@@ -1,0 +1,69 @@
+/* ---- filter row: 标签 pills + 文本过滤框(共享件 filter-bar.ts 的样式)----
+   看板与灵感共用;两视图的内容区横向 padding 同为 30px,故本行的 padding 也通用。 */
+.filter-row {
+  flex: none;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 11px 30px;
+  border-bottom: 1px solid var(--line);
+}
+.filter-row[hidden] { display: none; }
+.topic-filter {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+/* 文本过滤框:与 pills 同排同形(胶囊),常驻元素——renderFilterPills 只重建 pills,
+   打字过程中的重渲不碰它,焦点/光标不丢。 */
+.filter-text {
+  flex: none;
+  font: inherit;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  padding: 4px 12px;
+  width: 13em;
+}
+.filter-text:focus { outline: none; border-color: var(--seal-line); }
+.filter-text::placeholder { color: var(--ink-faint); }
+.tf-pill {
+  font: inherit;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  color: var(--ink-soft);
+  background: transparent;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  padding: 4px 11px;
+  cursor: pointer;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  transition: background 0.14s, color 0.14s, border-color 0.14s;
+}
+.tf-pill:hover { color: var(--ink); border-color: var(--seal-line); }
+.tf-pill.active {
+  color: var(--seal);
+  border-color: var(--seal-line);
+  background: var(--seal-tint);
+  font-weight: 600;
+}
+.tf-n { font-size: 11px; color: var(--ink-faint); font-variant-numeric: tabular-nums; }
+.tf-pill.active .tf-n { color: var(--seal); }
+/* 有色标签的筛选钮带一颗色点,让整条筛选条读出颜色分布(无色标签无点)。 */
+.tf-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--tag-color);
+  align-self: center;
+  flex: 0 0 auto;
+}

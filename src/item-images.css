@@ -1,0 +1,201 @@
+/* 配图(item images)——灵感 / 任务看板共用。基调沿用「纸与朱墨」令牌。 */
+
+/* 缩略图条:卡片正文下方一排小图,带「图N」角标。 */
+.img-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+.img-strip.empty {
+  display: none; /* 没图就不留空 */
+}
+
+.img-thumb {
+  position: relative;
+  width: 72px;
+  height: 72px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--raised-edge);
+  box-shadow: var(--card-shadow);
+}
+.img-thumb.broken {
+  display: grid;
+  place-items: center;
+}
+.img-thumb-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  cursor: zoom-in;
+}
+
+/* 「图N」角标 —— 左下角朱砂小牌,正文引用同号。 */
+.img-badge {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  padding: 1px 5px;
+  font-family: var(--font-sans);
+  font-size: 11px;
+  line-height: 1.4;
+  color: #fff;
+  background: var(--seal);
+  border-top-right-radius: 5px;
+  pointer-events: none;
+}
+
+/* 新建入口(灵感「记下灵感」/ 看板「新建任务」)里的暂存图条:compose 是 flex 行,
+   让它换行独占一整行,行距交给 flex gap(去掉 strip 自带的 margin-top)。 */
+.compose .img-pending {
+  flex-basis: 100%;
+  margin-top: 0;
+}
+
+/* 编辑态每张图右上角的删除 ×。 */
+.img-del {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  font-size: 14px;
+  line-height: 1;
+  color: #fff;
+  background: rgba(34, 31, 25, 0.62);
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+}
+.img-del:hover {
+  background: var(--seal);
+}
+
+/* 正文里「图N」引用 —— 朱砂底纹的就地小 chip,点开看大图。 */
+.img-ref {
+  display: inline;
+  padding: 0 5px;
+  margin: 0 1px;
+  font-family: var(--font-sans);
+  font-size: 0.86em;
+  color: var(--seal);
+  background: var(--seal-tint);
+  border: 1px solid var(--seal-line);
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.img-ref:hover {
+  background: var(--seal);
+  color: #fff;
+}
+
+/* 正文里的 http/https 链接:点击开系统浏览器(见 renderContent)。用墨色下划线、
+   不抢配图 chip 的朱砂,长链接可换行不撑破卡片。 */
+.link-ref {
+  color: var(--ink);
+  text-decoration: underline;
+  text-decoration-color: var(--seal-line);
+  text-underline-offset: 2px;
+  cursor: pointer;
+  word-break: break-all;
+}
+.link-ref:hover {
+  color: var(--seal);
+  text-decoration-color: var(--seal);
+}
+
+/* 右键复制链接后就地飘出的小提示——固定定位跟随光标、不撑动正文,约 1s 淡出移除。 */
+.copy-toast {
+  position: fixed;
+  z-index: 1000;
+  transform: translate(-50%, -140%);
+  padding: 3px 8px;
+  font-family: var(--font-sans);
+  font-size: 12px;
+  color: #fff;
+  background: var(--ink);
+  border-radius: 5px;
+  pointer-events: none;
+  white-space: nowrap;
+  animation: copy-toast-fade 1s ease forwards;
+}
+@keyframes copy-toast-fade {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -120%);
+  }
+  15% {
+    opacity: 1;
+    transform: translate(-50%, -140%);
+  }
+  75% {
+    opacity: 1;
+    transform: translate(-50%, -140%);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -155%);
+  }
+}
+
+/* 编辑态的配图工具条:只有缩略图。配图统一靠在标题/正文框里粘贴(Ctrl+V),
+   编辑态提示行写明;＋图 选文件入口、取消/保存按钮都已移除。 */
+.img-editor {
+  margin-top: 8px;
+}
+/* 编辑态没图、也没报错时,配图工具条整块收起——免得空 strip 在紧凑编辑框里留白。
+   粘贴一张图 → strip 掉 .empty → 本块自然显出(见 imageStrip.reload)。 */
+.img-editor:not(:has(.img-strip:not(.empty))):not(:has(.img-err:not([hidden]))) {
+  display: none;
+}
+.img-err {
+  font-family: var(--font-sans);
+  font-size: 12px;
+  color: var(--seal);
+  margin: 4px 0 0;
+}
+
+/* 看大图遮罩。 */
+.img-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 9000;
+  overflow: auto; /* 长图铺满宽度后竖向溢出 → 原生滚动(item-images.ts makeImageViewer) */
+  overscroll-behavior: contain;
+  background: rgba(20, 16, 10, 0.78);
+  cursor: zoom-out;
+}
+/* 舞台:min-100% + flex 居中 → 图小于视口时居中、大于视口时从边缘起可滚(不裁顶/不裁左)。
+   safe center:图超出视口时对齐退回 start,保证正 scroll 能到达两端(否则不安全居中会把
+   左/上侧内容顶到负方向、滚不到)。 */
+.img-lightbox-stage {
+  box-sizing: border-box;
+  min-width: 100%;
+  min-height: 100%;
+  padding: 32px;
+  display: flex;
+  align-items: safe center;
+  justify-content: safe center;
+}
+.img-lightbox-img {
+  display: block;
+  flex: none; /* 不被 flex 收缩:宽高由 JS 直接写(makeImageViewer),超出即溢出交原生滚动 */
+  /* 宽高由 JS 直接写,不用 object-fit/transform。 */
+  border-radius: 6px;
+  box-shadow: var(--float-shadow);
+  /* 禁原生图拖影 + 触控手势,平移/缩放全由脚本接管。 */
+  touch-action: none;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+.img-lightbox-err {
+  font-family: var(--font-sans);
+  color: #fff;
+}

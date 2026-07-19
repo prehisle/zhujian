@@ -1,0 +1,282 @@
+<!doctype html>
+<html lang="zh">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>朱笺</title>
+    <link rel="stylesheet" href="/src/theme.css" />
+    <link rel="stylesheet" href="/src/controls.css" />
+    <style>
+      /* 原生控件(目前只有看板截止日期的 <input type=date>:框内日历小图标、弹出的
+         日期面板)跟随明暗主题,否则深色下图标近黑不可见、面板刺白。刻意声明在
+         notebook 壳层而非共享 theme.css——capture 窗是 transparent:true,根上的
+         dark color-scheme 会让 UA 给透明窗铺不透明黑底;notebook 窗不透明,无此险。 */
+      :root { color-scheme: light; }
+      @media (prefers-color-scheme: dark) {
+        :root { color-scheme: dark; }
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; height: 100%; }
+      body {
+        font: 14px/1.6 var(--font-sans);
+        color: var(--ink);
+        background: var(--paper);
+        display: flex;
+        height: 100vh;
+        overflow: hidden;
+        position: relative;
+      }
+      /* paper grain over the whole window */
+      body::before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        z-index: 0;
+        background-image: var(--grain);
+        opacity: 0.035;
+        mix-blend-mode: multiply;
+      }
+
+      /* ---- left sidebar (frameless: also a drag handle) ---- */
+      .sidebar {
+        flex: none;
+        width: 172px;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        padding: 18px 14px 16px;
+        background: linear-gradient(180deg, var(--raised), var(--raised-edge));
+        border-right: 1px solid var(--line);
+        position: relative;
+        z-index: 2;
+        transition: width 0.18s ease;
+      }
+      /* 折叠开关(小按钮 + Ctrl+B):沉在侧栏右上角。折叠后侧栏缩成细条、只留它。
+         双击 brand 刻意不接管折叠——那是拖拽区的「双击最大化窗口」,别抢。 */
+      .sb-toggle {
+        position: absolute;
+        top: 12px;
+        right: 8px;
+        width: 22px;
+        height: 22px;
+        padding: 0;
+        border: 0;
+        border-radius: 6px;
+        background: transparent;
+        color: var(--ink-soft);
+        font-size: 15px;
+        line-height: 1;
+        cursor: pointer;
+        display: grid;
+        place-items: center;
+        z-index: 4;
+        transition: background 0.14s, color 0.14s;
+      }
+      .sb-toggle:hover { background: color-mix(in srgb, var(--ink) 8%, transparent); color: var(--ink); }
+      /* 折叠态:侧栏收成一根细条,brand/nav/同步全藏,开关居中留作展开入口。 */
+      body.sb-collapsed .sidebar {
+        width: 36px;
+        padding-left: 0;
+        padding-right: 0;
+        gap: 0;
+      }
+      body.sb-collapsed .sidebar .brand,
+      body.sb-collapsed .sidebar nav,
+      body.sb-collapsed .sidebar #space-entry,
+      body.sb-collapsed .sidebar #sync-entry { display: none; }
+      body.sb-collapsed .sb-toggle { right: 50%; transform: translateX(50%); }
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        font-family: var(--font-serif);
+        font-size: 17px;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+        color: var(--ink);
+        padding: 4px 8px 16px;
+        white-space: nowrap;
+      }
+      .brand .seal {
+        /* 与应用/托盘图标同一枚印:朱砂圆角方印 + 镂空墨滴(evenodd 挖空透底)。 */
+        width: 15px; height: 15px;
+        flex: none;
+        display: block;
+      }
+      /* ---- 空间切换(97 多空间,sync-plan §六):brand 下入口 + 轻浮层菜单 ---- */
+      .space-entry {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin: -8px 8px 10px;
+        padding: 3px 8px;
+        border: 0;
+        border-radius: 7px;
+        background: transparent;
+        color: var(--ink-soft);
+        font: 12px/1.5 var(--font-sans);
+        cursor: pointer;
+        text-align: left;
+        position: relative;
+        max-width: calc(100% - 16px);
+        transition: background 0.14s, color 0.14s;
+      }
+      .space-entry:hover { background: color-mix(in srgb, var(--ink) 6%, transparent); color: var(--ink); }
+      .space-entry #space-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .space-caret { font-size: 9px; opacity: 0.6; flex: none; }
+      /* 非当前空间有同步异常(冻结/身份冲突/错误):入口右上一粒朱砂点(§六⑥ 空间级提示)。 */
+      .space-entry.alert::after {
+        content: "";
+        position: absolute;
+        top: 1px;
+        right: 1px;
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--seal);
+      }
+      .space-menu {
+        position: fixed;
+        z-index: 60;
+        min-width: 185px;
+        background: var(--raised);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        box-shadow: 0 10px 28px rgba(0, 0, 0, 0.14);
+        padding: 5px;
+        display: flex;
+        flex-direction: column;
+        gap: 1px;
+      }
+      .space-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        border: 0;
+        border-radius: 7px;
+        background: transparent;
+        padding: 7px 9px;
+        font: 13px/1.4 var(--font-sans);
+        color: var(--ink);
+        cursor: pointer;
+        text-align: left;
+      }
+      .space-row:hover { background: color-mix(in srgb, var(--ink) 6%, transparent); }
+      .space-row:disabled { opacity: 0.55; cursor: default; }
+      .space-row:disabled:hover { background: transparent; }
+      .space-row .space-row-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .space-row.cur .space-row-name { font-weight: 600; }
+      .space-cur-mark { color: var(--seal); font-size: 12px; flex: none; }
+      .space-row.action { color: var(--ink-soft); font-size: 12.5px; }
+      .space-form { display: flex; flex-direction: column; gap: 6px; padding: 6px 8px; }
+      .space-form input {
+        font: 13px/1.4 var(--font-sans);
+        padding: 5px 8px;
+        border: 1px solid var(--line);
+        border-radius: 7px;
+        background: var(--paper);
+        color: var(--ink);
+      }
+      .space-form .space-err { color: var(--seal); font-size: 12px; }
+      .space-form .space-err:empty { display: none; }
+
+      .sidebar nav { display: flex; flex-direction: column; gap: 2px; }
+      .sidebar nav button {
+        font-family: var(--font-serif);
+        font-size: 14.5px;
+        letter-spacing: 0.03em;
+        text-align: left;
+        color: var(--ink-soft);
+        background: transparent;
+        border: 0;
+        border-radius: 9px;
+        padding: 9px 12px;
+        cursor: pointer;
+        position: relative;
+        transition: background 0.14s, color 0.14s;
+      }
+      .sidebar nav button:hover { background: color-mix(in srgb, var(--ink) 6%, transparent); color: var(--ink); }
+      .sidebar nav button.active {
+        background: var(--seal-tint);
+        color: var(--ink);
+      }
+      .sidebar nav button.active::before {
+        content: "";
+        position: absolute;
+        left: 0; top: 8px; bottom: 8px;
+        width: 3px;
+        border-radius: 0 3px 3px 0;
+        background: var(--seal);
+      }
+
+      /* ---- main column ---- */
+      .main-col {
+        position: relative;
+        flex: 1;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        z-index: 1;
+      }
+      /* floating window controls (top-right, over the content) */
+      .winctl { position: absolute; top: 0; right: 0; z-index: 6; display: flex; }
+      .wc {
+        font-family: "Segoe Fluent Icons", "Segoe MDL2 Assets", sans-serif;
+        font-size: 10px;
+        width: 46px;
+        height: 36px;
+        padding: 0;
+        border: 0;
+        border-radius: 0;
+        background: transparent;
+        color: var(--ink-soft);
+        display: grid;
+        place-items: center;
+        cursor: pointer;
+      }
+      .wc:hover { background: color-mix(in srgb, var(--ink) 9%, transparent); color: var(--ink); }
+      .wc-close:hover { background: var(--seal); color: #fdf6ee; }
+
+      /* the mounted view fills the column */
+      #view { flex: 1; min-height: 0; display: flex; }
+      #view > * { flex: 1; min-width: 0; }
+      /* header title text is NOT a drag handle (no data-tauri-drag-region) so it
+         can be selected & copied; the surrounding header strip still drags. */
+      #view header h1 { user-select: text; cursor: text; }
+    </style>
+  </head>
+  <body>
+    <!-- 侧栏整体不再是拖拽区:否则 nav 下方的空白被当成标题栏,单击会触发
+         startDragging「抓一下又放下」而闪烁、双击还会最大化窗口。拖窗交给顶部
+         「朱笺」logo 行 + 各视图 header(常规标题栏位置)。 -->
+    <aside class="sidebar">
+      <button id="sidebar-toggle" class="sb-toggle" title="折叠侧栏 (Ctrl+B)" aria-label="折叠侧栏">«</button>
+      <div class="brand" data-tauri-drag-region><svg class="seal" viewBox="0 0 24 24" aria-hidden="true"><path fill="var(--seal)" fill-rule="evenodd" d="M7 0h10a7 7 0 0 1 7 7v10a7 7 0 0 1-7 7H7a7 7 0 0 1-7-7V7a7 7 0 0 1 7-7Zm5 4.5c2.6 3.7 4.2 6.1 4.2 8.7a4.2 4.2 0 1 1-8.4 0c0-2.6 1.6-5 4.2-8.7Z"/></svg>朱笺</div>
+      <!-- 空间切换(97 多空间):当前空间名 + 菜单(切换/新建/改名)。逻辑在 notebook.ts。 -->
+      <button id="space-entry" class="space-entry" title="切换空间">
+        <span id="space-name">个人空间</span><span class="space-caret">▾</span>
+      </button>
+      <nav>
+        <button data-view="inbox">灵感</button>
+        <button data-view="board">任务</button>
+        <button data-view="topics">标签</button>
+        <button data-view="search">搜索</button>
+      </nav>
+      <!-- 同步入口(P2-g):nav 之外(不参与视图切换),沉在侧栏底部;
+           未配置时只是一枚安静的灰点,零打扰。样式在 sync.css。 -->
+      <button id="sync-entry" class="sync-entry" title="同步">
+        <span id="sync-dot" class="sync-dot off"></span><span>同步</span>
+      </button>
+    </aside>
+    <div class="main-col">
+      <div class="winctl">
+        <button id="win-min" class="wc" title="最小化" aria-label="最小化">&#xE921;</button>
+        <button id="win-max" class="wc" title="最大化" aria-label="最大化">&#xE922;</button>
+        <button id="win-close" class="wc wc-close" title="关闭" aria-label="关闭">&#xE8BB;</button>
+      </div>
+      <main id="view"></main>
+    </div>
+    <script type="module" src="/src/notebook.ts"></script>
+  </body>
+</html>

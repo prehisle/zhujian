@@ -1,0 +1,29 @@
+[package]
+name = "zhujian-syncd"
+version = "0.1.0"
+description = "朱笺同步专用服务(sync-protocol §4)——设备鉴权 + 账户内密文帧路由 + 内存信箱 + 配对盲桥;对一切用户内容零知识"
+edition = "2021"
+rust-version = "1.77.2"
+
+# 刻意不建 cargo workspace(sync-protocol §8):独立编译、独立 target/。
+
+[dependencies]
+sync-proto = { path = "../sync-proto" }
+axum = { version = "0.8", features = ["ws"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "sync", "signal"] }
+futures-util = { version = "0.3", default-features = false, features = ["sink"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+# 验签专用(Ed25519 设备鉴权,§4);服务器不生成、不持有任何密钥。
+ed25519-dalek = "2"
+# challenge nonce(32B)与配对槽号的系统熵;不引 rand 全家桶。
+getrandom = "0.3"
+# 日志时间戳(与 src-tauri 同款 time 0.3)。
+time = { version = "0.3", features = ["formatting", "parsing"] }
+
+[dev-dependencies]
+# 集成测试的 WS 客户端(0.29 对齐 axum 0.8 内部的 tungstenite,免双版本)。
+tokio-tungstenite = "0.29"
+# 集成测试生成设备密钥对(rand_core 0.6 与 dalek 2 对齐)。
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+rand = "0.8"

@@ -1,0 +1,220 @@
+/* 同步 UI 最小面(P2-g):侧栏入口 + 状态点 + 设置面板 + 提示条。
+   tokens 来自 theme.css;按钮吃 controls.css 的 .hbtn。 */
+
+/* ---- 侧栏入口(未配置时唯一的可见面,安静) ---- */
+.sync-entry {
+  margin-top: auto; /* 沉到侧栏底部 */
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-serif);
+  font-size: 12.5px;
+  letter-spacing: 0.03em;
+  color: var(--ink-faint);
+  background: transparent;
+  border: 0;
+  border-radius: 9px;
+  padding: 7px 12px;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.14s, color 0.14s;
+}
+.sync-entry:hover {
+  background: color-mix(in srgb, var(--ink) 6%, transparent);
+  color: var(--ink);
+}
+
+.sync-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: transparent;
+  border: 1px solid var(--line-strong);
+}
+.sync-dot.on {
+  background: #4c9a6a;
+  border-color: transparent;
+}
+.sync-dot.busy {
+  background: #c9973a;
+  border-color: transparent;
+  animation: sync-pulse 1.6s ease-in-out infinite;
+}
+.sync-dot.err {
+  background: var(--seal);
+  border-color: transparent;
+}
+@keyframes sync-pulse {
+  50% { opacity: 0.35; }
+}
+
+/* ---- 设置面板(轻模态) ---- */
+.sync-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  background: color-mix(in srgb, var(--paper) 55%, transparent);
+  backdrop-filter: blur(2px);
+}
+.sync-panel {
+  width: min(420px, calc(100vw - 48px));
+  background: linear-gradient(180deg, var(--raised), var(--raised-edge));
+  border: 1px solid var(--line-strong);
+  border-radius: 14px;
+  box-shadow: var(--float-shadow);
+  padding: 18px 20px 20px;
+}
+.sync-title {
+  margin: 0 0 12px;
+  font-family: var(--font-serif);
+  font-size: 16px;
+  letter-spacing: 0.04em;
+  color: var(--ink);
+}
+.sync-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--ink);
+}
+.sync-note {
+  margin: 0;
+  color: var(--ink-soft);
+  line-height: 1.7;
+}
+.sync-dim { color: var(--ink-faint); }
+.sync-kv {
+  color: var(--ink-soft);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.sync-warn {
+  color: var(--seal);
+  font-size: 12px;
+  line-height: 1.7;
+}
+/* 压实前逐项确认闸(132 债):防无脑连点跳过服务器侧吊销/清箱 */
+.sync-ack-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 8px 0;
+}
+.sync-ack {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  color: var(--ink-soft);
+  font-size: 12px;
+  line-height: 1.5;
+  cursor: pointer;
+}
+.sync-ack input { margin-top: 2px; flex: 0 0 auto; }
+.sync-err {
+  color: var(--seal);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.sync-err:empty { display: none; }
+.sync-stateline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.sync-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+}
+/* 面板底部:版本 + 「检查更新」入口(88),与上方同步动作用细线分隔 */
+.sync-update-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line-strong);
+}
+.sync-input {
+  font: inherit;
+  font-size: 13px;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  padding: 8px 10px;
+  outline: none;
+}
+.sync-input:focus { border-color: var(--seal-line); }
+
+/* 恢复码 / 配对码:等宽大字,可选中抄录 */
+.sync-code {
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 15px;
+  letter-spacing: 0.06em;
+  line-height: 1.8;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px dashed var(--seal-line);
+  border-radius: 10px;
+  padding: 12px 14px;
+  text-align: center;
+  overflow-wrap: anywhere;
+  user-select: text;
+  cursor: text;
+}
+/* 恢复码专用:只在组边界(短横)换行,别从字中间断——长码分成规整几行、不再是
+   一条长蛇(需求3)。DOM 文本仍是原始带 `-` 的整串,故复制/回验口径不变。 */
+.sync-code--recovery {
+  overflow-wrap: normal;
+  word-break: normal;
+  max-width: 16em;
+  margin-inline: auto;
+}
+
+/* 配对二维码(107):恒白底黑码——扫码要的是对比度,不随暗色主题走 */
+.sync-qr {
+  width: 190px;
+  margin: 2px auto 0;
+  background: #fff;
+  border-radius: 10px;
+  padding: 6px;
+  line-height: 0;
+}
+.sync-qr svg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+/* ---- 提示条(非模态,右下) ---- */
+#sync-toast {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 70;
+  max-width: min(420px, calc(100vw - 60px));
+  background: linear-gradient(180deg, var(--raised), var(--raised-edge));
+  border: 1px solid var(--line-strong);
+  border-left: 3px solid var(--seal);
+  border-radius: 10px;
+  box-shadow: var(--float-shadow);
+  padding: 10px 14px;
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: var(--ink);
+  opacity: 0;
+  transform: translateY(6px);
+  pointer-events: none;
+  transition: opacity 0.18s, transform 0.18s;
+}
+#sync-toast.show {
+  opacity: 1;
+  transform: none;
+  pointer-events: auto;
+}

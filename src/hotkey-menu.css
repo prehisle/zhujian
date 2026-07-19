@@ -1,0 +1,91 @@
+/* 悬停即选中 + ⋯ 速查菜单 —— 视图无关的共享样式(抽自 inbox.css)。任何可操作卡片
+   加上 .hk-host 即可接入;选中态边框等视觉个性由各视图自己的 .is-active 规则补。 */
+
+/* 卡片是 ⋯ 角标的定位锚点;选中/菜单开时浮到邻居之上,让下拉盖住下方(不透明)卡片。 */
+.hk-host { position: relative; }
+.hk-host.is-active { z-index: 4; }
+
+/* ⋯ 角标:坐在卡片右上角留白里,只有卡片被悬停 / 选中时才浮现,安静的列表保持安静。 */
+.hk-menu-wrap { position: absolute; top: 8px; right: 8px; z-index: 3; }
+.hk-btn {
+  font: inherit;
+  font-size: 15px;
+  line-height: 1;
+  color: var(--ink-faint);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  padding: 1px 7px 3px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.14s, background 0.14s, color 0.14s, border-color 0.14s;
+}
+.hk-host:hover .hk-btn,
+.hk-host.is-active .hk-btn { opacity: 1; }
+.hk-btn:hover {
+  color: var(--ink);
+  background: color-mix(in srgb, var(--ink) 8%, transparent);
+  border-color: var(--line-strong);
+}
+
+/* 下拉:每行左边是操作名、右边是它的键帽。position:fixed + JS 按 ⋯ 图标的 rect 定位,
+   这样高菜单不会被祖先的 overflow(看板列体是 overflow:auto)裁掉;top/right 由 JS 设。 */
+.hk-menu {
+  position: fixed;
+  z-index: 50; /* fixed → root stacking context; sit above all cards/columns */
+  min-width: 150px;
+  max-height: calc(100vh - 12px); /* pathological tallness scrolls rather than overflowing */
+  overflow-y: auto;
+  padding: 5px;
+  background: var(--paper);
+  border: 1px solid var(--line-strong);
+  border-radius: 11px;
+  box-shadow: 0 8px 24px -8px color-mix(in srgb, var(--ink) 40%, transparent);
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  animation: hk-rise 0.14s ease both;
+}
+.hk-item {
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--ink);
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+  padding: 7px 9px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  transition: background 0.12s, color 0.12s;
+}
+.hk-item:hover { background: color-mix(in srgb, var(--ink) 8%, transparent); }
+.hk-item.danger:hover { background: var(--seal-tint); color: var(--seal); }
+.hk-label { white-space: nowrap; }
+.hk-key {
+  flex: none;
+  font-family: var(--font-sans);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--ink-faint);
+  background: color-mix(in srgb, var(--ink) 6%, transparent);
+  border: 1px solid var(--line-strong);
+  border-radius: 5px;
+  padding: 1px 0;
+  min-width: 19px;
+  text-align: center;
+}
+.hk-item.danger .hk-key {
+  color: var(--seal);
+  border-color: var(--seal-line);
+  background: var(--seal-tint);
+}
+.hk-item:hover .hk-key { color: var(--ink); }
+.hk-item.danger:hover .hk-key { color: var(--seal); }
+
+/* Slide only — do NOT animate from opacity:0: a WebDriver/isDisplayed check during the
+   fade treats the menu as not-displayed → "element not interactable" flake. */
+@keyframes hk-rise { from { transform: translateY(6px); } }

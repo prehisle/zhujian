@@ -1,0 +1,509 @@
+/* 任务看板视图(看板 + 回收站)— scoped under .v-board. Grain + window controls
+   live on the shell; the header clears them with right padding + flex-wrap (58). */
+.v-board {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  position: relative;
+}
+.v-board header,
+.v-board main { position: relative; z-index: 1; }
+
+/* ---- header ---- */
+/* 右 padding 168px 给浮动窗控(3×46=138px)留死区——比 margin 预留可靠:窄窗
+   header 溢出时 margin 会被推出可视区,padding 约束的是行盒本身。配 wrap:
+   放不下的动作钮整体落到第二行(首行高 ≥36px,第二行天然在窗控下方)。 */
+.v-board header {
+  flex: none;
+  padding: 20px 168px 16px 30px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px 14px;
+  border-bottom: 1px solid var(--line);
+}
+.v-board header h1 {
+  flex: none;
+  margin: 0;
+  font-family: var(--font-serif);
+  font-size: 19px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  position: relative;
+  padding-left: 20px;
+}
+.v-board header h1::before {
+  content: "";
+  position: absolute;
+  left: 0; top: 0.16em;
+  width: 12px; height: 12px;
+  border-radius: 3px;
+  background: var(--seal);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, #fff 22%, transparent);
+}
+.v-board header .spacer { flex: 1; }
+/* header 动作按钮统一走共享 .hbtn(见 controls.css);这里只补本视图的特例。 */
+/* 归档/回收站一组:宽窗随 .spacer 靠右;换行到第二行时 margin-left:auto 接手
+   (spacer 不在该行,auto 边距才吃到剩余空间),整组仍右对齐不散。 */
+.v-board .head-tools {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 14px;
+  margin-left: auto;
+}
+/* 窄窗按钮缩成字母(69,取代 68 的掉行方案):从 minWidth 760 到满宽 header 恒一行。
+   ≤999(e2e 驱动窗恰 1000,保持全名态)隐去按钮文字,只留 +/计数/键帽,悬停 title
+   兜底全名;回收站/归档态的开关(.active)保留「← 看板」全文(彼时 新建任务 本就
+   hidden、位子空出来);复制看板没有字母态,窄窗整颗隐去——每列列头的「复制」仍在,
+   拉宽即回。 */
+@media (max-width: 999px) {
+  .v-board header .hbtn .lbl { display: none; }
+  .v-board header .hbtn.active .lbl { display: inline; }
+  .v-board header .copy-slot { display: none; }
+}
+.v-board .trash-toggle .tn,
+.v-board #trash-toggle .tn { font-variant-numeric: tabular-nums; opacity: 0.8; }
+
+/* 复制为 Markdown — 每列列头那颗(header 那颗「复制看板」走共享 .hbtn 标准 pill) */
+.v-board .col-copy {
+  flex: none;
+  font: inherit;
+  font-size: 11px;
+  letter-spacing: 0.03em;
+  color: var(--ink-faint);
+  background: transparent;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  padding: 2px 10px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.14s, color 0.14s, border-color 0.14s;
+}
+.v-board .col-copy:hover { color: var(--ink); border-color: var(--seal-line); background: var(--seal-tint); }
+/* the per-column copy sits at the right edge of the col-head */
+.v-board .col-copy { margin-left: auto; }
+
+/* ---- 新建任务 compose bar ---- */
+.v-board .compose {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex-wrap: wrap; /* 暂存图条(.img-pending)换行独占一行 */
+  padding: 12px 30px;
+  border-bottom: 1px solid var(--line);
+}
+.v-board .compose[hidden] { display: none; }
+.v-board .compose-input {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-family: var(--font-serif);
+  font-size: 14.5px;
+  line-height: 1.5;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--line-strong);
+  border-radius: 9px;
+  padding: 8px 11px;
+  outline: none;
+  resize: none; /* height is auto-grown in JS to fit the content */
+  max-height: 160px;
+  overflow-y: auto;
+  transition: border-color 0.14s;
+}
+.v-board .compose-input:focus { border-color: var(--seal-line); }
+.v-board .compose-add {
+  flex: none;
+  font: inherit;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  font-weight: 600;
+  color: #fdf6ee;
+  background: var(--seal);
+  border: 1px solid var(--seal);
+  border-radius: 999px;
+  padding: 7px 16px;
+  cursor: pointer;
+  transition: background 0.14s;
+}
+.v-board .compose-add:hover { background: color-mix(in srgb, var(--seal) 88%, #000); }
+.v-board .compose-close {
+  flex: none;
+  font: inherit;
+  font-size: 12px;
+  color: var(--ink-soft);
+  background: transparent;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  padding: 7px 14px;
+  cursor: pointer;
+}
+.v-board .compose-close:hover { color: var(--ink); background: color-mix(in srgb, var(--ink) 6%, transparent); }
+.v-board .compose-err { color: var(--seal); font-size: 12px; letter-spacing: 0.02em; }
+
+/* filter row(标签 pills + 文本过滤框)样式已抽共享件 filter-bar.css——看板与灵感
+   同一套筛选行为与皮肤(单一真相源),此处不再重复。 */
+
+/* ---- per-card topic chip (reuses .task-meta chip styling) ---- */
+.v-board .task-topic { margin-top: 7px; }
+.v-board .task-meta .chip.topic.set::before { content: "🏷 "; }
+.v-board .task-meta .chip.topic.set {
+  color: var(--ink);
+  border-color: var(--line-strong);
+}
+/* 有色标签:🏷 换成该色的实心点 + 极淡底色 + 描边染色(颜色是冗余次通道,文字仍是主)。 */
+.v-board .task-meta .chip.topic.set.tinted::before {
+  content: "●";
+  color: var(--tag-color);
+  margin-right: 2px;
+}
+.v-board .task-meta .chip.topic.set.tinted {
+  border-color: color-mix(in srgb, var(--tag-color) 55%, var(--line-strong));
+  background: color-mix(in srgb, var(--tag-color) 12%, var(--paper));
+}
+.v-board .task-topic .topic-hint { font-size: 11.5px; color: var(--ink-faint); }
+
+/* 标签选择器(⋯ 菜单「标签 L」展开):一个能搜、能建的内联选择器,取代旧的「一排按钮 + 取消」。
+   搜标签把已有的顶到眼前(引导复用),输入名无匹配才出现「创建『x』」(染朱、虚线以示新建)。 */
+.v-board .task-topic .topic-search {
+  font: inherit;
+  font-size: 12px;
+  padding: 2px 7px;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  background: var(--paper);
+  color: var(--ink);
+  width: 11em;
+  max-width: 100%;
+}
+.v-board .task-topic .topic-search:focus { outline: none; border-color: var(--seal-line); }
+.v-board .task-topic .topic-choices { display: inline-flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.v-board .task-topic .choice.create { border-style: dashed; color: var(--seal); border-color: var(--seal-line); }
+.v-board .task-topic .choice.create:hover { background: var(--seal-tint); border-color: var(--seal); }
+
+/* ---- the board: columns row + an archive drop strip ---- */
+.v-board main {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  gap: 16px;
+  padding: 18px 24px 22px;
+}
+.v-board main.board-wrap { flex-direction: column; position: relative; }
+.v-board .cols { flex: 1; min-height: 0; display: flex; gap: 16px; }
+.v-board main.centered { display: grid; place-items: center; }
+
+/* ---- drag & drop ---- */
+.v-board .tcard[draggable="true"] { cursor: grab; }
+.v-board .tcard.dragging { opacity: 0.45; cursor: grabbing; }
+.v-board .col-body.drop-hover {
+  background: var(--seal-tint);
+  border-radius: 10px;
+  outline: 1px dashed var(--seal-line);
+  outline-offset: -2px;
+}
+/* The insertion marker showing where a dragged card will land. A real-height,
+   solid-filled pill (not a zero-height border box, which WebView2 renders as a
+   skewed sliver). The negative top margin keeps net layout shift at zero, so
+   inserting it between cards never nudges them — matching the old intent. */
+.v-board .drop-line {
+  height: 3px;
+  margin: -3px 2px 0;
+  background: var(--seal);
+  border-radius: 999px;
+  pointer-events: none;
+}
+/* 平时完全不占空间(绝对定位浮层 + 不吃指针事件),四列拿回整个高度;拖起「已完成」的
+   卡时才浮现在看板底部(.board-wrap.drag-done 由 dragstart/dragend 切)。做成浮层而非
+   flex 槽位:既不常驻挤占,浮现时也脱离文档流、不挤动四列/不抖乱落点(旧「留槽位」正是
+   为躲后者)。left/right/bottom 对齐 main 的内边距(24/24/22)。 */
+.v-board .archive-zone {
+  position: absolute;
+  left: 24px;
+  right: 24px;
+  bottom: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 46px;
+  border: 1px dashed transparent;
+  border-radius: 11px;
+  color: var(--ink-faint);
+  font-size: 12px;
+  letter-spacing: 0.03em;
+  user-select: none;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.14s, background 0.14s, border-color 0.14s, color 0.14s;
+}
+.v-board .board-wrap.drag-done .archive-zone {
+  opacity: 1;
+  pointer-events: auto;
+  border-color: var(--line-strong);
+  /* 浮在四列之上要读得清:铺纸底 + 一道朝上的轻阴影把它托起来。 */
+  background: var(--raised);
+  box-shadow: 0 -6px 18px -10px color-mix(in srgb, var(--ink) 30%, transparent);
+}
+.v-board .board-wrap.drag-done .archive-zone.drop-hover {
+  border-color: var(--seal);
+  border-style: solid;
+  background: var(--seal-tint);
+  color: var(--seal);
+}
+
+.v-board .col {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.v-board .col-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 4px 10px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 12px;
+}
+.v-board .col-name {
+  font-family: var(--font-serif);
+  font-size: 14.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--ink-soft);
+}
+.v-board .col.doing .col-name { color: var(--seal); }
+.v-board .col-count {
+  font-size: 11.5px;
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+  background: color-mix(in srgb, var(--ink) 7%, transparent);
+  border-radius: 999px;
+  min-width: 19px;
+  height: 19px;
+  padding: 0 6px;
+  display: grid;
+  place-items: center;
+}
+
+.v-board .col-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 2px 4px 6px;
+}
+.v-board .col-body::-webkit-scrollbar { width: 9px; }
+.v-board .col-body::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border: 3px solid var(--paper);
+  border-radius: 9px;
+}
+/* ---- a task card ---- */
+.v-board .tcard {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 12px 13px 11px;
+  margin-bottom: 10px;
+  background: linear-gradient(180deg, var(--raised), var(--raised-edge));
+  box-shadow: var(--card-shadow);
+  /* No entrance animation: every drag-reorder reloads the board, and replaying a
+     fade-in on all cards each time looked like a heavy flicker. */
+  transition: border-color 0.16s;
+}
+.v-board .tcard:hover { border-color: var(--line-strong); }
+/* board cards carry the ⋯ corner menu (灵感 parity): a right gutter on the title row
+   clears the icon, and the active (hovered / menu-open) card gets the seal accent.
+   (trash/sealed cards have no ⋯ menu — no gutter needed.) */
+.v-board .tcard:not(.archived):not(.sealed) .ttitle { padding-right: 22px; }
+.v-board .tcard.is-active { border-color: var(--seal-line); }
+/* the .acts row is only the inline-confirm host now (删除 / 撤回); empty = no row */
+.v-board .acts:empty { display: none; }
+/* doing is the active focus (朱砂 bar); 待确认 is set aside / on hold (a muted grey
+   bar — alive but not being worked); done recedes */
+.v-board .tcard.doing { box-shadow: var(--card-shadow), inset 3px 0 0 var(--seal); }
+.v-board .tcard.confirming { box-shadow: var(--card-shadow), inset 3px 0 0 var(--line-strong); }
+.v-board .tcard.done { opacity: 0.62; }
+/* due highlight: an overdue card carries a 朱砂 left bar; due-today a soft seal edge */
+.v-board .tcard.due-today { border-color: var(--seal-line); }
+.v-board .tcard.due-overdue { border-color: var(--seal-line); box-shadow: var(--card-shadow), inset 3px 0 0 var(--seal); }
+/* archived cards (回收站): recede further, no seal accent */
+.v-board .tcard.archived { opacity: 0.82; border-style: dashed; }
+.v-board .tcard.archived .ttitle { color: var(--ink-soft); }
+/* sealed cards (归档·成就册): full-strength paper — an achievement, not junk.
+   The ✓ keeps the 已完成 heritage; a quiet 朱砂 left bar marks it as "入册". */
+.v-board .tcard.sealed { box-shadow: var(--card-shadow), inset 3px 0 0 var(--seal-line); }
+.v-board .tcard.sealed .ttitle::before { content: "✓ "; color: var(--seal); font-weight: 700; }
+
+/* ㊺ 卡片去噪:截止/优先级/标签的「值」是纯展示 chip(信息,逾期/今天仍标红供一眼识别);
+   增改清操作不在卡面、全走 ⋯ 菜单 S/P/L(无 ＋ 占位入口)。故只需把「无任何展示内容」的
+   空 meta 行连同 margin 收起,免得静止卡片在标题下留空行。当 ⋯ 菜单打开某个编辑器时,该行
+   会含 .due-input / .choice / .link / .topic-hint / .topic-search → 不匹配收起、自然显出。 */
+.v-board .tcard .task-meta:not(:has(.chip)):not(:has(.due-input)):not(:has(.choice)):not(:has(.link)):not(:has(.topic-hint)):not(:has(.topic-search)) {
+  display: none;
+}
+
+/* ---- trash view: a single scrolling list + an empty/clear bar ---- */
+.v-board main.trash { display: block; overflow-y: auto; padding: 16px 24px 22px; }
+.v-board main.trash .trash-list { max-width: 560px; margin: 0 auto; }
+
+/* ---- 归档(成就册)view: reuses the trash list layout + a day timeline ---- */
+/* the day heading (同 inbox 时间轴的 .tl-date,此处无轴线,只要日期标头) */
+.v-board .tl-date {
+  font-family: var(--font-sans);
+  font-size: 11.5px;
+  letter-spacing: 0.05em;
+  color: var(--ink-faint);
+  margin: 14px 0 9px;
+}
+.v-board .tl-date::before { content: "◆ "; color: var(--seal); font-size: 8px; vertical-align: 1px; }
+.v-board .trash-list .tl-date:first-child { margin-top: 2px; }
+
+/* ---- done 列头「全部归档」(slot swaps to an inline confirm) ---- */
+.v-board .seal-all-slot {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.v-board .seal-all-slot .act { padding: 2px 10px; font-size: 11px; white-space: nowrap; }
+.v-board .seal-all-slot .confirm-q { font-size: 11px; white-space: nowrap; }
+.v-board .trash-bar {
+  max-width: 560px;
+  margin: 0 auto 14px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12.5px;
+  color: var(--ink-faint);
+}
+.v-board .trash-bar .grow { flex: 1; }
+
+.v-board .ttitle {
+  margin: 0;
+  font-family: var(--font-serif);
+  font-size: 14.5px;
+  line-height: 1.5;
+  color: var(--ink);
+  word-break: break-word;
+  white-space: pre-wrap; /* render the newlines a multi-line title may carry */
+}
+.v-board .tcard.done .ttitle { color: var(--ink-soft); }
+.v-board .tcard.done .ttitle::before { content: "✓ "; color: var(--seal); font-weight: 700; }
+/* 待确认 title hint: a quiet ⋯ marks work parked awaiting confirmation */
+.v-board .tcard.confirming .ttitle::before { content: "⋯ "; color: var(--ink-faint); font-weight: 700; }
+
+.v-board .prov {
+  margin-top: 6px;
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- inline rename (编辑) ---- */
+.v-board .edit-form { display: flex; flex-direction: column; gap: 9px; }
+.v-board .edit-input {
+  width: 100%;
+  font: inherit;
+  font-family: var(--font-serif);
+  font-size: 14.5px;
+  line-height: 1.5;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--seal-line);
+  border-radius: 9px;
+  padding: 7px 10px;
+  outline: none;
+  resize: none; /* height auto-grown in JS to fit a multi-line title */
+  max-height: 200px;
+  overflow-y: auto;
+}
+.v-board .edit-err { color: var(--seal); font-size: 12px; letter-spacing: 0.02em; }
+.v-board .edit-err:empty { display: none; } /* 无报错时不占 flex gap,编辑框保持紧凑 */
+
+/* ---- action pills ---- */
+.v-board .acts {
+  margin-top: 11px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.v-board .act {
+  font: inherit;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  border-radius: 999px;
+  padding: 5px 13px;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: background 0.14s, color 0.14s, border-color 0.14s;
+}
+.v-board .act.primary {
+  background: var(--seal);
+  border-color: var(--seal);
+  color: #fdf6ee;
+  font-weight: 600;
+}
+.v-board .act.primary:hover { background: color-mix(in srgb, var(--seal) 88%, #000); }
+.v-board .act.ghost { background: transparent; color: var(--ink-soft); border-color: var(--line-strong); }
+.v-board .act.ghost:hover { color: var(--ink); background: color-mix(in srgb, var(--ink) 6%, transparent); }
+.v-board .confirm-q { font-size: 12px; color: var(--seal); letter-spacing: 0.02em; }
+/* 不再提示 opt-out inside the delete confirm row */
+.v-board .dont-ask {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11.5px;
+  color: var(--ink-soft);
+  cursor: pointer;
+  user-select: none;
+}
+.v-board .dont-ask input { cursor: pointer; margin: 0; }
+
+/* ---- 卡级操作失败横幅(ui-audit P0 #6:非破坏,不替换看板) ---- */
+.v-board .op-err {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 30px;
+  border-bottom: 1px solid var(--line);
+  color: var(--seal);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.v-board .op-err[hidden] { display: none; }
+.v-board .op-err .op-err-msg { flex: 1; min-width: 0; word-break: break-word; white-space: pre-wrap; }
+.v-board .op-err .act { flex: none; }
+
+/* ---- centered empty / error states ---- */
+.v-board .center {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  text-align: center;
+  color: var(--ink-soft);
+  animation: rise 0.4s ease both;
+}
+.v-board .center .big { font-family: var(--font-serif); font-size: 17px; color: var(--ink); }
+.v-board .center > div:not(.big):not(.err-box) { max-width: 340px; font-size: 13px; line-height: 1.7; }
+.v-board .center .err-box {
+  max-width: 480px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--seal);
+  font-size: 12.5px;
+  text-align: left;
+  background: var(--seal-tint);
+  border: 1px solid var(--seal-line);
+  border-radius: 10px;
+  padding: 12px 14px;
+}
+@keyframes rise { from { opacity: 0; transform: translateY(6px); } }

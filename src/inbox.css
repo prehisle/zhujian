@@ -1,0 +1,446 @@
+/* 灵感源视图(未归类 / 已归类 / 回收站)— scoped under the view root so it
+   never bleeds into the shell or its sibling views. Grain + window controls
+   live on the shell (notebook.html); this file is layout + cards only. */
+.v-inbox {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  position: relative;
+}
+.v-inbox header,
+.v-inbox main { position: relative; z-index: 1; }
+
+/* ---- header (also a drag handle; right pad clears the floating win ctls,
+   which are 3×46=138px wide — pad must exceed that or header content runs under) ---- */
+.v-inbox header {
+  flex: none;
+  padding: 20px 150px 12px 30px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.v-inbox header h1 {
+  margin: 0;
+  font-family: var(--font-serif);
+  font-size: 19px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  position: relative;
+  padding-left: 20px;
+  flex: none;
+  white-space: nowrap;
+}
+.v-inbox header h1::before {
+  content: "";
+  position: absolute;
+  left: 0; top: 0.32em;
+  width: 12px; height: 12px;
+  border-radius: 3px;
+  background: var(--seal);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, #fff 22%, transparent);
+}
+/* 灵感流转统计:头部一行淡字(纯信息,和标签视图的计数同性质);
+   margin-left:auto 顶右——原先靠 .sub 说明行 flex:1 撑开,说明行删了(67)。 */
+.v-inbox header .idea-stats {
+  flex: none;
+  margin-left: auto;
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
+  color: var(--ink-faint);
+  white-space: nowrap;
+}
+
+/* ---- 新建灵感 compose bar (top of 未归类) ---- */
+.v-inbox .compose {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+  padding-bottom: 16px;
+  border-bottom: 1px dashed var(--line-strong);
+}
+.v-inbox .compose-input {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-family: var(--font-serif);
+  font-size: 15px;
+  line-height: 1.55;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  padding: 10px 12px;
+  outline: none;
+  resize: none; /* auto-grown to fit (shared autogrow.ts) */
+  min-height: 42px;
+  max-height: 160px; /* same cap as the board compose */
+  overflow-y: auto;
+  transition: border-color 0.14s;
+}
+.v-inbox .compose-input:focus { border-color: var(--seal-line); }
+.v-inbox .compose-add {
+  flex: none;
+  font: inherit;
+  font-size: 12.5px;
+  letter-spacing: 0.04em;
+  font-weight: 600;
+  color: #fdf6ee;
+  background: var(--seal);
+  border: 1px solid var(--seal);
+  border-radius: 999px;
+  padding: 9px 18px;
+  cursor: pointer;
+  transition: background 0.14s;
+}
+.v-inbox .compose-add:hover { background: color-mix(in srgb, var(--seal) 88%, #000); }
+.v-inbox .compose .form-err { flex-basis: 100%; }
+/* when 未归类 is empty, the centered hint sits below the compose bar, not full-height */
+.v-inbox .compose ~ .center { height: auto; padding: 56px 0; }
+
+/* ---- tab strip (未归类 / 已归类 / 回收站) ---- */
+.v-inbox .tabs {
+  flex: none;
+  display: flex;
+  gap: 6px;
+  padding: 0 30px;
+  border-bottom: 1px solid var(--line);
+  position: relative;
+  z-index: 1;
+}
+.v-inbox .tab {
+  font-family: var(--font-serif);
+  font-size: 14px;
+  letter-spacing: 0.02em;
+  color: var(--ink-faint);
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  padding: 9px 6px 11px;
+  margin-bottom: -1px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  transition: color 0.14s, border-color 0.14s;
+}
+.v-inbox .tab:hover { color: var(--ink-soft); }
+.v-inbox .tab.active { color: var(--ink); border-bottom-color: var(--seal); }
+.v-inbox .tab-n {
+  font-family: var(--font-sans);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
+  color: var(--ink-faint);
+}
+.v-inbox .tab.active .tab-n { color: var(--seal); }
+
+/* ---- scrolling list ---- */
+.v-inbox main {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px 30px 28px;
+}
+.v-inbox main::-webkit-scrollbar { width: 10px; }
+.v-inbox main::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border: 3px solid var(--paper);
+  border-radius: 10px;
+}
+
+/* ---- 想法 timeline (a left rail + per-day headings) ---- */
+.v-inbox .timeline { position: relative; padding-left: 22px; }
+/* the continuous axis line; sits just inside the left padding */
+.v-inbox .timeline::before {
+  content: "";
+  position: absolute;
+  left: 6px; top: 4px; bottom: 4px;
+  width: 2px;
+  background: var(--line);
+  border-radius: 1px;
+}
+.v-inbox .tl-group { position: relative; }
+.v-inbox .tl-date {
+  position: relative;
+  font-family: var(--font-sans);
+  font-size: 11.5px;
+  letter-spacing: 0.05em;
+  color: var(--ink-faint);
+  margin: 2px 0 9px;
+}
+/* the node on the axis, aligned to the rail centre (x=7); paper halo punches a
+   clean gap through the line */
+.v-inbox .tl-date::before {
+  content: "";
+  position: absolute;
+  left: -19.5px; top: 1px;
+  width: 9px; height: 9px;
+  border-radius: 50%;
+  background: var(--seal);
+  box-shadow: 0 0 0 3px var(--paper);
+}
+
+/* ---- a note card ---- */
+.v-inbox .note {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  position: relative; /* anchor the ⋯ corner menu */
+  padding: 13px 36px 13px 16px; /* right gutter clears the corner icon */
+  margin-bottom: 10px;
+  background: linear-gradient(180deg, var(--raised), var(--raised-edge));
+  box-shadow: var(--card-shadow);
+  transition: opacity 0.18s, border-color 0.16s, transform 0.18s, max-height 0.22s;
+  animation: rise 0.3s ease both;
+}
+.v-inbox .note:hover { border-color: var(--line-strong); }
+/* hovered or menu-locked = the current shortcut target. Raised above its
+   neighbours so the dropdown floats over the (opaque) cards below it. */
+.v-inbox .note.is-active { border-color: var(--seal-line); z-index: 4; }
+.v-inbox .note.removing { opacity: 0; transform: translateX(14px); }
+.v-inbox .note.confirming { border-color: var(--seal-line); background: var(--seal-tint); }
+.v-inbox .note.editing { flex-direction: column; align-items: stretch; gap: 10px; }
+.v-inbox .note.editing .note-time { margin-top: 4px; }
+
+.v-inbox .note-body { flex: 1; min-width: 0; }
+.v-inbox .note-text {
+  margin: 0;
+  font-family: var(--font-serif);
+  font-size: 15px;
+  line-height: 1.6;
+  color: var(--ink);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.v-inbox .note-time {
+  display: block;
+  margin-top: 7px;
+  font-size: 11.5px;
+  letter-spacing: 0.03em;
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- 回收站 toolbar (清空回收站) ---- */
+.v-inbox .trash-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
+  padding-bottom: 11px;
+  border-bottom: 1px dashed var(--line-strong);
+}
+.v-inbox .trash-note { font-size: 12px; color: var(--ink-faint); letter-spacing: 0.02em; }
+.v-inbox .trash-actions { display: flex; gap: 8px; align-items: center; }
+.v-inbox .note.archived { opacity: 0.82; }
+.v-inbox .note.archived .note-text { color: var(--ink-soft); }
+
+/* ---- provenance chips on a processed card (topics + task flag) ---- */
+.v-inbox .tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 9px; }
+.v-inbox .tags:empty { display: none; } /* 无标签时不留 margin(编辑态尤其明显) */
+.v-inbox .tag {
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  color: var(--ink-soft);
+  background: var(--seal-tint);
+  border: 1px solid var(--seal-line);
+  border-radius: 999px;
+  padding: 2px 9px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.v-inbox .tag.task {
+  background: color-mix(in srgb, var(--ink) 6%, transparent);
+  border-color: var(--line-strong);
+  color: var(--ink-soft);
+}
+/* 有色标签:朱砂淡底换成该色的实心点 + 极淡底色 + 描边染色(同看板 .chip.topic.set.tinted)。 */
+.v-inbox .tag.tinted {
+  color: var(--ink-soft);
+  border-color: color-mix(in srgb, var(--tag-color) 55%, var(--line-strong));
+  background: color-mix(in srgb, var(--tag-color) 12%, var(--paper));
+}
+.v-inbox .tag.tinted::before {
+  content: "●";
+  color: var(--tag-color);
+  margin-right: 3px;
+}
+
+/* ⋯ corner menu + single-key shortcuts now live in the shared hotkey-menu.css
+   (.hk-* classes), wired by src/hotkey-menu.ts so 灵感 / 任务看板 share one source of
+   truth. Only the 灵感-specific active-card accent stays here (.note.is-active above). */
+
+/* ---- inline forms (edit / 转待办 / 归纳主题) — no modal ---- */
+.v-inbox .inline-form { display: flex; flex-direction: column; gap: 9px; }
+.v-inbox .form-label {
+  font-size: 11.5px;
+  letter-spacing: 0.05em;
+  color: var(--ink-soft);
+}
+.v-inbox .field,
+.v-inbox .edit-area {
+  font: inherit;
+  font-family: var(--font-serif);
+  font-size: 15px;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--line-strong);
+  border-radius: 9px;
+  padding: 9px 11px;
+  width: 100%;
+  outline: none;
+  transition: border-color 0.14s;
+}
+.v-inbox .field:focus,
+.v-inbox .edit-area:focus { border-color: var(--seal-line); }
+/* 编辑态原文框:自动长高(autogrow.ts)、刻意无 max-height——展示态本就全文显示,
+   编辑态同样全文可见(列表自己滚动);resize 手柄退役。 */
+.v-inbox .edit-area { min-height: 76px; resize: none; line-height: 1.55; white-space: pre-wrap; }
+.v-inbox .form-actions { display: flex; justify-content: flex-end; gap: 8px; align-items: center; }
+
+/* shared pill buttons (forms + delete confirm) */
+.v-inbox .do,
+.v-inbox .no {
+  font: inherit;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  border-radius: 999px;
+  padding: 6px 15px;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: background 0.14s, color 0.14s, border-color 0.14s;
+}
+.v-inbox .do { background: var(--seal); border-color: var(--seal); color: #fdf6ee; font-weight: 600; }
+.v-inbox .do:hover { background: color-mix(in srgb, var(--seal) 88%, #000); }
+.v-inbox .no { background: transparent; color: var(--ink-soft); border-color: var(--line-strong); }
+.v-inbox .no:hover { color: var(--ink); background: color-mix(in srgb, var(--ink) 6%, transparent); }
+
+/* topic picker */
+.v-inbox .chips { display: flex; flex-wrap: wrap; gap: 7px; }
+.v-inbox .chip {
+  font: inherit;
+  font-size: 12.5px;
+  background: var(--seal-tint);
+  color: var(--ink);
+  border: 1px solid var(--seal-line);
+  border-radius: 999px;
+  padding: 5px 13px;
+  cursor: pointer;
+  transition: background 0.14s;
+}
+.v-inbox .chip:hover { background: color-mix(in srgb, var(--seal) 18%, var(--paper)); }
+.v-inbox .new-topic { display: flex; gap: 8px; }
+.v-inbox .new-topic .field { flex: 1; }
+.v-inbox .new-topic .do { flex: none; white-space: nowrap; }
+.v-inbox .hint { margin: 0; font-size: 12.5px; color: var(--ink-soft); }
+.v-inbox .form-err {
+  margin: 0;
+  color: var(--seal);
+  font-size: 12px;
+  background: var(--seal-tint);
+  border: 1px solid var(--seal-line);
+  border-radius: 8px;
+  padding: 7px 10px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.v-inbox .form-err[hidden] { display: none; }
+
+/* edit history disclosure */
+.v-inbox .hist-toggle {
+  font: inherit;
+  font-size: 11.5px;
+  color: var(--ink-soft);
+  background: transparent;
+  border: 0;
+  padding: 4px 0;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-color: var(--line-strong);
+}
+.v-inbox .hist-toggle:hover { color: var(--ink); }
+.v-inbox .hist-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin-top: 7px;
+  padding-left: 11px;
+  border-left: 2px solid var(--line);
+}
+.v-inbox .hist-panel[hidden] { display: none; }
+.v-inbox .hist-text {
+  margin: 0;
+  font-family: var(--font-serif);
+  font-size: 13.5px;
+  color: var(--ink-soft);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.v-inbox .hist-time {
+  font-size: 10.5px;
+  color: var(--ink-faint);
+  letter-spacing: 0.03em;
+}
+
+/* inline confirm — replaces the trash icon, no modal */
+.v-inbox .confirm { flex: none; display: flex; align-items: center; gap: 8px; }
+.v-inbox .confirm button {
+  font: inherit;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  border-radius: 999px;
+  padding: 5px 14px;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: background 0.14s, color 0.14s, border-color 0.14s;
+}
+.v-inbox .confirm .do {
+  background: var(--seal);
+  border-color: var(--seal);
+  color: #fdf6ee;
+  font-weight: 600;
+}
+.v-inbox .confirm .do:hover { background: color-mix(in srgb, var(--seal) 88%, #000); }
+.v-inbox .confirm .no { background: transparent; color: var(--ink-soft); border-color: var(--line-strong); }
+.v-inbox .confirm .no:hover { color: var(--ink); background: color-mix(in srgb, var(--ink) 6%, transparent); }
+
+/* ---- centered empty / error states ---- */
+.v-inbox .center {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  text-align: center;
+  color: var(--ink-soft);
+  animation: rise 0.4s ease both;
+}
+.v-inbox .center .big {
+  font-family: var(--font-serif);
+  font-size: 17px;
+  color: var(--ink);
+}
+.v-inbox .center > div:not(.big):not(.err-box) { max-width: 330px; font-size: 13px; line-height: 1.7; }
+.v-inbox .center .err-box {
+  max-width: 460px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--seal);
+  font-size: 12.5px;
+  text-align: left;
+  background: var(--seal-tint);
+  border: 1px solid var(--seal-line);
+  border-radius: 10px;
+  padding: 12px 14px;
+}
+@keyframes rise { from { opacity: 0; transform: translateY(6px); } }

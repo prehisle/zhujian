@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- H2(android-plan §7):Android 12+ 的备份/迁移细则——云备份与设备间迁移
+     全域排除(root 即 app 数据根,库与密钥都在其下;其余 domain 一并列全,
+     防将来有代码往别的 domain 写东西时静默漏进备份)。allowBackup=false 已是
+     主闸,这份规则是 12+ 的显式兜底(部分 OEM 迁移工具只认这份)。 -->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="root" path="." />
+        <exclude domain="file" path="." />
+        <exclude domain="database" path="." />
+        <exclude domain="sharedpref" path="." />
+        <exclude domain="external" path="." />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="root" path="." />
+        <exclude domain="file" path="." />
+        <exclude domain="database" path="." />
+        <exclude domain="sharedpref" path="." />
+        <exclude domain="external" path="." />
+    </device-transfer>
+</data-extraction-rules>

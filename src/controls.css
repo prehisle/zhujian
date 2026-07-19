@@ -1,0 +1,44 @@
+/* 共享 header 动作按钮 —— 三个视图(灵感 / 任务 / 标签)头部的全局动作统一长这样,
+   风格一致。右侧可带一个键帽 .k 提示它的全局单键(和卡片 ⋯ 菜单同一套语言)。
+   单一真相源:改这里,三视图同步。tokens 来自 theme.css。 */
+.hbtn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font: inherit;
+  font-family: var(--font-sans);
+  font-size: 12px;
+  letter-spacing: 0.03em;
+  color: var(--ink-soft);
+  background: transparent;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  padding: 5px 13px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.14s, color 0.14s, border-color 0.14s;
+}
+.hbtn:hover { color: var(--ink); border-color: var(--seal-line); background: var(--seal-tint); }
+.hbtn.on,
+.hbtn.active { color: var(--seal); border-color: var(--seal-line); background: var(--seal-tint); }
+.hbtn[hidden] { display: none; }
+
+/* 键帽:复用卡片菜单 .hk-key 的视觉,作 header 按钮里的全局单键提示 */
+.hbtn .k {
+  flex: none;
+  font-family: var(--font-sans);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--ink-faint);
+  background: color-mix(in srgb, var(--ink) 6%, transparent);
+  border: 1px solid var(--line-strong);
+  border-radius: 5px;
+  padding: 1px 5px;
+  min-width: 15px;
+  text-align: center;
+}
+.hbtn:hover .k,
+.hbtn.on .k,
+.hbtn.active .k { color: var(--seal); border-color: var(--seal-line); }

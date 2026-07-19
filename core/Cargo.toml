@@ -1,0 +1,68 @@
+[package]
+name = "zhujian-core"
+version = "0.1.0"
+description = "朱笺共享核心(P4-a,android-plan §1)——数据层(items 单实体 + oplog/HLC)与同步客户端侧(收端引擎/E2EE/配对/引导/WSS 传输);桌面 tauri 壳与安卓壳双端 path 依赖共用,零 tauri 耦合"
+authors = ["prehisle"]
+license = ""
+edition = "2021"
+# 1.89:spaces::WriterLease 用 std 稳定化的 File::try_lock(免引 fs2/fs4)。
+rust-version = "1.89"
+
+# 刻意不建 cargo workspace(sync-protocol §8:workspace 会把 target 挪仓根,
+# 破坏 e2e 的 src-tauri/target/*/app.exe 锚)。本 crate 独立编译、独立 target/。
+# Cargo.lock 提交;path dep 的 lock 不控制被依赖时的解析——桌面/安卓两端各自
+# lock 决定版本,关键协议/密码学 crate 版本走 scripts/check-lock-drift.mjs
+# 门禁比对(android-plan §1 M5:两端加密实现漂移会静默破协议)。
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+# hooks:update_hook 给同步传输任务当「本地写命令发射 op 即推送」的通知源(P2-g)。
+rusqlite = { version = "0.32", features = ["bundled", "hooks"] }
+ulid = "1"
+# image_add op 带字节 sha256(图字节旁路的完整性锚,sync-protocol §5.4);P2-d 加密层同用。
+sha2 = "0.10"
+# P2-d 加密层(sync-protocol §2):HKDF-SHA256 域子钥 + XChaCha20-Poly1305 封解帧 +
+# 内层消息 CBOR 线上格式。24B 随机 nonce 用 chacha20poly1305::aead::OsRng,不另引 rand。
+hkdf = "0.12"
+chacha20poly1305 = "0.10"
+ciborium = "0.2"
+# 图字节块(Vec<u8>)按 CBOR bytes 编码——serde 默认把 Vec<u8> 编成逐元素数组,
+# 256 KiB 块膨胀近一倍且解析慢。
+serde_bytes = "0.11"
+# P2-f 配对(sync-protocol §6.1):SPAKE2 口令认证密钥交换 + 密钥确认 HMAC(sha2 已有)。
+spake2 = "0.4"
+hmac = "0.12"
+# 设备鉴权钥(§1):新设备入账户时生成 Ed25519 钥对、opener 侧收 enroll 时校验公钥
+# 是合法曲线点(server crate 同版本只验签);种子取 chacha20poly1305::aead::OsRng。
+ed25519-dalek = "2"
+time = { version = "0.3", features = ["formatting"] }
+# P2-g 传输层(sync-protocol §8):信封层与服务器同底座(path 依赖)+ WSS 客户端
+# (rustls 不拖 OpenSSL:webpki roots 供公网 wss://,本地/局域网 ws:// 不走 TLS)。
+# tokio 与 tauri 内置同主版本;tokio-tungstenite 0.29 与 server 集成测同版。
+sync-proto = { path = "../sync-proto" }
+tokio = { version = "1", features = ["rt", "macros", "sync", "time", "net"] }
+tokio-tungstenite = { version = "0.29", features = ["rustls-tls-webpki-roots"] }
+# rustls 0.23 须恰好一个加密提供者,tokio-tungstenite 引它时关了默认特性、一个都不带
+# ——ws:// 明文全程用不到故测试全绿,首次真连 wss:// 在 ClientConfig::builder() panic
+# (84 真机创号当场抓到)。ring 特性跟着 TLS 代码留在 core(transport.rs 的 wss 回归
+# 锚测试钉死);install_default() 是各 app 壳的事——桌面/安卓 run() 启动时各装一次,
+# 坏了当场响亮(android-plan §1 M2)。
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
+futures-util = { version = "0.3", default-features = false, features = ["sink"] }
+
+# 引导快照的可用空间预检(P4-d,android-plan §3:导入峰值≈三份并存)——unix
+# (安卓/linux/mac)statvfs;Windows 无对应 std API、预检跳过(写盘 fail-fast 兜底)。
+# libc 本就是 rusqlite/tokio 的传递依赖,不新增供应链面。
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+# 物理文件身份(multispace-plan §13:volume serial + file index,hardlink 归一;
+# unix 侧走 std MetadataExt 的 dev+ino,不需要它)。原 same-file(97 桌面壳)的
+# 底座依赖,树里本就有。
+[target.'cfg(windows)'.dependencies]
+winapi-util = "0.1"
+
+[dev-dependencies]
+# 传输层集成测:起真同步服务(随机端口),双库端到端(建账户→配对→引导→实时互通)。
+zhujian-syncd = { path = "../server" }

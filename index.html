@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="zh">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>朱笺 · 捕获</title>
+    <link rel="stylesheet" href="/src/theme.css" />
+    <style>
+      * { box-sizing: border-box; }
+      /* overflow:hidden so no body scrollbar flashes during the brief async gap between the
+         textarea growing (sync) and the window resizing to fit it (async setSize). */
+      html, body { margin: 0; height: 100%; overflow: hidden; }
+      body {
+        background: transparent;
+        display: flex;
+        /* top-align so the slip keeps its NATURAL height (the window grows to fit it via
+           main.ts) instead of stretching to fill a fixed window. */
+        align-items: flex-start;
+        /* generous, bottom-weighted margin so our own drop shadow isn't clipped
+           (the OS shadow is off — see tauri.conf.json shadow:false) */
+        padding: 16px 22px 26px;
+      }
+
+      .slip {
+        position: relative;
+        flex: 1;
+        display: flex;
+        flex-direction: column; /* textarea on top, pasted-image preview strip below */
+        border-radius: 16px;
+        background: linear-gradient(180deg, var(--raised), var(--raised-edge));
+        box-shadow: var(--float-shadow);
+        overflow: hidden;
+        outline: 1px solid var(--line);
+        outline-offset: -1px;
+      }
+      .slip::before { /* fine paper grain */
+        content: "";
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        background-image: var(--grain);
+        opacity: 0.04;
+        mix-blend-mode: multiply;
+      }
+      .slip::after { /* cinnabar bookmark ribbon down the left edge */
+        content: "";
+        position: absolute;
+        left: 0; top: 14px; bottom: 14px;
+        width: 3px;
+        border-radius: 0 3px 3px 0;
+        background: var(--seal);
+        opacity: 0.85;
+      }
+
+      #capture {
+        /* content-driven height (auto-grown by main.ts), with a comfortable single-line
+           floor; the window tracks this so multi-line text isn't crammed. */
+        min-height: 72px;
+        border: 0;
+        outline: none;
+        resize: none;
+        overflow-y: hidden; /* main.ts flips to auto only when capped at MAX height */
+        background: transparent;
+        color: var(--ink);
+        padding: 16px 20px 16px 22px;
+        font: 16px/1.7 var(--font-serif);
+        letter-spacing: 0.005em;
+        caret-color: var(--seal);
+      }
+      #capture::placeholder {
+        color: var(--ink-faint);
+        font-style: italic;
+        letter-spacing: 0.02em;
+      }
+      #capture::selection { background: var(--seal-tint); }
+
+      /* 粘贴的图(暂存,回车随灵感一起存)——预览条本体是共享件的 .img-strip(见
+         item-images.css,main.ts 把 pendingImages 的 root 挂进来),这里只管浮窗内的
+         留白与收起:没有缩略图时整块不占位(strip 常驻在内,:empty 不再成立)。 */
+      #cap-images {
+        padding: 0 20px 12px 22px;
+      }
+      #cap-images:not(:has(.img-thumb)) { display: none; }
+      #cap-images .img-strip { margin-top: 0; }
+
+      #cap-err {
+        padding: 0 20px 12px 22px;
+        margin: 0;
+        font: 12px/1.5 var(--font-sans);
+        color: var(--seal);
+      }
+      #cap-err:empty { display: none; }
+
+      /* 目标空间标(工序 8,§9 目标可见):右上角一枚小印,亮出捕获落点。
+         只在 ≥2 空间时显示(单空间落点无歧义,纯噪音,main.ts 控 hidden);
+         入流占位、不悬浮——绝不叠在输入文字上(负下边距只探进 textarea 的
+         上内边距空白区,首行文字仍在其下 8px)。 */
+      #cap-space {
+        align-self: flex-end;
+        margin: 10px 14px -8px 0;
+        font: 11px/1 var(--font-sans);
+        color: var(--seal);
+        background: var(--seal-tint);
+        border-radius: 999px;
+        padding: 3px 9px;
+        pointer-events: none;
+        max-width: 40%;
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      }
+      #cap-space[hidden] { display: none; }
+    </style>
+  </head>
+  <body>
+    <div class="slip">
+      <span id="cap-space" hidden></span>
+      <textarea
+        id="capture"
+        placeholder="记下这个念头……    ↵ 收存    ⇧↵ 换行    Esc 退出    可粘贴图片"
+        autofocus
+      ></textarea>
+      <div id="cap-images"></div>
+      <p id="cap-err"></p>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

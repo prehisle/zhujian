@@ -1,0 +1,95 @@
+/* 设计令牌 —— 两个窗口共用的单一真相源。改这里,两窗同步。
+   基调「纸与朱墨」:暖纸面、浓墨字、朱砂点缀。 */
+:root {
+  /* 表面 */
+  --paper: #f3eee3; /* 窗口底色 */
+  --raised: #faf6ec; /* 抬升的纸面(卡片 / 捕获条) */
+  --raised-edge: #f0eadd; /* 抬升纸面底部渐变收口 */
+
+  /* 墨 */
+  --ink: #221f19; /* 正文 */
+  --ink-soft: #6c6354; /* 次级 */
+  --ink-faint: #a89e8c; /* 提示 / 禁用 */
+
+  /* 发丝线 */
+  --line: rgba(34, 31, 25, 0.1);
+  --line-strong: rgba(34, 31, 25, 0.16);
+
+  /* 朱砂(印章红)—— 仅用于主行动与「保留」 */
+  --seal: #b3402b;
+  --seal-tint: rgba(179, 64, 43, 0.1);
+  --seal-line: rgba(179, 64, 43, 0.38);
+
+  /* 字体:想法原文与标题走衬线(书写感),界面文字走黑体(清晰) */
+  --font-serif: "Georgia", "SimSun", "Songti SC", "Source Han Serif SC", serif;
+  --font-sans: "Microsoft YaHei", "PingFang SC", system-ui, -apple-system, sans-serif;
+
+  /* 阴影 */
+  --float-shadow: 0 18px 50px -20px rgba(40, 30, 18, 0.55), 0 2px 6px rgba(40, 30, 18, 0.12);
+  --card-shadow: 0 1px 2px rgba(40, 30, 18, 0.06), 0 14px 30px -22px rgba(40, 30, 18, 0.5);
+
+  /* 纸纹噪点,两窗复用 */
+  --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.78' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #1b1813;
+    --raised: #242019;
+    --raised-edge: #2c2820;
+    --ink: #ece4d5;
+    --ink-soft: #a59a87;
+    --ink-faint: #7d7463;
+    --line: rgba(236, 228, 213, 0.12);
+    --line-strong: rgba(236, 228, 213, 0.2);
+    --seal: #df6a4f;
+    --seal-tint: rgba(223, 106, 79, 0.14);
+    --seal-line: rgba(223, 106, 79, 0.45);
+    --float-shadow: 0 22px 55px -18px rgba(0, 0, 0, 0.7), 0 2px 8px rgba(0, 0, 0, 0.4);
+    --card-shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 16px 34px -22px rgba(0, 0, 0, 0.7);
+  }
+}
+
+/* ---- 笔触(元素级、两窗一致)。theme.css 本职是令牌,这几条是主题里全局到
+   不属于任何一窗的应用:朱笔光标、朱砂选区、尊重系统减动画。 ---- */
+input,
+textarea {
+  caret-color: var(--seal); /* 打字的光标是一支朱笔 */
+}
+::selection {
+  /* 系统默认的选区蓝是全应用唯一游离在纸墨配色外的颜色。换朱砂;26% 透明——
+     比 --seal-tint 的 10% 深一档,选区要一眼可辨,tint 级会看不出选没选上。 */
+  background: color-mix(in srgb, var(--seal) 26%, transparent);
+}
+/* 新生卡片的朱砂脉冲:此刻在本视图新建的那一张灵感/任务落进列表时,边缘漾开一圈
+   朱砂又归于纸面;存量卡片安安静静。动画放在 ::after 伪元素上——卡片自身的入场
+   animation(.note 的 rise)不被覆盖、两者并行,JS 按 animationName 摘 class(宿主
+   的入场动画也会发 animationend,不能见 end 就摘)。宿主已是 position:relative
+   (.hk-host)。系统减动画时随下方规则压到近零。 */
+@keyframes born-pulse {
+  from {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--seal) 55%, transparent);
+  }
+  to {
+    box-shadow: 0 0 0 12px transparent;
+  }
+}
+.just-born::after {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  pointer-events: none;
+  animation: born-pulse 0.9s ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* 系统开了「减少动态效果」就把入场/离场/过渡压到近零。0.01ms 而非 0:
+     transitionend 仍触发,依赖它的离场清理(如 leaveCard)不悬空。 */
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

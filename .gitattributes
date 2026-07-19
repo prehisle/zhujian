@@ -1,0 +1,8 @@
+# 仓库内统一存为 LF,签出时按平台还原;消除 LF/CRLF 警告
+* text=auto eol=lf
+
+# 二进制资源不做行尾转换
+*.png binary
+*.ico binary
+*.icns binary
+*.sqlite3 binary

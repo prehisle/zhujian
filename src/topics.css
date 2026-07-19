@@ -1,0 +1,509 @@
+/* 标签视图(扁平列表 + 下钻态 + 合并模式)— scoped under .v-topics. The merge-mode body class
+   is rescoped to the view root (.v-topics.merging) so it can't leak into siblings;
+   grain + window controls live on the shell. */
+.v-topics {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  position: relative;
+}
+.v-topics header,
+.v-topics main { position: relative; z-index: 1; }
+
+/* ---- header (also a drag handle; right pad clears floating win ctls) ---- */
+.v-topics header {
+  flex: none;
+  padding: 20px 150px 14px 30px;
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  border-bottom: 1px solid var(--line);
+}
+.v-topics header h1 {
+  margin: 0;
+  font-family: var(--font-serif);
+  font-size: 19px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  position: relative;
+  padding-left: 20px;
+  flex: none;
+  white-space: nowrap;
+}
+.v-topics header h1::before {
+  content: "";
+  position: absolute;
+  left: 0; top: 0.16em;
+  width: 12px; height: 12px;
+  border-radius: 3px;
+  background: var(--seal);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, #fff 22%, transparent);
+}
+/* header 动作按钮(新建标签 / 合并标签)统一走共享 .hbtn,见 controls.css;
+   新建标签 margin-left:auto 把两颗钮顶右——原先靠 .sub 说明行 flex:1 撑开,说明行删了(67)。 */
+.v-topics header #new-toggle { margin-left: auto; }
+
+/* ---- new-tag compose bar ---- */
+.v-topics .newform {
+  flex: none;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 9px;
+  padding: 12px 30px;
+  border-bottom: 1px solid var(--line);
+}
+.v-topics .newform[hidden] { display: none; }
+.v-topics .nt-title {
+  font: 14px var(--font-serif);
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--line-strong);
+  border-radius: 9px;
+  padding: 8px 11px;
+  outline: none;
+  transition: border-color 0.14s;
+  flex: 1;
+  min-width: 200px;
+}
+.v-topics .nt-title:focus { border-color: var(--seal); }
+.v-topics .nt-err { color: var(--seal); font-size: 12px; letter-spacing: 0.02em; }
+
+/* ---- scrolling list ---- */
+.v-topics main {
+  flex: 1;
+  overflow-y: auto;
+  padding: 18px 30px 28px;
+}
+.v-topics main::-webkit-scrollbar { width: 10px; }
+.v-topics main::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border: 3px solid var(--paper);
+  border-radius: 10px;
+}
+
+/* ---- a tag row (flat list) ---- */
+.v-topics .topic {
+  margin-bottom: 4px;
+  animation: rise 0.3s ease both;
+}
+/* 前缀分组的子标签(zhujian/同步 缩进到 zhujian 下、只显后缀)——纯视觉层级,只有缩进 */
+.v-topics .topic.child { margin-left: 26px; }
+
+/* clickable row — caret + title + counts; clicking expands/collapses the tag inline */
+.v-topics .topic-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 11px 10px 11px 4px;
+  cursor: pointer;
+  border-radius: 10px;
+  border-bottom: 1px solid var(--line);
+  user-select: none;
+  transition: background 0.14s;
+}
+.v-topics .topic-head:hover {
+  background: color-mix(in srgb, var(--ink) 4%, transparent);
+  border-bottom-color: transparent;
+}
+.v-topics .topic-head:hover .topic-title { color: var(--seal); }
+
+/* ---- merge mode: heads become selectable ---- */
+.v-topics .check {
+  flex: none;
+  align-self: center;
+  width: 16px;
+  height: 16px;
+  margin-right: 2px;
+  border: 1.5px solid var(--line-strong);
+  border-radius: 5px;
+  display: none;
+  place-items: center;
+  font-family: "Segoe Fluent Icons", "Segoe MDL2 Assets", sans-serif;
+  font-size: 10px;
+  color: transparent;
+  transition: border-color 0.14s, background 0.14s, color 0.14s;
+}
+.v-topics.merging .check { display: grid; }
+.v-topics .topic.selected .check {
+  background: var(--seal);
+  border-color: var(--seal);
+  color: #fdf6ee;
+}
+.v-topics .topic.selected .topic-head { border-bottom-color: var(--seal); }
+.v-topics .topic.selected .topic-title { color: var(--seal); }
+/* the survivor of the current selection wears a serif badge */
+.v-topics .keep-badge {
+  flex: none;
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  color: var(--seal);
+  border: 1px solid var(--seal-line);
+  background: var(--seal-tint);
+  border-radius: 999px;
+  padding: 1px 8px;
+  display: none;
+}
+.v-topics .topic.survivor .keep-badge { display: inline-block; }
+.v-topics .topic-title {
+  font-family: var(--font-serif);
+  font-size: 16.5px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--ink);
+  transition: color 0.14s;
+  word-break: break-word;
+}
+.v-topics .topic-count {
+  flex: none;
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.04em;
+  color: var(--ink-faint);
+}
+
+/* ---- per-topic maintenance actions (编辑 / 删除) in the head ---- */
+.v-topics .topic-actions {
+  flex: none;
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity 0.14s;
+}
+.v-topics .topic-head:hover .topic-actions { opacity: 1; }
+.v-topics.merging .topic-actions { display: none; } /* heads are for selection while merging */
+.v-topics .tbtn {
+  font: 11.5px/1 var(--font-sans);
+  color: var(--ink-faint);
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+  padding: 4px 8px;
+  cursor: pointer;
+  transition: background 0.14s, color 0.14s;
+}
+.v-topics .tbtn:hover { background: color-mix(in srgb, var(--ink) 8%, transparent); color: var(--ink); }
+.v-topics .tbtn.danger:hover { background: var(--seal-tint); color: var(--seal); }
+.v-topics .td-q { font-size: 11.5px; color: var(--seal); letter-spacing: 0.02em; }
+
+/* ---- 标签颜色:行首色点 + ⋯「颜色」的调色板 ---- */
+.v-topics .topic-dot {
+  display: none;
+  align-self: center;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--tag-color);
+  flex: 0 0 auto;
+}
+.v-topics .topic-dot.on { display: inline-block; }
+.v-topics .color-row { display: inline-flex; align-items: center; gap: 5px; }
+.v-topics .color-swatch {
+  box-sizing: border-box;
+  width: 17px;
+  height: 17px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid color-mix(in srgb, var(--ink) 20%, transparent);
+  background: var(--tag-color);
+  cursor: pointer;
+}
+.v-topics .color-swatch.current { outline: 2px solid var(--ink); outline-offset: 1px; }
+.v-topics .color-swatch.none {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--paper);
+  font: 9px/1 var(--font-sans);
+  color: var(--ink-faint);
+}
+
+/* ---- inline tag rename (title only) ---- */
+.v-topics .topic-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 12px 14px;
+  border: 1px solid var(--seal-line);
+  border-radius: 12px;
+  background: var(--seal-tint);
+}
+.v-topics .te-label { font-size: 11.5px; letter-spacing: 0.05em; color: var(--ink-soft); }
+.v-topics .te-title {
+  font: 15px var(--font-serif);
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--line-strong);
+  border-radius: 9px;
+  padding: 9px 11px;
+  outline: none;
+  transition: border-color 0.14s;
+}
+.v-topics .te-title:focus { border-color: var(--seal); }
+.v-topics .te-actions { display: flex; align-items: center; gap: 8px; }
+.v-topics .te-err { color: var(--seal); font-size: 12px; letter-spacing: 0.02em; }
+
+/* ---- expand/collapse: a tag's notes + tasks shown inline (no drill page) ---- */
+.v-topics .topic-caret {
+  flex: none;
+  width: 14px;
+  text-align: center;
+  font-size: 10px;
+  color: var(--ink-faint);
+  transition: color 0.14s;
+}
+.v-topics .topic-head:hover .topic-caret { color: var(--seal); }
+.v-topics.merging .topic-caret { visibility: hidden; } /* heads are for selection while merging */
+.v-topics .topic-body {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 14px 2px 4px;
+  animation: rise 0.2s ease both;
+}
+.v-topics .drill-h {
+  margin: 0 0 10px;
+  font: 12px/1 var(--font-sans);
+  letter-spacing: 0.08em;
+  color: var(--ink-soft);
+}
+.v-topics .drill-notes,
+.v-topics .drill-tasks {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+.v-topics .drill-empty {
+  font-size: 12.5px;
+  color: var(--ink-faint);
+  font-style: italic;
+  padding: 4px 2px;
+}
+
+/* a task card in an expanded tag (read-only) */
+.v-topics .dtask {
+  position: relative;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 11px 14px;
+  background: linear-gradient(180deg, var(--raised), var(--raised-edge));
+  box-shadow: var(--card-shadow);
+}
+.v-topics .dtask-title {
+  margin: 0;
+  font-family: var(--font-serif);
+  font-size: 14.5px;
+  line-height: 1.6;
+  color: var(--ink);
+  white-space: pre-wrap;
+  word-break: break-word;
+  padding-right: 56px; /* clear the copy button */
+}
+.v-topics .dtask-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+  margin-top: 8px;
+}
+.v-topics .dtask-col,
+.v-topics .dtask-due,
+.v-topics .dtask-pri {
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  padding: 2px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  color: var(--ink-soft);
+  background: var(--raised);
+}
+.v-topics .dtask-due.overdue { color: var(--seal); border-color: var(--seal-line); background: var(--seal-tint); }
+.v-topics .dtask-due.today { color: var(--ink); border-color: var(--ink-faint); }
+.v-topics .dtask-pri.p3 { color: var(--seal); border-color: var(--seal-line); background: var(--seal-tint); }
+.v-topics .dtask-copy {
+  position: absolute;
+  top: 9px;
+  right: 10px;
+  font: 11px/1 var(--font-sans);
+  padding: 4px 9px;
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  background: var(--raised);
+  color: var(--ink-faint);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.14s, border-color 0.14s, color 0.14s;
+}
+.v-topics .dtask:hover .dtask-copy { opacity: 1; }
+.v-topics .dtask-copy:hover { border-color: var(--seal); color: var(--seal); }
+
+/* idea card in an expanded tag (read-only 想法 list) */
+.v-topics .tnote {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 11px 14px;
+  background: linear-gradient(180deg, var(--raised), var(--raised-edge));
+  box-shadow: var(--card-shadow);
+}
+.v-topics .tnote-text {
+  margin: 0;
+  font-family: var(--font-serif);
+  font-size: 14.5px;
+  line-height: 1.6;
+  color: var(--ink);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.v-topics .tnote-time {
+  display: block;
+  margin-top: 6px;
+  font-size: 11px;
+  letter-spacing: 0.03em;
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- bottom merge bar (only while merging) ---- */
+.v-topics .mergebar {
+  flex: none;
+  position: relative;
+  z-index: 2;
+  border-top: 1px solid var(--line);
+  background: color-mix(in srgb, var(--paper) 88%, #000 2%);
+  padding: 12px 30px 14px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 12px;
+  animation: rise 0.22s ease both;
+}
+.v-topics .mergebar[hidden] { display: none; }
+.v-topics .mb-hint {
+  flex-basis: 100%;
+  min-width: 0;
+  font-size: 12.5px;
+  color: var(--ink-soft);
+}
+.v-topics .mb-hint b { color: var(--seal); font-weight: 600; }
+
+/* selected topics as chips — click a chip to make it the survivor, × to drop it */
+.v-topics .mb-chips {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+.v-topics .mb-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  max-width: 220px;
+  padding: 4px 5px 4px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--raised);
+  color: var(--ink-soft);
+}
+.v-topics .mb-chip.is-keep {
+  border-color: var(--seal);
+  background: var(--seal-tint);
+  color: var(--seal);
+}
+.v-topics .mb-chip-label {
+  cursor: pointer;
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-serif);
+}
+.v-topics .mb-chip-keep {
+  flex: none;
+  font-family: var(--font-sans);
+  font-size: 9.5px;
+  letter-spacing: 0.06em;
+  color: var(--seal);
+}
+.v-topics .mb-chip-x {
+  flex: none;
+  cursor: pointer;
+  width: 17px;
+  height: 17px;
+  display: grid;
+  place-items: center;
+  border-radius: 999px;
+  color: var(--ink-faint);
+  font-size: 13px;
+  line-height: 1;
+}
+.v-topics .mb-chip-x:hover { background: color-mix(in srgb, var(--ink) 12%, transparent); color: var(--ink); }
+.v-topics .mb-rename {
+  flex: none;
+  width: 180px;
+  font: 13px var(--font-serif);
+  color: var(--ink);
+  background: var(--raised);
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  padding: 7px 11px;
+  outline: none;
+  transition: border-color 0.14s;
+}
+.v-topics .mb-rename:focus { border-color: var(--seal); }
+.v-topics .mb-rename[hidden] { display: none; }
+.v-topics .mb-btn {
+  flex: none;
+  font: 12.5px/1 var(--font-sans);
+  padding: 8px 15px;
+  border-radius: 8px;
+  border: 1px solid var(--line-strong);
+  background: var(--raised);
+  color: var(--ink-soft);
+  cursor: pointer;
+  transition: border-color 0.14s, color 0.14s, background 0.14s, opacity 0.14s;
+}
+.v-topics .mb-btn:hover:not(:disabled) { border-color: var(--ink); color: var(--ink); }
+.v-topics .mb-btn.go {
+  background: var(--seal);
+  border-color: var(--seal);
+  color: #fdf6ee;
+}
+.v-topics .mb-btn.go:hover:not(:disabled) { background: var(--seal-deep, var(--seal)); color: #fff; }
+.v-topics .mb-btn:disabled { opacity: 0.4; cursor: default; }
+
+/* ---- centered empty / error states ---- */
+.v-topics .center {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  text-align: center;
+  color: var(--ink-soft);
+  animation: rise 0.4s ease both;
+}
+.v-topics .center .big {
+  font-family: var(--font-serif);
+  font-size: 17px;
+  color: var(--ink);
+}
+.v-topics .center > div:not(.big):not(.err-box) { max-width: 330px; font-size: 13px; line-height: 1.7; }
+.v-topics .center .err-box {
+  max-width: 460px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--seal);
+  font-size: 12.5px;
+  text-align: left;
+  background: var(--seal-tint);
+  border: 1px solid var(--seal-line);
+  border-radius: 10px;
+  padding: 12px 14px;
+}
+@keyframes rise { from { opacity: 0; transform: translateY(6px); } }

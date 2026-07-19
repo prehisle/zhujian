@@ -1,0 +1,728 @@
+<!doctype html>
+<html lang="zh">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>朱笺 — 一个纯人工的想法与事务工具</title>
+    <meta
+      name="description"
+      content="朱笺(zhujian)是一个纯人工、本地优先的个人事务工具:快速捕获、手动流转、任务看板。没有 AI 替你整理,数据只留在你自己的机器里;多设备同步端到端加密。"
+    />
+
+    <style>
+      /* ───────────────────────────────────────────────────────────
+         设计令牌 —— 与桌面客户端 src/theme.css 同源(纸与朱墨)。
+         官网是静态单文件,故把令牌就地内联,颜色逐一对齐 app。
+         ─────────────────────────────────────────────────────────── */
+      :root {
+        --paper: #f3eee3;
+        --raised: #faf6ec;
+        --raised-edge: #f0eadd;
+        --ink: #221f19;
+        --ink-soft: #6c6354;
+        --ink-faint: #a89e8c;
+        --line: rgba(34, 31, 25, 0.1);
+        --line-strong: rgba(34, 31, 25, 0.16);
+        --seal: #b3402b;
+        --seal-tint: rgba(179, 64, 43, 0.1);
+        --seal-line: rgba(179, 64, 43, 0.38);
+
+        /* 三层字面:楷体(书写/品牌)· 宋体(书卷/想法原文)· 黑体(界面) */
+        --font-brush: "Kaiti SC", "STKaiti", "KaiTi", "楷体", "Songti SC", "SimSun", serif;
+        --font-serif: "Georgia", "Songti SC", "SimSun", "Source Han Serif SC", serif;
+        --font-sans: "Microsoft YaHei", "PingFang SC", system-ui, -apple-system, sans-serif;
+
+        --float-shadow: 0 18px 50px -20px rgba(40, 30, 18, 0.55), 0 2px 6px rgba(40, 30, 18, 0.12);
+        --card-shadow: 0 1px 2px rgba(40, 30, 18, 0.06), 0 14px 30px -22px rgba(40, 30, 18, 0.5);
+
+        --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.78' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+
+        --wrap: 1060px;
+      }
+
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --paper: #1b1813;
+          --raised: #242019;
+          --raised-edge: #2c2820;
+          --ink: #ece4d5;
+          --ink-soft: #a59a87;
+          --ink-faint: #7d7463;
+          --line: rgba(236, 228, 213, 0.12);
+          --line-strong: rgba(236, 228, 213, 0.2);
+          --seal: #df6a4f;
+          --seal-tint: rgba(223, 106, 79, 0.14);
+          --seal-line: rgba(223, 106, 79, 0.45);
+          --float-shadow: 0 22px 55px -18px rgba(0, 0, 0, 0.7), 0 2px 8px rgba(0, 0, 0, 0.4);
+          --card-shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 16px 34px -22px rgba(0, 0, 0, 0.7);
+        }
+      }
+
+      * { box-sizing: border-box; }
+      html { scroll-behavior: smooth; }
+
+      body {
+        margin: 0;
+        background: var(--paper);
+        color: var(--ink);
+        font-family: var(--font-sans);
+        line-height: 1.65;
+        -webkit-font-smoothing: antialiased;
+        text-rendering: optimizeLegibility;
+        overflow-x: hidden;
+      }
+      /* 全站极淡纸纹 */
+      body::before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        z-index: 0;
+        background-image: var(--grain);
+        opacity: 0.035;
+        mix-blend-mode: multiply;
+      }
+      @media (prefers-color-scheme: dark) {
+        body::before { mix-blend-mode: screen; opacity: 0.05; }
+      }
+
+      input, textarea { caret-color: var(--seal); }
+      ::selection { background: color-mix(in srgb, var(--seal) 26%, transparent); }
+
+      a { color: inherit; }
+
+      .wrap {
+        width: 100%;
+        max-width: var(--wrap);
+        margin: 0 auto;
+        padding: 0 28px;
+        position: relative;
+        z-index: 1;
+      }
+
+      /* ── 朱砂方印(白文)· 内联 SVG 的样式钩子 ───────────────── */
+      .seal-mark { display: block; }
+      .seal-mark rect { fill: var(--seal); }
+      .seal-mark text { fill: var(--raised); font-family: var(--font-brush); font-weight: 700; }
+
+      /* ── 顶栏 ──────────────────────────────────────────────── */
+      .topbar {
+        position: sticky;
+        top: 0;
+        z-index: 20;
+        backdrop-filter: saturate(1.1) blur(8px);
+        background: color-mix(in srgb, var(--paper) 82%, transparent);
+        border-bottom: 1px solid var(--line);
+      }
+      .topbar .wrap {
+        display: flex;
+        align-items: center;
+        gap: 18px;
+        height: 62px;
+      }
+      .brand {
+        display: inline-flex;
+        align-items: center;
+        gap: 11px;
+        font-family: var(--font-brush);
+        font-size: 22px;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        text-decoration: none;
+        color: var(--ink);
+      }
+      .brand svg { width: 30px; height: 30px; border-radius: 7px; box-shadow: 0 1px 2px rgba(40,30,18,.25); }
+      .nav { margin-left: auto; display: flex; align-items: center; gap: 26px; }
+      .nav a {
+        text-decoration: none;
+        color: var(--ink-soft);
+        font-size: 14.5px;
+        letter-spacing: 0.02em;
+        transition: color 0.15s;
+      }
+      .nav a:hover { color: var(--ink); }
+      .nav a.ghost-btn {
+        color: var(--seal);
+        border: 1px solid var(--seal-line);
+        border-radius: 999px;
+        padding: 7px 16px;
+      }
+      .nav a.ghost-btn:hover { background: var(--seal-tint); color: var(--seal); }
+      @media (max-width: 720px) {
+        .nav a.hide-sm { display: none; }
+      }
+
+      /* ── 通用节标题 ────────────────────────────────────────── */
+      .eyebrow {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 12.5px;
+        letter-spacing: 0.22em;
+        text-transform: none;
+        color: var(--seal);
+        font-weight: 600;
+      }
+      .eyebrow::before {
+        content: "";
+        width: 9px; height: 9px;
+        border-radius: 2px;
+        background: var(--seal);
+        transform: rotate(45deg);
+      }
+      .section-title {
+        font-family: var(--font-serif);
+        font-weight: 600;
+        font-size: clamp(26px, 4.2vw, 38px);
+        letter-spacing: 0.01em;
+        margin: 14px 0 0;
+        line-height: 1.25;
+      }
+      .section-lead {
+        color: var(--ink-soft);
+        font-size: 16.5px;
+        max-width: 42ch;
+        margin: 14px 0 0;
+      }
+
+      /* ── HERO ─────────────────────────────────────────────── */
+      .hero { position: relative; overflow: hidden; }
+      /* 朱丝栏:古笺的红色竖界栏 —— 首屏的记忆点,极淡 */
+      .hero::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        z-index: 0;
+        pointer-events: none;
+        background-image: repeating-linear-gradient(
+          90deg,
+          transparent 0,
+          transparent 53px,
+          var(--seal) 53px,
+          var(--seal) 54px
+        );
+        opacity: 0.05;
+        -webkit-mask-image: linear-gradient(180deg, transparent, #000 12%, #000 74%, transparent);
+        mask-image: linear-gradient(180deg, transparent, #000 12%, #000 74%, transparent);
+      }
+      .hero .wrap {
+        display: grid;
+        grid-template-columns: 1.05fr 0.95fr;
+        gap: 56px;
+        align-items: center;
+        padding-top: clamp(48px, 6vw, 82px);
+        padding-bottom: clamp(48px, 6vw, 82px);
+      }
+      .hero-copy { position: relative; z-index: 1; }
+      .hero h1 {
+        font-family: var(--font-brush);
+        font-weight: 700;
+        font-size: clamp(40px, 6.6vw, 68px);
+        line-height: 1.16;
+        letter-spacing: 0.02em;
+        margin: 20px 0 0;
+      }
+      .hero h1 .accent { color: var(--seal); }
+      .hero-lead {
+        margin: 22px 0 0;
+        font-size: 18px;
+        line-height: 1.75;
+        color: var(--ink-soft);
+        max-width: 40ch;
+      }
+      .cta-row {
+        margin-top: 34px;
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 14px 20px;
+      }
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 9px;
+        font-family: var(--font-sans);
+        font-size: 15.5px;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+        text-decoration: none;
+        border-radius: 999px;
+        padding: 13px 24px;
+        cursor: pointer;
+        transition: transform 0.12s ease, box-shadow 0.15s, background 0.15s;
+      }
+      .btn-primary {
+        background: var(--seal);
+        color: #faf6ec;
+        box-shadow: 0 10px 24px -12px var(--seal), inset 0 1px 0 rgba(255,255,255,0.18);
+      }
+      .btn-primary:hover { transform: translateY(-1px); }
+      .btn-ghost { color: var(--ink); border: 1px solid var(--line-strong); }
+      .btn-ghost:hover { background: var(--raised); }
+      .cta-note { font-size: 13px; color: var(--ink-faint); letter-spacing: 0.01em; }
+
+      /* HERO 视觉:复刻客户端的捕获纸条 .slip */
+      .hero-art { position: relative; z-index: 1; }
+      .slip {
+        position: relative;
+        border-radius: 18px;
+        background: linear-gradient(180deg, var(--raised), var(--raised-edge));
+        box-shadow: var(--float-shadow);
+        outline: 1px solid var(--line);
+        outline-offset: -1px;
+        overflow: hidden;
+        padding: 26px 26px 20px 30px;
+        transform: rotate(-1.3deg);
+      }
+      .slip::before {
+        content: "";
+        position: absolute; inset: 0;
+        pointer-events: none;
+        background-image: var(--grain);
+        opacity: 0.05;
+        mix-blend-mode: multiply;
+      }
+      .slip::after {
+        content: "";
+        position: absolute;
+        left: 0; top: 18px; bottom: 18px;
+        width: 4px;
+        border-radius: 0 4px 4px 0;
+        background: var(--seal);
+        opacity: 0.9;
+      }
+      .slip-text {
+        font-family: var(--font-serif);
+        font-size: 18px;
+        line-height: 1.85;
+        color: var(--ink);
+        min-height: 96px;
+      }
+      .slip-text .caret {
+        display: inline-block;
+        width: 2px;
+        height: 1.05em;
+        vertical-align: -0.16em;
+        margin-left: 1px;
+        background: var(--seal);
+        animation: blink 1.1s step-end infinite;
+      }
+      @keyframes blink { 50% { opacity: 0; } }
+      .slip-hint {
+        margin-top: 16px;
+        padding-top: 13px;
+        border-top: 1px solid var(--line);
+        font-size: 12.5px;
+        letter-spacing: 0.03em;
+        color: var(--ink-faint);
+        display: flex;
+        gap: 16px;
+        flex-wrap: wrap;
+      }
+      .slip-hint kbd {
+        font-family: var(--font-sans);
+        color: var(--ink-soft);
+        border: 1px solid var(--line);
+        border-radius: 5px;
+        padding: 1px 6px;
+        background: var(--paper);
+      }
+      /* 悬在纸条上的小印,像刚钤下的落款 */
+      .slip-seal {
+        position: absolute;
+        right: -14px;
+        bottom: -14px;
+        width: 62px; height: 62px;
+        border-radius: 12px;
+        transform: rotate(6deg);
+        box-shadow: 0 6px 16px -6px rgba(40,30,18,.5);
+      }
+
+      /* ── 三步主线 ──────────────────────────────────────────── */
+      .flow { padding: clamp(52px, 7vw, 90px) 0; }
+      .flow-grid {
+        margin-top: 46px;
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 22px;
+      }
+      .card {
+        position: relative;
+        background: linear-gradient(180deg, var(--raised), var(--raised-edge));
+        border-radius: 16px;
+        outline: 1px solid var(--line);
+        outline-offset: -1px;
+        box-shadow: var(--card-shadow);
+        padding: 28px 26px 30px;
+      }
+      .card .step {
+        font-family: var(--font-brush);
+        font-size: 15px;
+        color: var(--seal);
+        letter-spacing: 0.14em;
+      }
+      .card h3 {
+        font-family: var(--font-serif);
+        font-weight: 600;
+        font-size: 21px;
+        margin: 12px 0 0;
+      }
+      .card p { color: var(--ink-soft); font-size: 15px; margin: 12px 0 0; }
+      .card .kbd-inline {
+        font-family: var(--font-sans);
+        font-size: 12px;
+        color: var(--seal);
+        border: 1px solid var(--seal-line);
+        border-radius: 5px;
+        padding: 1px 7px;
+        white-space: nowrap;
+      }
+
+      /* ── 信任三点 ──────────────────────────────────────────── */
+      .trust {
+        padding: clamp(48px, 6vw, 78px) 0;
+        border-top: 1px solid var(--line);
+        border-bottom: 1px solid var(--line);
+        background: color-mix(in srgb, var(--raised) 55%, transparent);
+      }
+      .trust-grid {
+        margin-top: 44px;
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 40px;
+      }
+      .pillar h3 {
+        font-family: var(--font-serif);
+        font-size: 20px;
+        font-weight: 600;
+        margin: 0 0 10px;
+        display: flex;
+        align-items: baseline;
+        gap: 11px;
+      }
+      .pillar h3::before {
+        content: "";
+        width: 8px; height: 8px;
+        border-radius: 2px;
+        background: var(--seal);
+        transform: translateY(-1px) rotate(45deg);
+        flex: 0 0 auto;
+      }
+      .pillar p { color: var(--ink-soft); font-size: 15px; margin: 0; }
+
+      /* ── 下载 ──────────────────────────────────────────────── */
+      .download { padding: clamp(52px, 7vw, 90px) 0; text-align: center; }
+      .download .eyebrow { justify-content: center; }
+      .download .section-title { margin-inline: auto; }
+      .download .section-lead { margin-inline: auto; text-align: center; }
+      .dl-row {
+        margin-top: 40px;
+        display: flex;
+        justify-content: center;
+        flex-wrap: wrap;
+        gap: 20px;
+      }
+      .dl-card {
+        width: 260px;
+        background: linear-gradient(180deg, var(--raised), var(--raised-edge));
+        border-radius: 16px;
+        outline: 1px solid var(--line);
+        outline-offset: -1px;
+        box-shadow: var(--card-shadow);
+        padding: 30px 26px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 4px;
+      }
+      .dl-card .os { font-family: var(--font-serif); font-size: 20px; font-weight: 600; }
+      .dl-card .meta { font-size: 13px; color: var(--ink-faint); margin-bottom: 18px; }
+      .dl-card.soon { opacity: 0.72; }
+      .dl-card.soon .badge {
+        margin-top: 6px;
+        font-size: 13px;
+        color: var(--ink-soft);
+        border: 1px dashed var(--line-strong);
+        border-radius: 999px;
+        padding: 8px 18px;
+      }
+      .dl-foot { margin-top: 30px; font-size: 13.5px; color: var(--ink-faint); }
+
+      /* ── 理念 + 开源 ───────────────────────────────────────── */
+      .ethos { padding: clamp(56px, 7.5vw, 100px) 0; }
+      .ethos-grid {
+        display: grid;
+        grid-template-columns: 0.9fr 1.1fr;
+        gap: 56px;
+        align-items: start;
+      }
+      .ethos blockquote {
+        margin: 0;
+        font-family: var(--font-serif);
+        font-size: clamp(21px, 2.6vw, 27px);
+        line-height: 1.6;
+        letter-spacing: 0.01em;
+      }
+      .ethos blockquote .accent { color: var(--seal); }
+      .ethos .attrib { margin-top: 22px; font-size: 14px; color: var(--ink-faint); letter-spacing: 0.04em; }
+      .ethos-body p { color: var(--ink-soft); font-size: 16px; margin: 0 0 18px; }
+      .ethos-body p strong { color: var(--ink); font-weight: 600; }
+      .ethos-body p:last-child { margin-bottom: 0; }
+
+      /* ── 页脚:朱砂钤印落款 ────────────────────────────────── */
+      .foot {
+        border-top: 1px solid var(--line);
+        padding: 46px 0 54px;
+      }
+      .foot .wrap {
+        display: flex;
+        align-items: flex-end;
+        justify-content: space-between;
+        gap: 32px;
+        flex-wrap: wrap;
+      }
+      .foot-sign { display: flex; align-items: center; gap: 18px; }
+      .foot-sign svg { width: 76px; height: 76px; border-radius: 12px; box-shadow: 0 6px 16px -8px rgba(40,30,18,.5); }
+      .foot-sign .word { font-family: var(--font-brush); }
+      .foot-sign .word b { font-size: 24px; font-weight: 700; letter-spacing: 0.08em; display: block; }
+      .foot-sign .word span { font-size: 13px; color: var(--ink-faint); letter-spacing: 0.12em; }
+      .foot-links { display: flex; gap: 24px; font-size: 14px; }
+      .foot-links a { color: var(--ink-soft); text-decoration: none; }
+      .foot-links a:hover { color: var(--ink); }
+      .foot-copy { width: 100%; font-size: 12.5px; color: var(--ink-faint); margin-top: 8px; }
+
+      a:focus-visible, .btn:focus-visible {
+        outline: 2px solid var(--seal);
+        outline-offset: 3px;
+        border-radius: 8px;
+      }
+
+      /* ── 响应式 ────────────────────────────────────────────── */
+      @media (max-width: 860px) {
+        .hero .wrap { grid-template-columns: 1fr; gap: 44px; }
+        .hero-art { max-width: 440px; }
+        .flow-grid { grid-template-columns: 1fr; }
+        .trust-grid { grid-template-columns: 1fr; gap: 30px; }
+        .ethos-grid { grid-template-columns: 1fr; gap: 34px; }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        html { scroll-behavior: auto; }
+        *, *::before, *::after {
+          animation-duration: 0.01ms !important;
+          transition-duration: 0.01ms !important;
+        }
+        .slip-text .caret { opacity: 1; }
+      }
+    </style>
+  </head>
+
+  <body>
+    <!-- 复用的朱砂方印(白文·单字「朱」)。SVG symbol,多处 <use> -->
+    <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+      <symbol id="seal-zhu" viewBox="0 0 100 100">
+        <rect width="100" height="100" rx="14" style="fill:var(--seal)" />
+        <text x="50" y="54" text-anchor="middle" dominant-baseline="central" font-size="64"
+          style="fill:var(--raised);font-family:var(--font-brush);font-weight:700">朱</text>
+      </symbol>
+      <symbol id="seal-zhujian" viewBox="0 0 100 100">
+        <rect width="100" height="100" rx="14" style="fill:var(--seal)" />
+        <text x="50" y="30" text-anchor="middle" dominant-baseline="central" font-size="42"
+          style="fill:var(--raised);font-family:var(--font-brush);font-weight:700">朱</text>
+        <text x="50" y="72" text-anchor="middle" dominant-baseline="central" font-size="42"
+          style="fill:var(--raised);font-family:var(--font-brush);font-weight:700">笺</text>
+      </symbol>
+    </svg>
+
+    <header class="topbar">
+      <div class="wrap">
+        <a class="brand" href="#top" aria-label="朱笺 首页">
+          <svg class="seal-mark" viewBox="0 0 100 100"><use href="#seal-zhu" /></svg>
+          朱笺
+        </a>
+        <nav class="nav">
+          <a href="#flow" class="hide-sm">怎么用</a>
+          <a href="#ethos" class="hide-sm">理念</a>
+          <a href="https://github.com/prehisle/zhujian" class="hide-sm">源码</a>
+          <a href="#download" class="ghost-btn">下载</a>
+        </nav>
+      </div>
+    </header>
+
+    <main id="top">
+      <!-- ───────── HERO ───────── -->
+      <section class="hero">
+        <div class="wrap">
+          <div class="hero-copy">
+            <span class="eyebrow">纯人工 · 本地优先 · 端到端加密</span>
+            <h1>把念头,<br />一笔一笔<br /><span class="accent">亲手</span>理清。</h1>
+            <p class="hero-lead">
+              朱笺是一个纯人工的想法与事务工具。快速捕获、手动流转、任务看板——
+              没有 AI 替你整理,数据只留在你自己的机器里。
+            </p>
+            <div class="cta-row">
+              <a class="btn btn-primary" href="#download">
+                下载 Windows 客户端
+              </a>
+              <a class="btn btn-ghost" href="#flow">看看它怎么工作</a>
+            </div>
+            <p class="cta-note">免费 · 开源方向 · 装好后自动更新</p>
+          </div>
+
+          <div class="hero-art">
+            <div class="slip" role="img" aria-label="捕获纸条示意:一行手记正在被写下">
+              <div class="slip-text">
+                下雨天该给读者的信重写开头——<br />别再从「最近」两个字起<span class="caret"></span>
+              </div>
+              <div class="slip-hint">
+                <span><kbd>↵</kbd> 收存</span>
+                <span><kbd>⇧↵</kbd> 换行</span>
+                <span><kbd>Esc</kbd> 退出</span>
+                <span>可粘贴图片</span>
+              </div>
+              <svg class="seal-mark slip-seal" viewBox="0 0 100 100" aria-hidden="true"><use href="#seal-zhu" /></svg>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ───────── 三步主线 ───────── -->
+      <section class="flow" id="flow">
+        <div class="wrap">
+          <span class="eyebrow">一条手动主线</span>
+          <h2 class="section-title">从一个念头,到一件做成的事</h2>
+          <p class="section-lead">
+            每一步流转都是你亲手经手的动作——捕获、打标签、转待办、推进。没有自动分类,也没有静默改写。
+          </p>
+
+          <div class="flow-grid">
+            <article class="card">
+              <div class="step">其一 · 捕获</div>
+              <h3>随手记下,立刻消失</h3>
+              <p>
+                全局热键 <span class="kbd-inline">Ctrl+Alt+N</span> 唤出一张纸条,写完回车就闪退,不打断手头的事。
+                想法可直接粘贴截图,原文永不丢失。
+              </p>
+            </article>
+            <article class="card">
+              <div class="step">其二 · 流转</div>
+              <h3>亲手理,不外包</h3>
+              <p>
+                在「灵感」里给念头打标签、转成待办。编辑保留全部历史版本,旧稿永远找得回;
+                删除先进回收站,手滑了随时还原。
+              </p>
+            </article>
+            <article class="card">
+              <div class="step">其三 · 推进</div>
+              <h3>看板上,一列列往前</h3>
+              <p>
+                待办 / 进行中 / 待确认 / 已完成,拖动改状态、排顺序。干完的活拖进「成就册」留档——
+                是历史,不是垃圾,不和回收站挤一个桶。
+              </p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <!-- ───────── 信任三点 ───────── -->
+      <section class="trust">
+        <div class="wrap">
+          <span class="eyebrow">为什么可以放心把想法交给它</span>
+          <div class="trust-grid">
+            <div class="pillar">
+              <h3>纯人工</h3>
+              <p>
+                没有 AI 参与任何一步。整理想法这件事本身有价值,不该外包给模型。
+                早期的 AI 代码已经整段删掉,不留后门。
+              </p>
+            </div>
+            <div class="pillar">
+              <h3>本地优先</h3>
+              <p>
+                数据是你机器里的一个 SQLite 文件,断网照常用。不上传、不追踪、不需要账号也能开始。
+              </p>
+            </div>
+            <div class="pillar">
+              <h3>端到端加密</h3>
+              <p>
+                想多设备同步就自己接上服务器:笔记和图片在本机加密后才出门,
+                服务器只见密文、只做转发。恢复码只有你手上有。
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ───────── 下载 ───────── -->
+      <section class="download" id="download">
+        <div class="wrap">
+          <span class="eyebrow">现在就能用</span>
+          <h2 class="section-title">拿起你的朱笺</h2>
+          <p class="section-lead">Windows 和 Android 客户端都已经可以下载。装好后会自动检查、提示更新,无需再手动盯版本。</p>
+
+          <div class="dl-row">
+            <a class="dl-card" href="https://zhujian.app/updates/zhujian_0.2.11_x64-setup.exe">
+              <div class="os">Windows</div>
+              <div class="meta">10 / 11 · 64 位 · v0.2.11</div>
+              <span class="btn btn-primary">下载安装包</span>
+            </a>
+            <a class="dl-card" href="https://zhujian.app/updates/zhujian_0.3.13_aarch64.apk">
+              <div class="os">Android</div>
+              <div class="meta">11+ · 64 位 · v0.3.13</div>
+              <span class="btn btn-primary">下载 APK</span>
+            </a>
+          </div>
+          <p class="dl-foot">安装包由私钥签名 · Windows 从系统托盘或热键唤起 · Android 首次安装需在系统里允许「未知来源」</p>
+        </div>
+      </section>
+
+      <!-- ───────── 理念 + 开源 ───────── -->
+      <section class="ethos" id="ethos">
+        <div class="wrap">
+          <span class="eyebrow">一点固执</span>
+          <div class="ethos-grid" style="margin-top: 28px;">
+            <blockquote>
+              在人人都抢着让 AI 替你想的时候,<br />
+              朱笺<span class="accent">什么都不替你想</span>。
+            </blockquote>
+            <div class="ethos-body">
+              <p>
+                <strong>它原本是个 AI 想法系统。</strong>后来我们把整理、补提这些 AI 功能连同代码一起删掉,
+                重新定位成一个纯手动的工具。因为想清楚一件事的过程,恰恰是最不该被省略的那部分。
+              </p>
+              <p>
+                名字取自「<strong>朱砂笺纸</strong>」——古人拿朱色小笺写短札、记小事。
+                所以你看到的暖纸面、浓墨字、朱砂点缀,不是装饰,是它看待「记录」这件事的态度:
+                安静、可靠、经得起翻旧账。
+              </p>
+              <p>
+                <strong>你的数据,你做主。</strong>格式是透明的 SQLite,导出、备份、迁移都不设障碍;
+                朱笺以开放源码为方向,同步协议与加密方案都摆在明面上,不靠「相信我们」运转。
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- ───────── 页脚:钤印落款 ───────── -->
+    <footer class="foot">
+      <div class="wrap">
+        <div class="foot-sign">
+          <svg class="seal-mark" viewBox="0 0 100 100" aria-hidden="true"><use href="#seal-zhujian" /></svg>
+          <div class="word">
+            <b>朱笺</b>
+            <span>ZHUJIAN · 纸与朱墨</span>
+          </div>
+        </div>
+        <nav class="foot-links">
+          <a href="#flow">怎么用</a>
+          <a href="#download">下载</a>
+          <a href="#ethos">理念</a>
+          <a href="https://github.com/prehisle/zhujian">源码</a>
+        </nav>
+        <p class="foot-copy">© 2026 朱笺 zhujian · 纯人工 · 本地优先 · 端到端加密同步</p>
+      </div>
+    </footer>
+  </body>
+</html>

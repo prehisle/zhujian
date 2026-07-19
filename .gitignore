@@ -1,0 +1,53 @@
+# 依赖
+/node_modules
+
+# 构建产物
+/dist
+/src-tauri/target
+# 独立 crate(刻意不建 workspace,各自 target;Cargo.lock 都提交):
+# P2-e 的 server/sync-proto + P4-a 的 core(zhujian-core 共享核心)
+/server/target
+/sync-proto/target
+/core/target
+
+# 安卓端(P4-b):独立 npm 工程 + 独立 crate target;gradle 分发 zip(137MB,
+# services.gradle.org 被墙,从腾讯镜像下载后放这里供 wrapper file:// 引用)不进 git
+/android/node_modules
+/android/dist
+/android/src-tauri/target
+/android/src-tauri/gen/schemas
+/android/gradle-*.zip
+
+# Tauri 自动生成
+/src-tauri/gen/schemas
+
+# 密钥 / 本地配置(含真实 API key)
+.env
+.env.*
+!.env.example
+# 更新签名私钥备份(88):.secrets/ 整目录绝不进 git;私钥丢了发不出更新,见 docs/deploy.md §7
+/.secrets/
+*.key
+*.key.pub
+
+# 侧载/发版 APK 副本(仓根友好名,验收/分发用;产物可重 build,不进 git)
+/zhujian_*_aarch64.apk
+# 安卓构建统一入口(scripts/build-android.mjs)的干净包副本 + 构建来源标记
+# (构建目录外,gradle clean 清不到;产物可重 build,不进 git)
+/android/apk-out/
+
+# 本地工作杂物(图标出稿中间产物 / 验收截图等,不进 git)
+/work_data/
+
+# 本地数据库 / 临时
+*.sqlite3
+*.sqlite3-*
+*.log
+
+# 编辑器 / 系统
+.DS_Store
+Thumbs.db
+
+# 机器本地配置/二进制(开源后不随仓分发;本机文件保留在磁盘)
+/.cargo/
+/e2e/drivers/

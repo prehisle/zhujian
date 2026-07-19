@@ -1,0 +1,65 @@
+[package]
+name = "zhujian-android"
+version = "0.3.13"
+description = "朱笺安卓端(119 起全功能主力端;android-plan/phone-space-plan)——tauri 壳;数据层与同步全在共享 crate zhujian-core"
+authors = ["prehisle"]
+license = ""
+edition = "2021"
+# 与 path 依赖 zhujian-core 对齐(core 的 WriterLease 用 1.89 稳定化的 File::try_lock;
+# 声明必须真实——低于 1.89 本就编不过)。
+rust-version = "1.89"
+
+# 沿用「sibling crate 不建 workspace」纪律(各自 target/ 与 Cargo.lock;本 lock 已在
+# scripts/check-lock-drift.mjs 门禁内——关键协议/密码学 crate 版本与桌面漂移会静默破协议,
+# android-plan §1 M5)。
+
+[lib]
+name = "app_lib"
+# cdylib 供 Android 出 .so;staticlib/rlib 供桌面 dev(本机跑诊断页快检)。
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[features]
+# 验收工装(不发版):开 WebView 远程调试通道(Chrome DevTools 协议),默认关。
+# 发版包不带此 feature => WebView 不可被任意调试(安全)。验收时
+# `npx tauri android build --apk --target aarch64 --features devtools` 出可调试包,
+# 配 adb forward + CDP 精确点击/DOM 断言(见 scripts/android-cdp.mjs);发版仍用干净包。
+devtools = ["tauri/devtools"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+log = "0.4"
+tauri = { version = "2", features = [] }
+# 真机排障锚:Rust 侧 log::info 直达 logcat(探针工程同款;release 也装,屏幕小靠 adb 看)。
+tauri-plugin-log = "2"
+# 共享核心(android-plan §1):数据层(items/oplog/HLC/26 迁移)+ 同步客户端侧,与桌面
+# 逐字节同一套;本 crate 只做壳(setup 建库 + 命令面 + M2 的 rustls provider 安装)。
+zhujian-core = { path = "../../core" }
+# 壳层直接用到的底座(版本声明与 core 一致,同一 lock 内解析成同一实例)。
+rusqlite = { version = "0.32", features = ["bundled", "hooks"] }
+# P4-d 接同步:传输任务的控制通道(mpsc)与写通知(Notify)——类型来自 tokio,
+# 壳层要能构造;运行时仍是 tauri 的 async_runtime(内置同主版本 tokio)。
+tokio = { version = "1", features = ["sync"] }
+# rustls 0.23 须恰好一个加密提供者(ring 特性由 core 钉死);壳层职责 = run() 启动时
+# install_default,不装则首次 wss:// 在 ClientConfig::builder() panic(84 真机踩过,
+# android-plan §1 M2 要求安卓壳照桌面做)。
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
+# 106 半自动更新:拉 android.json 的最小阻塞式 HTTP 客户端(spawn_blocking 里跑;
+# rustls+webpki-roots,TLS 走启动时装好的 ring 提供者,不引 aws-lc)。
+ureq = { version = "2", features = ["json"] }
+# 106「下载」跳系统浏览器。
+tauri-plugin-opener = "2"
+# 117 时间轴显示配图:图片字节 → data: URL 过 IPC(与桌面壳同版)。
+base64 = "0.22"
+
+# 107 扫码配对:官方扫码插件,移动端专属(桌面 dev 构型不编它,代码 cfg(mobile) 守)。
+[target.'cfg(any(target_os = "android", target_os = "ios"))'.dependencies]
+tauri-plugin-barcode-scanner = "2"
+
+[dev-dependencies]
+# 「加入空间」集成测(space-entry-plan §7):起真同步服务(随机端口),源端创号
+# 出码 → coord.join_space 全程(配对→staging 引导→publish→集成)。与 core 同款。
+zhujian-syncd = { path = "../../server" }

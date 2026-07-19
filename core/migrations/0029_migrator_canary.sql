@@ -1,0 +1,14 @@
+-- migration 0029: 迁移器 v2 金丝雀(刻意零 schema 改动)。
+--
+-- 收回「安卓不跑迁移」简化(space-name-sync-plan 141 遗留债)时,迁移执行器换了新形:
+-- 0029 起事务与 user_version 归 runner 所有(BEGIN IMMEDIATE → 事务体 →
+-- foreign_key_check → user_version → COMMIT,authorizer 拒事务体里的事务控制),
+-- 迁移文件只写「事务体」——本文件就是新形的第一条,**身体刻意为空**:
+-- 让现网全部设备(桌面 + 两台手机)在任何真实 schema 改动到来之前,先真实走一遍
+-- 新 runner 的 v28→v29 前滚(含手机断电中断恢复),别让首次实战落在将来某次大表
+-- 重建上(codex 设计审 M6)。
+--
+-- 跨版本同步政策(M7 声明):纯本地 schema(且无改动),新旧客户端混跑安全。
+--
+-- 注意:按新规则,这里禁止出现 BEGIN/COMMIT/ROLLBACK 与 PRAGMA user_version。
+-- (身体为空:注释即全部内容,execute_batch 对零语句是 no-op,事务与 uv 全由 runner 落。)

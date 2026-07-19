@@ -1,0 +1,61 @@
+[package]
+name = "app"
+version = "0.2.11"
+description = "朱笺(zhujian)— 纸与朱墨的个人事务管理:灵感捕获、任务看板,纯人工、本地优先"
+authors = ["prehisle"]
+license = ""
+repository = ""
+edition = "2021"
+# 与 path 依赖 zhujian-core 对齐(core 的 WriterLease 用 1.89 稳定化的 File::try_lock;
+# 声明必须真实——低于 1.89 本就编不过)。
+rust-version = "1.89"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+name = "app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.6.2", features = [] }
+
+[dependencies]
+serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+log = "0.4"
+tauri = { version = "2.11.2", features = ["tray-icon"] }
+tauri-plugin-log = "2"
+tauri-plugin-global-shortcut = "2"
+# opens 正文里的 http/https 链接到系统默认浏览器(webview 内不导航自身)。
+tauri-plugin-opener = "2"
+# 记住主窗几何(尺寸/位置/最大化),托盘退出→重启后原样回来(57)。
+tauri-plugin-window-state = "2"
+# 客户端自动更新(88):启动静默查 zhujian.app/updates/latest.json、提示式下载装 NSIS
+# 安装包(更新签名钥验签,与同步的设备鉴权钥无关);process 供装后 relaunch。
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
+# app 级单实例门(97 多空间,sync-plan §六②):两个进程同开多库会争抢同一 origin 的
+# op 发射序号,必须先于一切开库/transport/热键把第二实例挡在门外(最先注册;
+# e2e/YS_DB_PATH 刻意不装,见 lib.rs run())。
+tauri-plugin-single-instance = "2"
+# 共享核心(P4-a,android-plan §1):数据层(items/oplog/HLC/迁移)+ 同步客户端侧
+# (引擎/加密/配对/引导/传输)全在 ../core,本 crate 只剩 tauri 壳(命令/托盘/窗口/
+# 事件桥)。将来的安卓壳同样 path 依赖它。
+zhujian-core = { path = "../core" }
+# 壳层仍直接用到的底座(版本声明与 core 一致;同一 Cargo.lock 内 cargo 统一解析成
+# 同一实例,类型跨 crate 边界互认)。hooks:hook_oplog_writes 的 update_hook。
+rusqlite = { version = "0.32", features = ["bundled", "hooks"] }
+# 命令面与传输任务的握手:控制通道 mpsc/oneshot、写通知 Notify、配对等待 timeout;
+# rt:core 的 SpaceSupervisor 收 tokio::runtime::Handle(tauri 内置 tokio 的句柄)
+# 在其上 spawn transport 任务(multispace-plan 工序 4/5)。
+tokio = { version = "1", features = ["rt", "sync", "time"] }
+# image bytes cross the IPC boundary base64-encoded (compact vs a JSON number array),
+# decoded to a real BLOB on the way in / re-encoded into a data: URL on the way out.
+base64 = "0.22"
+# rustls 0.23 须恰好一个加密提供者(ring 特性由 core 随 TLS 代码钉死;transport.rs 的
+# wss 回归锚守着)。壳层职责 = run() 启动时 install_default,坏了当场响亮,不留到用户
+# 第一次点「创建账户」才在 async 命令里 panic(84 真机踩过;android-plan §1 要求安卓
+# 壳照做)。
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
+# (multispace-plan 工序 3:建库[ulid 取名]与真文件身份[原 same-file]随空间逻辑
+#  上抬进 zhujian-core::spaces,壳不再直接依赖 ulid / same-file。)

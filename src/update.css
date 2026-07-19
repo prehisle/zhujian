@@ -1,0 +1,66 @@
+/* 自动更新提示(88)。右下角交互 banner(带按钮、不自动消失)+ 一次性 flash 回话。
+   视觉令牌沿用 sync-toast(theme.css:纸面卡片 + 朱砂左沿);按钮吃 controls.css 的 .hbtn。 */
+.update-banner {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 72;
+  max-width: min(360px, calc(100vw - 60px));
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: linear-gradient(180deg, var(--raised), var(--raised-edge));
+  border: 1px solid var(--line-strong);
+  border-left: 3px solid var(--seal);
+  border-radius: 10px;
+  box-shadow: var(--float-shadow);
+  padding: 12px 14px;
+  opacity: 0;
+  transform: translateY(6px);
+  transition: opacity 0.18s, transform 0.18s;
+}
+.update-banner.show {
+  opacity: 1;
+  transform: none;
+}
+.update-msg {
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--ink);
+}
+.update-acts {
+  display: flex;
+  gap: 8px;
+}
+.update-acts:empty { display: none; }
+/* 「更新」是主行动:朱砂描边点出来(与 sync 面板主按钮一致的强调法)。 */
+.hbtn.update-go {
+  color: var(--seal);
+  border-color: var(--seal-line);
+  background: var(--seal-tint);
+}
+
+/* 一次性提示(手动检查回话) */
+.update-flash {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 72;
+  max-width: min(360px, calc(100vw - 60px));
+  background: linear-gradient(180deg, var(--raised), var(--raised-edge));
+  border: 1px solid var(--line-strong);
+  border-left: 3px solid var(--seal);
+  border-radius: 10px;
+  box-shadow: var(--float-shadow);
+  padding: 10px 14px;
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: var(--ink);
+  opacity: 0;
+  transform: translateY(6px);
+  transition: opacity 0.2s, transform 0.2s;
+}
+.update-flash.show {
+  opacity: 1;
+  transform: none;
+}
