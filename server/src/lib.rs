@@ -10,6 +10,7 @@
 mod conn;
 pub mod hub;
 pub mod registry;
+pub mod throttle;
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -18,7 +19,7 @@ use std::time::Duration;
 
 use axum::extract::{Query, State, WebSocketUpgrade};
 use axum::http::StatusCode;
-use axum::response::Response;
+use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::Router;
 use tokio::task::JoinHandle;
@@ -57,11 +58,34 @@ pub struct Config {
     /// 配对桥每槽累计配额(§5.2 #5:帧数 / 字节,超即烧槽)。
     pub pair_slot_max_frames: u64,
     pub pair_slot_max_bytes: usize,
+    /// 达量速率(169,工序 3;字节/秒)。超月度 grant 后普通会话按此速率排队。宽松
+    /// 默认 1 MiB/s=现网无感;启动校验 `device_cap·MAX_FRAME/rate ≤ silence/3`(见
+    /// [`serve_inner`]),注入的小 rate 也过此校验、不许贴界。
+    pub throttle_rate_bps: u64,
+    /// meters sidecar 路径(粗 checkpoint 落 fastlane_used+period;grant 在 registry)。
+    pub meters_path: PathBuf,
+    /// checkpoint 时间触发(默认 60s;与脏字节阈值谁先到谁触发)。
+    pub checkpoint_interval: Duration,
+    /// checkpoint 脏字节阈值(默认 16 MiB;有状态、丢一次 tick 不退化)。
+    pub checkpoint_dirty_bytes: u64,
+    /// 免费档月度 fastlane 额度(169;默认 = `registry::FREE_FASTLANE_BYTES_PER_MONTH`
+    /// 300 MiB,是「草值、开闸前按真实观测定」)。生产用默认;**测试注入小值烤限速
+    /// 路径**(fresh 账户 grant floor 即取此值,无需 admin 也能触发越额)。
+    pub free_fastlane_bytes_per_month: u64,
+    /// 免费档席位数(默认 = `registry::FREE_SEAT_QUOTA` 2)。推广期生产走 CLI
+    /// `--free-seat-quota 4` 注入=夫妻各手机+电脑够用、比逐个 admin 提额简单;收费期
+    /// 改回默认即可、不重编。**测试恒用默认 2**(registry/hub 单元测有 free=2 假设,
+    /// 别改常量)。硬帽 `device_cap` 是另一层、两层取 min,故此值 ≤ device_cap 才有意义。
+    pub free_seat_quota: u32,
+    /// 停机 drain 超时(169;默认 5s)。SIGTERM 关栅后等 in-flight 计数归零的上限;
+    /// 超时 = best-effort checkpoint + 非零退出(不称最终快照)。测试注入短值烤超时路径。
+    pub shutdown_drain_timeout: Duration,
 }
 
 impl Config {
     /// 规格默认(§3/§4:信箱 64 MiB·8192 帧·TTL 72h,槽 TTL 10 分钟,静默 90s)。
     pub fn new(banlist_path: PathBuf, registry_path: PathBuf) -> Self {
+        let meters_path = registry_path.with_file_name("meters.json");
         Config {
             banlist_path,
             registry_path,
@@ -79,7 +103,26 @@ impl Config {
             conn_max_bytes: 32 * 1024 * 1024,
             pair_slot_max_frames: 256,
             pair_slot_max_bytes: 4 * 1024 * 1024,
+            throttle_rate_bps: 1024 * 1024, // 1 MiB/s(宽松:上界 8·1MiB/1MiBps=8s ≤ 90/3)
+            meters_path,
+            checkpoint_interval: Duration::from_secs(60),
+            checkpoint_dirty_bytes: 16 * 1024 * 1024,
+            free_fastlane_bytes_per_month: registry::FREE_FASTLANE_BYTES_PER_MONTH,
+            free_seat_quota: registry::FREE_SEAT_QUOTA,
+            shutdown_drain_timeout: Duration::from_secs(5),
         }
+    }
+}
+
+/// 停机退出码真值表(169,codex 实现审 M:提成无副作用小函数便于测,避免测里
+/// `process::exit`)。**唯一成功出口 = 干净 drain + 落盘成功**;其余非零(超时/落盘失败/
+/// worker 无 ack 都不得声称最终快照)。SIGTERM 编排是 `#[cfg(unix)]`,非 unix 只测里用。
+#[cfg_attr(not(unix), allow(dead_code))]
+pub(crate) fn shutdown_exit_code(drained: bool, flush_ok: bool) -> i32 {
+    if drained && flush_ok {
+        0
+    } else {
+        1
     }
 }
 
@@ -151,9 +194,38 @@ async fn serve_inner(
             "seat_lease_ttl 须 >0(0=租约生成即死,满席纪元切换被堵死)",
         ));
     }
+    // 达量限速上界校验(169,工序 3;codex C/G,§4 不变量②③):单帧最大限速等待
+    // = device_cap·MAX_FRAME/rate ≤ silence/3(留 2/3 给路由/调度/心跳)。注入的 rate
+    // 也过此校验、不许贴界配死限速(测试用小 quota 烤限速路径,不动这条上界)。
+    if cfg.throttle_rate_bps == 0 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "throttle_rate_bps 须 >0(0=限速即死锁,§4 不变量①)",
+        ));
+    }
+    // 毫秒口径避免 as_secs 把亚秒 silence(测试用)截成 0:
+    //   device_cap·MAX_FRAME·3 ≤ rate·silence_s  ⇔  device_cap·MAX_FRAME·3·1000 ≤ rate·silence_ms
+    let max_wait_num = (cfg.device_cap as u128) * (sync_proto::MAX_FRAME_BYTES as u128) * 3 * 1000;
+    let bound = (cfg.throttle_rate_bps as u128) * cfg.silence_timeout.as_millis();
+    if max_wait_num > bound {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!(
+                "throttle 上界超 silence/3:device_cap({})·MAX_FRAME·3 > rate({} B/s)·silence({}ms)——提高 throttle_rate_bps 或降 device_cap",
+                cfg.device_cap,
+                cfg.throttle_rate_bps,
+                cfg.silence_timeout.as_millis()
+            ),
+        ));
+    }
     let registry = Registry::load(&cfg.banlist_path, cfg.registry_path.clone())?;
     let sweep_interval = cfg.sweep_interval;
+    let meters_path = cfg.meters_path.clone();
+    let checkpoint_interval = cfg.checkpoint_interval;
+    let checkpoint_dirty = cfg.checkpoint_dirty_bytes;
     let hub = Arc::new(Hub::new(cfg, registry));
+    // 启动从 sidecar 恢复计量(fastlane_used+period;损坏=从零+告警,grant 在 registry)。
+    hub.restore_meters(throttle::load_sidecar(&meters_path));
     let app = Router::new()
         .route("/ws", get(ws_upgrade))
         .route("/healthz", get(|| async { "ok" }))
@@ -188,6 +260,61 @@ async fn serve_inner(
         }
     };
     let sweep_hub = hub.clone();
+    let ckpt_hub = hub.clone();
+    // meters checkpoint 的**唯一写者**是下方 worker(codex 实现审 H-2:worker 与
+    // SIGTERM 都直调会并发写同一 tmp、旧快照覆盖新)。SIGTERM 的 final flush 不直接
+    // 落盘,而是经此命令通道请 worker 落一次、等 oneshot ack。
+    let (flush_tx, flush_rx) =
+        tokio::sync::mpsc::channel::<tokio::sync::oneshot::Sender<std::io::Result<()>>>(4);
+    // 停机信号(SIGTERM/SIGINT):关计量准入栅栏 + 等 in-flight 计数退栏 → 请 worker
+    // final flush、等 ack → 退出(169,codex H-3;仅 unix,生产 linux)。drain 后无新
+    // 计数,worker 的 flush 是真最终计量快照。
+    #[cfg(unix)]
+    {
+        let term_hub = hub.clone();
+        let flush_tx = flush_tx.clone();
+        tokio::spawn(async move {
+            use tokio::signal::unix::{signal, SignalKind};
+            let mut term = match signal(SignalKind::terminate()) {
+                Ok(s) => s,
+                Err(e) => {
+                    logln(format!("WARN 监听 SIGTERM 失败,停机 checkpoint 不可用:{e}"));
+                    return;
+                }
+            };
+            let mut intr = signal(SignalKind::interrupt()).ok();
+            tokio::select! {
+                _ = term.recv() => {}
+                _ = async { match intr.as_mut() { Some(i) => { i.recv().await; }, None => std::future::pending::<()>().await } } => {}
+            }
+            logln("INFO 收到停机信号:关计量准入栅栏 → drain → 请 worker 最终 checkpoint → 退出".into());
+            // 干净 drain(active 归零)才有资格声称最终快照 + 退 0;超时=best-effort、退非零。
+            let drained = term_hub.shutdown_admissions().await;
+            let (ack_tx, ack_rx) = tokio::sync::oneshot::channel();
+            if flush_tx.send(ack_tx).await.is_err() {
+                logln("ERROR checkpoint worker 已停,无法 final flush——退出 1".into());
+                std::process::exit(1);
+            }
+            // 保留具体错误(codex L:别只留 bool)——drain 与 flush 各自失败分别高优记录。
+            let flush_result = ack_rx.await;
+            let flush_ok = matches!(flush_result, Ok(Ok(())));
+            if !drained {
+                logln("ERROR 停机 drain 超时:best-effort checkpoint 已发但非最终快照(计量窗丢失,grant 在 registry 不受影响)".into());
+            }
+            match &flush_result {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => logln(format!("ERROR 最终 meters checkpoint 落盘失败:{e}(计量窗丢失,grant 在 registry 不受影响)")),
+                Err(_) => logln("ERROR checkpoint worker 未回 ack(已停),final flush 未确认".into()),
+            }
+            let code = shutdown_exit_code(drained, flush_ok);
+            if code == 0 {
+                logln("INFO 计量已 drain + 最终 meters checkpoint 完成,退出 0".into());
+            } else {
+                logln(format!("WARN 停机非干净收尾(drain={drained} flush_ok={flush_ok}),退出 {code}"));
+            }
+            std::process::exit(code);
+        });
+    }
     // SIGHUP 热重载封禁表(`systemctl reload`):经 hub::reload_banlist 编排——
     // 换集合 + banned 在线设备当场摘租约/kick/烧槽(即时失权,open-signup §1.2);
     // 未涉账户连接不断、信箱不丢。仅 unix(生产 linux);Windows 本机测试无此面,
@@ -213,13 +340,50 @@ async fn serve_inner(
             }
         });
     }
+    // flush_tx keepalive:移进 handle 任务,让命令通道随服务存活(否则非 unix 无
+    // SIGTERM 持有者时 flush_rx 立即见 all-senders-dropped)。
     let handle = tokio::spawn(async move {
+        let _flush_tx_keepalive = flush_tx;
         let sweeper = tokio::spawn(async move {
             let mut tick = tokio::time::interval(sweep_interval);
             tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
             loop {
                 tick.tick().await;
                 sweep_hub.sweep();
+                sweep_hub.roll_grants_now(); // 月初建当月 grant(169;非月初为 no-op)
+            }
+        });
+        // meters checkpoint worker(169,工序 3;**唯一 sidecar 写者**——H-2):
+        // interval / dirty 阈值事件(checkpoint_nudge)/ SIGTERM final flush 命令三触发,
+        // 串行处理。有状态判据(dirty_bytes 累计),丢一次唤醒不退化;落盘失败保留 dirty。
+        let checkpointer = tokio::spawn(async move {
+            let poll = checkpoint_interval.min(Duration::from_secs(10)).max(Duration::from_millis(200));
+            let mut tick = tokio::time::interval(poll);
+            tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            let mut last = tokio::time::Instant::now();
+            let mut flush_rx = flush_rx;
+            loop {
+                tokio::select! {
+                    _ = tick.tick() => {}
+                    _ = ckpt_hub.checkpoint_nudge().notified() => {}
+                    cmd = flush_rx.recv() => match cmd {
+                        // SIGTERM final flush:无条件落一次、回 ack(唯一写者串行,无并发覆盖)。
+                        Some(ack) => {
+                            let _ = ack.send(ckpt_hub.checkpoint_meters());
+                            continue;
+                        }
+                        None => break, // 命令通道全关(服务停机):worker 退出
+                    },
+                }
+                let dirty = ckpt_hub.meters_dirty_bytes();
+                if dirty > 0 && (dirty >= checkpoint_dirty || last.elapsed() >= checkpoint_interval) {
+                    match ckpt_hub.checkpoint_meters() {
+                        Ok(()) => last = tokio::time::Instant::now(),
+                        Err(e) => logln(format!(
+                            "ERROR meters checkpoint 落盘失败(dirty 保留,下轮重试):{e}"
+                        )),
+                    }
+                }
             }
         });
         // admin 面是真被监督的:任一监听退出,另一侧一并收掉、整个服务任务结束
@@ -246,6 +410,7 @@ async fn serve_inner(
             }
         }
         sweeper.abort();
+        checkpointer.abort();
     });
     logln(format!("INFO zhujian-syncd 监听 ws://{addr}/ws"));
     Ok((addr, admin_addr, handle))
@@ -273,7 +438,6 @@ async fn admin_auth_mw(
     req: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> Response {
-    use axum::response::IntoResponse;
     if !admin_authorized(req.headers(), &st.token) {
         return (StatusCode::UNAUTHORIZED, "缺/错 Authorization: Bearer <admin-token>\n")
             .into_response();
@@ -446,11 +610,9 @@ async fn admin_entitlement_set(
         fastlane_bytes_per_month: q.fastlane_bytes_per_month,
     };
     let now = time::OffsetDateTime::now_utc();
-    let outcome = {
-        let mut reg = st.hub.registry.lock().unwrap();
-        reg.set_entitlement(&q.account, ent.clone())
-            .map(|()| reg.effective_entitlement(&q.account, now))
-    };
+    // 收口经 hub 编排(169,codex D):set_entitlement 同事务改 grant,升级抬 grant 后
+    // 若账户不再超额则清空 pending 放行在等帧(release_if_unthrottled)。
+    let outcome = st.hub.admin_set_entitlement(&q.account, ent.clone(), now);
     match outcome {
         Ok(effective) => {
             // 审计线(§11 纪律:只记元数据与参数,无用户内容可记)。
@@ -492,8 +654,45 @@ async fn admin_entitlement_set(
 }
 
 async fn ws_upgrade(State(hub): State<Arc<Hub>>, ws: WebSocketUpgrade) -> Response {
+    // 停机中拒新 WS upgrade(169,codex 实现审 M:graceful 序列「停收新连接」)——
+    // 计量准入栅栏已关,新连接进来也只会在发数据时被拒,提前在握手层挡掉更干净。
+    if hub.is_shutting_down() {
+        return (axum::http::StatusCode::SERVICE_UNAVAILABLE, "服务停机中").into_response();
+    }
     // 帧上限在 WS 消息层强制(§3:服务器拒超;超限 = 连接错误断开)。
     ws.max_message_size(sync_proto::MAX_FRAME_BYTES)
         .max_frame_size(sync_proto::MAX_FRAME_BYTES)
         .on_upgrade(move |socket| conn::handle(hub, socket))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 停机退出码真值表(169,codex 实现审 M):唯一成功出口 = 干净 drain + 落盘成功。
+    #[test]
+    fn shutdown_exit_code_truth_table() {
+        assert_eq!(shutdown_exit_code(true, true), 0, "干净 drain + 落盘成功 = 退 0");
+        assert_eq!(shutdown_exit_code(true, false), 1, "落盘失败 = 非零");
+        assert_eq!(shutdown_exit_code(false, true), 1, "drain 超时 = 非零(不称最终快照)");
+        assert_eq!(shutdown_exit_code(false, false), 1, "两者皆失败 = 非零");
+    }
+
+    /// ws_upgrade 停机中拒新连接的**决策谓词** `is_shutting_down` 直测(169,codex L)。
+    /// 503 分支是 `if hub.is_shutting_down() { 503 }` 的平凡早返;`WebSocketUpgrade`
+    /// 提取器需真实 hyper 升级上下文、无法在单元测合成,故此处钉死谓词转换:干净
+    /// drain 后 `is_shutting_down()` 为真 ⇒ ws_upgrade 走 503 分支。
+    #[tokio::test]
+    async fn ws_upgrade_shutdown_predicate_flips_after_drain() {
+        let dir = std::env::temp_dir().join(format!("zhujian-ws503-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("banlist.txt"), "# 空\n").unwrap();
+        let cfg = Config::new(dir.join("banlist.txt"), dir.join("registry.json"));
+        let reg = Registry::load(&cfg.banlist_path, cfg.registry_path.clone()).unwrap();
+        let hub = Hub::new(cfg, reg);
+        assert!(!hub.is_shutting_down(), "起始非停机 → ws 正常升级");
+        assert!(hub.shutdown_admissions().await); // active=0 → true,置 adm_closing
+        assert!(hub.is_shutting_down(), "干净 drain 后停机 → ws_upgrade 走 503 分支");
+    }
 }

@@ -98,6 +98,48 @@ pub(crate) fn parse_expires(s: &str) -> Result<time::OffsetDateTime, String> {
         .map_err(|e| format!("expires_at 不是合法 RFC3339(如 2027-07-19T00:00:00Z):{e}"))
 }
 
+/// 当月已授 fastlane 高水位(billing-plan §4,工序 3;169)。**quota 是月度已授权益、
+/// 不是首帧观察后才授予**(codex 六轮设计审 B):升级即时抬、到期/降档当月不倒扣、
+/// 新月按 `period_start` 时刻的 effective 重建。与 entitlement 同一 registry 持久化
+/// 边界(每写落盘、强一致——meter 的粗 checkpoint 只承载 `fastlane_used`,grant 绝不
+/// 走那条弱持久化)。`period` = UTC (年, 月),有序比较(向前滚月/墙钟回拨保留未来)。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Grant {
+    pub period: (i32, u8),
+    pub quota: u64,
+}
+
+/// UTC 时刻 → (年, 月)(`period_id=YYYY-MM` 的机器形;月 ∈ 1..=12)。
+pub(crate) fn month_of(t: time::OffsetDateTime) -> (i32, u8) {
+    (t.year(), u8::from(t.month()))
+}
+
+/// (年, 月) → 当月 UTC 月初 00:00:00(grant_floor 按此时刻算 entitlement 的有效额度)。
+pub(crate) fn month_start_utc(t: time::OffsetDateTime) -> time::OffsetDateTime {
+    let (y, m) = month_of(t);
+    let month = time::Month::try_from(m).expect("month_of 恒返回 1..=12");
+    time::Date::from_calendar_date(y, month, 1)
+        .expect("每月都有 1 号")
+        .midnight()
+        .assume_utc()
+}
+
+/// (年, 月) → `"YYYY-MM"`(落盘人可 diff)。
+fn format_period((y, m): (i32, u8)) -> String {
+    format!("{y:04}-{m:02}")
+}
+
+/// `"YYYY-MM"` → (年, 月);月须 1..=12(坏数据 load 响亮拒,同 entitlement 纪律)。
+fn parse_period(s: &str) -> Result<(i32, u8), String> {
+    let (y, m) = s.split_once('-').ok_or_else(|| format!("period 不是 YYYY-MM:{s:?}"))?;
+    let year: i32 = y.parse().map_err(|_| format!("period 年份非法:{s:?}"))?;
+    let month: u8 = m.parse().map_err(|_| format!("period 月份非法:{s:?}"))?;
+    if !(1..=12).contains(&month) {
+        return Err(format!("period 月份须 1..=12:{s:?}"));
+    }
+    Ok((year, month))
+}
+
 /// set_entitlement 失败(admin 面映射见 lib.rs)。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SetEntitlementError {
@@ -182,6 +224,19 @@ pub struct Registry {
     /// 一枚**(新求租烧旧开新)、纯内存不落盘(论证见 [`SeatLease`]);只有已鉴权
     /// sponsor 能开 → 规模有账户数上界,过期由 [`Self::sweep_seat_leases`] 清。
     seat_leases: BTreeMap<String, SeatLease>,
+    /// account → 当月已授 fastlane 高水位(billing-plan §4 工序 3;169)。**随 registry
+    /// 每写落盘**(与 entitlement 同一持久化边界),由 admin `set_entitlement`、sweeper
+    /// 月初滚月([`Self::roll_grants_to_current_month`])写;数据热路径只读
+    /// [`Self::effective_grant_quota`]。规模有账户数上界。
+    grants: BTreeMap<String, Grant>,
+    /// 免费档月度 fastlane 额度(169;默认 [`FREE_FASTLANE_BYTES_PER_MONTH`],由 Hub
+    /// 从 Config 注入——生产 300MiB「草值」,测试可注小值烤限速)。只影响无显式
+    /// entitlement 账户的 effective fastlane;其余字段仍走 free_default 常量。
+    free_fastlane: u64,
+    /// 免费档席位数(默认 [`FREE_SEAT_QUOTA`]=2,由 Hub 从 Config 注入——推广期
+    /// 生产设 4[`--free-seat-quota`],收费期改回默认不重编;测试恒用常量默认 2)。
+    /// 只影响无显式 entitlement 账户的 effective seat_quota;硬帽 device_cap 仍两层取 min。
+    free_seat: u32,
     /// 封禁表文件路径(SIGHUP 热重载重读它;`path` 是 registry.json)。
     banlist_path: PathBuf,
     path: PathBuf,
@@ -198,6 +253,11 @@ struct DiskForm {
     accounts: BTreeMap<String, BTreeMap<String, String>>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     entitlements: BTreeMap<String, EntitlementDisk>,
+    /// 当月已授 fastlane 高水位(169,工序 3;serde default——旧文件无此键照常加载、
+    /// 空 map 不写键=未触发限速的生产文件字节不变)。回滚红线见 deploy §2:grant
+    /// 首写后旧二进制(deny_unknown_fields)会响亮拒启,须先删 `grants` 键再回滚。
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    grants: BTreeMap<String, GrantDisk>,
 }
 
 /// entitlement 落盘形态(expires_at 存 RFC3339 文本,人可查)。
@@ -209,6 +269,14 @@ struct EntitlementDisk {
     expires_at: Option<String>,
     seat_quota: u32,
     fastlane_bytes_per_month: u64,
+}
+
+/// grant 落盘形态(period 存 `"YYYY-MM"` 文本,人可查)。
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GrantDisk {
+    period: String,
+    quota: u64,
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -272,7 +340,7 @@ impl Registry {
     pub fn load(banlist_path: &Path, registry_path: PathBuf) -> io::Result<Self> {
         let banned = parse_banlist(banlist_path)?;
 
-        let (accounts, entitlements) = match fs::read_to_string(&registry_path) {
+        let (accounts, entitlements, grants) = match fs::read_to_string(&registry_path) {
             Ok(json) => {
                 let disk: DiskForm = serde_json::from_str(&json).map_err(|e| {
                     io::Error::new(
@@ -331,9 +399,32 @@ impl Registry {
                     })?;
                     entitlements.insert(acct, ent);
                 }
-                (accounts, entitlements)
+                // grant(169,工序 3):与 entitlement 同一把尺——指向不存在账户 / period
+                // 形态坏 = 拒启(计量态也不许静默丢弃)。
+                let mut grants = BTreeMap::new();
+                for (acct, g) in disk.grants {
+                    if !accounts.contains_key(&acct) {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!(
+                                "registry {} 损坏:grant 指向不存在的账户 {acct}(拒启,人工核对)",
+                                registry_path.display()
+                            ),
+                        ));
+                    }
+                    let period = parse_period(&g.period).map_err(|msg| {
+                        io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!("registry 里 {acct} 的 grant:{msg}"),
+                        )
+                    })?;
+                    grants.insert(acct, Grant { period, quota: g.quota });
+                }
+                (accounts, entitlements, grants)
             }
-            Err(e) if e.kind() == io::ErrorKind::NotFound => (BTreeMap::new(), BTreeMap::new()),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                (BTreeMap::new(), BTreeMap::new(), BTreeMap::new())
+            }
             Err(e) => return Err(e),
         };
 
@@ -361,6 +452,9 @@ impl Registry {
             accounts,
             entitlements,
             seat_leases: BTreeMap::new(),
+            grants,
+            free_fastlane: FREE_FASTLANE_BYTES_PER_MONTH,
+            free_seat: FREE_SEAT_QUOTA,
             banlist_path: banlist_path.to_owned(),
             path: registry_path,
         })
@@ -407,6 +501,13 @@ impl Registry {
                             fastlane_bytes_per_month: e.fastlane_bytes_per_month,
                         },
                     )
+                })
+                .collect(),
+            grants: self
+                .grants
+                .iter()
+                .map(|(a, g)| {
+                    (a.clone(), GrantDisk { period: format_period(g.period), quota: g.quota })
                 })
                 .collect(),
         };
@@ -476,6 +577,7 @@ impl Registry {
         &mut self,
         account: &str,
         ent: Entitlement,
+        now: time::OffsetDateTime,
     ) -> Result<(), SetEntitlementError> {
         ent.validate().map_err(SetEntitlementError::Invalid)?;
         match self.accounts.get(account) {
@@ -483,19 +585,51 @@ impl Registry {
             Some(devs) if devs.is_empty() => return Err(SetEntitlementError::SealedAccount),
             Some(_) => {}
         }
-        let prev = self.entitlements.insert(account.to_owned(), ent);
+        // grant 高水位(169,工序 3;codex B):升级即时抬、到期/降档当月不倒扣。
+        // 顺序钉死——先按**旧** entitlement 取本月基值(base)与变更前 effective,
+        // 再覆盖 entitlement、取变更后 effective,grant.quota = max(三者)。
+        let now_month = month_of(now);
+        let old_eff_now = self.effective_entitlement(account, now).fastlane_bytes_per_month;
+        // 本月 grant 基值:同月已有则用其 quota(已含既往抬升);否则(缺省/跨月/回拨)
+        // 按 period_start 时刻的**旧** entitlement 重建(捕获月初有效额度,不受月中到期影响)。
+        let (base_period, base_quota) = match self.grants.get(account) {
+            Some(g) if g.period == now_month => (g.period, g.quota),
+            // 墙钟回拨(grant 在未来月):保留未来 period 与 quota,不倒退重建。
+            Some(g) if g.period > now_month => (g.period, g.quota),
+            _ => (
+                now_month,
+                self.effective_entitlement(account, month_start_utc(now))
+                    .fastlane_bytes_per_month,
+            ),
+        };
+        // 快照供回滚(entitlement + grant 同一 save 事务,失败一并还原)。
+        let prev_ent = self.entitlements.insert(account.to_owned(), ent);
+        let prev_grant = self.grants.get(account).cloned();
+        let new_eff_now = self.effective_entitlement(account, now).fastlane_bytes_per_month;
+        self.grants.insert(
+            account.to_owned(),
+            Grant { period: base_period, quota: base_quota.max(old_eff_now).max(new_eff_now) },
+        );
         match self.save() {
             Ok(()) => Ok(()),
             Err(e) => {
                 crate::logln(format!(
-                    "ERROR registry 落盘失败,已回滚 entitlement 设置 {account}:{e}"
+                    "ERROR registry 落盘失败,已回滚 entitlement+grant 设置 {account}:{e}"
                 ));
-                match prev {
+                match prev_ent {
                     Some(p) => {
                         self.entitlements.insert(account.to_owned(), p);
                     }
                     None => {
                         self.entitlements.remove(account);
+                    }
+                }
+                match prev_grant {
+                    Some(g) => {
+                        self.grants.insert(account.to_owned(), g);
+                    }
+                    None => {
+                        self.grants.remove(account);
                     }
                 }
                 Err(SetEntitlementError::Persist)
@@ -512,7 +646,101 @@ impl Registry {
     pub fn effective_entitlement(&self, account: &str, now: time::OffsetDateTime) -> Entitlement {
         match self.entitlements.get(account) {
             Some(e) if e.expires_at.is_none_or(|t| t > now) => e.clone(),
-            _ => Entitlement::free_default(),
+            _ => self.free_entitlement(),
+        }
+    }
+
+    /// 免费档 effective(fastlane 走 Config 注入的 [`Self::free_fastlane`]、seat_quota 走
+    /// 注入的 [`Self::free_seat`],其余走 [`Entitlement::free_default`] 常量)。
+    fn free_entitlement(&self) -> Entitlement {
+        Entitlement {
+            seat_quota: self.free_seat,
+            fastlane_bytes_per_month: self.free_fastlane,
+            ..Entitlement::free_default()
+        }
+    }
+
+    /// Config 注入免费档 fastlane 额度(Hub::new 调;生产 300MiB,测试可注小值)。
+    pub fn set_free_fastlane(&mut self, bytes: u64) {
+        self.free_fastlane = bytes;
+    }
+
+    /// Config 注入免费档席位数(Hub::new 调;推广期生产 4,测试恒默认 2)。**调用方
+    /// 保证 ≥1**(0 席=免费账户全瘫、且 free_entitlement 不过 [`Entitlement::validate`]
+    /// ——CLI `--free-seat-quota` 解析处已拒 0)。
+    pub fn set_free_seat(&mut self, quota: u32) {
+        self.free_seat = quota;
+    }
+
+    /// 账户在 `now` 所在 UTC 月的**生效 fastlane 额度**(billing-plan §4 工序 3;169)。
+    /// FastlaneExhausted 的唯一 quota 判据(数据热路径只读)。有序月份语义:
+    /// * grant.period == 本月 → `grant.quota`(已含月中升级抬升、月初 floor)。
+    /// * grant.period < 本月 / 缺省 → 按 `period_start` 时刻 effective 重建(**只读不落盘**;
+    ///   sweeper [`Self::roll_grants_to_current_month`] 负责持久化滚月)。
+    /// * grant.period > 本月(墙钟回拨)→ 保留 `grant.quota` 并告警,绝不重建旧月。
+    pub fn effective_grant_quota(&self, account: &str, now: time::OffsetDateTime) -> u64 {
+        let now_month = month_of(now);
+        match self.grants.get(account) {
+            Some(g) if g.period == now_month => g.quota,
+            Some(g) if g.period > now_month => {
+                crate::logln(format!(
+                    "WARN grant 墙钟回拨:账户 {account} grant.period={:?} > 当前 {now_month:?},保留未来 grant 不重建",
+                    g.period
+                ));
+                g.quota
+            }
+            _ => self
+                .effective_entitlement(account, month_start_utc(now))
+                .fastlane_bytes_per_month,
+        }
+    }
+
+    /// sweeper 月初滚月(169,工序 3;codex B):把 grant.period < 本月(或缺省)的账户
+    /// 向前重置为 `{本月, grant_floor(period_start)}`——**基值按 UTC 月初时刻算 effective**
+    /// (不是 sweeper 执行的 now),故月初早于到期也能捕获到期前额度。批量改动**一次
+    /// save**;落盘失败**回滚全部内存 grant**(保 registry「盘内一致」不变量)。墙钟回拨
+    /// 的未来 grant 保留、不动。返回本轮滚了多少账户。
+    pub fn roll_grants_to_current_month(&mut self, now: time::OffsetDateTime) -> io::Result<usize> {
+        let now_month = month_of(now);
+        let period_start = month_start_utc(now);
+        let accounts: Vec<String> = self.accounts.keys().cloned().collect();
+        let mut changed: Vec<(String, Option<Grant>)> = Vec::new();
+        for acct in accounts {
+            // 空墓碑账户不建 grant(无设备=无同步,授权无意义)。
+            if self.accounts.get(&acct).is_none_or(|d| d.is_empty()) {
+                continue;
+            }
+            let needs = match self.grants.get(&acct) {
+                Some(g) => g.period < now_month, // 未来月(回拨)/本月:不动
+                None => true,
+            };
+            if needs {
+                let floor =
+                    self.effective_entitlement(&acct, period_start).fastlane_bytes_per_month;
+                let prev = self.grants.insert(acct.clone(), Grant { period: now_month, quota: floor });
+                changed.push((acct, prev));
+            }
+        }
+        if changed.is_empty() {
+            return Ok(0);
+        }
+        let n = changed.len();
+        match self.save() {
+            Ok(()) => Ok(n),
+            Err(e) => {
+                for (acct, prev) in changed {
+                    match prev {
+                        Some(g) => {
+                            self.grants.insert(acct, g);
+                        }
+                        None => {
+                            self.grants.remove(&acct);
+                        }
+                    }
+                }
+                crate::logln(format!("ERROR grant 滚月落盘失败,已回滚 {n} 个内存 grant:{e}"));
+                Err(e)
+            }
         }
     }
 
@@ -1012,7 +1240,7 @@ mod tests {
             assert_eq!(r.effective_entitlement("ACCT_A", now), Entitlement::free_default());
             assert_eq!(r.effective_entitlement("ACCT_A", now).seat_quota, FREE_SEAT_QUOTA);
             assert!(r.configured_entitlement("ACCT_A").is_none());
-            assert_eq!(r.set_entitlement("ACCT_A", paid.clone()), Ok(()));
+            assert_eq!(r.set_entitlement("ACCT_A", paid.clone(), now), Ok(()));
             assert_eq!(r.effective_entitlement("ACCT_A", now), paid);
             assert_eq!(r.configured_entitlement("ACCT_A"), Some(&paid));
             // 别的账户仍是默认。
@@ -1028,6 +1256,29 @@ mod tests {
         assert_eq!(r2.configured_entitlement("ACCT_A"), Some(&paid));
     }
 
+    /// 免费档席位数 Config 旋钮(推广期生产 4):`set_free_seat` 只抬无显式 entitlement
+    /// 账户的 effective seat_quota,不碰 fastlane、不碰已设 entitlement;默认仍 2。
+    #[test]
+    fn free_seat_quota_knob_lifts_free_tier_only() {
+        let dir = tmpdir("free-seat");
+        let now = t("2026-07-19T00:00:00Z");
+        let mut r = fresh(&dir);
+        r.register_first("ACCT_FREE", "D1", [1; 32]).unwrap();
+        r.register_first("ACCT_PAID", "D2", [2; 32]).unwrap();
+        // 默认 = 常量 2(测试基线,单元测别的地方都靠这个)。
+        assert_eq!(r.effective_entitlement("ACCT_FREE", now).seat_quota, FREE_SEAT_QUOTA);
+        // 已设显式 entitlement 的账户走自己的席位,不受旋钮影响。
+        let paid = Entitlement { seat_quota: 16, ..Entitlement::free_default() };
+        r.set_entitlement("ACCT_PAID", paid.clone(), now).unwrap();
+        // 注入推广期 4:免费账户抬到 4,fastlane 仍是免费档默认,付费账户不变。
+        r.set_free_seat(4);
+        let free_eff = r.effective_entitlement("ACCT_FREE", now);
+        assert_eq!(free_eff.seat_quota, 4);
+        assert_eq!(free_eff.fastlane_bytes_per_month, FREE_FASTLANE_BYTES_PER_MONTH);
+        assert_eq!(free_eff.tier, FREE_TIER);
+        assert_eq!(r.effective_entitlement("ACCT_PAID", now).seat_quota, 16);
+    }
+
     /// set 的拒绝面:未知账户(typo 防线)/ 空墓碑(重开 runbook 手删账户条目不许
     /// 留孤儿 entitlement,159 codex M2)/ 结构不变量(tier 形态 / seat_quota 0)。
     #[test]
@@ -1037,17 +1288,17 @@ mod tests {
         let mut r = fresh(&dir);
         r.register_first("ACCT_A", "D1", [1; 32]).unwrap();
         assert_eq!(
-            r.set_entitlement("ACCT_NOPE", Entitlement::free_default()),
+            r.set_entitlement("ACCT_NOPE", Entitlement::free_default(), now),
             Err(SetEntitlementError::UnknownAccount)
         );
         let bad_quota = Entitlement { seat_quota: 0, ..Entitlement::free_default() };
         assert!(matches!(
-            r.set_entitlement("ACCT_A", bad_quota),
+            r.set_entitlement("ACCT_A", bad_quota, now),
             Err(SetEntitlementError::Invalid(_))
         ));
         let bad_tier = Entitlement { tier: "有 空格".into(), ..Entitlement::free_default() };
         assert!(matches!(
-            r.set_entitlement("ACCT_A", bad_tier),
+            r.set_entitlement("ACCT_A", bad_tier, now),
             Err(SetEntitlementError::Invalid(_))
         ));
         // 拒绝零副作用:仍是默认、盘上无记录。
@@ -1056,7 +1307,7 @@ mod tests {
         r.register_first("ACCT_B", "D9", [9; 32]).unwrap();
         assert_eq!(r.revoke_device("ACCT_B", "D9"), Ok(RevokeOutcome::AccountSealed));
         assert_eq!(
-            r.set_entitlement("ACCT_B", Entitlement::free_default()),
+            r.set_entitlement("ACCT_B", Entitlement::free_default(), now),
             Err(SetEntitlementError::SealedAccount)
         );
         assert!(r.account_exists("ACCT_A") && !r.account_exists("ACCT_B") && !r.account_exists("ACCT_NOPE"));
@@ -1067,17 +1318,136 @@ mod tests {
     #[test]
     fn set_entitlement_persist_failure_rolls_back() {
         let dir = tmpdir("ent-rollback");
+        let now = t("2026-07-19T00:00:00Z");
         let mut r = fresh(&dir);
         r.register_first("ACCT_A", "D1", [1; 32]).unwrap();
         let v1 = Entitlement { seat_quota: 4, ..Entitlement::free_default() };
-        r.set_entitlement("ACCT_A", v1.clone()).unwrap();
+        r.set_entitlement("ACCT_A", v1.clone(), now).unwrap();
         // registry.json 换成同名目录:save 的 rename 必败。
         fs::remove_file(dir.join("registry.json")).unwrap();
         fs::create_dir(dir.join("registry.json")).unwrap();
         let v2 = Entitlement { seat_quota: 16, ..Entitlement::free_default() };
-        assert_eq!(r.set_entitlement("ACCT_A", v2), Err(SetEntitlementError::Persist));
+        assert_eq!(r.set_entitlement("ACCT_A", v2, now), Err(SetEntitlementError::Persist));
         // 旧值仍在,未生效不装成功。
         assert_eq!(r.configured_entitlement("ACCT_A"), Some(&v1));
+    }
+
+    // ---- grant 高水位(169,工序 3;codex 六轮设计审)----
+
+    const GIB2: u64 = 2 * 1024 * 1024 * 1024;
+
+    fn paid_ent(fastlane: u64, expires: Option<&str>) -> Entitlement {
+        Entitlement {
+            tier: "personal".into(),
+            expires_at: expires.map(t),
+            seat_quota: 4,
+            fastlane_bytes_per_month: fastlane,
+        }
+    }
+
+    /// grant 月初按 `period_start` 建:月初早于到期也捕获到期前高额度(codex B 反例)。
+    #[test]
+    fn grant_floor_captures_pre_expiry() {
+        let dir = tmpdir("grant-floor");
+        let mut r = fresh(&dir);
+        r.register_first("ACCT_A", "D1", [1; 32]).unwrap();
+        // 6/20 设 paid 2GiB、7/15 到期。
+        r.set_entitlement("ACCT_A", paid_ent(GIB2, Some("2026-07-15T00:00:00Z")), t("2026-06-20T00:00:00Z")).unwrap();
+        // 滚到 7 月(now=7/20 已过到期):grant_floor 按 7/1 时刻算,paid 仍在 → 2GiB。
+        assert_eq!(r.roll_grants_to_current_month(t("2026-07-20T00:00:00Z")).unwrap(), 1);
+        // 7/20 的 fastlane 判据 = 2GiB(尽管 effective 已回免费档)。
+        assert_eq!(r.effective_grant_quota("ACCT_A", t("2026-07-20T00:00:00Z")), GIB2);
+        assert_eq!(r.effective_entitlement("ACCT_A", t("2026-07-20T00:00:00Z")).fastlane_bytes_per_month, FREE_FASTLANE_BYTES_PER_MONTH);
+    }
+
+    /// 升级即时抬、降档当月不降、新月重建。
+    #[test]
+    fn grant_upgrade_raises_downgrade_holds_new_month_rebuilds() {
+        let dir = tmpdir("grant-hw");
+        let mut r = fresh(&dir);
+        r.register_first("ACCT_A", "D1", [1; 32]).unwrap();
+        // 7/10 升 paid 2GiB(不过期)。
+        r.set_entitlement("ACCT_A", paid_ent(GIB2, None), t("2026-07-10T00:00:00Z")).unwrap();
+        assert_eq!(r.effective_grant_quota("ACCT_A", t("2026-07-15T00:00:00Z")), GIB2);
+        // 7/20 降回免费档 fastlane:当月 grant 不倒扣,仍 2GiB。
+        r.set_entitlement("ACCT_A", paid_ent(FREE_FASTLANE_BYTES_PER_MONTH, None), t("2026-07-20T00:00:00Z")).unwrap();
+        assert_eq!(r.effective_grant_quota("ACCT_A", t("2026-07-25T00:00:00Z")), GIB2);
+        // 8 月滚月:按 8/1 effective 重建 = 现档 300MiB。
+        assert_eq!(r.roll_grants_to_current_month(t("2026-08-01T00:00:00Z")).unwrap(), 1);
+        assert_eq!(r.effective_grant_quota("ACCT_A", t("2026-08-05T00:00:00Z")), FREE_FASTLANE_BYTES_PER_MONTH);
+    }
+
+    /// 有序月份:grant 在未来月(墙钟回拨)→ 保留、不重建旧月。
+    #[test]
+    fn grant_wall_clock_back_keeps_future() {
+        let dir = tmpdir("grant-back");
+        let mut r = fresh(&dir);
+        r.register_first("ACCT_A", "D1", [1; 32]).unwrap();
+        r.set_entitlement("ACCT_A", paid_ent(GIB2, None), t("2026-07-10T00:00:00Z")).unwrap();
+        // grant.period=2026-07;查 6 月(回拨)→ 保留 2GiB,不重建 6 月免费。
+        assert_eq!(r.effective_grant_quota("ACCT_A", t("2026-06-30T23:00:00Z")), GIB2);
+    }
+
+    /// 无帧授权:升级→无任何数据帧→到期→次月滚月前的 fastlane 判据仍取本月高 grant。
+    #[test]
+    fn grant_no_traffic_still_high() {
+        let dir = tmpdir("grant-notraffic");
+        let mut r = fresh(&dir);
+        r.register_first("ACCT_A", "D1", [1; 32]).unwrap();
+        // 7/1 前设 paid、7/10 到期;7 月无任何 set/roll 之外的动作。
+        r.set_entitlement("ACCT_A", paid_ent(GIB2, Some("2026-07-10T00:00:00Z")), t("2026-06-25T00:00:00Z")).unwrap();
+        r.roll_grants_to_current_month(t("2026-07-02T00:00:00Z")).unwrap(); // sweeper 月初建 grant[7]=2GiB
+        // 7/20(到期后、无流量):仍 2GiB。
+        assert_eq!(r.effective_grant_quota("ACCT_A", t("2026-07-20T00:00:00Z")), GIB2);
+    }
+
+    /// 滚月落盘持久 + 幂等(同月再滚=0 改动)。
+    #[test]
+    fn grant_roll_persists_and_idempotent() {
+        let dir = tmpdir("grant-roll");
+        {
+            let mut r = fresh(&dir);
+            r.register_first("ACCT_A", "D1", [1; 32]).unwrap();
+            assert_eq!(r.roll_grants_to_current_month(t("2026-07-05T00:00:00Z")).unwrap(), 1);
+            // 同月再滚:0 改动。
+            assert_eq!(r.roll_grants_to_current_month(t("2026-07-25T00:00:00Z")).unwrap(), 0);
+        }
+        // 重 load:grant 持久(免费档 fastlane)。
+        let r2 = fresh(&dir);
+        assert_eq!(r2.effective_grant_quota("ACCT_A", t("2026-07-30T00:00:00Z")), FREE_FASTLANE_BYTES_PER_MONTH);
+    }
+
+    /// 滚月落盘失败 → 回滚全部内存 grant(盘内一致不变量)。
+    #[test]
+    fn grant_roll_save_fail_rolls_back_all() {
+        let dir = tmpdir("grant-roll-fail");
+        let mut r = fresh(&dir);
+        r.register_first("ACCT_A", "D1", [1; 32]).unwrap();
+        r.register_first("ACCT_B", "D9", [9; 32]).unwrap();
+        // save 的 rename 必败。
+        fs::remove_file(dir.join("registry.json")).unwrap();
+        fs::create_dir(dir.join("registry.json")).unwrap();
+        assert!(r.roll_grants_to_current_month(t("2026-07-05T00:00:00Z")).is_err());
+        // 内存 grant 全回滚:两账户读回 rebuild(免费档),grants map 未留半成品
+        // (无从直接读私有 map,借 effective_grant_quota 的 rebuild 路径=免费档验证)。
+        assert_eq!(r.effective_grant_quota("ACCT_A", t("2026-07-05T00:00:00Z")), FREE_FASTLANE_BYTES_PER_MONTH);
+    }
+
+    /// 旧 registry.json(无 grants 键)照常加载=全员 rebuild;坏 period = 拒启。
+    #[test]
+    fn grant_disk_compat_and_bad_period_rejected() {
+        let dir = tmpdir("grant-disk");
+        let bl = dir.join("banlist.txt");
+        fs::write(&bl, "# 空\n").unwrap();
+        // 无 grants 键:加载成功,rebuild 到免费档。
+        let old = dir.join("old.json");
+        fs::write(&old, r#"{"accounts":{"ACCT_A":{"D1":"0101010101010101010101010101010101010101010101010101010101010101"}}}"#).unwrap();
+        let r = Registry::load(&bl, old).unwrap();
+        assert_eq!(r.effective_grant_quota("ACCT_A", t("2026-07-05T00:00:00Z")), FREE_FASTLANE_BYTES_PER_MONTH);
+        // 坏 period(月份 13):拒启。
+        let bad = dir.join("bad.json");
+        fs::write(&bad, r#"{"accounts":{"ACCT_A":{"D1":"0101010101010101010101010101010101010101010101010101010101010101"}},"grants":{"ACCT_A":{"period":"2026-13","quota":1}}}"#).unwrap();
+        assert!(Registry::load(&bl, bad).is_err());
     }
 
     /// 旧 registry.json(无 entitlements 键)照常加载=全员免费档默认(serde default
@@ -1171,7 +1541,7 @@ mod tests {
             seat_quota: 4,
             ..Entitlement::free_default()
         };
-        r.set_entitlement("ACCT_A", paid).unwrap();
+        r.set_entitlement("ACCT_A", paid, t0()).unwrap();
         assert_eq!(r.register_device("ACCT_A", "D3", [3; 32], 8, t0()), Ok(()));
         assert_eq!(r.register_device("ACCT_A", "D4", [4; 32], 8, t0()), Ok(()));
         // 4/4 满:第五台 SeatLimit。
@@ -1198,7 +1568,7 @@ mod tests {
         r.register_device("ACCT_A", "D2", [2; 32], 8, t0()).unwrap();
         // quota 拉到 16,硬帽 2:触帽报 AccountFull 而非 SeatLimit。
         let big = Entitlement { seat_quota: 16, ..Entitlement::free_default() };
-        r.set_entitlement("ACCT_A", big).unwrap();
+        r.set_entitlement("ACCT_A", big, t0()).unwrap();
         assert_eq!(
             r.register_device("ACCT_A", "D3", [3; 32], 2, t0()),
             Err(RegisterError::AccountFull)

@@ -734,7 +734,13 @@ async fn unauth_business_rejected() {
 
 #[tokio::test]
 async fn silence_timeout_kills_and_ping_keeps_alive() {
-    let addr = start(&[], |c| c.silence_timeout = Duration::from_millis(300)).await;
+    let addr = start(&[], |c| {
+        c.silence_timeout = Duration::from_millis(300);
+        // 短 silence 下 throttle 上界校验(device_cap·MAX_FRAME·3 ≤ rate·silence)要求
+        // 极高 rate——本测不关心限速,把 rate 设到满足校验(限速在此测实质关闭)。
+        c.throttle_rate_bps = 256 * 1024 * 1024;
+    })
+    .await;
     let sk = key();
     // 静默连接被判死。
     let mut idle = first_authed(addr, ACCT, D1, &sk).await;
@@ -1268,6 +1274,80 @@ async fn serve_rejects_zero_device_cap_and_zero_lease_ttl() {
     assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
     cfg.device_cap = 8;
     cfg.seat_lease_ttl = Duration::ZERO;
+    let err = serve("127.0.0.1:0".parse().unwrap(), cfg.clone()).await.unwrap_err();
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+    // 达量限速上界校验(169,§4 不变量①③):rate=0 拒;rate 太低致上界 > silence/3 拒。
+    cfg.seat_lease_ttl = Duration::from_secs(3600);
+    cfg.throttle_rate_bps = 0;
+    let err = serve("127.0.0.1:0".parse().unwrap(), cfg.clone()).await.unwrap_err();
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+    // silence=90s、device_cap=8:rate 须 ≥ 8·1MiB·3/90 ≈ 273KiB/s;给 100KiB/s 太低,拒。
+    cfg.throttle_rate_bps = 100 * 1024;
     let err = serve("127.0.0.1:0".parse().unwrap(), cfg).await.unwrap_err();
     assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+}
+
+/// 越额发送被达量限速(端到端真 WS):quota=0 + 低速率,连发多帧——首帧 burst 直放、
+/// 其后按速率排队,总耗时体现限速;且**全部照常投递(Ack)**——限速是「慢但走得完」
+/// 不是丢帧(§4 不变量④;169,工序 3)。
+#[tokio::test]
+async fn over_quota_sends_are_rate_limited_but_delivered() {
+    // device_cap=2 + rate=100KiB/s:上界 2·1MiB·3/90 ≈ 68KiB/s < 100KiB/s,过校验。
+    // 免费档 fastlane 注小值 1000B:fresh 账户 grant floor 即 1000,一切帧越额(不需 admin)。
+    let addr = start(&[], |c| {
+        c.device_cap = 2;
+        c.throttle_rate_bps = 100 * 1024;
+        c.free_fastlane_bytes_per_month = 1000;
+    })
+    .await;
+    let sk = key();
+    let mut c = first_authed(addr, ACCT, D1, &sk).await;
+
+    // 连发 6 帧 20KB(broadcast 到 "*",单设备账户=0 收件人,mail lane 恒 Ack)。
+    let k = 6;
+    let blob = vec![0u8; 20 * 1024];
+    let started = std::time::Instant::now();
+    for n in 0..k {
+        c.send(&ClientMsg::Send { n, to: BROADCAST.into(), lane: Lane::Mail, blob: blob.clone() }).await;
+    }
+    // 收 6 个 Ack(限速下逐个到达;跳过 Peer 噪音)。
+    let mut acked = 0u64;
+    for _ in 0..k {
+        match c.recv_skip_peer().await {
+            ServerMsg::Ack { n } => {
+                assert_eq!(n, acked, "Ack 应按发送序");
+                acked += 1;
+            }
+            other => panic!("期待 Ack,得到 {other:?}"),
+        }
+    }
+    let elapsed = started.elapsed();
+    assert_eq!(acked, k, "全部帧照常投递(限速不丢帧)");
+    // 首帧 burst + 其后 5 帧各 ~20KB/100KiB/s≈0.195s → 总 ~0.98s。宽松断言 ≥0.5s
+    // (只有限速能解释这个耗时;未限速时 6 帧本地 WS <0.1s)。
+    assert!(
+        elapsed >= Duration::from_millis(500),
+        "越额连发应被限速拖慢(实测 {elapsed:?},期望 ≥500ms)"
+    );
+}
+
+/// 额度内 + 控制帧不限速(端到端):默认免费档 quota(300MiB)下连发小帧秒回,
+/// Ping 也秒回——限速机制在线但对现网正常量无感(§4「现网无感」)。
+#[tokio::test]
+async fn under_quota_and_control_frames_not_throttled() {
+    let (addr, _admin) = start_with_admin(&[]).await;
+    let sk = key();
+    let mut c = first_authed(addr, ACCT, D1, &sk).await;
+    let started = std::time::Instant::now();
+    // 10 个小帧(远不及免费档 300MiB)+ Ping:全秒回。
+    for n in 0..10u64 {
+        c.send(&ClientMsg::Send { n, to: BROADCAST.into(), lane: Lane::Mail, blob: vec![0u8; 256] }).await;
+        match c.recv_skip_peer().await {
+            ServerMsg::Ack { n: got } => assert_eq!(got, n),
+            other => panic!("期待 Ack,得到 {other:?}"),
+        }
+    }
+    c.send(&ClientMsg::Ping).await;
+    assert_eq!(c.recv_skip_peer().await, ServerMsg::Pong);
+    assert!(started.elapsed() < Duration::from_millis(500), "额度内不该被限速");
 }

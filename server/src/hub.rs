@@ -20,15 +20,16 @@
 //! * 时间源用 `tokio::time::Instant`(TTL/槽过期)。
 
 use std::collections::{HashMap, VecDeque};
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use sync_proto::{err_code, Lane, PairEvent, ServerMsg, BROADCAST};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Notify};
 use tokio::time::Instant;
 
 use crate::logln;
-use crate::registry::{Registry, RevokeError, RevokeOutcome};
+use crate::registry::{Entitlement, Registry, RevokeError, RevokeOutcome, SetEntitlementError};
+use crate::throttle::{AdmitDecision, PollOutcome, WaitHandle};
 use crate::Config;
 
 /// 下行数据队列(协议消息)。
@@ -65,6 +66,19 @@ pub struct Hub {
     pub cfg: Config,
     pub registry: Mutex<Registry>,
     state: Mutex<HubState>,
+    /// 达量限速计量 + ticket 调度(169,工序 3;第三把锁)。锁序扩为
+    /// **registry → state / registry → meters**;绝不 `state → meters`、`meters → *`、
+    /// 跨 `.await`。准入决策(读 grant + 计数 + enqueue)在 registry→meters 内原子完成。
+    meters: Mutex<crate::throttle::Meters>,
+    /// graceful shutdown 计量准入栅栏(169,codex 实现审 H-3):conn 在 decode 后、
+    /// registry 锁前 `admission_enter`;shutdown 关栅 + 等 active 归零(所有 in-flight
+    /// 计数完成)再 final flush ⇒ 已进帧计入、未进帧确定拒,栅栏线性化两侧。
+    adm_closing: AtomicBool,
+    adm_active: AtomicUsize,
+    adm_drained: Notify,
+    /// checkpoint 阈值事件唤醒(dirty ≥ 阈值即 notify worker,事件驱动非轮询——
+    /// codex 实现审 M:高流量下轮询窗口可远超 16MiB)。
+    checkpoint_nudge: Notify,
     conn_seq: AtomicU64,
 }
 
@@ -120,13 +134,29 @@ struct PairSlot {
 }
 
 impl Hub {
-    pub fn new(cfg: Config, registry: Registry) -> Self {
+    pub fn new(cfg: Config, mut registry: Registry) -> Self {
+        // 免费档 fastlane 从 Config 注入 registry(169;生产 300MiB,测试小值烤限速)。
+        registry.set_free_fastlane(cfg.free_fastlane_bytes_per_month);
+        // 免费档席位数从 Config 注入(推广期生产 4,测试默认 2)。
+        registry.set_free_seat(cfg.free_seat_quota);
         Hub {
             cfg,
             registry: Mutex::new(registry),
             state: Mutex::new(HubState::default()),
+            meters: Mutex::new(crate::throttle::Meters::new()),
+            adm_closing: AtomicBool::new(false),
+            adm_active: AtomicUsize::new(0),
+            adm_drained: Notify::new(),
+            checkpoint_nudge: Notify::new(),
             conn_seq: AtomicU64::new(1),
         }
+    }
+
+    /// 启动时从 sidecar 恢复计量记录(serve_inner 调用;`now` 给新建 meter 的
+    /// committed_until 基点)。有序月份在 admission 时按墙钟再滚。
+    pub fn restore_meters(&self, records: Vec<(String, crate::throttle::MeterRecord)>) {
+        let now = std::time::Instant::now();
+        self.meters.lock().unwrap().load_records(records, now);
     }
 
     pub fn next_conn_id(&self) -> u64 {
@@ -146,8 +176,10 @@ impl Hub {
     /// 「此刻仍在 registry **且公钥就是本次验签那把**」(只核存在会中 ABA:吊销后
     /// 同 device_id 被幸存设备合法重注册换新钥,旧钥连接不得冒充新设备上线),
     /// Authed 也在锁内推进下行队(客户端以 Authed 为同步态起点,恒在积压 deliver
-    /// 之前;由本函数发,调用方别再发)。返回 false = 已不在/已换钥,没发 Authed,
-    /// 调用方按鉴权失败断开。
+    /// 之前;由本函数发,调用方别再发)。返回 `None` = 已不在/已换钥,没发 Authed,
+    /// 调用方按鉴权失败断开;`Some(session_gen)` = 上线成功,调用方须存入连接态供
+    /// 限速准入的会话代际核验(169,codex H:挡同 device 重连 ABA)。
+    /// **会话代际在 state 释放后、仍持 registry 时置**(锁序 registry→meters)。
     ///
     /// **封禁复核同锁**(open-signup §1.2):conn 初查 banned 后会放锁,banlist
     /// reload 若插在初查与上线之间,这里不复核就会放进一个刚被封的连接——
@@ -162,13 +194,13 @@ impl Hub {
         tx: Tx,
         kick: KickTx,
         queued: QueuedBytes,
-    ) -> bool {
+    ) -> Option<u64> {
         let reg = self.registry.lock().unwrap();
         if reg.is_banned(account) {
-            return false;
+            return None;
         }
         if reg.pubkey_of(account, device) != Some(expected_pubkey) {
-            return false;
+            return None;
         }
         let addr: Addr = (account.to_owned(), device.to_owned());
         let mut st = self.state.lock().unwrap();
@@ -248,7 +280,196 @@ impl Hub {
             push(peer_tx, ServerMsg::Peer { device: device.to_owned(), online: true });
         }
         st.online.insert(addr, Client { conn_id, tx, kick, queued });
+        drop(st);
+        // 会话代际(169,codex H):state 已释放、仍持 registry(锁序 registry→meters)。
+        // 给本 device 发新单调 session_gen、取消旧代际残留 pending;返回供连接态存储。
+        let wall_month = crate::registry::month_of(time::OffsetDateTime::now_utc());
+        let gen = self.meters.lock().unwrap().begin_session(
+            account,
+            device,
+            wall_month,
+            std::time::Instant::now(),
+        );
+        Some(gen)
+    }
+
+    /// 数据帧准入(169,工序 3;**只 Authed Send/PairMsg 调**,控制帧不过桶——计数
+    /// 口径 §4)。**准入原子临界区**:读 grant + 设备集(registry)→ 计数 + 判超额 +
+    /// enqueue(meters),全在 registry→meters 内一次拿下,admin 改 grant 不能插在读与
+    /// enqueue 之间(codex D 丢通知竞态)。无论决策如何,wire 字节已计入(帧已达入站
+    /// 边界)。返回 Immediate=直接放行 / Kicked=stale 会话须断连 / Wait=须限速等待。
+    pub fn throttle_admission(
+        &self,
+        account: &str,
+        device: &str,
+        session_gen: u64,
+        conn_id: u64,
+        bytes: u64,
+    ) -> AdmitDecision {
+        // 单次捕获墙钟(codex 实现审 M:两次 now_utc 恰跨月会让 meter period 与 grant
+        // 取自不同月)。month 与 grant 同源。
+        let now_instant = std::time::Instant::now();
+        let now_wall = time::OffsetDateTime::now_utc();
+        let wall_month = crate::registry::month_of(now_wall);
+        let reg = self.registry.lock().unwrap();
+        let grant = reg.effective_grant_quota(account, now_wall);
+        let device_set: std::collections::HashSet<String> =
+            reg.devices_of(account).into_iter().collect();
+        let device_cap = self.cfg.device_cap;
+        let rate = self.cfg.throttle_rate_bps;
+        let (decision, dirty) = {
+            let mut meters = self.meters.lock().unwrap();
+            let decision = meters.admission(
+                account,
+                device,
+                session_gen,
+                conn_id,
+                bytes,
+                wall_month,
+                now_instant,
+                grant,
+                &device_set,
+                device_cap,
+                rate,
+            );
+            (decision, meters.dirty_bytes())
+        };
+        // 阈值事件唤醒(codex M:事件驱动非轮询;notify_one 合并、丢一次不退化因 dirty
+        // 有状态、worker 每轮读实况)。
+        if dirty >= self.cfg.checkpoint_dirty_bytes {
+            self.checkpoint_nudge.notify_one();
+        }
+        decision
+    }
+
+    /// 限速 waiter 唤醒后的 poll(conn.rs 临界区外的等待循环调;registry→meters 重读
+    /// grant 判「是否仍超额」)。`now_instant`=调用方取的单调钟。
+    pub fn throttle_poll(&self, h: &WaitHandle, now_instant: std::time::Instant) -> PollOutcome {
+        let reg = self.registry.lock().unwrap();
+        let grant = reg.effective_grant_quota(&h.account, time::OffsetDateTime::now_utc());
+        let mut meters = self.meters.lock().unwrap();
+        meters.poll(h, now_instant, grant)
+    }
+
+    /// 连接断开清理:清该会话的 throttle 态(clear_if_current——旧连接退出不清新会话)。
+    pub fn throttle_clear(&self, account: &str, device: &str, session_gen: u64) {
+        self.meters.lock().unwrap().clear_if_current(
+            account,
+            device,
+            session_gen,
+            std::time::Instant::now(),
+        );
+    }
+
+    /// admin 设 entitlement 的收口编排(169,codex D):registry 内改 entitlement+grant,
+    /// **仍持 registry** 锁 meters——升级抬 grant 后若账户已不再超额,清空 pending 放行
+    /// 在等帧(release_if_unthrottled)。返回 `now` 时刻的 effective(admin 回显)。
+    pub fn admin_set_entitlement(
+        &self,
+        account: &str,
+        ent: Entitlement,
+        now_wall: time::OffsetDateTime,
+    ) -> Result<Entitlement, SetEntitlementError> {
+        let mut reg = self.registry.lock().unwrap();
+        reg.set_entitlement(account, ent, now_wall)?;
+        let effective = reg.effective_entitlement(account, now_wall);
+        let grant = reg.effective_grant_quota(account, now_wall);
+        self.meters.lock().unwrap().release_if_unthrottled(
+            account,
+            std::time::Instant::now(),
+            grant,
+        );
+        Ok(effective)
+    }
+
+    /// 单写者 checkpoint(169,工序 3;**唯一 sidecar 写者**——worker task 串行调,
+    /// 无并发覆盖)。锁内拷快照(不清 dirty),落盘在锁外;成功后 `checkpoint_ack`
+    /// 扣减快照量,失败保留 dirty 供重试。
+    pub fn checkpoint_meters(&self) -> std::io::Result<()> {
+        let (records, dirty_at) = { self.meters.lock().unwrap().checkpoint_snapshot() };
+        match crate::throttle::save_sidecar(&self.cfg.meters_path, &records) {
+            Ok(()) => {
+                self.meters.lock().unwrap().checkpoint_ack(dirty_at);
+                Ok(())
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// 自上次 checkpoint 以来的脏字节量(worker 判 ≥ `checkpoint_dirty_bytes` 触发)。
+    pub fn meters_dirty_bytes(&self) -> u64 {
+        self.meters.lock().unwrap().dirty_bytes()
+    }
+
+    /// 计量准入栅栏 enter(169,codex H-3):conn 在 decode 后、`throttle_admission` 前
+    /// 调。返回 false = 停机关栅,帧须拒(不计不路由)。double-check 挡「关栅插在
+    /// load 与 incr 之间」。
+    pub fn admission_enter(&self) -> bool {
+        if self.adm_closing.load(Ordering::Acquire) {
+            return false;
+        }
+        self.adm_active.fetch_add(1, Ordering::AcqRel);
+        if self.adm_closing.load(Ordering::Acquire) {
+            if self.adm_active.fetch_sub(1, Ordering::AcqRel) == 1 {
+                self.adm_drained.notify_waiters();
+            }
+            return false;
+        }
         true
+    }
+
+    /// 计量准入栅栏 leave(`throttle_admission` 返回后即调;**只括住计数临界段,不含
+    /// 限速等待**——等待在栅栏外,shutdown drain 不被限速拖住)。
+    pub fn admission_leave(&self) {
+        if self.adm_active.fetch_sub(1, Ordering::AcqRel) == 1
+            && self.adm_closing.load(Ordering::Acquire)
+        {
+            self.adm_drained.notify_waiters();
+        }
+    }
+
+    /// 关计量准入栅栏 + 等 in-flight 计数全部退栏(SIGTERM 第一步)。**返回是否干净
+    /// drain**:`true`=active 归零、之后 final flush 是真最终计量快照;`false`=5s 超时
+    /// 未归零(某帧卡在 registry 慢 save 后),调用方须 best-effort checkpoint + **非零
+    /// 退出**、不得声称最终快照(codex 实现审 H:超时不能走成功出口)。栅栏后新帧一律拒。
+    #[must_use]
+    pub async fn shutdown_admissions(&self) -> bool {
+        self.adm_closing.store(true, Ordering::Release);
+        loop {
+            let notified = self.adm_drained.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable(); // 先注册 waiter 再查,无丢唤醒
+            if self.adm_active.load(Ordering::Acquire) == 0 {
+                return true;
+            }
+            if tokio::time::timeout(self.cfg.shutdown_drain_timeout, notified).await.is_err() {
+                logln("WARN 停机 drain 超时(仍有 in-flight 计量准入):final checkpoint 可能非最终,将非零退出".into());
+                return false;
+            }
+        }
+    }
+
+    /// checkpoint 阈值事件唤醒源(worker `select!` 它;`throttle_admission` 越阈值即
+    /// `notify_one`)。
+    pub fn checkpoint_nudge(&self) -> &Notify {
+        &self.checkpoint_nudge
+    }
+
+    /// 停机中(SIGTERM 已关计量准入栅栏):ws_upgrade 据此拒新 WS 连接。
+    pub fn is_shutting_down(&self) -> bool {
+        self.adm_closing.load(Ordering::Acquire)
+    }
+
+    /// sweeper 月初滚 grant(169;grant.period < 本月的账户按 period_start effective 重建
+    /// 并落盘,批量一次 save、失败回滚全部内存 grant)。落盘错只告警(下一 tick 再试)。
+    pub fn roll_grants_now(&self) {
+        let now = time::OffsetDateTime::now_utc();
+        let mut reg = self.registry.lock().unwrap();
+        match reg.roll_grants_to_current_month(now) {
+            Ok(0) => {}
+            Ok(n) => logln(format!("INFO grant 滚月:{n} 个账户建当月 grant")),
+            Err(e) => logln(format!("ERROR grant 滚月落盘失败(已回滚内存,下轮重试):{e}")),
+        }
     }
 
     /// 连接断开的全部清理(读循环退出后恒调,幂等):下线广播 + 涉及的配对槽烧毁。
@@ -1003,7 +1224,7 @@ mod tests {
             seat_quota: 8,
             ..crate::registry::Entitlement::free_default()
         };
-        reg.set_entitlement(ACCT, wide).unwrap();
+        reg.set_entitlement(ACCT, wide, time::OffsetDateTime::now_utc()).unwrap();
         let mut cfg = Config::new(banlist.clone(), dir.join("registry.json"));
         tweak(&mut cfg);
         (Hub::new(cfg, reg), banlist)
@@ -1022,7 +1243,7 @@ mod tests {
     /// D1 以 conn_id=cid 上线(fixture 公钥 [1;32]/[2;32],见 hub())。账本按连接
     /// 新造——只想上线不查预算的测试用它;预算测试用 [`attach_with_ledger`]。
     fn attach_dev(h: &Hub, dev: &str, key: [u8; 32], cid: u64, tx: Tx, kick: KickTx) -> bool {
-        h.attach_authenticated(ACCT, dev, key, cid, tx, kick, QueuedBytes::default())
+        h.attach_authenticated(ACCT, dev, key, cid, tx, kick, QueuedBytes::default()).is_some()
     }
 
     /// 上线并返回该连接的字节账本(预算测试断言/模拟「写任务未出队」用)。
@@ -1035,7 +1256,7 @@ mod tests {
         kick: KickTx,
     ) -> QueuedBytes {
         let q = QueuedBytes::default();
-        assert!(h.attach_authenticated(ACCT, dev, key, cid, tx, kick, q.clone()));
+        assert!(h.attach_authenticated(ACCT, dev, key, cid, tx, kick, q.clone()).is_some());
         q
     }
 
@@ -1238,7 +1459,7 @@ mod tests {
         // 第二账户在线,验证 reload 不误伤。
         h.registry.lock().unwrap().register_first(ACCT_B, "DEV_B", [5; 32]).unwrap();
         let (txb, _rxb, kickb, mut kickb_rx) = chan(64);
-        assert!(h.attach_authenticated(ACCT_B, "DEV_B", [5; 32], 7, txb, kickb, QueuedBytes::default()));
+        assert!(h.attach_authenticated(ACCT_B, "DEV_B", [5; 32], 7, txb, kickb, QueuedBytes::default()).is_some());
 
         std::fs::write(&banlist, format!("{ACCT}\n")).unwrap();
         assert_eq!(h.reload_banlist().unwrap(), 1);
@@ -1547,7 +1768,7 @@ mod tests {
         let h = hub(|_| {});
         // 夹具把 ACCT 提到 8 席——压回免费档 2 席(2 台在编 = 满席)。
         let free = crate::registry::Entitlement::free_default();
-        h.registry.lock().unwrap().set_entitlement(ACCT, free).unwrap();
+        h.registry.lock().unwrap().set_entitlement(ACCT, free, time::OffsetDateTime::now_utc()).unwrap();
         let (tx, _rx, _kick, _k) = chan(64);
         let (k1, k2) = (chan(1).2, chan(1).2);
         assert!(attach_dev(&h, D1, [1; 32], 1, tx.clone(), k1));
@@ -1561,7 +1782,7 @@ mod tests {
             seat_quota: 4,
             ..crate::registry::Entitlement::free_default()
         };
-        h.registry.lock().unwrap().set_entitlement(ACCT, wide).unwrap();
+        h.registry.lock().unwrap().set_entitlement(ACCT, wide, time::OffsetDateTime::now_utc()).unwrap();
         assert!(h.pair_open(ACCT, D1, 1, tx.clone()).is_ok());
     }
 
@@ -1575,5 +1796,47 @@ mod tests {
         assert!(attach_dev(&h, D1, [1; 32], 1, tx.clone(), k1));
         // 夹具 quota=8、硬帽 2、在编 2:容量层先拒。
         assert_eq!(h.pair_open(ACCT, D1, 1, tx), Err(err_code::ACCOUNT_FULL));
+    }
+
+    /// 计量准入栅栏(169,codex 实现审 M):干净 drain(active 归零)→ shutdown 返 true、
+    /// is_shutting_down 置真、其后 enter 一律拒。
+    #[tokio::test]
+    async fn admission_guard_drains_clean() {
+        let h = hub(|_| {});
+        assert!(!h.is_shutting_down());
+        assert!(h.admission_enter()); // active=1
+        h.admission_leave(); // active=0
+        assert!(h.shutdown_admissions().await, "active 已归零应干净 drain=true");
+        assert!(h.is_shutting_down());
+        assert!(!h.admission_enter(), "关栅后新帧一律拒");
+    }
+
+    /// permit 未退时 shutdown 超时返 false(不称最终快照);退出码真值表由 lib 单元测覆盖。
+    #[tokio::test]
+    async fn admission_guard_drain_times_out_with_held_permit() {
+        let h = hub(|c| c.shutdown_drain_timeout = std::time::Duration::from_millis(50));
+        assert!(h.admission_enter()); // active=1,故意不 leave(模拟卡在 registry 锁)
+        assert!(!h.shutdown_admissions().await, "active>0 超时应返 false");
+    }
+
+    /// 并发 drain 唤醒(钉 `notified.enable()` 无丢唤醒):shutdown 注册 waiter 时 active=1,
+    /// 另一任务 50ms 后 leave→归零通知,shutdown 应经通知**立即返回 true**(远早于 5s
+    /// 默认超时);若丢唤醒会拖到超时才返回。
+    #[tokio::test]
+    async fn admission_guard_concurrent_drain_wakes_before_timeout() {
+        let h = std::sync::Arc::new(hub(|_| {})); // 默认 5s 超时
+        assert!(h.admission_enter()); // active=1
+        let h2 = h.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            h2.admission_leave(); // active→0 + notify
+        });
+        let started = tokio::time::Instant::now();
+        assert!(h.shutdown_admissions().await, "leave 归零应干净 drain=true");
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(2),
+            "应经 notify 唤醒立即返回(实测 {:?}),而非等 5s 超时——丢唤醒才会拖到超时",
+            started.elapsed()
+        );
     }
 }

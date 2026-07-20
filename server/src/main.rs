@@ -10,6 +10,7 @@ async fn main() {
     let mut admin_listen: Option<SocketAddr> = None;
     let mut admin_token: Option<String> = None;
     let mut data_dir = PathBuf::from("./data");
+    let mut free_seat_quota: Option<u32> = None;
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         match a.as_str() {
@@ -33,6 +34,19 @@ async fn main() {
             "--data-dir" => {
                 data_dir = PathBuf::from(args.next().unwrap_or_else(|| die("--data-dir 缺参数")));
             }
+            // 免费档席位数(推广期生产设 4;收费期改回默认 2 即可、不重编)。默认
+            // 走 Config::new(=常量 2)。**拒 0**:0 席=免费账户全瘫,且 free_entitlement
+            // 不过 Entitlement::validate(seat_quota≥1);此处是唯一注入口,fail-fast 挡死。
+            "--free-seat-quota" => {
+                let v = args.next().unwrap_or_else(|| die("--free-seat-quota 缺参数"));
+                let q: u32 = v
+                    .parse()
+                    .unwrap_or_else(|_| die(&format!("--free-seat-quota 不是合法整数:{v}")));
+                if q == 0 {
+                    die("--free-seat-quota 须 ≥1(0 席=免费账户全瘫)");
+                }
+                free_seat_quota = Some(q);
+            }
             // 封禁表离线校验(open-signup §1.6 运维纪律:先校验、原子替换、再 reload
             // ——直写活文件留坏内容会让下次重启 fail-fast 拒启)。与运行期同一解析器,
             // 过=打印封禁数退 0,不过=打印带行号的错误退 1。
@@ -47,14 +61,17 @@ async fn main() {
                 }
             }
             other => die(&format!(
-                "未知参数 {other}\n用法:zhujian-syncd [--listen 127.0.0.1:8787] [--admin-listen 127.0.0.1:8788 --admin-token-file ./data/admin-token] [--data-dir ./data] | zhujian-syncd --validate-banlist <file>\n  data-dir 下须有 banlist.txt(封禁表:一行一个被封禁的 account_id,须为合法 26 位 ULID,# 整行注释;空文件=零封禁;准入开放,fresh 账户直接 TOFU;改动先 --validate-banlist 校验再原子替换)\n  admin 面(运营侧设备吊销)只许回环地址、别进反代;token 文件 openssl rand -hex 32 生成、chmod 600,两参数必须同给"
+                "未知参数 {other}\n用法:zhujian-syncd [--listen 127.0.0.1:8787] [--admin-listen 127.0.0.1:8788 --admin-token-file ./data/admin-token] [--data-dir ./data] [--free-seat-quota 4] | zhujian-syncd --validate-banlist <file>\n  data-dir 下须有 banlist.txt(封禁表:一行一个被封禁的 account_id,须为合法 26 位 ULID,# 整行注释;空文件=零封禁;准入开放,fresh 账户直接 TOFU;改动先 --validate-banlist 校验再原子替换)\n  admin 面(运营侧设备吊销)只许回环地址、别进反代;token 文件 openssl rand -hex 32 生成、chmod 600,两参数必须同给\n  free-seat-quota 免费档席位数(默认 2;推广期设 4,收费期改回不重编;≥1)"
             )),
         }
     }
-    let cfg = zhujian_syncd::Config::new(
+    let mut cfg = zhujian_syncd::Config::new(
         data_dir.join("banlist.txt"),
         data_dir.join("registry.json"),
     );
+    if let Some(q) = free_seat_quota {
+        cfg.free_seat_quota = q;
+    }
     let handle = match (admin_listen, admin_token) {
         (Some(admin), Some(token)) => {
             match zhujian_syncd::serve_with_admin(listen, admin, token, cfg).await {

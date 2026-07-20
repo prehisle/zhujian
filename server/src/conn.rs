@@ -29,6 +29,8 @@ use tokio::time::timeout;
 use crate::hub::{Hub, Tx};
 use crate::logln;
 use crate::registry::{RegisterError, SeatLeaseError};
+use crate::throttle::{AdmitDecision, PollOutcome, WaitHandle, DISP_ADMITTED, DISP_CANCELLED, DISP_RELEASED};
+use std::sync::atomic::Ordering;
 
 /// 连接状态。Fresh 只许 Auth/RegisterFirst/PairJoin/Ping;PairJoined(未鉴权入槽,
 /// 限一槽)只许本槽 PairMsg/PairClose/Ping;Authed 是全部业务面。
@@ -37,7 +39,9 @@ use crate::registry::{RegisterError, SeatLeaseError};
 enum ConnState {
     Fresh,
     PairJoined { slot: u64 },
-    Authed { account: String, device: String, pubkey: [u8; 32] },
+    /// `session_gen`(169,工序 3):attach 线性化点发的会话代际,限速准入按它核验
+    /// 同 device 重连 ABA——旧连接后到、gen 不匹配即 kicked,不淘汰新会话 ticket。
+    Authed { account: String, device: String, pubkey: [u8; 32], session_gen: u64 },
 }
 
 /// 一条消息的处置结果(状态转移经返回值,绕开对 state 的借用纠纷)。
@@ -124,6 +128,38 @@ pub(crate) async fn handle(hub: Arc<Hub>, ws: WebSocket) {
             err(&tx, err_code::BAD_REQUEST, "信封无法解码");
             break;
         };
+        // 达量限速准入(169,工序 3;§4 计数口径:只 Authed 面 Send/PairMsg 过桶,按
+        // 收到的 WS 帧字节计一次;控制帧与未鉴权 joiner 的 PairMsg 不计)。等待在主循环、
+        // 临界区外,可被 kick 取消——放 dispatch 前(route_send/pair_relay 之前)。
+        if let Some((account, device, session_gen)) = throttle_target(&state, &msg) {
+            let frame_bytes = bytes.len() as u64;
+            // 计量准入栅栏(169,codex H-3):enter 在 registry 锁前;失败=停机关栅,
+            // 帧拒(不计不路由)、断开(客户端重连到重启后服务、按水位重发,无丢失)。
+            if !hub.admission_enter() {
+                logln(format!("INFO conn={conn_id} 停机计量栅栏:拒帧、断开"));
+                break;
+            }
+            // leave 紧跟 admission(只括住计数临界段;限速等待在栅栏外,不拖 drain)。
+            let decision = hub.throttle_admission(&account, &device, session_gen, conn_id, frame_bytes);
+            hub.admission_leave();
+            match decision {
+                AdmitDecision::Immediate => {}
+                AdmitDecision::Kicked => {
+                    // 会话已被更新会话顶替(stale gen):帧已计 wire 字节,连接按 kicked
+                    // 收尾(kick 在途;不淘汰新会话 ticket)。
+                    logln(format!("INFO conn={conn_id} 限速准入:会话已被顶替(stale),断开"));
+                    kicked = true;
+                    break;
+                }
+                AdmitDecision::Wait(handle) => match throttle_wait(&hub, handle, &mut kick_rx).await {
+                    WaitOutcome::Proceed => {}
+                    WaitOutcome::Kicked => {
+                        kicked = true;
+                        break;
+                    }
+                },
+            }
+        }
         match dispatch(&hub, conn_id, &tx, &kick_tx, &queued, &nonce, &state, msg).await {
             Step::Continue => {}
             Step::Close => break,
@@ -132,10 +168,17 @@ pub(crate) async fn handle(hub: Arc<Hub>, ws: WebSocket) {
     }
 
     let authed = match &state {
-        ConnState::Authed { account, device, .. } => Some((account.clone(), device.clone())),
+        ConnState::Authed { account, device, session_gen, .. } => {
+            Some((account.clone(), device.clone(), *session_gen))
+        }
         _ => None,
     };
-    hub.detach(conn_id, authed.as_ref());
+    // 限速会话清理(169):clear_if_current——旧连接退出不清已顶替的新会话。
+    if let Some((account, device, session_gen)) = &authed {
+        hub.throttle_clear(account, device, *session_gen);
+    }
+    let addr = authed.as_ref().map(|(a, d, _)| (a.clone(), d.clone()));
+    hub.detach(conn_id, addr.as_ref());
     if kicked {
         // 关断即断(codex P4-e 轮 H4):被顶替/慢客户端/吊销的连接,队里余帧
         // 一帧都不再出门(吊销后继续冲密文给被吊设备不可接受;TCP 已在途的
@@ -206,14 +249,14 @@ async fn dispatch(
             // Authed 由 attach 在锁内发(恒在积压 deliver 之前);attach 顺带复核
             // 「此刻仍是这把公钥」——verify 与上线之间被 revoke_device 插队(含
             // 吊后重注册换钥的 ABA)= false,按鉴权失败断开(codex P4-e 轮 H1)。
-            if !hub.attach_authenticated(&account, &device, pk, conn_id, tx.clone(), kick_tx.clone(), queued.clone())
-            {
+            let Some(session_gen) = hub.attach_authenticated(&account, &device, pk, conn_id, tx.clone(), kick_tx.clone(), queued.clone())
+            else {
                 logln(format!("INFO conn={conn_id} 鉴权后上线被拒(已吊销)account={account} device={device}"));
                 err(tx, err_code::AUTH_FAILED, "鉴权失败");
                 return Step::Close;
-            }
+            };
             logln(format!("INFO conn={conn_id} authed account={account} device={device}"));
-            Step::Become(ConnState::Authed { account, device, pubkey: pk })
+            Step::Become(ConnState::Authed { account, device, pubkey: pk, session_gen })
         }
 
         (ConnState::Fresh, ClientMsg::RegisterFirst { account, device, pubkey, sig }) => {
@@ -240,7 +283,7 @@ async fn dispatch(
                 Ok(()) => {
                     // attach 内联发 Authed + 复核「仍是这把公钥」(注册成功到上线
                     // 之间被 revoke 插队的窗口,同 Auth 分支)。
-                    if !hub.attach_authenticated(
+                    let Some(session_gen) = hub.attach_authenticated(
                         &account,
                         &device,
                         pk,
@@ -248,15 +291,15 @@ async fn dispatch(
                         tx.clone(),
                         kick_tx.clone(),
                         queued.clone(),
-                    ) {
+                    ) else {
                         logln(format!(
                             "INFO conn={conn_id} 首台注册后上线被拒(已吊销)account={account}"
                         ));
                         err(tx, err_code::AUTH_FAILED, "鉴权失败");
                         return Step::Close;
-                    }
+                    };
                     logln(format!("INFO conn={conn_id} 首台注册 account={account} device={device}"));
-                    Step::Become(ConnState::Authed { account, device, pubkey: pk })
+                    Step::Become(ConnState::Authed { account, device, pubkey: pk, session_gen })
                 }
                 Err(RegisterError::Banned | RegisterError::AccountSealed) => {
                     // 封禁 / 账户已封存(#1):同 auth_failed 待遇、断开,不给探测面。
@@ -376,7 +419,7 @@ async fn dispatch(
         }
 
         (
-            ConnState::Authed { account, device, pubkey: session_pub },
+            ConnState::Authed { account, device, pubkey: session_pub, .. },
             ClientMsg::RegisterDevice { account: acct, new_device, new_pubkey, sig_by_old },
         ) => {
             if acct != *account {
@@ -455,7 +498,7 @@ async fn dispatch(
         }
 
         (
-            ConnState::Authed { account, device, pubkey: session_pub },
+            ConnState::Authed { account, device, pubkey: session_pub, .. },
             ClientMsg::SeatLease { account: acct, new_device, new_pubkey, sig_by_old },
         ) => {
             if acct != *account {
@@ -518,6 +561,65 @@ async fn dispatch(
             logln(format!("INFO conn={conn_id} 越权或乱序消息断开:{}", name_of(&other)));
             err(tx, err_code::BAD_REQUEST, "当前状态不允许此消息");
             Step::Close
+        }
+    }
+}
+
+/// 该帧是否过数据桶(169,工序 3):只 Authed 面的 Send/PairMsg 计量;控制帧、未鉴权
+/// `PairJoined` 的 PairMsg(无账户归属)一律不计。返回 (account, device, session_gen)。
+fn throttle_target(state: &ConnState, msg: &ClientMsg) -> Option<(String, String, u64)> {
+    match (state, msg) {
+        (
+            ConnState::Authed { account, device, session_gen, .. },
+            ClientMsg::Send { .. } | ClientMsg::PairMsg { .. },
+        ) => Some((account.clone(), device.clone(), *session_gen)),
+        _ => None,
+    }
+}
+
+enum WaitOutcome {
+    Proceed,
+    Kicked,
+}
+
+/// 限速等待循环(169,临界区外):poll 得处置 → 睡到点 / 等 generation 变化 / kicked。
+/// disp 锁外先读(终态直接归类);watch sender 关闭(Hub 析构=进程停机)按 kicked 退出
+/// (codex 断言④)。kick 走 biased 优先,取消即断——回主循环走 `kicked=true` 收尾。
+async fn throttle_wait(
+    hub: &Arc<Hub>,
+    mut handle: WaitHandle,
+    kick_rx: &mut tokio::sync::mpsc::Receiver<()>,
+) -> WaitOutcome {
+    loop {
+        match handle.disp.load(Ordering::SeqCst) {
+            DISP_ADMITTED | DISP_RELEASED => return WaitOutcome::Proceed,
+            DISP_CANCELLED => return WaitOutcome::Kicked,
+            _ => {}
+        }
+        let now = std::time::Instant::now();
+        match hub.throttle_poll(&handle, now) {
+            PollOutcome::Proceed => return WaitOutcome::Proceed,
+            PollOutcome::Kicked => return WaitOutcome::Kicked,
+            PollOutcome::SleepUntil(deadline) => {
+                let dl = tokio::time::Instant::from_std(deadline);
+                tokio::select! {
+                    biased;
+                    _ = kick_rx.recv() => return WaitOutcome::Kicked,
+                    r = handle.gen_rx.changed() => {
+                        if r.is_err() { return WaitOutcome::Kicked; }
+                    }
+                    _ = tokio::time::sleep_until(dl) => {}
+                }
+            }
+            PollOutcome::WaitGen => {
+                tokio::select! {
+                    biased;
+                    _ = kick_rx.recv() => return WaitOutcome::Kicked,
+                    r = handle.gen_rx.changed() => {
+                        if r.is_err() { return WaitOutcome::Kicked; }
+                    }
+                }
+            }
         }
     }
 }

@@ -447,8 +447,22 @@ async function planGrowMainWindow(
     const targetW = Math.max(900, Math.min((naturalW || 600) + PAD, maxW)); // 笔记本 minWidth 900
     const targetH = Math.max(600, Math.min((naturalH || 400) + PAD, maxH)); // minHeight 600
     if (targetW <= prevW && targetH <= prevH) return null; // 图已放得下,别动窗口(免无谓跳动)
+    // 原地长大,不再无脑 center(用户报:看张图不该把整个主窗甩到屏幕正中):保持原左上角,只在撑大
+    // 后会超出当前显示器时朝内钳最小的一段(窗比屏还大就贴左上角)。全程用物理像素算——outerPosition
+    // 与显示器 position/size 都是物理量,免 DPI 换算误差;取不到显示器信息(mon 为空)才退回旧的居中。
+    let targetPos: PhysicalPosition | null = null;
+    if (mon) {
+      const msf = mon.scaleFactor || 1;
+      const physW = Math.round(targetW * msf); // setSize 用逻辑尺寸;窗在本显示器上,物理尺寸即 ×msf
+      const physH = Math.round(targetH * msf);
+      const maxX = mon.position.x + mon.size.width - physW; // 右不溢出的左上角上界
+      const maxY = mon.position.y + mon.size.height - physH; // 下不溢出的左上角上界
+      const x = Math.max(mon.position.x, Math.min(prevPos.x, maxX)); // 先钳上界再钳下界:窗>屏时落左上
+      const y = Math.max(mon.position.y, Math.min(prevPos.y, maxY));
+      targetPos = new PhysicalPosition(x, y);
+    }
     // restore 与 applyGrow 分开返回:调用方先登记 restore 再 applyGrow,故即使关闭抢在
-    // 放大过程中(setSize/center 的 await 间隙)发生,onClose 也能把窗口还原回去。
+    // 放大过程中(setSize/setPosition 的 await 间隙)发生,onClose 也能把窗口还原回去。
     const restore = async (): Promise<void> => {
       try {
         await win.setSize(new PhysicalSize(prevSize.width, prevSize.height));
@@ -459,7 +473,8 @@ async function planGrowMainWindow(
     };
     const applyGrow = async (): Promise<void> => {
       await win.setSize(new LogicalSize(targetW, targetH));
-      await win.center();
+      if (targetPos) await win.setPosition(targetPos); // 原地长大 + 边界钳位(替代无脑 center)
+      else await win.center(); // 无显示器信息:退回旧的居中行为
     };
     return { restore, applyGrow };
   } catch {
