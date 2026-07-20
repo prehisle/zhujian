@@ -199,3 +199,18 @@
   font-family: var(--font-sans);
   color: #fff;
 }
+
+/* 取字节期间的加载指示(ui-guidelines §3.7):延迟 ~0.2s 淡入——快路径(缓存命中/小图)
+   在指示露脸前就已成形亮相,不给一闪而过的 loading;慢路径才见到它。 */
+.img-lightbox-loading {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  color: #fff;
+  opacity: 0;
+  animation: img-lightbox-loading-in 0.2s ease 0.2s forwards;
+}
+@keyframes img-lightbox-loading-in {
+  to {
+    opacity: 0.85;
+  }
+}

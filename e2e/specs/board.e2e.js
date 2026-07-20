@@ -436,3 +436,46 @@ describe("任务看板 · 文本过滤", () => {
     expect(await browser.execute(() => document.querySelector("#board-filter").value)).toBe("");
   });
 });
+
+describe("任务看板 · 乐观移位即时更新列头计数(163 可优化项①)", () => {
+  // 卡片乐观移位(松手即挪)后,列头「N」徽章过去要等 reorder 的 load() 才刷新,留一拍
+  // 延迟(卡已挪走、数字没动)。此测把 drop 与计数读取放进同一次 execute:drop 处理器同步
+  // 跑完 bumpColCount 后才轮到 reorder 的 await invoke,故此刻读到的必是乐观值、load() 尚未
+  // 回来——delta 即证徽章在手势帧就动了。天然阴性对照:去掉 bumpColCount 则 delta=0、测转红。
+  const M = "计数-即时更新的活";
+
+  before(async () => {
+    await invoke("create_task", { title: M });
+    await goNotebook("board");
+    await (await cardInColumn("todo", M)).waitForExist({ timeout: 8000 });
+  });
+
+  it("跨列 drop:目标列 +1、源列 −1 在同一帧生效(不等 load)", async () => {
+    const snap = await browser.execute(
+      (t, fromSel, toSel) => {
+        const read = (sel) => Number(document.querySelector(sel + " .col-count").textContent);
+        const before = { from: read(fromSel), to: read(toSel) };
+        const card = [...document.querySelectorAll(".tcard")].find((c) => c.textContent.includes(t));
+        const target = document.querySelector(toSel + " .col-body");
+        const dt = new DataTransfer();
+        card.dispatchEvent(new DragEvent("dragstart", { bubbles: true, dataTransfer: dt }));
+        target.dispatchEvent(new DragEvent("dragover", { bubbles: true, cancelable: true, dataTransfer: dt }));
+        target.dispatchEvent(new DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer: dt }));
+        // reorder() 里 load() 是 await 的异步,此刻还没跑;读到的纯是乐观 bump。
+        const after = { from: read(fromSel), to: read(toSel) };
+        card.dispatchEvent(new DragEvent("dragend", { bubbles: true, dataTransfer: dt }));
+        return { before, after };
+      },
+      M,
+      ".col.todo",
+      ".col.doing",
+    );
+
+    expect(snap.after.to - snap.before.to).toBe(1); // 目标列(进行中)同帧 +1
+    expect(snap.before.from - snap.after.from).toBe(1); // 源列(待办)同帧 −1
+
+    // 结算态也对:load() 校正后与后端一致(端到端闭环)。
+    await browser.waitUntil(async () => (await statusOf(M)) === "doing", { timeout: 8000 });
+    await expect(await cardInColumn("doing", M)).toExist();
+  });
+});

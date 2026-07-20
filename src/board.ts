@@ -243,6 +243,10 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
   // Fingerprint of the last rendered state. load() runs on every window refocus
   // (alt-tab back) but skips the DOM rebuild when this matches — refresh without flicker.
   let lastSig = "";
+  // 各列滚动位(status → scrollTop):全量重画 replaceChildren 会把列滚动清零,长列里
+  // 任何写操作后都跳回列顶。load() 重画定局处先记、renderBoard 落 DOM 后还原(与灵感
+  // savedScroll 同规,ui-guidelines §3.6)。mount 级即可——同 lastSig,视图重挂即重来。
+  const colScroll = new Map<string, number>();
   // load() 代次(codex 二审 H1):并发/重叠的 load 里,await 回来若已非最新那一发就不许
   // 落 DOM——否则旧响应会盖掉新响应、并拆掉刚设好的跳转脉冲。跨视图跳转的 focus 消费也
   // 挪到 load() 同步入口(见下),boardView 中途被 G/R 切走也不会把 focusId 悬着。
@@ -321,6 +325,15 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
 
   function clearDropHovers(): void {
     board.querySelectorAll(".drop-hover").forEach((e) => e.classList.remove("drop-hover"));
+  }
+
+  // 乐观移位改了某列的成员数,同一帧把列头计数徽章也改掉——否则它要等随后的 load() 才刷新,
+  // 会留下「卡已挪走、数字还没动」的一拍延迟(手势即回执 ui-guidelines §3.6 的完形)。真相仍
+  // 由 load() 校正:成功值相同、失败时连卡带数字一起复原。列 section 的 class 是 `col ${status}`、
+  // 每列只有一个 .col-count,按状态即可唯一定位(状态恒是字母数字 CSS token,选择器安全)。
+  function bumpColCount(status: string, delta: number): void {
+    const span = board.querySelector<HTMLElement>(`.col.${status} .col-count`);
+    if (span) span.textContent = String(Number(span.textContent) + delta);
   }
 
   // ---- drag-reorder helpers --------------------------------------------------
@@ -985,6 +998,9 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
           ? [...targetBody.querySelectorAll<HTMLElement>(".tcard")].map((x) => x.dataset.taskId!)
           : [];
         const ordered = [...base, item.id];
+        targetBody?.append(c); // 手势即回执:按键即挪到目标列尾(与拖放同规),load() 校正
+        bumpColCount(item.status, -1); // 移列必跨列:源 −1、目标 +1(与拖放同规)
+        bumpColCount(toStatus, 1);
         if (filtered) reorderVisible(item.id, item.status, toStatus, base, ordered);
         else reorder(item.id, item.status, toStatus, base, ordered);
       }
@@ -1248,6 +1264,9 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         clearDropHovers();
         detachDropLine();
         if (!d) return;
+        // 上一单还在途:整个手势不接——reorder() 会静默拒,先做乐观移位会留下无人
+        // 持久化的假位置(手势即回执的旁路复核:不落账就不动 DOM)。
+        if (busy) return;
         // The target column's current order (DOM): includes the dragged card for a
         // same-column move, excludes it for a cross-column one — matching what the
         // backend sees as `base_target_ids` before the move.
@@ -1257,6 +1276,17 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         const ordered = [...others.slice(0, idx), d.id, ...others.slice(idx)];
         // Same column, unchanged order → nothing to persist.
         if (d.from === status && ordered.join(" ") === base.join(" ")) return;
+        // 手势即回执(ui-guidelines §3.6):松手这一帧就把卡挪进落点——此前视觉上原卡
+        // 一直留在旧位,dragend 摘掉半透明后会「先弹回原位、重载后再跳到目标」。base
+        // 已按移动前的 DOM 取好,这里挪的只是元素;真相由随后的 load() 校正(失败同样
+        // 由它复原)。ULID 仅字母数字,选择器安全。
+        const dropped = board.querySelector<HTMLElement>(`[data-task-id="${d.id}"]`);
+        if (dropped) body.insertBefore(dropped, after);
+        // 跨列才改列计数:源列 −1、目标列 +1(同列内重排成员数不变,故按 from≠target 判)。
+        if (d.from !== status) {
+          bumpColCount(d.from, -1);
+          bumpColCount(status, 1);
+        }
         if (filtered) reorderVisible(d.id, d.from, status, base, ordered);
         else reorder(d.id, d.from, status, base, ordered);
       });
@@ -1281,12 +1311,22 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       zone.classList.remove("drop-hover");
       const d = dragging;
       dragging = null;
+      if (!d || d.from !== "done") return;
       // 真归档(成就册),不再是丢回收站——「归档」一词自此只有一个意思(概念隔离)。
-      if (d && d.from === "done") sealOne(d.id);
+      // 手势即回执:松手即离场,不等重载才消失;失败由 sealOne 内的 load() 复原。
+      board.querySelector(`[data-task-id="${d.id}"]`)?.remove();
+      bumpColCount("done", -1); // 卡即刻离场,「已完成」计数同帧扣掉,别等 sealOne 内的 load()
+      sealOne(d.id);
     });
 
     const cols_wrap = el("div", { className: "cols" }, cols);
     board.replaceChildren(cols_wrap, zone);
+    // 还原各列滚动位(记录见 load() 重画定局处;列变短时 scrollTop 由浏览器自钳位)。
+    for (const sec of board.querySelectorAll<HTMLElement>(".col")) {
+      const colBody = sec.querySelector<HTMLElement>(".col-body");
+      const col = COLUMNS.find(({ status }) => sec.classList.contains(status));
+      if (colBody && col) colBody.scrollTop = colScroll.get(col.status) ?? 0;
+    }
   }
 
   function renderTrash(items: TaskItem[]): void {
@@ -1444,6 +1484,13 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
           void load();
           return;
         }
+      }
+      // 重画已定局:先记下各列滚动位(renderBoard 落 DOM 后还原;切去回收站/归档再回
+      // 来,还原的也是看板上一次的现场)。
+      for (const sec of board.querySelectorAll<HTMLElement>(".col")) {
+        const colBody = sec.querySelector<HTMLElement>(".col-body");
+        const col = COLUMNS.find(({ status }) => sec.classList.contains(status));
+        if (colBody && col) colScroll.set(col.status, colBody.scrollTop);
       }
       hk.reset();
       disarmConfirm(); // 卡片将被整批替换:在场确认的文档级监听一并收走

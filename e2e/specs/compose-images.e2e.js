@@ -106,3 +106,63 @@ describe("新建入口配图 · 看板「新建任务」粘贴", () => {
     await invoke("purge_task", { id: taskId });
   });
 });
+
+// 点暂存缩略图 → openLightboxUrl(无放大分支,笔记本窗:pendingImages 未传 openPreview)。
+// 163④/166④ 把这条路径改成与 openLightbox 同一套「布局未定不显示 → 定形亮相」时序:img 出生
+// 即隐形零占位,init() 定形后一次成形亮相。这里断言点开后 img 确实经 init 亮相(visibility 非
+// hidden、渲染宽 == 图宽 = fit 1:1),而非停在出生隐形态。阴性对照:注掉 openLightboxUrl 的
+// viewer.init() → img 停在 width:0/visibility:hidden,waitUntil 超时真红(2026-07-20 实跑验过)。
+describe("新建入口配图 · 点暂存预览开 lightbox(无放大分支)", () => {
+  before(async () => {
+    await goNotebook("inbox");
+    await clearInbox();
+  });
+
+  it("点暂存缩略图 → lightbox 按图尺寸成形亮相;Esc 关闭", async () => {
+    const input = await $(".v-inbox .compose-input");
+    await input.waitForExist({ timeout: 10000 });
+    await input.click();
+
+    // 造一张 400×300 真 PNG 贴进灵感 compose 条(1×1 太小看不出布局)。
+    await browser.execute(async () => {
+      const c = document.createElement("canvas");
+      c.width = 400;
+      c.height = 300;
+      const ctx = c.getContext("2d");
+      ctx.fillStyle = "#c33";
+      ctx.fillRect(0, 0, 400, 300);
+      const blob = await new Promise((res) => c.toBlob(res, "image/png"));
+      const file = new File([blob], "big.png", { type: "image/png" });
+      const dt = new DataTransfer();
+      dt.items.add(file);
+      const ev = new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true });
+      document.querySelector(".v-inbox .compose-input").dispatchEvent(ev);
+    });
+    const thumb = await $(".v-inbox .compose .img-pending .img-thumb .img-thumb-img");
+    await thumb.waitForExist({ timeout: 5000 });
+    await thumb.click(); // → openLightboxUrl(url),无 grow 分支
+
+    await $(".img-lightbox .img-lightbox-img").waitForExist({ timeout: 5000 });
+    // 定形亮相:非隐形(init 跑过)且渲染宽 == 400(fit 1:1,图 < 视口 → 不放大)。
+    await browser.waitUntil(
+      async () =>
+        browser.execute(() => {
+          const img = document.querySelector(".img-lightbox .img-lightbox-img");
+          if (!img) return false;
+          const cs = getComputedStyle(img);
+          return cs.visibility !== "hidden" && Math.round(img.getBoundingClientRect().width) === 400;
+        }),
+      { timeout: 5000, timeoutMsg: "lightbox 图未定形亮相(仍隐形/非 400 宽 = init 未跑或布局错)" },
+    );
+
+    await browser.keys("Escape");
+    await browser.waitUntil(async () => (await $$(".img-lightbox")).length === 0, {
+      timeout: 5000,
+      timeoutMsg: "Esc 未关闭 lightbox",
+    });
+
+    // 清掉暂存预览(未回车 → 未入库,只需摘预览),不给后续 spec 留状态。
+    const del = await $(".v-inbox .compose .img-pending .img-del");
+    if (await del.isExisting()) await del.click();
+  });
+});

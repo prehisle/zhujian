@@ -31,6 +31,65 @@ export function listImages(itemId: string): Promise<ImageMeta[]> {
   return invoke<ImageMeta[]>("list_item_images", { itemId });
 }
 
+// 图字节内存纪律(163② 学安卓 117):缩略图条**每张卡都渲染只读小图**、桌面又无懒加载,
+// 若像 163③ 那样按 id 缓「全尺寸 data URL」,缓存会随图库线性膨胀且永不释放——base64 是 JS
+// 强引用字符串,不受 WebView 图片缓存的压力驱逐;且每个 <img> 还常驻解码整张全尺寸位图。
+// 改为:缩略图**过 canvas 降采样成 ≤144² 方裁小图**(与 .img-thumb 的 72² object-fit:cover
+// 同款中心裁,视觉不变),只缓小图;lightbox 要全尺寸,只留「最近看过的 1 张」(二开秒显、
+// 又不无界)。两处都只缓**已到手的字符串**、不缓 Promise——统一 invoke 包装把跨空间迟到响应
+// 变成「永不决议」(space.ts stale),缓 Promise 会把这种挂起永久钉进 Map(163③ 教训)。
+// 图不可变(只增删不改,0016)故小图永不失效,删图时清项。
+const thumbCache = new Map<string, string>(); // imageId → 降采样 ≤144² data URL
+
+// lightbox 的全尺寸缓存:只留最近看过的一张(换图即顶掉旧的 → 至多 1 张全尺寸常驻)。
+let lastFull: { id: string; url: string } | null = null;
+
+/** 全尺寸字节 → data URL(lightbox 用)。命中「刚看过那张」秒回,否则取回并顶掉旧的。 */
+function getFullImage(imageId: string): Promise<string> {
+  if (lastFull && lastFull.id === imageId) return Promise.resolve(lastFull.url);
+  return invoke<string>("get_item_image", { imageId }).then((url) => {
+    lastFull = { id: imageId, url }; // 旧 url 无人引用即可回收(至多留 1 张全尺寸)
+    return url;
+  });
+}
+
+// 降采样(安卓 117 手法):一律过 canvas 重编码成 ≤144² 的 cover 方裁——原图哪怕像素尺寸小
+// 也可能字节巨大(多帧/元数据),直接缓原 data URL = 缓存无界;只钉短边则超宽长图 thumb 仍
+// 巨大,故两边都钉死。小图不放大、照样重编码;透明 PNG 经 JPEG 扁平化会失透明(与安卓一致,
+// lightbox 看的仍是原图)。解码失败响亮 reject,调用方标 .broken。
+const THUMB_PX = 144;
+function shrinkToThumb(url: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = (): void => {
+      const crop = Math.min(img.naturalWidth, img.naturalHeight); // 原图中央方形
+      const side = Math.min(THUMB_PX, crop);
+      const c = document.createElement("canvas");
+      c.width = side;
+      c.height = side;
+      const ctx = c.getContext("2d");
+      if (!ctx) return reject(new Error("canvas 2d 上下文不可用"));
+      // 中央方裁 → 缩到 side×side(cover;source rect 居中,dest 铺满)。
+      ctx.drawImage(img, (img.naturalWidth - crop) / 2, (img.naturalHeight - crop) / 2, crop, crop, 0, 0, side, side);
+      resolve(c.toDataURL("image/jpeg", 0.8));
+    };
+    img.onerror = (): void => reject(new Error("图片解码失败"));
+    img.src = url;
+  });
+}
+
+/** 缩略图小图(缩略图条用):命中缓存秒回,否则取全尺寸→降采样→只缓小图(全尺寸随即丢弃)。 */
+function getThumb(imageId: string): Promise<string> {
+  const hit = thumbCache.get(imageId);
+  if (hit !== undefined) return Promise.resolve(hit);
+  return invoke<string>("get_item_image", { imageId })
+    .then(shrinkToThumb)
+    .then((small) => {
+      thumbCache.set(imageId, small);
+      return small;
+    });
+}
+
 // Blob -> base64 (no data: prefix) for the IPC hop. Chunked so a large image never
 // blows the argument limit of String.fromCharCode(...spread).
 async function toBase64(blob: Blob): Promise<string> {
@@ -115,6 +174,13 @@ function makeImageViewer(
 ): { init: () => void; cleanup: () => void; signal: AbortSignal } {
   const ac = new AbortController();
   const { signal } = ac;
+  // 布局未定不显示(ui-guidelines §3.7):.img-lightbox-img 无 CSS 尺寸约束,宽高全靠下面
+  // layout() 写——从 src 解码到 init() 之间隔着取字节/量窗/放大窗数个 await,裸渲染会以
+  // 原始尺寸闪现、随窗口放大反排、最后猛缩定位(2026-07-19 用户实测的「过渡状态」)。
+  // 故出生即隐形零占位,init() 定形后一次成形亮相。
+  img.style.visibility = "hidden";
+  img.style.width = "0px";
+  img.style.height = "0px";
   const PAD = 32; // 与 .img-lightbox-stage padding 一致
   const DRAG_THRESHOLD = 4; // px:超过才算拖动(否则算单击)
   const CLICK_DELAY = 500; // ms:单击关闭延迟 ≥ 系统双击判定,免真双击被第一击提前关(H1)
@@ -174,6 +240,7 @@ function makeImageViewer(
       s.scrollTop = 0;
       s.scrollLeft = 0;
     }
+    img.style.visibility = ""; // 定形完毕,一次成形亮相(与构造时的出生隐形配对)
   };
 
   // 光标锚点缩放:用 img 真实 rect 算光标在图内的归一坐标,缩放后调 scroll 让它回到光标处
@@ -400,13 +467,43 @@ async function planGrowMainWindow(
   }
 }
 
+/** 放大窗口的 IPC 返回不等于 WebView 视口已更新(WM_SIZE→webview 重排→JS resize 异步
+ *  到达)。init() 若用旧视口布局,亮相后会被迟到的 resize 再排一次——尺寸可见地跳一记
+ *  (163 续案,超高图最显眼)。这里等视口真离开放大前的尺寸并连续两帧稳定再放行;600ms
+ *  兜底——setSize 被拒/无效时视口永不变,超时按当前视口布局(等于旧行为,不更糟)。 */
+function viewportSettle(preW: number, preH: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    const t0 = performance.now();
+    let lastW = -1;
+    let lastH = -1;
+    let stable = 0;
+    const tick = (): void => {
+      if (signal.aborted) return resolve(); // 关闭抢先:立即放行,调用方靠 closed 止步
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+      if ((w !== preW || h !== preH) && w === lastW && h === lastH) {
+        stable += 1;
+        if (stable >= 2) return resolve();
+      } else stable = 0;
+      lastW = w;
+      lastH = h;
+      if (performance.now() - t0 > 600) return resolve();
+      requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  });
+}
+
 /** A full-window overlay showing a SAVED image at full size (bytes load lazily as a data:
  *  URL by id). 滚轮缩放 / 滚动、拖动平移、双击切取向;click backdrop 或 Esc 关闭(见 makeImageViewer)。
  *  在暗遮罩下把主窗撑到近屏幕(planGrowMainWindow),关闭时先摘监听再还原窗口——两步都在
  *  遮罩仍覆盖时发生,无裸窗闪(与捕获窗同纪律)。 */
 export async function openLightbox(imageId: string, seq: number): Promise<void> {
   const img = el("img", { className: "img-lightbox-img", alt: `图${seq}` });
-  const stage = el("div", { className: "img-lightbox-stage" }, [img]);
+  // 取字节/解码/定窗期间的加载指示(§3.7 审计 #14):CSS 延迟淡入,快路径(命中「刚看过」的
+  // 全尺寸缓存)一闪而过时不露脸;init 前 remove,showError 的 replaceChildren 也会带走它。
+  const loading = el("div", { className: "img-lightbox-loading", textContent: "图片载入中…" });
+  const stage = el("div", { className: "img-lightbox-stage" }, [loading, img]);
   let closed = false;
   let restore: (() => Promise<void>) | null = null;
   let grow: Promise<void> | null = null; // 进行中的放大;关闭须等它跑完(成/败)再唯一一次还原(H4)
@@ -423,7 +520,7 @@ export async function openLightbox(imageId: string, seq: number): Promise<void> 
     overlay.replaceChildren(el("div", { className: "img-lightbox-err", textContent: "图片加载失败" }));
   };
   try {
-    const src = await invoke<string>("get_item_image", { imageId });
+    const src = await getFullImage(imageId);
     if (closed) return;
     // 图解码出来才知道自然尺寸 → 据此把主窗撑到近屏幕(在暗遮罩下 resize,无闪)。load 监听走
     // viewer.signal:关闭时随 cleanup 一起摘、并由 abort 事件让本 Promise 必定 settle(M5)。
@@ -441,33 +538,89 @@ export async function openLightbox(imageId: string, seq: number): Promise<void> 
     const plan = await planGrowMainWindow(img.naturalWidth, img.naturalHeight);
     if (closed) return; // 关在放大前:窗口没动,onClose 里 restore 仍 null,无需还原
     if (plan) {
+      const preW = window.innerWidth; // 放大前的视口:viewportSettle 以「离开此尺寸」为信号
+      const preH = window.innerHeight;
       restore = plan.restore; // 先登记还原,再启动放大:onClose 会等 grow 完再还原(串行,不并发)
       grow = plan.applyGrow();
       await grow.catch(() => {}); // 放大失败不致命(权限/重启未生效时窗口保持原尺寸)
       if (closed) return; // 关已在放大中发生:onClose 负责等 grow + 还原,这里不再动
+      await viewportSettle(preW, preH, viewer.signal); // 视口真落定再布局,亮相后不再被迟到 resize 重排
+      if (closed) return;
     }
-    viewer.init(); // 窗口已定尺(放大过或没放大)→ 挑取向 + 布局一次
+    loading.remove();
+    viewer.init(); // 窗口已定尺(放大过或没放大)→ 挑取向 + 布局一次 + 亮相
   } catch {
     showError();
   }
 }
 
 /** A full-window overlay showing an image from a ready src (object URL / data URL) — for an
- *  unsaved preview (e.g. a just-pasted capture image, which has no id yet). `onClose` runs
- *  after it closes (the capture window uses it to shrink back after growing for the preview). */
-export function openLightboxUrl(src: string, alt = "预览", onClose?: () => void | Promise<void>): void {
-  const img = el("img", { className: "img-lightbox-img", alt, src });
-  const stage = el("div", { className: "img-lightbox-stage" }, [img]);
+ *  unsaved preview (e.g. a just-pasted capture image, which has no id yet). `opts.onClose` runs
+ *  after it closes; `opts.grow`(捕获窗传入)把浮窗放大到图的近原尺寸——`apply` 在暗遮罩下
+ *  放大、`restore` 关闭时缩回。**放大→视口落定→亮相**的无闪时序由本函数统一负责(与已保存图
+ *  的 openLightbox 同纪律,163 续案):先前捕获窗是「先小窗 init、放大后 resize 重挑」,亮相后
+ *  被迟到的 resize 重排一次(尺寸可见跳一记);现改为图先隐形解码、窗口在暗遮罩下放大、viewport
+ *  真落定后一次成形亮相。放大/解码期间显「图片载入中…」加载指示(§3.7,快路径 <0.2s 不露脸)。 */
+export function openLightboxUrl(
+  src: string,
+  alt = "预览",
+  opts: {
+    onClose?: () => void | Promise<void>;
+    grow?: { apply: () => Promise<void>; restore: () => Promise<void> };
+  } = {},
+): void {
+  const img = el("img", { className: "img-lightbox-img", alt });
+  const loading = el("div", { className: "img-lightbox-loading", textContent: "图片载入中…" });
+  const stage = el("div", { className: "img-lightbox-stage" }, [loading, img]);
+  let closed = false;
+  let restore: (() => Promise<void>) | null = null;
+  let grow: Promise<void> | null = null; // 进行中的放大;关闭须等它跑完(成/败)再唯一一次还原(H4)
   const viewer = makeImageViewer(img, () => close());
-  // 关闭:先摘缩放/滚动监听(含 window resize),再跑调用方的 onClose(捕获窗的缩回)。
-  const { close } = mountLightbox(stage, async () => {
+  // 关闭:先摘缩放/滚动监听(含 window resize),等在途放大跑完再唯一一次还原窗口,最后跑调用方
+  // 的 onClose——都在暗遮罩仍覆盖时发生,无裸窗闪(与 openLightbox 同纪律)。
+  const { overlay, close } = mountLightbox(stage, async () => {
+    closed = true; // 关标志:让下面异步流每个 await 后止步
     viewer.cleanup();
-    await onClose?.();
+    if (grow) await grow.catch(() => {}); // 等放大真正结束,避免 restore 与放大并发
+    if (restore) await restore(); // 仍在暗遮罩下还原窗口几何(只此一次)
+    await opts.onClose?.();
   });
-  // src 已就绪:load 后(拿到自然尺寸)挑取向布局一次;window 放大后 resize 会自动重挑取向。
-  // load 监听走 viewer.signal(关闭随 cleanup 一起摘);init 内部也查 signal.aborted 双保险。
-  if (img.complete && img.naturalWidth > 0) viewer.init();
-  else img.addEventListener("load", () => viewer.init(), { once: true, signal: viewer.signal });
+  const showError = (): void => {
+    if (closed) return;
+    viewer.cleanup();
+    overlay.replaceChildren(el("div", { className: "img-lightbox-err", textContent: "图片加载失败" }));
+  };
+  void (async () => {
+    try {
+      // src 已就绪(object URL / data URL),但大截图仍要解码——等 load 拿到自然尺寸再走(图此刻
+      // 隐形,不闪)。监听走 viewer.signal:关闭随 cleanup 一起摘、abort 让本 Promise 必定 settle。
+      await new Promise<void>((resolve) => {
+        img.addEventListener("load", () => resolve(), { once: true, signal: viewer.signal });
+        img.addEventListener("error", () => resolve(), { once: true, signal: viewer.signal });
+        viewer.signal.addEventListener("abort", () => resolve(), { once: true });
+        img.src = src;
+      });
+      if (closed) return;
+      if (img.naturalWidth === 0) {
+        showError();
+        return;
+      }
+      if (opts.grow) {
+        const preW = window.innerWidth; // 放大前视口:viewportSettle 以「离开此尺寸」为信号
+        const preH = window.innerHeight;
+        restore = opts.grow.restore; // 先登记还原,再启动放大:onClose 会等 grow 完再还原(串行)
+        grow = opts.grow.apply();
+        await grow.catch(() => {}); // 放大失败不致命(权限/重启未生效时窗口保持原尺寸)
+        if (closed) return;
+        await viewportSettle(preW, preH, viewer.signal); // 视口真落定再布局,不被迟到 resize 重排
+        if (closed) return;
+      }
+      loading.remove();
+      viewer.init(); // 窗口已定尺(放大过或没放大)→ 挑取向 + 布局一次 + 亮相
+    } catch {
+      showError();
+    }
+  })();
 }
 
 /** A thumbnail strip for an item's images. `editable` adds a × to delete each one (used in a
@@ -484,9 +637,9 @@ export function imageStrip(
   function thumb(m: ImageMeta): HTMLElement {
     const wrap = el("div", { className: "img-thumb" });
     const img = el("img", { className: "img-thumb-img", alt: `图${m.seq}`, title: `图${m.seq}` });
-    invoke<string>("get_item_image", { imageId: m.id })
+    getThumb(m.id)
       .then((url) => {
-        img.src = url;
+        img.src = url; // 缓存命中=同帧微任务落 src,重渲不再逐张闪现(且落的是小图,不解全尺寸位图)
       })
       .catch(() => {
         wrap.classList.add("broken");
@@ -505,6 +658,8 @@ export function imageStrip(
         } catch {
           return; // leave the thumb in place if the delete failed
         }
+        thumbCache.delete(m.id); // 内存卫生:小图缓存清项
+        if (lastFull && lastFull.id === m.id) lastFull = null; // 连带清掉可能命中的「刚看过」
         await reload();
         opts.onChange?.();
       });

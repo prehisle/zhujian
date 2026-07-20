@@ -111,13 +111,10 @@ async function fitWindow(): Promise<void> {
 // Click a pasted preview → show a lightbox, growing the capture window so the image is near
 // its real size (capped to ~92% of the monitor); restore the compact box on close.
 //
-// Order matters to avoid flicker: mount the dark overlay FIRST (it covers the window), THEN
-// resize under it — otherwise the bare enlarged window (transparent + the small slip) flashes
-// before the overlay appears. On close, mountLightbox shrinks the window (via onClose) while
-// the overlay is still up, then tears it down — so there's no bare-window flash either way.
-async function openPreviewLarge(url: string, naturalW: number, naturalH: number): Promise<void> {
-  let closed = false;
-  let grow: Promise<void> | null = null; // 进行中的放大;关闭须等它跑完再唯一一次缩回(H4)
+// 无闪时序全交给 openLightboxUrl(与已保存图的 openLightbox 同纪律,163 续案):它先在暗遮罩
+// 下放大(apply)、等 viewport 真落定再让图一次成形亮相,关闭时(遮罩仍覆盖)先等放大跑完再
+// 缩回(restore)——本函数只提供「怎么放大 / 怎么缩回」两个钩子,放大/关闭的编排不再自管。
+function openPreviewLarge(url: string, naturalW: number, naturalH: number): void {
   const shrink = async (): Promise<void> => {
     try {
       await appWindow.setSize(new LogicalSize(WIN_W, lastH));
@@ -126,36 +123,26 @@ async function openPreviewLarge(url: string, naturalW: number, naturalH: number)
       /* nothing to restore if the grow didn't happen */
     }
   };
-  openLightboxUrl(url, "预览", async () => {
-    closed = true; // 关标志:别把还没跑完的放大留成孤儿
-    if (grow) await grow.catch(() => {}); // 等放大真正结束(在遮罩仍覆盖时),免裸窗短暂放大再缩
-    await shrink();
-  });
-
-  let maxW = 1280;
-  let maxH = 880;
-  try {
-    const mon = await currentMonitor();
-    if (mon) {
-      const sf = mon.scaleFactor || 1;
-      maxW = Math.floor((mon.size.width / sf) * 0.92);
-      maxH = Math.floor((mon.size.height / sf) * 0.92);
+  const growWindow = async (): Promise<void> => {
+    let maxW = 1280;
+    let maxH = 880;
+    try {
+      const mon = await currentMonitor();
+      if (mon) {
+        const sf = mon.scaleFactor || 1;
+        maxW = Math.floor((mon.size.width / sf) * 0.92);
+        maxH = Math.floor((mon.size.height / sf) * 0.92);
+      }
+    } catch {
+      // no monitor info — fall back to the generous fixed cap
     }
-  } catch {
-    // no monitor info — fall back to the generous fixed cap
-  }
-  if (closed) return; // 关在测显示器前:窗口未放大,无需善后
-  const PAD = 56; // lightbox padding + a little breathing room
-  const w = Math.max(420, Math.min((naturalW || 600) + PAD, maxW));
-  const h = Math.max(320, Math.min((naturalH || 400) + PAD, maxH));
-  grow = (async (): Promise<void> => {
+    const PAD = 56; // lightbox padding + a little breathing room
+    const w = Math.max(420, Math.min((naturalW || 600) + PAD, maxW));
+    const h = Math.max(320, Math.min((naturalH || 400) + PAD, maxH));
     await appWindow.setSize(new LogicalSize(w, h));
     await appWindow.center();
-  })();
-  await grow.catch(() => {
-    // can't grow (perms/restart pending) — the lightbox still shows, just window-bounded.
-  });
-  // 若期间已关闭:onClose 会 await 这个 grow 再 shrink,故此处无需再动窗口。
+  };
+  openLightboxUrl(url, "预览", { grow: { apply: growWindow, restore: shrink } });
 }
 
 // Images pasted while composing, held in memory until save — the shared pendingImages

@@ -2524,7 +2524,6 @@ mod tests {
 
     // 半途态恢复测试用的第二个账户(合法 ULID 形态;open-signup 起准入开放,
     // 定点账户直接可用,不再需要预签)。
-    const ACCT2: &str = "01AAAAAAAAAAAAAAAAAAAACCT2";
 
     /// 带 admin 面(吊销接口)的测试服务器(封禁表为空 = 全放行)。
     async fn start_server_with_admin() -> (SocketAddr, SocketAddr, &'static str) {
@@ -3093,6 +3092,94 @@ mod tests {
                 Some(new_id.as_str())
             );
         }
+    }
+
+    /// seat_limit 的 opener 收口(billing-plan §5 工序 2,160 可优化项①专测):
+    /// 开槽后配额降档(pair_open 前置拒管不到的竞态窗口),注册撞商业层
+    /// seat_limit 时 opener 必须 fail_pair 烧槽——PairClose 发到服务器、joiner
+    /// 立刻收到对端中止(而不是挂满 600s 码 TTL)、opener 报「席位已满」人话且
+    /// 配对态清场;随后的 PairStart 走 pair_open 前置拒,拿到的同样是席位人话
+    /// 而不是「已有配对在进行中」。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn seat_limit_mid_pair_opener_burns_slot_with_pair_close() {
+        let (addr, admin, token) = start_server_with_admin().await;
+        let url = format!("ws://{addr}");
+        let (db_a, clock_a, dir_a) = test_db("seat-a");
+        create_account_as(&db_a, &url, Some(ACCT)).await.unwrap();
+        let mut rig_a = spawn_transport(db_a, clock_a, dir_a);
+        wait_state(&rig_a.status, "online").await;
+
+        // 免费档 2 席、现 1 席:前置闸放行,正常出码。
+        let (tx, rx) = oneshot::channel();
+        rig_a.control.send(Control::PairStart { reply: tx }).await.unwrap();
+        let code = timeout(Duration::from_secs(10), rx).await.unwrap().unwrap().unwrap();
+
+        // joiner 停在 gate 停点;主流程趁机把配额压到 1,再放行——Enroll/注册
+        // 必然发生在降档之后,竞态窗口是确定性构造的。
+        let (reached_tx, mut reached_rx) = mpsc::unbounded_channel::<()>();
+        let (proceed_tx, proceed_rx) = std::sync::mpsc::channel::<()>();
+        let (db_b, _clock_b, _dir_b) = test_db("seat-b");
+        let join = tokio::spawn({
+            let db_b = db_b.clone();
+            let url = url.clone();
+            async move {
+                pair_join(&db_b, &url, &code, move |_| {
+                    reached_tx.send(()).expect("主流程先于 gate 消失");
+                    proceed_rx
+                        .recv_timeout(Duration::from_secs(30))
+                        .map_err(|_| "测试超时:主流程没放行 gate".to_string())
+                })
+                .await
+            }
+        });
+        timeout(Duration::from_secs(15), reached_rx.recv())
+            .await
+            .expect("joiner 未到 gate 停点")
+            .expect("gate 信道断了");
+        let resp = admin_post(
+            admin,
+            token,
+            &format!("/admin/entitlement?account={ACCT}&tier=test&seat_quota=1&fastlane_bytes_per_month=1"),
+        )
+        .await;
+        assert!(resp.starts_with("HTTP/1.1 200"), "压到 1 席应 200:{resp}");
+        proceed_tx.send(()).expect("joiner 已死,gate 无人收");
+
+        // joiner 侧:注册被拒后 opener 烧槽,PairPeer::Closed 秒级到达——若 opener
+        // 没发 PairClose,这里会挂到 join 超时(= 红,烧槽契约的行为证明)。
+        let err = timeout(Duration::from_secs(30), join)
+            .await
+            .expect("joiner 未在限时内收到对端中止(opener 没烧槽?)")
+            .unwrap()
+            .unwrap_err();
+        assert!(err.contains("中止"), "joiner 要拿到对端中止人话:{err}");
+        {
+            let conn = db_b.lock().unwrap();
+            assert!(load_config(&conn).unwrap().is_none(), "注册未成,joiner 配置一个键都不写");
+        }
+
+        // opener 侧:配对失败事件带席位人话。
+        let detail = loop {
+            match timeout(Duration::from_secs(15), rig_a.events.recv())
+                .await
+                .expect("opener 未上报配对失败")
+                .expect("事件信道断了")
+            {
+                SyncEvent::Pair { phase: "failed", detail } => break detail,
+                _ => {}
+            }
+        };
+        assert!(detail.contains("席位已满"), "失败事件要给席位人话:{detail}");
+
+        // 配对态已清场:重试不撞「已有配对在进行中」,而是 pair_open 前置拒的
+        // 同一句席位人话(quota=1 已满)——两层闸给同一出口。
+        for _ in 0..2 {
+            let (tx, rx) = oneshot::channel();
+            rig_a.control.send(Control::PairStart { reply: tx }).await.unwrap();
+            let err = timeout(Duration::from_secs(10), rx).await.unwrap().unwrap().unwrap_err();
+            assert!(err.contains("席位已满"), "前置拒也要给席位人话:{err}");
+        }
+        rig_a.task.abort();
     }
 
     /// §1.3(codex r2 N1):壳层放弃等待(receiver drop)后,迟到的 PairSlot 不得把
