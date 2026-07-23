@@ -44,6 +44,8 @@ describe("任务看板 · 归档(成就册,可查不可删)", () => {
     await goNotebook("board");
     // NB: a `*=text` selector can't follow a descendant combinator — chain the $() calls.
     await $(".col.done").$(`.tcard*=${A}`).waitForExist({ timeout: 10000 });
+    // 完成时刻(0030 writer):进 done 那条边盖了 done_at,已完成卡显示「完成于」小字。
+    await expect($(".col.done").$(`.tcard*=${A}`).$(".done-at")).toExist();
 
     // 待办卡的菜单没有「归档」;已完成卡有。
     expect(await boardMenuHas(TODO, "归档")).toBe(false);
@@ -57,6 +59,8 @@ describe("任务看板 · 归档(成就册,可查不可删)", () => {
     // 归档 ≠ 删除:回收站里没有它;sealed_at 已盖上(时间轴分组的依据)。
     expect((await invoke("list_archived_tasks")).some((x) => x.title === A)).toBe(false);
     expect((await sealedRow(A)).sealed_at).toBeTruthy();
+    // 完成时刻随行到归档册(0030):归档册按 done_at ?? sealed_at 分组/排序。
+    expect((await sealedRow(A)).done_at).toBeTruthy();
   });
 
   it("归档视图:时间轴分组、不可删;取消归档 → 回「已完成」列", async () => {
@@ -64,9 +68,10 @@ describe("任务看板 · 归档(成就册,可查不可删)", () => {
     const card = await $(".trash-list").$(`.tcard*=${A}`);
     await card.waitForExist({ timeout: 8000 });
     await expect($(".tl-date")).toExist(); // 按归档日分组的日期标头
-    // 60:头部一行统计(本周入册 + 累计,纯派生、只算不存)。刚归档的 A 就在本周。
+    // 头部一行统计(本周完成 + 累计,纯派生、只算不存;0030 决定 A:按完成日计数)。
+    // 刚 seed→done→归档的 A 完成日=今天,必在本周。
     const statsText = await (await $(".trash-bar .grow")).getText();
-    expect(/^本周归档 [1-9]\d* · 累计 [1-9]\d*$/.test(statsText)).toBe(true);
+    expect(/^本周完成 [1-9]\d* · 累计 [1-9]\d*$/.test(statsText)).toBe(true);
 
     // 不可删:软删/彻底删的命令层都 fail-fast(DB 触发器是终极后盾)。
     const row = await sealedRow(A);

@@ -35,6 +35,7 @@ class MainActivity : TauriActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
     enableEdgeToEdge()
     stashSharedText(intent) // 冷启动:分享拉起进程,先落文件再起 WebView。
+    stashDeepLink(intent) // 冷启动:深链接拉起进程,同样先落文件(前端 take_deep_link 取走)。
     super.onCreate(savedInstanceState)
     onBackPressedDispatcher.addCallback(this, object : androidx.activity.OnBackPressedCallback(true) {
       // single-flight(codex 补审 M3):JS 应答/超时未归前,重复返回丢弃(JS 侧对
@@ -79,10 +80,12 @@ class MainActivity : TauriActivity() {
 
   override fun onNewIntent(intent: Intent) {
     stashSharedText(intent) // 热启动(singleTask):先落文件,再让 tauri 插件链看 intent。
+    stashDeepLink(intent) // 热启动:深链接同样先落文件。
     super.onNewIntent(intent)
-    // 活动可能全程前台收到分享(不触发 visibilitychange):补一记事件戳。
+    // 活动可能全程前台收到分享/深链接(不触发 visibilitychange):补一记事件戳。
     // WebView 没就绪/事件丢了都无妨——文件才是真相源,回前台或下次启动照样取走。
     webView?.evaluateJavascript("window.dispatchEvent(new Event('zhujian-share'))", null)
+    webView?.evaluateJavascript("window.dispatchEvent(new Event('zhujian-deeplink'))", null)
   }
 
   // M4 薄桥(android-plan §7):ACTION_SEND 的 EXTRA_TEXT 原生侧暂存成文件,前端经
@@ -103,6 +106,18 @@ class MainActivity : TauriActivity() {
     tmp.writeBytes(utf8Truncate(text, 200 * 1024))
     // tmp + rename 原子落位:取走端读不到半截文件;rename 失败别留垃圾。
     if (!tmp.renameTo(File(dataDir, "shared_text.pending"))) tmp.delete()
+  }
+
+  // 4c 深链接薄桥:ACTION_VIEW 的 zhujian:// URI 原生侧暂存成文件,前端 take_deep_link
+  // 一次性取走(与分享同理:事件桥会在 WebView 未监听时把它丢掉,文件不会)。只暂存不
+  // 入库;URI 短,给个宽松上限。目录同 dataDir(与 take_deep_link 的 app_data_dir 同址)。
+  private fun stashDeepLink(intent: Intent?) {
+    if (intent?.action != Intent.ACTION_VIEW) return
+    val uri = intent.data ?: return
+    if (uri.scheme != "zhujian") return // 契约校验(intent-filter 已按 scheme 过滤,双保险)
+    val tmp = File(dataDir, "deep_link.pending.tmp")
+    tmp.writeBytes(utf8Truncate(uri.toString(), 8 * 1024))
+    if (!tmp.renameTo(File(dataDir, "deep_link.pending"))) tmp.delete()
   }
 
   // 截断只许落在 UTF-8 码点边界:回退跳过续字节(10xxxxxx),再把切剩的首字节去掉,

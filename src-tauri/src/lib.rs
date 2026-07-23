@@ -66,6 +66,18 @@ fn get_foreground_space(fg: State<'_, ForegroundSpace>) -> String {
     fg.0.lock().expect("foreground mutex poisoned").clone()
 }
 
+/// 深链接暂存(4b OS 桥):点击的 zhujian:// 链接由 deep-link 插件的 on_open_url 落这里,
+/// 前端启动时(冷启动)与收到 "deep-link-open" 事件时(热启动)各来取一次——take 语义,
+/// 取走即清,单一入口不会重放旧链接。安卓 take_shared_text 的桌面同构。
+struct PendingDeepLink(Mutex<Option<String>>);
+
+/// 取走并清空待处理的深链接 URL(无 = None)。前端 notebook 消费端(deeplink.ts /
+/// notebook.ts openDeepLink)的取号口。
+#[tauri::command]
+fn consume_deep_link(pending: State<'_, PendingDeepLink>) -> Option<String> {
+    pending.0.lock().expect("deep-link mutex poisoned").take()
+}
+
 /// Capture-first: persist a raw thought into the Inbox, return its id.
 /// `space_id` = capture 窗「按下回车那刻看到的」目标空间;在前台状态内复核
 /// (§16.2 提案 B):与 foreground 不符 = 目标已变,响亮拒、草稿保留,**绝不
@@ -186,6 +198,34 @@ struct IdeaStatsItem {
     converted: i64,
 }
 
+/// 深链接定位:一条 item 现在住在哪个视图/子视图,供前端 navigate + 高亮。返回值
+/// 与搜索 jump 的路由词汇一致——"task"(看板)/ "sealed"(归档册)/ "trash-task"
+/// (看板回收站)/ "inbox"(灵感)/ "trash-idea"(灵感回收站);None = 该 id 在本
+/// 空间不存在(链接来自本机没有的空间,或已彻底删除)。
+#[tauri::command]
+fn locate_item(space_id: String, item_id: String, spaces: State<'_, Spaces>) -> Result<Option<String>, String> {
+    let rt = spaces.get(&space_id)?;
+    let conn = rt.db.lock().expect("db mutex poisoned");
+    let axes = repo::item_axes(&conn, &item_id).map_err(|e| e.to_string())?;
+    Ok(axes.map(|(stage, archived, sealed)| {
+        let is_idea = stage == "inbox" || stage == "filed";
+        if sealed {
+            "sealed"
+        } else if archived {
+            if is_idea {
+                "trash-idea"
+            } else {
+                "trash-task"
+            }
+        } else if is_idea {
+            "inbox"
+        } else {
+            "task"
+        }
+        .to_string()
+    }))
+}
+
 #[tauri::command]
 fn idea_stats(space_id: String, week_start: String, spaces: State<'_, Spaces>) -> Result<IdeaStatsItem, String> {
     let rt = spaces.get(&space_id)?;
@@ -206,6 +246,10 @@ struct TopicTreeItem {
     title: String,
     /// Chip tint (`#RRGGBB`) or null = 无色 —— 标签视图据此画色点。
     color: Option<String>,
+    /// 手动排序键(0031 frindex)或 null = 未定序 —— 标签视图据此排序/拖动定位。
+    position: Option<String>,
+    /// 标签类型自由文本(0031)或 null = 无类型 —— 供日后按类型筛选。
+    kind: Option<String>,
     notes: Vec<InboxItem>,
 }
 
@@ -223,6 +267,8 @@ fn list_topic_tree(space_id: String, spaces: State<'_, Spaces>) -> Result<Vec<To
             id: t.id,
             title: t.title,
             color: t.color,
+            position: t.position,
+            kind: t.kind,
             notes: t
                 .notes
                 .into_iter()
@@ -382,6 +428,9 @@ struct TaskItem {
     /// 成就归档时间(RFC3339),null = 不在归档册。只有 `list_sealed_tasks` 的行非 null;
     /// 归档视图按它的本地日分组成时间轴。
     sealed_at: Option<String>,
+    /// 完成时刻(RFC3339,0030 done_at),null = 未知(本功能前完成的老卡)。看板「已完成」
+    /// 卡据它显示「完成于」;归档册按 COALESCE(done_at, sealed_at) 分组(完成日优先)。只增不清。
+    done_at: Option<String>,
     /// Every tag on this card (M:N, `item_topic`), each `{id, title}`. Empty = 无标签.
     /// The board shows them all as chips; the filter bar treats a card as belonging to
     /// each of its tags. Tag order follows the topic's `updated_at` (see repo::task_rows).
@@ -395,7 +444,7 @@ impl From<repo::TaskRow> for TaskItem {
         let topics = t
             .topics
             .into_iter()
-            .map(|tag| TopicItem { id: tag.id, title: tag.title, color: tag.color })
+            .map(|tag| TopicItem { id: tag.id, title: tag.title, color: tag.color, kind: None })
             .collect();
         TaskItem {
             id: t.id,
@@ -404,6 +453,7 @@ impl From<repo::TaskRow> for TaskItem {
             due_on: t.due_on,
             priority: t.priority,
             sealed_at: t.sealed_at,
+            done_at: t.done_at,
             topics,
         }
     }
@@ -783,16 +833,19 @@ fn revert_task_to_inbox(space_id: String, id: String, spaces: State<'_, Spaces>)
 }
 
 /// One topic for the manual filing picker. `color` = chip tint (`#RRGGBB`) or null = 无色.
+/// `kind` = 自由文本类型(0031,默认 null = 无类型),只在 `list_topics` 带真值——供看板按
+/// 类型筛选;作为条目卡片的 chip(From<TagRef>)时恒 null(TagRef 不载 kind、chip 也用不到)。
 #[derive(Serialize)]
 struct TopicItem {
     id: String,
     title: String,
     color: Option<String>,
+    kind: Option<String>,
 }
 
 impl From<repo::TagRef> for TopicItem {
     fn from(t: repo::TagRef) -> Self {
-        TopicItem { id: t.id, title: t.title, color: t.color }
+        TopicItem { id: t.id, title: t.title, color: t.color, kind: None }
     }
 }
 
@@ -808,6 +861,7 @@ fn list_topics(space_id: String, spaces: State<'_, Spaces>) -> Result<Vec<TopicI
             id: t.id,
             title: t.title,
             color: t.color,
+            kind: t.kind,
         })
         .collect())
 }
@@ -831,6 +885,20 @@ fn file_note_to_topic(space_id: String,
     notes::file_to_topic(&mut conn, &mut clk, &id, topic_id.as_deref(), new_title.as_deref())
 }
 
+/// Remove one tag from a 灵感 (multi-tag, M:N). Idempotent; only an active idea
+/// (inbox/filed) can be edited; a task/archived/missing item fails fast — see
+/// notes::remove_topic. Removing the last tag flips 已整理 -> 未归类.
+#[tauri::command]
+fn remove_note_topic(space_id: String, id: String, topic_id: String, spaces: State<'_, Spaces>) -> Result<(), String> {
+    let rt = spaces.get(&space_id)?;
+    let (mut conn, mut clk) = rt.write_locks();
+    // ReopenRequired 复核在锁内(同 remove_task_topic;旗与导入共临界区)。
+    if let Some(e) = rt.restart_required() {
+        return Err(format!("此空间需要重启朱笺完成初始同步装配:{e}"));
+    }
+    notes::remove_topic(&mut conn, &mut clk, &id, &topic_id)
+}
+
 /// List every topic — including empty ones — each with the processed notes filed under
 /// it, for the manual topic-management view. Unlike `list_topic_tree` (read-only browse,
 /// hides empties), this keeps empty topics so they can be edited/deleted, ordered
@@ -846,6 +914,8 @@ fn list_topics_full(space_id: String, spaces: State<'_, Spaces>) -> Result<Vec<T
             id: t.id,
             title: t.title,
             color: t.color,
+            position: t.position,
+            kind: t.kind,
             notes: t
                 .notes
                 .into_iter()
@@ -901,6 +971,43 @@ fn set_topic_color(space_id: String,
         return Err(format!("此空间需要重启朱笺完成初始同步装配:{e}"));
     }
     notes::set_topic_color(&mut conn, &mut clk, &id, color)
+}
+
+/// Reorder a topic in the manual list (0031 1c). `prev_id` / `next_id` are the ids of the
+/// dragged topic's new neighbours (either null = 列首前 / 列尾后); the backend lands it
+/// strictly between them (one frindex key write, one op — multi-writer friendly).
+#[tauri::command]
+fn reorder_topic(
+    space_id: String,
+    id: String,
+    prev_id: Option<String>,
+    next_id: Option<String>,
+    spaces: State<'_, Spaces>,
+) -> Result<(), String> {
+    let rt = spaces.get(&space_id)?;
+    let (mut conn, mut clk) = rt.write_locks();
+    if let Some(e) = rt.restart_required() {
+        return Err(format!("此空间需要重启朱笺完成初始同步装配:{e}"));
+    }
+    notes::reorder_topic(&mut conn, &mut clk, &id, prev_id.as_deref(), next_id.as_deref())
+}
+
+/// Set or clear a topic's free-text type label (0031;`kind` = 「人名」等,或 null/空串 = 清
+/// 类型)。Syncs like color (topic set_field + LWW). Fails fast on a non-canonical value or a
+/// missing id.
+#[tauri::command]
+fn set_topic_kind(
+    space_id: String,
+    id: String,
+    kind: Option<String>,
+    spaces: State<'_, Spaces>,
+) -> Result<(), String> {
+    let rt = spaces.get(&space_id)?;
+    let (mut conn, mut clk) = rt.write_locks();
+    if let Some(e) = rt.restart_required() {
+        return Err(format!("此空间需要重启朱笺完成初始同步装配:{e}"));
+    }
+    notes::set_topic_kind(&mut conn, &mut clk, &id, kind)
 }
 
 /// Delete a topic (manual maintenance). Only the topic projection goes — its
@@ -1980,8 +2087,67 @@ fn activate_space(
     Ok(rt)
 }
 
+// 全局热键的修饰键跨平台分叉:Windows 用 Ctrl+Alt(桌面老惯例、无冲突);macOS
+// 用 Cmd+Alt(用户肌肉记忆是 Cmd,即 keyboard-types 的 SUPER)。ACCEL_* 是托盘
+// 菜单里的 display-only 提示串(键本身由 global_shortcut 插件持有),跟着一起改。
+#[cfg(target_os = "macos")]
+const HOTKEY_MODS: Modifiers = Modifiers::SUPER.union(Modifiers::ALT);
+#[cfg(not(target_os = "macos"))]
+const HOTKEY_MODS: Modifiers = Modifiers::CONTROL.union(Modifiers::ALT);
+#[cfg(target_os = "macos")]
+const ACCEL_CAPTURE: &str = "Cmd+Alt+N";
+#[cfg(target_os = "macos")]
+const ACCEL_NOTEBOOK: &str = "Cmd+Alt+M";
+#[cfg(not(target_os = "macos"))]
+const ACCEL_CAPTURE: &str = "Ctrl+Alt+N";
+#[cfg(not(target_os = "macos"))]
+const ACCEL_NOTEBOOK: &str = "Ctrl+Alt+M";
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
+/// 启动期 panic 的原生弹窗钩子:桌面壳的开库/身份/租约全在 Tauri `setup` 闭包里
+/// fail-fast panic,窗口尚未建成——默认行为只往 stderr 打一行,双击 exe 的用户什么
+/// 都看不到(表现为「没反应」)。这里在崩之前先弹一个原生框把消息给用户看见
+/// (最常见:「库版本 vN 比本程序新——请安装新版朱笺」=装了旧包;另有另一实例占
+/// writer.lock、空间发现失败等)。仍链到默认钩子,保留 stderr 记录与 backtrace。
+///
+/// e2e(YS_DB_PATH)刻意不装:测试无人点框,模态框会把用例挂死。
+/// (macOS 注记:rfd 的消息框须主线程调;我们关心的启动 panic 都在主线程,后台线程
+/// panic 弹框是 macOS 移植时再收的边角,当前 Windows 目标不受影响。)
+fn install_panic_dialog_hook() {
+    if e2e_db_path().is_some() {
+        return;
+    }
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        // 先跑默认钩子:stderr 的 panic 消息 + RUST_BACKTRACE 回溯照旧留着。
+        default_hook(info);
+        rfd::MessageDialog::new()
+            .set_level(rfd::MessageLevel::Error)
+            .set_title("朱笺无法启动")
+            .set_description(panic_dialog_message(info))
+            .set_buttons(rfd::MessageButtons::Ok)
+            .show();
+    }));
+}
+
+/// 从 panic 载荷 + 位置拼出给用户看的消息(载荷可能是 `&str` 或 `String`)。
+fn panic_dialog_message(info: &std::panic::PanicHookInfo<'_>) -> String {
+    let body = info
+        .payload()
+        .downcast_ref::<&str>()
+        .map(|s| s.to_string())
+        .or_else(|| info.payload().downcast_ref::<String>().cloned())
+        .unwrap_or_else(|| "未知错误".to_string());
+    match info.location() {
+        Some(loc) => format!("{body}\n\n(位置:{}:{})", loc.file(), loc.line()),
+        None => body,
+    }
+}
+
 pub fn run() {
+    // 启动期 fail-fast panic 不该「窗口没建就静默死」:最先装 panic 弹窗钩子,连下面
+    // rustls install 失败都能被用户看见(见 install_panic_dialog_hook 注释)。
+    install_panic_dialog_hook();
     // wss:// 的 TLS 提供者(Cargo.toml rustls 依赖注释):启动即装,坏了当场响亮,
     // 不留到用户第一次点「创建账户」才在 async 命令里 panic(promise 永不返回)。
     // 全 app 装一次;严禁每空间/每 transport 再 install_default(§六 codex 核点)。
@@ -1995,11 +2161,19 @@ pub fn run() {
     // 第二实例被拒时把已运行实例的捕获条召到前台;e2e(YS_DB_PATH)刻意不装——
     // 测试库隔离,且开发者常边开着 dev app 边跑 e2e。
     if e2e_db_path().is_none() {
-        builder = builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            // 第二实例是被 zhujian:// 链接拉起的:交给 deep-link 插件的 on_open_url 处理
+            // (它会唤起主窗+定位条目),这里别再弹捕获条抢焦点。否则(普通再启)照旧弹捕获。
+            if argv.iter().any(|a| a.starts_with("zhujian://")) {
+                return;
+            }
             show_window(app, "capture");
         }));
     }
     builder
+        // 深链接(zhujian://open?…):OS 把点击的链接转成 on_open_url(Win/Linux 经上面
+        // 带 deep-link 特性的单实例插件转发);接线在 setup。单实例必须先于它注册(已满足)。
+        .plugin(tauri_plugin_deep_link::init())
         // 正文链接点击 → 系统默认浏览器(前端 openUrl,只放行 http/https)。
         .plugin(tauri_plugin_opener::init())
         // 客户端自动更新(88):前端 initUpdate 启动静默查更新、提示式装;process 供装后
@@ -2025,10 +2199,10 @@ pub fn run() {
                     if event.state != ShortcutState::Pressed {
                         return;
                     }
-                    // Ctrl+Alt+N → 弹捕获窗记录想法;Ctrl+Alt+M → 唤起笔记本主窗。
-                    if shortcut.matches(Modifiers::CONTROL | Modifiers::ALT, Code::KeyN) {
+                    // Ctrl+Alt+N(mac: Cmd+Alt+N)→ 弹捕获窗;+M → 唤起笔记本主窗。
+                    if shortcut.matches(HOTKEY_MODS, Code::KeyN) {
                         show_window(app, "capture");
-                    } else if shortcut.matches(Modifiers::CONTROL | Modifiers::ALT, Code::KeyM) {
+                    } else if shortcut.matches(HOTKEY_MODS, Code::KeyM) {
                         open_notebook(app);
                     }
                 })
@@ -2109,6 +2283,11 @@ pub fn run() {
                 // 时序契约:WriterLease 已持(上方)、transport 未启(下方 activate 才起)。
                 spaces::heal_legacy_space_name(&mut conn, &mut clk)
                     .unwrap_or_else(|e| panic!("空间 {id} 存量名补发失败:{e}"));
+                // 存量标签排序键自愈(0031):position IS NULL 的标签落末键 + 发 position op
+                // (迁移只加 NULL 列、不回填,见 0031 头注)。同上时序契约:WriterLease 下、
+                // transport 未启;幂等,无 NULL 行则无事。
+                notes::heal_legacy_topic_positions(&mut conn, &mut clk)
+                    .unwrap_or_else(|e| panic!("空间 {id} 存量标签排序自愈失败:{e}"));
                 idents.push(
                     spaces::read_identity(&id, &path, &conn, &clk)
                         .unwrap_or_else(|e| panic!("读空间 {id} 身份失败:{e}")),
@@ -2156,17 +2335,51 @@ pub fn run() {
             // 立即 set_foreground_space 对齐。
             app.manage(ForegroundSpace(Mutex::new(spaces::MAIN_SPACE.to_string())));
 
+            // 深链接(4b OS 桥):暂存位 + scheme 注册 + on_open_url 接线。
+            app.manage(PendingDeepLink(Mutex::new(None)));
+            {
+                use tauri_plugin_deep_link::DeepLinkExt;
+                // Win/Linux 每次启动自注册 zhujian://(指向当前 exe):比「只靠安装器注册」更稳
+                // ——移动/复制安装、便携运行都能自愈,scheme 恒指向正在跑的这个。e2e 用独立库、
+                // 刻意不注册,免污染机器的 scheme 关联。macOS 由 Info.plist 声明,无需运行期注册。
+                #[cfg(any(target_os = "linux", target_os = "windows"))]
+                if e2e_db_path().is_none() {
+                    let _ = app.deep_link().register_all();
+                }
+                // 冷启动:被链接拉起时 URL 在启动 argv。运行期注册的 scheme 必须自己查 argv
+                // (插件文档明载:get_current 对 runtime-registered scheme 冷启动不可靠,须读
+                // Env::args)。前端启动时 consume_deep_link 取走它。
+                if let Some(u) = std::env::args().find(|a| a.starts_with("zhujian://")) {
+                    *app.state::<PendingDeepLink>().0.lock().expect("deep-link mutex poisoned") =
+                        Some(u);
+                }
+                // 热启动:app 已在跑再点链接 → 暂存 + 唤起主窗 + 通知前端来取。
+                let handle = app.handle().clone();
+                app.deep_link().on_open_url(move |event| {
+                    if let Some(u) = event
+                        .urls()
+                        .into_iter()
+                        .map(|u| u.to_string())
+                        .find(|s| s.starts_with("zhujian://"))
+                    {
+                        *handle
+                            .state::<PendingDeepLink>()
+                            .0
+                            .lock()
+                            .expect("deep-link mutex poisoned") = Some(u);
+                        open_notebook(&handle);
+                        let _ = handle.emit("deep-link-open", ());
+                    }
+                });
+            }
+
             // Global hotkeys: Ctrl+Alt+N summons capture from anywhere; Ctrl+Alt+M
             // summons the notebook on whatever view it was left on. (The tray still
             // opens the notebook too — these just add a from-anywhere shortcut.)
-            app.global_shortcut().register(Shortcut::new(
-                Some(Modifiers::CONTROL | Modifiers::ALT),
-                Code::KeyN,
-            ))?;
-            app.global_shortcut().register(Shortcut::new(
-                Some(Modifiers::CONTROL | Modifiers::ALT),
-                Code::KeyM,
-            ))?;
+            app.global_shortcut()
+                .register(Shortcut::new(Some(HOTKEY_MODS), Code::KeyN))?;
+            app.global_shortcut()
+                .register(Shortcut::new(Some(HOTKEY_MODS), Code::KeyM))?;
 
             // The notebook is the single browse/manage window — a panel, not a
             // doc. Closing it should hide it (so the next summon works), not
@@ -2175,17 +2388,44 @@ pub fn run() {
                 .get_webview_window("notebook")
                 .expect("notebook window must exist");
             let notebook_for_close = notebook.clone();
-            notebook.on_window_event(move |event| {
-                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+            // 几何防抖落盘:拖动/缩放是高频事件,不能每次写盘。事件送进 channel,一个
+            // 长驻后台线程吸收连续事件、静默 600ms 后落一次盘。为什么需要它:插件只在
+            // RunEvent::Exit / 关窗两个时机写盘,但重装用 TerminateProcess 硬杀实例,
+            // 两个时机都不触发——自上次关窗以来的移动/缩放只躺在插件内存缓存里、随进程
+            // 一起丢(症状:重装后窗口回到旧位置或配置默认,而非重装前的现场)。
+            let (geom_tx, geom_rx) = std::sync::mpsc::channel::<()>();
+            {
+                let app_geom = notebook.app_handle().clone();
+                std::thread::spawn(move || {
+                    while geom_rx.recv().is_ok() {
+                        // 收到一个事件后持续吸收后续事件,直到 600ms 无新动静才落盘。
+                        while geom_rx
+                            .recv_timeout(std::time::Duration::from_millis(600))
+                            .is_ok()
+                        {}
+                        // save_window_state 要读窗口几何(tao 要求主线程),从后台线程直调会
+                        // 失败;调度到主线程执行(CloseRequested 那次本就在主线程,故无需)。
+                        let app_save = app_geom.clone();
+                        let _ = app_geom.run_on_main_thread(move || {
+                            let _ = app_save.save_window_state(WINDOW_STATE_FLAGS);
+                        });
+                    }
+                });
+            }
+            notebook.on_window_event(move |event| match event {
+                // 关窗即存一次几何(别赌干净退出:常驻托盘、可能强杀/断电)。存失败不致命。
+                tauri::WindowEvent::CloseRequested { api, .. } => {
                     api.prevent_close();
-                    // 插件只在 RunEvent::Exit(托盘退出)时落盘,而这个 app 常驻
-                    // 托盘、可能强杀/断电收场——关窗即存一次几何,别赌干净退出。
-                    // 存失败不致命(同上 unminimize 的容忍)。
                     let _ = notebook_for_close
                         .app_handle()
                         .save_window_state(WINDOW_STATE_FLAGS);
                     let _ = notebook_for_close.hide();
                 }
+                // 移动/缩放:防抖落盘(见上)。send 失败(防抖线程已退出)无害。
+                tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_) => {
+                    let _ = geom_tx.send(());
+                }
+                _ => {}
             });
 
             // Tray: capture is the heartbeat (also Ctrl+Alt+N); the notebook
@@ -2195,16 +2435,18 @@ pub fn run() {
             // themselves are owned by the global_shortcut plugin above (a tray context menu
             // installs no keyboard handler), so this can't double-register / conflict.
             let show_item =
-                MenuItem::with_id(app, "show", "记录灵感", true, Some("Ctrl+Alt+N"))?;
+                MenuItem::with_id(app, "show", "记录灵感", true, Some(ACCEL_CAPTURE))?;
             let notebook_item =
-                MenuItem::with_id(app, "notebook", "打开朱笺", true, Some("Ctrl+Alt+M"))?;
+                MenuItem::with_id(app, "notebook", "打开朱笺", true, Some(ACCEL_NOTEBOOK))?;
             let quit_item = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show_item, &notebook_item, &quit_item])?;
             TrayIconBuilder::new()
                 .icon(app.default_window_icon().expect("default icon").clone())
                 .menu(&menu)
-                // 左键不再弹菜单(否则双击会先被单击的弹菜单截走);菜单只走右键。
-                .show_menu_on_left_click(false)
+                // 托盘左键行为分平台:Windows 惯例左键不弹菜单(留给下面 DoubleClick 开主窗,
+                // 否则双击会先被单击的弹菜单截走);macOS 惯例状态栏图标左键即弹菜单——mac 上
+                // DoubleClick 根本不触发(真机冒烟证实),双击/左键开窗那套是死的,靠菜单进主窗。
+                .show_menu_on_left_click(cfg!(target_os = "macos"))
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "show" => show_window(app, "capture"),
                     "notebook" => open_notebook(app),
@@ -2231,10 +2473,12 @@ pub fn run() {
             capture_note,
             set_foreground_space,
             get_foreground_space,
+            consume_deep_link,
             list_inbox,
             list_processed,
             list_ideas,
             idea_stats,
+            locate_item,
             list_archived,
             list_topic_tree,
             search_notes,
@@ -2271,8 +2515,11 @@ pub fn run() {
             create_topic,
             update_topic,
             set_topic_color,
+            reorder_topic,
+            set_topic_kind,
             delete_topic,
             file_note_to_topic,
+            remove_note_topic,
             merge_topics,
             add_item_image,
             list_item_images,

@@ -240,6 +240,7 @@ pub fn file_to_topic(
             None => {
                 let minted = repo::insert_topic(&tx, title).map_err(|e| e.to_string())?;
                 oplog::topic_create(&tx, clock, &minted)?;
+                assign_new_topic_position(&tx, clock, &minted)?; // 0031:顺手建的标签也落末键
                 minted
             }
         },
@@ -253,6 +254,41 @@ pub fn file_to_topic(
 enum Target<'a> {
     Existing(&'a str),
     New(&'a str),
+}
+
+/// Remove ONE tag from a 灵感 (stage inbox/filed) — the inverse of `file_to_topic`'s tag
+/// link. Multi-tag M:N. Idempotent: removing a tag the idea does not carry is a no-op
+/// success that emits nothing. Removing the LAST tag flips 已整理 -> 未归类 (symmetric with
+/// file_to_topic's inbox -> filed, so a tagless idea is never stuck in 已整理). A
+/// task/archived/missing item fails fast — a board task uses `task::remove_topic`. One
+/// transaction.
+pub fn remove_topic(conn: &mut Connection, clock: &mut Clock, id: &str, topic_id: &str) -> Result<(), String> {
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    let (stage, archived) = repo::item_state(&tx, id)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "灵感不存在".to_string())?;
+    if archived {
+        return Err("回收站中的条目不能改标签".to_string());
+    }
+    match stage.as_str() {
+        "inbox" | "filed" => {}
+        _ => return Err("只有灵感可以在这里去标签(任务请在看板去标签)".to_string()),
+    }
+    let removed = repo::unlink_item_topic(&tx, id, topic_id).map_err(|e| e.to_string())?;
+    if removed == 1 {
+        oplog::link_remove(&tx, clock, id, topic_id)?;
+        // 去掉最后一个标签:已整理 -> 未归类(对称 file_to_topic 的 inbox -> filed,别把
+        // 无标签的灵感留在「已整理」这个脏态)。stage 的值从行上读回,一条 op。
+        if stage == "filed" && !repo::item_has_topic(&tx, id).map_err(|e| e.to_string())? {
+            let n = repo::unfile_item(&tx, id).map_err(|e| e.to_string())?;
+            if n != 1 {
+                return Err(format!("回退未归类失败(影响 {n} 行),已回滚"));
+            }
+            oplog::item_set(&tx, clock, id, &["stage"])?;
+        }
+    }
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 // ---- Topics (tag CRUD — 标签视图的新建/重命名/删除) ---------------------------------
@@ -271,8 +307,133 @@ pub fn create_topic(conn: &mut Connection, clock: &mut Clock, title: &str) -> Re
     }
     let id = repo::insert_topic(&tx, title).map_err(|e| e.to_string())?;
     oplog::topic_create(&tx, clock, &id)?;
+    assign_new_topic_position(&tx, clock, &id)?;
     tx.commit().map_err(|e| e.to_string())?;
     Ok(id)
+}
+
+/// 给一枚**刚建档**的标签落列**末键** + 发一条 position set_field(0031)。**所有建标签路径
+/// 共用**(手工建 create_topic / 归类顺手建 file_to_topic / 任务按名建 task::add_topic_by_title /
+/// 跨空间移动补建 move_item),保证「每个标签都有 op-backed 的 position」——position 是同步
+/// 字段,表值必须由 op 背书,否则 boot 语义审计判「表/日志矛盾」(codex 审 #2)。create op 不
+/// 带 position(与 color 同款,apply_topic_create 直写 NULL),position 走独立 set_field,回放端
+/// 按 op 因果序(create 先于 set_field)补键。key_between(last, None) 落末键,frindex 键随长度自增。
+pub(crate) fn assign_new_topic_position(
+    tx: &Connection,
+    clock: &mut Clock,
+    id: &str,
+) -> Result<(), String> {
+    let last = repo::last_topic_position(tx).map_err(|e| e.to_string())?;
+    let key = crate::frindex::key_between(last.as_deref(), None)?;
+    let n = repo::set_topic_position(tx, id, &key).map_err(|e| e.to_string())?;
+    if n != 1 {
+        return Err(format!("设置标签排序键失败:影响行数 {n}"));
+    }
+    oplog::topic_set(tx, clock, id, &["position"])?;
+    Ok(())
+}
+
+/// 开库自愈:给所有 **position IS NULL** 的标签(0031 迁移后未落键的存量 / 老端同步来的
+/// 无键行)按 `(updated_at, id)` 升序逐个落末键 + 发 position set_field op —— 契约同
+/// `spaces::heal_legacy_space_name`:WriterLease 下、transport 启动前、每次开库跑、幂等(无
+/// NULL 行则无事发生)。首次升级时全表 position 皆 NULL、开库尚无命令抢先建标签 → 按现序
+/// 全量落键,列表顺序不变。**不在迁移 SQL 里回填**的原因见 0031 头注(表值须 op 背书 +
+/// 避免两端各灌不同键造成永久分叉;这里发的 op 走 LWW 同步收敛,frindex 键随长度自增、
+/// 无 3906 上限)。存量 updated_at 是已同步的 LWW 字段,两端同序落键 → 值一致、天然收敛。
+pub fn heal_legacy_topic_positions(conn: &mut Connection, clock: &mut Clock) -> Result<(), String> {
+    let null_ids: Vec<String> = {
+        let mut stmt = conn
+            .prepare("SELECT id FROM topics WHERE position IS NULL ORDER BY updated_at ASC, id ASC")
+            .map_err(|e| e.to_string())?;
+        let rows = stmt.query_map([], |r| r.get::<_, String>(0)).map_err(|e| e.to_string())?;
+        rows.collect::<rusqlite::Result<_>>().map_err(|e| e.to_string())?
+    };
+    if null_ids.is_empty() {
+        return Ok(());
+    }
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    for id in &null_ids {
+        assign_new_topic_position(&tx, clock, id)?;
+    }
+    tx.commit().map_err(|e| e.to_string())
+}
+
+/// Reorder a topic in the manual list (0031 1c). The dragged topic lands strictly between
+/// its new neighbours (`prev_id` / `next_id`, either None = 列首前 / 列尾后), computed from
+/// their CURRENT keys via frindex — **only the dragged topic is rewritten** (one op),
+/// mirroring the board's single-key reorder (multi-writer friendly). A specified neighbour
+/// (`Some(id)`) that is missing or 未定序 (position NULL) fails fast (看板已变,请重试) —
+/// it is NOT treated as an open bound; only `None` means a true list end. Fails fast if the
+/// topic itself does not exist.
+pub fn reorder_topic(
+    conn: &mut Connection,
+    clock: &mut Clock,
+    id: &str,
+    prev_id: Option<&str>,
+    next_id: Option<&str>,
+) -> Result<(), String> {
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    if !repo::topic_exists(&tx, id).map_err(|e| e.to_string())? {
+        return Err(format!("标签不存在:{id}"));
+    }
+    // 邻居解析(codex 审 #4):None = 真·列端边界;Some(id) 必须是一枚**存在且已定序**的
+    // 标签——若该 id 不存在或 position 为 NULL(未定序/已被并发删除),把它当开边界会让
+    // key_between 落到列首/尾、静默错排,故 fail-fast 让前端重取列表重试。
+    let resolve = |who: &str, nb: Option<&str>| -> Result<Option<String>, String> {
+        match nb {
+            None => Ok(None),
+            Some(nid) => match repo::topic_position(&tx, nid).map_err(|e| e.to_string())? {
+                Some(k) => Ok(Some(k)),
+                None => Err(format!("{who}标签已变化(不存在或未定序),已忽略本次排序,请重试")),
+            },
+        }
+    };
+    let prev = resolve("前一个", prev_id)?;
+    let next = resolve("后一个", next_id)?;
+    let key = crate::frindex::key_between(prev.as_deref(), next.as_deref())?;
+    let n = repo::set_topic_position(&tx, id, &key).map_err(|e| e.to_string())?;
+    if n != 1 {
+        return Err(format!("标签排序写入失败:主题不存在,影响行数 {n}"));
+    }
+    oplog::topic_set(&tx, clock, id, &["position"])?;
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Set or clear a topic's free-text type label (0031 kind:「人名」等,None = 无类型)。走
+/// topic `set_field` + 字段级 LWW,跨设备同步(同 color)。命令层先 trim 再校验规范形态
+/// (非空、≤ 上限),空串 = 清类型(转 None)。fail-fast 拒非规范值或不存在的 id。
+pub fn set_topic_kind(
+    conn: &mut Connection,
+    clock: &mut Clock,
+    id: &str,
+    kind: Option<String>,
+) -> Result<(), String> {
+    // 入口规范化:trim;trim 后空 = 清类型(None)。再交共享 validator(与回放同一真相源)。
+    let normalized: Option<String> = match kind {
+        Some(s) => {
+            let t = s.trim();
+            if t.is_empty() {
+                None
+            } else {
+                Some(t.to_string())
+            }
+        }
+        None => None,
+    };
+    let value = match &normalized {
+        Some(s) => serde_json::Value::String(s.clone()),
+        None => serde_json::Value::Null,
+    };
+    crate::replay::validate_topic_kind_value(&value)?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    let n = repo::set_topic_kind(&tx, id, normalized.as_deref()).map_err(|e| e.to_string())?;
+    if n != 1 {
+        return Err(format!("设置标签类型失败:主题不存在,影响行数 {n}"));
+    }
+    oplog::topic_set(&tx, clock, id, &["kind"])?;
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 /// Edit a topic's title. Fails fast on an empty title, a collision with another topic,
@@ -577,10 +738,12 @@ mod tests {
         assert_eq!(t1, t2, "same-name tag is the same topic, not a duplicate");
         let total: i64 = conn.query_row("SELECT COUNT(*) FROM topics", [], |r| r.get(0)).unwrap();
         assert_eq!(total, 1, "no duplicate topic created");
-        // 复用已有标签不再发第二条 topic create。
+        // 复用已有标签不再发第二条 topic create;首次建时 create + position set_field(0031)两条。
         let tops = ops_for(&conn, "topic", &t1);
-        assert_eq!(tops.len(), 1);
+        assert_eq!(tops.len(), 2, "首建:create + position;复用不再发");
         assert_eq!(tops[0].kind, "create");
+        assert_eq!(tops[1].kind, "set_field");
+        assert_eq!(tops[1].payload["field"], "position");
         // Whitespace around the name still resolves to the same topic.
         let c = repo::add_item(&conn, "丙").unwrap();
         let t3 = file_to_topic(&mut conn, &mut clock, &c, None, Some("  探索  ")).unwrap();
@@ -657,6 +820,44 @@ mod tests {
         assert_eq!(hist, vec!["买菜".to_string()]);
         // 改了措辞的转待办多一条 content op。
         assert!(op_shapes(&conn, &n).contains(&("set_field".into(), "content".into())));
+    }
+
+    #[test]
+    fn remove_topic_drops_one_tag_and_unfiles_on_last() {
+        let (mut conn, mut clock) = fresh_db();
+        let id = repo::add_item(&conn, "带俩标签的想法").unwrap();
+        let a = file_to_topic(&mut conn, &mut clock, &id, None, Some("甲")).unwrap();
+        let b = file_to_topic(&mut conn, &mut clock, &id, None, Some("乙")).unwrap();
+        assert_eq!(stage(&conn, &id), "filed", "打了标签就进「已整理」");
+
+        // 去掉一个:还剩一个 → 仍在 filed。
+        remove_topic(&mut conn, &mut clock, &id, &a).unwrap();
+        assert!(!repo::item_has_tag(&conn, &id, &a).unwrap());
+        assert!(repo::item_has_tag(&conn, &id, &b).unwrap());
+        assert_eq!(stage(&conn, &id), "filed", "还有标签时不该退回未归类");
+
+        // 去掉最后一个 → 退回未归类(inbox),对称 file_to_topic 的 inbox->filed。
+        remove_topic(&mut conn, &mut clock, &id, &b).unwrap();
+        assert!(!repo::item_has_tag(&conn, &id, &b).unwrap());
+        assert_eq!(stage(&conn, &id), "inbox", "去掉最后一个标签应退回未归类");
+
+        // 幂等:再删一个本就不在的标签 = Ok no-op,不改 stage。
+        remove_topic(&mut conn, &mut clock, &id, &b).unwrap();
+        assert_eq!(stage(&conn, &id), "inbox");
+    }
+
+    #[test]
+    fn remove_topic_rejects_a_board_task() {
+        // 阴性对照:任务态条目不能走灵感去标签(必须用 task::remove_topic)。
+        let (mut conn, mut clock) = fresh_db();
+        let id = repo::add_item(&conn, "会变成任务的").unwrap();
+        let t = file_to_topic(&mut conn, &mut clock, &id, None, Some("标")).unwrap();
+        promote_to_task(&mut conn, &mut clock, &id, "会变成任务的").unwrap();
+        assert_eq!(stage(&conn, &id), "todo");
+        assert!(
+            remove_topic(&mut conn, &mut clock, &id, &t).is_err(),
+            "任务态应 fail-fast(去标签走看板路径)",
+        );
     }
 
     #[test]
@@ -816,8 +1017,9 @@ mod tests {
         delete_topic(&mut conn, &mut clock, &id).unwrap();
         assert!(delete_topic(&mut conn, &mut clock, &id).is_err(), "already gone");
 
+        // create(+0031 position set_field 落末键)+ rename(title/updated_at 两条)+ tombstone。
         let kinds: Vec<String> = ops_for(&conn, "topic", &id).into_iter().map(|o| o.kind).collect();
-        assert_eq!(kinds, vec!["create", "set_field", "set_field", "tombstone"]);
+        assert_eq!(kinds, vec!["create", "set_field", "set_field", "set_field", "tombstone"]);
     }
 
     #[test]
@@ -855,6 +1057,141 @@ mod tests {
         assert_eq!(color_ops.len(), 2, "设色 + 清色各一条 color op");
         assert_eq!(color_ops[0].payload["value"], "#3F7A99");
         assert!(color_ops[1].payload["value"].is_null(), "清色 op 的 value 是 null");
+    }
+
+    #[test]
+    fn create_topic_lands_at_end_and_all_topics_are_in_manual_order() {
+        let (mut conn, mut clock) = fresh_db();
+        let a = create_topic(&mut conn, &mut clock, "甲").unwrap();
+        let b = create_topic(&mut conn, &mut clock, "乙").unwrap();
+        let c = create_topic(&mut conn, &mut clock, "丙").unwrap();
+        // 每个新标签都拿到非空排序键,且键严格递增(落末尾)。
+        let key = |id: &str| repo::topic_position(&conn, id).unwrap().unwrap();
+        assert!(key(&a) < key(&b) && key(&b) < key(&c), "新标签落末尾:键递增");
+        // all_topics 按手动序返回 = 建档顺序。
+        let order: Vec<String> = repo::all_topics(&conn).unwrap().into_iter().map(|t| t.id).collect();
+        assert_eq!(order, vec![a.clone(), b.clone(), c.clone()]);
+        // create 各发一条 position set_field(非空键)。
+        for id in [&a, &b, &c] {
+            let pos_ops: Vec<_> = ops_for(&conn, "topic", id)
+                .into_iter()
+                .filter(|o| o.kind == "set_field" && o.payload["field"] == "position")
+                .collect();
+            assert_eq!(pos_ops.len(), 1, "create 恰一条 position op");
+            assert!(pos_ops[0].payload["value"].is_string(), "position 值非空");
+        }
+    }
+
+    #[test]
+    fn heal_legacy_topic_positions_keys_null_topics_in_order_op_backed_and_idempotent() {
+        // 模拟 0031 升级态:建三个标签后清空 position(迁移只加 NULL 列、不回填)。自愈按
+        // (updated_at,id) 升序落末键 + 发 position op,保持现序;op-backed;再跑幂等。
+        let (mut conn, mut clock) = fresh_db();
+        let a = create_topic(&mut conn, &mut clock, "甲").unwrap();
+        let b = create_topic(&mut conn, &mut clock, "乙").unwrap();
+        let c = create_topic(&mut conn, &mut clock, "丙").unwrap();
+        conn.execute("UPDATE topics SET position = NULL", []).unwrap();
+        assert!(repo::all_topics(&conn).unwrap().iter().all(|t| t.position.is_none()));
+
+        heal_legacy_topic_positions(&mut conn, &mut clock).unwrap();
+        let order: Vec<String> = repo::all_topics(&conn).unwrap().into_iter().map(|t| t.id).collect();
+        assert_eq!(order, vec![a.clone(), b.clone(), c.clone()], "自愈保持 (updated_at,id) 现序");
+        // 每个标签末尾多一条 op-backed 的 position set_field。
+        for id in [&a, &b, &c] {
+            assert!(repo::topic_position(&conn, id).unwrap().is_some(), "自愈后皆有键");
+            let last = ops_for(&conn, "topic", id).pop().unwrap();
+            assert_eq!(last.kind, "set_field");
+            assert_eq!(last.payload["field"], "position");
+        }
+        // 幂等:无 NULL 行 = 一次 SELECT no-op,不新增 op。
+        let before: i64 = conn.query_row("SELECT COUNT(*) FROM oplog", [], |r| r.get(0)).unwrap();
+        heal_legacy_topic_positions(&mut conn, &mut clock).unwrap();
+        let after: i64 = conn.query_row("SELECT COUNT(*) FROM oplog", [], |r| r.get(0)).unwrap();
+        assert_eq!(before, after, "无 NULL 行则无事发生");
+    }
+
+    #[test]
+    fn reorder_topic_rejects_missing_or_unordered_neighbour() {
+        // codex 审 #4:指定的邻居必须存在且已定序;不存在 / position NULL 的邻居 = 看板已变,
+        // fail-fast 让前端重取重试,而非把它当开边界静默错排。
+        let (mut conn, mut clock) = fresh_db();
+        let a = create_topic(&mut conn, &mut clock, "甲").unwrap();
+        let b = create_topic(&mut conn, &mut clock, "乙").unwrap();
+        // 邻居不存在。
+        assert!(reorder_topic(&mut conn, &mut clock, &a, Some("ghost"), None).is_err());
+        // 邻居存在但未定序(position NULL)。
+        conn.execute("UPDATE topics SET position = NULL WHERE id = ?1", [&b]).unwrap();
+        assert!(reorder_topic(&mut conn, &mut clock, &a, Some(&b), None).is_err());
+        // None 邻居(真·列端)照常。
+        reorder_topic(&mut conn, &mut clock, &a, None, None).unwrap();
+    }
+
+    #[test]
+    fn reorder_topic_writes_only_the_dragged_key_and_reorders() {
+        let (mut conn, mut clock) = fresh_db();
+        let a = create_topic(&mut conn, &mut clock, "甲").unwrap();
+        let b = create_topic(&mut conn, &mut clock, "乙").unwrap();
+        let c = create_topic(&mut conn, &mut clock, "丙").unwrap();
+        let key = |conn: &Connection, id: &str| repo::topic_position(conn, id).unwrap().unwrap();
+        let (ka, kc) = (key(&conn, &a), key(&conn, &c));
+
+        // 把 丙 拖到 甲、乙 之间:落点 = key_between(甲, 乙),只改 丙 一枚键。
+        reorder_topic(&mut conn, &mut clock, &c, Some(&a), Some(&b)).unwrap();
+        assert_eq!(key(&conn, &a), ka, "非被拖行的键不动");
+        assert!(key(&conn, &a) < key(&conn, &c) && key(&conn, &c) < key(&conn, &b));
+        let order: Vec<String> = repo::all_topics(&conn).unwrap().into_iter().map(|t| t.id).collect();
+        assert_eq!(order, vec![a.clone(), c.clone(), b.clone()], "丙 现居 甲、乙 之间");
+
+        // 拖到最前(prev=None):键落 甲 之前。
+        reorder_topic(&mut conn, &mut clock, &b, None, Some(&a)).unwrap();
+        assert!(key(&conn, &b) < key(&conn, &a));
+        assert_eq!(key(&conn, &a), ka, "旧键仍不动(kc 已换,ka 未换)");
+        let _ = kc;
+
+        // 只发 position op(reorder 不碰 title/updated_at);不存在的 id fail-fast。
+        let pos_c: Vec<_> = ops_for(&conn, "topic", &c)
+            .into_iter()
+            .filter(|o| o.kind == "set_field" && o.payload["field"] == "position")
+            .collect();
+        assert_eq!(pos_c.len(), 2, "丙:create 落键 + 一次拖动");
+        assert!(reorder_topic(&mut conn, &mut clock, "ghost", None, None).is_err());
+    }
+
+    #[test]
+    fn set_topic_kind_sets_clears_normalizes_and_validates() {
+        let (mut conn, mut clock) = fresh_db();
+        let id = create_topic(&mut conn, &mut clock, "张三").unwrap();
+        let kind = |conn: &Connection| -> Option<String> {
+            conn.query_row("SELECT kind FROM topics WHERE id=?1", [&id], |r| r.get(0)).unwrap()
+        };
+
+        // 出生无类型。
+        assert!(kind(&conn).is_none());
+        // 设类型(入口 trim)→ 落规范值 + 一条 kind set_field。
+        set_topic_kind(&mut conn, &mut clock, &id, Some("  人名  ".into())).unwrap();
+        assert_eq!(kind(&conn).as_deref(), Some("人名"), "入口 trim");
+        // 空串 / 纯空白 = 清类型(转 None,不是存空串)。
+        set_topic_kind(&mut conn, &mut clock, &id, Some("   ".into())).unwrap();
+        assert!(kind(&conn).is_none(), "纯空白 = 清类型");
+        set_topic_kind(&mut conn, &mut clock, &id, Some("项目".into())).unwrap();
+        set_topic_kind(&mut conn, &mut clock, &id, None).unwrap();
+        assert!(kind(&conn).is_none());
+
+        // 超长 fail-fast(> 100 字节);不存在的 id fail-fast。
+        let too_long = "字".repeat(50); // 150 字节 > 100
+        assert!(set_topic_kind(&mut conn, &mut clock, &id, Some(too_long)).is_err());
+        assert!(set_topic_kind(&mut conn, &mut clock, "ghost", Some("人名".into())).is_err());
+
+        // kind op 序:人名 / null(清) / 项目 / null(清)四条(超长与 ghost 被拒不留 op)。
+        let kind_ops: Vec<_> = ops_for(&conn, "topic", &id)
+            .into_iter()
+            .filter(|o| o.kind == "set_field" && o.payload["field"] == "kind")
+            .collect();
+        assert_eq!(kind_ops.len(), 4);
+        assert_eq!(kind_ops[0].payload["value"], "人名");
+        assert!(kind_ops[1].payload["value"].is_null());
+        assert_eq!(kind_ops[2].payload["value"], "项目");
+        assert!(kind_ops[3].payload["value"].is_null());
     }
 
     #[test]

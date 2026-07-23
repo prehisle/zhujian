@@ -4,6 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import { LogicalSize } from "@tauri-apps/api/dpi";
 import { currentMonitor, getCurrentWindow } from "@tauri-apps/api/window";
 import { openLightboxUrl, pendingImages } from "./item-images";
+import { saveTextDraft, loadTextDraft, clearTextDraft } from "./compose-draft";
 
 const input = document.getElementById("capture") as HTMLTextAreaElement;
 const slip = document.querySelector(".slip") as HTMLElement;
@@ -158,12 +159,33 @@ const pend = pendingImages({
     void fitWindow();
   },
   openPreview: (url, w, h) => void openPreviewLarge(url, w, h),
+  // 断电恢复(198 桌面侧):暂存图落 IndexedDB,重开回填。捕获浮窗不分空间(落点在按
+  // 回车那刻定),文字草稿见下方 CAPTURE_DRAFT_KEY。
+  persistKey: "zhujian.capture-images",
 });
 imagesBar.replaceChildren(pend.root);
 pend.wire(input);
 
-// Grow/shrink the window as the text wraps to more / fewer lines.
-input.addEventListener("input", () => void fitWindow());
+// compose 文字草稿断电恢复:输入即写 localStorage、记下/dismiss 清、启动回填(见 compose-draft.ts)。
+// 捕获浮窗落点在回车那刻才定,草稿不分空间(space 恒 null)。程序改值处(记下清空、dismiss)
+// 显式补调 persistCaptureText——input.value 赋值不触发 input 事件,不补调就与磁盘脱节。
+const CAPTURE_DRAFT_KEY = "zhujian.capture-draft";
+function persistCaptureText(): void {
+  saveTextDraft(CAPTURE_DRAFT_KEY, { text: input.value, space: null });
+}
+
+// Grow/shrink the window as the text wraps to more / fewer lines; persist the draft live.
+input.addEventListener("input", () => {
+  persistCaptureText();
+  void fitWindow();
+});
+
+// 启动回填:上次没记下的文字 + 暂存图(意外断电 / 杀进程后重开还在)。文字同步灌回、
+// 量窗;图走 IndexedDB 异步回填(填好经 onChange 再量一次窗)。
+const captureDraft = loadTextDraft(CAPTURE_DRAFT_KEY);
+if (captureDraft && captureDraft.text) input.value = captureDraft.text;
+void fitWindow();
+void pend.restore();
 
 // Capture-first: Enter saves, Shift+Enter is a newline, Esc hides but KEEPS the draft.
 // in-flight 闸(ui-audit P0 #2):capture_note 往返窗口里第二记 Enter 会用同一内容再建
@@ -217,6 +239,7 @@ input.addEventListener("keydown", async (e) => {
       }
       // The note is now saved — clear the text so a re-Enter can't create a duplicate.
       input.value = "";
+      persistCaptureText(); // 落库成功即清磁盘草稿(空文字 → 清键;剩下的暂存图属下一条,自留)
 
       // Attach the frozen batch to the new note. A failed attach is surfaced (fail-fast, not
       // swallowed): the note is already saved, so keep the window open with a note that the
@@ -244,6 +267,7 @@ input.addEventListener("keydown", async (e) => {
 async function dismiss(): Promise<void> {
   input.value = "";
   errLine.textContent = "";
+  clearTextDraft(CAPTURE_DRAFT_KEY); // 稿了结:清磁盘(pend.clear() 自会清图存)
   pend.clear();
   await appWindow.hide();
 }

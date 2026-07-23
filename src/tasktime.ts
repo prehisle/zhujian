@@ -20,6 +20,9 @@ export type TaskItem = {
   /** 成就归档时间(RFC3339),null = 不在归档册。只有 list_sealed_tasks 返回的行非
    *  null;归档视图按它的本地日分组成时间轴。 */
   sealed_at: string | null;
+  /** 完成时刻(RFC3339,0030 done_at),null = 未知(本功能前完成的老卡)。看板「已完成」
+   *  卡显示「完成于」;归档册按 done_at ?? sealed_at 分组(完成日优先)。只增不清。 */
+  done_at: string | null;
   /** Every tag on this task (M:N, item_topic). Empty = 无标签. The board shows them
    *  all as chips; the filter bar treats a task as belonging to each of its tags. */
   topics: TaskTag[];

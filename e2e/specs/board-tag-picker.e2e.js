@@ -107,4 +107,68 @@ describe("任务看板 · 标签选择器(Esc 收起 + 内联新建)", () => {
     await card.$(`.choice=${EXIST}`).waitForExist({ timeout: 5000 });
     expect(await card.$(".choice.create").isExisting()).toBe(false);
   });
+
+  it("keepOpen:选一个不收起 → 可连续再加,已加的即时从候选消失", async () => {
+    const NEW2 = "E2E-连加第二个标签";
+    const setSearch = (name) =>
+      browser.execute(
+        (title, n) => {
+          const c = [...document.querySelectorAll(".tcard")].find((x) => x.textContent.includes(title));
+          const inp = c.querySelector(".topic-search");
+          inp.value = n;
+          inp.dispatchEvent(new Event("input", { bubbles: true }));
+        },
+        TASK,
+        name,
+      );
+
+    await boardAction(TASK, "标签");
+    const card = await $(`.tcard*=${TASK}`);
+    await card.$(".topic-search").waitForExist({ timeout: 5000 });
+
+    // 选既有 EXIST:选完选择器**不收起**(keepOpen),标签即刻挂上。
+    await setSearch(EXIST);
+    await card.$(`.choice=${EXIST}`).waitForExist({ timeout: 5000 });
+    await browser.execute(
+      (title, name) => {
+        const c = [...document.querySelectorAll(".tcard")].find((x) => x.textContent.includes(title));
+        [...c.querySelectorAll(".choice")].find((b) => b.textContent === name).click();
+      },
+      TASK,
+      EXIST,
+    );
+    await browser.waitUntil(async () => (await tagTitles()).includes(EXIST), {
+      timeout: 8000,
+      timeoutMsg: "EXIST 未挂上",
+    });
+    // 选完选择器仍在(没收起),且 EXIST 已从候选隐藏(避免重复挂)。
+    expect(await card.$(".topic-search").isExisting()).toBe(true);
+    await setSearch(EXIST);
+    await browser.waitUntil(async () => !(await $(`.tcard*=${TASK}`).$(`.choice=${EXIST}`).isExisting()), {
+      timeout: 5000,
+      timeoutMsg: "已加的标签仍留在候选里",
+    });
+
+    // 同一次选择器会话里再内联新建第二个,也一并挂上 —— 无需重开 ⋯ 菜单。
+    await setSearch(NEW2);
+    await card.$(".choice.create").waitForExist({ timeout: 5000 });
+    await browser.execute((title) => {
+      const c = [...document.querySelectorAll(".tcard")].find((x) => x.textContent.includes(title));
+      c.querySelector(".choice.create").click();
+    }, TASK);
+    await browser.waitUntil(
+      async () => {
+        const t = await tagTitles();
+        return t.includes(EXIST) && t.includes(NEW2);
+      },
+      { timeout: 8000, timeoutMsg: "连加的两个标签未同时挂到任务上" },
+    );
+
+    // Esc 收起,连加结束。
+    await browser.execute(() => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })));
+    await browser.waitUntil(async () => !(await $(`.tcard*=${TASK}`).$(".topic-search").isExisting()), {
+      timeout: 5000,
+      timeoutMsg: "Esc 后选择器未收起",
+    });
+  });
 });

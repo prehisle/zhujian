@@ -140,8 +140,15 @@ pub(crate) async fn handle(hub: Arc<Hub>, ws: WebSocket) {
                 break;
             }
             // leave 紧跟 admission(只括住计数临界段;限速等待在栅栏外,不拖 drain)。
-            let decision = hub.throttle_admission(&account, &device, session_gen, conn_id, frame_bytes);
+            let (decision, newly_restricted) =
+                hub.throttle_admission(&account, &device, session_gen, conn_id, frame_bytes);
             hub.admission_leave();
+            // 工序4:FastlaneExhausted 首穿越 → ENTER 实时推送(锁外、**处理 decision 之前**;
+            // codex 检查点①:Kicked 那帧也可能正是首次跨线,不能漏。push 内按当前快照门控,
+            // cap 推 AccountStatusV1、旧客户端仅当前仍受限才推 account_throttled)。
+            if newly_restricted {
+                hub.push_account_status(&account);
+            }
             match decision {
                 AdmitDecision::Immediate => {}
                 AdmitDecision::Kicked => {
@@ -228,11 +235,13 @@ async fn dispatch(
             Step::Continue
         }
 
-        (ConnState::Fresh, ClientMsg::Auth { account, device, sig }) => {
+        (ConnState::Fresh, ClientMsg::Auth { account, device, sig, caps }) => {
             if !is_ulid(&account) || !is_ulid(&device) || sig.len() != ED25519_SIG_LEN {
                 err(tx, err_code::BAD_REQUEST, "鉴权字段形态不合法");
                 return Step::Close;
             }
+            // 工序4:能力协商——声明 account_status_v1 者上线后收 AccountStatusV1。
+            let wants_status = sync_proto::has_capability(&caps, sync_proto::CAP_ACCOUNT_STATUS_V1);
             // 封禁 / 未注册 / 坏签名对外同一个错,不给探测面(§4;open-signup 起
             // 准入开放,拒的只有封禁表命中——attach 会在同锁内复核,堵 reload 竞态)。
             let pubkey = {
@@ -249,7 +258,7 @@ async fn dispatch(
             // Authed 由 attach 在锁内发(恒在积压 deliver 之前);attach 顺带复核
             // 「此刻仍是这把公钥」——verify 与上线之间被 revoke_device 插队(含
             // 吊后重注册换钥的 ABA)= false,按鉴权失败断开(codex P4-e 轮 H1)。
-            let Some(session_gen) = hub.attach_authenticated(&account, &device, pk, conn_id, tx.clone(), kick_tx.clone(), queued.clone())
+            let Some(session_gen) = hub.attach_authenticated(&account, &device, pk, conn_id, tx.clone(), kick_tx.clone(), queued.clone(), wants_status)
             else {
                 logln(format!("INFO conn={conn_id} 鉴权后上线被拒(已吊销)account={account} device={device}"));
                 err(tx, err_code::AUTH_FAILED, "鉴权失败");
@@ -259,7 +268,7 @@ async fn dispatch(
             Step::Become(ConnState::Authed { account, device, pubkey: pk, session_gen })
         }
 
-        (ConnState::Fresh, ClientMsg::RegisterFirst { account, device, pubkey, sig }) => {
+        (ConnState::Fresh, ClientMsg::RegisterFirst { account, device, pubkey, sig, caps }) => {
             if !is_ulid(&account)
                 || !is_ulid(&device)
                 || pubkey.len() != ED25519_PUB_LEN
@@ -268,6 +277,8 @@ async fn dispatch(
                 err(tx, err_code::BAD_REQUEST, "注册字段形态不合法");
                 return Step::Close;
             }
+            // 工序4:能力协商(同 Auth;首台注册者也可声明,上线即收 AccountStatusV1)。
+            let wants_status = sync_proto::has_capability(&caps, sync_proto::CAP_ACCOUNT_STATUS_V1);
             // 签名覆盖本连接 challenge,用消息自带公钥验——自证私钥持有且防离线
             // 重放(§4);顺带证明 pubkey 是可用的 Ed25519 公钥。验签在 registry 锁外。
             if !verify(&pubkey, &register_first_sig_payload(nonce, &account, &device, &pubkey), &sig)
@@ -291,6 +302,7 @@ async fn dispatch(
                         tx.clone(),
                         kick_tx.clone(),
                         queued.clone(),
+                        wants_status,
                     ) else {
                         logln(format!(
                             "INFO conn={conn_id} 首台注册后上线被拒(已吊销)account={account}"

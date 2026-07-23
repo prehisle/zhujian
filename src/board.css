@@ -205,6 +205,21 @@
   outline: 1px dashed var(--seal-line);
   outline-offset: -2px;
 }
+
+/* 拖拽打标签(1a/1b):任务卡拖到标签 pill,或标签 pill 拖到任务卡,松手即打上该标签。
+   两向落点都点亮成朱砂,与列体落点同一套语汇(手势即回执)。 */
+.v-board .tcard.tag-drop-hover {
+  outline: 1.5px dashed var(--seal);
+  outline-offset: -2px;
+  background: var(--seal-tint);
+}
+.v-board .tf-pill.tag-drop-hover {
+  border-color: var(--seal);
+  background: var(--seal-tint);
+  color: var(--seal);
+}
+/* 正被拖动的标签 pill(pill→card):半透明,呼应卡片 .dragging 的手感。 */
+.v-board .tf-pill.tag-dragging { opacity: 0.45; }
 /* The insertion marker showing where a dragged card will land. A real-height,
    solid-filled pill (not a zero-height border box, which WebView2 renders as a
    skewed sliver). The negative top margin keeps net layout shift at zero, so
@@ -338,6 +353,15 @@
    The ✓ keeps the 已完成 heritage; a quiet 朱砂 left bar marks it as "入册". */
 .v-board .tcard.sealed { box-shadow: var(--card-shadow), inset 3px 0 0 var(--seal-line); }
 .v-board .tcard.sealed .ttitle::before { content: "✓ "; color: var(--seal); font-weight: 700; }
+
+/* 完成时刻(0030):已完成卡标题下一行「完成于 <日>」,弱化不抢标题(同 tl-date 的 faint)。 */
+.v-board .tcard .done-at {
+  font-family: var(--font-sans);
+  font-size: 11px;
+  letter-spacing: 0.03em;
+  color: var(--ink-faint);
+  margin: 3px 0 0;
+}
 
 /* ㊺ 卡片去噪:截止/优先级/标签的「值」是纯展示 chip(信息,逾期/今天仍标红供一眼识别);
    增改清操作不在卡面、全走 ⋯ 菜单 S/P/L(无 ＋ 占位入口)。故只需把「无任何展示内容」的

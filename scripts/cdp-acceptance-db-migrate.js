@@ -5,7 +5,7 @@
 // 会逐空间 activate 再查(手机 max_live=1,db_info 只对前台空间可用),查完切回原空间
 // 并 reload 让 UI 与后端前台重新对齐。EXPECT_UV 随 core SCHEMA_VERSION 升版更新。
 (async () => {
-  const EXPECT_UV = 29;
+  const EXPECT_UV = 30;
   const invoke = window.__TAURI__.core.invoke;
   const rows = [];
   const check = (name, ok, detail) => rows.push({ name, ok: !!ok, detail: detail ?? "" });

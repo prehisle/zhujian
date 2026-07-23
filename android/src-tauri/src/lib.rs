@@ -311,6 +311,13 @@ async fn activate_space(
     }
 }
 
+/// 深链接按账户找空间(4c):返回本机装的、account_id==acc 的空间 id(无=None);链接
+/// 的 acc= 分支用它把跨设备账户身份映射到本机 space id,再交前端 activate_space 切过去。
+#[tauri::command]
+fn find_space_by_account(account_id: String, coord: State<'_, Coord>) -> Result<Option<String>, String> {
+    coord.space_id_for_account(&account_id)
+}
+
 /// 前台空间 id(前端启动对账用;运行中变更走 "space-foreground" 事件)。
 #[tauri::command]
 fn foreground_space(coord: State<'_, Coord>) -> String {
@@ -471,6 +478,8 @@ struct TimelineItem {
     /// 非同一快照;灵感行恒 null)。
     due_on: Option<String>,
     priority: Option<i64>,
+    /// 完成时刻(RFC3339,0030 done_at):done 行据它显示「完成于」;灵感/未完成行 null。
+    done_at: Option<String>,
     topics: Vec<TopicItem>,
     images: Vec<ImageMeta>,
 }
@@ -501,6 +510,7 @@ fn list_timeline(space_id: String, coord: State<'_, Coord>) -> Result<Vec<Timeli
                     stage: r.stage,
                     due_on: r.due_on,
                     priority: r.priority,
+                    done_at: r.done_at,
                     topics: r.topics.into_iter().map(TopicItem::from).collect(),
                     images,
                 }
@@ -720,6 +730,19 @@ async fn file_note_to_topic(
         .await
 }
 
+/// 摘掉灵感的一个标签(幂等;去掉最后一个标签会把「已整理」退回「未归类」)。
+#[tauri::command]
+async fn remove_note_topic(
+    space_id: String,
+    id: String,
+    topic_id: String,
+    coord: State<'_, Coord>,
+) -> Result<(), String> {
+    coord
+        .write(&space_id, |conn, clock| notes::remove_topic(conn, clock, &id, &topic_id))
+        .await
+}
+
 // ---- 任务(看板能力;title=content、status=stage 的桌面前端契约照搬) ----
 
 /// 一张看板卡(与桌面 TaskItem 同形)。
@@ -731,6 +754,9 @@ struct TaskItem {
     due_on: Option<String>,
     priority: Option<i64>,
     sealed_at: Option<String>,
+    /// 完成时刻(RFC3339,0030 done_at),null = 未知老卡。归档册按 COALESCE(done_at,
+    /// sealed_at) 排序/显示(完成日优先),看板已完成卡走 list_timeline 显示。只增不清。
+    done_at: Option<String>,
     topics: Vec<TopicItem>,
 }
 
@@ -743,6 +769,7 @@ impl From<repo::TaskRow> for TaskItem {
             due_on: t.due_on,
             priority: t.priority,
             sealed_at: t.sealed_at,
+            done_at: t.done_at,
             topics: t.topics.into_iter().map(TopicItem::from).collect(),
         }
     }
@@ -966,6 +993,10 @@ struct TopicTreeItem {
     id: String,
     title: String,
     color: Option<String>,
+    /// 手动排序键(0031 frindex)或 null=未定序——标签管理面据它排序/拖动定位。
+    position: Option<String>,
+    /// 标签类型自由文本(0031)或 null=无类型——标签管理面据它显徽标/设类型。
+    kind: Option<String>,
     notes: Vec<TopicNoteItem>,
 }
 
@@ -982,6 +1013,8 @@ fn topic_tree_item(t: repo::TopicTree) -> TopicTreeItem {
         id: t.id,
         title: t.title,
         color: t.color,
+        position: t.position,
+        kind: t.kind,
         notes: t
             .notes
             .into_iter()
@@ -1058,6 +1091,34 @@ async fn merge_topics(
             notes::merge_topics(conn, clock, &source_ids, &target_id, new_title.as_deref())
         })
         .await
+}
+
+/// 标签手动重排(0031 frindex):把 `id` 挪到 `prev_id`(None=列首)与 `next_id`
+/// (None=列尾)之间,只写被拖那枚的 position。标签平铺无父子,全体同层。
+#[tauri::command]
+async fn reorder_topic(
+    space_id: String,
+    id: String,
+    prev_id: Option<String>,
+    next_id: Option<String>,
+    coord: State<'_, Coord>,
+) -> Result<(), String> {
+    coord
+        .write(&space_id, |conn, clock| {
+            notes::reorder_topic(conn, clock, &id, prev_id.as_deref(), next_id.as_deref())
+        })
+        .await
+}
+
+/// 设/清标签类型自由文本(0031;null=清、规范非空 ≤100 字节且禁控制字符)。
+#[tauri::command]
+async fn set_topic_kind(
+    space_id: String,
+    id: String,
+    kind: Option<String>,
+    coord: State<'_, Coord>,
+) -> Result<(), String> {
+    coord.write(&space_id, |conn, clock| notes::set_topic_kind(conn, clock, &id, kind.clone())).await
 }
 
 // ---- 统一回收站(120:灵感+任务合并一屏,repo::trash_items 单查询单快照) ----
@@ -1373,6 +1434,26 @@ fn take_shared_text(app: tauri::AppHandle) -> Result<Option<String>, String> {
     Ok(Some(text))
 }
 
+/// 深链接薄桥的取走端(4c):MainActivity 把 ACTION_VIEW 的 zhujian:// URI 原子暂存在
+/// app 数据根。取走协议同分享——先 rename 成 consuming 接手,读与删都对 consuming 做
+/// (取走端读不到半截、并发取走幂等)。返回 URI 字符串,前端解析后定位条目。
+#[tauri::command]
+fn take_deep_link(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let pending = dir.join("deep_link.pending");
+    let consuming = dir.join("deep_link.consuming");
+    if !consuming.exists() {
+        match std::fs::rename(&pending, &consuming) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(e.to_string()),
+        }
+    }
+    let url = std::fs::read_to_string(&consuming).map_err(|e| e.to_string())?;
+    std::fs::remove_file(&consuming).map_err(|e| e.to_string())?;
+    Ok(Some(url))
+}
+
 /// 半自动更新(106):拉 android.json 比 versionCode,更新才回条目、已最新回 null。
 #[tauri::command]
 async fn check_update() -> Result<Option<update::AndroidUpdate>, String> {
@@ -1528,6 +1609,7 @@ pub fn run() {
             promote_note_to_task,
             revert_task_to_inbox,
             file_note_to_topic,
+            remove_note_topic,
             // 119 全功能底座:任务
             list_tasks,
             list_archived_tasks,
@@ -1557,6 +1639,8 @@ pub fn run() {
             set_topic_color,
             delete_topic,
             merge_topics,
+            reorder_topic,
+            set_topic_kind,
             // 119 全功能底座:配图
             add_item_image,
             list_item_images,
@@ -1566,6 +1650,8 @@ pub fn run() {
             purge_all_trash,
             add_task_topic_by_title,
             take_shared_text,
+            take_deep_link,
+            find_space_by_account,
             check_update,
             sync_status,
             sync_create_account,

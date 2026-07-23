@@ -1,6 +1,9 @@
-// 朱笺安卓自动装机 —— 免每次截图估坐标。adb install -r 会卡在 vivo「外部来源应用」
-// 安全拦截页;本脚本延时后按「设备分辨率标定过的固定坐标」点勾选框 + 继续安装,再轮询
-// versionName 确认装成;装不上则自动截图 + 如实报错(绝不盲点完就宣布成功)。
+// 朱笺安卓自动装机 —— 免每次截图估坐标。adb install -r 会卡在 vivo 拦截页;本脚本延时后按
+// 「设备分辨率标定过的固定坐标」点掉,再轮询 versionName/lastUpdateTime 确认装成;装不上则
+// 自动截图 + 如实报错(绝不盲点完就宣布成功)。两种拦截页各自处置(181 补齐):
+//   · 升级(versionCode 更高)= 「外部来源」风险页 → 勾选框 + 继续安装;
+//   · 反装(versionCode 相同,如给 0.3.14 再侧载 0.3.14 调试/干净包)= 「已安装相同版本」
+//     拦截页(PackageInterceptActivity)→ 重新安装。
 //
 // 用法:
 //   node scripts/android-install-auto.mjs <apk路径> [--device <serial>] [--expect <版本>]
@@ -14,7 +17,9 @@ import { createWriteStream } from "node:fs";
 
 const GEOMETRY = {
   // vivo V2352GA(1260×2800):实测三次一致。[x, y] 为物理像素。
-  "1260x2800": { checkbox: [658, 2440], cont: [630, 2622] },
+  // checkbox/cont = 升级时「外部来源」风险页的勾选框 + 继续安装;
+  // reinstall = 同 versionCode 反装时「已安装相同版本」拦截页的「重新安装」(181 标定)。
+  "1260x2800": { checkbox: [658, 2440], cont: [630, 2622], reinstall: [631, 2363] },
 };
 
 const [, , apk, ...rest] = process.argv;
@@ -47,9 +52,18 @@ function installedUpdateTime() {
   const out = sh(["shell", "dumpsys", "package", PKG]);
   return out.match(/lastUpdateTime=(.+)/)?.[1]?.trim() ?? null;
 }
-function focusHasInstaller() {
+function focusLine() {
   const out = sh(["shell", "dumpsys", "window"]);
-  return /mCurrentFocus=[^\n]*packageinstaller/i.test(out);
+  return (out.match(/mCurrentFocus=[^\n]*/g) || []).join(" | ");
+}
+function focusHasInstaller() {
+  return /packageinstaller/i.test(focusLine());
+}
+// 已进真正安装页(NewInstallInstalling 等):焦点仍含 packageinstaller,但装已在跑,
+// 视同拦截页已点掉,别再继续点(否则会点到别处)。同版本反装的两个框都是
+// PackageInterceptActivity、焦点区分不了,故不按焦点判框型,只用它判「已进安装」。
+function focusIsInstalling() {
+  return /Installing/i.test(focusLine());
 }
 
 (async () => {
@@ -61,7 +75,10 @@ function focusHasInstaller() {
 
   const beforeV = installedVersion();
   const beforeT = installedUpdateTime();
-  console.log(`设备 ${device} / ${dim} / 现装 ${beforeV ?? "(无)"} → 安装 ${apk}`);
+  // 同 versionName 反装 → vivo 弹「已安装相同版本」拦截页(重新安装),而非升级的「外部来源」
+  // 风险页。用这个确定性判据选分支,别赌焦点时机(焦点切到拦截页有竞态,误判会点到取消)。
+  const sameVersion = !!(beforeV && expect && beforeV === expect);
+  console.log(`设备 ${device} / ${dim} / 现装 ${beforeV ?? "(无)"} → 安装 ${apk}${sameVersion ? "(同版本反装)" : ""}`);
 
   // 后台起 install(会阻塞在弹窗);不 await
   const proc = spawn("adb", (device ? ["-s", device] : []).concat(["install", "-r", apk]), {
@@ -80,17 +97,32 @@ function focusHasInstaller() {
   if (dialog) {
     sh(["shell", "input", "keyevent", "KEYCODE_WAKEUP"]);
     // vivo 拦截页 focus 先到、内容后渲染:点太早会落空(勾选框没勾上→继续安装灰着不动)。
-    // 先等渲染,再「勾选框 + 继续安装」为一组重试,直到 focus 离开 installer(=真点掉)。
+    // 先等渲染,再按对话框类型点:每轮先判焦点是「已安装相同版本」还是「外部来源」,
+    // 分别点「重新安装」或「勾选框+继续安装」,直到 focus 离开 installer 或进安装页(=真点掉)。
     await sleep(2000);
+    // 同版本反装(181 实测):先弹「已安装相同版本」(重新安装),点掉后再弹「外部来源」风险页;
+    // 两者都是 PackageInterceptActivity、焦点区分不了,故按已知顺序处理——先(仅反装)点一次
+    // 「重新安装」,再进「勾选框 + 继续安装」重试循环。升级场景没有第一步,直接进循环。
+    if (sameVersion) {
+      if (!coords.reinstall)
+        throw new Error(`分辨率 ${dim} 未标定 reinstall 坐标——同版本反装请先手动量「重新安装」位置补进 GEOMETRY 表`);
+      sh(["shell", "input", "tap", String(coords.reinstall[0]), String(coords.reinstall[1])]); // 已安装相同版本 → 重新安装
+      await sleep(2500);
+    }
     let dismissed = false;
-    for (let a = 0; a < 5 && !dismissed; a++) {
-      sh(["shell", "input", "tap", String(coords.checkbox[0]), String(coords.checkbox[1])]); // 风险确认框
+    for (let a = 0; a < 6 && !dismissed; a++) {
+      if (focusIsInstalling() || !focusHasInstaller()) { dismissed = true; break; } // 已进安装页/离开安装器
+      sh(["shell", "input", "tap", String(coords.checkbox[0]), String(coords.checkbox[1])]); // 风险确认勾选框
       await sleep(700);
       sh(["shell", "input", "tap", String(coords.cont[0]), String(coords.cont[1])]); // 继续安装
       await sleep(1500);
-      if (!focusHasInstaller()) dismissed = true;
+      if (focusIsInstalling() || !focusHasInstaller()) dismissed = true;
     }
-    console.log(dismissed ? "已自动点掉拦截页(勾选框+继续安装)" : "⚠ 多次尝试后拦截页仍在——坐标可能漂移");
+    console.log(
+      dismissed
+        ? `已自动点掉安装拦截页${sameVersion ? "(重新安装 → 勾选框+继续安装)" : "(勾选框+继续安装)"}`
+        : "⚠ 多次尝试后拦截页仍在——坐标可能漂移/对话框变样",
+    );
   } else {
     console.log("未见拦截页(可能已直接安装或系统允许静默)——继续等结果");
   }

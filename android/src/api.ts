@@ -71,6 +71,8 @@ export type TimelineItem = {
   /** 任务行的当前真值(卡片面板直读,不另拼 list_tasks);灵感行恒 null。 */
   due_on: string | null;
   priority: TaskPriority | null;
+  /** 完成时刻(RFC3339,0030 done_at):done 行据它显示「完成于」;灵感/未完成行 null。 */
+  done_at: string | null;
   topics: TopicItem[];
   images: ImageMeta[];
 };
@@ -99,6 +101,9 @@ export type TaskItem = {
   due_on: string | null;
   priority: TaskPriority | null;
   sealed_at: string | null;
+  /** 完成时刻(RFC3339,0030 done_at),null = 未知老卡。归档册按 done_at ?? sealed_at
+   *  显示/排序(完成日优先)。只增不清。 */
+  done_at: string | null;
   topics: TopicItem[];
 };
 export type TopicNoteItem = { id: string; content: string; created_at: string };
@@ -106,6 +111,10 @@ export type TopicTreeItem = {
   id: string;
   title: string;
   color: string | null;
+  /** 手动排序键(0031 frindex)或 null=未定序——标签管理面据它排序/拖动定位。 */
+  position: string | null;
+  /** 标签类型自由文本(0031)或 null=无类型。 */
+  kind: string | null;
   notes: TopicNoteItem[];
 };
 export type SearchHitItem = {
@@ -331,6 +340,18 @@ export const mergeTopics = (
   targetId: string,
   newTitle: string | null,
 ) => invoke<string>("merge_topics", { spaceId: space, sourceIds, targetId, newTitle });
+
+/** 标签手动重排(0031):把 id 挪到 prevId(null=列首)与 nextId(null=列尾)之间。 */
+export const reorderTopic = (
+  space: string,
+  id: string,
+  prevId: string | null,
+  nextId: string | null,
+) => invoke<void>("reorder_topic", { spaceId: space, id, prevId, nextId });
+
+/** 设/清标签类型自由文本(0031;null=清)。 */
+export const setTopicKind = (space: string, id: string, kind: string | null) =>
+  invoke<void>("set_topic_kind", { spaceId: space, id, kind });
 
 /** 挂一张图(dataB64 = 字节的 base64)。返回元数据(id + 「图N」编号 + MIME)。 */
 export const addItemImage = (space: string, itemId: string, mime: string, dataB64: string) =>

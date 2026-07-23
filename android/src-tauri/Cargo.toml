@@ -1,6 +1,6 @@
 [package]
 name = "zhujian-android"
-version = "0.3.13"
+version = "0.3.15"
 description = "朱笺安卓端(119 起全功能主力端;android-plan/phone-space-plan)——tauri 壳;数据层与同步全在共享 crate zhujian-core"
 authors = ["prehisle"]
 license = ""

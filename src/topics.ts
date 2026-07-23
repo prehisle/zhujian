@@ -16,6 +16,10 @@ type TopicTree = {
   id: string;
   title: string;
   color: string | null;
+  /** 手动排序键(0031 frindex)或 null=未定序 —— 后端已按它排序,拖动改它。 */
+  position: string | null;
+  /** 标签类型自由文本(0031)或 null=无类型 —— 可标「人名」等,供日后按类型筛选。 */
+  kind: string | null;
   notes: TopicNote[];
 };
 
@@ -51,35 +55,33 @@ function when(iso: string): string {
 }
 
 // ---- 前缀分组(纯视觉层级)---------------------------------------------------
-// 标签名带 `/` 时(如 zhujian/同步),若存在与首段同名的父标签,该行缩进到父标签下、
-// 只显后缀。语义仍是平的:分组只影响列表排版,筛选/计数/重命名/合并/删除全不感知层级
-// (看板筛父标签不含子;一条内容两边都该算就打两个标签——M:N 本来就支持)。只按第一段
-// 分一层视觉层级,多级斜杠不再细分;没有同名父标签的 a/b 保持平铺显全名(不造假组头)。
-type TopicRow = { topic: TopicTree; label: string; child: boolean };
-function groupByPrefix(trees: TopicTree[]): TopicRow[] {
+// 标签名带 `/` 时(如 zhujian/同步),若存在与首段同名的父标签,该行收进父标签下方的子
+// 容器(.topic-kids:缩进 + 一条左导轨)、只显后缀,视觉上「父子成一组」。语义仍是平的:
+// 分组只影响列表排版,筛选/计数/重命名/合并/删除全不感知层级(看板筛父标签不含子;一条
+// 内容两边都该算就打两个标签——M:N 本来就支持)。只按第一段分一层视觉层级,多级斜杠不再
+// 细分;没有同名父标签的 a/b 保持平铺显全名(不造假组头)。
+type TopicGroup = { parent: TopicTree; children: { topic: TopicTree; label: string }[] };
+function groupByPrefix(trees: TopicTree[]): TopicGroup[] {
   const titles = new Set(trees.map((t) => t.title));
-  const children = new Map<string, TopicTree[]>();
+  const childrenOf = new Map<string, TopicTree[]>();
   const tops: TopicTree[] = [];
   for (const t of trees) {
     const i = t.title.indexOf("/");
     // 首尾斜杠("/x"、"x/")不算前缀写法,照平铺走。
     const prefix = i > 0 && i < t.title.length - 1 ? t.title.slice(0, i) : null;
     if (prefix !== null && titles.has(prefix)) {
-      const arr = children.get(prefix);
+      const arr = childrenOf.get(prefix);
       if (arr) arr.push(t);
-      else children.set(prefix, [t]);
+      else childrenOf.set(prefix, [t]);
     } else {
       tops.push(t);
     }
   }
-  const rows: TopicRow[] = [];
-  for (const t of tops) {
-    rows.push({ topic: t, label: t.title, child: false });
-    // 子标签保持后端给的相对顺序(最近变动在前,同顶层列表一个排序原则)。
-    for (const c of children.get(t.title) ?? [])
-      rows.push({ topic: c, label: c.title.slice(t.title.length + 1), child: true });
-  }
-  return rows;
+  // 子标签保持后端给的相对顺序(最近变动在前,同顶层列表一个排序原则)。
+  return tops.map((t) => ({
+    parent: t,
+    children: (childrenOf.get(t.title) ?? []).map((c) => ({ topic: c, label: c.title.slice(t.title.length + 1) })),
+  }));
 }
 
 // Which tags are expanded (collapse/expand state). Module scope so leaving the view
@@ -157,6 +159,13 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     );
   }
 
+  // ---- drag-reorder state (0031 1c) ----------------------------------------
+  // 手动排序:拖标签行调顺序。只在**同层兄弟**间重排(顶层行之间 / 同一父下的子行之间)
+  // —— 同层的 DOM 渲染序 == position 序(后端按 position 排,groupByPrefix 在层内保序),
+  // 故 key_between(前邻.position, 后邻.position) 恒合法(前 < 后);跨层拖放忽略,避免
+  // 「父在子后」这类 position 逆序把 key_between 撞 Err。拖动只写被拖那一枚(一条 op)。
+  let draggingTopicId: string | null = null;
+
   // ---- merge mode state ----------------------------------------------------
   // Manual tag merge: pick 2+ tags, designate one survivor, the rest fold in.
   let merging = false;
@@ -171,13 +180,32 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
   // tag inline (collapse/expand, not a drill into a separate sub-page) to show its ideas
   // + tasks read-only. In merge mode the head toggles selection instead. Outside merge
   // mode the head also carries 重命名 / 删除 (manual maintenance).
-  // `label` 是列表里显示的名字(子标签只显后缀),`child` 只加缩进——重命名/合并/chips
-  // 等一切别处仍用全名 topic.title。
+  // `label` 是列表里显示的名字(子标签只显后缀),`child` 只标记子行(缩进/左导轨由外层
+  // .topic-kids 容器给,见 renderList)+ 悬停全名——重命名/合并/chips 等一切别处仍用全名
+  // topic.title。
   function section(topic: TopicTree, label: string, child: boolean): HTMLElement {
     const sec = el("section", { className: child ? "topic child" : "topic" });
+    sec.dataset.topicId = topic.id; // 拖排序落点据它反查 id / 判同层
     const tasks = tasksByTopic.get(topic.id) ?? [];
 
     const check = el("span", { className: "check", textContent: "" }); // ✓ (merge mode)
+    // 拖动手柄(仅非合并态出现;draggable 只挂它,避开 head 里的按钮/展开点击冲突)。
+    const handle = el("span", { className: "topic-drag", textContent: "⠿", title: "拖动调整顺序" });
+    handle.draggable = true;
+    handle.addEventListener("dragstart", (e) => {
+      if (merging) {
+        e.preventDefault();
+        return;
+      }
+      draggingTopicId = topic.id;
+      sec.classList.add("dragging");
+      if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
+    });
+    handle.addEventListener("dragend", () => {
+      draggingTopicId = null;
+      sec.classList.remove("dragging");
+      clearDropHints();
+    });
     const caret = el("span", { className: "topic-caret", textContent: "▸" });
     // 色点:有色标签才现身(反映当前颜色,和看板 chip 一致);无色不占位。
     const dot = el("span", { className: "topic-dot" });
@@ -187,17 +215,46 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     }
     const titleEl = el("span", { className: "topic-title", textContent: label });
     if (child) titleEl.title = topic.title; // 悬停可见全名(后缀脱离上下文时的兜底)
+    // 类型徽标:有类型才现身(如「人名」),供一眼识别标签类别。
+    const kindBadge = el("span", { className: "topic-kind", textContent: topic.kind ?? "" });
+    if (topic.kind) kindBadge.classList.add("on");
     const head = el("div", { className: "topic-head" }, [
       check,
+      handle,
       caret,
       dot,
       titleEl,
+      kindBadge,
       el("span", {
         className: "topic-count",
         textContent: `${topic.notes.length} 条灵感 · ${tasks.length} 个任务`,
       }),
       el("span", { className: "keep-badge", textContent: "存续" }),
     ]);
+
+    // 拖排序落点:只认同层兄弟(同 parentElement);按指针在目标行上/下半决定插前/插后。
+    sec.addEventListener("dragover", (e) => {
+      if (draggingTopicId === null || draggingTopicId === topic.id) return;
+      if (sec.parentElement !== sections.get(draggingTopicId)?.parentElement) return; // 跨层不收
+      e.preventDefault();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+      const rect = sec.getBoundingClientRect();
+      const after = e.clientY > rect.top + rect.height / 2;
+      clearDropHints();
+      sec.classList.add(after ? "drop-after" : "drop-before");
+    });
+    sec.addEventListener("dragleave", () => {
+      sec.classList.remove("drop-before", "drop-after");
+    });
+    sec.addEventListener("drop", (e) => {
+      if (draggingTopicId === null || draggingTopicId === topic.id) return;
+      const draggedSec = sections.get(draggingTopicId);
+      if (!draggedSec || sec.parentElement !== draggedSec.parentElement) return;
+      e.preventDefault();
+      const after = sec.classList.contains("drop-after");
+      clearDropHints();
+      void dropReorder(draggingTopicId, topic.id, after);
+    });
 
     // A small head button that never triggers the head's drill/select click.
     const tbtn = (label: string, onClick: () => void, danger = false) => {
@@ -214,7 +271,48 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
 
     const actions = el("div", { className: "topic-actions" });
     const showActions = () =>
-      actions.replaceChildren(tbtn("颜色", openColor), tbtn("重命名", openEdit), tbtn("删除", confirmDelete, true));
+      actions.replaceChildren(
+        tbtn("颜色", openColor),
+        tbtn("类型", openKind),
+        tbtn("重命名", openEdit),
+        tbtn("删除", confirmDelete, true),
+      );
+
+    // 类型:一个自由文本输入(默认填当前类型),就地替换动作区。写入走 set_topic_kind
+    // (空 = 清类型)。类型是元数据,供日后按类型筛选(如「人名」)。
+    async function saveKind(value: string | null): Promise<void> {
+      try {
+        await invoke("set_topic_kind", { id: topic.id, kind: value });
+      } catch (e) {
+        renderError(String(e));
+        return;
+      }
+      await refresh();
+    }
+    function openKind(): void {
+      const input = el("input", {
+        className: "tk-input",
+        value: topic.kind ?? "",
+        placeholder: "类型(如 人名),留空=无类型",
+      }) as HTMLInputElement;
+      input.addEventListener("keydown", (e) => {
+        if (e.isComposing) return; // IME 组合期的 Enter 是上屏(ui-audit P0 #1)
+        if (e.key === "Enter") {
+          e.preventDefault();
+          void saveKind(input.value);
+        } else if (e.key === "Escape") {
+          showActions();
+        }
+      });
+      actions.replaceChildren(
+        input,
+        tbtn("保存", () => void saveKind(input.value)),
+        tbtn("清除", () => void saveKind(null)),
+        tbtn("取消", showActions),
+      );
+      input.focus();
+      input.select();
+    }
 
     // 颜色:调色板行(一排色块 + 无色),就地替换动作区(同「删除?」的 in-place swap)。
     // 点色块即写入并刷新——手选热标签,默认无色。
@@ -386,6 +484,38 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     return el("div", { className: "topic-body" }, [notesSec, tasksSec]);
   }
 
+  // Clear any drop indicator across all live rows (called on dragover re-hint / drop / end).
+  function clearDropHints(): void {
+    for (const sec of sections.values()) sec.classList.remove("drop-before", "drop-after");
+  }
+
+  // Land `dragId` next to `targetId` (same-level siblings). Neighbours are computed from
+  // the DOM sibling order within the shared parent (== position order in-layer), so
+  // key_between(prev.pos, next.pos) on the backend is always valid. One key write, one op.
+  async function dropReorder(dragId: string, targetId: string, after: boolean): Promise<void> {
+    const target = sections.get(targetId);
+    if (!target) return;
+    const container = target.parentElement;
+    if (!container) return;
+    // 同层兄弟按 DOM 顺序(= position 顺序);去掉被拖行本身后定位。
+    const sibIds = ([...container.children] as HTMLElement[])
+      .filter((c) => c.matches("section.topic") && c.dataset.topicId)
+      .map((c) => c.dataset.topicId as string)
+      .filter((id) => id !== dragId);
+    const tIdx = sibIds.indexOf(targetId);
+    if (tIdx < 0) return;
+    const prevId = after ? targetId : (sibIds[tIdx - 1] ?? null);
+    const nextId = after ? (sibIds[tIdx + 1] ?? null) : targetId;
+    // 落回原位(前后邻都没变)= no-op,不发命令。
+    try {
+      await invoke("reorder_topic", { id: dragId, prevId, nextId });
+    } catch (e) {
+      renderError(String(e));
+      return;
+    }
+    await refresh();
+  }
+
   function renderList(): void {
     if (trees.length === 0) {
       sections.clear();
@@ -395,11 +525,23 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       return;
     }
     sections.clear();
-    const built = groupByPrefix(trees).map((r) => {
-      const sec = section(r.topic, r.label, r.child);
-      sections.set(r.topic.id, sec);
-      return sec;
-    });
+    // 每个顶层标签渲成一行;有子标签的,紧跟一个 .topic-kids 子容器(缩进 + 左导轨),父行
+    // 仍是 #list 的直接子(nextElementSibling = .topic-kids),子行收在容器内成一组。
+    const built: HTMLElement[] = [];
+    for (const g of groupByPrefix(trees)) {
+      const parentSec = section(g.parent, g.parent.title, false);
+      sections.set(g.parent.id, parentSec);
+      built.push(parentSec);
+      if (g.children.length) {
+        const kids = el("div", { className: "topic-kids" });
+        for (const c of g.children) {
+          const childSec = section(c.topic, c.label, true);
+          sections.set(c.topic.id, childSec);
+          kids.append(childSec);
+        }
+        built.push(kids);
+      }
+    }
     list.replaceChildren(...built);
     paint();
   }

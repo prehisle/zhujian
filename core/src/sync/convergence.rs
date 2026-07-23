@@ -320,7 +320,7 @@ const LIVE_ANY: &str = "SELECT id FROM items WHERE archived_at IS NULL AND seale
 /// 失败即回滚不脏库、无 op 发射)。标签名取小池子(t0..t3):同机重名被编排拒,
 /// **跨机重名天然发生**——「同名标签并存」正是规格 §6.2 的约定终局。
 fn random_command(conn: &mut Connection, clock: &mut Clock, rng: &mut Rng, step: usize) -> bool {
-    let roll = rng.below(23);
+    let roll = rng.below(25);
     let done: Result<(), String> = match roll {
         0..=3 => notes::capture(conn, clock, &format!("灵感 {step}-{}", rng.below(1000))).map(|_| ()),
         4 => match rng.pick(&ids(conn, LIVE_IDEAS)).cloned() {
@@ -457,6 +457,24 @@ fn random_command(conn: &mut Connection, clock: &mut Clock, rng: &mut Rng, step:
             Some(id) => images::remove(conn, clock, &id),
             None => Ok(()),
         },
+        // 标签手动排序(0031 position set_field):把一枚标签拖到另一枚之前(prev=None,
+        // next=目标)。目标未定序(transient)→ reorder_topic 内部 fail-fast、合法跳过。
+        22 => {
+            let topics = ids(conn, TOPICS);
+            match (rng.pick(&topics).cloned(), rng.pick(&topics).cloned()) {
+                (Some(t), Some(n)) if t != n => notes::reorder_topic(conn, clock, &t, None, Some(&n)),
+                _ => Ok(()),
+            }
+        }
+        // 标签类型(0031 kind set_field):设/清自由文本类型,小池子跨机并发撞写走 LWW。
+        23 => match rng.pick(&ids(conn, TOPICS)).cloned() {
+            Some(id) => {
+                let k: Option<String> =
+                    [None, Some("人名".to_string()), Some("项目".to_string())][rng.below(3)].clone();
+                notes::set_topic_kind(conn, clock, &id, k)
+            }
+            None => Ok(()),
+        },
         // 空间改名(0028 space 单例寄存器):小池子名跨机并发撞写,LWW 收敛由
         // space_profile 指纹断言(space-name-sync-plan §7)。
         _ => crate::spaces::set_space_name(conn, clock, &format!("空间名{}", rng.below(4))),
@@ -474,9 +492,15 @@ const FINGERPRINTS: &[(&str, &str)] = &[
         "SELECT id||'|'||content||'|'||stage||'|'||created_at \
          ||'|'||COALESCE(archived_at,'∅')||'|'||COALESCE(due_on,'∅')||'|'||COALESCE(priority,'∅') \
          ||'|'||COALESCE(position,'∅')||'|'||COALESCE(sealed_at,'∅')||'|'||COALESCE(born_stage,'∅') \
+         ||'|'||COALESCE(done_at,'∅') \
          FROM items ORDER BY id",
     ),
-    ("topics", "SELECT id||'|'||title||'|'||created_at||'|'||updated_at FROM topics ORDER BY id"),
+    (
+        "topics",
+        "SELECT id||'|'||title||'|'||created_at||'|'||updated_at \
+         ||'|'||COALESCE(color,'∅')||'|'||COALESCE(position,'∅')||'|'||quote(kind) \
+         FROM topics ORDER BY id",
+    ),
     ("item_topic", "SELECT item_id||'|'||topic_id FROM item_topic ORDER BY item_id, topic_id"),
     (
         "item_image(含字节)",

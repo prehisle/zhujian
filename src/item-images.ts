@@ -6,6 +6,7 @@
 // 正文「见图N」 reference always points at the same picture (see migration 0016).
 
 import { invoke, invokeInSpace } from "./space";
+import { saveImageDraft, loadImageDraft } from "./compose-draft";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { copyText } from "./clipboard";
 import { PhysicalPosition, PhysicalSize, LogicalSize } from "@tauri-apps/api/dpi";
@@ -102,16 +103,53 @@ async function toBase64(blob: Blob): Promise<string> {
   return btoa(bin);
 }
 
+// 上传前降采样(194 可优化项①):两道闸——**主闸** 长边 > UPLOAD_MAX_EDGE 按比例缩;
+// **副闸(B)** 尺寸达标但字节偏大的**照片**(JPEG 源)也重编码,补「小尺寸大体积」漏网。
+// 副闸只认 JPEG:透明 PNG 与文字截图(截图多为 PNG)天然豁免,不被 JPEG 化丢透明/糊字。
+// 任一闸命中就 canvas 重绘 → JPEG q0.85;都不命中 / 解码不了(HEIC 等)/ 缩后反更大均放行
+// 原图(后端 MIME 闸仍是权威)。免相册/剪贴板原图整份进 E2EE 库并下行到所有设备。
+const UPLOAD_MAX_EDGE = 2560;
+const UPLOAD_HEAVY_BYTES = 1_500_000; // ~1.5MB:尺寸内但比这肥的 JPEG 照片也压
+function downsampleForUpload(blob: Blob): Promise<Blob> {
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(blob);
+    const done = (out: Blob): void => {
+      URL.revokeObjectURL(url);
+      resolve(out);
+    };
+    const img = new Image();
+    img.onload = (): void => {
+      const maxDim = Math.max(img.naturalWidth, img.naturalHeight);
+      const overDim = maxDim > UPLOAD_MAX_EDGE; // 主闸
+      const heavyPhoto = blob.type === "image/jpeg" && blob.size > UPLOAD_HEAVY_BYTES; // 副闸
+      if (!overDim && !heavyPhoto) return done(blob); // 尺寸达标且非肥照片:原样(不动透明)
+      const scale = Math.min(1, UPLOAD_MAX_EDGE / maxDim); // 只缩不放大;副闸场景 scale=1 仅重编码
+      const w = Math.round(img.naturalWidth * scale);
+      const h = Math.round(img.naturalHeight * scale);
+      const c = document.createElement("canvas");
+      c.width = w;
+      c.height = h;
+      const ctx = c.getContext("2d");
+      if (!ctx) return done(blob);
+      ctx.drawImage(img, 0, 0, w, h);
+      c.toBlob((out) => done(out && out.size < blob.size ? out : blob), "image/jpeg", 0.85);
+    };
+    img.onerror = (): void => done(blob); // 解码失败(HEIC 等):原样交后端,该拒的响亮拒
+    img.src = url;
+  });
+}
+
 /** Attach one image blob (pasted screenshot or picked file) to an item as its next 「图N」.
  *  Resolves to the new image's metadata. Throws on a bad type / empty blob (the backend's
  *  CHECK is the authority — fail-fast, no silent default). */
 export async function attachBlob(itemId: string, blob: Blob, space?: string): Promise<ImageMeta> {
-  const dataB64 = await toBase64(blob);
+  const use = await downsampleForUpload(blob); // 大图先降采样,截图/小图原样
+  const dataB64 = await toBase64(use);
   // 显式空间 = 必落账链(创建后挂图):响应恒到达,不走「跨空间迟到即永不决议」的
   // 统一包装——那会把 in-flight 闸卡死(codex P1 二审 H1)。
   if (space !== undefined)
-    return invokeInSpace<ImageMeta>(space, "add_item_image", { itemId, mime: blob.type, dataB64 });
-  return invoke<ImageMeta>("add_item_image", { itemId, mime: blob.type, dataB64 });
+    return invokeInSpace<ImageMeta>(space, "add_item_image", { itemId, mime: use.type, dataB64 });
+  return invoke<ImageMeta>("add_item_image", { itemId, mime: use.type, dataB64 });
 }
 
 /** The first image on a paste, or null if the clipboard carried none (so the caller can let
@@ -130,12 +168,16 @@ export function imageFromPaste(e: ClipboardEvent): Blob | null {
 
 /** Mount a full-window overlay around `inner`; click anywhere or press Esc closes it.
  *  `onClose` runs while the overlay is STILL up and is awaited before teardown — so a caller
- *  that shrinks a grown window does it under the dark backdrop (no bare-window flash on close). */
+ *  that shrinks a grown window does it under the dark backdrop (no bare-window flash on close).
+ *  焦点陷阱(a11y):开图即把焦点移进遮罩、Tab/Shift+Tab 焦点困在遮罩内转圈(别溜到背后被盖住
+ *  的看板/灵感按钮上误触),关闭时把焦点还给打开前的元素(缩略图/正文链接)。 */
 function mountLightbox(
   inner: HTMLElement,
   onClose?: () => void | Promise<void>,
 ): { overlay: HTMLElement; close: () => Promise<void> } {
   const overlay = el("div", { className: "img-lightbox" }, [inner]);
+  overlay.tabIndex = -1; // 让遮罩自身可聚焦:遮罩内无可聚焦子元素时,焦点有个「家」落回这里
+  const prevFocus = document.activeElement as HTMLElement | null; // 关闭后把焦点还回原处
   let closing = false;
   const close = async (): Promise<void> => {
     if (closing) return; // a click + Esc race shouldn't run teardown twice
@@ -145,17 +187,47 @@ function mountLightbox(
     } finally {
       overlay.remove();
       document.removeEventListener("keydown", onKey);
+      prevFocus?.focus?.(); // 焦点还给打开前的元素,不留在已摘除的遮罩上(读屏/键盘不迷路)
+    }
+  };
+  // Tab 焦点陷阱:遮罩内通常没有可聚焦子元素(只有图+文字),故 Tab 一律钉回遮罩自身;若日后加了
+  // 按钮等可聚焦项,则在首/末之间环绕——焦点始终困在遮罩内,不落到背后被盖住的界面上。
+  const trapTab = (e: KeyboardEvent): void => {
+    const focusable = Array.from(
+      overlay.querySelectorAll<HTMLElement>(
+        'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])',
+      ),
+    );
+    if (focusable.length === 0) {
+      e.preventDefault();
+      overlay.focus({ preventScroll: true });
+      return;
+    }
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    const active = document.activeElement;
+    if (e.shiftKey) {
+      if (active === first || !overlay.contains(active)) {
+        e.preventDefault();
+        last.focus();
+      }
+    } else if (active === last || !overlay.contains(active)) {
+      e.preventDefault();
+      first.focus();
     }
   };
   const onKey = (e: KeyboardEvent): void => {
     if (e.key === "Escape") {
       e.preventDefault();
       close();
+      return;
     }
+    if (e.key === "Tab") trapTab(e);
   };
   overlay.addEventListener("click", close);
   document.addEventListener("keydown", onKey);
   document.body.append(overlay);
+  overlay.focus({ preventScroll: true }); // 开图即把焦点移进遮罩,Tab 从此在内部转圈
   return { overlay, close };
 }
 
@@ -784,6 +856,9 @@ export function pendingImages(
     onChange?: () => void;
     /** 点预览看大图的方式;不传就用普通遮罩 openLightboxUrl(捕获浮窗要连窗口一起放大)。 */
     openPreview?: (url: string, naturalW: number, naturalH: number) => void;
+    /** 传了就把暂存图持久化到 IndexedDB(此键分桶),供断电恢复;不传=纯内存(旧行为)。
+     *  见 compose-draft.ts:三入口各用一个键。持久化尽力而为,写失败吞掉不拦业务。 */
+    persistKey?: string;
   } = {},
 ): {
   root: HTMLElement;
@@ -795,10 +870,23 @@ export function pendingImages(
   disposeBatch: (batch: PendingImage[]) => void;
   attachBatch: (itemId: string, batch: PendingImage[], space?: string) => Promise<number>;
   clear: () => void;
+  /** 启动回填:从 IndexedDB 读回上次没记下的暂存图(仅当前无暂存时,不覆盖已贴的)。
+   *  未传 persistKey 时为 no-op。 */
+  restore: () => Promise<void>;
 } {
   let held: PendingImage[] = [];
   // 复用保存态缩略图的样式(.img-thumb/.img-del),只是没有「图N」角标——编号要入库才有。
   const root = el("div", { className: "img-strip img-pending empty" });
+
+  // held 一变就整体覆盖写 IndexedDB(串行成链防并发写乱序;失败吞掉不拦业务)。
+  // 每个 held 变动点(add / × 删 / takeBatch / putBack / clear)都调 persist()。
+  let persistChain: Promise<void> = Promise.resolve();
+  function persist(): void {
+    if (!opts.persistKey) return;
+    const key = opts.persistKey;
+    const snapshot = held.map((p) => p.blob);
+    persistChain = persistChain.then(() => saveImageDraft(key, snapshot)).catch(() => {});
+  }
 
   function sync(): void {
     root.classList.toggle("empty", held.length === 0);
@@ -820,10 +908,12 @@ export function pendingImages(
       thumb.remove();
       held = held.filter((p) => p !== entry);
       sync();
+      persist();
     });
     held.push(entry);
     root.append(thumb);
     sync();
+    persist();
   }
 
   function clear(): void {
@@ -831,6 +921,7 @@ export function pendingImages(
     held = [];
     root.replaceChildren();
     sync();
+    persist();
   }
 
   return {
@@ -855,6 +946,7 @@ export function pendingImages(
       held = [];
       for (const p of batch) p.thumb.remove();
       sync();
+      persist(); // 冻结带走即清持久化(记下成功=草稿了结;失败由 putBack 复写回)
       return batch;
     },
     putBack(batch: PendingImage[]): void {
@@ -862,6 +954,7 @@ export function pendingImages(
       held = [...batch, ...held];
       for (const p of [...batch].reverse()) root.prepend(p.thumb);
       sync();
+      persist();
     },
     disposeBatch(batch: PendingImage[]): void {
       // 空间已切走的失败批:不许追加进别的空间的预览区(codex 三审 H),revoke 即弃。
@@ -886,6 +979,7 @@ export function pendingImages(
       held = [];
       for (const p of batch) p.thumb.remove();
       sync();
+      persist();
       let failed = 0;
       for (const p of batch) {
         try {
@@ -898,6 +992,17 @@ export function pendingImages(
       return failed;
     },
     clear,
+    async restore(): Promise<void> {
+      if (!opts.persistKey || held.length > 0) return; // 用户已抢先贴图:不覆盖
+      let blobs: Blob[];
+      try {
+        blobs = await loadImageDraft(opts.persistKey);
+      } catch {
+        return; // IndexedDB 不可用 / 读失败:恢复尽力而为,不拦启动
+      }
+      if (blobs.length === 0 || held.length > 0) return; // await 期间可能已被贴入:再核一次
+      for (const b of blobs) add(b); // add 各自 revoke-safe 建预览 + persist(幂等回写同内容)
+    },
   };
 }
 

@@ -580,6 +580,11 @@ impl Coord {
         let new_id = {
             let mut conn = spaces::open_space(&target_desc)?;
             let mut clock = Clock::load(&conn)?;
+            // 目标标签排序键自愈(0031,codex 复审 #2):这条一次性 RW 连接可能是**目标空间
+            // 刚从 v30 迁到 v31 后的首次开库**(未经 activate 的 heal),存量标签 position 全
+            // NULL。若不先自愈,import 新建的目标标签会先取到 "a0" 抢到存量标签之前;先补跑
+            // heal 让存量标签按现序落末键,新标签再落其后。幂等,无 NULL 行则一次 SELECT no-op。
+            zhujian_core::notes::heal_legacy_topic_positions(&mut conn, &mut clock)?;
             zhujian_core::move_item::import(&mut conn, &mut clock, &pkg)?
         };
         // 原语三:源删除(重取源写锁,重验指纹;裸 Err→unconfirmed,绝不丢 new_id)。
@@ -612,6 +617,9 @@ impl Coord {
         // 存量空间名补发自愈步(space-name-sync-plan §5):安卓库版本不等即清库重配,
         // 正常永无遗留 key(恒 no-op 一次 SELECT);与桌面装配点同纪律,防御性统一。
         spaces::heal_legacy_space_name(&mut conn, &mut clock)?;
+        // 存量标签排序键自愈(0031):position IS NULL 的标签落末键 + 发 position op(迁移
+        // 只加 NULL 列、不回填,见 0031 头注)。幂等,无 NULL 行则一次 SELECT no-op。
+        zhujian_core::notes::heal_legacy_topic_positions(&mut conn, &mut clock)?;
         let (ev_tx, ev_rx) = tokio::sync::mpsc::unbounded_channel();
         let rt = reservation.commit(
             ActivateSpec {
@@ -765,6 +773,21 @@ impl Coord {
             }
         }
         Ok(())
+    }
+
+    /// 深链接(4c):按 account_id 找本机对应空间的 id。SpaceInfo 只暴露 configured 不暴露
+    /// account_id 原值(前端匹不了),故走后端遍历磁盘正式候选的 descriptor 匹配。None =
+    /// 本机没装该账户的空间(链接来自没加入的账户)。任一候选读不出 = fail-closed Err
+    /// (与 account_free 同律,绝不「读不到就当没有」)。
+    pub fn space_id_for_account(&self, acc: &str) -> Result<Option<String>, String> {
+        let main_db = self.data_dir.join("notebook.sqlite3");
+        for (id, path) in spaces::discover(&main_db, Some(&self.data_dir), None)? {
+            let d = spaces::read_descriptor(&id, &path)?;
+            if d.account_id.as_deref() == Some(acc) {
+                return Ok(Some(id));
+            }
+        }
+        Ok(None)
     }
 
     /// 请求取消进行中的「加入空间」(独立 cancel token,不抢 lifecycle、不碰

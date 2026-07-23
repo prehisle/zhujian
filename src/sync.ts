@@ -14,6 +14,9 @@ import { generate } from "lean-qr";
 import { toSvg } from "lean-qr/extras/svg";
 import "./sync.css";
 
+// 同步服务器默认地址——创建账户/加入设备(本文件)+ 加入空间(notebook.ts)三处入口预填。
+export const DEFAULT_SYNC_URL = "wss://sync.zhujian.app";
+
 type Mode =
   | "home"
   | "create"
@@ -382,7 +385,7 @@ function renderCreate(body: HTMLElement): void {
   body.appendChild(
     el("p", "sync-note", "把本机创建为账户的第一台设备,其他设备之后配对加入。"),
   );
-  const server = input("服务器地址(wss://… 或 ws://…)");
+  const server = input("服务器地址(wss://… 或 ws://…)", DEFAULT_SYNC_URL);
   body.appendChild(server);
   const err = formErr(body);
   const acts = el("div", "sync-actions");
@@ -451,7 +454,7 @@ function renderJoin(body: HTMLElement): void {
   body.appendChild(
     el("p", "sync-note", "在老设备上点「添加设备」得到服务器地址和配对码,两项都填。本机已有的数据会保留并合并。"),
   );
-  const server = input("服务器地址(wss://… 或 ws://…)");
+  const server = input("服务器地址(wss://… 或 ws://…)", DEFAULT_SYNC_URL);
   const code = input("配对码(形如 123456789-XXXX-XXXX)");
   body.appendChild(server);
   body.appendChild(code);

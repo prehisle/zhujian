@@ -3,12 +3,34 @@
 .filter-row {
   flex: none;
   display: flex;
-  align-items: flex-start;
-  gap: 12px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
   padding: 11px 30px;
   border-bottom: 1px solid var(--line);
 }
 .filter-row[hidden] { display: none; }
+/* 类型轴行(kind pills):在标签 pills 之上;无 kind 时 renderKindPills 清空 → :empty 隐整行。 */
+.kind-filter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.kind-filter:empty { display: none; }
+/* 轴名小标(「类型」):与 pills 同排,弱化以示这是分组标签而非可点项。 */
+.tf-axis {
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--ink-faint);
+  margin-right: 2px;
+}
+/* 标签 pills + 文本过滤框同排(kind 行之下)。 */
+.filter-main {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
 .topic-filter {
   flex: 1;
   min-width: 0;

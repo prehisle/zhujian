@@ -96,19 +96,22 @@ describe("标签 · 浏览与收缩展开", () => {
     await goNotebook("topics");
     await (await $(`.topic-title*=${P}`)).waitForExist({ timeout: 10000 });
 
-    // 分组是纯视觉层级:子行带 .child 缩进、标题只显后缀、悬停 title 是全名、紧跟父行
-    // (子标签建得更晚,不分组的话按「最近变动在前」会排到父前面——紧跟父即分组生效)。
+    // 分组是纯视觉层级:子行带 .child、标题只显后缀、悬停 title 是全名,并收进父行紧跟的
+    // .topic-kids 子容器里(父行仍是列表直接子、nextElementSibling = .topic-kids;子标签
+    // 建得更晚,不分组的话按「最近变动在前」会排到父前面——收进容器即分组生效)。
     const got = await browser.execute((parent) => {
       const secs = [...document.querySelectorAll(".topic")];
       const byTitle = (txt) => secs.find((s) => s.querySelector(".topic-title").textContent === txt);
       const parentSec = byTitle(parent);
       const childSec = byTitle("子刊");
       const orphanSec = byTitle("E2E-孤前缀/尾巴");
+      const kids = parentSec ? parentSec.nextElementSibling : null;
       return {
         parentFlat: parentSec ? !parentSec.classList.contains("child") : null,
         childIndented: childSec ? childSec.classList.contains("child") : null,
         childFullName: childSec ? childSec.querySelector(".topic-title").title : null,
-        childFollowsParent: !!parentSec && parentSec.nextElementSibling === childSec,
+        childInParentKids:
+          !!kids && kids.classList.contains("topic-kids") && !!childSec && kids.contains(childSec),
         orphanFlatFullName: orphanSec ? !orphanSec.classList.contains("child") : null,
       };
     }, P);
@@ -116,7 +119,7 @@ describe("标签 · 浏览与收缩展开", () => {
       parentFlat: true,
       childIndented: true,
       childFullName: `${P}/子刊`,
-      childFollowsParent: true,
+      childInParentKids: true,
       orphanFlatFullName: true,
     });
   });
@@ -193,6 +196,89 @@ describe("标签 · 人工维护(CRUD)", () => {
     );
     // The note survives — only the tag projection was removed.
     expect((await invoke("list_processed")).some((n) => n.id === noteId)).toBe(true);
+  });
+});
+
+describe("标签 · 手动排序 + 类型(1c)", () => {
+  // 合成 HTML5 拖拽:dragstart 落被拖行的手柄、drop 落目标行 —— clientY 缺省 0 < 目标行中点,
+  // 故走 drop-before(插到目标之前),等价真实拖到目标上半区(board-tag-drag 同手法)。
+  async function dragTopicBefore(dragTitle, targetTitle) {
+    await browser.execute(
+      (dt, tt) => {
+        const secs = [...document.querySelectorAll(".topic")];
+        const byTitle = (txt) => secs.find((s) => s.querySelector(".topic-title")?.textContent === txt);
+        const drag = byTitle(dt);
+        const target = byTitle(tt);
+        const handle = drag.querySelector(".topic-drag");
+        const xfer = new DataTransfer();
+        handle.dispatchEvent(new DragEvent("dragstart", { bubbles: true, dataTransfer: xfer }));
+        target.dispatchEvent(new DragEvent("dragover", { bubbles: true, cancelable: true, dataTransfer: xfer }));
+        target.dispatchEvent(new DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer: xfer }));
+        handle.dispatchEvent(new DragEvent("dragend", { bubbles: true, dataTransfer: xfer }));
+      },
+      dragTitle,
+      targetTitle,
+    );
+  }
+
+  it("给标签点类型(人名)→ 徽标显示 + 落库;清除回无类型", async () => {
+    const T = "E2E-类型-甲";
+    const id = await invoke("create_topic", { title: T });
+
+    await goNotebook("topics");
+    await (await $(`.topic-title*=${T}`)).waitForExist({ timeout: 10000 });
+
+    // 打开「类型」→ 输入「人名」→ 保存。
+    await clickTopicAction(T, "类型");
+    await $(".tk-input").waitForDisplayed({ timeout: 5000 });
+    await setField(".tk-input", "人名");
+    await clickTopicAction(T, "保存");
+
+    await browser.waitUntil(
+      async () => {
+        const t = (await invoke("list_topics_full")).find((x) => x.id === id);
+        return t && t.kind === "人名";
+      },
+      { timeout: 8000 },
+    );
+    const sec = await $(`.topic*=${T}`);
+    await expect(sec.$(".topic-kind.on")).toHaveText("人名");
+
+    // 清除 → 回无类型(kind = null)。
+    await clickTopicAction(T, "类型");
+    await $(".tk-input").waitForDisplayed({ timeout: 5000 });
+    await clickTopicAction(T, "清除");
+    await browser.waitUntil(
+      async () => {
+        const t = (await invoke("list_topics_full")).find((x) => x.id === id);
+        return t && t.kind === null;
+      },
+      { timeout: 8000 },
+    );
+  });
+
+  it("拖动手柄调整标签顺序:把丙拖到甲之前 → 顺序变更并落库", async () => {
+    const A = "E2E-序-甲子";
+    const B = "E2E-序-乙丑";
+    const C = "E2E-序-丙寅";
+    const ida = await invoke("create_topic", { title: A });
+    const idb = await invoke("create_topic", { title: B });
+    const idc = await invoke("create_topic", { title: C });
+
+    await goNotebook("topics");
+    await (await $(`.topic-title*=${C}`)).waitForExist({ timeout: 10000 });
+
+    // 建档序 = 甲 乙 丙(新标签落末尾,position 递增)。拖 丙 到 甲 之前 → 丙 甲 乙。
+    await dragTopicBefore(C, A);
+
+    await browser.waitUntil(
+      async () => {
+        const trees = await invoke("list_topics_full");
+        const order = trees.filter((t) => [ida, idb, idc].includes(t.id)).map((t) => t.id);
+        return order.length === 3 && order[0] === idc && order[1] === ida && order[2] === idb;
+      },
+      { timeout: 8000 },
+    );
   });
 });
 

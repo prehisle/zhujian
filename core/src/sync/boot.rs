@@ -486,17 +486,17 @@ fn import_attached(conn: &mut Connection, clock: &mut Clock) -> Result<ImportRep
     // = 前提被破坏,响亮失败整体回滚。
     let topics = tx
         .execute(
-            "INSERT INTO topics (id, title, created_at, updated_at, color) \
-             SELECT id, title, created_at, updated_at, color FROM boot.topics",
+            "INSERT INTO topics (id, title, created_at, updated_at, color, position, kind) \
+             SELECT id, title, created_at, updated_at, color, position, kind FROM boot.topics",
             [],
         )
         .map_err(|e| format!("导入 topics 失败:{e}"))?;
     let items = tx
         .execute(
             "INSERT INTO items (id, content, stage, created_at, updated_at, archived_at, \
-                                due_on, priority, position, sealed_at, born_stage) \
+                                due_on, priority, position, sealed_at, born_stage, done_at) \
              SELECT id, content, stage, created_at, updated_at, archived_at, \
-                    due_on, priority, position, sealed_at, born_stage FROM boot.items",
+                    due_on, priority, position, sealed_at, born_stage, done_at FROM boot.items",
             [],
         )
         .map_err(|e| format!("导入 items 失败:{e}"))?;
@@ -787,11 +787,11 @@ fn audit_contiguity_and_fk(conn: &Connection) -> Result<(), String> {
 // 导入三道闸)。
 
 /// item 的 LWW 审计字段(updated_at 是本机簿记摸 now,不同步不审)。
-/// 每个字段:create payload 里键名同字段名(archived_at/sealed_at 出生态不在 payload →
+/// 每个字段:create payload 里键名同字段名(archived_at/sealed_at/done_at 出生态不在 payload →
 /// json_extract 得 NULL,winner 落到 set_field 或保持 NULL),set_field 值在 `$.value`。
 const ITEM_LWW_FIELDS: &[&str] = &[
     "content", "stage", "created_at", "due_on", "priority", "archived_at", "sealed_at",
-    "born_stage", "position",
+    "born_stage", "position", "done_at",
 ];
 
 /// 某 op 背书实体的某字段:表列是否 == 日志 LWW winner(winner = create 初值 + 该字段
@@ -805,7 +805,7 @@ fn count_field_mismatches(
     create_key: Option<&str>,
 ) -> Result<i64, String> {
     // create 初值:Some(k) 取自 $.<k>;None = 恒 NULL(create-forced-NULL 字段:item 的
-    // archived_at/sealed_at、topic 的 color——apply_*_create 忽略 payload 直写 NULL,审计
+    // archived_at/sealed_at/done_at、topic 的 color——apply_*_create 忽略 payload 直写 NULL,审计
     // 必须同口径,否则恶意 create 注入同名键 + 表里设同值即过审,replay 却得 NULL 静默
     // 分叉,codex 二审)。set_field 值恒在 $.value,按 $.field == field 筛。
     let create_value_expr = match create_key {
@@ -837,22 +837,26 @@ fn audit_op_backed_semantics(live: &Connection) -> Result<(), String> {
     audit_op_preconditions(live)?;
     // ① item / topic 字段级 LWW:表列必须 == 日志 winner。
     for &field in ITEM_LWW_FIELDS {
-        // archived_at/sealed_at:apply_item_create 强制 NULL、忽略 payload——create 初值恒
+        // archived_at/sealed_at/done_at:apply_item_create 强制 NULL、忽略 payload——create 初值恒
         // NULL(否则恶意 create 注入同名键即过审,codex 二审);其余字段读 payload 初值。
-        let create_key = if matches!(field, "archived_at" | "sealed_at") { None } else { Some(field) };
+        let create_key = if matches!(field, "archived_at" | "sealed_at" | "done_at") { None } else { Some(field) };
         if count_field_mismatches(live, "items", field, create_key)? > 0 {
             return Err(format!(
                 "导入后语义审计:有 item 的 {field} 终态与自身日志的 LWW 结果不符(快照与日志矛盾),整体回滚"
             ));
         }
     }
-    // topic 的 title / updated_at / color 都是同步字段(apply_topic_set_field 白名单);
-    // updated_at 出生初值 = created_at;color 无 create 键 → 出生初值 NULL(与列默认 NULL 一致,
-    // 与 item 的 due_on/archived_at 同款)。item.updated_at 是本机簿记(回放摸 now、非确定性
-    // payload),不审。
-    for (field, create_key) in
-        [("title", Some("title")), ("updated_at", Some("created_at")), ("color", None)]
-    {
+    // topic 的 title / updated_at / color / position / kind 都是同步字段(apply_topic_set_field
+    // 白名单);updated_at 出生初值 = created_at;color/position/kind 无 create 键 → 出生初值
+    // NULL(与列默认 NULL 一致,与 item 的 due_on/archived_at 同款)。item.updated_at 是本机
+    // 簿记(回放摸 now、非确定性 payload),不审。
+    for (field, create_key) in [
+        ("title", Some("title")),
+        ("updated_at", Some("created_at")),
+        ("color", None),
+        ("position", None),
+        ("kind", None),
+    ] {
         if count_field_mismatches(live, "topics", field, create_key)? > 0 {
             return Err(format!(
                 "导入后语义审计:有 topic 的 {field} 终态与自身日志的 LWW 结果不符(快照与日志矛盾),整体回滚"
@@ -1873,6 +1877,46 @@ mod tests {
         assert!(err.contains("快照") && err.contains("赢家不符"), "{err}");
     }
 
+    /// 工序1 的 boot 分支覆盖(codex 复审 §7):非 NULL done_at 随快照整行到新端、逐字保留,
+    /// 并经引导 strict battery(done_at 已入 ITEM_LWW_FIELDS + create-forced-NULL 审计)。此前
+    /// boot 只走 done_at=NULL,整行复制与审计的非 NULL 分支未被执行。
+    #[test]
+    fn import_preserves_nonnull_done_at() {
+        let mut a = peer("done-a");
+        let id = task::create(&mut a.conn, &mut a.clock, "干完的活", None, None, None).unwrap();
+        task::transition(&mut a.conn, &mut a.clock, &id, "done").unwrap();
+        // 工序1 无本地 writer:合法远端 done_at set_field 落值 + 记 op(strict battery 要求行值
+        // == oplog LWW 赢家,故经 apply_remote_op 落值,而非裸 UPDATE)。
+        let done_ts = "2026-07-20T10:00:00.000Z";
+        crate::replay::apply_remote_op(
+            &mut a.conn,
+            &mut a.clock,
+            &crate::replay::RemoteOp {
+                op_id: Ulid::new().to_string(),
+                hlc: crate::clock::Hlc {
+                    wall_ms: 4_102_444_800_000,
+                    counter: 0,
+                    device_id: "RMTDEV0000000000000000000X".into(),
+                }
+                .encode(),
+                entity: "item".into(),
+                entity_id: id.clone(),
+                kind: "set_field".into(),
+                payload: serde_json::json!({"field": "done_at", "value": done_ts}),
+                origin_seq: 1,
+            },
+        )
+        .expect("done_at 落值");
+
+        let snap = make_snapshot(&a.conn, &a.dir).unwrap();
+        let mut b = peer("done-b");
+        check_fresh_to_account(&b.conn).expect("新端 fresh");
+        import_snapshot(&mut b.conn, &mut b.clock, &snap.path).unwrap().expect_clean_commit();
+        let got: Option<String> =
+            b.conn.query_row("SELECT done_at FROM items WHERE id = ?1", [&id], |r| r.get(0)).unwrap();
+        assert_eq!(got.as_deref(), Some(done_ts), "引导后 done_at 逐字保留");
+    }
+
     /// §6.2 全形态导入:老端(归档成就/回收站/图/编辑历史/标签),新端有配对前本地
     /// 数据 + 同名标签——并集、零丢失、时钟推进、标记落盘。严格纪元(epoch-plan
     /// §3.2)起快照不得携带无背书 legacy 行(负例见
@@ -2870,9 +2914,15 @@ mod tests {
             "SELECT id||'|'||content||'|'||stage||'|'||created_at \
              ||'|'||COALESCE(archived_at,'∅')||'|'||COALESCE(due_on,'∅')||'|'||COALESCE(priority,'∅') \
              ||'|'||COALESCE(position,'∅')||'|'||COALESCE(sealed_at,'∅')||'|'||COALESCE(born_stage,'∅') \
+             ||'|'||COALESCE(done_at,'∅') \
              FROM items ORDER BY id",
         ),
-        ("topics", "SELECT id||'|'||title||'|'||created_at||'|'||updated_at FROM topics ORDER BY id"),
+        (
+            "topics",
+            "SELECT id||'|'||title||'|'||created_at||'|'||updated_at \
+             ||'|'||COALESCE(color,'∅')||'|'||COALESCE(position,'∅')||'|'||quote(kind) \
+             FROM topics ORDER BY id",
+        ),
         ("item_topic", "SELECT item_id||'|'||topic_id FROM item_topic ORDER BY item_id, topic_id"),
         (
             "item_image",

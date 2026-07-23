@@ -14,18 +14,24 @@ import {
   captureIdea,
   captureTodo,
   completeTask,
+  deleteItemImage,
   getItemImage,
   listSpaces,
   listTimeline,
+  listTopicsFull,
   spaceLabel,
   syncCreateAccount,
   syncPairStart,
   type SpaceInfo,
   type TimelineItem,
 } from "./api";
-import { $, esc, fmtWhen, hideConfirmBar, showBar, showError, STAGE_LABEL } from "./ui";
+import { $, confirmBar, esc, fmtWhen, hideConfirmBar, showBar, showError, STAGE_LABEL } from "./ui";
+import { composeImages, pickImage } from "./images";
 import * as cardPanel from "./cardpanel";
+import * as filter from "./filter";
 import * as panes from "./panes";
+import * as topics from "./topics";
+import { initCardSwipe } from "./swipe";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   scan,
@@ -97,6 +103,14 @@ let spaceMenuFor: string | null = null; // 空间行「⋯」展开态(ui-audit 
 
 type ViewMode = "ideas" | "tasks";
 let viewMode: ViewMode = "ideas";
+// 时间轴筛选(灵感/看板两面各持一份,同桌面 board/inbox 各自记忆自己的筛选):
+// 切面保留、切空间清零。allFilterTopics 是带 kind 的全量标签(list_topics_full),
+// 每轮刷新重取——类型轴的真相只在它上(per-item chip 不带 kind)。
+const filters: Record<ViewMode, filter.FilterState> = {
+  ideas: { kind: "all", topic: "all", text: "" },
+  tasks: { kind: "all", topic: "all", text: "" },
+};
+let allFilterTopics: filter.FilterTopic[] = [];
 // 用户主动导航(点 mode 钮)/开始保存 → ++,作废在途的 focus 定位(146 ▲M2/▲▲M3:
 // 旧定位的内部切面不许反抢用户刚选的面、不许打破保存的「新卡在当前面」承诺)。
 let navSeq = 0;
@@ -105,8 +119,32 @@ let captureSaving = false;
 // 在飞期间发生过新输入/分享追加(哪怕后来又删空,实现审 L1):成功回执据此判
 // 「用户正在打字」——不 blur、不抢焦点、不滚动;别用「框是否为空」当替身。
 let captureLiveTouched = false;
+// 草稿断电恢复(197 下一步①):compose 文字草稿走 localStorage(纯设备本地 UI 状态,
+// 绝不进 DB/同步;图走 IndexedDB,见 images.ts)。输入即写、记下成功清、启动回填——
+// 意外断电/杀进程后重开,上次没记下的文字还在。单条全局草稿(与文字框跨面/跨空间
+// 复用同哲学,存到记下那刻落当前空间)。
+const COMPOSE_DRAFT_KEY = "zhujian.compose-draft";
+function persistComposeText(): void {
+  const v = ($("text") as HTMLTextAreaElement).value;
+  if (v) localStorage.setItem(COMPOSE_DRAFT_KEY, v);
+  else localStorage.removeItem(COMPOSE_DRAFT_KEY);
+}
 $("text").addEventListener("input", () => {
   if (captureSaving) captureLiveTouched = true;
+  persistComposeText();
+});
+
+// 记灵感时的暂存配图(195 slice1):点「加图」贴进 compose 暂存条,「记下」建条目后
+// 随之挂上(save() 的两缓冲结算)。暂存不随切面/切空间清(与文字草稿同律),存到保存
+// 那刻落到当前空间。取图/转码走共享件 images.ts,与卡片操作面「加图」同一套。
+const compImgs = composeImages($("compose-thumbs"));
+$("compose-addimg").addEventListener("click", async () => {
+  if (captureSaving || switching) return; // 在飞/切换中不受理(与「记下」同闸)
+  const file = await pickImage();
+  if (!file) return;
+  compImgs.add(file);
+  if (captureSaving) captureLiveTouched = true; // 罕见:选图期间「记下」在飞=新输入
+  ($("text") as HTMLTextAreaElement).focus(); // 贴完回到输入,顺手写配文
 });
 
 // stage → 主视图归属。穷尽映射,未知值响亮抛(铁律:不写兜底)。
@@ -156,7 +194,7 @@ function renderCard(it: TimelineItem): string {
         .map(
           (im) =>
             `<button class="thumb" data-img="${esc(im.id)}" data-seq="${im.seq}"
-               aria-label="查看图${im.seq}"><span class="tag-n">图${im.seq}</span></button>`,
+               aria-label="查看图${im.seq}"><span class="tag-n">图${im.seq}</span><span class="thumb-del" role="button" aria-label="删除图${im.seq}">×</span></button>`,
         )
         .join("")}</div>`
     : "";
@@ -164,9 +202,11 @@ function renderCard(it: TimelineItem): string {
   const meta: string[] = [];
   if (it.due_on) meta.push(`<span class="chip">截止 ${esc(it.due_on)}</span>`);
   if (it.priority) meta.push(`<span class="chip">${["", "低", "中", "高"][it.priority]}优先</span>`);
+  // 完成时刻(0030):已完成卡显示「完成于 <时刻>」;done_at 为 null(本功能前完成的老卡)则不显示。
+  const doneAt = done && it.done_at ? `<time class="done-at">完成于 ${esc(fmtWhen(it.done_at))}</time>` : "";
   return `<article class="card${done ? " done" : ""}" data-id="${esc(it.id)}">${tick}<div class="body">
     <p class="content">${esc(it.content)}</p>${thumbs}
-    <footer>${pill}<time>${esc(fmtWhen(it.created_at))}</time>${meta.join("")}${chips}</footer>
+    <footer>${pill}<time>${esc(fmtWhen(it.created_at))}</time>${doneAt}${meta.join("")}${chips}</footer>
   </div></article>`;
 }
 
@@ -407,6 +447,7 @@ window.addEventListener("popstate", () => {
 // (IPC 去重内已并单),关闭即置空 src——大图字节不驻留。请求带代次(codex 二审):
 // 快速连点几张图,迟到的旧响应不许盖掉最新点击;关闭也推代次,在途响应作废不复弹。
 let viewerSeq = 0;
+let viewerImgId: string | null = null; // 当前大图的 image id(删图按钮据此删这张)
 async function openViewer(id: string, seq: string) {
   const my = ++viewerSeq;
   hideConfirmBar(); // 开大图 = 放弃挂着的两拍确认(确认条 z 在查看器之上,别浮在图上)
@@ -414,6 +455,7 @@ async function openViewer(id: string, seq: string) {
   try {
     const url = await fetchImageUrl(space, id);
     if (!url || my !== viewerSeq) return;
+    viewerImgId = id; // 现显的这张(删图按钮据此),迟到响应被 my!==viewerSeq 挡在上面
     resetZoom(); // 换图不继承上一张的缩放
     const img = $("viewer-img") as HTMLImageElement;
     img.src = url;
@@ -430,6 +472,8 @@ async function openViewer(id: string, seq: string) {
 
 function closeViewerNow() {
   viewerSeq++; // 在途的打开请求作废
+  viewerImgId = null;
+  hideConfirmBar(); // 关图即弃挂着的删图确认(旧确认不许作用到下一张/下个语境)
   $("viewer").hidden = true;
   ($("viewer-img") as HTMLImageElement).src = ""; // 释放大图
   resetZoom();
@@ -563,10 +607,59 @@ $("viewer").addEventListener("click", (e) => {
   }, 260);
 });
 
+// 删图(196):看大图时删这张。永久销毁(图无回收站、编号退役不复用),两拍确认——
+// 确认条 z(17)在查看器(15)之上能盖住。stopPropagation 挡掉查看器自身的单击关/双击缩放。
+// onYes 复核「还在看这张、空间没换」(期间换图/关闭/切空间一律作废);删成关查看器 +
+// settleHistory(平掉开图压的历史层)+ 刷新轴(缩略图随之消失)。
+$("viewer-del").addEventListener("click", (e) => {
+  e.stopPropagation();
+  const id = viewerImgId;
+  if (!id) return;
+  const space = getCurrentSpace();
+  confirmBar("删除这张图?删了不可恢复", "删除", () => {
+    if (viewerImgId !== id || getCurrentSpace() !== space) return;
+    void (async () => {
+      try {
+        await deleteItemImage(space, id);
+        closeViewerNow();
+        settleHistory();
+        await refresh();
+        showBar("已删除该图", true);
+      } catch (err) {
+        showError(String(err));
+      }
+    })();
+  });
+});
+
+// 编辑态多图管理(cardpanel 给 actions 面开着的卡片挂 .imgmanage 露出缩略图 ×):删这张图。
+// 两拍确认,与查看器删图(197)同律(图无回收站、编号退役不复用);删成刷新轴,缩略图随之消失。
+// actions 面无脏草稿,refresh 不被草稿闸延后(edit 面恒脏才有那问题,故删图放 actions 面)。
+function confirmDeleteImage(space: string, id: string, seq: string) {
+  confirmBar(`删除图${seq}?删了不可恢复`, "删除", () => {
+    if (getCurrentSpace() !== space) return; // 期间切空间:作废
+    void (async () => {
+      try {
+        await deleteItemImage(space, id);
+        await refresh();
+        showBar("已删除该图", true);
+      } catch (err) {
+        showError(String(err));
+      }
+    })();
+  });
+}
+
 $("timeline").addEventListener("click", (e) => {
   if (switching) return; // 切换编排中:屏上还是旧空间的卡,不接受任何取图请求
-  const btn = (e.target as HTMLElement).closest<HTMLElement>(".thumb[data-img]");
+  const target = e.target as HTMLElement;
+  const btn = target.closest<HTMLElement>(".thumb[data-img]");
   if (!btn) return;
+  if (target.closest(".thumb-del")) {
+    // 露出的删图 ×(仅 .imgmanage 卡可见):两拍确认删,不落到看大图。
+    confirmDeleteImage(getCurrentSpace(), btn.dataset.img!, btn.dataset.seq ?? "");
+    return;
+  }
   if (btn.classList.contains("err")) {
     btn.classList.remove("err"); // 暂态读错不判死:点一下重试
     void fillThumb(btn);
@@ -604,27 +697,78 @@ function projectTimeline(): void {
   const box = $("timeline");
   thumbObserver.disconnect();
   const items = [...lastItems.values()];
+  const modeItems = items.filter((i) => modeOfStage(i.stage) === viewMode);
+  const f = filters[viewMode];
+  // 死标签/死类型回落(纯状态,先于渲染 pills 与应用过滤,同桌面共享件次序)。
+  filter.reconcileTopicFilter(f, allFilterTopics);
+  filter.reconcileKindFilter(f, allFilterTopics);
+  renderFilterBar(modeItems);
+  const shown = filter.applyFilter(modeItems, f, (i) => i.content, allFilterTopics);
   if (viewMode === "ideas") {
-    const shown = items.filter((i) => modeOfStage(i.stage) === "ideas");
     box.innerHTML = shown.length
       ? shown.map(renderCard).join("")
-      : `<p class="muted empty">还没有灵感。</p>`;
+      : modeItems.length === 0
+        ? `<p class="muted empty">还没有灵感。</p>`
+        : filteredEmptyHtml(f);
   } else {
-    const tasks = items.filter((i) => modeOfStage(i.stage) === "tasks");
-    box.innerHTML = tasks.length
-      ? TASK_SECTIONS.filter((s) => tasks.some((t) => t.stage === s.stage))
+    box.innerHTML = shown.length
+      ? TASK_SECTIONS.filter((s) => shown.some((t) => t.stage === s.stage))
           .map(
             (s) =>
-              `<section class="tl-group"><h3 class="tl-sec">${s.label}</h3>${tasks
+              `<section class="tl-group"><h3 class="tl-sec">${s.label}</h3>${shown
                 .filter((t) => t.stage === s.stage)
                 .map(renderCard)
                 .join("")}</section>`,
           )
           .join("")
-      : `<p class="muted empty">还没有任务。</p>`;
+      : modeItems.length === 0
+        ? `<p class="muted empty">还没有任务。</p>`
+        : filteredEmptyHtml(f);
   }
   hydrateThumbs(box);
   cardPanel.restore(box); // 展开态跨重画恢复(条目已不在=清态)
+}
+
+/** 筛选条:本面有条目才显示(空面无可筛)。类型行 + 标签行由 filter.ts 渲染,文本框
+ *  是常驻元素(不随 pills 重建、打字不丢焦点),值在 applyMode/清筛处另行同步。 */
+function renderFilterBar(modeItems: TimelineItem[]): void {
+  const bar = $("filterbar");
+  bar.hidden = modeItems.length === 0;
+  if (modeItems.length === 0) return;
+  const f = filters[viewMode];
+  filter.renderKindPills($("filter-kinds"), modeItems, allFilterTopics, f, onFilterPick);
+  filter.renderTopicPills($("filter-topics"), modeItems, allFilterTopics, f, onFilterPick);
+}
+
+/** 点 pill 的落点:先过草稿闸(卡片编辑未存时重投影会拆掉草稿),再改本面筛选状态
+ *  并重投影(纯客户端,不重新拉数据)。切类型时 filter.ts 已带上 topic:"all"。 */
+function onFilterPick(patch: Partial<filter.FilterState>): void {
+  if (cardPanel.hasDirtyDraft()) {
+    showError("先保存或取消正在编辑的内容");
+    return;
+  }
+  Object.assign(filters[viewMode], patch);
+  projectTimeline();
+}
+
+/** 筛空(本面有条目、被当前筛选滤没了)的空态文案:词优先,再标签,再类型——别让
+ *  用户以为记录全没了。 */
+function filteredEmptyHtml(f: filter.FilterState): string {
+  const q = f.text.trim();
+  if (q) return `<p class="muted empty">没有匹配「${esc(q)}」的记录。</p>`;
+  if (f.topic === "none") return `<p class="muted empty">没有未打标签的记录。</p>`;
+  const t = allFilterTopics.find((x) => x.id === f.topic);
+  if (t) return `<p class="muted empty">「${esc(t.title)}」下没有记录。</p>`;
+  if (f.kind !== "all") return `<p class="muted empty">「${esc(f.kind)}」类型下没有记录。</p>`;
+  return `<p class="muted empty">没有匹配的记录。</p>`;
+}
+
+/** 清掉某面的筛选并同步文本框(新记录落该面时用,避免被停留的筛选藏起)。 */
+function clearFilter(mode: ViewMode): void {
+  const f = filters[mode];
+  if (f.kind === "all" && f.topic === "all" && f.text === "") return;
+  filters[mode] = { kind: "all", topic: "all", text: "" };
+  if (mode === viewMode) ($("filter-text") as HTMLInputElement).value = "";
 }
 
 async function refreshOnce(): Promise<void> {
@@ -634,13 +778,16 @@ async function refreshOnce(): Promise<void> {
   }
   const space = getCurrentSpace();
   try {
-    const items = await listTimeline(space);
+    // 时间轴 + 带 kind 的全量标签一把取(同 space、同一轮):后者供筛选条的类型轴与
+    // 标签色/死筛回落用(per-item chip 不带 kind、也不含当前无条目的标签)。
+    const [items, ftopics] = await Promise.all([listTimeline(space), listTopicsFull(space)]);
     if (space !== getCurrentSpace()) return;
     if (cardPanel.hasDirtyDraft()) {
       refreshDeferred = true;
       return;
     }
     lastItems = new Map(items.map((i) => [i.id, i])); // 全量真值,只在成功读取后更新
+    allFilterTopics = ftopics.map((t) => ({ id: t.id, title: t.title, color: t.color, kind: t.kind }));
     lastRefreshOk = true;
     projectTimeline();
   } catch (err) {
@@ -724,6 +871,7 @@ async function pullSharedText() {
       if (!text) break;
       const ta = $("text") as HTMLTextAreaElement;
       ta.value = ta.value.trim() ? `${ta.value}\n${text}` : text;
+      persistComposeText(); // 分享追加的文字也持久化(程序改值不触发 input)
       if (captureSaving) captureLiveTouched = true; // 分享追加=在飞新输入(实现审 L1)
       ta.focus();
     }
@@ -741,9 +889,62 @@ async function pullSharedText() {
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState !== "visible") return;
   void pullSharedText();
+  void pullDeepLink(); // 回前台也取一次深链接(热启动 emit 可能丢,文件兜底)
   void initUpdate(); // 后台切回也查一次新版(否则只有冷启动才提示)
 });
 window.addEventListener("zhujian-share", () => void pullSharedText());
+window.addEventListener("zhujian-deeplink", () => void pullDeepLink());
+
+// ---- 深链接消费(4c,照抄分享薄桥)------------------------------------------
+// zhujian://open?acc=<账户>&item=<条目> | space=<空间>&item=<条目>。take_deep_link 取走
+// 原生暂存的 URI → 解析 → 匹本机空间(space= 按 id;acc= 走后端 find_space_by_account,因
+// SpaceInfo 不暴露 account_id)→ 若非当前空间先切过去(异步、会停机)→ focusTimelineCard
+// 定位高亮。与分享不同,深链接是一次性跳转、不做追加合并,简单 single-flight 去重即可。
+// 回收站/归档册的条目 focusTimelineCard 会如实报「已不在」(v1 只覆盖灵感/任务两面)。
+type ParsedDeepLink = { acc: string | null; space: string | null; item: string };
+function parseDeepLink(raw: string): ParsedDeepLink | null {
+  let u: URL;
+  try {
+    u = new URL(raw);
+  } catch {
+    return null;
+  }
+  if (u.protocol !== "zhujian:" || u.host !== "open") return null;
+  const item = u.searchParams.get("item");
+  if (!item) return null;
+  return { acc: u.searchParams.get("acc"), space: u.searchParams.get("space"), item };
+}
+
+let pullingDeepLink = false;
+async function pullDeepLink(): Promise<void> {
+  if (pullingDeepLink) return;
+  pullingDeepLink = true;
+  try {
+    const raw = await invoke<string | null>("take_deep_link");
+    if (!raw) return;
+    const p = parseDeepLink(raw);
+    if (!p) return;
+    let target: string | null = null;
+    if (p.space) {
+      const spaces = await invoke<SpaceInfo[]>("list_spaces");
+      target = spaces.find((s) => s.id === p.space)?.id ?? null;
+    } else if (p.acc) {
+      target = await invoke<string | null>("find_space_by_account", { accountId: p.acc });
+    }
+    if (!target) {
+      showError("这条所在的空间不在这台设备上");
+      return;
+    }
+    // 切到目标空间(若不同):switchSpace 是异步、有停机,返回即前台 runtime 就绪、
+    // switching 已复位——之后再定位,躲开 focusTimelineCard 的 switching 守卫。
+    if (target !== getCurrentSpace()) await switchSpace(target);
+    await focusTimelineCard(p.item);
+  } catch (e) {
+    showError(String(e));
+  } finally {
+    pullingDeepLink = false;
+  }
+}
 
 // 保存 = 写命令:显式携带「点击那刻看到的空间与 mode」,后端在协调状态内复核(切换中
 // 响亮拒、目标已变响亮拒)。**两缓冲**(146 ▲H1▲▲M1,与 145 takeBatch「保存那刻冻结」
@@ -753,7 +954,12 @@ window.addEventListener("zhujian-share", () => void pullSharedText());
 // 从不重建,框内现值即 liveDraft 的单一真相源。刻意不走 sinvoke(§16.2-4)。
 async function save() {
   const ta = $("text") as HTMLTextAreaElement;
-  if (captureSaving || !ta.value.trim()) return;
+  if (captureSaving) return;
+  if (!ta.value.trim()) {
+    // 图不能独立成条(条目正文非空):只贴图没写字时给可辨识提示,不静默无反应。
+    if (compImgs.count() > 0) showError("先写点文字,图片作为配文一起记下");
+    return;
+  }
   if (cardPanel.hasDirtyDraft()) {
     // ▲▲M3:卡片草稿在场时保存后的 refresh 会被无限延后、新卡落不了 DOM——响亮拒。
     showError("先保存或取消正在编辑的内容");
@@ -763,6 +969,9 @@ async function save() {
   const mode = viewMode; // 落点冻结在点击那刻,响应回来绝不重读
   const savingDraft = ta.value;
   ta.value = "";
+  // 图与文字同刻冻结带走(两缓冲,同 takeBatch):在飞期间新贴的图属于下一条,清预览。
+  const savingImgs = compImgs.takeBatch();
+  localStorage.removeItem(COMPOSE_DRAFT_KEY); // 文字草稿同刻清(图持久化由 takeBatch 清)
   captureSaving = true;
   captureLiveTouched = false;
   navSeq++; // 作废在途 focus 定位:不许其内部切面打破「新卡在当前面」承诺
@@ -771,6 +980,16 @@ async function save() {
   try {
     const capture = mode === "ideas" ? captureIdea : captureTodo;
     const newId = await capture(space, savingDraft);
+    // 条目已建 → 把冻结的暂存图逐张挂上(失败按张计,条目在、图可去卡片「加图」重贴)。
+    // 挂完再刷新,新卡带着缩略图一次呈现。
+    if (savingImgs.length) {
+      const failed = await compImgs.attachBatch(space, newId, savingImgs);
+      if (failed > 0) showError(`有 ${failed} 张配图没挂上,可在该卡片「加图」重贴`);
+    }
+    // 新卡落 mode 面:清掉该面停留的筛选,免得刚记的记录被藏起(「记了却没出现」的
+    // 错觉)。桌面在筛着标签时改为自动挂标签保留可见,安卓这版先取「清筛见新卡」的
+    // 简单形(捕获不自动打标签,故没有可保留的标签维度)。
+    clearFilter(mode);
     if (!captureLiveTouched) {
       // 在飞期间无新输入:现状回执——收键盘让新卡露出来,滚到顶闪一下
       // (ui-audit P1 #7:原 finally 无条件 ta.focus() 让键盘永不收、新卡被挡)。
@@ -791,6 +1010,8 @@ async function save() {
     // 失败:取走的那份放回。框里有新字就合并(先写的在前),光标置尾接着改。
     const live = ta.value;
     ta.value = live === "" ? savingDraft : `${savingDraft}\n${live}`;
+    persistComposeText(); // 退回的文字重新持久化(程序改值不触发 input)
+    compImgs.putBack(savingImgs); // 图同样退回预览条,可连同文字一起重试
     ta.focus();
     ta.setSelectionRange(ta.value.length, ta.value.length);
   } finally {
@@ -951,6 +1172,7 @@ const PANE_EL: Record<string, string> = {
   search: "search-pane",
   trash: "trash-pane",
   sealed: "sealed-pane",
+  topics: "topics-pane",
   diag: "diag",
 };
 let activePane: string | null = null;
@@ -1000,6 +1222,7 @@ function openPane(name: string) {
   }
   else if (name === "trash") void panes.loadTrash();
   else if (name === "sealed") void panes.loadSealed();
+  else if (name === "topics") void topics.loadTopics();
   else if (name === "search") panes.focusSearch();
   else if (name === "diag" && !diagLoaded) {
     diagLoaded = true;
@@ -1016,6 +1239,7 @@ function applyMode(target: ViewMode) {
   viewMode = target;
   ($("text") as HTMLTextAreaElement).placeholder =
     target === "ideas" ? "记一笔灵感…" : "记一件待办…";
+  ($("filter-text") as HTMLInputElement).value = filters[target].text; // 各面记忆自己的过滤词
   renderBottomBar();
   if (lastRefreshOk) projectTimeline();
   else void refresh();
@@ -1050,6 +1274,12 @@ function resetPanesForSpaceChange() {
   $("db").innerHTML = `<span class="muted">读取中…</span>`;
   $("probe").innerHTML = `<span class="muted">未运行</span>`;
   panes.resetPanesForSpaceChange();
+  topics.resetTopicsForSpaceChange();
+  // 筛选是 A 空间的标签 id/词,绝不带进 B 空间(allFilterTopics 随下轮刷新重取)。
+  filters.ideas = { kind: "all", topic: "all", text: "" };
+  filters.tasks = { kind: "all", topic: "all", text: "" };
+  allFilterTopics = [];
+  ($("filter-text") as HTMLInputElement).value = "";
 }
 
 /** 远端变更时活动面也要跟上(实现审 M6):回收站/归档册打开着就重载,不给
@@ -1057,6 +1287,8 @@ function resetPanesForSpaceChange() {
 function refreshActivePane() {
   if (activePane === "trash") void panes.loadTrash();
   else if (activePane === "sealed") void panes.loadSealed();
+  // 标签面:拖动/类型编辑进行中不被动重载(免把正在操作的行从脚下拆掉),空闲才重读。
+  else if (activePane === "topics" && !topics.topicsInteracting()) void topics.loadTopics();
   cardPanel.onRemoteChanged(); // tags 面的标签集标脏重读
 }
 
@@ -1118,7 +1350,20 @@ document.querySelector("header h1")!.addEventListener("click", (e) => {
 });
 $("space-chip").addEventListener("click", () => openPane("spaces"));
 $("sync-spaces-btn").addEventListener("click", () => openPane("spaces"));
+$("topics-toggle").addEventListener("click", () => openPane("topics"));
 $("search-toggle").addEventListener("click", () => openPane("search"));
+// 文本过滤(常驻框,不随 pills 重建):输入即筛,走 projectTimeline 单一渲染路径。
+// 卡片编辑草稿在场时不受理(重投影会拆掉草稿)——把框回退到已存值、响一声,不静默毁稿。
+$("filter-text").addEventListener("input", () => {
+  const input = $("filter-text") as HTMLInputElement;
+  if (cardPanel.hasDirtyDraft()) {
+    input.value = filters[viewMode].text;
+    showError("先保存或取消正在编辑的内容");
+    return;
+  }
+  filters[viewMode].text = input.value;
+  projectTimeline();
+});
 $("bottombar").addEventListener("click", (e) => {
   const btn = (e.target as HTMLElement).closest<HTMLButtonElement>("#bottombar button");
   if (!btn) return;
@@ -1345,6 +1590,8 @@ $("sync-toggle").addEventListener("click", () => openPane("sync"));
 
 function renderSync(s: SyncStatus) {
   const dot = $("sync-dot");
+  // 断网/出错态类名用 off 不用 error:全局 .error 是左上角 fixed 的错误提示条,
+  // 状态点若带 error 类会被它命中、断网时被拽到左上角盖住「朱」(真机 bug)。
   dot.className =
     "dot " +
     (s.state === "online"
@@ -1352,7 +1599,7 @@ function renderSync(s: SyncStatus) {
       : s.state === "connecting" || s.state === "booting"
         ? "busy"
         : s.error || s.state === "offline"
-          ? "error"
+          ? "off"
           : "");
   const err = s.error ? `<div class="err">${esc(s.error)}</div>` : "";
   const frozen = s.frozen.length
@@ -1878,7 +2125,15 @@ cardPanel.initCardPanel({
   // 移动入口按空间数决定是否出现;picker 列其他空间(main.ts 的 spacesCache 影子)。
   getSpaces: () => spacesCache,
 });
+initCardSwipe({
+  getItem: (id) => lastItems.get(id),
+  getCurrentSpace,
+  isSwitching: () => switching,
+  hasDirtyDraft: () => cardPanel.hasDirtyDraft(),
+  refresh,
+});
 panes.initPanes({ refreshTimeline: refresh, focusCard: focusTimelineCard, showPane: openPane });
+topics.initTopicsPane({ refreshTimeline: refresh, isSwitching: () => switching });
 
 // ---- 启动闸(工序 6)+ 上次空间恢复(工序 8) --------------------------------
 
@@ -1947,6 +2202,11 @@ async function init() {
   }
   gateBlocked = false;
   $("gate").hidden = true;
+  // 草稿断电恢复(197 下一步①):闸放行即回填 compose 上次没记下的文字 + 暂存图。
+  // 先于下方 pullSharedText——冷启动被分享拉起时,分享文本追加在已恢复的草稿之后。
+  const draftText = localStorage.getItem(COMPOSE_DRAFT_KEY);
+  if (draftText) ($("text") as HTMLTextAreaElement).value = draftText;
+  void compImgs.restore();
   // 上次空间恢复(设备本地 UI 记忆,与桌面 zhujian.last-space 同哲学):后端启动
   // 恒在 main,记忆指向别的空间就切过去;失效记忆清掉。
   await refreshSpaces();
@@ -1960,6 +2220,7 @@ async function init() {
   }
   void sinvoke<SyncStatus>("sync_status").then(renderSync).catch(() => {});
   void pullSharedText();
+  void pullDeepLink(); // 冷启动:被 zhujian:// 链接拉起时取走暂存的 URI 并定位(空间已恢复后)
   void initUpdate();
   void refresh();
 }

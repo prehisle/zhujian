@@ -605,6 +605,7 @@ pub(crate) async fn create_account_as(
         device: device_id.clone(),
         pubkey: pubkey.to_vec(),
         sig: sig.to_bytes().to_vec(),
+        caps: vec![], // 工序4:本轮客户端不声明能力(编译兼容;声明 cap 与渲染属未来轮)。
     })
     .await?;
     loop {
@@ -890,6 +891,7 @@ pub async fn register_pending_identity(
         account: cfg.account_id.clone(),
         device: cfg.device_id.clone(),
         sig: sig.to_bytes().to_vec(),
+        caps: vec![], // 工序4:本轮客户端不声明能力(编译兼容;声明 cap 与渲染属未来轮)。
     })
     .await?;
     loop {
@@ -1559,6 +1561,7 @@ async fn session(
         account: cfg.account_id.clone(),
         device: cfg.device_id.clone(),
         sig: sig.to_bytes().to_vec(),
+        caps: vec![], // 工序4:本轮客户端不声明能力(编译兼容;声明 cap 与渲染属未来轮)。
     })
     .await?;
     loop {
@@ -1900,6 +1903,10 @@ impl Ctx<'_> {
             | ServerMsg::Authed
             | ServerMsg::Pong
             | ServerMsg::SeatLease { .. } => Ok(()),
+            // 工序4:AccountStatusV1 只对声明 account_status_v1 能力者下发;本轮客户端不
+            // 声明,故正常永不收到。收到=服务端门控 bug——**忽略**(非断连:良性控制帧,
+            // 不改同步数据/密钥/水位;声明 cap 与渲染属未来轮,服务端阴性测负责抓门控)。
+            ServerMsg::AccountStatusV1 { .. } => Ok(()),
         }
     }
 
@@ -3125,9 +3132,17 @@ mod tests {
             async move {
                 pair_join(&db_b, &url, &code, move |_| {
                     reached_tx.send(()).expect("主流程先于 gate 消失");
-                    proceed_rx
-                        .recv_timeout(Duration::from_secs(30))
-                        .map_err(|_| "测试超时:主流程没放行 gate".to_string())
+                    // 生产的 account_gate(account_free_desktop)是即返的同步本地检查、从不阻塞;
+                    // 这里测试刻意用阻塞 recv_timeout 把 gate 摁住来构造「降档竞态窗口」。gate 回调
+                    // 是在 pair_join 的 poll 里同步内联调用(transport.rs:703),直接阻塞会占死这个
+                    // tokio worker——在 macOS 的 kqueue 反应堆上会饿死并发的 admin_post(该 I/O 拿不到
+                    // worker 推进,直到 gate 30s 超时才解冻→本测原在 mac 上必挂;Win/Linux 侥幸不饿)。
+                    // block_in_place 让多线程运行时把本 worker 转为阻塞线程并顶一个替补,反应堆继续服务
+                    // admin_post 的 I/O。纯测试机制,pair_join 产品路径零改。
+                    tokio::task::block_in_place(|| {
+                        proceed_rx.recv_timeout(Duration::from_secs(30))
+                    })
+                    .map_err(|_| "测试超时:主流程没放行 gate".to_string())
                 })
                 .await
             }

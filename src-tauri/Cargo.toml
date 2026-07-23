@@ -1,6 +1,6 @@
 [package]
 name = "app"
-version = "0.2.13"
+version = "0.2.15"
 description = "朱笺(zhujian)— 纸与朱墨的个人事务管理:灵感捕获、任务看板,纯人工、本地优先"
 authors = ["prehisle"]
 license = ""
@@ -23,7 +23,7 @@ tauri-build = { version = "2.6.2", features = [] }
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 log = "0.4"
-tauri = { version = "2.11.2", features = ["tray-icon"] }
+tauri = { version = "2.11.2", features = ["macos-private-api", "tray-icon"] }
 tauri-plugin-log = "2"
 tauri-plugin-global-shortcut = "2"
 # opens 正文里的 http/https 链接到系统默认浏览器(webview 内不导航自身)。
@@ -37,7 +37,10 @@ tauri-plugin-process = "2"
 # app 级单实例门(97 多空间,sync-plan §六②):两个进程同开多库会争抢同一 origin 的
 # op 发射序号,必须先于一切开库/transport/热键把第二实例挡在门外(最先注册;
 # e2e/YS_DB_PATH 刻意不装,见 lib.rs run())。
-tauri-plugin-single-instance = "2"
+# deep-link feature:Windows/Linux 上点击的 zhujian:// 链接由 OS 拉起第二实例,单实例
+# 插件带此特性才会把 URL 转给 deep-link 插件、让 on_open_url 一致触发(见 lib.rs 接线)。
+tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
+tauri-plugin-deep-link = "2"
 # 共享核心(P4-a,android-plan §1):数据层(items/oplog/HLC/迁移)+ 同步客户端侧
 # (引擎/加密/配对/引导/传输)全在 ../core,本 crate 只剩 tauri 壳(命令/托盘/窗口/
 # 事件桥)。将来的安卓壳同样 path 依赖它。
@@ -57,5 +60,9 @@ base64 = "0.22"
 # 第一次点「创建账户」才在 async 命令里 panic(84 真机踩过;android-plan §1 要求安卓
 # 壳照做)。
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
+# 启动期 fail-fast panic 的原生弹窗(run() 装 panic 钩子用):否则窗口还没建就静默死,
+# 最常见「库版本比本程序新=装了旧包」只进 stderr、双击 exe 表现为「没反应」。Windows
+# 走 win32 MessageBox 无需事件循环、任意线程可调(官方 dialog 插件底层同款 rfd)。
+rfd = "0.15"
 # (multispace-plan 工序 3:建库[ulid 取名]与真文件身份[原 same-file]随空间逻辑
 #  上抬进 zhujian-core::spaces,壳不再直接依赖 ulid / same-file。)

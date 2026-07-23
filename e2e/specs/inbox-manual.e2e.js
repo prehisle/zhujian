@@ -91,16 +91,19 @@ describe("灵感 · 打标签(手动,不经 AI)", () => {
     await clearInbox();
   });
 
-  it("新建标签归入 → 想法留在列表并长出标签 chip;再用已有标签 chip 归入第二条", async () => {
-    // First note: file into a brand-new topic via the new-topic input.
+  it("选择器里新名 + Enter 建标签归入 → 想法留在列表长出 chip;再点已有标签选项归入第二条", async () => {
+    // 第一条:在标签选择器输入新名 + Enter → 建标签并挂上(Enter:命中已有就复用、没有就新建,
+    // 故标签残留时也稳)。选择器 = 看板同款 openPicker(输入即筛选 + 无匹配冒「创建」)。
     await invoke("capture_note", { content: "E2E-主题-甲" });
     const card = await openCard("E2E-主题-甲");
     await inboxAction("E2E-主题-甲", "标签");
 
-    const newField = await card.$(".new-topic .field");
-    await newField.waitForExist({ timeout: 5000 });
-    await setField(newField, "E2E-新主题-X");
-    await (await card.$("button*=新建并归入")).click();
+    const search = await card.$(".topic-search");
+    await search.waitForExist({ timeout: 5000 });
+    await setField(search, "E2E-新主题-X");
+    await browser.execute((el) => {
+      el.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    }, search);
 
     // 标签只是元数据:打标签后想法留在「想法」列表(不再离开),只是长出一个 chip。
     const taggedA = await $(".note*=E2E-主题-甲");
@@ -108,14 +111,14 @@ describe("灵感 · 打标签(手动,不经 AI)", () => {
     let topics = await invoke("list_topics");
     expect(topics.some((t) => t.title === "E2E-新主题-X")).toBe(true);
 
-    // Second note: file into the now-existing topic by clicking its chip.
+    // 第二条:打开选择器,不输入 → 候选列出全部未加标签,点已存在的那个 .choice 归入。
     await invoke("capture_note", { content: "E2E-主题-乙" });
     const card2 = await openCard("E2E-主题-乙");
     await inboxAction("E2E-主题-乙", "标签");
 
-    const chip = await card2.$(".chip*=E2E-新主题-X");
-    await chip.waitForExist({ timeout: 5000 });
-    await chip.click();
+    const choice = await card2.$(".choice*=E2E-新主题-X");
+    await choice.waitForExist({ timeout: 5000 });
+    await choice.click();
 
     // It too stays in the list with the chip; both have left the inbox (未归类) stage.
     const taggedB = await $(".note*=E2E-主题-乙");

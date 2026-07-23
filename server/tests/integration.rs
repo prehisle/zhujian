@@ -12,7 +12,8 @@ use ed25519_dalek::{Signer, SigningKey};
 use futures_util::{SinkExt, StreamExt};
 use sync_proto::{
     auth_sig_payload, err_code, register_device_sig_payload, register_first_sig_payload,
-    seat_lease_sig_payload, ClientMsg, Lane, PairEvent, ServerMsg, BROADCAST,
+    seat_lease_sig_payload, ClientMsg, DataPlane, Lane, PairEvent, Restriction, ServerMsg,
+    CAP_ACCOUNT_STATUS_V1, BROADCAST,
 };
 use tokio::net::TcpStream;
 use tokio::time::timeout;
@@ -127,6 +128,7 @@ impl Conn {
             device: device.into(),
             pubkey,
             sig,
+            caps: vec![],
         })
         .await;
     }
@@ -136,8 +138,31 @@ impl Conn {
             .sign(&auth_sig_payload(&self.nonce, account, device))
             .to_bytes()
             .to_vec();
-        self.send(&ClientMsg::Auth { account: account.into(), device: device.into(), sig })
+        self.send(&ClientMsg::Auth { account: account.into(), device: device.into(), sig, caps: vec![] })
             .await;
+    }
+
+    /// 工序4:首台注册并声明能力(caps)。
+    async fn register_first_caps(
+        &mut self,
+        account: &str,
+        device: &str,
+        sk: &SigningKey,
+        caps: Vec<String>,
+    ) {
+        let pubkey = sk.verifying_key().to_bytes().to_vec();
+        let sig = sk
+            .sign(&register_first_sig_payload(&self.nonce, account, device, &pubkey))
+            .to_bytes()
+            .to_vec();
+        self.send(&ClientMsg::RegisterFirst {
+            account: account.into(),
+            device: device.into(),
+            pubkey,
+            sig,
+            caps,
+        })
+        .await;
     }
 }
 
@@ -145,6 +170,14 @@ impl Conn {
 async fn first_authed(addr: SocketAddr, account: &str, device: &str, sk: &SigningKey) -> Conn {
     let mut c = connect(addr).await;
     c.register_first(account, device, sk).await;
+    assert_eq!(c.recv().await, ServerMsg::Authed);
+    c
+}
+
+/// 工序4:首台注册 + 声明 account_status_v1 能力,直通 Authed(AccountStatusV1 随后由调用方收)。
+async fn first_authed_caps(addr: SocketAddr, account: &str, device: &str, sk: &SigningKey) -> Conn {
+    let mut c = connect(addr).await;
+    c.register_first_caps(account, device, sk, vec![CAP_ACCOUNT_STATUS_V1.into()]).await;
     assert_eq!(c.recv().await, ServerMsg::Authed);
     c
 }
@@ -220,7 +253,7 @@ async fn auth_challenge_is_per_connection() {
     let replay_sig = sk.sign(&auth_sig_payload(&old.nonce, ACCT, D1)).to_bytes().to_vec();
     let mut fresh = connect(addr).await;
     fresh
-        .send(&ClientMsg::Auth { account: ACCT.into(), device: D1.into(), sig: replay_sig })
+        .send(&ClientMsg::Auth { account: ACCT.into(), device: D1.into(), sig: replay_sig, caps: vec![] })
         .await;
     expect_err(fresh.recv().await, err_code::AUTH_FAILED);
     fresh.expect_close().await;
@@ -1310,19 +1343,25 @@ async fn over_quota_sends_are_rate_limited_but_delivered() {
     for n in 0..k {
         c.send(&ClientMsg::Send { n, to: BROADCAST.into(), lane: Lane::Mail, blob: blob.clone() }).await;
     }
-    // 收 6 个 Ack(限速下逐个到达;跳过 Peer 噪音)。
+    // 收 6 个 Ack(限速下逐个到达;跳过 Peer 噪音)+ **恰一条 account_throttled**
+    // (工序4:无 caps 旧客户端首次跨线的 ENTER 实时推送——旧客户端可见性端到端锚)。
     let mut acked = 0u64;
-    for _ in 0..k {
+    let mut throttled = 0u32;
+    while acked < k {
         match c.recv_skip_peer().await {
             ServerMsg::Ack { n } => {
                 assert_eq!(n, acked, "Ack 应按发送序");
                 acked += 1;
             }
-            other => panic!("期待 Ack,得到 {other:?}"),
+            ServerMsg::Err { code, .. } if code == err_code::ACCOUNT_THROTTLED => {
+                throttled += 1;
+            }
+            other => panic!("期待 Ack / account_throttled,得到 {other:?}"),
         }
     }
     let elapsed = started.elapsed();
     assert_eq!(acked, k, "全部帧照常投递(限速不丢帧)");
+    assert_eq!(throttled, 1, "无 caps 旧客户端首次跨线恰收一条 account_throttled(工序4 ENTER 推送)");
     // 首帧 burst + 其后 5 帧各 ~20KB/100KiB/s≈0.195s → 总 ~0.98s。宽松断言 ≥0.5s
     // (只有限速能解释这个耗时;未限速时 6 帧本地 WS <0.1s)。
     assert!(
@@ -1350,4 +1389,119 @@ async fn under_quota_and_control_frames_not_throttled() {
     c.send(&ClientMsg::Ping).await;
     assert_eq!(c.recv_skip_peer().await, ServerMsg::Pong);
     assert!(started.elapsed() < Duration::from_millis(500), "额度内不该被限速");
+}
+
+// ---- 工序 4:协议能力协商 + AccountStatusV1(billing-plan §6) ----
+
+/// 声明 account_status_v1 的客户端上线后 Authed 之后立刻收 AccountStatusV1(免费档默认:
+/// Open / free / seat 1/2 / used 0 / 无受限)。四组跨版本测「能力开启后新状态向量」。
+#[tokio::test]
+async fn caps_status_v1_on_attach() {
+    let (addr, _admin) = start_with_admin(&[]).await;
+    let sk = key();
+    let mut c = first_authed_caps(addr, ACCT, D1, &sk).await;
+    match c.recv().await {
+        ServerMsg::AccountStatusV1 {
+            effective_tier,
+            configured_tier,
+            seat_count,
+            seat_quota,
+            fastlane_used,
+            restriction_reasons,
+            data_plane,
+            effective_rate_bps,
+            ..
+        } => {
+            assert_eq!(effective_tier, "free");
+            assert_eq!(configured_tier, None, "从未显式设置");
+            assert_eq!(seat_count, 1);
+            assert_eq!(seat_quota, 2, "默认免费档 2 席(测试用默认,非推广 4)");
+            assert_eq!(fastlane_used, 0);
+            assert!(restriction_reasons.is_empty());
+            assert!(matches!(data_plane, DataPlane::Open));
+            assert_eq!(effective_rate_bps, 0);
+        }
+        other => panic!("期待 AccountStatusV1,得到 {other:?}"),
+    }
+}
+
+/// cap 客户端在线时 admin 改 entitlement → 收到推送的 AccountStatusV1(新档位、更高
+/// revision)。四组跨版本测「新状态向量」的 push 路 + Required-1 revision 单调。
+#[tokio::test]
+async fn caps_status_v1_admin_push_bumps_revision() {
+    let (addr, admin) = start_with_admin(&[]).await;
+    let sk = key();
+    let mut c = first_authed_caps(addr, ACCT, D1, &sk).await;
+    let rev0 = match c.recv().await {
+        ServerMsg::AccountStatusV1 { status_revision, effective_tier, .. } => {
+            assert_eq!(effective_tier, "free");
+            status_revision
+        }
+        other => panic!("期待 AccountStatusV1,得到 {other:?}"),
+    };
+    let (code, body) = http(
+        admin,
+        "POST",
+        &format!(
+            "/admin/entitlement?account={ACCT}&tier=personal&seat_quota=4&fastlane_bytes_per_month=2000000000"
+        ),
+        Some(TOKEN),
+    )
+    .await;
+    assert_eq!(code, 200, "{body}");
+    match c.recv_skip_peer().await {
+        ServerMsg::AccountStatusV1 {
+            status_revision,
+            effective_tier,
+            configured_tier,
+            seat_quota,
+            ..
+        } => {
+            assert!(status_revision > rev0, "revision 单调递增(Required-1)");
+            assert_eq!(effective_tier, "personal");
+            assert_eq!(configured_tier, Some("personal".to_string()));
+            assert_eq!(seat_quota, 4);
+        }
+        other => panic!("期待推送的 AccountStatusV1,得到 {other:?}"),
+    }
+}
+
+/// ENTER 实时推送(cap 端到端):cap 客户端在线越额 → 收到推送的 RateLimited
+/// AccountStatusV1(FastlaneExhausted;§4 计数=wire 字节,首帧即越小额度)。
+#[tokio::test]
+async fn caps_status_v1_enter_push_rate_limited() {
+    let addr = start(&[], |c| {
+        c.device_cap = 2;
+        c.throttle_rate_bps = 100 * 1024;
+        c.free_fastlane_bytes_per_month = 1000; // fresh grant floor=1000,一帧即越额
+    })
+    .await;
+    let sk = key();
+    let mut c = first_authed_caps(addr, ACCT, D1, &sk).await;
+    assert!(matches!(
+        c.recv().await,
+        ServerMsg::AccountStatusV1 { data_plane: DataPlane::Open, .. }
+    ));
+    c.send(&ClientMsg::Send { n: 0, to: BROADCAST.into(), lane: Lane::Mail, blob: vec![0u8; 20 * 1024] })
+        .await;
+    // 越线帧触发 ENTER 推送(RateLimited)+ 该帧的 Ack(限速下);顺序=先 push 后 Ack。
+    let mut saw_rate_limited = false;
+    for _ in 0..4 {
+        match c.recv_skip_peer().await {
+            ServerMsg::AccountStatusV1 {
+                data_plane: DataPlane::RateLimited,
+                restriction_reasons,
+                effective_rate_bps,
+                ..
+            } => {
+                assert_eq!(restriction_reasons, vec![Restriction::FastlaneExhausted]);
+                assert!(effective_rate_bps > 0);
+                saw_rate_limited = true;
+                break;
+            }
+            ServerMsg::Ack { .. } | ServerMsg::AccountStatusV1 { .. } => continue,
+            other => panic!("期待 RateLimited AccountStatusV1 / Ack,得到 {other:?}"),
+        }
+    }
+    assert!(saw_rate_limited, "cap 客户端越额应收到推送的 RateLimited 状态");
 }

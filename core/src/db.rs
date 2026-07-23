@@ -36,7 +36,7 @@ use rusqlite::Connection;
 /// 当前 schema 版本 = 迁移链末位。spaces 的只读 exact-match 检查(multispace-plan §10)
 /// 与 staging 建库都以它为锚;加新迁移时此常量跟着 MIGRATIONS 一起动
 /// (migration_sets_user_version 测试与下方一致性测试双守)。
-pub const SCHEMA_VERSION: i64 = 29;
+pub const SCHEMA_VERSION: i64 = 31;
 
 /// 安卓前滚迁移下限(codex 设计审 H1):手机端只对 `user_version >= 28` 的既有
 /// 正式库做原地前滚(现网手机全部诞生于 v28 干净装)。1-27 的老迁移不自带崩溃窗
@@ -78,6 +78,8 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (27, include_str!("../migrations/0027_sync_quarantine.sql")),
     (28, include_str!("../migrations/0028_space_profile.sql")),
     (29, include_str!("../migrations/0029_migrator_canary.sql")),
+    (30, include_str!("../migrations/0030_add_item_done_at.sql")),
+    (31, include_str!("../migrations/0031_topic_position_and_kind.sql")),
 ];
 
 /// Open the database at `path`, enforce foreign keys, and apply migrations.
@@ -162,7 +164,11 @@ mod tests {
             let mut conn = open_through(&path, 27).unwrap();
             let mut clock = crate::clock::Clock::load(&conn).unwrap();
             crate::notes::capture(&mut conn, &mut clock, "升级前的数据").unwrap();
-            let t = crate::notes::create_topic(&mut conn, &mut clock, "老标签").unwrap();
+            // v27 库(0031 前)没有 topics.position:不能用高层 create_topic(它读/写 position)。
+            // 用建档原语 + oplog 助手直接播三条 topic op(create + color set_field),口径与旧
+            // create_topic 一致——本测只验 0028 崩溃窗对既有 oplog 的原样保全,不涉 0031。
+            let t = crate::repo::insert_topic(&conn, "老标签").unwrap();
+            crate::oplog::topic_create(&conn, &mut clock, &t).unwrap();
             crate::notes::set_topic_color(&mut conn, &mut clock, &t, Some("#aa3311".into()))
                 .unwrap();
             tuples(&conn)
@@ -290,7 +296,8 @@ mod tests {
         let _ = std::fs::remove_file(&path);
     }
 
-    /// 金丝雀 0029(M6):v28 库经正常 open 前滚到 29,业务数据与 oplog 原样。
+    /// 金丝雀 0029(M6):v28 库前滚到 29,业务数据与 oplog 原样。用 `open_through(29)`
+    /// 隔离这一步(open() 现会继续前滚到最新迁移;full-open 覆盖在别处),专验 0029 空迁移。
     #[test]
     fn canary_0029_forward_migrates_v28() {
         let path = std::env::temp_dir()
@@ -302,7 +309,7 @@ mod tests {
             crate::notes::capture(&mut conn, &mut clock, "升级前的数据").unwrap();
             conn.query_row("SELECT COUNT(*) FROM oplog", [], |r| r.get::<_, i64>(0)).unwrap()
         };
-        let conn = open(&path).expect("v28 库前滚 open 必须成功");
+        let conn = open_through(&path, 29).expect("v28 库前滚到 29 必须成功");
         let uv: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0)).unwrap();
         assert_eq!(uv, 29);
         let after: i64 =

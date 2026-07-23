@@ -24,6 +24,9 @@
     "opener:allow-open-url",
     "opener:allow-default-urls",
     "updater:default",
-    "process:default"
+    "process:default",
+    "deep-link:default",
+    "deep-link:allow-get-current",
+    "deep-link:allow-register"
   ]
 }

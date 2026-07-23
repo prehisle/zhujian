@@ -41,7 +41,7 @@ pub(crate) struct ImagePack {
 /// 未必更新它)。counter 区分「无行」与具体值;position 不迁移不比。
 #[derive(PartialEq, Debug)]
 pub(crate) struct Fingerprint {
-    item: (String, String, Option<String>, Option<i64>, String, Option<String>, Option<String>),
+    item: (String, String, Option<String>, Option<i64>, String, Option<String>, Option<String>, Option<String>),
     /// 排序后的 (source_topic_id, exact_title)——不能只比去重后的名字。
     topics: Vec<(String, String)>,
     /// 排序后的 (id, seq, mime, byte_len, sha256)。
@@ -59,6 +59,9 @@ pub struct MovePackage {
     pub(crate) created_at: String,
     pub(crate) due_on: Option<String>,
     pub(crate) priority: Option<i64>,
+    /// 完成时刻(0030):Some = 该条目带完成时间,目标 create 后补 set_field 落同值保号;
+    /// None = 未完成过 / 老卡未知,目标生而 NULL(不补)。
+    pub(crate) done_at: Option<String>,
     pub(crate) topics: Vec<(String, String)>,
     pub(crate) images: Vec<ImagePack>,
     pub(crate) fingerprint: Fingerprint,
@@ -145,9 +148,9 @@ pub fn item_image_bytes(conn: &Connection, item_id: &str) -> Result<i64, String>
 pub fn export(conn: &mut Connection, item_id: &str) -> Result<ExportOutcome, String> {
     let tx = conn.transaction().map_err(|e| e.to_string())?;
 
-    let row: Option<(String, String, String, Option<String>, Option<i64>, Option<String>, Option<String>)> = tx
+    let row: Option<(String, String, String, Option<String>, Option<i64>, Option<String>, Option<String>, Option<String>)> = tx
         .query_row(
-            "SELECT content, stage, created_at, due_on, priority, archived_at, sealed_at \
+            "SELECT content, stage, created_at, due_on, priority, archived_at, sealed_at, done_at \
              FROM items WHERE id = ?1",
             [item_id],
             |r| {
@@ -159,16 +162,20 @@ pub fn export(conn: &mut Connection, item_id: &str) -> Result<ExportOutcome, Str
                     r.get(4)?,
                     r.get(5)?,
                     r.get(6)?,
+                    r.get(7)?,
                 ))
             },
         )
         .optional()
         .map_err(|e| e.to_string())?;
-    let (content, stage, created_at, due_on, priority, archived_at, sealed_at) =
+    let (content, stage, created_at, due_on, priority, archived_at, sealed_at, done_at) =
         row.ok_or_else(|| "条目不存在".to_string())?;
     if archived_at.is_some() || sealed_at.is_some() {
         return Err("回收站/成就归档中的条目不能移动(史实轴,先还原)".to_string());
     }
+    // done_at 保号(0030 单版 writer):带完成时间的条目照常移动——包携 done_at,目标 create
+    // 后补一次 set_field 落同值(见 import)。done_at 进移动指纹(下方 + finalize 重验守 H1),
+    // 导出后并发改完成时刻会被 finalize 拒删。工序1 的「响亮拒绝已带完成时间的条目」已撤。
     if !ACTIVE_STAGES.contains(&stage.as_str()) {
         return Err(format!("条目 stage 异常({stage}),拒绝移动"));
     }
@@ -205,6 +212,7 @@ pub fn export(conn: &mut Connection, item_id: &str) -> Result<ExportOutcome, Str
             created_at.clone(),
             archived_at,
             sealed_at,
+            done_at.clone(),
         ),
         topics: topics.clone(),
         images: images
@@ -223,6 +231,7 @@ pub fn export(conn: &mut Connection, item_id: &str) -> Result<ExportOutcome, Str
         created_at,
         due_on,
         priority,
+        done_at,
         topics,
         images,
         fingerprint,
@@ -257,6 +266,20 @@ pub fn import(conn: &mut Connection, clock: &mut Clock, pkg: &MovePackage) -> Re
     // item_create 立即发(因果前驱,payload 含最终 position 出生快照)。
     oplog::item_create(&tx, clock, &new_id)?;
 
+    // 完成时刻保号(0030):create 出生快照生而 NULL(触发器 trg_item_no_insert_done_at
+    // 也只拦 INSERT),故带完成时间的条目在 create 之后补一次 UPDATE + set_field——协议只增
+    // 不清、值必非空,让目标账户各端回放到同一完成时刻。done_at 与当前 stage 无关(「最近
+    // 一次进 done 的时刻」,撤回后也保住),不按 stage 设卡。
+    if let Some(done_at) = pkg.done_at.as_deref() {
+        let n = tx
+            .execute("UPDATE items SET done_at = ?2 WHERE id = ?1", (&new_id, done_at))
+            .map_err(|e| format!("目标空间完成时刻落值失败:{e}"))?;
+        if n != 1 {
+            return Err(format!("目标空间完成时刻落值失败(影响 {n} 行)"));
+        }
+        oplog::item_set(&tx, clock, &new_id, &["done_at"])?;
+    }
+
     // 标签按名归并(§2.5):源名先去重(BTreeMap 顺带给出确定性遍历序);目标同名
     // 取最小 ULID;缺则新建(不带源颜色——颜色是目标空间自己的元数据)。
     let mut unique_titles: BTreeMap<String, ()> = BTreeMap::new();
@@ -277,6 +300,7 @@ pub fn import(conn: &mut Connection, clock: &mut Clock, pkg: &MovePackage) -> Re
             None => {
                 let minted = repo::insert_topic(&tx, title).map_err(|e| e.to_string())?;
                 oplog::topic_create(&tx, clock, &minted)?; // 父 create 先于 link(三轮 #2)
+                crate::notes::assign_new_topic_position(&tx, clock, &minted)?; // 0031:落末键 + op
                 minted
             }
         };
@@ -439,7 +463,7 @@ fn read_counter(tx: &Connection, item_id: &str) -> Result<Option<i64>, String> {
 fn read_fingerprint(tx: &Connection, item_id: &str) -> Result<Fingerprint, String> {
     let item = tx
         .query_row(
-            "SELECT content, stage, due_on, priority, created_at, archived_at, sealed_at \
+            "SELECT content, stage, due_on, priority, created_at, archived_at, sealed_at, done_at \
              FROM items WHERE id = ?1",
             [item_id],
             |r| {
@@ -451,6 +475,7 @@ fn read_fingerprint(tx: &Connection, item_id: &str) -> Result<Fingerprint, Strin
                     r.get::<_, String>(4)?,
                     r.get::<_, Option<String>>(5)?,
                     r.get::<_, Option<String>>(6)?,
+                    r.get::<_, Option<String>>(7)?,
                 ))
             },
         )
@@ -716,6 +741,77 @@ mod tests {
             finalize_source(&mut src, &mut sc, &pkg2).unwrap(),
             FinalizeOutcome::Kept { .. }
         ));
+    }
+
+    /// 注一条合法远端 done_at set_field(HLC 在 2100 年,LWW 必压过本地写者的完成时刻)
+    /// ——模拟「导出后完成时刻被别端并发改动」,验指纹重验守 H1。
+    fn inject_done_at(conn: &mut Connection, clock: &mut Clock, id: &str, ts: &str) {
+        crate::replay::apply_remote_op(
+            conn,
+            clock,
+            &crate::replay::RemoteOp {
+                op_id: ulid::Ulid::new().to_string(),
+                hlc: crate::clock::Hlc {
+                    wall_ms: 4_102_444_800_000,
+                    counter: 0,
+                    device_id: "RMTDEV0000000000000000000X".into(),
+                }
+                .encode(),
+                entity: "item".into(),
+                entity_id: id.to_string(),
+                kind: "set_field".into(),
+                payload: serde_json::json!({"field": "done_at", "value": ts}),
+                origin_seq: 1,
+            },
+        )
+        .expect("done_at 落值");
+    }
+
+    /// done_at 保号(0030 单版 writer):进 done 的卡(writer 已盖 done_at)跨空间移动 →
+    /// 移动包携完成时刻、目标 create 后补 set_field 落**同一** done_at、源删。工序1 的
+    /// 「响亮拒绝已带完成时间的条目」已撤。
+    #[test]
+    fn move_preserves_done_at() {
+        let (mut src, mut sc) = fresh_db("done-keep");
+        let (mut dst, mut dc) = fresh_db("done-keep-dst");
+        let id = task::create(&mut src, &mut sc, "干完的活", None, None, None).unwrap();
+        task::transition(&mut src, &mut sc, &id, "done").unwrap(); // writer 盖 done_at
+        let src_done: String =
+            src.query_row("SELECT done_at FROM items WHERE id=?1", [&id], |r| r.get(0)).unwrap();
+
+        let pkg = export_ready(&mut src, &id);
+        assert_eq!(pkg.done_at.as_deref(), Some(src_done.as_str()), "移动包携完成时刻");
+
+        let new_id = import(&mut dst, &mut dc, &pkg).unwrap();
+        let dst_done: Option<String> =
+            dst.query_row("SELECT done_at FROM items WHERE id=?1", [&new_id], |r| r.get(0)).unwrap();
+        assert_eq!(dst_done.as_deref(), Some(src_done.as_str()), "目标保住同一完成时刻");
+        // 目标发一条 done_at set_field(值非空,供目标账户各端回放)。
+        let done_vals: Vec<serde_json::Value> = ops_for(&dst, "item", &new_id)
+            .into_iter()
+            .filter(|o| o.kind == "set_field" && o.payload["field"] == "done_at")
+            .map(|o| o.payload["value"].clone())
+            .collect();
+        assert_eq!(done_vals, vec![serde_json::json!(src_done)], "补一条 done_at set_field(非空)");
+
+        assert!(matches!(finalize_source(&mut src, &mut sc, &pkg).unwrap(), FinalizeOutcome::Deleted));
+    }
+
+    /// H1(完成时刻版):导出后 done_at 被别端并发改动 → finalize 指纹重验命中差异 →
+    /// 拒删返回 Kept,源保留、零 tombstone(不静默丢值)。done_at 在移动指纹里是这道守卫的凭据。
+    #[test]
+    fn concurrent_done_at_blocks_finalize() {
+        let (mut src, mut sc) = fresh_db("done-h1");
+        let id = task::create(&mut src, &mut sc, "干完的活", None, None, None).unwrap();
+        task::transition(&mut src, &mut sc, &id, "done").unwrap(); // done_at=T1
+        let pkg = export_ready(&mut src, &id); // 导出捕获 T1
+        inject_done_at(&mut src, &mut sc, &id, "2026-07-20T10:00:00.000Z"); // 并发改成 T2(LWW 胜)
+        let before = oplog_rows(&src);
+        match finalize_source(&mut src, &mut sc, &pkg).unwrap() {
+            FinalizeOutcome::Kept { reason } => assert!(reason.contains("被改动"), "{reason}"),
+            _ => panic!("done_at 差异必须拒删"),
+        }
+        assert_eq!(oplog_rows(&src), before, "拒删不发任何 op");
     }
 
     /// 三轮 #5:目标已建后、源恰被(远端)tombstone 删除 → AlreadyGone,零新 op,

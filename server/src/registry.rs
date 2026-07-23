@@ -124,6 +124,48 @@ pub(crate) fn month_start_utc(t: time::OffsetDateTime) -> time::OffsetDateTime {
         .assume_utc()
 }
 
+/// (年,月) period → 当月 UTC 月初(AccountStatusV1.period_start,工序4)。
+/// **前提:period 已过 [`period_representable`]**(sidecar 装载校验 + month_of(now) 天然合法)。
+pub(crate) fn period_start_utc(period: (i32, u8)) -> time::OffsetDateTime {
+    let (y, m) = period;
+    let month = time::Month::try_from(m).expect("period 月 ∈ 1..=12");
+    time::Date::from_calendar_date(y, month, 1)
+        .expect("period 已过 period_representable 校验")
+        .midnight()
+        .assume_utc()
+}
+
+/// period 的下一个月(12 月→次年 1 月;`checked_add` 防 i32::MAX 溢出——实现审 M2)。
+fn next_period((y, m): (i32, u8)) -> Option<(i32, u8)> {
+    if m >= 12 {
+        Some((y.checked_add(1)?, 1))
+    } else {
+        Some((y, m + 1))
+    }
+}
+
+/// (年,月) period → 下月 UTC 月初(AccountStatusV1.period_end,工序4)。
+/// **前提:period 已过 [`period_representable`]**。
+pub(crate) fn period_end_utc(period: (i32, u8)) -> time::OffsetDateTime {
+    let next = next_period(period).expect("period 已过 period_representable 校验");
+    period_start_utc(next)
+}
+
+/// period 的 start 与 next-month end 是否都能被 `time::Date` 表示(工序4,实现审 M2)。
+/// 损坏 sidecar 的极端年份(9999+ / i32::MAX)不能进 AccountStatusV1 构造——否则
+/// period_end_utc 的 +1 溢出或 `from_calendar_date().expect()` panic。装载 sidecar 时
+/// 校验,不过=按现有损坏语义整份从零。
+pub(crate) fn period_representable(period: (i32, u8)) -> bool {
+    let (y, m) = period;
+    let Ok(month) = time::Month::try_from(m) else { return false };
+    if time::Date::from_calendar_date(y, month, 1).is_err() {
+        return false;
+    }
+    let Some((ny, nm)) = next_period(period) else { return false };
+    let Ok(nmonth) = time::Month::try_from(nm) else { return false };
+    time::Date::from_calendar_date(ny, nmonth, 1).is_ok()
+}
+
 /// (年, 月) → `"YYYY-MM"`(落盘人可 diff)。
 fn format_period((y, m): (i32, u8)) -> String {
     format!("{y:04}-{m:02}")
@@ -971,6 +1013,23 @@ impl Registry {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 工序4(实现审 M2):period_representable 守极端年份;representable 的构造不 panic。
+    #[test]
+    fn period_representable_guards_extreme_years() {
+        assert!(period_representable((2026, 7)));
+        assert!(period_representable((2026, 12)), "12 月→次年 1 月应可表示");
+        assert!(!period_representable((2026, 13)), "坏月拒");
+        assert!(!period_representable((i32::MAX, 1)), "极端年份 start 不可表示");
+        assert!(!period_representable((i32::MAX, 12)), "极端年份 +1 溢出(checked_add None)");
+        // representable 的 period 构造不 panic(period_end_utc 走 next_period 的 checked_add)。
+        let _ = period_start_utc((2026, 12));
+        assert_eq!(
+            period_end_utc((2026, 12)),
+            period_start_utc((2027, 1)),
+            "2026-12 的 period_end = 2027-01 月初"
+        );
+    }
 
     /// 封禁夹具账号(合法 26 位 ULID 形态——parse_banlist 逐行严格校验)。
     const BANNED_A: &str = "01BANNEDBANNEDBANNEDBANNED";

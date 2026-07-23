@@ -13,12 +13,16 @@ import {
   spaceLabel,
 } from "./space";
 import { autoGrow } from "./autogrow";
+import { saveTextDraft, loadTextDraft, clearTextDraft } from "./compose-draft";
 import { copyText } from "./clipboard";
+import { buildItemDeepLink } from "./deeplink";
 import {
   type FilterState,
   applyFilter,
+  reconcileKindFilter,
   reconcileTopicFilter,
   renderFilterPills,
+  renderKindPills,
   wireFilterInput,
 } from "./filter-bar";
 import { type Act, armDismiss, createHotkeyController, registerViewKeys } from "./hotkey-menu";
@@ -32,6 +36,7 @@ import {
 } from "./item-images";
 import type { View, ViewCtx } from "./notebook";
 import { applyTagColor } from "./tag-color";
+import { renderTagPicker } from "./tag-picker";
 import { dayKey, dayLabel, startOfWeek, when } from "./tasktime";
 import "./inbox.css";
 
@@ -48,7 +53,9 @@ type IdeaItem = {
   topics: IdeaTag[];
 };
 type RevisionItem = { content: string; archived_at: string };
-type TopicItem = { id: string; title: string; color: string | null };
+// list_topics 载真值:`kind`(自由文本类型,0031)或 null = 无类型 —— 类型轴 pill 行
+// (renderKindPills)据它分组;per-item chip 的 kind 恒 null(类型真相只在 allTopics)。
+type TopicItem = { id: string; title: string; color: string | null; kind: string | null };
 // 灵感流转统计(lib.rs idea_stats):纯派生、只算不存。born_inbox=0(还没有出生态
 // 已知的灵感,0018 前的老数据不算)时不显比例——数字从补列那天起诚实积累。
 type IdeaStats = { captured_week: number; born_inbox: number; converted: number };
@@ -83,6 +90,12 @@ export function focusInboxItem(id: string, tab: Mode): void {
 // 标记必须取 mount 时捕获的空间)。
 let composeDraftSaved = "";
 let composeDraftSpace: string | null = null;
+// 断电恢复(198 桌面侧):compose 文字草稿走 localStorage、暂存图走 IndexedDB(pendImgs 的
+// persistKey)——意外断电 / 杀进程后重开,上次没记下的灵感还在。载荷带空间(A 空间草稿绝不
+// 灌进 B,与 composeDraftSpace 同律)。**纯设备本地 UI 状态,绝不进 DB / 同步**。
+const INBOX_DRAFT_KEY = "zhujian.inbox-draft";
+// 首个 mount 时回填一次暂存图(pendImgs 是模块级,填好即常驻,后续 mount 不重填)。
+let imgsRestored = false;
 
 /** 空间两来路 H1(notebook.ts 草稿探针的模块态半边):compose 文字存底或暂存图
  *  还攥在模块态里 = 有未保存内容(DOM 里的 textarea 由探针另一半覆盖)。 */
@@ -98,14 +111,26 @@ let composeNoticeSpace: string | null = null;
 // 的新 mount 得马上重读(顺带经 composeBar 领走模块 notice)——否则「正文被清了、
 // 卡片没出现」要等到下次 refocus。navigate 恒先 unmount 旧再 mount 新,单值不互踩。
 let liveRefresh: (() => void) | null = null;
-const pendImgs = pendingImages();
+const pendImgs = pendingImages({ persistKey: "zhujian.inbox-images" });
+// 模块加载即从磁盘灌回文字草稿(同步读):重开后 composeBar 首建就能显示上次的字。
+// 空间也一并恢复,交给既有的「mount 空间对不上就丢弃」逻辑把关(暂存图的同步丢弃由
+// 该逻辑里的 pendImgs.clear() 兼办,回填走首个 mount 的 pendImgs.restore())。
+{
+  const d = loadTextDraft(INBOX_DRAFT_KEY);
+  if (d && d.text) {
+    composeDraftSaved = d.text;
+    composeDraftSpace = d.space;
+  }
+}
 // in-flight 闸提模块级(codex P1 审 H2):保存往返期间切走再回来,新 mount 的闸必须
 // 还是同一把——否则同一草稿能被重提两次。
 let composeSaving = false;
 // 想法 tab 的两维筛选(标签 pills + 文本过滤词):行为与看板同源(共享件
 // filter-bar.ts),模块态理由同 `active`。只作用于想法 tab;回收站不筛(同看板的
 // 回收站/归档不筛)。文本只匹配当前正文——连历史的找回忆是全局「搜索」视图的事。
-const filter: FilterState = { topic: "all", text: "" };
+// 三维正交筛选 kind→topic→text(行为在共享件,与看板同源):类型轴(kind)是钻取器,
+// 选一个类型先圈定「挂了该类型任一标签的想法」,再把标签 pill 收到该类型内。
+const filter: FilterState = { kind: "all", topic: "all", text: "" };
 // Scroll offset of the list, captured on unmount and restored on the next mount so a
 // view switch returns you to where you were reading (not snapped back to the top).
 // Belongs to the tab in `active` above — since that tab is preserved too, the offset
@@ -150,8 +175,11 @@ const SKELETON = `
     <button class="tab" id="tab-archived" data-tab="archived">回收站<span class="tab-n" id="n-archived"></span></button>
   </nav>
   <div class="filter-row" id="filter-row" hidden>
-    <div class="topic-filter" id="idea-topic-filter"></div>
-    <input class="filter-text" id="idea-filter" type="search" placeholder="过滤灵感…" autocomplete="off" spellcheck="false" />
+    <div class="kind-filter" id="idea-kind-filter"></div>
+    <div class="filter-main">
+      <div class="topic-filter" id="idea-topic-filter"></div>
+      <input class="filter-text" id="idea-filter" type="search" placeholder="过滤灵感…" autocomplete="off" spellcheck="false" />
+    </div>
   </div>
   <main id="list"></main>
 `;
@@ -163,7 +191,14 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
   if (composeDraftSpace !== null && composeDraftSpace !== mountSpace) {
     composeDraftSaved = "";
     composeDraftSpace = null;
+    clearTextDraft(INBOX_DRAFT_KEY); // 跨空间丢弃:磁盘草稿也清(pendImgs.clear() 自清图存)
     pendImgs.clear();
+  }
+  // 断电恢复:首个 mount 回填暂存图(此时空间对不上的已被上面 clear 掉,restore 读到空存;
+  // 重开正常场景 = 恢复上次空间,存里的图属本空间,回填即可)。仅一次,后续 mount 图已常驻。
+  if (!imgsRestored) {
+    imgsRestored = true;
+    void pendImgs.restore();
   }
   const view = el("div", { className: "v-inbox" });
   view.innerHTML = SKELETON;
@@ -173,6 +208,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
   const statsEl = view.querySelector("#idea-stats") as HTMLElement;
   const filterRow = view.querySelector("#filter-row") as HTMLElement;
   const filterBar = view.querySelector("#idea-topic-filter") as HTMLElement;
+  const kindBar = view.querySelector("#idea-kind-filter") as HTMLElement;
   const filterInput = view.querySelector("#idea-filter") as HTMLInputElement;
   const tabEls: Record<Tab, HTMLButtonElement> = {
     ideas: view.querySelector("#tab-ideas") as HTMLButtonElement,
@@ -299,10 +335,14 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       if (current !== null && currentSpaceId() === mountSpace && current.value === submitted) {
         current.value = "";
         autoGrow(current); // back to one row (same as the board compose reset)
+        clearTextDraft(INBOX_DRAFT_KEY); // 输入框被清 = 稿了结,磁盘草稿同步清(等待期未再打字才走这)
       }
       // 保存中切走时 unmount 会把提交前的输入框内容存进模块态:成功即作废同内容的
       // 存底,回来不再灌回已保存的正文(codex P1 审 H2)。
-      if (composeDraftSaved === submitted) composeDraftSaved = "";
+      if (composeDraftSaved === submitted) {
+        composeDraftSaved = "";
+        clearTextDraft(INBOX_DRAFT_KEY); // 模块存底=已保存正文:磁盘也清(切走场景,input 不在场)
+      }
       const notices: string[] = [];
       // 筛着具体标签记灵感 → 新灵感自动挂上该标签(同看板「筛着标签建卡」),否则
       // 新卡会被当前筛选当场滤到隐身;「无标签」筛选下新卡本就无标签、天然可见。
@@ -336,7 +376,10 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       pulseId = id;
       void refresh();
     };
-    input.addEventListener("input", () => autoGrow(input)); // grows to fit, CSS-capped at 160
+    input.addEventListener("input", () => {
+      autoGrow(input); // grows to fit, CSS-capped at 160
+      saveTextDraft(INBOX_DRAFT_KEY, { text: input.value, space: mountSpace }); // 断电恢复:输入即写
+    });
     input.addEventListener("keydown", (e) => {
       if (e.isComposing) return; // IME 组合期的 Enter 是上屏,不是保存(ui-audit P0 #1)
       if (e.key === "Enter" && !e.shiftKey) {
@@ -462,13 +505,36 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     // Tag chips — a 想法 may carry tags (just metadata); show them whenever present.
     // Single-entity model: a task is the same subject at a board stage, so it lives on the
     // board — never here — hence no "待办" flag.
+    // 删标签:每个 chip 带一个 ✕(和看板卡片一致),点它去掉该标签、整卡重渲。只有灵感态
+    // (mode==="ideas")给这个入口——回收站卡只读,后端也会拒。去掉最后一个标签会让「已整理」
+    // 退回「未归类」(notes::remove_topic),但都在「想法」tab 合并显示,视觉上只是标签消失。
+    async function removeTag(topicId: string): Promise<void> {
+      try {
+        await invoke("remove_note_topic", { id: item.id, topicId });
+      } catch (e) {
+        showOpErr(e);
+        return;
+      }
+      void refresh();
+    }
     let tagsEl: HTMLElement | null = null;
     if (tagged) {
       tagsEl = el(
         "div",
         { className: "tags" },
         topics.map((t) => {
-          const chip = el("span", { className: "tag", textContent: t.title });
+          const kids: Node[] = [el("span", { className: "tag-label", textContent: t.title })];
+          if (mode === "ideas") {
+            kids.push(
+              el("button", {
+                className: "tag-x",
+                textContent: "✕",
+                title: "去掉这个标签",
+                onclick: () => void removeTag(t.id),
+              }),
+            );
+          }
+          const chip = el("span", { className: "tag" }, kids);
           applyTagColor(chip, t.color); // 有色标签着色(左色点 + 淡底),同看板 chip
           return chip;
         }),
@@ -707,73 +773,51 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     }
 
     // ---- 归纳主题 (manual file into an existing/new topic) ----
+    // 打标签:输入即筛选的选择器(搜既有 + 无匹配冒「创建」),和看板 openPicker 同一套。
+    // Esc / 点选择器以外任意处收起(armDismiss 文档级),不再挂「取消」按钮——⑧-1 修:老实现
+    // 的 Esc 只绑在输入框、离焦即失效,还多一个取消钮。已加的标签从候选隐藏(have),避免重复
+    // 挂(link 唯一键、重复会报错);要加第二个标签就再按一次 L,多标签靠此达成,同看板。
     async function openTopic(): Promise<void> {
+      let allTopics: TopicItem[];
+      try {
+        allTopics = await invoke<TopicItem[]>("list_topics");
+      } catch (e) {
+        showOpErr(e);
+        return;
+      }
       note.classList.add("editing");
-      const err = errLine();
-      const fileInto = async (topicId: string | null, newTitle: string | null) => {
+      const have = new Set(topics.map((t) => t.id));
+
+      const picker = el("div", { className: "topic-picker" });
+      // 收起:摘掉选择器 + 去 editing(不重建 body,原文卡面保持在场)。成功挂标签走 afterFile
+      // (refresh 整卡重建,picker 随之消失);失败则收起并把错误显示在卡上。
+      const close = (): void => {
+        picker.remove();
+        note.classList.remove("editing");
+      };
+      const off = armDismiss(picker, close);
+      const fileInto = async (topicId: string | null, newTitle: string | null): Promise<void> => {
+        off();
         try {
           await invoke("file_note_to_topic", { id: item.id, topicId, newTitle });
         } catch (e) {
-          showErr(err, e);
+          close();
+          showOpErr(e);
           return;
         }
         afterFile();
       };
-
-      const newInput = el("input", { className: "field" });
-      (newInput as HTMLInputElement).placeholder = "新建标签名…";
-      const newBtn = el("button", {
-        className: "do",
-        textContent: "新建并归入",
-        onclick: () => fileInto(null, newInput.value),
+      // 选择器 UI(搜索 + 候选 + Enter 复用/新建)走共享件 tag-picker.ts(与看板同源)。
+      // 先把 picker 挂进 DOM 再渲染 —— renderTagPicker 末尾会 focus 搜索框,而 focus 对游离
+      // 节点是空操作。灵感一步落库:选既有 = file_note_to_topic(topicId),输入新名 =
+      // file_note_to_topic(newTitle)(后端一次建标签并归入,与看板两步 create+add 等效)。
+      note.append(picker);
+      renderTagPicker(picker, {
+        allTopics,
+        have,
+        onPick: (topicId) => void fileInto(topicId, null),
+        onCreate: (title) => void fileInto(null, title),
       });
-      newInput.addEventListener("keydown", (e) => {
-        if (e.isComposing) return; // IME 组合期不劫持(ui-audit P0 #1)
-        if (e.key === "Enter") {
-          e.preventDefault();
-          newBtn.click();
-        } else if (e.key === "Escape") {
-          e.preventDefault();
-          showView();
-        }
-      });
-
-      const form = el("div", { className: "inline-form" }, [
-        el("label", { className: "form-label", textContent: "打标签" }),
-      ]);
-
-      try {
-        const topics = await invoke<TopicItem[]>("list_topics");
-        if (topics.length > 0) {
-          form.append(
-            el(
-              "div",
-              { className: "chips" },
-              topics.map((t) =>
-                el("button", {
-                  className: "chip",
-                  textContent: t.title,
-                  onclick: () => fileInto(t.id, null),
-                }),
-              ),
-            ),
-          );
-        } else {
-          form.append(el("p", { className: "hint", textContent: "还没有标签,新建一个:" }));
-        }
-      } catch (e) {
-        showErr(err, e);
-      }
-
-      form.append(
-        el("div", { className: "new-topic" }, [newInput, newBtn]),
-        err,
-        el("div", { className: "form-actions" }, [
-          el("button", { className: "no", textContent: "取消", onclick: showView }),
-        ]),
-      );
-      note.replaceChildren(body, form);
-      newInput.focus();
     }
 
     // ---- 删除 (soft delete → 回收站, recoverable so no confirm) ----
@@ -937,11 +981,21 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         return "复制失败";
       }
     };
+    // 复制这条灵感的深链接(zhujian://open?…&item=…):粘到别处 / 发对方设备都能直接打开它。
+    const copyLinkFeedback = async (): Promise<string> => {
+      try {
+        await copyText(await buildItemDeepLink(item.id));
+        return "已复制链接";
+      } catch {
+        return "复制失败";
+      }
+    };
     function actionsFor(): Act[] {
       if (mode === "archived") {
         return [
           { label: "还原", key: "R", run: doRestore },
           { label: "复制", key: "C", feedback: copyFeedback },
+          { label: "复制链接", key: "K", feedback: copyLinkFeedback },
           { label: "彻底删除", key: "D", run: openPurge, danger: true },
         ];
       }
@@ -950,6 +1004,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         { label: "待办", key: "T", run: doPromote },
         { label: "标签", key: "L", run: openTopic },
         { label: "复制", key: "C", feedback: copyFeedback },
+        { label: "复制链接", key: "K", feedback: copyLinkFeedback },
       ];
       // 移动到其他空间(cross-space-move v1):≥2 空间才出现(单空间是纯噪音);
       // 该条目有部分成功登记(目标已建、源还在)时入口整个藏起——绝不提供重跑。
@@ -1062,6 +1117,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         active = focus.tab;
         if (focus.tab === "ideas") {
           // 清筛选让目标必然可见(跳转即揭示,同 board focusOnBoard)。
+          filter.kind = "all";
           filter.topic = "all";
           filter.text = "";
           filterInput.value = "";
@@ -1073,6 +1129,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
 
       // 死标签回落(删除/合并后别让筛选条指着空气)——纯状态修正,先于指纹(共享件)。
       reconcileTopicFilter(filter, topics);
+      reconcileKindFilter(filter, topics); // 死类型回落 + 切类型后标签轴归一(纯状态,先于指纹)
       const q = filter.text.trim().toLowerCase();
 
       // Fingerprint everything that affects the DOM; an idle refocus whose fingerprint
@@ -1080,7 +1137,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       // open inline editor survives. `todayKey` is folded in so the day-grouped 时间轴
       // relabels 今天→昨天 if the app sits open across midnight.
       const todayKey = new Date().toDateString();
-      const sig = JSON.stringify([active, filter.topic, q, todayKey, ideas, archived, stats, topics]);
+      const sig = JSON.stringify([active, filter.kind, filter.topic, q, todayKey, ideas, archived, stats, topics]);
       // `=== true`, not truthy: guards against a future caller wiring `refresh` as a
       // bare event handler, where a MouseEvent would otherwise count as a refocus.
       if (refocus === true && sig === lastSig) return;
@@ -1119,8 +1176,13 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         // 筛选行:有想法才出现(同看板);pills 计数从全量想法派生(不随文本过滤
         // 收缩,两维正交——口径在共享件 filter-bar.ts,与看板同源)。
         filterRow.hidden = ideas.length === 0;
-        if (ideas.length > 0) renderFilterPills(filterBar, ideas, topics, filter, () => void refresh());
-        const shown = applyFilter(ideas, filter, (i) => i.content);
+        if (ideas.length > 0) {
+          // 类型轴在标签 pills 之上(路线 A 钻取器);renderKindPills 无 kind 时清空、CSS
+          // :empty 隐整行。标签 pills 随 kind 收到该类型内(见 filter-bar.ts)。
+          renderKindPills(kindBar, ideas, topics, filter, () => void refresh());
+          renderFilterPills(filterBar, ideas, topics, filter, () => void refresh());
+        }
+        const shown = applyFilter(ideas, filter, (i) => i.content, topics);
         // The compose bar always sits at the top of 想法, empty or not.
         const bar = composeBar();
         if (ideas.length === 0) {

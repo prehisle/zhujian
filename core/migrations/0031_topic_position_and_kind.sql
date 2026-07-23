@@ -1,0 +1,45 @@
+-- migration 0031: 标签手动排序(position)+ 标签类型(kind)—— 1c「标签顺序可调」+
+-- 用户加需求「标签类型标记(默认无,可标人名),供日后按类型筛选」。给 topics 加两个
+-- **可空同步字段**,都走 oplog `topic set_field` + 字段级 LWW 回放(跨设备一致):
+--   * position TEXT —— frindex 分数排序键(base62,字节序即排序序,见 src/frindex.rs)。
+--     标签视图手动拖排序的轴;新标签建时落**末键**、拖动只写被拖那一枚(多写者友好,
+--     同 items.position 判例)。永不清(离开只换键,不设 NULL)。
+--   * kind TEXT —— 标签类型的自由文本(默认 NULL = 无类型;可设「人名」等短标签)。语义
+--     与 color(0026)同款:可设、可清(NULL),命令层 trim + 长度校验,replay 白名单接纳。
+--
+-- 两者都是**新增可空列**:不整表重建、不加列内 CHECK —— position 的规范形态由生成侧与
+-- 回放侧同用 frindex::validate 守(0031 起 topic position 走完整键校验,不只是「首字母 +
+-- 全字母数字」的松形态);kind 由命令层/回放共享 validator 校验。加列手法同 0026 color。
+--
+-- **迁移只加两个 NULL 列,刻意不在 SQL 里回填 position**(codex 数据层审 NO-GO #1/#5):
+-- position 是同步字段——若迁移直接灌非空键 = 表有值、oplog 无对应 op → ① boot 引导的
+-- op-backed 语义审计(create 初值 NULL、之后须有 position set_field)当场判「表/日志矛盾」,
+-- 新设备无法引导;② 两端各自迁移灌的键若不同(ROW_NUMBER 依赖本机当刻 updated_at),而
+-- 同步永不下发这些键 → **永久分叉**。存量落键改由**开库自愈**
+-- `notes::heal_legacy_topic_positions` 承担:按 (updated_at, id) 升序逐个 key_between 落末键 +
+-- 发 position set_field op(走 LWW 同步收敛;frindex 键随长度自增、无 3906 上限)。契约同
+-- heal_legacy_space_name:WriterLease 下、transport 启动前、每次开库跑、幂等(只补 position
+-- IS NULL 的行)。首次升级时全表 position 皆 NULL、无命令抢先 → 自愈按现序全量落键,顺序不变。
+--
+-- 排序回落:position IS NULL 的行(自愈未跑到 / 老端同步来的无键行)排最后、回落 updated_at,
+-- 故迁移后到自愈前的窗口列表顺序也不乱(见 repo.rs 各处 `position IS NULL, position, updated_at`)。
+-- kind 存量不回填(默认无类型)。
+--
+-- 跨版本政策(单版直发,forward):新增同步字段,旧端收未知 field 会 UnsupportedVocab 挂起
+-- 该 origin 到升级(engine 版本偏斜自愈),非破坏、升级即补;发布须提示两端一起更新。
+-- oplog append-only:0031 前的 topic op 不含 position/kind,历史不改写。
+--
+-- **混版窗口的一处非破坏性不对称(codex 复审记,用户 2026-07-23 拍板按非破坏接受,同 done_at
+-- 判例)**:设备 A 升级并自愈后你在 A 手工重排某标签(真实 position op,HLC=h1),此时设备 B
+-- 仍是旧版、对 A 的 position 词汇挂起;B 稍后升级、在拉到 h1 之前先跑自愈,发出「默认序」op
+-- (HLC=h2,正常墙钟 h2>h1)→ 同步后 h2 赢 LWW,该标签的手拖顺序回退到默认序。**只影响在
+-- 版本偏斜窗口内手工重排过的那枚标签,且可再拖一次修正**(position 是展示轴,非内容/身份/
+-- 同步轴,不丢任何条目/标签/归属)。缓解=「两端尽快一起升」(发布说明)。彻底修需把自愈推迟
+-- 到升级后首次同步完成之后,权衡后不做(两人自用+同升下几乎不发生,与 clean-over-compat /
+-- single-phase 同路)。
+--
+-- 0029 起迁移文件只写事务体:无 BEGIN/COMMIT/PRAGMA user_version(runner 自有事务与版本号,
+-- 事务体内的事务控制会被 SQLite authorizer 拒)。真实库迁移后核验 integrity_check + 行数零变。
+
+ALTER TABLE topics ADD COLUMN position TEXT;
+ALTER TABLE topics ADD COLUMN kind TEXT;

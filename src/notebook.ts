@@ -1,16 +1,18 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
-import { mount as mountInbox, inboxHasStashedDraft } from "./inbox";
-import { mount as mountBoard, boardHasStashedDraft } from "./board";
+import { mount as mountInbox, inboxHasStashedDraft, focusInboxItem } from "./inbox";
+import { mount as mountBoard, boardHasStashedDraft, focusTask, focusBoardView } from "./board";
 import { mount as mountTopics } from "./topics";
 import { mount as mountSearch } from "./search";
-import { initSync, seedSpaceStatuses, setSpaceNames, showToast, syncSpaceSwitched } from "./sync";
+import { parseDeepLink, consumePendingDeepLink } from "./deeplink";
+import { initSync, seedSpaceStatuses, setSpaceNames, showToast, syncSpaceSwitched, DEFAULT_SYNC_URL } from "./sync";
 import { initUpdate } from "./update";
 import {
   createSpace,
   currentSpaceId,
   dotClass,
   initCurrentSpace,
+  invokeInSpace,
   joinSpace,
   joinSpaceCancel,
   listSpaces,
@@ -167,6 +169,91 @@ function switchSpace(id: string): void {
   syncSpaceSwitched();
   navigate(currentName);
 }
+
+// ---- 深链接消费(zhujian://open?...)-----------------------------------------
+// 壳收到一条深链接:解析 → 定位它属于本机哪个空间(acc 匹 account_id / space 匹 id)→
+// 若不在当前空间先切过去(复用 switchSpace 的三步、但不先 navigate 当前视图,带着 focus
+// 一次落到条目所在视图)→ 后端 locate_item 定位视图 → 复用搜索 jump 的 focus 通道高亮。
+// 条目所属空间不在本机 / 条目已删 = 一句 toast 说清,不静默、不猜跳(fail-fast)。
+function routeToItem(item: string, loc: string): void {
+  switch (loc) {
+    case "task":
+      focusTask(item);
+      navigate("board");
+      break;
+    case "sealed":
+      focusTask(item);
+      focusBoardView("sealed");
+      navigate("board");
+      break;
+    case "trash-task":
+      focusTask(item);
+      focusBoardView("trash");
+      navigate("board");
+      break;
+    case "inbox":
+      focusInboxItem(item, "ideas");
+      navigate("inbox");
+      break;
+    case "trash-idea":
+      focusInboxItem(item, "archived");
+      navigate("inbox");
+      break;
+    default:
+      navigate(currentName); // 不认识的定位词:至少把主窗落到当前视图(不该发生)
+  }
+}
+
+async function openDeepLink(raw: string): Promise<void> {
+  const p = parseDeepLink(raw);
+  if (!p) return; // 无关 URL 静默忽略
+  // 主窗露出来 + 抢焦点:冷启动(app 被链接拉起)时主窗默认隐藏,只靠 navigate 换视图不会
+  // 显窗;热启动 on_open_url 侧虽也 open_notebook,这里再显一次无害,且让 toast/定位都可见。
+  void win.show();
+  void win.setFocus();
+  const all = await listSpaces();
+  const target = p.acc
+    ? (all.find((s) => s.alive && s.status.account_id === p.acc)?.id ?? null)
+    : p.space
+      ? (all.find((s) => s.alive && s.id === p.space)?.id ?? null)
+      : null;
+  if (!target) {
+    showToast("这条所在的空间不在这台设备上");
+    return;
+  }
+  // 切到目标空间(若不同):不走 switchSpace 的「先 navigate 当前视图」——那会白挂一次,
+  // 我们要带着 focus 一次落到条目所在视图。
+  if (target !== currentSpaceId()) {
+    setCurrentSpace(target);
+    refreshSpaceEntry();
+    syncSpaceSwitched();
+  }
+  let loc: string | null;
+  try {
+    loc = await invokeInSpace<string | null>(target, "locate_item", { itemId: p.item });
+  } catch (e) {
+    showToast(`打开失败:${String(e)}`);
+    return;
+  }
+  if (!loc) {
+    showToast("找不到这条(可能已删除)");
+    return;
+  }
+  routeToItem(p.item, loc);
+}
+
+// OS 桥(4b):点击的 zhujian:// 链接由 deep-link 插件 on_open_url 暂存到壳,并发一个空
+// "deep-link-open" 通知。冷启动(app 被链接拉起、监听还没挂上,emit 会丢)与热启动统一走
+// 「取暂存」——consume 是 take 语义、原子取走即清,谁先到都只处理一次、不重放。启动时先
+// 主动取一次兜冷启动。window 全局钩子供 e2e 直驱(同安卓 __zhujianHandleBack 先例)。
+async function consumeDeepLink(): Promise<void> {
+  const url = await consumePendingDeepLink();
+  if (url) await openDeepLink(url);
+}
+void listen("deep-link-open", () => void consumeDeepLink());
+void consumeDeepLink();
+(window as unknown as { __zhujianOpenDeepLink?: (u: string) => void }).__zhujianOpenDeepLink = (u) =>
+  void openDeepLink(u);
 
 let spaceMenu: HTMLDivElement | null = null;
 
@@ -330,7 +417,7 @@ function spaceJoinRow(): HTMLElement {
     form.className = "space-form";
     const server = document.createElement("input");
     server.placeholder = "服务器地址(wss://…)";
-    server.value = "wss://sync.zhujian.app";
+    server.value = DEFAULT_SYNC_URL;
     server.spellcheck = false;
     const code = document.createElement("input");
     code.placeholder = "配对码(对方设备「添加设备」出示)";

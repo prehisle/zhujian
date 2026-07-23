@@ -150,8 +150,9 @@ pub fn item_tombstone(conn: &Connection, clock: &mut Clock, id: &str) -> Result<
 fn read_item_field(conn: &Connection, id: &str, field: &str) -> Result<Value, String> {
     let sql = format!("SELECT {field} FROM items WHERE id = ?1");
     let value = match field {
-        // NOT NULL 文本字段
-        "content" | "stage" => conn
+        // NOT NULL 文本字段(done_at:完成时刻,只增不清、发射时必非空,读回 NULL = bug,
+        // get::<String> 直接失败 fail-fast——见迁移 0030 的「协议非空」语义)。
+        "content" | "stage" | "done_at" => conn
             .query_row(&sql, [id], |r| r.get::<_, String>(0))
             .map(Value::from),
         // 可空文本字段(position 自 0021 起是 fractional index 字符串)
@@ -187,9 +188,10 @@ pub fn topic_create(conn: &Connection, clock: &mut Clock, id: &str) -> Result<()
     append(conn, clock, "topic", id, "create", payload)
 }
 
-/// 标签字段变更(title / updated_at / color),值从行上读回。color 可空(NULL = 无色),
-/// 读成 `Option<String>` → None 时 payload 的 value 落 JSON null(与 due_on/priority 等
-/// 可空字段同款);title/updated_at 恒非空,读成 Option 后必是 Some,序列化不变。
+/// 标签字段变更(title / updated_at / color / position / kind),值从行上读回。color/kind
+/// 可空(NULL = 无色 / 无类型),读成 `Option<String>` → None 时 payload 的 value 落 JSON
+/// null(与 due_on/priority 等可空字段同款);title/updated_at/position 恒非空,读成 Option
+/// 后必是 Some,序列化不变。position 是 frindex 排序键(0031),永不清(离开只换键)。
 pub fn topic_set(
     conn: &Connection,
     clock: &mut Clock,
@@ -198,7 +200,9 @@ pub fn topic_set(
 ) -> Result<(), String> {
     for field in fields {
         let sql = match *field {
-            "title" | "updated_at" | "color" => format!("SELECT {field} FROM topics WHERE id = ?1"),
+            "title" | "updated_at" | "color" | "position" | "kind" => {
+                format!("SELECT {field} FROM topics WHERE id = ?1")
+            }
             other => panic!("topic set_field 不认识的字段(必是 bug):{other}"),
         };
         let value: Option<String> = conn

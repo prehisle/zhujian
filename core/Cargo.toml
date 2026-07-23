@@ -36,7 +36,7 @@ hmac = "0.12"
 # 设备鉴权钥(§1):新设备入账户时生成 Ed25519 钥对、opener 侧收 enroll 时校验公钥
 # 是合法曲线点(server crate 同版本只验签);种子取 chacha20poly1305::aead::OsRng。
 ed25519-dalek = "2"
-time = { version = "0.3", features = ["formatting"] }
+time = { version = "0.3", features = ["formatting", "parsing"] }
 # P2-g 传输层(sync-protocol §8):信封层与服务器同底座(path 依赖)+ WSS 客户端
 # (rustls 不拖 OpenSSL:webpki roots 供公网 wss://,本地/局域网 ws:// 不走 TLS)。
 # tokio 与 tauri 内置同主版本;tokio-tungstenite 0.29 与 server 集成测同版。

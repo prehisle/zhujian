@@ -245,6 +245,9 @@
 .v-inbox .tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 9px; }
 .v-inbox .tags:empty { display: none; } /* 无标签时不留 margin(编辑态尤其明显) */
 .v-inbox .tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   font-size: 11px;
   letter-spacing: 0.02em;
   color: var(--ink-soft);
@@ -253,10 +256,24 @@
   border-radius: 999px;
   padding: 2px 9px;
   max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
+.v-inbox .tag-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 每个标签 chip 尾部的 ✕:去掉这个标签(灵感卡才有;回收站卡只读不给)。 */
+.v-inbox .tag-x {
+  flex: none;
+  font: inherit;
+  font-size: 9px;
+  line-height: 1;
+  color: var(--ink-faint);
+  background: transparent;
+  border: 0;
+  padding: 1px;
+  margin-right: -2px;
+  cursor: pointer;
+  border-radius: 999px;
+  transition: color 0.14s, background 0.14s;
+}
+.v-inbox .tag-x:hover { color: var(--seal); background: color-mix(in srgb, var(--seal) 15%, transparent); }
 .v-inbox .tag.task {
   background: color-mix(in srgb, var(--ink) 6%, transparent);
   border-color: var(--line-strong);
@@ -323,7 +340,45 @@
 .v-inbox .no { background: transparent; color: var(--ink-soft); border-color: var(--line-strong); }
 .v-inbox .no:hover { color: var(--ink); background: color-mix(in srgb, var(--ink) 6%, transparent); }
 
-/* topic picker */
+/* topic picker — 输入即筛选的标签选择器(L 键;Esc/点外收起,无取消钮),同看板 openPicker */
+.v-inbox .topic-picker { display: flex; flex-direction: column; gap: 9px; margin-top: 4px; }
+.v-inbox .topic-search {
+  font: inherit;
+  font-family: var(--font-serif);
+  font-size: 14px;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--line-strong);
+  border-radius: 9px;
+  padding: 8px 11px;
+  width: 100%;
+  outline: none;
+  transition: border-color 0.14s;
+}
+.v-inbox .topic-search:focus { border-color: var(--seal-line); }
+.v-inbox .topic-choices { display: flex; flex-wrap: wrap; gap: 7px; align-items: center; }
+.v-inbox .choice {
+  font: inherit;
+  font-size: 12.5px;
+  background: var(--seal-tint);
+  color: var(--ink);
+  border: 1px solid var(--seal-line);
+  border-radius: 999px;
+  padding: 5px 13px;
+  cursor: pointer;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: background 0.14s;
+}
+.v-inbox .choice:hover { background: color-mix(in srgb, var(--seal) 18%, var(--paper)); }
+.v-inbox .choice.create { border-style: dashed; color: var(--seal); border-color: var(--seal-line); }
+.v-inbox .choice.create:hover { background: var(--seal-tint); border-color: var(--seal); }
+.v-inbox .topic-hint { font-size: 12.5px; color: var(--ink-soft); }
+
+/* .chips/.chip/.form-actions 现由跨空间「移动到…」表单(inbox.ts openMove)复用,仍在用;
+   老打标签表单专有的 .new-topic 已随 174 标签选择器对齐删除。 */
 .v-inbox .chips { display: flex; flex-wrap: wrap; gap: 7px; }
 .v-inbox .chip {
   font: inherit;
@@ -337,9 +392,6 @@
   transition: background 0.14s;
 }
 .v-inbox .chip:hover { background: color-mix(in srgb, var(--seal) 18%, var(--paper)); }
-.v-inbox .new-topic { display: flex; gap: 8px; }
-.v-inbox .new-topic .field { flex: 1; }
-.v-inbox .new-topic .do { flex: none; white-space: nowrap; }
 .v-inbox .hint { margin: 0; font-size: 12.5px; color: var(--ink-soft); }
 .v-inbox .form-err {
   margin: 0;

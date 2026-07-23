@@ -14,6 +14,8 @@
 //   node scripts/android-cdp.mjs info            # 列 CDP page targets
 //   node scripts/android-cdp.mjs eval '<js>'     # 页面内执行 JS,打印返回值(JSON)
 //   node scripts/android-cdp.mjs evalfile <path> # 从文件读 JS 执行(长脚本免转义)
+//   node scripts/android-cdp.mjs swipe x1 y1 x2 y2 [steps]  # 真实触摸滑动(CSS 视口坐标,
+//                                                   走 Input.dispatchTouchEvent 原生管线,含 touch-action)
 // 依赖:node ≥ 22(全局 WebSocket/fetch)、adb 在 PATH。
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
@@ -80,6 +82,55 @@ async function evaluate(expr) {
   return out;
 }
 
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// 开一条 CDP 会话跑多条命令(swipe 要在同一连接上连发 touchStart/Move/End)。
+async function session(fn) {
+  const p = await pageTarget();
+  const ws = new WebSocket(p.webSocketDebuggerUrl);
+  await new Promise((res, rej) => {
+    ws.addEventListener("open", res, { once: true });
+    ws.addEventListener("error", () => rej(new Error("ws 连接失败")), { once: true });
+  });
+  let id = 0;
+  const send = (method, params) =>
+    new Promise((res, rej) => {
+      const myId = ++id;
+      const to = setTimeout(() => rej(new Error(`CDP 超时: ${method}`)), 10000);
+      const onMsg = (ev) => {
+        const m = JSON.parse(ev.data);
+        if (m.id !== myId) return;
+        ws.removeEventListener("message", onMsg);
+        clearTimeout(to);
+        if (m.error) return rej(new Error(JSON.stringify(m.error)));
+        res(m.result);
+      };
+      ws.addEventListener("message", onMsg);
+      ws.send(JSON.stringify({ id: myId, method, params }));
+    });
+  try {
+    return await fn(send);
+  } finally {
+    ws.close();
+  }
+}
+
+// 真实触摸滑动:一次 touchStart → 若干 touchMove → touchEnd。坐标是 CSS 视口像素
+// (直接用 getBoundingClientRect 的值,不换算设备像素);走原生输入管线,故 touch-action、
+// 滚动识别、pointer capture 都真实生效——正是合成 PointerEvent 测不到的那半截。
+async function swipe(x1, y1, x2, y2, steps = 12) {
+  await session(async (send) => {
+    await send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: x1, y: y1 }] });
+    for (let i = 1; i <= steps; i++) {
+      const x = x1 + ((x2 - x1) * i) / steps;
+      const y = y1 + ((y2 - y1) * i) / steps;
+      await send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x, y }] });
+      await sleep(16);
+    }
+    await send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+  });
+}
+
 const [cmd, ...rest] = process.argv.slice(2);
 try {
   if (cmd === "forward") forward();
@@ -90,8 +141,13 @@ try {
   } else if (cmd === "evalfile") {
     const r = await evaluate(readFileSync(rest[0], "utf8"));
     console.log(JSON.stringify(r?.value ?? r, null, 2));
+  } else if (cmd === "swipe") {
+    const [x1, y1, x2, y2, steps] = rest.map(Number);
+    if ([x1, y1, x2, y2].some(Number.isNaN)) throw new Error("用法: swipe x1 y1 x2 y2 [steps]");
+    await swipe(x1, y1, x2, y2, Number.isNaN(steps) ? 12 : steps);
+    console.log(`swipe (${x1},${y1}) -> (${x2},${y2})`);
   } else {
-    console.error("用法: forward | info | eval <js> | evalfile <path>");
+    console.error("用法: forward | info | eval <js> | evalfile <path> | swipe x1 y1 x2 y2 [steps]");
     process.exit(1);
   }
 } catch (e) {

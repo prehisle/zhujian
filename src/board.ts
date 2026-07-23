@@ -13,13 +13,17 @@ import {
   spaceLabel,
 } from "./space";
 import { autoGrow } from "./autogrow";
+import { saveTextDraft, loadTextDraft, clearTextDraft } from "./compose-draft";
 import { copyButton, copyText } from "./clipboard";
+import { buildItemDeepLink } from "./deeplink";
 import {
   type FilterState,
   applyFilter,
   filterActive,
+  reconcileKindFilter,
   reconcileTopicFilter,
   renderFilterPills,
+  renderKindPills,
   wireFilterInput,
 } from "./filter-bar";
 import { type Act, armDismiss, createHotkeyController, registerViewKeys } from "./hotkey-menu";
@@ -33,6 +37,7 @@ import {
 } from "./item-images";
 import type { View, ViewCtx } from "./notebook";
 import { applyTagColor } from "./tag-color";
+import { renderTagPicker } from "./tag-picker";
 import { type TaskItem, dayKey, dayLabel, dueState, localToday, metaRow, startOfWeek } from "./tasktime";
 import "./board.css";
 
@@ -115,8 +120,11 @@ const SKELETON = `
     <span class="compose-err" id="compose-err"></span>
   </div>
   <div class="filter-row" id="filter-row" hidden>
-    <div class="topic-filter" id="topic-filter"></div>
-    <input class="filter-text" id="board-filter" type="search" placeholder="过滤任务…" autocomplete="off" spellcheck="false" />
+    <div class="kind-filter" id="kind-filter"></div>
+    <div class="filter-main">
+      <div class="topic-filter" id="topic-filter"></div>
+      <input class="filter-text" id="board-filter" type="search" placeholder="过滤任务…" autocomplete="off" spellcheck="false" />
+    </div>
   </div>
   <div class="op-err" id="op-err" hidden>
     <span class="op-err-msg" id="op-err-msg"></span>
@@ -126,8 +134,9 @@ const SKELETON = `
 `;
 
 // One topic, for the filter bar and the per-card topic picker. `color` (`#RRGGBB` or
-// null) tints the filter pill's dot so categories read at a glance.
-type TopicOpt = { id: string; title: string; color: string | null };
+// null) tints the filter pill's dot so categories read at a glance. `kind`(自由文本
+// 类型,0031)或 null = 无类型 —— 类型轴 pill 行(renderKindPills)据它分组。
+type TopicOpt = { id: string; title: string; color: string | null; kind: string | null };
 
 // 删除确认偏好 (a UI-only preference, kept in localStorage — not product data, so
 // it never participates in any DB invariant). Missing/unreadable → the safe default
@@ -161,7 +170,7 @@ type BoardView = "board" | "trash" | "sealed";
 // mounted at a time, so a single shared value is correct. The 回收站 toggle (boardView)
 // stays mount-scope on purpose — it's a transient peek, so a fresh mount lands on the
 // board, not the trash. 行为(pills/口径/Esc)在共享件 filter-bar.ts,与灵感同源。
-const filter: FilterState = { topic: "all", text: "" };
+const filter: FilterState = { kind: "all", topic: "all", text: "" };
 
 // 新建任务的草稿与暂存配图不随视图切换蒸发(ui-audit P1 #9d):文字过桥走模块态
 // (unmount 存、mount 灌回),暂存图直接把 pendingImages 提到模块级——root 元素随
@@ -172,6 +181,12 @@ const filter: FilterState = { topic: "all", text: "" };
 // 先翻 current 再 unmount,故标记必须取 mount 时捕获的空间,不能在 unmount 时现取)。
 let composeDraftSaved = "";
 let composeDraftSpace: string | null = null;
+// 断电恢复(198 桌面侧):新建任务的文字草稿走 localStorage、暂存图走 IndexedDB
+// (composeImgs 的 persistKey)——意外断电 / 杀进程后重开,上次没记下的任务还在。载荷带
+// 空间(A 空间草稿绝不灌进 B,与 composeDraftSpace 同律)。**纯设备本地 UI 状态,不进 DB / 同步**。
+const BOARD_DRAFT_KEY = "zhujian.board-draft";
+// 首个 mount 时回填一次暂存图(composeImgs 模块级,填好即常驻,后续 mount 不重填)。
+let imgsRestored = false;
 
 /** 空间两来路 H1(notebook.ts 草稿探针的模块态半边):新建任务的文字存底或暂存图
  *  还攥在模块态里 = 有未保存内容(DOM 里的 textarea 由探针另一半覆盖)。 */
@@ -186,7 +201,16 @@ let composeNoticeSpace: string | null = null;
 // 的新 mount 得马上重读——否则「正文被清了、卡片却没出现」要等到下次 refocus。
 // navigate 恒先 unmount 旧再 mount 新,单值不会互踩。
 let liveLoad: (() => void) | null = null;
-const composeImgs = pendingImages();
+const composeImgs = pendingImages({ persistKey: "zhujian.board-images" });
+// 模块加载即从磁盘灌回文字草稿(同步读):重开后 mount 首建 compose 就能显示上次的字。
+// 空间一并恢复,交给既有的「mount 空间对不上就丢弃」逻辑把关(见 mount 底部)。
+{
+  const d = loadTextDraft(BOARD_DRAFT_KEY);
+  if (d && d.text) {
+    composeDraftSaved = d.text;
+    composeDraftSpace = d.space;
+  }
+}
 // in-flight 闸提模块级(codex P1 审 H2):保存往返期间切走再回来,新 mount 的闸
 // 必须还是同一把——否则同一草稿能被重提两次。
 let composeSaving = false;
@@ -203,6 +227,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
   const copySlot = view.querySelector("#copy-slot") as HTMLElement;
   const filterRow = view.querySelector("#filter-row") as HTMLElement;
   const filterBar = view.querySelector("#topic-filter") as HTMLElement;
+  const kindBar = view.querySelector("#kind-filter") as HTMLElement;
   const filterInput = view.querySelector("#board-filter") as HTMLInputElement;
   const trashToggle = view.querySelector("#trash-toggle") as HTMLButtonElement;
   const trashN = view.querySelector("#trash-n") as HTMLElement;
@@ -259,6 +284,11 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
   // rather than dataTransfer, so a status move never depends on the platform
   // serializing drag data (and synthetic e2e drags work the same way).
   let dragging: { id: string; from: string } | null = null;
+
+  // 拖拽打标签(1a/1b)的第二根拖拽轴:被拖动的标签 pill 的 topic id。与 `dragging`
+  // 互斥并存——卡片重排只认 `dragging`(列体/归档区),打标签只认 `draggingTopic`(卡片/
+  // pill 互为落点)。两条 dragover/drop 各自先查自己那根、对方拖动时早返回,天然不打架。
+  let draggingTopic: string | null = null;
 
   // 单一编辑态(全局只允许一张卡进编辑)。开编辑走 requestEdit→load():load 把所有卡重渲为
   // 视图态(关掉任何旧编辑态),renderBoard 里命中 pendingEditId 的那张卡再自动开编辑——
@@ -325,6 +355,64 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
 
   function clearDropHovers(): void {
     board.querySelectorAll(".drop-hover").forEach((e) => e.classList.remove("drop-hover"));
+  }
+
+  // 打标签拖拽的落点高亮(卡片或 pill),与 clearDropHovers 同规:每次 dragover 先清全场
+  // 再点亮当前一枚,不靠 dragleave(它在子元素间穿梭会闪)。pill 在 filterBar、卡片在
+  // board,两处都扫。
+  function clearTagHovers(): void {
+    for (const host of [board, filterBar])
+      host.querySelectorAll(".tag-drop-hover").forEach((e) => e.classList.remove("tag-drop-hover"));
+  }
+  // 某任务卡当前是否已挂某标签(读卡上的 chip;chip 带 data-topic-id,见 topicTags）。
+  // 拖拽两向共用的去重判据——已挂就不作落点、不落库(link 唯一键会报错)。
+  function taskHasTopic(taskId: string, topicId: string): boolean {
+    const cardEl = board.querySelector<HTMLElement>(`[data-task-id="${taskId}"]`);
+    return !!cardEl?.querySelector(`.chip.topic.set[data-topic-id="${topicId}"]`);
+  }
+  // 把一个标签加到某任务(拖拽落点的落库,复用 call 的横幅报错 + 重载对齐);已挂则 no-op。
+  function dropTagOnTask(taskId: string, topicId: string): void {
+    if (taskHasTopic(taskId, topicId)) return;
+    void call("add_task_topic", { id: taskId, topicId });
+  }
+
+  // 标签 pill 双向拖拽接线(每次 renderFilterPills 后调,pills 每轮重建)。真标签 pill
+  // (带 data-topic-id;所有/无标签不带)既是拖源(pill→card)也是落点(card→pill)。
+  function wireTagPills(): void {
+    for (const pill of filterBar.querySelectorAll<HTMLElement>(".tf-pill[data-topic-id]")) {
+      const topicId = pill.dataset.topicId!;
+      pill.draggable = true;
+      pill.addEventListener("dragstart", (e) => {
+        draggingTopic = topicId;
+        pill.classList.add("tag-dragging");
+        if (e.dataTransfer) {
+          e.dataTransfer.setData("text/plain", topicId);
+          e.dataTransfer.effectAllowed = "copy";
+        }
+      });
+      pill.addEventListener("dragend", () => {
+        draggingTopic = null;
+        pill.classList.remove("tag-dragging");
+        clearTagHovers();
+      });
+      // 任务卡拖到本 pill = 给那张卡打这个标签(card→pill)。只认 dragging(卡片重排轴);
+      // 已挂该标签则不作落点(dropTagOnTask 里也再兜一道)。
+      pill.addEventListener("dragover", (e) => {
+        if (!dragging || taskHasTopic(dragging.id, topicId)) return;
+        e.preventDefault();
+        clearTagHovers();
+        detachDropLine(); // 卡片拖出列区,别让列里的插入线残留
+        pill.classList.add("tag-drop-hover");
+      });
+      pill.addEventListener("drop", (e) => {
+        if (!dragging) return;
+        e.preventDefault();
+        const taskId = dragging.id;
+        dragging = null;
+        clearTagHovers();
+        dropTagOnTask(taskId, topicId);
+      });
+    }
   }
 
   // 乐观移位改了某列的成员数,同一帧把列头计数徽章也改掉——否则它要等随后的 load() 才刷新,
@@ -504,8 +592,12 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     if (live !== null && currentSpaceId() === mountSpace && live.value === raw) {
       live.value = "";
       live.style.height = "auto";
+      clearTextDraft(BOARD_DRAFT_KEY); // 输入框被清=稿了结,磁盘草稿同步清(等待期未再打字才走这)
     }
-    if (composeDraftSaved === raw) composeDraftSaved = "";
+    if (composeDraftSaved === raw) {
+      composeDraftSaved = "";
+      clearTextDraft(BOARD_DRAFT_KEY); // 模块存底=已保存标题:磁盘也清(切走场景,input 不在场)
+    }
     // 挂图也在必落账链上(同一保存的一部分),同样恒决议;挂失败不吞掉(fail-fast)。
     const failed = await composeImgs.attachBatch(id, batch, mountSpace);
     if (unmounted) {
@@ -555,6 +647,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
   if (composeDraftSpace !== null && composeDraftSpace !== mountSpace) {
     composeDraftSaved = "";
     composeDraftSpace = null;
+    clearTextDraft(BOARD_DRAFT_KEY); // 跨空间丢弃:磁盘草稿也清(composeImgs.clear() 自清图存)
     composeImgs.clear();
   }
   if (composeDraftSaved !== "" || composeImgs.count() > 0) {
@@ -562,6 +655,15 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     composeDraftSaved = "";
     setComposeOpen(true);
     autoGrow(composeInput);
+  }
+  // 断电恢复:首个 mount 回填暂存图(空间对不上的已被上面 clear 掉,restore 读到空存;重开
+  // 正常场景=恢复上次空间,图属本空间)。IndexedDB 异步——填好若有图且 compose 还关着,
+  // 把它开出来让用户看见(纯图无字草稿也不至于藏在收起的 compose 里)。仅一次。
+  if (!imgsRestored) {
+    imgsRestored = true;
+    void composeImgs.restore().then(() => {
+      if (!unmounted && composeImgs.count() > 0 && compose.hidden) setComposeOpen(true);
+    });
   }
   // 上个 mount 死后才失败的保存:错误过桥到这,领走显示(codex 三审 M)。
   // 先开 compose 再写错误——setComposeOpen 内部会清 composeErr,顺序反了就白写。
@@ -575,7 +677,10 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
   addTaskBtn.addEventListener("click", () => setComposeOpen(compose.hidden));
   composeAdd.addEventListener("click", () => void submitNewTask());
   composeClose.addEventListener("click", () => setComposeOpen(false));
-  composeInput.addEventListener("input", () => autoGrow(composeInput));
+  composeInput.addEventListener("input", () => {
+    autoGrow(composeInput);
+    saveTextDraft(BOARD_DRAFT_KEY, { text: composeInput.value, space: mountSpace }); // 断电恢复:输入即写
+  });
   composeInput.addEventListener("keydown", (e) => {
     if (e.isComposing) return; // IME 组合期的 Enter 是上屏,不是提交(ui-audit P0 #1)
     // Enter submits; Shift+Enter inserts a newline (let the default through).
@@ -762,36 +867,45 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     );
   }
 
-  // A card's tags (M:N). Each current tag is a chip with a ✕ to drop it; a ＋ button
-  // opens a picker of the tags not yet on the card to add one. Add/remove write through
-  // add_task_topic / remove_task_topic, then reload from the new truth. draggable:false
-  // keeps a chip click from starting a card drag.
+  // A card's tags (M:N). Each current tag is a chip with a ✕ to drop it; the ⋯ menu's
+  // 标签 opens a keepOpen picker of the tags not yet on the card — pick/create adds one
+  // and the picker stays put so you can add several in a row (each write = add_task_topic;
+  // remove = remove_task_topic). Adds reflect in place (item.topics + a live `have`) and
+  // reconcile the whole board with one load() when the picker closes; remove reloads at
+  // once. draggable:false keeps a chip click from starting a card drag.
   function topicTags(item: TaskItem): { root: HTMLElement; openPicker: () => void } {
     const wrap = el("span", { className: "slot topic-slot" });
-    async function addTag(topicId: string): Promise<void> {
+    // 选择器 keepOpen 连加:选/建一个即就地更新——落库成功后把标签并进 item.topics 与
+    // have、**不整板重载**(load() 会拆掉卡片连带选择器);连续加多个,收起时(openPicker 的
+    // armDismiss)才补一发 load() 对齐全局真相(筛选 pills 计数、其它卡)。失败=横幅就地报错、
+    // 不改本地态,选择器留场可重试。返回是否真加上,供 openPicker 决定收起时要不要重载。
+    async function addTag(topicId: string, have: Set<string>): Promise<boolean> {
       clearOpError();
       try {
         await invoke("add_task_topic", { id: item.id, topicId });
       } catch (e) {
-        showOpError(String(e)); // 横幅就地报错,卡片保持在场(ui-audit P0 #6)
-        renderChips(); // 失败也收起选择器,别停在没监听的半开态(off() 已摘监听)
-        return;
+        showOpError(String(e)); // 横幅就地报错,卡片与选择器都保持在场(ui-audit P0 #6)
+        return false;
       }
-      load();
+      const tp = allTopics.find((t) => t.id === topicId);
+      if (tp) item.topics.push({ id: tp.id, title: tp.title, color: tp.color });
+      have.add(topicId);
+      return true;
     }
-    // 新建并挂上:输入的名字在库里不存在时才走到这。create_topic 校验空/重名/超长,
-    // 失败原样报错并收起;成功拿到新 id 后立即 addTag(其内部 load() 重渲)。
-    async function createTag(title: string): Promise<void> {
+    // 新建并挂上:输入的名字在库里不存在时才走到这。create_topic 校验空/重名/超长,失败原样
+    // 报错、选择器留场;成功拿新 id 后先并进 allTopics(让本次选择器会话的候选/重名判定一致,
+    // 收起时的 load() 会用后端真相覆盖),再 addTag。
+    async function createTag(title: string, have: Set<string>): Promise<boolean> {
       clearOpError();
       let id: string;
       try {
         id = await invoke<string>("create_topic", { title });
       } catch (e) {
         showOpError(String(e));
-        renderChips();
-        return;
+        return false;
       }
-      await addTag(id);
+      allTopics.push({ id, title, color: null, kind: null });
+      return addTag(id, have);
     }
     async function removeTag(topicId: string): Promise<void> {
       clearOpError();
@@ -809,6 +923,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       // the picker from the ⋯ menu's 标签 (openPicker). A tagless card shows nothing here.
       const chips = item.topics.map((tp) => {
         const chip = el("span", { className: "chip topic set", draggable: false });
+        chip.dataset.topicId = tp.id; // 拖拽打标签的去重判据(taskHasTopic 读它;ULID 选择器安全)
         applyTagColor(chip, tp.color); // 有色标签的 chip 着色(左色条 + 极淡底),便于一眼定位
         chip.append(
           document.createTextNode(tp.title),
@@ -829,70 +944,29 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     // 手滑造近似重复(标签视图有「合并」正因为重复会发生)。Esc / 点别处 收起,无「取消」钮。
     function openPicker(): void {
       const have = new Set(item.topics.map((t) => t.id));
-      let off = () => {};
-      off = armDismiss(wrap, renderChips);
-      const pick = (topicId: string): void => {
-        off();
-        void addTag(topicId);
-      };
-      const create = (title: string): void => {
-        off();
-        void createTag(title);
-      };
-
-      const search = el("input", { className: "topic-search", draggable: false }) as HTMLInputElement;
-      search.placeholder = "搜标签,或输入新名…";
-      const choices = el("div", { className: "topic-choices" });
-
-      function renderChoices(): void {
-        const q = search.value.trim();
-        const ql = q.toLowerCase();
-        const avail = allTopics.filter((tp) => !have.has(tp.id));
-        const shown = q ? avail.filter((tp) => tp.title.toLowerCase().includes(ql)) : avail;
-        const nodes: Node[] = shown.map((tp) =>
-          el("button", { className: "choice", textContent: tp.title, draggable: false, onclick: () => pick(tp.id) }),
-        );
-        // 精确同名(忽略大小写)已存在就不给「创建」——避免造重复;它要么在上面可选,要么已在卡上。
-        const exists = ql !== "" && allTopics.some((tp) => tp.title.toLowerCase() === ql);
-        if (q && !exists) {
-          nodes.push(
-            el("button", {
-              className: "choice create",
-              draggable: false,
-              textContent: `创建「${q}」`,
-              onclick: () => create(q),
-            }),
-          );
-        }
-        if (nodes.length === 0) {
-          nodes.push(
-            el("span", {
-              className: "topic-hint",
-              textContent: allTopics.length ? "已加上所有标签" : "输入名字,建第一个标签",
-            }),
-          );
-        }
-        choices.replaceChildren(...nodes);
-      }
-
-      search.addEventListener("input", renderChoices);
-      search.addEventListener("keydown", (e) => {
-        if (e.isComposing) return; // IME 组合期不劫持(ui-audit P0 #1)
-        if (e.key !== "Enter") return; // Esc 由 armDismiss 文档级监听处理
-        e.preventDefault();
-        const q = search.value.trim();
-        if (!q) return;
-        const match = allTopics.find((tp) => tp.title.toLowerCase() === q.toLowerCase());
-        if (match) {
-          if (!have.has(match.id)) pick(match.id); // 精确命中已有 → 直接加(已在卡上则无操作)
-        } else {
-          create(q); // 无匹配 → 新建并加
-        }
+      let changed = false;
+      // 收起(Esc / 点选择器之外):把 chips 画回;只有连加期间真加过标签,才补一发 load() 把
+      // 整板(筛选 pills 计数、其它卡)对齐后端真相——纯打开又取消不重画整板,省一次闪。
+      armDismiss(wrap, () => {
+        renderChips();
+        if (changed) void load();
       });
-
-      wrap.replaceChildren(search, choices);
-      renderChoices();
-      search.focus();
+      // 选择器 UI(搜索 + 候选 + Enter 复用/新建)走共享件 tag-picker.ts(与灵感同源),keepOpen
+      // 让选完不收起、可连续加多个:选既有 = add_task_topic,输入新名 = create_topic 拿 id 再 add
+      // (见 addTag / createTag)。回调落定后由 tag-picker 就地重渲候选(已加的即时隐藏)。
+      renderTagPicker(wrap, {
+        allTopics,
+        have,
+        keepOpen: true,
+        onPick: (topicId) =>
+          addTag(topicId, have).then((ok) => {
+            if (ok) changed = true;
+          }),
+        onCreate: (title) =>
+          createTag(title, have).then((ok) => {
+            if (ok) changed = true;
+          }),
+      });
     }
     renderChips();
     return { root: wrap, openPicker };
@@ -939,6 +1013,11 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     } else if (mode === "sealed") {
       c.append(sealedActions(item));
     } else {
+      // 完成时刻(0030):已完成卡显示「完成于 <日>」。done_at 可能为 null(本功能上线前
+      // 完成的老卡)——那就不显示。dayLabel 与归档册同口径(今天/昨天/M月D日)。
+      if (item.status === "done" && item.done_at) {
+        c.append(el("div", { className: "done-at", textContent: `完成于 ${dayLabel(item.done_at)}` }));
+      }
       // due/priority: pure-display chips on the card; edits open from the ⋯ menu (㊺).
       // 失败走 op-err 横幅(非破坏),renderError 只留给读取失败(ui-audit P0 #6)。
       const meta = metaRow(item, today, load, showOpError);
@@ -983,6 +1062,16 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
           return "复制失败";
         }
       };
+      // 复制这条任务的深链接(zhujian://open?…&item=…):粘到别的笔记 / 发给对方设备都能
+      // 直接打开它(见 deeplink.ts)。菜单反馈复用 copy 一族的「点一下闪一下」。
+      const copyLinkFeedback = async (): Promise<string> => {
+        try {
+          await copyText(await buildItemDeepLink(item.id));
+          return "已复制链接";
+        } catch {
+          return "复制失败";
+        }
+      };
       // 列间移动: advance/retreat the card one column. The target column's current DOM
       // order (excludes this card — cross-column) is the base; the card appends to the
       // end of the target column. Routes through the same reorder paths as a drop, so a
@@ -1010,6 +1099,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         const list: Act[] = [
           { label: "编辑", key: "E", run: () => requestEdit(item.id) },
           { label: "复制", key: "C", feedback: copyFeedback },
+          { label: "复制链接", key: "K", feedback: copyLinkFeedback },
           { label: "标签", key: "L", run: tags.openPicker },
           { label: "截止", key: "S", run: meta.openDue },
           { label: "优先级", key: "P", run: meta.openPri },
@@ -1072,6 +1162,26 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         board.classList.remove("drag-done");
         clearDropHovers();
         detachDropLine();
+      });
+
+      // 标签 pill 拖到本卡 = 给本卡打这个标签(pill→card)。只认 draggingTopic;卡片重排
+      // (dragging)时早返回,交给列体处理。stopPropagation 免得冒泡到列体的 dragover/drop
+      // (列体本就 !dragging 自退,双保险)。已挂该标签则不作接收目标(无高亮、不落库)。
+      c.addEventListener("dragover", (e) => {
+        if (draggingTopic === null || item.topics.some((t) => t.id === draggingTopic)) return;
+        e.preventDefault();
+        e.stopPropagation();
+        clearTagHovers();
+        c.classList.add("tag-drop-hover");
+      });
+      c.addEventListener("drop", (e) => {
+        if (draggingTopic === null) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const topicId = draggingTopic;
+        draggingTopic = null;
+        clearTagHovers();
+        dropTagOnTask(item.id, topicId);
       });
 
       // 双击卡片 = 默认操作「编辑」(和单键 E 同一入口)。双击在 chip / ⋯ 菜单 / 按钮 /
@@ -1348,8 +1458,9 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     board.replaceChildren(bar, list);
   }
 
-  // 归档册:干完的活按「归档日」分组成时间轴(同灵感 ㊳ 的按天分组,共享 dayKey/dayLabel)。
-  // 只读 + 每卡一个「取消归档」;没有删除入口(史实不删)。
+  // 归档册:干完的活按**完成日**分组成时间轴(0030 决定 A:完成时刻优先,老卡无 done_at
+  // 时回落归档日 sealed_at;同灵感 ㊳ 的按天分组,共享 dayKey/dayLabel)。批量归档不再把
+  // 一周的活压成归档那天——答得准「什么时候干完」。只读 + 每卡一个「取消归档」;无删除入口。
   function renderSealed(items: TaskItem[]): void {
     if (items.length === 0) {
       renderCentered(
@@ -1359,22 +1470,27 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       return;
     }
     board.className = "trash sealed-view";
-    // 头部一行统计(纯派生、只算不存,和列头计数同性质):本周入册几条 + 累计。
-    // list_sealed_tasks 已把全部 sealed_at 给到前端,本地周一为界直接数。
+    // 分组时刻 = 完成时刻优先、老卡回落归档时刻(后端已按同一 COALESCE 降序排好)。
+    // sealed_at 契约上恒非 null,故 groupTs 必得一个可比时刻。
+    const groupTs = (t: TaskItem): string => t.done_at ?? t.sealed_at!;
+    // 头部一行统计(纯派生、只算不存):本周**完成**几条 + 累计成就。计数口径 = 完成日
+    // (回落归档日),与下面按完成日分组同轴,故称「本周完成」而非「本周归档」——上周完成、
+    // 本周才入册的不会误算进本周(决定 A 的措辞收口)。
     const monday = startOfWeek();
-    const week = items.filter((t) => t.sealed_at !== null && new Date(t.sealed_at) >= monday).length;
+    const week = items.filter((t) => new Date(groupTs(t)) >= monday).length;
     const bar = el("div", { className: "trash-bar" }, [
-      el("span", { className: "grow", textContent: `本周归档 ${week} · 累计 ${items.length}` }),
+      el("span", { className: "grow", textContent: `本周完成 ${week} · 累计 ${items.length}` }),
     ]);
     const list = el("div", { className: "trash-list" });
     let lastDay = "";
     for (const t of items) {
       // list_sealed_tasks 只返回已归档行,sealed_at 恒非 null(契约);缺了是真 bug,fail fast。
       if (!t.sealed_at) throw new Error(`归档条目缺 sealed_at:${t.id}`);
-      const k = dayKey(t.sealed_at);
+      const ts = groupTs(t);
+      const k = dayKey(ts);
       if (k !== lastDay) {
         lastDay = k;
-        list.append(el("div", { className: "tl-date", textContent: dayLabel(t.sealed_at) }));
+        list.append(el("div", { className: "tl-date", textContent: dayLabel(ts) }));
       }
       list.append(card(t, "sealed"));
     }
@@ -1451,12 +1567,13 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       // 死标签回落 + 匹配口径归一(trim+忽略大小写)都在共享件;回落是纯状态修正
       // (no DOM),必须先于指纹。
       reconcileTopicFilter(filter, allTopics);
+      reconcileKindFilter(filter, allTopics); // 死类型回落 + 切类型后标签轴归一(纯状态,先于指纹)
       const q = filter.text.trim().toLowerCase();
 
       // Fingerprint everything that affects the DOM; an idle refocus whose fingerprint
       // matches the last render bails before touching a single card (no flicker). An
       // open inline editor / hover state survives such a refocus untouched.
-      const sig = JSON.stringify([boardView, filter.topic, q, today, active, archived, sealed, topics]);
+      const sig = JSON.stringify([boardView, filter.kind, filter.topic, q, today, active, archived, sealed, topics]);
       // `=== true`, not truthy: `load` is also wired as a bare onclick handler in a few
       // places, so a stray MouseEvent must never count as a refocus and skip the repaint.
       // pendingEditId 在场时不短路(codex 二审 M):requestEdit 的那发若被更新的同签名
@@ -1542,6 +1659,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       // 的窄窗)= 不设脉冲/不滚动,静态落看板(它的归宿),状态不残留。
       const focusOnBoard = focus !== null && visible.some((t) => t.id === focus);
       if (focusOnBoard) {
+        filter.kind = "all";
         filter.topic = "all";
         filter.text = "";
         filterInput.value = "";
@@ -1551,9 +1669,15 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       // The filter row (标签 pills + 文本过滤框) only appears once there is something
       // to filter. Pills 计数与两维应用都在共享件(与灵感同源);文本只匹配当前标题。
       filterRow.hidden = visible.length === 0;
-      if (visible.length > 0) renderFilterPills(filterBar, visible, allTopics, filter, () => void load());
+      if (visible.length > 0) {
+        // 类型轴在标签 pills 之上(路线 A 钻取器);renderKindPills 无 kind 时清空、CSS
+        // :empty 隐整行。标签 pills 随 kind 收到该类型内(见 filter-bar.ts)。
+        renderKindPills(kindBar, visible, allTopics, filter, () => void load());
+        renderFilterPills(filterBar, visible, allTopics, filter, () => void load());
+        wireTagPills();
+      }
 
-      const shown = applyFilter(visible, filter, (t) => t.title);
+      const shown = applyFilter(visible, filter, (t) => t.title, allTopics);
 
       // Filtered(标签或文本任一激活): the column DOM is only the visible subset, so drops
       // route through reorder_task_visible (merged server-side). Unfiltered: the

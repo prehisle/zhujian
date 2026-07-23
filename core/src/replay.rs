@@ -87,8 +87,12 @@ pub struct RemoteOp {
 /// 版本,engine 在重验时只对 `validator_ver < VALIDATOR_VER` 的行以新规则重跑,
 /// 「升级修好了误判」的自助恢复路全靠它区分新旧规则。v1 = 严格纪元首版(2a 工序1:
 /// 删三处 legacy 容忍 + born_stage:null 收编 + typed 分型);v2 = 0028 space 词汇
-/// (空间名跨端同步:space/profile 单例寄存器 + name 值域,space-name-sync-plan §4.3)。
-pub(crate) const VALIDATOR_VER: i64 = 2;
+/// (空间名跨端同步:space/profile 单例寄存器 + name 值域,space-name-sync-plan §4.3);
+/// v3 = 0030 item.done_at set_field 字段(完成时刻,存储可空 / 协议非空只增不清;
+/// done-at 两版发布工序1:reader 先认识,详见迁移 0030 头注)。v4 = 0031 topic 新增
+/// position(frindex 排序键,非空只增不清)/ kind(标签类型自由文本,可空可清)两个
+/// set_field 字段(标签顺序可调 + 标签类型,详见迁移 0031 头注)。
+pub(crate) const VALIDATOR_VER: i64 = 4;
 
 /// typed poison 错误分型(epoch-plan §4):`validate_op_shape` 与 `apply_remote_op`
 /// 返回**同一枚举**,分型在源头、不靠错误字符串事后分类。engine 按型分道:
@@ -980,7 +984,10 @@ fn row_exists(conn: &Connection, table: &str, id: &str) -> Result<bool, String> 
 /// 这里先把 JSON 类型钉死,值域(枚举/格式/范围)再由表 CHECK 把关。
 fn item_field_value(field: &str, v: &Value) -> Result<SqlValue, String> {
     match field {
-        "content" | "stage" => match v {
+        // NOT NULL 文本字段。done_at 是「只增不清」的完成时刻:虽存储可空(NULL=未完成过),
+        // 但 set_field 协议值恒非空——放这里拒 null,从协议层守「永不清除」(别落进下面可空臂,
+        // 否则一条 set_field{value:null} 就能清空它,还会让前端 dayLabel 显示「NaN月NaN日」)。
+        "content" | "stage" | "done_at" => match v {
             Value::String(s) => Ok(SqlValue::Text(s.clone())),
             other => Err(format!("item 字段 {field} 期待字符串,收到:{other}")),
         },
@@ -1001,18 +1008,19 @@ fn item_field_value(field: &str, v: &Value) -> Result<SqlValue, String> {
     }
 }
 
-/// topic 同步字段白名单 + 值类型(与 oplog::topic_set 一一对应)。title/updated_at 恒
-/// 字符串;color 可空(NULL = 无色,允许清空,与 item 的 due_on/priority 同款)。
+/// topic 同步字段白名单 + 值类型(与 oplog::topic_set 一一对应)。title/updated_at/position
+/// 恒字符串(position 是 frindex 排序键,永不清);color/kind 可空(NULL = 无色 / 无类型,
+/// 允许清空,与 item 的 due_on/priority 同款)。
 fn topic_field_value(field: &str, v: &Value) -> Result<SqlValue, String> {
     match field {
-        "title" | "updated_at" => match v {
+        "title" | "updated_at" | "position" => match v {
             Value::String(s) => Ok(SqlValue::Text(s.clone())),
             other => Err(format!("topic 字段 {field} 期待字符串,收到:{other}")),
         },
-        "color" => match v {
+        "color" | "kind" => match v {
             Value::String(s) => Ok(SqlValue::Text(s.clone())),
             Value::Null => Ok(SqlValue::Null),
-            other => Err(format!("topic 字段 color 期待字符串或 null,收到:{other}")),
+            other => Err(format!("topic 字段 {field} 期待字符串或 null,收到:{other}")),
         },
         other => Err(format!("topic set_field 不认识的字段:{other}")),
     }
@@ -1023,7 +1031,8 @@ const STAGES: [&str; 6] = ["inbox", "filed", "todo", "doing", "confirming", "don
 /// item set_field 的**形态 + 内在值域**校验(shape 层,boot+live 共用)。值域(stage 枚举 /
 /// priority 1..3 / due_on 规范日历日)**必须放共享层、不能只放 boot** ——否则 live 会在 LWW
 /// 输家上走 LwwStale 跳过、不撞列 CHECK 而收下,boot-only 审计却拒 = 反向分歧(codex 二审 1.3)。
-/// content/archived_at/sealed_at 无 DB 级值域 CHECK,仅类型。错误分型(epoch-plan §4):
+/// content/archived_at/sealed_at 无 DB 级值域 CHECK,仅类型;done_at 走 RFC3339 值域
+/// (validate_done_at_value:0030 头注承诺「防 NaN月NaN日」)。错误分型(epoch-plan §4):
 /// **词汇表外的字段名 = UnsupportedVocab**(将来版本可能新增同步字段,旧端挂起等升级);
 /// created_at/born_stage 是已知词汇但**协议禁 set**(出生/史实不可改写)= InvalidOp。
 fn validate_item_field_shape(field: &str, v: &Value) -> Result<(), OpError> {
@@ -1033,6 +1042,7 @@ fn validate_item_field_shape(field: &str, v: &Value) -> Result<(), OpError> {
         "stage" => validate_stage_value(v).map_err(inv),
         "priority" => validate_priority_value(v).map_err(inv),
         "due_on" => validate_due_on_value(v).map_err(inv),
+        "done_at" => validate_done_at_value(v).map_err(inv),
         "content" | "archived_at" | "sealed_at" => {
             item_field_value(field, v).map(|_| ()).map_err(inv)
         }
@@ -1050,8 +1060,53 @@ fn validate_topic_field_shape(field: &str, v: &Value) -> Result<(), OpError> {
     let inv = OpError::InvalidOp;
     match field {
         "title" | "updated_at" | "color" => topic_field_value(field, v).map(|_| ()).map_err(inv),
+        // position 是 frindex 排序键(0031),**永不清**:拒 null(与 items.position 允许
+        // 灵感态 NULL 不同——topic 没有「灵感态」),且**走完整 frindex::validate**(不是
+        // items 那种「首字母 + 全字母数字」的松形态——codex 审 #3:松形态会放行 "z"/"a00"
+        // 等非规范键,一旦成为最大键就让后续 key_between(last,None) 永久失败)。shape 层
+        // (boot/live 单一真相源)与 topic_field_value 的非空臂同口径,不出反向分歧。
+        "position" => match v {
+            Value::String(s) => crate::frindex::validate(s).map_err(inv),
+            Value::Null => Err(inv("topic 字段 position 不接受 null(排序键永不清)".into())),
+            other => Err(inv(format!("topic position 期待 frindex 键字符串,收到:{other}"))),
+        },
+        // kind 是标签类型自由文本(0031):null(清类型)或规范短字符串(见 validate_topic_kind_value)。
+        "kind" => validate_topic_kind_value(v).map_err(inv),
         "created_at" => Err(inv("topic 字段 created_at 是出生字段,协议禁 set_field".into())),
         other => Err(OpError::UnsupportedVocab(format!("topic set_field 不认识的字段:{other}"))),
+    }
+}
+
+/// 标签类型 kind 的**线上规范**(0031):null(清类型),或满足 `value == value.trim()`
+/// ∧ 非空 ∧ 原始 UTF-8 ≤ 100 字节 ∧ **不含控制字符(含 NUL)**的字符串(短标签:人名/
+/// 项目名一类)。三处共用单一函数(本地命令 notes::set_topic_kind 入口先 trim 再进来、
+/// 远端回放/审计本分支)——replay 只验证、绝不静默修改远端 payload(带首尾空白的远端值 =
+/// 非规范 → 拒)。**禁 NUL/控制字符**(codex 复审 #3):`quote(kind)` 在指纹里对内嵌 NUL
+/// 会截断(quote("a\0b")=="'a'"),放行 NUL 会让不同 kind 指纹相同、收敛/压实自验漏判分叉;
+/// 短类型标签本无控制字符的合法用途,收窄值域即让 quote(kind) 在此值域上单射。
+pub(crate) const TOPIC_KIND_MAX_BYTES: usize = 100;
+pub(crate) fn validate_topic_kind_value(v: &Value) -> Result<(), String> {
+    match v {
+        Value::Null => Ok(()),
+        Value::String(s) => {
+            if s != s.trim() {
+                return Err(format!("topic kind 带首尾空白(非规范):{s:?}"));
+            }
+            if s.is_empty() {
+                return Err("topic kind 不得为空串(清类型用 null)".into());
+            }
+            if s.len() > TOPIC_KIND_MAX_BYTES {
+                return Err(format!(
+                    "topic kind 超长({} 字节 > 上限 {TOPIC_KIND_MAX_BYTES})",
+                    s.len()
+                ));
+            }
+            if s.chars().any(|c| c.is_control()) {
+                return Err(format!("topic kind 不得含控制字符(含 NUL):{s:?}"));
+            }
+            Ok(())
+        }
+        other => Err(format!("topic kind 期待字符串或 null,收到:{other}")),
     }
 }
 
@@ -1101,6 +1156,21 @@ fn validate_born_stage_value(v: &Value) -> Result<(), String> {
         Value::Null => Ok(()),
         other => validate_stage_value(other)
             .map_err(|_| format!("item born_stage 期待 stage 枚举或 null:{other}")),
+    }
+}
+
+/// done_at 值域(0030):完成时刻由 `repo::now_iso()` 以 time crate 的 Rfc3339 **格式化**产出,
+/// 这里用**对称的 Rfc3339 解析**校验——format→parse 往返保证绝不误拒任何合法写入值(否则 v2
+/// 发的 done_at 会被别端自相拒收、把同步搞分叉),同时拒空串/垃圾/非法日期,兑现头注「防
+/// NaN月NaN日」。done_at **只增不清**:协议值恒非空字符串——null 落 `other` 臂被拒,守「永不清除」。
+fn validate_done_at_value(v: &Value) -> Result<(), String> {
+    match v {
+        Value::String(s) => {
+            time::OffsetDateTime::parse(s, &time::format_description::well_known::Rfc3339)
+                .map(|_| ())
+                .map_err(|e| format!("done_at 非合法 RFC3339 时间戳({s:?}):{e}"))
+        }
+        other => Err(format!("done_at 期待 RFC3339 字符串(只增不清,不接受 null):{other}")),
     }
 }
 
@@ -1502,6 +1572,108 @@ mod tests {
     }
 
     #[test]
+    fn topic_position_and_kind_set_field_replay_and_value_domain() {
+        // 0031:topic position(非空 frindex 键,永不清)/ kind(自由文本,可空可清)两个
+        // 新同步字段的回放落值 + 值域(live apply 与 shape gate 同口径)。
+        let (mut conn, mut clock) = fresh();
+        let tid = "01TOPICPOSKIND0000000000AA";
+        let create = mk(
+            &remote_hlc(FUTURE_MS, 1),
+            "topic",
+            tid,
+            "create",
+            json!({"title": "张三", "created_at": "2026-07-23T00:00:00Z"}),
+        );
+        assert_eq!(apply_remote_op(&mut conn, &mut clock, &create).unwrap(), Outcome::Applied);
+
+        // position 合法键 → 落值。
+        let pos = mk(
+            &remote_hlc(FUTURE_MS + 1, 0),
+            "topic",
+            tid,
+            "set_field",
+            json!({"field": "position", "value": "a5"}),
+        );
+        assert_eq!(apply_remote_op(&mut conn, &mut clock, &pos).unwrap(), Outcome::Applied);
+        let got: Option<String> =
+            conn.query_row("SELECT position FROM topics WHERE id=?1", [tid], |r| r.get(0)).unwrap();
+        assert_eq!(got.as_deref(), Some("a5"));
+
+        // position = null 被拒(排序键永不清):shape gate + apply 同拒。
+        let pos_null = mk(
+            &remote_hlc(FUTURE_MS + 2, 0),
+            "topic",
+            tid,
+            "set_field",
+            json!({"field": "position", "value": null}),
+        );
+        assert!(matches!(validate_op_shape(&pos_null), Err(OpError::InvalidOp(_))));
+        assert!(apply_remote_op(&mut conn, &mut clock, &pos_null).is_err());
+        // position 垃圾键(含非法字符)被拒。
+        let pos_bad = mk(
+            &remote_hlc(FUTURE_MS + 3, 0),
+            "topic",
+            tid,
+            "set_field",
+            json!({"field": "position", "value": "a b"}),
+        );
+        assert!(matches!(validate_op_shape(&pos_bad), Err(OpError::InvalidOp(_))));
+
+        // kind 合法字符串 → 落值。
+        let kind = mk(
+            &remote_hlc(FUTURE_MS + 4, 0),
+            "topic",
+            tid,
+            "set_field",
+            json!({"field": "kind", "value": "人名"}),
+        );
+        assert_eq!(apply_remote_op(&mut conn, &mut clock, &kind).unwrap(), Outcome::Applied);
+        let k: Option<String> =
+            conn.query_row("SELECT kind FROM topics WHERE id=?1", [tid], |r| r.get(0)).unwrap();
+        assert_eq!(k.as_deref(), Some("人名"));
+
+        // kind = null(清类型)以更高 HLC 到来 → 行在、kind NULL。
+        let kind_clear = mk(
+            &remote_hlc(FUTURE_MS + 5, 0),
+            "topic",
+            tid,
+            "set_field",
+            json!({"field": "kind", "value": null}),
+        );
+        assert_eq!(apply_remote_op(&mut conn, &mut clock, &kind_clear).unwrap(), Outcome::Applied);
+        let k2: Option<String> =
+            conn.query_row("SELECT kind FROM topics WHERE id=?1", [tid], |r| r.get(0)).unwrap();
+        assert!(k2.is_none());
+
+        // kind 带首尾空白(非规范)/ 超长 → shape gate 拒(replay 只验不改)。
+        let kind_ws = mk(
+            &remote_hlc(FUTURE_MS + 6, 0),
+            "topic",
+            tid,
+            "set_field",
+            json!({"field": "kind", "value": " 人名 "}),
+        );
+        assert!(matches!(validate_op_shape(&kind_ws), Err(OpError::InvalidOp(_))));
+        let kind_long = mk(
+            &remote_hlc(FUTURE_MS + 7, 0),
+            "topic",
+            tid,
+            "set_field",
+            json!({"field": "kind", "value": "字".repeat(50)}),
+        );
+        assert!(matches!(validate_op_shape(&kind_long), Err(OpError::InvalidOp(_))));
+        // kind 含控制字符 / 内嵌 NUL → 拒(否则指纹里 quote(kind) 对 NUL 截断会漏判分叉)。
+        let kind_nul = mk(
+            &remote_hlc(FUTURE_MS + 8, 0),
+            "topic",
+            tid,
+            "set_field",
+            json!({"field": "kind", "value": "a\u{0}b"}),
+        );
+        assert!(matches!(validate_op_shape(&kind_nul), Err(OpError::InvalidOp(_))));
+    }
+
+    #[test]
     fn space_op_shape_gate_rejects_bad_coordinates_and_vocab() {
         let (mut conn, mut clock) = fresh();
         let apply = |conn: &mut Connection, clock: &mut Clock, op: &RemoteOp| {
@@ -1572,13 +1744,71 @@ mod tests {
     const ITEMS_FP: &str = "SELECT id||'|'||content||'|'||stage||'|'||created_at \
         ||'|'||COALESCE(archived_at,'∅')||'|'||COALESCE(due_on,'∅')||'|'||COALESCE(priority,'∅') \
         ||'|'||COALESCE(position,'∅')||'|'||COALESCE(sealed_at,'∅')||'|'||COALESCE(born_stage,'∅') \
+        ||'|'||COALESCE(done_at,'∅') \
         FROM items ORDER BY id";
     const TOPICS_FP: &str = "SELECT id||'|'||title||'|'||created_at||'|'||updated_at \
-        ||'|'||COALESCE(color,'∅') FROM topics ORDER BY id";
+        ||'|'||COALESCE(color,'∅')||'|'||COALESCE(position,'∅')||'|'||quote(kind) \
+        FROM topics ORDER BY id";
     const LINKS_FP: &str =
         "SELECT item_id||'|'||topic_id FROM item_topic ORDER BY item_id, topic_id";
     const IMG_COUNTER_FP: &str =
         "SELECT item_id||'|'||last_seq FROM item_image_counter ORDER BY item_id";
+
+    // done_at 值域:RFC3339 时间戳,且「只增不清」(协议值必非空)。now_iso() 以 time crate 的
+    // Rfc3339 格式化,验证器用对称 Rfc3339 解析——往返保证接受一切合法写入值(防 v2 自相拒收),
+    // 拒 null/空串/垃圾/非法日期(否则前端 dayLabel 见 NaN月NaN日)。(工序1 只认识、不发射。)
+    #[test]
+    fn done_at_set_field_validates_rfc3339_and_rejects_null() {
+        // now_iso() 的真实产出必须被接受(format→parse 往返,防同步分叉)。
+        assert!(validate_item_field_shape("done_at", &json!(crate::repo::now_iso())).is_ok());
+        assert!(validate_item_field_shape("done_at", &json!("2026-07-20T10:00:00.000Z")).is_ok());
+        // null / 空串 / 垃圾 / 非法日期全拒(InvalidOp)。
+        for bad in [json!(null), json!(""), json!("garbage"), json!("2026-99-99")] {
+            assert!(
+                matches!(validate_item_field_shape("done_at", &bad), Err(OpError::InvalidOp(_))),
+                "done_at 非法值应 InvalidOp:{bad}"
+            );
+        }
+        // item_field_value(apply 侧类型强制)仍拒 JSON null。
+        assert!(item_field_value("done_at", &json!(null)).is_err());
+    }
+
+    /// 工序1 最危险、此前未被执行的分支:收下别端(将来 v2)发的 done_at set_field。走通用
+    /// apply_remote_op → validate_op_shape(RFC3339 值域)→ UPDATE。合法值落库、垃圾值拒收。
+    #[test]
+    fn apply_remote_done_at_set_field_lands_and_rejects_garbage() {
+        let (mut r, mut rc) = fresh();
+        let id = task::create(&mut r, &mut rc, "远端完成的活", None, None, None).unwrap();
+        task::transition(&mut r, &mut rc, &id, "done").unwrap();
+        let mut ops = all_ops(&r);
+        let done_ts = "2026-07-20T10:00:00.000Z";
+        ops.push(mk(
+            &remote_hlc(FUTURE_MS, 1),
+            "item",
+            &id,
+            "set_field",
+            json!({ "field": "done_at", "value": done_ts }),
+        ));
+
+        let (mut l, mut lc) = fresh();
+        feed_all(&mut l, &mut lc, &ops);
+        let got: Option<String> =
+            l.query_row("SELECT done_at FROM items WHERE id = ?1", [&id], |r| r.get(0)).unwrap();
+        assert_eq!(got.as_deref(), Some(done_ts), "远端 done_at set_field 必须落值");
+
+        // 垃圾 done_at:shape 层 RFC3339 值域拒(InvalidOp),不落库、原值不变。
+        let bad = mk(
+            &remote_hlc(FUTURE_MS, 2),
+            "item",
+            &id,
+            "set_field",
+            json!({ "field": "done_at", "value": "2026-99-99" }),
+        );
+        assert!(matches!(apply_remote_op(&mut l, &mut lc, &bad), Err(OpError::InvalidOp(_))));
+        let still: Option<String> =
+            l.query_row("SELECT done_at FROM items WHERE id = ?1", [&id], |r| r.get(0)).unwrap();
+        assert_eq!(still.as_deref(), Some(done_ts), "垃圾 done_at 被拒后原值不变");
+    }
 
     // ---- 端到端:远端真实历史 → 本地回放收敛 ---------------------------------------
 

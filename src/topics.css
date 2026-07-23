@@ -88,8 +88,27 @@
   margin-bottom: 4px;
   animation: rise 0.3s ease both;
 }
-/* 前缀分组的子标签(zhujian/同步 缩进到 zhujian 下、只显后缀)——纯视觉层级,只有缩进 */
-.v-topics .topic.child { margin-left: 26px; }
+/* 前缀分组:有子标签的父行下方紧跟一个子容器,缩进 + 一条左导轨,视觉上「父子收拢成一组」
+   (zhujian/同步 收在 zhujian 下、只显后缀)——纯视觉层级,语义仍平(筛父不含子)。 */
+.v-topics .topic-kids {
+  margin: -2px 0 5px 12px; /* 收紧父→子间距(父行有 4px margin-bottom);左移到父行 caret 附近 */
+  padding-left: 16px;
+  border-left: 1.5px solid var(--line); /* 导轨:一条淡线把整组子标签串起来 */
+}
+.v-topics .topic.child { margin-left: 0; } /* 缩进交给容器,子行本身不再各自外移 */
+/* 每个子行头挂一条短横「elbow」接回导轨,明示「这是父的子项」 */
+.v-topics .topic-kids .topic-head { position: relative; }
+.v-topics .topic-kids .topic-head::before {
+  content: "";
+  position: absolute;
+  left: -16px;
+  top: 21px; /* 对齐标题首行中线附近(head padding-top 11 + 半行) */
+  width: 12px;
+  height: 1.5px;
+  background: var(--line);
+}
+/* 悬停某子行时,它的 elbow 与父色一致点一下,呼应 .topic-title 的 hover */
+.v-topics .topic-kids .topic-head:hover::before { background: var(--seal); }
 
 /* clickable row — caret + title + counts; clicking expands/collapses the tag inline */
 .v-topics .topic-head {
@@ -161,6 +180,53 @@
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.04em;
   color: var(--ink-faint);
+}
+
+/* ---- 拖动手柄(0031 手动排序):默认隐,悬停行才现;合并态藏起 ---- */
+.v-topics .topic-drag {
+  flex: none;
+  align-self: center;
+  cursor: grab;
+  color: var(--ink-faint);
+  font-size: 13px;
+  line-height: 1;
+  opacity: 0;
+  transition: opacity 0.14s, color 0.14s;
+  user-select: none;
+}
+.v-topics .topic-head:hover .topic-drag { opacity: 0.6; }
+.v-topics .topic-drag:hover { opacity: 1; color: var(--seal); }
+.v-topics .topic-drag:active { cursor: grabbing; }
+.v-topics.merging .topic-drag { display: none; } /* heads are for selection while merging */
+.v-topics .topic.dragging { opacity: 0.5; }
+/* 落点指示线(插到目标行的上/下方) */
+.v-topics .topic.drop-before .topic-head { box-shadow: inset 0 2px 0 var(--seal); }
+.v-topics .topic.drop-after .topic-head { box-shadow: inset 0 -2px 0 var(--seal); }
+
+/* ---- 类型徽标(0031):有类型才现身 ---- */
+.v-topics .topic-kind {
+  flex: none;
+  display: none;
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  color: var(--ink-soft);
+  border: 1px solid var(--line);
+  background: color-mix(in srgb, var(--ink) 4%, transparent);
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+.v-topics .topic-kind.on { display: inline-block; }
+/* 类型自由文本输入(就地替换动作区,同调色板) */
+.v-topics .tk-input {
+  flex: none;
+  width: 180px;
+  font: inherit;
+  font-size: 13px;
+  padding: 3px 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  background: var(--paper);
+  color: var(--ink);
 }
 
 /* ---- per-topic maintenance actions (编辑 / 删除) in the head ---- */

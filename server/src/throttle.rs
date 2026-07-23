@@ -192,6 +192,20 @@ impl Meters {
         self.map.entry(account.to_owned()).or_insert_with(|| AccountMeter::new(period, now))
     }
 
+    /// 单账户当月已计 wire 字节 + **有效 period**(只读,供 AccountStatusV1 组装,工序4)。
+    /// 与 admission 滚期口径一致(见 `admission` 的 `wall_month` vs `m.period`):
+    /// `meter.period == now_month` → `(now_month, used)`;`meter.period > now_month`
+    /// (墙钟回拨)→ **保留** `(meter.period, used)`;`meter.period < now_month`(已滚月)
+    /// 或无 meter → `(now_month, 0)`(视作滚零)。返回 period 供 period_start/end 与 used
+    /// 同源(codex M1:展示与执行同一口径,免「显示 Open、下一帧仍被上月计数限速」)。
+    pub fn account_fastlane_used(&self, account: &str, now_month: (i32, u8)) -> ((i32, u8), u64) {
+        match self.map.get(account) {
+            Some(m) if m.period == now_month => (now_month, m.fastlane_used),
+            Some(m) if m.period > now_month => (m.period, m.fastlane_used),
+            _ => (now_month, 0),
+        }
+    }
+
     /// attach 顶替成功的线性化点:给 device 发新会话代际、取消旧代际本 device 的 pending。
     /// 返回新 `session_gen`。调用方(hub)在 `registry→meters` 内、state 锁释放后调。
     pub fn begin_session(
@@ -262,7 +276,7 @@ impl Meters {
         device_set: &HashSet<String>,
         device_cap: usize,
         rate: u64,
-    ) -> AdmitDecision {
+    ) -> (AdmitDecision, bool) {
         let m = self.meter_mut(account, wall_month, now);
         // 有序月份滚期(codex E:非 !=)。
         if wall_month > m.period {
@@ -280,8 +294,11 @@ impl Meters {
         self.dirty_bytes = self.dirty_bytes.saturating_add(bytes);
 
         let m = self.map.get_mut(account).expect("刚插入");
-        // 超量首越告警(RestrictionReason::FastlaneExhausted;越线那一帧记一次,不刷屏)。
-        if used_before <= grant_quota && m.fastlane_used > grant_quota {
+        // 超量首越(RestrictionReason::FastlaneExhausted;越线那一帧记一次日志、并作为
+        // newly_restricted 返回给 conn 触发 ENTER 实时推送——工序4;codex 检查点①:在
+        // 会话核验**之前**算,Kicked 帧也已计费、可能正是首次跨线,不能漏通知)。
+        let newly_restricted = used_before <= grant_quota && m.fastlane_used > grant_quota;
+        if newly_restricted {
             crate::logln(format!(
                 "WARN account={account} 首次越本月 fastlane 额度({} > {} B)——进入 {:?} 达量限速",
                 m.fastlane_used,
@@ -293,10 +310,10 @@ impl Meters {
         // 也须 Kicked,不得当 Immediate 放行)。stale=帧已计、连接须 kicked。
         if m.sessions.get(device) != Some(&session_gen) {
             m.bump(); // 让可能存在的旧 waiter 也重查
-            return AdmitDecision::Kicked;
+            return (AdmitDecision::Kicked, newly_restricted);
         }
         if m.fastlane_used <= grant_quota {
-            return AdmitDecision::Immediate; // 未超额:快路径
+            return (AdmitDecision::Immediate, newly_restricted); // 未超额:快路径
         }
 
         // —— FastlaneExhausted:入队前剪枝,保 pending ≤ device_cap ——
@@ -345,16 +362,19 @@ impl Meters {
         );
         let gen_rx = m.gen_tx.subscribe();
         m.bump();
-        AdmitDecision::Wait(WaitHandle {
-            account: account.to_owned(),
-            device: device.to_owned(),
-            conn_id,
-            session_gen,
-            ticket_id,
-            disp,
-            gen_rx,
-            start,
-        })
+        (
+            AdmitDecision::Wait(WaitHandle {
+                account: account.to_owned(),
+                device: device.to_owned(),
+                conn_id,
+                session_gen,
+                ticket_id,
+                disp,
+                gen_rx,
+                start,
+            }),
+            newly_restricted,
+        )
     }
 
     /// waiter 醒来后在锁内 poll(disp 已在锁外先读、非 Pending 直接归类,这里只处理 Pending)。
@@ -456,6 +476,15 @@ impl Meters {
     /// 有序月份在 admission 时按墙钟再滚,这里原样载入。
     pub fn load_records(&mut self, records: Vec<(String, MeterRecord)>, now: Instant) {
         for (acct, rec) in records {
+            // 工序4(实现审 M):period 必须能进 AccountStatusV1 的 period_start/end 构造,
+            // 否则跳过该账户——不 panic(public API 绕过磁盘 load_sidecar 校验的最后防线)。
+            if !crate::registry::period_representable(rec.period) {
+                crate::logln(format!(
+                    "ERROR restore_meters:{acct} 的 period 不可表示 {:?}——跳过该账户计量",
+                    rec.period
+                ));
+                continue;
+            }
             let m = self.map.entry(acct).or_insert_with(|| AccountMeter::new(rec.period, now));
             m.period = rec.period;
             m.fastlane_used = rec.fastlane_used;
@@ -529,6 +558,12 @@ pub fn load_sidecar(path: &std::path::Path) -> Vec<(String, MeterRecord)> {
             crate::logln(format!("ERROR meters sidecar 里 {acct} 的 period 月份越界:{:?}——整份从零", m.period));
             return Vec::new();
         }
+        // 工序4(实现审 M2):极端年份(9999+ / i32::MAX)不能进 AccountStatusV1 的
+        // period_start/end 构造(否则 +1 溢出或 time::Date panic)——损坏,整份从零。
+        if !crate::registry::period_representable((year, month)) {
+            crate::logln(format!("ERROR meters sidecar 里 {acct} 的 period 年份不可表示:{:?}——整份从零", m.period));
+            return Vec::new();
+        }
         out.push((acct, MeterRecord { period: (year, month), fastlane_used: m.fastlane_used }));
     }
     out
@@ -556,14 +591,66 @@ mod tests {
         let mut m = Meters::new();
         let t0 = Instant::now();
         let g = m.begin_session("A", "D1", MONTH, t0);
-        // quota=1000:头一帧 600 未超 → Immediate。
-        assert!(matches!(
-            m.admission("A", "D1", g, 1, 600, MONTH, t0, 1000, &dset(&["D1"]), CAP, RATE),
-            AdmitDecision::Immediate
-        ));
-        // 第二帧 600:累计 1200 > 1000 → Wait。
-        let d = m.admission("A", "D1", g, 1, 600, MONTH, t0, 1000, &dset(&["D1"]), CAP, RATE);
+        // quota=1000:头一帧 600 未超 → Immediate,未跨线。
+        let (d0, nr0) = m.admission("A", "D1", g, 1, 600, MONTH, t0, 1000, &dset(&["D1"]), CAP, RATE);
+        assert!(matches!(d0, AdmitDecision::Immediate));
+        assert!(!nr0, "首帧未越额,newly_restricted=false");
+        // 第二帧 600:累计 1200 > 1000 → Wait,且**首次跨线** newly_restricted=true(工序4 ENTER 信号)。
+        let (d, nr) = m.admission("A", "D1", g, 1, 600, MONTH, t0, 1000, &dset(&["D1"]), CAP, RATE);
         assert!(matches!(d, AdmitDecision::Wait(_)));
+        assert!(nr, "第二帧首次越额,newly_restricted=true");
+    }
+
+    /// account_fastlane_used 有效 period(工序4;codex M1):当月=used、未来月(墙钟
+    /// 回拨)保留 used、过去月/无 meter 视作滚零——与 admission 滚期同口径。
+    #[test]
+    fn account_fastlane_used_effective_period() {
+        let mut m = Meters::new();
+        let t0 = Instant::now();
+        // 无 meter → (查询月, 0)。
+        assert_eq!(m.account_fastlane_used("A", MONTH), (MONTH, 0));
+        // 建 meter(period=MONTH)并计 500 字节。
+        let g = m.begin_session("A", "D1", MONTH, t0);
+        let _ = m.admission("A", "D1", g, 1, 500, MONTH, t0, u64::MAX, &dset(&["D1"]), CAP, RATE);
+        assert_eq!(m.account_fastlane_used("A", MONTH), (MONTH, 500));
+        // 过去 period 查询(now 已滚到 8 月)→ 视作滚零 (8 月, 0)。
+        let next = (MONTH.0, MONTH.1 + 1);
+        assert_eq!(m.account_fastlane_used("A", next), (next, 0));
+        // 墙钟回拨(now=6 月 < meter.period=7 月)→ 保留 (7 月, 500)。
+        let prev = (MONTH.0, MONTH.1 - 1);
+        assert_eq!(m.account_fastlane_used("A", prev), (MONTH, 500));
+    }
+
+    /// 工序4 检查点①:stale 会话帧若恰是首次跨线,newly_restricted 仍为 true——
+    /// Kicked 不吞 ENTER 信号(那帧已计费、可能正是账户首次越额)。
+    #[test]
+    fn stale_kicked_frame_still_reports_first_crossing() {
+        let mut m = Meters::new();
+        let t0 = Instant::now();
+        let g_old = m.begin_session("A", "D1", MONTH, t0);
+        let g_new = m.begin_session("A", "D1", MONTH, t0); // 顶替 → g_old stale
+        assert_ne!(g_old, g_new);
+        // 旧会话发帧,累计 2000 首次越 quota=1000:Kicked 但 newly_restricted=true。
+        let (d, nr) = m.admission("A", "D1", g_old, 1, 2000, MONTH, t0, 1000, &dset(&["D1"]), CAP, RATE);
+        assert!(matches!(d, AdmitDecision::Kicked));
+        assert!(nr, "Kicked 那帧若首次跨线,仍报 newly_restricted");
+    }
+
+    /// 工序4(实现审 M):load_records(public API,绕过磁盘校验)跳过不可表示的 period,
+    /// 不 panic——挡住外部注入极端年份让 period_start/end_utc 崩的绕过路径。
+    #[test]
+    fn load_records_skips_unrepresentable_period() {
+        let mut m = Meters::new();
+        let t0 = Instant::now();
+        m.load_records(
+            vec![
+                ("GOOD".into(), MeterRecord { period: MONTH, fastlane_used: 42 }),
+                ("BAD".into(), MeterRecord { period: (i32::MAX, 12), fastlane_used: 1 }),
+            ],
+            t0,
+        );
+        assert_eq!(m.account_fastlane_used("GOOD", MONTH), (MONTH, 42), "合法记录照常入");
+        assert!(!m.map.contains_key("BAD"), "不可表示 period 的账户被跳过(不 panic)");
     }
 
     /// 会话 ABA:旧 gen 帧被 kicked、不 enqueue、不淘汰新 ticket。
@@ -579,7 +666,7 @@ mod tests {
         assert_ne!(g_old, g_new);
         // 旧会话再来一帧:stale → Kicked,不入队。
         let d = m.admission("A", "D1", g_old, 1, 2000, MONTH, t0, 1000, &dset(&["D1"]), CAP, RATE);
-        assert!(matches!(d, AdmitDecision::Kicked));
+        assert!(matches!(d.0, AdmitDecision::Kicked));
     }
 
     /// 剪枝:已不在 registry 的 device 的 pending 在下次准入时被清,pending ≤ device_cap。
@@ -595,7 +682,7 @@ mod tests {
         // D1 被 revoke(设备集只剩 D2、新增 D9);D9 入队前剪掉 D1 的 pending。
         let g9 = m.begin_session("A", "D9", MONTH, t0);
         let d = m.admission("A", "D9", g9, 9, 2000, MONTH, t0, 1000, &dset(&["D2", "D9"]), 8, RATE);
-        assert!(matches!(d, AdmitDecision::Wait(_)));
+        assert!(matches!(d.0, AdmitDecision::Wait(_)));
         // D1 的 ticket 已被剪(设备集不含):其 disp=Cancelled。
         // (借内部:pending 里应只剩 D2、D9。)
         let am = m.map.get("A").unwrap();
@@ -638,7 +725,7 @@ mod tests {
         // grant=MAX(远未超额)+ 旧会话 → 仍 Kicked(不当 Immediate)。
         assert!(matches!(
             m.admission("A", "D1", g_old, 1, 100, MONTH, t0, u64::MAX, &dset(&["D1"]), CAP, RATE),
-            AdmitDecision::Kicked
+            (AdmitDecision::Kicked, _)
         ));
     }
 
@@ -649,7 +736,7 @@ mod tests {
         let t0 = Instant::now();
         let g = m.begin_session("A", "D1", MONTH, t0);
         let h = match m.admission("A", "D1", g, 1, 2000, MONTH, t0, 1000, &dset(&["D1"]), CAP, RATE) {
-            AdmitDecision::Wait(h) => h,
+            (AdmitDecision::Wait(h), _) => h,
             _ => panic!("应入队"),
         };
         // grant 抬到覆盖 used(2000):release。
@@ -670,14 +757,14 @@ mod tests {
         let g = m.begin_session("A", "D1", MONTH, t0);
         // 首帧 1MiB(service=1s),start=t0:head 且 now>=start → 立即 admit。
         let h1 = match m.admission("A", "D1", g, 1, RATE, MONTH, t0, 0, &dset(&["D1"]), CAP, RATE) {
-            AdmitDecision::Wait(h) => h,
+            (AdmitDecision::Wait(h), _) => h,
             _ => panic!("应入队"),
         };
         assert!(matches!(m.poll(&h1, t0, 0), PollOutcome::Proceed));
         assert_eq!(m.map.get("A").unwrap().committed_until, t0 + sec);
         // 第二帧:start = max(t0, committed=t0+1s) = t0+1s。到点前 SleepUntil。
         let h2 = match m.admission("A", "D1", g, 1, RATE, MONTH, t0, 0, &dset(&["D1"]), CAP, RATE) {
-            AdmitDecision::Wait(h) => h,
+            (AdmitDecision::Wait(h), _) => h,
             _ => panic!("应入队"),
         };
         assert!(matches!(m.poll(&h2, t0, 0), PollOutcome::SleepUntil(_)));

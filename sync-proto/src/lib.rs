@@ -82,6 +82,24 @@ pub mod err_code {
     pub const BAD_REQUEST: &str = "bad_request";
     /// 服务器内部错误(registry 落盘失败等;内存态已回滚,重试或找运营者)。
     pub const INTERNAL: &str = "internal";
+    /// 账户受限(billing-plan §6,工序 4)。**旧客户端可见性**:无 caps 旧客户端
+    /// 进入受限时收此**非致命** Err(现有状态面至少一条可见错误);声明
+    /// [`crate::CAP_ACCOUNT_STATUS_V1`] 的新客户端改收 [`crate::ServerMsg::AccountStatusV1`]。
+    pub const ACCOUNT_THROTTLED: &str = "account_throttled";
+}
+
+/// 能力名:客户端声明「我懂 [`ServerMsg::AccountStatusV1`],请下发」(billing-plan
+/// §6,工序 4)。挂在 [`ClientMsg::Auth`]/[`ClientMsg::RegisterFirst`] 的 `caps`。
+pub const CAP_ACCOUNT_STATUS_V1: &str = "account_status_v1";
+
+/// caps 入口卫生 + 成员判定(§6:≤16 项、每项 ≤32 字节、仅 ASCII、未知忽略、
+/// 重复无所谓)。只回答「是否声明了某能力」:扫描上界 16 项挡异常长列表,
+/// 超 32 字节 / 非 ASCII 的项跳过——**不因垃圾项拒绝整个 Auth**(那会把鉴权连坐)。
+pub fn has_capability(caps: &[String], name: &str) -> bool {
+    caps.iter()
+        .take(16)
+        .filter(|c| c.len() <= 32 && c.is_ascii())
+        .any(|c| c.as_str() == name)
 }
 
 // ---- 信封类型(§3) ----
@@ -100,6 +118,12 @@ pub enum ClientMsg {
         pubkey: Vec<u8>,
         #[serde(with = "serde_bytes")]
         sig: Vec<u8>,
+        /// 能力协商(billing-plan §6,工序 4):客户端声明它懂哪些可选服务器消息。
+        /// **缺省(空)不序列化**——旧客户端/旧线上字节逐字节不变(黄金向量钉死),
+        /// 且旧服务端按 CBOR 命名 map 忽略未知键(前向兼容,有测)。服务端按
+        /// [`has_capability`] 卫生化判定;目前唯一能力 [`CAP_ACCOUNT_STATUS_V1`]。
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        caps: Vec<String>,
     },
     /// 挑战应答鉴权(§4):对连接 challenge 的签名,payload 见 [`auth_sig_payload`]。
     Auth {
@@ -107,6 +131,9 @@ pub enum ClientMsg {
         device: String,
         #[serde(with = "serde_bytes")]
         sig: Vec<u8>,
+        /// 能力协商(§6,工序 4);语义同 [`ClientMsg::RegisterFirst::caps`]。
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        caps: Vec<String>,
     },
     /// 发密文帧(§3):n=连接内单调序号(ack 回显);to=device_id 或 [`BROADCAST`];
     /// blob=域子钥下的密文,服务器只路由不解析。
@@ -203,6 +230,63 @@ pub enum ServerMsg {
     Peer { device: String, online: bool },
     /// 心跳应答。
     Pong,
+    /// 账户授权状态(billing-plan §6,工序 4;**仅对声明 [`CAP_ACCOUNT_STATUS_V1`]
+    /// 能力者下发**——旧客户端不声明能力故永不收到本变体,不触发「未知变体
+    /// DecodeError 断连」)。粗粒度只读展示,取值全派生自服务器亲见的元数据与
+    /// wire 字节计数,不含任何用户内容。
+    ///
+    /// **客户端契约(Required-1,未来渲染轮必须遵守)**:多帧到达时**取
+    /// `status_revision` 最大者为准、丢弃更小的**,不是「后到覆盖」——ENTER 推送
+    /// (连接线程)与 admin 推送(另一线程)可乱序到达同一连接,revision 单调但
+    /// 发送序不保证。`status_revision` 单调性限单次服务器启动(跨重启复位)。
+    AccountStatusV1 {
+        status_revision: u64,
+        /// 服务器当前 UTC 时刻(RFC3339)。
+        server_now: String,
+        /// 账户显式设置过的档位名(None=从未设置=隐含免费档)。
+        configured_tier: Option<String>,
+        /// server_now 时刻的生效档位名(到期/无记录=免费档)。
+        effective_tier: String,
+        /// 显式记录的到期时刻(RFC3339;None=不过期)。取 **configured** 那份——
+        /// effective 到期后回免费档会丢失原到期时刻。
+        expires_at: Option<String>,
+        /// 当前活跃(未吊销)设备数。
+        seat_count: u32,
+        /// 生效可执行席位上限 = `min(套餐席位, 服务器硬帽 device_cap)`。
+        seat_quota: u32,
+        /// 本 UTC 月已计 wire 字节(达量计数口径)。
+        fastlane_used: u64,
+        /// 本月已授高速额度高水位(grant;`fastlane_used > fastlane_quota` 即 RateLimited)。
+        fastlane_quota: u64,
+        /// 生效受限原因集合(工序 4 只可能空或 `{FastlaneExhausted}`)。
+        restriction_reasons: Vec<Restriction>,
+        /// 受限时的达量速率(**字节/秒**);`0` = 不限速(Open)。
+        effective_rate_bps: u64,
+        /// 计量周期(UTC 月)起(RFC3339)。
+        period_start: String,
+        /// 计量周期止=下月初(RFC3339)。
+        period_end: String,
+        /// 数据面态(工序 4 只可能 `Open`/`RateLimited`;`SeatClosed` 工序 6)。
+        data_plane: DataPlane,
+    },
+}
+
+/// 受限原因(billing-plan §4;线上枚举,与服务端内部 `throttle::RestrictionReason`
+/// 解耦、服务端做映射)。工序 4 只 `FastlaneExhausted` 可达,其余供后续工序。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Restriction {
+    FastlaneExhausted,
+    SeatOverage,
+    AdminAbuse,
+}
+
+/// 数据面态(billing-plan §6 `AccountStatusV1.data_plane`)。工序 4 只 `Open`/
+/// `RateLimited` 可达;`SeatClosed`(数据面关闭)随 SeatOverage 在工序 6 落。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DataPlane {
+    Open,
+    RateLimited,
+    SeatClosed,
 }
 
 /// 投递通道(§3):mail=收件设备离线则入信箱(op/ctl 控制帧);
@@ -334,13 +418,19 @@ mod tests {
     #[test]
     fn golden_client_msgs() {
         let cases: Vec<(ClientMsg, &str)> = vec![
+            // 空 caps skip 序列化:字节与工序 4 前逐字节相同(前向兼容锚,勿改断言)。
             (
-                ClientMsg::RegisterFirst { account: "A".into(), device: "D".into(), pubkey: vec![7; 2], sig: vec![8; 2] },
+                ClientMsg::RegisterFirst { account: "A".into(), device: "D".into(), pubkey: vec![7; 2], sig: vec![8; 2], caps: vec![] },
                 "a16d52656769737465724669727374a4676163636f756e746141666465766963656144667075626b657942070763736967420808",
             ),
             (
-                ClientMsg::Auth { account: "A".into(), device: "D".into(), sig: vec![1, 2] },
+                ClientMsg::Auth { account: "A".into(), device: "D".into(), sig: vec![1, 2], caps: vec![] },
                 "a16441757468a3676163636f756e74614166646576696365614463736967420102",
+            ),
+            // 带 caps 的 Auth:map 多一个 "caps" 键(工序 4 新线上形态)。
+            (
+                ClientMsg::Auth { account: "A".into(), device: "D".into(), sig: vec![1, 2], caps: vec![CAP_ACCOUNT_STATUS_V1.into()] },
+                "a16441757468a4676163636f756e74614166646576696365614463736967420102646361707381716163636f756e745f7374617475735f7631",
             ),
             (
                 ClientMsg::Send { n: 7, to: BROADCAST.into(), lane: Lane::Mail, blob: vec![0xaa, 0xbb] },
@@ -418,6 +508,27 @@ mod tests {
                 "a16450656572a2666465766963656144666f6e6c696e65f5",
             ),
             (ServerMsg::Pong, "64506f6e67"),
+            // 工序 4:AccountStatusV1 全字段(免费档/Open 样例)。字段顺序即线上形态,
+            // 改字段名/序=破坏兼容,别改断言、改回代码。
+            (
+                ServerMsg::AccountStatusV1 {
+                    status_revision: 1,
+                    server_now: "2026-07-22T00:00:00Z".into(),
+                    configured_tier: None,
+                    effective_tier: "free".into(),
+                    expires_at: None,
+                    seat_count: 1,
+                    seat_quota: 2,
+                    fastlane_used: 0,
+                    fastlane_quota: 314572800,
+                    restriction_reasons: vec![],
+                    effective_rate_bps: 0,
+                    period_start: "2026-07-01T00:00:00Z".into(),
+                    period_end: "2026-08-01T00:00:00Z".into(),
+                    data_plane: DataPlane::Open,
+                },
+                "a16f4163636f756e745374617475735631ae6f7374617475735f7265766973696f6e016a7365727665725f6e6f7774323032362d30372d32325430303a30303a30305a6f636f6e666967757265645f74696572f66e6566666563746976655f7469657264667265656a657870697265735f6174f66a736561745f636f756e74016a736561745f71756f7461026d666173746c616e655f75736564006e666173746c616e655f71756f74611a12c00000737265737472696374696f6e5f726561736f6e7380726566666563746976655f726174655f627073006c706572696f645f737461727474323032362d30372d30315430303a30303a30305a6a706572696f645f656e6474323032362d30382d30315430303a30303a30305a6a646174615f706c616e65644f70656e",
+            ),
         ];
         for (msg, want) in cases {
             assert_eq!(hex(&encode(&msg)), *want, "{msg:?}");
@@ -433,11 +544,13 @@ mod tests {
                 device: DEV_A.into(),
                 pubkey: vec![7; 32],
                 sig: vec![8; 64],
+                caps: vec![],
             },
             ClientMsg::Auth {
                 account: ACCT.into(),
                 device: DEV_A.into(),
                 sig: vec![8; 64],
+                caps: vec![CAP_ACCOUNT_STATUS_V1.into()],
             },
             ClientMsg::Send {
                 n: 42,
@@ -481,6 +594,22 @@ mod tests {
             ServerMsg::PairPeer { event: PairEvent::Closed },
             ServerMsg::Peer { device: DEV_A.into(), online: true },
             ServerMsg::Pong,
+            ServerMsg::AccountStatusV1 {
+                status_revision: 42,
+                server_now: "2026-07-22T12:34:56Z".into(),
+                configured_tier: Some("personal".into()),
+                effective_tier: "personal".into(),
+                expires_at: Some("2027-07-22T00:00:00Z".into()),
+                seat_count: 3,
+                seat_quota: 4,
+                fastlane_used: 2_147_483_648,
+                fastlane_quota: 2_147_483_648,
+                restriction_reasons: vec![Restriction::FastlaneExhausted],
+                effective_rate_bps: 1_048_576,
+                period_start: "2026-07-01T00:00:00Z".into(),
+                period_end: "2026-08-01T00:00:00Z".into(),
+                data_plane: DataPlane::RateLimited,
+            },
         ];
         for msg in server {
             assert_eq!(decode::<ServerMsg>(&encode(&msg)).unwrap(), msg);
@@ -544,5 +673,79 @@ mod tests {
         assert!(!is_ulid("01ARZ3NDEKTSV4RRFFQ69G5FAL")); // L 不在字母表
         assert!(!is_ulid("81ARZ3NDEKTSV4RRFFQ69G5FAV")); // 首字符 > 7
         assert!(!is_ulid(BROADCAST)); // "*" 不是设备
+    }
+
+    /// 前向兼容命根子(四组跨版本测②「新客→旧服」):新客户端给 Auth 多带 caps
+    /// (map 多一键),旧服务端(不知 caps 的旧结构)必须忽略它、照常解码。依据=
+    /// ciborium 命名 map + serde `IgnoredAny` 跳过未知键;若哪天有人给 Auth/
+    /// RegisterFirst 加 `deny_unknown_fields` 或改数组编码,本测即红、当场拦住。
+    #[test]
+    fn caps_forward_compat_old_decoder_ignores() {
+        // 旧服务端的视图(工序 4 前的字段形态,无 caps)。
+        #[derive(Deserialize, PartialEq, Debug)]
+        enum OldClientMsg {
+            RegisterFirst {
+                account: String,
+                device: String,
+                #[serde(with = "serde_bytes")]
+                pubkey: Vec<u8>,
+                #[serde(with = "serde_bytes")]
+                sig: Vec<u8>,
+            },
+            Auth {
+                account: String,
+                device: String,
+                #[serde(with = "serde_bytes")]
+                sig: Vec<u8>,
+            },
+        }
+        // Auth 带 caps → 旧结构解码忽略 caps。
+        let auth = ClientMsg::Auth {
+            account: "A".into(),
+            device: "D".into(),
+            sig: vec![1, 2],
+            caps: vec![CAP_ACCOUNT_STATUS_V1.into()],
+        };
+        assert_eq!(
+            decode::<OldClientMsg>(&encode(&auth)).expect("旧服务端须忽略 Auth 的 caps"),
+            OldClientMsg::Auth { account: "A".into(), device: "D".into(), sig: vec![1, 2] }
+        );
+        // RegisterFirst 带 caps → 同样忽略。
+        let reg = ClientMsg::RegisterFirst {
+            account: "A".into(),
+            device: "D".into(),
+            pubkey: vec![7, 7],
+            sig: vec![8, 8],
+            caps: vec![CAP_ACCOUNT_STATUS_V1.into(), "future_cap".into()],
+        };
+        assert_eq!(
+            decode::<OldClientMsg>(&encode(&reg)).expect("旧服务端须忽略 RegisterFirst 的 caps"),
+            OldClientMsg::RegisterFirst {
+                account: "A".into(),
+                device: "D".into(),
+                pubkey: vec![7, 7],
+                sig: vec![8, 8]
+            }
+        );
+    }
+
+    /// caps 卫生化(§6):≤16 项扫描、超 32B/非 ASCII 跳过、重复无妨、垃圾不连坐。
+    #[test]
+    fn has_capability_sanitizes() {
+        assert!(has_capability(&[CAP_ACCOUNT_STATUS_V1.into()], CAP_ACCOUNT_STATUS_V1));
+        assert!(!has_capability(&[], CAP_ACCOUNT_STATUS_V1));
+        assert!(!has_capability(&["future_cap".into()], CAP_ACCOUNT_STATUS_V1)); // 未知忽略
+        // 目标混在垃圾里仍认(超 32B / 非 ASCII 项跳过,不连坐)。
+        let mixed = vec!["x".repeat(33), "naïve".into(), CAP_ACCOUNT_STATUS_V1.into()];
+        assert!(has_capability(&mixed, CAP_ACCOUNT_STATUS_V1));
+        // 超 16 项:目标落第 17 位不认(扫描上界挡异常长列表)。
+        let mut long: Vec<String> = (0..16).map(|i| format!("cap{i}")).collect();
+        long.push(CAP_ACCOUNT_STATUS_V1.into());
+        assert!(!has_capability(&long, CAP_ACCOUNT_STATUS_V1));
+        // 重复无妨。
+        assert!(has_capability(
+            &[CAP_ACCOUNT_STATUS_V1.into(), CAP_ACCOUNT_STATUS_V1.into()],
+            CAP_ACCOUNT_STATUS_V1
+        ));
     }
 }

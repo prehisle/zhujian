@@ -70,7 +70,8 @@ describe("灵感 · 编辑态显示标签(只读)", () => {
     await card.$(".note-text").doubleClick();
     await card.$(".edit-area").waitForExist({ timeout: 5000 });
 
-    // ㊿:编辑态复用读态 .tags/.tag 展示标签,纯只读(无 ✕/＋,增删仍走 ⋯ 菜单 L)。
+    // 编辑态标签是独立的只读展示(tagView,无 ✕/＋,增删走 ⋯ 菜单 L);读态 chip 则带 ✕ 可删,
+    // 故读态文本落在 .tag-label 子里(.tag 本身还含 ✕)。编辑态 tagView 仍是纯 .tag 文本。
     const tag = await card.$(".tags .tag");
     await tag.waitForExist({ timeout: 5000 });
     await expect(tag).toHaveText("E2E-编辑态标签");
@@ -80,7 +81,7 @@ describe("灵感 · 编辑态显示标签(只读)", () => {
       el.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     }, await card.$(".edit-area"));
     await card.$(".note-text").waitForExist({ timeout: 5000 });
-    await expect(card.$(".tags .tag")).toHaveText("E2E-编辑态标签");
+    await expect(card.$(".tags .tag-label")).toHaveText("E2E-编辑态标签");
   });
 });
 

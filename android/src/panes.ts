@@ -164,7 +164,9 @@ export async function loadSealed(): Promise<void> {
           .map(
             (r) => `<article class="card" data-sealed="${esc(r.id)}"><div class="body">
               <p class="content">${esc(r.title)}</p>
-              <footer><time>归档于 ${esc(fmtWhen(r.sealed_at!))}</time></footer>
+              <footer><time>${
+                r.done_at ? `完成于 ${esc(fmtWhen(r.done_at))}` : `归档于 ${esc(fmtWhen(r.sealed_at!))}`
+              }</time></footer>
               <div class="panel"><div class="acts">
                 <button data-unseal="${esc(r.id)}"${sealedBusy ? " disabled" : ""}>取消入册(回看板已完成)</button>
               </div></div>

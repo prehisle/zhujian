@@ -18,6 +18,7 @@
 //   话术会变宽换行+3s 复原,第二拍可能落到毗邻的单拍控件),第二拍在固定条上执行,
 //   onYes 复核 session 未变;in-flight 期间整面禁点(防双击重复写)。
 import {
+  addItemImage,
   archiveNote,
   archiveTask,
   addTaskTopic,
@@ -45,6 +46,7 @@ import {
   type TopicItem,
 } from "./api";
 import { $, confirmBar, esc, hideConfirmBar, isTaskStage, showBar, showError } from "./ui";
+import { pickImage, toBase64 } from "./images";
 
 type Mode = "actions" | "edit" | "tags" | "move";
 
@@ -110,6 +112,7 @@ export function forceClose(reason?: string) {
   clearConfirm();
   state = null;
   document.querySelector("#timeline .panel")?.remove();
+  clearImgManage();
   if (hadDraft) showBar(reason ?? "未保存的编辑已丢弃");
   deps.onDraftClosed();
 }
@@ -139,6 +142,11 @@ export function onRemoteChanged() {
 /** 收起底部确认条(改卡/收面/写完/切空间都要收:旧确认不许挂在新语境上)。 */
 function clearConfirm() {
   hideConfirmBar();
+}
+
+/** 摘掉缩略图删图 × 的显隐标记(面板拆除时用;renderPanel 里换卡自会摘旧上新)。 */
+function clearImgManage() {
+  document.querySelector("#timeline .card.imgmanage")?.classList.remove("imgmanage");
 }
 
 function currentCard(): HTMLElement | null {
@@ -174,6 +182,12 @@ function renderPanel(card: HTMLElement) {
     panel.innerHTML = renderActions(item);
   }
   card.querySelector(".body")!.appendChild(panel);
+  // 编辑态多图管理:仅 actions 面露出缩略图删图 ×(main.ts 接管删除)。同一时刻只一张卡开面,
+  // 先摘所有旧标记再给当前卡上——换卡/进 edit·tags·move 面都会随之收起 ×。
+  document
+    .querySelectorAll<HTMLElement>("#timeline .card.imgmanage")
+    .forEach((c) => c.classList.remove("imgmanage"));
+  if (state.mode === "actions") card.classList.add("imgmanage");
   if (state.mode === "edit" && !busy) {
     const ta = panel.querySelector<HTMLTextAreaElement>("textarea.edit")!;
     ta.focus();
@@ -190,7 +204,7 @@ function renderActions(item: TimelineItem): string {
       `<button data-pact="move-ack" class="p">我已处理</button></div>`
     : "";
   const task = isTaskStage(item.stage);
-  const acts: string[] = [actBtn("edit", "编辑"), actBtn("tags", "标签")];
+  const acts: string[] = [actBtn("edit", "编辑"), actBtn("tags", "标签"), actBtn("addimg", "加图")];
   if (!task) acts.push(actBtn("promote", "转待办"));
   if (item.stage === "todo") acts.push(actBtn("revert", "撤回为灵感", { warn: true }));
   if (item.stage === "done") acts.push(actBtn("seal", "入归档册"));
@@ -479,6 +493,28 @@ function closeDraft() {
   deps.onDraftClosed();
 }
 
+// ---- 操作面「加图」(取图/转码走共享件 images.ts,与 compose 记灵感同源) -------
+
+/** 点「加图」:唤起系统相册选一张(pickImage,借 WebView onShowFileChooser,无插件),
+ *  选中即读字节挂到本条,走面板统一写口 run()(写成功刷新轴、缩略图现出)。图挂在既有
+ *  条目上,与正文编辑草稿无关,刷新干净;取消(没选)静默返回。后端限 png/jpeg/webp/gif
+ *  ≤32MiB,越界响亮报后端原话(不静默吞)。 */
+async function addImage(itemId: string): Promise<void> {
+  if (!state || busy) return;
+  const file = await pickImage();
+  if (!file) return;
+  let b64: string;
+  try {
+    b64 = await toBase64(file);
+  } catch {
+    showError("读取图片失败,请重试");
+    return;
+  }
+  await run((space) => addItemImage(space, itemId, file.type, b64), {
+    onCommitted: () => showBar("已加图", true),
+  });
+}
+
 // ---- 事件接线 ----------------------------------------------------------------
 
 function onTimelineClick(e: Event) {
@@ -549,6 +585,7 @@ function onTimelineClick(e: Event) {
     clearConfirm();
     state = null;
     card.querySelector(".panel")?.remove();
+    card.classList.remove("imgmanage");
     deps.onDraftClosed(); // 三审 M1:收面即「草稿域收场」,补被延后的刷新
     return;
   }
@@ -585,6 +622,10 @@ function handleAct(act: string, card: HTMLElement) {
     case "tags":
       clearConfirm();
       void enterTags(card);
+      return;
+    case "addimg":
+      clearConfirm();
+      void addImage(session.id);
       return;
     case "move":
       clearConfirm();

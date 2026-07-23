@@ -23,7 +23,7 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
-use sync_proto::{err_code, Lane, PairEvent, ServerMsg, BROADCAST};
+use sync_proto::{err_code, DataPlane, Lane, PairEvent, Restriction, ServerMsg, BROADCAST};
 use tokio::sync::{mpsc, Notify};
 use tokio::time::Instant;
 
@@ -59,6 +59,10 @@ pub fn deliver_cost(msg: &ServerMsg) -> Option<usize> {
 /// 实时帧在「信箱整箱搬入之外」的队深余量。
 const REALTIME_HEADROOM: usize = 1024;
 
+/// 旧客户端受限时 account_throttled 的人话(§6:现有状态面至少一条可见错误;客户端
+/// human_err 兜底会显它)。声明 `account_status_v1` 的新客户端改收 AccountStatusV1。
+const THROTTLE_MSG: &str = "账户本月高速额度已用尽,同步降速中(升级客户端可见详情)";
+
 /// (account, device)。
 type Addr = (String, String);
 
@@ -80,6 +84,9 @@ pub struct Hub {
     /// codex 实现审 M:高流量下轮询窗口可远超 16MiB)。
     checkpoint_nudge: Notify,
     conn_seq: AtomicU64,
+    /// AccountStatusV1 修订号(工序4;单次启动内单调、跨重启复位——§6 取舍,不引
+    /// server_instance_id)。每 build 一次 checked 自增,到顶 fail-fast 不回绕。
+    status_revision: AtomicU64,
 }
 
 #[derive(Default)]
@@ -100,6 +107,9 @@ struct Client {
     kick: KickTx,
     /// 本连接下行队里未写出的 Deliver 字节(§5.2 账本;见 [`QueuedBytes`])。
     queued: QueuedBytes,
+    /// 本连接是否声明了 `account_status_v1` 能力(工序4):决定 push 推
+    /// [`ServerMsg::AccountStatusV1`](cap)还是受限时的 `account_throttled`(旧客户端)。
+    wants_status: bool,
 }
 
 #[derive(Default)]
@@ -149,6 +159,7 @@ impl Hub {
             adm_drained: Notify::new(),
             checkpoint_nudge: Notify::new(),
             conn_seq: AtomicU64::new(1),
+            status_revision: AtomicU64::new(1),
         }
     }
 
@@ -166,6 +177,101 @@ impl Hub {
     /// 每连接下行队列容量(见模块注释)。
     pub fn channel_cap(&self) -> usize {
         self.cfg.mailbox_max_frames + REALTIME_HEADROOM
+    }
+
+    /// 读一次 registry→meters 计量快照(工序4;调用方**须持 registry**,Required-2:
+    /// used/quota/over 与 AccountStatusV1 字段同源一份)。返回 (有效 period, used, quota, over)。
+    fn read_meter_snapshot(
+        &self,
+        reg: &Registry,
+        account: &str,
+        now_wall: time::OffsetDateTime,
+    ) -> ((i32, u8), u64, u64, bool) {
+        let now_month = crate::registry::month_of(now_wall);
+        let (eff_period, used) =
+            self.meters.lock().unwrap().account_fastlane_used(account, now_month);
+        let quota = reg.effective_grant_quota(account, now_wall);
+        (eff_period, used, quota, used > quota)
+    }
+
+    /// 组装 AccountStatusV1(工序4;**纯组装、不自锁**——调用方持 registry、快照已读好)。
+    /// status_revision checked 自增(codex M5:不回绕,到顶 fail-fast)。
+    fn build_account_status(
+        &self,
+        reg: &Registry,
+        account: &str,
+        now_wall: time::OffsetDateTime,
+        eff_period: (i32, u8),
+        used: u64,
+        quota: u64,
+    ) -> ServerMsg {
+        let rev = self
+            .status_revision
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |v| v.checked_add(1))
+            .expect("status_revision 取号到顶(u64,不可能达到,fail-fast)");
+        let effective = reg.effective_entitlement(account, now_wall);
+        let configured = reg.configured_entitlement(account);
+        let seat_count = u32::try_from(reg.devices_of(account).len())
+            .expect("设备数超过 AccountStatusV1 u32 表示范围(硬帽远小于 u32::MAX,不可能达到)");
+        // 生效可执行席位上限 = min(套餐席位, 硬帽)——展示真正能加到几台(codex M2)。
+        // device_cap 是 usize;`as u32` 会在 >u32::MAX 时静默截断(实现审 M1),用饱和转换。
+        let hard_cap = u32::try_from(self.cfg.device_cap).unwrap_or(u32::MAX);
+        let seat_quota = effective.seat_quota.min(hard_cap);
+        let over = used > quota;
+        let (restriction_reasons, data_plane, effective_rate_bps) = if over {
+            (vec![Restriction::FastlaneExhausted], DataPlane::RateLimited, self.cfg.throttle_rate_bps)
+        } else {
+            (Vec::new(), DataPlane::Open, 0)
+        };
+        let fmt = |t: time::OffsetDateTime| {
+            t.format(&time::format_description::well_known::Rfc3339)
+                .expect("UTC 时刻 RFC3339 格式化无失败路径")
+        };
+        ServerMsg::AccountStatusV1 {
+            status_revision: rev,
+            server_now: fmt(now_wall),
+            configured_tier: configured.map(|e| e.tier.clone()),
+            effective_tier: effective.tier,
+            expires_at: configured.and_then(|e| e.expires_at).map(fmt),
+            seat_count,
+            seat_quota,
+            fastlane_used: used,
+            fastlane_quota: quota,
+            restriction_reasons,
+            effective_rate_bps,
+            period_start: fmt(crate::registry::period_start_utc(eff_period)),
+            period_end: fmt(crate::registry::period_end_utc(eff_period)),
+            data_plane,
+        }
+    }
+
+    /// 推送账户当前授权状态给全部在线连接(工序4;**内部,调用方须持 registry**)。
+    /// Required-1/2/3:全程持 registry(revision 分配→state 入队序 == revision 序)、
+    /// 单次快照(一份 used/quota/over)、registry→state 遍历 try_send。cap 恒推当前
+    /// AccountStatusV1;旧客户端**仅当前仍受限**(over)才推 account_throttled——按当前
+    /// 快照门控,不拿历史 newly_restricted 当当前态(codex M1:admin 解除后不误发)。
+    fn push_status_locked(&self, reg: &Registry, account: &str, now_wall: time::OffsetDateTime) {
+        let (eff_period, used, quota, over) = self.read_meter_snapshot(reg, account, now_wall);
+        let status = self.build_account_status(reg, account, now_wall, eff_period, used, quota);
+        let throttled = ServerMsg::Err {
+            code: err_code::ACCOUNT_THROTTLED.to_owned(),
+            msg: THROTTLE_MSG.to_owned(),
+        };
+        let st = self.state.lock().unwrap();
+        for (_, c) in st.online.iter().filter(|((a, _), _)| a.as_str() == account) {
+            if c.wants_status {
+                push(&c.tx, status.clone());
+            } else if over {
+                push(&c.tx, throttled.clone());
+            }
+        }
+    }
+
+    /// 推送账户当前授权状态(工序4;conn 侧**无锁**调用:ENTER 实时推送)。自取 registry。
+    pub fn push_account_status(&self, account: &str) {
+        let now_wall = time::OffsetDateTime::now_utc();
+        let reg = self.registry.lock().unwrap();
+        self.push_status_locked(&reg, account, now_wall);
     }
 
     /// 鉴权成功,设备上线:踢旧迎新(kick 专线,闪断重连不用等静默判死)→
@@ -194,7 +300,9 @@ impl Hub {
         tx: Tx,
         kick: KickTx,
         queued: QueuedBytes,
+        wants_status: bool,
     ) -> Option<u64> {
+        let now_wall = time::OffsetDateTime::now_utc();
         let reg = self.registry.lock().unwrap();
         if reg.is_banned(account) {
             return None;
@@ -202,9 +310,26 @@ impl Hub {
         if reg.pubkey_of(account, device) != Some(expected_pubkey) {
             return None;
         }
+        // 工序4:state 锁前、持 registry 时把「Authed 后要发的帧」构好(单次快照,
+        // registry→meters→drop)。cap 客户端恒 AccountStatusV1;旧客户端仅受限时
+        // account_throttled;均先于 mailbox drain(§6 鉴权顺序 Authed→状态→Deliver)。
+        let (eff_period, used, quota, over) = self.read_meter_snapshot(&reg, account, now_wall);
+        let extra: Option<ServerMsg> = if wants_status {
+            Some(self.build_account_status(&reg, account, now_wall, eff_period, used, quota))
+        } else if over {
+            Some(ServerMsg::Err {
+                code: err_code::ACCOUNT_THROTTLED.to_owned(),
+                msg: THROTTLE_MSG.to_owned(),
+            })
+        } else {
+            None
+        };
         let addr: Addr = (account.to_owned(), device.to_owned());
         let mut st = self.state.lock().unwrap();
         push(&tx, ServerMsg::Authed);
+        if let Some(m) = extra {
+            push(&tx, m);
+        }
         if let Some(old) = st.online.remove(&addr) {
             logln(format!(
                 "INFO conn={} account={account} device={device} 被新连接 conn={conn_id} 顶替",
@@ -279,11 +404,11 @@ impl Hub {
         for (_, peer_tx) in &peers {
             push(peer_tx, ServerMsg::Peer { device: device.to_owned(), online: true });
         }
-        st.online.insert(addr, Client { conn_id, tx, kick, queued });
+        st.online.insert(addr, Client { conn_id, tx, kick, queued, wants_status });
         drop(st);
         // 会话代际(169,codex H):state 已释放、仍持 registry(锁序 registry→meters)。
         // 给本 device 发新单调 session_gen、取消旧代际残留 pending;返回供连接态存储。
-        let wall_month = crate::registry::month_of(time::OffsetDateTime::now_utc());
+        let wall_month = crate::registry::month_of(now_wall);
         let gen = self.meters.lock().unwrap().begin_session(
             account,
             device,
@@ -305,7 +430,7 @@ impl Hub {
         session_gen: u64,
         conn_id: u64,
         bytes: u64,
-    ) -> AdmitDecision {
+    ) -> (AdmitDecision, bool) {
         // 单次捕获墙钟(codex 实现审 M:两次 now_utc 恰跨月会让 meter period 与 grant
         // 取自不同月)。month 与 grant 同源。
         let now_instant = std::time::Instant::now();
@@ -317,9 +442,9 @@ impl Hub {
             reg.devices_of(account).into_iter().collect();
         let device_cap = self.cfg.device_cap;
         let rate = self.cfg.throttle_rate_bps;
-        let (decision, dirty) = {
+        let (decision, newly_restricted, dirty) = {
             let mut meters = self.meters.lock().unwrap();
-            let decision = meters.admission(
+            let (decision, newly_restricted) = meters.admission(
                 account,
                 device,
                 session_gen,
@@ -332,14 +457,14 @@ impl Hub {
                 device_cap,
                 rate,
             );
-            (decision, meters.dirty_bytes())
+            (decision, newly_restricted, meters.dirty_bytes())
         };
         // 阈值事件唤醒(codex M:事件驱动非轮询;notify_one 合并、丢一次不退化因 dirty
         // 有状态、worker 每轮读实况)。
         if dirty >= self.cfg.checkpoint_dirty_bytes {
             self.checkpoint_nudge.notify_one();
         }
-        decision
+        (decision, newly_restricted)
     }
 
     /// 限速 waiter 唤醒后的 poll(conn.rs 临界区外的等待循环调;registry→meters 重读
@@ -379,6 +504,9 @@ impl Hub {
             std::time::Instant::now(),
             grant,
         );
+        // 工序4:entitlement 变化后给在线连接推更新后的状态(仍持 registry——Required-3:
+        // 与 ENTER 推送对同账户被 registry 串行化,入队序 == revision 序)。
+        self.push_status_locked(&reg, account, now_wall);
         Ok(effective)
     }
 
@@ -1236,6 +1364,97 @@ mod tests {
         (tx, rx, kick, kick_rx)
     }
 
+    /// 工序4:build_account_status 的越额边界(used==quota 仍 Open、>quota 才 RateLimited)
+    /// + 席位展示取硬帽 min(codex M2/M4⑤⑦)。
+    #[test]
+    fn build_status_boundary_and_seat_cap() {
+        let h = hub(|c| c.device_cap = 8);
+        {
+            // entitlement seat_quota=16 > 硬帽 8 → 展示应 min=8。
+            let mut reg = h.registry.lock().unwrap();
+            let ent = crate::registry::Entitlement {
+                tier: "large".into(),
+                seat_quota: 16,
+                ..crate::registry::Entitlement::free_default()
+            };
+            reg.set_entitlement(ACCT, ent, now()).unwrap();
+        }
+        let reg = h.registry.lock().unwrap();
+        let now_wall = now();
+        let period = crate::registry::month_of(now_wall);
+        // used == quota:over=false → Open、无受限、rate=0。
+        match h.build_account_status(&reg, ACCT, now_wall, period, 1000, 1000) {
+            ServerMsg::AccountStatusV1 {
+                seat_quota,
+                data_plane,
+                restriction_reasons,
+                effective_rate_bps,
+                fastlane_used,
+                fastlane_quota,
+                ..
+            } => {
+                assert_eq!(seat_quota, 8, "展示硬帽 min(16,8)=8");
+                assert!(matches!(data_plane, DataPlane::Open), "used==quota 仍 Open");
+                assert!(restriction_reasons.is_empty());
+                assert_eq!(effective_rate_bps, 0);
+                assert_eq!((fastlane_used, fastlane_quota), (1000, 1000));
+            }
+            other => panic!("期待 AccountStatusV1,得到 {other:?}"),
+        }
+        // used > quota:RateLimited + FastlaneExhausted + rate>0。
+        match h.build_account_status(&reg, ACCT, now_wall, period, 1001, 1000) {
+            ServerMsg::AccountStatusV1 { data_plane, restriction_reasons, effective_rate_bps, .. } => {
+                assert!(matches!(data_plane, DataPlane::RateLimited), "used>quota → RateLimited");
+                assert_eq!(restriction_reasons, vec![Restriction::FastlaneExhausted]);
+                assert!(effective_rate_bps > 0);
+            }
+            other => panic!("期待 AccountStatusV1,得到 {other:?}"),
+        }
+    }
+
+    /// 工序4 命根子 + M1(确定性):push_account_status 对 cap 连接恒推 AccountStatusV1、
+    /// 对无 caps 旧连接**仅当前受限**才推 account_throttled(未受限时一帧都不给它——
+    /// 旧客户端永不收 AccountStatusV1 新变体)。按当前快照门控 = 堵住「越额后 admin 解除、
+    /// 旧端仍误收 throttled」的竞态(revision 乱序无害靠客户端取最大,此处不涉)。
+    #[test]
+    fn push_status_pushes_cap_and_gates_old_client() {
+        let h = hub(|_| {});
+        let (tx1, mut rx1, kick1, _k1) = chan(64);
+        let (tx2, mut rx2, kick2, _k2) = chan(64);
+        // D1=cap(wants_status=true),D2=旧(false)。
+        h.attach_authenticated(ACCT, D1, [1; 32], 1, tx1, kick1, QueuedBytes::default(), true)
+            .unwrap();
+        let g2 = h
+            .attach_authenticated(ACCT, D2, [2; 32], 2, tx2, kick2, QueuedBytes::default(), false)
+            .unwrap();
+        while rx1.try_recv().is_ok() {} // 排空 attach 期帧(Authed/AccountStatusV1/Peer)
+        while rx2.try_recv().is_ok() {}
+        // 未越额 push:cap 收 Open,旧连接一帧都不收(命根子阴性 + M1 未受限不误发)。
+        h.push_account_status(ACCT);
+        assert!(
+            matches!(rx1.try_recv(), Ok(ServerMsg::AccountStatusV1 { data_plane: DataPlane::Open, .. })),
+            "cap 连接收 AccountStatusV1(Open)"
+        );
+        assert!(rx1.try_recv().is_err(), "cap 只收一条");
+        assert!(rx2.try_recv().is_err(), "无 caps 旧连接未受限时 push 不给它任何帧");
+        // D2 发帧越额(读实际 grant 再 +1 跨线——ACCT 有 entitlement,grant 非免费档小值)。
+        let grant = h.registry.lock().unwrap().effective_grant_quota(ACCT, now());
+        let (_d, nr) = h.throttle_admission(ACCT, D2, g2, 2, grant + 1);
+        assert!(nr, "首次越额 newly_restricted");
+        while rx1.try_recv().is_ok() {}
+        while rx2.try_recv().is_ok() {}
+        // 受限 push:cap 收 RateLimited,旧连接收 account_throttled。
+        h.push_account_status(ACCT);
+        assert!(
+            matches!(rx1.try_recv(), Ok(ServerMsg::AccountStatusV1 { data_plane: DataPlane::RateLimited, .. })),
+            "cap 连接收 RateLimited"
+        );
+        assert!(
+            matches!(rx2.try_recv(), Ok(ServerMsg::Err { code, .. }) if code == err_code::ACCOUNT_THROTTLED),
+            "旧连接当前受限收 account_throttled"
+        );
+    }
+
     fn deliver(from: &str, to: &str, blob: &[u8]) -> ServerMsg {
         ServerMsg::Deliver { from: from.into(), to: to.into(), blob: blob.to_vec() }
     }
@@ -1243,7 +1462,7 @@ mod tests {
     /// D1 以 conn_id=cid 上线(fixture 公钥 [1;32]/[2;32],见 hub())。账本按连接
     /// 新造——只想上线不查预算的测试用它;预算测试用 [`attach_with_ledger`]。
     fn attach_dev(h: &Hub, dev: &str, key: [u8; 32], cid: u64, tx: Tx, kick: KickTx) -> bool {
-        h.attach_authenticated(ACCT, dev, key, cid, tx, kick, QueuedBytes::default()).is_some()
+        h.attach_authenticated(ACCT, dev, key, cid, tx, kick, QueuedBytes::default(), false).is_some()
     }
 
     /// 上线并返回该连接的字节账本(预算测试断言/模拟「写任务未出队」用)。
@@ -1256,7 +1475,7 @@ mod tests {
         kick: KickTx,
     ) -> QueuedBytes {
         let q = QueuedBytes::default();
-        assert!(h.attach_authenticated(ACCT, dev, key, cid, tx, kick, q.clone()).is_some());
+        assert!(h.attach_authenticated(ACCT, dev, key, cid, tx, kick, q.clone(), false).is_some());
         q
     }
 
@@ -1459,7 +1678,7 @@ mod tests {
         // 第二账户在线,验证 reload 不误伤。
         h.registry.lock().unwrap().register_first(ACCT_B, "DEV_B", [5; 32]).unwrap();
         let (txb, _rxb, kickb, mut kickb_rx) = chan(64);
-        assert!(h.attach_authenticated(ACCT_B, "DEV_B", [5; 32], 7, txb, kickb, QueuedBytes::default()).is_some());
+        assert!(h.attach_authenticated(ACCT_B, "DEV_B", [5; 32], 7, txb, kickb, QueuedBytes::default(), false).is_some());
 
         std::fs::write(&banlist, format!("{ACCT}\n")).unwrap();
         assert_eq!(h.reload_banlist().unwrap(), 1);

@@ -1,7 +1,7 @@
 //! zhujian-core —— 朱笺共享核心(P4-a,android-plan §1)。
 //!
 //! 数据层(items 单实体 + topics/item_topic + item_revisions + item_image +
-//! oplog/HLC/fractional index,26 条迁移)与同步客户端侧(收端引擎 / E2EE 加密层 /
+//! oplog/HLC/fractional index,30 条迁移)与同步客户端侧(收端引擎 / E2EE 加密层 /
 //! SPAKE2 配对 / 快照引导 / WSS 传输)全在这里;桌面 tauri 壳(../src-tauri)与
 //! 安卓壳双端 path 依赖共用,本 crate 零 tauri 耦合。切割线 = tauri app 壳 vs 其余全部。
 //!

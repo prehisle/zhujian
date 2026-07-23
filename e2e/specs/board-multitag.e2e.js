@@ -42,9 +42,16 @@ describe("任务看板 · 多标签", () => {
       B,
     );
 
-    // Both tags now on the card (backend) and two chips (DOM, scoped to this card).
+    // Backend already has both tags right after the pick.
     await browser.waitUntil(async () => (await tagIds()).length === 2, { timeout: 8000 });
     expect(await tagIds()).toEqual([idA, idB].sort());
+    // keepOpen:选完选择器不收起(可接着连加),chip 要等收起后才画回 —— Esc 收起并让整板重载,
+    // 再断言两个 chip 共存(不是替换)。
+    await browser.execute(() => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })));
+    await browser.waitUntil(async () => !(await $(`.tcard*=${TASK}`).$(".topic-search").isExisting()), {
+      timeout: 5000,
+      timeoutMsg: "Esc 后选择器未收起",
+    });
     const reCard = await $(`.tcard*=${TASK}`);
     await expect(await reCard.$$(".chip.topic.set")).toBeElementsArrayOfSize(2);
   });

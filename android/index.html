@@ -149,6 +149,26 @@
         padding: 7px 22px; font-size: 14px; font-weight: 600; font-family: var(--font-sans);
       }
       .primary:disabled { opacity: 0.5; }
+      /* compose「加图」按钮:低调靠左,「记下」仍靠右(margin-right:auto 顶开)。 */
+      .compose-row .cimg {
+        margin-right: auto; font-size: 13px; color: var(--seal);
+        padding: 6px 4px; font-weight: 600;
+      }
+      .compose-row .cimg:disabled { opacity: 0.4; }
+      /* compose 暂存图缩略条:小图 + 右上角「×」移除;无图时容器 hidden。 */
+      .cthumbs { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+      .cthumb {
+        position: relative; width: 64px; height: 64px;
+        border: 1px solid var(--line-strong); border-radius: 8px;
+        overflow: hidden; background: var(--seal-tint);
+      }
+      .cthumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+      .cthumb-del {
+        position: absolute; right: 2px; top: 2px; width: 22px; height: 22px;
+        border: none; border-radius: 50%; padding: 0;
+        background: rgba(0, 0, 0, 0.55); color: #fff;
+        font-size: 15px; line-height: 1; display: grid; place-items: center;
+      }
 
       /* 错误条:后端原话,响亮但会自己退场。notice = 非错误的同步提示(墨绿)。
          fixed 悬浮不进文档流(ui-audit P0 #3):此前在 compose 与时间轴之间,每次
@@ -208,7 +228,8 @@
       /* 时间轴:灵感行素卡;任务行带勾框 + stage 印。146:主视图分灵感/任务两面,
          任务面按四态分组,组头轻标题、组内沿列 gap。 */
       .timeline { display: flex; flex-direction: column; gap: 8px; }
-      .timeline .tl-group { display: flex; flex-direction: column; gap: 8px; }
+      /* position:relative = swipe-track(182 卡下亮出目标印)的定位基;不改流内布局。 */
+      .timeline .tl-group { display: flex; flex-direction: column; gap: 8px; position: relative; }
       .timeline .tl-sec {
         margin: 8px 2px 0; font-size: 12px; font-weight: 600;
         color: var(--ink-soft); font-family: var(--font-sans); letter-spacing: 0.04em;
@@ -222,7 +243,22 @@
         border: 1px solid var(--line);
         border-radius: 12px;
         padding: 10px 12px;
+        /* 竖滑交回原生滚动、横滑归自己(182 任务卡左右滑改状态)。 */
+        touch-action: pan-y;
       }
+      /* 182:滑动中的卡浮在 track 之上、跟手平移;track 铺在卡原位下亮出目标态。 */
+      .card.swiping { position: relative; z-index: 1; }
+      .swipe-track {
+        position: absolute; left: 0; right: 0; z-index: 0;
+        display: flex; align-items: center; padding: 0 18px;
+        border-radius: 12px; border: 1px dashed var(--seal-line);
+        background: var(--seal-tint); color: var(--seal);
+        font-family: var(--font-sans); font-size: 13px; font-weight: 600;
+      }
+      .swipe-track[data-dir="right"] { justify-content: flex-start; }
+      .swipe-track[data-dir="left"] { justify-content: flex-end; }
+      /* 过提交阈值:变实底,告诉手指「松开就改」。 */
+      .swipe-track.armed { background: var(--seal); color: #fff; border-style: solid; border-color: var(--seal); }
       .card .content {
         margin: 0; font: 16px/1.6 var(--font-serif);
         white-space: pre-wrap; word-break: break-word;
@@ -266,6 +302,15 @@
       }
       .thumb.err { border-color: var(--seal); }
       .thumb.err::before { content: "!"; color: var(--seal); font-weight: 700; }
+      /* 编辑态多图管理:卡片操作面(actions)开着时,缩略图露出删图 ×(两拍确认,main.ts
+         接管删除)。平时隐藏,免误触且不干扰纯查看。 */
+      .thumb-del {
+        position: absolute; top: 2px; right: 2px; display: none;
+        width: 20px; height: 20px; line-height: 18px; text-align: center;
+        border-radius: 999px; background: rgba(0, 0, 0, 0.6); color: #fff;
+        font-size: 15px; border: 1px solid rgba(255, 255, 255, 0.45);
+      }
+      .card.imgmanage .thumb-del { display: block; }
 
       /* 大图查看层(143 手势缩放):未放大时单击关;双击 2.5 倍/复位、双指捏合、
          放大后单指拖拽,返回键也能关(history 层)。touch-action:none 把手势从
@@ -280,6 +325,15 @@
       #viewer img { max-width: 100vw; max-height: 88vh; object-fit: contain; will-change: transform; }
       #viewer .cap { color: #fff; opacity: 0.85; font-size: 13px; transition: opacity 0.15s; }
       #viewer.zoomed .cap { opacity: 0; }
+      /* 删图按钮:右上角,低调描边;放大态淡出并禁点(与角标同,防平移误触)。 */
+      .viewer-del {
+        position: absolute; top: calc(12px + env(safe-area-inset-top)); right: 16px;
+        border: 1px solid rgba(255, 255, 255, 0.5); border-radius: 999px;
+        background: rgba(0, 0, 0, 0.45); color: #fff;
+        padding: 8px 18px; font-size: 14px; font-family: var(--font-sans);
+        transition: opacity 0.15s;
+      }
+      #viewer.zoomed .viewer-del { opacity: 0; pointer-events: none; }
 
       /* 勾框:任务行的「标完成」。触区放大到整块 label,视觉是一枚圆圈,勾上即朱砂。 */
       .tick { flex: none; display: grid; place-items: center; width: 48px; align-self: stretch; margin: -10px 0 -10px -12px; }
@@ -302,12 +356,59 @@
       }
       .dot.online { background: var(--ok); }
       .dot.busy { background: var(--seal); opacity: 0.65; }
-      .dot.error { background: var(--seal); }
+      /* 断网/出错态:类名故意不叫 error——全局错误提示条 .error 是 position:fixed
+         左上角朱砂圆角块,若状态点也带 error 类会被它命中,断网时点子被拽到左上角
+         盖住「朱」字(实测真机 bug)。用独立类名 off,与 .error 隔离。 */
+      .dot.off { background: var(--seal); }
       .sync { margin-top: 4px; border-top: 1px dashed var(--line-strong); padding: 12px 0 4px; margin-bottom: 10px; }
       .sync h2 { font-size: 13px; color: var(--ink-soft); margin: 0 0 8px; font-weight: 600; }
       .sync .state { font-size: 13px; margin-bottom: 8px; }
       .sync .state .err { color: var(--seal); word-break: break-all; }
       .sync .fine { font-size: 12px; color: var(--ink-faint); margin: 8px 0 0; }
+
+      /* 标签管理面(190):每行 = 拖手柄 + 名 + 计数 + 类型;拖手柄纵向拖排序。 */
+      #topics-list { position: relative; }
+      .trow {
+        display: flex; align-items: center; gap: 10px;
+        padding: 10px 4px; border-bottom: 1px solid var(--line);
+        background: var(--paper);
+      }
+      .trow.off { opacity: 0.5; pointer-events: none; }
+      .trow.dragging {
+        position: relative; z-index: 3; border-radius: 8px; border-bottom-color: transparent;
+        background: var(--raised); box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28);
+      }
+      .thandle {
+        flex: none; width: 30px; text-align: center; cursor: grab;
+        color: var(--ink-faint); font-size: 17px; line-height: 1;
+        touch-action: none; user-select: none; -webkit-user-select: none;
+      }
+      .tname { flex: 1; min-width: 0; font-size: 14px; color: var(--ink);
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .tname .tdot {
+        display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+        margin-left: 6px; background: var(--tc, var(--ink-faint)); vertical-align: middle;
+      }
+      .tcount { flex: none; font-size: 12px; color: var(--ink-faint); font-variant-numeric: tabular-nums; }
+      .tk-add, .tk-badge {
+        flex: none; font-size: 12px; padding: 3px 10px; border-radius: 999px;
+        border: 1px solid var(--line-strong); background: none;
+      }
+      .tk-add { color: var(--ink-faint); }
+      .tk-badge { color: var(--seal); border-color: var(--seal-line); background: var(--seal-tint); font-weight: 600; }
+      .tk-edit { flex: none; display: inline-flex; align-items: center; gap: 6px; }
+      .tk-input {
+        width: 8.5em; font: inherit; font-size: 13px; padding: 4px 8px;
+        border: 1px solid var(--seal-line); border-radius: 8px;
+        background: var(--paper); color: var(--ink);
+      }
+      .tk-edit button { font-size: 12px; padding: 4px 10px; border-radius: 8px; }
+      .tk-edit button.ghost { background: none; color: var(--ink-soft); border: 1px solid var(--line-strong); }
+      /* 拖动落点指示线(朱砂),按指针位置浮在目标间隙上。 */
+      .drop-line {
+        position: absolute; left: 34px; right: 4px; height: 2px; margin-top: -1px;
+        background: var(--seal); border-radius: 2px; z-index: 4; pointer-events: none;
+      }
       .bar { height: 6px; border-radius: 999px; background: var(--seal-tint); overflow: hidden; margin: 6px 0; }
       .bar > i { display: block; height: 100%; width: 0; background: var(--seal); transition: width 0.2s; }
       /* 恢复码专用:只在组边界(短横)换行、分成规整几行,别从字中间断成长蛇
@@ -448,7 +549,55 @@
          下方还残留 记一笔灵感 + 时间轴」的杂乱;诊断本体在 DOM 末尾,时间轴一收它就
          回到顶部可见(修「点诊断像没反应、要滚到最底」)。底部工具行照旧固定。 */
       body.pane-open .compose,
+      body.pane-open #filterbar,
       body.pane-open #timeline { display: none; }
+
+      /* 时间轴筛选条(filter.ts 渲染):类型行在上、标签行+文本框在下,两行横向可滑。
+         本面无条目时整条 hidden(main.ts)。 */
+      #filterbar {
+        display: flex; flex-direction: column; gap: 8px;
+        margin-bottom: 12px;
+      }
+      #filterbar[hidden] { display: none; }
+      .fkinds, .ftopics {
+        display: flex; align-items: center; gap: 8px;
+        overflow-x: auto; flex-wrap: nowrap;
+        -webkit-overflow-scrolling: touch; scrollbar-width: none;
+      }
+      .fkinds::-webkit-scrollbar, .ftopics::-webkit-scrollbar { display: none; }
+      /* 无 kind 时 filter.ts 清空 #filter-kinds → :empty 隐整行(无类型一条不多)。 */
+      .fkinds:empty { display: none; }
+      .fmain { display: flex; align-items: center; gap: 10px; }
+      .ftopics { flex: 1; min-width: 0; }
+      .faxis {
+        flex: none; font-size: 11px; letter-spacing: 0.04em;
+        color: var(--ink-faint);
+      }
+      .fpill {
+        flex: none; font: inherit; font-size: 13px; letter-spacing: 0.02em;
+        color: var(--ink-soft); background: transparent;
+        border: 1px solid var(--line-strong); border-radius: 999px;
+        padding: 5px 12px; min-height: 30px; white-space: nowrap;
+        display: inline-flex; align-items: center; gap: 6px;
+      }
+      .fpill.active {
+        color: var(--seal); border-color: var(--seal);
+        background: var(--seal-tint); font-weight: 600;
+      }
+      .fn { font-size: 11px; color: var(--ink-faint); font-variant-numeric: tabular-nums; }
+      .fpill.active .fn { color: var(--seal); }
+      .fdot {
+        width: 8px; height: 8px; border-radius: 50%;
+        background: var(--tc, var(--ink-faint)); flex: none;
+      }
+      .ftext {
+        flex: none; width: 9.5em; font: inherit; font-size: 13px;
+        color: var(--ink); background: var(--raised);
+        border: 1px solid var(--line-strong); border-radius: 999px;
+        padding: 5px 12px; min-height: 30px;
+      }
+      .ftext:focus { outline: none; border-color: var(--seal); }
+      .ftext::placeholder { color: var(--ink-faint); }
 
       /* 诊断面(P4-b 原样收编,打开才跑)。 */
       .diag { margin-top: 20px; border-top: 1px dashed var(--line-strong); padding-top: 12px; }
@@ -486,6 +635,7 @@
     <header>
       <h1><span class="seal">朱笺</span><button id="space-chip" class="space-chip" hidden>默认空间</button></h1>
       <div>
+        <button id="topics-toggle" class="ghost">标签</button>
         <button id="search-toggle" class="ghost">搜索</button>
         <button id="sync-toggle" class="ghost"><span id="sync-dot" class="dot"></span>同步</button>
       </div>
@@ -633,16 +783,40 @@
       <p class="fine">完成的任务「入册」后在这里安放;归档是史实,不可删除。</p>
     </section>
 
+    <!-- 标签管理面(190,安卓精简版):拖手柄调顺序(1c)+ 点「类型」标自由文本类型(kind);
+         顺序/类型跨端同步。重命名/删除/合并/颜色暂在桌面做。 -->
+    <section id="topics-pane" class="sync" hidden>
+      <h2>标签</h2>
+      <div id="topics-list"></div>
+      <p class="fine">按住左侧 ⠿ 拖动调顺序;点「类型」给标签标个类型(如「人名」),顺序与类型都会同步到其它设备。</p>
+    </section>
+
     <!-- 146:seg 两态删除——输入落点=当前主视图(灵感面记灵感/任务面记待办),
          placeholder 随面换;同一个 textarea 两面共用,切面草稿随行。 -->
     <section class="compose">
       <textarea id="text" placeholder="记一笔灵感…" rows="2"></textarea>
+      <!-- 记灵感时暂存的配图缩略(195 slice1):点「加图」贴进来先摆着,点「记下」建
+           条目后随之挂上;每张带「×」可移除。无图时整条隐藏(images.ts composeImages)。 -->
+      <div id="compose-thumbs" class="cthumbs" hidden></div>
       <div class="compose-row">
+        <button id="compose-addimg" class="ghost cimg" type="button">＋ 加图</button>
         <button id="save" class="primary">记下</button>
       </div>
     </section>
 
     <div id="error" class="error" hidden></div>
+
+    <!-- 时间轴筛选(灵感/看板两面,与桌面同源三维:标签+文本+类型):类型 pill 行在上
+         (仅当库里有标了 kind 的标签才现),标签 pill 行 + 文本框在下;两行横向可滑。
+         本面无条目时整条隐藏(main.ts renderFilterBar);pane 打开时随时间轴一起收。 -->
+    <section id="filterbar" hidden>
+      <div id="filter-kinds" class="fkinds"></div>
+      <div class="fmain">
+        <div id="filter-topics" class="ftopics"></div>
+        <input id="filter-text" class="ftext" type="search" placeholder="过滤当前列表…"
+               autocapitalize="off" autocomplete="off" spellcheck="false" />
+      </div>
+    </section>
 
     <main id="timeline" class="timeline"></main>
 
@@ -733,6 +907,9 @@
     <div id="viewer" role="dialog" aria-modal="true" aria-label="图片查看" hidden>
       <img id="viewer-img" alt="" />
       <span id="viewer-cap" class="cap"></span>
+      <!-- 删图(196):看大图时删这张。永久销毁(图无回收站、编号退役不复用),两拍确认;
+           放大态淡出防误触(同角标)。只从主时间轴开图,不作用于归档册史实。 -->
+      <button id="viewer-del" class="viewer-del" type="button">删除</button>
     </div>
 
     <!-- 扫码层(107):真正的相机画面由插件画在 WebView 底下,这里只是取景框与取消。 -->

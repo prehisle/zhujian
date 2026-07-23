@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "zhujian",
-  "version": "0.2.13",
+  "version": "0.2.15",
   "identifier": "app.zhujian.notebook",
   "build": {
     "frontendDist": "../dist",
@@ -11,6 +11,7 @@
   },
   "app": {
     "withGlobalTauri": true,
+    "macOSPrivateApi": true,
     "windows": [
       {
         "label": "capture",
@@ -50,11 +51,16 @@
     "updater": {
       "endpoints": ["https://zhujian.app/updates/latest.json"],
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDFGRDVBQUFBQjA4QzNENjUKUldSbFBZeXdxcXJWSDFWN2VKTlNLWXZSaXZPam1GSVlFS0pQcmhRUDVHbHpGbnd2a3BEelJDSlMK"
+    },
+    "deep-link": {
+      "desktop": {
+        "schemes": ["zhujian"]
+      }
     }
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"],
+    "targets": ["nsis", "app", "dmg"],
     "createUpdaterArtifacts": true,
     "icon": [
       "icons/32x32.png",

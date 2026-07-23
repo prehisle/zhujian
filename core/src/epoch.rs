@@ -489,17 +489,25 @@ fn synthesize_baseline(tx: &Connection) -> Result<Vec<(String, String, String, V
         }
     }
     // topics:create {title, created_at};updated_at ≠ created_at 补 set(回放基线所得
-    // 行 == 现值:apply_topic_create 落 updated_at = created_at);color 非 NULL 补 set。
+    // 行 == 现值:apply_topic_create 落 updated_at = created_at);color/position/kind 非
+    // NULL 各补一条 set(它们无 create 键 → 出生 NULL,现值非 NULL 时补齐,0031)。
     {
         let mut stmt = tx
-            .prepare("SELECT id, title, created_at, updated_at, color FROM topics ORDER BY id")
+            .prepare(
+                "SELECT id, title, created_at, updated_at, color, position, kind \
+                 FROM topics ORDER BY id",
+            )
             .map_err(|e| e.to_string())?;
-        let rows: Vec<(String, String, String, String, Option<String>)> = stmt
-            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))
+        type TopicBaseline =
+            (String, String, String, String, Option<String>, Option<String>, Option<String>);
+        let rows: Vec<TopicBaseline> = stmt
+            .query_map([], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?))
+            })
             .map_err(|e| e.to_string())?
             .collect::<rusqlite::Result<_>>()
             .map_err(|e| e.to_string())?;
-        for (id, title, created_at, updated_at, color) in rows {
+        for (id, title, created_at, updated_at, color, position, kind) in rows {
             ops.push((
                 "topic".into(),
                 id.clone(),
@@ -517,20 +525,36 @@ fn synthesize_baseline(tx: &Connection) -> Result<Vec<(String, String, String, V
             if let Some(c) = color {
                 ops.push((
                     "topic".into(),
-                    id,
+                    id.clone(),
                     "set_field".into(),
                     json!({"field": "color", "value": c}),
+                ));
+            }
+            if let Some(p) = position {
+                ops.push((
+                    "topic".into(),
+                    id.clone(),
+                    "set_field".into(),
+                    json!({"field": "position", "value": p}),
+                ));
+            }
+            if let Some(k) = kind {
+                ops.push((
+                    "topic".into(),
+                    id,
+                    "set_field".into(),
+                    json!({"field": "kind", "value": k}),
                 ));
             }
         }
     }
     // items(含回收站/已归档):create = 现值快照(created_at/born_stage 取史实,
-    // born_stage 可 null);archived_at/sealed_at 生而 NULL,非 NULL 各补一条 set。
+    // born_stage 可 null);archived_at/sealed_at/done_at 生而 NULL,非 NULL 各补一条 set。
     {
         let mut stmt = tx
             .prepare(
                 "SELECT id, content, stage, created_at, born_stage, due_on, priority, \
-                 position, archived_at, sealed_at FROM items ORDER BY id",
+                 position, archived_at, sealed_at, done_at FROM items ORDER BY id",
             )
             .map_err(|e| e.to_string())?;
         #[allow(clippy::type_complexity)]
@@ -542,6 +566,7 @@ fn synthesize_baseline(tx: &Connection) -> Result<Vec<(String, String, String, V
             Option<String>,
             Option<String>,
             Option<i64>,
+            Option<String>,
             Option<String>,
             Option<String>,
             Option<String>,
@@ -558,12 +583,13 @@ fn synthesize_baseline(tx: &Connection) -> Result<Vec<(String, String, String, V
                     r.get(7)?,
                     r.get(8)?,
                     r.get(9)?,
+                    r.get(10)?,
                 ))
             })
             .map_err(|e| e.to_string())?
             .collect::<rusqlite::Result<_>>()
             .map_err(|e| e.to_string())?;
-        for (id, content, stage, created_at, born, due_on, priority, position, archived, sealed) in
+        for (id, content, stage, created_at, born, due_on, priority, position, archived, sealed, done) in
             rows
         {
             ops.push((
@@ -591,9 +617,19 @@ fn synthesize_baseline(tx: &Connection) -> Result<Vec<(String, String, String, V
             if let Some(s) = sealed {
                 ops.push((
                     "item".into(),
-                    id,
+                    id.clone(),
                     "set_field".into(),
                     json!({"field": "sealed_at", "value": s}),
+                ));
+            }
+            // done_at 同 archived_at/sealed_at:生而 NULL,非 NULL 补一条 set_field。补发的
+            // HLC 严格晚于本行 create(基线按此序 push、随后逐条 tick),不被 LWW 反噬。
+            if let Some(d) = done {
+                ops.push((
+                    "item".into(),
+                    id,
+                    "set_field".into(),
+                    json!({"field": "done_at", "value": d}),
                 ));
             }
         }
@@ -759,10 +795,12 @@ fn table_fingerprints(tx: &Connection) -> Result<Vec<Vec<String>>, String> {
             "SELECT id||'|'||content||'|'||stage||'|'||created_at||'|'||updated_at \
              ||'|'||COALESCE(archived_at,'∅')||'|'||COALESCE(due_on,'∅')||'|'||COALESCE(priority,'∅') \
              ||'|'||COALESCE(position,'∅')||'|'||COALESCE(sealed_at,'∅')||'|'||COALESCE(born_stage,'∅') \
+             ||'|'||COALESCE(done_at,'∅') \
              FROM items ORDER BY id",
         )?,
         text_rows(
             "SELECT id||'|'||title||'|'||created_at||'|'||updated_at||'|'||COALESCE(color,'∅') \
+             ||'|'||COALESCE(position,'∅')||'|'||quote(kind) \
              FROM topics ORDER BY id",
         )?,
         text_rows("SELECT item_id||'|'||topic_id FROM item_topic ORDER BY item_id, topic_id")?,
@@ -918,6 +956,53 @@ mod tests {
         conn.execute("DELETE FROM sync_replay_active", []).unwrap();
     }
 
+    /// 工序1 的 epoch 分支覆盖(codex 复审 §7):done_at 非 NULL 时,压实基线必须补发
+    /// done_at set_field(HLC 晚于 create)且值零丢——`if let Some(d) = done` 分支此前
+    /// 全走 NULL、未被执行。compact 内含七表指纹自验收(现含 done_at),丢值会当场红。
+    #[test]
+    fn compact_preserves_done_at_and_emits_baseline_set_field() {
+        let mut p = peer("done-at");
+        let id = task::create(&mut p.conn, &mut p.clock, "干完的活", None, None, None).unwrap();
+        task::transition(&mut p.conn, &mut p.clock, &id, "done").unwrap();
+        // 工序1 无本地 writer,用一条合法远端 done_at set_field 注值(RFC3339)。
+        let done_ts = "2026-07-20T10:00:00.000Z";
+        let op = RemoteOp {
+            op_id: ulid::Ulid::new().to_string(),
+            hlc: crate::clock::Hlc {
+                wall_ms: 4_102_444_800_000,
+                counter: 0,
+                device_id: "RMTDEV0000000000000000000X".into(),
+            }
+            .encode(),
+            entity: "item".into(),
+            entity_id: id.clone(),
+            kind: "set_field".into(),
+            payload: json!({"field": "done_at", "value": done_ts}),
+            origin_seq: 1,
+        };
+        replay::apply_remote_op(&mut p.conn, &mut p.clock, &op).expect("done_at 落值");
+        compact(&mut p.conn).expect("带 done_at 压实必须成功(battery + 七表指纹自验收)");
+        let got: Option<String> = p
+            .conn
+            .query_row("SELECT done_at FROM items WHERE id = ?1", [&id], |r| r.get(0))
+            .unwrap();
+        assert_eq!(got.as_deref(), Some(done_ts), "压实后 done_at 不丢");
+        // 基线里该 item 的 done_at set_field 的 HLC 必须晚于它的 create(不被 LWW 反噬)。
+        let (create_hlc, done_hlc): (Option<String>, Option<String>) = p
+            .conn
+            .query_row(
+                "SELECT MAX(CASE WHEN kind='create' THEN hlc END), \
+                        MAX(CASE WHEN kind='set_field' AND json_extract(payload,'$.field')='done_at' THEN hlc END) \
+                 FROM oplog WHERE entity='item' AND entity_id = ?1",
+                [&id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        let create_hlc = create_hlc.expect("基线必有 create");
+        let done_hlc = done_hlc.expect("基线必有 done_at set_field");
+        assert!(done_hlc > create_hlc, "done_at 基线 set_field 的 HLC 必须晚于 create");
+    }
+
     /// space profile 随压实走(0028,space-name-sync-plan §4.5):行保留(七表指纹)、
     /// 基线恰一条 space op;**null 清名也合成**(行存在就合成,含 value:null——否则
     /// 压实把清名写丢背书,battery 双向审计当场红)。
@@ -1017,10 +1102,12 @@ mod tests {
                  ||'|'||(archived_at IS NOT NULL)||'|'||COALESCE(due_on,'∅') \
                  ||'|'||COALESCE(priority,'∅')||'|'||COALESCE(position,'∅') \
                  ||'|'||(sealed_at IS NOT NULL)||'|'||COALESCE(born_stage,'∅') \
+                 ||'|'||(done_at IS NOT NULL) \
                  FROM items ORDER BY id",
             ),
             rows(
                 "SELECT id||'|'||title||'|'||created_at||'|'||COALESCE(color,'∅') \
+                 ||'|'||COALESCE(position,'∅')||'|'||quote(kind) \
                  FROM topics ORDER BY id",
             ),
             rows("SELECT item_id||'|'||topic_id FROM item_topic ORDER BY item_id, topic_id"),

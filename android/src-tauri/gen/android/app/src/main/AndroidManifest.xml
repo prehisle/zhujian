@@ -43,6 +43,14 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="text/plain" />
             </intent-filter>
+            <!-- 4c 深链接:zhujian://open?…&item=… 唤起并定位条目。URI 由 MainActivity
+                 暂存成文件、前端 take_deep_link 一次性取走(照抄分享薄桥,冷/热启动都覆盖)。 -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="zhujian" android:host="open" />
+            </intent-filter>
         </activity>
 
         <provider

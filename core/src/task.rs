@@ -38,10 +38,23 @@ pub fn transition(conn: &mut Connection, clock: &mut Clock, id: &str, to: &str) 
     if changed != 1 {
         return Err(format!("流转失败:任务状态已变化(期望 {from}),已忽略本次操作"));
     }
-    // set_task_stage 同时把卡落到目标列末尾——stage 与 position 都变了。
-    oplog::item_set(&tx, clock, id, &["stage", "position"])?;
+    // set_task_stage 同时把卡落到目标列末尾——stage 与 position 都变了。进入 done 的那条
+    // 边(legal 已保证 from≠to,故 to=done ⟹ from≠done)还盖了 done_at(0030),一并发射:
+    // 读行发声取回刚盖的完成时刻(必非空,协议只增不清);其余流转不带 done_at。
+    oplog::item_set(&tx, clock, id, done_fields(to))?;
     tx.commit().map_err(|e| e.to_string())?;
     Ok(())
+}
+
+/// 一次改了 stage 的流转要发射的字段:进 done 时 stage+position+done_at,否则 stage+position。
+/// 只在真正换列(stage 变)时调用——列内拖动(stage 不变)走另一条只发 position 的路,
+/// 永不带 done_at(那张卡本就在 done、done_at 未变)。
+fn done_fields(to: &str) -> &'static [&'static str] {
+    if to == "done" {
+        &["stage", "position", "done_at"]
+    } else {
+        &["stage", "position"]
+    }
 }
 
 /// Reorder a card within (or into) a board column via drag-and-drop. `ordered_ids` is
@@ -130,9 +143,9 @@ pub fn reorder(
         return Err(format!("排序写入失败(任务 {id},影响 {n} 行)"));
     }
 
-    // 发射:只有被拖卡自己——跨列 stage+position 两条,列内一条。
+    // 发射:只有被拖卡自己——跨列 stage+position(+ done_at 若拖进 done)两三条,列内一条。
     if from_status != to_status {
-        oplog::item_set(&tx, clock, id, &["stage", "position"])?;
+        oplog::item_set(&tx, clock, id, done_fields(to_status))?;
     } else {
         oplog::item_set(&tx, clock, id, &["position"])?;
     }
@@ -296,8 +309,9 @@ pub fn reorder_visible(
         return Err(format!("排序写入失败(任务 {id},影响 {n} 行)"));
     }
 
+    // 跨列进 done 那条边一并发 done_at(同 reorder);筛选态列内拖动只 position。
     if from_status != to_status {
-        oplog::item_set(&tx, clock, id, &["stage", "position"])?;
+        oplog::item_set(&tx, clock, id, done_fields(to_status))?;
     } else {
         oplog::item_set(&tx, clock, id, &["position"])?;
     }
@@ -439,6 +453,7 @@ pub fn add_topic_by_title(
         None => {
             let minted = repo::insert_topic(&tx, title).map_err(|e| e.to_string())?;
             oplog::topic_create(&tx, clock, &minted)?;
+            crate::notes::assign_new_topic_position(&tx, clock, &minted)?; // 0031:落末键 + op
             minted
         }
     };
@@ -646,6 +661,69 @@ mod tests {
             .map(|(_, v)| v)
             .collect();
         assert_eq!(stages, vec!["doing", "done", "doing", "todo"].into_iter().map(serde_json::Value::from).collect::<Vec<_>>());
+    }
+
+    fn done_at(conn: &Connection, id: &str) -> Option<String> {
+        conn.query_row("SELECT done_at FROM items WHERE id = ?1", [id], |r| r.get(0)).unwrap()
+    }
+    /// 该条目发射过的 done_at set_field 值序列(按 HLC)。
+    fn done_at_ops(conn: &Connection, id: &str) -> Vec<serde_json::Value> {
+        field_ops(conn, id).into_iter().filter(|(f, _)| f == "done_at").map(|(_, v)| v).collect()
+    }
+
+    /// done_at(0030 writer):进 done 那条边盖完成时刻并发一条**非空** set_field;离开
+    /// done 不清(值保住、不发新 op);再进 done 刷新(第二条);非 done 流转从不带 done_at。
+    #[test]
+    fn done_at_stamped_on_entering_done_and_never_cleared() {
+        let (mut conn, mut clock) = fresh_db();
+        let id = mk(&conn, "干活");
+        // 进 doing:不碰 done_at。
+        transition(&mut conn, &mut clock, &id, "doing").unwrap();
+        assert!(done_at(&conn, &id).is_none());
+        assert!(done_at_ops(&conn, &id).is_empty(), "非 done 流转不发 done_at");
+        // 进 done:盖完成时刻 + 一条非空 done_at op。
+        transition(&mut conn, &mut clock, &id, "done").unwrap();
+        let t1 = done_at(&conn, &id).expect("进 done 盖了完成时刻");
+        assert_eq!(done_at_ops(&conn, &id), vec![serde_json::json!(t1)], "一条非空 done_at op");
+        // 离开 done:完成时刻天然保住,不发新的 done_at op。
+        transition(&mut conn, &mut clock, &id, "todo").unwrap();
+        assert_eq!(done_at(&conn, &id).as_deref(), Some(t1.as_str()), "离开 done 不清完成时刻");
+        assert_eq!(done_at_ops(&conn, &id).len(), 1, "离开 done 不发 done_at op");
+        // 再进 done:刷新完成时刻(第二条 op)。
+        transition(&mut conn, &mut clock, &id, "done").unwrap();
+        assert_eq!(done_at_ops(&conn, &id).len(), 2, "再进 done 刷新");
+        assert_eq!(done_at_ops(&conn, &id).last().unwrap(), &serde_json::json!(done_at(&conn, &id).unwrap()));
+    }
+
+    /// 拖动进 done 同样盖并发 done_at(reorder 跨列);done 列内重排(stage 不变)不带 done_at。
+    #[test]
+    fn reorder_into_done_stamps_done_at_but_within_done_does_not() {
+        let (mut conn, mut clock) = fresh_db();
+        let a = mk(&conn, "A");
+        let b = mk(&conn, "B");
+        transition(&mut conn, &mut clock, &b, "done").unwrap(); // b 先进 done
+        assert_eq!(done_at_ops(&conn, &b).len(), 1);
+        // a 从 todo 拖进 done 列(落 b 之前)。
+        reorder(&mut conn, &mut clock, &a, "todo", "done", &[b.clone()], &[a.clone(), b.clone()]).unwrap();
+        assert_eq!(done_at_ops(&conn, &a).len(), 1, "拖进 done 盖并发 done_at");
+        assert!(!done_at_ops(&conn, &a)[0].is_null());
+        // b 在 done 列内与 a 换序 —— stage 不变,不该再发 done_at。
+        reorder(&mut conn, &mut clock, &b, "done", "done", &[a.clone(), b.clone()], &[b.clone(), a.clone()]).unwrap();
+        assert_eq!(done_at_ops(&conn, &b).len(), 1, "done 列内拖动不发 done_at");
+    }
+
+    /// 筛选态(reorder_visible)跨列拖进 done 同样盖并发 done_at——闭合 done_fields 的第三个入口。
+    #[test]
+    fn reorder_visible_into_done_stamps_done_at() {
+        let (mut conn, mut clock) = fresh_db();
+        let x = mk(&conn, "X"); // todo
+        let d = mk(&conn, "D");
+        transition(&mut conn, &mut clock, &d, "done").unwrap(); // done 列已有 d
+        // x 从 todo 拖进 done(可见基准 [d]、可见新序 [x,d],x 落 d 前)。
+        reorder_visible(&mut conn, &mut clock, &x, "todo", "done", &[d.clone()], &[x.clone(), d.clone()]).unwrap();
+        assert_eq!(stage_of(&conn, &x), "done");
+        assert_eq!(done_at_ops(&conn, &x).len(), 1, "筛选态拖进 done 盖并发 done_at");
+        assert!(!done_at_ops(&conn, &x)[0].is_null());
     }
 
     #[test]
@@ -859,18 +937,19 @@ mod tests {
     fn add_topic_by_title_atomic_reuse_and_guards() {
         let (mut conn, mut clock) = fresh_db();
         let id = mk(&conn, "要打标签的任务");
-        // 新标题:建标签+挂链一步原子(topic create + link_add 两条 op)。
+        // 新标题:建标签(create + position set_field,0031)+ 挂链原子。
         let t1 = add_topic_by_title(&mut conn, &mut clock, &id, " 新标签 ").unwrap();
         let tops = ops_for(&conn, "topic", &t1);
-        assert_eq!(tops.len(), 1);
+        assert_eq!(tops.len(), 2, "首建:create + position");
         assert_eq!(tops[0].kind, "create");
+        assert_eq!(tops[1].payload["field"], "position");
         let lops = ops_for(&conn, "link", &format!("{id}:{t1}"));
         assert_eq!(lops.len(), 1);
         assert_eq!(lops[0].kind, "link_add");
         // 同名复用:不铸重复标签;已挂则连 link op 都不再发(幂等)。
         let t1b = add_topic_by_title(&mut conn, &mut clock, &id, "新标签").unwrap();
         assert_eq!(t1b, t1);
-        assert_eq!(ops_for(&conn, "topic", &t1).len(), 1, "复用不再发 topic op");
+        assert_eq!(ops_for(&conn, "topic", &t1).len(), 2, "复用不再发 topic op");
         assert_eq!(ops_for(&conn, "link", &format!("{id}:{t1}")).len(), 1, "已挂不再发 link op");
         // 空名/超长响亮拒;目标不存在或已归档拒且不留半成品标签。
         assert!(add_topic_by_title(&mut conn, &mut clock, &id, "  ").is_err());
