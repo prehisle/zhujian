@@ -5,7 +5,7 @@
     <!-- 页面级缩放锁死(143):此前没锁 user-scalable,捏合缩放的是整张页面且退出
          大图后不复位(「主界面也被放大」);大图的缩放由查看器自己的手势实现。 -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-    <title>朱笺</title>
+    <title>朱简</title>
     <!-- P4-c 捕获页 + 统一时间轴 + 勾标完成(android-plan §0 ②③④);诊断面(P4-b)收进
          页脚「诊断」入口。令牌取值对齐桌面 src/theme.css「纸与朱墨」,单位手机化。 -->
     <style>
@@ -633,7 +633,7 @@
   </head>
   <body>
     <header>
-      <h1><span class="seal">朱笺</span><button id="space-chip" class="space-chip" hidden>默认空间</button></h1>
+      <h1><span class="seal">朱简</span><button id="space-chip" class="space-chip" hidden>默认空间</button></h1>
       <div>
         <button id="topics-toggle" class="ghost">标签</button>
         <button id="search-toggle" class="ghost">搜索</button>
@@ -710,7 +710,7 @@
                    autocapitalize="off" autocomplete="off" />
             <button id="sync-join-btn">加入</button>
           </div>
-          <p class="fine">在电脑朱笺的「同步」里点「添加设备」,把服务器地址和配对码抄到上面。</p>
+          <p class="fine">在电脑朱简的「同步」里点「添加设备」,把服务器地址和配对码抄到上面。</p>
         </div>
         <div id="sync-create" hidden>
           <div class="row">
@@ -859,28 +859,28 @@
       <p id="gate-checking" class="muted">正在检查本机空间…</p>
       <div id="gate-blocked" hidden>
         <div id="gate-upgrade" hidden>
-          <h2>需要更新朱笺</h2>
+          <h2>需要更新朱简</h2>
           <p id="gate-msg-upgrade" class="gate-msg"></p>
-          <p>本机数据由更新版本的朱笺创建,当前装的是旧版:请到官网 <b>zhujian.app</b> 下载安装最新版,数据即可继续使用。</p>
+          <p>本机数据由更新版本的朱简创建,当前装的是旧版:请到官网 <b>zhujian.app</b> 下载安装最新版,数据即可继续使用。</p>
           <p class="fine">不要清除数据——清除会把这些较新的记录永久删掉。</p>
         </div>
         <div id="gate-retry" hidden>
           <h2>启动暂时失败</h2>
           <p id="gate-msg-retry" class="gate-msg"></p>
-          <p>这是环境问题(例如存储空间不足),记录数据本身无恙:请释放存储空间后,完全关闭朱笺再重新打开。</p>
+          <p>这是环境问题(例如存储空间不足),记录数据本身无恙:请释放存储空间后,完全关闭朱简再重新打开。</p>
           <p class="fine">不要清除数据——重试即可恢复。</p>
         </div>
         <div id="gate-repair" hidden>
           <h2>升级遇到问题</h2>
           <p id="gate-msg-repair" class="gate-msg"></p>
-          <p>记录数据完好,是这一版朱笺升级数据时出了问题:请到官网 <b>zhujian.app</b> 重新下载安装最新版再试。</p>
+          <p>记录数据完好,是这一版朱简升级数据时出了问题:请到官网 <b>zhujian.app</b> 重新下载安装最新版再试。</p>
           <p class="fine">不要清除数据——问题在程序,不在你的记录。</p>
         </div>
         <div id="gate-reset" hidden>
           <h2>本机空间数据异常</h2>
           <p id="gate-msg-reset" class="gate-msg"></p>
-          <p>本版本不修复受损数据:请到 系统设置 → 应用 → 朱笺 → 存储 → <b>清除数据</b>,再重新打开并配对。</p>
-          <p class="fine">清除后,本机尚未被其他设备实际接收的记录将永久丢失;服务器不是完整备份。请先在桌面朱笺确认数据完整、并保持它在线,再清除。</p>
+          <p>本版本不修复受损数据:请到 系统设置 → 应用 → 朱简 → 存储 → <b>清除数据</b>,再重新打开并配对。</p>
+          <p class="fine">清除后,本机尚未被其他设备实际接收的记录将永久丢失;服务器不是完整备份。请先在桌面朱简确认数据完整、并保持它在线,再清除。</p>
         </div>
       </div>
     </div>

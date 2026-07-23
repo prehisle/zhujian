@@ -89,7 +89,7 @@ impl Spaces {
     pub fn get_writable(&self, id: &str) -> Result<Arc<ActiveRuntime>, String> {
         let rt = self.sup.get(id)?;
         if let Some(e) = rt.restart_required() {
-            return Err(format!("此空间的初始同步已完成,但需要重启朱笺完成装配:{e}"));
+            return Err(format!("此空间的初始同步已完成,但需要重启朱简完成装配:{e}"));
         }
         Ok(rt)
     }
@@ -130,10 +130,10 @@ pub fn move_between(
         ));
     }
     // ReopenRequired 的写闸(space-entry-plan §3.2):两端任一 runtime 的连接已判
-    // 「须重开」,移动的写不能落在它上面——重启朱笺后再移。
+    // 「须重开」,移动的写不能落在它上面——重启朱简后再移。
     for rt in [&src, &dst] {
         if let Some(e) = rt.restart_required() {
-            return Err(format!("空间需要重启朱笺完成初始同步装配,暂不能移动:{e}"));
+            return Err(format!("空间需要重启朱简完成初始同步装配,暂不能移动:{e}"));
         }
     }
     // 原语一:导出(只持源锁;两道预检是业务结果,分道返回)。
@@ -142,7 +142,7 @@ pub fn move_between(
         // ReopenRequired 锁内复核(space-entry-plan §3.2,codex 二轮 M2;三段各自
         // 复核——旗可能在任意两段之间落下)。
         if let Some(e) = src.restart_required() {
-            return Err(format!("当前空间需要重启朱笺完成初始同步装配,暂不能移动:{e}"));
+            return Err(format!("当前空间需要重启朱简完成初始同步装配,暂不能移动:{e}"));
         }
         match zhujian_core::move_item::export(&mut conn, item_id)? {
             zhujian_core::move_item::ExportOutcome::Ready(p) => p,
@@ -158,7 +158,7 @@ pub fn move_between(
     let new_id = {
         let (mut conn, mut clock) = dst.write_locks();
         if let Some(e) = dst.restart_required() {
-            return Err(format!("目标空间需要重启朱笺完成初始同步装配,暂不能移动:{e}"));
+            return Err(format!("目标空间需要重启朱简完成初始同步装配,暂不能移动:{e}"));
         }
         zhujian_core::move_item::import(&mut conn, &mut clock, &pkg)?
     };
@@ -170,7 +170,7 @@ pub fn move_between(
         let (mut conn, mut clock) = src.write_locks();
         if let Some(e) = src.restart_required() {
             // 目标已建、源删被旗挡:如实走 unconfirmed 家族(绝不丢 new_id)。
-            Err(format!("源空间需要重启朱笺完成初始同步装配,删除未执行:{e}"))
+            Err(format!("源空间需要重启朱简完成初始同步装配,删除未执行:{e}"))
         } else {
             zhujian_core::move_item::finalize_source(&mut conn, &mut clock, &pkg)
         }

@@ -100,7 +100,7 @@ fn capture_note(
     // ReopenRequired 复核在锁内(space-entry-plan §3.2,codex 二轮 M2:旗与导入共
     // 临界区,排队在锁上的写拿到锁时旗必已在;锁前查有「查后落旗抢锁」竞态)。
     if let Some(e) = rt.restart_required() {
-        return Err(format!("此空间需要重启朱笺完成初始同步装配:{e}"));
+        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
     }
     notes::capture(&mut conn, &mut clk, &content)
 }
@@ -292,7 +292,7 @@ fn delete_note(space_id: String, id: String, spaces: State<'_, Spaces>) -> Resul
     // ReopenRequired 复核在锁内(space-entry-plan §3.2,codex 二轮 M2:旗与导入共
     // 临界区,排队在锁上的写拿到锁时旗必已在;锁前查有「查后落旗抢锁」竞态)。
     if let Some(e) = rt.restart_required() {
-        return Err(format!("此空间需要重启朱笺完成初始同步装配:{e}"));
+        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
     }
     notes::delete_inbox(&mut conn, &mut clk, &id)
 }
@@ -307,7 +307,7 @@ fn archive_note(space_id: String, id: String, spaces: State<'_, Spaces>) -> Resu
     // ReopenRequired 复核在锁内(space-entry-plan §3.2,codex 二轮 M2:旗与导入共
     // 临界区,排队在锁上的写拿到锁时旗必已在;锁前查有「查后落旗抢锁」竞态)。
     if let Some(e) = rt.restart_required() {
-        return Err(format!("此空间需要重启朱笺完成初始同步装配:{e}"));
+        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
     }
     notes::archive(&mut conn, &mut clk, &id)
 }
@@ -321,7 +321,7 @@ fn restore_note(space_id: String, id: String, spaces: State<'_, Spaces>) -> Resu
     // ReopenRequired 复核在锁内(space-entry-plan §3.2,codex 二轮 M2:旗与导入共
     // 临界区,排队在锁上的写拿到锁时旗必已在;锁前查有「查后落旗抢锁」竞态)。
     if let Some(e) = rt.restart_required() {
-        return Err(format!("此空间需要重启朱笺完成初始同步装配:{e}"));
+        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
     }
     notes::restore(&mut conn, &mut clk, &id)
 }
@@ -394,7 +394,7 @@ fn purge_note(space_id: String, id: String, spaces: State<'_, Spaces>) -> Result
     // ReopenRequired 复核在锁内(space-entry-plan §3.2,codex 二轮 M2:旗与导入共
     // 临界区,排队在锁上的写拿到锁时旗必已在;锁前查有「查后落旗抢锁」竞态)。
     if let Some(e) = rt.restart_required() {
-        return Err(format!("此空间需要重启朱笺完成初始同步装配:{e}"));
+        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
     }
     notes::purge(&mut conn, &mut clk, &id)
 }
@@ -408,7 +408,7 @@ fn purge_archived(space_id: String, spaces: State<'_, Spaces>) -> Result<usize, 
     // ReopenRequired 复核在锁内(space-entry-plan §3.2,codex 二轮 M2:旗与导入共
     // 临界区,排队在锁上的写拿到锁时旗必已在;锁前查有「查后落旗抢锁」竞态)。
     if let Some(e) = rt.restart_required() {
-        return Err(format!("此空间需要重启朱笺完成初始同步装配:{e}"));
+        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
     }
     notes::purge_all_archived(&mut conn, &mut clk)
 }
@@ -491,7 +491,7 @@ fn update_task_status(space_id: String, id: String, to: String, spaces: State<'_
     // ReopenRequired 复核在锁内(space-entry-plan §3.2,codex 二轮 M2:旗与导入共
     // 临界区,排队在锁上的写拿到锁时旗必已在;锁前查有「查后落旗抢锁」竞态)。
     if let Some(e) = rt.restart_required() {
-        return Err(format!("此空间需要重启朱笺完成初始同步装配:{e}"));
+        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
     }
     task::transition(&mut conn, &mut clk, &id, &to)
 }
@@ -515,7 +515,7 @@ fn reorder_task(space_id: String,
     // ReopenRequired 复核在锁内(space-entry-plan §3.2,codex 二轮 M2:旗与导入共
     // 临界区,排队在锁上的写拿到锁时旗必已在;锁前查有「查后落旗抢锁」竞态)。
     if let Some(e) = rt.restart_required() {
-        return Err(format!("此空间需要重启朱笺完成初始同步装配:{e}"));
+        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
     }
     task::reorder(
         &mut conn,
@@ -548,7 +548,7 @@ fn reorder_task_visible(space_id: String,
     // ReopenRequired 复核在锁内(space-entry-plan §3.2,codex 二轮 M2:旗与导入共
     // 临界区,排队在锁上的写拿到锁时旗必已在;锁前查有「查后落旗抢锁」竞态)。
     if let Some(e) = rt.restart_required() {
-        return Err(format!("此空间需要重启朱笺完成初始同步装配:{e}"));
+        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
     }
     task::reorder_visible(
         &mut conn,
@@ -570,7 +570,7 @@ fn archive_task(space_id: String, id: String, spaces: State<'_, Spaces>) -> Resu
     // ReopenRequired 复核在锁内(space-entry-plan §3.2,codex 二轮 M2:旗与导入共
     // 临界区,排队在锁上的写拿到锁时旗必已在;锁前查有「查后落旗抢锁」竞态)。
     if let Some(e) = rt.restart_required() {
-        return Err(format!("此空间需要重启朱笺完成初始同步装配:{e}"));
+        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
     }
     task::archive(&mut conn, &mut clk, &id)
 }
@@ -583,7 +583,7 @@ fn restore_task(space_id: String, id: String, spaces: State<'_, Spaces>) -> Resu
     // ReopenRequired 复核在锁内(space-entry-plan §3.2,codex 二轮 M2:旗与导入共
     // 临界区,排队在锁上的写拿到锁时旗必已在;锁前查有「查后落旗抢锁」竞态)。
     if let Some(e) = rt.restart_required() {
-        return Err(format!("此空间需要重启朱笺完成初始同步装配:{e}"));
+        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
     }
     task::restore(&mut conn, &mut clk, &id)
 }
@@ -597,7 +597,7 @@ fn purge_task(space_id: String, id: String, spaces: State<'_, Spaces>) -> Result
     // ReopenRequired 复核在锁内(space-entry-plan §3.2,codex 二轮 M2:旗与导入共
     // 临界区,排队在锁上的写拿到锁时旗必已在;锁前查有「查后落旗抢锁」竞态)。
     if let Some(e) = rt.restart_required() {
-        return Err(format!("此空间需要重启朱笺完成初始同步装配:{e}"));
+        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
     }
     task::purge(&mut conn, &mut clk, &id)
 }
@@ -611,7 +611,7 @@ fn purge_archived_tasks(space_id: String, spaces: State<'_, Spaces>) -> Result<u
     // ReopenRequired 复核在锁内(space-entry-plan §3.2,codex 二轮 M2:旗与导入共
     // 临界区,排队在锁上的写拿到锁时旗必已在;锁前查有「查后落旗抢锁」竞态)。
     if let Some(e) = rt.restart_required() {
-        return Err(format!("此空间需要重启朱笺完成初始同步装配:{e}"));
+        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
     }
     task::purge_all(&mut conn, &mut clk)
 }
@@ -625,7 +625,7 @@ fn seal_task(space_id: String, id: String, spaces: State<'_, Spaces>) -> Result<
     // ReopenRequired 复核在锁内(space-entry-plan §3.2,codex 二轮 M2:旗与导入共
     // 临界区,排队在锁上的写拿到锁时旗必已在;锁前查有「查后落旗抢锁」竞态)。
     if let Some(e) = rt.restart_required() {
-        return Err(format!("此空间需要重启朱笺完成初始同步装配:{e}"));
+        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
     }
     task::seal(&mut conn, &mut clk, &id)
 }
@@ -638,7 +638,7 @@ fn seal_done_tasks(space_id: String, spaces: State<'_, Spaces>) -> Result<usize,
     // ReopenRequired 复核在锁内(space-entry-plan §3.2,codex 二轮 M2:旗与导入共
     // 临界区,排队在锁上的写拿到锁时旗必已在;锁前查有「查后落旗抢锁」竞态)。
     if let Some(e) = rt.restart_required() {
-        return Err(format!("此空间需要重启朱笺完成初始同步装配:{e}"));
+        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
     }
     task::seal_all(&mut conn, &mut clk)
 }
@@ -652,7 +652,7 @@ fn unseal_task(space_id: String, id: String, spaces: State<'_, Spaces>) -> Resul
     // ReopenRequired 复核在锁内(space-entry-plan §3.2,codex 二轮 M2:旗与导入共
     // 临界区,排队在锁上的写拿到锁时旗必已在;锁前查有「查后落旗抢锁」竞态)。
     if let Some(e) = rt.restart_required() {
-        return Err(format!("此空间需要重启朱笺完成初始同步装配:{e}"));
+        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
     }
     task::unseal(&mut conn, &mut clk, &id)
 }
@@ -686,7 +686,7 @@ fn create_task(space_id: String,
     // ReopenRequired 复核在锁内(space-entry-plan §3.2,codex 二轮 M2:旗与导入共
     // 临界区,排队在锁上的写拿到锁时旗必已在;锁前查有「查后落旗抢锁」竞态)。
     if let Some(e) = rt.restart_required() {
-        return Err(format!("此空间需要重启朱笺完成初始同步装配:{e}"));
+        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
     }
     task::create(&mut conn, &mut clk, &title, due_on.as_deref(), priority, topic_id.as_deref())
 }
@@ -700,7 +700,7 @@ fn rename_task(space_id: String, id: String, title: String, spaces: State<'_, Sp
     // ReopenRequired 复核在锁内(space-entry-plan §3.2,codex 二轮 M2:旗与导入共
     // 临界区,排队在锁上的写拿到锁时旗必已在;锁前查有「查后落旗抢锁」竞态)。
     if let Some(e) = rt.restart_required() {
-        return Err(format!("此空间需要重启朱笺完成初始同步装配:{e}"));
+        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
     }
     task::rename(&mut conn, &mut clk, &id, &title)
 }
@@ -715,7 +715,7 @@ fn set_task_due(space_id: String, id: String, due_on: Option<String>, spaces: St
     // ReopenRequired 复核在锁内(space-entry-plan §3.2,codex 二轮 M2:旗与导入共
     // 临界区,排队在锁上的写拿到锁时旗必已在;锁前查有「查后落旗抢锁」竞态)。
     if let Some(e) = rt.restart_required() {
-        return Err(format!("此空间需要重启朱笺完成初始同步装配:{e}"));
+        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
     }
     task::set_due(&mut conn, &mut clk, &id, due_on.as_deref())
 }
@@ -729,7 +729,7 @@ fn set_task_priority(space_id: String, id: String, priority: Option<i64>, spaces
     // ReopenRequired 复核在锁内(space-entry-plan §3.2,codex 二轮 M2:旗与导入共
     // 临界区,排队在锁上的写拿到锁时旗必已在;锁前查有「查后落旗抢锁」竞态)。
     if let Some(e) = rt.restart_required() {
-        return Err(format!("此空间需要重启朱笺完成初始同步装配:{e}"));
+        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
     }
     task::set_priority(&mut conn, &mut clk, &id, priority)
 }
@@ -743,7 +743,7 @@ fn add_task_topic(space_id: String, id: String, topic_id: String, spaces: State<
     // ReopenRequired 复核在锁内(space-entry-plan §3.2,codex 二轮 M2:旗与导入共
     // 临界区,排队在锁上的写拿到锁时旗必已在;锁前查有「查后落旗抢锁」竞态)。
     if let Some(e) = rt.restart_required() {
-        return Err(format!("此空间需要重启朱笺完成初始同步装配:{e}"));
+        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
     }
     task::add_topic(&mut conn, &mut clk, &id, &topic_id)
 }
@@ -757,7 +757,7 @@ fn remove_task_topic(space_id: String, id: String, topic_id: String, spaces: Sta
     // ReopenRequired 复核在锁内(space-entry-plan §3.2,codex 二轮 M2:旗与导入共
     // 临界区,排队在锁上的写拿到锁时旗必已在;锁前查有「查后落旗抢锁」竞态)。
     if let Some(e) = rt.restart_required() {
-        return Err(format!("此空间需要重启朱笺完成初始同步装配:{e}"));
+        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
     }
     task::remove_topic(&mut conn, &mut clk, &id, &topic_id)
 }
@@ -773,7 +773,7 @@ fn edit_note(space_id: String, id: String, content: String, spaces: State<'_, Sp
     // ReopenRequired 复核在锁内(space-entry-plan §3.2,codex 二轮 M2:旗与导入共
     // 临界区,排队在锁上的写拿到锁时旗必已在;锁前查有「查后落旗抢锁」竞态)。
     if let Some(e) = rt.restart_required() {
-        return Err(format!("此空间需要重启朱笺完成初始同步装配:{e}"));
+        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
     }
     notes::edit(&mut conn, &mut clk, &id, &content)
 }
@@ -810,7 +810,7 @@ fn promote_note_to_task(space_id: String, id: String, title: String, spaces: Sta
     // ReopenRequired 复核在锁内(space-entry-plan §3.2,codex 二轮 M2:旗与导入共
     // 临界区,排队在锁上的写拿到锁时旗必已在;锁前查有「查后落旗抢锁」竞态)。
     if let Some(e) = rt.restart_required() {
-        return Err(format!("此空间需要重启朱笺完成初始同步装配:{e}"));
+        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
     }
     notes::promote_to_task(&mut conn, &mut clk, &id, &title)
 }
@@ -827,7 +827,7 @@ fn revert_task_to_inbox(space_id: String, id: String, spaces: State<'_, Spaces>)
     // ReopenRequired 复核在锁内(space-entry-plan §3.2,codex 二轮 M2:旗与导入共
     // 临界区,排队在锁上的写拿到锁时旗必已在;锁前查有「查后落旗抢锁」竞态)。
     if let Some(e) = rt.restart_required() {
-        return Err(format!("此空间需要重启朱笺完成初始同步装配:{e}"));
+        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
     }
     notes::revert_task_to_inbox(&mut conn, &mut clk, &id)
 }
@@ -880,7 +880,7 @@ fn file_note_to_topic(space_id: String,
     // ReopenRequired 复核在锁内(space-entry-plan §3.2,codex 二轮 M2:旗与导入共
     // 临界区,排队在锁上的写拿到锁时旗必已在;锁前查有「查后落旗抢锁」竞态)。
     if let Some(e) = rt.restart_required() {
-        return Err(format!("此空间需要重启朱笺完成初始同步装配:{e}"));
+        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
     }
     notes::file_to_topic(&mut conn, &mut clk, &id, topic_id.as_deref(), new_title.as_deref())
 }
@@ -894,7 +894,7 @@ fn remove_note_topic(space_id: String, id: String, topic_id: String, spaces: Sta
     let (mut conn, mut clk) = rt.write_locks();
     // ReopenRequired 复核在锁内(同 remove_task_topic;旗与导入共临界区)。
     if let Some(e) = rt.restart_required() {
-        return Err(format!("此空间需要重启朱笺完成初始同步装配:{e}"));
+        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
     }
     notes::remove_topic(&mut conn, &mut clk, &id, &topic_id)
 }
@@ -937,7 +937,7 @@ fn create_topic(space_id: String, title: String, spaces: State<'_, Spaces>) -> R
     // ReopenRequired 复核在锁内(space-entry-plan §3.2,codex 二轮 M2:旗与导入共
     // 临界区,排队在锁上的写拿到锁时旗必已在;锁前查有「查后落旗抢锁」竞态)。
     if let Some(e) = rt.restart_required() {
-        return Err(format!("此空间需要重启朱笺完成初始同步装配:{e}"));
+        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
     }
     notes::create_topic(&mut conn, &mut clk, &title)
 }
@@ -950,7 +950,7 @@ fn update_topic(space_id: String, id: String, title: String, spaces: State<'_, S
     // ReopenRequired 复核在锁内(space-entry-plan §3.2,codex 二轮 M2:旗与导入共
     // 临界区,排队在锁上的写拿到锁时旗必已在;锁前查有「查后落旗抢锁」竞态)。
     if let Some(e) = rt.restart_required() {
-        return Err(format!("此空间需要重启朱笺完成初始同步装配:{e}"));
+        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
     }
     notes::rename_topic(&mut conn, &mut clk, &id, &title)
 }
@@ -968,7 +968,7 @@ fn set_topic_color(space_id: String,
     // ReopenRequired 复核在锁内(space-entry-plan §3.2,codex 二轮 M2:旗与导入共
     // 临界区,排队在锁上的写拿到锁时旗必已在;锁前查有「查后落旗抢锁」竞态)。
     if let Some(e) = rt.restart_required() {
-        return Err(format!("此空间需要重启朱笺完成初始同步装配:{e}"));
+        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
     }
     notes::set_topic_color(&mut conn, &mut clk, &id, color)
 }
@@ -987,7 +987,7 @@ fn reorder_topic(
     let rt = spaces.get(&space_id)?;
     let (mut conn, mut clk) = rt.write_locks();
     if let Some(e) = rt.restart_required() {
-        return Err(format!("此空间需要重启朱笺完成初始同步装配:{e}"));
+        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
     }
     notes::reorder_topic(&mut conn, &mut clk, &id, prev_id.as_deref(), next_id.as_deref())
 }
@@ -1005,7 +1005,7 @@ fn set_topic_kind(
     let rt = spaces.get(&space_id)?;
     let (mut conn, mut clk) = rt.write_locks();
     if let Some(e) = rt.restart_required() {
-        return Err(format!("此空间需要重启朱笺完成初始同步装配:{e}"));
+        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
     }
     notes::set_topic_kind(&mut conn, &mut clk, &id, kind)
 }
@@ -1020,7 +1020,7 @@ fn delete_topic(space_id: String, id: String, spaces: State<'_, Spaces>) -> Resu
     // ReopenRequired 复核在锁内(space-entry-plan §3.2,codex 二轮 M2:旗与导入共
     // 临界区,排队在锁上的写拿到锁时旗必已在;锁前查有「查后落旗抢锁」竞态)。
     if let Some(e) = rt.restart_required() {
-        return Err(format!("此空间需要重启朱笺完成初始同步装配:{e}"));
+        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
     }
     notes::delete_topic(&mut conn, &mut clk, &id)
 }
@@ -1040,7 +1040,7 @@ fn merge_topics(space_id: String,
     // ReopenRequired 复核在锁内(space-entry-plan §3.2,codex 二轮 M2:旗与导入共
     // 临界区,排队在锁上的写拿到锁时旗必已在;锁前查有「查后落旗抢锁」竞态)。
     if let Some(e) = rt.restart_required() {
-        return Err(format!("此空间需要重启朱笺完成初始同步装配:{e}"));
+        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
     }
     notes::merge_topics(&mut conn, &mut clk, &source_ids, &target_id, new_title.as_deref())
 }
@@ -1071,7 +1071,7 @@ fn add_item_image(space_id: String,
     // ReopenRequired 复核在锁内(space-entry-plan §3.2,codex 二轮 M2:旗与导入共
     // 临界区,排队在锁上的写拿到锁时旗必已在;锁前查有「查后落旗抢锁」竞态)。
     if let Some(e) = rt.restart_required() {
-        return Err(format!("此空间需要重启朱笺完成初始同步装配:{e}"));
+        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
     }
     let (id, seq) = images::attach(&mut conn, &mut clk, &item_id, &bytes, &mime)?;
     Ok(ImageMeta { id, seq, mime })
@@ -1111,7 +1111,7 @@ fn delete_item_image(space_id: String, image_id: String, spaces: State<'_, Space
     // ReopenRequired 复核在锁内(space-entry-plan §3.2,codex 二轮 M2:旗与导入共
     // 临界区,排队在锁上的写拿到锁时旗必已在;锁前查有「查后落旗抢锁」竞态)。
     if let Some(e) = rt.restart_required() {
-        return Err(format!("此空间需要重启朱笺完成初始同步装配:{e}"));
+        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
     }
     images::remove(&mut conn, &mut clk, &image_id)
 }
@@ -1157,7 +1157,7 @@ fn sync_status(space_id: String, spaces: State<'_, Spaces>) -> Result<sync::tran
 fn account_free_desktop(spaces: &Spaces, exclude: Option<&str>, acc: &str) -> Result<(), String> {
     if spaces.reserved_accounts.lock().expect("reserved mutex poisoned").contains(acc) {
         return Err(
-            "这个账户正在(或刚刚)被「加入空间」使用——空间=账户,一空间一账户;若刚才加入失败,重启朱笺后再试"
+            "这个账户正在(或刚刚)被「加入空间」使用——空间=账户,一空间一账户;若刚才加入失败,重启朱简后再试"
                 .into(),
         );
     }
@@ -1242,7 +1242,7 @@ async fn sync_create_account(
     let _life = spaces.lifecycle.lock().await;
     // ReopenRequired 复核在 lifecycle 取得之后(codex 二轮 M2:等待锁期间旗可能落下)。
     if let Some(e) = rt.restart_required() {
-        return Err(format!("此空间需要重启朱笺完成初始同步装配:{e}"));
+        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
     }
     let code = sync::transport::create_account(&rt.db, &server_url).await?;
     let _ = rt.control.send(sync::transport::Control::Reconfigured).await;
@@ -1262,7 +1262,7 @@ async fn sync_pair_start(space_id: String, spaces: State<'_, Spaces>) -> Result<
     let _life = spaces.lifecycle.lock().await;
     // ReopenRequired 复核在 lifecycle 取得之后(codex 二轮 M2:等待锁期间旗可能落下)。
     if let Some(e) = rt.restart_required() {
-        return Err(format!("此空间需要重启朱笺完成初始同步装配:{e}"));
+        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
     }
     let (tx, rx) = tokio::sync::oneshot::channel();
     rt.control
@@ -1314,7 +1314,7 @@ async fn sync_pair_join(
     let _life = spaces.lifecycle.lock().await;
     // ReopenRequired 复核在 lifecycle 取得之后(codex 二轮 M2:等待锁期间旗可能落下)。
     if let Some(e) = rt.restart_required() {
-        return Err(format!("此空间需要重启朱笺完成初始同步装配:{e}"));
+        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
     }
     let spaces_ref: &Spaces = &spaces;
     let gate_space = space_id.clone();
@@ -1482,7 +1482,7 @@ async fn join_space_inner(
                 release_join_reservation(spaces, &reserved);
                 e
             }
-            Err(c) => format!("{e};且暂存清理失败(重启朱笺后自动清理):{c}"),
+            Err(c) => format!("{e};且暂存清理失败(重启朱简后自动清理):{c}"),
         });
     }
 
@@ -1591,7 +1591,7 @@ async fn join_space_inner(
                     // 多次孤儿可能触发设备上限——如实指路,不保证无条件重来成功。
                     "已取消加入空间。若配对已完成,账户侧会留下一台闲置设备注册;重复取消后加不进时,联系运营者吊销闲置设备再试".into()
                 }
-                Err(c) => format!("已取消加入,但暂存清理失败(重启朱笺后自动清理):{c}"),
+                Err(c) => format!("已取消加入,但暂存清理失败(重启朱简后自动清理):{c}"),
             });
         }
         Waited::TransportGone(why) => {
@@ -1602,7 +1602,7 @@ async fn join_space_inner(
                     release_join_reservation(spaces, &reserved);
                     format!("加入失败:{err}")
                 }
-                Err(c) => format!("加入失败:{err};且暂存清理失败(重启朱笺后自动清理):{c}"),
+                Err(c) => format!("加入失败:{err};且暂存清理失败(重启朱简后自动清理):{c}"),
             });
         }
     };
@@ -1616,7 +1616,7 @@ async fn join_space_inner(
         Ok(c) => c,
         Err(f) => {
             // 既不 publish 也不假装已清(§3.1 fail-closed);reservation 保留到重启。
-            return Err(format!("加入未完成(收尾失败,重启朱笺后重试):{}", f.error));
+            return Err(format!("加入未完成(收尾失败,重启朱简后重试):{}", f.error));
         }
     };
     let published = match closed.publish() {
@@ -1624,8 +1624,8 @@ async fn join_space_inner(
         Err((closed, e)) => {
             // publish 失败(§3.5:本进程对该账户 fail-closed 到重启)。
             return Err(match closed.abort() {
-                Ok(()) => format!("{e}(暂存已清理;重启朱笺后可重试加入)"),
-                Err(c) => format!("{e};且暂存清理失败(重启朱笺后自动清理):{c}"),
+                Ok(()) => format!("{e}(暂存已清理;重启朱简后可重试加入)"),
+                Err(c) => format!("{e};且暂存清理失败(重启朱简后自动清理):{c}"),
             });
         }
     };
@@ -1685,7 +1685,7 @@ async fn join_space_inner(
         // 二次加入同一账户,必须拒到重启(§3.5)。
         Err(e) => Ok(JoinOutcome::PublishedNeedsRestart {
             space_id: id,
-            error: format!("空间已加入,但装配失败:{e}——重启朱笺后空间会出现"),
+            error: format!("空间已加入,但装配失败:{e}——重启朱简后空间会出现"),
         }),
     }
 }
@@ -1705,14 +1705,14 @@ async fn sync_set_server(
     let _life = spaces.lifecycle.lock().await;
     // ReopenRequired 复核在 lifecycle 取得之后(codex 二轮 M2:等待锁期间旗可能落下)。
     if let Some(e) = rt.restart_required() {
-        return Err(format!("此空间需要重启朱笺完成初始同步装配:{e}"));
+        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
     }
     {
         let conn = rt.db.lock().expect("db mutex poisoned");
         // ReopenRequired 复核在 db 锁内(codex 三轮 M2:set_server 是裸 db.lock 写,
         // 不走 write_locks,锁前预检有「查后落旗抢锁」竞态)。
         if let Some(e) = rt.restart_required() {
-            return Err(format!("此空间需要重启朱笺完成初始同步装配:{e}"));
+            return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
         }
         sync::transport::set_server(&conn, &server_url)?;
     }
@@ -1873,7 +1873,7 @@ fn rename_space(
     // ReopenRequired 复核在锁内(space-entry-plan §3.2,codex 二轮 M2:旗与导入共
     // 临界区,排队在锁上的写拿到锁时旗必已在;锁前查有「查后落旗抢锁」竞态)。
     if let Some(e) = rt.restart_required() {
-        return Err(format!("此空间需要重启朱笺完成初始同步装配:{e}"));
+        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
     }
         spaces::set_space_name(&mut conn, &mut clk, &name)?;
     }
@@ -1988,7 +1988,7 @@ fn show_window<R: Runtime>(app: &AppHandle<R>, label: &str) {
     window.set_focus().expect("focus window");
 }
 
-/// 唤起笔记本主窗。托盘双击、托盘「打开朱笺」菜单项、以及 Ctrl+Alt+M 全局键
+/// 唤起笔记本主窗。托盘双击、托盘「打开朱简」菜单项、以及 Ctrl+Alt+M 全局键
 /// 三处入口共用此逻辑,避免散三份将来漂移。
 /// 刻意不强制切视图:主窗隐藏不销毁,唤起后天然停在离开时的视图;真重启由前端
 /// 视图记忆(zhujian.last-view)恢复——早年写死直达看板,与视图记忆打架,已改。
@@ -2107,7 +2107,7 @@ const ACCEL_NOTEBOOK: &str = "Ctrl+Alt+M";
 /// 启动期 panic 的原生弹窗钩子:桌面壳的开库/身份/租约全在 Tauri `setup` 闭包里
 /// fail-fast panic,窗口尚未建成——默认行为只往 stderr 打一行,双击 exe 的用户什么
 /// 都看不到(表现为「没反应」)。这里在崩之前先弹一个原生框把消息给用户看见
-/// (最常见:「库版本 vN 比本程序新——请安装新版朱笺」=装了旧包;另有另一实例占
+/// (最常见:「库版本 vN 比本程序新——请安装新版朱简」=装了旧包;另有另一实例占
 /// writer.lock、空间发现失败等)。仍链到默认钩子,保留 stderr 记录与 backtrace。
 ///
 /// e2e(YS_DB_PATH)刻意不装:测试无人点框,模态框会把用例挂死。
@@ -2123,7 +2123,7 @@ fn install_panic_dialog_hook() {
         default_hook(info);
         rfd::MessageDialog::new()
             .set_level(rfd::MessageLevel::Error)
-            .set_title("朱笺无法启动")
+            .set_title("朱简无法启动")
             .set_description(panic_dialog_message(info))
             .set_buttons(rfd::MessageButtons::Ok)
             .show();
@@ -2437,7 +2437,7 @@ pub fn run() {
             let show_item =
                 MenuItem::with_id(app, "show", "记录灵感", true, Some(ACCEL_CAPTURE))?;
             let notebook_item =
-                MenuItem::with_id(app, "notebook", "打开朱笺", true, Some(ACCEL_NOTEBOOK))?;
+                MenuItem::with_id(app, "notebook", "打开朱简", true, Some(ACCEL_NOTEBOOK))?;
             let quit_item = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show_item, &notebook_item, &quit_item])?;
             TrayIconBuilder::new()

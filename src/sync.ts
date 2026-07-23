@@ -299,7 +299,7 @@ function renderHome(body: HTMLElement): void {
   }
   body.appendChild(line);
   if (s.skew) {
-    body.appendChild(el("div", "sync-warn", "对端版本较新:请升级朱笺后继续同步。"));
+    body.appendChild(el("div", "sync-warn", "对端版本较新:请升级朱简后继续同步。"));
   }
   if (s.clock_skew) {
     body.appendChild(
@@ -325,7 +325,7 @@ function renderHome(body: HTMLElement): void {
         .then((code) => {
           pairCode = code;
           pairNote =
-            "用手机朱笺「同步」里的「扫码连接电脑」直接扫;或在新设备上选「用配对码加入」,输入服务器地址和这串码。10 分钟内有效,只能用一次。";
+            "用手机朱简「同步」里的「扫码连接电脑」直接扫;或在新设备上选「用配对码加入」,输入服务器地址和这串码。10 分钟内有效,只能用一次。";
           if (mode === "pair") renderPanel();
         })
         .catch((e: unknown) => {

@@ -1343,7 +1343,7 @@ async function focusTimelineCard(id: string) {
   window.setTimeout(() => card.classList.remove("flash"), 1200);
 }
 
-// 点头部「朱笺」= 回时间轴(143):面板开着就收面,和「再点一次入口」同一条 toggle 路。
+// 点头部「朱简」= 回时间轴(143):面板开着就收面,和「再点一次入口」同一条 toggle 路。
 document.querySelector("header h1")!.addEventListener("click", (e) => {
   if ((e.target as HTMLElement).closest("#space-chip")) return; // chip 自己开空间面板
   if (activePane !== null) openPane(activePane);
@@ -1702,12 +1702,12 @@ function parsePairQr(text: string): PairPayload {
   try {
     o = JSON.parse(text) as Record<string, unknown>;
   } catch {
-    throw new Error("这不是朱笺的配对二维码");
+    throw new Error("这不是朱简的配对二维码");
   }
   if (o?.zhujian !== "pair" || typeof o.server !== "string" || typeof o.code !== "string") {
-    throw new Error("这不是朱笺的配对二维码");
+    throw new Error("这不是朱简的配对二维码");
   }
-  if (o.v !== 1) throw new Error("二维码版本较新:请先升级手机端朱笺再扫");
+  if (o.v !== 1) throw new Error("二维码版本较新:请先升级手机端朱简再扫");
   return { server: o.server, code: o.code };
 }
 
@@ -1732,7 +1732,7 @@ async function startScan(onGot: (p: PairPayload) => Promise<void>) {
   let perm = await checkPermissions();
   if (perm !== "granted" && perm !== "denied") perm = await requestPermissions();
   if (perm !== "granted") {
-    showError("没有相机权限,无法扫码;可以手动输入配对码,或到系统设置里给朱笺开相机。");
+    showError("没有相机权限,无法扫码;可以手动输入配对码,或到系统设置里给朱简开相机。");
     return;
   }
   scanCancelled = false;

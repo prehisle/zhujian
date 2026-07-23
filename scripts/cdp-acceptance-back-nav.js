@@ -4,7 +4,7 @@
 // 页内断言全绿也测不到;终局修复=MainActivity 自注册回调调 JS 原子入口
 // window.__zhujianHandleBack()(关层/收扫码/合并在飞,回 false 才放行退 app),
 // Kotlin 侧 single-flight+500ms 超时 fail-open。此半截每轮必跑**):
-//   开面板 → adb shell input keyevent 4 → 断言 pane-open 消失且 topResumedActivity 仍是朱笺;
+//   开面板 → adb shell input keyevent 4 → 断言 pane-open 消失且 topResumedActivity 仍是朱简;
 //   时间轴无层态(灵感面或任务面,146 起 mode 不压层)→ keyevent 4 → 应退到桌面(一次即退,不留空炮)。
 (async () => {
   const out = { pass: false, steps: [] };
@@ -24,12 +24,12 @@
   await new Promise((r) => setTimeout(r, 100));
   ok("再点一次收面", !paneOpen());
 
-  // ② 点头部「朱笺」收面
+  // ② 点头部「朱简」收面
   click(document.querySelector('#bottombar [data-pane="trash"]'));
   await new Promise((r) => setTimeout(r, 100));
   click(document.querySelector("header h1"));
   await new Promise((r) => setTimeout(r, 100));
-  ok("头部朱笺收面", !paneOpen());
+  ok("头部朱简收面", !paneOpen());
 
   // ③ 查看器手势数学:摆一张 200×200,合成双指 60→160 应得 scale≈2.667;
   //    放大态合成单击不关;数学断言完直接复原(不走关闭路,免动 history 账本)。

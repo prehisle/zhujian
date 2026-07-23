@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "zhujian",
-  "version": "0.2.15",
+  "version": "0.2.16",
   "identifier": "app.zhujian.notebook",
   "build": {
     "frontendDist": "../dist",
@@ -15,7 +15,7 @@
     "windows": [
       {
         "label": "capture",
-        "title": "朱笺 · 捕获",
+        "title": "朱简 · 捕获",
         "width": 560,
         "height": 140,
         "center": true,
@@ -29,7 +29,7 @@
       },
       {
         "label": "notebook",
-        "title": "朱笺",
+        "title": "朱简",
         "url": "notebook.html",
         "width": 1040,
         "height": 680,

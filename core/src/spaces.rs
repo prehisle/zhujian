@@ -265,7 +265,7 @@ pub fn read_descriptor(id: &str, path: &Path) -> Result<SpaceDescriptor, String>
     // 库在预处理后被换过等异常。
     if uv > db::SCHEMA_VERSION {
         return Err(format!(
-            "空间 {id} 的数据版本({uv})比本程序({})新——请安装新版朱笺;不要清除数据",
+            "空间 {id} 的数据版本({uv})比本程序({})新——请安装新版朱简;不要清除数据",
             db::SCHEMA_VERSION
         ));
     }
@@ -434,7 +434,7 @@ pub fn open_space(desc: &SpaceDescriptor) -> Result<Connection, String> {
     // 版本分流与 read_descriptor 同口径(H3):太新绝不劝清库。
     if uv > db::SCHEMA_VERSION {
         return Err(format!(
-            "空间 {} 的数据版本({uv})比本程序({})新——请安装新版朱笺;不要清除数据",
+            "空间 {} 的数据版本({uv})比本程序({})新——请安装新版朱简;不要清除数据",
             desc.id,
             db::SCHEMA_VERSION
         ));
@@ -472,11 +472,11 @@ pub fn open_space(desc: &SpaceDescriptor) -> Result<Connection, String> {
 /// 恰是本案要消灭的死路。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StartupBlockKind {
-    /// 库比本程序新(装了旧包):唯一出路 = 安装新版朱笺。
+    /// 库比本程序新(装了旧包):唯一出路 = 安装新版朱简。
     UpgradeRequired,
     /// 环境性失败(磁盘满 / IO / 库忙):重启或释放空间后重试,数据无恙。
     Retryable,
-    /// 程序侧问题(迁移 bug / 约束违例 / API 误用):数据完好,升级或重装朱笺再试,
+    /// 程序侧问题(迁移 bug / 约束违例 / API 误用):数据完好,升级或重装朱简再试,
     /// **绝不清库**(codex 实现审 H1:迁移失败的事务已回滚,数据没坏是程序坏)。
     RepairRequired,
     /// 恢复 = 清库重配(§19,本地可丢)。**只许由明确判断产生**(低于手机下限 /
@@ -1410,7 +1410,7 @@ impl WriterLease {
         match try_lock_exclusive(&file) {
             Ok(true) => Ok(WriterLease { _file: file }),
             Ok(false) => Err(format!(
-                "另一个朱笺进程正在使用此数据目录(写者锁被占:{})——请先退出那个进程再启动",
+                "另一个朱简进程正在使用此数据目录(写者锁被占:{})——请先退出那个进程再启动",
                 path.display()
             )),
             Err(e) => Err(format!("取写者锁失败 {}:{e}", path.display())),
@@ -2489,7 +2489,7 @@ mod tests {
         let lock = dir.join("writer.lock");
         let held = WriterLease::acquire(&lock).unwrap();
         let err = WriterLease::acquire(&lock).unwrap_err();
-        assert!(err.contains("另一个朱笺进程"), "{err}");
+        assert!(err.contains("另一个朱简进程"), "{err}");
         drop(held);
         let _again = WriterLease::acquire(&lock).unwrap();
         assert!(lock.exists(), "锁文件永不 unlink");

@@ -460,7 +460,7 @@ fn import_attached(conn: &mut Connection, clock: &mut Clock) -> Result<ImportRep
         .optional()
         .map_err(|e| e.to_string())?;
     match src_device {
-        None => return Err("快照缺 device_id(不是朱笺同步库?)".into()),
+        None => return Err("快照缺 device_id(不是朱简同步库?)".into()),
         Some(d) if d == my_device => {
             return Err("快照来自本机自己(引导编排出错),拒导入".into())
         }

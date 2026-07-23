@@ -1949,7 +1949,7 @@ impl Ctx<'_> {
     fn report_skew(&mut self) {
         if !self.skew_reported {
             self.skew_reported = true;
-            self.toast("对端版本较新,请升级朱笺后继续同步".into());
+            self.toast("对端版本较新,请升级朱简后继续同步".into());
         }
         self.set_status(|s| s.skew = true);
     }

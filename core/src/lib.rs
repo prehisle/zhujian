@@ -1,4 +1,4 @@
-//! zhujian-core —— 朱笺共享核心(P4-a,android-plan §1)。
+//! zhujian-core —— 朱简共享核心(P4-a,android-plan §1)。
 //!
 //! 数据层(items 单实体 + topics/item_topic + item_revisions + item_image +
 //! oplog/HLC/fractional index,30 条迁移)与同步客户端侧(收端引擎 / E2EE 加密层 /

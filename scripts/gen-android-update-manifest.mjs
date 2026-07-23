@@ -96,7 +96,7 @@ if (prof.versionCode !== versionCode) {
 }
 
 // ── 4. 清单(字段与 update.rs::AndroidUpdate 逐键对应,versionCode 是比较轴) ──
-const notes = process.argv[2] ?? `朱笺安卓版 v${version}`;
+const notes = process.argv[2] ?? `朱简安卓版 v${version}`;
 const manifest = {
   version,
   versionCode,

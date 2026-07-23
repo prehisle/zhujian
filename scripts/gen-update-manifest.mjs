@@ -46,7 +46,7 @@ if (!installer || !sig) {
 const signature = readFileSync(join(nsisDir, sig), "utf8").trim();
 
 // ── 3. 生成 Tauri v2 静态清单(平台键 windows-x86_64) ──
-const notes = process.argv[2] ?? `朱笺 v${version}`;
+const notes = process.argv[2] ?? `朱简 v${version}`;
 const manifest = {
   version,
   notes,

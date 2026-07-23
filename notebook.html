@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>朱笺</title>
+    <title>朱简</title>
     <link rel="stylesheet" href="/src/theme.css" />
     <link rel="stylesheet" href="/src/controls.css" />
     <style>
@@ -249,10 +249,10 @@
   <body>
     <!-- 侧栏整体不再是拖拽区:否则 nav 下方的空白被当成标题栏,单击会触发
          startDragging「抓一下又放下」而闪烁、双击还会最大化窗口。拖窗交给顶部
-         「朱笺」logo 行 + 各视图 header(常规标题栏位置)。 -->
+         「朱简」logo 行 + 各视图 header(常规标题栏位置)。 -->
     <aside class="sidebar">
       <button id="sidebar-toggle" class="sb-toggle" title="折叠侧栏 (Ctrl+B)" aria-label="折叠侧栏">«</button>
-      <div class="brand" data-tauri-drag-region><svg class="seal" viewBox="0 0 24 24" aria-hidden="true"><path fill="var(--seal)" fill-rule="evenodd" d="M7 0h10a7 7 0 0 1 7 7v10a7 7 0 0 1-7 7H7a7 7 0 0 1-7-7V7a7 7 0 0 1 7-7Zm5 4.5c2.6 3.7 4.2 6.1 4.2 8.7a4.2 4.2 0 1 1-8.4 0c0-2.6 1.6-5 4.2-8.7Z"/></svg>朱笺</div>
+      <div class="brand" data-tauri-drag-region><svg class="seal" viewBox="0 0 24 24" aria-hidden="true"><path fill="var(--seal)" fill-rule="evenodd" d="M7 0h10a7 7 0 0 1 7 7v10a7 7 0 0 1-7 7H7a7 7 0 0 1-7-7V7a7 7 0 0 1 7-7Zm5 4.5c2.6 3.7 4.2 6.1 4.2 8.7a4.2 4.2 0 1 1-8.4 0c0-2.6 1.6-5 4.2-8.7Z"/></svg>朱简</div>
       <!-- 空间切换(97 多空间):当前空间名 + 菜单(切换/新建/改名)。逻辑在 notebook.ts。 -->
       <button id="space-entry" class="space-entry" title="切换空间">
         <span id="space-name">个人空间</span><span class="space-caret">▾</span>

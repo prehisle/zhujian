@@ -37,7 +37,7 @@ ${StrLoc}
 ; zhujian:安装目录 / 注册表键 / 二进制名)刻意分离。只影响 .lnk 文件名与 DisplayName,
 ; 不碰目录 / 注册表键 / updater 匹配。改此名后,存量安装需重装一次才换成中文快捷方式
 ; (Tauri 默认「更新不重建快捷方式」,故 updater 升级不会自动改名——仅 2 用户,重装即可)。
-!define SHORTCUTNAME "朱笺"
+!define SHORTCUTNAME "朱简"
 !define VERSION "{{version}}"
 !define VERSIONWITHBUILD "{{version_with_build}}"
 !define HOMEPAGE "{{homepage}}"
@@ -915,7 +915,7 @@ Function CreateOrUpdateStartMenuShortcut
   ${EndIf}
 
   ; zhujian: 面向用户的显示名走中文(SHORTCUTNAME)。先清掉早先按 PRODUCTNAME 建的英文
-  ; zhujian.lnk(文件夹 + root 两处,仅当它指向本程序时),再建 朱笺.lnk。二进制名稳定
+  ; zhujian.lnk(文件夹 + root 两处,仅当它指向本程序时),再建 朱简.lnk。二进制名稳定
   ; (app.exe),故不再走 Tauri 原「旧二进制名迁移」分支——那分支会命中存量 zhujian.lnk
   ; 并早退,导致中文名永远建不出来。
   !insertmacro IsShortcutTarget "$SMPROGRAMS\$AppStartMenuFolder\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
@@ -952,7 +952,7 @@ Function CreateOrUpdateDesktopShortcut
   ${EndIf}
 
   ; zhujian: 显示名走中文。先清掉早先按 PRODUCTNAME 建的英文 zhujian.lnk(仅当指向本程序),
-  ; 再建 朱笺.lnk(见 CreateOrUpdateStartMenuShortcut 注:不再走旧二进制名迁移分支)。
+  ; 再建 朱简.lnk(见 CreateOrUpdateStartMenuShortcut 注:不再走旧二进制名迁移分支)。
   !insertmacro IsShortcutTarget "$DESKTOP\${PRODUCTNAME}.lnk" "$INSTDIR\${MAINBINARYNAME}.exe"
   Pop $0
   ${If} $0 = 1

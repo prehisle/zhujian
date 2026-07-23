@@ -107,7 +107,7 @@ pub fn open(path: &Path) -> rusqlite::Result<Connection> {
 fn assert_downgrade_gate(current: i64) {
     assert!(
         current <= SCHEMA_VERSION,
-        "库版本 v{current} 比本程序(v{SCHEMA_VERSION})新——请安装新版朱笺,不支持降级打开"
+        "库版本 v{current} 比本程序(v{SCHEMA_VERSION})新——请安装新版朱简,不支持降级打开"
     );
 }
 

@@ -1,4 +1,4 @@
-//! zhujian-syncd —— 朱笺同步专用服务(sync-protocol §4)。
+//! zhujian-syncd —— 朱简同步专用服务(sync-protocol §4)。
 //!
 //! 单 Rust 二进制:设备鉴权(Ed25519 挑战应答;准入开放,封禁表拒名单——
 //! open-signup)+ 账户内密文帧路由 + 内存信箱 + 配对盲桥。**对一切用户内容
