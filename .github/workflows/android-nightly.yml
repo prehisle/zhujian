@@ -1,0 +1,97 @@
+name: android-nightly
+
+# 每日夜间构建安卓「签名发版 APK」存档(不发版给用户)。走统一入口 scripts/build-android.mjs
+# (三处版本一致校验 + tauri android build + aapt 验 versionCode + build-profile.json 护栏)。
+# 安卓发版给用户仍走 docs/deploy.md §7.4 手动(gen-android-update-manifest + scp VPS)——
+# tag 触发的安卓发版链路留后续:安卓版本与桌面 v* 不同步(0.3.x vs 0.2.x)、发版节奏不绑,
+# 须另定 android-v* tag 方案,不混进本轮。
+
+# 公开仓最小权限:自动 GITHUB_TOKEN 只读(本 job 只存 artifact、不建 Release、不碰 VPS)
+permissions:
+  contents: read
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "30 18 * * *" # 每日 UTC 18:30(错开桌面 nightly 的 18:00)
+
+concurrency:
+  group: android-nightly
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: build android aarch64 APK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+
+      - name: 装 JDK 17(AGP 8.x / gradle 8.14.3 需 17)
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "android/src-tauri"
+
+      - name: 装 android 子工程 npm 依赖
+        run: cd android && npm ci
+
+      # runner 未必预装 compileSdk 36 / 带 aapt 的 build-tools;显式补(已装则秒过)
+      - name: 确保 SDK 组件(platform 36 + build-tools 36)
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            "platforms;android-36" "build-tools;36.0.0" > /dev/null
+
+      # gen/android 的 gradle wrapper distributionUrl 指向本地翻墙 zip(见 dev-and-testing §安卓);
+      # CI 在墙外,改回官方直连 URL。仅改 CI 工作副本、不回写仓库。
+      - name: 修正 gradle wrapper 分发 URL(本地 file:// → 官方)
+        run: |
+          f=android/src-tauri/gen/android/gradle/wrapper/gradle-wrapper.properties
+          sed -i "s#^distributionUrl=.*#distributionUrl=https://services.gradle.org/distributions/gradle-8.14.3-bin.zip#" "$f"
+          grep distributionUrl "$f"
+
+      # 签名钥从 secret 复现:base64 的 jks 解码落盘 + 写 keystore.properties(gitignore、绝不进仓)。
+      # storeFile 用正斜杠绝对路径(反斜杠会被 Java Properties 当转义吃掉,dev-and-testing 有记)。
+      - name: 复现 release 签名配置
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
+        run: |
+          jks="$RUNNER_TEMP/zhujian-android.jks"
+          printf '%s' "$KEYSTORE_B64" | base64 -d > "$jks"
+          props=android/src-tauri/gen/android/keystore.properties
+          {
+            printf 'keyAlias=%s\n' "$KEY_ALIAS"
+            printf 'keyPassword=%s\n' "$KEY_PASSWORD"
+            printf 'storeFile=%s\n' "$jks"
+            printf 'storePassword=%s\n' "$STORE_PASSWORD"
+          } > "$props"
+
+      - name: 构建签名发版 APK(统一入口,含 aapt 验 + 护栏)
+        run: |
+          export NDK_HOME="${ANDROID_NDK_LATEST_HOME:-$ANDROID_NDK_HOME}"
+          echo "NDK_HOME=$NDK_HOME"
+          node scripts/build-android.mjs
+
+      - name: 收集签名 APK
+        uses: actions/upload-artifact@v7
+        with:
+          name: android-nightly-aarch64
+          path: |
+            android/apk-out/*.apk
+            android/apk-out/build-profile.json
+          retention-days: 14
+          if-no-files-found: error
