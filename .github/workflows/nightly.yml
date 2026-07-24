@@ -23,7 +23,7 @@ jobs:
     name: cargo test(共享核心 + 服务端 + 信封层)
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -49,7 +49,7 @@ jobs:
             label: linux-x86_64
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Linux 系统依赖(Tauri v2)
         if: matrix.os == 'ubuntu-22.04'
@@ -58,7 +58,7 @@ jobs:
           sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file \
             libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev pkg-config
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 20
           cache: npm
@@ -73,6 +73,8 @@ jobs:
 
       # createUpdaterArtifacts:true 要求签名;mac 未配 Apple 证书 → app 为 adhoc(公证留 release 时补)
       # bash 统一三平台;tr 去掉粘贴 secret 时可能带入的尾换行(base64 单行钥无内部换行,删 CR/LF 安全)
+      # 重试 3 次:Linux AppImage 打包现从 GitHub 拉 linuxdeploy/AppRun,偶发 Connection reset(os error 104);
+      # 工具首次下载后进 target 缓存,重试跳过重编译成本低;Win/mac 一般一次过,重试对其是无害空转。
       - name: tauri build(签名更新产物)
         shell: bash
         env:
@@ -80,10 +82,16 @@ jobs:
         run: |
           export TAURI_SIGNING_PRIVATE_KEY="$(printf '%s' "$RAW_SIGNING_KEY" | tr -d '\r\n')"
           export TAURI_SIGNING_PRIVATE_KEY_PASSWORD=""
-          npm run tauri build
+          n=0
+          until npm run tauri build; do
+            n=$((n + 1))
+            if [ "$n" -ge 3 ]; then echo "::error::tauri build 连续 3 次失败"; exit 1; fi
+            echo "::warning::tauri build 第 $n 次失败,10s 后重试(多为 AppImage 工具下载瞬时 reset)"
+            sleep 10
+          done
 
       - name: 收集产物
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: nightly-${{ matrix.label }}
           path: |
