@@ -37,6 +37,16 @@
         opacity: 0.035;
         mix-blend-mode: multiply;
       }
+      /* 无边框窗:自绘一圈 1px 细边,给窗口一个可辨的边界(否则和同色官网并排时糊成一片)。
+         盖在最上层、不吃鼠标;不圆角以免无边框不透明窗四角露出直角底。 */
+      body::after {
+        content: "";
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        z-index: 9999;
+        border: 1px solid var(--line-strong);
+      }
 
       /* ---- left sidebar (frameless: also a drag handle) ---- */
       .sidebar {

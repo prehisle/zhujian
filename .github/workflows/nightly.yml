@@ -1,0 +1,93 @@
+name: nightly
+
+# 每日夜间构建桌面三平台(Windows / macOS / Linux)产物存档,不发版。
+# 发版给用户走 release.yml(打 tag 触发,合并 latest.json)——见 docs/deploy.md §7。
+# createUpdaterArtifacts:true ⇒ 只要 build 就必须签名,故 nightly 也带更新签名钥。
+
+# 公开仓最小权限:自动 GITHUB_TOKEN 只读(本仓不建 Release、只 scp 到 VPS)
+permissions:
+  contents: read
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 18 * * *" # 每日 UTC 18:00(北京 02:00)
+
+# 同一时刻只跑一份,新触发取消在跑的旧份
+concurrency:
+  group: nightly
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: cargo test(共享核心 + 服务端 + 信封层)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            core
+            server
+            sync-proto
+      - run: cd core && cargo test --quiet
+      - run: cd server && cargo test --quiet
+      - run: cd sync-proto && cargo test --quiet
+
+  build:
+    name: build ${{ matrix.label }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            label: windows-x86_64
+          - os: macos-latest # 现为 Apple Silicon(arm64)
+            label: darwin-aarch64
+          - os: ubuntu-22.04
+            label: linux-x86_64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Linux 系统依赖(Tauri v2)
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file \
+            libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev pkg-config
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "src-tauri"
+
+      - run: npm ci
+
+      # createUpdaterArtifacts:true 要求签名;mac 未配 Apple 证书 → app 为 adhoc(公证留 release 时补)
+      - name: tauri build(签名更新产物)
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: npm run tauri build
+
+      - name: 收集产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-${{ matrix.label }}
+          path: |
+            src-tauri/target/release/bundle/**/*-setup.exe
+            src-tauri/target/release/bundle/**/*.dmg
+            src-tauri/target/release/bundle/**/*.AppImage
+            src-tauri/target/release/bundle/**/*.deb
+            src-tauri/target/release/bundle/**/*.sig
+            src-tauri/target/release/bundle/**/*.tar.gz
+          retention-days: 14
+          if-no-files-found: error

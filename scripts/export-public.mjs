@@ -17,7 +17,7 @@ if (target === repoRoot || repoRoot.startsWith(target)) {
 
 // 公开白名单(目录以 / 结尾按前缀匹配,其余精确匹配)
 const ALLOW = [
-  "android/", "core/", "e2e/", "scripts/", "server/", "site/", "src/",
+  ".github/", "android/", "core/", "e2e/", "scripts/", "server/", "site/", "src/",
   "src-tauri/", "sync-proto/",
   "docs/sync-protocol.md", "docs/design-rules.md", "docs/why-no-framework.md",
   "index.html", "notebook.html", "package.json", "package-lock.json",

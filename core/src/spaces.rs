@@ -2408,6 +2408,17 @@ mod tests {
         let dir = tmp_dir("open-space");
         let (id, path) = create_space(&dir, "家庭").unwrap();
         let desc = read_descriptor(&id, &path).unwrap();
+        // 预先建好「当前版本、物理身份不同」的替换库:趁原库还在、其 inode 未释放时,让替换库
+        // 占住一个不同 inode,留到子场景②用 rename 覆盖。不能用「删原库+同名重建」来模拟替换
+        // ——Linux 会把刚释放的 inode 号复用给同名新文件,(dev,ino) 判不出替换,该模拟在
+        // Linux 站不住(Unix inode 语义;Windows 靠 file_index 无此问题)。
+        let replacement = dir.join("replacement.sqlite3");
+        {
+            let conn = Connection::open(&replacement).unwrap();
+            conn.pragma_update(None, "foreign_keys", true).unwrap();
+            db::run_migrations(&conn, i64::MAX).unwrap();
+            Clock::load(&conn).unwrap();
+        }
         // 正道:验过才切 WAL。
         {
             let conn = open_space(&desc).unwrap();
@@ -2431,14 +2442,9 @@ mod tests {
             let mode: String = conn.pragma_query_value(None, "journal_mode", |r| r.get(0)).unwrap();
             assert_eq!(mode, "delete", "被换的旧库不许被切 WAL");
         }
-        // 版本恰好当前但换了 inode(同名重建):物理身份与 descriptor 不符 → 拒。
-        std::fs::remove_file(&path).unwrap();
-        {
-            let conn = Connection::open(&path).unwrap();
-            conn.pragma_update(None, "foreign_keys", true).unwrap();
-            db::run_migrations(&conn, i64::MAX).unwrap();
-            Clock::load(&conn).unwrap();
-        }
+        // 版本恰好当前但物理身份不同(inode 变):必须在切 WAL 前拒。用预建的替换库 rename
+        // 覆盖——保证新文件带与 descriptor 不同的 inode(见上方 replacement 注释)。
+        std::fs::rename(&replacement, &path).unwrap();
         let err = open_space(&desc).unwrap_err();
         assert!(err.contains("被替换"), "{err}");
         // 文件缺席:NO_CREATE,绝不隐式建库。

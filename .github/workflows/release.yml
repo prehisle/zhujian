@@ -1,0 +1,124 @@
+name: release
+
+# 打 tag(vX.Y.Z)触发:三平台构建签名 → 合并一份三平台 latest.json → scp 到 VPS
+# (zjci 受限用户,只能写 /var/www/zhujian-app/updates/)→ 核验。分发落点=zhujian.app,
+# updater endpoint 不变、老用户无感。安卓走 android.json 另发(build-android.mjs)。
+# 首发前必读 docs/deploy.md §7。
+
+# 公开仓最小权限:自动 GITHUB_TOKEN 只读(本仓不建 Release、只 scp 到 VPS)
+permissions:
+  contents: read
+
+on:
+  push:
+    tags: ["v*"]
+
+# 发版中途绝不取消
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: build ${{ matrix.label }}
+    strategy:
+      fail-fast: true # 有一个平台没打出来就别发半套
+      matrix:
+        include:
+          - os: windows-latest
+            label: windows-x86_64
+          - os: macos-latest
+            label: darwin-aarch64
+          - os: ubuntu-22.04
+            label: linux-x86_64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 校验 tag 与 package.json 版本一致
+        shell: bash
+        run: |
+          ver=$(node -p "require('./package.json').version")
+          tag="${GITHUB_REF_NAME#v}"
+          if [ "$ver" != "$tag" ]; then
+            echo "::error::tag $GITHUB_REF_NAME 与 package.json 版本 $ver 不一致——三处版本先同步 bump"
+            exit 1
+          fi
+
+      - name: Linux 系统依赖(Tauri v2)
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file \
+            libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev pkg-config
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "src-tauri"
+
+      - run: npm ci
+
+      - name: tauri build(签名更新产物)
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: npm run tauri build
+
+      - name: 收集产物(updater 产物 + .sig + 首装包)
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.label }}
+          path: |
+            src-tauri/target/release/bundle/**/*-setup.exe
+            src-tauri/target/release/bundle/**/*-setup.exe.sig
+            src-tauri/target/release/bundle/**/*.app.tar.gz
+            src-tauri/target/release/bundle/**/*.app.tar.gz.sig
+            src-tauri/target/release/bundle/**/*.dmg
+            src-tauri/target/release/bundle/**/*.AppImage
+            src-tauri/target/release/bundle/**/*.AppImage.sig
+            src-tauri/target/release/bundle/**/*.deb
+          if-no-files-found: error
+
+  publish:
+    name: 合并清单并发到 VPS
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: 生成三平台 latest.json + 收集 upload/
+        run: node scripts/gen-update-manifest-ci.mjs artifacts upload "朱简 ${{ github.ref_name }}"
+
+      - name: 配置 SSH(受限 deploy key)
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' "${{ secrets.VPS_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+
+      - name: 上传到 VPS updates/(先清旧桌面包,不碰 apk/android.json)
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+        run: |
+          H="zjci@$VPS_HOST"
+          D=/var/www/zhujian-app/updates
+          ssh -i ~/.ssh/id_ed25519 "$H" "rm -f $D/*-setup.exe $D/*.app.tar.gz $D/*.AppImage $D/*.dmg $D/*.deb $D/latest.json"
+          scp -i ~/.ssh/id_ed25519 upload/* "$H:$D/"
+          ssh -i ~/.ssh/id_ed25519 "$H" "chmod 644 $D/*.exe $D/*.tar.gz $D/*.AppImage $D/*.dmg $D/*.deb $D/latest.json"
+
+      - name: 核验线上清单
+        run: |
+          curl -s --fail "https://zhujian.app/updates/latest.json" > got.json
+          node -e "const j=require('./got.json');console.log('线上 latest.json 版本',j.version,'| 平台',Object.keys(j.platforms).join(', '))"
+          test "$(node -p "require('./got.json').version")" = "$(node -p "require('./package.json').version")"
