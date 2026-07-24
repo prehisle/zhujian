@@ -72,11 +72,15 @@ jobs:
       - run: npm ci
 
       # createUpdaterArtifacts:true 要求签名;mac 未配 Apple 证书 → app 为 adhoc(公证留 release 时补)
+      # bash 统一三平台;tr 去掉粘贴 secret 时可能带入的尾换行(base64 单行钥无内部换行,删 CR/LF 安全)
       - name: tauri build(签名更新产物)
+        shell: bash
         env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: npm run tauri build
+          RAW_SIGNING_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          export TAURI_SIGNING_PRIVATE_KEY="$(printf '%s' "$RAW_SIGNING_KEY" | tr -d '\r\n')"
+          export TAURI_SIGNING_PRIVATE_KEY_PASSWORD=""
+          npm run tauri build
 
       - name: 收集产物
         uses: actions/upload-artifact@v4

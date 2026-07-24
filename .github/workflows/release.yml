@@ -65,11 +65,15 @@ jobs:
 
       - run: npm ci
 
+      # bash 统一三平台;tr 去掉粘贴 secret 时可能带入的尾换行(base64 单行钥无内部换行,删 CR/LF 安全)
       - name: tauri build(签名更新产物)
+        shell: bash
         env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: npm run tauri build
+          RAW_SIGNING_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          export TAURI_SIGNING_PRIVATE_KEY="$(printf '%s' "$RAW_SIGNING_KEY" | tr -d '\r\n')"
+          export TAURI_SIGNING_PRIVATE_KEY_PASSWORD=""
+          npm run tauri build
 
       - name: 收集产物(updater 产物 + .sig + 首装包)
         uses: actions/upload-artifact@v4
@@ -111,7 +115,7 @@ jobs:
         env:
           VPS_HOST: ${{ secrets.VPS_HOST }}
         run: |
-          H="zjci@$VPS_HOST"
+          H="zjci@$(printf '%s' "$VPS_HOST" | tr -d '\r\n')"
           D=/var/www/zhujian-app/updates
           ssh -i ~/.ssh/id_ed25519 "$H" "rm -f $D/*-setup.exe $D/*.app.tar.gz $D/*.AppImage $D/*.dmg $D/*.deb $D/latest.json"
           scp -i ~/.ssh/id_ed25519 upload/* "$H:$D/"
