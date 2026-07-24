@@ -1,0 +1,139 @@
+name: android-release
+
+# 打 tag(android-vX.Y.Z)触发:构建签名 APK → gen android.json → scp 到 VPS。
+# 与桌面 release.yml(v* 触发)刻意分开:安卓版本 0.3.x 与桌面 0.2.x 不同步、发版
+# 节奏不绑;tag 前缀 android-v 不以 v 开头,与 v* 天然不撞、两 workflow 互不误触。
+# 分发落点=zhujian.app/updates/android.json(app 内比 versionCode 提示升级,§7.4)。
+# 构建步骤与 android-nightly.yml 同源(210 首跑全绿)、只多「版本校验 + 生成清单 + 发 VPS」。
+# 首发前必读 docs/deploy.md §7.4。
+
+# 公开仓最小权限:自动 GITHUB_TOKEN 只读(本仓不建 Release、只 scp 到 VPS)
+permissions:
+  contents: read
+
+on:
+  push:
+    tags: ["android-v*"]
+
+# 发版中途绝不取消
+concurrency:
+  group: android-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: build android APK + 发 VPS
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # 取全历史+tag 对象,好读注解 tag 的更新说明(git tag -m)
+
+      # 长构建前 fail-fast:tag 版本必须与安卓三处版本一致(node 是 runner 预装)
+      - name: 校验 tag 与 android/package.json 版本一致
+        shell: bash
+        run: |
+          ver=$(node -p "require('./android/package.json').version")
+          tag="${GITHUB_REF_NAME#android-v}"
+          if [ "$ver" != "$tag" ]; then
+            echo "::error::tag $GITHUB_REF_NAME 与 android/package.json 版本 $ver 不一致——安卓三处版本先同步 bump(deploy §7.4)"
+            exit 1
+          fi
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+
+      - name: 装 JDK 17(AGP 8.x / gradle 8.14.3 需 17)
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "android/src-tauri"
+
+      - name: 装 android 子工程 npm 依赖
+        run: cd android && npm ci
+
+      # runner 未必预装 compileSdk 36 / 带 aapt 的 build-tools;显式补(已装则秒过)。
+      # aapt 后面 gen-android-update-manifest.mjs 拆 APK 验 versionCode 也要用。
+      - name: 确保 SDK 组件(platform 36 + build-tools 36)
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            "platforms;android-36" "build-tools;36.0.0" > /dev/null
+
+      # gen/android 的 gradle wrapper distributionUrl 指向本地翻墙 zip(见 dev-and-testing §安卓);
+      # CI 在墙外,改回官方直连 URL。仅改 CI 工作副本、不回写仓库。
+      - name: 修正 gradle wrapper 分发 URL(本地 file:// → 官方)
+        run: |
+          f=android/src-tauri/gen/android/gradle/wrapper/gradle-wrapper.properties
+          sed -i "s#^distributionUrl=.*#distributionUrl=https://services.gradle.org/distributions/gradle-8.14.3-bin.zip#" "$f"
+          grep distributionUrl "$f"
+
+      # 签名钥从 secret 复现:base64 的 jks 解码落盘 + 写 keystore.properties(gitignore、绝不进仓)。
+      # storeFile 用正斜杠绝对路径(反斜杠会被 Java Properties 当转义吃掉,dev-and-testing 有记)。
+      - name: 复现 release 签名配置
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
+        run: |
+          jks="$RUNNER_TEMP/zhujian-android.jks"
+          printf '%s' "$KEYSTORE_B64" | base64 -d > "$jks"
+          props=android/src-tauri/gen/android/keystore.properties
+          {
+            printf 'keyAlias=%s\n' "$KEY_ALIAS"
+            printf 'keyPassword=%s\n' "$KEY_PASSWORD"
+            printf 'storeFile=%s\n' "$jks"
+            printf 'storePassword=%s\n' "$STORE_PASSWORD"
+          } > "$props"
+
+      - name: 构建签名发版 APK(统一入口,含三处版本一致 + aapt 验 + 干净包护栏)
+        run: |
+          export NDK_HOME="${ANDROID_NDK_LATEST_HOME:-$ANDROID_NDK_HOME}"
+          echo "NDK_HOME=$NDK_HOME"
+          node scripts/build-android.mjs
+
+      # gen 脚本自带三道闸(三处版本一致 / aapt 拆 APK 验 versionCode / build-profile.json 非 devtools),
+      # 写 android.json 到 APK 旁。notes 取注解 tag 的 message(git tag -a -m),空则回落版本串。
+      - name: 生成 android.json(版本一致 + aapt 验 versionCode + devtools 护栏)
+        run: |
+          notes=$(git tag -l --format='%(contents:subject)' "$GITHUB_REF_NAME")
+          [ -z "$notes" ] && notes="朱简安卓版 ${GITHUB_REF_NAME#android-v}"
+          echo "更新说明:$notes"
+          node scripts/gen-android-update-manifest.mjs "$notes"
+
+      - name: 配置 SSH(受限 deploy key)
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' "${{ secrets.VPS_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+
+      # 只清旧 apk 与 android.json,绝不碰桌面 *-setup.exe / latest.json / *.dmg 等
+      #(两份清单刻意分开、两端发版节奏不绑,deploy §7.4)。APK 上传时改名带版本号。
+      - name: 上传 APK + android.json 到 VPS
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+        run: |
+          ver=$(node -p "require('./android/package.json').version")
+          rel=android/src-tauri/gen/android/app/build/outputs/apk/universal/release
+          apkName="zhujian_${ver}_aarch64.apk"
+          H="zjci@$(printf '%s' "$VPS_HOST" | tr -d '\r\n')"
+          D=/var/www/zhujian-app/updates
+          ssh -i ~/.ssh/id_ed25519 "$H" "rm -f $D/zhujian_*_aarch64.apk $D/android.json"
+          scp -i ~/.ssh/id_ed25519 "$rel/app-universal-release.apk" "$H:$D/$apkName"
+          scp -i ~/.ssh/id_ed25519 "$rel/android.json" "$H:$D/android.json"
+          ssh -i ~/.ssh/id_ed25519 "$H" "chmod 644 $D/*.apk $D/android.json"
+
+      - name: 核验线上 android.json
+        run: |
+          curl -s --fail "https://zhujian.app/updates/android.json" > got.json
+          node -e "const j=require('./got.json');const v=require('./android/package.json').version;console.log('线上 android.json 版本',j.version,'versionCode',j.versionCode);if(j.version!==v){console.error('::error::线上版本 '+j.version+' 与本版 '+v+' 不符');process.exit(1)}"
