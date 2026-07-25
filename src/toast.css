@@ -1,0 +1,35 @@
+/* 一次性浮动回执(228 从 item-images.css 提出来的共享样式;语境覆盖留在各自的 css)。 */
+/* 右键复制链接后就地飘出的小提示——固定定位跟随光标、不撑动正文,约 1s 淡出移除。 */
+.copy-toast {
+  position: fixed;
+  z-index: 1000;
+  transform: translate(-50%, -140%);
+  padding: 3px 8px;
+  font-family: var(--font-sans);
+  font-size: 12px;
+  color: #fff;
+  background: var(--ink);
+  border-radius: 5px;
+  pointer-events: none;
+  white-space: nowrap;
+  /* 时长由 JS 写 animationDuration 覆盖(与移除定时器同一个参数);这里只给默认值。 */
+  animation: copy-toast-fade 1s ease forwards;
+}
+@keyframes copy-toast-fade {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -120%);
+  }
+  15% {
+    opacity: 1;
+    transform: translate(-50%, -140%);
+  }
+  75% {
+    opacity: 1;
+    transform: translate(-50%, -140%);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -155%);
+  }
+}

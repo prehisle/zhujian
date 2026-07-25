@@ -4,6 +4,10 @@
 // space_id;空间的存在与身份(发现/白名单/四不变量)见 spaces.rs,本文件负责装配
 // (逐空间 spawn transport + 事件贴空间标)与命令面。
 mod spaces;
+// macOS Dock 右键菜单(macos-port-plan §2):往 tao 的 NSApplicationDelegate 补
+// applicationDockMenu:,整块 objc 关在这个平台专属模块里。
+#[cfg(target_os = "macos")]
+mod dock_menu;
 
 use spaces::Spaces;
 use zhujian_core::sync::supervisor::{ActivateSpec, ActiveRuntime as SpaceRuntime, SpaceSupervisor};
@@ -1947,6 +1951,37 @@ fn saved_notebook_maximized<R: Runtime>(app: &AppHandle<R>) -> bool {
         .unwrap_or(false)
 }
 
+/// 把召唤出来的窗口抬到最前并给键盘焦点。分平台:Windows/macOS 的 set_focus() 够用;
+/// GNOME/X11 下 tao 的 Focus 走 gtk `present_with_time(GDK_CURRENT_TIME=0)`——0 时间戳
+/// 被 mutter 的焦点偷窃防护当成「后台程序抢焦点」拒掉,于是 notebook(非 alwaysOnTop)
+/// 映射到活动窗背后=用户以为「没打开」,capture 虽 alwaysOnTop 可见却拿不到焦点=
+/// `onFocusChanged(true)` 不触发、`input.focus()` 不跑=光标不进输入框。修法:用
+/// `gdkx11::x11_get_server_time` 取一个真·近期时间戳再 `present_with_time`(等价
+/// wmctrl -a 发 _NET_ACTIVE_WINDOW,真机验过 mutter 放行)。必须在 GTK 主线程跑,故走
+/// `run_on_main_thread`;取时间戳失败退回 0(不比现状差)。`#[cfg]` 让 Win/mac 逐字节不变。
+fn raise_and_focus<R: Runtime>(window: &tauri::WebviewWindow<R>) {
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = window.set_focus();
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let w = window.clone();
+        let _ = window.run_on_main_thread(move || {
+            use gtk::glib::Cast;
+            use gtk::prelude::{GtkWindowExt, WidgetExt};
+            if let Ok(gtk_win) = w.gtk_window() {
+                let ts = gtk_win
+                    .window()
+                    .and_then(|gdk_win| gdk_win.downcast::<gdkx11::X11Window>().ok())
+                    .map(|x11| gdkx11::functions::x11_get_server_time(&x11))
+                    .unwrap_or(0);
+                gtk_win.present_with_time(ts);
+            }
+        });
+    }
+}
+
 /// Summon and focus a window by label. Windows always exist (declared in
 /// tauri.conf.json), so a missing handle is a programming error, not a runtime
 /// condition to recover from.
@@ -1974,7 +2009,7 @@ fn show_window<R: Runtime>(app: &AppHandle<R>, label: &str) {
         }
         window.show().expect("show window");
         let _ = window.maximize();
-        window.set_focus().expect("focus window");
+        raise_and_focus(&window);
         return;
     }
 
@@ -1985,7 +2020,7 @@ fn show_window<R: Runtime>(app: &AppHandle<R>, label: &str) {
         let _ = window.unminimize();
     }
     window.show().expect("show window");
-    window.set_focus().expect("focus window");
+    raise_and_focus(&window);
 }
 
 /// 唤起笔记本主窗。托盘双击、托盘「打开朱简」菜单项、以及 Ctrl+Alt+M 全局键
@@ -2145,6 +2180,16 @@ fn panic_dialog_message(info: &std::panic::PanicHookInfo<'_>) -> String {
 }
 
 pub fn run() {
+    // Linux 真机冒烟(progress-log 215):透明浮窗(capture,transparent:true)在
+    // GNOME/X11 + WebKitGTK 的 DMABUF 加速合成路径下整窗渲染为空——卡片一个像素不画、
+    // 用户召唤捕获看到的是「透过窗口的桌面」(不透明的 notebook 窗不走该路径,故不受影响)。
+    // 关掉 DMABUF renderer(社区对 Tauri-on-Linux 空白/透明失效的标准解;比整体禁合成
+    // WEBKIT_DISABLE_COMPOSITING_MODE 更轻、保留 GPU 合成)即恢复。必须在任何 GTK/WebKit
+    // 初始化之前设(此处是进程最早点);尊重用户既有覆盖(已设则不动)。仅 Linux。
+    #[cfg(target_os = "linux")]
+    if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
+        std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+    }
     // 启动期 fail-fast panic 不该「窗口没建就静默死」:最先装 panic 弹窗钩子,连下面
     // rustls install 失败都能被用户看见(见 install_panic_dialog_hook 注释)。
     install_panic_dialog_hook();
@@ -2376,10 +2421,32 @@ pub fn run() {
             // Global hotkeys: Ctrl+Alt+N summons capture from anywhere; Ctrl+Alt+M
             // summons the notebook on whatever view it was left on. (The tray still
             // opens the notebook too — these just add a from-anywhere shortcut.)
-            app.global_shortcut()
-                .register(Shortcut::new(Some(HOTKEY_MODS), Code::KeyN))?;
-            app.global_shortcut()
-                .register(Shortcut::new(Some(HOTKEY_MODS), Code::KeyM))?;
+            //
+            // Linux(progress-log 215):全局热键走 X11 XGrabKey。X11 会话注册即生效(真机
+            // 冒烟证实 Ctrl+Alt+M 唤主窗 OK);但 Wayland 会话下 XGrabKey 常注册不上——那是
+            // 平台限制、不是用户能解的键位冲突。绝不能像 Win/mac 那样 `?` fail-fast 把整个
+            // setup 拖垮(那样 Wayland 用户连托盘/窗口都进不去=最坏结局)。故 Linux 分支只
+            // 响亮记一笔、留退路(托盘「打开朱简」+ 窗口内入口仍可达),不阻断启动。
+            #[cfg(target_os = "linux")]
+            for (sc, name) in [
+                (Shortcut::new(Some(HOTKEY_MODS), Code::KeyN), ACCEL_CAPTURE),
+                (Shortcut::new(Some(HOTKEY_MODS), Code::KeyM), ACCEL_NOTEBOOK),
+            ] {
+                if let Err(e) = app.global_shortcut().register(sc) {
+                    log::error!(
+                        "全局热键 {name} 注册失败(Wayland 会话常见,退回托盘/窗口入口):{e}"
+                    );
+                }
+            }
+            // Windows/macOS:保留 fail-fast——那里注册失败=真实键位冲突,该响亮崩(见
+            // dev-and-testing「全局热键冲突即 panic」),不该静默吞。
+            #[cfg(not(target_os = "linux"))]
+            {
+                app.global_shortcut()
+                    .register(Shortcut::new(Some(HOTKEY_MODS), Code::KeyN))?;
+                app.global_shortcut()
+                    .register(Shortcut::new(Some(HOTKEY_MODS), Code::KeyM))?;
+            }
 
             // The notebook is the single browse/manage window — a panel, not a
             // doc. Closing it should hide it (so the next summon works), not
@@ -2387,6 +2454,16 @@ pub fn run() {
             let notebook = app
                 .get_webview_window("notebook")
                 .expect("notebook window must exist");
+            // 窗口装饰分平台:config 里 notebook 开了 decorations + titleBarStyle Overlay,
+            // 让 macOS 显示系统原生红绿灯(左上角);Windows/Linux 无红绿灯、用前端自绘按钮,
+            // 运行时把原生边框关掉回到无边框态。窗口启动即隐藏(visible:false),此刻关无闪烁。
+            #[cfg(not(target_os = "macos"))]
+            let _ = notebook.set_decorations(false);
+            // mac 原生窗口阴影:config 的 shadow:false 是为 Windows/Linux 无边框态保留,
+            // 这里只在 mac 运行时开启——原生阴影 + 系统窗口边,是「与同色背景区分」的地道办法
+            // (mac 上前端自绘的方形外框线 body::after 已隐,见 notebook.html)。
+            #[cfg(target_os = "macos")]
+            let _ = notebook.set_shadow(true);
             let notebook_for_close = notebook.clone();
             // 几何防抖落盘:拖动/缩放是高频事件,不能每次写盘。事件送进 channel,一个
             // 长驻后台线程吸收连续事件、静默 600ms 后落一次盘。为什么需要它:插件只在
@@ -2434,10 +2511,20 @@ pub fn run() {
             // The accelerator strings are DISPLAY-ONLY hints in the tray popup — the keys
             // themselves are owned by the global_shortcut plugin above (a tray context menu
             // installs no keyboard handler), so this can't double-register / conflict.
+            // Linux:appindicator 菜单经 DBusMenu 序列化,muda 传给 MenuItem 的 accelerator
+            // 是挂到 GTK 窗口 accel_group(菜单栏用)、不进 DBusMenu,故 GNOME 托盘菜单不显示
+            // 快捷键——把快捷键文本焊进标签补上(Win/mac 由第 5 参原生渲染,标签不含,免重复)。
+            #[cfg(target_os = "linux")]
+            let (show_label, notebook_label) = (
+                format!("记录灵感  ({ACCEL_CAPTURE})"),
+                format!("打开朱简  ({ACCEL_NOTEBOOK})"),
+            );
+            #[cfg(not(target_os = "linux"))]
+            let (show_label, notebook_label) = ("记录灵感".to_string(), "打开朱简".to_string());
             let show_item =
-                MenuItem::with_id(app, "show", "记录灵感", true, Some(ACCEL_CAPTURE))?;
+                MenuItem::with_id(app, "show", &show_label, true, Some(ACCEL_CAPTURE))?;
             let notebook_item =
-                MenuItem::with_id(app, "notebook", "打开朱简", true, Some(ACCEL_NOTEBOOK))?;
+                MenuItem::with_id(app, "notebook", &notebook_label, true, Some(ACCEL_NOTEBOOK))?;
             let quit_item = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show_item, &notebook_item, &quit_item])?;
             TrayIconBuilder::new()
@@ -2464,6 +2551,11 @@ pub fn run() {
                     }
                 })
                 .build(app)?;
+
+            // macOS Dock 右键菜单(§2 的 b):与托盘菜单同两项、同用词,路由回同一对
+            // show_window/open_notebook。Windows/Linux 无 Dock,整段 cfg 掉。
+            #[cfg(target_os = "macos")]
+            dock_menu::install(app.handle());
 
             // Show capture once on launch so the first run is discoverable.
             show_window(app.handle(), "capture");
@@ -2539,8 +2631,16 @@ pub fn run() {
             rename_space,
             move_item_to_space
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|_app_handle, _event| {
+            // macOS:点 Dock 图标(app 已在跑)= 打开主窗。RunEvent::Reopen 是 macOS 专属
+            // (Windows/Linux 无 Dock);不处理时主窗被关(隐藏)后点 Dock 没反应。
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Reopen { .. } = _event {
+                open_notebook(_app_handle);
+            }
+        });
 }
 
 #[cfg(test)]

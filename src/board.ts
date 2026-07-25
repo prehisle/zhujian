@@ -15,6 +15,7 @@ import {
 import { autoGrow } from "./autogrow";
 import { saveTextDraft, loadTextDraft, clearTextDraft } from "./compose-draft";
 import { copyButton, copyText } from "./clipboard";
+import { toastAction } from "./toast";
 import { buildItemDeepLink } from "./deeplink";
 import {
   type FilterState,
@@ -24,6 +25,8 @@ import {
   reconcileTopicFilter,
   renderFilterPills,
   renderKindPills,
+  selectedTopicLabels,
+  soleTopicFilter,
   wireFilterInput,
 } from "./filter-bar";
 import { type Act, armDismiss, createHotkeyController, registerViewKeys } from "./hotkey-menu";
@@ -170,7 +173,7 @@ type BoardView = "board" | "trash" | "sealed";
 // mounted at a time, so a single shared value is correct. The 回收站 toggle (boardView)
 // stays mount-scope on purpose — it's a transient peek, so a fresh mount lands on the
 // board, not the trash. 行为(pills/口径/Esc)在共享件 filter-bar.ts,与灵感同源。
-const filter: FilterState = { kind: "all", topic: "all", text: "" };
+const filter: FilterState = { kind: "all", topics: [], text: "" };
 
 // 新建任务的草稿与暂存配图不随视图切换蒸发(ui-audit P1 #9d):文字过桥走模块态
 // (unmount 存、mount 灌回),暂存图直接把 pendingImages 提到模块级——root 元素随
@@ -558,9 +561,9 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       if (composeImgs.count() > 0) composeErr.textContent = "先写个任务标题,配图会随任务一起保存";
       return;
     }
-    // Creating while a specific topic is filtered files the new task under it;
-    // 所有 / 无主题 → born untagged.
-    const topicId = filter.topic !== "all" && filter.topic !== "none" ? filter.topic : null;
+    // 恰好筛了单一具体标签时,新任务归到它(唯一归属才明确);所有 / 无标签 / 多标签(OR)
+    // → 生而无标签(多标签下归属不明,别猜)。
+    const topicId = soleTopicFilter(filter);
     // 「保存那刻」冻结整份载荷(codex P1 二审 H2):图批同步带走,IPC 等待期间新粘贴
     // 的归下一条。整条链走 invokeInSpace(mountSpace)——必落账写不许走「跨空间迟到
     // 永不决议」的统一包装,否则模块级 in-flight 闸的 finally 永不执行、保存锁死(H1)。
@@ -620,10 +623,15 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       return;
     }
     // 文本过滤下新建:新卡多半不含过滤词,会被当场滤到隐身——清掉过滤让它可见。
-    // (标签筛选不清:筛着标签建卡会挂上该标签,新卡本来就在视野里。)
     if (filter.text !== "") {
       filter.text = "";
       filterInput.value = "";
+    }
+    // 标签筛选下新建:单选具体标签会归到该标签、本就可见,不清;但多标签(OR)下新卡
+    // 生而无标签、不在任何被筛标签下 = 会隐身,清掉标签筛选让它可见(含「无标签」筛选时
+    // 新卡天然在视野,不清)。
+    if (topicId === null && filter.topics.length > 0 && !filter.topics.includes("none")) {
+      filter.topics = [];
     }
     composeErr.textContent =
       failed > 0 ? `任务已建,但 ${failed} 张图未能附加(可在卡片编辑态重新粘贴)` : "";
@@ -762,6 +770,8 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       }
       switch (r.outcome) {
         case "moved":
+          // 回执(228):卡片默默消失等于没回话,且安卓那边一直给绿条——端间不该分叉。
+          toastAction(`已移到「${labels.get(target) ?? target}」`);
           // 迟到(期间取消/重渲/切空间)也只在还在源空间时重载,把移走的卡收掉。
           if (currentSpaceId() === sourceSpace) void load();
           return;
@@ -923,6 +933,10 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       // the picker from the ⋯ menu's 标签 (openPicker). A tagless card shows nothing here.
       const chips = item.topics.map((tp) => {
         const chip = el("span", { className: "chip topic set", draggable: false });
+        // 筛某个标签时,卡片上那枚同名 chip 是纯冗余(筛出来的卡本就都带它)——标 redundant
+        // 交给 CSS 藏起来,消掉视觉噪音。**仍留在 DOM 里**:拖拽打标签的去重判据 taskHasTopic
+        // 读这枚 chip,真删掉会误判「未挂」→ 拖回该 pill 重复 add_task_topic 报错(旁路不变量)。
+        if (soleTopicFilter(filter) === tp.id) chip.classList.add("redundant");
         chip.dataset.topicId = tp.id; // 拖拽打标签的去重判据(taskHasTopic 读它;ULID 选择器安全)
         applyTagColor(chip, tp.color); // 有色标签的 chip 着色(左色条 + 极淡底),便于一眼定位
         chip.append(
@@ -1521,10 +1535,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       );
       return;
     }
-    const label =
-      filter.topic === "none"
-        ? "无标签"
-        : allTopics.find((t) => t.id === filter.topic)?.title ?? "该标签";
+    const label = selectedTopicLabels(filter, allTopics).join("、");
     renderCentered(
       el("div", { className: "big", textContent: `「${label}」下没有任务` }),
       el("div", { textContent: "切到「所有」看全部任务,或在卡片上给任务打个标签。" }),
@@ -1573,7 +1584,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       // Fingerprint everything that affects the DOM; an idle refocus whose fingerprint
       // matches the last render bails before touching a single card (no flicker). An
       // open inline editor / hover state survives such a refocus untouched.
-      const sig = JSON.stringify([boardView, filter.kind, filter.topic, q, today, active, archived, sealed, topics]);
+      const sig = JSON.stringify([boardView, filter.kind, filter.topics, q, today, active, archived, sealed, topics]);
       // `=== true`, not truthy: `load` is also wired as a bare onclick handler in a few
       // places, so a stray MouseEvent must never count as a refocus and skip the repaint.
       // pendingEditId 在场时不短路(codex 二审 M):requestEdit 的那发若被更新的同签名
@@ -1660,7 +1671,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       const focusOnBoard = focus !== null && visible.some((t) => t.id === focus);
       if (focusOnBoard) {
         filter.kind = "all";
-        filter.topic = "all";
+        filter.topics = [];
         filter.text = "";
         filterInput.value = "";
         pulseId = focus;

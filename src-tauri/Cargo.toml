@@ -1,6 +1,6 @@
 [package]
 name = "app"
-version = "0.2.16"
+version = "0.2.17"
 description = "朱简(zhujian)— 纸与朱墨的个人事务管理:灵感捕获、任务看板,纯人工、本地优先"
 authors = ["prehisle"]
 license = ""
@@ -66,3 +66,30 @@ rustls = { version = "0.23", default-features = false, features = ["ring"] }
 rfd = "0.15"
 # (multispace-plan 工序 3:建库[ulid 取名]与真文件身份[原 same-file]随空间逻辑
 #  上抬进 zhujian-core::spaces,壳不再直接依赖 ulid / same-file。)
+
+# macOS Dock 右键菜单(macos-port-plan §2,src/dock_menu.rs):往 tao 的
+# NSApplicationDelegate 类补 applicationDockMenu:。三个 crate 本就在依赖树里
+# (tao/wry 传递引入),这里只是把它们提成直接依赖;**只挂 macOS target 段**,
+# Windows/Linux 构建拉都不拉。特性按需勾,不吃 objc2-app-kit 的全量默认集。
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", default-features = false, features = [
+    "std",
+    "NSApplication",
+    "NSMenu",
+    "NSMenuItem",
+    "NSResponder",
+] }
+objc2-foundation = { version = "0.3", default-features = false, features = [
+    "std",
+    "NSString",
+] }
+
+# GNOME/X11 唤起主窗/浮窗时把窗口抬到最前并拿到键盘焦点(progress-log 216):tao 的
+# Focus 请求走 gtk present_with_time(GDK_CURRENT_TIME=0),0 时间戳被 mutter 焦点偷窃
+# 防护判为「非用户操作」拒掉;换成 gdkx11::x11_get_server_time 取的真时间戳再 present
+# 即被放行(等价 wmctrl -a)。两 crate 本就在依赖树(gtk/tao 传递引入),这里提成直接
+# 依赖、**只挂 Linux target 段**,Windows/mac 构建拉都不拉;版本钉死随 Cargo.lock 的 0.18。
+[target.'cfg(target_os = "linux")'.dependencies]
+gtk = "0.18"
+gdkx11 = "0.18"

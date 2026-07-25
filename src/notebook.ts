@@ -52,6 +52,14 @@ const registry: Record<ViewName, MountFn> = {
 
 // ---- shell ----------------------------------------------------------------
 const win = getCurrentWindow();
+
+// mac 用系统原生红绿灯(壳层给 notebook 窗开了 titleBarStyle Overlay):打个 body
+// 标记,让 CSS 隐藏自绘窗口按钮、并给左上角红绿灯让出侧栏顶部空间。WKWebView 的
+// userAgent 在 macOS 上含「Macintosh」;Windows(WebView2)/Linux 不含,保持自绘按钮。
+if (navigator.userAgent.includes("Macintosh")) {
+  document.body.classList.add("is-macos");
+}
+
 const viewRoot = document.getElementById("view") as HTMLElement;
 const navButtons = Array.from(
   document.querySelectorAll<HTMLButtonElement>(".sidebar nav button"),
@@ -93,14 +101,16 @@ document.getElementById("win-close")?.addEventListener("click", () => void win.h
 // double-click on the header drag-region, or an OS maximize all funnel through
 // onResized → syncMaxGlyph), so it never lies about whether we're maximized.
 const maxBtn = document.getElementById("win-max");
-// Segoe Fluent Icons (private-use codepoints, built from char codes to keep the
-// source ASCII): 0xE923 = restore (shown when maximized), 0xE922 = maximize.
-const GLYPH_RESTORE = String.fromCharCode(0xe923);
-const GLYPH_MAXIMIZE = String.fromCharCode(0xe922);
+// 图标走内联 SVG(不依赖 Windows 独有的 Segoe 图标字体,mac/Linux 同样渲染):
+// 未最大化=单方框;已最大化=双叠方框(向下还原)。随窗口状态切换。
+const SVG_MAXIMIZE =
+  '<svg viewBox="0 0 10 10" aria-hidden="true"><rect x="1" y="1" width="8" height="8" /></svg>';
+const SVG_RESTORE =
+  '<svg viewBox="0 0 10 10" aria-hidden="true"><path d="M3 3 V1 H9 V7 H7" /><rect x="1" y="3" width="6" height="6" /></svg>';
 async function syncMaxGlyph(): Promise<void> {
   if (!maxBtn) return;
   const max = await win.isMaximized();
-  maxBtn.textContent = max ? GLYPH_RESTORE : GLYPH_MAXIMIZE;
+  maxBtn.innerHTML = max ? SVG_RESTORE : SVG_MAXIMIZE;
   maxBtn.title = max ? "向下还原" : "最大化";
 }
 maxBtn?.addEventListener("click", () => void win.toggleMaximize());

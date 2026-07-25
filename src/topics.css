@@ -96,6 +96,29 @@
   border-left: 1.5px solid var(--line); /* 导轨:一条淡线把整组子标签串起来 */
 }
 .v-topics .topic.child { margin-left: 0; } /* 缩进交给容器,子行本身不再各自外移 */
+.v-topics .topic-kids.collapsed { display: none; } /* 折叠:整组子标签收起(0031 需求 3) */
+
+/* 子标签折叠开关:父行上一枚小胶囊(▾/▸ + 「N 个子标签」),点它收起/展开子标签组。 */
+.v-topics .topic-kids-toggle {
+  flex: none;
+  font: inherit;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--ink-faint);
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 1px 9px;
+  cursor: pointer;
+  transition: color 0.14s, border-color 0.14s, background 0.14s;
+}
+.v-topics .topic-kids-toggle:hover {
+  color: var(--seal);
+  border-color: var(--seal-line);
+  background: var(--seal-tint);
+}
+.v-topics .topic-kids-toggle .kt-chev { font-size: 9px; margin-right: 1px; }
+.v-topics.merging .topic-kids-toggle { display: none; } /* 合并态要选子标签,不折叠 */
 /* 每个子行头挂一条短横「elbow」接回导轨,明示「这是父的子项」 */
 .v-topics .topic-kids .topic-head { position: relative; }
 .v-topics .topic-kids .topic-head::before {

@@ -89,3 +89,26 @@
   align-self: center;
   flex: 0 0 auto;
 }
+
+/* ---- 父子标签在筛选条折叠(0031 需求扩展)---- */
+.tf-pill.hidden { display: none; } /* 收起态:子标签 pill 藏起来 */
+/* 子标签 pill:虚线描边 + 一枚淡连接符,一眼读作「父的子项」(横排里以皮肤区分,不缩进)。 */
+.tf-pill.child { border-style: dashed; }
+.tf-pill.child::before {
+  content: "↳";
+  color: var(--ink-faint);
+  font-size: 11px;
+  align-self: center;
+}
+/* 父 pill 右侧的展开/收起小箭头:点它翻子标签显隐(点 pill 主体照常筛选)。 */
+.tf-caret {
+  font-size: 9px;
+  color: var(--ink-faint);
+  cursor: pointer;
+  padding: 1px 1px 1px 4px;
+  margin-left: -1px;
+  align-self: center;
+  transition: color 0.14s;
+}
+.tf-caret:hover { color: var(--seal); }
+.tf-pill.active .tf-caret { color: var(--seal); }

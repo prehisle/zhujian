@@ -150,6 +150,8 @@
 /* ---- per-card topic chip (reuses .task-meta chip styling) ---- */
 .v-board .task-topic { margin-top: 7px; }
 .v-board .task-meta .chip.topic.set::before { content: "🏷 "; }
+/* 筛某标签时,卡片上重复的同名 chip 藏起来(节点仍在 DOM 供 taskHasTopic 去重判据用)。 */
+.v-board .task-meta .chip.topic.set.redundant { display: none; }
 .v-board .task-meta .chip.topic.set {
   color: var(--ink);
   border-color: var(--line-strong);
@@ -367,7 +369,7 @@
    增改清操作不在卡面、全走 ⋯ 菜单 S/P/L(无 ＋ 占位入口)。故只需把「无任何展示内容」的
    空 meta 行连同 margin 收起,免得静止卡片在标题下留空行。当 ⋯ 菜单打开某个编辑器时,该行
    会含 .due-input / .choice / .link / .topic-hint / .topic-search → 不匹配收起、自然显出。 */
-.v-board .tcard .task-meta:not(:has(.chip)):not(:has(.due-input)):not(:has(.choice)):not(:has(.link)):not(:has(.topic-hint)):not(:has(.topic-search)) {
+.v-board .tcard .task-meta:not(:has(.chip:not(.redundant))):not(:has(.due-input)):not(:has(.choice)):not(:has(.link)):not(:has(.topic-hint)):not(:has(.topic-search)) {
   display: none;
 }
 

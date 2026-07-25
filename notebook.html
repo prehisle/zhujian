@@ -232,7 +232,6 @@
       /* floating window controls (top-right, over the content) */
       .winctl { position: absolute; top: 0; right: 0; z-index: 6; display: flex; }
       .wc {
-        font-family: "Segoe Fluent Icons", "Segoe MDL2 Assets", sans-serif;
         font-size: 10px;
         width: 46px;
         height: 36px;
@@ -245,8 +244,30 @@
         place-items: center;
         cursor: pointer;
       }
+      /* 图标走内联 SVG:不依赖 Windows 独有的 Segoe 图标字体,mac/Linux 同样渲染;
+         stroke=currentColor 跟着 .wc 的 color / hover 变色。 */
+      .wc svg { width: 10px; height: 10px; fill: none; stroke: currentColor; stroke-width: 1; }
       .wc:hover { background: color-mix(in srgb, var(--ink) 9%, transparent); color: var(--ink); }
       .wc-close:hover { background: var(--seal); color: #fdf6ee; }
+      /* macOS:窗口用系统原生「红绿灯」按钮(左上角,titleBarStyle Overlay),
+         隐藏这套自绘按钮;并把侧栏顶部内容往下推,给左上角的红绿灯让出位置。
+         Windows/Linux 无红绿灯,保留自绘按钮、维持原布局。 */
+      body.is-macos .winctl { display: none; }
+      body.is-macos .sidebar { padding-top: 34px; }
+      body.is-macos .sb-toggle { top: 30px; }
+      /* mac 是原生圆角窗:自绘的方形外框线(body::after)套在圆角上会在四角露方角,
+         隐掉它交给原生窗口边缘;与同色背景的区分改由原生窗口阴影承担(见 lib.rs set_shadow)。 */
+      body.is-macos::after { display: none; }
+      /* mac:各视图 header 原来右侧留 150~168px 是给自绘 winctl 按钮让位(见各视图 css);
+         mac 按钮已隐,收回这段留白让内容用整宽(否则统计/动作钮悬在中间、右侧空一大片);
+         顶部与侧栏一起下移,给左上原生红绿灯 / 标题栏让位。 */
+      body.is-macos .v-inbox header,
+      body.is-macos .v-board header,
+      body.is-macos .v-topics header,
+      body.is-macos .v-search header {
+        padding-top: 34px;
+        padding-right: 30px;
+      }
 
       /* the mounted view fills the column */
       #view { flex: 1; min-height: 0; display: flex; }
@@ -281,9 +302,9 @@
     </aside>
     <div class="main-col">
       <div class="winctl">
-        <button id="win-min" class="wc" title="最小化" aria-label="最小化">&#xE921;</button>
-        <button id="win-max" class="wc" title="最大化" aria-label="最大化">&#xE922;</button>
-        <button id="win-close" class="wc wc-close" title="关闭" aria-label="关闭">&#xE8BB;</button>
+        <button id="win-min" class="wc" title="最小化" aria-label="最小化"><svg viewBox="0 0 10 10" aria-hidden="true"><path d="M1 5 h8" /></svg></button>
+        <button id="win-max" class="wc" title="最大化" aria-label="最大化"><svg viewBox="0 0 10 10" aria-hidden="true"><rect x="1" y="1" width="8" height="8" /></svg></button>
+        <button id="win-close" class="wc wc-close" title="关闭" aria-label="关闭"><svg viewBox="0 0 10 10" aria-hidden="true"><path d="M1 1 L9 9 M9 1 L1 9" /></svg></button>
       </div>
       <main id="view"></main>
     </div>

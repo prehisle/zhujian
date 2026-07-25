@@ -22,6 +22,7 @@ import {
   spaceLabel,
   syncCreateAccount,
   syncPairStart,
+  type ImageMeta,
   type SpaceInfo,
   type TimelineItem,
 } from "./api";
@@ -107,8 +108,8 @@ let viewMode: ViewMode = "ideas";
 // 切面保留、切空间清零。allFilterTopics 是带 kind 的全量标签(list_topics_full),
 // 每轮刷新重取——类型轴的真相只在它上(per-item chip 不带 kind)。
 const filters: Record<ViewMode, filter.FilterState> = {
-  ideas: { kind: "all", topic: "all", text: "" },
-  tasks: { kind: "all", topic: "all", text: "" },
+  ideas: { kind: "all", topics: [], text: "" },
+  tasks: { kind: "all", topics: [], text: "" },
 };
 let allFilterTopics: filter.FilterTopic[] = [];
 // 用户主动导航(点 mode 钮)/开始保存 → ++,作废在途的 focus 定位(146 ▲M2/▲▲M3:
@@ -448,31 +449,112 @@ window.addEventListener("popstate", () => {
 // 快速连点几张图,迟到的旧响应不许盖掉最新点击;关闭也推代次,在途响应作废不复弹。
 let viewerSeq = 0;
 let viewerImgId: string | null = null; // 当前大图的 image id(删图按钮据此删这张)
-async function openViewer(id: string, seq: string) {
-  const my = ++viewerSeq;
-  hideConfirmBar(); // 开大图 = 放弃挂着的两拍确认(确认条 z 在查看器之上,别浮在图上)
-  const space = getCurrentSpace(); // 点击那一刻的空间(切走后 fetchImageUrl 返 null 即弃)
-  try {
-    const url = await fetchImageUrl(space, id);
-    if (!url || my !== viewerSeq) return;
-    viewerImgId = id; // 现显的这张(删图按钮据此),迟到响应被 my!==viewerSeq 挡在上面
-    resetZoom(); // 换图不继承上一张的缩放
-    const img = $("viewer-img") as HTMLImageElement;
+// 225:查看器收**同条目的整组图**,未放大时单指横滑翻页(左滑下一张、右滑上一张,首尾循环)。
+// 组来自 lastItems 里那条的 images(时间轴本来就带下来,不另取);只一张时横滑不接管。
+let viewerGroup: ImageMeta[] = [];
+let viewerIdx = 0;
+
+function openViewer(group: ImageMeta[], idx: number) {
+  viewerGroup = group;
+  return showViewerAt(idx);
+}
+
+const SLIDE_MS = 180; // 与 applyTransform 里的 transform 0.18s 对齐
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+// 过场进行中不接新的翻页手势:否则新手势的跟手位移与在跑的飞出/滑入抢同一个 vSwipeX,
+// 图会在半途被拽回来再跳走。一次过场只有 ~180ms + 取字节,锁掉这一小段比抖动强。
+let flipping = false;
+
+/** 设 src 并等它真解码完(或失败)。同 src 不再触发 load,故先短路——否则永远等不到。 */
+function loadViewerImage(img: HTMLImageElement, url: string): Promise<void> {
+  return new Promise((resolve) => {
+    if (img.src === url && img.complete && img.naturalWidth > 0) return resolve();
+    const done = (): void => {
+      img.removeEventListener("load", done);
+      img.removeEventListener("error", done);
+      resolve();
+    };
+    img.addEventListener("load", done); // 模块级 load 监听先注册,故 vBase 此刻已量好
+    img.addEventListener("error", done);
     img.src = url;
-    img.alt = `图${seq}`; // 读屏语义与角标同源
-    $("viewer-cap").textContent = `图${seq}`;
+  });
+}
+
+/** 呈现组内第 i 张。`dir` = 翻页方向(0 = 开图,不走过场);+1 是「下一张」(旧图向左飞出、
+ *  新图从右侧滑入),-1 反之。**不预载相邻图**——全尺寸 data URL 一律不缓存是 117 定下的
+ *  内存红线(32MiB 级原图 base64 常驻会撑爆 WebView),所以飞出与滑入之间必然要现取一次;
+ *  取字节与飞出并行发起,换图那一瞬图隐形,不让「旧图没走 / 新图没定位」露脸。 */
+async function showViewerAt(i: number, dir: -1 | 0 | 1 = 0) {
+  const my = ++viewerSeq;
+  hideConfirmBar(); // 开大图/换图 = 放弃挂着的两拍确认(确认条 z 在查看器之上,别浮在图上;
+  // 且旧确认针对的是上一张)
+  const m = viewerGroup[i];
+  if (!m) return;
+  // 光标**同步**推进(不等字节回来):连划两下要真翻两张——若等 await 后再记,第二下
+  // 还从旧位置起算,两下只翻一张。而 viewerImgId(删图按钮的依据)仍等字节落定才改:
+  // 那枚必须永远指着**屏幕上真显示的**那张。
+  viewerIdx = i;
+  const space = getCurrentSpace(); // 点击那一刻的空间(切走后 fetchImageUrl 返 null 即弃)
+  const img = $("viewer-img") as HTMLImageElement;
+  // 取不到字节就把飞出去的旧图弹回来 + 亮错误条,别留一屏空黑。
+  const abortSlide = (): void => {
+    if (dir === 0) return;
+    vSwipeX = 0;
+    img.style.visibility = "";
+    applyTransform(true);
+  };
+  const bytes = fetchImageUrl(space, m.id); // 与飞出动画并行跑,不串行等
+  if (dir !== 0) flipping = true; // 过场期间手势闸(同轮只有一次过场,故清标不会踩到别人)
+  try {
+    if (dir !== 0) {
+      vSwipeX = -dir * window.innerWidth; // 顺着手势方向送出屏外
+      applyTransform(true);
+      await sleep(SLIDE_MS);
+      if (my !== viewerSeq) return; // 已被更新的一次翻页接管:位置交给它管
+    }
+    const url = await bytes;
+    if (my !== viewerSeq) return;
+    if (!url) {
+      abortSlide(); // 空间已切走
+      return;
+    }
+    viewerImgId = m.id; // 现显的这张(删图按钮据此),迟到响应被 my!==viewerSeq 挡在上面
+    if (dir !== 0) img.style.visibility = "hidden"; // 先隐,免得 resetZoom 把旧图瞬移回中心
+    resetZoom(); // 换图不继承上一张的缩放(连带清 vSwipeX)
+    await loadViewerImage(img, url);
+    if (my !== viewerSeq) return;
+    img.alt = `图${m.seq}`; // 读屏语义与角标同源
+    // 多图时角标兼作「还有几张」的读数(手机上没有左右箭头,这是唯一的组内位置提示)。
+    $("viewer-cap").textContent =
+      viewerGroup.length > 1 ? `图${m.seq} · ${i + 1}/${viewerGroup.length}` : `图${m.seq}`;
+    if (dir !== 0) {
+      vSwipeX = dir * window.innerWidth; // 瞬移到另一侧屏外(同一帧里连同亮相一起提交)
+      applyTransform(false);
+      img.style.visibility = "";
+      requestAnimationFrame(() => {
+        if (my !== viewerSeq) return;
+        vSwipeX = 0;
+        applyTransform(true); // 滑入
+      });
+    }
     if ($("viewer").hidden) {
       $("viewer").hidden = false;
       pushLayer();
     }
   } catch (err) {
-    if (my === viewerSeq) showError(String(err));
+    if (my !== viewerSeq) return;
+    abortSlide();
+    showError(String(err));
+  } finally {
+    flipping = false;
   }
 }
 
 function closeViewerNow() {
   viewerSeq++; // 在途的打开请求作废
   viewerImgId = null;
+  viewerGroup = [];
+  viewerIdx = 0;
   hideConfirmBar(); // 关图即弃挂着的删图确认(旧确认不许作用到下一张/下个语境)
   $("viewer").hidden = true;
   ($("viewer-img") as HTMLImageElement).src = ""; // 释放大图
@@ -487,14 +569,23 @@ let vScale = 1;
 let vTx = 0;
 let vTy = 0;
 let vBase = { cx: 0, cy: 0, w: 0, h: 0 };
+// 翻页横移(227):与 vTx 分家——vTx 是放大后的平移(要过 clampView 钳位),vSwipeX 是
+// 翻页手势与过场动画的横向位移,不受钳位、也不算进 identity(跟手拖动中不该把角标淡掉)。
+let vSwipeX = 0;
 let suppressClick = false; // 手势(捏合/拖拽)收尾时 WebView 可能补发 click:吞掉
 let closeTimer: number | undefined;
 let lastTap = { t: 0, x: 0, y: 0 };
 
 function applyTransform(anim = false) {
-  const identity = vScale === 1 && vTx === 0 && vTy === 0;
+  // identity 按「肉眼等同」判,不按严格零(226):双击复位把三个量清零后还要过 clampView,
+  // 而 clampView 对小于视口的图恒把位置钉到几何中点——vBase 的中心与视口中心差个零点几像素
+  // 就留下 vTy≈-0.6 的余量,严格 `=== 0` 于是判不出复位。后果不止「图N」角标不回来:
+  // `.zoomed` 还给删除按钮挂着 `opacity:0; pointer-events:none`(index.html),
+  // 也就是放大再复位后那张图**删不掉了**,要关掉重开才恢复。
+  const identity = Math.abs(vScale - 1) < 0.005 && Math.abs(vTx) < 1 && Math.abs(vTy) < 1;
   viewerImgEl.style.transition = anim ? "transform 0.18s ease-out" : "";
-  viewerImgEl.style.transform = identity ? "" : `translate(${vTx}px, ${vTy}px) scale(${vScale})`;
+  viewerImgEl.style.transform =
+    identity && vSwipeX === 0 ? "" : `translate(${vTx + vSwipeX}px, ${vTy}px) scale(${vScale})`;
   // 放大/拖动中「图N」角标是噪音,且 transform 不改布局、放大后必与图重合:淡出,复位再现。
   $("viewer").classList.toggle("zoomed", !identity);
 }
@@ -503,6 +594,7 @@ function resetZoom() {
   vScale = 1;
   vTx = 0;
   vTy = 0;
+  vSwipeX = 0;
   viewerImgEl.style.transition = "";
   viewerImgEl.style.transform = "";
   $("viewer").classList.remove("zoomed");
@@ -536,8 +628,33 @@ function beginGesture() {
   gest = { s: vScale, tx: vTx, ty: vTy, d0, mx, my };
 }
 
+// 横滑翻页(225 引入,227 改跟手):拖动中图就跟着手指走,**松手才判翻不翻**——原先是
+// 「越过阈值瞬间换图」,手指还在屏上、屏幕先跳一下,用户报「死板、没有过渡」。
+// 定性只做一次(swipeAxis 闩住):走够 8px 时看横竖谁占优,横向压过竖向 1.2 倍才接管,
+// 之后整轮手势不再改判(免得斜划到一半突然从跟手变不跟手)。
+// 阈值随屏宽走(至少 48px / 至多屏宽 18%):跟手之后有了视觉反馈,阈值可以比「盲翻」时更实。
+const swipeThreshold = (): number => Math.max(48, window.innerWidth * 0.18);
+let swipeAxis: "" | "x" | "no" = "";
+
+/** 松手结算:过阈值就翻页(走过场动画),否则弹回原位。 */
+function settleSwipe() {
+  const dx = vSwipeX;
+  swipeAxis = "";
+  const n = viewerGroup.length;
+  if (n > 1 && Math.abs(dx) > swipeThreshold()) {
+    const dir = dx < 0 ? 1 : -1; // 左滑 = 下一张
+    void showViewerAt((viewerIdx + dir + n) % n, dir);
+    return;
+  }
+  vSwipeX = 0; // 没划够:弹回来(有回弹本身就是「我收到了你的手势」的回执)
+  applyTransform(true);
+}
+
 $("viewer").addEventListener("pointerdown", (e) => {
-  if (vPtrs.size === 0) suppressClick = false; // 新一轮手势:上一轮的抑制标志作废
+  if (vPtrs.size === 0) {
+    suppressClick = false; // 新一轮手势:上一轮的抑制标志作废
+    swipeAxis = "";
+  }
   vPtrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
   beginGesture();
 });
@@ -556,23 +673,57 @@ $("viewer").addEventListener("pointermove", (e) => {
     vTx = mx - vBase.cx - ns * vx;
     vTy = my - vBase.cy - ns * vy;
     suppressClick = true;
+    if (vSwipeX !== 0 || swipeAxis === "x") {
+      // 单指划到一半又落了第二根手指:这是要捏合,放弃这轮翻页并把图弹回原位。
+      swipeAxis = "no";
+      vSwipeX = 0;
+    }
   } else if (vScale > 1.01) {
     vTx = gest.tx + (mx - gest.mx);
     vTy = gest.ty + (my - gest.my);
     if (Math.hypot(mx - gest.mx, my - gest.my) > 8) suppressClick = true;
   } else {
+    // 未放大的单指拖拽:这条通道原本空着(既不平移也不缩放),拿来翻同条目的图——
+    // **图跟着手指走**,松手才由 settleSwipe 判翻不翻。放大态仍归平移,那是看细节的手。
+    if (viewerGroup.length < 2) return;
+    if (flipping) {
+      swipeAxis = "no"; // 过场跑着呢:这一轮手势整轮作废(别和动画抢 vSwipeX)
+      return;
+    }
+    const dx = mx - gest.mx;
+    const dy = my - gest.my;
+    if (swipeAxis === "") {
+      if (Math.hypot(dx, dy) < 8) return; // 还没走够,先不定性(轻点仍是「关图」)
+      suppressClick = true; // 划过就不算点击(免翻完又把图关了)
+      swipeAxis = Math.abs(dx) > Math.abs(dy) * 1.2 ? "x" : "no";
+    }
+    if (swipeAxis !== "x") return; // 这轮判成竖划:整轮都不接管,别中途改判
+    vSwipeX = dx;
+    applyTransform();
     return;
   }
   clampView();
   applyTransform();
 });
-const viewerPtrEnd = (e: PointerEvent) => {
+const viewerPtrEnd = (e: PointerEvent, cancelled = false) => {
   vPtrs.delete(e.pointerId);
-  if (vPtrs.size) beginGesture(); // 双指抬一指:剩下的手指重新起基准,不跳变
-  else gest = null;
+  if (vPtrs.size) {
+    beginGesture(); // 双指抬一指:剩下的手指重新起基准,不跳变
+    return;
+  }
+  gest = null;
+  if (swipeAxis !== "x") return;
+  if (cancelled) {
+    // 系统收走了手势(来电/通知栏下拉等):不当成翻页意图,弹回原位。
+    swipeAxis = "";
+    vSwipeX = 0;
+    applyTransform(true);
+    return;
+  }
+  settleSwipe();
 };
-$("viewer").addEventListener("pointerup", viewerPtrEnd);
-$("viewer").addEventListener("pointercancel", viewerPtrEnd);
+$("viewer").addEventListener("pointerup", (e) => viewerPtrEnd(e));
+$("viewer").addEventListener("pointercancel", (e) => viewerPtrEnd(e, true));
 
 $("viewer").addEventListener("click", (e) => {
   if (suppressClick) {
@@ -665,7 +816,16 @@ $("timeline").addEventListener("click", (e) => {
     void fillThumb(btn);
     return;
   }
-  void openViewer(btn.dataset.img!, btn.dataset.seq ?? "");
+  // 225:连同条目的整组图一起交给查看器(横滑翻页要的就是这个),组来自 lastItems——
+  // 它与时间轴 DOM 在同一轮 refreshOnce 里由同一份 items 建出,天然同步。
+  const card = btn.closest<HTMLElement>(".card[data-id]");
+  const group = card ? (lastItems.get(card.dataset.id!)?.images ?? []) : [];
+  const idx = group.findIndex((m) => m.id === btn.dataset.img);
+  if (idx < 0) {
+    showError("这张图已不在(列表可能已刷新)");
+    return;
+  }
+  void openViewer(group, idx);
 });
 
 // 读失败画在读的位置(时间轴区域),写失败亮在错误条——两个通道各管各的。
@@ -752,13 +912,14 @@ function onFilterPick(patch: Partial<filter.FilterState>): void {
 }
 
 /** 筛空(本面有条目、被当前筛选滤没了)的空态文案:词优先,再标签,再类型——别让
- *  用户以为记录全没了。 */
+ *  用户以为记录全没了。标签多选时把选中的名字全列出来(「A、B」下没有记录)。 */
 function filteredEmptyHtml(f: filter.FilterState): string {
   const q = f.text.trim();
   if (q) return `<p class="muted empty">没有匹配「${esc(q)}」的记录。</p>`;
-  if (f.topic === "none") return `<p class="muted empty">没有未打标签的记录。</p>`;
-  const t = allFilterTopics.find((x) => x.id === f.topic);
-  if (t) return `<p class="muted empty">「${esc(t.title)}」下没有记录。</p>`;
+  const labels = filter.selectedTopicLabels(f, allFilterTopics);
+  if (labels.length === 1 && labels[0] === "无标签")
+    return `<p class="muted empty">没有未打标签的记录。</p>`;
+  if (labels.length) return `<p class="muted empty">「${esc(labels.join("、"))}」下没有记录。</p>`;
   if (f.kind !== "all") return `<p class="muted empty">「${esc(f.kind)}」类型下没有记录。</p>`;
   return `<p class="muted empty">没有匹配的记录。</p>`;
 }
@@ -766,8 +927,8 @@ function filteredEmptyHtml(f: filter.FilterState): string {
 /** 清掉某面的筛选并同步文本框(新记录落该面时用,避免被停留的筛选藏起)。 */
 function clearFilter(mode: ViewMode): void {
   const f = filters[mode];
-  if (f.kind === "all" && f.topic === "all" && f.text === "") return;
-  filters[mode] = { kind: "all", topic: "all", text: "" };
+  if (!filter.filterActive(f)) return;
+  filters[mode] = { kind: "all", topics: [], text: "" };
   if (mode === viewMode) ($("filter-text") as HTMLInputElement).value = "";
 }
 
@@ -1276,8 +1437,8 @@ function resetPanesForSpaceChange() {
   panes.resetPanesForSpaceChange();
   topics.resetTopicsForSpaceChange();
   // 筛选是 A 空间的标签 id/词,绝不带进 B 空间(allFilterTopics 随下轮刷新重取)。
-  filters.ideas = { kind: "all", topic: "all", text: "" };
-  filters.tasks = { kind: "all", topic: "all", text: "" };
+  filters.ideas = { kind: "all", topics: [], text: "" };
+  filters.tasks = { kind: "all", topics: [], text: "" };
   allFilterTopics = [];
   ($("filter-text") as HTMLInputElement).value = "";
 }

@@ -29,18 +29,37 @@ export function fmtWhen(iso: string): string {
 }
 
 // ---- 错误/提示条:后端原话,响亮但会自己退场(notice = 非错误的提示) ----------
+// 退场时长按「读得完」定,不再一律 6s(221:全部 24 个调用点共用 6s,「已移到「X」」
+// 这种六个字的回执也要顶在时间轴上方杵满六秒)。错误=后端原话、要读懂才好处置,
+// 保持 6s;notice=回执,按字数给读秒(下限 2.2s 够扫一眼,上限仍 6s 兜住长指引)。
+// 另外补一条:点一下就收——此前 6s 内只能干等或等下一条顶掉。
+
+const ERROR_MS = 6000;
+/** notice 读秒:基线 1s + 每字 110ms,钳在 [2.2s, 6s]。 */
+const noticeMs = (msg: string) => Math.min(ERROR_MS, Math.max(2200, 1000 + msg.length * 110));
 
 let errTimer: number | undefined;
+let errWired = false;
+
+function hideBar(): void {
+  clearTimeout(errTimer);
+  $("error").hidden = true;
+}
 
 export function showBar(msg: string, notice = false) {
   const el = $("error");
+  if (!errWired) {
+    // 懒接线(模块加载期不碰 DOM):点条身即收,不等读秒走完。
+    el.addEventListener("click", hideBar);
+    errWired = true;
+  }
   el.textContent = msg;
   el.classList.toggle("notice", notice);
   el.hidden = false;
   clearTimeout(errTimer);
   errTimer = window.setTimeout(() => {
     el.hidden = true;
-  }, 6000);
+  }, notice ? noticeMs(msg) : ERROR_MS);
 }
 
 export const showError = (msg: string) => showBar(msg);

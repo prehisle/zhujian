@@ -590,6 +590,24 @@
         width: 8px; height: 8px; border-radius: 50%;
         background: var(--tc, var(--ink-faint)); flex: none;
       }
+      /* 父子标签在筛选条折叠(同桌面 filter-bar.css)。收起态子 pill 直接不占位。 */
+      .fpill.hidden { display: none; }
+      /* 子标签 pill:虚线描边 + 一枚淡连接符,横排里以皮肤区分「父的子项」(不缩进)。 */
+      .fpill.child { border-style: dashed; }
+      .fpill.child::before {
+        content: "↳"; color: var(--ink-faint); font-size: 11px; align-self: center;
+      }
+      /* 父 pill 右侧的展开/收起箭头。点它翻子标签显隐(点 pill 主体照常筛选)——两者
+         紧挨着,故命中盒按手指给足:纵向 stretch 撑满 pill 全高(负 margin 抵消 pill 的
+         上下内边距)、横向左 padding 吃掉计数与箭头之间的死区、右 padding 吃满 pill 自己的
+         右内边距(负 margin 抵消)。实测 28.2×30.8 CSS px 且四边都不外溢父 pill——外溢会
+         抢邻座 pill 的点击。桌面那枚 caret 只有 1px padding,照抄到触屏必点不中。 */
+      .fcaret {
+        align-self: stretch; display: inline-flex; align-items: center;
+        padding: 5px 10px 5px 14px; margin: -5px -10px -5px 0;
+        font-size: 11px; color: var(--ink-faint);
+      }
+      .fpill.active .fcaret { color: var(--seal); }
       .ftext {
         flex: none; width: 9.5em; font: inherit; font-size: 13px;
         color: var(--ink); background: var(--raised);

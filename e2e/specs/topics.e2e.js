@@ -124,6 +124,57 @@ describe("标签 · 浏览与收缩展开", () => {
     });
   });
 
+  it("父标签折叠开关:收起 / 展开子标签组(0031 需求 3)", async () => {
+    const P = "E2E-折叠-父";
+    await invoke("create_topic", { title: P });
+    await invoke("create_topic", { title: `${P}/子一` });
+    await invoke("create_topic", { title: `${P}/子二` });
+
+    await goNotebook("topics");
+    await (await $(`.topic-title*=${P}`)).waitForExist({ timeout: 10000 });
+
+    // 父行折叠态 + 钮文案 + 子容器是否 collapsed。
+    const state = () =>
+      browser.execute((parent) => {
+        const secs = [...document.querySelectorAll(".topic")];
+        const parentSec = secs.find((s) => s.querySelector(".topic-title").textContent === parent);
+        const kids = parentSec ? parentSec.nextElementSibling : null;
+        const toggle = parentSec ? parentSec.querySelector(".topic-kids-toggle") : null;
+        return {
+          hasToggle: !!toggle,
+          toggleText: toggle ? toggle.textContent.trim() : null,
+          kidsCollapsed:
+            kids && kids.classList.contains("topic-kids") ? kids.classList.contains("collapsed") : null,
+        };
+      }, P);
+    const clickToggle = () =>
+      browser.execute((parent) => {
+        const secs = [...document.querySelectorAll(".topic")];
+        const parentSec = secs.find((s) => s.querySelector(".topic-title").textContent === parent);
+        parentSec.querySelector(".topic-kids-toggle").click();
+      }, P);
+
+    // 默认:有折叠钮(标「2 个子标签」)、子标签组展开(未 collapsed)。
+    let s = await state();
+    expect(s.hasToggle).toBe(true);
+    expect(s.toggleText).toContain("2 个子标签");
+    expect(s.kidsCollapsed).toBe(false);
+
+    // 点一下 → 子标签组收起。
+    await clickToggle();
+    await browser.waitUntil(async () => (await state()).kidsCollapsed === true, {
+      timeout: 8000,
+      timeoutMsg: "点折叠钮后子标签组未收起",
+    });
+
+    // 再点 → 展开(收起是可逆的)。
+    await clickToggle();
+    await browser.waitUntil(async () => (await state()).kidsCollapsed === false, {
+      timeout: 8000,
+      timeoutMsg: "再点后子标签组未展开",
+    });
+  });
+
   it("想法归档后,空标签仍留在列表里(可管理),计数归零", async () => {
     const content = "E2E-标签-乙-源";
     const [noteId] = await seedTopicWithNotes("E2E-标签-乙", [content]);

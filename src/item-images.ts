@@ -9,6 +9,7 @@ import { invoke, invokeInSpace } from "./space";
 import { saveImageDraft, loadImageDraft } from "./compose-draft";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { copyText } from "./clipboard";
+import { flashToast } from "./toast";
 import { PhysicalPosition, PhysicalSize, LogicalSize } from "@tauri-apps/api/dpi";
 import { currentMonitor, getCurrentWindow } from "@tauri-apps/api/window";
 import "./item-images.css";
@@ -166,6 +167,22 @@ export function imageFromPaste(e: ClipboardEvent): Blob | null {
   return null;
 }
 
+// 看图时 Ctrl+C 复制整张图(223)。剪贴板写图在 Chromium/WebView2 只保证认 image/png,
+// 而库里存的可能是 jpeg/webp/gif,故一律过 canvas 重绘成 PNG 再写——不是转码洁癖,是不转
+// 就写不进去。已知折损:GIF 动图只得当前帧(canvas 取不到动画),透明 PNG 走 canvas 保 alpha。
+// 走的是 <img> 已解码的像素,不重新取字节(全尺寸图本就在眼前这张 img 上)。
+async function copyImageToClipboard(img: HTMLImageElement): Promise<void> {
+  const c = document.createElement("canvas");
+  c.width = img.naturalWidth;
+  c.height = img.naturalHeight;
+  const ctx = c.getContext("2d");
+  if (!ctx) throw new Error("canvas 2d 上下文不可用");
+  ctx.drawImage(img, 0, 0);
+  const blob = await new Promise<Blob | null>((r) => c.toBlob(r, "image/png"));
+  if (!blob) throw new Error("图片编码失败");
+  await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
+}
+
 /** Mount a full-window overlay around `inner`; click anywhere or press Esc closes it.
  *  `onClose` runs while the overlay is STILL up and is awaited before teardown — so a caller
  *  that shrinks a grown window does it under the dark backdrop (no bare-window flash on close).
@@ -174,6 +191,7 @@ export function imageFromPaste(e: ClipboardEvent): Blob | null {
 function mountLightbox(
   inner: HTMLElement,
   onClose?: () => void | Promise<void>,
+  onNav?: (delta: -1 | 1) => void,
 ): { overlay: HTMLElement; close: () => Promise<void> } {
   const overlay = el("div", { className: "img-lightbox" }, [inner]);
   overlay.tabIndex = -1; // 让遮罩自身可聚焦:遮罩内无可聚焦子元素时,焦点有个「家」落回这里
@@ -216,10 +234,31 @@ function mountLightbox(
       first.focus();
     }
   };
+  // 遮罩底部中央的一次性回执(z 抬到遮罩之上,否则被 9000 层盖住看不见)。
+  const toast = (text: string): void =>
+    flashToast(window.innerWidth / 2, window.innerHeight - 20, text, { extraClass: "on-lightbox" });
   const onKey = (e: KeyboardEvent): void => {
     if (e.key === "Escape") {
       e.preventDefault();
       close();
+      return;
+    }
+    // Ctrl/Cmd+C:把眼前这张图复制到剪贴板。遮罩内没有可选文本,这个键位空着。
+    if ((e.ctrlKey || e.metaKey) && (e.key === "c" || e.key === "C")) {
+      e.preventDefault();
+      if (e.repeat) return; // 按住不放不重复编码整张图
+      const shown = overlay.querySelector<HTMLImageElement>("img.img-lightbox-img");
+      if (!shown || shown.naturalWidth === 0) return; // 还没解码出来 / 已换成失败面:不假装复制
+      copyImageToClipboard(shown).then(
+        () => toast("已复制图片"),
+        () => toast("复制失败"), // 写剪贴板被拒要响亮,别静默(与 clipboard.ts 同纪律)
+      );
+      return;
+    }
+    // ←/→ 在同条目的整组图内翻页(只有多图时 onNav 才在,单图这两键照旧无义)。
+    if (onNav && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
+      e.preventDefault();
+      onNav(e.key === "ArrowLeft" ? -1 : 1);
       return;
     }
     if (e.key === "Tab") trapTab(e);
@@ -584,9 +623,17 @@ function viewportSettle(preW: number, preH: number, signal: AbortSignal): Promis
 /** A full-window overlay showing a SAVED image at full size (bytes load lazily as a data:
  *  URL by id). 滚轮缩放 / 滚动、拖动平移、双击切取向;click backdrop 或 Esc 关闭(见 makeImageViewer)。
  *  在暗遮罩下把主窗撑到近屏幕(planGrowMainWindow),关闭时先摘监听再还原窗口——两步都在
- *  遮罩仍覆盖时发生,无裸窗闪(与捕获窗同纪律)。 */
-export async function openLightbox(imageId: string, seq: number): Promise<void> {
-  const img = el("img", { className: "img-lightbox-img", alt: `图${seq}` });
+ *  遮罩仍覆盖时发生,无裸窗闪(与捕获窗同纪律)。
+ *  **224 起收同条目的整组图**:`images` 是这条目的全部配图、`index` 是点开的那张;>1 张时
+ *  ←/→ 键与左右箭头按钮在组内循环翻页(角标显「图N · i/共」)。只一张时零变化——按钮与角标
+ *  都不出现,老路径原样。翻页**不重新撑窗**:窗口按第一张的尺寸定好就不再动,否则每翻一张
+ *  窗口跳一次(比看不清更难受)。 */
+export async function openLightbox(images: ImageMeta[], index: number): Promise<void> {
+  if (images.length === 0) return; // 没图可看:不挂空遮罩
+  const multi = images.length > 1;
+  let cur = Math.min(Math.max(index, 0), images.length - 1);
+  let gen = 0; // 换图代次:翻得快时迟到的字节/解码不许盖住新的那张(同安卓 viewerSeq)
+  const img = el("img", { className: "img-lightbox-img", alt: `图${images[cur].seq}` });
   // 取字节/解码/定窗期间的加载指示(§3.7 审计 #14):CSS 延迟淡入,快路径(命中「刚看过」的
   // 全尺寸缓存)一闪而过时不露脸;init 前 remove,showError 的 replaceChildren 也会带走它。
   const loading = el("div", { className: "img-lightbox-loading", textContent: "图片载入中…" });
@@ -595,50 +642,93 @@ export async function openLightbox(imageId: string, seq: number): Promise<void> 
   let restore: (() => Promise<void>) | null = null;
   let grow: Promise<void> | null = null; // 进行中的放大;关闭须等它跑完(成/败)再唯一一次还原(H4)
   const viewer = makeImageViewer(img, () => close());
-  const { overlay, close } = mountLightbox(stage, async () => {
-    closed = true; // 关标志:让下面异步流(invoke/load/放大)每个 await 后止步
-    viewer.cleanup(); // 摘缩放/滚动监听(含 window resize),不泄漏 img
-    if (grow) await grow.catch(() => {}); // 等放大真正结束(即便 center 抛错),避免 restore 与放大并发
-    if (restore) await restore(); // 仍在暗遮罩下还原窗口几何(只此一次)
-  });
+  const { overlay, close } = mountLightbox(
+    stage,
+    async () => {
+      closed = true; // 关标志:让下面异步流(invoke/load/放大)每个 await 后止步
+      viewer.cleanup(); // 摘缩放/滚动监听(含 window resize),不泄漏 img
+      if (grow) await grow.catch(() => {}); // 等放大真正结束(即便 center 抛错),避免 restore 与放大并发
+      if (restore) await restore(); // 仍在暗遮罩下还原窗口几何(只此一次)
+    },
+    multi ? (delta) => void present((cur + delta + images.length) % images.length, false) : undefined,
+  );
   const showError = (): void => {
     if (closed) return;
     viewer.cleanup();
     overlay.replaceChildren(el("div", { className: "img-lightbox-err", textContent: "图片加载失败" }));
   };
-  try {
-    const src = await getFullImage(imageId);
-    if (closed) return;
-    // 图解码出来才知道自然尺寸 → 据此把主窗撑到近屏幕(在暗遮罩下 resize,无闪)。load 监听走
-    // viewer.signal:关闭时随 cleanup 一起摘、并由 abort 事件让本 Promise 必定 settle(M5)。
-    await new Promise<void>((resolve) => {
-      img.addEventListener("load", () => resolve(), { once: true, signal: viewer.signal });
-      img.addEventListener("error", () => resolve(), { once: true, signal: viewer.signal });
-      viewer.signal.addEventListener("abort", () => resolve(), { once: true });
-      img.src = src;
+  // 组内导航件(只在多图时存在):左右箭头 + 「图N · i/共」角标。都 position:fixed 钉在视口,
+  // 放大后拖着滚图时不跟着跑。按钮的 click 必须 stopPropagation——遮罩自身的 click 是「关闭」。
+  const counter = multi ? el("div", { className: "img-lightbox-count" }) : null;
+  const navBtn = (dir: -1 | 1): HTMLButtonElement => {
+    const b = el("button", {
+      className: `img-lightbox-nav ${dir < 0 ? "prev" : "next"}`,
+      textContent: dir < 0 ? "‹" : "›",
+      title: dir < 0 ? "上一张(←)" : "下一张(→)",
     });
+    b.addEventListener("click", (e) => {
+      e.stopPropagation(); // 别冒泡到遮罩的「点背景关闭」
+      void present((cur + dir + images.length) % images.length, false);
+    });
+    return b;
+  };
+  if (multi && counter) overlay.append(navBtn(-1), navBtn(1), counter);
+
+  /** 呈现第 i 张。`first`=开图那次(要量图撑窗);换图那次只重新解码 + 重排,窗口不动。 */
+  async function present(i: number, first: boolean): Promise<void> {
     if (closed) return;
-    if (img.naturalWidth === 0) {
-      showError(); // 解码失败:明确失败 UI + 立刻 cleanup,别留空白遮罩(M5)
-      return;
+    const my = ++gen;
+    cur = i;
+    const m = images[cur];
+    img.alt = `图${m.seq}`;
+    if (counter) counter.textContent = `图${m.seq} · ${cur + 1}/${images.length}`;
+    if (!first) {
+      // 换图:先隐去旧图(否则新图按旧尺寸闪一下再重排)、把加载指示放回去——与「布局未定
+      // 不显示」同纪律,定形后由 viewer.init() 一次成形亮相。
+      img.style.visibility = "hidden";
+      if (!loading.isConnected) stage.prepend(loading);
     }
-    const plan = await planGrowMainWindow(img.naturalWidth, img.naturalHeight);
-    if (closed) return; // 关在放大前:窗口没动,onClose 里 restore 仍 null,无需还原
-    if (plan) {
-      const preW = window.innerWidth; // 放大前的视口:viewportSettle 以「离开此尺寸」为信号
-      const preH = window.innerHeight;
-      restore = plan.restore; // 先登记还原,再启动放大:onClose 会等 grow 完再还原(串行,不并发)
-      grow = plan.applyGrow();
-      await grow.catch(() => {}); // 放大失败不致命(权限/重启未生效时窗口保持原尺寸)
-      if (closed) return; // 关已在放大中发生:onClose 负责等 grow + 还原,这里不再动
-      await viewportSettle(preW, preH, viewer.signal); // 视口真落定再布局,亮相后不再被迟到 resize 重排
-      if (closed) return;
+    try {
+      const src = await getFullImage(m.id);
+      if (closed || my !== gen) return;
+      // 图解码出来才知道自然尺寸 → 据此把主窗撑到近屏幕(在暗遮罩下 resize,无闪)。load 监听走
+      // viewer.signal:关闭时随 cleanup 一起摘、并由 abort 事件让本 Promise 必定 settle(M5)。
+      // 已经是这张(翻回刚看过的一张、或两张字节相同)则不重新等 load——同 src 不再触发 load 事件。
+      if (!(img.src === src && img.complete && img.naturalWidth > 0)) {
+        await new Promise<void>((resolve) => {
+          img.addEventListener("load", () => resolve(), { once: true, signal: viewer.signal });
+          img.addEventListener("error", () => resolve(), { once: true, signal: viewer.signal });
+          viewer.signal.addEventListener("abort", () => resolve(), { once: true });
+          img.src = src;
+        });
+        if (closed || my !== gen) return;
+      }
+      if (img.naturalWidth === 0) {
+        showError(); // 解码失败:明确失败 UI + 立刻 cleanup,别留空白遮罩(M5)
+        return;
+      }
+      if (first) {
+        const plan = await planGrowMainWindow(img.naturalWidth, img.naturalHeight);
+        if (closed || my !== gen) return; // 关在放大前:窗口没动,onClose 里 restore 仍 null,无需还原
+        if (plan) {
+          const preW = window.innerWidth; // 放大前的视口:viewportSettle 以「离开此尺寸」为信号
+          const preH = window.innerHeight;
+          restore = plan.restore; // 先登记还原,再启动放大:onClose 会等 grow 完再还原(串行,不并发)
+          grow = plan.applyGrow();
+          await grow.catch(() => {}); // 放大失败不致命(权限/重启未生效时窗口保持原尺寸)
+          if (closed || my !== gen) return; // 关已在放大中发生:onClose 负责等 grow + 还原,这里不再动
+          await viewportSettle(preW, preH, viewer.signal); // 视口真落定再布局,亮相后不再被迟到 resize 重排
+          if (closed || my !== gen) return;
+        }
+      }
+      loading.remove();
+      viewer.init(); // 窗口已定尺(放大过或没放大)→ 挑取向 + 布局一次 + 亮相
+    } catch {
+      showError();
     }
-    loading.remove();
-    viewer.init(); // 窗口已定尺(放大过或没放大)→ 挑取向 + 布局一次 + 亮相
-  } catch {
-    showError();
   }
+
+  await present(cur, true);
 }
 
 /** A full-window overlay showing an image from a ready src (object URL / data URL) — for an
@@ -721,7 +811,8 @@ export function imageStrip(
   // 初始即 .empty(隐藏):reload 前默认无图,免得配图工具条在 load 完成前闪一下再收起。
   const root = el("div", { className: "img-strip empty" });
 
-  function thumb(m: ImageMeta): HTMLElement {
+  // `all` = 本条同批列出的整组图:点开任一张后 ←/→ 能在组内翻页(224)。
+  function thumb(m: ImageMeta, all: ImageMeta[]): HTMLElement {
     const wrap = el("div", { className: "img-thumb" });
     const img = el("img", { className: "img-thumb-img", alt: `图${m.seq}`, title: `图${m.seq}` });
     getThumb(m.id)
@@ -733,7 +824,7 @@ export function imageStrip(
       });
     img.addEventListener("click", (e) => {
       e.stopPropagation();
-      void openLightbox(m.id, m.seq);
+      void openLightbox(all, all.indexOf(m));
     });
     wrap.append(img, el("span", { className: "img-badge", textContent: `图${m.seq}` }));
     if (opts.editable) {
@@ -764,7 +855,7 @@ export function imageStrip(
       return;
     }
     root.classList.toggle("empty", metas.length === 0);
-    root.replaceChildren(...metas.map(thumb));
+    root.replaceChildren(...metas.map((m) => thumb(m, metas)));
   }
 
   void reload();
@@ -774,16 +865,6 @@ export function imageStrip(
 // Trailing punctuation that commonly hugs a URL in prose but isn't part of it, so
 // "见 https://a.com。" or "(https://a.com)" don't swallow the 。/) into the link.
 const URL_TAIL = /[)\].,;:!?，。、;:!?…）】》」』]+$/;
-
-// A brief floating toast at (x, y) — used to confirm 复制链接 without shifting the
-// inline text or needing a global toast system. Self-removes after the fade.
-function flashToast(x: number, y: number, text: string): void {
-  const t = el("div", { className: "copy-toast", textContent: text });
-  t.style.left = `${x}px`;
-  t.style.top = `${y}px`;
-  document.body.append(t);
-  setTimeout(() => t.remove(), 1000);
-}
 
 /** Render `text` with two kinds of inline references linkified in a single left-to-right pass:
  *   - 「图N」 that has a matching image → a clickable chip that opens the lightbox. A 图N with NO
@@ -834,7 +915,7 @@ export function renderContent(text: string, images: ImageMeta[]): DocumentFragme
     const chip = el("button", { className: "img-ref", textContent: `图${meta.seq}` });
     chip.addEventListener("click", (e) => {
       e.stopPropagation();
-      void openLightbox(meta.id, meta.seq);
+      void openLightbox(images, images.indexOf(meta)); // 从正文链接进去也能 ←/→ 翻同条目的图
     });
     frag.append(chip);
     last = m.index + m[0].length;

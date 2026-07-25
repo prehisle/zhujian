@@ -88,6 +88,11 @@ function groupByPrefix(trees: TopicTree[]): TopicGroup[] {
 // and coming back keeps the same rows open — a UI preference, not data.
 const expanded = new Set<string>();
 
+// 哪些父标签把「子标签组」收起来了(0031 前缀分组的折叠态)。默认展开(不在集里 = 显子行);
+// 加进来 = 收起该父下方的 .topic-kids。同 expanded 提到模块级(跨视图切换存活的 UI 偏好,
+// 非数据)。只对有子标签的父行有意义;合并态强制展开(要选子标签),故那时不套用。
+const collapsedKids = new Set<string>();
+
 // List scroll offset, captured on unmount and restored on the next mount so a view
 // switch returns you to where you were reading (same rationale as inbox.ts savedScroll).
 let savedScroll = 0;
@@ -183,7 +188,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
   // `label` 是列表里显示的名字(子标签只显后缀),`child` 只标记子行(缩进/左导轨由外层
   // .topic-kids 容器给,见 renderList)+ 悬停全名——重命名/合并/chips 等一切别处仍用全名
   // topic.title。
-  function section(topic: TopicTree, label: string, child: boolean): HTMLElement {
+  function section(topic: TopicTree, label: string, child: boolean, kidCount = 0): HTMLElement {
     const sec = el("section", { className: child ? "topic child" : "topic" });
     sec.dataset.topicId = topic.id; // 拖排序落点据它反查 id / 判同层
     const tasks = tasksByTopic.get(topic.id) ?? [];
@@ -218,6 +223,37 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     // 类型徽标:有类型才现身(如「人名」),供一眼识别标签类别。
     const kindBadge = el("span", { className: "topic-kind", textContent: topic.kind ?? "" });
     if (topic.kind) kindBadge.classList.add("on");
+    const countEl = el("span", {
+      className: "topic-count",
+      textContent: `${topic.notes.length} 条灵感 · ${tasks.length} 个任务`,
+    });
+    const keepBadge = el("span", { className: "keep-badge", textContent: "存续" });
+
+    // 子标签折叠开关(仅有子标签的父行、非合并态):收起/展开该父下方的 .topic-kids 组。
+    // 状态在模块级 collapsedKids(跨视图切换存活,同 expanded)。点击直接翻邻接的 kids 容器
+    // 的 .collapsed 类,不整表重建(省一次重画、不跳滚动);合并态要选子标签故不出此钮。
+    let kidsToggle: HTMLElement | null = null;
+    if (kidCount > 0 && !merging) {
+      const collapsed = collapsedKids.has(topic.id);
+      const chev = el("span", { className: "kt-chev", textContent: collapsed ? "▸" : "▾" });
+      kidsToggle = el("button", { className: "topic-kids-toggle", title: collapsed ? "展开子标签" : "收起子标签" }, [
+        chev,
+        document.createTextNode(` ${kidCount} 个子标签`),
+      ]);
+      kidsToggle.addEventListener("click", (e) => {
+        e.stopPropagation(); // 别触发 head 的「展开本标签内容」
+        const now = !collapsedKids.has(topic.id);
+        if (now) collapsedKids.add(topic.id);
+        else collapsedKids.delete(topic.id);
+        const kids = sec.nextElementSibling;
+        if (kids instanceof HTMLElement && kids.classList.contains("topic-kids")) {
+          kids.classList.toggle("collapsed", now);
+        }
+        chev.textContent = now ? "▸" : "▾";
+        kidsToggle!.title = now ? "展开子标签" : "收起子标签";
+      });
+    }
+
     const head = el("div", { className: "topic-head" }, [
       check,
       handle,
@@ -225,11 +261,9 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       dot,
       titleEl,
       kindBadge,
-      el("span", {
-        className: "topic-count",
-        textContent: `${topic.notes.length} 条灵感 · ${tasks.length} 个任务`,
-      }),
-      el("span", { className: "keep-badge", textContent: "存续" }),
+      countEl,
+      ...(kidsToggle ? [kidsToggle] : []),
+      keepBadge,
     ]);
 
     // 拖排序落点:只认同层兄弟(同 parentElement);按指针在目标行上/下半决定插前/插后。
@@ -529,11 +563,13 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     // 仍是 #list 的直接子(nextElementSibling = .topic-kids),子行收在容器内成一组。
     const built: HTMLElement[] = [];
     for (const g of groupByPrefix(trees)) {
-      const parentSec = section(g.parent, g.parent.title, false);
+      const parentSec = section(g.parent, g.parent.title, false, g.children.length);
       sections.set(g.parent.id, parentSec);
       built.push(parentSec);
       if (g.children.length) {
         const kids = el("div", { className: "topic-kids" });
+        // 折叠态在重建时套回来(合并态强制展开:那时要选子标签,section 也不出折叠钮)。
+        if (!merging && collapsedKids.has(g.parent.id)) kids.classList.add("collapsed");
         for (const c of g.children) {
           const childSec = section(c.topic, c.label, true);
           sections.set(c.topic.id, childSec);
@@ -712,6 +748,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       // Drop any state referring to tags that no longer exist (keeps things tidy).
       const live = new Set(trees.map((x) => x.id));
       for (const id of [...expanded]) if (!live.has(id)) expanded.delete(id);
+      for (const id of [...collapsedKids]) if (!live.has(id)) collapsedKids.delete(id);
       for (const id of [...selected]) if (!live.has(id)) selected.delete(id);
       if (survivor && !live.has(survivor)) survivor = selected.values().next().value ?? null;
 

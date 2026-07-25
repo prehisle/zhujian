@@ -13,6 +13,7 @@ import {
   spaceLabel,
 } from "./space";
 import { autoGrow } from "./autogrow";
+import { toastAction } from "./toast";
 import { saveTextDraft, loadTextDraft, clearTextDraft } from "./compose-draft";
 import { copyText } from "./clipboard";
 import { buildItemDeepLink } from "./deeplink";
@@ -23,6 +24,8 @@ import {
   reconcileTopicFilter,
   renderFilterPills,
   renderKindPills,
+  selectedTopicLabels,
+  soleTopicFilter,
   wireFilterInput,
 } from "./filter-bar";
 import { type Act, armDismiss, createHotkeyController, registerViewKeys } from "./hotkey-menu";
@@ -130,7 +133,7 @@ let composeSaving = false;
 // 回收站/归档不筛)。文本只匹配当前正文——连历史的找回忆是全局「搜索」视图的事。
 // 三维正交筛选 kind→topic→text(行为在共享件,与看板同源):类型轴(kind)是钻取器,
 // 选一个类型先圈定「挂了该类型任一标签的想法」,再把标签 pill 收到该类型内。
-const filter: FilterState = { kind: "all", topic: "all", text: "" };
+const filter: FilterState = { kind: "all", topics: [], text: "" };
 // Scroll offset of the list, captured on unmount and restored on the next mount so a
 // view switch returns you to where you were reading (not snapped back to the top).
 // Belongs to the tab in `active` above — since that tab is preserved too, the offset
@@ -344,12 +347,13 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         clearTextDraft(INBOX_DRAFT_KEY); // 模块存底=已保存正文:磁盘也清(切走场景,input 不在场)
       }
       const notices: string[] = [];
-      // 筛着具体标签记灵感 → 新灵感自动挂上该标签(同看板「筛着标签建卡」),否则
-      // 新卡会被当前筛选当场滤到隐身;「无标签」筛选下新卡本就无标签、天然可见。
-      // 挂失败不吞掉:灵感已在,提示一句(切「所有」能找到)。
-      if (filter.topic !== "all" && filter.topic !== "none") {
+      // 恰好筛了单一具体标签 → 新灵感自动挂上它(同看板「筛着标签建卡」),否则新卡会被
+      // 当前筛选滤到隐身;「无标签」筛选下新卡本就无标签、天然可见。挂失败不吞掉:灵感
+      // 已在,提示一句(切「所有」能找到)。
+      const soleTopic = soleTopicFilter(filter);
+      if (soleTopic !== null) {
         try {
-          await invokeInSpace(mountSpace, "file_note_to_topic", { id, topicId: filter.topic, newTitle: null });
+          await invokeInSpace(mountSpace, "file_note_to_topic", { id, topicId: soleTopic, newTitle: null });
         } catch {
           notices.push("灵感已保存,但标签未能挂上(切到「所有」可见)");
         }
@@ -367,11 +371,15 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         if (currentSpaceId() === mountSpace) liveRefresh?.();
         return;
       }
-      // 文本过滤下记灵感:新卡多半不含过滤词,会被当场滤到隐身——清掉过滤让它可见
-      // (同看板;标签筛选不清,新卡刚挂上该标签、本来就在视野里)。
+      // 文本过滤下记灵感:新卡多半不含过滤词,会被当场滤到隐身——清掉过滤让它可见。
       if (filter.text !== "") {
         filter.text = "";
         filterInput.value = "";
+      }
+      // 多标签(OR)筛选下记灵感:新卡生而无标签、不在任何被筛标签下 = 会隐身,清掉标签
+      // 筛选让它可见(单选具体标签已自动挂上、本就可见;含「无标签」筛选时新卡天然在视野)。
+      if (soleTopic === null && filter.topics.length > 0 && !filter.topics.includes("none")) {
+        filter.topics = [];
       }
       pulseId = id;
       void refresh();
@@ -494,7 +502,12 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     }
     let currentContent = item.content;
     const topics = item.topics ?? [];
-    const tagged = topics.length > 0;
+    // 筛某个标签时,卡片上那枚同名 chip 是纯冗余(筛出来的卡本就都带它)——从展示里去掉,
+    // 消视觉噪音;其余标签仍显。只在想法态按当前筛选去重(回收站不套用筛选)。灵感侧
+    // 无拖拽打标签,故直接不渲染即可(不像看板要留 DOM 供去重判据)。
+    const sole = mode === "ideas" ? soleTopicFilter(filter) : null;
+    const visibleTopics = sole !== null ? topics.filter((t) => t.id !== sole) : topics;
+    const tagged = visibleTopics.length > 0;
 
     const textP = el("p", { className: "note-text", textContent: currentContent });
     // 想法 sits in a per-day timeline → time-of-day only; 回收站 is flat → full stamp.
@@ -522,7 +535,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       tagsEl = el(
         "div",
         { className: "tags" },
-        topics.map((t) => {
+        visibleTopics.map((t) => {
           const kids: Node[] = [el("span", { className: "tag-label", textContent: t.title })];
           if (mode === "ideas") {
             kids.push(
@@ -936,6 +949,8 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         }
         switch (r.outcome) {
           case "moved":
+            // 回执(228):与看板同一句话、同一个通道(共享件 toast.ts),别再各说各的。
+            toastAction(`已移到「${labels.get(target) ?? target}」`);
             // 迟到(期间取消/重渲/切空间)= 卡片已脱离 DOM:列表由现任渲染负责,
             // 只在还在源空间时补一次刷新,把已被移走的卡从陈列里收掉。
             if (note.isConnected) leaveCard(note, "ideas", null);
@@ -1118,7 +1133,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         if (focus.tab === "ideas") {
           // 清筛选让目标必然可见(跳转即揭示,同 board focusOnBoard)。
           filter.kind = "all";
-          filter.topic = "all";
+          filter.topics = [];
           filter.text = "";
           filterInput.value = "";
         }
@@ -1137,7 +1152,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       // open inline editor survives. `todayKey` is folded in so the day-grouped 时间轴
       // relabels 今天→昨天 if the app sits open across midnight.
       const todayKey = new Date().toDateString();
-      const sig = JSON.stringify([active, filter.kind, filter.topic, q, todayKey, ideas, archived, stats, topics]);
+      const sig = JSON.stringify([active, filter.kind, filter.topics, q, todayKey, ideas, archived, stats, topics]);
       // `=== true`, not truthy: guards against a future caller wiring `refresh` as a
       // bare event handler, where a MouseEvent would otherwise count as a refocus.
       if (refocus === true && sig === lastSig) return;
@@ -1190,8 +1205,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         } else if (shown.length === 0) {
           // 筛空 ≠ 没有灵感:提示当前筛选(词优先),别让用户以为灵感全没了(同看板)。
           const qRaw = filter.text.trim();
-          const label =
-            filter.topic === "none" ? "无标签" : topics.find((t) => t.id === filter.topic)?.title ?? "该标签";
+          const label = selectedTopicLabels(filter, topics).join("、");
           list.replaceChildren(
             bar,
             qRaw !== ""

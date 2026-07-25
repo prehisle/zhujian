@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "zhujian",
-  "version": "0.2.16",
+  "version": "0.2.17",
   "identifier": "app.zhujian.notebook",
   "build": {
     "frontendDist": "../dist",
@@ -37,7 +37,9 @@
         "minHeight": 600,
         "center": true,
         "resizable": true,
-        "decorations": false,
+        "decorations": true,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
         "shadow": false,
         "dragDropEnabled": false,
         "visible": false

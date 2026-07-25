@@ -10,14 +10,31 @@ import "./filter-bar.css";
 export type FilterTopic = { id: string; title: string; color: string | null; kind?: string | null };
 
 // The three orthogonal dimensions. kind: "all" / a kind string(标签类型,如「人名」).
-// topic: "all" / "none" (无标签) / a topic id. text: 原始输入(trim + 忽略大小写).
-// 应用顺序 kind → topic → text;kind 是「钻取器」——选中一个类型先圈定「挂了该类型任一
-// 标签的条目」,再把标签 pill 收到该类型内(见 renderFilterPills / renderKindPills)。
-export type FilterState = { kind: string; topic: string; text: string };
+// topics: 被选中的标签集,**OR/并集语义**——空数组 = 「所有」(不按标签筛);元素为
+// "none"(无标签)或某 topic id;同时选中多个 = 显示挂了其中任一标签的条目(如 zhujian
+// + saiai = 带 zhujian 或 saiai 的任务)。text: 原始输入(trim + 忽略大小写). 应用顺序
+// kind → topics → text;kind 是「钻取器」——选中一个类型先圈定「挂了该类型任一标签的
+// 条目」,再把标签 pill 收到该类型内(见 renderFilterPills / renderKindPills)。
+export type FilterState = { kind: string; topics: string[]; text: string };
 
 // 任一维激活即「筛选态」(看板拿它路由 visible-merge 拖拽)。
 export function filterActive(f: FilterState): boolean {
-  return f.kind !== "all" || f.topic !== "all" || f.text.trim() !== "";
+  return f.kind !== "all" || f.topics.length > 0 || f.text.trim() !== "";
+}
+
+// 当前是否恰好只筛了「单一具体标签」(非无标签)——返回它的 id,否则 null。用于「卡片
+// 隐藏那枚重复 chip」(218):单选时同名 chip 是纯冗余;多选 OR 下每枚 chip 表明「凭哪个
+// 标签入选」是有效信息、不该藏。也用于「筛着标签建条目自动挂该标签」(唯一归属才明确)。
+export function soleTopicFilter(f: FilterState): string | null {
+  return f.topics.length === 1 && f.topics[0] !== "none" ? f.topics[0] : null;
+}
+
+// 被筛具体标签的中文名列表(供筛空空态提示「「A、B」下没有…」)。none 显「无标签」,
+// id 解析成标签名(找不到 = 已删,显「该标签」占位)。空数组 = 未筛具体标签。
+export function selectedTopicLabels(f: FilterState, allTopics: FilterTopic[]): string[] {
+  return f.topics.map((tok) =>
+    tok === "none" ? "无标签" : allTopics.find((t) => t.id === tok)?.title ?? "该标签",
+  );
 }
 
 // The topic ids belonging to a given kind — the bridge from the kind axis (which lives
@@ -26,13 +43,41 @@ function idsOfKind(allTopics: FilterTopic[], kind: string): Set<string> {
   return new Set(allTopics.filter((t) => t.kind === kind).map((t) => t.id));
 }
 
+// 筛选条里「已展开子标签」的父标签集(0031 需求扩展:父子标签在筛选条折叠)。默认收起
+// (不在集里 = 子标签 pill 藏起来),点父 pill 上的小箭头翻。模块级——跨刷新存活(避开各
+// 视图 load/refresh 指纹短路),看板与灵感共享一份(标签层级两端相同,展开态一致即可)。
+const expandedParents = new Set<string>();
+
+// 把 domain 标签按 `父/子` 前缀分组(与标签视图 topics.ts::groupByPrefix 同规:仅当存在
+// 同名父标签才算子;首尾斜杠不算)。返回顶层序(保 domain 原序)+ 每个顶层的子标签(后缀
+// 标签)。只按第一段分一层,多级斜杠不再细分;没有同名父的照平铺。
+function groupPills(
+  domain: FilterTopic[],
+): { parent: FilterTopic; kids: { topic: FilterTopic; label: string }[] }[] {
+  const titles = new Set(domain.map((t) => t.title));
+  const kidsOf = new Map<string, FilterTopic[]>();
+  const tops: FilterTopic[] = [];
+  for (const t of domain) {
+    const i = t.title.indexOf("/");
+    const prefix = i > 0 && i < t.title.length - 1 ? t.title.slice(0, i) : null;
+    if (prefix !== null && titles.has(prefix)) {
+      const arr = kidsOf.get(prefix);
+      if (arr) arr.push(t);
+      else kidsOf.set(prefix, [t]);
+    } else tops.push(t);
+  }
+  return tops.map((t) => ({
+    parent: t,
+    kids: (kidsOf.get(t.title) ?? []).map((c) => ({ topic: c, label: c.title.slice(t.title.length + 1) })),
+  }));
+}
+
 // If the active filter points at a topic that no longer exists (deleted/merged),
 // fall back to 所有 rather than showing a dead filter. Pure state fix (no DOM) —
 // must run before the caller fingerprints the render.
 export function reconcileTopicFilter(f: FilterState, allTopics: FilterTopic[]): void {
-  if (f.topic !== "all" && f.topic !== "none" && !allTopics.some((t) => t.id === f.topic)) {
-    f.topic = "all";
-  }
+  // 逐 token 保留:none 恒有效,id 须仍存在(删/合并后消失的从选集里剔掉)。
+  f.topics = f.topics.filter((tok) => tok === "none" || allTopics.some((t) => t.id === tok));
 }
 
 // 类型轴同样的死筛修复:选中的 kind 已无任何标签(标签被删/改类型)→ 回落 全部类型;
@@ -45,7 +90,8 @@ export function reconcileKindFilter(f: FilterState, allTopics: FilterTopic[]): v
     f.kind = "all";
     return;
   }
-  if (f.topic !== "all" && f.topic !== "none" && !ids.has(f.topic)) f.topic = "all";
+  // 类型内只留属于该类型的具体标签(none 不属任何类型、类型态也不画无标签 pill)。
+  f.topics = f.topics.filter((tok) => tok !== "none" && ids.has(tok));
 }
 
 // 应用三维过滤:先类型(圈定挂该类型标签的条目)、再标签、后文本。textOf 由视图给
@@ -64,12 +110,15 @@ export function applyFilter<T extends { topics: { id: string }[] }>(
       : ((kindIds) => items.filter((t) => t.topics.some((tp) => kindIds.has(tp.id))))(
           idsOfKind(allTopics, f.kind),
         );
+  // OR/并集:选集空 = 全部;否则条目命中选集里任一 token(none = 无标签,id = 挂该标签)。
   const byTopic =
-    f.topic === "all"
+    f.topics.length === 0
       ? byKind
-      : f.topic === "none"
-        ? byKind.filter((t) => t.topics.length === 0)
-        : byKind.filter((t) => t.topics.some((tp) => tp.id === f.topic));
+      : byKind.filter((t) =>
+          f.topics.some((tok) =>
+            tok === "none" ? t.topics.length === 0 : t.topics.some((tp) => tp.id === tok),
+          ),
+        );
   const q = f.text.trim().toLowerCase();
   return q === "" ? byTopic : byTopic.filter((t) => textOf(t).toLowerCase().includes(q));
 }
@@ -101,7 +150,9 @@ export function renderFilterPills(
   }
   const pill = (key: string, label: string, n: number, color?: string | null) => {
     const b = document.createElement("button");
-    b.className = `tf-pill${f.topic === key ? " active" : ""}`;
+    // 「所有」在选集为空时高亮;其余 pill 在被选中(在选集里)时高亮——多选可同时多个高亮。
+    const on = key === "all" ? f.topics.length === 0 : f.topics.includes(key);
+    b.className = `tf-pill${on ? " active" : ""}`;
     // 有色标签的筛选钮带一颗色点(所有 / 无标签 无色点),让整条筛选条也读出颜色分布。
     if (color) {
       const d = document.createElement("span");
@@ -114,22 +165,85 @@ export function renderFilterPills(
     nEl.textContent = String(n);
     b.append(document.createTextNode(label), nEl);
     b.onclick = () => {
-      f.topic = key;
+      // 「所有」= 清空选集(回到不筛)。「无标签」与具体标签**互斥**:一个条目不可能既
+      // 无标签又挂着某标签,把两者 OR 到一起是无意义的并集——故选「无标签」清掉所有标签、
+      // 选某标签清掉「无标签」。具体标签之间才是多选 OR(切进/切出)。
+      if (key === "all") {
+        f.topics = [];
+      } else if (key === "none") {
+        f.topics = f.topics.includes("none") ? [] : ["none"];
+      } else {
+        const rest = f.topics.filter((t) => t !== "none");
+        const i = rest.indexOf(key);
+        if (i >= 0) rest.splice(i, 1);
+        else rest.push(key);
+        f.topics = rest;
+      }
       onChange();
     };
     return b;
   };
-  const pills = kindActive
+  const pills: HTMLElement[] = kindActive
     ? [pill("all", "所有", scoped.length)]
     : [pill("all", "所有", items.length), pill("none", "无标签", none)];
-  for (const tp of domain) {
-    const n = counts.get(tp.id) ?? 0;
-    if (n === 0 && f.topic !== tp.id) continue;
-    const p = pill(tp.id, tp.title, n, tp.color);
-    // 真标签 pill 挂 topic id(所有/无标签不挂):看板据此把 pill 接成拖拽打标签的拖源/落点
-    // (纯元数据,灵感侧不接线故无副作用)。
+
+  // 一个标签是否该出现:有条目 或 正被选中(选中的绝不因 0 计数消失)。
+  const visible = (tp: FilterTopic) => (counts.get(tp.id) ?? 0) > 0 || f.topics.includes(tp.id);
+  // 造一枚真标签 pill 并入列。child=true 的挂 .child + data-parent(供折叠显隐 + 缩进皮肤)。
+  // 全部真标签 pill 都挂 data-topic-id(看板据此接拖拽打标签;灵感侧不接线故无副作用)。
+  const pushTopic = (tp: FilterTopic, label: string, child: boolean, parentId?: string): HTMLElement => {
+    const p = pill(tp.id, label, counts.get(tp.id) ?? 0, tp.color);
     p.dataset.topicId = tp.id;
+    if (child) {
+      p.classList.add("child");
+      if (parentId) p.dataset.parent = parentId;
+    }
     pills.push(p);
+    return p;
+  };
+
+  if (kindActive) {
+    // 类型态:标签已按 kind 圈定,不做前缀分组(保持扁平,drill 语义单纯)。
+    for (const tp of domain) if (visible(tp)) pushTopic(tp, tp.title, false);
+  } else {
+    for (const g of groupPills(domain)) {
+      const kids = g.kids.filter((k) => visible(k.topic));
+      if (!visible(g.parent)) {
+        // 父标签自己没内容也没被选:它的可见子标签退化成平铺全名 pill(别让子标签凭空消失)。
+        for (const k of kids) pushTopic(k.topic, k.topic.title, false);
+        continue;
+      }
+      const parentPill = pushTopic(g.parent, g.parent.title, false);
+      if (kids.length === 0) continue;
+      // 有子标签:父 pill 挂展开/收起小箭头。默认收起;某子标签正被选中则自动展开(别把
+      // 选中的筛选藏起来)。展开态在模块级 expandedParents(跨刷新存活)。
+      const anyKidSelected = kids.some((k) => f.topics.includes(k.topic.id));
+      const open = expandedParents.has(g.parent.id) || anyKidSelected;
+      const caret = document.createElement("span");
+      caret.className = "tf-caret";
+      caret.textContent = open ? "▾" : "▸";
+      caret.title = open ? "收起子标签" : `展开 ${kids.length} 个子标签`;
+      // 点箭头只翻子标签 pill 的显隐 + 箭头方向,不整条重建(避开各视图 load/refresh 的指纹
+      // 短路——它不认 expandedParents,会跳过重画)。正被选中的子标签即便收起也留着可见
+      // (它是活着的筛选,不能藏)。
+      caret.addEventListener("click", (e) => {
+        e.stopPropagation(); // 别触发 pill 主体的「筛选」
+        const now = !expandedParents.has(g.parent.id);
+        if (now) expandedParents.add(g.parent.id);
+        else expandedParents.delete(g.parent.id);
+        caret.textContent = now ? "▾" : "▸";
+        caret.title = now ? "收起子标签" : `展开 ${kids.length} 个子标签`;
+        for (const el of bar.querySelectorAll<HTMLElement>(`.tf-pill.child[data-parent="${g.parent.id}"]`)) {
+          const keep = !now && !f.topics.includes(el.dataset.topicId ?? "");
+          el.classList.toggle("hidden", now ? false : keep);
+        }
+      });
+      parentPill.append(caret);
+      for (const k of kids) {
+        const kp = pushTopic(k.topic, k.label, true, g.parent.id);
+        if (!open && !f.topics.includes(k.topic.id)) kp.classList.add("hidden");
+      }
+    }
   }
   bar.replaceChildren(...pills);
 }
@@ -166,7 +280,7 @@ export function renderKindPills(
     }
     b.onclick = () => {
       f.kind = key;
-      f.topic = "all"; // 切类型 = 重新圈定,标签轴归零(reconcileKindFilter 亦保此)
+      f.topics = []; // 切类型 = 重新圈定,标签轴归零(reconcileKindFilter 亦保此)
       onChange();
     };
     return b;
