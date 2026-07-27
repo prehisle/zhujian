@@ -24,6 +24,9 @@
     return id;
   };
   const a = await idea("FFV-想到张三", p1);
+  // 张三那条追挂一枚项目甲 = 双标签卡(file_to_topic 对已归类灵感是追加):供「筛某标签
+  // 时卡上同名 chip 不渲染、其余 chip 留」断言(追齐桌面 218)。
+  await inv("file_note_to_topic", { spaceId: space, id: a, topicId: proj, newTitle: null });
   const b = await idea("FFV-想到李四", p2);
   const c = await idea("FFV-想到项目", proj);
   const d = await idea("FFV-家务总览", home);

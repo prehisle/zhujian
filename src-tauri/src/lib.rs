@@ -23,7 +23,7 @@ use serde::Serialize;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Manager, Runtime, State};
-use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 use tauri_plugin_window_state::{AppHandleExt as _, StateFlags};
 
 /// 主窗几何要记的维度:尺寸/位置/最大化。刻意不含 VISIBLE——启动仪式保持
@@ -2122,13 +2122,9 @@ fn activate_space(
     Ok(rt)
 }
 
-// 全局热键的修饰键跨平台分叉:Windows 用 Ctrl+Alt(桌面老惯例、无冲突);macOS
-// 用 Cmd+Alt(用户肌肉记忆是 Cmd,即 keyboard-types 的 SUPER)。ACCEL_* 是托盘
-// 菜单里的 display-only 提示串(键本身由 global_shortcut 插件持有),跟着一起改。
-#[cfg(target_os = "macos")]
-const HOTKEY_MODS: Modifiers = Modifiers::SUPER.union(Modifiers::ALT);
-#[cfg(not(target_os = "macos"))]
-const HOTKEY_MODS: Modifiers = Modifiers::CONTROL.union(Modifiers::ALT);
+// 全局热键的平台默认分叉:Windows/Linux 用 Ctrl+Alt(桌面老惯例);macOS 用 Cmd+Alt
+// (用户肌肉记忆是 Cmd)。这两个串是「首装 / 无配置」时的默认,232 起用户可在设置里改;
+// 也是托盘菜单里显示的加速键提示。加速键串由 global_hotkey 的 FromStr 解析成真正的键。
 #[cfg(target_os = "macos")]
 const ACCEL_CAPTURE: &str = "Cmd+Alt+N";
 #[cfg(target_os = "macos")]
@@ -2137,6 +2133,178 @@ const ACCEL_NOTEBOOK: &str = "Cmd+Alt+M";
 const ACCEL_CAPTURE: &str = "Ctrl+Alt+N";
 #[cfg(not(target_os = "macos"))]
 const ACCEL_NOTEBOOK: &str = "Ctrl+Alt+M";
+
+// ── 可改全局热键(232)────────────────────────────────────────────────
+// 键存 app 配置目录 `.hotkeys.json`,纯设备本地——不进 DB、不同步(热键是每台机器
+// 自己的事)。值是加速键串(如 "Ctrl+Alt+N"),两端同格式:前端录制器把 KeyboardEvent
+// 转成串,后端 global_hotkey FromStr 解析回键。读不到 / 解析不了 → 退回平台默认键
+// (fail-safe:坏配置绝不让热键失效或崩启动)。
+
+/// `.hotkeys.json` 的内容:两枚加速键串。
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+struct HotkeyConfig {
+    capture: String,
+    notebook: String,
+}
+
+impl Default for HotkeyConfig {
+    fn default() -> Self {
+        Self {
+            capture: ACCEL_CAPTURE.to_string(),
+            notebook: ACCEL_NOTEBOOK.to_string(),
+        }
+    }
+}
+
+/// 当前生效的热键(解析后的 Shortcut + 原始串)。热键回调按此分派 capture / notebook;
+/// setup 装配,`set_hotkey` 改写。放 managed state 里,命令与回调共享。
+struct HotkeyState(Mutex<HotkeyRuntime>);
+struct HotkeyRuntime {
+    capture: Shortcut,
+    capture_accel: String,
+    notebook: Shortcut,
+    notebook_accel: String,
+}
+
+/// 托盘两枚菜单项句柄,供改键时同步刷新显示的键名。
+struct TrayHotkeyItems {
+    show: MenuItem<tauri::Wry>,
+    notebook: MenuItem<tauri::Wry>,
+}
+
+fn hotkeys_path(app: &AppHandle) -> Option<PathBuf> {
+    Some(app.path().app_config_dir().ok()?.join(".hotkeys.json"))
+}
+
+fn load_hotkey_config(app: &AppHandle) -> HotkeyConfig {
+    let Some(p) = hotkeys_path(app) else {
+        return HotkeyConfig::default();
+    };
+    match std::fs::read_to_string(&p) {
+        Ok(txt) => serde_json::from_str(&txt).unwrap_or_default(),
+        Err(_) => HotkeyConfig::default(),
+    }
+}
+
+fn save_hotkey_config(app: &AppHandle, cfg: &HotkeyConfig) -> std::io::Result<()> {
+    let Some(p) = hotkeys_path(app) else {
+        return Ok(());
+    };
+    if let Some(dir) = p.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
+    std::fs::write(&p, serde_json::to_string_pretty(cfg).expect("HotkeyConfig 可序列化"))
+}
+
+/// 加速键串 → Shortcut;坏串退回给定默认。返回真正生效的 (Shortcut, 规范串)。
+fn parse_hotkey_or(accel: &str, default: &str) -> (Shortcut, String) {
+    match accel.parse::<Shortcut>() {
+        Ok(sc) => (sc, accel.to_string()),
+        Err(_) => (
+            default.parse::<Shortcut>().expect("平台默认加速键必可解析"),
+            default.to_string(),
+        ),
+    }
+}
+
+/// 刷新托盘两枚项显示的键名。Linux:appindicator 不显原生加速键,焊进标签文本;
+/// Win/mac:走原生第 5 参,标签保持纯中文。托盘未装配(理论上不会)则静默跳过。
+fn refresh_tray_hotkey_labels(app: &AppHandle, capture_accel: &str, notebook_accel: &str) {
+    let Some(items) = app.try_state::<TrayHotkeyItems>() else {
+        return;
+    };
+    #[cfg(target_os = "linux")]
+    {
+        let _ = items.show.set_text(format!("记录灵感  ({capture_accel})"));
+        let _ = items
+            .notebook
+            .set_text(format!("打开朱简  ({notebook_accel})"));
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = items.show.set_accelerator(Some(capture_accel));
+        let _ = items.notebook.set_accelerator(Some(notebook_accel));
+    }
+}
+
+#[derive(Serialize)]
+struct HotkeysDto {
+    capture: String,
+    notebook: String,
+}
+
+/// 当前两枚热键的加速键串(设置面板初显)。
+#[tauri::command]
+fn get_hotkeys(app: AppHandle) -> HotkeysDto {
+    let st = app.state::<HotkeyState>();
+    let rt = st.0.lock().expect("hotkey state");
+    HotkeysDto {
+        capture: rt.capture_accel.clone(),
+        notebook: rt.notebook_accel.clone(),
+    }
+}
+
+/// 改一枚热键(`which` = "capture" | "notebook",`accel` = 新加速键串)。
+/// 注销旧两枚→注册新两枚;新键被占用则回滚回旧键并报错(fail-safe:绝不留半注册态)。
+/// 成功即存盘 + 刷新托盘显示。返回改后两枚串给前端回显。
+#[tauri::command]
+fn set_hotkey(app: AppHandle, which: String, accel: String) -> Result<HotkeysDto, String> {
+    // 至少一个修饰键:裸键(如「N」)注册成全局热键会到处劫持该键。加速键串靠 '+' 连修饰键。
+    if !accel.contains('+') {
+        return Err("请至少带一个修饰键(如 Ctrl、Alt)".into());
+    }
+    let new_sc: Shortcut = accel
+        .parse()
+        .map_err(|_| "没认出这个快捷键,换一个试试".to_string())?;
+    if new_sc.mods.is_empty() {
+        return Err("请至少带一个修饰键(如 Ctrl、Alt)".into());
+    }
+
+    let st = app.state::<HotkeyState>();
+    let mut rt = st.0.lock().expect("hotkey state");
+
+    let (new_capture, cap_accel, new_notebook, nb_accel) = match which.as_str() {
+        "capture" => (new_sc, accel.clone(), rt.notebook, rt.notebook_accel.clone()),
+        "notebook" => (rt.capture, rt.capture_accel.clone(), new_sc, accel.clone()),
+        _ => return Err("未知的热键项".into()),
+    };
+    if new_capture == new_notebook {
+        return Err("两个快捷键不能设成一样的".into());
+    }
+
+    let gs = app.global_shortcut();
+    let _ = gs.unregister_all();
+    let reg = gs
+        .register(new_capture)
+        .and_then(|_| gs.register(new_notebook));
+    if let Err(e) = reg {
+        // 回滚:清掉可能已注册的一半,把旧键装回去。
+        let _ = gs.unregister_all();
+        let _ = gs.register(rt.capture);
+        let _ = gs.register(rt.notebook);
+        log::error!("改热键失败,已回滚:{e}");
+        return Err("这个快捷键可能被别的程序占用了,没换成——换一个再试".into());
+    }
+
+    rt.capture = new_capture;
+    rt.capture_accel = cap_accel.clone();
+    rt.notebook = new_notebook;
+    rt.notebook_accel = nb_accel.clone();
+    drop(rt);
+
+    let cfg = HotkeyConfig {
+        capture: cap_accel.clone(),
+        notebook: nb_accel.clone(),
+    };
+    if let Err(e) = save_hotkey_config(&app, &cfg) {
+        log::error!("热键配置存盘失败(改动已生效,重启后可能丢):{e}");
+    }
+    refresh_tray_hotkey_labels(&app, &cfg.capture, &cfg.notebook);
+    Ok(HotkeysDto {
+        capture: cfg.capture,
+        notebook: cfg.notebook,
+    })
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 /// 启动期 panic 的原生弹窗钩子:桌面壳的开库/身份/租约全在 Tauri `setup` 闭包里
@@ -2244,10 +2412,18 @@ pub fn run() {
                     if event.state != ShortcutState::Pressed {
                         return;
                     }
-                    // Ctrl+Alt+N(mac: Cmd+Alt+N)→ 弹捕获窗;+M → 唤起笔记本主窗。
-                    if shortcut.matches(HOTKEY_MODS, Code::KeyN) {
+                    // 按当前生效的键分派(用户可改,见 HotkeyState):捕获键 → 弹捕获窗;
+                    // 主窗键 → 唤起笔记本主窗。状态未装配(启动早期,理论上热键还没注册)则跳过。
+                    let Some(st) = app.try_state::<HotkeyState>() else {
+                        return;
+                    };
+                    let (capture, notebook) = {
+                        let rt = st.0.lock().expect("hotkey state");
+                        (rt.capture, rt.notebook)
+                    };
+                    if *shortcut == capture {
                         show_window(app, "capture");
-                    } else if shortcut.matches(HOTKEY_MODS, Code::KeyM) {
+                    } else if *shortcut == notebook {
                         open_notebook(app);
                     }
                 })
@@ -2422,30 +2598,48 @@ pub fn run() {
             // summons the notebook on whatever view it was left on. (The tray still
             // opens the notebook too — these just add a from-anywhere shortcut.)
             //
-            // Linux(progress-log 215):全局热键走 X11 XGrabKey。X11 会话注册即生效(真机
-            // 冒烟证实 Ctrl+Alt+M 唤主窗 OK);但 Wayland 会话下 XGrabKey 常注册不上——那是
-            // 平台限制、不是用户能解的键位冲突。绝不能像 Win/mac 那样 `?` fail-fast 把整个
-            // setup 拖垮(那样 Wayland 用户连托盘/窗口都进不去=最坏结局)。故 Linux 分支只
-            // 响亮记一笔、留退路(托盘「打开朱简」+ 窗口内入口仍可达),不阻断启动。
-            #[cfg(target_os = "linux")]
-            for (sc, name) in [
-                (Shortcut::new(Some(HOTKEY_MODS), Code::KeyN), ACCEL_CAPTURE),
-                (Shortcut::new(Some(HOTKEY_MODS), Code::KeyM), ACCEL_NOTEBOOK),
-            ] {
+            // 键从 `.hotkeys.json` 读(读不到 / 坏串=平台默认),解析后装进 HotkeyState 供回调
+            // 分派,再注册。改键走 set_hotkey 命令(注销重注册 + 存盘 + 刷托盘)。
+            let cfg = load_hotkey_config(app.handle());
+            let (capture_sc, capture_accel) = parse_hotkey_or(&cfg.capture, ACCEL_CAPTURE);
+            let (notebook_sc, notebook_accel) = parse_hotkey_or(&cfg.notebook, ACCEL_NOTEBOOK);
+            app.manage(HotkeyState(Mutex::new(HotkeyRuntime {
+                capture: capture_sc,
+                capture_accel: capture_accel.clone(),
+                notebook: notebook_sc,
+                notebook_accel: notebook_accel.clone(),
+            })));
+
+            // 注册失败一律不拖垮启动。热键只是「从任何地方唤起」的便利,托盘「打开朱简」和
+            // 窗口内入口都在;撞键(会议/输入法类软件常年占用 Ctrl+Alt+M/N)不该让整个 app
+            // 进不去。此前 Win/mac 用 `?` fail-fast——撞键即弹「朱简无法启动」、连托盘都摸不到,
+            // 是最坏结局;现对齐 Linux(progress-log 215)只记一笔、留退路(232 起并可去设置改键)。
+            let mut failed: Vec<String> = Vec::new();
+            for (sc, name) in [(capture_sc, &capture_accel), (notebook_sc, &notebook_accel)] {
                 if let Err(e) = app.global_shortcut().register(sc) {
                     log::error!(
-                        "全局热键 {name} 注册失败(Wayland 会话常见,退回托盘/窗口入口):{e}"
+                        "全局热键 {name} 注册失败(可能被其它程序占用,退回托盘/窗口入口):{e}"
                     );
+                    failed.push(name.clone());
                 }
             }
-            // Windows/macOS:保留 fail-fast——那里注册失败=真实键位冲突,该响亮崩(见
-            // dev-and-testing「全局热键冲突即 panic」),不该静默吞。
+            // Win/mac:撞键=真实键位冲突(第三方软件占用该键),弹一次非阻塞原生提示让用户
+            // 知道该键失效、指向托盘入口、并提示可去设置改键;后台线程弹,不阻断 setup。
+            // Linux:注册失败多是 Wayland 平台限制(XGrabKey 抓不到、非用户可解的键位冲突),
+            // 只记日志、不打扰(每次启动都弹会很烦)。
             #[cfg(not(target_os = "linux"))]
-            {
-                app.global_shortcut()
-                    .register(Shortcut::new(Some(HOTKEY_MODS), Code::KeyN))?;
-                app.global_shortcut()
-                    .register(Shortcut::new(Some(HOTKEY_MODS), Code::KeyM))?;
+            if !failed.is_empty() && e2e_db_path().is_none() {
+                let keys = failed.join("、");
+                std::thread::spawn(move || {
+                    rfd::MessageDialog::new()
+                        .set_level(rfd::MessageLevel::Warning)
+                        .set_title("朱简")
+                        .set_description(format!(
+                            "全局快捷键 {keys} 已被其它程序占用,暂时用不了。\n\n朱简已正常启动——双击系统托盘图标、或右键托盘选「打开朱简」即可进入;也可以在朱简「设置」里把它换成别的键。"
+                        ))
+                        .set_buttons(rfd::MessageButtons::Ok)
+                        .show();
+                });
             }
 
             // The notebook is the single browse/manage window — a panel, not a
@@ -2514,19 +2708,30 @@ pub fn run() {
             // Linux:appindicator 菜单经 DBusMenu 序列化,muda 传给 MenuItem 的 accelerator
             // 是挂到 GTK 窗口 accel_group(菜单栏用)、不进 DBusMenu,故 GNOME 托盘菜单不显示
             // 快捷键——把快捷键文本焊进标签补上(Win/mac 由第 5 参原生渲染,标签不含,免重复)。
+            // 键名跟着当前生效的热键走(232 可改),故用上面从配置解析出的 accel 串、不再用常量。
             #[cfg(target_os = "linux")]
             let (show_label, notebook_label) = (
-                format!("记录灵感  ({ACCEL_CAPTURE})"),
-                format!("打开朱简  ({ACCEL_NOTEBOOK})"),
+                format!("记录灵感  ({capture_accel})"),
+                format!("打开朱简  ({notebook_accel})"),
             );
             #[cfg(not(target_os = "linux"))]
             let (show_label, notebook_label) = ("记录灵感".to_string(), "打开朱简".to_string());
             let show_item =
-                MenuItem::with_id(app, "show", &show_label, true, Some(ACCEL_CAPTURE))?;
-            let notebook_item =
-                MenuItem::with_id(app, "notebook", &notebook_label, true, Some(ACCEL_NOTEBOOK))?;
+                MenuItem::with_id(app, "show", &show_label, true, Some(capture_accel.as_str()))?;
+            let notebook_item = MenuItem::with_id(
+                app,
+                "notebook",
+                &notebook_label,
+                true,
+                Some(notebook_accel.as_str()),
+            )?;
             let quit_item = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show_item, &notebook_item, &quit_item])?;
+            // 句柄留一份给 set_hotkey 改键后刷新显示的键名。
+            app.manage(TrayHotkeyItems {
+                show: show_item.clone(),
+                notebook: notebook_item.clone(),
+            });
             TrayIconBuilder::new()
                 .icon(app.default_window_icon().expect("default icon").clone())
                 .menu(&menu)
@@ -2629,7 +2834,9 @@ pub fn run() {
             create_space,
             reset_space,
             rename_space,
-            move_item_to_space
+            move_item_to_space,
+            get_hotkeys,
+            set_hotkey
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

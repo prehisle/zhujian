@@ -94,7 +94,8 @@
       body.sb-collapsed .sidebar .brand,
       body.sb-collapsed .sidebar nav,
       body.sb-collapsed .sidebar #space-entry,
-      body.sb-collapsed .sidebar #sync-entry { display: none; }
+      body.sb-collapsed .sidebar #sync-entry,
+      body.sb-collapsed .sidebar #settings-entry { display: none; }
       body.sb-collapsed .sb-toggle { right: 50%; transform: translateX(50%); }
       .brand {
         display: flex;
@@ -298,6 +299,10 @@
            未配置时只是一枚安静的灰点,零打扰。样式在 sync.css。 -->
       <button id="sync-entry" class="sync-entry" title="同步">
         <span id="sync-dot" class="sync-dot off"></span><span>同步</span>
+      </button>
+      <!-- 设置(232):目前只有全局热键一项;样式在 settings.css,逻辑在 settings.ts。 -->
+      <button id="settings-entry" class="settings-entry" title="设置">
+        <span class="settings-gear" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.1"/><path d="M19.14 12.94a7.49 7.49 0 0 0 .05-.94 7.49 7.49 0 0 0-.05-.94l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.61-.22l-2.39.96a7.3 7.3 0 0 0-1.62-.94l-.36-2.54a.5.5 0 0 0-.5-.42h-3.84a.5.5 0 0 0-.5.42l-.36 2.54a7.3 7.3 0 0 0-1.62.94l-2.39-.96a.5.5 0 0 0-.61.22L2.7 8.84a.5.5 0 0 0 .12.64l2.03 1.58a7.49 7.49 0 0 0 0 1.88L2.82 14.5a.5.5 0 0 0-.12.64l1.92 3.32a.5.5 0 0 0 .61.22l2.39-.96a7.3 7.3 0 0 0 1.62.94l.36 2.54a.5.5 0 0 0 .5.42h3.84a.5.5 0 0 0 .5-.42l.36-2.54a7.3 7.3 0 0 0 1.62-.94l2.39.96a.5.5 0 0 0 .61-.22l1.92-3.32a.5.5 0 0 0-.12-.64l-2.03-1.58Z"/></svg></span><span>设置</span>
       </button>
     </aside>
     <div class="main-col">

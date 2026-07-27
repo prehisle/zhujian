@@ -6,6 +6,7 @@ import { mount as mountTopics } from "./topics";
 import { mount as mountSearch } from "./search";
 import { parseDeepLink, consumePendingDeepLink } from "./deeplink";
 import { initSync, seedSpaceStatuses, setSpaceNames, showToast, syncSpaceSwitched, DEFAULT_SYNC_URL } from "./sync";
+import { initSettings } from "./settings";
 import { initUpdate } from "./update";
 import {
   createSpace,
@@ -598,6 +599,8 @@ void (async () => {
   // await:四个事件监听注册完才拉状态基线(顺序反了会漏两者之间的事件)。
   await initSync({ refresh: () => current?.onFocus?.() });
   refreshSpaceEntry();
+  // 设置面板(232):目前只有全局热键一项,与空间/同步无关,挂个入口即可。
+  initSettings();
 
   // 自动更新(88):启动静默查一次。只在生产构建跑(dev/e2e 是 vite dev server,
   // import.meta.env.PROD 为 false),开发/测试期不打网络也不弹 banner。

@@ -1,5 +1,6 @@
 // 时间轴筛选(灵感/看板两面,与桌面同源三维:kind→topics→text)真机验收 · 验证。
-// ①-③ 按类型筛选(190/192);④-⑩ 标签多选走「或」+ 父子折叠(229,追齐桌面 219/221)。
+// ①-③ 按类型筛选(190/192);④-⑩ 标签多选走「或」+ 父子折叠(229,追齐桌面 219/221);
+// ⑤b 单选标签时卡上同名 chip 不渲染(追齐桌面 218)。
 // 三步流程之中:假设已 evalfile cdp-acceptance-timeline-filter-seed.js 播种
 // 且随后 reload(app 重读 timeline+list_topics_full)。点类型 pill 走 onFilterPick→
 // projectTimeline 同步重投影,无需再 reload。evalfile 跑,pass=true 才算过。只读+点击,
@@ -77,6 +78,31 @@
   ok("再选李四:无标签 pill 取消高亮", !findNone()?.classList.contains("active"));
   click(findAll());
   ok("点「所有」:清空选集、恢复全量", findAll()?.classList.contains("active") && shows("FFV-想到项目"));
+
+  // ⑤b 追齐桌面 218:恰好单选一枚标签时,卡上那枚同名 chip 不渲染(筛出来的卡本就都带它,
+  //    纯冗余);多选 OR 下每枚 chip 是「凭哪个标签入选」的有效信息,全部保留。种子里
+  //    FFV-想到张三 挂两标签(张三+项目甲)、FFV-想到李四 只挂李四。
+  const cardChips = (marker) => {
+    const card = [...document.querySelectorAll("#timeline [data-id]")].find((c) =>
+      c.querySelector(".content")?.textContent.includes(marker));
+    return card ? [...card.querySelectorAll(".chip")].map((c) => c.textContent) : null;
+  };
+  click(findTopic("FFV-李四"));
+  ok("单选李四:只挂李四的卡 chip 整枚消失", cardChips("FFV-想到李四")?.length === 0);
+  click(findAll());
+  click(findTopic("FFV-张三"));
+  const zc = cardChips("FFV-想到张三");
+  ok("单选张三:同名 chip 藏、其余留(只剩项目甲)", !!zc && zc.length === 1 && zc[0].includes("FFV-项目甲"), zc);
+  click(findTopic("FFV-李四")); // 追加李四 → 变多选
+  const zc2 = cardChips("FFV-想到张三");
+  ok(
+    "多选:张三卡同名 chip 回来(凭哪个标签入选是信息)",
+    !!zc2 && zc2.some((t) => t.includes("FFV-张三")) && zc2.some((t) => t.includes("FFV-项目甲")),
+    zc2,
+  );
+  ok("多选:李四卡 chip 也在", cardChips("FFV-想到李四")?.some((t) => t.includes("FFV-李四")));
+  click(findAll());
+  ok("清回所有:chip 全量回来", cardChips("FFV-想到李四")?.some((t) => t.includes("FFV-李四")));
 
   // ⑥ 父子折叠:父 FFV-家 出 pill 并带箭头;两子默认收起(在 DOM 里但 .hidden)。
   const parentPill = byId(home);

@@ -1,0 +1,151 @@
+/* 设置(232):侧栏底部入口 + 居中面板。视觉沿用 sync 面板的纸墨令牌,保持一致。 */
+
+.settings-entry {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-serif);
+  font-size: 12.5px;
+  letter-spacing: 0.03em;
+  color: var(--ink-faint);
+  background: transparent;
+  border: 0;
+  border-radius: 9px;
+  padding: 7px 12px;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.14s, color 0.14s;
+}
+.settings-entry:hover {
+  background: color-mix(in srgb, var(--ink) 6%, transparent);
+  color: var(--ink);
+}
+/* 齿轮图标:与窗控同风格的细线 SVG(描边随文字色、hover 变深),不用彩色 emoji。
+   图标槽宽度对齐 .sync-dot(7px),让「设置」文字与「同步」左对齐;齿轮本体 13px 溢出
+   居中,与圆点同轴——大小不同但轴对齐,读作一对安静的侧栏入口。 */
+.settings-gear {
+  flex: none;
+  width: 7px;
+  height: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.settings-gear svg {
+  width: 13px;
+  height: 13px;
+  overflow: visible;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.settings-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  background: color-mix(in srgb, var(--paper) 55%, transparent);
+  backdrop-filter: blur(2px);
+}
+.settings-panel {
+  width: min(420px, calc(100vw - 48px));
+  background: linear-gradient(180deg, var(--raised), var(--raised-edge));
+  border: 1px solid var(--line-strong);
+  border-radius: 14px;
+  box-shadow: var(--float-shadow);
+  padding: 18px 20px 20px;
+}
+.settings-title {
+  margin: 0 0 4px;
+  font-family: var(--font-serif);
+  font-size: 16px;
+  letter-spacing: 0.04em;
+  color: var(--ink);
+}
+.settings-sub {
+  margin: 0 0 16px;
+  font-size: 12px;
+  color: var(--ink-faint);
+  line-height: 1.6;
+}
+
+/* 一行 = 一枚热键:左边名字,右边当前键 + 更改按钮。 */
+.hk-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+}
+.hk-row:first-of-type { border-top: 0; }
+.hk-name {
+  flex: none;
+  width: 76px;
+  font-size: 13px;
+  color: var(--ink);
+}
+.hk-desc {
+  flex: 1;
+  font-size: 11.5px;
+  color: var(--ink-faint);
+  line-height: 1.5;
+}
+.hk-keys {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.hk-combo {
+  font-family: var(--font-sans);
+  font-size: 12px;
+  color: var(--ink);
+  background: color-mix(in srgb, var(--ink) 6%, transparent);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 4px 9px;
+  min-width: 82px;
+  text-align: center;
+  white-space: nowrap;
+}
+.hk-combo.recording {
+  color: var(--seal);
+  border-color: var(--seal);
+  background: var(--seal-tint);
+}
+.hk-change {
+  font-family: var(--font-serif);
+  font-size: 12px;
+  color: var(--ink-soft);
+  background: transparent;
+  border: 1px solid var(--line-strong);
+  border-radius: 7px;
+  padding: 4px 10px;
+  cursor: pointer;
+  transition: background 0.14s, color 0.14s;
+}
+.hk-change:hover {
+  background: color-mix(in srgb, var(--ink) 6%, transparent);
+  color: var(--ink);
+}
+
+/* 行下的一句话:成功=墨绿淡提示,失败=朱砂。 */
+.hk-msg {
+  margin: 2px 0 0;
+  font-size: 11.5px;
+  line-height: 1.5;
+  min-height: 0;
+}
+.hk-msg.ok { color: var(--ink-soft); }
+.hk-msg.err { color: var(--seal); }
+
+.settings-foot {
+  margin: 14px 0 0;
+  font-size: 11px;
+  color: var(--ink-faint);
+  line-height: 1.6;
+}

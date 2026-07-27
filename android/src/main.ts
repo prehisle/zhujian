@@ -174,7 +174,9 @@ const TASK_SECTIONS: { stage: string; label: string }[] = [
 
 // ---- 统一时间轴 -------------------------------------------------------------
 
-function renderCard(it: TimelineItem): string {
+// hideTopic:恰好单选一枚标签筛选时,卡上那枚同名 chip 是纯冗余(筛出来的卡本就都带它),
+// 直接不渲染(同桌面 218 灵感侧;安卓 chip 无拖拽去重等 DOM 依赖,面板真值走 lastItems)。
+function renderCard(it: TimelineItem, hideTopic: string | null): string {
   const label = STAGE_LABEL[it.stage];
   const isTask = label !== undefined;
   const done = it.stage === "done";
@@ -184,6 +186,7 @@ function renderCard(it: TimelineItem): string {
     : "";
   const pill = isTask ? `<span class="pill">${label}</span>` : "";
   const chips = it.topics
+    .filter((t) => t.id !== hideTopic)
     .map(
       (t) =>
         `<span class="chip"${t.color ? ` style="--tc:${esc(t.color)}"` : ""}>${esc(t.title)}</span>`,
@@ -864,9 +867,10 @@ function projectTimeline(): void {
   filter.reconcileKindFilter(f, allFilterTopics);
   renderFilterBar(modeItems);
   const shown = filter.applyFilter(modeItems, f, (i) => i.content, allFilterTopics);
+  const hideTopic = filter.soleTopicFilter(f); // 单选一枚标签时,卡上同名 chip 不渲染(218 同法)
   if (viewMode === "ideas") {
     box.innerHTML = shown.length
-      ? shown.map(renderCard).join("")
+      ? shown.map((i) => renderCard(i, hideTopic)).join("")
       : modeItems.length === 0
         ? `<p class="muted empty">还没有灵感。</p>`
         : filteredEmptyHtml(f);
@@ -877,7 +881,7 @@ function projectTimeline(): void {
             (s) =>
               `<section class="tl-group"><h3 class="tl-sec">${s.label}</h3>${shown
                 .filter((t) => t.stage === s.stage)
-                .map(renderCard)
+                .map((t) => renderCard(t, hideTopic))
                 .join("")}</section>`,
           )
           .join("")

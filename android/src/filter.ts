@@ -17,6 +17,13 @@ export function filterActive(f: FilterState): boolean {
   return f.kind !== "all" || f.topics.length > 0 || f.text.trim() !== "";
 }
 
+// 当前是否恰好只筛了「单一具体标签」(非无标签)——返回它的 id,否则 null。用于「卡片
+// 隐藏那枚重复 chip」(同桌面 218 / filter-bar.ts):单选时筛出来的卡本就都带它,同名
+// chip 是纯冗余;多选 OR 下每枚 chip 表明「凭哪个标签入选」是有效信息、不该藏。
+export function soleTopicFilter(f: FilterState): string | null {
+  return f.topics.length === 1 && f.topics[0] !== "none" ? f.topics[0] : null;
+}
+
 // 被筛具体标签的中文名列表(供筛空空态提示「「A、B」下没有…」)。none 显「无标签」,
 // id 解析成标签名(找不到 = 已删,显「该标签」占位)。空数组 = 未筛具体标签。
 export function selectedTopicLabels(f: FilterState, all: FilterTopic[]): string[] {
