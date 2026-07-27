@@ -1,16 +1,20 @@
-import { invoke, mirrorSpace, spaceLabel, listSpaces, MAIN_SPACE } from "./space";
+import { invoke, mirrorSpace, spaceLabel, listSpaces, dotClass, MAIN_SPACE } from "./space";
 import { invoke as rawInvoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { LogicalSize } from "@tauri-apps/api/dpi";
 import { currentMonitor, getCurrentWindow } from "@tauri-apps/api/window";
 import { openLightboxUrl, pendingImages } from "./item-images";
 import { saveTextDraft, loadTextDraft, clearTextDraft } from "./compose-draft";
+import { createCaptureCommands } from "./capture-commands";
 
 const input = document.getElementById("capture") as HTMLTextAreaElement;
 const slip = document.querySelector(".slip") as HTMLElement;
 const imagesBar = document.getElementById("cap-images") as HTMLElement;
 const errLine = document.getElementById("cap-err") as HTMLElement;
 const spaceTag = document.getElementById("cap-space") as HTMLElement;
+const modsBar = document.getElementById("cap-mods") as HTMLElement;
+const cmdPanel = document.getElementById("cap-cmd") as HTMLElement;
+const spacesPanel = document.getElementById("cap-spaces") as HTMLElement;
 const appWindow = getCurrentWindow();
 
 // 捕获目标空间(工序 8,§9「目标可见」/§16.2 提案 B):壳侧 ForegroundSpace 的
@@ -67,6 +71,192 @@ async function initSpaceTag(): Promise<void> {
   await refreshSpaceNames();
 }
 void initSpaceTag();
+
+// ---- 本次捕获的修饰(模式 + 标签)+ 空间选择器 + 斜杠命令 -----------------------
+// 捕获默认存成想法;/task 把本次转任务(存看板)、/tag 给本次挂标签、/space 换落点
+// 空间。修饰是「本条」状态,存完即结算回想法;和文字/图草稿一样断电可恢复(念头别丢)。
+type CaptureMode = "idea" | "task";
+let captureMode: CaptureMode = "idea";
+let captureTags: string[] = []; // 标签名(存 title,存那刻才 resolve/建 topic,弃稿不留孤儿)
+
+// 修饰草稿(纯设备本地 UI 状态,不进 DB / 同步;与 compose-draft 同体感,单列小键)。
+const MODS_KEY = "zhujian.capture-mods";
+function saveMods(): void {
+  if (captureMode === "idea" && captureTags.length === 0) {
+    localStorage.removeItem(MODS_KEY);
+    return;
+  }
+  try {
+    localStorage.setItem(MODS_KEY, JSON.stringify({ mode: captureMode, tags: captureTags }));
+  } catch {
+    // 持久化尽力而为,不拦输入。
+  }
+}
+function loadMods(): void {
+  const raw = localStorage.getItem(MODS_KEY);
+  if (!raw) return;
+  try {
+    const v = JSON.parse(raw) as { mode?: string; tags?: unknown };
+    captureMode = v.mode === "task" ? "task" : "idea";
+    captureTags = Array.isArray(v.tags) ? v.tags.filter((t): t is string => typeof t === "string") : [];
+  } catch {
+    // 坏 JSON:当没有修饰。
+  }
+}
+function resetMods(): void {
+  captureMode = "idea";
+  captureTags = [];
+  saveMods();
+  renderMods();
+}
+function chipX(title: string, onClick: () => void): HTMLSpanElement {
+  const x = document.createElement("span");
+  x.className = "x";
+  x.textContent = "×";
+  x.title = title;
+  x.addEventListener("click", onClick);
+  return x;
+}
+function renderMods(): void {
+  modsBar.replaceChildren();
+  if (captureMode === "task") {
+    const chip = document.createElement("span");
+    chip.className = "cap-chip mode";
+    const label = document.createElement("span");
+    label.textContent = "任务";
+    chip.append(
+      label,
+      chipX("改回想法", () => {
+        captureMode = "idea";
+        saveMods();
+        renderMods();
+        void fitWindow();
+        input.focus();
+      }),
+    );
+    modsBar.appendChild(chip);
+  }
+  for (const t of captureTags) {
+    const chip = document.createElement("span");
+    chip.className = "cap-chip";
+    const label = document.createElement("span");
+    label.textContent = "#" + t;
+    chip.append(
+      label,
+      chipX("移除标签", () => {
+        captureTags = captureTags.filter((g) => g !== t);
+        saveMods();
+        renderMods();
+        void fitWindow();
+        input.focus();
+      }),
+    );
+    modsBar.appendChild(chip);
+  }
+}
+
+// 标签名 → topic id:list_topics 复用同名,缺则 create_topic(存那刻才建,弃稿不留孤儿)。
+type TopicItem = { id: string; title: string };
+async function resolveTags(titles: string[]): Promise<string[]> {
+  const all = await invoke<TopicItem[]>("list_topics");
+  const byTitle = new Map(all.map((t) => [t.title, t.id]));
+  const ids: string[] = [];
+  for (const t of titles) {
+    let tid = byTitle.get(t);
+    if (!tid) {
+      tid = await invoke<string>("create_topic", { title: t });
+      byTitle.set(t, tid);
+    }
+    ids.push(tid);
+  }
+  return ids;
+}
+
+// 空间选择器(方案 B:切壳侧前台空间 → 广播 space-foreground → 本窗 targetSpace 更新、
+// notebook 连带切)。徽章点击 + /space 命令共用这一个入口;单空间无从切,不开。
+let spacePickerOpen = false;
+async function openSpacePicker(): Promise<void> {
+  if (spacePickerOpen) {
+    closeSpacePicker();
+    return;
+  }
+  const alive = (await listSpaces()).filter((s) => s.alive);
+  if (alive.length < 2) return;
+  spacesPanel.replaceChildren();
+  for (const s of alive) {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "space-pick-row";
+    const dot = document.createElement("span");
+    dot.className = `sync-dot ${dotClass(s.status)}`;
+    const name = document.createElement("span");
+    name.textContent = spaceLabel(s);
+    row.append(dot, name);
+    if (s.id === targetSpace) {
+      const cur = document.createElement("span");
+      cur.className = "cur";
+      cur.textContent = "✓";
+      row.append(cur);
+    }
+    row.addEventListener("click", () => {
+      closeSpacePicker();
+      void pickSpace(s.id);
+    });
+    spacesPanel.appendChild(row);
+  }
+  spacesPanel.hidden = false;
+  spacePickerOpen = true;
+  void fitWindow();
+  input.focus();
+}
+function closeSpacePicker(): void {
+  spacesPanel.hidden = true;
+  spacesPanel.replaceChildren();
+  spacePickerOpen = false;
+  void fitWindow();
+  input.focus();
+}
+async function pickSpace(id: string): Promise<void> {
+  // 只切壳侧前台空间;本窗 targetSpace 由随后的 space-foreground 广播更新(见 initSpaceTag)。
+  try {
+    await rawInvoke("set_foreground_space", { spaceId: id });
+  } catch (e) {
+    console.error("set_foreground_space:", e);
+  }
+}
+spaceTag.addEventListener("click", () => void openSpacePicker());
+
+const cmd = createCaptureCommands({
+  input,
+  panel: cmdPanel,
+  commands: [
+    {
+      id: "space",
+      label: "切换空间",
+      hint: "换个本子记",
+      takesArg: false,
+      enabled: () => Object.keys(targetNames).length >= 2,
+    },
+    { id: "task", label: "记为任务", hint: "存进看板而非灵感", takesArg: false },
+    { id: "tag", label: "打标签", hint: "/tag 家庭", takesArg: true },
+  ],
+  onExec: (id, arg) => {
+    if (id === "space") {
+      void openSpacePicker();
+    } else if (id === "task") {
+      captureMode = "task";
+      saveMods();
+      renderMods();
+    } else if (id === "tag") {
+      const name = arg.trim();
+      if (name && !captureTags.includes(name)) captureTags.push(name);
+      saveMods();
+      renderMods();
+    }
+    persistCaptureText();
+    void fitWindow();
+  },
+});
 
 // The slip is a fixed 560px-wide floating window, but its HEIGHT grows with content so
 // multi-line text + a pasted-image preview strip aren't crammed into one short box. The
@@ -177,11 +367,14 @@ function persistCaptureText(): void {
 // Grow/shrink the window as the text wraps to more / fewer lines; persist the draft live.
 input.addEventListener("input", () => {
   persistCaptureText();
+  cmd.refresh(); // 首行以 / 起且有匹配时亮命令面板(非承诺式,见 capture-commands)
   void fitWindow();
 });
 
 // 启动回填:上次没记下的文字 + 暂存图(意外断电 / 杀进程后重开还在)。文字同步灌回、
 // 量窗;图走 IndexedDB 异步回填(填好经 onChange 再量一次窗)。
+loadMods();
+renderMods(); // 上次没记下的模式/标签 chip(意外断电 / 杀进程后重开还在)
 const captureDraft = loadTextDraft(CAPTURE_DRAFT_KEY);
 if (captureDraft && captureDraft.text) input.value = captureDraft.text;
 void fitWindow();
@@ -195,6 +388,18 @@ input.addEventListener("keydown", async (e) => {
   // IME 组合期的按键是给输入法的(选字/上屏),不是给我们的——放行会把半打的拼音
   // 当正文存库、或把上屏那记 Enter 当保存(ui-audit P0 #1)。
   if (e.isComposing) return;
+  // 斜杠命令面板开着时先吃键(↑↓ 选、Enter/Tab 执行、Esc 关面板)——绝不让 Enter 直接
+  // 保存、Esc 直接收窗。面板没开返回 false,照旧走下面的保存/收窗。
+  if (cmd.handleKey(e)) {
+    void fitWindow(); // Esc 关面板 / 执行后正文变短 → 缩回窗口
+    return;
+  }
+  // 空间选择器开着时 Esc 只关它(不收窗)。
+  if (e.key === "Escape" && spacePickerOpen) {
+    e.preventDefault();
+    closeSpacePicker();
+    return;
+  }
   // While a preview lightbox is open it owns Esc (close it, don't dismiss/save the capture).
   if (document.querySelector(".img-lightbox")) return;
   if (e.key === "Escape") {
@@ -227,10 +432,23 @@ input.addEventListener("keydown", async (e) => {
       // 「按下回车那刻」冻结图批(codex 三审 M):IPC 等待期间新粘贴的图属于下一条,
       // 不结算进这条。Create the note first to get its id. On failure put the batch back
       // and keep the text so the user can retry (don't pretend it saved).
+      // 冻结本次形态(与图批同理):IPC 等待期间改模式/标签属于下一条,不算进这条。
+      const mode = captureMode;
+      const tags = captureTags.slice();
       const batch = pend.takeBatch();
       let id: string;
       try {
-        id = await invoke<string>("capture_note", { content });
+        // /task 走 create_task(存看板),否则 capture_note(存灵感);两者都带前台空间守卫,
+        // 保存往返里空间切走会响亮拒(草稿保留)。
+        id =
+          mode === "task"
+            ? await invoke<string>("create_task", {
+                title: content,
+                dueOn: null,
+                priority: null,
+                topicId: null,
+              })
+            : await invoke<string>("capture_note", { content });
       } catch (err) {
         pend.putBack(batch);
         errLine.textContent = String(err);
@@ -240,15 +458,37 @@ input.addEventListener("keydown", async (e) => {
       // The note is now saved — clear the text so a re-Enter can't create a duplicate.
       input.value = "";
       persistCaptureText(); // 落库成功即清磁盘草稿(空文字 → 清键;剩下的暂存图属下一条,自留)
+      resetMods(); // 模式/标签随本条结算,下一条从想法起(chip 清空)
+
+      // 挂标签:标签名 → id(复用同名 / 缺则建),想法走 file_note_to_topic(加法建链)、
+      // 任务走 add_task_topic。失败不假装成功、也不吞图批——记一句提示,继续附图。
+      let tagWarn = "";
+      if (tags.length > 0) {
+        try {
+          const ids = await resolveTags(tags);
+          for (const tid of ids) {
+            if (mode === "task") await invoke("add_task_topic", { id, topicId: tid });
+            else await invoke("file_note_to_topic", { id, topicId: tid, newTitle: null });
+          }
+        } catch (err) {
+          tagWarn = ` 部分标签未挂上(${String(err)})`;
+        }
+      }
 
       // Attach the frozen batch to the new note. A failed attach is surfaced (fail-fast, not
       // swallowed): the note is already saved, so keep the window open with a note that the
       // image didn't stick — the user can re-paste it on the idea card.
+      const kind = mode === "task" ? "任务" : "灵感";
       const failed = await pend.attachBatch(id, batch);
       if (failed > 0) {
-        errLine.textContent = `灵感已保存,但 ${failed} 张图未能附加(可在灵感卡里重新粘贴)`;
+        errLine.textContent = `${kind}已保存,但 ${failed} 张图未能附加(可在卡片里重新粘贴)${tagWarn}`;
         void fitWindow();
         return; // stay open so the message is seen; text already cleared (no duplicate)
+      }
+      if (tagWarn) {
+        errLine.textContent = `${kind}已保存,但${tagWarn.trim()}`;
+        void fitWindow();
+        return; // 留窗让提示被看到;正文已清,不会重复
       }
       if (pend.count() > 0) {
         // 保存等待期间又粘了图:它们属于下一条,不许被 dismiss 的 clear 连坐(codex
@@ -269,6 +509,7 @@ async function dismiss(): Promise<void> {
   errLine.textContent = "";
   clearTextDraft(CAPTURE_DRAFT_KEY); // 稿了结:清磁盘(pend.clear() 自会清图存)
   pend.clear();
+  resetMods(); // 修饰(模式/标签)随稿了结一并清
   await appWindow.hide();
 }
 

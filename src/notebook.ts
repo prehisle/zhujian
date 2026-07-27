@@ -181,6 +181,11 @@ function switchSpace(id: string): void {
   navigate(currentName);
 }
 
+// 前台空间被别的窗切了(捕获浮窗切空间 = 方案 B「连带切 notebook」):壳侧 fg 是
+// 单一真相源,notebook 跟随它整视图重挂。自己切空间也会收到这条回声——switchSpace
+// 对同 id 是 no-op,幂等无害(setCurrentSpace 里已把 current 设成新值)。
+void listen<string>("space-foreground", (e) => switchSpace(e.payload));
+
 // ---- 深链接消费(zhujian://open?...)-----------------------------------------
 // 壳收到一条深链接:解析 → 定位它属于本机哪个空间(acc 匹 account_id / space 匹 id)→
 // 若不在当前空间先切过去(复用 switchSpace 的三步、但不先 navigate 当前视图,带着 focus

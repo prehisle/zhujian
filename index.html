@@ -103,21 +103,94 @@
         background: var(--seal-tint);
         border-radius: 999px;
         padding: 3px 9px;
-        pointer-events: none;
+        /* 可点切换空间(方案 B):点它弹空间选择器,连带切 notebook。 */
+        cursor: pointer;
+        border: 0;
         max-width: 40%;
         overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
       }
+      #cap-space:hover { filter: brightness(0.96); }
       #cap-space[hidden] { display: none; }
+      #cap-space::after { content: " ▾"; opacity: 0.6; }
+
+      /* 本次捕获的修饰(模式 + 标签)chips:在正文上方,亮出这条会存成什么。
+         入流占位、随 fitWindow 长高;无 chip 时整块不占位。 */
+      #cap-mods {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        padding: 10px 20px 0 22px;
+      }
+      #cap-mods:empty { display: none; }
+      .cap-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        font: 12px/1 var(--font-sans);
+        border-radius: 999px;
+        padding: 4px 8px;
+        border: 1px solid var(--line);
+        color: var(--ink);
+        background: var(--surface);
+      }
+      .cap-chip.mode { color: var(--seal); border-color: var(--seal-tint); background: var(--seal-tint); }
+      .cap-chip .x {
+        cursor: pointer;
+        opacity: 0.55;
+        font: 13px/1 var(--font-sans);
+      }
+      .cap-chip .x:hover { opacity: 1; }
+
+      /* 斜杠命令面板 + 空间选择器:内联在 slip 内(靠 fitWindow 长高,不用浮层——
+         .slip 有 overflow:hidden,浮层会被裁,而窗口长高天然不裁)。 */
+      #cap-cmd, #cap-spaces {
+        display: flex;
+        flex-direction: column;
+        padding: 4px 12px 8px;
+      }
+      #cap-cmd[hidden], #cap-spaces[hidden] { display: none; }
+      .cmd-row, .space-pick-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        text-align: left;
+        width: 100%;
+        border: 0;
+        background: transparent;
+        color: var(--ink);
+        border-radius: 8px;
+        padding: 6px 10px;
+        cursor: pointer;
+        font: 13px/1.3 var(--font-sans);
+      }
+      .cmd-row.hi, .space-pick-row.hi, .space-pick-row:hover, .cmd-row:hover {
+        background: var(--seal-tint);
+      }
+      .cmd-name { color: var(--seal); font-weight: 600; min-width: 52px; }
+      .cmd-label { color: var(--ink); }
+      .cmd-hint { color: var(--ink-faint); margin-left: auto; font-size: 11px; }
+      /* 状态点(sync-dot 配色住 sync.css,capture 窗没加载它,内联最小份)。 */
+      .space-pick-row .sync-dot {
+        width: 7px; height: 7px; border-radius: 50%; flex: 0 0 auto;
+        background: transparent; border: 1px solid var(--line-strong);
+      }
+      .space-pick-row .sync-dot.on { background: #4c9a6a; border-color: transparent; }
+      .space-pick-row .sync-dot.busy { background: #c9973a; border-color: transparent; }
+      .space-pick-row .sync-dot.err { background: var(--seal); border-color: transparent; }
+      .space-pick-row .cur { margin-left: auto; color: var(--seal); }
     </style>
   </head>
   <body>
     <div class="slip">
-      <span id="cap-space" hidden></span>
+      <button id="cap-space" type="button" hidden></button>
+      <div id="cap-mods"></div>
       <textarea
         id="capture"
-        placeholder="记下这个念头……    ↵ 收存    ⇧↵ 换行    Esc 退出    可粘贴图片"
+        placeholder="记下这个念头……    ↵ 收存    ⇧↵ 换行    Esc 退出    可粘贴图片    / 唤起命令"
         autofocus
       ></textarea>
+      <div id="cap-cmd" hidden></div>
+      <div id="cap-spaces" hidden></div>
       <div id="cap-images"></div>
       <p id="cap-err"></p>
     </div>

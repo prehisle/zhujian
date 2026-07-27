@@ -678,13 +678,22 @@ fn list_sealed_tasks(space_id: String, spaces: State<'_, Spaces>) -> Result<Vec<
 /// (CHECK) or non-existent topic_id (FK) fails the row and leaves nothing behind.
 /// Returns the new task's id. See task::create.
 #[tauri::command]
-fn create_task(space_id: String, 
+fn create_task(space_id: String,
     title: String,
     due_on: Option<String>,
     priority: Option<i64>,
     topic_id: Option<String>,
     spaces: State<'_, Spaces>,
+    fg: State<'_, ForegroundSpace>,
 ) -> Result<String, String> {
+    // 与 capture_note 对齐(捕获浮窗 /task 可建任务):落库目标必须仍是前台空间——
+    // 保存往返期间 notebook / 捕获窗切走空间的话响亮拒,绝不把任务建进别的空间。
+    {
+        let cur = fg.0.lock().expect("foreground mutex poisoned");
+        if *cur != space_id {
+            return Err("目标空间已经变化,请确认后重新保存".into());
+        }
+    }
     let rt = spaces.get(&space_id)?;
     let (mut conn, mut clk) = rt.write_locks();
     // ReopenRequired 复核在锁内(space-entry-plan §3.2,codex 二轮 M2:旗与导入共
@@ -2861,5 +2870,31 @@ mod tests {
         assert!(pair_join_target_gate(spaces::MAIN_SPACE).is_ok());
         let err = pair_join_target_gate("01JT0000000000000000000000").unwrap_err();
         assert!(err.contains("加入空间"), "拒绝话术要指路新入口:{err}");
+    }
+
+    // ── 可改热键(232/233)────────────────────────────────────────────
+
+    #[test]
+    fn default_hotkey_accels_parse() {
+        // parse_hotkey_or 对平台默认串 expect() 解析成功;若日后改 ACCEL_* 常量打错字,
+        // 启动会 panic 在 setup——用测试提前抓,别等发版后用户崩在启动。
+        let cap: Shortcut = ACCEL_CAPTURE.parse().expect("ACCEL_CAPTURE 必可解析");
+        let nb: Shortcut = ACCEL_NOTEBOOK.parse().expect("ACCEL_NOTEBOOK 必可解析");
+        assert_ne!(cap, nb, "捕获/主窗默认键必须不同");
+    }
+
+    #[test]
+    fn parse_hotkey_or_keeps_valid_accel() {
+        let (sc, accel) = parse_hotkey_or("Ctrl+Alt+K", ACCEL_CAPTURE);
+        assert_eq!(accel, "Ctrl+Alt+K");
+        assert_eq!(sc, "Ctrl+Alt+K".parse::<Shortcut>().unwrap());
+    }
+
+    #[test]
+    fn parse_hotkey_or_falls_back_on_garbage() {
+        // 坏的存量串(手改坏了 .hotkeys.json / 老格式)不该让热键失效,静默退回默认键。
+        let (sc, accel) = parse_hotkey_or("Ctrl+Alt+ZZZ", ACCEL_NOTEBOOK);
+        assert_eq!(accel, ACCEL_NOTEBOOK);
+        assert_eq!(sc, ACCEL_NOTEBOOK.parse::<Shortcut>().unwrap());
     }
 }

@@ -121,3 +121,111 @@ describe("捕获 · 打字回车入 Inbox", () => {
     expect(imgs[0].seq).toBe(1);
   });
 });
+
+// 斜杠命令(capture-commands.ts):首行以 / 起且有命令匹配才亮面板;/task 存看板、
+// /tag 挂标签、/etc 这类无匹配的绝不误触发(回车照旧存记录)。e2e 恒单空间,故 /space
+// 命令不出现(enabled 关),空间切换靠代码审 + 真机 CDP,不在此测。
+describe("捕获 · 斜杠命令", () => {
+  const panelHidden = () => browser.execute(() => document.getElementById("cap-cmd").hidden);
+  const cmdRows = () =>
+    browser.execute(() =>
+      [...document.querySelectorAll("#cap-cmd .cmd-row .cmd-name")].map((n) => n.textContent),
+    );
+
+  it("打 / 亮命令面板(单空间下列 /task /tag,无 /space)", async () => {
+    await goShow("/index.html");
+    await clearInbox();
+    const ta = await $("#capture");
+    await ta.waitForExist({ timeout: 10000 });
+    await ta.click();
+    await ta.setValue("/");
+    await browser.waitUntil(async () => !(await panelHidden()), {
+      timeout: 4000,
+      timeoutMsg: "打 / 后命令面板未亮",
+    });
+    expect(await cmdRows()).toEqual(["/task", "/tag"]);
+  });
+
+  it("/etc 无命令匹配 → 面板不亮,回车原样存为想法", async () => {
+    await goShow("/index.html");
+    await clearInbox();
+    const ta = await $("#capture");
+    await ta.waitForExist({ timeout: 10000 });
+    await ta.click();
+    await ta.setValue("/etc/hosts要改");
+    await browser.pause(300);
+    expect(await panelHidden()).toBe(true); // 没有命令叫 etc,不吞正文
+    await browser.keys("Enter");
+    await browser.waitUntil(
+      async () => {
+        const inbox = await invoke("list_inbox");
+        return inbox.length === 1 && inbox[0].content === "/etc/hosts要改";
+      },
+      { timeout: 6000, timeoutMsg: "/etc… 未原样入库" },
+    );
+  });
+
+  it("/task 回车 → 任务 chip;写标题回车 → 存进看板(非灵感)", async () => {
+    await goShow("/index.html");
+    await clearInbox();
+    const ta = await $("#capture");
+    await ta.waitForExist({ timeout: 10000 });
+    await ta.click();
+    await ta.setValue("/task");
+    await browser.waitUntil(async () => !(await panelHidden()), { timeout: 4000 });
+    await browser.keys("Enter"); // 执行 /task → 任务模式 chip
+    await $("#cap-mods .cap-chip.mode").waitForExist({ timeout: 4000 });
+
+    const TITLE = "E2E-斜杠-任务";
+    await ta.setValue(TITLE);
+    await browser.keys("Enter"); // create_task,非 capture_note
+
+    let taskId;
+    await browser.waitUntil(
+      async () => {
+        const t = (await invoke("list_tasks")).find((x) => x.title === TITLE);
+        if (t) taskId = t.id;
+        return !!t;
+      },
+      { timeout: 6000, timeoutMsg: "/task 未存进看板" },
+    );
+    // 没有同名想法漏进灵感视图(存的是任务,天然去重)。
+    expect((await invoke("list_inbox")).some((n) => n.content === TITLE)).toBe(false);
+    // 存完 chip 结算清空,下一条从想法起。
+    expect(await $("#cap-mods .cap-chip.mode").isExisting()).toBe(false);
+    // 清理本条任务。
+    await invoke("archive_task", { id: taskId });
+    await invoke("purge_task", { id: taskId });
+  });
+
+  it("/tag 家庭 回车 → 标签 chip;写正文回车 → 想法带该标签", async () => {
+    await goShow("/index.html");
+    await clearInbox();
+    const ta = await $("#capture");
+    await ta.waitForExist({ timeout: 10000 });
+    await ta.click();
+    await ta.setValue("/tag 家庭");
+    await browser.waitUntil(async () => !(await panelHidden()), { timeout: 4000 });
+    await browser.keys("Enter"); // 执行 /tag → 标签 chip
+    const chip = await $("#cap-mods .cap-chip");
+    await chip.waitForExist({ timeout: 4000 });
+    expect(await chip.getText()).toContain("#家庭");
+
+    const BODY = "E2E-斜杠-带标签";
+    await ta.setValue(BODY);
+    await browser.keys("Enter"); // capture_note + 挂「家庭」标签
+
+    await browser.waitUntil(
+      async () => {
+        const hit = (await invoke("list_ideas")).find((n) => n.content === BODY);
+        return hit && hit.topics.some((t) => t.title === "家庭");
+      },
+      { timeout: 6000, timeoutMsg: "带标签想法未入库或未挂上标签" },
+    );
+
+    // 清理:软删+purge 该想法,删掉顺手建的「家庭」标签。
+    await clearInbox();
+    const home = (await invoke("list_topics")).find((t) => t.title === "家庭");
+    if (home) await invoke("delete_topic", { id: home.id });
+  });
+});
