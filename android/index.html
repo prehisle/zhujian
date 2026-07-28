@@ -49,14 +49,27 @@
       html { color-scheme: light dark; }
       body {
         margin: 0;
-        /* 底边留出固定工具行(120)的高度。 */
-        padding: calc(10px + env(safe-area-inset-top)) 14px calc(64px + env(safe-area-inset-bottom));
+        /* 顶部 padding 归零:安全区上移给 sticky header 自己吃(见 header)。
+           底边留出固定工具行(120)的高度。 */
+        padding: 0 14px calc(64px + env(safe-area-inset-bottom));
         background: var(--paper);
         color: var(--ink);
         font: 15px/1.6 var(--font-sans);
         -webkit-tap-highlight-color: transparent;
       }
-      header { display: flex; align-items: baseline; justify-content: space-between; margin: 2px 2px 10px; }
+      /* 顶栏常驻(sticky):滚长列表时空间徽章/标签/搜索/同步状态始终一眼可达
+         (同底栏 #bottombar 的固定思路,顶底对称)。安全区内移到 header 自己吃、
+         负 margin 拉到左右满幅铺不透明底(否则卡片会从透明处透上来),z 低于所有
+         全屏遮罩(#viewer 15/#scan 10/.gate 20)与错误条(18)。 */
+      header {
+        position: sticky; top: 0; z-index: 5;
+        display: flex; align-items: baseline; justify-content: space-between;
+        margin: 0 -14px 10px;
+        padding: calc(10px + env(safe-area-inset-top)) 16px 8px;
+        background: color-mix(in srgb, var(--paper) 94%, transparent);
+        backdrop-filter: blur(6px);
+        border-bottom: 1px solid var(--line);
+      }
       header h1 { font-size: 17px; margin: 0; font-weight: 700; }
       header h1 .seal { color: var(--seal); }
       .ghost {

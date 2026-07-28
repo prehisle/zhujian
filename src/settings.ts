@@ -23,10 +23,11 @@ let recordCleanup: (() => void) | null = null;
 export function initSettings(): void {
   const entry = document.getElementById("settings-entry");
   if (!entry) throw new Error("侧栏缺 #settings-entry(notebook.html 漂移?)");
-  entry.addEventListener("click", () => void openPanel());
+  entry.addEventListener("click", () => void openSettingsPanel());
 }
 
-async function openPanel(): Promise<void> {
+/** 弹出设置面板。侧栏「设置」入口 + 捕获窗热键冲突提示条「点此改键」(经壳 open-settings 事件)共用。 */
+export async function openSettingsPanel(): Promise<void> {
   if (overlay) return;
   hotkeys = await invoke<Hotkeys>("get_hotkeys");
   overlay = document.createElement("div");

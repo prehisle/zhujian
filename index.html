@@ -113,6 +113,39 @@
       #cap-space[hidden] { display: none; }
       #cap-space::after { content: " ▾"; opacity: 0.6; }
 
+      /* 全局热键被别的程序占用(启动注册失败):一条非模态提示条,「点此改键」直达主窗
+         设置面板。只在真占用时现(main.ts 控 hidden),入流占位、随 fitWindow 长高。 */
+      #cap-hotkey {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin: 10px 14px 0 22px;
+        padding: 7px 11px;
+        border-radius: 9px;
+        background: var(--seal-tint);
+        font: 12px/1.45 var(--font-sans);
+      }
+      #cap-hotkey[hidden] { display: none; }
+      #cap-hotkey .hk-fix {
+        flex: 1;
+        text-align: left;
+        border: 0;
+        background: transparent;
+        cursor: pointer;
+        color: var(--seal);
+        font: inherit;
+        padding: 0;
+      }
+      #cap-hotkey .hk-fix:hover { text-decoration: underline; }
+      #cap-hotkey .hk-x {
+        cursor: pointer;
+        color: var(--seal);
+        opacity: 0.6;
+        font: 15px/1 var(--font-sans);
+        padding: 0 2px;
+      }
+      #cap-hotkey .hk-x:hover { opacity: 1; }
+
       /* 本次捕获的修饰(模式 + 标签)chips:在正文上方,亮出这条会存成什么。
          入流占位、随 fitWindow 长高;无 chip 时整块不占位。 */
       #cap-mods {
@@ -183,6 +216,7 @@
   <body>
     <div class="slip">
       <button id="cap-space" type="button" hidden></button>
+      <div id="cap-hotkey" hidden></div>
       <div id="cap-mods"></div>
       <textarea
         id="capture"

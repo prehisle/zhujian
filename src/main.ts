@@ -13,6 +13,7 @@ const imagesBar = document.getElementById("cap-images") as HTMLElement;
 const errLine = document.getElementById("cap-err") as HTMLElement;
 const spaceTag = document.getElementById("cap-space") as HTMLElement;
 const modsBar = document.getElementById("cap-mods") as HTMLElement;
+const hotkeyBar = document.getElementById("cap-hotkey") as HTMLElement;
 const cmdPanel = document.getElementById("cap-cmd") as HTMLElement;
 const spacesPanel = document.getElementById("cap-spaces") as HTMLElement;
 const appWindow = getCurrentWindow();
@@ -71,6 +72,49 @@ async function initSpaceTag(): Promise<void> {
   await refreshSpaceNames();
 }
 void initSpaceTag();
+
+// ---- 全局热键冲突提示条(232 起撞键不崩,此处告知用户)-------------------------
+// 启动时某枚全局热键被别的程序占用会注册失败(壳把失效键记进 HotkeyConflicts)。捕获窗
+// 是启动唯一可见的窗,在这里挂一条非模态提示条:「点此改键」直达主窗设置面板去换键。
+// 用户按 × 收起后本会话不再出现(捕获窗隐藏不销毁,dismiss 稳);改好键后壳清空冲突,
+// 下次唤起(onFocusChanged 复查)自然消失。
+let hotkeyDismissed = false;
+function renderHotkeyBar(conflicts: string[]): void {
+  hotkeyBar.replaceChildren();
+  if (hotkeyDismissed || conflicts.length === 0) {
+    hotkeyBar.hidden = true;
+    void fitWindow();
+    return;
+  }
+  const fix = document.createElement("button");
+  fix.type = "button";
+  fix.className = "hk-fix";
+  fix.textContent = `⚠ 快捷键 ${conflicts.join("、")} 被占用,点此改键`;
+  fix.addEventListener("click", () => {
+    void rawInvoke("open_settings");
+    void appWindow.hide(); // 让位给主窗设置面板(草稿原样留着,同 Esc 收窗)
+  });
+  const x = document.createElement("span");
+  x.className = "hk-x";
+  x.textContent = "×";
+  x.title = "知道了";
+  x.addEventListener("click", () => {
+    hotkeyDismissed = true;
+    renderHotkeyBar([]);
+  });
+  hotkeyBar.append(fix, x);
+  hotkeyBar.hidden = false;
+  void fitWindow();
+}
+async function refreshHotkeyBar(): Promise<void> {
+  if (hotkeyDismissed) return; // 收起后不再打扰(会话级)
+  try {
+    renderHotkeyBar(await rawInvoke<string[]>("hotkey_conflicts"));
+  } catch {
+    // 壳未就绪 / 无此命令(不该发生):静默,不拦记录。
+  }
+}
+void refreshHotkeyBar();
 
 // ---- 本次捕获的修饰(模式 + 标签)+ 空间选择器 + 斜杠命令 -----------------------
 // 捕获默认存成想法;/task 把本次转任务(存看板)、/tag 给本次挂标签、/space 换落点
@@ -521,6 +565,8 @@ appWindow.onFocusChanged(({ payload: focused }) => {
     // 顺带刷新空间名字表:新建第二个空间不一定伴随前台切换事件,唤起浮窗这一刻
     // 对齐(徽章该出现就出现、改名不腐)。
     void refreshSpaceNames();
+    // 热键冲突也复查:去设置改好键后壳已清空冲突,这次唤起提示条自然消失。
+    void refreshHotkeyBar();
     void fitWindow();
   }
 });

@@ -142,8 +142,8 @@ describe("灵感 · 标签筛选与文本过滤", () => {
     const NEW = "E2EF-新茶到了";
     const D = "E2EF-无标买粮";
     await invoke("capture_note", { content: D });
-    // 多选 OR 语义下 pickPill 是「切换」:上一例已把 T1 选着,直接再点会把它关掉——
-    // 先归「所有」再单选 T1,保证这里只筛 T1(不依赖前例的残留选态)。
+    // 桌面单选惯例下,单击 T1 就把选集替换成只 T1;但上一例可能残留别的选态,先归
+    // 「所有」再单击 T1,保证这里只筛 T1(不依赖前例的残留选态)。
     await pickPill("所有");
     await pickPill(T1);
     await browser.waitUntil(async () => (await exists(A)) && (await exists(NEW)), {

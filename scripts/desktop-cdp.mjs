@@ -18,10 +18,18 @@ const pageMatch = process.argv.includes("--page")
   ? process.argv[process.argv.indexOf("--page") + 1]
   : "notebook";
 
+// 捕获浮窗的 URL 是应用根(dev 下 `http://localhost:1420/`、生产 `.../index.html`),
+// 不含子串 "capture" —— `--page capture` 得按「根页 / 或 index.html」匹配,否则 dev/fast
+// 模式下 includes("capture") 永远落空(235 实踩:曾为此临时另写脚本)。
+function matches(url) {
+  if (pageMatch === "capture") return /\/(index\.html)?(\?.*)?$/.test(url);
+  return url.includes(pageMatch);
+}
+
 async function pageTarget() {
   const r = await fetch(`http://127.0.0.1:${PORT}/json/list`);
   const ts = await r.json();
-  const p = ts.find((t) => t.type === "page" && t.url.includes(pageMatch) && t.webSocketDebuggerUrl);
+  const p = ts.find((t) => t.type === "page" && matches(t.url) && t.webSocketDebuggerUrl);
   if (!p) throw new Error(`无匹配 page target(${pageMatch}):` + ts.map((t) => t.url).join(", "));
   return p;
 }

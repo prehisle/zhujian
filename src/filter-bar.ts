@@ -164,20 +164,26 @@ export function renderFilterPills(
     nEl.className = "tf-n";
     nEl.textContent = String(n);
     b.append(document.createTextNode(label), nEl);
-    b.onclick = () => {
-      // 「所有」= 清空选集(回到不筛)。「无标签」与具体标签**互斥**:一个条目不可能既
-      // 无标签又挂着某标签,把两者 OR 到一起是无意义的并集——故选「无标签」清掉所有标签、
-      // 选某标签清掉「无标签」。具体标签之间才是多选 OR(切进/切出)。
+    b.onclick = (e) => {
+      // 桌面交互:平时**单击 = 只筛这一个标签**(替换选集,再点它自己 = 取消回「所有」);
+      // 按住 **Ctrl/⌘ 单击 = 多选**(把标签切进/切出 OR 并集)。「所有」= 清空选集(回到
+      // 不筛)。「无标签」与具体标签**互斥**——一个条目不可能既无标签又挂着某标签,把两者
+      // OR 到一起是无意义的并集,故它只单击切换、不参与 Ctrl 多选。(安卓触屏无 Ctrl,其
+      // 独立件 android/src/filter.ts 保持点按切换的多选,不受此桌面单选惯例影响。)
+      const multi = e.ctrlKey || e.metaKey;
       if (key === "all") {
         f.topics = [];
       } else if (key === "none") {
         f.topics = f.topics.includes("none") ? [] : ["none"];
-      } else {
+      } else if (multi) {
         const rest = f.topics.filter((t) => t !== "none");
         const i = rest.indexOf(key);
         if (i >= 0) rest.splice(i, 1);
         else rest.push(key);
         f.topics = rest;
+      } else {
+        // 单选替换:已是唯一选中项则取消(回「所有」),否则只留这一个。
+        f.topics = f.topics.length === 1 && f.topics[0] === key ? [] : [key];
       }
       onChange();
     };
@@ -194,6 +200,7 @@ export function renderFilterPills(
   const pushTopic = (tp: FilterTopic, label: string, child: boolean, parentId?: string): HTMLElement => {
     const p = pill(tp.id, label, counts.get(tp.id) ?? 0, tp.color);
     p.dataset.topicId = tp.id;
+    p.title = "单击只筛此标签 · 按住 Ctrl 多选"; // 多选是隐藏能力,靠 hover 提示补可发现性
     if (child) {
       p.classList.add("child");
       if (parentId) p.dataset.parent = parentId;

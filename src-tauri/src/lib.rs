@@ -2175,6 +2175,14 @@ struct HotkeyRuntime {
     notebook_accel: String,
 }
 
+/// 启动时注册失败(被别的程序占用)的全局热键加速键串——供捕获窗内提示条查询后
+/// 显示「点此改键」。`set_hotkey` 两枚都重注册成功时清空(冲突已解,提示条随之消失)。
+struct HotkeyConflicts(Mutex<Vec<String>>);
+
+/// 捕获窗「点此改键」待处理旗:主窗惰性导航,未加载时 emit 的事件会丢(同 deep-link),
+/// `open_settings` 置旗,notebook 冷启动 + 收到事件各取一次(take 语义,谁先到谁处理)。
+struct PendingOpenSettings(AtomicBool);
+
 /// 托盘两枚菜单项句柄,供改键时同步刷新显示的键名。
 struct TrayHotkeyItems {
     show: MenuItem<tauri::Wry>,
@@ -2309,10 +2317,47 @@ fn set_hotkey(app: AppHandle, which: String, accel: String) -> Result<HotkeysDto
         log::error!("热键配置存盘失败(改动已生效,重启后可能丢):{e}");
     }
     refresh_tray_hotkey_labels(&app, &cfg.capture, &cfg.notebook);
+    // 走到这里两枚键都重注册成功 = 已无占用冲突,清掉启动期记下的那份
+    // (下次捕获窗查询即空,提示条不再出现)。
+    app.state::<HotkeyConflicts>()
+        .0
+        .lock()
+        .expect("hotkey conflicts")
+        .clear();
     Ok(HotkeysDto {
         capture: cfg.capture,
         notebook: cfg.notebook,
     })
+}
+
+/// 启动时被别的程序占用、当前失效的全局热键(加速键串)。捕获窗据此显示提示条。
+#[tauri::command]
+fn hotkey_conflicts(app: AppHandle) -> Vec<String> {
+    app.state::<HotkeyConflicts>()
+        .0
+        .lock()
+        .expect("hotkey conflicts")
+        .clone()
+}
+
+/// 从捕获窗跳到主窗设置面板(热键冲突提示条「点此改键」):置待处理旗 → 唤起主窗 →
+/// emit 事件。冷启动(主窗还是 about:blank)时事件会丢,靠 notebook 启动时取旗兜底;
+/// 热路(主窗已加载)靠 emit 即时弹面板。旗是 take 语义,两条路谁先到谁处理、不重放。
+#[tauri::command]
+fn open_settings(app: AppHandle) {
+    app.state::<PendingOpenSettings>()
+        .0
+        .store(true, Ordering::SeqCst);
+    open_notebook(&app);
+    if let Some(nb) = app.get_webview_window("notebook") {
+        let _ = nb.emit("open-settings", ());
+    }
+}
+
+/// 取走「打开设置面板」待处理旗(读并清)。notebook 冷启动 + 收到 open-settings 事件各取一次。
+#[tauri::command]
+fn take_open_settings(app: AppHandle) -> bool {
+    app.state::<PendingOpenSettings>().0.swap(false, Ordering::SeqCst)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -2438,6 +2483,15 @@ pub fn run() {
                 })
                 .build(),
         )
+        // 这两枚 state 必须在 builder 链上(`.setup` 之前)manage,不能放进 setup 闭包:
+        // 捕获窗 webview 在**窗口创建期**就同步 invoke `hotkey_conflicts`(backtrace:
+        // Webview::on_message→prepare_webview→with_webview→tauri::app::setup,早于 .setup
+        // 闭包体运行),放 setup 里 manage 必被这记同步 invoke 抢先 → `state() called before
+        // manage()` panic 崩启动(get_foreground_space 因 main.ts 里排在 `await listen` 之后
+        // 才 dispatch、赶上了 setup 的 manage,才没中招——同类竞速只是它侥幸)。空值起手,
+        // 真实冲突名单在 setup 注册热键后回填(见下 `*state().lock() = failed`)。
+        .manage(HotkeyConflicts(Mutex::new(Vec::new())))
+        .manage(PendingOpenSettings(AtomicBool::new(false)))
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -2564,6 +2618,8 @@ pub fn run() {
             // 前台空间(工序 8,§9):启动恒 main;notebook 前端恢复上次空间时会
             // 立即 set_foreground_space 对齐。
             app.manage(ForegroundSpace(Mutex::new(spaces::MAIN_SPACE.to_string())));
+            // 注:HotkeyConflicts / PendingOpenSettings 已在 builder 链上提前 manage(见那里
+            // 长注释——捕获窗创建期就同步 invoke,setup 里 manage 太晚)。此处不再 manage。
 
             // 深链接(4b OS 桥):暂存位 + scheme 注册 + on_open_url 接线。
             app.manage(PendingDeepLink(Mutex::new(None)));
@@ -2632,24 +2688,19 @@ pub fn run() {
                     failed.push(name.clone());
                 }
             }
-            // Win/mac:撞键=真实键位冲突(第三方软件占用该键),弹一次非阻塞原生提示让用户
-            // 知道该键失效、指向托盘入口、并提示可去设置改键;后台线程弹,不阻断 setup。
-            // Linux:注册失败多是 Wayland 平台限制(XGrabKey 抓不到、非用户可解的键位冲突),
-            // 只记日志、不打扰(每次启动都弹会很烦)。
-            #[cfg(not(target_os = "linux"))]
-            if !failed.is_empty() && e2e_db_path().is_none() {
-                let keys = failed.join("、");
-                std::thread::spawn(move || {
-                    rfd::MessageDialog::new()
-                        .set_level(rfd::MessageLevel::Warning)
-                        .set_title("朱简")
-                        .set_description(format!(
-                            "全局快捷键 {keys} 已被其它程序占用,暂时用不了。\n\n朱简已正常启动——双击系统托盘图标、或右键托盘选「打开朱简」即可进入;也可以在朱简「设置」里把它换成别的键。"
-                        ))
-                        .set_buttons(rfd::MessageButtons::Ok)
-                        .show();
-                });
+            // Win/mac:撞键=真实键位冲突(第三方软件占用该键),把失效的键交给捕获窗内那条
+            // 非模态提示条(启动时唯一可见的窗就是捕获窗)——「点此改键」一下直达设置面板,
+            // 比原生模态框既不突兀又能顺手修好;只在真占用时现,正常启动不打扰。
+            // Linux:注册失败多是 Wayland 平台限制(XGrabKey 抓不到、非用户可改的键位冲突),
+            // 改键也没用、每次启动都提示会烦 → 不 surface,只留上面日志。
+            if cfg!(target_os = "linux") {
+                failed.clear();
             }
+            // 填进上面已提前 manage 的名单(不能再 manage 第二次 = 会 panic「already managed」)。
+            *app.state::<HotkeyConflicts>()
+                .0
+                .lock()
+                .expect("hotkey conflicts") = failed;
 
             // The notebook is the single browse/manage window — a panel, not a
             // doc. Closing it should hide it (so the next summon works), not
@@ -2845,7 +2896,10 @@ pub fn run() {
             rename_space,
             move_item_to_space,
             get_hotkeys,
-            set_hotkey
+            set_hotkey,
+            hotkey_conflicts,
+            open_settings,
+            take_open_settings
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

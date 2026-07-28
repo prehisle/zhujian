@@ -1,4 +1,5 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { invoke as rawInvoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { mount as mountInbox, inboxHasStashedDraft, focusInboxItem } from "./inbox";
 import { mount as mountBoard, boardHasStashedDraft, focusTask, focusBoardView } from "./board";
@@ -6,7 +7,7 @@ import { mount as mountTopics } from "./topics";
 import { mount as mountSearch } from "./search";
 import { parseDeepLink, consumePendingDeepLink } from "./deeplink";
 import { initSync, seedSpaceStatuses, setSpaceNames, showToast, syncSpaceSwitched, DEFAULT_SYNC_URL } from "./sync";
-import { initSettings } from "./settings";
+import { initSettings, openSettingsPanel } from "./settings";
 import { initUpdate } from "./update";
 import {
   createSpace,
@@ -268,6 +269,20 @@ async function consumeDeepLink(): Promise<void> {
 }
 void listen("deep-link-open", () => void consumeDeepLink());
 void consumeDeepLink();
+
+// 捕获窗热键冲突提示条「点此改键」:壳 open_settings 置待处理旗 + 唤起主窗 + 广播事件。
+// 冷启动(主窗还是 about:blank、本文件尚未加载)时事件会丢,靠启动主动取旗兜底;热路
+// 靠事件即时弹。两条都走 take 语义的 take_open_settings——谁先到谁弹,另一条取到 false
+// 即 no-op,绝不重复弹、也不会把旧旗留到下次重启误弹。
+async function consumeOpenSettings(): Promise<void> {
+  try {
+    if (await rawInvoke<boolean>("take_open_settings")) await openSettingsPanel();
+  } catch {
+    // 壳未就绪(不该发生):静默,设置入口另有侧栏「设置」可点。
+  }
+}
+void listen("open-settings", () => void consumeOpenSettings());
+void consumeOpenSettings();
 (window as unknown as { __zhujianOpenDeepLink?: (u: string) => void }).__zhujianOpenDeepLink = (u) =>
   void openDeepLink(u);
 

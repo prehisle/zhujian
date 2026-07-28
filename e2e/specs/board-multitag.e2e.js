@@ -127,6 +127,15 @@ describe("任务看板 · 多标签筛选(OR/并集)", () => {
   const exists = (title) => $(`.tcard*=${title}`).isExisting();
   const clickPill = (id) =>
     browser.execute((i) => document.querySelector(`.tf-pill[data-topic-id="${i}"]`).click(), id);
+  // 桌面多选走 Ctrl+单击(真用户按住 Ctrl):合成一枚带 ctrlKey 的 click 派发,触发同一 onclick。
+  const ctrlPill = (id) =>
+    browser.execute(
+      (i) =>
+        document
+          .querySelector(`.tf-pill[data-topic-id="${i}"]`)
+          .dispatchEvent(new MouseEvent("click", { ctrlKey: true, bubbles: true })),
+      id,
+    );
   const pillActive = (id) =>
     browser.execute(
       (i) => document.querySelector(`.tf-pill[data-topic-id="${i}"]`).classList.contains("active"),
@@ -163,9 +172,9 @@ describe("任务看板 · 多标签筛选(OR/并集)", () => {
     await invoke("delete_topic", { id: idC });
   });
 
-  it("选甲 + 乙 → 显示带甲或乙的任务(并集),丙/无标签隐身;两枚 pill 同时高亮", async () => {
-    await clickPill(idA);
-    await clickPill(idB);
+  it("单击甲、Ctrl+单击乙 → 显示带甲或乙的任务(并集),丙/无标签隐身;两枚 pill 同时高亮", async () => {
+    await clickPill(idA); // 单击 = 只选甲
+    await ctrlPill(idB); // Ctrl+单击 = 把乙加进选集(OR 并集)
     await browser.waitUntil(
       async () =>
         (await exists(ONLY_A)) &&
@@ -179,18 +188,32 @@ describe("任务看板 · 多标签筛选(OR/并集)", () => {
     expect(await pillActive(idB)).toBe(true);
   });
 
-  it("再点乙 → 切出乙,只剩甲(单选);再点甲 → 回「所有」全显", async () => {
+  it("Ctrl+单击乙 → 切出乙只剩甲;单击唯一选中的甲 → 取消回「所有」全显", async () => {
     // 承上:此刻甲、乙都选着。
-    await clickPill(idB); // 切出乙
+    await ctrlPill(idB); // Ctrl+单击切出乙(多选内减一)
     await browser.waitUntil(
       async () => (await exists(ONLY_A)) && (await exists(BOTH)) && !(await exists(ONLY_B)),
       { timeout: 8000, timeoutMsg: "切出乙后应只剩带甲的" },
     );
-    await clickPill(idA); // 切出甲 → 选集空 = 所有
+    await clickPill(idA); // 单击唯一选中项 = 取消 → 选集空 = 所有
     await browser.waitUntil(
       async () => (await exists(ONLY_C)) && (await exists(NONE)) && (await exists(ONLY_B)),
-      { timeout: 8000, timeoutMsg: "全部切出后应回到显示所有" },
+      { timeout: 8000, timeoutMsg: "取消唯一选中后应回到显示所有" },
     );
+  });
+
+  it("单击 = 单选替换(非累加):点甲后点乙 → 只剩带乙的,带甲(不带乙)的隐身", async () => {
+    await clickPill(idA);
+    await browser.waitUntil(async () => (await exists(ONLY_A)) && !(await exists(ONLY_B)), {
+      timeout: 8000,
+    });
+    await clickPill(idB); // 平常单击 = 替换选集(不是像旧版那样累加)
+    await browser.waitUntil(
+      async () => (await exists(ONLY_B)) && (await exists(BOTH)) && !(await exists(ONLY_A)),
+      { timeout: 8000, timeoutMsg: "单击应替换为只选乙,而非与甲并集" },
+    );
+    expect(await pillActive(idA)).toBe(false);
+    expect(await pillActive(idB)).toBe(true);
   });
 
   it("无标签与具体标签互斥:选甲后点无标签 → 只剩无标签的", async () => {
