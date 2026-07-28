@@ -28,6 +28,9 @@ describe("深链接 · 给链接直接打开条目", () => {
       timeoutMsg: "深链接未切到看板",
     });
     await expect($(`.tcard*=${TASK}`)).toExist();
+    // 冷着陆的目标卡带持续定位高亮 .just-located(留到下次点击/滚动才消,见 locate.ts),
+    // 不是新建那记 0.9s 一次性 .just-born——别再「还没看清就消失」。
+    expect(await $(`.tcard*=${TASK}`).getAttribute("class")).toContain("just-located");
   });
 
   it("链接打开一条灵感 → 切到灵感视图并定位到它", async () => {
@@ -71,5 +74,40 @@ describe("深链接 · 给链接直接打开条目", () => {
     });
     const clip = await browser.execute(() => window.__lastClip);
     expect(clip).toBe(`zhujian://open?space=main&item=${taskId}`);
+  });
+});
+
+// 剪贴板补路(桌面):回窗读一次剪贴板,合规 zhujian:// 链接才弹非承诺式提示条「点此打开」。
+// 驱动窗读 OS 剪贴板会挂起(见上),故直驱 notebook 暴露的 __zhujianOfferClipboardDeepLink(text)
+// ——它就是 onFocusChanged 读到剪贴板后喂进的同一入口,把「解析→弹条→点开定位」整条验干净。
+describe("剪贴板深链接 · 提示条", () => {
+  const TASK = "E2E-剪贴板深链任务";
+  let taskId;
+  const offer = (text) => browser.execute((t) => window.__zhujianOfferClipboardDeepLink(t), text);
+  const pill = () => $("#deeplink-pill");
+  const pillShown = async () => (await pill().isExisting()) && (await pill().getAttribute("class")).includes("show");
+
+  before(async () => {
+    taskId = await invoke("create_task", { title: TASK, topicId: null });
+    await goNotebook("topics"); // 停在非看板视图,确认点「打开」会切回来
+  });
+
+  it("合规链接 → 弹提示条,点「打开」切到看板并定位", async () => {
+    await offer(`zhujian://open?space=main&item=${taskId}`);
+    await browser.waitUntil(pillShown, { timeout: 5000, timeoutMsg: "未弹深链接提示条" });
+    await $("#deeplink-pill .deeplink-pill-open").click();
+    await browser.waitUntil(async () => (await activeView()) === "board", {
+      timeout: 8000,
+      timeoutMsg: "点「打开」未切到看板",
+    });
+    await expect($(`.tcard*=${TASK}`)).toExist();
+    expect(await $(`.tcard*=${TASK}`).getAttribute("class")).toContain("just-located");
+  });
+
+  it("非自家链接 → 不弹", async () => {
+    await browser.execute(() => document.getElementById("deeplink-pill")?.classList.remove("show"));
+    await offer("https://example.com/not-ours"); // 合法 URL 但非 zhujian:// scheme
+    await browser.pause(300);
+    expect(await pillShown()).toBe(false);
   });
 });

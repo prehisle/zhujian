@@ -149,3 +149,39 @@
   color: var(--ink-faint);
   line-height: 1.6;
 }
+
+/* 二级分节标题(界面字号):比主标题小一号、上方留白与热键区分隔。 */
+.settings-sect {
+  margin-top: 20px;
+  font-size: 14px;
+}
+
+/* 字号一行:左名字,右边 −  100%  ＋  复位。 */
+.zoom-row .hk-name { width: auto; flex: 1; }
+.zoom-ctrls {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.zoom-btn {
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1;
+  color: var(--ink);
+  background: color-mix(in srgb, var(--ink) 6%, transparent);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  width: 30px;
+  height: 28px;
+  cursor: pointer;
+  transition: background 0.14s;
+}
+.zoom-btn:hover { background: color-mix(in srgb, var(--ink) 12%, transparent); }
+.zoom-val {
+  font-family: var(--font-sans);
+  font-size: 12.5px;
+  color: var(--ink);
+  min-width: 48px;
+  text-align: center;
+}

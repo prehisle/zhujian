@@ -17,6 +17,7 @@ import { toastAction } from "./toast";
 import { saveTextDraft, loadTextDraft, clearTextDraft } from "./compose-draft";
 import { copyText } from "./clipboard";
 import { buildItemDeepLink } from "./deeplink";
+import { armLocate } from "./locate";
 import {
   type FilterState,
   applyFilter,
@@ -268,6 +269,9 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
   // 刚在本视图记下的灵感:下一次渲染给它一记朱砂脉冲(.just-born),用完即清——
   // 只有「此刻新生」的卡片有入场感,存量列表安安静静。
   let pulseId: string | null = null;
+  // 跳转定位(搜索/深链接/剪贴板「打开」冷着陆命中的卡):下一次渲染给它**持续常亮**的
+  // .just-located(区别于 born 的一次性涟漪),留到下次点击/滚动才消(见 locate.ts)。
+  let locateId: string | null = null;
   // in-flight 闸(ui-audit P0 #2)在模块级 composeSaving:refresh 会重建 bar 并把草稿
   // 回灌进新框,新 bar 的 Enter 也必须被同一把闸挡住;闸跨 mount 才挡得住「保存中切走
   // 再回来」(codex P1 审 H2)。
@@ -499,6 +503,13 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         note.removeEventListener("animationend", onEnd);
       };
       note.addEventListener("animationend", onEnd);
+    }
+    if (item.id === locateId) {
+      // 跳转定位冷着陆:持续常亮的朱砂高亮(theme.css .just-located),armLocate 挂一次性关闭
+      // ——留到下次点击/滚动才淡出,免得「还没看清是哪条就消失了」。用完即清。
+      locateId = null;
+      note.classList.add("just-located");
+      armLocate(note);
     }
     let currentContent = item.content;
     const topics = item.topics ?? [];
@@ -1138,7 +1149,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
           filterInput.value = "";
         }
         const pool = focus.tab === "ideas" ? ideas : archived;
-        if (pool.some((i) => i.id === focus.id)) pulseId = focus.id;
+        if (pool.some((i) => i.id === focus.id)) locateId = focus.id;
         restorePending = false; // 跳转的滚动定位赢过「回到上次读的位置」
       }
 
@@ -1236,8 +1247,8 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         if (archived.length === 0) renderEmpty("archived");
         else list.replaceChildren(trashBar(archived.length), ...archived.map((a) => row(a, "archived")));
       }
-      // 跳转定位:落 DOM 后滚到脉冲卡(row() 渲染时已消费 pulseId 加上 .just-born)。
-      if (focus) list.querySelector<HTMLElement>(".just-born")?.scrollIntoView({ block: "center" });
+      // 跳转定位:落 DOM 后滚到高亮卡(row() 渲染时已消费 locateId 加上 .just-located)。
+      if (focus) list.querySelector<HTMLElement>(".just-located")?.scrollIntoView({ block: "center" });
       // 回收站 tab 没有输入框:草稿过桥进模块态,切回想法 tab 由 composeBar 灌回
       // (P1 #9d;原先 querySelector 落空即静默丢稿)。
       const newCompose = view.querySelector<HTMLTextAreaElement>(".compose-input");

@@ -83,6 +83,26 @@ textarea {
   animation: born-pulse 0.9s ease-out both;
 }
 
+/* 跳转定位高亮(深链接 / 搜索命中 / 剪贴板「打开」冷着陆):区别于 .just-born 的一次性涟漪,
+   这个**持续常亮**——浅朱砂底 + 朱砂描边 + 柔光,把冷着陆的目标卡钉住,留到下次点击/滚动
+   才由 .locate-fading 淡出摘除(时序控制见 locate.ts)。 */
+.just-located::after {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  pointer-events: none;
+  background: color-mix(in srgb, var(--seal) 10%, transparent);
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, var(--seal) 55%, transparent),
+    0 0 12px 2px color-mix(in srgb, var(--seal) 22%, transparent);
+  opacity: 1;
+  transition: opacity 0.55s ease;
+}
+.just-located.locate-fading::after {
+  opacity: 0;
+}
+
 @media (prefers-reduced-motion: reduce) {
   /* 系统开了「减少动态效果」就把入场/离场/过渡压到近零。0.01ms 而非 0:
      transitionend 仍触发,依赖它的离场清理(如 leaveCard)不悬空。 */

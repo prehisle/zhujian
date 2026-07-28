@@ -21,12 +21,14 @@
     "core:window:allow-center",
     "core:window:allow-current-monitor",
     "core:window:allow-start-dragging",
+    "core:webview:allow-set-webview-zoom",
     "opener:allow-open-url",
     "opener:allow-default-urls",
     "updater:default",
     "process:default",
     "deep-link:default",
     "deep-link:allow-get-current",
-    "deep-link:allow-register"
+    "deep-link:allow-register",
+    "clipboard-manager:allow-read-text"
   ]
 }

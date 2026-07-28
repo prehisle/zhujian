@@ -1,6 +1,6 @@
 [package]
 name = "app"
-version = "0.2.20"
+version = "0.2.21"
 description = "朱简(zhujian)— 纸与朱墨的个人事务管理:灵感捕获、任务看板,纯人工、本地优先"
 authors = ["prehisle"]
 license = ""
@@ -34,6 +34,10 @@ tauri-plugin-window-state = "2"
 # 安装包(更新签名钥验签,与同步的设备鉴权钥无关);process 供装后 relaunch。
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
+# 读系统剪贴板(桌面):notebook 回窗时若剪贴板是自家 zhujian:// 深链接,弹「点此打开」
+# 提示条(非承诺式,用户点了才跳)。走插件的 Rust 侧读、避开 webview navigator.clipboard
+# .readText 的权限门(WebView2 对剪贴板读有权限判定,不稳);只用到 read。
+tauri-plugin-clipboard-manager = "2"
 # app 级单实例门(97 多空间,sync-plan §六②):两个进程同开多库会争抢同一 origin 的
 # op 发射序号,必须先于一切开库/transport/热键把第二实例挡在门外(最先注册;
 # e2e/YS_DB_PATH 刻意不装,见 lib.rs run())。

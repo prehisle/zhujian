@@ -1,0 +1,22 @@
+/* 字号缩放回执(241):单例复用一个元素——快速连按只更新文字+重置计时,不再每档
+   飘一条(叠成拖影)。CSS 居中定位,不依赖会随缩放变的 innerWidth。 */
+.zoom-badge {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  z-index: 1000;
+  padding: 5px 12px;
+  font-family: var(--font-sans);
+  font-size: 12px;
+  color: #fff;
+  background: var(--ink);
+  border-radius: 6px;
+  pointer-events: none;
+  white-space: nowrap;
+  opacity: 0;
+  transition: opacity 0.18s ease;
+}
+.zoom-badge.show {
+  opacity: 1;
+}

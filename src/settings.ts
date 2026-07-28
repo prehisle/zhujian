@@ -1,7 +1,9 @@
-// 设置面板(232):目前只管全局热键——用户可改捕获窗 / 主窗两枚键,解决「热键被别的
-// 程序占用后就没法用」。侧栏底部「设置」入口点开;录制态里按下的组合(要求带修饰键)
-// 转成加速键串交给后端 set_hotkey(注销旧+注册新+存盘+刷托盘)。纯设备本地、不进同步。
+// 设置面板(232):全局热键 + 界面字号。热键——用户可改捕获窗 / 主窗两枚键,解决「热键
+// 被别的程序占用后就没法用」;录制态里按下的组合(要求带修饰键)转成加速键串交给后端
+// set_hotkey(注销旧+注册新+存盘+刷托盘)。字号——整体缩放主窗,PC 上看着吃力时放大。
+// 侧栏底部「设置」入口点开。全部纯设备本地、不进同步。
 import { invoke } from "@tauri-apps/api/core";
+import { currentZoomPercent, zoomIn, zoomOut, zoomReset, onZoomChange } from "./zoom";
 import "./settings.css";
 
 type Hotkeys = { capture: string; notebook: string };
@@ -46,6 +48,7 @@ export async function openSettingsPanel(): Promise<void> {
 
 function closePanel(): void {
   stopRecording();
+  onZoomChange(null); // 摘掉字号回调,别对已卸载的面板 DOM 悬空引用
   overlay?.remove();
   overlay = null;
   document.removeEventListener("keydown", onPanelEsc);
@@ -75,6 +78,36 @@ function renderPanel(panel: HTMLDivElement): void {
         : "点「更改」后,按住 Ctrl / Alt / Shift 等修饰键再按一个字母或数字;Esc 取消。",
     ),
   );
+
+  panel.append(
+    el("h2", "settings-title settings-sect", "界面字号"),
+    el("p", "settings-sub", "整体放大 / 缩小主窗,看着吃力时调大。也可用 Ctrl + / Ctrl - 调节、Ctrl 0 复位。"),
+    buildZoomRow(),
+  );
+}
+
+function buildZoomRow(): HTMLDivElement {
+  const line = document.createElement("div");
+  line.className = "hk-row zoom-row";
+
+  const val = el("span", "zoom-val", `${currentZoomPercent()}%`);
+  const minus = el("button", "zoom-btn", "−") as HTMLButtonElement;
+  const plus = el("button", "zoom-btn", "＋") as HTMLButtonElement;
+  const reset = el("button", "hk-change", "复位") as HTMLButtonElement;
+
+  minus.addEventListener("click", () => void zoomOut());
+  plus.addEventListener("click", () => void zoomIn());
+  reset.addEventListener("click", () => void zoomReset());
+  // 键盘 / 滚轮 / 这三个按钮任一改了字号,都回来刷新这个百分比标签(单一真相源)。
+  onZoomChange((p) => {
+    val.textContent = `${p}%`;
+  });
+
+  const ctrls = document.createElement("div");
+  ctrls.className = "zoom-ctrls";
+  ctrls.append(minus, val, plus, reset);
+  line.append(el("div", "hk-name", "字号"), ctrls);
+  return line;
 }
 
 function buildRow(row: { which: Which; name: string; desc: string }): HTMLDivElement {

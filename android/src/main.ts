@@ -142,10 +142,13 @@ const compImgs = composeImages($("compose-thumbs"));
 $("compose-addimg").addEventListener("click", async () => {
   if (captureSaving || switching) return; // 在飞/切换中不受理(与「记下」同闸)
   const file = await pickImage();
-  if (!file) return;
-  compImgs.add(file);
-  if (captureSaving) captureLiveTouched = true; // 罕见:选图期间「记下」在飞=新输入
-  ($("text") as HTMLTextAreaElement).focus(); // 贴完回到输入,顺手写配文
+  if (file) {
+    compImgs.add(file);
+    if (captureSaving) captureLiveTouched = true; // 罕见:选图期间「记下」在飞=新输入
+  }
+  // 取图/取消都回到输入:系统选择器会背景化 webview 让输入掉焦,回来须重聚焦——
+  // 捕获层(232)据此不误关、键盘回来,顺手写配文。
+  ($("text") as HTMLTextAreaElement).focus();
 });
 
 // stage → 主视图归属。穷尽映射,未知值响亮抛(铁律:不写兜底)。
@@ -1117,6 +1120,14 @@ async function pullDeepLink(): Promise<void> {
 // (liveDraft),与已提交段互不沾染——绝不「保留全文再存一遍」(A 会重复入库)。
 // 成功只消费取走的那份;失败放回(有新输入则合并,先写在前)。textarea 是静态节点、
 // 从不重建,框内现值即 liveDraft 的单一真相源。刻意不走 sinvoke(§16.2-4)。
+// 「记下」按钮禁用态(在飞/切换中禁,单一入口免漏一处)。
+function setSaveDisabled(v: boolean): void {
+  ($("save") as HTMLButtonElement).disabled = v;
+}
+
+// 捕获层(232)收起入口:由下方捕获块赋值,save() 存成功后调它收层露出新卡。
+let dismissCapture: (() => void) | null = null;
+
 async function save() {
   const ta = $("text") as HTMLTextAreaElement;
   if (captureSaving) return;
@@ -1140,8 +1151,7 @@ async function save() {
   captureSaving = true;
   captureLiveTouched = false;
   navSeq++; // 作废在途 focus 定位:不许其内部切面打破「新卡在当前面」承诺
-  const btn = $("save") as HTMLButtonElement;
-  btn.disabled = true;
+  setSaveDisabled(true);
   try {
     const capture = mode === "ideas" ? captureIdea : captureTodo;
     const newId = await capture(space, savingDraft);
@@ -1159,6 +1169,7 @@ async function save() {
       // 在飞期间无新输入:现状回执——收键盘让新卡露出来,滚到顶闪一下
       // (ui-audit P1 #7:原 finally 无条件 ta.focus() 让键盘永不收、新卡被挡)。
       ta.blur();
+      dismissCapture?.(); // 收起捕获层(232),露出刚记的新卡
       await refresh();
       const card = document.querySelector<HTMLElement>(`#timeline [data-id="${newId}"]`);
       if (card) {
@@ -1181,10 +1192,144 @@ async function save() {
     ta.setSelectionRange(ta.value.length, ta.value.length);
   } finally {
     captureSaving = false;
-    btn.disabled = !!switching;
+    setSaveDisabled(!!switching);
   }
 }
 $("save").addEventListener("click", save);
+
+// ---- 悬浮 ＋ 钮 + 底部捕获层(232 优化)--------------------------------------
+// 平时零占屏:时间轴干净,只有右下角一颗悬浮 ＋。点 ＋(或任何路径聚焦到输入,如顶栏
+// 「一步回捕获」/系统分享)→ 捕获层从屏底滑入。
+//
+// 键盘避让(232 重做):本机 WebView 键盘弹起时布局视口不缩(innerHeight 恒 800)、只有
+// visualViewport 缩。此前纯 `bottom:0` 交给浏览器抬层,浏览器是靠「滚文档露出聚焦输入」来抬的
+// ——那下滚动正是「弹键盘背景乱滚」的元凶,且拦滚动就等于拦抬升(层掉键盘后)。这版改由 JS 自己
+// 用 transform 抬层(placeSheet 跟随 vv),并在 focus 前用缓存键盘高度抢先抬上去,让输入框始终留在
+// 可见区内 → 浏览器再没有滚文档的动机 → 背景一格不动(不靠遮罩兜底)。回车仍换行;收层只由
+// 遮罩点击/保存成功/返回触发。
+{
+  const sheet = $("compose-card");
+  const fab = $("capture-fab");
+  const scrim = $("capture-scrim");
+  const nav = $("bottombar");
+  const ta = $("text") as HTMLTextAreaElement;
+  const root = document.documentElement;
+  const vv = window.visualViewport;
+  let capturing = false;
+  let lastKbH = 280; // 最近一次软键盘高度(innerH - vvH);初值给个常见值,首次也能抢先抬
+  let raiseUntil = 0; // 抢先抬后的保护窗口(键盘上升动画期):此刻前不许 placeSheet 把层落回屏底
+  let wasKbUp = false; // 上次 placeSheet 时键盘是否在起——用于识别「起→落」的收起动作
+  let suppressScrimUntil = 0; // 抢先抬会把层瞬移上去,紧随的 click 漏到遮罩上——这段时间内不当关层
+
+  // 把层底沿贴到「当前可见区底」:键盘起=键盘上沿、键盘落=屏底。对 bottom:0 的层施上移量
+  // = 键盘遮住的高度((vvH+vvTop)-innerH,≤0)。副作用即目的:输入框恒在可见区内,免浏览器滚文档。
+  function kbOffset(): number {
+    if (!vv) return 0;
+    return vv.height + vv.offsetTop - window.innerHeight;
+  }
+  // 瞬移到位(transition:none + 强制回流):抢先抬与键盘跟随都必须「即时」——真机实测,只要
+  // 0.22s 过场让输入框在 focus 那刻还留在键盘区一瞬,浏览器就会滚文档/滚视口去露它(背景就动了)。
+  // 收层的滑落另走 CSS 过场(closeCapture 清 inline transform 时 transition 已恢复)。
+  function setTransform(y: number): void {
+    sheet.style.transition = "none";
+    sheet.style.transform = `translateY(${y}px)`;
+    void sheet.offsetHeight; // 强制回流,让这次「无过场」定位即时落地
+    sheet.style.transition = "";
+  }
+  function placeSheet(): void {
+    if (!capturing) return;
+    const kbH = vv ? window.innerHeight - vv.height : 0;
+    const kbUp = kbH > 80;
+    if (kbUp) lastKbH = kbH;
+    // 键盘由起转落(用户按了收起键、且已过抢先抬窗口)→ 主动 blur:层「停屏底待着」不变,但下次点
+    // 输入框能重新触发 focus 事件——据此在 focus 里再抢先抬,躲开二次露出滚动(点已聚焦的输入框不发 focus)。
+    if (wasKbUp && !kbUp && Date.now() >= raiseUntil) ta.blur();
+    wasKbUp = kbUp;
+    // 底沿贴可见区底(kbOffset,≤0)。保护窗口内取 min(更高者):键盘半升时 kbOffset 还接近 0,
+    // 照用会把层掉回屏底触发露出滚动;取 min 让层稳在键盘上方等键盘升满,到 kbOffset≤-lastKbH 时
+    // 自然接手,平滑不回弹。窗口外(用户收起键盘)kbOffset=0 → 回屏底(符合「收起就在底部」)。
+    let y = kbOffset();
+    if (Date.now() < raiseUntil) y = Math.min(y, -lastKbH);
+    setTransform(y);
+  }
+  // 在键盘真正弹起「之前」抢先把层抬到(上次)键盘上方,让输入框一开始就落在可见区内 →
+  // 浏览器没有「滚文档露出它」的动机(这是弹键盘背景不滚的关键)。保护窗口挡住上升动画期
+  // placeSheet 早期(键盘半升、kbOffset 尚≈0)把层误落回屏底;窗口过后兜底重贴一次:键盘真起
+  // 了按实测贴上沿、没起就落回屏底,故绝不会卡在半空。
+  function raiseForKeyboard(): void {
+    raiseUntil = Date.now() + 550;
+    suppressScrimUntil = Date.now() + 450; // 抬升后紧随的漏点 click 会落在遮罩上,压掉免误关层
+    setTransform(-lastKbH);
+    window.setTimeout(placeSheet, 600);
+  }
+
+  function enterCapture(): void {
+    if (capturing) return;
+    capturing = true;
+    scrim.hidden = false;
+    fab.hidden = true;
+    sheet.classList.add("open");
+    raiseForKeyboard();
+  }
+  function closeCapture(): void {
+    // 只收界面;草稿(localStorage)/暂存图(pendingImages)由既有逻辑保留,下次点开还在。
+    capturing = false;
+    raiseUntil = 0;
+    scrim.hidden = true;
+    sheet.classList.remove("open");
+    sheet.style.transition = ""; // 收层走 CSS 过场(0.22s 滑落),别被上一次 setTransform 的 none 卡住
+    sheet.style.transform = ""; // 交回 CSS:.compose 默认 translateY(110%) 滑出屏下
+    fab.hidden = false;
+    ta.blur();
+  }
+  dismissCapture = closeCapture; // 供 save() 存成功后收层
+
+  fab.addEventListener("click", () => {
+    enterCapture();
+    ta.focus(); // 键盘自动起
+  });
+  // 焦点入口(单一抬升点):任何路径聚焦输入都进入/维持捕获态并抢先抬——首次开(FAB/顶栏
+  // 「一步回捕获」/分享追加)走 enterCapture,已开着从屏底再点(收起键盘后已 blur、故会重发
+  // focus)走 raiseForKeyboard。抬升放在 focus 里(而非 pointerdown):focus 落定后再抬,不会把
+  // 输入框从手指底下挪走导致点空;又是同步早于键盘几何变化,故仍赶在露出滚动之前。
+  ta.addEventListener("focus", () => {
+    if (!capturing) enterCapture();
+    else raiseForKeyboard();
+  });
+  // 点遮罩 = 收走捕获层(键盘一并收)。用 click(整个 tap 完成再收)而非 pointerdown:pointerdown
+  // 收早了,后半程 tap 会漏到下方卡片上误开面板。抬升(focus 里)诱发的漏点 click 落在遮罩上,由
+  // suppressScrimUntil 压掉——两个反向的坑在此汇合,click + 抑制窗口是同时躲开两者的解。
+  scrim.addEventListener("click", () => {
+    if (Date.now() < suppressScrimUntil) return;
+    ta.blur();
+    closeCapture();
+  });
+  // 层内按钮不抢输入焦点,免点一下就收键盘、层跳一下。
+  ($("save") as HTMLButtonElement).addEventListener("mousedown", (e) => e.preventDefault());
+  $("compose-addimg").addEventListener("mousedown", (e) => e.preventDefault());
+
+  // 键盘起落:visualViewport 缩放/滚动时把层重新贴到可见区底沿。
+  if (vv) {
+    vv.addEventListener("resize", placeSheet);
+    vv.addEventListener("scroll", placeSheet);
+  }
+  // 层高变化(打字自增高/加图缩略条)时,底沿保持贴合可见区底(placeSheet 内有 !capturing 早返回)。
+  new ResizeObserver(() => placeSheet()).observe(sheet);
+
+  // FAB 竖直位置吃底栏实高(含安全区);底栏极少变,稳妥观察。
+  function setNavH(): void {
+    root.style.setProperty("--nav-h", `${nav.offsetHeight}px`);
+  }
+  new ResizeObserver(setNavH).observe(nav);
+  setNavH();
+
+  // 层内点空白也聚焦输入(此前只有 textarea 本体响);按钮/缩略图不抢。
+  sheet.addEventListener("click", (e) => {
+    const t = e.target as HTMLElement;
+    if (t === ta || t.closest("button") || t.closest(".cthumb")) return;
+    ta.focus();
+  });
+}
 
 // ---- 空间面板(工序 7/8):列表可切、新建、当前空间改名、全部同步 --------------
 
@@ -1312,7 +1457,7 @@ async function switchSpace(id: string) {
     return;
   }
   switching = true;
-  ($("save") as HTMLButtonElement).disabled = true;
+  setSaveDisabled(true);
   try {
     await invoke("activate_space", { spaceId: id });
     setCurrentSpace(id);
@@ -1324,7 +1469,7 @@ async function switchSpace(id: string) {
     await reconcileForeground(); // 失败已回滚(§9):对账回真前台。
   } finally {
     switching = false;
-    ($("save") as HTMLButtonElement).disabled = false;
+    setSaveDisabled(false);
   }
 }
 

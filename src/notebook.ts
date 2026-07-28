@@ -1,5 +1,6 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { invoke as rawInvoke } from "@tauri-apps/api/core";
+import { readText as readClipboardText } from "@tauri-apps/plugin-clipboard-manager";
 import { listen } from "@tauri-apps/api/event";
 import { mount as mountInbox, inboxHasStashedDraft, focusInboxItem } from "./inbox";
 import { mount as mountBoard, boardHasStashedDraft, focusTask, focusBoardView } from "./board";
@@ -8,6 +9,7 @@ import { mount as mountSearch } from "./search";
 import { parseDeepLink, consumePendingDeepLink } from "./deeplink";
 import { initSync, seedSpaceStatuses, setSpaceNames, showToast, syncSpaceSwitched, DEFAULT_SYNC_URL } from "./sync";
 import { initSettings, openSettingsPanel } from "./settings";
+import { initZoom } from "./zoom";
 import { initUpdate } from "./update";
 import {
   createSpace,
@@ -150,7 +152,10 @@ document.addEventListener("keydown", (e) => {
 });
 
 win.onFocusChanged(({ payload: focused }) => {
-  if (focused) current?.onFocus?.();
+  if (focused) {
+    current?.onFocus?.();
+    void checkClipboardForDeepLink(); // 回窗时:剪贴板若是自家深链接,弹「点此打开」
+  }
 });
 
 // ---- 空间切换(97 多空间,sync-plan §六):brand 下入口 + 轻浮层菜单 -------------
@@ -285,6 +290,74 @@ void listen("open-settings", () => void consumeOpenSettings());
 void consumeOpenSettings();
 (window as unknown as { __zhujianOpenDeepLink?: (u: string) => void }).__zhujianOpenDeepLink = (u) =>
   void openDeepLink(u);
+
+// 剪贴板补路(桌面):OS scheme 桥(4b)要求用户「点」一个 zhujian:// 链接,但很多软件不把它
+// 渲染成可点、点了又弹「用什么打开」。补一条更稳的:复制链接 → 切回朱简 → 回窗时读一次剪贴板,
+// 若是自家合规深链接,就在角上弹一条非承诺式提示条「点此打开」——用户点了才跳,绝不自动劫持
+// 当前视图。只认 zhujian://open&item=(parseDeepLink),别的剪贴板内容一律静默丢弃(隐私底线:
+// 只碰自家 scheme、读到不匹配立即忘)。同一串只提示一次,免得每次回窗反复弹。安卓不接(系统每
+// 次读剪贴板弹「已粘贴」toast,自动读又吵又像偷窥)。
+let lastClipDeepLink: string | null = null;
+
+/** 给定一段文本(剪贴板内容):是自家合规深链接且与上次不同就弹提示条,否则 no-op。
+ *  抽出来供 e2e 直驱(驱动窗读 OS 剪贴板会挂起,同 deeplink.e2e 的既有取舍)。 */
+function offerDeepLinkFromClipboard(text: string): void {
+  const link = text.trim();
+  if (link === lastClipDeepLink) return; // 这串已提示过,别反复弹
+  if (!parseDeepLink(link)) return; // 非自家合规链接:静默忽略
+  lastClipDeepLink = link;
+  showDeepLinkPill(link);
+}
+
+async function checkClipboardForDeepLink(): Promise<void> {
+  let text: string;
+  try {
+    text = await readClipboardText();
+  } catch {
+    return; // 剪贴板空/非文本/读不到:静默,不是错误路径
+  }
+  if (text) offerDeepLinkFromClipboard(text);
+}
+(window as unknown as { __zhujianOfferClipboardDeepLink?: (t: string) => void }).__zhujianOfferClipboardDeepLink =
+  (t) => offerDeepLinkFromClipboard(t);
+
+let deepLinkPillTimer: number | undefined;
+
+function hideDeepLinkPill(): void {
+  document.getElementById("deeplink-pill")?.classList.remove("show");
+  window.clearTimeout(deepLinkPillTimer);
+}
+
+function showDeepLinkPill(url: string): void {
+  let pill = document.getElementById("deeplink-pill");
+  if (!pill) {
+    pill = document.createElement("div");
+    pill.id = "deeplink-pill";
+    document.body.appendChild(pill);
+  }
+  pill.textContent = "";
+  const label = document.createElement("span");
+  label.className = "deeplink-pill-label";
+  label.textContent = "剪贴板里有一条朱简链接";
+  const openBtn = document.createElement("button");
+  openBtn.type = "button";
+  openBtn.className = "deeplink-pill-open";
+  openBtn.textContent = "打开";
+  openBtn.addEventListener("click", () => {
+    hideDeepLinkPill();
+    void openDeepLink(url);
+  });
+  const dismiss = document.createElement("button");
+  dismiss.type = "button";
+  dismiss.className = "deeplink-pill-dismiss";
+  dismiss.textContent = "×";
+  dismiss.setAttribute("aria-label", "关闭");
+  dismiss.addEventListener("click", () => hideDeepLinkPill());
+  pill.append(label, openBtn, dismiss);
+  pill.classList.add("show");
+  window.clearTimeout(deepLinkPillTimer);
+  deepLinkPillTimer = window.setTimeout(() => hideDeepLinkPill(), 8000);
+}
 
 let spaceMenu: HTMLDivElement | null = null;
 
@@ -619,8 +692,11 @@ void (async () => {
   // await:四个事件监听注册完才拉状态基线(顺序反了会漏两者之间的事件)。
   await initSync({ refresh: () => current?.onFocus?.() });
   refreshSpaceEntry();
-  // 设置面板(232):目前只有全局热键一项,与空间/同步无关,挂个入口即可。
+  // 设置面板(232):全局热键 + 界面字号,与空间/同步无关,挂个入口即可。
   initSettings();
+
+  // 界面字号缩放:恢复上次字号并挂 Ctrl+/-/0 与 Ctrl+滚轮。纯设备本地、不进同步。
+  initZoom();
 
   // 自动更新(88):启动静默查一次。只在生产构建跑(dev/e2e 是 vite dev server,
   // import.meta.env.PROD 为 false),开发/测试期不打网络也不弹 banner。

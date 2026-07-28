@@ -4,7 +4,12 @@
     <meta charset="UTF-8" />
     <!-- 页面级缩放锁死(143):此前没锁 user-scalable,捏合缩放的是整张页面且退出
          大图后不复位(「主界面也被放大」);大图的缩放由查看器自己的手势实现。 -->
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <!-- 软键盘避让(232):本机 WebView 键盘弹起时「布局视口」不缩(innerHeight 恒 800)、
+         只有 visualViewport 缩——真正的避让靠 main.ts 的 placeSheet 监听 visualViewport 把捕获层
+         贴到键盘上沿,并让输入框始终落在可见区内(浏览器就不去滚文档露它,背景不动)。
+         interactive-widget=resizes-content 在支持的 WebView 上让布局视口直接缩(更省事),本机
+         不支持、留作渐进增强,不影响 JS 方案。 -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content" />
     <title>朱简</title>
     <!-- P4-c 捕获页 + 统一时间轴 + 勾标完成(android-plan §0 ②③④);诊断面(P4-b)收进
          页脚「诊断」入口。令牌取值对齐桌面 src/theme.css「纸与朱墨」,单位手机化。 -->
@@ -139,18 +144,44 @@
       }
 
       /* 捕获区:抬升的纸面。textarea 随内容自增高(field-sizing,安卓 WebView 够新)。 */
+      /* 捕获层(232 优化,聊天/Keep 式):平时零占屏——只在点悬浮 ＋ 或聚焦输入时从屏底滑入。
+         开合与「贴键盘上沿」的位置都由 JS 按 visualViewport 定(main.ts placeSheet):键盘起→
+         贴键盘上沿、键盘落→贴屏底;关键是让输入框始终留在可见区内,浏览器就不去滚文档露它=
+         背景不动。收起态 transform 滑到屏下(留 DOM 与草稿,不 display:none 以便过场)。回车仍
+         换行,提交靠层内「记下」。z 高于遮罩(13)、低于错误条(18)。 */
       .compose {
+        position: fixed; left: 0; right: 0; bottom: 0; z-index: 14;
         background: var(--raised);
-        border: 1px solid var(--line);
-        border-radius: 12px;
-        padding: 10px 12px;
-        margin-bottom: 14px;
+        border-top: 1px solid var(--line);
+        border-radius: 16px 16px 0 0;
+        padding: 12px 14px calc(12px + env(safe-area-inset-bottom));
+        box-shadow: 0 -8px 28px rgba(0, 0, 0, 0.18);
+        transform: translateY(110%); /* 收起态:滑到屏下;开态由 JS 设 inline transform 覆盖 */
+        transition: transform 0.22s ease;
+        will-change: transform;
       }
+      /* 捕获层遮罩:压住时间轴/底栏,点它=收层。 */
+      #capture-scrim {
+        position: fixed; inset: 0; z-index: 13;
+        background: rgba(0, 0, 0, 0.35);
+      }
+      /* 悬浮 ＋ 钮:右下角,坐在底栏上方;平时唯一的捕获入口(捕获中隐去)。 */
+      #capture-fab {
+        position: fixed; right: 16px; z-index: 8;
+        bottom: calc(var(--nav-h, 64px) + 16px);
+        width: 56px; height: 56px; border: none; border-radius: 50%;
+        background: var(--seal); color: #fff;
+        font-size: 30px; line-height: 1; font-weight: 300;
+        display: grid; place-items: center;
+        box-shadow: 0 6px 20px rgba(0, 0, 0, 0.28);
+      }
+      /* 面板接管视图时(回收站/归档/标签/搜索/空间),捕获入口与层一并让出。 */
+      body.pane-open #capture-fab { display: none !important; }
       .compose textarea {
         display: block; width: 100%;
         border: none; background: none; resize: none; outline: none;
         color: var(--ink); font: 16px/1.6 var(--font-serif);
-        min-height: 3.2em; max-height: 40vh;
+        min-height: 2.8em; max-height: 40vh;
         field-sizing: content;
         caret-color: var(--seal);
       }
@@ -168,6 +199,8 @@
         padding: 6px 4px; font-weight: 600;
       }
       .compose-row .cimg:disabled { opacity: 0.4; }
+      /* 底部条里的「记下」加大到拇指舒适(原 7×22 偏小,232 反馈)。 */
+      .compose-row .primary { padding: 9px 28px; font-size: 15px; }
       /* compose 暂存图缩略条:小图 + 右上角「×」移除;无图时容器 hidden。 */
       .cthumbs { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
       .cthumb {
@@ -824,7 +857,9 @@
 
     <!-- 146:seg 两态删除——输入落点=当前主视图(灵感面记灵感/任务面记待办),
          placeholder 随面换;同一个 textarea 两面共用,切面草稿随行。 -->
-    <section class="compose">
+    <!-- 捕获层遮罩(232):捕获中压住时间轴/底栏,点它=收层。 -->
+    <div id="capture-scrim" hidden></div>
+    <section id="compose-card" class="compose">
       <textarea id="text" placeholder="记一笔灵感…" rows="2"></textarea>
       <!-- 记灵感时暂存的配图缩略(195 slice1):点「加图」贴进来先摆着,点「记下」建
            条目后随之挂上;每张带「×」可移除。无图时整条隐藏(images.ts composeImages)。 -->
@@ -834,6 +869,9 @@
         <button id="save" class="primary">记下</button>
       </div>
     </section>
+
+    <!-- 悬浮 ＋ 钮(232):平时唯一的记一笔入口,点它滑出上面的捕获层。 -->
+    <button id="capture-fab" type="button" aria-label="记一笔">＋</button>
 
     <div id="error" class="error" hidden></div>
 

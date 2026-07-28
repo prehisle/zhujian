@@ -17,6 +17,7 @@ import { saveTextDraft, loadTextDraft, clearTextDraft } from "./compose-draft";
 import { copyButton, copyText } from "./clipboard";
 import { toastAction } from "./toast";
 import { buildItemDeepLink } from "./deeplink";
+import { armLocate } from "./locate";
 import {
   type FilterState,
   applyFilter,
@@ -540,6 +541,9 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
   // 刚在本视图新建的任务:下一次渲染给它一记朱砂脉冲(.just-born),用完即清——
   // 只有「此刻新生」的卡片有入场感,存量看板安安静静(同灵感 compose)。
   let pulseId: string | null = null;
+  // 跳转定位(搜索/深链接/剪贴板「打开」冷着陆命中的卡):下一次渲染给它**持续常亮**的
+  // .just-located(区别于 born 的一次性涟漪),留到下次点击/滚动才消(见 locate.ts)。
+  let locateId: string | null = null;
 
   // in-flight 闸(ui-audit P0 #2)在模块级 composeSaving:create_task 往返窗口里第二记
   // Enter/点「添加」会用同一标题再建一条重复任务;闸跨 mount 才挡得住「保存中切走再回来」。
@@ -1004,6 +1008,13 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         c.removeEventListener("animationend", onEnd);
       };
       c.addEventListener("animationend", onEnd);
+    }
+    if (item.id === locateId) {
+      // 跳转定位冷着陆:持续常亮的朱砂高亮(theme.css .just-located),armLocate 挂一次性关闭
+      // ——留到下次点击/滚动才淡出,免得「还没看清是哪条就消失了」。用完即清。
+      locateId = null;
+      c.classList.add("just-located");
+      armLocate(c);
     }
 
     // ---- 配图 (item images) ----
@@ -1646,16 +1657,16 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       // 窄窗)静态落列表,不残留。
       if (boardView === "trash") {
         filterRow.hidden = true;
-        if (focus !== null && archived.some((t) => t.id === focus)) pulseId = focus;
+        if (focus !== null && archived.some((t) => t.id === focus)) locateId = focus;
         renderTrash(archived);
-        if (focus !== null) board.querySelector(".just-born")?.scrollIntoView({ block: "center" });
+        if (focus !== null) board.querySelector(".just-located")?.scrollIntoView({ block: "center" });
         return;
       }
       if (boardView === "sealed") {
         filterRow.hidden = true;
-        if (focus !== null && sealed.some((t) => t.id === focus)) pulseId = focus;
+        if (focus !== null && sealed.some((t) => t.id === focus)) locateId = focus;
         renderSealed(sealed);
-        if (focus !== null) board.querySelector(".just-born")?.scrollIntoView({ block: "center" });
+        if (focus !== null) board.querySelector(".just-located")?.scrollIntoView({ block: "center" });
         return;
       }
       // Only tasks that belong to a visible column are shown/counted. Any stray
@@ -1665,16 +1676,16 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
 
       // 跨视图跳转(搜索命中任务 → 看板):focus 已在上方 seq 守卫之后取走(`focus`)。
       // 目标仍在看板(boardView==='board' 且在 visible)才动作——**在过滤之前**清掉标签/
-      // 文本筛选让目标必然进 shown(跳转即揭示,不被筛掉白跳),并设 pulseId 让下方 card()
-      // 给它一记脉冲;真正的滚动在 renderBoard 落 DOM 后做。目标已离开看板(归档/入册/删
-      // 的窄窗)= 不设脉冲/不滚动,静态落看板(它的归宿),状态不残留。
+      // 文本筛选让目标必然进 shown(跳转即揭示,不被筛掉白跳),并设 locateId 让下方 card()
+      // 给它持续高亮;真正的滚动在 renderBoard 落 DOM 后做。目标已离开看板(归档/入册/删
+      // 的窄窗)= 不高亮/不滚动,静态落看板(它的归宿),状态不残留。
       const focusOnBoard = focus !== null && visible.some((t) => t.id === focus);
       if (focusOnBoard) {
         filter.kind = "all";
         filter.topics = [];
         filter.text = "";
         filterInput.value = "";
-        pulseId = focus;
+        locateId = focus;
       }
 
       // The filter row (标签 pills + 文本过滤框) only appears once there is something

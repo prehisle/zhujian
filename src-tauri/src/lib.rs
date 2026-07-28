@@ -2447,6 +2447,8 @@ pub fn run() {
         // relaunch。updater 端点/公钥在 tauri.conf.json plugins.updater,注册无需额外配置。
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        // 剪贴板读(桌面深链接补路):前端回窗时读一次,合规 zhujian:// 链接才提示打开。
+        .plugin(tauri_plugin_clipboard_manager::init())
         // 记住主窗几何(57):尺寸/位置/最大化存 app 配置目录的状态文件,重启后
         // 原样回来;首启无状态文件时窗口保持 tauri.conf.json 默认(1040×680 居中)。
         // capture 是每次居中弹出的浮窗,不该被记住位置。e2e(YS_DB_PATH)换单独

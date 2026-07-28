@@ -218,3 +218,59 @@
   transform: none;
   pointer-events: auto;
 }
+
+/* 剪贴板深链接提示条(桌面):回窗时若剪贴板是自家 zhujian:// 链接,弹这条非承诺式
+   「点此打开」。放在 sync-toast 上方一格(两者极少同时出现,叠也不打架)。 */
+#deeplink-pill {
+  position: fixed;
+  right: 18px;
+  bottom: 66px;
+  z-index: 71;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: min(420px, calc(100vw - 60px));
+  background: linear-gradient(180deg, var(--raised), var(--raised-edge));
+  border: 1px solid var(--line-strong);
+  border-left: 3px solid var(--seal);
+  border-radius: 10px;
+  box-shadow: var(--float-shadow);
+  padding: 8px 10px 8px 14px;
+  font-size: 12.5px;
+  color: var(--ink);
+  opacity: 0;
+  transform: translateY(6px);
+  pointer-events: none;
+  transition: opacity 0.18s, transform 0.18s;
+}
+#deeplink-pill.show {
+  opacity: 1;
+  transform: none;
+  pointer-events: auto;
+}
+#deeplink-pill .deeplink-pill-label {
+  white-space: nowrap;
+}
+#deeplink-pill .deeplink-pill-open {
+  border: 1px solid var(--seal);
+  background: var(--seal);
+  color: #fff;
+  border-radius: 7px;
+  padding: 4px 12px;
+  font-size: 12.5px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+#deeplink-pill .deeplink-pill-dismiss {
+  border: none;
+  background: transparent;
+  color: var(--ink);
+  opacity: 0.55;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 2px;
+}
+#deeplink-pill .deeplink-pill-dismiss:hover {
+  opacity: 0.85;
+}
