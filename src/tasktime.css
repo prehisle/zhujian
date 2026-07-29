@@ -29,7 +29,13 @@
 
 /* multi-tag: each tag is a display chip (span) carrying a ✕ to drop it; the ＋ chip
    adds one. The slot wraps so several tags stack neatly under a narrow card. */
-.task-meta.task-topic .topic-slot { flex-wrap: wrap; }
+/* 标签名可以很长(`zhujian/移动端` 这类带父子前缀的尤其),而 chip 基类是 nowrap:不让它
+   缩,一枚长标签就能把卡片整个撑破、逼得看板列体横滚。灵感卡早就解过(inbox.css 的
+   `.tag` / `.tag-label`),此处补齐,两边一套做法:名字省略号,chip 缩到列宽以内。
+   两层 min-width:0 缺一不可——slot 与 chip 都是 flex item,自动最小尺寸=内容宽,不解开
+   就一路顶着不缩。(注:这里不能靠 chip 的 max-width:100% —— slot 自己是 shrink-to-fit,
+   宽度未定,百分比循环引用会被浏览器直接忽略,实测确认过。) */
+.task-meta.task-topic .topic-slot { flex-wrap: wrap; min-width: 0; }
 .task-meta .chip.topic.set {
   display: inline-flex;
   align-items: center;
@@ -38,9 +44,14 @@
   color: var(--seal);
   border-color: var(--seal-line);
   background: var(--seal-tint);
+  min-width: 0;
 }
+/* 只有名字缩,✕ 不缩(否则窄卡上先没的是操作)。overflow 非 visible 让它作为 flex item
+   的最小尺寸解析成 0,才缩得下去。 */
+.task-meta .chip-label { overflow: hidden; text-overflow: ellipsis; }
 .task-meta .chip.topic.set:hover { color: var(--seal); background: var(--seal-tint); }
 .task-meta .chip-x {
+  flex: none;
   font: inherit;
   font-size: 10px;
   line-height: 1;

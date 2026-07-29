@@ -1,9 +1,11 @@
-// 设置面板(232):全局热键 + 界面字号。热键——用户可改捕获窗 / 主窗两枚键,解决「热键
-// 被别的程序占用后就没法用」;录制态里按下的组合(要求带修饰键)转成加速键串交给后端
-// set_hotkey(注销旧+注册新+存盘+刷托盘)。字号——整体缩放主窗,PC 上看着吃力时放大。
-// 侧栏底部「设置」入口点开。全部纯设备本地、不进同步。
+// 设置面板(232):全局热键 + 外观 + 界面字号。热键——用户可改捕获窗 / 主窗两枚键,解决
+// 「热键被别的程序占用后就没法用」;录制态里按下的组合(要求带修饰键)转成加速键串交给
+// 后端 set_hotkey(注销旧+注册新+存盘+刷托盘)。外观(250)——明暗三档,自动 / 亮 / 暗。
+// 字号——整体缩放主窗,PC 上看着吃力时放大。侧栏底部「设置」入口点开。
+// 全部纯设备本地、不进同步。
 import { invoke } from "@tauri-apps/api/core";
 import { currentZoomPercent, zoomIn, zoomOut, zoomReset, onZoomChange } from "./zoom";
+import { currentThemeMode, setThemeMode, type ThemeMode } from "./theme-mode";
 import "./settings.css";
 
 type Hotkeys = { capture: string; notebook: string };
@@ -80,10 +82,47 @@ function renderPanel(panel: HTMLDivElement): void {
   );
 
   panel.append(
+    el("h2", "settings-title settings-sect", "外观"),
+    el("p", "settings-sub", "「自动」跟随系统的浅色 / 深色设置;想固定成一种,直接选亮或暗。"),
+    buildThemeRow(),
+  );
+
+  panel.append(
     el("h2", "settings-title settings-sect", "界面字号"),
     el("p", "settings-sub", "整体放大 / 缩小主窗,看着吃力时调大。也可用 Ctrl + / Ctrl - 调节、Ctrl 0 复位。"),
     buildZoomRow(),
   );
+}
+
+const THEME_CHOICES: { mode: ThemeMode; label: string }[] = [
+  { mode: "auto", label: "自动" },
+  { mode: "light", label: "亮" },
+  { mode: "dark", label: "暗" },
+];
+
+function buildThemeRow(): HTMLDivElement {
+  const line = document.createElement("div");
+  line.className = "hk-row zoom-row";
+
+  const seg = document.createElement("div");
+  seg.className = "seg";
+  const btns = THEME_CHOICES.map(({ mode, label }) => {
+    const b = el("button", "seg-btn", label) as HTMLButtonElement;
+    b.addEventListener("click", () => {
+      setThemeMode(mode);
+      paintSeg(); // 高亮的单一渲染点:改完回来按当前档重画,不在点击处各自 toggle
+    });
+    return b;
+  });
+  const paintSeg = (): void => {
+    const now = currentThemeMode();
+    btns.forEach((b, i) => b.classList.toggle("on", THEME_CHOICES[i].mode === now));
+  };
+  paintSeg();
+  seg.append(...btns);
+
+  line.append(el("div", "hk-name", "明暗"), seg);
+  return line;
 }
 
 function buildZoomRow(): HTMLDivElement {

@@ -6,6 +6,7 @@ import { currentMonitor, getCurrentWindow } from "@tauri-apps/api/window";
 import { openLightboxUrl, pendingImages } from "./item-images";
 import { saveTextDraft, loadTextDraft, clearTextDraft } from "./compose-draft";
 import { createCaptureCommands } from "./capture-commands";
+import { initTheme } from "./theme-mode";
 
 const input = document.getElementById("capture") as HTMLTextAreaElement;
 const slip = document.querySelector(".slip") as HTMLElement;
@@ -423,6 +424,10 @@ const captureDraft = loadTextDraft(CAPTURE_DRAFT_KEY);
 if (captureDraft && captureDraft.text) input.value = captureDraft.text;
 void fitWindow();
 void pend.restore();
+
+// 明暗三档(250):首帧定色已由 index.html 头里的内联脚本做掉,这里接上「自动」档跟随
+// 系统变化 + 主窗改档时的跨窗广播(捕获窗自己没有开关,只跟)。
+initTheme();
 
 // Capture-first: Enter saves, Shift+Enter is a newline, Esc hides but KEEPS the draft.
 // in-flight 闸(ui-audit P0 #2):capture_note 往返窗口里第二记 Enter 会用同一内容再建

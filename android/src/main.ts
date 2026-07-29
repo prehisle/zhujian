@@ -7,6 +7,9 @@
 // 单一真相源);本文件只剩视图编排,业务调用一律走 api 包装。
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { getVersion } from "@tauri-apps/api/app";
+import { currentThemeMode, initTheme, setThemeMode, type ThemeMode } from "./theme";
+import { currentTextSize, initTextSize, setTextSize, type TextSize } from "./textsize";
 import {
   getCurrentSpace,
   setCurrentSpace,
@@ -1529,6 +1532,7 @@ const PANE_EL: Record<string, string> = {
   trash: "trash-pane",
   sealed: "sealed-pane",
   topics: "topics-pane",
+  settings: "settings-pane",
   diag: "diag",
 };
 let activePane: string | null = null;
@@ -1580,6 +1584,11 @@ function openPane(name: string) {
   else if (name === "sealed") void panes.loadSealed();
   else if (name === "topics") void topics.loadTopics();
   else if (name === "search") panes.focusSearch();
+  else if (name === "settings") {
+    paintThemeSeg();
+    paintTextSizeSeg();
+    void loadAbout();
+  }
   else if (name === "diag" && !diagLoaded) {
     diagLoaded = true;
     loadDb();
@@ -1726,7 +1735,42 @@ $("bottombar").addEventListener("click", (e) => {
   if (btn.dataset.pane) openPane(btn.dataset.pane);
   else if (btn.dataset.mode) onModeButton(btn.dataset.mode as ViewMode);
 });
-$("sync-diag-btn").addEventListener("click", () => openPane("diag"));
+$("settings-toggle").addEventListener("click", () => openPane("settings"));
+$("settings-diag-btn").addEventListener("click", () => openPane("diag"));
+
+// 明暗三档(250):点哪档写哪档,高亮回来按当前档整排重画(单一渲染点,不在点击处
+// 各自 toggle);立刻生效,没有确认也没有回执——手势即回执,整屏换色就是最大的回执。
+$("theme-seg").addEventListener("click", (e) => {
+  const m = (e.target as HTMLElement).closest<HTMLButtonElement>("[data-theme-mode]")?.dataset
+    .themeMode;
+  if (!m) return;
+  setThemeMode(m as ThemeMode);
+  paintThemeSeg();
+});
+
+function paintThemeSeg() {
+  const now = currentThemeMode();
+  $("theme-seg")
+    .querySelectorAll<HTMLButtonElement>("[data-theme-mode]")
+    .forEach((b) => b.classList.toggle("on", b.dataset.themeMode === now));
+}
+
+// 界面字号(251):与明暗三档同形——点哪档写哪档,整排按当前档重画;立刻生效,
+// 全屏文字变大就是回执。
+$("textsize-seg").addEventListener("click", (e) => {
+  const raw = (e.target as HTMLElement).closest<HTMLButtonElement>("[data-textsize]")?.dataset
+    .textsize;
+  if (!raw) return;
+  setTextSize(Number(raw) as TextSize);
+  paintTextSizeSeg();
+});
+
+function paintTextSizeSeg() {
+  const now = String(currentTextSize());
+  $("textsize-seg")
+    .querySelectorAll<HTMLButtonElement>("[data-textsize]")
+    .forEach((b) => b.classList.toggle("on", b.dataset.textsize === now));
+}
 
 $("space-list").addEventListener("click", async (e) => {
   const t = e.target as HTMLElement;
@@ -1931,6 +1975,20 @@ async function runProbe() {
   }
 }
 $("run").addEventListener("click", runProbe);
+
+// ---- 关于(250):这台机上装的是哪一版。手机端此前没处看版本号,排查问题第一句总是
+// 「你手机上是几点几」;版本取自 tauri.conf.json,与更新清单 android.json 同源。
+async function loadAbout() {
+  const box = $("about");
+  try {
+    const v = await getVersion();
+    box.innerHTML =
+      `<span class="k">版本</span><span class="v">v${esc(v)}</span>` +
+      `<span class="k">官网</span><span class="v">zhujian.app</span>`;
+  } catch (e) {
+    box.innerHTML = `<span class="v" style="color:var(--seal)">读版本失败:${esc(String(e))}</span>`;
+  }
+}
 
 // ---- 同步面(P4-d):当前空间的输码一屏 + 引导进度 + 状态/恢复码 ---------------
 
@@ -2544,6 +2602,11 @@ async function resolveStartupGate(): Promise<GateStatus & { status: "blocked" } 
 }
 
 async function init() {
+  // 明暗三档(250):首帧定色已由 index.html 头里的内联脚本做掉,这里只接上「自动」档
+  // 对系统的跟随。放在启动闸之前——封锁页也得是用户选的那个色。
+  initTheme();
+  // 界面字号(251):首帧应用同样已由内联脚本做掉,这里兜同一规则(幂等)。
+  initTextSize();
   // 先用空缓存画一次空间入口(按单空间态:chip 藏、兜底「空间…」显)——否则首次
   // list_spaces 失败时 chip 与兜底都停在静态 hidden,空间面板整个不可达(codex 必修 3)。
   renderSpaceChip();

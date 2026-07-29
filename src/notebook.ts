@@ -10,6 +10,7 @@ import { parseDeepLink, consumePendingDeepLink } from "./deeplink";
 import { initSync, seedSpaceStatuses, setSpaceNames, showToast, syncSpaceSwitched, DEFAULT_SYNC_URL } from "./sync";
 import { initSettings, openSettingsPanel } from "./settings";
 import { initZoom } from "./zoom";
+import { initTheme } from "./theme-mode";
 import { initUpdate, checkForUpdateOnFocus } from "./update";
 import {
   createSpace,
@@ -698,6 +699,10 @@ void (async () => {
 
   // 界面字号缩放:恢复上次字号并挂 Ctrl+/-/0 与 Ctrl+滚轮。纯设备本地、不进同步。
   initZoom();
+
+  // 明暗三档(250):首帧的定色已由 notebook.html 头里的内联脚本做掉,这里接上「自动」
+  // 档跟随系统变化 + 跨窗改档广播。同样纯设备本地、不进同步。
+  initTheme();
 
   // 自动更新(88):启动静默查一次。只在生产构建跑(dev/e2e 是 vite dev server,
   // import.meta.env.PROD 为 false),开发/测试期不打网络也不弹 banner。

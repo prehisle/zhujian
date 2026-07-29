@@ -178,6 +178,32 @@
   transition: background 0.14s;
 }
 .zoom-btn:hover { background: color-mix(in srgb, var(--ink) 12%, transparent); }
+/* 三档分段(明暗:自动 / 亮 / 暗):三枚连体按钮,选中那枚上朱砂。 */
+.seg {
+  flex: none;
+  display: flex;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.seg-btn {
+  font-family: var(--font-serif);
+  font-size: 12.5px;
+  color: var(--ink-soft);
+  background: color-mix(in srgb, var(--ink) 4%, transparent);
+  border: 0;
+  border-left: 1px solid var(--line);
+  padding: 5px 14px;
+  cursor: pointer;
+  transition: background 0.14s, color 0.14s;
+}
+.seg-btn:first-child { border-left: 0; }
+.seg-btn:hover { background: color-mix(in srgb, var(--ink) 10%, transparent); }
+.seg-btn.on {
+  color: var(--seal);
+  background: var(--seal-tint);
+}
+
 .zoom-val {
   font-family: var(--font-sans);
   font-size: 12.5px;

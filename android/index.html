@@ -11,8 +11,33 @@
          不支持、留作渐进增强,不影响 JS 方案。 -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content" />
     <title>朱简</title>
+    <!-- 明暗定色(250):首帧之前就把生效色写进 <html data-theme>——晚一帧上色就是亮暗
+         闪一下。规则与 android/src/theme.ts 完全一致(存的不是 light / dark 就算「自动」、
+         跟系统);那边是真正的开关,这里只是提前落地同一条规则。桌面两个窗口壳里各有
+         一份一字不差的副本(index.html / notebook.html),改一处记得改全。 -->
+    <script>
+      (function () {
+        var m = localStorage.getItem("zhujian.theme");
+        if (m !== "light" && m !== "dark")
+          m = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+        document.documentElement.dataset.theme = m;
+      })();
+    </script>
+    <!-- 界面字号(251):首帧之前把上次档位应用到 WebView textZoom——晚一帧就是字号跳
+         一下。规则与 android/src/textsize.ts 完全一致(不在档位表里就算标准 100、不调);
+         那边是真正的开关,这里只是提前落地。桥 __zhujianTextSize 在 WebView 创建时挂上
+         (MainActivity.kt),先于页面加载,内联脚本里已可调;桌面浏览器里开这页没有桥,
+         静默跳过(可选链)。 -->
+    <script>
+      (function () {
+        var s = Number(localStorage.getItem("zhujian.textsize"));
+        if (s === 90 || s === 115 || s === 130)
+          window.__zhujianTextSize && window.__zhujianTextSize.set(s);
+      })();
+    </script>
     <!-- P4-c 捕获页 + 统一时间轴 + 勾标完成(android-plan §0 ②③④);诊断面(P4-b)收进
-         页脚「诊断」入口。令牌取值对齐桌面 src/theme.css「纸与朱墨」,单位手机化。 -->
+         设置面「诊断」入口(250 自同步面挪来)。令牌取值对齐桌面 src/theme.css「纸与朱墨」,
+         单位手机化。 -->
     <style>
       :root {
         --paper: #f3eee3;
@@ -30,28 +55,32 @@
         --font-serif: "Georgia", "SimSun", "Songti SC", "Source Han Serif SC", serif;
         --font-sans: "Microsoft YaHei", "PingFang SC", system-ui, -apple-system, sans-serif;
       }
-      @media (prefers-color-scheme: dark) {
-        :root {
-          --paper: #1b1813;
-          --raised: #242019;
-          --raised-edge: #2c2820;
-          --ink: #ece4d5;
-          --ink-soft: #a59a87;
-          --ink-faint: #7d7463;
-          --line: rgba(236, 228, 213, 0.12);
-          --line-strong: rgba(236, 228, 213, 0.2);
-          --seal: #df6a4f;
-          --seal-tint: rgba(223, 106, 79, 0.14);
-          --seal-line: rgba(223, 106, 79, 0.45);
-          --ok: #6fa47e;
-        }
+      /* 暗色令牌。挂在 <html data-theme="dark"> 上而**不是** @media——明暗有三档
+         (自动 / 亮 / 暗),生效色由 src/theme.ts 单点算出后写进这个属性,CSS 里不再
+         有第二处判断;「自动」档跟随系统也由它负责(监听 matchMedia)。 */
+      :root[data-theme="dark"] {
+        --paper: #1b1813;
+        --raised: #242019;
+        --raised-edge: #2c2820;
+        --ink: #ece4d5;
+        --ink-soft: #a59a87;
+        --ink-faint: #7d7463;
+        --line: rgba(236, 228, 213, 0.12);
+        --line-strong: rgba(236, 228, 213, 0.2);
+        --seal: #df6a4f;
+        --seal-tint: rgba(223, 106, 79, 0.14);
+        --seal-line: rgba(223, 106, 79, 0.45);
+        --ok: #6fa47e;
+        color-scheme: dark; /* 原生控件(输入框选区/滚动条)跟着走 */
       }
       * { box-sizing: border-box; }
       /* hidden 属性只是 UA 样式表里的普通 display:none,任何作者 display(.update 的
          flex、#scan 的 flex、.code 的 block)都会压过它——必须 !important 钉回,否则
          「hidden 却在屏上」(107 审查抓出,#sync-recovery 是既有同类患)。 */
       [hidden] { display: none !important; }
-      html { color-scheme: light dark; }
+      /* 250:三档明暗后不再让 UA 自己按系统挑(`light dark` 会绕过用户选的档),
+         亮为底、暗随 :root[data-theme="dark"] 覆盖。 */
+      html { color-scheme: light; }
       body {
         margin: 0;
         /* 顶部 padding 归零:安全区上移给 sticky header 自己吃(见 header)。
@@ -75,8 +104,34 @@
         backdrop-filter: blur(6px);
         border-bottom: 1px solid var(--line);
       }
-      header h1 { font-size: 17px; margin: 0; font-weight: 700; }
-      header h1 .seal { color: var(--seal); }
+      /* 顶栏两侧都得能让位(249 判例:flex item 默认 min-width:auto,里头一个长东西
+         就把整条撑出横滚条)。左边标题让空间徽章在窄屏里缩着显省略号,右边一排按钮
+         不缩(缩了字要换行)。 */
+      header h1 {
+        font-size: 17px; margin: 0; font-weight: 700;
+        display: flex; align-items: baseline; min-width: 0;
+      }
+      header h1 .seal { color: var(--seal); flex: none; }
+      .head-acts { flex: none; display: flex; align-items: center; }
+      /* 设置齿轮:图标钮,比文字钮省横向空间(顶栏本就四件挤)。描边随文字色,
+         不用彩色 emoji——与全局的细线图标一路。 */
+      .gear { display: flex; align-items: center; padding: 4px 4px 4px 8px; }
+      .gear svg {
+        width: 16px; height: 16px; overflow: visible;
+        fill: none; stroke: currentColor; stroke-width: 1.7;
+        stroke-linejoin: round; stroke-linecap: round;
+      }
+      /* 三档分段(明暗:自动 / 亮 / 暗):连体按钮,选中那枚上朱砂;整高 44px 够拇指。 */
+      .seg { display: flex; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+      .seg button {
+        flex: 1; height: 44px; border: 0; border-left: 1px solid var(--line);
+        background: color-mix(in srgb, var(--ink) 4%, transparent);
+        color: var(--ink-soft); font-size: 14px; font-family: var(--font-sans);
+      }
+      .seg button:first-child { border-left: 0; }
+      .seg button.on { color: var(--seal); background: var(--seal-tint); font-weight: 600; }
+      /* 设置面里各节之间留白(.sync h2 本身没有上边距,「关于」会紧贴上一节的说明字)。 */
+      #settings-pane h2:not(:first-child) { margin-top: 22px; }
       .ghost {
         border: none; background: none; padding: 4px 6px;
         color: var(--ink-faint); font-size: 12px; font-family: var(--font-sans);
@@ -102,7 +157,10 @@
         border: 1px solid var(--seal-line); border-radius: 999px;
         background: var(--seal-tint); color: var(--seal);
         padding: 2px 10px; font-size: 12px; font-weight: 600; font-family: var(--font-sans);
-        max-width: 40vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        /* 250:顶栏加了齿轮后横向更紧,徽章从「至多 40vw」改成「有多少给多少、不够
+           就缩」——min-width:0 是 flex 里让省略号真能生效的那一半(249)。 */
+        flex: 0 1 auto; min-width: 0;
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
         vertical-align: 2px; margin-left: 8px;
       }
 
@@ -706,10 +764,11 @@
   <body>
     <header>
       <h1><span class="seal">朱简</span><button id="space-chip" class="space-chip" hidden>默认空间</button></h1>
-      <div>
+      <div class="head-acts">
         <button id="topics-toggle" class="ghost">标签</button>
         <button id="search-toggle" class="ghost">搜索</button>
         <button id="sync-toggle" class="ghost"><span id="sync-dot" class="dot"></span>同步</button>
+        <button id="settings-toggle" class="ghost gear" aria-label="设置"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.1"/><path d="M19.14 12.94a7.49 7.49 0 0 0 .05-.94 7.49 7.49 0 0 0-.05-.94l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.61-.22l-2.39.96a7.3 7.3 0 0 0-1.62-.94l-.36-2.54a.5.5 0 0 0-.5-.42h-3.84a.5.5 0 0 0-.5.42l-.36 2.54a7.3 7.3 0 0 0-1.62.94l-2.39-.96a.5.5 0 0 0-.61.22L2.7 8.84a.5.5 0 0 0 .12.64l2.03 1.58a7.49 7.49 0 0 0 0 1.88L2.82 14.5a.5.5 0 0 0-.12.64l1.92 3.32a.5.5 0 0 0 .61.22l2.39-.96a7.3 7.3 0 0 0 1.62.94l.36 2.54a.5.5 0 0 0 .5.42h3.84a.5.5 0 0 0 .5-.42l.36-2.54a7.3 7.3 0 0 0 1.62-.94l2.39.96a.5.5 0 0 0 .61-.22l1.92-3.32a.5.5 0 0 0-.12-.64l-2.03-1.58Z"/></svg></button>
       </div>
     </header>
 
@@ -818,11 +877,10 @@
         <div id="sync-info" class="kv" hidden></div>
         <p class="fine">后台不保证实时,回到前台会继续追赶。</p>
       </div>
-      <!-- 单空间时头部空间徽章隐藏,空间面板从这里兜底可达(多空间时徽章即入口);
-           诊断(143 自底栏挪入):工程向低频入口,常驻可达。 -->
+      <!-- 单空间时头部空间徽章隐藏,空间面板从这里兜底可达(多空间时徽章即入口)。
+           诊断 143 自底栏挪来此处,250 再挪进设置面——同步面只管同步。 -->
       <div class="row" style="margin-top: 14px">
         <button id="sync-spaces-btn" class="ghost" style="flex: 1" hidden>空间…</button>
-        <button id="sync-diag-btn" class="ghost" style="flex: 1">诊断</button>
       </div>
     </section>
 
@@ -896,6 +954,34 @@
     </section>
 
     <main id="timeline" class="timeline"></main>
+
+    <!-- 设置面(250):这台设备自己的偏好 + 低频工程入口。明暗刻意**不进同步**——它是
+         环境属性不是账户属性(手机夜里要暗、桌面白天要亮),跟着同步反而添乱。 -->
+    <section id="settings-pane" class="sync" hidden>
+      <h2>外观</h2>
+      <div id="theme-seg" class="seg">
+        <button data-theme-mode="auto">自动</button>
+        <button data-theme-mode="light">亮</button>
+        <button data-theme-mode="dark">暗</button>
+      </div>
+      <p class="fine">「自动」跟随系统的浅色 / 深色设置(手机常按日夜自动切);想固定成一种就选亮或暗。只影响这台设备,不同步到别的设备。</p>
+
+      <h2>界面字号</h2>
+      <div id="textsize-seg" class="seg">
+        <button data-textsize="90">小</button>
+        <button data-textsize="100">标准</button>
+        <button data-textsize="115">大</button>
+        <button data-textsize="130">特大</button>
+      </div>
+      <p class="fine">调整全 app 的文字大小(在系统「字体大小」的基础上叠加)。只影响这台设备,不同步到别的设备。</p>
+
+      <h2>关于</h2>
+      <div id="about" class="kv"></div>
+
+      <div class="row" style="margin-top: 14px">
+        <button id="settings-diag-btn" class="ghost" style="flex: 1">诊断</button>
+      </div>
+    </section>
 
     <section id="diag" class="diag" hidden>
       <h2>本机库(建库 + 全部迁移)</h2>

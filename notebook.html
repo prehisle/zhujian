@@ -4,17 +4,28 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>朱简</title>
+    <!-- 明暗定色(250):首帧之前就把生效色写进 <html data-theme>——晚一帧上色就是亮暗
+         闪一下(163 闪烁族契约)。规则与 src/theme-mode.ts 完全一致(存的不是 light /
+         dark 就算「自动」、跟系统);那边是真正的开关,这里只是提前落地同一条规则。
+         两个窗口壳各一份,内容一字不差,改一处记得改另一处。 -->
+    <script>
+      (function () {
+        var m = localStorage.getItem("zhujian.theme");
+        if (m !== "light" && m !== "dark")
+          m = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+        document.documentElement.dataset.theme = m;
+      })();
+    </script>
     <link rel="stylesheet" href="/src/theme.css" />
     <link rel="stylesheet" href="/src/controls.css" />
     <style>
       /* 原生控件(目前只有看板截止日期的 <input type=date>:框内日历小图标、弹出的
          日期面板)跟随明暗主题,否则深色下图标近黑不可见、面板刺白。刻意声明在
          notebook 壳层而非共享 theme.css——capture 窗是 transparent:true,根上的
-         dark color-scheme 会让 UA 给透明窗铺不透明黑底;notebook 窗不透明,无此险。 */
+         dark color-scheme 会让 UA 给透明窗铺不透明黑底;notebook 窗不透明,无此险。
+         250 起认 data-theme(明暗三档的生效色),不再自己判 prefers-color-scheme。 */
       :root { color-scheme: light; }
-      @media (prefers-color-scheme: dark) {
-        :root { color-scheme: dark; }
-      }
+      :root[data-theme="dark"] { color-scheme: dark; }
       * { box-sizing: border-box; }
       html, body { margin: 0; height: 100%; }
       body {

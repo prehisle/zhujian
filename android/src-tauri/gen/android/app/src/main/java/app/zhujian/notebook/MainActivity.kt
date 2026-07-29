@@ -11,6 +11,38 @@ class MainActivity : TauriActivity() {
 
   override fun onWebViewCreate(webView: WebView) {
     this.webView = webView
+    webView.addJavascriptInterface(SystemBars(), "__zhujianSystemBars")
+    // 界面字号(251):基准取 WebView 创建时的初始 textZoom——它已含系统「字体大小」
+    // 的放大,我们的百分比乘在上面、不覆盖用户的系统级选择。
+    webView.addJavascriptInterface(TextSize(webView.settings.textZoom), "__zhujianTextSize")
+  }
+
+  // 明暗三档(250)的原生半截。页面里换色换不动**系统状态栏/导航栏的图标颜色**:用户手动
+  // 锁「暗」而系统仍是浅色时,系统仍按浅底把时间/信号画成深色,顶在深色纸面上几乎看不见
+  // (真机截图取证)。开一条极窄的 JS→原生桥,只做这一件事:按当前生效色翻两条 appearance
+  // 位。WebView 只加载打包进 APK 的本地资源,桥面仅此一个布尔入口。
+  inner class SystemBars {
+    @android.webkit.JavascriptInterface
+    fun setDark(dark: Boolean) {
+      runOnUiThread {
+        val c = androidx.core.view.WindowInsetsControllerCompat(window, window.decorView)
+        c.isAppearanceLightStatusBars = !dark // 深色纸面 → 浅色图标
+        c.isAppearanceLightNavigationBars = !dark
+      }
+    }
+  }
+
+  // 界面字号(251)的原生半截。wry 0.55.1 的安卓 zoom() 是空实现(返回 Ok 什么都不做),
+  // 桌面 241 的 setZoom 路在这里静默失效;WebView 自带的 textZoom 才是平台正道——只放大
+  // 文字、布局自然回流,不改 px 坐标系(240 捕获层 / 226 大图手势的几何计算零影响)。
+  // 桥面仅此一个整数入口;档位表在 JS 侧(textsize.ts),这里只做范围理智校验,出格
+  // 直接不理(不 clamp 半应用)。
+  inner class TextSize(private val base: Int) {
+    @android.webkit.JavascriptInterface
+    fun set(percent: Int) {
+      if (percent < 50 || percent > 200) return
+      runOnUiThread { webView?.settings?.textZoom = base * percent / 100 }
+    }
   }
 
   // 146:返回键层账本的 Kotlin 半截。真机取证(vivo/Android 16,keyevent 4 + CDP 探针):

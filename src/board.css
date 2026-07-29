@@ -314,11 +314,18 @@
   overflow-y: auto;
   padding: 2px 4px 6px;
 }
-.v-board .col-body::-webkit-scrollbar { width: 9px; }
+.v-board .col-body::-webkit-scrollbar { width: 9px; height: 9px; }
 .v-board .col-body::-webkit-scrollbar-thumb {
   background: var(--line-strong);
   border: 3px solid var(--paper);
   border-radius: 9px;
+}
+/* 一旦用 ::-webkit-scrollbar 定制,整条滚动条改走自绘,没写到的部件退回浏览器默认的**白**:
+   轨道白一层(被 thumb 的 3px 纸边遮掉大半、平时看不出),横竖滚动条同现时右下角那枚
+   直角就是明晃晃一块白方块(窄窗看板实见)。铺 transparent 让元素自己的底色透上来。 */
+.v-board .col-body::-webkit-scrollbar-track,
+.v-board .col-body::-webkit-scrollbar-corner {
+  background: transparent;
 }
 /* ---- a task card ---- */
 .v-board .tcard {

@@ -944,7 +944,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         chip.dataset.topicId = tp.id; // 拖拽打标签的去重判据(taskHasTopic 读它;ULID 选择器安全)
         applyTagColor(chip, tp.color); // 有色标签的 chip 着色(左色条 + 极淡底),便于一眼定位
         chip.append(
-          document.createTextNode(tp.title),
+          el("span", { className: "chip-label", textContent: tp.title }),
           el("button", {
             className: "chip-x",
             textContent: "✕",
@@ -1330,7 +1330,9 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         "div",
         { className: "task-meta task-topic" },
         item.topics.map((tp) => {
-          const chip = el("span", { className: "chip topic set", textContent: tp.title });
+          const chip = el("span", { className: "chip topic set" }, [
+            el("span", { className: "chip-label", textContent: tp.title }),
+          ]);
           applyTagColor(chip, tp.color);
           return chip;
         }),

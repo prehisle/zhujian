@@ -4,6 +4,18 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>朱简 · 捕获</title>
+    <!-- 明暗定色(250):首帧之前就把生效色写进 <html data-theme>——晚一帧上色就是亮暗
+         闪一下(163 闪烁族契约)。规则与 src/theme-mode.ts 完全一致(存的不是 light /
+         dark 就算「自动」、跟系统);那边是真正的开关,这里只是提前落地同一条规则。
+         两个窗口壳各一份,内容一字不差,改一处记得改另一处。 -->
+    <script>
+      (function () {
+        var m = localStorage.getItem("zhujian.theme");
+        if (m !== "light" && m !== "dark")
+          m = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+        document.documentElement.dataset.theme = m;
+      })();
+    </script>
     <link rel="stylesheet" href="/src/theme.css" />
     <style>
       * { box-sizing: border-box; }

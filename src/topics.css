@@ -76,11 +76,16 @@
   overflow-y: auto;
   padding: 18px 30px 28px;
 }
-.v-topics main::-webkit-scrollbar { width: 10px; }
+.v-topics main::-webkit-scrollbar { width: 10px; height: 10px; }
 .v-topics main::-webkit-scrollbar-thumb {
   background: var(--line-strong);
   border: 3px solid var(--paper);
   border-radius: 10px;
+}
+/* 未定制的部件会退回默认白(轨道 + 横竖交汇的直角),见 board.css 同处注释。 */
+.v-topics main::-webkit-scrollbar-track,
+.v-topics main::-webkit-scrollbar-corner {
+  background: transparent;
 }
 
 /* ---- a tag row (flat list) ---- */

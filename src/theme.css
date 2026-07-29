@@ -32,22 +32,23 @@
   --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.78' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --paper: #1b1813;
-    --raised: #242019;
-    --raised-edge: #2c2820;
-    --ink: #ece4d5;
-    --ink-soft: #a59a87;
-    --ink-faint: #7d7463;
-    --line: rgba(236, 228, 213, 0.12);
-    --line-strong: rgba(236, 228, 213, 0.2);
-    --seal: #df6a4f;
-    --seal-tint: rgba(223, 106, 79, 0.14);
-    --seal-line: rgba(223, 106, 79, 0.45);
-    --float-shadow: 0 22px 55px -18px rgba(0, 0, 0, 0.7), 0 2px 8px rgba(0, 0, 0, 0.4);
-    --card-shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 16px 34px -22px rgba(0, 0, 0, 0.7);
-  }
+/* 暗色令牌。挂在 <html data-theme="dark"> 上而**不是** @media——明暗有三档(自动 /
+   亮 / 暗),生效色由 src/theme-mode.ts 单点算出后写进这个属性,CSS 里不再有第二处
+   判断。「自动」档的跟随系统也由它负责(监听 matchMedia)。 */
+:root[data-theme="dark"] {
+  --paper: #1b1813;
+  --raised: #242019;
+  --raised-edge: #2c2820;
+  --ink: #ece4d5;
+  --ink-soft: #a59a87;
+  --ink-faint: #7d7463;
+  --line: rgba(236, 228, 213, 0.12);
+  --line-strong: rgba(236, 228, 213, 0.2);
+  --seal: #df6a4f;
+  --seal-tint: rgba(223, 106, 79, 0.14);
+  --seal-line: rgba(223, 106, 79, 0.45);
+  --float-shadow: 0 22px 55px -18px rgba(0, 0, 0, 0.7), 0 2px 8px rgba(0, 0, 0, 0.4);
+  --card-shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 16px 34px -22px rgba(0, 0, 0, 0.7);
 }
 
 /* ---- 笔触(元素级、两窗一致)。theme.css 本职是令牌,这几条是主题里全局到
