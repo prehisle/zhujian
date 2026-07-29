@@ -11,6 +11,10 @@ let banner: HTMLDivElement | null = null;
 // 当前待处理的 Update:banner 收起时 close() 释放后端 resource。
 let pending: Update | null = null;
 
+// 回窗查更新的节流:频繁切窗口不该每次都打 latest.json。
+const FOCUS_CHECK_THROTTLE_MS = 10 * 60 * 1000;
+let lastCheckedAt = 0;
+
 function el<K extends keyof HTMLElementTagNameMap>(
   tag: K,
   cls: string,
@@ -90,12 +94,20 @@ async function run(update: Update, msg: HTMLElement, acts: HTMLElement): Promise
 // 启动静默查。只在生产构建跑:dev/e2e 走 vite dev server(PROD=false),不打网络也不弹,
 // 免得开发/测试期被弹窗或网络往返打扰。
 export async function initUpdate(): Promise<void> {
+  lastCheckedAt = Date.now();
   try {
     const update = await check();
     if (update) showBanner(update);
   } catch {
     // 离线/端点不可达:静默。
   }
+}
+
+// 回窗时查一次(否则只有冷启动才提示,长开着不重启的窗口永远发现不了新版)。
+// 节流:短时间内反复切窗口只查一次,不空转 latest.json。
+export async function checkForUpdateOnFocus(): Promise<void> {
+  if (Date.now() - lastCheckedAt < FOCUS_CHECK_THROTTLE_MS) return;
+  await initUpdate();
 }
 
 // 侧栏「检查更新」手动入口:有新版走同一 banner,否则明确回话(手动动作要有反馈)。

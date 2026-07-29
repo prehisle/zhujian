@@ -5893,7 +5893,7 @@ dependencies = [
 
 [[package]]
 name = "zhujian-android"
-version = "0.3.19"
+version = "0.3.20"
 dependencies = [
  "base64 0.22.1",
  "log",

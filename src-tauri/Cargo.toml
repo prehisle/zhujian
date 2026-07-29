@@ -1,6 +1,6 @@
 [package]
 name = "app"
-version = "0.2.22"
+version = "0.2.23"
 description = "朱简(zhujian)— 纸与朱墨的个人事务管理:灵感捕获、任务看板,纯人工、本地优先"
 authors = ["prehisle"]
 license = ""

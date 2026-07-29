@@ -166,6 +166,23 @@
   user-select: none;
   -webkit-user-drag: none;
 }
+/* 关闭中(246):单击关不是「等一会儿再啪地消失」,而是**点下去立刻开始淡出**——延迟那段
+   必须留着(要给双击留取消的机会),但它不该是一段静止的白等,那正是用户读成「卡」的东西。
+   只淡**内容**、黑底不动:窗口还原(缩窗)要在暗遮罩下发生才无裸窗闪,所以背景撑到最后。
+   淡出时长与 CLICK_DELAY 对齐,到点时恰好淡尽,关闭无缝接上;第二击撤销时移掉这个类,
+   transition 会把它平滑地拉回来(所以这里绝不能加 pointer-events:none——撤销靠的正是
+   落在遮罩上的第二次 pointerdown)。 */
+.img-lightbox-stage,
+.img-lightbox-nav,
+.img-lightbox-count {
+  transition: opacity 0.12s ease;
+}
+.img-lightbox.closing .img-lightbox-stage,
+.img-lightbox.closing .img-lightbox-nav,
+.img-lightbox.closing .img-lightbox-count {
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
 .img-lightbox-err {
   font-family: var(--font-sans);
   color: #fff;

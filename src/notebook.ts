@@ -10,7 +10,7 @@ import { parseDeepLink, consumePendingDeepLink } from "./deeplink";
 import { initSync, seedSpaceStatuses, setSpaceNames, showToast, syncSpaceSwitched, DEFAULT_SYNC_URL } from "./sync";
 import { initSettings, openSettingsPanel } from "./settings";
 import { initZoom } from "./zoom";
-import { initUpdate } from "./update";
+import { initUpdate, checkForUpdateOnFocus } from "./update";
 import {
   createSpace,
   currentSpaceId,
@@ -155,6 +155,7 @@ win.onFocusChanged(({ payload: focused }) => {
   if (focused) {
     current?.onFocus?.();
     void checkClipboardForDeepLink(); // 回窗时:剪贴板若是自家深链接,弹「点此打开」
+    if (import.meta.env.PROD) void checkForUpdateOnFocus(); // 回窗顺手查一次新版(节流)
   }
 });
 

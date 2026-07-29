@@ -367,7 +367,15 @@
         gap: 10px; background: rgba(0, 0, 0, 0.88);
         padding: calc(10px + env(safe-area-inset-top)) 0 calc(16px + env(safe-area-inset-bottom));
         touch-action: none; -webkit-user-select: none; user-select: none;
+        transition: opacity 0.12s ease; /* 撤销待关时用这个快档把整层平滑拉回来 */
       }
+      /* 关闭中(246):轻点关不是「等一会儿再啪地消失」,而是**点下去立刻开始淡出**。延迟那段
+         必须留着(要给双击留取消的机会,系统标准双击窗口 300ms),但它不该是一段静止的白等
+         ——用户读成「卡」的是「点了没反应」,不是「没立刻消失」。淡出时长与 main.ts 的
+         CLOSE_DELAY 对齐,到点恰好淡尽。**绝不能加 pointer-events:none**:撤销靠的正是落在
+         本层上的第二次 pointerdown。closeViewerNow 关层时必须把这个类摘掉,否则下次开图
+         整层还挂着 opacity:0(图在、看不见)。 */
+      #viewer.closing { opacity: 0; transition: opacity 0.3s ease; }
       #viewer img { max-width: 100vw; max-height: 88vh; object-fit: contain; will-change: transform; }
       #viewer .cap { color: #fff; opacity: 0.85; font-size: 13px; transition: opacity 0.15s; }
       #viewer.zoomed .cap { opacity: 0; }

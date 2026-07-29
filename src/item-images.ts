@@ -294,7 +294,14 @@ function makeImageViewer(
   img.style.height = "0px";
   const PAD = 32; // 与 .img-lightbox-stage padding 一致
   const DRAG_THRESHOLD = 4; // px:超过才算拖动(否则算单击)
-  const CLICK_DELAY = 500; // ms:单击关闭延迟 ≥ 系统双击判定,免真双击被第一击提前关(H1)
+  // ms:单击关闭的延迟。旧值 500 是照「系统双击判定」定的,白等半秒(用户报「点了图关不掉、卡」);
+  // 但把它一味砍短是拿**双击容错**换的——安卓真机实测:延迟砍到 200ms 后,两次按下间隔 226ms
+  // 的双击第一击就把图关了,第二击落在空处(想放大却关了图)。系统标准的双击窗口是 300ms
+  // (Android)/500ms(Windows),所以这里回到 300 老实覆盖它。
+  // **速度感另有出路**:点下去立刻给遮罩挂 `.closing` 开始淡出(setClosing),延迟这段就不再是
+  // 一段静止的白等——用户读成「卡」的是「点了没反应」,不是「没立刻消失」。第二击一按下就
+  // clearTimeout + 摘 class,淡出被平滑拉回,双击照常放大。
+  const CLICK_DELAY = 300;
   let mode: "fit" | "fill" = "fit"; // fill = 铺满宽度、竖向可滚
   let zoom = 1; // 在 mode 基准尺寸上再乘的缩放(Ctrl+滚轮)
   let userToggled = false; // 用户双击切过取向后,resize 不再自动改 mode
@@ -302,6 +309,10 @@ function makeImageViewer(
   let closeTimer: number | null = null;
 
   const scroller = (): HTMLElement | null => img.closest<HTMLElement>(".img-lightbox");
+  // 关闭中的淡出开关(246):只淡内容、黑底留着(缩窗要在暗遮罩下发生);撤销时摘掉即平滑拉回。
+  const setClosing = (on: boolean): void => {
+    scroller()?.classList.toggle("closing", on);
+  };
   const nw = (): number => img.naturalWidth || 1;
   const nh = (): number => img.naturalHeight || 1;
   const viewport = (): { w: number; h: number } => {
@@ -417,6 +428,7 @@ function makeImageViewer(
       if (closeTimer !== null) {
         clearTimeout(closeTimer);
         closeTimer = null;
+        setClosing(false); // 双击撤销待关:淡到一半的内容平滑回来
       }
       mode = mode === "fit" ? "fill" : "fit";
       userToggled = true; // 手动切过 → resize 不再自动改取向
@@ -443,6 +455,7 @@ function makeImageViewer(
       if (closeTimer !== null) {
         clearTimeout(closeTimer); // 第二次按下 → 取消上一击的待关(双击不误关,H1 兜底)
         closeTimer = null;
+        setClosing(false); // 连带把淡出拉回来(246)
       }
       if (!canPan()) return; // 整图放得下:让单击走 click→关闭
       panning = true;
@@ -504,6 +517,7 @@ function makeImageViewer(
       if (canPan()) return; // 长图/放大态:单击不关
       if (e.detail !== 1) return; // 只有真正的单击(非双击的第二下)才安排关闭
       if (closeTimer !== null) return;
+      setClosing(true); // 立刻开始淡出 = 立刻有回执(246);延迟这段不再是静止的白等
       closeTimer = window.setTimeout(() => {
         closeTimer = null;
         requestClose();
@@ -531,6 +545,18 @@ function makeImageViewer(
       ac.abort();
     },
   };
+}
+
+/** 关闭第一步:把遮罩里的**内容**卸干净,只留纯黑底。遮罩本体还盖着,所以不会露裸窗。
+ *  为什么单拎一步:关闭要先把主窗从「撑到近满屏」缩回原尺寸,而缩窗会让 WebView 把整个
+ *  主窗重排重绘一遍——此刻若全尺寸位图还挂在遮罩里,它得陪着一起重绘;偏偏遮罩要等
+ *  restore 跑完才撤,这一段全发生在用户「已经想关了」之后、且零反馈(用户报的「关闭好卡」
+ *  的第二段,第一段是单击延迟)。先卸再缩,缩的是一屏纯色。
+ *  `removeAttribute("src")` 而非 `src=""`:后者在部分 WebView 里会当相对 URL 去重新请求
+ *  当前页;移掉属性才是干净地断掉对那份 data URL 的引用,位图可即刻回收。 */
+function shedVisuals(overlay: HTMLElement, img: HTMLImageElement): void {
+  img.removeAttribute("src");
+  overlay.replaceChildren(); // stage / 左右箭头 / 角标一并撤走
 }
 
 /** 看已保存图时把笔记本主窗放大到「图原尺寸 + 边距」(上限=显示器 92%),返回还原原
@@ -579,10 +605,14 @@ async function planGrowMainWindow(
     }
     // restore 与 applyGrow 分开返回:调用方先登记 restore 再 applyGrow,故即使关闭抢在
     // 放大过程中(setSize/setPosition 的 await 间隙)发生,onClose 也能把窗口还原回去。
+    // 位置到底动没动:targetPos 为空走的是 center()(必动),否则只有钳位真把左上角挪开才算动。
+    // 「原地长大」是常态(窗口没越出显示器),那时还原只需改回尺寸——省掉的这次 setPosition
+    // 是关闭路径上一整趟 IPC + 一记窗口消息,而关闭时遮罩正等着它跑完才撤(用户感知的「卡」)。
+    const posMoved = targetPos === null || targetPos.x !== prevPos.x || targetPos.y !== prevPos.y;
     const restore = async (): Promise<void> => {
       try {
         await win.setSize(new PhysicalSize(prevSize.width, prevSize.height));
-        await win.setPosition(new PhysicalPosition(prevPos.x, prevPos.y));
+        if (posMoved) await win.setPosition(new PhysicalPosition(prevPos.x, prevPos.y));
       } catch {
         /* 还原失败无妨——用户可手动调整 */
       }
@@ -652,6 +682,7 @@ export async function openLightbox(images: ImageMeta[], index: number): Promise<
     async () => {
       closed = true; // 关标志:让下面异步流(invoke/load/放大)每个 await 后止步
       viewer.cleanup(); // 摘缩放/滚动监听(含 window resize),不泄漏 img
+      shedVisuals(overlay, img); // 先卸大图、只留黑底,再去缩窗(见 shedVisuals)
       if (grow) await grow.catch(() => {}); // 等放大真正结束(即便 center 抛错),避免 restore 与放大并发
       if (restore) await restore(); // 仍在暗遮罩下还原窗口几何(只此一次)
     },
@@ -763,6 +794,7 @@ export function openLightboxUrl(
   const { overlay, close } = mountLightbox(stage, async () => {
     closed = true; // 关标志:让下面异步流每个 await 后止步
     viewer.cleanup();
+    shedVisuals(overlay, img); // 先卸大图、只留黑底,再去缩窗(见 shedVisuals)
     if (grow) await grow.catch(() => {}); // 等放大真正结束,避免 restore 与放大并发
     if (restore) await restore(); // 仍在暗遮罩下还原窗口几何(只此一次)
     await opts.onClose?.();

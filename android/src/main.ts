@@ -449,7 +449,7 @@ window.addEventListener("popstate", () => {
   // mode 从不压层:任务面按返回与灵感面同账,直接退 app(146 §2.3)。
 });
 
-// 大图查看:全屏覆盖层。未放大时单击关(260ms 让位双击判定)、双击 2.5 倍/复位、
+// 大图查看:全屏覆盖层。未放大时单击关(200ms 让位双击判定)、双击 2.5 倍/复位、
 // 双指捏合 1~8 倍、放大后单指拖拽平移、返回键关(history 层)。全图每次打开现取
 // (IPC 去重内已并单),关闭即置空 src——大图字节不驻留。请求带代次(codex 二审):
 // 快速连点几张图,迟到的旧响应不许盖掉最新点击;关闭也推代次,在途响应作废不复弹。
@@ -562,6 +562,8 @@ function closeViewerNow() {
   viewerGroup = [];
   viewerIdx = 0;
   hideConfirmBar(); // 关图即弃挂着的删图确认(旧确认不许作用到下一张/下个语境)
+  window.clearTimeout(closeTimer); // 返回键/删图这些路子关层时,可能还挂着一枚待关
+  setClosing(false); // 必须摘:留着的话下次开图整层还是 opacity:0(图在、看不见)
   $("viewer").hidden = true;
   ($("viewer-img") as HTMLImageElement).src = ""; // 释放大图
   resetZoom();
@@ -580,6 +582,14 @@ let vBase = { cx: 0, cy: 0, w: 0, h: 0 };
 let vSwipeX = 0;
 let suppressClick = false; // 手势(捏合/拖拽)收尾时 WebView 可能补发 click:吞掉
 let closeTimer: number | undefined;
+// 轻点关的延迟(246)。**别再往下砍**:真机实测砍到 200ms 后,两次按下间隔 226ms 的双击第一击
+// 就把图关了、第二击落在空处(想放大却关了图);系统标准的双击窗口就是 300ms,老实覆盖它。
+// 「点了没反应」的手感问题由 setClosing 的即时淡出解决,不靠缩短这个数。
+const CLOSE_DELAY = 300;
+/** 关闭中的淡出开关:点下去立刻淡、第二击一按下就摘掉(transition 平滑拉回)。 */
+function setClosing(on: boolean): void {
+  $("viewer").classList.toggle("closing", on);
+}
 let lastTap = { t: 0, x: 0, y: 0 };
 
 function applyTransform(anim = false) {
@@ -685,6 +695,12 @@ function settleSwipe() {
 }
 
 $("viewer").addEventListener("pointerdown", (e) => {
+  // 一按下就取消上一击挂着的「待关」+ 把淡出拉回来(照桌面 item-images.ts 的同名兜底)。
+  // 注意这条**买到的余量很小**(只有「第二次按下 → 第二次 click」那十几毫秒),别拿它当
+  // 缩短 CLOSE_DELAY 的依据——246 首版就是这么推理的,真机把账算清了:延迟必须自己覆盖
+  // 双击窗口。它的真正用处是让第二击**更早**撤销淡出,双击时几乎看不到闪。
+  window.clearTimeout(closeTimer);
+  setClosing(false);
   if (vPtrs.size === 0) {
     suppressClick = false; // 新一轮手势:上一轮的抑制标志作废
     swipeAxis = "";
@@ -768,6 +784,7 @@ $("viewer").addEventListener("click", (e) => {
   const dbl = now - lastTap.t < 300 && Math.hypot(e.clientX - lastTap.x, e.clientY - lastTap.y) < 40;
   if (dbl) {
     window.clearTimeout(closeTimer);
+    setClosing(false); // 双击撤销待关:淡到一半的层平滑回来
     lastTap.t = 0;
     if (vScale > 1.01) {
       vScale = 1;
@@ -786,10 +803,11 @@ $("viewer").addEventListener("click", (e) => {
   }
   lastTap = { t: now, x: e.clientX, y: e.clientY };
   if (vScale > 1.01) return; // 放大态单击不关(误触保护):双击复位或返回键关
+  setClosing(true); // 立刻开始淡出 = 立刻有回执(246);延迟这段不再是静止的白等
   closeTimer = window.setTimeout(() => {
     closeViewerNow();
     settleHistory();
-  }, 260);
+  }, CLOSE_DELAY);
 });
 
 // 删图(196):看大图时删这张。永久销毁(图无回收站、编号退役不复用),两拍确认——
@@ -1086,7 +1104,7 @@ document.addEventListener("visibilitychange", () => {
   if (document.visibilityState !== "visible") return;
   void pullSharedText();
   void pullDeepLink(); // 回前台也取一次深链接(热启动 emit 可能丢,文件兜底)
-  void initUpdate(); // 后台切回也查一次新版(否则只有冷启动才提示)
+  initUpdateThrottled(); // 后台切回也查一次新版(否则只有冷启动才提示;节流)
 });
 window.addEventListener("zhujian-share", () => void pullSharedText());
 window.addEventListener("zhujian-deeplink", () => void pullDeepLink());
@@ -2344,6 +2362,7 @@ let updateFound: AndroidUpdate | null = null;
 let updateDismissedCode = 0;
 
 async function initUpdate() {
+  lastUpdateCheckedAt = Date.now();
   try {
     const u = await invoke<AndroidUpdate | null>("check_update");
     if (!u || u.versionCode === updateDismissedCode) return;
@@ -2353,6 +2372,14 @@ async function initUpdate() {
   } catch {
     /* 离线/端点不可达:静默,下次回前台/启动再查。 */
   }
+}
+
+// 回前台查更新的节流:短时间内反复切前后台只查一次,不空转 android.json。
+const UPDATE_CHECK_THROTTLE_MS = 10 * 60 * 1000;
+let lastUpdateCheckedAt = 0;
+function initUpdateThrottled() {
+  if (Date.now() - lastUpdateCheckedAt < UPDATE_CHECK_THROTTLE_MS) return;
+  void initUpdate();
 }
 $("update-go").addEventListener("click", () => {
   if (!updateFound) return;
