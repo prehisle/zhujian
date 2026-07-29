@@ -5,7 +5,10 @@
   left: 50%;
   bottom: 24px;
   transform: translateX(-50%);
-  z-index: 1000;
+  /* 9100:抬到大图遮罩(9000)之上——键盘 Ctrl+±/0 在看大图时仍改界面字号(setZoom 连
+     大图一起缩,是合理的),回执被遮罩盖住才是坑(改了字号却看不见提示,244 复扫)。
+     滚轮那条通道已归大图自己(item-images.ts 掐了冒泡),两个通道各有确切归属。 */
+  z-index: 9100;
   padding: 5px 12px;
   font-family: var(--font-sans);
   font-size: 12px;

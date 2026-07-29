@@ -1,6 +1,13 @@
 // 桌面朱笺 WebView2 CDP 驱动(android-cdp.mjs 的桌面孪生;134 手法、142 首次全程实战)。
 // 生产 exe 即可用、无需 devtools feature——重启 app 前设好环境变量:
-//   PowerShell: $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS='--remote-debugging-port=9223'; Start-Process <app.exe>
+//   PowerShell:
+//     $env:WEBVIEW2_USER_DATA_FOLDER='G:\yj2026\zhujian\.cdp-profile'
+//     $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS='--remote-debugging-port=9223'
+//     Start-Process <app.exe>
+// 上面第一行钉死 profile 目录很重要:不设的话,若上一个同 exe 实例的默认 profile 目录
+// 还没释放(taskkill 强杀不算干净退出),WebView2 会 fallback 去 C:\Windows\SystemTemp
+// 新开一个 scoped_dir<pid>_<random>,taskkill 掉后就成永久垃圾(2026-07-29 实踩,发现
+// 系统临时目录攒了一堆同类)。钉死后每次复用同一目录,不再新增。
 // 用法: node scripts/desktop-cdp.mjs eval '<js>' | evalfile <path>
 //       node scripts/desktop-cdp.mjs shot <out.png> [--clip x,y,w,h] [--scale N]
 //       (默认选 notebook 页;所有命令带 [--page capture] 可切页)

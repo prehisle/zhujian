@@ -568,8 +568,8 @@ function closeViewerNow() {
 }
 
 // -- 查看器手势(143):transform = translate(t) scale(s),原点为 img 布局中心。
-// 页面级缩放已在 viewport 锁死,这里自己接管指针;基座矩形在图片 load 时量一次
-//(查看器开着期间布局静止)。捏合公式:中点下的图像点保持在中点下。
+// 页面级缩放已在 viewport 锁死,这里自己接管指针;基座矩形在每轮手势起点量(244,见 measureBase)。
+// 捏合公式:中点下的图像点保持在中点下。
 const viewerImgEl = $("viewer-img") as HTMLImageElement;
 let vScale = 1;
 let vTx = 0;
@@ -607,9 +607,36 @@ function resetZoom() {
 }
 
 viewerImgEl.addEventListener("load", () => {
-  resetZoom(); // 量未变换的布局盒
+  resetZoom(); // 新图不继承上一张的缩放(基座矩形改在手势起点量,见 measureBase)
+});
+
+/** 量「基座矩形」= 图片**未变换时**的布局盒(clampView 的钳位框与捏合的原点),在每轮
+ *  手势起点量。
+ *  244:原先在 img 的 load 里量,而首开那一刻查看器还 hidden(showViewerAt 要等图解码完
+ *  才 unhide,225/226 起如此),`[hidden]{display:none!important}` 的元素量出来是零盒;
+ *  于是一捏合/双击,clampView 见 w=h=0 就走「比视口小的轴回中」把图钉到
+ *  (innerWidth/2, innerHeight/2)——用户看到的「一放大就飞到右下角、复位也回不来」。
+ *  **两道闸都问渲染态,不问 JS 变量**(244 二轮:只问 JS 变量会从另外两扇门漏回同一个患):
+ *  ① computed transform 必须是 none——翻页滑入/没划够的弹回都挂着 0.18s 过场,那段时间
+ *     vScale/vTx/vTy/vSwipeX 早已归零、图却还在半路上,rect 量的是动画中途的盒(滑入那下
+ *     最多偏整个屏宽);「有没有在飞的变换」只有 computed 值答得准。
+ *  ② 零盒一律不收——换图时 src 刚换、图没解码完,`#viewer img` 没有显式宽高会塌成 0×0
+ *     (`flipping` 闸只拦单指 pointermove,拦不住 pointerdown),那正是 244 的病根形状。
+ *     宁可留着上一轮的量值,等下一轮手势重量,也绝不把零盒记进钳位框。 */
+function measureBase(): void {
+  if (getComputedStyle(viewerImgEl).transform !== "none") return; // 图上挂着变换/过场在飞
   const r = viewerImgEl.getBoundingClientRect();
+  if (r.width === 0 || r.height === 0) return; // 没解码 / 没显出来:这不是布局盒
   vBase = { cx: r.x + r.width / 2, cy: r.y + r.height / 2, w: r.width, h: r.height };
+}
+
+// 转屏(或任何视口尺寸变化)后,旧基座与新视口不是一个坐标系:把图复位回未变换态,基座
+// 交给下一轮手势重量。不复位的话,放大态下转屏 clampView 会拿旧基座算出个偏位,**双击也
+// 回不来**,applyTransform 的 identity 判据恒假连带 `.zoomed` 摘不掉——那条规则会把「删除」
+// 按钮永久 pointer-events:none,这张图就删不掉了(226 判例的后果从另一条门回来)。
+// 本机 WebView 弹键盘时 innerHeight 不缩、不发 resize(见 240),故不会误伤捕获层。
+window.addEventListener("resize", () => {
+  if (!$("viewer").hidden) resetZoom();
 });
 
 /** 出界钳位:图比视口大时不许拖出黑边,比视口小的轴回中。 */
@@ -627,6 +654,7 @@ const vPtrs = new Map<number, { x: number; y: number }>();
 let gest: { s: number; tx: number; ty: number; d0: number; mx: number; my: number } | null = null;
 
 function beginGesture() {
+  measureBase(); // 手势起点量基座(渲染态干净才收;首开时 load 那一刻查看器还没显出来,量不得)
   const ps = [...vPtrs.values()];
   const mx = ps.reduce((a, p) => a + p.x, 0) / ps.length;
   const my = ps.reduce((a, p) => a + p.y, 0) / ps.length;

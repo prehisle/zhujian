@@ -39,6 +39,10 @@
 # 本地工作杂物(图标出稿中间产物 / 验收截图等,不进 git)
 /work_data/
 
+# desktop-cdp.mjs 真机验收固定 WebView2 profile(钉住 WEBVIEW2_USER_DATA_FOLDER,
+# 防止每次带 --remote-debugging-port 启动都在 C:\Windows\SystemTemp 新开 scoped_dir)
+/.cdp-profile/
+
 # 本地数据库 / 临时
 *.sqlite3
 *.sqlite3-*

@@ -387,6 +387,11 @@ function makeImageViewer(
   const onWheel = (e: WheelEvent): void => {
     if (e.ctrlKey) {
       e.preventDefault();
+      // 大图开着时 Ctrl+滚轮**归大图**:必须连冒泡一起掐掉(244 复扫)。241 的界面字号缩放
+      // 挂在 document 上、同样只看 ctrlKey,只 preventDefault 拦不住冒泡——两处会同时缩,
+      // 图缩一档、整个界面字号也被静默改一档还写进 localStorage(关掉大图回不去、重启还在),
+      // 而回执 badge 被遮罩盖住看不见,用户只会觉得「字怎么变了」。
+      e.stopPropagation();
       if (e.deltaY !== 0) zoomAt(e.clientX, e.clientY, e.deltaY < 0 ? 1.15 : 1 / 1.15);
       return;
     }
