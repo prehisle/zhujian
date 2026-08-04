@@ -198,7 +198,7 @@ mod tests {
         core_spaces::create_space(&dir, "家庭").unwrap();
         let main_db = dir.join("notebook.sqlite3");
         let catalog = core_spaces::SpaceCatalog::load(&main_db, Some(&dir), None).unwrap();
-        let sup = SpaceSupervisor::new(tokio::runtime::Handle::current(), DESKTOP_MAX_LIVE);
+        let sup = SpaceSupervisor::new(tokio::runtime::Handle::current(), DESKTOP_MAX_LIVE, None);
         let boot_dir = dir.join(".boot");
         for d in catalog.spaces() {
             let conn = core_spaces::open_space(d).unwrap();

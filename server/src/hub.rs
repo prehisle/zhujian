@@ -57,7 +57,7 @@ pub fn deliver_cost(msg: &ServerMsg) -> Option<usize> {
 }
 
 /// 实时帧在「信箱整箱搬入之外」的队深余量。
-const REALTIME_HEADROOM: usize = 1024;
+pub(crate) const REALTIME_HEADROOM: usize = 1024;
 
 /// 旧客户端受限时 account_throttled 的人话(§6:现有状态面至少一条可见错误;客户端
 /// human_err 兜底会显它)。声明 `account_status_v1` 的新客户端改收 AccountStatusV1。
@@ -87,6 +87,13 @@ pub struct Hub {
     /// AccountStatusV1 修订号(工序4;单次启动内单调、跨重启复位——§6 取舍,不引
     /// server_instance_id)。每 build 一次 checked 自增,到顶 fail-fast 不回绕。
     status_revision: AtomicU64,
+    /// 全局连接 permit(2026-07-31 评审:连接耗尽 DoS 闸,容量 = cfg.max_conns)。
+    /// upgrade 前 try_acquire,连接任务 RAII 持有到死;停机关栅时 close(拒新=503)。
+    conn_permits: std::sync::Arc<tokio::sync::Semaphore>,
+    /// 创号闸拒绝日志聚合(2026-07-31 codex M3:逐条打日志=journal 放大器)。
+    /// (上次落线, 上次 ERROR 落线, 窗口内限流数, 窗口内目录满数)——ERROR 有独立
+    /// 时间戳:目录满要能**跳过** INFO 窗口立即出线(二轮 M1),但自己也 60s 限一次。
+    signup_log: Mutex<(Option<Instant>, Option<Instant>, u64, u64)>,
 }
 
 #[derive(Default)]
@@ -131,7 +138,10 @@ struct PairSlot {
     account: String,
     owner_conn: u64,
     owner_tx: Tx,
-    joiner: Option<(u64, Tx, QueuedBytes)>,
+    /// (conn_id, 下行 tx, 队列账本, kick 专线)。kick(2026-07-31 codex H1):槽死
+    /// = 未鉴权 joiner 的存在理由消失,当场断连归还连接 permit——否则 ping 保活的
+    /// 僵尸 joiner 每只可占位「槽 TTL+余量」,循环铸造能打满全局连接闸。
+    joiner: Option<(u64, Tx, QueuedBytes, KickTx)>,
     opened: Instant,
     /// 单次使用(§4):join 过即烧,第二个 join 恒拒——服务器 MITM 对 SECRET
     /// 的在线猜测恒只有一次。
@@ -149,6 +159,9 @@ impl Hub {
         registry.set_free_fastlane(cfg.free_fastlane_bytes_per_month);
         // 免费档席位数从 Config 注入(推广期生产 4,测试默认 2)。
         registry.set_free_seat(cfg.free_seat_quota);
+        // 创号闸参数从 Config 注入(2026-07-31 评审;测试注小值烤洪泛路径)。
+        registry.set_signup_limits(cfg.signup_burst, cfg.signup_refill, cfg.max_accounts);
+        let conn_permits = std::sync::Arc::new(tokio::sync::Semaphore::new(cfg.max_conns));
         Hub {
             cfg,
             registry: Mutex::new(registry),
@@ -160,7 +173,58 @@ impl Hub {
             checkpoint_nudge: Notify::new(),
             conn_seq: AtomicU64::new(1),
             status_revision: AtomicU64::new(1),
+            conn_permits,
+            signup_log: Mutex::new((None, None, 0, 0)),
         }
+    }
+
+    /// 创号闸拒绝的聚合日志:INFO 与 ERROR **各自** 60s 限频(带窗口内计数;首次
+    /// 立即落线,目录满可跳过 INFO 窗口)。
+    /// **目录满 0→1 强制冲刷**(codex 二轮 M1:窗口内只累计的话,「唯一那次目录满」
+    /// 若后面再无请求就永远发不出来——容量事件一次都不许吞)。落线在锁外(stderr
+    /// 阻塞不许变成锁队头拥塞)。
+    pub fn log_signup_reject(&self, directory_full: bool) {
+        if let Some(line) = self.signup_reject_line(directory_full) {
+            logln(line);
+        }
+    }
+
+    /// 聚合决策(单测入口):返回该落的整行(含级别前缀)或 None=窗口内继续累计。
+    /// 目录满可跳过 INFO 窗口立即出 ERROR,但 ERROR 自己也按独立时间戳 60s 限一次
+    /// (否则「冲刷清零计数 → 下一次目录满又是首例」会绕回逐条刷屏)。
+    fn signup_reject_line(&self, directory_full: bool) -> Option<String> {
+        const WINDOW: std::time::Duration = std::time::Duration::from_secs(60);
+        let mut g = self.signup_log.lock().unwrap();
+        let (last_any, last_err, throttled, full) = &mut *g;
+        if directory_full {
+            *full += 1;
+        } else {
+            *throttled += 1;
+        }
+        let err_due = directory_full && !last_err.is_some_and(|t| t.elapsed() < WINDOW);
+        let any_due = !last_any.is_some_and(|t| t.elapsed() < WINDOW);
+        if !err_due && !any_due {
+            return None;
+        }
+        let now = Instant::now();
+        *last_any = Some(now);
+        if *full > 0 {
+            *last_err = Some(now);
+        }
+        let line = format!(
+            "创号闸拒绝:限流 {throttled} 次、目录满 {full} 次(60s 聚合;目录满=抬 max_accounts 或人工清理,见 deploy §2)"
+        );
+        let out =
+            if *full > 0 { format!("ERROR {line}") } else { format!("INFO {line}") };
+        *throttled = 0;
+        *full = 0;
+        Some(out)
+    }
+
+    /// 收一条新连接的许可(全局并发硬上界;2026-07-31 评审)。None = 满,**或停机
+    /// 关栅已 close 信号量**(shutdown_admissions;两者对 upgrade 都是 503)。
+    pub fn try_admit_conn(&self) -> Option<tokio::sync::OwnedSemaphorePermit> {
+        self.conn_permits.clone().try_acquire_owned().ok()
     }
 
     /// 启动时从 sidecar 恢复计量记录(serve_inner 调用;`now` 给新建 meter 的
@@ -563,6 +627,10 @@ impl Hub {
     #[must_use]
     pub async fn shutdown_admissions(&self) -> bool {
         self.adm_closing.store(true, Ordering::Release);
+        // 连接 permit 栅同点关闭(2026-07-31 codex L1):close 后 try_acquire 恒 Err,
+        // ws_upgrade 的取 permit 分支即 503——「停收新连接」与关栅同一线性化点,
+        // 不再依赖 is_shutting_down 的 check-then-act。已发 permit 不受影响。
+        self.conn_permits.close();
         loop {
             let notified = self.adm_drained.notified();
             tokio::pin!(notified);
@@ -738,7 +806,7 @@ impl Hub {
                 + st.slots
                     .values()
                     .filter(|sl| sl.account == account)
-                    .filter_map(|sl| sl.joiner.as_ref().map(|(_, _, q)| q.load(Ordering::Relaxed)))
+                    .filter_map(|sl| sl.joiner.as_ref().map(|(_, _, q, _)| q.load(Ordering::Relaxed)))
                     .sum::<usize>()
                 + st.draining
                     .iter()
@@ -796,7 +864,7 @@ impl Hub {
             + st.online.values().map(|c| c.queued.load(Ordering::Relaxed)).sum::<usize>()
             + st.slots
                 .values()
-                .filter_map(|sl| sl.joiner.as_ref().map(|(_, _, q)| q.load(Ordering::Relaxed)))
+                .filter_map(|sl| sl.joiner.as_ref().map(|(_, _, q, _)| q.load(Ordering::Relaxed)))
                 .sum::<usize>()
             // 摘线/断开后 writer 仍持有的队列(内存未释放,prune 后的余量)。
             + st.draining.iter().map(|(_, q)| q.load(Ordering::Relaxed)).sum::<usize>();
@@ -870,7 +938,7 @@ impl Hub {
                 if s.owner_conn != conn_id {
                     return true;
                 }
-                if let Some((_, joiner_tx, _)) = &s.joiner {
+                if let Some((_, joiner_tx, _, _)) = &s.joiner {
                     push(joiner_tx, ServerMsg::PairPeer { event: PairEvent::Closed });
                 }
                 retire_joiner_ledger(draining, s);
@@ -907,7 +975,7 @@ impl Hub {
 
     /// 入槽(§4:未鉴权连接的唯一业务入口)。不存在/已用/过期恒同一个错
     /// (bad_slot,不给「槽存在与否」的探测面);成功即占用(单次),通知发起端。
-    pub fn pair_join(&self, conn_id: u64, tx: Tx, queued: QueuedBytes, slot: u64) -> Result<(), &'static str> {
+    pub fn pair_join(&self, conn_id: u64, tx: Tx, kick: KickTx, queued: QueuedBytes, slot: u64) -> Result<(), &'static str> {
         let mut st = self.state.lock().unwrap();
         let expired = st
             .slots
@@ -926,7 +994,7 @@ impl Hub {
             return Err(err_code::BAD_SLOT);
         }
         s.used = true;
-        s.joiner = Some((conn_id, tx, queued));
+        s.joiner = Some((conn_id, tx, queued, kick));
         push(&s.owner_tx, ServerMsg::PairPeer { event: PairEvent::Joined });
         Ok(())
     }
@@ -945,7 +1013,7 @@ impl Hub {
                 return Err(err_code::BAD_SLOT);
             }
             false
-        } else if s.joiner.as_ref().is_some_and(|(c, _, _)| *c == conn_id) {
+        } else if s.joiner.as_ref().is_some_and(|(c, _, _, _)| *c == conn_id) {
             true
         } else {
             return Err(err_code::BAD_SLOT);
@@ -968,7 +1036,7 @@ impl Hub {
             + st.online.values().map(|c| c.queued.load(Ordering::Relaxed)).sum::<usize>()
             + st.slots
                 .values()
-                .filter_map(|sl| sl.joiner.as_ref().map(|(_, _, q)| q.load(Ordering::Relaxed)))
+                .filter_map(|sl| sl.joiner.as_ref().map(|(_, _, q, _)| q.load(Ordering::Relaxed)))
                 .sum::<usize>()
             + st.draining.iter().map(|(_, q)| q.load(Ordering::Relaxed)).sum::<usize>();
         let account_used: usize = st
@@ -985,7 +1053,7 @@ impl Hub {
             + st.slots
                 .values()
                 .filter(|sl| sl.account == slot_account)
-                .filter_map(|sl| sl.joiner.as_ref().map(|(_, _, q)| q.load(Ordering::Relaxed)))
+                .filter_map(|sl| sl.joiner.as_ref().map(|(_, _, q, _)| q.load(Ordering::Relaxed)))
                 .sum::<usize>()
             + st.draining
                 .iter()
@@ -1017,7 +1085,7 @@ impl Hub {
                     }
                 }
             } else {
-                let (_, t, q) = sl.joiner.as_ref().expect("已证有 joiner");
+                let (_, t, q, _) = sl.joiner.as_ref().expect("已证有 joiner");
                 (t.clone(), q.clone())
             }
         };
@@ -1035,14 +1103,14 @@ impl Hub {
     pub fn pair_close(&self, conn_id: u64, slot: u64) -> Result<(), &'static str> {
         let mut st = self.state.lock().unwrap();
         let member = st.slots.get(&slot).is_some_and(|s| {
-            s.owner_conn == conn_id || s.joiner.as_ref().is_some_and(|(c, _, _)| *c == conn_id)
+            s.owner_conn == conn_id || s.joiner.as_ref().is_some_and(|(c, _, _, _)| *c == conn_id)
         });
         if !member {
             return Err(err_code::BAD_SLOT);
         }
         let s = st.slots.remove(&slot).expect("上一行已证存在");
         retire_joiner_ledger(&mut st.draining, &s);
-        let other = if s.owner_conn == conn_id { s.joiner.as_ref().map(|(_, t, _)| t.clone()) } else { Some(s.owner_tx.clone()) };
+        let other = if s.owner_conn == conn_id { s.joiner.as_ref().map(|(_, t, _, _)| t.clone()) } else { Some(s.owner_tx.clone()) };
         if let Some(tx) = other {
             push(&tx, ServerMsg::PairPeer { event: PairEvent::Closed });
         }
@@ -1225,7 +1293,7 @@ impl Hub {
                     return true;
                 }
                 push(&s.owner_tx, ServerMsg::PairPeer { event: PairEvent::Closed });
-                if let Some((_, joiner_tx, _)) = &s.joiner {
+                if let Some((_, joiner_tx, _, _)) = &s.joiner {
                     push(joiner_tx, ServerMsg::PairPeer { event: PairEvent::Closed });
                 }
                 retire_joiner_ledger(draining, s);
@@ -1263,11 +1331,11 @@ fn burn_slots_of(st: &mut HubState, conn_id: u64) {
     let HubState { slots, draining, .. } = st;
     slots.retain(|slot, s| {
         let is_owner = s.owner_conn == conn_id;
-        let is_joiner = s.joiner.as_ref().is_some_and(|(c, _, _)| *c == conn_id);
+        let is_joiner = s.joiner.as_ref().is_some_and(|(c, _, _, _)| *c == conn_id);
         if !is_owner && !is_joiner {
             return true;
         }
-        let other = if is_owner { s.joiner.as_ref().map(|(_, t, _)| t) } else { Some(&s.owner_tx) };
+        let other = if is_owner { s.joiner.as_ref().map(|(_, t, _, _)| t) } else { Some(&s.owner_tx) };
         if let Some(tx) = other {
             push(tx, ServerMsg::PairPeer { event: PairEvent::Left });
         }
@@ -1282,7 +1350,7 @@ fn burn_slots_of(st: &mut HubState, conn_id: u64) {
 fn burn_slot_notify_both(st: &mut HubState, slot: u64) {
     if let Some(s) = st.slots.remove(&slot) {
         push(&s.owner_tx, ServerMsg::PairPeer { event: PairEvent::Closed });
-        if let Some((_, joiner_tx, _)) = &s.joiner {
+        if let Some((_, joiner_tx, _, _)) = &s.joiner {
             push(joiner_tx, ServerMsg::PairPeer { event: PairEvent::Closed });
         }
         retire_joiner_ledger(&mut st.draining, &s);
@@ -1293,7 +1361,11 @@ fn burn_slot_notify_both(st: &mut HubState, slot: u64) {
 /// 它的唯一账本挂点;不转则烧槽即从派生消失,内存却还在其 mpsc 里)。owner 侧
 /// 账本挂在 online/draining,槽消亡不影响。
 fn retire_joiner_ledger(draining: &mut Vec<(String, QueuedBytes)>, s: &PairSlot) {
-    if let Some((_, _, q)) = &s.joiner {
+    if let Some((_, _, q, kick)) = &s.joiner {
+        // 槽死即踢 joiner(2026-07-31 codex H1;本函数是全部槽死点的公共汇点):
+        // 未鉴权连接只为这只槽活着,槽没了立刻断、归还连接 permit。若槽死正是
+        // joiner 自己发起(PairClose/断线),kick 落在已退出的循环后,无害。
+        let _ = kick.try_send(());
         if q.load(Ordering::Relaxed) > 0 && Arc::strong_count(q) > 1 {
             draining.push((s.account.clone(), q.clone()));
         }
@@ -1663,7 +1735,43 @@ mod tests {
         let (tx2, _rx2, kick2, _k2) = chan(64);
         assert!(attach_dev(&h, D1, [1; 32], 2, tx2.clone(), kick2));
         assert_eq!(h.pair_relay(1, slot, b"x".to_vec()), Err(err_code::BAD_SLOT));
-        assert_eq!(h.pair_join(9, tx2, QueuedBytes::default(), slot), Err(err_code::BAD_SLOT));
+        assert_eq!(h.pair_join(9, tx2, test_kick(), QueuedBytes::default(), slot), Err(err_code::BAD_SLOT));
+    }
+
+    /// 创号闸聚合日志(codex 二轮 M1):目录满 0→1 必须**立即**出 ERROR 行——
+    /// 窗口内只累计的话,唯一那次容量事件可能永远发不出来。
+    #[test]
+    fn signup_reject_log_flushes_first_directory_full() {
+        let (h, _bl) = hub_with_banlist(|_| {});
+        // 首次限流:立即落 INFO 行。
+        let l1 = h.signup_reject_line(false).expect("首次即落线");
+        assert!(l1.starts_with("INFO"), "{l1}");
+        // 窗口内再限流:累计不落线。
+        assert!(h.signup_reject_line(false).is_none());
+        // 窗口内第一次目录满:强制冲刷,ERROR 行、带累计的限流数。
+        let l2 = h.signup_reject_line(true).expect("目录满 0→1 必须立即落线");
+        assert!(l2.starts_with("ERROR"), "{l2}");
+        assert!(l2.contains("限流 1 次") && l2.contains("目录满 1 次"), "{l2}");
+        // 窗口内第二次目录满:回到累计(不再是 0→1)。
+        assert!(h.signup_reject_line(true).is_none());
+    }
+
+    /// 停机关栅与连接 permit 同一线性化点(codex 二轮 L2:此前删掉 close 也测不红):
+    /// 关栅前可取;关栅后即使旧 permit 归还,也永远取不到新的。
+    #[tokio::test]
+    async fn conn_permits_close_with_shutdown() {
+        let (h, _bl) = hub_with_banlist(|_| {});
+        let held = h.try_admit_conn().expect("关栅前可取");
+        assert!(h.shutdown_admissions().await);
+        assert!(h.try_admit_conn().is_none(), "关栅后拒新");
+        drop(held);
+        assert!(h.try_admit_conn().is_none(), "旧 permit 归还也不许再取");
+    }
+
+    /// 测试用 kick 专线(pair_join 新参)。接收端直接丢:单元测不驱动 conn 循环,
+    /// retire_joiner_ledger 的 try_send 对关闭通道 Err 且被忽略,行为无差。
+    fn test_kick() -> KickTx {
+        mpsc::channel(1).0
     }
 
     /// open-signup §1.2:封禁表热重载 = **即时失权**——reload 返回即线性化点:
@@ -1835,7 +1943,7 @@ mod tests {
         assert!(attach_dev(&h, D1, [1; 32], 1, tx1.clone(), kick1));
         let slot = h.pair_open(ACCT, D1, 1, tx1).unwrap();
         let (jtx, mut jrx, _jk, _jkr) = chan(64);
-        h.pair_join(9, jtx, QueuedBytes::default(), slot).unwrap();
+        h.pair_join(9, jtx, test_kick(), QueuedBytes::default(), slot).unwrap();
         assert_eq!(h.pair_relay(1, slot, b"m1".to_vec()), Ok(()));
         assert_eq!(h.pair_relay(9, slot, b"m2".to_vec()), Ok(()));
         assert_eq!(h.pair_relay(1, slot, b"m3".to_vec()), Err(err_code::BAD_SLOT), "超帧数配额");
@@ -1862,7 +1970,7 @@ mod tests {
         assert!(attach_dev(&h, D1, [1; 32], 1, tx1.clone(), kick1));
         let slot = h.pair_open(ACCT, D1, 1, tx1).unwrap();
         let (jtx, _jrx, _jk, _jkr) = chan(64);
-        h.pair_join(9, jtx, QueuedBytes::default(), slot).unwrap();
+        h.pair_join(9, jtx, test_kick(), QueuedBytes::default(), slot).unwrap();
         assert_eq!(h.pair_relay(1, slot, vec![0u8; 11]), Err(err_code::BAD_SLOT), "超字节配额");
 
         // 桥断(对端队满,push 失败):烧槽回错,不再装作还在配对。
@@ -1871,7 +1979,7 @@ mod tests {
         assert!(attach_dev(&h, D1, [1; 32], 1, tx1.clone(), kick1));
         let slot = h.pair_open(ACCT, D1, 1, tx1).unwrap();
         let (jtx, _jrx_kept, _jk, _jkr) = chan(1); // 容量 1:第一帧填满、第二帧必失败
-        h.pair_join(9, jtx, QueuedBytes::default(), slot).unwrap();
+        h.pair_join(9, jtx, test_kick(), QueuedBytes::default(), slot).unwrap();
         assert_eq!(h.pair_relay(1, slot, b"fill".to_vec()), Ok(()));
         assert_eq!(h.pair_relay(1, slot, b"boom".to_vec()), Err(err_code::BAD_SLOT), "桥断即烧");
         assert_eq!(h.pair_relay(1, slot, b"gone".to_vec()), Err(err_code::BAD_SLOT));
@@ -1891,17 +1999,17 @@ mod tests {
         let slot = h.pair_open(ACCT, D1, 1, tx1.clone()).unwrap();
         let (jtx, _jrx_kept, _jk, _jkr) = chan(64);
         let jq = QueuedBytes::default();
-        h.pair_join(9, jtx, jq.clone(), slot).unwrap();
+        h.pair_join(9, jtx, test_kick(), jq.clone(), slot).unwrap();
         assert_eq!(h.pair_relay(1, slot, vec![0u8; 60]), Ok(()));
         assert_eq!(jq.load(Ordering::Relaxed), 60, "PairMsg 已入 joiner 账本");
         tokio::time::sleep(std::time::Duration::from_millis(80)).await;
         // 过期后再 join:槽被内联删除——joiner 的 60B 必须转入 draining。
         let (jtx2, _jrx2, _jk2, _jkr2) = chan(64);
-        assert_eq!(h.pair_join(10, jtx2, QueuedBytes::default(), slot), Err(err_code::BAD_SLOT));
+        assert_eq!(h.pair_join(10, jtx2, test_kick(), QueuedBytes::default(), slot), Err(err_code::BAD_SLOT));
         // 新开槽再转发 60B:60(draining)+60 > 100 全局线 → 必须被顶住。
         let slot2 = h.pair_open(ACCT, D1, 1, tx1).unwrap();
         let (jtx3, _jrx3, _jk3, _jkr3) = chan(64);
-        h.pair_join(11, jtx3, QueuedBytes::default(), slot2).unwrap();
+        h.pair_join(11, jtx3, test_kick(), QueuedBytes::default(), slot2).unwrap();
         assert_eq!(
             h.pair_relay(1, slot2, vec![0u8; 60]),
             Err(err_code::BAD_SLOT),
@@ -1924,7 +2032,7 @@ mod tests {
         assert!(attach_dev(&h, D1, [1; 32], 1, tx1.clone(), kick1));
         let slot = h.pair_open(ACCT, D1, 1, tx1).unwrap();
         let (jtx, _jrx, _jk, _jkr) = chan(64);
-        h.pair_join(9, jtx, QueuedBytes::default(), slot).unwrap();
+        h.pair_join(9, jtx, test_kick(), QueuedBytes::default(), slot).unwrap();
         assert_eq!(h.pair_relay(1, slot, vec![0u8; 60]), Ok(()), "线内放行");
         assert_eq!(
             h.pair_relay(9, slot, vec![0u8; 60]),

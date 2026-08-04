@@ -49,11 +49,21 @@ impl Hlc {
         }
         let (wall_ms, counter) = parse_watermark(&s[..22]).map_err(|_| bad())?;
         let device = &s[23..];
-        if !device.bytes().all(is_crockford_upper) {
+        if !is_canonical_device_id(device) {
             return Err(bad());
         }
         Ok(Hlc { wall_ms, counter, device_id: device.to_string() })
     }
+}
+
+/// 设备 id 的规范形:恰 26 字符规范 Crockford base32(ULID 形态)。
+///
+/// **这把尺只此一份**——[`Hlc::parse`] 的 device 后缀与出入站 Hello 水位图的 key
+/// (`sync::ops_serve::vet_watermarks`,lan-direct-plan §10)共用它。理由同 `parse`
+/// 的抬头:设备身份只出自 `Ulid::new()`,别的形状都是伪造,而每个伪造 origin 白得
+/// 一份水位/池/挂起状态——两处各写一遍就是让「伪造无限 origin」从松的那处开闸。
+pub(crate) fn is_canonical_device_id(s: &str) -> bool {
+    s.len() == 26 && s.bytes().all(is_crockford_upper)
 }
 
 /// 规范 Crockford base32 字母表(ULID 编码字符集):0-9 + 大写 A-Z 去 I/L/O/U。

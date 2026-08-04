@@ -63,6 +63,16 @@ pub const FREE_TIER: &str = "free";
 pub const FREE_SEAT_QUOTA: u32 = 2;
 pub const FREE_FASTLANE_BYTES_PER_MONTH: u64 = 300 * 1024 * 1024;
 
+/// 创号闸默认值(2026-07-31 防御评审:开放创号下 register_first 可被脚本无限刷——
+/// 账户条目永不回收 + 每次创号全量重写 registry.json,进程自身必须有硬闸,不再只靠
+/// 反代/系统层兜)。令牌桶**只对「真要新建账户」花令牌**:幂等重试 / NotFirst /
+/// 封禁 / 墓碑都不花,老用户的鉴权与背书注册完全不经此闸。
+pub const SIGNUP_BURST: u32 = 20;
+/// 每枚令牌的补墨间隔(20 深 + 每分钟 1 枚:一群朋友同晚装机够用,脚本刷号封顶)。
+pub const SIGNUP_REFILL_SECS: u64 = 60;
+/// 账户目录硬上界(绝对磁盘/写放大封顶;到顶=运营容量事件,ERROR 告警人工处置)。
+pub const MAX_ACCOUNTS: usize = 10_000;
+
 impl Entitlement {
     /// **fail-closed 默认**(billing-plan §3):无记录按免费档执行——绝不静默给出
     /// 更宽参数,也绝不因「没设置」拒绝服务。
@@ -225,6 +235,12 @@ pub enum RegisterError {
     SeatLimit,
     /// 落盘失败(内存已回滚)。
     Persist,
+    /// register_first 创号令牌桶已空(洪泛闸,2026-07-31 评审):稍后重试。
+    /// 对外并进 busy——只有「真要新建账户」才走到这,老用户不受牵连。
+    SignupThrottled,
+    /// 账户目录已达 [`MAX_ACCOUNTS`] 硬上界:拒新创号(运营容量事件,conn 层
+    /// ERROR 告警;抬 Config 上界或人工清理墓碑后恢复)。对外并进 busy。
+    DirectoryFull,
 }
 
 /// 纪元席位租约(billing-plan §5,工序 2):纪元切换「先预注册新身份、后吊旧身份」
@@ -282,6 +298,14 @@ pub struct Registry {
     /// 封禁表文件路径(SIGHUP 热重载重读它;`path` 是 registry.json)。
     banlist_path: PathBuf,
     path: PathBuf,
+    /// 创号闸参数(2026-07-31 评审;默认 [`SIGNUP_BURST`]/[`SIGNUP_REFILL_SECS`]/
+    /// [`MAX_ACCOUNTS`],由 Hub 从 Config 注入,测试注小值烤洪泛路径)。桶态纯运行期
+    /// 不落盘(重启=满桶,无害:上界护的是持续洪泛,不是瞬时突刺)。
+    max_accounts: usize,
+    signup_burst: u32,
+    signup_refill: std::time::Duration,
+    signup_tokens: u32,
+    signup_last_refill: Option<std::time::Instant>,
 }
 
 /// 落盘形态(公钥 hex;entitlements `serde(default)`——旧 registry.json 无此键
@@ -499,6 +523,11 @@ impl Registry {
             free_seat: FREE_SEAT_QUOTA,
             banlist_path: banlist_path.to_owned(),
             path: registry_path,
+            max_accounts: MAX_ACCOUNTS,
+            signup_burst: SIGNUP_BURST,
+            signup_refill: std::time::Duration::from_secs(SIGNUP_REFILL_SECS),
+            signup_tokens: SIGNUP_BURST,
+            signup_last_refill: None,
         })
     }
 
@@ -714,6 +743,55 @@ impl Registry {
         self.free_seat = quota;
     }
 
+    /// Config 注入创号闸参数(Hub::new 调;测试注小值烤洪泛路径)。桶重置为满、
+    /// 基点清零(注入即换闸,不继承旧参数下攒的进度)。调用方保证三值均 ≥1/非零
+    /// (serve_inner fail-fast 校验)。
+    pub fn set_signup_limits(
+        &mut self,
+        burst: u32,
+        refill: std::time::Duration,
+        max_accounts: usize,
+    ) {
+        // fail-fast(serve_inner 已校验;这里是最后防线——0 值会让 signup_take
+        // 除零/永拒,绝不静默容忍)。
+        assert!(burst >= 1 && !refill.is_zero() && max_accounts >= 1, "创号闸参数须非零");
+        self.signup_burst = burst;
+        self.signup_refill = refill;
+        self.max_accounts = max_accounts;
+        self.signup_tokens = burst;
+        self.signup_last_refill = None;
+    }
+
+    /// 创号令牌桶:按 `now` 补墨后取一枚,空桶 = false。整数口径(每过一个 refill
+    /// 间隔补一枚,补满即以 now 重起算;桶满期间不攒历史时长)。单调钟由调用方给
+    /// (生产 `Instant::now()`,单元测合成 Instant 烤补墨边界)。
+    fn signup_take(&mut self, now: std::time::Instant) -> bool {
+        let last = *self.signup_last_refill.get_or_insert(now);
+        let deficit = self.signup_burst - self.signup_tokens;
+        if deficit == 0 {
+            self.signup_last_refill = Some(now);
+        } else {
+            // 纳秒整数口径(codex M4:毫秒截断会让亚毫秒 refill 静默改语义;refill
+            // 非零由 set_signup_limits 断言,除零不可达)。商全程留 u128、比较后才
+            // 窄转(codex 二轮 L1:as u64 是静默截断点,虽要 584 年 uptime 才碰得到)。
+            let refills = now.saturating_duration_since(last).as_nanos()
+                / self.signup_refill.as_nanos();
+            if refills >= u128::from(deficit) {
+                self.signup_tokens = self.signup_burst;
+                self.signup_last_refill = Some(now);
+            } else if refills > 0 {
+                // refills < deficit ≤ burst(u32),窄转换不truncate。
+                self.signup_tokens += refills as u32;
+                self.signup_last_refill = Some(last + self.signup_refill * refills as u32);
+            }
+        }
+        if self.signup_tokens == 0 {
+            return false;
+        }
+        self.signup_tokens -= 1;
+        true
+    }
+
     /// 账户在 `now` 所在 UTC 月的**生效 fastlane 额度**(billing-plan §4 工序 3;169)。
     /// FastlaneExhausted 的唯一 quota 判据(数据热路径只读)。有序月份语义:
     /// * grant.period == 本月 → `grant.quota`(已含月中升级抬升、月初 floor)。
@@ -786,6 +864,11 @@ impl Registry {
         }
     }
 
+    /// 账户目录总条数(含空墓碑;创号闸的分母,serve_inner 启动时用它核对超额)。
+    pub fn account_count(&self) -> usize {
+        self.accounts.len()
+    }
+
     /// 显式设置过的授权记录(admin 查询用,与「默认免费档」可区分;None=从未设置)。
     pub fn configured_entitlement(&self, account: &str) -> Option<&Entitlement> {
         self.entitlements.get(account)
@@ -827,6 +910,15 @@ impl Registry {
         }
         if self.device_owner(device).is_some() {
             return Err(RegisterError::DeviceIdTaken);
+        }
+        // 创号闸(2026-07-31 评审):此下恒是「真要新建账户」路径(上面幂等/墓碑/
+        // NotFirst 全部早返)。目录硬上界在前(到顶谁也不建、不花令牌),令牌桶在
+        // 最后一步(桶花掉才插行;落盘失败不退令牌——磁盘故障期更该收紧)。
+        if self.accounts.len() >= self.max_accounts {
+            return Err(RegisterError::DirectoryFull);
+        }
+        if !self.signup_take(std::time::Instant::now()) {
+            return Err(RegisterError::SignupThrottled);
         }
         self.accounts.entry(account.to_owned()).or_default().insert(device.to_owned(), pubkey);
         self.persist_or_rollback(account, device)
@@ -1076,6 +1168,84 @@ mod tests {
         // device_id 全局唯一:另一账户抢 D1(公钥不同或相同都拒——设备恒属一账户)。
         assert_eq!(r.register_first("ACCT_B", "D1", [9; 32]), Err(RegisterError::DeviceIdTaken));
         assert_eq!(r.register_first("ACCT_B", "D1", [1; 32]), Err(RegisterError::DeviceIdTaken));
+    }
+
+    /// 创号闸(2026-07-31 评审):令牌桶只对「真要新建账户」花令牌。证法(codex
+    /// M5:桶已空时的幂等放行证不了「不花」):burst=2,创 A 花第 1 枚,然后幂等
+    /// 重试 ×2、NotFirst ×2——若它们花令牌,B 就建不成;B 建成 = 第 2 枚还在。
+    #[test]
+    fn register_first_signup_gates() {
+        let dir = tmpdir("signup-gates");
+        let mut r = fresh(&dir);
+        r.set_signup_limits(2, std::time::Duration::from_secs(3600), 10);
+        assert_eq!(r.register_first("ACCT_A", "D1", [1; 32]), Ok(()));
+        assert_eq!(r.register_first("ACCT_A", "D1", [1; 32]), Ok(()));
+        assert_eq!(r.register_first("ACCT_A", "D1", [1; 32]), Ok(()));
+        assert_eq!(r.register_first("ACCT_A", "D2", [2; 32]), Err(RegisterError::NotFirst));
+        assert_eq!(r.register_first("ACCT_A", "D2", [2; 32]), Err(RegisterError::NotFirst));
+        assert_eq!(r.register_first("ACCT_B", "D2", [2; 32]), Ok(()));
+        // 两枚都花在真创号上,第三个新账户才被限流。
+        assert_eq!(r.register_first("ACCT_C", "D3", [3; 32]), Err(RegisterError::SignupThrottled));
+    }
+
+    /// 目录硬上界在令牌判定**之前**且不烧令牌(codex M5):max=1、burst=2——B 撞
+    /// 上界时桶里明明还有令牌,仍报 DirectoryFull 而非 Throttled;白盒复核那枚令牌
+    /// 原封未动。存量账户的背书注册不受创号闸影响。
+    #[test]
+    fn register_first_directory_cap_before_bucket_and_keeps_token() {
+        let dir = tmpdir("signup-cap");
+        let mut r = fresh(&dir);
+        r.set_signup_limits(2, std::time::Duration::from_secs(3600), 1);
+        assert_eq!(r.register_first("ACCT_A", "D1", [1; 32]), Ok(()));
+        assert_eq!(r.register_first("ACCT_B", "D2", [2; 32]), Err(RegisterError::DirectoryFull));
+        assert_eq!(r.register_first("ACCT_B", "D2", [2; 32]), Err(RegisterError::DirectoryFull));
+        let now = std::time::Instant::now();
+        assert!(r.signup_take(now), "DirectoryFull 不该烧令牌");
+        assert!(!r.signup_take(now), "只该剩那一枚(A 花掉的没复活)");
+        assert_eq!(r.register_device("ACCT_A", "D4", [4; 32], 8, t0()), Ok(()));
+    }
+
+    /// 亚毫秒 refill 的纳秒口径(codex M4/二轮 L1):500µs 一枚——毫秒 floor 实现
+    /// (除数 .max(1ms))会把 1ms 只算 1 枚补墨,本测在 t0+1ms 连取两枚,退回毫秒
+    /// 实现即红。
+    #[test]
+    fn signup_bucket_submillisecond_refill() {
+        let dir = tmpdir("signup-subms");
+        let mut r = fresh(&dir);
+        let step = std::time::Duration::from_micros(500);
+        r.set_signup_limits(2, step, 100);
+        let t0 = std::time::Instant::now();
+        assert!(r.signup_take(t0));
+        assert!(r.signup_take(t0));
+        assert!(!r.signup_take(t0 + std::time::Duration::from_micros(499)));
+        // 1ms = 两个 500µs 间隔:补满 2 枚。
+        assert!(r.signup_take(t0 + std::time::Duration::from_millis(1)));
+        assert!(r.signup_take(t0 + std::time::Duration::from_millis(1)));
+        assert!(!r.signup_take(t0 + std::time::Duration::from_millis(1)));
+    }
+
+    /// 令牌桶补墨口径:每 refill 间隔一枚、补满以 now 重起算、满桶不攒历史时长。
+    #[test]
+    fn signup_bucket_refill_semantics() {
+        let dir = tmpdir("signup-bucket");
+        let mut r = fresh(&dir);
+        let step = std::time::Duration::from_secs(60);
+        r.set_signup_limits(2, step, 100);
+        let t0 = std::time::Instant::now();
+        // 满桶(2 枚)期间基点随取推进:连取两枚成功、第三枚失败。
+        assert!(r.signup_take(t0));
+        assert!(r.signup_take(t0));
+        assert!(!r.signup_take(t0));
+        // 不满一个间隔:仍空。
+        assert!(!r.signup_take(t0 + step / 2));
+        // 过一个间隔补一枚,取走后又空。
+        assert!(r.signup_take(t0 + step));
+        assert!(!r.signup_take(t0 + step));
+        // 一次过两个间隔补满(封顶 burst=2),第三枚仍无——满桶不攒历史。
+        let t1 = t0 + step * 10;
+        assert!(r.signup_take(t1));
+        assert!(r.signup_take(t1));
+        assert!(!r.signup_take(t1));
     }
 
     #[test]

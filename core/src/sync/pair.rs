@@ -50,7 +50,7 @@ use sha2::Sha256;
 use spake2::{Ed25519Group, Identity, Password, Spake2};
 use sync_proto::is_ulid;
 
-use super::crypto::{crockford_char_value, CROCKFORD};
+use super::crypto::{crockford_char_value, ct_eq, CROCKFORD};
 
 /// 配对码 SECRET 的字符数(8 × 5 bit = 40 bit,§4/§6.1)。
 pub const SECRET_CHARS: usize = 8;
@@ -292,14 +292,6 @@ fn confirm_mac(confirm_key: &[u8; 32]) -> [u8; 32] {
     let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(confirm_key).expect("HMAC 任意钥长");
     mac.update(CONFIRM_LABEL);
     mac.finalize().into_bytes().into()
-}
-
-/// 常数时间比较(单次失败即烧槽,时序面本就只有一发;此为卫生习惯)。
-fn ct_eq(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
 /// 材料 AEAD 的 AAD:CBOR 数组 [版本铭牌, slot, 方向](绑槽防跨会话拼接、绑方向防

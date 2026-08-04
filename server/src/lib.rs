@@ -80,6 +80,29 @@ pub struct Config {
     /// 停机 drain 超时(169;默认 5s)。SIGTERM 关栅后等 in-flight 计数归零的上限;
     /// 超时 = best-effort checkpoint + 非零退出(不称最终快照)。测试注入短值烤超时路径。
     pub shutdown_drain_timeout: Duration,
+    /// 未鉴权握手截止(2026-07-31 防御评审):Fresh 态连接必须在此窗内完成
+    /// Auth / RegisterFirst / PairJoin,否则断开。静默判死对「定时 ping 保活的空
+    /// 连接」无效,这道是绝对钟——ping 不续命。PairJoined 放宽到槽 TTL + 余量,
+    /// Authed 解除(只剩静默判死)。
+    pub handshake_timeout: Duration,
+    /// 全局并发连接硬上界(同上评审:连接耗尽 DoS 的进程自身闸)。超限的 WS
+    /// upgrade 直接 503,permit 由连接任务 RAII 持有到死(abort/panic 不漏)。
+    /// 默认 32;组合包络**由 serve_inner 用真实尺寸校验**而非注释拍数(codex 三轮
+    /// H1:每连接未计账 = 下行 channel 槽位 `channel_cap × size_of::<ServerMsg>()`
+    /// + 1MiB 在途帧 + 1MiB CBOR 解码副本,对抗性可近 4MiB/连接):
+    /// `budget_global + max_conns × 每连接包络 ≤ MEMORY_ENVELOPE(448MiB
+    /// = MemoryMax 512M − 进程基线/allocator 预留 64MiB)`,超即拒启。
+    /// 两人自用+朋友尺度几十台设备,32 仍宽裕;要抬先抬 MemoryMax 再改
+    /// `MEMORY_ENVELOPE_BYTES`。生产单元另须 `LimitNOFILE > max_conns + 预留`
+    /// (deploy §1)。
+    pub max_conns: usize,
+    /// 创号令牌桶:桶深 / 每枚补墨间隔(只对「真要新建账户」花令牌;默认
+    /// `registry::SIGNUP_BURST` / `SIGNUP_REFILL_SECS`,测试注小值烤洪泛路径)。
+    pub signup_burst: u32,
+    pub signup_refill: Duration,
+    /// 账户目录硬上界(每次创号全量重写 registry.json、账户条目永不回收——无上界
+    /// = 磁盘与 O(n²) 写放大不封顶;默认 `registry::MAX_ACCOUNTS`)。
+    pub max_accounts: usize,
 }
 
 impl Config {
@@ -110,6 +133,11 @@ impl Config {
             free_fastlane_bytes_per_month: registry::FREE_FASTLANE_BYTES_PER_MONTH,
             free_seat_quota: registry::FREE_SEAT_QUOTA,
             shutdown_drain_timeout: Duration::from_secs(5),
+            handshake_timeout: Duration::from_secs(15),
+            max_conns: 32,
+            signup_burst: registry::SIGNUP_BURST,
+            signup_refill: Duration::from_secs(registry::SIGNUP_REFILL_SECS),
+            max_accounts: registry::MAX_ACCOUNTS,
         }
     }
 }
@@ -194,6 +222,60 @@ async fn serve_inner(
             "seat_lease_ttl 须 >0(0=租约生成即死,满席纪元切换被堵死)",
         ));
     }
+    // 洪泛闸配置不变量(2026-07-31 评审):三道闸的 0 值都是「谁也进不来」的配置
+    // 错误,fail-fast 拒启,不留静默全拒的残废服务。
+    if cfg.max_conns == 0 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "max_conns 须 ≥1(0=任何连接都进不来,配置错误)",
+        ));
+    }
+    if cfg.handshake_timeout.is_zero() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "handshake_timeout 须 >0(0=连接一到就被判死,配置错误)",
+        ));
+    }
+    if cfg.signup_burst == 0 || cfg.signup_refill.is_zero() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "signup_burst 须 ≥1 且 signup_refill 须 >0(0=永远建不了新账户,配置错误)",
+        ));
+    }
+    if cfg.max_accounts == 0 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "max_accounts 须 ≥1(0=永远建不了新账户,配置错误)",
+        ));
+    }
+    // 组合内存包络(codex 三轮 H1,用真实尺寸不拍脑袋):hub 统一预算之外,每条
+    // 连接还有三块不计账内存——下行 channel 的内联槽位(容量 × ServerMsg 枚举
+    // 尺寸)、~1MiB WS 在途帧、~1MiB CBOR 解码副本(blob 在解码期双份)。总和必须
+    // 压在 `MemoryMax − 进程基线预留` 之内,超即拒启(配置组合错误,不静默上线
+    // 等 OOM)。要抬连接数:先抬 systemd MemoryMax,再改这里的包络常量。
+    const MEMORY_ENVELOPE_BYTES: usize = 448 * 1024 * 1024; // 512M MemoryMax − 64MiB 基线
+    // 全程 checked 算术(codex 四轮 M1:release 下 usize 回绕会让超大配置算出小
+    // envelope 混过校验);任一步溢出 = 配置荒谬,与超限同款拒启。
+    let envelope = (|| {
+        let per_conn = cfg
+            .mailbox_max_frames
+            .checked_add(hub::REALTIME_HEADROOM)?
+            .checked_mul(std::mem::size_of::<sync_proto::ServerMsg>())?
+            .checked_add(2 * sync_proto::MAX_FRAME_BYTES)?;
+        cfg.budget_global_bytes.checked_add(cfg.max_conns.checked_mul(per_conn)?)
+    })();
+    match envelope {
+        Some(envelope) if envelope <= MEMORY_ENVELOPE_BYTES => {}
+        _ => {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!(
+                    "内存包络超限或溢出:budget_global({}) + max_conns({}) × 每连接包络 = {:?}B,上限 {MEMORY_ENVELOPE_BYTES}B——降 max_conns/budget 或抬 MemoryMax 后改包络常量",
+                    cfg.budget_global_bytes, cfg.max_conns, envelope
+                ),
+            ));
+        }
+    }
     // 达量限速上界校验(169,工序 3;codex C/G,§4 不变量②③):单帧最大限速等待
     // = device_cap·MAX_FRAME/rate ≤ silence/3(留 2/3 给路由/调度/心跳)。注入的 rate
     // 也过此校验、不许贴界配死限速(测试用小 quota 烤限速路径,不动这条上界)。
@@ -219,6 +301,16 @@ async fn serve_inner(
         ));
     }
     let registry = Registry::load(&cfg.banlist_path, cfg.registry_path.clone())?;
+    // 存量目录超上界(codex M2):升级/改配置后可能带着超额目录启动——存量用户
+    // 照常服务(fail-fast 拒启会把全体用户一起断掉,比超额更糟),但启动即响亮
+    // 告警,不等第一次创号才暴露。
+    let n_accounts = registry.account_count();
+    if n_accounts >= cfg.max_accounts {
+        logln(format!(
+            "ERROR 账户目录 {n_accounts} 条已达/超 max_accounts={},新创号将被拒——运营处置(抬上界或清理墓碑,deploy §2)",
+            cfg.max_accounts
+        ));
+    }
     let sweep_interval = cfg.sweep_interval;
     let meters_path = cfg.meters_path.clone();
     let checkpoint_interval = cfg.checkpoint_interval;
@@ -659,10 +751,16 @@ async fn ws_upgrade(State(hub): State<Arc<Hub>>, ws: WebSocketUpgrade) -> Respon
     if hub.is_shutting_down() {
         return (axum::http::StatusCode::SERVICE_UNAVAILABLE, "服务停机中").into_response();
     }
+    // 全局连接闸(2026-07-31 评审):upgrade 前取 permit,满 = 503。permit 随连接
+    // 任务活到死,Drop 即还(RAII;abort/panic 不漏)。刻意不逐条打日志——洪泛时
+    // 每拒一条一行会把 journal 打成放大器,拒是常态化闸不是异常。
+    let Some(permit) = hub.try_admit_conn() else {
+        return (axum::http::StatusCode::SERVICE_UNAVAILABLE, "连接数已满").into_response();
+    };
     // 帧上限在 WS 消息层强制(§3:服务器拒超;超限 = 连接错误断开)。
     ws.max_message_size(sync_proto::MAX_FRAME_BYTES)
         .max_frame_size(sync_proto::MAX_FRAME_BYTES)
-        .on_upgrade(move |socket| conn::handle(hub, socket))
+        .on_upgrade(move |socket| conn::handle(hub, socket, permit))
 }
 
 #[cfg(test)]

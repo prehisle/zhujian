@@ -1,7 +1,8 @@
 import { invoke } from "./space";
 import type { View, ViewCtx } from "./notebook";
-import { type TaskItem, PRIORITY_LABEL, dueLabel, dueState, localToday } from "./tasktime";
+import { type TaskItem, PRIORITY_LABEL, dueLabel, dueState, localToday, when } from "./tasktime";
 import { copyButton } from "./clipboard";
+import { toastAction } from "./toast";
 import { armDismiss, registerViewKeys } from "./hotkey-menu";
 import { TAG_COLORS } from "./tag-color";
 import "./topics.css";
@@ -40,18 +41,6 @@ function el<K extends keyof HTMLElementTagNameMap>(
   const node = Object.assign(document.createElement(tag), props);
   for (const c of children) node.append(c);
   return node;
-}
-
-// RFC3339 UTC -> a short local stamp, e.g. "6月13日 14:23".
-const fmt = new Intl.DateTimeFormat("zh-CN", {
-  month: "long",
-  day: "numeric",
-  hour: "2-digit",
-  minute: "2-digit",
-  hour12: false,
-});
-function when(iso: string): string {
-  return fmt.format(new Date(iso));
 }
 
 // ---- 前缀分组(纯视觉层级)---------------------------------------------------
@@ -155,11 +144,16 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     );
   }
 
+  // 只给**读取**失败用(refresh 的 catch;那里会清 lastSig,否则 refocus 指纹短路会把
+  // 错误页永久钉在屏上)。卡级操作失败一律就地/回执报错,绝不整页换错误页。
   function renderError(message: string): void {
+    const retry = el("button", { className: "mb-btn", textContent: "重试" });
+    retry.addEventListener("click", () => void refresh());
     list.replaceChildren(
       el("div", { className: "center" }, [
         el("div", { className: "big", textContent: "读取失败" }),
         el("div", { className: "err-box", textContent: message }),
+        retry,
       ]),
     );
   }
@@ -314,11 +308,20 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
 
     // 类型:一个自由文本输入(默认填当前类型),就地替换动作区。写入走 set_topic_kind
     // (空 = 清类型)。类型是元数据,供日后按类型筛选(如「人名」)。
+    // 行内操作失败:动作区就地报错(整页换错误页会被 refocus 指纹短路钉死,且把
+    // 一次瞬时失败放大成全视图不可用——ui-audit P0 #6 与 inbox/board 同规)。
+    function showOpError(e: unknown): void {
+      actions.replaceChildren(
+        el("span", { className: "te-err", textContent: `操作失败:${String(e)}` }),
+        tbtn("知道了", showActions),
+      );
+    }
+
     async function saveKind(value: string | null): Promise<void> {
       try {
         await invoke("set_topic_kind", { id: topic.id, kind: value });
       } catch (e) {
-        renderError(String(e));
+        showOpError(e);
         return;
       }
       await refresh();
@@ -354,7 +357,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       try {
         await invoke("set_topic_color", { id: topic.id, color: hex });
       } catch (e) {
-        renderError(String(e));
+        showOpError(e);
         return;
       }
       await refresh();
@@ -405,7 +408,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       try {
         await invoke("delete_topic", { id: topic.id });
       } catch (e) {
-        renderError(String(e));
+        showOpError(e);
         return;
       }
       await refresh();
@@ -540,11 +543,18 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     if (tIdx < 0) return;
     const prevId = after ? targetId : (sibIds[tIdx - 1] ?? null);
     const nextId = after ? (sibIds[tIdx + 1] ?? null) : targetId;
-    // 落回原位(前后邻都没变)= no-op,不发命令。
+    // 落回原位(前后邻都没变)= no-op,不发命令(否则白写一枚 position key、白发
+    // 一条同步 op——LWW 无害但脏)。当前邻居按含被拖行的 DOM 顺序取。
+    const all = ([...container.children] as HTMLElement[])
+      .filter((c) => c.matches("section.topic") && c.dataset.topicId)
+      .map((c) => c.dataset.topicId as string);
+    const dIdx = all.indexOf(dragId);
+    if ((all[dIdx - 1] ?? null) === prevId && (all[dIdx + 1] ?? null) === nextId) return;
     try {
       await invoke("reorder_topic", { id: dragId, prevId, nextId });
     } catch (e) {
-      renderError(String(e));
+      // 操作失败走回执,不整页换错误页(拖动没有稳定的行内报错锚点)。
+      toastAction(`调整顺序失败:${String(e)}`, 3200);
       return;
     }
     await refresh();
@@ -710,8 +720,10 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       setMerging(false);
       await refresh();
     } catch (err) {
-      disarmConfirm(); // 换错误页 = 整批替换,在场确认监听一并收走(codex 二审 M)
-      renderError(String(err));
+      confirming = false;
+      paintBar();
+      // 操作失败走回执(合并栏还在,选择保留,用户可改后重试),不整页换错误页。
+      toastAction(`合并失败:${String(err)}`, 3200);
     }
   }
 

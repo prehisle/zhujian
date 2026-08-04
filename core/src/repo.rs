@@ -330,7 +330,7 @@ pub fn idea_stats(conn: &Connection, week_start: &str) -> rusqlite::Result<IdeaS
 pub fn idea_trash(conn: &Connection) -> rusqlite::Result<Vec<OrganizedRow>> {
     organized_rows(
         conn,
-        &format!("i.stage IN {IDEA_STAGES} AND i.archived_at IS NOT NULL"),
+        &format!("i.stage IN {IDEA_STAGES} AND i.archived_at IS NOT NULL AND i.sealed_at IS NULL"),
         "i.archived_at DESC",
     )
 }
@@ -396,13 +396,20 @@ pub fn live_timeline(conn: &Connection) -> rusqlite::Result<Vec<TimelineRow>> {
 /// 统一回收站(120 安卓:灵感+任务合并一屏,最近删除在前)。单一 LEFT JOIN 单快照,
 /// 标签相邻分组与 live_timeline 同一手法;`archived_at DESC, id DESC` 全局可比的
 /// 删除时间轴(同刻并列按 id 打平)。
+///
+/// **双轴行不进回收站(2026-07-31 评审)**:两端并发「归档成就 × 删进回收站」经
+/// LWW 合并会产出 archived_at 与 sealed_at 同时非空的行(回放豁免放行,数据层已
+/// 声明的政策)。归档=不可删的史实,这样的行归**归档册单独管**(出路=取消归档,
+/// 之后它就是普通回收站条目)——否则它两处重复显示,且清空回收站会撞归档禁删
+/// 触发器整事务回滚、回收站从此清不空。**回收站家族谓词一律 `sealed_at IS NULL`**
+/// (列表/还原/单删/清空共 10 处,漏一处=英文触发器报错重现)。
 pub fn trash_items(conn: &Connection) -> rusqlite::Result<Vec<TrashRow>> {
     let mut stmt = conn.prepare(
         "SELECT i.id, i.content, i.created_at, i.archived_at, i.stage, t.id, t.title, t.color \
          FROM items i \
          LEFT JOIN item_topic it ON it.item_id = i.id \
          LEFT JOIN topics t ON t.id = it.topic_id \
-         WHERE i.archived_at IS NOT NULL \
+         WHERE i.archived_at IS NOT NULL AND i.sealed_at IS NULL \
          ORDER BY i.archived_at DESC, i.id DESC, t.position IS NULL, t.position, t.updated_at, t.id",
     )?;
     let rows = stmt.query_map([], |r| {
@@ -435,7 +442,7 @@ pub fn trash_items(conn: &Connection) -> rusqlite::Result<Vec<TrashRow>> {
 /// 一次删空整个回收站(全 stage,120 统一清空的存储原语)。0004 触发器仍在场守
 /// 「只有已归档可硬删」——WHERE 天然满足;返回删除行数供编排层与点名数核对。
 pub fn purge_all_trash(conn: &Connection) -> rusqlite::Result<usize> {
-    conn.execute("DELETE FROM items WHERE archived_at IS NOT NULL", [])
+    conn.execute("DELETE FROM items WHERE archived_at IS NOT NULL AND sealed_at IS NULL", [])
 }
 
 /// Full-text-ish search over EVERY item — current text or any superseded version
@@ -1016,7 +1023,7 @@ pub fn list_tasks(conn: &Connection) -> rusqlite::Result<Vec<TaskRow>> {
 pub fn archived_tasks(conn: &Connection) -> rusqlite::Result<Vec<TaskRow>> {
     task_rows(
         conn,
-        &format!("i.stage IN {TASK_STAGES} AND i.archived_at IS NOT NULL"),
+        &format!("i.stage IN {TASK_STAGES} AND i.archived_at IS NOT NULL AND i.sealed_at IS NULL"),
         "i.archived_at DESC",
     )
 }
@@ -1183,7 +1190,7 @@ pub fn restore_idea(conn: &Connection, id: &str) -> rusqlite::Result<usize> {
     let now = now_iso();
     let sql = format!(
         "UPDATE items SET archived_at = NULL, updated_at = ?2 \
-         WHERE id = ?1 AND stage IN {IDEA_STAGES} AND archived_at IS NOT NULL"
+         WHERE id = ?1 AND stage IN {IDEA_STAGES} AND archived_at IS NOT NULL AND sealed_at IS NULL"
     );
     conn.execute(&sql, (id, &now))
 }
@@ -1193,7 +1200,7 @@ pub fn restore_idea(conn: &Connection, id: &str) -> rusqlite::Result<usize> {
 /// Returns rows deleted.
 pub fn purge_idea(conn: &Connection, id: &str) -> rusqlite::Result<usize> {
     let sql = format!(
-        "DELETE FROM items WHERE id = ?1 AND stage IN {IDEA_STAGES} AND archived_at IS NOT NULL"
+        "DELETE FROM items WHERE id = ?1 AND stage IN {IDEA_STAGES} AND archived_at IS NOT NULL AND sealed_at IS NULL"
     );
     conn.execute(&sql, [id])
 }
@@ -1201,7 +1208,7 @@ pub fn purge_idea(conn: &Connection, id: &str) -> rusqlite::Result<usize> {
 /// Empty the 灵感回收站: hard-delete every archived idea. Returns how many were removed.
 pub fn purge_archived_ideas(conn: &Connection) -> rusqlite::Result<usize> {
     let sql = format!(
-        "DELETE FROM items WHERE stage IN {IDEA_STAGES} AND archived_at IS NOT NULL"
+        "DELETE FROM items WHERE stage IN {IDEA_STAGES} AND archived_at IS NOT NULL AND sealed_at IS NULL"
     );
     conn.execute(&sql, [])
 }
@@ -1230,7 +1237,7 @@ pub fn restore_task(conn: &Connection, id: &str, stage: &str) -> rusqlite::Resul
     let key = end_key(conn, stage, id)?;
     conn.execute(
         "UPDATE items SET archived_at = NULL, updated_at = ?2, position = ?4 \
-         WHERE id = ?1 AND stage = ?3 AND archived_at IS NOT NULL",
+         WHERE id = ?1 AND stage = ?3 AND archived_at IS NOT NULL AND sealed_at IS NULL",
         (id, &now, stage, &key),
     )
 }
@@ -1239,7 +1246,7 @@ pub fn restore_task(conn: &Connection, id: &str, stage: &str) -> rusqlite::Resul
 /// guard means it must be soft-archived first. Returns rows deleted.
 pub fn purge_task(conn: &Connection, id: &str) -> rusqlite::Result<usize> {
     let sql = format!(
-        "DELETE FROM items WHERE id = ?1 AND stage IN {TASK_STAGES} AND archived_at IS NOT NULL"
+        "DELETE FROM items WHERE id = ?1 AND stage IN {TASK_STAGES} AND archived_at IS NOT NULL AND sealed_at IS NULL"
     );
     conn.execute(&sql, [id])
 }
@@ -1247,7 +1254,7 @@ pub fn purge_task(conn: &Connection, id: &str) -> rusqlite::Result<usize> {
 /// Empty the 任务回收站: hard-delete every archived board card. Returns how many were removed.
 pub fn purge_archived_tasks(conn: &Connection) -> rusqlite::Result<usize> {
     let sql = format!(
-        "DELETE FROM items WHERE stage IN {TASK_STAGES} AND archived_at IS NOT NULL"
+        "DELETE FROM items WHERE stage IN {TASK_STAGES} AND archived_at IS NOT NULL AND sealed_at IS NULL"
     );
     conn.execute(&sql, [])
 }
@@ -1828,6 +1835,42 @@ mod tests {
         // 存储原语一次删空全 stage(0004 触发器守卫下 WHERE 天然合法)。
         assert_eq!(purge_all_trash(&conn).unwrap(), 2);
         assert!(trash_items(&conn).unwrap().is_empty());
+    }
+
+    /// 双轴行(archived_at 与 sealed_at 同时非空,只有 LWW 并发合并造得出):归归档册
+    /// 单独管、不进回收站家族;清空回收站不再被它撞归档禁删触发器整事务回滚;出路
+    /// =取消归档,之后按普通回收站条目处置(2026-07-31 评审)。
+    #[test]
+    fn dual_axis_row_lives_in_sealed_book_only_and_trash_still_purges() {
+        let conn = fresh_db();
+        // 造双轴行:done 任务先归档成就,再模拟远端删除的 archived_at 经回放豁免落上
+        // (0017 冻结触发器对第一方直写会拒,回放豁免正是真实合并走的门)。
+        let task = insert_task(&conn, "两端并发归档×删除", None, None).unwrap();
+        conn.execute("UPDATE items SET stage='done' WHERE id=?1", [&task]).unwrap();
+        assert_eq!(seal_task(&conn, &task).unwrap(), 1);
+        conn.execute("INSERT INTO sync_replay_active (flag) VALUES (1)", []).unwrap();
+        conn.execute(
+            "UPDATE items SET archived_at='2026-07-30T00:00:00Z' WHERE id=?1",
+            [&task],
+        )
+        .unwrap();
+        conn.execute("DELETE FROM sync_replay_active", []).unwrap();
+        // 单一归属:归档册在、回收站(统一/任务侧)不在。
+        assert!(sealed_tasks(&conn).unwrap().iter().any(|r| r.id == task));
+        assert!(!trash_items(&conn).unwrap().iter().any(|r| r.id == task));
+        assert!(!archived_tasks(&conn).unwrap().iter().any(|r| r.id == task));
+        // 回收站家族的写原语全部 0 行绕开它(不再撞触发器):
+        assert_eq!(purge_task(&conn, &task).unwrap(), 0);
+        assert_eq!(restore_task(&conn, &task, "done").unwrap(), 0);
+        // 清空回收站照常工作:只清普通条目、双轴行不动、不整事务失败。
+        let plain = add_item(&conn, "普通回收站条目").unwrap();
+        assert_eq!(archive_idea(&conn, &plain).unwrap(), 1);
+        assert_eq!(purge_all_trash(&conn).unwrap(), 1);
+        assert!(sealed_tasks(&conn).unwrap().iter().any(|r| r.id == task));
+        // 出路:取消归档 → 变普通已删任务(回收站可见、可彻底删)。
+        assert_eq!(unseal_task(&conn, &task).unwrap(), 1);
+        assert!(trash_items(&conn).unwrap().iter().any(|r| r.id == task));
+        assert_eq!(purge_task(&conn, &task).unwrap(), 1);
     }
 
     #[test]

@@ -194,16 +194,27 @@ pub struct SpaceSupervisor {
     /// 真退出前不交还。超限 activate 响亮拒、不排队:「新空间只在旧空间交还 permit
     /// 后起」的次序由壳的切换编排保证(先 stop 成功、后 activate)。
     max_live: usize,
+    /// app 级局域网监听器与准入表(lan-direct-plan §6;L-c3a)。**每 app 一枚**——
+    /// 一台机器只有一个 24618 端口,而桌面壳 eager 装配全部空间,故 socket 只有一只、
+    /// 拨入方靠 Intro 的 MAC 自证它找的是哪个空间。`None` = 本端不监听(手机壳:§6
+    /// 「手机壳不监听、只拨出」,拨号器归 L-c3b)。
+    lan: Option<Arc<transport::LanAdmission>>,
     generation: AtomicU64,
     live: RwLock<HashMap<String, Slot>>,
 }
 
 impl SpaceSupervisor {
-    pub fn new(rt: tokio::runtime::Handle, max_live: usize) -> SpaceSupervisor {
+    /// `lan` = app 级局域网监听器(桌面壳传 `Some`,手机壳与测试传 `None`)。
+    pub fn new(
+        rt: tokio::runtime::Handle,
+        max_live: usize,
+        lan: Option<Arc<transport::LanAdmission>>,
+    ) -> SpaceSupervisor {
         assert!(max_live >= 1, "max_live 至少 1");
         SpaceSupervisor {
             rt,
             max_live,
+            lan,
             generation: AtomicU64::new(0),
             live: RwLock::new(HashMap::new()),
         }
@@ -362,6 +373,16 @@ impl SpaceSupervisor {
                 // transport 在 DETACH 终败**判定那一刻**置位,壳层写闸即时拒写——
                 // 下面 run 返回后的 wrapper 赋值只是幂等兜底。
                 restart_flag: restart_required.clone(),
+                // 本空间在 app 级监听器上的席位(§6 准入表的键 = 空间 id)。壳没给
+                // 监听器(手机)= None,直连的监听面整个不存在。
+                lan: self.lan.as_ref().map(|a| transport::LanHost {
+                    space_id: spec.id.clone(),
+                    admission: Arc::clone(a),
+                    // 注册者号 = 本次激活的代次(全局递增、永不复用),故 `stop` 说得出
+                    // 「摘谁的」而不必等 transport 自己退出(lan-direct-plan §6:停机要
+                    // **先**摘准入条目,再走既有停机 watch)。
+                    owner: generation,
+                }),
             };
             let restart = restart_required.clone();
             Some(self.rt.spawn(async move {
@@ -395,6 +416,20 @@ impl SpaceSupervisor {
         Ok(rt)
     }
 
+    /// **先摘局域网准入条目,再拉停机信号**(lan-direct-plan §6 / L-c3a 实现审 H1):翻
+    /// Stopping 之后这个空间就不该再收下任何新的直连拨入了,而准入条目若要等 transport
+    /// 自己退出才由 `AdmitLease` 摘,「已 Stopping 却还在认新链」的窗口就等于整个停机耗时
+    /// (在飞长命令 + join,上界 10s)。同一句顺带 abort 该空间全部未移交的 pre-auth 握手
+    /// 任务。幂等:transport 收场时那声 `deregister` 号对得上也只是重复摘一次。
+    fn drop_lan_seat(&self, id: &str, generation: u64) {
+        if let Some(lan) = &self.lan {
+            // **最终撤席**(不是临时撤位):这一代 runtime 正在停机 / 重置,而它的 transport
+            // 可能还没观察到停机信号——它每 15s 一轮的拨号巡查会拿着仍然存在的席位再注册
+            // 一次,把条目复活(codex L-c3b 四轮 H1)。revoke 记下水位,同代及更早一律拒。
+            lan.revoke(id, generation);
+        }
+    }
+
     /// 安全停机:Running→Stopping(占着 permit、`get` 即拒)→ 挡新长命令 + 拉高停机
     /// 信号 → 等在飞长命令(配对)放手旧 runtime/连接 → await 任务真退出 → 移除表项。
     /// 两段等待共用一个 10s deadline。任一步未按时完成 = Err 响亮,空间**留在 Stopping**
@@ -426,6 +461,7 @@ impl SpaceSupervisor {
         // 控制通道可能被排队命令占位,不许拖住停机;任务与在飞长命令都在各自 await
         // 点收到)。veto 空间无任务、无人听,send 失败无妨。
         rt.ops.state.lock().expect("ops mutex poisoned").closing = true;
+        self.drop_lan_seat(id, rt.generation);
         let _ = rt.shutdown.send(true);
         // H1:先等在飞的长命令(配对)放手旧 runtime/连接,调用方才可安全激活出下一
         // 条连接。notified 先登记(enable)再查计数,零丢唤醒;归零即过。超时=留
@@ -511,6 +547,7 @@ impl SpaceSupervisor {
         let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
         // 与 stop 同一套收场:挡新长命令、停机信号、等在飞长命令、join 任务。
         rt.ops.state.lock().expect("ops mutex poisoned").closing = true;
+        self.drop_lan_seat(id, rt.generation);
         let _ = rt.shutdown.send(true);
         loop {
             let waiter = rt.ops.done.notified();
@@ -687,7 +724,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn activate_runs_transport_and_stop_joins_it() {
-        let sup = SpaceSupervisor::new(tokio::runtime::Handle::current(), 2);
+        let sup = SpaceSupervisor::new(tokio::runtime::Handle::current(), 2, None);
         let (path, conn, clock) = test_db("run");
         let (s, _ev) = spec("main", &path, None);
         let rt = sup.activate(s, conn, clock).unwrap();
@@ -706,11 +743,84 @@ mod tests {
         sup.stop("main").await.unwrap();
     }
 
+    /// **停机先摘局域网准入条目**(lan-direct-plan §6 / L-c3a 实现审 H1)。行为半:
+    /// `stop` 之后条目必须不在了(注册者号 = 本次激活的代次,故 supervisor 说得出摘谁的)。
+    /// 顺序半靠下面那条词法锚——「在 transport 退出之前就摘掉了」这件事,行为测只有把
+    /// 停机卡住才看得见,而那要么改产品代码要么造不出确定时刻。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn stop_drops_the_lan_admission_seat() {
+        let lan = transport::LanAdmission::ephemeral();
+        let sup = SpaceSupervisor::new(
+            tokio::runtime::Handle::current(),
+            2,
+            Some(Arc::clone(&lan)),
+        );
+        let (path, conn, clock) = test_db("lan-seat");
+        // **刻意用 veto 空间**:它压根不 spawn transport,故没有 `AdmitLease` 会在 `run`
+        // 收场时替 `stop` 把条目摘掉——这条测因此真的只证 `stop` 自己那一句。用正常空间
+        // 的话,把 `drop_lan_seat` 整句删掉本测照样绿(lease 顺手背了书),那就是假绿
+        // (变异对照当场抓到过)。
+        let (s, _ev) = spec("main", &path, Some("测试:此空间同步停用".into()));
+        let rt = sup.activate(s, conn, clock).unwrap();
+        assert!(rt.veto().is_some(), "veto 空间不起 transport");
+        // 手工放一条同号条目当探针(veto 空间自然不会自己注册)。
+        let (handoff, _rx) = mpsc::channel(4);
+        lan.register(crate::sync::lan_net::Registration {
+            space_id: "main".into(),
+            owner: rt.generation,
+            account_id: "01ACCTAAAAAAAAAAAAAAAAAAAA".into(),
+            self_device: "01SELFAAAAAAAAAAAAAAAAAAAA".into(),
+            k_acc: [5u8; 32],
+            self_seed: [6u8; 32],
+            db: rt.db.clone(),
+            active: Arc::new(Mutex::new(std::collections::HashSet::new())),
+            handoff,
+        })
+        .expect("探针条目该放得进去");
+        assert!(lan.epoch_of("main").is_some(), "条目在");
+        sup.stop("main").await.unwrap();
+        assert!(lan.epoch_of("main").is_none(), "stop 必须把准入条目摘掉");
+
+        // **而且是最终撤席,不是临时撤位**(L-c3b 四轮 H1):那个 runtime 的 transport 可能
+        // 还没观察到停机信号,它每 15s 一轮的拨号巡查会拿着仍然存在的席位再注册一次——摘了
+        // 又被插回去,「Stopping 之后不再认新链」就白设了。同代重注册必须被拒。
+        let probe = |owner: u64| crate::sync::lan_net::Registration {
+            space_id: "main".into(),
+            owner,
+            account_id: "01ACCTAAAAAAAAAAAAAAAAAAAA".into(),
+            self_device: "01SELFAAAAAAAAAAAAAAAAAAAA".into(),
+            k_acc: [5u8; 32],
+            self_seed: [6u8; 32],
+            db: rt.db.clone(),
+            active: Arc::new(Mutex::new(std::collections::HashSet::new())),
+            handoff: mpsc::channel(4).0,
+        };
+        assert!(lan.register(probe(rt.generation)).is_err(), "已撤销的代次不许把条目插回去");
+        assert!(lan.epoch_of("main").is_none(), "条目没被复活");
+        // 新 runtime(更高代次)照常:撤席不是「这个空间从此不能直连」。
+        assert!(lan.register(probe(rt.generation + 1)).is_ok(), "新 runtime 该注册得上");
+    }
+
+    /// 顺序锚:`stop` 与 `begin_reset` 里,摘准入条目必须排在拉停机信号**之前**。
+    #[test]
+    fn the_lan_seat_is_dropped_before_the_shutdown_signal() {
+        let src = include_str!("supervisor.rs");
+        let prod = &src[..src.find("mod tests {").expect("本文件有测试模块")];
+        let drops: Vec<usize> = prod.match_indices("self.drop_lan_seat(id,").map(|(i, _)| i).collect();
+        let signals: Vec<usize> =
+            prod.match_indices("rt.shutdown.send(true)").map(|(i, _)| i).collect();
+        assert_eq!(drops.len(), 2, "两条收场路径(stop / begin_reset)各一次");
+        assert_eq!(signals.len(), 2, "停机信号也恰两处");
+        for (d, s) in drops.iter().zip(signals.iter()) {
+            assert!(d < s, "摘条目必须排在拉停机信号之前");
+        }
+    }
+
     /// is_stopped(跨空间移动的目标槽位闸,codex 安卓实现审 #1):Running 空间 false;
     /// 从未激活的 id 与停机后都是 true(表里无槽 = 可安全开一次性写连接)。
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn is_stopped_reflects_slot_presence() {
-        let sup = SpaceSupervisor::new(tokio::runtime::Handle::current(), 2);
+        let sup = SpaceSupervisor::new(tokio::runtime::Handle::current(), 2, None);
         let (path, conn, clock) = test_db("stopq");
         let (s, _ev) = spec("main", &path, None);
         sup.activate(s, conn, clock).unwrap();
@@ -728,7 +838,7 @@ mod tests {
     /// 同一枚 Arc(判定那一刻置位即读得到),壳层写闸据 accessor 拒写。
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn restart_required_flag_is_shared_and_readable() {
-        let sup = SpaceSupervisor::new(tokio::runtime::Handle::current(), 2);
+        let sup = SpaceSupervisor::new(tokio::runtime::Handle::current(), 2, None);
         let (path, conn, clock) = test_db("restart");
         let (s, _ev) = spec("main", &path, None);
         let rt = sup.activate(s, conn, clock).unwrap();
@@ -740,7 +850,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn activate_rejects_duplicate_and_over_limit() {
-        let sup = SpaceSupervisor::new(tokio::runtime::Handle::current(), 1);
+        let sup = SpaceSupervisor::new(tokio::runtime::Handle::current(), 1, None);
         let (path_a, conn_a, clock_a) = test_db("cap-a");
         let (s, _ev) = spec("a", &path_a, None);
         sup.activate(s, conn_a, clock_a).unwrap();
@@ -762,7 +872,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn vetoed_space_has_no_task_and_stop_is_still_clean() {
-        let sup = SpaceSupervisor::new(tokio::runtime::Handle::current(), 2);
+        let sup = SpaceSupervisor::new(tokio::runtime::Handle::current(), 2, None);
         let (path, conn, clock) = test_db("veto");
         let (s, _ev) = spec("v", &path, Some("身份撞了".into()));
         let rt = sup.activate(s, conn, clock).unwrap();
@@ -782,7 +892,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn activate_rejects_swapped_file_against_descriptor_key() {
-        let sup = SpaceSupervisor::new(tokio::runtime::Handle::current(), 2);
+        let sup = SpaceSupervisor::new(tokio::runtime::Handle::current(), 2, None);
         let (path, conn, clock) = test_db("swap");
         // descriptor 记录的是「另一个文件」的身份 → 激活时现算不符,拒。
         let other = path.parent().unwrap().join("other.bin");
@@ -798,7 +908,7 @@ mod tests {
     async fn activate_rejects_conn_not_backed_by_expected_file() {
         // path/expected 指 A、传入的 conn 却开着 B(装配错位):UI 会显示 A、
         // transport 实际写 B——必须拒(codex 二轮 M2 的 conn↔path 绑定)。
-        let sup = SpaceSupervisor::new(tokio::runtime::Handle::current(), 2);
+        let sup = SpaceSupervisor::new(tokio::runtime::Handle::current(), 2, None);
         let (path_a, conn_a, _clock_a) = test_db("bind-a");
         drop(conn_a);
         let (_path_b, conn_b, clock_b) = test_db("bind-b");
@@ -824,7 +934,7 @@ mod tests {
             z = "00".repeat(32),
         ))
         .unwrap();
-        let sup = SpaceSupervisor::new(tokio::runtime::Handle::current(), 1);
+        let sup = SpaceSupervisor::new(tokio::runtime::Handle::current(), 1, None);
         let (s, _ev) = spec("stuck", &path, None);
         let rt = sup.activate(s, conn, clock).unwrap();
         wait_state(&rt.status, "connecting").await;
@@ -843,7 +953,7 @@ mod tests {
     /// 满员再 reserve 拒;Drop 交还 permit——「开第二条连接前先占坑」的地基。
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn reserve_holds_permit_invisible_and_releases_on_drop() {
-        let sup = SpaceSupervisor::new(tokio::runtime::Handle::current(), 1);
+        let sup = SpaceSupervisor::new(tokio::runtime::Handle::current(), 1, None);
         let r = sup.reserve("a").unwrap();
         assert_eq!(sup.count(), 1, "Starting 计入 permit");
         assert!(sup.get("a").map(|_| ()).unwrap_err().contains("正在启动"), "Starting 对 get 不可见");
@@ -862,7 +972,7 @@ mod tests {
     /// guard 一放 stop 迅速收场。
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn stop_waits_for_in_flight_op_and_blocks_new_ones() {
-        let sup = Arc::new(SpaceSupervisor::new(tokio::runtime::Handle::current(), 1));
+        let sup = Arc::new(SpaceSupervisor::new(tokio::runtime::Handle::current(), 1, None));
         let (path, conn, clock) = test_db("op");
         let (s, _ev) = spec("a", &path, None);
         let rt = sup.activate(s, conn, clock).unwrap();
@@ -892,7 +1002,7 @@ mod tests {
     /// 阴性对照:文件步失败绝不放行重新激活)。
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn begin_reset_tombstones_waits_for_refs_and_finish_releases() {
-        let sup = Arc::new(SpaceSupervisor::new(tokio::runtime::Handle::current(), 2));
+        let sup = Arc::new(SpaceSupervisor::new(tokio::runtime::Handle::current(), 2, None));
         let (path, conn, clock) = test_db("reset");
         let (s, _ev) = spec("a", &path, None);
         let rt = sup.activate(s, conn, clock).unwrap();
@@ -931,7 +1041,7 @@ mod tests {
     /// 未激活空间(手机后台空间/桌面未开)重置:直插墓碑挡并发激活,finish 即除。
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn begin_reset_on_inactive_space_inserts_tombstone() {
-        let sup = SpaceSupervisor::new(tokio::runtime::Handle::current(), 2);
+        let sup = SpaceSupervisor::new(tokio::runtime::Handle::current(), 2, None);
         let ticket = sup.begin_reset("ghost").await.unwrap();
         assert!(sup.get("ghost").map(|_| ()).unwrap_err().contains("重置"));
         // 文件操作期间不许把它激活出来。
@@ -949,7 +1059,7 @@ mod tests {
     /// 不泄漏)。修前 debug_assert 在 release 下空转 + 失效分支置 active=false 会泄漏。
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn reservation_commit_wrong_id_releases_and_spawns_nothing() {
-        let sup = SpaceSupervisor::new(tokio::runtime::Handle::current(), 1);
+        let sup = SpaceSupervisor::new(tokio::runtime::Handle::current(), 1, None);
         let r = sup.reserve("a").unwrap();
         assert_eq!(sup.count(), 1, "预留占 permit");
         // 错传 spec.id=b:commit 早退 Err(id 不符,未进 commit_reservation、未 spawn),

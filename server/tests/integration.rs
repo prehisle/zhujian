@@ -631,16 +631,14 @@ async fn pairing_bridge_relay_and_single_use() {
     second.send(&ClientMsg::PairJoin { slot }).await;
     expect_err(second.recv().await, err_code::BAD_SLOT);
     second.expect_close().await;
-    // 发起端主动关槽(密钥确认失败路径):对端收 Closed,槽烧毁。
+    // 发起端主动关槽(密钥确认失败路径):槽烧毁;joiner 是未鉴权连接、存在理由
+    // 随槽消失,被服务端当场关闭(2026-07-31 洪泛闸 codex H1:不留可 ping 保活的
+    // 僵尸连接)。expect_close 容忍关闭前塞来的 Closed 帧。
     owner.send(&ClientMsg::PairClose { slot }).await;
-    assert_eq!(joiner.recv().await, ServerMsg::PairPeer { event: PairEvent::Closed });
+    joiner.expect_close().await;
     let mut third = connect(addr).await;
     third.send(&ClientMsg::PairJoin { slot }).await;
     expect_err(third.recv().await, err_code::BAD_SLOT);
-    // joiner 在烧毁的槽上再发 = 断开。
-    joiner.send(&ClientMsg::PairMsg { slot, blob: b"late".to_vec() }).await;
-    expect_err(joiner.recv().await, err_code::BAD_SLOT);
-    joiner.expect_close().await;
 }
 
 #[tokio::test]
@@ -655,7 +653,9 @@ async fn pairing_owner_disconnect_burns_slot() {
     // 等发起端确认 join 落地再断开(否则和 join 赛跑,槽在 join 前就烧了)。
     assert_eq!(owner.recv().await, ServerMsg::PairPeer { event: PairEvent::Joined });
     drop(owner);
-    assert_eq!(joiner.recv().await, ServerMsg::PairPeer { event: PairEvent::Left });
+    // owner 断线烧槽 → joiner 当场被关(2026-07-31 洪泛闸 codex H1;Left 帧可能
+    // 赶在关闭前到、也可能随 abort 丢,expect_close 两容)。
+    joiner.expect_close().await;
 }
 
 #[tokio::test]
@@ -1504,4 +1504,209 @@ async fn caps_status_v1_enter_push_rate_limited() {
         }
     }
     assert!(saw_rate_limited, "cap 客户端越额应收到推送的 RateLimited 状态");
+}
+
+// ---- 洪泛闸(2026-07-31 防御评审:未鉴权截止 / 全局连接闸 / 创号闸)----
+
+/// Fresh 态绝对截止:**连发**协议 Ping(每 100ms 一枚)也救不了——若实现被任何
+/// 活动续命,连接永不关、循环打满 5s 即败;关得早于截止同样败(codex M5:单发
+/// 一枚钉不死「绝对钟」语义)。
+#[tokio::test]
+async fn fresh_handshake_deadline_closes_idle_conn() {
+    let addr = start(&[], |c| c.handshake_timeout = Duration::from_millis(400)).await;
+    let mut c = connect(addr).await;
+    let t0 = std::time::Instant::now();
+    let closed_at = loop {
+        if t0.elapsed() > Duration::from_secs(5) {
+            panic!("持续 ping 下连接迟迟不关——绝对钟被活动续命了");
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        // 发送失败或读到关闭都算「已关」;Pong/其它帧继续泵。
+        if c.ws.send(WsMsg::Binary(sync_proto::encode(&ClientMsg::Ping).into())).await.is_err() {
+            break t0.elapsed();
+        }
+        match timeout(Duration::from_millis(50), c.ws.next()).await {
+            Ok(None) | Ok(Some(Err(_))) => break t0.elapsed(),
+            Ok(Some(Ok(WsMsg::Close(_)))) => break t0.elapsed(),
+            _ => {}
+        }
+    };
+    assert!(closed_at >= Duration::from_millis(300), "关得太早:{closed_at:?}");
+}
+
+/// 截止只管未鉴权:窗内完成注册的连接、入槽的 joiner(放宽到槽 TTL)都不受影响。
+#[tokio::test]
+async fn handshake_deadline_spares_authed_and_pair_joined() {
+    let addr = start(&[], |c| c.handshake_timeout = Duration::from_millis(400)).await;
+    let sk = key();
+    let mut a = first_authed(addr, ACCT, D1, &sk).await;
+    a.send(&ClientMsg::PairOpen).await;
+    let slot = match a.recv_skip_peer().await {
+        ServerMsg::PairSlot { slot } => slot,
+        other => panic!("期待 PairSlot,得到 {other:?}"),
+    };
+    let mut j = connect(addr).await;
+    j.send(&ClientMsg::PairJoin { slot }).await;
+    // 越过 Fresh 截止窗:Authed 与 PairJoined 都还活着(Ping/Pong 为证;
+    // joiner 侧容忍配对事件噪音)。
+    tokio::time::sleep(Duration::from_millis(700)).await;
+    for (label, c) in [("owner", &mut a), ("joiner", &mut j)] {
+        c.send(&ClientMsg::Ping).await;
+        let mut got = false;
+        for _ in 0..4 {
+            match c.recv().await {
+                ServerMsg::Pong => {
+                    got = true;
+                    break;
+                }
+                // 容忍配对/在线状态事件噪音(join 时点不定)。
+                ServerMsg::PairPeer { .. } | ServerMsg::Peer { .. } => continue,
+                other => panic!("{label} 期待 Pong,得到 {other:?}"),
+            }
+        }
+        assert!(got, "{label} 没等到 Pong");
+    }
+}
+
+/// 全局连接闸:超限的 upgrade 直接拒(503),腾位后放行。
+#[tokio::test]
+async fn conn_cap_rejects_then_recovers() {
+    let addr = start(&[], |c| c.max_conns = 2).await;
+    let _c1 = connect(addr).await;
+    let c2 = connect(addr).await;
+    match tokio_tungstenite::connect_async(format!("ws://{addr}/ws")).await {
+        Err(tokio_tungstenite::tungstenite::Error::Http(resp)) => {
+            assert_eq!(resp.status(), 503, "满员应是 503");
+        }
+        other => panic!("第三条连接应被 HTTP 503 拒,得到 {other:?}"),
+    }
+    // 腾一位:permit 随连接任务收尾归还(服务端察觉断连有微小滞后,轮询等)。
+    drop(c2);
+    for _ in 0..40 {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        if tokio_tungstenite::connect_async(format!("ws://{addr}/ws")).await.is_ok() {
+            return;
+        }
+    }
+    panic!("腾位后仍连不上");
+}
+
+/// 创号令牌桶:桶空拒新账户(busy 断开);幂等重试不花令牌、老账户挑战应答不受影响。
+#[tokio::test]
+async fn signup_bucket_limits_fresh_accounts() {
+    let addr = start(&[], |c| {
+        c.signup_burst = 2;
+        c.signup_refill = Duration::from_secs(3600);
+    })
+    .await;
+    let (k1, k2, k3) = (key(), key(), key());
+    let _a = first_authed(addr, ACCT, D1, &k1).await;
+    let _b = first_authed(addr, ACCT2, D2, &k2).await;
+    // 第三个新账户:桶空 → busy、断开。
+    let mut c = connect(addr).await;
+    c.register_first(EVIL, D3, &k3).await;
+    expect_err(c.recv().await, err_code::BUSY);
+    c.expect_close().await;
+    // 幂等重试(同账户同设备同钥)不花令牌、照常放行。
+    let mut r = connect(addr).await;
+    r.register_first(ACCT, D1, &k1).await;
+    assert_eq!(r.recv().await, ServerMsg::Authed);
+    // 老账户挑战应答照常(创号闸不碰 Auth 面)。
+    let _ = authed(addr, ACCT2, D2, &k2).await;
+}
+
+/// 账户目录硬上界:到顶拒新创号;存量账户鉴权照常。
+#[tokio::test]
+async fn account_directory_cap_blocks_new_accounts() {
+    let addr = start(&[], |c| c.max_accounts = 1).await;
+    let k1 = key();
+    let _a = first_authed(addr, ACCT, D1, &k1).await;
+    let mut c = connect(addr).await;
+    c.register_first(ACCT2, D2, &key()).await;
+    expect_err(c.recv().await, err_code::BUSY);
+    c.expect_close().await;
+    let _ = authed(addr, ACCT, D1, &k1).await;
+}
+
+/// 槽死即踢 joiner(codex H1):owner 主动关槽后,未鉴权 joiner 连接立即被服务端
+/// 关闭——不许它靠 ping 保活撑满「槽 TTL+余量」的长截止(僵尸连接占满连接闸)。
+#[tokio::test]
+async fn joiner_conn_closes_when_slot_dies() {
+    let addr = start(&[], |_| {}).await;
+    let sk = key();
+    let mut a = first_authed(addr, ACCT, D1, &sk).await;
+    a.send(&ClientMsg::PairOpen).await;
+    let slot = match a.recv_skip_peer().await {
+        ServerMsg::PairSlot { slot } => slot,
+        other => panic!("期待 PairSlot,得到 {other:?}"),
+    };
+    let mut j = connect(addr).await;
+    j.send(&ClientMsg::PairJoin { slot }).await;
+    // owner 收到 Joined 再关槽(保证 join 已完成)。
+    loop {
+        match a.recv_skip_peer().await {
+            ServerMsg::PairPeer { event: PairEvent::Joined } => break,
+            other => panic!("期待 Joined,得到 {other:?}"),
+        }
+    }
+    a.send(&ClientMsg::PairClose { slot }).await;
+    // joiner 连接应当场被关(kick),而不是等 10 分钟截止。
+    j.expect_close().await;
+}
+
+/// 洪泛闸配置零值 fail-fast 拒启(codex M5:四道校验此前无测)。
+#[tokio::test]
+async fn flood_gate_zero_configs_rejected() {
+    for tweak in [
+        (|c: &mut Config| c.max_conns = 0) as fn(&mut Config),
+        |c| c.handshake_timeout = Duration::ZERO,
+        |c| c.signup_burst = 0,
+        |c| c.signup_refill = Duration::ZERO,
+        |c| c.max_accounts = 0,
+    ] {
+        let dir = std::env::temp_dir().join(format!(
+            "zhujian-syncd-zerocfg-{}-{}",
+            std::process::id(),
+            rand::random::<u32>()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("banlist.txt"), "# 空
+").unwrap();
+        let mut cfg = Config::new(dir.join("banlist.txt"), dir.join("registry.json"));
+        tweak(&mut cfg);
+        assert!(
+            serve("127.0.0.1:0".parse().unwrap(), cfg).await.is_err(),
+            "零值配置应拒启"
+        );
+    }
+    // 组合内存包络超限同样拒启(codex 三轮 H1:硬闸在启动即闭合,不静默上线等 OOM)。
+    let dir = std::env::temp_dir().join(format!(
+        "zhujian-syncd-envelope-{}-{}",
+        std::process::id(),
+        rand::random::<u32>()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("banlist.txt"), "# 空
+").unwrap();
+    let mut cfg = Config::new(dir.join("banlist.txt"), dir.join("registry.json"));
+    cfg.max_conns = 10_000;
+    assert!(
+        serve("127.0.0.1:0".parse().unwrap(), cfg.clone()).await.is_err(),
+        "max_conns=10000 早已顶穿 448MiB 包络,应拒启"
+    );
+    // 溢出面(codex 四轮 M1):usize::MAX 级参数在 release 下若用裸乘会回绕成小值
+    // 混过校验——checked 算术必须把它们同样拒在门外。
+    for tweak in [
+        (|c: &mut Config| c.max_conns = usize::MAX) as fn(&mut Config),
+        |c| c.mailbox_max_frames = usize::MAX,
+        |c| c.budget_global_bytes = usize::MAX,
+    ] {
+        let mut cfg = cfg.clone();
+        cfg.max_conns = 32;
+        tweak(&mut cfg);
+        assert!(
+            serve("127.0.0.1:0".parse().unwrap(), cfg).await.is_err(),
+            "usize::MAX 级配置应拒启(溢出=荒谬配置)"
+        );
+    }
 }

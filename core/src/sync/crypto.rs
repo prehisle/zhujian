@@ -37,6 +37,10 @@ const NONCE_LEN: usize = 24;
 /// Poly1305 认证标签长度。
 const TAG_LEN: usize = 16;
 
+/// 局域网直连 Intro MAC 钥的 HKDF info 后缀(lan-direct-plan §4)。与 `Domain::Lan`
+/// 的域子钥(后缀 `"lan"`)同源不同 info = 派生分离:MAC 钥泄露不解 lan 域密文。
+const LAN_MAC_INFO_SUFFIX: &str = "lan-mac";
+
 /// 加密域(§2)。域字符串既进 HKDF info 又进 AAD——隔离双保险。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Domain {
@@ -48,6 +52,11 @@ pub enum Domain {
     Boot,
     /// 图字节流(§5.4,direct)。
     Blob,
+    /// 局域网直连握手(lan-direct-plan §4 的 `LanMsg::Accept/Confirm`)。**只在局域网
+    /// socket 上出现**:`open_deliver` 逐域试解刻意不含它,故 lan 域密文经中转投递
+    /// 恒 `Undecryptable`(transport 侧有回归锚)。数据面 `LanWire::Frame` 里的 blob
+    /// 仍是 op/ctl/blob 域的原密文,不套第二层。
+    Lan,
 }
 
 impl Domain {
@@ -57,6 +66,7 @@ impl Domain {
             Domain::Ctl => "ctl",
             Domain::Boot => "boot",
             Domain::Blob => "blob",
+            Domain::Lan => "lan",
         }
     }
 }
@@ -96,14 +106,36 @@ impl std::fmt::Display for OpenError {
     }
 }
 
-/// 域子钥:HKDF-SHA256(K_acc, info = 前缀 + domain) → 32B(§2)。
-pub fn domain_key(k_acc: &[u8; 32], domain: Domain) -> [u8; 32] {
+/// 子钥派生:HKDF-SHA256(K_acc, info = 前缀 + 后缀) → 32B(§2)。后缀空间由调用方
+/// 分区:域名(`op`/`ctl`/…)归 [`domain_key`],`lan-mac` 归 [`lan_mac_key`]。
+fn hkdf_sub(k_acc: &[u8; 32], info_suffix: &str) -> [u8; 32] {
     let hk = Hkdf::<Sha256>::new(None, k_acc);
-    let info = [HKDF_INFO_PREFIX.as_bytes(), domain.as_str().as_bytes()].concat();
+    let info = [HKDF_INFO_PREFIX.as_bytes(), info_suffix.as_bytes()].concat();
     let mut okm = [0u8; 32];
     hk.expand(&info, &mut okm)
         .expect("32B 远在 HKDF-SHA256 输出上限(8160B)内");
     okm
+}
+
+/// 域子钥:HKDF-SHA256(K_acc, info = 前缀 + domain) → 32B(§2)。
+pub fn domain_key(k_acc: &[u8; 32], domain: Domain) -> [u8; 32] {
+    hkdf_sub(k_acc, domain.as_str())
+}
+
+/// 局域网 Intro MAC 钥 `K_mac`(lan-direct-plan §4):HKDF-SHA256(K_acc,
+/// info = 前缀 + `"lan-mac"`)。证明「持 K_acc」的那一半——拨入方首帧明文靠它绑定
+/// (账户, D, L, nonce_d),验证方代入自己的空间材料重算。
+pub(crate) fn lan_mac_key(k_acc: &[u8; 32]) -> [u8; 32] {
+    hkdf_sub(k_acc, LAN_MAC_INFO_SUFFIX)
+}
+
+/// 常数时间比较(MAC / 确认值 / nonce 回显共用)。单次失败即断链或烧槽,时序面本就
+/// 只有一发;此为卫生习惯。
+pub(crate) fn ct_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
 /// AAD:CBOR 数组 [ver, account, from, to, domain](§2)。字节形态钉死为 CBOR
@@ -375,11 +407,16 @@ f3a82f4eda7e39ae64c6708c54c216cb96b72e1213b4522f8c9ba40db5d945b11b69b982c1bb9e3f
     #[test]
     fn domain_keys_are_pairwise_distinct_and_pinned() {
         let k_acc = k(0);
-        let all = [Domain::Op, Domain::Ctl, Domain::Boot, Domain::Blob];
+        let all = [Domain::Op, Domain::Ctl, Domain::Boot, Domain::Blob, Domain::Lan];
         for (i, a) in all.iter().enumerate() {
             for b in &all[i + 1..] {
                 assert_ne!(domain_key(&k_acc, *a), domain_key(&k_acc, *b));
             }
+        }
+        // lan 域子钥与 lan-mac 钥同源不同 info:派生必须分离(lan-direct-plan §4)。
+        assert_ne!(domain_key(&k_acc, Domain::Lan), lan_mac_key(&k_acc));
+        for d in all {
+            assert_ne!(domain_key(&k_acc, d), lan_mac_key(&k_acc));
         }
         // 黄金向量:info 前缀/域名字符串是线上格式,重构漂移必须在此响亮。
         assert_eq!(
@@ -405,7 +442,7 @@ f3a82f4eda7e39ae64c6708c54c216cb96b72e1213b4522f8c9ba40db5d945b11b69b982c1bb9e3f
     fn seal_uses_fresh_random_nonce_each_time() {
         let k_acc = k(7);
         let a = addr("acct", "dev-a", "dev-b", Domain::Op);
-        let msg = Msg::Hello { watermarks: BTreeMap::new() };
+        let msg = Msg::Hello { watermarks: BTreeMap::new(), lan: None };
         let b1 = seal_msg(&k_acc, &a, &msg);
         let b2 = seal_msg(&k_acc, &a, &msg);
         assert_ne!(b1, b2, "同帧两封必须得不同 blob(随机 nonce)");

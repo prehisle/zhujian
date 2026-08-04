@@ -20,7 +20,8 @@
 //! NULL 的 0018 前遗产、born_stage ≠ stage 的转办行、耦合不变量的合法违反态),单机
 //! INSERT 守护会拦——0022 的豁免 + 0025 补的两只 INSERT 豁免在此生效;单机路径照拦。
 //!
-//! **导入完成后调用方必须重建 `Engine` 并重走 `on_connected`**(P2-g 接线契约):
+//! **导入完成后调用方必须装配 `Engine` 并走一次中转会话仪式**(P2-g 接线契约;
+//! 256 起 = `EngineSlot::reconcile` + `on_relay_session_up`):
 //! 引擎的 pending 池出队条件是严格 `seq == watermark+1`,导入一次性抬高水位后,池内
 //! 低于水位的旧队头永不出队会堵死该 origin;引擎全部状态本就是可丢内存态(engine.rs
 //! 模块注释),重建后水位从库重新派生、缺字节图清单从日志重新派生,重发 hello 互补
@@ -389,7 +390,7 @@ pub struct ImportReport {
 /// - `Committed`:库已可信提交;`post_commit_error` 只承载**不影响库可信度**的
 ///   收尾噪音(当前恒 None,字段是合同占位);
 /// - `CommittedNeedsReopen`:DETACH 最终失败 = 这条连接仍挂着 boot 库——库本体
-///   已可信提交,但**禁止在原 Connection 上 `start_engine`/继续会话**,调用方必须
+///   已可信提交,但**禁止在原 Connection 上 `relay_session_up`/继续会话**,调用方必须
 ///   以新连接重开(staging 路:close→publish→新连接;正式 runtime 路:stop→重新
 ///   activate,做不到就封写等重启)。
 #[derive(Debug)]
@@ -598,7 +599,7 @@ fn import_attached(conn: &mut Connection, clock: &mut Clock) -> Result<ImportRep
 
     // 全库体检挪进导入事务、bootstrapped_at 与 commit **之前**(space-entry-plan
     // §3.2,codex 二轮 H1;共用路径,main onboarding 一起变严):不过即整体回滚——
-    // 绝不发布/激活/start_engine 一个完整性已失败的库。显式点名 main(unqualified
+    // 绝不发布/激活/relay_session_up 一个完整性已失败的库。显式点名 main(unqualified
     // integrity_check 会连 attached 的 boot 一起查,语义要钉死在「本库」上)。
     let verdict: String = tx
         .pragma_query_value(Some(DatabaseName::Main), "integrity_check", |r| r.get(0))
@@ -1419,7 +1420,7 @@ mod tests {
             "commit 之后不许再有体检(失败会把已提交的引导洗成 Err 重试)"
         );
     }
-    use crate::sync::engine::{BlobPolicy, Engine, Msg, Output, BROADCAST};
+    use crate::sync::engine::{BlobPolicy, Engine, Msg, Output, Route, BROADCAST};
     use crate::sync::pair::{
         gen_device_key, gen_secret, AccountGrant, DeviceEnroll, Joiner, Opener, PairOutput,
     };
@@ -2875,6 +2876,12 @@ mod tests {
             for o in outs {
                 match o {
                     Output::Send { msg, .. } => self.outbox.push_back(msg),
+                    // 图字节供流(lan-direct-plan §10 C′):块由传输层逐块取,这只夹具
+                    // 走的是引导后的水位互补,不该有图在传。
+                    Output::ServeBlob(s) => panic!("互通阶段不该供图:{s:?}"),
+                    // 「来取活」的铃:这只夹具没有消费腿,活由 `drain_ops_for_test` 抽走,
+                    // 故这里丢掉即可(**不能 panic**:它是新形下的正常输出)。
+                    Output::ServeOps(_) => {}
                     Output::Event(e) => panic!("互通阶段不该出事件:{e:?}"),
                 }
             }
@@ -2890,17 +2897,23 @@ mod tests {
             if let Some(msg) = x.outbox.pop_front() {
                 let outs = y
                     .engine
-                    .on_msg(&mut y.p.conn, &mut y.p.clock, &x.p.device_id, msg)
+                    .on_msg_v(&mut y.p.conn, &mut y.p.clock, &x.p.device_id, Route::Relay, msg)
                     .unwrap();
                 y.collect(outs);
+                // 第5笔起 Hello/Want 只**登记**对账义务,帧要由消费腿逐帧取:这只夹具
+                // 没有传输层,故每喂一枚就自己抽一次(见 drain_ops_for_test)。
+                let served = y.engine.drain_ops_for_test(&y.p.conn).unwrap();
+                y.collect(served);
                 continue;
             }
             if let Some(msg) = y.outbox.pop_front() {
                 let outs = x
                     .engine
-                    .on_msg(&mut x.p.conn, &mut x.p.clock, &y.p.device_id, msg)
+                    .on_msg_v(&mut x.p.conn, &mut x.p.clock, &y.p.device_id, Route::Relay, msg)
                     .unwrap();
                 x.collect(outs);
+                let served = x.engine.drain_ops_for_test(&x.p.conn).unwrap();
+                x.collect(served);
                 continue;
             }
             return;
@@ -3058,20 +3071,29 @@ mod tests {
         std::fs::remove_file(&snap.path).unwrap();
 
         // ---- 引导后互通:重建引擎(boot.rs 模块注释的接线契约)+ hello 互补。 ----
-        let a_engine = Engine::new(&ap.conn, BlobPolicy::Full).unwrap();
-        let b_engine = Engine::new(&bp.conn, BlobPolicy::Full).unwrap();
+        let a_engine = Engine::new_solo(&ap.conn, BlobPolicy::Full).unwrap();
+        let b_engine = Engine::new_solo(&bp.conn, BlobPolicy::Full).unwrap();
         let mut a = SyncPeer { p: ap, engine: a_engine, outbox: VecDeque::new() };
         let mut b = SyncPeer { p: bp, engine: b_engine, outbox: VecDeque::new() };
-        let outs = a.engine.on_connected(&a.p.conn).unwrap();
+        // 装配即活 → 中转会话建立 → 服务器在线快照(lan-direct-plan §6 三段;两台
+        // 都在线,故互相置对端的 relay 腿 Up——blob 选路只认这张表)。
+        let b_id = b.p.device_id.clone();
+        let a_id = a.p.device_id.clone();
+        a.engine.on_runtime_started(&a.p.conn).unwrap();
+        b.engine.on_runtime_started(&b.p.conn).unwrap();
+        let outs = a.engine.relay_up(&a.p.conn).unwrap();
         a.collect(outs);
-        let outs = b.engine.on_connected(&b.p.conn).unwrap();
+        let outs = b.engine.relay_up(&b.p.conn).unwrap();
         b.collect(outs);
+        a.engine.on_relay_peer_up(&b_id);
+        b.engine.on_relay_peer_up(&a_id);
         pump(&mut a, &mut b);
 
         // 引导后 B 再写一笔,实时广播也通(outbound 走 last_pushed 游标)。
         let late = notes::capture(&mut b.p.conn, &mut b.p.clock, "引导后的新灵感").unwrap();
         notes::file_to_topic(&mut b.p.conn, &mut b.p.clock, &late, Some(&b_topic), None).unwrap();
-        let outs = b.engine.outbound(&b.p.conn).unwrap();
+        b.engine.outbound(&b.p.conn, &mut vec![]).unwrap();
+        let outs = b.engine.drain_ops_for_test(&b.p.conn).unwrap();
         b.collect(outs);
         pump(&mut a, &mut b);
 

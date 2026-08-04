@@ -383,6 +383,19 @@
 /* ---- trash view: a single scrolling list + an empty/clear bar ---- */
 .v-board main.trash { display: block; overflow-y: auto; padding: 16px 24px 22px; }
 .v-board main.trash .trash-list { max-width: 560px; margin: 0 auto; }
+/* 回收站/归档册主滚动区的滚动条定制(249 修法此前只落了 col-body,这两个子视图
+   漏掉、退回系统默认样式——跨视图漂移复发;规则与上方 .col-body 完全同款,含
+   track/corner 铺 transparent 防白角)。 */
+.v-board main.trash::-webkit-scrollbar { width: 9px; height: 9px; }
+.v-board main.trash::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border: 3px solid var(--paper);
+  border-radius: 9px;
+}
+.v-board main.trash::-webkit-scrollbar-track,
+.v-board main.trash::-webkit-scrollbar-corner {
+  background: transparent;
+}
 
 /* ---- 归档(成就册)view: reuses the trash list layout + a day timeline ---- */
 /* the day heading (同 inbox 时间轴的 .tl-date,此处无轴线,只要日期标头) */

@@ -53,7 +53,19 @@ enum Step {
     Become(ConnState),
 }
 
-pub(crate) async fn handle(hub: Arc<Hub>, ws: WebSocket) {
+/// PairJoined 态的未鉴权截止余量(槽 TTL 之外再宽一点:sweep 周期与收尾帧的量级
+/// 余地;一处一数)。
+const PAIR_JOINED_GRACE: Duration = Duration::from_secs(30);
+
+pub(crate) async fn handle(
+    hub: Arc<Hub>,
+    ws: WebSocket,
+    conn_permit: tokio::sync::OwnedSemaphorePermit,
+) {
+    // 全局连接闸的 permit(2026-07-31 评审):绑读任务(连接准入的主体)生命期,
+    // 一切出口含 panic 展开 Drop 即还。写任务是独立 spawn、可能短暂多活一拍
+    // (排空/关帧),但它不收新帧、随通道关闭收尾,不占准入名额。
+    let _conn_permit = conn_permit;
     let conn_id = hub.next_conn_id();
     let (mut sink, mut stream) = ws.split();
     let (tx, mut rx) = tokio::sync::mpsc::channel::<ServerMsg>(hub.channel_cap());
@@ -87,12 +99,21 @@ pub(crate) async fn handle(hub: Arc<Hub>, ws: WebSocket) {
 
     let mut state = ConnState::Fresh;
     let mut kicked = false;
+    // 未鉴权截止(2026-07-31 评审):Fresh 态是**绝对钟**——静默判死把任何帧(含
+    // WS ping)都算活动,一条只 ping 不鉴权的空连接能永久占位;这道钟不被活动续命。
+    // PairJoined 放宽到槽 TTL + 余量(joiner 等 opener 是合法慢路径),Authed 解除。
+    let mut preauth_deadline =
+        Some(tokio::time::Instant::now() + hub.cfg.handshake_timeout);
     loop {
         let received = tokio::select! {
             biased; // 关断优先于继续读
             _ = kick_rx.recv() => {
                 logln(format!("INFO conn={conn_id} 被关断(顶替/慢客户端/吊销)"));
                 kicked = true;
+                break;
+            }
+            _ = preauth_expire(preauth_deadline) => {
+                logln(format!("INFO conn={conn_id} 未鉴权超时断开"));
                 break;
             }
             r = timeout(hub.cfg.silence_timeout, stream.next()) => match r {
@@ -170,7 +191,17 @@ pub(crate) async fn handle(hub: Arc<Hub>, ws: WebSocket) {
         match dispatch(&hub, conn_id, &tx, &kick_tx, &queued, &nonce, &state, msg).await {
             Step::Continue => {}
             Step::Close => break,
-            Step::Become(next) => state = next,
+            Step::Become(next) => {
+                preauth_deadline = match &next {
+                    ConnState::Authed { .. } => None,
+                    ConnState::PairJoined { .. } => Some(
+                        tokio::time::Instant::now() + hub.cfg.pair_slot_ttl + PAIR_JOINED_GRACE,
+                    ),
+                    // 无转回 Fresh 的路径;真出现也只是保留原钟,不放宽。
+                    ConnState::Fresh => preauth_deadline,
+                };
+                state = next;
+            }
         }
     }
 
@@ -186,12 +217,17 @@ pub(crate) async fn handle(hub: Arc<Hub>, ws: WebSocket) {
     }
     let addr = authed.as_ref().map(|(a, d, _)| (a.clone(), d.clone()));
     hub.detach(conn_id, addr.as_ref());
-    if kicked {
+    if kicked && authed.is_some() {
         // 关断即断(codex P4-e 轮 H4):被顶替/慢客户端/吊销的连接,队里余帧
         // 一帧都不再出门(吊销后继续冲密文给被吊设备不可接受;TCP 已在途的
         // 字节无法召回,abort 是能收的最紧边界)。帧丢失由水位协议自愈。
         writer.abort();
     } else {
+        // 正常断开,**以及未鉴权连接的关断**(洪泛闸「槽死即踢 joiner」走这里):
+        // 未鉴权队里只有配对事件(PairPeer::Closed/Left),按序送完再发 WS Close
+        // ——joiner 客户端靠那帧把「对端中止配对」显成人话(core transport 集成测
+        // 钉着这个契约),abort 会把它吞成裸连接重置。资源面不回退:对端不收时
+        // 下方 10s 限时兜底,permit 至多多占一次排空的工夫。
         // 正常断开:drop 本地 tx 即通道全关(detach 后 hub 已无本连接的 clone)
         // → 写任务清空余帧、发 WS Close 干净收场。写任务若卡在对端不收的 TCP
         // 写上,限时后掐断(不让连接任务泄漏)。
@@ -199,6 +235,14 @@ pub(crate) async fn handle(hub: Arc<Hub>, ws: WebSocket) {
         if timeout(Duration::from_secs(10), &mut writer).await.is_err() {
             writer.abort();
         }
+    }
+}
+
+/// 未鉴权截止钟(None = 已鉴权,永不醒)。select 分支用;绝对钟,不被帧活动续命。
+async fn preauth_expire(deadline: Option<tokio::time::Instant>) {
+    match deadline {
+        Some(d) => tokio::time::sleep_until(d).await,
+        None => std::future::pending().await,
     }
 }
 
@@ -321,6 +365,20 @@ async fn dispatch(
                     err(tx, err_code::AUTH_FAILED, "鉴权失败");
                     Step::Close
                 }
+                // 创号洪泛闸(2026-07-31 评审):两错对外同一个 busy(拒新建不解释
+                // 内情),断开——失败的创号不配占着连接重试,重连即成本。
+                Err(RegisterError::SignupThrottled) => {
+                    // 聚合日志(codex M3:洪泛期逐条打=journal 放大器)。
+                    hub.log_signup_reject(false);
+                    err(tx, err_code::BUSY, "服务器繁忙,请稍后再试");
+                    Step::Close
+                }
+                Err(RegisterError::DirectoryFull) => {
+                    // 目录满=要人处置的容量事件,聚合行升 ERROR(同 60s 窗口)。
+                    hub.log_signup_reject(true);
+                    err(tx, err_code::BUSY, "服务器繁忙,请稍后再试");
+                    Step::Close
+                }
                 Err(e) => {
                     let (code, human): (&str, &str) = match e {
                         RegisterError::NotFirst => {
@@ -332,6 +390,8 @@ async fn dispatch(
                         RegisterError::Persist => (err_code::INTERNAL, "服务器存储故障,请稍后重试"),
                         RegisterError::Banned
                         | RegisterError::AccountSealed
+                        | RegisterError::SignupThrottled
+                        | RegisterError::DirectoryFull
                         | RegisterError::AccountNotInitialized
                         | RegisterError::AccountFull
                         | RegisterError::SeatLimit => {
@@ -349,7 +409,7 @@ async fn dispatch(
         }
 
         (ConnState::Fresh, ClientMsg::PairJoin { slot }) => {
-            match hub.pair_join(conn_id, tx.clone(), queued.clone(), slot) {
+            match hub.pair_join(conn_id, tx.clone(), kick_tx.clone(), queued.clone(), slot) {
                 Ok(()) => {
                     logln(format!("INFO conn={conn_id} 入配对槽 {slot}"));
                     Step::Become(ConnState::PairJoined { slot })

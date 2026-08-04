@@ -170,7 +170,7 @@ fn assemble_spaces(app: &AppHandle, data_dir: std::path::PathBuf) -> Result<(), 
     let tauri::async_runtime::RuntimeHandle::Tokio(rt_handle) = tauri::async_runtime::handle();
     // 手机同刻单活跃 runtime(multispace-plan 决定④:max_live=1;切换 = 先 stop
     // 后 activate,由 Coord 编排)。
-    let sup = Arc::new(SpaceSupervisor::new(rt_handle, 1));
+    let sup = Arc::new(SpaceSupervisor::new(rt_handle, 1, None));
     let coord = Coord::new(sup.clone(), data_dir, catalog);
     // 启动激活主空间(上次停在别的空间由前端 localStorage 记忆,init 时切换过去
     // ——空间记忆是设备本地 UI 状态,与桌面 zhujian.last-space 同哲学)。

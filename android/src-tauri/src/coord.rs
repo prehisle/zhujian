@@ -630,7 +630,7 @@ impl Coord {
                 boot_dir: self.data_dir.clone(),
                 // 117 起手机也全量下行图字节(反转 android-plan §4 M1,用户拍板:
                 // 手机可以是唯一主力端,桌面贴的图必须看得到)。既有 MetadataOnly 库
-                // 自愈:Full 引擎 on_connected 重新派生缺图清单补拉(engine.rs
+                // 自愈:Full 引擎装配时 on_runtime_started 重新派生缺图清单补拉(engine.rs
                 // 「切回 Full 必须重新发现缺图并发 want」测试锚),不用清库。
                 blob_policy: transport::BlobPolicy::Full,
                 // 可当引导快照源(phone-space-plan §2.3 反转 96 的拒当源政策——
@@ -920,6 +920,8 @@ impl Coord {
             shutdown: shutdown_rx,
             boot_commit: latch,
             restart_flag: Arc::new(Mutex::new(None)),
+            // 手机壳不监听(lan-direct-plan §6:只拨出,拨号器归 L-c3b)。
+            lan: None,
         };
         // 任务句柄进共享槽并挂上 admission guard(codex 一轮 M1 + 二轮 M1):
         // - 正常路 `stop_staging` 从槽取走、shutdown→限时等→abort 强杀到真消亡;
@@ -1541,7 +1543,7 @@ mod tests {
         }
         let main_db = dir.join("notebook.sqlite3");
         let catalog = SpaceCatalog::load(&main_db, Some(&dir), None).unwrap();
-        let sup = Arc::new(SpaceSupervisor::new(tokio::runtime::Handle::current(), 1));
+        let sup = Arc::new(SpaceSupervisor::new(tokio::runtime::Handle::current(), 1, None));
         let coord = Coord::with_timings(sup, dir.clone(), catalog, timings);
         let desc = coord.descriptor(spaces::MAIN_SPACE).unwrap();
         let (_rt, _ev) = coord.activate_from_descriptor(&desc).unwrap();
@@ -1939,6 +1941,8 @@ mod tests {
             shutdown: src_sd_rx,
             boot_commit: Arc::new(Mutex::new(None)),
             restart_flag: Arc::new(Mutex::new(None)),
+            // 手机壳不监听(lan-direct-plan §6:只拨出,拨号器归 L-c3b)。
+            lan: None,
         }));
         for _ in 0..200 {
             if src_status.lock().unwrap().state == "online" {

@@ -15,7 +15,9 @@ use rusqlite::Connection;
 use std::collections::VecDeque;
 
 use crate::clock::Clock;
-use crate::sync::engine::{BlobPolicy, Engine, Event, Lane, Msg, Output, BROADCAST};
+use crate::sync::engine::{
+    serve_chunks, BlobPolicy, Engine, Event, Lane, Msg, Output, Route, RouteHint, BROADCAST,
+};
 use crate::{db, images, notes, task};
 
 // ---- 确定性随机(xorshift64*,无外部依赖) -------------------------------------------
@@ -59,6 +61,9 @@ const STEPS: usize = 150;
 /// settle 的 hello 轮上限:每轮 = 全员重连互报水位 + pump 到静默(§5.2「总会发生在
 /// 下次连接」的模拟)。超限仍不齐 = 不收敛,报种子。
 const MAX_SETTLE_ROUNDS: usize = 12;
+/// 每轮 settle 在「帧跑干了」之后最多补几拍心跳(见 [`Sim::heartbeat`])。
+/// 取值要大于最长的那档冷却(`RECONCILE_COOLDOWN_TICKS` = 2),留一倍余量。
+const BEATS_PER_ROUND: usize = 4;
 
 struct Peer {
     device_id: String,
@@ -95,8 +100,11 @@ impl Sim {
                 let _ = std::fs::remove_file(&path);
                 let conn = db::open(&path).expect("open migrated db");
                 let clock = Clock::load(&conn).expect("load clock");
-                let engine =
-                    Engine::new(&conn, policy).expect("engine").with_pending_cap(PENDING_CAP);
+                let mut engine =
+                    Engine::new_solo(&conn, policy).expect("engine").with_pending_cap(PENDING_CAP);
+                // 运行时装配即活(lan-direct-plan §6):一次性本地初始化与「连上服务器」
+                // 无关,故在此、不在 set_online 里(每次重连再跑一遍就不叫一次性了)。
+                engine.on_runtime_started(&conn).expect("runtime started");
                 let device_id = clock.device_id().to_string();
                 Peer { device_id, conn, clock, engine, policy, online: false, inbox: VecDeque::new(), _path: path }
             })
@@ -107,9 +115,24 @@ impl Sim {
     /// 路由一批引擎输出:Send 进目标队列(离线信箱裁容量;direct 只投在线,离线目标
     /// 通知发送者不可达),事件按类收集(冻结/拒帧在本测试里 = 违约)。
     fn route(&mut self, from_idx: usize, outputs: Vec<Output>) {
+        // 「direct 投不到离线设备」会让引擎作废在飞拉流并**当场重问**(lan-direct-plan
+        // §6 实现审 H2):那批输出必须真的投出去,否则模拟不到「路由失效后立刻换来源」
+        // 的端到端活性(实现审二轮 L1)。收在这里、循环外再投,避免嵌套借用。
+        let mut cascaded: Vec<(usize, Vec<Output>)> = vec![];
         for output in outputs {
             match output {
-                Output::Send { to, lane, msg } => {
+                // 「来取活」的铃:本模拟没有消费腿,活由 drain_ops_for_test 抽走。
+                Output::ServeOps(_) => continue,
+                Output::Send { to, lane, route_hint, msg } => {
+                    // 本模拟只有中转一条腿:任何 `Require(Lan)` = 引擎在没有 lan 链路时
+                    // 钉了直连(路由表置位路径漏了),响亮失败——lan 帧在这里无处可投,
+                    // 静默吞掉会伪装成收敛。
+                    assert_ne!(
+                        route_hint,
+                        RouteHint::Require(Route::Lan),
+                        "无 lan 链路却要求直连(种子 {}):{msg:?}",
+                        self.seed
+                    );
                     // M1 违约稽查:轻端只许答(BlobHave/BlobChunk serve),不许要
                     // (want/pull)。收集不 panic,终局断言给全景。
                     if self.peers[from_idx].policy == BlobPolicy::MetadataOnly
@@ -137,9 +160,38 @@ impl Sim {
                             }
                         } else {
                             // direct 且离线:不入信箱,通知发送者(§3 err{not_online})。
+                            // 本模拟只有中转一条腿(服务器 + 信箱模型),故通报的是
+                            // 该对端的 **relay** 腿不可达(lan-direct-plan §6 对端级)。
                             let target_id = self.peers[t].device_id.clone();
-                            self.peers[from_idx].engine.on_peer_unreachable(&target_id);
+                            let outs = self.peers[from_idx].engine.on_relay_peer_down(&target_id);
+                            cascaded.push((from_idx, outs));
                         }
+                    }
+                }
+                // 图字节供流(lan-direct-plan §10 C′):引擎只给描述符,块由传输层逐块
+                // 取。本模拟就地把**生产取数原语**跑一遍再投(见 [`serve_chunks`]),故
+                // 「切块 / 末块标志 / 行中途没了回 deny」这三条在收敛 property test 里也
+                // 是真跑的。direct lane 语义照旧:对端离线不入信箱,通报 relay 腿不可达。
+                Output::ServeBlob(serve) => {
+                    assert_eq!(
+                        serve.route,
+                        Route::Relay,
+                        "本模拟只有中转一条腿(种子 {})",
+                        self.seed
+                    );
+                    let Some(t) = self.peers.iter().position(|p| p.device_id == serve.to) else {
+                        continue;
+                    };
+                    if self.peers[t].online {
+                        let from_id = self.peers[from_idx].device_id.clone();
+                        let msgs = serve_chunks(&self.peers[from_idx].conn, &serve);
+                        for m in msgs {
+                            self.peers[t].inbox.push_back((from_id.clone(), m));
+                        }
+                    } else {
+                        let target_id = self.peers[t].device_id.clone();
+                        let outs = self.peers[from_idx].engine.on_relay_peer_down(&target_id);
+                        cascaded.push((from_idx, outs));
                     }
                 }
                 Output::Event(Event::OriginFrozen { origin, reason }) => {
@@ -151,15 +203,57 @@ impl Sim {
                 Output::Event(_) => {} // Renumbered / Suspended 是合法过程事件。
             }
         }
+        // 级联只有一层:上面产出的都是 mail 广播 want(入队即止),不会再触发引擎。
+        for (idx, outs) in cascaded {
+            self.route(idx, outs);
+        }
     }
 
-    /// 设备上线:重连仪式 = hello 广播 + 缺字节重发 + 推送离线期间攒的本机 op。
+    /// 设备上线:重连仪式 = hello 广播 + 缺字节重发 + 推送离线期间攒的本机 op;并模拟
+    /// 服务器的在线快照/上线广播——**(X, Relay)=Up 须「本机会话在 ∧ X 在线」两层同时
+    /// 成立**(lan-direct-plan §5.1/§6),blob 选路只认这张表,漏了广播就没人能拉图。
     fn set_online(&mut self, i: usize) {
         self.peers[i].online = true;
         let p = &mut self.peers[i];
-        let mut outs = p.engine.on_connected(&p.conn).expect("on_connected");
-        outs.extend(p.engine.outbound(&p.conn).expect("outbound"));
+        let mut outs = p.engine.relay_up(&p.conn).expect("relay session up");
+        p.engine.outbound(&p.conn, &mut outs).expect("outbound");
+        outs.extend(p.engine.drain_ops_for_test(&p.conn).expect("drain ops"));
+        let ids: Vec<String> = self.peers.iter().map(|p| p.device_id.clone()).collect();
+        let mut cascaded: Vec<(usize, Vec<Output>)> = vec![];
+        for j in 0..self.peers.len() {
+            if j == i || !self.peers[j].online {
+                continue;
+            }
+            // 换代作废旧代 transfer 时会带回重问输出(此刻两端 relay 都刚重置,通常空)。
+            let a = self.peers[i].engine.on_relay_peer_up(&ids[j]); // 在线快照给新人
+            let b = self.peers[j].engine.on_relay_peer_up(&ids[i]); // 上线事件给其他人
+            outs.extend(a);
+            cascaded.push((j, b));
+        }
         self.route(i, outs);
+        for (j, o) in cascaded {
+            self.route(j, o);
+        }
+    }
+
+    /// 设备掉线:本机会话断(只丢 relay 维度的连接态与在飞拉流)+ 服务器把离线事件
+    /// 广播给其余在线设备(它们的 (i, Relay) 置 Absent)。
+    fn set_offline(&mut self, i: usize) {
+        self.peers[i].online = false;
+        // 掉线者自己的重问投不出去(它离线了),但其余在线端的重问必须真的投出去
+        // (实现审二轮 L1)。
+        let _ = self.peers[i].engine.on_relay_session_down();
+        let ids: Vec<String> = self.peers.iter().map(|p| p.device_id.clone()).collect();
+        let mut cascaded: Vec<(usize, Vec<Output>)> = vec![];
+        for j in 0..self.peers.len() {
+            if j == i || !self.peers[j].online {
+                continue;
+            }
+            cascaded.push((j, self.peers[j].engine.on_relay_peer_down(&ids[i])));
+        }
+        for (j, outs) in cascaded {
+            self.route(j, outs);
+        }
     }
 
     /// 消费某在线设备队列头的一帧。
@@ -169,7 +263,14 @@ impl Sim {
         }
         let Some((from, msg)) = self.peers[i].inbox.pop_front() else { return false };
         let p = &mut self.peers[i];
-        let outs = p.engine.on_msg(&mut p.conn, &mut p.clock, &from, msg).expect("on_msg");
+        // 本模拟只有中转一条腿:来路恒 Relay(lan 投递路径的模拟归 L-c3 集成测)。
+        let mut outs = p
+            .engine
+            .on_msg_v(&mut p.conn, &mut p.clock, &from, Route::Relay, msg)
+            .expect("on_msg");
+        // 第5笔起 Hello/Want 只**登记**对账义务,帧由消费腿逐帧取:本模拟没有传输层,
+        // 故每喂一枚就自己抽一次(复用真取数路,见 drain_ops_for_test)。
+        outs.extend(p.engine.drain_ops_for_test(&p.conn).expect("drain ops"));
         self.route(i, outs);
         true
     }
@@ -183,9 +284,28 @@ impl Sim {
         };
         if did_write && self.peers[i].online {
             let p = &mut self.peers[i];
-            let outs = p.engine.outbound(&p.conn).expect("outbound");
+            let mut outs = vec![];
+            p.engine.outbound(&p.conn, &mut outs).expect("outbound");
+            outs.extend(p.engine.drain_ops_for_test(&p.conn).expect("drain ops"));
             self.route(i, outs);
         }
+    }
+
+    /// 打一拍心跳(§6.2 ⑥):推进 tick(放行冷却里停着的对账/补洞义务)+ 本机 origin
+    /// 重新派生,再把因此变得可跑的活抽出来。
+    ///
+    /// **第⑤笔起 settle 非有它不可**:Hello 此后只**登记**义务,同一对端连着来两枚时
+    /// 第二枚落进冷却(`RECONCILE_COOLDOWN_TICKS`),没人打这一拍它就永远停在 `pending`
+    /// ——表现出来正是「水位追不齐」。生产里这一拍由协调者心跳打。
+    fn heartbeat(&mut self, i: usize) {
+        if !self.peers[i].online {
+            return;
+        }
+        let p = &mut self.peers[i];
+        let mut outs = p.engine.on_tick();
+        let _ = p.engine.ops_tick(&p.conn, &mut outs).expect("ops tick");
+        outs.extend(p.engine.drain_ops_for_test(&p.conn).expect("drain ops"));
+        self.route(i, outs);
     }
 
     /// 终局:反复「全员重连互报水位 + pump 到静默」,直到水位齐、缺字节清零(§5.2
@@ -196,6 +316,7 @@ impl Sim {
                 self.set_online(i);
             }
             let mut guard = 0usize;
+            let mut beats = 0usize;
             loop {
                 let mut any = false;
                 for i in 0..self.peers.len() {
@@ -208,6 +329,15 @@ impl Sim {
                             self.seed
                         );
                     }
+                }
+                // 帧跑干了不等于活干完了:冷却里还停着的义务要靠心跳放行。**有界**地补
+                // 几拍(超过两档冷却即可),补完仍静默才算这一轮真到头。
+                if !any && beats < BEATS_PER_ROUND {
+                    beats += 1;
+                    for i in 0..self.peers.len() {
+                        self.heartbeat(i);
+                    }
+                    any = true;
                 }
                 if !any {
                     break;
@@ -561,7 +691,7 @@ fn run(seed: u64, policies: &[BlobPolicy]) -> usize {
             80..=87 => {
                 let i = sim.rng.below(sim.peers.len());
                 if sim.peers[i].online {
-                    sim.peers[i].online = false;
+                    sim.set_offline(i);
                 } else {
                     sim.set_online(i);
                 }
@@ -577,9 +707,9 @@ fn run(seed: u64, policies: &[BlobPolicy]) -> usize {
             }
             92..=95 => {
                 // 服务器重启:信箱与在途全失(§4「重启即失、永不写盘」),全员断连。
-                for p in &mut sim.peers {
-                    p.inbox.clear();
-                    p.online = false;
+                for i in 0..sim.peers.len() {
+                    sim.peers[i].inbox.clear();
+                    sim.set_offline(i);
                 }
             }
             _ => {
@@ -587,11 +717,11 @@ fn run(seed: u64, policies: &[BlobPolicy]) -> usize {
                 // 也无害」的实弹;在线设备随即重连(transport 自动)。策略随库沿用。
                 let i = sim.rng.below(sim.peers.len());
                 let p = &mut sim.peers[i];
-                p.engine = Engine::new(&p.conn, p.policy)
-                    .expect("engine restart")
+                p.engine = Engine::new_solo(&p.conn, p.policy).expect("engine restart")
                     .with_pending_cap(PENDING_CAP);
+                p.engine.on_runtime_started(&p.conn).expect("runtime started");
                 if sim.peers[i].online {
-                    sim.peers[i].online = false;
+                    sim.set_offline(i);
                     sim.set_online(i);
                 }
             }

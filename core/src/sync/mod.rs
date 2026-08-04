@@ -10,6 +10,17 @@
 pub(crate) mod boot;
 pub(crate) mod crypto;
 pub(crate) mod engine;
+/// L-b 局域网直连的纯逻辑层(lan-direct-plan)。IO 宿主分两处:链路集与投递面在
+/// transport(L-c2c),监听器准入表与握手任务在 [`lan_net`](L-c3a)。拨号器(L-c3b)
+/// 之前仍有少数条目只被测试调用,`dead_code` 整模块豁免暂留。
+#[allow(dead_code)]
+pub(crate) mod lan;
+/// L-c3a 局域网直连的 IO 面:本机接口枚举 + app 级监听器与准入表 + pre-auth 握手任务。
+pub(crate) mod lan_net;
+/// L-d″:op 追赶的惰性供流——计划、节流与公平调度(第①笔)、LAN 与中转两条消费腿
+/// (第②/④笔)、三个生产入口的原子切换(第⑤笔)。**dormant 标记已撤**:
+/// `on_hello` / `on_want` / `outbound` 与出站 Hello 的有界水位都在生产路径上。
+pub(crate) mod ops_serve;
 pub(crate) mod pair;
 pub mod supervisor;
 pub mod transport;

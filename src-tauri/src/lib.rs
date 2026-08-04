@@ -1527,6 +1527,8 @@ async fn join_space_inner(
         shutdown: shutdown_rx,
         boot_commit: latch,
         restart_flag: Arc::new(Mutex::new(None)),
+        // staging(「加入空间」的一次性连接)不是一个 live 空间,不进准入表。
+        lan: None,
     };
     /// shutdown → 限时等退出;不退就 abort 强杀并等到真消亡(丢句柄 = detach,
     /// 任务还持 DB Arc,槽清不掉而 single-flight 又已释放)。abort 落在 await 点 =
@@ -2606,8 +2608,12 @@ pub fn run() {
             // 即 eager 全连所有发现的空间(不设上限)。transport 任务跑在 tauri
             // 内置的 tokio 上(单变体 enum,解构即拿句柄)。
             let tauri::async_runtime::RuntimeHandle::Tokio(rt_handle) = tauri::async_runtime::handle();
+            // 局域网直连的 app 级监听器(lan-direct-plan §6):**整个 app 一枚**,各空间
+            // 的 transport 往它的准入表里注册自己。惰性绑定——首个已配置空间注册时才真绑
+            // 24618(被占退临时端口),没加账户的机器一个端口都不开。手机壳不建(只拨出)。
+            let lan = Some(sync::transport::LanAdmission::new());
             let table = Spaces::new(
-                SpaceSupervisor::new(rt_handle, spaces::DESKTOP_MAX_LIVE),
+                SpaceSupervisor::new(rt_handle, spaces::DESKTOP_MAX_LIVE, lan),
                 scan_dir,
                 boot_dir.clone(),
                 dead,

@@ -24,8 +24,32 @@ const ALLOW = [
   "tsconfig.json", "vite.config.ts", "readme.md", "LICENSE",
   ".gitignore", ".gitattributes",
 ];
-// 公开树内容红线:命中即导出失败(个人语境 / 局域网地址 / 历史遗留密钥名)
-const FORBIDDEN = /妻子|老婆|192\.168\.\d|DEEPSEEK_API_KEY/;
+// 公开树内容红线:命中即导出失败(个人语境 / 真实局域网网段 / 历史遗留密钥名)。
+// 模式清单存在 .export-redlines.json —— 它**不在下面的 ALLOW 里**,故清单本身不进公开仓,
+// 这样才敢往里放「真实网段」这类不宜公开的字面量(296:模式写在本文件里时,能公开的只有
+// 抓不着真东西的粗规则)。缺文件 / 解析失败 / 空清单一律 fail-closed:宁可发不出去,
+// 不可静默地不扫。
+function loadRedlines() {
+  const p = join(repoRoot, ".export-redlines.json");
+  let patterns;
+  try {
+    patterns = JSON.parse(readFileSync(p, "utf8")).patterns;
+  } catch (e) {
+    console.error(`红线模式文件读不动,拒绝导出:${p}\n  ${e.message}`);
+    process.exit(1);
+  }
+  if (!Array.isArray(patterns) || patterns.length === 0 || patterns.some((s) => typeof s !== "string")) {
+    console.error(`红线模式清单不是非空字符串数组,拒绝导出:${p}`);
+    process.exit(1);
+  }
+  try {
+    return new RegExp(patterns.join("|"));
+  } catch (e) {
+    console.error(`红线模式拼不成正则,拒绝导出:${e.message}`);
+    process.exit(1);
+  }
+}
+const FORBIDDEN = loadRedlines();
 
 const tracked = execFileSync("git", ["ls-files", "-z"], { cwd: repoRoot })
   .toString("utf8").split("\0").filter(Boolean);
@@ -50,7 +74,7 @@ for (const rel of allowed) {
 // 内容红线扫描(只扫小于 2MB 的文件,二进制按 utf8 宽松解码——正则命中率只增不减)
 const hits = [];
 for (const rel of allowed) {
-  if (rel === "scripts/export-public.mjs") continue; // 扫描器自身含红线字面量
+  // 扫描器自身也扫(296 起模式外置,它不再含红线字面量,那条豁免随之取消)
   const dst = join(target, rel);
   if (statSync(dst).size > 2 * 1024 * 1024) continue;
   if (FORBIDDEN.test(readFileSync(dst, "utf8"))) hits.push(rel);

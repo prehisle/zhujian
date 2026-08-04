@@ -18,7 +18,10 @@ rust-version = "1.89"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 # hooks:update_hook 给同步传输任务当「本地写命令发射 op 即推送」的通知源(P2-g)。
-rusqlite = { version = "0.32", features = ["bundled", "hooks"] }
+# `blob` = 增量 BLOB I/O(`Connection::blob_open`)。图字节分段供流(lan-direct-plan
+# §10 的 C′)按块取数,走 `substr(data,…)` 的话 SQLite 每块都要把整张图读进内存
+# (32 MiB 的图 × 128 块 = 4 GiB 无谓读),增量句柄才是真的「不整图物化」。
+rusqlite = { version = "0.32", features = ["bundled", "hooks", "blob"] }
 ulid = "1"
 # image_add op 带字节 sha256(图字节旁路的完整性锚,sync-protocol §5.4);P2-d 加密层同用。
 sha2 = "0.10"
@@ -50,6 +53,11 @@ tokio-tungstenite = { version = "0.29", features = ["rustls-tls-webpki-roots"] }
 # 坏了当场响亮(android-plan §1 M2)。
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
 futures-util = { version = "0.3", default-features = false, features = ["sink"] }
+# 局域网直连(L-c3a,lan-direct-plan §7):本机活动接口的直连 IPv4 子网——通告哪些地址、
+# 以及拨号候选必须落在哪个网段内,都要它。unix 走 getifaddrs、windows 走
+# GetAdaptersAddresses;传递依赖只有 libc 与 windows-sys(两个树里本就有),不扩供应链面。
+# 安卓:getifaddrs 是 __INTRODUCED_IN(24) < minSdk 30,aarch64/armv7 两 ABI 已 cross-check。
+if-addrs = "0.15"
 
 # 引导快照的可用空间预检(P4-d,android-plan §3:导入峰值≈三份并存)——unix
 # (安卓/linux/mac)statvfs;Windows 无对应 std API、预检跳过(写盘 fail-fast 兜底)。

@@ -42,8 +42,10 @@
 - **编辑即存**:双击卡片(或 `E`)进编辑,**回车 / 点到别处**都保存,`Esc` 取消——不用找保存按钮。
 - **记住窗口和视图**:主窗的大小 / 位置 / 最大化状态,以及上次停在哪个视图(灵感 / 任务 / 标签 / 搜索),退出重启后原样回来;首次运行用默认大小居中。
 - **折叠侧栏**:侧栏顶角小按钮或 `Ctrl+B` 把左侧栏收成细条,给内容腾出横向空间;再点 / 再按展开,折叠状态记住。
-- **明暗(自动 / 亮 / 暗)**:默认「自动」——跟随系统的浅色 / 深色设置(手机常按日夜自动切,到晚上就自己变暗);不想跟系统就直接选「亮」或「暗」固定住。电脑在侧栏底部「设置 → 外观」,手机在顶栏齿轮里。**这个选择只影响这一台设备、不会同步到别的设备**(手机夜里想要暗、电脑白天想要亮,各管各的);界面字号缩放(`Ctrl +` / `Ctrl -` / `Ctrl 0`,电脑端)同理。
+- **明暗(自动 / 亮 / 暗)**:默认「自动」——跟随系统的浅色 / 深色设置(手机常按日夜自动切,到晚上就自己变暗);不想跟系统就直接选「亮」或「暗」固定住。电脑在侧栏底部「设置 → 外观」,手机在顶栏齿轮里。**这个选择只影响这一台设备、不会同步到别的设备**(手机夜里想要暗、电脑白天想要亮,各管各的);界面字号同理——电脑端 `Ctrl +` / `Ctrl -` / `Ctrl 0` 整体缩放,手机端在「设置 → 界面字号」选 小 / 标准 / 大 / 特大(在系统「字体大小」的基础上叠加)。
 - **多设备同步(试验中,自建服务器)**:侧栏底部「同步」入口——多台设备经自己的服务器同步数据,**端到端加密**(笔记与图片加密后才出本机,服务器只见密文、只做转发和暂存)。第一台设备点「创建账户」即可(无需邀请码),会得到一串**恢复码**(抄在纸上:它是账户密钥、不是数据备份——恢复数据还必须有至少一台在线的完整副本,服务器帮不了);其余设备输入老设备生成的**配对码**加入,自动拿到全量数据,此后离线照用、上线互补。未配置时这个功能完全沉默,不打扰单机使用。
+- **同一个 wifi 下自动直连(局域网加速)**:两台设备在同一个局域网里时会自动**点对点直传**,不用绕服务器——更快,而且**路由器断了外网也照样同步**。加密一点没变:直连和走服务器一样是端到端加密,内容**服务器看不到,局域网里的人也看不到**。不需要设置,连不上就自动退回走服务器,你不会察觉。
+  **诚实说一句它的代价**:同一个局域网里的人虽然看不到你的内容,但**能看出「这两台设备正在同步」**,以及设备编号、内网地址、什么时候传了多少数据——这比服务器能看到的更多。在自己家里的 wifi 上无所谓;在公司、咖啡馆这类公共 wifi 上,这些信息对同网的人是可见的。**目前没有关闭开关**。
 - **空间**:侧栏顶部当前空间名(默认「默认空间」)点开可**新建空间**(比如「家庭」,数量不限)并随时切换、改名;手机端同样支持多空间。**空间有两条来路**:「新建空间」=开个新本子,即建即用、纯本地(要多端同步,在那个空间里创建账户);「加入空间」=把别处已有的账户接到本机(扫码/输配对码),同步完成才出现在列表里。每个空间是一本**完全独立的册子**——各自的灵感/看板/标签/搜索、各自的同步账户;把家人设备配对进「家庭」空间的账户,两个人就共用这一本,而**默认空间的数据永远不出它自己的账户**(隔离是加密边界,不是权限开关)。快速捕获落**当前所在空间**(浮窗右上有小印标明落点,只有一个空间时不显);跨空间不混排:搜索/看板只看当前空间,切换着看。
 - **移动到其他空间**:记错了地方,灵感卡/看板卡的 ⋯ 菜单里「移动」(快捷键 M)可把这一条搬进别的空间(有两个以上空间时才出现)。移动 = 在目标空间重新诞生、在原空间删除:标签按名字带过去、配图原编号带过去;**编辑历史不随迁、会随移动永久删除**(选择空间前会提示)。万一中途出岔子,宁可两边各留一份也绝不弄丢,卡片上会明确标注让你手动处理。
 
@@ -68,9 +70,9 @@ core/                       zhujian-core 共享核心 crate(P4-a:数据层+同�
   src/task.rs               任务看板状态机(合法迁移 + CAS)+ 拖动排序 + 置顶 + 任务回收站编排
   src/images.rs             配图编排(取「图N」编号高水位 + 插图,单事务)
   src/repo.rs               数据访问层(纯 SQL)+ 各读取/写入原语
-  src/db.rs                 连接 + 迁移运行器(user_version + 编号 SQL,现 30 条)
+  src/db.rs                 连接 + 迁移运行器(user_version + 编号 SQL,现 31 条)
   src/clock.rs 等           同步数据层(设备身份+HLC 时钟 / oplog 操作日志 / replay 远端回放 / frindex 分数排序键)
-  src/sync/                 同步客户端(收端引擎 / E2EE 加密 / SPAKE2 配对 / 快照引导 / WSS 传输)
+  src/sync/                 同步客户端(收端引擎 / E2EE 加密 / SPAKE2 配对 / 快照引导 / WSS 传输 / 局域网直连[lan.rs 纯逻辑 + lan_net.rs 监听拨号 + ops_serve.rs 追赶供流])
   migrations/0001_init.sql                     初始 schema(6 表)
   migrations/0002_task_guards.sql              任务用户态不变量的 DB 触发器(后被 0010 清)
   migrations/0003_note_history.sql             想法编辑历史:自动归档旧版 + 历史不可改写
@@ -83,10 +85,10 @@ core/                       zhujian-core 共享核心 crate(P4-a:数据层+同�
   migrations/0014_unify_items.sql              ㉜ 单实体:notes+tasks 合并为 items(+item_topic/item_revisions),零丢失整库搬家
   migrations/0015_drop_topic_summary.sql       ㉞ 删早期 AI 遗留的 topics.summary 死列(DROP COLUMN,行数零变)
   migrations/0016_add_item_image.sql           ㊴ 配图:item_image(BLOB,1:N)+ item_image_counter(「图N」编号高水位永不复用)+ 图不可改触发器
-  migrations/0017~0030_*.sql                   成就归档 sealed_at / 出生态 born_stage / 同步数据层(sync_meta·oplog·fractional position·回放豁免·图N op 化·origin_seq·引导豁免·标签颜色·空间名同步 space 单例·完成时刻 done_at)
+  migrations/0017~0031_*.sql                   成就归档 sealed_at / 出生态 born_stage / 同步数据层(sync_meta·oplog·fractional position·回放豁免·图N op 化·origin_seq·引导豁免·标签颜色·空间名同步 space 单例·完成时刻 done_at·标签手动序与类型)
 src-tauri/
   tauri.conf.json           窗口/打包配置
-e2e/                        真 GUI e2e(wdio.conf.js + 27 个 specs + support.js;drivers/msedgedriver 自备)
+e2e/                        真 GUI e2e(wdio.conf.js + 34 个 specs + support.js;drivers/msedgedriver 自备)
 sync-proto/, server/        同步信封层 + 自建同步服务 zhujian-syncd(独立 crate,E2EE 零知识中转)
 android/                    安卓壳(独立 npm 工程 + crate zhujian-android,path 依赖 core;界面现有 捕获两态+统一时间轴[含配图]+勾标完成+系统分享入口+扫码配对+新版提示[提示式,下载跳浏览器];119 起后端能力面已与桌面对齐[全功能主力端底座],界面按使用渐进补齐;禁系统备份)
 ```
@@ -109,8 +111,8 @@ npm run tauri build  # 打包发行版(release,把前端嵌入独立 exe)
 
 ## 测试 / 验证
 
-- **逻辑**:`cd core && cargo test`(**365 个测试**;含历次数据迁移零丢失的折叠验证、同步引擎收敛 property test 与对真同步服务器的双库端到端集成测;全部后端测试在共享 crate `zhujian-core`,`cd src-tauri && cargo test` 为桌面壳多空间单测)。另有独立 crate:`cd sync-proto && cargo test`(信封层)/ `cd server && cargo test`(同步服务)/ `cd android/src-tauri && cargo test`(安卓壳)。
-- **真 GUI e2e**:`npm run test:e2e`(**27 个 spec 文件 / 106 例**)——WebdriverIO → tauri-driver → msedgedriver → 真 WebView2,跑真点击 + 真 IPC + 真 SQLite(详见 `docs/dev-and-testing.md`)。
+- **逻辑**:`cd core && cargo test`(**676 个测试**;含历次数据迁移零丢失的折叠验证、同步引擎收敛 property test 与对真同步服务器的双库端到端集成测;全部后端测试在共享 crate `zhujian-core`,`cd src-tauri && cargo test` 为桌面壳多空间单测)。另有独立 crate:`cd sync-proto && cargo test`(信封层)/ `cd server && cargo test`(同步服务)/ `cd android/src-tauri && cargo test`(安卓壳)。
+- **真 GUI e2e**:`npm run test:e2e`(**34 个 spec 文件 / 140 例**)——WebdriverIO → tauri-driver → msedgedriver → 真 WebView2,跑真点击 + 真 IPC + 真 SQLite(详见 `docs/dev-and-testing.md`)。
   - **fast(日常迭代,~80s)**:先在另一终端 `npm run dev`(**只起 vite,别用 `tauri dev`**——它会抢全局热键 `Ctrl+Alt+N` 致 e2e 的 app panic),再 `YS_E2E_FAST=1 npm run test:e2e`(debug exe,onPrepare 自动增量 `cargo build`)。
   - **release(最终把关,~5min)**:`npm run tauri build -- --no-bundle` 出 release exe 后 `npm run test:e2e`(默认,自包含无需 vite);同样**先停 dev**。
   - 隔离:e2e 用临时库 `%TEMP%\ys-nb-e2e.sqlite3`(每次清空),**不碰真实笔记本**。
