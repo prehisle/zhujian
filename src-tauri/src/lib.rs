@@ -11,7 +11,7 @@ mod dock_menu;
 
 use spaces::Spaces;
 use zhujian_core::sync::supervisor::{ActivateSpec, ActiveRuntime as SpaceRuntime, SpaceSupervisor};
-use zhujian_core::{clock, db, images, notes, repo, sync, task, thumbs};
+use zhujian_core::{clock, db, identity, images, notes, repo, sync, task, thumbs};
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -147,6 +147,11 @@ struct ProcessedItem {
     /// 删除 by this (inbox = hard-deletable junk, filed = soft → 回收站), NOT by whether
     /// `topics` is empty: a filed idea whose last tag was deleted stays filed.
     stage: String,
+    /// 出生设备(0033 born_device),null = 未知(0033 前的存量行)。前端经 `device_identity`
+    /// 的名册翻成别名显一枚署名 chip;**只在「不是本机」且「那台起过别名」时显**,其余
+    /// 一律不显(identity-plan §3.7 + 2026-08-05 用户拍板:未命名设备不显 id 片段)。
+    /// 回收站视图拿到同一份数据但不渲染它(署名在「已处理完」的语境里价值低噪音高)。
+    born_device: Option<String>,
     /// Each tag as `{id, title, color}` — the 灵感 card renders them as chips, tinted by
     /// `color` (null = 无色) just like the board.
     topics: Vec<TopicItem>,
@@ -166,6 +171,7 @@ fn list_processed(space_id: String, spaces: State<'_, Spaces>) -> Result<Vec<Pro
             content: n.content,
             created_at: n.created_at,
             stage: n.stage,
+            born_device: n.born_device,
             topics: n.topics.into_iter().map(TopicItem::from).collect(),
         })
         .collect())
@@ -186,6 +192,7 @@ fn list_ideas(space_id: String, spaces: State<'_, Spaces>) -> Result<Vec<Process
             content: n.content,
             created_at: n.created_at,
             stage: n.stage,
+            born_device: n.born_device,
             topics: n.topics.into_iter().map(TopicItem::from).collect(),
         })
         .collect())
@@ -344,6 +351,7 @@ fn list_archived(space_id: String, spaces: State<'_, Spaces>) -> Result<Vec<Proc
             content: n.content,
             created_at: n.created_at,
             stage: n.stage,
+            born_device: n.born_device,
             topics: n.topics.into_iter().map(TopicItem::from).collect(),
         })
         .collect())
@@ -435,6 +443,8 @@ struct TaskItem {
     /// 完成时刻(RFC3339,0030 done_at),null = 未知(本功能前完成的老卡)。看板「已完成」
     /// 卡据它显示「完成于」;归档册按 COALESCE(done_at, sealed_at) 分组(完成日优先)。只增不清。
     done_at: Option<String>,
+    /// 出生设备(0033 born_device),显示规则同 [`ProcessedItem::born_device`]。
+    born_device: Option<String>,
     /// Every tag on this card (M:N, `item_topic`), each `{id, title}`. Empty = 无标签.
     /// The board shows them all as chips; the filter bar treats a card as belonging to
     /// each of its tags. Tag order follows the topic's `updated_at` (see repo::task_rows).
@@ -458,6 +468,7 @@ impl From<repo::TaskRow> for TaskItem {
             priority: t.priority,
             sealed_at: t.sealed_at,
             done_at: t.done_at,
+            born_device: t.born_device,
             topics,
         }
     }
@@ -1960,6 +1971,61 @@ fn rename_space(
     Ok(())
 }
 
+/// 设备身份面(identity-plan §2.3):本机是哪台 + 这个账户里见过哪些设备。
+/// 一次取齐,因为前端两处都要用它——设置面的「本机别名」输入框,与卡片署名 chip 的
+/// 「device_id → 别名」翻译表。
+#[derive(Serialize)]
+struct DeviceIdentity {
+    /// 本机在**这个空间**里的 device_id(设备身份是「设备 × 空间」粒度:同一台机器
+    /// 在两个空间里是两个不同的 id)。
+    this_device: String,
+    /// 全量名册,按 device_id 排序。⚠ 口径是**「见过的设备」**,不是「当前在册的设备」
+    /// ——被服务端吊销的设备,它的别名行照样在(op 早已收敛进每台设备的库)。要一份
+    /// 权威在册名单得等 §5「移除设备」补服务端下发,别拿这个当那个用。
+    devices: Vec<DeviceEntryItem>,
+}
+
+#[derive(Serialize)]
+struct DeviceEntryItem {
+    device_id: String,
+    /// null = 从未命名或显式清名。**后端绝不编造缺省名**(design-rules:绝不回退兜底);
+    /// 人话缺省(设置面显 id 前 6 位 + 灰「未命名」)归前端。
+    alias: Option<String>,
+}
+
+#[tauri::command]
+fn device_identity(space_id: String, spaces: State<'_, Spaces>) -> Result<DeviceIdentity, String> {
+    let rt = spaces.get(&space_id)?;
+    let conn = rt.db.lock().expect("db mutex poisoned");
+    let this_device = clock::Clock::load(&conn)?.device_id().to_string();
+    let devices = identity::device_roster(&conn)?
+        .into_iter()
+        .map(|d| DeviceEntryItem { device_id: d.device_id, alias: d.alias })
+        .collect();
+    Ok(DeviceIdentity { this_device, devices })
+}
+
+/// 给一台设备起/改/清别名(identity-plan §2)。`alias` 传 null 或空白 = 清名。
+/// 别名**进同步**(和空间名同族);字号 / 明暗 / 热键那三样是环境属性刻意不同步,别搞混。
+///
+/// `device_id` 由前端传,不锁本机:名册是账户内共享的,给别的设备改名合法(冲突走
+/// 字段级 LWW)。当前 UI 只用它改本机那台。
+#[tauri::command]
+fn set_device_alias(
+    space_id: String,
+    device_id: String,
+    alias: Option<String>,
+    spaces: State<'_, Spaces>,
+) -> Result<(), String> {
+    let rt = spaces.get(&space_id)?;
+    let (mut conn, mut clk) = rt.write_locks();
+    // ReopenRequired 复核在锁内(space-entry-plan §3.2,codex 二轮 M2),同 rename_space。
+    if let Some(e) = rt.restart_required() {
+        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
+    }
+    identity::set_device_alias(&mut conn, &mut clk, &device_id, alias.as_deref())
+}
+
 /// 重置空间(epoch-plan §7):清除本机该空间副本,之后走配对重新加入。**UI 义务
 /// (multispace §20 门 4)在前端**:二段确认红字(本机该空间数据将删除、须有另一台
 /// 在线完整副本、旧 device_id 报运营者吊销)。次序 = supervisor `begin_reset`(会话
@@ -2966,6 +3032,8 @@ pub fn run() {
             create_space,
             reset_space,
             rename_space,
+            device_identity,
+            set_device_alias,
             move_item_to_space,
             get_hotkeys,
             set_hotkey,

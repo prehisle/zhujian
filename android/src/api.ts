@@ -73,6 +73,9 @@ export type TimelineItem = {
   priority: TaskPriority | null;
   /** 完成时刻(RFC3339,0030 done_at):done 行据它显示「完成于」;灵感/未完成行 null。 */
   done_at: string | null;
+  /** 出生设备(0033 born_device),null = 未知(0033 前的存量行)。经 identity.ts 翻成
+   *  署名 chip;只在「不是本机」且「那台起过别名」时显。 */
+  born_device: string | null;
   topics: TopicItem[];
   images: ImageMeta[];
 };
@@ -133,6 +136,19 @@ export const listTimeline = (space: string) =>
   invoke<TimelineItem[]>("list_timeline", { spaceId: space });
 
 export const listIdeas = (space: string) => invoke<IdeaItem[]>("list_ideas", { spaceId: space });
+
+/** 设备身份面(0033,identity-plan §2.3):本机是哪台 + 见过哪些设备(含别名)。
+ *  ⚠ 名册口径是「见过的设备」,不是「当前在册的设备」。 */
+export type DeviceIdentity = {
+  this_device: string;
+  devices: { device_id: string; alias: string | null }[];
+};
+export const deviceIdentity = (space: string) =>
+  invoke<DeviceIdentity>("device_identity", { spaceId: space });
+
+/** 起/改/清设备别名。alias 传 null 或空白 = 清名。**进同步**(与明暗/字号刻意不同)。 */
+export const setDeviceAlias = (space: string, deviceId: string, alias: string | null) =>
+  invoke<void>("set_device_alias", { spaceId: space, deviceId, alias });
 
 /** 灵感回收站(archived_at 轴)。 */
 export const listArchivedIdeas = (space: string) =>

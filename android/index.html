@@ -389,6 +389,14 @@
         display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
         margin-top: 4px; font-size: 12px; color: var(--ink-faint);
       }
+      /* 条目署名(0033):和时间戳同一档存在感,刻意不用标签 chip 的边框/底色——
+         署名不是可点、可筛的实体,只是一句「谁记的」。别名上限 200 字节,截断而不是
+         把卡片撑出横条(249:min-width:0 是 flex 里让省略号真生效的那一半)。 */
+      .sig-chip {
+        color: var(--ink-faint); white-space: nowrap;
+        overflow: hidden; text-overflow: ellipsis; max-width: 10em; min-width: 0;
+      }
+      .sig-chip::before { content: "·"; margin-right: 4px; opacity: 0.6; }
       .pill {
         padding: 1px 8px; border-radius: 999px;
         background: var(--seal-tint); color: var(--seal); font-weight: 600;
@@ -987,6 +995,16 @@
         <button data-textsize="130">特大</button>
       </div>
       <p class="fine">调整全 app 的文字大小(在系统「字体大小」的基础上叠加)。只影响这台设备,不同步到别的设备。</p>
+
+      <h2>本机别名</h2>
+      <div class="row">
+        <input id="alias-input" placeholder="未命名" maxlength="60" spellcheck="false"
+               autocapitalize="off" autocomplete="off" disabled />
+        <button id="alias-save" disabled>保存</button>
+      </div>
+      <!-- 与上面两样刻意不同:别名**进同步**(和空间名同族),外观/字号是设备环境属性。 -->
+      <p class="fine">给这台设备起个名字(如「娟娟的手机」)。它会<b>同步</b>给同一账户的其他设备,让他们看到条目是谁记的。留空 = 不起名。</p>
+      <p id="alias-msg" class="fine" hidden></p>
 
       <h2>关于</h2>
       <div id="about" class="kv"></div>

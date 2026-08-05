@@ -23,6 +23,16 @@
 //! 业务 schema):三选一——「纯本地 schema,新旧客户端混跑安全」/「协议或 oplog 词汇
 //! 变化,先发兼容 reader、下一版才开 writer」/「必须版本门控同步」。
 //!
+//! **除本文件的 [`SCHEMA_VERSION`] 外,还有两处写死了版本号**(300 判例):
+//! 1. `core/src/repo.rs` 的 `migration_sets_user_version_NN_and_enforces_foreign_keys`
+//!    —— **函数名与断言值都写死**,加迁移时会红,得连名字一起改;
+//! 2. `scripts/cdp-acceptance-db-migrate.js` 的 `EXPECT_UV` —— **在仓外、编译器管不着**,
+//!    它在 0031 上生产后**整整两版没人动**,一直拿 30 去对 32 的库,直到 300 真跑才红。
+//!
+//! 下方 `schema_version_matches_migration_chain` 那只是**派生**断言(拿迁移链
+//! 末位比),自维护、加迁移不用动它 —— 别把它跟上面两处搞混。加迁移的当轮把上面两处
+//! 一起改掉,别指望事后想起来。
+//!
 //! **已声明的债(codex 实现审 M4)**:新 runner 下事务体里 `PRAGMA foreign_keys=OFF`
 //! 是事务内 no-op——将来第一条需要重建被 FK 引用表的真实迁移,必须先把 MIGRATIONS
 //! 元组升级出 `foreign_keys: Enforced | DisabledDuringBody` 声明位(runner 在 BEGIN
@@ -36,7 +46,7 @@ use rusqlite::Connection;
 /// 当前 schema 版本 = 迁移链末位。spaces 的只读 exact-match 检查(multispace-plan §10)
 /// 与 staging 建库都以它为锚;加新迁移时此常量跟着 MIGRATIONS 一起动
 /// (migration_sets_user_version 测试与下方一致性测试双守)。
-pub const SCHEMA_VERSION: i64 = 32;
+pub const SCHEMA_VERSION: i64 = 34;
 
 /// 安卓前滚迁移下限(codex 设计审 H1):手机端只对 `user_version >= 28` 的既有
 /// 正式库做原地前滚(现网手机全部诞生于 v28 干净装)。1-27 的老迁移不自带崩溃窗
@@ -81,6 +91,8 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (30, include_str!("../migrations/0030_add_item_done_at.sql")),
     (31, include_str!("../migrations/0031_topic_position_and_kind.sql")),
     (32, include_str!("../migrations/0032_item_image_thumb.sql")),
+    (33, include_str!("../migrations/0033_device_profile_and_born_device.sql")),
+    (34, include_str!("../migrations/0034_recover_born_device_from_log.sql")),
 ];
 
 /// Open the database at `path`, enforce foreign keys, and apply migrations.
@@ -281,6 +293,85 @@ pub fn open_through(path: &Path, max_version: i64) -> rusqlite::Result<Connectio
     Ok(conn)
 }
 
+/// 往一枚**任意版本**的库里播一条真实数据(一行 items + 一条 item create op),
+/// 列面按那枚库真实拥有的列走。
+///
+/// 为什么不能直接用 `notes::capture`:生产路径恒按**当前** schema 的列面写(今天含 0033
+/// 的 `born_device`),拿它去喂 v27/v28 库会直接撞「table items has no column named
+/// born_device」。而调用方(`spaces::build_old_db`)同一个函数既造 v28 也造当前版,
+/// 所以这里必须真的分叉,不能二选一写死——「造旧版库」这类测试的固有代价。
+///
+/// 分叉判据取库自己的 `pragma_table_info`,不取 `SCHEMA_VERSION`:后者是「本程序最新是
+/// 几」,而这里要问的是「**手上这枚库**有没有这列」,两者在本函数的调用现场恰好不同。
+#[cfg(test)]
+pub(crate) fn seed_legacy_item(
+    conn: &Connection,
+    clock: &mut crate::clock::Clock,
+    content: &str,
+) -> String {
+    let id = ulid::Ulid::new().to_string();
+    let now = "2026-01-01T00:00:00Z";
+    let has_born_device: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('items') WHERE name = 'born_device'",
+            [],
+            |r| r.get(0),
+        )
+        .expect("查 items 列面");
+    if has_born_device > 0 {
+        // v33+:born_device 由触发器钉死成「恰等于本机 device_id」,同生产路径取数式。
+        conn.execute(
+            "INSERT INTO items (id, content, stage, created_at, updated_at, born_stage, born_device) \
+             VALUES (?1, ?2, 'inbox', ?3, ?3, 'inbox', \
+                     (SELECT value FROM sync_meta WHERE key = 'device_id'))",
+            (&id, content, now),
+        )
+        .expect("播 items 行");
+    } else {
+        conn.execute(
+            "INSERT INTO items (id, content, stage, created_at, updated_at, born_stage) \
+             VALUES (?1, ?2, 'inbox', ?3, ?3, 'inbox')",
+            (&id, content, now),
+        )
+        .expect("播旧版 items 行");
+    }
+    let hlc = clock.tick(conn).expect("取号");
+    let origin_seq: i64 = conn
+        .query_row(
+            "SELECT COALESCE(MAX(origin_seq), 0) + 1 FROM oplog WHERE origin = ?1",
+            [hlc.device_id.as_str()],
+            |r| r.get(0),
+        )
+        .expect("取 origin_seq");
+    // create payload 跟着列面走:v33+ 八键(带 born_device),更早七键。**必须跟**——
+    // boot 的状态⟺日志审计逐字段比「表列 == create 初值」,行上有值而 payload 无键
+    // 就是一枚人造的矛盾。
+    let mut payload = serde_json::json!({
+        "content": content,
+        "stage": "inbox",
+        "created_at": now,
+        "born_stage": "inbox",
+        "due_on": null,
+        "priority": null,
+        "position": null,
+    });
+    if has_born_device > 0 {
+        payload["born_device"] = serde_json::Value::String(hlc.device_id.clone());
+    }
+    crate::oplog::append_remote(
+        conn,
+        &ulid::Ulid::new().to_string(),
+        &hlc.encode(),
+        "item",
+        &id,
+        "create",
+        &payload,
+        origin_seq,
+    )
+    .expect("播 create op");
+    id
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -322,7 +413,7 @@ mod tests {
         let before = {
             let mut conn = open_through(&path, 27).unwrap();
             let mut clock = crate::clock::Clock::load(&conn).unwrap();
-            crate::notes::capture(&mut conn, &mut clock, "升级前的数据").unwrap();
+            seed_legacy_item(&conn, &mut clock, "升级前的数据");
             // v27 库(0031 前)没有 topics.position:不能用高层 create_topic(它读/写 position)。
             // 用建档原语 + oplog 助手直接播三条 topic op(create + color set_field),口径与旧
             // create_topic 一致——本测只验 0028 崩溃窗对既有 oplog 的原样保全,不涉 0031。
@@ -463,9 +554,9 @@ mod tests {
             .join(format!("ys-nb-db-canary-{}.sqlite3", std::process::id()));
         let _ = std::fs::remove_file(&path);
         let before = {
-            let mut conn = open_through(&path, 28).unwrap();
+            let conn = open_through(&path, 28).unwrap();
             let mut clock = crate::clock::Clock::load(&conn).unwrap();
-            crate::notes::capture(&mut conn, &mut clock, "升级前的数据").unwrap();
+            seed_legacy_item(&conn, &mut clock, "升级前的数据");
             conn.query_row("SELECT COUNT(*) FROM oplog", [], |r| r.get::<_, i64>(0)).unwrap()
         };
         let conn = open_through(&path, 29).expect("v28 库前滚到 29 必须成功");

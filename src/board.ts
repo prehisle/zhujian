@@ -43,6 +43,7 @@ import type { View, ViewCtx } from "./notebook";
 import { applyTagColor } from "./tag-color";
 import { renderTagPicker } from "./tag-picker";
 import { type TaskItem, dayKey, dayLabel, dueState, localToday, metaRow, startOfWeek } from "./tasktime";
+import { loadIdentity, signatureChip } from "./identity";
 import "./board.css";
 
 // 跨视图「跳到这张任务卡」通道(搜索命中任务 → 跳看板并高亮)。模块级——
@@ -1046,6 +1047,12 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       // due/priority: pure-display chips on the card; edits open from the ⋯ menu (㊺).
       // 失败走 op-err 横幅(非破坏),renderError 只留给读取失败(ui-audit P0 #6)。
       const meta = metaRow(item, today, load, showOpError);
+      // 署名(0033):只在活跃看板显——回收站/归档册是「已处理完」的语境,不铺
+      // (2026-08-05 用户拍板的铺开范围)。挂进 due/priority 那一行末尾。
+      if (boardView === "board") {
+        const sig = signatureChip(mountSpace, item.born_device);
+        if (sig) meta.root.append(sig);
+      }
       c.append(meta.root);
       // tags (M:N): set-tag chips show on the card (each with a ✕ to drop it); adding a
       // tag opens the picker from the ⋯ menu's 标签 (㊺). Reuses .task-meta chip styling.
@@ -1580,6 +1587,8 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         invoke<TaskItem[]>("list_archived_tasks"),
         invoke<TaskItem[]>("list_sealed_tasks"),
         invoke<TopicOpt[]>("list_topics"),
+        // 设备名册(0033 署名):与列表**并发**取,不给渲染加一跳延迟。
+        loadIdentity(mountSpace),
       ]);
       if (seq !== loadSeq) return; // 有更晚的 load 已在途:旧响应不落 DOM(否则盖新画/拆脉冲)
       // focus 只由**确认最新**的这一发消费(codex 三审 H1):放在 seq 守卫之后取走——陈旧的

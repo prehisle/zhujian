@@ -506,6 +506,10 @@ fn import_attached(conn: &mut Connection, clock: &mut Clock) -> Result<ImportRep
     // 侧矛盾响亮拒——绝不让下方的合并物化顺手「修复」既有损坏再让 battery 误过。
     audit_space_profile_semantics(&tx, "", "本机")?;
     audit_space_profile_semantics(&tx, "boot.", "快照")?;
+    // device profile 多实例寄存器同样**双侧独立预审**(identity-plan §2.1):理由与上面
+    // 逐字相同——绝不让下方的表级复制顺手把既有损坏搬过来再让 battery 误过。
+    audit_device_profile_semantics(&tx, "", "本机")?;
+    audit_device_profile_semantics(&tx, "boot.", "快照")?;
     tx.execute("INSERT INTO sync_replay_active (flag) VALUES (1)", [])
         .map_err(|e| e.to_string())?;
 
@@ -522,9 +526,11 @@ fn import_attached(conn: &mut Connection, clock: &mut Clock) -> Result<ImportRep
     let items = tx
         .execute(
             "INSERT INTO items (id, content, stage, created_at, updated_at, archived_at, \
-                                due_on, priority, position, sealed_at, born_stage, done_at) \
+                                due_on, priority, position, sealed_at, born_stage, done_at, \
+                                born_device) \
              SELECT id, content, stage, created_at, updated_at, archived_at, \
-                    due_on, priority, position, sealed_at, born_stage, done_at FROM boot.items",
+                    due_on, priority, position, sealed_at, born_stage, done_at, \
+                    born_device FROM boot.items",
             [],
         )
         .map_err(|e| format!("导入 items 失败:{e}"))?;
@@ -593,6 +599,36 @@ fn import_attached(conn: &mut Connection, clock: &mut Clock) -> Result<ImportRep
             .map_err(|e| format!("物化 space_profile 失败:{e}"))?;
         }
     }
+    // device profile **多实例合并**(identity-plan §2.1;codex 301 实现审一轮 M1)。
+    //
+    // 这里原先走的是表级复制,论证是「两侧同时有某个 device_id 的行 = 前提被破坏,撞
+    // PRIMARY KEY 响亮失败」。那个论证**过强**:[`crate::identity::set_device_alias`] 有意
+    // **不锁本机**(名册是账户内共享的,给别台设备改名是合法操作),而 fresh 闸只排除
+    // **他人 origin** 的 op、本机 op 是许的——于是「新端在引导前给快照里那台设备写过一行」
+    // 两侧都合法,表复制当场撞 PK、整个引导失败。今天两端 UI 都只传 this_device 够不着这
+    // 条路,但护栏是「调用方自律」而不是结构,且 §2.3 的真名单、§5 的移除设备一做出来就
+    // 够得着了。
+    //
+    // 改成与上面 space_profile 同一手法:从**合并后**的日志按 HLC 赢家 UPSERT。它不依赖
+    // 「两侧不相交」这个假设,且与 [`audit_device_profile_semantics`] 的「值不符」判据
+    // **逐字同口径**(同样 `ORDER BY hlc DESC LIMIT 1`),天生不会自己跟自己打架;只在快照
+    // 有 / 只在本机有 / 两侧都有,三种情形一条 SQL 全覆盖。快照那张表不再被直接复制,但
+    // 仍受上方 `"boot."` 侧预审把关(值必须与快照自己的日志一致),验它 + 从日志重建是
+    // 双保险,不是重复。
+    // (行数不进 ImportReport:那份报告是给用户看的「导入了多少内容」,设备名册是元数据。)
+    tx.execute(
+        "INSERT INTO device_profile (device_id, alias) \
+         SELECT o.entity_id, \
+                (SELECT json_extract(w.payload, '$.value') FROM oplog w \
+                  WHERE w.entity = 'device' AND w.entity_id = o.entity_id \
+                    AND w.kind = 'set_field' \
+                  ORDER BY w.hlc DESC LIMIT 1) \
+           FROM (SELECT DISTINCT entity_id FROM oplog WHERE entity = 'device') o \
+          WHERE true \
+             ON CONFLICT(device_id) DO UPDATE SET alias = excluded.alias",
+        [],
+    )
+    .map_err(|e| format!("物化 device_profile 失败:{e}"))?;
 
     // ---- 导入后校验(§6.2 步骤 4;任一不过 = 整体回滚,连豁免标志一起消失) ----
     // 结构校验四件套(双序 / 墓碑复活 / counter 治理 / 连续性+FK)抽成共享审计函数,
@@ -817,9 +853,14 @@ fn audit_contiguity_and_fk(conn: &Connection) -> Result<(), String> {
 /// item 的 LWW 审计字段(updated_at 是本机簿记摸 now,不同步不审)。
 /// 每个字段:create payload 里键名同字段名(archived_at/sealed_at/done_at 出生态不在 payload →
 /// json_extract 得 NULL,winner 落到 set_field 或保持 NULL),set_field 值在 `$.value`。
+/// born_stage / born_device 是**不可变**列,却照样在这里:这张表实际审的是「表列 ==
+/// 日志 LWW 赢家」,而不可变列的 winner 恒 = create 初值(它们的 set_field 被协议禁),
+/// 于是这条审计对它们退化成「行上的出生史实 == create op 说的出生史实」——正是该审的。
+/// pre-0033 的老行两边都是 NULL,`IS` 比较相等,不误报(identity-plan §3.4 原写「不加」,
+/// 理由「不可变列不参与 LWW」与既有 born_stage 的事实不符,按 born_stage 同款加)。
 const ITEM_LWW_FIELDS: &[&str] = &[
     "content", "stage", "created_at", "due_on", "priority", "archived_at", "sealed_at",
-    "born_stage", "position", "done_at",
+    "born_stage", "position", "done_at", "born_device",
 ];
 
 /// 某 op 背书实体的某字段:表列是否 == 日志 LWW winner(winner = create 初值 + 该字段
@@ -920,6 +961,88 @@ fn audit_op_backed_semantics(live: &Connection) -> Result<(), String> {
     audit_image_integrity(live)?;
     // ⑥ space profile 单例寄存器双向不变量(space-name-sync-plan §4.4,0028)。
     audit_space_profile_semantics(live, "", "本库")?;
+    // ⑦ device profile 多实例寄存器双向不变量(identity-plan §2.1,0033)。
+    audit_device_profile_semantics(live, "", "本库")?;
+    Ok(())
+}
+
+/// device profile **多实例**寄存器的双向语义审计(identity-plan §2.1,0033)。
+///
+/// 与 [`audit_space_profile_semantics`] 同构,差别只在「一行」变成「每 device_id 一行」:
+/// 某设备**有 op ⇔ 有行**,且 `alias` IS 该设备全部 op 里 HLC 最大那条的 value(**含 null**
+/// ——显式清名的规范表示)。行在无 op / op 在行缺 / 值不符 三向都拒。
+///
+/// `prefix` 复用于快照侧(`"boot."`——attached 库的 CHECK/PK 可被篡改,故不信 schema、
+/// 实查词汇与坐标)与本库侧(`""`);`who` 只进话术。
+fn audit_device_profile_semantics(
+    conn: &Connection,
+    prefix: &str,
+    who: &str,
+) -> Result<(), String> {
+    let one = |sql: &str| -> Result<i64, String> {
+        conn.query_row(sql, [], |r| r.get(0)).map_err(|e| e.to_string())
+    };
+    // 词汇合规(NULL 语义:json_extract 缺键、篡改 schema 的 attached 库列为 NULL 时
+    // `<>` 三值逻辑不计入——全部 COALESCE 后照拒,同 space 的 codex 实现审 L)。
+    // **坐标**这里不是固定字面量,而是「必须是规范 device_id」——挡的是非规范 id 白得
+    // 一行(**不是行数**,见 replay 那臂:合法 ULID 要多少有多少),快照侧尤其不能只靠
+    // 表 CHECK。
+    let bad_ops = one(&format!(
+        "SELECT COUNT(*) FROM {prefix}oplog WHERE entity = 'device' AND ( \
+             COALESCE(kind, '') <> 'set_field' \
+             OR COALESCE(json_extract(payload, '$.field'), '') <> 'alias' \
+             OR length(COALESCE(entity_id, '')) <> 26 \
+             OR COALESCE(entity_id, '') GLOB '*[^0-9A-Z]*')"
+    ))?;
+    if bad_ops > 0 {
+        return Err(format!(
+            "device 语义审计({who}):{bad_ops} 条 device op 词汇/坐标非法(寄存器只认 set_field/alias,entity_id 须为规范 device_id),整体回滚"
+        ));
+    }
+    let bad_rows = one(&format!(
+        "SELECT COUNT(*) FROM {prefix}device_profile \
+         WHERE length(COALESCE(device_id, '')) <> 26 OR COALESCE(device_id, '') GLOB '*[^0-9A-Z]*'"
+    ))?;
+    if bad_rows > 0 {
+        return Err(format!(
+            "device 语义审计({who}):{bad_rows} 行 device_profile 的 device_id 非规范形,整体回滚"
+        ));
+    }
+    // 行在无 op:每行必须有至少一条自己的 device op 背书。
+    let unbacked = one(&format!(
+        "SELECT COUNT(*) FROM {prefix}device_profile p WHERE NOT EXISTS ( \
+             SELECT 1 FROM {prefix}oplog o \
+             WHERE o.entity = 'device' AND o.entity_id = p.device_id)"
+    ))?;
+    if unbacked > 0 {
+        return Err(format!(
+            "device 语义审计({who}):{unbacked} 行 device_profile 无任何 device op 背书(行在无 op),整体回滚"
+        ));
+    }
+    // op 在行缺:有 op 的设备必须有行(alias=NULL 的清名也是「有行」)。
+    let missing = one(&format!(
+        "SELECT COUNT(*) FROM (SELECT DISTINCT entity_id FROM {prefix}oplog \
+             WHERE entity = 'device') o \
+         WHERE NOT EXISTS ( \
+             SELECT 1 FROM {prefix}device_profile p WHERE p.device_id = o.entity_id)"
+    ))?;
+    if missing > 0 {
+        return Err(format!(
+            "device 语义审计({who}):{missing} 台设备有 device op 但 device_profile 无行(op 在行缺),整体回滚"
+        ));
+    }
+    // 值不符:逐行比「表列 IS 该设备日志的 HLC 最大赢家」(含 null)。
+    let mismatch = one(&format!(
+        "SELECT COUNT(*) FROM {prefix}device_profile p WHERE NOT (p.alias IS ( \
+             SELECT json_extract(payload, '$.value') FROM {prefix}oplog \
+             WHERE entity = 'device' AND entity_id = p.device_id AND kind = 'set_field' \
+             ORDER BY hlc DESC LIMIT 1))"
+    ))?;
+    if mismatch > 0 {
+        return Err(format!(
+            "device 语义审计({who}):{mismatch} 行 device_profile.alias 与日志 LWW 赢家不符(状态与日志矛盾),整体回滚"
+        ));
+    }
     Ok(())
 }
 
@@ -1520,9 +1643,11 @@ mod tests {
             let err = p
                 .conn
                 .execute(
+                    // born_device 给对(0033),否则它先 ABORT,本测就验不到 0025 那两只。
                     "INSERT INTO items (id, content, stage, created_at, updated_at, position, \
-                                        sealed_at, born_stage) \
-                     VALUES ('x', 'x', 'done', 't', 't', 'a0', ?1, ?2)",
+                                        sealed_at, born_stage, born_device) \
+                     VALUES ('x', 'x', 'done', 't', 't', 'a0', ?1, ?2, \
+                             (SELECT value FROM sync_meta WHERE key = 'device_id'))",
                     (sealed, born),
                 )
                 .unwrap_err();
@@ -1933,6 +2058,128 @@ mod tests {
         import_snapshot(&mut f.conn, &mut f.clock, &snap.path).unwrap();
         assert_eq!(space_profile_of(&f.conn), (1, Some(None)), "null 赢家 = 行在、name NULL");
         strict_battery(&f.conn).unwrap();
+    }
+
+    /// device 多实例寄存器的双侧预审(0033,identity-plan §2.1)——与上面 space 那只
+    /// 逐条同构,差别只在「一行」变成「每 device_id 一行」。三向都拒:行在无 op /
+    /// op 在行缺 / 值不符。**没有这只测,`audit_device_profile_semantics` 整只是死码**
+    /// (引导正路上的合法快照永远不会触发它,它防的是被篡改/损坏的源库)。
+    #[test]
+    fn import_rejects_device_profile_state_log_mismatch_both_sides() {
+        let dev = "01DEVAAAAAAAAAAAAAAAAAAAAA";
+        // ① 源侧「行在无 op」:裸快照(绕供货闸)塞一行无背书的 device_profile。
+        let mut a = peer("dv-bad-src");
+        notes::capture(&mut a.conn, &mut a.clock, "数据").unwrap();
+        let snap = raw_snapshot(&a.conn, &a.dir);
+        {
+            let sc = Connection::open(&snap.path).unwrap();
+            sc.execute("INSERT INTO device_profile (device_id, alias) VALUES (?1, '伪名')", [dev])
+                .unwrap();
+        }
+        let mut b = peer("dv-bad-src-dst");
+        let err = import_snapshot(&mut b.conn, &mut b.clock, &snap.path).unwrap_err();
+        assert!(err.contains("快照") && err.contains("行在无 op"), "{err}");
+        assert!(meta_get(&b.conn, "bootstrapped_at").unwrap().is_none(), "半途无痕");
+
+        // ② 本机侧「行在无 op」:直插模拟本地损坏(device_profile 无触发器守护)。
+        let mut c = peer("dv-bad-local");
+        c.conn
+            .execute("INSERT INTO device_profile (device_id, alias) VALUES (?1, '幽灵')", [dev])
+            .unwrap();
+        let snap = make_snapshot(&a.conn, &a.dir).unwrap();
+        let err = import_snapshot(&mut c.conn, &mut c.clock, &snap.path).unwrap_err();
+        assert!(err.contains("本机") && err.contains("行在无 op"), "{err}");
+
+        // ③ 源侧「op 在行缺」:有 op、把行删了(op 是史实删不掉,行不是)。
+        let mut d = peer("dv-bad-missing");
+        notes::capture(&mut d.conn, &mut d.clock, "数据").unwrap();
+        crate::identity::set_device_alias(&mut d.conn, &mut d.clock, dev, Some("甲")).unwrap();
+        let snap = raw_snapshot(&d.conn, &d.dir);
+        {
+            let sc = Connection::open(&snap.path).unwrap();
+            sc.execute("DELETE FROM device_profile WHERE device_id = ?1", [dev]).unwrap();
+        }
+        let mut e = peer("dv-bad-missing-dst");
+        let err = import_snapshot(&mut e.conn, &mut e.clock, &snap.path).unwrap_err();
+        assert!(err.contains("快照") && err.contains("op 在行缺"), "{err}");
+
+        // ④ 源侧「值不符」:有 op、行也在,但行值 ≠ 日志赢家。
+        let mut f = peer("dv-bad-val");
+        notes::capture(&mut f.conn, &mut f.clock, "数据").unwrap();
+        crate::identity::set_device_alias(&mut f.conn, &mut f.clock, dev, Some("甲")).unwrap();
+        let snap = raw_snapshot(&f.conn, &f.dir);
+        {
+            let sc = Connection::open(&snap.path).unwrap();
+            sc.execute("UPDATE device_profile SET alias = '改错' WHERE device_id = ?1", [dev])
+                .unwrap();
+        }
+        let mut g = peer("dv-bad-val-dst");
+        let err = import_snapshot(&mut g.conn, &mut g.clock, &snap.path).unwrap_err();
+        assert!(err.contains("快照") && err.contains("LWW 赢家不符"), "{err}");
+    }
+
+    /// 验收工装(302):对一枚**真实库副本**跑 strict battery。`strict_battery` 是
+    /// `pub(crate)`,examples 够不到,所以这道验收只能落在测试里。
+    ///
+    /// 默认 `#[ignore]`,只在真实库迁移验收时手动跑:
+    /// ```text
+    /// ZHUJIAN_BATTERY_DB=<副本路径> cargo test --lib battery_on_a_real_db_copy -- --ignored --nocapture
+    /// ```
+    /// **只喂副本**——它虽然只读,但别拿生产库当试验田(`ys-notebook-migration-trap`)。
+    #[test]
+    #[ignore = "验收工装:要 ZHUJIAN_BATTERY_DB 指向一枚真实库副本"]
+    fn battery_on_a_real_db_copy() {
+        let path = std::env::var("ZHUJIAN_BATTERY_DB")
+            .expect("用法:ZHUJIAN_BATTERY_DB=<副本路径> cargo test ... -- --ignored");
+        let conn = Connection::open(&path).expect("开副本");
+        conn.pragma_update(None, "foreign_keys", true).unwrap();
+        strict_battery(&conn).expect("真实库副本必须过 strict battery");
+        println!("✓ {path} 过 strict battery");
+    }
+
+    /// **两侧都已经有同一台设备那一行**时,引导必须合并而不是撞 PRIMARY KEY。
+    ///
+    /// 原实现走表级复制,论证是「两侧同时有某个 device_id 的行 = 前提被破坏」——过强:
+    /// `identity::set_device_alias` 有意**不锁本机**(名册账户内共享),而 fresh 闸只排除
+    /// **他人 origin** 的 op、本机 op 是许的。于是这个局面两侧都合法,旧代码在这里整个
+    /// 引导失败。codex 301 实现审 M1。
+    #[test]
+    fn import_merges_a_device_row_that_both_sides_already_have() {
+        let dev = "01DEVAAAAAAAAAAAAAAAAAAAAA";
+        let mut a = peer("dv-merge-src");
+        notes::capture(&mut a.conn, &mut a.clock, "数据").unwrap();
+        crate::identity::set_device_alias(&mut a.conn, &mut a.clock, dev, Some("甲")).unwrap();
+        let snap = make_snapshot(&a.conn, &a.dir).unwrap();
+
+        let mut b = peer("dv-merge-dst");
+        crate::identity::set_device_alias(&mut b.conn, &mut b.clock, dev, Some("乙")).unwrap();
+        import_snapshot(&mut b.conn, &mut b.clock, &snap.path)
+            .expect("两侧都有这一行:必须按日志合并,不是撞 PK 把整个引导打掉");
+
+        // 赢家用**独立观测**算:把合并后的 device op 全读出来、自己按 hlc 排序取最大,
+        // 不复用实现那条 SQL——复用就成了同义反复,证不出口径对不对。
+        let mut stmt = b
+            .conn
+            .prepare(
+                "SELECT hlc, json_extract(payload, '$.value') FROM oplog \
+                 WHERE entity = 'device' AND entity_id = ?1 AND kind = 'set_field'",
+            )
+            .unwrap();
+        let mut ops: Vec<(String, Option<String>)> = stmt
+            .query_map([dev], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        assert_eq!(ops.len(), 2, "两侧各发过一条,合并后都在");
+        ops.sort();
+        let winner = ops.last().unwrap().1.clone();
+        let got: Option<String> = b
+            .conn
+            .query_row("SELECT alias FROM device_profile WHERE device_id = ?1", [dev], |r| r.get(0))
+            .unwrap();
+        assert_eq!(got, winner, "表值必须 == 日志的 HLC 赢家");
+        assert!(matches!(got.as_deref(), Some("甲") | Some("乙")), "赢家必是两个真名之一");
+        strict_battery(&b.conn).expect("合并后状态⟺日志必须自洽");
     }
 
     /// 双侧独立预审(codex 二轮 M1):任一侧「状态与日志矛盾」响亮拒,合并绝不代修。
@@ -3025,7 +3272,7 @@ mod tests {
             "SELECT id||'|'||content||'|'||stage||'|'||created_at \
              ||'|'||COALESCE(archived_at,'∅')||'|'||COALESCE(due_on,'∅')||'|'||COALESCE(priority,'∅') \
              ||'|'||COALESCE(position,'∅')||'|'||COALESCE(sealed_at,'∅')||'|'||COALESCE(born_stage,'∅') \
-             ||'|'||COALESCE(done_at,'∅') \
+             ||'|'||COALESCE(done_at,'∅')||'|'||COALESCE(born_device,'∅') \
              FROM items ORDER BY id",
         ),
         (

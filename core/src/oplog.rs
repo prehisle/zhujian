@@ -103,10 +103,14 @@ pub fn append_remote(
 
 /// 条目出生:读回刚插入的行,payload = 出生快照。archived_at/sealed_at 生而为 NULL
 /// (0014/0017 触发器禁「生而归档」),不进快照;updated_at 是本地簿记,不同步。
+///
+/// born_device(0033):读回的是行上的值,故本机发射恒 = 本机 device_id(触发器钉死),
+/// 压实基线可为 null(pre-0033 存量行的「未知不回填」史实)。读成 `Option<String>` 是
+/// 为承载后者——**本机新建路径读到 None 是不可能的**(触发器先 ABORT)。
 pub fn item_create(conn: &Connection, clock: &mut Clock, id: &str) -> Result<(), String> {
     let payload = conn
         .query_row(
-            "SELECT content, stage, created_at, born_stage, due_on, priority, position \
+            "SELECT content, stage, created_at, born_stage, due_on, priority, position, born_device \
              FROM items WHERE id = ?1",
             [id],
             |r| {
@@ -118,6 +122,7 @@ pub fn item_create(conn: &Connection, clock: &mut Clock, id: &str) -> Result<(),
                     "due_on": r.get::<_, Option<String>>(4)?,
                     "priority": r.get::<_, Option<i64>>(5)?,
                     "position": r.get::<_, Option<String>>(6)?,
+                    "born_device": r.get::<_, Option<String>>(7)?,
                 }))
             },
         )
@@ -228,6 +233,36 @@ pub fn space_set_name(conn: &Connection, clock: &mut Clock) -> Result<(), String
         .query_row("SELECT name FROM space_profile WHERE key = 'profile'", [], |r| r.get(0))
         .map_err(|e| format!("读取空间名失败(编排层应先落行):{e}"))?;
     append(conn, clock, "space", "profile", "set_field", json!({ "field": "name", "value": value }))
+}
+
+// ---- device(profile 多实例寄存器,identity-plan §2.1) -----------------------------
+
+/// 设备别名变更(唯一 device 字段)。形同 [`space_set_name`],**唯一差别是多实例**:
+/// entity_id = 被命名那台设备的 device_id,而不是固定字面量 'profile'。读行发声:调用方
+/// (`spaces::set_device_alias` 编排层)先 UPSERT `device_profile`,这里读回落 payload
+/// ——行必须已在(读不到 = 编排 bug,fail-fast)。无 create/无 tombstone;NULL = 显式
+/// 清名,payload value 落 JSON null。
+///
+/// **能给别的设备改名**(entity_id 不锁本机):名册是账户内共享的,§2.3 的设备名册与
+/// §5 的成员列表都建在它上面。冲突走字段级 LWW,与 space 名同款。
+pub fn device_set_alias(
+    conn: &Connection,
+    clock: &mut Clock,
+    device_id: &str,
+) -> Result<(), String> {
+    let value: Option<String> = conn
+        .query_row("SELECT alias FROM device_profile WHERE device_id = ?1", [device_id], |r| {
+            r.get(0)
+        })
+        .map_err(|e| format!("读取设备别名失败(编排层应先落行):{e}"))?;
+    append(
+        conn,
+        clock,
+        "device",
+        device_id,
+        "set_field",
+        json!({ "field": "alias", "value": value }),
+    )
 }
 
 // ---- link (item_topic) -------------------------------------------------------------

@@ -1,0 +1,55 @@
+// 设备署名(identity-plan §2/§3,0033)——把条目的 born_device 翻成人能读的名字。
+//
+// 这个系统里没有「用户」,只有设备(device_id 是「设备 × 空间」粒度)。设备起了别名之后,
+// 别的设备记下的条目就能显示一枚小字署名。
+//
+// **显示规则只有一条**(§3.7 + 2026-08-05 用户拍板):
+//   出生设备已知 ∧ 不是本机 ∧ 那台**起过别名** → 显别名;其余一律不显。
+// 未命名的设备刻意不显 id 片段——卡片上一串 K7M2QX 是噪音,不是信息。这条规则天然
+// 涵盖了「单设备账户完全不显示」(本机自己恒被第二个条件挡掉)。
+//
+// ⚠ 名册的口径是**「见过的设备」**,不是「当前在册的设备」:被服务端吊销的设备,它的
+// 别名行照样在。这里只做显示,不承担「谁还在册」的判断(那是 §5 移除设备的事)。
+import { invoke } from "./space";
+import "./identity.css";
+
+export type DeviceEntry = { device_id: string; alias: string | null };
+type DeviceIdentity = { this_device: string; devices: DeviceEntry[] };
+
+/** 最近一次取回的身份面。**按空间键住**——切空间后没重取之前,旧空间的名册一律不认
+ *  (设备身份是「设备 × 空间」粒度,拿甲空间的表去翻乙空间的 id 会张冠李戴)。 */
+let snapshot: { space: string; thisDevice: string; alias: Map<string, string> } | null = null;
+
+/** 取一次身份面并落进模块快照。视图在 `Promise.all` 里与列表查询**并发**发起,不给
+ *  渲染加一跳延迟(163 那轮的教训:别为一个装饰性的小字拖慢主内容)。 */
+export async function loadIdentity(space: string): Promise<void> {
+  const d = await invoke<DeviceIdentity>("device_identity");
+  const alias = new Map<string, string>();
+  for (const e of d.devices) if (e.alias) alias.set(e.device_id, e.alias);
+  snapshot = { space, thisDevice: d.this_device, alias };
+}
+
+/** 本机在当前空间的 device_id;快照还没到 = null。 */
+export function thisDeviceId(space: string): string | null {
+  return snapshot && snapshot.space === space ? snapshot.thisDevice : null;
+}
+
+/** 这条条目该显的署名文字;null = 不显(未知出生设备 / 就是本机 / 那台没起过别名)。 */
+export function signatureFor(space: string, bornDevice: string | null | undefined): string | null {
+  if (!bornDevice) return null; // 0033 之前的存量行:未知不猜,也不显「未知设备」
+  const s = snapshot;
+  if (!s || s.space !== space) return null;
+  if (bornDevice === s.thisDevice) return null;
+  return s.alias.get(bornDevice) ?? null;
+}
+
+/** 署名 chip;不该显时返回 null(调用方 `if (n) parent.append(n)`)。 */
+export function signatureChip(space: string, bornDevice: string | null | undefined): HTMLElement | null {
+  const name = signatureFor(space, bornDevice);
+  if (!name) return null;
+  const n = document.createElement("span");
+  n.className = "sig-chip";
+  n.textContent = name;
+  n.title = `记于「${name}」`;
+  return n;
+}

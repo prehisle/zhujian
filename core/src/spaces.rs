@@ -240,6 +240,10 @@ const CORE_TABLES: &[&str] = &[
     "sync_replay_active",
     // 0028 的空间 profile 物化单行表(空间名跨端同步的状态侧)。
     "space_profile",
+    // 0033 的设备 profile 物化表(设备别名跨端同步的状态侧,identity-plan §2.1)。
+    // 与 space_profile 同性质:op-backed 正表,进引导导入与 strict_battery 审计。
+    // (0032 的 item_image_thumb 是纯本地派生表,刻意**不**在此列。)
+    "device_profile",
 ];
 
 /// 只读读取一个空间的描述符:**不跑迁移、不写库、不切 WAL**(`db::open` 是读写
@@ -1483,11 +1487,11 @@ mod tests {
     /// 建的库,覆盖装新版后首启」。create_main_db/create_space 只会建当前版,造旧版
     /// 只能走 runner 直控。
     fn build_old_db(path: &Path, through: i64) -> (i64, i64) {
-        let mut conn = Connection::open(path).unwrap();
+        let conn = Connection::open(path).unwrap();
         conn.pragma_update(None, "foreign_keys", true).unwrap();
         db::run_migrations(&conn, through).unwrap();
         let mut clock = Clock::load(&conn).unwrap();
-        crate::notes::capture(&mut conn, &mut clock, "升级前的数据").unwrap();
+        db::seed_legacy_item(&conn, &mut clock, "升级前的数据");
         let ops: i64 = conn.query_row("SELECT COUNT(*) FROM oplog", [], |r| r.get(0)).unwrap();
         let items: i64 = conn.query_row("SELECT COUNT(*) FROM items", [], |r| r.get(0)).unwrap();
         (ops, items)

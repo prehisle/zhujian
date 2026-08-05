@@ -1,0 +1,50 @@
+// 设备署名(identity-plan §2/§3,0033)——把条目的 born_device 翻成人能读的名字。
+// 桌面同名模块的安卓孪生:显示规则、名册口径、按空间键快照,三件逐条一致。
+//
+// **显示规则只有一条**(§3.7 + 2026-08-05 用户拍板):
+//   出生设备已知 ∧ 不是本机 ∧ 那台**起过别名** → 显别名;其余一律不显。
+// 未命名的设备刻意不显 id 片段——卡片上一串 K7M2QX 是噪音,不是信息。这条规则天然
+// 涵盖了「单设备账户完全不显示」(本机自己恒被第二个条件挡掉)。
+//
+// ⚠ 名册口径是**「见过的设备」**,不是「当前在册的设备」:被服务端吊销的设备,它的
+// 别名行照样在。这里只做显示,不承担「谁还在册」的判断(那是 §5 移除设备的事)。
+import { deviceIdentity } from "./api";
+
+/** 最近一次取回的身份面,**按空间键住**——设备身份是「设备 × 空间」粒度,拿甲空间的
+ *  表去翻乙空间的 id 会张冠李戴。切空间后没重取之前一律不认。 */
+let snapshot: { space: string; thisDevice: string; alias: Map<string, string> } | null = null;
+
+/** 取一次身份面并落进模块快照。调用方在 `Promise.all` 里与时间轴查询**并发**发起,
+ *  不给渲染加一跳延迟。失败**不抛**——署名是装饰,不该让整屏内容陪葬(旧快照保留,
+ *  下次刷新再试)。 */
+export async function loadIdentity(space: string): Promise<void> {
+  try {
+    const d = await deviceIdentity(space);
+    const alias = new Map<string, string>();
+    for (const e of d.devices) if (e.alias) alias.set(e.device_id, e.alias);
+    snapshot = { space, thisDevice: d.this_device, alias };
+  } catch {
+    /* 保留旧快照;署名少显一轮,不影响任何数据 */
+  }
+}
+
+/** 本机在当前空间的 device_id;快照还没到 = null。 */
+export function thisDeviceId(space: string): string | null {
+  return snapshot && snapshot.space === space ? snapshot.thisDevice : null;
+}
+
+/** 本机当前别名;没起过 / 快照未到 = null。设置面用它回填输入框。 */
+export function myAlias(space: string): string | null {
+  const s = snapshot;
+  if (!s || s.space !== space) return null;
+  return s.alias.get(s.thisDevice) ?? null;
+}
+
+/** 这条条目该显的署名文字;null = 不显(未知出生设备 / 就是本机 / 那台没起过别名)。 */
+export function signatureFor(space: string, bornDevice: string | null | undefined): string | null {
+  if (!bornDevice) return null; // 0033 之前的存量行:未知不猜,也不显「未知设备」
+  const s = snapshot;
+  if (!s || s.space !== space) return null;
+  if (bornDevice === s.thisDevice) return null;
+  return s.alias.get(bornDevice) ?? null;
+}

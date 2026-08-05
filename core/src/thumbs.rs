@@ -69,10 +69,13 @@ pub fn get(conn: &Connection, image_id: &str) -> rusqlite::Result<Option<Vec<u8>
 /// 的 144/q0.8 真的与 token 描述的一致。「改常量即存量行全体失效」这条价值由 [`get`] 里的
 /// `AND spec = ?` 单独提供,与往返无关)。
 ///
-/// 两道闸,全部 fail-fast(派生数据也不收来路不明的字节):
-/// 1. 非空且 ≤ [`MAX_THUMB_BYTES`](DB 的 CHECK 是背板,这里给人话;壳层另有
+/// 三条拒,全部 fail-fast(派生数据也不收来路不明的字节)。**点名不数数** —— 这个数
+/// 曾在三处各写成 2 / 3 / 4(拆掉 spec 往返后没回扫,architecture 与 image-perf-plan
+/// 都跟着漂了一轮,300 才对齐):
+/// 1. 非空;
+/// 2. ≤ [`MAX_THUMB_BYTES`](DB 的 CHECK 是背板,这里给人话;壳层另有
 ///    [`MAX_THUMB_B64_CHARS`] 在**解码前**挡一道);
-/// 2. 必须真是 JPEG(见 [`JPEG_MAGIC`])。
+/// 3. 必须真是 JPEG(见 [`JPEG_MAGIC`])。
 ///
 /// 图不存在 = FK 违例 → 响亮 Err(不静默建孤儿行)。**不发 op、不动时钟**:调用方无需
 /// 持时钟锁,拿库锁即可。
@@ -155,7 +158,7 @@ mod tests {
         assert_eq!(rows, 1, "每张图至多一行(覆盖而非追加)");
     }
 
-    /// put 的两道闸 + FK:每一条都响亮拒,且**一行都不留**。
+    /// put 的三条拒 + FK:每一条都响亮拒,且**一行都不留**。
     #[test]
     fn put_rejects_bad_size_shape_and_unknown_image() {
         let (conn, _clk, _item, image) = seed("gates");
@@ -171,7 +174,7 @@ mod tests {
         // 不存在的图 = FK 违例(不静默建孤儿行)。
         let e = put(&conn, "01NOSUCHIMAGE0000000000000", &jpeg(64)).unwrap_err();
         assert!(e.contains("回存失败"), "{e}");
-        assert_eq!(count(&conn), 0, "三道闸 + FK 全部不留痕");
+        assert_eq!(count(&conn), 0, "三条拒 + FK 全部不留痕");
         // 恰好等于上界的放行(闸是 > 不是 >=)。
         put(&conn, &image, &jpeg(MAX_THUMB_BYTES)).unwrap();
         assert_eq!(count(&conn), 1);

@@ -32,7 +32,7 @@ use tokio::sync::mpsc::UnboundedReceiver;
 use zhujian_core::spaces;
 use zhujian_core::sync::supervisor::SpaceSupervisor;
 use zhujian_core::sync::transport::{self, SyncEvent};
-use zhujian_core::{db, images, notes, repo, task, thumbs};
+use zhujian_core::{clock, db, identity, images, notes, repo, task, thumbs};
 
 /// 启动闸(工序 6;本轮升级为**类型化三种 status、四种封锁 kind**,codex 设计审
 /// H3/H4 + 实现审 H1):
@@ -272,6 +272,61 @@ async fn rename_space(
     r
 }
 
+/// 设备身份面(identity-plan §2.3):本机是哪台 + 这个账户里见过哪些设备。
+/// 一次取齐——设置面的「本机别名」输入框与时间轴卡片的署名 chip 都要它。
+#[derive(serde::Serialize)]
+struct DeviceIdentity {
+    /// 本机在**这个空间**里的 device_id(身份是「设备 × 空间」粒度)。
+    this_device: String,
+    /// 全量名册。⚠ 口径是**「见过的设备」**,不是「当前在册的设备」——被服务端吊销的
+    /// 设备,它的别名行照样在。要权威在册名单得等 §5「移除设备」。
+    devices: Vec<DeviceEntryItem>,
+}
+
+#[derive(serde::Serialize)]
+struct DeviceEntryItem {
+    device_id: String,
+    /// null = 从未命名或显式清名。后端绝不编造缺省名,人话缺省归前端。
+    alias: Option<String>,
+}
+
+/// 读身份面。走只读直读前台库(同 list_timeline),不占写锁。
+#[tauri::command]
+fn device_identity(space_id: String, coord: State<'_, Coord>) -> Result<DeviceIdentity, String> {
+    coord.with_read(&space_id, |conn| {
+        let this_device = clock::Clock::load(conn)?.device_id().to_string();
+        let devices = identity::device_roster(conn)?
+            .into_iter()
+            .map(|d| DeviceEntryItem { device_id: d.device_id, alias: d.alias })
+            .collect();
+        Ok(DeviceIdentity { this_device, devices })
+    })
+}
+
+/// 给一台设备起/改/清别名(identity-plan §2)。`alias` 传 null 或空白 = 清名。
+/// 别名**进同步**(和空间名同族);字号 / 明暗那两样是环境属性刻意不同步,别搞混。
+/// 纪律同 `rename_space`:持 lifecycle + control_runtime + begin_op,锁内复核 restart。
+#[tauri::command]
+async fn set_device_alias(
+    space_id: String,
+    device_id: String,
+    alias: Option<String>,
+    coord: State<'_, Coord>,
+) -> Result<(), String> {
+    let _life = coord.lifecycle.lock().await;
+    let rt = coord.control_runtime(&space_id)?;
+    let _op = rt.begin_op().ok_or_else(|| "空间正在停止,稍后再改别名".to_string())?;
+    let r = {
+        let (mut conn, mut clk) = rt.write_locks();
+        if let Some(e) = rt.restart_required() {
+            return Err(format!("此空间的同步会话需要重启:{e}——切换空间后切回,或重启应用"));
+        }
+        identity::set_device_alias(&mut conn, &mut clk, &device_id, alias.as_deref())
+    };
+    drop(rt); // 先松连接,再由 _op(scope 末)通知 stop——同 rename_space 的次序。
+    r
+}
+
 /// 串行重扫 catalog(space-name-changed 的前端处理器专用;codex 实现审 H1):重扫
 /// 从事件桥挪进命令面——refresh_catalog 内部有覆盖 load+swap 的重载互斥,失败响亮
 /// 在返回值上(不许「让 _ = 」吞掉后照发「已刷新」)。
@@ -480,6 +535,10 @@ struct TimelineItem {
     priority: Option<i64>,
     /// 完成时刻(RFC3339,0030 done_at):done 行据它显示「完成于」;灵感/未完成行 null。
     done_at: Option<String>,
+    /// 出生设备(0033 born_device),null = 未知(0033 前的存量行)。前端经
+    /// `device_identity` 的名册翻成别名显一枚署名 chip;**只在「不是本机」且「那台起过
+    /// 别名」时显**,其余一律不显(identity-plan §3.7 + 2026-08-05 用户拍板)。
+    born_device: Option<String>,
     topics: Vec<TopicItem>,
     images: Vec<ImageMeta>,
 }
@@ -511,6 +570,7 @@ fn list_timeline(space_id: String, coord: State<'_, Coord>) -> Result<Vec<Timeli
                     due_on: r.due_on,
                     priority: r.priority,
                     done_at: r.done_at,
+                    born_device: r.born_device,
                     topics: r.topics.into_iter().map(TopicItem::from).collect(),
                     images,
                 }
@@ -1653,6 +1713,8 @@ pub fn run() {
             list_spaces,
             create_space,
             rename_space,
+            device_identity,
+            set_device_alias,
             rescan_spaces,
             activate_space,
             foreground_space,

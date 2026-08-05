@@ -42,6 +42,7 @@ import type { View, ViewCtx } from "./notebook";
 import { applyTagColor } from "./tag-color";
 import { renderTagPicker } from "./tag-picker";
 import { dayKey, dayLabel, startOfWeek, when } from "./tasktime";
+import { loadIdentity, signatureChip } from "./identity";
 import "./inbox.css";
 
 // Mirrors of the Rust contracts (lib.rs) — the fields this view consumes. 想法 = a live
@@ -54,6 +55,9 @@ type IdeaItem = {
   id: string;
   content: string;
   created_at: string;
+  /** 出生设备(0033 born_device),null = 未知(0033 前的存量行)。经 identity.ts 翻成
+   *  署名 chip;只在「不是本机」且「那台起过别名」时显,回收站 tab 不显。 */
+  born_device: string | null;
   topics: IdeaTag[];
 };
 type RevisionItem = { content: string; archived_at: string };
@@ -145,6 +149,8 @@ type CardItem = {
   id: string;
   content: string;
   created_at: string;
+  /** 出生设备(0033),可缺——回收站行也走这个形,只是不渲染署名。 */
+  born_device?: string | null;
   topics?: IdeaTag[];
 };
 
@@ -524,6 +530,12 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     // 想法 sits in a per-day timeline → time-of-day only; 回收站 is flat → full stamp.
     const stamp = mode === "ideas" ? hm.format(new Date(item.created_at)) : when(item.created_at);
     const timeT = el("time", { className: "note-time", textContent: stamp });
+    // 署名(0033):只在「想法」tab 显——回收站是「已处理完」的语境,署名价值低噪音高
+    // (2026-08-05 用户拍板的铺开范围)。挂进时间戳那一行,与它同一档存在感。
+    if (mode === "ideas") {
+      const sig = signatureChip(mountSpace, item.born_device);
+      if (sig) timeT.append(sig);
+    }
     const body = el("div", { className: "note-body" });
 
     // Tag chips — a 想法 may carry tags (just metadata); show them whenever present.
@@ -1131,6 +1143,8 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         invoke<IdeaStats>("idea_stats", { weekStart: startOfWeek().toISOString() }),
         // 筛选 pills 要认识全部标签(死标签回落判断 + 正被筛的零计数标签的标题)。
         invoke<TopicItem[]>("list_topics"),
+        // 设备名册(0033 署名):与列表**并发**取,不给渲染加一跳延迟。
+        loadIdentity(mountSpace),
       ]);
       if (seq !== refreshSeq) return; // 有更晚的 refresh 已在途:旧响应不落 DOM(乱序覆盖/计数错位)
 

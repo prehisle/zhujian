@@ -6,10 +6,13 @@
 import { invoke } from "@tauri-apps/api/core";
 import { currentZoomPercent, zoomIn, zoomOut, zoomReset, onZoomChange } from "./zoom";
 import { currentThemeMode, setThemeMode, type ThemeMode } from "./theme-mode";
+import { currentSpaceId } from "./space";
 import "./settings.css";
 
 type Hotkeys = { capture: string; notebook: string };
 type Which = "capture" | "notebook";
+/** lib.rs `device_identity` 的镜像。别名**进同步**(与热键/明暗/字号刻意不同)。 */
+type DeviceIdentity = { this_device: string; devices: { device_id: string; alias: string | null }[] };
 
 const ROWS: { which: Which; name: string; desc: string }[] = [
   { which: "capture", name: "捕获窗", desc: "从任何地方弹出快速记录窗" },
@@ -92,6 +95,103 @@ function renderPanel(panel: HTMLDivElement): void {
     el("p", "settings-sub", "整体放大 / 缩小主窗,看着吃力时调大。也可用 Ctrl + / Ctrl - 调节、Ctrl 0 复位。"),
     buildZoomRow(),
   );
+
+  panel.append(
+    el("h2", "settings-title settings-sect", "本机别名"),
+    el(
+      "p",
+      "settings-sub",
+      "给这台设备起个名字(如「书房台式机」)。它会同步给同一账户的其他设备,让他们看到条目是谁记的。留空 = 不起名。",
+    ),
+    buildAliasRow(),
+  );
+}
+
+// ---- 本机别名(identity-plan §2.4)----
+//
+// 与上面三样的关键差别:**别名进同步**(和空间名 140-142 同族),热键 / 明暗 / 字号
+// 那三样是设备环境属性、刻意不同步。别搞混。
+
+function buildAliasRow(): HTMLDivElement {
+  const line = document.createElement("div");
+  line.className = "hk-row";
+
+  const input = document.createElement("input");
+  input.type = "text";
+  input.className = "alias-input";
+  input.placeholder = "未命名";
+  input.maxLength = 60; // 后端上限 200 **字节**,这里按字符给个宽松的手感闸
+  input.disabled = true;
+
+  const save = el("button", "hk-change", "保存") as HTMLButtonElement;
+  save.disabled = true;
+  const msg = el("p", "hk-msg", "");
+  const sub = el("div", "hk-desc", "读取中…");
+
+  // 本机 device_id 只有取回身份面之后才知道;取回前整行禁用,**不编造占位值**。
+  let thisDevice: string | null = null;
+  let saved = "";
+  void invoke<DeviceIdentity>("device_identity", { spaceId: currentSpaceId() })
+    .then((d) => {
+      thisDevice = d.this_device;
+      saved = d.devices.find((x) => x.device_id === d.this_device)?.alias ?? "";
+      input.value = saved;
+      // id 前 6 位当副标题:没起名时它是这台设备唯一能自证身份的东西(卡片上刻意
+      // 不显 id 片段,设置面这里显——这里的语境是「这是哪台」,不是噪音)。
+      sub.textContent = `本机 · ${d.this_device.slice(0, 6)}`;
+      input.disabled = false;
+      save.disabled = false;
+    })
+    .catch((e) => setMsg(msg, String(e), "err"));
+
+  async function apply(): Promise<void> {
+    if (thisDevice === null) return;
+    const next = input.value.trim();
+    if (next === saved) {
+      setMsg(msg, "", "");
+      return; // 同值:后端也是 no-op,连提示都不必给
+    }
+    save.disabled = true;
+    try {
+      await invoke("set_device_alias", {
+        spaceId: currentSpaceId(),
+        deviceId: thisDevice,
+        // 空串 = 清名;后端 trim 后为空即落 null(显式清名是规范表示)。
+        alias: next === "" ? null : next,
+      });
+      saved = next;
+      input.value = next;
+      setMsg(msg, next === "" ? "已清除别名" : "已保存,会同步到其他设备", "ok");
+    } catch (e) {
+      input.value = saved; // 后端拒了(超长等):回显旧值 + 后端原话
+      setMsg(msg, String(e), "err");
+    } finally {
+      save.disabled = false;
+    }
+  }
+
+  save.addEventListener("click", () => void apply());
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      void apply();
+    }
+    // Esc 在这里只放弃编辑、不关面板(面板级 Esc 监听在 document 上,这里先吞掉)。
+    if (e.key === "Escape") {
+      e.stopPropagation();
+      input.value = saved;
+      setMsg(msg, "", "");
+    }
+  });
+
+  const ctrls = document.createElement("div");
+  ctrls.className = "alias-ctrls";
+  ctrls.append(input, save);
+  line.append(el("div", "hk-name", "名字"), sub, ctrls);
+
+  const wrap = document.createElement("div");
+  wrap.append(line, msg);
+  return wrap as HTMLDivElement;
 }
 
 const THEME_CHOICES: { mode: ThemeMode; label: string }[] = [

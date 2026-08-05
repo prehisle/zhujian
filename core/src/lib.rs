@@ -19,6 +19,7 @@ pub mod clock;
 pub mod db;
 pub mod epoch;
 mod frindex;
+pub mod identity;
 pub mod images;
 pub mod move_item;
 pub mod notes;

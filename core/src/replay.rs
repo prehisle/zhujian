@@ -91,8 +91,12 @@ pub struct RemoteOp {
 /// v3 = 0030 item.done_at set_field 字段(完成时刻,存储可空 / 协议非空只增不清;
 /// done-at 两版发布工序1:reader 先认识,详见迁移 0030 头注)。v4 = 0031 topic 新增
 /// position(frindex 排序键,非空只增不清)/ kind(标签类型自由文本,可空可清)两个
-/// set_field 字段(标签顺序可调 + 标签类型,详见迁移 0031 头注)。
-pub(crate) const VALIDATOR_VER: i64 = 4;
+/// set_field 字段(标签顺序可调 + 标签类型,详见迁移 0031 头注)。v5 = 0033 身份族:
+/// `device` 多实例寄存器进词汇(device/set_field + entity_id 须为规范 device_id +
+/// alias 值域)、item create 的 `born_device` 值域(26 位 ULID ∪ null,**缺键合法**——
+/// 老端的历史 create op 永远长不出这个键,判严 = 把那台设备整条 op 流打进持久隔离,
+/// identity-plan §3.5)、`born_device` 进「协议禁 set_field」那一臂。
+pub(crate) const VALIDATOR_VER: i64 = 5;
 
 /// typed poison 错误分型(epoch-plan §4):`validate_op_shape` 与 `apply_remote_op`
 /// 返回**同一枚举**,分型在源头、不靠错误字符串事后分类。engine 按型分道:
@@ -212,6 +216,7 @@ pub fn apply_remote_op(
         ("image", "image_add") => apply_image_add(&tx, clock, op, &hlc)?,
         ("image", "image_tombstone") => apply_image_tombstone(&tx, op)?,
         ("space", "set_field") => apply_space_set_field(&tx, op)?,
+        ("device", "set_field") => apply_device_set_field(&tx, op)?,
         _ => unreachable!("词汇表已在入口校验"),
     };
 
@@ -244,8 +249,8 @@ fn apply_item_create(tx: &Connection, op: &RemoteOp) -> Result<Outcome, OpError>
     let inv = OpError::InvalidOp;
     tx.execute(
         "INSERT INTO items (id, content, stage, created_at, updated_at, archived_at, \
-                            due_on, priority, position, sealed_at, born_stage) \
-         VALUES (?1, ?2, ?3, ?4, ?4, NULL, ?5, ?6, ?7, NULL, ?8)",
+                            due_on, priority, position, sealed_at, born_stage, born_device) \
+         VALUES (?1, ?2, ?3, ?4, ?4, NULL, ?5, ?6, ?7, NULL, ?8, ?9)",
         (
             &op.entity_id,
             str_field(p, "content").map_err(inv)?,
@@ -255,6 +260,9 @@ fn apply_item_create(tx: &Connection, op: &RemoteOp) -> Result<Outcome, OpError>
             opt_int_field(p, "priority").map_err(inv)?,
             opt_str_field(p, "position").map_err(inv)?,
             opt_str_field(p, "born_stage").map_err(inv)?,
+            // 缺键 → None(0033):老端发的 create op 永远没有这个键,而 op 是不可改写的
+            // 史实。「缺键 = 未知」是它唯一诚实的读法,也是不把老设备打进隔离的唯一读法。
+            opt_str_field(p, "born_device").map_err(inv)?,
         ),
     )
     .map_err(|e| db_err(&format!("回放 item create 失败({})", op.entity_id), e))?;
@@ -369,6 +377,36 @@ fn apply_space_set_field(tx: &Connection, op: &RemoteOp) -> Result<Outcome, OpEr
         [&value],
     )
     .map_err(|e| db_err("回放 space set_field 失败", e))?;
+    Ok(Outcome::Applied)
+}
+
+/// device profile **多实例**寄存器(identity-plan §2.1):除「一台设备一行、entity_id 是
+/// 它的 device_id」外,与 [`apply_space_set_field`] 逐条同构——无 create、无 tombstone、
+/// 首条 set_field 即 UPSERT、字段级 LWW 按 (entity, entity_id, field) 比。
+///
+/// entity_id 的规范形已由 shape 层(`validate_op_shape`)把关;这里不重复校验,让
+/// `device_profile` 的 CHECK 当存储层背板——真漏到这一层是 bug,撞 CHECK 响亮失败。
+fn apply_device_set_field(tx: &Connection, op: &RemoteOp) -> Result<Outcome, OpError> {
+    let field = str_field(&op.payload, "field").map_err(OpError::InvalidOp)?;
+    // shape 层已限 field=="alias";这里按白名单读值(String 或 null),与 space 同构。
+    let value: Option<String> = match field_value(&op.payload).map_err(OpError::InvalidOp)? {
+        Value::String(s) => Some(s.clone()),
+        Value::Null => None,
+        other => {
+            return Err(OpError::InvalidOp(format!(
+                "device 字段 {field} 期待字符串或 null:{other}"
+            )))
+        }
+    };
+    if !is_latest_field_write(tx, "device", &op.entity_id, &field, &op.hlc).map_err(local)? {
+        return Ok(Outcome::LwwStale);
+    }
+    tx.execute(
+        "INSERT INTO device_profile (device_id, alias) VALUES (?1, ?2) \
+         ON CONFLICT(device_id) DO UPDATE SET alias = excluded.alias",
+        (&op.entity_id, &value),
+    )
+    .map_err(|e| db_err("回放 device set_field 失败", e))?;
     Ok(Outcome::Applied)
 }
 
@@ -1046,7 +1084,7 @@ fn validate_item_field_shape(field: &str, v: &Value) -> Result<(), OpError> {
         "content" | "archived_at" | "sealed_at" => {
             item_field_value(field, v).map(|_| ()).map_err(inv)
         }
-        "created_at" | "born_stage" => {
+        "created_at" | "born_stage" | "born_device" => {
             Err(inv(format!("item 字段 {field} 是出生/史实字段,协议禁 set_field")))
         }
         other => Err(OpError::UnsupportedVocab(format!("item set_field 不认识的字段:{other}"))),
@@ -1117,6 +1155,10 @@ pub(crate) fn validate_topic_kind_value(v: &Value) -> Result<(), String> {
 /// 绝不静默修改远端 payload(带首尾空白的远端值=非规范→拒,不存在「validator 按
 /// trim 后判合法、物化却存原串」的含糊)。
 pub(crate) const SPACE_NAME_MAX_BYTES: usize = 200;
+
+/// 设备别名的字节上限(identity-plan §7 第 4 条:照空间名口径)。别名是人读的短标签
+/// (「娟娟的手机」「书房台式机」),200 字节远超真实需要,闸只挡「拿寄存器当存储用」。
+pub(crate) const DEVICE_ALIAS_MAX_BYTES: usize = 200;
 pub(crate) fn validate_space_name_value(v: &Value) -> Result<(), String> {
     match v {
         Value::Null => Ok(()),
@@ -1145,6 +1187,51 @@ fn validate_space_field_shape(field: &str, v: &Value) -> Result<(), OpError> {
     match field {
         "name" => validate_space_name_value(v).map_err(OpError::InvalidOp),
         other => Err(OpError::UnsupportedVocab(format!("space set_field 不认识的字段:{other}"))),
+    }
+}
+
+/// 设备别名的线上规范形(identity-plan §7 第 4 条:照 space 名的口径走)。
+/// null = 显式清名(规范表示);与 [`validate_space_name_value`] 逐条同构,只是话术不同
+/// ——两者刻意不合并成一个泛型:日后别名若要收紧(比如禁换行)不该顺手改到空间名上。
+pub(crate) fn validate_device_alias_value(v: &Value) -> Result<(), String> {
+    match v {
+        Value::Null => Ok(()),
+        Value::String(s) => {
+            if s != s.trim() {
+                return Err(format!("device alias 带首尾空白(非规范):{s:?}"));
+            }
+            if s.is_empty() {
+                return Err("device alias 不得为空串(清名用 null)".into());
+            }
+            if s.len() > DEVICE_ALIAS_MAX_BYTES {
+                return Err(format!(
+                    "device alias 超长({} 字节 > 上限 {DEVICE_ALIAS_MAX_BYTES})",
+                    s.len()
+                ));
+            }
+            Ok(())
+        }
+        other => Err(format!("device alias 期待字符串或 null:{other}")),
+    }
+}
+
+/// device set_field 的形态校验(shape 层,boot+live 共用);分型口径同 space:
+/// 未知字段 = UnsupportedVocab(将来版本可能扩 device profile 字段,旧端挂起等升级)。
+fn validate_device_field_shape(field: &str, v: &Value) -> Result<(), OpError> {
+    match field {
+        "alias" => validate_device_alias_value(v).map_err(OpError::InvalidOp),
+        other => Err(OpError::UnsupportedVocab(format!("device set_field 不认识的字段:{other}"))),
+    }
+}
+
+/// item create 里 born_device 的值域(0033):26 位规范 ULID ∪ **null**。
+/// null 承载两类真实史实——pre-0033 的存量行(「未知不回填」,同 born_stage: null 的
+/// 判例)与压实基线对它们的合成。尺只此一把:[`crate::clock::is_canonical_device_id`]。
+fn validate_device_id_value(v: &Value) -> Result<(), String> {
+    match v {
+        Value::Null => Ok(()),
+        Value::String(s) if crate::clock::is_canonical_device_id(s) => Ok(()),
+        other => Err(format!("item born_device 期待 26 位规范 ULID 或 null:{other}")),
     }
 }
 
@@ -1290,6 +1377,15 @@ pub(crate) fn validate_op_shape(op: &RemoteOp) -> Result<(), OpError> {
             if let Some(pos) = p.get("position") {
                 validate_position_shape(pos).map_err(inv)?;
             }
+            // born_device(0033):**刻意不要求键在**——与上面 born_stage 的「必带」不同。
+            // born_stage 诞生于 0018(早于同步存在),账本里不可能有缺它的 create op;
+            // born_device 诞生于 0033,而 pre-0033 老端发的 create op 是**不可改写的史实**,
+            // 永远长不出这个键。要求它必带 = 老端每条 create 都判 InvalidOp = 把那台设备的
+            // op 流**持久隔离**(engine 的「毒 op」臂),而这不是版本偏斜能自愈的——升级
+            // 也不会重写历史 op。故:缺键 = null = 未知,与压实基线承载 pre-0033 史实同款。
+            if let Some(v) = p.get("born_device") {
+                validate_device_id_value(v).map_err(inv)?;
+            }
         }
         ("item", "set_field") => {
             let field = str_field(p, "field").map_err(inv)?;
@@ -1369,6 +1465,23 @@ pub(crate) fn validate_op_shape(op: &RemoteOp) -> Result<(), OpError> {
             }
             let field = str_field(p, "field").map_err(inv)?;
             validate_space_field_shape(&field, field_value(p).map_err(inv)?)?;
+        }
+        ("device", "set_field") => {
+            // 多实例寄存器(identity-plan §2.1):entity_id = 被命名设备的 device_id,必须
+            // 是规范形(同 Hlc::parse 收紧 device 后缀的理由:别让畸形身份从松的那处进来)。
+            // ⚠ 这道闸挡的是**非规范 id 白得一行**(1 字节的 / 超长的 / 带小写的),**不是
+            // 行数**——一个已认证设备照样能发 N 条 device op、每条一个不同的合法 ULID,条条
+            // 合法。`device_profile` 的行数**没有协议上界**,与 items/topics 同级(codex 301
+            // 实现审 M3 证伪了此处原写的「记录数天然有界于账户设备数」)。
+            // 已知词汇下的坐标非法 = InvalidOp,不是版本偏斜。
+            if !crate::clock::is_canonical_device_id(&op.entity_id) {
+                return Err(inv(format!(
+                    "device op 的 entity_id 必须是 26 位规范 ULID(设备身份),收到:{}",
+                    op.entity_id
+                )));
+            }
+            let field = str_field(p, "field").map_err(inv)?;
+            validate_device_field_shape(&field, field_value(p).map_err(inv)?)?;
         }
         _ => {
             // 词汇表外 = 版本偏斜(对端较新):挂起等升级,不隔离(epoch-plan §4)。
@@ -1673,6 +1786,209 @@ mod tests {
         assert!(matches!(validate_op_shape(&kind_nul), Err(OpError::InvalidOp(_))));
     }
 
+    // ---- device profile 多实例寄存器 + 条目署名(0033,identity-plan §2/§3) ----
+
+    fn device_row(conn: &Connection, device_id: &str) -> Option<Option<String>> {
+        conn.query_row("SELECT alias FROM device_profile WHERE device_id = ?1", [device_id], |r| {
+            r.get::<_, Option<String>>(0)
+        })
+        .optional()
+        .unwrap()
+    }
+
+    /// **混版那一条**:pre-0033 的老端发的 item create,payload 里**没有** born_device
+    /// 键——那是不可改写的史实,升级也长不出来。
+    ///
+    /// 必须按「缺键 = null = 未知」放行。若判成 InvalidOp,engine 会**持久隔离该
+    /// origin**(engine.rs 的「毒 op」臂:此后帧到即丢),等于把老设备整条 op 流打死;
+    /// 而 UnsupportedVocab 那条「挂起等升级」的自愈路在这里也用不上(要等的东西永远
+    /// 不会来)。这是本批唯一一处刻意比规格**放松**的判据,回归锚就在这里。
+    #[test]
+    fn a_pre_0033_create_without_born_device_applies_as_unknown_not_poison() {
+        let (mut conn, mut clock) = fresh();
+        let id = Ulid::new().to_string();
+        let legacy = mk(
+            &remote_hlc(FUTURE_MS, 1),
+            "item",
+            &id,
+            "create",
+            // 0024~0032 的七键形态,一个字都不多。
+            json!({
+                "content": "老端记的",
+                "stage": "inbox",
+                "created_at": "2026-01-01T00:00:00Z",
+                "born_stage": "inbox",
+                "due_on": null,
+                "priority": null,
+                "position": null,
+            }),
+        );
+        assert_eq!(
+            apply_remote_op(&mut conn, &mut clock, &legacy).expect("老端的 create 必须能落地"),
+            Outcome::Applied
+        );
+        let born: Option<String> = conn
+            .query_row("SELECT born_device FROM items WHERE id = ?1", [&id], |r| r.get(0))
+            .unwrap();
+        assert_eq!(born, None, "缺键 = 未知,不猜也不伪造");
+        // 显式 null 与缺键同义(压实基线承载 pre-0033 史实用的就是它)。
+        let id2 = Ulid::new().to_string();
+        let explicit = mk(
+            &remote_hlc(FUTURE_MS, 2),
+            "item",
+            &id2,
+            "create",
+            json!({
+                "content": "基线合成的", "stage": "inbox", "created_at": "t",
+                "born_stage": null, "due_on": null, "priority": null, "position": null,
+                "born_device": null,
+            }),
+        );
+        assert_eq!(apply_remote_op(&mut conn, &mut clock, &explicit).unwrap(), Outcome::Applied);
+
+        // **带值那一支必须真落列**(变异对照 ⑦ 补:此前只测了「缺键 = 未知」,
+        // `apply_item_create` 把 born_device 写死成 None 也没人红 —— 引导走表级复制、
+        // 压实直接写基线 op,两条路都不经过这里,回放是唯一走它的路)。
+        let id3 = Ulid::new().to_string();
+        let peer_dev = "01DEVPEERAAAAAAAAAAAAAAAAA";
+        let signed = mk(
+            &remote_hlc(FUTURE_MS, 3),
+            "item",
+            &id3,
+            "create",
+            json!({
+                "content": "对端记的", "stage": "inbox", "created_at": "t",
+                "born_stage": "inbox", "due_on": null, "priority": null, "position": null,
+                "born_device": peer_dev,
+            }),
+        );
+        assert_eq!(apply_remote_op(&mut conn, &mut clock, &signed).unwrap(), Outcome::Applied);
+        let got: Option<String> = conn
+            .query_row("SELECT born_device FROM items WHERE id = ?1", [&id3], |r| r.get(0))
+            .unwrap();
+        assert_eq!(got.as_deref(), Some(peer_dev), "回放来的署名必须原样落列");
+    }
+
+    /// 形态闸:born_device 是 26 位规范 ULID ∪ null,别的一律 InvalidOp;
+    /// 且它是不可变列,协议**禁 set_field**(与 created_at / born_stage 同臂)。
+    #[test]
+    fn born_device_shape_and_set_field_ban() {
+        let (mut conn, mut clock) = fresh();
+        for bad in [json!("短"), json!("01lowercase000000000000000"), json!(7)] {
+            let op = mk(
+                &remote_hlc(FUTURE_MS, 3),
+                "item",
+                &Ulid::new().to_string(),
+                "create",
+                json!({
+                    "content": "x", "stage": "inbox", "created_at": "t", "born_stage": "inbox",
+                    "due_on": null, "priority": null, "position": null, "born_device": bad,
+                }),
+            );
+            assert!(
+                matches!(validate_op_shape(&op), Err(OpError::InvalidOp(_))),
+                "非规范 born_device 必须拒:{op:?}"
+            );
+        }
+        let id = repo::add_item(&conn, "本机的").unwrap();
+        let set = mk(
+            &remote_hlc(FUTURE_MS, 4),
+            "item",
+            &id,
+            "set_field",
+            json!({"field": "born_device", "value": "01AAAAAAAAAAAAAAAAAAAAAAAA"}),
+        );
+        let err = apply_remote_op(&mut conn, &mut clock, &set).unwrap_err();
+        assert!(
+            matches!(&err, OpError::InvalidOp(m) if m.contains("出生/史实字段")),
+            "{err:?}"
+        );
+    }
+
+    /// device 寄存器的坐标 / 词汇 / 值域闸。entity_id 必须是规范 device_id——挡的是
+    /// **非规范 id 白得一行**,不是行数(行数无协议上界,见 shape 层该臂的注释)。
+    #[test]
+    fn device_op_shape_gate_rejects_bad_coordinates_and_vocab() {
+        let (mut conn, mut clock) = fresh();
+        let dev = "01DEVAAAAAAAAAAAAAAAAAAAAA";
+        let apply = |conn: &mut Connection, clock: &mut Clock, op: &RemoteOp| {
+            apply_remote_op(conn, clock, op).unwrap_err()
+        };
+        // entity_id 不是规范 ULID:已知词汇下坐标非法 = InvalidOp(不是版本偏斜)。
+        //
+        // ⚠ 这里**必须直接断言 `validate_op_shape`**,不能只看 `apply_remote_op` 的错型
+        // (变异对照 ⑤ 补):把 shape 层这道闸整只拆掉,live 路照样红 —— `device_profile`
+        // 的 CHECK 会在 INSERT 时兜住,错型也照样是 InvalidOp,**两条路的可观测终局一模
+        // 一样**。而 shape 层还是**快照审计**(`audit_op_shapes` / `scan_op_shapes`)的
+        // 入口,那条路上没有 live INSERT,且 **attached 快照的 CHECK 是可被篡改的**
+        // (boot.rs 全篇的前提:不信 attached DB 声称的 schema)。承重的是 shape 层。
+        for bad in ["profile", "01lowercase000000000000000", "01SHORT"] {
+            let op = mk(
+                &remote_hlc(FUTURE_MS, 5),
+                "device",
+                bad,
+                "set_field",
+                json!({"field": "alias", "value": "甲"}),
+            );
+            assert!(
+                matches!(validate_op_shape(&op), Err(OpError::InvalidOp(_))),
+                "shape 层必须自己拒(快照审计路上没有存储层兜底):{bad}"
+            );
+            assert!(matches!(apply(&mut conn, &mut clock, &op), OpError::InvalidOp(_)), "{bad}");
+        }
+        // 未知 device 字段 = UnsupportedVocab(将来可能扩 profile 字段,旧端挂起等升级)。
+        let bad_field = mk(
+            &remote_hlc(FUTURE_MS, 6),
+            "device",
+            dev,
+            "set_field",
+            json!({"field": "color", "value": "x"}),
+        );
+        assert!(matches!(apply(&mut conn, &mut clock, &bad_field), OpError::UnsupportedVocab(_)));
+        // 寄存器无 create/tombstone:词汇表外 = UnsupportedVocab(存储层 CHECK 双保险)。
+        let create = mk(&remote_hlc(FUTURE_MS, 7), "device", dev, "create", json!({}));
+        assert!(matches!(apply(&mut conn, &mut clock, &create), OpError::UnsupportedVocab(_)));
+        // 线上规范:带首尾空白 / 空串 / 超 200 字节 = InvalidOp,replay 绝不代 trim。
+        for bad in [json!(" 甲 "), json!(""), json!("长".repeat(70))] {
+            let op = mk(
+                &remote_hlc(FUTURE_MS, 8),
+                "device",
+                dev,
+                "set_field",
+                json!({"field": "alias", "value": bad}),
+            );
+            assert!(matches!(apply(&mut conn, &mut clock, &op), OpError::InvalidOp(_)));
+        }
+        // 全拒于 shape 层:零记账、零落行。
+        assert_eq!(oplog_rows(&conn), 0);
+        assert_eq!(device_row(&conn, dev), None);
+    }
+
+    /// 别名的 LWW 与显式清名:多实例互不干扰,晚的赢,null 是规范表示。
+    #[test]
+    fn device_alias_is_per_device_lww_with_explicit_clear() {
+        let (mut conn, mut clock) = fresh();
+        let a = "01DEVAAAAAAAAAAAAAAAAAAAAA";
+        let b = "01DEVBBBBBBBBBBBBBBBBBBBBB";
+        let set = |hlc_c: u32, dev: &str, v: Value| {
+            mk(&remote_hlc(FUTURE_MS, hlc_c), "device", dev, "set_field", json!({"field": "alias", "value": v}))
+        };
+        for op in [set(1, a, json!("甲机")), set(2, b, json!("乙机"))] {
+            assert_eq!(apply_remote_op(&mut conn, &mut clock, &op).unwrap(), Outcome::Applied);
+        }
+        assert_eq!(device_row(&conn, a), Some(Some("甲机".into())));
+        assert_eq!(device_row(&conn, b), Some(Some("乙机".into())));
+        // 更早的 op 输 LWW,且**不碰另一台**。
+        let stale = set(0, a, json!("旧名"));
+        assert_eq!(apply_remote_op(&mut conn, &mut clock, &stale).unwrap(), Outcome::LwwStale);
+        assert_eq!(device_row(&conn, a), Some(Some("甲机".into())));
+        // 清名:行留着、alias 落 NULL(规范表示,不是删行)。
+        let clear = set(9, a, Value::Null);
+        assert_eq!(apply_remote_op(&mut conn, &mut clock, &clear).unwrap(), Outcome::Applied);
+        assert_eq!(device_row(&conn, a), Some(None), "显式清名 = 行在、alias NULL");
+        assert_eq!(device_row(&conn, b), Some(Some("乙机".into())), "另一台纹丝不动");
+    }
+
     #[test]
     fn space_op_shape_gate_rejects_bad_coordinates_and_vocab() {
         let (mut conn, mut clock) = fresh();
@@ -1744,7 +2060,7 @@ mod tests {
     const ITEMS_FP: &str = "SELECT id||'|'||content||'|'||stage||'|'||created_at \
         ||'|'||COALESCE(archived_at,'∅')||'|'||COALESCE(due_on,'∅')||'|'||COALESCE(priority,'∅') \
         ||'|'||COALESCE(position,'∅')||'|'||COALESCE(sealed_at,'∅')||'|'||COALESCE(born_stage,'∅') \
-        ||'|'||COALESCE(done_at,'∅') \
+        ||'|'||COALESCE(done_at,'∅')||'|'||COALESCE(born_device,'∅') \
         FROM items ORDER BY id";
     const TOPICS_FP: &str = "SELECT id||'|'||title||'|'||created_at||'|'||updated_at \
         ||'|'||COALESCE(color,'∅')||'|'||COALESCE(position,'∅')||'|'||quote(kind) \

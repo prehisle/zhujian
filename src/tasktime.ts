@@ -23,6 +23,9 @@ export type TaskItem = {
   /** 完成时刻(RFC3339,0030 done_at),null = 未知(本功能前完成的老卡)。看板「已完成」
    *  卡显示「完成于」;归档册按 done_at ?? sealed_at 分组(完成日优先)。只增不清。 */
   done_at: string | null;
+  /** 出生设备(0033 born_device),null = 未知(0033 前的存量行)。经 identity.ts 翻成
+   *  署名 chip;只在「不是本机」且「那台起过别名」时显,回收站/归档册不显。 */
+  born_device: string | null;
   /** Every tag on this task (M:N, item_topic). Empty = 无标签. The board shows them
    *  all as chips; the filter bar treats a task as belonging to each of its tags. */
   topics: TaskTag[];

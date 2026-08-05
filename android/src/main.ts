@@ -17,6 +17,8 @@ import {
   captureIdea,
   captureTodo,
   completeTask,
+  deviceIdentity,
+  setDeviceAlias,
   deleteItemImage,
   getItemImage,
   getItemThumb,
@@ -39,6 +41,7 @@ import * as filter from "./filter";
 import * as panes from "./panes";
 import * as topics from "./topics";
 import { initCardSwipe } from "./swipe";
+import { loadIdentity, signatureFor } from "./identity";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   scan,
@@ -217,9 +220,13 @@ function renderCard(it: TimelineItem, hideTopic: string | null): string {
   if (it.priority) meta.push(`<span class="chip">${["", "低", "中", "高"][it.priority]}优先</span>`);
   // 完成时刻(0030):已完成卡显示「完成于 <时刻>」;done_at 为 null(本功能前完成的老卡)则不显示。
   const doneAt = done && it.done_at ? `<time class="done-at">完成于 ${esc(fmtWhen(it.done_at))}</time>` : "";
+  // 署名(0033):只在「不是本机」且「那台起过别名」时显一枚小字;其余一律不显
+  // (未命名设备刻意不显 id 片段——卡片上一串 K7M2QX 是噪音)。
+  const sigName = signatureFor(getCurrentSpace(), it.born_device);
+  const sig = sigName ? `<span class="sig-chip">${esc(sigName)}</span>` : "";
   return `<article class="card${done ? " done" : ""}" data-id="${esc(it.id)}">${tick}<div class="body">
     <p class="content">${esc(it.content)}</p>${thumbs}
-    <footer>${pill}<time>${esc(fmtWhen(it.created_at))}</time>${doneAt}${meta.join("")}${chips}</footer>
+    <footer>${pill}<time>${esc(fmtWhen(it.created_at))}</time>${doneAt}${sig}${meta.join("")}${chips}</footer>
   </div></article>`;
 }
 
@@ -1020,7 +1027,13 @@ async function refreshOnce(): Promise<void> {
   try {
     // 时间轴 + 带 kind 的全量标签一把取(同 space、同一轮):后者供筛选条的类型轴与
     // 标签色/死筛回落用(per-item chip 不带 kind、也不含当前无条目的标签)。
-    const [items, ftopics] = await Promise.all([listTimeline(space), listTopicsFull(space)]);
+    // 设备名册(0033 署名)与前两者**并发**取,不给渲染加一跳延迟;它内部吞错,
+    // 署名少显一轮也绝不让整屏内容陪葬。
+    const [items, ftopics] = await Promise.all([
+      listTimeline(space),
+      listTopicsFull(space),
+      loadIdentity(space),
+    ]);
     if (space !== getCurrentSpace()) return;
     if (cardPanel.hasDirtyDraft()) {
       refreshDeferred = true;
@@ -1610,6 +1623,7 @@ function openPane(name: string) {
   else if (name === "settings") {
     paintThemeSeg();
     paintTextSizeSeg();
+    void loadAlias();
     void loadAbout();
   }
   else if (name === "diag" && !diagLoaded) {
@@ -1794,6 +1808,85 @@ function paintTextSizeSeg() {
     .querySelectorAll<HTMLButtonElement>("[data-textsize]")
     .forEach((b) => b.classList.toggle("on", b.dataset.textsize === now));
 }
+
+// ---- 本机别名(identity-plan §2.4)------------------------------------------------
+//
+// 与外观 / 字号的关键差别:**别名进同步**(和空间名同族),那两样是设备环境属性。
+// 别搞混——这也是它下面那句说明里「同步」二字加粗的原因。
+
+/** 面板里的「已保存值」影子:同值不发命令(后端也是 no-op),失败回退到它。 */
+let aliasSaved = "";
+/** 本机 device_id,由 loadAlias 落下。null = 还没取到 → 整行禁用,保存路径直接不走
+ *  (**不在保存时再查一次**:那是第二次往返,还给「查到的是切走后那个空间」留了口子)。 */
+let aliasDevice: string | null = null;
+
+/** 开设置面时回填。**取不到就整行禁用,不编造占位值**(design-rules:绝不回退兜底)。 */
+async function loadAlias() {
+  const input = $("alias-input") as HTMLInputElement;
+  const save = $("alias-save") as HTMLButtonElement;
+  const msg = $("alias-msg");
+  msg.hidden = true;
+  input.disabled = true;
+  save.disabled = true;
+  aliasDevice = null;
+  const space = getCurrentSpace();
+  try {
+    const d = await deviceIdentity(space);
+    if (space !== getCurrentSpace()) return; // 迟到响应:切走了就不动这个面
+    aliasDevice = d.this_device;
+    aliasSaved = d.devices.find((x) => x.device_id === d.this_device)?.alias ?? "";
+    input.value = aliasSaved;
+    // 没起名时,id 前 6 位是这台设备唯一能自证身份的东西。**卡片上刻意不显 id 片段**
+    // (那是噪音),但这里的语境正是「这是哪台」,显它才有用。
+    input.placeholder = `未命名 · ${d.this_device.slice(0, 6)}`;
+    input.disabled = false;
+    save.disabled = false;
+  } catch (e) {
+    showAliasMsg(String(e), true);
+  }
+}
+
+function showAliasMsg(text: string, bad: boolean) {
+  const msg = $("alias-msg");
+  msg.textContent = text;
+  msg.style.color = bad ? "var(--seal)" : "var(--ink-faint)";
+  msg.hidden = false;
+}
+
+async function saveAlias() {
+  const input = $("alias-input") as HTMLInputElement;
+  const save = $("alias-save") as HTMLButtonElement;
+  const device = aliasDevice;
+  if (device === null) return; // 身份没取到:整行本就禁用,这里是第二道
+  const next = input.value.trim();
+  if (next === aliasSaved) {
+    $("alias-msg").hidden = true;
+    return;
+  }
+  const space = getCurrentSpace();
+  save.disabled = true;
+  try {
+    // 空串 = 清名(后端 trim 后为空即落 null,显式清名是规范表示)。
+    await setDeviceAlias(space, device, next === "" ? null : next);
+    aliasSaved = next;
+    input.value = next;
+    input.blur(); // 收键盘,给一个「这一笔完了」的手势回执(ui-guidelines:手势即回执)
+    showAliasMsg(next === "" ? "已清除别名" : "已保存,会同步到其他设备", false);
+  } catch (e) {
+    input.value = aliasSaved; // 后端拒了(超长等):回显旧值 + 后端原话
+    showAliasMsg(String(e), true);
+  } finally {
+    save.disabled = false;
+  }
+}
+
+$("alias-save").addEventListener("click", () => void saveAlias());
+$("alias-input").addEventListener("keydown", (e) => {
+  if ((e as KeyboardEvent).key === "Enter") {
+    e.preventDefault();
+    void saveAlias();
+  }
+});
 
 $("space-list").addEventListener("click", async (e) => {
   const t = e.target as HTMLElement;

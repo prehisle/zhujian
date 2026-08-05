@@ -68,6 +68,10 @@ pub struct OrganizedRow {
     pub content: String,
     pub created_at: String,
     pub stage: String,
+    /// 出生设备(0033 born_device):这条是哪台设备记的。None = 未知(0033 之前的存量行,
+    /// 「未知不回填」)。前端把它经设备名册翻成别名,**只在多设备账户里、且不是本机时**
+    /// 才显一枚小字 chip(identity-plan §3.7);单设备账户完全不显示。
+    pub born_device: Option<String>,
     /// This idea's tags (each id + title + optional color), for chip display + tint.
     pub topics: Vec<TagRef>,
 }
@@ -97,6 +101,10 @@ pub struct TimelineRow {
     /// 完成时刻(0030 done_at):安卓主卡走 live_timeline,done 行据它显示「完成于」;
     /// 灵感行 / 未完成任务行 = None。只增不清(见 TaskRow.done_at)。
     pub done_at: Option<String>,
+    /// 出生设备(0033 born_device):这条是哪台设备记的。None = 未知(0033 之前的存量行,
+    /// 「未知不回填」)。前端把它经设备名册翻成别名,**只在多设备账户里、且不是本机时**
+    /// 才显一枚小字 chip(identity-plan §3.7);单设备账户完全不显示。
+    pub born_device: Option<String>,
     pub topics: Vec<TagRef>,
 }
 
@@ -129,6 +137,10 @@ pub struct TaskRow {
     /// (本功能上线前完成的老卡)。只增不清——离开 done / 归档 / 撤回都保住。看板「已完成」
     /// 卡显示「完成于」,归档册按 COALESCE(done_at, sealed_at) 分组/排序(完成日优先)。
     pub done_at: Option<String>,
+    /// 出生设备(0033 born_device):这条是哪台设备记的。None = 未知(0033 之前的存量行,
+    /// 「未知不回填」)。前端把它经设备名册翻成别名,**只在多设备账户里、且不是本机时**
+    /// 才显一枚小字 chip(identity-plan §3.7);单设备账户完全不显示。
+    pub born_device: Option<String>,
     pub topics: Vec<TagRef>,
 }
 
@@ -206,12 +218,19 @@ fn escape_like(query: &str) -> String {
 
 /// Capture a raw thought into the Inbox (stage 'inbox'). Returns the new item's ULID.
 /// born_stage 如实记 'inbox'(出生态史实,0018 触发器强制且冻结)。
+///
+/// born_device 同理(0033,identity-plan §3):**直接从权威真相源 `sync_meta` 取**,不由
+/// 调用方转述。`trg_item_born_device_required` 把值域钉死成「恰等于本机 device_id」——
+/// 只有一个合法值,多一个参数就只是多一条传错的路。身份未初始化(`Clock::load` 没跑过)
+/// → 子查询得 NULL → 触发器 ABORT,fail-closed 而非落一个永不可改的错署名。
+/// 本地三条 insert 路径(本函数 / `insert_task` / `insert_moved_item`)写法一致。
 pub fn add_item(conn: &Connection, content: &str) -> rusqlite::Result<String> {
     let id = Ulid::new().to_string();
     let now = now_iso();
     conn.execute(
-        "INSERT INTO items (id, content, stage, created_at, updated_at, born_stage) \
-         VALUES (?1, ?2, 'inbox', ?3, ?3, 'inbox')",
+        "INSERT INTO items (id, content, stage, created_at, updated_at, born_stage, born_device) \
+         VALUES (?1, ?2, 'inbox', ?3, ?3, 'inbox', \
+                 (SELECT value FROM sync_meta WHERE key = 'device_id'))",
         (&id, content, &now),
     )?;
     Ok(id)
@@ -260,7 +279,7 @@ fn organized_rows(
     }
 
     let sql = format!(
-        "SELECT i.id, i.content, i.created_at, i.stage FROM items i \
+        "SELECT i.id, i.content, i.created_at, i.stage, i.born_device FROM items i \
          WHERE {where_sql} ORDER BY {order_sql}"
     );
     let mut stmt = conn.prepare(&sql)?;
@@ -270,13 +289,14 @@ fn organized_rows(
             r.get::<_, String>(1)?,
             r.get::<_, String>(2)?,
             r.get::<_, String>(3)?,
+            r.get::<_, Option<String>>(4)?,
         ))
     })?;
     let mut out = Vec::new();
     for row in rows {
-        let (id, content, created_at, stage) = row?;
+        let (id, content, created_at, stage, born_device) = row?;
         let topics = topics_by_item.remove(&id).unwrap_or_default();
-        out.push(OrganizedRow { id, content, created_at, stage, topics });
+        out.push(OrganizedRow { id, content, created_at, stage, born_device, topics });
     }
     Ok(out)
 }
@@ -346,7 +366,7 @@ pub fn idea_trash(conn: &Connection) -> rusqlite::Result<Vec<OrganizedRow>> {
 pub fn live_timeline(conn: &Connection) -> rusqlite::Result<Vec<TimelineRow>> {
     let mut stmt = conn.prepare(
         "SELECT i.id, i.content, i.created_at, i.stage, i.due_on, i.priority, i.done_at, \
-                t.id, t.title, t.color \
+                i.born_device, t.id, t.title, t.color \
          FROM items i \
          LEFT JOIN item_topic it ON it.item_id = i.id \
          LEFT JOIN topics t ON t.id = it.topic_id \
@@ -365,12 +385,24 @@ pub fn live_timeline(conn: &Connection) -> rusqlite::Result<Vec<TimelineRow>> {
             r.get::<_, Option<String>>(7)?,
             r.get::<_, Option<String>>(8)?,
             r.get::<_, Option<String>>(9)?,
+            r.get::<_, Option<String>>(10)?,
         ))
     })?;
     let mut out: Vec<TimelineRow> = Vec::new();
     for row in rows {
-        let (id, content, created_at, stage, due_on, priority, done_at, tag_id, tag_title, tag_color) =
-            row?;
+        let (
+            id,
+            content,
+            created_at,
+            stage,
+            due_on,
+            priority,
+            done_at,
+            born_device,
+            tag_id,
+            tag_title,
+            tag_color,
+        ) = row?;
         // 同一条目的标签行必然相邻(前两个排序键完全相同),条目 id 一换就开新行。
         if out.last().map(|last| last.id != id).unwrap_or(true) {
             out.push(TimelineRow {
@@ -381,6 +413,7 @@ pub fn live_timeline(conn: &Connection) -> rusqlite::Result<Vec<TimelineRow>> {
                 due_on,
                 priority,
                 done_at,
+                born_device,
                 topics: Vec::new(),
             });
         }
@@ -925,8 +958,9 @@ pub fn insert_task(
     let now = now_iso();
     let key = end_key(conn, "todo", &id)?;
     conn.execute(
-        "INSERT INTO items (id, content, stage, created_at, updated_at, due_on, priority, position, born_stage) \
-         VALUES (?1, ?2, 'todo', ?3, ?3, ?4, ?5, ?6, 'todo')",
+        "INSERT INTO items (id, content, stage, created_at, updated_at, due_on, priority, position, born_stage, born_device) \
+         VALUES (?1, ?2, 'todo', ?3, ?3, ?4, ?5, ?6, 'todo', \
+                 (SELECT value FROM sync_meta WHERE key = 'device_id'))",
         (&id, content, &now, due_on, priority, &key),
     )?;
     Ok(id)
@@ -937,6 +971,10 @@ pub fn insert_task(
 /// 移动时 stage(该行在**本库**的出生态)、任务态落所在列**列首**(同 create/promote
 /// 先例:新来的先可见)、灵感态 position=NULL(0022 耦合触发器要求)。
 /// updated_at 是本地簿记 = 现在。返回插入行数(恒 1,失败走 Err)。
+///
+/// **born_device = 执行移动的这台设备**(0033,identity-plan §3.5 第 3 条已拍板接受):
+/// 这行确实是它在**这个空间**创建的,填本机是诚实的;代价是原作者信息不跨空间。
+/// 记档不修——源空间那行是墓碑、目标是新 ULID 的新生行,署名跟着「在哪个库出生」走。
 pub fn insert_moved_item(
     conn: &Connection,
     id: &str,
@@ -951,8 +989,9 @@ pub fn insert_moved_item(
         _ => None,
     };
     conn.execute(
-        "INSERT INTO items (id, content, stage, created_at, updated_at, due_on, priority, position, born_stage) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?3)",
+        "INSERT INTO items (id, content, stage, created_at, updated_at, due_on, priority, position, born_stage, born_device) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?3, \
+                 (SELECT value FROM sync_meta WHERE key = 'device_id'))",
         (id, content, stage, created_at, now_iso(), due_on, priority, position),
     )
 }
@@ -985,7 +1024,8 @@ fn task_rows(
     }
 
     let sql = format!(
-        "SELECT i.id, i.content, i.stage, i.due_on, i.priority, i.sealed_at, i.done_at FROM items i \
+        "SELECT i.id, i.content, i.stage, i.due_on, i.priority, i.sealed_at, i.done_at, \
+                i.born_device FROM items i \
          WHERE {where_sql} ORDER BY {order_sql}"
     );
     let mut stmt = conn.prepare(&sql)?;
@@ -998,13 +1038,24 @@ fn task_rows(
             r.get::<_, Option<i64>>(4)?,
             r.get::<_, Option<String>>(5)?,
             r.get::<_, Option<String>>(6)?,
+            r.get::<_, Option<String>>(7)?,
         ))
     })?;
     let mut out = Vec::new();
     for row in rows {
-        let (id, content, stage, due_on, priority, sealed_at, done_at) = row?;
+        let (id, content, stage, due_on, priority, sealed_at, done_at, born_device) = row?;
         let topics = tags_by_item.remove(&id).unwrap_or_default();
-        out.push(TaskRow { id, content, stage, due_on, priority, sealed_at, done_at, topics });
+        out.push(TaskRow {
+            id,
+            content,
+            stage,
+            due_on,
+            priority,
+            sealed_at,
+            done_at,
+            born_device,
+            topics,
+        });
     }
     Ok(out)
 }
@@ -1440,8 +1491,14 @@ mod tests {
     }
 
     /// A fully-migrated (latest) database in a unique temp file.
+    /// 全新库 + **已初始化的设备身份**。0033 起后者不是可选装饰:`items` 的
+    /// `trg_item_born_device_required` 在 `sync_meta` 无 device_id 行时 fail-closed
+    /// ABORT(宁可拒插,也不落一个永不可改的错署名),而生产路径上 `Clock::load`
+    /// 恒在任何写之前跑过(两壳装配点 / transport 启动前)。
     fn fresh_db() -> Connection {
-        db::open(&temp_path("fresh")).expect("open migrated db")
+        let conn = db::open(&temp_path("fresh")).expect("open migrated db");
+        crate::clock::Clock::load(&conn).expect("init device identity");
+        conn
     }
 
     fn stage_of(conn: &Connection, id: &str) -> String {
@@ -1449,10 +1506,10 @@ mod tests {
     }
 
     #[test]
-    fn migration_sets_user_version_32_and_enforces_foreign_keys() {
+    fn migration_sets_user_version_34_and_enforces_foreign_keys() {
         let conn = fresh_db();
         let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0)).unwrap();
-        assert_eq!(version, 32);
+        assert_eq!(version, 34);
         let fk: i64 = conn.pragma_query_value(None, "foreign_keys", |r| r.get(0)).unwrap();
         assert_eq!(fk, 1, "foreign keys must be ON");
     }
@@ -1462,8 +1519,9 @@ mod tests {
     #[test]
     fn done_at_born_null_guarded_single_user_but_replay_exempt() {
         let conn = fresh_db();
-        let insert = "INSERT INTO items (id, content, stage, created_at, updated_at, position, born_stage, done_at) \
-             VALUES ('x', 'x', 'done', 't', 't', 'a0', 'done', '2026-07-20T10:00:00.000Z')";
+        let insert = "INSERT INTO items (id, content, stage, created_at, updated_at, position, born_stage, done_at, born_device) \
+             VALUES ('x', 'x', 'done', 't', 't', 'a0', 'done', '2026-07-20T10:00:00.000Z', \
+                     (SELECT value FROM sync_meta WHERE key = 'device_id'))";
         // 单机路径:新条目不能生而带完成时间。
         let err = conn.execute(insert, []).unwrap_err();
         assert!(err.to_string().contains("完成时间"), "{err}");
@@ -1483,8 +1541,9 @@ mod tests {
         // stage↔position 耦合 CHECK:灵感态 position 必须 NULL,任务态必须有键。
         let ins = |id: &str, stage: &str, pos: Option<&str>| {
             conn.execute(
-                "INSERT INTO items (id, content, stage, created_at, updated_at, position, born_stage) \
-                 VALUES (?1, 'x', ?2, 't', 't', ?3, ?2)",
+                "INSERT INTO items (id, content, stage, created_at, updated_at, position, born_stage, born_device) \
+                 VALUES (?1, 'x', ?2, 't', 't', ?3, ?2, \
+                         (SELECT value FROM sync_meta WHERE key = 'device_id'))",
                 rusqlite::params![id, stage, pos],
             )
             .unwrap();
@@ -2194,6 +2253,8 @@ mod tests {
         }
 
         let conn = db::open(&path).expect("apply 0021");
+        // 0033:下面 insert_task 走生产路径,要求设备身份已在(fail-closed 触发器)。
+        crate::clock::Clock::load(&conn).expect("init device identity");
         let pos = |id: &str| -> Option<String> {
             conn.query_row("SELECT position FROM items WHERE id=?1", [id], |r| r.get(0)).unwrap()
         };
@@ -2281,6 +2342,8 @@ mod tests {
         }
 
         let conn = db::open(&path).expect("apply 0022");
+        // 0033:下面那条「同键卡」直插走单机路径,要求设备身份已在(fail-closed 触发器)。
+        crate::clock::Clock::load(&conn).expect("init device identity");
         assert_eq!(fp(&conn), before, "整表重建零值变化(含 updated_at)");
         for (table, want) in [("topics", 1i64), ("item_topic", 1), ("item_image", 1),
                               ("item_image_counter", 1), ("item_revisions", 1)] {
@@ -2294,8 +2357,9 @@ mod tests {
             "任务态丢排序键仍被拦(耦合触发器接棒)");
         assert!(conn.execute("UPDATE items SET due_on='2026-07-11' WHERE id='fi'", []).is_err(),
             "灵感态带 due 仍被拦");
-        conn.execute("INSERT INTO items (id, content, stage, created_at, updated_at, position, born_stage) \
-                      VALUES ('t2', '同键卡', 'todo', 'c', 'u', 'a0', 'todo')", [])
+        conn.execute("INSERT INTO items (id, content, stage, created_at, updated_at, position, born_stage, born_device) \
+                      VALUES ('t2', '同键卡', 'todo', 'c', 'u', 'a0', 'todo', \
+                              (SELECT value FROM sync_meta WHERE key = 'device_id'))", [])
             .expect("同列同键自 0022 起允许(多写者合并的合法结局)");
         // 回放标志表就位且为空。
         let flags: i64 =
@@ -2581,6 +2645,7 @@ mod tests {
             .unwrap();
         }
         let conn = db::open(&path).expect("migrate to v18");
+        crate::clock::Clock::load(&conn).expect("init device identity"); // 0033 fail-closed
         add_item(&conn, "新灵感").unwrap();
         let s = idea_stats(&conn, "0000-01-01T00:00:00Z").unwrap();
         assert_eq!((s.captured_week, s.born_inbox), (1, 1), "legacy NULL row stays out");

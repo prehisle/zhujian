@@ -40,7 +40,7 @@ use crate::db;
 use crate::sync::boot;
 use crate::sync::crypto;
 
-/// oplog 表的**单一 DDL 构造源**(§2.6.7 第一层;与 **0028** 迁移文本**逐字同源,含语句
+/// oplog 表的**单一 DDL 构造源**(§2.6.7 第一层;与 **0033** 迁移文本**逐字同源,含语句
 /// 内注释**——sqlite_schema 保存的是语句原文,任何漂移都会被下方「规范化 sqlite_schema
 /// 比对」在压实现场拒绝,不是靠人眼对齐。首跑就抓到过:常量少了迁移里的两段行内注释,
 /// 比对当场红——这正是比对该有的灵敏度,修法是把常量对齐迁移原文,不是放松比对)。
@@ -62,6 +62,9 @@ const OPLOG_TABLE_DDL: &str = "CREATE TABLE {name} (
         OR (entity = 'image' AND kind IN ('image_add', 'image_tombstone'))
         -- 空间 profile 单例寄存器(space-name-sync-plan §3):无 create、无 tombstone。
         OR (entity = 'space' AND kind = 'set_field')
+        -- 设备 profile 多实例寄存器(identity-plan §2.1):同样无 create、无 tombstone,
+        -- 但 entity_id = 该设备的 device_id(不是固定字面量),故无单行钉死。
+        OR (entity = 'device' AND kind = 'set_field')
     )
 )";
 
@@ -488,6 +491,30 @@ fn synthesize_baseline(tx: &Connection) -> Result<Vec<(String, String, String, V
             ));
         }
     }
+    // device profile(identity-plan §2.1/§3.6):同 space,无 create 的寄存器,**行存在就
+    // 合成一条 set_field(含 alias=NULL 的显式清名)**。
+    //
+    // ⚠️ **全部行都要合成,不只是当前在册的那几台**(§3.6,这是设计要求不是可选优化):
+    // 压实会换掉每台设备的 device_id,压实后所有设备清库重配,而条目里冻着的 born_device
+    // 是**旧** id。旧 id 的别名若不跨压实存活,署名就再也翻不成人话了。
+    {
+        let mut stmt = tx
+            .prepare("SELECT device_id, alias FROM device_profile ORDER BY device_id")
+            .map_err(|e| e.to_string())?;
+        let rows: Vec<(String, Option<String>)> = stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .map_err(|e| e.to_string())?
+            .collect::<rusqlite::Result<_>>()
+            .map_err(|e| e.to_string())?;
+        for (device_id, alias) in rows {
+            ops.push((
+                "device".into(),
+                device_id,
+                "set_field".into(),
+                json!({"field": "alias", "value": alias}),
+            ));
+        }
+    }
     // topics:create {title, created_at};updated_at ≠ created_at 补 set(回放基线所得
     // 行 == 现值:apply_topic_create 落 updated_at = created_at);color/position/kind 非
     // NULL 各补一条 set(它们无 create 键 → 出生 NULL,现值非 NULL 时补齐,0031)。
@@ -554,11 +581,12 @@ fn synthesize_baseline(tx: &Connection) -> Result<Vec<(String, String, String, V
         let mut stmt = tx
             .prepare(
                 "SELECT id, content, stage, created_at, born_stage, due_on, priority, \
-                 position, archived_at, sealed_at, done_at FROM items ORDER BY id",
+                 position, archived_at, sealed_at, done_at, born_device FROM items ORDER BY id",
             )
             .map_err(|e| e.to_string())?;
-        #[allow(clippy::type_complexity)]
-        let rows: Vec<(
+        /// 一行 items 的基线取数形(id, content, stage, created_at, born_stage, due_on,
+        /// priority, position, archived_at, sealed_at, done_at, born_device)。
+        type ItemBaseline = (
             String,
             String,
             String,
@@ -570,7 +598,9 @@ fn synthesize_baseline(tx: &Connection) -> Result<Vec<(String, String, String, V
             Option<String>,
             Option<String>,
             Option<String>,
-        )> = stmt
+            Option<String>,
+        );
+        let rows: Vec<ItemBaseline> = stmt
             .query_map([], |r| {
                 Ok((
                     r.get(0)?,
@@ -584,13 +614,26 @@ fn synthesize_baseline(tx: &Connection) -> Result<Vec<(String, String, String, V
                     r.get(8)?,
                     r.get(9)?,
                     r.get(10)?,
+                    r.get(11)?,
                 ))
             })
             .map_err(|e| e.to_string())?
             .collect::<rusqlite::Result<_>>()
             .map_err(|e| e.to_string())?;
-        for (id, content, stage, created_at, born, due_on, priority, position, archived, sealed, done) in
-            rows
+        for (
+            id,
+            content,
+            stage,
+            created_at,
+            born,
+            due_on,
+            priority,
+            position,
+            archived,
+            sealed,
+            done,
+            born_device,
+        ) in rows
         {
             ops.push((
                 "item".into(),
@@ -604,6 +647,10 @@ fn synthesize_baseline(tx: &Connection) -> Result<Vec<(String, String, String, V
                     "due_on": due_on,
                     "priority": priority,
                     "position": position,
+                    // born_device 是史实、恒进 create payload(可为 null = pre-0033 未知),
+                    // **绝不重写**:压实换掉每台设备的 device_id,但署名指的是「当年那台」。
+                    // 旧 id 靠下方 device_profile 全表合成跨压实存活(identity-plan §3.6)。
+                    "born_device": born_device,
                 }),
             ));
             if let Some(a) = archived {
@@ -780,8 +827,9 @@ fn probe_hlc(device_id: &str, n: u32) -> String {
         .encode()
 }
 
-/// 七张用户数据表的逐行指纹(§2.6.6 终态等价;图字节以 sha256 入指纹;0028 起
-/// 含 space_profile——名字也是用户数据,压实前后必须逐字相等)。
+/// 八张用户数据表的逐行指纹(§2.6.6 终态等价;图字节以 sha256 入指纹;0028 起
+/// 含 space_profile、0033 起含 device_profile——名字与别名也是用户数据,压实前后
+/// 必须逐字相等)。
 fn table_fingerprints(tx: &Connection) -> Result<Vec<Vec<String>>, String> {
     let text_rows = |sql: &str| -> Result<Vec<String>, String> {
         let mut stmt = tx.prepare(sql).map_err(|e| e.to_string())?;
@@ -791,11 +839,13 @@ fn table_fingerprints(tx: &Connection) -> Result<Vec<Vec<String>>, String> {
     let mut out = vec![
         // quote():NULL→'NULL'、字符串带引号——合法名字「∅」不与 NULL 同指纹(codex L)。
         text_rows("SELECT key||'|'||quote(name) FROM space_profile ORDER BY key")?,
+        // 同上用 quote():alias NULL(显式清名)不与合法别名「∅」同指纹。
+        text_rows("SELECT device_id||'|'||quote(alias) FROM device_profile ORDER BY device_id")?,
         text_rows(
             "SELECT id||'|'||content||'|'||stage||'|'||created_at||'|'||updated_at \
              ||'|'||COALESCE(archived_at,'∅')||'|'||COALESCE(due_on,'∅')||'|'||COALESCE(priority,'∅') \
              ||'|'||COALESCE(position,'∅')||'|'||COALESCE(sealed_at,'∅')||'|'||COALESCE(born_stage,'∅') \
-             ||'|'||COALESCE(done_at,'∅') \
+             ||'|'||COALESCE(done_at,'∅')||'|'||COALESCE(born_device,'∅') \
              FROM items ORDER BY id",
         )?,
         text_rows(
@@ -1102,7 +1152,7 @@ mod tests {
                  ||'|'||(archived_at IS NOT NULL)||'|'||COALESCE(due_on,'∅') \
                  ||'|'||COALESCE(priority,'∅')||'|'||COALESCE(position,'∅') \
                  ||'|'||(sealed_at IS NOT NULL)||'|'||COALESCE(born_stage,'∅') \
-                 ||'|'||(done_at IS NOT NULL) \
+                 ||'|'||(done_at IS NOT NULL)||'|'||COALESCE(born_device,'∅') \
                  FROM items ORDER BY id",
             ),
             rows(
@@ -1453,6 +1503,125 @@ mod tests {
                 .unwrap_or_else(|e| panic!("B 应用 {}/{} 失败:{e:?}", op.entity, op.kind));
         }
         assert_eq!(projection(&a.conn), projection(&conn_b), "压实前后行为等价");
+    }
+
+    // ---- 身份族(0033):设备别名与条目署名活过压实 ----
+
+    /// **压实往返那一条**(identity-plan §6.3 三点之二 + §3.6 的设计要求)。
+    ///
+    /// 压实会换掉每台设备的 device_id,而条目里冻着的 `born_device` 是**旧** id。
+    /// 若基线只合成「当前在册的那几台」的别名,旧 id 的名字就永远翻不出来了——署名
+    /// 变成一串没人认识的字符。故 `synthesize_baseline` 必须把 `device_profile` 的
+    /// **全部行**都合成 `set_field`。这不是可选优化,拿掉「全部」这个量词本测必须红。
+    #[test]
+    fn compact_preserves_signatures_and_the_whole_device_roster() {
+        let mut p = peer("ident");
+        build_rich(&mut p);
+        let old_device = p.clock.device_id().to_string();
+        // 本机起个名;再放一台「已经不在册了、但历史条目还指着它」的设备(清名那台
+        // 也要活下来——alias=NULL 是规范表示,不是「没这行」)。
+        let gone = "01DEVGNEAAAAAAAAAAAAAAAAAA";
+        let cleared = "01DEVCRBBBBBBBBBBBBBBBBBBB";
+        crate::identity::set_device_alias(&mut p.conn, &mut p.clock, &old_device, Some("书房台式机"))
+            .unwrap();
+        crate::identity::set_device_alias(&mut p.conn, &mut p.clock, gone, Some("退役的旧手机"))
+            .unwrap();
+        crate::identity::set_device_alias(&mut p.conn, &mut p.clock, cleared, Some("先起后清"))
+            .unwrap();
+        crate::identity::set_device_alias(&mut p.conn, &mut p.clock, cleared, None).unwrap();
+        // 一条署名指向「已退役」那台的条目(回放豁免下手插,模拟它当年记的)。
+        p.conn.execute("INSERT INTO sync_replay_active (flag) VALUES (1)", []).unwrap();
+        p.conn
+            .execute(
+                "INSERT INTO items (id, content, stage, created_at, updated_at, born_stage, born_device) \
+                 VALUES ('01SIGNEDBYGONE000000000000', '旧手机记的', 'inbox', 't', 't', 'inbox', ?1)",
+                [gone],
+            )
+            .unwrap();
+        p.conn.execute("DELETE FROM sync_replay_active", []).unwrap();
+
+        let before = projection(&p.conn);
+        let roster_before = crate::identity::device_roster(&p.conn).unwrap();
+        assert_eq!(roster_before.len(), 3);
+
+        let report = compact(&mut p.conn).unwrap();
+        assert_ne!(report.new_device_id, old_device, "压实换了本机身份");
+
+        // ① 署名零改写:压实换 id,但史实指的是「当年那台」。
+        assert_eq!(projection(&p.conn), before, "含 born_device 的全列投影逐字不变");
+        // ② 名册整份活过来了——**包括退役那台和清名那台**。
+        assert_eq!(crate::identity::device_roster(&p.conn).unwrap(), roster_before);
+        // ③ 基线里每台设备恰一条 device op(含 value:null 的清名)。
+        let dev_ops: Vec<(String, Option<String>)> = {
+            let mut stmt = p
+                .conn
+                .prepare(
+                    "SELECT entity_id, json_extract(payload, '$.value') FROM oplog \
+                     WHERE entity = 'device' ORDER BY entity_id",
+                )
+                .unwrap();
+            let it = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+            it.collect::<rusqlite::Result<_>>().unwrap()
+        };
+        assert_eq!(
+            dev_ops,
+            vec![
+                (cleared.to_string(), None),
+                (gone.to_string(), Some("退役的旧手机".into())),
+                (old_device.clone(), Some("书房台式机".into())),
+            ],
+            "全部行都合成基线 op,清名以 value:null 承载"
+        );
+        // ④ 基线全部 op 的 origin 都是新身份(压实的既有不变量,顺带复核 device op 也守)。
+        let foreign: i64 = p
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM oplog WHERE origin <> ?1",
+                [&report.new_device_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(foreign, 0);
+        // ⑤ 状态⟺日志双向审计过(device 那一节是新加的第 ⑦ 条)。
+        boot::strict_battery(&p.conn).expect("压实后必过严格电池");
+    }
+
+    /// **引导往返那一条**(identity-plan §6.3 三点之三):老端有别名和署名 → 新端引导
+    /// → 两侧指纹相等,且新端的严格电池过。
+    #[test]
+    fn boot_carries_device_roster_and_signatures_to_a_new_device() {
+        let mut a = peer("ident-boot-src");
+        build_rich(&mut a);
+        let a_device = a.clock.device_id().to_string();
+        crate::identity::set_device_alias(&mut a.conn, &mut a.clock, &a_device, Some("娟娟的手机"))
+            .unwrap();
+
+        let snap = boot::make_snapshot(&a.conn, &a.dir).unwrap();
+        let mut b = peer("ident-boot-dst");
+        boot::import_snapshot(&mut b.conn, &mut b.clock, &snap.path)
+            .expect("带别名与署名的快照必须通过全部严格审计");
+
+        assert_eq!(projection(&b.conn), projection(&a.conn), "引导 = 完整副本(含 born_device)");
+        assert_eq!(
+            crate::identity::device_roster(&b.conn).unwrap(),
+            crate::identity::device_roster(&a.conn).unwrap(),
+            "设备名册整份带过来(device_profile 是 boot 正表,不是可剥离的派生数据)"
+        );
+        // 新端看 A 记的条目:born_device 是 A、翻得出「娟娟的手机」——这就是署名的全链路。
+        let born: Option<String> = b
+            .conn
+            .query_row(
+                "SELECT born_device FROM items WHERE content = '灵感甲(改)'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(born.as_deref(), Some(a_device.as_str()));
+        assert_eq!(
+            crate::identity::device_alias(&b.conn, &a_device).unwrap().as_deref(),
+            Some("娟娟的手机")
+        );
+        boot::strict_battery(&b.conn).expect("引导出来的库同样过电池");
     }
 
     // ---- 压实后引导端到端:压实库作源,新设备快照引导必过严格审计 ----
