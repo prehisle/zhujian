@@ -1449,10 +1449,10 @@ mod tests {
     }
 
     #[test]
-    fn migration_sets_user_version_31_and_enforces_foreign_keys() {
+    fn migration_sets_user_version_32_and_enforces_foreign_keys() {
         let conn = fresh_db();
         let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0)).unwrap();
-        assert_eq!(version, 31);
+        assert_eq!(version, 32);
         let fk: i64 = conn.pragma_query_value(None, "foreign_keys", |r| r.get(0)).unwrap();
         assert_eq!(fk, 1, "foreign keys must be ON");
     }

@@ -462,7 +462,12 @@ pub fn open_space(desc: &SpaceDescriptor) -> Result<Connection, String> {
         return Err(format!("SQLite 拒绝 WAL 模式(journal_mode={mode})"));
     }
     conn.pragma_update(None, "foreign_keys", true).map_err(|e| e.to_string())?;
-    Ok(conn)
+    // 开库回收空页(image-perf-plan §4)。⚠ 凭据不是「按值签名」——那只挡得住「顺手
+    // rt.db.lock() 就 VACUUM」那类手滑,挡不住对同一文件另开连接(299 codex 实现审 M2)。
+    // 这条调用点的真凭据是:两壳装配都先 `sup.reserve(id)` 占槽、安卓跨空间移动持双锁并
+    // 经 `is_stopped` 证目标完全无槽 —— 详见 db::reclaim_free_pages 的调用点证据表。
+    // 失败只记日志、不挡开库。
+    Ok(db::reclaim_free_pages(conn))
 }
 
 // ---- 手机启动地基:前滚迁移 + 严格 catalog 一段式(收回「安卓不跑迁移」) ----

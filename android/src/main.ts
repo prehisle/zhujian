@@ -19,6 +19,8 @@ import {
   completeTask,
   deleteItemImage,
   getItemImage,
+  getItemThumb,
+  putItemThumb,
   listSpaces,
   listTimeline,
   listTopicsFull,
@@ -26,6 +28,7 @@ import {
   syncCreateAccount,
   syncPairStart,
   type ImageMeta,
+  type ThumbData,
   type SpaceInfo,
   type TimelineItem,
 } from "./api";
@@ -247,6 +250,20 @@ function fetchImageUrl(space: string, id: string): Promise<string | null> {
   return p.then((url) => (getCurrentSpace() === space ? url : null));
 }
 
+// 缩略图取数(0032 派生表,image-perf-plan §3):命中就只过来几 KB、连全尺寸位图都不用解;
+// 未命中才回退全尺寸,由下面 fillThumb 缩完异步回存。与 imgPending 分开一只 in-flight 去重
+// (两条路的载荷差着两个数量级,合用一只会让看大图去等缩略图、或反过来)。
+const thumbPending = new Map<string, Promise<ThumbData>>();
+function fetchThumbData(space: string, id: string): Promise<ThumbData | null> {
+  const key = `${space}/${id}`;
+  let p = thumbPending.get(key);
+  if (!p) {
+    p = getItemThumb(space, id).finally(() => thumbPending.delete(key));
+    thumbPending.set(key, p);
+  }
+  return p.then((d) => (getCurrentSpace() === space ? d : null));
+}
+
 /** 降采样:**一律过 canvas 重编码成 ≤144×144 的 cover 方裁**(codex 二审:原图
  *  哪怕像素尺寸小也可能字节巨大[多帧/元数据],直接放原 URL 进缓存 = 缓存无界;
  *  只钉短边则超宽长图 thumb 仍巨大——两边都钉死)。小图不放大,但照样重编码。
@@ -310,10 +327,16 @@ async function fillThumb(btn: HTMLElement) {
           if (getCurrentSpace() !== space) return null; // 排队期间切走:放弃,不查错库
           const cached = thumbCache.get(key); // 排队期间别人可能已做完
           if (cached) return cached;
-          const full = await fetchImageUrl(space, id);
-          if (!full) return null; // 空间已切走:时间轴整个重画了,别再动旧节点
-          const s = await shrinkToThumb(full);
+          const data = await fetchThumbData(space, id);
+          if (!data) return null; // 空间已切走:时间轴整个重画了,别再动旧节点
+          if (data.thumb) {
+            thumbCache.set(key, data.url); // 派生表命中:已是 ≤144² 小图,不必再解不必再缩
+            return data.url;
+          }
+          const s = await shrinkToThumb(data.url);
           thumbCache.set(key, s);
+          // 异步回存,不阻塞渲染;存不进去就是下次再算(派生数据,失败无害)。
+          void putItemThumb(space, id, s.slice(s.indexOf(",") + 1)).catch(() => {});
           return s;
         })) ?? undefined;
       if (!small) return;
@@ -2419,6 +2442,21 @@ type AndroidUpdate = { version: string; versionCode: number; notes: string; url:
 let updateFound: AndroidUpdate | null = null;
 let updateDismissedCode = 0;
 
+// 更新说明值不值得显(296):空的不显;只是把版本号又说一遍的也不显——历史发版的
+// notes 恒是 CI 写死的「朱简安卓版 vX.Y.Z」,显出来就是紧挨着「有新版 v0.3.22」
+// 再重复一次。剥不干净(将来换了措辞)就照显:宁可多显一行,不可把真说明吞掉。
+// ⚠ 与桌面 `src/update.ts::meaningfulNotes` 同一份判据,两端是独立工程,改一处要同改。
+export function meaningfulNotes(notes: string | undefined, version: string): string {
+  const s = (notes ?? "").trim();
+  if (!s) return "";
+  const residue = s
+    .replaceAll("朱简", "")
+    .replaceAll("安卓版", "")
+    .replaceAll(version, "")
+    .replace(/[\sv·、,，。:：\-—]/g, "");
+  return residue === "" ? "" : s;
+}
+
 async function initUpdate() {
   lastUpdateCheckedAt = Date.now();
   try {
@@ -2426,6 +2464,9 @@ async function initUpdate() {
     if (!u || u.versionCode === updateDismissedCode) return;
     updateFound = u;
     $("update-msg").textContent = `有新版 v${u.version}`;
+    const notes = meaningfulNotes(u.notes, u.version);
+    $("update-notes").textContent = notes;
+    $("update-notes").hidden = notes === "";
     $("update").hidden = false;
   } catch {
     /* 离线/端点不可达:静默,下次回前台/启动再查。 */

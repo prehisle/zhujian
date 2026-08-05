@@ -51,6 +51,21 @@ function flash(msg: string): void {
   }, 4200);
 }
 
+// 更新说明值不值得显(296):空的不显;**只是把版本号又说一遍的也不显**——历史发版的
+// notes 恒是 CI 写死的「朱简 vX.Y.Z」/「朱简安卓版 vX.Y.Z」,显出来就是紧挨着
+// 「有新版 v0.2.25」再重复一次。判据 = 剥掉版本串与产品名后还剩不剩字,不去猜格式;
+// 剥不干净(未来换了措辞)就照显 —— 宁可多显一行,不可把真说明吞掉。
+export function meaningfulNotes(body: string | undefined, version: string): string {
+  const s = (body ?? "").trim();
+  if (!s) return "";
+  const residue = s
+    .replaceAll("朱简", "")
+    .replaceAll("安卓版", "")
+    .replaceAll(version, "")
+    .replace(/[\sv·、,，。:：\-—]/g, "");
+  return residue === "" ? "" : s;
+}
+
 function showBanner(update: Update): void {
   dismiss();
   pending = update;
@@ -59,7 +74,10 @@ function showBanner(update: Update): void {
   const acts = el("div", "update-acts");
   acts.appendChild(btn("更新", "hbtn update-go", () => void run(update, msg, acts)));
   acts.appendChild(btn("稍后", "hbtn", dismiss));
-  banner.append(msg, acts);
+  const notes = meaningfulNotes(update.body, update.version);
+  banner.append(msg);
+  if (notes) banner.append(el("div", "update-notes", notes));
+  banner.append(acts);
   document.body.appendChild(banner);
   requestAnimationFrame(() => banner?.classList.add("show"));
 }

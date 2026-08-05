@@ -104,13 +104,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # 取 tag 对象本身(注解 tag 的 message 要当更新说明)
 
       - uses: actions/download-artifact@v8
         with:
           path: artifacts
 
+      # notes 取注解 tag 的 subject(第一行),空则回落「朱简 vX.Y.Z」。296 起
+      # 提示条会把它显给用户,故这里不再恒定写死版本串——那样显出来只是重复。
       - name: 生成三平台 latest.json + 收集 upload/
-        run: node scripts/gen-update-manifest-ci.mjs artifacts upload "朱简 ${{ github.ref_name }}"
+        run: |
+          notes=$(git tag -l --format='%(contents:subject)' "$GITHUB_REF_NAME")
+          [ -z "$notes" ] && notes="朱简 ${GITHUB_REF_NAME}"
+          echo "更新说明:$notes"
+          node scripts/gen-update-manifest-ci.mjs artifacts upload "$notes"
 
       - name: 配置 SSH(受限 deploy key)
         run: |

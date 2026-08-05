@@ -11,7 +11,7 @@ mod dock_menu;
 
 use spaces::Spaces;
 use zhujian_core::sync::supervisor::{ActivateSpec, ActiveRuntime as SpaceRuntime, SpaceSupervisor};
-use zhujian_core::{clock, db, images, notes, repo, sync, task};
+use zhujian_core::{clock, db, images, notes, repo, sync, task, thumbs};
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -1066,6 +1066,14 @@ struct ImageMeta {
     mime: String,
 }
 
+/// 缩略图响应(image-perf-plan §3.2):`thumb=false` 表示未命中、`url` 是全尺寸,
+/// 前端该自己缩一次再回存(规格 token 不出 core,见 `get_item_thumb`)。
+#[derive(serde::Serialize)]
+struct ThumbData {
+    url: String,
+    thumb: bool,
+}
+
 /// Attach a pasted / imported image to an item as its next numbered 「图N」 attachment. The
 /// bytes arrive base64-encoded (compact across the IPC boundary) and are decoded to a real
 /// BLOB. Returns the new image's id + 编号 + MIME. See images::attach.
@@ -1113,6 +1121,60 @@ fn get_item_image(space_id: String, image_id: String, spaces: State<'_, Spaces>)
         .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("图片不存在:{image_id}"))?;
     Ok(format!("data:{};base64,{}", mime, STANDARD.encode(&bytes)))
+}
+
+/// 一张图的**缩略图**(image-perf-plan §3.2)。命中本地派生表就只吐几 KB;未命中吐全尺寸
+/// (维持今天的行为,首次不比现在慢),前端算完再走 `put_item_thumb` 回存。
+///
+/// 规格 token 不出 core(299 codex 实现审):让前端往返搬运它并不能证明前端那边的
+/// 144/q0.8 与它一致,是伪契约。命中判定归 `thumbs::get`,回存打标归 `thumbs::put`。
+#[tauri::command]
+fn get_item_thumb(space_id: String, image_id: String, spaces: State<'_, Spaces>) -> Result<ThumbData, String> {
+    let rt = spaces.get(&space_id)?;
+    let conn = rt.db.lock().expect("db mutex poisoned");
+    if let Some(bytes) = thumbs::get(&conn, &image_id).map_err(|e| e.to_string())? {
+        return Ok(ThumbData {
+            url: format!("data:{};base64,{}", thumbs::THUMB_MIME, STANDARD.encode(&bytes)),
+            thumb: true,
+        });
+    }
+    let (bytes, mime) = repo::item_image_data(&conn, &image_id)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("图片不存在:{image_id}"))?;
+    Ok(ThumbData {
+        url: format!("data:{};base64,{}", mime, STANDARD.encode(&bytes)),
+        thumb: false,
+    })
+}
+
+/// 回存一张算好的缩略图(惰性填充)。纯本地派生:不发 op、不动时钟,故只取库锁。
+/// 失败对前端无害(下次再算),但后端一律响亮 —— 别把「存不进去」和「存进了脏字节」搞混。
+#[tauri::command]
+fn put_item_thumb(
+    space_id: String,
+    image_id: String,
+    data_b64: String,
+    spaces: State<'_, Spaces>,
+) -> Result<(), String> {
+    // 先按**编码长度**拒,再解码(299 codex 实现审 L3):否则「128 KiB 上界」是在
+    // 解完整串之后才生效的,中间那一份无界内存已经吃下去了。
+    if data_b64.len() > thumbs::MAX_THUMB_B64_CHARS {
+        return Err(format!(
+            "缩略图数据过长({} 字符,上限 {}),拒绝回存",
+            data_b64.len(),
+            thumbs::MAX_THUMB_B64_CHARS
+        ));
+    }
+    let bytes = STANDARD
+        .decode(data_b64.as_bytes())
+        .map_err(|e| format!("缩略图数据解码失败:{e}"))?;
+    let rt = spaces.get(&space_id)?;
+    let conn = rt.db.lock().expect("db mutex poisoned");
+    // 与其余写命令同纪律:ReopenRequired 复核在锁内(space-entry-plan §3.2)。
+    if let Some(e) = rt.restart_required() {
+        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
+    }
+    thumbs::put(&conn, &image_id, &bytes)
 }
 
 /// Delete one image (换图 / 移除配图). Its 编号 is retired, never reused. A missing id is an
@@ -2889,6 +2951,8 @@ pub fn run() {
             add_item_image,
             list_item_images,
             get_item_image,
+            get_item_thumb,
+            put_item_thumb,
             delete_item_image,
             sync_status,
             sync_create_account,

@@ -302,6 +302,16 @@
         font-size: 13px;
         box-shadow: 0 6px 20px rgba(0, 0, 0, 0.2);
       }
+      /* 更新说明(296):标题下面弱一档、最多三行。两侧都要 min-width:0——否则长说明
+         把整条撑出屏外而不是换行截断(249 同一坑,flex item 默认 min-width:auto)。 */
+      .update .update-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+      .update .update-notes {
+        font-size: 12px; line-height: 1.5; color: var(--ink-soft);
+        display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3;
+        overflow: hidden; white-space: pre-wrap;
+        overflow-wrap: anywhere; /* 网址这类不断词长串否则横向溢出被切掉(桌面量过) */
+      }
+      .update .update-acts { flex: none; }
       .update .go {
         border: none; border-radius: 999px;
         background: var(--seal); color: #fff;
@@ -773,8 +783,11 @@
     </header>
 
     <div id="update" class="update" hidden>
-      <span id="update-msg"></span>
-      <span>
+      <span class="update-text">
+        <span id="update-msg"></span>
+        <span id="update-notes" class="update-notes" hidden></span>
+      </span>
+      <span class="update-acts">
         <button id="update-go" class="go">下载</button>
         <button id="update-later" class="ghost">稍后</button>
       </span>

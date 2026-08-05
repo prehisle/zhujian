@@ -26,13 +26,13 @@ mod update;
 use std::sync::Arc;
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
-use coord::{Coord, SyncAllReport};
+use coord::{Coord, SyncAllReport, WriteAttempt};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::mpsc::UnboundedReceiver;
 use zhujian_core::spaces;
 use zhujian_core::sync::supervisor::SpaceSupervisor;
 use zhujian_core::sync::transport::{self, SyncEvent};
-use zhujian_core::{db, images, notes, repo, task};
+use zhujian_core::{db, images, notes, repo, task, thumbs};
 
 /// 启动闸(工序 6;本轮升级为**类型化三种 status、四种封锁 kind**,codex 设计审
 /// H3/H4 + 实现审 H1):
@@ -531,6 +531,75 @@ fn get_item_image(space_id: String, image_id: String, coord: State<'_, Coord>) -
             .ok_or_else(|| format!("图片不存在:{image_id}"))
     })?;
     Ok(format!("data:{};base64,{}", mime, STANDARD.encode(&bytes)))
+}
+
+/// 缩略图响应(image-perf-plan §3.2,与桌面壳逐字段一致):`thumb=false` 表示未命中、
+/// `url` 是全尺寸,前端该自己缩一次再回存(规格 token 不出 core)。
+#[derive(serde::Serialize)]
+struct ThumbData {
+    url: String,
+    thumb: bool,
+}
+
+/// 一张图的**缩略图**:命中本地派生表只吐几 KB;未命中吐全尺寸(维持今天的行为)。
+/// 与 `get_item_image` 同纪律 —— 锁内只读字节,Base64 编码在锁外做。
+#[tauri::command]
+fn get_item_thumb(space_id: String, image_id: String, coord: State<'_, Coord>) -> Result<ThumbData, String> {
+    let hit = coord.with_read(&space_id, |conn| {
+        if let Some(bytes) = thumbs::get(conn, &image_id).map_err(|e| e.to_string())? {
+            return Ok(Some(bytes));
+        }
+        Ok(None)
+    })?;
+    if let Some(bytes) = hit {
+        return Ok(ThumbData {
+            url: format!("data:{};base64,{}", thumbs::THUMB_MIME, STANDARD.encode(&bytes)),
+            thumb: true,
+        });
+    }
+    let (bytes, mime) = coord.with_read(&space_id, |conn| {
+        repo::item_image_data(conn, &image_id)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| format!("图片不存在:{image_id}"))
+    })?;
+    Ok(ThumbData {
+        url: format!("data:{};base64,{}", mime, STANDARD.encode(&bytes)),
+        thumb: false,
+    })
+}
+
+/// 回存一张算好的缩略图(惰性填充)。纯本地派生:不发 op、不动时钟。
+///
+/// ⚠ 走**非阻塞**的 `with_write`,`Busy` 当场静默跳过 —— 绝不走 async `coord.write`:
+/// 那条在 `ManualSyncing` 下会 `request_cancel_sync_all()`,让一次缩略图缓存回存把用户
+/// 的「全部同步」取消掉。
+///
+/// **Busy 那一支的契约要说清**(299 codex 实现审 L4):这次不落库,而前端此刻已经把小图
+/// 放进了内存层,所以**本进程内不会再来第二次** —— 补上是**下次进程启动**的事。「全部同步」
+/// 是用户手动触发的短暂相位,期间看过的那几张图下次冷启动补录,不影响正确性。
+#[tauri::command]
+fn put_item_thumb(
+    space_id: String,
+    image_id: String,
+    data_b64: String,
+    coord: State<'_, Coord>,
+) -> Result<(), String> {
+    // 先按**编码长度**拒,再解码(299 codex 实现审 L3):Busy 那一支尤其明显——
+    // 原先会先把整串解完,再把结果丢掉。
+    if data_b64.len() > thumbs::MAX_THUMB_B64_CHARS {
+        return Err(format!(
+            "缩略图数据过长({} 字符,上限 {}),拒绝回存",
+            data_b64.len(),
+            thumbs::MAX_THUMB_B64_CHARS
+        ));
+    }
+    let bytes = STANDARD
+        .decode(data_b64.as_bytes())
+        .map_err(|e| format!("缩略图数据解码失败:{e}"))?;
+    match coord.with_write(&space_id, |conn, _clock| thumbs::put(conn, &image_id, &bytes)) {
+        WriteAttempt::Done(r) => r,
+        WriteAttempt::Busy => Ok(()),
+    }
 }
 
 // ---- 全功能业务命令面(119 底座:桌面业务命令 1:1 上机,UI 渐进接线) ----
@@ -1594,6 +1663,8 @@ pub fn run() {
             capture_todo,
             list_timeline,
             get_item_image,
+            get_item_thumb,
+            put_item_thumb,
             complete_task,
             // 119 全功能底座:灵感
             list_ideas,

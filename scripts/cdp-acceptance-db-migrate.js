@@ -5,7 +5,7 @@
 // 会逐空间 activate 再查(手机 max_live=1,db_info 只对前台空间可用),查完切回原空间
 // 并 reload 让 UI 与后端前台重新对齐。EXPECT_UV 随 core SCHEMA_VERSION 升版更新。
 (async () => {
-  const EXPECT_UV = 30;
+  const EXPECT_UV = 32;
   const invoke = window.__TAURI__.core.invoke;
   const rows = [];
   const check = (name, ok, detail) => rows.push({ name, ok: !!ok, detail: detail ?? "" });
@@ -31,7 +31,10 @@
 
   for (const s of spaces) {
     try {
-      if (s.id !== original) await invoke("activate_space", { spaceId: s.id });
+      // 无条件 activate:手机 max_live=1,db_info 只对**前台**空间可用。早先这里写的是
+      // `if (s.id !== original)`,只有「前台空间恰好排在清单第一位」时才碰巧对——一旦
+      // 前台排在中间,轮到它自己时前台早被上一圈切走了,db_info 当场「未知空间」。
+      await invoke("activate_space", { spaceId: s.id });
       const info = await invoke("db_info", { spaceId: s.id });
       const tag = s.name ?? s.id.slice(-6);
       check(`[${tag}] user_version=${EXPECT_UV}`, info.user_version === EXPECT_UV,

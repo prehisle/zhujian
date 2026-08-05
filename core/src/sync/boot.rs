@@ -100,6 +100,16 @@ pub fn make_snapshot(conn: &Connection, dir: &Path) -> Result<Snapshot, String> 
         let _ = std::fs::remove_file(&path);
         return Err(format!("VACUUM INTO 快照失败:{e}"));
     }
+    // 派生数据不上路(299 codex 实现审 M1):`VACUUM INTO` 是**整库**复制,会把 0032 的
+    // 缩略图派生表一起装进快照。收端 `import_attached` 不导入它,所以「不进表级导入」
+    // 是真的——但字节照样被哈希、分块、加密、传输、落到收端临时文件,最后才被丢弃,
+    // 还白占 [`MAX_SNAPSHOT_BYTES`] 的额度。image-perf-plan §0 拍板的「不进引导」要的
+    // 是这件事本身不发生,故在这里就地剥掉。
+    // 顺序:先剥再 hash——`bytes`/`sha256` 必须描述**最终**那个文件。
+    if let Err(e) = strip_derived_from_snapshot(&path) {
+        let _ = std::fs::remove_file(&path);
+        return Err(e);
+    }
     let (bytes, sha256) = match hash_file(&path) {
         Ok(v) => v,
         Err(e) => {
@@ -113,6 +123,23 @@ pub fn make_snapshot(conn: &Connection, dir: &Path) -> Result<Snapshot, String> 
         return Err("快照文件为空(SQLite 库至少一页,必是环境故障)".into());
     }
     Ok(Snapshot { path, bytes, sha256 })
+}
+
+/// 把快照文件里的**纯本地派生数据**剥干净(299 codex 实现审 M1)。
+///
+/// 只对**刚由 `VACUUM INTO` 产出的临时文件**做,不碰源库:那个文件此刻只有我们一个
+/// 持有者,故这里的原地 `VACUUM` 不受 `ops_serve` 那条「在制 work 期间禁止原地 VACUUM」
+/// 的约束(它约束的是**活着的空间库**)。
+///
+/// 删行之后必须再 `VACUUM` 一次:`DELETE` 只把页还给 freelist,那些页照样要被哈希、
+/// 传输——不收掉就等于没剥。
+///
+/// **新增纯本地派生表时,这里要跟着加一行**;漏了不会有任何测试变红,除非你也在
+/// `snapshot_carries_no_derived_rows` 里加一格(那只测按表名逐张点名)。
+fn strip_derived_from_snapshot(path: &Path) -> Result<(), String> {
+    let conn = Connection::open(path).map_err(|e| format!("打开快照剥派生数据失败:{e}"))?;
+    conn.execute_batch("DELETE FROM item_image_thumb; VACUUM;")
+        .map_err(|e| format!("剥快照里的派生数据失败:{e}"))
 }
 
 fn hash_file(path: &Path) -> Result<(i64, [u8; 32]), String> {
@@ -1631,6 +1658,77 @@ mod tests {
     }
 
     // ---- 快照流 ----
+
+    /// 299 codex 实现审 M1:**纯本地派生数据不许搭引导快照的车**。
+    ///
+    /// `VACUUM INTO` 是整库复制,0032 的缩略图表会被一起装走。收端 `import_attached`
+    /// 不导入它——但那只让「不进表级导入」成立,字节照样被哈希、分块、加密、传输、
+    /// 落到收端临时文件才丢掉,还白占 `MAX_SNAPSHOT_BYTES` 的额度。image-perf-plan §0
+    /// 拍板的「不进引导」要的是这件事**本身不发生**。
+    ///
+    /// 断言两侧都要:源库里缩略图**还在**(剥的是快照,不是用户的本地缓存),
+    /// 快照里**一行不剩**;并且快照仍是个好用的快照(能引导、体积没白涨)。
+    #[test]
+    fn snapshot_carries_no_derived_rows() {
+        let mut a = peer("snap-derived");
+        let jpeg = |n: usize| {
+            let mut v = vec![0xFFu8, 0xD8, 0xFF, 0xE0];
+            v.resize(n, 0x7Bu8);
+            v
+        };
+        // 三条带图的条目,每张图配一枚**明显大**的缩略图(小了看不出体积差)。
+        for i in 0..3 {
+            let it = notes::capture(&mut a.conn, &mut a.clock, &format!("配图 {i}")).unwrap();
+            let (img, _) =
+                crate::images::attach(&mut a.conn, &mut a.clock, &it, &jpeg(2048), "image/jpeg")
+                    .unwrap();
+            crate::thumbs::put(&a.conn, &img, &jpeg(100 * 1024)).unwrap();
+        }
+        let local: i64 = a
+            .conn
+            .query_row("SELECT COUNT(*) FROM item_image_thumb", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(local, 3, "前置:源库确实有缩略图");
+
+        let snap = make_snapshot(&a.conn, &a.dir).unwrap();
+
+        // ① 快照里一行不剩。
+        {
+            let s = Connection::open(&snap.path).unwrap();
+            let in_snap: i64 = s
+                .query_row("SELECT COUNT(*) FROM item_image_thumb", [], |r| r.get(0))
+                .unwrap();
+            assert_eq!(in_snap, 0, "派生行不许搭快照的车");
+            // 用户资产照旧全在(别把正表也剥了)。
+            let imgs: i64 =
+                s.query_row("SELECT COUNT(*) FROM item_image", [], |r| r.get(0)).unwrap();
+            assert_eq!(imgs, 3, "正表的图必须原样在快照里");
+            let ok: String =
+                s.pragma_query_value(None, "integrity_check", |r| r.get(0)).unwrap();
+            assert_eq!(ok, "ok", "剥完再 VACUUM 过的快照必须仍是好库");
+        }
+        // ② 源库的本地缓存分毫未动(剥的是快照那份副本)。
+        let still: i64 = a
+            .conn
+            .query_row("SELECT COUNT(*) FROM item_image_thumb", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(still, 3, "剥的是快照,不是用户本地的缓存");
+        // ③ **DELETE 之后真的又 VACUUM 过**:直接问快照的 freelist——只 DELETE 不 VACUUM
+        //    的话页还挂在 freelist 上、照样要被哈希传输。
+        //    (原先这一格断的是 `bytes < 300 KiB`,那会随 schema 自然长大而无关误红;
+        //    codex 二轮 L 的更稳形。三条 M1 变异在这个判据下照样全红。)
+        {
+            let s = Connection::open(&snap.path).unwrap();
+            let free: i64 =
+                s.pragma_query_value(None, "freelist_count", |r| r.get(0)).unwrap();
+            assert_eq!(free, 0, "剥完必须再 VACUUM:快照还有 {free} 个空页");
+        }
+        // ④ 声明的 bytes/sha256 描述的是**剥完之后**那个文件(先剥后 hash)。
+        let (real_bytes, real_hash) = hash_file(&snap.path).unwrap();
+        assert_eq!(snap.bytes, real_bytes);
+        assert_eq!(snap.sha256, real_hash);
+        let _ = std::fs::remove_file(&snap.path);
+    }
 
     #[test]
     fn snapshot_stream_round_trips_bytes_exactly() {

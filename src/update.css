@@ -28,6 +28,22 @@
   line-height: 1.6;
   color: var(--ink);
 }
+/* 更新说明(296):比标题弱一档,最多四行——发版说明再长也不该把 banner 撑成一堵墙。
+   只在有实质内容时才建这个节点(见 update.ts::meaningfulNotes),故无需 :empty 兜底。 */
+.update-notes {
+  font-size: 12.5px;
+  line-height: 1.65;
+  color: var(--ink-soft);
+  white-space: pre-wrap;
+  /* 不断词的长串(网址)会横向溢出、被 overflow:hidden 从中间切掉——量出来
+     scrollWidth 564 > clientWidth 360。让它随处断行,截断只发生在纵向。 */
+  overflow-wrap: anywhere;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  margin-top: -4px; /* 吃掉一半 banner 的 gap:说明是标题的续,不是并列的第二块 */
+}
 .update-acts {
   display: flex;
   gap: 8px;

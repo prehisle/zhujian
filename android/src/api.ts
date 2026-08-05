@@ -177,6 +177,18 @@ export const listItemImages = (space: string, itemId: string) =>
 export const getItemImage = (space: string, imageId: string) =>
   invoke<string>("get_item_image", { spaceId: space, imageId });
 
+/** 后端缩略图响应(镜像 lib.rs `ThumbData`)。`thumb=false` = 本地派生表未命中、`url` 是
+ *  全尺寸,该自己缩一次再回存(规格 token 不出 core,前端不碰)。 */
+export type ThumbData = { url: string; thumb: boolean };
+
+/** 一张图的**缩略图**(0032 派生表;命中只过来几 KB,未命中回退全尺寸)。 */
+export const getItemThumb = (space: string, imageId: string) =>
+  invoke<ThumbData>("get_item_thumb", { spaceId: space, imageId });
+
+/** 回存算好的缩略图(惰性填充)。失败无害 —— 下次再算,调用方 catch 掉即可。 */
+export const putItemThumb = (space: string, imageId: string, dataB64: string) =>
+  invoke<void>("put_item_thumb", { spaceId: space, imageId, dataB64 });
+
 // ---- 写(显式 space = 「点击那一刻看到的空间」;后端 coord 复核,切换中响亮拒) ----
 
 export const captureIdea = (space: string, content: string) =>

@@ -41,6 +41,11 @@ export function listImages(itemId: string): Promise<ImageMeta[]> {
 // 又不无界)。两处都只缓**已到手的字符串**、不缓 Promise——统一 invoke 包装把跨空间迟到响应
 // 变成「永不决议」(space.ts stale),缓 Promise 会把这种挂起永久钉进 Map(163③ 教训)。
 // 图不可变(只增删不改,0016)故小图永不失效,删图时清项。
+//
+// **0032 起这只 Map 只是第一层**(image-perf-plan §3.3):底下多了一张本地派生表,算好的
+// 小图落库,重启后也不用再「读整图 + 解码整图 + 缩 + 再编码」一遍。这一层留着,是因为它
+// 缓的是 ≤144² 的小图 —— **仍然随图库线性增长,只是系数小了两个数量级**(几 KB vs 几百 KB),
+// 上面那条「按 id 缓全尺寸会膨胀到不可接受」的理由不再适用。别把它读成「有界」。
 const thumbCache = new Map<string, string>(); // imageId → 降采样 ≤144² data URL
 
 // lightbox 的全尺寸缓存:只留最近看过的一张(换图即顶掉旧的 → 至多 1 张全尺寸常驻)。
@@ -80,16 +85,31 @@ function shrinkToThumb(url: string): Promise<string> {
   });
 }
 
-/** 缩略图小图(缩略图条用):命中缓存秒回,否则取全尺寸→降采样→只缓小图(全尺寸随即丢弃)。 */
+/** 后端缩略图响应(镜像 lib.rs `ThumbData`)。`thumb=false` = 派生表未命中,`url` 是全尺寸。
+ *  规格 token 不出 core,前端不碰它(image-perf-plan §3.1④)。 */
+type ThumbData = { url: string; thumb: boolean };
+
+/** 缩略图小图(缩略图条用)。三层:内存 Map → 本地派生表(0032)→ 全尺寸现算。
+ *
+ *  命中派生表就只过来几 KB,连解码整张全尺寸位图那一步都省了(§2:一屏十张卡原本要读
+ *  7.8 MB、解码 10 张全尺寸位图)。未命中才走老路 —— 取全尺寸、canvas 缩、**异步回存**
+ *  (不阻塞渲染);回存失败无害,下次再算,故 catch 掉不打扰用户。 */
 function getThumb(imageId: string): Promise<string> {
   const hit = thumbCache.get(imageId);
   if (hit !== undefined) return Promise.resolve(hit);
-  return invoke<string>("get_item_image", { imageId })
-    .then(shrinkToThumb)
-    .then((small) => {
-      thumbCache.set(imageId, small);
-      return small;
-    });
+  return invoke<ThumbData>("get_item_thumb", { imageId }).then(async (r) => {
+    if (r.thumb) {
+      thumbCache.set(imageId, r.url); // 已是 ≤144² 小图,直接进内存层
+      return r.url;
+    }
+    const small = await shrinkToThumb(r.url);
+    thumbCache.set(imageId, small);
+    void invoke("put_item_thumb", {
+      imageId,
+      dataB64: small.slice(small.indexOf(",") + 1), // 去掉 data:image/jpeg;base64, 前缀
+    }).catch(() => {}); // 存不进去就是下次再算(派生数据,失败无害)
+    return small;
+  });
 }
 
 // Blob -> base64 (no data: prefix) for the IPC hop. Chunked so a large image never

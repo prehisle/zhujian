@@ -127,7 +127,12 @@ pub(crate) struct ReconcilePlan {
     ///
     /// **这条边界的安全性靠的不是「oplog 不许 DELETE」**(七轮 M4 纠正:`oplog` 无显式
     /// `INTEGER PRIMARY KEY`,**原地 `VACUUM` 可重排 rowid**,与有没有 DELETE 无关),
-    /// 而是:仓里只有 `VACUUM INTO`(写新文件、不动源库)+ 纪元压实换 `EngineKey` 丢 work。
+    /// 而是:**原地 `VACUUM` 只在两个「文件上没有活引擎」的时刻发生** —— 299 起有两处,
+    /// 都由 `db::reclaim_free_pages` 的调用点证据表与 `vacuum_and_reclaim_call_sites_are_the_audited_ones`
+    /// 那只工作区级审计锚看着(299 之前这句写的是「仓里只有 VACUUM INTO」,现在不成立了):
+    /// ① `db::open` / `spaces::open_space` 开库时回收空页 —— 连接刚造出来、引擎槽还没装;
+    /// ② `boot::make_snapshot` 剥快照副本里的派生数据 —— 那是刚产出的临时文件,没有任何游标绑在它上面。
+    /// 另加纪元压实换 `EngineKey` 丢 work。
     /// **在制 work 期间禁止对源库做原地 `VACUUM` 或任何 rowid 重写;将来要加须先撤引擎槽。**
     pub(crate) snapshot_rowid: i64,
     pub(crate) kind: PlanKind,

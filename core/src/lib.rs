@@ -28,3 +28,4 @@ pub mod repo;
 pub mod spaces;
 pub mod sync;
 pub mod task;
+pub mod thumbs;
