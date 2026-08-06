@@ -14,6 +14,12 @@ rust-version = "1.89"
 # lock 决定版本,关键协议/密码学 crate 版本走 scripts/check-lock-drift.mjs
 # 门禁比对(android-plan §1 M5:两端加密实现漂移会静默破协议)。
 
+[features]
+# **台架专用**(305 真机复验,验完即撤):把 ops 供流那条链的内部时刻打进 `log`。
+# 默认关 = 一行都不编进去;发版包不带它(照 android 的 `devtools` 同一套纪律)。
+# 埋点本身在 `sync/probe.rs`,理由见该文件头注。
+probe305 = ["dep:log"]
+
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -58,6 +64,9 @@ futures-util = { version = "0.3", default-features = false, features = ["sink"] 
 # GetAdaptersAddresses;传递依赖只有 libc 与 windows-sys(两个树里本就有),不扩供应链面。
 # 安卓:getifaddrs 是 __INTRODUCED_IN(24) < minSdk 30,aarch64/armv7 两 ABI 已 cross-check。
 if-addrs = "0.15"
+# 台架埋点出口(feature `probe305` 才拉进来):两壳都已装 tauri-plugin-log,
+# 安卓那端直达 logcat、桌面那端落 %APPDATA%\app.zhujian.notebook\logs\。
+log = { version = "0.4", optional = true }
 
 # 引导快照的可用空间预检(P4-d,android-plan §3:导入峰值≈三份并存)——unix
 # (安卓/linux/mac)statvfs;Windows 无对应 std API、预检跳过(写盘 fail-fast 兜底)。

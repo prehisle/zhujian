@@ -2625,7 +2625,9 @@ pub fn run() {
         .manage(HotkeyConflicts(Mutex::new(Vec::new())))
         .manage(PendingOpenSettings(AtomicBool::new(false)))
         .setup(|app| {
-            if cfg!(debug_assertions) {
+            // `probe305` 是台架 feature(305 真机复验,验完即撤):release 壳本来没有
+            // 日志出口,core 那边的埋点就落不到盘上,故这里连带恒装。
+            if cfg!(debug_assertions) || cfg!(feature = "probe305") {
                 app.handle().plugin(
                     tauri_plugin_log::Builder::default()
                         .level(log::LevelFilter::Info)

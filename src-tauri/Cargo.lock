@@ -99,7 +99,7 @@ checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
 
 [[package]]
 name = "app"
-version = "0.2.27"
+version = "0.2.28"
 dependencies = [
  "base64 0.22.1",
  "gdkx11",
@@ -6889,6 +6889,7 @@ dependencies = [
  "hmac",
  "if-addrs",
  "libc",
+ "log",
  "rusqlite",
  "rustls",
  "serde",

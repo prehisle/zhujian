@@ -5903,7 +5903,7 @@ dependencies = [
 
 [[package]]
 name = "zhujian-android"
-version = "0.3.24"
+version = "0.3.25"
 dependencies = [
  "base64 0.22.1",
  "log",
@@ -5934,6 +5934,7 @@ dependencies = [
  "hmac",
  "if-addrs",
  "libc",
+ "log",
  "rusqlite",
  "rustls",
  "serde",

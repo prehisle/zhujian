@@ -22,6 +22,10 @@ pub(crate) mod lan_net;
 /// `on_hello` / `on_want` / `outbound` 与出站 Hello 的有界水位都在生产路径上。
 pub(crate) mod ops_serve;
 pub(crate) mod pair;
+/// **台架专用**(305 真机复验,feature `probe305` 默认关;验完即撤)。
+/// 消费方按 `use crate::sync::probe::p305;` 显式引(**不走 `#[macro_use]`**:那条
+/// 的可见域只到本文件里排在它后面的 `mod`,engine/ops_serve 都在它前面)。
+pub(crate) mod probe;
 pub mod supervisor;
 pub mod transport;
 

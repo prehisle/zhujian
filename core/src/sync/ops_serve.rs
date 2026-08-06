@@ -44,6 +44,7 @@ use std::sync::Mutex;
 use rusqlite::{Connection, OptionalExtension};
 
 use super::engine::{encoded_op_len, BROADCAST, MAX_OPS_FRAME_BYTES, MAX_OPS_PER_FRAME};
+use super::probe::p305;
 use crate::replay::RemoteOp;
 
 /// 补洞(`Want`)那一档的冷却:1 拍心跳 ≈ 30s。
@@ -182,8 +183,22 @@ enum FrameSpec {
 /// 取数之后该把游标推到哪。由取数层算出、随在飞位存着,**提交时才生效**。
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Advance {
-    /// 补洞段推进到 `next_seq`;`done` = 该段已到应答方水位,出队。
-    Range { next_seq: i64, done: bool },
+    /// 补洞段供出了一帧,推进到 `next_seq`。**段照留,哪怕这一帧已经读到本机水位**。
+    ///
+    /// 「已到头」是**取数那一刻**的事实,而提交要等一个中转往返之后(§6.2 ①(C):本机
+    /// origin 只由 relay 的 Ack 提交)。这中间本地新写的 op 会被 `on_want` 合并进这一段
+    /// ——而 [`PeerWork::lower_existing_gap`] 对**更晚**的起点是空操作,于是那笔义务一个
+    /// 字节都没记下,却让 `woke` 为假(段还在队里 = 看着有人在做)、让
+    /// [`Engine::outbound`](engine.rs) 把内存游标推过去。段随后连着退役 = **静默丢**,
+    /// 且没有任何续做所有者:心跳那一拍的 `outbound` 撞 `max <= last_pushed` 早返回。
+    /// 这就是 303 量出的「推送唤醒活性缺口」。
+    RangeAt { next_seq: i64 },
+    /// 补洞段**读空**:出队。
+    ///
+    /// **只有 `frame == None` 那一支产得出它**(见 [`read_gap`]),而那一支的取数与提交
+    /// 同处 `ops_prepare`(transport.rs)的一把库锁 —— 写者插不进来,故「这一段确实供完了」
+    /// 在提交那一刻仍然成立。退役资格与它的判据因此绑死在同一个临界区里。
+    RangeDrained,
     /// 对账推进到某 origin 的 `next_seq`。
     ReconcileAt { origin: String, next_seq: i64 },
     /// 该 origin 已供完,下一步从它之后继续。
@@ -473,7 +488,7 @@ impl PeerWork {
             unreachable!("check_token 刚判过在飞位非空")
         };
         match advance {
-            Advance::Range { next_seq, done } => {
+            a @ (Advance::RangeAt { .. } | Advance::RangeDrained) => {
                 self.last_was_urgent = true;
                 // 队头没了 = 在飞期间这些段被折叠进了全量重扫(`collapse_gaps`),那份
                 // 义务已由 Full 覆盖,这里不该也不必再动队列。
@@ -488,13 +503,24 @@ impl PeerWork {
                     _ => i64::MIN,
                 };
                 if r.next_seq < served_from {
+                    p305!(
+                        "commit gap served_from={served_from} queued_next={} -> requeue(下修保护)",
+                        r.next_seq
+                    );
                     self.urgent.push_back(r);
-                } else if !done {
+                } else if let Advance::RangeAt { next_seq } = a {
+                    p305!("commit gap served_from={served_from} -> requeue(next={next_seq})");
                     r.next_seq = next_seq;
                     // **未跑完就推到队尾**(六轮 M1):放回队头等于让第一枚大 Want
                     // 整段跑完,别的真实缺口全被饿死。
                     self.urgent.push_back(r);
+                } else {
+                    p305!(
+                        "commit gap served_from={served_from} -> RETIRE(读空);urgent 余 {}",
+                        self.urgent.len()
+                    );
                 }
+                // 剩下那一格 = `RangeDrained` ∧ 没被下修过:出队,义务到此为止。
             }
             Advance::ReconcileAt { origin, next_seq } => {
                 self.last_was_urgent = false;
@@ -1316,12 +1342,43 @@ impl Served {
 /// 补洞取数:单 origin 从 `from_seq` 起,**不受对账快照约束**(对端当下点名要的缺口,
 /// 拿最新事实答才对)。
 ///
-/// 读空时 `read_run` 恒回 `exhausted`(第一行不可能被字节尺挡下),故「段已到本机水位
-/// → 出队」与「供到尾 → 出队」是同一条规则,不必分两支写。
+/// **退役资格只认「读空」,不认 `exhausted`**(305;原先这两句被当成同一条规则合写了)。
+/// 差别只在**这一帧读到了尾**那一格:`exhausted` 说的是取数那一刻的水位,而提交在一个
+/// 中转往返之后 —— 那中间新写的 op 会被合并进这一段,再随它一起退役(见
+/// [`Advance::RangeAt`])。读空那一支没有这个窗口:它的取数与提交同处 `ops_prepare`
+/// 的一把库锁。代价 = 每段抽干后多一次空探(索引单点),换回「退役判据与提交同刻成立」。
+///
+/// (对账那两支不受此病:它们的上界是**开计划那一刻钉死的** `snapshot_rowid`,而
+/// `rowid <= snapshot` 的那批行 append-only 不会变,故「快照内已供完」提交时照样成立。)
 fn read_gap(conn: &Connection, origin: &str, from_seq: i64) -> Result<Served, String> {
     let run = read_run(conn, origin, from_seq, i64::MAX)?;
-    let advance = Advance::Range { next_seq: run.next_seq, done: run.exhausted };
+    let advance = match &run.frame {
+        Some(_) => Advance::RangeAt { next_seq: run.next_seq },
+        None => Advance::RangeDrained,
+    };
+    p305!(
+        "read_gap origin={} from={} -> {} seqs={}",
+        &origin[origin.len().saturating_sub(6)..],
+        from_seq,
+        match &advance {
+            Advance::RangeAt { next_seq } => format!("RangeAt(next={next_seq})"),
+            _ => "RangeDrained".to_string(),
+        },
+        probe_seqs(&run.frame)
+    );
     Ok(Served { frame: run.frame, advance })
+}
+
+/// 埋点用:帧里 `origin_seq` 的区间(空帧 = `-`)。见 [`crate::sync::probe`]。
+#[cfg(feature = "probe305")]
+fn probe_seqs(frame: &Option<OpsFrame>) -> String {
+    match frame {
+        None => "-".to_string(),
+        Some(f) => match (f.ops.first(), f.ops.last()) {
+            (Some(a), Some(b)) => format!("{}..{}({})", a.origin_seq, b.origin_seq, f.ops.len()),
+            _ => "empty!".to_string(),
+        },
+    }
 }
 
 /// 对账取数。**快照与水位图都从同一份 `plan` 取**(实现审 H7):描述符自己带一份快照的
@@ -2053,9 +2110,15 @@ mod tests {
             "在飞时再取 = 正常争用,既不是错误也不是没活"
         );
         work.commit(p.token).expect("提交");
+        // **退役要多走一趟空探**(305):那一帧的「已读到尾」是取数那一刻的事实,而提交
+        // 在一个中转往返之后;段得留到**读空**才出队,而读空那一趟的判据与提交同处一把
+        // 库锁,写者插不进来。
+        let spun = work.prepare_next(&conn).unwrap().ready().expect("段还在:先空转一趟");
+        assert!(spun.frame.is_none(), "空探不放一个字节上线");
+        work.commit(spun.token).expect("空转照样要提交");
         assert!(
             matches!(work.prepare_next(&conn), Ok(Prepare::Idle)),
-            "提交完就没活了 —— 与 Occupied 是两个答案"
+            "读空之后才算没活 —— 与 Occupied 是两个答案"
         );
     }
 
@@ -2135,6 +2198,49 @@ mod tests {
             3,
             "提交不许把游标抬过下修值 —— 抬过去那段缺口就被吞掉了"
         );
+    }
+
+    /// **在飞期间本机新写的 op 不许被提交静默丢掉**(303 量出的「推送唤醒活性缺口」)。
+    ///
+    /// 上一只测的镜像面:那条是「更早的起点」,这条是「更晚的后继」。`Engine::outbound`
+    /// 靠「段只记起点、上界由取数那一刻的水位说了算」推出「后续新写自动含在同一段里」,
+    /// 而那句话对**已经取过数、正在等 Ack** 的段不成立 —— 它的 `done` 是拿旧水位算的。
+    #[test]
+    fn ops_appended_while_a_gap_is_in_flight_are_not_swallowed_by_commit() {
+        let conn = fresh_db();
+        let me = dev(1);
+        let mut w = OpsWorks::default();
+
+        // ① 本地写了第 1 条:`outbound` 登记义务(from_seq = last_pushed + 1 = 1)。
+        put(&conn, &me, 1, 8);
+        assert!(w.on_want(BROADCAST, &me, 1, 0).woke, "首次登记要摇铃");
+
+        // ② 权威完成腿取走这一帧(读到当下水位 = 1),发出去等 relay 的 Ack。
+        let p = w.work_mut(BROADCAST).unwrap().prepare_next(&conn).unwrap().ready().expect("有帧");
+        assert_eq!(p.frame.as_ref().unwrap().ops.len(), 1);
+
+        // ③ Ack 还没回来,本地又写了第 2 条 —— `outbound` 拿它去登记,随后把内存游标
+        //    `last_pushed` 推到 2(「已经登记过了」)。
+        put(&conn, &me, 2, 8);
+        let a = w.on_want(BROADCAST, &me, 2, 0);
+        assert_eq!(a.admit, Admit::Ok);
+
+        // ④ Ack 到:提交第 1 帧。
+        w.work_mut(BROADCAST).unwrap().commit(p.token).expect("提交");
+
+        // ⑤ 第 2 条的义务还在不在。
+        assert!(
+            !w.idle_runnable_targets().is_empty(),
+            "在飞期间登记的后继被提交丢掉了 —— 没有任何续做所有者会回来取它"
+        );
+        assert_eq!(
+            drain(&conn, w.work_mut(BROADCAST).unwrap()),
+            vec![(me.clone(), 2)],
+            "第 2 条应当仍会被供出去"
+        );
+        // 下界也要断(不然「段永不退役」这种改法也照样绿):抽干之后 work 必须真空掉,
+        // 否则 64 格里的墓碑回收不掉、`has_runnable` 恒真 = 每拍白摸一次库。
+        assert!(w.idle_runnable_targets().is_empty(), "供完之后段必须退役");
     }
 
     /// **对账在飞期间的低位 Want 必须走快车道**(实现审 H3)。
@@ -2692,13 +2798,18 @@ mod tests {
         assert_eq!(f.ops.last().unwrap().origin_seq, MAX_OPS_PER_FRAME as i64);
         assert_eq!(
             served.advance,
-            Advance::Range { next_seq: MAX_OPS_PER_FRAME as i64 + 1, done: false },
+            Advance::RangeAt { next_seq: MAX_OPS_PER_FRAME as i64 + 1 },
             "取满一整帧不敢说供完了"
         );
 
         let served2 = read_gap(&conn, &d, MAX_OPS_PER_FRAME as i64 + 1).unwrap();
         assert_eq!(served2.frame.expect("尾巴还在").ops.len(), 100);
-        assert_eq!(served2.advance, Advance::Range { next_seq: total + 1, done: true });
+        assert_eq!(
+            served2.advance,
+            Advance::RangeAt { next_seq: total + 1 },
+            "读到尾也只推进、不退役(305):这一帧要过一个中转往返才提交,\
+             那期间新写的 op 会被合并进这一段"
+        );
     }
 
     /// 字节尺:大 op 独占一帧,且 `bytes` 报的是**真实天花板**——消费方就靠它跟自己那条
@@ -2718,7 +2829,7 @@ mod tests {
             "bytes 必须报真实体量(实得 {}),不然消费方无从判「这一帧封不封得下」",
             f.bytes
         );
-        assert_eq!(served.advance, Advance::Range { next_seq: 2, done: false });
+        assert_eq!(served.advance, Advance::RangeAt { next_seq: 2 });
     }
 
     /// 固定快照:开计划之后新写入的行**这一轮一条都不供**(六轮 H1 —— 不然持续新增的
@@ -2815,7 +2926,7 @@ mod tests {
         assert_eq!(f.origin, last);
     }
 
-    /// 读空的两种收场:补洞段到水位 = 出队(`done`);对账 origin 已齐 = 跨过去。
+    /// 读空的两种收场:补洞段**读空**才出队;对账 origin 已齐 = 跨过去。
     #[test]
     fn an_exhausted_gap_pops_and_an_exhausted_origin_is_stepped_over() {
         let conn = fresh_db();
@@ -2827,7 +2938,7 @@ mod tests {
         assert!(served.frame.is_none());
         assert_eq!(
             served.advance,
-            Advance::Range { next_seq: 9, done: true },
+            Advance::RangeDrained,
             "要不出东西的段该出队,不许挂着占公平轮次"
         );
 

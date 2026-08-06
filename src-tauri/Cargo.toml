@@ -1,6 +1,6 @@
 [package]
 name = "app"
-version = "0.2.27"
+version = "0.2.28"
 description = "朱简(zhujian)— 纸与朱墨的个人事务管理:灵感捕获、任务看板,纯人工、本地优先"
 authors = ["prehisle"]
 license = ""
@@ -15,6 +15,12 @@ rust-version = "1.89"
 [lib]
 name = "app_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
+
+[features]
+# **台架专用**(305 真机复验,验完即撤):打开 core 的 ops 供流埋点,并把 log 插件
+# 从「只在 debug 装」改成恒装(见 lib.rs 那处 `cfg!(debug_assertions)`)——release
+# 壳没有日志出口,埋点就落不到盘上。默认关、发版包不带。
+probe305 = ["zhujian-core/probe305"]
 
 [build-dependencies]
 tauri-build = { version = "2.6.2", features = [] }

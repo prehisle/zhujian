@@ -32,7 +32,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
 use chacha20poly1305::aead::rand_core::RngCore;
@@ -63,6 +63,7 @@ use crate::sync::lan::{self, Ingress, LanAd};
 use crate::sync::lan_net;
 use crate::sync::ops_serve;
 use crate::sync::pair::{self, AccountGrant, DeviceEnroll, PairOutput};
+use crate::sync::probe::p305;
 
 /// 图字节旁路策略(M1,定义在 engine、由壳层经 [`Transport`] 注入)——sync 模块
 /// 对外只露 transport,策略枚举从这里出 crate(android-plan §1 窄公开面)。
@@ -3900,6 +3901,14 @@ async fn lan_write_pump(
                         continue;
                     }
                     ops_stuck = None;
+                    p305!(
+                        "lan_send peer={} origin={} seqs={}..{}({})",
+                        &peer[peer.len().saturating_sub(6)..],
+                        &frame.origin[frame.origin.len().saturating_sub(6)..],
+                        frame.ops.first().expect("取数产出的帧恒非空").origin_seq,
+                        frame.ops.last().expect("取数产出的帧恒非空").origin_seq,
+                        frame.ops.len()
+                    );
                     let msg = Msg::Ops { origin: frame.origin, ops: frame.ops };
                     match seal_lan_frame(
                         &serve_ctx.k_acc,
@@ -4207,8 +4216,14 @@ impl Drop for OpsTicket {
 /// 追赶跨过换代之后,后面每一帧都是拿旧身份封的。分两次取锁的话,「查完身份、换代提交、
 /// 再取数」这个窄窗会漏一帧过去。
 ///
-/// **锁序 db → work 是全仓唯一一处同时持两把锁的地方**(第④笔的 relay 泵要提交游标时应复用
-/// 本函数这条次序),故不存在反序取锁的对家。
+/// **锁序 db → work,而本函数是全仓唯一一处自己动手取两把锁的地方**(第④笔的 relay 泵要提交
+/// 游标时应复用本函数这条次序),故不存在反序取锁的对家。引擎那半也有同持两把的路
+/// (`Engine::hello_watermarks`),但它的库锁恒是调用方借来的 `&Connection` —— `engine.rs`
+/// 结构上取不到库锁,故那几处无从反序。全部上锁点的名单与分类见
+/// `ops_lock_sites_are_allowlisted`。
+///
+/// 取数与空转提交本身在 [`ops_prepare_locked`] 里 —— 那只 helper **只借得到库锁的守卫**,
+/// 故它放不掉锁;而守卫在这里被它借着,这一层也放不掉。见那只 helper 的抬头。
 fn ops_prepare(ctx: &ServeCtx, target: &str) -> OpsTurn {
     let conn = ctx.db.lock().expect("db mutex poisoned");
     if !identity_still_current_conn(
@@ -4221,20 +4236,75 @@ fn ops_prepare(ctx: &ServeCtx, target: &str) -> OpsTurn {
         return OpsTurn::Recast;
     }
     let mut works = lock_ops(&ctx.ops);
+    // **生产调用也走那枚借用型 fn 指针**(codex 实现审 307 轮二次 M)。一轮改完之后还剩一条
+    // 绕法:helper 改成泛型(`conn: impl ConnView`),测试那一侧单态化成借用、生产这一侧传
+    // 所有权,于是提交前照样放得掉锁。强制成 fn 指针之后,**这次调用在类型上只可能把守卫
+    // 借出去**。经实测那条泛型绕法今天连测试侧都编译不过(fn 指针是高阶 `for<'c,'d>`,而
+    // 泛型类型参数早绑定、必须是单一具体类型),故这几行是**冗余的第二道** —— 留着的理由
+    // 是不让「放不掉锁」依赖一条这么微妙的推导规则,也不让它随那只测试一起被删掉。
+    const PREPARE_LOCKED: fn(
+        &ServeCtx,
+        &str,
+        &MutexGuard<'_, Connection>,
+        &mut ops_serve::OpsWorks,
+    ) -> OpsTurn = ops_prepare_locked;
+    PREPARE_LOCKED(ctx, target, &conn, &mut works)
+}
+
+/// 取数 + 空转提交 —— **两件必须落在同一段持锁期里,由类型封死**(305 排队第 1 条)。
+///
+/// 「读空 → 段退役」([`ops_serve::Advance::RangeDrained`])是唯一能让补洞段出队的
+/// advance,而它的**全部安全性**就在于:产出它的那次读与它的提交之间写者插不进来。插得
+/// 进来的话,中间新写的 op 会被 `on_want` 合并进这一段(合并对更晚的起点是空操作),再随
+/// 段一起退役 = **静默丢**,且没有续做所有者(`outbound` 的内存游标已经推过去了)——那正是
+/// 303 量出、305 修掉的「推送唤醒活性缺口」。发帧那一支之所以改成**不**退役,正因为它的
+/// 提交要等一个中转往返,这个前提对它不成立。
+///
+/// 305 首版靠一条读源码文本的结构锚守这件事,而 codex 实现审两轮各给出一段能编译、能过
+/// 全部断言的绕法(`let released = conn; drop(released);` / `std::mem::drop::<_>(conn)`)
+/// —— 文本挡不住改名后再放。**现在改由借用检查器守**:
+///
+/// * `conn: &MutexGuard<'_, Connection>` —— helper 拿到的是**借**,不是所有权,故它没有
+///   任何写法能提前释放这把锁(改名也好、绕路调 `drop` 也好,放的都不是守卫本身);
+/// * 调用方([`ops_prepare`])在这次调用期间把守卫借了出去,故它也放不掉。
+///
+/// 剩下**仍需按源码钉**的只有「这两件真的都在这只 helper 体内」与「这个形参真的是借」
+/// ——见 `the_drained_gap_commit_stays_inside_the_read_critical_section`。
+///
+/// 有帧那一支返回的 [`OpsTicket`] 照旧**不带连接生命期**(relay 的 Ack 才提交),
+/// `prepare_next` 不推进游标的基础契约一格不动。
+fn ops_prepare_locked(
+    ctx: &ServeCtx,
+    target: &str,
+    conn: &MutexGuard<'_, Connection>,
+    works: &mut ops_serve::OpsWorks,
+) -> OpsTurn {
     // 取数次数的可观测面(仅测试):「没活就灭 armed」这条规则在线上字节、状态面、武装
     // 发号器三格全同形,只有「还在不在反复摸库」分得开(实现审 M2)。
     #[cfg(test)]
     works.note_probe();
-    let Some(work) = works.work_mut(target) else { return OpsTurn::Idle };
-    match work.prepare_next(&conn) {
+    let Some(work) = works.work_mut(target) else {
+        p305!("prepare target={target} -> Idle(无 work)");
+        return OpsTurn::Idle;
+    };
+    match work.prepare_next(conn) {
         Err(e) => OpsTurn::Failed(e),
-        Ok(ops_serve::Prepare::Idle) => OpsTurn::Idle,
-        Ok(ops_serve::Prepare::Occupied) => OpsTurn::Occupied,
+        Ok(ops_serve::Prepare::Idle) => {
+            p305!("prepare target={target} -> Idle(work empty)");
+            OpsTurn::Idle
+        }
+        Ok(ops_serve::Prepare::Occupied) => {
+            p305!("prepare target={target} -> Occupied(在飞)");
+            OpsTurn::Occupied
+        }
         Ok(ops_serve::Prepare::Ready(p)) => match p.frame {
             // 空转:没字节可写,但游标得往前走,就在这个临界区里办完——凭据不出门,也就
             // 没有「空转的凭据谁来回滚」这种形。
             None => match work.commit(p.token) {
-                Ok(()) => OpsTurn::Spun,
+                Ok(()) => {
+                    p305!("prepare target={target} -> Spun(空探,0 字节不上线)");
+                    OpsTurn::Spun
+                }
                 Err(e) => OpsTurn::Failed(e),
             },
             Some(frame) => OpsTurn::Frame(
@@ -5000,9 +5070,30 @@ impl Deck<'_> {
 
     // ---- 入帧:解封 → 引擎 ------------------------------------------------------------
 
-    /// 一枚密文帧的解封与分流(**两条腿共用**):逐域试解 → 引导中整帧丢弃 → 数据帧入
-    /// [`Deck::feed`]。引导帧不在此处理,**原样交回调用方**——引导编排(源端/收端状态机、
-    /// 临时快照、latch)是会话的活,而 boot 帧 v1 恒走中转(§5),lan 那边收到即拒。
+    /// 一枚密文帧的解封与分流(**两条腿共用**):两道地址闸 → 逐域试解 → 引导中整帧
+    /// 丢弃 → 数据帧入 [`Deck::feed`]。引导帧不在此处理,**原样交回调用方**——引导编排
+    /// (源端/收端状态机、临时快照、latch)是会话的活,而 boot 帧 v1 恒走中转(§5),lan
+    /// 那边收到即拒。
+    ///
+    /// **两道地址闸**(307 收 `from`,308 收 `to`)。
+    ///
+    /// **`from` 必须是完整的规范设备 id**(307;尺只此一把:
+    /// [`crate::clock::is_canonical_device_id`],与 `vet_target` / `vet_watermarks` /
+    /// `replay` 同源)。这一格是 305 那轮 codex 纠正我的地方:我当时报「持 K_acc 的成员封
+    /// 一枚 `from = "*"` 的 Hello 就能给 BROADCAST 开出 active 计划」,而**成员单独作恶做
+    /// 不到** —— `ClientMsg::Send` 根本没有 `from` 字段,服务端从已鉴权连接自行构造
+    /// `Deliver.from`,成员按 `"*"` 封的密文到收端会用真 device id 重构 AAD → 解不开;
+    /// LAN 那条另有 [`lan::check_frame_addr`] 要求 `Frame.from` 等于握手验签得到的对端。
+    /// 要**成员与中转串通**才做得到,故这道闸是**纵深防御,不是现存可达漏洞**。
+    ///
+    /// 校验的是「是不是规范设备 id」而**不是特判 `"*"`**(codex 原话):真正要挡的是
+    /// 「`from` 被当成 `on_hello` / `on_want` 的 target 用出去」,而那把尺的合法域是
+    /// `BROADCAST ∪ 规范设备 id` —— 只堵掉字面的星号,任何别的畸形值照样能建 target。
+    /// 做了它顺带把「**BROADCAST 不得拥有 active 计划**」这条阴性结论钉死在入口上。
+    ///
+    /// **拒一枚帧,不拆会话**:与本函数另两条拒收臂(变体-域不符 / 解不开)同档。这条路
+    /// 上的帧还没解密、什么都没做成,是惰性的;而 `on_wire` 的 `Err` 在两条腿上都是
+    /// session-fatal,拿它答远端递来的一个畸形字段,等于把「拆掉本机会话」这根杠杆递出去。
     async fn on_wire(
         &mut self,
         ingress: Ingress,
@@ -5010,6 +5101,29 @@ impl Deck<'_> {
         to: &str,
         blob: &[u8],
     ) -> Result<Option<BootMsg>, String> {
+        if !crate::clock::is_canonical_device_id(from) {
+            let text = format!("拒收一枚帧:发件设备 id 不合规范({from:?})");
+            self.set_status(|s| s.error = Some(text));
+            return Ok(None);
+        }
+        // **收件人必须是本机或广播**(308;codex 307 轮 L 收紧过的判据)。注意这**不是**
+        // 「`to` 也过一遍 `is_canonical_device_id`」—— 只要求语法规范的话,一枚发给**第三台
+        // 设备**的合法帧照样进得来,而它会一路走到 `feed` 的 `directed = to == 本机` 判成
+        // false,以别人的信封身份影响本机的通告应答面(§2 的隐式索要)。地址归属这件事,
+        // LAN 那条腿从 L-c2c 起就是这么要求的([`lan::check_frame_addr`],不符即断链);
+        // 中转腿此前一直敞着,本笔与它对齐。
+        //
+        // 与 `from` 那道同一条:**成员单独作恶做不到**(服务端按信箱路由,`to` 不是本机的
+        // 帧压根不会投给本机;AAD 又把 `to` 钉死,改一个字节就解不开),要**成员与中转
+        // 串通**才做得到 —— 纵深防御,不是现存可达漏洞。处置也同一条:拒这一枚帧、只进
+        // advisory 面、**不拆会话**。
+        //
+        // 位置在 `open_deliver` **之前**,故也排在 `directed` 判定产生任何行为之前。
+        if to != self.cfg.device_id && to != BROADCAST {
+            let text = format!("拒收 {from} 的帧:收件人既不是本机也不是广播({to:?})");
+            self.set_status(|s| s.error = Some(text));
+            return Ok(None);
+        }
         match open_deliver(self.cfg, from, to, blob) {
             Opened::Data(msg) => {
                 // 引导中整帧丢弃(模块注释;hello 互补会重取)。**通告也一起丢**:此刻库
@@ -5300,8 +5414,16 @@ impl Deck<'_> {
             OpsTurn::Failed(why) => return Err(format!("ops 供流取数失败:{why}")),
             OpsTurn::Frame(frame, ticket) => (frame, ticket),
         };
+        p305!(
+            "offline_send origin={} seqs={}..{}({})",
+            &frame.origin[frame.origin.len().saturating_sub(6)..],
+            frame.ops.first().expect("取数产出的帧恒非空").origin_seq,
+            frame.ops.last().expect("取数产出的帧恒非空").origin_seq,
+            frame.ops.len()
+        );
         let msg = Msg::Ops { origin: frame.origin, ops: frame.ops };
         let FanOut { mut back, delivered } = self.fan_out_broadcast(&msg);
+        p305!("offline_send delivered={delivered} 条腿");
         if delivered == 0 {
             // **一条腿都没投出去:游标一步不许进**(codex 实现审一轮 M)。断网期这条腿自己
             // 就是权威,没有别人在等 Ack —— 照 relay 那套「旁腿失败不回滚」搬过来,那一段
@@ -5596,6 +5718,13 @@ impl Deck<'_> {
                     let own_max_seq = (frame.origin == self.cfg.device_id).then(|| {
                         frame.ops.last().expect("取数产出的帧恒非空").origin_seq
                     });
+                    p305!(
+                        "relay_send target={target} origin={} seqs={}..{}({}) own_max_seq={own_max_seq:?}",
+                        &frame.origin[frame.origin.len().saturating_sub(6)..],
+                        frame.ops.first().expect("取数产出的帧恒非空").origin_seq,
+                        frame.ops.last().expect("取数产出的帧恒非空").origin_seq,
+                        frame.ops.len()
+                    );
                     let msg = Msg::Ops { origin: frame.origin, ops: frame.ops };
                     self.send_relay_ops(OpsJob { own_max_seq, ticket }, &msg).await?;
                     // **BROADCAST 的 LAN 补投就在这一处**(§6.2 ① 的 (C)):权威腿发完
@@ -6562,6 +6691,7 @@ impl Ctx<'_> {
         ticket: RelayDataTicket,
         own_max_seq: Option<i64>,
     ) -> Result<(), String> {
+        p305!("ACK relay ops own_max_seq={own_max_seq:?} -> bump+commit");
         let job = self.engine.relay_data.take_ops(ticket)?;
         if let Some(max_seq) = own_max_seq {
             let conn = self.db.lock().expect("db mutex poisoned");
@@ -8592,6 +8722,56 @@ mod tests {
         }
     }
 
+    /// 结构锚(305;307 按 codex 二轮给的设计收口):**「读空 → 段退役」那一支的提交,
+    /// 必须与产出它的那次取数同处一把库锁**。为什么非守不可,见 [`ops_prepare_locked`]
+    /// 的抬头(那里写着 303 量出的那个静默丢是怎么发生的)。
+    ///
+    /// **「放不掉锁」这一格已经不归本锚管了** —— 305 首版拿源码文本守它,而 codex 实现审
+    /// 一~二轮各给出一段能编译、能过全部断言的绕法(内层求值块 / 第二次取锁 /
+    /// `let released = conn; drop(released);` / `std::mem::drop::<_>(conn)`)。文本挡得住
+    /// 前两种,挡不住后两种,而当时那句「一网打尽三种写法」本身就是假话。307 把取数与空转
+    /// 提交收进只借得到 `&MutexGuard` 的 [`ops_prepare_locked`],于是**借用检查器**接手:
+    /// helper 手里没有所有权,任何写法都放不掉它借来的守卫;调用方在这次调用期间把守卫借
+    /// 了出去,同样放不掉。
+    ///
+    /// 剩下三件里,**只有前两件按源码钉**(接线事实,类型封不住):
+    /// 1. **取数唯一入口**:`prepare_next(` 恰一处,且在 helper 体内(多一处 = 有人在别的
+    ///    持锁期外另开了一条取数路);
+    /// 2. **空转提交也在 helper 体内**(挪回调用方就重新有了「放锁之后再提交」的可能)。
+    ///
+    /// 第 3 件「那个形参真的是**借**」**不许按源码钉**(codex 实现审 307 轮 M):文本断言
+    /// 挡不住把签名改成按值、再在体内塞一句
+    /// `let _signature_decoy = "conn: &MutexGuard<'_, Connection>,";` —— 三条文本断言全过、
+    /// 代码却在空转提交前放掉了锁(`work.commit({ drop(conn); p.token })`)。故改成
+    /// **编译期类型断言**:把函数项强制成一枚 fn 指针,签名对不上**根本编译不过**。
+    /// 这一格因此没有「红」的变异 —— 变异④(退回按值)撞的是编译器,见 progress-log 307。
+    ///
+    /// **同一件事在生产侧另有一道**([`ops_prepare`] 里的 `const PREPARE_LOCKED`):codex
+    /// 二轮提出「helper 改泛型 `impl ConnView`,测试侧单态化成借用、生产侧传所有权」这条
+    /// 绕法,我实测它**连测试这一侧都编译不过**(fn 指针是高阶 `for<'c,'d>`,而泛型类型参数
+    /// 早绑定、必须是单一具体类型 → `one type is more general than the other`)。生产那道
+    /// 因此是冗余的第二道,留着的理由是不让这件事依赖一条这么微妙的推导规则、也不让它
+    /// 随本测一起被删掉 —— 实测把本测这行断言删掉之后,那条绕法**在 `cargo build --lib`
+    /// 上就被 `PREPARE_LOCKED` 挡住**(不必等到测试构建)。
+    #[test]
+    fn the_drained_gap_commit_stays_inside_the_read_critical_section() {
+        // ③ 形参必须是**借来的**守卫:按值收走 = 拿回了放锁的权力,①② 白钉。
+        // 这一行由借用检查器验,不由字符串验。
+        let _: fn(&ServeCtx, &str, &MutexGuard<'_, Connection>, &mut ops_serve::OpsWorks) -> OpsTurn =
+            ops_prepare_locked;
+
+        let src = include_str!("transport.rs");
+        let prod = &src[..src.find("mod tests {").expect("本文件有测试模块")];
+        let hits = prod.matches("prepare_next(").count();
+        assert_eq!(hits, 1, "取数唯一入口 = ops_prepare_locked,实见 {hits} 处");
+        let at = prod.find("fn ops_prepare_locked(").expect("必有取数入口");
+        let body = &prod[at..at + prod[at..].find("\n}").expect("函数总有结尾")];
+        // ①② 两件都在这只 helper 体内,且取数在前、空转提交在后。
+        let read = body.find("prepare_next(").expect("取数必须在 helper 体内");
+        let spun = body.find("None => match work.commit(").expect("空转提交必须在 helper 体内");
+        assert!(read < spun, "取数 → 空转提交,必须是这个次序");
+    }
+
     /// **feed 的出口那几件在失败路径上也要跑**(实现审四轮 M1)。
     ///
     /// 一枚线帧会被切成好几个子批逐批喂进引擎,前面几批可能**已经落地**了——`Changed`
@@ -10318,6 +10498,216 @@ mod tests {
         );
     }
 
+    /// 结构锚(L-d″ 第⑤笔;lan-direct-plan §6.2 三轮 S6 点名要的那一只):**ops 计划表的
+    /// 每一处上锁点都在名单上,并按「同持库锁」与「只持 work」分两类各自钉住**。
+    ///
+    /// [`Engine::ops`] 的字段注释早就许诺了它,而它**一直不存在**(progress-log 308 排队
+    /// 第一条;「文档凭空许诺一只不存在的专测」同族第二例,293 判过一次)。
+    ///
+    /// 守的是 `ops` 那把锁的三条纪律:
+    /// 1. **锁序恒 db → work**:反序取锁的对家一出现就是 ABBA 死锁。今天全仓只有
+    ///    [`ops_prepare`] 自己动手取两把;引擎那半的库锁恒由调用方借来
+    ///    (`conn: &Connection`),而 `engine.rs` **结构上取不到库锁**(整个文件一次 db 上锁
+    ///    都没有),故它无从反序 —— 这条是引擎那七处的全部安全性依据,单独钉一道。
+    /// 2. **guard 不许跨 `.await`**;
+    /// 3. **持 work 时不得再取 db/clock/status/lan**。
+    ///
+    /// 临界区的范围不靠人读,由**上锁点的形状**算出来:
+    /// * `lock_ops(…).方法(…);` —— 守卫是临时量,活到本语句末 → 临界区 = 这一句;
+    /// * `let w = lock_ops(…);` —— 守卫被接住,活到作用域末 → 临界区**保守地**取到函数末
+    ///   (取不到更紧的那一档:大括号匹配得先分清字符串与注释里的括号,不值)。
+    ///
+    /// 牙齿就在这一格:把 [`Deck::ops_tick`] 那句临时量改成 `let` 接住,临界区立刻盖到函数
+    /// 末的 `self.db.lock()` 与几个 `.await` 上 —— 那是一条 **work → db 的反序**,而它今天
+    /// 只由「碰巧写成了临时量」这个一眼看不见的细节挡着。
+    ///
+    /// **诚实边界**:名单的完整性靠「生产段不许出现 `.ops.lock(`」这一句文本挡着。它挡得住
+    /// 顺手写成 `self.ops.lock().unwrap()` 的漂移,挡不住先把 `Mutex` 别名进局部变量再上锁
+    /// ——要彻底封死得把 `Mutex<OpsWorks>` 裹成只有 `lock_ops` 开得了的新类型(307 那条
+    /// 「类型的事让编译器判」的同一味药),记 progress-log 可优化项,不在本笔。
+    #[test]
+    fn ops_lock_sites_are_allowlisted() {
+        /// 这一处上锁时,临界区里碰不碰库。
+        #[derive(PartialEq)]
+        enum Hold {
+            /// 同持库锁与 work,**且库锁在先**。
+            DbThenWork,
+            /// 只持 work:临界区内不许碰库、不许再取别的锁、不许 `.await`。
+            WorkOnly,
+        }
+        use Hold::*;
+        // (文件, 函数, 类别)。每一条必须**恰好**命中一次:多一处上锁点、少一处、或类别与
+        // 源码对不上,都在这里响亮红掉 —— 加新上锁点的人被迫先回答「它属哪一类」。
+        let allow: &[(&str, &str, Hold)] = &[
+            // ---- engine.rs:库锁恒由调用方借来,引擎自己取不到(见下面那道全局断言)----
+            ("engine.rs", "drain_ops_for_test", DbThenWork), // cfg(test) 夹具,如实列
+            ("engine.rs", "hello_watermarks", DbThenWork),
+            ("engine.rs", "outbound", WorkOnly),
+            ("engine.rs", "ops_tick", WorkOnly),
+            ("engine.rs", "on_peer_online_ops", WorkOnly),
+            ("engine.rs", "on_hello", WorkOnly),
+            ("engine.rs", "on_want", WorkOnly),
+            // ---- transport.rs ----
+            ("transport.rs", "session_wrapup", WorkOnly),
+            ("transport.rs", "rollback_quiet", WorkOnly),
+            ("transport.rs", "settle", WorkOnly),
+            ("transport.rs", "ops_prepare", DbThenWork), // 全仓唯一自己动手取两把的
+            ("transport.rs", "ops_tick", WorkOnly),
+            ("transport.rs", "ops_changed_tick", WorkOnly),
+            ("transport.rs", "pump_ops", WorkOnly),
+            ("transport.rs", "probe_unknown_target", WorkOnly),
+            ("transport.rs", "on_nack", WorkOnly),
+            ("transport.rs", "clear_unknown_for", WorkOnly),
+        ];
+        const DB_LOCK: &str = ".lock().expect(\"db mutex poisoned\")";
+        // 找 token 之前一律先剔注释(293 那条:同一段的散文里常常正在讲「原先这里还有一句
+        // X」,不剔就会命中自己的注释 —— 本锚就有现成的一处,`ops_prepare` 的行内注释里写着
+        // `conn: impl ConnView`)。代价:`//` 也可能出现在字符串里(`wss://`),那一行会被多
+        // 剔一截;本锚要找的几个 token 都不出现在带 URL 的行上。
+        let code = |s: &str| -> String {
+            s.lines().map(|l| l.split("//").next().unwrap_or("")).collect::<Vec<_>>().join("\n")
+        };
+
+        // 引擎那半**取不到库锁**:这不是习惯,是结构事实,且是上面七条「无从反序」的全部
+        // 依据。它跟着名单一起过期的话,反序就重新变成一句无人复核的声称。
+        let engine_src = include_str!("engine.rs");
+        let engine_prod = &engine_src[..engine_src.find("mod tests {").expect("engine.rs 有测试模块")];
+        assert!(
+            !code(engine_prod).contains(DB_LOCK),
+            "engine.rs 生产段开始自己取库锁了 —— 它那几处 work 上锁的锁序从此不再是结构事实"
+        );
+
+        // 顺带给「文档点名一只不存在的测试」那条陈账打疫苗:engine.rs 点名的锚,本文件里
+        // 得真有一只同名的 `fn`(名字从注释里**读出来**,不写死 —— 写死就只证明了它自己)。
+        let marker = "结构锚见 transport.rs 的";
+        let m = engine_prod.find(marker).expect("engine.rs 的 `ops` 字段还写着那句锁序纪律");
+        let tail = &engine_prod[m + marker.len()..];
+        let a = tail.find('`').expect("点名的锚要用反引号括起来") + 1;
+        let b = a + tail[a..].find('`').expect("反引号要成对");
+        let named = &tail[a..b];
+        assert!(
+            include_str!("transport.rs").contains(&format!("fn {named}(")),
+            "engine.rs 点名的结构锚 `{named}` 在 transport.rs 里不存在"
+        );
+
+        let mut seen = vec![0usize; allow.len()];
+        for (file, src) in [
+            ("engine.rs", engine_src),
+            ("transport.rs", include_str!("transport.rs")),
+            ("ops_serve.rs", include_str!("ops_serve.rs")),
+        ] {
+            let prod = &src[..src.find("mod tests {").expect("每个文件都有测试模块")];
+            // 名单要完整,前提是生产段一律走 `lock_ops` 这一处入口(诚实边界见抬头)。
+            assert!(
+                !code(prod).contains(".ops.lock("),
+                "{file} 生产段绕开 lock_ops 直接上锁 —— 绕开的那一处不在本名单上"
+            );
+            for (at, _) in prod.match_indices("lock_ops(") {
+                if prod[..at].ends_with("fn ") {
+                    continue; // ops_serve.rs 里那唯一一处定义
+                }
+                let line = prod[..at].rfind('\n').map_or(0, |n| n + 1);
+                if prod[line..at].contains("//") {
+                    continue; // 注释里提到它,不是上锁点
+                }
+                // ① 上锁参数必须是朴素路径:里面再套调用,下面按括号切形状就会读错。
+                let open = at + "lock_ops(".len();
+                let close = open + prod[open..].find(')').expect("上锁参数总有右括号");
+                assert!(
+                    !prod[open..close].contains('('),
+                    "{file}:lock_ops 的参数里别再套调用(本锚按括号切形状)"
+                );
+                // ② 落在哪个函数里(行首除了 pub/async/unsafe 就是 `fn` 的那一行)。
+                let head = &prod[..at];
+                let mut found = None;
+                for (i, _) in head.match_indices("fn ") {
+                    let ls = head[..i].rfind('\n').map_or(0, |n| n + 1);
+                    let mut pre = head[ls..i].trim_start();
+                    for kw in ["pub(crate) ", "pub(super) ", "pub ", "async ", "unsafe "] {
+                        pre = pre.strip_prefix(kw).unwrap_or(pre);
+                    }
+                    if pre.is_empty() {
+                        found = Some((ls, i));
+                    }
+                }
+                let (fn_ls, fn_at) = found.expect("上锁点总落在某个函数里");
+                let indent = head[fn_ls..].len() - head[fn_ls..].trim_start().len();
+                let from = fn_at + "fn ".len();
+                let name_len = prod[from..]
+                    .find(|c: char| !(c.is_alphanumeric() || c == '_'))
+                    .expect("函数名后面总有东西");
+                let name = &prod[from..from + name_len];
+                // ③ 形状 → 临界区范围(见抬头)。
+                let rest = prod[close + 1..].trim_start();
+                let end = if rest.starts_with('.') {
+                    at + prod[at..].find(';').expect("语句总有分号") + 1
+                } else if rest.starts_with(';') {
+                    let tail = format!("\n{}}}", " ".repeat(indent));
+                    at + prod[at..].find(&tail).expect("函数总有结尾")
+                } else {
+                    panic!("{file} fn {name}:认不出的上锁形状,先扩充本锚再改代码");
+                };
+                let body = code(&prod[at..end]);
+
+                let idx = allow
+                    .iter()
+                    .position(|(f, n, _)| *f == file && *n == name)
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "{file} fn {name} 取了 ops 那把锁却不在名单上 —— 先判它是 db+work \
+                             还是 work-only(判据见本锚抬头),再把它加进来"
+                        )
+                    });
+                seen[idx] += 1;
+
+                // 两类共有的两条纪律。
+                assert!(!body.contains(".await"), "{file} fn {name}:work 的 guard 不许跨 `.await`");
+                assert!(!body.contains(".lock("), "{file} fn {name}:持 work 时不得再取别的锁");
+                assert!(
+                    !body.contains("set_status("),
+                    "{file} fn {name}:持 work 时不得再取状态锁(它就藏在 set_status 后面)"
+                );
+                match allow[idx].2 {
+                    // 库连接在这个 crate 里恒叫 `conn`(`Connection` 大写,不会误命中)。
+                    WorkOnly => assert!(
+                        !body.contains("conn"),
+                        "{file} fn {name}:名单上写着只持 work,临界区里却在碰库 —— 要么把它挪\
+                         出锁外,要么改判 DbThenWork 并当场证明库锁在先"
+                    ),
+                    DbThenWork => {
+                        assert!(
+                            body.contains("conn"),
+                            "{file} fn {name}:名单上写着同持库锁,临界区里却一次都没碰库 —— \
+                             该降级成 WorkOnly(类别是给人看锁序用的,不是装饰)"
+                        );
+                        // 库锁在先的两种证法:自己先取了,或者压根取不到(只收得到 `&Connection`,
+                        // 而这个文件整体没有一次 db 上锁 —— 引擎那半走的就是后一条)。
+                        if !code(&prod[fn_ls..at]).contains(DB_LOCK) {
+                            let sig = code(&prod[fn_ls..fn_ls + prod[fn_ls..].find('{').expect("函数总有体")]);
+                            assert!(
+                                sig.contains("conn: &Connection"),
+                                "{file} fn {name}:既没先取库锁,签名也没收 `&Connection` —— 锁序无从谈起"
+                            );
+                            assert!(
+                                !code(prod).contains(DB_LOCK),
+                                "{file} fn {name}:靠「库锁由调用方持着」立论,而本文件自己也会取库锁 \
+                                 —— 那就不是结构事实,只是一句约定"
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        for (i, (file, name, _)) in allow.iter().enumerate() {
+            assert_eq!(
+                seen[i], 1,
+                "{file} fn {name}:名单上有它,源码里命中 {} 次(0 = 这条该删;>1 = 同一个函数里\
+                 多出了上锁点,得逐个判)",
+                seen[i]
+            );
+        }
+    }
+
     /// 撤位 / 身份换代 = ops 计划**整只丢弃**(§6.1 所有权表:随 `EngineKey` 换代)。
     /// 留着旧计划的话,新一代会接着按上一代的水位图与游标供 —— 而那些账是拿旧 `K_acc`
     /// 的对端事实算出来的。
@@ -10492,6 +10882,229 @@ mod tests {
         assert!(peer.closed(500).await, "判死 = socket 当场关掉(不是「碰巧没帧」)");
     }
 
+    /// 两只入口闸测共用的探针 op:一枚**合法**的远端 `Ops`(payload 取最简的 topic create,
+    /// 照 engine 测试的 `topic_op`)。origin 与信封上的 `from`/`to` 无关,故它能不能落地
+    /// **只**取决于这枚帧进没进引擎 —— 这正是两只测要的那个「只由入口闸决定」的观测面。
+    ///
+    /// **每个样本各用一个自己的 origin**(codex 实现审 307 轮 L):共用 origin 的话,闸一旦
+    /// 破了,第一枚落地会把该 origin 的水位推到 1,后面几枚同样是 `origin_seq: 1` 就成了
+    /// 「已见过」而被幂等吞掉 —— 那几格的绿会变成**回放状态背书的**,不再由入口闸决定。
+    /// 各用各的 origin,则每一枚都是那个 origin 的第 1 枚,恒可应用。
+    fn wire_probe_op(n: u8) -> Msg {
+        // 26 位规范 Crockford(S/R/C/A 都在表内;别用 I/L/O/U)。
+        // **序号定宽 + 夹具自证**:`{n}` 不定宽,`n = 100` 时 origin 会长到 28 位、当场
+        // 变成非法设备 id,而症状是「阳性对照的 op 没落地」—— 看着像被测那道闸拦错了。
+        // 别手数长度,让夹具自己过一遍生产那把尺(identity.rs 的夹具连踩三次同一件事)。
+        let origin = format!("01SRC{n:03}{}", "A".repeat(18));
+        assert!(
+            crate::clock::is_canonical_device_id(&origin),
+            "夹具自证:探针 origin 必须是规范设备 id,实见 {origin:?}"
+        );
+        Msg::Ops {
+            origin: origin.clone(),
+            ops: vec![crate::replay::RemoteOp {
+                op_id: ulid::Ulid::new().to_string(),
+                hlc: crate::clock::Hlc { wall_ms: 9_000 + n as u64, counter: 0, device_id: origin }
+                    .encode(),
+                entity: "topic".into(),
+                entity_id: ulid::Ulid::new().to_string(),
+                kind: "create".into(),
+                payload: serde_json::json!({
+                    "title": format!("入口闸样本 {n}"),
+                    "created_at": "2026-08-06T00:00:00Z"
+                }),
+                origin_seq: 1,
+            }],
+        }
+    }
+
+    fn count_topics(db: &Arc<Mutex<Connection>>) -> i64 {
+        let conn = db.lock().unwrap();
+        conn.query_row("SELECT COUNT(*) FROM topics", [], |r| r.get(0)).unwrap()
+    }
+
+    /// **网络入口只收发给本机或广播的帧**(308;codex 307 轮那条 L,判据由它收紧过)。
+    ///
+    /// 与 `from` 那只是同一条纪律的另一半,但**判据刻意不同**:`from` 问的是「是不是规范
+    /// 设备 id」(形态),`to` 问的是「**是不是发给我的**」(归属)。只要求语法规范的话,
+    /// 一枚发给**第三台设备**的合法帧照样进得来 —— 那正是 `PEER_TWO` 那个样本,它过得了
+    /// `is_canonical_device_id` 却过不了这道闸。LAN 那条腿从 L-c2c 起就是这么要求的
+    /// (`lan::check_frame_addr`),本笔把中转腿对齐。
+    ///
+    /// 观测面与 `from` 那只同源(**这一帧到底进没进引擎**),理由也同源:入口闸是这一格
+    /// 唯一的决定者。**两个阳性对照都要有** —— 本机 id 与 `BROADCAST` 各一,少了后者的话
+    /// 「只放行本机 id」这个过严的写法会全绿,而它会把所有广播帧(Hello / 本机 op 推送 /
+    /// 补洞 want)整片挡在门外。
+    #[tokio::test]
+    async fn the_wire_only_admits_frames_addressed_to_this_device_or_broadcast() {
+        let mut r = deck_rig("wire-to");
+        let cfg = deck_cfg(&r.db);
+        let seal = |to: &str, msg: &Msg| {
+            crypto::seal_msg(
+                &cfg.k_acc,
+                &FrameAddr {
+                    account_id: &cfg.account_id,
+                    from_device: PEER_ONE,
+                    to,
+                    domain: msg_domain(msg),
+                },
+                msg,
+            )
+        };
+        let before = count_topics(&r.db);
+        // 三类各一:形态不合 / **规范但是别人的**(这条只有归属闸挡得住)/ 空串。
+        for (n, bogus) in ["01PEER1", PEER_TWO, ""].into_iter().enumerate() {
+            let msg = wire_probe_op(n as u8);
+            let blob = seal(bogus, &msg);
+            r.status.lock().unwrap().error = None;
+            let got = offline_face(&mut r)
+                .on_wire(Ingress::RelayDeliver, PEER_ONE, bogus, &blob)
+                .await
+                .expect("拒一枚地址不对的帧不许拆掉整条会话");
+            assert!(got.is_none(), "拒掉的帧不该交出引导消息:{bogus:?}");
+            assert!(
+                r.status.lock().unwrap().error.is_some(),
+                "拒收要出声(advisory 面),不许静默咽下:{bogus:?}"
+            );
+            assert_eq!(
+                count_topics(&r.db),
+                before,
+                "收件人不是本机也不是广播的帧,压根不许进引擎:{bogus:?}"
+            );
+        }
+        // 阳性对照两件:本机 id 与广播都要真放行(少了广播那件,「只放行本机 id」也能全绿)。
+        for (n, good) in [cfg.device_id.as_str(), BROADCAST].into_iter().enumerate() {
+            let msg = wire_probe_op(100 + n as u8);
+            let blob = seal(good, &msg);
+            offline_face(&mut r)
+                .on_wire(Ingress::RelayDeliver, PEER_ONE, good, &blob)
+                .await
+                .expect("地址合法的帧照收");
+            assert_eq!(
+                count_topics(&r.db),
+                before + n as i64 + 1,
+                "发给 {good:?} 的 op 必须真落地(否则上半的绿是恒 false 挣来的)"
+            );
+        }
+    }
+
+    /// **网络入口只收完整的规范设备 id**(307;305 那轮 codex 纠正后排队的第 2 条)。
+    ///
+    /// 守的是 [`Deck::on_wire`] 抬头那条:`from` 会被 `on_hello` / `on_want` 当成 ops 计划
+    /// 表的 target 用出去,而那把尺放行 `BROADCAST`(本机 origin 的 outbound work 就挂在
+    /// 它上面)。于是一枚 `from = "*"` 的 Hello 能给 BROADCAST 开出 active 计划,让
+    /// 「只下修固定快照计划的水位图」那条臂对广播可达 = 同一个静默丢。
+    ///
+    /// **判据挑得对不对,第一版栽过一次,记在这里**(变异 ⑥ 抓到的假绿):我原先只断
+    /// 「畸形 from 不许建出 target」,而那一格**只有 `"*"` 这一个样本由入口闸决定** ——
+    /// 别的畸形值到了 `ops_serve` 照样撞 `vet_target` 那把尺,`Admit::Malformed` 在
+    /// `ensure` 之前就返回了,target 一样建不出来。于是把闸改成「只特判 `"*"`」跑起来
+    /// 全绿,正是 codex 点名不许写的那个形。
+    ///
+    /// 故主判据换成**这一帧到底进没进引擎**:喂一枚合法的远端 `Ops`,看那条 op 落没落库。
+    /// 入口闸是这一格**唯一**的决定者 —— 放行就一定落地,拦下就一定不落。
+    /// 「BROADCAST 不得拥有 active 计划」那条阴性结论另用一枚 `Hello` 单钉(它是
+    /// `vet_target` 唯一放行、因而只能由入口闸挡的那个值)。
+    ///
+    /// 四个畸形样本各代表一类:字面广播 / 长度不对 / 空串 / **长度对但字母表不对**
+    /// (`O` 不在 Crockford 表里,它专证这道闸不是只在数长度)。阴性对照必配:规范 id
+    /// 的同一枚帧要真落地,否则一把恒 false 的尺也能让上半全绿。
+    #[tokio::test]
+    async fn the_wire_only_admits_a_full_canonical_device_id_as_from() {
+        let mut r = deck_rig("wire-from");
+        let cfg = deck_cfg(&r.db);
+        let op = wire_probe_op;
+        let seal = |from: &str, msg: &Msg| {
+            crypto::seal_msg(
+                &cfg.k_acc,
+                &FrameAddr {
+                    account_id: &cfg.account_id,
+                    from_device: from,
+                    to: &cfg.device_id,
+                    domain: msg_domain(msg),
+                },
+                msg,
+            )
+        };
+        let before = count_topics(&r.db);
+        for (n, bogus) in [BROADCAST, "01PEER1", "", "01PEEROAAAAAAAAAAAAAAAAAAA"]
+            .into_iter()
+            .enumerate()
+        {
+            let msg = op(n as u8);
+            let blob = seal(bogus, &msg);
+            r.status.lock().unwrap().error = None;
+            let got = offline_face(&mut r)
+                .on_wire(Ingress::RelayDeliver, bogus, &cfg.device_id, &blob)
+                .await
+                .expect("拒一枚畸形帧不许拆掉整条会话");
+            assert!(got.is_none(), "拒掉的帧不该交出引导消息:{bogus:?}");
+            assert!(
+                r.status.lock().unwrap().error.is_some(),
+                "拒收要出声(advisory 面),不许静默咽下:{bogus:?}"
+            );
+            assert_eq!(
+                count_topics(&r.db),
+                before,
+                "畸形 from 的帧压根不许进引擎 —— 这一格只有入口闸决定得了:{bogus:?}"
+            );
+        }
+        // 「BROADCAST 不得拥有 active 计划」:`vet_target` 放行 `"*"`,故挡它的只能是入口闸。
+        let hello = Msg::Hello { watermarks: Default::default(), lan: None };
+        offline_face(&mut r)
+            .on_wire(Ingress::RelayDeliver, BROADCAST, &cfg.device_id, &seal(BROADCAST, &hello))
+            .await
+            .expect("拒一枚畸形帧不许拆掉整条会话");
+        assert_eq!(lock_ops(&r.slot.ops).len(), 0, "不许给 BROADCAST 开出 active 计划");
+
+        // 阴性对照两件:同一条入口换成规范设备 id,op 要真落地、Hello 要真进计划表。
+        let msg = op(9);
+        offline_face(&mut r)
+            .on_wire(Ingress::RelayDeliver, PEER_ONE, &cfg.device_id, &seal(PEER_ONE, &msg))
+            .await
+            .expect("规范 id 的帧照收");
+        assert_eq!(count_topics(&r.db), before + 1, "规范 from 的 op 必须真落地(否则上半的绿是恒 false 挣来的)");
+        offline_face(&mut r)
+            .on_wire(Ingress::RelayDeliver, PEER_ONE, &cfg.device_id, &seal(PEER_ONE, &hello))
+            .await
+            .expect("规范 id 的 Hello 照收");
+        let works = lock_ops(&r.slot.ops);
+        assert_eq!(
+            works.idle_runnable_targets(),
+            vec![PEER_ONE.to_string()],
+            "规范 id 的 Hello 必须真开出活"
+        );
+    }
+
+    /// 「空探不许放一个字节上线」的**顺序屏障**(307;替掉原先那两处
+    /// `next_msg(200ms).is_none()`)。
+    ///
+    /// 超时式的「等 200ms 没等到」只证明**这 200ms 里**没有帧,它只会假绿不会假红:出帧
+    /// 慢一点就溜过去了。这里改成**在同一根 FIFO 上追加一枚已知会到的帧**:
+    ///
+    /// * 协调者那一趟(`ops_changed_tick`)返回时,它这一拍要投的帧**已经同步入了各链路的
+    ///   `out` 队列**(`dispatch` 不异步);
+    /// * 随后这一手 `lan_beat` 把 Ping 追加进**同一根**队列;
+    /// * 写泵按队列次序写,TCP 又是 FIFO —— 故「空探错误地出了一枚帧」时,读到的第一枚
+    ///   **必然**是那枚帧而不是 Ping,`matches!` 当场红。
+    ///
+    /// 于是判据从「时间够不够」变成「次序对不对」,与快慢无关。
+    ///
+    /// ⚠ **它建在上面那两条前提上,而前提变了会静默变成假绿**(codex 实现审 307 轮 L,
+    /// 刻意不加源码锚 —— 静态钉住 `dispatch` 的实现太脆)。改了下面任一条就得同轮改这里:
+    /// * `Deck::dispatch` 不再同步入队(改成交给别的任务去投);
+    /// * Ping 不再走 `push_lan` 那根 `out` 队列(如改由写泵自己周期产出),或控制帧与数据帧
+    ///   拆成两根队列 —— 那时屏障要换成「经**数据帧同一条路**入队的一枚显式尾帧」。
+    async fn no_frame_before_the_ping<const N: usize>(r: &mut DeckRig, links: [&mut FakeLink; N]) {
+        offline_face(r).lan_beat().await.unwrap();
+        for link in links {
+            assert!(
+                matches!(link.next(1000).await, Some(lan::LanWire::Ping {})),
+                "空探不许放一个字节上线 —— 同一根队列上 Ping 排在它后面,先读到别的就是它出帧了"
+            );
+        }
+    }
+
     /// §5「本机中转离线:全部 mail 走各 lan 链路」+ 收端的来路亲和应答。这里同时钉住
     /// **中转在线的对端不补投**:补投面只认引擎的路由表(不变量 1 的「唯一副本路」)。
     #[tokio::test]
@@ -10536,6 +11149,15 @@ mod tests {
             assert_eq!(to, BROADCAST, "广播帧的 AAD 收件人恒是广播(封一次投多条)");
             assert!(matches!(msg, Msg::Ops { .. }));
         }
+        // **接力还有一环**(305):发出去那一帧的「已读到尾」是取数那一刻的事实,故段留到
+        // 下一趟**读空**才退役。生产里这一趟由 `commit` 摇的 `ops_changed` 驱动(离线泵那条
+        // 臂),夹具里同样得自己投——不投的话下面仪式那次登记会撞上「段还在 = 已经有人在做」
+        // 而老实回 `woke=false`,那一枚就没有输出可 dispatch。
+        //
+        // **投完当场断两腿都没有新帧**(codex 实现审 L2):空探不许放一个字节上线,否则那枚
+        // 多出来的旧帧会在下面冒充「仪式重推那一枚」/「第二条」,把最终断言整段架空。
+        offline_face(&mut r).ops_changed_tick().await.unwrap();
+        no_frame_before_the_ping(&mut r, [&mut one, &mut two]).await;
 
         // 让引擎认定 PEER_ONE 的中转腿通着 → 它就退出补投面,只剩 PEER_TWO。
         //
@@ -10553,6 +11175,10 @@ mod tests {
         };
         offline_face(&mut r).dispatch(ceremony).await.unwrap();
         assert!(two.next_msg(&cfg, 500).await.is_some(), "仪式重推那一枚,照样只落 PEER_TWO");
+        // 同上那一环(连同「空探不上线」那道断言):这一帧提交之后也得让读空那一趟跑掉,
+        // 段才退役(305)。
+        offline_face(&mut r).ops_changed_tick().await.unwrap();
+        no_frame_before_the_ping(&mut r, [&mut one, &mut two]).await;
         {
             let mut conn = r.db.lock().unwrap();
             let mut clk = r.clock.lock().unwrap();
@@ -10564,7 +11190,15 @@ mod tests {
             r.slot.get().unwrap().outbound(&conn, &mut outs).unwrap();
         }
         offline_face(&mut r).dispatch(outs).await.unwrap();
-        assert!(two.next_msg(&cfg, 500).await.is_some(), "中转腿不可达的对端照补投");
+        // **解帧核 `origin_seq`**(codex 实现审 L2):只断「收到了点什么」的话,一枚滞留的
+        // 旧帧就能冒充「第二条」把这条测整段架空。
+        let (_, _, msg) = two.next_msg(&cfg, 500).await.expect("中转腿不可达的对端照补投");
+        let Msg::Ops { ops, .. } = msg else { panic!("补投的该是 ops 帧,实见 {msg:?}") };
+        assert_eq!(
+            ops.iter().map(|o| o.origin_seq).collect::<Vec<_>>(),
+            vec![2],
+            "补投的必须是**第二条**本身,不是滞留的第一条"
+        );
         assert!(one.next_msg(&cfg, 300).await.is_none(), "中转腿通着的对端不平行投一份");
     }
 

@@ -1,6 +1,6 @@
 [package]
 name = "zhujian-android"
-version = "0.3.24"
+version = "0.3.25"
 description = "朱简安卓端(119 起全功能主力端;android-plan/phone-space-plan)——tauri 壳;数据层与同步全在共享 crate zhujian-core"
 authors = ["prehisle"]
 license = ""
@@ -24,6 +24,9 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 # `npx tauri android build --apk --target aarch64 --features devtools` 出可调试包,
 # 配 adb forward + CDP 精确点击/DOM 断言(见 scripts/android-cdp.mjs);发版仍用干净包。
 devtools = ["tauri/devtools"]
+# **台架专用**(305 真机复验,验完即撤):把 core 的 ops 供流埋点打开,经
+# tauri-plugin-log 直达 logcat(`adb logcat -s P305`)。默认关、发版包不带。
+probe305 = ["zhujian-core/probe305"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

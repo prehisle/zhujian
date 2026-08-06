@@ -25,6 +25,10 @@ import { execFileSync } from "node:child_process";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const devtools = process.argv.includes("--devtools");
+// **台架专用**(305 真机复验,验完即撤):打开 core 的 ops 供流埋点,经
+// tauri-plugin-log 直达 logcat(`adb logcat | grep P305`)。与 --devtools 同属
+// 「不许发版」那一档。
+const probe305 = process.argv.includes("--probe305");
 
 // ── 1. 三处版本号一致(与 gen-android-update-manifest.mjs 同锚,构建前先拦) ──
 const pkg = JSON.parse(readFileSync(join(root, "android/package.json"), "utf8")).version;
@@ -52,7 +56,12 @@ console.log(
   `构建安卓${devtools ? "验收调试包(devtools)" : "发版干净包"} v${version} / versionCode ${versionCode}…`,
 );
 const args = ["tauri", "android", "build", "--apk", "--target", "aarch64"];
-if (devtools) args.push("--features", "devtools");
+const feats = [];
+if (devtools) feats.push("devtools");
+// **台架专用**(305 真机复验,验完即撤):core 的 ops 供流埋点 → logcat。
+// 与 devtools 同一条护栏 —— 见下面 build-profile.json 的 `clean` 判据。
+if (probe305) feats.push("probe305");
+if (feats.length) args.push("--features", feats.join(","));
 execFileSync("npx", args, { cwd: join(root, "android"), stdio: "inherit", shell: true });
 
 // ── 3. aapt 验产物 versionCode(与 gen 脚本同一 aapt 定位) ──
@@ -77,11 +86,21 @@ if (Number(apkCode) !== versionCode) {
 }
 
 // ── 4. 产物旁写构建来源标记(发版护栏的真相源) ──
-const profile = { profile: devtools ? "devtools" : "release", devtools, version, versionCode };
+// **凡带任一台架 feature 的包都不许发版**,故 `clean` 是一个总闸而不是逐个 feature
+// 判——发版脚本只要问「干不干净」这一个问题,以后再加台架 feature 也不会漏掉它。
+const tainted = devtools || probe305;
+const profile = {
+  profile: tainted ? [devtools && "devtools", probe305 && "probe305"].filter(Boolean).join("+") : "release",
+  clean: !tainted,
+  devtools,
+  probe305,
+  version,
+  versionCode,
+};
 writeFileSync(join(apkDir, "build-profile.json"), JSON.stringify(profile, null, 2) + "\n");
 
 // ── 5. 干净包复制到构建目录外(gradle clean 清不到;发版从这里取) ──
-if (!devtools) {
+if (!tainted) {
   const outDir = join(root, "android/apk-out");
   if (!existsSync(outDir)) mkdirSync(outDir, { recursive: true });
   const outApk = join(outDir, `zhujian_${version}_aarch64.apk`);
@@ -92,8 +111,8 @@ if (!devtools) {
   console.log(`  副本 ${outApk}(构建目录外,gradle clean 清不到)`);
   console.log(`  下一步:node scripts/gen-android-update-manifest.mjs "更新说明"`);
 } else {
-  console.log(`\n✔ 验收调试包已就位(WebView 远程可调试):`);
+  console.log(`\n✔ 验收包已就位(${profile.profile}):`);
   console.log(`  ${apkPath}`);
   console.log(`  装机后:adb install -r <apk> → node scripts/android-cdp.mjs forward`);
-  console.log(`  ⚠ 此包带 devtools,gen-android-update-manifest.mjs 会拒绝用它发版。`);
+  console.log(`  ⚠ 此包带台架 feature,gen-android-update-manifest.mjs 会拒绝用它发版。`);
 }

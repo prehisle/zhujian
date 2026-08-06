@@ -40,6 +40,7 @@ use std::sync::{Arc, Mutex};
 use ulid::Ulid;
 
 use super::ops_serve::{self, Admit, Admitted, OpsWorks};
+use super::probe::p305;
 use crate::clock::{Clock, Hlc};
 use crate::replay::{self, BytesOutcome, Outcome, RemoteOp};
 
@@ -1371,13 +1372,33 @@ impl Engine {
     ///
     /// 上界不必在这里给:Range 只记**起点**,上界由取数那一刻自己的水位说了算,故后续
     /// 新写的 op 自动含在同一段里(这也是「`Overload` 之后下一拍自己回来」成立的原因)。
+    ///
+    /// ⚠ **那句话曾经不成立于「段已经取过数、正在等 Ack」的窗口**(303 量出 / 305 修):
+    /// 段的退役资格当时是拿**取数那一刻**的水位算的(`exhausted`),而提交要等一个中转
+    /// 往返。这中间本地再写一条,`on_want` 会把它合并进这一段——合并对**更晚**的起点是
+    /// 空操作(`lower_existing_gap` 取 min),于是义务一个字节没记下,却让 `woke` 为假
+    /// (段还在队里 = 看着有人在做)、让下面那句把 `last_pushed` 推过去。段随后连着退役
+    /// = **静默丢**,而这里的早返回(`max <= last_pushed`)让心跳每拍都补不回来,直到
+    /// 下一次本地写或中转重连复位游标。修法在 [`ops_serve::Advance`]:退役资格只认「读空」,
+    /// 而读空那一支的判据与提交同处一把库锁。**这里的立论因此才真成立**。
     pub fn outbound(&mut self, conn: &Connection, out: &mut Vec<Output>) -> Result<(), String> {
         let max = watermark(conn, &self.device_id)?;
+        // 埋点里一律只带 device_id 末 6 位:同一台机上多个空间的日志混在一条 logcat 里,
+        // 这是唯一分得开它们的键(每空间一身份)。
+        #[cfg(feature = "probe305")]
+        let dev = &self.device_id[self.device_id.len().saturating_sub(6)..];
         if max <= self.last_pushed {
+            p305!("outbound me={dev} max={max} last_pushed={} -> 早返回(没新的)", self.last_pushed);
             return Ok(());
         }
         let (from_seq, tick, me) = (self.last_pushed + 1, self.tick, self.device_id.clone());
         let admitted = ops_serve::lock_ops(&self.ops).on_want(BROADCAST, &me, from_seq, tick);
+        p305!(
+            "outbound me={dev} max={max} last_pushed={} from_seq={from_seq} admit={:?} woke={}",
+            self.last_pushed,
+            admitted.admit,
+            admitted.woke
+        );
         match admitted.admit {
             Admit::Ok => {
                 // **登记成了才推进**「已登记到哪」这根内存游标(§6.2 ⑥-1):`Overload` 那一
