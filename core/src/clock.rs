@@ -63,6 +63,17 @@ impl Hlc {
 /// 的抬头:设备身份只出自 `Ulid::new()`,别的形状都是伪造,而每个伪造 origin 白得
 /// 一份水位/池/挂起状态——两处各写一遍就是让「伪造无限 origin」从松的那处开闸。
 pub(crate) fn is_canonical_device_id(s: &str) -> bool {
+    is_canonical_ulid(s)
+}
+
+/// 26 位规范 Crockford 大写 ULID —— [`is_canonical_device_id`] 的通用形
+/// (那把尺量的就是这个,名字只是说了它的第一个用途)。
+///
+/// 0035 起 `comment` 的 `entity_id` 与 payload 里的 `item_id` 也走它:别让畸形身份从松
+/// 的那处进来。⚠ 同一条已登记的 L(identity-plan §2 那轮):它**不是严格 ULID**(首字符
+/// 本该只能 `0..7`),pre-existing 于 `Hlc::parse`,收紧会牵动三个模块里大量 `AREMTE...`
+/// 形夹具,单独一笔。
+pub(crate) fn is_canonical_ulid(s: &str) -> bool {
     s.len() == 26 && s.bytes().all(is_crockford_upper)
 }
 

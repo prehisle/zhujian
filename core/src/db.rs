@@ -46,7 +46,7 @@ use rusqlite::Connection;
 /// 当前 schema 版本 = 迁移链末位。spaces 的只读 exact-match 检查(multispace-plan §10)
 /// 与 staging 建库都以它为锚;加新迁移时此常量跟着 MIGRATIONS 一起动
 /// (migration_sets_user_version 测试与下方一致性测试双守)。
-pub const SCHEMA_VERSION: i64 = 34;
+pub const SCHEMA_VERSION: i64 = 35;
 
 /// 安卓前滚迁移下限(codex 设计审 H1):手机端只对 `user_version >= 28` 的既有
 /// 正式库做原地前滚(现网手机全部诞生于 v28 干净装)。1-27 的老迁移不自带崩溃窗
@@ -93,6 +93,7 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (32, include_str!("../migrations/0032_item_image_thumb.sql")),
     (33, include_str!("../migrations/0033_device_profile_and_born_device.sql")),
     (34, include_str!("../migrations/0034_recover_born_device_from_log.sql")),
+    (35, include_str!("../migrations/0035_item_comment.sql")),
 ];
 
 /// Open the database at `path`, enforce foreign keys, and apply migrations.
@@ -626,7 +627,10 @@ mod tests {
             let mut in_tests = false;
             for line in src.lines() {
                 let code = line.split("//").next().unwrap_or("");
-                if !in_tests && code.starts_with("mod tests") {
+                // 只有**内联模块体**(`mod tests {`)才开始跳;`mod tests;` 是一句声明,
+                // 后面跟的仍是生产码 —— 按老写法它会把声明之后的整个文件吞掉(310 起
+                // 六个大文件都有这句声明,当场量出来的)。
+                if !in_tests && code.starts_with("mod tests") && code.contains('{') {
                     in_tests = true;
                     continue;
                 }
@@ -793,6 +797,10 @@ mod tests {
         let mut into: Vec<(String, usize)> = Vec::new();
         let mut db_open: Vec<(String, usize)> = Vec::new();
         let mut open_space: Vec<(String, usize)> = Vec::new();
+        // 310 起大文件的测试段住 `<name>/tests.rs`(整个文件都是测试)。下面那个
+        // `production()` 只会切**内联**的 `mod tests`,对这种文件它会原样返回、
+        // 把夹具当生产码扫 —— 落地当天就红在 boot 的两处剥快照 VACUUM 上。故整文件跳过。
+        let (mut skipped, mut declared) = (0usize, 0usize);
         for (tag, root) in &roots {
             let mut files = Vec::new();
             rs_files(root, &mut files);
@@ -802,6 +810,10 @@ mod tests {
                     "{tag}/{}",
                     f.strip_prefix(root).unwrap().to_string_lossy().replace('\\', "/")
                 );
+                if rel.ends_with("/tests.rs") || rel.contains("/tests/") {
+                    skipped += 1;
+                    continue;
+                }
                 let src = std::fs::read_to_string(f).expect("读源文件");
                 // ---- 自证二:测试模块声明必须顶格,排布反常直接红(边界判据的前提)。
                 for line in src.lines() {
@@ -814,6 +826,9 @@ mod tests {
                     }
                 }
                 let prod = production(&src);
+                if prod.lines().any(|l| l.trim_end() == "mod tests;") {
+                    declared += 1;
+                }
                 // ---- 自证三:敏感入口**只许限定名直接调用**(codex 四轮 M)。
                 // `use ...db::open; open(p)` / `open_space as open_target` / `let f = db::open`
                 // 都是**普通 Rust 演进**,不是刻意规避 —— 靠数固定拼写的锚对它们全是假绿。
@@ -869,6 +884,14 @@ mod tests {
                 }
             }
         }
+        // 跳过的测试文件数,必须与生产段里 `mod tests;` 的声明数相等 —— 否则要么有
+        // 测试文件没被跳过(夹具会被当生产码扫,本锚变假绿),要么跳过的路径判据认错了
+        // 文件(把真生产码扫漏了)。两侧各自会变,故拿它们互证,而不是写死一个数。
+        assert_eq!(
+            skipped, declared,
+            "跳过的 tests.rs 有 {skipped} 个,而生产段里声明了 {declared} 处 `mod tests;` —— \
+             对不上就说明路径判据(`/tests.rs` 结尾或 `/tests/` 下)与实际布局脱节了"
+        );
         for v in [&mut reclaim, &mut inplace, &mut into, &mut db_open, &mut open_space] {
             v.sort();
         }

@@ -50,6 +50,41 @@ pub(crate) fn now_iso() -> String {
         .expect("RFC3339 formatting of a valid OffsetDateTime cannot fail")
 }
 
+/// 留言时间的**定宽**规范串:`YYYY-MM-DDTHH:MM:SS.sssZ`,恰 24 字节
+/// (identity-plan §4.6.1,设计审三轮 M2)。
+///
+/// **它是排序编码,不是展示格式。** `created_at` 参与 `item_comment` 的索引与 keyset
+/// 游标,而 TEXT 序里 `.`(0x2E)< `Z`(0x5A):若小数秒宽度不定,`...:00Z` 会排在真实
+/// 更晚的 `...:00.1Z` **前面**,按时间展示的语义顺序就废了(keyset 本身不跳行不重复,
+/// 那只要求稳定全序)。
+///
+/// ⚠️ **刻意不改 [`now_iso`]**:它走 `time` 的 `Rfc3339`,**省略尾部零的小数秒**,产出
+/// 宽度本来就是不定的;而仓里 SQL 那一支(`topics.created_at` 等)是定宽三位毫秒——
+/// 两种今天就混着。但给**既有**时间列追加定宽 validator,会当场拒掉 v34 端发来的合法
+/// 旧值 → `InvalidOp` → **持久隔离那台设备**(§3.5 那条通用教训的同族陷阱)。comment
+/// 没这问题:新 entity,只有 v35+ 发得出。既有列那笔债已记 progress-log 314 排队。
+///
+/// 本函数是 comment 时间的**唯一**格式定义:产出走它,校验也走它
+/// (`replay::validate_comment_created_at` 做 parse → 本函数 → 逐字相等)。
+pub(crate) fn format_iso_millis(t: OffsetDateTime) -> String {
+    let t = t.to_offset(time::UtcOffset::UTC);
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}.{:03}Z",
+        t.year(),
+        u8::from(t.month()),
+        t.day(),
+        t.hour(),
+        t.minute(),
+        t.second(),
+        t.millisecond(),
+    )
+}
+
+/// 现在时刻的留言规范串(comment `created_at` 的唯一本地产出点)。
+pub(crate) fn now_iso_millis() -> String {
+    format_iso_millis(OffsetDateTime::now_utc())
+}
+
 /// A bare item row (id + text + capture time): the Inbox list and topic-tree children.
 pub struct ItemRow {
     pub id: String,
@@ -1480,6 +1515,30 @@ mod tests {
     use crate::db;
     use std::sync::atomic::{AtomicU32, Ordering};
 
+    /// 留言时间 formatter 的**固定输入**锚(codex 实现审一轮 L2)。
+    ///
+    /// 只拿「现在」验自洽的话,UTC 换算 / 补零 / 截断三件都可能同时错而仍然自洽
+    /// (`format(parse(x)) == x` 对一把歪尺照样成立)。这里钉死一个带时区、带纳秒的
+    /// 输入,三件各占一格:`+08:00` → `Z`(减 8 小时)、`.007` 补零到三位、
+    /// `007123456 ns` 截断到毫秒(不四舍五入)。
+    #[test]
+    fn format_iso_millis_pins_utc_padding_and_truncation() {
+        let t = time::OffsetDateTime::parse(
+            "2026-08-07T12:00:00.007123456+08:00",
+            &time::format_description::well_known::Rfc3339,
+        )
+        .unwrap();
+        assert_eq!(format_iso_millis(t), "2026-08-07T04:00:00.007Z");
+        assert_eq!(format_iso_millis(t).len(), 24);
+        // 恰零毫秒不许省略小数部分 —— 省了就退回宽度不定,TEXT 序即乱。
+        let z = time::OffsetDateTime::parse(
+            "2026-08-07T00:00:00Z",
+            &time::format_description::well_known::Rfc3339,
+        )
+        .unwrap();
+        assert_eq!(format_iso_millis(z), "2026-08-07T00:00:00.000Z");
+    }
+
     static COUNTER: AtomicU32 = AtomicU32::new(0);
 
     fn temp_path(tag: &str) -> std::path::PathBuf {
@@ -1506,10 +1565,10 @@ mod tests {
     }
 
     #[test]
-    fn migration_sets_user_version_34_and_enforces_foreign_keys() {
+    fn migration_sets_user_version_35_and_enforces_foreign_keys() {
         let conn = fresh_db();
         let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0)).unwrap();
-        assert_eq!(version, 34);
+        assert_eq!(version, 35);
         let fk: i64 = conn.pragma_query_value(None, "foreign_keys", |r| r.get(0)).unwrap();
         assert_eq!(fk, 1, "foreign keys must be ON");
     }

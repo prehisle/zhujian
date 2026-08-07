@@ -55,3 +55,6 @@ Thumbs.db
 # 机器本地配置/二进制(开源后不随仓分发;本机文件保留在磁盘)
 /.cargo/
 /e2e/drivers/
+
+# flaky-hunt 的失败输出(临时诊断产物)
+tmp-flaky/

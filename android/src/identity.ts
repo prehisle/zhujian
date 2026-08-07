@@ -40,6 +40,23 @@ export function myAlias(space: string): string | null {
   return s.alias.get(s.thisDevice) ?? null;
 }
 
+/** 留言列表里那条「谁说的」(identity-plan §4.7)。**口径与卡片 chip 刻意不同**:
+ *  卡片上的署名是装饰,未命名设备显 id 片段是纯噪音;留言是**逐条的话**,不知道是谁说的
+ *  会让多设备账户根本读不懂,所以这里退到设置面那一档——有别名显别名,没别名显 id 前 6 位。
+ *
+ *  - `born_device` 为 null → 「作者未知」:唯一来源是跨空间搬迁(§4.5,空间=账户=独立库,
+ *    源作者身份在目标名册里根本不存在)。**绝不署成当前设备**(§4.14.2 第 5 条);
+ *  - 是本机 / 名册还没到手 → null(不显):自己说的话不必落款;名册没到就不猜。
+ *
+ *  与桌面 `src/identity.ts` 的同名函数逐字一致(两端同一句话得长一样)。 */
+export function authorLabel(space: string, bornDevice: string | null | undefined): string | null {
+  if (!bornDevice) return "作者未知";
+  const s = snapshot;
+  if (!s || s.space !== space) return null;
+  if (bornDevice === s.thisDevice) return null;
+  return s.alias.get(bornDevice) ?? bornDevice.slice(0, 6);
+}
+
 /** 这条条目该显的署名文字;null = 不显(未知出生设备 / 就是本机 / 那台没起过别名)。 */
 export function signatureFor(space: string, bornDevice: string | null | undefined): string | null {
   if (!bornDevice) return null; // 0033 之前的存量行:未知不猜,也不显「未知设备」

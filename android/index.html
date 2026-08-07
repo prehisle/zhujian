@@ -274,6 +274,76 @@
         font-size: 15px; line-height: 1; display: grid; place-items: center;
       }
 
+      /* 留言层(314 第③笔,identity-plan §4.7):几何与捕获层同一套(src/kbsheet.ts)——
+         贴键盘上沿、收键盘停屏底。与捕获层的差别只有两处:限高(顶上留一条背景,读得出
+         这是盖着的一层)、开层不自动弹键盘(手机上先读后写)。z 与捕获层同档(层 14 /
+         遮罩 13),两层不会同时开:留言层只从时间轴开,而捕获层开着时遮罩压住时间轴。 */
+      .cmsheet {
+        position: fixed; left: 0; right: 0; bottom: 0; z-index: 14;
+        display: flex; flex-direction: column; overflow: hidden;
+        background: var(--raised);
+        border-top: 1px solid var(--line);
+        border-radius: 16px 16px 0 0;
+        box-shadow: 0 -8px 28px rgba(0, 0, 0, 0.18);
+        transform: translateY(110%); /* 收起态:滑到屏下;开态由 JS 设 inline transform 覆盖 */
+        transition: transform 0.22s ease;
+        will-change: transform;
+      }
+      #comments-scrim { position: fixed; inset: 0; z-index: 13; background: rgba(0, 0, 0, 0.35); }
+      /* 悬浮 ＋ 在遮罩之下,留着只是个灰疙瘩:留言层开着就让位(同 body.pane-open)。 */
+      body.cm-open #capture-fab { display: none !important; }
+      .cm-head {
+        display: flex; align-items: center; justify-content: space-between;
+        padding: 12px 14px 8px; border-bottom: 1px solid var(--line);
+      }
+      .cm-head h3 { margin: 0; font: 600 15px/1.4 var(--font-sans); }
+      .cm-x { border: none; background: none; color: var(--ink-faint); font-size: 18px; padding: 4px 10px; }
+      /* 列表自己滚,且滚到头不把滚动交给背后的时间轴(overscroll-behavior: contain)。 */
+      .cm-list {
+        flex: 1; min-height: 96px; overflow-y: auto; overscroll-behavior: contain;
+        padding: 2px 14px;
+      }
+      .cm-item { padding: 10px 0; border-bottom: 1px solid var(--line); }
+      .cm-item:last-child { border-bottom: none; }
+      .cm-text {
+        margin: 0; font: 15px/1.6 var(--font-serif);
+        white-space: pre-wrap; word-break: break-word;
+      }
+      .cm-meta {
+        display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+        margin-top: 4px; font-size: 12px; color: var(--ink-faint);
+      }
+      /* 作者口径与卡片署名 chip 刻意不同(identity.ts authorLabel):留言是逐条的话,
+         不知道谁说的就读不懂,故没起别名也显 id 前 6 位、搬迁来的显「作者未知」。 */
+      .cm-author { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 10em; }
+      .cm-author::before { content: "·"; margin-right: 4px; opacity: 0.6; }
+      .cm-del { margin-left: auto; border: none; background: none; color: var(--seal); font-size: 12px; padding: 8px 2px; }
+      .cm-empty { padding: 20px 0; text-align: center; }
+      .cm-more { display: block; width: 100%; border: none; background: none; color: var(--seal); font-size: 13px; padding: 10px 0; }
+      .cm-compose {
+        display: flex; align-items: flex-end; gap: 8px;
+        padding: 10px 14px calc(10px + env(safe-area-inset-bottom));
+        border-top: 1px solid var(--line);
+      }
+      .cm-compose textarea {
+        flex: 1; min-width: 0;
+        border: none; background: none; resize: none; outline: none;
+        color: var(--ink); font: 16px/1.6 var(--font-serif);
+        min-height: 2.2em; max-height: 24vh;
+        field-sizing: content;
+        caret-color: var(--seal);
+      }
+      .cm-compose textarea::placeholder { color: var(--ink-faint); }
+      /* 写/删 in-flight:整层禁点(防双击——重复提交造不出「撤销」)。 */
+      .cmsheet.busy .cm-del, .cmsheet.busy .cm-more { opacity: 0.45; pointer-events: none; }
+      /* 卡上的留言徽章:与时间戳同一档存在感,但它**是可点的**——触区靠 ::before 外扩
+         (同 .panel .acts button 的手法),12px 的字不能只给 12px 的靶。N=0 不渲染。 */
+      .cm-badge {
+        position: relative; border: none; background: none; padding: 0;
+        color: var(--ink-faint); font-size: 12px; font-family: var(--font-sans);
+      }
+      .cm-badge::before { content: ""; position: absolute; left: -8px; right: -8px; top: -12px; bottom: -12px; }
+
       /* 错误条:后端原话,响亮但会自己退场。notice = 非错误的同步提示(墨绿)。
          fixed 悬浮不进文档流(ui-audit P0 #3):此前在 compose 与时间轴之间,每次
          出现/6s 消失都让整轴跳 ~37px——「手指落下时和抬起时屏幕不一样」,143 实测
@@ -959,6 +1029,23 @@
 
     <!-- 悬浮 ＋ 钮(232):平时唯一的记一笔入口,点它滑出上面的捕获层。 -->
     <button id="capture-fab" type="button" aria-label="记一笔">＋</button>
+
+    <!-- 留言层(314 第③笔,identity-plan §4.7):点卡上的 💬 N 徽章、或卡片操作面板的
+         「留言」滑入。列表最近优先 + keyset 分页(「加载更多」);删除是两拍确认的销毁
+         (**不进回收站**);正文不可编辑(comment 刻意无 set_field)。 -->
+    <div id="comments-scrim" hidden></div>
+    <section id="comments-sheet" class="cmsheet" aria-label="留言">
+      <header class="cm-head">
+        <h3>留言</h3>
+        <button id="cm-close" class="cm-x" type="button" aria-label="关闭">✕</button>
+      </header>
+      <div id="cm-list" class="cm-list"></div>
+      <button id="cm-more" class="cm-more" type="button" hidden>加载更多</button>
+      <div class="cm-compose">
+        <textarea id="cm-input" rows="1" placeholder="写句话…"></textarea>
+        <button id="cm-send" class="primary" type="button">写下</button>
+      </div>
+    </section>
 
     <div id="error" class="error" hidden></div>
 

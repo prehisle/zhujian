@@ -39,6 +39,13 @@ import {
   renderContent,
   wirePasteToAttach,
 } from "./item-images";
+import {
+  closeComments,
+  commentBadge,
+  loadCommentCounts,
+  openComments,
+  refreshOpenComments,
+} from "./item-comments";
 import type { View, ViewCtx } from "./notebook";
 import { applyTagColor } from "./tag-color";
 import { renderTagPicker } from "./tag-picker";
@@ -1052,6 +1059,10 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       if (boardView === "board") {
         const sig = signatureChip(mountSpace, item.born_device);
         if (sig) meta.root.append(sig);
+        // 留言徽章(§4.7):N=0 不显(那时的入口在 ⋯ 菜单的「留言」)。回收站/归档册
+        // 不铺——同署名的铺开范围。
+        const badge = commentBadge(mountSpace, item.id, () => void load());
+        if (badge) meta.root.append(badge);
       }
       c.append(meta.root);
       // tags (M:N): set-tag chips show on the card (each with a ✕ to drop it); adding a
@@ -1135,6 +1146,8 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
           { label: "标签", key: "L", run: tags.openPicker },
           { label: "截止", key: "S", run: meta.openDue },
           { label: "优先级", key: "P", run: meta.openPri },
+          // 留言(§4.7,与灵感同键):N=0 时卡片上没有徽章,这里是写第一条的唯一入口。
+          { label: "留言", key: "Y", run: () => openComments(mountSpace, item.id, () => void load()) },
         ];
         const i = COLUMNS.findIndex((col) => col.status === item.status);
         if (i < COLUMNS.length - 1)
@@ -1582,13 +1595,15 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     today = localToday();
     const seq = ++loadSeq;
     try {
-      const [active, archived, sealed, topics] = await Promise.all([
+      const [active, archived, sealed, topics, , cmCounts] = await Promise.all([
         invoke<TaskItem[]>("list_tasks"),
         invoke<TaskItem[]>("list_archived_tasks"),
         invoke<TaskItem[]>("list_sealed_tasks"),
         invoke<TopicOpt[]>("list_topics"),
         // 设备名册(0033 署名):与列表**并发**取,不给渲染加一跳延迟。
         loadIdentity(mountSpace),
+        // 留言计数(0035 徽章):同样并发;列表另走分页(§4.14.2 第 4 条)。
+        loadCommentCounts(mountSpace),
       ]);
       if (seq !== loadSeq) return; // 有更晚的 load 已在途:旧响应不落 DOM(否则盖新画/拆脉冲)
       // focus 只由**确认最新**的这一发消费(codex 三审 H1):放在 seq 守卫之后取走——陈旧的
@@ -1606,7 +1621,20 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       // Fingerprint everything that affects the DOM; an idle refocus whose fingerprint
       // matches the last render bails before touching a single card (no flicker). An
       // open inline editor / hover state survives such a refocus untouched.
-      const sig = JSON.stringify([boardView, filter.kind, filter.topics, q, today, active, archived, sealed, topics]);
+      // 留言计数进指纹:别的设备写了一条留言,任务数据一个字节没变、只有徽章要变数字
+      // ——不进指纹的话 refocus 刷新会在这一格短路掉(同灵感)。
+      const sig = JSON.stringify([
+        boardView,
+        filter.kind,
+        filter.topics,
+        q,
+        today,
+        active,
+        archived,
+        sealed,
+        topics,
+        cmCounts,
+      ]);
       // `=== true`, not truthy: `load` is also wired as a bare onclick handler in a few
       // places, so a stray MouseEvent must never count as a refocus and skip the repaint.
       // pendingEditId 在场时不短路(codex 二审 M):requestEdit 的那发若被更新的同签名
@@ -1643,6 +1671,9 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         if (colBody && col) colScroll.set(col.status, colBody.scrollTop);
       }
       hk.reset();
+      // 留言浮层:宿主还在就重拉第一页,已经离开这个视图(删了 / 移走了 / 撤回成灵感)
+      // 就关掉——别让人对着不在了的条目写话(同灵感)。
+      refreshOpenComments(mountSpace, [...active, ...archived, ...sealed].map((t) => t.id));
       disarmConfirm(); // 卡片将被整批替换:在场确认的文档级监听一并收走
       if (activeEditCleanup) {
         activeEditCleanup();
@@ -1779,6 +1810,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         activeEditCleanup = null;
       }
       activeEditFlush = null;
+      closeComments(); // 浮层 portal 在 body 上,不随视图根节点走:切视图/切空间必须自己收
       teardownViewKeys();
       hk.destroy(); // tear down the document keydown + any lingering menu listeners
       // (P1 #9d)compose 草稿与暂存图跨视图存活:文字过桥进模块态,composeImgs 本身

@@ -244,6 +244,8 @@ const CORE_TABLES: &[&str] = &[
     // 与 space_profile 同性质:op-backed 正表,进引导导入与 strict_battery 审计。
     // (0032 的 item_image_thumb 是纯本地派生表,刻意**不**在此列。)
     "device_profile",
+    // 0035 的条目留言(identity-plan §4)。op-backed 正表:进引导导入与 strict_battery。
+    "item_comment",
 ];
 
 /// 只读读取一个空间的描述符:**不跑迁移、不写库、不切 WAL**(`db::open` 是读写

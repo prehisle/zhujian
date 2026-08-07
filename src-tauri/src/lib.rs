@@ -11,7 +11,7 @@ mod dock_menu;
 
 use spaces::Spaces;
 use zhujian_core::sync::supervisor::{ActivateSpec, ActiveRuntime as SpaceRuntime, SpaceSupervisor};
-use zhujian_core::{clock, db, identity, images, notes, repo, sync, task, thumbs};
+use zhujian_core::{clock, comments, db, identity, images, notes, repo, sync, task, thumbs};
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -1200,6 +1200,74 @@ fn delete_item_image(space_id: String, image_id: String, spaces: State<'_, Space
         return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
     }
     images::remove(&mut conn, &mut clk, &image_id)
+}
+
+// ---- 条目留言(identity-plan §4;第②笔命令面)-------------------------------
+//
+// **DTO 直接用 core 的 `comments::Comment` / `CommentPage`,壳里刻意不再抄一份**:
+// §4.14.2 第 1 条要求两壳命令契约同源,而「同源」若靠两个壳各写一份结构体去维持,
+// 就是纪律不是事实。这里让两壳返回同一个类型,漂移在编译期就不可能发生。
+// (壳自定义 DTO 的既有先例——ImageMeta / DeviceEntryItem——都是要挑列或改口径;
+// 留言这四个命令一个字段都不改口径。)
+
+/// 写一条留言(identity-plan §4.3 第 8 条)。正文长度 / 非空 / 宿主在 / 500 软闸
+/// 四道校验全在 `comments::add` 的同一个事务里,壳不复述也不预判——预判会造出
+/// 「壳说行、库说不行」的两套判据。
+#[tauri::command]
+fn add_item_comment(
+    space_id: String,
+    item_id: String,
+    content: String,
+    spaces: State<'_, Spaces>,
+) -> Result<String, String> {
+    let rt = spaces.get(&space_id)?;
+    let (mut conn, mut clk) = rt.write_locks();
+    // ReopenRequired 复核在锁内(space-entry-plan §3.2,codex 二轮 M2)。
+    if let Some(e) = rt.restart_required() {
+        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
+    }
+    comments::add(&mut conn, &mut clk, &item_id, &content)
+}
+
+/// 销毁一条留言(**不进回收站** —— 用户 2026-08-06 拍板;UI 两拍确认兜)。
+/// 行不在 = 幂等 no-op(另一端删了并同步过来是正常并发,不是错误)。
+#[tauri::command]
+fn delete_item_comment(space_id: String, id: String, spaces: State<'_, Spaces>) -> Result<(), String> {
+    let rt = spaces.get(&space_id)?;
+    let (mut conn, mut clk) = rt.write_locks();
+    if let Some(e) = rt.restart_required() {
+        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
+    }
+    comments::remove(&mut conn, &mut clk, &id)
+}
+
+/// 一页留言(最近优先)。`cursor` = 上一页的 `next_cursor`,null = 第一页。
+/// **分页是后端契约的一部分,壳不许改成「一次拉全部」**(§4.6.2:软闸下也能一次
+/// 拉约 98 MiB 过 IPC/DOM)。
+#[tauri::command]
+fn list_item_comments(
+    space_id: String,
+    item_id: String,
+    cursor: Option<(String, String)>,
+    spaces: State<'_, Spaces>,
+) -> Result<comments::CommentPage, String> {
+    let rt = spaces.get(&space_id)?;
+    let conn = rt.db.lock().expect("db mutex poisoned");
+    let cur = cursor.as_ref().map(|(ca, id)| (ca.as_str(), id.as_str()));
+    comments::list_for_item(&conn, &item_id, cur)
+}
+
+/// 每条目留言数(徽章用):一次 `GROUP BY` 聚合读,**不 N+1**;零留言的条目不在
+/// 返回里(前端按 0 处理 —— N=0 不显示徽章)。徽章与列表是两个真相源(§4.14.2
+/// 第 4 条):这里只回计数,别为了「对齐」去全量拉留言正文。
+#[tauri::command]
+fn item_comment_counts(
+    space_id: String,
+    spaces: State<'_, Spaces>,
+) -> Result<std::collections::HashMap<String, i64>, String> {
+    let rt = spaces.get(&space_id)?;
+    let conn = rt.db.lock().expect("db mutex poisoned");
+    comments::counts_all(&conn)
 }
 
 /// 跨空间移动条目(cross-space-move v1,codex 设计审三轮已折入):三原语在全局
@@ -3022,6 +3090,10 @@ pub fn run() {
             get_item_thumb,
             put_item_thumb,
             delete_item_image,
+            add_item_comment,
+            delete_item_comment,
+            list_item_comments,
+            item_comment_counts,
             sync_status,
             sync_create_account,
             sync_pair_start,

@@ -36,10 +36,16 @@ use zhujian_core::spaces::{self, JoiningSlot, SpaceCatalog, SpaceDescriptor};
 use zhujian_core::sync::supervisor::{ActivateSpec, ActiveRuntime, SpaceSupervisor};
 use zhujian_core::sync::transport::{self, BootCommitLatch, SyncEvent};
 
-/// 手机跨空间移动的图字节预算(codex 安卓实现审 #4):export 把整组配图字节读进
-/// 内存、import 再落库,单条目图字节无小上限——超预算响亮拒,别把手机搞 OOM。
-/// 128 MiB = 单图上限(32 MiB)的 4 倍,真实笔记极难触达;数值是**手机政策**留壳层。
-const MOVE_IMAGE_BUDGET_BYTES: i64 = 128 * 1024 * 1024;
+/// 手机跨空间移动的**峰值**内存预算(codex 安卓实现审 #4;口径由 314 二弹 H1 改准):
+/// export 把整包字节读进内存、import 再落库,单条目的图与留言都无小上限——超预算响亮
+/// 拒,别把手机搞 OOM。128 MiB = 单图上限(32 MiB)的 4 倍,真实笔记极难触达;数值是
+/// **手机政策**留壳层。
+///
+/// ⚠️ 比的是 `move_peak_bytes`(三相位取最大)而**不是**包体:算指纹
+/// 那一刻 Rust 侧还额外持有「当前这一张图」与「每个子实体的元数据」。后一项尤其要紧 ——
+/// 远端可以给一个条目挂上任意多条极短留言(本地 500 是本地写入软闸、不是协议上界),
+/// 那种形态的**包体几乎为零**,只有按条数计价才拦得住。
+const MOVE_PEAK_BUDGET_BYTES: i64 = 128 * 1024 * 1024;
 
 /// 前台状态(§16.2):`space` = 业务命令的唯一合法目标;`phase` 见模块注释。
 #[derive(Clone, PartialEq, Debug)]
@@ -557,12 +563,16 @@ impl Coord {
             if let Some(e) = src_rt.restart_required() {
                 return Err(format!("当前空间需要重启应用完成初始同步装配,暂不能移动:{e}"));
             }
-            let bytes = zhujian_core::move_item::item_image_bytes(&conn, item_id)?;
-            if bytes > MOVE_IMAGE_BUDGET_BYTES {
+            let bytes = zhujian_core::move_item::move_peak_bytes(&conn, item_id)?;
+            if bytes > MOVE_PEAK_BUDGET_BYTES {
+                // 话术说的是**内存**不是内容(codex 实现审二弹二轮 L2):这个数含 scratch
+                // 与元数据准备金,不等于「这条有多大」。MB 一律**向上取整** —— 否则
+                // 「128 MiB + 1 字节」会显示成「128 MB 超过 128 MB」。
+                let mb = |n: i64| (n + 1024 * 1024 - 1) / (1024 * 1024);
                 return Err(format!(
-                    "这条的配图共 {} MB,超出手机跨空间移动上限({} MB),暂不支持",
-                    bytes / (1024 * 1024),
-                    MOVE_IMAGE_BUDGET_BYTES / (1024 * 1024)
+                    "移动这条预计需要约 {} MB 内存(含内容与处理开销),超出手机跨空间移动上限({} MB),暂不支持",
+                    mb(bytes),
+                    MOVE_PEAK_BUDGET_BYTES / (1024 * 1024)
                 ));
             }
             match zhujian_core::move_item::export(&mut conn, item_id)? {

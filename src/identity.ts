@@ -43,6 +43,22 @@ export function signatureFor(space: string, bornDevice: string | null | undefine
   return s.alias.get(bornDevice) ?? null;
 }
 
+/** 留言列表里那条「谁说的」(identity-plan §4.7)。**口径与卡片 chip 刻意不同**:
+ *  卡片上的署名是装饰,未命名设备显 id 片段是纯噪音;留言列表是逐条的话,不知道
+ *  是谁说的会让多设备账户根本读不懂,所以这里退到设置面那一档——有别名显别名,
+ *  没别名显 id 前 6 位(同 §2.4)。
+ *
+ *  - `born_device` 为 null → 「作者未知」:唯一来源是跨空间搬迁(§4.5,空间=账户=
+ *    独立库,源作者身份在目标名册里根本不存在)。**绝不署成当前设备**(§4.14.2 第 5 条);
+ *  - 是本机 / 名册还没到手 → null(不显):自己说的话不必落款;名册没到就不猜。 */
+export function authorLabel(space: string, bornDevice: string | null | undefined): string | null {
+  if (!bornDevice) return "作者未知";
+  const s = snapshot;
+  if (!s || s.space !== space) return null;
+  if (bornDevice === s.thisDevice) return null;
+  return s.alias.get(bornDevice) ?? bornDevice.slice(0, 6);
+}
+
 /** 署名 chip;不该显时返回 null(调用方 `if (n) parent.append(n)`)。 */
 export function signatureChip(space: string, bornDevice: string | null | undefined): HTMLElement | null {
   const name = signatureFor(space, bornDevice);

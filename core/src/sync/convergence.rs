@@ -13,6 +13,7 @@
 
 use rusqlite::Connection;
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::clock::Clock;
 use crate::sync::engine::{
@@ -444,13 +445,23 @@ const DONE_TASKS: &str = "SELECT id FROM items WHERE stage = 'done' \
      AND archived_at IS NULL AND sealed_at IS NULL ORDER BY id";
 const TOPICS: &str = "SELECT id FROM topics ORDER BY id";
 const IMAGES: &str = "SELECT id FROM item_image ORDER BY id";
+/// 0035:全部现存留言(随机命令流的删除面)。
+const COMMENTS: &str = "SELECT id FROM item_comment ORDER BY id";
+
+/// 留言两支的**覆盖计数**(codex 实现审二弹 M4)。
+///
+/// 「随机流里加了两支命令」证不了它们真被执行过 —— 把两支都改成 no-op,`item_comment`
+/// 全程为空,全表指纹照样处处相等、测试照样全绿(**零覆盖的空绿**,与 P4-d 轮 M3 抓到的
+/// 「轻端零 want」同款)。所以数一下真跑成了几次,并在测试末尾断言两支都 > 0。
+static COMMENT_ADDS: AtomicUsize = AtomicUsize::new(0);
+static COMMENT_REMOVES: AtomicUsize = AtomicUsize::new(0);
 const LIVE_ANY: &str = "SELECT id FROM items WHERE archived_at IS NULL AND sealed_at IS NULL ORDER BY id";
 
 /// 执行一条随机写命令,返回是否真的写了(Err = 前置不满足,跳过——编排自持事务,
 /// 失败即回滚不脏库、无 op 发射)。标签名取小池子(t0..t3):同机重名被编排拒,
 /// **跨机重名天然发生**——「同名标签并存」正是规格 §6.2 的约定终局。
 fn random_command(conn: &mut Connection, clock: &mut Clock, rng: &mut Rng, step: usize) -> bool {
-    let roll = rng.below(25);
+    let roll = rng.below(27);
     let done: Result<(), String> = match roll {
         0..=3 => notes::capture(conn, clock, &format!("灵感 {step}-{}", rng.below(1000))).map(|_| ()),
         4 => match rng.pick(&ids(conn, LIVE_IDEAS)).cloned() {
@@ -605,6 +616,21 @@ fn random_command(conn: &mut Connection, clock: &mut Clock, rng: &mut Rng, step:
             }
             None => Ok(()),
         },
+        // 0035 条目留言:写一条(宿主取活条目)。并发下两端各写各的,OR 语义天然收敛;
+        // 与 item 删除撞车时靠 FK CASCADE + ParentGone 收口。
+        24 => match rng.pick(&ids(conn, LIVE_ANY)).cloned() {
+            Some(id) => crate::comments::add(conn, clock, &id, &format!("留言 {step}-{}", rng.below(1000)))
+                .map(|_| COMMENT_ADDS.fetch_add(1, Ordering::Relaxed))
+                .map(|_| ()),
+            None => Ok(()),
+        },
+        // 0035:删一条留言(tombstone sticky —— 迟到的 create 不许复活它)。
+        25 => match rng.pick(&ids(conn, COMMENTS)).cloned() {
+            Some(id) => crate::comments::remove(conn, clock, &id).inspect(|_| {
+                COMMENT_REMOVES.fetch_add(1, Ordering::Relaxed);
+            }),
+            None => Ok(()),
+        },
         // 空间改名(0028 space 单例寄存器):小池子名跨机并发撞写,LWW 收敛由
         // space_profile 指纹断言(space-name-sync-plan §7)。
         _ => crate::spaces::set_space_name(conn, clock, &format!("空间名{}", rng.below(4))),
@@ -632,6 +658,12 @@ const FINGERPRINTS: &[(&str, &str)] = &[
          FROM topics ORDER BY id",
     ),
     ("item_topic", "SELECT item_id||'|'||topic_id FROM item_topic ORDER BY item_id, topic_id"),
+    // 0035 留言:四列全进(quote() 让 born_device 的 NULL 与字面「∅」不同指纹)。
+    (
+        "item_comment",
+        "SELECT id||'|'||item_id||'|'||content||'|'||created_at||'|'||quote(born_device) \
+         FROM item_comment ORDER BY id",
+    ),
     (
         "item_image(含字节)",
         "SELECT id||'|'||item_id||'|'||seq||'|'||mime||'|'||hex(data) FROM item_image ORDER BY id",
@@ -752,6 +784,55 @@ fn three_peers_converge_under_partitions_reorder_and_loss() {
     for seed in 1..=20u64 {
         run(seed, &[BlobPolicy::Full; 3]);
     }
+    // 覆盖断言(codex 实现审二弹 M4):留言那两支必须真被跑过 —— 否则「加了两支命令」
+    // 只是加了两行代码,`item_comment` 全程为空而指纹处处相等,这测什么都没测。
+    assert!(COMMENT_ADDS.load(Ordering::Relaxed) > 0, "随机流里一条留言都没写成");
+    assert!(COMMENT_REMOVES.load(Ordering::Relaxed) > 0, "随机流里一条留言都没删成");
+}
+
+/// 留言的**确定性**三端场景(codex 实现审二弹 M4;随机流管广度,这只管「本案那条路」)。
+///
+/// 四幕:①两端离线各给**同一条** item 写留言 → ②汇合,两条都在(OR 语义,不是 LWW);
+/// ③一端删掉其中一条、另一端同时再写一条新的 → ④再汇合,终态三方逐字相等且「删了的
+/// 不复活、新写的都在」。
+#[test]
+fn comments_converge_across_offline_writes_and_a_concurrent_delete() {
+    let mut sim = Sim::new(9001, &[BlobPolicy::Full; 3]);
+    for i in 0..3 {
+        sim.set_online(i);
+    }
+    // 幕 0:0 号建宿主,全网同步。
+    let host = { let p = &mut sim.peers[0]; notes::capture(&mut p.conn, &mut p.clock, "共同话题").unwrap() };
+    sim.settle();
+
+    // 幕 1:0 与 1 都离线,各写一条。
+    sim.set_offline(0);
+    sim.set_offline(1);
+    let a = { let p = &mut sim.peers[0]; crate::comments::add(&mut p.conn, &mut p.clock, &host, "甲说").unwrap() };
+    let b = { let p = &mut sim.peers[1]; crate::comments::add(&mut p.conn, &mut p.clock, &host, "乙说").unwrap() };
+
+    // 幕 2:汇合 —— 两条都要在(留言是 OR 集,不是「谁后写谁赢」)。
+    sim.settle();
+    for i in 0..3 {
+        let ids = ids(&sim.peers[i].conn, COMMENTS);
+        assert_eq!(ids.len(), 2, "第 {i} 台:离线各写的两条都该在");
+        assert!(ids.contains(&a) && ids.contains(&b), "第 {i} 台:{ids:?}");
+    }
+
+    // 幕 3:2 号删掉甲那条,同时 1 号(离线)再写一条。
+    sim.set_offline(1);
+    { let p = &mut sim.peers[2]; crate::comments::remove(&mut p.conn, &mut p.clock, &a).unwrap(); }
+    let c = { let p = &mut sim.peers[1]; crate::comments::add(&mut p.conn, &mut p.clock, &host, "乙又说").unwrap() };
+
+    // 幕 4:再汇合 —— 删了的不复活,新写的都在,三方逐字相等(由 assert_converged 兜全表)。
+    sim.settle();
+    for i in 0..3 {
+        let ids = ids(&sim.peers[i].conn, COMMENTS);
+        assert!(!ids.contains(&a), "第 {i} 台:删掉的留言不许复活");
+        assert!(ids.contains(&b) && ids.contains(&c), "第 {i} 台:{ids:?}");
+        assert_eq!(ids.len(), 2);
+    }
+    sim.assert_converged();
 }
 
 /// M1 测试②(android-plan §4):三实例其一 MetadataOnly(手机轻端)——同一随机

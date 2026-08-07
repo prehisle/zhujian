@@ -265,6 +265,42 @@ pub fn device_set_alias(
     )
 }
 
+// ---- comment(条目留言,identity-plan §4) ------------------------------------------
+
+/// 留言出生:读回刚插入的行,payload = 出生快照(**恰四键**,identity-plan §4.6.1)。
+/// 与 item/topic 的 create 同形「读行发声」——行必须已在(读不到 = 编排 bug,fail-fast)。
+///
+/// `born_device` 读成 `Option`:本机新建路径恒非空(触发器钉死),**NULL 只可能来自跨
+/// 空间移动**(§4.5:源作者的设备身份在目标空间的名册里不存在,填执行者 = 把别人写的
+/// 话署上搬运工的名)。
+pub fn comment_create(conn: &Connection, clock: &mut Clock, id: &str) -> Result<(), String> {
+    let payload = conn
+        .query_row(
+            "SELECT item_id, content, created_at, born_device FROM item_comment WHERE id = ?1",
+            [id],
+            |r| {
+                Ok(json!({
+                    "item_id": r.get::<_, String>(0)?,
+                    "content": r.get::<_, String>(1)?,
+                    "created_at": r.get::<_, String>(2)?,
+                    "born_device": r.get::<_, Option<String>>(3)?,
+                }))
+            },
+        )
+        .map_err(|e| format!("读取留言出生快照失败({id}):{e}"))?;
+    append(conn, clock, "comment", id, "create", payload)
+}
+
+/// 留言销毁(直接销毁,不进回收站——用户 2026-08-06 拍板)。行已不在,payload 空。
+///
+/// ⚠️ **item 删除时不逐条发本 op**:留言的死亡由 FK CASCADE 承载(回放同样生效),
+/// 照 [`topic_tombstone`] 对 link 的处置。于是「有 comment create、无行、无 comment
+/// tombstone、有 item tombstone」是**健康**终态,boot 的 strict_battery 必须认识它
+/// (identity-plan §4.3 第 6 条,设计审一轮 H2)。
+pub fn comment_tombstone(conn: &Connection, clock: &mut Clock, id: &str) -> Result<(), String> {
+    append(conn, clock, "comment", id, "tombstone", json!({}))
+}
+
 // ---- link (item_topic) -------------------------------------------------------------
 
 /// link 的 op 身份:条目与标签的配对。定长 ULID 中间一个冒号,可拆可索引。

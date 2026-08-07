@@ -42,6 +42,17 @@ import * as panes from "./panes";
 import * as topics from "./topics";
 import { initCardSwipe } from "./swipe";
 import { loadIdentity, signatureFor } from "./identity";
+import { createKbSheet } from "./kbsheet";
+import {
+  closeComments,
+  closeCommentsNow,
+  commentBadgeHtml,
+  initComments,
+  isCommentsOpen,
+  loadCommentCounts,
+  openComments,
+  refreshOpenComments,
+} from "./comments";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   scan,
@@ -224,9 +235,12 @@ function renderCard(it: TimelineItem, hideTopic: string | null): string {
   // (未命名设备刻意不显 id 片段——卡片上一串 K7M2QX 是噪音)。
   const sigName = signatureFor(getCurrentSpace(), it.born_device);
   const sig = sigName ? `<span class="sig-chip">${esc(sigName)}</span>` : "";
+  // 留言徽章(0035):`💬 N`,N=0 不渲染(布局未定不显示)——第一条留言的入口在卡片
+  // 操作面板的「留言」上。计数走 comments.ts 按空间键住的聚合快照,与列表两个真相源。
+  const cmBadge = commentBadgeHtml(getCurrentSpace(), it.id);
   return `<article class="card${done ? " done" : ""}" data-id="${esc(it.id)}">${tick}<div class="body">
     <p class="content">${esc(it.content)}</p>${thumbs}
-    <footer>${pill}<time>${esc(fmtWhen(it.created_at))}</time>${doneAt}${sig}${meta.join("")}${chips}</footer>
+    <footer>${pill}<time>${esc(fmtWhen(it.created_at))}</time>${doneAt}${sig}${cmBadge}${meta.join("")}${chips}</footer>
   </div></article>`;
 }
 
@@ -448,6 +462,7 @@ let nativeBackPending = false; // native 请求的 history.back() 已发、popst
   // 硬件返回」会被合并吞掉、重开的层却还开着。挂账层没有已压的历史条目,直关销账。
   if (deferredLayers > 0) {
     if (!$("viewer").hidden) closeViewerNow();
+    else if (isCommentsOpen()) closeCommentsNow();
     else if (activePane !== null) closePaneNow();
     settleHistory(); // 销挂账(settleHistory 首分支),不发 back
     return true;
@@ -475,6 +490,11 @@ window.addEventListener("popstate", () => {
   }
   if (!$("viewer").hidden) {
     closeViewerNow();
+    return;
+  }
+  // 留言层压在时间轴之上、面板之下(它只从时间轴开):返回键先收它。
+  if (isCommentsOpen()) {
+    closeCommentsNow();
     return;
   }
   if (activePane !== null) closePaneNow();
@@ -886,9 +906,25 @@ function confirmDeleteImage(space: string, id: string, seq: string) {
   });
 }
 
+/** 开留言层的单一入口(卡上的 💬 徽章与操作面板的「留言」共用):三道闸同 openPane
+ *  ——切换编排中屏上还是旧空间的卡、「记下」在飞时刷新被锁、有草稿时层会把它盖住。 */
+function openCommentsFor(itemId: string): void {
+  if (switching || captureSaving) return;
+  if (cardPanel.hasDirtyDraft()) {
+    showError("先保存或取消正在编辑的内容");
+    return;
+  }
+  openComments(getCurrentSpace(), itemId);
+}
+
 $("timeline").addEventListener("click", (e) => {
   if (switching) return; // 切换编排中:屏上还是旧空间的卡,不接受任何取图请求
   const target = e.target as HTMLElement;
+  const badge = target.closest<HTMLElement>(".cm-badge[data-cm]");
+  if (badge) {
+    openCommentsFor(badge.dataset.cm!);
+    return;
+  }
   const btn = target.closest<HTMLElement>(".thumb[data-img]");
   if (!btn) return;
   if (target.closest(".thumb-del")) {
@@ -1029,10 +1065,13 @@ async function refreshOnce(): Promise<void> {
     // 标签色/死筛回落用(per-item chip 不带 kind、也不含当前无条目的标签)。
     // 设备名册(0033 署名)与前两者**并发**取,不给渲染加一跳延迟;它内部吞错,
     // 署名少显一轮也绝不让整屏内容陪葬。
+    // 留言计数(0035 徽章)与设备名册同批并发:它是**聚合计数**这一个真相源,列表另走
+    // 分页(§4.14.2 第 4 条)——别为了对齐把留言正文整批拉过来。同样内部吞错(装饰)。
     const [items, ftopics] = await Promise.all([
       listTimeline(space),
       listTopicsFull(space),
       loadIdentity(space),
+      loadCommentCounts(space),
     ]);
     if (space !== getCurrentSpace()) return;
     if (cardPanel.hasDirtyDraft()) {
@@ -1043,6 +1082,9 @@ async function refreshOnce(): Promise<void> {
     allFilterTopics = ftopics.map((t) => ({ id: t.id, title: t.title, color: t.color, kind: t.kind }));
     lastRefreshOk = true;
     projectTimeline();
+    // 留言层:宿主还在就重拉第一页(别端写的留言自己冒出来),已经不在这批里就收层
+    // ——判据是「这个视图还认不认识它」,详见 comments.ts refreshOpenComments 的注释。
+    refreshOpenComments(space, lastItems.keys());
   } catch (err) {
     if (space !== getCurrentSpace()) return;
     if (cardPanel.hasDirtyDraft()) {
@@ -1077,6 +1119,7 @@ function refresh(): Promise<void> {
  *  随后的 refresh 负责画新空间。 */
 function blankTimelineForSpaceChange(): void {
   refreshDeferred = false; // 旧空间欠的刷新作废:新空间马上整轴重拉
+  closeComments(); // 留言层指着旧空间的条目(没开就是 no-op)
   cardPanel.forceClose("空间已切换,未保存的编辑已丢弃"); // 有草稿才响,静默无草稿路
   resetPanesForSpaceChange(); // 统一复位:关全部面 + 清陈旧内容 + 诊断缓存作废
   thumbObserver.disconnect();
@@ -1286,120 +1329,38 @@ $("save").addEventListener("click", save);
 // 平时零占屏:时间轴干净,只有右下角一颗悬浮 ＋。点 ＋(或任何路径聚焦到输入,如顶栏
 // 「一步回捕获」/系统分享)→ 捕获层从屏底滑入。
 //
-// 键盘避让(232 重做):本机 WebView 键盘弹起时布局视口不缩(innerHeight 恒 800)、只有
-// visualViewport 缩。此前纯 `bottom:0` 交给浏览器抬层,浏览器是靠「滚文档露出聚焦输入」来抬的
-// ——那下滚动正是「弹键盘背景乱滚」的元凶,且拦滚动就等于拦抬升(层掉键盘后)。这版改由 JS 自己
-// 用 transform 抬层(placeSheet 跟随 vv),并在 focus 前用缓存键盘高度抢先抬上去,让输入框始终留在
-// 可见区内 → 浏览器再没有滚文档的动机 → 背景一格不动(不靠遮罩兜底)。回车仍换行;收层只由
-// 遮罩点击/保存成功/返回触发。
+// 键盘避让(232 重做)已上抬成共享件 `src/kbsheet.ts`(314 第③笔:留言层要的是同一套
+// 几何,抄第二份必漂移)。那边有全部由头与阈值来历;这里只剩捕获层自己的接线:
+// 开层即抢先抬、聚焦输入即开层、不限高。回车仍换行;收层只由遮罩点击/保存成功/返回触发。
 {
   const sheet = $("compose-card");
   const fab = $("capture-fab");
-  const scrim = $("capture-scrim");
   const nav = $("bottombar");
   const ta = $("text") as HTMLTextAreaElement;
   const root = document.documentElement;
-  const vv = window.visualViewport;
-  let capturing = false;
-  let lastKbH = 280; // 最近一次软键盘高度(innerH - vvH);初值给个常见值,首次也能抢先抬
-  let raiseUntil = 0; // 抢先抬后的保护窗口(键盘上升动画期):此刻前不许 placeSheet 把层落回屏底
-  let wasKbUp = false; // 上次 placeSheet 时键盘是否在起——用于识别「起→落」的收起动作
-  let suppressScrimUntil = 0; // 抢先抬会把层瞬移上去,紧随的 click 漏到遮罩上——这段时间内不当关层
-
-  // 把层底沿贴到「当前可见区底」:键盘起=键盘上沿、键盘落=屏底。对 bottom:0 的层施上移量
-  // = 键盘遮住的高度((vvH+vvTop)-innerH,≤0)。副作用即目的:输入框恒在可见区内,免浏览器滚文档。
-  function kbOffset(): number {
-    if (!vv) return 0;
-    return vv.height + vv.offsetTop - window.innerHeight;
-  }
-  // 瞬移到位(transition:none + 强制回流):抢先抬与键盘跟随都必须「即时」——真机实测,只要
-  // 0.22s 过场让输入框在 focus 那刻还留在键盘区一瞬,浏览器就会滚文档/滚视口去露它(背景就动了)。
-  // 收层的滑落另走 CSS 过场(closeCapture 清 inline transform 时 transition 已恢复)。
-  function setTransform(y: number): void {
-    sheet.style.transition = "none";
-    sheet.style.transform = `translateY(${y}px)`;
-    void sheet.offsetHeight; // 强制回流,让这次「无过场」定位即时落地
-    sheet.style.transition = "";
-  }
-  function placeSheet(): void {
-    if (!capturing) return;
-    const kbH = vv ? window.innerHeight - vv.height : 0;
-    const kbUp = kbH > 80;
-    if (kbUp) lastKbH = kbH;
-    // 键盘由起转落(用户按了收起键、且已过抢先抬窗口)→ 主动 blur:层「停屏底待着」不变,但下次点
-    // 输入框能重新触发 focus 事件——据此在 focus 里再抢先抬,躲开二次露出滚动(点已聚焦的输入框不发 focus)。
-    if (wasKbUp && !kbUp && Date.now() >= raiseUntil) ta.blur();
-    wasKbUp = kbUp;
-    // 底沿贴可见区底(kbOffset,≤0)。保护窗口内取 min(更高者):键盘半升时 kbOffset 还接近 0,
-    // 照用会把层掉回屏底触发露出滚动;取 min 让层稳在键盘上方等键盘升满,到 kbOffset≤-lastKbH 时
-    // 自然接手,平滑不回弹。窗口外(用户收起键盘)kbOffset=0 → 回屏底(符合「收起就在底部」)。
-    let y = kbOffset();
-    if (Date.now() < raiseUntil) y = Math.min(y, -lastKbH);
-    setTransform(y);
-  }
-  // 在键盘真正弹起「之前」抢先把层抬到(上次)键盘上方,让输入框一开始就落在可见区内 →
-  // 浏览器没有「滚文档露出它」的动机(这是弹键盘背景不滚的关键)。保护窗口挡住上升动画期
-  // placeSheet 早期(键盘半升、kbOffset 尚≈0)把层误落回屏底;窗口过后兜底重贴一次:键盘真起
-  // 了按实测贴上沿、没起就落回屏底,故绝不会卡在半空。
-  function raiseForKeyboard(): void {
-    raiseUntil = Date.now() + 550;
-    suppressScrimUntil = Date.now() + 450; // 抬升后紧随的漏点 click 会落在遮罩上,压掉免误关层
-    setTransform(-lastKbH);
-    window.setTimeout(placeSheet, 600);
-  }
-
-  function enterCapture(): void {
-    if (capturing) return;
-    capturing = true;
-    scrim.hidden = false;
-    fab.hidden = true;
-    sheet.classList.add("open");
-    raiseForKeyboard();
-  }
-  function closeCapture(): void {
-    // 只收界面;草稿(localStorage)/暂存图(pendingImages)由既有逻辑保留,下次点开还在。
-    capturing = false;
-    raiseUntil = 0;
-    scrim.hidden = true;
-    sheet.classList.remove("open");
-    sheet.style.transition = ""; // 收层走 CSS 过场(0.22s 滑落),别被上一次 setTransform 的 none 卡住
-    sheet.style.transform = ""; // 交回 CSS:.compose 默认 translateY(110%) 滑出屏下
-    fab.hidden = false;
-    ta.blur();
-  }
-  dismissCapture = closeCapture; // 供 save() 存成功后收层
+  const kb = createKbSheet({
+    sheet,
+    scrim: $("capture-scrim"),
+    input: ta,
+    openOnFocus: true, // 任何路径聚焦输入都进入捕获态(顶栏「一步回捕获」/系统分享追加)
+    raiseOnOpen: true, // 开层就是要写字
+    onOpen: () => {
+      fab.hidden = true;
+    },
+    onClose: () => {
+      // 只收界面;草稿(localStorage)/暂存图(pendingImages)由既有逻辑保留,下次点开还在。
+      fab.hidden = false;
+    },
+  });
+  dismissCapture = () => kb.close(); // 供 save() 存成功后收层
 
   fab.addEventListener("click", () => {
-    enterCapture();
+    kb.open();
     ta.focus(); // 键盘自动起
-  });
-  // 焦点入口(单一抬升点):任何路径聚焦输入都进入/维持捕获态并抢先抬——首次开(FAB/顶栏
-  // 「一步回捕获」/分享追加)走 enterCapture,已开着从屏底再点(收起键盘后已 blur、故会重发
-  // focus)走 raiseForKeyboard。抬升放在 focus 里(而非 pointerdown):focus 落定后再抬,不会把
-  // 输入框从手指底下挪走导致点空;又是同步早于键盘几何变化,故仍赶在露出滚动之前。
-  ta.addEventListener("focus", () => {
-    if (!capturing) enterCapture();
-    else raiseForKeyboard();
-  });
-  // 点遮罩 = 收走捕获层(键盘一并收)。用 click(整个 tap 完成再收)而非 pointerdown:pointerdown
-  // 收早了,后半程 tap 会漏到下方卡片上误开面板。抬升(focus 里)诱发的漏点 click 落在遮罩上,由
-  // suppressScrimUntil 压掉——两个反向的坑在此汇合,click + 抑制窗口是同时躲开两者的解。
-  scrim.addEventListener("click", () => {
-    if (Date.now() < suppressScrimUntil) return;
-    ta.blur();
-    closeCapture();
   });
   // 层内按钮不抢输入焦点,免点一下就收键盘、层跳一下。
   ($("save") as HTMLButtonElement).addEventListener("mousedown", (e) => e.preventDefault());
   $("compose-addimg").addEventListener("mousedown", (e) => e.preventDefault());
-
-  // 键盘起落:visualViewport 缩放/滚动时把层重新贴到可见区底沿。
-  if (vv) {
-    vv.addEventListener("resize", placeSheet);
-    vv.addEventListener("scroll", placeSheet);
-  }
-  // 层高变化(打字自增高/加图缩略条)时,底沿保持贴合可见区底(placeSheet 内有 !capturing 早返回)。
-  new ResizeObserver(() => placeSheet()).observe(sheet);
 
   // FAB 竖直位置吃底栏实高(含安全区);底栏极少变,稳妥观察。
   function setNavH(): void {
@@ -2681,7 +2642,10 @@ cardPanel.initCardPanel({
   isCaptureSaving: () => captureSaving,
   // 移动入口按空间数决定是否出现;picker 列其他空间(main.ts 的 spacesCache 影子)。
   getSpaces: () => spacesCache,
+  openComments: openCommentsFor,
 });
+// 留言层(314 第③笔):写/删成功即整轴重拉(徽章计数跟着走),开合各压/平一枚返回键守门条目。
+initComments({ refresh, pushLayer, settleHistory });
 initCardSwipe({
   getItem: (id) => lastItems.get(id),
   getCurrentSpace,

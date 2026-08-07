@@ -27,7 +27,7 @@
 //!
 //! **自验收**(§2.6,事务内做完才 commit):压实后的库要能通过「新设备引导它的快照
 //! 时要过的全部严格审计」——对自己跑 boot::strict_battery(单一来源);另加终态等价
-//! (七表逐行相等 + sync_meta 白名单外逐键不变)与 schema 同构三层证明(单一 DDL
+//! (用户数据表逐行相等 + sync_meta 白名单外逐键不变)与 schema 同构三层证明(单一 DDL
 //! 常量 + 规范化 sqlite_schema 比对 + 负例功能探针——`table_xinfo` 系 pragma 看不见
 //! CHECK 与生成列表达式,必须真比 DDL、真插负例)。
 
@@ -40,7 +40,8 @@ use crate::db;
 use crate::sync::boot;
 use crate::sync::crypto;
 
-/// oplog 表的**单一 DDL 构造源**(§2.6.7 第一层;与 **0033** 迁移文本**逐字同源,含语句
+/// oplog 表的**单一 DDL 构造源**(§2.6.7 第一层;与**最新那条改 oplog 的迁移**(今为
+/// **0035**)文本**逐字同源,含语句
 /// 内注释**——sqlite_schema 保存的是语句原文,任何漂移都会被下方「规范化 sqlite_schema
 /// 比对」在压实现场拒绝,不是靠人眼对齐。首跑就抓到过:常量少了迁移里的两段行内注释,
 /// 比对当场红——这正是比对该有的灵敏度,修法是把常量对齐迁移原文,不是放松比对)。
@@ -65,6 +66,9 @@ const OPLOG_TABLE_DDL: &str = "CREATE TABLE {name} (
         -- 设备 profile 多实例寄存器(identity-plan §2.1):同样无 create、无 tombstone,
         -- 但 entity_id = 该设备的 device_id(不是固定字面量),故无单行钉死。
         OR (entity = 'device' AND kind = 'set_field')
+        -- 条目留言(identity-plan §4.1):有真实出生事件、要能删,故 create + tombstone;
+        -- **刻意无 set_field** —— 留言不可编辑,改错了删掉重写。
+        OR (entity = 'comment' AND kind IN ('create', 'tombstone'))
     )
 )";
 
@@ -374,10 +378,11 @@ fn compact_inner(conn: &mut Connection, fp: FailPointOpt) -> Result<CompactRepor
     schema_probes(&tx, &new_device_id)?;
     // 1-5. 严格电池(单一来源,boot 引导审计同一套)。
     boot::strict_battery(&tx)?;
-    // 6. 终态等价:七表逐行逐字段与压实前相等;sync_meta 白名单外逐键不变。
+    // 6. 终态等价:用户数据表逐行逐字段与压实前相等;sync_meta 白名单外逐键不变。
+    //    ⚠ 别在注释里数张数(0035 起是九张)——数字是唯一一种改了代码还看不出已经错了的写法。
     let post_tables = table_fingerprints(&tx)?;
     if pre_tables != post_tables {
-        return Err("压实自验收:用户数据七表与压实前不相等(必是 bug),拒绝提交".into());
+        return Err("压实自验收:用户数据表与压实前不相等(必是 bug),拒绝提交".into());
     }
     let post_meta = meta_all(&tx)?;
     let allowed: &[&str] = if configured {
@@ -728,6 +733,45 @@ fn synthesize_baseline(tx: &Connection) -> Result<Vec<(String, String, String, V
             ));
         }
     }
+    // comments(identity-plan §4.3 第 5 条):每条现存留言一条 create,payload **恰四键**。
+    // **必须排在 items 之后**(因果前驱:回放 comment create 要求宿主行已在,否则走
+    // DependencyMissing)。两类「不合成」是天然的、不必特判:已 tombstone 的留言行已不在;
+    // 已死 item 的留言也随 FK CASCADE 一起消失了。
+    //
+    // ⚠️ 内存:本函数返回整份 Vec,留言正文会随之整批物化 —— 这**不是留言引入的**
+    // (items 的 content 今天就在同一个 Vec 里),但留言把同一个量加大一档。已知上界 ≈
+    // 全部条目正文 + 全部留言正文 + pre/post 两份表指纹;设计审明确**排除**在 negative
+    // assurance 之外,债记 progress-log 314,触发升级的条件 = 给壳层暴露 compact,或真实库
+    // 正文规模显著增长。
+    {
+        let mut stmt = tx
+            .prepare(
+                "SELECT id, item_id, content, created_at, born_device FROM item_comment ORDER BY id",
+            )
+            .map_err(|e| e.to_string())?;
+        let rows: Vec<(String, String, String, String, Option<String>)> = stmt
+            .query_map([], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
+            })
+            .map_err(|e| e.to_string())?
+            .collect::<rusqlite::Result<_>>()
+            .map_err(|e| e.to_string())?;
+        for (id, item_id, content, created_at, born_device) in rows {
+            ops.push((
+                "comment".into(),
+                id,
+                "create".into(),
+                json!({
+                    "item_id": item_id,
+                    "content": content,
+                    "created_at": created_at,
+                    // 与 items.born_device 同理:史实,压实换 device_id 也绝不重写;
+                    // null = 作者未知(跨空间搬迁而来)。
+                    "born_device": born_device,
+                }),
+            ));
+        }
+    }
     Ok(ops)
 }
 
@@ -827,8 +871,9 @@ fn probe_hlc(device_id: &str, n: u32) -> String {
         .encode()
 }
 
-/// 八张用户数据表的逐行指纹(§2.6.6 终态等价;图字节以 sha256 入指纹;0028 起
-/// 含 space_profile、0033 起含 device_profile——名字与别名也是用户数据,压实前后
+/// 用户数据表的逐行指纹(§2.6.6 终态等价;图字节以 sha256 入指纹;0028 起
+/// 含 space_profile、0033 起含 device_profile、0035 起含 item_comment——名字 / 别名 /
+/// 留言都是用户数据,压实前后
 /// 必须逐字相等)。
 fn table_fingerprints(tx: &Connection) -> Result<Vec<Vec<String>>, String> {
     let text_rows = |sql: &str| -> Result<Vec<String>, String> {
@@ -858,6 +903,12 @@ fn table_fingerprints(tx: &Connection) -> Result<Vec<Vec<String>>, String> {
         text_rows(
             "SELECT revision_id||'|'||item_id||'|'||content||'|'||archived_at \
              FROM item_revisions ORDER BY revision_id",
+        )?,
+        // item_comment 全列(identity-plan §4.3 第 12 条)。quote():born_device NULL
+        // (作者未知)不与某个恰好叫「∅」的值同指纹——与 device_profile.alias 同款。
+        text_rows(
+            "SELECT id||'|'||item_id||'|'||content||'|'||created_at||'|'||quote(born_device) \
+             FROM item_comment ORDER BY id",
         )?,
     ];
     // item_image:元数据 + 字节 sha256(BLOB 不进字符串拼接)。
@@ -1006,9 +1057,89 @@ mod tests {
         conn.execute("DELETE FROM sync_replay_active", []).unwrap();
     }
 
+    /// 压实往返带留言(identity-plan §4.8 锚 7):基线里 **item → comment 的顺序**、
+    /// 留言四列零丢、**署名绝不被重写**(压实换掉本机 device_id,但署名指的是「当年那台」),
+    /// 且 compact 自带的表指纹自验收(现含 item_comment 全列)必须通过。
+    ///
+    /// ⚠ 只验**语义往返**;内存峰值那格是本笔明确延期的债(§4.6.2),**不在这里断言**
+    /// (设计审二轮 M5 点名删掉过一句「验大正文路径不整批复制」的假承诺)。
+    #[test]
+    fn compact_round_trips_comments_and_never_rewrites_their_author() {
+        let mut p = peer("cmt-compact");
+        let host = notes::capture(&mut p.conn, &mut p.clock, "宿主").unwrap();
+        let cid = crate::comments::add(&mut p.conn, &mut p.clock, &host, "压实前写的").unwrap();
+        let old_device: String = p
+            .conn
+            .query_row("SELECT born_device FROM item_comment WHERE id = ?1", [&cid], |r| r.get(0))
+            .unwrap();
+        // 再来一条**搬迁来的**留言(`born_device` = NULL,作者未知)——它是本案刻意留的
+        // 语义,基线合成必须把 null 原样写进 payload、压实后行上仍是 NULL
+        // (codex 实现审二弹 L2)。走可信语境直插,那正是跨空间导入用的那条路。
+        let moved = "01CMTMVED00000000000000000";
+        p.conn.execute("INSERT INTO sync_replay_active (flag) VALUES (1)", []).unwrap();
+        p.conn
+            .execute(
+                "INSERT INTO item_comment (id, item_id, content, created_at, born_device) \
+                 VALUES (?1, ?2, '搬来的', '2026-08-07T12:00:00.000Z', NULL)",
+                (moved, &host),
+            )
+            .unwrap();
+        p.conn.execute("DELETE FROM sync_replay_active", []).unwrap();
+        crate::oplog::comment_create(&p.conn, &mut p.clock, moved).unwrap();
+
+        let report = compact(&mut p.conn).expect("压实必须过(含表指纹自验收)");
+        assert_ne!(report.new_device_id, old_device, "压实换了本机身份");
+
+        // 行零丢、署名仍是**当年那台**。
+        let (content, born): (String, Option<String>) = p
+            .conn
+            .query_row(
+                "SELECT content, born_device FROM item_comment WHERE id = ?1",
+                [&cid],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(content, "压实前写的");
+        assert_eq!(born.as_deref(), Some(old_device.as_str()), "署名是史实,压实绝不重写");
+        // 搬迁来的那条:NULL 是**规范表示**(作者未知),压实既不许把它填成本机、
+        // 也不许把它连行带走。
+        let (mc, mb): (String, Option<String>) = p
+            .conn
+            .query_row(
+                "SELECT content, born_device FROM item_comment WHERE id = ?1",
+                [moved],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(mc, "搬来的");
+        assert_eq!(mb, None, "作者未知的留言压实后仍是 NULL,不许被填成压实那台");
+
+        // 基线顺序:comment create 必须晚于宿主 item create(因果前驱)。
+        let item_hlc: String = p
+            .conn
+            .query_row(
+                "SELECT hlc FROM oplog WHERE entity='item' AND entity_id=?1 AND kind='create'",
+                [&host],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let cmt_hlc: String = p
+            .conn
+            .query_row(
+                "SELECT hlc FROM oplog WHERE entity='comment' AND entity_id=?1 AND kind='create'",
+                [&cid],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(item_hlc < cmt_hlc, "基线里 comment 必须排在它的 item 之后");
+
+        // 压实后的库要能直接供快照(strict_battery 是那条路的闸)。
+        crate::sync::boot::strict_battery(&p.conn).expect("压实后电池必须过");
+    }
+
     /// 工序1 的 epoch 分支覆盖(codex 复审 §7):done_at 非 NULL 时,压实基线必须补发
     /// done_at set_field(HLC 晚于 create)且值零丢——`if let Some(d) = done` 分支此前
-    /// 全走 NULL、未被执行。compact 内含七表指纹自验收(现含 done_at),丢值会当场红。
+    /// 全走 NULL、未被执行。compact 内含表指纹自验收(现含 done_at),丢值会当场红。
     #[test]
     fn compact_preserves_done_at_and_emits_baseline_set_field() {
         let mut p = peer("done-at");
@@ -1031,7 +1162,7 @@ mod tests {
             origin_seq: 1,
         };
         replay::apply_remote_op(&mut p.conn, &mut p.clock, &op).expect("done_at 落值");
-        compact(&mut p.conn).expect("带 done_at 压实必须成功(battery + 七表指纹自验收)");
+        compact(&mut p.conn).expect("带 done_at 压实必须成功(battery + 表指纹自验收)");
         let got: Option<String> = p
             .conn
             .query_row("SELECT done_at FROM items WHERE id = ?1", [&id], |r| r.get(0))
@@ -1053,7 +1184,7 @@ mod tests {
         assert!(done_hlc > create_hlc, "done_at 基线 set_field 的 HLC 必须晚于 create");
     }
 
-    /// space profile 随压实走(0028,space-name-sync-plan §4.5):行保留(七表指纹)、
+    /// space profile 随压实走(0028,space-name-sync-plan §4.5):行保留(进表指纹)、
     /// 基线恰一条 space op;**null 清名也合成**(行存在就合成,含 value:null——否则
     /// 压实把清名写丢背书,battery 双向审计当场红)。
     #[test]
@@ -1061,7 +1192,7 @@ mod tests {
         let mut p = peer("space-name");
         notes::capture(&mut p.conn, &mut p.clock, "有点数据").unwrap();
         crate::spaces::set_space_name(&mut p.conn, &mut p.clock, "家庭").unwrap();
-        compact(&mut p.conn).expect("有名压实必须成功(自验收含 battery+七表指纹)");
+        compact(&mut p.conn).expect("有名压实必须成功(自验收含 battery+表指纹)");
         assert_eq!(crate::spaces::space_name(&p.conn).unwrap().as_deref(), Some("家庭"));
         let (ops, value): (i64, Option<String>) = p
             .conn

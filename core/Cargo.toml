@@ -83,3 +83,6 @@ winapi-util = "0.1"
 [dev-dependencies]
 # 传输层集成测:起真同步服务(随机端口),双库端到端(建账户→配对→引导→实时互通)。
 zhujian-syncd = { path = "../server" }
+# 测试临时目录扫尾(见 src/test_temp_cleanup.rs):进程加载时跑一次,不依赖任何具体
+# 测试被选中执行——`cargo test <filter>` 只挑子集跑时也不漏扫。
+ctor = "0.2"

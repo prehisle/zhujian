@@ -79,6 +79,9 @@ type Deps = {
   isCaptureSaving: () => boolean;
   /** 当前空间列表(spacesCache 影子):移动入口按数量决定是否出现、picker 列它。 */
   getSpaces: () => SpaceInfo[];
+  /** 开留言层(main.ts openCommentsFor,与卡上 💬 徽章同一个入口)。**N=0 时这里是
+   *  唯一入口**——徽章 N=0 不显示,没有它第一条留言就无从写起(§4.7 第 1 条)。 */
+  openComments: (itemId: string) => void;
 };
 
 const STATUSES: { key: TaskStatus; label: string }[] = [
@@ -204,7 +207,12 @@ function renderActions(item: TimelineItem): string {
       `<button data-pact="move-ack" class="p">我已处理</button></div>`
     : "";
   const task = isTaskStage(item.stage);
-  const acts: string[] = [actBtn("edit", "编辑"), actBtn("tags", "标签"), actBtn("addimg", "加图")];
+  const acts: string[] = [
+    actBtn("edit", "编辑"),
+    actBtn("tags", "标签"),
+    actBtn("addimg", "加图"),
+    actBtn("comment", "留言"),
+  ];
   if (!task) acts.push(actBtn("promote", "转待办"));
   if (item.stage === "todo") acts.push(actBtn("revert", "撤回为灵感", { warn: true }));
   if (item.stage === "done") acts.push(actBtn("seal", "入归档册"));
@@ -575,8 +583,9 @@ function onTimelineClick(e: Event) {
   }
   // 面板内其余区域(textarea/输入框等)不冒泡成开合。
   if (t.closest(".panel")) return;
-  // 勾框与缩略图各有其主(main.ts),不抢。
-  if (t.closest(".tick") || t.closest(".thumb")) return;
+  // 勾框、缩略图、留言徽章各有其主(main.ts),不抢——徽章漏在这里的话,点它会连带
+  // 把操作面板开合一次(留言层滑上来,底下的面板悄悄换了态)。
+  if (t.closest(".tick") || t.closest(".thumb") || t.closest(".cm-badge")) return;
   const card = t.closest<HTMLElement>("article.card[data-id]");
   if (!card) return;
   const id = card.dataset.id!;
@@ -626,6 +635,12 @@ function handleAct(act: string, card: HTMLElement) {
     case "addimg":
       clearConfirm();
       void addImage(session.id);
+      return;
+    case "comment":
+      // 留言层盖在面板之上;面板留着不收(收层回来还在原处)。写/删由留言层自己走
+      // 命令与刷新,不经 run()——它不是面板的业务写。
+      clearConfirm();
+      deps.openComments(session.id);
       return;
     case "move":
       clearConfirm();

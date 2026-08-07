@@ -389,6 +389,47 @@ export const addItemImage = (space: string, itemId: string, mime: string, dataB6
 export const deleteItemImage = (space: string, imageId: string) =>
   invoke<void>("delete_item_image", { spaceId: space, imageId });
 
+// ---- 条目留言(identity-plan §4,0035;命令面 315 已备好,这里是第③笔的调用层) -----
+//
+// 两个类型是 core `comments::Comment` / `CommentPage` 的镜像(两壳都直接返回 core 的类型,
+// 故全仓只有桌面 `src/item-comments.ts` 与这里两份 TS 抄写,字段名即 Rust 字段名)。
+
+export type Comment = {
+  id: string;
+  content: string;
+  created_at: string;
+  /** 出生设备,null = 作者未知(唯一来源是跨空间搬迁 §4.5)。经 identity.ts 的
+   *  `authorLabel` 翻成人话——口径与卡片署名 chip 刻意不同,见那里。 */
+  born_device: string | null;
+};
+
+/** 一页留言(最近优先)。`next_cursor` 是 `(created_at, id)` 元组,serde 序列化成数组
+ *  ——原样收下、原样传回,前端不解释它的内部结构。 */
+export type CommentPage = {
+  rows: Comment[];
+  next_cursor: [string, string] | null;
+  has_more: boolean;
+};
+
+/** 写一条留言。四道校验(非空 / 200 KiB / 宿主在 / 500 软闸)全在后端,前端不预判。 */
+export const addItemComment = (space: string, itemId: string, content: string) =>
+  invoke<string>("add_item_comment", { spaceId: space, itemId, content });
+
+/** 销毁一条留言(**不进回收站**;UI 两拍确认兜)。行不在 = 幂等 no-op。 */
+export const deleteItemComment = (space: string, id: string) =>
+  invoke<void>("delete_item_comment", { spaceId: space, id });
+
+/** 一页留言。cursor = 上一页的 next_cursor,null = 第一页。 */
+export const listItemComments = (
+  space: string,
+  itemId: string,
+  cursor: [string, string] | null,
+) => invoke<CommentPage>("list_item_comments", { spaceId: space, itemId, cursor });
+
+/** 每条目留言数(徽章用):一次聚合读,零留言的条目不在返回里。 */
+export const itemCommentCounts = (space: string) =>
+  invoke<Record<string, number>>("item_comment_counts", { spaceId: space });
+
 // ---- 同步:创号 / 邀请(phone-space-plan,与桌面对称;写类命令显式 space、正常决议) ----
 
 /** 创号结果:core 一旦提交,恢复码必达(强制仪式的数据面);post-commit 阶段

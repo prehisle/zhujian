@@ -96,7 +96,7 @@ pub struct RemoteOp {
 /// alias 值域)、item create 的 `born_device` 值域(26 位 ULID ∪ null,**缺键合法**——
 /// 老端的历史 create op 永远长不出这个键,判严 = 把那台设备整条 op 流打进持久隔离,
 /// identity-plan §3.5)、`born_device` 进「协议禁 set_field」那一臂。
-pub(crate) const VALIDATOR_VER: i64 = 5;
+pub(crate) const VALIDATOR_VER: i64 = 6;
 
 /// typed poison 错误分型(epoch-plan §4):`validate_op_shape` 与 `apply_remote_op`
 /// 返回**同一枚举**,分型在源头、不靠错误字符串事后分类。engine 按型分道:
@@ -217,6 +217,9 @@ pub fn apply_remote_op(
         ("image", "image_tombstone") => apply_image_tombstone(&tx, op)?,
         ("space", "set_field") => apply_space_set_field(&tx, op)?,
         ("device", "set_field") => apply_device_set_field(&tx, op)?,
+        ("comment", "create") => apply_comment_create(&tx, op)?,
+        // 留言销毁与 item/topic 同一条处置:DELETE 该行、行本就不在则幂等。
+        ("comment", "tombstone") => apply_entity_tombstone(&tx, "item_comment", &op.entity_id)?,
         _ => unreachable!("词汇表已在入口校验"),
     };
 
@@ -407,6 +410,81 @@ fn apply_device_set_field(tx: &Connection, op: &RemoteOp) -> Result<Outcome, OpE
         (&op.entity_id, &value),
     )
     .map_err(|e| db_err("回放 device set_field 失败", e))?;
+    Ok(Outcome::Applied)
+}
+
+// ---- 分发:comment(条目留言,identity-plan §4) ------------------------------------
+
+/// comment create:落行。**四道判断的顺序是规格钉死的**(identity-plan §4.3 第 4 条,
+/// 设计审二轮 M1),因为回放是「**先把当前 op 插进日志,再执行 apply**」:
+///
+/// 1. 解析 payload;
+/// 2. **每 comment 至多一条 create**(照 `apply_image_add` 的 `add_count != 1`);
+/// 3. 自身 tombstone → `SuppressedByTombstone`(sticky);
+/// 4. 宿主 item 已死 → `ParentGone`;宿主行不在且无 tombstone → `DependencyMissing`。
+///
+/// ⚠ 第 2 步**必须在第 3 步之前**:反过来的话,墓碑在场时会先早返回,而那条重复的
+/// create **已经落进日志了** —— 随后 boot 的 `audit_create_multiplicity` 会以「重复
+/// create」拒掉整个库。
+fn apply_comment_create(tx: &Connection, op: &RemoteOp) -> Result<Outcome, OpError> {
+    let inv = OpError::InvalidOp;
+    let p = &op.payload;
+    let item_id = str_field(p, "item_id").map_err(inv)?;
+
+    // ② 每实体恰一条 create(shape 层管形态,这里管日志里的**多重性**)。
+    let create_count: i64 = tx
+        .query_row(
+            "SELECT COUNT(*) FROM oplog \
+             WHERE entity = 'comment' AND entity_id = ?1 AND kind = 'create'",
+            [&op.entity_id],
+            |r| r.get(0),
+        )
+        .map_err(local)?;
+    if create_count != 1 {
+        return Err(inv(format!(
+            "回放异常:comment {} 已有 create,重复的 create 拒收",
+            op.entity_id
+        )));
+    }
+
+    // ③ 自身墓碑 sticky:留言删了就是删了,迟到的 create 不复活它。
+    if has_tombstone(tx, "comment", &op.entity_id).map_err(local)? {
+        return Ok(Outcome::SuppressedByTombstone);
+    }
+
+    // ④ 宿主:已死 = 只记账(行由 FK CASCADE 清过,且本就不该重建);
+    //    行不在又没有墓碑 = 因果未到,挂起重试(engine 既有自愈)。
+    if has_tombstone(tx, "item", &item_id).map_err(local)? {
+        return Ok(Outcome::ParentGone);
+    }
+    if !row_exists(tx, "items", &item_id).map_err(local)? {
+        return Err(OpError::DependencyMissing(format!(
+            "回放依赖未到:comment {} 的宿主 item {item_id} 行缺失且无 tombstone(引擎挂起重试,§5.3)",
+            op.entity_id
+        )));
+    }
+
+    if row_exists(tx, "item_comment", &op.entity_id).map_err(local)? {
+        // op_id 幂等已挡重放;撞上已存在的行 = 状态型非法,不是可合并的冲突(照 item create)。
+        return Err(inv(format!(
+            "回放异常:comment {} 的 create 撞上已存在的行",
+            op.entity_id
+        )));
+    }
+
+    tx.execute(
+        "INSERT INTO item_comment (id, item_id, content, created_at, born_device) \
+         VALUES (?1, ?2, ?3, ?4, ?5)",
+        (
+            &op.entity_id,
+            &item_id,
+            str_field(p, "content").map_err(inv)?,
+            str_field(p, "created_at").map_err(inv)?,
+            // NULL = 作者未知,是规范表示(跨空间搬迁的留言,§4.5)。
+            opt_str_field(p, "born_device").map_err(inv)?,
+        ),
+    )
+    .map_err(|e| db_err(&format!("回放 comment create 失败({})", op.entity_id), e))?;
     Ok(Outcome::Applied)
 }
 
@@ -1250,6 +1328,32 @@ fn validate_born_stage_value(v: &Value) -> Result<(), String> {
 /// 这里用**对称的 Rfc3339 解析**校验——format→parse 往返保证绝不误拒任何合法写入值(否则 v2
 /// 发的 done_at 会被别端自相拒收、把同步搞分叉),同时拒空串/垃圾/非法日期,兑现头注「防
 /// NaN月NaN日」。done_at **只增不清**:协议值恒非空字符串——null 落 `other` 臂被拒,守「永不清除」。
+/// comment `created_at` 的**定宽**规范判据(identity-plan §4.6.1,设计审三轮 M2)。
+///
+/// 判据 = **parse → 用同一个具名 formatter 重新格式化 → 逐字相等**,而**不是**
+/// `parse RFC3339 && ends_with('Z')`:后者挡不住小数秒宽度,而宽度不定会破坏
+/// 「按时间展示」的语义顺序(TEXT 序里 `.` 0x2E < `Z` 0x5A,`...:00Z` 会排在真实更晚的
+/// `...:00.1Z` 前面)。同一条判据顺带拒掉带 offset 的写法(`+08:00` 重格式化成 `Z` 形
+/// 即不等)与超毫秒精度(`.123456Z` → `.123Z` 不等)。
+///
+/// 唯一的格式定义在 [`crate::repo::format_iso_millis`],产出与校验共用它。
+fn validate_comment_created_at(s: &str) -> Result<(), String> {
+    let t = time::OffsetDateTime::parse(s, &time::format_description::well_known::Rfc3339)
+        .map_err(|e| format!("comment created_at 非合法 RFC3339 时间戳({s:?}):{e}"))?;
+    if crate::repo::format_iso_millis(t) != s {
+        return Err(format!(
+            "comment created_at 必须是定宽规范串 YYYY-MM-DDTHH:MM:SS.sssZ(恰 24 字节,UTC),收到:{s:?}"
+        ));
+    }
+    Ok(())
+}
+
+/// 测试转发:让 comment 的行为锚能验「本地产出的值过的是同一把尺」。
+#[cfg(test)]
+pub(crate) fn validate_comment_created_at_for_test(s: &str) -> Result<(), String> {
+    validate_comment_created_at(s)
+}
+
 fn validate_done_at_value(v: &Value) -> Result<(), String> {
     match v {
         Value::String(s) => {
@@ -1482,6 +1586,57 @@ pub(crate) fn validate_op_shape(op: &RemoteOp) -> Result<(), OpError> {
             }
             let field = str_field(p, "field").map_err(inv)?;
             validate_device_field_shape(&field, field_value(p).map_err(inv)?)?;
+        }
+        ("comment", "create") => {
+            // 值域逐键写死(identity-plan §4.6.1,设计审二轮 M3:原先只说「正文 200 KB +
+            // 四键约 100 B」,而那个「约 100 B」没有依据——宿主缺失那条路根本不落表,FK
+            // 替不了 item_id 限长)。补齐后单条 create 的 CBOR ≈ 205 KiB < 256 KiB 批帧预算。
+            if !crate::clock::is_canonical_ulid(&op.entity_id) {
+                return Err(inv(format!(
+                    "comment op 的 entity_id 必须是 26 位规范 ULID,收到:{}",
+                    op.entity_id
+                )));
+            }
+            // **恰四键**:comment 是新 entity(只有 v35+ 发得出),不存在「老端缺键」的
+            // 兼容面,故可以严。代价已记 §4.12 第 1 条:日后连非语义元数据也不能直接追加,
+            // 扩展必须走新 kind / 新 entity。
+            let obj = p.as_object().ok_or_else(|| inv("comment create 的 payload 必须是对象".into()))?;
+            const KEYS: [&str; 4] = ["item_id", "content", "created_at", "born_device"];
+            if obj.len() != KEYS.len() || !KEYS.iter().all(|k| obj.contains_key(*k)) {
+                return Err(inv(format!(
+                    "comment create 的 payload 必须恰含 {KEYS:?},收到:{:?}",
+                    obj.keys().collect::<Vec<_>>()
+                )));
+            }
+            let item_id = str_field(p, "item_id").map_err(inv)?;
+            if !crate::clock::is_canonical_ulid(&item_id) {
+                return Err(inv(format!(
+                    "comment create 的 item_id 必须是 26 位规范 ULID,收到:{item_id}"
+                )));
+            }
+            crate::repo::ensure_content_fits(&str_field(p, "content").map_err(inv)?).map_err(inv)?;
+            validate_comment_created_at(&str_field(p, "created_at").map_err(inv)?).map_err(inv)?;
+            match p.get("born_device") {
+                Some(Value::Null) => {}
+                Some(Value::String(s)) if crate::clock::is_canonical_ulid(s) => {}
+                other => {
+                    return Err(inv(format!(
+                        "comment create 的 born_device 必须是 26 位规范 ULID 或 null(作者未知),收到:{other:?}"
+                    )))
+                }
+            }
+        }
+        ("comment", "tombstone") => {
+            if !crate::clock::is_canonical_ulid(&op.entity_id) {
+                return Err(inv(format!(
+                    "comment op 的 entity_id 必须是 26 位规范 ULID,收到:{}",
+                    op.entity_id
+                )));
+            }
+            // 恰零键(照 item/topic tombstone 的 payload,只是这里显式钉死)。
+            if !p.as_object().is_some_and(|o| o.is_empty()) {
+                return Err(inv(format!("comment tombstone 的 payload 必须是空对象,收到:{p}")));
+            }
         }
         _ => {
             // 词汇表外 = 版本偏斜(对端较新):挂起等升级,不隔离(epoch-plan §4)。

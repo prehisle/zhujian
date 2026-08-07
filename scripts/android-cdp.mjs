@@ -52,14 +52,18 @@ async function pageTarget() {
 
 async function evaluate(expr) {
   const p = await pageTarget();
-  const ws = new WebSocket(p.webSocketDebuggerUrl);
+  // 单条 CDP 调用的上限。默认 10s 够绝大多数断言;**阴性对照那种「专等失败」的跑法**
+// 每个失败的 until 都要等满超时,总时长会翻几倍 —— 那时用 CDP_TIMEOUT_MS 放宽。
+const CDP_TIMEOUT_MS = Number(process.env.CDP_TIMEOUT_MS || 10000);
+
+const ws = new WebSocket(p.webSocketDebuggerUrl);
   await new Promise((res, rej) => {
     ws.addEventListener("open", res, { once: true });
     ws.addEventListener("error", () => rej(new Error("ws 连接失败")), { once: true });
   });
   const id = 1;
   const out = await new Promise((res, rej) => {
-    const to = setTimeout(() => rej(new Error("CDP 超时")), 10000);
+    const to = setTimeout(() => rej(new Error("CDP 超时")), CDP_TIMEOUT_MS);
     ws.addEventListener("message", (ev) => {
       const m = JSON.parse(ev.data);
       if (m.id !== id) return;
@@ -96,7 +100,7 @@ async function session(fn) {
   const send = (method, params) =>
     new Promise((res, rej) => {
       const myId = ++id;
-      const to = setTimeout(() => rej(new Error(`CDP 超时: ${method}`)), 10000);
+      const to = setTimeout(() => rej(new Error(`CDP 超时: ${method}`)), CDP_TIMEOUT_MS);
       const onMsg = (ev) => {
         const m = JSON.parse(ev.data);
         if (m.id !== myId) return;

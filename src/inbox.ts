@@ -38,6 +38,13 @@ import {
   renderContent,
   wirePasteToAttach,
 } from "./item-images";
+import {
+  closeComments,
+  commentBadge,
+  loadCommentCounts,
+  openComments,
+  refreshOpenComments,
+} from "./item-comments";
 import type { View, ViewCtx } from "./notebook";
 import { applyTagColor } from "./tag-color";
 import { renderTagPicker } from "./tag-picker";
@@ -535,6 +542,10 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     if (mode === "ideas") {
       const sig = signatureChip(mountSpace, item.born_device);
       if (sig) timeT.append(sig);
+      // 留言徽章(§4.7):N=0 不显(那时的入口在 ⋯ 菜单的「留言」)。回收站不显——
+      // 那是「决定要不要销毁」的场景,不是读留言的场景(§4.4)。
+      const badge = commentBadge(mountSpace, item.id, () => void refresh());
+      if (badge) timeT.append(badge);
     }
     const body = el("div", { className: "note-body" });
 
@@ -1041,6 +1052,8 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         { label: "编辑", key: "E", run: openEdit },
         { label: "待办", key: "T", run: doPromote },
         { label: "标签", key: "L", run: openTopic },
+        // 留言(§4.7):N=0 时卡片上没有徽章,这里是写第一条的唯一入口。
+        { label: "留言", key: "Y", run: () => openComments(mountSpace, item.id, () => void refresh()) },
         { label: "复制", key: "C", feedback: copyFeedback },
         { label: "复制链接", key: "K", feedback: copyLinkFeedback },
       ];
@@ -1136,7 +1149,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     if (unmounted) return; // 死 mount 不再发起任何刷新(codex M1:防抢食模块级 pendingFocus)
     const seq = ++refreshSeq;
     try {
-      const [ideas, archived, stats, topics] = await Promise.all([
+      const [ideas, archived, stats, topics, , cmCounts] = await Promise.all([
         invoke<IdeaItem[]>("list_ideas"),
         invoke<IdeaItem[]>("list_archived"),
         // 本地周一 00:00 换成 UTC RFC3339 给后端(后端从不算本地时间,同 due_on 的哲学)。
@@ -1145,6 +1158,9 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         invoke<TopicItem[]>("list_topics"),
         // 设备名册(0033 署名):与列表**并发**取,不给渲染加一跳延迟。
         loadIdentity(mountSpace),
+        // 留言计数(0035 徽章):同样并发。它是**聚合计数**这一个真相源,列表另走
+        // 分页(§4.14.2 第 4 条)——别为了对齐把留言正文整批拉过来。
+        loadCommentCounts(mountSpace),
       ]);
       if (seq !== refreshSeq) return; // 有更晚的 refresh 已在途:旧响应不落 DOM(乱序覆盖/计数错位)
 
@@ -1177,7 +1193,20 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       // open inline editor survives. `todayKey` is folded in so the day-grouped 时间轴
       // relabels 今天→昨天 if the app sits open across midnight.
       const todayKey = new Date().toDateString();
-      const sig = JSON.stringify([active, filter.kind, filter.topics, q, todayKey, ideas, archived, stats, topics]);
+      // 留言计数进指纹:别的设备写了一条留言,列表数据一个字节都没变,只有徽章要
+      // 变数字——不进指纹的话 refocus 刷新会在这一格短路掉。
+      const sig = JSON.stringify([
+        active,
+        filter.kind,
+        filter.topics,
+        q,
+        todayKey,
+        ideas,
+        archived,
+        stats,
+        topics,
+        cmCounts,
+      ]);
       // `=== true`, not truthy: guards against a future caller wiring `refresh` as a
       // bare event handler, where a MouseEvent would otherwise count as a refocus.
       if (refocus === true && sig === lastSig) return;
@@ -1199,6 +1228,9 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       // down an open editor's document-level key listener (it would leak otherwise). After
       // the refocus short-circuit, so an idle refocus that keeps an open editor is untouched.
       hk.reset();
+      // 留言浮层:宿主还在就顺手把第一页重拉一遍(别的设备写的话自己冒出来),宿主
+      // 已经离开这个视图(删了 / 转了待办 / 移走了)就关掉——别让人对着不在了的条目写话。
+      refreshOpenComments(mountSpace, [...ideas, ...archived].map((i) => i.id));
       disarmConfirm(); // 卡片将被整批替换:在场确认的文档级监听一并收走(codex M3)
       if (closeActiveEdit) closeActiveEdit();
       counts.ideas = ideas.length;
@@ -1334,6 +1366,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       }
       unmounted = true;
       refreshSeq++; // 作废本 mount 的在途 refresh:迟到响应不许消费新 mount 的 pendingFocus(codex M1)
+      closeComments(); // 浮层 portal 在 body 上,不随视图根节点走:切视图/切空间必须自己收
       teardownViewKeys();
       hk.destroy(); // tear down the document keydown + any lingering menu listeners
       root.replaceChildren();

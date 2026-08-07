@@ -1,0 +1,198 @@
+/* 条目留言(identity-plan §4.7)——徽章 + 浮层。基调沿用「纸与朱墨」令牌。 */
+
+/* 卡片上的 💬 N 徽章:安静的小牌,和时间戳同一档存在感(N=0 根本不渲染)。 */
+.cm-badge {
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--ink-soft);
+  font-family: var(--font-sans);
+  font-size: 11px;
+  line-height: 1.5;
+  padding: 0 6px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+.cm-badge:hover {
+  border-color: var(--seal-line);
+  color: var(--seal);
+}
+
+/* 浮层:遮罩 + 居中面板。portal 到 <body>,不受卡片 overflow / 层叠上下文摆布
+   (同 ⋯ 菜单与看大图那两处栽过的坑)。 */
+.cm-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  background: rgba(24, 20, 14, 0.42);
+}
+
+.cm-panel {
+  width: min(560px, calc(100vw - 48px));
+  max-height: min(70vh, 640px);
+  display: flex;
+  flex-direction: column;
+  background: var(--raised);
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  box-shadow: var(--float-shadow);
+  overflow: hidden;
+}
+
+.cm-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+}
+.cm-title {
+  margin: 0;
+  font-family: var(--font-serif);
+  font-size: 15px;
+  color: var(--ink);
+}
+.cm-close {
+  border: none;
+  background: transparent;
+  color: var(--ink-faint);
+  font-size: 14px;
+  cursor: pointer;
+}
+.cm-close:hover {
+  color: var(--seal);
+}
+
+.cm-list {
+  overflow: auto;
+  padding: 6px 14px;
+  min-height: 0; /* flex item 不给 0 下限的话内部滚不动 */
+}
+
+.cm-item {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+}
+.cm-item:last-child {
+  border-bottom: none;
+}
+.cm-text {
+  margin: 0;
+  font-family: var(--font-serif);
+  font-size: 14px;
+  line-height: 1.65;
+  color: var(--ink);
+  white-space: pre-wrap; /* 留言原样保形:换行是作者写的 */
+  overflow-wrap: anywhere; /* 长串不撑破面板 */
+}
+.cm-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+  font-family: var(--font-sans);
+  font-size: 11px;
+  color: var(--ink-faint);
+}
+.cm-author {
+  color: var(--ink-soft);
+}
+.cm-del,
+.cm-no {
+  margin-left: auto;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--ink-faint);
+  font-family: var(--font-sans);
+  font-size: 11px;
+  padding: 0 4px;
+  cursor: pointer;
+}
+.cm-del:hover {
+  color: var(--seal);
+}
+/* 确认那一拍:问句在左、销毁在右,红字明说「不进回收站」。 */
+.cm-confirm {
+  margin-left: auto;
+  color: var(--seal);
+}
+.cm-del.danger {
+  margin-left: 0;
+  color: var(--seal);
+  border-color: var(--seal-line);
+  border-radius: 4px;
+}
+.cm-no {
+  margin-left: 0;
+}
+
+.cm-empty {
+  margin: 10px 0;
+  font-family: var(--font-sans);
+  font-size: 12px;
+  color: var(--ink-faint);
+}
+
+.cm-more {
+  margin: 0 14px 8px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--ink-soft);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  padding: 4px 0;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.cm-more:hover {
+  border-color: var(--seal-line);
+  color: var(--seal);
+}
+
+.cm-err {
+  margin: 0 14px 8px;
+  font-family: var(--font-sans);
+  font-size: 12px;
+  color: var(--seal);
+}
+
+.cm-compose {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+  padding: 10px 14px;
+  border-top: 1px solid var(--line);
+  background: var(--raised-edge);
+}
+.cm-input {
+  flex: 1;
+  min-width: 0;
+  resize: none;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--raised);
+  color: var(--ink);
+  font-family: var(--font-serif);
+  font-size: 14px;
+  line-height: 1.6;
+  padding: 6px 8px;
+}
+.cm-input:focus {
+  outline: none;
+  border-color: var(--seal-line);
+}
+.cm-send {
+  border: 1px solid var(--seal-line);
+  background: var(--seal-tint);
+  color: var(--seal);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  padding: 6px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.cm-send:disabled {
+  opacity: 0.5;
+  cursor: default;
+}

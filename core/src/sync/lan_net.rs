@@ -835,6 +835,54 @@ const DIAL_CONNECT_SECS: u64 = 2;
 /// 发出 Intro 后等 Accept(与监听侧「Accept 发出后等 Confirm ≤2s」同一档,§10)。
 const DIAL_ACCEPT_SECS: u64 = 2;
 
+/// 出站握手那两道计时(整只任务 [`HANDSHAKE_SECS`] / 等 Accept [`DIAL_ACCEPT_SECS`])。
+/// **测试可整体拉长**,见 [`DialBudgetGuard`]。
+fn dial_handshake_budget() -> Duration {
+    #[cfg(test)]
+    if let Some(secs) = DIAL_BUDGET_SECS.with(|c| c.get()) {
+        return Duration::from_secs(secs);
+    }
+    Duration::from_secs(HANDSHAKE_SECS)
+}
+
+fn dial_accept_budget() -> Duration {
+    #[cfg(test)]
+    if let Some(secs) = DIAL_BUDGET_SECS.with(|c| c.get()) {
+        return Duration::from_secs(secs);
+    }
+    Duration::from_secs(DIAL_ACCEPT_SECS)
+}
+
+#[cfg(test)]
+thread_local! {
+    static DIAL_BUDGET_SECS: std::cell::Cell<Option<u64>> = const { std::cell::Cell::new(None) };
+}
+
+/// 出站握手计时的覆盖位(RAII 把手,理由同 [`IdlePollGuard`])。
+///
+/// **为什么非有它不可**:验「撤位当场取消在飞的出站握手」时,阳性判据是「socket 现在就
+/// 关了」,而它之所以**可证伪**,全靠「没人取消的话这只任务得等自己的计时到点才落地」。
+/// 生产的那两个数是 2s / 10s,于是用例的等待窗口只能取 1s —— 满载并行下一次调度抖动就
+/// 能把这道余量吃光,那正是 302 / 310 记的两只 flaky(真机上从来没有这个问题:它们红在
+/// 宿主调度,不在被测行为)。把余量从秒级拉到分钟级,窗口宽度就与负载无关了。
+#[cfg(test)]
+pub(crate) struct DialBudgetGuard;
+
+#[cfg(test)]
+impl DialBudgetGuard {
+    pub(crate) fn install(secs: u64) -> DialBudgetGuard {
+        DIAL_BUDGET_SECS.with(|c| c.set(Some(secs)));
+        DialBudgetGuard
+    }
+}
+
+#[cfg(test)]
+impl Drop for DialBudgetGuard {
+    fn drop(&mut self) {
+        DIAL_BUDGET_SECS.with(|c| c.set(None));
+    }
+}
+
 /// 一台对端的拨号退避(§7:15s→300s 抖动)。
 struct Backoff {
     /// 下次可发起的时刻。
@@ -1119,7 +1167,7 @@ async fn dial_task(
     peer_pubkey: [u8; 32],
     targets: Vec<std::net::SocketAddrV4>,
 ) {
-    let _ = tokio::time::timeout(Duration::from_secs(HANDSHAKE_SECS), async {
+    let _ = tokio::time::timeout(dial_handshake_budget(), async {
         for addr in targets {
             if matches!(dial_one(&b, &peer, &peer_pubkey, addr).await, DialStep::Done) {
                 return;
@@ -1162,7 +1210,7 @@ async fn dial_one(
         return DialStep::Unreachable;
     }
     let Ok(Ok(accept)) = tokio::time::timeout(
-        Duration::from_secs(DIAL_ACCEPT_SECS),
+        dial_accept_budget(),
         read_wire(&mut stream, lan::FramePhase::PreAuth),
     )
     .await

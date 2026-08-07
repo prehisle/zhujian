@@ -16,6 +16,7 @@
 //!   特性——不装则首次 wss:// 在 `ClientConfig::builder()` panic(84 真机踩过)。
 
 pub mod clock;
+pub mod comments;
 pub mod db;
 pub mod epoch;
 mod frindex;
@@ -29,4 +30,6 @@ pub mod repo;
 pub mod spaces;
 pub mod sync;
 pub mod task;
+#[cfg(test)]
+mod test_temp_cleanup;
 pub mod thumbs;

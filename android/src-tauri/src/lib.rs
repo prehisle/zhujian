@@ -32,7 +32,7 @@ use tokio::sync::mpsc::UnboundedReceiver;
 use zhujian_core::spaces;
 use zhujian_core::sync::supervisor::SpaceSupervisor;
 use zhujian_core::sync::transport::{self, SyncEvent};
-use zhujian_core::{clock, db, identity, images, notes, repo, task, thumbs};
+use zhujian_core::{clock, comments, db, identity, images, notes, repo, task, thumbs};
 
 /// 启动闸(工序 6;本轮升级为**类型化三种 status、四种封锁 kind**,codex 设计审
 /// H3/H4 + 实现审 H1):
@@ -1338,6 +1338,54 @@ async fn delete_item_image(space_id: String, image_id: String, coord: State<'_, 
     coord.write(&space_id, |conn, clock| images::remove(conn, clock, &image_id)).await
 }
 
+// ---- 条目留言(identity-plan §4;第②笔命令面,与桌面壳逐字对称)----------------
+//
+// **DTO 直接用 core 的 `comments::Comment` / `CommentPage`**:§4.14.2 第 1 条要的
+// 「两壳契约同源」若靠两个壳各抄一份结构体维持,就只是纪律;返回同一个类型,漂移
+// 在编译期即不可能。写命令一律走 `coord.write`(空间锁 + 相位),**不许直开旁路连接**。
+
+/// 写一条留言。四道校验(非空 / 200 KiB / 宿主在 / 500 软闸)全在 `comments::add`
+/// 的同一个事务里,壳不复述也不预判。
+#[tauri::command]
+async fn add_item_comment(
+    space_id: String,
+    item_id: String,
+    content: String,
+    coord: State<'_, Coord>,
+) -> Result<String, String> {
+    coord.write(&space_id, |conn, clock| comments::add(conn, clock, &item_id, &content)).await
+}
+
+/// 销毁一条留言(**不进回收站**;UI 两拍确认兜)。行不在 = 幂等 no-op。
+#[tauri::command]
+async fn delete_item_comment(space_id: String, id: String, coord: State<'_, Coord>) -> Result<(), String> {
+    coord.write(&space_id, |conn, clock| comments::remove(conn, clock, &id)).await
+}
+
+/// 一页留言(最近优先)。`cursor` = 上一页的 `next_cursor`,null = 第一页。
+/// 读走只读直读前台库(同 list_timeline),不占写锁。
+#[tauri::command]
+fn list_item_comments(
+    space_id: String,
+    item_id: String,
+    cursor: Option<(String, String)>,
+    coord: State<'_, Coord>,
+) -> Result<comments::CommentPage, String> {
+    coord.with_read(&space_id, |conn| {
+        let cur = cursor.as_ref().map(|(ca, id)| (ca.as_str(), id.as_str()));
+        comments::list_for_item(conn, &item_id, cur)
+    })
+}
+
+/// 每条目留言数(徽章用):一次 `GROUP BY` 聚合读,不 N+1;零留言的条目不在返回里。
+#[tauri::command]
+fn item_comment_counts(
+    space_id: String,
+    coord: State<'_, Coord>,
+) -> Result<std::collections::HashMap<String, i64>, String> {
+    coord.with_read(&space_id, |conn| comments::counts_all(conn))
+}
+
 // ---- 同步命令面(与桌面对称:创号 / 邀请 / 加入 / 状态 / 改服务器,phone-space-plan) ----
 
 /// 同步状态快照(当前空间;变更另有 "sync-status" 事件实时推送)。非前台空间没有
@@ -1778,6 +1826,11 @@ pub fn run() {
             add_item_image,
             list_item_images,
             delete_item_image,
+            // 314 第②笔:条目留言命令面(UI 在第③笔,契约与桌面同源)
+            add_item_comment,
+            delete_item_comment,
+            list_item_comments,
+            item_comment_counts,
             // 120 UI 第一批的 core 加菜
             list_trash,
             purge_all_trash,
