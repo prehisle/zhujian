@@ -5,8 +5,12 @@
 // 桌面(src-tauri)与安卓壳各自的 lock 才决定真实编进 app 的版本;两端加密实现
 // 漂移会静默破协议(core 的黄金向量测试只护 core 自己 lock 的解析,护不到 app)。
 //
+// 它同时看住**第二件事**:两份 npm lock 里 `resolved` 的下载源必须是官方 registry
+// (318 实栽,见文件下半)。两件事都是「lock 里悄悄漂了个东西进来,而没有任何人会报错」,
+// 故合在同一道门禁里 —— 另起一个脚本等于又多一处要记得跑的清单项。
+//
 // 用法:node scripts/check-lock-drift.mjs
-// 全一致 = 退出 0;任一 crate 版本漂移 / 点名的 lock 缺失 = 非零响亮。
+// 全一致 = 退出 0;任一 crate 版本漂移 / npm 下载源非官方 / 点名的 lock 缺失 = 非零响亮。
 // 发版门禁之一(与 cargo audit 并列,见 docs/dev-and-testing.md)。
 
 import { readFileSync } from "node:fs";
@@ -63,8 +67,57 @@ for (const name of WATCH) {
   }
 }
 
+// ── 第二件:npm lock 里 `resolved` 的下载源(318 实栽,烧掉约一小时 + 两轮 CI)──
+// `npm install --package-lock-only` 会把本机 ~/.npmrc 的 registry **固化进 lock 的
+// `resolved`**,而本机那条今天仍写着 registry.npm.taobao.org(重定向到 npmmirror)。
+// CI 跑在 GitHub runner 上本就不该走国内镜像:镜像一 502,两条 release CI 全死在
+// `npm ci`(npm 会一直重试同一个 502 —— 桌面三平台各卡满 16 分钟才失败)。
+// 本地装包用什么源是 `.npmrc` 的事,**不该由 lock 替所有人决定**。
+// 这颗雷从 npmmirror 上线起就一直装填着,只是此前它没坏过;318 之后仍是零防护,故补此闸。
+const NPM_LOCKS = ["package-lock.json", "android/package-lock.json"];
+const OFFICIAL = "registry.npmjs.org";
+
+let srcDrift = false;
+for (const rel of NPM_LOCKS) {
+  const text = readFileSync(resolve(root, rel), "utf8"); // 缺文件不吞,同 Cargo.lock
+  const hosts = new Map(); // host(或非 https 的协议名)-> 条数
+  for (const m of text.matchAll(/"resolved":\s*"([^"]+)"/g)) {
+    const url = m[1];
+    const key = url.startsWith("https://")
+      ? url.slice("https://".length).split("/")[0]
+      : `非 https(${url.split(":")[0]})`;
+    hosts.set(key, (hosts.get(key) ?? 0) + 1);
+  }
+  const total = [...hosts.values()].reduce((a, b) => a + b, 0);
+  // 反向探针:一条都没抽出来,下面那句「全指向官方」就**平凡地**成立了(329 判例:
+  // 被验的性质在退化形下照样成立 = 假绿)。故先响亮判死提取器,而不是判它通过。
+  if (total === 0) {
+    srcDrift = true;
+    console.error(`DRIFT ${rel}: 一条 resolved 都没解析到 —— 提取器失灵或 lock 变了形,`);
+    console.error("        这不等于「全是官方源」。先修提取器再谈门禁结论。");
+    continue;
+  }
+  const bad = [...hosts.entries()].filter(([h]) => h !== OFFICIAL);
+  if (bad.length === 0) {
+    console.log(`  ok  ${rel} ${total} 处 resolved 全指向 ${OFFICIAL}`);
+  } else {
+    srcDrift = true;
+    console.error(`DRIFT ${rel}: resolved 指向了非官方源 ——`);
+    for (const [h, n] of bad) console.error(`        ${h}: ${n} 处`);
+  }
+}
+
 if (drift) {
   console.error("\nlockfile 漂移:先对齐版本(cargo update -p <crate> --precise <ver>)再过门禁。");
-  process.exit(1);
 }
-console.log("\nlock 门禁通过:关键 crate 版本全库一致。");
+if (srcDrift) {
+  console.error(
+    "\nnpm lock 的下载源漂了:CI 上 `npm ci` 会去够不着(或会 502)的源拉包,整条 release 打死。" +
+      "\n修法 = 纯 host 替换回 registry.npmjs.org(两个源路径结构一致,integrity 是内容哈希、不受影响)," +
+      "\n验证不能只看「字符串换对了」:把 lock 复制进临时目录真跑一次" +
+      "\n`npm ci --registry=https://registry.npmjs.org`,EXIT=0 才算数。" +
+      "\n以后跑 `npm install --package-lock-only` 一律显式带 --registry=https://registry.npmjs.org。",
+  );
+}
+if (drift || srcDrift) process.exit(1);
+console.log("\nlock 门禁通过:关键 crate 版本全库一致,npm 下载源全指向官方 registry。");

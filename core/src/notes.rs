@@ -659,7 +659,7 @@ mod tests {
 
     fn fresh_db() -> (rusqlite::Connection, Clock) {
         let n = COUNTER.fetch_add(1, Ordering::SeqCst);
-        let path = std::env::temp_dir()
+        let path = crate::test_temp::dir()
             .join(format!("ys-nb-notes-test-{}-{}.sqlite3", std::process::id(), n));
         let _ = std::fs::remove_file(&path);
         let conn = db::open(&path).expect("open migrated db");

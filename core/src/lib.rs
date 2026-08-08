@@ -18,6 +18,10 @@
 pub mod clock;
 pub mod comments;
 pub mod db;
+/// 同步实体登记表与结构锚(见模块头注):九个横切面「加实体要改几处」的单一清单。
+/// 纯锚,无生产消费者,故 `cfg(test)` —— 与 `transport_sources()` 同性质。
+#[cfg(test)]
+mod entity_registry;
 pub mod epoch;
 mod frindex;
 pub mod identity;
@@ -30,6 +34,8 @@ pub mod repo;
 pub mod spaces;
 pub mod sync;
 pub mod task;
+#[cfg(test)]
+mod test_temp;
 #[cfg(test)]
 mod test_temp_cleanup;
 pub mod thumbs;

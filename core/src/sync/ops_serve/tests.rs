@@ -28,7 +28,7 @@ fn vw(pairs: &[(&str, i64)]) -> VettedWatermarks {
 
 fn fresh_db() -> Connection {
     let n = COUNTER.fetch_add(1, Ordering::SeqCst);
-    let path = std::env::temp_dir()
+    let path = crate::test_temp::dir()
         .join(format!("ys-nb-opsserve-{}-{}.sqlite3", std::process::id(), n));
     let _ = std::fs::remove_file(&path);
     db::open(&path).expect("open migrated db")

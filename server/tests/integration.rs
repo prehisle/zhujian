@@ -38,7 +38,7 @@ fn key() -> SigningKey {
 /// 可调配置,返回实际地址。服务任务随本测试的 runtime 结束而消亡。
 async fn start(banned: &[&str], tweak: impl FnOnce(&mut Config)) -> SocketAddr {
     static N: AtomicU32 = AtomicU32::new(0);
-    let dir = std::env::temp_dir().join(format!(
+    let dir = zhujian_syncd::test_temp::dir().join(format!(
         "zhujian-syncd-it-{}-{}",
         std::process::id(),
         N.fetch_add(1, Ordering::Relaxed)
@@ -794,7 +794,7 @@ async fn silence_timeout_kills_and_ping_keeps_alive() {
 async fn registry_survives_restart_mailbox_does_not() {
     // §4:registry 落盘、信箱重启即失。
     static DIR: AtomicU32 = AtomicU32::new(0);
-    let dir: PathBuf = std::env::temp_dir().join(format!(
+    let dir: PathBuf = zhujian_syncd::test_temp::dir().join(format!(
         "zhujian-syncd-it-restart-{}-{}",
         std::process::id(),
         DIR.fetch_add(1, Ordering::Relaxed)
@@ -847,7 +847,7 @@ async fn start_with_admin_cfg(
     tweak: impl FnOnce(&mut Config),
 ) -> (SocketAddr, SocketAddr) {
     static N: AtomicU32 = AtomicU32::new(0);
-    let dir = std::env::temp_dir().join(format!(
+    let dir = zhujian_syncd::test_temp::dir().join(format!(
         "zhujian-syncd-it-admin-{}-{}",
         std::process::id(),
         N.fetch_add(1, Ordering::Relaxed)
@@ -1122,7 +1122,7 @@ async fn admin_entitlement_set_and_query_end_to_end() {
 /// 短 token 拒(≥32 字符,没钥匙不开门)。
 #[tokio::test]
 async fn admin_listen_rejects_non_loopback_and_short_token() {
-    let dir = std::env::temp_dir().join(format!("zhujian-syncd-it-admin-guard-{}", std::process::id()));
+    let dir = zhujian_syncd::test_temp::dir().join(format!("zhujian-syncd-it-admin-guard-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("banlist.txt"), "# 空封禁表
@@ -1296,7 +1296,7 @@ async fn seat_lease_validation_and_hard_cap() {
 /// 席位闸配置不变量启动断言(codex 160 L6):device_cap=0 / 租约 TTL=0 拒启。
 #[tokio::test]
 async fn serve_rejects_zero_device_cap_and_zero_lease_ttl() {
-    let dir = std::env::temp_dir().join(format!("zhujian-syncd-it-cfg-guard-{}", std::process::id()));
+    let dir = zhujian_syncd::test_temp::dir().join(format!("zhujian-syncd-it-cfg-guard-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("banlist.txt"), "# 空封禁表
@@ -1664,7 +1664,7 @@ async fn flood_gate_zero_configs_rejected() {
         |c| c.signup_refill = Duration::ZERO,
         |c| c.max_accounts = 0,
     ] {
-        let dir = std::env::temp_dir().join(format!(
+        let dir = zhujian_syncd::test_temp::dir().join(format!(
             "zhujian-syncd-zerocfg-{}-{}",
             std::process::id(),
             rand::random::<u32>()
@@ -1680,7 +1680,7 @@ async fn flood_gate_zero_configs_rejected() {
         );
     }
     // 组合内存包络超限同样拒启(codex 三轮 H1:硬闸在启动即闭合,不静默上线等 OOM)。
-    let dir = std::env::temp_dir().join(format!(
+    let dir = zhujian_syncd::test_temp::dir().join(format!(
         "zhujian-syncd-envelope-{}-{}",
         std::process::id(),
         rand::random::<u32>()

@@ -1,4 +1,7 @@
 use super::*;
+// 建号的带参形只有测试用得着(生产走 `create_account` 那层尾调用包装),故这句 use 住在
+// 这里而不是主文件 —— 放主文件的话生产构建会响一句 unused import(312 拆子模块的遗留)。
+use super::account::create_account_as;
 use crate::sync::production_src;
 use crate::{db, images, notes, task};
 use std::net::SocketAddr;
@@ -93,7 +96,7 @@ const ACCT: &str = "01AAAAAAAAAAAAAAAAAAAAACCT";
 static N: AtomicU32 = AtomicU32::new(0);
 
 fn temp_dir(tag: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!(
+    let dir = crate::test_temp::dir().join(format!(
         "ys-nb-transport-{tag}-{}-{}",
         std::process::id(),
         N.fetch_add(1, AtomicOrdering::Relaxed)
@@ -1553,21 +1556,85 @@ impl FakeLink {
         }
     }
 
+    /// 在**总预算**内读一枚数据帧:Ping 顺手回 Pong(像真对端那样),Pong 跳过。
+    ///
+    /// 与 [`FakeLink::next_msg`] 的差别只有一处 —— **预算是总的,不是每次读的**,而这一处
+    /// 在把心跳压到毫秒级的台架上是生死线:lan 的 Ping 借 runtime 那根心跳发(§3),故
+    /// 心跳 250ms 的用例里对端**每 250ms 就有一枚 Ping**,per-read 预算的那只于是永远
+    /// 「读得到东西」→ 既不返回也不让出。首版就卡在这儿 90 秒,期间一个字节都没往回写,
+    /// 链路反被**自己的沉默**判死(90 秒无帧),而断言报出来的是「内容没到」。
+    ///
+    /// 回 Pong 不是为了绕开判死,是**把对端演像**:真对端收 Ping 必回,链路因此不静默。
+    ///
+    /// **预算由 `timeout_at` 一处兜住整只循环**,不是「每一跳各自算剩余」(codex 实现审 L2):
+    /// 后者只给 4 字节前缀那次读加了闸,**帧体的 `read_exact` 与回 Pong 的 `write_all` 都能
+    /// 越过 deadline** —— 在受控 localhost 上不构成假绿,但注释承诺的是「总预算」,那就得
+    /// 真的是总的。**注释说了什么,就让它守得住什么。**
+    async fn next_msg_within(
+        &mut self,
+        cfg: &SyncConfig,
+        ms: u64,
+    ) -> Option<(String, String, Msg)> {
+        let deadline = tokio::time::Instant::now() + Duration::from_millis(ms);
+        tokio::time::timeout_at(deadline, async {
+            loop {
+                // 内层这个 `ms` 只是「别永久堵在一次 read 上」的粗闸,真正的截止由外层
+                // `timeout_at` 说了算(它连帧体与回 Pong 一起罩住)。
+                match self.read(ms).await {
+                    LinkRead::Frame(lan::LanWire::Frame { from, to, blob }) => {
+                        let Opened::Data(msg) = open_deliver(cfg, &from, &to, &blob) else {
+                            panic!("链路上的帧解不开");
+                        };
+                        return Some((from, to, msg));
+                    }
+                    LinkRead::Frame(lan::LanWire::Ping {}) => {
+                        self.try_send(&lan::LanWire::Pong {}).await;
+                    }
+                    LinkRead::Frame(_) => {}
+                    LinkRead::Eof | LinkRead::Timeout => return None,
+                }
+            }
+        })
+        .await
+        .unwrap_or(None)
+    }
+
     /// socket 真的关了吗(EOF / 被重置),而不只是「这会儿没帧」——两者在
     /// [`FakeLink::next`] 里都是 `None`,拿它断言「链路已关」是**假绿**。
+    ///
+    /// **先把已经在路上的字节读干净**:「关了」与「一个字节都没发过」是两件事,而 TCP
+    /// 里前者读得到的是「剩余数据…然后 EOF」。只读一次就下结论,等于把「发过东西再被关掉」
+    /// 判成「还开着」——320 那只随机红正栽在这里:被验的出站握手稳态是**Intro 已写出、
+    /// 正等 Accept**,于是「取消得够不够快」变成了「用例抢没抢在 Intro 前面」的调度赌局
+    /// (加长超时反而更红:等得越久,数据越是已经到了)。这与 299 栽在 `next()` 上的是
+    /// 同一族——判据必须能把三种结局分开,`Timeout` 才是「还开着」。
     async fn closed(&mut self, ms: u64) -> bool {
         use tokio::io::AsyncReadExt;
-        let mut b = [0u8; 1];
-        matches!(
-            timeout(Duration::from_millis(ms), self.stream.read(&mut b)).await,
-            Ok(Ok(0)) | Ok(Err(_))
-        )
+        let mut b = [0u8; 4096];
+        timeout(Duration::from_millis(ms), async {
+            // 读到 EOF / 重置为止;中途读到的都是收场前对端已经写出去的字节,丢掉。
+            while let Ok(n) = self.stream.read(&mut b).await {
+                if n == 0 {
+                    break;
+                }
+            }
+        })
+        .await
+        .is_ok()
     }
 
     async fn send(&mut self, wire: &lan::LanWire) {
         use tokio::io::AsyncWriteExt;
         let bytes = lan::frame_bytes(wire).expect("封帧");
         self.stream.write_all(&bytes).await.expect("写链路");
+    }
+
+    /// 同上,但**链路已关就如实回 `false`**。给「链路在不在」本身是观察对象的用例用:
+    /// 那种用例里写失败是一条要记下来的事实,`expect` 会把它变成一句掩盖现场的 panic。
+    async fn try_send(&mut self, wire: &lan::LanWire) -> bool {
+        use tokio::io::AsyncWriteExt;
+        let bytes = lan::frame_bytes(wire).expect("封帧");
+        self.stream.write_all(&bytes).await.is_ok()
     }
 
     /// 以对端身份封一枚数据帧发过来(同一套 K_acc / 域子钥 / AAD,只换管子)。
@@ -5471,6 +5538,254 @@ async fn only_a_broadcast_hello_can_clear_the_reconcile_debt() {
     relay.task.abort();
 }
 
+/// **本机 origin 那枚 ops 撞 `busy`,必须顺手置一笔对账重发债**(lan-direct-plan §12.1)。
+///
+/// 缺口是 295 真机量出的(6.5 拍 193s 零到达、期间一枚定向帧都没产生),三条叠加:
+/// ①本机 op 挂 BROADCAST,而它那条 LAN 补投面([`Deck::fan_out_broadcast`])的名单出口
+/// [`Engine::lan_backfill_peers`] 只收「lan 腿 Up **∧ relay 腿不 Up**」的对端 —— 295 那一幕
+/// 两端都在中转上在线,故补投集恒空。(判据在**对端**那一维;§12.1 原文写成「`relay_up()`
+/// 时不 fan-out」是按本机会话说的,已同轮更正 —— 权威 relay 帧其实**无条件**进 fan-out。)
+/// ②**BROADCAST 恒不让位**(§6.2 ①,理由正当:让给 LAN 就是「谁抢到谁提交」,别的对端
+/// 那一帧永远补不上);③唯一能把它变成「会让位的定向 work」的对端 Hello **不周期发送**
+/// —— `reconcile_tick` 只在债在场时重建,而债此前只有**自己的 Hello 被 Nack** 才置。
+/// 于是「中转会话稳定在、数据面持续 busy、直连稳定可用」时,本机新写的内容无限期停摆,
+/// 而直连就在旁边闲着。
+///
+/// 判据落在**修法那一格**(置债),往后的链条(对端回 Want → 登记定向 work → 撞 busy →
+/// 让位 → 直连接走)全是既有路径、各有专测,整条链另有
+/// [`a_busy_relay_still_lets_local_writes_reach_a_lan_peer`]。
+///
+/// **看两拍**才排除得掉「碰巧有别的轴发了一枚」:仪式那枚已经 Ack 过,而 Hello 不周期
+/// 发送(同族的 [`a_busy_hello_sets_the_debt_and_only_its_ack_clears_it`] 末段那 8 拍
+/// 静默窗口就是这条背景事实的现成证据),故 `busy` 之后冒出来的广播 Hello 只可能是债
+/// 驱动的;第一枚**刻意不给回执**,第二枚才证明它认的是债,而不是「发出去就算完」。
+#[tokio::test]
+async fn a_busy_own_ops_frame_sets_the_reconcile_debt() {
+    let (mut relay, rig, cfg) =
+        relay_rig_beat("relay-own-ops-debt", 91, Duration::from_millis(250)).await;
+    {
+        let mut conn = rig.db.lock().unwrap();
+        let mut clk = rig.clock.lock().unwrap();
+        notes::capture(&mut conn, &mut clk, "撞 busy 的那一条").unwrap();
+    }
+    // 仪式那枚广播 Hello **Ack 掉**:债只能来自下面那记 ops 的 `busy`,不能来自它。
+    let (ritual, to, msg) = relay.next_out(&cfg, 8000).await.expect("仪式 Hello");
+    assert!(matches!(msg, Msg::Hello { .. }), "仪式第一枚是 Hello,实见 {msg:?}");
+    assert_eq!(to, BROADCAST);
+    relay.ack(ritual);
+
+    let (n, to, origin, _) = next_ops(&mut relay, &cfg, 8000).await.expect("本机那一枚 ops");
+    assert_eq!(
+        (to.as_str(), origin.as_str()),
+        (BROADCAST, cfg.device_id.as_str()),
+        "本机新写的内容挂 BROADCAST、origin 是本机"
+    );
+    relay.nack(n, err_code::BUSY);
+
+    let first = next_broadcast_hello(&mut relay, &cfg, 8000)
+        .await
+        .expect("本机 ops 撞 busy 之后,心跳必须重建一枚广播 Hello(§12.1)");
+    let second = next_broadcast_hello(&mut relay, &cfg, 8000)
+        .await
+        .expect("没拿到 Ack 就不算还债:下一拍必须再来一枚");
+    assert_ne!(first, second, "两拍该是两枚不同的帧");
+    rig.task.abort();
+    relay.task.abort();
+}
+
+/// **只有 BROADCAST 那一格才置债**:定向 work 撞 `busy` 一律不置。
+///
+/// 收窄的理由不是省流量,是**别把一件已经有出路的事再挂一笔债**:定向 work 撞 busy 时
+/// 走的是既有的「让位 + 摇直连的铃」(见
+/// [`a_busy_relay_yields_the_directed_work_to_the_lan_leg`]),而债的存在只为解开
+/// BROADCAST 那条**恒不让位**的死结。放宽到全部 `ServeOps` 的话,一台对端多、中转持续
+/// busy 的设备每拍都在替一堆本来就在动的 work 重发水位图。
+///
+/// 判据取「2s = 8 拍内一枚广播 Hello 都不许有」:仪式那枚已 Ack、Hello 不周期发送,
+/// 故只要冒出来就只可能是这笔不该记的债。
+#[tokio::test]
+async fn a_busy_directed_ops_frame_does_not_set_the_reconcile_debt() {
+    let (mut relay, rig, cfg) =
+        relay_rig_beat("relay-directed-ops-nodebt", 92, Duration::from_millis(250)).await;
+    seed_remote_ops(&rig, PEER_TWO, 2, 0);
+    seed_ops_work(&rig.device, PEER_ONE, PEER_TWO, 1);
+    recycle_session(&mut relay).await;
+
+    let (ritual, to, msg) = relay.next_out(&cfg, 8000).await.expect("仪式 Hello");
+    assert!(matches!(msg, Msg::Hello { .. }), "仪式第一枚是 Hello,实见 {msg:?}");
+    assert_eq!(to, BROADCAST);
+    relay.ack(ritual);
+
+    let (n, to, _, seqs) = next_ops(&mut relay, &cfg, 8000).await.expect("定向那一枚 ops");
+    assert_eq!((to.as_str(), &seqs[..]), (PEER_ONE, &[1, 2][..]));
+    relay.nack(n, err_code::BUSY);
+
+    assert!(
+        next_broadcast_hello(&mut relay, &cfg, 2000).await.is_none(),
+        "定向 work 撞 busy 有让位这条既有出路,不该记债"
+    );
+    rig.task.abort();
+    relay.task.abort();
+}
+
+/// **整条链**:中转会话稳定在、数据面持续 `busy`、直连健康时,本机新写的内容必须到得了
+/// 对端(lan-direct-plan §12.1 那条活性缺口的行为测)。
+///
+/// 链条五步,每一步都是既有路径,**只有第一步是本笔新加的**:
+/// 1. 本机 ops 撞 busy → 置债;
+/// 2. 心跳按债重建一枚广播 Hello —— 小帧在数据面 busy 期照样通(295 实测:那期间债「当场
+///    就被 Ack 清掉」,正说明控制面是通的);
+/// 3. 对端收到那份水位图,发现自己落后 → 回一枚 `Want`(**真实对端的动作,这里由夹具代
+///    演** —— 但代演的时刻绑死在「广播 Hello 真出现之后」,故修法不在,这一步永远不会发生);
+/// 4. 本机把它登记成**定向** work → 泵到中转腿 → 又撞 busy;
+/// 5. 定向那一格**会让位** → 直连当场接走。
+///
+/// 缺口本身也断了一格(第 4 行那个 for):直连接上之后、债那枚 Hello 之前,本机那一段
+/// **不该**出现在直连上 —— BROADCAST 恒不让位是设计,不是本笔要改的东西。
+///
+/// ⚠ **对端必须「中转在线」这一格是拓扑要件,不是摆设**(首版漏了它,测试当场把我打红):
+/// BROADCAST 那枚帧其实**有**一条补投面 —— 权威中转腿发帧那一处顺手 fan-out
+/// ([`Deck::fan_out_broadcast`],§6.2 ①(C))。但它的名单出口
+/// [`Engine::lan_backfill_peers`] 只收「lan 腿 Up **且 relay 腿不 Up**」的对端:中转在线的
+/// 对端由信箱负责,不平行投第二份。295 真机那一幕正是**两端都在中转上在线、只有数据面
+/// busy**,故补投集恒空 —— 这才是缺口成立的那一格。(§12.1 原文把 ① 写成「`relay_up()`
+/// 时不 fan-out」,那是按本机会话说的,读着像整条补投面都关着;真实判据在**对端**那一维。)
+///
+/// 中转腿全程一律回 `busy`(模拟服务端预算持续不足),控制面照旧 Ack。
+/// 一枚帧的一行摘要(只给 §12.1 那条链的现场记录用):`Debug` 会把 op 正文与水位图整个
+/// 摊开,几十行淹掉真正要看的那一格 —— **谁、什么类、哪些 seq**。
+fn brief(msg: &Msg) -> String {
+    match msg {
+        Msg::Ops { origin, ops } => format!(
+            "Ops(origin={}, seq={:?})",
+            &origin[origin.len() - 4..],
+            ops.iter().map(|o| o.origin_seq).collect::<Vec<_>>()
+        ),
+        Msg::Hello { watermarks, .. } => format!("Hello(水位 {} 项)", watermarks.len()),
+        Msg::Want { origin, from_seq } => {
+            format!("Want(origin={}, from={from_seq})", &origin[origin.len() - 4..])
+        }
+        other => format!("{other:?}"),
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_busy_relay_still_lets_local_writes_reach_a_lan_peer() {
+    let (mut relay, rig, cfg) =
+        relay_rig_beat("relay-own-ops-busy-lan", 93, Duration::from_millis(250)).await;
+    {
+        let mut conn = rig.db.lock().unwrap();
+        let mut clk = rig.clock.lock().unwrap();
+        notes::capture(&mut conn, &mut clk, "持续 busy 期写的那一条").unwrap();
+    }
+    let (ritual, to, msg) = relay.next_out(&cfg, 8000).await.expect("仪式 Hello");
+    assert!(matches!(msg, Msg::Hello { .. }), "仪式第一枚是 Hello,实见 {msg:?}");
+    assert_eq!(to, BROADCAST);
+    relay.ack(ritual);
+
+    let (n, to, origin, _) = next_ops(&mut relay, &cfg, 8000).await.expect("本机那一枚 ops");
+    assert_eq!((to.as_str(), origin.as_str()), (BROADCAST, cfg.device_id.as_str()));
+    relay.nack(n, err_code::BUSY);
+
+    // 摆出 295 那一幕的拓扑:对端在中转上**在线**(故广播补投面不覆盖它)。等到那枚
+    // 「在线缺钥索要」的定向 Hello 出现为止 —— 它是这条事件真被引擎处置过的地面证据,
+    // 光 send 完就往下走会与移交抢跑。
+    relay
+        .reply
+        .send(ServerMsg::Peer { device: PEER_ONE.into(), online: true })
+        .expect("假中转还活着");
+    let mut peer_up = false;
+    for _ in 0..40 {
+        let Some((n, to, msg)) = relay.next_out(&cfg, 400).await else { continue };
+        match &msg {
+            Msg::Ops { .. } => relay.nack(n, err_code::BUSY),
+            _ => relay.ack(n),
+        }
+        if to == PEER_ONE && matches!(msg, Msg::Hello { .. }) {
+            peer_up = true;
+            break;
+        }
+    }
+    assert!(peer_up, "夹具:对端上线那条事件该产出一枚定向 Hello(§2 收敛触发②)");
+
+    // 直连接进来:健康、闲着。
+    let (mine, theirs) = tcp_pair().await;
+    let mut lan = FakeLink { stream: theirs };
+    rig.handoff.send(adopted(PEER_ONE, 1, mine)).await.expect("移交");
+    wait_until("直连认下", || rig.status.lock().unwrap().lan_peers == 1).await;
+    let (_, _, hello) = lan.next_msg_within(&cfg, 4000).await.expect("建链的定向 Hello");
+    assert!(matches!(hello, Msg::Hello { .. }), "建链先发 Hello,实见 {hello:?}");
+
+    // 缺口本身:BROADCAST 不让位,本机那一段此刻到不了直连(断的是「不该有」,故要容忍
+    // 链路上本来就有的别的帧 —— 光断「一片安静」会被 Ping/Hello 打成假红)。
+    for _ in 0..3 {
+        if let Some((_, _, m)) = lan.next_msg_within(&cfg, 300).await {
+            assert!(
+                !matches!(&m, Msg::Ops { origin, .. } if origin == &cfg.device_id),
+                "BROADCAST 恒不让位(§6.2 ①):本机那一段此刻不该走直连,实见 {m:?}"
+            );
+        }
+    }
+
+    // 两条腿交替轮询到 op 落地为止。中转腿:ops 一律 busy,别的照 Ack;广播 Hello 一到
+    // 就代演对端那枚 Want(只演一次)。
+    let mut asked = false;
+    let mut arrived = false;
+    // 两条腿上看见的每一枚都记一行:断言红了要能一眼看出链条断在第几步,而不是只知道
+    // 「没到」(首版就是只有结论、没有现场,白跑了两轮)。
+    let mut trace: Vec<String> = Vec::new();
+    let t0 = std::time::Instant::now();
+    for _ in 0..60 {
+        if let Some((n, to, msg)) = relay.next_out(&cfg, 200).await {
+            trace.push(format!("[{:?}] relay→{to}: {}", t0.elapsed(), brief(&msg)));
+            match &msg {
+                Msg::Ops { .. } => relay.nack(n, err_code::BUSY),
+                Msg::Hello { .. } => {
+                    relay.ack(n);
+                    if to == BROADCAST && !asked {
+                        asked = true;
+                        trace.push("夹具:代演对端那枚 Want".into());
+                        relay.deliver(
+                            &cfg,
+                            PEER_ONE,
+                            &Msg::Want { origin: cfg.device_id.clone(), from_seq: 1 },
+                        );
+                    }
+                }
+                _ => relay.ack(n),
+            }
+        }
+        if let Some((_, to, msg)) = lan.next_msg_within(&cfg, 200).await {
+            trace.push(format!("[{:?}] lan→{to}: {}", t0.elapsed(), brief(&msg)));
+            if let Msg::Ops { origin, ops } = &msg {
+                if origin == &cfg.device_id {
+                    assert!(
+                        ops.iter().any(|o| o.origin_seq == 1),
+                        "本机第一枚 op 该在这一帧里:{:?}",
+                        ops.iter().map(|o| o.origin_seq).collect::<Vec<_>>()
+                    );
+                    arrived = true;
+                    break;
+                }
+            }
+        }
+    }
+    // 红了要能一眼分清「链没了」与「链在、内容没走」——这两种失败的下一步完全不同。
+    let seen = {
+        let s = rig.status.lock().unwrap();
+        format!(
+            "{}\n  [直连] lan_peers={} warning={:?}",
+            trace.join("\n  "),
+            s.lan_peers,
+            s.lan_warning
+        )
+    };
+    assert!(asked, "债那枚广播 Hello 一直没出来,对端无从知道自己落后(§12.1 第 2 步)\n  {seen}");
+    assert!(arrived, "中转持续 busy、直连健康时,本机新写的内容必须经直连到达(§12.1)\n  {seen}");
+    rig.task.abort();
+    relay.task.abort();
+}
+
 /// **鉴权成功与会话仪式之间那一窗也得自证**(实现审四轮 H1):建连期最后一次栅栏检查
 /// 已过、服务器还没回 `Authed` 时换掉身份,紧随其后的会话仪式(游标复位 + Hello + 缺图
 /// Want + 把本机 op 全量重推)就会整轮被**旧 K_acc** 封了发出去——其中「重推本机 op」
@@ -8004,7 +8319,9 @@ async fn retiring_the_engine_slot_also_retires_the_dialer() {
     assert_eq!(slot.dial.inflight(), 1, "此刻恰有一只在飞的出站握手");
 
     slot.retire();
-    assert_eq!(slot.dial.inflight(), 0, "撤位把在飞的出站握手一并取消(§6 ⑤)");
+    // 这一格只说「在飞表清空了」——`retire` 是 drain 掉整张表,故它**结构上恒为 0**,
+    // 证不了任何取消行为(把 `h.abort()` 删掉它照样绿)。真判据是下面那条 socket。
+    assert_eq!(slot.dial.inflight(), 0, "撤位后在飞表清空");
     assert!(slot.dial_due().is_none(), "撤位期不拨号(§6 撤位清单)");
     let mut link = FakeLink { stream: sock };
     // 5s 是**余量**不是期望值(实测亚毫秒):没被取消的话这只任务还得活 600s,故这一格

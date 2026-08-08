@@ -50,7 +50,7 @@ import type { View, ViewCtx } from "./notebook";
 import { applyTagColor } from "./tag-color";
 import { renderTagPicker } from "./tag-picker";
 import { type TaskItem, dayKey, dayLabel, dueState, localToday, metaRow, startOfWeek } from "./tasktime";
-import { loadIdentity, signatureChip } from "./identity";
+import { identitySig, loadIdentity, signatureChip } from "./identity";
 import "./board.css";
 
 // 跨视图「跳到这张任务卡」通道(搜索命中任务 → 跳看板并高亮)。模块级——
@@ -1634,6 +1634,9 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         sealed,
         topics,
         cmCounts,
+        // 设备名册(317):同 cmCounts 的理由——别台设备改别名时任务数据不动,变的
+        // 只有署名 chip 与留言层里那行作者。
+        identitySig(mountSpace),
       ]);
       // `=== true`, not truthy: `load` is also wired as a bare onclick handler in a few
       // places, so a stray MouseEvent must never count as a refocus and skip the repaint.

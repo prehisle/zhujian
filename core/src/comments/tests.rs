@@ -12,7 +12,7 @@ static COUNTER: AtomicU32 = AtomicU32::new(0);
 fn fresh_db(tag: &str) -> (Connection, Clock) {
     let n = COUNTER.fetch_add(1, Ordering::SeqCst);
     let path =
-        std::env::temp_dir().join(format!("ys-nb-cmt-{tag}-{}-{}.sqlite3", std::process::id(), n));
+        crate::test_temp::dir().join(format!("ys-nb-cmt-{tag}-{}-{}.sqlite3", std::process::id(), n));
     let _ = std::fs::remove_file(&path);
     let conn = db::open(&path).expect("open migrated db");
     let clock = Clock::load(&conn).expect("load clock");
@@ -514,7 +514,7 @@ fn comment_shape_gate_is_measured_directly() {
 fn born_device_trigger_closes_the_missing_device_id_row_branch() {
     let n = COUNTER.fetch_add(1, Ordering::SeqCst);
     let path =
-        std::env::temp_dir().join(format!("ys-nb-cmt-nometa-{}-{}.sqlite3", std::process::id(), n));
+        crate::test_temp::dir().join(format!("ys-nb-cmt-nometa-{}-{}.sqlite3", std::process::id(), n));
     let _ = std::fs::remove_file(&path);
     // **刻意不调 Clock::load** —— 那一步才会写 sync_meta 的 device_id 行。
     let conn = db::open(&path).expect("open migrated db");
@@ -545,7 +545,7 @@ fn born_device_trigger_closes_the_missing_device_id_row_branch() {
 fn two_deferred_readers_cannot_both_pass_the_soft_cap() {
     let n = COUNTER.fetch_add(1, Ordering::SeqCst);
     let path =
-        std::env::temp_dir().join(format!("ys-nb-cmt-race-{}-{}.sqlite3", std::process::id(), n));
+        crate::test_temp::dir().join(format!("ys-nb-cmt-race-{}-{}.sqlite3", std::process::id(), n));
     let _ = std::fs::remove_file(&path);
     let mut c1 = db::open(&path).expect("open db");
     let mut k1 = Clock::load(&c1).expect("clock");

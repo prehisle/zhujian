@@ -303,10 +303,55 @@ impl Ctx<'_> {
                 // 一枚,而反过来(复用旧号)就是把「服务器没接手」这件事静默销账。
                 self.engine.set_reconcile_debt()?;
             }
+            // ④′ **本机 origin(BROADCAST)那枚 ops 撞 busy:同样置一笔债**
+            //    (lan-direct-plan §12.1,295 真机量出的活性缺口)。
+            //
+            //    缺口三条叠加:①本机 op 挂 BROADCAST,而它那条补投面([`Deck::fan_out_broadcast`])
+            //    的名单出口 [`Engine::lan_backfill_peers`] 只收「lan 腿 Up **∧ relay 腿不 Up**」
+            //    的对端 —— 中转在线的对端由信箱负责,不平行投第二份;295 那一幕恰是**两端
+            //    都在中转上在线、只有数据面 busy**,故补投集恒空(§12.1 原文把这条写成
+            //    「`relay_up()` 时不 fan-out」,那是按本机会话说的,判据其实在**对端**那一维);
+            //    ②**BROADCAST 恒不让位**(§6.2 ①——让给 LAN 就是「谁抢到谁提交」,别的对端
+            //    那一帧永远补不上,这条不改);③唯一能把它变成「会让位的定向 work」的对端 Hello **不
+            //    周期发送**,而债此前只有**自己的 Hello 被 Nack** 才置。于是数据面 busy 而
+            //    控制面通时,债当场被 Ack 清掉,**再没有任何一根轴会重新问一次** —— 本机
+            //    新写的内容无限期停摆(实测 193s 零到达),而直连就在旁边闲着。
+            //
+            //    修法刻意**不新造状态**:置一下这枚已经存在的位,后面全走既有路径 ——
+            //    心跳经 `make_hello` 重建一枚广播 Hello(小帧在数据面 busy 期照样通,295
+            //    正是靠「债当场被 Ack」证明的)→ 对端发现自己落后 → 回 Want → 本机登记
+            //    **定向** work → 撞 busy → **让位** → 直连接走。
+            //
+            //    **为什么不给 BROADCAST 也开直连口子**:那个入口才真要新状态(得有一根
+            //    「中转数据面持续拒了我 N 拍」的判据),而 §6.2 ① 否掉 per-leg frontier 正
+            //    是因为那要新状态。
+            //
+            //    **只收窄到 BROADCAST**:定向 work 撞 busy 已经有让位这条既有出路(上面那
+            //    句 `yield_relay` + `wake_ops`),再记一笔债就是白多发水位图。
+            //
+            //    代价自限:持续 busy 期**每拍至多多一枚广播 Hello**。它有多大要按闸说,不能
+            //    凭印象 —— 水位图上界是 [`ops_serve::OPS_WATERMARK_BYTES_PER_TARGET`] = **64 KiB**
+            //    (加 CBOR/AEAD/信封的固定开销),远在单帧 1 MiB 闸之下;走 `Require(Relay)`
+            //    故不碰 LAN 每链 8 MiB 那道队列闸。(一轮我在这里写「几百字节」,是低估:
+            //    codex 实现审 L1。)
+            //
+            //    ⚠ **适用边界:这条修法要「控制面通得过」**(codex 实现审同轮点名)。服务端
+            //    **没有独立的控制面预算** —— `admit` 在分 lane 之前就能回 BUSY,故 Hello 与
+            //    数据帧吃同一份额度。真把额度压到连 64 KiB 的 Hello 都过不去时(台架
+            //    `busy-syncd --budget-global-bytes 1`),会话靠 Ping/Pong 活着、债每拍重试,
+            //    但对端**永远看不到我的水位**,§12.1 那四条件的宽泛表述照样能长期停摆。
+            //    这不否定本修法:295 实测的正是「数据面 busy 而控制面通」(债当场被 Ack 清掉),
+            //    而那一档现在有出路了。剩下的那一档要治得给控制面单开预算 = 服务端的事,
+            //    已记进 §12.1。
+            Sent::ServeOps { target, .. } if code == err_code::BUSY && target == BROADCAST => {
+                self.engine.set_reconcile_debt()?;
+            }
             // ④ busy:**一格都不标 peer down**。引导两格由既有的 30s 步超时 + 换源兜住;
             //    `Direct`(BlobPull/BlobDeny)与 `Other`(BlobWant/BlobHave)由既有的
             //    stale / 重问轴自愈;`ServeBlob`/`ServeOps` 的 work 上面已保留,续做挂心跳
             //    —— **刻意不在同一个 Nack 事件里立即重泵**,那就是热循环。
+            //    (`ServeOps` 里 BROADCAST 那一格已被 ④′ 接走:work 照样保留,只是**另外**
+            //    还欠一笔债 —— 它是那一格唯一能变成「会让位的定向 work」的轴。)
             //    **busy 的那一类不阻塞另一类**:窗口已在 ② 里释放,下一拍心跳的泵按 1:1
             //    先问另一类,故一条 ops 的 busy 不会挡住图字节,反之亦然。
             _ if code == err_code::BUSY => {}

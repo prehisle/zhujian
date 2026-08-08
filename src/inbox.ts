@@ -49,7 +49,7 @@ import type { View, ViewCtx } from "./notebook";
 import { applyTagColor } from "./tag-color";
 import { renderTagPicker } from "./tag-picker";
 import { dayKey, dayLabel, startOfWeek, when } from "./tasktime";
-import { loadIdentity, signatureChip } from "./identity";
+import { identitySig, loadIdentity, signatureChip } from "./identity";
 import "./inbox.css";
 
 // Mirrors of the Rust contracts (lib.rs) — the fields this view consumes. 想法 = a live
@@ -1206,6 +1206,9 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         stats,
         topics,
         cmCounts,
+        // 设备名册(317):别台设备改别名时列表数据不动,只有署名 chip 与留言层的
+        // 作者要变——同 cmCounts 那一格,不进指纹就会被 refocus 短路掉。
+        identitySig(mountSpace),
       ]);
       // `=== true`, not truthy: guards against a future caller wiring `refresh` as a
       // bare event handler, where a MouseEvent would otherwise count as a refocus.

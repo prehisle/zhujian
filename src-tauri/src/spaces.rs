@@ -191,7 +191,7 @@ mod tests {
     /// 造「main + 家庭」双 runtime 的桌面空间面(与 lib.rs 装配同构:开库正道 +
     /// supervisor reserve/commit;未配置账户的 transport 睡通道零打扰)。
     async fn boot_two(tag: &str) -> (Spaces, PathBuf) {
-        let dir = std::env::temp_dir().join(format!("zj-move-shell-{tag}-{}", std::process::id()));
+        let dir = crate::test_temp::dir().join(format!("zj-move-shell-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         core_spaces::create_main_db(&dir).unwrap();

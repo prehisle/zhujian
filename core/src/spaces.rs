@@ -1464,7 +1464,7 @@ mod tests {
 
     /// 身份带真文件 key(hardlink 归一靠它),测试也就用真文件。
     fn tmp_dir(tag: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("zj-{tag}-{}", std::process::id()));
+        let dir = crate::test_temp::dir().join(format!("zj-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir

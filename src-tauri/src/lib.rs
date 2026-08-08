@@ -4,6 +4,9 @@
 // space_id;空间的存在与身份(发现/白名单/四不变量)见 spaces.rs,本文件负责装配
 // (逐空间 spawn transport + 事件贴空间标)与命令面。
 mod spaces;
+// 测试容器目录(per-pid,progress-log 326);测试之外无人调用。
+#[cfg(test)]
+mod test_temp;
 // macOS Dock 右键菜单(macos-port-plan §2):往 tao 的 NSApplicationDelegate 补
 // applicationDockMenu:,整块 objc 关在这个平台专属模块里。
 #[cfg(target_os = "macos")]

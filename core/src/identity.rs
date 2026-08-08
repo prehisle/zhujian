@@ -109,7 +109,7 @@ mod tests {
 
     fn fresh() -> (Connection, Clock) {
         let n = COUNTER.fetch_add(1, Ordering::SeqCst);
-        let path = std::env::temp_dir()
+        let path = crate::test_temp::dir()
             .join(format!("ys-nb-identity-{}-{}.sqlite3", std::process::id(), n));
         let _ = std::fs::remove_file(&path);
         let conn = db::open(&path).expect("open migrated db");
@@ -122,7 +122,7 @@ mod tests {
     /// ——这正是 v32 收到 v33 端 create op 时的真实形状(payload 原样入库、值被丢弃)。
     fn v32_db_with_create_payload(tag: &str, born: Option<serde_json::Value>) -> (Connection, String) {
         let n = COUNTER.fetch_add(1, Ordering::SeqCst);
-        let path = std::env::temp_dir()
+        let path = crate::test_temp::dir()
             .join(format!("ys-nb-id34-{tag}-{}-{}.sqlite3", std::process::id(), n));
         let _ = std::fs::remove_file(&path);
         let conn = Connection::open(&path).expect("开库");
@@ -468,7 +468,7 @@ mod tests {
     #[test]
     fn insert_is_fail_closed_when_the_device_has_no_identity_yet() {
         let n = COUNTER.fetch_add(1, Ordering::SeqCst);
-        let path = std::env::temp_dir()
+        let path = crate::test_temp::dir()
             .join(format!("ys-nb-identity-noid-{}-{}.sqlite3", std::process::id(), n));
         let _ = std::fs::remove_file(&path);
         // **刻意不跑 Clock::load**:这枚库还没有设备身份。

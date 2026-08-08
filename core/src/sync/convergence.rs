@@ -96,7 +96,7 @@ impl Sim {
             .iter()
             .map(|&policy| {
                 let k = COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                let path = std::env::temp_dir()
+                let path = crate::test_temp::dir()
                     .join(format!("ys-nb-conv-{}-{}.sqlite3", std::process::id(), k));
                 let _ = std::fs::remove_file(&path);
                 let conn = db::open(&path).expect("open migrated db");
@@ -455,13 +455,58 @@ const COMMENTS: &str = "SELECT id FROM item_comment ORDER BY id";
 /// 「轻端零 want」同款)。所以数一下真跑成了几次,并在测试末尾断言两支都 > 0。
 static COMMENT_ADDS: AtomicUsize = AtomicUsize::new(0);
 static COMMENT_REMOVES: AtomicUsize = AtomicUsize::new(0);
+
+/// 0033 设备名册的**命名对象池** = 本库见过的全部设备(oplog 的 origin 集合,
+/// `origin` 是 `substr(hlc, 24)` 的虚拟生成列 = 完整 26 位 device_id)。
+///
+/// ⚠ **刻意不只命名自己**(328 补这一支时定的形):`set_device_alias` 的 `device_id`
+/// 是参数、不锁本机(名册是账户内共享的,给别的设备改名是合法操作)。若随机流只命名
+/// 自己,三端各写各的 entity_id,**字段级 LWW 撞写那一格就永远验不到**。从 origin 池里
+/// 挑,随同步推进三端会互相见到对方,「两端同时给同一台设备改名」自然发生。
+const SEEN_DEVICES: &str = "SELECT DISTINCT origin FROM oplog ORDER BY 1";
+
+/// 设备别名两支的**覆盖计数**,理由同上面留言那两支。
+///
+/// ⚠ 与留言那两支不同的是:`identity::set_device_alias` **有幂等 no-op**(行在且值同就
+/// 直接 `Ok(())`,一条 op 都不发)。只在 `Ok` 上计数会把「值没变」也记成一次覆盖 ——
+/// 那正好是这两个计数要防的「看着有覆盖、其实没写」。故按 **device op 条数真的长了**
+/// 来计(见 `device_op_count`)。
+static DEVICE_ALIAS_SETS: AtomicUsize = AtomicUsize::new(0);
+static DEVICE_ALIAS_CLEARS: AtomicUsize = AtomicUsize::new(0);
+
+/// 本库里 device set_field op 的条数 —— 判「这一笔到底发没发 op」的唯一诚实判据。
+fn device_op_count(conn: &Connection) -> i64 {
+    conn.query_row("SELECT COUNT(*) FROM oplog WHERE entity = 'device'", [], |r| r.get(0))
+        .expect("count device ops")
+}
+
+/// 累计「同一台设备被**两台以上不同机器**命名过」的台数 = 字段级 LWW 真的撞过写。
+///
+/// ⚠ 这是 [`SEEN_DEVICES`] 那个设计意图的**唯一守卫**,而且缺了它谁都发现不了:把命名
+/// 对象退化成「只命名自己」之后,三端各写各的 `entity_id`,`device_profile` 照样三份逐字
+/// 相等 —— 全部指纹断言一条都不会红,可「验到了 LWW 收敛」是假的(每台设备上只有一个
+/// 写者,根本没有赢家可选)。上面那两个 SETS/CLEARS 计数也照样 > 0,同样兜不住。
+static DEVICE_LWW_COLLISIONS: AtomicUsize = AtomicUsize::new(0);
+
+fn device_lww_collisions(conn: &Connection) -> i64 {
+    conn.query_row(
+        "SELECT COUNT(*) FROM (SELECT entity_id FROM oplog WHERE entity = 'device' \
+         GROUP BY entity_id HAVING COUNT(DISTINCT origin) > 1)",
+        [],
+        |r| r.get(0),
+    )
+    .expect("count device lww collisions")
+}
 const LIVE_ANY: &str = "SELECT id FROM items WHERE archived_at IS NULL AND sealed_at IS NULL ORDER BY id";
 
 /// 执行一条随机写命令,返回是否真的写了(Err = 前置不满足,跳过——编排自持事务,
 /// 失败即回滚不脏库、无 op 发射)。标签名取小池子(t0..t3):同机重名被编排拒,
 /// **跨机重名天然发生**——「同名标签并存」正是规格 §6.2 的约定终局。
 fn random_command(conn: &mut Connection, clock: &mut Clock, rng: &mut Rng, step: usize) -> bool {
-    let roll = rng.below(27);
+    // ⚠ 改这个上限会**重排全部种子的命令序列**(328 从 27 加到 28 时如此)。这只 property
+    // test 靠广度不靠特定路径,故可接受;但「种子 1 当年抓到活锁」那条战绩指的是旧序列,
+    // 别拿它当今天还在复现的回归锚。
+    let roll = rng.below(28);
     let done: Result<(), String> = match roll {
         0..=3 => notes::capture(conn, clock, &format!("灵感 {step}-{}", rng.below(1000))).map(|_| ()),
         4 => match rng.pick(&ids(conn, LIVE_IDEAS)).cloned() {
@@ -631,6 +676,24 @@ fn random_command(conn: &mut Connection, clock: &mut Clock, rng: &mut Rng, step:
             }),
             None => Ok(()),
         },
+        // 0033 设备别名(device 多实例 LWW 寄存器):命名对象从**本库见过的设备**里挑
+        // (见 SEEN_DEVICES 的头注:只命名自己就验不到撞写),值取小池子 + **清名**
+        // (`None` 是「显式清名」的规范表示,与「没有这一行」不同——epoch 合成基线与
+        // boot 双侧预审都特判过它,指纹里的 quote() 也是为它)。
+        26 => match rng.pick(&ids(conn, SEEN_DEVICES)).cloned() {
+            Some(target) => {
+                let alias = [None, Some("设备甲"), Some("设备乙"), Some("设备丙")][rng.below(4)];
+                let before = device_op_count(conn);
+                let r = crate::identity::set_device_alias(conn, clock, &target, alias);
+                // 幂等 no-op 不计:只有 op 真长了才算一次覆盖(见计数器头注)。
+                if r.is_ok() && device_op_count(conn) > before {
+                    let bag = if alias.is_some() { &DEVICE_ALIAS_SETS } else { &DEVICE_ALIAS_CLEARS };
+                    bag.fetch_add(1, Ordering::Relaxed);
+                }
+                r
+            }
+            None => Ok(()),
+        },
         // 空间改名(0028 space 单例寄存器):小池子名跨机并发撞写,LWW 收敛由
         // space_profile 指纹断言(space-name-sync-plan §7)。
         _ => crate::spaces::set_space_name(conn, clock, &format!("空间名{}", rng.below(4))),
@@ -671,6 +734,10 @@ const FINGERPRINTS: &[(&str, &str)] = &[
     ("item_image_counter", "SELECT item_id||'|'||last_seq FROM item_image_counter ORDER BY item_id"),
     // quote():合法名字「∅」不与 NULL 同指纹(codex L;随机名池撞不上,防御一致性)。
     ("space_profile", "SELECT key||'|'||quote(name) FROM space_profile ORDER BY key"),
+    // 0033 设备名册(device 多实例 LWW 寄存器,328 补)。quote() 同上:**显式清名**的
+    // NULL 不与某个恰好叫「∅」的别名同指纹。三端收敛后每个 device_id 上的赢家由
+    // (entity, entity_id, field) 的字段级 LWW 定,本机写与回放走的是**逐字同一句 UPSERT**。
+    ("device_profile", "SELECT device_id||'|'||quote(alias) FROM device_profile ORDER BY device_id"),
     ("oplog", "SELECT op_id||'|'||hlc||'|'||origin_seq FROM oplog ORDER BY op_id"),
 ];
 
@@ -761,6 +828,10 @@ fn run(seed: u64, policies: &[BlobPolicy]) -> usize {
     }
     sim.settle();
     sim.assert_converged();
+    // 328:收敛后三份 oplog 相同,取任一台数一次「同一设备被多机命名」——见
+    // DEVICE_LWW_COLLISIONS 头注(它守的退化形是全部指纹断言都兜不住的那种)。
+    DEVICE_LWW_COLLISIONS
+        .fetch_add(device_lww_collisions(&sim.peers[0].conn) as usize, Ordering::Relaxed);
     sim.peers
         .iter()
         .filter(|p| p.policy == BlobPolicy::MetadataOnly)
@@ -788,6 +859,15 @@ fn three_peers_converge_under_partitions_reorder_and_loss() {
     // 只是加了两行代码,`item_comment` 全程为空而指纹处处相等,这测什么都没测。
     assert!(COMMENT_ADDS.load(Ordering::Relaxed) > 0, "随机流里一条留言都没写成");
     assert!(COMMENT_REMOVES.load(Ordering::Relaxed) > 0, "随机流里一条留言都没删成");
+    // 设备别名同理(328)。两支分开断言:**清名走的是 NULL 那条路**,与设一个名字在
+    // 存储层、指纹层(quote())、压实基线合成三处都不同形,合并成一条会让它假绿。
+    assert!(DEVICE_ALIAS_SETS.load(Ordering::Relaxed) > 0, "随机流里一个设备别名都没设成");
+    assert!(DEVICE_ALIAS_CLEARS.load(Ordering::Relaxed) > 0, "随机流里一次设备清名都没发生");
+    assert!(
+        DEVICE_LWW_COLLISIONS.load(Ordering::Relaxed) > 0,
+        "没有任何一台设备被两台以上机器命名过 —— 那 device 的字段级 LWW 一次都没被验到\
+         (每台设备只有一个写者时根本没有赢家可选),而全部指纹断言都不会因此变红",
+    );
 }
 
 /// 留言的**确定性**三端场景(codex 实现审二弹 M4;随机流管广度,这只管「本案那条路」)。

@@ -41,8 +41,16 @@ describe("跨空间移动 · 部分成功登记的持久化", () => {
     const card = await $(".note*=E2E-移动登记-甲");
     await card.waitForExist({ timeout: 10000 });
     const notice = await $(".move-partial");
-    await notice.waitForExist({ timeout: 10000 });
-    expect(await notice.getText()).toContain("E2E注入原话");
+    // `waitForExist` 只等元素**进 DOM**,而 `getText()` 读的是**渲染后的可见文本** ——
+    // 元素刚插入、布局还没跑完的那一瞬读它会拿到空串(330 判例:整套跑时三次红在这里,
+    // 单跑与「插一句 browser.execute 诊断」时都绿 —— 加时间能压下去 = 真时序竞态)。
+    // 故等到「显示出来」再把「文本对不对」也放进等待条件里,判据没削弱、反而更严:
+    // 产品真不渲染那行字,这里会超时红。
+    await notice.waitForDisplayed({ timeout: 10000 });
+    await browser.waitUntil(async () => (await notice.getText()).includes("E2E注入原话"), {
+      timeout: 10000,
+      timeoutMsg: "登记提示已显示,但迟迟没渲染出注入的原话",
+    });
 
     // 解除:标记清掉、提示离场,再重挂一次也不回来。
     const clearBtn = await notice.$("button*=解除");

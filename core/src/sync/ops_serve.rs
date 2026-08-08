@@ -1633,6 +1633,16 @@ pub(crate) struct VettedWatermarks {
 }
 
 impl VettedWatermarks {
+    /// 过完形态闸的那份图本体(生产读者只有 [`crate::sync::engine::Engine::hello_gap_wants`],
+    /// 322)。**读得到的前提就是它已经过闸** —— key 恒是规范 26 字符 device id、值恒非负,
+    /// 故那边照着它发出去的 `Want.origin` 天然合形,不必再自己验一遍。
+    ///
+    /// 闸在**构造**那一侧(字段私有 + 唯一造法 [`vet_watermarks`]),不在这一侧:把图取
+    /// 出来读没有风险,拿一份没过闸的图冒充才有。
+    pub(crate) fn peer(&self) -> &BTreeMap<String, i64> {
+        &self.peer
+    }
+
     #[cfg(test)]
     pub(crate) fn bytes(&self) -> usize {
         self.bytes

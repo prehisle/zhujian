@@ -1406,7 +1406,7 @@ mod tests {
     /// 同上,另返回封禁表路径(reload 测试改文件后热重载用)。
     fn hub_with_banlist(tweak: impl FnOnce(&mut Config)) -> (Hub, PathBuf) {
         static N: AtomicU64 = AtomicU64::new(0);
-        let dir: PathBuf = std::env::temp_dir().join(format!(
+        let dir: PathBuf = crate::test_temp::dir().join(format!(
             "zhujian-syncd-hubtest-{}-{}",
             std::process::id(),
             N.fetch_add(1, Ordering::Relaxed)

@@ -21,6 +21,9 @@
 //! 薄包装;UI 渐进接线,前端调用层见 `src/api.ts`。
 
 mod coord;
+// 测试容器目录(per-pid,progress-log 326);测试之外无人调用。
+#[cfg(test)]
+mod test_temp;
 mod update;
 
 use std::sync::Arc;
@@ -1882,7 +1885,7 @@ mod tests {
     }
 
     fn tmp_dir(tag: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("zj-android-{tag}-{}", std::process::id()));
+        let dir = crate::test_temp::dir().join(format!("zj-android-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir

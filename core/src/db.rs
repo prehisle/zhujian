@@ -393,7 +393,7 @@ mod tests {
     /// 只跑 SQL、绝不跑 runner 的 pragma,再走正常 open)。
     #[test]
     fn migration_0028_is_crash_window_safe_and_preserves_oplog() {
-        let path = std::env::temp_dir()
+        let path = crate::test_temp::dir()
             .join(format!("ys-nb-db-0028-{}.sqlite3", std::process::id()));
         let _ = std::fs::remove_file(&path);
         // v27 库 + 真实 op(词汇表旧 CHECK 下的正道数据)。
@@ -474,7 +474,7 @@ mod tests {
     /// authorizer 拒 / 触发器体 BEGIN…END 不受伤 / FK 自验收咬人 / 幸福路 uv 随事务落。
     #[test]
     fn runner_owned_migration_shape() {
-        let path = std::env::temp_dir()
+        let path = crate::test_temp::dir()
             .join(format!("ys-nb-db-owned-{}.sqlite3", std::process::id()));
         let _ = std::fs::remove_file(&path);
         let conn = open_through(&path, 28).unwrap();
@@ -551,7 +551,7 @@ mod tests {
     /// 隔离这一步(open() 现会继续前滚到最新迁移;full-open 覆盖在别处),专验 0029 空迁移。
     #[test]
     fn canary_0029_forward_migrates_v28() {
-        let path = std::env::temp_dir()
+        let path = crate::test_temp::dir()
             .join(format!("ys-nb-db-canary-{}.sqlite3", std::process::id()));
         let _ = std::fs::remove_file(&path);
         let before = {
@@ -963,7 +963,7 @@ mod tests {
     /// 没有这只测,把 checkpoint 挪进 VACUUM 分支不会有任何测试变红。
     #[test]
     fn reclaim_checkpoints_wal_even_when_it_skips_vacuum() {
-        let path = std::env::temp_dir()
+        let path = crate::test_temp::dir()
             .join(format!("ys-nb-db-ckpt-{}.sqlite3", std::process::id()));
         let wal_path = path.with_file_name(format!(
             "{}-wal",
@@ -1010,7 +1010,7 @@ mod tests {
     /// **必须放行 `wal_checkpoint`**,否则测的就成了「两件事一起被拒」。
     #[test]
     fn reclaim_checkpoints_wal_even_when_measuring_fails() {
-        let path = std::env::temp_dir()
+        let path = crate::test_temp::dir()
             .join(format!("ys-nb-db-authfail-{}.sqlite3", std::process::id()));
         let wal_path = path.with_file_name(format!(
             "{}-wal",
@@ -1059,7 +1059,7 @@ mod tests {
     /// 闸、又过 30% 占比闸。**验的是文件真变小且数据一字不差**,不是只看返回值。
     #[test]
     fn reclaim_vacuums_only_over_both_thresholds_and_preserves_data() {
-        let path = std::env::temp_dir()
+        let path = crate::test_temp::dir()
             .join(format!("ys-nb-db-reclaim-{}.sqlite3", std::process::id()));
         for f in [path.clone(), path.with_extension("sqlite3-wal"), path.with_extension("sqlite3-shm")] {
             let _ = std::fs::remove_file(&f);
@@ -1135,7 +1135,7 @@ mod tests {
 
     #[test]
     fn open_enables_wal_and_busy_timeout() {
-        let path = std::env::temp_dir().join(format!("ys-nb-db-wal-{}.sqlite3", std::process::id()));
+        let path = crate::test_temp::dir().join(format!("ys-nb-db-wal-{}.sqlite3", std::process::id()));
         let _ = std::fs::remove_file(&path);
         let conn = open(&path).expect("open database");
         let mode: String = conn

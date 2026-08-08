@@ -1543,7 +1543,7 @@ mod tests {
 
     fn temp_path(tag: &str) -> std::path::PathBuf {
         let n = COUNTER.fetch_add(1, Ordering::SeqCst);
-        let path = std::env::temp_dir()
+        let path = crate::test_temp::dir()
             .join(format!("ys-nb-repo-{}-{}-{}.sqlite3", tag, std::process::id(), n));
         let _ = std::fs::remove_file(&path);
         path

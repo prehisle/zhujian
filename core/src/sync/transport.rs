@@ -88,7 +88,6 @@ mod session_loop;
 
 pub use account::{create_account, pair_join};
 pub use selftest::{net_probe, ProbeStep};
-use account::create_account_as;
 use ad_deck::{offline_deck, AdDeck};
 use deck::{Deck, RelayLeg};
 use lan_pump::{lan_read_pump, lan_write_pump};
@@ -2458,6 +2457,20 @@ struct EngineSlot {
     /// 不是队列、也不存帧:`busy` 时置一笔,**下一拍心跳重新构造一枚广播 Hello**,
     /// 只有**那枚广播 Hello 自己**的 Ack 才清(codex 实现审一轮 H1 收窄:一轮是「任一
     /// `ReconcileCtl` 的 Ack 都清」,普通 Want 的 Ack 会把债静默吞掉)。
+    ///
+    /// **两个置债者(321 起)**:除了「自己的广播 Hello 撞 busy」,**本机 origin(BROADCAST)
+    /// 那枚 ops 撞 busy** 也置一笔(lan-direct-plan §12.1 的活性缺口)。于是这枚位的语义从
+    /// 「服务器没接手我的 Hello」放宽成「**该重发一份水位图了**」—— 两个置债者要的是同一件
+    /// 事(让对端重新看见我的水位),故共用一枚位、不分类。
+    ///
+    /// **持续 busy 期这笔债多半清不掉,而那正是要的**:ops 那条路每拍都会再撞一次 busy 并
+    /// **换新号**,上一拍那枚 Hello 的 Ack 到手时债号可能已经变了。对端得反复看见我的水位
+    /// 才会发现自己落后并回 Want,故「清不掉」是解药不是病。
+    ///
+    /// ⚠ 上一段是**机制推演,不是测出来的**:置债与回执谁先到是一场竞速,没有断言钉它。
+    /// 钉住的只有**代价的上界**,而那一格与竞速结果无关 —— `reconcile_tick` 每拍至多产
+    /// 一枚 Hello、水位图恒有界([`ops_serve::bounded_watermarks`]),且 busy 一停,
+    /// ops 那条路不再置债,债被下一枚 Ack 清掉即收敛。
     ///
     /// **住槽里(跨会话)而不是住 `RelaySession`**:规格明写「会话仪式产生的新 Hello
     /// 可以接管这笔债」,而债要能被接管就得先活过会话边界 —— 住会话里的话,`busy` 恰好

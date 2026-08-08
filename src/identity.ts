@@ -29,6 +29,24 @@ export async function loadIdentity(space: string): Promise<void> {
   snapshot = { space, thisDevice: d.this_device, alias };
 }
 
+/** 名册的指纹,给视图那道「refocus 重画短路」的判据用(317)。
+ *
+ *  为什么非有它不可:别台设备改了别名,**列表数据一个字节都没变** —— 变的只有卡上
+ *  的署名 chip 与留言层里那行「谁说的」。`sync-changed` 会照常把 refresh 叫醒、
+ *  `loadIdentity` 也在同一个 `Promise.all` 里照常重取,可指纹一样就当场 return 了,
+ *  DOM 与浮层都不重建,于是要**关掉重开**才更新。留言计数 `cmCounts` 是同一格
+ *  (314 已进指纹),这是它的第二例。
+ *
+ *  空间对不上 / 名册还没到 = 空串:那两种情况下署名一律不显,没有可比的东西。 */
+export function identitySig(space: string): string {
+  const s = snapshot;
+  if (!s || s.space !== space) return "";
+  // 自己排一次序再序列化:后端今天是 `ORDER BY device_id`(`identity::device_roster`),
+  // 但指纹的稳定性不该挂在别人的排序承诺上——顺序抖一下就是一次无谓的整轮重画。
+  const pairs = [...s.alias].sort((a, b) => (a[0] < b[0] ? -1 : 1));
+  return JSON.stringify([s.thisDevice, pairs]);
+}
+
 /** 本机在当前空间的 device_id;快照还没到 = null。 */
 export function thisDeviceId(space: string): string | null {
   return snapshot && snapshot.space === space ? snapshot.thisDevice : null;

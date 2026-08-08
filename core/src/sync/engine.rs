@@ -36,6 +36,7 @@
 use rusqlite::{Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::ops::Bound;
 use std::sync::{Arc, Mutex};
 use ulid::Ulid;
 
@@ -125,6 +126,63 @@ const MAX_ACTIVE_PULLS: usize = 1;
 /// 让一轮白问;又只有 256 帧上界的 1/8,留足并发其它帧的余量。问不完的由轮转游标在
 /// 后续事件/心跳里接着问(见 [`Engine::want_batch`])。
 const BLOB_WANT_BATCH: usize = 32;
+/// 一枚入站 Hello 至多换回几枚补洞 `Want`([`Engine::hello_gap_wants`],322)。
+///
+/// 上界必须有:Hello 的水位图本身只按**字节**封顶(64 KiB ≈ 上千个 origin),逐个回
+/// Want 就是「一枚小帧换上千枚帧」——正是 `BLOB_WANT_BATCH` 那条注释里记着的同一种
+/// 突发面。取 16 而不是 32:这一档每枚还要读一次本机水位(索引查,但仍是 I/O),而
+/// 今天真实 origin 数是个位数,32 与 16 的差别只在异常形态下才看得见。
+/// 配 [`Engine::hello_want_cursor`] 轮转,故「排前面那几个永远挡着后面」不成立。
+const HELLO_GAP_WANT_BATCH: usize = 16;
+/// 一枚入站 Hello 至多**检查**几个 origin([`Engine::hello_gap_wants`],322 实现审 M2)。
+///
+/// 光有 [`HELLO_GAP_WANT_BATCH`] 不够 —— 那道闸数的是**产出**。水位全齐(或本机更高)时
+/// 一枚 Want 都不产,循环却会把整张图走完、每项还查一次本机水位,**输出零、工作量满**:
+/// 又是「单次输入的工作量由数据规模说了算」(263/264/266 同族)。
+///
+/// 而入站那张图**不是** 64 KiB 硬闸:[`ops_serve::vet_watermarks`] 只验 key/value 的形态,
+/// 超预算要到本函数**之后**的 admission 才折叠,故一枚合形帧的项数实际只受外层帧上限
+/// (LAN 1 MiB)约束 ≈ 两三万项。少了这道闸,那就是每 30 秒两三万次索引查询。
+///
+/// 到限就停,并**把游标推到已看过的位置**——与 [`ops_serve::OPS_SEEK_STEPS_PER_FRAME`]
+/// 同一条纪律(「不发帧也让进度严格前进」)。取 64 与它同量级。
+///
+/// ⚠ **「绕一圈必然走完」只在同一个窗口内成立**:发送侧超预算时自己也在按互不相交的
+/// 窗口轮转,故进度必须**按窗口分开记** —— 见 [`Engine::hello_want_cursor`] 的键。
+const HELLO_GAP_SCAN_STEPS: usize = 64;
+/// [`Engine::hello_want_cursor`] 存几格((对端, 窗口指纹))游标。
+///
+/// ⚠ **它封的是「格数」,不是「对端数」**(三轮 M2 点名:键带上窗口之后,**一台**对端
+/// 循环发 65 个不同窗口就能把表撑满,`OPS_TARGET_MAX`/席位上限那套解释不再成立)。数值
+/// 沿用 64 只是同量级,不再借那张表的语义。满额与回收的处置全在
+/// [`Engine::remember_hello_cursor`]。
+const HELLO_CURSOR_SLOTS: usize = 64;
+/// 一格游标多久没人动就算**废格**(心跳拍数;322 实现审四轮 M1)。
+///
+/// 废格是**正常演进**就会造出来的,不需要恶意成员:origin 集长大让窗口重新分块 / 水位跨
+/// 过 CBOR 整数编码边界让单项字节成本变化 / 发送端重建 / 老设备离开而本引擎还活着 ——
+/// 这些窗口发过一次就再不出现,靠「扫完即还」永远回收不了。64 格被它们占满之后,**后来
+/// 那些诚实窗口**就再也拿不到记忆,永久只问自己的前 16 个。
+///
+/// ⚠ **必须按「绝对年龄」清,不能按 LRU 挑受害者**:窗口是**循环**来的,而循环工作集大于
+/// 容量时**任何**需求驱动的挑受害者策略都会抖动(Belady;照 `OpsWorks::ensure` 那套写过
+/// 一版,`more_windows_than_cursor_slots_still_sweep_to_the_end` 当场红了 260 个 origin)。
+/// 绝对年龄不看别人多新、只看自己多久没动,故不会在「下一次轮到它之前」把它摘掉。
+///
+/// 取 256 拍(心跳 30s ≈ 2 小时)。⚠ **这是一条支持边界,不是定理**(四轮实现审 L1:
+/// 我原先写成「至多 64 格 ⟹ 一圈至多 64 拍」,那推不出来 —— 表里只有**拿到格**的窗口,
+/// 没拿到格的无记忆窗口不计入表长,却照样夹在两个已登记窗口中间占拍)。契约照实写:
+///
+/// - 一个没扫完的窗口,**每隔不到 256 拍至少露一次面**,它的进度就不会被年龄轴清掉;
+/// - 超过 256 拍没露面则允许丢游标,下次从头重扫(不丢数据,只是这一圈白走);
+/// - 「窗口数超过格数 **且** 轮回周期 ≥256 拍」的工作集,属于**已接受的无记忆降级**
+///   (见 [`Engine::remember_hello_cursor`] 规则 ③)。
+///
+/// 现役规模够不到:正常 Hello 的窗口数远低于 64(一次装得下就压根不轮转),而 256 拍
+/// ≈ 2 小时。**要把「超大历史 origin」变成正式支持场景,该做的是响亮 overload 或重新
+/// 设计调度,不是把这个数调大**(五轮实现审的原话);真改了它,配一只
+/// 「255 不清 / 256 可清」的边界测。
+const HELLO_CURSOR_STALE_TICKS: u64 = 256;
 /// 图字节拉流「无进展」阈值(on_tick 心跳次数):对端应了 BlobHave 却不发块(恶意或
 /// bug),连累这么多次心跳后作废本次拉流、回缺图清单换来源(评审 P2-h 轮 M1)。心跳
 /// 30s → 2 次 ≈ 60s idle 才判死,正常传输不误伤。
@@ -274,6 +332,17 @@ pub enum OpsServeTo {
     /// 为什么不塞一枚 `Option<Route>`:那样每个消费点都得回答「`None` 到底是『没来路』
     /// 还是『忘填了』」。把这件事钉进类型是 254 那条教训(「凭据只绑一半等于没封」)。
     Broadcast,
+}
+
+/// 一格补洞轮转进度(见 [`Engine::hello_want_cursor`])。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct HelloSweep {
+    /// 上一枚 Hello 在这个窗口里**看到**的最后一个 origin。绕回头(走满一圈)那一刻
+    /// 这一格就被释放,故它只在「一圈还没走完」期间存在。
+    cursor: String,
+    /// 最后一次动它的心跳刻度 —— 满额时按它清废格(**绝对年龄**,不是 LRU,见
+    /// [`HELLO_CURSOR_STALE_TICKS`])。
+    touched: u64,
 }
 
 /// 一笔图字节供流(§5.4 的供方侧)。**刻意不含字节**——字节由
@@ -544,6 +613,34 @@ pub struct Engine {
     /// [`MAX_ACTIVE_PULLS`] 之后,「下一张问谁」若恒取最小 id,一张谁也没有的图就能把
     /// 后面的图永久挡住;轮转让清单里每张都轮得到。
     want_cursor: u64,
+    /// 「收 Hello 发现自己落后就回 Want」那一批的**轮转起点**([`Engine::hello_gap_wants`]),
+    /// **按发信人分开存**。存最后看过的那个 origin,该对端的下一枚 Hello 从它之后接着扫、
+    /// 绕一圈。
+    ///
+    /// 与 [`Self::want_cursor`] 同一条理由:恒取最小的话,前 16 个长期要不到的 origin
+    /// 会把后面的永久挡住。
+    ///
+    /// **键是(发信人, 这枚 Hello 的窗口指纹)**,三轮实现审各定一块:
+    ///
+    /// - **按发信人分开**(一轮 M1):全局一只时,另一台设备能把游标拨回它自己那一格 ——
+    ///   A 报 20 个缺口、我问了 `01..16` 把游标推到 `16`,紧接着 C 的 Hello 只报一个 `00`、
+    ///   我问它一枚就把游标拨回 `00`;A、C 交替就让 `17..20` **永远**问不到。
+    /// - **再按窗口分开**(二轮 M1):发送侧自己也在轮转 —— 全部水位装不进 64 KiB 时
+    ///   [`ops_serve::bounded_watermarks`] 按窗口 `W1,W2,…,Wk` 循环发。一枚绝对游标追不了
+    ///   k 条独立序列:问完 `W1` 的前 16 个,游标落在 `W1` 里;`W2` 一来游标被推进 `W2`;
+    ///   `W1` 再来时游标已大于它全部 key,绕回头又从第一个问起 —— 每个窗口**永远只被问到
+    ///   前 16 个**。
+    /// - **窗口身份是整份 key 集的指纹,不是最小 key**(三轮 M1):最小 key 认错窗口有两
+    ///   条路 ——(a)生产切窗口是**沿 key 空间绕圈**取的,回绕那一枚(如 `[26..40]+[01..10]`)
+    ///   进了 `BTreeMap` 之后最小 key 是 `01`,压根不是它的圆环起点;(b)两份合法水位图
+    ///   完全可以共用最小 key(`{00,01..20}` 与 `{00,21..40}`),撞同一格就等于没分开。
+    ///
+    /// 一次装得下时发送侧不启用轮转(`cursor.after` 复位、逐枚 Hello 逐字相同),指纹恒定,
+    /// 故常态就是「每台对端一格」,与二轮之前逐字同义。指纹只走内存、不碰库。
+    ///
+    /// 有界:至多 [`HELLO_CURSOR_SLOTS`] 格;回收靠「扫完即还」+ 按绝对年龄清废格
+    /// ([`HELLO_CURSOR_STALE_TICKS`]),两条都在 [`Engine::remember_hello_cursor`]。
+    hello_want_cursor: HashMap<(String, u64), HelloSweep>,
     /// 路由健康表(§5.1):(对端, 路由) → 连接态 × 惩罚态。表里没有的 = Absent 无惩罚。
     routes: HashMap<(String, Route), RouteState>,
     /// 心跳刻度(on_tick 单调加):惩罚到期判定的时间轴,**不用墙钟**(回拨即失效不了)。
@@ -639,6 +736,7 @@ impl Engine {
             pulling: HashMap::new(),
             blob_shunned: HashMap::new(),
             want_cursor: 0,
+            hello_want_cursor: HashMap::new(),
             routes: HashMap::new(),
             tick: 0,
             runtime_started: false,
@@ -2086,7 +2184,9 @@ impl Engine {
     }
 
     /// 收到水位向量:对每个「我高你低」的 origin(含对方没听说过的)回 ops 补给
-    /// (§5.2)。「我低你高」不动作——对方也会收到我的 hello,对称补齐。顺带把
+    /// (§5.2);对每个「我低你高」的回一枚**定向**补洞 `Want`([`Self::hello_gap_wants`],
+    /// 322)。**这里原先写的是「我低你高不动作——对方也会收到我的 hello,对称补齐」**,
+    /// 而稳定会话里 Hello **不周期发送**,那句话的前提不成立(真机字据见该函数头注)。顺带把
     /// hello 当「对端可达」信号,向它重发缺字节图的 want(§5.4 的重试时机;
     /// MetadataOnly 下清单恒空,天然不发——M1「on_hello 不重发 blob want」)。
     ///
@@ -2095,8 +2195,9 @@ impl Engine {
     /// 每 origin 的帧数无界),一枚很小的 Hello 就能撞穿队列上界。现在只登记一份对账
     /// 计划,帧由投递面逐帧惰性取。
     ///
-    /// **顺序守 ③″**:vet 与快照这两件可能失败的事全在 admission 之前做完;admission
-    /// 之后到函数结束**没有 `?`**,故「已登记的义务随 `?` 蒸发」在这里不成立。
+    /// **顺序守 ③″**:vet / 快照 / `hello_gap_wants` 这三件可能失败的事全在 admission
+    /// 之前做完;admission 之后到函数结束**没有 `?`**,故「已登记的义务随 `?` 蒸发」在
+    /// 这里不成立。
     fn on_hello(
         &mut self,
         conn: &Connection,
@@ -2113,6 +2214,14 @@ impl Engine {
                 out.push(Output::Event(Event::FrameRejected { from: from.into(), reason }))
             }
             Ok(vetted) => {
+                // 「我低你高」那一半(322)。**排在 admission 之前**:它要读本机水位、
+                // 带 `?`,而 `settle_ops_admission` 之后到函数结束不许有失败点(③″)。
+                //
+                // 递进去的是**凭据**不是原始 `theirs`:那一步要照着水位图的 key 往外发
+                // `Want.origin`,而「key 是规范设备 id」正是形态闸的产物(自检清单 §8:
+                // 凭据要绑全部输入)。收原始图的话,哪天这行挪出 `Ok(vetted)` 分支,
+                // 编译器一声不吭。
+                let asks = self.hello_gap_wants(conn, from, &vetted)?;
                 let tick = self.tick;
                 let admitted =
                     ops_serve::lock_ops(&self.ops).on_hello(from, vetted, snapshot, tick);
@@ -2123,6 +2232,7 @@ impl Engine {
                     || "hello 的发送方 id 形态不合规范设备 id".into(),
                     out,
                 );
+                out.extend(asks);
             }
         }
         // 同会话仪式那条(264 实现审 H2):缺字节清单走唯一发问点,一次至多
@@ -2130,6 +2240,147 @@ impl Engine {
         // 改成广播不损功能:want 本就是「谁有谁答」,发问人不该挑收件人。
         out.extend(self.want_batch());
         Ok(())
+    }
+
+    /// 收到对端 Hello 时,对每个「**我低你高**」的 origin 回一枚补洞 `Want`(322)。
+    ///
+    /// **为什么这一步非有不可**。Hello 的语义是「这是我有的,你把我缺的推给我」——收到
+    /// Hello 的一方只登记「服务发信人」的对账计划([`ops_serve::OpsWorks::on_hello`]),
+    /// 对「我低你高」原先**一步都不动**(本文件 `on_hello` 上方那句注释的原话:「对方也会
+    /// 收到我的 hello,对称补齐」)。那句话成立的前提是**双方都会发 Hello**,而稳定会话里
+    /// Hello **不周期发送**(`transport.rs` 自述)。
+    ///
+    /// 于是 321 补的那条轴是断的:本机 ops 撞 busy → 置债 → 每拍发一枚广播 Hello,可那枚
+    /// Hello 只会让对端**把对端的新东西推给我**,换不回任何人来要**我**的积压。
+    /// **322 真机实测**:一端写 40 条、另一端闲着,8 分钟零到达;直到对端自己也写了东西、
+    /// 因而发出它那枚 Hello,积压才在 28 秒内全部走直连过去。补上这一步,写入方那枚 Hello
+    /// 才第一次有回音。
+    ///
+    /// **重叠的代价,如实记着**:会话仪式那一刻双方本来就各发一枚 Hello,故落后那一方
+    /// 这里多问的一枚 Want 与「对方收到我的 Hello 后要推的那份」是同一批数据。多数情况下
+    /// 由 [`ops_serve::OpsWorks::on_want`] 的 ①「还在活动计划的未扫部分 → 只下修起点,
+    /// 不新开段」吸收掉;两枚帧到达次序反过来时会短暂并存两条供给路,ops 幂等故只是白发
+    /// 一段字节,不产生错误结果。
+    ///
+    /// 有界**两道**:产出至多 [`HELLO_GAP_WANT_BATCH`] 枚,检查至多
+    /// [`HELLO_GAP_SCAN_STEPS`] 项(后者是 322 实现审 M2 补的 —— 前者数的是产出,水位
+    /// 全齐时它一枚都不拦,而遍历与查库照样按整张图的规模走)。起点由
+    /// [`Self::hello_want_cursor`] **按发信人**轮转,且**看过就推进**(不只是问过的那些),
+    /// 故一片「已齐」或「冻结」不会在每枚 Hello 里被反复重扫、把后面的挡住。
+    ///
+    /// **冻结与隔离在册的 origin 跳过** —— 那两档要来的帧到岸即丢/即冻,问了纯属白问,
+    /// 而 Hello 每来一枚就会再问一次。
+    fn hello_gap_wants(
+        &mut self,
+        conn: &Connection,
+        from: &str,
+        vetted: &ops_serve::VettedWatermarks,
+    ) -> Result<Vec<Output>, String> {
+        // `from` 不合形时 admission 会把整枚帧判 `Malformed`(见调用点),这里先退场,
+        // 免得把 Want 寄给一个不是规范设备 id 的收件人。**收件人这一格闸不进类型**
+        // (`from` 是裸 `&str`,与水位图的 key 不同源),故留这道运行期闸。
+        if !crate::clock::is_canonical_device_id(from) {
+            return Ok(vec![]);
+        }
+        // key 的合形由凭据背书(见 [`ops_serve::VettedWatermarks::peer`]),不重验。
+        let theirs = vetted.peer();
+        // 这枚 Hello 的**窗口身份** = 整份有序 key 集的指纹(见 [`Self::hello_want_cursor`])。
+        // 空图没有窗口,也没什么可问的。
+        if theirs.is_empty() {
+            return Ok(vec![]);
+        }
+        let slot = (from.to_string(), window_fingerprint(theirs.keys()));
+        let cursor = self.hello_want_cursor.get(&slot).map(|s| s.cursor.clone());
+        // 从这台对端的游标之后扫起,绕回头把「≤ 游标」的那半接上。**两段都是惰性
+        // `Range`,不 collect** —— 整张图可达两三万项,收进 `Vec` 就是一次按数据规模走的
+        // 分配(M2 同一条)。
+        let after = theirs.range::<str, _>((
+            cursor.as_deref().map_or(Bound::Unbounded, Bound::Excluded),
+            Bound::Unbounded,
+        ));
+        let wrapped = theirs.range::<str, _>((
+            Bound::Unbounded,
+            // 没游标 = 从头扫一圈,第二段必须**恒空**:空串比任何规范 device id 都小,
+            // 故「< 空串」一项不含(用 `Unbounded` 的话两段会把整张图数两遍)。
+            cursor.as_deref().map_or(Bound::Excluded(""), Bound::Included),
+        ));
+        let mut out = vec![];
+        // 游标**攒在局部量里、最后一次性提交**:循环里有 `?`(读本机水位),中途失败时
+        // 这一批 `out` 会随 `?` 一起丢掉。边走边推进 `self.hello_want_cursor` 的话就是
+        // 「状态留下了、义务丢了」——§6.2 ③″「已提交的义务不许随 `?` 蒸发」的镜像:那几个
+        // 已被游标跳过的 origin 这一轮没问成,却要等轮转绕完一圈才轮得回来。攒起来之后,
+        // 「游标动过 ⟺ 这一批真交出去了」。
+        let mut next_cursor = cursor;
+        let mut steps = 0usize;
+        // 「这一趟绕回头了吗」= 走进 `wrapped` 那一段。绕回头 ⟺ 游标从起点走满了一圈,
+        // 该窗口每个 origin 都问过一遍 —— 那一刻这一格就还回去(见 `remember_hello_cursor`)。
+        let mut swept = false;
+        for (is_wrapped, (origin, &their_seq)) in
+            after.map(|e| (false, e)).chain(wrapped.map(|e| (true, e)))
+        {
+            if out.len() >= HELLO_GAP_WANT_BATCH || steps >= HELLO_GAP_SCAN_STEPS {
+                break;
+            }
+            steps += 1;
+            swept |= is_wrapped;
+            // **看过就推游标**,不只是问过的那些(M2):否则一片「已齐」或「冻结」的
+            // origin 会在每枚 Hello 里被从头重扫一遍,排在它们后面的永远轮不到。
+            next_cursor = Some(origin.clone());
+            if self.frozen.contains_key(origin) || self.quarantined.contains(origin) {
+                continue;
+            }
+            let mine = watermark(conn, origin)?;
+            if their_seq <= mine {
+                continue;
+            }
+            out.push(Output::Send {
+                // **定向发给这枚 Hello 的作者**,不广播:是它自报「我有到 N」的,别的
+                // 设备既没这么说、也没有义务答。与 `want_batch` 那条「谁有谁答」不同——
+                // 那边问的是缺字节,发问时并不知道谁手里有。
+                to: from.into(),
+                lane: Lane::Mail,
+                route_hint: RouteHint::Auto,
+                msg: Msg::Want { origin: origin.clone(), from_seq: mine + 1 },
+            });
+        }
+        self.remember_hello_cursor(slot, next_cursor, swept);
+        Ok(out)
+    }
+
+    /// 记下这一格((对端, 窗口指纹))的补洞轮转进度(见 [`Self::hello_want_cursor`])。
+    ///
+    /// 三条回收/让位规则,合起来才是三轮 M2 要的「completion-aware 的有界调度」+ 四轮 M1
+    /// 要的「废格有确定的生命周期」:
+    ///
+    /// 1. **绕回头了就当场释放这一格**(`swept` 为真):游标已经从起点走了一整圈,该窗口
+    ///    每个 origin 都问过一遍了,留着它只是占位。释放 = 下次这个窗口来了从头再走一圈。
+    /// 2. **满额先按绝对年龄清废格**([`HELLO_CURSOR_STALE_TICKS`]):只发过一次就再不
+    ///    出现的窗口靠规则 1 永远回收不了,而它是**正常演进**就会造出来的(窗口重分块 /
+    ///    老设备离开),64 格被占满后**后来那些诚实窗口**会被静默永久饿死(四轮 M1)。
+    /// 3. 清完仍满 = 工作集真的超容量,才把这一枚降级成**无记忆**(照样问它的前 16 个,
+    ///    只是不记进度)。**任何时候都绝不整只清空**。
+    ///
+    /// **为什么规则 2 按绝对年龄而不是 LRU**:窗口是**循环**来的,循环工作集大于容量时任何
+    /// 需求驱动的挑受害者策略都会抖动(Belady)—— 每个窗口恰好在轮到它之前被摘掉,人人
+    /// 都是新格、人人只问前 16 个,正是三轮 M2 换了张皮(照 LRU 写过一版,
+    /// `more_windows_than_cursor_slots_still_sweep_to_the_end` 当场红了 260 个 origin)。
+    fn remember_hello_cursor(&mut self, slot: (String, u64), cursor: Option<String>, swept: bool) {
+        if swept {
+            self.hello_want_cursor.remove(&slot);
+            return;
+        }
+        let Some(c) = cursor else { return };
+        let tick = self.tick;
+        if !self.hello_want_cursor.contains_key(&slot)
+            && self.hello_want_cursor.len() >= HELLO_CURSOR_SLOTS
+        {
+            self.hello_want_cursor
+                .retain(|_, s| tick.saturating_sub(s.touched) < HELLO_CURSOR_STALE_TICKS);
+            if self.hello_want_cursor.len() >= HELLO_CURSOR_SLOTS {
+                return;
+            }
+        }
+        self.hello_want_cursor.insert(slot, HelloSweep { cursor: c, touched: tick });
     }
 
     /// 收到补洞请求:登记进该 target 的补洞快车道(§6.2 ③)。
@@ -2911,6 +3162,26 @@ pub(crate) fn encoded_op_len(op: &RemoteOp) -> usize {
 }
 
 // ---- 日志派生(水位与缺字节清单都不落存储,项目铁律「派生不存」) ---------------------
+
+/// 一枚 Hello 的**窗口身份** = 它那份**有序 key 集**的指纹(FNV-1a 64;三轮 M1)。
+///
+/// 只吃 key、不吃水位:同一个窗口的水位每拍都在涨,吃了值就等于每次都是新窗口。
+/// 分隔符 `0xFF` 不在 Crockford 字母表里,故「拼起来一样」造不出撞车
+/// (`AB|C` 与 `A|BC` 这类)。
+///
+/// 撞车的后果是**两个窗口共用一格游标**,即退化回二轮那个形 —— 不丢数据、不错发,
+/// 只是公平性打折;64 位下这需要刻意构造,而能构造它的一定是本空间成员,而成员本来
+/// 就可以干脆不答我的 `Want`。故这里不上抗碰撞哈希。
+fn window_fingerprint<'a>(keys: impl Iterator<Item = &'a String>) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for k in keys {
+        for b in k.as_bytes().iter().chain(std::iter::once(&0xFFu8)) {
+            h ^= *b as u64;
+            h = h.wrapping_mul(0x0000_0100_0000_01B3);
+        }
+    }
+    h
+}
 
 /// 单 origin 水位 = 本机日志该 origin 的 MAX(origin_seq)(严格连续应用保证无洞)。
 fn watermark(conn: &Connection, origin: &str) -> Result<i64, String> {

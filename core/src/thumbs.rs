@@ -122,7 +122,7 @@ mod tests {
 
     /// 建库 + 一条带图的条目,返回 (conn, clock, item_id, image_id)。
     fn seed(tag: &str) -> (rusqlite::Connection, Clock, String, String) {
-        let path = std::env::temp_dir()
+        let path = crate::test_temp::dir()
             .join(format!("zj-thumb-{tag}-{}.sqlite3", std::process::id()));
         let _ = std::fs::remove_file(&path);
         let mut conn = crate::db::open(&path).expect("open migrated db");

@@ -12,7 +12,7 @@ static COUNTER: AtomicU32 = AtomicU32::new(0);
 
 fn fresh() -> (Connection, Clock, Engine) {
     let n = COUNTER.fetch_add(1, Ordering::SeqCst);
-    let path = std::env::temp_dir()
+    let path = crate::test_temp::dir()
         .join(format!("ys-nb-engine-{}-{}.sqlite3", std::process::id(), n));
     let _ = std::fs::remove_file(&path);
     let conn = db::open(&path).expect("open migrated db");
@@ -283,7 +283,7 @@ fn suspended_head_retries_after_any_progress() {
     // 挂起,A 到齐后 drain 不动点把 B 解开。
     let (mut remote, mut rclock) = {
         let n = COUNTER.fetch_add(1, Ordering::SeqCst);
-        let path = std::env::temp_dir()
+        let path = crate::test_temp::dir()
             .join(format!("ys-nb-engine-{}-{}.sqlite3", std::process::id(), n));
         let _ = std::fs::remove_file(&path);
         let conn = db::open(&path).expect("open");
@@ -443,6 +443,515 @@ fn hello_answers_with_ops_the_peer_lacks() {
         .on_relay_msg(&mut conn, &mut clock, PEER_ULID, Msg::Hello { watermarks: theirs, lan: None })
         .unwrap();
     assert!(sends(&outs).iter().all(|m| !matches!(m, Msg::Ops { .. })));
+}
+
+/// 一批输出里那些补洞请求问的是哪些 origin(顺序即产出序,轮转用例要看它)。
+fn asked_origins(outs: &[Output]) -> Vec<String> {
+    outs.iter()
+        .filter_map(|o| match o {
+            Output::Send { msg: Msg::Want { origin, .. }, .. } => Some(origin.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// 322:**收 Hello 发现自己落后,当场回一枚定向 `Want`**。
+///
+/// 少了这一步,321 那条「本机 ops 撞 busy → 置债 → 每拍一枚广播 Hello」是死巷:Hello
+/// 只让对端**把对端的新东西推给我**,没有任何人来要**我**的积压(真机实测 8 分钟零到达,
+/// progress-log 322)。
+#[test]
+fn a_hello_from_a_peer_that_is_ahead_asks_it_for_the_gap() {
+    let (mut conn, mut clock, mut eng) = fresh();
+    let theirs = BTreeMap::from([(PEER_ULID.to_string(), 7)]);
+    let outs = eng
+        .on_relay_msg(&mut conn, &mut clock, PEER_ULID, Msg::Hello { watermarks: theirs, lan: None })
+        .unwrap();
+    let asked: Vec<(&str, &str, i64)> = outs
+        .iter()
+        .filter_map(|o| match o {
+            Output::Send { to, msg: Msg::Want { origin, from_seq }, .. } => {
+                Some((to.as_str(), origin.as_str(), *from_seq))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        asked,
+        vec![(PEER_ULID, PEER_ULID, 1)],
+        "本机水位 0 → 从 1 问起;且**定向**发给自报有货的那台,不广播:{outs:?}"
+    );
+}
+
+/// 反面那一半:对端没比我高,一枚都不问(否则每收一枚 Hello 就白问一轮)。
+#[test]
+fn a_hello_from_a_peer_that_is_not_ahead_asks_for_nothing() {
+    let (mut conn, mut clock, mut eng) = fresh();
+    let idea = notes::capture(&mut conn, &mut clock, "本机的东西").unwrap();
+    notes::edit(&mut conn, &mut clock, &idea, "再改一笔").unwrap();
+    let me = clock.device_id().to_string();
+    let mine = watermark(&conn, &me).unwrap();
+    let theirs = BTreeMap::from([
+        (me.clone(), mine - 1),           // 我高你低:该我推给它,不是我问它
+        (PEER_ULID.to_string(), 0),       // 齐平(两边都是 0)
+    ]);
+    let outs = eng
+        .on_relay_msg(&mut conn, &mut clock, PEER_ULID, Msg::Hello { watermarks: theirs, lan: None })
+        .unwrap();
+    assert!(asked_origins(&outs).is_empty(), "没落后就别问:{outs:?}");
+}
+
+/// 有界 + 轮转:一枚 Hello 的水位图只按字节封顶(64 KiB ≈ 上千个 origin),逐个回问
+/// 就是「一枚小帧换上千枚帧」。而恒取最小的话,前 16 个长期要不到的会把后面永久挡住。
+#[test]
+fn the_gap_wants_from_one_hello_are_capped_and_rotate() {
+    let (mut conn, mut clock, mut eng) = fresh();
+    let ids: Vec<String> = (1..=(HELLO_GAP_WANT_BATCH + 4)).map(|i| format!("{i:026}")).collect();
+    let theirs: BTreeMap<String, i64> = ids.iter().map(|o| (o.clone(), 3)).collect();
+    let hello = || Msg::Hello { watermarks: theirs.clone(), lan: None };
+    let first =
+        asked_origins(&eng.on_relay_msg(&mut conn, &mut clock, PEER_ULID, hello()).unwrap());
+    assert_eq!(first.len(), HELLO_GAP_WANT_BATCH, "一枚 Hello 至多换回这么多枚:{first:?}");
+    let second =
+        asked_origins(&eng.on_relay_msg(&mut conn, &mut clock, PEER_ULID, hello()).unwrap());
+    assert_eq!(second.len(), HELLO_GAP_WANT_BATCH);
+    assert!(
+        second.iter().any(|o| !first.contains(o)),
+        "第二枚 Hello 必须问到第一枚没问的那几个(轮转);first={first:?} second={second:?}"
+    );
+}
+
+/// 冻结与隔离在册的 origin 跳过:那两档要来的帧到岸即冻/即丢,问了纯属白问,而
+/// Hello 每来一枚就会再问一次。
+#[test]
+fn gap_wants_skip_frozen_and_quarantined_origins() {
+    let (mut conn, mut clock, mut eng) = fresh();
+    let (froze, quar, ok) = (format!("{:026}", 1), format!("{:026}", 2), format!("{:026}", 3));
+    eng.frozen.insert(froze.clone(), "分叉".into());
+    eng.quarantined.insert(quar.clone());
+    let theirs = BTreeMap::from([(froze, 9), (quar, 9), (ok.clone(), 9)]);
+    let outs = eng
+        .on_relay_msg(&mut conn, &mut clock, PEER_ULID, Msg::Hello { watermarks: theirs, lan: None })
+        .unwrap();
+    assert_eq!(asked_origins(&outs), vec![ok], "只问那一个还能收的:{outs:?}");
+}
+
+/// 游标**攒到最后一次性提交**:循环里读本机水位带 `?`,中途炸掉时整批 `Want` 随 `?`
+/// 一起丢。边走边推进游标的话就是「状态留下了、义务丢了」——§6.2 ③″ 那条纪律的镜像:
+/// 被游标跳过的那几个 origin 这一轮没问成,却要等轮转绕完一圈才轮得回来。
+///
+/// 可控失败点用 rusqlite authorizer(`db.rs` 里已有的同一把):放行第一枚 origin 的
+/// 水位读、拒掉第二枚,于是「已问出一枚、第二枚炸了」这一格真被走到。
+#[test]
+fn a_mid_loop_read_failure_leaves_the_rotation_cursor_untouched() {
+    use rusqlite::hooks::{AuthAction, AuthContext, Authorization};
+    let (conn, _clock, mut eng) = fresh();
+    let theirs = BTreeMap::from([(format!("{:026}", 1), 5), (format!("{:026}", 2), 5)]);
+    let vetted = ops_serve::vet_watermarks(theirs).expect("两枚都是规范 id");
+    let selects = std::cell::Cell::new(0usize);
+    conn.authorizer(Some(move |ctx: AuthContext| match ctx.action {
+        AuthAction::Select => {
+            selects.set(selects.get() + 1);
+            if selects.get() >= 2 { Authorization::Deny } else { Authorization::Allow }
+        }
+        _ => Authorization::Allow,
+    }));
+    let err = eng
+        .hello_gap_wants(&conn, PEER_ULID, &vetted)
+        .expect_err("第二枚 origin 的水位读被拒,整批必须响亮失败");
+    conn.authorizer(None::<fn(AuthContext<'_>) -> Authorization>);
+    assert!(
+        eng.hello_want_cursor.is_empty(),
+        "这一批一枚都没交出去(`?` 把 out 丢了),游标就一格都不许动;实见 err={err}"
+    );
+}
+
+/// **322 实现审 M1 的反例**:两个发送方交替,谁也不许拨动对方那只游标。
+///
+/// 全局一只游标时:A 报 20 个缺口 → 我问 `01..16`、游标到 `16`;紧接着 C 的 Hello 只报
+/// 一个更小的 `00` → 我问它一枚就把游标**拨回** `00`;A、C 一交替,`17..20` 永远问不到。
+/// 那是合法输入下的活性错误(它们全都取不到 = 持续 busy,这正是 322 要治的那一幕)。
+#[test]
+fn two_senders_do_not_drag_each_others_rotation_cursor() {
+    let (mut conn, mut clock, mut eng) = fresh();
+    let a = PEER_ULID;
+    let c = "01PEERXCCCCCCCCCCCCCCCCCCC";
+    // A 报 20 个缺口(`00000…01` … `00000…20`),C 只报一个**排在最前**的 `00000…00`。
+    let a_map: BTreeMap<String, i64> =
+        (1..=20).map(|i| (format!("{i:026}"), 3)).collect();
+    let c_map = BTreeMap::from([(format!("{:026}", 0), 3)]);
+    let hello = |m: &BTreeMap<String, i64>| Msg::Hello { watermarks: m.clone(), lan: None };
+
+    let first =
+        asked_origins(&eng.on_relay_msg(&mut conn, &mut clock, a, hello(&a_map)).unwrap());
+    assert_eq!(first.len(), HELLO_GAP_WANT_BATCH, "前置:第一枚 Hello 该问满 16 枚");
+    // C 插一脚:它那枚 origin 排在所有 A 的前面,全局游标形态下会被拨回去。
+    let from_c =
+        asked_origins(&eng.on_relay_msg(&mut conn, &mut clock, c, hello(&c_map)).unwrap());
+    assert_eq!(from_c, vec![format!("{:026}", 0)], "C 那枚也该问出来");
+    let second =
+        asked_origins(&eng.on_relay_msg(&mut conn, &mut clock, a, hello(&a_map)).unwrap());
+
+    for i in 17..=20 {
+        let tail = format!("{i:026}");
+        assert!(
+            second.contains(&tail),
+            "A 的第 {i} 个缺口必须在第二枚 Hello 里问到 —— 它被 C 拨回去的游标挡住了。\
+             first={first:?} from_c={from_c:?} second={second:?}"
+        );
+    }
+}
+
+/// **322 实现审 M2**:一枚 Hello 的**查库次数**由常量定,不由水位图有多大定。
+///
+/// 水位全齐时一枚 Want 都不产,故 `HELLO_GAP_WANT_BATCH` 那道闸一次都不拦;少了检查
+/// 预算,这一枚 Hello 就会把整张图走一遍、每项查一次本机水位。用 authorizer 数 `SELECT`。
+#[test]
+fn one_hello_costs_a_bounded_number_of_watermark_reads() {
+    use rusqlite::hooks::{AuthAction, AuthContext, Authorization};
+    let (conn, _clock, mut eng) = fresh();
+    // 200 项,全部「我齐你齐」(两边都是 0)→ 一枚 Want 都不该产。
+    let theirs: BTreeMap<String, i64> = (1..=200).map(|i| (format!("{i:026}"), 0)).collect();
+    let vetted = ops_serve::vet_watermarks(theirs).expect("全是规范 id");
+    let selects = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counter = selects.clone();
+    conn.authorizer(Some(move |ctx: AuthContext| {
+        if matches!(ctx.action, AuthAction::Select) {
+            counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+        Authorization::Allow
+    }));
+    let outs = eng.hello_gap_wants(&conn, PEER_ULID, &vetted).unwrap();
+    conn.authorizer(None::<fn(AuthContext<'_>) -> Authorization>);
+
+    let n = selects.load(std::sync::atomic::Ordering::SeqCst);
+    assert!(outs.is_empty(), "水位全齐,一枚都不该问:{outs:?}");
+    assert!(
+        n <= HELLO_GAP_SCAN_STEPS,
+        "一枚 Hello 的查库次数必须由 HELLO_GAP_SCAN_STEPS({HELLO_GAP_SCAN_STEPS})定,\
+         不由图有多大定;实见 {n} 次"
+    );
+    // 下界同样要断:游标必须**推过已看过的那些**,否则每枚 Hello 都从头重扫、
+    // 排在后面的 origin 永远轮不到(那是「有闸但不前进」的假绿)。
+    assert_eq!(
+        eng.hello_want_cursor.values().map(|s| s.cursor.as_str()).collect::<Vec<_>>(),
+        vec![format!("{HELLO_GAP_SCAN_STEPS:026}").as_str()],
+        "游标该停在第 {HELLO_GAP_SCAN_STEPS} 项上"
+    );
+}
+
+/// **322 实现审三轮 M1 的反例**:两份**最小 key 相同**的合法水位图必须各记各的进度。
+///
+/// 头一版拿「这枚 Hello 最小的那个 key」当窗口身份 —— 而 `{00,01..20}` 与 `{00,21..40}`
+/// 都合形、都远小于 64 KiB、最小 key 都是 `00`,撞同一格就等于没分开:交替发来时
+/// `01..20` 的尾巴与 `21..40` 的尾巴各自永久漏问。
+#[test]
+fn two_windows_sharing_a_smallest_origin_keep_separate_progress() {
+    let (mut conn, mut clock, mut eng) = fresh();
+    let shared = format!("{:026}", 0);
+    let mk = |range: std::ops::RangeInclusive<u32>| -> BTreeMap<String, i64> {
+        std::iter::once((shared.clone(), 3))
+            .chain(range.map(|i| (format!("{i:026}"), 3)))
+            .collect()
+    };
+    let (w1, w2) = (mk(1..=20), mk(21..=40));
+    assert_eq!(w1.keys().next(), w2.keys().next(), "前置:两份图的最小 key 必须相同");
+
+    let mut asked: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for _ in 0..8 {
+        for w in [&w1, &w2] {
+            let outs = eng
+                .on_relay_msg(
+                    &mut conn,
+                    &mut clock,
+                    PEER_ULID,
+                    Msg::Hello { watermarks: w.clone(), lan: None },
+                )
+                .unwrap();
+            asked.extend(asked_origins(&outs));
+        }
+    }
+    let never: Vec<String> = (1..=40)
+        .map(|i| format!("{i:026}"))
+        .filter(|o| !asked.contains(o))
+        .collect();
+    assert!(never.is_empty(), "这些 origin 一次都没被问到(两份图撞了同一格游标):{never:?}");
+}
+
+/// 造 `n` 个各 20 项的互不相交窗口(每个都比一枚 Hello 的产出上界大)。
+fn cursor_test_windows(n: usize) -> Vec<BTreeMap<String, i64>> {
+    (0..n)
+        .map(|w| (0..20).map(|i| (format!("{w:013}{i:013}"), 3)).collect::<BTreeMap<_, _>>())
+        .collect()
+}
+
+/// **322 实现审三轮 M2 的反例**:窗口数超过游标表的格数时,不许「整只清空」。
+///
+/// 键带上窗口之后,**一台**对端循环发 65 个不同窗口就能把 64 格撑满。头一版满额时整只
+/// 清空 —— 于是每个窗口在下次露面前进度都已被抹掉,永远只问自己的前 16 个。改成「扫完
+/// 即还」之后,格子由**已登记的窗口自己走完一圈**来腾,登记者优先续完、完了让位。
+#[test]
+fn more_windows_than_cursor_slots_still_sweep_to_the_end() {
+    let (mut conn, mut clock, mut eng) = fresh();
+    let windows = cursor_test_windows(HELLO_CURSOR_SLOTS + 1);
+    assert!(
+        windows.iter().all(|w| w.len() > HELLO_GAP_WANT_BATCH),
+        "前置:每个窗口都要比产出上界大,否则一枚 Hello 就问完了"
+    );
+
+    let mut asked: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for _ in 0..12 {
+        for w in &windows {
+            let outs = eng
+                .on_relay_msg(
+                    &mut conn,
+                    &mut clock,
+                    PEER_ULID,
+                    Msg::Hello { watermarks: w.clone(), lan: None },
+                )
+                .unwrap();
+            asked.extend(asked_origins(&outs));
+            eng.on_tick();
+        }
+    }
+    let never: Vec<String> = windows
+        .iter()
+        .flat_map(|w| w.keys().cloned())
+        .filter(|o| !asked.contains(o))
+        .collect();
+    assert!(
+        never.is_empty(),
+        "{} 个 origin 一次都没被问到(满额把没扫完的进度整只抹了):{:?}",
+        never.len(),
+        &never[..never.len().min(8)]
+    );
+    assert!(
+        eng.hello_want_cursor.len() <= HELLO_CURSOR_SLOTS,
+        "游标表越界:{}",
+        eng.hello_want_cursor.len()
+    );
+}
+
+/// **322 实现审四轮 M1 的反例**:64 个**只来一次**的窗口占满格之后,后来那个稳定窗口
+/// 照样要能扫到尾。
+///
+/// 「扫完即还」回收不了一次性窗口 —— 它们等不到下一次露面。而一次性窗口是**正常演进**
+/// 就会造出来的(origin 集长大让窗口重新分块 / 水位跨过 CBOR 整数编码边界 / 发送端重建 /
+/// 老设备离开),故被饿死的会是后来那些诚实窗口,不是什么恶意成员。回收轴 = 按**绝对
+/// 年龄**清废格;⚠ 不能换成 LRU,那会在 65>64 那只测里当场抖动。
+#[test]
+fn stale_cursor_slots_do_not_poison_a_later_steady_window() {
+    let (mut conn, mut clock, mut eng) = fresh();
+    let mut feed = |eng: &mut Engine, conn: &mut Connection, clock: &mut Clock, w: &BTreeMap<String, i64>| {
+        let outs = eng
+            .on_relay_msg(conn, clock, PEER_ULID, Msg::Hello { watermarks: w.clone(), lan: None })
+            .unwrap();
+        eng.on_tick();
+        asked_origins(&outs)
+    };
+
+    // ① 64 个窗口各来一次就再不出现 —— 每个都留下一格没扫完的进度,表就此满了。
+    let one_shots = cursor_test_windows(HELLO_CURSOR_SLOTS);
+    for w in &one_shots {
+        feed(&mut eng, &mut conn, &mut clock, w);
+    }
+    assert_eq!(
+        eng.hello_want_cursor.len(),
+        HELLO_CURSOR_SLOTS,
+        "前置:64 个一次性窗口该把格占满"
+    );
+
+    // ② 此后只有这一个窗口稳定周期来。它的尾巴(第 17..20 个)必须最终被问到。
+    let steady: BTreeMap<String, i64> =
+        (0..20).map(|i| (format!("{:013}{i:013}", 9999), 3)).collect();
+    let mut asked: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for _ in 0..(HELLO_CURSOR_STALE_TICKS + 4) {
+        asked.extend(feed(&mut eng, &mut conn, &mut clock, &steady));
+    }
+    let never: Vec<&String> = steady.keys().filter(|o| !asked.contains(*o)).collect();
+    assert!(
+        never.is_empty(),
+        "废格把后来这个稳定窗口毒死了,它永远只问得到自己的前 {HELLO_GAP_WANT_BATCH} 个:{never:?}"
+    );
+    assert!(
+        eng.hello_want_cursor.len() <= HELLO_CURSOR_SLOTS,
+        "游标表越界:{}",
+        eng.hello_want_cursor.len()
+    );
+}
+
+/// 指纹只吃 key、不吃水位:同一个窗口的水位每拍都在涨,吃了值就等于每枚 Hello 都是新
+/// 窗口 —— 那等于把这套记忆整个废掉(而且不会有任何测试红,故单钉一只)。
+#[test]
+fn the_same_origins_with_moved_watermarks_stay_in_one_slot() {
+    let (mut conn, mut clock, mut eng) = fresh();
+    let at = |seq: i64| -> BTreeMap<String, i64> {
+        (1..=20).map(|i| (format!("{i:026}"), seq)).collect()
+    };
+    for seq in [3, 4, 5] {
+        eng.on_relay_msg(
+            &mut conn,
+            &mut clock,
+            PEER_ULID,
+            Msg::Hello { watermarks: at(seq), lan: None },
+        )
+        .unwrap();
+    }
+    assert_eq!(
+        eng.hello_want_cursor.len(),
+        1,
+        "同一份 origin 集、水位涨了三轮,只该占一格:{:?}",
+        eng.hello_want_cursor
+    );
+}
+
+/// **322 实现审二轮 M1 的反例**:发送侧**自己也在轮转**时,每个窗口都要被扫透。
+///
+/// 全部水位装不进预算时,生产的 `bounted_watermarks` 按**互不相交**的窗口 `W1,W2,…`
+/// 循环发。收端若只记一枚绝对游标:问完 `W1` 前 16 个游标落在 `W1` 里 → `W2` 来了把游标
+/// 推进 `W2` → `W1` 再来时游标已大于它全部 key,绕回头**又从第一个问起**。于是每个窗口
+/// 永远只被问到前 16 个,后面的即便对端拿得出也永远没人要。
+///
+/// 这只测**走生产的窗口切法**(不是手搓两张 map),故发送侧哪天改了切法它会跟着说话。
+#[test]
+fn a_rotating_sender_still_gets_every_window_swept() {
+    use crate::sync::ops_serve::{bounded_watermarks, HelloCursor};
+    // ① 造一台「有很多 origin」的对端:40 个各写过一枚 op。
+    let (mut a_conn, mut a_clock, mut a_eng) = fresh();
+    let origins: Vec<String> = (1..=40).map(|i| format!("{i:026}")).collect();
+    for (n, o) in origins.iter().enumerate() {
+        a_eng
+            .on_relay_msg(
+                &mut a_conn,
+                &mut a_clock,
+                o,
+                Msg::Ops {
+                    origin: o.clone(),
+                    ops: vec![topic_op(o, 1_000 + n as u64, 1, &format!("T{n:025}"))],
+                },
+            )
+            .unwrap();
+    }
+
+    // ② 拿生产切法把它切成窗口。
+    //
+    // ⚠ **预算这个数是判据的一部分,不是随手挑的**(变异对照抓到过一次假绿):窗口是
+    // 按 key 空间**循环**取的,窗口尺不整除 origin 数时边界每圈都在漂 —— 而漂移本身就
+    // 把覆盖面带出来了,那一格连坏代码都能过。要复现二轮 M1 说的那一幕,必须让窗口
+    // **恰好平铺**:40 个 origin、每枚 Hello 恰 20 条 → 两块互不相交的定长砖来回换。
+    // 每条 26 字符 id + 小整数 ≈ 29 字节,故预算取 600(3 + 29×20 = 583 装得下、
+    // 再加一条 612 装不下)。
+    let mut send_cursor = HelloCursor::default();
+    let mut windows = vec![];
+    for _ in 0..6 {
+        let w = bounded_watermarks(&a_conn, &mut send_cursor, 600).unwrap();
+        assert!(!w.is_empty(), "窗口不该空");
+        windows.push(w);
+    }
+    // 前置逐条钉死,别让这只测哪天悄悄退化回「漂移窗口」那种谁都能过的形。
+    let shapes: Vec<Vec<&String>> = windows.iter().map(|w| w.keys().collect()).collect();
+    let distinct: std::collections::BTreeSet<&Vec<&String>> = shapes.iter().collect();
+    assert_eq!(distinct.len(), 2, "前置:该切成恰两块来回换;实见 {} 种", distinct.len());
+    let (w0, w1) = (&shapes[0], &shapes[1]);
+    assert!(
+        w0.iter().all(|k| !w1.contains(k)),
+        "前置:两块必须互不相交(重叠的话覆盖靠重叠就有了,测不到轮转)"
+    );
+    assert!(
+        windows.iter().all(|w| w.len() > HELLO_GAP_WANT_BATCH),
+        "前置:窗口要比一枚 Hello 的产出上界大,否则一枚就问完了;实见 {:?}",
+        windows.iter().map(|w| w.len()).collect::<Vec<_>>()
+    );
+
+    // ③ 收端 B 一条都没有 → 每个 origin 都是缺口。把窗口按生产那个次序循环喂进去。
+    let (mut b_conn, mut b_clock, mut b_eng) = fresh();
+    let a_id = a_clock.device_id().to_string();
+    let mut asked: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for _ in 0..8 {
+        for w in &windows {
+            let outs = b_eng
+                .on_relay_msg(
+                    &mut b_conn,
+                    &mut b_clock,
+                    &a_id,
+                    Msg::Hello { watermarks: w.clone(), lan: None },
+                )
+                .unwrap();
+            asked.extend(asked_origins(&outs));
+        }
+    }
+    let never: Vec<&String> = origins.iter().filter(|o| !asked.contains(*o)).collect();
+    assert!(
+        never.is_empty(),
+        "发送方轮转时,这些 origin 一次都没被问到(每个窗口只被扫了个头):{never:?}"
+    );
+}
+
+/// **整条链**(321+322)在 sans-io 层跑一遍,拓扑照真机上停摆的那个摆:A 写了东西、
+/// B 落后,而**只有 A 发 Hello**(那是 321 的债轴唯一产得出的东西,B 这边没有任何
+/// 事件让它发自己的 Hello)。322 之前这一串到第二步就断了。
+#[test]
+fn only_the_writers_hello_is_enough_for_the_peer_to_catch_up() {
+    let (mut a_conn, mut a_clock, mut a_eng) = fresh();
+    let (mut b_conn, mut b_clock, mut b_eng) = fresh();
+    let a_id = a_clock.device_id().to_string();
+    let b_id = b_clock.device_id().to_string();
+    notes::capture(&mut a_conn, &mut a_clock, "只写在 A 上的东西").unwrap();
+    let a_max = watermark(&a_conn, &a_id).unwrap();
+    assert!(a_max > 0);
+
+    // ① A 那枚广播 Hello(走 `make_hello` 这个唯一构造点,与心跳那一拍同一份)。
+    let hello = a_eng
+        .make_hello(&a_conn, BROADCAST, Route::Relay)
+        .unwrap()
+        .into_iter()
+        .find_map(|o| match o {
+            Output::Send { msg: msg @ Msg::Hello { .. }, .. } => Some(msg),
+            _ => None,
+        })
+        .expect("make_hello 必产一枚 Hello");
+
+    // ② B 收下它 —— 322 之前这里只登记「服务 A」的计划,一个字节都不问。
+    let b_out = b_eng.on_relay_msg(&mut b_conn, &mut b_clock, &a_id, hello).unwrap();
+    let want = b_out
+        .into_iter()
+        .find(|o| matches!(o, Output::Send { msg: Msg::Want { .. }, .. }))
+        .expect("B 落后,必须回一枚 Want");
+    let Output::Send { to, msg: want_msg, .. } = want else { unreachable!() };
+    assert_eq!(to, a_id, "定向问自报有货的那台");
+
+    // ③ A 收下这枚 Want → 登记**定向** work(真机上正是它撞 busy 后让位给直连的)。
+    //
+    // **钉死描述符去哪台、走哪条路**(实现审 L1):只断「存在某个 `ServeOps`」的话,
+    // 摇给 BROADCAST、或来路绑错腿,这只测照样绿——而那两样恰恰是 322 要区分的东西
+    // (定向 work 才会让位给直连,BROADCAST 恒不让位)。
+    let a_out = a_eng.on_relay_msg(&mut a_conn, &mut a_clock, &b_id, want_msg).unwrap();
+    let serve = a_out
+        .iter()
+        .find_map(|o| match o {
+            Output::ServeOps(s) => Some(s.clone()),
+            _ => None,
+        })
+        .expect("Want 必须换来一枚「来取活」的描述符");
+    assert_eq!(
+        serve.to,
+        OpsServeTo::Peer { device: b_id.clone(), route: Route::Relay },
+        "定向答复要绑发问那台 + 产出那一刻的来路(来路亲和):{a_out:?}"
+    );
+
+    // ④ 把 A 供出来的帧喂给 B,B 追平。**帧的收件人也要断**——寄错人时这一步会静默
+    // 变成「B 什么也没收到」,而水位断言只在**一枚都没到**时才红(下界),寄给第三台
+    // 却仍喂给 B 的写法看不出来。
+    let mut fed = 0usize;
+    for f in a_eng.drain_ops_for_test(&a_conn).unwrap() {
+        if let Output::Send { to, msg, .. } = f {
+            assert_eq!(to, b_id, "取出来的帧必须寄给发问那台");
+            b_eng.on_relay_msg(&mut b_conn, &mut b_clock, &a_id, msg).unwrap();
+            fed += 1;
+        }
+    }
+    assert!(fed > 0, "一枚帧都没取出来:那这只测什么也没证");
+    assert_eq!(watermark(&b_conn, &a_id).unwrap(), a_max, "B 该追平 A 的水位");
 }
 
 #[test]
@@ -935,7 +1444,7 @@ fn metadata_only_never_wants_blobs_but_ops_and_counter_converge() {
     let (mut a_conn, mut a_clock, _a_eng) = fresh();
     let (mut b_conn, mut b_clock) = {
         let n = COUNTER.fetch_add(1, Ordering::SeqCst);
-        let path = std::env::temp_dir()
+        let path = crate::test_temp::dir()
             .join(format!("ys-nb-engine-{}-{}.sqlite3", std::process::id(), n));
         let _ = std::fs::remove_file(&path);
         let conn = db::open(&path).expect("open");
@@ -1018,7 +1527,7 @@ fn switching_back_to_full_rediscovers_and_backfills() {
     let (mut a_conn, mut a_clock, mut a_eng) = fresh();
     let (mut b_conn, mut b_clock) = {
         let n = COUNTER.fetch_add(1, Ordering::SeqCst);
-        let path = std::env::temp_dir()
+        let path = crate::test_temp::dir()
             .join(format!("ys-nb-engine-{}-{}.sqlite3", std::process::id(), n));
         let _ = std::fs::remove_file(&path);
         let conn = db::open(&path).expect("open");
@@ -1079,7 +1588,7 @@ fn pending_blob_count_mirrors_missing_set() {
     let (mut a_conn, mut a_clock, _a_eng) = fresh();
     let (mut b_conn, mut b_clock) = {
         let n = COUNTER.fetch_add(1, Ordering::SeqCst);
-        let path = std::env::temp_dir()
+        let path = crate::test_temp::dir()
             .join(format!("ys-nb-engine-{}-{}.sqlite3", std::process::id(), n));
         let _ = std::fs::remove_file(&path);
         let conn = db::open(&path).expect("open");
@@ -1122,7 +1631,7 @@ fn boot_source_refuses_snapshot_with_pending_blobs() {
     let (mut a_conn, mut a_clock, _a_eng) = fresh();
     let (mut b_conn, mut b_clock) = {
         let n = COUNTER.fetch_add(1, Ordering::SeqCst);
-        let path = std::env::temp_dir()
+        let path = crate::test_temp::dir()
             .join(format!("ys-nb-engine-boot-{}-{}.sqlite3", std::process::id(), n));
         let _ = std::fs::remove_file(&path);
         let conn = db::open(&path).expect("open");
@@ -1130,7 +1639,7 @@ fn boot_source_refuses_snapshot_with_pending_blobs() {
         (conn, clock)
     };
     let mut b_light = Engine::new_solo(&b_conn, BlobPolicy::MetadataOnly).expect("light");
-    let dir = std::env::temp_dir().join(format!(
+    let dir = crate::test_temp::dir().join(format!(
         "ys-nb-engine-boot-snap-{}-{}",
         std::process::id(),
         COUNTER.fetch_add(1, Ordering::SeqCst)
@@ -1167,7 +1676,7 @@ fn boot_source_refuses_snapshot_with_pending_blobs() {
 fn boot_source_refuses_on_pending_query_error() {
     use crate::sync::transport::boot_serve_snapshot;
     let (conn, _clock, _eng) = fresh();
-    let dir = std::env::temp_dir().join(format!(
+    let dir = crate::test_temp::dir().join(format!(
         "ys-nb-engine-boot-err-{}-{}",
         std::process::id(),
         COUNTER.fetch_add(1, Ordering::SeqCst)

@@ -10,6 +10,10 @@
 mod conn;
 pub mod hub;
 pub mod registry;
+// 测试容器目录(per-pid)。刻意不带 cfg(test):tests/integration.rs 是独立二进制,
+// 把本 crate 当普通依赖链接,看不见 cfg(test) 里的东西 —— 详见该模块顶部。
+#[doc(hidden)]
+pub mod test_temp;
 pub mod throttle;
 
 use std::net::SocketAddr;
@@ -782,7 +786,7 @@ mod tests {
     /// drain 后 `is_shutting_down()` 为真 ⇒ ws_upgrade 走 503 分支。
     #[tokio::test]
     async fn ws_upgrade_shutdown_predicate_flips_after_drain() {
-        let dir = std::env::temp_dir().join(format!("zhujian-ws503-{}", std::process::id()));
+        let dir = crate::test_temp::dir().join(format!("zhujian-ws503-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("banlist.txt"), "# 空\n").unwrap();

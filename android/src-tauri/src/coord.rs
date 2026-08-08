@@ -1544,7 +1544,7 @@ mod tests {
     /// 造一个「fresh 主库 + N 个已建空间」的数据目录,返回启动完成的 Coord
     /// (主空间已激活,与壳装配同构)。
     async fn boot_coord(tag: &str, extra: &[&str], timings: SweepTimings) -> (Coord, PathBuf) {
-        let dir = std::env::temp_dir().join(format!("zj-coord-{tag}-{}", std::process::id()));
+        let dir = crate::test_temp::dir().join(format!("zj-coord-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         spaces::create_main_db(&dir).unwrap();
@@ -1903,7 +1903,7 @@ mod tests {
     /// ——新空间进 catalog、账户/数据俱全、reservation 已释放、admission 回 Idle。
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn join_space_end_to_end_integrates_new_space() {
-        let sdir = std::env::temp_dir().join(format!("zj-join-srv-{}", std::process::id()));
+        let sdir = crate::test_temp::dir().join(format!("zj-join-srv-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&sdir);
         std::fs::create_dir_all(&sdir).unwrap();
         std::fs::write(sdir.join("banlist.txt"), "# 空封禁表\n").unwrap();
@@ -1913,7 +1913,7 @@ mod tests {
         let url = format!("ws://{addr}");
 
         // 源端(别的设备):独立目录,一条数据 + 创号 + 常驻 transport(可当引导源)。
-        let src_dir = std::env::temp_dir().join(format!("zj-join-src-{}", std::process::id()));
+        let src_dir = crate::test_temp::dir().join(format!("zj-join-src-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&src_dir);
         std::fs::create_dir_all(&src_dir).unwrap();
         let src_conn = zhujian_core::db::open(&src_dir.join("src.sqlite3")).unwrap();

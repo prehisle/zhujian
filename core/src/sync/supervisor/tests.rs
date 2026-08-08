@@ -4,7 +4,7 @@ use crate::db;
 use std::path::Path;
 
 fn test_db(tag: &str) -> (PathBuf, Connection, Clock) {
-    let dir = std::env::temp_dir().join(format!("zj-sup-{tag}-{}", std::process::id()));
+    let dir = crate::test_temp::dir().join(format!("zj-sup-{tag}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("notebook.sqlite3");

@@ -1025,7 +1025,7 @@ mod tests {
     fn temp_dir_for(tag: &str) -> PathBuf {
         let n = N.fetch_add(1, Ordering::SeqCst);
         let dir =
-            std::env::temp_dir().join(format!("ys-nb-epoch-{tag}-{}-{n}", std::process::id()));
+            crate::test_temp::dir().join(format!("ys-nb-epoch-{tag}-{}-{n}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("mkdir");
         dir
