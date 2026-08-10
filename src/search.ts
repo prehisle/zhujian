@@ -1,8 +1,10 @@
 import { invoke } from "./space";
 import { focusBoardView, focusTask } from "./board";
+import { t } from "./i18n";
 import { focusInboxItem } from "./inbox";
 import type { View, ViewCtx } from "./notebook";
 import { when } from "./tasktime";
+import { INPUT_DEBOUNCE_MS } from "./timing";
 import "./search.css";
 
 // Mirror of the Rust contract (lib.rs `search_items`): an item whose current text
@@ -30,11 +32,11 @@ function el<K extends keyof HTMLElementTagNameMap>(
 // Where the item currently lives. 灵感 is one merged list now (tags are just metadata, no
 // inbox/filed split), so both idea statuses read as 灵感; plus 回收站 and 任务 (the board).
 const STATUS_LABEL: Record<SearchHit["status"], string> = {
-  inbox: "灵感",
-  processed: "灵感",
-  archived: "回收站",
-  task: "任务",
-  sealed: "归档", // 成就归档(sealed 轴)——已入册的干完的活,不在看板上
+  inbox: t("search.statusIdeas"),
+  processed: t("search.statusIdeas"),
+  archived: t("search.statusTrash"),
+  task: t("search.statusTask"),
+  sealed: t("search.statusSealed"), // 成就归档(sealed 轴)——已入册的干完的活,不在看板上
 };
 
 // Build the matched text as text + <mark> nodes (never innerHTML), so the
@@ -59,13 +61,13 @@ function highlighted(text: string, query: string): (Node | string)[] {
 
 const SKELETON = `
   <header data-tauri-drag-region>
-    <h1>搜索</h1>
+    <h1>${t("search.title")}</h1>
   </header>
   <div class="searchbar">
     <div class="field">
-      <span class="mag" aria-hidden="true">&#xE721;</span>
-      <input id="q" type="text" placeholder="搜索灵感的内容……" autocomplete="off" spellcheck="false" />
-      <button id="clear" class="clear" title="清空" aria-label="清空" hidden>&#xE711;</button>
+      <span class="mag" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="5.5"/><path d="M14.6 14.6 20 20"/></svg></span>
+      <input id="q" type="text" placeholder="${t("search.inputPlaceholder")}" autocomplete="off" spellcheck="false" />
+      <button id="clear" class="clear" title="${t("search.clear")}" aria-label="${t("search.clear")}" hidden>✕</button>
     </div>
   </div>
   <main id="list"></main>
@@ -78,7 +80,7 @@ const SKELETON = `
 let lastQuery = "";
 
 export function mount(root: HTMLElement, ctx: ViewCtx): View {
-  const view = el("div", { className: "v-search" });
+  const view = el("div", { className: "v-search view" });
   view.innerHTML = SKELETON;
   root.replaceChildren(view);
 
@@ -98,7 +100,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
   function renderError(message: string): void {
     list.replaceChildren(
       el("div", { className: "center" }, [
-        el("div", { className: "big", textContent: "搜索失败" }),
+        el("div", { className: "big", textContent: t("search.failed") }),
         el("div", { className: "err-box", textContent: message }),
       ]),
     );
@@ -180,18 +182,18 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
     shown = q;
     lastQuery = q; // remember across view switches
     if (!q) {
-      renderCenter("在所有条目里查找", "输入关键词,跨灵感 / 任务 / 回收站搜索内容,连改过的旧版本一起找。");
+      renderCenter(t("search.idleTitle"), t("search.idleHint"));
       return;
     }
     try {
       const hits = await invoke<SearchHit[]>("search_notes", { query: q });
       if (shown !== q) return; // a newer query already superseded this one
       if (hits.length === 0) {
-        renderCenter("没有匹配的灵感", `没有灵感的内容包含「${q}」。`);
+        renderCenter(t("search.noMatch"), t("search.noMatchDetail", { q }));
         return;
       }
       list.replaceChildren(
-        el("p", { className: "count", textContent: `${hits.length} 条匹配` }),
+        el("p", { className: "count", textContent: t("search.matchCount", { n: hits.length }) }),
         ...hits.map((h) => card(h, q)),
       );
     } catch (err) {
@@ -205,7 +207,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
   function onInput(): void {
     clearBtn.hidden = input.value.length === 0;
     window.clearTimeout(timer);
-    timer = window.setTimeout(() => void run(input.value), 150);
+    timer = window.setTimeout(() => void run(input.value), INPUT_DEBOUNCE_MS);
   }
 
   input.addEventListener("input", onInput);
@@ -239,7 +241,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
     clearBtn.hidden = false;
     void run(lastQuery);
   } else {
-    renderCenter("在所有条目里查找", "输入关键词,跨灵感 / 任务 / 回收站搜索内容,连改过的旧版本一起找。");
+    renderCenter(t("search.idleTitle"), t("search.idleHint"));
   }
   input.focus();
 

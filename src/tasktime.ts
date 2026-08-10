@@ -1,5 +1,6 @@
 import { invoke } from "./space";
 import { armDismiss } from "./hotkey-menu";
+import { currentLang, t } from "./i18n";
 import "./tasktime.css";
 
 // Shared task time-dimension helpers + a reusable due/priority editor, used by
@@ -31,7 +32,11 @@ export type TaskItem = {
   topics: TaskTag[];
 };
 
-export const PRIORITY_LABEL: Record<number, string> = { 1: "低", 2: "中", 3: "高" };
+export const PRIORITY_LABEL: Record<number, string> = {
+  1: t("tasktime.priLow"),
+  2: t("tasktime.priMid"),
+  3: t("tasktime.priHigh"),
+};
 
 function el<K extends keyof HTMLElementTagNameMap>(
   tag: K,
@@ -75,24 +80,28 @@ export function dayLabel(iso: string): string {
   const d = new Date(iso);
   const now = new Date();
   const diff = Math.round((startOfDay(now) - startOfDay(d)) / 86_400_000);
-  if (diff === 0) return "今天";
-  if (diff === 1) return "昨天";
-  if (diff === 2) return "前天";
-  const md = `${d.getMonth() + 1}月${d.getDate()}日`;
-  return d.getFullYear() === now.getFullYear() ? md : `${d.getFullYear()}年${md}`;
+  if (diff === 0) return t("tasktime.today");
+  if (diff === 1) return t("tasktime.yesterday");
+  if (diff === 2) return t("tasktime.dayBeforeYesterday");
+  const m = d.getMonth() + 1;
+  const day = d.getDate();
+  return d.getFullYear() === now.getFullYear()
+    ? t("tasktime.monthDay", { m, d: day })
+    : t("tasktime.yearMonthDay", { y: d.getFullYear(), m, d: day });
 }
 
 /** RFC3339 → full local stamp, e.g. 「6月13日 14:23」— adds the year across a year
  *  boundary (same rule as dayLabel), so a last-year entry in 回收站 / 编辑历史 / 搜索
  *  can't read as this year's. Shared by inbox + search (one source of truth). */
-const stampThisYear = new Intl.DateTimeFormat("zh-CN", {
+const STAMP_LOCALE = currentLang() === "zh" ? "zh-CN" : "en-US";
+const stampThisYear = new Intl.DateTimeFormat(STAMP_LOCALE, {
   month: "long",
   day: "numeric",
   hour: "2-digit",
   minute: "2-digit",
   hour12: false,
 });
-const stampWithYear = new Intl.DateTimeFormat("zh-CN", {
+const stampWithYear = new Intl.DateTimeFormat(STAMP_LOCALE, {
   year: "numeric",
   month: "long",
   day: "numeric",
@@ -127,11 +136,11 @@ function dayDiff(due: string, today: string): number {
 /** A short human label for a due date relative to today. */
 export function dueLabel(due: string, today: string): string {
   const diff = dayDiff(due, today);
-  if (diff === 0) return "今天";
-  if (diff === 1) return "明天";
-  if (diff === -1) return "昨天";
-  if (diff < 0) return `逾期 ${-diff} 天`;
-  if (diff <= 7) return `${diff} 天后`;
+  if (diff === 0) return t("tasktime.today");
+  if (diff === 1) return t("tasktime.tomorrow");
+  if (diff === -1) return t("tasktime.yesterday");
+  if (diff < 0) return t("tasktime.overdueDays", { n: -diff });
+  if (diff <= 7) return t("tasktime.inDays", { n: diff });
   const [, m, d] = due.split("-").map(Number);
   return `${m}/${d}`;
 }
@@ -199,7 +208,7 @@ export function metaRow(
     if (item.due_on) {
       kids.push(el("button", {
         className: "link",
-        textContent: "清除",
+        textContent: t("tasktime.clear"),
         draggable: false,
         onclick: () => apply(null),
       }));
@@ -215,7 +224,7 @@ export function metaRow(
       return;
     }
     priWrap.replaceChildren(
-      el("span", { className: `chip pri set p${item.priority}`, textContent: `优先级·${PRIORITY_LABEL[item.priority]}` }),
+      el("span", { className: `chip pri set p${item.priority}`, textContent: t("tasktime.priorityChip", { p: PRIORITY_LABEL[item.priority] }) }),
     );
   }
   function openPri(): void {
@@ -230,7 +239,7 @@ export function metaRow(
     const buttons = choices.map((p) =>
       el("button", {
         className: `choice ${p ? `p${p}` : "none"}${item.priority === p ? " cur" : ""}`,
-        textContent: p ? PRIORITY_LABEL[p] : "清除",
+        textContent: p ? PRIORITY_LABEL[p] : t("tasktime.clear"),
         draggable: false,
         onclick: () => apply(p),
       }),

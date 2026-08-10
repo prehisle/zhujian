@@ -5,7 +5,7 @@
 //   A 段「命令层往返 + 三道闸 + 级联」——自造一张真 JPEG 当种子,末尾 finally 清净;
 //   B 段「真实图的命中率」——不造数据,直查这台机上**用户真图**里有多少已经被
 //     app 自己的 fillThumb 回存过。B 段才是「产品路径真跑通了」的证据:A 段的 put
-//     是我在脚本里手调的,只证后端;B 段的 put 全部出自 android/src/main.ts。
+//     是我在脚本里手调的,只证后端;B 段的 put 全部出自 android/src/thumbs.ts(310 第③笔前住 main.ts)。
 //
 // ⚠ B 段要有意义,得先让 app 真渲染过缩略图 —— 跑本脚本前先把时间轴滚过几屏带图的卡。
 (async () => {
@@ -35,7 +35,7 @@
     ctx.putImageData(img, 0, 0);
     return c;
   };
-  // 与 android/src/main.ts::shrinkToThumb 同口径(144² cover 方裁 / JPEG q0.8)。
+  // 与 android/src/thumbs.ts::shrinkToThumb 同口径(144² cover 方裁 / JPEG q0.8)。
   const shrink = (srcUrl) =>
     new Promise((res, rej) => {
       const im = new Image();

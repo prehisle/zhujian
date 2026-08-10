@@ -21,7 +21,7 @@ const ALLOW = [
   "src-tauri/", "sync-proto/",
   "docs/sync-protocol.md", "docs/design-rules.md", "docs/why-no-framework.md",
   "index.html", "notebook.html", "package.json", "package-lock.json",
-  "tsconfig.json", "vite.config.ts", "readme.md", "LICENSE",
+  "tsconfig.json", "vite.config.ts", "readme.md", "readme.en.md", "LICENSE",
   ".gitignore", ".gitattributes",
 ];
 // 公开树内容红线:命中即导出失败(个人语境 / 真实局域网网段 / 历史遗留密钥名)。

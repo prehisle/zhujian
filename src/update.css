@@ -12,7 +12,7 @@
   background: linear-gradient(180deg, var(--raised), var(--raised-edge));
   border: 1px solid var(--line-strong);
   border-left: 3px solid var(--seal);
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   box-shadow: var(--float-shadow);
   padding: 12px 14px;
   opacity: 0;
@@ -24,14 +24,14 @@
   transform: none;
 }
 .update-msg {
-  font-size: 13px;
+  font-size: var(--fs-13);
   line-height: 1.6;
   color: var(--ink);
 }
 /* 更新说明(296):比标题弱一档,最多四行——发版说明再长也不该把 banner 撑成一堵墙。
    只在有实质内容时才建这个节点(见 update.ts::meaningfulNotes),故无需 :empty 兜底。 */
 .update-notes {
-  font-size: 12.5px;
+  font-size: var(--fs-13);
   line-height: 1.65;
   color: var(--ink-soft);
   white-space: pre-wrap;
@@ -66,10 +66,10 @@
   background: linear-gradient(180deg, var(--raised), var(--raised-edge));
   border: 1px solid var(--line-strong);
   border-left: 3px solid var(--seal);
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   box-shadow: var(--float-shadow);
   padding: 10px 14px;
-  font-size: 12.5px;
+  font-size: var(--fs-13);
   line-height: 1.7;
   color: var(--ink);
   opacity: 0;

@@ -7,6 +7,7 @@
 // 本件只产出 .topic-search + .topic-choices 的 DOM 与筛选/新建/Enter 行为;类名与两视图
 // 各自 scoped 的 CSS(.v-inbox / .v-board .task-topic)对齐、原样保留,故视觉不变、e2e
 // 选择器不动。
+import { t } from "./i18n";
 
 // ---- small DOM helper (same shape as the views / hotkey-menu.ts) ------------
 function el<K extends keyof HTMLElementTagNameMap>(
@@ -59,7 +60,7 @@ export function renderTagPicker(container: HTMLElement, opts: TagPickerOpts): vo
   // draggable:false 铺在每个交互件上:落在可拖拽宿主(看板卡片)时,mousedown 不会误
   // 起卡片拖拽;对不可拖拽宿主(灵感)无害 —— 同 hotkey-menu.ts 的取舍。
   const search = el("input", { className: "topic-search", draggable: false });
-  search.placeholder = "搜标签,或输入新名…";
+  search.placeholder = t("tagPicker.searchPlaceholder");
   search.spellcheck = false;
   const choices = el("div", { className: "topic-choices" });
 
@@ -83,7 +84,7 @@ export function renderTagPicker(container: HTMLElement, opts: TagPickerOpts): vo
         el("button", {
           className: "choice create",
           draggable: false,
-          textContent: `创建「${q}」`,
+          textContent: t("tagPicker.create", { name: q }),
           onclick: () => commit(() => onCreate(q)),
         }),
       );
@@ -92,7 +93,7 @@ export function renderTagPicker(container: HTMLElement, opts: TagPickerOpts): vo
       nodes.push(
         el("span", {
           className: "topic-hint",
-          textContent: allTopics.length ? "已加上所有标签" : "输入名字,建第一个标签",
+          textContent: allTopics.length ? t("tagPicker.allAdded") : t("tagPicker.first"),
         }),
       );
     }

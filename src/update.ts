@@ -5,6 +5,7 @@
 import { check, type Update, type DownloadEvent } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { getVersion } from "@tauri-apps/api/app";
+import { t } from "./i18n";
 import "./update.css";
 
 let banner: HTMLDivElement | null = null;
@@ -42,12 +43,12 @@ function dismiss(): void {
 // 一次性提示(无按钮、自动消失)——手动检查回话「已是最新/失败」用。和 sync 的 toast
 // 分开(那个绑同步事件),避免两条提示互相顶掉。
 function flash(msg: string): void {
-  const t = el("div", "update-flash", msg);
-  document.body.appendChild(t);
-  requestAnimationFrame(() => t.classList.add("show"));
+  const box = el("div", "update-flash", msg);
+  document.body.appendChild(box);
+  requestAnimationFrame(() => box.classList.add("show"));
   window.setTimeout(() => {
-    t.classList.remove("show");
-    window.setTimeout(() => t.remove(), 250);
+    box.classList.remove("show");
+    window.setTimeout(() => box.remove(), 250);
   }, 4200);
 }
 
@@ -70,10 +71,10 @@ function showBanner(update: Update): void {
   dismiss();
   pending = update;
   banner = el("div", "update-banner");
-  const msg = el("div", "update-msg", `有新版 v${update.version}`);
+  const msg = el("div", "update-msg", t("update.newVersion", { v: update.version }));
   const acts = el("div", "update-acts");
-  acts.appendChild(btn("更新", "hbtn update-go", () => void run(update, msg, acts)));
-  acts.appendChild(btn("稍后", "hbtn", dismiss));
+  acts.appendChild(btn(t("update.go"), "hbtn update-go", () => void run(update, msg, acts)));
+  acts.appendChild(btn(t("update.later"), "hbtn", dismiss));
   const notes = meaningfulNotes(update.body, update.version);
   banner.append(msg);
   if (notes) banner.append(el("div", "update-notes", notes));
@@ -91,21 +92,21 @@ async function run(update: Update, msg: HTMLElement, acts: HTMLElement): Promise
     await update.downloadAndInstall((ev: DownloadEvent) => {
       if (ev.event === "Started") {
         total = ev.data.contentLength ?? 0;
-        msg.textContent = "下载中…";
+        msg.textContent = t("update.downloading");
       } else if (ev.event === "Progress") {
         got += ev.data.chunkLength;
         msg.textContent =
           total > 0
-            ? `下载中… ${Math.floor((got / total) * 100)}%`
-            : `下载中… ${Math.floor(got / 1024)} KB`;
+            ? t("update.downloadingPct", { pct: Math.floor((got / total) * 100) })
+            : t("update.downloadingKb", { kb: Math.floor(got / 1024) });
       } else {
-        msg.textContent = "安装中,即将重启…";
+        msg.textContent = t("update.installing");
       }
     });
     await relaunch();
   } catch (e) {
-    msg.textContent = `更新失败:${String(e)}`;
-    acts.appendChild(btn("关闭", "hbtn", dismiss));
+    msg.textContent = t("update.failed", { err: String(e) });
+    acts.appendChild(btn(t("update.close"), "hbtn", dismiss));
   }
 }
 
@@ -133,8 +134,8 @@ export async function checkForUpdateManual(): Promise<void> {
   try {
     const update = await check();
     if (update) showBanner(update);
-    else flash(`已是最新 v${await getVersion()}`);
+    else flash(t("update.upToDate", { v: await getVersion() }));
   } catch (e) {
-    flash(`检查更新失败:${String(e)}`);
+    flash(t("update.checkFailed", { err: String(e) }));
   }
 }

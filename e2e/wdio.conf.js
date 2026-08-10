@@ -5,8 +5,15 @@ import { homedir, tmpdir } from "node:os";
 import { rmSync } from "node:fs";
 import net from "node:net";
 
-// Real GUI e2e: WebdriverIO -> tauri-driver -> msedgedriver -> the built app's
-// WebView2. Drives real clicks against real IPC against a throwaway SQLite DB.
+// Real GUI e2e: WebdriverIO -> tauri-driver -> 平台原生 WebDriver -> the built app's
+// WebView. Drives real clicks against real IPC against a throwaway SQLite DB.
+//
+// 平台(340 补齐 Linux):
+//   Windows — msedgedriver -> WebView2。这是**生产端**,发版前的最终门禁走它。
+//   Linux   — WebKitWebDriver -> WebKitGTK(系统包 `webkit2gtk-driver`)。⚠ 渲染引擎与
+//             生产端**不是同一个**,故 Linux 绿只是有意义的证据、不能替代 Windows 那次;
+//             它换来的是「没有 Windows 机器时也能验交互层」(CI 与容器里尤其值)。
+//             无显示器时套 `xvfb-run -a npm run test:e2e`。
 //
 // Two modes:
 //   default — release exe (self-contained, slow to build ~5min). Final gate.
@@ -15,20 +22,40 @@ import net from "node:net";
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "..");
 const isWin = process.platform === "win32";
+const isLinux = process.platform === "linux";
 const fast = process.env.YS_E2E_FAST === "1";
 
 const appBinary = resolve(
   root,
   `src-tauri/target/${fast ? "debug" : "release"}/app${isWin ? ".exe" : ""}`,
 );
-const edgeDriver = resolve(here, "drivers/msedgedriver.exe");
+// tauri-driver 要的原生 driver 按平台换。**不给未知平台兜底**(设计铁律「绝不回退兜底」):
+// macOS 的 WKWebView today 没有可用的 WebDriver,静默挑一个只会在半小时后以看不懂的
+// 方式失败,不如当场说清楚。
+const nativeDriver = isWin
+  ? resolve(here, "drivers/msedgedriver.exe")
+  : isLinux
+    ? "/usr/bin/WebKitWebDriver"
+    : null;
+if (nativeDriver === null) {
+  throw new Error(
+    `e2e 不支持 ${process.platform}:Windows 走 msedgedriver(生产端)、Linux 走 WebKitWebDriver;` +
+      `macOS 的 WKWebView 没有可用的 WebDriver,真机验收走 CDP 或手动`,
+  );
+}
 const tauriDriverBin = resolve(homedir(), `.cargo/bin/tauri-driver${isWin ? ".exe" : ""}`);
 // A disposable DB so e2e never touches the real notebook (see YS_DB_PATH in lib.rs).
 const testDb = resolve(tmpdir(), "ys-nb-e2e.sqlite3");
 // 57: with YS_DB_PATH set the app writes window geometry to this separate state
 // file (never the real .window-state.json) — wipe it so runs stay deterministic.
+// 文件住在 Tauri 的 `app_config_dir`(lib.rs:2143 那段):Windows = %APPDATA%,
+// Linux = $XDG_CONFIG_HOME 或 ~/.config。**别用 `resolve(process.env.APPDATA, …)` 一把梭**
+// —— Linux 上那个变量是 undefined,resolve 当场抛 TypeError(340 之前踩的就是这个)。
+const appConfigDir = isWin
+  ? process.env.APPDATA
+  : (process.env.XDG_CONFIG_HOME ?? resolve(homedir(), ".config"));
 const e2eWindowState = resolve(
-  process.env.APPDATA,
+  appConfigDir,
   "app.zhujian.notebook/.window-state.e2e.json",
 );
 
@@ -101,11 +128,11 @@ export const config = {
     }
   },
   beforeSession: async () => {
-    tauriDriver = spawn(tauriDriverBin, ["--native-driver", edgeDriver], {
+    tauriDriver = spawn(tauriDriverBin, ["--native-driver", nativeDriver], {
       env: { ...process.env, YS_DB_PATH: testDb },
       stdio: [null, process.stdout, process.stderr],
     });
-    // Give tauri-driver + msedgedriver a moment to bind their ports.
+    // Give tauri-driver + the native driver a moment to bind their ports.
     await new Promise((r) => setTimeout(r, 2500));
   },
   afterSession: () => {

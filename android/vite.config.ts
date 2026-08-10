@@ -8,5 +8,9 @@ export default defineConfig({
     port: 1420,
     strictPort: true,
     host: "0.0.0.0",
+    watch: {
+      // 本工程自己的 crate target(根工程的 vite 有同款名单,理由见那边注释)。
+      ignored: ["**/src-tauri/target/**"],
+    },
   },
 });

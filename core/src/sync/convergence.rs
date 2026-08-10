@@ -2,7 +2,7 @@
 //!
 //! 三个引擎实例(各配真 SQLite)+ 内存服务器模型(§4 信箱语义:每收件设备一条 FIFO
 //! 队列、离线堆积按容量丢最老、随机衰减模拟 TTL、重启清空、direct 不入信箱)。随机
-//! 命令流(覆盖全部 11 种 entity·kind,0028 起含 space set_field)× 随机上下线 ×
+//! 命令流(覆盖词汇表**全部** entity·kind(计数别写死在这里——0028 space、0033 device、0035 comment 三次都是它先腐;以 random_command 的臂为准))× 随机上下线 ×
 //! 乱序交错投递 × 引擎重启;终局全员在线、反复 hello 互补直到静默,断言六张同步表
 //! 逐行相等(items 刨去本地簿记 updated_at;item_image 含字节)+ per-origin 水位
 //! 相等且连续 + 无冻结无拒帧。

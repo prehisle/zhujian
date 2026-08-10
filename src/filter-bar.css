@@ -20,7 +20,7 @@
 .kind-filter:empty { display: none; }
 /* 轴名小标(「类型」):与 pills 同排,弱化以示这是分组标签而非可点项。 */
 .tf-axis {
-  font-size: 11px;
+  font-size: var(--fs-12);
   letter-spacing: 0.04em;
   color: var(--ink-faint);
   margin-right: 2px;
@@ -44,12 +44,12 @@
 .filter-text {
   flex: none;
   font: inherit;
-  font-size: 12px;
+  font-size: var(--fs-12);
   letter-spacing: 0.02em;
   color: var(--ink);
   background: var(--paper);
   border: 1px solid var(--line-strong);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   padding: 4px 12px;
   width: 13em;
 }
@@ -57,12 +57,12 @@
 .filter-text::placeholder { color: var(--ink-faint); }
 .tf-pill {
   font: inherit;
-  font-size: 12px;
+  font-size: var(--fs-12);
   letter-spacing: 0.02em;
   color: var(--ink-soft);
   background: transparent;
   border: 1px solid var(--line-strong);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   padding: 4px 11px;
   cursor: pointer;
   white-space: nowrap;
@@ -78,13 +78,13 @@
   background: var(--seal-tint);
   font-weight: 600;
 }
-.tf-n { font-size: 11px; color: var(--ink-faint); font-variant-numeric: tabular-nums; }
+.tf-n { font-size: var(--fs-12); color: var(--ink-faint); font-variant-numeric: tabular-nums; }
 .tf-pill.active .tf-n { color: var(--seal); }
 /* 有色标签的筛选钮带一颗色点,让整条筛选条读出颜色分布(无色标签无点)。 */
 .tf-dot {
   width: 8px;
   height: 8px;
-  border-radius: 50%;
+  border-radius: var(--radius-circle);
   background: var(--tag-color);
   align-self: center;
   flex: 0 0 auto;

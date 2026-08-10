@@ -3,9 +3,14 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>朱简 — 一个纯人工的想法与事务工具</title>
+    <!-- 多语言(360,i18n-plan 第③笔):壳里保留中文原文防首帧闪(163 契约),
+         启动时按 data-i18n 族属性覆写;原文与 zh 值逐字相等由 check-i18n-drift 核。
+         字典与运行期在页面末尾的那段内联 script 里(⚠ 注释里别写闭合标签的字面量:
+         按标签切文件的工具会先命中这里,360 当场栽过一次)。 -->
+    <title data-i18n="meta.title">朱简 — 一个纯人工的想法与事务工具</title>
     <meta
       name="description"
+      data-i18n-content="meta.desc"
       content="朱简(zhujian)是一个纯人工、本地优先的个人事务工具:快速捕获、手动流转、任务看板。没有 AI 替你整理,数据只留在你自己的机器里;多设备同步端到端加密。"
     />
 
@@ -26,9 +31,12 @@
         --seal: #b3402b;
         --seal-tint: rgba(179, 64, 43, 0.1);
         --seal-line: rgba(179, 64, 43, 0.38);
+        --on-seal: #fdf6ee; /* 压在朱砂上的字,随明暗翻面(理由见桌面 src/theme.css) */
 
         /* 三层字面:楷体(书写/品牌)· 宋体(书卷/想法原文)· 黑体(界面) */
-        --font-brush: "Kaiti SC", "STKaiti", "KaiTi", "楷体", "Songti SC", "SimSun", serif;
+        /* 西文排在栈首:font-family 是逐字符回退,故英文走人文衬线、汉字照旧落楷体。
+           不排的话,普通 Windows 的英文标题会落到 KaiTi 的等宽拉丁字形上(字距被撑开)。 */
+        --font-brush: "Palatino Linotype", "Palatino", "Book Antiqua", "Kaiti SC", "STKaiti", "KaiTi", "楷体", "Songti SC", "SimSun", serif;
         --font-serif: "Georgia", "SimSun", "Songti SC", "Source Han Serif SC", serif;
         --font-sans: "Microsoft YaHei", "PingFang SC", system-ui, -apple-system, sans-serif;
 
@@ -38,6 +46,28 @@
         --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.78' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
 
         --wrap: 1060px;
+        /* 圆角阶(341)。四档 = 4px 栅格;后三个是**形状**不是尺寸阶上的档。
+           完整理由与三份的对齐关系见桌面 src/theme.css。 */
+        --radius-xs: 4px;
+        --radius-sm: 8px;
+        --radius-md: 12px;
+        --radius-lg: 16px;
+        --radius-pill: 999px;
+        --radius-circle: 50%;
+        --radius-seal: 25%;
+        /* 字号阶(342)。十档 = 一张白名单;最小档 12px 就是 §2.2 第一条(信息性文字
+           最小 12px),阶下无档、小于 12px 的一律进门禁登记表签字。为什么用数值命名
+           而不是 xs/sm/md/lg,见桌面 src/theme.css。 */
+        --fs-12: 12px;
+        --fs-13: 13px;
+        --fs-14: 14px;
+        --fs-15: 15px;
+        --fs-16: 16px;
+        --fs-17: 17px;
+        --fs-18: 18px;
+        --fs-20: 20px;
+        --fs-24: 24px;
+        --fs-30: 30px;
       }
 
       @media (prefers-color-scheme: dark) {
@@ -53,6 +83,7 @@
           --seal: #df6a4f;
           --seal-tint: rgba(223, 106, 79, 0.14);
           --seal-line: rgba(223, 106, 79, 0.45);
+          --on-seal: #1b1813;
           --float-shadow: 0 22px 55px -18px rgba(0, 0, 0, 0.7), 0 2px 8px rgba(0, 0, 0, 0.4);
           --card-shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 16px 34px -22px rgba(0, 0, 0, 0.7);
         }
@@ -125,18 +156,18 @@
         align-items: center;
         gap: 11px;
         font-family: var(--font-brush);
-        font-size: 22px;
+        font-size: var(--fs-24);
         font-weight: 700;
         letter-spacing: 0.06em;
         text-decoration: none;
         color: var(--ink);
       }
-      .brand svg { width: 30px; height: 30px; border-radius: 7px; box-shadow: 0 1px 2px rgba(40,30,18,.25); }
+      .brand svg { width: 30px; height: 30px; border-radius: var(--radius-sm); box-shadow: 0 1px 2px rgba(40,30,18,.25); }
       .nav { margin-left: auto; display: flex; align-items: center; gap: 26px; }
       .nav a {
         text-decoration: none;
         color: var(--ink-soft);
-        font-size: 14.5px;
+        font-size: var(--fs-15);
         letter-spacing: 0.02em;
         transition: color 0.15s;
       }
@@ -144,12 +175,21 @@
       .nav a.ghost-btn {
         color: var(--seal);
         border: 1px solid var(--seal-line);
-        border-radius: 999px;
+        border-radius: var(--radius-pill);
         padding: 7px 16px;
       }
       .nav a.ghost-btn:hover { background: var(--seal-tint); color: var(--seal); }
+      /* 语言开关(360):窄屏也留着 —— 它是英文访客唯一的出口,不进 .hide-sm。 */
+      .nav a.lang {
+        font-size: var(--fs-13);
+        letter-spacing: 0.1em;
+        border: 1px solid var(--line-strong);
+        border-radius: var(--radius-pill);
+        padding: 4px 11px;
+      }
       @media (max-width: 720px) {
         .nav a.hide-sm { display: none; }
+        .nav { gap: 16px; }
       }
 
       /* ── 通用节标题 ────────────────────────────────────────── */
@@ -157,7 +197,7 @@
         display: inline-flex;
         align-items: center;
         gap: 10px;
-        font-size: 12.5px;
+        font-size: var(--fs-13);
         letter-spacing: 0.22em;
         text-transform: none;
         color: var(--seal);
@@ -166,7 +206,7 @@
       .eyebrow::before {
         content: "";
         width: 9px; height: 9px;
-        border-radius: 2px;
+        border-radius: var(--radius-seal);
         background: var(--seal);
         transform: rotate(45deg);
       }
@@ -180,7 +220,7 @@
       }
       .section-lead {
         color: var(--ink-soft);
-        font-size: 16.5px;
+        font-size: var(--fs-17);
         max-width: 42ch;
         margin: 14px 0 0;
       }
@@ -225,7 +265,7 @@
       .hero h1 .accent { color: var(--seal); }
       .hero-lead {
         margin: 22px 0 0;
-        font-size: 18px;
+        font-size: var(--fs-18);
         line-height: 1.75;
         color: var(--ink-soft);
         max-width: 40ch;
@@ -242,30 +282,30 @@
         align-items: center;
         gap: 9px;
         font-family: var(--font-sans);
-        font-size: 15.5px;
+        font-size: var(--fs-16);
         font-weight: 600;
         letter-spacing: 0.02em;
         text-decoration: none;
-        border-radius: 999px;
+        border-radius: var(--radius-pill);
         padding: 13px 24px;
         cursor: pointer;
         transition: transform 0.12s ease, box-shadow 0.15s, background 0.15s;
       }
       .btn-primary {
         background: var(--seal);
-        color: #faf6ec;
+        color: var(--on-seal);
         box-shadow: 0 10px 24px -12px var(--seal), inset 0 1px 0 rgba(255,255,255,0.18);
       }
       .btn-primary:hover { transform: translateY(-1px); }
       .btn-ghost { color: var(--ink); border: 1px solid var(--line-strong); }
       .btn-ghost:hover { background: var(--raised); }
-      .cta-note { font-size: 13px; color: var(--ink-faint); letter-spacing: 0.01em; }
+      .cta-note { font-size: var(--fs-13); color: var(--ink-faint); letter-spacing: 0.01em; }
 
       /* HERO 视觉:复刻客户端的捕获纸条 .slip */
       .hero-art { position: relative; z-index: 1; }
       .slip {
         position: relative;
-        border-radius: 18px;
+        border-radius: var(--radius-lg);
         background: linear-gradient(180deg, var(--raised), var(--raised-edge));
         box-shadow: var(--float-shadow);
         outline: 1px solid var(--line);
@@ -287,13 +327,13 @@
         position: absolute;
         left: 0; top: 18px; bottom: 18px;
         width: 4px;
-        border-radius: 0 4px 4px 0;
+        border-radius: 0 var(--radius-xs) var(--radius-xs) 0;
         background: var(--seal);
         opacity: 0.9;
       }
       .slip-text {
         font-family: var(--font-serif);
-        font-size: 18px;
+        font-size: var(--fs-18);
         line-height: 1.85;
         color: var(--ink);
         min-height: 96px;
@@ -311,8 +351,11 @@
       .slip-hint {
         margin-top: 16px;
         padding-top: 13px;
+        /* 给右下角那枚钤印让位:它是绝对定位、压在纸条角上,而这一行在英文档下更长
+           (Save / New line / Close 都比「收存 / 换行 / 退出」宽),不留位就压到印上去。 */
+        padding-right: 46px;
         border-top: 1px solid var(--line);
-        font-size: 12.5px;
+        font-size: var(--fs-13);
         letter-spacing: 0.03em;
         color: var(--ink-faint);
         display: flex;
@@ -323,7 +366,7 @@
         font-family: var(--font-sans);
         color: var(--ink-soft);
         border: 1px solid var(--line);
-        border-radius: 5px;
+        border-radius: var(--radius-xs);
         padding: 1px 6px;
         background: var(--paper);
       }
@@ -333,7 +376,7 @@
         right: -14px;
         bottom: -14px;
         width: 62px; height: 62px;
-        border-radius: 12px;
+        border-radius: var(--radius-md);
         transform: rotate(6deg);
         box-shadow: 0 6px 16px -6px rgba(40,30,18,.5);
       }
@@ -349,7 +392,7 @@
       .card {
         position: relative;
         background: linear-gradient(180deg, var(--raised), var(--raised-edge));
-        border-radius: 16px;
+        border-radius: var(--radius-lg);
         outline: 1px solid var(--line);
         outline-offset: -1px;
         box-shadow: var(--card-shadow);
@@ -357,23 +400,23 @@
       }
       .card .step {
         font-family: var(--font-brush);
-        font-size: 15px;
+        font-size: var(--fs-15);
         color: var(--seal);
         letter-spacing: 0.14em;
       }
       .card h3 {
         font-family: var(--font-serif);
         font-weight: 600;
-        font-size: 21px;
+        font-size: var(--fs-20);
         margin: 12px 0 0;
       }
-      .card p { color: var(--ink-soft); font-size: 15px; margin: 12px 0 0; }
+      .card p { color: var(--ink-soft); font-size: var(--fs-15); margin: 12px 0 0; }
       .card .kbd-inline {
         font-family: var(--font-sans);
-        font-size: 12px;
+        font-size: var(--fs-12);
         color: var(--seal);
         border: 1px solid var(--seal-line);
-        border-radius: 5px;
+        border-radius: var(--radius-xs);
         padding: 1px 7px;
         white-space: nowrap;
       }
@@ -393,7 +436,7 @@
       }
       .pillar h3 {
         font-family: var(--font-serif);
-        font-size: 20px;
+        font-size: var(--fs-20);
         font-weight: 600;
         margin: 0 0 10px;
         display: flex;
@@ -403,12 +446,12 @@
       .pillar h3::before {
         content: "";
         width: 8px; height: 8px;
-        border-radius: 2px;
+        border-radius: var(--radius-seal);
         background: var(--seal);
         transform: translateY(-1px) rotate(45deg);
         flex: 0 0 auto;
       }
-      .pillar p { color: var(--ink-soft); font-size: 15px; margin: 0; }
+      .pillar p { color: var(--ink-soft); font-size: var(--fs-15); margin: 0; }
 
       /* ── 下载 ──────────────────────────────────────────────── */
       .download { padding: clamp(52px, 7vw, 90px) 0; text-align: center; }
@@ -425,9 +468,13 @@
         margin-inline: auto;
       }
       .dl-card {
+        /* 主卡整张是 <a>,下划线必须在这里关:装饰是**往下传播**的(不是继承),
+           子元素自己写 text-decoration:none 压不住祖先 —— .btn 那句只对独立的
+           <a class="btn"> 有用。不关的话卡里的机型、版本号连同朱砂按钮都横着一道线。 */
+        text-decoration: none;
         width: 260px;
         background: linear-gradient(180deg, var(--raised), var(--raised-edge));
-        border-radius: 16px;
+        border-radius: var(--radius-lg);
         outline: 1px solid var(--line);
         outline-offset: -1px;
         box-shadow: var(--card-shadow);
@@ -437,38 +484,38 @@
         align-items: center;
         gap: 4px;
       }
-      .dl-card .os { font-family: var(--font-serif); font-size: 20px; font-weight: 600; }
-      .dl-card .meta { font-size: 13px; color: var(--ink-faint); margin-bottom: 18px; }
+      .dl-card .os { font-family: var(--font-serif); font-size: var(--fs-20); font-weight: 600; }
+      .dl-card .meta { font-size: var(--fs-13); color: var(--ink-faint); margin-bottom: 18px; }
       .dl-card.soon { opacity: 0.72; }
       .dl-card.soon .badge {
         margin-top: 6px;
-        font-size: 13px;
+        font-size: var(--fs-13);
         color: var(--ink-soft);
         border: 1px dashed var(--line-strong);
-        border-radius: 999px;
+        border-radius: var(--radius-pill);
         padding: 8px 18px;
       }
-      .dl-foot { margin-top: 30px; font-size: 13.5px; color: var(--ink-faint); }
+      .dl-foot { margin-top: 30px; font-size: var(--fs-14); color: var(--ink-faint); }
 
       /* 尝鲜版卡:mac/Linux 链路已通但未正式发布,视觉降一档、如实标注 */
       .dl-card.trial { opacity: 0.94; }
       .dl-card .trial-tag {
-        font-size: 11.5px;
+        font-size: var(--fs-12);
         letter-spacing: 0.16em;
         color: var(--seal);
         border: 1px solid var(--seal-line);
-        border-radius: 999px;
+        border-radius: var(--radius-pill);
         padding: 2px 13px;
         margin-bottom: 12px;
       }
       .dl-card .caveat {
-        font-size: 12px;
+        font-size: var(--fs-12);
         line-height: 1.55;
         color: var(--ink-faint);
         margin: 2px 0 16px;
         max-width: 24ch;
       }
-      .dl-card.trial .btn { padding: 10px 18px; font-size: 14px; }
+      .dl-card.trial .btn { padding: 10px 18px; font-size: var(--fs-14); }
       .lin-dls { display: flex; gap: 10px; }
       .lin-dls .btn { padding: 10px 15px; }
 
@@ -488,8 +535,8 @@
         letter-spacing: 0.01em;
       }
       .ethos blockquote .accent { color: var(--seal); }
-      .ethos .attrib { margin-top: 22px; font-size: 14px; color: var(--ink-faint); letter-spacing: 0.04em; }
-      .ethos-body p { color: var(--ink-soft); font-size: 16px; margin: 0 0 18px; }
+      .ethos .attrib { margin-top: 22px; font-size: var(--fs-14); color: var(--ink-faint); letter-spacing: 0.04em; }
+      .ethos-body p { color: var(--ink-soft); font-size: var(--fs-16); margin: 0 0 18px; }
       .ethos-body p strong { color: var(--ink); font-weight: 600; }
       .ethos-body p:last-child { margin-bottom: 0; }
 
@@ -506,19 +553,19 @@
         flex-wrap: wrap;
       }
       .foot-sign { display: flex; align-items: center; gap: 18px; }
-      .foot-sign svg { width: 76px; height: 76px; border-radius: 12px; box-shadow: 0 6px 16px -8px rgba(40,30,18,.5); }
+      .foot-sign svg { width: 76px; height: 76px; border-radius: var(--radius-md); box-shadow: 0 6px 16px -8px rgba(40,30,18,.5); }
       .foot-sign .word { font-family: var(--font-brush); }
-      .foot-sign .word b { font-size: 24px; font-weight: 700; letter-spacing: 0.08em; display: block; }
-      .foot-sign .word span { font-size: 13px; color: var(--ink-faint); letter-spacing: 0.12em; }
-      .foot-links { display: flex; gap: 24px; font-size: 14px; }
+      .foot-sign .word b { font-size: var(--fs-24); font-weight: 700; letter-spacing: 0.08em; display: block; }
+      .foot-sign .word span { font-size: var(--fs-13); color: var(--ink-faint); letter-spacing: 0.12em; }
+      .foot-links { display: flex; gap: 24px; font-size: var(--fs-14); }
       .foot-links a { color: var(--ink-soft); text-decoration: none; }
       .foot-links a:hover { color: var(--ink); }
-      .foot-copy { width: 100%; font-size: 12.5px; color: var(--ink-faint); margin-top: 8px; }
+      .foot-copy { width: 100%; font-size: var(--fs-13); color: var(--ink-faint); margin-top: 8px; }
 
       a:focus-visible, .btn:focus-visible {
         outline: 2px solid var(--seal);
         outline-offset: 3px;
-        border-radius: 8px;
+        border-radius: var(--radius-sm);
       }
 
       /* ── 响应式 ────────────────────────────────────────────── */
@@ -560,15 +607,16 @@
 
     <header class="topbar">
       <div class="wrap">
-        <a class="brand" href="#top" aria-label="朱简 首页">
+        <a class="brand" href="#top" aria-label="朱简 首页" data-i18n-aria-label="nav.brandAria">
           <svg class="seal-mark" viewBox="0 0 100 100"><use href="#seal-zhu" /></svg>
-          朱简
+          <span data-i18n="nav.brand">朱简</span>
         </a>
         <nav class="nav">
-          <a href="#flow" class="hide-sm">怎么用</a>
-          <a href="#ethos" class="hide-sm">理念</a>
-          <a href="https://github.com/prehisle/zhujian" class="hide-sm">源码</a>
-          <a href="#download" class="ghost-btn">下载</a>
+          <a href="#flow" class="hide-sm" data-i18n="nav.flow">怎么用</a>
+          <a href="#ethos" class="hide-sm" data-i18n="nav.ethos">理念</a>
+          <a href="https://github.com/prehisle/zhujian" class="hide-sm" data-i18n="nav.source">源码</a>
+          <a href="#download" class="ghost-btn" data-i18n="nav.download">下载</a>
+          <a href="#top" class="lang" id="lang-toggle" data-i18n="nav.langToggle">EN</a>
         </nav>
       </div>
     </header>
@@ -578,31 +626,33 @@
       <section class="hero">
         <div class="wrap">
           <div class="hero-copy">
-            <span class="eyebrow">纯人工 · 本地优先 · 端到端加密</span>
-            <h1>把念头,<br />一笔一笔<br /><span class="accent">亲手</span>理清。</h1>
-            <p class="hero-lead">
-              朱简是一个纯人工的想法与事务工具。快速捕获、手动流转、任务看板——
-              没有 AI 替你整理,数据只留在你自己的机器里。
+            <span class="eyebrow" data-i18n="hero.eyebrow">纯人工 · 本地优先 · 端到端加密</span>
+            <!-- 主标题的换行与朱砂重音是版式的一部分,故每一段各自成键(data-i18n 只覆写
+                 textContent、带子元素会被吞掉)。末段在中文里是「理清。」、在英文里只剩
+                 句点 —— 重音落在句尾时,这一格就只承担标点。 -->
+            <h1><span data-i18n="hero.line1">把念头,</span><br /><span data-i18n="hero.line2">一笔一笔</span><br /><span class="accent" data-i18n="hero.line3">亲手</span><span data-i18n="hero.line4">理清。</span></h1>
+            <p class="hero-lead" data-i18n="hero.lead">
+              朱简是一个纯人工的想法与事务工具。快速捕获、手动流转、任务看板——没有 AI 替你整理,数据只留在你自己的机器里。
             </p>
             <div class="cta-row">
-              <a class="btn btn-primary" href="#download">
+              <a class="btn btn-primary" href="#download" data-i18n="hero.ctaDownload">
                 下载 Windows 客户端
               </a>
-              <a class="btn btn-ghost" href="#flow">看看它怎么工作</a>
+              <a class="btn btn-ghost" href="#flow" data-i18n="hero.ctaSee">看看它怎么工作</a>
             </div>
-            <p class="cta-note">免费 · 开源方向 · 装好后自动更新</p>
+            <p class="cta-note" data-i18n="hero.ctaNote">免费 · 开源方向 · 装好后自动更新</p>
           </div>
 
           <div class="hero-art">
-            <div class="slip" role="img" aria-label="捕获纸条示意:一行手记正在被写下">
+            <div class="slip" role="img" aria-label="捕获纸条示意:一行手记正在被写下" data-i18n-aria-label="hero.slipAria">
               <div class="slip-text">
-                下雨天该给读者的信重写开头——<br />别再从「最近」两个字起<span class="caret"></span>
+                <span data-i18n="hero.slip1">下雨天该给读者的信重写开头——</span><br /><span data-i18n="hero.slip2">别再从「最近」两个字起</span><span class="caret"></span>
               </div>
               <div class="slip-hint">
-                <span><kbd>↵</kbd> 收存</span>
-                <span><kbd>⇧↵</kbd> 换行</span>
-                <span><kbd>Esc</kbd> 退出</span>
-                <span>可粘贴图片</span>
+                <span><kbd>↵</kbd> <span data-i18n="hero.kbdSave">收存</span></span>
+                <span><kbd>⇧↵</kbd> <span data-i18n="hero.kbdNewline">换行</span></span>
+                <span><kbd>Esc</kbd> <span data-i18n="hero.kbdEsc">退出</span></span>
+                <span data-i18n="hero.kbdPaste">可粘贴图片</span>
               </div>
               <svg class="seal-mark slip-seal" viewBox="0 0 100 100" aria-hidden="true"><use href="#seal-zhu" /></svg>
             </div>
@@ -613,35 +663,32 @@
       <!-- ───────── 三步主线 ───────── -->
       <section class="flow" id="flow">
         <div class="wrap">
-          <span class="eyebrow">一条手动主线</span>
-          <h2 class="section-title">从一个念头,到一件做成的事</h2>
-          <p class="section-lead">
+          <span class="eyebrow" data-i18n="flow.eyebrow">一条手动主线</span>
+          <h2 class="section-title" data-i18n="flow.title">从一个念头,到一件做成的事</h2>
+          <p class="section-lead" data-i18n="flow.lead">
             每一步流转都是你亲手经手的动作——捕获、打标签、转待办、推进。没有自动分类,也没有静默改写。
           </p>
 
           <div class="flow-grid">
             <article class="card">
-              <div class="step">其一 · 捕获</div>
-              <h3>随手记下,立刻消失</h3>
+              <div class="step" data-i18n="flow.step1">其一 · 捕获</div>
+              <h3 data-i18n="flow.card1Title">随手记下,立刻消失</h3>
               <p>
-                全局热键 <span class="kbd-inline">Ctrl+Alt+N</span> 唤出一张纸条,写完回车就闪退,不打断手头的事。
-                想法可直接粘贴截图,原文永不丢失。
+                <span data-i18n="flow.card1a">全局热键</span> <span class="kbd-inline">Ctrl+Alt+N</span> <span data-i18n="flow.card1b">唤出一张纸条,写完回车就闪退,不打断手头的事。想法可直接粘贴截图,原文永不丢失。</span>
               </p>
             </article>
             <article class="card">
-              <div class="step">其二 · 流转</div>
-              <h3>亲手理,不外包</h3>
-              <p>
-                在「灵感」里给念头打标签、转成待办。编辑保留全部历史版本,旧稿永远找得回;
-                删除先进回收站,手滑了随时还原。
+              <div class="step" data-i18n="flow.step2">其二 · 流转</div>
+              <h3 data-i18n="flow.card2Title">亲手理,不外包</h3>
+              <p data-i18n="flow.card2">
+                在「灵感」里给念头打标签、转成待办。编辑保留全部历史版本,旧稿永远找得回;删除先进回收站,手滑了随时还原。
               </p>
             </article>
             <article class="card">
-              <div class="step">其三 · 推进</div>
-              <h3>看板上,一列列往前</h3>
-              <p>
-                待办 / 进行中 / 待确认 / 已完成,拖动改状态、排顺序。干完的活拖进「成就册」留档——
-                是历史,不是垃圾,不和回收站挤一个桶。
+              <div class="step" data-i18n="flow.step3">其三 · 推进</div>
+              <h3 data-i18n="flow.card3Title">看板上,一列列往前</h3>
+              <p data-i18n="flow.card3">
+                待办 / 进行中 / 待确认 / 已完成,拖动改状态、排顺序。干完的活拖进「成就册」留档——是历史,不是垃圾,不和回收站挤一个桶。
               </p>
             </article>
           </div>
@@ -651,26 +698,24 @@
       <!-- ───────── 信任三点 ───────── -->
       <section class="trust">
         <div class="wrap">
-          <span class="eyebrow">为什么可以放心把想法交给它</span>
+          <span class="eyebrow" data-i18n="trust.eyebrow">为什么可以放心把想法交给它</span>
           <div class="trust-grid">
             <div class="pillar">
-              <h3>纯人工</h3>
-              <p>
-                没有 AI 参与任何一步。整理想法这件事本身有价值,不该外包给模型。
-                早期的 AI 代码已经整段删掉,不留后门。
+              <h3 data-i18n="trust.p1Title">纯人工</h3>
+              <p data-i18n="trust.p1">
+                没有 AI 参与任何一步。整理想法这件事本身有价值,不该外包给模型。早期的 AI 代码已经整段删掉,不留后门。
               </p>
             </div>
             <div class="pillar">
-              <h3>本地优先</h3>
-              <p>
+              <h3 data-i18n="trust.p2Title">本地优先</h3>
+              <p data-i18n="trust.p2">
                 数据是你机器里的一个 SQLite 文件,断网照常用。不上传、不追踪、不需要账号也能开始。
               </p>
             </div>
             <div class="pillar">
-              <h3>端到端加密</h3>
-              <p>
-                想多设备同步就自己接上服务器:笔记和图片在本机加密后才出门,
-                服务器只见密文、只做转发。恢复码只有你手上有。
+              <h3 data-i18n="trust.p3Title">端到端加密</h3>
+              <p data-i18n="trust.p3">
+                想多设备同步就自己接上服务器:笔记和图片在本机加密后才出门,服务器只见密文、只做转发。恢复码只有你手上有。
               </p>
             </div>
           </div>
@@ -680,65 +725,66 @@
       <!-- ───────── 下载 ───────── -->
       <section class="download" id="download">
         <div class="wrap">
-          <span class="eyebrow">现在就能用</span>
-          <h2 class="section-title">拿起你的朱简</h2>
-          <p class="section-lead">Windows 和 Android 客户端已经可以放心下载。装好后会自动检查、提示更新,无需再手动盯版本。macOS 与 Linux 是尝鲜版,可用但还没打磨完。</p>
+          <span class="eyebrow" data-i18n="dl.eyebrow">现在就能用</span>
+          <h2 class="section-title" data-i18n="dl.title">拿起你的朱简</h2>
+          <p class="section-lead" data-i18n="dl.lead">Windows 和 Android 客户端已经可以放心下载。装好后会自动检查、提示更新,无需再手动盯版本。macOS 与 Linux 是尝鲜版,可用但还没打磨完。</p>
 
+          <!-- 版本号刻意留在 markup 里、不进字典(deploy §8.1 的「全文替换 + 数命中处数」
+               靠的是它只有一种写法);字典只装那半句需要翻的机型说明。 -->
           <div class="dl-row">
-            <a class="dl-card" href="https://zhujian.app/updates/zhujian_0.2.30_x64-setup.exe">
+            <a class="dl-card" href="https://zhujian.app/updates/zhujian_0.2.31_x64-setup.exe">
               <div class="os">Windows</div>
-              <div class="meta">10 / 11 · 64 位 · v0.2.30</div>
-              <span class="btn btn-primary">下载安装包</span>
+              <div class="meta"><span data-i18n="dl.winMeta">10 / 11 · 64 位</span> · v0.2.31</div>
+              <span class="btn btn-primary" data-i18n="dl.winBtn">下载安装包</span>
             </a>
-            <a class="dl-card" href="https://zhujian.app/updates/zhujian_0.3.27_aarch64.apk">
+            <a class="dl-card" href="https://zhujian.app/updates/zhujian_0.3.28_aarch64.apk">
               <div class="os">Android</div>
-              <div class="meta">11+ · 64 位 · v0.3.27</div>
-              <span class="btn btn-primary">下载 APK</span>
+              <div class="meta"><span data-i18n="dl.androidMeta">11+ · 64 位</span> · v0.3.28</div>
+              <span class="btn btn-primary" data-i18n="dl.apkBtn">下载 APK</span>
             </a>
             <div class="dl-card trial">
-              <span class="trial-tag">尝鲜版</span>
+              <span class="trial-tag" data-i18n="dl.trialTag">尝鲜版</span>
               <div class="os">macOS</div>
-              <div class="meta">Apple 芯片 · v0.2.30</div>
-              <p class="caveat">暂未签名,首次打开需在「系统设置 › 隐私与安全性」里手动放行。</p>
-              <a class="btn btn-ghost" href="https://zhujian.app/updates/zhujian_0.2.30_aarch64.dmg">下载 dmg</a>
+              <div class="meta"><span data-i18n="dl.macMeta">Apple 芯片</span> · v0.2.31</div>
+              <p class="caveat" data-i18n="dl.macCaveat">暂未签名,首次打开需在「系统设置 › 隐私与安全性」里手动放行。</p>
+              <a class="btn btn-ghost" href="https://zhujian.app/updates/zhujian_0.2.31_aarch64.dmg" data-i18n="dl.macBtn">下载 dmg</a>
             </div>
             <div class="dl-card trial">
-              <span class="trial-tag">尝鲜版</span>
+              <span class="trial-tag" data-i18n="dl.trialTag">尝鲜版</span>
               <div class="os">Linux</div>
-              <div class="meta">x86_64 · v0.2.30</div>
-              <p class="caveat">全局热键 / 托盘在部分桌面环境(尤其 Wayland)可能不全。</p>
+              <div class="meta">x86_64 · v0.2.31</div>
+              <p class="caveat" data-i18n="dl.linuxCaveat">全局热键 / 托盘在部分桌面环境(尤其 Wayland)可能不全。</p>
               <div class="lin-dls">
-                <a class="btn btn-ghost" href="https://zhujian.app/updates/zhujian_0.2.30_amd64.AppImage">AppImage</a>
-                <a class="btn btn-ghost" href="https://zhujian.app/updates/zhujian_0.2.30_amd64.deb">.deb</a>
+                <a class="btn btn-ghost" href="https://zhujian.app/updates/zhujian_0.2.31_amd64.AppImage">AppImage</a>
+                <a class="btn btn-ghost" href="https://zhujian.app/updates/zhujian_0.2.31_amd64.deb">.deb</a>
               </div>
             </div>
           </div>
-          <p class="dl-foot">安装包由私钥签名 · Windows 从系统托盘或热键唤起 · Android 首次安装需在系统里允许「未知来源」 · macOS / Linux 尚未正式发布,遇到问题欢迎反馈</p>
+          <p class="dl-foot" data-i18n="dl.foot">安装包由私钥签名 · Windows 从系统托盘或热键唤起 · Android 首次安装需在系统里允许「未知来源」 · macOS / Linux 尚未正式发布,遇到问题欢迎反馈</p>
         </div>
       </section>
 
       <!-- ───────── 理念 + 开源 ───────── -->
       <section class="ethos" id="ethos">
         <div class="wrap">
-          <span class="eyebrow">一点固执</span>
+          <span class="eyebrow" data-i18n="ethos.eyebrow">一点固执</span>
           <div class="ethos-grid" style="margin-top: 28px;">
             <blockquote>
-              在人人都抢着让 AI 替你想的时候,<br />
-              朱简<span class="accent">什么都不替你想</span>。
+              <span data-i18n="ethos.quote1">在人人都抢着让 AI 替你想的时候,</span><br />
+              <span data-i18n="ethos.quote2">朱简</span><span class="accent" data-i18n="ethos.quote3">什么都不替你想</span><span data-i18n="ethos.quote4">。</span>
             </blockquote>
             <div class="ethos-body">
               <p>
-                <strong>它原本是个 AI 想法系统。</strong>后来我们把整理、补提这些 AI 功能连同代码一起删掉,
-                重新定位成一个纯手动的工具。因为想清楚一件事的过程,恰恰是最不该被省略的那部分。
+                <strong data-i18n="ethos.p1Lead">它原本是个 AI 想法系统。</strong><span data-i18n="ethos.p1">后来我们把整理、补提这些 AI 功能连同代码一起删掉,重新定位成一个纯手动的工具。因为想清楚一件事的过程,恰恰是最不该被省略的那部分。</span>
+              </p>
+              <!-- 字源那段里两个词是加粗的,故按加粗边界切片;英文版把「原名朱笺」的来龙去脉
+                   略去(对英文读者是无从对照的旧名),不是漏译。 -->
+              <p>
+                <span data-i18n="ethos.p2a">名字取自「</span><strong data-i18n="ethos.p2Zhusha">朱砂</strong><span data-i18n="ethos.p2b">」与「</span><strong data-i18n="ethos.p2Jiandu">简牍</strong><span data-i18n="ethos.p2c">」——朱色书写、竹木短简记小事,「简」亦取简朴意。(原名「朱笺」,取朱砂笺纸意;现改称朱简,更好认好念,那份安静记小事的心意没变。)</span>
+                <span data-i18n="ethos.p2d">所以你看到的暖纸面、浓墨字、朱砂点缀,不是装饰,是它看待「记录」这件事的态度:安静、可靠、经得起翻旧账。</span>
               </p>
               <p>
-                名字取自「<strong>朱砂</strong>」与「<strong>简牍</strong>」——朱色书写、竹木短简记小事,「简」亦取简朴意。(原名「<strong>朱笺</strong>」,取朱砂笺纸意;现改称朱简,更好认好念,那份安静记小事的心意没变。)
-                所以你看到的暖纸面、浓墨字、朱砂点缀,不是装饰,是它看待「记录」这件事的态度:
-                安静、可靠、经得起翻旧账。
-              </p>
-              <p>
-                <strong>你的数据,你做主。</strong>格式是透明的 SQLite,导出、备份、迁移都不设障碍;
-                朱简以开放源码为方向,同步协议与加密方案都摆在明面上,不靠「相信我们」运转。
+                <strong data-i18n="ethos.p3Lead">你的数据,你做主。</strong><span data-i18n="ethos.p3">格式是透明的 SQLite,导出、备份、迁移都不设障碍;朱简以开放源码为方向,同步协议与加密方案都摆在明面上,不靠「相信我们」运转。</span>
               </p>
             </div>
           </div>
@@ -752,18 +798,174 @@
         <div class="foot-sign">
           <svg class="seal-mark" viewBox="0 0 100 100" aria-hidden="true"><use href="#seal-zhujian" /></svg>
           <div class="word">
-            <b>朱简</b>
-            <span>ZHUJIAN · 纸与朱墨</span>
+            <b data-i18n="nav.brand">朱简</b>
+            <span data-i18n="foot.tagline">ZHUJIAN · 纸与朱墨</span>
           </div>
         </div>
         <nav class="foot-links">
-          <a href="#flow">怎么用</a>
-          <a href="#download">下载</a>
-          <a href="#ethos">理念</a>
-          <a href="https://github.com/prehisle/zhujian">源码</a>
+          <a href="#flow" data-i18n="nav.flow">怎么用</a>
+          <a href="#download" data-i18n="nav.download">下载</a>
+          <a href="#ethos" data-i18n="nav.ethos">理念</a>
+          <a href="https://github.com/prehisle/zhujian" data-i18n="nav.source">源码</a>
         </nav>
-        <p class="foot-copy">© 2026 朱简 zhujian · 纯人工 · 本地优先 · 端到端加密同步</p>
+        <p class="foot-copy" data-i18n="foot.copy">© 2026 朱简 zhujian · 纯人工 · 本地优先 · 端到端加密同步</p>
       </div>
     </footer>
+
+    <!-- ───────── 多语言(360,i18n-plan 第③笔)─────────────────────────────────
+         官网是**无构建步骤的静态单文件**(scp 部署,deploy §8),故字典与运行期都内联
+         在这里。形状与两个客户端工程的字典分片一字对齐(一键一行、双引号、zh/en 并排),
+         check-i18n-drift 用同一条 ENTRY_LINE 解析下面那一段。
+
+         · 生效语言 = `?lang=` > localStorage["zhujian.lang"](与两个客户端同一个键,纯本机)
+           > 系统语言(zh* → 中文,其余 → 英文);`?lang=en` 也是一条可分享的英文链接。
+         · markup 保留中文原文防首帧闪(163 契约):中文访客首帧即正确,英文访客会闪一下
+           中文 —— 与客户端同一条已接受的诚实边界。SEO 同理:爬虫拿到的是中文那一份。
+         · **注释一律用块注释**:门禁只挖空 `/* */`,行注释里的中文会被当成写死文案。
+           这是有意的 fail-closed —— 挖空 `//` 就等于把 `//` 后面的真文案也一起放行了。 -->
+    <script>
+      (function () {
+        "use strict";
+        /* 一键一行、zh/en 并排;缺一半、形状不对、键存而不用都是门禁红。取块的两枚
+           标记就钉在下面这对花括号自己那一行上 —— 别把它们挪到单独一行。 */
+        var M = { /* ⟦i18n-dict⟧ */
+          /* — 页面元信息 — */
+          "meta.title": { zh: "朱简 — 一个纯人工的想法与事务工具", en: "Zhujian — a strictly manual tool for ideas and tasks" },
+          "meta.desc": { zh: "朱简(zhujian)是一个纯人工、本地优先的个人事务工具:快速捕获、手动流转、任务看板。没有 AI 替你整理,数据只留在你自己的机器里;多设备同步端到端加密。", en: "Zhujian is a strictly manual, local-first personal task tool: quick capture, everything moved along by hand, a task board. No AI tidies up for you, and your data stays on your own machine; multi-device sync is end-to-end encrypted." },
+
+          /* — 顶栏 / 页脚导航 — */
+          "nav.brand": { zh: "朱简", en: "Zhujian" },
+          "nav.brandAria": { zh: "朱简 首页", en: "Zhujian home" },
+          "nav.flow": { zh: "怎么用", en: "How it works" },
+          "nav.ethos": { zh: "理念", en: "Why" },
+          "nav.source": { zh: "源码", en: "Source" },
+          "nav.download": { zh: "下载", en: "Download" },
+          "nav.langToggle": { zh: "EN", en: "中文" },
+
+          /* — 首屏 — */
+          "hero.eyebrow": { zh: "纯人工 · 本地优先 · 端到端加密", en: "Strictly manual · Local-first · Encrypted" },
+          "hero.line1": { zh: "把念头,", en: "Sort your" },
+          "hero.line2": { zh: "一笔一笔", en: "thoughts out" },
+          "hero.line3": { zh: "亲手", en: "by hand" },
+          "hero.line4": { zh: "理清。", en: "." },
+          "hero.lead": { zh: "朱简是一个纯人工的想法与事务工具。快速捕获、手动流转、任务看板——没有 AI 替你整理,数据只留在你自己的机器里。", en: "Zhujian is a strictly manual tool for ideas and tasks. Capture fast, move things along by hand, push them across a board — no AI tidies up for you, and your data stays on your own machine." },
+          "hero.ctaDownload": { zh: "下载 Windows 客户端", en: "Download for Windows" },
+          "hero.ctaSee": { zh: "看看它怎么工作", en: "See how it works" },
+          "hero.ctaNote": { zh: "免费 · 开源方向 · 装好后自动更新", en: "Free · Open source · Updates itself once installed" },
+          "hero.slipAria": { zh: "捕获纸条示意:一行手记正在被写下", en: "A capture slip: a line being written down" },
+          "hero.slip1": { zh: "下雨天该给读者的信重写开头——", en: "Rewrite the opening of that letter to readers —" },
+          "hero.slip2": { zh: "别再从「最近」两个字起", en: "stop starting it with “Lately”" },
+          "hero.kbdSave": { zh: "收存", en: "Save" },
+          "hero.kbdNewline": { zh: "换行", en: "New line" },
+          "hero.kbdEsc": { zh: "退出", en: "Close" },
+          "hero.kbdPaste": { zh: "可粘贴图片", en: "Paste images" },
+
+          /* — 三步主线 — */
+          "flow.eyebrow": { zh: "一条手动主线", en: "One manual line" },
+          "flow.title": { zh: "从一个念头,到一件做成的事", en: "From a passing thought to a thing that's done" },
+          "flow.lead": { zh: "每一步流转都是你亲手经手的动作——捕获、打标签、转待办、推进。没有自动分类,也没有静默改写。", en: "Every step is something you do by hand — capture, tag, make it a task, push it forward. Nothing is filed automatically, nothing is rewritten behind your back." },
+          "flow.step1": { zh: "其一 · 捕获", en: "One · Capture" },
+          "flow.card1Title": { zh: "随手记下,立刻消失", en: "Jot it down, watch it vanish" },
+          "flow.card1a": { zh: "全局热键", en: "The global hotkey" },
+          "flow.card1b": { zh: "唤出一张纸条,写完回车就闪退,不打断手头的事。想法可直接粘贴截图,原文永不丢失。", en: "pops up a slip; press Enter and it is gone, without breaking what you were doing. Paste a screenshot straight in — the original text is never lost." },
+          "flow.step2": { zh: "其二 · 流转", en: "Two · Sort" },
+          "flow.card2Title": { zh: "亲手理,不外包", en: "Sorted by you, not outsourced" },
+          "flow.card2": { zh: "在「灵感」里给念头打标签、转成待办。编辑保留全部历史版本,旧稿永远找得回;删除先进回收站,手滑了随时还原。", en: "In Ideas, tag a thought or turn it into a task. Every edit keeps the version before it, so old drafts are always recoverable; deleting puts it in the trash first, so a slip of the hand costs nothing." },
+          "flow.step3": { zh: "其三 · 推进", en: "Three · Push" },
+          "flow.card3Title": { zh: "看板上,一列列往前", en: "Column by column on the board" },
+          "flow.card3": { zh: "待办 / 进行中 / 待确认 / 已完成,拖动改状态、排顺序。干完的活拖进「成就册」留档——是历史,不是垃圾,不和回收站挤一个桶。", en: "To do / In progress / To confirm / Done — drag to change state or reorder. Finished work goes into the Archive: it is history, not garbage, and it never shares a bin with the trash." },
+
+          /* — 信任三点 — */
+          "trust.eyebrow": { zh: "为什么可以放心把想法交给它", en: "Why you can trust it with your thoughts" },
+          "trust.p1Title": { zh: "纯人工", en: "Strictly manual" },
+          "trust.p1": { zh: "没有 AI 参与任何一步。整理想法这件事本身有价值,不该外包给模型。早期的 AI 代码已经整段删掉,不留后门。", en: "No AI in any step. Making sense of your own thoughts is the valuable part; it should not be outsourced to a model. The early AI code was deleted outright — no back door left behind." },
+          "trust.p2Title": { zh: "本地优先", en: "Local-first" },
+          "trust.p2": { zh: "数据是你机器里的一个 SQLite 文件,断网照常用。不上传、不追踪、不需要账号也能开始。", en: "Your data is one SQLite file on your machine, and it works offline. Nothing is uploaded, nothing is tracked, and no account is needed to start." },
+          "trust.p3Title": { zh: "端到端加密", en: "End-to-end encrypted" },
+          "trust.p3": { zh: "想多设备同步就自己接上服务器:笔记和图片在本机加密后才出门,服务器只见密文、只做转发。恢复码只有你手上有。", en: "For multi-device sync, point it at a server: notes and images are encrypted on your machine before they leave, and the server only ever sees ciphertext it relays. The recovery code exists only in your hands." },
+
+          /* — 下载 — */
+          "dl.eyebrow": { zh: "现在就能用", en: "Ready to use" },
+          "dl.title": { zh: "拿起你的朱简", en: "Get Zhujian" },
+          "dl.lead": { zh: "Windows 和 Android 客户端已经可以放心下载。装好后会自动检查、提示更新,无需再手动盯版本。macOS 与 Linux 是尝鲜版,可用但还没打磨完。", en: "The Windows and Android builds are ready to install. Once installed they check for updates and prompt you, so there is no version to keep an eye on. macOS and Linux are early builds: usable, not polished yet." },
+          "dl.winMeta": { zh: "10 / 11 · 64 位", en: "10 / 11 · 64-bit" },
+          "dl.winBtn": { zh: "下载安装包", en: "Download .exe" },
+          "dl.androidMeta": { zh: "11+ · 64 位", en: "11+ · 64-bit" },
+          "dl.apkBtn": { zh: "下载 APK", en: "Download APK" },
+          "dl.trialTag": { zh: "尝鲜版", en: "Early build" },
+          "dl.macMeta": { zh: "Apple 芯片", en: "Apple silicon" },
+          "dl.macCaveat": { zh: "暂未签名,首次打开需在「系统设置 › 隐私与安全性」里手动放行。", en: "Not signed yet — on first launch, allow it under System Settings › Privacy & Security." },
+          "dl.macBtn": { zh: "下载 dmg", en: "Download dmg" },
+          "dl.linuxCaveat": { zh: "全局热键 / 托盘在部分桌面环境(尤其 Wayland)可能不全。", en: "Global hotkeys and the tray may be incomplete on some desktops, Wayland especially." },
+          "dl.foot": { zh: "安装包由私钥签名 · Windows 从系统托盘或热键唤起 · Android 首次安装需在系统里允许「未知来源」 · macOS / Linux 尚未正式发布,遇到问题欢迎反馈", en: "Builds are signed with a private key · On Windows, summon it from the tray or a hotkey · On Android, allow “unknown sources” on first install · macOS / Linux are not formally released — feedback welcome" },
+
+          /* — 理念 — */
+          "ethos.eyebrow": { zh: "一点固执", en: "A bit of stubbornness" },
+          "ethos.quote1": { zh: "在人人都抢着让 AI 替你想的时候,", en: "While everyone races to have AI think for you," },
+          "ethos.quote2": { zh: "朱简", en: "Zhujian " },
+          "ethos.quote3": { zh: "什么都不替你想", en: "thinks nothing for you" },
+          "ethos.quote4": { zh: "。", en: "." },
+          "ethos.p1Lead": { zh: "它原本是个 AI 想法系统。", en: "It began as an AI idea system." },
+          "ethos.p1": { zh: "后来我们把整理、补提这些 AI 功能连同代码一起删掉,重新定位成一个纯手动的工具。因为想清楚一件事的过程,恰恰是最不该被省略的那部分。", en: " Later the AI parts — filing, resurfacing — were deleted along with their code, and it was repositioned as a purely manual tool. Because thinking something through is exactly the part that should not be skipped." },
+          "ethos.p2a": { zh: "名字取自「", en: "The name joins " },
+          "ethos.p2Zhusha": { zh: "朱砂", en: "zhūshā" },
+          "ethos.p2b": { zh: "」与「", en: " (cinnabar) with " },
+          "ethos.p2Jiandu": { zh: "简牍", en: "jiǎndú" },
+          "ethos.p2c": { zh: "」——朱色书写、竹木短简记小事,「简」亦取简朴意。(原名「朱笺」,取朱砂笺纸意;现改称朱简,更好认好念,那份安静记小事的心意没变。)", en: " (bamboo and wooden slips) — writing in red on short strips, for the small things worth keeping. The second character also carries the sense of plain and simple." },
+          "ethos.p2d": { zh: "所以你看到的暖纸面、浓墨字、朱砂点缀,不是装饰,是它看待「记录」这件事的态度:安静、可靠、经得起翻旧账。", en: "So the warm paper, the dark ink and the cinnabar accents are not decoration — they are how it regards the act of writing something down: quiet, dependable, and able to bear being looked up years later." },
+          "ethos.p3Lead": { zh: "你的数据,你做主。", en: "Your data, your call." },
+          "ethos.p3": { zh: "格式是透明的 SQLite,导出、备份、迁移都不设障碍;朱简以开放源码为方向,同步协议与加密方案都摆在明面上,不靠「相信我们」运转。", en: " The format is plain SQLite — exporting, backing up and migrating are unobstructed. Zhujian is open source, and both the sync protocol and the encryption scheme are out in the open; it does not run on “trust us”." },
+
+          /* — 页脚 — */
+          "foot.tagline": { zh: "ZHUJIAN · 纸与朱墨", en: "ZHUJIAN · PAPER AND CINNABAR" },
+          "foot.copy": { zh: "© 2026 朱简 zhujian · 纯人工 · 本地优先 · 端到端加密同步", en: "© 2026 Zhujian · Strictly manual · Local-first · End-to-end encrypted sync" },
+        }; /* ⟦/i18n-dict⟧ */
+
+        /* 属性绑定表。门禁**从这里读**「本页支持哪几个 data-i18n-*」,不另写一份登记表
+           —— 「登记本身没人核」是 336 ⑩ 刀判过死刑的形状(改坏了照样绿)。 */
+        var BIND = { "data-i18n-title": "title", "data-i18n-aria-label": "aria-label", "data-i18n-content": "content" };
+
+        var KEY = "zhujian.lang"; /* 与两个客户端同一个键;纯本机、不进同步 */
+
+        function pick() {
+          var q = new URLSearchParams(location.search).get("lang");
+          if (q === "zh" || q === "en") {
+            localStorage.setItem(KEY, q);
+            return q;
+          }
+          var saved = localStorage.getItem(KEY);
+          if (saved === "zh" || saved === "en") return saved;
+          return navigator.language.toLowerCase().indexOf("zh") === 0 ? "zh" : "en";
+        }
+
+        function apply(lang) {
+          document.documentElement.lang = lang;
+          function t(key) {
+            var entry = M[key];
+            if (!entry) throw new Error("i18n: unknown key " + key); /* 绝不回退兜底 */
+            return entry[lang];
+          }
+          var texts = document.querySelectorAll("[data-i18n]");
+          for (var i = 0; i < texts.length; i++) {
+            /* textContent 覆写会吞掉子元素:data-i18n 只许挂在纯文本元素上(门禁也静态核)。 */
+            if (texts[i].childElementCount > 0) throw new Error("i18n: data-i18n element has children");
+            texts[i].textContent = t(texts[i].getAttribute("data-i18n"));
+          }
+          for (var attr in BIND) {
+            var nodes = document.querySelectorAll("[" + attr + "]");
+            for (var j = 0; j < nodes.length; j++) nodes[j].setAttribute(BIND[attr], t(nodes[j].getAttribute(attr)));
+          }
+        }
+
+        var current = pick();
+        apply(current);
+        document.getElementById("lang-toggle").addEventListener("click", function (ev) {
+          ev.preventDefault(); /* 单文件静态页,换档不必重载:就地重铺一遍即可 */
+          current = current === "zh" ? "en" : "zh";
+          localStorage.setItem(KEY, current);
+          apply(current);
+        });
+      })();
+    </script>
   </body>
 </html>

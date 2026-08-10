@@ -5,6 +5,7 @@ import { copyButton } from "./clipboard";
 import { toastAction } from "./toast";
 import { armDismiss, registerViewKeys } from "./hotkey-menu";
 import { TAG_COLORS } from "./tag-color";
+import { t } from "./i18n";
 import "./topics.css";
 
 // 标签视图。底层数据是 topics/item_topic(命令名、表名沿用 topic),对用户重定位为
@@ -26,10 +27,10 @@ type TopicTree = {
 
 // 任务状态 -> 看板列中文名(mirror board.ts COLUMNS),下钻态只读展示用。
 const COL_NAME: Record<string, string> = {
-  todo: "待办",
-  doing: "进行中",
-  confirming: "待确认",
-  done: "已完成",
+  todo: t("topics.colTodo"),
+  doing: t("topics.colDoing"),
+  confirming: t("topics.colConfirming"),
+  done: t("topics.colDone"),
 };
 
 // ---- small DOM helper (same shape as inbox.ts) -----------------------------
@@ -88,28 +89,28 @@ let savedScroll = 0;
 
 const SKELETON = `
   <header data-tauri-drag-region>
-    <h1>标签</h1>
-    <button id="new-toggle" class="hbtn" type="button">新建标签 <kbd class="k">N</kbd></button>
-    <button id="merge-toggle" class="hbtn" type="button"><span class="lbl">合并标签</span> <kbd class="k">M</kbd></button>
+    <h1>${t("topics.header")}</h1>
+    <button id="new-toggle" class="hbtn" type="button">${t("topics.newTag")} <kbd class="k">N</kbd></button>
+    <button id="merge-toggle" class="hbtn" type="button"><span class="lbl">${t("topics.mergeTags")}</span> <kbd class="k">M</kbd></button>
   </header>
   <div id="newform" class="newform" hidden>
-    <input id="nt-title" class="nt-title" type="text" placeholder="标签名…" />
-    <button id="nt-create" class="mb-btn go" type="button">创建</button>
-    <button id="nt-cancel" class="mb-btn" type="button">取消</button>
+    <input id="nt-title" class="nt-title" type="text" placeholder="${t("topics.namePlaceholder")}" />
+    <button id="nt-create" class="mb-btn go" type="button">${t("topics.create")}</button>
+    <button id="nt-cancel" class="mb-btn" type="button">${t("topics.cancel")}</button>
     <span id="nt-err" class="nt-err"></span>
   </div>
   <main id="list"></main>
   <footer id="mergebar" class="mergebar" hidden>
     <span id="mb-hint" class="mb-hint"></span>
     <div id="mb-chips" class="mb-chips"></div>
-    <input id="mb-rename" class="mb-rename" type="text" placeholder="合并后标题(可改)" hidden />
-    <button id="mb-merge" class="mb-btn go" type="button" disabled>合并</button>
-    <button id="mb-cancel" class="mb-btn" type="button">取消</button>
+    <input id="mb-rename" class="mb-rename" type="text" placeholder="${t("topics.mergeRenamePlaceholder")}" hidden />
+    <button id="mb-merge" class="mb-btn go" type="button" disabled>${t("topics.merge")}</button>
+    <button id="mb-cancel" class="mb-btn" type="button">${t("topics.cancel")}</button>
   </footer>
 `;
 
 export function mount(root: HTMLElement, _ctx: ViewCtx): View {
-  const view = el("div", { className: "v-topics" });
+  const view = el("div", { className: "v-topics view" });
   view.innerHTML = SKELETON;
   root.replaceChildren(view);
 
@@ -147,11 +148,11 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
   // 只给**读取**失败用(refresh 的 catch;那里会清 lastSig,否则 refocus 指纹短路会把
   // 错误页永久钉在屏上)。卡级操作失败一律就地/回执报错,绝不整页换错误页。
   function renderError(message: string): void {
-    const retry = el("button", { className: "mb-btn", textContent: "重试" });
+    const retry = el("button", { className: "mb-btn", textContent: t("topics.retry") });
     retry.addEventListener("click", () => void refresh());
     list.replaceChildren(
       el("div", { className: "center" }, [
-        el("div", { className: "big", textContent: "读取失败" }),
+        el("div", { className: "big", textContent: t("topics.loadFailed") }),
         el("div", { className: "err-box", textContent: message }),
         retry,
       ]),
@@ -189,7 +190,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
 
     const check = el("span", { className: "check", textContent: "" }); // ✓ (merge mode)
     // 拖动手柄(仅非合并态出现;draggable 只挂它,避开 head 里的按钮/展开点击冲突)。
-    const handle = el("span", { className: "topic-drag", textContent: "⠿", title: "拖动调整顺序" });
+    const handle = el("span", { className: "topic-drag", textContent: "⠿", title: t("topics.dragHint") });
     handle.draggable = true;
     handle.addEventListener("dragstart", (e) => {
       if (merging) {
@@ -219,9 +220,9 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     if (topic.kind) kindBadge.classList.add("on");
     const countEl = el("span", {
       className: "topic-count",
-      textContent: `${topic.notes.length} 条灵感 · ${tasks.length} 个任务`,
+      textContent: t("topics.counts", { ideas: topic.notes.length, tasks: tasks.length }),
     });
-    const keepBadge = el("span", { className: "keep-badge", textContent: "存续" });
+    const keepBadge = el("span", { className: "keep-badge", textContent: t("topics.keep") });
 
     // 子标签折叠开关(仅有子标签的父行、非合并态):收起/展开该父下方的 .topic-kids 组。
     // 状态在模块级 collapsedKids(跨视图切换存活,同 expanded)。点击直接翻邻接的 kids 容器
@@ -230,9 +231,9 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     if (kidCount > 0 && !merging) {
       const collapsed = collapsedKids.has(topic.id);
       const chev = el("span", { className: "kt-chev", textContent: collapsed ? "▸" : "▾" });
-      kidsToggle = el("button", { className: "topic-kids-toggle", title: collapsed ? "展开子标签" : "收起子标签" }, [
+      kidsToggle = el("button", { className: "topic-kids-toggle", title: collapsed ? t("topics.expandKids") : t("topics.collapseKids") }, [
         chev,
-        document.createTextNode(` ${kidCount} 个子标签`),
+        document.createTextNode(` ${t("topics.kidCount", { n: kidCount })}`),
       ]);
       kidsToggle.addEventListener("click", (e) => {
         e.stopPropagation(); // 别触发 head 的「展开本标签内容」
@@ -244,7 +245,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
           kids.classList.toggle("collapsed", now);
         }
         chev.textContent = now ? "▸" : "▾";
-        kidsToggle!.title = now ? "展开子标签" : "收起子标签";
+        kidsToggle!.title = now ? t("topics.expandKids") : t("topics.collapseKids");
       });
     }
 
@@ -300,10 +301,10 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     const actions = el("div", { className: "topic-actions" });
     const showActions = () =>
       actions.replaceChildren(
-        tbtn("颜色", openColor),
-        tbtn("类型", openKind),
-        tbtn("重命名", openEdit),
-        tbtn("删除", confirmDelete, true),
+        tbtn(t("topics.color"), openColor),
+        tbtn(t("topics.kind"), openKind),
+        tbtn(t("topics.rename"), openEdit),
+        tbtn(t("topics.delete"), confirmDelete, true),
       );
 
     // 类型:一个自由文本输入(默认填当前类型),就地替换动作区。写入走 set_topic_kind
@@ -312,8 +313,8 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     // 一次瞬时失败放大成全视图不可用——ui-audit P0 #6 与 inbox/board 同规)。
     function showOpError(e: unknown): void {
       actions.replaceChildren(
-        el("span", { className: "te-err", textContent: `操作失败:${String(e)}` }),
-        tbtn("知道了", showActions),
+        el("span", { className: "te-err", textContent: t("topics.opFailed", { msg: String(e) }) }),
+        tbtn(t("topics.gotIt"), showActions),
       );
     }
 
@@ -330,7 +331,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       const input = el("input", {
         className: "tk-input",
         value: topic.kind ?? "",
-        placeholder: "类型(如 人名),留空=无类型",
+        placeholder: t("topics.kindPlaceholder"),
       }) as HTMLInputElement;
       input.addEventListener("keydown", (e) => {
         if (e.isComposing) return; // IME 组合期的 Enter 是上屏(ui-audit P0 #1)
@@ -343,9 +344,9 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       });
       actions.replaceChildren(
         input,
-        tbtn("保存", () => void saveKind(input.value)),
-        tbtn("清除", () => void saveKind(null)),
-        tbtn("取消", showActions),
+        tbtn(t("topics.save"), () => void saveKind(input.value)),
+        tbtn(t("topics.clear"), () => void saveKind(null)),
+        tbtn(t("topics.cancel"), showActions),
       );
       input.focus();
       input.select();
@@ -366,8 +367,8 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       const swatch = (hex: string | null): HTMLElement => {
         const b = el("button", {
           className: hex ? "color-swatch" : "color-swatch none",
-          title: hex ?? "无色",
-          textContent: hex ? "" : "无",
+          title: hex ?? t("topics.noColor"),
+          textContent: hex ? "" : t("topics.none"),
         });
         if (hex) b.style.setProperty("--tag-color", hex);
         if ((topic.color ?? null) === hex) b.classList.add("current");
@@ -379,7 +380,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       };
       actions.replaceChildren(
         el("div", { className: "color-row" }, [...TAG_COLORS.map((c) => swatch(c.hex)), swatch(null)]),
-        tbtn("完成", showActions),
+        tbtn(t("topics.done"), showActions),
       );
     }
 
@@ -393,12 +394,12 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       });
       confirmOff = off;
       actions.replaceChildren(
-        el("span", { className: "td-q", textContent: "删除标签?" }),
-        tbtn("取消", () => {
+        el("span", { className: "td-q", textContent: t("topics.deleteConfirm") }),
+        tbtn(t("topics.cancel"), () => {
           disarmConfirm();
           showActions();
         }),
-        tbtn("删除", () => {
+        tbtn(t("topics.delete"), () => {
           disarmConfirm();
           void doDelete();
         }, true),
@@ -458,11 +459,11 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       });
       sec.replaceChildren(
         el("div", { className: "topic-edit" }, [
-          el("span", { className: "te-label", textContent: "重命名标签" }),
+          el("span", { className: "te-label", textContent: t("topics.renameTitle") }),
           titleInput,
           el("div", { className: "te-actions" }, [
-            el("button", { className: "mb-btn", textContent: "取消", onclick: () => void refresh() }),
-            el("button", { className: "mb-btn go", textContent: "保存", onclick: () => void save() }),
+            el("button", { className: "mb-btn", textContent: t("topics.cancel"), onclick: () => void refresh() }),
+            el("button", { className: "mb-btn go", textContent: t("topics.save"), onclick: () => void save() }),
             err,
           ]),
         ]),
@@ -479,20 +480,20 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
   // ---- expanded body: a tag's ideas + tasks, read-only (collapse/expand) ----
   // One read-only task row in an expanded tag (column + due/priority + 复制). No
   // click-to-jump — the tag view only browses; act on tasks over on the board.
-  function taskRow(t: TaskItem, today: string): HTMLElement {
-    const meta: Node[] = [el("span", { className: "dtask-col", textContent: COL_NAME[t.status] ?? t.status })];
-    if (t.due_on) {
-      const st = dueState(t.due_on, today);
-      meta.push(el("span", { className: `dtask-due ${st}`, textContent: dueLabel(t.due_on, today) }));
+  function taskRow(task: TaskItem, today: string): HTMLElement {
+    const meta: Node[] = [el("span", { className: "dtask-col", textContent: COL_NAME[task.status] ?? task.status })];
+    if (task.due_on) {
+      const st = dueState(task.due_on, today);
+      meta.push(el("span", { className: `dtask-due ${st}`, textContent: dueLabel(task.due_on, today) }));
     }
-    if (t.priority) {
-      meta.push(el("span", { className: `dtask-pri p${t.priority}`, textContent: `优先级·${PRIORITY_LABEL[t.priority]}` }));
+    if (task.priority) {
+      meta.push(el("span", { className: `dtask-pri p${task.priority}`, textContent: t("topics.priority", { label: PRIORITY_LABEL[task.priority] }) }));
     }
     const card = el("article", { className: "dtask" }, [
-      el("p", { className: "dtask-title", textContent: t.title }),
+      el("p", { className: "dtask-title", textContent: task.title }),
       el("div", { className: "dtask-meta" }, meta),
     ]);
-    card.append(copyButton(t.title, "dtask-copy"));
+    card.append(copyButton(task.title, "dtask-copy"));
     return card;
   }
 
@@ -506,16 +507,16 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
             el("time", { className: "tnote-time", textContent: when(n.created_at) }),
           ]),
         )
-      : [el("div", { className: "drill-empty", textContent: "还没有灵感打这个标签" })];
+      : [el("div", { className: "drill-empty", textContent: t("topics.noIdeas") })];
     const notesSec = el("section", { className: "drill-sec" }, [
-      el("h2", { className: "drill-h", textContent: `灵感 ${topic.notes.length}` }),
+      el("h2", { className: "drill-h", textContent: t("topics.ideasCount", { n: topic.notes.length }) }),
       el("div", { className: "drill-notes" }, noteCards),
     ]);
     const taskCards = tasks.length
       ? tasks.map((t) => taskRow(t, today))
-      : [el("div", { className: "drill-empty", textContent: "还没有任务打这个标签" })];
+      : [el("div", { className: "drill-empty", textContent: t("topics.noTasks") })];
     const tasksSec = el("section", { className: "drill-sec" }, [
-      el("h2", { className: "drill-h", textContent: `任务 ${tasks.length}` }),
+      el("h2", { className: "drill-h", textContent: t("topics.tasksCount", { n: tasks.length }) }),
       el("div", { className: "drill-tasks" }, taskCards),
     ]);
     return el("div", { className: "topic-body" }, [notesSec, tasksSec]);
@@ -554,7 +555,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       await invoke("reorder_topic", { id: dragId, prevId, nextId });
     } catch (e) {
       // 操作失败走回执,不整页换错误页(拖动没有稳定的行内报错锚点)。
-      toastAction(`调整顺序失败:${String(e)}`, 3200);
+      toastAction(t("topics.reorderFailed", { msg: String(e) }), 3200);
       return;
     }
     await refresh();
@@ -563,7 +564,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
   function renderList(): void {
     if (trees.length === 0) {
       sections.clear();
-      renderCenter("还没有标签", "点右上角「新建标签」创建一个,或在「灵感」里给条目打标签。");
+      renderCenter(t("topics.emptyTitle"), t("topics.emptyHint"));
       // A merge in progress can't continue with nothing to merge.
       if (merging) setMerging(false);
       return;
@@ -642,14 +643,14 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     if (n >= 2 && survivor) {
       const keep = titles.get(survivor) ?? "";
       mbHint.replaceChildren(
-        document.createTextNode(`把 ${n} 个标签合并到 「`),
+        document.createTextNode(t("topics.mergeHintPre", { n })),
         el("b", { textContent: keep }),
-        document.createTextNode("」(点下面的标签可改存续目标)"),
+        document.createTextNode(t("topics.mergeHintPost")),
       );
     } else if (n === 1) {
-      mbHint.textContent = "已选 1 个 · 再选至少一个才能合并";
+      mbHint.textContent = t("topics.mergeOne");
     } else {
-      mbHint.textContent = "选择 2 个以上标签,合并成一个";
+      mbHint.textContent = t("topics.mergePrompt");
     }
 
     // One chip per selected tag; the survivor is highlighted and labelled 存续.
@@ -658,14 +659,14 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         const isKeep = survivor === id;
         const label = el("span", {
           className: "mb-chip-label",
-          textContent: titles.get(id) ?? "(已删除)",
-          title: "设为存续标签",
+          textContent: titles.get(id) ?? t("topics.deleted"),
+          title: t("topics.setKeep"),
         });
         label.addEventListener("click", () => setSurvivor(id));
-        const x = el("span", { className: "mb-chip-x", textContent: "✕", title: "移出合并" });
+        const x = el("span", { className: "mb-chip-x", textContent: "✕", title: t("topics.removeFromMerge") });
         x.addEventListener("click", () => deselect(id));
         const chip = el("div", { className: isKeep ? "mb-chip is-keep" : "mb-chip" });
-        if (isKeep) chip.append(el("span", { className: "mb-chip-keep", textContent: "存续" }));
+        if (isKeep) chip.append(el("span", { className: "mb-chip-keep", textContent: t("topics.keep") }));
         chip.append(label, x);
         return chip;
       }),
@@ -681,7 +682,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     if (!showRename) renameFor = null;
 
     mbMerge.disabled = !(n >= 2 && survivor);
-    mbMerge.textContent = confirming ? `确认合并 ${n} 个?` : "合并";
+    mbMerge.textContent = confirming ? t("topics.mergeConfirm", { n }) : t("topics.merge");
   }
 
   function setMerging(on: boolean): void {
@@ -698,7 +699,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     view.classList.toggle("merging", on);
     mergeToggle.classList.toggle("on", on);
     // Only swap the label text — keep the kbd hint (.k) intact.
-    (mergeToggle.querySelector(".lbl") as HTMLElement).textContent = on ? "完成" : "合并标签";
+    (mergeToggle.querySelector(".lbl") as HTMLElement).textContent = on ? t("topics.done") : t("topics.mergeTags");
     mergebar.hidden = !on;
     render();
   }
@@ -723,7 +724,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       confirming = false;
       paintBar();
       // 操作失败走回执(合并栏还在,选择保留,用户可改后重试),不整页换错误页。
-      toastAction(`合并失败:${String(err)}`, 3200);
+      toastAction(t("topics.mergeFailed", { msg: String(err) }), 3200);
     }
   }
 
@@ -792,7 +793,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
   }
   async function doCreate(): Promise<void> {
     if (!ntTitle.value.trim()) {
-      ntErr.textContent = "标签名不能为空";
+      ntErr.textContent = t("topics.nameRequired");
       return;
     }
     try {

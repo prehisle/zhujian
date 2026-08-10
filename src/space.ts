@@ -8,6 +8,7 @@
 // setCurrentSpace 同步喂壳;capture 浮窗听 "space-foreground" 显示目标名、保存
 // 那刻 mirrorSpace 对齐注入目标,由后端复核(目标已变 = 响亮拒,草稿保留)。
 import { invoke as tauriInvoke } from "@tauri-apps/api/core";
+import { t } from "./i18n";
 
 /// 主库(默认空间/第一空间)的固定 space_id——spaces.rs::MAIN_SPACE 的镜像。
 export const MAIN_SPACE = "main";
@@ -111,6 +112,31 @@ export type MoveResult =
   | { outcome: "images_pending"; count: number }
   | { outcome: "dangling_refs"; seqs: number[] };
 
+/** outcome → 用户话术。此前五分支话术在 board / inbox 两视图逐字复制(228「别再
+ *  各写各的」的形),改一句要记得改两处——收进 MoveResult 类型的家,视图只留各自的
+ *  DOM 反应。default 是穷尽性守卫:新增变体时这里编译期变红,别让两份 switch 静默
+ *  落空(board 那份还会把 moving=true 留在场,入口永久卡死)。 */
+export function moveOutcomeText(r: MoveResult, targetLabel: string): string {
+  switch (r.outcome) {
+    case "moved":
+      return t("space.moved", { name: targetLabel });
+    case "copied_but_source_kept":
+      return t("space.copiedSourceKept", { reason: r.reason });
+    case "copied_but_source_unconfirmed":
+      return t("space.copiedSourceUnconfirmed", { error: r.error });
+    case "images_pending":
+      return t("space.imagesPending", { count: r.count });
+    case "dangling_refs":
+      return t("space.danglingRefs", {
+        refs: r.seqs.map((n) => t("space.imageRef", { n })).join(t("space.listSep")),
+      });
+    default: {
+      const exhaustive: never = r;
+      return exhaustive;
+    }
+  }
+}
+
 /** 把当前空间的一条条目移进 `targetSpaceId`。**刻意不走统一 invoke 包装**——移动
  *  期间用户切走空间的话,包装层会把响应变成永不决议,部分成功(目标已建)的结果
  *  就永远写不进登记、下次回来还能重跑整个移动(codex 实现审二轮)。这里显式捕获
@@ -173,7 +199,7 @@ export function distinctSpaceLabels(list: SpaceInfo[]): Map<string, string> {
     list.map((s) => {
       const base = spaceLabel(s);
       if ((count.get(base) ?? 0) <= 1) return [s.id, base] as const;
-      const tail = s.id === MAIN_SPACE ? "(默认空间)" : ` · ${s.id.slice(-6)}`;
+      const tail = s.id === MAIN_SPACE ? t("space.mainSuffix") : ` · ${s.id.slice(-6)}`;
       return [s.id, `${base}${tail}`] as const;
     }),
   );
@@ -226,7 +252,7 @@ export function resetSpace(spaceId: string): Promise<void> {
 export function spaceLabel(s: { id: string; name: string | null }): string {
   // 无名非 main 带 ID 尾缀(space-entry-plan §3.6):加入的空间可能源侧从未命名,
   // 多个无名空间必须可辨识。
-  return s.name ?? (s.id === MAIN_SPACE ? "默认空间" : `未命名空间 · ${s.id.slice(-4)}`);
+  return s.name ?? (s.id === MAIN_SPACE ? t("space.defaultName") : t("space.unnamedName", { id: s.id.slice(-4) }));
 }
 
 /** 状态点四态(off 灰 / on 绿 / busy 琥珀 / err 朱砂)。侧栏状态点与空间菜单行共用。

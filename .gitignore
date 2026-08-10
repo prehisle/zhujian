@@ -58,3 +58,7 @@ Thumbs.db
 
 # flaky-hunt 的失败输出(临时诊断产物)
 tmp-flaky/
+
+# e2e 期间 app 崩出的 GB 级 core dump(340 实测单轮 4 枚共 22GB;/core.* 锚定仓根,
+# 与 /core/ 目录不同形不误伤)
+/core.*

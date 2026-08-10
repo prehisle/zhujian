@@ -3,20 +3,21 @@
 // 落在纸色底上仍安静;颜色只是冗余的次通道,文字始终是主。默认无色。
 //
 // 存的是 6 位十六进制(`#RRGGBB`),后端(notes::set_topic_color)只认这一种形式。
+import { t } from "./i18n";
 
 export type TagColor = { hex: string; name: string };
 
 // 八个可区分的暗调色(避开纯朱红——那是截止/新生脉冲的强调色,别撞)。手选热标签用,
 // 不铺满。顺序即调色板里的排布。
 export const TAG_COLORS: TagColor[] = [
-  { hex: "#c0563f", name: "赭红" },
-  { hex: "#cc8b3c", name: "黄土" },
-  { hex: "#7f8b3a", name: "苔绿" },
-  { hex: "#3f8272", name: "松石" },
-  { hex: "#3f7a99", name: "黛蓝" },
-  { hex: "#6b5b95", name: "藤紫" },
-  { hex: "#a8577e", name: "绛红" },
-  { hex: "#7a7166", name: "墨褐" },
+  { hex: "#c0563f", name: t("tagColor.ochre") },
+  { hex: "#cc8b3c", name: t("tagColor.loess") },
+  { hex: "#7f8b3a", name: t("tagColor.moss") },
+  { hex: "#3f8272", name: t("tagColor.turquoise") },
+  { hex: "#3f7a99", name: t("tagColor.indigo") },
+  { hex: "#6b5b95", name: t("tagColor.wisteria") },
+  { hex: "#a8577e", name: t("tagColor.crimson") },
+  { hex: "#7a7166", name: t("tagColor.inkBrown") },
 ];
 
 // 给一个 chip 元素套上/摘掉颜色:着色时写入 --tag-color 自定义属性并加 .tinted class

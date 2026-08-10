@@ -49,7 +49,7 @@
     out.midOpacity > 0 &&
     out.midOpacity < 1 &&
     out.closed === true &&
-    out.closeMs >= 250 && // 延迟没被谁悄悄砍短(双击容错的下界,见 main.ts CLOSE_DELAY)
+    out.closeMs >= 250 && // 延迟没被谁悄悄砍短(双击容错的下界,见 viewer.ts CLOSE_DELAY)
     out.closeMs < 500 &&
     out.classCleared === true &&
     (out.reopened === undefined || (out.reopened === true && out.reopenOpacity === 1));

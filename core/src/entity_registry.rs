@@ -25,7 +25,11 @@
 //!
 //! 1. **九个面之外的落地面不在此列**:两壳命令面、前端 UI、`replay` 的分发臂与
 //!    `validate_op_shape`、`VALIDATOR_VER` 的 bump、`move_item` 的跨空间随迁。前两者靠
-//!    e2e 与真机验收,后三者漏了会被既有行为测当场打红(不是静默少干活),故本轮不铺。
+//!    e2e 与真机验收;后三者对**既有**实体的破坏会被既有行为测打红,但对**新**实体不会——
+//!    漏 replay 两臂的真实形态是「同版本对端的合法 op 落 UnsupportedVocab → 该 origin
+//!    挂起 + 误导性升级提示」(validate 兜底臂)或撞分发臂的 `unreachable!`,得靠新实体
+//!    **自带**的回放/收敛测试兜(每加实体必配:314 comment、329 device 两判例)。故本轮
+//!    不铺第十面,但别拿「既有测会红」当理由跳过那两处——那句对新实体是假的。
 //! 2. **[`Match::Superset`] 的面守漏登记、不守假登记**:那几处的实际集合里本就混着非实体
 //!    表(`oplog` / `sync_meta` / `item_revisions` …),要求精确相等就得再维护一份「非实体
 //!    表」名单,那是把同一个腐烂点搬个家。
@@ -33,8 +37,11 @@
 //!    随机命令流真的产过这个实体的 op。314 给 `comment` 配的 `COMMENT_ADDS`/`COMMENT_REMOVES`
 //!    覆盖计数才是那一格的判据,本锚不复制它。
 
+use crate::test_src::{
+    const_body, fn_body, sql_from_tables, sql_insert_tables, str_literals, strip_line_comments,
+    Repo,
+};
 use std::collections::BTreeSet;
-use std::path::{Path, PathBuf};
 
 /// 一个实体在某个横切面上的登记状态。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -328,212 +335,11 @@ const FACETS: &[FacetSpec] = &[
     },
 ];
 
-// ---- 源码读取与切片 ----------------------------------------------------------------
-
-/// 仓内源码的取用口。路径一律相对仓根,读不动即 panic(扫描面写错 = 什么都没扫到,
-/// 那正是本锚要防的静默变绿)。
-struct Repo {
-    root: PathBuf,
-}
-
-impl Repo {
-    fn open() -> Self {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .expect("core/ 的上一级就是仓根")
-            .to_path_buf();
-        Repo { root }
-    }
-
-    fn read(&self, rel: &str) -> String {
-        let p = self.root.join(rel);
-        std::fs::read_to_string(&p)
-            .unwrap_or_else(|e| panic!("读不动 {rel}:{e} —— 文件改名了?名单要跟着改"))
-    }
-
-    /// 最新那条重建 `oplog` 表的迁移(词汇表 CHECK 住在它里面)。按文件名排序取最后一个,
-    /// 故加一条新迁移重建 oplog 时锚自动跟过去,不必改名单。
-    fn newest_oplog_migration(&self) -> String {
-        let dir = self.root.join("core/migrations");
-        let mut names: Vec<String> = std::fs::read_dir(&dir)
-            .unwrap_or_else(|e| panic!("读不动 {}:{e}", dir.display()))
-            .map(|e| e.expect("读目录项").file_name().to_string_lossy().into_owned())
-            .filter(|n| n.ends_with(".sql"))
-            .collect();
-        names.sort();
-        let hit = names
-            .iter()
-            .rev()
-            .find(|n| {
-                std::fs::read_to_string(dir.join(n))
-                    .is_ok_and(|s| s.contains("CREATE TABLE oplog"))
-            })
-            .unwrap_or_else(|| {
-                panic!("core/migrations 里没有任何一条迁移建 oplog 表 —— 扫描面写错了?")
-            });
-        std::fs::read_to_string(dir.join(hit)).expect("上一步已读过一次")
-    }
-}
-
-/// 剥掉行注释(`//` 到行尾)。**注释里提到某个实体名不算登记** —— 不剥的话,一句
-/// 「本表刻意不含 device」就能让那一格假绿。
-///
-/// 块注释不特判:仓里这几处没有,真出现了会让下方的形状解析对不上而响亮红。
-fn strip_line_comments(src: &str) -> String {
-    src.lines()
-        .map(|l| match l.find("//") {
-            // 只在**字符串外**的 `//` 才是注释起点。这几个面里没有含 `//` 的字面量
-            // (SQL 里不会有),故用「该行 `//` 之前的引号个数为偶数」这条便宜判据。
-            Some(i) if l[..i].matches('"').count() % 2 == 0 => &l[..i],
-            _ => l,
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-/// 切出一个函数体(不含外层花括号)。跳过字符串字面量与行注释里的花括号,故
-/// `format!("… FROM {table} …")` 这类不会把配平算歪。
-///
-/// 找不到该函数 = panic:名单里的函数改名了就得一起改,不许静默跳过。
-fn fn_body(src: &str, name: &str) -> String {
-    let needle = format!("fn {name}(");
-    let at = src
-        .match_indices(&needle)
-        .map(|(i, _)| i)
-        .find(|i| {
-            // 排在注释行里的同名字样不算(文档注释里点名函数很常见)。
-            let line_start = src[..*i].rfind('\n').map_or(0, |p| p + 1);
-            !src[line_start..*i].trim_start().starts_with("//")
-        })
-        .unwrap_or_else(|| panic!("源码里找不到 `fn {name}(` —— 它改名了?锚的名单要跟着改"));
-    let open = src[at..]
-        .find('{')
-        .unwrap_or_else(|| panic!("`fn {name}` 之后没有函数体"))
-        + at;
-    balanced(src, open, '{', '}', &format!("fn {name}"))
-}
-
-/// 切出一个常量数组体(不含外层方括号)。
-///
-/// ⚠ 起点必须跨过 `decl` 本身:`const CORE_TABLES: &[&str] = &` 的类型里就带一对
-/// `[`,从 decl 开头找第一个 `[` 会切出 `&str` 而不是数组体(首版实测,被反向探针
-/// 当场抓住)。
-fn const_body(src: &str, decl: &str) -> String {
-    let at = src
-        .find(decl)
-        .unwrap_or_else(|| panic!("源码里找不到 `{decl}` —— 它改名了?锚的名单要跟着改"));
-    let after = at + decl.len();
-    let open = src[after..]
-        .find('[')
-        .unwrap_or_else(|| panic!("`{decl}` 之后没有 `[`"))
-        + after;
-    balanced(src, open, '[', ']', decl)
-}
-
-/// 从 `open`(那一枚开括号的下标)起做配平切片,返回**括号内**的内容。
-///
-/// 扫描时跳过 Rust 字符串字面量(含 `\"` 转义)与行注释——不跳的话,SQL 里的
-/// `'$.item_id'` 无所谓,但 `format!("{table}")` 的花括号会把配平算歪。
-fn balanced(src: &str, open: usize, lb: char, rb: char, what: &str) -> String {
-    let bytes: Vec<char> = src[open..].chars().collect();
-    let mut depth = 0usize;
-    let mut in_str = false;
-    let mut i = 0usize;
-    while i < bytes.len() {
-        let c = bytes[i];
-        if in_str {
-            if c == '\\' {
-                i += 2;
-                continue;
-            }
-            if c == '"' {
-                in_str = false;
-            }
-            i += 1;
-            continue;
-        }
-        match c {
-            '"' => in_str = true,
-            '/' if bytes.get(i + 1) == Some(&'/') => {
-                while i < bytes.len() && bytes[i] != '\n' {
-                    i += 1;
-                }
-                continue;
-            }
-            c if c == lb => depth += 1,
-            c if c == rb => {
-                depth -= 1;
-                if depth == 0 {
-                    return bytes[1..i].iter().collect();
-                }
-            }
-            _ => {}
-        }
-        i += 1;
-    }
-    panic!("{what} 的 `{lb}` 没有配平的 `{rb}` —— 解析器看不懂这个形状,拒绝猜");
-}
-
 // ---- 九个提取器:从源码解析出「实际登记了谁」 ----------------------------------------
-
-/// 抓 SQL 里 `FROM <表名>` 的表名(含 `FROM boot.<表名>`);`FROM (` 这种子查询跳过。
-fn sql_from_tables(src: &str) -> BTreeSet<String> {
-    let mut out = BTreeSet::new();
-    for (i, _) in src.match_indices("FROM ") {
-        let rest = src[i + 5..].trim_start();
-        let tok: String = rest
-            .chars()
-            .take_while(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '.')
-            .collect();
-        // `FROM boot.items` → items;`FROM (SELECT …)` → 空 token,跳过。
-        if let Some(t) = tok.rsplit('.').next().filter(|t| !t.is_empty()) {
-            out.insert(t.to_string());
-        }
-    }
-    out
-}
-
-/// 抓 SQL 里 `INSERT INTO <表名>` 的表名。
-fn sql_insert_tables(src: &str) -> BTreeSet<String> {
-    let mut out = BTreeSet::new();
-    for (i, _) in src.match_indices("INSERT INTO ") {
-        let tok: String = src[i + 12..]
-            .trim_start()
-            .chars()
-            .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
-            .collect();
-        if !tok.is_empty() {
-            out.insert(tok);
-        }
-    }
-    out
-}
-
-/// 抓全部 Rust 字符串字面量的内容(单行、不含转义引号的那种;这几处都是)。
-fn str_literals(src: &str) -> BTreeSet<String> {
-    let mut out = BTreeSet::new();
-    let chars: Vec<char> = src.chars().collect();
-    let mut i = 0usize;
-    while i < chars.len() {
-        if chars[i] == '"' {
-            let mut j = i + 1;
-            let mut buf = String::new();
-            while j < chars.len() && chars[j] != '"' {
-                if chars[j] == '\\' {
-                    j += 2;
-                    continue;
-                }
-                buf.push(chars[j]);
-                j += 1;
-            }
-            out.insert(buf);
-            i = j + 1;
-            continue;
-        }
-        i += 1;
-    }
-    out
-}
+//
+// 源码读取与切片件(Repo / strip_line_comments / fn_body / const_body / balanced /
+// sql_from_tables / sql_insert_tables / str_literals)327 时首铸在本文件,后收拢成
+// 共享工具箱 [`crate::test_src`](基底就是这份最硬化的,判例头注随件走)。
 
 /// ① 词汇表:`entity = 'X'` 与 `entity IN ('X', 'Y')` 两种形。
 fn extract_vocab(repo: &Repo) -> BTreeSet<String> {
@@ -687,6 +493,23 @@ mod tests {
                     );
                 }
             }
+        }
+
+        // 防线 5(前门):下面每个面都先与 all_keys 取交集再比对——Superset 面的 raw
+        // 混着非实体表(oplog/sync_meta/…),降噪是必要的;代价是「进了词汇表 CHECK、却
+        // 忘在 ENTITIES 加行」的新实体会被交集静默滤掉,九面对它全部照绿,恰好复现本表
+        // 要防的「漏掉的那处不会自己报错」。词汇表这一面的 raw 可证无噪声(CHECK 里只有
+        // 实体名),单独反向核一遍,把「进清单」这个动作本身也纳入 fail-closed:
+        {
+            let vocab = extract_vocab(&repo);
+            let all_keys: BTreeSet<String> =
+                ENTITIES.iter().map(|e| e.name.to_string()).collect();
+            let unregistered: Vec<&String> = vocab.difference(&all_keys).collect();
+            assert!(
+                unregistered.is_empty(),
+                "词汇表 CHECK 里有 ENTITIES 没登记的实体:{unregistered:?} —— \
+                 新实体先在 ENTITIES 加一行(前门),九面守护才对它生效。"
+            );
         }
 
         for f in FACETS {

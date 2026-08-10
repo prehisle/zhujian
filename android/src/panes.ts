@@ -16,6 +16,7 @@ import {
   unsealTask,
   type SearchStatus,
 } from "./api";
+import { t } from "./i18n";
 import { $, confirmBar, esc, fmtWhen, hideConfirmBar, isTaskStage, showBar, showError, STAGE_LABEL } from "./ui";
 
 type Deps = {
@@ -44,7 +45,7 @@ export async function loadTrash(): Promise<void> {
   const space = getCurrentSpace();
   const seq = ++trashSeq;
   const box = $("trash-list");
-  box.innerHTML = `<p class="muted empty">读取中…</p>`;
+  box.innerHTML = `<p class="muted empty">${t("panes.loading")}</p>`;
   try {
     const rows = await listTrash(space);
     if (space !== getCurrentSpace() || seq !== trashSeq) return;
@@ -53,7 +54,7 @@ export async function loadTrash(): Promise<void> {
     renderTrash();
   } catch (err) {
     if (space !== getCurrentSpace() || seq !== trashSeq) return;
-    box.innerHTML = `<p class="empty" style="color:var(--seal)">回收站读取失败:${esc(String(err))}</p>`;
+    box.innerHTML = `<p class="empty warn-ink">${t("panes.trashLoadFailed", { error: esc(String(err)) })}</p>`;
   }
 }
 
@@ -61,24 +62,24 @@ function renderTrash() {
   const box = $("trash-list");
   ($("trash-empty") as HTMLButtonElement).disabled = trashBusy || trashRows.length === 0;
   if (!trashRows.length) {
-    box.innerHTML = `<p class="muted empty">回收站是空的。</p>`;
+    box.innerHTML = `<p class="muted empty">${t("panes.trashEmpty")}</p>`;
     return;
   }
   box.innerHTML = trashRows
     .map((r) => {
-      const kind = STAGE_LABEL[r.stage] ?? "灵感";
+      const kind = STAGE_LABEL[r.stage] ?? t("panes.kindIdea");
       const chips = r.topics
         .map(
           (t) =>
-            `<span class="chip"${t.color ? ` style="--tc:${esc(t.color)}"` : ""}>${esc(t.title)}</span>`,
+            `<span class="chip${t.color ? " tinted" : ""}"${t.color ? ` style="--tc:${esc(t.color)}"` : ""}>${esc(t.title)}</span>`,
         )
         .join("");
       return `<article class="card" data-trash="${esc(r.id)}"><div class="body">
         <p class="content">${esc(r.content)}</p>
-        <footer><span class="pill">${kind}</span><time>删于 ${esc(fmtWhen(r.archived_at))}</time>${chips}</footer>
+        <footer><span class="pill">${kind}</span><time>${t("panes.deletedAt", { when: esc(fmtWhen(r.archived_at)) })}</time>${chips}</footer>
         <div class="panel"><div class="acts">
-          <button data-trash-act="restore"${trashBusy ? " disabled" : ""}>恢复</button>
-          <button data-trash-act="purge" class="warn"${trashBusy ? " disabled" : ""}>彻底删除</button>
+          <button data-trash-act="restore"${trashBusy ? " disabled" : ""}>${t("panes.restore")}</button>
+          <button data-trash-act="purge" class="warn"${trashBusy ? " disabled" : ""}>${t("panes.purge")}</button>
         </div></div>
       </div></article>`;
     })
@@ -106,24 +107,24 @@ async function trashRun(op: (space: string) => Promise<unknown>, doneMsg?: strin
 }
 
 function onTrashClick(e: Event) {
-  const t = e.target as HTMLElement;
-  if (t.id === "trash-empty") {
+  const el = e.target as HTMLElement;
+  if (el.id === "trash-empty") {
     if (!trashRows.length || trashBusy) return;
-    confirmBar(`清空回收站?${trashRows.length} 条将彻底删除、无法找回`, "清空", () => {
+    confirmBar(t("panes.emptyTrashQ", { n: trashRows.length }), t("panes.emptyTrashYes"), () => {
       if (trashBusy || !trashRows.length) return; // 期间已重载成空/在写:弃
       void trashRun(
         async (space) => {
           const n = await purgeAllTrash(space);
           return n;
         },
-        "回收站已清空",
+        t("panes.trashEmptied"),
       );
     });
     return;
   }
-  const act = t.closest<HTMLElement>("[data-trash-act]")?.dataset.trashAct;
+  const act = el.closest<HTMLElement>("[data-trash-act]")?.dataset.trashAct;
   if (!act || trashBusy) return;
-  const id = t.closest<HTMLElement>("[data-trash]")?.dataset.trash;
+  const id = el.closest<HTMLElement>("[data-trash]")?.dataset.trash;
   const row = trashRows.find((r) => r.id === id);
   if (!row) return;
   const task = isTaskStage(row.stage);
@@ -131,12 +132,12 @@ function onTrashClick(e: Event) {
     // 146:恢复=回主视图,按该行冻结 stage 指路(任务回任务面、灵感回灵感面)。
     void trashRun(
       (space) => (task ? restoreTask(space, row.id) : restoreNote(space, row.id)),
-      task ? "已恢复,在底栏「任务」里" : "已恢复,在底栏「灵感」里",
+      task ? t("panes.restoredTask") : t("panes.restoredIdea"),
     );
     return;
   }
   if (act === "purge") {
-    confirmBar("彻底删除这条?无法找回", "彻底删除", () => {
+    confirmBar(t("panes.purgeOneQ"), t("panes.purge"), () => {
       // 确认期间列表可能已被远端刷新重载:按 id 重取现行,行没了就弃(绝不误删别行)。
       const fresh = trashRows.find((r) => r.id === row.id);
       if (!fresh || trashBusy) return;
@@ -155,7 +156,7 @@ export async function loadSealed(): Promise<void> {
   const space = getCurrentSpace();
   const seq = ++sealedSeq;
   const box = $("sealed-list");
-  box.innerHTML = `<p class="muted empty">读取中…</p>`;
+  box.innerHTML = `<p class="muted empty">${t("panes.loading")}</p>`;
   try {
     const rows = await listSealedTasks(space);
     if (space !== getCurrentSpace() || seq !== sealedSeq) return;
@@ -165,18 +166,20 @@ export async function loadSealed(): Promise<void> {
             (r) => `<article class="card" data-sealed="${esc(r.id)}"><div class="body">
               <p class="content">${esc(r.title)}</p>
               <footer><time>${
-                r.done_at ? `完成于 ${esc(fmtWhen(r.done_at))}` : `归档于 ${esc(fmtWhen(r.sealed_at!))}`
+                r.done_at
+                  ? t("panes.doneAt", { when: esc(fmtWhen(r.done_at)) })
+                  : t("panes.sealedAt", { when: esc(fmtWhen(r.sealed_at!)) })
               }</time></footer>
               <div class="panel"><div class="acts">
-                <button data-unseal="${esc(r.id)}"${sealedBusy ? " disabled" : ""}>取消入册(回看板已完成)</button>
+                <button data-unseal="${esc(r.id)}"${sealedBusy ? " disabled" : ""}>${t("panes.unseal")}</button>
               </div></div>
             </div></article>`,
           )
           .join("")
-      : `<p class="muted empty">归档册还是空的——完成的任务入册后在这里。</p>`;
+      : `<p class="muted empty">${t("panes.sealedEmpty")}</p>`;
   } catch (err) {
     if (space !== getCurrentSpace() || seq !== sealedSeq) return;
-    box.innerHTML = `<p class="empty" style="color:var(--seal)">归档册读取失败:${esc(String(err))}</p>`;
+    box.innerHTML = `<p class="empty warn-ink">${t("panes.sealedLoadFailed", { error: esc(String(err)) })}</p>`;
   }
 }
 
@@ -188,7 +191,7 @@ function onSealedClick(e: Event) {
   void (async () => {
     try {
       await unsealTask(space, id);
-      if (space === getCurrentSpace()) showBar("已取消入册,在「任务」的「已完成」里", true);
+      if (space === getCurrentSpace()) showBar(t("panes.unsealed"), true);
     } catch (err) {
       if (space === getCurrentSpace()) showError(String(err));
     } finally {
@@ -204,11 +207,11 @@ function onSealedClick(e: Event) {
 // ---- 搜索 --------------------------------------------------------------------
 
 const SEARCH_STATUS_LABEL: Record<SearchStatus, string> = {
-  inbox: "灵感",
-  processed: "已归类",
-  task: "任务",
-  archived: "回收站",
-  sealed: "归档册",
+  inbox: t("panes.hitInbox"),
+  processed: t("panes.hitProcessed"),
+  task: t("panes.hitTask"),
+  archived: t("panes.hitArchived"),
+  sealed: t("panes.hitSealed"),
 };
 
 let searchSeq = 0;
@@ -221,10 +224,10 @@ async function runSearch() {
   const q = ($("search-input") as HTMLInputElement).value.trim();
   const box = $("search-results");
   if (!q) {
-    box.innerHTML = `<p class="muted empty">输入词再搜(连编辑历史一起搜)。</p>`;
+    box.innerHTML = `<p class="muted empty">${t("panes.searchPrompt")}</p>`;
     return;
   }
-  box.innerHTML = `<p class="muted empty">搜索中…</p>`;
+  box.innerHTML = `<p class="muted empty">${t("panes.searching")}</p>`;
   try {
     const hits = await searchNotes(space, q);
     if (space !== getCurrentSpace() || seq !== searchSeq) return;
@@ -239,10 +242,10 @@ async function runSearch() {
             </div></article>`,
           )
           .join("")
-      : `<p class="muted empty">没有找到「${esc(q)}」。</p>`;
+      : `<p class="muted empty">${t("panes.searchNoHit", { q: esc(q) })}</p>`;
   } catch (err) {
     if (space !== getCurrentSpace() || seq !== searchSeq) return;
-    box.innerHTML = `<p class="empty" style="color:var(--seal)">搜索失败:${esc(String(err))}</p>`;
+    box.innerHTML = `<p class="empty warn-ink">${t("panes.searchFailed", { error: esc(String(err)) })}</p>`;
   }
 }
 

@@ -1,5 +1,8 @@
 // 全功能底座(119)的前端调用层:安卓壳业务命令的类型与包装,单一真相源。
 // UI 各工序接线时从这里 import,不再手写 invoke 字符串。
+// **豁免边界**:app 级/空间管理命令(join_space/activate_space/create_space/reset_space/
+// rename_space/take_* 等,不收目标 space_id 或以空间为操作对象)不进本层,裸写在 main.ts
+// ——「业务命令进层、空间管理留壳」是 119 的界定;此前两个文件头都写「一律」,与实践各说各话。
 //
 // 两条纪律(全部来自 117 五轮 codex 审的结论,勿回退):
 // - **业务包装一律显式收 `space` 参数**(读写皆然)且**正常 resolve/reject**:调用方
@@ -12,6 +15,7 @@
 // currentSpace 影子(后端 foreground 的镜像)也在此:main.ts 切换/对账时写入,
 // 所有读方(包括 main.ts 的判弃逻辑)从这里取。
 import { invoke } from "@tauri-apps/api/core";
+import { t } from "./i18n";
 
 export const MAIN_SPACE = "main";
 
@@ -33,7 +37,7 @@ export type SpaceInfo = { id: string; name: string | null; configured: boolean; 
 /** 空间展示名(main=默认空间;无名非 main 带 ID 尾缀——space-entry-plan §3.6:
  *  加入的空间可能源侧从未命名,多个无名空间必须可辨识)。 */
 export function spaceLabel(s: { id: string; name: string | null }): string {
-  return s.name ?? (s.id === MAIN_SPACE ? "默认空间" : `未命名空间 · ${s.id.slice(-4)}`);
+  return s.name ?? (s.id === MAIN_SPACE ? t("api.defaultSpace") : t("api.unnamedSpace", { id: s.id.slice(-4) }));
 }
 
 /** 全部空间(主库恒第一)。命令不带 space。 */
@@ -349,6 +353,10 @@ export const unsealTask = (space: string, id: string) =>
 export const createTopic = (space: string, title: string) =>
   invoke<string>("create_topic", { spaceId: space, title });
 
+// ⚠ 下面四个标签写包装(改名/颜色/删除/合并)**安卓 UI 端无调用点**:190/258 拍板
+// 「重命名/删除/合并/颜色仍只桌面有(克制,不搬)」,包装是 119 命令面 1:1 搬运时随
+// Rust 命令带进来的、留作命令面对称。日后要做入口直接接线;巡查双端能力对齐时别把
+// 它们误读成「已具备入口、只差接线」,也别当死代码删(有主的登记项,四件一体)。
 /** 标签改名。 */
 export const updateTopic = (space: string, id: string, title: string) =>
   invoke<void>("update_topic", { spaceId: space, id, title });
@@ -454,6 +462,10 @@ export type PairStartOutcome = { code: string; server_url: string };
 export const syncPairStart = (space: string) =>
   invoke<PairStartOutcome>("sync_pair_start", { spaceId: space });
 
+/** 应码配对(新设备侧,输入对方出的码;同一流程的另一半,与 syncPairStart 并排)。 */
+export const syncPairJoin = (space: string, serverUrl: string, code: string) =>
+  invoke<void>("sync_pair_join", { spaceId: space, serverUrl, code });
+
 // ---- 跨空间移动(cross-space-move-plan §2.7 安卓入口;镜像桌面 src/space.ts) ----
 
 /** 移动结果五分道(core::move_item::MoveResult 的 JSON 镜像;字段名由 core 的
@@ -519,7 +531,7 @@ export function distinctSpaceLabels(list: SpaceInfo[]): Map<string, string> {
     list.map((s) => {
       const base = spaceLabel(s);
       if ((count.get(base) ?? 0) <= 1) return [s.id, base] as const;
-      const tail = s.id === MAIN_SPACE ? "(默认空间)" : ` · ${s.id.slice(-6)}`;
+      const tail = s.id === MAIN_SPACE ? t("api.mainSuffix") : ` · ${s.id.slice(-6)}`;
       return [s.id, `${base}${tail}`] as const;
     }),
   );

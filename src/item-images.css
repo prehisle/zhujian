@@ -16,7 +16,7 @@
   width: 72px;
   height: 72px;
   border: 1px solid var(--line-strong);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   overflow: hidden;
   background: var(--raised-edge);
   box-shadow: var(--card-shadow);
@@ -40,11 +40,11 @@
   bottom: 0;
   padding: 1px 5px;
   font-family: var(--font-sans);
-  font-size: 11px;
+  font-size: var(--fs-12);
   line-height: 1.4;
-  color: #fff;
+  color: var(--on-seal);
   background: var(--seal);
-  border-top-right-radius: 5px;
+  border-top-right-radius: var(--radius-xs);
   pointer-events: none;
 }
 
@@ -65,16 +65,36 @@
   padding: 0;
   display: grid;
   place-items: center;
-  font-size: 14px;
+  font-size: var(--fs-14);
   line-height: 1;
   color: #fff;
   background: rgba(34, 31, 25, 0.62);
   border: none;
-  border-radius: 50%;
+  border-radius: var(--radius-circle);
   cursor: pointer;
+}
+/* 337:底色换成朱砂了,字也得跟着换 —— 基规则那个 #fff 是给上面那层深色蒙版
+   (rgba 写死的,它压在照片上、与明暗无关)配的,压到朱砂上就不合身:暗色档的朱砂
+   偏亮,白字只有 3.33:1。悬停这一半跨了两条规则,336 那轮的门禁看不见。 */
+/* 热区扩展(§2.3,354 立 / 356 搬家):宿主 .img-thumb 是 overflow:hidden + 圆角
+   (--radius-sm),越界即裁——触区不居中于 ✕(那会越出缩略图右上边被裁),改贴
+   缩略图右上角摆(按钮自身已 absolute 于 top/right 2px,-2px 即贴角)。实测(354,
+   真 Chrome elementFromPoint 逐像素扫)24×24 全命中、圆角弧尖也没被裁;别改回居中
+   ——那才是真会被裁的摆位。⚠ 它必须住在**这份**里:354 原放 controls.css,而那份
+   只被主窗加载,捕获窗的粘贴图预览(同样用 .img-del)整整一版没有热区——356 热区闸
+   (check-hit-zone)按文档层叠当场抓出;.img-del 出现在两个文档,扩展就得跟着它住
+   两个文档都加载的 item-images.css(「一次层叠 = 一个文档」,338 那条)。 */
+.img-del::before {
+  content: "";
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  width: 24px;
+  height: 24px;
 }
 .img-del:hover {
   background: var(--seal);
+  color: var(--on-seal);
 }
 
 /* 正文里「图N」引用 —— 朱砂底纹的就地小 chip,点开看大图。 */
@@ -87,13 +107,13 @@
   color: var(--seal);
   background: var(--seal-tint);
   border: 1px solid var(--seal-line);
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   cursor: pointer;
   white-space: nowrap;
 }
 .img-ref:hover {
   background: var(--seal);
-  color: #fff;
+  color: var(--on-seal);
 }
 
 /* 正文里的 http/https 链接:点击开系统浏览器(见 renderContent)。用墨色下划线、
@@ -128,7 +148,7 @@
 }
 .img-err {
   font-family: var(--font-sans);
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--seal);
   margin: 4px 0 0;
 }
@@ -159,7 +179,7 @@
   display: block;
   flex: none; /* 不被 flex 收缩:宽高由 JS 直接写(makeImageViewer),超出即溢出交原生滚动 */
   /* 宽高由 JS 直接写,不用 object-fit/transform。 */
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   box-shadow: var(--float-shadow);
   /* 禁原生图拖影 + 触控手势,平移/缩放全由脚本接管。 */
   touch-action: none;
@@ -192,7 +212,7 @@
    在指示露脸前就已成形亮相,不给一闪而过的 loading;慢路径才见到它。 */
 .img-lightbox-loading {
   font-family: var(--font-sans);
-  font-size: 13px;
+  font-size: var(--fs-13);
   color: #fff;
   opacity: 0;
   animation: img-lightbox-loading-in 0.2s ease 0.2s forwards;
@@ -214,10 +234,10 @@
   height: 64px;
   padding: 0;
   border: none;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   background: rgba(20, 16, 10, 0.5);
   color: #fff;
-  font-size: 30px;
+  font-size: var(--fs-30);
   line-height: 1;
   cursor: pointer;
   opacity: 0.55;
@@ -241,10 +261,10 @@
   transform: translateX(-50%);
   z-index: 9100;
   padding: 4px 10px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: rgba(20, 16, 10, 0.55);
   color: #fff;
   font-family: var(--font-sans);
-  font-size: 12px;
+  font-size: var(--fs-12);
   pointer-events: none; /* 纯读数,不吃点击(点它等于点遮罩=关闭) */
 }

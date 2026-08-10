@@ -11,8 +11,12 @@
 //  3. **写命令走 `invokeInSpace`**:统一包装的「永不决议」会让 in-flight 闸的 finally
 //     永不执行、提交按钮永久卡死(118 教训第三踩)。这里显式带发起那刻的空间,响应恒
 //     到达,动不动 UI 由会话号判。
+//
+// 浮层 portal 到 body:已登记进 hotkey-menu.ts 的 SATELLITE_LAYERS(卫星浮层白名单),
+// 新增 portal 层也须进那份名单,否则点它会误触发别卡编辑态的默认保存。
 import { invoke, invokeInSpace } from "./space";
 import { authorLabel } from "./identity";
+import { t } from "./i18n";
 import { when } from "./tasktime";
 import "./item-comments.css";
 
@@ -59,8 +63,8 @@ export function commentBadge(space: string, itemId: string, onChanged: () => voi
   if (n === 0) return null;
   const b = el("button", {
     className: "cm-badge",
-    textContent: `💬 ${n}`,
-    title: "看留言",
+    textContent: t("comments.badge", { n }),
+    title: t("comments.badgeTitle"),
     draggable: false, // 看板卡可拖:点徽章绝不许变成拖卡片
   });
   b.addEventListener("click", (e) => {
@@ -96,13 +100,13 @@ export function openComments(space: string, itemId: string, onChanged: () => voi
 
   const list = el("div", { className: "cm-list" });
   const err = el("p", { className: "cm-err", hidden: true });
-  const more = el("button", { className: "cm-more", textContent: "加载更多", hidden: true });
-  const area = el("textarea", { className: "cm-input", rows: 2, placeholder: "写句话…(Enter 发出,Shift+Enter 换行)" });
-  const send = el("button", { className: "cm-send", textContent: "写下" });
+  const more = el("button", { className: "cm-more", textContent: t("comments.loadMore"), hidden: true });
+  const area = el("textarea", { className: "cm-input", rows: 2, placeholder: t("comments.inputPlaceholder") });
+  const send = el("button", { className: "cm-send", textContent: t("comments.send") });
   const panel = el("div", { className: "cm-panel" }, [
     el("header", { className: "cm-head" }, [
-      el("h3", { className: "cm-title", textContent: "留言" }),
-      el("button", { className: "cm-close", textContent: "✕", title: "关闭(Esc)" }),
+      el("h3", { className: "cm-title", textContent: t("comments.title") }),
+      el("button", { className: "cm-close", textContent: "✕", title: t("comments.closeTitle") }),
     ]),
     list,
     more,
@@ -133,13 +137,13 @@ export function openComments(space: string, itemId: string, onChanged: () => voi
       el("time", { className: "cm-time", textContent: when(c.created_at) }),
     ]);
     if (who) meta.append(el("span", { className: "cm-author", textContent: who }));
-    const del = el("button", { className: "cm-del", textContent: "删除", title: "销毁这条留言" });
+    const del = el("button", { className: "cm-del", textContent: t("comments.delete"), title: t("comments.deleteTitle") });
     // 两拍确认:留言**不进回收站,删了就没了**(用户 2026-08-06 拍板),所以这一拍是
     // 唯一的挽回机会。就地把按钮换成问句 + 两个按钮,同看板 confirmInline 的形。
     del.addEventListener("click", () => {
-      const q = el("span", { className: "cm-confirm", textContent: "销毁?不进回收站" });
-      const yes = el("button", { className: "cm-del danger", textContent: "销毁" });
-      const no = el("button", { className: "cm-no", textContent: "取消" });
+      const q = el("span", { className: "cm-confirm", textContent: t("comments.confirmDestroy") });
+      const yes = el("button", { className: "cm-del danger", textContent: t("comments.destroy") });
+      const no = el("button", { className: "cm-no", textContent: t("comments.cancel") });
       yes.addEventListener("click", () => void destroy(c.id, row));
       no.addEventListener("click", () => meta.replaceChildren(...metaKids));
       meta.replaceChildren(metaKids[0], q, yes, no);
@@ -153,7 +157,7 @@ export function openComments(space: string, itemId: string, onChanged: () => voi
     for (const c of page.rows) list.append(renderRow(c));
     cursor = page.next_cursor; // 只有整页真的进了 DOM 才推进——失败重试不许跳页
     more.hidden = !page.has_more;
-    if (list.childElementCount === 0) list.append(el("p", { className: "cm-empty", textContent: "还没有留言。" }));
+    if (list.childElementCount === 0) list.append(el("p", { className: "cm-empty", textContent: t("comments.empty") }));
   }
   async function loadPage(next: boolean): Promise<void> {
     if (loading) return;
@@ -205,7 +209,7 @@ export function openComments(space: string, itemId: string, onChanged: () => voi
       await invokeInSpace(space, "delete_item_comment", { id });
       if (!live()) return;
       row.remove();
-      if (list.childElementCount === 0) list.append(el("p", { className: "cm-empty", textContent: "还没有留言。" }));
+      if (list.childElementCount === 0) list.append(el("p", { className: "cm-empty", textContent: t("comments.empty") }));
       clearErr();
       onChanged();
     } catch (e) {

@@ -1,0 +1,33 @@
+// android/src/panes.ts(回收站 / 归档册 / 搜索三面)的文案分片。
+import { defineMessages } from "./entry";
+
+export const panes = defineMessages({
+  "panes.loading": { zh: "读取中…", en: "Loading…" },
+  "panes.kindIdea": { zh: "灵感", en: "Idea" },
+  "panes.deletedAt": { zh: "删于 {when}", en: "Deleted {when}" },
+  "panes.restore": { zh: "恢复", en: "Restore" },
+  "panes.purge": { zh: "彻底删除", en: "Delete forever" },
+  "panes.trashLoadFailed": { zh: "回收站读取失败:{error}", en: "Could not load Trash: {error}" },
+  "panes.trashEmpty": { zh: "回收站是空的。", en: "Trash is empty." },
+  "panes.emptyTrashQ": { zh: "清空回收站?{n} 条将彻底删除、无法找回", en: "Empty Trash? {n} {n|item|items} will be deleted forever" },
+  "panes.emptyTrashYes": { zh: "清空", en: "Empty" },
+  "panes.trashEmptied": { zh: "回收站已清空", en: "Trash emptied" },
+  "panes.restoredTask": { zh: "已恢复,在底栏「任务」里", en: "Restored — find it under Tasks" },
+  "panes.restoredIdea": { zh: "已恢复,在底栏「灵感」里", en: "Restored — find it under Ideas" },
+  "panes.purgeOneQ": { zh: "彻底删除这条?无法找回", en: "Delete this forever? It cannot be recovered" },
+  "panes.doneAt": { zh: "完成于 {when}", en: "Done {when}" },
+  "panes.sealedAt": { zh: "归档于 {when}", en: "Archived {when}" },
+  "panes.unseal": { zh: "取消入册(回看板已完成)", en: "Unarchive (back to Done)" },
+  "panes.unsealed": { zh: "已取消入册,在「任务」的「已完成」里", en: "Unarchived — find it under Tasks › Done" },
+  "panes.sealedEmpty": { zh: "归档册还是空的——完成的任务入册后在这里。", en: "The archive is empty — finished tasks land here once archived." },
+  "panes.sealedLoadFailed": { zh: "归档册读取失败:{error}", en: "Could not load the archive: {error}" },
+  "panes.hitInbox": { zh: "灵感", en: "Idea" },
+  "panes.hitProcessed": { zh: "已归类", en: "Filed" },
+  "panes.hitTask": { zh: "任务", en: "Task" },
+  "panes.hitArchived": { zh: "回收站", en: "Trash" },
+  "panes.hitSealed": { zh: "归档册", en: "Archive" },
+  "panes.searchPrompt": { zh: "输入词再搜(连编辑历史一起搜)。", en: "Type a word and search (edit history is included)." },
+  "panes.searching": { zh: "搜索中…", en: "Searching…" },
+  "panes.searchNoHit": { zh: "没有找到「{q}」。", en: "Nothing found for “{q}”." },
+  "panes.searchFailed": { zh: "搜索失败:{error}", en: "Search failed: {error}" },
+});

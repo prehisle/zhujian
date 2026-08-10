@@ -122,19 +122,6 @@ mod tests {
         "core/examples/migrate-check-0035.rs",
     ];
 
-    fn collect_rs(dir: &Path, out: &mut Vec<PathBuf>) {
-        let entries =
-            std::fs::read_dir(dir).unwrap_or_else(|e| panic!("读不动目录 {}:{e}", dir.display()));
-        for e in entries {
-            let p = e.expect("读目录项").path();
-            if p.is_dir() {
-                collect_rs(&p, out);
-            } else if p.extension().is_some_and(|x| x == "rs") {
-                out.push(p);
-            }
-        }
-    }
-
     /// 结构锚:全仓每一处 `std::env::temp_dir()` 建的容器,名字前缀都必须在
     /// [`super::PREFIXES`] 里 —— 否则那一族垃圾在 `%TEMP%` 下没有任何人收。
     ///
@@ -169,7 +156,7 @@ mod tests {
                 "扫描面里的目录不存在:{} —— 路径写错 = 什么都没扫到",
                 dir.display()
             );
-            collect_rs(&dir, &mut files);
+            crate::test_src::rs_files(&dir, &mut files);
         }
         for e in EXEMPT.iter().chain(TEMP_DIR_OWNERS) {
             assert!(

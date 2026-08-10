@@ -3,6 +3,7 @@
 // 取图机制:借 WebView 的 `<input type=file accept=image/*>`,wry 0.55 安卓端接了
 // onShowFileChooser,点击即弹系统相册/文件选择器,**无需任何插件**(195 真机验通)。
 import { addItemImage } from "./api";
+import { t } from "./i18n";
 
 /** Blob → base64(不带 data: 前缀,过 IPC 给 add_item_image)。分块喂 btoa,
  *  免大图一次 fromCharCode(...几百万) 爆栈(与桌面 item-images.ts::toBase64 同法)。 */
@@ -171,7 +172,7 @@ export function composeImages(container: HTMLElement): ComposeImages {
       del.type = "button";
       del.className = "cthumb-del";
       del.textContent = "×";
-      del.setAttribute("aria-label", "移除这张图");
+      del.setAttribute("aria-label", t("images.removeThis"));
       del.addEventListener("click", () => {
         URL.revokeObjectURL(h.url);
         held = held.filter((x) => x !== h);

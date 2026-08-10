@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>朱简</title>
+    <title data-i18n="common.appName">朱简</title>
     <!-- 明暗定色(250):首帧之前就把生效色写进 <html data-theme>——晚一帧上色就是亮暗
          闪一下(163 闪烁族契约)。规则与 src/theme-mode.ts 完全一致(存的不是 light /
          dark 就算「自动」、跟系统);那边是真正的开关,这里只是提前落地同一条规则。
@@ -29,7 +29,7 @@
       * { box-sizing: border-box; }
       html, body { margin: 0; height: 100%; }
       body {
-        font: 14px/1.6 var(--font-sans);
+        font: var(--fs-14)/1.6 var(--font-sans);
         color: var(--ink);
         background: var(--paper);
         display: flex;
@@ -83,10 +83,10 @@
         height: 22px;
         padding: 0;
         border: 0;
-        border-radius: 6px;
+        border-radius: var(--radius-sm);
         background: transparent;
         color: var(--ink-soft);
-        font-size: 15px;
+        font-size: var(--fs-15);
         line-height: 1;
         cursor: pointer;
         display: grid;
@@ -113,7 +113,7 @@
         align-items: center;
         gap: 9px;
         font-family: var(--font-serif);
-        font-size: 17px;
+        font-size: var(--fs-17);
         font-weight: 600;
         letter-spacing: 0.02em;
         color: var(--ink);
@@ -134,10 +134,10 @@
         margin: -8px 8px 10px;
         padding: 3px 8px;
         border: 0;
-        border-radius: 7px;
+        border-radius: var(--radius-sm);
         background: transparent;
         color: var(--ink-soft);
-        font: 12px/1.5 var(--font-sans);
+        font: var(--fs-12)/1.5 var(--font-sans);
         cursor: pointer;
         text-align: left;
         position: relative;
@@ -155,7 +155,7 @@
         right: 1px;
         width: 6px;
         height: 6px;
-        border-radius: 50%;
+        border-radius: var(--radius-circle);
         background: var(--seal);
       }
       .space-menu {
@@ -164,8 +164,12 @@
         min-width: 185px;
         background: var(--raised);
         border: 1px solid var(--line);
-        border-radius: 10px;
-        box-shadow: 0 10px 28px rgba(0, 0, 0, 0.14);
+        border-radius: var(--radius-md);
+        /* 339:此前写死 `0 10px 28px rgba(0,0,0,0.14)` —— 全仓另外 6 处浮层(留言层 /
+           看大图 / 设置 / 同步面板 / 更新条)一律 var(--float-shadow),只有它是例外,
+           因为它住在内联段里、从来没进过任何扫描面。暗色档下那个 0.14 的黑压在深色
+           纸面上几乎看不见,菜单浮不起来;令牌那份在暗色档是加重的。 */
+        box-shadow: var(--float-shadow);
         padding: 5px;
         display: flex;
         flex-direction: column;
@@ -176,10 +180,10 @@
         align-items: center;
         gap: 8px;
         border: 0;
-        border-radius: 7px;
+        border-radius: var(--radius-sm);
         background: transparent;
         padding: 7px 9px;
-        font: 13px/1.4 var(--font-sans);
+        font: var(--fs-13)/1.4 var(--font-sans);
         color: var(--ink);
         cursor: pointer;
         text-align: left;
@@ -189,30 +193,30 @@
       .space-row:disabled:hover { background: transparent; }
       .space-row .space-row-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .space-row.cur .space-row-name { font-weight: 600; }
-      .space-cur-mark { color: var(--seal); font-size: 12px; flex: none; }
-      .space-row.action { color: var(--ink-soft); font-size: 12.5px; }
+      .space-cur-mark { color: var(--seal); font-size: var(--fs-12); flex: none; }
+      .space-row.action { color: var(--ink-soft); font-size: var(--fs-13); }
       .space-form { display: flex; flex-direction: column; gap: 6px; padding: 6px 8px; }
       .space-form input {
-        font: 13px/1.4 var(--font-sans);
+        font: var(--fs-13)/1.4 var(--font-sans);
         padding: 5px 8px;
         border: 1px solid var(--line);
-        border-radius: 7px;
+        border-radius: var(--radius-sm);
         background: var(--paper);
         color: var(--ink);
       }
-      .space-form .space-err { color: var(--seal); font-size: 12px; }
+      .space-form .space-err { color: var(--seal); font-size: var(--fs-12); }
       .space-form .space-err:empty { display: none; }
 
       .sidebar nav { display: flex; flex-direction: column; gap: 2px; }
       .sidebar nav button {
         font-family: var(--font-serif);
-        font-size: 14.5px;
+        font-size: var(--fs-15);
         letter-spacing: 0.03em;
         text-align: left;
         color: var(--ink-soft);
         background: transparent;
         border: 0;
-        border-radius: 9px;
+        border-radius: var(--radius-sm);
         padding: 9px 12px;
         cursor: pointer;
         position: relative;
@@ -228,7 +232,7 @@
         position: absolute;
         left: 0; top: 8px; bottom: 8px;
         width: 3px;
-        border-radius: 0 3px 3px 0;
+        border-radius: 0 var(--radius-xs) var(--radius-xs) 0;
         background: var(--seal);
       }
 
@@ -245,7 +249,9 @@
       .winctl { position: absolute; top: 0; right: 0; z-index: 6; display: flex; }
       .wc {
         font-size: 10px;
-        width: 46px;
+        /* 宽走 --wc-w(theme.css,344):各视图头的右侧死区 --winctl-dead 按 3 × 这个值
+           派生,改宽度只改那一枚令牌,视图头自动跟上。 */
+        width: var(--wc-w);
         height: 36px;
         padding: 0;
         border: 0;
@@ -260,7 +266,10 @@
          stroke=currentColor 跟着 .wc 的 color / hover 变色。 */
       .wc svg { width: 10px; height: 10px; fill: none; stroke: currentColor; stroke-width: 1; }
       .wc:hover { background: color-mix(in srgb, var(--ink) 9%, transparent); color: var(--ink); }
-      .wc-close:hover { background: var(--seal); color: #fdf6ee; }
+      /* 压在朱砂上的字走 --on-seal(它随明暗翻面)。336 把三端各写各的白收成这枚令牌时
+         漏了这一处 —— 它住在窗口壳的内联样式里,而门禁到 338 才扫 html 壳:暗色档下
+         白字压偏亮的朱砂只有 3.10:1。 */
+      .wc-close:hover { background: var(--seal); color: var(--on-seal); }
       /* macOS:窗口用系统原生「红绿灯」按钮(左上角,titleBarStyle Overlay),
          隐藏这套自绘按钮;并把侧栏顶部内容往下推,给左上角的红绿灯让出位置。
          Windows/Linux 无红绿灯,保留自绘按钮、维持原布局。 */
@@ -294,33 +303,35 @@
          startDragging「抓一下又放下」而闪烁、双击还会最大化窗口。拖窗交给顶部
          「朱简」logo 行 + 各视图 header(常规标题栏位置)。 -->
     <aside class="sidebar">
-      <button id="sidebar-toggle" class="sb-toggle" title="折叠侧栏 (Ctrl+B)" aria-label="折叠侧栏">«</button>
-      <div class="brand" data-tauri-drag-region><svg class="seal" viewBox="0 0 24 24" aria-hidden="true"><path fill="var(--seal)" fill-rule="evenodd" d="M7 0h10a7 7 0 0 1 7 7v10a7 7 0 0 1-7 7H7a7 7 0 0 1-7-7V7a7 7 0 0 1 7-7Zm5 4.5c2.6 3.7 4.2 6.1 4.2 8.7a4.2 4.2 0 1 1-8.4 0c0-2.6 1.6-5 4.2-8.7Z"/></svg>朱简</div>
-      <!-- 空间切换(97 多空间):当前空间名 + 菜单(切换/新建/改名)。逻辑在 notebook.ts。 -->
-      <button id="space-entry" class="space-entry" title="切换空间">
-        <span id="space-name">个人空间</span><span class="space-caret">▾</span>
+      <button id="sidebar-toggle" class="sb-toggle" title="折叠侧栏 (Ctrl+B)" aria-label="折叠侧栏" data-i18n-title="shell.collapseSidebarTitle" data-i18n-aria-label="shell.collapseSidebar">«</button>
+      <div class="brand" data-tauri-drag-region><svg class="seal" viewBox="0 0 24 24" aria-hidden="true"><path fill="var(--seal)" fill-rule="evenodd" d="M7 0h10a7 7 0 0 1 7 7v10a7 7 0 0 1-7 7H7a7 7 0 0 1-7-7V7a7 7 0 0 1 7-7Zm5 4.5c2.6 3.7 4.2 6.1 4.2 8.7a4.2 4.2 0 1 1-8.4 0c0-2.6 1.6-5 4.2-8.7Z"/></svg><span data-i18n="common.appName">朱简</span></div>
+      <!-- 空间切换(97 多空间):当前空间名 + 菜单(切换/新建/改名)。逻辑在 notebook.ts。
+           358 起壳层静态文案挂 data-i18n 族属性、启动 applyStaticI18n 覆写;markup 保留
+           中文原文防首帧闪,原文与 zh 字典逐字相等由 check-i18n-drift 核。 -->
+      <button id="space-entry" class="space-entry" title="切换空间" data-i18n-title="shell.switchSpace">
+        <span id="space-name" data-i18n="shell.personalSpace">个人空间</span><span class="space-caret">▾</span>
       </button>
       <nav>
-        <button data-view="inbox">灵感</button>
-        <button data-view="board">任务</button>
-        <button data-view="topics">标签</button>
-        <button data-view="search">搜索</button>
+        <button data-view="inbox" data-i18n="shell.navIdeas">灵感</button>
+        <button data-view="board" data-i18n="shell.navTasks">任务</button>
+        <button data-view="topics" data-i18n="shell.navTags">标签</button>
+        <button data-view="search" data-i18n="shell.navSearch">搜索</button>
       </nav>
       <!-- 同步入口(P2-g):nav 之外(不参与视图切换),沉在侧栏底部;
            未配置时只是一枚安静的灰点,零打扰。样式在 sync.css。 -->
-      <button id="sync-entry" class="sync-entry" title="同步">
-        <span id="sync-dot" class="sync-dot off"></span><span>同步</span>
+      <button id="sync-entry" class="sync-entry" title="同步" data-i18n-title="shell.sync">
+        <span id="sync-dot" class="sync-dot off"></span><span data-i18n="shell.sync">同步</span>
       </button>
       <!-- 设置(232):目前只有全局热键一项;样式在 settings.css,逻辑在 settings.ts。 -->
-      <button id="settings-entry" class="settings-entry" title="设置">
-        <span class="settings-gear" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.1"/><path d="M19.14 12.94a7.49 7.49 0 0 0 .05-.94 7.49 7.49 0 0 0-.05-.94l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.61-.22l-2.39.96a7.3 7.3 0 0 0-1.62-.94l-.36-2.54a.5.5 0 0 0-.5-.42h-3.84a.5.5 0 0 0-.5.42l-.36 2.54a7.3 7.3 0 0 0-1.62.94l-2.39-.96a.5.5 0 0 0-.61.22L2.7 8.84a.5.5 0 0 0 .12.64l2.03 1.58a7.49 7.49 0 0 0 0 1.88L2.82 14.5a.5.5 0 0 0-.12.64l1.92 3.32a.5.5 0 0 0 .61.22l2.39-.96a7.3 7.3 0 0 0 1.62.94l.36 2.54a.5.5 0 0 0 .5.42h3.84a.5.5 0 0 0 .5-.42l.36-2.54a7.3 7.3 0 0 0 1.62-.94l2.39.96a.5.5 0 0 0 .61-.22l1.92-3.32a.5.5 0 0 0-.12-.64l-2.03-1.58Z"/></svg></span><span>设置</span>
+      <button id="settings-entry" class="settings-entry" title="设置" data-i18n-title="shell.settings">
+        <span class="settings-gear" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.1"/><path d="M19.14 12.94a7.49 7.49 0 0 0 .05-.94 7.49 7.49 0 0 0-.05-.94l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.61-.22l-2.39.96a7.3 7.3 0 0 0-1.62-.94l-.36-2.54a.5.5 0 0 0-.5-.42h-3.84a.5.5 0 0 0-.5.42l-.36 2.54a7.3 7.3 0 0 0-1.62.94l-2.39-.96a.5.5 0 0 0-.61.22L2.7 8.84a.5.5 0 0 0 .12.64l2.03 1.58a7.49 7.49 0 0 0 0 1.88L2.82 14.5a.5.5 0 0 0-.12.64l1.92 3.32a.5.5 0 0 0 .61.22l2.39-.96a7.3 7.3 0 0 0 1.62.94l.36 2.54a.5.5 0 0 0 .5.42h3.84a.5.5 0 0 0 .5-.42l.36-2.54a7.3 7.3 0 0 0 1.62-.94l2.39.96a.5.5 0 0 0 .61-.22l1.92-3.32a.5.5 0 0 0-.12-.64l-2.03-1.58Z"/></svg></span><span data-i18n="shell.settings">设置</span>
       </button>
     </aside>
     <div class="main-col">
       <div class="winctl">
-        <button id="win-min" class="wc" title="最小化" aria-label="最小化"><svg viewBox="0 0 10 10" aria-hidden="true"><path d="M1 5 h8" /></svg></button>
-        <button id="win-max" class="wc" title="最大化" aria-label="最大化"><svg viewBox="0 0 10 10" aria-hidden="true"><rect x="1" y="1" width="8" height="8" /></svg></button>
-        <button id="win-close" class="wc wc-close" title="关闭" aria-label="关闭"><svg viewBox="0 0 10 10" aria-hidden="true"><path d="M1 1 L9 9 M9 1 L1 9" /></svg></button>
+        <button id="win-min" class="wc" title="最小化" aria-label="最小化" data-i18n-title="shell.winMin" data-i18n-aria-label="shell.winMin"><svg viewBox="0 0 10 10" aria-hidden="true"><path d="M1 5 h8" /></svg></button>
+        <button id="win-max" class="wc" title="最大化" aria-label="最大化" data-i18n-title="shell.winMax" data-i18n-aria-label="shell.winMax"><svg viewBox="0 0 10 10" aria-hidden="true"><rect x="1" y="1" width="8" height="8" /></svg></button>
+        <button id="win-close" class="wc wc-close" title="关闭" aria-label="关闭" data-i18n-title="shell.winClose" data-i18n-aria-label="shell.winClose"><svg viewBox="0 0 10 10" aria-hidden="true"><path d="M1 1 L9 9 M9 1 L1 9" /></svg></button>
       </div>
       <main id="view"></main>
     </div>

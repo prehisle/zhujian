@@ -7,11 +7,81 @@ import { invoke, goShow, goNotebook, clearInbox } from "./support.js";
 // 磁盘、同源留存,重载后 main.ts / inbox.ts / board.ts 的启动回填(restore)应把稿灌回。
 // 每例自清:记下 → 断言草稿清 → 清库,不给后续 spec 留状态。
 //
-// 阴性对照(手工验过一次即可,勿留代码):把 persistKey / saveTextDraft 注掉,重载后
+// 阴性对照(手工验过即可,勿留代码):把 persistKey / saveTextDraft 注掉,重载后
 // 输入框空、暂存条无 thumb → 三个 waitUntil 全超时真红。
+// 335 轮又验了三刀,每刀都红在**新写的那句** timeoutMsg 上、不是别的断言顺带红:
+//   · persist() 整个 no-op            → 「重载前:IndexedDB 里应有 1 张暂存图」
+//   · persist() 在 held 空时跳过回写   → 「记下后:IndexedDB 里应有 0 张暂存图」
+//   · compose-draft 两条清稿路径都切掉 → 「记下后:localStorage 里的文字草稿应已清」
+// 外加一个决定性实验(比反复跑碰运气强):给 persist 注入 200ms 延迟 —— 改之前三例
+// 100% 红在「重载后暂存图未回填」,改之后同样注入全绿。窗口是真的,且真被关上了。
 
 const PNG =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+
+// 三入口各自的两把持久化钥匙(compose-draft.ts / item-images.ts 里的常量,此处按名对齐)。
+const KEYS = {
+  capture: { img: "zhujian.capture-images", text: "zhujian.capture-draft" },
+  inbox: { img: "zhujian.inbox-images", text: "zhujian.inbox-draft" },
+  board: { img: "zhujian.board-images", text: "zhujian.board-draft" },
+};
+
+// 直接读磁盘那一侧(IndexedDB / localStorage)。**本 spec 的等待与判据都得落在这里**,原因
+// 是两个方向上的坑各一个:
+//
+//  ① 等的东西 ≠ 读的东西(331 同族第二只,真 flaky):暂存图进 DOM 是同步的
+//    (item-images.ts::add 里 root.append(thumb)),落 IndexedDB 是异步的(persist() 只把写
+//    挂进 persistChain)。等 .img-thumb 出现就整页重载,会抢在事务提交之前 —— 而重载还会
+//    把没提交的事务连锅端掉,于是「重载后暂存图未回填」。给 persist 注入 200ms 延迟,三例
+//    100% 复现,那就是它平时随机红的那扇窗。
+//  ② 「记下 = 稿了结」那几格的牙齿挂在时序运气上(判据方向与等待方向相反):启动回填是
+//    `void pend.restore()`(要先 await IndexedDB 才 append thumb),而 #capture /
+//    .compose-input 是静态元素、waitForExist 立刻满足 —— 「DOM 上没有 thumb」既可能是真
+//    清了、也可能是还没来得及填,两者读出来一模一样。⚠ **实测它今天有牙齿**(把「清磁盘」
+//    那一刀注掉,旧版三例照样红):goShow 里那次 show()/setFocus() 往返给了 restore 足够
+//    时间 —— 立本条时我按「必然抢在回填之前 ⟹ 恒真假绿」写,阴性对照当场把这句话证伪了。
+//    改判据的理由因此收窄成两条,但仍成立:一是这条牙齿不欠等待就长不牢,restore 里哪天多
+//    一次 await(比如解码缩略图)就会翻面,而翻面方向是「产品坏了却绿」;二是磁盘才是「稿
+//    了结」的权威真相源,红得更早更准(红在记下那一步,而不是绕一圈重载之后)。
+//    (文字那半旧版本来就可靠——文字回填是同步的,不像图。)
+async function draftImageCount(key) {
+  return browser.execute(async (k) => {
+    const db = await new Promise((res, rej) => {
+      const r = indexedDB.open("zhujian-compose-draft", 1);
+      r.onupgradeneeded = () => r.result.createObjectStore("images");
+      r.onsuccess = () => res(r.result);
+      r.onerror = () => rej(r.error);
+    });
+    try {
+      return await new Promise((res, rej) => {
+        const tx = db.transaction("images", "readonly");
+        const q = tx.objectStore("images").get(k);
+        q.onsuccess = () => res((q.result ?? []).length);
+        q.onerror = () => rej(q.error);
+      });
+    } finally {
+      db.close();
+    }
+  }, key);
+}
+
+/** 等暂存图真落到磁盘上(重载前必等,否则重载抢在事务提交前)。 */
+async function waitImagesOnDisk(entry, n, what) {
+  await browser.waitUntil(async () => (await draftImageCount(KEYS[entry].img)) === n, {
+    timeout: 10000,
+    timeoutMsg: `${what}:IndexedDB(${KEYS[entry].img})里应有 ${n} 张暂存图`,
+  });
+}
+
+/** 记下 = 稿了结:两把钥匙都得从磁盘上消失(清稿本身也是异步的,故用等待而非即时断言)。 */
+async function waitDraftCleared(entry, what) {
+  await waitImagesOnDisk(entry, 0, what);
+  await browser.waitUntil(
+    async () =>
+      (await browser.execute((k) => localStorage.getItem(k), KEYS[entry].text)) === null,
+    { timeout: 10000, timeoutMsg: `${what}:localStorage(${KEYS[entry].text})里的文字草稿应已清` },
+  );
+}
 
 async function pasteImage(sel) {
   await browser.execute(
@@ -43,6 +113,7 @@ describe("草稿断电恢复 · 捕获浮窗", () => {
     await ta.setValue("E2E-断电-捕获"); // 真按键 → input 事件 → 文字入 localStorage
     await pasteImage("#capture"); // 暂存图 → IndexedDB
     await $("#cap-images .img-thumb").waitForExist({ timeout: 5000 });
+    await waitImagesOnDisk("capture", 1, "重载前"); // ← thumb 进 DOM ≠ 已落盘,见顶部 ①
 
     await goShow("/index.html"); // ← 断电 proxy:整页重载
     const ta2 = await $("#capture");
@@ -71,7 +142,8 @@ describe("草稿断电恢复 · 捕获浮窗", () => {
     );
     expect(await invoke("list_item_images", { itemId: noteId })).toHaveLength(1);
 
-    // 记下 = 稿了结:再重载,草稿不复现(持久化已清)。
+    // 记下 = 稿了结:持久化已清(权威判据,见顶部 ②),故再重载也复现不出来。
+    await waitDraftCleared("capture", "捕获浮窗记下后");
     await goShow("/index.html");
     const ta3 = await $("#capture");
     await ta3.waitForExist({ timeout: 10000 });
@@ -94,6 +166,7 @@ describe("草稿断电恢复 · 灵感「记下灵感」", () => {
     await input.setValue("E2E-断电-灵感");
     await pasteImage(".v-inbox .compose-input");
     await $(".v-inbox .compose .img-pending .img-thumb").waitForExist({ timeout: 5000 });
+    await waitImagesOnDisk("inbox", 1, "重载前"); // ← 见顶部 ①
 
     await goNotebook("inbox"); // ← 断电 proxy:整页重载 + 回到灵感
     const input2 = await $(".v-inbox .compose-input");
@@ -121,6 +194,7 @@ describe("草稿断电恢复 · 灵感「记下灵感」", () => {
     );
     expect(await invoke("list_item_images", { itemId: noteId })).toHaveLength(1);
 
+    await waitDraftCleared("inbox", "灵感记下后"); // ← 权威判据,见顶部 ②
     await goNotebook("inbox");
     const input3 = await $(".v-inbox .compose-input");
     await input3.waitForExist({ timeout: 10000 });
@@ -145,6 +219,7 @@ describe("草稿断电恢复 · 看板「新建任务」", () => {
     await input.setValue("E2E-断电-任务");
     await pasteImage("#compose-input");
     await $(".v-board .compose .img-pending .img-thumb").waitForExist({ timeout: 5000 });
+    await waitImagesOnDisk("board", 1, "重载前"); // ← 见顶部 ①
 
     await goNotebook("board"); // ← 断电 proxy:整页重载 + 回到看板
     // 有文字草稿 → compose 应被回填并自动开回(setComposeOpen(true)),输入框可见带字。
@@ -173,6 +248,7 @@ describe("草稿断电恢复 · 看板「新建任务」", () => {
     );
     expect(await invoke("list_item_images", { itemId: taskId })).toHaveLength(1);
 
+    await waitDraftCleared("board", "任务记下后"); // ← 权威判据,见顶部 ②
     await goNotebook("board");
     // 记下后重载:草稿不复现(compose 无字 → 收起;暂存条无 thumb)。
     expect((await $$(".v-board .compose .img-pending .img-thumb")).length).toBe(0);

@@ -1,11 +1,12 @@
-// 设置面板(232):全局热键 + 外观 + 界面字号。热键——用户可改捕获窗 / 主窗两枚键,解决
+// 设置面板(232):全局热键 + 外观 + 语言 + 界面字号。热键——用户可改捕获窗 / 主窗两枚键,解决
 // 「热键被别的程序占用后就没法用」;录制态里按下的组合(要求带修饰键)转成加速键串交给
 // 后端 set_hotkey(注销旧+注册新+存盘+刷托盘)。外观(250)——明暗三档,自动 / 亮 / 暗。
-// 字号——整体缩放主窗,PC 上看着吃力时放大。侧栏底部「设置」入口点开。
-// 全部纯设备本地、不进同步。
+// 语言(358)——自动 / 中文 / English,改档 reload 两窗。字号——整体缩放主窗。
+// 侧栏底部「设置」入口点开。全部纯设备本地、不进同步。可见文案走字典(i18n-plan)。
 import { invoke } from "@tauri-apps/api/core";
 import { currentZoomPercent, zoomIn, zoomOut, zoomReset, onZoomChange } from "./zoom";
 import { currentThemeMode, setThemeMode, type ThemeMode } from "./theme-mode";
+import { currentLangChoice, setLangChoice, t, type LangChoice } from "./i18n";
 import { currentSpaceId } from "./space";
 import "./settings.css";
 
@@ -15,8 +16,8 @@ type Which = "capture" | "notebook";
 type DeviceIdentity = { this_device: string; devices: { device_id: string; alias: string | null }[] };
 
 const ROWS: { which: Which; name: string; desc: string }[] = [
-  { which: "capture", name: "捕获窗", desc: "从任何地方弹出快速记录窗" },
-  { which: "notebook", name: "主窗", desc: "从任何地方唤起朱简主窗口" },
+  { which: "capture", name: t("settings.captureWin"), desc: t("settings.captureWinDesc") },
+  { which: "notebook", name: t("settings.notebookWin"), desc: t("settings.notebookWinDesc") },
 ];
 
 // mac 上 metaKey = Cmd(显示与解析都用 Cmd);其它平台 metaKey = Win 键 → Super。
@@ -70,39 +71,33 @@ function onPanelEsc(e: KeyboardEvent): void {
 function renderPanel(panel: HTMLDivElement): void {
   panel.innerHTML = "";
   panel.append(
-    el("h2", "settings-title", "设置"),
-    el("p", "settings-sub", "全局快捷键——在任何程序里都能唤起朱简。若和别的软件撞了用不了,在这里换一个。"),
+    el("h2", "settings-title", t("settings.title")),
+    el("p", "settings-sub", t("settings.hotkeysIntro")),
   );
   for (const row of ROWS) panel.appendChild(buildRow(row));
-  panel.appendChild(
-    el(
-      "p",
-      "settings-foot",
-      IS_MAC
-        ? "点「更改」后,按住 Cmd / Ctrl / Option 等修饰键再按一个字母或数字;Esc 取消。"
-        : "点「更改」后,按住 Ctrl / Alt / Shift 等修饰键再按一个字母或数字;Esc 取消。",
-    ),
-  );
+  panel.appendChild(el("p", "settings-foot", IS_MAC ? t("settings.recordHintMac") : t("settings.recordHint")));
 
   panel.append(
-    el("h2", "settings-title settings-sect", "外观"),
-    el("p", "settings-sub", "「自动」跟随系统的浅色 / 深色设置;想固定成一种,直接选亮或暗。"),
+    el("h2", "settings-title settings-sect", t("settings.appearance")),
+    el("p", "settings-sub", t("settings.appearanceSub")),
     buildThemeRow(),
   );
 
   panel.append(
-    el("h2", "settings-title settings-sect", "界面字号"),
-    el("p", "settings-sub", "整体放大 / 缩小主窗,看着吃力时调大。也可用 Ctrl + / Ctrl - 调节、Ctrl 0 复位。"),
+    el("h2", "settings-title settings-sect", t("settings.langTitle")),
+    el("p", "settings-sub", t("settings.langSub")),
+    buildLangRow(),
+  );
+
+  panel.append(
+    el("h2", "settings-title settings-sect", t("settings.textSize")),
+    el("p", "settings-sub", t("settings.textSizeSub")),
     buildZoomRow(),
   );
 
   panel.append(
-    el("h2", "settings-title settings-sect", "本机别名"),
-    el(
-      "p",
-      "settings-sub",
-      "给这台设备起个名字(如「书房台式机」)。它会同步给同一账户的其他设备,让他们看到条目是谁记的。留空 = 不起名。",
-    ),
+    el("h2", "settings-title settings-sect", t("settings.aliasTitle")),
+    el("p", "settings-sub", t("settings.aliasSub")),
     buildAliasRow(),
   );
 }
@@ -114,19 +109,19 @@ function renderPanel(panel: HTMLDivElement): void {
 
 function buildAliasRow(): HTMLDivElement {
   const line = document.createElement("div");
-  line.className = "hk-row";
+  line.className = "hkset-row";
 
   const input = document.createElement("input");
   input.type = "text";
   input.className = "alias-input";
-  input.placeholder = "未命名";
+  input.placeholder = t("settings.aliasUnnamed");
   input.maxLength = 60; // 后端上限 200 **字节**,这里按字符给个宽松的手感闸
   input.disabled = true;
 
-  const save = el("button", "hk-change", "保存") as HTMLButtonElement;
+  const save = el("button", "hkset-change", t("common.save")) as HTMLButtonElement;
   save.disabled = true;
-  const msg = el("p", "hk-msg", "");
-  const sub = el("div", "hk-desc", "读取中…");
+  const msg = el("p", "hkset-msg", "");
+  const sub = el("div", "hkset-desc", t("common.loading"));
 
   // 本机 device_id 只有取回身份面之后才知道;取回前整行禁用,**不编造占位值**。
   let thisDevice: string | null = null;
@@ -138,7 +133,7 @@ function buildAliasRow(): HTMLDivElement {
       input.value = saved;
       // id 前 6 位当副标题:没起名时它是这台设备唯一能自证身份的东西(卡片上刻意
       // 不显 id 片段,设置面这里显——这里的语境是「这是哪台」,不是噪音)。
-      sub.textContent = `本机 · ${d.this_device.slice(0, 6)}`;
+      sub.textContent = t("settings.thisDevice", { id: d.this_device.slice(0, 6) });
       input.disabled = false;
       save.disabled = false;
     })
@@ -161,7 +156,7 @@ function buildAliasRow(): HTMLDivElement {
       });
       saved = next;
       input.value = next;
-      setMsg(msg, next === "" ? "已清除别名" : "已保存,会同步到其他设备", "ok");
+      setMsg(msg, next === "" ? t("settings.aliasCleared") : t("settings.aliasSaved"), "ok");
     } catch (e) {
       input.value = saved; // 后端拒了(超长等):回显旧值 + 后端原话
       setMsg(msg, String(e), "err");
@@ -187,7 +182,7 @@ function buildAliasRow(): HTMLDivElement {
   const ctrls = document.createElement("div");
   ctrls.className = "alias-ctrls";
   ctrls.append(input, save);
-  line.append(el("div", "hk-name", "名字"), sub, ctrls);
+  line.append(el("div", "hkset-name", t("settings.aliasName")), sub, ctrls);
 
   const wrap = document.createElement("div");
   wrap.append(line, msg);
@@ -195,14 +190,14 @@ function buildAliasRow(): HTMLDivElement {
 }
 
 const THEME_CHOICES: { mode: ThemeMode; label: string }[] = [
-  { mode: "auto", label: "自动" },
-  { mode: "light", label: "亮" },
-  { mode: "dark", label: "暗" },
+  { mode: "auto", label: t("settings.themeAuto") },
+  { mode: "light", label: t("settings.themeLight") },
+  { mode: "dark", label: t("settings.themeDark") },
 ];
 
 function buildThemeRow(): HTMLDivElement {
   const line = document.createElement("div");
-  line.className = "hk-row zoom-row";
+  line.className = "hkset-row zoom-row";
 
   const seg = document.createElement("div");
   seg.className = "seg";
@@ -221,18 +216,53 @@ function buildThemeRow(): HTMLDivElement {
   paintSeg();
   seg.append(...btns);
 
-  line.append(el("div", "hk-name", "明暗"), seg);
+  line.append(el("div", "hkset-name", t("settings.themeName")), seg);
+  return line;
+}
+
+// ---- 语言(358,i18n-plan)----
+//
+// 与明暗同形的三档 seg。语言名按惯例显自己那门语言(中文 / English),不随界面语言翻译。
+// 改档 = setLangChoice 存 + 广播 + 两窗 reload(面板随窗一起没了,不必自己收)。
+
+const LANG_CHOICES: { choice: LangChoice; label: string }[] = [
+  { choice: "auto", label: t("settings.langAuto") },
+  { choice: "zh", label: t("settings.langZh") },
+  { choice: "en", label: t("settings.langEn") },
+];
+
+function buildLangRow(): HTMLDivElement {
+  const line = document.createElement("div");
+  line.className = "hkset-row zoom-row";
+
+  const seg = document.createElement("div");
+  seg.className = "seg";
+  const btns = LANG_CHOICES.map(({ choice, label }) => {
+    const b = el("button", "seg-btn", label) as HTMLButtonElement;
+    b.addEventListener("click", () => {
+      void setLangChoice(choice).then(paintSeg); // 解析语言没变(auto↔同语言)时只刷高亮
+    });
+    return b;
+  });
+  const paintSeg = (): void => {
+    const now = currentLangChoice();
+    btns.forEach((b, i) => b.classList.toggle("on", LANG_CHOICES[i].choice === now));
+  };
+  paintSeg();
+  seg.append(...btns);
+
+  line.append(el("div", "hkset-name", t("settings.langTitle")), seg);
   return line;
 }
 
 function buildZoomRow(): HTMLDivElement {
   const line = document.createElement("div");
-  line.className = "hk-row zoom-row";
+  line.className = "hkset-row zoom-row";
 
   const val = el("span", "zoom-val", `${currentZoomPercent()}%`);
   const minus = el("button", "zoom-btn", "−") as HTMLButtonElement;
   const plus = el("button", "zoom-btn", "＋") as HTMLButtonElement;
-  const reset = el("button", "hk-change", "复位") as HTMLButtonElement;
+  const reset = el("button", "hkset-change", t("settings.zoomReset")) as HTMLButtonElement;
 
   minus.addEventListener("click", () => void zoomOut());
   plus.addEventListener("click", () => void zoomIn());
@@ -245,24 +275,24 @@ function buildZoomRow(): HTMLDivElement {
   const ctrls = document.createElement("div");
   ctrls.className = "zoom-ctrls";
   ctrls.append(minus, val, plus, reset);
-  line.append(el("div", "hk-name", "字号"), ctrls);
+  line.append(el("div", "hkset-name", t("settings.zoomName")), ctrls);
   return line;
 }
 
 function buildRow(row: { which: Which; name: string; desc: string }): HTMLDivElement {
   const wrap = document.createElement("div");
   const line = document.createElement("div");
-  line.className = "hk-row";
+  line.className = "hkset-row";
 
   const keys = document.createElement("div");
-  keys.className = "hk-keys";
-  const combo = el("span", "hk-combo", hotkeys[row.which]);
-  const change = el("button", "hk-change", "更改") as HTMLButtonElement;
+  keys.className = "hkset-keys";
+  const combo = el("span", "hkset-combo", hotkeys[row.which]);
+  const change = el("button", "hkset-change", t("settings.change")) as HTMLButtonElement;
   keys.append(combo, change);
 
-  line.append(el("div", "hk-name", row.name), el("div", "hk-desc", row.desc), keys);
+  line.append(el("div", "hkset-name", row.name), el("div", "hkset-desc", row.desc), keys);
 
-  const msg = el("p", "hk-msg", "");
+  const msg = el("p", "hkset-msg", "");
   change.addEventListener("click", () => startRecording(row.which, combo, msg));
 
   wrap.append(line, msg);
@@ -273,7 +303,7 @@ function startRecording(which: Which, combo: HTMLElement, msg: HTMLElement): voi
   if (recording) stopRecording(); // 同一时刻只录一枚
   recording = which;
   combo.classList.add("recording");
-  combo.textContent = "按下新快捷键…";
+  combo.textContent = t("settings.pressNewHotkey");
   setMsg(msg, "", "");
 
   const onKey = (e: KeyboardEvent): void => {
@@ -287,12 +317,12 @@ function startRecording(which: Which, combo: HTMLElement, msg: HTMLElement): voi
     if (isModifierKey(e.code)) return; // 光按修饰键 → 继续等一个主键
     const mods = modTokens(e);
     if (mods.length === 0) {
-      setMsg(msg, "要按住至少一个修饰键(Ctrl / Alt …)", "err");
+      setMsg(msg, t("settings.needModifier"), "err");
       return;
     }
     const key = keyToken(e.code);
     if (!key) {
-      setMsg(msg, "这个键不支持,换一个", "err");
+      setMsg(msg, t("settings.keyUnsupported"), "err");
       return;
     }
     finishRecording(combo);
@@ -320,7 +350,7 @@ async function applyHotkey(which: Which, accel: string, combo: HTMLElement, msg:
     const hk = await invoke<Hotkeys>("set_hotkey", { which, accel });
     hotkeys = hk;
     combo.textContent = hk[which];
-    setMsg(msg, "已更新,立即生效", "ok");
+    setMsg(msg, t("settings.hotkeyUpdated"), "ok");
   } catch (e) {
     // 后端已回滚到旧键(占用/无效等),回显旧值 + 后端原话。
     combo.textContent = hotkeys[which];
@@ -391,5 +421,5 @@ function el(tag: string, cls: string, text: string): HTMLElement {
 
 function setMsg(msg: HTMLElement, text: string, kind: "ok" | "err" | ""): void {
   msg.textContent = text;
-  msg.className = "hk-msg" + (kind ? " " + kind : "");
+  msg.className = "hkset-msg" + (kind ? " " + kind : "");
 }

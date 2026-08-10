@@ -34,6 +34,10 @@ pub mod repo;
 pub mod spaces;
 pub mod sync;
 pub mod task;
+/// 结构锚的源码解析工具箱(Repo / 剔注释 / 函数体与常量体切片 / SQL 表名抓取;
+/// 见模块头注)。纯测试侧共享件,故 `cfg(test)` —— 与 `test_temp` 同性质。
+#[cfg(test)]
+mod test_src;
 #[cfg(test)]
 mod test_temp;
 #[cfg(test)]

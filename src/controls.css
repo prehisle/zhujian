@@ -1,3 +1,35 @@
+/* 视图标题 —— 四个主视图(灵感 / 任务 / 标签 / 搜索)的 h1 与它前面那枚朱砂方印。
+   339 之前四份 CSS 各抄一遍(共八条规则、逐字相同),而 `top` 已经漂了:灵感那枚写的是
+   0.32em、其余三个 0.16em,两个值都是初始提交带进来的、从没人对齐过 —— 于是同一枚方块
+   在灵感视图里比别处低 3px。渲图比过四档(0.16 / 0.21 / 0.26 / 0.32),0.16em 的方块中心
+   与 19px 汉字的视觉中心最齐,故统一取它(也是多数派)。
+   钩子用 `.view` 类而不是壳的 `#view` id:后者特异性 (1,0,0),将来哪个视图想覆盖标题样式
+   得写得比它还重;类是 (0,2,0),`.v-board header h1` (0,3,0) 就能压过它。 */
+.view header h1 {
+  flex: none;
+  margin: 0;
+  font-family: var(--font-serif);
+  font-size: var(--fs-20);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  position: relative;
+  padding-left: 20px;
+}
+.view header h1::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0.16em;
+  width: 12px;
+  height: 12px;
+  border-radius: var(--radius-seal);
+  background: var(--seal);
+  /* 朱砂块上的受光内高光。压的是 --seal 不是纸面,朱砂两档都是暖红,故白高光两档都成立
+     —— 已登记在 scripts/check-hardcoded-colors.mjs(339 之前这一句也是四份抄写)。 */
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, #fff 22%, transparent);
+}
+
 /* 共享 header 动作按钮 —— 三个视图(灵感 / 任务 / 标签)头部的全局动作统一长这样,
    风格一致。右侧可带一个键帽 .k 提示它的全局单键(和卡片 ⋯ 菜单同一套语言)。
    单一真相源:改这里,三视图同步。tokens 来自 theme.css。 */
@@ -8,12 +40,12 @@
   gap: 7px;
   font: inherit;
   font-family: var(--font-sans);
-  font-size: 12px;
+  font-size: var(--fs-12);
   letter-spacing: 0.03em;
   color: var(--ink-soft);
   background: transparent;
   border: 1px solid var(--line-strong);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   padding: 5px 13px;
   cursor: pointer;
   white-space: nowrap;
@@ -28,13 +60,13 @@
 .hbtn .k {
   flex: none;
   font-family: var(--font-sans);
-  font-size: 10px;
+  font-size: var(--fs-12);
   font-weight: 600;
   letter-spacing: 0.04em;
   color: var(--ink-faint);
   background: color-mix(in srgb, var(--ink) 6%, transparent);
   border: 1px solid var(--line-strong);
-  border-radius: 5px;
+  border-radius: var(--radius-xs);
   padding: 1px 5px;
   min-width: 15px;
   text-align: center;
@@ -42,3 +74,162 @@
 .hbtn:hover .k,
 .hbtn.on .k,
 .hbtn.active .k { color: var(--seal); border-color: var(--seal-line); }
+
+/* 视图中央错误卡 —— 四个主视图 main 区居中态的报错框,同一件东西。
+   345 之前四份 CSS 各抄一遍(与本文件头 .view header h1 那次同病:339 收标题时它就在
+   隔壁,当时没扫到)。九条声明逐字相同,收进来;**max-width 刻意不收**——board 写 480、
+   其余三家 460,与旁边 `.center > div:not(.big):not(.err-box)` 那条 340/330 的分布同向
+   (board 的中央列整族更宽),意图不明就不趁合并偷改(topics 头 14px 那条的纪律),留在
+   各视图文件里(后注:480/460 已考古判「有意」,判据见 board.css 同位注释)。这也让
+   共享规则与各视图规则声明的属性**零重叠**,同权重跨文件不决胜。 */
+.view .center .err-box {
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--seal);
+  font-size: var(--fs-13);
+  text-align: left;
+  background: var(--seal-tint);
+  border: 1px solid var(--seal-line);
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+}
+
+/* 徽记 chip 族「2px 9px」—— 搜索命中行的状态徽记与标签 chip、灵感卡的溯源标签、
+   标签视图任务卡的列/截止/优先级三枚,同一个小药丸形制(344 间距盘点翻出的四处)。
+   352 之前四份 CSS 各抄一遍;逐字相同的交集收进来 —— 侦查底稿记「恰 3 条共有」,
+   开工重比是 4 条:color: var(--ink-soft) 四处也都写着,漏数了。**letter-spacing
+   刻意不收**:search .badge 0.03em、inbox/topics 0.02em、search .chip 没写,这是
+   记档的观感现状,不趁合并偷改(346 err-box max-width 那条纪律);border/background
+   四处各不相同,本就不是交集。组选择器不改变各选择器自身的特异性(每条仍 (0,2,0)),
+   .badge.inbox / .tag.task / .dtask-due.overdue 那些 (0,3,0) modifier 照旧压得住。
+   共享规则与各视图余下声明**零重叠**,同权重跨文件不决胜。 */
+.v-search .badge,
+.v-search .chip,
+.v-inbox .tag,
+.v-topics .dtask-col,
+.v-topics .dtask-due,
+.v-topics .dtask-pri {
+  font-size: var(--fs-12);
+  padding: 2px 9px;
+  border-radius: var(--radius-pill);
+  color: var(--ink-soft);
+}
+
+/* 卡片入场的「浮起」—— 四个主视图的列表项共用(animation 引用散在各视图 CSS)。
+   keyframes 是文档级全局名:此前 board/inbox/topics/search 四份 CSS 各定义一份同名
+   副本,层叠上只有最后 import 的那份生效、其余三份是看起来活着的死代码——改错文件
+   静默无效。照 346 err-box 的形收成一份;某视图将来要独立调参,按 hk-rise 的形
+   (hotkey-menu.css)改带前缀的独名。 */
+@keyframes rise { from { opacity: 0; transform: translateY(6px); } }
+
+/* 纸面滚动条 —— 四视图五个列表容器共用一份(348 拍板统一 10px + radius-md;此前看板
+   两处 9px+radius-sm、其余三视图 10px+radius-md,两种拼写并存、无一处登记差异理由,
+   thumb 半径超半宽夹取后视觉本就近同[341 拖动落点线判例同型]、宽度差 1px 不可感)。
+   一旦用 ::-webkit-scrollbar 定制,整条滚动条改走自绘,没写到的部件退回浏览器默认的
+   **白**:轨道白一层(被 thumb 的 3px 纸边遮掉大半),横竖同现时右下角那枚 corner 是
+   明晃晃的白方块(249;窄窗看板实见)——track/corner 必须铺 transparent。
+   新增可滚容器把选择器加进这一组,别再各写各的。 */
+.v-board .col-body::-webkit-scrollbar,
+.v-board main.trash::-webkit-scrollbar,
+.v-inbox main::-webkit-scrollbar,
+.v-topics main::-webkit-scrollbar,
+.v-search main::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+.v-board .col-body::-webkit-scrollbar-thumb,
+.v-board main.trash::-webkit-scrollbar-thumb,
+.v-inbox main::-webkit-scrollbar-thumb,
+.v-topics main::-webkit-scrollbar-thumb,
+.v-search main::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border: 3px solid var(--paper);
+  border-radius: var(--radius-md);
+}
+.v-board .col-body::-webkit-scrollbar-track,
+.v-board .col-body::-webkit-scrollbar-corner,
+.v-board main.trash::-webkit-scrollbar-track,
+.v-board main.trash::-webkit-scrollbar-corner,
+.v-inbox main::-webkit-scrollbar-track,
+.v-inbox main::-webkit-scrollbar-corner,
+.v-topics main::-webkit-scrollbar-track,
+.v-topics main::-webkit-scrollbar-corner,
+.v-search main::-webkit-scrollbar-track,
+.v-search main::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* ---- 热区扩展(§2.3 桌面:鼠标热区 ≥24×24px;审计 #25 另一半,354/356)------------
+   小控件的隐形触区:视觉尺寸一动不动(§2.3 既定技法),::before 撑出 24×24 点击区——
+   伪元素属于按钮,点它就是点按钮。悬停反馈会在隐形圈内提前亮起,是技法自带的性质
+   (预告这一下点的就是 ✕)。居中摆位族的宿主链无 overflow 裁剪;隐形圈盖到隔壁
+   静态文本时按钮(positioned)压过静态文本,命中恒归按钮。
+   两枚 chip ✕(354):label 本就不可点,把误点半径让给唯一的操作。
+   .mb-chip-x(356):隔壁 .mb-chip-label **可点**(设存续),但溢出每侧仅 3.5px、
+   落在 chip 内 6px gap 与 5px 右衬垫里,碰不到 label 的盒,不偷它的点击。
+   .cm-close(356):留言浮层头部孤立 ✕,四周留白 ≥10px,.cm-panel 的 overflow:hidden
+   裁不到。⚠ 本块只被主窗加载(controls.css 不在捕获窗层叠里)——捕获窗也出现的
+   控件别往这儿放,判例见 item-images.css 的 .img-del::before(356 热区闸抓的)。 */
+/* 357 存量清账:REGISTRY 里 pending 的孤立/行内控件整批收进来。几何逐处核过
+   (progress-log 357):文字按钮自身宽 ≥24,扩展横向不越自身,只往上下各借
+   ≤5px;密排行的行距(.cm-meta 8 / .tf-pills 8 / .task-meta 7 / .topic-actions 4
+   +行高富余 / deeplink 10)都吃得下。嵌在**可点父行**里的小钮(.tbtn /
+   .topic-kids-toggle)扩展环从父行借点击,与 354「误点半径让给操作」同理。
+   ⚠ 已定位的宿主(.sb-toggle / .v-topics .dtask-copy 是 absolute)**不进 relative
+   组**——position:relative 会把它们从 absolute 拽回文档流,那是布局事故;它们只进
+   ::before 组(354 的 .img-del 先例)。
+   ⚠ 自带 overflow:hidden 的宿主(.mb-chip-label 的 ellipsis / #cap-space)**不能用
+   本技法**:::before 会被宿主自己裁掉成死扩展(357 真 Chrome 实测出的族,热区闸
+   静态也判),走登记不走扩展。 */
+.task-meta .chip-x,
+.v-inbox .tag-x,
+.v-topics .mb-chip-x,
+.cm-close,
+.v-board .col-copy,
+.hk-btn,
+.v-inbox .hist-toggle,
+.cm-badge,
+.cm-del,
+.cm-no,
+.cm-more,
+.hkset-change,
+.sync-ack,
+.tf-pill,
+.task-meta .link,
+.task-meta .choice,
+.v-topics .topic-kids-toggle,
+.v-topics .tbtn,
+#deeplink-pill .deeplink-pill-open,
+#deeplink-pill .deeplink-pill-dismiss {
+  position: relative;
+}
+.task-meta .chip-x::before,
+.v-inbox .tag-x::before,
+.v-topics .mb-chip-x::before,
+.cm-close::before,
+.v-board .col-copy::before,
+.hk-btn::before,
+.v-inbox .hist-toggle::before,
+.cm-badge::before,
+.cm-del::before,
+.cm-no::before,
+.cm-more::before,
+.hkset-change::before,
+.sync-ack::before,
+.tf-pill::before,
+.task-meta .link::before,
+.task-meta .choice::before,
+.v-topics .topic-kids-toggle::before,
+.v-topics .tbtn::before,
+#deeplink-pill .deeplink-pill-open::before,
+#deeplink-pill .deeplink-pill-dismiss::before,
+.sb-toggle::before,
+.v-topics .dtask-copy::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 24px;
+  height: 24px;
+  transform: translate(-50%, -50%);
+}

@@ -4,6 +4,8 @@
 // Clipboard API is available; a write failure surfaces on the label (复制失败)
 // rather than being swallowed.
 
+import { t } from "./i18n";
+
 /** Copy `text` to the clipboard from a click. Fail-fast: a rejected write throws,
  *  so callers wrap it for their own feedback. */
 export async function copyText(text: string): Promise<void> {
@@ -14,7 +16,7 @@ export async function copyText(text: string): Promise<void> {
  *  (or 复制失败), then reverts. `className` lets each view style it as its own action
  *  pill; `label` is the idle text (defaults to 复制, but a column copy uses 复制 Markdown
  *  etc.). stopPropagation keeps the click from reaching a draggable parent card. */
-export function copyButton(text: string, className: string, label = "复制"): HTMLButtonElement {
+export function copyButton(text: string, className: string, label = t("clipboard.copy")): HTMLButtonElement {
   const btn = document.createElement("button");
   btn.type = "button";
   btn.className = className;
@@ -24,9 +26,9 @@ export function copyButton(text: string, className: string, label = "复制"): H
     e.stopPropagation();
     try {
       await copyText(text);
-      btn.textContent = "已复制";
+      btn.textContent = t("clipboard.copied");
     } catch {
-      btn.textContent = "复制失败";
+      btn.textContent = t("clipboard.copyFail");
     }
     clearTimeout(revert);
     revert = setTimeout(() => {

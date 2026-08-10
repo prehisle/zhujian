@@ -12,6 +12,8 @@ import { getVersion } from "@tauri-apps/api/app";
 import { checkForUpdateManual } from "./update";
 import { generate } from "lean-qr";
 import { toSvg } from "lean-qr/extras/svg";
+import { TOAST_ERROR_MS } from "./timing";
+import { t } from "./i18n";
 import "./sync.css";
 
 // 同步服务器默认地址——创建账户/加入设备(本文件)+ 加入空间(notebook.ts)三处入口预填。
@@ -28,11 +30,11 @@ type Mode =
   | "advanced";
 
 const STATE_WORD: Record<string, string> = {
-  off: "未启用",
-  connecting: "连接中…",
-  booting: "初始同步中…",
-  online: "已连接",
-  offline: "离线,重连中…",
+  off: t("sync.stateOff"),
+  connecting: t("sync.stateConnecting"),
+  booting: t("sync.stateBooting"),
+  online: t("sync.stateOnline"),
+  offline: t("sync.stateOffline"),
 };
 
 // 每空间一份状态留存(§六⑥);状态点/面板只画当前空间的那份。
@@ -48,7 +50,7 @@ let pairNote = "";
 let pairFailed = false;
 let shownRecovery = "";
 // 仪式收尾提示:创号与压实共用同一个 ceremony 页,完成话术不同。
-const CEREMONY_MSG_CREATE = "账户已创建,同步已开启";
+const CEREMONY_MSG_CREATE = t("sync.ceremonyDoneCreate");
 let ceremonyDoneMsg = CEREMONY_MSG_CREATE;
 // 仪式页随附警告(压实已提交但装配失败时,错误必须跟着恢复码走到仪式页)。
 let ceremonyWarn = "";
@@ -74,7 +76,7 @@ export function seedSpaceStatuses(list: { id: string; status: SyncStatus }[]): v
 }
 
 function nameOf(space: string): string {
-  return spaceNames.get(space) ?? "另一空间";
+  return spaceNames.get(space) ?? t("sync.otherSpace");
 }
 
 /** notebook.ts 切完空间后调:状态点/面板改画新空间。留存 Map 由事件流 + 基线维护
@@ -113,7 +115,7 @@ export async function initSync(opts: { refresh: () => void }): Promise<void> {
     listen<{ space: string; msg: string }>("sync-toast", (e) => {
       // 别的空间的提示(引导完成/图N翻案/冻结)不丢——带空间名冒出来。
       const { space, msg } = e.payload;
-      showToast(space === currentSpaceId() ? msg : `「${nameOf(space)}」${msg}`);
+      showToast(space === currentSpaceId() ? msg : t("sync.toastFromSpace", { space: nameOf(space), msg }));
     }),
     listen<{ space: string; phase: string; detail: string }>("sync-pair", (e) => {
       // 配对进度只属于发起它的空间(面板是模态,配对期间空间切不走)。
@@ -142,7 +144,7 @@ function renderDot(): void {
   const status = cur();
   dot.className = `sync-dot ${dotClass(status)}`;
   const word = status ? (STATE_WORD[status.state] ?? status.state) : "";
-  entry.title = status?.configured ? `同步:${word}` : "同步(未启用)";
+  entry.title = status?.configured ? t("sync.entryTitle", { state: word }) : t("sync.entryTitleOff");
   renderAlert();
 }
 
@@ -228,7 +230,7 @@ function renderPanel(): void {
   const panel = overlay.querySelector(".sync-panel");
   if (!panel) return;
   panel.replaceChildren();
-  panel.appendChild(el("h2", "sync-title", "同步"));
+  panel.appendChild(el("h2", "sync-title", t("sync.panelTitle")));
   const body = el("div", "sync-body");
   panel.appendChild(body);
   switch (mode) {
@@ -272,18 +274,18 @@ function renderHome(body: HTMLElement): void {
     // 未配置却带 error = 身份被停用(整库复制的同 device 等):先说明,别只给创号入口。
     if (s?.error) body.appendChild(el("div", "sync-err", s.error));
     body.appendChild(
-      el("p", "sync-note", "多设备同步,内容端到端加密——服务器看不到记录内容。"),
+      el("p", "sync-note", t("sync.homeIntro")),
     );
     const acts = el("div", "sync-actions");
-    acts.appendChild(btn("创建账户(第一台设备)", "hbtn", () => goto("create")));
+    acts.appendChild(btn(t("sync.createAccount"), "hbtn", () => goto("create")));
     // 「用配对码加入」只在 main(装机 onboarding,本机数据保留并合并;space-entry-
     // plan §4):非 main 空间同步唯一路 = 创号;「把别处的账户带过来」在空间菜单的
     // 「加入空间」——那是独立入口,不背到这里。
     if (currentSpaceId() === MAIN_SPACE) {
-      acts.appendChild(btn("用配对码加入", "hbtn", () => goto("join")));
+      acts.appendChild(btn(t("sync.joinWithCode"), "hbtn", () => goto("join")));
     } else {
       body.appendChild(
-        el("p", "sync-dim", "要把别处的账户带到这台电脑,用左上空间菜单里的「加入空间」。"),
+        el("p", "sync-dim", t("sync.nonMainHint")),
       );
     }
     body.appendChild(acts);
@@ -295,20 +297,20 @@ function renderHome(body: HTMLElement): void {
   line.appendChild(el("span", `sync-dot ${dotClass(s)}`));
   line.appendChild(el("b", "", word));
   if (s.state === "online") {
-    line.appendChild(el("span", "sync-dim", ` · 另有 ${s.peers_online} 台设备在线`));
+    line.appendChild(el("span", "sync-dim", t("sync.peersOnline", { n: s.peers_online })));
   }
   body.appendChild(line);
   if (s.skew) {
-    body.appendChild(el("div", "sync-warn", "对端版本较新:请升级朱简后继续同步。"));
+    body.appendChild(el("div", "sync-warn", t("sync.skewWarn")));
   }
   if (s.clock_skew) {
     body.appendChild(
-      el("div", "sync-warn", "另一台设备的系统时间明显偏快,可能让它的编辑总是「胜出」:请核对两台设备的时间。"),
+      el("div", "sync-warn", t("sync.clockSkewWarn")),
     );
   }
   if (s.frozen.length > 0) {
     body.appendChild(
-      el("div", "sync-warn", "检测到设备历史分叉,已冻结该设备的同步(需人工处理)。"),
+      el("div", "sync-warn", t("sync.frozenWarn")),
     );
   }
   if (s.error) {
@@ -316,16 +318,15 @@ function renderHome(body: HTMLElement): void {
   }
   const acts = el("div", "sync-actions");
   acts.appendChild(
-    btn("添加设备", "hbtn", () => {
+    btn(t("sync.addDevice"), "hbtn", () => {
       pairCode = "";
-      pairNote = "正在向服务器申请配对码…";
+      pairNote = t("sync.pairRequesting");
       pairFailed = false;
       goto("pair");
       void invoke<string>("sync_pair_start")
         .then((code) => {
           pairCode = code;
-          pairNote =
-            "用手机朱简「同步」里的「扫码连接电脑」直接扫;或在新设备上选「用配对码加入」,输入服务器地址和这串码。10 分钟内有效,只能用一次。";
+          pairNote = t("sync.pairInstructions");
           if (mode === "pair") renderPanel();
         })
         .catch((e: unknown) => {
@@ -335,7 +336,7 @@ function renderHome(body: HTMLElement): void {
         });
     }),
   );
-  acts.appendChild(btn("查看恢复码", "hbtn", () => goto("recovery")));
+  acts.appendChild(btn(t("sync.viewRecovery"), "hbtn", () => goto("recovery")));
   body.appendChild(acts);
   // 修改服务器收进「高级」:运维动作不与日常操作同屏(概念收敛)。
   body.appendChild(advancedEntryRow());
@@ -345,7 +346,7 @@ function renderHome(body: HTMLElement): void {
 /** 「高级」低调入口:服务器信息与运维动作的收纳处。 */
 function advancedEntryRow(): HTMLElement {
   const row = el("div", "sync-update-row");
-  row.appendChild(btn("高级…", "hbtn", () => goto("advanced")));
+  row.appendChild(btn(t("sync.advanced"), "hbtn", () => goto("advanced")));
   return row;
 }
 
@@ -353,13 +354,13 @@ function renderAdvanced(body: HTMLElement): void {
   const s = cur();
   if (s?.configured) {
     // 服务器地址的唯一常显出处(首屏已收走)。
-    body.appendChild(el("div", "sync-kv", `服务器 ${s.server_url ?? ""}`));
+    body.appendChild(el("div", "sync-kv", t("sync.serverKv", { url: s.server_url ?? "" })));
     const acts = el("div", "sync-actions");
-    acts.appendChild(btn("修改服务器", "hbtn", () => goto("server")));
+    acts.appendChild(btn(t("sync.changeServer"), "hbtn", () => goto("server")));
     body.appendChild(acts);
   }
   const acts = el("div", "sync-actions");
-  acts.appendChild(btn("返回", "hbtn", () => goto("home")));
+  acts.appendChild(btn(t("sync.back"), "hbtn", () => goto("home")));
   body.appendChild(acts);
 }
 
@@ -368,11 +369,11 @@ function renderAdvanced(body: HTMLElement): void {
 // 先占位后填,不阻塞面板渲染(row 在首个 await 前已挂上,位置不乱)。
 async function appendUpdateFooter(body: HTMLElement): Promise<void> {
   const row = el("div", "sync-update-row");
-  row.appendChild(btn("检查更新", "hbtn", () => void checkForUpdateManual()));
-  const ver = el("span", "sync-dim", "当前 v…");
+  row.appendChild(btn(t("sync.checkUpdate"), "hbtn", () => void checkForUpdateManual()));
+  const ver = el("span", "sync-dim", t("sync.versionLoading"));
   row.appendChild(ver);
   body.appendChild(row);
-  ver.textContent = `当前 v${await getVersion()}`;
+  ver.textContent = t("sync.versionCurrent", { v: await getVersion() });
 }
 
 function formErr(body: HTMLElement): HTMLElement {
@@ -383,13 +384,13 @@ function formErr(body: HTMLElement): HTMLElement {
 
 function renderCreate(body: HTMLElement): void {
   body.appendChild(
-    el("p", "sync-note", "把本机创建为账户的第一台设备,其他设备之后配对加入。"),
+    el("p", "sync-note", t("sync.createIntro")),
   );
-  const server = input("服务器地址(wss://… 或 ws://…)", DEFAULT_SYNC_URL);
+  const server = input(t("sync.serverPlaceholder"), DEFAULT_SYNC_URL);
   body.appendChild(server);
   const err = formErr(body);
   const acts = el("div", "sync-actions");
-  const go = btn("创建", "hbtn", () => {
+  const go = btn(t("sync.createGo"), "hbtn", () => {
     go.disabled = true;
     err.textContent = "";
     void invoke<string>("sync_create_account", {
@@ -405,7 +406,7 @@ function renderCreate(body: HTMLElement): void {
       });
   });
   acts.appendChild(go);
-  acts.appendChild(btn("返回", "hbtn", () => goto("home")));
+  acts.appendChild(btn(t("sync.back"), "hbtn", () => goto("home")));
   body.appendChild(acts);
 }
 
@@ -421,7 +422,7 @@ function normalizeCode(s: string): string {
 }
 
 function renderCeremony(body: HTMLElement): void {
-  body.appendChild(el("p", "sync-note", "这是账户恢复码——请抄写在纸上,存放在安全的地方。"));
+  body.appendChild(el("p", "sync-note", t("sync.ceremonyIntro")));
   body.appendChild(el("div", "sync-code sync-code--recovery", ceremonyCode));
   // 压实已提交但装配失败:错误随恢复码一起到仪式页(先抄码,再按指引重启)。
   if (ceremonyWarn) body.appendChild(el("div", "sync-err", ceremonyWarn));
@@ -429,18 +430,18 @@ function renderCeremony(body: HTMLElement): void {
     el(
       "p",
       "sync-warn",
-      "恢复码是账户密钥,不是数据备份:恢复数据还必须有至少一台在线的完整副本。它不存在服务器上,丢了无人能帮你找回。",
+      t("sync.ceremonyWarn"),
     ),
   );
   // 强制仪式(§2):抄写后必须回输核对——「点过确认」不算抄过,输对才放行。
-  const confirm = input("抄写完成后,在这里重新输入一遍以确认");
+  const confirm = input(t("sync.ceremonyConfirmPh"));
   body.appendChild(confirm);
   const err = formErr(body);
   const acts = el("div", "sync-actions");
   acts.appendChild(
-    btn("我已抄写,完成", "hbtn", () => {
+    btn(t("sync.ceremonyConfirm"), "hbtn", () => {
       if (normalizeCode(confirm.value) !== normalizeCode(ceremonyCode)) {
-        err.textContent = "输入与恢复码不符——请对照纸上抄写的内容逐组核对。";
+        err.textContent = t("sync.ceremonyMismatch");
         return;
       }
       showToast(ceremonyDoneMsg);
@@ -452,20 +453,20 @@ function renderCeremony(body: HTMLElement): void {
 
 function renderJoin(body: HTMLElement): void {
   body.appendChild(
-    el("p", "sync-note", "在老设备上点「添加设备」得到服务器地址和配对码,两项都填。本机已有的数据会保留并合并。"),
+    el("p", "sync-note", t("sync.joinIntro")),
   );
-  const server = input("服务器地址(wss://… 或 ws://…)", DEFAULT_SYNC_URL);
-  const code = input("配对码(形如 123456789-XXXX-XXXX)");
+  const server = input(t("sync.serverPlaceholder"), DEFAULT_SYNC_URL);
+  const code = input(t("sync.pairCodePh"));
   body.appendChild(server);
   body.appendChild(code);
   const err = formErr(body);
   const acts = el("div", "sync-actions");
-  const go = btn("加入", "hbtn", () => {
+  const go = btn(t("sync.joinGo"), "hbtn", () => {
     go.disabled = true;
     err.textContent = "";
     void invoke("sync_pair_join", { serverUrl: server.value.trim(), code: code.value.trim() })
       .then(() => {
-        showToast("已连接,正在初始同步…");
+        showToast(t("sync.joinedToast"));
         closePanel();
       })
       .catch((e: unknown) => {
@@ -474,7 +475,7 @@ function renderJoin(body: HTMLElement): void {
       });
   });
   acts.appendChild(go);
-  acts.appendChild(btn("返回", "hbtn", () => goto("home")));
+  acts.appendChild(btn(t("sync.back"), "hbtn", () => goto("home")));
   body.appendChild(acts);
 }
 
@@ -482,7 +483,7 @@ function renderPair(body: HTMLElement): void {
   if (pairCode) {
     // 手输路要抄两项(服务器地址+码),都在本页给全——首屏已不再常显服务器。
     const srv = cur()?.server_url;
-    if (srv) body.appendChild(el("div", "sync-kv", `服务器 ${srv}`));
+    if (srv) body.appendChild(el("div", "sync-kv", t("sync.serverKv", { url: srv })));
     body.appendChild(el("div", "sync-code", pairCode));
     // 107 扫码配对:同一串码的二维码形态,载荷再带上服务器地址(手机扫到即自动加入,
     // 一个字不用输)。安全面不变:码本来就是 10 分钟一次性,能看到这块屏幕就能抄码。
@@ -501,18 +502,18 @@ function renderPair(body: HTMLElement): void {
   }
   body.appendChild(el("p", pairFailed ? "sync-err" : "sync-note", pairNote));
   const acts = el("div", "sync-actions");
-  acts.appendChild(btn("关闭", "hbtn", () => closePanel()));
+  acts.appendChild(btn(t("sync.close"), "hbtn", () => closePanel()));
   body.appendChild(acts);
 }
 
 function renderRecovery(body: HTMLElement): void {
   if (!shownRecovery) {
     body.appendChild(
-      el("p", "sync-note", "恢复码是账户密钥,确认周围无人再显示。"),
+      el("p", "sync-note", t("sync.recoveryIntro")),
     );
     const acts = el("div", "sync-actions");
     acts.appendChild(
-      btn("显示恢复码", "hbtn", () => {
+      btn(t("sync.showRecovery"), "hbtn", () => {
         void invoke<string>("sync_recovery_code")
           .then((code) => {
             shownRecovery = code;
@@ -521,7 +522,7 @@ function renderRecovery(body: HTMLElement): void {
           .catch((e: unknown) => showToast(String(e)));
       }),
     );
-    acts.appendChild(btn("返回", "hbtn", () => goto("home")));
+    acts.appendChild(btn(t("sync.back"), "hbtn", () => goto("home")));
     body.appendChild(acts);
     return;
   }
@@ -530,12 +531,12 @@ function renderRecovery(body: HTMLElement): void {
     el(
       "p",
       "sync-warn",
-      "恢复码是账户密钥,不是数据备份:恢复还需要至少一台在线的完整副本。抄写在纸上,别截图、别存网盘。",
+      t("sync.recoveryWarn"),
     ),
   );
   const acts = el("div", "sync-actions");
   acts.appendChild(
-    btn("收起", "hbtn", () => {
+    btn(t("sync.hideRecovery"), "hbtn", () => {
       shownRecovery = "";
       goto("home");
     }),
@@ -544,13 +545,13 @@ function renderRecovery(body: HTMLElement): void {
 }
 
 function renderServer(body: HTMLElement): void {
-  body.appendChild(el("p", "sync-note", "运营者迁移服务器时改这里,保存后立即重连。"));
-  const server = input("服务器地址(wss://… 或 ws://…)", cur()?.server_url ?? "");
+  body.appendChild(el("p", "sync-note", t("sync.serverIntro")));
+  const server = input(t("sync.serverPlaceholder"), cur()?.server_url ?? "");
   body.appendChild(server);
   const err = formErr(body);
   const acts = el("div", "sync-actions");
   acts.appendChild(
-    btn("保存", "hbtn", () => {
+    btn(t("sync.save"), "hbtn", () => {
       err.textContent = "";
       void invoke("sync_set_server", { serverUrl: server.value.trim() })
         .then(() => goto("advanced"))
@@ -559,7 +560,7 @@ function renderServer(body: HTMLElement): void {
         });
     }),
   );
-  acts.appendChild(btn("返回", "hbtn", () => goto("advanced")));
+  acts.appendChild(btn(t("sync.back"), "hbtn", () => goto("advanced")));
   body.appendChild(acts);
 }
 
@@ -577,5 +578,7 @@ export function showToast(msg: string): void {
   t.textContent = msg;
   t.classList.add("show");
   window.clearTimeout(toastTimer);
-  toastTimer = window.setTimeout(() => t.classList.remove("show"), 6000);
+  // 同步面板这条是**第三条**回执通道(228 定的两条通用通道之外),合并是另一笔;
+  // 340 先让它的时长不再是个孤立字面量 —— 它承载的就是后端原话,同 TOAST_ERROR。
+  toastTimer = window.setTimeout(() => t.classList.remove("show"), TOAST_ERROR_MS);
 }

@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>朱简 · 捕获</title>
+    <title data-i18n="shell.captureTitle">朱简 · 捕获</title>
     <!-- 明暗定色(250):首帧之前就把生效色写进 <html data-theme>——晚一帧上色就是亮暗
          闪一下(163 闪烁族契约)。规则与 src/theme-mode.ts 完全一致(存的不是 light /
          dark 就算「自动」、跟系统);那边是真正的开关,这里只是提前落地同一条规则。
@@ -38,7 +38,7 @@
         flex: 1;
         display: flex;
         flex-direction: column; /* textarea on top, pasted-image preview strip below */
-        border-radius: 16px;
+        border-radius: var(--radius-lg);
         background: linear-gradient(180deg, var(--raised), var(--raised-edge));
         box-shadow: var(--float-shadow);
         overflow: hidden;
@@ -59,7 +59,7 @@
         position: absolute;
         left: 0; top: 14px; bottom: 14px;
         width: 3px;
-        border-radius: 0 3px 3px 0;
+        border-radius: 0 var(--radius-xs) var(--radius-xs) 0;
         background: var(--seal);
         opacity: 0.85;
       }
@@ -75,7 +75,7 @@
         background: transparent;
         color: var(--ink);
         padding: 16px 20px 16px 22px;
-        font: 16px/1.7 var(--font-serif);
+        font: var(--fs-16)/1.7 var(--font-serif);
         letter-spacing: 0.005em;
         caret-color: var(--seal);
       }
@@ -84,7 +84,6 @@
         font-style: italic;
         letter-spacing: 0.02em;
       }
-      #capture::selection { background: var(--seal-tint); }
 
       /* 粘贴的图(暂存,回车随灵感一起存)——预览条本体是共享件的 .img-strip(见
          item-images.css,main.ts 把 pendingImages 的 root 挂进来),这里只管浮窗内的
@@ -98,7 +97,7 @@
       #cap-err {
         padding: 0 20px 12px 22px;
         margin: 0;
-        font: 12px/1.5 var(--font-sans);
+        font: var(--fs-12)/1.5 var(--font-sans);
         color: var(--seal);
       }
       #cap-err:empty { display: none; }
@@ -110,10 +109,10 @@
       #cap-space {
         align-self: flex-end;
         margin: 10px 14px -8px 0;
-        font: 11px/1 var(--font-sans);
+        font: var(--fs-12)/1 var(--font-sans);
         color: var(--seal);
         background: var(--seal-tint);
-        border-radius: 999px;
+        border-radius: var(--radius-pill);
         padding: 3px 9px;
         /* 可点切换空间(方案 B):点它弹空间选择器,连带切 notebook。 */
         cursor: pointer;
@@ -121,7 +120,9 @@
         max-width: 40%;
         overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
       }
-      #cap-space:hover { filter: brightness(0.96); }
+      /* hover 照 337 的规矩往 var(--ink) 压(幽灵档 6%),翻面由令牌完成 —— 原先是
+         全仓唯一一处 filter: brightness() 型 hover,恒往黑压,暗色档下方向反了。 */
+      #cap-space:hover { background: color-mix(in srgb, var(--ink) 6%, var(--seal-tint)); }
       #cap-space[hidden] { display: none; }
       #cap-space::after { content: " ▾"; opacity: 0.6; }
 
@@ -133,9 +134,9 @@
         gap: 8px;
         margin: 10px 14px 0 22px;
         padding: 7px 11px;
-        border-radius: 9px;
+        border-radius: var(--radius-sm);
         background: var(--seal-tint);
-        font: 12px/1.45 var(--font-sans);
+        font: var(--fs-12)/1.45 var(--font-sans);
       }
       #cap-hotkey[hidden] { display: none; }
       #cap-hotkey .hk-fix {
@@ -153,7 +154,7 @@
         cursor: pointer;
         color: var(--seal);
         opacity: 0.6;
-        font: 15px/1 var(--font-sans);
+        font: var(--fs-15)/1 var(--font-sans);
         padding: 0 2px;
       }
       #cap-hotkey .hk-x:hover { opacity: 1; }
@@ -171,20 +172,48 @@
         display: inline-flex;
         align-items: center;
         gap: 4px;
-        font: 12px/1 var(--font-sans);
-        border-radius: 999px;
+        font: var(--fs-12)/1 var(--font-sans);
+        border-radius: var(--radius-pill);
         padding: 4px 8px;
         border: 1px solid var(--line);
         color: var(--ink);
-        background: var(--surface);
+        /* 底透出 slip 的纸面。235 起这里写的是 `var(--surface)`,而那个令牌**哪份令牌表
+           里都没有** —— 不带兜底的 var() 整条声明作废(IACVT),所以它一直就是这个样子
+           (同 336 的 --rule 判例)。338 把门禁扫到 html 壳里才照出来;写明它,别留幽灵。
+           只读的元信息 chip 也是这么写的(src/tasktime.css 的 .task-meta .chip)。 */
+        background: transparent;
       }
       .cap-chip.mode { color: var(--seal); border-color: var(--seal-tint); background: var(--seal-tint); }
       .cap-chip .x {
         cursor: pointer;
         opacity: 0.55;
-        font: 13px/1 var(--font-sans);
+        font: var(--fs-13)/1 var(--font-sans);
       }
       .cap-chip .x:hover { opacity: 1; }
+
+      /* 热区扩展(§2.3,357;技法与判例见 src/controls.css 同名块——那份只被主窗
+         加载,捕获窗的控件必须在这儿自带一份)。三处宿主全 static、居中 ::before
+         撑 24×24;外扩 ≤5.5px,都落在 .slip 的边距(10/14)与 #cap-hotkey 的
+         gap 8 之内,slip 的 overflow:hidden 裁不到。.cap-chip .x 的隐形圈盖到
+         chip 文字时按 354 chip ✕ 同理:label 不可点,误点半径让给唯一的操作。
+         ⚠ #cap-space 不在此列:它自带 overflow:hidden(截断长空间名),::before
+         会被**宿主自己**裁掉成死扩展(357 真 Chrome 实测出的族,热区闸静态也判)。 */
+      #cap-hotkey .hk-fix,
+      #cap-hotkey .hk-x,
+      .cap-chip .x {
+        position: relative;
+      }
+      #cap-hotkey .hk-fix::before,
+      #cap-hotkey .hk-x::before,
+      .cap-chip .x::before {
+        content: "";
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        width: 24px;
+        height: 24px;
+        transform: translate(-50%, -50%);
+      }
 
       /* 斜杠命令面板 + 空间选择器:内联在 slip 内(靠 fitWindow 长高,不用浮层——
          .slip 有 overflow:hidden,浮层会被裁,而窗口长高天然不裁)。 */
@@ -203,23 +232,26 @@
         border: 0;
         background: transparent;
         color: var(--ink);
-        border-radius: 8px;
+        border-radius: var(--radius-sm);
         padding: 6px 10px;
         cursor: pointer;
-        font: 13px/1.3 var(--font-sans);
+        font: var(--fs-13)/1.3 var(--font-sans);
       }
       .cmd-row.hi, .space-pick-row.hi, .space-pick-row:hover, .cmd-row:hover {
         background: var(--seal-tint);
       }
       .cmd-name { color: var(--seal); font-weight: 600; min-width: 52px; }
       .cmd-label { color: var(--ink); }
-      .cmd-hint { color: var(--ink-faint); margin-left: auto; font-size: 11px; }
+      .cmd-hint { color: var(--ink-faint); margin-left: auto; font-size: var(--fs-12); }
       /* 状态点(sync-dot 配色住 sync.css,capture 窗没加载它,内联最小份)。 */
       .space-pick-row .sync-dot {
-        width: 7px; height: 7px; border-radius: 50%; flex: 0 0 auto;
+        width: 7px; height: 7px; border-radius: var(--radius-circle); flex: 0 0 auto;
         background: transparent; border: 1px solid var(--line-strong);
       }
-      .space-pick-row .sync-dot.on { background: #4c9a6a; border-color: transparent; }
+      /* 「已连」绿走 --ok(339 提到两端共有;此前这里是同一个语义色的第三个抄写点,
+         躲在内联段里、令牌门禁与对比度门禁都扫不到)。琥珀「连接中」仍是写死的,
+         理由与登记见 src/sync.css 那处同名规则。 */
+      .space-pick-row .sync-dot.on { background: var(--ok); border-color: transparent; }
       .space-pick-row .sync-dot.busy { background: #c9973a; border-color: transparent; }
       .space-pick-row .sync-dot.err { background: var(--seal); border-color: transparent; }
       .space-pick-row .cur { margin-left: auto; color: var(--seal); }
@@ -230,9 +262,12 @@
       <button id="cap-space" type="button" hidden></button>
       <div id="cap-hotkey" hidden></div>
       <div id="cap-mods"></div>
+      <!-- 358:placeholder 挂 data-i18n-placeholder,启动 applyStaticI18n 覆写;markup
+           保留中文原文防首帧闪,原文与 zh 字典逐字相等由 check-i18n-drift 核。 -->
       <textarea
         id="capture"
         placeholder="记下这个念头……    ↵ 收存    ⇧↵ 换行    Esc 退出    可粘贴图片    / 唤起命令"
+        data-i18n-placeholder="shell.capturePlaceholder"
         autofocus
       ></textarea>
       <div id="cap-cmd" hidden></div>

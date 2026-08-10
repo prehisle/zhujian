@@ -1,4 +1,5 @@
 import "./hotkey-menu.css";
+import { t } from "./i18n";
 
 // 悬停即选中 + ⋯ 速查菜单 + 单键直达 —— 抽自 inbox 的原型,做成视图无关的公共件,
 // 让「同一个键 = 同一个概念」跨视图(灵感 / 任务看板 / …)一致,肌肉记忆才能迁移。
@@ -6,6 +7,12 @@ import "./hotkey-menu.css";
 // One declared action = one dropdown row + one single-key shortcut. The SAME list
 // drives the hover ⋯ menu (the visible cheat-sheet) and the keydown dispatch, so a
 // key shown in the menu can never do something else (single source of truth).
+
+/** portal 到 body 的「卫星浮层」白名单——落点在这些层里不算「点别处」,不触发
+ *  编辑态的默认保存 / 确认态的收起。此前这串选择器以字面量抄在三处(board / inbox 的
+ *  onDown 与这里的 armDismiss,顺序还不一致),新增留言层(.cm-overlay)三处都没登记;
+ *  收成唯一登记点:**新增 portal 层改这里一处**。 */
+export const SATELLITE_LAYERS = ".hk-menu, .img-lightbox, .cm-overlay";
 
 export type Act = {
   /** 菜单行左侧文案。 */
@@ -167,7 +174,7 @@ export function createHotkeyController(): HotkeyController {
       const iconBtn = el("button", {
         className: "hk-btn",
         textContent: "⋯",
-        title: "操作(点开,或悬停卡片按 / 键)",
+        title: t("hotkeyMenu.actionsTitle"),
         draggable: false,
       });
       iconBtn.addEventListener("click", (e) => {
@@ -313,7 +320,7 @@ export function armDismiss(root: HTMLElement, close: () => void): () => void {
   function onDown(e: MouseEvent): void {
     const t = e.target as HTMLElement;
     if (root.contains(t)) return;
-    if (t.closest(".hk-menu, .img-lightbox")) return;
+    if (t.closest(SATELLITE_LAYERS)) return;
     teardown();
     close();
   }

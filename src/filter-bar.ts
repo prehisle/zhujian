@@ -2,6 +2,8 @@
 // 筛选行为(单一真相源,同 hotkey-menu.ts 的抽法):列表内容 = 标签过滤 ∩ 文本过滤,
 // 两维正交。筛选状态由各视图自己以模块态持有(「跨视图切换保留」的语义属于视图,
 // 见 board.ts topicFilter 的注释),本件只提供纯函数应用 + pills/输入框的 DOM 行为。
+import { t } from "./i18n";
+import { INPUT_DEBOUNCE_MS } from "./timing";
 import "./filter-bar.css";
 
 // A topic as the filter consumes it (pill label + optional dot color + optional kind).
@@ -29,11 +31,11 @@ export function soleTopicFilter(f: FilterState): string | null {
   return f.topics.length === 1 && f.topics[0] !== "none" ? f.topics[0] : null;
 }
 
-// 被筛具体标签的中文名列表(供筛空空态提示「「A、B」下没有…」)。none 显「无标签」,
+// 被筛具体标签的名字列表(供筛空空态提示「「A、B」下没有…」)。none 显「无标签」,
 // id 解析成标签名(找不到 = 已删,显「该标签」占位)。空数组 = 未筛具体标签。
 export function selectedTopicLabels(f: FilterState, allTopics: FilterTopic[]): string[] {
   return f.topics.map((tok) =>
-    tok === "none" ? "无标签" : allTopics.find((t) => t.id === tok)?.title ?? "该标签",
+    tok === "none" ? t("filter.none") : allTopics.find((tp) => tp.id === tok)?.title ?? t("filter.thatTag"),
   );
 }
 
@@ -190,8 +192,8 @@ export function renderFilterPills(
     return b;
   };
   const pills: HTMLElement[] = kindActive
-    ? [pill("all", "所有", scoped.length)]
-    : [pill("all", "所有", items.length), pill("none", "无标签", none)];
+    ? [pill("all", t("filter.all"), scoped.length)]
+    : [pill("all", t("filter.all"), items.length), pill("none", t("filter.none"), none)];
 
   // 一个标签是否该出现:有条目 或 正被选中(选中的绝不因 0 计数消失)。
   const visible = (tp: FilterTopic) => (counts.get(tp.id) ?? 0) > 0 || f.topics.includes(tp.id);
@@ -200,7 +202,7 @@ export function renderFilterPills(
   const pushTopic = (tp: FilterTopic, label: string, child: boolean, parentId?: string): HTMLElement => {
     const p = pill(tp.id, label, counts.get(tp.id) ?? 0, tp.color);
     p.dataset.topicId = tp.id;
-    p.title = "单击只筛此标签 · 按住 Ctrl 多选"; // 多选是隐藏能力,靠 hover 提示补可发现性
+    p.title = t("filter.pillTitle"); // 多选是隐藏能力,靠 hover 提示补可发现性
     if (child) {
       p.classList.add("child");
       if (parentId) p.dataset.parent = parentId;
@@ -229,7 +231,7 @@ export function renderFilterPills(
       const caret = document.createElement("span");
       caret.className = "tf-caret";
       caret.textContent = open ? "▾" : "▸";
-      caret.title = open ? "收起子标签" : `展开 ${kids.length} 个子标签`;
+      caret.title = open ? t("filter.collapseKids") : t("filter.expandKids", { n: kids.length });
       // 点箭头只翻子标签 pill 的显隐 + 箭头方向,不整条重建(避开各视图 load/refresh 的指纹
       // 短路——它不认 expandedParents,会跳过重画)。正被选中的子标签即便收起也留着可见
       // (它是活着的筛选,不能藏)。
@@ -239,7 +241,7 @@ export function renderFilterPills(
         if (now) expandedParents.add(g.parent.id);
         else expandedParents.delete(g.parent.id);
         caret.textContent = now ? "▾" : "▸";
-        caret.title = now ? "收起子标签" : `展开 ${kids.length} 个子标签`;
+        caret.title = now ? t("filter.collapseKids") : t("filter.expandKids", { n: kids.length });
         for (const el of bar.querySelectorAll<HTMLElement>(`.tf-pill.child[data-parent="${g.parent.id}"]`)) {
           const keep = !now && !f.topics.includes(el.dataset.topicId ?? "");
           el.classList.toggle("hidden", now ? false : keep);
@@ -294,8 +296,8 @@ export function renderKindPills(
   };
   const label = document.createElement("span");
   label.className = "tf-axis";
-  label.textContent = "类型";
-  const pills: (HTMLElement | Text)[] = [label, pill("all", "全部类型")];
+  label.textContent = t("filter.kindAxis");
+  const pills: (HTMLElement | Text)[] = [label, pill("all", t("filter.allKinds"))];
   for (const k of kinds) {
     const ids = idsOfKind(allTopics, k);
     const n = items.filter((t) => t.topics.some((tp) => ids.has(tp.id))).length;
@@ -314,9 +316,21 @@ export function wireFilterInput(
   onChange: () => void,
 ): void {
   input.value = f.text; // 切视图回来恢复(模块态值)
+
+  // 去抖(340,§2.4 `INPUT_DEBOUNCE`)。`onChange` 是 board.load() / inbox.refresh(),
+  // **两个都发 IPC 再全量重画** —— 此前逐字符打一次往返,一个四字词就是四次。
+  //
+  // 两条边界:
+  //  · `f.text` 仍**当场**写。它是模块态,切视图回来 / 重挂要靠它恢复,不能等去抖窗口
+  //    (窗口未闭合就切走 = 筛选词丢一半,正是 §六-1「状态归属」那族的形状)。
+  //  · 遗留定时器打进死 mount 无害:两个目标都在头一行 `if (unmounted) return`
+  //    (board.ts:1594 / inbox.ts:1149)。监听挂在 input 元素身上、随视图 DOM 一起消失,
+  //    不是 §六-2 说的文档级监听,故这里不额外要 unmount 钩子。
+  let timer: number | undefined;
   input.addEventListener("input", () => {
     f.text = input.value;
-    onChange();
+    window.clearTimeout(timer);
+    timer = window.setTimeout(onChange, INPUT_DEBOUNCE_MS);
   });
   input.addEventListener("keydown", (e) => {
     if (e.key !== "Escape") return;
@@ -326,6 +340,7 @@ export function wireFilterInput(
     }
     input.value = "";
     f.text = "";
+    window.clearTimeout(timer); // 清词 = 「全部回来」,立即兑现,不排队等去抖
     onChange();
   });
 }

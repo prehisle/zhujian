@@ -5,12 +5,12 @@
   align-items: center;
   gap: 8px;
   font-family: var(--font-serif);
-  font-size: 12.5px;
+  font-size: var(--fs-13);
   letter-spacing: 0.03em;
   color: var(--ink-faint);
   background: transparent;
   border: 0;
-  border-radius: 9px;
+  border-radius: var(--radius-sm);
   padding: 7px 12px;
   cursor: pointer;
   text-align: left;
@@ -42,6 +42,8 @@
   stroke-linecap: round;
 }
 
+/* 遮罩取浅雾玻璃=「操作型面板」那一路(348 分野判据:阅读型深压、操作型浅雾;
+   全文见 item-comments.css 遮罩处注)。 */
 .settings-overlay {
   position: fixed;
   inset: 0;
@@ -55,97 +57,99 @@
   width: min(420px, calc(100vw - 48px));
   background: linear-gradient(180deg, var(--raised), var(--raised-edge));
   border: 1px solid var(--line-strong);
-  border-radius: 14px;
+  border-radius: var(--radius-lg);
   box-shadow: var(--float-shadow);
   padding: 18px 20px 20px;
 }
 .settings-title {
   margin: 0 0 4px;
   font-family: var(--font-serif);
-  font-size: 16px;
+  font-size: var(--fs-16);
   letter-spacing: 0.04em;
   color: var(--ink);
 }
 .settings-sub {
   margin: 0 0 16px;
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--ink-faint);
   line-height: 1.6;
 }
 
-/* 一行 = 一枚热键:左边名字,右边当前键 + 更改按钮。 */
-.hk-row {
+/* 一行 = 一枚热键:左边名字,右边当前键 + 更改按钮。
+   前缀是 hkset-(settings 的热键行):裸 hk- 已被共享件 hotkey-menu.css(卡片 ⋯ 速查菜单)
+   占用,两族同在 notebook 文档里,同前缀裸类将来新增自然名(.hk-btn/.hk-key)会静默串样式。 */
+.hkset-row {
   display: flex;
   align-items: center;
   gap: 10px;
   padding: 10px 0;
   border-top: 1px solid var(--line);
 }
-.hk-row:first-of-type { border-top: 0; }
-.hk-name {
+.hkset-row:first-of-type { border-top: 0; }
+.hkset-name {
   flex: none;
   width: 76px;
-  font-size: 13px;
+  font-size: var(--fs-13);
   color: var(--ink);
 }
-.hk-desc {
+.hkset-desc {
   flex: 1;
-  font-size: 11.5px;
+  font-size: var(--fs-12);
   color: var(--ink-faint);
   line-height: 1.5;
 }
-.hk-keys {
+.hkset-keys {
   flex: none;
   display: flex;
   align-items: center;
   gap: 8px;
 }
-.hk-combo {
+.hkset-combo {
   font-family: var(--font-sans);
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--ink);
   background: color-mix(in srgb, var(--ink) 6%, transparent);
   border: 1px solid var(--line);
-  border-radius: 7px;
+  border-radius: var(--radius-sm);
   padding: 4px 9px;
   min-width: 82px;
   text-align: center;
   white-space: nowrap;
 }
-.hk-combo.recording {
+.hkset-combo.recording {
   color: var(--seal);
   border-color: var(--seal);
   background: var(--seal-tint);
 }
-.hk-change {
+.hkset-change {
   font-family: var(--font-serif);
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--ink-soft);
   background: transparent;
   border: 1px solid var(--line-strong);
-  border-radius: 7px;
+  border-radius: var(--radius-sm);
   padding: 4px 10px;
   cursor: pointer;
   transition: background 0.14s, color 0.14s;
 }
-.hk-change:hover {
+.hkset-change:hover {
   background: color-mix(in srgb, var(--ink) 6%, transparent);
   color: var(--ink);
 }
 
 /* 行下的一句话:成功=墨绿淡提示,失败=朱砂。 */
-.hk-msg {
+.hkset-msg {
   margin: 2px 0 0;
-  font-size: 11.5px;
+  font-size: var(--fs-12);
   line-height: 1.5;
   min-height: 0;
 }
-.hk-msg.ok { color: var(--ink-soft); }
-.hk-msg.err { color: var(--seal); }
+.hkset-msg.ok { color: var(--ink-soft); }
+.hkset-msg.err { color: var(--seal); }
 
 .settings-foot {
   margin: 14px 0 0;
-  font-size: 11px;
+  font-size: var(--fs-12);
   color: var(--ink-faint);
   line-height: 1.6;
 }
@@ -153,11 +157,11 @@
 /* 二级分节标题(界面字号):比主标题小一号、上方留白与热键区分隔。 */
 .settings-sect {
   margin-top: 20px;
-  font-size: 14px;
+  font-size: var(--fs-14);
 }
 
 /* 字号一行:左名字,右边 −  100%  ＋  复位。 */
-.zoom-row .hk-name { width: auto; flex: 1; }
+.zoom-row .hkset-name { width: auto; flex: 1; }
 .zoom-ctrls {
   flex: none;
   display: flex;
@@ -166,12 +170,12 @@
 }
 .zoom-btn {
   font-family: var(--font-sans);
-  font-size: 15px;
+  font-size: var(--fs-15);
   line-height: 1;
   color: var(--ink);
   background: color-mix(in srgb, var(--ink) 6%, transparent);
   border: 1px solid var(--line);
-  border-radius: 7px;
+  border-radius: var(--radius-sm);
   width: 30px;
   height: 28px;
   cursor: pointer;
@@ -183,12 +187,12 @@
   flex: none;
   display: flex;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   overflow: hidden;
 }
 .seg-btn {
   font-family: var(--font-serif);
-  font-size: 12.5px;
+  font-size: var(--fs-13);
   color: var(--ink-soft);
   background: color-mix(in srgb, var(--ink) 4%, transparent);
   border: 0;
@@ -206,7 +210,7 @@
 
 .zoom-val {
   font-family: var(--font-sans);
-  font-size: 12.5px;
+  font-size: var(--fs-13);
   color: var(--ink);
   min-width: 48px;
   text-align: center;
@@ -222,12 +226,12 @@
 .alias-input {
   width: 150px;
   font-family: var(--font-sans);
-  font-size: 12.5px;
+  font-size: var(--fs-13);
   padding: 5px 8px;
   color: var(--ink);
   background: var(--paper);
   border: 1px solid var(--line-strong);
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
 }
 .alias-input:focus {
   outline: none;

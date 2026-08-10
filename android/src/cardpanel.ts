@@ -45,6 +45,7 @@ import {
   type TimelineItem,
   type TopicItem,
 } from "./api";
+import { t } from "./i18n";
 import { $, confirmBar, esc, hideConfirmBar, isTaskStage, showBar, showError } from "./ui";
 import { pickImage, toBase64 } from "./images";
 
@@ -85,16 +86,16 @@ type Deps = {
 };
 
 const STATUSES: { key: TaskStatus; label: string }[] = [
-  { key: "todo", label: "待办" },
-  { key: "doing", label: "进行中" },
-  { key: "confirming", label: "待确认" },
-  { key: "done", label: "已完成" },
+  { key: "todo", label: t("ui.stageTodo") },
+  { key: "doing", label: t("ui.stageDoing") },
+  { key: "confirming", label: t("ui.stageConfirming") },
+  { key: "done", label: t("ui.stageDone") },
 ];
 const PRIORITIES: { key: 1 | 2 | 3 | null; label: string }[] = [
-  { key: null, label: "无" },
-  { key: 1, label: "低" },
-  { key: 2, label: "中" },
-  { key: 3, label: "高" },
+  { key: null, label: t("cardpanel.prioNone") },
+  { key: 1, label: t("cardpanel.prioLow") },
+  { key: 2, label: t("cardpanel.prioMid") },
+  { key: 3, label: t("cardpanel.prioHigh") },
 ];
 
 let deps: Deps;
@@ -116,7 +117,7 @@ export function forceClose(reason?: string) {
   state = null;
   document.querySelector("#timeline .panel")?.remove();
   clearImgManage();
-  if (hadDraft) showBar(reason ?? "未保存的编辑已丢弃");
+  if (hadDraft) showBar(reason ?? t("cardpanel.draftDropped"));
   deps.onDraftClosed();
 }
 
@@ -204,30 +205,30 @@ function renderActions(item: TimelineItem): string {
   const partial = movePartialNote(item.id);
   const noteBlock = partial
     ? `<div class="movenote"><span>${esc(partial)}</span>` +
-      `<button data-pact="move-ack" class="p">我已处理</button></div>`
+      `<button data-pact="move-ack" class="p">${t("cardpanel.moveAck")}</button></div>`
     : "";
   const task = isTaskStage(item.stage);
   const acts: string[] = [
-    actBtn("edit", "编辑"),
-    actBtn("tags", "标签"),
-    actBtn("addimg", "加图"),
-    actBtn("comment", "留言"),
+    actBtn("edit", t("cardpanel.actEdit")),
+    actBtn("tags", t("cardpanel.actTags")),
+    actBtn("addimg", t("cardpanel.actAddImg")),
+    actBtn("comment", t("cardpanel.actComment")),
   ];
-  if (!task) acts.push(actBtn("promote", "转待办"));
-  if (item.stage === "todo") acts.push(actBtn("revert", "撤回为灵感", { warn: true }));
-  if (item.stage === "done") acts.push(actBtn("seal", "入归档册"));
+  if (!task) acts.push(actBtn("promote", t("cardpanel.actPromote")));
+  if (item.stage === "todo") acts.push(actBtn("revert", t("cardpanel.actRevert"), { warn: true }));
+  if (item.stage === "done") acts.push(actBtn("seal", t("cardpanel.actSeal")));
   // 移动入口:仅 ≥2 空间、且本条无未处理的部分移动登记时出现(§4)。
-  if (!partial && deps.getSpaces().length >= 2) acts.push(actBtn("move", "移动"));
-  acts.push(actBtn("del", "删除", { warn: true }));
+  if (!partial && deps.getSpaces().length >= 2) acts.push(actBtn("move", t("cardpanel.actMove")));
+  acts.push(actBtn("del", t("cardpanel.actDelete"), { warn: true }));
   const lanes = task
-    ? `<div class="lane"><span class="lab">状态</span><span class="pillrow">${STATUSES.map((s) =>
+    ? `<div class="lane"><span class="lab">${t("cardpanel.laneStatus")}</span><span class="pillrow">${STATUSES.map((s) =>
         pill(s.label, `data-status="${s.key}"`, item.stage === s.key, busy || item.stage === s.key),
       ).join("")}</span></div>
-      <div class="lane"><span class="lab">截止</span>
+      <div class="lane"><span class="lab">${t("cardpanel.laneDue")}</span>
         <input type="date" data-due value="${esc(item.due_on ?? "")}"${busy ? " disabled" : ""} />
-        ${item.due_on ? `<button data-pact="due-clear" class="p"${busy ? " disabled" : ""}>清除</button>` : ""}
+        ${item.due_on ? `<button data-pact="due-clear" class="p"${busy ? " disabled" : ""}>${t("cardpanel.dueClear")}</button>` : ""}
       </div>
-      <div class="lane"><span class="lab">优先级</span><span class="pillrow">${PRIORITIES.map((p) =>
+      <div class="lane"><span class="lab">${t("cardpanel.lanePriority")}</span><span class="pillrow">${PRIORITIES.map((p) =>
         pill(
           p.label,
           `data-prio="${p.key ?? ""}"`,
@@ -254,16 +255,16 @@ function renderMove(): string {
         )}</button>`,
     )
     .join("");
-  return `<div class="movewarn">移到别的空间 = 那边新生一条、这边删除;<b>编辑历史会随移动永久删除,不迁入目标空间</b>。</div>
-    <div class="lane"><span class="pillrow">${rows || `<span class="lab">没有其他空间</span>`}</span></div>
-    <div class="acts"><button data-pact="back"${busy ? " disabled" : ""}>返回</button></div>`;
+  return `<div class="movewarn">${t("cardpanel.moveWarnPre")}<b>${t("cardpanel.moveWarnBold")}</b>${t("cardpanel.moveWarnPost")}</div>
+    <div class="lane"><span class="pillrow">${rows || `<span class="lab">${t("cardpanel.noOtherSpace")}</span>`}</span></div>
+    <div class="acts"><button data-pact="back"${busy ? " disabled" : ""}>${t("cardpanel.back")}</button></div>`;
 }
 
 function renderEdit(): string {
   return `<textarea class="edit">${esc(state?.editDraft ?? "")}</textarea>
     <div class="acts">
-      <button data-pact="save" class="confirm"${busy ? " disabled" : ""}>保存</button>
-      <button data-pact="cancel"${busy ? " disabled" : ""}>取消</button>
+      <button data-pact="save" class="confirm"${busy ? " disabled" : ""}>${t("cardpanel.save")}</button>
+      <button data-pact="cancel"${busy ? " disabled" : ""}>${t("cardpanel.cancel")}</button>
     </div>`;
 }
 
@@ -272,30 +273,30 @@ function renderTags(item: TimelineItem): string {
   const task = isTaskStage(item.stage);
   const linked = new Set(item.topics.map((t) => t.id));
   const pills = state.topics
-    .map((t) => {
-      const on = linked.has(t.id);
+    .map((tp) => {
+      const on = linked.has(tp.id);
       // 灵感的已挂标签不可摘(core 没有该原语,与桌面能力一致——不造假入口)。
       const disabled = busy || (!task && on);
-      return `<button data-topic="${esc(t.id)}" class="p${on ? " on" : ""}"${
+      return `<button data-topic="${esc(tp.id)}" class="p${on ? " on" : ""}${tp.color ? " tinted" : ""}"${
         disabled ? " disabled" : ""
-      }${!task && on ? ` title="已挂标签暂不支持摘除" aria-disabled="true"` : ""}${
-        t.color ? ` style="--tc:${esc(t.color)}"` : ""
-      }>${esc(t.title)}</button>`;
+      }${!task && on ? ` title="${t("cardpanel.tagLocked")}" aria-disabled="true"` : ""}${
+        tp.color ? ` style="--tc:${esc(tp.color)}"` : ""
+      }>${esc(tp.title)}</button>`;
     })
     .join("");
   // 有已挂标签的灵感:一行弱提示把「禁点」讲明白(实现审 L8,克制不造假入口)。
   const ideaHint =
     !task && item.topics.length
-      ? `<div class="lane"><span class="lab">灵感的标签暂只支持添加</span></div>`
+      ? `<div class="lane"><span class="lab">${t("cardpanel.ideaTagAddOnly")}</span></div>`
       : "";
-  return `<div class="lane"><span class="pillrow">${pills || `<span class="lab">还没有标签</span>`}</span></div>
+  return `<div class="lane"><span class="pillrow">${pills || `<span class="lab">${t("cardpanel.noTags")}</span>`}</span></div>
     ${ideaHint}
     <div class="lane">
-      <input class="tagnew" placeholder="新标签名" autocapitalize="off" autocomplete="off"
+      <input class="tagnew" placeholder="${t("cardpanel.newTagPh")}" autocapitalize="off" autocomplete="off"
              value="${esc(state.tagDraft)}"${busy ? " disabled" : ""} />
-      <button data-pact="tagnew" class="p"${busy ? " disabled" : ""}>建并挂上</button>
+      <button data-pact="tagnew" class="p"${busy ? " disabled" : ""}>${t("cardpanel.createAndTag")}</button>
     </div>
-    <div class="acts"><button data-pact="back"${busy ? " disabled" : ""}>返回</button></div>`;
+    <div class="acts"><button data-pact="back"${busy ? " disabled" : ""}>${t("cardpanel.back")}</button></div>`;
 }
 
 // ---- 写操作统一收口(实现审 M2/M3 的形) ---------------------------------------
@@ -358,12 +359,12 @@ async function runMove(target: string, targetLabel: string): Promise<void> {
   if (result) {
     // 登记先行(独立于 UI 是否还在):目标已建的事实切走/重画都不能丢。
     if (result.outcome === "copied_but_source_kept") {
-      movePartialMark(source, id, `已复制到「${targetLabel}」,原条目已保留:${result.reason}`);
+      movePartialMark(source, id, t("cardpanel.moveKept", { name: targetLabel, reason: result.reason }));
     } else if (result.outcome === "copied_but_source_unconfirmed") {
       movePartialMark(
         source,
         id,
-        `已复制到「${targetLabel}」,但原条目删除未确认(${result.error})——请检查后手动删除,勿再移动`,
+        t("cardpanel.moveUnconfirmedNote", { name: targetLabel, error: result.error }),
       );
     }
     // 以下 UI 反馈只给还停在本空间/本 session 的人(登记已落)。
@@ -372,14 +373,14 @@ async function runMove(target: string, targetLabel: string): Promise<void> {
       case "moved":
         if (state === session) state = null;
         if (here) {
-          showBar(`已移到「${targetLabel}」`, true);
+          showBar(t("cardpanel.moved", { name: targetLabel }), true);
           void deps.refresh();
         }
         break;
       case "copied_but_source_kept":
         if (state === session) session.mode = "actions"; // 回 actions 面显登记提示、藏移动入口
         if (here) {
-          showBar(`已复制到「${targetLabel}」,原条目保留`, true);
+          showBar(t("cardpanel.movedKept", { name: targetLabel }), true);
           void deps.refresh();
         }
         break;
@@ -387,20 +388,20 @@ async function runMove(target: string, targetLabel: string): Promise<void> {
         // 源删除状态未知,绝不谎报「保留」(codex 实现审 #2)。
         if (state === session) session.mode = "actions";
         if (here) {
-          showBar(`已复制到「${targetLabel}」,但原条目删除未确认——请核对两边`, true);
+          showBar(t("cardpanel.movedUnconfirmed", { name: targetLabel }), true);
           void deps.refresh();
         }
         break;
       case "images_pending":
         if (here && state === session) {
           session.mode = "actions";
-          showError(`有 ${result.count} 张配图还没同步到齐,等完成再移`);
+          showError(t("cardpanel.imagesPending", { n: result.count }));
         }
         break;
       case "dangling_refs":
         if (here && state === session) {
           session.mode = "actions";
-          showError("正文引用了已删除的配图,暂不支持跨空间移动");
+          showError(t("cardpanel.danglingRefs"));
         }
         break;
     }
@@ -425,7 +426,7 @@ async function refreshTopics(session: PanelState, space: string) {
     }
   } catch {
     if (state === session && space === getCurrentSpace() && seq === session.topicsSeq) {
-      showBar("标签列表刷新失败(下次打开自动重读)");
+      showBar(t("cardpanel.topicsRefreshFailed"));
     }
   }
 }
@@ -468,7 +469,7 @@ async function saveEdit() {
   const draft = session.editDraft;
   const trimmed = draft.trim();
   if (!trimmed) {
-    showError("内容不能为空");
+    showError(t("cardpanel.emptyContent"));
     return; // 留在编辑态,草稿不丢
   }
   const task = isTaskStage(item.stage);
@@ -515,11 +516,11 @@ async function addImage(itemId: string): Promise<void> {
   try {
     b64 = await toBase64(file);
   } catch {
-    showError("读取图片失败,请重试");
+    showError(t("cardpanel.imageReadFailed"));
     return;
   }
   await run((space) => addItemImage(space, itemId, file.type, b64), {
-    onCommitted: () => showBar("已加图", true),
+    onCommitted: () => showBar(t("cardpanel.imageAdded"), true),
   });
 }
 
@@ -528,16 +529,16 @@ async function addImage(itemId: string): Promise<void> {
 function onTimelineClick(e: Event) {
   if (deps.isSwitching() || deps.isCaptureSaving()) return;
   if (busy) return; // in-flight:面板一切导航(开合/换卡/控件)整体拒(实现审 M2)
-  const t = e.target as HTMLElement;
+  const el = e.target as HTMLElement;
   // 面板控件优先。
-  const pact = t.closest<HTMLElement>("[data-pact]")?.dataset.pact;
+  const pact = el.closest<HTMLElement>("[data-pact]")?.dataset.pact;
   if (pact && state) {
     const card = currentCard();
     if (!card) return;
     handleAct(pact, card);
     return;
   }
-  const topicBtn = t.closest<HTMLElement>("[data-topic]");
+  const topicBtn = el.closest<HTMLElement>("[data-topic]");
   if (topicBtn && state?.mode === "tags") {
     const session = state;
     const item = deps.getItem(session.id);
@@ -559,21 +560,21 @@ function onTimelineClick(e: Event) {
     );
     return;
   }
-  const moveBtn = t.closest<HTMLElement>("[data-move-to]");
+  const moveBtn = el.closest<HTMLElement>("[data-move-to]");
   if (moveBtn && state?.mode === "move") {
     const target = moveBtn.dataset.moveTo!;
     const label = distinctSpaceLabels(deps.getSpaces()).get(target) ?? target;
     void runMove(target, label);
     return;
   }
-  const statusBtn = t.closest<HTMLElement>("[data-status]");
+  const statusBtn = el.closest<HTMLElement>("[data-status]");
   if (statusBtn && state) {
     const session = state;
     const to = statusBtn.dataset.status as TaskStatus;
     void run((space) => updateTaskStatus(space, session.id, to));
     return;
   }
-  const prioBtn = t.closest<HTMLElement>("[data-prio]");
+  const prioBtn = el.closest<HTMLElement>("[data-prio]");
   if (prioBtn && state) {
     const session = state;
     const raw = prioBtn.dataset.prio!;
@@ -582,11 +583,11 @@ function onTimelineClick(e: Event) {
     return;
   }
   // 面板内其余区域(textarea/输入框等)不冒泡成开合。
-  if (t.closest(".panel")) return;
+  if (el.closest(".panel")) return;
   // 勾框、缩略图、留言徽章各有其主(main.ts),不抢——徽章漏在这里的话,点它会连带
   // 把操作面板开合一次(留言层滑上来,底下的面板悄悄换了态)。
-  if (t.closest(".tick") || t.closest(".thumb") || t.closest(".cm-badge")) return;
-  const card = t.closest<HTMLElement>("article.card[data-id]");
+  if (el.closest(".tick") || el.closest(".thumb") || el.closest(".cm-badge")) return;
+  const card = el.closest<HTMLElement>("article.card[data-id]");
   if (!card) return;
   const id = card.dataset.id!;
   if (state?.id === id) {
@@ -599,7 +600,7 @@ function onTimelineClick(e: Event) {
     return;
   }
   if (hasDirtyDraft()) {
-    showError("先保存或取消正在编辑的内容");
+    showError(t("cardpanel.finishDraftFirst"));
     return;
   }
   clearConfirm();
@@ -663,13 +664,13 @@ function handleAct(act: string, card: HTMLElement) {
     case "promote":
       // 146:卡离开灵感面——回执指路,且走 onCommitted(重投影清掉 session 也要响)。
       void run((space) => promoteNoteToTask(space, item.id, item.content), {
-        onCommitted: () => showBar("已转为待办,在底栏「任务」里", true),
+        onCommitted: () => showBar(t("cardpanel.promoted"), true),
       });
       return;
     case "tagnew": {
       const title = session.tagDraft.trim();
       if (!title) {
-        showError("标签名不能为空");
+        showError(t("cardpanel.tagNameRequired"));
         return;
       }
       const task = isTaskStage(item.stage);
@@ -694,7 +695,7 @@ function handleAct(act: string, card: HTMLElement) {
     // 两拍类:第一拍弹底部固定确认条,第二拍在条上执行(onYes 复核 session 未变——
     // 期间换卡/收面/切空间的旧确认一律作废,不许作用到新语境)。
     case "del":
-      confirmBar("删除?将移入回收站(可恢复)", "删除", () => {
+      confirmBar(t("cardpanel.deleteQ"), t("cardpanel.deleteYes"), () => {
         if (state !== session || busy) return;
         // 确认期间远端可能已翻 stage(灵感→任务):按现行条目分流,不用第一拍的快照。
         const cur = deps.getItem(session.id);
@@ -703,7 +704,7 @@ function handleAct(act: string, card: HTMLElement) {
           (space) =>
             isTaskStage(cur.stage) ? archiveTask(space, cur.id) : archiveNote(space, cur.id),
           {
-            onCommitted: () => showBar("已移入回收站(底部「回收站」可恢复)", true),
+            onCommitted: () => showBar(t("cardpanel.deleted"), true),
             afterSession: () => {
               state = null;
             },
@@ -714,23 +715,23 @@ function handleAct(act: string, card: HTMLElement) {
     case "revert": {
       const hasMeta = item.due_on !== null || item.priority !== null;
       confirmBar(
-        hasMeta ? "撤回为灵感?将清除截止和优先级" : "撤回为灵感?",
-        "撤回",
+        hasMeta ? t("cardpanel.revertQMeta") : t("cardpanel.revertQ"),
+        t("cardpanel.revertYes"),
         () => {
           if (state !== session || busy) return;
           // 146:卡离开任务面——回执指路,走 onCommitted(理由同 promote)。
           void run((space) => revertTaskToInbox(space, item.id), {
-            onCommitted: () => showBar("已撤回为灵感,在底栏「灵感」里", true),
+            onCommitted: () => showBar(t("cardpanel.reverted"), true),
           });
         },
       );
       return;
     }
     case "seal":
-      confirmBar("入归档册?归档后可查、不可删", "入册", () => {
+      confirmBar(t("cardpanel.sealQ"), t("cardpanel.sealYes"), () => {
         if (state !== session || busy) return;
         void run((space) => sealTask(space, item.id), {
-          onCommitted: () => showBar("已入归档册(底部「归档册」可查)", true),
+          onCommitted: () => showBar(t("cardpanel.sealed"), true),
           afterSession: () => {
             state = null;
           },

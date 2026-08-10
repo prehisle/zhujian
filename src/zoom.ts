@@ -4,6 +4,7 @@
 // 缩根字号只动少数 rem 元素)。纯设备本地——localStorage 记忆、重启保留,**不进同步**
 // (每台机器屏幕大小 / 视力舒适度各管各的,同过去反而添乱)。
 import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { t } from "./i18n";
 import "./zoom.css";
 
 const ZOOM_KEY = "zhujian.zoom";
@@ -58,8 +59,8 @@ async function apply(next: number, announce: boolean): Promise<number> {
   onChange?.(percent());
   // 到上下限也飘(飘当前值),免得用户以为坏了;单例复用,连按不叠。
   if (announce) {
-    const limit = factor === prev ? (factor === MAX ? "（已到最大）" : factor === MIN ? "（已到最小）" : "") : "";
-    showBadge(`界面字号 ${percent()}%${limit}`);
+    const limit = factor === prev ? (factor === MAX ? t("zoom.atMax") : factor === MIN ? t("zoom.atMin") : "") : "";
+    showBadge(t("zoom.badge", { percent: percent(), limit }));
   }
   return percent();
 }

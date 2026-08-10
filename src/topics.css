@@ -11,35 +11,20 @@
 .v-topics header,
 .v-topics main { position: relative; z-index: 1; }
 
-/* ---- header (also a drag handle; right pad clears floating win ctls) ---- */
+/* ---- header (also a drag handle; right pad clears floating win ctls:
+   dead zone = --winctl-dead(theme.css,344 收成派生令牌),+12px 呼吸)。
+   底边距 14px 比 inbox/search 的 12px 多 2px:本视图头带 border-bottom,贴线前
+   多留一口气 —— 建仓第一笔就是 14(inbox/search 的 12 是 58 抄形时另选的),
+   与 border 的有无严格对应,344 判「有意」留着。 ---- */
 .v-topics header {
   flex: none;
-  padding: 20px 150px 14px 30px;
+  padding: 20px calc(var(--winctl-dead) + 12px) 14px 30px;
   display: flex;
   align-items: baseline;
   gap: 14px;
   border-bottom: 1px solid var(--line);
 }
-.v-topics header h1 {
-  margin: 0;
-  font-family: var(--font-serif);
-  font-size: 19px;
-  font-weight: 600;
-  letter-spacing: 0.01em;
-  position: relative;
-  padding-left: 20px;
-  flex: none;
-  white-space: nowrap;
-}
-.v-topics header h1::before {
-  content: "";
-  position: absolute;
-  left: 0; top: 0.16em;
-  width: 12px; height: 12px;
-  border-radius: 3px;
-  background: var(--seal);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, #fff 22%, transparent);
-}
+/* 标题 h1 与它前面那枚朱砂方印:共享件 .view header h1(见 controls.css,339 抽出)。 */
 /* header 动作按钮(新建标签 / 合并标签)统一走共享 .hbtn,见 controls.css;
    新建标签 margin-left:auto 把两颗钮顶右——原先靠 .sub 说明行 flex:1 撑开,说明行删了(67)。 */
 .v-topics header #new-toggle { margin-left: auto; }
@@ -56,11 +41,11 @@
 }
 .v-topics .newform[hidden] { display: none; }
 .v-topics .nt-title {
-  font: 14px var(--font-serif);
+  font: var(--fs-14) var(--font-serif);
   color: var(--ink);
   background: var(--paper);
   border: 1px solid var(--line-strong);
-  border-radius: 9px;
+  border-radius: var(--radius-sm);
   padding: 8px 11px;
   outline: none;
   transition: border-color 0.14s;
@@ -68,7 +53,7 @@
   min-width: 200px;
 }
 .v-topics .nt-title:focus { border-color: var(--seal); }
-.v-topics .nt-err { color: var(--seal); font-size: 12px; letter-spacing: 0.02em; }
+.v-topics .nt-err { color: var(--seal); font-size: var(--fs-12); letter-spacing: 0.02em; }
 
 /* ---- scrolling list ---- */
 .v-topics main {
@@ -76,17 +61,7 @@
   overflow-y: auto;
   padding: 18px 30px 28px;
 }
-.v-topics main::-webkit-scrollbar { width: 10px; height: 10px; }
-.v-topics main::-webkit-scrollbar-thumb {
-  background: var(--line-strong);
-  border: 3px solid var(--paper);
-  border-radius: 10px;
-}
-/* 未定制的部件会退回默认白(轨道 + 横竖交汇的直角),见 board.css 同处注释。 */
-.v-topics main::-webkit-scrollbar-track,
-.v-topics main::-webkit-scrollbar-corner {
-  background: transparent;
-}
+/* 纸面滚动条住 controls.css(全应用一份,348 统一;新增可滚容器去那边登记)。 */
 
 /* ---- a tag row (flat list) ---- */
 .v-topics .topic {
@@ -107,12 +82,12 @@
 .v-topics .topic-kids-toggle {
   flex: none;
   font: inherit;
-  font-size: 11px;
+  font-size: var(--fs-12);
   letter-spacing: 0.04em;
   color: var(--ink-faint);
   background: transparent;
   border: 1px solid var(--line);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   padding: 1px 9px;
   cursor: pointer;
   transition: color 0.14s, border-color 0.14s, background 0.14s;
@@ -145,7 +120,7 @@
   gap: 10px;
   padding: 11px 10px 11px 4px;
   cursor: pointer;
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   border-bottom: 1px solid var(--line);
   user-select: none;
   transition: background 0.14s;
@@ -164,38 +139,36 @@
   height: 16px;
   margin-right: 2px;
   border: 1.5px solid var(--line-strong);
-  border-radius: 5px;
+  border-radius: var(--radius-xs);
   display: none;
   place-items: center;
-  font-family: "Segoe Fluent Icons", "Segoe MDL2 Assets", sans-serif;
-  font-size: 10px;
-  color: transparent;
-  transition: border-color 0.14s, background 0.14s, color 0.14s;
+  /* span 恒为空串(topics.ts section()),勾选态=下方 .topic.selected .check 的实心朱砂方块;
+     原先残留的 Segoe 字体栈/10px/transparent 三条服务于一个不存在的字形,已删。 */
+  transition: border-color 0.14s, background 0.14s;
 }
 .v-topics.merging .check { display: grid; }
 .v-topics .topic.selected .check {
   background: var(--seal);
   border-color: var(--seal);
-  color: #fdf6ee;
 }
 .v-topics .topic.selected .topic-head { border-bottom-color: var(--seal); }
 .v-topics .topic.selected .topic-title { color: var(--seal); }
 /* the survivor of the current selection wears a serif badge */
 .v-topics .keep-badge {
   flex: none;
-  font-size: 10.5px;
+  font-size: var(--fs-12);
   letter-spacing: 0.06em;
   color: var(--seal);
   border: 1px solid var(--seal-line);
   background: var(--seal-tint);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   padding: 1px 8px;
   display: none;
 }
 .v-topics .topic.survivor .keep-badge { display: inline-block; }
 .v-topics .topic-title {
   font-family: var(--font-serif);
-  font-size: 16.5px;
+  font-size: var(--fs-17);
   font-weight: 600;
   letter-spacing: 0.01em;
   color: var(--ink);
@@ -204,7 +177,7 @@
 }
 .v-topics .topic-count {
   flex: none;
-  font-size: 11.5px;
+  font-size: var(--fs-12);
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.04em;
   color: var(--ink-faint);
@@ -216,7 +189,7 @@
   align-self: center;
   cursor: grab;
   color: var(--ink-faint);
-  font-size: 13px;
+  font-size: var(--fs-13);
   line-height: 1;
   opacity: 0;
   transition: opacity 0.14s, color 0.14s;
@@ -235,12 +208,12 @@
 .v-topics .topic-kind {
   flex: none;
   display: none;
-  font-size: 10.5px;
+  font-size: var(--fs-12);
   letter-spacing: 0.04em;
   color: var(--ink-soft);
   border: 1px solid var(--line);
   background: color-mix(in srgb, var(--ink) 4%, transparent);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   padding: 1px 8px;
 }
 .v-topics .topic-kind.on { display: inline-block; }
@@ -249,10 +222,10 @@
   flex: none;
   width: 180px;
   font: inherit;
-  font-size: 13px;
+  font-size: var(--fs-13);
   padding: 3px 8px;
   border: 1px solid var(--line-strong);
-  border-radius: 7px;
+  border-radius: var(--radius-sm);
   background: var(--paper);
   color: var(--ink);
 }
@@ -270,18 +243,18 @@
 .v-topics .topic-head:hover .topic-actions { opacity: 1; }
 .v-topics.merging .topic-actions { display: none; } /* heads are for selection while merging */
 .v-topics .tbtn {
-  font: 11.5px/1 var(--font-sans);
+  font: var(--fs-12)/1 var(--font-sans);
   color: var(--ink-faint);
   background: transparent;
   border: 0;
-  border-radius: 7px;
+  border-radius: var(--radius-sm);
   padding: 4px 8px;
   cursor: pointer;
   transition: background 0.14s, color 0.14s;
 }
 .v-topics .tbtn:hover { background: color-mix(in srgb, var(--ink) 8%, transparent); color: var(--ink); }
 .v-topics .tbtn.danger:hover { background: var(--seal-tint); color: var(--seal); }
-.v-topics .td-q { font-size: 11.5px; color: var(--seal); letter-spacing: 0.02em; }
+.v-topics .td-q { font-size: var(--fs-12); color: var(--seal); letter-spacing: 0.02em; }
 
 /* ---- 标签颜色:行首色点 + ⋯「颜色」的调色板 ---- */
 .v-topics .topic-dot {
@@ -289,7 +262,7 @@
   align-self: center;
   width: 9px;
   height: 9px;
-  border-radius: 50%;
+  border-radius: var(--radius-circle);
   background: var(--tag-color);
   flex: 0 0 auto;
 }
@@ -300,7 +273,7 @@
   width: 17px;
   height: 17px;
   padding: 0;
-  border-radius: 50%;
+  border-radius: var(--radius-circle);
   border: 1px solid color-mix(in srgb, var(--ink) 20%, transparent);
   background: var(--tag-color);
   cursor: pointer;
@@ -311,7 +284,7 @@
   align-items: center;
   justify-content: center;
   background: var(--paper);
-  font: 9px/1 var(--font-sans);
+  font: var(--fs-12)/1 var(--font-sans);
   color: var(--ink-faint);
 }
 
@@ -322,23 +295,23 @@
   gap: 9px;
   padding: 12px 14px;
   border: 1px solid var(--seal-line);
-  border-radius: 12px;
+  border-radius: var(--radius-md);
   background: var(--seal-tint);
 }
-.v-topics .te-label { font-size: 11.5px; letter-spacing: 0.05em; color: var(--ink-soft); }
+.v-topics .te-label { font-size: var(--fs-12); letter-spacing: 0.05em; color: var(--ink-soft); }
 .v-topics .te-title {
-  font: 15px var(--font-serif);
+  font: var(--fs-15) var(--font-serif);
   color: var(--ink);
   background: var(--paper);
   border: 1px solid var(--line-strong);
-  border-radius: 9px;
+  border-radius: var(--radius-sm);
   padding: 9px 11px;
   outline: none;
   transition: border-color 0.14s;
 }
 .v-topics .te-title:focus { border-color: var(--seal); }
 .v-topics .te-actions { display: flex; align-items: center; gap: 8px; }
-.v-topics .te-err { color: var(--seal); font-size: 12px; letter-spacing: 0.02em; }
+.v-topics .te-err { color: var(--seal); font-size: var(--fs-12); letter-spacing: 0.02em; }
 
 /* ---- expand/collapse: a tag's notes + tasks shown inline (no drill page) ---- */
 .v-topics .topic-caret {
@@ -360,7 +333,7 @@
 }
 .v-topics .drill-h {
   margin: 0 0 10px;
-  font: 12px/1 var(--font-sans);
+  font: var(--fs-12)/1 var(--font-sans);
   letter-spacing: 0.08em;
   color: var(--ink-soft);
 }
@@ -371,7 +344,7 @@
   gap: 9px;
 }
 .v-topics .drill-empty {
-  font-size: 12.5px;
+  font-size: var(--fs-13);
   color: var(--ink-faint);
   font-style: italic;
   padding: 4px 2px;
@@ -381,7 +354,7 @@
 .v-topics .dtask {
   position: relative;
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: var(--radius-md);
   padding: 11px 14px;
   background: linear-gradient(180deg, var(--raised), var(--raised-edge));
   box-shadow: var(--card-shadow);
@@ -389,7 +362,7 @@
 .v-topics .dtask-title {
   margin: 0;
   font-family: var(--font-serif);
-  font-size: 14.5px;
+  font-size: var(--fs-15);
   line-height: 1.6;
   color: var(--ink);
   white-space: pre-wrap;
@@ -406,14 +379,10 @@
 .v-topics .dtask-col,
 .v-topics .dtask-due,
 .v-topics .dtask-pri {
-  font-size: 11px;
   letter-spacing: 0.02em;
-  padding: 2px 9px;
-  border-radius: 999px;
   border: 1px solid var(--line-strong);
-  color: var(--ink-soft);
   background: var(--raised);
-}
+} /* 其余声明 = 共享件徽记 chip 族(controls.css,352) */
 .v-topics .dtask-due.overdue { color: var(--seal); border-color: var(--seal-line); background: var(--seal-tint); }
 .v-topics .dtask-due.today { color: var(--ink); border-color: var(--ink-faint); }
 .v-topics .dtask-pri.p3 { color: var(--seal); border-color: var(--seal-line); background: var(--seal-tint); }
@@ -421,10 +390,10 @@
   position: absolute;
   top: 9px;
   right: 10px;
-  font: 11px/1 var(--font-sans);
+  font: var(--fs-12)/1 var(--font-sans);
   padding: 4px 9px;
   border: 1px solid var(--line-strong);
-  border-radius: 7px;
+  border-radius: var(--radius-sm);
   background: var(--raised);
   color: var(--ink-faint);
   cursor: pointer;
@@ -432,12 +401,16 @@
   transition: opacity 0.14s, border-color 0.14s, color 0.14s;
 }
 .v-topics .dtask:hover .dtask-copy { opacity: 1; }
-.v-topics .dtask-copy:hover { border-color: var(--seal); color: var(--seal); }
+/* 悬停升到 --ink 而不是 --seal(343):这枚钮 12px,朱砂压抬升纸面只有 5.28(暗档 4.87),
+   过不了 §2.2 第二条那条小字底线。⭐ 更要紧的是 —— check-contrast 的 ALLOW 里给它那条
+   登记原话就写着「悬停时才升到 --ink」,而代码一直写的是 --seal:**那句 why 从来没人核**。
+   朱砂的强调由边框留着,字回到墨(与 §2.1「hover 一律往 --ink 的方向压」同向)。 */
+.v-topics .dtask-copy:hover { border-color: var(--seal); color: var(--ink); }
 
 /* idea card in an expanded tag (read-only 想法 list) */
 .v-topics .tnote {
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: var(--radius-md);
   padding: 11px 14px;
   background: linear-gradient(180deg, var(--raised), var(--raised-edge));
   box-shadow: var(--card-shadow);
@@ -445,7 +418,7 @@
 .v-topics .tnote-text {
   margin: 0;
   font-family: var(--font-serif);
-  font-size: 14.5px;
+  font-size: var(--fs-15);
   line-height: 1.6;
   color: var(--ink);
   white-space: pre-wrap;
@@ -454,7 +427,7 @@
 .v-topics .tnote-time {
   display: block;
   margin-top: 6px;
-  font-size: 11px;
+  font-size: var(--fs-12);
   letter-spacing: 0.03em;
   color: var(--ink-faint);
   font-variant-numeric: tabular-nums;
@@ -466,7 +439,14 @@
   position: relative;
   z-index: 2;
   border-top: 1px solid var(--line);
-  background: color-mix(in srgb, var(--paper) 88%, #000 2%);
+  /* 「比纸面沉一档的底座」——chip 用 --raised 浮在它上面,层次是 条底 < 纸 < chip。
+     ⚠ 原写 `var(--paper) 88%, #000 2%`:两个百分比加起来只有 90,按 CSS 规范这会让
+     **结果的 alpha 乘上 0.9**(而不是把差额补给谁),于是整条意外半透明 10%。它
+     `z-index:2` 明确是要盖住东西的,今天没露馅只因为它背后恰好也是纸面。补到 100 后
+     渲染色与原来几乎一字不差(#eee9de),这一改**不动观感,只把意图写对**。
+     这里的 `#000` 与 337 那条「hover 不许往 #000 压」不冲突:那条要的是「离纸面更远、
+     更凸出」(故两档翻面、往 --ink 压),这里要的是绝对的「沉」(两档同向往暗压)。 */
+  background: color-mix(in srgb, var(--paper) 98%, #000);
   padding: 12px 30px 14px;
   display: flex;
   align-items: center;
@@ -478,7 +458,7 @@
 .v-topics .mb-hint {
   flex-basis: 100%;
   min-width: 0;
-  font-size: 12.5px;
+  font-size: var(--fs-13);
   color: var(--ink-soft);
 }
 .v-topics .mb-hint b { color: var(--seal); font-weight: 600; }
@@ -495,11 +475,11 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: 12px;
+  font-size: var(--fs-12);
   max-width: 220px;
   padding: 4px 5px 4px 10px;
   border: 1px solid var(--line-strong);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--raised);
   color: var(--ink-soft);
 }
@@ -519,7 +499,7 @@
 .v-topics .mb-chip-keep {
   flex: none;
   font-family: var(--font-sans);
-  font-size: 9.5px;
+  font-size: var(--fs-12);
   letter-spacing: 0.06em;
   color: var(--seal);
 }
@@ -530,20 +510,20 @@
   height: 17px;
   display: grid;
   place-items: center;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   color: var(--ink-faint);
-  font-size: 13px;
+  font-size: var(--fs-13);
   line-height: 1;
 }
 .v-topics .mb-chip-x:hover { background: color-mix(in srgb, var(--ink) 12%, transparent); color: var(--ink); }
 .v-topics .mb-rename {
   flex: none;
   width: 180px;
-  font: 13px var(--font-serif);
+  font: var(--fs-13) var(--font-serif);
   color: var(--ink);
   background: var(--raised);
   border: 1px solid var(--line-strong);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   padding: 7px 11px;
   outline: none;
   transition: border-color 0.14s;
@@ -552,9 +532,9 @@
 .v-topics .mb-rename[hidden] { display: none; }
 .v-topics .mb-btn {
   flex: none;
-  font: 12.5px/1 var(--font-sans);
+  font: var(--fs-13)/1 var(--font-sans);
   padding: 8px 15px;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   border: 1px solid var(--line-strong);
   background: var(--raised);
   color: var(--ink-soft);
@@ -565,9 +545,20 @@
 .v-topics .mb-btn.go {
   background: var(--seal);
   border-color: var(--seal);
-  color: #fdf6ee;
+  color: var(--on-seal);
 }
-.v-topics .mb-btn.go:hover:not(:disabled) { background: var(--seal-deep, var(--seal)); color: #fff; }
+/* 336:原写 `var(--seal-deep, var(--seal))`,而 --seal-deep 哪份令牌表都没有 —— 幽灵
+   令牌靠兜底值静默退回 --seal,于是这个 hover 只是把字从纸色换成纯白,几乎没有反馈。
+   改成与灵感/看板主按钮同一句(往墨里压 12%,方向规矩见 theme.css)。
+   337 补齐另外两半:上面那条通用 `.mb-btn:hover:not(:disabled)` 是 (0,4,0),**压过**
+   `.mb-btn.go` 的 (0,3,0),于是「合并」钮一悬停,字就从 --on-seal 变回 --ink、边框
+   变成墨黑 —— 亮色档下是**墨黑压朱砂 2.51:1,几乎读不出来**。这两个 color/border-color
+   不是冗余,是把被通用规则抢走的那两格抢回来。 */
+.v-topics .mb-btn.go:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--seal) 88%, var(--ink));
+  border-color: color-mix(in srgb, var(--seal) 88%, var(--ink));
+  color: var(--on-seal);
+}
 .v-topics .mb-btn:disabled { opacity: 0.4; cursor: default; }
 
 /* ---- centered empty / error states ---- */
@@ -584,20 +575,9 @@
 }
 .v-topics .center .big {
   font-family: var(--font-serif);
-  font-size: 17px;
+  font-size: var(--fs-17);
   color: var(--ink);
 }
-.v-topics .center > div:not(.big):not(.err-box) { max-width: 330px; font-size: 13px; line-height: 1.7; }
-.v-topics .center .err-box {
-  max-width: 460px;
-  white-space: pre-wrap;
-  word-break: break-word;
-  color: var(--seal);
-  font-size: 12.5px;
-  text-align: left;
-  background: var(--seal-tint);
-  border: 1px solid var(--seal-line);
-  border-radius: 10px;
-  padding: 12px 14px;
-}
-@keyframes rise { from { opacity: 0; transform: translateY(6px); } }
+.v-topics .center > div:not(.big):not(.err-box) { max-width: 330px; font-size: var(--fs-13); line-height: 1.7; }
+.v-topics .center .err-box { max-width: 460px; } /* 其余九条声明 = 共享件 .view .center .err-box(controls.css,345)。460 vs board 480 判「有意」:340/330 与 480/460 两对同向、自初始提交 da8d68f(㊶)成对存在,判据全文见 board.css 同位注释。 */
+/* @keyframes rise 住 controls.css(全文档一份)—— keyframes 是文档级全局名,四份同名副本只有最后加载的那份生效。 */

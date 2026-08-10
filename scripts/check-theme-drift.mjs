@@ -28,12 +28,26 @@ import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
-/** 三份令牌表。`dark` = 这一份有没有暗色档。 */
+/**
+ * 暗色档的两种挂法。客户端由 theme-mode 单点写 data-theme 属性(明暗三档要它);
+ * 官网没有那一层,直接 @media 跟随系统。**两种都主动去找**,找到哪种算哪种。
+ */
+const DARK_FORMS = [':root[data-theme="dark"]', "@media (prefers-color-scheme: dark)"];
+
+/**
+ * 三份令牌表。`dark` = 这一份**应该**有暗色档 —— 它是个会被核对的断言,不是配置:
+ * 声称有却找不到、或声称没有却找得到,两个方向都红。
+ *
+ * ⚠ 336 修正:官网原登记为 `dark: false`,理由写「刻意不做明暗三档」。**三档**
+ * (自动/亮/暗 用户可选)确实没有 —— 那要偏好持久化;但它**有暗色档**。于是官网那
+ * 12 个暗色令牌从上线起没被任何门禁看过(今天碰巧还对齐,靠的是运气不是这道闸)。
+ * 同轮的阴性对照还量出:光把这里改对不够 —— 旧版把 `dark:false` 当**配置**用,谁翻
+ * 回去都不会响。所以现在两个方向都核。
+ */
 const SOURCES = [
   { name: "桌面", file: "src/theme.css", dark: true },
   { name: "安卓", file: "android/index.html", dark: true },
-  // 官网刻意不做明暗三档(静态单页、无偏好持久化),故只有亮色一档。
-  { name: "官网", file: "site/index.html", dark: false },
+  { name: "官网", file: "site/index.html", dark: true },
 ];
 
 const ALL = SOURCES.map((s) => s.name);
@@ -55,10 +69,37 @@ const TOKENS = [
   { name: "--seal", in: ALL, dark: true },
   { name: "--seal-tint", in: ALL, dark: true },
   { name: "--seal-line", in: ALL, dark: true },
+  // 压在朱砂上的字。336 之前三份各写各的白(桌面 #fdf6ee / 安卓 #fff / 官网 #faf6ec)——
+  // 令牌表逐字对齐,用法却是三个值,那正是这道门禁看不见的那一层(现由 check-contrast 管)。
+  { name: "--on-seal", in: ALL, dark: true },
 
   // ---- 字体:三份同字栈;暗色不重定义(字体与明暗无关) ----
   { name: "--font-sans", in: ALL, dark: false },
   { name: "--font-serif", in: ALL, dark: false },
+
+  // ---- 圆角阶(341):三份同阶;暗色不重定义(几何与明暗无关) ----
+  // 用法那一层由 `scripts/check-radius-drift.mjs` 管(这道只核定义)。
+  { name: "--radius-xs", in: ALL, dark: false },
+  { name: "--radius-sm", in: ALL, dark: false },
+  { name: "--radius-md", in: ALL, dark: false },
+  { name: "--radius-lg", in: ALL, dark: false },
+  { name: "--radius-pill", in: ALL, dark: false },
+  { name: "--radius-circle", in: ALL, dark: false },
+  { name: "--radius-seal", in: ALL, dark: false },
+
+  // ---- 字号阶(342):三份同阶;暗色不重定义(字号与明暗无关) ----
+  // 用法那一层由 `scripts/check-fs-drift.mjs` 管(这道只核定义)。
+  // 最小档 12px 不是随手取的:它就是 §2.2 第一条「信息性文字最小 12px」,阶下无档。
+  { name: "--fs-12", in: ALL, dark: false },
+  { name: "--fs-13", in: ALL, dark: false },
+  { name: "--fs-14", in: ALL, dark: false },
+  { name: "--fs-15", in: ALL, dark: false },
+  { name: "--fs-16", in: ALL, dark: false },
+  { name: "--fs-17", in: ALL, dark: false },
+  { name: "--fs-18", in: ALL, dark: false },
+  { name: "--fs-20", in: ALL, dark: false },
+  { name: "--fs-24", in: ALL, dark: false },
+  { name: "--fs-30", in: ALL, dark: false },
 
   // ---- 各端专用 / 尚未铺到的:逐条写明归谁、为什么 ----
   {
@@ -93,10 +134,34 @@ const TOKENS = [
   },
   {
     name: "--ok",
-    in: ["安卓"],
+    in: APPS,
     dark: true,
-    why: "「成功/正向」绿,今天只有安卓的同步状态点在用。桌面若要用同一个语义色,\
-应当把它提到 in: APPS 并把值抄过去,而不是另起一个名字",
+    why: "「成功/正向」绿,两个客户端的同步状态点「已连」在用。339 兑现了上一版这条 why 里\
+写的话 —— 桌面此前写死 #4c9a6a 且两档同一个值,已把安卓那份的值抄过来。官网没有同步状态",
+  },
+  {
+    name: "--wc-w",
+    in: ["桌面"],
+    dark: false,
+    why: "单颗自绘窗控按钮的宽(notebook 壳 .wc)。344 收:此前 46px 写在壳里、而各视图头\
+「右侧躲开 3×46=138px」那笔账只存在于三处复制的注释里,窗控加宽会让视图头静默钻底。\
+安卓/官网没有自绘窗控。与 --wrap 同族:布局尺寸不是颜色令牌",
+  },
+  {
+    name: "--winctl-dead",
+    in: ["桌面"],
+    dark: false,
+    why: "窗控死区 = calc(3 × --wc-w) = 138px,四个视图头的右 padding 从它派生(+ 各自的\
+呼吸量)。派生常量不是审美值 —— 344 有意只把这类跨文件派生约束收成令牌,间距不建阶\
+(判据分析见 progress-log 344)",
+  },
+  {
+    name: "--nav-clear",
+    in: ["安卓"],
+    dark: false,
+    why: "悬浮层给底栏让出的高度(64px 眼估余量,实高约 57px+安全区):此前 body 底 padding /\
+更新条 / 确认条三处各写死一份、上次底栏改高人工追改过一轮。与 --winctl-dead 同族:跨处派生\
+约束收成令牌(344 的形)。FAB 走 ResizeObserver 实测的 --nav-h,两套的合并待拍板",
   },
 ];
 
@@ -120,7 +185,7 @@ function blockBody(src, selector) {
   throw new Error(`${selector} 的 { 没有配平的 } —— 解析器看不懂这个形状`);
 }
 
-/** 一份文件里的令牌:{ light: {名:值}, dark: {名:值} }。值做空白折叠后逐字比对。 */
+/** 一份文件里的令牌:{ light, dark, darkForm }。值做空白折叠后逐字比对。 */
 function tokensOf(text, file) {
   const pick = (body) => {
     const bag = {};
@@ -130,10 +195,20 @@ function tokensOf(text, file) {
     }
     return bag;
   };
-  // `:root {` 与 `:root{` 两种写法都认;暗色一律挂 [data-theme="dark"](theme-mode 单点写属性)。
+  // `:root {` 与 `:root{` 两种写法都认。
   const lightBody = blockBody(text, ":root {") ?? blockBody(text, ":root{");
   if (lightBody === null) throw new Error(`${file} 里找不到 :root { … } 块 —— 令牌表搬走了?`);
-  return { light: pick(lightBody), dark: pick(blockBody(text, ':root[data-theme="dark"]')) };
+  // 两种挂法都探,别听登记表说 —— 「这份有没有暗色档」自己就是要被核的那件事。
+  for (const form of DARK_FORMS) {
+    let darkBody = blockBody(text, form);
+    if (darkBody === null) continue;
+    if (form.startsWith("@media")) {
+      darkBody = blockBody(darkBody, ":root {") ?? blockBody(darkBody, ":root{");
+    }
+    const dark = pick(darkBody);
+    if (Object.keys(dark).length > 0) return { light: pick(lightBody), dark, darkForm: form };
+  }
+  return { light: pick(lightBody), dark: {}, darkForm: null };
 }
 
 // ---- 门禁 ---------------------------------------------------------------------------
@@ -149,8 +224,16 @@ for (const s of SOURCES) {
   if (Object.keys(t.light).length === 0) {
     problems.push(`${s.name}(${s.file})的 :root 里一个令牌都没解析到 —— 提取器失灵,不是那里真的空着`);
   }
-  if (s.dark && Object.keys(t.dark).length === 0) {
-    problems.push(`${s.name}(${s.file})声称有暗色档,却一个暗色令牌都没解析到`);
+  // `dark` 是断言不是配置,两个方向都核 —— 336 的阴性对照证明:只把登记改对不够,
+  // 旧版把它当配置用,谁翻回 false 都不会响,那 12 个暗色令牌就又静默出局了。
+  if (s.dark && t.darkForm === null) {
+    problems.push(`${s.name}(${s.file})登记为有暗色档,却两种挂法(${DARK_FORMS.join(" / ")})都没找到`);
+  }
+  if (!s.dark && t.darkForm !== null) {
+    problems.push(
+      `${s.name}(${s.file})登记为没有暗色档,却在 ${t.darkForm} 里找到了 ` +
+        `${Object.keys(t.dark).length} 个暗色令牌 —— 那它们从来没被比对过,改登记表`,
+    );
   }
   parsed.set(s.name, t);
 }

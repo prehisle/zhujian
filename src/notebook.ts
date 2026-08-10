@@ -7,6 +7,7 @@ import { mount as mountBoard, boardHasStashedDraft, focusTask, focusBoardView } 
 import { mount as mountTopics } from "./topics";
 import { mount as mountSearch } from "./search";
 import { parseDeepLink, consumePendingDeepLink } from "./deeplink";
+import { t, initLang, applyStaticI18n } from "./i18n";
 import { initSync, seedSpaceStatuses, setSpaceNames, showToast, syncSpaceSwitched, DEFAULT_SYNC_URL } from "./sync";
 import { initSettings, openSettingsPanel } from "./settings";
 import { initZoom } from "./zoom";
@@ -116,7 +117,7 @@ async function syncMaxGlyph(): Promise<void> {
   if (!maxBtn) return;
   const max = await win.isMaximized();
   maxBtn.innerHTML = max ? SVG_RESTORE : SVG_MAXIMIZE;
-  maxBtn.title = max ? "向下还原" : "最大化";
+  maxBtn.title = max ? t("notebook.restoreDown") : t("notebook.maximize");
 }
 maxBtn?.addEventListener("click", () => void win.toggleMaximize());
 win.onResized(() => void syncMaxGlyph());
@@ -132,7 +133,7 @@ function applySidebar(collapsed: boolean): void {
   document.body.classList.toggle("sb-collapsed", collapsed);
   if (sidebarToggle) {
     sidebarToggle.textContent = collapsed ? "»" : "«";
-    sidebarToggle.title = collapsed ? "展开侧栏 (Ctrl+B)" : "折叠侧栏 (Ctrl+B)";
+    sidebarToggle.title = collapsed ? t("notebook.expandSidebar") : t("notebook.collapseSidebar");
   }
 }
 function toggleSidebar(): void {
@@ -242,7 +243,7 @@ async function openDeepLink(raw: string): Promise<void> {
       ? (all.find((s) => s.alive && s.id === p.space)?.id ?? null)
       : null;
   if (!target) {
-    showToast("这条所在的空间不在这台设备上");
+    showToast(t("notebook.spaceNotOnDevice"));
     return;
   }
   // 切到目标空间(若不同):不走 switchSpace 的「先 navigate 当前视图」——那会白挂一次,
@@ -256,11 +257,11 @@ async function openDeepLink(raw: string): Promise<void> {
   try {
     loc = await invokeInSpace<string | null>(target, "locate_item", { itemId: p.item });
   } catch (e) {
-    showToast(`打开失败:${String(e)}`);
+    showToast(t("notebook.openFailed", { error: String(e) }));
     return;
   }
   if (!loc) {
-    showToast("找不到这条(可能已删除)");
+    showToast(t("notebook.itemNotFound"));
     return;
   }
   routeToItem(p.item, loc);
@@ -340,11 +341,11 @@ function showDeepLinkPill(url: string): void {
   pill.textContent = "";
   const label = document.createElement("span");
   label.className = "deeplink-pill-label";
-  label.textContent = "剪贴板里有一条朱简链接";
+  label.textContent = t("notebook.clipboardLink");
   const openBtn = document.createElement("button");
   openBtn.type = "button";
   openBtn.className = "deeplink-pill-open";
-  openBtn.textContent = "打开";
+  openBtn.textContent = t("notebook.open");
   openBtn.addEventListener("click", () => {
     hideDeepLinkPill();
     void openDeepLink(url);
@@ -353,7 +354,7 @@ function showDeepLinkPill(url: string): void {
   dismiss.type = "button";
   dismiss.className = "deeplink-pill-dismiss";
   dismiss.textContent = "×";
-  dismiss.setAttribute("aria-label", "关闭");
+  dismiss.setAttribute("aria-label", t("notebook.close"));
   dismiss.addEventListener("click", () => hideDeepLinkPill());
   pill.append(label, openBtn, dismiss);
   pill.classList.add("show");
@@ -426,11 +427,11 @@ let joinAttempt: string | null = null;
 let joinNoteEl: HTMLElement | null = null;
 
 const JOIN_PHASE_LABEL: Record<string, string> = {
-  preparing: "准备中…",
-  pairing: "正在配对…",
-  booting: "正在拉取账户数据…",
-  publishing: "正在落成空间…",
-  integrating: "正在装入空间列表…",
+  preparing: t("notebook.joinPreparing"),
+  pairing: t("notebook.joinPairing"),
+  booting: t("notebook.joinBooting"),
+  publishing: t("notebook.joinPublishing"),
+  integrating: t("notebook.joinIntegrating"),
 };
 
 void listen<{ attempt_id: string; phase: string; received: number; total: number }>(
@@ -440,7 +441,10 @@ void listen<{ attempt_id: string; phase: string; received: number; total: number
     if (p.attempt_id !== joinAttempt || !joinNoteEl) return;
     joinNoteEl.textContent =
       p.phase === "booting" && p.total > 0
-        ? `正在拉取账户数据 ${(p.received / 1048576).toFixed(1)} / ${(p.total / 1048576).toFixed(1)} MB`
+        ? t("notebook.joinBootingProgress", {
+            received: (p.received / 1048576).toFixed(1),
+            total: (p.total / 1048576).toFixed(1),
+          })
         : (JOIN_PHASE_LABEL[p.phase] ?? p.phase);
   },
 );
@@ -480,28 +484,28 @@ async function doJoinSpace(
   const attempt = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
   joinAttempt = attempt;
   joinNoteEl = note;
-  note.textContent = "准备中…";
+  note.textContent = t("notebook.joinPreparing");
   go.disabled = true;
   try {
     const out = await joinSpace(serverUrl, code, attempt);
     if (out.kind === "integrated") {
-      const warn = out.warnings.length ? `(注意:${out.warnings.join(";")})` : "";
+      const warn = out.warnings.length ? t("notebook.joinWarnSuffix", { warnings: out.warnings.join(";") }) : "";
       closeSpaceMenu();
       refreshSpaceEntry();
       // Integrated 不含强切(§3.2 / codex 一轮 H1):当前视图有未保存的输入
       // (compose/编辑卡都是 textarea;过滤框是 input[type=search] 不算)时**保持
       // 原前台**——桌面视图重挂会丢别的空间的草稿,只指路不代切。
       if (viewHasDirtyText()) {
-        showToast(`已加入空间「${spaceLabel(out.space)}」${warn}——保存或清空正在编辑的内容后,从空间菜单切换过去`);
+        showToast(t("notebook.joinedStay", { name: spaceLabel(out.space), warn }));
       } else {
-        showToast(`已加入空间「${spaceLabel(out.space)}」${warn}`);
+        showToast(t("notebook.joined", { name: spaceLabel(out.space), warn }));
         switchSpace(out.space.id);
       }
     } else {
       // 空间已真实存在(账户已注册):如实提示重启后出现,**绝不当失败重试**。
       showToast(out.error);
       note.textContent = out.error;
-      cancel.textContent = "关闭";
+      cancel.textContent = t("notebook.close");
     }
   } catch (e: unknown) {
     note.textContent = String(e);
@@ -517,21 +521,21 @@ async function doJoinSpace(
 function spaceJoinRow(): HTMLElement {
   const row = document.createElement("button");
   row.className = "space-row action";
-  row.textContent = "加入空间(输入配对码)…";
+  row.textContent = t("notebook.joinSpace");
   row.addEventListener("click", () => {
     const form = document.createElement("div");
     form.className = "space-form";
     const server = document.createElement("input");
-    server.placeholder = "服务器地址(wss://…)";
+    server.placeholder = t("notebook.joinServerPh");
     server.value = DEFAULT_SYNC_URL;
     server.spellcheck = false;
     const code = document.createElement("input");
-    code.placeholder = "配对码(对方设备「添加设备」出示)";
+    code.placeholder = t("notebook.joinCodePh");
     code.spellcheck = false;
     const go = document.createElement("button");
-    go.textContent = "加入";
+    go.textContent = t("notebook.join");
     const cancel = document.createElement("button");
-    cancel.textContent = "取消";
+    cancel.textContent = t("notebook.cancel");
     const note = document.createElement("div");
     note.className = "space-err";
     for (const inp of [server, code]) {
@@ -567,19 +571,19 @@ function spaceJoinRow(): HTMLElement {
 function spaceResetRow(configured: boolean): HTMLElement {
   const row = document.createElement("button");
   row.className = "space-row action";
-  row.textContent = "重置当前空间…";
+  row.textContent = t("notebook.resetSpace");
   row.addEventListener("click", () => {
     const form = document.createElement("div");
     form.className = "space-form";
     const warn = document.createElement("div");
     warn.className = "space-err";
     warn.textContent = configured
-      ? "将删除本机此空间的全部数据,不可恢复。确认另一台设备有在线完整副本后再继续;重置后可用「加入空间」重新加入,旧设备身份请告知运营者吊销。"
-      : "此空间未开启同步,本机就是唯一副本——重置=永久删除这个本子的全部内容,没有任何地方可以找回。";
+      ? t("notebook.resetWarnSynced")
+      : t("notebook.resetWarnLocalOnly");
     const ok = document.createElement("button");
-    ok.textContent = "确认重置";
+    ok.textContent = t("notebook.resetConfirm");
     const cancel = document.createElement("button");
-    cancel.textContent = "取消";
+    cancel.textContent = t("notebook.cancel");
     const err = document.createElement("div");
     err.className = "space-err";
     let busy = false;
@@ -636,7 +640,7 @@ async function openSpaceMenu(): Promise<void> {
     if (!s.alive) {
       // 未装载的空间(同一物理库的第二个名字):列出说明,不可切入。
       row.disabled = true;
-      row.title = s.status.error ?? "此空间未装载";
+      row.title = s.status.error ?? t("notebook.spaceNotLoaded");
     } else {
       if (s.id === currentSpaceId()) {
         const mark = document.createElement("span");
@@ -654,16 +658,16 @@ async function openSpaceMenu(): Promise<void> {
   // 新建空间(不设上限,109 决定①;入口常驻;即建即用的纯本地本子)+ 加入空间
   // (space-entry-plan §2 独立入口)+ 改当前空间名。
   menu.appendChild(
-    spaceActionRow("＋ 新建空间", "空间名(比如「家庭」)", async (name) => {
+    spaceActionRow(t("notebook.newSpace"), t("notebook.newSpacePh"), async (name) => {
       const info: SpaceInfo = await createSpace(name);
       closeSpaceMenu();
       switchSpace(info.id);
-      showToast("空间已创建,现在就能记录。想多端同步,到「同步」里创建账户。");
+      showToast(t("notebook.spaceCreated"));
     }),
   );
   menu.appendChild(spaceJoinRow());
   menu.appendChild(
-    spaceActionRow("重命名当前空间", "新名字", async (name) => {
+    spaceActionRow(t("notebook.renameSpace"), t("notebook.renameSpacePh"), async (name) => {
       await renameSpace(currentSpaceId(), name);
       closeSpaceMenu();
       refreshSpaceEntry();
@@ -703,6 +707,11 @@ void (async () => {
   // 明暗三档(250):首帧的定色已由 notebook.html 头里的内联脚本做掉,这里接上「自动」
   // 档跟随系统变化 + 跨窗改档广播。同样纯设备本地、不进同步。
   initTheme();
+
+  // 多语言(358):壳层静态文案按 data-i18n 覆写(zh 下写回同文 = 零可见变化),
+  // 并挂「别窗改档 → 本窗 reload」。同样纯设备本地、不进同步。
+  initLang();
+  applyStaticI18n();
 
   // 自动更新(88):启动静默查一次。只在生产构建跑(dev/e2e 是 vite dev server,
   // import.meta.env.PROD 为 false),开发/测试期不打网络也不弹 banner。

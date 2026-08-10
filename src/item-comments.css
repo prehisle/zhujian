@@ -6,10 +6,10 @@
   background: transparent;
   color: var(--ink-soft);
   font-family: var(--font-sans);
-  font-size: 11px;
+  font-size: var(--fs-12);
   line-height: 1.5;
   padding: 0 6px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   cursor: pointer;
 }
 .cm-badge:hover {
@@ -18,7 +18,10 @@
 }
 
 /* 浮层:遮罩 + 居中面板。portal 到 <body>,不受卡片 overflow / 层叠上下文摆布
-   (同 ⋯ 菜单与看大图那两处栽过的坑)。 */
+   (同 ⋯ 菜单与看大图那两处栽过的坑)。
+   遮罩取**深压**而非 settings/sync 的浅雾玻璃是有分野判据的(348 拍板):阅读型浮层
+   深压(读内容,身后整版退场好聚焦)、操作型面板浅雾(操作台,保「还在原场所」的
+   方位感)。新增浮层按此二选一;登记见 check-hardcoded-colors.mjs 本色那条。 */
 .cm-overlay {
   position: fixed;
   inset: 0;
@@ -35,7 +38,7 @@
   flex-direction: column;
   background: var(--raised);
   border: 1px solid var(--line-strong);
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   box-shadow: var(--float-shadow);
   overflow: hidden;
 }
@@ -50,14 +53,14 @@
 .cm-title {
   margin: 0;
   font-family: var(--font-serif);
-  font-size: 15px;
+  font-size: var(--fs-15);
   color: var(--ink);
 }
 .cm-close {
   border: none;
   background: transparent;
   color: var(--ink-faint);
-  font-size: 14px;
+  font-size: var(--fs-14);
   cursor: pointer;
 }
 .cm-close:hover {
@@ -80,7 +83,7 @@
 .cm-text {
   margin: 0;
   font-family: var(--font-serif);
-  font-size: 14px;
+  font-size: var(--fs-14);
   line-height: 1.65;
   color: var(--ink);
   white-space: pre-wrap; /* 留言原样保形:换行是作者写的 */
@@ -92,7 +95,7 @@
   gap: 8px;
   margin-top: 4px;
   font-family: var(--font-sans);
-  font-size: 11px;
+  font-size: var(--fs-12);
   color: var(--ink-faint);
 }
 .cm-author {
@@ -105,7 +108,7 @@
   background: transparent;
   color: var(--ink-faint);
   font-family: var(--font-sans);
-  font-size: 11px;
+  font-size: var(--fs-12);
   padding: 0 4px;
   cursor: pointer;
 }
@@ -121,7 +124,7 @@
   margin-left: 0;
   color: var(--seal);
   border-color: var(--seal-line);
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
 }
 .cm-no {
   margin-left: 0;
@@ -130,7 +133,7 @@
 .cm-empty {
   margin: 10px 0;
   font-family: var(--font-sans);
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--ink-faint);
 }
 
@@ -140,9 +143,9 @@
   background: transparent;
   color: var(--ink-soft);
   font-family: var(--font-sans);
-  font-size: 12px;
+  font-size: var(--fs-12);
   padding: 4px 0;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
 }
 .cm-more:hover {
@@ -153,7 +156,7 @@
 .cm-err {
   margin: 0 14px 8px;
   font-family: var(--font-sans);
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--seal);
 }
 
@@ -170,11 +173,11 @@
   min-width: 0;
   resize: none;
   border: 1px solid var(--line-strong);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: var(--raised);
   color: var(--ink);
   font-family: var(--font-serif);
-  font-size: 14px;
+  font-size: var(--fs-14);
   line-height: 1.6;
   padding: 6px 8px;
 }
@@ -187,9 +190,9 @@
   background: var(--seal-tint);
   color: var(--seal);
   font-family: var(--font-sans);
-  font-size: 12px;
+  font-size: var(--fs-12);
   padding: 6px 12px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
 }
 .cm-send:disabled {

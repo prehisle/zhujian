@@ -1620,9 +1620,15 @@ mod tests {
     async fn switch_failure_rolls_back_to_old_space() {
         let (coord, dir) = boot_coord("rollback", &["家庭"], fast()).await;
         let fam_desc = coord.all_descriptors()[1].clone();
-        // 同名重建(内容合法的当前版库、但 inode 变了):descriptor.file 复核必拒。
-        std::fs::remove_file(&fam_desc.path).unwrap();
-        std::fs::copy(coord.data_dir.join("notebook.sqlite3"), &fam_desc.path).unwrap();
+        // 同名重建(内容合法的当前版库、但物理文件换了枚):descriptor.file 复核必拒。
+        // ⚠ 不能 remove 后原地 copy —— ext4/f2fs 会**立刻复用**刚释放的 inode(348 实证:
+        // rm+重建拿回同一枚 929403),(dev,ino) 键就真是同一个文件了,本测在 Linux 恒红。
+        // 确定性写法:旧文件还在时先建副本(inode 必不同),再 rename 顶替(rename 保留
+        // 副本自己的 inode)。⚠ 产品面注记:这也说明「同名重建必换 inode」在 ext4/f2fs
+        // 上不成立——身份复核是纵深防御之一、不是该场景的保证(348 拍板记档,见 progress-log)。
+        let staged = fam_desc.path.with_extension("staged");
+        std::fs::copy(coord.data_dir.join("notebook.sqlite3"), &staged).unwrap();
+        std::fs::rename(&staged, &fam_desc.path).unwrap();
         let err = coord.switch_to(&fam_desc.id).await.map(|_| ()).unwrap_err();
         assert!(err.contains("已回到原空间"), "{err}");
         assert_eq!(coord.foreground(), (spaces::MAIN_SPACE.to_string(), Phase::Ready));

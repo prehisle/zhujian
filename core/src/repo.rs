@@ -8,6 +8,12 @@
 //!   * tags are M:N via `item_topic` (ideas AND tasks alike);
 //!   * edit history is `item_revisions` (the 0014 trigger covers EVERY stage).
 //! Converting 想法 -> 待办 flips `stage` (zero copy); 撤回 flips it back.
+//!
+//! **公开面纪律(M2 的 repo 半边)**:读查询 `pub`(两壳的 list/查询命令直接消费);
+//! **写原语一律 `pub(crate)`**——壳的写必须走 notes/task/images/comments 编排层,它们在
+//! 同一事务里配对发射 op(oplog)。绕过编排层直写 = 数据当场正确、op 永久漏发 = 静默
+//! 同步分叉(oplog.rs 头注定义的最危险失效类),此前只靠约定挡着,现在编译器替约定站岗。
+//! 个别写原语确需对壳开放时,逐个升回 `pub` 并在此登记理由。
 
 use std::collections::HashMap;
 
@@ -259,7 +265,7 @@ fn escape_like(query: &str) -> String {
 /// 只有一个合法值,多一个参数就只是多一条传错的路。身份未初始化(`Clock::load` 没跑过)
 /// → 子查询得 NULL → 触发器 ABORT,fail-closed 而非落一个永不可改的错署名。
 /// 本地三条 insert 路径(本函数 / `insert_task` / `insert_moved_item`)写法一致。
-pub fn add_item(conn: &Connection, content: &str) -> rusqlite::Result<String> {
+pub(crate) fn add_item(conn: &Connection, content: &str) -> rusqlite::Result<String> {
     let id = Ulid::new().to_string();
     let now = now_iso();
     conn.execute(
@@ -509,7 +515,7 @@ pub fn trash_items(conn: &Connection) -> rusqlite::Result<Vec<TrashRow>> {
 
 /// 一次删空整个回收站(全 stage,120 统一清空的存储原语)。0004 触发器仍在场守
 /// 「只有已归档可硬删」——WHERE 天然满足;返回删除行数供编排层与点名数核对。
-pub fn purge_all_trash(conn: &Connection) -> rusqlite::Result<usize> {
+pub(crate) fn purge_all_trash(conn: &Connection) -> rusqlite::Result<usize> {
     conn.execute("DELETE FROM items WHERE archived_at IS NOT NULL AND sealed_at IS NULL", [])
 }
 
@@ -610,7 +616,7 @@ pub fn item_axes(conn: &Connection, id: &str) -> rusqlite::Result<Option<(String
 /// Overwrite an item's text, bumping updated_at. The 0014 `trg_item_archive_on_edit`
 /// trigger snapshots the prior version into `item_revisions` first, so history is kept
 /// by the database itself — no caller can bypass it, on any stage. Returns rows updated.
-pub fn update_item_content(conn: &Connection, id: &str, content: &str) -> rusqlite::Result<usize> {
+pub(crate) fn update_item_content(conn: &Connection, id: &str, content: &str) -> rusqlite::Result<usize> {
     conn.execute(
         "UPDATE items SET content = ?2, updated_at = ?3 WHERE id = ?1",
         (id, content, now_iso()),
@@ -621,7 +627,7 @@ pub fn update_item_content(conn: &Connection, id: &str, content: &str) -> rusqli
 /// `stage IN task / archived_at IS NULL` guard makes an idea-stage, archived, or missing
 /// item a 0-row no-op the caller fails fast on; the history trigger still fires. Returns
 /// rows changed.
-pub fn rename_task(conn: &Connection, id: &str, content: &str) -> rusqlite::Result<usize> {
+pub(crate) fn rename_task(conn: &Connection, id: &str, content: &str) -> rusqlite::Result<usize> {
     let sql = format!(
         "UPDATE items SET content = ?2, updated_at = ?3 \
          WHERE id = ?1 AND stage IN {TASK_STAGES} AND archived_at IS NULL AND sealed_at IS NULL"
@@ -647,7 +653,7 @@ pub fn item_revisions(conn: &Connection, id: &str) -> rusqlite::Result<Vec<Revis
 /// matches the 0014 delete-guard trigger: only an unorganized, unarchived capture can
 /// be destroyed outright — anything else must go through the 回收站. A non-inbox or
 /// missing id matches 0 rows and the caller fails fast.
-pub fn delete_inbox_item(conn: &Connection, id: &str) -> rusqlite::Result<usize> {
+pub(crate) fn delete_inbox_item(conn: &Connection, id: &str) -> rusqlite::Result<usize> {
     conn.execute(
         "DELETE FROM items WHERE id = ?1 AND stage = 'inbox' AND archived_at IS NULL",
         [id],
@@ -661,7 +667,7 @@ pub fn delete_inbox_item(conn: &Connection, id: &str) -> rusqlite::Result<usize>
 /// card, one write, no renumbering. The `stage IN idea / archived_at IS NULL` guard
 /// rejects an already-task, archived, or missing item as a 0-row no-op. due/priority
 /// stay NULL (idea attrs were none). Returns rows changed.
-pub fn promote_to_todo(conn: &Connection, id: &str) -> rusqlite::Result<usize> {
+pub(crate) fn promote_to_todo(conn: &Connection, id: &str) -> rusqlite::Result<usize> {
     let key = front_key(conn, "todo", id)?;
     let sql = format!(
         "UPDATE items SET stage = 'todo', updated_at = ?2, position = ?3 \
@@ -675,7 +681,7 @@ pub fn promote_to_todo(conn: &Connection, id: &str) -> rusqlite::Result<usize> {
 /// (position/due/priority) the idea stages forbid (the row CHECKs require them NULL).
 /// The `stage = 'todo' / archived_at IS NULL` guard rejects a more-mature or archived
 /// task. Returns rows changed.
-pub fn revert_to_idea(conn: &Connection, id: &str, to_stage: &str) -> rusqlite::Result<usize> {
+pub(crate) fn revert_to_idea(conn: &Connection, id: &str, to_stage: &str) -> rusqlite::Result<usize> {
     conn.execute(
         "UPDATE items SET stage = ?2, updated_at = ?3, \
                 position = NULL, due_on = NULL, priority = NULL \
@@ -687,7 +693,7 @@ pub fn revert_to_idea(conn: &Connection, id: &str, to_stage: &str) -> rusqlite::
 /// Move an Inbox item into 已整理 (stage inbox -> filed) — the 0-tag entry point used
 /// when filing it under its first tag. The `stage = 'inbox'` guard makes an
 /// already-filed/task/archived/missing item a 0-row no-op. Returns rows changed.
-pub fn file_inbox_item(conn: &Connection, id: &str) -> rusqlite::Result<usize> {
+pub(crate) fn file_inbox_item(conn: &Connection, id: &str) -> rusqlite::Result<usize> {
     conn.execute(
         "UPDATE items SET stage = 'filed', updated_at = ?2 \
          WHERE id = ?1 AND stage = 'inbox' AND archived_at IS NULL",
@@ -698,7 +704,7 @@ pub fn file_inbox_item(conn: &Connection, id: &str) -> rusqlite::Result<usize> {
 /// Move a 已整理 item back to 未归类 (stage filed -> inbox) — the inverse of
 /// `file_inbox_item`, used when its LAST tag is removed. The `stage = 'filed'` guard makes
 /// an inbox/task/archived/missing item a 0-row no-op. Returns rows changed.
-pub fn unfile_item(conn: &Connection, id: &str) -> rusqlite::Result<usize> {
+pub(crate) fn unfile_item(conn: &Connection, id: &str) -> rusqlite::Result<usize> {
     conn.execute(
         "UPDATE items SET stage = 'inbox', updated_at = ?2 \
          WHERE id = ?1 AND stage = 'filed' AND archived_at IS NULL",
@@ -709,7 +715,7 @@ pub fn unfile_item(conn: &Connection, id: &str) -> rusqlite::Result<usize> {
 // ---- Tags (item_topic, M:N) -----------------------------------------------------
 
 /// Insert a new topic (tag); returns its ULID.
-pub fn insert_topic(conn: &Connection, title: &str) -> rusqlite::Result<String> {
+pub(crate) fn insert_topic(conn: &Connection, title: &str) -> rusqlite::Result<String> {
     let id = Ulid::new().to_string();
     let now = now_iso();
     conn.execute(
@@ -736,7 +742,7 @@ pub fn topic_id_by_title(conn: &Connection, title: &str) -> rusqlite::Result<Opt
 
 /// Tag an item with a topic. Plain INSERT — a duplicate pair is a real error (the
 /// caller dedups first for idempotent paths); a non-existent topic id fails the FK.
-pub fn link_item_topic(conn: &Connection, item_id: &str, topic_id: &str) -> rusqlite::Result<()> {
+pub(crate) fn link_item_topic(conn: &Connection, item_id: &str, topic_id: &str) -> rusqlite::Result<()> {
     conn.execute(
         "INSERT INTO item_topic (item_id, topic_id) VALUES (?1, ?2)",
         (item_id, topic_id),
@@ -746,7 +752,7 @@ pub fn link_item_topic(conn: &Connection, item_id: &str, topic_id: &str) -> rusq
 
 /// Remove ONE specific tag from an item (multi-tag). Returns rows removed (0 if the
 /// item did not carry that tag — the caller treats that as an idempotent no-op).
-pub fn unlink_item_topic(conn: &Connection, item_id: &str, topic_id: &str) -> rusqlite::Result<usize> {
+pub(crate) fn unlink_item_topic(conn: &Connection, item_id: &str, topic_id: &str) -> rusqlite::Result<usize> {
     conn.execute(
         "DELETE FROM item_topic WHERE item_id = ?1 AND topic_id = ?2",
         (item_id, topic_id),
@@ -787,7 +793,7 @@ pub fn topic_item_ids(conn: &Connection, topic_id: &str) -> rusqlite::Result<Vec
 /// uniform pass now that ideas AND tasks tag through item_topic): an item already under
 /// `target` keeps its one link (NOT EXISTS guard), the rest move over, then the source's
 /// links are dropped. Returns how many source links were removed.
-pub fn repoint_item_topic(conn: &Connection, source: &str, target: &str) -> rusqlite::Result<usize> {
+pub(crate) fn repoint_item_topic(conn: &Connection, source: &str, target: &str) -> rusqlite::Result<usize> {
     conn.execute(
         "INSERT INTO item_topic (item_id, topic_id) \
          SELECT item_id, ?2 FROM item_topic \
@@ -804,12 +810,12 @@ pub fn repoint_item_topic(conn: &Connection, source: &str, target: &str) -> rusq
 /// (ON DELETE CASCADE) — every tagged item (idea OR task) simply loses this tag; the
 /// items themselves are untouched. In a merge, `repoint_item_topic` runs first so no
 /// link still points here.
-pub fn delete_topic(conn: &Connection, id: &str) -> rusqlite::Result<usize> {
+pub(crate) fn delete_topic(conn: &Connection, id: &str) -> rusqlite::Result<usize> {
     conn.execute("DELETE FROM topics WHERE id = ?1", [id])
 }
 
 /// Rename a topic and stamp updated_at. Returns rows hit.
-pub fn rename_topic(conn: &Connection, id: &str, title: &str) -> rusqlite::Result<usize> {
+pub(crate) fn rename_topic(conn: &Connection, id: &str, title: &str) -> rusqlite::Result<usize> {
     conn.execute(
         "UPDATE topics SET title = ?2, updated_at = ?3 WHERE id = ?1",
         (id, title, &now_iso()),
@@ -817,7 +823,7 @@ pub fn rename_topic(conn: &Connection, id: &str, title: &str) -> rusqlite::Resul
 }
 
 /// Edit a topic's title, bumping updated_at. Returns rows hit.
-pub fn update_topic(conn: &Connection, id: &str, title: &str) -> rusqlite::Result<usize> {
+pub(crate) fn update_topic(conn: &Connection, id: &str, title: &str) -> rusqlite::Result<usize> {
     conn.execute(
         "UPDATE topics SET title = ?2, updated_at = ?3 WHERE id = ?1",
         (id, title, &now_iso()),
@@ -826,27 +832,27 @@ pub fn update_topic(conn: &Connection, id: &str, title: &str) -> rusqlite::Resul
 
 /// Bump a topic's updated_at without any other change (a merge into it counts as a
 /// change even when the title is untouched). Returns rows hit.
-pub fn touch_topic(conn: &Connection, id: &str) -> rusqlite::Result<usize> {
+pub(crate) fn touch_topic(conn: &Connection, id: &str) -> rusqlite::Result<usize> {
     conn.execute("UPDATE topics SET updated_at = ?2 WHERE id = ?1", (id, &now_iso()))
 }
 
 /// Set (or clear, with `None`) a topic's chip color. Deliberately does NOT touch
 /// `updated_at`: the color is decoration, not a rename, and `updated_at` drives chip
 /// ordering — recoloring must not reshuffle chips. Returns rows hit (0 = no such topic).
-pub fn set_topic_color(conn: &Connection, id: &str, color: Option<&str>) -> rusqlite::Result<usize> {
+pub(crate) fn set_topic_color(conn: &Connection, id: &str, color: Option<&str>) -> rusqlite::Result<usize> {
     conn.execute("UPDATE topics SET color = ?2 WHERE id = ?1", (id, color))
 }
 
 /// Set (or clear, with `None`) a topic's free-text type label (0031 kind). Like color,
 /// deliberately does NOT touch `updated_at` (a type tag is metadata, not a rename).
 /// Returns rows hit (0 = no such topic). Canonical form is validated by the command layer.
-pub fn set_topic_kind(conn: &Connection, id: &str, kind: Option<&str>) -> rusqlite::Result<usize> {
+pub(crate) fn set_topic_kind(conn: &Connection, id: &str, kind: Option<&str>) -> rusqlite::Result<usize> {
     conn.execute("UPDATE topics SET kind = ?2 WHERE id = ?1", (id, kind))
 }
 
 /// Set a topic's manual-order frindex key (0031 position). Never cleared — reorder only
 /// swaps the key. Does NOT touch `updated_at`. Returns rows hit (0 = no such topic).
-pub fn set_topic_position(conn: &Connection, id: &str, position: &str) -> rusqlite::Result<usize> {
+pub(crate) fn set_topic_position(conn: &Connection, id: &str, position: &str) -> rusqlite::Result<usize> {
     conn.execute("UPDATE topics SET position = ?2 WHERE id = ?1", (id, position))
 }
 
@@ -983,7 +989,7 @@ pub fn all_topics_with_notes(conn: &Connection) -> rusqlite::Result<Vec<TopicTre
 /// nothing is inserted). Lands at the 待办 column's END (a fractional key after the
 /// current last card; `task::create` then repositions it to the front). Tags, if any,
 /// are linked separately within the caller's transaction. Returns its ULID.
-pub fn insert_task(
+pub(crate) fn insert_task(
     conn: &Connection,
     content: &str,
     due_on: Option<&str>,
@@ -1010,7 +1016,7 @@ pub fn insert_task(
 /// **born_device = 执行移动的这台设备**(0033,identity-plan §3.5 第 3 条已拍板接受):
 /// 这行确实是它在**这个空间**创建的,填本机是诚实的;代价是原作者信息不跨空间。
 /// 记档不修——源空间那行是墓碑、目标是新 ULID 的新生行,署名跟着「在哪个库出生」走。
-pub fn insert_moved_item(
+pub(crate) fn insert_moved_item(
     conn: &Connection,
     id: &str,
     content: &str,
@@ -1137,7 +1143,7 @@ pub fn active_task_stage(conn: &Connection, id: &str) -> rusqlite::Result<Option
 /// 清除,故归档/撤回后完成时刻天然保住(迁移 0030 语义)。CASE 里的 `stage` 是行的
 /// **旧值**(SQLite 的 UPDATE...SET 右式一律读未改前的行值),「旧≠done」判据真实成立;
 /// 编排层据同一条边把 `"done_at"` 加进 oplog 发射(task.rs)。
-pub fn set_task_stage(conn: &Connection, id: &str, from: &str, to: &str) -> rusqlite::Result<usize> {
+pub(crate) fn set_task_stage(conn: &Connection, id: &str, from: &str, to: &str) -> rusqlite::Result<usize> {
     let key = end_key(conn, to, id)?;
     conn.execute(
         "UPDATE items SET stage = ?3, updated_at = ?4, position = ?5, \
@@ -1219,7 +1225,7 @@ pub(crate) fn front_key(conn: &Connection, stage: &str, excluding: &str) -> rusq
 /// Set one active card's sort key within a column. The `stage`/`archived_at` guard
 /// makes a row no longer an active member of this column a 0-row no-op. Returns rows
 /// changed.
-pub fn set_task_position(conn: &Connection, id: &str, stage: &str, position: &str) -> rusqlite::Result<usize> {
+pub(crate) fn set_task_position(conn: &Connection, id: &str, stage: &str, position: &str) -> rusqlite::Result<usize> {
     conn.execute(
         "UPDATE items SET position = ?3 \
          WHERE id = ?1 AND stage = ?2 AND archived_at IS NULL AND sealed_at IS NULL",
@@ -1233,7 +1239,7 @@ pub fn set_task_position(conn: &Connection, id: &str, stage: &str, position: &st
 /// `stage IN task / archived_at IS NULL` guard makes an idea-stage, archived, or missing
 /// item a 0-row no-op (an idea has no schedule; the row CHECK also forbids it). A
 /// malformed day is rejected by the CHECK. Bumps updated_at. Returns rows changed.
-pub fn set_task_due(conn: &Connection, id: &str, due_on: Option<&str>) -> rusqlite::Result<usize> {
+pub(crate) fn set_task_due(conn: &Connection, id: &str, due_on: Option<&str>) -> rusqlite::Result<usize> {
     let sql = format!(
         "UPDATE items SET due_on = ?2, updated_at = ?3 \
          WHERE id = ?1 AND stage IN {TASK_STAGES} AND archived_at IS NULL AND sealed_at IS NULL"
@@ -1243,7 +1249,7 @@ pub fn set_task_due(conn: &Connection, id: &str, due_on: Option<&str>) -> rusqli
 
 /// Set (or clear, None) a task's priority (1/2/3). Same guard as set_task_due; an
 /// out-of-range value is rejected by the CHECK. Bumps updated_at. Returns rows changed.
-pub fn set_task_priority(conn: &Connection, id: &str, priority: Option<i64>) -> rusqlite::Result<usize> {
+pub(crate) fn set_task_priority(conn: &Connection, id: &str, priority: Option<i64>) -> rusqlite::Result<usize> {
     let sql = format!(
         "UPDATE items SET priority = ?2, updated_at = ?3 \
          WHERE id = ?1 AND stage IN {TASK_STAGES} AND archived_at IS NULL AND sealed_at IS NULL"
@@ -1261,7 +1267,7 @@ pub fn set_task_priority(conn: &Connection, id: &str, priority: Option<i64>) -> 
 /// Soft-archive a live idea (未归类 or 已归类) into the 回收站. The `stage IN idea /
 /// archived_at IS NULL` guard makes a task/archived/missing item a 0-row no-op.
 /// Returns rows changed.
-pub fn archive_idea(conn: &Connection, id: &str) -> rusqlite::Result<usize> {
+pub(crate) fn archive_idea(conn: &Connection, id: &str) -> rusqlite::Result<usize> {
     let now = now_iso();
     let sql = format!(
         "UPDATE items SET archived_at = ?2, updated_at = ?2 \
@@ -1272,7 +1278,7 @@ pub fn archive_idea(conn: &Connection, id: &str) -> rusqlite::Result<usize> {
 
 /// Restore an archived idea from the 回收站 (clear archived_at; the frozen stage stays
 /// what it was — inbox or filed — position stays NULL). Returns rows changed.
-pub fn restore_idea(conn: &Connection, id: &str) -> rusqlite::Result<usize> {
+pub(crate) fn restore_idea(conn: &Connection, id: &str) -> rusqlite::Result<usize> {
     let now = now_iso();
     let sql = format!(
         "UPDATE items SET archived_at = NULL, updated_at = ?2 \
@@ -1284,7 +1290,7 @@ pub fn restore_idea(conn: &Connection, id: &str) -> rusqlite::Result<usize> {
 /// Hard-delete one archived idea (彻底删除). The `stage IN idea / archived_at IS NOT NULL`
 /// guard means it must be soft-archived first; item_topic / item_revisions cascade away.
 /// Returns rows deleted.
-pub fn purge_idea(conn: &Connection, id: &str) -> rusqlite::Result<usize> {
+pub(crate) fn purge_idea(conn: &Connection, id: &str) -> rusqlite::Result<usize> {
     let sql = format!(
         "DELETE FROM items WHERE id = ?1 AND stage IN {IDEA_STAGES} AND archived_at IS NOT NULL AND sealed_at IS NULL"
     );
@@ -1292,7 +1298,7 @@ pub fn purge_idea(conn: &Connection, id: &str) -> rusqlite::Result<usize> {
 }
 
 /// Empty the 灵感回收站: hard-delete every archived idea. Returns how many were removed.
-pub fn purge_archived_ideas(conn: &Connection) -> rusqlite::Result<usize> {
+pub(crate) fn purge_archived_ideas(conn: &Connection) -> rusqlite::Result<usize> {
     let sql = format!(
         "DELETE FROM items WHERE stage IN {IDEA_STAGES} AND archived_at IS NOT NULL AND sealed_at IS NULL"
     );
@@ -1303,7 +1309,7 @@ pub fn purge_archived_ideas(conn: &Connection) -> rusqlite::Result<usize> {
 /// task-stage card can be archived; the `archived_at IS NULL` guard makes an
 /// already-archived/missing one a 0-row no-op. The row keeps its stage (restore returns
 /// it to the same column). Returns rows changed.
-pub fn archive_task(conn: &Connection, id: &str) -> rusqlite::Result<usize> {
+pub(crate) fn archive_task(conn: &Connection, id: &str) -> rusqlite::Result<usize> {
     let now = now_iso();
     // `sealed_at IS NULL`: 成就归档的任务不进回收站(0017 冻结触发器是后盾,这里 0 行让
     // 调用方 fail-fast 出中文错误而不是触发器英文报错)。
@@ -1318,7 +1324,7 @@ pub fn archive_task(conn: &Connection, id: &str) -> rusqlite::Result<usize> {
 /// landing it at that column's END — its stale pre-archive key could collide with an
 /// active card's, so it is re-assigned a fresh end key. The `stage = ?3 / archived_at
 /// IS NOT NULL` guard makes a stale call a 0-row no-op. Returns rows changed.
-pub fn restore_task(conn: &Connection, id: &str, stage: &str) -> rusqlite::Result<usize> {
+pub(crate) fn restore_task(conn: &Connection, id: &str, stage: &str) -> rusqlite::Result<usize> {
     let now = now_iso();
     let key = end_key(conn, stage, id)?;
     conn.execute(
@@ -1330,7 +1336,7 @@ pub fn restore_task(conn: &Connection, id: &str, stage: &str) -> rusqlite::Resul
 
 /// Hard-delete one archived board card. The `stage IN task / archived_at IS NOT NULL`
 /// guard means it must be soft-archived first. Returns rows deleted.
-pub fn purge_task(conn: &Connection, id: &str) -> rusqlite::Result<usize> {
+pub(crate) fn purge_task(conn: &Connection, id: &str) -> rusqlite::Result<usize> {
     let sql = format!(
         "DELETE FROM items WHERE id = ?1 AND stage IN {TASK_STAGES} AND archived_at IS NOT NULL AND sealed_at IS NULL"
     );
@@ -1338,7 +1344,7 @@ pub fn purge_task(conn: &Connection, id: &str) -> rusqlite::Result<usize> {
 }
 
 /// Empty the 任务回收站: hard-delete every archived board card. Returns how many were removed.
-pub fn purge_archived_tasks(conn: &Connection) -> rusqlite::Result<usize> {
+pub(crate) fn purge_archived_tasks(conn: &Connection) -> rusqlite::Result<usize> {
     let sql = format!(
         "DELETE FROM items WHERE stage IN {TASK_STAGES} AND archived_at IS NOT NULL AND sealed_at IS NULL"
     );
@@ -1354,7 +1360,7 @@ pub fn purge_archived_tasks(conn: &Connection) -> rusqlite::Result<usize> {
 
 /// 归档一条「已完成」任务(盖 sealed_at)。position 冻结原值(已退出 partial unique
 /// 的约束范围)。guard 使 非 done/回收站中/已归档/不存在 均为 0 行 no-op,调用方 fail-fast。
-pub fn seal_task(conn: &Connection, id: &str) -> rusqlite::Result<usize> {
+pub(crate) fn seal_task(conn: &Connection, id: &str) -> rusqlite::Result<usize> {
     let now = now_iso();
     conn.execute(
         "UPDATE items SET sealed_at = ?2, updated_at = ?2 \
@@ -1365,7 +1371,7 @@ pub fn seal_task(conn: &Connection, id: &str) -> rusqlite::Result<usize> {
 
 /// 一键归档全部「已完成」:同一时间戳盖满整列(一批一个归档时刻,时间轴上归成一组)。
 /// 返回归档条数(0 = 列本来就空,不是错误)。
-pub fn seal_all_done(conn: &Connection) -> rusqlite::Result<usize> {
+pub(crate) fn seal_all_done(conn: &Connection) -> rusqlite::Result<usize> {
     let now = now_iso();
     conn.execute(
         "UPDATE items SET sealed_at = ?1, updated_at = ?1 \
@@ -1376,7 +1382,7 @@ pub fn seal_all_done(conn: &Connection) -> rusqlite::Result<usize> {
 
 /// 取消归档:sealed_at 置回 NULL,任务回到看板「已完成」列的末尾(冻结的旧排序键
 /// 可能已被活跃卡占用,重发一枚列尾键,同 restore_task)。guard 使 未归档/不存在 为 0 行。
-pub fn unseal_task(conn: &Connection, id: &str) -> rusqlite::Result<usize> {
+pub(crate) fn unseal_task(conn: &Connection, id: &str) -> rusqlite::Result<usize> {
     let key = end_key(conn, "done", id)?;
     conn.execute(
         "UPDATE items SET sealed_at = NULL, updated_at = ?2, position = ?3 \
@@ -1419,7 +1425,7 @@ pub struct ImageRef {
 /// — so a 编号 is NEVER reused (a 正文「见图N」 reference can never silently re-point at a
 /// different picture). Seeds at 1 on the first image. Call inside the caller's transaction,
 /// paired with `insert_item_image`.
-pub fn next_image_seq(conn: &Connection, item_id: &str) -> rusqlite::Result<i64> {
+pub(crate) fn next_image_seq(conn: &Connection, item_id: &str) -> rusqlite::Result<i64> {
     conn.query_row(
         "INSERT INTO item_image_counter (item_id, last_seq) VALUES (?1, 1) \
          ON CONFLICT(item_id) DO UPDATE SET last_seq = last_seq + 1 RETURNING last_seq",
@@ -1431,7 +1437,7 @@ pub fn next_image_seq(conn: &Connection, item_id: &str) -> rusqlite::Result<i64>
 /// Insert one image row (bytes + MIME) at an already-allocated 编号. A bad MIME / empty blob
 /// hits a CHECK and errors (fail-fast); a missing item_id fails the FK. Call inside the
 /// caller's transaction, after `next_image_seq`. Returns rows inserted (1).
-pub fn insert_item_image(
+pub(crate) fn insert_item_image(
     conn: &Connection,
     id: &str,
     item_id: &str,
@@ -1498,7 +1504,7 @@ pub fn item_image_data(
 
 /// Hard-delete one image by id (换图 = 删旧加新). The counter is left untouched, so the freed
 /// 编号 is never handed out again. Returns rows deleted (0 if the id was already gone).
-pub fn delete_item_image(conn: &Connection, image_id: &str) -> rusqlite::Result<usize> {
+pub(crate) fn delete_item_image(conn: &Connection, image_id: &str) -> rusqlite::Result<usize> {
     conn.execute("DELETE FROM item_image WHERE id = ?1", [image_id])
 }
 

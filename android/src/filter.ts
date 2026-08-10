@@ -5,6 +5,7 @@
 // kind → topics → text:选一个类型先圈定「挂了该类型任一标签的条目」,再把标签 pill 收到
 // 该类型内,可再钻到具体某枚;切类型即把标签轴归零。per-item 的 topics 只带 id/title/color
 // (不带 kind),类型真相只在 allTopics(来自 list_topics_full)。
+import { t } from "./i18n";
 
 export type FilterTopic = { id: string; title: string; color: string | null; kind: string | null };
 // kind: "all" / 某个类型字符串;topics: 被选中的标签集,**OR/并集语义**——空数组 =
@@ -24,11 +25,11 @@ export function soleTopicFilter(f: FilterState): string | null {
   return f.topics.length === 1 && f.topics[0] !== "none" ? f.topics[0] : null;
 }
 
-// 被筛具体标签的中文名列表(供筛空空态提示「「A、B」下没有…」)。none 显「无标签」,
+// 被筛具体标签的名字列表(供筛空空态提示「「A、B」下没有…」)。none 显「无标签」,
 // id 解析成标签名(找不到 = 已删,显「该标签」占位)。空数组 = 未筛具体标签。
 export function selectedTopicLabels(f: FilterState, all: FilterTopic[]): string[] {
   return f.topics.map((tok) =>
-    tok === "none" ? "无标签" : (all.find((t) => t.id === tok)?.title ?? "该标签"),
+    tok === "none" ? t("filter.none") : (all.find((tp) => tp.id === tok)?.title ?? t("filter.thatTag")),
   );
 }
 
@@ -155,9 +156,9 @@ export function renderKindPills(
   const nodes: (HTMLElement | Text)[] = [];
   const axis = document.createElement("span");
   axis.className = "faxis";
-  axis.textContent = "类型";
+  axis.textContent = t("filter.kindAxis");
   nodes.push(axis);
-  nodes.push(pill("全部类型", f.kind === "all", () => onPick({ kind: "all", topics: [] })));
+  nodes.push(pill(t("filter.allKinds"), f.kind === "all", () => onPick({ kind: "all", topics: [] })));
   for (const k of kinds) {
     const ids = idsOfKind(all, k);
     const n = items.filter((t) => t.topics.some((tp) => ids.has(tp.id))).length;
@@ -204,10 +205,10 @@ export function renderTopicPills(
 
   const nodes: HTMLElement[] = [];
   nodes.push(
-    pill("所有", f.topics.length === 0, () => onPick({ topics: [] }), kindActive ? scoped.length : items.length),
+    pill(t("filter.all"), f.topics.length === 0, () => onPick({ topics: [] }), kindActive ? scoped.length : items.length),
   );
   if (!kindActive) {
-    nodes.push(pill("无标签", f.topics.includes("none"), () => onPick({ topics: toggled("none") }), none));
+    nodes.push(pill(t("filter.none"), f.topics.includes("none"), () => onPick({ topics: toggled("none") }), none));
   }
 
   // 一个标签是否该出现:有条目 或 正被选中(选中的绝不因 0 计数消失)。

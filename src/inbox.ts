@@ -7,6 +7,7 @@ import {
   invokeInSpace,
   listSpaces,
   moveItemToSpace,
+  moveOutcomeText,
   movePartialClear,
   movePartialMark,
   movePartialNote,
@@ -14,7 +15,7 @@ import {
 } from "./space";
 import { autoGrow } from "./autogrow";
 import { toastAction } from "./toast";
-import { saveTextDraft, loadTextDraft, clearTextDraft } from "./compose-draft";
+import { createComposeController } from "./compose-controller";
 import { copyText } from "./clipboard";
 import { buildItemDeepLink } from "./deeplink";
 import { armLocate } from "./locate";
@@ -29,12 +30,13 @@ import {
   soleTopicFilter,
   wireFilterInput,
 } from "./filter-bar";
-import { type Act, armDismiss, createHotkeyController, registerViewKeys } from "./hotkey-menu";
+import { type Act, SATELLITE_LAYERS, armDismiss, createHotkeyController, registerViewKeys } from "./hotkey-menu";
+import { t } from "./i18n";
 import {
   type ImageMeta,
+  REPASTE_HINT,
   imageStrip,
   listImages,
-  pendingImages,
   renderContent,
   wirePasteToAttach,
 } from "./item-images";
@@ -95,51 +97,23 @@ export function focusInboxItem(id: string, tab: Mode): void {
   // 不许在 B 的列表上清筛选/切 tab。
   pendingFocus = { id, tab, space: currentSpaceId() };
 }
-// 「记下灵感」的草稿与暂存图不随视图/tab 切换蒸发(ui-audit P1 #9d):文字过桥走模块态
-// (unmount / 切去无 compose 的 tab 时存,composeBar 重建时消费灌回);暂存图直接把
-// pendingImages 提到模块级——root 节点由每个新 bar append 搬家,预览/字节原地存活
-// (原先仅 mount 级=跨 refresh 存活,跨视图仍丢)。save 成功先清空输入框与暂存图,
-// 不会把已保存的内容再灌回来。
-// **按空间分桶**(codex P1 审 H1):草稿随 mount 时的空间打标,空间对不上=丢弃——
-// A 空间的草稿/暂存图绝不灌进 B 空间(切空间时 notebook 先翻 current 再 unmount,
-// 标记必须取 mount 时捕获的空间)。
-let composeDraftSaved = "";
-let composeDraftSpace: string | null = null;
-// 断电恢复(198 桌面侧):compose 文字草稿走 localStorage、暂存图走 IndexedDB(pendImgs 的
-// persistKey)——意外断电 / 杀进程后重开,上次没记下的灵感还在。载荷带空间(A 空间草稿绝不
-// 灌进 B,与 composeDraftSpace 同律)。**纯设备本地 UI 状态,绝不进 DB / 同步**。
-const INBOX_DRAFT_KEY = "zhujian.inbox-draft";
-// 首个 mount 时回填一次暂存图(pendImgs 是模块级,填好即常驻,后续 mount 不重填)。
-let imgsRestored = false;
+// 「记下灵感」的草稿/暂存图过桥、断电恢复、失败通知与 in-flight 闸:模块态与保存链
+// 骨架全在共享编排件 compose-controller.ts(353,与看板「新建任务」同源收拢;历轮
+// codex 修复的出处注释随迁到那边)。灵感特有的载荷/纯图可存/标签二次挂载/错误落点等
+// 在 composeBar 里的 bindSave 接线;这里每视图一份控制器实例,跨 mount 存活。
+// (inbox 的 root 节点由每个新 bar append 搬家——原先仅 mount 级=跨 refresh 存活,
+// 跨视图仍丢;refresh 期的草稿/光标/焦点携带是重建 bar 的生命周期特有段,在 refresh
+// 里,不在共享件。)
+const composeCtl = createComposeController({
+  draftKey: "zhujian.inbox-draft",
+  imagesKey: "zhujian.inbox-images",
+});
 
 /** 空间两来路 H1(notebook.ts 草稿探针的模块态半边):compose 文字存底或暂存图
  *  还攥在模块态里 = 有未保存内容(DOM 里的 textarea 由探针另一半覆盖)。 */
 export function inboxHasStashedDraft(): boolean {
-  return composeDraftSaved.trim().length > 0 || pendImgs.count() > 0;
+  return composeCtl.hasStashedDraft();
 }
-// 挂图失败/保存失败的提示过桥(codex 三审 M 升模块级):save 后 refresh 会重建
-// composeBar,旧 bar 的 err 会被冲掉——由同空间的新 bar 领走显示一次;本 mount 已死
-// 时同理过桥给下一个 mount,失败不许因为切了个视图就无声。
-let composeNotice = "";
-let composeNoticeSpace: string | null = null;
-// 活 mount 的重读通道(codex 四审 M):旧 mount 的保存链在 unmount 后才落账时,同空间
-// 的新 mount 得马上重读(顺带经 composeBar 领走模块 notice)——否则「正文被清了、
-// 卡片没出现」要等到下次 refocus。navigate 恒先 unmount 旧再 mount 新,单值不互踩。
-let liveRefresh: (() => void) | null = null;
-const pendImgs = pendingImages({ persistKey: "zhujian.inbox-images" });
-// 模块加载即从磁盘灌回文字草稿(同步读):重开后 composeBar 首建就能显示上次的字。
-// 空间也一并恢复,交给既有的「mount 空间对不上就丢弃」逻辑把关(暂存图的同步丢弃由
-// 该逻辑里的 pendImgs.clear() 兼办,回填走首个 mount 的 pendImgs.restore())。
-{
-  const d = loadTextDraft(INBOX_DRAFT_KEY);
-  if (d && d.text) {
-    composeDraftSaved = d.text;
-    composeDraftSpace = d.space;
-  }
-}
-// in-flight 闸提模块级(codex P1 审 H2):保存往返期间切走再回来,新 mount 的闸必须
-// 还是同一把——否则同一草稿能被重提两次。
-let composeSaving = false;
 // 想法 tab 的两维筛选(标签 pills + 文本过滤词):行为与看板同源(共享件
 // filter-bar.ts),模块态理由同 `active`。只作用于想法 tab;回收站不筛(同看板的
 // 回收站/归档不筛)。文本只匹配当前正文——连历史的找回忆是全局「搜索」视图的事。
@@ -184,18 +158,18 @@ const TABS: Tab[] = ["ideas", "archived"];
 
 const SKELETON = `
   <header data-tauri-drag-region>
-    <h1>灵感</h1>
+    <h1>${t("inbox.title")}</h1>
     <span class="idea-stats" id="idea-stats"></span>
   </header>
   <nav class="tabs">
-    <button class="tab active" id="tab-ideas" data-tab="ideas">灵感<span class="tab-n" id="n-ideas"></span></button>
-    <button class="tab" id="tab-archived" data-tab="archived">回收站<span class="tab-n" id="n-archived"></span></button>
+    <button class="tab active" id="tab-ideas" data-tab="ideas">${t("inbox.tabIdeas")}<span class="tab-n" id="n-ideas"></span></button>
+    <button class="tab" id="tab-archived" data-tab="archived">${t("inbox.tabTrash")}<span class="tab-n" id="n-archived"></span></button>
   </nav>
   <div class="filter-row" id="filter-row" hidden>
     <div class="kind-filter" id="idea-kind-filter"></div>
     <div class="filter-main">
       <div class="topic-filter" id="idea-topic-filter"></div>
-      <input class="filter-text" id="idea-filter" type="search" placeholder="过滤灵感…" autocomplete="off" spellcheck="false" />
+      <input class="filter-text" id="idea-filter" type="search" placeholder="${t("inbox.filterPlaceholder")}" autocomplete="off" spellcheck="false" />
     </div>
   </div>
   <main id="list"></main>
@@ -205,19 +179,12 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
   // 本 mount 归属的空间(codex P1 审 H1):切空间时 notebook 先翻 current 再 unmount,
   // unmount 时现取会把 A 空间的草稿标成 B 的——在这里捕获。空间对不上的存底整体丢弃。
   const mountSpace = currentSpaceId();
-  if (composeDraftSpace !== null && composeDraftSpace !== mountSpace) {
-    composeDraftSaved = "";
-    composeDraftSpace = null;
-    clearTextDraft(INBOX_DRAFT_KEY); // 跨空间丢弃:磁盘草稿也清(pendImgs.clear() 自清图存)
-    pendImgs.clear();
-  }
-  // 断电恢复:首个 mount 回填暂存图(此时空间对不上的已被上面 clear 掉,restore 读到空存;
-  // 重开正常场景 = 恢复上次空间,存里的图属本空间,回填即可)。仅一次,后续 mount 图已常驻。
-  if (!imgsRestored) {
-    imgsRestored = true;
-    void pendImgs.restore();
-  }
-  const view = el("div", { className: "v-inbox" });
+  composeCtl.discardForeignDraft(mountSpace);
+  // 断电恢复:首个 mount 回填暂存图(此时空间对不上的已被上面 discard 清掉,restore 读到
+  // 空存;重开正常场景 = 恢复上次空间,存里的图属本空间,回填即可)。仅一次,后续 mount
+  // 图已常驻。
+  composeCtl.restoreImagesOnce();
+  const view = el("div", { className: "v-inbox view" });
   view.innerHTML = SKELETON;
   root.replaceChildren(view);
 
@@ -277,15 +244,15 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     list.replaceChildren(centerNode(big, detail));
   }
 
-  // 新建入口的暂存配图/文字草稿/失败提示:见模块级 pendImgs / composeDraftSaved /
-  // composeNotice(P1 #9d + codex 三审 M)。
+  // 新建入口的暂存配图/文字草稿/失败提示:见模块级 composeCtl(共享编排件,
+  // P1 #9d + codex 三审 M)。
   // 刚在本视图记下的灵感:下一次渲染给它一记朱砂脉冲(.just-born),用完即清——
   // 只有「此刻新生」的卡片有入场感,存量列表安安静静。
   let pulseId: string | null = null;
   // 跳转定位(搜索/深链接/剪贴板「打开」冷着陆命中的卡):下一次渲染给它**持续常亮**的
   // .just-located(区别于 born 的一次性涟漪),留到下次点击/滚动才消(见 locate.ts)。
   let locateId: string | null = null;
-  // in-flight 闸(ui-audit P0 #2)在模块级 composeSaving:refresh 会重建 bar 并把草稿
+  // in-flight 闸(ui-audit P0 #2)在模块级(共享编排件):refresh 会重建 bar 并把草稿
   // 回灌进新框,新 bar 的 Enter 也必须被同一把闸挡住;闸跨 mount 才挡得住「保存中切走
   // 再回来」(codex P1 审 H2)。
 
@@ -293,117 +260,81 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
   // Reuses `capture_note` — the same path as the Ctrl+Alt+N floating window.
   function composeBar(): HTMLElement {
     const input = el("textarea", { className: "compose-input", rows: 1 }) as HTMLTextAreaElement;
-    input.placeholder = "记下一个灵感… (Enter 保存,Shift+Enter 换行)";
-    if (composeDraftSaved !== "" && composeDraftSpace === mountSpace) {
-      input.value = composeDraftSaved; // 上个 mount/别的 tab 留下的草稿:同空间才灌回(P1 #9d)
-      composeDraftSaved = "";
+    input.placeholder = t("inbox.composePlaceholder");
+    if (composeCtl.draftText() !== "" && composeCtl.draftSpace() === mountSpace) {
+      input.value = composeCtl.takeDraftText(); // 上个 mount/别的 tab 留下的草稿:同空间才灌回(P1 #9d)
     }
     const err = el("p", { className: "form-err", hidden: true });
-    if (composeNotice && composeNoticeSpace === mountSpace) {
-      err.textContent = composeNotice;
-      err.hidden = false;
-      composeNotice = "";
-      composeNoticeSpace = null;
+    {
+      const bridged = composeCtl.takeNotice(mountSpace);
+      if (bridged !== null) {
+        err.textContent = bridged;
+        err.hidden = false;
+      }
     }
-    pendImgs.wire(input); // Ctrl+V 图片 → 暂存预览,随灵感一起存(纯图不写字也能存,同捕获浮窗)
-    const save = async () => {
-      if (composeSaving) return;
-      composeSaving = true;
-      try {
-        await doSave();
-      } finally {
-        composeSaving = false;
-      }
-    };
-    const doSave = async () => {
-      const submitted = input.value;
-      if (!submitted.trim() && pendImgs.count() === 0) return;
-      // 「保存那刻」冻结整份载荷(codex P1 二审 H2):图批同步带走,IPC 等待期间新粘贴
-      // 的归下一条。整条链走 invokeInSpace(mountSpace)——必落账写不许走「跨空间迟到
-      // 永不决议」的统一包装,否则模块级 in-flight 闸的 finally 永不执行、保存锁死(H1)。
-      const batch = pendImgs.takeBatch();
-      let id: string;
-      try {
-        id = await invokeInSpace<string>(mountSpace, "capture_note", { content: submitted });
-      } catch (e) {
-        // 没建成:同空间才把图退回预览区(可重试);空间已切走的批 revoke 即弃——绝不
-        // 追加进别的空间的预览区随人家的条目保存(codex 三审 H)。错误找活的输入区显示
-        // (旧 bar 已脱离 DOM 就 document 级找同空间的新 bar),都不在场就走模块态过桥
-        // ——失败不许无声(复查 L1 + codex 三审 M)。
-        if (currentSpaceId() === mountSpace) pendImgs.putBack(batch);
-        else pendImgs.disposeBatch(batch);
-        const liveErr = err.isConnected
-          ? err
-          : currentSpaceId() === mountSpace
-            ? document.querySelector<HTMLElement>(".v-inbox .compose .form-err")
-            : null;
-        if (liveErr !== null) {
-          liveErr.textContent = String(e);
-          liveErr.hidden = false;
-        } else if (currentSpaceId() === mountSpace) {
-          composeNotice = String(e);
-          composeNoticeSpace = mountSpace;
-          if (!unmounted) void refresh();
+    composeCtl.imgs.wire(input); // Ctrl+V 图片 → 暂存预览,随灵感一起存(纯图不写字也能存,同捕获浮窗)
+    // 保存链走共享编排件(353):in-flight 闸/载荷冻结/必落账/在场守卫在骨架里
+    // (compose-controller.ts),这里只接灵感特有的形。
+    const save = composeCtl.bindSave({
+      space: mountSpace,
+      input,
+      errEl: err,
+      liveErrSelector: ".v-inbox .compose .form-err",
+      liveInputSelector: ".v-inbox .compose-input",
+      isUnmounted: () => unmounted,
+      command: "capture_note",
+      prepare: (submitted) => {
+        if (!submitted.trim() && composeCtl.imgs.count() === 0) return null;
+        return { payload: { content: submitted } };
+      },
+      showErr: (el, msg) => {
+        el.textContent = msg;
+        el.hidden = false;
+      },
+      onBridgedError: () => {
+        if (!unmounted) void refresh();
+      },
+      afterCreate: async (id, notices) => {
+        // 恰好筛了单一具体标签 → 新灵感自动挂上它(同看板「筛着标签建卡」),否则新卡会被
+        // 当前筛选滤到隐身;「无标签」筛选下新卡本就无标签、天然可见。挂失败不吞掉:灵感
+        // 已在,提示一句(切「所有」能找到)。二次挂载是与看板的刻意分歧(capture_note
+        // 不带归属,挂标签是独立命令)。
+        const soleTopic = soleTopicFilter(filter);
+        if (soleTopic !== null) {
+          try {
+            await invokeInSpace(mountSpace, "file_note_to_topic", { id, topicId: soleTopic, newTitle: null });
+          } catch {
+            notices.push(t("inbox.savedTagFailed"));
+          }
         }
-        return;
-      }
-      // 等 capture_note 的空档里,过滤 refresh/视图切换可能已重建 compose 并把草稿灌进
-      // 新框——清「当前在场」的输入框而非闭包里的旧节点(document 级找,新 mount 的框
-      // 也归它管;codex P1 二审 H1 余波)。同空间且值仍等于刚提交的正文才清:等待期间
-      // 用户接着打的字不能吞(极端并发下宁多留不误删)。
-      const current = document.querySelector<HTMLTextAreaElement>(".v-inbox .compose-input");
-      if (current !== null && currentSpaceId() === mountSpace && current.value === submitted) {
-        current.value = "";
-        autoGrow(current); // back to one row (same as the board compose reset)
-        clearTextDraft(INBOX_DRAFT_KEY); // 输入框被清 = 稿了结,磁盘草稿同步清(等待期未再打字才走这)
-      }
-      // 保存中切走时 unmount 会把提交前的输入框内容存进模块态:成功即作废同内容的
-      // 存底,回来不再灌回已保存的正文(codex P1 审 H2)。
-      if (composeDraftSaved === submitted) {
-        composeDraftSaved = "";
-        clearTextDraft(INBOX_DRAFT_KEY); // 模块存底=已保存正文:磁盘也清(切走场景,input 不在场)
-      }
-      const notices: string[] = [];
-      // 恰好筛了单一具体标签 → 新灵感自动挂上它(同看板「筛着标签建卡」),否则新卡会被
-      // 当前筛选滤到隐身;「无标签」筛选下新卡本就无标签、天然可见。挂失败不吞掉:灵感
-      // 已在,提示一句(切「所有」能找到)。
-      const soleTopic = soleTopicFilter(filter);
-      if (soleTopic !== null) {
-        try {
-          await invokeInSpace(mountSpace, "file_note_to_topic", { id, topicId: soleTopic, newTitle: null });
-        } catch {
-          notices.push("灵感已保存,但标签未能挂上(切到「所有」可见)");
+        return soleTopic;
+      },
+      onSettled: (notices, failed) => {
+        if (failed > 0) notices.push(t("inbox.savedImagesFailed", { n: failed }) + REPASTE_HINT);
+        if (notices.length > 0) {
+          // 过桥进模块态:refresh 会重建 bar,提示恒由同空间的新 bar 领走显示
+          // (活 mount 与死 mount 同一条路;codex 三审 M)。
+          composeCtl.postNotice(notices.join(";"), mountSpace);
         }
-      }
-      // 灵感已入库,再挂暂存图(同一保存的一部分,恒决议);挂失败不吞掉(fail-fast)。
-      const failed = await pendImgs.attachBatch(id, batch, mountSpace);
-      if (failed > 0) notices.push(`灵感已保存,但 ${failed} 张图未能附加(可在卡片编辑态重新粘贴)`);
-      if (notices.length > 0) {
-        composeNotice = notices.join(";");
-        composeNoticeSpace = mountSpace;
-      }
-      if (unmounted) {
-        // 本 mount 已死但落账已完成(codex 四审 M):通知同空间活 mount 马上重读——
-        // 新卡上列表,模块 notice 也随 composeBar 重建当场亮出来。
-        if (currentSpaceId() === mountSpace) liveRefresh?.();
-        return;
-      }
-      // 文本过滤下记灵感:新卡多半不含过滤词,会被当场滤到隐身——清掉过滤让它可见。
-      if (filter.text !== "") {
-        filter.text = "";
-        filterInput.value = "";
-      }
-      // 多标签(OR)筛选下记灵感:新卡生而无标签、不在任何被筛标签下 = 会隐身,清掉标签
-      // 筛选让它可见(单选具体标签已自动挂上、本就可见;含「无标签」筛选时新卡天然在视野)。
-      if (soleTopic === null && filter.topics.length > 0 && !filter.topics.includes("none")) {
-        filter.topics = [];
-      }
-      pulseId = id;
-      void refresh();
-    };
+      },
+      onSaved: (id, soleTopic) => {
+        // 文本过滤下记灵感:新卡多半不含过滤词,会被当场滤到隐身——清掉过滤让它可见。
+        if (filter.text !== "") {
+          filter.text = "";
+          filterInput.value = "";
+        }
+        // 多标签(OR)筛选下记灵感:新卡生而无标签、不在任何被筛标签下 = 会隐身,清掉标签
+        // 筛选让它可见(单选具体标签已自动挂上、本就可见;含「无标签」筛选时新卡天然在视野)。
+        if (soleTopic === null && filter.topics.length > 0 && !filter.topics.includes("none")) {
+          filter.topics = [];
+        }
+        pulseId = id;
+        void refresh();
+      },
+    });
     input.addEventListener("input", () => {
       autoGrow(input); // grows to fit, CSS-capped at 160
-      saveTextDraft(INBOX_DRAFT_KEY, { text: input.value, space: mountSpace }); // 断电恢复:输入即写
+      composeCtl.persistText(input.value, mountSpace); // 断电恢复:输入即写
     });
     input.addEventListener("keydown", (e) => {
       if (e.isComposing) return; // IME 组合期的 Enter 是上屏,不是保存(ui-audit P0 #1)
@@ -412,9 +343,9 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         void save();
       }
     });
-    const addBtn = el("button", { className: "compose-add", textContent: "记下", onclick: () => void save() });
+    const addBtn = el("button", { className: "compose-add", textContent: t("inbox.composeAdd"), onclick: () => void save() });
     // 暂存图条换行独占一行(.compose 本就 flex-wrap);root 是常驻节点,从上一个 bar 搬过来。
-    return el("div", { className: "compose" }, [input, addBtn, pendImgs.root, err]);
+    return el("div", { className: "compose" }, [input, addBtn, composeCtl.imgs.root, err]);
   }
 
   // 只给「读取失败」(refresh 整批拉取挂了)用;卡级操作失败走卡上的就地错误行。
@@ -422,9 +353,9 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
   function renderError(message: string): void {
     list.replaceChildren(
       el("div", { className: "center" }, [
-        el("div", { className: "big", textContent: "读取失败" }),
+        el("div", { className: "big", textContent: t("inbox.loadFailed") }),
         el("div", { className: "err-box", textContent: message }),
-        el("button", { className: "no", textContent: "重试", onclick: () => void refresh() }),
+        el("button", { className: "no", textContent: t("inbox.retry"), onclick: () => void refresh() }),
       ]),
     );
   }
@@ -458,9 +389,9 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
 
   function renderEmpty(mode: Tab): void {
     if (mode === "ideas") {
-      renderCenter("还没有灵感", "在上方输入,或按 Ctrl+Alt+N 随手记一个念头。");
+      renderCenter(t("inbox.emptyIdeasTitle"), t("inbox.emptyIdeasHint"));
     } else {
-      renderCenter("回收站是空的", "删掉的灵感会先来这里,可还原或彻底删除。");
+      renderCenter(t("inbox.emptyTrashTitle"), t("inbox.emptyTrashHint"));
     }
   }
 
@@ -566,6 +497,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     }
     let tagsEl: HTMLElement | null = null;
     if (tagged) {
+      const removeTagTitle = t("inbox.removeTagTitle"); // map 参数 t 遮蔽 i18n 的 t,先取出来
       tagsEl = el(
         "div",
         { className: "tags" },
@@ -576,7 +508,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
               el("button", {
                 className: "tag-x",
                 textContent: "✕",
-                title: "去掉这个标签",
+                title: removeTagTitle,
                 onclick: () => void removeTag(t.id),
               }),
             );
@@ -645,7 +577,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
             el("p", { className: "form-err", textContent: partialMsg }),
             el("button", {
               className: "no",
-              textContent: "我已处理,解除",
+              textContent: t("inbox.movePartialDone"),
               onclick: () => {
                 movePartialClear(item.id);
                 void refresh();
@@ -760,12 +692,12 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         }
       };
       // 点这张卡以外的任何地方 = 默认保存(需求:点别处即提交)。落点在本卡内(文本框 /
-      // 缩略图 / 历史 / 提示行)不算离开;落在看大图遮罩、别卡的 ⋯ 菜单浮层(portal 到 body)
-      // 也放行——那是编辑态的卫星 UI,不该误触发保存。
+      // 缩略图 / 历史 / 提示行)不算离开;落在看大图遮罩、别卡的 ⋯ 菜单浮层、留言浮层(portal 到
+      // body)也放行——那是编辑态的卫星 UI,不该误触发保存(白名单=SATELLITE_LAYERS,一处登记)。
       const onDown = (e: MouseEvent): void => {
         const t = e.target as HTMLElement;
         if (note.contains(t)) return;
-        if (t.closest(".img-lightbox, .hk-menu")) return;
+        if (t.closest(SATELLITE_LAYERS)) return;
         commit();
       };
       document.addEventListener("keydown", onKey);
@@ -788,13 +720,13 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
           revs.map((r) =>
             el("div", { className: "hist-item" }, [
               el("p", { className: "hist-text", textContent: r.content }),
-              el("time", { className: "hist-time", textContent: `于 ${when(r.archived_at)} 改` }),
+              el("time", { className: "hist-time", textContent: t("inbox.editedAt", { time: when(r.archived_at) }) }),
             ]),
           ),
         );
         const toggle = el("button", {
           className: "hist-toggle",
-          textContent: `历史 ${revs.length} 版`,
+          textContent: t("inbox.historyToggle", { n: revs.length }),
           onclick: () => {
             panel.hidden = !panel.hidden;
           },
@@ -915,13 +847,13 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         el("div", { className: "confirm" }, [
           el("button", {
             className: "no",
-            textContent: "取消",
+            textContent: t("inbox.cancel"),
             onclick: () => {
               disarmConfirm();
               showView();
             },
           }),
-          el("button", { className: "do", textContent: "彻底删除", onclick: confirmPurge }),
+          el("button", { className: "do", textContent: t("inbox.deleteForever"), onclick: confirmPurge }),
         ]),
       );
     }
@@ -945,10 +877,10 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       );
       const chips = el("div", { className: "chips" }, chipBtns);
       const actionsRow = el("div", { className: "form-actions" }, [
-        el("button", { className: "no", textContent: "取消", onclick: showView }),
+        el("button", { className: "no", textContent: t("inbox.cancel"), onclick: showView }),
       ]);
       const form = el("div", { className: "inline-form" }, [
-        el("label", { className: "form-label", textContent: "移动到…(编辑历史将随移动永久删除)" }),
+        el("label", { className: "form-label", textContent: t("inbox.moveLabel") }),
         chips,
         err,
         actionsRow,
@@ -962,7 +894,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         showErr(err, msg);
         chips.remove();
         actionsRow.replaceChildren(
-          el("button", { className: "no", textContent: "知道了(刷新)", onclick: () => void refresh() }),
+          el("button", { className: "no", textContent: t("inbox.moveGotIt"), onclick: () => void refresh() }),
         );
       };
 
@@ -981,31 +913,31 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
           setBusy(false);
           return;
         }
+        // 话术=space.ts::moveOutcomeText 一份(此前与看板逐字两抄),这里只留 DOM 反应。
+        const text = moveOutcomeText(r, labels.get(target) ?? target);
         switch (r.outcome) {
           case "moved":
             // 回执(228):与看板同一句话、同一个通道(共享件 toast.ts),别再各说各的。
-            toastAction(`已移到「${labels.get(target) ?? target}」`);
+            toastAction(text);
             // 迟到(期间取消/重渲/切空间)= 卡片已脱离 DOM:列表由现任渲染负责,
             // 只在还在源空间时补一次刷新,把已被移走的卡从陈列里收掉。
             if (note.isConnected) leaveCard(note, "ideas", null);
             else if (currentSpaceId() === sourceSpace) void refresh();
             return;
           case "copied_but_source_kept":
-            settlePartial(`已复制到目标空间,但原条目删除未执行:${r.reason}。两边各有一份,确认后可手动删除本条`);
-            return;
           case "copied_but_source_unconfirmed":
-            settlePartial(`已复制到目标空间,但删除原条目时出错(原条目状态未知):${r.error}。请核对两边,勿重复移动`);
+            settlePartial(text);
             return;
           case "images_pending":
-            showErr(err, `有 ${r.count} 张配图的字节还没同步到齐,稍后再移`);
-            moving = false;
-            setBusy(false);
-            return;
           case "dangling_refs":
-            showErr(err, `正文引用了已删除的配图(图${r.seqs.join("、图")}),暂不支持移动`);
+            showErr(err, text);
             moving = false;
             setBusy(false);
             return;
+          default: {
+            const exhaustive: never = r;
+            return exhaustive;
+          }
         }
         // 部分成功:**先落登记**(独立于 DOM,取消/重渲/切空间/重启都冲不掉,
         // 该条目的「移动」入口随之隐藏),再更新眼前的表单;表单已脱离 DOM 就
@@ -1025,47 +957,47 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     const copyFeedback = async (): Promise<string> => {
       try {
         await copyText(currentContent);
-        return "已复制";
+        return t("inbox.copied");
       } catch {
-        return "复制失败";
+        return t("inbox.copyFailed");
       }
     };
     // 复制这条灵感的深链接(zhujian://open?…&item=…):粘到别处 / 发对方设备都能直接打开它。
     const copyLinkFeedback = async (): Promise<string> => {
       try {
         await copyText(await buildItemDeepLink(item.id));
-        return "已复制链接";
+        return t("inbox.copiedLink");
       } catch {
-        return "复制失败";
+        return t("inbox.copyFailed");
       }
     };
     function actionsFor(): Act[] {
       if (mode === "archived") {
         return [
-          { label: "还原", key: "R", run: doRestore },
-          { label: "复制", key: "C", feedback: copyFeedback },
-          { label: "复制链接", key: "K", feedback: copyLinkFeedback },
-          { label: "彻底删除", key: "D", run: openPurge, danger: true },
+          { label: t("inbox.actRestore"), key: "R", run: doRestore },
+          { label: t("inbox.actCopy"), key: "C", feedback: copyFeedback },
+          { label: t("inbox.actCopyLink"), key: "K", feedback: copyLinkFeedback },
+          { label: t("inbox.deleteForever"), key: "D", run: openPurge, danger: true },
         ];
       }
       const list: Act[] = [
-        { label: "编辑", key: "E", run: openEdit },
-        { label: "待办", key: "T", run: doPromote },
-        { label: "标签", key: "L", run: openTopic },
+        { label: t("inbox.actEdit"), key: "E", run: openEdit },
+        { label: t("inbox.actTask"), key: "T", run: doPromote },
+        { label: t("inbox.actTag"), key: "L", run: openTopic },
         // 留言(§4.7):N=0 时卡片上没有徽章,这里是写第一条的唯一入口。
-        { label: "留言", key: "Y", run: () => openComments(mountSpace, item.id, () => void refresh()) },
-        { label: "复制", key: "C", feedback: copyFeedback },
-        { label: "复制链接", key: "K", feedback: copyLinkFeedback },
+        { label: t("inbox.actComments"), key: "Y", run: () => openComments(mountSpace, item.id, () => void refresh()) },
+        { label: t("inbox.actCopy"), key: "C", feedback: copyFeedback },
+        { label: t("inbox.actCopyLink"), key: "K", feedback: copyLinkFeedback },
       ];
       // 移动到其他空间(cross-space-move v1):≥2 空间才出现(单空间是纯噪音);
       // 该条目有部分成功登记(目标已建、源还在)时入口整个藏起——绝不提供重跑。
       if (otherSpaces.length > 0 && !movePartialNote(item.id)) {
-        list.push({ label: "移动", key: "M", run: openMove });
+        list.push({ label: t("inbox.actMove"), key: "M", run: openMove });
       }
       // 73: 删除=进回收站,不再按 stage 分流(59 的 inbox 硬删 UI 就此退役——tombstone
       // 在同步语义里是全网抹掉、不可复活,不该是删除键的默认归宿)。软删可还原,故与
       // filed 先例一致零确认;真要销毁走回收站的「彻底删除」。
-      list.push({ label: "删除", key: "D", run: doArchive, danger: true });
+      list.push({ label: t("inbox.actDelete"), key: "D", run: doArchive, danger: true });
       return list;
     }
     // A card mid inline-edit / mid-confirm owns the keyboard (its own Enter/Esc), so
@@ -1099,7 +1031,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     const showDefault = () => {
       disarmConfirm();
       actions.replaceChildren(
-        el("button", { className: "no", textContent: "清空回收站", onclick: showConfirm }),
+        el("button", { className: "no", textContent: t("inbox.emptyTrash"), onclick: showConfirm }),
       );
     };
     function showConfirm(): void {
@@ -1127,13 +1059,13 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       // 原「清空回收站」的落点被「取消」接住——手抖/双击的第二击落在取消上,而不是
       // 一击不可恢复的「彻底删除全部」。
       actions.replaceChildren(
-        el("button", { className: "do", textContent: `彻底删除全部 ${n} 条`, onclick: doPurge }),
-        el("button", { className: "no", textContent: "取消", onclick: showDefault }),
+        el("button", { className: "do", textContent: t("inbox.purgeAll", { n }), onclick: doPurge }),
+        el("button", { className: "no", textContent: t("inbox.cancel"), onclick: showDefault }),
       );
     }
     showDefault();
     return el("div", { className: "trash-bar" }, [
-      el("span", { className: "trash-note", textContent: "删掉的灵感会一直留在这,直到你彻底删除" }),
+      el("span", { className: "trash-note", textContent: t("inbox.trashNote") }),
       err,
       actions,
     ]);
@@ -1220,7 +1152,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       // 常驻不重建、提交后 focus() 留焦点;这里补齐同款「连续录入」手感)。
       // 半打的正文同理:过滤框每敲一字都 refresh(重建 compose),不带走草稿就等于
       // 「敲过滤词毁正文」——重建前存下 value/光标,渲染完灌回新输入框(暂存图片由
-      // pendImgs.root 搬家存活,这条是文字的对称面)。save 成功已先清空旧框,存到的
+      // composeCtl.imgs.root 搬家存活,这条是文字的对称面)。save 成功已先清空旧框,存到的
       // 是空串,不会把已保存的正文再灌回去。
       const oldCompose = view.querySelector<HTMLTextAreaElement>(".compose-input");
       const hadComposeFocus = oldCompose !== null && document.activeElement === oldCompose;
@@ -1243,10 +1175,12 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       // 有多少转过待办(含后来归档/进回收站的——经历是史实);分母 0(全是 0018 前的
       // 老数据)时只显捕获数,不显「—」的哑谜。
       statsEl.textContent =
-        `本周捕获 ${stats.captured_week}` +
-        (stats.born_inbox > 0
-          ? ` · 转待办 ${Math.round((stats.converted / stats.born_inbox) * 100)}%`
-          : "");
+        stats.born_inbox > 0
+          ? t("inbox.weekStats", {
+              n: stats.captured_week,
+              pct: Math.round((stats.converted / stats.born_inbox) * 100),
+            })
+          : t("inbox.weekStatsNoRatio", { n: stats.captured_week });
       if (active === "ideas") {
         // 筛选行:有想法才出现(同看板);pills 计数从全量想法派生(不随文本过滤
         // 收缩,两维正交——口径在共享件 filter-bar.ts,与看板同源)。
@@ -1261,7 +1195,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         // The compose bar always sits at the top of 想法, empty or not.
         const bar = composeBar();
         if (ideas.length === 0) {
-          list.replaceChildren(bar, centerNode("还没有灵感", "在上方输入,或按 Ctrl+Alt+N 随手记一个念头。"));
+          list.replaceChildren(bar, centerNode(t("inbox.emptyIdeasTitle"), t("inbox.emptyIdeasHint")));
         } else if (shown.length === 0) {
           // 筛空 ≠ 没有灵感:提示当前筛选(词优先),别让用户以为灵感全没了(同看板)。
           const qRaw = filter.text.trim();
@@ -1269,8 +1203,8 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
           list.replaceChildren(
             bar,
             qRaw !== ""
-              ? centerNode(`没有匹配「${qRaw}」的灵感`, "换个词,或清空过滤框(Esc)。")
-              : centerNode(`「${label}」下没有灵感`, "切到「所有」看全部灵感。"),
+              ? centerNode(t("inbox.filterNoMatch", { q: qRaw }), t("inbox.filterNoMatchHint"))
+              : centerNode(t("inbox.filterEmptyTag", { tag: label }), t("inbox.filterEmptyTagHint")),
           );
         } else {
           // 按天分组成时间轴:同一天的灵感归到一个日期标头下(后端已按时间倒序;
@@ -1308,8 +1242,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       } else if (newCompose !== null && newCompose.value !== "") {
         autoGrow(newCompose); // 模块态草稿在 composeBar() 已灌回:补一记自适应高度
       } else if (newCompose === null && composeDraft !== "") {
-        composeDraftSaved = composeDraft;
-        composeDraftSpace = mountSpace;
+        composeCtl.stashDraft(composeDraft, mountSpace);
       }
       if (hadComposeFocus) newCompose?.focus();
       // First render after a (re)mount: drop back to where the user was reading before
@@ -1349,23 +1282,23 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     { key: "N", run: () => view.querySelector<HTMLTextAreaElement>(".compose-input")?.focus() },
   ]);
 
-  liveRefresh = () => void refresh(); // 本 mount 即当前活灵感视图(codex 四审 M)
+  composeCtl.setLiveReload(() => void refresh()); // 本 mount 即当前活灵感视图(codex 四审 M)
   void refresh();
 
   return {
     unmount() {
       // Remember where the user was reading so the next mount can restore it.
       savedScroll = list.scrollTop;
-      liveRefresh = null; // navigate 恒先 unmount 再 mount:新 mount 会立即接管
+      composeCtl.setLiveReload(null); // navigate 恒先 unmount 再 mount:新 mount 会立即接管
       // (P1 #9a)编辑态:只拆监听不 commit(理由见 teardownActiveEdit 声明处)。
       if (teardownActiveEdit) teardownActiveEdit();
       disarmConfirm(); // 在场确认的文档级监听不跨 mount 存活(codex M3)
-      // (P1 #9d)compose 草稿过桥进模块态;暂存图由模块级 pendImgs 自然存活
-      // (此前这里 clear 掉=切个视图就丢图丢字)。
+      // (P1 #9d)compose 草稿过桥进模块态;暂存图由模块级 composeCtl.imgs 自然存活
+      // (此前这里 clear 掉=切个视图就丢图丢字)。回收站 tab 没有输入框:liveCompose
+      // 可能不在,不在就不存(与看板常驻 compose 的无条件存是生命周期分歧)。
       const liveCompose = view.querySelector<HTMLTextAreaElement>(".compose-input");
       if (liveCompose !== null) {
-        composeDraftSaved = liveCompose.value;
-        composeDraftSpace = mountSpace; // 空间标记取 mount 时捕获值(codex H1)
+        composeCtl.stashDraft(liveCompose.value, mountSpace); // 空间标记取 mount 时捕获值(codex H1)
       }
       unmounted = true;
       refreshSeq++; // 作废本 mount 的在途 refresh:迟到响应不许消费新 mount 的 pendingFocus(codex M1)

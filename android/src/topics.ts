@@ -13,6 +13,7 @@ import {
   setTopicKind,
   type TopicTreeItem,
 } from "./api";
+import { t } from "./i18n";
 import { $, esc, showBar, showError } from "./ui";
 
 type Deps = {
@@ -39,7 +40,7 @@ export async function loadTopics(): Promise<void> {
   const space = getCurrentSpace();
   const s = ++seq;
   const box = $("topics-list");
-  if (!rows.length) box.innerHTML = `<p class="muted empty">读取中…</p>`;
+  if (!rows.length) box.innerHTML = `<p class="muted empty">${t("topics.loading")}</p>`;
   try {
     // 合计口径(想法 notes + 任务交叉):只显想法数会让「只挂在任务上」的标签显 0 条、误导。
     const [tree, tasks] = await Promise.all([listTopicsFull(space), listTasks(space)]);
@@ -52,36 +53,36 @@ export async function loadTopics(): Promise<void> {
     render();
   } catch (err) {
     if (space !== getCurrentSpace() || s !== seq) return;
-    box.innerHTML = `<p class="empty" style="color:var(--seal)">标签读取失败:${esc(String(err))}</p>`;
+    box.innerHTML = `<p class="empty warn-ink">${t("topics.loadFailed", { error: esc(String(err)) })}</p>`;
   }
 }
 
 function render(): void {
   const box = $("topics-list");
   if (!rows.length) {
-    box.innerHTML = `<p class="muted empty">还没有标签——在卡片上打标签,标签就会出现在这里。</p>`;
+    box.innerHTML = `<p class="muted empty">${t("topics.empty")}</p>`;
     return;
   }
   box.innerHTML = rows
-    .map((t) => {
-      const n = counts.get(t.id) ?? 0;
-      const editing = t.id === kindEditId;
+    .map((tp) => {
+      const n = counts.get(tp.id) ?? 0;
+      const editing = tp.id === kindEditId;
       const kindZone = editing
         ? `<span class="tk-edit">
-             <input class="tk-input" value="${esc(t.kind ?? "")}" placeholder="类型(如 人名)"
+             <input class="tk-input" value="${esc(tp.kind ?? "")}" placeholder="${t("topics.kindPh")}"
                     autocapitalize="off" autocomplete="off" maxlength="40" />
-             <button data-kind-save="${esc(t.id)}">存</button>
-             <button data-kind-clear="${esc(t.id)}" class="ghost">清</button>
+             <button data-kind-save="${esc(tp.id)}">${t("topics.kindSave")}</button>
+             <button data-kind-clear="${esc(tp.id)}" class="ghost">${t("topics.kindClear")}</button>
            </span>`
-        : t.kind
-          ? `<button class="tk-badge" data-kind-edit="${esc(t.id)}">${esc(t.kind)}</button>`
-          : `<button class="tk-add" data-kind-edit="${esc(t.id)}">+ 类型</button>`;
-      return `<article class="trow${busy ? " off" : ""}" data-topic="${esc(t.id)}">
-        <span class="thandle" data-drag="${esc(t.id)}" aria-label="拖动排序">⠿</span>
-        <span class="tname">${esc(t.title)}${
-          t.color ? `<i class="tdot" style="--tc:${esc(t.color)}"></i>` : ""
+        : tp.kind
+          ? `<button class="tk-badge" data-kind-edit="${esc(tp.id)}">${esc(tp.kind)}</button>`
+          : `<button class="tk-add" data-kind-edit="${esc(tp.id)}">${t("topics.kindAdd")}</button>`;
+      return `<article class="trow${busy ? " off" : ""}" data-topic="${esc(tp.id)}">
+        <span class="thandle" data-drag="${esc(tp.id)}" aria-label="${t("topics.dragHint")}">⠿</span>
+        <span class="tname">${esc(tp.title)}${
+          tp.color ? `<i class="tdot" style="--tc:${esc(tp.color)}"></i>` : ""
         }</span>
-        <span class="tcount">${n} 项</span>
+        <span class="tcount">${t("topics.count", { n })}</span>
         ${kindZone}
       </article>`;
     })
@@ -101,7 +102,7 @@ async function saveKind(id: string, clear = false): Promise<void> {
   render();
   try {
     await setTopicKind(space, id, kind);
-    if (space === getCurrentSpace()) showBar(kind ? "已设类型" : "已清类型", true);
+    if (space === getCurrentSpace()) showBar(kind ? t("topics.kindSet") : t("topics.kindCleared"), true);
   } catch (err) {
     if (space === getCurrentSpace()) showError(String(err));
   } finally {
@@ -114,8 +115,8 @@ async function saveKind(id: string, clear = false): Promise<void> {
 }
 
 function onClick(e: Event): void {
-  const t = e.target as HTMLElement;
-  const editId = t.closest<HTMLElement>("[data-kind-edit]")?.dataset.kindEdit;
+  const el = e.target as HTMLElement;
+  const editId = el.closest<HTMLElement>("[data-kind-edit]")?.dataset.kindEdit;
   if (editId) {
     if (busy || deps.isSwitching()) return;
     kindEditId = editId;
@@ -123,12 +124,12 @@ function onClick(e: Event): void {
     $("topics-list").querySelector<HTMLInputElement>(".tk-input")?.focus();
     return;
   }
-  const saveId = t.closest<HTMLElement>("[data-kind-save]")?.dataset.kindSave;
+  const saveId = el.closest<HTMLElement>("[data-kind-save]")?.dataset.kindSave;
   if (saveId) {
     void saveKind(saveId);
     return;
   }
-  const clearId = t.closest<HTMLElement>("[data-kind-clear]")?.dataset.kindClear;
+  const clearId = el.closest<HTMLElement>("[data-kind-clear]")?.dataset.kindClear;
   if (clearId) void saveKind(clearId, true);
 }
 

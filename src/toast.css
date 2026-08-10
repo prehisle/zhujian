@@ -6,10 +6,12 @@
   transform: translate(-50%, -140%);
   padding: 3px 8px;
   font-family: var(--font-sans);
-  font-size: 12px;
-  color: #fff;
+  font-size: var(--fs-12);
+  /* 墨底纸字。两个都走令牌——暗色档里「墨」本身是浅的(纸黑墨白反过来了),
+     写死 #fff 会在暗色下变成白字压白底(实测 1.26:1,肉眼近乎看不见)。 */
+  color: var(--paper);
   background: var(--ink);
-  border-radius: 5px;
+  border-radius: var(--radius-xs);
   pointer-events: none;
   white-space: nowrap;
   /* 时长由 JS 写 animationDuration 覆盖(与移除定时器同一个参数);这里只给默认值。 */

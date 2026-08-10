@@ -24,6 +24,7 @@ import {
   listItemComments,
   type Comment,
 } from "./api";
+import { t } from "./i18n";
 import { authorLabel } from "./identity";
 import { createKbSheet, type KbSheet } from "./kbsheet";
 import { $, confirmBar, esc, fmtWhen, hideConfirmBar, showBar, showError } from "./ui";
@@ -61,7 +62,7 @@ export async function loadCommentCounts(space: string): Promise<void> {
 export function commentBadgeHtml(space: string, itemId: string): string {
   const n = counts && counts.space === space ? (counts.map.get(itemId) ?? 0) : 0;
   if (n === 0) return "";
-  return `<button class="cm-badge" data-cm="${esc(itemId)}" aria-label="看留言">💬 ${n}</button>`;
+  return `<button class="cm-badge" data-cm="${esc(itemId)}" aria-label="${t("comments.badgeAria")}">💬 ${n}</button>`;
 }
 
 // ---- 留言层 --------------------------------------------------------------------
@@ -130,7 +131,7 @@ export function openComments(space: string, itemId: string): void {
   hideConfirmBar(); // 上一发挂着的确认不许作用到新语境
   setBusy(s, false);
   inputEl().value = "";
-  listEl().innerHTML = `<p class="muted cm-empty">读取中…</p>`;
+  listEl().innerHTML = `<p class="muted cm-empty">${t("comments.loading")}</p>`;
   $("cm-more").hidden = true;
   if (first) {
     kb.open();
@@ -170,7 +171,7 @@ function renderRow(space: string, c: Comment): string {
     <p class="cm-text">${esc(c.content)}</p>
     <footer class="cm-meta"><time>${esc(fmtWhen(c.created_at))}</time>${
       who ? `<span class="cm-author">${esc(who)}</span>` : ""
-    }<button class="cm-del" data-cm-del="${esc(c.id)}">删除</button></footer>
+    }<button class="cm-del" data-cm-del="${esc(c.id)}">${t("comments.delete")}</button></footer>
   </article>`;
 }
 
@@ -180,7 +181,7 @@ function paintEmpty(): void {
   const has = list.querySelector(".cm-item") !== null;
   const ph = list.querySelector(".cm-empty");
   if (has) ph?.remove();
-  else if (!ph) list.innerHTML = `<p class="muted cm-empty">还没有留言。</p>`;
+  else if (!ph) list.innerHTML = `<p class="muted cm-empty">${t("comments.empty")}</p>`;
 }
 
 async function loadPage(s: Sheet, next: boolean): Promise<void> {
@@ -199,7 +200,7 @@ async function loadPage(s: Sheet, next: boolean): Promise<void> {
     if (!live(s)) return;
     // 后端的话原样展示(宿主不存在 / 游标不合形都是有话可说的拒绝),不吞不改写。
     showError(String(err));
-    if (!next) listEl().innerHTML = `<p class="cm-empty" style="color: var(--seal)">留言读取失败</p>`;
+    if (!next) listEl().innerHTML = `<p class="cm-empty warn-ink">${t("comments.loadFailed")}</p>`;
   } finally {
     s.loading = false;
   }
@@ -242,7 +243,7 @@ function onListClick(e: Event): void {
   const id = (e.target as HTMLElement).closest<HTMLElement>("[data-cm-del]")?.dataset.cmDel;
   if (!id) return;
   inputEl().blur();
-  confirmBar("销毁这条留言?不进回收站、无法找回", "销毁", () => {
+  confirmBar(t("comments.destroyQ"), t("comments.destroyYes"), () => {
     if (sheet !== s || s.busy) return;
     void destroy(s, id);
   });
@@ -290,7 +291,7 @@ export function refreshOpenComments(space: string, aliveItemIds: Iterable<string
   }
   if (!alive) {
     closeComments();
-    showBar("这条记录已不在,留言面已收起", true);
+    showBar(t("comments.hostGone"), true);
     return;
   }
   if (!s.paged && !s.busy) void loadPage(s, false);

@@ -1,5 +1,7 @@
 # 朱简(zhujian)
 
+> [English](readme.en.md) · **简体中文**
+
 个人事务管理工具 —— **纯人工、灵活不受限、维护性高**。名取「朱砂」与「简牍」:朱色书写、竹木短简记小事,「简」亦取简朴意(原名「朱笺」,取「朱砂笺纸」意,现改称朱简、更好认好念;更早叫 ys-notebook)。纸与朱墨的设计一脉相承。
 
 ```
@@ -71,7 +73,7 @@ core/                       zhujian-core 共享核心 crate(P4-a:数据层+同�
   src/task.rs               任务看板状态机(合法迁移 + CAS)+ 拖动排序 + 置顶 + 任务回收站编排
   src/images.rs             配图编排(取「图N」编号高水位 + 插图,单事务)
   src/repo.rs               数据访问层(纯 SQL)+ 各读取/写入原语
-  src/db.rs                 连接 + 迁移运行器(user_version + 编号 SQL,现 31 条)
+  src/db.rs                 连接 + 迁移运行器(user_version + 编号 SQL,现 35 条)
   src/clock.rs 等           同步数据层(设备身份+HLC 时钟 / oplog 操作日志 / replay 远端回放 / frindex 分数排序键)
   src/sync/                 同步客户端(收端引擎 / E2EE 加密 / SPAKE2 配对 / 快照引导 / WSS 传输 / 局域网直连[lan.rs 纯逻辑 + lan_net.rs 监听拨号 + ops_serve.rs 追赶供流])
   migrations/0001_init.sql                     初始 schema(6 表)
@@ -89,7 +91,7 @@ core/                       zhujian-core 共享核心 crate(P4-a:数据层+同�
   migrations/0017~0031_*.sql                   成就归档 sealed_at / 出生态 born_stage / 同步数据层(sync_meta·oplog·fractional position·回放豁免·图N op 化·origin_seq·引导豁免·标签颜色·空间名同步 space 单例·完成时刻 done_at·标签手动序与类型)
 src-tauri/
   tauri.conf.json           窗口/打包配置
-e2e/                        真 GUI e2e(wdio.conf.js + 34 个 specs + support.js;drivers/msedgedriver 自备)
+e2e/                        真 GUI e2e(wdio.conf.js + 35 个 specs + support.js;drivers/msedgedriver 自备)
 sync-proto/, server/        同步信封层 + 自建同步服务 zhujian-syncd(独立 crate,E2EE 零知识中转)
 android/                    安卓壳(独立 npm 工程 + crate zhujian-android,path 依赖 core;界面现有 捕获两态+统一时间轴[含配图]+勾标完成+系统分享入口+扫码配对+新版提示[提示式,下载跳浏览器];119 起后端能力面已与桌面对齐[全功能主力端底座],界面按使用渐进补齐;禁系统备份)
 ```
@@ -112,8 +114,8 @@ npm run tauri build  # 打包发行版(release,把前端嵌入独立 exe)
 
 ## 测试 / 验证
 
-- **逻辑**:`cd core && cargo test`(**676 个测试**;含历次数据迁移零丢失的折叠验证、同步引擎收敛 property test 与对真同步服务器的双库端到端集成测;全部后端测试在共享 crate `zhujian-core`,`cd src-tauri && cargo test` 为桌面壳多空间单测)。另有独立 crate:`cd sync-proto && cargo test`(信封层)/ `cd server && cargo test`(同步服务)/ `cd android/src-tauri && cargo test`(安卓壳)。
-- **真 GUI e2e**:`npm run test:e2e`(**34 个 spec 文件 / 140 例**)——WebdriverIO → tauri-driver → msedgedriver → 真 WebView2,跑真点击 + 真 IPC + 真 SQLite(详见 `docs/dev-and-testing.md`)。
+- **逻辑**:`cd core && cargo test`(**766 个测试**;含历次数据迁移零丢失的折叠验证、同步引擎收敛 property test 与对真同步服务器的双库端到端集成测;全部后端测试在共享 crate `zhujian-core`,`cd src-tauri && cargo test` 为桌面壳多空间单测)。另有独立 crate:`cd sync-proto && cargo test`(信封层)/ `cd server && cargo test`(同步服务)/ `cd android/src-tauri && cargo test`(安卓壳)。
+- **真 GUI e2e**:`npm run test:e2e`(**35 个 spec 文件 / 149 例**)——WebdriverIO → tauri-driver → msedgedriver → 真 WebView2,跑真点击 + 真 IPC + 真 SQLite(详见 `docs/dev-and-testing.md`)。
   - **fast(日常迭代,~80s)**:先在另一终端 `npm run dev`(**只起 vite,别用 `tauri dev`**——它会抢全局热键 `Ctrl+Alt+N` 致 e2e 的 app panic),再 `YS_E2E_FAST=1 npm run test:e2e`(debug exe,onPrepare 自动增量 `cargo build`)。
   - **release(最终把关,~5min)**:`npm run tauri build -- --no-bundle` 出 release exe 后 `npm run test:e2e`(默认,自包含无需 vite);同样**先停 dev**。
   - 隔离:e2e 用临时库 `%TEMP%\ys-nb-e2e.sqlite3`(每次清空),**不碰真实笔记本**。

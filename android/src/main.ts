@@ -4,10 +4,12 @@
 // (§16.2 提案 B:目标由后端协调器复核,切换中响亮拒、草稿成功落库才清)。
 // currentSpace 只是后端 foreground 的影子:每次切换/恢复后从 foreground_space 对账。
 // 119 起空间影子 + sinvoke + 业务命令包装上抬到 src/api.ts(全功能底座的调用层,
-// 单一真相源);本文件只剩视图编排,业务调用一律走 api 包装。
+// 单一真相源);本文件只剩视图编排,业务调用一律走 api 包装——**app 级/空间管理命令
+// 除外**(join_space/activate_space/create_space 等,豁免清单见 api.ts 文件头)。
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getVersion } from "@tauri-apps/api/app";
+import { applyStaticI18n, currentLangChoice, initLang, setLangChoice, t, type LangChoice } from "./i18n";
 import { currentThemeMode, initTheme, setThemeMode, type ThemeMode } from "./theme";
 import { currentTextSize, initTextSize, setTextSize, type TextSize } from "./textsize";
 import {
@@ -20,22 +22,16 @@ import {
   deviceIdentity,
   setDeviceAlias,
   deleteItemImage,
-  getItemImage,
-  getItemThumb,
-  putItemThumb,
   listSpaces,
   listTimeline,
   listTopicsFull,
   spaceLabel,
-  syncCreateAccount,
-  syncPairStart,
-  type ImageMeta,
-  type ThumbData,
   type SpaceInfo,
   type TimelineItem,
 } from "./api";
 import { $, confirmBar, esc, fmtWhen, hideConfirmBar, showBar, showError, STAGE_LABEL } from "./ui";
 import { composeImages, pickImage } from "./images";
+import { INPUT_DEBOUNCE_MS } from "./timing";
 import * as cardPanel from "./cardpanel";
 import * as filter from "./filter";
 import * as panes from "./panes";
@@ -53,14 +49,17 @@ import {
   openComments,
   refreshOpenComments,
 } from "./comments";
-import { openUrl } from "@tauri-apps/plugin-opener";
+import { disconnectThumbObserver, fillThumb, hydrateThumbs } from "./thumbs";
+import { closeViewerNow, initViewer, isViewerOpen, openViewer } from "./viewer";
 import {
-  scan,
-  cancel,
-  checkPermissions,
-  requestPermissions,
-  Format,
-} from "@tauri-apps/plugin-barcode-scanner";
+  dismissScanOverlay,
+  initSync,
+  renderSync,
+  resetSyncTransient,
+  type Spaced,
+  type SyncStatus,
+} from "./sync";
+import { openUrl } from "@tauri-apps/plugin-opener";
 
 type DbInfo = {
   path: string;
@@ -71,19 +70,6 @@ type DbInfo = {
   items: number;
 };
 type ProbeStep = { name: string; ok: boolean; detail: string };
-type SyncStatus = {
-  configured: boolean;
-  state: string; // off | connecting | booting | online | offline
-  account_id: string | null;
-  device_id: string | null;
-  server_url: string | null;
-  peers_online: number;
-  error: string | null;
-  frozen: string[];
-  suspended: number;
-  skew: boolean;
-  clock_skew: boolean;
-};
 type SyncOutcome = {
   space: string;
   name: string | null;
@@ -95,7 +81,8 @@ type SyncAllReport = { outcomes: SyncOutcome[]; restore_error: string | null };
 // 事件桥的统一信封(后端 bridge_emit):space 标 + 代次 + 原 payload。前端按
 // 「space=当前 且 generation ≥ 该空间已见最大代次」过滤——切换/回滚/遍历恢复
 // 会重激活同一空间,旧桥 buffer 里的迟到事件不许盖过新代次的状态(§12)。
-type Spaced<T> = { space: string; generation: number; payload: T };
+// 类型 Spaced<T> 随三个同步面监听住 sync.ts(310 第③笔);谓词与代次账本留这——
+// space-foreground 监听要直写账本,sync.ts 经 Deps 拿谓词。
 
 const seenGeneration: Record<string, number> = {};
 
@@ -189,11 +176,18 @@ function modeOfStage(stage: string): ViewMode {
 // 任务面四态分组(看板列同一套中文、固定顺序,空组不显;组内沿时间倒序——
 // 手机不读 position/不做拖排,组内时间序是本端自己的确定性顺序,146 §2.1)。
 const TASK_SECTIONS: { stage: string; label: string }[] = [
-  { stage: "todo", label: "待办" },
-  { stage: "doing", label: "进行中" },
-  { stage: "confirming", label: "待确认" },
-  { stage: "done", label: "已完成" },
+  { stage: "todo", label: t("ui.stageTodo") },
+  { stage: "doing", label: t("ui.stageDoing") },
+  { stage: "confirming", label: t("ui.stageConfirming") },
+  { stage: "done", label: t("ui.stageDone") },
 ];
+
+// 优先级角标的三档词(1..3;下标 0 恒不取——priority 有值才画这枚 chip)。
+const PRIORITY_LABEL: Record<number, string> = {
+  1: t("main.prioLow"),
+  2: t("main.prioMid"),
+  3: t("main.prioHigh"),
+};
 
 // ---- 统一时间轴 -------------------------------------------------------------
 
@@ -212,7 +206,7 @@ function renderCard(it: TimelineItem, hideTopic: string | null): string {
     .filter((t) => t.id !== hideTopic)
     .map(
       (t) =>
-        `<span class="chip"${t.color ? ` style="--tc:${esc(t.color)}"` : ""}>${esc(t.title)}</span>`,
+        `<span class="chip${t.color ? " tinted" : ""}"${t.color ? ` style="--tc:${esc(t.color)}"` : ""}>${esc(t.title)}</span>`,
     )
     .join("");
   // 配图缩略(117):只渲染占位框,字节滚到可视区才拉(thumbObserver)。
@@ -221,16 +215,16 @@ function renderCard(it: TimelineItem, hideTopic: string | null): string {
         .map(
           (im) =>
             `<button class="thumb" data-img="${esc(im.id)}" data-seq="${im.seq}"
-               aria-label="查看图${im.seq}"><span class="tag-n">图${im.seq}</span><span class="thumb-del" role="button" aria-label="删除图${im.seq}">×</span></button>`,
+               aria-label="${t("main.viewImage", { n: im.seq })}"><span class="tag-n">${t("images.imageN", { n: im.seq })}</span><span class="thumb-del" role="button" aria-label="${t("main.deleteImage", { n: im.seq })}">×</span></button>`,
         )
         .join("")}</div>`
     : "";
   // 120:data-id 供卡片操作面板定位;截止/优先级角标(任务行、有值才显)。
   const meta: string[] = [];
-  if (it.due_on) meta.push(`<span class="chip">截止 ${esc(it.due_on)}</span>`);
-  if (it.priority) meta.push(`<span class="chip">${["", "低", "中", "高"][it.priority]}优先</span>`);
+  if (it.due_on) meta.push(`<span class="chip">${t("main.dueChip", { day: esc(it.due_on) })}</span>`);
+  if (it.priority) meta.push(`<span class="chip">${t("main.priorityChip", { p: PRIORITY_LABEL[it.priority] })}</span>`);
   // 完成时刻(0030):已完成卡显示「完成于 <时刻>」;done_at 为 null(本功能前完成的老卡)则不显示。
-  const doneAt = done && it.done_at ? `<time class="done-at">完成于 ${esc(fmtWhen(it.done_at))}</time>` : "";
+  const doneAt = done && it.done_at ? `<time class="done-at">${t("main.doneAt", { when: esc(fmtWhen(it.done_at)) })}</time>` : "";
   // 署名(0033):只在「不是本机」且「那台起过别名」时显一枚小字;其余一律不显
   // (未命名设备刻意不显 id 片段——卡片上一串 K7M2QX 是噪音)。
   const sigName = signatureFor(getCurrentSpace(), it.born_device);
@@ -246,157 +240,6 @@ function renderCard(it: TimelineItem, hideTopic: string | null): string {
 
 // 时间轴最新一次渲染的条目快照(卡片操作面板的真值来源;refreshOnce 每轮重建)。
 let lastItems = new Map<string, TimelineItem>();
-
-// ---- 配图:取图去重 + 缩略图降采样缓存 + 点开大图(117;codex H1/M1) ----------
-// 内存纪律:**全尺寸 data URL 一律不缓存**(单图协议上限 32MiB,Base64 后 ~43MiB,
-// 存几张就把 WebView 撑爆)——缩略图取回后立刻降采样成小图(短边 144px,~几 KB)
-// 只缓存小图;大图只在查看器打开时取、关闭即置空 src 释放。缓存键带空间标,
-// 图不可变(删图=编号退役不复用)故小图永不过期。
-
-const thumbCache = new Map<string, string>(); // `${space}/${imageId}` → 降采样小图
-const imgPending = new Map<string, Promise<string>>(); // 取图 in-flight 去重
-
-/** 全尺寸图的一次取回(IPC 去重;空间已切走 = 返回 null,调用方直接放弃——
- *  刻意不走 sinvoke 的「永不决议」:悬挂的 Promise 会把 pending 表堵死,切回
- *  该空间后同一张图就再也取不到了)。`space` 由调用方显式传「发起那一刻的
- *  空间」(codex 三审:排队醒来重读 currentSpace 会拿 A 空间的 key 去查 B 库,
- *  撞 ID 时错图进 A 缓存)。 */
-function fetchImageUrl(space: string, id: string): Promise<string | null> {
-  const key = `${space}/${id}`;
-  let p = imgPending.get(key);
-  if (!p) {
-    p = getItemImage(space, id).finally(() => imgPending.delete(key));
-    imgPending.set(key, p);
-  }
-  return p.then((url) => (getCurrentSpace() === space ? url : null));
-}
-
-// 缩略图取数(0032 派生表,image-perf-plan §3):命中就只过来几 KB、连全尺寸位图都不用解;
-// 未命中才回退全尺寸,由下面 fillThumb 缩完异步回存。与 imgPending 分开一只 in-flight 去重
-// (两条路的载荷差着两个数量级,合用一只会让看大图去等缩略图、或反过来)。
-const thumbPending = new Map<string, Promise<ThumbData>>();
-function fetchThumbData(space: string, id: string): Promise<ThumbData | null> {
-  const key = `${space}/${id}`;
-  let p = thumbPending.get(key);
-  if (!p) {
-    p = getItemThumb(space, id).finally(() => thumbPending.delete(key));
-    thumbPending.set(key, p);
-  }
-  return p.then((d) => (getCurrentSpace() === space ? d : null));
-}
-
-/** 降采样:**一律过 canvas 重编码成 ≤144×144 的 cover 方裁**(codex 二审:原图
- *  哪怕像素尺寸小也可能字节巨大[多帧/元数据],直接放原 URL 进缓存 = 缓存无界;
- *  只钉短边则超宽长图 thumb 仍巨大——两边都钉死)。小图不放大,但照样重编码。
- *  解码失败响亮抛给调用方标错框。 */
-const THUMB_PX = 144;
-async function shrinkToThumb(url: string): Promise<string> {
-  const img = new Image();
-  await new Promise<void>((res, rej) => {
-    img.onload = () => res();
-    img.onerror = () => rej(new Error("图片解码失败"));
-    img.src = url;
-  });
-  const crop = Math.min(img.naturalWidth, img.naturalHeight); // 原图中央方形
-  const side = Math.min(THUMB_PX, crop);
-  const c = document.createElement("canvas");
-  c.width = side;
-  c.height = side;
-  c.getContext("2d")!.drawImage(
-    img,
-    (img.naturalWidth - crop) / 2,
-    (img.naturalHeight - crop) / 2,
-    crop,
-    crop,
-    0,
-    0,
-    side,
-    side,
-  );
-  return c.toDataURL("image/jpeg", 0.8);
-}
-
-// 缩略管线(取字节+解码+降采样)全局并发闸 = 2(codex 二审:可视区一次能冒出
-// 几十张占位框,imgPending 只并单同一张图、拦不住几十张不同图同时全尺寸解码
-// ——12MP 一张解码 ~48MiB,十张就几百 MiB)。排队的醒来直接继承坑位。
-let thumbSlots = 2;
-const thumbQueue: (() => void)[] = [];
-async function withThumbSlot<T>(f: () => Promise<T>): Promise<T> {
-  if (thumbSlots === 0) {
-    await new Promise<void>((res) => thumbQueue.push(res));
-  } else {
-    thumbSlots--;
-  }
-  try {
-    return await f();
-  } finally {
-    const next = thumbQueue.shift();
-    if (next) next();
-    else thumbSlots++;
-  }
-}
-
-async function fillThumb(btn: HTMLElement) {
-  const id = btn.dataset.img!;
-  const space = getCurrentSpace(); // 发起那一刻的空间,全程显式带着(排队醒来不重读)
-  const key = `${space}/${id}`;
-  let small = thumbCache.get(key);
-  if (!small) {
-    try {
-      small =
-        (await withThumbSlot(async () => {
-          if (getCurrentSpace() !== space) return null; // 排队期间切走:放弃,不查错库
-          const cached = thumbCache.get(key); // 排队期间别人可能已做完
-          if (cached) return cached;
-          const data = await fetchThumbData(space, id);
-          if (!data) return null; // 空间已切走:时间轴整个重画了,别再动旧节点
-          if (data.thumb) {
-            thumbCache.set(key, data.url); // 派生表命中:已是 ≤144² 小图,不必再解不必再缩
-            return data.url;
-          }
-          const s = await shrinkToThumb(data.url);
-          thumbCache.set(key, s);
-          // 异步回存,不阻塞渲染;存不进去就是下次再算(派生数据,失败无害)。
-          void putItemThumb(space, id, s.slice(s.indexOf(",") + 1)).catch(() => {});
-          return s;
-        })) ?? undefined;
-      if (!small) return;
-    } catch {
-      // 极窄窗口(刷新与取图之间图被远端删)或暂态读错:亮错标,点一下可重试;
-      // 真删掉的图下次 sync-changed 刷新就整个消失。不打全局错误条。
-      btn.classList.add("err");
-      return;
-    }
-  }
-  if (!btn.isConnected) return; // 期间时间轴重建了:小图已入缓存,新节点直取
-  if (!btn.querySelector("img")) {
-    const img = document.createElement("img");
-    img.src = small;
-    img.alt = `图${btn.dataset.seq}`;
-    btn.prepend(img);
-  }
-}
-
-// 滚到可视区才拉字节(时间轴是全量列表,启动就把每张图都过一遍 IPC 太重;并发
-// 天然被视口束住)。observer 只认「当前这代」占位框——refresh 重建 DOM 前必须
-// disconnect,否则未进过视区的旧节点被 observer 长期钉住(codex M1 泄漏)。
-const thumbObserver = new IntersectionObserver((entries) => {
-  for (const e of entries) {
-    if (!e.isIntersecting) continue;
-    thumbObserver.unobserve(e.target);
-    void fillThumb(e.target as HTMLElement);
-  }
-});
-
-function hydrateThumbs(scope: HTMLElement) {
-  scope.querySelectorAll<HTMLElement>(".thumb[data-img]").forEach((btn) => {
-    if (thumbCache.has(`${getCurrentSpace()}/${btn.dataset.img}`)) {
-      void fillThumb(btn); // 小图现成:直接填,省一轮 observer 回调。
-    } else {
-      thumbObserver.observe(btn);
-    }
-  });
-}
 
 // ---- 返回键层账本(143):安卓返回键的第一本能是「关掉当前层」,此前直接退 app。
 // WryActivity 内建「WebView 有历史先 goBack」,故开层(面板/大图)pushState 压一枚
@@ -461,7 +304,7 @@ let nativeBackPending = false; // native 请求的 history.back() 已发、popst
   // popSuppress>0 窗口内产生,后判就永远够不着——「UI 关层 back 在飞→重开层→
   // 硬件返回」会被合并吞掉、重开的层却还开着。挂账层没有已压的历史条目,直关销账。
   if (deferredLayers > 0) {
-    if (!$("viewer").hidden) closeViewerNow();
+    if (isViewerOpen()) closeViewerNow();
     else if (isCommentsOpen()) closeCommentsNow();
     else if (activePane !== null) closePaneNow();
     settleHistory(); // 销挂账(settleHistory 首分支),不发 back
@@ -488,7 +331,7 @@ window.addEventListener("popstate", () => {
     }
     return;
   }
-  if (!$("viewer").hidden) {
+  if (isViewerOpen()) {
     closeViewerNow();
     return;
   }
@@ -502,403 +345,17 @@ window.addEventListener("popstate", () => {
   // mode 从不压层:任务面按返回与灵感面同账,直接退 app(146 §2.3)。
 });
 
-// 大图查看:全屏覆盖层。未放大时单击关(200ms 让位双击判定)、双击 2.5 倍/复位、
-// 双指捏合 1~8 倍、放大后单指拖拽平移、返回键关(history 层)。全图每次打开现取
-// (IPC 去重内已并单),关闭即置空 src——大图字节不驻留。请求带代次(codex 二审):
-// 快速连点几张图,迟到的旧响应不许盖掉最新点击;关闭也推代次,在途响应作废不复弹。
-let viewerSeq = 0;
-let viewerImgId: string | null = null; // 当前大图的 image id(删图按钮据此删这张)
-// 225:查看器收**同条目的整组图**,未放大时单指横滑翻页(左滑下一张、右滑上一张,首尾循环)。
-// 组来自 lastItems 里那条的 images(时间轴本来就带下来,不另取);只一张时横滑不接管。
-let viewerGroup: ImageMeta[] = [];
-let viewerIdx = 0;
-
-function openViewer(group: ImageMeta[], idx: number) {
-  viewerGroup = group;
-  return showViewerAt(idx);
-}
-
-const SLIDE_MS = 180; // 与 applyTransform 里的 transform 0.18s 对齐
-const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
-// 过场进行中不接新的翻页手势:否则新手势的跟手位移与在跑的飞出/滑入抢同一个 vSwipeX,
-// 图会在半途被拽回来再跳走。一次过场只有 ~180ms + 取字节,锁掉这一小段比抖动强。
-let flipping = false;
-
-/** 设 src 并等它真解码完(或失败)。同 src 不再触发 load,故先短路——否则永远等不到。 */
-function loadViewerImage(img: HTMLImageElement, url: string): Promise<void> {
-  return new Promise((resolve) => {
-    if (img.src === url && img.complete && img.naturalWidth > 0) return resolve();
-    const done = (): void => {
-      img.removeEventListener("load", done);
-      img.removeEventListener("error", done);
-      resolve();
-    };
-    img.addEventListener("load", done); // 模块级 load 监听先注册,故 vBase 此刻已量好
-    img.addEventListener("error", done);
-    img.src = url;
-  });
-}
-
-/** 呈现组内第 i 张。`dir` = 翻页方向(0 = 开图,不走过场);+1 是「下一张」(旧图向左飞出、
- *  新图从右侧滑入),-1 反之。**不预载相邻图**——全尺寸 data URL 一律不缓存是 117 定下的
- *  内存红线(32MiB 级原图 base64 常驻会撑爆 WebView),所以飞出与滑入之间必然要现取一次;
- *  取字节与飞出并行发起,换图那一瞬图隐形,不让「旧图没走 / 新图没定位」露脸。 */
-async function showViewerAt(i: number, dir: -1 | 0 | 1 = 0) {
-  const my = ++viewerSeq;
-  hideConfirmBar(); // 开大图/换图 = 放弃挂着的两拍确认(确认条 z 在查看器之上,别浮在图上;
-  // 且旧确认针对的是上一张)
-  const m = viewerGroup[i];
-  if (!m) return;
-  // 光标**同步**推进(不等字节回来):连划两下要真翻两张——若等 await 后再记,第二下
-  // 还从旧位置起算,两下只翻一张。而 viewerImgId(删图按钮的依据)仍等字节落定才改:
-  // 那枚必须永远指着**屏幕上真显示的**那张。
-  viewerIdx = i;
-  const space = getCurrentSpace(); // 点击那一刻的空间(切走后 fetchImageUrl 返 null 即弃)
-  const img = $("viewer-img") as HTMLImageElement;
-  // 取不到字节就把飞出去的旧图弹回来 + 亮错误条,别留一屏空黑。
-  const abortSlide = (): void => {
-    if (dir === 0) return;
-    vSwipeX = 0;
-    img.style.visibility = "";
-    applyTransform(true);
-  };
-  const bytes = fetchImageUrl(space, m.id); // 与飞出动画并行跑,不串行等
-  if (dir !== 0) flipping = true; // 过场期间手势闸(同轮只有一次过场,故清标不会踩到别人)
-  try {
-    if (dir !== 0) {
-      vSwipeX = -dir * window.innerWidth; // 顺着手势方向送出屏外
-      applyTransform(true);
-      await sleep(SLIDE_MS);
-      if (my !== viewerSeq) return; // 已被更新的一次翻页接管:位置交给它管
-    }
-    const url = await bytes;
-    if (my !== viewerSeq) return;
-    if (!url) {
-      abortSlide(); // 空间已切走
-      return;
-    }
-    viewerImgId = m.id; // 现显的这张(删图按钮据此),迟到响应被 my!==viewerSeq 挡在上面
-    if (dir !== 0) img.style.visibility = "hidden"; // 先隐,免得 resetZoom 把旧图瞬移回中心
-    resetZoom(); // 换图不继承上一张的缩放(连带清 vSwipeX)
-    await loadViewerImage(img, url);
-    if (my !== viewerSeq) return;
-    img.alt = `图${m.seq}`; // 读屏语义与角标同源
-    // 多图时角标兼作「还有几张」的读数(手机上没有左右箭头,这是唯一的组内位置提示)。
-    $("viewer-cap").textContent =
-      viewerGroup.length > 1 ? `图${m.seq} · ${i + 1}/${viewerGroup.length}` : `图${m.seq}`;
-    if (dir !== 0) {
-      vSwipeX = dir * window.innerWidth; // 瞬移到另一侧屏外(同一帧里连同亮相一起提交)
-      applyTransform(false);
-      img.style.visibility = "";
-      requestAnimationFrame(() => {
-        if (my !== viewerSeq) return;
-        vSwipeX = 0;
-        applyTransform(true); // 滑入
-      });
-    }
-    if ($("viewer").hidden) {
-      $("viewer").hidden = false;
-      pushLayer();
-    }
-  } catch (err) {
-    if (my !== viewerSeq) return;
-    abortSlide();
-    showError(String(err));
-  } finally {
-    flipping = false;
-  }
-}
-
-function closeViewerNow() {
-  viewerSeq++; // 在途的打开请求作废
-  viewerImgId = null;
-  viewerGroup = [];
-  viewerIdx = 0;
-  hideConfirmBar(); // 关图即弃挂着的删图确认(旧确认不许作用到下一张/下个语境)
-  window.clearTimeout(closeTimer); // 返回键/删图这些路子关层时,可能还挂着一枚待关
-  setClosing(false); // 必须摘:留着的话下次开图整层还是 opacity:0(图在、看不见)
-  $("viewer").hidden = true;
-  ($("viewer-img") as HTMLImageElement).src = ""; // 释放大图
-  resetZoom();
-}
-
-// -- 查看器手势(143):transform = translate(t) scale(s),原点为 img 布局中心。
-// 页面级缩放已在 viewport 锁死,这里自己接管指针;基座矩形在每轮手势起点量(244,见 measureBase)。
-// 捏合公式:中点下的图像点保持在中点下。
-const viewerImgEl = $("viewer-img") as HTMLImageElement;
-let vScale = 1;
-let vTx = 0;
-let vTy = 0;
-let vBase = { cx: 0, cy: 0, w: 0, h: 0 };
-// 翻页横移(227):与 vTx 分家——vTx 是放大后的平移(要过 clampView 钳位),vSwipeX 是
-// 翻页手势与过场动画的横向位移,不受钳位、也不算进 identity(跟手拖动中不该把角标淡掉)。
-let vSwipeX = 0;
-let suppressClick = false; // 手势(捏合/拖拽)收尾时 WebView 可能补发 click:吞掉
-let closeTimer: number | undefined;
-// 轻点关的延迟(246)。**别再往下砍**:真机实测砍到 200ms 后,两次按下间隔 226ms 的双击第一击
-// 就把图关了、第二击落在空处(想放大却关了图);系统标准的双击窗口就是 300ms,老实覆盖它。
-// 「点了没反应」的手感问题由 setClosing 的即时淡出解决,不靠缩短这个数。
-const CLOSE_DELAY = 300;
-/** 关闭中的淡出开关:点下去立刻淡、第二击一按下就摘掉(transition 平滑拉回)。 */
-function setClosing(on: boolean): void {
-  $("viewer").classList.toggle("closing", on);
-}
-let lastTap = { t: 0, x: 0, y: 0 };
-
-function applyTransform(anim = false) {
-  // identity 按「肉眼等同」判,不按严格零(226):双击复位把三个量清零后还要过 clampView,
-  // 而 clampView 对小于视口的图恒把位置钉到几何中点——vBase 的中心与视口中心差个零点几像素
-  // 就留下 vTy≈-0.6 的余量,严格 `=== 0` 于是判不出复位。后果不止「图N」角标不回来:
-  // `.zoomed` 还给删除按钮挂着 `opacity:0; pointer-events:none`(index.html),
-  // 也就是放大再复位后那张图**删不掉了**,要关掉重开才恢复。
-  const identity = Math.abs(vScale - 1) < 0.005 && Math.abs(vTx) < 1 && Math.abs(vTy) < 1;
-  viewerImgEl.style.transition = anim ? "transform 0.18s ease-out" : "";
-  viewerImgEl.style.transform =
-    identity && vSwipeX === 0 ? "" : `translate(${vTx + vSwipeX}px, ${vTy}px) scale(${vScale})`;
-  // 放大/拖动中「图N」角标是噪音,且 transform 不改布局、放大后必与图重合:淡出,复位再现。
-  $("viewer").classList.toggle("zoomed", !identity);
-}
-
-function resetZoom() {
-  vScale = 1;
-  vTx = 0;
-  vTy = 0;
-  vSwipeX = 0;
-  viewerImgEl.style.transition = "";
-  viewerImgEl.style.transform = "";
-  $("viewer").classList.remove("zoomed");
-}
-
-viewerImgEl.addEventListener("load", () => {
-  resetZoom(); // 新图不继承上一张的缩放(基座矩形改在手势起点量,见 measureBase)
-});
-
-/** 量「基座矩形」= 图片**未变换时**的布局盒(clampView 的钳位框与捏合的原点),在每轮
- *  手势起点量。
- *  244:原先在 img 的 load 里量,而首开那一刻查看器还 hidden(showViewerAt 要等图解码完
- *  才 unhide,225/226 起如此),`[hidden]{display:none!important}` 的元素量出来是零盒;
- *  于是一捏合/双击,clampView 见 w=h=0 就走「比视口小的轴回中」把图钉到
- *  (innerWidth/2, innerHeight/2)——用户看到的「一放大就飞到右下角、复位也回不来」。
- *  **两道闸都问渲染态,不问 JS 变量**(244 二轮:只问 JS 变量会从另外两扇门漏回同一个患):
- *  ① computed transform 必须是 none——翻页滑入/没划够的弹回都挂着 0.18s 过场,那段时间
- *     vScale/vTx/vTy/vSwipeX 早已归零、图却还在半路上,rect 量的是动画中途的盒(滑入那下
- *     最多偏整个屏宽);「有没有在飞的变换」只有 computed 值答得准。
- *  ② 零盒一律不收——换图时 src 刚换、图没解码完,`#viewer img` 没有显式宽高会塌成 0×0
- *     (`flipping` 闸只拦单指 pointermove,拦不住 pointerdown),那正是 244 的病根形状。
- *     宁可留着上一轮的量值,等下一轮手势重量,也绝不把零盒记进钳位框。 */
-function measureBase(): void {
-  if (getComputedStyle(viewerImgEl).transform !== "none") return; // 图上挂着变换/过场在飞
-  const r = viewerImgEl.getBoundingClientRect();
-  if (r.width === 0 || r.height === 0) return; // 没解码 / 没显出来:这不是布局盒
-  vBase = { cx: r.x + r.width / 2, cy: r.y + r.height / 2, w: r.width, h: r.height };
-}
-
-// 转屏(或任何视口尺寸变化)后,旧基座与新视口不是一个坐标系:把图复位回未变换态,基座
-// 交给下一轮手势重量。不复位的话,放大态下转屏 clampView 会拿旧基座算出个偏位,**双击也
-// 回不来**,applyTransform 的 identity 判据恒假连带 `.zoomed` 摘不掉——那条规则会把「删除」
-// 按钮永久 pointer-events:none,这张图就删不掉了(226 判例的后果从另一条门回来)。
-// 本机 WebView 弹键盘时 innerHeight 不缩、不发 resize(见 240),故不会误伤捕获层。
-window.addEventListener("resize", () => {
-  if (!$("viewer").hidden) resetZoom();
-});
-
-/** 出界钳位:图比视口大时不许拖出黑边,比视口小的轴回中。 */
-function clampView() {
-  vScale = Math.min(8, Math.max(1, vScale));
-  const hw = (vBase.w * vScale) / 2;
-  const hh = (vBase.h * vScale) / 2;
-  const cl = (lo: number, hi: number, v: number) =>
-    lo > hi ? (lo + hi) / 2 : Math.min(hi, Math.max(lo, v));
-  vTx = cl(window.innerWidth - vBase.cx - hw, hw - vBase.cx, vTx);
-  vTy = cl(window.innerHeight - vBase.cy - hh, hh - vBase.cy, vTy);
-}
-
-const vPtrs = new Map<number, { x: number; y: number }>();
-let gest: { s: number; tx: number; ty: number; d0: number; mx: number; my: number } | null = null;
-
-function beginGesture() {
-  measureBase(); // 手势起点量基座(渲染态干净才收;首开时 load 那一刻查看器还没显出来,量不得)
-  const ps = [...vPtrs.values()];
-  const mx = ps.reduce((a, p) => a + p.x, 0) / ps.length;
-  const my = ps.reduce((a, p) => a + p.y, 0) / ps.length;
-  const d0 = ps.length >= 2 ? Math.hypot(ps[0].x - ps[1].x, ps[0].y - ps[1].y) : 0;
-  gest = { s: vScale, tx: vTx, ty: vTy, d0, mx, my };
-}
-
-// 横滑翻页(225 引入,227 改跟手):拖动中图就跟着手指走,**松手才判翻不翻**——原先是
-// 「越过阈值瞬间换图」,手指还在屏上、屏幕先跳一下,用户报「死板、没有过渡」。
-// 定性只做一次(swipeAxis 闩住):走够 8px 时看横竖谁占优,横向压过竖向 1.2 倍才接管,
-// 之后整轮手势不再改判(免得斜划到一半突然从跟手变不跟手)。
-// 阈值随屏宽走(至少 48px / 至多屏宽 18%):跟手之后有了视觉反馈,阈值可以比「盲翻」时更实。
-const swipeThreshold = (): number => Math.max(48, window.innerWidth * 0.18);
-let swipeAxis: "" | "x" | "no" = "";
-
-/** 松手结算:过阈值就翻页(走过场动画),否则弹回原位。 */
-function settleSwipe() {
-  const dx = vSwipeX;
-  swipeAxis = "";
-  const n = viewerGroup.length;
-  if (n > 1 && Math.abs(dx) > swipeThreshold()) {
-    const dir = dx < 0 ? 1 : -1; // 左滑 = 下一张
-    void showViewerAt((viewerIdx + dir + n) % n, dir);
-    return;
-  }
-  vSwipeX = 0; // 没划够:弹回来(有回弹本身就是「我收到了你的手势」的回执)
-  applyTransform(true);
-}
-
-$("viewer").addEventListener("pointerdown", (e) => {
-  // 一按下就取消上一击挂着的「待关」+ 把淡出拉回来(照桌面 item-images.ts 的同名兜底)。
-  // 注意这条**买到的余量很小**(只有「第二次按下 → 第二次 click」那十几毫秒),别拿它当
-  // 缩短 CLOSE_DELAY 的依据——246 首版就是这么推理的,真机把账算清了:延迟必须自己覆盖
-  // 双击窗口。它的真正用处是让第二击**更早**撤销淡出,双击时几乎看不到闪。
-  window.clearTimeout(closeTimer);
-  setClosing(false);
-  if (vPtrs.size === 0) {
-    suppressClick = false; // 新一轮手势:上一轮的抑制标志作废
-    swipeAxis = "";
-  }
-  vPtrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
-  beginGesture();
-});
-$("viewer").addEventListener("pointermove", (e) => {
-  if (!vPtrs.has(e.pointerId) || !gest) return;
-  vPtrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
-  const ps = [...vPtrs.values()];
-  const mx = ps.reduce((a, p) => a + p.x, 0) / ps.length;
-  const my = ps.reduce((a, p) => a + p.y, 0) / ps.length;
-  if (ps.length >= 2) {
-    const d = Math.hypot(ps[0].x - ps[1].x, ps[0].y - ps[1].y);
-    const ns = Math.min(8, Math.max(1, (gest.s * d) / (gest.d0 || d)));
-    const vx = (gest.mx - vBase.cx - gest.tx) / gest.s;
-    const vy = (gest.my - vBase.cy - gest.ty) / gest.s;
-    vScale = ns;
-    vTx = mx - vBase.cx - ns * vx;
-    vTy = my - vBase.cy - ns * vy;
-    suppressClick = true;
-    if (vSwipeX !== 0 || swipeAxis === "x") {
-      // 单指划到一半又落了第二根手指:这是要捏合,放弃这轮翻页并把图弹回原位。
-      swipeAxis = "no";
-      vSwipeX = 0;
-    }
-  } else if (vScale > 1.01) {
-    vTx = gest.tx + (mx - gest.mx);
-    vTy = gest.ty + (my - gest.my);
-    if (Math.hypot(mx - gest.mx, my - gest.my) > 8) suppressClick = true;
-  } else {
-    // 未放大的单指拖拽:这条通道原本空着(既不平移也不缩放),拿来翻同条目的图——
-    // **图跟着手指走**,松手才由 settleSwipe 判翻不翻。放大态仍归平移,那是看细节的手。
-    if (viewerGroup.length < 2) return;
-    if (flipping) {
-      swipeAxis = "no"; // 过场跑着呢:这一轮手势整轮作废(别和动画抢 vSwipeX)
-      return;
-    }
-    const dx = mx - gest.mx;
-    const dy = my - gest.my;
-    if (swipeAxis === "") {
-      if (Math.hypot(dx, dy) < 8) return; // 还没走够,先不定性(轻点仍是「关图」)
-      suppressClick = true; // 划过就不算点击(免翻完又把图关了)
-      swipeAxis = Math.abs(dx) > Math.abs(dy) * 1.2 ? "x" : "no";
-    }
-    if (swipeAxis !== "x") return; // 这轮判成竖划:整轮都不接管,别中途改判
-    vSwipeX = dx;
-    applyTransform();
-    return;
-  }
-  clampView();
-  applyTransform();
-});
-const viewerPtrEnd = (e: PointerEvent, cancelled = false) => {
-  vPtrs.delete(e.pointerId);
-  if (vPtrs.size) {
-    beginGesture(); // 双指抬一指:剩下的手指重新起基准,不跳变
-    return;
-  }
-  gest = null;
-  if (swipeAxis !== "x") return;
-  if (cancelled) {
-    // 系统收走了手势(来电/通知栏下拉等):不当成翻页意图,弹回原位。
-    swipeAxis = "";
-    vSwipeX = 0;
-    applyTransform(true);
-    return;
-  }
-  settleSwipe();
-};
-$("viewer").addEventListener("pointerup", (e) => viewerPtrEnd(e));
-$("viewer").addEventListener("pointercancel", (e) => viewerPtrEnd(e, true));
-
-$("viewer").addEventListener("click", (e) => {
-  if (suppressClick) {
-    suppressClick = false;
-    return;
-  }
-  const now = Date.now();
-  const dbl = now - lastTap.t < 300 && Math.hypot(e.clientX - lastTap.x, e.clientY - lastTap.y) < 40;
-  if (dbl) {
-    window.clearTimeout(closeTimer);
-    setClosing(false); // 双击撤销待关:淡到一半的层平滑回来
-    lastTap.t = 0;
-    if (vScale > 1.01) {
-      vScale = 1;
-      vTx = 0;
-      vTy = 0;
-    } else {
-      const vx = (e.clientX - vBase.cx - vTx) / vScale;
-      const vy = (e.clientY - vBase.cy - vTy) / vScale;
-      vScale = 2.5;
-      vTx = e.clientX - vBase.cx - vScale * vx;
-      vTy = e.clientY - vBase.cy - vScale * vy;
-    }
-    clampView();
-    applyTransform(true);
-    return;
-  }
-  lastTap = { t: now, x: e.clientX, y: e.clientY };
-  if (vScale > 1.01) return; // 放大态单击不关(误触保护):双击复位或返回键关
-  setClosing(true); // 立刻开始淡出 = 立刻有回执(246);延迟这段不再是静止的白等
-  closeTimer = window.setTimeout(() => {
-    closeViewerNow();
-    settleHistory();
-  }, CLOSE_DELAY);
-});
-
-// 删图(196):看大图时删这张。永久销毁(图无回收站、编号退役不复用),两拍确认——
-// 确认条 z(17)在查看器(15)之上能盖住。stopPropagation 挡掉查看器自身的单击关/双击缩放。
-// onYes 复核「还在看这张、空间没换」(期间换图/关闭/切空间一律作废);删成关查看器 +
-// settleHistory(平掉开图压的历史层)+ 刷新轴(缩略图随之消失)。
-$("viewer-del").addEventListener("click", (e) => {
-  e.stopPropagation();
-  const id = viewerImgId;
-  if (!id) return;
-  const space = getCurrentSpace();
-  confirmBar("删除这张图?删了不可恢复", "删除", () => {
-    if (viewerImgId !== id || getCurrentSpace() !== space) return;
-    void (async () => {
-      try {
-        await deleteItemImage(space, id);
-        closeViewerNow();
-        settleHistory();
-        await refresh();
-        showBar("已删除该图", true);
-      } catch (err) {
-        showError(String(err));
-      }
-    })();
-  });
-});
-
 // 编辑态多图管理(cardpanel 给 actions 面开着的卡片挂 .imgmanage 露出缩略图 ×):删这张图。
 // 两拍确认,与查看器删图(197)同律(图无回收站、编号退役不复用);删成刷新轴,缩略图随之消失。
 // actions 面无脏草稿,refresh 不被草稿闸延后(edit 面恒脏才有那问题,故删图放 actions 面)。
 function confirmDeleteImage(space: string, id: string, seq: string) {
-  confirmBar(`删除图${seq}?删了不可恢复`, "删除", () => {
+  confirmBar(t("main.deleteImageQ", { n: seq }), t("main.deleteImageYes"), () => {
     if (getCurrentSpace() !== space) return; // 期间切空间:作废
     void (async () => {
       try {
         await deleteItemImage(space, id);
         await refresh();
-        showBar("已删除该图", true);
+        showBar(t("main.imageDeleted"), true);
       } catch (err) {
         showError(String(err));
       }
@@ -911,7 +368,7 @@ function confirmDeleteImage(space: string, id: string, seq: string) {
 function openCommentsFor(itemId: string): void {
   if (switching || captureSaving) return;
   if (cardPanel.hasDirtyDraft()) {
-    showError("先保存或取消正在编辑的内容");
+    showError(t("main.finishDraftFirst"));
     return;
   }
   openComments(getCurrentSpace(), itemId);
@@ -943,7 +400,7 @@ $("timeline").addEventListener("click", (e) => {
   const group = card ? (lastItems.get(card.dataset.id!)?.images ?? []) : [];
   const idx = group.findIndex((m) => m.id === btn.dataset.img);
   if (idx < 0) {
-    showError("这张图已不在(列表可能已刷新)");
+    showError(t("main.imageGone"));
     return;
   }
   void openViewer(group, idx);
@@ -976,7 +433,7 @@ let lastRefreshOk = false;
  *  **写 DOM 这一刻读当前 viewMode**,绝不用请求发起时的旧 mode。 */
 function projectTimeline(): void {
   const box = $("timeline");
-  thumbObserver.disconnect();
+  disconnectThumbObserver();
   const items = [...lastItems.values()];
   const modeItems = items.filter((i) => modeOfStage(i.stage) === viewMode);
   const f = filters[viewMode];
@@ -990,7 +447,7 @@ function projectTimeline(): void {
     box.innerHTML = shown.length
       ? shown.map((i) => renderCard(i, hideTopic)).join("")
       : modeItems.length === 0
-        ? `<p class="muted empty">还没有灵感。</p>`
+        ? `<p class="muted empty">${t("main.emptyIdeas")}</p>`
         : filteredEmptyHtml(f);
   } else {
     box.innerHTML = shown.length
@@ -1004,7 +461,7 @@ function projectTimeline(): void {
           )
           .join("")
       : modeItems.length === 0
-        ? `<p class="muted empty">还没有任务。</p>`
+        ? `<p class="muted empty">${t("main.emptyTasks")}</p>`
         : filteredEmptyHtml(f);
   }
   hydrateThumbs(box);
@@ -1026,7 +483,7 @@ function renderFilterBar(modeItems: TimelineItem[]): void {
  *  并重投影(纯客户端,不重新拉数据)。切类型时 filter.ts 已带上 topic:"all"。 */
 function onFilterPick(patch: Partial<filter.FilterState>): void {
   if (cardPanel.hasDirtyDraft()) {
-    showError("先保存或取消正在编辑的内容");
+    showError(t("main.finishDraftFirst"));
     return;
   }
   Object.assign(filters[viewMode], patch);
@@ -1037,13 +494,15 @@ function onFilterPick(patch: Partial<filter.FilterState>): void {
  *  用户以为记录全没了。标签多选时把选中的名字全列出来(「A、B」下没有记录)。 */
 function filteredEmptyHtml(f: filter.FilterState): string {
   const q = f.text.trim();
-  if (q) return `<p class="muted empty">没有匹配「${esc(q)}」的记录。</p>`;
+  if (q) return `<p class="muted empty">${t("main.noMatchText", { q: esc(q) })}</p>`;
   const labels = filter.selectedTopicLabels(f, allFilterTopics);
-  if (labels.length === 1 && labels[0] === "无标签")
-    return `<p class="muted empty">没有未打标签的记录。</p>`;
-  if (labels.length) return `<p class="muted empty">「${esc(labels.join("、"))}」下没有记录。</p>`;
-  if (f.kind !== "all") return `<p class="muted empty">「${esc(f.kind)}」类型下没有记录。</p>`;
-  return `<p class="muted empty">没有匹配的记录。</p>`;
+  if (labels.length === 1 && labels[0] === t("filter.none"))
+    return `<p class="muted empty">${t("main.noUntagged")}</p>`;
+  if (labels.length) {
+    return `<p class="muted empty">${t("main.noneUnderTags", { labels: esc(labels.join(t("main.listSep"))) })}</p>`;
+  }
+  if (f.kind !== "all") return `<p class="muted empty">${t("main.noneUnderKind", { kind: esc(f.kind) })}</p>`;
+  return `<p class="muted empty">${t("main.noMatch")}</p>`;
 }
 
 /** 清掉某面的筛选并同步文本框(新记录落该面时用,避免被停留的筛选藏起)。 */
@@ -1091,9 +550,9 @@ async function refreshOnce(): Promise<void> {
       refreshDeferred = true;
       return;
     }
-    thumbObserver.disconnect();
+    disconnectThumbObserver();
     $("timeline").innerHTML =
-      `<p class="empty" style="color:var(--seal)">时间轴读取失败:${esc(String(err))}</p>`;
+      `<p class="empty warn-ink">${t("main.timelineLoadFailed", { error: esc(String(err)) })}</p>`;
     lastRefreshOk = false; // 快照失效:mode 切换不投影、定位不误报"已归档"
   }
 }
@@ -1120,12 +579,12 @@ function refresh(): Promise<void> {
 function blankTimelineForSpaceChange(): void {
   refreshDeferred = false; // 旧空间欠的刷新作废:新空间马上整轴重拉
   closeComments(); // 留言层指着旧空间的条目(没开就是 no-op)
-  cardPanel.forceClose("空间已切换,未保存的编辑已丢弃"); // 有草稿才响,静默无草稿路
+  cardPanel.forceClose(t("main.spaceSwitchedDraftDropped")); // 有草稿才响,静默无草稿路
   resetPanesForSpaceChange(); // 统一复位:关全部面 + 清陈旧内容 + 诊断缓存作废
-  thumbObserver.disconnect();
+  disconnectThumbObserver();
   lastItems = new Map();
   lastRefreshOk = false; // 快照失效(146 ▲▲M2):新空间读到之前,mode 切换不许投影旧数据
-  $("timeline").innerHTML = `<p class="muted empty">正在载入…</p>`;
+  $("timeline").innerHTML = `<p class="muted empty">${t("main.loading")}</p>`;
 }
 
 // 勾「标完成」:写命令,带点击时看到的空间;成败都刷新,不吞错、不做静默幂等。
@@ -1222,13 +681,13 @@ async function pullDeepLink(): Promise<void> {
     if (!p) return;
     let target: string | null = null;
     if (p.space) {
-      const spaces = await invoke<SpaceInfo[]>("list_spaces");
+      const spaces = await listSpaces();
       target = spaces.find((s) => s.id === p.space)?.id ?? null;
     } else if (p.acc) {
       target = await invoke<string | null>("find_space_by_account", { accountId: p.acc });
     }
     if (!target) {
-      showError("这条所在的空间不在这台设备上");
+      showError(t("main.spaceNotOnDevice"));
       return;
     }
     // 切到目标空间(若不同):switchSpace 是异步、有停机,返回即前台 runtime 就绪、
@@ -1261,12 +720,12 @@ async function save() {
   if (captureSaving) return;
   if (!ta.value.trim()) {
     // 图不能独立成条(条目正文非空):只贴图没写字时给可辨识提示,不静默无反应。
-    if (compImgs.count() > 0) showError("先写点文字,图片作为配文一起记下");
+    if (compImgs.count() > 0) showError(t("main.textBeforeImages"));
     return;
   }
   if (cardPanel.hasDirtyDraft()) {
     // ▲▲M3:卡片草稿在场时保存后的 refresh 会被无限延后、新卡落不了 DOM——响亮拒。
-    showError("先保存或取消正在编辑的内容");
+    showError(t("main.finishDraftFirst"));
     return;
   }
   const space = getCurrentSpace();
@@ -1287,7 +746,7 @@ async function save() {
     // 挂完再刷新,新卡带着缩略图一次呈现。
     if (savingImgs.length) {
       const failed = await compImgs.attachBatch(space, newId, savingImgs);
-      if (failed > 0) showError(`有 ${failed} 张配图没挂上,可在该卡片「加图」重贴`);
+      if (failed > 0) showError(t("main.imagesNotAttached", { n: failed }));
     }
     // 新卡落 mode 面:清掉该面停留的筛选,免得刚记的记录被藏起(「记了却没出现」的
     // 错觉)。桌面在筛着标签时改为自动挂标签保留可见,安卓这版先取「清筛见新卡」的
@@ -1371,8 +830,8 @@ $("save").addEventListener("click", save);
 
   // 层内点空白也聚焦输入(此前只有 textarea 本体响);按钮/缩略图不抢。
   sheet.addEventListener("click", (e) => {
-    const t = e.target as HTMLElement;
-    if (t === ta || t.closest("button") || t.closest(".cthumb")) return;
+    const el = e.target as HTMLElement;
+    if (el === ta || el.closest("button") || el.closest(".cthumb")) return;
     ta.focus();
   });
 }
@@ -1387,9 +846,11 @@ function renderSpaceChip() {
   const single = spacesCache.length <= 1;
   const chip = $("space-chip") as HTMLButtonElement;
   chip.hidden = single;
-  chip.textContent = cur ? spaceLabel(cur) : "默认空间";
+  chip.textContent = cur ? spaceLabel(cur) : t("api.defaultSpace");
   $("sync-spaces-btn").hidden = !single;
-  $("sync-title").textContent = single ? "同步" : `同步 · ${cur ? spaceLabel(cur) : "默认空间"}`;
+  $("sync-title").textContent = single
+    ? t("main.syncTitle")
+    : t("main.syncTitleSpaced", { name: cur ? spaceLabel(cur) : t("api.defaultSpace") });
 }
 
 function renderSpaceList() {
@@ -1401,8 +862,8 @@ function renderSpaceList() {
         return `<div class="space-row current">
           <input class="rename" id="space-rename-input" value="${esc(s.name ?? "")}"
                  placeholder="${label}" autocapitalize="off" autocomplete="off" />
-          <button class="act" data-rename-ok="1">确定</button>
-          <button class="act" data-rename-cancel="1">取消</button>
+          <button class="act" data-rename-ok="1">${t("main.renameOk")}</button>
+          <button class="act" data-rename-cancel="1">${t("main.renameCancel")}</button>
         </div>`;
       }
       // 重置两拍确认(epoch-plan §7,multispace §20 门 4 的警告义务):红字说清
@@ -1411,32 +872,28 @@ function renderSpaceList() {
       if (resettingSpace === s.id) {
         // 重置话术分流(space-entry-plan §5):已开同步的空间=清本机副本、可重新
         // 加入;仅本机的本子=删除**唯一副本**,不再用「清库重配」安抚。
-        const warnText = s.configured
-          ? `将删除本机此空间的全部数据,不可恢复。确认另一台设备有在线完整副本后再继续;
-              重置后可用「加入空间」重新加入,旧设备身份请告知运营者吊销。`
-          : `此空间未开启同步,本机就是**唯一副本**——重置=永久删除这个本子的全部内容,
-              没有任何地方可以找回。`;
+        const warnText = s.configured ? t("main.resetWarnSynced") : t("main.resetWarnLocalOnly");
         return `<div class="space-row current" data-space="${esc(s.id)}">
           <div style="flex:1">
             <div>${label}</div>
             <div class="tag warn" style="display:block;white-space:normal">${warnText}</div>
-            <button class="act warn reset-confirm" data-reset-ok="${esc(s.id)}">确认重置(删除本机数据)</button>
-            <button class="act reset-cancel" data-reset-cancel="1">取消</button>
+            <button class="act warn reset-confirm" data-reset-ok="${esc(s.id)}">${t("main.resetConfirm")}</button>
+            <button class="act reset-cancel" data-reset-cancel="1">${t("main.renameCancel")}</button>
           </div>
         </div>`;
       }
       const tag = s.current
-        ? `<span class="tag" style="color:var(--seal)">当前</span>`
+        ? `<span class="tag warn">${t("main.tagCurrent")}</span>`
         : s.configured
           ? ""
-          : `<span class="tag">仅本机</span>`;
+          : `<span class="tag">${t("main.tagLocalOnly")}</span>`;
       // 「重置」= 删本机全部数据的最重操作,不常驻行上(ui-audit P1 #11):收进「⋯」。
       const act =
-        (s.current ? `<button class="act" data-rename="1">改名</button>` : "") +
-        `<button class="act" data-more="${esc(s.id)}" aria-label="更多操作">⋯</button>`;
+        (s.current ? `<button class="act" data-rename="1">${t("main.rename")}</button>` : "") +
+        `<button class="act" data-more="${esc(s.id)}" aria-label="${t("main.moreActions")}">⋯</button>`;
       const more =
         spaceMenuFor === s.id
-          ? `<div class="space-row sub"><button class="act warn" data-reset="${esc(s.id)}">重置(删除本机此空间数据)…</button></div>`
+          ? `<div class="space-row sub"><button class="act warn" data-reset="${esc(s.id)}">${t("main.resetEntry")}</button></div>`
           : "";
       return `<div class="space-row${s.current ? " current" : ""}" data-space="${esc(s.id)}">
         <button class="sname" data-switch="${esc(s.id)}">${label}</button>${tag}${act}
@@ -1457,19 +914,6 @@ async function refreshSpaces() {
 }
 
 /** 空间切换后的整页重拉(chip/列表/同步状态/时间轴)。幂等,多来一次无害。 */
-/** 同步面的一次性展示态全体复位:出码页/恢复码/连接信息/辅路折叠与输了一半的码。
- *  切空间必调——旧空间的恢复码挂在新空间的同步页上=把错误密钥当新空间的交付
- *  (codex 实现审必修 1);空间重置后同理。 */
-function resetSyncTransient() {
-  $("sync-pair-out").hidden = true;
-  const recovery = $("sync-recovery");
-  recovery.hidden = true;
-  recovery.textContent = "";
-  $("sync-recovery-note").hidden = true;
-  $("sync-info").hidden = true;
-  resetSecondary();
-}
-
 async function onSpaceChanged() {
   renderSpaceChip();
   // 出码页属于旧空间的会话,切走即失效(旧配对流由 stop→core 收口烧槽)。
@@ -1499,7 +943,7 @@ async function switchSpace(id: string) {
   if (cardPanel.hasDirtyDraft()) {
     // 用户主动切换(含新建空间后的自动切)被草稿挡下;后端强制的前台变更走
     // reconcileForeground → blankTimelineForSpaceChange 丢草稿并响一声。
-    showError("先保存或取消正在编辑的内容,再切换空间");
+    showError(t("main.finishDraftBeforeSwitch"));
     return;
   }
   switching = true;
@@ -1558,7 +1002,7 @@ function closePaneNow() {
 function openPane(name: string) {
   if (switching || captureSaving) return; // 146 ▲▲M3:切换编排/保存在飞期间面不动
   if (cardPanel.hasDirtyDraft()) {
-    showError("先保存或取消正在编辑的内容");
+    showError(t("main.finishDraftFirst"));
     return;
   }
   if (activePane === name) {
@@ -1584,6 +1028,7 @@ function openPane(name: string) {
   else if (name === "settings") {
     paintThemeSeg();
     paintTextSizeSeg();
+    paintLangSeg();
     void loadAlias();
     void loadAbout();
   }
@@ -1601,7 +1046,7 @@ function openPane(name: string) {
 function applyMode(target: ViewMode) {
   viewMode = target;
   ($("text") as HTMLTextAreaElement).placeholder =
-    target === "ideas" ? "记一笔灵感…" : "记一件待办…";
+    target === "ideas" ? t("main.composeIdeaPh") : t("main.composeTaskPh");
   ($("filter-text") as HTMLInputElement).value = filters[target].text; // 各面记忆自己的过滤词
   renderBottomBar();
   if (lastRefreshOk) projectTimeline();
@@ -1615,7 +1060,7 @@ function applyMode(target: ViewMode) {
 function onModeButton(target: ViewMode) {
   if (switching || captureSaving) return;
   if (cardPanel.hasDirtyDraft()) {
-    showError("先保存或取消正在编辑的内容");
+    showError(t("main.finishDraftFirst"));
     return;
   }
   navSeq++; // 用户主动导航:作废在途 focus 定位(▲M2)
@@ -1634,8 +1079,8 @@ function resetPanesForSpaceChange() {
   closePaneNow();
   settleHistory(); // 守门条目同轮消掉,不给返回键留「按一下没反应」的空炮
   diagLoaded = false;
-  $("db").innerHTML = `<span class="muted">读取中…</span>`;
-  $("probe").innerHTML = `<span class="muted">未运行</span>`;
+  $("db").innerHTML = `<span class="muted">${t("main.diagLoading")}</span>`;
+  $("probe").innerHTML = `<span class="muted">${t("main.probeIdle")}</span>`;
   panes.resetPanesForSpaceChange();
   topics.resetTopicsForSpaceChange();
   // 筛选是 A 空间的标签 id/词,绝不带进 B 空间(allFilterTopics 随下轮刷新重取)。
@@ -1664,7 +1109,7 @@ function refreshActivePane() {
 let focusSeq = 0;
 async function focusTimelineCard(id: string) {
   if (cardPanel.hasDirtyDraft()) {
-    showError("先保存或取消正在编辑的内容");
+    showError(t("main.finishDraftFirst"));
     return;
   }
   const space = getCurrentSpace();
@@ -1686,19 +1131,19 @@ async function focusTimelineCard(id: string) {
     return;
   }
   if (!lastRefreshOk) {
-    showError("时间轴读取失败,稍后再试"); // 读失败 ≠ 条目已离开,别误报
+    showError(t("main.timelineRetry")); // 读失败 ≠ 条目已离开,别误报
     return;
   }
   const item = lastItems.get(id); // 全量真值:住哪个面由 stage 定(穷尽映射)
   if (!item) {
-    showError("这条记录已不在(可能已归档或入册)");
+    showError(t("main.itemGone"));
     return;
   }
   const target = modeOfStage(item.stage);
   if (target !== viewMode) applyMode(target); // 快照有效,applyMode 同步投影
   const card = document.querySelector<HTMLElement>(`#timeline [data-id="${id}"]`); // ULID 仅字母数字,选择器安全
   if (!card) {
-    showError("这条记录已不在(可能已归档或入册)");
+    showError(t("main.itemGone"));
     return;
   }
   card.scrollIntoView({ block: "center", behavior: "smooth" });
@@ -1717,15 +1162,21 @@ $("topics-toggle").addEventListener("click", () => openPane("topics"));
 $("search-toggle").addEventListener("click", () => openPane("search"));
 // 文本过滤(常驻框,不随 pills 重建):输入即筛,走 projectTimeline 单一渲染路径。
 // 卡片编辑草稿在场时不受理(重投影会拆掉草稿)——把框回退到已存值、响一声,不静默毁稿。
+// 去抖(§2.4 `INPUT_DEBOUNCE`,两端同值):投影虽是纯客户端(无 IPC,比桌面轻一档),
+// 但中文 IME 组合期每次候选变化都触发 input,几百张卡上每击键 innerHTML 全量重建 +
+// thumbObserver 重挂是白付的抖动。照桌面 filter-bar 的两条边界:模块态 `filters[].text`
+// **当场**写(切视图恢复靠它,不能等窗口闭合);迟到的定时器只是对当前态多投影一次,无害。
+let filterTextTimer: number | undefined;
 $("filter-text").addEventListener("input", () => {
   const input = $("filter-text") as HTMLInputElement;
   if (cardPanel.hasDirtyDraft()) {
     input.value = filters[viewMode].text;
-    showError("先保存或取消正在编辑的内容");
+    showError(t("main.finishDraftFirst"));
     return;
   }
   filters[viewMode].text = input.value;
-  projectTimeline();
+  window.clearTimeout(filterTextTimer);
+  filterTextTimer = window.setTimeout(projectTimeline, INPUT_DEBOUNCE_MS);
 });
 $("bottombar").addEventListener("click", (e) => {
   const btn = (e.target as HTMLElement).closest<HTMLButtonElement>("#bottombar button");
@@ -1770,6 +1221,22 @@ function paintTextSizeSeg() {
     .forEach((b) => b.classList.toggle("on", b.dataset.textsize === now));
 }
 
+// 语言三档(358 第②笔):同上两排的形,只是回执不同——生效语言真变了就 reload
+// (i18n.ts 里判),此时整页换文案就是回执;auto↔解析同语言时页面不动,只刷高亮。
+$("lang-seg").addEventListener("click", (e) => {
+  const c = (e.target as HTMLElement).closest<HTMLButtonElement>("[data-lang]")?.dataset.lang;
+  if (!c) return;
+  setLangChoice(c as LangChoice);
+  paintLangSeg();
+});
+
+function paintLangSeg() {
+  const now = currentLangChoice();
+  $("lang-seg")
+    .querySelectorAll<HTMLButtonElement>("[data-lang]")
+    .forEach((b) => b.classList.toggle("on", b.dataset.lang === now));
+}
+
 // ---- 本机别名(identity-plan §2.4)------------------------------------------------
 //
 // 与外观 / 字号的关键差别:**别名进同步**(和空间名同族),那两样是设备环境属性。
@@ -1799,7 +1266,7 @@ async function loadAlias() {
     input.value = aliasSaved;
     // 没起名时,id 前 6 位是这台设备唯一能自证身份的东西。**卡片上刻意不显 id 片段**
     // (那是噪音),但这里的语境正是「这是哪台」,显它才有用。
-    input.placeholder = `未命名 · ${d.this_device.slice(0, 6)}`;
+    input.placeholder = t("main.aliasUnnamed", { id: d.this_device.slice(0, 6) });
     input.disabled = false;
     save.disabled = false;
   } catch (e) {
@@ -1810,7 +1277,8 @@ async function loadAlias() {
 function showAliasMsg(text: string, bad: boolean) {
   const msg = $("alias-msg");
   msg.textContent = text;
-  msg.style.color = bad ? "var(--seal)" : "var(--ink-faint)";
+  // 红字走 .warn-ink 类(样式住样式层,门禁看得见);默认色由 .fine 自己给。
+  msg.classList.toggle("warn-ink", bad);
   msg.hidden = false;
 }
 
@@ -1832,7 +1300,7 @@ async function saveAlias() {
     aliasSaved = next;
     input.value = next;
     input.blur(); // 收键盘,给一个「这一笔完了」的手势回执(ui-guidelines:手势即回执)
-    showAliasMsg(next === "" ? "已清除别名" : "已保存,会同步到其他设备", false);
+    showAliasMsg(next === "" ? t("main.aliasCleared") : t("main.aliasSaved"), false);
   } catch (e) {
     input.value = aliasSaved; // 后端拒了(超长等):回显旧值 + 后端原话
     showAliasMsg(String(e), true);
@@ -1850,38 +1318,38 @@ $("alias-input").addEventListener("keydown", (e) => {
 });
 
 $("space-list").addEventListener("click", async (e) => {
-  const t = e.target as HTMLElement;
-  const sw = t.closest<HTMLElement>("[data-switch]")?.dataset.switch;
+  const el = e.target as HTMLElement;
+  const sw = el.closest<HTMLElement>("[data-switch]")?.dataset.switch;
   if (sw && sw !== getCurrentSpace()) {
     spaceMenuFor = null;
     await switchSpace(sw);
     return;
   }
-  if (t.dataset.more) {
+  if (el.dataset.more) {
     // 「⋯」开合重置入口(P1 #11);重开即收上一行的,恒最多一行展开。
-    spaceMenuFor = spaceMenuFor === t.dataset.more ? null : t.dataset.more;
+    spaceMenuFor = spaceMenuFor === el.dataset.more ? null : el.dataset.more;
     resettingSpace = null;
     renderSpaceList();
     return;
   }
-  if (t.dataset.reset) {
-    resettingSpace = t.dataset.reset; // 第一拍:亮红字确认,不动数据。
+  if (el.dataset.reset) {
+    resettingSpace = el.dataset.reset; // 第一拍:亮红字确认,不动数据。
     renamingSpace = false;
     spaceMenuFor = null;
     renderSpaceList();
     return;
   }
-  if (t.dataset.resetCancel) {
+  if (el.dataset.resetCancel) {
     resettingSpace = null;
     renderSpaceList();
     return;
   }
-  if (t.dataset.resetOk) {
-    const id = t.dataset.resetOk;
+  if (el.dataset.resetOk) {
+    const id = el.dataset.resetOk;
     resettingSpace = null;
     try {
       await invoke("reset_space", { spaceId: id });
-      showError("已重置此空间。要重新加入账户,用「空间」里的「加入空间」。");
+      showError(t("main.spaceReset"));
       resetSyncTransient(); // 重置空间的恢复码/出码页等一次性展示随之作废。
       await reconcileForeground(); // 前台可能已落回 main(后端广播为准,这里对账兜底)。
       await refreshSpaces();
@@ -1891,22 +1359,22 @@ $("space-list").addEventListener("click", async (e) => {
     }
     return;
   }
-  if (t.dataset.rename) {
+  if (el.dataset.rename) {
     renamingSpace = true;
     spaceMenuFor = null; // 进改名态顺带收「⋯」,改完/取消不回弹重置入口(codex L)
     renderSpaceList();
     ($("space-rename-input") as HTMLInputElement | null)?.focus();
     return;
   }
-  if (t.dataset.renameCancel) {
+  if (el.dataset.renameCancel) {
     renamingSpace = false;
     renderSpaceList();
     return;
   }
-  if (t.dataset.renameOk) {
+  if (el.dataset.renameOk) {
     const name = ($("space-rename-input") as HTMLInputElement).value.trim();
     if (!name) {
-      showError("空间名不能为空");
+      showError(t("main.spaceNameRequired"));
       return;
     }
     try {
@@ -1923,13 +1391,13 @@ $("space-create").addEventListener("click", async () => {
   // 草稿闸前置(实现审 M4):创建+自动切换是不可拆的一体动作,后端调用之前就拒
   // ——否则建出一个用户并不想留的空空间、切换又被草稿挡下,现场撕裂。
   if (cardPanel.hasDirtyDraft()) {
-    showError("先保存或取消正在编辑的内容");
+    showError(t("main.finishDraftFirst"));
     return;
   }
   const input = $("space-new-name") as HTMLInputElement;
   const name = input.value.trim();
   if (!name) {
-    showError("给空间起个名字(比如「家庭」)");
+    showError(t("main.spaceNamePrompt"));
     return;
   }
   const btn = $("space-create") as HTMLButtonElement;
@@ -1942,9 +1410,9 @@ $("space-create").addEventListener("click", async () => {
     // 或并发切换挡下——只有真切过去了才说「已创建并切换」,否则如实分开说。
     await switchSpace(id); // 创建即切过去——新本子即建即用,人就该在那个空间里。
     if (getCurrentSpace() === id) {
-      showBar("空间已创建,现在就能记录。想多端同步,到「同步」里创建账户。", true);
+      showBar(t("main.spaceCreated"), true);
     } else {
-      showBar("空间已创建,但还没切换过去——到「空间」列表里点它即可。", true);
+      showBar(t("main.spaceCreatedNoSwitch"), true);
     }
   } catch (err) {
     showError(String(err));
@@ -1955,25 +1423,25 @@ $("space-create").addEventListener("click", async () => {
 
 // 全部同步(§7 lean-B):有界 best-effort;结果只显「试了 N 个」,绝不显「全部完成」。
 const OUTCOME_LABEL: Record<string, string> = {
-  boot_completed: "完成初始同步",
-  connected: "已连接追赶",
-  no_boot_peer: "等不到引导(需桌面在线)",
-  timed_out: "超时",
-  failed: "失败",
-  cancelled: "被打断",
+  boot_completed: t("main.outcomeBootCompleted"),
+  connected: t("main.outcomeConnected"),
+  no_boot_peer: t("main.outcomeNoBootPeer"),
+  timed_out: t("main.outcomeTimedOut"),
+  failed: t("main.outcomeFailed"),
+  cancelled: t("main.outcomeCancelled"),
 };
 
 $("sync-all-btn").addEventListener("click", async () => {
   const btn = $("sync-all-btn") as HTMLButtonElement;
   const box = $("sync-all-result");
   btn.disabled = true;
-  box.textContent = "正在逐空间同步…";
+  box.textContent = t("main.syncAllRunning");
   try {
     const report = await invoke<SyncAllReport>("sync_all_spaces");
     const outcomes = report.outcomes;
     if (!outcomes.length) {
       // 「全部同步」只遍历开了同步的空间——纯本地本子被跳过是预期(space-entry-plan §5)。
-      box.textContent = "没有开启同步的空间(纯本地的本子不参与,属预期)。";
+      box.textContent = t("main.syncAllNoSpaces");
     } else {
       const progressed = outcomes.filter((o) => o.progressed).length;
       const lines = outcomes
@@ -1981,13 +1449,13 @@ $("sync-all-btn").addEventListener("click", async () => {
           const label = esc(spaceLabel({ id: o.space, name: o.name }));
           const verdict = OUTCOME_LABEL[o.outcome] ?? o.outcome;
           const detail = o.detail ? `:${esc(o.detail)}` : "";
-          return `<div>${label} — ${verdict}${o.progressed ? "(有新数据)" : ""}${detail}</div>`;
+          return `<div>${label} — ${verdict}${o.progressed ? t("main.syncAllProgressed") : ""}${detail}</div>`;
         })
         .join("");
       const restore = report.restore_error
-        ? `<div style="color:var(--seal)">${esc(report.restore_error)}(重启应用可恢复)</div>`
+        ? `<div class="warn-ink">${t("main.syncAllRestoreError", { error: esc(report.restore_error) })}</div>`
         : "";
-      box.innerHTML = `<div>试了 ${outcomes.length} 个空间,${progressed} 个有新数据:</div>${lines}${restore}`;
+      box.innerHTML = `<div>${t("main.syncAllSummary", { n: outcomes.length, progressed })}</div>${lines}${restore}`;
     }
     await reconcileForeground();
     await refresh(); // 前台空间在遍历期间可能收到过草稿保存,重拉一次。
@@ -2001,7 +1469,7 @@ $("sync-all-btn").addEventListener("click", async () => {
 });
 
 void listen<{ space: string; done: number; total: number }>("sync-all-progress", (e) => {
-  $("sync-all-result").textContent = `正在逐空间同步…(${e.payload.done}/${e.payload.total})`;
+  $("sync-all-result").textContent = t("main.syncAllProgress", { done: e.payload.done, total: e.payload.total });
 });
 
 // ---- 诊断面(P4-b 收编:打开才读库、才跑网络闸门;120 起入口在底部工具行) -----
@@ -2015,16 +1483,16 @@ async function loadDb() {
     const rows: [string, string][] = [
       ["SQLite", d.sqlite_version],
       ["journal_mode", d.journal_mode],
-      ["迁移版本", String(d.user_version)],
+      [t("main.diagMigration"), String(d.user_version)],
       ["device_id", d.device_id],
-      ["items 行数", String(d.items)],
-      ["库路径", d.path],
+      [t("main.diagItems"), String(d.items)],
+      [t("main.diagPath"), d.path],
     ];
     box.innerHTML = rows
       .map(([k, v]) => `<span class="k">${esc(k)}</span><span class="v">${esc(v)}</span>`)
       .join("");
   } catch (e) {
-    box.innerHTML = `<span class="v" style="color:var(--seal)">建库失败:${esc(String(e))}</span>`;
+    box.innerHTML = `<span class="v warn-ink">${t("main.diagDbFailed", { error: esc(String(e)) })}</span>`;
   }
 }
 
@@ -2033,7 +1501,7 @@ async function runProbe() {
   const box = $("probe");
   const url = ($("url") as HTMLInputElement).value.trim();
   btn.disabled = true;
-  box.innerHTML = `<span class="muted">诊断中…(连接项最长等 10 秒)</span>`;
+  box.innerHTML = `<span class="muted">${t("main.probeRunning")}</span>`;
   try {
     const steps = await invoke<ProbeStep[]>("net_probe", { url });
     box.innerHTML = steps
@@ -2046,7 +1514,7 @@ async function runProbe() {
       )
       .join("");
   } catch (e) {
-    box.innerHTML = `<span class="v" style="color:var(--seal)">诊断命令失败:${esc(String(e))}</span>`;
+    box.innerHTML = `<span class="v warn-ink">${t("main.probeFailed", { error: esc(String(e)) })}</span>`;
   } finally {
     btn.disabled = false;
   }
@@ -2060,431 +1528,12 @@ async function loadAbout() {
   try {
     const v = await getVersion();
     box.innerHTML =
-      `<span class="k">版本</span><span class="v">v${esc(v)}</span>` +
-      `<span class="k">官网</span><span class="v">zhujian.app</span>`;
+      `<span class="k">${t("main.aboutVersion")}</span><span class="v">v${esc(v)}</span>` +
+      `<span class="k">${t("main.aboutSite")}</span><span class="v">zhujian.app</span>`;
   } catch (e) {
-    box.innerHTML = `<span class="v" style="color:var(--seal)">读版本失败:${esc(String(e))}</span>`;
+    box.innerHTML = `<span class="v warn-ink">${t("main.aboutFailed", { error: esc(String(e)) })}</span>`;
   }
 }
-
-// ---- 同步面(P4-d):当前空间的输码一屏 + 引导进度 + 状态/恢复码 ---------------
-
-const STATE_LABEL: Record<string, string> = {
-  off: "未开启",
-  connecting: "连接中…",
-  booting: "初始同步中…",
-  online: "在线",
-  offline: "掉线,重连中…",
-};
-
-$("sync-toggle").addEventListener("click", () => openPane("sync"));
-
-function renderSync(s: SyncStatus) {
-  const dot = $("sync-dot");
-  // 断网/出错态类名用 off 不用 error:全局 .error 是左上角 fixed 的错误提示条,
-  // 状态点若带 error 类会被它命中、断网时被拽到左上角盖住「朱」(真机 bug)。
-  dot.className =
-    "dot " +
-    (s.state === "online"
-      ? "online"
-      : s.state === "connecting" || s.state === "booting"
-        ? "busy"
-        : s.error || s.state === "offline"
-          ? "off"
-          : "");
-  const err = s.error ? `<div class="err">${esc(s.error)}</div>` : "";
-  const frozen = s.frozen.length
-    ? `<div class="err">已冻结设备:${esc(s.frozen.join("、"))}(需人工处理)</div>`
-    : "";
-  $("sync-state").innerHTML =
-    `<b>${esc(STATE_LABEL[s.state] ?? s.state)}</b>${err}${frozen}`;
-  $("sync-join").hidden = s.configured;
-  // 未配置态的路数按空间分(space-entry-plan §4):main 保留「一主两辅」(装机
-  // onboarding:扫码/输码把本机并进已有账户);**非 main 只有创号一条路**——
-  // 「把别处的账户带过来」的入口是空间面板的「加入空间」,不在这里。
-  const isMain = getCurrentSpace() === "main";
-  (($("sync-scan-btn").parentElement) as HTMLElement).hidden = !isMain;
-  $("sync-alt-pair").hidden = !isMain;
-  const altCreate = $("sync-alt-create") as HTMLButtonElement;
-  altCreate.textContent = isMain ? "没有其他设备?创建新账户" : "开启多端同步(创建账户)";
-  altCreate.classList.toggle("ghost", isMain);
-  $("sync-boot").hidden = s.state !== "booting";
-  $("sync-online").hidden = !s.configured;
-  if (s.configured) {
-    const rows: [string, string][] = [
-      ["账户", s.account_id ?? ""],
-      ["服务器", s.server_url ?? ""],
-      ["同伴在线", String(s.peers_online)],
-    ];
-    $("sync-info").innerHTML = rows
-      .map(([k, v]) => `<span class="k">${esc(k)}</span><span class="v">${esc(v)}</span>`)
-      .join("");
-  }
-}
-
-// 辅路互斥折叠(codex 审:两条路对当前空间是互斥决策,共享的服务器地址行只在
-// 任一辅路展开时显示;重复点当前项收起)。切空间时复位并清掉旧材料——上一空间
-// 的配对码不许带进新空间(创号自 open-signup 起无码,无材料可清)。
-type SecondaryMode = null | "pair" | "create";
-let secondary: SecondaryMode = null;
-
-function renderSecondary() {
-  $("sync-manual").hidden = secondary !== "pair";
-  $("sync-create").hidden = secondary !== "create";
-  $("sync-server-row").hidden = secondary === null;
-}
-
-function resetSecondary() {
-  secondary = null;
-  ($("sync-code") as HTMLInputElement).value = "";
-  renderSecondary();
-}
-
-$("sync-alt-pair").addEventListener("click", () => {
-  secondary = secondary === "pair" ? null : "pair";
-  renderSecondary();
-});
-$("sync-alt-create").addEventListener("click", () => {
-  secondary = secondary === "create" ? null : "create";
-  renderSecondary();
-});
-
-// 手输与扫码共用同一条加入路(107 抽出:后端 sync_pair_join 不区分码怎么来的)。
-// 配对目标 = 点击那刻的当前空间(写类命令,不走 sinvoke,明确处理响应)。
-async function doJoin(serverUrl: string, code: string) {
-  if (!serverUrl || !code) return;
-  const target = getCurrentSpace();
-  const btn = $("sync-join-btn") as HTMLButtonElement;
-  btn.disabled = true;
-  btn.textContent = "加入中…";
-  try {
-    await invoke("sync_pair_join", { spaceId: target, serverUrl, code });
-    resetSecondary(); // 码已消费,收起辅路清掉旧材料。
-    await refreshSpaces();
-    const cur = spacesCache.find((s) => s.id === target);
-    // 起名提示只在多空间时给(codex 审:单空间用户刚扫完码,别把「空间」概念抛回来)。
-    showBar(
-      spacesCache.length > 1 && cur && !cur.name
-        ? "已连接,正在初始同步…(可在「空间」面板给本空间起个名字)"
-        : "已连接,正在初始同步…",
-      true,
-    );
-  } catch (err) {
-    showError(String(err));
-  } finally {
-    btn.disabled = false;
-    btn.textContent = "加入";
-  }
-}
-
-$("sync-join-btn").addEventListener("click", () => {
-  void doJoin(
-    ($("sync-server") as HTMLInputElement).value.trim(),
-    ($("sync-code") as HTMLInputElement).value.trim(),
-  );
-});
-
-// ---- 扫码加入(107):桌面「发起配对」旁出二维码,扫到即自动加入 ----------------
-
-type PairPayload = { server: string; code: string };
-
-function parsePairQr(text: string): PairPayload {
-  let o: Record<string, unknown>;
-  try {
-    o = JSON.parse(text) as Record<string, unknown>;
-  } catch {
-    throw new Error("这不是朱简的配对二维码");
-  }
-  if (o?.zhujian !== "pair" || typeof o.server !== "string" || typeof o.code !== "string") {
-    throw new Error("这不是朱简的配对二维码");
-  }
-  if (o.v !== 1) throw new Error("二维码版本较新:请先升级手机端朱简再扫");
-  return { server: o.server, code: o.code };
-}
-
-let scanCancelled = false;
-
-/** 收扫码层(146 真机取证):plugin 的 cancel 命令会 resolve,但**部分状态下不
- *  reject 挂着的 scan()**——页面若只等 startScan.finally 收尾,会永远停在挖空态
- *  (「取消扫码」按钮此前同患)。故 UI 收尾自己做、不等插件:cancel 尽力发出,
- *  scanning/挖空层立即收,与 startScan.finally 幂等;返回键与取消按钮共用这一条。 */
-function dismissScanOverlay() {
-  scanCancelled = true;
-  void cancel().catch(() => {});
-  document.body.classList.remove("scanning");
-  $("scan").hidden = true;
-}
-
-const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
-
-/** 扫码取一枚配对载荷,交给 `onGot` 路由(两条消费路:main 装机配对 doJoin /
- *  「加入空间」doJoinSpace——扫码只管拿码,去哪由入口按钮决定)。 */
-async function startScan(onGot: (p: PairPayload) => Promise<void>) {
-  let perm = await checkPermissions();
-  if (perm !== "granted" && perm !== "denied") perm = await requestPermissions();
-  if (perm !== "granted") {
-    showError("没有相机权限,无法扫码;可以手动输入配对码,或到系统设置里给朱简开相机。");
-    return;
-  }
-  scanCancelled = false;
-  document.body.classList.add("scanning");
-  $("scan").hidden = false;
-  try {
-    const got = await scan({ windowed: true, formats: [Format.QRCode] });
-    const p = parsePairQr(got.content);
-    document.body.classList.remove("scanning");
-    $("scan").hidden = true;
-    await onGot(p);
-  } catch (err) {
-    if (!scanCancelled) showError(errMsg(err));
-  } finally {
-    document.body.classList.remove("scanning");
-    $("scan").hidden = true;
-  }
-}
-
-$("sync-scan-btn").addEventListener("click", () =>
-  void startScan(async (p) => {
-    ($("sync-server") as HTMLInputElement).value = p.server;
-    ($("sync-code") as HTMLInputElement).value = p.code;
-    await doJoin(p.server, p.code);
-  }).catch((e) => showError(errMsg(e))),
-);
-$("scan-cancel").addEventListener("click", dismissScanOverlay);
-
-// ---- 加入空间(space-entry-plan §3:app 级入口,不收目标 space_id) -------------
-
-type JoinOutcome =
-  | {
-      kind: "integrated";
-      space: { id: string; name: string | null; configured: boolean };
-      warnings: string[];
-    }
-  | { kind: "published_needs_restart"; space_id: string; error: string };
-
-const JOIN_PHASE_LABEL: Record<string, string> = {
-  preparing: "准备中…",
-  pairing: "正在配对…",
-  booting: "正在拉取账户数据…",
-  publishing: "正在落成空间…",
-  integrating: "正在装入空间列表…",
-};
-
-/** 当前 attempt 的 id(null=没有加入在跑)。进度事件只接受当前 attempt、terminal
- *  后拒迟到事件(取消旧加入后 WebView 队列里的旧进度不许画到新一次加入上,§3.2)。 */
-let joinAttempt: string | null = null;
-
-function renderJoinProgress(text: string | null) {
-  const box = $("join-progress");
-  box.hidden = !text;
-  box.textContent = text ?? "";
-  $("join-cancel-row").hidden = joinAttempt === null;
-}
-
-async function doJoinSpace(serverUrl: string, code: string) {
-  if (!serverUrl || !code) return;
-  if (joinAttempt) {
-    showError("已有一次「加入空间」在进行中");
-    return;
-  }
-  const attempt = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  joinAttempt = attempt;
-  renderJoinProgress("准备中…");
-  const goBtn = $("join-go") as HTMLButtonElement;
-  const scanBtn = $("join-scan-btn") as HTMLButtonElement;
-  goBtn.disabled = true;
-  scanBtn.disabled = true;
-  try {
-    const out = await invoke<JoinOutcome>("join_space", {
-      serverUrl,
-      code,
-      attemptId: attempt,
-    });
-    // 结果分道**先于**任何后续收尾(codex 一轮 M4):后端事实(Integrated /
-    // PublishedNeedsRestart)不许被前端刷新的任何闪失盖成「普通失败」。
-    $("join-form").hidden = true;
-    ($("join-code") as HTMLInputElement).value = "";
-    if (out.kind === "integrated") {
-      const label = spaceLabel({ id: out.space.id, name: out.space.name });
-      const warn = out.warnings.length ? `(注意:${out.warnings.join(";")})` : "";
-      await refreshSpaces();
-      // Integrated 不含视图切换(§3.2 二轮 H3):经现有**草稿感知**入口尝试切换,
-      // 草稿挡住就保持原前台、指路即可——绝不 reconcileForeground 强切丢草稿。
-      if (!cardPanel.hasDirtyDraft()) await switchSpace(out.space.id);
-      if (getCurrentSpace() === out.space.id) {
-        showBar(`已加入空间「${label}」${warn}`, true);
-      } else {
-        showBar(`已加入空间「${label}」,保存当前编辑后可到「空间」列表切换过去${warn}`, true);
-      }
-    } else {
-      // 空间已真实存在(账户已注册):只提示重启后出现,绝不谎报失败(三轮 M5)。
-      showError(out.error);
-    }
-  } catch (err) {
-    showError(String(err));
-  } finally {
-    joinAttempt = null;
-    renderJoinProgress(null);
-    goBtn.disabled = false;
-    scanBtn.disabled = false;
-  }
-}
-
-void listen<{ attempt_id: string; phase: string; received: number; total: number }>(
-  "join-progress",
-  (e) => {
-    const p = e.payload;
-    if (p.attempt_id !== joinAttempt) return; // 只接受当前 attempt(迟到事件拒)
-    renderJoinProgress(
-      p.phase === "booting" && p.total > 0
-        ? `正在拉取账户数据 ${fmtMb(p.received)} / ${fmtMb(p.total)}`
-        : (JOIN_PHASE_LABEL[p.phase] ?? p.phase),
-    );
-  },
-);
-
-$("join-scan-btn").addEventListener("click", () =>
-  void startScan(async (p) => {
-    await doJoinSpace(p.server, p.code);
-  }).catch((e) => showError(errMsg(e))),
-);
-$("join-alt-btn").addEventListener("click", () => {
-  const f = $("join-form");
-  f.hidden = !f.hidden;
-});
-$("join-go").addEventListener("click", () => {
-  void doJoinSpace(
-    ($("join-server") as HTMLInputElement).value.trim(),
-    ($("join-code") as HTMLInputElement).value.trim(),
-  );
-});
-$("join-cancel").addEventListener("click", () => {
-  void invoke("join_space_cancel").catch(() => {});
-});
-
-$("sync-recovery-btn").addEventListener("click", async () => {
-  const box = $("sync-recovery");
-  try {
-    box.textContent = await sinvoke<string>("sync_recovery_code");
-    // 警示随码同现(codex 审:「恢复码≠数据备份」必须跟着码走,防误当备份)。
-    $("sync-recovery-note").hidden = false;
-    box.hidden = false;
-  } catch (err) {
-    showError(String(err));
-  }
-});
-
-// 连接信息(账户/服务器/同伴)折叠:唯一出处,点开才见。
-$("sync-conninfo-btn").addEventListener("click", () => {
-  const info = $("sync-info");
-  info.hidden = !info.hidden;
-});
-
-// ---- 创号 + 恢复码强制仪式(phone-space-plan §2.1/§3,与桌面对称) --------------
-
-// Crockford 抄录容错的规范化,与 core parse_recovery_code **严格同口径**(只容忍
-// 空格与 `-`;实现审 L7:前端多容忍 tab/换行会让仪式通过、将来真恢复时被 core
-// 拒)。大写、O→0、I/L→1。只用于仪式回验比对,不做解码。
-function normalizeCode(s: string): string {
-  return s
-    .replace(/[- ]/g, "")
-    .toUpperCase()
-    .replace(/O/g, "0")
-    .replace(/[IL]/g, "1");
-}
-
-let ritualCode = "";
-
-/** 强制仪式:展示+警示+回输核对,输对才放行。post-commit 错误(目录刷新失败等)
- *  随码一起亮出——账户已创建是事实,码必须交付,错误只旁路提示(codex r1 #5)。 */
-function openRitual(code: string, postErr: string | null) {
-  ritualCode = code;
-  $("ritual-code").textContent = code;
-  const post = $("ritual-post");
-  post.hidden = !postErr;
-  post.textContent = postErr ?? "";
-  ($("ritual-confirm") as HTMLInputElement).value = "";
-  $("ritual-err").textContent = "";
-  $("ritual").hidden = false;
-}
-
-$("ritual-done").addEventListener("click", () => {
-  const typed = ($("ritual-confirm") as HTMLInputElement).value;
-  if (normalizeCode(typed) !== normalizeCode(ritualCode)) {
-    $("ritual-err").textContent = "输入与恢复码不符——请对照纸上抄写的内容逐组核对。";
-    return;
-  }
-  ritualCode = "";
-  $("ritual").hidden = true;
-  showBar("账户已创建,同步已开启", true);
-  resetSecondary(); // 创号完成,收起辅路。
-  void refreshSpaces();
-  void sinvoke<SyncStatus>("sync_status").then(renderSync).catch(() => {});
-});
-
-async function doCreateAccount() {
-  const serverUrl = ($("sync-server") as HTMLInputElement).value.trim();
-  if (!serverUrl) return;
-  const target = getCurrentSpace();
-  const btn = $("sync-create-btn") as HTMLButtonElement;
-  btn.disabled = true;
-  btn.textContent = "创建中…";
-  try {
-    // 刻意不判弃迟到响应:码一旦提交只出这一次机会窗,即使空间已切走也必须
-    // 走完仪式(api.ts 注释同款纪律)。
-    const out = await syncCreateAccount(target, serverUrl);
-    openRitual(out.recovery_code, out.post_commit_error);
-  } catch (err) {
-    showError(String(err));
-  } finally {
-    btn.disabled = false;
-    btn.textContent = "创建新账户";
-  }
-}
-$("sync-create-btn").addEventListener("click", () => void doCreateAccount());
-
-// ---- 邀请设备(老设备侧出码;phone-space-plan §2.2/§3) -------------------------
-
-async function doInviteDevice() {
-  const target = getCurrentSpace();
-  const btn = $("sync-invite-btn") as HTMLButtonElement;
-  btn.disabled = true;
-  btn.textContent = "申请配对码…";
-  try {
-    // 码与服务器地址由后端同 runtime 原子取(实现审 M3),不从状态缓存拼。
-    const { code, server_url: server } = await syncPairStart(target);
-    if (target !== getCurrentSpace()) return; // 出码页属于该空间,已切走就不画
-    $("sync-pair-kv").innerHTML = (
-      [
-        ["服务器", server],
-        ["配对码", code],
-      ] as const
-    )
-      .map(
-        ([k, v]) =>
-          `<span class="k">${esc(k)}</span><span class="v" style="user-select:text">${esc(v)}</span>`,
-      )
-      .join("");
-    $("sync-pair-copy").dataset.copy = `服务器地址:${server}\n配对码:${code}`;
-    $("sync-pair-note").textContent =
-      "在电脑上:「空间」→「加入空间」→ 输入配对码,两项都要填。出码和对方初始同步期间,不要切换空间、不要运行「全部同步」,并保持本机亮屏在前台。配对码 10 分钟内有效、只能用一次。";
-    $("sync-pair-out").hidden = false;
-  } catch (err) {
-    showError(String(err));
-  } finally {
-    btn.disabled = false;
-    btn.textContent = "添加设备";
-  }
-}
-$("sync-invite-btn").addEventListener("click", () => void doInviteDevice());
-
-$("sync-pair-copy").addEventListener("click", () => {
-  const text = $("sync-pair-copy").dataset.copy ?? "";
-  navigator.clipboard.writeText(text).then(
-    () => showBar("已复制,发给电脑端粘贴", true),
-    () => showError("复制失败——请长按选中文字手动复制"),
-  );
-});
 
 // ---- 半自动更新(106):启动静默查 + 后台切回再查(149 后用户点名),有新版出提示条 ----
 
@@ -2517,7 +1566,7 @@ async function initUpdate() {
     const u = await invoke<AndroidUpdate | null>("check_update");
     if (!u || u.versionCode === updateDismissedCode) return;
     updateFound = u;
-    $("update-msg").textContent = `有新版 v${u.version}`;
+    $("update-msg").textContent = t("main.updateFound", { version: u.version });
     const notes = meaningfulNotes(u.notes, u.version);
     $("update-notes").textContent = notes;
     $("update-notes").hidden = notes === "";
@@ -2543,8 +1592,6 @@ $("update-later").addEventListener("click", () => {
   if (updateFound) updateDismissedCode = updateFound.versionCode;
 });
 
-const fmtMb = (b: number) => `${(b / 1048576).toFixed(1)} MB`;
-
 // 远端变更 → 去抖刷新时间轴(追赶期一批 op 一次重画)+ 活动面跟上(实现审 M6)。
 let refreshTimer: number | undefined;
 function refreshSoon() {
@@ -2557,10 +1604,6 @@ function refreshSoon() {
 
 // 事件桥统一信封(工序 8):按 space+generation 过滤(acceptSpaced)——非当前
 // 空间(「全部同步」遍历期间的临时 session)与迟到代次一律丢弃。
-void listen<Spaced<SyncStatus>>("sync-status", (e) => {
-  if (!acceptSpaced(e.payload)) return;
-  renderSync(e.payload.payload);
-});
 void listen<Spaced<unknown>>("sync-changed", (e) => {
   if (!acceptSpaced(e.payload)) return;
   refreshSoon();
@@ -2579,7 +1622,7 @@ async function rescanThenRefreshSpaces(retryLeft: number): Promise<void> {
       window.setTimeout(() => void rescanThenRefreshSpaces(retryLeft - 1), 3000);
       return;
     }
-    showError(`空间名已更新,但空间列表刷新失败:${String(err)}`);
+    showError(t("main.spaceRenamedRefreshFailed", { error: String(err) }));
     return;
   }
   await refreshSpaces();
@@ -2590,28 +1633,6 @@ void listen("space-name-changed", () => {
 void listen<Spaced<string>>("sync-toast", (e) => {
   if (!acceptSpaced(e.payload)) return;
   showBar(e.payload.payload, true);
-});
-void listen<Spaced<{ received: number; total: number }>>("sync-boot", (e) => {
-  if (!acceptSpaced(e.payload)) return;
-  const { received, total } = e.payload.payload;
-  const pct = total > 0 ? Math.floor((received / total) * 100) : 0;
-  ($("sync-boot-fill") as HTMLElement).style.width = `${pct}%`;
-  $("sync-boot-text").textContent =
-    received >= total
-      ? `快照 ${fmtMb(total)} 已收全,校验并导入中…`
-      : `拉取快照 ${fmtMb(received)} / ${fmtMb(total)}(${pct}%)`;
-});
-// 邀请方配对进度(phone-space-plan §2.2)。done=注册完成≠对方引导完成(codex r2
-// N4):不自动关出码页,提示等电脑端初始同步完成。
-void listen<Spaced<{ phase: string; detail: string }>>("sync-pair", (e) => {
-  if (!acceptSpaced(e.payload)) return;
-  const { phase, detail } = e.payload.payload;
-  $("sync-pair-note").textContent =
-    phase === "done"
-      ? `${detail}——请等电脑端显示初始同步完成后再离开本页。`
-      : phase === "failed"
-        ? `配对失败:${detail}(可重新出码)`
-        : detail;
 });
 // 后端 foreground 变更(切换成功/失败回滚/遍历恢复)——先立代次水位(同空间
 // 重激活后,旧桥 buffer 里还没吐完的旧代次事件从此被拒,工序 7/8 二审 L1;
@@ -2646,6 +1667,19 @@ cardPanel.initCardPanel({
 });
 // 留言层(314 第③笔):写/删成功即整轴重拉(徽章计数跟着走),开合各压/平一枚返回键守门条目。
 initComments({ refresh, pushLayer, settleHistory });
+// 大图查看器(310 第③笔):返回键层账本仍住 main.ts,经 Deps 注入(留言层同形)。
+initViewer({ pushLayer, settleHistory, refresh });
+// 同步面(310 第③笔):接线即挂全部监听(面内控件 + sync-status/sync-boot/sync-pair/
+// join-progress)——本调用在模块体同一同步 tick 内、先于任何事件派发,启动期事件不丢;
+// acceptSpaced 账本与空间切换编排仍住 main.ts,经 Deps 注入。
+initSync({
+  openPane,
+  acceptSpaced,
+  getSpaces: () => spacesCache,
+  refreshSpaces,
+  switchSpace,
+  hasDirtyDraft: () => cardPanel.hasDirtyDraft(),
+});
 initCardSwipe({
   getItem: (id) => lastItems.get(id),
   getCurrentSpace,
@@ -2687,14 +1721,14 @@ async function resolveStartupGate(): Promise<GateStatus & { status: "blocked" } 
         if (g.status === "ready") return null;
         if (g.status === "blocked") return g;
         // pending:装配还在跑(可能正在升级数据格式),提示后继续轮询。
-        if (attempt >= 3) $("gate-checking").textContent = "正在准备本机空间…";
+        if (attempt >= 3) $("gate-checking").textContent = t("main.gatePreparing");
         await new Promise((res) => setTimeout(res, 150));
         continue;
       }
     } catch {
       // manage(Gate) 之前的窗口会抛「state not managed」:歇一下重发,不当封锁。
     }
-    if (attempt >= 3) $("gate-checking").textContent = "正在检查本机空间…(重试中)";
+    if (attempt >= 3) $("gate-checking").textContent = t("main.gateRetrying");
     await new Promise((res) => setTimeout(res, 150));
   }
 }
@@ -2705,6 +1739,10 @@ async function init() {
   initTheme();
   // 界面字号(251):首帧应用同样已由内联脚本做掉,这里兜同一规则(幂等)。
   initTextSize();
+  // 语言(358 第②笔):壳里保留中文原文防首帧闪(163 契约),这里按生效语言统一
+  // 覆写静态文案 + 落 <html lang>。放在启动闸之前——封锁页也要说用户那门语言。
+  initLang();
+  applyStaticI18n();
   // 先用空缓存画一次空间入口(按单空间态:chip 藏、兜底「空间…」显)——否则首次
   // list_spaces 失败时 chip 与兜底都停在静态 hidden,空间面板整个不可达(codex 必修 3)。
   renderSpaceChip();

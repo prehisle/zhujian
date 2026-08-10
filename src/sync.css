@@ -8,12 +8,12 @@
   align-items: center;
   gap: 8px;
   font-family: var(--font-serif);
-  font-size: 12.5px;
+  font-size: var(--fs-13);
   letter-spacing: 0.03em;
   color: var(--ink-faint);
   background: transparent;
   border: 0;
-  border-radius: 9px;
+  border-radius: var(--radius-sm);
   padding: 7px 12px;
   cursor: pointer;
   text-align: left;
@@ -28,15 +28,19 @@
   flex: none;
   width: 7px;
   height: 7px;
-  border-radius: 50%;
+  border-radius: var(--radius-circle);
   background: transparent;
   border: 1px solid var(--line-strong);
 }
 .sync-dot.on {
-  background: #4c9a6a;
+  background: var(--ok);
   border-color: transparent;
 }
 .sync-dot.busy {
+  /* 「连接中 / 初始同步」的琥珀。它是写死的:纸墨朱三色里没有「中性等待」这一格,
+     而它又不能是 --seal(那是 .err 用的,两态得一眼分得开)。与 --ok 不同,琥珀在
+     两端不是同一个表达 —— 安卓那份用的是朱砂淡(`--seal` + opacity 0.65),故没有
+     「同一个语义两个值」的漂移可消,不提令牌。已登记在 scripts/check-hardcoded-colors.mjs。 */
   background: #c9973a;
   border-color: transparent;
   animation: sync-pulse 1.6s ease-in-out infinite;
@@ -50,6 +54,8 @@
 }
 
 /* ---- 设置面板(轻模态) ---- */
+/* 遮罩取浅雾玻璃=「操作型面板」那一路(348 分野判据:阅读型深压、操作型浅雾;
+   全文见 item-comments.css 遮罩处注)。 */
 .sync-overlay {
   position: fixed;
   inset: 0;
@@ -63,14 +69,14 @@
   width: min(420px, calc(100vw - 48px));
   background: linear-gradient(180deg, var(--raised), var(--raised-edge));
   border: 1px solid var(--line-strong);
-  border-radius: 14px;
+  border-radius: var(--radius-lg);
   box-shadow: var(--float-shadow);
   padding: 18px 20px 20px;
 }
 .sync-title {
   margin: 0 0 12px;
   font-family: var(--font-serif);
-  font-size: 16px;
+  font-size: var(--fs-16);
   letter-spacing: 0.04em;
   color: var(--ink);
 }
@@ -78,7 +84,7 @@
   display: flex;
   flex-direction: column;
   gap: 10px;
-  font-size: 13px;
+  font-size: var(--fs-13);
   color: var(--ink);
 }
 .sync-note {
@@ -89,12 +95,12 @@
 .sync-dim { color: var(--ink-faint); }
 .sync-kv {
   color: var(--ink-soft);
-  font-size: 12px;
+  font-size: var(--fs-12);
   overflow-wrap: anywhere;
 }
 .sync-warn {
   color: var(--seal);
-  font-size: 12px;
+  font-size: var(--fs-12);
   line-height: 1.7;
 }
 /* 压实前逐项确认闸(132 债):防无脑连点跳过服务器侧吊销/清箱 */
@@ -109,14 +115,14 @@
   align-items: flex-start;
   gap: 6px;
   color: var(--ink-soft);
-  font-size: 12px;
+  font-size: var(--fs-12);
   line-height: 1.5;
   cursor: pointer;
 }
 .sync-ack input { margin-top: 2px; flex: 0 0 auto; }
 .sync-err {
   color: var(--seal);
-  font-size: 12px;
+  font-size: var(--fs-12);
   overflow-wrap: anywhere;
 }
 .sync-err:empty { display: none; }
@@ -142,11 +148,11 @@
 }
 .sync-input {
   font: inherit;
-  font-size: 13px;
+  font-size: var(--fs-13);
   color: var(--ink);
   background: var(--paper);
   border: 1px solid var(--line-strong);
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   padding: 8px 10px;
   outline: none;
 }
@@ -155,13 +161,13 @@
 /* 恢复码 / 配对码:等宽大字,可选中抄录 */
 .sync-code {
   font-family: Consolas, "Courier New", monospace;
-  font-size: 15px;
+  font-size: var(--fs-15);
   letter-spacing: 0.06em;
   line-height: 1.8;
   color: var(--ink);
   background: var(--paper);
   border: 1px dashed var(--seal-line);
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   padding: 12px 14px;
   text-align: center;
   overflow-wrap: anywhere;
@@ -182,7 +188,7 @@
   width: 190px;
   margin: 2px auto 0;
   background: #fff;
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   padding: 6px;
   line-height: 0;
 }
@@ -202,10 +208,10 @@
   background: linear-gradient(180deg, var(--raised), var(--raised-edge));
   border: 1px solid var(--line-strong);
   border-left: 3px solid var(--seal);
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   box-shadow: var(--float-shadow);
   padding: 10px 14px;
-  font-size: 12.5px;
+  font-size: var(--fs-13);
   line-height: 1.7;
   color: var(--ink);
   opacity: 0;
@@ -233,10 +239,10 @@
   background: linear-gradient(180deg, var(--raised), var(--raised-edge));
   border: 1px solid var(--line-strong);
   border-left: 3px solid var(--seal);
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   box-shadow: var(--float-shadow);
   padding: 8px 10px 8px 14px;
-  font-size: 12.5px;
+  font-size: var(--fs-13);
   color: var(--ink);
   opacity: 0;
   transform: translateY(6px);
@@ -254,10 +260,10 @@
 #deeplink-pill .deeplink-pill-open {
   border: 1px solid var(--seal);
   background: var(--seal);
-  color: #fff;
-  border-radius: 7px;
+  color: var(--on-seal);
+  border-radius: var(--radius-sm);
   padding: 4px 12px;
-  font-size: 12.5px;
+  font-size: var(--fs-13);
   cursor: pointer;
   white-space: nowrap;
 }
@@ -266,7 +272,7 @@
   background: transparent;
   color: var(--ink);
   opacity: 0.55;
-  font-size: 16px;
+  font-size: var(--fs-16);
   line-height: 1;
   cursor: pointer;
   padding: 0 2px;

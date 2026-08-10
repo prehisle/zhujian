@@ -6,6 +6,7 @@
 // 正文「见图N」 reference always points at the same picture (see migration 0016).
 
 import { invoke, invokeInSpace } from "./space";
+import { t } from "./i18n";
 import { saveImageDraft, loadImageDraft } from "./compose-draft";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { copyText } from "./clipboard";
@@ -16,6 +17,10 @@ import "./item-images.css";
 
 /** Mirror of lib.rs `ImageMeta` (no bytes): an image's id, 「图N」编号, and MIME. */
 export type ImageMeta = { id: string; seq: number; mime: string };
+
+/** attachBatch 部分失败时的补救指引。此前在 board / inbox / 捕获窗三个 compose 各抄
+ *  一份、已漂成两种说法(「卡片编辑态」vs「卡片里」)——同一语义收成一处。 */
+export const REPASTE_HINT = t("itemImages.repasteHint");
 
 // ---- small DOM helper (kept local so this module stands alone) -------------
 function el<K extends keyof HTMLElementTagNameMap>(
@@ -270,8 +275,8 @@ function mountLightbox(
       const shown = overlay.querySelector<HTMLImageElement>("img.img-lightbox-img");
       if (!shown || shown.naturalWidth === 0) return; // 还没解码出来 / 已换成失败面:不假装复制
       copyImageToClipboard(shown).then(
-        () => toast("已复制图片"),
-        () => toast("复制失败"), // 写剪贴板被拒要响亮,别静默(与 clipboard.ts 同纪律)
+        () => toast(t("itemImages.copiedImage")),
+        () => toast(t("itemImages.copyFail")), // 写剪贴板被拒要响亮,别静默(与 clipboard.ts 同纪律)
       );
       return;
     }
@@ -688,10 +693,10 @@ export async function openLightbox(images: ImageMeta[], index: number): Promise<
   const multi = images.length > 1;
   let cur = Math.min(Math.max(index, 0), images.length - 1);
   let gen = 0; // 换图代次:翻得快时迟到的字节/解码不许盖住新的那张(同安卓 viewerSeq)
-  const img = el("img", { className: "img-lightbox-img", alt: `图${images[cur].seq}` });
+  const img = el("img", { className: "img-lightbox-img", alt: t("itemImages.badge", { n: images[cur].seq }) });
   // 取字节/解码/定窗期间的加载指示(§3.7 审计 #14):CSS 延迟淡入,快路径(命中「刚看过」的
   // 全尺寸缓存)一闪而过时不露脸;init 前 remove,showError 的 replaceChildren 也会带走它。
-  const loading = el("div", { className: "img-lightbox-loading", textContent: "图片载入中…" });
+  const loading = el("div", { className: "img-lightbox-loading", textContent: t("itemImages.loading") });
   const stage = el("div", { className: "img-lightbox-stage" }, [loading, img]);
   let closed = false;
   let restore: (() => Promise<void>) | null = null;
@@ -711,7 +716,7 @@ export async function openLightbox(images: ImageMeta[], index: number): Promise<
   const showError = (): void => {
     if (closed) return;
     viewer.cleanup();
-    overlay.replaceChildren(el("div", { className: "img-lightbox-err", textContent: "图片加载失败" }));
+    overlay.replaceChildren(el("div", { className: "img-lightbox-err", textContent: t("itemImages.loadFail") }));
   };
   // 组内导航件(只在多图时存在):左右箭头 + 「图N · i/共」角标。都 position:fixed 钉在视口,
   // 放大后拖着滚图时不跟着跑。按钮的 click 必须 stopPropagation——遮罩自身的 click 是「关闭」。
@@ -720,7 +725,7 @@ export async function openLightbox(images: ImageMeta[], index: number): Promise<
     const b = el("button", {
       className: `img-lightbox-nav ${dir < 0 ? "prev" : "next"}`,
       textContent: dir < 0 ? "‹" : "›",
-      title: dir < 0 ? "上一张(←)" : "下一张(→)",
+      title: dir < 0 ? t("itemImages.prev") : t("itemImages.next"),
     });
     b.addEventListener("click", (e) => {
       e.stopPropagation(); // 别冒泡到遮罩的「点背景关闭」
@@ -736,8 +741,8 @@ export async function openLightbox(images: ImageMeta[], index: number): Promise<
     const my = ++gen;
     cur = i;
     const m = images[cur];
-    img.alt = `图${m.seq}`;
-    if (counter) counter.textContent = `图${m.seq} · ${cur + 1}/${images.length}`;
+    img.alt = t("itemImages.badge", { n: m.seq });
+    if (counter) counter.textContent = t("itemImages.counter", { n: m.seq, i: cur + 1, total: images.length });
     if (!first) {
       // 换图:先隐去旧图(否则新图按旧尺寸闪一下再重排)、把加载指示放回去——与「布局未定
       // 不显示」同纪律,定形后由 viewer.init() 一次成形亮相。
@@ -796,14 +801,14 @@ export async function openLightbox(images: ImageMeta[], index: number): Promise<
  *  真落定后一次成形亮相。放大/解码期间显「图片载入中…」加载指示(§3.7,快路径 <0.2s 不露脸)。 */
 export function openLightboxUrl(
   src: string,
-  alt = "预览",
+  alt = t("itemImages.preview"),
   opts: {
     onClose?: () => void | Promise<void>;
     grow?: { apply: () => Promise<void>; restore: () => Promise<void> };
   } = {},
 ): void {
   const img = el("img", { className: "img-lightbox-img", alt });
-  const loading = el("div", { className: "img-lightbox-loading", textContent: "图片载入中…" });
+  const loading = el("div", { className: "img-lightbox-loading", textContent: t("itemImages.loading") });
   const stage = el("div", { className: "img-lightbox-stage" }, [loading, img]);
   let closed = false;
   let restore: (() => Promise<void>) | null = null;
@@ -822,7 +827,7 @@ export function openLightboxUrl(
   const showError = (): void => {
     if (closed) return;
     viewer.cleanup();
-    overlay.replaceChildren(el("div", { className: "img-lightbox-err", textContent: "图片加载失败" }));
+    overlay.replaceChildren(el("div", { className: "img-lightbox-err", textContent: t("itemImages.loadFail") }));
   };
   void (async () => {
     try {
@@ -871,7 +876,7 @@ export function imageStrip(
   // `all` = 本条同批列出的整组图:点开任一张后 ←/→ 能在组内翻页(224)。
   function thumb(m: ImageMeta, all: ImageMeta[]): HTMLElement {
     const wrap = el("div", { className: "img-thumb" });
-    const img = el("img", { className: "img-thumb-img", alt: `图${m.seq}`, title: `图${m.seq}` });
+    const img = el("img", { className: "img-thumb-img", alt: t("itemImages.badge", { n: m.seq }), title: t("itemImages.badge", { n: m.seq }) });
     getThumb(m.id)
       .then((url) => {
         img.src = url; // 缓存命中=同帧微任务落 src,重渲不再逐张闪现(且落的是小图,不解全尺寸位图)
@@ -883,9 +888,9 @@ export function imageStrip(
       e.stopPropagation();
       void openLightbox(all, all.indexOf(m));
     });
-    wrap.append(img, el("span", { className: "img-badge", textContent: `图${m.seq}` }));
+    wrap.append(img, el("span", { className: "img-badge", textContent: t("itemImages.badge", { n: m.seq }) }));
     if (opts.editable) {
-      const del = el("button", { className: "img-del", textContent: "×", title: "删除这张图(编号不再复用)" });
+      const del = el("button", { className: "img-del", textContent: "×", title: t("itemImages.deleteImage") });
       del.addEventListener("click", async (e) => {
         e.stopPropagation();
         try {
@@ -946,7 +951,7 @@ export function renderContent(text: string, images: ImageMeta[]): DocumentFragme
       url = url.slice(0, url.length - drop);
       if (m.index > last) frag.append(text.slice(last, m.index));
       // title = 完整链接 + 手势提示,悬停即自解释(尾随标点已剥,hover 看得到真实地址)。
-      const a = el("a", { className: "link-ref", href: url, title: `${url}\n点击打开 · 右键复制链接` });
+      const a = el("a", { className: "link-ref", href: url, title: t("itemImages.linkTitle", { url }) });
       a.textContent = url;
       a.addEventListener("click", (e) => {
         e.preventDefault(); // a bare href would navigate the webview away — open externally
@@ -958,8 +963,8 @@ export function renderContent(text: string, images: ImageMeta[]): DocumentFragme
         e.preventDefault();
         e.stopPropagation();
         copyText(url)
-          .then(() => flashToast(e.clientX, e.clientY, "已复制链接"))
-          .catch(() => flashToast(e.clientX, e.clientY, "复制失败"));
+          .then(() => flashToast(e.clientX, e.clientY, t("itemImages.copiedLink")))
+          .catch(() => flashToast(e.clientX, e.clientY, t("itemImages.copyFail")));
       });
       frag.append(a);
       last = m.index + url.length; // leave any trailing punctuation for the plain-text tail
@@ -969,7 +974,7 @@ export function renderContent(text: string, images: ImageMeta[]): DocumentFragme
     const meta = bySeq.get(Number(m[2]));
     if (!meta) continue; // no such image — leave the literal "图N" text untouched
     if (m.index > last) frag.append(text.slice(last, m.index));
-    const chip = el("button", { className: "img-ref", textContent: `图${meta.seq}` });
+    const chip = el("button", { className: "img-ref", textContent: t("itemImages.badge", { n: meta.seq }) });
     chip.addEventListener("click", (e) => {
       e.stopPropagation();
       void openLightbox(images, images.indexOf(meta)); // 从正文链接进去也能 ←/→ 翻同条目的图
@@ -1033,12 +1038,12 @@ export function pendingImages(
 
   function add(blob: Blob): void {
     const url = URL.createObjectURL(blob);
-    const img = el("img", { className: "img-thumb-img", src: url, title: "点击放大" });
+    const img = el("img", { className: "img-thumb-img", src: url, title: t("itemImages.clickZoom") });
     img.addEventListener("click", () => {
       if (opts.openPreview) opts.openPreview(url, img.naturalWidth, img.naturalHeight);
       else openLightboxUrl(url);
     });
-    const del = el("button", { className: "img-del", textContent: "×", title: "移除这张图" });
+    const del = el("button", { className: "img-del", textContent: "×", title: t("itemImages.removeImage") });
     const thumb = el("div", { className: "img-thumb" }, [img, del]);
     const entry: PendingImage = { blob, url, thumb };
     del.addEventListener("click", () => {

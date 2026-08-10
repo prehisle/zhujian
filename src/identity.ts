@@ -11,6 +11,7 @@
 // ⚠ 名册的口径是**「见过的设备」**,不是「当前在册的设备」:被服务端吊销的设备,它的
 // 别名行照样在。这里只做显示,不承担「谁还在册」的判断(那是 §5 移除设备的事)。
 import { invoke } from "./space";
+import { t } from "./i18n";
 import "./identity.css";
 
 export type DeviceEntry = { device_id: string; alias: string | null };
@@ -70,7 +71,7 @@ export function signatureFor(space: string, bornDevice: string | null | undefine
  *    独立库,源作者身份在目标名册里根本不存在)。**绝不署成当前设备**(§4.14.2 第 5 条);
  *  - 是本机 / 名册还没到手 → null(不显):自己说的话不必落款;名册没到就不猜。 */
 export function authorLabel(space: string, bornDevice: string | null | undefined): string | null {
-  if (!bornDevice) return "作者未知";
+  if (!bornDevice) return t("identity.authorUnknown");
   const s = snapshot;
   if (!s || s.space !== space) return null;
   if (bornDevice === s.thisDevice) return null;
@@ -84,6 +85,6 @@ export function signatureChip(space: string, bornDevice: string | null | undefin
   const n = document.createElement("span");
   n.className = "sig-chip";
   n.textContent = name;
-  n.title = `记于「${name}」`;
+  n.title = t("identity.notedOn", { name });
   return n;
 }

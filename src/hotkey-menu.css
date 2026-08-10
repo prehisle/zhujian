@@ -9,12 +9,12 @@
 .hk-menu-wrap { position: absolute; top: 8px; right: 8px; z-index: 3; }
 .hk-btn {
   font: inherit;
-  font-size: 15px;
+  font-size: var(--fs-15);
   line-height: 1;
   color: var(--ink-faint);
   background: transparent;
   border: 1px solid transparent;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   padding: 1px 7px 3px;
   cursor: pointer;
   opacity: 0;
@@ -39,7 +39,7 @@
   padding: 5px;
   background: var(--paper);
   border: 1px solid var(--line-strong);
-  border-radius: 11px;
+  border-radius: var(--radius-md);
   box-shadow: 0 8px 24px -8px color-mix(in srgb, var(--ink) 40%, transparent);
   display: flex;
   flex-direction: column;
@@ -48,11 +48,11 @@
 }
 .hk-item {
   font: inherit;
-  font-size: 12.5px;
+  font-size: var(--fs-13);
   color: var(--ink);
   background: transparent;
   border: 0;
-  border-radius: 7px;
+  border-radius: var(--radius-sm);
   padding: 7px 9px;
   cursor: pointer;
   display: flex;
@@ -67,13 +67,13 @@
 .hk-key {
   flex: none;
   font-family: var(--font-sans);
-  font-size: 10.5px;
+  font-size: var(--fs-12);
   font-weight: 600;
   letter-spacing: 0.04em;
   color: var(--ink-faint);
   background: color-mix(in srgb, var(--ink) 6%, transparent);
   border: 1px solid var(--line-strong);
-  border-radius: 5px;
+  border-radius: var(--radius-xs);
   padding: 1px 0;
   min-width: 19px;
   text-align: center;

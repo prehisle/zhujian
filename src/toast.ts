@@ -5,6 +5,7 @@
 //
 // 刻意不做成常驻通知中心:朱简的回执只需要「我看到了,做完了」,读完即走。
 import "./toast.css";
+import { toastSuccessMs } from "./timing";
 
 const HOLD_MS = 1000; // 跟随光标那种(复制链接/复制图片):瞥一眼就够
 
@@ -28,7 +29,11 @@ export function flashToast(
   setTimeout(() => t.remove(), ms);
 }
 
-/** 动作回执:落视口底部中央。比跟随光标那种停久一点(要读一句话,不是瞥一眼)。 */
-export function toastAction(text: string, ms = 2200): void {
+/** 动作回执:落视口底部中央。比跟随光标那种停久一点(要读一句话,不是瞥一眼)。
+ *
+ *  停留时长**按字数读秒**(§2.4 `TOAST_SUCCESS`)。340 之前这里写死 2.2s ——
+ *  222 那轮给安卓改的读秒,桌面从没跟上;「已移到「家庭」· 撤销」这种长回执和
+ *  「已复制」一样两秒就走,读不完。`ms` 仍可显式覆盖(调用方有特殊节奏时用)。 */
+export function toastAction(text: string, ms = toastSuccessMs(text)): void {
   flashToast(window.innerWidth / 2, window.innerHeight - 28, text, { ms });
 }

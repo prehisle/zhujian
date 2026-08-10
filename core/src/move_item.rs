@@ -793,6 +793,7 @@ fn fresh_id(tx: &Connection, table: &str, entity: &str) -> Result<String, String
 mod tests {
     use super::*;
     use crate::oplog::ops_for;
+    use crate::test_src::{fn_body, strip_line_comments};
     use crate::{db, images, notes, task};
     use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -1400,14 +1401,17 @@ mod tests {
     /// 的反面用法:文本锚该守的是接线事实,而这里的接线事实就是「这一段一个字都不许多」)。
     #[test]
     fn move_item_trusted_region_is_narrow() {
-        let body = normalize_src(&fn_body(SELF_SRC, "fn insert_moved_comment_rows"));
-        const EXPECT: &str = "{ tx.execute(\"INSERT INTO sync_replay_active (flag) VALUES (1)\", []) \
+        let body =
+            normalize_src(&strip_line_comments(&fn_body(SELF_SRC, "insert_moved_comment_rows")));
+        // 白名单形状随共享基底(`test_src::fn_body`)重基线:基底返回**不含外层花括号**
+        // 的函数体,故 EXPECT 掉了首尾的 `{`/`}`,内容一字未动。
+        const EXPECT: &str = "tx.execute(\"INSERT INTO sync_replay_active (flag) VALUES (1)\", []) \
 .map_err(|e| format!(\"进入可信写入语境失败:{e}\"))?; let res = (|| -> Result<(), String> { for r in rows { \
 tx.execute( \"INSERT INTO item_comment (id, item_id, content, created_at, born_device) \\ \
 VALUES (?1, ?2, ?3, ?4, NULL)\", (r.id, r.item_id, r.content, r.created_at), ) \
 .map_err(|e| format!(\"目标空间留言落行失败:{e}\"))?; } Ok(()) })(); \
 tx.execute(\"DELETE FROM sync_replay_active\", []) \
-.map_err(|e| format!(\"退出可信写入语境失败:{e}\"))?; res?; Ok(tx) }";
+.map_err(|e| format!(\"退出可信写入语境失败:{e}\"))?; res?; Ok(tx)";
         assert_eq!(
             body, EXPECT,
             "\n可信区一个字都不许多。真要改这一段,先想清楚它是安全边界,再同步改这份白名单。\n\
@@ -1447,6 +1451,7 @@ tx.execute(\"DELETE FROM sync_replay_active\", []) \
     }
 
     /// 本文件的**生产段**(剔掉 `#[cfg(test)] mod tests`,否则测试自己写的字面量会命中)。
+    /// 剔注释走共享件(`test_src::strip_line_comments`,引号感知)。
     fn production_src() -> String {
         let cut = SELF_SRC.find("#[cfg(test)]").expect("测试段起点");
         strip_line_comments(&SELF_SRC[..cut])
@@ -1463,12 +1468,13 @@ tx.execute(\"DELETE FROM sync_replay_active\", []) \
     /// (三轮明确**不建议**拿真实 RSS / 分配峰值当判据:平台噪声大、真机容易飘)。
     #[test]
     fn fingerprint_reads_are_streaming() {
-        let fp = fn_body(SELF_SRC, "fn read_fingerprint");
+        // 基底 `fn_body` 只切片不剔注释,剔注释单独走共享件(注释里天然含被禁的词)。
+        let fp = strip_line_comments(&fn_body(SELF_SRC, "read_fingerprint"));
         assert!(!fp.contains("read_images"), "重验指纹不许整批读图:\n{fp}");
         assert!(!fp.contains("read_comments"), "重验指纹不许整批读正文:\n{fp}");
         assert!(fp.contains("image_digests") && fp.contains("comment_digests"), "{fp}");
-        for f in ["fn image_digests", "fn comment_digests"] {
-            let body = fn_body(SELF_SRC, f);
+        for f in ["image_digests", "comment_digests"] {
+            let body = strip_line_comments(&fn_body(SELF_SRC, f));
             assert!(body.contains("while let Some(row)"), "{f} 必须逐行游标:\n{body}");
             // 打的是**整批读**的形状标志:`query_map(..).collect()` 会把每行(含 BLOB /
             // 正文)先攒成 `Vec` 再 map。⚠ 判据别写成「不许出现 `.collect`」——首版就是
@@ -1478,42 +1484,10 @@ tx.execute(\"DELETE FROM sync_replay_active\", []) \
         }
     }
 
-    /// 本文件源码(结构锚的输入)。
+    /// 本文件源码(结构锚的输入)。切片与剔注释走共享工具箱 `crate::test_src`
+    /// (原先这里各有一份朴素版:裸 `find` 首命中 + 裸字节配平 + 裸 `split("//")`
+    /// 剔注释 —— 字符串里的 `//` 会把那一行剔掉半截,收拢时一并升级)。
     const SELF_SRC: &str = include_str!("move_item.rs");
-
-    /// 取一个函数的**函数体文本**,并**剔掉行注释**(注释里天然含被禁的词)。
-    /// 起点 = 该签名之后第一个 `{`;终点 = 花括号配平处。
-    fn fn_body(src: &str, sig: &str) -> String {
-        let start = src.find(sig).unwrap_or_else(|| panic!("找不到 {sig}"));
-        let open = src[start..].find('{').expect("函数体起点") + start;
-        let bytes = src.as_bytes();
-        let (mut depth, mut i) = (0i32, open);
-        while i < bytes.len() {
-            match bytes[i] {
-                b'{' => depth += 1,
-                b'}' => {
-                    depth -= 1;
-                    if depth == 0 {
-                        break;
-                    }
-                }
-                _ => {}
-            }
-            i += 1;
-        }
-        strip_line_comments(&src[open..=i])
-    }
-
-    /// 剔掉行注释(注释里天然含被禁 / 被数的词)。
-    fn strip_line_comments(src: &str) -> String {
-        src.lines()
-            .map(|l| match l.find("//") {
-                Some(p) => &l[..p],
-                None => l,
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
-    }
 
     /// from_finalize 分道映射(两壳共用):Deleted/AlreadyGone→Moved、Kept→kept、
     /// Err→unconfirmed(new_id 恒带,绝不丢)。

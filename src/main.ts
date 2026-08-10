@@ -3,10 +3,11 @@ import { invoke as rawInvoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { LogicalSize } from "@tauri-apps/api/dpi";
 import { currentMonitor, getCurrentWindow } from "@tauri-apps/api/window";
-import { openLightboxUrl, pendingImages } from "./item-images";
+import { REPASTE_HINT, openLightboxUrl, pendingImages } from "./item-images";
 import { saveTextDraft, loadTextDraft, clearTextDraft } from "./compose-draft";
 import { createCaptureCommands } from "./capture-commands";
 import { initTheme } from "./theme-mode";
+import { t, initLang, applyStaticI18n } from "./i18n";
 
 const input = document.getElementById("capture") as HTMLTextAreaElement;
 const slip = document.querySelector(".slip") as HTMLElement;
@@ -90,7 +91,7 @@ function renderHotkeyBar(conflicts: string[]): void {
   const fix = document.createElement("button");
   fix.type = "button";
   fix.className = "hk-fix";
-  fix.textContent = `⚠ 快捷键 ${conflicts.join("、")} 被占用,点此改键`;
+  fix.textContent = t("capture.hotkeyConflict", { keys: conflicts.join(t("capture.listSep")) });
   fix.addEventListener("click", () => {
     void rawInvoke("open_settings");
     void appWindow.hide(); // 让位给主窗设置面板(草稿原样留着,同 Esc 收窗)
@@ -98,7 +99,7 @@ function renderHotkeyBar(conflicts: string[]): void {
   const x = document.createElement("span");
   x.className = "hk-x";
   x.textContent = "×";
-  x.title = "知道了";
+  x.title = t("capture.gotIt");
   x.addEventListener("click", () => {
     hotkeyDismissed = true;
     renderHotkeyBar([]);
@@ -168,10 +169,10 @@ function renderMods(): void {
     const chip = document.createElement("span");
     chip.className = "cap-chip mode";
     const label = document.createElement("span");
-    label.textContent = "任务";
+    label.textContent = t("capture.kindTask");
     chip.append(
       label,
-      chipX("改回想法", () => {
+      chipX(t("capture.chipBackToIdea"), () => {
         captureMode = "idea";
         saveMods();
         renderMods();
@@ -181,15 +182,15 @@ function renderMods(): void {
     );
     modsBar.appendChild(chip);
   }
-  for (const t of captureTags) {
+  for (const tagName of captureTags) {
     const chip = document.createElement("span");
     chip.className = "cap-chip";
     const label = document.createElement("span");
-    label.textContent = "#" + t;
+    label.textContent = "#" + tagName;
     chip.append(
       label,
-      chipX("移除标签", () => {
-        captureTags = captureTags.filter((g) => g !== t);
+      chipX(t("capture.chipRemoveTag"), () => {
+        captureTags = captureTags.filter((g) => g !== tagName);
         saveMods();
         renderMods();
         void fitWindow();
@@ -277,13 +278,13 @@ const cmd = createCaptureCommands({
   commands: [
     {
       id: "space",
-      label: "切换空间",
-      hint: "换个本子记",
+      label: t("capture.cmdSpaceLabel"),
+      hint: t("capture.cmdSpaceHint"),
       takesArg: false,
       enabled: () => Object.keys(targetNames).length >= 2,
     },
-    { id: "task", label: "记为任务", hint: "存进看板而非灵感", takesArg: false },
-    { id: "tag", label: "打标签", hint: "/tag 家庭", takesArg: true },
+    { id: "task", label: t("capture.cmdTaskLabel"), hint: t("capture.cmdTaskHint"), takesArg: false },
+    { id: "tag", label: t("capture.cmdTagLabel"), hint: t("capture.cmdTagHint"), takesArg: true },
   ],
   onExec: (id, arg) => {
     if (id === "space") {
@@ -378,7 +379,7 @@ function openPreviewLarge(url: string, naturalW: number, naturalH: number): void
     await appWindow.setSize(new LogicalSize(w, h));
     await appWindow.center();
   };
-  openLightboxUrl(url, "预览", { grow: { apply: growWindow, restore: shrink } });
+  openLightboxUrl(url, t("capture.preview"), { grow: { apply: growWindow, restore: shrink } });
 }
 
 // Images pasted while composing, held in memory until save — the shared pendingImages
@@ -428,6 +429,11 @@ void pend.restore();
 // 明暗三档(250):首帧定色已由 index.html 头里的内联脚本做掉,这里接上「自动」档跟随
 // 系统变化 + 主窗改档时的跨窗广播(捕获窗自己没有开关,只跟)。
 initTheme();
+
+// 多语言(358):壳层静态文案(placeholder / title)按 data-i18n 覆写,并挂
+// 「主窗改档 → 本窗 reload」(捕获窗自己没有语言开关,只跟)。
+initLang();
+applyStaticI18n();
 
 // Capture-first: Enter saves, Shift+Enter is a newline, Esc hides but KEEPS the draft.
 // in-flight 闸(ui-audit P0 #2):capture_note 往返窗口里第二记 Enter 会用同一内容再建
@@ -511,7 +517,7 @@ input.addEventListener("keydown", async (e) => {
 
       // 挂标签:标签名 → id(复用同名 / 缺则建),想法走 file_note_to_topic(加法建链)、
       // 任务走 add_task_topic。失败不假装成功、也不吞图批——记一句提示,继续附图。
-      let tagWarn = "";
+      let tagErr = "";
       if (tags.length > 0) {
         try {
           const ids = await resolveTags(tags);
@@ -520,22 +526,27 @@ input.addEventListener("keydown", async (e) => {
             else await invoke("file_note_to_topic", { id, topicId: tid, newTitle: null });
           }
         } catch (err) {
-          tagWarn = ` 部分标签未挂上(${String(err)})`;
+          tagErr = String(err);
         }
       }
 
       // Attach the frozen batch to the new note. A failed attach is surfaced (fail-fast, not
       // swallowed): the note is already saved, so keep the window open with a note that the
       // image didn't stick — the user can re-paste it on the idea card.
-      const kind = mode === "task" ? "任务" : "灵感";
+      const kind = mode === "task" ? t("capture.kindTask") : t("capture.kindIdea");
       const failed = await pend.attachBatch(id, batch);
       if (failed > 0) {
-        errLine.textContent = `${kind}已保存,但 ${failed} 张图未能附加(可在卡片里重新粘贴)${tagWarn}`;
+        errLine.textContent = t("capture.savedImagesFailed", {
+          kind,
+          failed,
+          hint: REPASTE_HINT,
+          tagWarn: tagErr ? t("capture.tagWarnSuffix", { err: tagErr }) : "",
+        });
         void fitWindow();
         return; // stay open so the message is seen; text already cleared (no duplicate)
       }
-      if (tagWarn) {
-        errLine.textContent = `${kind}已保存,但${tagWarn.trim()}`;
+      if (tagErr) {
+        errLine.textContent = t("capture.savedTagsFailed", { kind, err: tagErr });
         void fitWindow();
         return; // 留窗让提示被看到;正文已清,不会重复
       }

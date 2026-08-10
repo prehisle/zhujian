@@ -9,6 +9,7 @@
 // ⚠ 名册口径是**「见过的设备」**,不是「当前在册的设备」:被服务端吊销的设备,它的
 // 别名行照样在。这里只做显示,不承担「谁还在册」的判断(那是 §5 移除设备的事)。
 import { deviceIdentity } from "./api";
+import { t } from "./i18n";
 
 /** 最近一次取回的身份面,**按空间键住**——设备身份是「设备 × 空间」粒度,拿甲空间的
  *  表去翻乙空间的 id 会张冠李戴。切空间后没重取之前一律不认。 */
@@ -50,7 +51,7 @@ export function myAlias(space: string): string | null {
  *
  *  与桌面 `src/identity.ts` 的同名函数逐字一致(两端同一句话得长一样)。 */
 export function authorLabel(space: string, bornDevice: string | null | undefined): string | null {
-  if (!bornDevice) return "作者未知";
+  if (!bornDevice) return t("identity.authorUnknown");
   const s = snapshot;
   if (!s || s.space !== space) return null;
   if (bornDevice === s.thisDevice) return null;

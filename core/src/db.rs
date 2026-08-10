@@ -608,25 +608,18 @@ mod tests {
     /// `BEGIN IMMEDIATE` 里,VACUUM 在事务中会被 SQLite 当场拒,不是静默风险。
     #[test]
     fn vacuum_and_reclaim_call_sites_are_the_audited_ones() {
-        fn rs_files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
-            for e in std::fs::read_dir(dir).unwrap_or_else(|e| panic!("读 {} 失败:{e}", dir.display()))
-            {
-                let p = e.expect("目录项").path();
-                if p.is_dir() {
-                    rs_files(&p, out);
-                } else if p.extension().is_some_and(|x| x == "rs") {
-                    out.push(p);
-                }
-            }
-        }
-        // 生产段 = 剔 `//` 之后的正文,再摘掉 `mod tests` 整块(见上「三处坑」第一条)。
+        use crate::test_src::{rs_files, strip_line_comments};
+        // 生产段 = 剔行注释之后的正文(共享件,引号感知 —— 字符串里的 `//` 不再把那一行
+        // 剔掉半截、从扫描面上消失),再摘掉 `mod tests` 整块(见上「三处坑」第一条)。
         // 花括号一律用码点造,源码里不留字面量。
+        // ⚠ 本函数的**测试段边界切法**刻意不用工具箱的花括号配平(头注「三处坑」第一条:
+        // 它扫任意文件,字符字面量 `}` 数歪过),原地保留。
         fn production(src: &str) -> String {
             let cb = 0x7Du8 as char;
             let mut out = String::new();
             let mut in_tests = false;
             for line in src.lines() {
-                let code = line.split("//").next().unwrap_or("");
+                let code = crate::test_src::strip_line_comments(line);
                 // 只有**内联模块体**(`mod tests {`)才开始跳;`mod tests;` 是一句声明,
                 // 后面跟的仍是生产码 —— 按老写法它会把声明之后的整个文件吞掉(310 起
                 // 六个大文件都有这句声明,当场量出来的)。
@@ -643,7 +636,7 @@ mod tests {
                 if code.contains("fn reclaim_free_pages") || code.contains("fn open_space") {
                     continue; // 定义那一行长得也像一次调用
                 }
-                out.push_str(code);
+                out.push_str(&code);
                 out.push('\n');
             }
             out
@@ -817,7 +810,7 @@ mod tests {
                 let src = std::fs::read_to_string(f).expect("读源文件");
                 // ---- 自证二:测试模块声明必须顶格,排布反常直接红(边界判据的前提)。
                 for line in src.lines() {
-                    let code = line.split("//").next().unwrap_or("");
+                    let code = strip_line_comments(line);
                     if code.trim_start().starts_with("mod tests") {
                         assert!(
                             code.starts_with("mod tests"),

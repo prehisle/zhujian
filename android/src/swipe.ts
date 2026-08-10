@@ -6,6 +6,7 @@
 // 横向占优才锁定为滑动。进 done 走 update_task_status,后端照常盖 done_at(与勾框一致)。
 
 import { updateTaskStatus, type TaskStatus, type TimelineItem } from "./api";
+import { t } from "./i18n";
 import { confirmBar, isTaskStage, showError, STAGE_LABEL } from "./ui";
 
 // 任务四态线性链(与 STAGE_LABEL 同词汇表;数组顺序即右滑前进方向)。
@@ -191,7 +192,7 @@ export function initCardSwipe(deps: Deps): void {
     await deps.refresh();
     flash(id);
     // 回执 + 撤销:滑动是低门槛手势,给一记 6s 可撤销窗口替代两拍确认(误滑可召回)。
-    confirmBar(`已改为「${STAGE_LABEL[to]}」`, "撤销", () => {
+    confirmBar(t("swipe.changedTo", { stage: STAGE_LABEL[to] }), t("swipe.undo"), () => {
       if (deps.isSwitching() || deps.getCurrentSpace() !== space) return; // 换空间的旧撤销作废
       void (async () => {
         try {

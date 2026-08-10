@@ -3,6 +3,7 @@ use super::*;
 // 这里而不是主文件 —— 放主文件的话生产构建会响一句 unused import(312 拆子模块的遗留)。
 use super::account::create_account_as;
 use crate::sync::production_src;
+use crate::test_src::strip_line_comments;
 use crate::{db, images, notes, task};
 use std::net::SocketAddr;
 use std::sync::atomic::AtomicU32;
@@ -60,9 +61,11 @@ fn transport_prod_with(needle: &str) -> &'static str {
 #[test]
 fn every_transport_submodule_is_scanned() {
     let main = include_str!("../transport.rs");
-    let mut declared: Vec<String> = main
+    // 剔注释走共享件(引号感知)——注释里的 `mod X;` 字样不算声明。
+    let code = strip_line_comments(main);
+    let mut declared: Vec<String> = code
         .lines()
-        .map(|l| l.split("//").next().unwrap_or("").trim_end())
+        .map(str::trim_end)
         .filter_map(|l| l.strip_suffix(';').map(str::to_owned))
         .filter_map(|l| {
             ["mod ", "pub mod ", "pub(crate) mod ", "pub(super) mod "]
@@ -494,11 +497,10 @@ fn exactly_one_heartbeat_interval_in_the_whole_transport() {
 /// 故本测留着,声称三件:**逐 target 的那一半不碰泵,全局泵整趟各一次,心跳不另开第二次。**
 #[test]
 fn the_ops_sweep_pumps_the_global_window_at_most_once_per_pass() {
-    /// **只留代码,注释一律剔掉**:这几段的注释里本来就在讲「原先这里另有一句独立的
-    /// `relay_data_pump()`」,不剔的话锚点会命中自己的散文 —— 首版正是这么红的。
-    fn code_only(s: &str) -> String {
-        s.lines().map(|l| l.split("//").next().unwrap_or("")).collect::<Vec<_>>().join("\n")
-    }
+    // **只留代码,注释一律剔掉**(共享件,引号感知):这几段的注释里本来就在讲「原先
+    // 这里另有一句独立的 `relay_data_pump()`」,不剔的话锚点会命中自己的散文 ——
+    // 首版正是这么红的。
+    let code_only = strip_line_comments;
     // 先切掉测试模块(291/292 那两只自指空测的教训):本测自己也写这些字面量。
     let prod = transport_prod_with("async fn ops_changed_tick(");
     let at = prod.find("async fn ops_changed_tick(").expect("扫描那一趟在本文件");
@@ -3364,11 +3366,9 @@ fn ops_lock_sites_are_allowlisted() {
     const DB_LOCK: &str = ".lock().expect(\"db mutex poisoned\")";
     // 找 token 之前一律先剔注释(293 那条:同一段的散文里常常正在讲「原先这里还有一句
     // X」,不剔就会命中自己的注释 —— 本锚就有现成的一处,`ops_prepare` 的行内注释里写着
-    // `conn: impl ConnView`)。代价:`//` 也可能出现在字符串里(`wss://`),那一行会被多
-    // 剔一截;本锚要找的几个 token 都不出现在带 URL 的行上。
-    let code = |s: &str| -> String {
-        s.lines().map(|l| l.split("//").next().unwrap_or("")).collect::<Vec<_>>().join("\n")
-    };
+    // `conn: impl ConnView`)。剔法是共享件(引号感知):旧闭包裸 `split("//")` 会把
+    // `wss://` 那类字符串行多剔一截 —— 被剔掉的内容从扫描面上消失,收拢时顺手修掉。
+    let code = strip_line_comments;
 
     // 引擎那半**取不到库锁**:这不是习惯,是结构事实,且是上面七条「无从反序」的全部
     // 依据。它跟着名单一起过期的话,反序就重新变成一句无人复核的声称。

@@ -10,7 +10,7 @@
          interactive-widget=resizes-content 在支持的 WebView 上让布局视口直接缩(更省事),本机
          不支持、留作渐进增强,不影响 JS 方案。 -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content" />
-    <title>朱简</title>
+    <title data-i18n="shell.appName">朱简</title>
     <!-- 明暗定色(250):首帧之前就把生效色写进 <html data-theme>——晚一帧上色就是亮暗
          闪一下。规则与 android/src/theme.ts 完全一致(存的不是 light / dark 就算「自动」、
          跟系统);那边是真正的开关,这里只是提前落地同一条规则。桌面两个窗口壳里各有
@@ -51,9 +51,37 @@
         --seal: #b3402b;
         --seal-tint: rgba(179, 64, 43, 0.1);
         --seal-line: rgba(179, 64, 43, 0.38);
+        --on-seal: #fdf6ee; /* 压在朱砂上的字,随明暗翻面(理由见桌面 src/theme.css) */
         --ok: #3d7a4e;
         --font-serif: "Georgia", "SimSun", "Songti SC", "Source Han Serif SC", serif;
         --font-sans: "Microsoft YaHei", "PingFang SC", system-ui, -apple-system, sans-serif;
+        /* 圆角阶(341)。四档 = 4px 栅格;后三个是**形状**不是尺寸阶上的档。
+           完整理由与三份的对齐关系见桌面 src/theme.css。 */
+        --radius-xs: 4px;
+        --radius-sm: 8px;
+        --radius-md: 12px;
+        --radius-lg: 16px;
+        --radius-pill: 999px;
+        --radius-circle: 50%;
+        --radius-seal: 25%;
+        /* 字号阶(342)。十档 = 一张白名单;最小档 12px 就是 §2.2 第一条(信息性文字
+           最小 12px),阶下无档、小于 12px 的一律进门禁登记表签字。为什么用数值命名
+           而不是 xs/sm/md/lg,见桌面 src/theme.css。 */
+        --fs-12: 12px;
+        --fs-13: 13px;
+        --fs-14: 14px;
+        --fs-15: 15px;
+        --fs-16: 16px;
+        --fs-17: 17px;
+        --fs-18: 18px;
+        --fs-20: 20px;
+        --fs-24: 24px;
+        --fs-30: 30px;
+        /* 悬浮层给底栏让出的高度(眼估余量;底栏实高约 57px+安全区)。此前 body 底
+           padding / 更新条 / 确认条三处各写死一份 64px、上次底栏改高就人工追改过一轮
+           ——与桌面 --winctl-dead 同族:跨处派生约束收成令牌(344 的形)。FAB 用的
+           是 ResizeObserver 实测的 --nav-h(main.ts),两套的合并待拍板、别顺手改。 */
+        --nav-clear: 64px;
       }
       /* 暗色令牌。挂在 <html data-theme="dark"> 上而**不是** @media——明暗有三档
          (自动 / 亮 / 暗),生效色由 src/theme.ts 单点算出后写进这个属性,CSS 里不再
@@ -70,6 +98,7 @@
         --seal: #df6a4f;
         --seal-tint: rgba(223, 106, 79, 0.14);
         --seal-line: rgba(223, 106, 79, 0.45);
+        --on-seal: #1b1813;
         --ok: #6fa47e;
         color-scheme: dark; /* 原生控件(输入框选区/滚动条)跟着走 */
       }
@@ -85,10 +114,10 @@
         margin: 0;
         /* 顶部 padding 归零:安全区上移给 sticky header 自己吃(见 header)。
            底边留出固定工具行(120)的高度。 */
-        padding: 0 14px calc(64px + env(safe-area-inset-bottom));
+        padding: 0 14px calc(var(--nav-clear) + env(safe-area-inset-bottom));
         background: var(--paper);
         color: var(--ink);
-        font: 15px/1.6 var(--font-sans);
+        font: var(--fs-15)/1.6 var(--font-sans);
         -webkit-tap-highlight-color: transparent;
       }
       /* 顶栏常驻(sticky):滚长列表时空间徽章/标签/搜索/同步状态始终一眼可达
@@ -108,7 +137,7 @@
          就把整条撑出横滚条)。左边标题让空间徽章在窄屏里缩着显省略号,右边一排按钮
          不缩(缩了字要换行)。 */
       header h1 {
-        font-size: 17px; margin: 0; font-weight: 700;
+        font-size: var(--fs-17); margin: 0; font-weight: 700;
         display: flex; align-items: baseline; min-width: 0;
       }
       header h1 .seal { color: var(--seal); flex: none; }
@@ -121,12 +150,14 @@
         fill: none; stroke: currentColor; stroke-width: 1.7;
         stroke-linejoin: round; stroke-linecap: round;
       }
-      /* 三档分段(明暗:自动 / 亮 / 暗):连体按钮,选中那枚上朱砂;整高 44px 够拇指。 */
-      .seg { display: flex; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+      /* 三档分段(明暗:自动 / 亮 / 暗 + 字号四档):连体按钮,选中那枚上朱砂;整高 44px
+         够拇指。⚠ 只被设置面用(#settings-pane),定义住在顶栏样式区是历史位置——
+         判影响面认选择器、别认所在小节的节名。 */
+      .seg { display: flex; border: 1px solid var(--line); border-radius: var(--radius-md); overflow: hidden; }
       .seg button {
         flex: 1; height: 44px; border: 0; border-left: 1px solid var(--line);
         background: color-mix(in srgb, var(--ink) 4%, transparent);
-        color: var(--ink-soft); font-size: 14px; font-family: var(--font-sans);
+        color: var(--ink-soft); font-size: var(--fs-14); font-family: var(--font-sans);
       }
       .seg button:first-child { border-left: 0; }
       .seg button.on { color: var(--seal); background: var(--seal-tint); font-weight: 600; }
@@ -134,7 +165,7 @@
       #settings-pane h2:not(:first-child) { margin-top: 22px; }
       .ghost {
         border: none; background: none; padding: 4px 6px;
-        color: var(--ink-faint); font-size: 12px; font-family: var(--font-sans);
+        color: var(--ink-faint); font-size: var(--fs-12); font-family: var(--font-sans);
       }
       /* 触区扩展(ui-audit P1 #10;codex M4 收敛):halo 只垂直扩、水平不扩(宽度本就
          够,水平扩会与同排毗邻按钮抢点);扩量按各自实高补足到 ~44px。单拍即写的
@@ -154,9 +185,9 @@
       .panel button.p::before { content: ""; position: absolute; left: 0; right: 0; top: -4px; bottom: -4px; }
       /* 当前空间 chip(工序 8,§9 捕获目标可见):点名开空间面板可切。 */
       .space-chip {
-        border: 1px solid var(--seal-line); border-radius: 999px;
+        border: 1px solid var(--seal-line); border-radius: var(--radius-pill);
         background: var(--seal-tint); color: var(--seal);
-        padding: 2px 10px; font-size: 12px; font-weight: 600; font-family: var(--font-sans);
+        padding: 2px 10px; font-size: var(--fs-12); font-weight: 600; font-family: var(--font-sans);
         /* 250:顶栏加了齿轮后横向更紧,徽章从「至多 40vw」改成「有多少给多少、不够
            就缩」——min-width:0 是 flex 里让省略号真能生效的那一半(249)。 */
         flex: 0 1 auto; min-width: 0;
@@ -167,38 +198,38 @@
       /* 空间面板(工序 7/8):列表行 + 新建 + 全部同步。 */
       .space-row {
         display: flex; align-items: center; gap: 8px;
-        padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px;
+        padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--radius-md);
         margin-bottom: 6px; background: var(--raised);
       }
       .space-row.current { border-color: var(--seal-line); background: var(--seal-tint); }
       .space-row .sname {
         flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-        font-size: 14px; text-align: left; border: none; background: none;
+        font-size: var(--fs-14); text-align: left; border: none; background: none;
         color: var(--ink); font-family: var(--font-sans); padding: 0;
       }
       .space-row.current .sname { color: var(--seal); font-weight: 600; }
-      .space-row .tag { flex: none; font-size: 11px; color: var(--ink-faint); }
+      .space-row .tag { flex: none; font-size: var(--fs-12); color: var(--ink-faint); }
       .space-row .tag.warn { color: var(--seal); }
       .space-row .act {
         flex: none; border: none; background: none; padding: 2px 6px;
-        color: var(--ink-faint); font-size: 12px; font-family: var(--font-sans);
+        color: var(--ink-faint); font-size: var(--fs-12); font-family: var(--font-sans);
       }
       .space-row input.rename {
         flex: 1; min-width: 0; padding: 4px 8px;
-        border: 1px solid var(--seal-line); border-radius: 6px;
-        background: var(--paper); color: var(--ink); font-size: 14px;
+        border: 1px solid var(--seal-line); border-radius: var(--radius-sm);
+        background: var(--paper); color: var(--ink); font-size: var(--fs-14);
       }
       /* 「⋯」展开出的重置入口子行(P1 #11:最重操作不常驻行上) */
       .space-row.sub { margin-top: -4px; border-style: dashed; background: none; }
       /* 重置确认态:确认钮全宽独行升格、取消拉开在下(P1 #11) */
       .space-row .act.reset-confirm {
         display: block; width: 100%; margin-top: 10px; min-height: 44px;
-        border: 1px solid var(--seal-line); border-radius: 10px;
-        color: var(--seal); font-size: 14px; font-weight: 600;
+        border: 1px solid var(--seal-line); border-radius: var(--radius-md);
+        color: var(--seal); font-size: var(--fs-14); font-weight: 600;
       }
       .space-row .act.reset-cancel {
         display: block; width: 100%; margin-top: 6px; min-height: 44px;
-        color: var(--ink-soft); font-size: 13px;
+        color: var(--ink-soft); font-size: var(--fs-13);
       }
 
       /* 捕获区:抬升的纸面。textarea 随内容自增高(field-sizing,安卓 WebView 够新)。 */
@@ -211,7 +242,7 @@
         position: fixed; left: 0; right: 0; bottom: 0; z-index: 14;
         background: var(--raised);
         border-top: 1px solid var(--line);
-        border-radius: 16px 16px 0 0;
+        border-radius: var(--radius-lg) var(--radius-lg) 0 0;
         padding: 12px 14px calc(12px + env(safe-area-inset-bottom));
         box-shadow: 0 -8px 28px rgba(0, 0, 0, 0.18);
         transform: translateY(110%); /* 收起态:滑到屏下;开态由 JS 设 inline transform 覆盖 */
@@ -226,10 +257,10 @@
       /* 悬浮 ＋ 钮:右下角,坐在底栏上方;平时唯一的捕获入口(捕获中隐去)。 */
       #capture-fab {
         position: fixed; right: 16px; z-index: 8;
-        bottom: calc(var(--nav-h, 64px) + 16px);
-        width: 56px; height: 56px; border: none; border-radius: 50%;
-        background: var(--seal); color: #fff;
-        font-size: 30px; line-height: 1; font-weight: 300;
+        bottom: calc(var(--nav-h, var(--nav-clear)) + 16px);
+        width: 56px; height: 56px; border: none; border-radius: var(--radius-circle);
+        background: var(--seal); color: var(--on-seal);
+        font-size: var(--fs-30); line-height: 1; font-weight: 300;
         display: grid; place-items: center;
         box-shadow: 0 6px 20px rgba(0, 0, 0, 0.28);
       }
@@ -238,40 +269,47 @@
       .compose textarea {
         display: block; width: 100%;
         border: none; background: none; resize: none; outline: none;
-        color: var(--ink); font: 16px/1.6 var(--font-serif);
+        color: var(--ink); font: var(--fs-16)/1.6 var(--font-serif);
         min-height: 2.8em; max-height: 40vh;
         field-sizing: content;
         caret-color: var(--seal);
       }
       .compose textarea::placeholder { color: var(--ink-faint); }
       .compose-row { display: flex; align-items: center; justify-content: flex-end; margin-top: 8px; }
+      /* 主按钮(朱砂实心)。⚠ 出生在捕获层,后被留言层 #cm-send 复用——改它=改两层。 */
       .primary {
-        border: none; border-radius: 999px;
-        background: var(--seal); color: #fff;
-        padding: 7px 22px; font-size: 14px; font-weight: 600; font-family: var(--font-sans);
+        border: none; border-radius: var(--radius-pill);
+        background: var(--seal); color: var(--on-seal);
+        padding: 7px 22px; font-size: var(--fs-14); font-weight: 600; font-family: var(--font-sans);
       }
       .primary:disabled { opacity: 0.5; }
       /* compose「加图」按钮:低调靠左,「记下」仍靠右(margin-right:auto 顶开)。 */
       .compose-row .cimg {
-        margin-right: auto; font-size: 13px; color: var(--seal);
+        margin-right: auto; font-size: var(--fs-13); color: var(--seal);
         padding: 6px 4px; font-weight: 600;
       }
       .compose-row .cimg:disabled { opacity: 0.4; }
       /* 底部条里的「记下」加大到拇指舒适(原 7×22 偏小,232 反馈)。 */
-      .compose-row .primary { padding: 9px 28px; font-size: 15px; }
+      .compose-row .primary { padding: 9px 28px; font-size: var(--fs-15); }
       /* compose 暂存图缩略条:小图 + 右上角「×」移除;无图时容器 hidden。 */
       .cthumbs { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
       .cthumb {
         position: relative; width: 64px; height: 64px;
-        border: 1px solid var(--line-strong); border-radius: 8px;
+        border: 1px solid var(--line-strong); border-radius: var(--radius-sm);
         overflow: hidden; background: var(--seal-tint);
       }
       .cthumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
-      .cthumb-del {
+      /* 压在缩略图上的圆形删图钮:捕获层(.cthumb-del)与卡片图管理(.thumb-del,住
+         时间轴节)是同一枚控件共形(348 拍板,两家取优:尺寸取大 22px 稳触、白描边保
+         任意底图上的辨识——339「压在照片上」同族)。此前两处各写一份,四项取值各漂
+         各的(22/20px、蒙版 0.55/0.6、有无描边、circle/pill[正方形上二者渲染等同,341])。 */
+      .cthumb-del,
+      .thumb-del {
         position: absolute; right: 2px; top: 2px; width: 22px; height: 22px;
-        border: none; border-radius: 50%; padding: 0;
-        background: rgba(0, 0, 0, 0.55); color: #fff;
-        font-size: 15px; line-height: 1; display: grid; place-items: center;
+        padding: 0; border: 1px solid rgba(255, 255, 255, 0.45);
+        border-radius: var(--radius-circle);
+        background: rgba(0, 0, 0, 0.6); color: #fff;
+        font-size: var(--fs-15); line-height: 1; display: grid; place-items: center;
       }
 
       /* 留言层(314 第③笔,identity-plan §4.7):几何与捕获层同一套(src/kbsheet.ts)——
@@ -283,7 +321,7 @@
         display: flex; flex-direction: column; overflow: hidden;
         background: var(--raised);
         border-top: 1px solid var(--line);
-        border-radius: 16px 16px 0 0;
+        border-radius: var(--radius-lg) var(--radius-lg) 0 0;
         box-shadow: 0 -8px 28px rgba(0, 0, 0, 0.18);
         transform: translateY(110%); /* 收起态:滑到屏下;开态由 JS 设 inline transform 覆盖 */
         transition: transform 0.22s ease;
@@ -296,8 +334,8 @@
         display: flex; align-items: center; justify-content: space-between;
         padding: 12px 14px 8px; border-bottom: 1px solid var(--line);
       }
-      .cm-head h3 { margin: 0; font: 600 15px/1.4 var(--font-sans); }
-      .cm-x { border: none; background: none; color: var(--ink-faint); font-size: 18px; padding: 4px 10px; }
+      .cm-head h3 { margin: 0; font: 600 var(--fs-15)/1.4 var(--font-sans); }
+      .cm-x { border: none; background: none; color: var(--ink-faint); font-size: var(--fs-18); padding: 4px 10px; }
       /* 列表自己滚,且滚到头不把滚动交给背后的时间轴(overscroll-behavior: contain)。 */
       .cm-list {
         flex: 1; min-height: 96px; overflow-y: auto; overscroll-behavior: contain;
@@ -306,20 +344,20 @@
       .cm-item { padding: 10px 0; border-bottom: 1px solid var(--line); }
       .cm-item:last-child { border-bottom: none; }
       .cm-text {
-        margin: 0; font: 15px/1.6 var(--font-serif);
+        margin: 0; font: var(--fs-15)/1.6 var(--font-serif);
         white-space: pre-wrap; word-break: break-word;
       }
       .cm-meta {
         display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
-        margin-top: 4px; font-size: 12px; color: var(--ink-faint);
+        margin-top: 4px; font-size: var(--fs-12); color: var(--ink-faint);
       }
       /* 作者口径与卡片署名 chip 刻意不同(identity.ts authorLabel):留言是逐条的话,
-         不知道谁说的就读不懂,故没起别名也显 id 前 6 位、搬迁来的显「作者未知」。 */
-      .cm-author { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 10em; }
-      .cm-author::before { content: "·"; margin-right: 4px; opacity: 0.6; }
-      .cm-del { margin-left: auto; border: none; background: none; color: var(--seal); font-size: 12px; padding: 8px 2px; }
+         不知道谁说的就读不懂,故没起别名也显 id 前 6 位、搬迁来的显「作者未知」。
+         口径不同只指**文案**;省略号那形与「·」前缀和卡片 .sig-chip 是同一枚记号,
+         样式住 .sig-chip 处一份(此前逐字两抄)。 */
+      .cm-del { margin-left: auto; border: none; background: none; color: var(--seal); font-size: var(--fs-12); padding: 8px 2px; }
       .cm-empty { padding: 20px 0; text-align: center; }
-      .cm-more { display: block; width: 100%; border: none; background: none; color: var(--seal); font-size: 13px; padding: 10px 0; }
+      .cm-more { display: block; width: 100%; border: none; background: none; color: var(--seal); font-size: var(--fs-13); padding: 10px 0; }
       .cm-compose {
         display: flex; align-items: flex-end; gap: 8px;
         padding: 10px 14px calc(10px + env(safe-area-inset-bottom));
@@ -328,7 +366,7 @@
       .cm-compose textarea {
         flex: 1; min-width: 0;
         border: none; background: none; resize: none; outline: none;
-        color: var(--ink); font: 16px/1.6 var(--font-serif);
+        color: var(--ink); font: var(--fs-16)/1.6 var(--font-serif);
         min-height: 2.2em; max-height: 24vh;
         field-sizing: content;
         caret-color: var(--seal);
@@ -340,7 +378,7 @@
          (同 .panel .acts button 的手法),12px 的字不能只给 12px 的靶。N=0 不渲染。 */
       .cm-badge {
         position: relative; border: none; background: none; padding: 0;
-        color: var(--ink-faint); font-size: 12px; font-family: var(--font-sans);
+        color: var(--ink-faint); font-size: var(--fs-12); font-family: var(--font-sans);
       }
       .cm-badge::before { content: ""; position: absolute; left: -8px; right: -8px; top: -12px; bottom: -12px; }
 
@@ -351,9 +389,13 @@
       .error {
         position: fixed; left: 14px; right: 14px; z-index: 18;
         top: calc(8px + env(safe-area-inset-top));
-        background: var(--seal); color: #fff;
-        border-radius: 10px; padding: 8px 12px;
-        font-size: 13px; word-break: break-all;
+        background: var(--seal); color: var(--on-seal);
+        border-radius: var(--radius-md); padding: 8px 12px;
+        /* 14px 而不是 13px(343):notice 那一档是墨绿底(--ok),压 --on-seal 只有 4.79,
+           13px 时过不了 §2.2 第二条的小字底线。两条出路(别那么小 / 别那么淡)里取前者
+           —— 这条是「后端原话」,是要读的字;而绿底那格没有 --on-ok 令牌,为一处用法往
+           三份令牌表里加一个新令牌,代价比 +1px 大得多。 */
+        font-size: var(--fs-14); word-break: break-all;
         box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
       }
       .error.notice { background: var(--ok); }
@@ -363,29 +405,29 @@
          点「稍后」又弹回。悬浮于底栏上方,可点「稍后」收起,不再挤动任何内容。 */
       .update {
         position: fixed; left: 14px; right: 14px; z-index: 6;
-        bottom: calc(64px + env(safe-area-inset-bottom)); /* 底栏升 44px 触区后同步抬高 */
+        bottom: calc(var(--nav-clear) + env(safe-area-inset-bottom));
         display: flex; align-items: center; justify-content: space-between; gap: 8px;
         /* 悬浮层要不透底:seal-tint 是半透明,混进纸面色打底。 */
         background: color-mix(in srgb, var(--seal) 10%, var(--raised));
         border: 1px solid var(--seal-line);
-        border-radius: 10px; padding: 6px 6px 6px 12px;
-        font-size: 13px;
+        border-radius: var(--radius-md); padding: 6px 6px 6px 12px;
+        font-size: var(--fs-13);
         box-shadow: 0 6px 20px rgba(0, 0, 0, 0.2);
       }
       /* 更新说明(296):标题下面弱一档、最多三行。两侧都要 min-width:0——否则长说明
          把整条撑出屏外而不是换行截断(249 同一坑,flex item 默认 min-width:auto)。 */
       .update .update-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
       .update .update-notes {
-        font-size: 12px; line-height: 1.5; color: var(--ink-soft);
+        font-size: var(--fs-12); line-height: 1.5; color: var(--ink-soft);
         display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3;
         overflow: hidden; white-space: pre-wrap;
         overflow-wrap: anywhere; /* 网址这类不断词长串否则横向溢出被切掉(桌面量过) */
       }
       .update .update-acts { flex: none; }
       .update .go {
-        border: none; border-radius: 999px;
-        background: var(--seal); color: #fff;
-        padding: 5px 14px; font-size: 13px; font-weight: 600; font-family: var(--font-sans);
+        border: none; border-radius: var(--radius-pill);
+        background: var(--seal); color: var(--on-seal);
+        padding: 5px 14px; font-size: var(--fs-13); font-weight: 600; font-family: var(--font-sans);
       }
 
       /* 扫码层(107):windowed 扫码 = WebView 整个变透明、相机画面在底下——期间
@@ -399,14 +441,14 @@
       }
       #scan .scan-frame {
         width: min(68vw, 300px); aspect-ratio: 1;
-        border: 2px solid rgba(255, 255, 255, 0.9); border-radius: 14px;
+        border: 2px solid rgba(255, 255, 255, 0.9); border-radius: var(--radius-lg);
         box-shadow: 0 0 0 200vmax rgba(0, 0, 0, 0.35);
       }
-      #scan p { margin: 0; font-size: 14px; }
+      #scan p { margin: 0; font-size: var(--fs-14); }
       #scan button {
-        border: 1px solid rgba(255, 255, 255, 0.8); border-radius: 999px;
+        border: 1px solid rgba(255, 255, 255, 0.8); border-radius: var(--radius-pill);
         background: rgba(0, 0, 0, 0.35); color: #fff;
-        padding: 8px 22px; font-size: 14px; font-family: var(--font-sans);
+        padding: 8px 22px; font-size: var(--fs-14); font-family: var(--font-sans);
       }
 
       /* 时间轴:灵感行素卡;任务行带勾框 + stage 印。146:主视图分灵感/任务两面,
@@ -415,17 +457,17 @@
       /* position:relative = swipe-track(182 卡下亮出目标印)的定位基;不改流内布局。 */
       .timeline .tl-group { display: flex; flex-direction: column; gap: 8px; position: relative; }
       .timeline .tl-sec {
-        margin: 8px 2px 0; font-size: 12px; font-weight: 600;
+        margin: 8px 2px 0; font-size: var(--fs-12); font-weight: 600;
         color: var(--ink-soft); font-family: var(--font-sans); letter-spacing: 0.04em;
       }
       .timeline .tl-group:first-child .tl-sec { margin-top: 0; }
       .empty { text-align: center; margin: 40px 0; }
-      .muted { color: var(--ink-faint); font-size: 13px; }
+      .muted { color: var(--ink-faint); font-size: var(--fs-13); }
       .card {
         display: flex; gap: 10px; align-items: flex-start;
         background: var(--raised);
         border: 1px solid var(--line);
-        border-radius: 12px;
+        border-radius: var(--radius-md);
         padding: 10px 12px;
         /* 竖滑交回原生滚动、横滑归自己(182 任务卡左右滑改状态)。 */
         touch-action: pan-y;
@@ -435,16 +477,16 @@
       .swipe-track {
         position: absolute; left: 0; right: 0; z-index: 0;
         display: flex; align-items: center; padding: 0 18px;
-        border-radius: 12px; border: 1px dashed var(--seal-line);
+        border-radius: var(--radius-md); border: 1px dashed var(--seal-line);
         background: var(--seal-tint); color: var(--seal);
-        font-family: var(--font-sans); font-size: 13px; font-weight: 600;
+        font-family: var(--font-sans); font-size: var(--fs-13); font-weight: 600;
       }
       .swipe-track[data-dir="right"] { justify-content: flex-start; }
       .swipe-track[data-dir="left"] { justify-content: flex-end; }
       /* 过提交阈值:变实底,告诉手指「松开就改」。 */
-      .swipe-track.armed { background: var(--seal); color: #fff; border-style: solid; border-color: var(--seal); }
+      .swipe-track.armed { background: var(--seal); color: var(--on-seal); border-style: solid; border-color: var(--seal); }
       .card .content {
-        margin: 0; font: 16px/1.6 var(--font-serif);
+        margin: 0; font: var(--fs-16)/1.6 var(--font-serif);
         white-space: pre-wrap; word-break: break-word;
       }
       .card.done .content { color: var(--ink-faint); }
@@ -457,52 +499,56 @@
       .card .body { flex: 1; min-width: 0; }
       .card footer {
         display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
-        margin-top: 4px; font-size: 12px; color: var(--ink-faint);
+        margin-top: 4px; font-size: var(--fs-12); color: var(--ink-faint);
       }
       /* 条目署名(0033):和时间戳同一档存在感,刻意不用标签 chip 的边框/底色——
          署名不是可点、可筛的实体,只是一句「谁记的」。别名上限 200 字节,截断而不是
          把卡片撑出横条(249:min-width:0 是 flex 里让省略号真生效的那一半)。 */
-      .sig-chip {
-        color: var(--ink-faint); white-space: nowrap;
+      /* 署名省略号:卡片署名 chip(.sig-chip)与留言作者(.cm-author)同一枚记号共形
+         ——此前两处逐字各写一份(文案口径的差异见留言节注释,不涉样式)。 */
+      .sig-chip, .cm-author {
+        white-space: nowrap;
         overflow: hidden; text-overflow: ellipsis; max-width: 10em; min-width: 0;
       }
-      .sig-chip::before { content: "·"; margin-right: 4px; opacity: 0.6; }
+      .sig-chip { color: var(--ink-faint); }
+      .sig-chip::before, .cm-author::before { content: "·"; margin-right: 4px; opacity: 0.6; }
       .pill {
-        padding: 1px 8px; border-radius: 999px;
+        padding: 1px 8px; border-radius: var(--radius-pill);
         background: var(--seal-tint); color: var(--seal); font-weight: 600;
       }
       .card.done .pill { background: none; border: 1px solid var(--line-strong); color: var(--ink-faint); font-weight: 400; }
       .chip {
-        padding: 1px 8px; border-radius: 999px;
+        padding: 1px 8px; border-radius: var(--radius-pill);
         border: 1px solid color-mix(in srgb, var(--tc, var(--ink-faint)) 45%, transparent);
-        color: var(--tc, var(--ink-soft));
+        color: var(--ink-soft);
       }
+      /* 有色标签的字往墨压 55%(348 拍板:保留彩字身份、可读性过 §2.2 小字底线)——
+         原先原始色直接当 12px 字色,8 色亮档 7/8 连 4.5 都不过(黄土 2.66);压完两档
+         最紧 5.70/6.02,全部过 5.0。翻面由 --ink 完成(337 同法)。.tinted 由模板在
+         有 color 时与 --tc 一起挂(桌面 board.css 同名类同法)。 */
+      .chip.tinted { color: color-mix(in srgb, var(--tc) 55%, var(--ink)); }
 
       /* 配图缩略(117):正文下一排小图。占位框先渲染(编号可见),字节滚到可视区
-         才拉(main.ts thumbObserver);点开全屏大图。 */
+         才拉(thumbs.ts thumbObserver);点开全屏大图。 */
       .thumbs { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
       .thumb {
         position: relative; width: 72px; height: 72px; padding: 0;
-        border: 1px solid var(--line-strong); border-radius: 8px;
+        border: 1px solid var(--line-strong); border-radius: var(--radius-sm);
         background: var(--seal-tint); overflow: hidden;
       }
       .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
       .thumb .tag-n {
         position: absolute; right: 3px; bottom: 3px;
-        font-size: 10px; line-height: 1; padding: 2px 5px; border-radius: 999px;
+        font-size: var(--fs-12); line-height: 1; padding: 2px 5px; border-radius: var(--radius-pill);
         background: rgba(0, 0, 0, 0.45); color: #fff; pointer-events: none;
       }
       .thumb.err { border-color: var(--seal); }
       .thumb.err::before { content: "!"; color: var(--seal); font-weight: 700; }
       /* 编辑态多图管理:卡片操作面(actions)开着时,缩略图露出删图 ×(两拍确认,main.ts
          接管删除)。平时隐藏,免误触且不干扰纯查看。 */
-      .thumb-del {
-        position: absolute; top: 2px; right: 2px; display: none;
-        width: 20px; height: 20px; line-height: 18px; text-align: center;
-        border-radius: 999px; background: rgba(0, 0, 0, 0.6); color: #fff;
-        font-size: 15px; border: 1px solid rgba(255, 255, 255, 0.45);
-      }
-      .card.imgmanage .thumb-del { display: block; }
+      /* 共形声明住捕获节的「圆形删图钮」一份;这里只管显隐(图管理态才现身)。 */
+      .thumb-del { display: none; }
+      .card.imgmanage .thumb-del { display: grid; }
 
       /* 大图查看层(143 手势缩放):未放大时单击关;双击 2.5 倍/复位、双指捏合、
          放大后单指拖拽,返回键也能关(history 层)。touch-action:none 把手势从
@@ -517,20 +563,20 @@
       }
       /* 关闭中(246):轻点关不是「等一会儿再啪地消失」,而是**点下去立刻开始淡出**。延迟那段
          必须留着(要给双击留取消的机会,系统标准双击窗口 300ms),但它不该是一段静止的白等
-         ——用户读成「卡」的是「点了没反应」,不是「没立刻消失」。淡出时长与 main.ts 的
+         ——用户读成「卡」的是「点了没反应」,不是「没立刻消失」。淡出时长与 viewer.ts 的
          CLOSE_DELAY 对齐,到点恰好淡尽。**绝不能加 pointer-events:none**:撤销靠的正是落在
          本层上的第二次 pointerdown。closeViewerNow 关层时必须把这个类摘掉,否则下次开图
          整层还挂着 opacity:0(图在、看不见)。 */
       #viewer.closing { opacity: 0; transition: opacity 0.3s ease; }
       #viewer img { max-width: 100vw; max-height: 88vh; object-fit: contain; will-change: transform; }
-      #viewer .cap { color: #fff; opacity: 0.85; font-size: 13px; transition: opacity 0.15s; }
+      #viewer .cap { color: #fff; opacity: 0.85; font-size: var(--fs-13); transition: opacity 0.15s; }
       #viewer.zoomed .cap { opacity: 0; }
       /* 删图按钮:右上角,低调描边;放大态淡出并禁点(与角标同,防平移误触)。 */
       .viewer-del {
         position: absolute; top: calc(12px + env(safe-area-inset-top)); right: 16px;
-        border: 1px solid rgba(255, 255, 255, 0.5); border-radius: 999px;
+        border: 1px solid rgba(255, 255, 255, 0.5); border-radius: var(--radius-pill);
         background: rgba(0, 0, 0, 0.45); color: #fff;
-        padding: 8px 18px; font-size: 14px; font-family: var(--font-sans);
+        padding: 8px 18px; font-size: var(--fs-14); font-family: var(--font-sans);
         transition: opacity 0.15s;
       }
       #viewer.zoomed .viewer-del { opacity: 0; pointer-events: none; }
@@ -539,19 +585,19 @@
       .tick { flex: none; display: grid; place-items: center; width: 48px; align-self: stretch; margin: -10px 0 -10px -12px; }
       .tick input { position: absolute; opacity: 0; pointer-events: none; }
       .tick .box {
-        width: 22px; height: 22px; border-radius: 50%;
+        width: 22px; height: 22px; border-radius: var(--radius-circle);
         border: 1.6px solid var(--line-strong);
         display: grid; place-items: center;
-        color: transparent; font-size: 14px; font-weight: 700;
+        color: transparent; font-size: var(--fs-14); font-weight: 700;
       }
       .tick input:checked + .box {
-        background: var(--seal); border-color: var(--seal); color: #fff;
+        background: var(--seal); border-color: var(--seal); color: var(--on-seal);
       }
       .tick .box::after { content: "✓"; }
 
       /* 同步面(P4-d):状态点 + 输码一屏 + 引导进度。 */
       .dot {
-        display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+        display: inline-block; width: 8px; height: 8px; border-radius: var(--radius-circle);
         background: var(--ink-faint); vertical-align: 1px; margin-right: 5px;
       }
       .dot.online { background: var(--ok); }
@@ -560,11 +606,14 @@
          左上角朱砂圆角块,若状态点也带 error 类会被它命中,断网时点子被拽到左上角
          盖住「朱」字(实测真机 bug)。用独立类名 off,与 .error 隔离。 */
       .dot.off { background: var(--seal); }
+      /* ⚠ 名字叫 sync、定义住在同步面小节,实为**全部 7 个面板 section 的通用容器**
+         (空间/搜索/回收站/归档/设置/同步/诊断都套它)——「改同步面样式」与「改所有
+         面板骨架」要从这里分岔:动 .sync = 动全部面板。 */
       .sync { margin-top: 4px; border-top: 1px dashed var(--line-strong); padding: 12px 0 4px; margin-bottom: 10px; }
-      .sync h2 { font-size: 13px; color: var(--ink-soft); margin: 0 0 8px; font-weight: 600; }
-      .sync .state { font-size: 13px; margin-bottom: 8px; }
+      .sync h2 { font-size: var(--fs-13); color: var(--ink-soft); margin: 0 0 8px; font-weight: 600; }
+      .sync .state { font-size: var(--fs-13); margin-bottom: 8px; }
       .sync .state .err { color: var(--seal); word-break: break-all; }
-      .sync .fine { font-size: 12px; color: var(--ink-faint); margin: 8px 0 0; }
+      .sync .fine { font-size: var(--fs-12); color: var(--ink-faint); margin: 8px 0 0; }
 
       /* 标签管理面(190):每行 = 拖手柄 + 名 + 计数 + 类型;拖手柄纵向拖排序。 */
       #topics-list { position: relative; }
@@ -575,48 +624,52 @@
       }
       .trow.off { opacity: 0.5; pointer-events: none; }
       .trow.dragging {
-        position: relative; z-index: 3; border-radius: 8px; border-bottom-color: transparent;
+        position: relative; z-index: 3; border-radius: var(--radius-sm); border-bottom-color: transparent;
         background: var(--raised); box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28);
       }
       .thandle {
         flex: none; width: 30px; text-align: center; cursor: grab;
-        color: var(--ink-faint); font-size: 17px; line-height: 1;
+        color: var(--ink-faint); font-size: var(--fs-17); line-height: 1;
         touch-action: none; user-select: none; -webkit-user-select: none;
       }
-      .tname { flex: 1; min-width: 0; font-size: 14px; color: var(--ink);
+      .tname { flex: 1; min-width: 0; font-size: var(--fs-14); color: var(--ink);
         overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-      .tname .tdot {
-        display: inline-block; width: 8px; height: 8px; border-radius: 50%;
-        margin-left: 6px; background: var(--tc, var(--ink-faint)); vertical-align: middle;
+      /* 标签色点(8px 圆,注入色 --tc):标签管理面行内(.tdot)与筛选 pill(.fdot,住
+         筛选节)是同一枚记号共形——此前两处各写一份。布局差(行内对齐 vs flex 子项)
+         留在各自规则里。 */
+      .tname .tdot, .fdot {
+        width: 8px; height: 8px; border-radius: var(--radius-circle);
+        background: var(--tc, var(--ink-faint));
       }
-      .tcount { flex: none; font-size: 12px; color: var(--ink-faint); font-variant-numeric: tabular-nums; }
+      .tname .tdot { display: inline-block; margin-left: 6px; vertical-align: middle; }
+      .tcount { flex: none; font-size: var(--fs-12); color: var(--ink-faint); font-variant-numeric: tabular-nums; }
       .tk-add, .tk-badge {
-        flex: none; font-size: 12px; padding: 3px 10px; border-radius: 999px;
+        flex: none; font-size: var(--fs-12); padding: 3px 10px; border-radius: var(--radius-pill);
         border: 1px solid var(--line-strong); background: none;
       }
       .tk-add { color: var(--ink-faint); }
       .tk-badge { color: var(--seal); border-color: var(--seal-line); background: var(--seal-tint); font-weight: 600; }
       .tk-edit { flex: none; display: inline-flex; align-items: center; gap: 6px; }
       .tk-input {
-        width: 8.5em; font: inherit; font-size: 13px; padding: 4px 8px;
-        border: 1px solid var(--seal-line); border-radius: 8px;
+        width: 8.5em; font: inherit; font-size: var(--fs-13); padding: 4px 8px;
+        border: 1px solid var(--seal-line); border-radius: var(--radius-sm);
         background: var(--paper); color: var(--ink);
       }
-      .tk-edit button { font-size: 12px; padding: 4px 10px; border-radius: 8px; }
+      .tk-edit button { font-size: var(--fs-12); padding: 4px 10px; border-radius: var(--radius-sm); }
       .tk-edit button.ghost { background: none; color: var(--ink-soft); border: 1px solid var(--line-strong); }
       /* 拖动落点指示线(朱砂),按指针位置浮在目标间隙上。 */
       .drop-line {
         position: absolute; left: 34px; right: 4px; height: 2px; margin-top: -1px;
-        background: var(--seal); border-radius: 2px; z-index: 4; pointer-events: none;
+        background: var(--seal); border-radius: var(--radius-pill); z-index: 4; pointer-events: none;
       }
-      .bar { height: 6px; border-radius: 999px; background: var(--seal-tint); overflow: hidden; margin: 6px 0; }
+      .bar { height: 6px; border-radius: var(--radius-pill); background: var(--seal-tint); overflow: hidden; margin: 6px 0; }
       .bar > i { display: block; height: 100%; width: 0; background: var(--seal); transition: width 0.2s; }
       /* 恢复码专用:只在组边界(短横)换行、分成规整几行,别从字中间断成长蛇
          (需求3)。文本仍是原始带 `-` 的整串,复制/回验口径不变。 */
       .code {
-        display: block; font: 13px/1.7 ui-monospace, monospace;
+        display: block; font: var(--fs-13)/1.7 ui-monospace, monospace;
         background: var(--paper); border: 1px dashed var(--seal-line);
-        border-radius: 8px; padding: 8px 10px; margin: 8px auto 0;
+        border-radius: var(--radius-sm); padding: 8px 10px; margin: 8px auto 0;
         max-width: 16em; text-align: center;
         word-break: normal; overflow-wrap: normal; user-select: all;
       }
@@ -628,13 +681,13 @@
         padding: calc(28px + env(safe-area-inset-top)) 20px calc(24px + env(safe-area-inset-bottom));
         overflow: auto;
       }
-      .gate h2 { color: var(--seal); font-size: 16px; margin: 0 0 12px; }
-      .gate p { font-size: 14px; }
-      .gate .fine { font-size: 12px; color: var(--ink-faint); }
+      .gate h2 { color: var(--seal); font-size: var(--fs-16); margin: 0 0 12px; }
+      .gate p { font-size: var(--fs-14); }
+      .gate .fine { font-size: var(--fs-12); color: var(--ink-faint); }
       .gate .gate-msg {
-        font-size: 13px; word-break: break-all; color: var(--ink-soft);
+        font-size: var(--fs-13); word-break: break-all; color: var(--ink-soft);
         background: var(--raised); border: 1px solid var(--line);
-        border-radius: 10px; padding: 10px 12px;
+        border-radius: var(--radius-md); padding: 10px 12px;
       }
 
       /* 底部固定确认条(ui-audit P0 #4):两拍确认的第二拍统一落在这条 fixed 条上。
@@ -643,21 +696,21 @@
          几何恒定、远离一切单拍控件,顺手把确认按钮触区做到 ≥44px。 */
       #confirmbar {
         position: fixed; left: 10px; right: 10px; z-index: 17;
-        bottom: calc(64px + env(safe-area-inset-bottom)); /* 底栏升 44px 触区后同步抬高 */
+        bottom: calc(var(--nav-clear) + env(safe-area-inset-bottom));
         display: flex; align-items: center; gap: 10px;
         background: var(--raised); border: 1px solid var(--seal-line);
-        border-radius: 14px; padding: 10px 12px;
+        border-radius: var(--radius-lg); padding: 10px 12px;
         box-shadow: 0 6px 24px rgba(0, 0, 0, 0.25);
-        font-size: 14px;
+        font-size: var(--fs-14);
       }
       #confirmbar .cb-q { flex: 1; min-width: 0; line-height: 1.4; }
-      #confirmbar button { flex: none; min-height: 44px; font-family: var(--font-sans); font-size: 14px; }
+      #confirmbar button { flex: none; min-height: 44px; font-family: var(--font-sans); font-size: var(--fs-14); }
       #confirmbar .cb-no {
-        border: 1px solid var(--line-strong); border-radius: 999px; background: none;
+        border: 1px solid var(--line-strong); border-radius: var(--radius-pill); background: none;
         color: var(--ink-soft); padding: 8px 16px;
       }
       #confirmbar .cb-yes {
-        border: none; border-radius: 999px; background: var(--seal); color: #fff;
+        border: none; border-radius: var(--radius-pill); background: var(--seal); color: var(--on-seal);
         font-weight: 600; padding: 8px 18px;
       }
 
@@ -670,62 +723,65 @@
       /* 行距 10 ≥ 上下 halo 之和(5+5):换行时相邻行触区不互叠(codex 二审) */
       .panel .acts { display: flex; flex-wrap: wrap; gap: 10px 6px; }
       .panel .acts button {
-        border: 1px solid var(--line-strong); border-radius: 999px; background: none;
-        color: var(--ink-soft); font-size: 13px; padding: 8px 14px; font-family: var(--font-sans);
+        border: 1px solid var(--line-strong); border-radius: var(--radius-pill); background: none;
+        color: var(--ink-soft); font-size: var(--fs-13); padding: 8px 14px; font-family: var(--font-sans);
         /* 实高 ~36 + ::before 上下 5 = 触区 ~46(P1 #10/codex M4:优先真实尺寸) */
       }
       .panel .acts button.warn { border-color: var(--seal-line); color: var(--seal); }
-      .panel .acts button.confirm { background: var(--seal); border-color: var(--seal); color: #fff; }
+      .panel .acts button.confirm { background: var(--seal); border-color: var(--seal); color: var(--on-seal); }
       .panel button:disabled { opacity: 0.45; }
       .panel .lane {
         display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
-        font-size: 12px; color: var(--ink-faint);
+        font-size: var(--fs-12); color: var(--ink-faint);
       }
       .panel .lane .lab { flex: none; }
       .panel .pillrow { display: inline-flex; gap: 5px; flex-wrap: wrap; }
       /* 跨空间移动:选择前的永久删历史告知 + 部分成功常驻提示。 */
       .panel .movewarn {
-        font-size: 12px; color: var(--ink-soft); line-height: 1.5;
+        font-size: var(--fs-12); color: var(--ink-soft); line-height: 1.5;
         margin-bottom: 8px; padding: 6px 8px;
-        border: 1px solid var(--seal-line); border-radius: 8px;
+        border: 1px solid var(--seal-line); border-radius: var(--radius-sm);
         background: color-mix(in srgb, var(--seal) 6%, transparent);
       }
       .panel .movewarn b { color: var(--seal); }
       .panel .movenote {
         display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
-        font-size: 12px; color: var(--seal); line-height: 1.5;
+        font-size: var(--fs-12); color: var(--seal); line-height: 1.5;
         margin-bottom: 8px; padding: 6px 8px;
-        border: 1px solid var(--seal-line); border-radius: 8px;
+        border: 1px solid var(--seal-line); border-radius: var(--radius-sm);
         background: color-mix(in srgb, var(--seal) 8%, transparent);
       }
       .panel .movenote span { flex: 1; min-width: 0; }
       .panel button.p {
         border: 1px solid color-mix(in srgb, var(--tc, var(--line-strong)) 60%, transparent);
-        border-radius: 999px; background: none;
-        color: var(--tc, var(--ink-soft)); font-size: 12px; padding: 3px 10px;
+        border-radius: var(--radius-pill); background: none;
+        color: var(--ink-soft); font-size: var(--fs-12); padding: 3px 10px;
         font-family: var(--font-sans);
       }
+      /* 有色标签钮字色同 .chip.tinted 往墨压(348;描边/淡底仍用原始色,颜色是冗余次通道)。 */
+      .panel button.p.tinted { color: color-mix(in srgb, var(--tc) 55%, var(--ink)); }
       .panel button.p.on {
         background: color-mix(in srgb, var(--tc, var(--seal)) 14%, transparent);
         border-color: var(--tc, var(--seal)); color: var(--tc, var(--seal)); font-weight: 600;
       }
+      .panel button.p.on.tinted { color: color-mix(in srgb, var(--tc) 55%, var(--ink)); }
       .panel textarea.edit {
         display: block; width: 100%; box-sizing: border-box;
-        border: 1px solid var(--seal-line); border-radius: 8px;
+        border: 1px solid var(--seal-line); border-radius: var(--radius-sm);
         background: var(--paper); color: var(--ink);
-        font: 16px/1.6 var(--font-serif); padding: 8px 10px;
+        font: var(--fs-16)/1.6 var(--font-serif); padding: 8px 10px;
         min-height: 3em; max-height: 40vh; field-sizing: content;
         resize: none; outline: none; caret-color: var(--seal);
       }
       .panel input[type="date"] {
-        border: 1px solid var(--line-strong); border-radius: 6px;
-        background: var(--paper); color: var(--ink); padding: 3px 6px; font-size: 13px;
+        border: 1px solid var(--line-strong); border-radius: var(--radius-sm);
+        background: var(--paper); color: var(--ink); padding: 3px 6px; font-size: var(--fs-13);
         font-family: var(--font-sans);
       }
       .panel input.tagnew {
         flex: 1; min-width: 0; padding: 5px 10px;
-        border: 1px solid var(--line-strong); border-radius: 999px;
-        background: var(--paper); color: var(--ink); font-size: 13px;
+        border: 1px solid var(--line-strong); border-radius: var(--radius-pill);
+        background: var(--paper); color: var(--ink); font-size: var(--fs-13);
       }
 
       /* 底部固定工具行(120,codex L11:低频入口须始终可达,不埋在长列表末尾)。
@@ -740,7 +796,7 @@
       }
       #bottombar button {
         border: none; background: none; color: var(--ink-soft);
-        font-size: 12px; padding: 5px 12px; font-family: var(--font-sans);
+        font-size: var(--fs-12); padding: 5px 12px; font-family: var(--font-sans);
         min-height: 44px; /* 触区达标(ui-audit P1 #10):主导航给足 44px 实高 */
       }
       #bottombar button.active { color: var(--seal); font-weight: 600; }
@@ -770,13 +826,13 @@
       .fmain { display: flex; align-items: center; gap: 10px; }
       .ftopics { flex: 1; min-width: 0; }
       .faxis {
-        flex: none; font-size: 11px; letter-spacing: 0.04em;
+        flex: none; font-size: var(--fs-12); letter-spacing: 0.04em;
         color: var(--ink-faint);
       }
       .fpill {
-        flex: none; font: inherit; font-size: 13px; letter-spacing: 0.02em;
+        flex: none; font: inherit; font-size: var(--fs-13); letter-spacing: 0.02em;
         color: var(--ink-soft); background: transparent;
-        border: 1px solid var(--line-strong); border-radius: 999px;
+        border: 1px solid var(--line-strong); border-radius: var(--radius-pill);
         padding: 5px 12px; min-height: 30px; white-space: nowrap;
         display: inline-flex; align-items: center; gap: 6px;
       }
@@ -784,12 +840,9 @@
         color: var(--seal); border-color: var(--seal);
         background: var(--seal-tint); font-weight: 600;
       }
-      .fn { font-size: 11px; color: var(--ink-faint); font-variant-numeric: tabular-nums; }
+      .fn { font-size: var(--fs-12); color: var(--ink-faint); font-variant-numeric: tabular-nums; }
       .fpill.active .fn { color: var(--seal); }
-      .fdot {
-        width: 8px; height: 8px; border-radius: 50%;
-        background: var(--tc, var(--ink-faint)); flex: none;
-      }
+      .fdot { flex: none; } /* 共形声明住标签管理节的「标签色点」一份 */
       /* 父子标签在筛选条折叠(同桌面 filter-bar.css)。收起态子 pill 直接不占位。 */
       .fpill.hidden { display: none; }
       /* 子标签 pill:虚线描边 + 一枚淡连接符,横排里以皮肤区分「父的子项」(不缩进)。 */
@@ -809,36 +862,40 @@
       }
       .fpill.active .fcaret { color: var(--seal); }
       .ftext {
-        flex: none; width: 9.5em; font: inherit; font-size: 13px;
+        flex: none; width: 9.5em; font: inherit; font-size: var(--fs-13);
         color: var(--ink); background: var(--raised);
-        border: 1px solid var(--line-strong); border-radius: 999px;
+        border: 1px solid var(--line-strong); border-radius: var(--radius-pill);
         padding: 5px 12px; min-height: 30px;
       }
       .ftext:focus { outline: none; border-color: var(--seal); }
       .ftext::placeholder { color: var(--ink-faint); }
 
-      /* 诊断面(P4-b 原样收编,打开才跑)。 */
+      /* 诊断面(P4-b 原样收编,打开才跑)。⚠ 下面的 .kv 与 .row 出生在这一节,但早已是
+         **通用面板骨架**:.row 在 body 里 22 处、遍布空间/同步/搜索/回收站/设置/恢复码
+         仪式各面,.kv 也被同步配对/连接信息/关于共用——改 .row input 的内边距 = 改全 app
+         每个面板的表单。定义不挪(挪 = 动层叠位号,.row button 与 .ghost 的特异性互动
+         就在下方登记着),但判影响面别认这行节名。 */
       .diag { margin-top: 20px; border-top: 1px dashed var(--line-strong); padding-top: 12px; }
-      .diag h2 { font-size: 13px; color: var(--ink-soft); margin: 12px 0 8px; font-weight: 600; }
-      .kv { display: grid; grid-template-columns: max-content 1fr; gap: 2px 12px; font-size: 13px; }
+      .diag h2 { font-size: var(--fs-13); color: var(--ink-soft); margin: 12px 0 8px; font-weight: 600; }
+      .kv { display: grid; grid-template-columns: max-content 1fr; gap: 2px 12px; font-size: var(--fs-13); }
       .kv .k { color: var(--ink-soft); white-space: nowrap; }
       .kv .v { word-break: break-all; }
       .row { display: flex; gap: 8px; margin-bottom: 10px; }
       .row input {
         flex: 1; min-width: 0; padding: 8px 10px;
-        border: 1px solid var(--line-strong); border-radius: 8px;
-        background: var(--paper); color: var(--ink); font-size: 14px;
+        border: 1px solid var(--line-strong); border-radius: var(--radius-sm);
+        background: var(--paper); color: var(--ink); font-size: var(--fs-14);
       }
       .row button {
-        padding: 8px 16px; border: none; border-radius: 8px;
-        background: var(--seal); color: #fff; font-size: 14px; font-weight: 600;
+        padding: 8px 16px; border: none; border-radius: var(--radius-sm);
+        background: var(--seal); color: var(--on-seal); font-size: var(--fs-14); font-weight: 600;
       }
       /* ghost 在 .row 里被 .row button(0,1,1 > 0,1,0)盖成朱底白字,「连接信息」
          「空间…」与未配置态两条辅路全渲成通栏主按钮——133 的「一主两辅」在安卓端
          被压塌(143 评测实锤);按更高优先级把低调外观钉回。 */
       .row button.ghost { background: none; color: var(--ink-soft); font-weight: 400; }
       .row button:disabled { opacity: 0.5; }
-      .step { display: flex; gap: 8px; padding: 6px 0; border-top: 1px dashed var(--line); font-size: 13px; }
+      .step { display: flex; gap: 8px; padding: 6px 0; border-top: 1px dashed var(--line); font-size: var(--fs-13); }
       .step:first-child { border-top: none; }
       .step .mark { flex: none; font-weight: 700; }
       .step.ok .mark { color: var(--ok); }
@@ -847,16 +904,23 @@
       .step .detail { color: var(--ink-soft); word-break: break-all; }
       .step.fail .detail { color: var(--seal); }
       footer.app { text-align: center; margin-top: 24px; }
+
+      /* 错误/警示红字(通用修饰类)。此前同一语义以 style="color:var(--seal)" 内联散布
+         10+ 处(读取失败空态/诊断失败/恢复报错…)——style 属性不在三道配色门禁的扫描面
+         (门禁只扫样式表文本),是成体系的静默旁路;TS 里要标红一段字,挂这个类、别再内联。
+         选择器写成双类 = 特异性 (0,2,0):要压过 .sync .fine 这类同权重容器规则(同权重
+         按文档序后者胜,故本条必须住样式表末尾);单类 (0,1,0) 会输给它们。 */
+      .warn-ink.warn-ink { color: var(--seal); }
     </style>
   </head>
   <body>
     <header>
-      <h1><span class="seal">朱简</span><button id="space-chip" class="space-chip" hidden>默认空间</button></h1>
+      <h1><span class="seal" data-i18n="shell.appName">朱简</span><button id="space-chip" class="space-chip" data-i18n="api.defaultSpace" hidden>默认空间</button></h1>
       <div class="head-acts">
-        <button id="topics-toggle" class="ghost">标签</button>
-        <button id="search-toggle" class="ghost">搜索</button>
-        <button id="sync-toggle" class="ghost"><span id="sync-dot" class="dot"></span>同步</button>
-        <button id="settings-toggle" class="ghost gear" aria-label="设置"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.1"/><path d="M19.14 12.94a7.49 7.49 0 0 0 .05-.94 7.49 7.49 0 0 0-.05-.94l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.61-.22l-2.39.96a7.3 7.3 0 0 0-1.62-.94l-.36-2.54a.5.5 0 0 0-.5-.42h-3.84a.5.5 0 0 0-.5.42l-.36 2.54a7.3 7.3 0 0 0-1.62.94l-2.39-.96a.5.5 0 0 0-.61.22L2.7 8.84a.5.5 0 0 0 .12.64l2.03 1.58a7.49 7.49 0 0 0 0 1.88L2.82 14.5a.5.5 0 0 0-.12.64l1.92 3.32a.5.5 0 0 0 .61.22l2.39-.96a7.3 7.3 0 0 0 1.62.94l.36 2.54a.5.5 0 0 0 .5.42h3.84a.5.5 0 0 0 .5-.42l.36-2.54a7.3 7.3 0 0 0 1.62-.94l2.39.96a.5.5 0 0 0 .61-.22l1.92-3.32a.5.5 0 0 0-.12-.64l-2.03-1.58Z"/></svg></button>
+        <button id="topics-toggle" class="ghost" data-i18n="shell.navTags">标签</button>
+        <button id="search-toggle" class="ghost" data-i18n="shell.navSearch">搜索</button>
+        <button id="sync-toggle" class="ghost"><span id="sync-dot" class="dot"></span><span data-i18n="shell.sync">同步</span></button>
+        <button id="settings-toggle" class="ghost gear" aria-label="设置" data-i18n-aria-label="shell.settings"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.1"/><path d="M19.14 12.94a7.49 7.49 0 0 0 .05-.94 7.49 7.49 0 0 0-.05-.94l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.61-.22l-2.39.96a7.3 7.3 0 0 0-1.62-.94l-.36-2.54a.5.5 0 0 0-.5-.42h-3.84a.5.5 0 0 0-.5.42l-.36 2.54a7.3 7.3 0 0 0-1.62.94l-2.39-.96a.5.5 0 0 0-.61.22L2.7 8.84a.5.5 0 0 0 .12.64l2.03 1.58a7.49 7.49 0 0 0 0 1.88L2.82 14.5a.5.5 0 0 0-.12.64l1.92 3.32a.5.5 0 0 0 .61.22l2.39-.96a7.3 7.3 0 0 0 1.62.94l.36 2.54a.5.5 0 0 0 .5.42h3.84a.5.5 0 0 0 .5-.42l.36-2.54a7.3 7.3 0 0 0 1.62-.94l2.39.96a.5.5 0 0 0 .61-.22l1.92-3.32a.5.5 0 0 0-.12-.64l-2.03-1.58Z"/></svg></button>
       </div>
     </header>
 
@@ -866,8 +930,8 @@
         <span id="update-notes" class="update-notes" hidden></span>
       </span>
       <span class="update-acts">
-        <button id="update-go" class="go">下载</button>
-        <button id="update-later" class="ghost">稍后</button>
+        <button id="update-go" class="go" data-i18n="shell.updateGo">下载</button>
+        <button id="update-later" class="ghost" data-i18n="shell.updateLater">稍后</button>
       </span>
     </div>
 
@@ -875,17 +939,17 @@
          当前空间可改名(名字随同步跨端一致,space-name-sync-plan);「全部同步」= 有界 best-effort(§7),
          结果只显「试了 N 个」,绝不显「全部同步完成」。 -->
     <section id="spaces" class="sync" hidden>
-      <h2>空间</h2>
+      <h2 data-i18n="shell.spacesTitle">空间</h2>
       <div id="space-list"></div>
       <div class="row" style="margin-top: 8px">
-        <input id="space-new-name" placeholder="新空间的名字(比如「家庭」)" autocapitalize="off" autocomplete="off" />
-        <button id="space-create">新建</button>
+        <input id="space-new-name" placeholder="新空间的名字(比如「家庭」)" data-i18n-placeholder="shell.newSpacePh" autocapitalize="off" autocomplete="off" />
+        <button id="space-create" data-i18n="shell.spaceCreate">新建</button>
       </div>
       <!-- 加入空间(space-entry-plan §2/§3):独立入口直达——扫码/输码加入一个已在
            别处存在的账户;隐式空槽在后台 staging,成功才出现为空间。 -->
       <div class="row">
-        <button id="join-scan-btn" style="flex: 1">加入空间(扫电脑二维码)</button>
-        <button id="join-alt-btn" class="ghost">输码加入</button>
+        <button id="join-scan-btn" style="flex: 1" data-i18n="shell.joinScan">加入空间(扫电脑二维码)</button>
+        <button id="join-alt-btn" class="ghost" data-i18n="shell.joinAlt">输码加入</button>
       </div>
       <div id="join-form" hidden>
         <div class="row">
@@ -893,34 +957,34 @@
                  autocapitalize="off" autocomplete="off" />
         </div>
         <div class="row">
-          <input id="join-code" placeholder="配对码(对方设备「添加设备」出示)" spellcheck="false"
+          <input id="join-code" placeholder="配对码(对方设备「添加设备」出示)" data-i18n-placeholder="shell.joinCodePh" spellcheck="false"
                  autocapitalize="off" autocomplete="off" />
-          <button id="join-go">加入</button>
+          <button id="join-go" data-i18n="sync.join">加入</button>
         </div>
       </div>
       <div id="join-progress" class="fine" hidden></div>
       <div class="row" id="join-cancel-row" hidden>
-        <button id="join-cancel" class="ghost" style="flex: 1">取消加入</button>
+        <button id="join-cancel" class="ghost" style="flex: 1" data-i18n="shell.joinCancel">取消加入</button>
       </div>
       <div class="row">
-        <button id="sync-all-btn" style="flex: 1">全部同步(逐空间追赶一次)</button>
+        <button id="sync-all-btn" style="flex: 1" data-i18n="shell.syncAll">全部同步(逐空间追赶一次)</button>
       </div>
       <div id="sync-all-result" class="fine"></div>
-      <p class="fine">空间=独立的本子,互相隔离;记录落在当前空间。新建的空间即建即用;想多端同步,在该空间的「同步」里创建账户;要把别处的账户带到手机,用「加入空间」。</p>
+      <p class="fine" data-i18n="shell.spacesNote">空间=独立的本子,互相隔离;记录落在当前空间。新建的空间即建即用;想多端同步,在该空间的「同步」里创建账户;要把别处的账户带到手机,用「加入空间」。</p>
     </section>
 
     <section id="sync" class="sync" hidden>
-      <h2 id="sync-title">同步</h2>
+      <h2 id="sync-title" data-i18n="main.syncTitle">同步</h2>
       <div id="sync-state" class="state"></div>
       <!-- 未配置态(简化收敛):扫码是唯一主路;手动输码/创号是互斥折叠的辅路,
            点开才见——服务器地址行两条辅路共用,收着时不暴露概念。 -->
       <div id="sync-join" hidden>
         <div class="row">
-          <button id="sync-scan-btn" style="flex: 1">扫码连接电脑</button>
+          <button id="sync-scan-btn" style="flex: 1" data-i18n="shell.syncScan">扫码连接电脑</button>
         </div>
         <div class="row">
-          <button id="sync-alt-pair" class="ghost" style="flex: 1">手动输入配对码</button>
-          <button id="sync-alt-create" class="ghost" style="flex: 1">没有其他设备?创建新账户</button>
+          <button id="sync-alt-pair" class="ghost" style="flex: 1" data-i18n="shell.syncAltPair">手动输入配对码</button>
+          <button id="sync-alt-create" class="ghost" style="flex: 1" data-i18n="sync.altCreateMain">没有其他设备?创建新账户</button>
         </div>
         <div id="sync-server-row" class="row" hidden>
           <input id="sync-server" value="wss://sync.zhujian.app" spellcheck="false"
@@ -928,17 +992,17 @@
         </div>
         <div id="sync-manual" hidden>
           <div class="row">
-            <input id="sync-code" placeholder="配对码(电脑「添加设备」出示)" spellcheck="false"
+            <input id="sync-code" placeholder="配对码(电脑「添加设备」出示)" data-i18n-placeholder="shell.syncCodePh" spellcheck="false"
                    autocapitalize="off" autocomplete="off" />
-            <button id="sync-join-btn">加入</button>
+            <button id="sync-join-btn" data-i18n="sync.join">加入</button>
           </div>
-          <p class="fine">在电脑朱简的「同步」里点「添加设备」,把服务器地址和配对码抄到上面。</p>
+          <p class="fine" data-i18n="shell.syncManualNote">在电脑朱简的「同步」里点「添加设备」,把服务器地址和配对码抄到上面。</p>
         </div>
         <div id="sync-create" hidden>
           <div class="row">
-            <button id="sync-create-btn" style="flex: 1">创建新账户</button>
+            <button id="sync-create-btn" style="flex: 1" data-i18n="sync.createAccount">创建新账户</button>
           </div>
-          <p class="fine">把本机创建为账户的第一台设备。创建后请尽快让电脑加入——加入前唯一副本只在本机。</p>
+          <p class="fine" data-i18n="shell.syncCreateNote">把本机创建为账户的第一台设备。创建后请尽快让电脑加入——加入前唯一副本只在本机。</p>
         </div>
       </div>
       <div id="sync-boot" hidden>
@@ -947,41 +1011,41 @@
       </div>
       <div id="sync-online" hidden>
         <div class="row">
-          <button id="sync-invite-btn">添加设备</button>
-          <button id="sync-recovery-btn">查看恢复码</button>
+          <button id="sync-invite-btn" data-i18n="sync.addDevice">添加设备</button>
+          <button id="sync-recovery-btn" data-i18n="shell.viewRecovery">查看恢复码</button>
         </div>
         <!-- 出码区(phone-space-plan §3):码不含服务器地址,两项都给、都可复制;
              done=注册完成≠对方引导完成,绝不自动关(codex r2 N4)。 -->
         <div id="sync-pair-out" hidden>
           <div id="sync-pair-kv" class="kv"></div>
           <div class="row">
-            <button id="sync-pair-copy" class="ghost">复制服务器地址和配对码</button>
+            <button id="sync-pair-copy" class="ghost" data-i18n="shell.copyPair">复制服务器地址和配对码</button>
           </div>
           <div id="sync-pair-note" class="fine"></div>
         </div>
-        <p id="sync-recovery-note" class="fine" hidden>恢复码是账户密钥,不是数据备份:恢复还需要至少一台在线的完整副本。抄写在纸上,别截图、别存网盘。</p>
+        <p id="sync-recovery-note" class="fine" data-i18n="shell.recoveryNote" hidden>恢复码是账户密钥,不是数据备份:恢复还需要至少一台在线的完整副本。抄写在纸上,别截图、别存网盘。</p>
         <code id="sync-recovery" class="code" hidden></code>
         <!-- 连接信息(账户/服务器)收进折叠:唯一出处保留,首屏不摆概念。 -->
         <div class="row" style="margin-top: 8px">
-          <button id="sync-conninfo-btn" class="ghost" style="flex: 1">连接信息</button>
+          <button id="sync-conninfo-btn" class="ghost" style="flex: 1" data-i18n="shell.connInfo">连接信息</button>
         </div>
         <div id="sync-info" class="kv" hidden></div>
-        <p class="fine">后台不保证实时,回到前台会继续追赶。</p>
+        <p class="fine" data-i18n="shell.bgNote">后台不保证实时,回到前台会继续追赶。</p>
       </div>
       <!-- 单空间时头部空间徽章隐藏,空间面板从这里兜底可达(多空间时徽章即入口)。
            诊断 143 自底栏挪来此处,250 再挪进设置面——同步面只管同步。 -->
       <div class="row" style="margin-top: 14px">
-        <button id="sync-spaces-btn" class="ghost" style="flex: 1" hidden>空间…</button>
+        <button id="sync-spaces-btn" class="ghost" style="flex: 1" data-i18n="shell.spacesEntry" hidden>空间…</button>
       </div>
     </section>
 
     <!-- 搜索面(120):只读定位——连编辑历史、覆盖回收站与归档册,status 印指路。 -->
     <section id="search-pane" class="sync" hidden>
-      <h2>搜索</h2>
+      <h2 data-i18n="shell.navSearch">搜索</h2>
       <div class="row">
-        <input id="search-input" placeholder="搜正文(连编辑历史、含回收站与归档册)"
+        <input id="search-input" placeholder="搜正文(连编辑历史、含回收站与归档册)" data-i18n-placeholder="shell.searchPh"
                autocapitalize="off" autocomplete="off" />
-        <button id="search-btn">搜</button>
+        <button id="search-btn" data-i18n="shell.searchGo">搜</button>
       </div>
       <div id="search-results" class="timeline"></div>
     </section>
@@ -989,27 +1053,27 @@
     <!-- 回收站面(120):灵感+任务合并一屏(统一 list_trash 单快照);恢复回原处,
          彻底删/清空都是两拍确认。 -->
     <section id="trash-pane" class="sync" hidden>
-      <h2>回收站</h2>
+      <h2 data-i18n="shell.navTrash">回收站</h2>
       <div class="row">
-        <button id="trash-empty" style="flex: 1">清空回收站</button>
+        <button id="trash-empty" style="flex: 1" data-i18n="shell.emptyTrash">清空回收站</button>
       </div>
       <div id="trash-list" class="timeline"></div>
-      <p class="fine">删除的记录先到这里;恢复回到原来的位置;彻底删除后无法找回。</p>
+      <p class="fine" data-i18n="shell.trashNote">删除的记录先到这里;恢复回到原来的位置;彻底删除后无法找回。</p>
     </section>
 
     <!-- 归档册面(120):已完成入册的任务(史实,可查);取消入册回看板已完成。 -->
     <section id="sealed-pane" class="sync" hidden>
-      <h2>归档册</h2>
+      <h2 data-i18n="shell.navSealed">归档册</h2>
       <div id="sealed-list" class="timeline"></div>
-      <p class="fine">完成的任务「入册」后在这里安放;归档是史实,不可删除。</p>
+      <p class="fine" data-i18n="shell.sealedNote">完成的任务「入册」后在这里安放;归档是史实,不可删除。</p>
     </section>
 
     <!-- 标签管理面(190,安卓精简版):拖手柄调顺序(1c)+ 点「类型」标自由文本类型(kind);
          顺序/类型跨端同步。重命名/删除/合并/颜色暂在桌面做。 -->
     <section id="topics-pane" class="sync" hidden>
-      <h2>标签</h2>
+      <h2 data-i18n="shell.navTags">标签</h2>
       <div id="topics-list"></div>
-      <p class="fine">按住左侧 ⠿ 拖动调顺序;点「类型」给标签标个类型(如「人名」),顺序与类型都会同步到其它设备。</p>
+      <p class="fine" data-i18n="shell.topicsNote">按住左侧 ⠿ 拖动调顺序;点「类型」给标签标个类型(如「人名」),顺序与类型都会同步到其它设备。</p>
     </section>
 
     <!-- 146:seg 两态删除——输入落点=当前主视图(灵感面记灵感/任务面记待办),
@@ -1017,33 +1081,33 @@
     <!-- 捕获层遮罩(232):捕获中压住时间轴/底栏,点它=收层。 -->
     <div id="capture-scrim" hidden></div>
     <section id="compose-card" class="compose">
-      <textarea id="text" placeholder="记一笔灵感…" rows="2"></textarea>
+      <textarea id="text" placeholder="记一笔灵感…" data-i18n-placeholder="main.composeIdeaPh" rows="2"></textarea>
       <!-- 记灵感时暂存的配图缩略(195 slice1):点「加图」贴进来先摆着,点「记下」建
            条目后随之挂上;每张带「×」可移除。无图时整条隐藏(images.ts composeImages)。 -->
       <div id="compose-thumbs" class="cthumbs" hidden></div>
       <div class="compose-row">
-        <button id="compose-addimg" class="ghost cimg" type="button">＋ 加图</button>
-        <button id="save" class="primary">记下</button>
+        <button id="compose-addimg" class="ghost cimg" type="button" data-i18n="shell.addImage">＋ 加图</button>
+        <button id="save" class="primary" data-i18n="shell.saveIt">记下</button>
       </div>
     </section>
 
     <!-- 悬浮 ＋ 钮(232):平时唯一的记一笔入口,点它滑出上面的捕获层。 -->
-    <button id="capture-fab" type="button" aria-label="记一笔">＋</button>
+    <button id="capture-fab" type="button" aria-label="记一笔" data-i18n-aria-label="shell.captureAria">＋</button>
 
     <!-- 留言层(314 第③笔,identity-plan §4.7):点卡上的 💬 N 徽章、或卡片操作面板的
          「留言」滑入。列表最近优先 + keyset 分页(「加载更多」);删除是两拍确认的销毁
          (**不进回收站**);正文不可编辑(comment 刻意无 set_field)。 -->
     <div id="comments-scrim" hidden></div>
-    <section id="comments-sheet" class="cmsheet" aria-label="留言">
+    <section id="comments-sheet" class="cmsheet" aria-label="留言" data-i18n-aria-label="shell.commentsTitle">
       <header class="cm-head">
-        <h3>留言</h3>
-        <button id="cm-close" class="cm-x" type="button" aria-label="关闭">✕</button>
+        <h3 data-i18n="shell.commentsTitle">留言</h3>
+        <button id="cm-close" class="cm-x" type="button" aria-label="关闭" data-i18n-aria-label="shell.close">✕</button>
       </header>
       <div id="cm-list" class="cm-list"></div>
-      <button id="cm-more" class="cm-more" type="button" hidden>加载更多</button>
+      <button id="cm-more" class="cm-more" type="button" data-i18n="shell.loadMore" hidden>加载更多</button>
       <div class="cm-compose">
-        <textarea id="cm-input" rows="1" placeholder="写句话…"></textarea>
-        <button id="cm-send" class="primary" type="button">写下</button>
+        <textarea id="cm-input" rows="1" placeholder="写句话…" data-i18n-placeholder="shell.commentPh"></textarea>
+        <button id="cm-send" class="primary" type="button" data-i18n="shell.commentSend">写下</button>
       </div>
     </section>
 
@@ -1056,7 +1120,7 @@
       <div id="filter-kinds" class="fkinds"></div>
       <div class="fmain">
         <div id="filter-topics" class="ftopics"></div>
-        <input id="filter-text" class="ftext" type="search" placeholder="过滤当前列表…"
+        <input id="filter-text" class="ftext" type="search" placeholder="过滤当前列表…" data-i18n-placeholder="shell.filterPh"
                autocapitalize="off" autocomplete="off" spellcheck="false" />
       </div>
     </section>
@@ -1066,68 +1130,79 @@
     <!-- 设置面(250):这台设备自己的偏好 + 低频工程入口。明暗刻意**不进同步**——它是
          环境属性不是账户属性(手机夜里要暗、桌面白天要亮),跟着同步反而添乱。 -->
     <section id="settings-pane" class="sync" hidden>
-      <h2>外观</h2>
+      <h2 data-i18n="shell.appearance">外观</h2>
       <div id="theme-seg" class="seg">
-        <button data-theme-mode="auto">自动</button>
-        <button data-theme-mode="light">亮</button>
-        <button data-theme-mode="dark">暗</button>
+        <button data-theme-mode="auto" data-i18n="shell.themeAuto">自动</button>
+        <button data-theme-mode="light" data-i18n="shell.themeLight">亮</button>
+        <button data-theme-mode="dark" data-i18n="shell.themeDark">暗</button>
       </div>
-      <p class="fine">「自动」跟随系统的浅色 / 深色设置(手机常按日夜自动切);想固定成一种就选亮或暗。只影响这台设备,不同步到别的设备。</p>
+      <p class="fine" data-i18n="shell.appearanceNote">「自动」跟随系统的浅色 / 深色设置(手机常按日夜自动切);想固定成一种就选亮或暗。只影响这台设备,不同步到别的设备。</p>
 
-      <h2>界面字号</h2>
+      <h2 data-i18n="shell.textSize">界面字号</h2>
       <div id="textsize-seg" class="seg">
-        <button data-textsize="90">小</button>
-        <button data-textsize="100">标准</button>
-        <button data-textsize="115">大</button>
-        <button data-textsize="130">特大</button>
+        <button data-textsize="90" data-i18n="shell.size90">小</button>
+        <button data-textsize="100" data-i18n="shell.size100">标准</button>
+        <button data-textsize="115" data-i18n="shell.size115">大</button>
+        <button data-textsize="130" data-i18n="shell.size130">特大</button>
       </div>
-      <p class="fine">调整全 app 的文字大小(在系统「字体大小」的基础上叠加)。只影响这台设备,不同步到别的设备。</p>
+      <p class="fine" data-i18n="shell.textSizeNote">调整全 app 的文字大小(在系统「字体大小」的基础上叠加)。只影响这台设备,不同步到别的设备。</p>
 
-      <h2>本机别名</h2>
+      <!-- 语言(358 第②笔):与外观 / 字号同族的设备偏好,**不进同步**,也**绝不作
+           计费判据**(i18n-plan §0-1:海外华人用中文界面照样是付费目标用户)。改档
+           会重载页面——语言在模块求值时定死,活切会留下半屏旧文案。 -->
+      <h2 data-i18n="settings.langTitle">语言</h2>
+      <div id="lang-seg" class="seg">
+        <button data-lang="auto" data-i18n="settings.langAuto">自动</button>
+        <button data-lang="zh" data-i18n="settings.langZh">中文</button>
+        <button data-lang="en" data-i18n="settings.langEn">English</button>
+      </div>
+      <p class="fine" data-i18n="settings.langSub">界面语言。「自动」跟随系统;改档后本页会重新载入。只影响这台设备,不同步到别的设备。</p>
+
+      <h2 data-i18n="shell.aliasTitle">本机别名</h2>
       <div class="row">
-        <input id="alias-input" placeholder="未命名" maxlength="60" spellcheck="false"
+        <input id="alias-input" placeholder="未命名" data-i18n-placeholder="shell.aliasUnnamed" maxlength="60" spellcheck="false"
                autocapitalize="off" autocomplete="off" disabled />
-        <button id="alias-save" disabled>保存</button>
+        <button id="alias-save" data-i18n="shell.save" disabled>保存</button>
       </div>
       <!-- 与上面两样刻意不同:别名**进同步**(和空间名同族),外观/字号是设备环境属性。 -->
-      <p class="fine">给这台设备起个名字(如「娟娟的手机」)。它会<b>同步</b>给同一账户的其他设备,让他们看到条目是谁记的。留空 = 不起名。</p>
+      <p class="fine"><span data-i18n="shell.aliasNotePre">给这台设备起个名字(如「娟娟的手机」)。它会</span><b data-i18n="shell.aliasNoteBold">同步</b><span data-i18n="shell.aliasNotePost">给同一账户的其他设备,让他们看到条目是谁记的。留空 = 不起名。</span></p>
       <p id="alias-msg" class="fine" hidden></p>
 
-      <h2>关于</h2>
+      <h2 data-i18n="shell.aboutTitle">关于</h2>
       <div id="about" class="kv"></div>
 
       <div class="row" style="margin-top: 14px">
-        <button id="settings-diag-btn" class="ghost" style="flex: 1">诊断</button>
+        <button id="settings-diag-btn" class="ghost" style="flex: 1" data-i18n="shell.diag">诊断</button>
       </div>
     </section>
 
     <section id="diag" class="diag" hidden>
-      <h2>本机库(建库 + 全部迁移)</h2>
-      <div id="db" class="kv"><span class="muted">读取中…</span></div>
-      <h2>网络栈诊断</h2>
+      <h2 data-i18n="shell.diagDbTitle">本机库(建库 + 全部迁移)</h2>
+      <div id="db" class="kv"><span class="muted" data-i18n="main.diagLoading">读取中…</span></div>
+      <h2 data-i18n="shell.diagNetTitle">网络栈诊断</h2>
       <div class="row">
         <input id="url" value="wss://sync.zhujian.app" spellcheck="false"
                autocapitalize="off" autocomplete="off" />
-        <button id="run">跑诊断</button>
+        <button id="run" data-i18n="shell.runProbe">跑诊断</button>
       </div>
-      <div id="probe"><span class="muted">未运行</span></div>
+      <div id="probe"><span class="muted" data-i18n="main.probeIdle">未运行</span></div>
     </section>
 
     <!-- 底部固定确认条(ui-audit P0 #4):两拍确认的第二拍统一在此,布局恒定。 -->
     <div id="confirmbar" hidden>
       <span id="confirmbar-q" class="cb-q"></span>
-      <button id="confirmbar-no" class="cb-no" type="button">取消</button>
-      <button id="confirmbar-yes" class="cb-yes" type="button">确认</button>
+      <button id="confirmbar-no" class="cb-no" type="button" data-i18n="shell.cancel">取消</button>
+      <button id="confirmbar-yes" class="cb-yes" type="button" data-i18n="shell.confirm">确认</button>
     </div>
 
     <!-- 底部固定工具行(120;146 换席):灵感/任务=主视图二选一(同一条时间轴按
          stage 投影),回收站/归档册=覆盖面。重复点当前主视图=聚焦输入框(143
          「一步回捕获」推广到两面);诊断在同步面底部。 -->
     <nav id="bottombar">
-      <button data-mode="ideas" class="active">灵感</button>
-      <button data-mode="tasks">任务</button>
-      <button data-pane="trash">回收站</button>
-      <button data-pane="sealed">归档册</button>
+      <button data-mode="ideas" class="active" data-i18n="shell.navIdeas">灵感</button>
+      <button data-mode="tasks" data-i18n="shell.navTasks">任务</button>
+      <button data-pane="trash" data-i18n="shell.navTrash">回收站</button>
+      <button data-pane="sealed" data-i18n="shell.navSealed">归档册</button>
     </nav>
 
     <!-- 启动闸封锁页(工序 6,multispace-plan §2.1/§19):**默认在场**(问闸之前页面
@@ -1137,31 +1212,31 @@
          **「不要清除数据」**(单设备用户照做即真丢数据),只有明确判断(版本低于
          下限/目录残缺/SQLite 亲口损坏)才指向清库重配。 -->
     <div id="gate" class="gate">
-      <p id="gate-checking" class="muted">正在检查本机空间…</p>
+      <p id="gate-checking" class="muted" data-i18n="shell.gateChecking">正在检查本机空间…</p>
       <div id="gate-blocked" hidden>
         <div id="gate-upgrade" hidden>
-          <h2>需要更新朱简</h2>
+          <h2 data-i18n="shell.gateUpgradeTitle">需要更新朱简</h2>
           <p id="gate-msg-upgrade" class="gate-msg"></p>
-          <p>本机数据由更新版本的朱简创建,当前装的是旧版:请到官网 <b>zhujian.app</b> 下载安装最新版,数据即可继续使用。</p>
-          <p class="fine">不要清除数据——清除会把这些较新的记录永久删掉。</p>
+          <p><span data-i18n="shell.gateUpgradePre">本机数据由更新版本的朱简创建,当前装的是旧版:请到官网</span> <b>zhujian.app</b> <span data-i18n="shell.gateUpgradePost">下载安装最新版,数据即可继续使用。</span></p>
+          <p class="fine" data-i18n="shell.gateUpgradeFine">不要清除数据——清除会把这些较新的记录永久删掉。</p>
         </div>
         <div id="gate-retry" hidden>
-          <h2>启动暂时失败</h2>
+          <h2 data-i18n="shell.gateRetryTitle">启动暂时失败</h2>
           <p id="gate-msg-retry" class="gate-msg"></p>
-          <p>这是环境问题(例如存储空间不足),记录数据本身无恙:请释放存储空间后,完全关闭朱简再重新打开。</p>
-          <p class="fine">不要清除数据——重试即可恢复。</p>
+          <p data-i18n="shell.gateRetryBody">这是环境问题(例如存储空间不足),记录数据本身无恙:请释放存储空间后,完全关闭朱简再重新打开。</p>
+          <p class="fine" data-i18n="shell.gateRetryFine">不要清除数据——重试即可恢复。</p>
         </div>
         <div id="gate-repair" hidden>
-          <h2>升级遇到问题</h2>
+          <h2 data-i18n="shell.gateRepairTitle">升级遇到问题</h2>
           <p id="gate-msg-repair" class="gate-msg"></p>
-          <p>记录数据完好,是这一版朱简升级数据时出了问题:请到官网 <b>zhujian.app</b> 重新下载安装最新版再试。</p>
-          <p class="fine">不要清除数据——问题在程序,不在你的记录。</p>
+          <p><span data-i18n="shell.gateRepairPre">记录数据完好,是这一版朱简升级数据时出了问题:请到官网</span> <b>zhujian.app</b> <span data-i18n="shell.gateRepairPost">重新下载安装最新版再试。</span></p>
+          <p class="fine" data-i18n="shell.gateRepairFine">不要清除数据——问题在程序,不在你的记录。</p>
         </div>
         <div id="gate-reset" hidden>
-          <h2>本机空间数据异常</h2>
+          <h2 data-i18n="shell.gateResetTitle">本机空间数据异常</h2>
           <p id="gate-msg-reset" class="gate-msg"></p>
-          <p>本版本不修复受损数据:请到 系统设置 → 应用 → 朱简 → 存储 → <b>清除数据</b>,再重新打开并配对。</p>
-          <p class="fine">清除后,本机尚未被其他设备实际接收的记录将永久丢失;服务器不是完整备份。请先在桌面朱简确认数据完整、并保持它在线,再清除。</p>
+          <p><span data-i18n="shell.gateResetPre">本版本不修复受损数据:请到 系统设置 → 应用 → 朱简 → 存储 →</span> <b data-i18n="shell.gateResetBold">清除数据</b><span data-i18n="shell.gateResetPost">,再重新打开并配对。</span></p>
+          <p class="fine" data-i18n="shell.gateResetFine">清除后,本机尚未被其他设备实际接收的记录将永久丢失;服务器不是完整备份。请先在桌面朱简确认数据完整、并保持它在线,再清除。</p>
         </div>
       </div>
     </div>
@@ -1169,35 +1244,35 @@
     <!-- 恢复码强制仪式(phone-space-plan §3,对齐桌面 §2):展示+警示+回输核对,
          输对才放行;全屏盖住一切导航。恢复码=账户密钥,不是数据备份。 -->
     <div id="ritual" class="gate" hidden>
-      <h2>账户恢复码</h2>
-      <p>这是账户恢复码——请抄写在纸上,存放在安全的地方。</p>
+      <h2 data-i18n="shell.ritualTitle">账户恢复码</h2>
+      <p data-i18n="shell.ritualBody">这是账户恢复码——请抄写在纸上,存放在安全的地方。</p>
       <div id="ritual-code" class="gate-msg" style="font-family: ui-monospace, monospace; user-select: text; max-width: 16em; margin-left: auto; margin-right: auto; text-align: center; word-break: normal; overflow-wrap: normal"></div>
-      <p class="fine">恢复码是账户密钥,不是数据备份:恢复数据还必须有至少一台在线的完整副本。它不存在服务器上,丢了无人能帮你找回。</p>
+      <p class="fine" data-i18n="shell.ritualFine">恢复码是账户密钥,不是数据备份:恢复数据还必须有至少一台在线的完整副本。它不存在服务器上,丢了无人能帮你找回。</p>
       <p id="ritual-post" class="gate-msg" hidden></p>
       <div class="row" style="margin-top: 12px">
-        <input id="ritual-confirm" placeholder="抄写完成后,在这里重新输入一遍以确认"
+        <input id="ritual-confirm" placeholder="抄写完成后,在这里重新输入一遍以确认" data-i18n-placeholder="shell.ritualConfirmPh"
                spellcheck="false" autocapitalize="characters" autocomplete="off" />
       </div>
       <p id="ritual-err" class="fine" style="color: var(--seal)"></p>
       <div class="row">
-        <button id="ritual-done" style="flex: 1">我已抄写,完成</button>
+        <button id="ritual-done" style="flex: 1" data-i18n="shell.ritualDone">我已抄写,完成</button>
       </div>
     </div>
 
     <!-- 大图查看层(117):点缩略图全屏看图,点哪都关。 -->
-    <div id="viewer" role="dialog" aria-modal="true" aria-label="图片查看" hidden>
+    <div id="viewer" role="dialog" aria-modal="true" aria-label="图片查看" data-i18n-aria-label="shell.viewerAria" hidden>
       <img id="viewer-img" alt="" />
       <span id="viewer-cap" class="cap"></span>
       <!-- 删图(196):看大图时删这张。永久销毁(图无回收站、编号退役不复用),两拍确认;
            放大态淡出防误触(同角标)。只从主时间轴开图,不作用于归档册史实。 -->
-      <button id="viewer-del" class="viewer-del" type="button">删除</button>
+      <button id="viewer-del" class="viewer-del" type="button" data-i18n="shell.delete">删除</button>
     </div>
 
     <!-- 扫码层(107):真正的相机画面由插件画在 WebView 底下,这里只是取景框与取消。 -->
     <div id="scan" hidden>
       <div class="scan-frame"></div>
-      <p>对准电脑「添加设备」出示的二维码</p>
-      <button id="scan-cancel">取消扫码</button>
+      <p data-i18n="shell.scanHint">对准电脑「添加设备」出示的二维码</p>
+      <button id="scan-cancel" data-i18n="shell.scanCancel">取消扫码</button>
     </div>
 
     <script type="module" src="/src/main.ts"></script>
