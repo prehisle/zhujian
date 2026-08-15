@@ -191,7 +191,7 @@ struct Inflight {
     ///
     /// 形:**取消的理由由下手的那一方在表锁内写下**,不靠被取消者自己跑到哪一步 ——
     /// 名册判死置 `true`(那是关于对端的持久授权裁决),撤位 / 换代([`abort_bound_to`])
-    /// 保持 `false`(本机侧的处境)。[`LanAdmission::finish`] 摘条目时把它交给 `Drop`。
+    /// 保持 `false`(本机侧的处境)。[`LanAdmission::settle`] 摘条目时连同 `spend` 一起结清。
     charged: bool,
 }
 
@@ -311,60 +311,76 @@ impl LanAdmission {
     /// 首个注册者顺带**惰性绑定**监听 socket。绑不上(端口全被占 / 无权限)= 响亮 `Err`
     /// ——调用方据此不通告 listen(通告一个连不上的端口只会让对端白拨)。
     pub(crate) fn register(&self, reg: Registration) -> Result<u16, String> {
-        let mut t = self.lock();
-        t.registrations += 1;
+        // ⛔ **表锁只活在这个块里**(384 实现审 L1 的第二半):三个 abort 调用点里只有这一处
+        // 「拿到把手之后锁还要接着用」。原先写的是一句 `drop(t)` —— 而**把那句删掉照样编译**
+        // (`MutexGuard` 是有析构的局部量,活到词法作用域末尾;NLL 不会因为最后一次借用结束
+        // 就提前放锁),于是锁内 abort 会**悄悄回潮**,而结构锚看不见这里(`register` 不吃
+        // `&mut Table`)、行为测在今天的 tokio 行为下也分不出锁内锁外。⇒ 改成块作用域:
+        // 「持锁时不 abort」于是与 `deregister` / `apply_denied` 同形,是**作用域的结构事实**。
+        let (port, doomed) = {
+            let mut t = self.lock();
+            t.registrations += 1;
         // **已被最终撤销的代次不许回来**(codex 四轮 H1):stop/reset 的顺序是「先摘条目 →
         // 再拉停机信号 → 最后等 transport 退出」,而那个 transport 观察到停机之前,它每
         // 15s 一轮的拨号巡查还会拿着**仍然存在的** `AdmitSeat` 幂等续注册一次——放行就等于
         // 把「Stopping 之后不再认新链」那道闸重新打开(条目复活、新拨入又命中得了)。
         // 只在这把锁内判,故与撤席之间没有缝;更高代次(新 runtime)照常。
-        if t.revoked.get(&reg.space_id).is_some_and(|w| reg.owner <= *w) {
-            return Err("本 runtime 的局域网席位已撤销(空间正在停机或重置)".into());
-        }
-        if t.port.is_none() {
-            let (listener, port) = bind_listener(self.bind)?;
-            t.accept = Some(tokio::spawn(accept_loop(self.me.clone(), listener)));
-            t.port = Some(port);
-        }
-        let port = t.port.expect("刚绑上");
-        if t.spaces.get(&reg.space_id).is_some_and(|e| e.same_identity(&reg)) {
-            // 同一代身份续注册:只把可能换了的把手刷新(handoff 通道随 `run` 生灭)。
-            let e = t.spaces.get_mut(&reg.space_id).expect("刚查过在");
-            // ⛔ **名册闸也在这里刷**(identity-plan §5.11):这条路每 15 秒走一次(拨号
-            // 巡查恒幂等续注册),漏掉它就等于把「表里那份 = 最后一次注册交进来的那只」
-            // 变成一句没人守的话。今天它必是同一只 `Arc`(`owner` 进了 `same_identity`,
-            // 而 `owner` 每个 `run` 换一次、`EngineSlot::retire` 又刻意不换 gate),故这
-            // 句赋值是**恒等操作** —— 下面这句 `debug_assert` 把「恒等」从假设变成被核
-            // 对的事实,免得日后谁把 gate 的所有权挪个地方,两份就悄悄漂了(§5.11 item ②)。
-            debug_assert!(
-                Arc::ptr_eq(&e.gate, &reg.gate),
-                "同一代身份续注册却换了名册闸把手:准入表与引擎槽会各拿一份会漂的名单"
+            if t.revoked.get(&reg.space_id).is_some_and(|w| reg.owner <= *w) {
+                return Err("本 runtime 的局域网席位已撤销(空间正在停机或重置)".into());
+            }
+            if t.port.is_none() {
+                let (listener, port) = bind_listener(self.bind)?;
+                t.accept = Some(tokio::spawn(accept_loop(self.me.clone(), listener)));
+                t.port = Some(port);
+            }
+            let port = t.port.expect("刚绑上");
+            if t.spaces.get(&reg.space_id).is_some_and(|e| e.same_identity(&reg)) {
+                // 同一代身份续注册:只把可能换了的把手刷新(handoff 通道随 `run` 生灭)。
+                let e = t.spaces.get_mut(&reg.space_id).expect("刚查过在");
+                // ⛔ **名册闸也在这里刷**(identity-plan §5.11):这条路每 15 秒走一次(拨号
+                // 巡查恒幂等续注册),漏掉它就等于把「表里那份 = 最后一次注册交进来的那只」
+                // 变成一句没人守的话。今天它必是同一只 `Arc`(`owner` 进了 `same_identity`,
+                // 而 `owner` 每个 `run` 换一次、`EngineSlot::retire` 又刻意不换 gate),故这
+                // 句赋值是**恒等操作** —— 下面这句 `debug_assert` 把「恒等」从假设变成被核
+                // 对的事实,免得日后谁把 gate 的所有权挪个地方,两份就悄悄漂了(§5.11 item ②)。
+                debug_assert!(
+                    Arc::ptr_eq(&e.gate, &reg.gate),
+                    "同一代身份续注册却换了名册闸把手:准入表与引擎槽会各拿一份会漂的名单"
+                );
+                e.gate = reg.gate;
+                e.handoff = reg.handoff;
+                e.active = reg.active;
+                e.db = reg.db;
+                // 这条路一个把手都没拿到(不换代 = 谁都不 abort),故直接从函数返回,
+                // 锁随之落地。
+                return Ok(port);
+            }
+            t.next_epoch += 1;
+            let epoch = t.next_epoch;
+            let doomed = abort_bound_to(&mut t, &reg.space_id);
+            t.dups.insert(reg.space_id.clone(), lan::DupCache::new());
+            t.spaces.insert(
+                reg.space_id.clone(),
+                SpaceEntry {
+                    owner: reg.owner,
+                    epoch,
+                    account_id: reg.account_id,
+                    self_device: reg.self_device,
+                    k_acc: reg.k_acc,
+                    self_seed: reg.self_seed,
+                    db: reg.db,
+                    active: reg.active,
+                    gate: reg.gate,
+                    handoff: reg.handoff,
+                },
             );
-            e.gate = reg.gate;
-            e.handoff = reg.handoff;
-            e.active = reg.active;
-            e.db = reg.db;
-            return Ok(port);
+            (port, doomed)
+        };
+        // ⛔ **放锁之后才 abort**(§5.11-⑨ 那条纪律的第二处兑现):被 abort 的任务析构时要
+        // 回**这张表**交还并发额度([`ConnGuard`]),锁内调它就是新造一条跨结构锁序。
+        for h in doomed {
+            h.abort();
         }
-        t.next_epoch += 1;
-        let epoch = t.next_epoch;
-        abort_bound_to(&mut t, &reg.space_id);
-        t.dups.insert(reg.space_id.clone(), lan::DupCache::new());
-        t.spaces.insert(
-            reg.space_id.clone(),
-            SpaceEntry {
-                owner: reg.owner,
-                epoch,
-                account_id: reg.account_id,
-                self_device: reg.self_device,
-                k_acc: reg.k_acc,
-                self_seed: reg.self_seed,
-                db: reg.db,
-                active: reg.active,
-                gate: reg.gate,
-                handoff: reg.handoff,
-            },
-        );
         Ok(port)
     }
 
@@ -372,7 +388,13 @@ impl LanAdmission {
     /// LanReady 的三档撤位与 `run` 收场同样经它)。**认注册者号**:旧 runtime 迟到的那声
     /// 注销摘不掉新 runtime 的条目。
     pub(crate) fn deregister(&self, space_id: &str, owner: u64) {
-        drop_entry(&mut self.lock(), space_id, owner);
+        // ⛔ 表锁是**这条 `let` 语句里的临时量**,它在这一句末尾就落地了(同
+        // [`LanAdmission::apply_denied`]);`abort()` 在下一句,故「持锁时不 abort」是语句
+        // 作用域的结构事实,不是一句要人记得的纪律。
+        let doomed = drop_entry(&mut self.lock(), space_id, owner);
+        for h in doomed {
+            h.abort();
+        }
     }
 
     /// **最终撤席**(supervisor 的 `stop` / `begin_reset` 专用):摘条目 + abort 未移交
@@ -380,10 +402,16 @@ impl LanAdmission {
     /// 里那段:旧 runtime 的巡查会拿着还没失效的席位把条目复活)。新 runtime 的更高代次
     /// 照常注册,故这不是「这个空间从此不能直连」。
     pub(crate) fn revoke(&self, space_id: &str, owner: u64) {
-        let mut t = self.lock();
-        let w = t.revoked.entry(space_id.to_string()).or_insert(0);
-        *w = (*w).max(owner);
-        drop_entry(&mut t, space_id, owner);
+        // 同 [`LanAdmission::deregister`]:锁内只标死并复制把手,`abort()` 出了这个块才调。
+        let doomed = {
+            let mut t = self.lock();
+            let w = t.revoked.entry(space_id.to_string()).or_insert(0);
+            *w = (*w).max(owner);
+            drop_entry(&mut t, space_id, owner)
+        };
+        for h in doomed {
+            h.abort();
+        }
     }
 
     /// 名册一变,**当场**判死那些新被拒的对端在飞的**入站**握手(identity-plan §5.11;
@@ -396,7 +424,9 @@ impl LanAdmission {
     ///
     /// ⛔ **`abort()` 放锁之后再调**(§5.11 四轮 L1 / item ⑨):被 abort 的任务析构时要
     /// 回**这张表**交还并发额度([`ConnGuard`]),锁内调它就是新造一条跨结构锁序。
-    /// ⚠ 现成的 [`abort_bound_to`] 是**在表锁内直接 abort**,不能原样拿来用。
+    /// 这条纪律**今天四处一律**:本函数 / [`abort_bound_to`] 的三个调用点 /
+    /// [`LanAdmission::set_abort`] 的补刀 —— 立规那一轮只有本函数照办、剩下三处记成
+    /// 「tokio 版本绑定债」,这笔债已在 384 清掉。
     /// 安全线性化点 = 「gate 已换 ∧ 握手已标 doomed」,**不是**「`abort()` 真的调到了」,
     /// 故放锁到 abort 之间那一小段没有漏窗:此刻交上来的链在步骤 ⑦ 与协调者 install
     /// 那两道闸下照样装不上。
@@ -421,7 +451,7 @@ impl LanAdmission {
     ///
     /// **令牌在这里就预占掉**(实现审 M1):只查不扣的话,同一枚令牌在结果回来之前能同时
     /// 放进最多 8 条连接(全局槽数),每补回一枚就又放一批——实际速率远超规格的 10/s。
-    /// 预占 + [`LanAdmission::refund`](合法建链与本机侧原因才退)= 令牌是**一次性许可**,
+    /// 预占 + [`Table::refund_token`](合法建链与本机侧原因才退)= 令牌是**一次性许可**,
     /// 而「合法握手净零消耗」这条语义不变。
     fn admit_conn(&self, ip: IpAddr) -> Option<u64> {
         let mut t = self.lock();
@@ -449,22 +479,38 @@ impl LanAdmission {
         Some(id)
     }
 
+    /// 把 `accept_loop` spawn 出来的那只任务的 abort 句柄交进表里。
+    ///
+    /// ⛔ **补刀那一下也在放锁之后**(§5.11-⑨ 那条纪律的第三处兑现):补刀打的是一只正在
+    /// 跑的任务,它析构时要回这张表交还额度([`ConnGuard`])。
     fn set_abort(&self, id: u64, abort: tokio::task::AbortHandle) {
-        let mut t = self.lock();
-        // 任务可能已经跑完并自摘(guard 的 Drop);那就没有句柄可存。
-        let Some(f) = t.tasks.get_mut(&id) else { return };
-        // 装句柄之前就被判死过 = 那次 abort 落了空,这里补刀(见 [`Inflight::doomed`])。
-        if f.doomed {
-            abort.abort();
-            return;
+        {
+            let mut t = self.lock();
+            // 任务可能已经跑完并自摘(guard 的 Drop);那就没有句柄可存。
+            let Some(f) = t.tasks.get_mut(&id) else { return };
+            if !f.doomed {
+                f.abort = Some(abort);
+                return;
+            }
         }
-        f.abort = Some(abort);
+        // 装句柄之前就被判死过 = 那次 abort 落了空,这里补刀(见 [`Inflight::doomed`])。
+        abort.abort();
     }
 
-    /// 任务收场:交还并发额度。返回值 = **这只任务被取消时该记对端的账吗**
-    /// (见 [`Inflight::charged`];没有条目 = 没人给它下过判决 = `false`)。
-    #[must_use]
-    fn finish(&self, id: u64, ip: IpAddr) -> bool {
+    /// 任务收场:交还并发额度,**并在同一把锁里**把那枚预占的令牌结清([`ConnGuard`] 的
+    /// 唯一出口)。
+    ///
+    /// ⭐ **一次取锁,不是两次**(379 可优化项第三条):此前是 `finish` 摘条目、放锁、再
+    /// `refund` 第二次取锁,于是「在飞数已归零」与「令牌已结清」之间有一个真窗口 ——
+    /// 靠那只测跑在 current-thread runtime 上才看不见。结清与摘条目原子化之后,
+    /// 「`inflight() == 0` ⇒ 这一枚的账已经落定」在**任何** runtime 上都成立,
+    /// 判据不再由调度器背书。
+    ///
+    /// `spend` = 这只任务**自己跑完**得出的分类;条目上的 [`Inflight::charged`] 是**别人在
+    /// 它跑到那一步之前就下的**判决(名册判死)。⛔ **两个判决源缺一不可**(codex 实现审
+    /// L1):只看前者的话,「被 abort 掉的那只」永远停在默认的退款上 —— 同一条名册裁决
+    /// 因此会因竞速给出两个答案。
+    fn settle(&self, id: u64, ip: IpAddr, spend: bool) {
         let mut t = self.lock();
         let charged = t.tasks.remove(&id).is_some_and(|f| f.charged);
         if let Some(n) = t.per_ip.get_mut(&ip) {
@@ -473,18 +519,15 @@ impl LanAdmission {
                 t.per_ip.remove(&ip);
             }
         }
-        charged
+        if !spend && !charged {
+            t.refund_token();
+        }
     }
 
-    /// 退还预占的那一枚令牌(§10):合法建链与**本机侧**原因(身份换代 / 条目已摘 /
-    /// 移交队满)才退——那不是对端的无效尝试,拿它去关限速阀等于让真攻击更容易打空桶。
-    /// 对端给的东西不对 / 超时 = 留着不退,那正是「无效尝试」要花的那一枚。
+    /// 测试用直接退款口(生产侧只经 [`LanAdmission::settle`] 走 [`Table::refund_token`])。
+    #[cfg(test)]
     fn refund(&self) {
-        let mut t = self.lock();
-        t.refunds += 1;
-        let now = Instant::now();
-        t.bucket.refill(now);
-        t.bucket.tokens = (t.bucket.tokens + 1.0).min(PREAUTH_FAIL_BURST);
+        self.lock().refund_token();
     }
 
     /// 全表恰一命中 → 认下空间与代次(§4 步骤 1)。**认下即登记进任务表**,此后撤位能
@@ -622,6 +665,16 @@ impl Table {
     fn tokens_sub(&mut self) {
         self.bucket.tokens = (self.bucket.tokens - 1.0).max(0.0);
     }
+
+    /// 退还预占的那一枚令牌(§10):合法建链与**本机侧**原因(身份换代 / 条目已摘 /
+    /// 移交队满)才退——那不是对端的无效尝试,拿它去关限速阀等于让真攻击更容易打空桶。
+    /// 对端给的东西不对 / 超时 = 留着不退,那正是「无效尝试」要花的那一枚。
+    fn refund_token(&mut self) {
+        self.refunds += 1;
+        let now = Instant::now();
+        self.bucket.refill(now);
+        self.bucket.tokens = (self.bucket.tokens + 1.0).min(PREAUTH_FAIL_BURST);
+    }
 }
 
 /// 借出「逐 LanReady 空间代入」的材料面(`LanAdmit` 里全是 `&str`/`&[u8;32]`,借的正是
@@ -644,20 +697,25 @@ fn admit_entries(spaces: &HashMap<String, SpaceEntry>) -> Vec<lan::LanAdmit<'_>>
 /// 摘一条准入条目(**认注册者号**:旧 runtime 迟到的那声注销摘不掉新 runtime 的条目)。
 /// [`LanAdmission::deregister`](临时撤位,同一个 `run` 之后还可能回来)与
 /// [`LanAdmission::revoke`](最终撤席)共用这一手。
-fn drop_entry(t: &mut Table, space_id: &str, owner: u64) {
+///
+/// ⛔ 同 [`abort_bound_to`]:**函数体里一个 `abort` 都不许有**,把手交回调用方放锁后再打。
+#[must_use = "把手丢掉 = 摘了条目却没取消旧任务,那正是准入表要关的那扇窗"]
+fn drop_entry(t: &mut Table, space_id: &str, owner: u64) -> Vec<tokio::task::AbortHandle> {
     if !t.spaces.get(space_id).is_some_and(|e| e.owner == owner) {
-        return;
+        return vec![];
     }
     t.spaces.remove(space_id);
     t.dups.remove(space_id);
-    abort_bound_to(t, space_id);
+    abort_bound_to(t, space_id)
 }
 
 /// 把该空间里**新被名册拒掉**的在飞握手判死,并把它们的 abort 把手交回调用方
 /// ([`LanAdmission::apply_denied`] 在放锁之后才真去 abort)。
 ///
-/// ⛔ **这个函数体里一个 `abort` 都不许有**(§5.11 item ⑨,由结构锚
-/// `the_lock_holder_never_aborts` 守着):它是唯一持着表锁的那一半。
+/// ⛔ **这个函数体里一个 `abort` 都不许有**(§5.11 item ⑨,与 [`abort_bound_to`] /
+/// [`drop_entry`] 同受结构锚 `no_helper_holding_the_table_lock_aborts` 管):它跑在调用方
+/// 的表锁里。**384 之前它是这一族里唯一照办的那只**,故那时的注释写「唯一持着表锁的那一半」
+/// —— 今天四处一律,别再照那句读。
 ///
 /// 上界:`tasks` 至多 [`PREAUTH_MAX_INFLIGHT`] 条,`hits` 是 O(log N)、N ≤ 32(服务端的
 /// `MAX_ROSTER_DEVICES`),故这段临界区的长度由常量定、与数据规模无关。
@@ -697,21 +755,33 @@ fn doom_denied(
     out
 }
 
-/// abort 掉认在该空间的全部未移交任务(§6:撤位与换代都要**当场**取消,不等它们自己
-/// 到超时——「摘了条目但旧任务还能交一条链」正是准入表要关的窗)。
-fn abort_bound_to(t: &mut Table, space_id: &str) {
+/// 判死认在该空间的全部未移交任务,并把它们的 abort 把手交回调用方(§6:撤位与换代都要
+/// **当场**取消,不等它们自己到超时——「摘了条目但旧任务还能交一条链」正是准入表要关的窗)。
+///
+/// ⛔ **这个函数体里一个 `abort` 都不许有**(§5.11 item ⑨,与 [`doom_denied`] 同一条纪律,
+/// 由结构锚 `no_helper_holding_the_table_lock_aborts` 守着):它跑在调用方的表锁里。
+/// 调用方三处([`LanAdmission::register`] 换代 / [`LanAdmission::deregister`] /
+/// [`LanAdmission::revoke`])一律**放锁之后**才 abort。
+///
+/// 安全线性化点 = 「条目已换代/已摘 ∧ 握手已标 doomed」,**不是**「`abort()` 真的调到了」,
+/// 故放锁到 abort 之间那一小段没有漏窗:此刻交上来的链在自证代次与协调者 install 那两道闸
+/// 下照样装不上。
+#[must_use = "把手丢掉 = 这次撤位/换代静默落空,那些任务会一直占着 pre-auth 名额到 10s 超时"]
+fn abort_bound_to(t: &mut Table, space_id: &str) -> Vec<tokio::task::AbortHandle> {
+    let mut out = vec![];
     for f in t.tasks.values_mut() {
         let Some(b) = &f.bound else { continue };
         if b.space != space_id {
             continue;
         }
-        // 先判死再 abort:句柄可能还没装上(多线程 runtime 下 `set_abort` 与任务开跑是
+        // 先判死再交把手:句柄可能还没装上(多线程 runtime 下 `set_abort` 与任务开跑是
         // 赛跑),那一位让 `set_abort` 接着补刀,故这次撤位绝不会静默落空。
         f.doomed = true;
         if let Some(a) = &f.abort {
-            a.abort();
+            out.push(a.clone());
         }
     }
+    out
 }
 
 /// [`LanAdmission::accept`] 的三种结局。**刻意不是 `Option`**(实现审二轮 M1):
@@ -855,14 +925,10 @@ struct ConnGuard {
 
 impl Drop for ConnGuard {
     fn drop(&mut self) {
-        // ⛔ **两个判决源,缺一不可**(codex 实现审 L1):`spend` 是这只任务**自己跑完**得出
-        // 的分类,而 `finish` 交回的是**别人在它跑到那一步之前就下的**判决(名册判死)。
-        // 只看前者的话,「被 abort 掉的那只」永远停在默认的退款上 —— 同一条名册裁决因此
-        // 会因竞速给出两个答案。
-        let charged = self.adm.finish(self.id, self.ip);
-        if !self.spend && !charged {
-            self.adm.refund();
-        }
+        // 摘条目 + 结清令牌**在同一把锁里**(见 [`LanAdmission::settle`] 的头注):此前是
+        // 两次取锁,而「两个判决源缺一不可」那条形如今由 `settle` 的签名端着 —— 它把
+        // `spend` 吃进去,没有一个可以被下一个人丢掉的返回值(那正是 L1 的形状)。
+        self.adm.settle(self.id, self.ip, self.spend);
     }
 }
 
@@ -1573,12 +1639,73 @@ mod tests {
         adm.lock().tasks.get_mut(&id).expect("在表上").bound =
             Some(TaskBound { space: "s1".into(), peer: "01PEERAAAAAAAAAAAAAAAAAAAA".into() });
         let victim = tokio::spawn(async { std::future::pending::<()>().await });
-        abort_bound_to(&mut adm.lock(), "s1");
+        let doomed = abort_bound_to(&mut adm.lock(), "s1");
+        assert!(doomed.is_empty(), "句柄还没交上去,这一下一个把手都收不到");
         assert!(!victim.is_finished(), "句柄还没交上去,这一下当然打不着");
         adm.set_abort(id, victim.abort_handle());
         // 限时:没补刀的话这只任务永远跑下去,拿超时当红比让整轮测试挂死体面。
         let done = tokio::time::timeout(Duration::from_secs(2), victim).await;
         assert!(done.expect("补刀该当场生效").expect_err("该被取消").is_cancelled());
+    }
+
+    /// 注册一个 s1 条目;交回 handoff 的接收端(调用方留着,别让通道提前关)。
+    fn register_s1(
+        adm: &Arc<LanAdmission>,
+        owner: u64,
+        k_acc: [u8; 32],
+    ) -> mpsc::Receiver<AdoptedLink> {
+        let (handoff, rx) = mpsc::channel(4);
+        adm.register(Registration {
+            space_id: "s1".into(),
+            owner,
+            account_id: "01ACCTAAAAAAAAAAAAAAAAAAAA".into(),
+            self_device: "01SELFAAAAAAAAAAAAAAAAAAAA".into(),
+            k_acc,
+            self_seed: [7u8; 32],
+            db: Arc::new(Mutex::new(rusqlite::Connection::open_in_memory().unwrap())),
+            active: Arc::new(Mutex::new(HashSet::new())),
+            gate: Arc::new(Mutex::new(lan::RosterGate::default())),
+            handoff,
+        })
+        .expect("注册");
+        rx
+    }
+
+    /// 摆一只「已认下 s1、abort 句柄也已经交上去」的在飞任务,交回它的 join 把手。
+    fn plant_bound_task(adm: &Arc<LanAdmission>) -> tokio::task::JoinHandle<()> {
+        let id = adm.admit_conn(Ipv4Addr::LOCALHOST.into()).expect("该放行");
+        adm.lock().tasks.get_mut(&id).expect("在表上").bound =
+            Some(TaskBound { space: "s1".into(), peer: "01PEERAAAAAAAAAAAAAAAAAAAA".into() });
+        let victim = tokio::spawn(async { std::future::pending::<()>().await });
+        adm.set_abort(id, victim.abort_handle());
+        victim
+    }
+
+    /// ⛔ **三个调用点必须真的扣扳机**(384 清 379 那笔「锁内 abort」债时新造出来的义务):
+    /// [`abort_bound_to`] 从「函数体里直接打」改成「锁内标死、把手交回调用方」之后,
+    /// **谁去 abort** 就从函数体里的一句代码变成了**调用方的**义务。`#[must_use]` 只在编译期
+    /// 喊一嗓子(本 crate 不 `deny(warnings)`),挡不住「收了把手却不打」,故三处各要一条
+    /// 行为字据。
+    ///
+    /// ⚠ 靶子刻意是**一只永不自了的 `pending()` 任务** + 2 秒上界:拿真握手当靶子的话,
+    /// 「忘了 abort」会被那 10 秒的握手超时兜成绿的 —— 慢十秒,但还是绿。
+    #[tokio::test]
+    async fn every_caller_of_abort_bound_to_actually_pulls_the_trigger() {
+        for case in ["deregister", "revoke", "register(换代)"] {
+            let adm = LanAdmission::ephemeral();
+            let _rx = register_s1(&adm, 1, [5u8; 32]);
+            let victim = plant_bound_task(&adm);
+            match case {
+                "deregister" => adm.deregister("s1", 1),
+                "revoke" => adm.revoke("s1", 1),
+                // 换了身份指纹(这里换 K_acc)= 换代:旧代未移交的任务当场取消。
+                _ => drop(register_s1(&adm, 1, [6u8; 32])),
+            }
+            let done = tokio::time::timeout(Duration::from_secs(2), victim)
+                .await
+                .unwrap_or_else(|_| panic!("{case}:把手交回来了,却没人扣扳机"));
+            assert!(done.expect_err("该被取消").is_cancelled(), "{case}:该当场被取消");
+        }
     }
 
     /// §10 的令牌是**一次性许可**:预占在放行那一刻就扣掉,故一枚令牌最多放行一条连接
@@ -1795,29 +1922,68 @@ mod tests {
 
     /// 结构锚(§5.11-⑨):**持着准入表锁的那一半里,一个 `abort` 都不许有**。
     ///
-    /// ⚠ **诚实边界**:今天违反它也测不出行为差别 —— 实测 tokio 的 `abort()` 不会在调用
-    /// 线程上当场丢掉那只 future(故 [`ConnGuard`] 的析构不会当场回头来拿这把锁),所以
-    /// 「锁内 abort」不会当场死锁。这条锚守的是**设计规则**(不新造跨结构锁序),不是一个
-    /// 今天观测得到的故障;它咬的是「日后有人把 `abort()` 挪进 `doom_denied`」。
+    /// ⭐ **判据是签名不是函数名**(384 从「只守 `doom_denied` 一只」推广而来)。两族都算
+    /// 「已经在表锁里」:①吃 `&mut Table` 的自由函数(**参数名不限** —— 384 实现审 L1:
+    /// 原先写死匹配 `t: &mut Table`,于是一只正常命名的 `table: &mut Table` 会被静默漏掉,
+    /// 而阳性对照那句照样通过);②`impl Table` 里的全部方法(拿得到 `&mut self` 就等于拿得到
+    /// `tasks`)。这样写的用意是它**自己长大** —— 日后新写的锁内助手不必有人记得回来加白名单。
+    ///
+    /// ⚠ **诚实边界(三条)**:
+    /// 1. 今天违反它也测不出行为差别 —— 实测 tokio 1.52.3 的 `abort()` 不会在调用线程上
+    ///    当场丢掉那只 future(故 [`ConnGuard`] 的析构不会当场回头来拿这把锁)。这条锚守的
+    ///    是**设计规则**(不新造跨结构锁序),不是一个今天观测得到的故障。⭐ 而正因为
+    ///    「今天不是 bug」,原先那三处锁内 abort 才被记成「tokio 版本绑定债」躺了一轮;
+    ///    这条锚推广开之后,那笔债就不必再靠人记得还了。
+    /// 2. 它只认这两族的**签名**。持着 `MutexGuard` 却把 `&mut` 拆成别的形状传下去
+    ///    (例如吃 `&mut HashMap<u64, Inflight>`),这道锚看不见。
+    /// 3. ⛔ **`LanAdmission` 自己那些直接持 `MutexGuard` 的方法不在扫描面内**
+    ///    ——`register` 是其中唯一「拿到把手之后锁还接着用」的一处,它靠的是**块作用域**
+    ///    (见那只函数的头注),不是这道锚。
     #[test]
-    fn the_lock_holder_never_aborts() {
+    fn no_helper_holding_the_table_lock_aborts() {
         let src = include_str!("lan_net.rs");
         let prod = src.split("\nmod tests {").next().expect("生产段");
         // **先把注释整条剔掉再匹配**(mutation-check 铁律 9):这一段的散文里本来就要点名
-        // `abort_bound_to`「是锁内直接 abort」,拿原文匹配的话锚会命中自己的注释。
+        // 「锁内直接 abort」这类字样,拿原文匹配的话锚会命中自己的注释。
         let prod: String =
             prod.lines().map(|l| l.split("//").next().unwrap_or("")).collect::<Vec<_>>().join("\n");
-        let start = prod.find("fn doom_denied(").expect("`doom_denied` 还在吗");
-        let body = &prod[start..];
-        let end = body.find("\n}\n").expect("函数体的收尾");
-        // 判据是**调用**(`abort(`),不是名字:函数体本来就要读 `f.abort` 那个字段、
-        // 也要在注释里点名 `set_abort` 的补刀路 —— 判成「出现 abort 三个字母就红」的话,
-        // 这道锚从写下的第一天起就恒红,而恒红与恒绿一样答不出问题。
-        assert!(
-            !body[..end].contains("abort("),
-            "`doom_denied` 是唯一持着表锁的那一半,它里面出现 `abort(` \
-             就是把跨结构锁序新造了回来(§5.11-⑨);abort 的正当位置在 `apply_denied` \
-             那句放锁之后"
+        // 从一句 `fn ` 的起点切出「函数名 + 函数体」。
+        let cut = |f: usize| -> (&str, &str) {
+            let name = prod[f + 3..].split('(').next().expect("函数名").trim();
+            let body = &prod[f..];
+            let end = body.find("\n}\n").or_else(|| body.find("\n    }\n")).expect("函数体的收尾");
+            (name, &body[..end])
+        };
+        let mut checked: Vec<&str> = vec![];
+        // ①吃 `&mut Table` 的自由函数(参数名不限:匹配的是**类型**那一半)。
+        for (i, _) in prod.match_indices(": &mut Table") {
+            checked.push(cut(prod[..i].rfind("fn ").expect("签名总在某只 fn 里")).0);
+        }
+        // ②`impl Table` 里的全部方法。
+        let imp = prod.find("\nimpl Table {").expect("`impl Table` 还在吗");
+        let imp_body = &prod[imp..][..prod[imp..].find("\n}\n").expect("impl 块的收尾")];
+        for (i, _) in imp_body.match_indices("    fn ") {
+            checked.push(cut(imp + i + 4).0);
+        }
+        for name in &checked {
+            let f = prod.find(&format!("fn {name}(")).expect("刚扫到的");
+            // 判据是**调用**(`abort(`),不是名字:这些函数体本来就要读 `f.abort` 那个字段、
+            // 也要在注释里点名 `set_abort` 的补刀路 —— 判成「出现 abort 三个字母就红」的话,
+            // 这道锚从写下的第一天起就恒红,而恒红与恒绿一样答不出问题。
+            assert!(
+                !cut(f).1.contains("abort("),
+                "`{name}` 跑在表锁里,它里面出现 `abort(` 就是把跨结构锁序新造了回来\
+                 (§5.11-⑨);abort 的正当位置是把手交回调用方、放锁之后再打"
+            );
+        }
+        // ⛔ 阳性对照:锚必须真的**扫到过东西**。全被改名 / 全被挪走时它会静默变绿,而
+        // 「一只都没扫到」与「每只都干净」在断言上长得一模一样(339 那条教训)。
+        checked.sort_unstable();
+        checked.dedup();
+        assert_eq!(
+            checked,
+            ["abort_bound_to", "doom_denied", "drop_entry", "refund_token", "tokens_sub"],
+            "锁内那一族变了 —— 新增的要么确认它不 abort,要么这道锚已经扫不到东西了"
         );
     }
 

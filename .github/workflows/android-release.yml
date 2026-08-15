@@ -21,7 +21,13 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # ⭐ 385 立的发版闸(与桌面 `v*` 共用同一份 reusable workflow,两处零抄写)。
+  # 安卓虽然只改 android/,但 core 是双端共享的,同一套判据一样成立。
+  preflight:
+    uses: ./.github/workflows/preflight.yml
+
   release:
+    needs: preflight
     name: build android APK + 发 VPS
     runs-on: ubuntu-latest
     steps:

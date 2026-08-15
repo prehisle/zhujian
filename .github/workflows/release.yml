@@ -19,7 +19,14 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # ⭐ 385 立的发版闸:tag 是自动发给真实用户的边界,此前它前面没有任何机器门槛。
+  # 本体在 preflight.yml(reusable,安卓那条 tag 线共用同一份,两处零抄写);
+  # 它跑什么、刻意不跑什么,判据都写在那个文件的头注里。
+  preflight:
+    uses: ./.github/workflows/preflight.yml
+
   build:
+    needs: preflight
     name: build ${{ matrix.label }}
     strategy:
       fail-fast: true # 有一个平台没打出来就别发半套
@@ -119,6 +126,13 @@ jobs:
           [ -z "$notes" ] && notes="朱简 ${GITHUB_REF_NAME}"
           echo "更新说明:$notes"
           node scripts/gen-update-manifest-ci.mjs artifacts upload "$notes"
+
+      # ⚠ 385:这一步**必须在上传之前**。签名是存量用户唯一的接受判据——签错了产物照样
+      # 200、清单照样好看,而每个老用户被 updater 静默拒绝、卡在旧版且毫无提示。
+      # 更要命的是下一步的上传会**先 rm 掉旧包和 latest.json**:签名坏时若已经传上去,
+      # 用户既装不上新版、也没有旧版可回退。故判据前移到「还没碰线上任何东西」这一刻。
+      - name: 验签(上传前,只认本地产物)
+        run: node scripts/verify-update-signature.mjs --manifest upload/latest.json --artifacts upload
 
       - name: 配置 SSH(受限 deploy key)
         run: |

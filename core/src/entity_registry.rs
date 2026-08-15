@@ -3,17 +3,18 @@
 //! # 为什么存在
 //!
 //! 这个库里的每个 oplog 实体(`item` / `topic` / `link` / `image` / `space` / `device` /
-//! `comment`)都要在**九个互不相邻的横切面**上各登记一次:词汇表、catalog 核心表、压实
-//! 指纹、压实基线、引导导入、墓碑复活审计、无背书行、依赖前置、收敛指纹。少登记一处,
-//! 后果从「catalog 拒开库」到「第一次删掉带留言的条目之后那个库永远过不了电池」不等,
-//! 而**漏掉的那一处不会自己报错**——它只是少干活。
+//! `comment`)都要在**十一个互不相邻的横切面**上各登记一次:词汇表、catalog 核心表、压实
+//! 指纹、压实基线、引导导入、墓碑复活审计、无背书行、依赖前置、收敛指纹,以及 383 补的
+//! 两面 —— 回放分发臂、op 形状校验。少登记一处,后果从「catalog 拒开库」到「第一次删掉
+//! 带留言的条目之后那个库永远过不了电池」不等,而**漏掉的那一处不会自己报错**——它只是
+//! 少干活。
 //!
 //! 2026-08-06 加 `comment` 时的实测:我自己列出 10 处落地面,设计审补出 7 处,其中五处
 //! 就在这九个面里(identity-plan §4.3 第 11-16 条)。**靠人记清单已经证明记不全。**
 //!
 //! # 它守什么
 //!
-//! [`ENTITIES`] 是声明,九个提取器从**源码本身**解析出「实际登记了谁」,两边比对。
+//! [`ENTITIES`] 是声明,十一个提取器从**源码本身**解析出「实际登记了谁」,两边比对。
 //! 于是:
 //!
 //! - 加了新实体却漏掉某个面 → 该面的实际集合缺一项 → 红;
@@ -23,19 +24,30 @@
 //!
 //! # 它**不**守什么(如实写明,别当它是全覆盖)
 //!
-//! 1. **九个面之外的落地面不在此列**:两壳命令面、前端 UI、`replay` 的分发臂与
-//!    `validate_op_shape`、`VALIDATOR_VER` 的 bump、`move_item` 的跨空间随迁。前两者靠
-//!    e2e 与真机验收;后三者对**既有**实体的破坏会被既有行为测打红,但对**新**实体不会——
-//!    漏 replay 两臂的真实形态是「同版本对端的合法 op 落 UnsupportedVocab → 该 origin
-//!    挂起 + 误导性升级提示」(validate 兜底臂)或撞分发臂的 `unreachable!`,得靠新实体
-//!    **自带**的回放/收敛测试兜(每加实体必配:314 comment、329 device 两判例)。故本轮
-//!    不铺第十面,但别拿「既有测会红」当理由跳过那两处——那句对新实体是假的。
+//! 1. **十一个面之外的落地面不在此列**:两壳命令面、前端 UI、`VALIDATOR_VER` 的 bump、
+//!    `move_item` 的跨空间随迁。前两者靠 e2e 与真机验收;后两者对**既有**实体的破坏会被
+//!    既有行为测打红,但对**新**实体不会,得靠新实体**自带**的回放/收敛测试兜(每加实体
+//!    必配:314 comment、329 device 两判例)——别拿「既有测会红」当理由跳过,那句对新实体
+//!    是假的。
+//!
+//!    ⭐ **`replay` 两臂 383 起已收进来**(⑩⑪),它们此前是这段话里最贵的一条:漏掉的真实
+//!    形态是「同版本对端的合法 op 落 `UnsupportedVocab` → 该 origin 整条挂起 + 给用户一句
+//!    误导性的升级提示」(validate 兜底臂),或撞分发臂的 `unreachable!`。
+//!    `VALIDATOR_VER` 刻意**不**做成一个面 —— 它不按实体登记(全局一个数字),塞进这张表
+//!    就得给每个实体填一格无意义的值;它归「改了 shape 校验就 bump」那条纪律管。
 //! 2. **[`Match::Superset`] 的面守漏登记、不守假登记**:那几处的实际集合里本就混着非实体
 //!    表(`oplog` / `sync_meta` / `item_revisions` …),要求精确相等就得再维护一份「非实体
 //!    表」名单,那是把同一个腐烂点搬个家。
 //! 3. **「进了表」不等于「被覆盖」**:`convergence` 那一面只验表进没进指纹 SQL,验不了
 //!    随机命令流真的产过这个实体的 op。314 给 `comment` 配的 `COMMENT_ADDS`/`COMMENT_REMOVES`
 //!    覆盖计数才是那一格的判据,本锚不复制它。
+//! 4. **⑩⑪ 只守到「实体」这一级,不守「kind」**:两只提取器抓的是每条臂的**第一个**
+//!    字符串,故它答得了「`comment` 在不在这只 match 里」,答不了「`comment` 的每种 kind
+//!    都有臂吗」。⇒ **加一个新实体**漏登记会红(本面的立面目的),但给既有实体**加一种
+//!    新 kind**却忘了配 shape 校验,这两面看不见。
+//!    字据 = 383 的变异对照刀①:把 `("comment", "create")` 改成 `("comment", "__KNIFE1__")`
+//!    时锚**是绿的**(实体名还在);改掉 comment 的全部臂(刀①′)才红。要守到 kind 那一级,
+//!    得给 [`Entity`] 加一列 kind 清单 —— 那是另一轮的量,别在这儿顺手扩。
 
 use crate::test_src::{
     const_body, fn_body, sql_from_tables, sql_insert_tables, str_literals, strip_line_comments,
@@ -78,7 +90,7 @@ impl Facet {
     }
 }
 
-/// 一个同步实体在九个横切面上的登记。
+/// 一个同步实体在十一个横切面上的登记。
 ///
 /// **加字段 = 加一个面**,每个实体都得填一格,编译器不许漏。
 struct Entity {
@@ -106,9 +118,14 @@ struct Entity {
     op_preconditions: Facet,
     /// ⑨ `convergence::FINGERPRINTS` —— 三实例收敛 property test 的比对面。
     convergence: Facet,
+    /// ⑩ `replay::apply_remote_op` 的分发臂 —— 漏了会撞那条 `unreachable!`(383)。
+    replay_dispatch: Facet,
+    /// ⑪ `replay::validate_op_shape` 的臂 —— 漏了会落兜底臂 = 同版本对端的合法 op
+    /// 被判 `UnsupportedVocab`,该 origin 整条挂起 + 给用户一句误导性的升级提示(383)。
+    replay_shape: Facet,
 }
 
-/// 全部同步实体。**新增实体 = 这里加一行**,九格填满。
+/// 全部同步实体。**新增实体 = 这里加一行**,十一格填满。
 const ENTITIES: &[Entity] = &[
     Entity {
         name: "item",
@@ -122,6 +139,8 @@ const ENTITIES: &[Entity] = &[
         unbacked_rows: Facet::Required,
         op_preconditions: Facet::Required,
         convergence: Facet::Required,
+        replay_dispatch: Facet::Required,
+        replay_shape: Facet::Required,
     },
     Entity {
         name: "topic",
@@ -135,6 +154,8 @@ const ENTITIES: &[Entity] = &[
         unbacked_rows: Facet::Required,
         op_preconditions: Facet::Required,
         convergence: Facet::Required,
+        replay_dispatch: Facet::Required,
+        replay_shape: Facet::Required,
     },
     Entity {
         name: "link",
@@ -151,6 +172,8 @@ const ENTITIES: &[Entity] = &[
         unbacked_rows: Facet::Required,
         op_preconditions: Facet::Required,
         convergence: Facet::Required,
+        replay_dispatch: Facet::Required,
+        replay_shape: Facet::Required,
     },
     Entity {
         name: "image",
@@ -164,6 +187,8 @@ const ENTITIES: &[Entity] = &[
         unbacked_rows: Facet::Required,
         op_preconditions: Facet::Required,
         convergence: Facet::Required,
+        replay_dispatch: Facet::Required,
+        replay_shape: Facet::Required,
     },
     Entity {
         name: "space",
@@ -184,6 +209,8 @@ const ENTITIES: &[Entity] = &[
             "寄存器没有父实体,不存在依赖前置与因果序",
         ),
         convergence: Facet::Required,
+        replay_dispatch: Facet::Required,
+        replay_shape: Facet::Required,
     },
     Entity {
         name: "device",
@@ -203,6 +230,8 @@ const ENTITIES: &[Entity] = &[
         // `random_command` 加一支 set_device_alias(命名对象从 origin 池里挑,故 LWW 撞写
         // 真会发生)+ DEVICE_ALIAS_SETS/CLEARS 两个覆盖计数把「零覆盖的空绿」堵掉。
         convergence: Facet::Required,
+        replay_dispatch: Facet::Required,
+        replay_shape: Facet::Required,
     },
     Entity {
         name: "comment",
@@ -216,13 +245,16 @@ const ENTITIES: &[Entity] = &[
         unbacked_rows: Facet::Required,
         op_preconditions: Facet::Required,
         convergence: Facet::Required,
+        replay_dispatch: Facet::Required,
+        replay_shape: Facet::Required,
     },
 ];
 
 /// 今天允许存在的 [`Facet::Gap`] 条数。**只许降不许升**——真要新开口子,连同理由一起
 /// 改这个数字,那是个显式动作,不是悄悄多一条。
 ///
-/// 327 立表时是 1(device 的收敛覆盖),**328 补齐后降到 0** —— 九个面上再没有已知缺口。
+/// 327 立表时是 1(device 的收敛覆盖),**328 补齐后降到 0** —— 今天这十一个面上再没有
+/// 已知缺口(383 扩到十一面时两个新面也是直接满登记)。
 const GAP_BUDGET: usize = 0;
 
 // ---- 面的描述:键取谁、从哪解析、怎么比 --------------------------------------------
@@ -333,9 +365,25 @@ const FACETS: &[FacetSpec] = &[
         pick: |e| e.convergence,
         extract: extract_convergence,
     },
+    FacetSpec {
+        what: "回放分发臂",
+        site: "core/src/replay.rs 的 fn apply_remote_op 那只 match (entity, kind)",
+        key: Key::Entity,
+        matching: Match::Exact,
+        pick: |e| e.replay_dispatch,
+        extract: extract_replay_dispatch,
+    },
+    FacetSpec {
+        what: "op 形状校验",
+        site: "core/src/replay.rs 的 fn validate_op_shape 那只 match (entity, kind)",
+        key: Key::Entity,
+        matching: Match::Exact,
+        pick: |e| e.replay_shape,
+        extract: extract_replay_shape,
+    },
 ];
 
-// ---- 九个提取器:从源码解析出「实际登记了谁」 ----------------------------------------
+// ---- 十一个提取器:从源码解析出「实际登记了谁」 --------------------------------------
 //
 // 源码读取与切片件(Repo / strip_line_comments / fn_body / const_body / balanced /
 // sql_from_tables / sql_insert_tables / str_literals)327 时首铸在本文件,后收拢成
@@ -448,6 +496,52 @@ fn extract_convergence(repo: &Repo) -> BTreeSet<String> {
     sql_from_tables(&strip_line_comments(&body))
 }
 
+/// ⑩⑪ 共用:从一只 `match (op.entity.as_str(), op.kind.as_str())` 里抓出每条臂的
+/// **第一个**字符串字面量(= entity 名)。
+///
+/// 判据刻意窄:**只认行首就是 `("` 的行**。replay.rs 里全部分发臂都是这个形,而
+/// `format!("未知 op entity/kind:{}/{}", …)` 这类调用的 `("` 不在行首,故不会被误抓
+/// (放宽成「全文找 `("`」实测会把那句 format 的话术抓成一个「实体」)。
+///
+/// ⚠ 反过来说,哪天 rustfmt 把某条臂折了行、或那只 match 换了写法,这里就抓不到它 →
+/// 该实体判为漏登记 → **红**。这是有意的 fail-closed:抓不到时宁可响亮红,不许猜。
+/// 一行上可以有多条臂(`("item", "tombstone") | ("topic", "tombstone") => {}`),都收。
+fn match_arm_entities(src: &str, func: &str) -> BTreeSet<String> {
+    let body = strip_line_comments(&fn_body(src, func));
+    let mut out = BTreeSet::new();
+    for line in body.lines() {
+        let t = line.trim_start();
+        if !t.starts_with("(\"") {
+            continue;
+        }
+        let mut from = 0usize;
+        while let Some(i) = t[from..].find("(\"").map(|k| k + from) {
+            let rest = &t[i + 2..];
+            match rest.find('"') {
+                Some(end) => {
+                    out.insert(rest[..end].to_string());
+                    from = i + 2 + end;
+                }
+                None => break,
+            }
+        }
+    }
+    out
+}
+
+/// ⑩ 回放分发臂:漏了一个实体 = 它的 op 撞 `apply_remote_op` 末尾那条
+/// `unreachable!("词汇表已在入口校验")`。
+fn extract_replay_dispatch(repo: &Repo) -> BTreeSet<String> {
+    match_arm_entities(&repo.read("core/src/replay.rs"), "apply_remote_op")
+}
+
+/// ⑪ op 形状校验:漏了一个实体 = 它落 `validate_op_shape` 的兜底臂 =
+/// `UnsupportedVocab`。那条路是给**版本偏斜**准备的自愈路(挂起等升级),对一个
+/// 本端就认识的实体来说等不到任何东西 —— 该 origin 的 op 流从此整条卡住。
+fn extract_replay_shape(repo: &Repo) -> BTreeSet<String> {
+    match_arm_entities(&repo.read("core/src/replay.rs"), "validate_op_shape")
+}
+
 // ---- 锚 ----------------------------------------------------------------------------
 
 #[cfg(test)]
@@ -461,7 +555,7 @@ mod tests {
         }
     }
 
-    /// 结构锚:[`ENTITIES`] 声明的九格,与从源码解析出的实际登记逐面比对。
+    /// 结构锚:[`ENTITIES`] 声明的十一格,与从源码解析出的实际登记逐面比对。
     ///
     /// 四道防「静默变绿」(形照 312 `every_transport_submodule_is_scanned` /
     /// 326 `every_temp_dir_call_site_uses_a_swept_prefix`):
@@ -497,7 +591,7 @@ mod tests {
 
         // 防线 5(前门):下面每个面都先与 all_keys 取交集再比对——Superset 面的 raw
         // 混着非实体表(oplog/sync_meta/…),降噪是必要的;代价是「进了词汇表 CHECK、却
-        // 忘在 ENTITIES 加行」的新实体会被交集静默滤掉,九面对它全部照绿,恰好复现本表
+        // 忘在 ENTITIES 加行」的新实体会被交集静默滤掉,十一面对它全部照绿,恰好复现本表
         // 要防的「漏掉的那处不会自己报错」。词汇表这一面的 raw 可证无噪声(CHECK 里只有
         // 实体名),单独反向核一遍,把「进清单」这个动作本身也纳入 fail-closed:
         {
@@ -508,7 +602,7 @@ mod tests {
             assert!(
                 unregistered.is_empty(),
                 "词汇表 CHECK 里有 ENTITIES 没登记的实体:{unregistered:?} —— \
-                 新实体先在 ENTITIES 加一行(前门),九面守护才对它生效。"
+                 新实体先在 ENTITIES 加一行(前门),十一面守护才对它生效。"
             );
         }
 

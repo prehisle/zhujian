@@ -1,0 +1,60 @@
+name: preflight
+
+# ⭐ 385 立:**发版闸**。tag(桌面 `v*` / 安卓 `android-v*`)是自动发给真实用户的边界,
+# 而在此之前这个边界前面没有任何机器门槛——五套 cargo test 与十道发版门禁全靠人在本地
+# 记得跑。实测:十道门禁全跑 **2.7 秒**、三套 cargo test 约 3 分钟。
+# 单人项目可以没有 PR CI;**自动发布边界不可以没有刹车**。
+#
+# 它由两条 release workflow 用 `uses:` 调用(reusable workflow,**两处零抄写**——
+# 复制两份正是这一轮在批评的那类腐烂点)。也可以 `workflow_dispatch` 手动跑一趟,
+# 用来验证「这十道门禁在 Linux runner 上跑得起来」——它们此前只在作者的 Windows
+# 本机跑过。
+#
+# ⛔ 刻意**不**放进来的三样(判据见 progress-log 385):
+#   · e2e —— 要 Windows + 真 WebView2 + 先停掉占全局热键的生产实例,塞进来产的是
+#     环境噪声而不是发布判据;
+#   · 两壳的 cargo test(桌面 8 / 安卓 29)—— 要装 Tauri 系统依赖 / NDK,会把这一格
+#     从三五分钟拖成十几分钟。记在 385 的可优化项里;
+#   · check-deployed-drift —— 它问的是**线上**,要网络 + ssh,且在发版**前**问没有意义。
+
+permissions:
+  contents: read
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+jobs:
+  preflight:
+    name: cargo test 三套 + 十道门禁
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            core
+            server
+            sync-proto
+      # 与 nightly.yml 同口径的三套(两壳那两套见上方 ⛔)。
+      - run: cd core && cargo test --quiet
+      - run: cd server && cargo test --quiet
+      - run: cd sync-proto && cargo test --quiet
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+          cache: npm
+      # 只有 check-filter-parity 要 esbuild;其余九道只用 node 内置 + scripts/lib。
+      - run: npm ci
+
+      - name: 十道发版门禁(清单以 CLAUDE.md「怎么跑」为准)
+        run: |
+          set -euo pipefail
+          for g in lock-drift theme-drift contrast hardcoded-colors timing-drift \
+                   radius-drift fs-drift filter-parity hit-zone i18n-drift; do
+            echo "── check-$g"
+            node "scripts/check-$g.mjs"
+          done

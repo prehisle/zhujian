@@ -2,9 +2,9 @@ name: android-nightly
 
 # 每日夜间构建安卓「签名发版 APK」存档(不发版给用户)。走统一入口 scripts/build-android.mjs
 # (三处版本一致校验 + tauri android build + aapt 验 versionCode + build-profile.json 护栏)。
-# 安卓发版给用户仍走 docs/deploy.md §7.4 手动(gen-android-update-manifest + scp VPS)——
-# tag 触发的安卓发版链路留后续:安卓版本与桌面 v* 不同步(0.3.x vs 0.2.x)、发版节奏不绑,
-# 须另定 android-v* tag 方案,不混进本轮。
+# 安卓发版给用户走 android-release.yml(211 起:打 android-v* tag 触发,deploy.md §7.4a);
+# §7.4 单机手动保留为 fallback。安卓版本与桌面 v* 刻意不同步(0.3.x vs 0.2.x)、发版节奏不绑,
+# 故两条 tag 线各走各的。
 
 # 公开仓最小权限:自动 GITHUB_TOKEN 只读(本 job 只存 artifact、不建 Release、不碰 VPS)
 permissions:
