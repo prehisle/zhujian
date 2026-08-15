@@ -2,19 +2,23 @@ name: preflight
 
 # ⭐ 385 立:**发版闸**。tag(桌面 `v*` / 安卓 `android-v*`)是自动发给真实用户的边界,
 # 而在此之前这个边界前面没有任何机器门槛——五套 cargo test 与十道发版门禁全靠人在本地
-# 记得跑。实测:十道门禁全跑 **2.7 秒**、三套 cargo test 约 3 分钟。
+# 记得跑。实测:十道门禁全跑 **2.7 秒**、共享那三套 cargo test 约 3 分钟。
 # 单人项目可以没有 PR CI;**自动发布边界不可以没有刹车**。
 #
 # 它由两条 release workflow 用 `uses:` 调用(reusable workflow,**两处零抄写**——
 # 复制两份正是这一轮在批评的那类腐烂点)。也可以 `workflow_dispatch` 手动跑一趟,
-# 用来验证「这十道门禁在 Linux runner 上跑得起来」——它们此前只在作者的 Windows
-# 本机跑过。
+# 用来验证「这些门禁与测试在 Linux runner 上跑得起来」——它们原本只在作者的 Windows
+# 本机跑过。⭐ 十道门禁 385 已这样探过两趟(第一趟红在白名单漏了 `docs/ui-guidelines.md`,
+# 加白名单后第二趟全绿);**386 新加的 `shells` 那格还没在真 CI 上跑过,发版前先探一趟。**
 #
-# ⛔ 刻意**不**放进来的三样(判据见 progress-log 385):
+# ⭐ 386 补上第二格 `shells`:两壳的 cargo test(桌面 8 / 安卓 29)。它们守的是**壳装配
+# 契约**(单实例门 / 设备身份保持 / 坏库版本拒绝 / 主库丢失保护),此前不在任何 CI 里 ——
+# 385 把它记成可优化项时,五套里恰好漏掉的就是这两套。两格**并行**跑,故 preflight 的
+# 墙钟 = 两格里慢的那个,不是相加。
+#
+# ⛔ 刻意**不**放进来的两样(判据见 progress-log 385/386):
 #   · e2e —— 要 Windows + 真 WebView2 + 先停掉占全局热键的生产实例,塞进来产的是
 #     环境噪声而不是发布判据;
-#   · 两壳的 cargo test(桌面 8 / 安卓 29)—— 要装 Tauri 系统依赖 / NDK,会把这一格
-#     从三五分钟拖成十几分钟。记在 385 的可优化项里;
 #   · check-deployed-drift —— 它问的是**线上**,要网络 + ssh,且在发版**前**问没有意义。
 
 permissions:
@@ -38,7 +42,7 @@ jobs:
             core
             server
             sync-proto
-      # 与 nightly.yml 同口径的三套(两壳那两套见上方 ⛔)。
+      # 与 nightly.yml 同口径的三套(两壳那两套在下面的 `shells` 格,386 起)。
       - run: cd core && cargo test --quiet
       - run: cd server && cargo test --quiet
       - run: cd sync-proto && cargo test --quiet
@@ -58,3 +62,34 @@ jobs:
             echo "── check-$g"
             node "scripts/check-$g.mjs"
           done
+
+  # 386:两壳的 cargo test。与上面那格**互不依赖**,同时开跑。
+  shells:
+    name: cargo test 两壳(桌面 8 / 安卓 29)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v7
+
+      # 两壳都是 tauri crate,Linux 上编它要 webkit2gtk 一套(与 release.yml 的 Linux
+      # 那格逐字同一串;缺了会停在 pkg-config 找不到 webkit2gtk-4.1)。
+      # ⚠ 安卓壳这里编的是 **host target(x86_64-linux)**——跑的是纯 Rust 单测与起真
+      # 同步服务的集成测,**不需要 NDK**(NDK 只在真出 aarch64 的 .so 时才要)。
+      - name: Linux 系统依赖(Tauri v2)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file \
+            libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev pkg-config
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            src-tauri
+            android/src-tauri
+
+      # ⚠ 刻意**不**跑 `npm run build`:`dist/` 是 gitignore 的,CI 检出里没有,但
+      # `generate_context!` 只有在开了 `custom-protocol` 特性时才去嵌 `frontendDist`
+      # (tauri-macros:`dev: cfg!(not(feature = "custom-protocol"))`),而 cargo test
+      # 不开它 ⇒ 走 devUrl 那支,`dist/` 缺席照样编得过。别顺手补一步前端构建。
+      - run: cd src-tauri && cargo test --quiet
+      - run: cd android/src-tauri && cargo test --quiet
