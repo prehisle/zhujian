@@ -99,8 +99,24 @@ impl Drop for Ctx<'_> {
         // 随后的断连清场看到 `None`,**不得再报第二次失败**。
         self.settle_admin(Err("连接断开,未能确认是否已生效".into()));
         self.roster.end_session();
-        // 名册**会话内有效,断了就不认**(§5.4):UI 快照这一份在这里清成「不知道」。
-        // 每空间 gate 与 app 级准入表条目那两份归第②笔(§5.11 H5②)。
+        // 名册**会话内有效,断了就不认**(§5.4 / §5.11-⑧):三处一起清成「不知道」——
+        // ①每空间 gate ②UI 快照 ③app 级准入表条目那一份。⭐ ③ **与 ① 是同一只 `Arc`**
+        // (见 [`EngineSlot::gate`];第③笔已把把手真交进 `lan_net::Registration`),故它
+        // 不是第三个要人记得做的动作,是 ① 的推论 —— 这一句一执行,准入表里那份当场也是
+        // 「不知道」了。传 `seat` 只为触发器那一半,而 `Some → None` 命中不了任何人。
+        //
+        // ⛔ **gate 那一份排在 UI 那一份之前**(§5.11-⑦ 在收场侧的同构):UI 上名单一没,
+        // 用户就该认为「这道闸已经不在了」;反过来排会留一段「界面说不知道、闸还拦着人」。
+        //
+        // `Some → None` **谁也不 abort**(§5.11 那张表最后一行)—— 这在这里是**结构事实
+        // 不是纪律**:`apply_roster(None)` 算出的判据命中不了任何人,那个拆链循环跑零次。
+        // 下面这句只是把它钉住,不是靠它成立。
+        let outs = self.engine.apply_roster(None, self.seat.as_ref(), &self.status, &self.events);
+        debug_assert!(
+            outs.is_empty(),
+            "退回 fail-open 不该拆任何链,故也不该产出帧(§5.11);产出了 {} 枚",
+            outs.len()
+        );
         self.set_status(|s| s.roster = None);
     }
 }

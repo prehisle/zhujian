@@ -31,9 +31,9 @@ use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
 use serde_bytes::Bytes;
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::net::Ipv4Addr;
-use sync_proto::is_ulid;
+use sync_proto::{is_ulid, RosterEntry};
 
 use super::crypto::{self, ct_eq, Domain, FrameAddr, OpenError};
 use super::engine::BROADCAST;
@@ -502,6 +502,120 @@ impl DupCache {
         // 溢出无实际路径(单调刻度 + 10 分钟);饱和加法免得算术 panic 变成拒服务。
         self.seen.insert(key, now_ms.saturating_add(DUP_CACHE_TTL_MS));
         Ok(())
+    }
+}
+
+// ---- 权威名册闸(identity-plan §5.11;367 第②笔) ----
+
+/// **每空间一枚的直连准入闸**:把服务器下发的权威名册投影成 device-id 集合,拿它判
+/// 「这台对端还准不准直连」。
+///
+/// ```text
+/// None      => 放行(从没收到过名册 / 会话已收场 / 服务器连不上)
+/// Some(set) => 对端必须在 set 里,否则不建链、已建的拆掉
+/// ```
+///
+/// ⛔ **`None` 绝不许被折成空集合**(§5.11):那会把 fail-open 当场翻成「谁都不许连」,
+/// 而「路由器断了外网也照样同步」是直连的招牌承诺。两者在类型上分得开,这个区分**就是**
+/// 那条规则的可执行面(测里有一红一绿对照)。反过来 `Some(空集)` 是服务器**真说了**空,
+/// 照规则挡住所有人 —— 客户端不复算服务端「`admins` 非空 ⇒ 名册非空」那条不变量
+/// (371 那条纪律:判据只许有一份,在服务器那边)。
+///
+/// ⚠ **它是每空间的**,不是 app 级的:device_id 是「设备 × 空间」粒度,拿甲空间的名册
+/// 去判乙空间的对端就是张冠李戴(§5.11)。类型封不了这一格 —— 封它的是宿主给它的位置
+/// (每空间一枚引擎槽 / 准入表按 space_id 分条),故那两处各欠一只多空间隔离测。
+///
+/// **不落盘**(§5.11 规则 3):纯内存态,没有任何持久化入口,故「进程重开且服务器连不上
+/// 时这道闸不在」是结构事实。
+///
+/// **上界**:[`RosterGate::apply_roster`] 是 O(N log N)、[`RosterGate::allows`] 是
+/// O(log N),N = 名册条数。服务端把 N 闸在 [`sync_proto::MAX_ROSTER_DEVICES`] = 32。
+/// ⚠ **客户端刻意不另设条数闸**:369 起 `RosterSched.roster` 已经无闸存着同一份数据,
+/// 这里再加一道就是同一条规则的第二份描述、而且两份必然漂(first-draft-checklist 14)。
+/// 客户端这一侧的真实上界仍是既有的 WS 帧 1 MiB(约 24k 条)。要加得在 `on_roster` 那
+/// **一处**入口连 `RosterSched` 一起改 —— 记进可优化项,不在本笔顺手做。
+#[derive(Debug, Default)]
+pub struct RosterGate {
+    /// `None` = 不知道。⛔ **别给它加 `unwrap_or_default()` 一类的读法。**
+    allowed: Option<BTreeSet<String>>,
+}
+
+impl RosterGate {
+    /// **安全判据**:这台对端此刻准直连吗。`None` ⇒ 恒 `true`(fail-open)。
+    ///
+    /// 三道闸(入站 handoff 前 / 出站 handoff 前 / 链路集最终 install)问的都是这一句,
+    /// 且都问**当前**的它 —— §5.11「判据与触发器是两件事」的判据那一半。
+    ///
+    /// ⚠ **不问「本机在不在名册里」**:判据只关于对端。本机被别人移除时服务器直接
+    /// `Abort` 这条连接,本会话随即收场、三处 gate 一起清回 `None`;在客户端另判一次
+    /// 等于把服务器的不变量抄第二遍。
+    pub fn allows(&self, peer: &str) -> bool {
+        allows_in(&self.allowed, peer)
+    }
+
+    /// **唯一写入口**(§5.11:内容比较由 gate 自己做,不许调用方先算个 bool 传进来)。
+    ///
+    /// `None` = 退回 fail-open,故会话收场那次清场也走这一句 —— **不另开 `clear()`**:
+    /// 一条规则一个正式子,而且「`Some → None` 谁也不 abort」因此成了同一个算式的推论,
+    /// 不是收场路径上一条要人记得的例外(§5.11-⑧)。
+    ///
+    /// 投影(丢掉 `admin` 标记、去重、排序)是私有实现细节,外面拿不到半成品 ——
+    /// 于是「admin 标记与 revision 不属于 LAN 判据」是结构事实,不是纪律(§5.11 收窄④)。
+    pub fn apply_roster(&mut self, roster: Option<&[RosterEntry]>) -> NewlyDenied {
+        let after: Option<BTreeSet<String>> =
+            roster.map(|r| r.iter().map(|e| e.device.clone()).collect());
+        let before = std::mem::replace(&mut self.allowed, after.clone());
+        NewlyDenied { before, after }
+    }
+}
+
+/// [`RosterGate::apply_roster`] 交回的**判据**(不是名单)。
+///
+/// ⛔ `#[must_use]`(§5.11 点名:算出来却没人用的值,285 那条的反面)。
+///
+/// ⭐ **§5.11 那张四行表在这里是一句话的推论,不是四个分支**:
+///
+/// ```text
+/// hits(peer) = 换之前放行(peer) ∧ 换之后不放行(peer)
+/// ```
+///
+/// | gate 变化 | 表说 abort 谁 | 这句话算出来的 |
+/// |---|---|---|
+/// | `None → Some(S)` | 已绑定但不在 S 里的 | 旧的恒放行 ⇒ 命中 ⟺ `peer ∉ S` |
+/// | `Some(A) → Some(B)` | 只 `A − B` | 命中 ⟺ `peer ∈ A ∧ peer ∉ B` |
+/// | `Some(_) → None` | 谁也不 | 新的恒放行 ⇒ 恒不命中 |
+/// | 只多设备 / 只改 admin / 同内容新 revision | 不 abort | 投影后 `A ⊆ B` 或 `A = B` ⇒ 差集空 |
+///
+/// 写成四个分支的话,「只改 admin 不算移除」这类阴性性质要靠每个分支各自维护;写成这
+/// 一句,它们全是同一个算式的推论 —— §5.14-3c⑤ 那只阴性对照因此测的是**推论**,而不是
+/// 另一条并行实现。
+///
+/// **拥有式,不借 gate**:调用方要一手拿着它、一手改链路集与准入表(那两处都要 `&mut`),
+/// 借着 gate 就借不动了。代价 = 克隆一份 ≤32 条的集合。
+#[must_use]
+#[derive(Debug)]
+pub struct NewlyDenied {
+    before: Option<BTreeSet<String>>,
+    after: Option<BTreeSet<String>>,
+}
+
+impl NewlyDenied {
+    /// 这台对端**是被这次名册变更新拒掉的**吗(⇒ 该拆链 / 该 abort 它那只在飞握手)。
+    ///
+    /// ⚠ 「此刻不准连」与「这次才变得不准连」是两件事:本来就不在册的对端只满足前者,
+    /// 它没有链要拆、也没有握手要 abort。**安全判据恒是 [`RosterGate::allows`]**,
+    /// 这一句只回答「这次要动谁」(§5.11:generation 那半只是触发器,不参与判定)。
+    pub fn hits(&self, peer: &str) -> bool {
+        allows_in(&self.before, peer) && !allows_in(&self.after, peer)
+    }
+}
+
+/// 闸的判定本体(`None` = fail-open)。**两个类型共用这一句** —— 各写一遍就是同一条
+/// 规则的第二份描述,而它俩必须永远一致([`NewlyDenied::hits`] 正是拿两侧的它作差)。
+fn allows_in(set: &Option<BTreeSet<String>>, peer: &str) -> bool {
+    match set {
+        None => true,
+        Some(s) => s.contains(peer),
     }
 }
 

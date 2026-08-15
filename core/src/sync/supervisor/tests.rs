@@ -92,6 +92,7 @@ async fn stop_drops_the_lan_admission_seat() {
         self_seed: [6u8; 32],
         db: rt.db.clone(),
         active: Arc::new(Mutex::new(std::collections::HashSet::new())),
+        gate: Arc::new(Mutex::new(crate::sync::lan::RosterGate::default())),
         handoff,
     })
     .expect("探针条目该放得进去");
@@ -111,6 +112,7 @@ async fn stop_drops_the_lan_admission_seat() {
         self_seed: [6u8; 32],
         db: rt.db.clone(),
         active: Arc::new(Mutex::new(std::collections::HashSet::new())),
+        gate: Arc::new(Mutex::new(crate::sync::lan::RosterGate::default())),
         handoff: mpsc::channel(4).0,
     };
     assert!(lan.register(probe(rt.generation)).is_err(), "已撤销的代次不许把条目插回去");

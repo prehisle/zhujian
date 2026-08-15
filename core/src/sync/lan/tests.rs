@@ -1551,3 +1551,142 @@ fn every_msg_variant_is_accounted_for_against_the_frozen_type() {
         None
     );
 }
+
+// ---- 权威名册闸(identity-plan §5.11;367 第②笔) ----
+
+/// 第四台。四象限探针要「两边都在 / 只在旧的里 / 只在新的里 / 两边都不在」四格,
+/// 现成的三个常量差一个。
+const DEV_W: &str = "01JZFAKEDEVW0000000000WWWW";
+
+fn roster(entries: &[(&str, bool)]) -> Vec<RosterEntry> {
+    entries.iter().map(|(d, a)| RosterEntry { device: (*d).to_string(), admin: *a }).collect()
+}
+
+/// §5.14 五轮收敛点名的 `gate_transition_cases`:四种 `Option<Set>` 变化 → newly-denied。
+///
+/// 每行给探针两列期望:`allows`(换完之后此刻准不准连)与 `hits`(是不是**这次**才变得
+/// 不准)。⭐ **两列必须分开断**——它们是两件事,而把「本来就不在册」误算成 newly-denied
+/// 正是最容易写出来的那个 bug(见 `NewlyDenied::hits` 的注释);只断一列的话,第 2、8 行
+/// 那个 `W` 探针就白站了。
+#[test]
+fn gate_transition_cases() {
+    struct Case {
+        what: &'static str,
+        before: Option<&'static [(&'static str, bool)]>,
+        after: Option<&'static [(&'static str, bool)]>,
+        /// (peer, 换完之后 allows, 这次 hits)
+        probes: &'static [(&'static str, bool, bool)],
+    }
+
+    let cases = [
+        Case {
+            what: "None → Some(S):不在 S 里的全是新被拒的(旧的恒放行 ⇒ 差集不是空集)",
+            before: None,
+            after: Some(&[(DEV_D, true), (DEV_Z, false)]),
+            probes: &[
+                (DEV_D, true, false),
+                (DEV_Z, true, false),
+                (DEV_X, false, true),
+                (DEV_W, false, true),
+            ],
+        },
+        Case {
+            what: "Some(A) → Some(B):只有 A−B 算新拒;两边都不在的此刻不准连、但不是这次才变的",
+            before: Some(&[(DEV_D, true), (DEV_X, false)]),
+            after: Some(&[(DEV_D, true), (DEV_Z, false)]),
+            probes: &[
+                (DEV_D, true, false),
+                (DEV_X, false, true),
+                (DEV_Z, true, false),
+                (DEV_W, false, false),
+            ],
+        },
+        Case {
+            what: "Some(_) → None:退回 fail-open,谁也不 abort(会话收场走的就是这一格)",
+            before: Some(&[(DEV_D, true)]),
+            after: None,
+            probes: &[(DEV_D, true, false), (DEV_X, true, false), (DEV_W, true, false)],
+        },
+        Case {
+            what: "None → None:什么也没发生",
+            before: None,
+            after: None,
+            probes: &[(DEV_D, true, false), (DEV_X, true, false)],
+        },
+        Case {
+            what: "只多了一台无关设备:不得被当成 peer 已被移除(§5.14-3c⑤)",
+            before: Some(&[(DEV_D, true), (DEV_X, false)]),
+            after: Some(&[(DEV_D, true), (DEV_X, false), (DEV_Z, false)]),
+            probes: &[
+                (DEV_D, true, false),
+                (DEV_X, true, false),
+                (DEV_Z, true, false),
+                (DEV_W, false, false),
+            ],
+        },
+        Case {
+            what: "只改 admin 标记:投影后同集合,谁也不 abort(§5.14-3c⑤)",
+            before: Some(&[(DEV_D, false), (DEV_X, true)]),
+            after: Some(&[(DEV_D, true), (DEV_X, false)]),
+            probes: &[(DEV_D, true, false), (DEV_X, true, false), (DEV_W, false, false)],
+        },
+        Case {
+            what: "同内容的新 revision 又来一枚:不 abort",
+            before: Some(&[(DEV_D, true), (DEV_X, false)]),
+            after: Some(&[(DEV_D, true), (DEV_X, false)]),
+            probes: &[(DEV_D, true, false), (DEV_X, true, false), (DEV_W, false, false)],
+        },
+        Case {
+            what: "Some(空集):服务器真说了空 ⇒ 挡住所有人,在册过的那些是这次才被拒的",
+            before: Some(&[(DEV_D, true), (DEV_X, false)]),
+            after: Some(&[]),
+            probes: &[(DEV_D, false, true), (DEV_X, false, true), (DEV_W, false, false)],
+        },
+        Case {
+            what: "顺序与重复条目不影响投影(集合语义)",
+            before: Some(&[(DEV_D, true), (DEV_X, false)]),
+            after: Some(&[(DEV_X, false), (DEV_D, true), (DEV_X, false)]),
+            probes: &[(DEV_D, true, false), (DEV_X, true, false)],
+        },
+    ];
+
+    for c in &cases {
+        let mut gate = RosterGate::default();
+        // 先摆好「换之前」那一份。布景这一步产出的判据与本例无关,**显式丢掉** ——
+        // 这里刻意不写一句「顺手断一下」的弱断言:它在 `before.is_some()` 的那几行会
+        // 恒真,而恒真的断言是无效变异,比一句 `drop` 更会骗人(自检清单 11)。
+        drop(gate.apply_roster(c.before.map(roster).as_deref()));
+        let denied = gate.apply_roster(c.after.map(roster).as_deref());
+        for (peer, allows, hits) in c.probes {
+            assert_eq!(gate.allows(peer), *allows, "{}:allows({peer})", c.what);
+            assert_eq!(denied.hits(peer), *hits, "{}:hits({peer})", c.what);
+        }
+    }
+}
+
+/// ⛔ **`None` 绝不许被折成空集合**(§5.11)—— 一红一绿对照,单独站着。
+///
+/// 两次 `allows(DEV_X)` 的输入差别只有那一个 `Option`,结论却正好相反:有名册且不在册
+/// ⇒ 拒;没有名册 ⇒ 放行。把 `None` 折成空集合的实现会让**第二句**跟着变成拒 ——
+/// 「路由器断了外网也照样同步」这条招牌承诺当场失效,而且失效得很安静(状态面只会显示
+/// `lan_peers = 0`)。这是这道闸最贵的错法,故不并进上面那张矩阵。
+#[test]
+fn unknown_roster_is_fail_open_and_never_folds_into_an_empty_set() {
+    let mut gate = RosterGate::default();
+    // 绿:出厂态 = 从没收到过名册 ⇒ 谁都放行。
+    assert!(gate.allows(DEV_X), "出厂态必须 fail-open");
+    assert!(gate.allows(DEV_D));
+
+    // 红:服务器说了话,而 X 不在册 —— 且 X 正是「这次才被拒的」那一类。
+    let denied = gate.apply_roster(Some(&roster(&[(DEV_D, true)])));
+    assert!(!gate.allows(DEV_X), "有名册且不在册 ⇒ 拒");
+    assert!(gate.allows(DEV_D), "在册的不受影响");
+    assert!(denied.hits(DEV_X), "None → Some 时,不在册的对端就是这次新被拒的");
+    assert!(!denied.hits(DEV_D));
+
+    // 绿:退回「不知道」⇒ 又放行(而不是「上一份名册继续拦着」或「空集合拦住所有人」)。
+    let denied = gate.apply_roster(None);
+    assert!(gate.allows(DEV_X), "退回 None 必须 fail-open");
+    assert!(gate.allows(DEV_D));
+    assert!(!denied.hits(DEV_X), "Some → None 谁也不 abort");
+}

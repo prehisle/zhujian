@@ -586,11 +586,25 @@ impl Ctx<'_> {
                 // ⛔ 状态面的写入是**传进去的回调**,不是「回来之后自己记得写」
                 // (弹三 M2):顺序「先写状态面、再结账」由调度机内部保证,调用方
                 // 没有把它写反的余地。两个字段是 `Ctx` 的不同成员,分别借得开。
-                let (status, events) = (&self.status, &self.events);
+                //
+                // ⛔ **LAN 三道闸的对齐也在这个回调里,而且排在写 UI 之前**(§5.11-⑦):
+                // 否则「刷新成功」这个回执可能早于闸真正生效 —— 用户看见名单里没了那台,
+                // 而直连还开着。回调是同步的(调度机是 sans-io),故这里只做**同步的那半**
+                // (换闸 / 摘链 / 取消在飞握手 / 刷状态面),拆链产生的帧攒进 `outs`,
+                // 出了回调再 dispatch。⚠ 别为此把回调改成 async —— 那会毁掉 `roster.rs`
+                // 的 sans-io,而 §5.14-3d/3f/3g 那批 deadline 边界全靠它才验得动。
+                //
+                // **安全线性化点是「gate 已换 ∧ 链已摘」,不是「帧已发出去」**,故把
+                // dispatch 挪到回调之外不开任何窗口(§5.11 四轮 L1)。
+                let (status, events, engine) = (&self.status, &self.events, &mut *self.engine);
+                // 入站在飞握手的触发器要经它(§5.11 item ③;手机壳恒 `None`)。
+                let seat = self.seat.as_ref();
+                let mut outs = vec![];
                 self.roster.on_roster(request, revision, devices, |snap| {
+                    outs = engine.apply_roster(snap.as_deref(), seat, status, events);
                     set_status(status, events, |s| s.roster = snap);
                 });
-                Ok(())
+                self.dispatch(ws, outs).await
             }
             // `RosterReq` 的失败面(二轮 H2)。三格处置见 `RosterSched::on_nack`;
             // ⛔ `busy` 绝不许把已有的 `Some(roster)` 清成 `None`。

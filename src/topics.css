@@ -241,6 +241,12 @@
   transition: opacity 0.14s;
 }
 .v-topics .topic-head:hover .topic-actions { opacity: 1; }
+/* 就地展开了要交互的东西(类型输入 / 调色板 / 删除确认 / 失败提示)时钉住可见 ——
+   否则鼠标一离开这一行,正在填的输入框和刚报的错就一起隐形(topics.ts swapActions)。
+   `transition: none` 是要紧的一格:淡入期间 opacity 真的会有一瞬等于 0,而「祖先
+   opacity 为 0」正是 WebDriver 判不可见的判据 —— 这类就地编辑本来也该当场出现,
+   不该淡入。收起(去掉 .open)仍走上面那条 0.14s。 */
+.v-topics .topic-actions.open { opacity: 1; transition: none; }
 .v-topics.merging .topic-actions { display: none; } /* heads are for selection while merging */
 .v-topics .tbtn {
   font: var(--fs-12)/1 var(--font-sans);

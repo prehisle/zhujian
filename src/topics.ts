@@ -299,8 +299,19 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     };
 
     const actions = el("div", { className: "topic-actions" });
+    // 动作区默认只在悬停本行时现身(topics.css:opacity 0 → 1)。但它一旦就地换成
+    // **要交互的东西**(类型输入 / 调色板 / 删除确认 / 失败提示),那条规则就把它们
+    // 也一起藏了:鼠标离开这一行,正在填的输入框、刚报出来的错就当场隐形(键盘焦点
+    // 还在里面,打字照样进得去 —— 看不见的输入框)。故非默认态一律加 `.open` 钉住
+    // 可见;`showActions()` 是唯一的还原点。**每处都必须表态**:换内容只走 swapActions,
+    // 别再直接 actions.replaceChildren(漏一处就是漏一种隐形态)。
+    const swapActions = (open: boolean, ...nodes: (Node | string)[]) => {
+      actions.classList.toggle("open", open);
+      actions.replaceChildren(...nodes);
+    };
     const showActions = () =>
-      actions.replaceChildren(
+      swapActions(
+        false,
         tbtn(t("topics.color"), openColor),
         tbtn(t("topics.kind"), openKind),
         tbtn(t("topics.rename"), openEdit),
@@ -312,7 +323,8 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     // 行内操作失败:动作区就地报错(整页换错误页会被 refocus 指纹短路钉死,且把
     // 一次瞬时失败放大成全视图不可用——ui-audit P0 #6 与 inbox/board 同规)。
     function showOpError(e: unknown): void {
-      actions.replaceChildren(
+      swapActions(
+        true,
         el("span", { className: "te-err", textContent: t("topics.opFailed", { msg: String(e) }) }),
         tbtn(t("topics.gotIt"), showActions),
       );
@@ -342,7 +354,8 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
           showActions();
         }
       });
-      actions.replaceChildren(
+      swapActions(
+        true,
         input,
         tbtn(t("topics.save"), () => void saveKind(input.value)),
         tbtn(t("topics.clear"), () => void saveKind(null)),
@@ -378,7 +391,8 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         });
         return b;
       };
-      actions.replaceChildren(
+      swapActions(
+        true,
         el("div", { className: "color-row" }, [...TAG_COLORS.map((c) => swatch(c.hex)), swatch(null)]),
         tbtn(t("topics.done"), showActions),
       );
@@ -393,7 +407,8 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         showActions();
       });
       confirmOff = off;
-      actions.replaceChildren(
+      swapActions(
+        true,
         el("span", { className: "td-q", textContent: t("topics.deleteConfirm") }),
         tbtn(t("topics.cancel"), () => {
           disarmConfirm();

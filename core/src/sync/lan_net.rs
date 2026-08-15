@@ -42,6 +42,10 @@ const PREAUTH_MAX_INFLIGHT: usize = 8;
 const PREAUTH_MAX_PER_IP: usize = 2;
 /// 无效尝试的全局令牌桶:10/s,桶深 10。**只有失败才花令牌**——合法握手一枚不花,故
 /// 洪流打空桶时正常设备的直连仍能在下一秒挤进来;桶空即**静默丢**新连接(§10)。
+///
+/// ⚠ **「合法握手」按当前名册算**(identity-plan §5.11;367 第②笔的第③笔):材料全对、
+/// 但对端已不在本账户的设备名单里,记的是**对端的账**(花那一枚),不是本机侧的退款路
+/// ——理由写在 `handshake` 步骤 ⑦ 那段注释里(这枚令牌是 pre-auth 唯一的速率闸)。
 const PREAUTH_FAIL_PER_SEC: f64 = 10.0;
 const PREAUTH_FAIL_BURST: f64 = 10.0;
 /// 首帧 2s / Accept 后等 Confirm 2s / 全握手 10s(§3 / §10)。
@@ -115,6 +119,13 @@ pub(crate) struct Registration {
     /// `LanLinks::admit`(§7 二级规则),故这份视图偏一拍两边都安全——说有其实没有 =
     /// 对端退避后重来;说没有其实有 = 落到 `admit` 按 `link_id` 判。
     pub active: Arc<Mutex<HashSet<String>>>,
+    /// 该空间的**权威名册闸**(identity-plan §5.11;367 第②笔的第③笔)。
+    ///
+    /// ⭐ **交进来的是把手,不是快照**:它与 `EngineSlot::gate` 是**同一只 `Arc`**,故
+    /// 「app 级准入表这一份会不会与每空间那一份说不同的话」在类型层就不存在(§5.11
+    /// item ②/③)。也正因如此,§5.11-⑧ 那「会话收场三处一起清」在实现上收成两处 ——
+    /// 第三处是第一处的推论。
+    pub gate: Arc<Mutex<lan::RosterGate>>,
     pub handoff: mpsc::Sender<AdoptedLink>,
 }
 
@@ -131,6 +142,10 @@ struct SpaceEntry {
     self_seed: [u8; 32],
     db: Arc<Mutex<Connection>>,
     active: Arc<Mutex<HashSet<String>>>,
+    /// 见 [`Registration::gate`]。**不进 [`SpaceEntry::same_identity`]**:它不是身份的一
+    /// 部分,换了把手不该换代(换代 = abort 掉全部在飞握手);而「同一个 `run` 里恒是
+    /// 同一只 `Arc`」由 [`LanAdmission::register`] 里那句 `debug_assert` 守着。
+    gate: Arc<Mutex<lan::RosterGate>>,
     handoff: mpsc::Sender<AdoptedLink>,
 }
 
@@ -145,16 +160,39 @@ impl SpaceEntry {
     }
 }
 
+/// 一只在飞的 pre-auth 握手任务认下的东西(还没解析出 Intro 之前什么都没认下)。
+///
+/// **刻意不带代次**:撤位与换代都是「整个空间一起打」([`abort_bound_to`]),没有哪一处
+/// 按代次挑人 —— 存一个从来没人读的字段就是给下一个人留一处会漂的事实。每只任务自证用
+/// 的那份代次在它自己栈上的 [`Bound::epoch`] 里。
+struct TaskBound {
+    space: String,
+    /// 拨入方 device_id(= `Intro.from`)。**名册闸按它挑该 abort 谁**
+    /// (identity-plan §5.11 item ④:原先只有 space,「只 abort 新被拒的那些」就无从谈起)。
+    peer: String,
+}
+
 /// 一只在飞的 pre-auth 握手任务。
 struct Inflight {
-    /// 已认下的空间与代次(还没解析出 Intro 时是 `None`)。撤位按它挑该 abort 谁。
-    bound: Option<(String, u64)>,
+    /// 已认下的空间与对端(还没解析出 Intro 时是 `None`)。撤位与名册闸按它挑该 abort 谁。
+    bound: Option<TaskBound>,
     abort: Option<tokio::task::AbortHandle>,
     /// 撤位时这只任务已被判死,但**句柄还没装上**(多线程 runtime 下,新任务可能在
     /// `accept_loop` 调 [`LanAdmission::set_abort`] 之前就跑到了认空间那一步)。没有这
     /// 一位的话那次 abort 会静默落空——正确性不受影响(它随后的逐步自证照样拒绝移交),
     /// 但它会一直占着 pre-auth 名额直到 10s 超时。置位后由 `set_abort` 当场补刀。
     doomed: bool,
+    /// 这只任务**被取消**时,那枚预占的令牌算谁的账(§10;codex 实现审 L1)。
+    ///
+    /// 病:`serve_conn` 的分类记账写在 `handshake` 返回**之后**,而 abort 会把整只 future
+    /// 连同那一句一起丢掉 ⇒ [`ConnGuard::spend`] 停在默认的 `false` = 退款。于是同一条名册
+    /// 裁决会因**竞速**给出两个答案:握手先跑到步骤 ⑦ 就记对端的账,`apply_denied` 先 abort
+    /// 就记本机的账还退款。
+    ///
+    /// 形:**取消的理由由下手的那一方在表锁内写下**,不靠被取消者自己跑到哪一步 ——
+    /// 名册判死置 `true`(那是关于对端的持久授权裁决),撤位 / 换代([`abort_bound_to`])
+    /// 保持 `false`(本机侧的处境)。[`LanAdmission::finish`] 摘条目时把它交给 `Drop`。
+    charged: bool,
 }
 
 /// 无效尝试的令牌桶(§10)。
@@ -193,6 +231,13 @@ struct Table {
     arrivals: u64,
     /// 注册(含幂等续注册)次数(见 [`LanAdmission::registrations`])。
     registrations: u64,
+    /// 退过多少枚令牌(见 [`LanAdmission::refunds_for_test`])。**「这一次算谁的账」没有
+    /// 别的观测面** —— 桶里的水位会随时间自己补回来,拿它当判据是场竞速。
+    refunds: u64,
+    /// 名册判死过多少只在飞握手(**单调,永不减**;每只至多计一次,见 [`doom_denied`])。
+    /// 读取面在 [`LanAdmission::doomed_total`](`cfg(test)`);字段本身编进生产 = 8 字节
+    /// 加一次极低频自增,codex 实现审判定可接受(要零生产探针就得连字段一起条件编译)。
+    doomed_total: u64,
     /// **最终撤销水位**:space → 已被 supervisor 最终撤席的最高注册者号。见
     /// [`LanAdmission::revoke`]。
     ///
@@ -246,6 +291,8 @@ impl LanAdmission {
                 start: Instant::now(),
                 arrivals: 0,
                 registrations: 0,
+                refunds: 0,
+                doomed_total: 0,
                 revoked: HashMap::new(),
             }),
         })
@@ -283,6 +330,17 @@ impl LanAdmission {
         if t.spaces.get(&reg.space_id).is_some_and(|e| e.same_identity(&reg)) {
             // 同一代身份续注册:只把可能换了的把手刷新(handoff 通道随 `run` 生灭)。
             let e = t.spaces.get_mut(&reg.space_id).expect("刚查过在");
+            // ⛔ **名册闸也在这里刷**(identity-plan §5.11):这条路每 15 秒走一次(拨号
+            // 巡查恒幂等续注册),漏掉它就等于把「表里那份 = 最后一次注册交进来的那只」
+            // 变成一句没人守的话。今天它必是同一只 `Arc`(`owner` 进了 `same_identity`,
+            // 而 `owner` 每个 `run` 换一次、`EngineSlot::retire` 又刻意不换 gate),故这
+            // 句赋值是**恒等操作** —— 下面这句 `debug_assert` 把「恒等」从假设变成被核
+            // 对的事实,免得日后谁把 gate 的所有权挪个地方,两份就悄悄漂了(§5.11 item ②)。
+            debug_assert!(
+                Arc::ptr_eq(&e.gate, &reg.gate),
+                "同一代身份续注册却换了名册闸把手:准入表与引擎槽会各拿一份会漂的名单"
+            );
+            e.gate = reg.gate;
             e.handoff = reg.handoff;
             e.active = reg.active;
             e.db = reg.db;
@@ -303,6 +361,7 @@ impl LanAdmission {
                 self_seed: reg.self_seed,
                 db: reg.db,
                 active: reg.active,
+                gate: reg.gate,
                 handoff: reg.handoff,
             },
         );
@@ -325,6 +384,32 @@ impl LanAdmission {
         let w = t.revoked.entry(space_id.to_string()).or_insert(0);
         *w = (*w).max(owner);
         drop_entry(&mut t, space_id, owner);
+    }
+
+    /// 名册一变,**当场**判死那些新被拒的对端在飞的**入站**握手(identity-plan §5.11;
+    /// 出站那一半在 [`Dialer::abort_denied`])。
+    ///
+    /// ⚠ **触发器不是判据**:安全恒靠 `handshake` 步骤 ⑦ 每次问**当前** gate,这一句只是
+    /// 让不合法的那条不必等到 handoff 才被拒。判据用 [`lan::NewlyDenied::hits`](**这次**
+    /// 才变得不准连)而不是 `allows`(此刻准不准)—— 后者会把「只多了一台无关设备」
+    /// 「只改了 admin 标记」这类无关变更也拿来 abort 一批合法握手(§5.11 三轮 M3 那张表)。
+    ///
+    /// ⛔ **`abort()` 放锁之后再调**(§5.11 四轮 L1 / item ⑨):被 abort 的任务析构时要
+    /// 回**这张表**交还并发额度([`ConnGuard`]),锁内调它就是新造一条跨结构锁序。
+    /// ⚠ 现成的 [`abort_bound_to`] 是**在表锁内直接 abort**,不能原样拿来用。
+    /// 安全线性化点 = 「gate 已换 ∧ 握手已标 doomed」,**不是**「`abort()` 真的调到了」,
+    /// 故放锁到 abort 之间那一小段没有漏窗:此刻交上来的链在步骤 ⑦ 与协调者 install
+    /// 那两道闸下照样装不上。
+    ///
+    /// **每空间**(§5.11 item ⑩):只动 `space_id` 那一格的任务,甲空间的名册更新碰不到
+    /// 乙空间里同名的 device_id。
+    pub(crate) fn apply_denied(&self, space_id: &str, denied: &lan::NewlyDenied) {
+        // ⛔ 表锁是**这条 `let` 语句里的临时量**,它在这一句末尾就落地了;`abort()` 在下
+        // 一句,故「持锁时不 abort」是语句作用域的结构事实,不是一句要人记得的纪律。
+        let doomed = doom_denied(&mut self.lock(), space_id, denied);
+        for h in doomed {
+            h.abort();
+        }
     }
 
     /// 表侧自证:这枚任务认下的那一代还在吗。
@@ -359,7 +444,8 @@ impl LanAdmission {
         let id = t.next_task;
         t.tokens_sub();
         *t.per_ip.entry(ip).or_insert(0) += 1;
-        t.tasks.insert(id, Inflight { bound: None, abort: None, doomed: false });
+        t.tasks
+            .insert(id, Inflight { bound: None, abort: None, doomed: false, charged: false });
         Some(id)
     }
 
@@ -375,16 +461,19 @@ impl LanAdmission {
         f.abort = Some(abort);
     }
 
-    /// 任务收场:交还并发额度。
-    fn finish(&self, id: u64, ip: IpAddr) {
+    /// 任务收场:交还并发额度。返回值 = **这只任务被取消时该记对端的账吗**
+    /// (见 [`Inflight::charged`];没有条目 = 没人给它下过判决 = `false`)。
+    #[must_use]
+    fn finish(&self, id: u64, ip: IpAddr) -> bool {
         let mut t = self.lock();
-        t.tasks.remove(&id);
+        let charged = t.tasks.remove(&id).is_some_and(|f| f.charged);
         if let Some(n) = t.per_ip.get_mut(&ip) {
             *n -= 1;
             if *n == 0 {
                 t.per_ip.remove(&ip);
             }
         }
+        charged
     }
 
     /// 退还预占的那一枚令牌(§10):合法建链与**本机侧**原因(身份换代 / 条目已摘 /
@@ -392,6 +481,7 @@ impl LanAdmission {
     /// 对端给的东西不对 / 超时 = 留着不退,那正是「无效尝试」要花的那一枚。
     fn refund(&self) {
         let mut t = self.lock();
+        t.refunds += 1;
         let now = Instant::now();
         t.bucket.refill(now);
         t.bucket.tokens = (t.bucket.tokens + 1.0).min(PREAUTH_FAIL_BURST);
@@ -417,10 +507,14 @@ impl LanAdmission {
                 db: Arc::clone(&e.db),
             },
             active: Arc::clone(&e.active),
+            // **认下哪个空间,就拿哪个空间的名册闸**(identity-plan §5.11):device_id 是
+            // 「设备 × 空间」粒度,拿甲空间的名册去判乙空间的对端就是张冠李戴。这一格由
+            // 「从命中的那条 `SpaceEntry` 上取」保证,不是靠调用方传对。
+            gate: Arc::clone(&e.gate),
             handoff: e.handoff.clone(),
         };
         if let Some(f) = t.tasks.get_mut(&id) {
-            f.bound = Some((space, bound.epoch));
+            f.bound = Some(TaskBound { space, peer: intro.from.to_string() });
         }
         Some(bound)
     }
@@ -491,6 +585,37 @@ impl LanAdmission {
     pub(crate) fn registrations(&self) -> u64 {
         self.lock().registrations
     }
+
+    /// 这只在飞握手被判死了吗。**名册闸那条触发器的「立刻」观测面**:`abort()` 之后
+    /// 任务什么时候真落地由调度器说了算,而判死位是 `apply_denied` 当场写下的
+    /// (378 那条教训:凡是「等一个计数归零」的判据,先问一句「它自己会不会归零」)。
+    #[cfg(test)]
+    pub(crate) fn doomed_for_test(&self, id: u64) -> bool {
+        self.lock().tasks.get(&id).is_some_and(|f| f.doomed)
+    }
+
+    /// 同上,但不认任务号(跨模块的接线用例拿不到号)。**判死位没有第二个写者**:
+    /// 撤位/换代那条写的也是它,而那两件事在这类用例里根本没发生;超时自己收场则是
+    /// **摘条目**,数出来是 0 不是 1 —— 故「恰好一只被判死」这条判据不会被别的机制背书。
+    /// 退过多少枚令牌(§10「这一次算谁的账」的观测面)。**桶的水位当不了判据**:它按
+    /// 10/s 自己补,取样早几毫秒晚几毫秒答案就不同;计数是单调的,问什么时候都一样。
+    #[cfg(test)]
+    pub(crate) fn refunds_for_test(&self) -> u64 {
+        self.lock().refunds
+    }
+
+    /// 名册**一共**判死过多少只在飞握手。⭐ **单调、永不减**,故它是「整机接线」那只用例
+    /// 唯一站得住的判据:`doomed_count()` 会随任务收场自己归零(那只握手本来就有 10s 上限),
+    /// 拿它去轮询就是在跟被测对象的自愈赛跑 —— 赢了是运气,输了是随机红。
+    #[cfg(test)]
+    pub(crate) fn doomed_total(&self) -> u64 {
+        self.lock().doomed_total
+    }
+
+    #[cfg(test)]
+    pub(crate) fn doomed_count(&self) -> usize {
+        self.lock().tasks.values().filter(|f| f.doomed).count()
+    }
 }
 
 impl Table {
@@ -528,12 +653,56 @@ fn drop_entry(t: &mut Table, space_id: &str, owner: u64) {
     abort_bound_to(t, space_id);
 }
 
+/// 把该空间里**新被名册拒掉**的在飞握手判死,并把它们的 abort 把手交回调用方
+/// ([`LanAdmission::apply_denied`] 在放锁之后才真去 abort)。
+///
+/// ⛔ **这个函数体里一个 `abort` 都不许有**(§5.11 item ⑨,由结构锚
+/// `the_lock_holder_never_aborts` 守着):它是唯一持着表锁的那一半。
+///
+/// 上界:`tasks` 至多 [`PREAUTH_MAX_INFLIGHT`] 条,`hits` 是 O(log N)、N ≤ 32(服务端的
+/// `MAX_ROSTER_DEVICES`),故这段临界区的长度由常量定、与数据规模无关。
+fn doom_denied(
+    t: &mut Table,
+    space_id: &str,
+    denied: &lan::NewlyDenied,
+) -> Vec<tokio::task::AbortHandle> {
+    let mut out = vec![];
+    let mut doomed_total = t.doomed_total;
+    for f in t.tasks.values_mut() {
+        let Some(b) = &f.bound else { continue };
+        if b.space != space_id || !denied.hits(&b.peer) {
+            continue;
+        }
+        // **只数「第一次被名册判死」**(codex 实现审 GO 轮的精度备注):`charged` 只有这里
+        // 写,故它就是「这只任务此前被名册判过死没有」。不加这一格的话,一只尚未落地的
+        // 任务经历「重新加入 → 再次移除」会被计两次,而这个计数的**名字**说的是握手只数
+        // —— 注释里的断言与它数的东西必须是同一件事(314 那条教训)。
+        if !f.charged {
+            doomed_total += 1;
+        }
+        // 先判死再交把手:句柄可能还没装上(同 [`abort_bound_to`] 那场赛跑),那一位让
+        // `set_abort` 接着补刀,故这次判死绝不会静默落空。
+        f.doomed = true;
+        // **取消的理由在这里就写死**(codex 实现审 L1):被名册摘掉是关于**对端**的持久
+        // 授权裁决,故它那枚预占的令牌不退 —— 与「跑到步骤 ⑦ 才被拒」记同一笔账,不因
+        // 「谁先跑到」而变。⚠ 撤位 / 换代那条路([`abort_bound_to`])**刻意不置这一位**:
+        // 那是本机侧的处境,照旧退款。
+        f.charged = true;
+        // 判死位与记账位都写完了,才轮到把把手交出去 —— 交出去之后这只任务随时可能落地。
+        if let Some(a) = &f.abort {
+            out.push(a.clone());
+        }
+    }
+    t.doomed_total = doomed_total;
+    out
+}
+
 /// abort 掉认在该空间的全部未移交任务(§6:撤位与换代都要**当场**取消,不等它们自己
 /// 到超时——「摘了条目但旧任务还能交一条链」正是准入表要关的窗)。
 fn abort_bound_to(t: &mut Table, space_id: &str) {
     for f in t.tasks.values_mut() {
-        let Some((s, _)) = &f.bound else { continue };
-        if s != space_id {
+        let Some(b) = &f.bound else { continue };
+        if b.space != space_id {
             continue;
         }
         // 先判死再 abort:句柄可能还没装上(多线程 runtime 下 `set_abort` 与任务开跑是
@@ -590,7 +759,22 @@ struct Bound {
     epoch: u64,
     id: LanIdentity,
     active: Arc<Mutex<HashSet<String>>>,
+    /// 该空间名册闸的把手(identity-plan §5.11)。**与准入表、引擎槽手上那只是同一份**,
+    /// 故「交 handoff 之前问的是当前名册」是结构事实,不是一份拷贝碰巧还新鲜。
+    gate: Arc<Mutex<lan::RosterGate>>,
     handoff: mpsc::Sender<AdoptedLink>,
+}
+
+/// 名册闸此刻放行这台对端吗(identity-plan §5.11 的**判据**那一半)。
+///
+/// **四处共用这一句**(入站步骤 ⑦ / 出站 `dial_one` / 拨号巡查的 spawn 前闸 / 协调者
+/// 装链前的 `EngineSlot::gate_allows`):各写一遍就是同一条规则的第二份描述
+/// (first-draft-checklist 14),而这四处必须永远说同一句话。
+///
+/// ⛔ **锁只在这一句里活**:名册闸是叶子锁(见 `EngineSlot::gate`),持有它的时候不许再
+/// 去拿任何别的锁,故它与紧邻的 `id.current()`(要库锁)恒是先后两次独立取锁、绝不嵌套。
+pub(crate) fn gate_allows(gate: &Arc<Mutex<lan::RosterGate>>, peer: &str) -> bool {
+    gate.lock().expect("roster gate mutex poisoned").allows(peer)
 }
 
 // ---- 监听 socket ------------------------------------------------------------------
@@ -671,8 +855,12 @@ struct ConnGuard {
 
 impl Drop for ConnGuard {
     fn drop(&mut self) {
-        self.adm.finish(self.id, self.ip);
-        if !self.spend {
+        // ⛔ **两个判决源,缺一不可**(codex 实现审 L1):`spend` 是这只任务**自己跑完**得出
+        // 的分类,而 `finish` 交回的是**别人在它跑到那一步之前就下的**判决(名册判死)。
+        // 只看前者的话,「被 abort 掉的那只」永远停在默认的退款上 —— 同一条名册裁决因此
+        // 会因竞速给出两个答案。
+        let charged = self.adm.finish(self.id, self.ip);
+        if !self.spend && !charged {
             self.adm.refund();
         }
     }
@@ -741,6 +929,20 @@ async fn handshake(adm: &Arc<LanAdmission>, mut stream: TcpStream, id: u64) -> P
     // ⑦ **交 handoff 之前最后自证一次**(§6 ⑤)。
     if !adm.epoch_current(&bound) || !bound.id.current() {
         return PreAuth::Aborted;
+    }
+    // ⛔ **名册闸的入站那一道,挂在同一句自证上**(identity-plan §5.11;**不新开生命周期
+    // 入口**):从 ② 认下空间到这里跨了三次 `.await`,名册这期间可能已经把这台摘掉,而
+    // 此刻它还没进链路集 —— 「拆现有链」什么也拆不到,只有这一句拦得住这条路。
+    //
+    // ⭐ **算「对端的无效尝试」(花那一枚令牌),不走本机侧的退款路**。这一格是本笔自己
+    // 定的形,理由:①`admit_conn` 那枚令牌是 pre-auth 唯一的**速率**闸,退了款就等于给
+    // 一台已被移除的设备开了条「无限次让本机验签」的路(它手上的 K_acc 与钉住的公钥都还
+    // 是真的,前面几道闸一道也拦不住它);②`Aborted` 那一档的语义是「**本机**此刻服务不
+    // 了」(换代 / 条目已摘 / 移交队满),而名册拒绝是一条关于**对端**的、持久的授权裁决,
+    // 不是本机的临时处境;③代价是对称的:合法对端只在「名册刚变、它还不知道」那几分钟里
+    // 被记账,而它自带 15s→300s 退避,相对 10/s 的桶是可忽略量。
+    if !gate_allows(&bound.gate, intro.from) {
+        return PreAuth::Rejected;
     }
     // `try_send` 不 await:协调者一有空就取,队满(4 枚)说明它正忙——关掉这条,对端
     // 退避后重来,绝不让握手任务挂在通道上占着 pre-auth 名额。
@@ -961,6 +1163,22 @@ impl Dialer {
         self.peers.remove(peer);
     }
 
+    /// 名册一变,**当场**取消那些新被拒的对端的在飞出站握手(identity-plan §5.11)。
+    ///
+    /// ⚠ 这是**触发器不是判据**:安全靠的是三道闸各自问一次当前 gate,这一句只是让不合法
+    /// 的那条不必等到 handoff 才被拒。故它按 [`lan::NewlyDenied::hits`](**这次**才变得
+    /// 不准)而不是 `allows`(此刻准不准)—— 后者会把「只多了一台无关设备」「只改了 admin
+    /// 标记」这类无关变更也拿来 abort 一批合法握手(§5.11 三轮 M3 拍死的那张表)。
+    pub(crate) fn abort_denied(&mut self, denied: &lan::NewlyDenied) {
+        self.inflight.retain(|peer, h| {
+            let doomed = denied.hits(peer);
+            if doomed {
+                h.abort();
+            }
+            !doomed
+        });
+    }
+
     /// 撤位(§6 ⑤「stop / 撤位要同时取消入站与出站全部未移交的握手任务」)。
     pub(crate) fn retire(&mut self) {
         for (_, h) in self.inflight.drain() {
@@ -981,6 +1199,10 @@ impl Dialer {
         k_acc: &[u8; 32],
         self_seed: &[u8; 32],
         db: &Arc<Mutex<Connection>>,
+        // 权威名册闸(identity-plan §5.11)。**传的是把手不是快照**:spawn 出去的那只握手
+        // 任务要在交 handoff 之前拿**当时**的名册再问一次,拷一份进去就是「各存一份会漂的
+        // 名单」(§5.11 item ②)。
+        gate: &Arc<Mutex<lan::RosterGate>>,
         self_listening: bool,
         // 本机有监听席位吗(桌面壳 = 有)。**它决定「一台对端都没缓存」时计时器摘不摘**:
         // 本机通告地址的刷新与准入注册的重试**只由这条巡查驱动**(codex 三轮 H1),摘了
@@ -1035,6 +1257,14 @@ impl Dialer {
             if self.inflight.contains_key(&peer) {
                 continue;
             }
+            // ⛔ **名册闸,在 spawn 之前**(identity-plan §5.11 item ⑤ 的前一半):不在册的
+            // 对端一只任务都不该起。与下面那几种一样属于「**结构上**不该拨」,故照它们的
+            // 办法顺手清掉退避条目 —— 留着的话它那个早已过期的 `next` 会把巡查时刻永远钉在
+            // 过去(空转)。名册退回 `None` 或它重新在册时,恒在的空闲巡查会再拨。
+            if !gate_allows(gate, &peer) {
+                self.peers.remove(&peer);
+                continue;
+            }
             // §7 一级规则 + 「拨号前置」三条(禁用/无钥、无 listen、逾期、候选全被过滤掉)。
             // **这几种是「结构上不该拨」,故顺手清掉条目**:留着的话它那个早已过期的
             // `next` 会把巡查时刻永远钉在过去。
@@ -1075,6 +1305,7 @@ impl Dialer {
                     self_seed: *self_seed,
                     db: Arc::clone(db),
                 },
+                gate: Arc::clone(gate),
                 handoff: handoff.clone(),
             };
             let task = tokio::spawn(dial_task(bound, peer.clone(), pubkey, targets));
@@ -1147,6 +1378,9 @@ fn dial_jitter(delay_secs: u64) -> Duration {
 /// 空间是隐含的——拨号器每空间一只,库把手与移交通道都是那个空间的。
 struct DialBound {
     id: LanIdentity,
+    /// 权威名册闸的把手(identity-plan §5.11)。**与协调者手上那只是同一份**,故「交
+    /// handoff 之前问的是当前名册」是结构事实,不是一份拷贝碰巧还新鲜。
+    gate: Arc<Mutex<lan::RosterGate>>,
     handoff: mpsc::Sender<AdoptedLink>,
 }
 
@@ -1228,8 +1462,12 @@ async fn dial_one(
     if write_wire(&mut stream, &confirm).await.is_err() {
         return DialStep::Unreachable;
     }
-    // ③ 跨过写 Confirm 那次 await 了:**交 handoff 之前**最后自证。
-    if !b.id.current() {
+    // ③ 跨过写 Confirm 那次 await 了:**交 handoff 之前**最后自证。⛔ 名册闸的第二道也
+    // 挂在这一句上(identity-plan §5.11 item ⑤ 的后一半;**不新开生命周期入口**):从
+    // `round` 里那次 spawn 前的复核到这里跨了好几次 await,名册这期间可能已经把它摘掉,
+    // 而此刻它还没进链路集 —— 「拆现有链」什么也拆不到,只有这一句拦得住这条路。
+    // 两次取锁**先后独立、绝不嵌套**(gate 是叶子锁)。
+    if !gate_allows(&b.gate, peer) || !b.id.current() {
         return DialStep::Done;
     }
     // `try_send` 不 await:队满(4 枚)说明协调者正忙,关掉这条、退避后重来,绝不挂在
@@ -1332,7 +1570,8 @@ mod tests {
         let ip: IpAddr = Ipv4Addr::LOCALHOST.into();
         let id = adm.admit_conn(ip).expect("头一枚该放行");
         // 假装它已经认下了空间(`bind_task` 那一步),但句柄还在路上。
-        adm.lock().tasks.get_mut(&id).expect("在表上").bound = Some(("s1".into(), 1));
+        adm.lock().tasks.get_mut(&id).expect("在表上").bound =
+            Some(TaskBound { space: "s1".into(), peer: "01PEERAAAAAAAAAAAAAAAAAAAA".into() });
         let victim = tokio::spawn(async { std::future::pending::<()>().await });
         abort_bound_to(&mut adm.lock(), "s1");
         assert!(!victim.is_finished(), "句柄还没交上去,这一下当然打不着");
@@ -1381,6 +1620,7 @@ mod tests {
             self_seed: [7u8; 32],
             db: Arc::clone(&db),
             active: Arc::clone(&active),
+            gate: Arc::new(Mutex::new(lan::RosterGate::default())),
             handoff: handoff.clone(),
         })
         .expect("注册");
@@ -1406,6 +1646,7 @@ mod tests {
                 db: Arc::clone(&db),
             },
             active: Arc::clone(&active),
+            gate: Arc::new(Mutex::new(lan::RosterGate::default())),
             handoff: handoff.clone(),
         };
         assert!(matches!(adm.accept(&bound(epoch), &intro, &gate), AcceptOutcome::Ready(..)));
@@ -1416,6 +1657,167 @@ mod tests {
         assert!(
             matches!(adm.accept(&bound(epoch + 1), &intro, &gate), AcceptOutcome::LocalStale),
             "代次对不上 = 本机侧的事,不许算成无效尝试"
+        );
+    }
+
+    // ---- 权威名册闸的入站那一份(identity-plan §5.11;367 第②笔的第③笔) ----------
+
+    /// 造一份名册闸(拥有式,调用方自己留把手)。
+    fn gate_of(devices: Option<&[&str]>) -> Arc<Mutex<lan::RosterGate>> {
+        let g = Arc::new(Mutex::new(lan::RosterGate::default()));
+        drop(push_roster(&g, devices));
+        g
+    }
+
+    /// 换一份名册,交回判据(**只多一台无关设备**这种变更算出来的判据命中不了任何人)。
+    fn push_roster(g: &Arc<Mutex<lan::RosterGate>>, devices: Option<&[&str]>) -> lan::NewlyDenied {
+        let entries: Option<Vec<sync_proto::RosterEntry>> = devices.map(|ds| {
+            ds.iter().map(|d| sync_proto::RosterEntry { device: (*d).into(), admin: false }).collect()
+        });
+        let mut lock = g.lock().unwrap();
+        lock.apply_roster(entries.as_deref())
+    }
+
+    /// 注册一个空间(只填名册闸用例关心的那几件;账户与 K_acc 由调用方分开,免得
+    /// `resolve_intro` 多命中)。
+    fn register_space(
+        adm: &Arc<LanAdmission>,
+        space: &str,
+        acct: &str,
+        me: &str,
+        k_acc: [u8; 32],
+        gate: &Arc<Mutex<lan::RosterGate>>,
+    ) {
+        adm.register(Registration {
+            space_id: space.into(),
+            owner: 1,
+            account_id: acct.into(),
+            self_device: me.into(),
+            k_acc,
+            self_seed: [7u8; 32],
+            db: Arc::new(Mutex::new(rusqlite::Connection::open_in_memory().unwrap())),
+            active: Arc::new(Mutex::new(HashSet::new())),
+            gate: Arc::clone(gate),
+            handoff: mpsc::channel(4).0,
+        })
+        .expect("注册");
+    }
+
+    /// 手工摆一只「已认下空间与对端」的在飞握手(真跑一遍三步握手太重,而这几只用例要
+    /// 验的是**表怎么挑人**)。返回任务号与那只永远不会自己结束的 future 的把手。
+    fn fake_inflight(
+        adm: &Arc<LanAdmission>,
+        ip: IpAddr,
+        space: &str,
+        peer: &str,
+    ) -> (u64, tokio::task::JoinHandle<()>) {
+        let id = adm.admit_conn(ip).expect("该放行");
+        adm.lock().tasks.get_mut(&id).expect("在表上").bound =
+            Some(TaskBound { space: space.into(), peer: peer.into() });
+        // **刻意 `pending` 到底**:它自己永远不会收场,故「被取消了」这条判据不可能被
+        // 任何超时预算背书(378 那条教训的同族)。
+        let task = tokio::spawn(async { std::future::pending::<()>().await });
+        adm.set_abort(id, task.abort_handle());
+        (id, task)
+    }
+
+    /// **多空间隔离**(§5.11 item ⑩):甲空间的名册更新不得碰乙空间 —— 哪怕两边**是同一个
+    /// device_id**(device_id 是「设备 × 空间」粒度,拿甲的名册去判乙的对端就是张冠李戴)。
+    ///
+    /// 同轮带 §5.14-3c⑤ 那条阴性:**只多了一台无关设备**不许 abort 任何人。
+    #[tokio::test]
+    async fn a_roster_change_only_dooms_handshakes_bound_to_that_space() {
+        const PEER: &str = "01PEERAAAAAAAAAAAAAAAAAAAA";
+        const OTHER: &str = "01OTHERAAAAAAAAAAAAAAAAAAA";
+        let adm = LanAdmission::ephemeral();
+        let g1 = gate_of(Some(&[PEER, OTHER]));
+        // 三只在飞:甲/PEER、**乙/同一个 PEER**、甲/别的对端。
+        let (id_a, victim) = fake_inflight(&adm, Ipv4Addr::new(10, 0, 0, 1).into(), "s1", PEER);
+        let (id_b, bystander_space) =
+            fake_inflight(&adm, Ipv4Addr::new(10, 0, 0, 2).into(), "s2", PEER);
+        let (id_c, bystander_peer) =
+            fake_inflight(&adm, Ipv4Addr::new(10, 0, 0, 3).into(), "s1", OTHER);
+
+        // 阴性:只多了一台无关设备 —— 一只都不许判死。
+        let denied = push_roster(&g1, Some(&[PEER, OTHER, "01STRANGER0000000000000000"]));
+        adm.apply_denied("s1", &denied);
+        assert!(!adm.doomed_for_test(id_a), "无关变更不得当成它被移除(§5.11 三轮 M3)");
+
+        // 阳性:把 PEER 从**甲**的名册里摘掉。
+        let denied = push_roster(&g1, Some(&[OTHER]));
+        adm.apply_denied("s1", &denied);
+        // 判死位是**当场**写下的,故立刻问就问得出来(不必等 abort 真落地)。
+        assert!(adm.doomed_for_test(id_a), "甲空间里被摘的那只该当场判死");
+        assert!(!adm.doomed_for_test(id_b), "乙空间里同名的 device_id 一根汗毛都不许动");
+        assert!(!adm.doomed_for_test(id_c), "同空间但没被摘的对端不许动");
+
+        // 而且真的取消了(判死位只说「记了账」,这一句说「刀真的落下了」)。
+        let done = tokio::time::timeout(Duration::from_secs(2), victim).await;
+        assert!(done.expect("该当场取消").expect_err("该被取消").is_cancelled());
+        assert!(!bystander_space.is_finished() && !bystander_peer.is_finished(), "旁人还活着");
+        bystander_space.abort();
+        bystander_peer.abort();
+    }
+
+    /// **闸是每空间的**,而且「拿哪一份」由**命中的那条准入条目**决定,不是调用方传对的:
+    /// `bind_task` 从解析出来的那个空间上取把手(§5.11 那句「别用一个 app 级全局集合」)。
+    #[tokio::test]
+    async fn a_bound_handshake_carries_the_gate_of_the_space_it_resolved_to() {
+        const ACCT1: &str = "01ACCT1AAAAAAAAAAAAAAAAAAA";
+        const ACCT2: &str = "01ACCT2AAAAAAAAAAAAAAAAAAA";
+        const ME1: &str = "01SELF1AAAAAAAAAAAAAAAAAAA";
+        const ME2: &str = "01SELF2AAAAAAAAAAAAAAAAAAA";
+        const PEER: &str = "01PEERAAAAAAAAAAAAAAAAAAAA";
+        let adm = LanAdmission::ephemeral();
+        let (g1, g2) = (gate_of(Some(&[PEER])), gate_of(Some(&["01NOBODYAAAAAAAAAAAAAAAAAA"])));
+        register_space(&adm, "s1", ACCT1, ME1, [5u8; 32], &g1);
+        register_space(&adm, "s2", ACCT2, ME2, [6u8; 32], &g2);
+
+        // 一枚打给**乙**空间的 Intro(MAC 绑 ACCT2/K_acc2,故只可能命中 s2)。
+        let (_d, wire) = lan::LanDialer::start(&lan::DialParams {
+            account_id: ACCT2,
+            k_acc: &[6u8; 32],
+            self_seed: &[9u8; 32],
+            self_device: PEER,
+            peer_device: ME2,
+            peer_pubkey: &[1u8; 32],
+        });
+        let intro = lan::Intro::parse(&wire).expect("形态合法");
+        let id = adm.admit_conn(Ipv4Addr::LOCALHOST.into()).expect("该放行");
+        let bound = adm.bind_task(id, &intro).expect("该恰命中 s2");
+        assert_eq!(bound.space, "s2");
+        assert!(Arc::ptr_eq(&bound.gate, &g2), "拿的必须是命中那个空间的名册闸");
+        assert!(
+            !gate_allows(&bound.gate, PEER),
+            "乙空间的名册里没有它 —— 甲空间在册这件事一点都不该管用"
+        );
+    }
+
+    /// 结构锚(§5.11-⑨):**持着准入表锁的那一半里,一个 `abort` 都不许有**。
+    ///
+    /// ⚠ **诚实边界**:今天违反它也测不出行为差别 —— 实测 tokio 的 `abort()` 不会在调用
+    /// 线程上当场丢掉那只 future(故 [`ConnGuard`] 的析构不会当场回头来拿这把锁),所以
+    /// 「锁内 abort」不会当场死锁。这条锚守的是**设计规则**(不新造跨结构锁序),不是一个
+    /// 今天观测得到的故障;它咬的是「日后有人把 `abort()` 挪进 `doom_denied`」。
+    #[test]
+    fn the_lock_holder_never_aborts() {
+        let src = include_str!("lan_net.rs");
+        let prod = src.split("\nmod tests {").next().expect("生产段");
+        // **先把注释整条剔掉再匹配**(mutation-check 铁律 9):这一段的散文里本来就要点名
+        // `abort_bound_to`「是锁内直接 abort」,拿原文匹配的话锚会命中自己的注释。
+        let prod: String =
+            prod.lines().map(|l| l.split("//").next().unwrap_or("")).collect::<Vec<_>>().join("\n");
+        let start = prod.find("fn doom_denied(").expect("`doom_denied` 还在吗");
+        let body = &prod[start..];
+        let end = body.find("\n}\n").expect("函数体的收尾");
+        // 判据是**调用**(`abort(`),不是名字:函数体本来就要读 `f.abort` 那个字段、
+        // 也要在注释里点名 `set_abort` 的补刀路 —— 判成「出现 abort 三个字母就红」的话,
+        // 这道锚从写下的第一天起就恒红,而恒红与恒绿一样答不出问题。
+        assert!(
+            !body[..end].contains("abort("),
+            "`doom_denied` 是唯一持着表锁的那一半,它里面出现 `abort(` \
+             就是把跨结构锁序新造了回来(§5.11-⑨);abort 的正当位置在 `apply_denied` \
+             那句放锁之后"
         );
     }
 

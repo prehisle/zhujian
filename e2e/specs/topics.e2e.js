@@ -33,6 +33,17 @@ async function setField(sel, value) {
   );
 }
 
+// 把鼠标停到视口左上角(任何标签行都够不着),让「本行是否被悬停」成为**已知量**。
+// 由来:`.topic-actions` 悬停才现身(opacity:0→1),而 WebDriver 的 isDisplayed 把
+// 「祖先 opacity 为 0」判成不可见 —— 于是 `.tk-input` 的 waitForDisplayed 读的其实是
+// **物理指针落在哪**(上一次真实 .click() 把它丢在哪儿),行序一变就翻面:376 量到
+// 6 轮红 2 轮。停在这里 = 判据变确定,且它此刻正好断言了修法本身(动作区就地展开
+// 要交互的东西时钉住可见,src/topics.ts swapActions):摘掉 `.topic-actions.open`
+// 那条规则,这只测必红。
+async function parkPointerAway() {
+  await browser.action("pointer").move({ x: 3, y: 3, duration: 0 }).perform();
+}
+
 // Click a per-tag row action (重命名/删除) — they are opacity:0 until hover, so
 // drive them programmatically (the same escape hatch used for other hover reveals).
 async function clickTopicAction(topicText, label) {
@@ -279,7 +290,8 @@ describe("标签 · 手动排序 + 类型(1c)", () => {
     await goNotebook("topics");
     await (await $(`.topic-title*=${T}`)).waitForExist({ timeout: 10000 });
 
-    // 打开「类型」→ 输入「人名」→ 保存。
+    // 打开「类型」→ 输入「人名」→ 保存。指针先停到够不着的地方:见 parkPointerAway。
+    await parkPointerAway();
     await clickTopicAction(T, "类型");
     await $(".tk-input").waitForDisplayed({ timeout: 5000 });
     await setField(".tk-input", "人名");
@@ -295,7 +307,8 @@ describe("标签 · 手动排序 + 类型(1c)", () => {
     const sec = await $(`.topic*=${T}`);
     await expect(sec.$(".topic-kind.on")).toHaveText("人名");
 
-    // 清除 → 回无类型(kind = null)。
+    // 清除 → 回无类型(kind = null)。同上,指针位置不留给运气。
+    await parkPointerAway();
     await clickTopicAction(T, "类型");
     await $(".tk-input").waitForDisplayed({ timeout: 5000 });
     await clickTopicAction(T, "清除");

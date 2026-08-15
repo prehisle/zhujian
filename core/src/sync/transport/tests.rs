@@ -1694,23 +1694,27 @@ fn lan_rig_at_beat(tag: &str, seed: u8, url: &str, beat: Duration) -> LanRig {
 
 /// 真在服务器上创号、随后起 runtime——**会真走到 `Authed`** 的那一路(已鉴权会话里的
 /// lan 三臂要过闸,验它得有一条真会话)。
-async fn authed_lan_rig(tag: &str, url: &str) -> LanRig {
-    let (db, clock, dir) = test_db(tag);
-    create_account(&db, url).await.expect("创号");
-    rig_over(db, clock, dir)
-}
-
-/// 已配置好的库上起一台传输 runtime(账户怎么来的由调用方定)。
-fn rig_over(db: Arc<Mutex<Connection>>, clock: Arc<Mutex<Clock>>, dir: PathBuf) -> LanRig {
-    rig_over_beat(db, clock, dir, Duration::from_secs(HEARTBEAT_SECS))
-}
-
-/// 同上,心跳周期由调用方给。
+/// 已配置好的库上起一台传输 runtime,心跳周期由调用方给(账户怎么来的由调用方定)。
 fn rig_over_beat(
     db: Arc<Mutex<Connection>>,
     clock: Arc<Mutex<Clock>>,
     dir: PathBuf,
     beat: Duration,
+) -> LanRig {
+    rig_over_beat_lan(db, clock, dir, beat, None)
+}
+
+/// 同上,但可以给它一个 **app 级监听席位**(`lan: Some(..)` = 桌面形)。
+///
+/// 为什么单开一个入口而不是给上面那只加参数:那条链上有四只共用 helper、十几处调用点,
+/// 而需要「中转会话与监听席位**同时**在场」的只有名册闸接线那一只用例(见
+/// [`roster_listen_rig`])—— 让十几处去写 `None` 不如让那一处自己说清楚它要什么。
+fn rig_over_beat_lan(
+    db: Arc<Mutex<Connection>>,
+    clock: Arc<Mutex<Clock>>,
+    dir: PathBuf,
+    beat: Duration,
+    lan: Option<LanHost>,
 ) -> LanRig {
     let device = {
         let conn = db.lock().unwrap();
@@ -1738,10 +1742,10 @@ fn rig_over_beat(
         shutdown: shutdown_rx,
         boot_commit: Arc::new(Mutex::new(None)),
         restart_flag: Arc::new(Mutex::new(None)),
-        lan: None,
+        lan,
     };
     let (handoff, handoff_rx) = mpsc::channel(LAN_HANDOFF_CAP);
-    // 拨号器也拿一枚发送端:这台 rig 不监听(`lan: None` = 手机形),故方向规则下它
+    // 拨号器也拿一枚发送端:这台 rig 默认不监听(`lan: None` = 手机形),故方向规则下它
     // 恒是合法拨出方——缓存里有带 listen 的对端时它真会拨出去。
     let task = tokio::spawn(run_with_handoff(t, handoff_rx, Some(handoff.clone()), beat));
     LanRig { db, clock, status, device, handoff, task, ctl: ctl_tx, _dir: dir }
@@ -5853,13 +5857,16 @@ async fn a_recast_between_authed_and_the_session_ritual_is_caught() {
 /// 要么拿到定向 Hello,要么当场被关掉,没有中间态。
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn recasting_the_identity_blocks_the_lan_arms_of_a_live_session() {
-    let addr = start_server().await;
-    let a = authed_lan_rig("lan-authed-gate", &format!("ws://{addr}")).await;
+    // ⚠ **367 第②笔起改用假中转,不再是真服务器**:这一路上多了一把尺 —— 名册闸
+    // (§5.11)。真服务器给的名册里只有本机这一台,于是下面注入的 `PEER_ONE`/`PEER_TWO`
+    // 会被**名册闸**拒掉,首链根本认不下来 —— 那时红的是夹具不实,而不是本例要验的换代闸
+    // (first-draft-checklist 13:样本要落在其余各把尺都够不着的那一格)。改用假中转之后
+    // 名册由本例自己给,把这两台写成账户里的真设备,恰好也更接近生产:能建直连的对端
+    // 本来就必须是账户里注册过的设备。
+    let (relay, a, cfg) = relay_rig("lan-authed-gate", 101).await;
+    relay.push_roster(None, 1, &[(&cfg.device_id, true), (PEER_ONE, false), (PEER_TWO, false)]);
+    wait_roster(&a, 3).await;
     wait_state(&a.status, "online").await;
-    let cfg = {
-        let conn = a.db.lock().unwrap();
-        load_config(&conn).unwrap().expect("已配置")
-    };
 
     let (m1, t1) = tcp_pair().await;
     let mut first = FakeLink { stream: t1 };
@@ -7642,8 +7649,37 @@ struct SoloRig {
     cfg: SyncConfig,
     port: u16,
     adopted: mpsc::Receiver<AdoptedLink>,
-    _adm: Arc<LanAdmission>,
+    /// 该空间的名册闸把手(**与准入表条目上那只是同一份**,同生产:`lan_sync_admission`
+    /// 交的是 `EngineSlot::gate` 的克隆)。用例往它里灌名册,不去戳表的内部。
+    gate: Arc<Mutex<lan::RosterGate>>,
+    adm: Arc<LanAdmission>,
+    /// 续注册要重发一份(生产里每 15s 一轮的拨号巡查就是这么干的)。
+    handoff: mpsc::Sender<AdoptedLink>,
     _dir: PathBuf,
+}
+
+impl SoloRig {
+    /// 照生产那份材料重建一次注册(`same_identity` 恒成立 ⇒ 走**幂等续注册**那一支)。
+    fn registration(&self) -> lan_net::Registration {
+        lan_net::Registration {
+            space_id: "solo".into(),
+            owner: 1,
+            account_id: self.cfg.account_id.clone(),
+            self_device: self.cfg.device_id.clone(),
+            k_acc: self.cfg.k_acc,
+            self_seed: self.cfg.device_seed,
+            db: Arc::clone(&self.db),
+            active: Arc::new(Mutex::new(HashSet::new())),
+            gate: Arc::clone(&self.gate),
+            handoff: self.handoff.clone(),
+        }
+    }
+
+    /// 往这个空间的名册闸里灌一份名册(`None` = 退回「不知道」)。
+    fn push_roster(&self, devices: Option<&[&str]>) {
+        let entries = devices.map(roster_entries);
+        drop(self.gate.lock().unwrap().apply_roster(entries.as_deref()));
+    }
 }
 
 fn solo_rig(tag: &str, seed: u8) -> SoloRig {
@@ -7659,20 +7695,20 @@ fn solo_rig(tag: &str, seed: u8) -> SoloRig {
     pin_peer_key(&db, DIALER, &pubkey_of(&DIALER_SEED));
     let adm = LanAdmission::ephemeral();
     let (handoff, adopted) = mpsc::channel(LAN_HANDOFF_CAP);
-    let port = adm
-        .register(lan_net::Registration {
-            space_id: "solo".into(),
-            owner: 1,
-            account_id: cfg.account_id.clone(),
-            self_device: cfg.device_id.clone(),
-            k_acc: cfg.k_acc,
-            self_seed: cfg.device_seed,
-            db: Arc::clone(&db),
-            active: Arc::new(Mutex::new(HashSet::new())),
-            handoff,
-        })
-        .expect("注册该绑上监听口");
-    SoloRig { db, cfg, port, adopted, _adm: adm, _dir: dir }
+    // 出厂 `None` = fail-open,故既有那批用例的行为一格不变。
+    let gate = Arc::new(Mutex::new(lan::RosterGate::default()));
+    let rig = SoloRig {
+        db,
+        cfg,
+        port: 0,
+        adopted,
+        gate,
+        adm: Arc::clone(&adm),
+        handoff,
+        _dir: dir,
+    };
+    let port = adm.register(rig.registration()).expect("注册该绑上监听口");
+    SoloRig { port, ..rig }
 }
 
 /// 库自己悄悄换 K_acc = 纪元压实换代的最小形(进程内没有任何人被通知,故这正是
@@ -7832,7 +7868,7 @@ async fn the_handshake_task_itself_refuses_to_hand_off_after_a_recast() {
 #[tokio::test]
 async fn a_legitimate_handshake_refunds_its_token() {
     let mut r = solo_rig("lan-token-wiring", 34);
-    r._adm.set_tokens_for_test(1.0);
+    r.adm.set_tokens_for_test(1.0);
     let (_a, _) = dial_lan(r.port, &r.cfg, &r.cfg.k_acc).await.expect("第一条该成");
     assert!(r.adopted.recv().await.is_some(), "第一条被移交");
     let (_b, _) = dial_lan(r.port, &r.cfg, &r.cfg.k_acc).await.expect("退了款,第二条也该成");
@@ -7848,12 +7884,12 @@ async fn cancelling_a_handshake_gives_its_token_back() {
     let r = solo_rig("lan-token-abort", 35);
     // 先让一只握手停在等 Confirm 那一步(令牌已预占)。
     let (_sock, _d, _a) = half_dial(r.port, &r.cfg, &r.cfg.k_acc).await.expect("前两步该过");
-    assert_eq!(r._adm.inflight(), 1, "此刻恰有一只在飞");
+    assert_eq!(r.adm.inflight(), 1, "此刻恰有一只在飞");
     // 把桶按到 0 再撤位:这样「后面还连得进来」只可能是那一枚退回来的
     // (计时器同时归零,几十毫秒的自然补充不足一枚)。
-    r._adm.set_tokens_for_test(0.0);
-    r._adm.deregister("solo", 1);
-    wait_until("在飞任务已被取消", || r._adm.inflight() == 0).await;
+    r.adm.set_tokens_for_test(0.0);
+    r.adm.deregister("solo", 1);
+    wait_until("在飞任务已被取消", || r.adm.inflight() == 0).await;
     let mut next = FakeLink {
         stream: TcpStream::connect(("127.0.0.1", r.port)).await.expect("连得上"),
     };
@@ -7869,7 +7905,7 @@ async fn a_dial_after_the_seat_is_dropped_gets_nothing() {
     // 阳性半:条目在时认得下。
     let (_ok, _) = dial_lan(r.port, &r.cfg, &r.cfg.k_acc).await.expect("正路该成");
     assert!(r.adopted.recv().await.is_some(), "条目在时该被移交");
-    r._adm.deregister("solo", 1);
+    r.adm.deregister("solo", 1);
     let Err(err) = half_dial(r.port, &r.cfg, &r.cfg.k_acc).await else {
         panic!("条目已摘,该在 Accept 之前就关")
     };
@@ -7889,6 +7925,88 @@ async fn a_dial_arriving_after_a_recast_gets_no_accept_at_all() {
         panic!("该在 Accept 之前就关")
     };
     assert!(err.contains("Accept") || err.contains("长度前缀"), "实见:{err}");
+    assert!(r.adopted.try_recv().is_err(), "什么都不该被移交");
+}
+
+/// ⛔ **名册闸的入站那一道**(identity-plan §5.11;367 第②笔的第③笔):握手已经走到最后
+/// 一步,**交 handoff 之前**再问一次当前名册。这道挡的是「Intro 到达时它还在册,可名册在
+/// 这几次 `.await` 之间变了」那个窗口 —— 此刻这条链**还没进链路集**,所以协调者那边
+/// 「拆现有链」什么也拆不到,而出站那两道闸压根不在这条路上。
+///
+/// ⭐ **判据要证明是那一句拒的**(first-draft-checklist 13):这条路上排在它前面的尺有
+/// 「Intro 的 MAC / 签名」「重复抑制」「钉住的公钥」「表侧代次」「库侧身份」,而
+/// **Accept 真的发回来了**就证明它们全放行了 —— 剩下唯一能拦住移交的只有名册闸这一句。
+/// 用 `solo_rig`(没有协调者)则连「装链时被仲裁掉」这个替代解释也不存在。
+#[tokio::test]
+async fn the_listener_refuses_to_hand_off_a_peer_dropped_from_the_roster() {
+    let mut r = solo_rig("lan-gate-inbound", 36);
+    // 阳性半:它在册,这条链交得出来(没有它,「什么都不移交」也能骗过阴性半)。
+    r.push_roster(Some(&[DIALER]));
+    let (_link, _est) = dial_lan(r.port, &r.cfg, &r.cfg.k_acc).await.expect("在册时握手该成");
+    assert!(r.adopted.recv().await.is_some(), "在册就该把链交给协调者");
+
+    // 阴性半:握手停在「Accept 已收、Confirm 还没发」,期间名册把这台摘掉。
+    let (mut sock, mut dialer, accept) =
+        half_dial(r.port, &r.cfg, &r.cfg.k_acc).await.expect("Accept 该照发 —— 闸在它之后");
+    r.push_roster(Some(&[GATE_STRANGER]));
+    let (confirm, _est) = dialer.on_accept(&accept).expect("Accept 本身合法:拦它的不是握手");
+    lan_net::write_wire(&mut sock, &confirm).await.expect("发 Confirm");
+    let mut link = FakeLink { stream: sock };
+    assert!(link.closed(2000).await, "拒了就当场关 socket");
+    assert!(r.adopted.try_recv().is_err(), "不在册的对端,这条链绝不许被移交出去");
+}
+
+/// **被名册拒掉的那次拨入,算的是对端的账**(§10 的令牌桶;本笔自己定的形,理由写在
+/// `handshake` 步骤 ⑦ 那段注释里 —— 那枚令牌是 pre-auth 唯一的速率闸,退款等于给一台
+/// 已被移除的设备开一条无限次让本机验签的路)。
+///
+/// ⭐ **判据取「退款计数」不取桶的水位**:水位按 10/s 自己补,早几毫秒晚几毫秒答案就变了。
+/// 阳性对照放在同一只里:合法握手确实**净零消耗**(退款计数真的会动)—— 没有它,下面那句
+/// 「计数没再涨」在计数器坏掉时也是绿的。
+///
+/// 这只测同时钉住两件会一起塌的事:闸还在(拒了)+ 拒的那次不退款。
+#[tokio::test]
+async fn a_dial_from_a_device_off_the_roster_is_charged_as_a_failed_attempt() {
+    let mut r = solo_rig("lan-gate-token", 39);
+    // 阳性对照:在册的合法握手净零消耗。
+    r.push_roster(Some(&[DIALER]));
+    let (_link, _est) = dial_lan(r.port, &r.cfg, &r.cfg.k_acc).await.expect("在册时握手该成");
+    assert!(r.adopted.recv().await.is_some(), "在册就该把链交给协调者");
+    wait_until("那只握手任务收场了", || r.adm.inflight() == 0).await;
+    assert_eq!(r.adm.refunds_for_test(), 1, "合法握手一枚令牌都不该花(§10)");
+
+    // 名册把它摘掉:同一条路、同一份材料,这次记对端的账。
+    r.push_roster(Some(&[GATE_STRANGER]));
+    let (mut sock, mut dialer, accept) =
+        half_dial(r.port, &r.cfg, &r.cfg.k_acc).await.expect("Accept 该照发");
+    let (confirm, _est) = dialer.on_accept(&accept).expect("Accept 合法");
+    lan_net::write_wire(&mut sock, &confirm).await.expect("发 Confirm");
+    let mut link = FakeLink { stream: sock };
+    assert!(link.closed(2000).await, "不在册就该拒");
+    wait_until("这只也收场了", || r.adm.inflight() == 0).await;
+    assert_eq!(r.adm.refunds_for_test(), 1, "被名册拒的那次不退款(计数一枚都没再涨)");
+}
+
+/// **幂等续注册不许把闸清掉**(§5.11;拨号巡查每 15s 就走一次这条路)。
+///
+/// ⭐ 前置要**先钉死走的是哪一支**(first-draft-checklist 13):代次没变 = 走的是
+/// `same_identity` 那条幂等路。不钉的话,换代路径也能让这只测绿,而那时它验的是别的事。
+#[tokio::test]
+async fn an_idempotent_re_registration_keeps_the_roster_gate() {
+    let mut r = solo_rig("lan-gate-rereg", 37);
+    r.push_roster(Some(&[GATE_STRANGER]));
+    let epoch = r.adm.epoch_of("solo").expect("条目在");
+
+    r.adm.register(r.registration()).expect("续注册");
+    assert_eq!(r.adm.epoch_of("solo"), Some(epoch), "同身份续注册不换代(走的是幂等那一支)");
+
+    // 闸还在:同一台被摘掉的对端,握手照样交不出去。
+    let (mut sock, mut dialer, accept) =
+        half_dial(r.port, &r.cfg, &r.cfg.k_acc).await.expect("前两步照过");
+    let (confirm, _est) = dialer.on_accept(&accept).expect("Accept 合法");
+    lan_net::write_wire(&mut sock, &confirm).await.expect("发 Confirm");
+    let mut link = FakeLink { stream: sock };
+    assert!(link.closed(2000).await, "续注册之后名册闸必须还在");
     assert!(r.adopted.try_recv().is_err(), "什么都不该被移交");
 }
 
@@ -7934,6 +8052,9 @@ async fn re_registering_the_same_identity_keeps_the_epoch_but_recasting_bumps_it
     let (db, _clock, _dir) = test_db("lan-admit-epoch");
     let (handoff, _rx) = mpsc::channel(LAN_HANDOFF_CAP);
     let active = Arc::new(Mutex::new(HashSet::new()));
+    // 同一只把手 —— 生产里它是 `EngineSlot::gate` 的克隆,而槽活整个 `run`
+    // (`register` 里那句 `debug_assert` 核的就是这一格)。
+    let gate = Arc::new(Mutex::new(lan::RosterGate::default()));
     let reg = |k_acc: [u8; 32]| lan_net::Registration {
         space_id: "s1".into(),
         owner: 7,
@@ -7943,6 +8064,7 @@ async fn re_registering_the_same_identity_keeps_the_epoch_but_recasting_bumps_it
         self_seed: [1u8; 32],
         db: Arc::clone(&db),
         active: Arc::clone(&active),
+        gate: Arc::clone(&gate),
         handoff: handoff.clone(),
     };
     let p1 = adm.register(reg([5u8; 32])).expect("首次注册该绑上");
@@ -8056,6 +8178,9 @@ struct DialRig {
     db: Arc<Mutex<Connection>>,
     cfg: SyncConfig,
     dial: lan_net::Dialer,
+    /// 权威名册闸(identity-plan §5.11)。出厂 `None` = fail-open,故既有用例的行为一格
+    /// 不变;要验那道闸的用例自己往里灌一份名册。
+    gate: Arc<Mutex<lan::RosterGate>>,
     adopted: mpsc::Receiver<AdoptedLink>,
     /// 假对端的监听口(用例自己当 §4 的 L 侧)。`None` = 已丢弃,故拨过去必被拒。
     listener: Option<TcpListener>,
@@ -8075,13 +8200,14 @@ impl DialRig {
     }
 
     fn round_with(&mut self, self_listening: bool, all_linked: bool) {
-        let DialRig { db, cfg, dial, .. } = self;
+        let DialRig { db, cfg, dial, gate, .. } = self;
         let warned = dial.round(
             &cfg.account_id,
             &cfg.device_id,
             &cfg.k_acc,
             &cfg.device_seed,
             db,
+            gate,
             self_listening,
             // 这台装配台不接监听器(手机形)。
             false,
@@ -8119,6 +8245,7 @@ async fn dial_rig(tag: &str, seed: u8, alive: bool) -> DialRig {
         db,
         cfg,
         dial: lan_net::Dialer::new(Some(handoff)),
+        gate: Arc::new(Mutex::new(lan::RosterGate::default())),
         adopted,
         listener: alive.then_some(listener),
         _dir: dir,
@@ -8528,9 +8655,9 @@ async fn an_empty_peer_cache_still_keeps_the_local_ad_poll_armed() {
     forget_peer_ad(&r.db, DIAL_PEER); // 缓存清空 = 一台对端都不认识
     // 桌面形(有监听席位):拨号没得做,但巡查照挂。
     {
-        let DialRig { db, cfg, dial, .. } = &mut r;
+        let DialRig { db, cfg, dial, gate, .. } = &mut r;
         let warned = dial.round(
-            &cfg.account_id, &cfg.device_id, &cfg.k_acc, &cfg.device_seed, db, true, true,
+            &cfg.account_id, &cfg.device_id, &cfg.k_acc, &cfg.device_seed, db, gate, true, true,
             &|_| false,
         );
         assert_eq!(warned, None);
@@ -8538,9 +8665,9 @@ async fn an_empty_peer_cache_still_keeps_the_local_ad_poll_armed() {
     assert!(r.dial.due().is_some(), "有监听席位就得留着计时器(通告刷新只靠它)");
     // 手机形(无席位):那半件事不存在,整个摘掉等 kick。
     {
-        let DialRig { db, cfg, dial, .. } = &mut r;
+        let DialRig { db, cfg, dial, gate, .. } = &mut r;
         dial.round(
-            &cfg.account_id, &cfg.device_id, &cfg.k_acc, &cfg.device_seed, db, false, false,
+            &cfg.account_id, &cfg.device_id, &cfg.k_acc, &cfg.device_seed, db, gate, false, false,
             &|_| false,
         );
     }
@@ -9068,4 +9195,512 @@ async fn periodic_pull_runs_unattended_and_its_nack_does_not_settle_other_flows(
     assert!(rx.try_recv().is_err(), "带号的 RosterNack 不许结掉设备管理 flow");
     // ⛔ 那枚 busy 也不许把已有的名册清成 None(否则第②笔的直连闸当场翻成 fail-open)。
     assert!(rig.status.lock().unwrap().roster.is_some(), "busy 只是这次刷新失败");
+}
+
+// ---- 权威名册闸的接线(identity-plan §5.11;367 第②笔) ----------------------------
+//
+// 纯态那一层在 `lan/tests.rs`(`gate_transition_cases` 那张矩阵);这里验的全是**接线**:
+// 三道闸各挡哪个窗口、名册从服务器到达那条路真的接上了没有、会话收场清不清得干净。
+
+fn roster_entries(devices: &[&str]) -> Vec<RosterEntry> {
+    devices.iter().map(|d| RosterEntry { device: (*d).into(), admin: false }).collect()
+}
+
+/// 直接摆一份名册闸(拨号器那两只用;它们没有引擎槽)。
+fn gate_of(devices: Option<&[&str]>) -> lan::RosterGate {
+    let mut g = lan::RosterGate::default();
+    let entries = devices.map(roster_entries);
+    drop(g.apply_roster(entries.as_deref()));
+    g
+}
+
+/// 把一份名册喂给槽(走生产那条 `EngineSlot::apply_roster`,不是绕过去直接塞字段)。
+/// 返回拆链产生的帧数 —— `Some → None` 那一格要断它恒为 0。
+fn push_gate(r: &mut DeckRig, devices: Option<&[&str]>) -> usize {
+    let entries = devices.map(roster_entries);
+    // `None` = 这台 rig 没有监听席位(入站那一半在 `solo_rig` 那几只里验)。
+    r.slot.apply_roster(entries.as_deref(), None, &r.status, &r.ev_tx).len()
+}
+
+/// ⛔ **名册闸的第三道**(§5.11 收窄③:它**不能**因为前两道已在而删)。
+///
+/// 前两道(入站与出站各自「交 handoff 之前最后自证一次」那一句)都跑在**排进移交队列
+/// 之前**;而「`AdoptedLink` 已经在队列里躺着,名册这时才把这台摘掉」是它们够不着的那个
+/// 窗口 —— 只有协调者最终 install 那一次复核挡得住。
+///
+/// 一红一绿:同一台对端、同一条真 TCP、同一个入口,差别只有槽里那份名册。
+#[tokio::test]
+async fn a_link_handed_over_after_the_roster_shrank_is_refused_at_install() {
+    let mut r = deck_rig("gate-install");
+    // 红:名册里没有它。
+    push_gate(&mut r, Some(&[PEER_TWO]));
+    let (mine, _theirs) = tcp_pair().await;
+    offline_face(&mut r).lan_adopt(adopted(PEER_ONE, 1, mine)).await.unwrap();
+    assert_eq!(r.slot.lan.count(), 0, "不在册的对端,链交到协调者手上也装不上");
+
+    // 绿:只把名册换成含它的 ⇒ 同一条路装得上(证明拒它的是名册闸,不是仲裁或容量)。
+    push_gate(&mut r, Some(&[PEER_ONE, PEER_TWO]));
+    let (mine, _theirs2) = tcp_pair().await;
+    offline_face(&mut r).lan_adopt(adopted(PEER_ONE, 2, mine)).await.unwrap();
+    assert_eq!(r.slot.lan.count(), 1, "在册就该照常装链");
+}
+
+/// 名册一到,**已经建着的**链当场拆掉,而且走与死讯完全相同的那条收口(摘链 → 通报
+/// 引擎 → 刷状态面),不是「只从 map 里删掉 socket」(§5.11-⑥)。
+///
+/// 阴性对照同轮走(§5.14-3c⑤):**只多了一台无关设备**不得被当成「这台被移除了」。
+#[tokio::test]
+async fn a_shrinking_roster_tears_down_the_live_link_through_the_normal_down_path() {
+    let mut r = deck_rig("gate-teardown");
+    let (mine, _theirs) = tcp_pair().await;
+    offline_face(&mut r).lan_adopt(adopted(PEER_ONE, 1, mine)).await.unwrap();
+    assert_eq!(r.slot.lan.count(), 1, "先建上一条");
+
+    // 阴性:`None → Some(含它)`,再 `Some(A) → Some(A ∪ 别人)` —— 两次都不许动这条链。
+    push_gate(&mut r, Some(&[PEER_ONE]));
+    assert_eq!(r.slot.lan.count(), 1, "它在册,链不许被动");
+    push_gate(&mut r, Some(&[PEER_ONE, PEER_TWO]));
+    assert_eq!(r.slot.lan.count(), 1, "只多了一台无关设备,不得当成它被移除");
+
+    // 阳性:把它摘掉。
+    push_gate(&mut r, Some(&[PEER_TWO]));
+    assert_eq!(r.slot.lan.count(), 0, "不在册了就该拆链");
+    let s = r.status.lock().unwrap();
+    assert_eq!(s.lan_peers, 0, "状态面跟着刷 —— 拆链没有第二个 UI 出口");
+    assert!(
+        s.lan_warning.as_deref().is_some_and(|w| w.contains(PEER_ONE)),
+        "该说一句点名的人话:{:?}",
+        s.lan_warning
+    );
+}
+
+/// §5.14-3d⑦ 点名要的那只**行为**测:不能只断「字段变成了 `None`」、也不能只数 abort
+/// 次数。先证明这台对端在 `Some` 之下**确实被挡**,再退回 `None`,用**同一台对端**真正
+/// 完成一条新链路 —— 否则就是「值看着清了、准入其实还 fail-closed」的假绿。
+#[tokio::test]
+async fn after_the_roster_goes_back_to_unknown_the_same_peer_can_link_again() {
+    let mut r = deck_rig("gate-reopen");
+    push_gate(&mut r, Some(&[PEER_TWO]));
+    let (mine, _t1) = tcp_pair().await;
+    offline_face(&mut r).lan_adopt(adopted(PEER_ONE, 1, mine)).await.unwrap();
+    assert_eq!(r.slot.lan.count(), 0, "先证明它在 Some 之下确实被挡");
+
+    // `Some → None` 谁也不 abort ⇒ 一枚帧都不该产出(那个拆链循环跑零次)。
+    assert_eq!(push_gate(&mut r, None), 0, "退回 fail-open 不该拆任何链,故也不产帧");
+
+    let (mine, _t2) = tcp_pair().await;
+    offline_face(&mut r).lan_adopt(adopted(PEER_ONE, 2, mine)).await.unwrap();
+    assert_eq!(r.slot.lan.count(), 1, "退回「不知道」之后,同一台对端真能建成链");
+}
+
+/// 名册闸的**第一道**:不在册的对端,连一只握手任务都不该起(§5.11 item ⑤ 前半)。
+///
+/// 观测面 = 拨号器自己的发起计数:要证的是**本机根本没动手**,而不是「对端把它拒了」。
+#[tokio::test]
+async fn the_dialer_refuses_to_spawn_for_a_peer_outside_the_roster() {
+    let _net = lan_net::TestNetGuard::install(LAN_SELF_ADDR, 24);
+    let mut r = dial_rig("lan-gate-spawn", 57, false).await;
+    // 红:名册里没有它。
+    *r.gate.lock().unwrap() = gate_of(Some(&[GATE_STRANGER]));
+    r.round();
+    assert_eq!(r.dial.attempts(), 0, "不在册就一枚拨号都不许发");
+    // 被闸掉的对端**不留退避条目**(留着的话它那个早已过期的时刻会把巡查钉在过去)。
+    assert!(!r.dial.has_backoff(DIAL_PEER), "结构上不该拨的对端不留条目");
+
+    // 绿:同一台 rig、同一轮巡查,只把名册换成含它的 ⇒ 拨出去了。
+    *r.gate.lock().unwrap() = gate_of(Some(&[DIAL_PEER]));
+    r.round();
+    assert_eq!(r.dial.attempts(), 1, "在册就该照常拨(证明挡住它的只是名册闸)");
+}
+
+/// 名册闸的**第二道**:握手已经走到最后一步,交 handoff 之前再问一次(§5.11 item ⑤
+/// 后半)。这道挡的是「spawn 前复核过了,可名册在这几次 await 之间变了」那个窗口 ——
+/// 此刻这条链**还没进链路集**,所以「拆现有链」什么也拆不到。
+///
+/// ⭐ **判据要证明是那一句拒的**(first-draft-checklist 13):这条路上排在它前面的两把尺
+/// 是「发 Intro 前自证」与「发 Confirm 前自证」,而 **Confirm 真的到了对端**就证明那两道
+/// 都放行了 —— 剩下唯一能拦住移交的只有名册闸这一句。
+#[tokio::test]
+async fn the_dial_task_itself_refuses_to_hand_off_to_a_peer_dropped_from_the_roster() {
+    let _net = lan_net::TestNetGuard::install(LAN_SELF_ADDR, 24);
+    let mut r = dial_rig("lan-gate-handoff", 58, true).await;
+    let l = r.listener.take().expect("假对端在听");
+    *r.gate.lock().unwrap() = gate_of(Some(&[DIAL_PEER]));
+
+    // 阳性半:名册没动,这条链交得出来(没有它,「什么都不移交」也能骗过阴性半)。
+    r.round();
+    let (mut sock, mut listener, accept) = take_intro(&l, &r.cfg).await;
+    lan_net::write_wire(&mut sock, &accept).await.expect("发 Accept");
+    let confirm =
+        timeout(Duration::from_secs(2), lan_net::read_wire(&mut sock, lan::FramePhase::PreAuth))
+            .await
+            .expect("等 Confirm 超时")
+            .expect("Confirm 该读得出来");
+    listener.on_confirm(&confirm).expect("Confirm 该验得过");
+    assert!(r.adopted.recv().await.is_some(), "在册时该把链交给协调者");
+
+    // 阴性半:握手停在「Intro 已收、Accept 还没发」,期间名册把这台摘掉。
+    r.dial.kick_peer(DIAL_PEER);
+    r.round();
+    let (mut sock2, mut l2, accept2) = take_intro(&l, &r.cfg).await;
+    *r.gate.lock().unwrap() = gate_of(Some(&[GATE_STRANGER]));
+    lan_net::write_wire(&mut sock2, &accept2).await.expect("发 Accept");
+    let confirm2 =
+        timeout(Duration::from_secs(2), lan_net::read_wire(&mut sock2, lan::FramePhase::PreAuth))
+            .await
+            .expect("Confirm 该照发 —— 名册闸挂在它之后那一句上")
+            .expect("Confirm 该读得出来");
+    l2.on_confirm(&confirm2).expect("Confirm 本身合法:拦它的不是握手");
+    let mut link = FakeLink { stream: sock2 };
+    assert!(link.closed(2000).await, "拒了就当场关 socket");
+    assert!(r.adopted.try_recv().is_err(), "不在册的对端,这条链绝不许被移交出去");
+}
+
+/// **接线的行为面**(§5.11-⑦):名册从服务器到达 ⇒ LAN 闸当场生效。上面那几只都在
+/// Deck / Dialer 那一层,证不了「ServerMsg::Roster 那条路真的接上了」。
+///
+/// ⚠ **诚实边界**:这里在「名单已经变短」那一刻**当场**断链路数(不是 wait_until 慢慢
+/// 等),写法上是照着 §5.11-⑦ 那个顺序来的 —— 但它**证不了**那个顺序。把两句调个个儿
+/// 之后,「UI 名单已新、闸还没生效」的窗口只有几微秒,而轮询的间隔是毫秒级,那条变异
+/// 多半照样绿。顺序这一格今天靠的是代码结构(两句紧挨着写在同一个回调里),没有可证伪
+/// 的测 —— 已如实记账,别把这只测当成它的守卫。
+#[tokio::test]
+async fn a_roster_from_the_server_tears_down_the_direct_link_to_a_removed_device() {
+    let (relay, rig, cfg) = roster_rig("gate-wire", 99).await;
+    // roster_rig 的首份名册含 DEV_TARGET ⇒ 链装得上(阳性对照:闸此刻放行)。
+    let (mine, _theirs) = tcp_pair().await;
+    rig.handoff.send(adopted(DEV_TARGET, 1, mine)).await.unwrap();
+    wait_until("直连认下了", || rig.status.lock().unwrap().lan_peers == 1).await;
+
+    relay.push_roster(None, 2, &[(&cfg.device_id, true)]);
+    wait_until("新名册到了", || {
+        rig.status.lock().unwrap().roster.as_ref().is_some_and(|r| r.len() == 1)
+    })
+    .await;
+    assert_eq!(
+        rig.status.lock().unwrap().lan_peers,
+        0,
+        "名单已经变短的那一刻,直连必须已经断了(§5.11-⑦:闸先生效、再写 UI)"
+    );
+}
+
+/// 会话收场把**闸**也清了(§5.11-⑧ 三处之一)。判据是**行为**:先证明它在 Some 之下
+/// 确实被挡,会话收场之后用同一台对端真正建成一条新链。
+#[tokio::test]
+async fn the_lan_gate_is_forgotten_when_the_session_ends() {
+    let (relay, rig, cfg) = roster_rig("gate-clear2", 100).await;
+    relay.push_roster(None, 2, &[(&cfg.device_id, true)]);
+    wait_until("对端已出局", || {
+        rig.status.lock().unwrap().roster.as_ref().is_some_and(|r| r.len() == 1)
+    })
+    .await;
+
+    let (mine, theirs) = tcp_pair().await;
+    let mut peer = FakeLink { stream: theirs };
+    rig.handoff.send(adopted(DEV_TARGET, 1, mine)).await.unwrap();
+    assert!(peer.closed(2000).await, "不在册的对端,链交上去也装不上、socket 当场落地");
+    assert_eq!(rig.status.lock().unwrap().lan_peers, 0);
+
+    relay.close();
+    wait_until("会话收场后名册清成不知道", || rig.status.lock().unwrap().roster.is_none()).await;
+
+    let (mine2, _t2) = tcp_pair().await;
+    rig.handoff.send(adopted(DEV_TARGET, 2, mine2)).await.unwrap();
+    wait_until("退回 fail-open 之后,同一台对端真能建成链", || {
+        rig.status.lock().unwrap().lan_peers == 1
+    })
+    .await;
+}
+
+/// 名册闸用例里那台「在册、但与本例无关」的第三方(拿它当「名册非空、只是没有被测那台」)。
+const GATE_STRANGER: &str = "01STRANGER0000000000000000";
+
+/// **接线**(367 第②笔的第③笔):一份新名册喂进引擎槽,app 级准入表里那些**入站**在飞
+/// 握手也当场被判死 —— 触发器的另一半(出站那半在下面那只)。
+///
+/// 台架照生产接:交进 `Registration` 的是**槽自己那只**名册闸把手(`lan_sync_admission`
+/// 就是这么干的),故「表里那份与槽里那份是同一只 `Arc`」在本例里是真的,不是假的。
+///
+/// ⭐ **判据必须是「立刻」**(378 那条教训):那只入站握手本来就会在等 Confirm 的 2 秒
+/// 预算到点后自己收场,任何 `wait_until` 窗口都比它长 ⇒ 拆掉 `apply_denied` 整句照样绿。
+/// 判死位是 `apply_denied` 在锁内**当场**写下的,与「`abort()` 什么时候真落地」无关;而
+/// 超时自愈那条路是**摘条目**,数出来是 0 —— 两条路分得开。
+///
+/// ⚠ **诚实边界**:本例从 `EngineSlot::apply_roster` 这一层往下验。再往上那一跳(会话
+/// 收到 `ServerMsg::Roster` 时把**当前席位**传进来,而不是图省事写个 `None`)没有行为测
+/// —— 传 `None` 只会丢掉触发器这一半,闸本身照旧生效(共享把手),故任何行为面都看不出
+/// 差别。那一格由结构锚 `every_apply_roster_call_site_passes_the_admission_seat` 守着。
+#[tokio::test]
+async fn a_roster_applied_to_the_slot_dooms_the_inbound_handshakes_too() {
+    let mut r = gate_wire_rig("lan-gate-inbound-wire", 38);
+
+    // 它在册 ⇒ 握手走得到「Accept 已发回、等 Confirm」那一步,此刻它正躺在表上。
+    r.push(&[DIALER]);
+    let _stalled = r.stall_inbound().await;
+    assert_eq!(r.adm.inflight(), 1, "此刻恰有一只在飞的入站握手");
+
+    // 阴性:只多了一台无关设备 —— 一只都不许判死(§5.11 三轮 M3 那张表)。
+    r.push(&[DIALER, GATE_STRANGER]);
+    assert_eq!(r.adm.doomed_count(), 0, "无关变更不得当成它被移除");
+
+    // 阳性:名册把它摘掉 —— 当场判死。
+    r.push(&[GATE_STRANGER]);
+    assert_eq!(r.adm.doomed_count(), 1, "名册一到,入站那只在飞握手就该当场被判死");
+}
+
+/// ⛔ **取消的理由决定令牌算谁的账,而不是「谁先跑到」**(codex 实现审 L1)。
+///
+/// 病:`serve_conn` 的分类记账写在 `handshake` 返回**之后**,abort 把整只 future 连同那一句
+/// 一起丢掉 ⇒ `ConnGuard::spend` 停在默认的「退款」。于是同一条名册裁决有两个答案 ——
+/// 握手先跑到步骤 ⑦ 就记对端的账(不退),`apply_denied` 先 abort 就记本机的账(退)。
+///
+/// ⚠ **诚实边界(codex 实现审 GO 轮的精度备注)**:本例先等 `inflight() == 0` 再断退款计数,
+/// 而 `finish` 与随后可能的 `refund` 是**两次**取锁。它今天站得住,靠的是这只测跑在
+/// **current-thread** runtime 上、两者之间没有 `.await` 故插不进本测试任务;哪天改成
+/// multi-thread,这条判据要换成单调的「已结账总数」或改等对端 socket 完整关闭。
+///
+/// ⭐ **两半必须同测**,否则任何一半都能被另一半的形背书:
+/// * 名册判死 ⇒ **不退**(修法本身);
+/// * 撤位 ⇒ **退**(它证明这只 rig 里退款计数真的会动 —— 没有它,「计数没涨」在
+///   `charged` 被写成恒 `true` 时也是绿的,而那会把撤位那条本机侧的路一起记成对端的账)。
+#[tokio::test]
+async fn a_handshake_cancelled_by_the_roster_is_charged_but_one_cancelled_by_a_retiring_seat_is_not()
+{
+    let mut r = gate_wire_rig("lan-gate-cancel-charge", 40);
+    r.push(&[DIALER]);
+    let stalled = r.stall_inbound().await;
+    assert_eq!(r.adm.refunds_for_test(), 0, "还没有谁收场");
+
+    // 一半:名册摘掉它 ⇒ 当场 abort,而那枚预占的令牌**不退**。
+    r.push(&[GATE_STRANGER]);
+    wait_until("被判死的那只已收场", || r.adm.inflight() == 0).await;
+    assert_eq!(r.adm.refunds_for_test(), 0, "名册判死的那次是对端的账,不许退款");
+    drop(stalled);
+
+    // 另一半(阳性对照):同样是被 abort 掉的在飞握手,但这次的理由是**本机撤位** ⇒ 退款。
+    r.push(&[DIALER]);
+    let _stalled2 = r.stall_inbound().await;
+    assert_eq!(r.adm.inflight(), 1, "又有一只在飞");
+    r.adm.deregister("wire", 1);
+    wait_until("撤位那只也收场了", || r.adm.inflight() == 0).await;
+    assert_eq!(r.adm.refunds_for_test(), 1, "撤位是本机侧的处境,那一枚该退回来");
+}
+
+/// 「引擎槽 + app 级准入表 + 一条真拨入」的装配台(名册闸的接线用例共用)。
+struct GateWireRig {
+    db: Arc<Mutex<Connection>>,
+    cfg: SyncConfig,
+    slot: EngineSlot,
+    adm: Arc<LanAdmission>,
+    seat: AdmitSeat,
+    port: u16,
+    status: Arc<Mutex<SyncStatus>>,
+    ev_tx: mpsc::UnboundedSender<SyncEvent>,
+    _ev_rx: mpsc::UnboundedReceiver<SyncEvent>,
+    _lan_rx: mpsc::Receiver<LanInbound>,
+    _faults: mpsc::Receiver<LanFault>,
+    _adopted: mpsc::Receiver<AdoptedLink>,
+    _dir: PathBuf,
+}
+
+impl GateWireRig {
+    /// 走生产那条唯一出口喂一份名册(**带着当前席位**,故入站那半触发器也在路上)。
+    fn push(&mut self, devices: &[&str]) {
+        let outs = self.slot.apply_roster(
+            Some(&roster_entries(devices)),
+            Some(&self.seat),
+            &self.status,
+            &self.ev_tx,
+        );
+        assert!(outs.is_empty(), "这台 rig 一条链都没建,不该产出帧");
+    }
+
+    /// 真拨进来一条,**停在「Accept 已发回、等 Confirm」那一步** —— 此刻它正躺在表上,
+    /// 是名册闸与撤位这两条取消路的共同样本。返回值攥着 socket,别提前丢。
+    async fn stall_inbound(&self) -> TcpStream {
+        let (sock, _dialer, _accept) =
+            half_dial(self.port, &self.cfg, &self.cfg.k_acc).await.expect("Accept 该发回");
+        sock
+    }
+}
+
+/// **中转会话与 app 级监听席位同时在场**的装配台 —— 仓里唯一一台(别的假中转 rig 全是
+/// `lan: None` = 手机形,而 `listen_rig` 那台的服务器地址是必然连不上的端口)。
+///
+/// 出厂名册 = 本机 + [`DIALER`](后者要在册,否则「这次才变得不准连」这条判据算出来命中不了
+/// 任何人 —— 那时用例验的就不是这道闸了)。
+async fn roster_listen_rig(
+    tag: &str,
+    seed: u8,
+) -> (FakeRelay, LanRig, SyncConfig, Arc<LanAdmission>, u16) {
+    let mut relay = fake_relay().await;
+    let (db, clock, dir) = test_db(tag);
+    {
+        let mut conn = db.lock().unwrap();
+        save_config(&mut conn, ACCT, &[5u8; 32], &[seed; 32], &relay.url(), true).unwrap();
+    }
+    let adm = LanAdmission::ephemeral();
+    let host = LanHost { space_id: tag.into(), admission: Arc::clone(&adm), owner: 1 };
+    let rig = rig_over_beat_lan(db, clock, dir, Duration::from_secs(HEARTBEAT_SECS), Some(host));
+    let cfg = {
+        let conn = rig.db.lock().unwrap();
+        load_config(&conn).unwrap().expect("已配置")
+    };
+    timeout(Duration::from_secs(5), relay.conns.recv())
+        .await
+        .expect("客户端该连上来")
+        .expect("通道活着");
+    let mut port = None;
+    for _ in 0..400 {
+        port = adm.listen_port();
+        if port.is_some() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    let port = port.expect("监听器该在 4 秒内惰性绑上");
+    relay.push_roster(None, 1, &[(&cfg.device_id, true), (DIALER, false)]);
+    wait_roster(&rig, 2).await;
+    (relay, rig, cfg, adm, port)
+}
+
+fn gate_wire_rig(tag: &str, seed: u8) -> GateWireRig {
+    let (db, _clock, dir) = test_db(tag);
+    {
+        let mut conn = db.lock().unwrap();
+        save_config(&mut conn, ACCT, &[5u8; 32], &[seed; 32], "ws://127.0.0.1:1", true).unwrap();
+    }
+    let cfg = {
+        let conn = db.lock().unwrap();
+        load_config(&conn).unwrap().expect("已配置")
+    };
+    pin_peer_key(&db, DIALER, &pubkey_of(&DIALER_SEED));
+    let status = Arc::new(Mutex::new(SyncStatus::default()));
+    let (ev_tx, _ev_rx) = mpsc::unbounded_channel();
+    let (handoff, _adopted) = mpsc::channel(LAN_HANDOFF_CAP);
+    let (slot, _lan_rx, _faults) = EngineSlot::new(BlobPolicy::Full, Some(handoff.clone()));
+    let adm = LanAdmission::ephemeral();
+    // 同生产(`lan_sync_admission`):交进表里的是**槽自己那只**名册闸把手。
+    let port = adm
+        .register(lan_net::Registration {
+            space_id: "wire".into(),
+            owner: 1,
+            account_id: cfg.account_id.clone(),
+            self_device: cfg.device_id.clone(),
+            k_acc: cfg.k_acc,
+            self_seed: cfg.device_seed,
+            db: Arc::clone(&db),
+            active: Arc::new(Mutex::new(HashSet::new())),
+            gate: Arc::clone(&slot.gate),
+            handoff: handoff.clone(),
+        })
+        .expect("注册该绑上监听口");
+    let seat = AdmitSeat {
+        host: LanHost { space_id: "wire".into(), admission: Arc::clone(&adm), owner: 1 },
+        owner: 1,
+        handoff,
+    };
+    GateWireRig {
+        db,
+        cfg,
+        slot,
+        adm,
+        seat,
+        port,
+        status,
+        ev_tx,
+        _ev_rx,
+        _lan_rx,
+        _faults,
+        _adopted,
+        _dir: dir,
+    }
+}
+
+/// **整条接线的行为面**(§5.11 item ③):服务器推一份变短的名册 ⇒ 会话把**当前席位**交给
+/// `EngineSlot::apply_roster` ⇒ app 级准入表里那只在飞的**入站**握手当场被判死。
+///
+/// ⭐ 这只测本来不存在 —— 我在实现审里声称「传 `None` 只丢掉触发器,**没有任何行为面看得出
+/// 差别**,故造不出行为测」,**codex 当场证伪**(它是对的),给的配方就是下面这两件:
+/// 1. **一台中转会话与监听席位同时在场的 rig**(此前所有假中转 rig 都是 `lan: None` = 手机形);
+/// 2. **单调的判死总数**当判据 —— `doomed_count()` 会随那只握手自己收场归零(它有 10s 上限),
+///    拿它轮询就是在跟被测对象的自愈赛跑;`doomed_total()` 永不减,故窗口再窄也漏不掉。
+///
+/// 教训记在 progress-log 379:**「造不出行为测」这句话我说早了**,而这类降级声明自己写的
+/// 自己最难质疑(memory `test-negative-control`)。
+#[tokio::test]
+async fn a_roster_from_the_server_dooms_an_in_flight_inbound_handshake() {
+    let (relay, rig, cfg, adm, port) = roster_listen_rig("gate-seat-wire", 41).await;
+    pin_peer_key(&rig.db, DIALER, &pubkey_of(&DIALER_SEED));
+    // 真拨进来一条,停在「Accept 已发回、等 Confirm」—— 此刻它还没走到步骤 ⑦ 那道闸。
+    let (_sock, _dialer, _accept) =
+        half_dial(port, &cfg, &cfg.k_acc).await.expect("在册时 Accept 该发回");
+    assert_eq!(adm.inflight(), 1, "此刻恰有一只在飞的入站握手");
+    assert_eq!(adm.doomed_total(), 0, "还没人判过死");
+
+    // 服务器把它从名册里摘掉(`request = None` = 主动推送,与生产同形)。
+    relay.push_roster(None, 2, &[(&cfg.device_id, true)]);
+    wait_until("服务器那份名册把在飞的入站握手判死了", || adm.doomed_total() == 1).await;
+}
+
+/// 结构锚:`EngineSlot::apply_roster` 的**每一个**调用点都要把当前席位交进去。
+///
+/// 上面那只测已经把「收到名册」那个调用点验成行为面了;这条锚管的是**另一个调用点**
+/// (会话收场)与**将来新开的**调用点 —— 后者按定义还没有测。恰好两个也一起钉住:
+/// 新开第三个调用点的人得先来看一眼这条锚说了什么。
+#[test]
+fn every_apply_roster_call_site_passes_the_admission_seat() {
+    const NEEDLE: &str = "engine.apply_roster(";
+    let mut sites = 0;
+    for (file, src) in transport_sources() {
+        let prod = production_src(src, file);
+        for (i, _) in prod.match_indices(NEEDLE) {
+            sites += 1;
+            // ⚠ **按字符取窗口,不按字节**:这几份源码里全是中文注释,`&prod[i..i+200]`
+            // 迟早切在某个字的中间,那时这条锚不是「红」而是 panic。
+            let window: String = prod[i..].chars().take(160).collect();
+            assert!(
+                window.contains("seat"),
+                "{file} 里这个 `apply_roster` 调用点没把席位交进去 —— \
+                 入站在飞握手的那半触发器会静默消失(identity-plan §5.11 item ③):\n{window}"
+            );
+        }
+    }
+    assert_eq!(sites, 2, "调用点恰有两个(收到名册 / 会话收场);多出来的那个也得交席位");
+}
+
+/// 名册闸的**触发器**那一半(§5.11):名册一变,当场 abort 那些新被拒的对端的在飞出站
+/// 握手 —— 让不合法的那条不必等到 handoff 才被拒。
+///
+/// ⚠ 它**不是判据**:安全靠三道闸各自问一次当前 gate,拆掉这一句只会让被拒那条多跑几步
+/// (然后照样在 handoff 前被拦)。所以这只测证的是「触发器真的扣动了」,不是「没有它就
+/// 不安全」。阴性对照钉住 §5.11 三轮 M3 那张表:**只多了一台无关设备**不许 abort 任何人。
+#[tokio::test]
+async fn a_shrinking_roster_aborts_the_in_flight_dial_to_the_dropped_peer() {
+    let _net = lan_net::TestNetGuard::install(LAN_SELF_ADDR, 24);
+    // 假对端在听但一言不发:握手会一直挂在「等 Accept」上,故取样时它确实在飞。
+    let mut r = dial_rig("lan-gate-abort", 59, true).await;
+    let _l = r.listener.take().expect("假对端在听");
+    *r.gate.lock().unwrap() = gate_of(Some(&[DIAL_PEER]));
+    r.round();
+    assert_eq!(r.dial.inflight(), 1, "该有一只在飞的出站握手");
+
+    // 阴性:只多了一台无关设备 —— 一只都不许 abort。
+    let denied = r.gate.lock().unwrap().apply_roster(Some(&roster_entries(&[
+        DIAL_PEER,
+        GATE_STRANGER,
+    ])));
+    r.dial.abort_denied(&denied);
+    assert_eq!(r.dial.inflight(), 1, "无关变更不得当成它被移除(§5.11 三轮 M3)");
+
+    // 阳性:把它摘掉 —— 当场 abort。
+    //
+    // ⚠ **判据必须是「立刻」而不是「等它变成 0」**(变异对照第一跑抓到的假绿):那只握手
+    // 任务本来就会在等 Accept 的预算到点后自己收场,任何 `wait_until` 窗口都比那个预算长
+    // ⇒ 拆掉 `abort_denied` 整个函数体它照样绿,判据被**别的机制背书**了。
+    // 立刻断之所以成立,是因为 `abort_denied` 用的是 `retain`:它**当场把条目从表里摘掉**,
+    // 与「`abort()` 之后 `is_finished()` 什么时候变真」无关。
+    let denied = r.gate.lock().unwrap().apply_roster(Some(&roster_entries(&[GATE_STRANGER])));
+    r.dial.abort_denied(&denied);
+    assert_eq!(r.dial.inflight(), 0, "名册摘掉它的那一刻,在飞握手就该从表里消失");
 }

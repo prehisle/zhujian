@@ -1199,6 +1199,19 @@ impl Deck<'_> {
         if !self.slot.lan_ready() {
             return Ok(());
         }
+        // ⛔ **名册闸的第三道**(identity-plan §5.11)。前两道(入站与出站各自「交 handoff
+        // 之前最后自证一次」那一句)都跑在**排进移交队列之前**;而「`AdoptedLink` 已经在
+        // 队列里躺着,名册这时才把这台摘掉」是它们够不着的那个窗口 —— 只有这一道挡得住。
+        // **绝不许因为前两道已经在而删掉它**(§5.11 收窄③)。
+        //
+        // 判据问的是**当前** gate(不是移交那一刻的),而从这里到 `LanLinks::install` 之间
+        // 一个 `.await` 都没有,故「复核完又被换掉」这条缝在结构上不存在。
+        //
+        // **静默关**:对端会退避重来,每次都在这里报一句只会把状态面刷成噪音;拆链那一刻
+        // 已经在 `apply_roster` 里说过一句人话了。
+        if !self.slot.gate_allows(&adopted.established.peer) {
+            return Ok(());
+        }
         if let Err(why) = self.slot.lan.admit(&adopted.established) {
             self.set_status(|s| s.lan_warning = Some(why));
             return Ok(());

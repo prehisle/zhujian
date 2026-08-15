@@ -77,7 +77,7 @@ export const sync = defineMessages({
   "devices.removeYes": { zh: "确认移除", en: "Remove it" },
   "devices.removeL1": { zh: "它将无法再经服务器同步这个空间。", en: "It will no longer be able to sync this space through the server." },
   "devices.removeL2": { zh: "它本机上已有的内容不会被删除——移除不是「清空它」。", en: "Content already on that device is not deleted — removing is not wiping it." },
-  "devices.removeL3": { zh: "如果和它在同一个 wifi 下,局域网直连可能仍在同步。", en: "If it is on the same wifi, direct local-network sync may still be running." },
+  "devices.removeL3": { zh: "如果和它在同一个 wifi 下:还在册的设备每台只要能从服务器取到最新名单,就会断开与它的局域网直连——通常是立刻,网络不好时可能要等几分钟;取不到名单的那台仍可能继续直连。", en: "If it is on the same wifi: every device still on the list drops its direct local-network link to it as soon as that device can fetch the current list from the server — usually at once, or a few minutes later on a poor connection; a device that cannot fetch the list may keep syncing with it directly." },
   "devices.removeL4": { zh: "若它还有没同步出来的内容,请先让它上线同步完再移除——重新加入需要清空它那边的数据,期间独有的内容找不回来。", en: "If it still holds unsynced content, let it come online and finish syncing first — rejoining requires wiping its data, and anything only it had will be lost." },
   "devices.leaveQ": { zh: "让本机退出这个账户?", en: "Remove this device from the account?" },
   "devices.leaveYes": { zh: "确认退出", en: "Leave" },

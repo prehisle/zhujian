@@ -1275,6 +1275,10 @@ fn lan_sync_admission(
             self_seed: cfg.device_seed,
             db: Arc::clone(db),
             active: slot.lan.active_view(),
+            // **交把手不交快照**(identity-plan §5.11 item ②/③):准入表里那份名册闸与
+            // [`EngineSlot::gate`] 物理上是同一只 `Arc`,故「app 级那份会不会与每空间那份
+            // 说不同的话」在类型层不存在,而 §5.11-⑧ 的「收场三处一起清」也就收成了两处。
+            gate: Arc::clone(&slot.gate),
             handoff: seat.handoff.clone(),
         };
         seat.host
@@ -2463,6 +2467,27 @@ struct EngineSlot {
     /// 拨号器(§7;L-c3b)。住在槽里,故「撤位即取消在飞拨号」与「撤位即拆链」是同一个
     /// 结构事实——不是「记得在撤位那几档各调一句 cancel」的自律。
     dial: lan_net::Dialer,
+    /// **权威名册闸**(identity-plan §5.11;367 第②笔)。`None` = 还不知道 = fail-open。
+    ///
+    /// **住槽里**:两条 LAN 事件循环(在线会话循环与离线泵)共用同一个槽,故「断 WAN
+    /// 期间这道闸照样在」是结构事实,不必在两处各接一遍。
+    ///
+    /// **为什么是 `Arc<Mutex<_>>` 而不是裸字段**(§5.11 item ②「共享同一份,别各存一份会
+    /// 漂的名单」的落地形):三道闸里有两道**不在协调者的栈上** —— 出站握手是 spawn 出去
+    /// 的任务(`dial_task`,§5.11 item ⑤ 的第二半),入站 pre-auth 握手更是住在 app 级
+    /// 准入表那边(第③笔)。把手共享 ⇒ **物理上只有一份名单**,「三处会不会说不同的话」
+    /// 这个问题在类型层就不存在;而 `lan.rs` 里那个 [`lan::RosterGate`] 保持纯值语义
+    /// (sans-io、不带锁),分层与 L-b 以来一致。
+    ///
+    /// ⛔ **它是叶子锁**:持有它的时候不许再去拿任何别的锁(db / status / work / 准入表)。
+    /// 全部用法都是「锁内只做集合比较,拿到结果就放」,故它不进 `db → work` 那条全仓唯一
+    /// 的锁序,也不新开第二种顺序。
+    ///
+    /// **`retire()` 刻意不碰它**(同 [`EngineSlot::ops_changed`]):①名册的生命期绑的是
+    /// **服务器会话**,不是引擎代次 —— 清它的唯一权威点是 `Ctx::Drop`(§5.11-⑧),两处
+    /// 清就是两份判据;②换掉这只 `Arc` 会让 app 级准入表手上那份变成孤儿(`register` 的
+    /// 幂等路径不重发把手),而「同一份」正是上一段那条结构事实的全部依据。
+    gate: Arc<Mutex<lan::RosterGate>>,
     /// op 追赶的惰性供流计划(§6.1 所有权表的**前两层**:节流与逻辑计划)。**住槽里**,
     /// 故跨 LAN 换代、跨中转重连存活,随 `EngineKey` 换代整台丢弃([`EngineSlot::retire`])。
     ///
@@ -2567,6 +2592,7 @@ impl EngineSlot {
                 blob_policy,
                 lan,
                 dial: lan_net::Dialer::new(handoff),
+                gate: Arc::new(Mutex::new(lan::RosterGate::default())),
                 ops: Arc::new(Mutex::new(ops_serve::OpsWorks::default())),
                 ops_changed: Arc::new(Notify::new()),
                 relay_data: RelayData::default(),
@@ -2582,6 +2608,12 @@ impl EngineSlot {
     /// `LanReady`(不变量 6):监听器准入与拨号只认它;此处 = 槽里有引擎。
     fn lan_ready(&self) -> bool {
         self.engine.is_some()
+    }
+
+    /// **名册闸的安全判据**(identity-plan §5.11)。协调者这一侧的读法;spawn 出去的握手
+    /// 任务读的是同一只 `Arc`(见 [`EngineSlot::gate`])。
+    fn gate_allows(&self, peer: &str) -> bool {
+        lan_net::gate_allows(&self.gate, peer)
     }
 
     /// 拨号器下次该巡查的时刻(协调者的 select 臂用)。**没引擎就不挂**:LanReady 撤位
@@ -2605,7 +2637,7 @@ impl EngineSlot {
             self.dial.retire();
             return None;
         }
-        let EngineSlot { lan, dial, .. } = self;
+        let EngineSlot { lan, dial, gate, .. } = self;
         let self_listening = lan.listen.is_some();
         dial.round(
             &cfg.account_id,
@@ -2613,10 +2645,63 @@ impl EngineSlot {
             &cfg.k_acc,
             &cfg.device_seed,
             db,
+            gate,
             self_listening,
             host_seat,
             &|peer| lan.has(peer),
         )
+    }
+
+    /// **把 LAN 三道闸对齐到一份新名册**(identity-plan §5.11 的唯一出口;`None` = 退回
+    /// fail-open,会话收场那次清场走的就是它)。
+    ///
+    /// **同步、无 await** —— `Ctx::Drop` 里要调得动,而 `Drop` 做不了 await。拆链产生的
+    /// 引擎输出**交回调用方 dispatch**:⛔ 安全线性化点是「gate 已换 ∧ 新被拒的链已从
+    /// 发送表里摘掉 ∧ 它们的在飞握手已被 abort」,**不是**「拆链产生的帧已经发出去」
+    /// (§5.11 四轮 L1 那条「线性化点放在状态上、不放在动作上」的同构)。
+    ///
+    /// 拆链走的是与死讯**完全相同**的那条收口(摘链 → 通报引擎 → 刷状态面),不是「只从
+    /// map 里删掉 socket」(§5.11-⑥)。⚠ 摘的判据是 [`lan::NewlyDenied::hits`](**这次**
+    /// 才变得不准连)而不是 `allows`(此刻准不准):本来就不在册的对端压根不该有链在,
+    /// 真有的话那是别处的闸漏了,拿这条去兜等于给一个不该存在的状态配一条静默的修复路。
+    ///
+    /// ⭐ **§5.11-⑧ 那「收场三处一起清」在实现上收成两处**(第③笔的收窄):app 级准入表
+    /// 那一份与本槽这一份是**同一只 `Arc`**(`lan_sync_admission` 交的是把手),故它不是
+    /// 第三个要人记得做的动作、而是第一处的推论 —— 「三处会不会说不同的话」这个问题在类型
+    /// 层就不存在。下面那句 `apply_denied` **只是触发器**(abort 在飞的入站握手),不是清场。
+    fn apply_roster(
+        &mut self,
+        roster: Option<&[RosterEntry]>,
+        // 本 `run` 在 app 级监听器上的席位(桌面 = `Some`)。**入站在飞握手的触发器要经它**
+        // ——那张表不在协调者栈上(§5.11 item ③)。手机壳没有监听席位,`None` 是正确形、
+        // 不是漏实现:它压根收不到拨入。
+        seat: Option<&AdmitSeat>,
+        status: &Arc<Mutex<SyncStatus>>,
+        events: &mpsc::UnboundedSender<SyncEvent>,
+    ) -> Vec<Output> {
+        // 锁内只做集合比较,拿到判据就放(叶子锁,见 [`EngineSlot::gate`])。
+        let denied = self.gate.lock().expect("roster gate mutex poisoned").apply_roster(roster);
+        // 出站在飞握手先取消:它们是「不必等到 handoff 才被拒」的那一半(§5.11 的触发器)。
+        self.dial.abort_denied(&denied);
+        // 入站那一半(§5.11 item ④/⑨):**闸本身已经生效了** —— 准入表拿的是同一只 `Arc`,
+        // 上面那句 `apply_roster` 一换,`handshake` 步骤 ⑦ 问到的就是新名册。这一句只是触
+        // 发器:让新被拒的那几只不必跑到 handoff 才被拦。
+        if let Some(seat) = seat {
+            seat.host.admission.apply_denied(&seat.host.space_id, &denied);
+        }
+        let mut outs = vec![];
+        for (peer, generation) in self.lan.denied_links(&denied) {
+            self.lan.close(&peer, generation);
+            if let Some(e) = self.get() {
+                outs.extend(e.on_lan_link_down(&peer, generation));
+            }
+            set_status(status, events, |s| {
+                s.lan_warning = Some(format!("与 {peer} 的局域网直连已断:它已不在本账户的设备名单里"));
+            });
+        }
+        // 链路数与「活跃对端」那份只读视图从唯一出口刷一次(拆了链就得刷,同 `lan_down`)。
+        set_status(status, events, |s| self.apply_status(s));
+        outs
     }
 
     fn get(&mut self) -> Option<&mut Engine> {
@@ -2705,6 +2790,9 @@ impl EngineSlot {
         // 对账重发债随身份一起作废(见 [`EngineSlot::reconcile_debt`])。**发号器不复位**:
         // 旧身份那枚广播 Hello 的迟到 Ack 正是要靠号对不上来认出来。
         self.reconcile_debt = None;
+        // ⛔ **`gate` 刻意不在这里清、更不换那只 `Arc`**(理由写在 [`EngineSlot::gate`]):
+        // 名册的生命期绑服务器会话不绑引擎代次,清它的唯一权威点是 `Ctx::Drop`;而换 `Arc`
+        // 会让 app 级准入表手上那份变成孤儿。撤位期链路与拨号都已撤台,这道闸此刻没有消费者。
     }
 
     /// **对齐槽与库的当前事实**(幂等;实现审 M3 把「判过期」与「装配」合成这一个
@@ -3077,6 +3165,21 @@ impl LanLinks {
     fn publish_view(&self) {
         let mut view = self.active.lock().expect("lan active view mutex poisoned");
         *view = self.links.keys().cloned().collect();
+    }
+
+    /// 名册一变,**这次**才变得不准连的那些活跃链(identity-plan §5.11-⑥)。
+    ///
+    /// 借 [`LanLinks::peers`] 的排序:处置顺序必须可复现,否则同一场景两次跑拆链的次序
+    /// 不同、状态面上最后留下的那句 `lan_warning` 也就不同(同 `budget_probe` 那条纪律)。
+    fn denied_links(&self, denied: &lan::NewlyDenied) -> Vec<(String, u64)> {
+        self.peers()
+            .into_iter()
+            .filter(|p| denied.hits(p))
+            .map(|p| {
+                let generation = self.links[&p].generation;
+                (p, generation)
+            })
+            .collect()
     }
 
     /// 当前活跃对端(排序:投递顺序可复现)。
