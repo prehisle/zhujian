@@ -669,12 +669,21 @@ mod tests {
                 })
             })
             .collect();
-        assert!(
-            gaps.len() <= GAP_BUDGET,
-            "已知缺口 {} 条,超出 GAP_BUDGET={GAP_BUDGET}:\n{}\n\
-             —— 新开口子要连同理由一起改那个数字(显式动作),不许悄悄多一条。",
-            gaps.len(),
-            gaps.join("\n")
-        );
+        // `GAP_BUDGET` 今天是 0,于是 `<=` 在 clippy 眼里恒等于 `== 0`
+        // (`absurd_extreme_comparisons`,deny-by-default,会把整个 crate 的 clippy 顶成 error)。
+        // ⛔ **别按它的建议改成 `is_empty()` / `== GAP_BUDGET`**:这个数字是**给人改的旋钮**
+        // (上面那段头注写着「只许降不许升,真要新开口子连同理由一起改这个数字」),
+        // 改成等号后,哪天预算调到 1,判据会从「不超预算」静默变成「必须正好一条」。
+        // ⇒ 留住 `<=`,只在这一句上闭掉这条 lint。
+        #[allow(clippy::absurd_extreme_comparisons)]
+        {
+            assert!(
+                gaps.len() <= GAP_BUDGET,
+                "已知缺口 {} 条,超出 GAP_BUDGET={GAP_BUDGET}:\n{}\n\
+                 —— 新开口子要连同理由一起改那个数字(显式动作),不许悄悄多一条。",
+                gaps.len(),
+                gaps.join("\n")
+            );
+        }
     }
 }

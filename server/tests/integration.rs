@@ -1973,12 +1973,13 @@ async fn joiner_conn_closes_when_slot_dies() {
     };
     let mut j = connect(addr).await;
     j.send(&ClientMsg::PairJoin { slot }).await;
-    // owner 收到 Joined 再关槽(保证 join 已完成)。
-    loop {
-        match a.recv_skip_peer().await {
-            ServerMsg::PairPeer { event: PairEvent::Joined } => break,
-            other => panic!("期待 Joined,得到 {other:?}"),
-        }
+    // owner 收到 Joined 再关槽(保证 join 已完成)。别的都当场 panic,故这里**不是循环**
+    // ——`recv_skip_peer` 自己已经把要跳过的那类消息滤掉了(原先包了一层 `loop`,读起来像
+    // 「等到 Joined 为止」,实际第一条不是 Joined 就炸;clippy 的 `never_loop` 是 deny 级,
+    // 它会把整个 server 的 clippy 顶成 error,387 顺手拆掉,行为一字未变)。
+    match a.recv_skip_peer().await {
+        ServerMsg::PairPeer { event: PairEvent::Joined } => {}
+        other => panic!("期待 Joined,得到 {other:?}"),
     }
     a.send(&ClientMsg::PairClose { slot }).await;
     // joiner 连接应当场被关(kick),而不是等 10 分钟截止。

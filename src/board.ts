@@ -822,8 +822,9 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
 
   // A card's tags (M:N). Each current tag is a chip with a ✕ to drop it; the ⋯ menu's
   // 标签 opens a keepOpen picker of the tags not yet on the card — pick/create adds one
-  // and the picker stays put so you can add several in a row (each write = add_task_topic;
-  // remove = remove_task_topic). Adds reflect in place (item.topics + a live `have`) and
+  // and the picker stays put so you can add several in a row (each write = add_task_topic, or
+  // add_task_topic_by_title when the typed name is new; remove = remove_task_topic).
+  // Adds reflect in place (item.topics + a live `have`) and
   // reconcile the whole board with one load() when the picker closes; remove reloads at
   // once. draggable:false keeps a chip click from starting a card drag.
   function topicTags(item: TaskItem): { root: HTMLElement; openPicker: () => void } {
@@ -845,20 +846,33 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       have.add(topicId);
       return true;
     }
-    // 新建并挂上:输入的名字在库里不存在时才走到这。create_topic 校验空/重名/超长,失败原样
-    // 报错、选择器留场;成功拿新 id 后先并进 allTopics(让本次选择器会话的候选/重名判定一致,
-    // 收起时的 load() 会用后端真相覆盖),再 addTag。
+    // 新建并挂上:输入的名字在库里不存在时才走到这。**一条命令走完**(add_task_topic_by_title
+    // = core 单事务:验任务仍活跃 → 同名复用/缺则新建 → 挂链)。⛔ 别改回 create_topic 拿 id 再
+    // add 的两步:第一步成、第二步败会留下一枚没人要的空标签,且两调之间目标可能已被远端归档
+    // (codex 120 设计审 M9;安卓那端一直是单事务,386 第③条把桌面这端补齐)。校验空/超长仍在
+    // core 里,失败原样报错、选择器留场可重试。
+    // 返回的 id 可能是**既有**标签:本地 allTopics 落后于库(远端刚同步来同名标签)时,后端按
+    // 标题复用而不是新建 —— 故先按 id 查重再并进 allTopics / item.topics,别盲push 造重复。
     async function createTag(title: string, have: Set<string>): Promise<boolean> {
       clearOpError();
       let id: string;
       try {
-        id = await invoke<string>("create_topic", { title });
+        id = await invoke<string>("add_task_topic_by_title", { id: item.id, title });
       } catch (e) {
-        showOpError(String(e));
+        showOpError(String(e)); // 横幅就地报错,卡片与选择器都保持在场(ui-audit P0 #6)
         return false;
       }
-      allTopics.push({ id, title, color: null, kind: null });
-      return addTag(id, have);
+      let tp = allTopics.find((x) => x.id === id);
+      if (!tp) {
+        // core 里 title 是 trim 过的;本地这份只活到收起时那发 load(),用同一口径免得候选里
+        // 出现带空格的影子名。
+        tp = { id, title: title.trim(), color: null, kind: null };
+        allTopics.push(tp);
+      }
+      if (have.has(id)) return true; // 后端幂等 no-op(那标签已在卡上)—— 别再往 chips 里加一枚
+      item.topics.push({ id: tp.id, title: tp.title, color: tp.color });
+      have.add(id);
+      return true;
     }
     async function removeTag(topicId: string): Promise<void> {
       clearOpError();
@@ -909,8 +923,8 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         if (changed) void load();
       });
       // 选择器 UI(搜索 + 候选 + Enter 复用/新建)走共享件 tag-picker.ts(与灵感同源),keepOpen
-      // 让选完不收起、可连续加多个:选既有 = add_task_topic,输入新名 = create_topic 拿 id 再 add
-      // (见 addTag / createTag)。回调落定后由 tag-picker 就地重渲候选(已加的即时隐藏)。
+      // 让选完不收起、可连续加多个:选既有 = add_task_topic,输入新名 = add_task_topic_by_title
+      // (core 单事务建+挂,见 addTag / createTag)。回调落定后由 tag-picker 就地重渲候选(已加的即时隐藏)。
       renderTagPicker(wrap, {
         allTopics,
         have,

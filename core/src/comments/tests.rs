@@ -57,12 +57,28 @@ const INSERT_NULL_SIGNED: &str =
     "INSERT INTO item_comment (id, item_id, content, created_at, born_device) \
      VALUES (?1, ?2, 'x', '2026-08-07T12:00:00.000Z', NULL)";
 
+/// 自旋到系统时钟走进**下一毫秒**。不是 sleep:不引入固定等待、也不受定时器粒度影响,
+/// 且退出条件就是要证的那件事本身(`created_at` 真的不同了),不是「等久一点大概就行」。
+fn wait_next_millis() {
+    let t0 = repo::now_iso_millis();
+    while repo::now_iso_millis() == t0 {
+        std::hint::spin_loop();
+    }
+}
+
 /// 幸福路:写→读→删,行与 op 一一对应;时间是定宽 24 字节的规范串。
 #[test]
 fn add_list_remove_round_trip() {
     let (mut c, mut k) = fresh_db("happy");
     let item = notes::capture(&mut c, &mut k, "宿主").unwrap();
     let a = add(&mut c, &mut k, &item, "第一句").unwrap();
+    // ⚠ 排序键是 `created_at DESC, id DESC`,而 `created_at` 只到**毫秒**:同一毫秒里两条
+    // 留言谁排前面由 ULID 的随机后缀定 —— `Ulid::new()` 在同毫秒内**不单调**,于是「后写的
+    // 排前面」是抛硬币。387 在 CI 上真红过一次(两条 id 的时间戳前缀同为 `01M02X1Y3H`,
+    // 即同一毫秒;Linux runner 两次插入落在一个 ms 里很常见,本机 Windows 上难得撞上)。
+    // 「最近优先」这句承诺本来就是**按 created_at** 说的,同毫秒并列时实现没有、也不必有
+    // 「按写入先后」的保证 ⇒ 让两条落进不同毫秒,判据才有定义。
+    wait_next_millis();
     let b = add(&mut c, &mut k, &item, "第二句").unwrap();
     let page = list_for_item(&c, &item, None).unwrap();
     assert_eq!(page.rows.len(), 2);

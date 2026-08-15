@@ -107,7 +107,9 @@ jobs:
           echo "NDK_HOME=$NDK_HOME"
           node scripts/build-android.mjs
 
-      # gen 脚本自带三道闸(三处版本一致 / aapt 拆 APK 验 versionCode / build-profile.json 非 devtools),
+      # gen 脚本自带四道闸(三处版本一致 / aapt 拆 APK 验 versionCode / build-profile.json 非 devtools /
+      # 386 补的 apksigner 验签名证书是不是那把 release key——签错钥=存量用户报「应用未安装」;
+      # 它跑的是 build-tools 里的 apksigner.jar,靠上面那步的 JDK 17 与 build-tools 36),
       # 写 android.json 到 APK 旁。notes 取注解 tag 的 message(git tag -a -m),空则回落版本串。
       - name: 生成 android.json(版本一致 + aapt 验 versionCode + devtools 护栏)
         run: |

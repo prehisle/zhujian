@@ -99,6 +99,53 @@ if (prof.versionCode !== versionCode) {
   process.exit(1);
 }
 
+// ── 3.7 签的必须是那把 release key(386 可优化项第⑥条补的第四道闸)。前三道管的是
+//        「版本对不对 / 包干不干净」,签名证书本身从来没核过。签错 key 的后果不是报错而是
+//        **用户覆盖装报「应用未安装」**:安卓按签名证书认同一个应用,换了证书就是另一个应用,
+//        存量用户必须先卸载(= 本地数据全没)才装得上。⇒ 这一道 fail-closed,读不出也拒发。
+//        判据锚在**用户机上那份**:下面这个指纹 2026-08-15 由三个独立来源量到、逐字相同 ——
+//        ①线上 updates/zhujian_0.3.30_aarch64.apk(存量用户装的就是它)②本机 keystore
+//        (keytool -list,alias=zhujian)③本机产物 APK。改这个常量 = 换签名钥 = 所有存量
+//        用户装不上,绝不是「更新一下期望值」那种动作。 ──
+const EXPECTED_SIGNER_SHA256 = "b2d0614ae8ea67643afdea2d61c06d6b1090ccb6463310c0944c22191f6552f7";
+// apksigner 的 .bat/.sh 包装在 Node 里不能直接 execFile(Windows 下 spawn .bat 是 EINVAL),
+// 直接跑它的 jar:两平台同一条路径,CI 的 JDK 17 与本机 JAVA_HOME 都能起。
+const apksignerJar = join(btDir, bt, "lib", "apksigner.jar");
+if (!existsSync(apksignerJar)) {
+  console.error(`找不到 apksigner:${fwd(apksignerJar)} —— 无法核验签名证书,拒发。`);
+  console.error(`装上 build-tools(sdkmanager "build-tools;${bt}")后重跑。`);
+  process.exit(1);
+}
+const java = process.env.JAVA_HOME ? join(process.env.JAVA_HOME, "bin", "java") : "java";
+let certs;
+try {
+  // verify 本身会校验 APK 的签名完整性(v1/v2/v3),没签名/被改过的包在这一步就非零退出。
+  certs = execFileSync(java, ["-jar", apksignerJar, "verify", "--print-certs", apkPath], {
+    encoding: "utf8",
+  });
+} catch (e) {
+  console.error("apksigner 核验签名失败(包没签名 / 被改过 / java 起不来),拒发:");
+  console.error(String(e.stdout ?? "") + String(e.stderr ?? e.message));
+  process.exit(1);
+}
+// 取**全部** signer 的指纹:多签(如证书轮换血统)时每一个都必须是那把钥,一个不认识就拒。
+const digests = [...certs.matchAll(/Signer #\d+ certificate SHA-256 digest:\s*([0-9a-f]{64})/gi)].map(
+  (m) => m[1].toLowerCase(),
+);
+if (digests.length === 0) {
+  console.error("apksigner 输出里读不到任何签名证书指纹——判不了,拒发(fail-closed)。");
+  console.error(certs);
+  process.exit(1);
+}
+const wrong = digests.filter((d) => d !== EXPECTED_SIGNER_SHA256);
+if (wrong.length > 0) {
+  console.error(`APK 的签名证书不是那把 release key:${wrong.join(", ")}`);
+  console.error(`期望:${EXPECTED_SIGNER_SHA256}`);
+  console.error("⛔ 发出去存量用户会报「应用未安装」(安卓按证书认应用,必须卸载重装才行)。");
+  console.error("检查 keystore.properties / CI 的 ANDROID_KEYSTORE_B64 是不是换了钥。");
+  process.exit(1);
+}
+
 // ── 4. 清单(字段与 update.rs::AndroidUpdate 逐键对应,versionCode 是比较轴) ──
 const notes = process.argv[2] ?? `朱简安卓版 v${version}`;
 const manifest = {

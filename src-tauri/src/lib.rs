@@ -775,6 +775,26 @@ fn add_task_topic(space_id: String, id: String, topic_id: String, spaces: State<
     task::add_topic(&mut conn, &mut clk, &id, &topic_id)
 }
 
+/// 给任务按标题挂标签(同名复用、缺则新建,core 单事务原子;codex 120 设计审 M9:
+/// 禁 create_topic+add_task_topic 两步——半途失败留空标签)。返回标签 id。
+/// 与安卓 `add_task_topic_by_title` 同名同义(386 可优化项第③条:同一个判据原先只在安卓那端执行)。
+#[tauri::command]
+fn add_task_topic_by_title(
+    space_id: String,
+    id: String,
+    title: String,
+    spaces: State<'_, Spaces>,
+) -> Result<String, String> {
+    let rt = spaces.get(&space_id)?;
+    let (mut conn, mut clk) = rt.write_locks();
+    // ReopenRequired 复核在锁内(space-entry-plan §3.2,codex 二轮 M2:旗与导入共
+    // 临界区,排队在锁上的写拿到锁时旗必已在;锁前查有「查后落旗抢锁」竞态)。
+    if let Some(e) = rt.restart_required() {
+        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
+    }
+    task::add_topic_by_title(&mut conn, &mut clk, &id, &title)
+}
+
 /// Remove one tag from a task (multi-tag, M:N). Idempotent; only an active task can be
 /// edited; an archived/missing task fails fast — see task::remove_topic.
 #[tauri::command]
@@ -3128,6 +3148,7 @@ pub fn run() {
             set_task_due,
             set_task_priority,
             add_task_topic,
+            add_task_topic_by_title,
             remove_task_topic,
             edit_note,
             list_note_history,
