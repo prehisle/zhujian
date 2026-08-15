@@ -1,0 +1,116 @@
+/* 设备管理面(identity-plan §5.8;367 片⑤)——同步面板里的一页,不另开窗。
+   tokens 来自 theme.css;按钮吃 controls.css 的 .hbtn,面板骨架吃 sync.css。 */
+
+.dev-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.dev-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: var(--paper);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+}
+
+.dev-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.dev-name {
+  font-size: var(--fs-14);
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+.dev-badge {
+  font-size: var(--fs-12);
+  line-height: 1.6;
+  color: var(--ink);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-pill);
+  padding: 1px 8px;
+}
+.dev-badge--admin {
+  color: var(--seal);
+  border-color: var(--seal-line);
+  background: var(--seal-tint);
+}
+
+/* 唯一定位那一格(§5.8 ⛔):短的是**对当前名册算的最短唯一前缀**,点开是完整 26 位。
+   别名可被账户内任一设备改写,只有它能把两行分开,故它常显、不藏进浮层。 */
+.dev-idline {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.dev-id {
+  font-family: Consolas, "Courier New", monospace;
+  font-size: var(--fs-12);
+  line-height: 1.5;
+  letter-spacing: 0.04em;
+  color: var(--ink);
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xs);
+  padding: 3px 12px;
+  text-align: left;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+  transition: border-color 0.14s, background 0.14s;
+}
+.dev-id:hover {
+  border-color: var(--seal-line);
+  background: var(--seal-tint);
+}
+
+.dev-acts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* 破坏性动作在静息态就带朱砂,悬停按 337 的规矩往 --ink 压(--seal-tint 底由 .hbtn 给)。 */
+.hbtn.dev-danger {
+  color: var(--seal);
+  border-color: var(--seal-line);
+}
+
+/* 第二拍宿主:§5.9 的话一句都不能省,故它是块不是一行 pill。 */
+.dev-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 2px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line-strong);
+}
+.dev-confirm-q {
+  font-size: var(--fs-14);
+  color: var(--seal);
+  letter-spacing: 0.02em;
+}
+.dev-confirm-id {
+  font-family: Consolas, "Courier New", monospace;
+  font-size: var(--fs-12);
+  letter-spacing: 0.04em;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+.dev-confirm-list {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: var(--fs-13);
+  line-height: 1.7;
+  color: var(--ink);
+}

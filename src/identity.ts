@@ -53,6 +53,15 @@ export function thisDeviceId(space: string): string | null {
   return snapshot && snapshot.space === space ? snapshot.thisDevice : null;
 }
 
+/** 这台设备起过的别名;没起过 / 快照未到 / 空间对不上 = null。设备管理面(devices.ts)
+ *  用它把权威名册的 device_id 翻成人话——**它只是显示层的补充**,谁在册由名册说了算
+ *  (§2.3 的口径警告:`device_profile` 是「见过的设备」,不是「当前在册的设备」)。 */
+export function aliasOf(space: string, device: string): string | null {
+  const s = snapshot;
+  if (!s || s.space !== space) return null;
+  return s.alias.get(device) ?? null;
+}
+
 /** 这条条目该显的署名文字;null = 不显(未知出生设备 / 就是本机 / 那台没起过别名)。 */
 export function signatureFor(space: string, bornDevice: string | null | undefined): string | null {
   if (!bornDevice) return null; // 0033 之前的存量行:未知不猜,也不显「未知设备」

@@ -42,9 +42,9 @@ use futures_util::{SinkExt, StreamExt};
 use rusqlite::Connection;
 use serde::Serialize;
 use sync_proto::{
-    auth_sig_payload, err_code, register_device_sig_payload, register_first_sig_payload,
-    seat_lease_sig_payload, ClientMsg, Lane as WireLane, PairEvent, ServerMsg, HEARTBEAT_SECS,
-    SILENCE_TIMEOUT_SECS,
+    auth_sig_payload, device_admin_sig_payload, err_code, register_device_sig_payload,
+    register_first_sig_payload, seat_lease_sig_payload, ClientMsg, Lane as WireLane, PairEvent,
+    ServerMsg, CAP_DEVICE_ROSTER_V1, HEARTBEAT_SECS, SILENCE_TIMEOUT_SECS,
 };
 use tokio::net::TcpStream;
 use tokio::sync::{mpsc, oneshot, Notify};
@@ -81,6 +81,7 @@ mod ad_deck;
 mod ctx_impl;
 mod deck;
 mod lan_pump;
+mod roster;
 /// M3 网络栈真机闸门诊断(android-plan §9)。两壳的「诊断」入口按 `transport::net_probe` 调,
 /// 故这两个名字要在 `transport` 这一层看得见 —— 子模块本身不公开。
 mod selftest;
@@ -91,11 +92,19 @@ pub use selftest::{net_probe, ProbeStep};
 use ad_deck::{offline_deck, AdDeck};
 use deck::{Deck, RelayLeg};
 use lan_pump::{lan_read_pump, lan_write_pump};
+use roster::{
+    AdminFlow, AdminReply, RosterReply, RosterSched, DEVICE_ADMIN_DEADLINE,
+    ROSTER_PULL_TICKS,
+};
 use session_loop::session;
 
 /// 图字节旁路策略(M1,定义在 engine、由壳层经 [`Transport`] 注入)——sync 模块
 /// 对外只露 transport,策略枚举从这里出 crate(android-plan §1 窄公开面)。
 pub use crate::sync::engine::BlobPolicy;
+/// 设备管理动作与名册行(identity-plan §5)。**两壳命令面的 DTO 直接用它们**,
+/// 不各自再定义一份 —— 「与线上格式同源」于是是编译期事实,不是要记得对齐的纪律
+/// (314 第②笔那条:留言 DTO 直接用 core 的类型)。
+pub use sync_proto::{DeviceAction, RosterEntry};
 /// app 级局域网监听器与准入表(lan-direct-plan §6)。壳层建一枚给 supervisor,
 /// 同样从 transport 出 crate(窄公开面:sync 模块对外只露 transport 与 supervisor)。
 pub use crate::sync::lan_net::LanAdmission;
@@ -240,6 +249,16 @@ pub struct SyncStatus {
     /// 的纯函数([`engine::ops_notice`]),而 [`set_status`] 本就「快照没变不发事件」,
     /// 于是「同一条不重报 / 被别的盖过之后允许再报」两条自然成立。
     pub ops_notice: Option<String>,
+    /// **服务器权威名册**(identity-plan §5.4;367)。`None` = **不知道**(未连接 / attach
+    /// 那枚推送丢了 / 服务器版本旧),`Some` = 权威。
+    ///
+    /// 类型上把这件事封死是本案的要害:UI 拿不到 `Some` 就**不给操作面**,而不是拿一份
+    /// 可能过期的名单充数。**会话结束即清 `None`**(`Ctx::Drop`),故 `revision` 的比较域
+    /// 也随之收在会话内 —— 服务器重启后 revision 复位,而重启必然断连、会话必然重建。
+    ///
+    /// 名册只带 device_id 与管理标记,**不带别名**(别名是 E2EE 的,服务器根本不知道)。
+    /// 界面上的名字 = 本快照 ⋈ 本地 `device_profile`。
+    pub roster: Option<Vec<RosterEntry>>,
 }
 
 /// 传输任务 → UI 桥的事件(lib.rs 把它转 tauri emit;测试直接读通道)。
@@ -300,6 +319,15 @@ pub enum Control {
     Reconfigured,
     /// 发起配对:回执配对码(slot-XXXX-XXXX);后续进度走 [`SyncEvent::Pair`]。
     PairStart { reply: oneshot::Sender<Result<String, String>> },
+    /// 设备管理(identity-plan §5.7-1):移除 / 设为管理设备 / 取消管理设备。
+    ///
+    /// **能力闸在 core 这一侧再判一次**(§5.10-2 M4):本会话没收到过 `Roster` 就本地
+    /// 回错、一个新信封都不发 —— 只靠 UI 不显示按钮挡不住直接 IPC 调用与将来的接线漂移,
+    /// 而漏出去的后果是**把同步会话打断**(老服务器收到不认识的 `ClientMsg` 会
+    /// `bad_request` 并断开)。
+    DeviceAdmin { target: String, action: DeviceAction, reply: AdminReply },
+    /// 拉一枚当前名册(UI 打开设备面板时)。回执**自带名单**,见 [`RosterReply`]。
+    RosterRefresh { reply: RosterReply },
 }
 
 /// 传输任务的全部依赖(lib.rs setup 装配;测试直接构造)。
@@ -1007,7 +1035,9 @@ pub async fn register_pending_identity(
         account: cfg.account_id.clone(),
         device: cfg.device_id.clone(),
         sig: sig.to_bytes().to_vec(),
-        caps: vec![], // 工序4:本轮客户端不声明能力(编译兼容;声明 cap 与渲染属未来轮)。
+        // 纪元预注册的**专用短连接**:求完租约即关。名册那个 cap 刻意不声明(367)——
+        // 声明只会让服务器往一条马上就没的连接推一枚名册,白占它的在途额度。
+        caps: vec![],
     })
     .await?;
     loop {
@@ -1705,6 +1735,16 @@ async fn offline_wait(
                 None => return Idle::Stopped,
                 Some(Control::Reconfigured) => return Idle::Reconfigured,
                 Some(Control::PairStart { reply }) => {
+                    let _ = reply.send(Err(busy.to_string()));
+                    Woke::Handled
+                }
+                // 离线期两条新命令同 `PairStart`:响亮回执那句「在忙什么」,一个新信封
+                // 都不发(名册与设备管理都要一条已鉴权的会话)。
+                Some(Control::DeviceAdmin { reply, .. }) => {
+                    let _ = reply.send(Err(busy.to_string()));
+                    Woke::Handled
+                }
+                Some(Control::RosterRefresh { reply }) => {
                     let _ = reply.send(Err(busy.to_string()));
                     Woke::Handled
                 }
@@ -3618,6 +3658,22 @@ struct Ctx<'a> {
     boot_deadline: Option<Instant>,
     boot_out: Option<BootOut>,
     pair: Option<PairFlow>,
+    /// 一笔在飞的设备管理命令(§5.7-3)。与 [`Self::pair`]、名册刷新共用一个互斥域
+    /// (§5.7-4):三者都靠无编号的 `ServerMsg::Err` 认失败,两笔同时在飞会把 Err 认错主。
+    admin: Option<AdminFlow>,
+    /// 这条连接上的**无编号 `Err` 归属**还可信吗(实现审弹三 M1;`true` = 已污染)。
+    ///
+    /// 一旦有一笔 flow 是按 deadline 放弃的(结果未确认、服务器那枚回执可能还在路上),
+    /// 后到的任何无编号 `Err` 都可能是**上一笔**的迟到回执,而它会被认给下一笔在飞的
+    /// flow —— 把一笔其实成功了的操作报成失败。置位之后,无编号 `Err` 一律只进状态面。
+    /// **随会话消亡**(`Ctx` 每会话新建),见 [`Ctx::abandon_flow_by_deadline`]。
+    err_attribution_poisoned: bool,
+    /// 名册调度机(§5.4 那台;`roster.rs`)。恒在轴、UI 搭车、能力位、当前名册都在它里面。
+    roster: RosterSched,
+    /// 本连接鉴权用过的那枚 challenge nonce。**`DeviceAdmin` 的签名绑它**(§5.5):
+    /// 移除不是幂等动作,一枚签名在别的连接上重放可能命中一台同 id 被重新注册的设备;
+    /// 而 nonce 本来就在手里,代价为零的封闭窗口就该封。
+    nonce: Vec<u8>,
     /// 引导空间不足(复核 M):置位后 session 立即以 [`SessionEnd::SpaceBlocked`]
     /// 收场——断连让源端止流,外层固定长等待。
     space_blocked: bool,

@@ -70,7 +70,9 @@ pub(crate) async fn create_account_as(
         device: device_id.clone(),
         pubkey: pubkey.to_vec(),
         sig: sig.to_bytes().to_vec(),
-        caps: vec![], // 工序4:本轮客户端不声明能力(编译兼容;声明 cap 与渲染属未来轮)。
+        // 创号的**专用短连接**:注册完即关,壳层随后才起 live 会话。名册那个 cap 刻意
+        // 不声明(367),同纪元预注册那条短连接 —— 推来也没人消费,白占在途额度。
+        caps: vec![],
     })
     .await?;
     loop {

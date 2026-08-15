@@ -46,11 +46,14 @@ const NL = String.fromCharCode(10);
 const withChrome = process.argv.includes("--with-chrome");
 const want = process.argv.slice(2).find((a) => !a.startsWith("--")) ?? "all";
 
-/** 跑一只脚本。stdout 与 stderr 都收 —— 门禁抛出来的话消息在 stderr。 */
-function run(script) {
+/** 跑一只脚本。stdout 与 stderr 都收 —— 门禁抛出来的话消息在 stderr。
+ *  `env` 给「刀不是改文件、而是换掉门禁的输入」的那种(366 的 deployed 组:线上是好的
+ *  时候,那几条分支在真跑里一条都到不了)。 */
+function run(script, env) {
   try {
     const out = execFileSync("node", [F(script)], {
       cwd: ROOT, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
+      env: env ? { ...process.env, ...env } : process.env,
     });
     return { code: 0, out };
   } catch (e) {
@@ -324,6 +327,39 @@ const SUITES = {
         edits: [["src/i18n.ts", "const PLURAL = /\\{([A-Za-z0-9_]+)\\|", "const PLURAL = /\\{([A-Za-z0-9_]+)\\#"]] },
     ],
   },
+
+  // ===== 366:线上对账 ===================================================================
+  // ⚠ 这一组**要网络 + ssh**(它的基线阳性对照就是真去问一次线上)。别的组离线能跑,
+  // 它不能 —— 而这正是它守的那件事:一道扫不到线上的闸,答不了「用户在用哪一版」。
+  deployed: {
+    gate: "scripts/check-deployed-drift.mjs",
+    title: "check-deployed-drift(366,线上对账)",
+    knives: [
+      { n: "① 官网线上与仓里 site/index.html 不同", expect: "线上与 site/index.html 不同",
+        note: "逐字节而不是只比版本号:360-362 那三笔漂的是整段内容,版本号那一格照样能全绿",
+        edits: [["site/index.html", "<html lang=\"zh\">", "<html lang=\"zh\"> "]] },
+      { n: "② 桌面清单版本对不上", expect: "≠ 仓里",
+        edits: [["package.json", '"version": "', '"version": "9.']] },
+      { n: "③ 安卓 versionCode 对不上", expect: "≠ 按",
+        edits: [["android/package.json", '"version": "0.3.', '"version": "0.4.']] },
+      { n: "④ deploy.md 那张表的「服务器」行被挪走(地址读不出 = 不许猜)",
+        expect: "读不出服务器地址",
+        edits: [["docs/deploy.md", "| 服务器 | `", "| 服务器地址 | `"]] },
+      // ⑤-⑧ 换的是**门禁的输入**不是仓里的文件:线上好着的时候,下面四条分支在真跑里
+      // 一条都到不了(不可达的防护 = 没被验过的代码)。注入模式恒 exit 1,故这四刀
+      // 全靠 expect 那句话判 —— 退出码在这里不携带信息。
+      { n: "⑤ 线上跑的是脏构建", expect: "脏构建",
+        env: { ZJ_DRIFT_FAKE_SYNCD: '{"commit":"ab62d0df12c4","dirty":true,"built_at":"x","pkg_version":"0.1.0"}' } },
+      { n: "⑥ 线上 commit 本机仓里没有", expect: "本机仓里没有",
+        env: { ZJ_DRIFT_FAKE_SYNCD: '{"commit":"dead0000beef","dirty":false,"built_at":"x","pkg_version":"0.1.0"}' } },
+      { n: "⑦ 线上落后(server/ 有已提交未部署的改动)", expect: "线上落后",
+        note: "锚是仓里第一笔 server/ 提交(639cc5d,计费工序 1),它恒落后于 HEAD",
+        env: { ZJ_DRIFT_FAKE_SYNCD: '{"commit":"639cc5d75d93","dirty":false,"built_at":"x","pkg_version":"0.1.0"}' } },
+      { n: "⑧ 回体不合形(commit 不是 12 位 hex)", expect: "commit 不合形",
+        note: "build.rs 那句 fail-fast 的另一半:真出现 unknown 这种占位串,门禁必须当场红",
+        env: { ZJ_DRIFT_FAKE_SYNCD: '{"commit":"unknown","dirty":false,"built_at":"x","pkg_version":"0.1.0"}' } },
+    ],
+  },
 };
 
 // ---- 跑 ------------------------------------------------------------------------------
@@ -371,7 +407,7 @@ for (const name of picked) {
     }
     const saved = new Map();
     try {
-      for (const [file, from, to] of k.edits) {
+      for (const [file, from, to] of k.edits ?? []) {
         const p = F(file);
         if (!saved.has(p)) saved.set(p, readFileSync(p, "utf8"));
         const cur = readFileSync(p, "utf8");
@@ -380,7 +416,7 @@ for (const name of picked) {
         if (!cur.includes(from)) throw new Error(`这一刀下不去:${file} 里找不到「${from.slice(0, 46)}」`);
         writeFileSync(p, cur.replace(from, to));
       }
-      const r = run(tool);
+      const r = run(tool, k.env);
       ran++;
       const marks = r.out.split(NL).filter((l) => l.trim().startsWith("✗") || l.includes("DIFF"));
       const red = r.code > 0;
@@ -410,7 +446,14 @@ for (const name of picked) {
     const back = run(suite.gate);
     if (back.code !== 0) {
       bad++;
-      console.log(`✗ 还原之后基线不绿了  ${k.n} —— 这一刀漏了什么没擦掉`);
+      // ⚠ **别把这句话说死成「残留」**(366 判例):这道复证会因为**别的**原因不绿 —— deployed
+      // 组的门禁要走网络,一次瞬时抖动就让它红,而「这一刀漏了什么没擦掉」是个**自信的错答案**
+      // (与 338 那条「catch 的兜底值把工装自己坏了伪装成被测对象的问题」同族)。所以把门禁
+      // 当时说了什么原样印出来,让人自己看是残留还是别的。
+      console.log(`✗ 还原之后基线不绿了  ${k.n} —— 可能是这一刀漏了什么没擦掉,也可能是别的:`);
+      for (const l of back.out.split(NL).filter((l) => l.includes("FAIL") || l.trim().startsWith("✗"))) {
+        console.log(`    ${l.trim().slice(0, 160)}`);
+      }
     }
   }
 }

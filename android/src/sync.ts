@@ -22,13 +22,28 @@ import {
   syncPairStart,
   type SpaceInfo,
 } from "./api";
+import {
+  feedDevices,
+  initDevices,
+  openDevicesPanel,
+  resetDevices,
+  rosterDeparted,
+} from "./devices";
 import { t } from "./i18n";
 import { $, esc, showBar, showError } from "./ui";
+
+/** 后端 `err_code::SEAT_LIMIT` 那句人话的判别片段(core `transport.rs` 的诊断串,
+ *  Rust 诊断不翻)。**匹配字面量,不是显示文案** —— 翻它会破坏判据。 */
+const SEAT_LIMIT_MARK = "同步席位已满";
 
 // 事件桥的统一信封(后端 bridge_emit):space 标 + 代次 + 原 payload(§12)。过滤谓词
 // acceptSpaced 与代次账本 seenGeneration 住 main.ts(space-foreground 监听要直写账本),
 // 本模块经 Deps 拿谓词;类型随三个同步面监听搬来这边,main.ts 回头引用。
 export type Spaced<T> = { space: string; generation: number; payload: T };
+
+/** 服务器权威名册的一行(sync-proto `RosterEntry`;identity-plan §5.4)。**只有
+ *  device_id 与管理标记,不带别名**——别名是 E2EE 的,服务器根本不知道。 */
+export type RosterEntry = { device: string; admin: boolean };
 
 export type SyncStatus = {
   configured: boolean;
@@ -42,6 +57,9 @@ export type SyncStatus = {
   suspended: number;
   skew: boolean;
   clock_skew: boolean;
+  /** 服务器权威名册;**`null` = 不知道**(未连上 / attach 那枚推送丢了 / 服务器版本旧)。
+   *  ⛔ 消费方不许把它折成空数组(§5.16.2-7):拿不到就不给操作面。会话结束即回 `null`。 */
+  roster: RosterEntry[] | null;
 };
 
 type Deps = {
@@ -102,6 +120,8 @@ export function renderSync(s: SyncStatus) {
   altCreate.classList.toggle("ghost", isMain);
   $("sync-boot").hidden = s.state !== "booting";
   $("sync-online").hidden = !s.configured;
+  // 名册的唯一出处是状态面(§5.7-6):每份新快照都喂给设备面,开着就当场重画。
+  feedDevices(s);
   if (s.configured) {
     const rows: [string, string][] = [
       [t("sync.infoAccount"), s.account_id ?? ""],
@@ -136,6 +156,8 @@ function resetSecondary() {
  *  切空间必调——旧空间的恢复码挂在新空间的同步页上=把错误密钥当新空间的交付
  *  (codex 实现审必修 1);空间重置后同理。调用点在 main.ts(onSpaceChanged / 空间重置)。 */
 export function resetSyncTransient() {
+  // 名册是「设备 × 空间」粒度的服务器事实:旧空间那份一个字都不许留到新空间上。
+  resetDevices();
   $("sync-pair-out").hidden = true;
   const recovery = $("sync-recovery");
   recovery.hidden = true;
@@ -385,6 +407,10 @@ async function doInviteDevice() {
     $("sync-pair-out").hidden = false;
   } catch (err) {
     showError(String(err));
+    // 「席位已满:请先移除一台不用的设备」那句话得点得到能移除设备的地方(§5.8 末)。
+    // 桌面在失败页上多给一枚入口按钮;手机这一格是折叠区,直接把它展开——同一件事,
+    // 形态随端(端间差异见 devices.ts 头注)。
+    if (String(err).includes(SEAT_LIMIT_MARK)) openDevicesPanel();
   } finally {
     btn.disabled = false;
     btn.textContent = t("sync.addDevice");
@@ -484,9 +510,16 @@ export function initSync(d: Deps): void {
       () => showError(t("sync.copyFailed")),
     );
   });
+  initDevices();
   // 事件桥统一信封的三个同步面监听(过滤谓词 acceptSpaced 经 Deps 注入,账本住 main.ts)。
   void listen<Spaced<SyncStatus>>("sync-status", (e) => {
     if (!deps.acceptSpaced(e.payload)) return;
+    // 名册变短 → 一条提示(§5.8 末:「移除很安静」这个真问题的解法是**用透明代替权限**)。
+    // 会话内差分、零持久状态、零协议增量。⚠ 手机壳的 acceptSpaced 只放行前台空间的事件,
+    // 故这里天然只对当前空间做差分——与桌面「后台空间也报、带空间名」是承载差异,不是判据差异。
+    for (const name of rosterDeparted(e.payload.space, e.payload.payload)) {
+      showBar(t("devices.departedToast", { name }), true);
+    }
     renderSync(e.payload.payload);
   });
   void listen<Spaced<{ received: number; total: number }>>("sync-boot", (e) => {

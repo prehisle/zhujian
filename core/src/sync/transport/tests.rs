@@ -29,6 +29,7 @@ fn transport_sources() -> Vec<(&'static str, &'static str)> {
         ("ctx_impl.rs", include_str!("ctx_impl.rs")),
         ("deck.rs", include_str!("deck.rs")),
         ("lan_pump.rs", include_str!("lan_pump.rs")),
+        ("roster.rs", include_str!("roster.rs")),
         ("selftest.rs", include_str!("selftest.rs")),
         ("session_loop.rs", include_str!("session_loop.rs")),
     ]
@@ -4532,6 +4533,9 @@ struct FakeRelay {
     task: tokio::task::JoinHandle<()>,
     /// 每一枚 `ClientMsg::Send`,按线上顺序:`(n, to, blob)`。
     sent: mpsc::UnboundedReceiver<(u64, String, Vec<u8>)>,
+    /// 每一枚**控制面** `ClientMsg`(367:`DeviceAdmin` / `RosterReq`),按线上顺序。
+    /// 与 `sent` 分家的理由和生产同源:数据面积压时控制面照样看得见。
+    ctl_in: mpsc::UnboundedReceiver<ClientMsg>,
     /// 每条**新连接**鉴权完成时报一声 = 「上一条会话收场了」的判据。
     conns: mpsc::UnboundedReceiver<()>,
     /// 测试主动下发的回执 / 投递。
@@ -4608,6 +4612,7 @@ async fn fake_relay() -> FakeRelay {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
     let addr = listener.local_addr().expect("addr");
     let (sent_tx, sent) = mpsc::unbounded_channel();
+    let (ctl_tx, ctl_in) = mpsc::unbounded_channel();
     let (conn_tx, conns) = mpsc::unbounded_channel();
     let (reply, mut reply_rx) = mpsc::unbounded_channel::<ServerMsg>();
     let (closer, mut closer_rx) = mpsc::unbounded_channel::<()>();
@@ -4648,6 +4653,11 @@ async fn fake_relay() -> FakeRelay {
                                 let pong = sync_proto::encode(&ServerMsg::Pong);
                                 if ws.send(WsMsg::Binary(pong.into())).await.is_err() { break }
                             }
+                            // 367 控制面:原样交给用例,应答由用例自己下发(这台假中转
+                            // 不认识业务语义,它只是一根线)。
+                            Ok(m @ (ClientMsg::DeviceAdmin { .. } | ClientMsg::RosterReq { .. })) => {
+                                if ctl_tx.send(m).is_err() { return }
+                            }
                             _ => {}
                         }
                     }
@@ -4655,7 +4665,7 @@ async fn fake_relay() -> FakeRelay {
             }
         }
     });
-    FakeRelay { addr, task, sent, conns, reply, closer }
+    FakeRelay { addr, task, sent, ctl_in, conns, reply, closer }
 }
 
 const XFER_ONE: &str = "01TRANSFER0000000000000001";
@@ -8676,4 +8686,386 @@ async fn retiring_the_slot_cancels_an_in_flight_dial() {
     assert!(r.dial.due().is_none(), "撤位期不挂巡查计时器");
     let mut link = FakeLink { stream: sock };
     assert!(link.closed(5000).await, "取消掉的握手该把 socket 一起带走");
+}
+
+// ============================================================================
+// 367 第①笔片④:权威名册与设备管理的**线上面**(identity-plan §5.4 / §5.7)
+//
+// 调度机自己那台状态机的边界(deadline 恰相等 / 第 10 拍恰一枚 / 两条匹配判据)在
+// `roster/tests.rs` 里用纯态验;这里验的是**接线**:能力闸拦不拦得住、签名绑的是不是
+// 本连接那枚 nonce、`Err` 归属白名单、互斥域、断连收场。
+// ============================================================================
+
+impl FakeRelay {
+    /// 下一枚控制面 `ClientMsg`(367)。
+    async fn next_ctl(&mut self, ms: u64) -> Option<ClientMsg> {
+        timeout(Duration::from_millis(ms), self.ctl_in.recv()).await.ok()?
+    }
+
+    /// 下发一枚名册(`request = None` 即服务器主动推送)。
+    fn push_roster(&self, request: Option<u64>, revision: u64, devices: &[(&str, bool)]) {
+        let devices =
+            devices.iter().map(|(d, a)| RosterEntry { device: (*d).into(), admin: *a }).collect();
+        self.reply.send(ServerMsg::Roster { request, revision, devices }).expect("假中转还活着");
+    }
+
+    fn push_err(&self, code: &str) {
+        self.reply
+            .send(ServerMsg::Err { code: code.into(), msg: String::new() })
+            .expect("假中转还活着");
+    }
+
+    fn push_admin_ok(&self, target: &str, action: DeviceAction) {
+        self.reply
+            .send(ServerMsg::DeviceAdminOk { target: target.into(), action })
+            .expect("假中转还活着");
+    }
+}
+
+/// 假中转握手时发的那枚 challenge nonce(见 [`fake_relay`])。`DeviceAdmin` 的签名
+/// 必须绑它 —— 本测试段拿它当**期望值**,签错了当场红。
+const FAKE_NONCE: [u8; 32] = [7u8; 32];
+
+/// ⚠ 26 位规范 Crockford base32(去 I/L/O/U)。第一版写成 `…DEVICE…` —— 那个 **I**
+/// 不在字母表里,于是命令被 `on_device_admin` 的形态闸挡在了发帧之前,整只用例
+/// 验的其实是另一道闸。见 `device_admin_shape_gate_precedes_the_wire`。
+const DEV_TARGET: &str = "01TARGETDEV000000000000000";
+
+/// 发一笔设备管理命令。
+async fn send_admin(
+    rig: &LanRig,
+    action: DeviceAction,
+) -> oneshot::Receiver<Result<(), String>> {
+    let (tx, rx) = oneshot::channel();
+    rig.ctl
+        .send(Control::DeviceAdmin { target: DEV_TARGET.into(), action, reply: tx })
+        .await
+        .expect("控制通道活着");
+    rx
+}
+
+/// 等到本会话确认了名册能力(attach 那枚推送已被消费并进了状态面)。
+async fn wait_roster(rig: &LanRig, want: usize) {
+    wait_until("名册进状态面", || {
+        rig.status.lock().unwrap().roster.as_ref().is_some_and(|r| r.len() == want)
+    })
+    .await;
+}
+
+/// 起一台已确认名册能力的中转会话(本机 + 一台目标设备在册)。
+async fn roster_rig(tag: &str, seed: u8) -> (FakeRelay, LanRig, SyncConfig) {
+    roster_rig_beat(tag, seed, Duration::from_secs(HEARTBEAT_SECS)).await
+}
+
+async fn roster_rig_beat(
+    tag: &str,
+    seed: u8,
+    beat: Duration,
+) -> (FakeRelay, LanRig, SyncConfig) {
+    let (relay, rig, cfg) = relay_rig_beat(tag, seed, beat).await;
+    relay.push_roster(None, 1, &[(&cfg.device_id, true), (DEV_TARGET, false)]);
+    wait_roster(&rig, 2).await;
+    (relay, rig, cfg)
+}
+
+/// 设备管理命令的往返:**签名绑本连接那枚 nonce**,`DeviceAdminOk` 比对 target+action
+/// 才结账(§5.5 / §5.7-3)。
+///
+/// nonce 那一格是本测的要害:§5.5 之所以给这条命令绑 nonce(而 `RegisterDevice`/
+/// `SeatLease` 没绑),是因为移除**不是幂等动作** —— 一枚签名在别的连接上重放,可能
+/// 命中一台同 id 被重新注册的设备。签名对不上就是那个窗口没关。
+#[tokio::test]
+async fn device_admin_round_trip_signs_over_the_connection_nonce() {
+    let (mut relay, rig, cfg) = roster_rig("da-trip", 91).await;
+    let mut rx = send_admin(&rig, DeviceAction::Remove).await;
+    let ClientMsg::DeviceAdmin { account, target, action, sig } =
+        relay.next_ctl(3000).await.expect("命令该发到线上")
+    else {
+        panic!("发出来的不是 DeviceAdmin");
+    };
+    assert_eq!((account.as_str(), target.as_str()), (cfg.account_id.as_str(), DEV_TARGET));
+    assert_eq!(action, DeviceAction::Remove);
+    // Ed25519 是确定性签名:拿同一把钥匙对期望 payload 再签一次,逐字节比。
+    let signing = SigningKey::from_bytes(&cfg.device_seed);
+    let want = signing.sign(&device_admin_sig_payload(
+        &FAKE_NONCE,
+        &cfg.account_id,
+        &cfg.device_id,
+        DEV_TARGET,
+        DeviceAction::Remove,
+    ));
+    assert_eq!(sig, want.to_bytes().to_vec(), "签名没绑本连接那枚 challenge nonce");
+
+    // 对不上的回执先来一枚:action 不同 ⇒ 不结账(它是上一笔已超时命令的迟到回执)。
+    relay.push_admin_ok(DEV_TARGET, DeviceAction::GrantAdmin);
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert!(rx.try_recv().is_err(), "action 对不上的回执不许结账");
+    relay.push_admin_ok(DEV_TARGET, DeviceAction::Remove);
+    rx.await.expect("回执必到").expect("成功");
+}
+
+/// **形态闸先于发帧**(§5.5:定长形态是拼接无歧义的前提,与既有三条签名路同纪律)。
+///
+/// 这只测是本轮**自己栽出来的**:`DEV_TARGET` 第一版写成 `…DEVICE…`,而 `I` 不在
+/// Crockford 字母表里 —— 于是往返那只用例的命令根本没上线,它验的成了这道闸。既然
+/// 这道闸真会咬人,就给它一格自己的账,顺带把「拒它的是形态、不是能力」分开:样本
+/// 的能力位**已确认**(排除能力闸),错的只有 target 的形。
+#[tokio::test]
+async fn device_admin_shape_gate_precedes_the_wire() {
+    let (mut relay, rig, _cfg) = roster_rig("da-shape", 90).await;
+    for bad in ["01TARGETDEVICE00000000000A", "SHORT", &"0".repeat(27)] {
+        let (tx, rx) = oneshot::channel();
+        rig.ctl
+            .send(Control::DeviceAdmin {
+                target: bad.into(),
+                action: DeviceAction::Remove,
+                reply: tx,
+            })
+            .await
+            .unwrap();
+        assert_eq!(rx.await.unwrap().unwrap_err(), "设备编号形态不合法", "样本 {bad}");
+    }
+    assert!(relay.next_ctl(400).await.is_none(), "形态不合法的一枚都不许上线");
+    assert_eq!(rig.status.lock().unwrap().state, "online", "被拒的命令不该弄断会话");
+}
+
+/// **能力闸落在 core**(§5.10-2 一轮 M4):本会话没收到过 `Roster` ⇒ 两条命令都本地
+/// 回错、**一个新信封都不发**,而且会话**不断**。
+///
+/// 只靠 UI 不显示按钮挡不住直接 IPC 调用与将来的接线漂移,而漏出去的后果是老服务器
+/// 收到不认识的 `ClientMsg` 后 `bad_request` **并断开** = 点一下设备面板就把同步会话
+/// 打断一次。
+#[tokio::test]
+async fn capability_gate_lives_in_core_and_emits_no_new_envelope() {
+    // 刻意**不推**名册:这就是「老服务器」与「attach 推送丢了」两种情形的共同形态。
+    let (mut relay, rig, _cfg) = relay_rig("da-cap", 92).await;
+    // ⚠ `relay_rig` 只等到「假中转看见一条连接」,那时客户端可能还停在 `connect_and_auth`
+    // 里 —— 建连期那条臂对三条命令都回「正在连接服务器」,拿它当绿就等于**没验到能力闸**
+    // (别的用例是靠 `wait_roster` 顺带跨过这道门的)。这里等会话仪式真跑完。
+    wait_until("会话仪式跑完", || rig.status.lock().unwrap().state == "online").await;
+    // ⚠ 措辞不许说「服务器版本较旧」:新服务器的 attach 推送同样可能丢(§5.4),
+    // 断言版本旧是不诚实的。
+    const WHY: &str = "尚未确认服务器支持,暂不可用";
+    let rx = send_admin(&rig, DeviceAction::Remove).await;
+    assert_eq!(rx.await.unwrap().unwrap_err(), WHY, "设备管理");
+    let (tx, rx) = oneshot::channel();
+    rig.ctl.send(Control::RosterRefresh { reply: tx }).await.unwrap();
+    assert_eq!(rx.await.unwrap().unwrap_err(), WHY, "名册刷新");
+
+    assert!(relay.next_ctl(400).await.is_none(), "能力未确认时一个新信封都不许发");
+    assert_eq!(rig.status.lock().unwrap().state, "online", "被拒的命令不该弄断会话");
+}
+
+/// 名册进状态面,**会话收场即清成「不知道」**(§5.4:客户端不缓存、不落库)。
+///
+/// `None` = 不知道,`Some` = 权威。清成 `None` 而不是清成空名单是要害:空名单会让
+/// 第②笔的直连闸把每一台都判成「已被移除」。
+#[tokio::test]
+async fn roster_reaches_status_and_is_forgotten_when_the_session_ends() {
+    let (relay, rig, cfg) = roster_rig("da-clear", 93).await;
+    {
+        let s = rig.status.lock().unwrap();
+        let r = s.roster.as_ref().expect("有名册");
+        assert!(r.iter().any(|e| e.device == cfg.device_id && e.admin), "本机在册且是管理设备");
+        assert!(r.iter().any(|e| e.device == DEV_TARGET && !e.admin), "对端在册、不是管理设备");
+    }
+    relay.close();
+    wait_until("会话收场后名册清成不知道", || rig.status.lock().unwrap().roster.is_none()).await;
+}
+
+/// ⛔ **无编号 `Err` 的归属白名单**(§5.5 设计审三轮 H1)。
+///
+/// 仓里今天就有一条主动异步推送:`Err{account_throttled}`。它撞上一笔在飞的
+/// `DeviceAdmin` 时,老规则(「有 flow 在飞就归它」)会**提前错误结账**,真正的
+/// `DeviceAdminOk` 随后到达时 flow 已被清掉。
+///
+/// 判据两面都要:①它没结掉 flow;②它**确实进了状态面**(不是被整个吞掉)。
+#[tokio::test]
+async fn unowned_err_codes_only_reach_the_status_face() {
+    let (mut relay, rig, _cfg) = roster_rig("da-err", 94).await;
+    let mut rx = send_admin(&rig, DeviceAction::GrantAdmin).await;
+    relay.next_ctl(3000).await.expect("命令该发到线上");
+
+    relay.push_err(err_code::ACCOUNT_THROTTLED);
+    wait_until("越额提示进状态面", || rig.status.lock().unwrap().error.is_some()).await;
+    assert!(rx.try_recv().is_err(), "白名单外的 code 不许结掉设备管理 flow");
+
+    relay.push_admin_ok(DEV_TARGET, DeviceAction::GrantAdmin);
+    rx.await.expect("回执必到").expect("真正的回执随后到达,flow 还在,结得掉");
+}
+
+/// **上一笔按 deadline 放弃之后,它的迟到 `Err` 不许结掉下一笔**(实现审弹三 M1)。
+///
+/// 病:无编号 `Err` 的归属判据只有「此刻哪笔 flow 在飞 + code 在白名单里」,而它没有
+/// 请求号。交错:命令 A 发出 → 服务端那枚 `Err{busy}` 因下行积压迟到 → A 到点被本地
+/// 结账 → 同一条连接上起命令 B → A 的迟到 `busy` 到达 → **B 被错误结掉**,而 B 随后
+/// 仍可能在服务端真的执行,客户端却已经向 UI 报了失败。互斥域只挡「两笔同时在飞」,
+/// 挡不住「上一笔超时后,迟到回执落进下一笔」。
+///
+/// 修法不动线协议:一旦有一笔 flow 是按 deadline 放弃的(结果未确认),这条连接上的
+/// 无编号 `Err` 归属**从此不可信**,一律只进状态面。代价 = 那之后的失败要等满 deadline
+/// 才报;毒性随会话消亡。
+///
+/// ⚠ 15 秒的 deadline 靠真等验不动,故这只测**停掉时钟自己推**(判据仍是算出来的)。
+#[tokio::test]
+async fn a_late_err_from_an_abandoned_flow_never_settles_the_next_one() {
+    let (mut relay, rig, _cfg) = roster_rig("da-late-err", 96).await;
+    // A:发出去,然后**一个字都不回**。
+    let rx_a = send_admin(&rig, DeviceAction::GrantAdmin).await;
+    relay.next_ctl(3000).await.expect("A 该发到线上");
+    // 停表:runtime 一空转,时钟自己推到下一枚定时器 —— 15s 的 deadline 于是**瞬间**
+    // 到点,而判据仍是「到点」这件事本身,不是等了多久。
+    tokio::time::pause();
+    let a = rx_a.await.expect("A 到点必须被本地结账");
+    assert!(a.unwrap_err().contains("未在预期时间内"), "A 走的是 deadline 那条路");
+    tokio::time::resume();
+
+    // B:同一条连接上的下一笔。
+    let mut rx_b = send_admin(&rig, DeviceAction::RevokeAdmin).await;
+    relay.next_ctl(3000).await.expect("B 该发到线上");
+    // A 的迟到回执现在才到 —— 它在白名单里,而 B 正在飞。
+    relay.push_err(err_code::BUSY);
+    wait_until("迟到的 Err 进状态面", || rig.status.lock().unwrap().error.is_some()).await;
+    assert!(rx_b.try_recv().is_err(), "上一笔的迟到 Err 把这一笔结掉了 —— 它其实可能成功了");
+    // 一红一绿:B 自己那枚**带定向回执**的应答照样结得掉(证明 B 没被别的东西弄坏)。
+    relay.push_admin_ok(DEV_TARGET, DeviceAction::RevokeAdmin);
+    rx_b.await.expect("回执必到").expect("B 自己的定向回执照样结账");
+}
+
+/// 同一条的**对称面**:被放弃的那笔是**配对**,后一笔是设备管理(实现审弹三复核 L1)。
+///
+/// ⛔ 两处 deadline 臂各置一次污染位,而**上一只测只守得住设备管理那一处** —— 单独把
+/// 配对那处的 `abandon_flow_by_deadline()` 删掉,它照样绿。这正是污染必须做成**连接级**
+/// 而不是按 flow 族分的理由:`busy` / `bad_request` / `auth_failed` / `internal` 在两张
+/// 白名单里都有,配对那笔的迟到 `Err` 结得掉设备管理这一笔。
+#[tokio::test]
+async fn a_late_err_from_an_abandoned_pair_never_settles_a_later_admin() {
+    let (mut relay, rig, _cfg) = roster_rig("da-late-pair", 97).await;
+    // 开槽:假中转**不认识** `PairOpen`(它只是一根线),故这一笔永远等不到 `PairSlot`。
+    let (tx, rx_pair) = oneshot::channel();
+    rig.ctl.send(Control::PairStart { reply: tx }).await.expect("控制通道活着");
+    tokio::time::pause();
+    let p = rx_pair.await.expect("开槽到点必须被本地结账");
+    assert!(p.unwrap_err().contains("超时"), "配对走的是 deadline 那条路");
+    tokio::time::resume();
+
+    // 同一条连接上起一笔设备管理。
+    let mut rx_b = send_admin(&rig, DeviceAction::GrantAdmin).await;
+    relay.next_ctl(3000).await.expect("命令该发到线上");
+    // 上一笔**配对**的迟到 `Err` 现在才到(`busy` 在两张白名单里都有)。
+    relay.push_err(err_code::BUSY);
+    wait_until("迟到的 Err 进状态面", || rig.status.lock().unwrap().error.is_some()).await;
+    assert!(rx_b.try_recv().is_err(), "配对那笔的迟到 Err 把设备管理这一笔结掉了");
+    // 一红一绿:它自己那枚定向回执照样结得掉。
+    relay.push_admin_ok(DEV_TARGET, DeviceAction::GrantAdmin);
+    rx_b.await.expect("回执必到").expect("它自己的定向回执照样结账");
+}
+
+/// 白名单**里**的 code 照结(一红一绿的另一半),且 **`auth_failed` 恰好一次结账**:
+/// 收 `Err` 那一刻结账并 `take()` 走 flow,随后的断连清场看到 `None`,**不得再报第二次**。
+///
+/// 观察点 = UI 收到的那句话。若 `auth_failed` 没能结账,UI 拿到的会是断连那句
+/// 「连接断开,未能确认是否已生效」—— 两句话不同,这一格就分得清。
+#[tokio::test]
+async fn whitelisted_err_settles_exactly_once_before_the_disconnect() {
+    let (mut relay, rig, _cfg) = roster_rig("da-auth", 95).await;
+    let rx = send_admin(&rig, DeviceAction::Remove).await;
+    relay.next_ctl(3000).await.expect("命令该发到线上");
+    relay.push_err(err_code::AUTH_FAILED);
+    let err = rx.await.expect("回执必到").unwrap_err();
+    assert!(!err.contains("连接断开"), "断连那句说明这枚 Err 根本没结账:{err}");
+    assert_eq!(err, human_err(err_code::AUTH_FAILED, ""), "该是鉴权那句人话");
+    // 随后真断连:`Ctx::Drop` 看到 `None`,什么也不做(sender 已随 take 走掉)。
+    relay.close();
+    wait_until("会话确实收场了", || rig.status.lock().unwrap().roster.is_none()).await;
+}
+
+/// 断线未回执的话术(§5.7-5)。⚠ 这句必须如实 —— **命令可能已经在服务器上执行了**,
+/// UI 的义务是重连后以新名册为准,不是重试。
+#[tokio::test]
+async fn disconnect_settles_the_admin_flow_with_an_honest_sentence() {
+    let (mut relay, rig, _cfg) = roster_rig("da-drop", 96).await;
+    let rx = send_admin(&rig, DeviceAction::Remove).await;
+    relay.next_ctl(3000).await.expect("命令该发到线上");
+    relay.close();
+    assert_eq!(rx.await.expect("回执必到").unwrap_err(), "连接断开,未能确认是否已生效");
+}
+
+/// 三条 UI 命令共用一个互斥域(§5.7-4):它们都靠**无编号**的 `Err` 认失败,两笔同时
+/// 在飞就会把 Err 认错主。
+#[tokio::test]
+async fn ui_commands_share_one_mutex_domain() {
+    let (mut relay, rig, _cfg) = roster_rig("da-mutex", 97).await;
+    // 一笔设备管理在飞(假中转不回执,它就一直挂着)。
+    let _rx = send_admin(&rig, DeviceAction::Remove).await;
+    relay.next_ctl(3000).await.expect("第一笔该发到线上");
+
+    let (t2, r2) = oneshot::channel();
+    rig.ctl.send(Control::RosterRefresh { reply: t2 }).await.unwrap();
+    assert!(r2.await.unwrap().unwrap_err().contains("已有操作"), "名册刷新该被互斥域挡住");
+    let (t3, r3) = oneshot::channel();
+    rig.ctl.send(Control::PairStart { reply: t3 }).await.unwrap();
+    assert!(r3.await.unwrap().unwrap_err().contains("已有操作"), "配对该被互斥域挡住");
+    assert!(relay.next_ctl(400).await.is_none(), "被挡住的命令一个信封都不许发");
+}
+
+/// 名册刷新的往返:**回执到手那一刻,状态面已经含本轮那份名单**(实现审弹三 M2)。
+///
+/// ⚠ 我原先的形是「回执自带名单」,想封掉「拿到 `Ok(())` 之后去读状态面、而状态面还没
+/// 被本轮更新」那道跨线程窗口。**那个修法是错的**:它把一道窗口换成了**两个无法排序的
+/// 数据出口** —— 回执带 revision 10 的名单,而一枚 revision 11 的主动推送可能先被状态面
+/// 的消费者看见,随后那枚 promise 再把 10 的名单倒灌回界面,两个出口都不带 revision,
+/// UI 无从判断谁新。正解是**把顺序摆对**(状态面先写、再结账),oneshot 的收发天然给出
+/// happens-before。
+///
+/// ⭐ 判据因此是「**不等**」:回执已经到手,状态面此刻就必须已经是本轮那一份 —— 用
+/// `wait_roster` 那种轮询会把这条性质整个放过去(轮询等得到,恰恰说明它可以晚到)。
+#[tokio::test]
+async fn roster_refresh_settles_only_after_the_status_face_has_this_round() {
+    let (mut relay, rig, cfg) = roster_rig("da-refresh", 98).await;
+    let (tx, rx) = oneshot::channel();
+    rig.ctl.send(Control::RosterRefresh { reply: tx }).await.unwrap();
+    let ClientMsg::RosterReq { n } = relay.next_ctl(3000).await.expect("该发一枚 RosterReq") else {
+        panic!("发出来的不是 RosterReq");
+    };
+    relay.push_roster(Some(n), 2, &[(&cfg.device_id, true)]);
+    rx.await.expect("回执必到").expect("成功");
+    let roster = rig.status.lock().unwrap().roster.clone();
+    assert_eq!(
+        roster.expect("回执到手时状态面必须已含本轮名单").len(),
+        1,
+        "结账早于状态面写入 ⇒ UI 拿到 ok 之后读到的还是上一轮"
+    );
+}
+
+/// §5.4 的**恒在轴**:没人开面板也照拉,且周期请求引出的 `RosterNack` **不会结掉**
+/// 在飞的 `DeviceAdmin` flow(§5.14-3c②,二轮 H2 的对症测)。
+///
+/// 这条轴是名册正确性的唯一依靠 —— 服务端的 `push()` 是 `try_send().is_ok()`,
+/// attach 那枚与成员变更那些推送都可能静默消失。
+#[tokio::test]
+async fn periodic_pull_runs_unattended_and_its_nack_does_not_settle_other_flows() {
+    // 心跳压到 30ms:10 拍 ≈ 0.3s(生产是 10 × 30s ≈ 5 分钟,真等验不动)。
+    let (mut relay, rig, _cfg) =
+        roster_rig_beat("da-axis", 99, Duration::from_millis(30)).await;
+
+    // 谁也没开面板,它自己就该发出来。
+    let ClientMsg::RosterReq { n } = relay.next_ctl(5000).await.expect("恒在轴该自己拉一枚")
+    else {
+        panic!("发出来的不是 RosterReq");
+    };
+    // 这枚周期请求撞了服务端限频。它绝不该结掉一笔在飞的设备管理命令。
+    let mut rx = send_admin(&rig, DeviceAction::RevokeAdmin).await;
+    loop {
+        match relay.next_ctl(5000).await.expect("命令该发到线上") {
+            ClientMsg::DeviceAdmin { .. } => break,
+            ClientMsg::RosterReq { .. } => continue, // 恒在轴还在自己转,忽略
+            other => panic!("不该出现的控制帧:{other:?}"),
+        }
+    }
+    relay.reply.send(ServerMsg::RosterNack { n, code: err_code::BUSY.into() }).unwrap();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(rx.try_recv().is_err(), "带号的 RosterNack 不许结掉设备管理 flow");
+    // ⛔ 那枚 busy 也不许把已有的名册清成 None(否则第②笔的直连闸当场翻成 fail-open)。
+    assert!(rig.status.lock().unwrap().roster.is_some(), "busy 只是这次刷新失败");
 }

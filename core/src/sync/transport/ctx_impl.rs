@@ -536,14 +536,35 @@ impl Ctx<'_> {
                 let step = self.pair.as_mut().and_then(|p| p.opener.as_mut()).map(|o| o.on_registered());
                 self.drive_pair(ws, step).await
             }
+            // ⛔ **无编号 `Err` 的归属改成白名单**(§5.5 设计审三轮 H1),不许再用「有 flow
+            // 在飞就归它」。仓里今天就有一条主动异步推送:未声明 `CAP_ACCOUNT_STATUS_V1`
+            // 的连接会被推 `Err{account_throttled}`(fastlane 首次越额 + admin 状态变更)。
+            // 交错 = `DeviceAdmin` 正在等结果 → 任意一枚 `Send` 触发首次越额 → 服务端异步
+            // 推那枚 `Err` → 客户端提前错误结账 → 真正的 `DeviceAdminOk` 到达时 flow 已被
+            // 清掉。Pair flow 一样中招。
+            //
+            // ⚠ 白名单**不等于**「对将来任何新增的主动推送免疫」(五轮 L1 打掉了我那句
+            // 过强的话)。准确条件是:**将来任何主动推送的 `Err` 必须用一个不在任何 flow
+            // 白名单里的 code**;某天有人给主动推送复用了 `busy`/`bad_request`,照样会被
+            // 误认。那条契约的可执行面在服务端(主动推送 helper 的 `debug_assert`)。
+            //
+            // `RosterRefresh` **刻意不在这张表里**:它的失败面是带号的 `RosterNack`,
+            // 故一枚无编号 `Err` 永远不该结它。
             ServerMsg::Err { code, msg } => {
-                if self.pair.is_some() {
+                let text = human_err(&code, &msg);
+                let c = code.as_str();
+                // ⛔ 归属一旦被「上一笔按 deadline 放弃」污染,这条连接上的无编号 `Err`
+                // 就再也证不了自己属于谁(弹三 M1),一律只进状态面。
+                if self.err_attribution_poisoned {
+                    self.set_status(|s| s.error = Some(text));
+                } else if self.pair.is_some() && err_code::PAIR_FLOW_ERRORS.contains(&c) {
                     // bad_slot = 槽已死:别再回发 PairClose 补刀——对死槽的 Close
                     // 只会招来下一枚无法归属的迟到错误(工序 7/8 二审 M1)。
                     let close = code != err_code::BAD_SLOT;
-                    self.fail_pair(ws, human_err(&code, &msg), close).await;
+                    self.fail_pair(ws, text, close).await;
+                } else if self.admin.is_some() && err_code::DEVICE_ADMIN_FLOW_ERRORS.contains(&c) {
+                    self.settle_admin(Err(text));
                 } else {
-                    let text = human_err(&code, &msg);
                     self.set_status(|s| s.error = Some(text));
                 }
                 Ok(())
@@ -558,7 +579,165 @@ impl Ctx<'_> {
             // 声明,故正常永不收到。收到=服务端门控 bug——**忽略**(非断连:良性控制帧,
             // 不改同步数据/密钥/水位;声明 cap 与渲染属未来轮,服务端阴性测负责抓门控)。
             ServerMsg::AccountStatusV1 { .. } => Ok(()),
+            // 权威名册(§5.4)。**两条判据分家**(二轮 M1):`request` 号只管「结不结账」,
+            // `revision` 只管「用不用这份数据」。反过来 `request == None` 的主动推送不结账,
+            // 但 revision 更新时照样应用 —— 它仍是权威名册。
+            ServerMsg::Roster { request, revision, devices } => {
+                // ⛔ 状态面的写入是**传进去的回调**,不是「回来之后自己记得写」
+                // (弹三 M2):顺序「先写状态面、再结账」由调度机内部保证,调用方
+                // 没有把它写反的余地。两个字段是 `Ctx` 的不同成员,分别借得开。
+                let (status, events) = (&self.status, &self.events);
+                self.roster.on_roster(request, revision, devices, |snap| {
+                    set_status(status, events, |s| s.roster = snap);
+                });
+                Ok(())
+            }
+            // `RosterReq` 的失败面(二轮 H2)。三格处置见 `RosterSched::on_nack`;
+            // ⛔ `busy` 绝不许把已有的 `Some(roster)` 清成 `None`。
+            ServerMsg::RosterNack { n, code } => {
+                self.roster.on_nack(n, human_err(&code, ""));
+                Ok(())
+            }
+            // 定向成功回执:**比对 target + action 才结账**(§5.7-3)。对不上 = 上一笔
+            // 已超时命令的迟到回执,丢。
+            ServerMsg::DeviceAdminOk { target, action } => {
+                if self.admin.as_ref().is_some_and(|f| f.target == target && f.action == action) {
+                    self.settle_admin(Ok(()));
+                }
+                Ok(())
+            }
         }
+    }
+
+    // ---- 设备管理与名册(identity-plan §5.4/§5.7) ----
+
+    /// 设备管理命令的**唯一结账出口**(§5.5 五轮:成功 / `Err` / deadline / 断连四条路
+    /// 都走这里,`take()` 只在这里做一次)。同步、无 await —— `Ctx::Drop` 里调得动。
+    ///
+    /// 没有 flow 就什么也不做:一枚 `auth_failed` 结完账之后紧接着的断连清场看到 `None`,
+    /// **不得再报第二次失败**。
+    pub(super) fn settle_admin(&mut self, r: Result<(), String>) {
+        if let Some(f) = self.admin.take() {
+            let _ = f.reply.send(r);
+        }
+    }
+
+    /// **按 deadline 放弃一笔 flow**(实现审弹三 M1)。
+    ///
+    /// 病:无编号 `Err` 的归属判据只有「此刻哪笔 flow 在飞 + code 在不在白名单」,
+    /// 而它**没有请求号**。于是:命令 A 发出 → 服务端那枚 `Err{busy}` 因下行积压迟到
+    /// → A 到点被本地结账 → 同一条连接上起命令 B → A 的迟到 `busy` 到达 → **B 被错误
+    /// 结掉**,而 B 随后仍可能在服务端真的执行 —— 客户端已经向 UI 报了失败。
+    /// 互斥域只挡「两笔同时在飞」,挡不住「上一笔超时后,迟到回执落进下一笔」。
+    /// 两张白名单有重合 code,故 Pair↔Admin 之间**互相**也串得动。
+    ///
+    /// 修法**不动线协议**(不加请求号):一旦有一笔 flow 是按 deadline 放弃的
+    /// (= 结果未确认、服务器那枚回执可能仍在路上),这条连接上的无编号 `Err` 归属
+    /// **从此不再可信** —— 此后一律只进状态面,flow 一律靠自己的 deadline 收场。
+    /// 代价 = 那之后的失败要等满 deadline 才报(慢,但绝不错判);毒性随会话结束而消失
+    /// (`Ctx` 每会话新建)。
+    pub(super) fn abandon_flow_by_deadline(&mut self) {
+        self.err_attribution_poisoned = true;
+    }
+
+    /// 三条 UI 发起的服务器命令共用一个互斥域(§5.7-4):配对 / 设备管理 / 名册刷新。
+    /// 理由是它们都靠**无编号**的 `ServerMsg::Err` 认失败,两笔同时在飞会把 Err 认错主。
+    /// ⚠ 恒在轴那枚周期拉取**不占**这个域(它有 `request` 号可自证,且不该被一个开着的
+    /// 浮层饿死)。
+    fn ui_command_busy(&self) -> bool {
+        self.pair.is_some() || self.admin.is_some() || self.roster.ui_busy()
+    }
+
+    /// **能力闸**(§5.10-2 一轮 M4):本会话收到过 `Roster` 吗。没有就本地回错、**一个
+    /// 新信封都不发** —— 老服务器收到不认识的 `ClientMsg` 会 `bad_request` 并断开,
+    /// 那等于「点一下设备面板就把同步会话打断一次」。
+    ///
+    /// ⚠ 措辞不许说「服务器版本较旧」:新服务器的 attach 推送同样可能丢(§5.4)。
+    fn roster_cap_gate(&self) -> Result<(), String> {
+        match self.roster.cap_seen() {
+            true => Ok(()),
+            false => Err("尚未确认服务器支持,暂不可用".into()),
+        }
+    }
+
+    pub(super) async fn on_device_admin(
+        &mut self,
+        ws: &mut Ws,
+        target: String,
+        action: DeviceAction,
+        reply: AdminReply,
+    ) -> Result<(), String> {
+        if let Err(e) = self.roster_cap_gate() {
+            let _ = reply.send(Err(e));
+            return Ok(());
+        }
+        if self.ui_command_busy() {
+            let _ = reply.send(Err("已有操作在进行中,请稍后再试".into()));
+            return Ok(());
+        }
+        // **形态闸先于签名**(§5.5,与既有三条签名路同纪律):定长形态是拼接无歧义的
+        // 前提。服务端也判,这里判是不让一枚必被拒的帧白跑一趟。
+        if !crate::clock::is_canonical_device_id(&target) {
+            let _ = reply.send(Err("设备编号形态不合法".into()));
+            return Ok(());
+        }
+        let sig = self.signing.sign(&device_admin_sig_payload(
+            &self.nonce,
+            &self.cfg.account_id,
+            &self.cfg.device_id,
+            &target,
+            action,
+        ));
+        // ⛔ **先把 flow 装进 `Ctx`,再发帧**(实现审弹三 L1)。反过来写的话,
+        // `send_client(...).await` 那一段里 `reply` 还躺在这个栈帧上 —— 外层 shutdown
+        // 直接取消 session future 时,它随栈帧一起 drop,`Ctx::Drop` **看不见它**,于是
+        // 结账没经过 `settle_admin()`(oneshot 的 receiver 收到 `Canceled`,两壳虽然都把
+        // 它映射成诚实的断连文案,但「五路统一结账 / 所有退出点在 Drop 交汇」这句就不成立)。
+        // 装进去之后:发帧失败也好、future 被取消也好,一律由 `Drop` 收口。
+        // `RosterRefresh` 那条本来就是这个所有权顺序(waiter 先挂进调度机再发帧)。
+        self.admin = Some(AdminFlow {
+            target: target.clone(),
+            action,
+            deadline: Instant::now() + DEVICE_ADMIN_DEADLINE,
+            reply,
+        });
+        send_client(ws, &ClientMsg::DeviceAdmin {
+            account: self.cfg.account_id.clone(),
+            target,
+            action,
+            sig: sig.to_bytes().to_vec(),
+        })
+        .await?;
+        Ok(())
+    }
+
+    pub(super) async fn on_roster_refresh(
+        &mut self,
+        ws: &mut Ws,
+        reply: RosterReply,
+    ) -> Result<(), String> {
+        if let Err(e) = self.roster_cap_gate() {
+            let _ = reply.send(Err(e));
+            return Ok(());
+        }
+        if self.ui_command_busy() {
+            let _ = reply.send(Err("已有操作在进行中,请稍后再试".into()));
+            return Ok(());
+        }
+        // 三格全在调度机里(§5.4「UI 请求刷新」):无 pending 就发新的、pending 还剩得多
+        // 就**搭车不发帧**、快到期就作废旧 n 换新。`None` = 已挂上 waiter 但不发帧。
+        if let Some(n) = self.roster.on_ui_request(Instant::now(), reply) {
+            send_client(ws, &ClientMsg::RosterReq { n }).await?;
+        }
+        Ok(())
+    }
+
+    /// 名册恒在轴的一拍(§5.4)。挂在既有心跳上,**不新开生命周期入口**。
+    pub(super) async fn roster_tick(&mut self, ws: &mut Ws) -> Result<(), String> {
+        if let Some(n) = self.roster.on_tick(Instant::now()) {
+            send_client(ws, &ClientMsg::RosterReq { n }).await?;
+        }
+        Ok(())
     }
 
     // ---- 密文帧:逐域试解 → 引擎/引导 ----
@@ -867,6 +1046,12 @@ impl Ctx<'_> {
         }
         if self.pair.is_some() {
             let _ = reply.send(Err("已有配对在进行中".into()));
+            return Ok(());
+        }
+        // 367:互斥域从「只看配对」扩到三条命令(§5.7-4)。设备管理 / 名册刷新在飞时
+        // 开配对,那枚无编号 `Err` 就有两个候选主人了。
+        if self.ui_command_busy() {
+            let _ = reply.send(Err("已有操作在进行中,请稍后再试".into()));
             return Ok(());
         }
         send_client(ws, &ClientMsg::PairOpen).await?;

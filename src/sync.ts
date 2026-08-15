@@ -7,6 +7,12 @@
 // 非当前空间有冻结/错误时点亮空间入口的红点(空间级提示,后台空间不许静默坏着)。
 import { dotClass, invoke, currentSpaceId, MAIN_SPACE } from "./space";
 import type { SyncStatus } from "./space";
+import {
+  openDevicesPage,
+  renderDevices,
+  resetDevicesPage,
+  rosterDeparted,
+} from "./devices";
 import { listen } from "@tauri-apps/api/event";
 import { getVersion } from "@tauri-apps/api/app";
 import { checkForUpdateManual } from "./update";
@@ -19,6 +25,10 @@ import "./sync.css";
 // 同步服务器默认地址——创建账户/加入设备(本文件)+ 加入空间(notebook.ts)三处入口预填。
 export const DEFAULT_SYNC_URL = "wss://sync.zhujian.app";
 
+/** 后端 `err_code::SEAT_LIMIT` 那句人话的判别片段(core `transport.rs` 的诊断串,
+ *  Rust 诊断不翻)。**匹配字面量,不是显示文案** —— 翻它会破坏判据。 */
+const SEAT_LIMIT_MARK = "同步席位已满";
+
 type Mode =
   | "home"
   | "create"
@@ -27,7 +37,8 @@ type Mode =
   | "pair"
   | "recovery"
   | "server"
-  | "advanced";
+  | "advanced"
+  | "devices";
 
 const STATE_WORD: Record<string, string> = {
   off: t("sync.stateOff"),
@@ -99,11 +110,22 @@ export async function initSync(opts: { refresh: () => void }): Promise<void> {
     listen<{ space: string; status: SyncStatus }>("sync-status", (e) => {
       statuses.set(e.payload.space, e.payload.status);
       renderAlert();
+      // 名册变短 → 给**其它在线设备**一条提示(§5.8 末:「移除很安静」这个真问题的解法
+      // 是**用透明代替权限**)。会话内差分、零持久状态、零协议增量;放在空间过滤**之前**
+      // ——后台空间被人踢掉一台同样该说一声,照既有约定带空间名冒出来。
+      for (const name of rosterDeparted(e.payload.space, e.payload.status)) {
+        const msg = t("devices.departedToast", { name });
+        showToast(
+          e.payload.space === currentSpaceId()
+            ? msg
+            : t("sync.toastFromSpace", { space: nameOf(e.payload.space), msg }),
+        );
+      }
       if (e.payload.space !== currentSpaceId()) return; // 留存即可,不动当前画面
       renderDot();
-      // 面板开着且在状态页/高级页(均只读画状态):跟着最新快照走(配对/仪式等
+      // 面板开着且在状态页/高级页/设备页(均只读画状态):跟着最新快照走(配对/仪式等
       // 一次性页面不被打断)。改服务器保存回高级页,事件晚到也不至于显旧地址。
-      if (overlay && (mode === "home" || mode === "advanced")) renderPanel();
+      if (overlay && (mode === "home" || mode === "advanced" || mode === "devices")) renderPanel();
     }),
     listen<{ space: string }>("sync-changed", (e) => {
       // 非当前空间的落地直接丢:切回去时视图整个重挂、全量重查(§六⑥)。
@@ -190,6 +212,7 @@ function closePanel(): void {
   shownRecovery = "";
   ceremonyDoneMsg = CEREMONY_MSG_CREATE;
   ceremonyWarn = "";
+  resetDevicesPage();
 }
 
 function onPanelKey(e: KeyboardEvent): void {
@@ -258,11 +281,33 @@ function renderPanel(): void {
     case "advanced":
       renderAdvanced(body);
       break;
+    case "devices":
+      renderDevices(body, devicesDeps());
+      break;
   }
 }
 
 function goto(m: Mode): void {
   mode = m;
+  renderPanel();
+}
+
+/** 设备页的接线(identity-plan §5.8)。`status` 每次现取——名册的唯一出处是状态面,
+ *  别在这边留第二份副本(core 那侧保证「回执到手时状态面已含本轮」)。 */
+function devicesDeps() {
+  return {
+    status: cur(),
+    space: currentSpaceId(),
+    rerender: () => renderPanel(),
+    back: () => goto("home"),
+    toast: (m: string) => showToast(m),
+  };
+}
+
+/** 进设备页:先把页面态清干净、拉一枚权威名册(§5.4 那张表的第二行),再画。 */
+function gotoDevices(): void {
+  mode = "devices";
+  openDevicesPage(devicesDeps());
   renderPanel();
 }
 
@@ -336,6 +381,10 @@ function renderHome(body: HTMLElement): void {
         });
     }),
   );
+  // 设备名单(identity-plan §5.8):「另有 N 台设备在线」那句话背后的真名单,连同
+  // 移除设备与管理设备名单都在里头。入口恒显——权限差别在**行上**表达,不藏入口
+  // (藏了就没人知道自己能不能退出账户)。
+  acts.appendChild(btn(t("devices.entry"), "hbtn", () => gotoDevices()));
   acts.appendChild(btn(t("sync.viewRecovery"), "hbtn", () => goto("recovery")));
   body.appendChild(acts);
   // 修改服务器收进「高级」:运维动作不与日常操作同屏(概念收敛)。
@@ -502,6 +551,12 @@ function renderPair(body: HTMLElement): void {
   }
   body.appendChild(el("p", pairFailed ? "sync-err" : "sync-note", pairNote));
   const acts = el("div", "sync-actions");
+  // 「席位已满:请先移除一台不用的设备」——那句话得点得进能移除设备的地方(§5.8 末)。
+  // 判据是后端诊断串的一个片段(Rust 诊断不翻,i18n 边界);它是**匹配字面量不是文案**,
+  // 已逐值登记在 scripts/check-i18n-drift.mjs,与 update.ts 剥版本噪音那两条同族。
+  if (pairFailed && pairNote.includes(SEAT_LIMIT_MARK)) {
+    acts.appendChild(btn(t("devices.entry"), "hbtn", () => gotoDevices()));
+  }
   acts.appendChild(btn(t("sync.close"), "hbtn", () => closePanel()));
   body.appendChild(acts);
 }

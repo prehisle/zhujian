@@ -1435,6 +1435,28 @@ async fn sync_pair_start(
     coord.pair_start(&space_id).await
 }
 
+/// 设备管理(与桌面对称;identity-plan §5.3)。DTO 直接用 core 那个枚举 —— 与线上
+/// CBOR 变体名同源是编译期事实,不是要记得对齐的纪律。
+#[tauri::command]
+async fn sync_device_admin(
+    space_id: String,
+    device_id: String,
+    action: transport::DeviceAction,
+    coord: State<'_, Coord>,
+) -> Result<(), String> {
+    coord.device_admin(&space_id, device_id, action).await
+}
+
+/// 拉一枚当前设备名册(§5.4)。回执自带名单;`sync_status.roster` 那一份服务的是
+/// 服务器主动推送那条路。
+#[tauri::command]
+async fn sync_roster_refresh(
+    space_id: String,
+    coord: State<'_, Coord>,
+) -> Result<(), String> {
+    coord.roster_refresh(&space_id).await
+}
+
 /// 用配对码加入账户(新设备侧;107 起也可扫码,同一条路)。**space-entry-plan §2
 /// 起只接受 main**(后端不变量,不是 UI 藏按钮):非 main 空间的两条来路是「新建
 /// =纯本地本子(同步唯一路=创号)」与「加入空间」(`join_space`,隐式 staging 槽,
@@ -1845,6 +1867,8 @@ pub fn run() {
             sync_status,
             sync_create_account,
             sync_pair_start,
+            sync_device_admin,
+            sync_roster_refresh,
             sync_pair_join,
             join_space,
             join_space_cancel,

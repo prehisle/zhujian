@@ -34,6 +34,15 @@ export function thisDeviceId(space: string): string | null {
   return snapshot && snapshot.space === space ? snapshot.thisDevice : null;
 }
 
+/** 这台设备起过的别名;没起过 / 快照未到 / 空间对不上 = null。设备管理面(devices.ts)
+ *  用它把权威名册的 device_id 翻成人话——**它只是显示层的补充**,谁在册由名册说了算
+ *  (口径警告见文件头)。与桌面 `src/identity.ts` 的 `aliasOf` 逐字一致。 */
+export function aliasOf(space: string, device: string): string | null {
+  const s = snapshot;
+  if (!s || s.space !== space) return null;
+  return s.alias.get(device) ?? null;
+}
+
 /** 本机当前别名;没起过 / 快照未到 = null。设置面用它回填输入框。 */
 export function myAlias(space: string): string | null {
   const s = snapshot;

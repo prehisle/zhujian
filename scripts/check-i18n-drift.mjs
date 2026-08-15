@@ -72,6 +72,8 @@ const STRING_REGISTRY = [
   { file: "src/update.ts", value: "安卓版", why: "同上,meaningfulNotes 的匹配字面量" },
   { file: "android/src/main.ts", value: "朱简", why: "同桌面 update.ts:安卓更新提示条剥版本噪音的匹配字面量" },
   { file: "android/src/main.ts", value: "安卓版", why: "同上" },
+  { file: "src/sync.ts", value: "同步席位已满", why: "后端 err_code::SEAT_LIMIT 那句人话的判别片段(Rust 诊断不翻),用来把「请先移除一台不用的设备」接进设备名单入口(identity-plan §5.8);匹配字面量不是显示文案,翻了会破坏判据" },
+  { file: "android/src/sync.ts", value: "同步席位已满", why: "同桌面 sync.ts:安卓侧同一条判别片段" },
 ];
 
 /** ③:t() 后面不是字符串字面量的调用点,按文件恰等计数。 */

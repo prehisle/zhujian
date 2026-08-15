@@ -220,6 +220,20 @@ async fn serve_inner(
             "device_cap 须 ≥1(0=任何设备都注册不上,配置错误)",
         ));
     }
+    // 名册容量硬闸的**配置侧**(identity-plan §5.13):一份 `Roster` 帧的条数上界是
+    // 协议常量,而 `device_cap` 决定了一个账户能长到多大——两者不校齐,就会出现
+    // 「注册得进去、名册发不出来」的账户。**先校配置、再 load registry**(三轮裁决:
+    // 顺序写死),故超帽的配置连启动都过不去,不会走到存量那道闸。
+    if cfg.device_cap > sync_proto::MAX_ROSTER_DEVICES {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!(
+                "device_cap({}) 超过 MAX_ROSTER_DEVICES({})——名册帧有硬上界,先改协议常量与 §5.13 那张资源表再抬设备帽",
+                cfg.device_cap,
+                sync_proto::MAX_ROSTER_DEVICES
+            ),
+        ));
+    }
     if cfg.seat_lease_ttl.is_zero() {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
@@ -339,8 +353,10 @@ async fn serve_inner(
             // 都不被看一眼,恒 401 而非 extractor 的 400;单一真相源,后加路由不会漏。
             let st = AdminState { hub: hub.clone(), token: Arc::new(token) };
             let admin_app = Router::new()
+                .route("/admin/version", get(admin_version))
                 .route("/admin/devices", get(admin_devices))
                 .route("/admin/revoke", post(admin_revoke))
+                .route("/admin/set-admin", post(admin_set_admin))
                 .route("/admin/entitlement", get(admin_entitlement_get).post(admin_entitlement_set))
                 .route_layer(axum::middleware::from_fn_with_state(st.clone(), admin_auth_mw))
                 .with_state(st);
@@ -525,6 +541,8 @@ struct AdminState {
 struct AdminQuery {
     account: Option<String>,
     device: Option<String>,
+    /// `POST /admin/set-admin` 的开关(367)。**显式必填**、只认 `true`/`false`。
+    on: Option<String>,
 }
 
 /// admin 面统一鉴权 middleware(159 codex M3):**先于一切 handler 与 extractor**
@@ -567,8 +585,41 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     diff == 0
 }
 
-/// GET /admin/devices?account=… → 该账户已注册设备号 JSON 数组(吊销前先核对;
+/// GET /admin/version → 这只二进制的身份(366):从哪个 commit 构建、构建时工作区
+/// 脏不脏、什么时候构建的。指纹由 `build.rs` 焊在编译期,见那里的顶注。
+///
+/// **为什么挂 admin 面而不是 `/healthz` 边上**:同步面整个经 Caddy 反代对外
+/// (`sync.zhujian.app` 一条 `reverse_proxy`,没有按路径分流),把构建指纹挂那儿
+/// 等于白送一条「这台跑的是哪一版」的公开情报。门禁在本机 ssh 过去问一句就够,
+/// 不值得为省这一跳新开一个对外面。
+///
+/// `/healthz` 刻意仍只回字面量 `ok`——它是 Caddy→syncd 的传输链探针,deploy §3
+/// 与外部监控都按那个字面量判,别在它身上加字段。
+async fn admin_version() -> (StatusCode, String) {
+    let epoch: i64 = env!("ZJ_BUILD_EPOCH")
+        .parse()
+        .expect("build.rs 只写十进制秒");
+    let built_at = time::OffsetDateTime::from_unix_timestamp(epoch)
+        .expect("build.rs 写的是 SystemTime 取的秒,恒在合法域内")
+        .format(&time::format_description::well_known::Rfc3339)
+        .expect("Rfc3339 格式化 UTC 时刻无失败路径");
+    let body = serde_json::json!({
+        "pkg_version": env!("CARGO_PKG_VERSION"),
+        "commit": env!("ZJ_BUILD_COMMIT"),
+        // 脏 = 构建时 server/ 或 sync-proto/ 有未提交改动,那么 commit 这一格
+        // **说不全**这只二进制是什么。门禁见 true 即红,不必再比对提交历史。
+        "dirty": env!("ZJ_BUILD_DIRTY") == "true",
+        "built_at": built_at,
+    });
+    (StatusCode::OK, format!("{body}\n"))
+}
+
+/// GET /admin/devices?account=… → 该账户已注册设备 JSON 数组(吊销前先核对;
 /// 未知账户 = 空数组,与「有账户零设备」不作区分——admin 面不需要探测语义)。
+///
+/// **367 起每项带 `admin` 标记**:`[{"device":"…","admin":true}, …]`(此前是裸的
+/// device_id 字符串数组)。回填工序要照它挑一台设 `POST /admin/set-admin`,
+/// 而「这个账户有没有管理设备」正是那张回填清单的判据(deploy §2)。
 async fn admin_devices(
     State(st): State<AdminState>,
     Query(q): Query<AdminQuery>,
@@ -576,11 +627,65 @@ async fn admin_devices(
     let Some(account) = q.account.as_deref() else {
         return (StatusCode::BAD_REQUEST, "缺 account 参数\n".into());
     };
-    let devices = st.hub.registry.lock().unwrap().devices_of(account);
+    let reg = st.hub.registry.lock().unwrap();
+    let devices: Vec<serde_json::Value> = reg
+        .devices_of(account)
+        .into_iter()
+        .map(|d| {
+            let admin = reg.is_admin(account, &d);
+            serde_json::json!({ "device": d, "admin": admin })
+        })
+        .collect();
     (
         StatusCode::OK,
-        serde_json::to_string(&devices).expect("Vec<String> 序列化无失败路径"),
+        serde_json::to_string(&devices).expect("Vec<Value> 序列化无失败路径"),
     )
+}
+
+/// POST /admin/set-admin?account=…&device=…&on=true|false → 设 / 清管理设备(367,
+/// identity-plan §5.6-6)。两个用途:
+///
+/// 1. **存量账户的一次性回填**——服务器当初没记谁是首台(`accounts` 有序但不记注册
+///    时刻),故首台**已经查不出来了**;回填之前该账户的用户面设备管理**整条不可用**
+///    (fail-closed,不是 bug)。先 `GET /admin/devices` 核对再点一台。
+/// 2. **逃生口**——「只设了一台管理设备而它丢了」时重设一台。故本端点**刻意允许**
+///    破坏「至少留一台管理设备」那条不变量(它只约束用户面)。
+///
+/// 200=已改 / 200 幂等无变化(回执说清)/ 400=缺参数或 on 不是 true|false /
+/// 404=设备不在该账户(先 GET /admin/devices)/ 500=落盘失败(未生效)。
+async fn admin_set_admin(
+    State(st): State<AdminState>,
+    Query(q): Query<AdminQuery>,
+) -> (StatusCode, String) {
+    let (Some(account), Some(device)) = (q.account.as_deref(), q.device.as_deref()) else {
+        return (StatusCode::BAD_REQUEST, "缺 account 或 device 参数\n".into());
+    };
+    // on 显式必填:少一个字母就变成「清掉管理位」这种事,绝不给默认值。
+    let on = match q.on.as_deref() {
+        Some("true") => true,
+        Some("false") => false,
+        _ => {
+            return (StatusCode::BAD_REQUEST, "缺 on 参数(须显式 true 或 false)\n".into());
+        }
+    };
+    match st.hub.admin_set_admin(account, device, on) {
+        Ok(true) => (
+            StatusCode::OK,
+            format!("已{}管理设备 {account}/{device}\n", if on { "设为" } else { "取消" }),
+        ),
+        Ok(false) => (
+            StatusCode::OK,
+            format!("{account}/{device} 本来就{}管理设备,未改动\n", if on { "是" } else { "不是" }),
+        ),
+        Err(crate::registry::RegisterError::Persist) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "registry 落盘失败,设置未生效(查磁盘后重试)\n".into(),
+        ),
+        Err(_) => (
+            StatusCode::NOT_FOUND,
+            "该设备不在这个账户里(先 GET /admin/devices 核对)\n".into(),
+        ),
+    }
 }
 
 /// POST /admin/revoke?device=…[&account=…] → 单设备吊销(H1):registry 删绑定 +

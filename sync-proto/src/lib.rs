@@ -37,6 +37,25 @@ pub const PAIR_SLOT_TTL_SECS: u64 = 600;
 pub const SEAT_LEASE_TTL_SECS: u64 = 2 * 3600;
 /// 广播收件人约定值(§3;与 src-tauri `engine::BROADCAST` 同值)。
 pub const BROADCAST: &str = "*";
+/// 权威名册的条数硬上界(identity-plan §5.13)。
+///
+/// **为什么需要一个常量**:`device_cap` 只在**注册那一刻**判,`load` 不校验存量账户
+/// 的设备数,而硬帽是可配置的、历史上调高再调低就会留下超编账户 —— 于是「一份名册
+/// 有多大」由数据说了算,这一格没有上界(设计审一轮 H6)。
+///
+/// **32 的依据**:覆盖今天 8 席 + 未来 16 席档 + 纪元切换临时的第 17 席,留一倍余量。
+/// 最大 roster ≈ 1.4 KiB;32 条连接全 fan-out ≈ 45 KiB wire(见 `golden_max_roster_frame`)。
+/// 服务端**三处同源引用它**:`device_cap` 启动校验 / `load` 存量校验 / `build_roster`;
+/// 要超过 32 得连同设备硬帽与那张资源表一起改。
+pub const MAX_ROSTER_DEVICES: usize = 32;
+
+/// [`ClientMsg::RosterReq`] 两次**应答**之间的最短间隔(identity-plan §5.13)。
+///
+/// **住在协议层是因为两端都要读它**:服务端拿它限频(超频回
+/// [`ServerMsg::RosterNack`]`{busy}`),客户端拿它校验自己那台调度机的常量约束
+/// —— §5.4 五轮 M1 算错过一次,真正要挡的是「**换新那一刻旧请求的年龄**」,
+/// 于是 `PULL_DEADLINE >= REFRESH_DEADLINE + ROSTER_REQ_MIN_GAP`。抄成两份必漂。
+pub const ROSTER_REQ_MIN_GAP_SECS: u64 = 5;
 
 /// challenge nonce 长度(§4:32B 随机)。
 pub const CHALLENGE_LEN: usize = 32;
@@ -55,6 +74,11 @@ pub const SIG_REGISTER_DEVICE_V1: &str = "zhujian-sync-register-device-v1";
 /// 新 device/pubkey 不可换目标;重放=同目标幂等重求租,无害——与 register_device
 /// 同一「已鉴权通道内无 nonce」论证)。
 pub const SIG_SEAT_LEASE_V1: &str = "zhujian-sync-seat-lease-v1";
+/// 设备管理签名前缀(identity-plan §5.5)。**绑 nonce**——与 register_device /
+/// seat_lease 不同:那两条的重放是**幂等无害**的(重复注册同一个目标),移除不是
+/// (一枚签名在别的连接上重放可能命中一台同 id 被重新注册的设备)。nonce 本来就是
+/// `dispatch` 的入参,代价为零的封闭窗口就该封。payload 见 [`device_admin_sig_payload`]。
+pub const SIG_DEVICE_ADMIN_V1: &str = "zhujian-sync-device-admin-v1";
 
 /// `Err.code` 的机器可判值(msg 是人读中文,细节进服务器日志)。
 pub mod err_code {
@@ -86,11 +110,59 @@ pub mod err_code {
     /// 进入受限时收此**非致命** Err(现有状态面至少一条可见错误);声明
     /// [`crate::CAP_ACCOUNT_STATUS_V1`] 的新客户端改收 [`crate::ServerMsg::AccountStatusV1`]。
     pub const ACCOUNT_THROTTLED: &str = "account_throttled";
+
+    // ---- 无编号 `Err` 的归属白名单(identity-plan §5.5,设计审三轮 H1) ----
+    //
+    // 由来:`Err` 没有请求号,而仓里存在**第三方主动异步** `Err`——[`ACCOUNT_THROTTLED`]
+    // (fastlane 首次越额的 ENTER 推送 / admin 状态变更,推给未声明 account_status_v1 的
+    // 连接)。客户端若按「有 flow 在飞就归它」结账,那枚推送会把正在等结果的
+    // `DeviceAdmin` / `Pair` flow **提前错误结掉**,真正的回执随后到达时 flow 已被清掉。
+    // 故归属改成白名单:只有下面列出的 code 能结对应的 flow,其余一切 `Err` 只进状态面。
+    //
+    // ⛔ **这两张表是客户端对无编号 `Err` 的归属判据,不是服务端选择错误码的菜单**;
+    // 服务端仍须按具体失败语义映射 code,别照着白名单挑一个回(七轮)。
+    //
+    // ⚠ **维护契约(不是「免疫」)**:将来新增的主动推送 `Err` 必须用一个**不在**任何
+    // 表里的 code。若有人给主动推送复用了 `BUSY` / `BAD_REQUEST`,照样会被误认——
+    // 五轮 L1 打掉了我原来那句「白名单对将来任何新增的主动推送都免疫」。
+    //
+    // ⚠ **名册刷新 flow 刻意没有白名单**:它的失败面是**有编号**的
+    // [`crate::ServerMsg::RosterNack`],故一枚无编号 `Err` 永远不该结它。
+
+    /// 配对 flow(`PairOpen` → `PairMsg` → 末端 `RegisterDevice` 三段的实际错误码并集;
+    /// `PairJoin` 走 joiner 专用短连接,不在 live flow 面内)。
+    pub const PAIR_FLOW_ERRORS: &[&str] = &[
+        BAD_SLOT,
+        BUSY,
+        SEAT_LIMIT,
+        ACCOUNT_FULL,
+        DEVICE_ID_TAKEN,
+        BAD_REQUEST,
+        AUTH_FAILED,
+        INTERNAL,
+    ];
+
+    /// 设备管理 flow([`crate::ClientMsg::DeviceAdmin`])。`BUSY` 在表里是因为**限频**
+    /// 会产生它(四轮 M1:加一道闸的同轮要回头看「它产生的新错误码有没有人认」)。
+    pub const DEVICE_ADMIN_FLOW_ERRORS: &[&str] =
+        &[BAD_REQUEST, UNKNOWN_DEVICE, INTERNAL, AUTH_FAILED, BUSY];
 }
 
 /// 能力名:客户端声明「我懂 [`ServerMsg::AccountStatusV1`],请下发」(billing-plan
 /// §6,工序 4)。挂在 [`ClientMsg::Auth`]/[`ClientMsg::RegisterFirst`] 的 `caps`。
 pub const CAP_ACCOUNT_STATUS_V1: &str = "account_status_v1";
+
+/// 能力名:客户端声明「我懂权威名册这一套」(identity-plan §5.4/§5.5)——
+/// [`ServerMsg::Roster`] / [`ServerMsg::DeviceAdminOk`] / [`ServerMsg::RosterNack`]
+/// **三条都只发给声明了它的连接**。挂在 [`ClientMsg::Auth`]/[`ClientMsg::RegisterFirst`]
+/// 的 `caps`。
+///
+/// ⛔ **能力探测不许用新的 `ClientMsg`**:老服务器收到不认识的信封会 `bad_request`
+/// **并断开**——那等于「点开设备面板就把同步会话打断一次」。故**唯一的能力信号是
+/// attach 那一枚推送**:本会话收到过 [`ServerMsg::Roster`] ⇒ 服务器认得这套,之后发
+/// [`ClientMsg::RosterReq`] / [`ClientMsg::DeviceAdmin`] 才是安全的;没收到 ⇒ 一个新
+/// 信封都不发(§5.10-2,这道闸要落在 core 不只 UI)。
+pub const CAP_DEVICE_ROSTER_V1: &str = "device_roster_v1";
 
 /// caps 入口卫生 + 成员判定(§6:≤16 项、每项 ≤32 字节、仅 ASCII、未知忽略、
 /// 重复无所谓)。只回答「是否声明了某能力」:扫描上界 16 项挡异常长列表,
@@ -167,6 +239,33 @@ pub enum ClientMsg {
         #[serde(with = "serde_bytes")]
         sig_by_old: Vec<u8>,
     },
+    /// 设备管理(identity-plan §5.5;须已鉴权)。三个动作合一条——共用同一套鉴权、
+    /// 同一把锁、同一个签名域。授权判据只有一条正式子(§5.3),**全仓只留那一份**:
+    ///
+    /// ```text
+    /// authorized = caller_is_admin OR (action == Remove AND target == caller)
+    /// ```
+    ///
+    /// `sig` 用**本连接验签那把公钥**对应的私钥签,payload 见 [`device_admin_sig_payload`]
+    /// (绑 nonce)。形态闸先于验签:`is_ulid(account) && is_ulid(target) &&
+    /// sig.len() == 64` 不过就 `bad_request`,不进验签。
+    DeviceAdmin {
+        account: String,
+        /// 26 位规范 ULID(动作的目标设备;`target == caller` 即自助退出)。
+        target: String,
+        action: DeviceAction,
+        #[serde(with = "serde_bytes")]
+        sig: Vec<u8>,
+    },
+    /// 拉一枚当前名册(identity-plan §5.4:**推送可丢,正确性靠这条**——服务端的
+    /// `push()` 就是 `try_send().is_ok()`,通道满时那枚帧静默消失)。
+    ///
+    /// **不签名**:连接已鉴权,且它没有任何特权效果——名册只含**自己账户**的
+    /// device_id,那是发起方本来就有权知道的东西(它今天已经能从 [`ServerMsg::Peer`]
+    /// 看到在线的那些)。`n` = 连接内单调请求号(照 `Send.n` 的形):[`ServerMsg::Roster`]
+    /// 既是推送又是应答,**没有请求号就证不了「收到的这枚是本次拉取的应答」**,一枚
+    /// 早就在飞的旧推送会让面板提前开放(设计审一轮 H3)。
+    RosterReq { n: u64 },
     /// 开配对槽(须已鉴权;§4:TTL 10 分钟、单次使用)。
     PairOpen,
     /// 入配对槽(未鉴权连接唯一的业务入口,且限一槽;§4)。
@@ -269,6 +368,39 @@ pub enum ServerMsg {
         /// 数据面态(工序 4 只可能 `Open`/`RateLimited`;`SeatClosed` 工序 6)。
         data_plane: DataPlane,
     },
+    /// 权威名册(identity-plan §5.4;**仅对声明 [`CAP_DEVICE_ROSTER_V1`] 者下发**)。
+    /// 三个时机:`Authed` 之后**搬信箱之前**推一枚(能力信号)/ 对
+    /// [`ClientMsg::RosterReq`] 的应答 / 成员集合真变化时重推。
+    ///
+    /// **客户端契约:两条判据必须分家**(设计审二轮 M1)——
+    ///
+    /// ```text
+    /// matching_request = (request == Some(pending.n))   // 决定「结不结账」
+    /// apply_payload    = (revision >= current_revision) // 决定「更不更新名册」
+    /// ```
+    ///
+    /// 反例:我的应答带 revision 10,而一枚并发成员变更的推送带 revision 11 **先到**;
+    /// 按「revision 更小就丢弃」处理会把那枚**匹配我请求号**的应答整个丢掉 ⇒ UI 刷新
+    /// 错误超时。正确处置 = **结账但不倒灌**。反过来,`request == None` 或号对不上的
+    /// `Roster` 不结账,但 revision 更新时**照样应用**(它仍是权威名册)。
+    Roster {
+        /// `Some(n)` = 这是对那一枚 [`ClientMsg::RosterReq`] 的应答;`None` = 服务器主动推送。
+        request: Option<u64>,
+        /// 单账户单调计数器。**比较只在单条会话内有效**——服务器重启即复位,而重启
+        /// 必然断连、会话必然重建、客户端的名册必然回「不知道」,这一格由会话边界
+        /// 自然闭合(故不需要 `server_instance_id`)。
+        revision: u64,
+        devices: Vec<RosterEntry>,
+    },
+    /// [`ClientMsg::DeviceAdmin`] 的定向成功回执(客户端比对 target+action 才结账)。
+    DeviceAdminOk { target: String, action: DeviceAction },
+    /// [`ClientMsg::RosterReq`] 的**失败**面(identity-plan §5.5,设计审二轮 H2)。
+    ///
+    /// 没有它,失败只能走**无编号**的 [`ServerMsg::Err`],而那枚 Err 会被客户端认给
+    /// 正在等结果的 UI 命令(周期拉取撞限频回 `busy` ⇒ 结掉 `DeviceAdmin` flow)。
+    /// ⚠ **不复用既有 [`ServerMsg::Nack`]**:那个 `n` 是 `Send` 的连接内序号,两个
+    /// 序列共用一个变体会撞号。
+    RosterNack { n: u64, code: String },
 }
 
 /// 受限原因(billing-plan §4;线上枚举,与服务端内部 `throttle::RestrictionReason`
@@ -287,6 +419,47 @@ pub enum DataPlane {
     Open,
     RateLimited,
     SeatClosed,
+}
+
+/// 设备管理动作([`ClientMsg::DeviceAdmin`];identity-plan §5.3 三句话)。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum DeviceAction {
+    /// 移除设备:服务器面吊销(鉴权拒 + 当场 kick + 清信箱 + 烧配对槽)。
+    /// **任何设备都能移除自己**(自助退出),移除别人要管理位。
+    Remove,
+    /// 设为管理设备(要管理位)。
+    GrantAdmin,
+    /// 取消管理设备(要管理位;不得让 `admins` 变空)。
+    RevokeAdmin,
+}
+
+/// 签名域里 `action` 那一个字节。**写死成独立常量,不许依赖 Rust 枚举顺序或
+/// `as u8` 的隐式判别值**(identity-plan §5.5 M2):线上的 [`DeviceAction`] 走 CBOR
+/// **变体名**,而签名域这一字节是**另一份协议**——重排变体不得改变它,故它自己
+/// 进黄金向量(`golden_device_admin_action_bytes`)。
+const ACTION_REMOVE: u8 = 0x01;
+const ACTION_GRANT_ADMIN: u8 = 0x02;
+const ACTION_REVOKE_ADMIN: u8 = 0x03;
+
+impl DeviceAction {
+    fn sig_byte(self) -> u8 {
+        match self {
+            DeviceAction::Remove => ACTION_REMOVE,
+            DeviceAction::GrantAdmin => ACTION_GRANT_ADMIN,
+            DeviceAction::RevokeAdmin => ACTION_REVOKE_ADMIN,
+        }
+    }
+}
+
+/// 权威名册的一行([`ServerMsg::Roster`];identity-plan §5.4)。
+///
+/// **只带 device_id 与管理标记,不带别名**——别名是 E2EE 的,服务器根本不知道。
+/// 界面上的名字 = **服务器名册 ⋈ 本地 `device_profile`**:有别名显别名,没有就显
+/// 最短唯一前缀。这一条同时解释了为什么 `device_profile` 的行不能删。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RosterEntry {
+    pub device: String,
+    pub admin: bool,
 }
 
 /// 投递通道(§3):mail=收件设备离线则入信箱(op/ctl 控制帧);
@@ -388,6 +561,34 @@ pub fn seat_lease_sig_payload(account: &str, new_device: &str, new_pubkey: &[u8]
     .concat()
 }
 
+/// device_admin:`"zhujian-sync-device-admin-v1" ‖ nonce(32B) ‖ account(26B) ‖
+/// caller(26B) ‖ target(26B) ‖ action(1B)`(identity-plan §5.5)。
+///
+/// 两处与既有三条签名路不同,各有理由:
+/// - **绑 nonce**:register_device / seat_lease 的重放是幂等无害的,移除不是——一枚
+///   签名在别的连接上重放可能命中一台同 id 被重新注册的设备。产品路径上极窄(重新
+///   加入必然换 device_id),但 nonce 现成可用,**代价为零的封闭窗口就该封**。
+/// - **把 caller 也写进 payload**:验签用的是本会话公钥、已经绑住了发起方;写进去是
+///   让这枚签名**自描述**(「这台设备,在这条连接上,要对那台做这件事」),照 254
+///   那条「类型封不变量要绑全部输入」的纪律。
+pub fn device_admin_sig_payload(
+    nonce: &[u8],
+    account: &str,
+    caller: &str,
+    target: &str,
+    action: DeviceAction,
+) -> Vec<u8> {
+    [
+        SIG_DEVICE_ADMIN_V1.as_bytes(),
+        nonce,
+        account.as_bytes(),
+        caller.as_bytes(),
+        target.as_bytes(),
+        &[action.sig_byte()],
+    ]
+    .concat()
+}
+
 /// ULID 形态校验:26 字符、大写 Crockford base32(无 I/L/O/U)、首字符 ≤ '7'
 /// (128-bit 上限)。account_id/device_id 的入口守卫——**定长形态是签名 payload
 /// 拼接无歧义的前提**,不合 = 拒,不进验签。
@@ -457,6 +658,20 @@ mod tests {
             ),
             (ClientMsg::PairClose { slot: 123456789 }, "a16950616972436c6f7365a164736c6f741a075bcd15"),
             (ClientMsg::Ping, "6450696e67"),
+            // 367:设备管理。action 走 CBOR **变体名**(与签名域那一字节是两份协议)。
+            (
+                ClientMsg::DeviceAdmin { account: "A".into(), target: "T".into(), action: DeviceAction::Remove, sig: vec![1, 2] },
+                "a16b44657669636541646d696ea4676163636f756e74614166746172676574615466616374696f6e6652656d6f766563736967420102",
+            ),
+            (
+                ClientMsg::DeviceAdmin { account: "A".into(), target: "T".into(), action: DeviceAction::GrantAdmin, sig: vec![1, 2] },
+                "a16b44657669636541646d696ea4676163636f756e74614166746172676574615466616374696f6e6a4772616e7441646d696e63736967420102",
+            ),
+            (
+                ClientMsg::DeviceAdmin { account: "A".into(), target: "T".into(), action: DeviceAction::RevokeAdmin, sig: vec![1, 2] },
+                "a16b44657669636541646d696ea4676163636f756e74614166746172676574615466616374696f6e6b5265766f6b6541646d696e63736967420102",
+            ),
+            (ClientMsg::RosterReq { n: 7 }, "a169526f73746572526571a1616e07"),
         ];
         for (msg, want) in cases {
             assert_eq!(hex(&encode(&msg)), *want, "{msg:?}");
@@ -529,6 +744,28 @@ mod tests {
                 },
                 "a16f4163636f756e745374617475735631ae6f7374617475735f7265766973696f6e016a7365727665725f6e6f7774323032362d30372d32325430303a30303a30305a6f636f6e666967757265645f74696572f66e6566666563746976655f7469657264667265656a657870697265735f6174f66a736561745f636f756e74016a736561745f71756f7461026d666173746c616e655f75736564006e666173746c616e655f71756f74611a12c00000737265737472696374696f6e5f726561736f6e7380726566666563746976655f726174655f627073006c706572696f645f737461727474323032362d30372d30315430303a30303a30305a6a706572696f645f656e6474323032362d30382d30315430303a30303a30305a6a646174615f706c616e65644f70656e",
             ),
+            // 367:名册三条。`request` 是 Option<u64> —— Some 编成裸值、None 编成 null(f6),
+            // 两支各钉一条(客户端靠它区分「应答」与「主动推送」)。
+            (
+                ServerMsg::Roster {
+                    request: Some(5),
+                    revision: 9,
+                    devices: vec![RosterEntry { device: "D".into(), admin: true }],
+                },
+                "a166526f73746572a3677265717565737405687265766973696f6e09676465766963657381a26664657669636561446561646d696ef5",
+            ),
+            (
+                ServerMsg::Roster { request: None, revision: 0, devices: vec![] },
+                "a166526f73746572a36772657175657374f6687265766973696f6e00676465766963657380",
+            ),
+            (
+                ServerMsg::DeviceAdminOk { target: "T".into(), action: DeviceAction::GrantAdmin },
+                "a16d44657669636541646d696e4f6ba266746172676574615466616374696f6e6a4772616e7441646d696e",
+            ),
+            (
+                ServerMsg::RosterNack { n: 3, code: "busy".into() },
+                "a16a526f737465724e61636ba2616e0364636f64656462757379",
+            ),
         ];
         for (msg, want) in cases {
             assert_eq!(hex(&encode(&msg)), *want, "{msg:?}");
@@ -575,6 +812,13 @@ mod tests {
             ClientMsg::PairMsg { slot: 123456, blob: vec![0xff] },
             ClientMsg::PairClose { slot: 123456 },
             ClientMsg::Ping,
+            ClientMsg::DeviceAdmin {
+                account: ACCT.into(),
+                target: DEV_B.into(),
+                action: DeviceAction::RevokeAdmin,
+                sig: vec![11; 64],
+            },
+            ClientMsg::RosterReq { n: u64::MAX },
         ];
         for msg in client {
             assert_eq!(decode::<ClientMsg>(&encode(&msg)).unwrap(), msg);
@@ -610,6 +854,17 @@ mod tests {
                 period_end: "2026-08-01T00:00:00Z".into(),
                 data_plane: DataPlane::RateLimited,
             },
+            ServerMsg::Roster {
+                request: Some(u64::MAX),
+                revision: u64::MAX,
+                devices: vec![
+                    RosterEntry { device: DEV_A.into(), admin: true },
+                    RosterEntry { device: DEV_B.into(), admin: false },
+                ],
+            },
+            ServerMsg::Roster { request: None, revision: 1, devices: vec![] },
+            ServerMsg::DeviceAdminOk { target: DEV_B.into(), action: DeviceAction::Remove },
+            ServerMsg::RosterNack { n: 9, code: err_code::BUSY.into() },
         ];
         for msg in server {
             assert_eq!(decode::<ServerMsg>(&encode(&msg)).unwrap(), msg);
@@ -655,11 +910,100 @@ mod tests {
         let rd = register_device_sig_payload(ACCT, DEV_B, &pubkey);
         assert_eq!(rd.len(), SIG_REGISTER_DEVICE_V1.len() + 26 + 26 + 32);
 
+        let da = device_admin_sig_payload(&nonce, ACCT, DEV_A, DEV_B, DeviceAction::Remove);
+        assert_eq!(&da[..SIG_DEVICE_ADMIN_V1.len()], SIG_DEVICE_ADMIN_V1.as_bytes());
+        assert_eq!(da.len(), SIG_DEVICE_ADMIN_V1.len() + 32 + 26 + 26 + 26 + 1);
+        // caller 与 target 都在 payload 里,且**顺序固定**:调换二者必得不同字节
+        // (否则「A 踢 B」的签名就能当「B 踢 A」用)。
+        assert_ne!(
+            da,
+            device_admin_sig_payload(&nonce, ACCT, DEV_B, DEV_A, DeviceAction::Remove)
+        );
+        // 绑 nonce:换一条连接的 challenge 即换一枚 payload(重放窗口封闭)。
+        assert_ne!(
+            da,
+            device_admin_sig_payload(&[0x99u8; 32], ACCT, DEV_A, DEV_B, DeviceAction::Remove)
+        );
+
         let sl = seat_lease_sig_payload(ACCT, DEV_B, &pubkey);
         assert_eq!(&sl[..SIG_SEAT_LEASE_V1.len()], SIG_SEAT_LEASE_V1.as_bytes());
         assert_eq!(sl.len(), SIG_SEAT_LEASE_V1.len() + 26 + 26 + 32);
         // 域前缀隔离:同字段的 register_device 与 seat_lease payload 绝不同字节。
         assert_ne!(sl, rd);
+    }
+
+    /// **签名域里 action 那一字节是另一份协议**(identity-plan §5.5 M2):线上走 CBOR
+    /// 变体名,签名走这一个字节。它不许依赖枚举顺序或 `as u8`,故自己进黄金向量——
+    /// 重排 [`DeviceAction`] 的变体、或给它插一个新变体,本测都必须岿然不动。
+    #[test]
+    fn golden_device_admin_action_bytes() {
+        let nonce = [0u8; 32];
+        for (action, want) in [
+            (DeviceAction::Remove, 0x01u8),
+            (DeviceAction::GrantAdmin, 0x02),
+            (DeviceAction::RevokeAdmin, 0x03),
+        ] {
+            let p = device_admin_sig_payload(&nonce, ACCT, DEV_A, DEV_B, action);
+            assert_eq!(*p.last().unwrap(), want, "{action:?} 的签名字节");
+        }
+        // 三个动作两两互不相同——否则「取消管理位」的签名能当「移除」用。
+        let p = |a| device_admin_sig_payload(&nonce, ACCT, DEV_A, DEV_B, a);
+        assert_ne!(p(DeviceAction::Remove), p(DeviceAction::GrantAdmin));
+        assert_ne!(p(DeviceAction::GrantAdmin), p(DeviceAction::RevokeAdmin));
+        assert_ne!(p(DeviceAction::Remove), p(DeviceAction::RevokeAdmin));
+    }
+
+    /// 无编号 `Err` 的归属白名单(identity-plan §5.5 六轮点名的三只里的前两只;
+    /// 第三只「服务端主动状态推送 helper 拒用 flow code」住 server)。
+    /// ⚠ 「测一个字符串等于某常量」是同义反复,**不写**——白名单元素直接引用现有
+    /// 常量,「里面每个 code 都真实存在」已由**编译器**保证。
+    #[test]
+    fn flow_error_whitelists() {
+        // ① 两张表内部无重复。
+        for (name, table) in [
+            ("PAIR", err_code::PAIR_FLOW_ERRORS),
+            ("DEVICE_ADMIN", err_code::DEVICE_ADMIN_FLOW_ERRORS),
+        ] {
+            let mut seen = std::collections::BTreeSet::new();
+            for code in table {
+                assert!(seen.insert(*code), "{name}_FLOW_ERRORS 内部重复:{code}");
+            }
+        }
+        // ② `account_throttled` 不属于任何 flow —— 它正是那条**第三方主动异步**推送,
+        // 也是整套白名单存在的理由(三轮 H1)。它一旦落进任一张表,那条 flow 就会
+        // 被一枚与自己无关的状态推送提前结账。
+        assert!(!err_code::PAIR_FLOW_ERRORS.contains(&err_code::ACCOUNT_THROTTLED));
+        assert!(!err_code::DEVICE_ADMIN_FLOW_ERRORS.contains(&err_code::ACCOUNT_THROTTLED));
+    }
+
+    /// 黄金边界(identity-plan §5.13 H3/H6):[`MAX_ROSTER_DEVICES`] 台的**最大** roster
+    /// 帧编码后既要过 WS 帧上限,也要守住设计阶段算的那个量级。
+    ///
+    /// ⚠ 单看「不超 1 MiB」没有意义——那只保证「实现者最后挑的那个值不超上限」,
+    /// 替代不了设计阶段的资源判断(理论 wire 极限约 24,384 台)。真正有牙齿的是
+    /// 下面那条 ≈1.4 KiB 的紧边界:它同时锚住 §5.13 那张表里的 fan-out 估算
+    /// (32 条连接全 fan-out ≈ 45 KiB wire),形状一变就红。
+    #[test]
+    fn golden_max_roster_frame() {
+        let devices: Vec<RosterEntry> = (0..MAX_ROSTER_DEVICES)
+            .map(|i| {
+                let device = format!("01JZFAKEDEV{i:02}{}", "0".repeat(13));
+                assert!(is_ulid(&device), "夹具本身得是合法 ULID:{device}");
+                RosterEntry { device, admin: true }
+            })
+            .collect();
+        // 最坏情况:revision 取满、request 取 Some(满)——两个变长整数都吃 9 字节。
+        let frame = encode(&ServerMsg::Roster {
+            request: Some(u64::MAX),
+            revision: u64::MAX,
+            devices,
+        });
+        assert!(frame.len() <= MAX_FRAME_BYTES, "roster 帧撞 WS 上限:{}", frame.len());
+        assert!(
+            frame.len() <= 1500,
+            "roster 帧比 §5.13 算的 ≈1.4 KiB 大了({});资源表要重算",
+            frame.len()
+        );
     }
 
     #[test]

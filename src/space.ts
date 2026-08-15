@@ -14,6 +14,11 @@ import { t } from "./i18n";
 export const MAIN_SPACE = "main";
 const LAST_SPACE_KEY = "zhujian.last-space";
 
+/** 服务器权威名册的一行(sync-proto `RosterEntry`;identity-plan §5.4)。**只有
+ *  device_id 与管理标记,不带别名**——别名是 E2EE 的,服务器根本不知道。界面上的
+ *  名字 = 这份 ⋈ 本地 `device_profile`(identity.ts)。 */
+export type RosterEntry = { device: string; admin: boolean };
+
 // lib.rs sync_status / transport.rs::SyncStatus 的镜像(SpaceInfo 携带,故住这里;
 // sync.ts import type 复用)。
 export type SyncStatus = {
@@ -28,6 +33,10 @@ export type SyncStatus = {
   suspended: number;
   skew: boolean;
   clock_skew: boolean;
+  /** 服务器权威名册;**`null` = 不知道**(未连上 / attach 那枚推送丢了 / 服务器版本旧)。
+   *  ⛔ 消费方**不许**把它折成空数组(identity-plan §5.16.2-7):拿不到就不给操作面,
+   *  绝不拿一份可能过期的名单充数。会话结束即回 `null`。 */
+  roster: RosterEntry[] | null;
 };
 
 export type SpaceInfo = {

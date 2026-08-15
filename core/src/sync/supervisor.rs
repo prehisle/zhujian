@@ -514,9 +514,10 @@ impl SpaceSupervisor {
     /// 2. 挡新长命令 + 拉停机信号 + 等在飞长命令归零 + join transport 任务(与
     ///    [`stop`](Self::stop) 同一套等待,10s deadline);
     /// 3. 对移出的 runtime `Arc::try_unwrap`(**强引用归零证明**——调用方必须先放掉
-    ///    自己手里的全部 Arc;短暂重试吸收在途命令的尾巴)→ 显式 drop `Connection`
-    ///    (Unix/Android 上「删得动文件」不等于「没人写」:unlink 打开中的库会让旧
-    ///    runtime 继续写匿名 inode,同路径再建新库 = 真双写分叉);
+    ///    自己手里的全部 Arc;短暂重试吸收在途命令的尾巴)→ **同样有界重试**地
+    ///    `try_unwrap` 出 `Connection` 并显式 drop(Unix/Android 上「删得动文件」不等于
+    ///    「没人写」:unlink 打开中的库会让旧 runtime 继续写匿名 inode,同路径再建新库
+    ///    = 真双写分叉)。两处共用 [`try_unwrap_until`],见那里为什么单发必败;
     /// 4. 返回 [`ResetTicket`]:**然后**调用方才做文件操作(spaces::reset_*),成功后
     ///    [`finish_reset`](Self::finish_reset) 按 token 删墓碑。
     ///
@@ -579,24 +580,17 @@ impl SpaceSupervisor {
             }
         }
         // 强引用归零证明:调用方已放掉自己的 Arc,这里短暂重试吸收在途命令尾巴。
-        let mut rt = rt;
-        let runtime = loop {
-            match Arc::try_unwrap(rt) {
-                Ok(owned) => break owned,
-                Err(back) => {
-                    rt = back;
-                    if tokio::time::Instant::now() >= deadline {
-                        return Err(format!(
-                            "空间 {id} 的运行时仍被引用(有命令未放手)——空间保持封锁,重启应用后重试"
-                        ));
-                    }
-                    tokio::time::sleep(Duration::from_millis(50)).await;
-                }
-            }
-        };
-        // 显式 drop Connection(强引用归零后 db Arc 必是最后一份;transport 已退出)。
-        let db = Arc::try_unwrap(runtime.db)
-            .map_err(|_| format!("空间 {id} 的库连接仍被引用(必是 bug)——空间保持封锁"))?;
+        let runtime = try_unwrap_until(rt, deadline).await.map_err(|_| {
+            format!("空间 {id} 的运行时仍被引用(有命令未放手)——空间保持封锁,重启应用后重试")
+        })?;
+        // 显式 drop Connection。**这一格与上一格同形**:transport 任务是退出了,但它收场
+        // 时 `abort()` 掉的那几族任务(LAN 读写泵 / pre-auth 握手 / 在飞拨号)各攥着一份
+        // db 克隆,判死到真放手之间隔着一次 runtime 收尸(见 [`try_unwrap_until`])。
+        let db = try_unwrap_until(runtime.db, deadline).await.map_err(|_| {
+            format!(
+                "空间 {id} 的库连接仍被引用(收尾任务未在时限内放手)——空间保持封锁,重启应用后重试"
+            )
+        })?;
         let conn = db.into_inner().expect("db mutex poisoned");
         drop(conn);
         Ok(ResetTicket { id: id.to_string(), token })
@@ -675,6 +669,41 @@ impl Drop for Reservation<'_> {
         // 只回收自己那枚 token 的 Starting(防 ABA:别删掉同 id 的后来者)。
         if matches!(live.get(&self.id), Some(Slot::Starting(t)) if *t == self.token) {
             live.remove(&self.id);
+        }
+    }
+}
+
+/// `Arc::try_unwrap` 的**有界重试**——[`SpaceSupervisor::begin_reset`] 的两道强引用
+/// 归零证明共用这一只(runtime 一道、它里面那条库连接一道)。
+///
+/// 为什么不能单发就下结论:强引用归零在这条路径上是**异步**才发生的事。会话收场靠
+/// `abort()` 拆掉的任务有好几族,每一族都攥着一份 `Arc<Mutex<Connection>>` 的克隆 ——
+/// 每条局域网链路的读/写泵([`transport`] 里 `LanLink::drop`)、准入表里未移交的
+/// pre-auth 握手、在飞的拨号任务。而 `abort()` 只是**判死**:被判死的任务要等 runtime
+/// 收尸才放掉捕获值,已经派出去的 `spawn_blocking` 闭包更是连判都判不动(只能等它自己
+/// 跑完)。故这里必须给那个窗口留时间。
+///
+/// **373 真机量出的病就长在这个缝上**:db 那格原先是单发,而它恰恰是最后一个放手的
+/// ——同一个 wifi 下只要有一条直连链路活着(L-e 起的常见拓扑),`begin_reset` 必败且
+/// 空间被墓碑封住(`lan=1` 败 2/2,`lan=0` 过 3/3)。收成一个函数,是为了让「两处同形」
+/// 成为结构事实:下次谁改重试策略,两道证明一起变。
+///
+/// 超时仍是 fail-closed(`Err` 把 Arc 原样交回,调用方留墓碑不删文件)——重试只是把
+/// 「刚判死还没收尸」这个必然窗口吸收掉,它并不放宽判据本身。
+async fn try_unwrap_until<T>(
+    mut arc: Arc<T>,
+    deadline: tokio::time::Instant,
+) -> Result<T, Arc<T>> {
+    loop {
+        match Arc::try_unwrap(arc) {
+            Ok(owned) => return Ok(owned),
+            Err(back) => {
+                arc = back;
+                if tokio::time::Instant::now() >= deadline {
+                    return Err(arc);
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
         }
     }
 }

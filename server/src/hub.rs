@@ -23,7 +23,10 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
-use sync_proto::{err_code, DataPlane, Lane, PairEvent, Restriction, ServerMsg, BROADCAST};
+use sync_proto::{
+    err_code, DataPlane, DeviceAction, Lane, PairEvent, Restriction, RosterEntry, ServerMsg,
+    BROADCAST,
+};
 use tokio::sync::{mpsc, Notify};
 use tokio::time::Instant;
 
@@ -45,6 +48,62 @@ fn push(tx: &Tx, msg: ServerMsg) -> bool {
     tx.try_send(msg).is_ok()
 }
 
+/// **全仓唯一发 [`ServerMsg::Roster`] 的地方**(367)。在途上界见 [`MAX_ROSTER_INFLIGHT`];
+/// 计数由 conn.rs 的写任务出队时减,两侧靠「变体」对齐(加的这里只发 Roster,减的那里
+/// 只认 Roster)—— 单一发送点是这条对齐的结构前提,别在别处 `push` 一枚 Roster。
+///
+/// ⛔ **三件事的顺序是这道账的全部正确性**(实现审弹二 M2/L3),别改:
+///
+/// 1. **先占 mpsc 槽**(`try_reserve`)。它同时买到两件事:发送**不可能再失败**(于是
+///    没有「加了额度又要还回去」那条路),以及**通道满时连名册都不构造**。
+/// 2. **再原子预占名册额度**(`fetch_update` 把「`< MAX`」与「`+1`」合成一步)。
+///    先发后记账会漏出一条**永久幽灵额度**:`try_send` 成功 → 写任务在另一线程出队并
+///    `saturating_sub`(此刻账本还是 0,减不动)→ 这边才 `fetch_add` ⇒ 队里没有 Roster
+///    而账本多一。攒够 4 次,这条连接**此后一枚名册都发不出去**,且再没有任何真实帧
+///    能把幽灵数减回来(推送与周期拉取同走这里 ⇒ 名册面整条哑掉,直到重连)。
+///    CAS 顺带把「并发过冲」也一起封了 —— 我原来那句「允许微量过冲」不必要地把闸放松了。
+///    ⚠ 顺序不能倒:先占额度再占槽,槽占不到就又要还额度,那条归还路正是幽灵的来源。
+/// 3. **两样都占到了才构造**(`build` 惰性):`build_roster` 要克隆整份名单**并推进全局
+///    revision**。放在预占之前,一台不读下行的设备就能靠猛发 `RosterReq` 让服务器
+///    反复构造、丢弃整份名册(它那道 5s 间隔闸**只在真答了才推进基点**,答不出去就
+///    不设防)—— 拒发前的大对象构造是白烧的 CPU 与 allocator 压力。
+fn push_roster(tx: &Tx, inflight: &RosterInflight, build: impl FnOnce() -> ServerMsg) -> bool {
+    let Ok(permit) = tx.try_reserve() else {
+        return false;
+    };
+    if inflight
+        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |v| {
+            (v < MAX_ROSTER_INFLIGHT).then_some(v + 1)
+        })
+        .is_err()
+    {
+        return false;
+    }
+    let msg = build();
+    debug_assert!(matches!(msg, ServerMsg::Roster { .. }), "push_roster 只发 Roster");
+    permit.send(msg);
+    true
+}
+
+/// 用户面设备管理的**授权判据**(identity-plan §5.3)。
+///
+/// ⛔ **全仓只此一份正式子**,别处一律调它、不许复述(§5.3 一轮 H1:规格里散文写对了
+/// 而错误表把它写松成「不是管理设备**且** `target != caller` → 拒」,于是非管理设备发
+/// `GrantAdmin{target: 自己}` 落在 `target == caller` 上 —— **绕过整条闸直接自我提权**。
+/// 规格内部不一致时,实现会照抄松的那份)。
+///
+/// ```text
+/// authorized = caller_is_admin
+///           OR (action == Remove AND target == caller)   // 自助退出是唯一的非管理设备许可
+/// ```
+pub(crate) fn device_admin_authorized(
+    caller_is_admin: bool,
+    action: DeviceAction,
+    target_is_caller: bool,
+) -> bool {
+    caller_is_admin || (matches!(action, DeviceAction::Remove) && target_is_caller)
+}
+
 /// 预算计费口径(§5.2,二弹二轮修):计 [`ServerMsg::Deliver`] 与 [`ServerMsg::PairMsg`]
 /// 的 blob 字节——两类带无界内容体的帧都走**连接实际账本**(hub 入队加、conn.rs 写
 /// 任务出队减);槽累计值只负责单槽配额,不兼任内存账本(否则烧槽即释放预算、而
@@ -59,12 +118,79 @@ pub fn deliver_cost(msg: &ServerMsg) -> Option<usize> {
 /// 实时帧在「信箱整箱搬入之外」的队深余量。
 pub(crate) const REALTIME_HEADROOM: usize = 1024;
 
+/// 本连接下行队里还没写出去的 [`ServerMsg::Roster`] 枚数(367)。侧账本,形同
+/// [`QueuedBytes`]:hub 推时加、conn.rs 写任务出队时减,连接死则随 Client 摘除。
+pub type RosterInflight = Arc<AtomicUsize>;
+
+/// 每连接在途名册帧上界(367)。
+///
+/// ⛔ **这道闸是实现期算出来的,设计 §5.13 那张表把这一格记成「过」——按实测不成立。**
+/// 既有连接内存包络按 `size_of::<ServerMsg>() × 槽数` 算(216 B × 9216 ≈ 1.9 MiB),
+/// **不含每枚 roster 克隆的 `Vec`/`String` 堆内存**。满额 roster 的堆是 1,856 B,槽若
+/// 占满就是 **16.3 MiB/连接**;32 条连接合计 **647 MiB**,而包络上限是 448 MiB
+/// (`MEMORY_ENVELOPE_BYTES`)⇒ 慢速填队能把进程推过 `MemoryMax=512M`。
+///
+/// 触及上界时**跳过这一枚推送**,而不是排队等着 —— 名册推送本来就允许丢(服务端
+/// `push` 就是 `try_send().is_ok()`),客户端的周期拉取是恒在轴、丢了会自己补回来
+/// (§5.4)。故这道闸不引入新的失败语义,只是把「可以丢」这件事提前做掉。
+///
+/// 4 × 1,856 B ≈ 7.4 KiB/连接,对包络的贡献可忽略。
+pub(crate) const MAX_ROSTER_INFLIGHT: usize = 4;
+
 /// 旧客户端受限时 account_throttled 的人话(§6:现有状态面至少一条可见错误;客户端
 /// human_err 兜底会显它)。声明 `account_status_v1` 的新客户端改收 AccountStatusV1。
 const THROTTLE_MSG: &str = "账户本月高速额度已用尽,同步降速中(升级客户端可见详情)";
 
+/// **主动(无编号)`Err` 推送的唯一构造点**(367)。
+///
+/// ⛔ 它绝不许使用任何 flow 白名单里的 code:客户端对无编号 `Err` 的归属判据就是
+/// `sync_proto::err_code` 里那两张表,复用其中一个就会把**正在等结果的**
+/// `DeviceAdmin` / `Pair` flow 提前错误结账(§5.5 三轮 H1 的成因就是这条老推送)。
+///
+/// ⚠ 五轮 L1 把「白名单对将来任何新增的主动推送都免疫」那句话打掉了 —— 准确条件是
+/// 「将来的主动推送必须用一个**不在**表里的 code」。这道 `debug_assert` 就是那条
+/// **可执行的维护契约**:写规矩在注释里,这个仓的历史证明它腐烂得很快。
+fn advisory_err(code: &str, msg: &str) -> ServerMsg {
+    debug_assert!(
+        !err_code::PAIR_FLOW_ERRORS.contains(&code)
+            && !err_code::DEVICE_ADMIN_FLOW_ERRORS.contains(&code),
+        "主动推送用了 flow 白名单里的 code `{code}`——客户端会把它认给正在等结果的命令"
+    );
+    ServerMsg::Err { code: code.to_owned(), msg: msg.to_owned() }
+}
+
 /// (account, device)。
 type Addr = (String, String);
+
+/// 用户面设备管理的失败面(367;→ 信封 err code 的映射见 conn.rs 那一臂)。
+/// **每一格对应 §5.5 错误表的一行**,顺序即语义。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeviceAdminError {
+    /// ⓪ 发起方已不在册 / 已换钥 / 这条连接已不是它的当前在线连接(H-ABA)。
+    /// → `auth_failed` 且**断连**(同 SeatLease 的「本设备已被吊销」)。
+    Unauthorized,
+    /// ⓪ 账户被封禁 → `auth_failed` 且**断连**。
+    Banned,
+    /// ① `admins` 为空(存量未回填)→ `bad_request`,不断连。
+    NoAdmins,
+    /// ② 授权判据不成立 → `bad_request`,不断连。
+    Forbidden,
+    /// ③ target 不在本账户 → `unknown_device`,不断连。
+    UnknownTarget,
+    /// 账户级限频 → `busy`,不断连。
+    Busy,
+    /// ⑤ 这一步会让 `admins` 变空 → `bad_request`,不断连。
+    WouldEmptyAdmins,
+    /// ⑥ registry 落盘失败 → `internal`,不断连(未生效,可重试)。
+    Persist,
+}
+
+impl DeviceAdminError {
+    /// 这一格要不要断连。只有 ⓪ 那两格断——业务判定一律回错不断连。
+    pub fn is_fatal(self) -> bool {
+        matches!(self, DeviceAdminError::Unauthorized | DeviceAdminError::Banned)
+    }
+}
 
 pub struct Hub {
     pub cfg: Config,
@@ -87,6 +213,11 @@ pub struct Hub {
     /// AccountStatusV1 修订号(工序4;单次启动内单调、跨重启复位——§6 取舍,不引
     /// server_instance_id)。每 build 一次 checked 自增,到顶 fail-fast 不回绕。
     status_revision: AtomicU64,
+    /// 权威名册修订号(367,§5.4)。**全局单调**(规格只要求单账户单调,这是它的加强
+    /// ——客户端只做大小比较,故无副作用,且省一张 per-account 的表)。单次启动内
+    /// 有效、跨重启复位:重启必然断连、会话必然重建、客户端名册必然回「不知道」,
+    /// 这一格由会话边界自然闭合(故不需要 `server_instance_id`)。
+    roster_revision: AtomicU64,
     /// 全局连接 permit(2026-07-31 评审:连接耗尽 DoS 闸,容量 = cfg.max_conns)。
     /// upgrade 前 try_acquire,连接任务 RAII 持有到死;停机关栅时 close(拒新=503)。
     conn_permits: std::sync::Arc<tokio::sync::Semaphore>,
@@ -117,6 +248,11 @@ struct Client {
     /// 本连接是否声明了 `account_status_v1` 能力(工序4):决定 push 推
     /// [`ServerMsg::AccountStatusV1`](cap)还是受限时的 `account_throttled`(旧客户端)。
     wants_status: bool,
+    /// 本连接是否声明了 `device_roster_v1` 能力(367):名册三条**只发给声明者**
+    /// ——未声明者收到未知变体会 DecodeError 断连。
+    wants_roster: bool,
+    /// 本连接下行队里未写出的 Roster 枚数(见 [`MAX_ROSTER_INFLIGHT`])。
+    roster_inflight: RosterInflight,
 }
 
 #[derive(Default)]
@@ -173,6 +309,7 @@ impl Hub {
             checkpoint_nudge: Notify::new(),
             conn_seq: AtomicU64::new(1),
             status_revision: AtomicU64::new(1),
+            roster_revision: AtomicU64::new(1),
             conn_permits,
             signup_log: Mutex::new((None, None, 0, 0)),
         }
@@ -317,10 +454,7 @@ impl Hub {
     fn push_status_locked(&self, reg: &Registry, account: &str, now_wall: time::OffsetDateTime) {
         let (eff_period, used, quota, over) = self.read_meter_snapshot(reg, account, now_wall);
         let status = self.build_account_status(reg, account, now_wall, eff_period, used, quota);
-        let throttled = ServerMsg::Err {
-            code: err_code::ACCOUNT_THROTTLED.to_owned(),
-            msg: THROTTLE_MSG.to_owned(),
-        };
+        let throttled = advisory_err(err_code::ACCOUNT_THROTTLED, THROTTLE_MSG);
         let st = self.state.lock().unwrap();
         for (_, c) in st.online.iter().filter(|((a, _), _)| a.as_str() == account) {
             if c.wants_status {
@@ -329,6 +463,81 @@ impl Hub {
                 push(&c.tx, throttled.clone());
             }
         }
+    }
+
+    /// 构一枚权威名册(367,§5.4;**调用方须持 registry**)。
+    ///
+    /// `request`:`Some(n)` = 对 [`ClientMsg::RosterReq`] 的应答;`None` = 主动推送。
+    /// 名册**只带 device_id 与管理标记,不带别名** —— 别名是 E2EE 的,服务器不知道。
+    ///
+    /// `revision` 取全局单调发号器(**我填的形**:规格只要求「单账户单调」,全局单调是
+    /// 它的加强,客户端只做大小比较故无副作用;省一张 per-account 的表)。同
+    /// `status_revision`,单次服务器启动内有效——跨重启复位由「会话边界」自然闭合。
+    fn build_roster(&self, reg: &Registry, account: &str, request: Option<u64>) -> ServerMsg {
+        let devices: Vec<RosterEntry> = reg
+            .devices_of(account)
+            .into_iter()
+            .map(|d| {
+                let admin = reg.is_admin(account, &d);
+                RosterEntry { device: d, admin }
+            })
+            .collect();
+        // §5.13 那道容量闸的第三处同源(另两处 = 配置校验、load 存量校验)。走到这里
+        // 超界只可能是那两道被绕开 —— 帧发出去会撞 1 MiB 上限,截断则会**藏掉设备**,
+        // 两者都比当场 fail-fast 危险。
+        assert!(
+            devices.len() <= sync_proto::MAX_ROSTER_DEVICES,
+            "账户 {account} 有 {} 台设备,超过 MAX_ROSTER_DEVICES={}(配置校验与 load 校验都该先拦住)",
+            devices.len(),
+            sync_proto::MAX_ROSTER_DEVICES
+        );
+        let revision = self
+            .roster_revision
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |v| v.checked_add(1))
+            .expect("roster_revision 取号到顶(u64,不可能达到,fail-fast)");
+        ServerMsg::Roster { request, revision, devices }
+    }
+
+    /// 成员集合变化后向账户内**全部声明了 cap 的在线连接**重推名册(367,§5.4;
+    /// **调用方须持 registry**,锁序 registry → state)。
+    ///
+    /// ⚠ **正确性绝不挂在这枚推送上**:`push` 就是 `try_send().is_ok()`,通道满时帧
+    /// 静默消失(first-draft-checklist 第 1 条同族);触及在途上界时我们还会**主动**
+    /// 跳过。客户端那边的恒在轴是「每 10 拍心跳拉一枚 `RosterReq`」(§5.4 H2),这枚
+    /// 推送只负责**新鲜度**。
+    fn push_roster_locked(&self, reg: &Registry, account: &str) {
+        let st = self.state.lock().unwrap();
+        let mut msg: Option<ServerMsg> = None;
+        for (_, c) in st.online.iter().filter(|((a, _), _)| a.as_str() == account) {
+            if !c.wants_roster {
+                continue;
+            }
+            // 惰性构造两层:账户里一台声明 cap 的都没有时一枚都不建(取号也不动);
+            // 每条连接**预占到额度之后**才克隆(弹二 M2 的第 2 件)。
+            push_roster(&c.tx, &c.roster_inflight, || {
+                msg.get_or_insert_with(|| self.build_roster(reg, account, None)).clone()
+            });
+        }
+    }
+
+    /// [`ClientMsg::RosterReq`] 的应答(367,conn 侧无锁调用)。自取 registry → state,
+    /// 顺带复核「这条连接此刻仍是该设备的当前在线连接」——发的是账户名册,发错连接
+    /// 就是发错人。`false` = 没发出去(连接已不算数 / 在途上界 / 通道满),调用方据此
+    /// 回 `RosterNack{n, busy}`,让客户端的 deadline 与周期轴接手。
+    #[must_use]
+    pub fn reply_roster(&self, account: &str, device: &str, conn_id: u64, n: u64) -> bool {
+        let reg = self.registry.lock().unwrap();
+        let st = self.state.lock().unwrap();
+        let Some(c) = st.online.get(&(account.to_owned(), device.to_owned())) else {
+            return false;
+        };
+        if c.conn_id != conn_id || !c.wants_roster {
+            return false;
+        }
+        // ⚠ 构造(含**推进全局 revision**)在闭包里,只有预占到额度才会发生 —— 见
+        // `push_roster` 头注第 2 件:否则一台不读下行的设备能靠猛发 `RosterReq` 让服务器
+        // 反复构造整份名册再丢掉,而那道 5s 间隔闸恰恰**答不出去就不推进基点**。
+        push_roster(&c.tx, &c.roster_inflight, || self.build_roster(&reg, account, Some(n)))
     }
 
     /// 推送账户当前授权状态(工序4;conn 侧**无锁**调用:ENTER 实时推送)。自取 registry。
@@ -365,6 +574,8 @@ impl Hub {
         kick: KickTx,
         queued: QueuedBytes,
         wants_status: bool,
+        wants_roster: bool,
+        roster_inflight: RosterInflight,
     ) -> Option<u64> {
         let now_wall = time::OffsetDateTime::now_utc();
         let reg = self.registry.lock().unwrap();
@@ -381,18 +592,28 @@ impl Hub {
         let extra: Option<ServerMsg> = if wants_status {
             Some(self.build_account_status(&reg, account, now_wall, eff_period, used, quota))
         } else if over {
-            Some(ServerMsg::Err {
-                code: err_code::ACCOUNT_THROTTLED.to_owned(),
-                msg: THROTTLE_MSG.to_owned(),
-            })
+            Some(advisory_err(err_code::ACCOUNT_THROTTLED, THROTTLE_MSG))
         } else {
             None
         };
+        // 367:名册那一枚也在 state 锁前、持 registry 时构好(与 AccountStatusV1 同纪律)。
+        let roster: Option<ServerMsg> =
+            wants_roster.then(|| self.build_roster(&reg, account, None));
         let addr: Addr = (account.to_owned(), device.to_owned());
         let mut st = self.state.lock().unwrap();
         push(&tx, ServerMsg::Authed);
         if let Some(m) = extra {
             push(&tx, m);
+        }
+        // §6 鉴权顺序:Authed → 状态 → **名册** → Deliver。名册排在搬信箱之前是
+        // 「能力信号」这件事的结构前提(§5.14 末那只顺序/容量测):此刻下行队里只有
+        // 前面这两三枚,不可能已被积压 Deliver 填满 ⇒ attach 推送丢失只会退化成
+        // 「本会话面板暂不可用」,不会变成「服务器明明支持却看着像不支持」。
+        if let Some(m) = roster {
+            // 这一枚**刻意在 state 锁前、持 registry 时就构好**(与 AccountStatusV1 同
+            // 纪律),故闭包里只是把它交出去 —— `push_roster` 的「占到才构造」在这条路上
+            // 不适用:全新连接的在途计数必是 0,预占恒成功。
+            push_roster(&tx, &roster_inflight, || m);
         }
         if let Some(old) = st.online.remove(&addr) {
             logln(format!(
@@ -468,7 +689,8 @@ impl Hub {
         for (_, peer_tx) in &peers {
             push(peer_tx, ServerMsg::Peer { device: device.to_owned(), online: true });
         }
-        st.online.insert(addr, Client { conn_id, tx, kick, queued, wants_status });
+        st.online
+            .insert(addr, Client { conn_id, tx, kick, queued, wants_status, wants_roster, roster_inflight });
         drop(st);
         // 会话代际(169,codex H):state 已释放、仍持 registry(锁序 registry→meters)。
         // 给本 device 发新单调 session_gen、取消旧代际残留 pending;返回供连接态存储。
@@ -1142,21 +1364,171 @@ impl Hub {
             (Some(o), Some(a)) if o != a => return Err(RevokeError::OwnerMismatch),
             (Some(o), _) => o,
         };
-        let outcome = reg.revoke_device(&account, device)?;
-        let addr: Addr = (account.clone(), device.to_owned());
+        let outcome = self.revoke_locked(&mut reg, &account, device)?;
+        Ok((account, outcome))
+    }
+
+    /// 吊销的**唯一一条编排**(registry 删绑定 + 清信箱 + kick + 广播 offline;
+    /// **调用方须持 registry**,锁序 registry → state)。
+    ///
+    /// ⛔ 运营者面([`Self::revoke_device`])与用户面(367 的 [`Self::device_admin`]
+    /// 的 `Remove`)都走它 —— **不许另写第二条删除路径**(identity-plan §5.6-3;
+    /// 同一件事的第二处抄写点就是漂移源)。
+    fn revoke_locked(
+        &self,
+        reg: &mut Registry,
+        account: &str,
+        device: &str,
+    ) -> Result<RevokeOutcome, RevokeError> {
+        let outcome = reg.revoke_device(account, device)?;
+        let addr: Addr = (account.to_owned(), device.to_owned());
         let mut st = self.state.lock().unwrap();
         st.mailboxes.remove(&addr);
         if let Some(dead) = st.online.remove(&addr) {
             let conn = dead.conn_id;
-            kick_and_burn(&mut st, &account, dead);
-            broadcast_offline(&st, &account, device);
+            kick_and_burn(&mut st, account, dead);
+            broadcast_offline(&st, account, device);
             logln(format!(
                 "INFO 吊销 account={account} device={device}(在线,已 kick conn={conn})"
             ));
         } else {
             logln(format!("INFO 吊销 account={account} device={device}(离线)"));
         }
-        Ok((account, outcome))
+        drop(st);
+        // 成员集合变了 ⇒ 重推名册(367)。放在**唯一那条删除路径**里,故运营者面与
+        // 用户面都免费拿到,不会有人「忘了推」。
+        self.push_roster_locked(reg, account);
+        Ok(outcome)
+    }
+
+    /// 用户面设备管理(367,identity-plan §5.3/§5.5;conn.rs 的 `DeviceAdmin` 臂调)。
+    ///
+    /// **判定顺序照 §5.3 那一份,这里是它在代码里的唯一落点**——别在别处抄第二份缩略版
+    /// (三轮 L2 / 四轮 M3:同一件事的第三个粒度描述,照着写就会在判幂等之前先扣令牌)。
+    ///
+    /// ```text
+    /// ⓪ H-ABA 授权租约 → ⓪ 账户封禁 → ① admins 非空 → ② 授权判据 → ③ target 在册
+    /// → ④ 幂等早返 → 账户 limiter → ⑤ 不变量 → ⑥ 执行
+    /// ```
+    ///
+    /// ⛔ **幂等分支绝不许排在授权之前**:否则「已是管理设备就 Ok」这条捷径会让越权
+    /// 请求拿到一个成功回执,顺带泄露名单状态。
+    ///
+    /// ⛔ **账户令牌只有通过授权、且不是幂等的请求才扣**(三轮 M4):否则任一非管理
+    /// 设备都能持续发越权请求把账户桶耗干,让真正的管理设备长期收到 busy。
+    pub fn device_admin(
+        &self,
+        account: &str,
+        caller: &str,
+        caller_pub: [u8; 32],
+        conn_id: u64,
+        target: &str,
+        action: DeviceAction,
+    ) -> Result<(), DeviceAdminError> {
+        let mut reg = self.registry.lock().unwrap();
+        // ⓪ H-ABA 授权租约(照 register_endorsed / grant_seat_lease 逐条同构):验签在
+        // 锁外,验完到执行之间发起方可能被吊、甚至被吊后同 device_id 重注册换新钥;
+        // 「此刻仍是这把公钥」+「这条连接仍是它的当前在线连接」两件在同一把锁内核。
+        if reg.pubkey_of(account, caller) != Some(caller_pub) {
+            return Err(DeviceAdminError::Unauthorized);
+        }
+        {
+            let st = self.state.lock().unwrap();
+            let addr: Addr = (account.to_owned(), caller.to_owned());
+            if !st.online.get(&addr).is_some_and(|c| c.conn_id == conn_id) {
+                return Err(DeviceAdminError::Unauthorized);
+            }
+        }
+        // ⓪ 账户封禁(banlist reload 可能插在鉴权与此刻之间,同 attach 的复核)。
+        if reg.is_banned(account) {
+            return Err(DeviceAdminError::Banned);
+        }
+        // ① admins 为空(存量未回填)⇒ 用户面整条不可用,**含自助退出**:不变量只说
+        // 「不得**变**空」,对**已经**是空的账户约束为零 —— 这时放行自助退出,存量账户
+        // 会被逐台退到空、直接撞出账户封存(封存不可自助重开)。全禁才自洽(§5.3-3)。
+        if !reg.has_admins(account) {
+            return Err(DeviceAdminError::NoAdmins);
+        }
+        // ② 授权判据(唯一正式子,见 [`device_admin_authorized`])。
+        if !device_admin_authorized(reg.is_admin(account, caller), action, target == caller) {
+            return Err(DeviceAdminError::Forbidden);
+        }
+        // ③ target 在册。
+        if reg.pubkey_of(account, target).is_none() {
+            return Err(DeviceAdminError::UnknownTarget);
+        }
+        // ④ 幂等早返:**不 save、不升 revision、不 fan-out、不扣账户令牌**(§5.13 M1
+        // ——管理设备可以无限交替 Grant/Revoke,每次都触发全量落盘 + 全账户 fan-out)。
+        // Remove 没有这一格:target 在册已由 ③ 判过,不在册就是 unknown_device。
+        let target_is_admin = reg.is_admin(account, target);
+        match action {
+            DeviceAction::GrantAdmin if target_is_admin => return Ok(()),
+            DeviceAction::RevokeAdmin if !target_is_admin => return Ok(()),
+            _ => {}
+        }
+        // 账户 limiter(落在既有锁序 registry → state 之内:桶住在 registry 里,
+        // 不新开锁、更不 state → registry)。
+        // ⚠ 本文件的 `Instant` 是 `tokio::time::Instant`(TTL/槽过期用),而令牌桶的
+        // 单调钟口径是 `std::time::Instant`(创号闸同源)——这里必须显式写全路径。
+        if !reg.device_admin_take(account, std::time::Instant::now()) {
+            return Err(DeviceAdminError::Busy);
+        }
+        // ⑤ 不变量:任何一步只要会让 `admins` 变空就拒。
+        // 白送三件事(§5.3):用户面永远踢不空一个账户 ⇒ `RevokeOutcome::AccountSealed`
+        // 在用户面**不可达**。⚠ 照 264「不可达的防护 = 死码」,这里**不加**一道「若会
+        // seal 则拒」的兜底,改由一只测钉住它不可达。
+        let removes_an_admin = match action {
+            DeviceAction::Remove => target_is_admin,
+            DeviceAction::RevokeAdmin => true, // 幂等已早返 ⇒ 此刻 target 必是管理设备
+            DeviceAction::GrantAdmin => false,
+        };
+        if removes_an_admin && reg.admin_count(account) == 1 {
+            return Err(DeviceAdminError::WouldEmptyAdmins);
+        }
+        // ⑥ 执行。两条臂各自负责推名册:Remove 那条由 `revoke_locked` 内部推(它是
+        // 唯一那条删除路径),Grant/Revoke 这条在这里推 —— 都在 registry 写成功之后,
+        // 且都不返回 `Result`,已提交的义务不会随 `?` 蒸发(checklist 第 4 条)。
+        match action {
+            DeviceAction::Remove => {
+                self.revoke_locked(&mut reg, account, target).map_err(|e| match e {
+                    RevokeError::Persist => DeviceAdminError::Persist,
+                    // NotFound 已由 ③ 排除;Corrupt/OwnerMismatch 是 admin 面按 device
+                    // 反查那条路才有的形态(这里 account 由已鉴权会话给定)。
+                    _ => DeviceAdminError::Persist,
+                })?;
+            }
+            DeviceAction::GrantAdmin | DeviceAction::RevokeAdmin => {
+                let on = matches!(action, DeviceAction::GrantAdmin);
+                let changed = reg
+                    .set_admin(account, target, on)
+                    .map_err(|_| DeviceAdminError::Persist)?;
+                debug_assert!(changed, "幂等已在 ④ 早返,走到这里必是真变化");
+                self.push_roster_locked(&reg, account);
+            }
+        }
+        logln(format!(
+            "INFO 设备管理 account={account} caller={caller} target={target} action={action:?}"
+        ));
+        Ok(())
+    }
+
+    /// 运营者面设 / 清管理设备(`POST /admin/set-admin`;367,§5.6-6)。
+    ///
+    /// ⛔ **刻意不守「admins 不得变空」**:那条不变量只约束用户面。真出现「只设了一台
+    /// 管理设备而它丢了」,运营者要能重设一台 —— 这就是逃生口(§5.3)。`Ok(false)` =
+    /// 幂等无变化(不落盘、不推名册)。
+    pub fn admin_set_admin(
+        &self,
+        account: &str,
+        device: &str,
+        on: bool,
+    ) -> Result<bool, crate::registry::RegisterError> {
+        let mut reg = self.registry.lock().unwrap();
+        let changed = reg.set_admin(account, device, on)?;
+        if changed {
+            self.push_roster_locked(&reg, account);
+        }
+        Ok(changed)
     }
 
     /// SIGHUP 封禁表热重载 + **即时失权**(open-signup §1.2):重载封禁集合后,
@@ -1210,13 +1582,18 @@ impl Hub {
                 return None;
             }
         }
-        Some(reg.register_device(
+        let out = reg.register_device(
             account,
             new_device,
             pubkey,
             self.cfg.device_cap,
             time::OffsetDateTime::now_utc(),
-        ))
+        );
+        // 367:新设备进来也是成员集合变化 ⇒ 重推名册(§5.4 的四个触发点之一)。
+        if out.is_ok() {
+            self.push_roster_locked(&reg, account);
+        }
+        Some(out)
     }
 
     /// 纪元席位租约的原子收尾(conn.rs SeatLease 用;billing-plan §5 工序 2)。
@@ -1265,6 +1642,11 @@ impl Hub {
             if n > 0 {
                 logln(format!("INFO 清扫过期席位租约 {n} 枚"));
             }
+            // 367:回收满桶的设备管理令牌条目(满桶 = 没欠账,删了重建语义相同)
+            // ⇒ 那张表的规模有**近期活跃账户数**上界,不随运行时长单调增长。
+            // ⚠ 这里的 `Instant` 是 `std` 的单调钟(令牌桶口径,与本文件的
+            // `tokio::time::Instant` 不是一个东西),故显式写全路径。
+            reg.sweep_admin_buckets(std::time::Instant::now());
         }
         let now = Instant::now();
         let ttl = self.cfg.mailbox_ttl;
@@ -1494,10 +1876,10 @@ mod tests {
         let (tx1, mut rx1, kick1, _k1) = chan(64);
         let (tx2, mut rx2, kick2, _k2) = chan(64);
         // D1=cap(wants_status=true),D2=旧(false)。
-        h.attach_authenticated(ACCT, D1, [1; 32], 1, tx1, kick1, QueuedBytes::default(), true)
+        h.attach_authenticated(ACCT, D1, [1; 32], 1, tx1, kick1, QueuedBytes::default(), true, false, RosterInflight::default())
             .unwrap();
         let g2 = h
-            .attach_authenticated(ACCT, D2, [2; 32], 2, tx2, kick2, QueuedBytes::default(), false)
+            .attach_authenticated(ACCT, D2, [2; 32], 2, tx2, kick2, QueuedBytes::default(), false, false, RosterInflight::default())
             .unwrap();
         while rx1.try_recv().is_ok() {} // 排空 attach 期帧(Authed/AccountStatusV1/Peer)
         while rx2.try_recv().is_ok() {}
@@ -1534,7 +1916,7 @@ mod tests {
     /// D1 以 conn_id=cid 上线(fixture 公钥 [1;32]/[2;32],见 hub())。账本按连接
     /// 新造——只想上线不查预算的测试用它;预算测试用 [`attach_with_ledger`]。
     fn attach_dev(h: &Hub, dev: &str, key: [u8; 32], cid: u64, tx: Tx, kick: KickTx) -> bool {
-        h.attach_authenticated(ACCT, dev, key, cid, tx, kick, QueuedBytes::default(), false).is_some()
+        h.attach_authenticated(ACCT, dev, key, cid, tx, kick, QueuedBytes::default(), false, false, RosterInflight::default()).is_some()
     }
 
     /// 上线并返回该连接的字节账本(预算测试断言/模拟「写任务未出队」用)。
@@ -1547,7 +1929,7 @@ mod tests {
         kick: KickTx,
     ) -> QueuedBytes {
         let q = QueuedBytes::default();
-        assert!(h.attach_authenticated(ACCT, dev, key, cid, tx, kick, q.clone(), false).is_some());
+        assert!(h.attach_authenticated(ACCT, dev, key, cid, tx, kick, q.clone(), false, false, RosterInflight::default()).is_some());
         q
     }
 
@@ -1610,6 +1992,468 @@ mod tests {
         assert_eq!(rx2.try_recv(), Ok(deliver(D1, D2, b"b")));
         assert_eq!(rx2.try_recv(), Ok(deliver(D1, D2, b"c")));
         assert!(matches!(rx2.try_recv(), Ok(ServerMsg::Peer { .. }))); // D1 在线快照殿后
+    }
+
+    // ---- 367:用户面设备管理 -------------------------------------------------
+
+    /// 上线一条**声明了名册 cap** 的连接,回下行队(名册三条只发给声明者)。
+    fn attach_cap(h: &Hub, dev: &str, key: [u8; 32], cid: u64) -> mpsc::Receiver<ServerMsg> {
+        let (tx, rx, kick, _k) = chan(64);
+        std::mem::forget(_k); // kick 接收端留着,别让通道当场关掉
+        assert!(h
+            .attach_authenticated(
+                ACCT,
+                dev,
+                key,
+                cid,
+                tx,
+                kick,
+                QueuedBytes::default(),
+                false,
+                true,
+                RosterInflight::default()
+            )
+            .is_some());
+        rx
+    }
+
+    /// 从下行队里捞出下一枚 Roster(跳过 Authed / Peer 这些噪音);没有就 None。
+    fn next_roster(rx: &mut mpsc::Receiver<ServerMsg>) -> Option<(Option<u64>, u64, Vec<RosterEntry>)> {
+        while let Ok(m) = rx.try_recv() {
+            if let ServerMsg::Roster { request, revision, devices } = m {
+                return Some((request, revision, devices));
+            }
+        }
+        None
+    }
+
+    /// 六轮点名那三只里的第三只(前两只住 sync-proto):**服务端的主动状态推送
+    /// 拒绝使用任何 flow code**。⚠ 「测一个字符串等于某常量」是同义反复、别写;有牙齿
+    /// 的是这条 —— 把契约做成运行期守卫,再拿一刀证明它真会咬人。
+    #[test]
+    #[should_panic(expected = "flow 白名单里的 code")]
+    fn advisory_push_refuses_flow_codes() {
+        let _ = advisory_err(err_code::BUSY, "假装这是一枚主动推送");
+    }
+
+    /// 与上一只配对的绿:今天真正在用的那个 code 不在任何表里,故推得出去。
+    #[test]
+    fn advisory_push_accepts_the_throttle_code() {
+        let m = advisory_err(err_code::ACCOUNT_THROTTLED, THROTTLE_MSG);
+        assert!(matches!(m, ServerMsg::Err { .. }));
+    }
+
+    /// 授权判据的四象限(§5.3 唯一正式子)。**直接量那个纯函数**——端到端路径上还有
+    /// 好几把尺,拿它记账分不清是谁拒的(first-draft-checklist 第 13 条)。
+    #[test]
+    fn device_admin_authorized_truth_table() {
+        for action in [DeviceAction::Remove, DeviceAction::GrantAdmin, DeviceAction::RevokeAdmin] {
+            // 管理设备:三个动作 × 对自己/对别人,一律许。
+            assert!(device_admin_authorized(true, action, true), "{action:?}");
+            assert!(device_admin_authorized(true, action, false), "{action:?}");
+            // 非管理设备:**只有「移除自己」这一格**许(自助退出)。
+            assert_eq!(
+                device_admin_authorized(false, action, true),
+                matches!(action, DeviceAction::Remove),
+                "非管理设备对自己 {action:?}"
+            );
+            assert!(!device_admin_authorized(false, action, false), "非管理设备对别人 {action:?}");
+        }
+    }
+
+    /// ⭐ **提权四连**(设计审一轮 H1 的直接产物)。一只笼统的「非管理设备被拒」会被
+    /// `Remove(self)` 那格**背书成绿**,而漏掉的正是 `GrantAdmin{target: 自己}` ——
+    /// 规格的错误表当初写成「不是管理设备**且** target != caller → 拒」,于是它落在
+    /// `target == caller` 上**绕过整条闸自我提权**。四格必须分开写。
+    ///
+    /// ⚠ 每格都自证「拒它的是**授权**那道闸」:`admins` 非空(排除 ①)、target 恒在册
+    /// (排除 ③)、且都不是幂等(排除 ④)⇒ `Forbidden` 只可能来自 ②。
+    #[test]
+    fn non_admin_privilege_escalation_four_ways() {
+        let h = hub(|_| {});
+        let _rx1 = attach_cap(&h, D1, [1; 32], 1); // D1 = 首台 ⇒ 管理设备
+        let _rx2 = attach_cap(&h, D2, [2; 32], 2); // D2 = 背书进来 ⇒ 非管理设备
+        assert!(h.registry.lock().unwrap().is_admin(ACCT, D1));
+        assert!(!h.registry.lock().unwrap().is_admin(ACCT, D2));
+        let d2 = |target: &str, action| h.device_admin(ACCT, D2, [2; 32], 2, target, action);
+        // ① 对**自己**提权 —— 就是那条漏掉的路。
+        assert_eq!(d2(D2, DeviceAction::GrantAdmin), Err(DeviceAdminError::Forbidden));
+        // ② 对自己取消管理位(它本来就不是,但**授权先于幂等**,故仍是 Forbidden ——
+        //    幂等排在授权之前的话,这一格会回一个成功回执并顺带泄露名单状态)。
+        assert_eq!(d2(D2, DeviceAction::RevokeAdmin), Err(DeviceAdminError::Forbidden));
+        // ③ 对别人做任何动作。
+        assert_eq!(d2(D1, DeviceAction::Remove), Err(DeviceAdminError::Forbidden));
+        assert_eq!(d2(D1, DeviceAction::GrantAdmin), Err(DeviceAdminError::Forbidden));
+        assert_eq!(d2(D1, DeviceAction::RevokeAdmin), Err(DeviceAdminError::Forbidden));
+        // ④ 唯一许的那格:移除自己(自助退出),且席位真的下降。
+        assert_eq!(h.registry.lock().unwrap().devices_of(ACCT).len(), 2);
+        assert_eq!(d2(D2, DeviceAction::Remove), Ok(()));
+        assert_eq!(h.registry.lock().unwrap().devices_of(ACCT), vec![D1.to_string()]);
+    }
+
+    /// `admins` 为空的存量账户 ⇒ 用户面**整条不可用,含自助退出**(§5.3-3,首版自检
+    /// 第 6 条挡下的):不变量只说「不得**变**空」,对**已经**是空的账户约束为零 ——
+    /// 这时放行自助退出,存量账户能被逐台退到空、直接撞出账户封存(而封存不可自助重开)。
+    ///
+    /// ⚠ 样本与提权那只**必须落在对方够不着的地方**(§5.14 点名):空集合下每台设备
+    /// 都不是管理设备,一只测同时满足 ①② 两个前件。这里 caller 用 **D1** —— 它在
+    /// 回填过的账户里本来是管理设备,故拒它的只可能是 ①。
+    #[test]
+    fn empty_admins_disables_the_whole_user_face_including_self_exit() {
+        let h = hub(|_| {});
+        let _rx1 = attach_cap(&h, D1, [1; 32], 1);
+        // 运营者面清空管理设备(它刻意可以破坏那条不变量 —— 逃生口的另一半)。
+        assert_eq!(h.admin_set_admin(ACCT, D1, false), Ok(true));
+        assert!(!h.registry.lock().unwrap().has_admins(ACCT));
+        let d1 = |target: &str, action| h.device_admin(ACCT, D1, [1; 32], 1, target, action);
+        assert_eq!(d1(D1, DeviceAction::Remove), Err(DeviceAdminError::NoAdmins), "自助退出也得拒");
+        assert_eq!(d1(D2, DeviceAction::Remove), Err(DeviceAdminError::NoAdmins));
+        assert_eq!(d1(D1, DeviceAction::GrantAdmin), Err(DeviceAdminError::NoAdmins));
+        // 账户一台都没少。
+        assert_eq!(h.registry.lock().unwrap().devices_of(ACCT).len(), 2);
+    }
+
+    /// 不变量:**用户面永远踢不空一个账户**(admins ⊆ devices,admins 非空 ⇒ devices
+    /// 非空)。⇒ `RevokeOutcome::AccountSealed` 在用户面**不可达**。
+    ///
+    /// ⚠ 照 264「不可达的防护 = 死码」,代码里**没有**一道「若会 seal 则拒」的兜底;
+    /// 这只测就是钉住它不可达的那枚(§5.3 白送三件事之一)。
+    #[test]
+    fn user_face_can_never_seal_an_account() {
+        let h = hub(|_| {});
+        let _rx1 = attach_cap(&h, D1, [1; 32], 1);
+        let _rx2 = attach_cap(&h, D2, [2; 32], 2);
+        let d1 = |target: &str, action| h.device_admin(ACCT, D1, [1; 32], 1, target, action);
+        // D1 是唯一的管理设备:移除自己 / 取消自己的管理位,两条都会让 admins 变空。
+        assert_eq!(d1(D1, DeviceAction::Remove), Err(DeviceAdminError::WouldEmptyAdmins));
+        assert_eq!(d1(D1, DeviceAction::RevokeAdmin), Err(DeviceAdminError::WouldEmptyAdmins));
+        // 把 D2 也升成管理设备之后,D1 就退得掉了(admins 仍非空)。
+        assert_eq!(d1(D2, DeviceAction::GrantAdmin), Ok(()));
+        assert_eq!(d1(D1, DeviceAction::Remove), Ok(()));
+        // 现在只剩 D2 一台、且它是唯一管理设备 ⇒ 用户面再也踢不动 ⇒ 账户不可能归零。
+        let d2 = |target: &str, action| h.device_admin(ACCT, D2, [2; 32], 2, target, action);
+        assert_eq!(d2(D2, DeviceAction::Remove), Err(DeviceAdminError::WouldEmptyAdmins));
+        assert!(!h.registry.lock().unwrap().devices_of(ACCT).is_empty(), "账户绝不会被用户面吊空");
+    }
+
+    /// 幂等的 Grant/Revoke:**成功回执,但不升 revision、不 fan-out**(§5.13 M1 ——
+    /// 管理设备可以无限交替 Grant/Revoke,每次都触发全量落盘 + 全账户 fan-out)。
+    ///
+    /// 「不升 revision」的判据挑得能证伪:真变化那两枚的 revision **必须恰好差 1**,
+    /// 中间那 5 枚幂等若各取了一个号,差值就不是 1 了。
+    #[test]
+    fn idempotent_admin_changes_neither_bump_revision_nor_fan_out() {
+        let h = hub(|_| {});
+        let mut rx1 = attach_cap(&h, D1, [1; 32], 1);
+        let _rx2 = attach_cap(&h, D2, [2; 32], 2);
+        let d1 = |target: &str, action| h.device_admin(ACCT, D1, [1; 32], 1, target, action);
+        assert!(next_roster(&mut rx1).is_some(), "上线那一枚名册");
+        // 真变化:推一枚。
+        assert_eq!(d1(D2, DeviceAction::GrantAdmin), Ok(()));
+        let (_, rev_a, devices) = next_roster(&mut rx1).expect("真变化要推名册");
+        assert_eq!(devices.len(), 2);
+        assert!(devices.iter().all(|e| e.admin), "两台都成了管理设备");
+        // 幂等 ×5:回执成功,但一枚名册都不该来。
+        for _ in 0..5 {
+            assert_eq!(d1(D2, DeviceAction::GrantAdmin), Ok(()));
+        }
+        assert!(next_roster(&mut rx1).is_none(), "幂等不许 fan-out");
+        // 再来一次真变化:revision 恰好 +1 ⇒ 中间那 5 枚一个号都没取。
+        assert_eq!(d1(D2, DeviceAction::RevokeAdmin), Ok(()));
+        let (_, rev_b, _) = next_roster(&mut rx1).expect("真变化要推名册");
+        assert_eq!(rev_b, rev_a + 1, "幂等不许升 revision");
+    }
+
+    /// H-ABA 授权租约(§5.3 ⓪):验签在锁外,验完到执行之间发起方可能被吊、或被同
+    /// device_id 重注册换钥、或它那条连接已被新连接顶替 —— 三格都必须当场拒且**断连**。
+    #[test]
+    fn device_admin_checks_the_h_aba_lease() {
+        let h = hub(|_| {});
+        let _rx1 = attach_cap(&h, D1, [1; 32], 1);
+        let _rx2 = attach_cap(&h, D2, [2; 32], 2);
+        // ① 公钥对不上(吊后同 id 重注册换钥的 ABA)。
+        assert_eq!(
+            h.device_admin(ACCT, D1, [9; 32], 1, D2, DeviceAction::Remove),
+            Err(DeviceAdminError::Unauthorized)
+        );
+        // ② 这条连接已不是它的当前在线连接(旧连接被顶替后迟到的命令)。
+        let _rx1b = attach_cap(&h, D1, [1; 32], 11);
+        assert_eq!(
+            h.device_admin(ACCT, D1, [1; 32], 1, D2, DeviceAction::Remove),
+            Err(DeviceAdminError::Unauthorized)
+        );
+        // ③ 发起方已被并发吊销(在飞命令必拒)。
+        assert!(h.revoke_device(Some(ACCT), D2).is_ok());
+        assert_eq!(
+            h.device_admin(ACCT, D2, [2; 32], 2, D1, DeviceAction::Remove),
+            Err(DeviceAdminError::Unauthorized)
+        );
+        // 两格都要断连(业务判定一律不断)。
+        assert!(DeviceAdminError::Unauthorized.is_fatal());
+        assert!(DeviceAdminError::Banned.is_fatal());
+        for e in [
+            DeviceAdminError::NoAdmins,
+            DeviceAdminError::Forbidden,
+            DeviceAdminError::UnknownTarget,
+            DeviceAdminError::Busy,
+            DeviceAdminError::WouldEmptyAdmins,
+            DeviceAdminError::Persist,
+        ] {
+            assert!(!e.is_fatal(), "{e:?} 是业务判定,不该断连");
+        }
+    }
+
+    /// 两台管理设备**同时互踢,恰一个成功**(§5.3 白送三件事之二)。registry 锁串行化
+    /// 二者,而**后到的那条**在同一把锁内会撞上 H-ABA 复核:它此刻已不在册。
+    ///
+    /// ⚠ **这只测原先是串行的**(实现审弹二 L2):两条命令一前一后调,证明的只是
+    /// 「吊完之后它再来会被拒」,而不是「两枚**同时**争 registry 锁时恰一个赢」——
+    /// 而后者才是这只测的名字所声称的东西。现在两条线程在 barrier 上一起放行。
+    ///
+    /// ⛔ **barrier 只能放在取 registry 锁之前**:放进临界区里,先进去的那条会在
+    /// barrier 上等一个永远拿不到锁的同伴 = 死锁。
+    ///
+    /// 判据**与谁赢无关**(真并发下赢家不确定,钉某一个就是靠调度运气的假验收):
+    /// 结果**集合**恰是 `{Ok, Unauthorized}`,且事后恰好剩一台设备。
+    #[test]
+    fn two_admins_kicking_each_other_exactly_one_wins() {
+        let h = std::sync::Arc::new(hub(|_| {}));
+        let _rx1 = attach_cap(&h, D1, [1; 32], 1);
+        let _rx2 = attach_cap(&h, D2, [2; 32], 2);
+        h.device_admin(ACCT, D1, [1; 32], 1, D2, DeviceAction::GrantAdmin).unwrap();
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let hands: Vec<_> = [(D1, [1u8; 32], 1u64, D2), (D2, [2u8; 32], 2u64, D1)]
+            .into_iter()
+            .map(|(caller, key, conn, target)| {
+                let (h, b) = (h.clone(), barrier.clone());
+                std::thread::spawn(move || {
+                    b.wait();
+                    h.device_admin(ACCT, caller, key, conn, target, DeviceAction::Remove)
+                })
+            })
+            .collect();
+        let mut out: Vec<_> = hands.into_iter().map(|t| t.join().unwrap()).collect();
+        out.sort_by_key(|r| r.is_err());
+        assert_eq!(
+            out,
+            vec![Ok(()), Err(DeviceAdminError::Unauthorized)],
+            "恰一个赢,输的那个撞 H-ABA(它此刻已不在册)"
+        );
+        assert_eq!(h.registry.lock().unwrap().devices_of(ACCT).len(), 1, "恰好剩一台");
+    }
+
+    /// target 不在本账户 = `unknown_device`(③)。
+    /// ⚠ 样本必须落在 ② 够不着的地方:caller 用 **D1(管理设备)**,故授权那道过得去,
+    /// 拒它的只可能是 ③(§5.14 点名的那对陷阱)。
+    #[test]
+    fn unknown_target_is_rejected_by_the_membership_gate() {
+        let h = hub(|_| {});
+        let _rx1 = attach_cap(&h, D1, [1; 32], 1);
+        assert_eq!(
+            h.device_admin(ACCT, D1, [1; 32], 1, "DEV_NOPE", DeviceAction::Remove),
+            Err(DeviceAdminError::UnknownTarget)
+        );
+        assert_eq!(
+            h.device_admin(ACCT, D1, [1; 32], 1, "DEV_NOPE", DeviceAction::GrantAdmin),
+            Err(DeviceAdminError::UnknownTarget)
+        );
+    }
+
+    /// 账户令牌:**未授权与幂等都不扣**(三轮 M4 / 四轮 M2)。
+    ///
+    /// 三轮 M4 的原话:否则任一非管理设备都能持续发越权请求把账户 burst 耗干,让真正的
+    /// 管理设备长期收到 busy —— 共享桶被无权者压制。判据就照这句写:先让非管理设备
+    /// 猛发越权请求 + 让管理设备猛发幂等请求,**然后**看真正的操作还做不做得动。
+    #[test]
+    fn account_tokens_are_spent_only_by_authorized_non_idempotent_requests() {
+        let h = hub(|_| {});
+        let _rx1 = attach_cap(&h, D1, [1; 32], 1);
+        let _rx2 = attach_cap(&h, D2, [2; 32], 2);
+        // 非管理设备的越权请求 ×40(远超账户 burst 10)。
+        for _ in 0..40 {
+            assert_eq!(
+                h.device_admin(ACCT, D2, [2; 32], 2, D1, DeviceAction::GrantAdmin),
+                Err(DeviceAdminError::Forbidden)
+            );
+        }
+        // 管理设备的幂等请求 ×40(D2 本来就不是管理设备,RevokeAdmin 恒无变化)。
+        for _ in 0..40 {
+            assert_eq!(h.device_admin(ACCT, D1, [1; 32], 1, D2, DeviceAction::RevokeAdmin), Ok(()));
+        }
+        // 桶要是被上面那 80 枚耗过,这里第一枚就会 Busy。
+        assert_eq!(h.device_admin(ACCT, D1, [1; 32], 1, D2, DeviceAction::GrantAdmin), Ok(()));
+    }
+
+    /// 非幂等的成功请求**要扣**账户令牌,扣光回 `busy`(而不是无限放行)。
+    /// burst=10:第 1 枚上面那格已证会扣,这里连做 10 次真变化,第 11 次必 Busy
+    /// (测试跑得远快于 10s 补墨间隔,不会有令牌回来)。
+    #[test]
+    fn account_token_bucket_runs_dry_and_answers_busy() {
+        let h = hub(|_| {});
+        let _rx1 = attach_cap(&h, D1, [1; 32], 1);
+        let _rx2 = attach_cap(&h, D2, [2; 32], 2);
+        // 交替 Grant/Revoke:每一枚都是真变化,各扣一枚令牌。
+        for i in 0..crate::registry::DEVICE_ADMIN_BURST_ACCOUNT {
+            let action =
+                if i % 2 == 0 { DeviceAction::GrantAdmin } else { DeviceAction::RevokeAdmin };
+            assert_eq!(h.device_admin(ACCT, D1, [1; 32], 1, D2, action), Ok(()), "第 {i} 枚");
+        }
+        assert_eq!(
+            h.device_admin(ACCT, D1, [1; 32], 1, D2, DeviceAction::GrantAdmin),
+            Err(DeviceAdminError::Busy)
+        );
+    }
+
+    /// 名册面三件:cap 未声明者一枚都收不到 / `RosterReq` 的应答带 `request == Some(n)` /
+    /// 主动推送带 `request == None`。
+    #[test]
+    fn roster_goes_only_to_cap_declaring_connections_and_correlates_requests() {
+        let h = hub(|_| {});
+        let mut rx_cap = attach_cap(&h, D1, [1; 32], 1);
+        // D2 不声明 cap(attach_dev 的 wants_roster = false)。
+        let (tx2, mut rx_old, kick2, _k2) = chan(64);
+        std::mem::forget(_k2);
+        assert!(h
+            .attach_authenticated(
+                ACCT,
+                D2,
+                [2; 32],
+                2,
+                tx2,
+                kick2,
+                QueuedBytes::default(),
+                false,
+                false,
+                RosterInflight::default()
+            )
+            .is_some());
+        // 上线推送:声明者拿到、未声明者一枚都没有。
+        let (req, _, devices) = next_roster(&mut rx_cap).expect("声明 cap 者上线即收一枚");
+        assert_eq!(req, None, "主动推送不带请求号");
+        assert_eq!(devices.len(), 2);
+        assert!(next_roster(&mut rx_old).is_none(), "未声明 cap 者绝不能收到名册");
+        // 成员变化的 fan-out 同样只走声明者。
+        h.device_admin(ACCT, D1, [1; 32], 1, D2, DeviceAction::GrantAdmin).unwrap();
+        assert!(next_roster(&mut rx_cap).is_some());
+        assert!(next_roster(&mut rx_old).is_none());
+        // 应答带请求号(客户端靠它证明「这枚是我这次拉的」——一轮 H3)。
+        assert!(h.reply_roster(ACCT, D1, 1, 4242));
+        let (req, _, _) = next_roster(&mut rx_cap).expect("应答");
+        assert_eq!(req, Some(4242));
+        // 连接号对不上 = 不发(发的是账户名册,发错连接就是发错人)。
+        assert!(!h.reply_roster(ACCT, D1, 999, 1));
+        assert!(!h.reply_roster(ACCT, D2, 2, 1), "未声明 cap 者也不给应答");
+    }
+
+    /// 在途名册帧的上界(`MAX_ROSTER_INFLIGHT`)。
+    ///
+    /// ⛔ 这道闸是实现期算出来的、设计那张表把这格记成「过」:既有连接内存包络按
+    /// `size_of::<ServerMsg>() × 槽数` 算,**不含每枚 roster 克隆的堆内存**,满槽是
+    /// 16.3 MiB/连接 × 32 = 647 MiB > 448 MiB 包络。触界即**跳过这一枚**(名册推送
+    /// 本来就允许丢,客户端周期拉取会补回来),不排队。
+    #[test]
+    fn roster_pushes_are_capped_per_connection() {
+        let h = hub(|_| {});
+        let (tx, mut rx, kick, _k) = chan(64);
+        std::mem::forget(_k);
+        let inflight = RosterInflight::default();
+        assert!(h
+            .attach_authenticated(
+                ACCT,
+                D1,
+                [1; 32],
+                1,
+                tx,
+                kick,
+                QueuedBytes::default(),
+                false,
+                true,
+                inflight.clone()
+            )
+            .is_some());
+        // attach 已推一枚 ⇒ 在途 1。再连推到触界。
+        assert_eq!(inflight.load(Ordering::Relaxed), 1);
+        for _ in 0..10 {
+            // 返回值刻意不看:这只测的判据是**队里真躺着几枚**(比「它自己说发没发出去」
+            // 强一档),故显式丢弃而不是让 `#[must_use]` 在构建里留一条噪音。
+            let _ = h.reply_roster(ACCT, D1, 1, 7);
+        }
+        assert_eq!(
+            inflight.load(Ordering::Relaxed),
+            MAX_ROSTER_INFLIGHT,
+            "在途枚数必须停在上界上,而不是把队填满"
+        );
+        // ⚠ 只数 Roster:队里还躺着 Authed 那一枚,数「全部消息」会把上界看成 5。
+        let mut rosters = 0;
+        while let Ok(m) = rx.try_recv() {
+            if matches!(m, ServerMsg::Roster { .. }) {
+                rosters += 1;
+            }
+        }
+        assert_eq!(rosters, MAX_ROSTER_INFLIGHT, "队里恰好只有上界那么多枚名册");
+    }
+
+    /// 在途额度的**记账顺序**(实现审弹二 M2)。两件事各一格:
+    ///
+    /// ① **占到额度才构造**。`build_roster` 会克隆整份名单**并推进全局 revision** ——
+    ///    构造放在预占之前,一台不读下行的设备就能靠猛发 `RosterReq` 让服务器反复
+    ///    构造再丢弃(那道 5s 间隔闸「答不出去就不推进基点」,恰恰不设防)。
+    ///    ⭐ 判据挑得能证伪:被拒的那 5 枚若各取一个号,前后两枚真名册的 revision 就
+    ///    **不会恰好差 1**(同 §5.13 幂等那只测的手法)。
+    /// ② **入队失败即归还额度**。先加后发会漏出永久幽灵额度(写任务在另一线程
+    ///    `saturating_sub` 到 0 之后这边才 `fetch_add`);而加了不还同样是幽灵。
+    #[test]
+    fn roster_credit_is_reserved_before_the_frame_is_ever_built() {
+        let h = hub(|_| {});
+        let (tx, mut rx, kick, _k) = chan(64);
+        std::mem::forget(_k);
+        let filler = tx.clone(); // 同一条通道:后面拿它把队填满,验「入队失败要还额度」。
+        let inflight = RosterInflight::default();
+        assert!(h
+            .attach_authenticated(
+                ACCT, D1, [1; 32], 1, tx, kick,
+                QueuedBytes::default(), false, true, inflight.clone()
+            )
+            .is_some());
+        // 填到上界(attach 已占一枚)。
+        for n in 0..(MAX_ROSTER_INFLIGHT - 1) {
+            assert!(h.reply_roster(ACCT, D1, 1, n as u64));
+        }
+        assert_eq!(inflight.load(Ordering::Relaxed), MAX_ROSTER_INFLIGHT);
+        let last_before = drain_last_roster_revision(&mut rx).expect("到顶前最后那枚");
+        // ① 到顶之后再来 5 枚:一枚都不许构造 ⇒ 一个号都不许取。
+        for n in 0..5u64 {
+            assert!(!h.reply_roster(ACCT, D1, 1, 100 + n), "到顶了就该直接拒");
+        }
+        assert_eq!(inflight.load(Ordering::Relaxed), MAX_ROSTER_INFLIGHT, "拒发不许再加账");
+        // 腾一格(写任务出队即如此),再来一枚:它的 revision 必须**恰好**是上一枚 + 1。
+        inflight.fetch_sub(1, Ordering::Relaxed);
+        assert!(h.reply_roster(ACCT, D1, 1, 777));
+        let next = drain_last_roster_revision(&mut rx).expect("腾出格子之后那枚");
+        assert_eq!(next, last_before + 1, "被拒的那 5 枚各取了一个号 = 构造发生在预占之前");
+        // ② 通道填满 ⇒ 连额度都不占、连名册都不建(弹二 L3:先占 mpsc 槽,故「发送失败
+        //    要还额度」那条路整个不存在 —— 不存在的路比还得对的路强)。
+        // (`next` 就是此刻队里最后那枚的号 —— ① 段刚把队排空过。)
+        inflight.store(0, Ordering::Relaxed);
+        while push(&filler, ServerMsg::Authed) {}
+        assert!(!h.reply_roster(ACCT, D1, 1, 888), "队满发不出去");
+        assert_eq!(inflight.load(Ordering::Relaxed), 0, "队满那次不许占额度");
+        // 腾空队列后发一枚,它的号必须仍是「上一枚 + 1」⇒ 队满那次一个号都没取。
+        while rx.try_recv().is_ok() {}
+        assert!(h.reply_roster(ACCT, D1, 1, 999));
+        let after = drain_last_roster_revision(&mut rx).expect("腾空之后那枚");
+        assert_eq!(after, next + 1, "队满那次白建了一份名册(还顺手取了个号)");
+    }
+
+    /// 排空队列,回最后一枚 `Roster` 的 revision(`None` = 队里没有名册)。
+    fn drain_last_roster_revision(rx: &mut mpsc::Receiver<ServerMsg>) -> Option<u64> {
+        let mut last = None;
+        while let Ok(m) = rx.try_recv() {
+            if let ServerMsg::Roster { revision, .. } = m {
+                last = Some(revision);
+            }
+        }
+        last
     }
 
     /// H1 单设备吊销:在线被 kick + offline 广播 + 信箱清空 + 路由即拒;
@@ -1786,7 +2630,7 @@ mod tests {
         // 第二账户在线,验证 reload 不误伤。
         h.registry.lock().unwrap().register_first(ACCT_B, "DEV_B", [5; 32]).unwrap();
         let (txb, _rxb, kickb, mut kickb_rx) = chan(64);
-        assert!(h.attach_authenticated(ACCT_B, "DEV_B", [5; 32], 7, txb, kickb, QueuedBytes::default(), false).is_some());
+        assert!(h.attach_authenticated(ACCT_B, "DEV_B", [5; 32], 7, txb, kickb, QueuedBytes::default(), false, false, RosterInflight::default()).is_some());
 
         std::fs::write(&banlist, format!("{ACCT}\n")).unwrap();
         assert_eq!(h.reload_banlist().unwrap(), 1);

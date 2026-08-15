@@ -23,12 +23,17 @@ async fn connect_and_auth(
             account: cfg.account_id.clone(),
             device: cfg.device_id.clone(),
             sig: sig.to_bytes().to_vec(),
-            caps: vec![], // 工序4:本轮客户端不声明能力(编译兼容;声明 cap 与渲染属未来轮)。
+            // 367:live 连接声明名册能力。**声明一个 cap 是一句承诺**(§5.5 的驳回理由),
+            // 这一句的义务由片④整条兑现:收 `Roster`/`RosterNack`/`DeviceAdminOk`、按 §5.4
+            // 跑恒在轴、把 `Err` 归属改成白名单。`CAP_ACCOUNT_STATUS_V1` 仍**不**声明 ——
+            // 它的客户端义务(工序 6 的 `SeatClosed` 暂停发射)还没写。
+            caps: vec![CAP_DEVICE_ROSTER_V1.into()],
         })
         .await?;
         loop {
             match recv_server(&mut ws, HANDSHAKE_SECS).await? {
-                ServerMsg::Authed => return Ok(ws),
+                // nonce 随连接一起交出去:`DeviceAdmin` 的签名要绑它(§5.5)。
+                ServerMsg::Authed => return Ok((ws, nonce)),
                 ServerMsg::Err { code, msg } => return Err(human_err(&code, &msg)),
                 _ => continue,
             }
@@ -36,7 +41,7 @@ async fn connect_and_auth(
     });
     loop {
         let woke = tokio::select! {
-            r = &mut connecting => return r.map(Connected::Ready),
+            r = &mut connecting => return r.map(|(ws, nonce)| Connected::Ready(ws, nonce)),
             // 建连期**照收控制面**(实现审二轮 H1):这一段现在会做真活,把 `Reconfigured`
             // 一直积在通道里等于「配置改了却要等坏中转先超时」——纯换 server_url 那种连身份
             // 指纹都察觉不到,能被卡到天荒地老。
@@ -44,7 +49,16 @@ async fn connect_and_auth(
                 None => return Ok(Connected::HostGone),
                 Some(Control::Reconfigured) => return Ok(Connected::Reconfigured),
                 Some(Control::PairStart { reply }) => {
-                    let _ = reply.send(Err("正在连接服务器,请稍后再试".into()));
+                    let _ = reply.send(Err(CONNECTING_BUSY.into()));
+                    Woke::Handled
+                }
+                // 建连期两条新命令同 `PairStart`:响亮回执,**一个新信封都不发**。
+                Some(Control::DeviceAdmin { reply, .. }) => {
+                    let _ = reply.send(Err(CONNECTING_BUSY.into()));
+                    Woke::Handled
+                }
+                Some(Control::RosterRefresh { reply }) => {
+                    let _ = reply.send(Err(CONNECTING_BUSY.into()));
                     Woke::Handled
                 }
             },
@@ -56,9 +70,13 @@ async fn connect_and_auth(
     }
 }
 
+/// 建连期收到 UI 命令的统一回执(三条命令一句话,不各写各的)。
+const CONNECTING_BUSY: &str = "正在连接服务器,请稍后再试";
+
 /// [`connect_and_auth`] 的三种收场。
 enum Connected {
-    Ready(Ws),
+    /// 已鉴权的连接 + 本次握手那枚 challenge nonce(`DeviceAdmin` 签名绑它,§5.5)。
+    Ready(Ws, Vec<u8>),
     /// 建连期间配置/身份变了(收到 `Reconfigured`,或栅栏自证落下):回 `run` 顶重来。
     Reconfigured,
     /// 控制通道的发送端没了 = 壳层走了(同会话循环那一路)。
@@ -72,6 +90,18 @@ impl Drop for Ctx<'_> {
         if let Some(bo) = self.boot_out.take() {
             discard_boot_out(bo);
         }
+        // ⛔ **断连那一路必须落在这里,不许放外层的收场函数**(§5.5 六轮复核):外层
+        // shutdown 会**直接取消 `session` future 并返回**,未必经过收场那一步;而 `Drop`
+        // 是这些退出点的唯一交汇。两只 `settle_*` 都是同步 take-and-send —— `Drop` 里
+        // 做不了 await,断连时也不再尝试发任何帧。
+        //
+        // 「恰好一次结账」正是靠 `take()` 只在 settle 里做:一枚 `auth_failed` 先结了账,
+        // 随后的断连清场看到 `None`,**不得再报第二次失败**。
+        self.settle_admin(Err("连接断开,未能确认是否已生效".into()));
+        self.roster.end_session();
+        // 名册**会话内有效,断了就不认**(§5.4):UI 快照这一份在这里清成「不知道」。
+        // 每空间 gate 与 app 级准入表条目那两份归第②笔(§5.11 H5②)。
+        self.set_status(|s| s.roster = None);
     }
 }
 
@@ -85,17 +115,17 @@ pub(super) async fn session(
 ) -> Result<SessionEnd, String> {
     let url = ws_endpoint(&cfg.server_url)?;
     // 建连与挑战应答鉴权(§4):**这一段泵照转**(实现审 H1,见 [`connect_and_auth`])。
-    let mut ws = match connect_and_auth(t, cfg, pumps, &url).await? {
+    let (mut ws, nonce) = match connect_and_auth(t, cfg, pumps, &url).await? {
         // **鉴权成功到会话仪式之间再自证一次**(实现审四轮 H1):建连期最后一次栅栏检查与
         // 服务器回 `Authed` 之间是一段谁也没查的窗口,而紧随其后的会话仪式(`reconcile` +
         // `on_relay_session_up` + Hello/Want/离线 op)全是拿 `cfg` 干的活——身份恰在这一窗
         // 换代,那一整轮就会被**旧 K_acc** 封了发出去。连接状态机切进会话状态机的这一步,
         // 是「拿当前身份干活」的第四条出口(前三条 = 会话循环各臂 / 泵 / 收场重问)。
-        Connected::Ready(ws) => {
+        Connected::Ready(ws, nonce) => {
             if session_gate_tripped(&t.db, cfg) {
                 return Ok(SessionEnd::Reconfigured);
             }
-            ws
+            (ws, nonce)
         }
         Connected::Reconfigured => return Ok(SessionEnd::Reconfigured),
         Connected::HostGone => return Ok(SessionEnd::HostGone),
@@ -126,6 +156,13 @@ pub(super) async fn session(
         boot_deadline: None,
         boot_out: None,
         pair: None,
+        admin: None,
+        err_attribution_poisoned: false,
+        // 周期 deadline = 拉取周期(§5.4「取最克制的形」),由**实际心跳周期**算出而不是
+        // 另抄一份常量:`tick` 是整个 runtime 那一根,生产恒 `HEARTBEAT_SECS`,验收把它
+        // 压到毫秒级时这条性质跟着缩,不因环境而变。
+        roster: RosterSched::new(tick.period() * ROSTER_PULL_TICKS),
+        nonce,
         space_blocked: false,
         reopen_required: None,
         boot_commit: t.boot_commit.clone(),
@@ -170,6 +207,22 @@ pub(super) async fn session(
                         return Ok(SessionEnd::Reconfigured);
                     }
                     ctx.on_pair_start(&mut ws, reply).await?;
+                    Woke::Handled
+                }
+                Some(Control::DeviceAdmin { target, action, reply }) => {
+                    if session_gate_tripped(&t.db, cfg) {
+                        let _ = reply.send(Err("纪元切换进行中,暂不能管理设备".into()));
+                        return Ok(SessionEnd::Reconfigured);
+                    }
+                    ctx.on_device_admin(&mut ws, target, action, reply).await?;
+                    Woke::Handled
+                }
+                Some(Control::RosterRefresh { reply }) => {
+                    if session_gate_tripped(&t.db, cfg) {
+                        let _ = reply.send(Err("纪元切换进行中,暂不能取设备名单".into()));
+                        return Ok(SessionEnd::Reconfigured);
+                    }
+                    ctx.on_roster_refresh(&mut ws, reply).await?;
                     Woke::Handled
                 }
             },
@@ -270,6 +323,10 @@ pub(super) async fn session(
                 if !rev.is_empty() {
                     ctx.dispatch(&mut ws, rev).await?;
                 }
+                // 名册的**恒在轴**(§5.4 一轮 H2):挂既有心跳,不新开生命周期入口。
+                // 正确性挂在它身上——attach 那枚推送与成员变更推送都可能被 `try_send`
+                // 静默丢掉,只有周期拉取会把丢了的那一份补回来。
+                ctx.roster_tick(&mut ws).await?;
                 Woke::Handled
             },
             _ = until(ctx.pair.as_ref().map(|p| p.deadline)) => {
@@ -282,7 +339,25 @@ pub(super) async fn session(
                 } else {
                     "配对超时(配对码 10 分钟内有效)".to_string()
                 };
+                // 按 deadline 放弃 ⇒ 结果未确认,那枚回执可能仍在路上:此后这条连接上的
+                // 无编号 `Err` 归属不再可信(弹三 M1)。
+                ctx.abandon_flow_by_deadline();
                 ctx.fail_pair(&mut ws, why, true).await;
+                Woke::Handled
+            },
+            // 三个超时职责分开(§5.4):UI 那枚**只清 UI waiter**,共同 pending 留给
+            // periodic —— 不能让用户对着一个 5 分钟的周期 deadline 干等,也不能让他这一
+            // 声「算了」把恒在轴一起掐掉。
+            _ = until(ctx.roster.ui_deadline()) => {
+                ctx.roster.on_ui_deadline();
+                Woke::Handled
+            },
+            // 设备管理命令到点:五条结账路之一,同样只经 `settle_admin`。
+            _ = until(ctx.admin.as_ref().map(|f| f.deadline)) => {
+                // 同配对那条:结果未确认 ⇒ 归属从此不可信(弹三 M1)。⚠ 这一句必须与
+                // 结账**同处**,别指望下一个人记得在别处补。
+                ctx.abandon_flow_by_deadline();
+                ctx.settle_admin(Err("服务器未在预期时间内回执,请稍后重试".into()));
                 Woke::Handled
             },
             _ = until(ctx.boot_deadline) => {

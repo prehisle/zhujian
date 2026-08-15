@@ -749,6 +749,61 @@ impl Coord {
         Ok(PairStartOutcome { code: out?, server_url })
     }
 
+    /// 设备管理(identity-plan §5.3)。判定与执行全在服务器上,本地一个字节都不写。
+    /// 与桌面对称,只是这一侧走 `coord` 与空间锁、**不开旁路**(§5.7-6)。
+    pub async fn device_admin(
+        &self,
+        space_id: &str,
+        device_id: String,
+        action: transport::DeviceAction,
+    ) -> Result<(), String> {
+        let rt = self.control_runtime(space_id)?;
+        let _op = rt
+            .begin_op()
+            .ok_or_else(|| "空间正在停止,无法管理设备(稍后重试)".to_string())?;
+        let mut cancel = rt.subscribe_shutdown();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        rt.control
+            .send(transport::Control::DeviceAdmin { target: device_id, action, reply: tx })
+            .await
+            .map_err(|_| "同步任务未运行".to_string())?;
+        // 超时所有权在 core(§5.7);这里 30s 只兜「发送在死链路上挂死」。⚠ 断连那句
+        // 必须如实 —— 命令**可能已经在服务器上执行了**,重连后以新名册为准。
+        tokio::select! {
+            biased;
+            r = tokio::time::timeout(Duration::from_secs(30), rx) => match r {
+                Ok(Ok(reply)) => reply,
+                Ok(Err(_)) => Err("连接断开,未能确认是否已生效".into()),
+                Err(_) => Err("服务器未在预期时间内回执,请稍后重试".into()),
+            },
+            _ = cancel.wait_for(|v| *v) => Err("已取消:切换了空间".into()),
+        }
+    }
+
+    /// 拉一枚当前设备名册(§5.4)。回执只说成功与否,名单从 `sync_status.roster` 读
+    /// (core 保证「回执到手时状态面已含本轮」;弹三 M2)。
+    pub async fn roster_refresh(&self, space_id: &str) -> Result<(), String> {
+        let rt = self.control_runtime(space_id)?;
+        let _op = rt
+            .begin_op()
+            .ok_or_else(|| "空间正在停止,无法取设备名单(稍后重试)".to_string())?;
+        let mut cancel = rt.subscribe_shutdown();
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        rt.control
+            .send(transport::Control::RosterRefresh { reply: tx })
+            .await
+            .map_err(|_| "同步任务未运行".to_string())?;
+        tokio::select! {
+            biased;
+            r = tokio::time::timeout(Duration::from_secs(30), rx) => match r {
+                Ok(Ok(reply)) => reply,
+                Ok(Err(_)) => Err("连接断开,未能取得设备名单".into()),
+                Err(_) => Err("获取设备名单超时,请重试".into()),
+            },
+            _ = cancel.wait_for(|v| *v) => Err("已取消:切换了空间".into()),
+        }
+    }
+
     // ---- 加入空间(space-entry-plan §3,JoinManager) ----
 
     /// 账户唯一性的权威裁决(§3.5):**重扫磁盘正式候选**(不信缓存 catalog/

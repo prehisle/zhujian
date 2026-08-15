@@ -119,7 +119,12 @@ for (const m of plan) {
     verdict = '编译不过(变异无效,换个改法)';
     ok = false;
   } else {
-    const failed = [...out.matchAll(/^test (\S+) \.\.\. FAILED$/gm)].map((x) => x[1]);
+    // `#[should_panic]` 的行形是 `test <名> - should panic ... FAILED`(多出中间那段),
+    // 按 `test <名> ... FAILED` 认会把它当成「无 FAILED 行」——变异明明红在预期那只测上,
+    // 却被判成不过(367 片3 ⑭ 实栽)。中间那段设成可选,别放宽 `\S+` 那一格。
+    const failed = [...out.matchAll(/^test (\S+)(?: - should panic)? \.\.\. FAILED$/gm)].map(
+      (x) => x[1]
+    );
     const wanted = m.test.split(/\s+/).filter(Boolean);
     const hit = failed.filter((t) => wanted.some((w) => t.includes(w)));
     if (hit.length === 0) {

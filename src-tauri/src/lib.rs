@@ -1435,6 +1435,63 @@ async fn sync_pair_start(space_id: String, spaces: State<'_, Spaces>) -> Result<
     }
 }
 
+/// 设备管理(identity-plan §5.3 三句话:移除别人要管理位、任何设备都能移除自己、
+/// 设/取消管理位要管理位)。判定与执行全在服务器上 —— 本命令只是把一枚签好名的
+/// `DeviceAdmin` 送出去并等回执,**本地一个字节都不写**(§5.2)。
+///
+/// `action` 的 DTO **直接用 core 那个枚举**,不在这儿再写一张字符串映射表:多一份
+/// 映射就多一处会漂的抄写点,而它与线上 CBOR 变体名同源是编译期事实。前端传
+/// `"Remove"` / `"GrantAdmin"` / `"RevokeAdmin"`,认不出由 serde 当场拒。
+#[tauri::command]
+async fn sync_device_admin(
+    space_id: String,
+    device_id: String,
+    action: sync::transport::DeviceAction,
+    spaces: State<'_, Spaces>,
+) -> Result<(), String> {
+    let rt = spaces.get_writable(&space_id)?;
+    if let Some(v) = rt.veto() {
+        return Err(v);
+    }
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    rt.control
+        .send(sync::transport::Control::DeviceAdmin { target: device_id, action, reply: tx })
+        .await
+        .map_err(|_| "同步任务未运行".to_string())?;
+    // 超时所有权在 core(§5.7:`DEVICE_ADMIN_DEADLINE` 一次服务器往返);这里 30s 只兜
+    // 「发送在死链路上挂死」。⚠ 断连那句必须如实 —— 命令**可能已经在服务器上执行了**,
+    // UI 的义务是重连后以新名册为准,不是重试(§5.7-5)。
+    match tokio::time::timeout(std::time::Duration::from_secs(30), rx).await {
+        Ok(Ok(r)) => r,
+        Ok(Err(_)) => Err("连接断开,未能确认是否已生效".into()),
+        Err(_) => Err("服务器未在预期时间内回执,请稍后重试".into()),
+    }
+}
+
+/// 拉一枚当前设备名册(§5.4)。**回执只说成功与否,名单从 `sync_status.roster` 读**
+/// —— core 那一侧保证「回执到手时状态面已含本轮」(状态面先写、再结账;实现审弹三 M2
+/// 打掉了我原来那个「回执自带名单」的形:它把一道窗口换成了两个无法排序的数据出口)。
+#[tauri::command]
+async fn sync_roster_refresh(
+    space_id: String,
+    spaces: State<'_, Spaces>,
+) -> Result<(), String> {
+    let rt = spaces.get_writable(&space_id)?;
+    if let Some(v) = rt.veto() {
+        return Err(v);
+    }
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    rt.control
+        .send(sync::transport::Control::RosterRefresh { reply: tx })
+        .await
+        .map_err(|_| "同步任务未运行".to_string())?;
+    match tokio::time::timeout(std::time::Duration::from_secs(30), rx).await {
+        Ok(Ok(r)) => r,
+        Ok(Err(_)) => Err("连接断开,未能取得设备名单".into()),
+        Err(_) => Err("获取设备名单超时,请重试".into()),
+    }
+}
+
 /// 配对加入的目标闸(space-entry-plan §2,后端不变量、不是 UI 藏按钮):只接受
 /// main——非 main 空间的两条来路是「新建=纯本地本子(同步唯一路=创号)」与
 /// 「加入空间」(隐式 staging 槽,不收目标 space_id);直接 invoke 非 main 必拒。
@@ -3100,6 +3157,8 @@ pub fn run() {
             sync_status,
             sync_create_account,
             sync_pair_start,
+            sync_device_admin,
+            sync_roster_refresh,
             sync_pair_join,
             join_space,
             join_space_cancel,

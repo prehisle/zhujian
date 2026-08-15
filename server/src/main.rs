@@ -60,8 +60,30 @@ async fn main() {
                     Err(e) => die(&format!("封禁表不合法:{e}")),
                 }
             }
+            // registry 离线校验(367,identity-plan §5.16.5-1:**升级前必跑**)。367 给
+            // load 加了两道新拒启判据(单账户设备数上限、admins 不变量),现网是历史
+            // 数据——拿副本先跑一遍,别等升上去才发现拒启。顺带印出「还没回填管理
+            // 设备的账户」清单,那正是回填工序要的那张表。与运行期同一条 load。
+            "--validate-registry" => {
+                let v = args
+                    .next()
+                    .unwrap_or_else(|| die("--validate-registry 缺参数(registry.json 路径)"));
+                let bl = args.next().unwrap_or_else(|| die(
+                    "--validate-registry 还需第二个参数(banlist.txt 路径;load 两份一起校验)",
+                ));
+                match zhujian_syncd::registry::validate_registry(
+                    std::path::Path::new(&bl),
+                    PathBuf::from(&v),
+                ) {
+                    Ok(report) => {
+                        println!("{report}");
+                        std::process::exit(0);
+                    }
+                    Err(e) => die(&format!("registry 不合法:{e}")),
+                }
+            }
             other => die(&format!(
-                "未知参数 {other}\n用法:zhujian-syncd [--listen 127.0.0.1:8787] [--admin-listen 127.0.0.1:8788 --admin-token-file ./data/admin-token] [--data-dir ./data] [--free-seat-quota 4] | zhujian-syncd --validate-banlist <file>\n  data-dir 下须有 banlist.txt(封禁表:一行一个被封禁的 account_id,须为合法 26 位 ULID,# 整行注释;空文件=零封禁;准入开放,fresh 账户直接 TOFU;改动先 --validate-banlist 校验再原子替换)\n  admin 面(运营侧设备吊销)只许回环地址、别进反代;token 文件 openssl rand -hex 32 生成、chmod 600,两参数必须同给\n  free-seat-quota 免费档席位数(默认 2;推广期设 4,收费期改回不重编;≥1)"
+                "未知参数 {other}\n用法:zhujian-syncd [--listen 127.0.0.1:8787] [--admin-listen 127.0.0.1:8788 --admin-token-file ./data/admin-token] [--data-dir ./data] [--free-seat-quota 4] | zhujian-syncd --validate-banlist <file> | zhujian-syncd --validate-registry <registry.json> <banlist.txt>\n  data-dir 下须有 banlist.txt(封禁表:一行一个被封禁的 account_id,须为合法 26 位 ULID,# 整行注释;空文件=零封禁;准入开放,fresh 账户直接 TOFU;改动先 --validate-banlist 校验再原子替换)\n  admin 面(运营侧设备吊销)只许回环地址、别进反代;token 文件 openssl rand -hex 32 生成、chmod 600,两参数必须同给\n  free-seat-quota 免费档席位数(默认 2;推广期设 4,收费期改回不重编;≥1)"
             )),
         }
     }

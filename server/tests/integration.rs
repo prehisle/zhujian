@@ -11,9 +11,10 @@ use std::time::Duration;
 use ed25519_dalek::{Signer, SigningKey};
 use futures_util::{SinkExt, StreamExt};
 use sync_proto::{
-    auth_sig_payload, err_code, register_device_sig_payload, register_first_sig_payload,
-    seat_lease_sig_payload, ClientMsg, DataPlane, Lane, PairEvent, Restriction, ServerMsg,
-    CAP_ACCOUNT_STATUS_V1, BROADCAST,
+    auth_sig_payload, device_admin_sig_payload, err_code, register_device_sig_payload,
+    register_first_sig_payload, seat_lease_sig_payload, ClientMsg, DataPlane, DeviceAction, Lane,
+    PairEvent, Restriction, RosterEntry, ServerMsg, CAP_ACCOUNT_STATUS_V1, CAP_DEVICE_ROSTER_V1,
+    BROADCAST,
 };
 use tokio::net::TcpStream;
 use tokio::time::timeout;
@@ -134,11 +135,22 @@ impl Conn {
     }
 
     async fn auth(&mut self, account: &str, device: &str, sk: &SigningKey) {
+        self.auth_caps(account, device, sk, vec![]).await;
+    }
+
+    /// 挑战应答并声明能力(367:名册三条只发给声明者)。
+    async fn auth_caps(
+        &mut self,
+        account: &str,
+        device: &str,
+        sk: &SigningKey,
+        caps: Vec<String>,
+    ) {
         let sig = sk
             .sign(&auth_sig_payload(&self.nonce, account, device))
             .to_bytes()
             .to_vec();
-        self.send(&ClientMsg::Auth { account: account.into(), device: device.into(), sig, caps: vec![] })
+        self.send(&ClientMsg::Auth { account: account.into(), device: device.into(), sig, caps })
             .await;
     }
 
@@ -956,6 +968,216 @@ async fn admin_revoke_device_end_to_end() {
     assert!(body.contains(D1), "401 的请求不许有副作用:{body}");
 }
 
+/// 367:**自助退出的成功回执必须出得去**(实现审弹二 M1),以及运营者那两条端点的
+/// 真契约(同 L3)。
+///
+/// ⛔ M1 路径② 不是竞态,是**确定会丢**:`revoke_locked` 朝本连接发过 kick,而主循环
+/// 那条 select 是 `biased`、kick 已经躺在通道里 ⇒ 下一拍必取到它 → `writer.abort()`
+/// → 刚排进去的 `DeviceAdminOk` 一定被丢掉。而自助退出恰恰是**最不能重试**的一格:
+/// 设备已经被吊,重连鉴权即拒,客户端只会看到「连接断开,未能确认是否已生效」——
+/// 而服务器明明知道它成功了。
+#[tokio::test]
+async fn self_exit_gets_its_receipt_before_the_close() {
+    let (addr, admin) = start_with_admin(&[]).await;
+    let sk1 = key();
+    let mut c1 = connect(addr).await;
+    c1.register_first_caps(ACCT, D1, &sk1, vec![CAP_DEVICE_ROSTER_V1.into()]).await;
+    assert_eq!(c1.recv().await, ServerMsg::Authed);
+    assert!(matches!(c1.recv().await, ServerMsg::Roster { .. }), "上线即收一枚");
+    // 背书注册 D2 并让它带 cap 上线。
+    let sk2 = key();
+    let pub2 = sk2.verifying_key().to_bytes().to_vec();
+    let sig = sk1.sign(&register_device_sig_payload(ACCT, D2, &pub2)).to_bytes().to_vec();
+    c1.send(&ClientMsg::RegisterDevice {
+        account: ACCT.into(),
+        new_device: D2.into(),
+        new_pubkey: pub2,
+        sig_by_old: sig,
+    })
+    .await;
+    // 新设备进来也是成员集合变化 ⇒ fan-out 先到(hub 在锁内推),`Registered` 随后由
+    // conn 发。⚠ 顺序写死在这里是**如实记录**,不是随手写的:名册那一枚由 hub 在
+    // `register_endorsed` 里排队,conn 拿到返回值之后才排 `Registered`。
+    match c1.recv().await {
+        ServerMsg::Roster { devices, .. } => {
+            assert_eq!(devices.len(), 2, "新成员当场进名册");
+        }
+        other => panic!("期待成员变化的 fan-out,得到 {other:?}"),
+    }
+    assert_eq!(c1.recv().await, ServerMsg::Registered { device: D2.into() });
+    let mut c2 = connect(addr).await;
+    c2.auth_caps(ACCT, D2, &sk2, vec![CAP_DEVICE_ROSTER_V1.into()]).await;
+    assert_eq!(c2.recv().await, ServerMsg::Authed);
+    assert!(matches!(c2.recv().await, ServerMsg::Roster { .. }));
+
+    // ---- L3:`GET /admin/devices` 的回执**形状**(367 起是对象数组,不是裸字符串) ----
+    let devices = admin_devices(admin).await;
+    assert_eq!(devices, vec![(D1.to_string(), true), (D2.to_string(), false)], "首台自动是管理设备");
+    // `POST /admin/set-admin`:on 显式必填、只认 true|false;幂等回 200 但说清没改。
+    let (code, _) = http(admin, "POST", &format!("/admin/set-admin?account={ACCT}&device={D2}"), Some(TOKEN)).await;
+    assert_eq!(code, 400, "缺 on 参数必须拒 —— 少个字母就成了「清掉管理位」");
+    let (code, _) = http(admin, "POST", &format!("/admin/set-admin?account={ACCT}&device={D2}&on=yes"), Some(TOKEN)).await;
+    assert_eq!(code, 400, "on 只认 true|false");
+    let (code, _) = http(admin, "POST", &format!("/admin/set-admin?account={ACCT}&device={D2}&on=true"), None).await;
+    assert_eq!(code, 401);
+    let (code, _) = http(admin, "POST", &format!("/admin/set-admin?account={ACCT}&device=DEV_NOPE&on=true"), Some(TOKEN)).await;
+    assert_eq!(code, 404, "设备不在这个账户");
+    let (code, body) = http(admin, "POST", &format!("/admin/set-admin?account={ACCT}&device={D2}&on=true"), Some(TOKEN)).await;
+    assert_eq!(code, 200, "{body}");
+    let (code, body) = http(admin, "POST", &format!("/admin/set-admin?account={ACCT}&device={D2}&on=true"), Some(TOKEN)).await;
+    assert_eq!(code, 200);
+    assert!(body.contains("本来就"), "幂等要说清没改动:{body}");
+    assert_eq!(admin_devices(admin).await, vec![(D1.to_string(), true), (D2.to_string(), true)]);
+    // 成员变化 ⇒ 两台都收到 fan-out。(D2 上线那枚 Peer 广播排在它前面。)
+    assert_eq!(c1.recv().await, ServerMsg::Peer { device: D2.into(), online: true });
+    assert!(matches!(c1.recv().await, ServerMsg::Roster { .. }), "admin 标记变了要重推");
+    // c2 那边先有一枚「D1 在线」的快照(它上线时收的),再是这枚 fan-out。
+    assert_eq!(c2.recv().await, ServerMsg::Peer { device: D1.into(), online: true });
+    assert!(matches!(c2.recv().await, ServerMsg::Roster { .. }), "admin 标记变了要重推");
+
+    // ---- M1:D2 自助退出 —— 先拿回执,再关连接 ----
+    let sig = sk2
+        .sign(&device_admin_sig_payload(&c2.nonce, ACCT, D2, D2, DeviceAction::Remove))
+        .to_bytes()
+        .to_vec();
+    c2.send(&ClientMsg::DeviceAdmin {
+        account: ACCT.into(),
+        target: D2.into(),
+        action: DeviceAction::Remove,
+        sig,
+    })
+    .await;
+    // ⭐ 判据是**顺序**:回执必须先于关连接到达,而不是「早晚能收到」。
+    assert_eq!(
+        c2.recv().await,
+        ServerMsg::DeviceAdminOk { target: D2.into(), action: DeviceAction::Remove },
+        "自助退出的回执被 kick 抢在前面丢掉了"
+    );
+    c2.expect_close().await;
+    // 真的退出去了:重连鉴权即拒,幸存的 D1 拿到新名册。
+    let mut back = connect(addr).await;
+    back.auth(ACCT, D2, &sk2).await;
+    expect_err(back.recv().await, err_code::AUTH_FAILED);
+    assert_eq!(admin_devices(admin).await, vec![(D1.to_string(), true)]);
+
+    // ---- L3:逃生口 —— 运营者面**刻意允许**把 admins 清空(那条不变量只约束用户面) ----
+    let (code, body) = http(admin, "POST", &format!("/admin/set-admin?account={ACCT}&device={D1}&on=false"), Some(TOKEN)).await;
+    assert_eq!(code, 200, "{body}");
+    assert_eq!(admin_devices(admin).await, vec![(D1.to_string(), false)], "清空是逃生口,不是 bug");
+}
+
+/// 367:**管理设备对自己动手 ≠ 自助退出**(实现审弹二 M1)。
+///
+/// 病:自助退出那条收场判据我第一版只写了 `target == device`,漏了 action。于是管理
+/// 设备对自己发 `GrantAdmin`(幂等成功)或 `RevokeAdmin`(多管理设备账户里的合法降级)
+/// 都会被当成自助退出,**把同步连接一起关掉** —— 一次纯粹的权限调整变成掉线。
+#[tokio::test]
+async fn admin_self_operations_are_not_self_exit() {
+    let (addr, admin) = start_with_admin(&[]).await;
+    let sk1 = key();
+    let mut c1 = connect(addr).await;
+    c1.register_first_caps(ACCT, D1, &sk1, vec![CAP_DEVICE_ROSTER_V1.into()]).await;
+    assert_eq!(c1.recv().await, ServerMsg::Authed);
+    assert!(matches!(c1.recv().await, ServerMsg::Roster { .. }));
+    // 背书注册 D2 并把它也设成管理设备(这样 D1 降自己才不会撞「不得让 admins 变空」)。
+    let sk2 = key();
+    let pub2 = sk2.verifying_key().to_bytes().to_vec();
+    let sig = sk1.sign(&register_device_sig_payload(ACCT, D2, &pub2)).to_bytes().to_vec();
+    c1.send(&ClientMsg::RegisterDevice {
+        account: ACCT.into(),
+        new_device: D2.into(),
+        new_pubkey: pub2,
+        sig_by_old: sig,
+    })
+    .await;
+    assert!(matches!(c1.recv().await, ServerMsg::Roster { .. }));
+    assert_eq!(c1.recv().await, ServerMsg::Registered { device: D2.into() });
+    let (code, _) = http(admin, "POST", &format!("/admin/set-admin?account={ACCT}&device={D2}&on=true"), Some(TOKEN)).await;
+    assert_eq!(code, 200);
+    assert!(matches!(c1.recv().await, ServerMsg::Roster { .. }));
+
+    // ① `GrantAdmin(self)`:D1 已经是管理设备 ⇒ 幂等成功。连接必须活着。
+    for action in [DeviceAction::GrantAdmin, DeviceAction::RevokeAdmin] {
+        let sig = sk1
+            .sign(&device_admin_sig_payload(&c1.nonce, ACCT, D1, D1, action))
+            .to_bytes()
+            .to_vec();
+        c1.send(&ClientMsg::DeviceAdmin {
+            account: ACCT.into(),
+            target: D1.into(),
+            action,
+            sig,
+        })
+        .await;
+        // RevokeAdmin 是真变化 ⇒ 会先来一枚 fan-out;GrantAdmin 幂等 ⇒ 不推。
+        let mut got = c1.recv().await;
+        if matches!(got, ServerMsg::Roster { .. }) {
+            got = c1.recv().await;
+        }
+        assert_eq!(
+            got,
+            ServerMsg::DeviceAdminOk { target: D1.into(), action },
+            "{action:?} 该成功"
+        );
+        // ⭐ 判据:连接还活着 —— 把它当自助退出的话,这里已经关了。
+        c1.send(&ClientMsg::Ping).await;
+        assert_eq!(c1.recv().await, ServerMsg::Pong, "{action:?} 不是自助退出,不许关连接");
+    }
+}
+
+/// `GET /admin/devices` 的回执解析成 `(device, admin)` —— 用**真 JSON 解析**而不是
+/// `body.contains(…)`:后者对「裸字符串数组」与「admin 恒 false」两种回退都视而不见。
+async fn admin_devices(admin: SocketAddr) -> Vec<(String, bool)> {
+    let (code, body) = http(admin, "GET", &format!("/admin/devices?account={ACCT}"), Some(TOKEN)).await;
+    assert_eq!(code, 200, "{body}");
+    let v: serde_json::Value = serde_json::from_str(&body).expect("回执必须是 JSON");
+    v.as_array()
+        .expect("必须是数组")
+        .iter()
+        .map(|e| {
+            let o = e.as_object().expect("每项必须是对象(367 起不再是裸 device_id 字符串)");
+            (
+                o["device"].as_str().expect("device 字段").to_owned(),
+                o["admin"].as_bool().expect("admin 字段必须是 bool"),
+            )
+        })
+        .collect()
+}
+
+/// 构建指纹(366):`/admin/version` 回得出「这只二进制是从哪个 commit 出来的」,
+/// 且**它在鉴权之内**。这两格分别对应门禁 `check-deployed-drift.mjs` 的两条前提:
+/// 判据取得到(commit 是真的 12 位 hex,不是占位串),以及这条路由没把构建指纹
+/// 顺手变成公开情报(admin 面的 route_layer 对后加的路由一样生效——这正是 159
+/// codex M3 把鉴权做成 Router 层 middleware 的理由,此测是那条设计的回归网)。
+#[tokio::test]
+async fn admin_version_reports_the_build_commit_and_stays_behind_auth() {
+    let (_addr, admin) = start_with_admin(&[]).await;
+
+    // 漏带 token = 401,且**一个字节的指纹都不许漏出去**。
+    let (code, body) = http(admin, "GET", "/admin/version", None).await;
+    assert_eq!(code, 401);
+    assert!(
+        !body.contains("commit"),
+        "401 的回体不许带构建指纹:{body}"
+    );
+
+    let (code, body) = http(admin, "GET", "/admin/version", Some(TOKEN)).await;
+    assert_eq!(code, 200);
+    let v: serde_json::Value = serde_json::from_str(&body).expect("回体是 JSON");
+
+    let commit = v["commit"].as_str().expect("commit 是字符串");
+    assert_eq!(commit.len(), 12, "git rev-parse --short=12:{commit}");
+    assert!(
+        commit.chars().all(|c| c.is_ascii_hexdigit()),
+        "commit 须是十六进制,不是占位串:{commit}"
+    );
+    assert!(v["dirty"].is_boolean(), "dirty 须是布尔,不是字符串");
+    assert_eq!(v["pkg_version"], env!("CARGO_PKG_VERSION"));
+    // built_at 只钉形状(RFC3339 的 Z 结尾),不钉值——值每次构建都变。
+    let built = v["built_at"].as_str().expect("built_at 是字符串");
+    assert!(built.ends_with('Z') && built.contains('T'), "RFC3339 UTC:{built}");
+}
+
 /// #1 硬化端到端:吊光账户唯一设备 → admin 回执带「封存」字样(200)→ 账户变空墓碑,
 /// 同设备(私钥仍在手)重连 RegisterFirst 与 Auth 双双 auth_failed 断开、连全新
 /// device_id 也进不来(空墓碑非「从未初始化」)。堵死「被吊单设备自助重 TOFU 满血回」。
@@ -1318,6 +1540,115 @@ async fn serve_rejects_zero_device_cap_and_zero_lease_ttl() {
     cfg.throttle_rate_bps = 100 * 1024;
     let err = serve("127.0.0.1:0".parse().unwrap(), cfg).await.unwrap_err();
     assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+}
+
+/// 367:两条新命令的**线上那条路**(conn.rs 那两条分派臂,单元测够不着)。
+#[tokio::test]
+async fn device_admin_and_roster_over_the_wire() {
+    let addr = start(&[], |_| {}).await;
+    let sk = key();
+    let mut c = connect(addr).await;
+    c.register_first_caps(ACCT, D1, &sk, vec![CAP_DEVICE_ROSTER_V1.into()]).await;
+    assert_eq!(c.recv().await, ServerMsg::Authed);
+    // 上线即收一枚名册 —— 这是**唯一的能力信号**(§5.4:不许用新的 ClientMsg 探测,
+    // 老服务器收到不认识的信封会 bad_request 并断开 = 点开面板就打断一次同步会话)。
+    match c.recv().await {
+        ServerMsg::Roster { request, devices, .. } => {
+            assert_eq!(request, None, "主动推送不带请求号");
+            assert_eq!(devices, vec![RosterEntry { device: D1.into(), admin: true }]);
+        }
+        other => panic!("期待 Roster,得到 {other:?}"),
+    }
+    // RosterReq → 带请求号的应答(客户端靠它证明「这枚是我这次拉的」,一轮 H3)。
+    c.send(&ClientMsg::RosterReq { n: 7 }).await;
+    match c.recv().await {
+        ServerMsg::Roster { request, .. } => assert_eq!(request, Some(7)),
+        other => panic!("期待应答,得到 {other:?}"),
+    }
+    // 紧接着再拉 → 限频。⚠ 回的必须是**带号的 RosterNack**,不是无编号的 Err ——
+    // 后者会被客户端认给正在等结果的 UI 命令(设计审二轮 H2 的成因)。
+    c.send(&ClientMsg::RosterReq { n: 8 }).await;
+    match c.recv().await {
+        ServerMsg::RosterNack { n, code } => {
+            assert_eq!(n, 8);
+            assert_eq!(code, err_code::BUSY);
+        }
+        other => panic!("期待 RosterNack,得到 {other:?}"),
+    }
+    // DeviceAdmin 走通:账户只有这一台、且它是唯一管理设备 ⇒ 移除自己会让 admins
+    // 变空 ⇒ bad_request(⑤ 不变量)。这一格同时证明签名与整条判定链真的接上了。
+    let sig = sk
+        .sign(&device_admin_sig_payload(&c.nonce, ACCT, D1, D1, DeviceAction::Remove))
+        .to_bytes()
+        .to_vec();
+    c.send(&ClientMsg::DeviceAdmin {
+        account: ACCT.into(),
+        target: D1.into(),
+        action: DeviceAction::Remove,
+        sig,
+    })
+    .await;
+    expect_err(c.recv().await, err_code::BAD_REQUEST);
+    // 坏签名 → auth_failed 且**不断连**(业务判定一律回错不断)。
+    c.send(&ClientMsg::DeviceAdmin {
+        account: ACCT.into(),
+        target: D1.into(),
+        action: DeviceAction::GrantAdmin,
+        sig: vec![0u8; 64],
+    })
+    .await;
+    expect_err(c.recv().await, err_code::AUTH_FAILED);
+    c.send(&ClientMsg::Ping).await;
+    assert_eq!(c.recv().await, ServerMsg::Pong, "业务判定不许断连");
+}
+
+/// 未声明 cap 的连接:一枚名册都收不到,发新命令 = `bad_request` **且不断开**
+/// (§5.6-5「不静默吞」——静默吞会让客户端干等到超时)。
+#[tokio::test]
+async fn roster_commands_require_the_capability() {
+    let addr = start(&[], |_| {}).await;
+    let sk = key();
+    let mut c = first_authed(addr, ACCT, D1, &sk).await; // 不声明任何 cap
+    c.send(&ClientMsg::RosterReq { n: 1 }).await;
+    expect_err(c.recv().await, err_code::BAD_REQUEST);
+    c.send(&ClientMsg::DeviceAdmin {
+        account: ACCT.into(),
+        target: D1.into(),
+        action: DeviceAction::Remove,
+        sig: vec![0u8; 64],
+    })
+    .await;
+    expect_err(c.recv().await, err_code::BAD_REQUEST);
+    c.send(&ClientMsg::Ping).await;
+    assert_eq!(c.recv().await, ServerMsg::Pong, "不许断连");
+}
+
+/// 367:名册容量硬闸的**配置侧**(identity-plan §5.13)——`device_cap` 超过
+/// `MAX_ROSTER_DEVICES` 即拒启,否则会出现「注册得进去、名册发不出来」的账户。
+///
+/// ⚠ **这一格上有两把尺**(first-draft-checklist 第 13 条):`device_cap=33` 同时会被
+/// 既有的达量限速上界拒(rate 须 ≥ 33·1MiB·3/90 ≈ 1.1MiB/s,默认 1MiB/s 不够)。
+/// 故断言必须**点名是哪道闸拒的**,否则删掉新闸这只测照样绿。
+#[tokio::test]
+async fn serve_rejects_device_cap_over_roster_max() {
+    let dir = zhujian_syncd::test_temp::dir()
+        .join(format!("zhujian-syncd-it-roster-cap-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("banlist.txt"), "# 空封禁表\n").unwrap();
+    let mut cfg = Config::new(dir.join("banlist.txt"), dir.join("registry.json"));
+    // 把限速那把尺让开(给足速率),让红只可能来自新闸。
+    cfg.throttle_rate_bps = 8 * 1024 * 1024;
+    cfg.device_cap = sync_proto::MAX_ROSTER_DEVICES + 1;
+    let err = serve("127.0.0.1:0".parse().unwrap(), cfg.clone()).await.unwrap_err();
+    assert_eq!(err.kind(), std::io::ErrorKind::InvalidInput);
+    assert!(
+        err.to_string().contains("MAX_ROSTER_DEVICES"),
+        "拒它的必须是名册容量闸,不是别的尺:{err}"
+    );
+    // 一红一绿对照:恰好到顶要能起来(否则「拒启」可能只是因为别的东西)。
+    cfg.device_cap = sync_proto::MAX_ROSTER_DEVICES;
+    serve("127.0.0.1:0".parse().unwrap(), cfg).await.expect("恰好到顶必须起得来");
 }
 
 /// 越额发送被达量限速(端到端真 WS):quota=0 + 低速率,连发多帧——首帧 burst 直放、

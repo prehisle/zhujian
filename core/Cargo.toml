@@ -86,3 +86,8 @@ zhujian-syncd = { path = "../server" }
 # 测试临时目录扫尾(见 src/test_temp_cleanup.rs):进程加载时跑一次,不依赖任何具体
 # 测试被选中执行——`cargo test <filter>` 只挑子集跑时也不漏扫。
 ctor = "0.2"
+# 时钟注入(`tokio::time::{pause, advance}`)。367 实现审弹三 M1 那一格要走满 15s 的
+# 命令 deadline,而 identity-plan §5.16.3 对这类「窗口太窄/太宽命中不了」明写了做法:
+# **注入时钟或压缩 heartbeat**,绝不靠真等、更不靠「多试几次」。⚠ 只进 dev 面;
+# `pause()` 不被调用时对行为零影响。
+tokio = { version = "1", features = ["test-util"] }

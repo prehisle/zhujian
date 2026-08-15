@@ -13,7 +13,7 @@
 //! * 写路径全部在调用方的 `Mutex<Registry>` 锁内完成,「检查 + 插入 + 落盘」
 //!   天然原子(§4 register_first 的账户级原子 TOFU 靠这个)。
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -72,6 +72,78 @@ pub const SIGNUP_BURST: u32 = 20;
 pub const SIGNUP_REFILL_SECS: u64 = 60;
 /// 账户目录硬上界(绝对磁盘/写放大封顶;到顶=运营容量事件,ERROR 告警人工处置)。
 pub const MAX_ACCOUNTS: usize = 10_000;
+
+/// 用户面设备管理的**每账户**令牌桶参数(identity-plan §5.13,367)。
+/// 连接级那一份的参数住 `conn.rs`(它是连接自己的状态,不进 registry)。
+pub const DEVICE_ADMIN_BURST_ACCOUNT: u32 = 10;
+/// 每 10s 补一枚(连接级与账户级同节奏)。
+pub const DEVICE_ADMIN_REFILL_SECS: u64 = 10;
+
+/// 令牌桶(创号闸与设备管理闸共用)。
+///
+/// ⛔ **同一份补墨算术只留一份**:那段纳秒口径的商、「补满即以 `now` 重起算」、
+/// 「桶满期间不攒历史时长」三条语义抄第二遍必漂(first-draft-checklist 第 14 条)。
+/// 既有创号闸的两只边界测(亚毫秒 refill / 补墨语义)因此**同时**是本结构的测。
+#[derive(Debug, Clone)]
+pub(crate) struct TokenBucket {
+    burst: u32,
+    refill: std::time::Duration,
+    tokens: u32,
+    last: Option<std::time::Instant>,
+}
+
+impl TokenBucket {
+    pub(crate) fn new(burst: u32, refill: std::time::Duration) -> Self {
+        Self { burst, refill, tokens: burst, last: None }
+    }
+
+    /// 取一枚令牌,取得到回 true。单调钟由调用方给(生产 `Instant::now()`,单元测
+    /// 合成 `Instant` 烤补墨边界)。调用方保证 `burst ≥ 1` 且 `refill` 非零。
+    pub(crate) fn take(&mut self, now: std::time::Instant) -> bool {
+        self.refill(&now);
+        if self.tokens == 0 {
+            return false;
+        }
+        self.tokens -= 1;
+        true
+    }
+
+    /// **只补墨、不消费**。抽出来是因为 [`Self::is_full_at`] 也要它:补墨算术抄第二遍
+    /// 必漂(checklist 第 14 条),而这份纳秒口径的算术正是当初把桶抽成一份的理由。
+    fn refill(&mut self, now: &std::time::Instant) {
+        let now = *now;
+        let last = *self.last.get_or_insert(now);
+        let deficit = self.burst - self.tokens;
+        if deficit == 0 {
+            self.last = Some(now);
+        } else {
+            // 纳秒整数口径(codex M4:毫秒截断会让亚毫秒 refill 静默改语义;refill
+            // 非零由调用方断言,除零不可达)。商全程留 u128、比较后才窄转
+            // (codex 二轮 L1:as u64 是静默截断点,虽要 584 年 uptime 才碰得到)。
+            let refills = now.saturating_duration_since(last).as_nanos() / self.refill.as_nanos();
+            if refills >= u128::from(deficit) {
+                self.tokens = self.burst;
+                self.last = Some(now);
+            } else if refills > 0 {
+                // refills < deficit ≤ burst(u32),窄转换不 truncate。
+                self.tokens += refills as u32;
+                self.last = Some(last + self.refill * refills as u32);
+            }
+        }
+    }
+
+    /// 桶在 `now` 这一刻是满的 = 这个账户没有欠账,条目可被 sweep 回收(回收后重建
+    /// 即满桶,语义相同)。
+    ///
+    /// ⚠ **必须先补墨再判**(实现审弹二 L1):原先只看 `tokens == burst`,而任何一次
+    /// `take` 都会把它打到 `burst - 1` 并**永远停在那里**(下次 `take` 补满、随即又消费
+    /// 回去)⇒ **凡是用过的条目 sweep 一个都回收不了**,那句「满桶条目由 sweep 回收」
+    /// 是一句没人兑现的话。
+    fn is_full_at(&mut self, now: std::time::Instant) -> bool {
+        self.refill(&now);
+        self.tokens == self.burst
+    }
+}
 
 impl Entitlement {
     /// **fail-closed 默认**(billing-plan §3):无记录按免费档执行——绝不静默给出
@@ -275,6 +347,23 @@ pub struct Registry {
     banned: HashSet<String>,
     /// account → device → ed25519 公钥。BTreeMap 让落盘 JSON 稳定有序(人可 diff)。
     accounts: BTreeMap<String, BTreeMap<String, [u8; 32]>>,
+    /// account → 该账户的**管理设备**集合(identity-plan §5.3;367)。**与 accounts
+    /// 并行的独立 map**,不改 accounts 的值形——后者一变,`pubkey_of`/`devices_of`/
+    /// 路由 fanout 全要动。
+    ///
+    /// 不变量(load 与每条写路径都守):`admins.keys() ⊆ accounts.keys()` 且
+    /// `∀a. admins[a] ⊆ accounts[a].keys()`。**空集合的唯一规范表示 = 没有该 account
+    /// 键**,不是 `a: []`(§5.6-2 二轮 M3;load 遇到显式空集合即拒启,不静默规范化)。
+    ///
+    /// ⚠ **命名避让**:本文件已有 [`Self::owner_of_device`],那个 owner 指的是
+    /// 「哪个账户拥有这个 device_id」,与「管理设备」毫无关系。内部一律用 `admins`,
+    /// **不许用 `owner`**(309 的陈账:名字对不上,下一个人就对不上)。
+    ///
+    /// ⛔ **不变量「admins 不得变空」只约束用户面**(hub 的 `device_admin`);运营者面
+    /// (`/admin/`)**刻意保留**破坏它的能力——设/清 admins、吊销任何设备(含最后一台
+    /// 管理设备),那是「只设了一台管理设备而它丢了」时的逃生口。故本层的
+    /// [`Self::set_admin`] 与 [`Self::revoke_device`] **不检查非空**,别以为是漏了。
+    admins: BTreeMap<String, BTreeSet<String>>,
     /// account → 授权参数(billing-plan §3;无记录=免费档默认,fail-closed)。
     /// 只由 admin 写,规模有账户数上界(set 要求账户已存在)。
     entitlements: BTreeMap<String, Entitlement>,
@@ -302,10 +391,11 @@ pub struct Registry {
     /// [`MAX_ACCOUNTS`],由 Hub 从 Config 注入,测试注小值烤洪泛路径)。桶态纯运行期
     /// 不落盘(重启=满桶,无害:上界护的是持续洪泛,不是瞬时突刺)。
     max_accounts: usize,
-    signup_burst: u32,
-    signup_refill: std::time::Duration,
-    signup_tokens: u32,
-    signup_last_refill: Option<std::time::Instant>,
+    signup: TokenBucket,
+    /// account → 用户面设备管理的令牌桶(367,§5.13)。**纯内存不落盘**(同
+    /// `seat_leases`);只为真正发过 `DeviceAdmin` 的账户建条目,满桶即由
+    /// [`Self::sweep_admin_buckets`] 回收 ⇒ 规模有账户数上界,不随时间单调增长。
+    admin_buckets: BTreeMap<String, TokenBucket>,
 }
 
 /// 落盘形态(公钥 hex;entitlements `serde(default)`——旧 registry.json 无此键
@@ -324,6 +414,15 @@ struct DiskForm {
     /// 首写后旧二进制(deny_unknown_fields)会响亮拒启,须先删 `grants` 键再回滚。
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     grants: BTreeMap<String, GrantDisk>,
+    /// account → 管理设备集合(367;serde default——旧文件无此键照常加载、空 map 不
+    /// 写键=尚无任何管理设备的生产文件字节不变)。
+    /// ⛔ **回滚红线(deploy §2)**:`admins` 键一旦写进 registry.json,旧二进制
+    /// (`deny_unknown_fields`)会**响亮拒启**——这是 159 刻意设计的行为,不是 bug。
+    /// 回滚不许「恢复部署前的备份」(那会把部署后合法的注册/吊销一起撤销,最危险的
+    /// 是**把已吊销的设备复活**),只能停写后基于**当前**文件做受控降级转换:只摘
+    /// `admins` 键、保留当前 accounts/entitlements/grants(§5.10-3)。
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    admins: BTreeMap<String, BTreeSet<String>>,
 }
 
 /// entitlement 落盘形态(expires_at 存 RFC3339 文本,人可查)。
@@ -400,13 +499,78 @@ pub fn validate_banlist(path: &Path) -> io::Result<usize> {
     parse_banlist(path).map(|s| s.len())
 }
 
+/// registry 离线校验(main.rs `--validate-registry`;identity-plan §5.16.5-1)。
+///
+/// **升级前必跑**:367 给 load 加了两道新的拒启判据(账户设备数 ≤
+/// [`sync_proto::MAX_ROSTER_DEVICES`]、admins 三条不变量),而现网 registry 是历史
+/// 数据——超编账户是**可能存在**的(硬帽历史上调高再调低就会留下),别等升上去
+/// 才发现拒启。拿一份现网 registry.json 的副本跑它,过了再部署。
+///
+/// ⛔ **内容判据与正式 [`Registry::load`] 同源**:本函数**就是**调 load,不许各写一遍
+/// (§5.14 3d)。
+///
+/// ⚠ **它证明的范围就这么大,别说成「校验过就一定起得来」**(实现审弹一 L3:我原话
+/// 是「校验过的文件,新二进制必启得来」,被 `device_cap` 那个反例当场证伪)。准确的
+/// 一句是:**给定这份 banlist,这份 registry 文件过得了 `Registry::load` 的内容判据**。
+/// 启动还要过配置闸(`device_cap ≤ MAX_ROSTER_DEVICES`、throttle 上界…)、端口、
+/// 内存包络 —— 那些本函数一个都不看。
+///
+/// ⚠ **存在性这一格必须自己判,不能靠 load**(实现审弹一 M1):`load` 把 `NotFound`
+/// 当**首启空 registry**——那对服务器是对的(首次注册时创建),但对本函数是**假绿**:
+/// 路径拼错 / 副本没拷过来,回的是「ok,账户 0 个」。而这只工具存在的全部理由,就是
+/// 「升级前拿一份现网副本跑一遍」——它答错的那一刻,正是最需要它答对的那一刻。
+/// 故先要求目标存在且是**普通文件**(目录会让 load 报别的错,同样不许当合法)。
+pub fn validate_registry(banlist_path: &Path, registry_path: PathBuf) -> io::Result<String> {
+    let display = registry_path.display().to_string();
+    match fs::metadata(&registry_path) {
+        Ok(m) if m.is_file() => {}
+        Ok(_) => {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("{display} 不是普通文件(校验的对象必须是一份 registry.json)"),
+            ))
+        }
+        Err(e) => {
+            return Err(io::Error::new(
+                e.kind(),
+                format!("读不到 {display}:{e}(校验对象必须存在——路径拼错时绝不回「合法」)"),
+            ))
+        }
+    }
+    let reg = Registry::load(banlist_path, registry_path)?;
+    let accounts = reg.accounts.len();
+    let devices: usize = reg.accounts.values().map(|d| d.len()).sum();
+    let max_devices = reg.accounts.values().map(|d| d.len()).max().unwrap_or(0);
+    // 「有几个账户还没回填管理设备」正是 §5.16.5-2 那张回填清单要的数——没回填的
+    // 账户,新服上线后用户面**按设计 fail-closed**(不是 bug)。
+    let without_admins: Vec<&str> = reg
+        .accounts
+        .iter()
+        .filter(|(a, devs)| !devs.is_empty() && !reg.admins.contains_key(*a))
+        .map(|(a, _)| a.as_str())
+        .collect();
+    Ok(format!(
+        "ok:{display} 合法。账户 {accounts} 个 / 设备 {devices} 台 / 单账户最多 {max_devices} 台(上限 {})。\n未设管理设备的账户 {} 个{}",
+        sync_proto::MAX_ROSTER_DEVICES,
+        without_admins.len(),
+        if without_admins.is_empty() {
+            String::new()
+        } else {
+            format!(
+                ":\n  {}\n  ⚠ 这些账户在新服上线后,用户面的设备管理整条不可用(fail-closed,不是 bug)——\n    照 identity-plan §5.16.5-2 逐个 POST /admin/set-admin 回填,并记下「账户 / device_id / 确认人」。",
+                without_admins.join("\n  ")
+            )
+        }
+    ))
+}
+
 impl Registry {
     /// 封禁表必须存在(空文件=零封禁,运维意图显式;缺文件=部署残缺,fail-fast);
     /// registry 文件不存在 = 空(首启,首次注册时创建)。
     pub fn load(banlist_path: &Path, registry_path: PathBuf) -> io::Result<Self> {
         let banned = parse_banlist(banlist_path)?;
 
-        let (accounts, entitlements, grants) = match fs::read_to_string(&registry_path) {
+        let (accounts, entitlements, grants, admins) = match fs::read_to_string(&registry_path) {
             Ok(json) => {
                 let disk: DiskForm = serde_json::from_str(&json).map_err(|e| {
                     io::Error::new(
@@ -486,10 +650,10 @@ impl Registry {
                     })?;
                     grants.insert(acct, Grant { period, quota: g.quota });
                 }
-                (accounts, entitlements, grants)
+                (accounts, entitlements, grants, disk.admins)
             }
             Err(e) if e.kind() == io::ErrorKind::NotFound => {
-                (BTreeMap::new(), BTreeMap::new(), BTreeMap::new())
+                (BTreeMap::new(), BTreeMap::new(), BTreeMap::new(), BTreeMap::new())
             }
             Err(e) => return Err(e),
         };
@@ -513,9 +677,64 @@ impl Registry {
             }
         }
 
+        // 名册容量硬闸(identity-plan §5.13,设计审一轮 H6 / 二轮 H3)。**存量超编即
+        // 拒启,不静默截断**——截断会藏掉设备,比帧过大危险得多。「N 有多大」此前
+        // 由数据说了算:`device_cap` 只在**注册那一刻**判、load 从不校验存量,而硬帽
+        // 是可配置的、历史上调高再调低就会留下超编账户。
+        // ⚠ 这道闸与离线 validator(`--validate-registry`)**同源**——validator 就是
+        // 调本函数,不许各写一遍判据。
+        for (acct, devs) in &accounts {
+            if devs.len() > sync_proto::MAX_ROSTER_DEVICES {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "registry {} 里账户 {acct} 有 {} 台设备,超过 MAX_ROSTER_DEVICES={}(拒启:名册帧有硬上界,截断会藏掉设备——先用 admin 面吊销到限内,升级前请跑 --validate-registry)",
+                        registry_path.display(),
+                        devs.len(),
+                        sync_proto::MAX_ROSTER_DEVICES
+                    ),
+                ));
+            }
+        }
+
+        // admins 的两条不变量 + 空集合唯一规范表示(§5.6-2 二轮 M3)。与 entitlement /
+        // grant 同一把尺:坏条目 = 人工编辑或 bug,**响亮拒启**,绝不静默丢弃或规范化。
+        for (acct, set) in &admins {
+            if set.is_empty() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "registry {} 损坏:账户 {acct} 的 admins 是显式空集合——空的唯一规范表示是**没有该键**(拒启,人工核对)",
+                        registry_path.display()
+                    ),
+                ));
+            }
+            let Some(devs) = accounts.get(acct) else {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "registry {} 损坏:admins 指向不存在的账户 {acct}(拒启,人工核对)",
+                        registry_path.display()
+                    ),
+                ));
+            };
+            for dev in set {
+                if !devs.contains_key(dev) {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!(
+                            "registry {} 损坏:{acct} 的管理设备 {dev} 不在该账户设备表里(幽灵管理位,拒启)",
+                            registry_path.display()
+                        ),
+                    ));
+                }
+            }
+        }
+
         Ok(Registry {
             banned,
             accounts,
+            admins,
             entitlements,
             seat_leases: BTreeMap::new(),
             grants,
@@ -524,10 +743,11 @@ impl Registry {
             banlist_path: banlist_path.to_owned(),
             path: registry_path,
             max_accounts: MAX_ACCOUNTS,
-            signup_burst: SIGNUP_BURST,
-            signup_refill: std::time::Duration::from_secs(SIGNUP_REFILL_SECS),
-            signup_tokens: SIGNUP_BURST,
-            signup_last_refill: None,
+            signup: TokenBucket::new(
+                SIGNUP_BURST,
+                std::time::Duration::from_secs(SIGNUP_REFILL_SECS),
+            ),
+            admin_buckets: BTreeMap::new(),
         })
     }
 
@@ -581,6 +801,7 @@ impl Registry {
                     (a.clone(), GrantDisk { period: format_period(g.period), quota: g.quota })
                 })
                 .collect(),
+            admins: self.admins.clone(),
         };
         let json = serde_json::to_string_pretty(&disk).expect("BTreeMap<String,_> 序列化无失败路径");
         let tmp = self.path.with_extension("json.tmp");
@@ -755,41 +976,41 @@ impl Registry {
         // fail-fast(serve_inner 已校验;这里是最后防线——0 值会让 signup_take
         // 除零/永拒,绝不静默容忍)。
         assert!(burst >= 1 && !refill.is_zero() && max_accounts >= 1, "创号闸参数须非零");
-        self.signup_burst = burst;
-        self.signup_refill = refill;
+        self.signup = TokenBucket::new(burst, refill);
         self.max_accounts = max_accounts;
-        self.signup_tokens = burst;
-        self.signup_last_refill = None;
     }
 
-    /// 创号令牌桶:按 `now` 补墨后取一枚,空桶 = false。整数口径(每过一个 refill
-    /// 间隔补一枚,补满即以 now 重起算;桶满期间不攒历史时长)。单调钟由调用方给
-    /// (生产 `Instant::now()`,单元测合成 Instant 烤补墨边界)。
+    /// 创号令牌桶:按 `now` 补墨后取一枚,空桶 = false(算术见 [`TokenBucket::take`])。
     fn signup_take(&mut self, now: std::time::Instant) -> bool {
-        let last = *self.signup_last_refill.get_or_insert(now);
-        let deficit = self.signup_burst - self.signup_tokens;
-        if deficit == 0 {
-            self.signup_last_refill = Some(now);
-        } else {
-            // 纳秒整数口径(codex M4:毫秒截断会让亚毫秒 refill 静默改语义;refill
-            // 非零由 set_signup_limits 断言,除零不可达)。商全程留 u128、比较后才
-            // 窄转(codex 二轮 L1:as u64 是静默截断点,虽要 584 年 uptime 才碰得到)。
-            let refills = now.saturating_duration_since(last).as_nanos()
-                / self.signup_refill.as_nanos();
-            if refills >= u128::from(deficit) {
-                self.signup_tokens = self.signup_burst;
-                self.signup_last_refill = Some(now);
-            } else if refills > 0 {
-                // refills < deficit ≤ burst(u32),窄转换不truncate。
-                self.signup_tokens += refills as u32;
-                self.signup_last_refill = Some(last + self.signup_refill * refills as u32);
-            }
-        }
-        if self.signup_tokens == 0 {
-            return false;
-        }
-        self.signup_tokens -= 1;
-        true
+        self.signup.take(now)
+    }
+
+    /// 用户面设备管理的**每账户**令牌桶(367,§5.13):按 `now` 补墨后取一枚。
+    ///
+    /// ⛔ **只有通过授权、且不是幂等的请求才扣**(三轮 M4 / 四轮 M2)——判定顺序只有
+    /// 一份,在 `hub::device_admin`,这里只管桶。扣早了的后果:任一非管理设备都能持续
+    /// 发越权请求把账户桶耗干,让真正的管理设备长期收到 busy(共享桶被无权者压制)。
+    pub fn device_admin_take(&mut self, account: &str, now: std::time::Instant) -> bool {
+        self.admin_buckets
+            .entry(account.to_owned())
+            .or_insert_with(|| {
+                TokenBucket::new(
+                    DEVICE_ADMIN_BURST_ACCOUNT,
+                    std::time::Duration::from_secs(DEVICE_ADMIN_REFILL_SECS),
+                )
+            })
+            .take(now)
+    }
+
+    /// 回收满桶条目(hub 定期清扫调):满桶 = 没欠账,删掉与留着语义相同(下次重建
+    /// 即满桶)。⇒ `admin_buckets` 的规模有**近期活跃账户数**上界。
+    ///
+    /// `now` 显式入参(与本文件其余单调钟同纪律):判「满不满」**必须先按时间补墨**,
+    /// 否则用过的条目一个也回收不掉,见 [`TokenBucket::is_full_at`]。
+    pub fn sweep_admin_buckets(&mut self, now: std::time::Instant) -> usize {
+        let before = self.admin_buckets.len();
+        self.admin_buckets.retain(|_, b| !b.is_full_at(now));
+        before - self.admin_buckets.len()
     }
 
     /// 账户在 `now` 所在 UTC 月的**生效 fastlane 额度**(billing-plan §4 工序 3;169)。
@@ -920,8 +1141,31 @@ impl Registry {
         if !self.signup_take(std::time::Instant::now()) {
             return Err(RegisterError::SignupThrottled);
         }
+        // ⛔ **「谁自动成为管理设备」绑在「fresh 账户的首次插入」上,不是绑在
+        // `register_first` 这个入口上**(identity-plan §5.6-2 三轮 M5,**这是一条真的
+        // 提权路**):本函数对「账户唯一设备恰为同 device 同钥」是幂等 `Ok` **早返**的
+        // (上面第二臂),若把建 admin 写在那条早返**之前**,存量单设备账户(admins
+        // 无键)只要自己重放一枚 `RegisterFirst`,就能**绕过运营者手工回填直接拿到
+        // 管理位**。走到这一行的只可能是真 fresh 账户,故此处是唯一正确的落点。
         self.accounts.entry(account.to_owned()).or_default().insert(device.to_owned(), pubkey);
-        self.persist_or_rollback(account, device)
+        self.admins.insert(account.to_owned(), BTreeSet::from([device.to_owned()]));
+        match self.save() {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                crate::logln(format!("ERROR registry 落盘失败,已回滚 {account}/{device}:{e}"));
+                // 四条持久写路径之一(§5.6-2)。fresh 建档失败要**连账户键一起删**,
+                // 且 **admins 那条也必须删掉**——留下就是一个指向不存在账户的幽灵
+                // 管理位,下次启动直接撞 load 的不变量拒启。
+                if let Some(devs) = self.accounts.get_mut(account) {
+                    devs.remove(device);
+                    if devs.is_empty() {
+                        self.accounts.remove(account);
+                    }
+                }
+                self.admins.remove(account);
+                Err(RegisterError::Persist)
+            }
+        }
     }
 
     /// 后续注册(§4:老设备背书,验签在调用方)。同账户同钥重放 = 幂等 Ok;
@@ -953,6 +1197,20 @@ impl Registry {
             None => {}
         }
         let seat_count = self.accounts.get(account).map_or(0, |d| d.len());
+        // 0. 协议硬帽层(实现审弹一 M2):**这一格是本层自己的不变量,不许只靠调用方**。
+        //    `device_cap` 是**入参**——今天它恒来自启动已校验的 `Config`(`serve_inner`
+        //    拒启 `device_cap > MAX_ROSTER_DEVICES`),故网络面到不了这里;但 `Registry`
+        //    与本方法是 `pub`,一个传 33 的调用方就能让第 33 台**成功落盘**,而下次
+        //    `load` 会因超编**拒启** ⇒ 「成功落盘的状态下次一定 load 得动」这条被证伪。
+        //    ⚠ **这一层不「拒绝错配置」,别把它说大了**(实现审弹一 L1):`device_cap=33`
+        //    而当前只有 3 台时,本函数照样放行 —— 它只保证**长不过 32**。真正拒绝
+        //    `device_cap > MAX` 那个配置的是 `serve_inner` 的启动闸。
+        //    两道闸分开写(而不是 `min()`)是为了**出处可查**:审计时一眼看得出哪一格
+        //    来自协议硬帽、哪一格来自配置。⚠ 二者在「每次只加一台」下**行为等价**,故
+        //    这个取舍是可读性取舍,没有、也不可能有一只行为测能把它俩分开。
+        if seat_count >= sync_proto::MAX_ROSTER_DEVICES {
+            return Err(RegisterError::AccountFull);
+        }
         if seat_count >= device_cap {
             return Err(RegisterError::AccountFull);
         }
@@ -979,7 +1237,27 @@ impl Registry {
         // (无论这次是否靠它 +1——留着只是过期垃圾);落盘失败连租约一起还原。
         let consumed = if lease_match { self.seat_leases.remove(account) } else { None };
         self.accounts.entry(account.to_owned()).or_default().insert(new_device.to_owned(), pubkey);
-        let out = self.persist_or_rollback(account, new_device);
+        // 四条持久写路径之二(§5.6-2)。⚠ **admins 在这条路上不涉及**——背书进来的新
+        // 设备默认不是管理设备,故没有管理位要建、也没有要回滚的。**这句是「想过了,
+        // 不涉及」,不是漏了。**
+        //
+        // ⛔ 保存/回滚**内联在此**、不再走通用 helper(设计审二轮裁决):原先
+        // `persist_or_rollback` 被本函数与 `register_first` 共用,而两者的回滚义务并不
+        // 相同(那边要连账户键与 admins 一起删)。共用面一存在,下一个人就得靠读注释
+        // 才知道「这次调用该不该带 admins」——**把共用面去掉比给它造一个类型更便宜**。
+        // 这里删完必不空(进门前已断言账户非空),故没有「删到空要不要摘账户键」那一格。
+        let out = match self.save() {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                crate::logln(format!(
+                    "ERROR registry 落盘失败,已回滚 {account}/{new_device}:{e}"
+                ));
+                if let Some(devs) = self.accounts.get_mut(account) {
+                    devs.remove(new_device);
+                }
+                Err(RegisterError::Persist)
+            }
+        };
         if out.is_err() {
             if let Some(l) = consumed {
                 self.seat_leases.insert(account.to_owned(), l);
@@ -1023,7 +1301,13 @@ impl Registry {
             Some(_) => return Err(SeatLeaseError::DeviceIdTaken),
             None => {}
         }
-        if self.accounts.get(account).map_or(0, |d| d.len()) >= device_cap {
+        let seat_count = self.accounts.get(account).map_or(0, |d| d.len());
+        // 协议硬帽同 [`Self::register_device`] 那一格(实现审弹一 M2):**早拒**,
+        // 别发一枚注定消费不掉的租约(register_device 那道闸会拦下它)。
+        if seat_count >= sync_proto::MAX_ROSTER_DEVICES {
+            return Err(SeatLeaseError::AccountFull);
+        }
+        if seat_count >= device_cap {
             return Err(SeatLeaseError::AccountFull);
         }
         self.seat_leases.insert(
@@ -1066,6 +1350,14 @@ impl Registry {
         };
         // 空则留作墓碑(#1:不 remove 账户条目),据此回执 AccountSealed。
         let sealed = devs.is_empty();
+        // 367:管理位跟着设备走。**含 admin 面这条路**——不摘就会留下一个指向不存在
+        // 设备的幽灵管理位,下次启动直接撞 load 的不变量拒启。摘到空即删键(空集合的
+        // 唯一规范表示)。⚠ 本层**不检查「会不会把 admins 摘空」**:运营者面刻意保留
+        // 这个能力(逃生口),不变量只约束用户面(见 [`Registry::admins`] 头注)。
+        let was_admin = self.admins.get_mut(account).is_some_and(|set| set.remove(device));
+        if self.admins.get(account).is_some_and(|s| s.is_empty()) {
+            self.admins.remove(account);
+        }
         match self.save() {
             Ok(()) => Ok(if sealed {
                 RevokeOutcome::AccountSealed
@@ -1076,29 +1368,94 @@ impl Registry {
                 crate::logln(format!(
                     "ERROR registry 落盘失败,已回滚吊销 {account}/{device}:{e}"
                 ));
+                // 四条持久写路径之三:**净变化必须为零**,管理位也得原样还回去。
                 self.accounts
                     .entry(account.to_owned())
                     .or_default()
                     .insert(device.to_owned(), key);
+                if was_admin {
+                    self.admins.entry(account.to_owned()).or_default().insert(device.to_owned());
+                }
                 Err(RevokeError::Persist)
             }
         }
     }
 
-    fn persist_or_rollback(&mut self, account: &str, device: &str) -> Result<(), RegisterError> {
+    /// 设 / 取消管理设备(identity-plan §5.3;367)。**唯一的管理位写入口**——用户面
+    /// (hub `device_admin`)与运营者面(`/admin/set-admin`)都走它。
+    ///
+    /// 幂等:已是 / 已不是即 `Ok(false)`(**没变化**),调用方据此**不 save、不升
+    /// revision、不 fan-out**(§5.13 M1:管理设备可以无限交替 Grant/Revoke,每次都触发
+    /// 全量落盘 + 全账户 fan-out;幂等无变化不做事就砍掉了那条路)。真变了回 `Ok(true)`。
+    ///
+    /// ⛔ **本层不守「admins 不得变空」**:那条不变量只约束用户面,运营者面要能把最后
+    /// 一台管理设备清掉(逃生口的另一半,见 [`Registry::admins`] 头注)。
+    ///
+    /// 四条持久写路径之四(§5.6-2:**我原设计整个漏了它的回滚**)。落盘失败回滚到
+    /// **精确旧状态**——`on=true` 撤销刚插的、`on=false` 恢复刚删的,两条臂都要真跑。
+    pub fn set_admin(
+        &mut self,
+        account: &str,
+        device: &str,
+        on: bool,
+    ) -> Result<bool, RegisterError> {
+        // 形态前置:只对在册设备设管理位(否则就是造幽灵管理位,load 会拒启)。
+        if !self.accounts.get(account).is_some_and(|d| d.contains_key(device)) {
+            return Err(RegisterError::AccountNotInitialized);
+        }
+        let had = self.admins.get(account).is_some_and(|s| s.contains(device));
+        if had == on {
+            return Ok(false); // 幂等:不动内存、不落盘。
+        }
+        if on {
+            self.admins.entry(account.to_owned()).or_default().insert(device.to_owned());
+        } else {
+            if let Some(set) = self.admins.get_mut(account) {
+                set.remove(device);
+            }
+            // 摘掉最后一位即删键——空集合的唯一规范表示是「没有该键」。
+            if self.admins.get(account).is_some_and(|s| s.is_empty()) {
+                self.admins.remove(account);
+            }
+        }
         match self.save() {
-            Ok(()) => Ok(()),
+            Ok(()) => Ok(true),
             Err(e) => {
-                crate::logln(format!("ERROR registry 落盘失败,已回滚 {account}/{device}:{e}"));
-                if let Some(devs) = self.accounts.get_mut(account) {
-                    devs.remove(device);
-                    if devs.is_empty() {
-                        self.accounts.remove(account);
+                crate::logln(format!(
+                    "ERROR registry 落盘失败,已回滚管理位 {account}/{device} on={on}:{e}"
+                ));
+                if on {
+                    // 撤销刚插的(它此前一定不在,故连带把可能新建的空集合删掉)。
+                    if let Some(set) = self.admins.get_mut(account) {
+                        set.remove(device);
                     }
+                    if self.admins.get(account).is_some_and(|s| s.is_empty()) {
+                        self.admins.remove(account);
+                    }
+                } else {
+                    // 恢复刚删的(可能连键一起删掉了,or_default 重建)。
+                    self.admins.entry(account.to_owned()).or_default().insert(device.to_owned());
                 }
                 Err(RegisterError::Persist)
             }
         }
+    }
+
+    /// 这台设备是不是本账户的管理设备(用户面授权判据的一半,§5.3)。
+    pub fn is_admin(&self, account: &str, device: &str) -> bool {
+        self.admins.get(account).is_some_and(|s| s.contains(device))
+    }
+
+    /// 本账户的管理设备台数(用户面不变量「不得让 admins 变空」的判据)。
+    pub fn admin_count(&self, account: &str) -> usize {
+        self.admins.get(account).map_or(0, |s| s.len())
+    }
+
+    /// 本账户有没有管理设备。`false` = 存量未回填 ⇒ 用户面 `DeviceAdmin` **整条不可用**
+    /// (fail-closed;⚠ 含自助退出——不变量只说「不得**变**空」,对**已经**是空的账户
+    /// 约束为零,放行自助退出会让存量账户被逐台退到空、直接撞出账户封存)。
+    pub fn has_admins(&self, account: &str) -> bool {
+        self.admins.contains_key(account)
     }
 }
 
@@ -1248,6 +1605,33 @@ mod tests {
         assert!(!r.signup_take(t1));
     }
 
+    /// 设备管理令牌条目**真的回收得掉**(实现审弹二 L1)。
+    ///
+    /// 原先 `is_full` 不补墨就判,而任何一次 `take` 都把桶打到 `burst - 1` 并**永远停
+    /// 在那里**(下次 take 补满、随即又消费回去)⇒ 凡是用过的条目 sweep 一个都回收不
+    /// 了,「那张表的规模有账户数上界」全靠一句没人兑现的话撑着。
+    ///
+    /// 三格一红一绿:欠着账时**不许**收 / 补墨补满之后**必须**收 / 没用过的条目本来
+    /// 就不该在表里。
+    #[test]
+    fn admin_bucket_sweep_reclaims_after_refill() {
+        let dir = tmpdir("admin-bucket-sweep");
+        let mut r = fresh(&dir);
+        let t0 = std::time::Instant::now();
+        let step = std::time::Duration::from_secs(DEVICE_ADMIN_REFILL_SECS);
+        assert_eq!(r.sweep_admin_buckets(t0), 0, "还没人用过,表是空的");
+        assert!(r.device_admin_take("ACCT_A", t0));
+        assert_eq!(r.admin_buckets.len(), 1);
+        // 欠着一枚 ⇒ 不许回收(回收=遗忘欠账,等于白送一次 burst)。
+        assert_eq!(r.sweep_admin_buckets(t0), 0, "欠着账的条目不许收");
+        assert_eq!(r.admin_buckets.len(), 1);
+        // 差一点点还不满(补墨要**整**个间隔)。
+        assert_eq!(r.sweep_admin_buckets(t0 + step / 2), 0);
+        // 一个整间隔之后补满 ⇒ 收得掉。
+        assert_eq!(r.sweep_admin_buckets(t0 + step), 1, "补满了就该收");
+        assert!(r.admin_buckets.is_empty());
+    }
+
     #[test]
     fn register_device_idempotent_and_guard() {
         let dir = tmpdir("regdev");
@@ -1372,6 +1756,411 @@ mod tests {
     }
 
     /// 吊销落盘失败 = 回滚(绑定仍在,吊销未生效不装成功)。
+    // ---- 367:管理设备(admins)---------------------------------------------
+
+    /// 手工写一份 registry.json 再 load —— 用来造「存量文件」与「损坏文件」,
+    /// 那两类状态**造不出来**(正常写路径恒守不变量),只能从盘上来。
+    fn load_with_registry(dir: &Path, json: &str) -> io::Result<Registry> {
+        let bl = dir.join("banlist.txt");
+        fs::write(&bl, "# 空封禁表\n").unwrap();
+        let path = dir.join("registry.json");
+        fs::write(&path, json).unwrap();
+        Registry::load(&bl, path)
+    }
+
+    fn key_hex(b: u8) -> String {
+        format!("{b:02x}").repeat(32)
+    }
+
+    /// ⛔ **一条真的提权路**(设计审三轮 M5):`register_first` 对「账户唯一设备恰为
+    /// 同 device 同钥」是**幂等早返**的。若把「自动设 admin」写在那条早返之前,存量
+    /// 单设备账户(admins 无键)只要自己重放一枚 `RegisterFirst`,就能绕过运营者的
+    /// 手工回填直接拿到管理位。
+    ///
+    /// 一红一绿对照:fresh 账户**必须**拿到管理位(否则这测退化成「什么都不做也绿」)。
+    #[test]
+    fn admins_only_born_from_a_fresh_account_insert() {
+        let dir = tmpdir("admins-fresh-only");
+        // 绿:真 fresh 账户 → 首台即管理设备。
+        let mut r = fresh(&dir);
+        assert_eq!(r.register_first("ACCT_A", "D1", [1; 32]), Ok(()));
+        assert!(r.is_admin("ACCT_A", "D1"));
+        assert!(r.has_admins("ACCT_A"));
+        // 背书进来的第二台**不是**管理设备(默认不给)。
+        assert_eq!(r.register_device("ACCT_A", "D2", [2; 32], 8, t0()), Ok(()));
+        assert!(!r.is_admin("ACCT_A", "D2"));
+
+        // 红:存量账户(有设备、admins 无键)重放同钥 RegisterFirst → 幂等 Ok,
+        // 但**管理位一格都不许长出来**。
+        let dir2 = tmpdir("admins-legacy-replay");
+        let mut old = load_with_registry(
+            &dir2,
+            &format!(r#"{{"accounts":{{"ACCT_A":{{"D1":"{}"}}}}}}"#, key_hex(1)),
+        )
+        .unwrap();
+        assert!(!old.has_admins("ACCT_A"), "存量文件本来就没有管理设备");
+        assert_eq!(old.register_first("ACCT_A", "D1", [1; 32]), Ok(()), "同钥重放仍是幂等 Ok");
+        assert!(!old.has_admins("ACCT_A"), "幂等重放绝不许补出管理位(提权路)");
+        assert!(!old.is_admin("ACCT_A", "D1"));
+    }
+
+    /// load 的三条 admins 不变量 + 空集合唯一规范表示,逐条各一只(§5.6-2 二轮 M3)。
+    /// 全部**响亮拒启**,不静默丢弃、不静默规范化——与 entitlement / grant 同一把尺。
+    #[test]
+    fn load_rejects_broken_admins() {
+        let acct = format!(r#""accounts":{{"ACCT_A":{{"D1":"{}"}}}}"#, key_hex(1));
+        for (i, (name, json)) in [
+            // ① 显式空集合 = 非规范表示(规范表示是「没有该键」)。
+            ("显式空集合", format!(r#"{{{acct},"admins":{{"ACCT_A":[]}}}}"#)),
+            // ② 指向不存在的账户(register_first 落盘失败没删干净就会长这样)。
+            ("幽灵账户", format!(r#"{{{acct},"admins":{{"ACCT_B":["D1"]}}}}"#)),
+            // ③ 指向不在该账户设备表里的设备(revoke 没同步摘 admins 就会长这样)。
+            ("幽灵管理位", format!(r#"{{{acct},"admins":{{"ACCT_A":["DX"]}}}}"#)),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            // ⚠ 目录名按**序号**取,别按 name 派生:`"显式空集合"` 与 `"幽灵管理位"`
+            // 都是 15 字节,按长度取会让两格共用一个目录。
+            let dir = tmpdir(&format!("admins-bad-{i}"));
+            let Err(err) = load_with_registry(&dir, &json) else {
+                panic!("{name}:这份文件必须拒启");
+            };
+            assert_eq!(err.kind(), io::ErrorKind::InvalidData, "{name}");
+        }
+        // 阴性对照:同一份文件写成规范形就该正常加载(证明上面三条红不是被别的东西拒的)。
+        let dir = tmpdir("admins-good");
+        let r = load_with_registry(&dir, &format!(r#"{{{acct},"admins":{{"ACCT_A":["D1"]}}}}"#))
+            .expect("规范形必须加载得了");
+        assert!(r.is_admin("ACCT_A", "D1"));
+    }
+
+    /// 存量账户超 `MAX_ROSTER_DEVICES` 即**拒启**(设计审一轮 H6):`device_cap` 只在
+    /// 注册那刻判、load 从不校验存量,而硬帽可调低 ⇒ 超编账户是能存在的。
+    /// **不静默截断**——截断会藏掉设备,比帧过大危险得多。
+    #[test]
+    fn load_rejects_account_over_roster_capacity() {
+        let cap = sync_proto::MAX_ROSTER_DEVICES;
+        let devs = |n: usize| {
+            (0..n).map(|i| format!(r#""D{i}":"{}""#, key_hex(0))).collect::<Vec<_>>().join(",")
+        };
+        // 恰好到顶:放行(边界的另一半——否则「拒启」可能只是因为别的原因)。
+        let dir = tmpdir("roster-cap-ok");
+        let ok = load_with_registry(&dir, &format!(r#"{{"accounts":{{"A":{{{}}}}}}}"#, devs(cap)));
+        assert!(ok.is_ok(), "恰好 {cap} 台必须过");
+        // 超一台:拒启。
+        let dir = tmpdir("roster-cap-over");
+        let Err(err) =
+            load_with_registry(&dir, &format!(r#"{{"accounts":{{"A":{{{}}}}}}}"#, devs(cap + 1)))
+        else {
+            panic!("超编必须拒启");
+        };
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        assert!(err.to_string().contains("MAX_ROSTER_DEVICES"), "错误要点名那道闸:{err}");
+    }
+
+    /// **成功落盘的状态,下次一定 load 得动**(实现审弹一 M2)。
+    ///
+    /// 反例长这样:`register_device` 的容量闸此前**只信入参 `device_cap`**,而
+    /// `MAX_ROSTER_DEVICES` 只由 `serve_inner` 在启动时校配置。传一个 33 进来,第 33 台
+    /// 就会**成功写盘**,而下次 `load` 因超编**拒启** —— 一次成功的写把服务器锁在门外。
+    ///
+    /// ⚠ 判据挑的是**「写完还起得来」**,不是「第 33 台被拒」:后者只证明有一道闸,
+    /// 前者才是这道闸存在的**理由**。故这只测最后真的去 `load` 一次落盘结果。
+    #[test]
+    fn no_successful_write_can_leave_a_registry_that_refuses_to_load() {
+        let cap = sync_proto::MAX_ROSTER_DEVICES;
+        let dir = tmpdir("write-gate-roster-cap");
+        let bl = dir.join("banlist.txt");
+        fs::write(&bl, "# 空封禁表\n").unwrap();
+        let path = dir.join("registry.json");
+        let mut r = Registry::load(&bl, path.clone()).unwrap();
+        r.register_first("ACCT_A", "D0", [0; 32]).unwrap();
+        // 商业层那道闸不是本测的被测对象,先把它抬开 —— 否则拒第 33 台的会是 seat_quota,
+        // 这只测就变成「另一道闸背书成绿」(first-draft-checklist 第 13 条)。
+        r.set_entitlement(
+            "ACCT_A",
+            Entitlement {
+                tier: "test".into(),
+                expires_at: None,
+                seat_quota: cap as u32 + 8,
+                fastlane_bytes_per_month: FREE_FASTLANE_BYTES_PER_MONTH,
+            },
+            t0(),
+        )
+        .unwrap();
+        // 调用方传一个**越过协议硬帽**的 device_cap(今天 serve_inner 拒启这种配置,
+        // 但 Registry 是 pub,本层的不变量必须自己守)。
+        let bogus_cap = cap + 1;
+        for i in 1..cap {
+            r.register_device("ACCT_A", &format!("D{i}"), [i as u8; 32], bogus_cap, t0())
+                .unwrap_or_else(|e| panic!("第 {} 台该进得来:{e:?}", i + 1));
+        }
+        assert_eq!(r.devices_of("ACCT_A").len(), cap, "先填到恰好到顶");
+        // 到顶之后再来一台:拒,而且拒它的是**协议硬帽**不是 device_cap(后者是 33)。
+        assert_eq!(
+            r.register_device("ACCT_A", "DOVER", [99; 32], bogus_cap, t0()),
+            Err(RegisterError::AccountFull),
+            "到了协议硬帽就该拒,哪怕调用方给的帽子更大"
+        );
+        // ⭐ 真正的判据:盘上现在这份,新二进制起得来。
+        Registry::load(&bl, path).expect("成功落盘的 registry 必须 load 得动");
+        // 租约那条路同样早拒(别发一枚注定消费不掉的租约)。
+        assert_eq!(
+            r.grant_seat_lease("ACCT_A", "D0", "DOVER", [99; 32], bogus_cap, t0(), LEASE_TTL),
+            Err(SeatLeaseError::AccountFull)
+        );
+    }
+
+    /// L1(实现审弹一):`set_admin(on=true)` 的回滚里那句「连带把**新建的**空集合删掉」
+    /// 此前没有测 —— 既有那只用的账户 `admins` 键**本来就在**(首台注册建的),于是
+    /// 「从无到有建了键、回滚要把键也删掉」这一格谁也没走。
+    ///
+    /// 它漏掉的后果与 [`no_successful_write_can_leave_a_registry_that_refuses_to_load`]
+    /// 同族:留下 `{"ACCT_A": []}` 这个**非规范表示**,内存里看着人畜无害,直到**下一次
+    /// 成功落盘**把它写进文件 —— 再下次启动就撞 load 那道「显式空集合即拒启」。
+    #[test]
+    fn set_admin_rollback_removes_a_key_it_created_from_nothing() {
+        let dir = tmpdir("admins-set-rollback-fromnothing");
+        let bl = dir.join("banlist.txt");
+        fs::write(&bl, "# 空封禁表\n").unwrap();
+        let path = dir.join("registry.json");
+        // 存量形:账户有两台设备,**admins 一个键都没有**(未回填)。
+        fs::write(
+            &path,
+            format!(
+                r#"{{"accounts":{{"ACCT_A":{{"D1":"{}","D2":"{}"}}}}}}"#,
+                key_hex(1),
+                key_hex(2)
+            ),
+        )
+        .unwrap();
+        let mut r = Registry::load(&bl, path.clone()).unwrap();
+        assert!(!r.has_admins("ACCT_A"), "前置:这个账户此刻一个管理设备都没有");
+        // 落盘失败:把目标文件换成目录。
+        fs::remove_file(&path).unwrap();
+        fs::create_dir(&path).unwrap();
+        assert_eq!(r.set_admin("ACCT_A", "D1", true), Err(RegisterError::Persist));
+        assert!(!r.has_admins("ACCT_A"), "刚**新建**的那个键要连键一起删掉");
+        assert!(r.admins.is_empty(), "整张表回到出厂态,不许留下 ACCT_A:[]");
+        // ⭐ 判据落到真实后果上:恢复落盘能力,让**下一次成功的写**把当前内存态写出去,
+        // 它必须仍是 load 得动的(留下空集合的话,这一步写出的文件下次启动就拒)。
+        //
+        // ⚠ **这一步必须挑一条不碰 `admins` 的持久写**(实现审弹一 L2):我第一版写的是
+        // `set_admin(D2, true)` —— 它会把残留的 `ACCT_A: []` **顺手修成** `["D2"]`,于是
+        // 坏回滚实现照样能过,整段没有牙齿。`set_entitlement` 只动 entitlements,残留的
+        // 空集合会被原样写进文件。
+        fs::remove_dir(&path).unwrap();
+        r.set_entitlement(
+            "ACCT_A",
+            Entitlement {
+                tier: "test".into(),
+                expires_at: None,
+                seat_quota: 4,
+                fastlane_bytes_per_month: FREE_FASTLANE_BYTES_PER_MONTH,
+            },
+            t0(),
+        )
+        .expect("恢复之后要写得出去");
+        Registry::load(&bl, path).expect("回滚之后写出的 registry 必须 load 得动");
+    }
+
+    /// 四条持久写路径之一:`register_first` 落盘失败 → 设备、账户键、**admins 键**
+    /// 三样一起回滚。留下 admins 就是个指向不存在账户的幽灵管理位,下次启动撞 load。
+    #[test]
+    fn register_first_persist_failure_rolls_back_admins_too() {
+        let dir = tmpdir("admins-rollback-first");
+        let bl = dir.join("banlist.txt");
+        fs::write(&bl, "# 空封禁表\n").unwrap();
+        let mut r = Registry::load(&bl, dir.join("no-such-dir").join("registry.json")).unwrap();
+        assert_eq!(r.register_first("ACCT_A", "D1", [1; 32]), Err(RegisterError::Persist));
+        assert!(!r.has_admins("ACCT_A"), "幽灵管理位必须一起回滚");
+        assert!(r.admins.is_empty());
+    }
+
+    /// 四条持久写路径之二:`register_device` 落盘失败**只**删刚加的那台;admins 在这条
+    /// 路上不涉及(新设备默认不是管理设备),幸存设备的管理位一格不动。
+    #[test]
+    fn register_device_persist_failure_leaves_admins_alone() {
+        let dir = tmpdir("admins-rollback-endorse");
+        let mut r = fresh(&dir);
+        r.register_first("ACCT_A", "D1", [1; 32]).unwrap();
+        // 注册成功后把 registry.json 换成同名目录:save 的 rename 必败。
+        fs::remove_file(dir.join("registry.json")).unwrap();
+        fs::create_dir(dir.join("registry.json")).unwrap();
+        assert_eq!(
+            r.register_device("ACCT_A", "D2", [2; 32], 8, t0()),
+            Err(RegisterError::Persist)
+        );
+        assert_eq!(r.pubkey_of("ACCT_A", "D2"), None, "刚加的那台要删掉");
+        assert_eq!(r.pubkey_of("ACCT_A", "D1"), Some([1; 32]), "幸存设备不许被误删");
+        assert!(r.is_admin("ACCT_A", "D1"), "幸存设备的管理位一格不动");
+    }
+
+    /// 管理位跟着设备走:吊销即摘、摘到空即删键(规范表示)、落盘持久。
+    /// ⚠ 本层**不**拦「把 admins 摘空」——运营者面的逃生口,不变量只约束用户面。
+    #[test]
+    fn revoke_device_drops_the_admin_bit() {
+        let dir = tmpdir("admins-revoke");
+        let mut r = fresh(&dir);
+        r.register_first("ACCT_A", "D1", [1; 32]).unwrap();
+        r.register_device("ACCT_A", "D2", [2; 32], 8, t0()).unwrap();
+        assert_eq!(r.set_admin("ACCT_A", "D2", true), Ok(true));
+        // 吊掉一台管理设备:另一台仍在册,键还在。
+        assert_eq!(r.revoke_device("ACCT_A", "D2"), Ok(RevokeOutcome::DeviceRevoked));
+        assert!(!r.is_admin("ACCT_A", "D2"));
+        assert!(r.is_admin("ACCT_A", "D1"));
+        // 吊掉最后一台管理设备:运营者面**允许**,且 admins 键随之消失(空=无键)。
+        assert_eq!(r.revoke_device("ACCT_A", "D1"), Ok(RevokeOutcome::AccountSealed));
+        assert!(!r.has_admins("ACCT_A"));
+        assert!(r.admins.is_empty(), "空集合的唯一规范表示是没有该键");
+        // 落盘持久且**重 load 不撞不变量**(摘不干净就会在这一步拒启)。
+        let r2 = fresh(&dir);
+        assert!(!r2.has_admins("ACCT_A"));
+    }
+
+    /// 四条持久写路径之三:吊销落盘失败 → 设备与**管理位**净变化为零。
+    #[test]
+    fn revoke_persist_failure_restores_the_admin_bit() {
+        let dir = tmpdir("admins-revoke-rollback");
+        let mut r = fresh(&dir);
+        r.register_first("ACCT_A", "D1", [1; 32]).unwrap();
+        fs::remove_file(dir.join("registry.json")).unwrap();
+        fs::create_dir(dir.join("registry.json")).unwrap();
+        assert_eq!(r.revoke_device("ACCT_A", "D1"), Err(RevokeError::Persist));
+        assert_eq!(r.pubkey_of("ACCT_A", "D1"), Some([1; 32]));
+        assert!(r.is_admin("ACCT_A", "D1"), "管理位也得原样还回去");
+    }
+
+    /// `set_admin` 的幂等与规范表示。幂等那格是 §5.13 M1 的落地:管理设备可以无限
+    /// 交替 Grant/Revoke,每次都触发全量落盘 + 全账户 fan-out;**无变化就不做事**
+    /// 砍掉了那条路,故这里断的是「回 false」——调用方据它决定不 save、不升 revision。
+    #[test]
+    fn set_admin_idempotent_and_canonical_empty() {
+        let dir = tmpdir("admins-set");
+        let mut r = fresh(&dir);
+        r.register_first("ACCT_A", "D1", [1; 32]).unwrap();
+        r.register_device("ACCT_A", "D2", [2; 32], 8, t0()).unwrap();
+        // 已是管理设备再设 → 无变化。
+        assert_eq!(r.set_admin("ACCT_A", "D1", true), Ok(false));
+        // 真变化 → true。
+        assert_eq!(r.set_admin("ACCT_A", "D2", true), Ok(true));
+        assert_eq!(r.set_admin("ACCT_A", "D2", true), Ok(false));
+        assert_eq!(r.set_admin("ACCT_A", "D2", false), Ok(true));
+        assert_eq!(r.set_admin("ACCT_A", "D2", false), Ok(false), "已不是再取消也是无变化");
+        // 不在册的设备不许拿管理位(否则就是造幽灵管理位,load 会拒启)。
+        assert_eq!(
+            r.set_admin("ACCT_A", "DX", true),
+            Err(RegisterError::AccountNotInitialized)
+        );
+        assert_eq!(
+            r.set_admin("ACCT_B", "D1", true),
+            Err(RegisterError::AccountNotInitialized)
+        );
+        // 运营者面可以清空(逃生口的另一半),清空即删键。
+        assert_eq!(r.set_admin("ACCT_A", "D1", false), Ok(true));
+        assert!(r.admins.is_empty());
+        let r2 = fresh(&dir);
+        assert!(!r2.has_admins("ACCT_A"), "清空要落盘");
+    }
+
+    /// 四条持久写路径之四(**我原设计整个漏了它的回滚**)。`on=true` 与 `on=false`
+    /// 是两条**不同**的回滚臂,两个方向都要真跑(二轮 M5)。
+    #[test]
+    fn set_admin_persist_failure_rolls_back_both_arms() {
+        // 臂一:on=true 落盘失败 → 撤销刚插的(连带把新建的空集合删掉)。
+        let dir = tmpdir("admins-set-rollback-on");
+        let mut r = fresh(&dir);
+        r.register_first("ACCT_A", "D1", [1; 32]).unwrap();
+        r.register_device("ACCT_A", "D2", [2; 32], 8, t0()).unwrap();
+        fs::remove_file(dir.join("registry.json")).unwrap();
+        fs::create_dir(dir.join("registry.json")).unwrap();
+        assert_eq!(r.set_admin("ACCT_A", "D2", true), Err(RegisterError::Persist));
+        assert!(!r.is_admin("ACCT_A", "D2"), "刚插的管理位要撤掉");
+        assert!(r.is_admin("ACCT_A", "D1"), "别的管理位不许受牵连");
+
+        // 臂二:on=false 落盘失败 → 恢复刚删的(且那次删可能把整个键删掉了)。
+        let dir = tmpdir("admins-set-rollback-off");
+        let mut r = fresh(&dir);
+        r.register_first("ACCT_A", "D1", [1; 32]).unwrap();
+        fs::remove_file(dir.join("registry.json")).unwrap();
+        fs::create_dir(dir.join("registry.json")).unwrap();
+        assert_eq!(r.set_admin("ACCT_A", "D1", false), Err(RegisterError::Persist));
+        assert!(r.is_admin("ACCT_A", "D1"), "刚删的管理位要恢复(键也得重建)");
+        assert!(r.has_admins("ACCT_A"));
+    }
+
+    /// 离线 validator 与正式 load **同源**(§5.14 3d:两份判据不许各写一遍)——
+    /// 它就是调 load,故「校验过的文件,新二进制必启得来」是结构事实。
+    /// 回执里那份「未设管理设备的账户」清单 = §5.16.5-2 回填工序要的那张表。
+    #[test]
+    fn validate_registry_is_the_same_predicate_as_load() {
+        let dir = tmpdir("validate-registry");
+        let bl = dir.join("banlist.txt");
+        fs::write(&bl, "# 空封禁表\n").unwrap();
+        // 坏文件:load 拒启 ⇒ validator 必须也拒(而不是给个「看着合理」的绿)。
+        let bad = dir.join("bad.json");
+        fs::write(&bad, format!(r#"{{"accounts":{{"ACCT_A":{{"D1":"{}"}}}},"admins":{{"ACCT_A":[]}}}}"#, key_hex(1))).unwrap();
+        assert!(validate_registry(&bl, bad.clone()).is_err());
+        assert!(Registry::load(&bl, bad).is_err());
+        // 存量好文件:过,且点名「ACCT_A 还没设管理设备」。
+        let legacy = dir.join("legacy.json");
+        fs::write(&legacy, format!(r#"{{"accounts":{{"ACCT_A":{{"D1":"{}"}}}}}}"#, key_hex(1)))
+            .unwrap();
+        let report = validate_registry(&bl, legacy).expect("存量文件必须过");
+        assert!(report.starts_with("ok:"), "{report}");
+        assert!(report.contains("ACCT_A"), "回填清单要点名那个账户:{report}");
+        // 已回填的文件:过,且清单为空。
+        let filled = dir.join("filled.json");
+        fs::write(
+            &filled,
+            format!(
+                r#"{{"accounts":{{"ACCT_A":{{"D1":"{}"}}}},"admins":{{"ACCT_A":["D1"]}}}}"#,
+                key_hex(1)
+            ),
+        )
+        .unwrap();
+        let report = validate_registry(&bl, filled).expect("已回填的文件必须过");
+        assert!(report.contains("未设管理设备的账户 0 个"), "{report}");
+    }
+
+    /// **路径拼错时绝不回「合法」**(实现审弹一 M1)。
+    ///
+    /// `load` 把 `NotFound` 当首启空 registry —— 那对服务器是对的,对这只**升级前必跑**
+    /// 的工具是假绿:`--validate-registry typo.json` 会回「ok,账户 0 个 / 未设管理设备
+    /// 的账户 0 个」,而它答错的这一刻正是最需要它答对的一刻(实测过,回执逐字如此)。
+    /// 存在性这一格因此由 validator 自己判,内容判据仍与 load 同源。
+    #[test]
+    fn validate_registry_refuses_a_target_that_is_not_a_file() {
+        let dir = tmpdir("validate-registry-missing");
+        let bl = dir.join("banlist.txt");
+        fs::write(&bl, "# 空封禁表\n").unwrap();
+        // ① 不存在的路径:必须红,且**不许**被当成「空 registry」。
+        let missing = dir.join("no-such-registry.json");
+        let Err(e) = validate_registry(&bl, missing) else {
+            panic!("路径不存在时绝不许回「合法」——那是升级前唯一那道闸的假绿");
+        };
+        assert_eq!(e.kind(), io::ErrorKind::NotFound);
+        // ② 目录:同样不是一份 registry。
+        //    ⚠ **判「红没红」在这一格没有牙齿** —— 目录 `load` 自己也会拒(read_to_string
+        //    失败),摘掉这道闸照样红(变异 ② 当场证明)。这道闸买到的是**给运维的那句
+        //    话**:「你指的不是一份文件」比「不是合法 JSON」有用得多。故判据钉**拒它的
+        //    是哪道闸**,不是「拒没拒」(first-draft-checklist 第 13 条)。
+        let asdir = dir.join("adirectory.json");
+        fs::create_dir(&asdir).unwrap();
+        let Err(e) = validate_registry(&bl, asdir) else { panic!("目录不是一份 registry") };
+        assert!(
+            e.to_string().contains("不是普通文件"),
+            "该由 validator 自己那道闸拒,并说清楚为什么;现在拒它的是别处:{e}"
+        );
+        // ③ 一红一绿对照:同一目录下真有一份合法文件时,它照样过 —— 否则上面两条
+        //    可能只是因为 banlist 或别的什么而红。
+        let good = dir.join("good.json");
+        fs::write(&good, format!(r#"{{"accounts":{{"ACCT_A":{{"D1":"{}"}}}}}}"#, key_hex(1)))
+            .unwrap();
+        assert!(validate_registry(&bl, good).expect("合法文件必须过").starts_with("ok:"));
+    }
+
     #[test]
     fn revoke_persist_failure_rolls_back() {
         let dir = tmpdir("revoke-rollback");

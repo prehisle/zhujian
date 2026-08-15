@@ -615,6 +615,45 @@
       .sync .state .err { color: var(--seal); word-break: break-all; }
       .sync .fine { font-size: var(--fs-12); color: var(--ink-faint); margin: 8px 0 0; }
 
+      /* 设备名单(identity-plan §5.8,367 片⑤):一行一台,收起态只给名字与短 id,
+         点开才是完整 26 位 + §5.9 那段说明 + 操作。竖屏摆不下一行摊开,而说明恰恰是
+         本案最不能省的东西,故它跟着展开走、不塞进只活 6 秒的底部确认条。 */
+      .devices { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
+      .dev-row {
+        display: flex; align-items: center; flex-wrap: wrap; gap: 8px; width: 100%;
+        background: var(--raised); border: 1px solid var(--line-strong);
+        border-radius: var(--radius-sm); padding: 10px 12px;
+        font: inherit; color: var(--ink); text-align: left;
+      }
+      .dev-row.open { display: block; }
+      .dev-head {
+        display: flex; align-items: center; flex-wrap: wrap; gap: 8px; width: 100%;
+        background: none; border: 0; padding: 0; font: inherit; color: var(--ink); text-align: left;
+      }
+      .dev-name { font-size: var(--fs-14); word-break: break-all; }
+      .dev-sid {
+        margin-left: auto; font-family: ui-monospace, monospace;
+        font-size: var(--fs-12); color: var(--ink-soft); letter-spacing: 0.04em;
+      }
+      .dev-badge {
+        font-size: var(--fs-12); line-height: 1.6; color: var(--ink);
+        border: 1px solid var(--line-strong); border-radius: var(--radius-pill); padding: 1px 8px;
+      }
+      .dev-badge.admin { color: var(--seal); border-color: var(--seal-line); background: var(--seal-tint); }
+      /* 唯一定位那一格(§5.8 ⛔):别名可被账户内任一设备改写,只有完整 ID 定得死是哪台。 */
+      .dev-id {
+        display: block; margin: 8px 0; font-family: ui-monospace, monospace;
+        font-size: var(--fs-12); letter-spacing: 0.04em; color: var(--ink);
+        word-break: break-all; user-select: text;
+      }
+      .dev-facts {
+        margin: 8px 0; padding-left: 18px;
+        font-size: var(--fs-13); line-height: 1.7; color: var(--ink);
+      }
+      .dev-facts li { margin-bottom: 4px; }
+      .devices .err { color: var(--seal); font-size: var(--fs-13); word-break: break-all; margin: 8px 0; }
+      .devices .row button.danger { background: var(--seal); color: var(--on-seal); }
+
       /* 标签管理面(190):每行 = 拖手柄 + 名 + 计数 + 类型;拖手柄纵向拖排序。 */
       #topics-list { position: relative; }
       .trow {
@@ -1025,6 +1064,12 @@
         </div>
         <p id="sync-recovery-note" class="fine" data-i18n="shell.recoveryNote" hidden>恢复码是账户密钥,不是数据备份:恢复还需要至少一台在线的完整副本。抄写在纸上,别截图、别存网盘。</p>
         <code id="sync-recovery" class="code" hidden></code>
+        <!-- 设备名单(identity-plan §5.8):「同伴在线 N」背后的真名单,移除设备与管理
+             设备名单都在里头。权限差别在**行上**表达,入口恒显。 -->
+        <div class="row" style="margin-top: 8px">
+          <button id="sync-devices-btn" class="ghost" style="flex: 1" data-i18n="devices.entry">设备名单</button>
+        </div>
+        <div id="sync-devices" class="devices" hidden></div>
         <!-- 连接信息(账户/服务器)收进折叠:唯一出处保留,首屏不摆概念。 -->
         <div class="row" style="margin-top: 8px">
           <button id="sync-conninfo-btn" class="ghost" style="flex: 1" data-i18n="shell.connInfo">连接信息</button>

@@ -356,6 +356,70 @@ async fn begin_reset_tombstones_waits_for_refs_and_finish_releases() {
     sup.stop("a").await.unwrap();
 }
 
+/// **373 真机量出的那条重置患**:有局域网直连链路时「重置空间」必败,且空间被墓碑封死
+/// (`lan_peers=1` 败 2/2、`lan=0` 过 3/3;重启 app 不是解——链路几秒就回来)。
+///
+/// 病不在链路上,在「**强引用归零是异步才发生的事**」:transport 退出时 `abort()` 掉的
+/// 那几族任务(每链的 LAN 读/写泵、准入表里未移交的 pre-auth 握手、在飞的拨号)各攥着一
+/// 份 db 克隆,而 db 那道证明原先是**单发**的——判死到 runtime 收尸之间那一瞬,它必然还
+/// 没归零,于是报「必是 bug」。那句断言本身是错的:不需要任何 bug 就走得到。
+///
+/// 夹具取**最狠的那一档**模型:一只已派出的 `spawn_blocking` 闭包攥着克隆(句柄当场丢掉
+/// = 分离,而阻塞任务本就不可取消,连 abort 都停不下来)。它比真实那几族更难吸收,故过了
+/// 这一关的修法对真实收尾路径恒成立。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn begin_reset_absorbs_a_late_db_arc_release() {
+    let sup = SpaceSupervisor::new(tokio::runtime::Handle::current(), 2, None);
+    let (path, conn, clock) = test_db("resetlate");
+    let (s, _ev) = spec("a", &path, None);
+    let rt = sup.activate(s, conn, clock).unwrap();
+    wait_state(&rt.status, "off").await;
+    // 克隆在 spawn 那一刻就被闭包捕获了,故「计数已经是 2」与闭包排到没排到无关
+    // ——这条红是确定的,不靠调度赛跑。
+    let late = Arc::clone(&rt.db);
+    drop(tokio::task::spawn_blocking(move || {
+        std::thread::sleep(Duration::from_millis(400));
+        drop(late);
+    }));
+    drop(rt);
+    let ticket = tokio::time::timeout(Duration::from_secs(9), sup.begin_reset("a"))
+        .await
+        .expect("begin_reset 不得挂到超时")
+        .expect("迟到的 db 克隆必须被有界重试吸收掉");
+    assert_eq!(ticket.space_id(), "a");
+    // 吸收 ≠ 放宽判据:重置照常走完(墓碑仍在),finish 之后空间才真正离表。
+    assert!(sup.get("a").map(|_| ()).unwrap_err().contains("重置"));
+    sup.finish_reset(ticket);
+    assert!(sup.get("a").map(|_| ()).unwrap_err().contains("未知空间"));
+}
+
+/// 上一条的**另一半**:有界重试吸收的只是「刚判死还没收尸」那个必然窗口,**它不放宽
+/// 判据**。真有人永不放手时必须 fail-closed —— `Err` + 墓碑留下,文件步一个字节都不许动。
+///
+/// 这一格此前**无人守**(374 变异③:把 db 那道强引用归零证明整格拆掉,两只 begin_reset
+/// 的测一只都不红)。它守的是数据安全红线:Unix/Android 上 unlink 一个还开着的库,旧连接
+/// 会接着写那个匿名 inode,同路径再建新库 = 真双写分叉。
+///
+/// 走**虚拟时钟**(`start_paused`:全部任务空闲时 tokio 自动把时间跳到下一个定时器),
+/// 故那 10s 死线在挂钟上一瞬即过,不给测试套加十秒。
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn begin_reset_fails_closed_when_a_db_ref_never_lets_go() {
+    let sup = SpaceSupervisor::new(tokio::runtime::Handle::current(), 2, None);
+    let (path, conn, clock) = test_db("resetstuck");
+    let (s, _ev) = spec("a", &path, None);
+    let rt = sup.activate(s, conn, clock).unwrap();
+    wait_state(&rt.status, "off").await;
+    // 攥着不放的一份 db 克隆(模型:一只永远收不了尸的收尾任务)。
+    let stuck = Arc::clone(&rt.db);
+    drop(rt);
+    let err = sup.begin_reset("a").await.map(|_| ()).unwrap_err();
+    assert!(err.contains("库连接仍被引用"), "{err}");
+    // 宁封锁不双写:墓碑留下(调用方据此**不做**文件步),空间此后不可用也不可激活。
+    assert!(sup.get("a").map(|_| ()).unwrap_err().contains("重置"));
+    assert_eq!(sup.count(), 1, "墓碑计入表");
+    drop(stuck);
+}
+
 /// 未激活空间(手机后台空间/桌面未开)重置:直插墓碑挡并发激活,finish 即除。
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn begin_reset_on_inactive_space_inserts_tombstone() {
