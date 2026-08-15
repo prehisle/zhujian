@@ -20,6 +20,11 @@ const ALLOW = [
   ".github/", "android/", "core/", "e2e/", "scripts/", "server/", "site/", "src/",
   "src-tauri/", "sync-proto/",
   "docs/sync-protocol.md", "docs/design-rules.md", "docs/why-no-framework.md",
+  // 385:三道门禁(timing / radius / fs)会 readFileSync 它——§2.2/§2.4/§2.5 那三张表
+  // 是**被核对的断言**,不是描述。它不进公开仓,那三道在公开仓的 CI 上就永远 ENOENT
+  // (385 探路实测:preflight 红在第五道 check-timing-drift)。内容是纯 UI 规范,无商业/
+  // 密钥/服务器信息;用户 2026-08-15 拍板公开。
+  "docs/ui-guidelines.md",
   "index.html", "notebook.html", "package.json", "package-lock.json",
   "tsconfig.json", "vite.config.ts", "readme.md", "readme.en.md", "LICENSE",
   ".gitignore", ".gitattributes",
