@@ -11,8 +11,10 @@ async fn connect_and_auth(
     // 而「会话收场后置成立刻」在从没连上过时根本轮不到,`until(None)` 又永不就绪——于是坏中转
     // 卡住第一次握手时,§5 要的 60s 定向 Hello 一枚都不会发。进建连即武装;**只有鉴权成功才
     // 清**(拨号失败也清的话,退避 1s 起步时就成了每秒一枚的 Hello 洪流)。
+    // 「立刻」经 [`lan_hello_first_delay`] 说出口(生产恒 0):不验 §5 重发的那些 lan 用例要
+    // 把这一响推出自己的窗口,否则它会在 `select!` 里随机插队(见那个函数的头注)。
     if pumps.lan_hello_due.is_none() {
-        pumps.lan_hello_due = Some(Instant::now());
+        pumps.lan_hello_due = Some(Instant::now() + lan_hello_first_delay());
     }
     let mut connecting = std::pin::pin!(async {
         let mut ws = dial(url).await?;

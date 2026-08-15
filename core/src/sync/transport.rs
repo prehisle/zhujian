@@ -1600,8 +1600,10 @@ async fn run_inner(
         session_wrapup(&t, &cfg, &mut pumps).await;
         // 会话**建立过**才让断网期定向 Hello 立刻起一轮(§5「本机中转离线 → 立即发一帧」)。
         // `is_none()` 这一判是防连环拨号失败把它一路提前:发过一轮之后下次恒是 60s 后。
+        // 「立刻」经 [`lan_hello_first_delay`] 说出口(生产恒 0),与建连那处同一个出口——
+        // 两处各写各的话,测试把第一响推远时会漏掉这一处。
         if pumps.lan_hello_due.is_none() {
-            pumps.lan_hello_due = Some(Instant::now());
+            pumps.lan_hello_due = Some(Instant::now() + lan_hello_first_delay());
         }
         match end {
             Ok(SessionEnd::Reconfigured) => {
@@ -3908,6 +3910,51 @@ impl Drop for HelloPeriodGuard {
     fn drop(&mut self) {
         let prev = self.0;
         LAN_HELLO_PERIOD.with(|p| p.set(prev));
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// 断网期定向 Hello **第一响**的推迟量,见 [`lan_hello_first_delay`]。
+    static LAN_HELLO_FIRST_DELAY: std::cell::Cell<Option<Duration>> =
+        const { std::cell::Cell::new(None) };
+}
+
+/// 断网期定向 Hello 的**第一响**距此刻多久(§5「本机中转离线 → 立即对全部活跃 lan 对端发一帧」
+/// ⇒ 生产恒为 0,上面那个 `period` 管的是第二响起的间隔)。
+///
+/// **测试可把它推出窗口**(387 那只发版闸假红的修法):这只计时器在**第一次拨号**时就武装成
+/// 「立刻」([`connect_and_auth`]),而 lan 台架的中转地址是必然连不上的 `127.0.0.1:1` ⇒ 这一响
+/// **必定**落在用例期间;它与移交、心跳、本地写在同一个 `select!` 里,谁先谁后由「就绪臂之间
+/// 随机挑」定。对**不验 §5 重发**的那些用例,这就是一枚会随机插队的帧:轻则多一枚 Hello 排在
+/// 期待的数据帧前面,重则它自己那次 `dispatch` 把一次性栅栏先用掉 —— 栅栏拦住的于是不再是用例
+/// 点名的那一枚。⇒ 那些用例把第一响推到用例结束之后,让台架安静。
+///
+/// 同 [`lan_hello_period`],线程局部 + RAII 把手([`HelloFirstDelayGuard`]),理由见那两处。
+fn lan_hello_first_delay() -> Duration {
+    #[cfg(test)]
+    if let Some(d) = LAN_HELLO_FIRST_DELAY.with(|p| p.get()) {
+        return d;
+    }
+    Duration::ZERO
+}
+
+/// [`lan_hello_first_delay`] 覆盖位的 RAII 把手,理由同 [`HelloPeriodGuard`]。
+#[cfg(test)]
+struct HelloFirstDelayGuard(Option<Duration>);
+
+#[cfg(test)]
+impl HelloFirstDelayGuard {
+    fn set(d: Duration) -> HelloFirstDelayGuard {
+        HelloFirstDelayGuard(LAN_HELLO_FIRST_DELAY.with(|p| p.replace(Some(d))))
+    }
+}
+
+#[cfg(test)]
+impl Drop for HelloFirstDelayGuard {
+    fn drop(&mut self) {
+        let prev = self.0;
+        LAN_HELLO_FIRST_DELAY.with(|p| p.set(prev));
     }
 }
 

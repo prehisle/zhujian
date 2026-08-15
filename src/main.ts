@@ -123,7 +123,7 @@ void refreshHotkeyBar();
 // 空间。修饰是「本条」状态,存完即结算回想法;和文字/图草稿一样断电可恢复(念头别丢)。
 type CaptureMode = "idea" | "task";
 let captureMode: CaptureMode = "idea";
-let captureTags: string[] = []; // 标签名(存 title,存那刻才 resolve/建 topic,弃稿不留孤儿)
+let captureTags: string[] = []; // 标签名(存 title,存那刻才由后端复用/新建 topic,弃稿不留孤儿)
 
 // 修饰草稿(纯设备本地 UI 状态,不进 DB / 同步;与 compose-draft 同体感,单列小键)。
 const MODS_KEY = "zhujian.capture-mods";
@@ -199,23 +199,6 @@ function renderMods(): void {
     );
     modsBar.appendChild(chip);
   }
-}
-
-// 标签名 → topic id:list_topics 复用同名,缺则 create_topic(存那刻才建,弃稿不留孤儿)。
-type TopicItem = { id: string; title: string };
-async function resolveTags(titles: string[]): Promise<string[]> {
-  const all = await invoke<TopicItem[]>("list_topics");
-  const byTitle = new Map(all.map((t) => [t.title, t.id]));
-  const ids: string[] = [];
-  for (const t of titles) {
-    let tid = byTitle.get(t);
-    if (!tid) {
-      tid = await invoke<string>("create_topic", { title: t });
-      byTitle.set(t, tid);
-    }
-    ids.push(tid);
-  }
-  return ids;
 }
 
 // 空间选择器(方案 B:切壳侧前台空间 → 广播 space-foreground → 本窗 targetSpace 更新、
@@ -515,15 +498,18 @@ input.addEventListener("keydown", async (e) => {
       persistCaptureText(); // 落库成功即清磁盘草稿(空文字 → 清键;剩下的暂存图属下一条,自留)
       resetMods(); // 模式/标签随本条结算,下一条从想法起(chip 清空)
 
-      // 挂标签:标签名 → id(复用同名 / 缺则建),想法走 file_note_to_topic(加法建链)、
-      // 任务走 add_task_topic。失败不假装成功、也不吞图批——记一句提示,继续附图。
+      // 挂标签:**一个标签名 = 一条命令**(387 可优化项第①条)。后端按标题在**同一事务**里
+      // 复用同名 / 缺则新建 / 挂链,前端不再自己走「先 create_topic 拿 id、再挂链」那两步——
+      // 那两步之间断掉(第二步失败、进程没了)会留下一枚谁也没挂上的空标签,而这里一次可能挂
+      // 好几个,失败面比看板那处还大。任务走 add_task_topic_by_title、想法走 file_note_to_topic
+      // 的 newTitle 分支(两条都自带「同名复用」)。失败不假装成功、也不吞图批——记一句提示,
+      // 继续附图。
       let tagErr = "";
       if (tags.length > 0) {
         try {
-          const ids = await resolveTags(tags);
-          for (const tid of ids) {
-            if (mode === "task") await invoke("add_task_topic", { id, topicId: tid });
-            else await invoke("file_note_to_topic", { id, topicId: tid, newTitle: null });
+          for (const title of tags) {
+            if (mode === "task") await invoke("add_task_topic_by_title", { id, title });
+            else await invoke("file_note_to_topic", { id, topicId: null, newTitle: title });
           }
         } catch (err) {
           tagErr = String(err);

@@ -4404,6 +4404,15 @@ async fn generation_exhaustion_refuses_new_links() {
 /// 这条用例就什么也没验)。
 #[tokio::test]
 async fn a_frame_born_under_gen1_never_lands_on_gen2() {
+    // **先把 §5 那枚会插队的帧挪出窗口**(387 排队第⑦条那只发版闸假红的根)。断网期定向
+    // Hello 的计时器在**第一次拨号**时就武装成「立刻」,而本 rig 的中转地址必然连不上 ⇒
+    // 这一响必定落在本用例期间,且它与「链路移交 / 本地写」同在一个 `select!` 里、就绪臂之间
+    // **随机挑**。排在两条链认下之后的那半边,`lan_offline_hello` 会给全部活跃 lan 对端各补
+    // 一枚定向 Hello:①作证链上于是多出一枚 Hello 排在下面要等的那枚 op 前头;②更糟的是它
+    // 自己那次 `dispatch` 会把下面那道**一次性栅栏**先用掉 —— 栅栏拦住的就不再是本地写产出
+    // 的那一枚,本用例的整个前提垮掉。本机拨号失败来得早、那一响几乎恒排在移交之前(对端集
+    // 为空 = 什么也没发),Linux CI 上排在后面 ⇒ 抛硬币。它验的不是 §5,让台架安静即可。
+    let _hello_quiet = HelloFirstDelayGuard::set(Duration::from_secs(3600));
     let a = lan_rig("lan-gen-race", 66);
     let (m1, t1) = tcp_pair().await;
     let (m2, t2) = tcp_pair().await;

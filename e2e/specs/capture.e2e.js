@@ -228,4 +228,45 @@ describe("捕获 · 斜杠命令", () => {
     const home = (await invoke("list_topics")).find((t) => t.title === "家庭");
     if (home) await invoke("delete_topic", { id: home.id });
   });
+
+  // 两个 chip 同时在场的那一支:落点是看板,而标签要挂到**任务**上(走
+  // add_task_topic_by_title,与灵感那支的 file_note_to_topic 是两条不同的命令)。
+  // 388 补:388 把这里从「先 create_topic 拿 id 再挂链」两步改成一条命令,而这一支原先
+  // 一条自动化判据都没有——灵感那支有上面那只,任务这支没有(改坏了没人会红)。
+  it("/task + /tag 回车 → 任务进看板且带该标签(标签挂在任务上,不是想法上)", async () => {
+    await goShow("/index.html");
+    await clearInbox();
+    const ta = await $("#capture");
+    await ta.waitForExist({ timeout: 10000 });
+    await ta.click();
+    await ta.setValue("/task");
+    await browser.waitUntil(async () => !(await panelHidden()), { timeout: 4000 });
+    await browser.keys("Enter"); // 执行 /task → 任务模式 chip
+    await $("#cap-mods .cap-chip.mode").waitForExist({ timeout: 4000 });
+    await ta.setValue("/tag 工作");
+    await browser.waitUntil(async () => !(await panelHidden()), { timeout: 4000 });
+    await browser.keys("Enter"); // 执行 /tag → 标签 chip(与任务 chip 并存)
+
+    const TITLE = "E2E-斜杠-任务带标签";
+    await ta.setValue(TITLE);
+    await browser.keys("Enter"); // create_task + add_task_topic_by_title
+
+    let taskId;
+    await browser.waitUntil(
+      async () => {
+        const hit = (await invoke("list_tasks")).find((x) => x.title === TITLE);
+        if (hit) taskId = hit.id;
+        return hit && hit.topics.some((t) => t.title === "工作");
+      },
+      { timeout: 6000, timeoutMsg: "带标签任务未进看板或未挂上标签" },
+    );
+    // 标签挂的是任务这一行,没顺手造一条同名想法(单实体:转不转 stage 是一回事,别多一行)。
+    expect((await invoke("list_inbox")).some((n) => n.content === TITLE)).toBe(false);
+
+    // 清理:任务软删+purge,删掉顺手建的「工作」标签。
+    await invoke("archive_task", { id: taskId });
+    await invoke("purge_task", { id: taskId });
+    const work = (await invoke("list_topics")).find((t) => t.title === "工作");
+    if (work) await invoke("delete_topic", { id: work.id });
+  });
 });
