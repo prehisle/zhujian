@@ -659,6 +659,31 @@ impl LanAdmission {
     pub(crate) fn doomed_count(&self) -> usize {
         self.lock().tasks.values().filter(|f| f.doomed).count()
     }
+
+    /// 测试用:手工摆一只「已认下空间与对端」的在飞 pre-auth 握手任务(真跑一遍三步握手
+    /// 太重,而这类用例要验的是**谁去打它**),交回任务号与那只 future 的把手。
+    ///
+    /// ⚠ 靶子刻意是一只**永不自了**的 `pending()`:真握手有 10s 上限,拿它当靶子的话
+    /// 「压根没人来 abort」会被那个超时兜成绿的 —— 慢十秒,但还是绿(378 那条教训)。
+    ///
+    /// ⭐ **住在这里、不住在各家的测试模块里**:摆一只桩要动 `tasks` / [`Self::admit_conn`]
+    /// / [`Self::set_abort`],三样都是本模块私有,`supervisor/tests.rs` 那侧够不着。抄一份
+    /// 过去就是两份会各自漂的摆桩逻辑(390:这一只是本模块两只旧助手合并来的,不是新写的
+    /// 第三份)。
+    #[cfg(test)]
+    pub(crate) fn plant_inflight_for_test(
+        &self,
+        ip: IpAddr,
+        space: &str,
+        peer: &str,
+    ) -> (u64, tokio::task::JoinHandle<()>) {
+        let id = self.admit_conn(ip).expect("该放行");
+        self.lock().tasks.get_mut(&id).expect("在表上").bound =
+            Some(TaskBound { space: space.into(), peer: peer.into() });
+        let task = tokio::spawn(async { std::future::pending::<()>().await });
+        self.set_abort(id, task.abort_handle());
+        (id, task)
+    }
 }
 
 impl Table {
@@ -719,6 +744,7 @@ fn drop_entry(t: &mut Table, space_id: &str, owner: u64) -> Vec<tokio::task::Abo
 ///
 /// 上界:`tasks` 至多 [`PREAUTH_MAX_INFLIGHT`] 条,`hits` 是 O(log N)、N ≤ 32(服务端的
 /// `MAX_ROSTER_DEVICES`),故这段临界区的长度由常量定、与数据规模无关。
+#[must_use = "把手丢掉 = 名册判死只落在位上,那些已被移除的对端会一直握到 10s 超时"]
 fn doom_denied(
     t: &mut Table,
     space_id: &str,
@@ -1671,16 +1697,6 @@ mod tests {
         rx
     }
 
-    /// 摆一只「已认下 s1、abort 句柄也已经交上去」的在飞任务,交回它的 join 把手。
-    fn plant_bound_task(adm: &Arc<LanAdmission>) -> tokio::task::JoinHandle<()> {
-        let id = adm.admit_conn(Ipv4Addr::LOCALHOST.into()).expect("该放行");
-        adm.lock().tasks.get_mut(&id).expect("在表上").bound =
-            Some(TaskBound { space: "s1".into(), peer: "01PEERAAAAAAAAAAAAAAAAAAAA".into() });
-        let victim = tokio::spawn(async { std::future::pending::<()>().await });
-        adm.set_abort(id, victim.abort_handle());
-        victim
-    }
-
     /// ⛔ **三个调用点必须真的扣扳机**(384 清 379 那笔「锁内 abort」债时新造出来的义务):
     /// [`abort_bound_to`] 从「函数体里直接打」改成「锁内标死、把手交回调用方」之后,
     /// **谁去 abort** 就从函数体里的一句代码变成了**调用方的**义务。`#[must_use]` 只在编译期
@@ -1694,7 +1710,9 @@ mod tests {
         for case in ["deregister", "revoke", "register(换代)"] {
             let adm = LanAdmission::ephemeral();
             let _rx = register_s1(&adm, 1, [5u8; 32]);
-            let victim = plant_bound_task(&adm);
+            let victim = adm
+                .plant_inflight_for_test(Ipv4Addr::LOCALHOST.into(), "s1", "01PEERAAAAAAAAAAAAAAAAAAAA")
+                .1;
             match case {
                 "deregister" => adm.deregister("s1", 1),
                 "revoke" => adm.revoke("s1", 1),
@@ -1830,24 +1848,6 @@ mod tests {
         .expect("注册");
     }
 
-    /// 手工摆一只「已认下空间与对端」的在飞握手(真跑一遍三步握手太重,而这几只用例要
-    /// 验的是**表怎么挑人**)。返回任务号与那只永远不会自己结束的 future 的把手。
-    fn fake_inflight(
-        adm: &Arc<LanAdmission>,
-        ip: IpAddr,
-        space: &str,
-        peer: &str,
-    ) -> (u64, tokio::task::JoinHandle<()>) {
-        let id = adm.admit_conn(ip).expect("该放行");
-        adm.lock().tasks.get_mut(&id).expect("在表上").bound =
-            Some(TaskBound { space: space.into(), peer: peer.into() });
-        // **刻意 `pending` 到底**:它自己永远不会收场,故「被取消了」这条判据不可能被
-        // 任何超时预算背书(378 那条教训的同族)。
-        let task = tokio::spawn(async { std::future::pending::<()>().await });
-        adm.set_abort(id, task.abort_handle());
-        (id, task)
-    }
-
     /// **多空间隔离**(§5.11 item ⑩):甲空间的名册更新不得碰乙空间 —— 哪怕两边**是同一个
     /// device_id**(device_id 是「设备 × 空间」粒度,拿甲的名册去判乙的对端就是张冠李戴)。
     ///
@@ -1859,11 +1859,12 @@ mod tests {
         let adm = LanAdmission::ephemeral();
         let g1 = gate_of(Some(&[PEER, OTHER]));
         // 三只在飞:甲/PEER、**乙/同一个 PEER**、甲/别的对端。
-        let (id_a, victim) = fake_inflight(&adm, Ipv4Addr::new(10, 0, 0, 1).into(), "s1", PEER);
+        let (id_a, victim) =
+            adm.plant_inflight_for_test(Ipv4Addr::new(10, 0, 0, 1).into(), "s1", PEER);
         let (id_b, bystander_space) =
-            fake_inflight(&adm, Ipv4Addr::new(10, 0, 0, 2).into(), "s2", PEER);
+            adm.plant_inflight_for_test(Ipv4Addr::new(10, 0, 0, 2).into(), "s2", PEER);
         let (id_c, bystander_peer) =
-            fake_inflight(&adm, Ipv4Addr::new(10, 0, 0, 3).into(), "s1", OTHER);
+            adm.plant_inflight_for_test(Ipv4Addr::new(10, 0, 0, 3).into(), "s1", OTHER);
 
         // 阴性:只多了一台无关设备 —— 一只都不许判死。
         let denied = push_roster(&g1, Some(&[PEER, OTHER, "01STRANGER0000000000000000"]));
@@ -1985,6 +1986,86 @@ mod tests {
             ["abort_bound_to", "doom_denied", "drop_entry", "refund_token", "tokens_sub"],
             "锁内那一族变了 —— 新增的要么确认它不 abort,要么这道锚已经扫不到东西了"
         );
+    }
+
+    /// 调用点 census(384 诚实边界第 5 条自己点名的「本轮剩下最薄的一格」,也是 codex 判 GO
+    /// 那轮给的下一笔重点复核面):**三只把 abort 把手交回调用方的助手,调用方恰好是谁**,
+    /// 在这里签字。
+    ///
+    /// ⭐ 它守的是 [`no_helper_holding_the_table_lock_aborts`] **守不到的另一半**:那道锚说
+    /// 「持着表锁的那一族里一个 `abort(` 都不许有」,这道说「拿到把手的那一族**恰好是这五只**,
+    /// 而且每只都真去扣扳机」。这条义务是 384 那笔改动**新造出来的** —— 三只助手从「函数体里
+    /// 直接打」改成「交回把手」之后,**谁去 abort** 就从函数体里的一句代码变成了调用方的事,而
+    /// `#[must_use]` 在本 crate 只是警告(`lib.rs` 没有 `deny(warnings)`)、一句 `let _ = …`
+    /// 就能抹平 ⇒ **第四个调用点静默出现时,在这条之前没有任何一格会红**。
+    ///
+    /// ⚠ **诚实边界(三条)**:
+    /// 1. 扫描面 = 本文件的生产段。它的**完整性**由下面那句「三只仍是私有自由函数」背书:一旦
+    ///    有人把某只 `pub` 出去,调用点就可能落在别的文件里,那句当场红,逼人回来重想这道锚
+    ///    (312 那条「被扫的代码搬走了 ⇒ 结构锚静默变绿」的预防)。
+    /// 2. 「体内出现 `.abort()`」是**结构**断言,不等于「把手真的全打了」。今天四只调用方各有
+    ///    行为字据([`every_caller_of_abort_bound_to_actually_pulls_the_trigger`] 三只 +
+    ///    [`a_roster_change_only_dooms_handshakes_bound_to_that_space`] 一只);这道锚管的是
+    ///    **第五只出现那一刻** —— 那时它还没有行为字据。
+    /// 3. 文本断言的对抗性绕法照旧存在(同那道锚的诚实边界):它咬的是「有人新写一处调用、
+    ///    顺手把把手丢了」这种**正常写法**,不是对抗。
+    #[test]
+    fn the_handle_returning_helpers_have_exactly_these_callers() {
+        const HELPERS: [&str; 3] = ["abort_bound_to", "doom_denied", "drop_entry"];
+        let src = include_str!("lan_net.rs");
+        let prod = src.split("\nmod tests {").next().expect("生产段");
+        // **先把注释整条剔掉再匹配**(mutation-check 铁律 9):这一段的散文里本来就密集点名
+        // 这三只助手与它们的调用方,拿原文匹配的话 census 会把自己的注释数成调用点。
+        let prod: String =
+            prod.lines().map(|l| l.split("//").next().unwrap_or("")).collect::<Vec<_>>().join("\n");
+        // 扫描面完整性(诚实边界 1):三只都还是**本文件里的私有自由函数**,故调用点只可能
+        // 在这一段里。`\nfn X(` 这个形状同时钉死了「顶层」与「没有可见性前缀」两件事。
+        for h in HELPERS {
+            assert!(
+                prod.contains(&format!("\nfn {h}(")),
+                "`{h}` 不再是本文件里的私有自由函数 —— 调用点可能落到别的文件去了,\
+                 这道 census 的扫描面不再完整,别原样留着它"
+            );
+        }
+        // 从一句 `fn ` 的起点切出「函数名 + 函数体」。⚠ **别照抄隔壁那道锚的
+        // `find("\n}\n")`**:`impl` 里的方法会被一路切到整个 `impl` 块的收尾,于是下面
+        // 「体内有没有 `.abort()`」就会被邻居的代码背书成假绿。收尾按**同缩进的 `}`** 算。
+        let cut = |f: usize| -> (&str, &str) {
+            let name = prod[f + 3..].split('(').next().expect("函数名").trim();
+            let line = prod[..f].rfind('\n').map_or(0, |i| i + 1);
+            let indent: String = prod[line..f].chars().take_while(|c| *c == ' ').collect();
+            let body = &prod[f..];
+            let end = body.find(&format!("\n{indent}}}")).expect("函数体的收尾");
+            (name, &body[..end])
+        };
+        let mut callers: Vec<&str> = vec![];
+        for h in HELPERS {
+            for (i, _) in prod.match_indices(&format!("{h}(")) {
+                // 定义那一处不是调用点。
+                if prod[..i].ends_with("fn ") {
+                    continue;
+                }
+                callers.push(cut(prod[..i].rfind("fn ").expect("调用总在某只 fn 里")).0);
+            }
+        }
+        callers.sort_unstable();
+        callers.dedup();
+        assert_eq!(
+            callers,
+            ["apply_denied", "deregister", "drop_entry", "register", "revoke"],
+            "拿到 abort 把手的那一族变了 —— 新调用点要么自己配一条『真扣扳机』的行为字据,\
+             要么写清楚它凭什么可以把把手丢掉;这一格 `#[must_use]` 挡不住"
+        );
+        // `drop_entry` 自己就跑在表锁里(把把手原样转手给它的调用方),受隔壁那道锚管着
+        // 「一个 `abort(` 都不许有」—— 它是这一族里唯一**不该**扣扳机的那只。
+        for name in callers.iter().filter(|n| **n != "drop_entry") {
+            let f = prod.find(&format!("fn {name}(")).expect("刚扫到的");
+            assert!(
+                cut(f).1.contains(".abort()"),
+                "`{name}` 收下了 abort 把手却没在自己体内扣扳机:撤位 / 换代 / 名册判死会\
+                 静默落空,那些任务一直占着 pre-auth 名额到 10s 超时"
+            );
+        }
     }
 
     /// 令牌桶:桶深内连花 10 枚即空,一秒后回满。

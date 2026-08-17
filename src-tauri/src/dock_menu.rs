@@ -124,12 +124,12 @@ pub fn install(app: &AppHandle) {
     }
 
     let menu = NSMenu::new(mtm);
-    // 用词与托盘菜单完全一致(lib.rs setup 里的 "记录灵感" / "打开朱简"),两处入口
+    // 用词与托盘菜单完全一致(lib.rs setup 里的 "记一笔" / "打开朱简"),两处入口
     // 同一件事就该同一个名字。不放「退出」——Dock 默认菜单自带 Quit。
     // 快捷键提示留空:Dock 菜单不显示 key equivalent,写了也只是噪音(热键本身由
     // global_shortcut 插件持有)。
     for (title, action) in [
-        ("记录灵感", sel!(zjDockCapture:)),
+        ("记一笔", sel!(zjDockCapture:)),
         ("打开朱简", sel!(zjDockNotebook:)),
     ] {
         // SAFETY: action 就是上面刚补进 delegate 类的选择器,target 随即设成那个

@@ -55,6 +55,10 @@
 }
 .settings-panel {
   width: min(420px, calc(100vw - 48px));
+  /* 412:面板长到装不下了(热键 2 + 外观 + 语言 + 字号 + 别名 + 备份)。不封高的话
+     底部那几节在矮窗上直接够不着——不是"看着挤",是**点不到**。 */
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
   background: linear-gradient(180deg, var(--raised), var(--raised-edge));
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-lg);
@@ -215,6 +219,50 @@
   min-width: 48px;
   text-align: center;
 }
+
+/* ---- 备份(412,backup-plan 笔①-a)----
+   复用热键那一族的行/按钮/提示(.hkset-*)与别名那只输入框(.alias-input),
+   这里只加三件它们没有的:码的展示块、路径输入框加宽、结果清单。 */
+
+/* 备份码:与恢复码同一形(sync.css 的 .sync-code--recovery)——等宽、虚线朱框、
+   只在组边界换行。⛔ 刻意可选中但**没有复制按钮**:一写剪贴板,剪贴板就成了新的
+   所有者,而系统剪贴板我们清不干净(backup-plan §3.4.1 第 11 格)。 */
+.bkup-code {
+  font-family: Consolas, "Courier New", monospace;
+  font-size: var(--fs-15);
+  letter-spacing: 0.06em;
+  line-height: 1.8;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px dashed var(--seal-line);
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+  margin: 8px auto;
+  max-width: 16em;
+  text-align: center;
+  overflow-wrap: normal;
+  word-break: normal;
+  user-select: text;
+  cursor: text;
+}
+/* 路径要看得见尾巴(别名那只 150px 太窄)。 */
+.bkup-input { width: 100%; }
+.bkup-body .alias-ctrls { flex: 1; min-width: 0; }
+.bkup-acts {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+/* 结果清单:一行一份产物 / 一条失败原因。等宽给文件名,行距给长句。 */
+.bkup-file {
+  font-family: var(--font-sans);
+  font-size: var(--fs-12);
+  color: var(--ink-faint);
+  line-height: 1.6;
+  padding-left: 2px;
+  overflow-wrap: anywhere;
+}
+.bkup-out { margin-top: 2px; }
 
 /* ---- 本机别名(identity-plan §2.4)---- */
 .alias-ctrls {

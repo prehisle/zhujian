@@ -1,6 +1,7 @@
 // 字典合并点(i18n-plan §1):全部分片在此收拢。新分片必须两处登记(import + spread),
 // 漏 spread 那半会被门禁「存而不用/文件未收进」逮住;跨分片重键当场 throw——spread
 // 会静默后者覆前者,这里不许安静。
+import { backup } from "./backup";
 import { board } from "./board";
 import { capture } from "./capture";
 import { chrome } from "./chrome";
@@ -14,7 +15,7 @@ import { shell } from "./shell";
 import { sync } from "./sync";
 import { topics } from "./topics";
 
-const parts = [board, capture, chrome, comments, common, filter, images, inbox, settings, shell, sync, topics];
+const parts = [backup, board, capture, chrome, comments, common, filter, images, inbox, settings, shell, sync, topics];
 {
   const seen = new Set<string>();
   for (const part of parts) {
@@ -26,6 +27,7 @@ const parts = [board, capture, chrome, comments, common, filter, images, inbox, 
 }
 
 export const messages = {
+  ...backup,
   ...board,
   ...capture,
   ...chrome,

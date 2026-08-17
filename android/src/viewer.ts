@@ -1,5 +1,6 @@
-// 大图查看器:全屏覆盖层。未放大时单击关(200ms 让位双击判定)、双击 2.5 倍/复位、
-// 双指捏合 1~8 倍、放大后单指拖拽平移、返回键关(history 层)。全图每次打开现取
+// 大图查看器:全屏覆盖层。未放大时单击关(300ms 让位双击判定)、双击 2.5 倍/复位、
+// 双指捏合 1~8 倍、放大后单指拖拽平移、放大态单击=就地复位回全图(再点一下才关,403)、
+// 返回键关(history 层)。全图每次打开现取
 // (IPC 去重内已并单),关闭即置空 src——大图字节不驻留。请求带代次(codex 二审):
 // 快速连点几张图,迟到的旧响应不许盖掉最新点击;关闭也推代次,在途响应作废不复弹。
 // 310 第③笔:自 main.ts 纯搬迁成模块(initX(Deps) 的形,事件在 initViewer 里挂;
@@ -160,6 +161,9 @@ function setClosing(on: boolean): void {
   $("viewer").classList.toggle("closing", on);
 }
 let lastTap = { t: 0, x: 0, y: 0 };
+// 放大态单击已就地复位(403):紧跟的第二击是双击的后半,吞掉——否则「双击想复位」的
+// 第二下会落在已复位的图上又放大回去。任何一次非复位单击、或外因复位(resetZoom)都清此标。
+let resetTapPending = false;
 
 function applyTransform(anim = false) {
   // identity 按「肉眼等同」判,不按严格零(226):双击复位把三个量清零后还要过 clampView,
@@ -180,6 +184,7 @@ function resetZoom() {
   vTx = 0;
   vTy = 0;
   vSwipeX = 0;
+  resetTapPending = false; // 外因复位(换图/转屏/关闭):挂着的「已复位待吞」记账作废
   viewerImgEl.style.transition = "";
   viewerImgEl.style.transform = "";
   $("viewer").classList.remove("zoomed");
@@ -360,23 +365,44 @@ export function initViewer(d: Deps): void {
       window.clearTimeout(closeTimer);
       setClosing(false); // 双击撤销待关:淡到一半的层平滑回来
       lastTap.t = 0;
+      if (resetTapPending) {
+        resetTapPending = false; // 第一击已把放大态复位:这一击只是双击的后半,到此为止
+        return;
+      }
       if (vScale > 1.01) {
+        // 复位=回未变换布局,**不过 clampView**(403 修的存量患):它会把比视口小的轴钉回
+        // 视口中点,而图的布局中心不必是视口中点(MuMu 横屏差 17px)——identity 于是永远
+        // 差一截,.zoomed 摘不掉,删除按钮跟着永久失灵(正是 226 记档的后果,±1px 容差
+        // 只治零点几像素的形)。归零本身恒合法,无需钳。
         vScale = 1;
         vTx = 0;
         vTy = 0;
-      } else {
-        const vx = (e.clientX - vBase.cx - vTx) / vScale;
-        const vy = (e.clientY - vBase.cy - vTy) / vScale;
-        vScale = 2.5;
-        vTx = e.clientX - vBase.cx - vScale * vx;
-        vTy = e.clientY - vBase.cy - vScale * vy;
+        applyTransform(true);
+        return;
       }
+      const vx = (e.clientX - vBase.cx - vTx) / vScale;
+      const vy = (e.clientY - vBase.cy - vTy) / vScale;
+      vScale = 2.5;
+      vTx = e.clientX - vBase.cx - vScale * vx;
+      vTy = e.clientY - vBase.cy - vScale * vy;
       clampView();
       applyTransform(true);
       return;
     }
     lastTap = { t: now, x: e.clientX, y: e.clientY };
-    if (vScale > 1.01) return; // 放大态单击不关(误触保护):双击复位或返回键关
+    resetTapPending = false;
+    if (vScale > 1.01) {
+      // 放大态单击=就地复位回全图(403)。此前这里静默 return(用户实报「点了没反应」),
+      // 违背「手势即回执」;复位本身就是可见回执,误触保护还在——单击永远只退一步,
+      // 绝不直接关。过渡当帧就起(246 的账:判定窗口不能是白等);双击的第二下由
+      // resetTapPending 吞掉,不会在已复位的图上又放大回去。
+      resetTapPending = true;
+      vScale = 1;
+      vTx = 0;
+      vTy = 0;
+      applyTransform(true); // 同上:复位不过 clampView,归零恒合法
+      return;
+    }
     setClosing(true); // 立刻开始淡出 = 立刻有回执(246);延迟这段不再是静止的白等
     closeTimer = window.setTimeout(() => {
       closeViewerNow();

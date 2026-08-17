@@ -3,7 +3,7 @@ import { defineMessages } from "./entry";
 
 export const panes = defineMessages({
   "panes.loading": { zh: "读取中…", en: "Loading…" },
-  "panes.kindIdea": { zh: "灵感", en: "Idea" },
+  "panes.kindIdea": { zh: "随记", en: "Note" },
   "panes.deletedAt": { zh: "删于 {when}", en: "Deleted {when}" },
   "panes.restore": { zh: "恢复", en: "Restore" },
   "panes.purge": { zh: "彻底删除", en: "Delete forever" },
@@ -13,7 +13,7 @@ export const panes = defineMessages({
   "panes.emptyTrashYes": { zh: "清空", en: "Empty" },
   "panes.trashEmptied": { zh: "回收站已清空", en: "Trash emptied" },
   "panes.restoredTask": { zh: "已恢复,在底栏「任务」里", en: "Restored — find it under Tasks" },
-  "panes.restoredIdea": { zh: "已恢复,在底栏「灵感」里", en: "Restored — find it under Ideas" },
+  "panes.restoredIdea": { zh: "已恢复,在底栏「随记」里", en: "Restored — find it under Notes" },
   "panes.purgeOneQ": { zh: "彻底删除这条?无法找回", en: "Delete this forever? It cannot be recovered" },
   "panes.doneAt": { zh: "完成于 {when}", en: "Done {when}" },
   "panes.sealedAt": { zh: "归档于 {when}", en: "Archived {when}" },
@@ -21,7 +21,7 @@ export const panes = defineMessages({
   "panes.unsealed": { zh: "已取消入册,在「任务」的「已完成」里", en: "Unarchived — find it under Tasks › Done" },
   "panes.sealedEmpty": { zh: "归档册还是空的——完成的任务入册后在这里。", en: "The archive is empty — finished tasks land here once archived." },
   "panes.sealedLoadFailed": { zh: "归档册读取失败:{error}", en: "Could not load the archive: {error}" },
-  "panes.hitInbox": { zh: "灵感", en: "Idea" },
+  "panes.hitInbox": { zh: "随记", en: "Note" },
   "panes.hitProcessed": { zh: "已归类", en: "Filed" },
   "panes.hitTask": { zh: "任务", en: "Task" },
   "panes.hitArchived": { zh: "回收站", en: "Trash" },

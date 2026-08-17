@@ -1,5 +1,5 @@
 import { browser, $, $$, expect } from "@wdio/globals";
-import { invoke, goNotebook, clearInbox } from "./support.js";
+import { invoke, goNotebook, clearInbox, openCompose } from "./support.js";
 
 // 新建入口配图一致性:凡是能输入条目正文的地方,都能 Ctrl+V 配图(共享件 pendingImages)。
 // 捕获浮窗一例在 capture.e2e.js;这里补另外两个新建入口 —— 灵感「记下灵感」和看板「新建任务」。
@@ -73,12 +73,9 @@ describe("新建入口配图 · 看板「新建任务」粘贴", () => {
   });
 
   it("粘贴图片 → 暂存预览;回车 → 任务入库且带 1 张配图", async () => {
-    // 打开 compose 条(N 键/按钮同源;按钮直点最稳)。
-    const addBtn = await $("#add-task");
-    await addBtn.waitForExist({ timeout: 10000 });
-    await addBtn.click();
+    // 打开 compose 条。⚠ 别写成裸 click:`#add-task` 是开关,见 support.js 那段注释。
+    await openCompose();
     const input = await $("#compose-input");
-    await input.waitForDisplayed({ timeout: 5000 });
     await input.click();
 
     await pasteImage("#compose-input");

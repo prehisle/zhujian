@@ -144,6 +144,9 @@
         max-width: calc(100% - 16px);
         transition: background 0.14s, color 0.14s;
       }
+      /* 411/D2:单空间时整枚藏起(display:flex 会盖过 hidden 属性,故显式写一条——
+         与捕获窗 #cap-space[hidden] 同一处理)。 */
+      .space-entry[hidden] { display: none; }
       .space-entry:hover { background: color-mix(in srgb, var(--ink) 6%, transparent); color: var(--ink); }
       .space-entry #space-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .space-caret { font-size: 9px; opacity: 0.6; flex: none; }
@@ -308,11 +311,13 @@
       <!-- 空间切换(97 多空间):当前空间名 + 菜单(切换/新建/改名)。逻辑在 notebook.ts。
            358 起壳层静态文案挂 data-i18n 族属性、启动 applyStaticI18n 覆写;markup 保留
            中文原文防首帧闪,原文与 zh 字典逐字相等由 check-i18n-drift 核。 -->
-      <button id="space-entry" class="space-entry" title="切换空间" data-i18n-title="shell.switchSpace">
+      <!-- 411/D2:静态 markup 即 hidden,由 refreshSpaceEntry 在「≥2 空间」时开——单空间
+           (绝大多数首用者)首帧就不闪一下再消失,与安卓 space-chip 同一写法。 -->
+      <button id="space-entry" class="space-entry" title="切换空间" data-i18n-title="shell.switchSpace" hidden>
         <span id="space-name" data-i18n="shell.personalSpace">个人空间</span><span class="space-caret">▾</span>
       </button>
       <nav>
-        <button data-view="inbox" data-i18n="shell.navIdeas">灵感</button>
+        <button data-view="inbox" data-i18n="shell.navIdeas">随记</button>
         <button data-view="board" data-i18n="shell.navTasks">任务</button>
         <button data-view="topics" data-i18n="shell.navTags">标签</button>
         <button data-view="search" data-i18n="shell.navSearch">搜索</button>

@@ -43,14 +43,14 @@ describe("任务看板 · 撤回为灵感", () => {
   });
 
   // Whether the card carrying `title` offers 撤回为灵感 in its ⋯ menu.
-  const cardHasRevert = (title) => boardMenuHas(title, "撤回为灵感");
+  const cardHasRevert = (title) => boardMenuHas(title, "撤回为随记");
 
   it("待办带「撤回为灵感」→ 撤回 → 同一条翻回未归类灵感(不再是任务)", async () => {
     await (await $(".col.todo").$(`.tcard*=${IDEA}`)).waitForExist({ timeout: 8000 });
     expect(await cardHasRevert(IDEA)).toBe(true);
 
     // 撤回为灵感 (⋯ menu) → inline confirm → 撤回.
-    await boardAction(IDEA, "撤回为灵感");
+    await boardAction(IDEA, "撤回为随记");
     await clickConfirmButton(IDEA, "撤回");
 
     // Closed loop: the item is no longer a task (left the board), back in 未归类 (inbox).
@@ -67,7 +67,7 @@ describe("任务看板 · 撤回为灵感", () => {
     await (await $(".col.todo").$(`.tcard*=${MANUAL}`)).waitForExist({ timeout: 8000 });
     expect(await cardHasRevert(MANUAL)).toBe(true);
 
-    await boardAction(MANUAL, "撤回为灵感");
+    await boardAction(MANUAL, "撤回为随记");
     await clickConfirmButton(MANUAL, "撤回");
 
     // ㉜: the SAME item flipped back to 未归类 (no separate task to delete, no new idea seeded).

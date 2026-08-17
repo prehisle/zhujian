@@ -64,8 +64,23 @@ class MainActivity : TauriActivity() {
     return null
   }
 
+  // 391 拍照的临时文件收尾。wry 那侧把 ACTION_IMAGE_CAPTURE 的输出写成
+  // getExternalFilesDir(Pictures)/JPEG_<时间戳>_*.jpg 交给相机 app,回传后**从不删**:
+  // 字节此刻已经被前端读走进了 E2EE 库,留下的这份是纯中转垃圾,拍多了白占几十 MB
+  // (%TEMP% 堆爆同族的账,别再让它长)。启动即清——这一刻不可能有在飞的拍照(进程若
+  // 在相机期间被杀,那次的 filePathCallback 也随之没了,那张本就是废的)。只认 wry 那
+  // 个命名形,不扫目录里别的东西;几十个小文件的 delete 是微秒级,不值得为它开线程。
+  private fun clearCaptureLeftovers() {
+    val dir = getExternalFilesDir(android.os.Environment.DIRECTORY_PICTURES) ?: return
+    runCatching {
+      dir.listFiles { f -> f.isFile && f.name.startsWith("JPEG_") && f.name.endsWith(".jpg") }
+        ?.forEach { it.delete() }
+    }
+  }
+
   override fun onCreate(savedInstanceState: Bundle?) {
     enableEdgeToEdge()
+    clearCaptureLeftovers()
     stashSharedText(intent) // 冷启动:分享拉起进程,先落文件再起 WebView。
     stashDeepLink(intent) // 冷启动:深链接拉起进程,同样先落文件(前端 take_deep_link 取走)。
     super.onCreate(savedInstanceState)

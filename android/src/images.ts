@@ -2,6 +2,14 @@
 // 共用一套「唤起系统相册 + 字节转码 + compose 暂存」,免各写各的造能力漂移。
 // 取图机制:借 WebView 的 `<input type=file accept=image/*>`,wry 0.55 安卓端接了
 // onShowFileChooser,点击即弹系统相册/文件选择器,**无需任何插件**(195 真机验通)。
+// 391 起两条来路,底层都还是那一个 `<input>`、仍无插件、仍不碰 Rust 侧:
+//   ①**相册多选** `multiple` → wry 那侧认 `MODE_OPEN_MULTIPLE`,给 intent 挂
+//     `EXTRA_ALLOW_MULTIPLE` 并从 `clipData` 逐个回传 uri;
+//   ②**当场拍照** `capture` → wry 那侧认 `isCaptureEnabled`(要 accept 恰为
+//     `image/*`),起 `ACTION_IMAGE_CAPTURE`、照片经 FileProvider 回传。
+//     ⚠ 这条路要 manifest 的 `<queries>` 声明(targetSdk 30+ 的包可见性:没声明
+//     则 `resolveActivity` 返 null,wry **静默回落成文件选择器** = 点了拍照弹出
+//     相册,不报错)。
 import { addItemImage } from "./api";
 import { t } from "./i18n";
 
@@ -58,30 +66,29 @@ async function downsampleForUpload(file: File): Promise<File> {
   }
 }
 
-/** 唤起系统相册选一张图,resolve 选中的文件(已按上传上限降采样);取消(没选)resolve null。
- *  选择器是系统模态,期间 app 在后台。change=选中;有些 ROM 取消不发 change,
- *  故回到前台 1s 后若仍未 settle 判为取消(picked 已 settle 则本兜底空转,绝不
- *  抢在 change 之前误判)。调用点须由用户手势触发(input.click 要手势),故本函数
- *  只在点击处理器里调。 */
-export function pickImage(): Promise<File | null> {
+/** 唤起系统选择器的**唯一**底层:配好隐藏 `<input>` 点开、等结果、清节点,交回原始
+ *  File[](降采样在上层逐张做——多选时要边处理边交付)。选择器是系统模态,期间 app 在
+ *  后台。change=选中;有些 ROM 取消不发 change,故回到前台 1s 后若仍未 settle 判为取消
+ *  (已 settle 则本兜底空转,绝不抢在 change 之前误判)。调用点须由用户手势触发
+ *  (input.click 要手势),故只在点击处理器里调。 */
+function openPicker(configure: (el: HTMLInputElement) => void): Promise<File[]> {
   return new Promise((resolve) => {
     const input = document.createElement("input");
     input.type = "file";
-    input.accept = "image/*";
+    input.accept = "image/*"; // wry 认 capture 的前提之一:accept 恰为 image/*
     input.hidden = true;
+    configure(input);
     let settled = false;
-    const settle = (f: File | null): void => {
+    const settle = (files: File[]): void => {
       if (settled) return;
       settled = true;
       input.remove();
-      // 选中即降采样后再决议(downsampleForUpload 永不 reject,失败返原文件);取消直接 null。
-      if (f) void downsampleForUpload(f).then(resolve);
-      else resolve(null);
+      resolve(files);
     };
-    input.addEventListener("change", () => settle(input.files?.[0] ?? null), { once: true });
+    input.addEventListener("change", () => settle([...(input.files ?? [])]), { once: true });
     window.addEventListener(
       "focus",
-      () => window.setTimeout(() => settle(null), 1000),
+      () => window.setTimeout(() => settle([]), 1000),
       { once: true },
     );
     document.body.appendChild(input);
@@ -89,48 +96,156 @@ export function pickImage(): Promise<File | null> {
   });
 }
 
+/** 一次多选的张数上界(391,用户拍板 9)。这些字节缩完每张仍有 300-500KB,且整份进
+ *  E2EE 库、下行到**所有**设备——上界守的是同步体积,不是本地磁盘。超了整批不收
+ *  (响亮拒,不静默截断掉前 9 张:用户以为全加上了才是真的坏)。 */
+export const PICK_MAX = 9;
+
+export type PickOutcome =
+  | { kind: "picked"; count: number }
+  | { kind: "cancelled" }
+  | { kind: "tooMany"; count: number };
+
+/** 相册多选(≤ PICK_MAX 张)。**每张降采样完就 onEach 交付一次**——9 张原图串行解码
+ *  重编码要几秒,逐张交付才有「图在一张张长出来」的反馈,而不是干等一个大 Promise;
+ *  故本函数不返回文件数组,onEach 是唯一交付通道(免调用方两处重复处理同一批)。
+ *  取消(没选)= cancelled;超上界 = tooMany 且一张都不收。 */
+export async function pickImages(onEach: (file: File) => void): Promise<PickOutcome> {
+  const files = await openPicker((el) => {
+    el.multiple = true;
+  });
+  if (!files.length) return { kind: "cancelled" };
+  if (files.length > PICK_MAX) return { kind: "tooMany", count: files.length };
+  for (const f of files) onEach(await downsampleForUpload(f));
+  return { kind: "picked", count: files.length };
+}
+
+/** 当场拍一张(HTML `capture` → wry 起系统相机)。resolve 已降采样的那张;取消/没拍成
+ *  resolve null。⚠ 首次会弹系统相机权限框(manifest 声明了 CAMERA,wry 那侧据此先要
+ *  权限再开相机),用户拒了等同取消——不另弹说明,系统框本身已经说清楚了。
+ *  相机原图动辄 4000×3000,必过降采样主闸;EXIF 方向由 Chromium 的
+ *  `image-orientation: from-image` 默认值在解码时校正,竖拍不会躺倒。 */
+export async function capturePhoto(): Promise<File | null> {
+  const files = await openPicker((el) => {
+    // `capture` 不在 lib.dom 的 HTMLInputElement 上(各 TS 版本不一),走属性写死。
+    el.setAttribute("capture", "environment"); // 后置摄像头:拍的是东西不是人
+  });
+  const f = files[0];
+  return f ? await downsampleForUpload(f) : null;
+}
+
 // ---- compose 暂存图的断电恢复(197 下一步①):图走 IndexedDB(存 Blob 原生、容量够,
-// 不像 localStorage 会被大图撑爆)。单条全局草稿一份(与文字草稿同哲学,不按空间分),
-// held 一变就整体覆盖写;启动回填。纯设备本地 UI 状态,绝不进 DB/同步。 ------------
+// 不像 localStorage 会被大图撑爆)。单条全局草稿一份(与文字草稿同哲学,不按空间分);
+// 启动回填。纯设备本地 UI 状态,绝不进 DB/同步。
+// **392 起一张一个键**(391 可优化项④):此前是「held 一变就把整批 blob 整体覆盖写一个键」,
+// 相册多选把它放大了——一张张加到 9 张 = 1+2+…+9 = 45 次 blob 拷贝,而真正的新字节只有 9 张。
+// 现在每张自己一个 `img:<id>` 键、另有一个 id 顺序清单键,写入是**收敛**:库里没有的才写、
+// 不再持有的删掉。加第 N 张 = 1 次 blob 写 + 一份字符串清单,与 N 无关。
+// ⚠ 顺序是清单说了算,不是键序——键是 id、id 不含次序,重排/退回只重写清单(几十字节)。
 const DRAFT_DB = "zhujian-compose-draft";
 const DRAFT_STORE = "images";
-const DRAFT_KEY = "pending";
+const ORDER_KEY = "order"; // → string[](id 顺序清单)
+const IMG_PREFIX = "img:"; // + id → Blob(一张一个键)
 
+// ⚠ 这两个 Promise 的**每一条**终局都必须接上。写入是串行链(见 persist),链上任何一环
+// 永不落地 = 之后所有草稿写入(含「记下后清空」那一次)全部沉默,而 IndexedDB 停在最后
+// 一次成功的快照上 —— 下次启动 restore 就把一张早该没了的图回填进暂存条(391 真机上
+// 见过一次:库里停着第一次写入的那张,跨了四轮「记下」都没被清掉)。IndexedDB 的请求有
+// blocked、事务有 abort,漏接哪个哪个就是那口井。
 function openDraftDb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const req = indexedDB.open(DRAFT_DB, 1);
     req.onupgradeneeded = () => req.result.createObjectStore(DRAFT_STORE);
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
+    req.onblocked = () => reject(new Error("draft db open blocked"));
   });
 }
 
-async function persistDraftBlobs(blobs: Blob[]): Promise<void> {
+type DraftItem = { id: string; blob: Blob };
+
+/** 把库收敛到 `items` 这一份:库里没有的字节才写、不在 items 里的键一律删(**顺带扫掉
+ *  392 前那个整体覆盖写留下的老键 `pending`,和任何孤儿**),最后写 id 顺序清单。
+ *  ⚠ 三步都在同一个事务里,故「清单与字节」对不上这种半态落不了地。 */
+async function syncDraft(items: DraftItem[]): Promise<void> {
   const db = await openDraftDb();
   try {
     await new Promise<void>((resolve, reject) => {
       const tx = db.transaction(DRAFT_STORE, "readwrite");
-      tx.objectStore(DRAFT_STORE).put(blobs, DRAFT_KEY);
+      const store = tx.objectStore(DRAFT_STORE);
+      const keysReq = store.getAllKeys(); // 只取键不取值:不读一个 blob 字节
+      keysReq.onsuccess = () => {
+        const alive = new Set(items.map((it) => IMG_PREFIX + it.id));
+        const onDisk = new Set<string>();
+        for (const k of keysReq.result) {
+          // 删要拿**原样的键**去删(String() 只用来比对;真有非字符串键时
+          // 拿字符串去 delete 是删不掉的,那才是留下孤儿字节的形)。
+          const s = String(k);
+          if (s !== ORDER_KEY && !alive.has(s)) store.delete(k);
+          else onDisk.add(s);
+        }
+        for (const it of items) {
+          if (!onDisk.has(IMG_PREFIX + it.id)) store.put(it.blob, IMG_PREFIX + it.id);
+        }
+        store.put(
+          items.map((it) => it.id),
+          ORDER_KEY,
+        );
+      };
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error ?? new Error("draft persist aborted"));
     });
   } finally {
     db.close();
   }
 }
 
-async function loadDraftBlobs(): Promise<Blob[]> {
+/** 读回上次的暂存:清单定顺序,逐 id 取字节。清单里有 id 却没字节的跳过(半态落不了地,
+ *  但库被外力动过时不该整批失败)。**同一事务里顺带扫掉不在清单里的键**——老键与孤儿
+ *  的字节否则会一直占着(一次都不再加图的设备,persist 永远不跑,没人替它清)。 */
+async function loadDraft(): Promise<DraftItem[]> {
   const db = await openDraftDb();
   try {
-    return await new Promise<Blob[]>((resolve, reject) => {
-      const tx = db.transaction(DRAFT_STORE, "readonly");
-      const req = tx.objectStore(DRAFT_STORE).get(DRAFT_KEY);
-      req.onsuccess = () => resolve((req.result as Blob[] | undefined) ?? []);
-      req.onerror = () => reject(req.error);
+    return await new Promise<DraftItem[]>((resolve, reject) => {
+      const tx = db.transaction(DRAFT_STORE, "readwrite"); // 要扫孤儿,故非只读
+      const store = tx.objectStore(DRAFT_STORE);
+      const out: DraftItem[] = [];
+      const orderReq = store.get(ORDER_KEY);
+      orderReq.onsuccess = () => {
+        const ids = (orderReq.result as string[] | undefined) ?? [];
+        const alive = new Set(ids.map((id) => IMG_PREFIX + id));
+        const keysReq = store.getAllKeys();
+        keysReq.onsuccess = () => {
+          for (const k of keysReq.result) {
+            const s = String(k);
+            if (s !== ORDER_KEY && !alive.has(s)) store.delete(k); // 同上:原样的键
+          }
+        };
+        for (const id of ids) {
+          const req = store.get(IMG_PREFIX + id);
+          // 请求按发出顺序回调 ⇒ out 天然就是清单的顺序。
+          req.onsuccess = () => {
+            const b = req.result as Blob | undefined;
+            if (b) out.push({ id, blob: b });
+          };
+        }
+      };
+      tx.oncomplete = () => resolve(out);
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error ?? new Error("draft load aborted"));
     });
   } finally {
     db.close();
   }
+}
+
+/** 暂存图的本地 id:只用来当 IndexedDB 的键与「这张写过没有」的判据,不出这个模块、
+ *  不进 DB/同步。会话内单调 + 启动时刻做前缀 ⇒ 与上次会话回填进来的 id 不会撞。 */
+let draftIdSeq = 0;
+function newDraftId(): string {
+  draftIdSeq += 1;
+  return `${Date.now().toString(36)}-${draftIdSeq.toString(36)}`;
 }
 
 /** compose 暂存图(记灵感时先贴、条目还没建):holder 在给定容器里渲染缩略图(带
@@ -151,15 +266,25 @@ export type ComposeImages = {
 };
 
 export function composeImages(container: HTMLElement): ComposeImages {
-  type Held = { file: File; url: string };
+  type Held = { id: string; file: File; url: string };
   let held: Held[] = [];
 
-  // held 一变就整体覆盖写 IndexedDB(串行成链防并发写乱序;失败吞掉——持久化尽力而为,
-  // 不拦业务)。写的是 File 快照(结构化克隆含字节),读回可当 Blob 用。
+  /** id 在 held 内必须唯一——`syncDraft` 的「库里已经有这个键就不重写字节」全靠它;
+   *  撞了就会拿上一张的字节冒充这一张(静默错图,不是报错)。会话前缀让跨会话天然
+   *  不撞,**除非系统时钟被往回拨**,故这里再挡一道:撞了就继续往下取号。 */
+  function freshId(): string {
+    let id = newDraftId();
+    while (held.some((h) => h.id === id)) id = newDraftId();
+    return id;
+  }
+
+  // held 一变就把 IndexedDB 收敛到它(串行成链防并发写乱序;失败吞掉——持久化尽力而为,
+  // 不拦业务)。**快照要在链外同步取**:等轮到这一环时 held 可能已经又变了,那一变自己
+  // 会排在后面再收敛一次。写的是 File(结构化克隆含字节),读回可当 Blob 用。
   let persistChain: Promise<void> = Promise.resolve();
   function persist(): void {
-    const snapshot = held.map((h) => h.file as Blob);
-    persistChain = persistChain.then(() => persistDraftBlobs(snapshot)).catch(() => {});
+    const snapshot = held.map((h) => ({ id: h.id, blob: h.file as Blob }));
+    persistChain = persistChain.then(() => syncDraft(snapshot)).catch(() => {});
   }
 
   function render(): void {
@@ -190,7 +315,7 @@ export function composeImages(container: HTMLElement): ComposeImages {
   return {
     count: () => held.length,
     add(file) {
-      held.push({ file, url: URL.createObjectURL(file) });
+      held.push({ id: freshId(), file, url: URL.createObjectURL(file) });
       render();
       persist();
     },
@@ -204,7 +329,12 @@ export function composeImages(container: HTMLElement): ComposeImages {
     },
     putBack(batch) {
       // 退回的旧批插在在飞期间新贴的图之前(重试时次序不变),objectURL 重建。
-      const restored = batch.map((file) => ({ file, url: URL.createObjectURL(file) }));
+      // id 也是新的:takeBatch 那一刻这些键已从库里删掉,退回等于重新写一遍字节。
+      const restored = batch.map((file) => ({
+        id: freshId(),
+        file,
+        url: URL.createObjectURL(file),
+      }));
       held = [...restored, ...held];
       render();
       persist();
@@ -228,14 +358,17 @@ export function composeImages(container: HTMLElement): ComposeImages {
     },
     async restore() {
       if (held.length) return; // 启动后用户已抢先贴图:不覆盖
-      let blobs: Blob[];
+      let items: DraftItem[];
       try {
-        blobs = await loadDraftBlobs();
+        items = await loadDraft();
       } catch {
         return; // IndexedDB 不可用/读失败:恢复尽力而为,不拦启动
       }
-      if (!blobs.length || held.length) return; // await 期间可能已被贴入:再核一次
-      for (const b of blobs) held.push({ file: b as File, url: URL.createObjectURL(b) });
+      if (!items.length || held.length) return; // await 期间可能已被贴入:再核一次
+      // **id 原样带回**:这些字节库里已经有了,下一次 persist 只写清单不重写它们。
+      for (const it of items) {
+        held.push({ id: it.id, file: it.blob as File, url: URL.createObjectURL(it.blob) });
+      }
       render();
     },
   };

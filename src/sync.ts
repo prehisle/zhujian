@@ -99,11 +99,18 @@ export function syncSpaceSwitched(): void {
   if (mode === "home" || mode === "advanced") renderPanel();
 }
 
+/** 单空间时的空间入口兜底(411/D2):侧栏徽章藏起来了,菜单由 notebook.ts 注入这里打开。 */
+let openSpaces: (() => void) | null = null;
+
 /** 挂同步 UI。resolve = 四个事件监听都已注册完(调用方此后再拉状态基线,不漏事件)。 */
-export async function initSync(opts: { refresh: () => void }): Promise<void> {
+export async function initSync(opts: {
+  refresh: () => void;
+  openSpaces: () => void;
+}): Promise<void> {
   const entry = document.getElementById("sync-entry");
   if (!entry) throw new Error("侧栏缺 #sync-entry(notebook.html 漂移?)");
   entry.addEventListener("click", () => openPanel());
+  openSpaces = opts.openSpaces;
 
   let timer: number | undefined;
   await Promise.all([
@@ -334,6 +341,7 @@ function renderHome(body: HTMLElement): void {
       );
     }
     body.appendChild(acts);
+    if (spaceNames.size <= 1) body.appendChild(spacesEntryRow()); // 411/D2 兜底,见该函数
     void appendUpdateFooter(body);
     return;
   }
@@ -387,9 +395,27 @@ function renderHome(body: HTMLElement): void {
   acts.appendChild(btn(t("devices.entry"), "hbtn", () => gotoDevices()));
   acts.appendChild(btn(t("sync.viewRecovery"), "hbtn", () => goto("recovery")));
   body.appendChild(acts);
+  if (spaceNames.size <= 1) body.appendChild(spacesEntryRow()); // 411/D2 兜底,见该函数
   // 修改服务器收进「高级」:运维动作不与日常操作同屏(概念收敛)。
   body.appendChild(advancedEntryRow());
   void appendUpdateFooter(body);
+}
+
+/** 空间入口的兜底行(411/D2,与安卓 116 同源):单空间时侧栏徽章整个藏起,而新建 /
+ *  加入空间的**唯一**入口就在那枚徽章的菜单里 —— 这行把它接回来。多空间时徽章就在
+ *  侧栏上,这行随之收起:**两者互斥、永远恰有一条路**(判据同为「几个空间」)。
+ *  空间数取自 `spaceNames`(notebook.ts 每次 refreshSpaceEntry 都灌一遍,与徽章显隐同源
+ *  ——两处读同一个数,不会各判各的)。 */
+function spacesEntryRow(): HTMLElement {
+  const row = el("div", "sync-update-row");
+  row.appendChild(
+    btn(t("shell.spacesEntry"), "hbtn", () => {
+      if (!openSpaces) throw new Error("同步面板没接空间入口(initSync 漏传 openSpaces?)");
+      closePanel(); // 空间菜单是轻浮层,不与模态面板同屏
+      openSpaces();
+    }),
+  );
+  return row;
 }
 
 /** 「高级」低调入口:服务器信息与运维动作的收纳处。 */

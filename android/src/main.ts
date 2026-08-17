@@ -25,12 +25,15 @@ import {
   listSpaces,
   listTimeline,
   listTopicsFull,
+  paneCounts,
   spaceLabel,
+  updateTaskStatus,
   type SpaceInfo,
+  type TaskStatus,
   type TimelineItem,
 } from "./api";
-import { $, confirmBar, esc, fmtWhen, hideConfirmBar, showBar, showError, STAGE_LABEL } from "./ui";
-import { composeImages, pickImage } from "./images";
+import { $, actionBar, confirmBar, esc, fmtWhen, hideConfirmBar, showBar, showError, STAGE_LABEL } from "./ui";
+import { capturePhoto, composeImages, PICK_MAX, pickImages } from "./images";
 import { INPUT_DEBOUNCE_MS } from "./timing";
 import * as cardPanel from "./cardpanel";
 import * as filter from "./filter";
@@ -118,6 +121,11 @@ const filters: Record<ViewMode, filter.FilterState> = {
   ideas: { kind: "all", topics: [], text: "" },
   tasks: { kind: "all", topics: [], text: "" },
 };
+// 任务面的状态维(404+1):null = 全部,否则只看该 stage 的段。⛔ 刻意不进 filter.ts 的
+// FilterState——那是 check-filter-parity 钉住的两端共享纯逻辑,桌面没有这一维(看板四列
+// 本就并排);本维在本文件外挂、应用在共享 applyFilter 之后。同 filters:切面无关
+// (任务面专属)、切空间清零;新任务落面时随 clearFilter 一并归零(免得新卡被藏)。
+let taskStageFilter: string | null = null;
 let allFilterTopics: filter.FilterTopic[] = [];
 // 用户主动导航(点 mode 钮)/开始保存 → ++,作废在途的 focus 定位(146 ▲M2/▲▲M3:
 // 旧定位的内部切面不许反抢用户刚选的面、不许打破保存的「新卡在当前面」承诺)。
@@ -146,16 +154,27 @@ $("text").addEventListener("input", () => {
 // 随之挂上(save() 的两缓冲结算)。暂存不随切面/切空间清(与文字草稿同律),存到保存
 // 那刻落到当前空间。取图/转码走共享件 images.ts,与卡片操作面「加图」同一套。
 const compImgs = composeImages($("compose-thumbs"));
+function holdComposeImage(file: File): void {
+  compImgs.add(file);
+  if (captureSaving) captureLiveTouched = true; // 罕见:选图期间「记下」在飞=新输入
+}
+// 取图/取消都回到输入:系统选择器会背景化 webview 让输入掉焦,回来须重聚焦——
+// 捕获层(232)据此不误关、键盘回来,顺手写配文。
+function refocusCompose(): void {
+  ($("text") as HTMLTextAreaElement).focus();
+}
 $("compose-addimg").addEventListener("click", async () => {
   if (captureSaving || switching) return; // 在飞/切换中不受理(与「记下」同闸)
-  const file = await pickImage();
-  if (file) {
-    compImgs.add(file);
-    if (captureSaving) captureLiveTouched = true; // 罕见:选图期间「记下」在飞=新输入
-  }
-  // 取图/取消都回到输入:系统选择器会背景化 webview 让输入掉焦,回来须重聚焦——
-  // 捕获层(232)据此不误关、键盘回来,顺手写配文。
-  ($("text") as HTMLTextAreaElement).focus();
+  // 多选逐张交付(391):每张降采样完就进暂存条,缩略图一张张长出来。
+  const res = await pickImages(holdComposeImage);
+  if (res.kind === "tooMany") showError(t("images.tooMany", { max: PICK_MAX, n: res.count }));
+  refocusCompose();
+});
+$("compose-photo").addEventListener("click", async () => {
+  if (captureSaving || switching) return;
+  const file = await capturePhoto();
+  if (file) holdComposeImage(file);
+  refocusCompose();
 });
 
 // stage → 主视图归属。穷尽映射,未知值响亮抛(铁律:不写兜底)。
@@ -447,22 +466,27 @@ function projectTimeline(): void {
     box.innerHTML = shown.length
       ? shown.map((i) => renderCard(i, hideTopic)).join("")
       : modeItems.length === 0
-        ? `<p class="muted empty">${t("main.emptyIdeas")}</p>`
+        ? `<p class="muted empty">${t("main.emptyIdeas")}<br />${t("main.emptyIdeasHint")}</p>`
         : filteredEmptyHtml(f);
   } else {
-    box.innerHTML = shown.length
-      ? TASK_SECTIONS.filter((s) => shown.some((t) => t.stage === s.stage))
+    // 状态维最后应用(在共享三维之后):空态的话语权也按同序——词/标签/类型筛空的提示
+    // 优先(shown 已空),三维有结果、被状态维筛空才说「该状态下没有任务」。
+    const stageShown = taskStageFilter === null ? shown : shown.filter((t) => t.stage === taskStageFilter);
+    box.innerHTML = stageShown.length
+      ? TASK_SECTIONS.filter((s) => stageShown.some((t) => t.stage === s.stage))
           .map(
             (s) =>
-              `<section class="tl-group"><h3 class="tl-sec">${s.label}</h3>${shown
+              `<section class="tl-group"><h3 class="tl-sec">${s.label}</h3>${stageShown
                 .filter((t) => t.stage === s.stage)
                 .map((t) => renderCard(t, hideTopic))
                 .join("")}</section>`,
           )
           .join("")
       : modeItems.length === 0
-        ? `<p class="muted empty">${t("main.emptyTasks")}</p>`
-        : filteredEmptyHtml(f);
+        ? `<p class="muted empty">${t("main.emptyTasks")}<br />${t("main.emptyTasksHint")}</p>`
+        : shown.length > 0 && taskStageFilter !== null
+          ? `<p class="muted empty">${t("main.noneUnderStage", { stage: STAGE_LABEL[taskStageFilter] })}</p>`
+          : filteredEmptyHtml(f);
   }
   hydrateThumbs(box);
   cardPanel.restore(box); // 展开态跨重画恢复(条目已不在=清态)
@@ -474,9 +498,53 @@ function renderFilterBar(modeItems: TimelineItem[]): void {
   const bar = $("filterbar");
   bar.hidden = modeItems.length === 0;
   if (modeItems.length === 0) return;
+  renderStagePills($("filter-stages"), modeItems);
   const f = filters[viewMode];
   filter.renderKindPills($("filter-kinds"), modeItems, allFilterTopics, f, onFilterPick);
   filter.renderTopicPills($("filter-topics"), modeItems, allFilterTopics, f, onFilterPick);
+}
+
+/** 任务面的状态 chips 行:全部 + 四态(固定成员,含 0 计数——行的成员不随数据增减,
+ *  布局稳定),与标签/类型 pills 同皮(.fpill)、同全量计数口径(192:不随文本收缩)。
+ *  灵感面清空该行(CSS :empty 隐)。 */
+function renderStagePills(bar: HTMLElement, modeItems: TimelineItem[]): void {
+  if (viewMode !== "tasks") {
+    bar.replaceChildren();
+    return;
+  }
+  const mk = (label: string, stage: string | null, count: number | null): HTMLButtonElement => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = `fpill${taskStageFilter === stage ? " active" : ""}`;
+    b.dataset.stage = stage ?? "all";
+    b.append(document.createTextNode(label));
+    if (count !== null) {
+      const n = document.createElement("span");
+      n.className = "fn";
+      n.textContent = String(count);
+      b.append(n);
+    }
+    b.addEventListener("click", () => onStagePick(stage));
+    return b;
+  };
+  const axis = document.createElement("span");
+  axis.className = "faxis";
+  axis.textContent = t("main.stageAxis");
+  const nodes: HTMLElement[] = [axis, mk(t("main.stageAll"), null, null)];
+  for (const s of TASK_SECTIONS) {
+    nodes.push(mk(s.label, s.stage, modeItems.filter((i) => i.stage === s.stage).length));
+  }
+  bar.replaceChildren(...nodes);
+}
+
+/** 点状态 chip 的落点:同 onFilterPick 的草稿闸;点已选中的状态 = 回「全部」。 */
+function onStagePick(stage: string | null): void {
+  if (cardPanel.hasDirtyDraft()) {
+    showError(t("main.finishDraftFirst"));
+    return;
+  }
+  taskStageFilter = stage !== null && taskStageFilter === stage ? null : stage;
+  projectTimeline();
 }
 
 /** 点 pill 的落点:先过草稿闸(卡片编辑未存时重投影会拆掉草稿),再改本面筛选状态
@@ -507,6 +575,7 @@ function filteredEmptyHtml(f: filter.FilterState): string {
 
 /** 清掉某面的筛选并同步文本框(新记录落该面时用,避免被停留的筛选藏起)。 */
 function clearFilter(mode: ViewMode): void {
+  if (mode === "tasks") taskStageFilter = null; // 状态维不在 FilterState 里,单独清(新任务必可见)
   const f = filters[mode];
   if (!filter.filterActive(f)) return;
   filters[mode] = { kind: "all", topics: [], text: "" };
@@ -526,9 +595,10 @@ async function refreshOnce(): Promise<void> {
     // 署名少显一轮也绝不让整屏内容陪葬。
     // 留言计数(0035 徽章)与设备名册同批并发:它是**聚合计数**这一个真相源,列表另走
     // 分页(§4.14.2 第 4 条)——别为了对齐把留言正文整批拉过来。同样内部吞错(装饰)。
-    const [items, ftopics] = await Promise.all([
+    const [items, ftopics, counts] = await Promise.all([
       listTimeline(space),
       listTopicsFull(space),
+      paneCounts(space), // 底栏两枚 pane 钮的显形真值(408-A1);失败同走整轮错误页
       loadIdentity(space),
       loadCommentCounts(space),
     ]);
@@ -539,6 +609,8 @@ async function refreshOnce(): Promise<void> {
     }
     lastItems = new Map(items.map((i) => [i.id, i])); // 全量真值,只在成功读取后更新
     allFilterTopics = ftopics.map((t) => ({ id: t.id, title: t.title, color: t.color, kind: t.kind }));
+    paneHas = { trash: counts.trash > 0, sealed: counts.sealed > 0 };
+    renderBottomBar();
     lastRefreshOk = true;
     projectTimeline();
     // 留言层:宿主还在就重拉第一页(别端写的留言自己冒出来),已经不在这批里就收层
@@ -583,6 +655,8 @@ function blankTimelineForSpaceChange(): void {
   resetPanesForSpaceChange(); // 统一复位:关全部面 + 清陈旧内容 + 诊断缓存作废
   disconnectThumbObserver();
   lastItems = new Map();
+  paneHas = { trash: false, sealed: false }; // 旧空间的 pane 钮不许挂到新空间数据到达前
+  renderBottomBar();
   lastRefreshOk = false; // 快照失效(146 ▲▲M2):新空间读到之前,mode 切换不许投影旧数据
   $("timeline").innerHTML = `<p class="muted empty">${t("main.loading")}</p>`;
 }
@@ -596,13 +670,31 @@ $("timeline").addEventListener("change", async (e) => {
     input.checked = false; // 切换编排中:屏上还是旧空间的卡,勾选不受理、当场回弹
     return;
   }
+  const space = getCurrentSpace();
+  // 勾框与 lastItems 是同一次投影(勾框在屏 ⇒ 快照必有此行);done 卡勾框 disabled,
+  // 故 from 必是前三态——撤销要回的就是它,不是固定回 todo。
+  const from = lastItems.get(id)!.stage as TaskStatus;
   input.disabled = true;
   try {
-    await completeTask(getCurrentSpace(), id);
+    await completeTask(space, id);
   } catch (err) {
     showError(String(err));
+    await refresh();
+    return;
   }
   await refresh();
+  // 操作型回执(§3.1「已完成 · 撤销」):误勾一点召回,不用进操作面翻状态。
+  actionBar(t("main.completed"), t("ui.undo"), () => {
+    if (switching || getCurrentSpace() !== space) return; // 换空间的旧撤销作废
+    void (async () => {
+      try {
+        await updateTaskStatus(space, id, from);
+      } catch (err) {
+        showError(String(err));
+      }
+      await refresh();
+    })();
+  });
 });
 
 // ---- 捕获(146:seg 两态删除,落点=当前主视图,placeholder 随面换) -----------
@@ -978,10 +1070,19 @@ const PANE_EL: Record<string, string> = {
 };
 let activePane: string | null = null;
 
+/** 底栏「回收站/归档册」按数据显形(408-A1):两面空则不渲染那枚钮——第一天的底栏
+ *  只有「随记/任务」,第一次删除/归档时回执指路、钮随之出现,清空后再隐。真值每轮
+ *  refresh 随 pane_counts 更新;初值 false = 未证实有数据就不显(空库首帧不闪)。 */
+let paneHas = { trash: false, sealed: false };
+
 /** 底栏高亮的单一渲染点(146 ▲M3):pane 开着高亮 pane 钮,否则高亮当前 mode 钮
- *  ——popstate/closePaneNow 关面后必须回到 mode 高亮,不能清光。 */
+ *  ——popstate/closePaneNow 关面后必须回到 mode 高亮,不能清光。显形也收在这里:
+ *  该面正开着时钮保显(否则清空回收站的那一刻,高亮着的关面入口凭空消失)。 */
 function renderBottomBar() {
   document.querySelectorAll<HTMLButtonElement>("#bottombar button").forEach((b) => {
+    const pane = b.dataset.pane;
+    if (pane === "trash" || pane === "sealed")
+      b.hidden = !paneHas[pane] && activePane !== pane;
     b.classList.toggle(
       "active",
       activePane !== null ? b.dataset.pane === activePane : b.dataset.mode === viewMode,
@@ -1086,6 +1187,7 @@ function resetPanesForSpaceChange() {
   // 筛选是 A 空间的标签 id/词,绝不带进 B 空间(allFilterTopics 随下轮刷新重取)。
   filters.ideas = { kind: "all", topics: [], text: "" };
   filters.tasks = { kind: "all", topics: [], text: "" };
+  taskStageFilter = null;
   allFilterTopics = [];
   ($("filter-text") as HTMLInputElement).value = "";
 }
@@ -1140,6 +1242,11 @@ async function focusTimelineCard(id: string) {
     return;
   }
   const target = modeOfStage(item.stage);
+  if (target === "tasks" && taskStageFilter !== null && item.stage !== taskStageFilter) {
+    // 定位目标被状态维藏着:这一维自己清自己(标签/文本维的既有行为不动,单轮单件事)。
+    taskStageFilter = null;
+    if (viewMode === "tasks") projectTimeline();
+  }
   if (target !== viewMode) applyMode(target); // 快照有效,applyMode 同步投影
   const card = document.querySelector<HTMLElement>(`#timeline [data-id="${id}"]`); // ULID 仅字母数字,选择器安全
   if (!card) {

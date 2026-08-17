@@ -222,9 +222,9 @@ pub(crate) fn crockford_char_value(raw: char) -> Option<u32> {
     }
 }
 /// 有效字符数:256 bit / 5 ≈ 52,末字符低 4 bit 恒为填充 0。
-const RECOVERY_CHARS: usize = 52;
+const CODE32_CHARS: usize = 52;
 /// 显示分组宽度(4 字符一组,13 组)。
-const RECOVERY_GROUP: usize = 4;
+const CODE32_GROUP: usize = 4;
 
 /// 恢复码解析失败(输入是人手抄录,错误要能指认)。
 #[derive(Debug, PartialEq, Eq)]
@@ -242,19 +242,23 @@ impl std::fmt::Display for RecoveryCodeError {
         match self {
             RecoveryCodeError::BadChar(c) => write!(f, "恢复码含无效字符「{c}」"),
             RecoveryCodeError::BadLength(n) => {
-                write!(f, "恢复码长度不对(有效字符 {n} 个,应为 {RECOVERY_CHARS} 个)")
+                write!(f, "恢复码长度不对(有效字符 {n} 个,应为 {CODE32_CHARS} 个)")
             }
             RecoveryCodeError::NonCanonical => write!(f, "恢复码校验不过,请核对最后一组"),
         }
     }
 }
 
-/// K_acc → 恢复码:Crockford base32,4 字符一组 `-` 连接(§2 的显示形态)。
-pub fn recovery_code(k_acc: &[u8; 32]) -> String {
-    let mut chars = Vec::with_capacity(RECOVERY_CHARS);
+/// 32 字节钥 → Crockford base32 的人眼形态:52 字符,4 个一组 `-` 连接。
+///
+/// ⭐ **同步恢复码(§2)与备份码(backup-plan §5)共用这一份编码** —— 复用的是**编码**,
+/// 两把钥各自独立。⛔ 别为备份另写一份 base32(checklist §14:同一条规则的第二份描述
+/// 就是漂移源;backup-plan §7.2 点名要求抽这一支)。
+pub(crate) fn crockford_encode32(key: &[u8; 32]) -> String {
+    let mut chars = Vec::with_capacity(CODE32_CHARS);
     let mut acc: u32 = 0;
     let mut bits: u32 = 0;
-    for &b in k_acc {
+    for &b in key {
         acc = ((acc << 8) | u32::from(b)) & 0xFFFF; // 只留有效低位(bits ≤ 12)
         bits += 8;
         while bits >= 5 {
@@ -265,15 +269,16 @@ pub fn recovery_code(k_acc: &[u8; 32]) -> String {
     // 256 = 51*5 + 1:剩 1 个数据 bit,左移补 4 个 0 bit 成第 52 字符。
     chars.push(CROCKFORD[((acc << (5 - bits)) & 31) as usize]);
     chars
-        .chunks(RECOVERY_GROUP)
+        .chunks(CODE32_GROUP)
         .map(|g| std::str::from_utf8(g).expect("字母表是 ASCII"))
         .collect::<Vec<_>>()
         .join("-")
 }
 
-/// 恢复码 → K_acc。跳过 `-`/空格,不分大小写,O→0、I/L→1(Crockford 规范的抄录
-/// 容错);其余任何不合 = 拒。
-pub fn parse_recovery_code(input: &str) -> Result<[u8; 32], RecoveryCodeError> {
+/// Crockford base32 人眼形态 → 32 字节钥。跳过 `-`/空格,不分大小写,O→0、I/L→1
+/// (Crockford 规范的抄录容错);其余任何不合 = 拒。恢复码与备份码共用(见
+/// [`crockford_encode32`] 头注)。
+pub(crate) fn crockford_decode32(input: &str) -> Result<[u8; 32], RecoveryCodeError> {
     let mut out = [0u8; 32];
     let mut filled = 0usize;
     let mut acc: u32 = 0;
@@ -288,7 +293,7 @@ pub fn parse_recovery_code(input: &str) -> Result<[u8; 32], RecoveryCodeError> {
             None => return Err(RecoveryCodeError::BadChar(raw)),
         };
         nchars += 1;
-        if nchars > RECOVERY_CHARS {
+        if nchars > CODE32_CHARS {
             return Err(RecoveryCodeError::BadLength(nchars));
         }
         acc = ((acc << 5) | v) & 0xFFF; // 只留有效低位(bits ≤ 12)
@@ -299,7 +304,7 @@ pub fn parse_recovery_code(input: &str) -> Result<[u8; 32], RecoveryCodeError> {
             filled += 1;
         }
     }
-    if nchars != RECOVERY_CHARS {
+    if nchars != CODE32_CHARS {
         return Err(RecoveryCodeError::BadLength(nchars));
     }
     // 52*5 - 32*8 = 4:恰余 4 个填充 bit,必须为 0(非规范形态拒,fail-fast)。
@@ -309,6 +314,16 @@ pub fn parse_recovery_code(input: &str) -> Result<[u8; 32], RecoveryCodeError> {
         return Err(RecoveryCodeError::NonCanonical);
     }
     Ok(out)
+}
+
+/// K_acc → 恢复码(§2 的显示形态)。**编码本身**是 [`crockford_encode32`],与备份码同一份。
+pub fn recovery_code(k_acc: &[u8; 32]) -> String {
+    crockford_encode32(k_acc)
+}
+
+/// 恢复码 → K_acc。解码本身是 [`crockford_decode32`],与备份码同一份。
+pub fn parse_recovery_code(input: &str) -> Result<[u8; 32], RecoveryCodeError> {
+    crockford_decode32(input)
 }
 
 #[cfg(test)]
@@ -636,8 +651,8 @@ f3a82f4eda7e39ae64c6708c54c216cb96b72e1213b4522f8c9ba40db5d945b11b69b982c1bb9e3f
             *b = (i as u8) * 7 + 3;
         }
         let code = recovery_code(&key);
-        assert_eq!(code.len(), RECOVERY_CHARS + RECOVERY_CHARS / RECOVERY_GROUP - 1);
-        assert!(code.split('-').all(|g| g.len() == RECOVERY_GROUP));
+        assert_eq!(code.len(), CODE32_CHARS + CODE32_CHARS / CODE32_GROUP - 1);
+        assert!(code.split('-').all(|g| g.len() == CODE32_GROUP));
         assert!(code
             .chars()
             .all(|c| c == '-' || CROCKFORD.contains(&(c as u8))));
@@ -675,11 +690,11 @@ f3a82f4eda7e39ae64c6708c54c216cb96b72e1213b4522f8c9ba40db5d945b11b69b982c1bb9e3f
         // 少一字符 / 多一字符。
         assert_eq!(
             parse_recovery_code(&code[..code.len() - 1]),
-            Err(RecoveryCodeError::BadLength(RECOVERY_CHARS - 1))
+            Err(RecoveryCodeError::BadLength(CODE32_CHARS - 1))
         );
         assert_eq!(
             parse_recovery_code(&format!("{code}0")),
-            Err(RecoveryCodeError::BadLength(RECOVERY_CHARS + 1))
+            Err(RecoveryCodeError::BadLength(CODE32_CHARS + 1))
         );
         // 字母表外字符(U 被 Crockford 刻意排除)。
         assert_eq!(

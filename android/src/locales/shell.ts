@@ -9,7 +9,7 @@ import { defineMessages } from "./entry";
 
 export const shell = defineMessages({
   "shell.appName": { zh: "朱简", en: "Zhujian" },
-  "shell.navIdeas": { zh: "灵感", en: "Ideas" },
+  "shell.navIdeas": { zh: "随记", en: "Notes" },
   "shell.navTasks": { zh: "任务", en: "Tasks" },
   "shell.navTags": { zh: "标签", en: "Tags" },
   "shell.navSearch": { zh: "搜索", en: "Search" },
@@ -27,7 +27,7 @@ export const shell = defineMessages({
   "shell.joinCodePh": { zh: "配对码(对方设备「添加设备」出示)", en: "Pairing code (shown by “Add device” on the other device)" },
   "shell.joinCancel": { zh: "取消加入", en: "Cancel joining" },
   "shell.syncAll": { zh: "全部同步(逐空间追赶一次)", en: "Sync all (one catch-up pass per space)" },
-  "shell.spacesNote": { zh: "空间=独立的本子,互相隔离;记录落在当前空间。新建的空间即建即用;想多端同步,在该空间的「同步」里创建账户;要把别处的账户带到手机,用「加入空间」。", en: "A space is a separate notebook, isolated from the others; new notes land in the current space. A newly created space is usable right away. To sync across devices, create an account under that space's Sync; to bring an existing account to this phone, use Join a space." },
+  "shell.spacesNote": { zh: "空间=独立的本子,互相隔离;记录落在当前空间。新建的空间即建即用;想多端同步,在该空间的「同步」里创建账户;要把别处的账户带到手机,用「加入空间」。", en: "A space is a separate notebook, isolated from the others; new entries land in the current space. A newly created space is usable right away. To sync across devices, create an account under that space's Sync; to bring an existing account to this phone, use Join a space." },
   "shell.syncScan": { zh: "扫码连接电脑", en: "Scan to connect a computer" },
   "shell.syncAltPair": { zh: "手动输入配对码", en: "Enter the pairing code by hand" },
   "shell.syncCodePh": { zh: "配对码(电脑「添加设备」出示)", en: "Pairing code (shown by “Add device” on the computer)" },
@@ -46,6 +46,7 @@ export const shell = defineMessages({
   "shell.sealedNote": { zh: "完成的任务「入册」后在这里安放;归档是史实,不可删除。", en: "Finished tasks rest here once archived; the archive is a record of fact and cannot be deleted." },
   "shell.topicsNote": { zh: "按住左侧 ⠿ 拖动调顺序;点「类型」给标签标个类型(如「人名」),顺序与类型都会同步到其它设备。", en: "Hold the ⠿ handle on the left to reorder; tap Kind to label a tag (e.g. Person). Order and kind both sync to your other devices." },
   "shell.addImage": { zh: "＋ 加图", en: "＋ Image" },
+  "shell.takePhoto": { zh: "＋ 拍照", en: "＋ Photo" },
   "shell.saveIt": { zh: "记下", en: "Note it" },
   "shell.captureAria": { zh: "记一笔", en: "Note something" },
   "shell.commentsTitle": { zh: "留言", en: "Comments" },

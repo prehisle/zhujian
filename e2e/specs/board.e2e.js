@@ -1,5 +1,5 @@
 import { browser, $, expect } from "@wdio/globals";
-import { invoke, goNotebook, boardAction } from "./support.js";
+import { invoke, goNotebook, boardAction, openCompose } from "./support.js";
 
 // The backend status of a task by title — the real closed loop we assert against
 // (the DOM is driven by drags; the DB is the source of truth).
@@ -53,10 +53,8 @@ describe("任务看板 · 手工建任务与拖动流转", () => {
 
   it("新建任务 → 落在待办,拖动走过 进行中 → 已完成", async () => {
     // 新建任务 via the compose bar (born 'todo', no source note).
-    await $("#add-task").waitForClickable({ timeout: 8000 });
-    await $("#add-task").click();
+    await openCompose();
     const input = await $("#compose-input");
-    await input.waitForDisplayed({ timeout: 5000 });
     await browser.execute((v) => {
       document.querySelector("#compose-input").value = v;
     }, A);
@@ -421,9 +419,7 @@ describe("任务看板 · 文本过滤", () => {
 
     // Create through the compose bar: the new card wouldn't match 「买粮」, so
     // submit clears the text filter rather than filtering the newborn to invisible.
-    await $("#add-task").waitForClickable({ timeout: 8000 });
-    await $("#add-task").click();
-    await $("#compose-input").waitForDisplayed({ timeout: 5000 });
+    await openCompose();
     await browser.execute((v) => {
       document.querySelector("#compose-input").value = v;
     }, NEW);

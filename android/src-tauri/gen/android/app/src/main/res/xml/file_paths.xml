@@ -2,4 +2,9 @@
 <paths xmlns:android="http://schemas.android.com/apk/res/android">
   <external-path name="my_images" path="." />
   <cache-path name="my_cache_images" path="." />
+  <!-- 391 当场拍照:wry 把相机的输出文件建在 getExternalFilesDir(Pictures) 下,再用
+       这个 provider 把它换成 content:// uri 交给相机 app 写。上面那条 external-path
+       (根=外置存储顶层)按前缀算是能盖住它,但盖得含糊——多存储卷/多用户的设备上
+       两者未必同一个卷。显式给这条:FileProvider 取最长匹配,拍照恒走它。 -->
+  <external-files-path name="my_capture_images" path="Pictures" />
 </paths>

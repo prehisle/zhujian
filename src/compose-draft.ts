@@ -43,46 +43,125 @@ export function clearTextDraft(key: string): void {
 }
 
 // ---- 暂存图草稿(IndexedDB) ----------------------------------------------------
-// 单库、按入口键分桶存 Blob[](结构化克隆含字节,读回可当 Blob 用)。写失败一律吞掉——
-// 持久化尽力而为,绝不拦业务(同安卓 images.ts::persistDraftBlobs)。
+// 单库、按入口键分桶(捕获 / 灵感 / 看板三桶,互不串)。写失败一律吞掉——持久化尽力而为,
+// 绝不拦业务。
+// **393 起桶内一张一个键**(安卓同族 392 先改,这份是把两端改齐):此前是「held 一变就把
+// 整桶 blob 整体覆盖写一个键」,加第 N 张要重写前 N-1 张的字节(N 张累计 N(N+1)/2 次拷贝)。
+// 现在每张自己一个 `<桶>::img:<id>` 键、另有 `<桶>::order` 存 id 顺序清单,写入是**收敛**:
+// 同一事务里先 `getAllKeys()`(只取键不取值)、桶里没有的才写、不再持有的删掉。
+// ⚠ 收敛的扫描面**必须限在本桶内**(前缀 `<桶>::`,外加 393 之前那个光秃秃的 `<桶>` 老键)——
+// 三个桶共用一个 store,扫过界就是把别的入口的草稿删了。
+// ⚠ 顺序由清单说了算、不是键序;重排/退回只重写几十字节的清单。
 const IMG_DB = "zhujian-compose-draft";
 const IMG_STORE = "images";
+const ORDER_OF = (key: string): string => `${key}::order`;
+const IMG_OF = (key: string, id: string): string => `${key}::img:${id}`;
 
+/** 一张暂存图:`id` 只是本地键与「这张写过没有」的判据,不出这个模块、不进 DB/同步。 */
+export type DraftImage = { id: string; blob: Blob };
+
+// ⚠ 每一条终局都必须接上(安卓 391 真机上栽过一次):写入是串行链,链上任何一环 Promise
+// 永不落地 = 之后所有草稿写入(**含「记下后清稿」那一次**)全部沉默,而库停在最后一次成功
+// 的快照上 —— 下次启动就回填出一张早该没了的图。open 有 blocked、事务有 abort,漏接哪个
+// 哪个就是那口井。
 function openImgDb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const req = indexedDB.open(IMG_DB, 1);
     req.onupgradeneeded = () => req.result.createObjectStore(IMG_STORE);
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
+    req.onblocked = () => reject(new Error("draft db open blocked"));
   });
 }
 
-export async function saveImageDraft(key: string, blobs: Blob[]): Promise<void> {
+/** 本桶归属判定:`<桶>::…` 是新形态的键,光秃秃的 `<桶>` 是 393 之前那个整批键。 */
+function inBucket(k: string, key: string): boolean {
+  return k === key || k.startsWith(`${key}::`);
+}
+
+/** 把本桶收敛到 `items` 这一份:桶里没有的字节才写、不在 items 里的本桶键一律删
+ *  (**顺带扫掉 393 之前那个整批键与任何孤儿**),最后写 id 顺序清单。三步同一个事务,
+ *  故「清单与字节对不上」这种半态落不了地。 */
+export async function saveImageDraft(key: string, items: DraftImage[]): Promise<void> {
   const db = await openImgDb();
   try {
     await new Promise<void>((resolve, reject) => {
       const tx = db.transaction(IMG_STORE, "readwrite");
       const store = tx.objectStore(IMG_STORE);
-      if (blobs.length === 0) store.delete(key);
-      else store.put(blobs, key);
+      const keysReq = store.getAllKeys(); // 只取键不取值:不读一个 blob 字节
+      keysReq.onsuccess = () => {
+        const orderKey = ORDER_OF(key);
+        const alive = new Set(items.map((it) => IMG_OF(key, it.id)));
+        const onDisk = new Set<string>();
+        for (const k of keysReq.result) {
+          const s = String(k);
+          if (!inBucket(s, key)) continue; // 别的入口的草稿,一根汗毛都不许动
+          // 删要拿**原样的键**去删(String() 只用来比对)。
+          if (s !== orderKey && !alive.has(s)) store.delete(k);
+          else onDisk.add(s);
+        }
+        for (const it of items) {
+          if (!onDisk.has(IMG_OF(key, it.id))) store.put(it.blob, IMG_OF(key, it.id));
+        }
+        store.put(
+          items.map((it) => it.id),
+          orderKey,
+        );
+      };
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error ?? new Error("draft persist aborted"));
     });
   } finally {
     db.close();
   }
 }
 
-export async function loadImageDraft(key: string): Promise<Blob[]> {
+/** 读回本桶:清单定顺序,逐 id 取字节(清单里有 id 却没字节的跳过)。**同一事务里顺带扫掉
+ *  本桶不在清单里的键** —— 老键与孤儿的字节否则会一直占着(一个入口若再也不加图,
+ *  saveImageDraft 永远不跑,没有别人替它清)。 */
+export async function loadImageDraft(key: string): Promise<DraftImage[]> {
   const db = await openImgDb();
   try {
-    return await new Promise<Blob[]>((resolve, reject) => {
-      const tx = db.transaction(IMG_STORE, "readonly");
-      const req = tx.objectStore(IMG_STORE).get(key);
-      req.onsuccess = () => resolve((req.result as Blob[] | undefined) ?? []);
-      req.onerror = () => reject(req.error);
+    return await new Promise<DraftImage[]>((resolve, reject) => {
+      const tx = db.transaction(IMG_STORE, "readwrite"); // 要扫本桶孤儿,故非只读
+      const store = tx.objectStore(IMG_STORE);
+      const orderKey = ORDER_OF(key);
+      const out: DraftImage[] = [];
+      const orderReq = store.get(orderKey);
+      orderReq.onsuccess = () => {
+        const ids = (orderReq.result as string[] | undefined) ?? [];
+        const alive = new Set(ids.map((id) => IMG_OF(key, id)));
+        const keysReq = store.getAllKeys();
+        keysReq.onsuccess = () => {
+          for (const k of keysReq.result) {
+            const s = String(k);
+            if (inBucket(s, key) && s !== orderKey && !alive.has(s)) store.delete(k);
+          }
+        };
+        for (const id of ids) {
+          const req = store.get(IMG_OF(key, id));
+          // 请求按发出顺序回调 ⇒ out 天然就是清单的顺序。
+          req.onsuccess = () => {
+            const b = req.result as Blob | undefined;
+            if (b) out.push({ id, blob: b });
+          };
+        }
+      };
+      tx.oncomplete = () => resolve(out);
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error ?? new Error("draft load aborted"));
     });
   } finally {
     db.close();
   }
+}
+
+/** 暂存图的本地 id(同安卓 `images.ts::newDraftId`):会话内单调 + 启动时刻做前缀 ⇒ 与上次
+ *  会话回填进来的 id 不会撞。**唯一性是 saveImageDraft「已有就不重写字节」的前提**,撞了
+ *  就是拿上一张的字节冒充这一张(静默错图),故调用方还要在自己那份 held 内再挡一道。 */
+let draftIdSeq = 0;
+export function newDraftImageId(): string {
+  draftIdSeq += 1;
+  return `${Date.now().toString(36)}-${draftIdSeq.toString(36)}`;
 }

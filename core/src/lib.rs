@@ -15,6 +15,11 @@
 //! - ⚠ rustls 加密提供者由 app 壳启动时安装(`install_default`),core 只钉 ring
 //!   特性——不装则首次 wss:// 在 `ClientConfig::builder()` panic(84 真机踩过)。
 
+/// 加密备份(backup-plan 笔①-a,402 格式层 / 412 收口)。**公开面只有
+/// `BackupCoordinator` 那一组**(见模块头注):备份钥不出 crate,引擎与 staging 也不出——
+/// 所有备份 / 清扫入口必须经 coordinator(⛔ 这一条是冲着笔①-b 的自动备份去的:
+/// 它不会走桌面命令层,门开在壳里就等于没门)。
+pub mod backup;
 pub mod clock;
 pub mod comments;
 pub mod db;

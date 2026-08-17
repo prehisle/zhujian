@@ -1,5 +1,5 @@
 import { $, browser, expect } from "@wdio/globals";
-import { invoke, goNotebook, clearInbox } from "./support.js";
+import { invoke, goNotebook, clearInbox, tryInvoke } from "./support.js";
 
 // ㊴ 配图(item images). Two layers:
 //  1) command layer through the real IPC bridge — add/list/get/delete, asserting the 「图N」
@@ -72,12 +72,19 @@ describe("配图 · 命令层(编号永不复用 + data URL)", () => {
     expect(hit.url).toBe(`data:image/jpeg;base64,${JPEG}`);
 
     // 两道闸走真桥也要咬人:字节不是 JPEG / base64 超长(解码前就该拒),都响亮拒。
-    await expect(
-      invoke("put_item_thumb", { imageId: m.id, dataB64: PNG }),
-    ).rejects.toThrow(/不是 JPEG/);
-    await expect(
-      invoke("put_item_thumb", { imageId: m.id, dataB64: "/9j/4AAQ".padEnd(200000, "A") }),
-    ).rejects.toThrow(/过长/);
+    // ⚠ 走 `tryInvoke`(把失败当**值**收)而不是 `rejects.toThrow`:396 分诊 —— 让页内脚本
+    // 以 rejected promise 收场,WebKitWebDriver 序列化不了那个结果,回的是
+    // `Could not parse script result`,断言拿不到真正的错误串(Windows 的 msedgedriver 收得了
+    // ⇒ 同一句在两端结论不同,是驱动差异不是产品缺陷)。`tryInvoke` 本就是为这种断言备的。
+    const badMagic = await tryInvoke("put_item_thumb", { imageId: m.id, dataB64: PNG });
+    expect(badMagic.ok).toBe(false);
+    expect(badMagic.err).toMatch(/不是 JPEG/);
+    const tooLong = await tryInvoke("put_item_thumb", {
+      imageId: m.id,
+      dataB64: "/9j/4AAQ".padEnd(200000, "A"),
+    });
+    expect(tooLong.ok).toBe(false);
+    expect(tooLong.err).toMatch(/过长/);
     // 拒了就是拒了:原来那行分毫未动。
     const still = await invoke("get_item_thumb", { imageId: m.id });
     expect(still.url).toBe(`data:image/jpeg;base64,${JPEG}`);

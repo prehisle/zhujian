@@ -35,10 +35,13 @@ import {
   promoteNoteToTask,
   removeTaskTopic,
   renameTask,
+  restoreNote,
+  restoreTask,
   revertTaskToInbox,
   sealTask,
   setTaskDue,
   setTaskPriority,
+  unsealTask,
   updateTaskStatus,
   type SpaceInfo,
   type TaskStatus,
@@ -46,8 +49,8 @@ import {
   type TopicItem,
 } from "./api";
 import { t } from "./i18n";
-import { $, confirmBar, esc, hideConfirmBar, isTaskStage, showBar, showError } from "./ui";
-import { pickImage, toBase64 } from "./images";
+import { $, actionBar, confirmBar, esc, hideConfirmBar, isTaskStage, showBar, showError } from "./ui";
+import { capturePhoto, PICK_MAX, pickImages, toBase64 } from "./images";
 
 type Mode = "actions" | "edit" | "tags" | "move";
 
@@ -212,6 +215,7 @@ function renderActions(item: TimelineItem): string {
     actBtn("edit", t("cardpanel.actEdit")),
     actBtn("tags", t("cardpanel.actTags")),
     actBtn("addimg", t("cardpanel.actAddImg")),
+    actBtn("photo", t("cardpanel.actPhoto")),
     actBtn("comment", t("cardpanel.actComment")),
   ];
   if (!task) acts.push(actBtn("promote", t("cardpanel.actPromote")));
@@ -502,26 +506,69 @@ function closeDraft() {
   deps.onDraftClosed();
 }
 
-// ---- 操作面「加图」(取图/转码走共享件 images.ts,与 compose 记灵感同源) -------
+// ---- 操作面「加图」/「拍照」(取图/转码走共享件 images.ts,与 compose 记灵感同源) ----
 
-/** 点「加图」:唤起系统相册选一张(pickImage,借 WebView onShowFileChooser,无插件),
- *  选中即读字节挂到本条,走面板统一写口 run()(写成功刷新轴、缩略图现出)。图挂在既有
- *  条目上,与正文编辑草稿无关,刷新干净;取消(没选)静默返回。后端限 png/jpeg/webp/gif
- *  ≤32MiB,越界响亮报后端原话(不静默吞)。 */
-async function addImage(itemId: string): Promise<void> {
+/** 逐张挂到本条,走面板统一写口 run()(写成功刷新轴、缩略图现出)。图挂在既有条目上,
+ *  与正文编辑草稿无关,刷新干净。**逐张 try 不中断**:后端限 png/jpeg/webp/gif ≤32MiB,
+ *  一张被拒不该连累同批其余的(HEIC 混在相册多选里就是这个形)。回执三分:全成功 /
+ *  部分失败(带上后端第一条原话,不静默吞)/ 单张失败(就报原话,与 195 的行为一致)。 */
+async function attachImages(itemId: string, files: File[]): Promise<void> {
+  if (!state || busy || !files.length) return;
+  let ok = 0;
+  let firstErr = "";
+  await run(
+    async (space) => {
+      for (const f of files) {
+        let b64: string;
+        try {
+          b64 = await toBase64(f);
+        } catch {
+          if (!firstErr) firstErr = t("cardpanel.imageReadFailed"); // 转码炸了没有后端原话可报
+          continue;
+        }
+        try {
+          await addItemImage(space, itemId, f.type, b64);
+          ok += 1;
+        } catch (err) {
+          if (!firstErr) firstErr = String(err);
+        }
+      }
+    },
+    {
+      onCommitted: () => {
+        const failed = files.length - ok;
+        if (!failed) {
+          showBar(ok === 1 ? t("cardpanel.imageAdded") : t("cardpanel.imagesAdded", { n: ok }), true);
+        } else if (!ok && files.length === 1) {
+          showError(firstErr);
+        } else {
+          showError(`${t("cardpanel.imagesPartial", { ok, failed })} ${firstErr}`);
+        }
+      },
+    },
+  );
+}
+
+/** 点「加图」:唤起系统相册**多选**(≤ PICK_MAX 张,借 WebView onShowFileChooser,无插件)。
+ *  取图这一路每张降采样要几百 ms,逐张收进 batch 后一并写(写口 run() 是单飞的,不能
+ *  边选边写);取消(没选)静默返回,超上界响亮说清楚。 */
+async function addImages(itemId: string): Promise<void> {
   if (!state || busy) return;
-  const file = await pickImage();
-  if (!file) return;
-  let b64: string;
-  try {
-    b64 = await toBase64(file);
-  } catch {
-    showError(t("cardpanel.imageReadFailed"));
+  const batch: File[] = [];
+  const res = await pickImages((f) => batch.push(f));
+  if (res.kind === "tooMany") {
+    showError(t("images.tooMany", { max: PICK_MAX, n: res.count }));
     return;
   }
-  await run((space) => addItemImage(space, itemId, file.type, b64), {
-    onCommitted: () => showBar(t("cardpanel.imageAdded"), true),
-  });
+  await attachImages(itemId, batch);
+}
+
+/** 点「拍照」:当场开系统相机拍一张,拍完直接挂到本条(不进任何暂存)。 */
+async function addPhoto(itemId: string): Promise<void> {
+  if (!state || busy) return;
+  const file = await capturePhoto();
+  if (!file) return;
+  await attachImages(itemId, [file]);
 }
 
 // ---- 事件接线 ----------------------------------------------------------------
@@ -635,7 +682,11 @@ function handleAct(act: string, card: HTMLElement) {
       return;
     case "addimg":
       clearConfirm();
-      void addImage(session.id);
+      void addImages(session.id);
+      return;
+    case "photo":
+      clearConfirm();
+      void addPhoto(session.id);
       return;
     case "comment":
       // 留言层盖在面板之上;面板留着不收(收层回来还在原处)。写/删由留言层自己走
@@ -700,16 +751,28 @@ function handleAct(act: string, card: HTMLElement) {
         // 确认期间远端可能已翻 stage(灵感→任务):按现行条目分流,不用第一拍的快照。
         const cur = deps.getItem(session.id);
         if (!cur) return;
-        void run(
-          (space) =>
-            isTaskStage(cur.stage) ? archiveTask(space, cur.id) : archiveNote(space, cur.id),
-          {
-            onCommitted: () => showBar(t("cardpanel.deleted"), true),
-            afterSession: () => {
-              state = null;
-            },
+        const task = isTaskStage(cur.stage);
+        void run((space) => (task ? archiveTask(space, cur.id) : archiveNote(space, cur.id)), {
+          // 操作型回执(§3.1):软删可逆,撤销=按删除那刻的 stage 分流捞回(同回收站
+          // 「恢复」)。onCommitted 只在空间未换时被调 ⇒ 此刻 getCurrentSpace()=写时空间。
+          onCommitted: () => {
+            const space = getCurrentSpace();
+            actionBar(t("cardpanel.deleted"), t("ui.undo"), () => {
+              if (deps.isSwitching() || getCurrentSpace() !== space) return; // 换空间的旧撤销作废
+              void (async () => {
+                try {
+                  await (task ? restoreTask(space, cur.id) : restoreNote(space, cur.id));
+                } catch (err) {
+                  showError(String(err));
+                }
+                await deps.refresh();
+              })();
+            });
           },
-        );
+          afterSession: () => {
+            state = null;
+          },
+        });
       });
       return;
     case "revert": {
@@ -731,7 +794,22 @@ function handleAct(act: string, card: HTMLElement) {
       confirmBar(t("cardpanel.sealQ"), t("cardpanel.sealYes"), () => {
         if (state !== session || busy) return;
         void run((space) => sealTask(space, item.id), {
-          onCommitted: () => showBar(t("cardpanel.sealed"), true),
+          // 操作型回执(§3.1):归档可取消(unseal 回 done),撤销=一点回来,
+          // 不用去归档册再走一遍「取消归档」。space 取法同 del。
+          onCommitted: () => {
+            const space = getCurrentSpace();
+            actionBar(t("cardpanel.sealed"), t("ui.undo"), () => {
+              if (deps.isSwitching() || getCurrentSpace() !== space) return; // 换空间的旧撤销作废
+              void (async () => {
+                try {
+                  await unsealTask(space, item.id);
+                } catch (err) {
+                  showError(String(err));
+                }
+                await deps.refresh();
+              })();
+            });
+          },
           afterSession: () => {
             state = null;
           },

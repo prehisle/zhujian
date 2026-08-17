@@ -136,6 +136,101 @@ fn the_lan_seat_is_dropped_before_the_shutdown_signal() {
     }
 }
 
+/// 一份「探针」准入条目(390):veto 空间自己不会去注册(它压根不起 transport),故这几只
+/// 用例手工把条目放进准入表。**db 刻意是一条独立的内存连接**——拿 `rt.db` 的克隆的话,
+/// 「条目没被摘掉」会顺带让重置那道强引用归零证明过不去,一条判据两个红法,读不出坏的是哪件。
+fn lan_probe(space: &str, owner: u64) -> crate::sync::lan_net::Registration {
+    crate::sync::lan_net::Registration {
+        space_id: space.into(),
+        owner,
+        account_id: "01ACCTAAAAAAAAAAAAAAAAAAAA".into(),
+        self_device: "01SELFAAAAAAAAAAAAAAAAAAAA".into(),
+        k_acc: [5u8; 32],
+        self_seed: [6u8; 32],
+        db: Arc::new(Mutex::new(Connection::open_in_memory().unwrap())),
+        active: Arc::new(Mutex::new(std::collections::HashSet::new())),
+        gate: Arc::new(Mutex::new(crate::sync::lan::RosterGate::default())),
+        handoff: mpsc::channel(4).0,
+    }
+}
+
+/// **两条收场路径都要真的打掉在飞的 pre-auth 握手**(390 销 384 可优化项⑤的第①格)。
+///
+/// 上面那条 [`stop_drops_the_lan_admission_seat`] 只放了「条目」这一枚探针,而 §6 要的是
+/// 两件事:摘条目(新拨入不再命中)**与**当场取消那些**已经认下这个空间、还没移交**的握手
+/// (否则它们能在 Stopping 之后再交一条链上来,窗口 = 整个停机耗时)。后者在 supervisor
+/// 这条**真路**上此前一格字据都没有 —— `lan_net.rs` 那三条走的是直接调 `adm.revoke` 的
+/// 单元层,证不到「`stop`/`begin_reset` 真的接到了那根线上」。
+///
+/// ⭐ 同一条里带**跨空间阴性对照**:认在别的空间的那只一根汗毛都不许动。停一个空间顺手
+/// 把另一个空间的直连打断,是用户看得见的事故(而 `abort_bound_to` 的按空间挑人此前只有
+/// 名册那条路[`doom_denied`]有对照,撤位这条路没有)。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn stop_and_begin_reset_abort_the_in_flight_lan_handshakes() {
+    const PEER: &str = "01PEERAAAAAAAAAAAAAAAAAAAA";
+    for case in ["stop", "begin_reset"] {
+        let lan = transport::LanAdmission::ephemeral();
+        let sup =
+            SpaceSupervisor::new(tokio::runtime::Handle::current(), 2, Some(Arc::clone(&lan)));
+        let (path, conn, clock) = test_db(&format!("lan-inflight-{}", case.replace('_', "")));
+        // **刻意用 veto 空间**(同上一条):它不起 transport,故没有 `AdmitLease` 会在 `run`
+        // 收场时替这两条路把条目摘了——这一条因此真的只证 supervisor 自己那一句。
+        let (s, _ev) = spec("main", &path, Some("测试:此空间同步停用".into()));
+        let rt = sup.activate(s, conn, clock).unwrap();
+        let generation = rt.generation;
+        // `begin_reset` 要**强引用归零**才继续,故用例自己那份 Arc 先放手(拿 generation 就够)。
+        drop(rt);
+        lan.register(lan_probe("main", generation)).expect("探针条目该放得进去");
+        // 两只在飞握手:一只认在 main(该死),一只认在别的空间(不许受牵连)。⚠ 靶子是
+        // 永不自了的 `pending()`,故「没人来打」不会被任何超时兜成绿的。
+        let (_, victim) =
+            lan.plant_inflight_for_test(std::net::Ipv4Addr::new(10, 0, 0, 1).into(), "main", PEER);
+        let (bystander_id, bystander) =
+            lan.plant_inflight_for_test(std::net::Ipv4Addr::new(10, 0, 0, 2).into(), "other", PEER);
+        match case {
+            "stop" => sup.stop("main").await.expect("停机该干净收场"),
+            _ => drop(sup.begin_reset("main").await.expect("重置该拿到 ticket")),
+        }
+        // ⚠ 旁人那格**两句都要**,单看任何一句都有一条自愈路径能把红吃掉:判死位是撤位
+        // 当场写下的(不必等 abort 落地就问得出来),但任务一收场条目就整条摘掉、这一问
+        // 随之变回 false;而 `is_finished` 反过来要等调度器真处理完那次取消。
+        assert!(!lan.doomed_for_test(bystander_id), "{case}:认在别的空间的在飞握手不许被判死");
+        let done = tokio::time::timeout(Duration::from_secs(2), victim)
+            .await
+            .unwrap_or_else(|_| panic!("{case}:认在这个空间的在飞握手没被打掉"));
+        assert!(done.expect_err("该被取消").is_cancelled(), "{case}:该是被取消而不是自己跑完");
+        assert!(!bystander.is_finished(), "{case}:认在别的空间的在飞握手不许受牵连");
+        bystander.abort();
+    }
+}
+
+/// **`begin_reset` 的行为半**(390 销 384 可优化项⑤的第②格)。此前这条路只有那条词法
+/// 顺序锚([`the_lan_seat_is_dropped_before_the_shutdown_signal`] 同时管着 `stop` 与
+/// `begin_reset`),而顺序锚只答得出「那句话排在哪」,答不出「它干成了什么」——传错代次、
+/// 或撤席退化成临时撤位,它一格都不红。
+///
+/// 判据与 [`stop_drops_the_lan_admission_seat`] 同形:条目摘掉 + **同代重注册被拒**
+/// (最终撤席不是临时撤位:那个 runtime 的 transport 可能还没观察到停机,它 15s 一轮的
+/// 拨号巡查会拿着仍然存在的席位把条目插回去)+ 更高代次照常。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn begin_reset_drops_the_lan_admission_seat() {
+    let lan = transport::LanAdmission::ephemeral();
+    let sup = SpaceSupervisor::new(tokio::runtime::Handle::current(), 2, Some(Arc::clone(&lan)));
+    let (path, conn, clock) = test_db("lan-seat-reset");
+    let (s, _ev) = spec("main", &path, Some("测试:此空间同步停用".into()));
+    let rt = sup.activate(s, conn, clock).unwrap();
+    let generation = rt.generation;
+    drop(rt); // 强引用归零证明:用例自己那份先放手
+    lan.register(lan_probe("main", generation)).expect("探针条目该放得进去");
+    assert!(lan.epoch_of("main").is_some(), "条目在");
+    let ticket = sup.begin_reset("main").await.expect("重置该拿到 ticket");
+    assert!(lan.epoch_of("main").is_none(), "begin_reset 必须把准入条目摘掉");
+    assert!(lan.register(lan_probe("main", generation)).is_err(), "已撤销的代次不许把条目插回去");
+    assert!(lan.epoch_of("main").is_none(), "条目没被复活");
+    assert!(lan.register(lan_probe("main", generation + 1)).is_ok(), "新 runtime 该注册得上");
+    sup.finish_reset(ticket);
+}
+
 /// is_stopped(跨空间移动的目标槽位闸,codex 安卓实现审 #1):Running 空间 false;
 /// 从未激活的 id 与停机后都是 true(表里无槽 = 可安全开一次性写连接)。
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

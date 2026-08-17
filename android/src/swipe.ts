@@ -7,7 +7,7 @@
 
 import { updateTaskStatus, type TaskStatus, type TimelineItem } from "./api";
 import { t } from "./i18n";
-import { confirmBar, isTaskStage, showError, STAGE_LABEL } from "./ui";
+import { actionBar, isTaskStage, showError, STAGE_LABEL } from "./ui";
 
 // 任务四态线性链(与 STAGE_LABEL 同词汇表;数组顺序即右滑前进方向)。
 const CHAIN: TaskStatus[] = ["todo", "doing", "confirming", "done"];
@@ -192,7 +192,8 @@ export function initCardSwipe(deps: Deps): void {
     await deps.refresh();
     flash(id);
     // 回执 + 撤销:滑动是低门槛手势,给一记 6s 可撤销窗口替代两拍确认(误滑可召回)。
-    confirmBar(t("swipe.changedTo", { stage: STAGE_LABEL[to] }), t("swipe.undo"), () => {
+    // 走操作型回执而非 confirmBar——动作已成事实,确认条的「取消」在这儿是反义歧义。
+    actionBar(t("swipe.changedTo", { stage: STAGE_LABEL[to] }), t("ui.undo"), () => {
       if (deps.isSwitching() || deps.getCurrentSpace() !== space) return; // 换空间的旧撤销作废
       void (async () => {
         try {

@@ -10,6 +10,17 @@
     <!-- AndroidTV support -->
     <uses-feature android:name="android.software.leanback" android:required="false" />
 
+    <!-- 391 当场拍照:wry 的 onShowFileChooser 认 HTML `capture` 属性后,要先
+         `resolveActivity(ACTION_IMAGE_CAPTURE)` 才肯起系统相机。targetSdk 30+ 的包
+         可见性规则下,没有这段声明就问不到任何相机 app、resolveActivity 返 null,
+         wry 于是**静默回落成文件选择器**——表现是「点了拍照弹出来的是相册」,不报
+         任何错。这段是那条路的开关,不是可选优化。 -->
+    <queries>
+        <intent>
+            <action android:name="android.media.action.IMAGE_CAPTURE" />
+        </intent>
+    </queries>
+
     <!-- H2(android-plan §7):禁系统备份/设备迁移——库里有 device_id + device_key +
          k_acc + oplog,备份复活到别机 = 密钥离机 + 同一设备身份双副本,正撞协议的
          分叉冻结模型。allowBackup=false 是主闸;fullBackupContent=false 兜 Android 11-;

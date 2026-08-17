@@ -195,7 +195,7 @@ describe("灵感 · 标签筛选与文本过滤", () => {
 
     await inboxAction(B, "删除"); // 软删进回收站;离场动画完成后 refresh 重渲
     await browser.waitUntil(
-      async () => (await $(".v-inbox .center .big").getText()).includes("下没有灵感"),
+      async () => (await $(".v-inbox .center .big").getText()).includes("下没有随记"),
       { timeout: 8000 },
     );
   });

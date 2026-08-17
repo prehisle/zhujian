@@ -43,6 +43,21 @@ if (nativeDriver === null) {
       `macOS 的 WKWebView 没有可用的 WebDriver,真机验收走 CDP 或手动`,
   );
 }
+// **Linux 上没有 release 形**(409 白烧一次 9 分钟才发现,411 补这道响亮拒):下面那行
+// release 的 base 写死 `http://tauri.localhost`,而那是 **wry 在 Windows/Android 上的
+// workaround URL**;Linux/WebKitGTK 的资产源是 `tauri://localhost`(tauri-2.11.2
+// `src/manager/mod.rs:338` 原话)。现象是 36 支**全红在同一处**(`before all` 里 goShow 报
+// `Could not parse script result`)——看着像整棵树塌了,其实一个产品缺陷都没有。
+// ⛔ 不去「修通」它:Linux 本来就判不了发版(WebKitGTK 非生产渲染引擎,396 起口径没变),
+// 修通零收益;**响亮拒**才是省下下一个人那 9 分钟的东西(设计铁律:绝不回退兜底)。
+if (isLinux && !fast) {
+  throw new Error(
+    "这台是 Linux,跑不了 release 形的 e2e:release 的资产源在 Linux/WebKitGTK 是 " +
+      "tauri://localhost,而本配置(与 wry 在 Windows/Android 的 workaround 一致)写的是 " +
+      "http://tauri.localhost —— 硬跑会 36 支全红在 goShow,且与被测代码无关。" +
+      "改用 fast 形:先另起一个终端跑 `npm run dev`(只起 vite),再 `YS_E2E_FAST=1 npm run test:e2e`。",
+  );
+}
 const tauriDriverBin = resolve(homedir(), `.cargo/bin/tauri-driver${isWin ? ".exe" : ""}`);
 // A disposable DB so e2e never touches the real notebook (see YS_DB_PATH in lib.rs).
 const testDb = resolve(tmpdir(), "ys-nb-e2e.sqlite3");
@@ -111,6 +126,12 @@ export const config = {
   onPrepare: async () => {
     rmSync(testDb, { force: true }); // fresh DB each run
     rmSync(e2eWindowState, { force: true });
+    // 412:备份的三处路径**按库派生**(lib.rs setup 里那段:e2e 下绝不碰真实用户配置,
+    // 也绝不用 `main_db.parent()` —— 那是 /tmp,多个测试库会共享同一个暂存区)。库既然
+    // 每趟重来,它们也得一起重来:留着配置的话「首次仪式」那一格下一趟就没得测了。
+    for (const side of [".backup.json", ".backup-staging", ".backups"]) {
+      rmSync(`${testDb}${side}`, { force: true, recursive: true });
+    }
     if (fast) {
       // Refresh the debug binary so it reflects the latest Rust (incremental, seconds).
       const cargo = resolve(homedir(), `.cargo/bin/cargo${isWin ? ".exe" : ""}`);
@@ -129,12 +150,56 @@ export const config = {
   },
   beforeSession: async () => {
     tauriDriver = spawn(tauriDriverBin, ["--native-driver", nativeDriver], {
-      env: { ...process.env, YS_DB_PATH: testDb },
+      // 394:整套 spec 的断言都是**中文串**(⋯ 菜单项、筛选 pill、空态文案),而 358 起
+      // 语言「自动」档跟 `navigator.language` 走 —— Linux 上那是**进程 locale**。英文
+      // locale 的机器上 app 渲染英文,断言一条都对不上:2026-08-16 在 en_US 的容器里
+      // 实测 **32/36 红**,同一棵树换成 zh_CN 后 30 passed / 6 failed。故这里把语言钉死,
+      // 别让「机器的 locale」变成判绿的隐藏入参(Windows 的 WebView2 语言由系统设置定,
+      // 这两个变量它不看 = 生产端那条链一字不变)。
+      env: { ...process.env, YS_DB_PATH: testDb, LANG: "zh_CN.UTF-8", LC_ALL: "zh_CN.UTF-8" },
       stdio: [null, process.stdout, process.stderr],
     });
     // Give tauri-driver + the native driver a moment to bind their ports.
     await new Promise((r) => setTimeout(r, 2500));
   },
+  // 396:再焊掉一个隐藏入参 —— **上一次会话没记下的 compose 草稿**。
+  // 草稿(文字 localStorage / 暂存图 IndexedDB,198+353+393)是**设备本地**的,住在 app 的
+  // WebKit 存储里,而 `YS_DB_PATH` 只换掉 SQLite ⇒ 它跨 e2e 运行、跨手动开发会话一直留着。
+  // 留着就会翻掉判绿:三个 compose 在挂载时「有草稿就把自己开出来」,而 `#add-task` /
+  // 「记下灵感」是**开关**,于是 spec 里那句「点开 compose」反而把它关上 —— 现场是
+  // `element ("#compose-input") still not displayed after 5000ms`。阳性/阴性对照(396 §二):
+  // 板子桶里种一张暂存图 → board.e2e.js **8 failing**;删掉 → **15 passing 零重试**。
+  // 394 记的那只 1/16 抖动就是它,不是时序。
+  // ⚠ 代价说清楚:跑一次 e2e 会清掉**本机真实**的未记下草稿(与 SQLite 不同,这份没有影子
+  // 目录可换)。可接受 —— 草稿的定位本就是「还没记下的临时暂存」(393 拍板同一取舍),
+  // 而文档早已要求跑 e2e 前先退出生产朱简。
+  before: async () => {
+    await browser.execute(() => {
+      for (const k of ["zhujian.capture-draft", "zhujian.inbox-draft", "zhujian.board-draft"])
+        localStorage.removeItem(k);
+    });
+    // 清**内容**不删库:删库遇上另一窗还开着连接会走 `blocked`,那一路要么挂住要么静默跳过。
+    await browser.executeAsync((done) => {
+      const req = indexedDB.open("zhujian-compose-draft", 1);
+      req.onupgradeneeded = () => req.result.createObjectStore("images");
+      req.onsuccess = () => {
+        const db = req.result;
+        const tx = db.transaction("images", "readwrite");
+        tx.objectStore("images").clear();
+        tx.oncomplete = () => {
+          db.close();
+          done();
+        };
+        tx.onabort = () => {
+          db.close();
+          done();
+        };
+      };
+      req.onerror = () => done();
+      req.onblocked = () => done();
+    });
+  },
+
   afterSession: () => {
     tauriDriver?.kill();
   },

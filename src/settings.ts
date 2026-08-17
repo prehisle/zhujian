@@ -4,6 +4,7 @@
 // 语言(358)——自动 / 中文 / English,改档 reload 两窗。字号——整体缩放主窗。
 // 侧栏底部「设置」入口点开。全部纯设备本地、不进同步。可见文案走字典(i18n-plan)。
 import { invoke } from "@tauri-apps/api/core";
+import { buildBackupSection, closeBackupSection } from "./backup";
 import { currentZoomPercent, zoomIn, zoomOut, zoomReset, onZoomChange } from "./zoom";
 import { currentThemeMode, setThemeMode, type ThemeMode } from "./theme-mode";
 import { currentLangChoice, setLangChoice, t, type LangChoice } from "./i18n";
@@ -54,6 +55,8 @@ export async function openSettingsPanel(): Promise<void> {
 
 function closePanel(): void {
   stopRecording();
+  // 仪式还开着就让后端丢掉那把**只在内存里**的备份钥(§3.4.1 第 11 格:关面板即清)。
+  closeBackupSection();
   onZoomChange(null); // 摘掉字号回调,别对已卸载的面板 DOM 悬空引用
   overlay?.remove();
   overlay = null;
@@ -99,6 +102,14 @@ function renderPanel(panel: HTMLDivElement): void {
     el("h2", "settings-title settings-sect", t("settings.aliasTitle")),
     el("p", "settings-sub", t("settings.aliasSub")),
     buildAliasRow(),
+  );
+
+  // 备份(412,backup-plan 笔①-a):与上面几样一样是**每台机器自己的事**(钥与落点
+  // 都在本机配置,不进 DB、不同步)。整节住 src/backup.ts —— 这里只挂标题与位置。
+  panel.append(
+    el("h2", "settings-title settings-sect", t("backup.title")),
+    el("p", "settings-sub", t("backup.sub")),
+    buildBackupSection(),
   );
 }
 

@@ -52,20 +52,48 @@ function hideBar(): void {
   $("error").hidden = true;
 }
 
+/** 懒接线(模块加载期不碰 DOM):点条身即收,不等读秒走完。 */
+function wireBar(el: HTMLElement): void {
+  if (errWired) return;
+  el.addEventListener("click", hideBar);
+  errWired = true;
+}
+
 export function showBar(msg: string, notice = false) {
   const el = $("error");
-  if (!errWired) {
-    // 懒接线(模块加载期不碰 DOM):点条身即收,不等读秒走完。
-    el.addEventListener("click", hideBar);
-    errWired = true;
-  }
+  wireBar(el);
   el.textContent = msg;
   el.classList.toggle("notice", notice);
+  el.classList.remove("with-act");
   el.hidden = false;
   clearTimeout(errTimer);
   errTimer = window.setTimeout(() => {
     el.hidden = true;
   }, notice ? toastSuccessMs(msg) : TOAST_ERROR_MS);
+}
+
+/** 操作型回执(§3.1):回执文案 + 一枚动作钮(如滑动改状态的「撤销」),notice 形。
+ *  点钮=执行并收(冒泡到条身完成收条),点条身=只收;没人点则 CONFIRM_REVERT_MS 后
+ *  自动收(动作窗口长度与此前借 confirmBar 的形一致)。新条来了整条重建、旧钮随节点
+ *  移除自然作废,无需 token。⛔ 别再拿 confirmBar 当回执用:它左钮恒印「取消」,与
+ *  「已改为…」这类既成事实并排,「取消/撤销」读成一对反义词(用户 2026-08-16 实报)。 */
+export function actionBar(msg: string, actLabel: string, onAct: () => void): void {
+  const el = $("error");
+  wireBar(el);
+  el.textContent = "";
+  const text = document.createElement("span");
+  text.textContent = msg;
+  const act = document.createElement("button");
+  act.className = "bar-act";
+  act.textContent = actLabel;
+  act.onclick = onAct;
+  el.append(text, act);
+  el.classList.add("notice", "with-act");
+  el.hidden = false;
+  clearTimeout(errTimer);
+  errTimer = window.setTimeout(() => {
+    el.hidden = true;
+  }, CONFIRM_REVERT_MS);
 }
 
 export const showError = (msg: string) => showBar(msg);

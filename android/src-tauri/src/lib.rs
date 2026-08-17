@@ -934,6 +934,25 @@ fn list_sealed_tasks(space_id: String, coord: State<'_, Coord>) -> Result<Vec<Ta
     })
 }
 
+#[derive(serde::Serialize)]
+struct PaneCounts {
+    trash: i64,
+    sealed: i64,
+}
+
+/// 底栏「回收站/归档册」显形用的两个计数(408-A1:空则不渲染那枚钮)。
+/// 只为显隐服务——别拿它当列表口径,两个面各有自己的 list 命令。
+#[tauri::command]
+fn pane_counts(space_id: String, coord: State<'_, Coord>) -> Result<PaneCounts, String> {
+    coord.with_read(&space_id, |conn| {
+        let q = |sql: &str| conn.query_row(sql, [], |r| r.get(0)).map_err(|e| e.to_string());
+        Ok(PaneCounts {
+            trash: q("SELECT COUNT(*) FROM items WHERE archived_at IS NOT NULL")?,
+            sealed: q("SELECT COUNT(*) FROM items WHERE sealed_at IS NOT NULL")?,
+        })
+    })
+}
+
 /// 新建任务(生而 todo、置列首;due/priority/标签可选,整体原子)。返回 id。
 /// (capture_todo 是它的极简别名——只有标题;保留两个入口不合并,捕获语义
 /// 不该背上看板参数。)
@@ -1820,6 +1839,7 @@ pub fn run() {
             list_tasks,
             list_archived_tasks,
             list_sealed_tasks,
+            pane_counts,
             create_task,
             rename_task,
             update_task_status,

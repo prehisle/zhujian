@@ -1,6 +1,7 @@
 // 小件合收的分片(键前缀 = 来源 ts 文件名,全局唯一、跨分片不许撞):
 // api.ts(空间展示名)/ identity.ts(署名)/ images.ts + thumbs.ts(配图)/
-// swipe.ts(滑动改状态回执)/ ui.ts(stage 印文 + 时间格式)。
+// swipe.ts(滑动改状态回执)/ ui.ts(stage 印文 + 时间格式 + actionBar 配套的
+// 通用「撤销」——操作型回执(§3.1)的钮词只此一份,滑动/勾完成/删除/归档共用)。
 import { defineMessages } from "./entry";
 
 export const misc = defineMessages({
@@ -10,8 +11,9 @@ export const misc = defineMessages({
   "identity.authorUnknown": { zh: "作者未知", en: "Author unknown" },
   "images.removeThis": { zh: "移除这张图", en: "Remove this image" },
   "images.imageN": { zh: "图{n}", en: "Image {n}" },
+  "images.tooMany": { zh: "一次最多 {max} 张,这次选了 {n} 张;分几次加吧", en: "At most {max} at a time — you picked {n}. Add them in a few batches." },
   "swipe.changedTo": { zh: "已改为「{stage}」", en: "Moved to “{stage}”" },
-  "swipe.undo": { zh: "撤销", en: "Undo" },
+  "ui.undo": { zh: "撤销", en: "Undo" },
   "ui.stageTodo": { zh: "待办", en: "To do" },
   "ui.stageDoing": { zh: "进行中", en: "In progress" },
   "ui.stageConfirming": { zh: "待确认", en: "To confirm" },

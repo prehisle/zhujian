@@ -52,7 +52,15 @@ describe("a11y · lightbox 焦点陷阱", () => {
     await openThumb(T);
     await $(".img-lightbox").waitForExist({ timeout: 5000 });
     expect(await inOverlay()).toBe(true); // 开图即把焦点移进遮罩
-    for (const key of ["Tab", "Tab", ["Shift", "Tab"], "Tab"]) {
+    // ⚠ Shift+Tab 这一步只在 Windows(msedgedriver)上跑。396 分诊实证:Linux 的
+    // WebKitWebDriver **自己在 GTK 层处理掉了 Shift+Tab**,页面一条 keydown 都收不到
+    // (探针:那一步 `seen: []`,而同一轮里三次普通 Tab 都是 `prevented: true`、焦点纹丝不动),
+    // 焦点当场被挪到遮罩背后的 `BUTTON.hk-btn`。**拦不了一个收不到的事件 = 驱动差异,
+    // 不是产品缺陷**;这里摘掉它而不是放宽断言 —— 剩下三次真 Tab 照旧全强度跑,
+    // Windows 那端一字不动。
+    const seq =
+      process.platform === "linux" ? ["Tab", "Tab", "Tab"] : ["Tab", "Tab", ["Shift", "Tab"], "Tab"];
+    for (const key of seq) {
       await browser.keys(key);
       expect(await inOverlay()).toBe(true); // 旧代码:焦点会溜到背后看板按钮 → 此处红
     }

@@ -283,14 +283,17 @@
         padding: 7px 22px; font-size: var(--fs-14); font-weight: 600; font-family: var(--font-sans);
       }
       .primary:disabled { opacity: 0.5; }
-      /* compose「加图」按钮:低调靠左,「记下」仍靠右(margin-right:auto 顶开)。 */
+      /* compose 的两个配图钮(「加图」相册多选 /「拍照」开相机):低调并排靠左,
+         「记下」靠右由它自己的 margin-left:auto 顶开(391 加第二个钮,顶开的活从
+         .cimg 挪到 .primary 身上——否则两个 auto 会把中间那个也推到右半边)。 */
       .compose-row .cimg {
-        margin-right: auto; font-size: var(--fs-13); color: var(--seal);
+        font-size: var(--fs-13); color: var(--seal);
         padding: 6px 4px; font-weight: 600;
       }
+      .compose-row .cimg + .cimg { margin-left: 10px; }
       .compose-row .cimg:disabled { opacity: 0.4; }
       /* 底部条里的「记下」加大到拇指舒适(原 7×22 偏小,232 反馈)。 */
-      .compose-row .primary { padding: 9px 28px; font-size: var(--fs-15); }
+      .compose-row .primary { margin-left: auto; padding: 9px 28px; font-size: var(--fs-15); }
       /* compose 暂存图缩略条:小图 + 右上角「×」移除;无图时容器 hidden。 */
       .cthumbs { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
       .cthumb {
@@ -399,6 +402,18 @@
         box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
       }
       .error.notice { background: var(--ok); }
+      /* 操作型回执(§3.1,ui.ts actionBar):回执 + 一枚动作钮(如滑动改状态的「撤销」)。
+         钮走 --on-seal 描边幽灵形(底透出条身色,明暗两档都自洽);字号同条身 14px
+         (同上一条 343 的账:notice 墨绿底压 --on-seal 只有 4.79,13px 过不了小字底线);
+         触区靠 ::before 外扩到 44px(§2.3,同 .cm-badge 手法)。 */
+      .error.with-act { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+      .error .bar-act {
+        position: relative; flex: none;
+        border: 1px solid var(--on-seal); background: none; color: var(--on-seal);
+        font-size: var(--fs-14); font-family: var(--font-sans);
+        border-radius: var(--radius-pill); padding: 4px 14px;
+      }
+      .error .bar-act::before { content: ""; position: absolute; inset: -12px -10px; }
 
       /* 更新条(106):有新版才出现,提示式——「下载」跳系统浏览器,装不装用户定。
          同为 fixed(ui-audit P0 #3):它启动后异步出现,原先把 compose 和整轴顶下去、
@@ -854,12 +869,14 @@
         margin-bottom: 12px;
       }
       #filterbar[hidden] { display: none; }
-      .fkinds, .ftopics {
+      .fstages, .fkinds, .ftopics {
         display: flex; align-items: center; gap: 8px;
         overflow-x: auto; flex-wrap: nowrap;
         -webkit-overflow-scrolling: touch; scrollbar-width: none;
       }
-      .fkinds::-webkit-scrollbar, .ftopics::-webkit-scrollbar { display: none; }
+      .fstages::-webkit-scrollbar, .fkinds::-webkit-scrollbar, .ftopics::-webkit-scrollbar { display: none; }
+      /* 灵感面 main.ts 清空 #filter-stages → :empty 隐整行(同 .fkinds 的形)。 */
+      .fstages:empty { display: none; }
       /* 无 kind 时 filter.ts 清空 #filter-kinds → :empty 隐整行(无类型一条不多)。 */
       .fkinds:empty { display: none; }
       .fmain { display: flex; align-items: center; gap: 10px; }
@@ -1126,12 +1143,13 @@
     <!-- 捕获层遮罩(232):捕获中压住时间轴/底栏,点它=收层。 -->
     <div id="capture-scrim" hidden></div>
     <section id="compose-card" class="compose">
-      <textarea id="text" placeholder="记一笔灵感…" data-i18n-placeholder="main.composeIdeaPh" rows="2"></textarea>
+      <textarea id="text" placeholder="随手记一笔…" data-i18n-placeholder="main.composeIdeaPh" rows="2"></textarea>
       <!-- 记灵感时暂存的配图缩略(195 slice1):点「加图」贴进来先摆着,点「记下」建
            条目后随之挂上;每张带「×」可移除。无图时整条隐藏(images.ts composeImages)。 -->
       <div id="compose-thumbs" class="cthumbs" hidden></div>
       <div class="compose-row">
         <button id="compose-addimg" class="ghost cimg" type="button" data-i18n="shell.addImage">＋ 加图</button>
+        <button id="compose-photo" class="ghost cimg" type="button" data-i18n="shell.takePhoto">＋ 拍照</button>
         <button id="save" class="primary" data-i18n="shell.saveIt">记下</button>
       </div>
     </section>
@@ -1162,6 +1180,8 @@
          (仅当库里有标了 kind 的标签才现),标签 pill 行 + 文本框在下;两行横向可滑。
          本面无条目时整条隐藏(main.ts renderFilterBar);pane 打开时随时间轴一起收。 -->
     <section id="filterbar" hidden>
+      <!-- 任务面状态 chips 行(404+1,main.ts renderStagePills):全部+四态;灵感面清空,:empty 隐 -->
+      <div id="filter-stages" class="fstages"></div>
       <div id="filter-kinds" class="fkinds"></div>
       <div class="fmain">
         <div id="filter-topics" class="ftopics"></div>
@@ -1244,7 +1264,7 @@
          stage 投影),回收站/归档册=覆盖面。重复点当前主视图=聚焦输入框(143
          「一步回捕获」推广到两面);诊断在同步面底部。 -->
     <nav id="bottombar">
-      <button data-mode="ideas" class="active" data-i18n="shell.navIdeas">灵感</button>
+      <button data-mode="ideas" class="active" data-i18n="shell.navIdeas">随记</button>
       <button data-mode="tasks" data-i18n="shell.navTasks">任务</button>
       <button data-pane="trash" data-i18n="shell.navTrash">回收站</button>
       <button data-pane="sealed" data-i18n="shell.navSealed">归档册</button>

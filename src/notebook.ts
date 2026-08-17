@@ -166,12 +166,21 @@ win.onFocusChanged(({ payload: focused }) => {
 // 记住选择 → 通知同步 UI 换数据源 → 当前视图原地重挂(新空间全量重查)。
 const spaceEntry = document.getElementById("space-entry") as HTMLButtonElement;
 const spaceNameEl = document.getElementById("space-name") as HTMLElement;
+// 同步入口:平时只是侧栏底部那枚钮,411/D2 起还兼任「空间菜单」的锚点(单空间时徽章藏起)。
+const syncEntry = document.getElementById("sync-entry") as HTMLButtonElement;
 
 function refreshSpaceEntry(): void {
   void listSpaces().then((all) => {
     setSpaceNames(new Map(all.map((s) => [s.id, spaceLabel(s)])));
     // 状态基线一并喂给同步 UI(启动即 veto 的空间没有事件桥,红点全靠这份快照)。
     seedSpaceStatuses(all);
+    // D2(411,408 走查):单空间时「空间」这个概念整个不出现在侧栏——落点无歧义,
+    // 菜单里那几项(切换/新建/加入/改名/重置)第一天全用不到。与安卓同源(116 捕获
+    // 徽章、410 底栏「按数据显形」同一手法),捕获浮窗的 #cap-space 早就是这个规矩。
+    // ⛔ 入口不许就此消失:新建 / 加入空间的**唯一**入口就在这枚徽章的菜单里,故同步
+    // 面底部那行「空间…」是它的兜底,两者由「几个空间」互斥切换(sync.ts::renderHome)
+    // ——永远恰有一条路,别只藏不补。
+    spaceEntry.hidden = all.length <= 1;
     const curInfo = all.find((s) => s.id === currentSpaceId());
     if (curInfo) spaceNameEl.textContent = spaceLabel(curInfo);
   });
@@ -363,8 +372,25 @@ function showDeepLinkPill(url: string): void {
 }
 
 let spaceMenu: HTMLDivElement | null = null;
+// 菜单是谁点开的(411/D2 起有两个:侧栏徽章、以及徽章藏起时同步面里那行「空间…」)。
+// 位置与「点自己不算点外面」都跟着它走,别再写死 spaceEntry。
+let spaceMenuAnchor: HTMLElement = spaceEntry;
+let spaceMenuResize: ResizeObserver | null = null;
+
+/** 菜单贴锚点下沿,并**硬钳在视口内**:兜底入口(同步入口)贴在侧栏底部,不钳就整个
+ *  掉出下沿 = 真实的「点不到」(㊱ 悬停菜单栽过同一课)。长高时由 ResizeObserver 复钳。 */
+function clampSpaceMenu(): void {
+  if (!spaceMenu) return;
+  const r = spaceMenuAnchor.getBoundingClientRect();
+  const h = spaceMenu.getBoundingClientRect().height;
+  const top = Math.min(r.bottom + 4, window.innerHeight - h - 8);
+  spaceMenu.style.left = `${Math.round(r.left)}px`;
+  spaceMenu.style.top = `${Math.round(Math.max(8, top))}px`;
+}
 
 function closeSpaceMenu(): void {
+  spaceMenuResize?.disconnect();
+  spaceMenuResize = null;
   spaceMenu?.remove();
   spaceMenu = null;
   document.removeEventListener("mousedown", onSpaceMenuDoc, true);
@@ -373,7 +399,7 @@ function closeSpaceMenu(): void {
 
 function onSpaceMenuDoc(e: MouseEvent): void {
   const t = e.target as Node;
-  if (spaceMenu && !spaceMenu.contains(t) && !spaceEntry.contains(t)) closeSpaceMenu();
+  if (spaceMenu && !spaceMenu.contains(t) && !spaceMenuAnchor.contains(t)) closeSpaceMenu();
 }
 
 function onSpaceMenuKey(e: KeyboardEvent): void {
@@ -618,11 +644,13 @@ function spaceResetRow(configured: boolean): HTMLElement {
   return row;
 }
 
-async function openSpaceMenu(): Promise<void> {
+/** 打开空间菜单。`anchor` = 菜单挂在谁下面(默认侧栏徽章;411/D2 的兜底入口传同步入口)。 */
+async function openSpaceMenu(anchor: HTMLElement = spaceEntry): Promise<void> {
   if (spaceMenu) {
     closeSpaceMenu();
     return;
   }
+  spaceMenuAnchor = anchor;
   const all = await listSpaces();
   setSpaceNames(new Map(all.map((s) => [s.id, spaceLabel(s)])));
   const menu = document.createElement("div");
@@ -676,11 +704,13 @@ async function openSpaceMenu(): Promise<void> {
   menu.appendChild(
     spaceResetRow(all.find((s) => s.id === currentSpaceId())?.status.configured ?? false),
   );
-  const r = spaceEntry.getBoundingClientRect();
-  menu.style.left = `${Math.round(r.left)}px`;
-  menu.style.top = `${Math.round(r.bottom + 4)}px`;
+  // 先挂上再定位:量到真高度才钳得住(见 clampSpaceMenu)。菜单还会**就地长高**
+  // (「新建/加入/改名」那几行点开换成表单),故钳位挂在 ResizeObserver 上、不是只做一次。
   document.body.appendChild(menu);
   spaceMenu = menu;
+  clampSpaceMenu();
+  spaceMenuResize = new ResizeObserver(() => clampSpaceMenu());
+  spaceMenuResize.observe(menu);
   document.addEventListener("mousedown", onSpaceMenuDoc, true);
   document.addEventListener("keydown", onSpaceMenuKey, true);
 }
@@ -696,7 +726,13 @@ void (async () => {
   // 同步 UI(侧栏状态点/设置面板/提示条):远端 op 落地后借用视图的 onFocus 刷新
   // ——和「窗口回前台刷一遍」同一条幂等路径,不另造刷新机制。
   // await:四个事件监听注册完才拉状态基线(顺序反了会漏两者之间的事件)。
-  await initSync({ refresh: () => current?.onFocus?.() });
+  // openSpaces = 411/D2 的兜底:单空间时侧栏徽章藏起,同步面里那行「空间…」代它开菜单
+  // ——菜单挂在同步入口下面(那枚钮恒显),不挂已经 hidden 的徽章(hidden 元素量出来
+  // 是零矩形,菜单会飞到左上角 0,0)。
+  await initSync({
+    refresh: () => current?.onFocus?.(),
+    openSpaces: () => void openSpaceMenu(syncEntry),
+  });
   refreshSpaceEntry();
   // 设置面板(232):全局热键 + 界面字号,与空间/同步无关,挂个入口即可。
   initSettings();

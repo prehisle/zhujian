@@ -29,9 +29,11 @@ use tauri::{AppHandle, Emitter, Manager, Runtime, State};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 use tauri_plugin_window_state::{AppHandleExt as _, StateFlags};
 
-/// 主窗几何要记的维度:尺寸/位置/最大化。刻意不含 VISIBLE——启动仪式保持
+/// 主窗几何要记的维度:尺寸/位置/最大化。刻意不含 VISIBLE——启动仪式默认
 /// 「只弹捕获条、主窗被召唤才现身」,重启恢复的是「现身时的样子」而不是
 /// 「要不要现身」;无边框固定窗也用不上 DECORATIONS/FULLSCREEN。
+/// (411/D1 起「要不要现身」多了一条**按数据显形**的例外:空库首用时主窗也显一次,
+/// 见 `setup` 尾部——判据是当下库里有没有条目,同样不落盘、不进这份几何状态。)
 const WINDOW_STATE_FLAGS: StateFlags = StateFlags::SIZE
     .union(StateFlags::POSITION)
     .union(StateFlags::MAXIMIZED);
@@ -2318,6 +2320,17 @@ fn open_notebook<R: Runtime>(app: &AppHandle<R>) {
     show_window(app, "notebook");
 }
 
+/// 这个空间里有没有任何一条记录 —— `items` 一张表就是全部(㉜ 单实体:随记与任务同表,
+/// 回收站 `archived_at` / 归档册 `sealed_at` 也只是那张表上的两根轴),故一句 EXISTS 到底。
+/// D1(411)的判据;裸 SQL 留在壳里不下 core —— core 是两端共用面,为一句「库空不空」
+/// 给另一台叠一笔复跑债不值(与安卓 `pane_counts` 同一取舍,410)。
+fn space_has_item(conn: &Connection) -> rusqlite::Result<bool> {
+    conn.query_row("SELECT EXISTS(SELECT 1 FROM items)", [], |r| {
+        r.get::<_, i64>(0)
+    })
+    .map(|n| n != 0)
+}
+
 /// 装配一个空间:activate(core supervisor——库连接 + update_hook 写通知 + HLC
 /// 时钟 + transport 常驻,未配置账户时任务睡在控制通道上零打扰)+ 事件桥(给每个
 /// 事件贴空间标,§六⑥ 前端按空间路由)。开库策略在调用方(桌面 eager 全开所有
@@ -2510,7 +2523,7 @@ fn refresh_tray_hotkey_labels(app: &AppHandle, capture_accel: &str, notebook_acc
     };
     #[cfg(target_os = "linux")]
     {
-        let _ = items.show.set_text(format!("记录灵感  ({capture_accel})"));
+        let _ = items.show.set_text(format!("记一笔  ({capture_accel})"));
         let _ = items
             .notebook
             .set_text(format!("打开朱简  ({notebook_accel})"));
@@ -2638,6 +2651,171 @@ fn take_open_settings(app: AppHandle) -> bool {
     app.state::<PendingOpenSettings>().0.swap(false, Ordering::SeqCst)
 }
 
+// ── 加密备份(backup-plan 笔①-a,402 core / 412 壳与 UI)──────────────────────
+//
+// ⛔ **壳这一层不做任何策略**:准入(同一时刻只许一趟)、封锁态、仪式、清扫全在
+// core 的 `BackupCoordinator` 里 —— 门开在这儿的话,笔①-b 的自动备份(后台定时器,
+// 不走命令层)就绕过去了(backup-plan §3.4.1 第 7 维)。本节只做三件事:
+// ①把 core 的类型翻成前端 DTO;②把长活儿挪出 UI 线程;③「打开所在文件夹」。
+//
+// ⚠ 备份钥不出 core:这里能拿到的只有「备份码字符串」「文件路径」「人话状态」。
+
+#[derive(Serialize)]
+struct BackupStatusDto {
+    configured: bool,
+    dir: String,
+    blocked: Option<String>,
+    /// "backup" | "cleanup" | null —— UI 据此把两个按钮置灰。
+    busy: Option<&'static str>,
+    awaiting_ceremony: bool,
+    problem: Option<String>,
+}
+
+#[derive(Serialize)]
+struct BackupMadeDto {
+    space_id: String,
+    path: String,
+    bytes: u64,
+}
+
+#[derive(Serialize)]
+struct BackupFailedDto {
+    space_id: String,
+    message: String,
+    /// 盘上留下的那个文件:"unverified"(写完没验过)| "invalid"(验不过又删不掉)。
+    /// ⛔ 两种都**不得**计作一份备份。
+    leftover_kind: Option<&'static str>,
+    leftover_path: Option<String>,
+}
+
+#[derive(Serialize)]
+struct BackupReportDto {
+    made: Vec<BackupMadeDto>,
+    failed: Vec<BackupFailedDto>,
+    /// 剩余**根本没跑**的空间数;UI 必须与「跑了但失败」显著区分(§6.3)。
+    skipped: usize,
+    fatal: Option<String>,
+    blocked: Option<String>,
+}
+
+fn backup_status_dto(s: zhujian_core::backup::BackupStatus) -> BackupStatusDto {
+    use zhujian_core::backup::Busy;
+    BackupStatusDto {
+        configured: s.configured,
+        dir: s.dir,
+        blocked: s.blocked,
+        busy: s.busy.map(|b| match b {
+            Busy::Backup => "backup",
+            Busy::Cleanup => "cleanup",
+        }),
+        awaiting_ceremony: s.awaiting_ceremony,
+        problem: s.problem,
+    }
+}
+
+#[tauri::command]
+fn backup_status(app: AppHandle) -> BackupStatusDto {
+    backup_status_dto(app.state::<zhujian_core::backup::BackupCoordinator>().status())
+}
+
+/// 仪式第一步:生成备份钥(**只在内存**)并返回要抄的码。`dir` 为空 = 用默认落点。
+#[tauri::command]
+fn backup_begin_setup(app: AppHandle, dir: Option<String>) -> Result<String, String> {
+    let dir = dir.filter(|d| !d.trim().is_empty());
+    app.state::<zhujian_core::backup::BackupCoordinator>()
+        .begin_setup(dir.as_deref())
+        .map_err(|e| e.to_string())
+}
+
+/// 仪式第二步:回输核对。**对上了才落盘**(⛔ 不许退化成勾「我已抄下」)。
+#[tauri::command]
+fn backup_confirm_setup(app: AppHandle, code: String) -> Result<(), String> {
+    app.state::<zhujian_core::backup::BackupCoordinator>()
+        .confirm_setup(&code)
+        .map_err(|e| e.to_string())
+}
+
+/// 放弃仪式(关面板 / 点取消):进程内那把钥当场丢掉,盘上什么都没写过。
+#[tauri::command]
+fn backup_cancel_setup(app: AppHandle) {
+    app.state::<zhujian_core::backup::BackupCoordinator>().cancel_setup();
+}
+
+#[tauri::command]
+fn backup_set_dir(app: AppHandle, dir: String) -> Result<BackupStatusDto, String> {
+    let c = app.state::<zhujian_core::backup::BackupCoordinator>();
+    c.set_dir(&dir).map_err(|e| e.to_string())?;
+    Ok(backup_status_dto(c.status()))
+}
+
+/// 跑一趟备份(所有空间,逐空间串行)。
+///
+/// ⭐ **`spawn_blocking` 不是可省的礼节**:一趟备份 = 整库 `VACUUM INTO` + 全量加密 +
+/// **全量自验**,大库要跑好几秒。同步命令跑在 UI 线程上,那几秒会把主窗冻住
+/// (Linux/WebKitGTK 上还会被系统判成「无响应」)。
+#[tauri::command]
+async fn backup_run(app: AppHandle) -> Result<BackupReportDto, String> {
+    use zhujian_core::backup::Leftover;
+    tauri::async_runtime::spawn_blocking(move || {
+        let report = app
+            .state::<zhujian_core::backup::BackupCoordinator>()
+            .run_backup()
+            .map_err(|e| e.to_string())?;
+        Ok(BackupReportDto {
+            made: report
+                .made
+                .into_iter()
+                .map(|m| BackupMadeDto { space_id: m.space_id, path: m.path, bytes: m.bytes })
+                .collect(),
+            failed: report
+                .failed
+                .into_iter()
+                .map(|f| {
+                    let (kind, path) = match f.leftover {
+                        None => (None, None),
+                        Some(Leftover::Unverified(p)) => (Some("unverified"), Some(p)),
+                        Some(Leftover::Invalid(p)) => (Some("invalid"), Some(p)),
+                    };
+                    BackupFailedDto {
+                        space_id: f.space_id,
+                        message: f.message,
+                        leftover_kind: kind,
+                        leftover_path: path,
+                    }
+                })
+                .collect(),
+            skipped: report.skipped,
+            fatal: report.fatal,
+            blocked: report.blocked,
+        })
+    })
+    .await
+    .map_err(|e| format!("备份任务没跑起来:{e}"))?
+}
+
+/// 重试清扫暂存区(封锁态的**唯一**出路;⛔ 没有「忽略」按钮)。
+#[tauri::command]
+async fn backup_retry_cleanup(app: AppHandle) -> Result<BackupStatusDto, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        app.state::<zhujian_core::backup::BackupCoordinator>()
+            .retry_cleanup()
+            .map(backup_status_dto)
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("清扫任务没跑起来:{e}"))?
+}
+
+/// 「打开所在文件夹」——复用**已有的** opener 插件(§5.2:v1 不引原生目录选择器)。
+/// 目录不存在时先建出来:用户点它就是想去看看,弹一句「没有这个目录」帮不上忙。
+#[tauri::command]
+fn backup_open_dir(app: AppHandle) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    let dir = app.state::<zhujian_core::backup::BackupCoordinator>().status().dir;
+    std::fs::create_dir_all(&dir).map_err(|e| format!("打不开 {dir}:{e}"))?;
+    app.opener().open_path(dir.clone(), None::<&str>).map_err(|e| format!("打不开 {dir}:{e}"))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 /// 启动期 panic 的原生弹窗钩子:桌面壳的开库/身份/租约全在 Tauri `setup` 闭包里
 /// fail-fast panic,窗口尚未建成——默认行为只往 stderr 打一行,双击 exe 的用户什么
@@ -2679,7 +2857,33 @@ fn panic_dialog_message(info: &std::panic::PanicHookInfo<'_>) -> String {
     }
 }
 
+// Xlib 的多线程开关(Linux 专属,为什么要它见 `run()` 开头那段注释)。gdk/gtk 那条链
+// 只是**间接**用到 libX11(链接行里没有 -lX11、`--as-needed` 也不会留),故这里显式
+// `#[link]` 把它要过来 —— 构建期需要 libx11-dev,它是 libgtk-3-dev / libxdo-dev 的依赖,
+// 本机与三条 CI workflow 的 Linux job 都已装(release/nightly/preflight 同一份依赖行)。
+#[cfg(target_os = "linux")]
+#[link(name = "X11")]
+extern "C" {
+    fn XInitThreads() -> std::os::raw::c_int;
+}
+
 pub fn run() {
+    // Linux 真机冒烟(progress-log 394):Tauri 的命令跑在异步运行时线程上,而 tao 的
+    // `current_monitor()` 是**直接 GDK/Xlib 调用、不经事件循环转发**(同文件里 `set_size` /
+    // `set_position` / `maximize` 都走 tao 的 window_requests_tx 转给主线程,`is_minimized`
+    // 只读原子,所以只有显示器查询这一类踩到)。于是三条真路都会在非主线程上碰 Xlib:
+    // 「点开大图撑窗」(item-images.ts::planGrowMainWindow)、「捕获窗看图预览撑窗」
+    // (main.ts::growWindow)、「上次最大化的主窗第一次被召唤」(show_window)。没有
+    // XInitThreads 的多线程 X 客户端会把协议流搅乱,现场是 `xcb_xlib_threads_sequence_lost`
+    // 断言 **abort(整个 app 当场没,不是一次失败的查询)** —— 本机三条路各复现过一次。
+    // XInitThreads 让 Xlib 自己上锁,三条路当场恢复(winit 的 X11 后端同样开局就调它)。
+    // 必须在任何 Xlib 调用之前,故与下面那条 env 一起放在进程最早点。仅 Linux。
+    // 返回值(非零 = Xlib 支持多线程)**刻意不判**:真返回 0 时也只是回到本轮之前的状态
+    // (那三条路照旧会崩),没有比「照常启动」更好的处置 —— 不是静默兜底,是无分支可走。
+    #[cfg(target_os = "linux")]
+    unsafe {
+        XInitThreads();
+    }
     // Linux 真机冒烟(progress-log 215):透明浮窗(capture,transparent:true)在
     // GNOME/X11 + WebKitGTK 的 DMABUF 加速合成路径下整窗渲染为空——卡片一个像素不画、
     // 用户召唤捕获看到的是「透过窗口的桌面」(不透明的 notebook 窗不走该路径,故不受影响)。
@@ -2807,6 +3011,31 @@ pub fn run() {
             };
             let lease = spaces::WriterLease::acquire(&lease_path).unwrap_or_else(|e| panic!("{e}"));
             app.manage(lease);
+            // 加密备份(backup-plan §3.4):路径域**必须与上面那把租约一一对应** ——
+            // 生产落数据目录 / 配置目录,e2e(YS_DB_PATH)三处全按库派生(⛔ 绝不许用
+            // `main_db.parent()`:那是 /tmp,多个测试进程会共享同一个 .backup-staging
+            // 却各持不同租约,一个进程能删掉另一个正在用的明文快照;也绝不许碰真实用户配置)。
+            // 启动清扫必须在**取到租约之后**跑(那时才排他、才敢删),就插在既有三个清扫旁边。
+            {
+                let paths = match &scan_dir {
+                    Some(dir) => zhujian_core::backup::BackupPaths::production(
+                        &app.path().app_config_dir().expect("resolve app config dir"),
+                        dir,
+                        &main_db,
+                    ),
+                    None => zhujian_core::backup::BackupPaths::for_db(&main_db),
+                };
+                let coordinator = zhujian_core::backup::BackupCoordinator::new(
+                    paths,
+                    app.package_info().version.to_string(),
+                );
+                // 清不掉 = **封锁备份**(不拒启:用户还得能用 app 看自己的数据;比引导
+                // 快照那档强、比 joining 槽那档弱,理由 = 只有备份这条路会继续制造明文)。
+                if let Some(reason) = coordinator.sweep_on_start() {
+                    eprintln!("WARN {reason}");
+                }
+                app.manage(coordinator);
+            }
             let boot_dir = main_db.parent().expect("库文件必有父目录").join(".boot");
             std::fs::create_dir_all(&boot_dir).expect("create boot dir");
             // #4(codex 二审):清上次进程 kill/crash 残留的明文引导快照;必须在任何空间
@@ -2896,7 +3125,18 @@ pub fn run() {
                 boot_dir.clone(),
                 dead,
             );
+            // D1 的判据在这儿取(411,408 走查):`activate_space` 会把 conn 移走,故
+            // 必须在装配之前问。「空库」= **所有已装配空间的 `items` 一行都没有**
+            // ——不是只看 main:加入空间的用户 main 恒空(147-150 的「加入」新建独立
+            // 空间),只看 main 会让他每次启动都被弹一次主窗。
+            let mut empty_library = true;
             for (id, path, conn, clk, veto) in live {
+                if empty_library
+                    && space_has_item(&conn)
+                        .unwrap_or_else(|e| panic!("查空间 {id} 有无条目失败:{e}"))
+                {
+                    empty_library = false;
+                }
                 activate_space(app.handle(), &table, id, path, conn, clk, veto)
                     .unwrap_or_else(|e| panic!("装配空间 runtime 失败:{e}"));
             }
@@ -3057,11 +3297,11 @@ pub fn run() {
             // 键名跟着当前生效的热键走(232 可改),故用上面从配置解析出的 accel 串、不再用常量。
             #[cfg(target_os = "linux")]
             let (show_label, notebook_label) = (
-                format!("记录灵感  ({capture_accel})"),
+                format!("记一笔  ({capture_accel})"),
                 format!("打开朱简  ({notebook_accel})"),
             );
             #[cfg(not(target_os = "linux"))]
-            let (show_label, notebook_label) = ("记录灵感".to_string(), "打开朱简".to_string());
+            let (show_label, notebook_label) = ("记一笔".to_string(), "打开朱简".to_string());
             let show_item =
                 MenuItem::with_id(app, "show", &show_label, true, Some(capture_accel.as_str()))?;
             let notebook_item = MenuItem::with_id(
@@ -3108,6 +3348,18 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             dock_menu::install(app.handle());
 
+            // D1(411,408 走查「首用极简」桌面半):首用者只看得见捕获条,主窗存在感
+            // 为零——记完第一条,东西去哪了全靠猜(主窗入口只有托盘双击 / Ctrl+Alt+M,
+            // 两个都零指引)。空库时把主窗也显一次:用户一眼看见「记下的东西住在哪」,
+            // 且**不加任何常驻 UI**——与安卓 A1「回收站/归档册空则不渲染那枚钮」(410)
+            // 同一手法(按数据显形)。有任何一条记录在场就不再弹,主窗照旧只由托盘/热键唤起。
+            // ⭐ 顺序即焦点:先主窗后捕获条,焦点最终落在捕获条上(它还 alwaysOnTop),
+            // 主窗安静地待在它身后——「记一笔」仍是启动后第一个能打字的地方,没被抢走。
+            // ⚠ 不记「是不是第一次启动」的旗:清空库后再指一次路无害,而多一份要落盘、
+            // 要跨设备想清楚语义的状态不值(设计铁律:不加中间态)。
+            if empty_library {
+                open_notebook(app.handle());
+            }
             // Show capture once on launch so the first run is discoverable.
             show_window(app.handle(), "capture");
             Ok(())
@@ -3196,7 +3448,15 @@ pub fn run() {
             set_hotkey,
             hotkey_conflicts,
             open_settings,
-            take_open_settings
+            take_open_settings,
+            backup_status,
+            backup_begin_setup,
+            backup_confirm_setup,
+            backup_cancel_setup,
+            backup_set_dir,
+            backup_run,
+            backup_retry_cleanup,
+            backup_open_dir
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

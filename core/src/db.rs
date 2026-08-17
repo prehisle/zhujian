@@ -908,8 +908,21 @@ mod tests {
         );
         assert_eq!(
             into,
-            want(&[("core/sync/boot.rs", 2)]),
-            "VACUUM INTO(写新文件、不动源库)只许在 boot.rs 出快照"
+            want(&[("core/backup/engine.rs", 1), ("core/sync/boot.rs", 2)]),
+            "VACUUM INTO(写新文件、不动源库)只许两处:boot.rs 出引导快照,\
+             backup/engine.rs 出加密备份的明文中间快照(402,backup-plan §7.1)。\n\
+             \n\
+             ⚠ 这些是**词法出现次数**,不是调用点数:boot.rs 那个 2 = 真 SQL 一处 + \
+             错误消息里那句字样一处(本表刻意连错误消息一起数,见上面「三处坑」第三条)。\n\
+             ⛔ backup/engine.rs 恰为 1,是因为它的错误话术**刻意不复述这四个字** —— \
+             谁在那儿写回去,这一格就会红。那是对的:回来改这个数字,并先读一遍 §7.1。\n\
+             \n\
+             为什么备份那一处安全:VACUUM INTO **写新文件、不动源库**,本表要求的\
+             「那个文件上没有活引擎」说的是**目标文件**,而目标是刚生成的 ULID 名新文件、\
+             只有我们一个持有者;源库有没有活引擎不影响它(boot.rs 在活库上做的就是同一件事)。\
+             与之相对,**原地** VACUUM 才是「必须自证无活引擎」那条 —— 它重排 oplog rowid、\
+             打穿 ops_serve 的取帧游标且静默无报错。备份的 inplace 计数**零新增**:\
+             剥派生复用 boot.rs 那一支,不另写。"
         );
         assert_eq!(
             db_open,

@@ -7,10 +7,12 @@
 
 import { invoke, invokeInSpace } from "./space";
 import { t } from "./i18n";
-import { saveImageDraft, loadImageDraft } from "./compose-draft";
+import { saveImageDraft, loadImageDraft, newDraftImageId, type DraftImage } from "./compose-draft";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { copyText } from "./clipboard";
-import { flashToast } from "./toast";
+import { readImage, writeImage } from "@tauri-apps/plugin-clipboard-manager";
+import { Image as ShellImage } from "@tauri-apps/api/image";
+import { flashToast, toastAction } from "./toast";
 import { PhysicalPosition, PhysicalSize, LogicalSize } from "@tauri-apps/api/dpi";
 import { currentMonitor, getCurrentWindow } from "@tauri-apps/api/window";
 import "./item-images.css";
@@ -192,6 +194,59 @@ export function imageFromPaste(e: ClipboardEvent): Blob | null {
   return null;
 }
 
+/** 退路:直接问壳的剪贴板要图(Rust 侧 arboard 交回原始 RGBA),重绘成一张 PNG blob。
+ *  剪贴板里根本没有图是**常态**(用户按了 Ctrl+V 但复制的是别的东西)⇒ 那一路 resolve
+ *  null,不是失败;真失败(尺寸对不上像素数、canvas 不可用)照旧 throw,由调用方响亮报。 */
+async function imageFromShellClipboard(): Promise<Blob | null> {
+  let shot: ShellImage;
+  try {
+    shot = await readImage();
+  } catch {
+    return null; // 剪贴板里没有图 —— 正常的一次「没什么可贴」,不报错
+  }
+  const { width, height } = await shot.size();
+  const rgba = await shot.rgba();
+  if (width <= 0 || height <= 0 || rgba.length === 0) return null;
+  if (rgba.length !== width * height * 4)
+    throw new Error(`剪贴板图尺寸对不上:${width}×${height} 却有 ${rgba.length} 字节`);
+  const c = document.createElement("canvas");
+  c.width = width;
+  c.height = height;
+  const ctx = c.getContext("2d");
+  if (!ctx) throw new Error("canvas 2d 上下文不可用");
+  ctx.putImageData(new ImageData(new Uint8ClampedArray(rgba), width, height), 0, 0);
+  const blob = await new Promise<Blob | null>((r) => c.toBlob(r, "image/png"));
+  if (!blob) throw new Error("图片编码失败");
+  return blob;
+}
+
+/** 一次粘贴里取图的**唯一入口**(compose 暂存与卡片编辑态两条 wire 都走它)。
+ *
+ *  「要不要拦下这次粘贴」必须**同步**决定完(preventDefault 不能等 await),故分三支:
+ *  ①标准 DataTransfer 给了图 ⇒ 当场拦下收图。Windows/mac 恒走这条,行为一字不变。
+ *  ②没图但有文字 ⇒ 这就是一次文字粘贴,放行,**不去问壳**(不给每次贴字都加一趟 IPC)。
+ *  ③既无图也无文字 ⇒ 默认粘贴本来就什么都插不进去(拦与不拦同果),故**不 preventDefault**、
+ *    异步问一次壳。Linux(WebKitGTK)恒落这条:它 paste 事件里的 clipboardData 的
+ *    `types`/`items`/`files` 全是空的、只有 `getData` 拿得到文字 ⇒ 贴文字一直正常,断的
+ *    只有图这条(progress-log 394 锁死的根因)。
+ *
+ *  ⚠ 诚实边界:图与文字**同时**在剪贴板上时,两条路会给出不同结果 —— 标准路认图(①),
+ *  WebKitGTK 那条只看得见文字、按②放行贴字。这是平台差异,不在本轮射程内。 */
+function pasteImage(e: ClipboardEvent, onBlob: (b: Blob) => void, onError: (err: unknown) => void): void {
+  const direct = imageFromPaste(e);
+  if (direct) {
+    e.preventDefault();
+    onBlob(direct);
+    return;
+  }
+  if (e.clipboardData?.getData("text/plain")) return; // 文字粘贴:放行
+  imageFromShellClipboard()
+    .then((blob) => {
+      if (blob) onBlob(blob);
+    })
+    .catch(onError);
+}
+
 // 看图时 Ctrl+C 复制整张图(223)。剪贴板写图在 Chromium/WebView2 只保证认 image/png,
 // 而库里存的可能是 jpeg/webp/gif,故一律过 canvas 重绘成 PNG 再写——不是转码洁癖,是不转
 // 就写不进去。已知折损:GIF 动图只得当前帧(canvas 取不到动画),透明 PNG 走 canvas 保 alpha。
@@ -205,7 +260,24 @@ async function copyImageToClipboard(img: HTMLImageElement): Promise<void> {
   ctx.drawImage(img, 0, 0);
   const blob = await new Promise<Blob | null>((r) => c.toBlob(r, "image/png"));
   if (!blob) throw new Error("图片编码失败");
-  await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
+  try {
+    await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
+  } catch (webErr) {
+    // Linux 真机(progress-log 394):WebKitGTK 的异步剪贴板**只认文本**,写图恒
+    // `NotAllowedError`(真按键、有用户手势也一样)——那条路上用户拿到的是「复制失败」。
+    // 退到壳的剪贴板插件(Rust 侧 arboard)把同一张图交给系统剪贴板。不是兜底默认值:
+    // 它是另一条真机制,两条都不成才失败,而失败照旧响亮(调用方的 copyFail 回执)。
+    // Windows/mac 上第一条本就成功,永远走不到这里(生产端行为一字不变)。
+    // 交的是**canvas 的原始 RGBA**,不是上面那份 PNG 字节:插件的 writeImage 只认 RGBA
+    // (喂 PNG 字节报「expected RGBA image data」),而由 PNG 字节造 Image 的
+    // `Image.fromBytes` 要 tauri 的 `image-png` feature —— 用 RGBA 两样都不欠。
+    try {
+      const rgba = ctx.getImageData(0, 0, c.width, c.height).data;
+      await writeImage(await ShellImage.new(new Uint8Array(rgba.buffer), c.width, c.height));
+    } catch (shellErr) {
+      throw new Error(`剪贴板写图失败(web:${String(webErr)} / shell:${String(shellErr)})`);
+    }
+  }
 }
 
 /** Mount a full-window overlay around `inner`; click anywhere or press Esc closes it.
@@ -991,7 +1063,7 @@ export function renderContent(text: string, images: ImageMeta[]): DocumentFragme
  *  移除/清空时 revoke 不漏内存),提交拿到 id 后 attachAll 逐张挂上。规则:凡是能输入条目正文的
  *  地方,都能 Ctrl+V 配图 —— 新入口一律接这个控制器,不再各写各的。 */
 /** 暂存图条目(pendingImages 内部批的元素;takeBatch/putBack/attachBatch 传递用)。 */
-export type PendingImage = { blob: Blob; url: string; thumb: HTMLElement };
+export type PendingImage = { id: string; blob: Blob; url: string; thumb: HTMLElement };
 
 export function pendingImages(
   opts: {
@@ -1021,14 +1093,24 @@ export function pendingImages(
   // 复用保存态缩略图的样式(.img-thumb/.img-del),只是没有「图N」角标——编号要入库才有。
   const root = el("div", { className: "img-strip img-pending empty" });
 
-  // held 一变就整体覆盖写 IndexedDB(串行成链防并发写乱序;失败吞掉不拦业务)。
+  // held 一变就把 IndexedDB 那一桶收敛到它(串行成链防并发写乱序;失败吞掉不拦业务)。
   // 每个 held 变动点(add / × 删 / takeBatch / putBack / clear)都调 persist()。
+  // **快照要在链外同步取**:等轮到这一环时 held 可能已经又变了,那一变自己会排在后面再收敛一次。
   let persistChain: Promise<void> = Promise.resolve();
   function persist(): void {
     if (!opts.persistKey) return;
     const key = opts.persistKey;
-    const snapshot = held.map((p) => p.blob);
+    const snapshot = held.map((p) => ({ id: p.id, blob: p.blob }));
     persistChain = persistChain.then(() => saveImageDraft(key, snapshot)).catch(() => {});
+  }
+
+  /** id 在 held 内必须唯一——`saveImageDraft` 的「桶里已有这个键就不重写字节」全靠它,
+   *  撞了就会拿上一张的字节冒充这一张(静默错图,不是报错)。会话前缀让跨会话天然不撞,
+   *  **除非系统时钟被往回拨**,故这里再挡一道:撞了就继续往下取号。 */
+  function freshId(): string {
+    let id = newDraftImageId();
+    while (held.some((p) => p.id === id)) id = newDraftImageId();
+    return id;
   }
 
   function sync(): void {
@@ -1036,7 +1118,8 @@ export function pendingImages(
     opts.onChange?.();
   }
 
-  function add(blob: Blob): void {
+  // restoreId:回填时把磁盘上那张的 id 原样带回,下一次 persist 就只写清单、不重写它的字节。
+  function add(blob: Blob, restoreId?: string): void {
     const url = URL.createObjectURL(blob);
     const img = el("img", { className: "img-thumb-img", src: url, title: t("itemImages.clickZoom") });
     img.addEventListener("click", () => {
@@ -1045,7 +1128,7 @@ export function pendingImages(
     });
     const del = el("button", { className: "img-del", textContent: "×", title: t("itemImages.removeImage") });
     const thumb = el("div", { className: "img-thumb" }, [img, del]);
-    const entry: PendingImage = { blob, url, thumb };
+    const entry: PendingImage = { id: restoreId ?? freshId(), blob, url, thumb };
     del.addEventListener("click", () => {
       URL.revokeObjectURL(url);
       thumb.remove();
@@ -1073,10 +1156,11 @@ export function pendingImages(
     /** 在输入框上接管图片粘贴(文本粘贴放行)。composeBar 重建时对新框再 wire 一次即可。 */
     wire(area: HTMLTextAreaElement): void {
       area.addEventListener("paste", (e) => {
-        const blob = imageFromPaste(e);
-        if (!blob) return;
-        e.preventDefault();
-        add(blob);
+        pasteImage(
+          e,
+          (blob) => add(blob),
+          () => toastAction(t("itemImages.pasteFail")), // 取图真失败要响亮(与 copyFail 同纪律)
+        );
       });
     },
     /** 把暂存图逐张挂到刚建好的条目上,随后清空暂存;返回挂失败的张数(fail-fast,调用方
@@ -1137,21 +1221,22 @@ export function pendingImages(
     clear,
     async restore(): Promise<void> {
       if (!opts.persistKey || held.length > 0) return; // 用户已抢先贴图:不覆盖
-      let blobs: Blob[];
+      let items: DraftImage[];
       try {
-        blobs = await loadImageDraft(opts.persistKey);
+        items = await loadImageDraft(opts.persistKey);
       } catch {
         return; // IndexedDB 不可用 / 读失败:恢复尽力而为,不拦启动
       }
-      if (blobs.length === 0 || held.length > 0) return; // await 期间可能已被贴入:再核一次
-      for (const b of blobs) add(b); // add 各自 revoke-safe 建预览 + persist(幂等回写同内容)
+      if (items.length === 0 || held.length > 0) return; // await 期间可能已被贴入:再核一次
+      // **id 原样带回**:这些字节桶里已经有了,下一次 persist 只写清单不重写它们。
+      for (const it of items) add(it.blob, it.id);
     },
   };
 }
 
 /** Wire a textarea so pasting an image attaches it (instead of dumping a path / nothing).
  *  Returns nothing; on a successful attach it calls `onAttached` (refresh the strip). A
- *  paste with no image falls through to normal text paste. */
+ *  paste with no image falls through to normal text paste (取图的三支见 `pasteImage`)。 */
 export function wirePasteToAttach(
   area: HTMLTextAreaElement,
   itemId: string,
@@ -1159,9 +1244,10 @@ export function wirePasteToAttach(
   onError: (e: unknown) => void,
 ): void {
   area.addEventListener("paste", (e) => {
-    const blob = imageFromPaste(e);
-    if (!blob) return; // plain text paste — let it happen
-    e.preventDefault();
-    attachBlob(itemId, blob).then(onAttached).catch(onError);
+    pasteImage(
+      e,
+      (blob) => void attachBlob(itemId, blob).then(onAttached).catch(onError),
+      onError,
+    );
   });
 }

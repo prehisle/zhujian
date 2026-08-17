@@ -29,6 +29,8 @@
     "deep-link:default",
     "deep-link:allow-get-current",
     "deep-link:allow-register",
-    "clipboard-manager:allow-read-text"
+    "clipboard-manager:allow-read-text",
+    "clipboard-manager:allow-read-image",
+    "clipboard-manager:allow-write-image"
   ]
 }

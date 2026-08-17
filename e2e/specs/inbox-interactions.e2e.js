@@ -1,6 +1,6 @@
 import { $, $$, expect } from "@wdio/globals";
 import { browser } from "@wdio/globals";
-import { invoke, goNotebook, clearInbox } from "./support.js";
+import { invoke, goNotebook, clearInbox, shownText } from "./support.js";
 
 // ㊳ 两个交互需求的 e2e 覆盖(㊷ 已补 viewkeys,这里补剩下两个):
 //   ③ 双击卡片 = 编辑(和单键 E 同一入口,回收站卡冻结不响应);
@@ -74,14 +74,14 @@ describe("灵感 · 编辑态显示标签(只读)", () => {
     // 故读态文本落在 .tag-label 子里(.tag 本身还含 ✕)。编辑态 tagView 仍是纯 .tag 文本。
     const tag = await card.$(".tags .tag");
     await tag.waitForExist({ timeout: 5000 });
-    await expect(tag).toHaveText("E2E-编辑态标签");
+    expect(await shownText(tag)).toBe("E2E-编辑态标签"); // ⚠ 别退回 toHaveText,见 support.js
 
     // Esc 取消(监听在文档级)→ 回读态,标签 chip 仍在。
     await browser.execute((el) => {
       el.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     }, await card.$(".edit-area"));
     await card.$(".note-text").waitForExist({ timeout: 5000 });
-    await expect(card.$(".tags .tag-label")).toHaveText("E2E-编辑态标签");
+    expect(await shownText(card.$(".tags .tag-label"))).toBe("E2E-编辑态标签"); // 同上
   });
 });
 

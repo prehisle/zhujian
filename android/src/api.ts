@@ -180,6 +180,10 @@ export const listArchivedTasks = (space: string) =>
 export const listSealedTasks = (space: string) =>
   invoke<TaskItem[]>("list_sealed_tasks", { spaceId: space });
 
+/** 底栏「回收站/归档册」显形用的两个计数(408-A1);只为显隐,不是列表口径。 */
+export const paneCounts = (space: string) =>
+  invoke<{ trash: number; sealed: number }>("pane_counts", { spaceId: space });
+
 export const listTopics = (space: string) => invoke<TopicItem[]>("list_topics", { spaceId: space });
 
 /** 按标签浏览(只含名下有灵感的标签)。 */

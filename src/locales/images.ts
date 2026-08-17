@@ -5,6 +5,7 @@ export const images = defineMessages({
   "itemImages.repasteHint": { zh: "(可在卡片编辑态重新粘贴)", en: "(you can paste again in the card's edit mode)" },
   "itemImages.copiedImage": { zh: "已复制图片", en: "Image copied" },
   "itemImages.copyFail": { zh: "复制失败", en: "Copy failed" },
+  "itemImages.pasteFail": { zh: "粘贴图片失败", en: "Failed to paste image" },
   "itemImages.badge": { zh: "图{n}", en: "Image {n}" },
   "itemImages.loading": { zh: "图片载入中…", en: "Loading image…" },
   "itemImages.loadFail": { zh: "图片加载失败", en: "Image failed to load" },

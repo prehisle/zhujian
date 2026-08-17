@@ -136,7 +136,11 @@ pub fn make_snapshot(conn: &Connection, dir: &Path) -> Result<Snapshot, String> 
 ///
 /// **新增纯本地派生表时,这里要跟着加一行**;漏了不会有任何测试变红,除非你也在
 /// `snapshot_carries_no_derived_rows` 里加一格(那只测按表名逐张点名)。
-fn strip_derived_from_snapshot(path: &Path) -> Result<(), String> {
+///
+/// ⚠ **402 起有第二个消费者**:加密备份(`backup::engine`)也走这一支剥派生 ——
+/// 刻意复用而不另写一份(checklist §14:同一条规则的第二份描述就是漂移源)。
+/// ⇒ 上面那句「新增派生表要跟着加一行」现在同时管着备份产物。
+pub(crate) fn strip_derived_from_snapshot(path: &Path) -> Result<(), String> {
     let conn = Connection::open(path).map_err(|e| format!("打开快照剥派生数据失败:{e}"))?;
     conn.execute_batch("DELETE FROM item_image_thumb; VACUUM;")
         .map_err(|e| format!("剥快照里的派生数据失败:{e}"))

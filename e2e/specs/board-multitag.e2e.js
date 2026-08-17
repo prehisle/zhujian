@@ -1,5 +1,5 @@
 import { $, expect, browser } from "@wdio/globals";
-import { invoke, goNotebook, boardAction } from "./support.js";
+import { invoke, goNotebook, boardAction, shownText } from "./support.js";
 
 // Feature 3: a board card carries SEVERAL tags (M:N). Add one via the ＋ picker, drop one
 // via a chip's ✕; the filter bar treats a card as belonging to EACH of its tags.
@@ -98,7 +98,7 @@ describe("任务看板 · 多标签", () => {
 
     // ㊿:编辑态复用 .chip.topic.set 只读展示标签——无 ✕(读态才有),增删仍走 ⋯ 菜单 L。
     await expect(await form.$$(".chip.topic.set")).toBeElementsArrayOfSize(1);
-    await expect(form.$(".chip.topic.set")).toHaveText(B);
+    expect(await shownText(form.$(".chip.topic.set"))).toBe(B); // ⚠ 别退回 toHaveText,见 support.js
     expect(await form.$(".chip.topic.set .chip-x").isExisting()).toBe(false);
 
     // Esc 取消(监听在文档级)→ 编辑态拆除、卡片回读态。

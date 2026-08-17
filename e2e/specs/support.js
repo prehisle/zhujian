@@ -150,3 +150,33 @@ export function tryInvoke(cmd, args) {
     args,
   );
 }
+
+// 把看板 compose **开到开着**,而不是「点一下 `#add-task`」——那个按钮是**开关**
+// (`board.ts`: `setComposeOpen(compose.hidden)`),compose 又会因为草稿回填自己先开着
+// (文字那趟同步、暂存图那趟**异步**),于是「点开」在开着的时候正好把它**关上**,现场是
+// `element ("#compose-input") still not displayed after 5000ms`。**396 §二**钉死的那只
+// 1/16 抖动就是它(阳性对照:板子桶里种一张暂存图 → `board.e2e.js` 8 failing;删掉 →
+// 15 passing 零重试)。
+// ⚠ **别退回裸 click**:`wdio.conf.js` 那道清草稿的 `before` 只堵住「上次会话留下的」那条路,
+// 另一条是「同一份 spec 里上游把 compose 留开了」——396 真见过一次。414 把这只 helper 从
+// board.e2e.js 提到这里,就是为了让另外两处(compose-recovery / compose-images)也走同一条路。
+export async function openCompose() {
+  await $("#add-task").waitForClickable({ timeout: 8000 });
+  if (await $("#compose-input").isDisplayed()) return; // 已经开着(草稿回填 / 上一条测试留的)
+  await $("#add-task").click();
+  await $("#compose-input").waitForDisplayed({ timeout: 5000 });
+}
+
+// 元素上「用户看得见的那行字」。**别用 `getText()` / `toHaveText()` 读它** —— 396 分诊:
+// WebKitGTK 的 WebDriver 对已渲染元素会读回**空串**(实测同一元素 `innerText` 正确、
+// `getBoundingClientRect` 114×22、`visibility:visible`、`opacity:1`,驱动仍给 ""),而
+// Windows 的 msedgedriver 读得到 ⇒ 同一句断言在两端结论不同,是**驱动差异不是产品缺陷**。
+// 这里两条一起断:①元素确实显示(isDisplayed 走的是驱动的可见性判定,不受上面那条影响)
+// ②DOM 上的文字。比单看 getText **更强**而不是更弱。
+// ⚠ 先 `await` 把链式元素落成真元素再交给 execute:`$(sel)` 返回的是 thenable,直接当参数
+// 传进去会被当普通对象序列化,页内拿到的 `n` 是 undefined(现场:`undefined is not an object`)。
+export async function shownText(el) {
+  const node = await el;
+  if (!(await node.isDisplayed())) throw new Error("元素存在但不可见");
+  return browser.execute((n) => n.textContent.trim(), node);
+}

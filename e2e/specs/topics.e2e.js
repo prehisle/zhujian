@@ -68,7 +68,7 @@ describe("标签 · 浏览与收缩展开", () => {
     await sec.waitForExist({ timeout: 10000 });
 
     // The flat row shows a notes/tasks count.
-    await expect(sec.$(".topic-count")).toHaveText("2 条灵感 · 0 个任务");
+    await expect(sec.$(".topic-count")).toHaveText("2 条随记 · 0 个任务");
 
     // Clicking the row expands it INLINE (no separate page) — both notes show under 想法.
     await sec.$(".topic-head").click();
@@ -90,7 +90,7 @@ describe("标签 · 浏览与收缩展开", () => {
     await goNotebook("topics");
     const sec = await $(`.topic*=${T}`);
     await sec.waitForExist({ timeout: 10000 });
-    await expect(sec.$(".topic-count")).toHaveText("0 条灵感 · 1 个任务");
+    await expect(sec.$(".topic-count")).toHaveText("0 条随记 · 1 个任务");
 
     await sec.$(".topic-head").click();
     const task = await $(".dtask-title*=E2E-标签任务-甲");
@@ -200,7 +200,7 @@ describe("标签 · 浏览与收缩展开", () => {
     await goNotebook("topics");
     const sec = await $(".topic*=E2E-标签-乙");
     await sec.waitForExist({ timeout: 10000 });
-    await expect(sec.$(".topic-count")).toHaveText("0 条灵感 · 0 个任务");
+    await expect(sec.$(".topic-count")).toHaveText("0 条随记 · 0 个任务");
   });
 });
 

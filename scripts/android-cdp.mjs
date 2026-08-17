@@ -22,6 +22,12 @@ import { readFileSync } from "node:fs";
 
 const PORT = 9222;
 
+// 单条 CDP 调用的上限。默认 10s 够绝大多数断言;**阴性对照那种「专等失败」的跑法**
+// 每个失败的 until 都要等满超时,总时长会翻几倍 —— 那时用 CDP_TIMEOUT_MS 放宽。
+// ⚠ 必须在模块级:evaluate 与 session(swipe 的路)都用它——曾被误塞进 evaluate
+// 函数体内,swipe 一跑就 ReferenceError。
+const CDP_TIMEOUT_MS = Number(process.env.CDP_TIMEOUT_MS || 10000);
+
 // execFileSync 直调 adb.exe、参数逐个透传 => 不过 bash/MSYS,/proc 路径不被转义。
 const adb = (args) => execFileSync("adb", args, { encoding: "utf8" });
 
@@ -52,11 +58,7 @@ async function pageTarget() {
 
 async function evaluate(expr) {
   const p = await pageTarget();
-  // 单条 CDP 调用的上限。默认 10s 够绝大多数断言;**阴性对照那种「专等失败」的跑法**
-// 每个失败的 until 都要等满超时,总时长会翻几倍 —— 那时用 CDP_TIMEOUT_MS 放宽。
-const CDP_TIMEOUT_MS = Number(process.env.CDP_TIMEOUT_MS || 10000);
-
-const ws = new WebSocket(p.webSocketDebuggerUrl);
+  const ws = new WebSocket(p.webSocketDebuggerUrl);
   await new Promise((res, rej) => {
     ws.addEventListener("open", res, { once: true });
     ws.addEventListener("error", () => rej(new Error("ws 连接失败")), { once: true });

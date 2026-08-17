@@ -1,5 +1,5 @@
 import { browser, $, $$, expect } from "@wdio/globals";
-import { invoke, goShow, goNotebook, clearInbox } from "./support.js";
+import { invoke, goShow, goNotebook, clearInbox, openCompose } from "./support.js";
 
 // compose 草稿断电恢复(198 桌面侧):三入口(捕获浮窗 / 灵感记下灵感 / 看板新建任务)的
 // 未记下草稿——文字 + 暂存图——存到设备本地,断电 / 杀进程后重开还在。这里用「整页重载」
@@ -44,6 +44,10 @@ const KEYS = {
 //    一次 await(比如解码缩略图)就会翻面,而翻面方向是「产品坏了却绿」;二是磁盘才是「稿
 //    了结」的权威真相源,红得更早更准(红在记下那一步,而不是绕一圈重载之后)。
 //    (文字那半旧版本来就可靠——文字回填是同步的,不像图。)
+//
+// 形态(393 起,compose-draft.ts 一张一个键):本桶有 `<桶>::order`(id 顺序清单)与
+// 每张一个 `<桶>::img:<id>`。故「磁盘上有几张」= **清单里有 id 且那个 id 真有字节**的张数
+// —— 只数清单会把「清单说有、字节没落地」判成有,只数 `img:` 键会漏掉顺序这一半。
 async function draftImageCount(key) {
   return browser.execute(async (k) => {
     const db = await new Promise((res, rej) => {
@@ -55,9 +59,20 @@ async function draftImageCount(key) {
     try {
       return await new Promise((res, rej) => {
         const tx = db.transaction("images", "readonly");
-        const q = tx.objectStore("images").get(k);
-        q.onsuccess = () => res((q.result ?? []).length);
-        q.onerror = () => rej(q.error);
+        const store = tx.objectStore("images");
+        let withBytes = 0;
+        const ord = store.get(`${k}::order`);
+        ord.onsuccess = () => {
+          for (const id of ord.result ?? []) {
+            const c = store.count(`${k}::img:${id}`);
+            c.onsuccess = () => {
+              withBytes += c.result;
+            };
+          }
+        };
+        tx.oncomplete = () => res(withBytes);
+        tx.onerror = () => rej(tx.error);
+        tx.onabort = () => rej(tx.error);
       });
     } finally {
       db.close();
@@ -210,11 +225,8 @@ describe("草稿断电恢复 · 看板「新建任务」", () => {
   });
 
   it("打字+贴图 → 重载笔记本 → 文字+图回填(compose 自动开回);记下后重载不复现", async () => {
-    const addBtn = await $("#add-task");
-    await addBtn.waitForExist({ timeout: 10000 });
-    await addBtn.click();
+    await openCompose(); // ⚠ 别写成裸 click:`#add-task` 是开关,见 support.js 那段注释
     const input = await $("#compose-input");
-    await input.waitForDisplayed({ timeout: 5000 });
     await input.click();
     await input.setValue("E2E-断电-任务");
     await pasteImage("#compose-input");
@@ -258,5 +270,67 @@ describe("草稿断电恢复 · 看板「新建任务」", () => {
     // 清库:归档 + 彻底删,连图带计数 CASCADE。
     await invoke("archive_task", { id: taskId });
     await invoke("purge_task", { id: taskId });
+  });
+});
+
+// 393 起三个入口的暂存图**共用一个 IndexedDB store、按桶分键**(`<桶>::order` +
+// `<桶>::img:<id>`),而每次写入都会「把本桶收敛到 held」——顺带删掉本桶里不再持有的键。
+// ⚠ 那个 delete 的扫描面一旦写宽(漏掉「只动本桶」这道判断),**在 A 入口贴一张图就会把
+// B 入口那份没记下的草稿删掉**,而且一声不响。上面三例各自只碰一个桶,照不出这一格。
+describe("草稿断电恢复 · 跨入口互不串", () => {
+  before(async () => {
+    await goShow("/index.html");
+    await clearInbox();
+  });
+
+  it("在灵感里贴图,不许动到捕获浮窗那份没记下的草稿", async () => {
+    // ① 捕获浮窗先存一份草稿(文字 + 1 张图),不记下。
+    const ta = await $("#capture");
+    await ta.waitForExist({ timeout: 10000 });
+    await ta.click();
+    await ta.setValue("E2E-跨桶-捕获");
+    await pasteImage("#capture");
+    await waitImagesOnDisk("capture", 1, "跨桶:捕获那份存好");
+
+    // ② 换到笔记本的灵感入口,在**另一个桶**里贴一张、再删掉——一加一删两次写入,
+    //    两次都会跑本桶收敛(删那次尤其:它是唯一会发 delete 的路径)。
+    await goNotebook("inbox");
+    const input = await $(".v-inbox .compose-input");
+    await input.waitForExist({ timeout: 10000 });
+    await input.click();
+    await pasteImage(".v-inbox .compose-input");
+    await waitImagesOnDisk("inbox", 1, "跨桶:灵感那份写进去");
+    await $(".v-inbox .compose .img-pending .img-thumb .img-del").click();
+    await waitImagesOnDisk("inbox", 0, "跨桶:灵感那份删掉");
+
+    // ③ 捕获浮窗那份必须一张不少、文字也还在(它跟这一切毫无关系)。
+    expect(await draftImageCount(KEYS.capture.img)).toBe(1);
+    expect(
+      await browser.execute((k) => localStorage.getItem(k), KEYS.capture.text),
+    ).not.toBe(null);
+
+    // ④ 清场:两个桶都清干净(捕获那份没记下过,得手动清)。
+    await goShow("/index.html");
+    const ta2 = await $("#capture");
+    await ta2.waitForExist({ timeout: 10000 });
+    await browser.waitUntil(async () => (await ta2.getValue()) === "E2E-跨桶-捕获", {
+      timeout: 5000,
+      timeoutMsg: "跨桶:捕获那份重载后没回填(它本该完好)",
+    });
+    await ta2.click();
+    await browser.keys("Enter");
+    let noteId;
+    await browser.waitUntil(
+      async () => {
+        const ideas = await invoke("list_ideas");
+        const hit = ideas.find((n) => n.content === "E2E-跨桶-捕获");
+        if (hit) noteId = hit.id;
+        return !!hit;
+      },
+      { timeout: 6000, timeoutMsg: "跨桶:捕获那份记下后未入库" },
+    );
+    expect(await invoke("list_item_images", { itemId: noteId })).toHaveLength(1);
+    await waitDraftCleared("capture", "跨桶收场");
+    await clearInbox();
   });
 });
