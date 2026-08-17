@@ -8,6 +8,7 @@ import { readFileSync, writeFileSync, existsSync, readdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
+import { signerSha256Digests } from "./lib/apk-signer.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const BASE_URL = "https://zhujian.app/updates";
@@ -129,11 +130,13 @@ try {
   process.exit(1);
 }
 // 取**全部** signer 的指纹:多签(如证书轮换血统)时每一个都必须是那把钥,一个不认识就拒。
-const digests = [...certs.matchAll(/Signer #\d+ certificate SHA-256 digest:\s*([0-9a-f]{64})/gi)].map(
-  (m) => m[1].toLowerCase(),
-);
+// ⚠ 抓取器住 scripts/lib/apk-signer.mjs,**别把 signer 那一行的头写死**(416 实栽:
+// build-tools 35 印 `Signer #1 certificate …`、36 印 `V2 Signer: certificate …`,
+// 同一把钥同一个指纹,只是前缀变了 ⇒ 这道闸在真 CI 上首次触发就读不到、拒发)。
+const digests = signerSha256Digests(certs);
 if (digests.length === 0) {
   console.error("apksigner 输出里读不到任何签名证书指纹——判不了,拒发(fail-closed)。");
+  console.error("(若是 build-tools 换版换了输出格式,改 scripts/lib/apk-signer.mjs 并补一条真实样本)");
   console.error(certs);
   process.exit(1);
 }
