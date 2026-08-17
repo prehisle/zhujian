@@ -409,6 +409,25 @@ if (captureDraft && captureDraft.text) input.value = captureDraft.text;
 void fitWindow();
 void pend.restore();
 
+// 无合成器的桌面(418):本窗那圈透明底在没有合成器的桌面上是一块黑(为什么见壳里的
+// wm_composited)。问壳一次,顺手把结论回写 localStorage —— 下次启动 index.html 头里那段
+// 在首帧之前就用得上,不必再等这一趟往返。Win/mac 恒 true,那两端这里恒是空操作。
+void (async () => {
+  try {
+    const composited = await rawInvoke<boolean>("wm_composited");
+    if (composited) {
+      delete document.documentElement.dataset.wm;
+      localStorage.removeItem("zhujian.wm");
+    } else {
+      document.documentElement.dataset.wm = "flat";
+      localStorage.setItem("zhujian.wm", "flat");
+    }
+  } catch {
+    // 壳没答上来(理论上到不了:这是个不会失败的纯读命令)——保持首帧那一刻的样子,
+    // 别凭猜改外观,也别把上次的结论抹掉。
+  }
+})();
+
 // 明暗三档(250):首帧定色已由 index.html 头里的内联脚本做掉,这里接上「自动」档跟随
 // 系统变化 + 主窗改档时的跨窗广播(捕获窗自己没有开关,只跟)。
 initTheme();

@@ -84,7 +84,7 @@ fn backs_up_a_real_space_and_the_bytes_round_trip() {
     let restored = r.root.join("restored.sqlite3");
     let mut f = std::fs::File::open(&made.path).unwrap();
     let mut w = std::fs::File::create(&restored).unwrap();
-    let trailer = crate::backup::read_backup(&mut f, &mut w, &r.settings.key).expect("解得开");
+    let trailer = crate::backup::read_backup(&mut f, &mut w, &r.settings.key).expect("解得开").0;
     drop(w);
 
     assert_eq!(trailer.space_id, "main");

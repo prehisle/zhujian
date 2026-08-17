@@ -264,6 +264,28 @@
 }
 .bkup-out { margin-top: 2px; }
 
+/* 备份列表的一行:文件名可挤、事实与状态不挤、右端是「验证」钮。
+   ⚠ 每层 flex item 都要 min-width:0,否则长文件名会把整行撑出横条(249 那条)。 */
+.bkup-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  padding: 3px 0 3px 2px;
+}
+.bkup-item-name {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--ink-soft);
+}
+.bkup-item-meta { flex: none; }
+/* 默认(还没验过)= 与事实同一档灰,⛔ 不给它任何"看起来已就绪"的颜色。 */
+.bkup-item-state { flex: none; }
+.bkup-item-state.ok { color: var(--ok); }
+.bkup-item-state.err { color: var(--seal); }
+.bkup-item .hkset-change { flex: none; align-self: center; }
+
 /* ---- 本机别名(identity-plan §2.4)---- */
 .alias-ctrls {
   flex: none;

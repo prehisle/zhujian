@@ -2215,6 +2215,28 @@ async fn reset_space(
     Ok(())
 }
 
+/// 桌面合成器在不在。setup 里在**主线程**量一次(GDK 不是线程安全的)存这儿,命令只读它;
+/// 默认 true = 今天的样子(有合成器),量不到就不动外观。
+static WM_COMPOSITED: AtomicBool = AtomicBool::new(true);
+
+/// 桌面上有没有合成器(compositor)把窗口的 alpha 混到桌面上。
+///
+/// 捕获窗是 `transparent:true` 的无边框浮窗:纸片之外那一圈(index.html 里给自绘投影留的
+/// padding)是透明的。**透明要靠合成器**——没有合成器时 alpha 无人处理,那一圈在屏幕上
+/// 就是一块黑,用户看到的是「一张纸片嵌在一个大黑框里」。而 X11 上「没有合成器」是完全
+/// 合法的常见状态:XFCE 把合成关掉、i3/openbox 没挂 picom、软件 GL 的远程桌面里 xfwm4
+/// 直接以 `Unsupported GL renderer` 拒绝启合成器。前端据此把捕获窗底色由透明换成不透明的
+/// `--paper`(见 index.html)——窗仍是方的、纸片圆角投影都不动,但不再是一块黑。
+///
+/// Win/mac 恒有合成(DWM / Quartz),恒 true;Wayland 恒合成,`gdk_screen_is_composited`
+/// 在那儿也恒 true,故不必另判会话类型。
+/// ⚠ 只在启动时量一次:装上 picom 之后要重启 app 才认(合成器来去是罕见事件,为它挂一条
+/// `composited-changed` 信号桥不值)。
+#[tauri::command]
+fn wm_composited() -> bool {
+    WM_COMPOSITED.load(Ordering::Relaxed)
+}
+
 /// notebook 只在首个召唤时补一次「最大化恢复」;之后关窗只是隐藏、几何原样留着,
 /// 再召唤直接 show 即可,不必重摆。
 static NOTEBOOK_MAXIMIZE_RESTORED: AtomicBool = AtomicBool::new(false);
@@ -2806,6 +2828,168 @@ async fn backup_retry_cleanup(app: AppHandle) -> Result<BackupStatusDto, String>
     .map_err(|e| format!("清扫任务没跑起来:{e}"))?
 }
 
+#[derive(Serialize)]
+struct BackupEntryDto {
+    path: String,
+    file_name: String,
+    bytes: u64,
+    modified_ms: Option<u64>,
+}
+
+#[derive(Serialize)]
+struct VerifiedBackupDto {
+    space_id: String,
+    space_name: Option<String>,
+    created_at: String,
+    app_version: String,
+    plain_bytes: u64,
+}
+
+/// 列出备份目录里的候选文件。⛔ **回的只有盘上事实,没有「有效」这一格**
+/// (backup-plan §3.3:文件名 / 扩展名绝不能当「这是一份有效备份」的判据)。
+#[tauri::command]
+fn backup_list(app: AppHandle) -> Result<Vec<BackupEntryDto>, String> {
+    app.state::<zhujian_core::backup::BackupCoordinator>()
+        .list_backups()
+        .map(|v| {
+            v.into_iter()
+                .map(|e| BackupEntryDto {
+                    path: e.path,
+                    file_name: e.file_name,
+                    bytes: e.bytes,
+                    modified_ms: e.modified_ms,
+                })
+                .collect()
+        })
+        .map_err(|e| e.to_string())
+}
+
+/// 验一份备份:**整个读回来解一遍**(与恢复同一条路)。
+///
+/// ⭐ **`spawn_blocking` 与 `backup_run` 同理**:全量解一份大库要好几秒,同步命令会把主窗冻住。
+#[tauri::command]
+async fn backup_verify(app: AppHandle, path: String) -> Result<VerifiedBackupDto, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        app.state::<zhujian_core::backup::BackupCoordinator>()
+            .verify_backup(&path)
+            .map(|v| VerifiedBackupDto {
+                space_id: v.space_id,
+                space_name: v.space_name,
+                created_at: v.created_at,
+                app_version: v.app_version,
+                plain_bytes: v.plain_bytes,
+            })
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("验证任务没跑起来:{e}"))?
+}
+
+#[derive(Serialize)]
+struct BackupAutoStatusDto {
+    enabled: bool,
+    every_minutes: u32,
+    keep: u32,
+    /// UTC RFC3339 —— ⚠ **本地时间由前端 `Date` 转**(`time` 在多线程进程里取不到本地偏移)。
+    last_success_at: Option<String>,
+    last_result: Option<String>,
+    problem: Option<String>,
+    /// ⭐ 进程内那枚待读通知(设计审 H5):**每拉一次就取走** ——
+    /// 它是「结论连盘都写不进去」时唯一还能到达用户的路,而 `emit` 在主窗没开时会丢。
+    pending_notice: Option<String>,
+}
+
+fn backup_auto_dto(s: zhujian_core::backup::AutoStatus) -> BackupAutoStatusDto {
+    BackupAutoStatusDto {
+        enabled: s.enabled,
+        every_minutes: s.every_minutes,
+        keep: s.keep,
+        last_success_at: s.last_success_at,
+        last_result: s.last_result,
+        problem: s.problem,
+        pending_notice: s.pending_notice,
+    }
+}
+
+#[tauri::command]
+fn backup_auto_status(app: AppHandle) -> BackupAutoStatusDto {
+    backup_auto_dto(app.state::<zhujian_core::backup::BackupCoordinator>().auto_status())
+}
+
+/// 开 / 关自动备份。⛔ 策略一律不在这儿判 —— core 会拒绝「还没设置过备份就开」。
+#[tauri::command]
+fn backup_set_auto(app: AppHandle, enabled: bool) -> Result<BackupAutoStatusDto, String> {
+    app.state::<zhujian_core::backup::BackupCoordinator>()
+        .set_auto_enabled(enabled)
+        .map(backup_auto_dto)
+        .map_err(|e| e.to_string())
+}
+
+/// 把自动备份设置重置成默认(关 / 每天 / 3 份 / **空账**)。
+///
+/// ⭐ 这颗按钮**只在这一份文件上安全**:里面没有备份钥、没有任何不可再生的东西
+/// (⛔ `.backup.json` 那边刻意**没有**对应按钮 —— 重设那份 = 已有备份永远打不开)。
+/// ⚠ 代价照实说给用户:账清零 = 那些旧备份从此不再被自动清理。
+#[tauri::command]
+fn backup_reset_auto(app: AppHandle) -> Result<BackupAutoStatusDto, String> {
+    app.state::<zhujian_core::backup::BackupCoordinator>()
+        .reset_auto()
+        .map(backup_auto_dto)
+        .map_err(|e| e.to_string())
+}
+
+/// 自动备份那趟要不要打扰用户。⭐ **`Skipped` 一律不打扰**(没开 / 没到点 / 有别的操作在跑
+/// 都是正常);⛔ 但失败、封锁、轮转出岔子必须看得见 —— fail-fast 铁律在无人值守这条路上
+/// 只有这一个出口。
+#[derive(Serialize, Clone)]
+struct AutoBackupEvent {
+    /// 去抖用的**原因键**:同一个原因每进程只弹一次(60 秒一 tick,不去抖就是每分钟一张脸)。
+    reason: String,
+    text: String,
+}
+
+fn auto_event(tick: &zhujian_core::backup::AutoTick) -> Option<AutoBackupEvent> {
+    use zhujian_core::backup::AutoTick;
+    match tick {
+        AutoTick::Skipped(_) => None,
+        AutoTick::Refused(m) => Some(AutoBackupEvent { reason: format!("refused:{m}"), text: m.clone() }),
+        AutoTick::Ran(run) => {
+            let bad = !run.report.failed.is_empty()
+                || run.report.fatal.is_some()
+                || run.report.blocked.is_some()
+                || run.report.made.is_empty()
+                || run.rotations.iter().any(|r| r.stalled.is_some() || !r.unmanaged.is_empty());
+            // ⛔ 成功不弹:天天弹 = 用户学会无视它,那就等于没有提示。
+            bad.then(|| AutoBackupEvent {
+                reason: format!("ran:{}", run.summary),
+                text: run.summary.clone(),
+            })
+        }
+    }
+}
+
+/// 那根 60 秒的线程。**壳只管叫**:该不该跑、跑完删哪些旧的,全在 core
+/// (⛔ 门开在这儿就等于没门 —— 这条路本来就不走命令层)。
+///
+/// ⚠ 首次判定延后到启动后 60 秒(避开启动尖峰);⛔ e2e(`YS_DB_PATH`)下**根本不起它**:
+/// 测试要确定性,不要背景写盘。
+fn spawn_auto_backup_timer(app: &AppHandle) {
+    if e2e_db_path().is_some() {
+        return;
+    }
+    let handle = app.clone();
+    std::thread::spawn(move || loop {
+        std::thread::sleep(std::time::Duration::from_secs(60));
+        let tick = handle.state::<zhujian_core::backup::BackupCoordinator>().run_auto_if_due();
+        if let Some(ev) = auto_event(&tick) {
+            eprintln!("WARN 自动备份:{}", ev.text);
+            // ⚠ emit 只是"及时",不是"可靠"(主窗没开就收不到)——所以同一句话
+            // 也留在 `.backup-auto.json` 的 last_result 与进程内 pending_notice 里。
+            let _ = handle.emit("backup://auto", ev);
+        }
+    });
+}
+
 /// 「打开所在文件夹」——复用**已有的** opener 插件(§5.2:v1 不引原生目录选择器)。
 /// 目录不存在时先建出来:用户点它就是想去看看,弹一句「没有这个目录」帮不上忙。
 #[tauri::command]
@@ -2865,6 +3049,18 @@ fn panic_dialog_message(info: &std::panic::PanicHookInfo<'_>) -> String {
 #[link(name = "X11")]
 extern "C" {
     fn XInitThreads() -> std::os::raw::c_int;
+}
+
+// 桌面合成器在不在(Linux 专属,为什么要它见 `wm_composited` 那段注释)。与上面的 X11
+// 同理是**间接**依赖(链接行里没有 -lgdk-3),故显式 `#[link]` 把它要过来 —— 构建期需要
+// libgtk-3-dev(它直接提供 libgdk-3.so),本机与三条 CI workflow 的 Linux job 都已装
+// (release/nightly/preflight 同一份依赖行,那行本就是为 tauri 装的)。
+// ⛔ 两个函数都必须在主线程调(GDK 不是线程安全的,394 那次 abort 是同一课)。
+#[cfg(target_os = "linux")]
+#[link(name = "gdk-3")]
+extern "C" {
+    fn gdk_screen_get_default() -> *mut std::ffi::c_void;
+    fn gdk_screen_is_composited(screen: *mut std::ffi::c_void) -> std::os::raw::c_int;
 }
 
 pub fn run() {
@@ -3035,6 +3231,8 @@ pub fn run() {
                     eprintln!("WARN {reason}");
                 }
                 app.manage(coordinator);
+                // 笔①-b:自动备份那根 60 秒的线程(必须在 manage 之后)。
+                spawn_auto_backup_timer(app.handle());
             }
             let boot_dir = main_db.parent().expect("库文件必有父目录").join(".boot");
             std::fs::create_dir_all(&boot_dir).expect("create boot dir");
@@ -3227,6 +3425,32 @@ pub fn run() {
                 .0
                 .lock()
                 .expect("hotkey conflicts") = failed;
+
+            // 合成器探测(Linux,见 `wm_composited`):setup 跑在主线程、且窗口都已建好
+            // (GDK 必然初始化过),是唯一能安全问 GDK 的地方——命令跑在异步运行时线程上,
+            // 在那儿碰 GDK 就是 394 那次 abort。量到的结论存进静态,前端用命令来取。
+            // screen 为 NULL = GDK 没初始化,理论上到不了这;真到了也没有比「按今天的样子
+            // 继续」更好的处置(改外观要有把握,没有把握就别改),故只响亮记一行。
+            #[cfg(target_os = "linux")]
+            {
+                let composited = unsafe {
+                    let screen = gdk_screen_get_default();
+                    if screen.is_null() {
+                        log::error!(
+                            "gdk_screen_get_default() 返回 NULL —— 合成器探测跳过,按「有合成器」处理"
+                        );
+                        true
+                    } else {
+                        gdk_screen_is_composited(screen) != 0
+                    }
+                };
+                WM_COMPOSITED.store(composited, Ordering::Relaxed);
+                if !composited {
+                    log::warn!(
+                        "桌面没有合成器:捕获浮窗的透明底会被前端换成不透明纸色(否则那一圈是黑的)"
+                    );
+                }
+            }
 
             // The notebook is the single browse/manage window — a panel, not a
             // doc. Closing it should hide it (so the next summon works), not
@@ -3447,6 +3671,7 @@ pub fn run() {
             get_hotkeys,
             set_hotkey,
             hotkey_conflicts,
+            wm_composited,
             open_settings,
             take_open_settings,
             backup_status,
@@ -3456,7 +3681,12 @@ pub fn run() {
             backup_set_dir,
             backup_run,
             backup_retry_cleanup,
-            backup_open_dir
+            backup_open_dir,
+            backup_list,
+            backup_verify,
+            backup_auto_status,
+            backup_set_auto,
+            backup_reset_auto
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

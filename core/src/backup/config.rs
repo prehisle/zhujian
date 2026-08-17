@@ -195,7 +195,7 @@ fn save(config_path: &Path, on_disk: &OnDisk) -> Result<(), ConfigError> {
 
 /// 建一个「只有本人可读写」的新文件。Unix 走 `mode(0o600)`;
 /// ⚠ **Windows 侧继承 app 配置目录的 ACL,做不到等价的一行**(backup-plan §5.1 记档)。
-fn create_private(path: &Path) -> std::io::Result<std::fs::File> {
+pub(super) fn create_private(path: &Path) -> std::io::Result<std::fs::File> {
     let mut opts = std::fs::OpenOptions::new();
     opts.write(true).create_new(true);
     #[cfg(unix)]

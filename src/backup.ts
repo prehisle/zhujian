@@ -13,6 +13,7 @@
 // 3. **失败要摊开**:成功几个、失败几个、每个为什么;有 fatal 时「剩下的根本没跑」
 //    与「跑了但失败」必须显著区分(§6.3)。⛔ 别把它们收成一句「备份失败」。
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { t } from "./i18n";
 
 type BackupStatus = {
@@ -24,12 +25,34 @@ type BackupStatus = {
   problem: string | null;
 };
 
+type AutoStatus = {
+  enabled: boolean;
+  every_minutes: number;
+  keep: number;
+  /** UTC RFC3339 —— 本地时间在这一层用 `Date` 转(后端取不到本地偏移)。 */
+  last_success_at: string | null;
+  last_result: string | null;
+  problem: string | null;
+  /** ⭐ 拉一次取走一次(设计审 H5):结论连盘都写不进去时,它是唯一还能到达用户的路。 */
+  pending_notice: string | null;
+};
+
 type Made = { space_id: string; path: string; bytes: number };
 type Failed = {
   space_id: string;
   message: string;
   leftover_kind: "unverified" | "invalid" | null;
   leftover_path: string | null;
+};
+/** 备份目录里的一份候选。⛔ **刻意没有「有效」这一格** —— core 那边的类型也没有,见 §3.3。 */
+type Entry = { path: string; file_name: string; bytes: number; modified_ms: number | null };
+/** 验过之后才有的那几格,全部来自 trailer。 */
+type Verified = {
+  space_id: string;
+  space_name: string | null;
+  created_at: string;
+  app_version: string;
+  plain_bytes: number;
 };
 type Report = {
   made: Made[];
@@ -108,7 +131,219 @@ function render(body: HTMLElement, st: BackupStatus): void {
     return;
   }
 
-  body.append(buildDirRow(st), buildRunRow(body));
+  body.append(buildDirRow(st), buildRunRow(body), buildListSection(), buildAutoRow());
+}
+
+/**
+ * 备份列表(§3.3 收口那条义务的产品落点)。
+ *
+ * ⛔ **每一行的默认状态是「还没验过」,不是「有效」** —— 那条义务原话:
+ * 「**文件名 / 扩展名绝不能当『这是一份有效备份』的判据**」。413 真 SIGKILL 造出来的两份
+ * 半截产物与成功产物**同目录、同名族、同扩展名**,其中一份还完全解得开 —— 名字什么都证明不了。
+ * 唯一的判据是点「验证」真解一遍(与恢复同一条路)。
+ *
+ * ⛔ **没有删除按钮**:清理属于笔①-b 的轮转(账里那句「别把它单独做成第三个功能」)。
+ * 要删走上面那个「打开所在文件夹」自己删。
+ */
+function buildListSection(): HTMLElement {
+  const wrap = document.createElement("div");
+  const head = el("div", "hkset-row", "");
+  const out = el("div", "bkup-out", "");
+  const reload = button(t("backup.listReload"), () => void loadList(out));
+  head.append(
+    el("div", "hkset-name", t("backup.listName")),
+    el("div", "hkset-desc", t("backup.listDesc")),
+    reload,
+  );
+  wrap.append(head, out);
+  void loadList(out);
+  return wrap;
+}
+
+async function loadList(out: HTMLElement): Promise<void> {
+  out.replaceChildren(el("p", "hkset-msg", t("common.loading")));
+  let list: Entry[];
+  try {
+    list = await invoke<Entry[]>("backup_list");
+  } catch (e) {
+    out.replaceChildren(el("p", "hkset-msg err", String(e)));
+    return;
+  }
+  out.replaceChildren();
+  if (list.length === 0) {
+    out.appendChild(el("p", "hkset-msg", t("backup.listEmpty")));
+    return;
+  }
+  for (const e of list) out.appendChild(listRow(e));
+}
+
+function listRow(e: Entry): HTMLElement {
+  const row = el("div", "bkup-item", "");
+  const name = el("span", "bkup-item-name", e.file_name);
+  // 盘上事实那半:大小 + 改动时刻。⛔ 这两格**不是**「它是不是一份好备份」。
+  const facts = el("span", "bkup-item-meta", `${size(e.bytes)}${e.modified_ms ? " · " + when(e.modified_ms) : ""}`);
+  // ⭐ 默认就是这句「还没验过」,不是空白也不是「有效」。
+  const state = el("span", "bkup-item-state", t("backup.listUnverified"));
+
+  const verify = button(t("backup.listVerify"), () => {
+    verify.disabled = true;
+    state.className = "bkup-item-state";
+    state.textContent = t("backup.listVerifying");
+    void invoke<Verified>("backup_verify", { path: e.path })
+      .then((v) => {
+        state.className = "bkup-item-state ok";
+        // 说的是「**当前**完整可读」——⛔ 不许追认「当初那趟备份成功了」(§3.3 那张表)。
+        state.textContent = t("backup.listOk", {
+          space: v.space_name || v.space_id,
+          size: size(v.plain_bytes),
+        });
+      })
+      // ⛔ 原样摊开后端那句:「不是当前备份码对应的」与「结构不对」是两回事,
+      // 糊成一句会让用户把一份其实没坏的备份删掉。
+      .catch((err) => {
+        state.className = "bkup-item-state err";
+        state.textContent = String(err);
+      })
+      .finally(() => {
+        verify.disabled = false;
+      });
+  });
+
+  row.append(name, facts, state, verify);
+  return row;
+}
+
+/**
+ * 「自动备份」一节(笔①-b)。
+ *
+ * ⭐ 三条别改坏的:
+ * 1. **频率与份数从状态里读,⛔ 不许写死**——那个文件可以手改,写死的文案改完就在说谎
+ *    (设计审 H4)。
+ * 2. ⛔ **别把那句话写成绝对承诺**:轮转与删除之间有一段收窄不掉的窗口,所以只能说
+ *    「手动备份不进入自动清理账;一旦发现文件身份变了,自动清理就不再管它」(设计审三弹 M2)。
+ * 3. 设置文件坏了 ⇒ 显原话 + 一颗「重置」按钮。⭐ **这里给按钮是安全的**,与上面那条
+ *    「⛔ 坏配置绝不给按钮」正相反 —— 判据是**里面有没有不可再生的东西**:这份文件里
+ *    没有备份钥,重置最坏 = 那些旧备份从此归你自己管。
+ */
+function buildAutoRow(): HTMLElement {
+  const wrap = document.createElement("div");
+  void invoke<AutoStatus>("backup_auto_status")
+    .then((a) => renderAuto(wrap, a))
+    .catch((e) => wrap.replaceChildren(el("p", "hkset-msg err", String(e))));
+  return wrap;
+}
+
+function renderAuto(wrap: HTMLElement, a: AutoStatus): void {
+  wrap.replaceChildren();
+
+  if (a.problem) {
+    const row = el("div", "hkset-row", "");
+    const reset = button(t("backup.autoReset"), () => {
+      reset.disabled = true;
+      void invoke<AutoStatus>("backup_reset_auto")
+        .then((next) => renderAuto(wrap, next))
+        .catch((e) => {
+          reset.disabled = false;
+          wrap.appendChild(el("p", "hkset-msg err", String(e)));
+        });
+    });
+    row.append(el("div", "hkset-name", t("backup.autoName")), el("div", "hkset-desc", ""), reset);
+    wrap.append(el("p", "hkset-msg err", a.problem), row, el("p", "settings-foot", t("backup.autoResetHint")));
+    return;
+  }
+
+  // ⚠ **用按钮不用 checkbox**:这一面板每一行都是「名字 + 说明 + 按钮」,而且
+  // `<input type=checkbox>` 是替换元素、**渲染不出 `::before`** ⇒ §2.3 那套热区扩展技法
+  // 对它无效(热区闸当场抓到了第一版那只 16px 的框)。`.hkset-change` 本来就在扩展名单里。
+  const row = el("div", "hkset-row", "");
+  const msg = el("p", "hkset-msg", "");
+  const toggle = button(a.enabled ? t("backup.autoOff") : t("backup.autoOn"), () => {
+    toggle.disabled = true;
+    void invoke<AutoStatus>("backup_set_auto", { enabled: !a.enabled })
+      .then((next) => renderAuto(wrap, next))
+      .catch((e) => {
+        toggle.disabled = false;
+        setMsg(msg, String(e), "err");
+      });
+  });
+  toggle.dataset.on = a.enabled ? "1" : "0";
+  row.append(
+    el("div", "hkset-name", t("backup.autoName")),
+    el("div", "hkset-desc", a.enabled ? t("backup.autoStateOn") : t("backup.autoStateOff")),
+    toggle,
+  );
+
+  wrap.append(
+    row,
+    // ⭐ 值从状态读(⛔ 别写死),⛔ 那句承诺按 §15.3 末的措辞写。
+    el("p", "settings-sub", t("backup.autoDesc", { every: everyText(a.every_minutes), keep: a.keep })),
+    el("p", "settings-sub", t("backup.autoManualSafe")),
+    msg,
+  );
+  if (a.last_success_at || a.last_result) {
+    wrap.appendChild(
+      el(
+        "p",
+        "settings-sub",
+        t("backup.autoLast", {
+          when: a.last_success_at ? new Date(a.last_success_at).toLocaleString() : "—",
+          what: a.last_result ?? "",
+        }),
+      ),
+    );
+  }
+  // ⭐ 那枚「结论没能记下来」的通知:它只活在进程内,拉到就得显(设计审 H5)。
+  if (a.pending_notice) wrap.appendChild(el("p", "hkset-msg err", a.pending_notice));
+}
+
+function everyText(minutes: number): string {
+  if (minutes % 1440 === 0) return t("backup.everyDays", { n: minutes / 1440 });
+  if (minutes % 60 === 0) return t("backup.everyHours", { n: minutes / 60 });
+  return t("backup.everyMinutes", { n: minutes });
+}
+
+/**
+ * 主窗右下角那张提示条:**只在自动备份出岔子时弹**。
+ *
+ * ⛔ **成功不弹**——天天弹 = 用户学会无视它,那就等于没有提示。
+ * ⭐ **同一个原因每进程只弹一次**:60 秒一 tick,不去抖就是每分钟一张脸。
+ * ⚠ `emit` 只是"及时"不是"可靠"(主窗没开就收不到)⇒ 启动时**主动拉一次**状态,
+ *    把那枚 `pending_notice` 补显出来(设计审 H5)。
+ */
+const shownReasons = new Set<string>();
+
+export function initAutoBackupBanner(): void {
+  void listen<{ reason: string; text: string }>("backup://auto", (ev) => {
+    if (shownReasons.has(ev.payload.reason)) return;
+    shownReasons.add(ev.payload.reason);
+    showAutoBanner(ev.payload.text);
+  });
+  void invoke<AutoStatus>("backup_auto_status")
+    .then((a) => {
+      if (a.pending_notice && !shownReasons.has(a.pending_notice)) {
+        shownReasons.add(a.pending_notice);
+        showAutoBanner(a.pending_notice);
+      }
+    })
+    .catch(() => {
+      /* 拉不到状态不该打扰用户:设置面里还看得见 */
+    });
+}
+
+function showAutoBanner(text: string): void {
+  document.querySelector(".auto-backup-banner")?.remove();
+  const banner = el("div", "update-banner auto-backup-banner", "");
+  const acts = el("div", "update-acts", "");
+  const close = button(t("backup.autoBannerClose"), () => banner.remove());
+  close.className = "hbtn";
+  acts.appendChild(close);
+  banner.append(
+    el("div", "update-msg", t("backup.autoBannerLead")),
+    el("div", "update-notes", text),
+    acts,
+  );
+  document.body.appendChild(banner);
+  requestAnimationFrame(() => banner.classList.add("show"));
 }
 
 /** 仪式:显示码 → 用户完整回输 → 对上了才落盘。 */
@@ -308,6 +543,13 @@ function size(bytes: number): string {
   if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
   if (bytes >= 1024) return `${Math.round(bytes / 1024)} KB`;
   return `${bytes} B`;
+}
+
+/** 文件改动时刻,按本地时区显示到分钟。⛔ core 那边取不到时刻就给 `null`,这里不编一个。 */
+function when(ms: number): string {
+  const d = new Date(ms);
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
 function el(tag: string, cls: string, text: string): HTMLElement {

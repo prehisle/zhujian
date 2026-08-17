@@ -13,6 +13,7 @@ import { initSettings, openSettingsPanel } from "./settings";
 import { initZoom } from "./zoom";
 import { initTheme } from "./theme-mode";
 import { initUpdate, checkForUpdateOnFocus } from "./update";
+import { initAutoBackupBanner } from "./backup";
 import {
   createSpace,
   currentSpaceId,
@@ -752,6 +753,12 @@ void (async () => {
   // 自动更新(88):启动静默查一次。只在生产构建跑(dev/e2e 是 vite dev server,
   // import.meta.env.PROD 为 false),开发/测试期不打网络也不弹 banner。
   if (import.meta.env.PROD) void initUpdate();
+
+  // 自动备份的提示条(笔①-b)。⚠ **不加 PROD 门**:它不打网络,而 e2e 正是靠注入
+  // `backup://auto` 事件来验「弹一次 / 同因不再弹 / 异因仍弹」那三格(定时器本身在
+  // e2e 下根本不起,见 lib.rs)。启动时它还会主动拉一次状态,把「结论没能记下来」
+  // 那枚只活在进程内的通知补显出来(backup-plan §15.5)。
+  initAutoBackupBanner();
 
   // Land on the last-used view. Absent or unknown (first run, a since-renamed
   // view name) is the first-run default, not an error path — land on inbox.

@@ -37,7 +37,7 @@ fn sample_plain(n: usize) -> Vec<u8> {
 
 fn read(bytes: &[u8], key: &BackupKey) -> Result<(Trailer, Vec<u8>), ReadError> {
     let mut out = Vec::new();
-    let t = read_backup(&mut &bytes[..], &mut out, key)?;
+    let t = read_backup(&mut &bytes[..], &mut out, key)?.0;
     Ok((t, out))
 }
 

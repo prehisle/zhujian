@@ -36,6 +36,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 
+use super::auto;
 use super::config::{self, ConfigError};
 use super::engine::{self, Artifact, BatchFatal};
 use super::staging;
@@ -49,6 +50,11 @@ use crate::spaces::SpaceCatalog;
 pub struct BackupPaths {
     /// `.backup.json`(**明文备份钥**住这儿)。
     pub config_path: PathBuf,
+    /// `.backup-auto.json`(自动备份的开关 / 频率 / 份数 / 运行痕迹 / **本机产出账**)。
+    /// ⛔ **刻意与上面那份分开**(backup-plan §15.4):钥文件一辈子写两次,这份每天写一次;
+    /// 而且给 `.backup.json` 加字段会让**旧版朱简把它判成坏配置**(`deny_unknown_fields`
+    /// 是双向的),那条路的 UI 是「别重新设置」+ 备份完全不可用。
+    pub auto_path: PathBuf,
     /// 明文临时快照的落点(0700)。
     pub staging: PathBuf,
     /// 还没配过时显示 / 首次仪式用的默认落点。
@@ -68,6 +74,7 @@ impl BackupPaths {
     pub fn production(config_dir: &Path, data_dir: &Path, main_db: &Path) -> BackupPaths {
         BackupPaths {
             config_path: config_dir.join(".backup.json"),
+            auto_path: config_dir.join(".backup-auto.json"),
             staging: data_dir.join(".backup-staging"),
             default_dir: data_dir.join("backups"),
             main_db: main_db.to_path_buf(),
@@ -81,6 +88,7 @@ impl BackupPaths {
         let side = |suffix: &str| PathBuf::from(format!("{}{suffix}", main_db.display()));
         BackupPaths {
             config_path: side(".backup.json"),
+            auto_path: side(".backup-auto.json"),
             staging: side(".backup-staging"),
             default_dir: side(".backups"),
             main_db: main_db.to_path_buf(),
@@ -90,6 +98,30 @@ impl BackupPaths {
 }
 
 // ---- 对外的状态与结果(壳只认这几个形)-------------------------------------------
+
+/// 备份目录里的一份**候选**文件 —— 只有盘上事实。
+///
+/// ⛔ **刻意没有「有效 / 无效」这一格**:§3.3 收口那条义务写死了「文件名 / 扩展名绝不能当
+/// 『这是一份有效备份』的判据」。要状态就得调 [`BackupCoordinator::verify_backup`] 真解一遍;
+/// 类型里不给这一格 = 「想当然地标成有效」在**编译期**就写不出来。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BackupEntry {
+    pub path: String,
+    pub file_name: String,
+    pub bytes: u64,
+    /// 文件改动时刻(Unix 毫秒);取不到就是 `None`,⛔ 不编一个。
+    pub modified_ms: Option<u64>,
+}
+
+/// 验过之后才拿得到的那几格(全部来自 trailer,不是从文件名猜的)。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifiedBackup {
+    pub space_id: String,
+    pub space_name: Option<String>,
+    pub created_at: String,
+    pub app_version: String,
+    pub plain_bytes: u64,
+}
 
 /// 正在跑的是哪一件。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -163,6 +195,104 @@ pub struct BackupReport {
     pub blocked: Option<String>,
 }
 
+/// 自动备份这一 tick 的结论。⭐ **三态刻意分开**:`Skipped` 不该弹任何提示(它是正常),
+/// `Refused` 与「跑了但有失败」才弹(§15.2)。
+#[derive(Debug)]
+pub enum AutoTick {
+    /// 正常地什么都没做。
+    Skipped(AutoSkip),
+    /// 真跑了一趟。
+    Ran(AutoRun),
+    /// 这一趟被拒(封锁态 / 配置坏 / 目标目录不可用……)——**要让用户看见**。
+    Refused(String),
+}
+
+/// 为什么这一 tick 什么都没做。**每一种都不是故障。**
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AutoSkip {
+    /// 开关没开。
+    Disabled,
+    /// 还没到点。
+    NotDue,
+    /// 还没设置过备份(没有钥就没有可自动的东西)。
+    NotConfigured,
+    /// 用户正在走备份码仪式。
+    CeremonyPending,
+    /// 有别的操作在跑 —— ⭐ 自动**绝不排队**,下一 tick 再看。
+    Busy(Busy),
+}
+
+/// 真跑了一趟的结果。
+#[derive(Debug)]
+pub struct AutoRun {
+    pub report: BackupReport,
+    /// 逐空间的轮转结果(⛔ 只收**有话要说**的那些:全静默的空间不进这张表)。
+    pub rotations: Vec<SpaceRotation>,
+    /// 一句人话结论(与落进 `.backup-auto.json` 的 `last_result` 是同一句)。
+    pub summary: String,
+}
+
+/// 一个空间的轮转结果。⭐ **四类分开**,⛔ 别在 UI 上收成一句"清理完成"。
+#[derive(Debug)]
+pub struct SpaceRotation {
+    pub space_id: String,
+    /// 真删掉的旧备份路径。
+    pub removed: Vec<String>,
+    /// **摘账**了、从此不再自动管(已证明无效 / 身份变了 / 落点改过)。
+    pub unmanaged: Vec<(String, String)>,
+    /// 留账下轮再试(瞬时 IO / 删不掉 / 读不到文件身份)。
+    pub retry: Vec<(String, String)>,
+    /// `Some` = **这个空间这一轮零删除**(当前产物复验没过)。
+    pub stalled: Option<String>,
+}
+
+/// 自动备份的当前态(设置面那一节)。
+#[derive(Debug, Clone)]
+pub struct AutoStatus {
+    pub enabled: bool,
+    pub every_minutes: u32,
+    pub keep: u32,
+    /// UTC RFC3339;⚠ **本地时间由前端 `Date` 转**(`time` 在多线程进程里取不到本地偏移)。
+    pub last_success_at: Option<String>,
+    pub last_result: Option<String>,
+    /// 设置文件坏了 / 值越界 —— 自动备份已停下(手动不受影响)。
+    pub problem: Option<String>,
+    /// ⭐ 进程内那枚待读通知,**取走即清**(设计审 H5)。
+    pub pending_notice: Option<String>,
+}
+
+/// 一句人话结论。⛔ 别把「轮转停滞」这种事只放进那条每进程弹一次的 banner ——
+/// 它要**持久**留在 `last_result` 里(设计审四弹 M2)。
+fn summarize(report: &BackupReport, rotations: &[SpaceRotation]) -> String {
+    let mut parts = vec![format!("备好 {} 个空间", report.made.len())];
+    if !report.failed.is_empty() {
+        parts.push(format!("失败 {} 个", report.failed.len()));
+    }
+    if report.skipped > 0 {
+        parts.push(format!("还有 {} 个根本没跑", report.skipped));
+    }
+    if let Some(f) = &report.fatal {
+        parts.push(format!("整批停下:{f}"));
+    }
+    let removed: usize = rotations.iter().map(|r| r.removed.len()).sum();
+    if removed > 0 {
+        parts.push(format!("清掉 {removed} 份旧备份"));
+    }
+    let stalled = rotations.iter().filter(|r| r.stalled.is_some()).count();
+    if stalled > 0 {
+        parts.push(format!("{stalled} 个空间这轮没清理(刚备好的那份复验没过)"));
+    }
+    let unmanaged: usize = rotations.iter().map(|r| r.unmanaged.len()).sum();
+    if unmanaged > 0 {
+        parts.push(format!("{unmanaged} 份旧文件从此不再自动管"));
+    }
+    let retry: usize = rotations.iter().map(|r| r.retry.len()).sum();
+    if retry > 0 {
+        parts.push(format!("{retry} 份下次再试"));
+    }
+    parts.join(" · ")
+}
+
 /// 备份入口的失败。**每一种都要能被 UI 分开认领**(fail-fast:别退化成一句"操作失败")。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BackupError {
@@ -186,6 +316,9 @@ pub enum BackupError {
     Target(String),
     /// catalog 枚举 / 四不变量失败 —— 连"有哪些空间"都不知道,后面全是猜。
     Catalog(String),
+    /// 验一份已有备份没过。⚠ 里面那句是 `ReadError` 的原话,**四种读错各自分开**
+    /// (结构 / 认证 / 长度哈希 / **不是这把钥**)—— 别在上层糊成一句"验证失败"。
+    VerifyFailed(String),
 }
 
 impl std::fmt::Display for BackupError {
@@ -209,6 +342,7 @@ impl std::fmt::Display for BackupError {
             BackupError::Config(m) => write!(f, "{m}"),
             BackupError::Target(m) => write!(f, "{m}"),
             BackupError::Catalog(m) => write!(f, "读不出这台机器上有哪些空间,整批没跑:{m}"),
+            BackupError::VerifyFailed(m) => write!(f, "{m}"),
         }
     }
 }
@@ -230,6 +364,14 @@ struct Pending {
 
 struct Inner {
     activity: Activity,
+    /// **单调钟那把尺**(backup-plan §15.2):记的是「上一次**尝试**」不是「上一次成功」——
+    /// ⛔ 只在成功时更新的话,一个持续失败的目标目录会让它**每 60 秒重跑一次整库**。
+    /// 它兜的是「系统时钟被改 / `last_success_at` 落在未来」那一支,墙钟兜不住。
+    last_attempt: Option<std::time::Instant>,
+    /// ⭐ **进程内的待读通知**(设计审 H5):自动备份那趟的结论若**连盘都写不进去**,
+    /// 它不可能把失败写进那个刚写失败的文件;而 `emit` 在主窗没开时会丢。
+    /// ⇒ 留在这儿,由 UI **每次拉状态时主动取走看**。
+    pending_notice: Option<String>,
     /// `Some` = 暂存区没清干净,备份封锁中(值 = 给用户看的原因)。
     blocked: Option<String>,
     pending: Option<Pending>,
@@ -264,7 +406,13 @@ impl BackupCoordinator {
         BackupCoordinator {
             paths,
             app_version,
-            inner: Mutex::new(Inner { activity: Activity::Idle, blocked: None, pending: None }),
+            inner: Mutex::new(Inner {
+                activity: Activity::Idle,
+                last_attempt: None,
+                pending_notice: None,
+                blocked: None,
+                pending: None,
+            }),
         }
     }
 
@@ -439,7 +587,18 @@ impl BackupCoordinator {
     /// 任一不过就在这里 Err,一个文件都不产;进了循环之后走
     /// [`engine::backup_all`](**返回类型不是 `Result`**,从类型上消灭中途 `?`)。
     pub fn run_backup(&self) -> Result<BackupReport, BackupError> {
-        let _admitted = self.admit(Busy::Backup)?;
+        let admitted = self.admit(Busy::Backup)?;
+        let (batch, total, _settings) = self.run_batch(&admitted)?;
+        Ok(self.finish_batch(batch, total))
+    }
+
+    /// preflight + 逐空间跑完。**手动与自动共用这一段**,⛔ 调用方必须已经持着准入 ——
+    /// 那把准入要**一直持到轮转做完**(设计审一弹 H1:`Admitted` 一放开,用户就能合法
+    /// `set_dir()`,于是「拿 A 目录的成功授权去删 B 目录的文件」)。
+    fn run_batch(
+        &self,
+        _admitted: &Admitted<'_>,
+    ) -> Result<(engine::BackupBatchResult, usize, config::BackupSettings), BackupError> {
         {
             let inner = self.lock();
             // 表第 1 行:Blocked + 备份 = 立即拒(盘上有明文,不许再造下一份)。
@@ -459,14 +618,17 @@ impl BackupCoordinator {
             SpaceCatalog::load(&self.paths.main_db, self.paths.scan_dir.as_deref(), None)
                 .map_err(BackupError::Catalog)?;
         let total = catalog.spaces().len();
-
         let batch = engine::backup_all(
             catalog.spaces(),
             &settings,
             &self.paths.staging,
             &self.app_version,
         );
+        Ok((batch, total, settings))
+    }
 
+    /// 把逐空间结果翻成给 UI 的报告,并处置「明文删不掉 ⇒ 封锁」。
+    fn finish_batch(&self, batch: engine::BackupBatchResult, total: usize) -> BackupReport {
         // ⭐ 明文删不掉 = 已知盘上有明文 ⇒ 封锁,**不在这里顺手重扫解封**:
         // §3.4 钉死「只有 retry_cleanup 能把 Blocked 切回 Ready」。自动重扫会让
         // 「封锁」变成一个用户永远看不见、也验证不了的中间态。
@@ -502,12 +664,277 @@ impl BackupCoordinator {
             }
         }
         let skipped = total.saturating_sub(made.len() + failed.len());
-        Ok(BackupReport {
+        BackupReport {
             made,
             failed,
             skipped,
             fatal: batch.fatal.map(|f| f.to_string()),
             blocked,
+        }
+    }
+
+    // ---- 自动备份(笔①-b,backup-plan §15)------------------------------------------
+    //
+    // ⭐ **这就是 `BackupCoordinator` 当初被放进 core 的那个理由本身**(§3.4.1 第 7 维):
+    // 自动备份是备份的**第二个调用方**,它不走桌面命令层 —— 门要是开在壳里,今天就等于没门。
+
+    /// 设置面要显示的自动备份态。⚠ **每次都会把 `pending_notice` 取走**(设计审 H5:
+    /// 那条通知只活在进程内,UI 主动拉是它唯一的出路;`emit` 在主窗没开时会丢)。
+    pub fn auto_status(&self) -> AutoStatus {
+        let pending_notice = self.lock().pending_notice.take();
+        match auto::load(&self.paths.auto_path) {
+            Ok(a) => AutoStatus {
+                enabled: a.enabled,
+                every_minutes: a.every_minutes,
+                keep: a.keep,
+                last_success_at: a.last_success_at,
+                last_result: a.last_result,
+                problem: None,
+                pending_notice,
+            },
+            // ⛔ 坏了 / 越界 = **响亮拒绝自动备份**,不许静默按默认值跑(那会把用户
+            // 「我关掉了自动备份」的意思悄悄改回"开着")。UI 显示原话 + 给「重置」按钮。
+            Err(e) => AutoStatus {
+                enabled: false,
+                every_minutes: auto::DEFAULT_EVERY_MINUTES,
+                keep: auto::DEFAULT_KEEP,
+                last_success_at: None,
+                last_result: None,
+                problem: Some(e.to_string()),
+                pending_notice,
+            },
+        }
+    }
+
+    /// 开 / 关自动备份。⛔ **要先设置过备份**(没有钥就没有可自动的东西)。
+    ///
+    /// ⭐ 它与后台那条路**共用同一道串行化门**(准入):设计审二弹 M3 —— 否则 UI 这边的写
+    /// 与后台状态保存可能同时进行,扫 temp 的一方会删掉另一方正在写的那个 live temp。
+    pub fn set_auto_enabled(&self, enabled: bool) -> Result<AutoStatus, BackupError> {
+        let _admitted = self.admit(Busy::Backup)?;
+        if !matches!(config::load(&self.paths.config_path), Ok(_)) {
+            return Err(BackupError::NotConfigured);
+        }
+        let mut a = auto::load(&self.paths.auto_path).map_err(|e| BackupError::Config(e.to_string()))?;
+        a.enabled = enabled;
+        auto::save(&self.paths.auto_path, &a).map_err(|e| BackupError::Config(e.to_string()))?;
+        drop(_admitted);
+        Ok(self.auto_status())
+    }
+
+    /// 把 `.backup-auto.json` 重置成默认(关、每天、3 份、**空账**)。
+    ///
+    /// ⭐ **这里给按钮是安全的,与 `.backup.json` 那条「⛔ 不给按钮」正好相反**:判据不是
+    /// "要不要谨慎",是**里面有没有不可再生的东西** —— 这份文件里一个秘密都没有。
+    /// ⚠ 代价照实说:**账清零 = 那些旧备份从此归用户自己管**(轮转再也不碰它们)。
+    pub fn reset_auto(&self) -> Result<AutoStatus, BackupError> {
+        let _admitted = self.admit(Busy::Backup)?;
+        auto::save(&self.paths.auto_path, &auto::AutoFile::default())
+            .map_err(|e| BackupError::Config(e.to_string()))?;
+        drop(_admitted);
+        Ok(self.auto_status())
+    }
+
+    /// 后台定时器每 60 秒叫一次。**判定全在这里**,壳不做任何策略。
+    ///
+    /// ⭐ **跳过 ≠ 失败**:`Skipped` 那几种(没开 / 没到点 / 没配过 / 仪式中 / 有别的操作在跑)
+    /// **不该弹任何提示** —— 60 秒一次的节奏下,把"正常"也报出去等于教用户无视提示。
+    pub fn run_auto_if_due(&self) -> AutoTick {
+        let admitted = match self.admit(Busy::Backup) {
+            Ok(a) => a,
+            // ⭐ 手动那趟在跑 ⇒ **跳过,绝不排队**(下一个 tick 再看)。
+            Err(BackupError::BackupBusy(b)) | Err(BackupError::CleanupBusy(b)) => {
+                return AutoTick::Skipped(AutoSkip::Busy(b))
+            }
+            Err(e) => return AutoTick::Refused(e.to_string()),
+        };
+        let mut a = match auto::load(&self.paths.auto_path) {
+            Ok(a) => a,
+            Err(e) => return AutoTick::Refused(e.to_string()),
+        };
+        if !a.enabled {
+            return AutoTick::Skipped(AutoSkip::Disabled);
+        }
+        if !matches!(config::load(&self.paths.config_path), Ok(_)) {
+            return AutoTick::Skipped(AutoSkip::NotConfigured);
+        }
+        {
+            let inner = self.lock();
+            if inner.pending.is_some() {
+                return AutoTick::Skipped(AutoSkip::CeremonyPending);
+            }
+        }
+        // ---- 两把尺(§15.2)---------------------------------------------------------
+        let every = a.every_minutes;
+        let wall_due = auto::due(
+            time::OffsetDateTime::now_utc(),
+            a.last_success_at.as_deref().and_then(auto::parse_stamp),
+            every,
+        );
+        if !wall_due {
+            return AutoTick::Skipped(AutoSkip::NotDue);
+        }
+        {
+            // ⭐ 单调尺:系统时钟被改 / `last_success_at` 落在未来时,墙钟那把恒判 due,
+            // 只有它挡得住"每 60 秒备一次"。⛔ 记的是**尝试**,不是成功。
+            let mut inner = self.lock();
+            if let Some(t) = inner.last_attempt {
+                if t.elapsed() < std::time::Duration::from_secs(u64::from(every) * 60) {
+                    return AutoTick::Skipped(AutoSkip::NotDue);
+                }
+            }
+            inner.last_attempt = Some(std::time::Instant::now());
+        }
+
+        let (batch, total, settings) = match self.run_batch(&admitted) {
+            Ok(v) => v,
+            Err(e) => {
+                let msg = e.to_string();
+                self.remember(&mut a, Some(&msg), false);
+                return AutoTick::Refused(msg);
+            }
+        };
+
+        // ---- 逐个 `made` 单独授权轮转 ⛔ 不按外层结果授权 -------------------------------
+        let mut rotations = Vec::new();
+        for o in &batch.outcomes {
+            let Ok(m) = &o.result else { continue };
+            let r = auto::rotate_space(&mut a, &o.space_id, m, &settings.key);
+            if !(r.removed.is_empty() && r.is_quiet()) {
+                rotations.push(SpaceRotation {
+                    space_id: o.space_id.clone(),
+                    removed: r.removed,
+                    unmanaged: r.unmanaged,
+                    retry: r.retry,
+                    stalled: r.stalled,
+                });
+            }
+        }
+
+        let report = self.finish_batch(batch, total);
+        let summary = summarize(&report, &rotations);
+        // 墙钟只认「这一趟至少备成了一个空间」(§15.2 那张表:它是"多久备一次"的尺,
+        // 不是"有没有出错"的尺)。
+        self.remember(&mut a, Some(&summary), auto::wall_clock_should_advance(report.made.len()));
+        drop(admitted);
+        AutoTick::Ran(AutoRun { report, rotations, summary })
+    }
+
+    /// 把这一趟的结论落进 `.backup-auto.json`。
+    ///
+    /// ⛔ **写盘失败不是 fatal**(备份已经成了),但也**不能只指望把它写进那个刚写失败的
+    /// 文件** —— 那正是设计审 H5 打的洞。⇒ 同时落一枚**进程内** `pending_notice`,UI 拉状态
+    /// 时取走。⚠ 它挡不住"进程被杀 + 用户从不打开主窗",那条边界 v1 照实接受
+    /// (配置目录写不进时,app 的别的本机设置也在坏,不是备份独有的病)。
+    fn remember(&self, a: &mut auto::AutoFile, result: Option<&str>, success: bool) {
+        if success {
+            a.last_success_at = Some(auto::stamp_now());
+        }
+        if let Some(r) = result {
+            a.last_result = Some(r.to_string());
+        }
+        if let Err(e) = auto::save(&self.paths.auto_path, a) {
+            self.lock().pending_notice = Some(format!(
+                "自动备份跑完了,但结果没能记下来({e})——下次启动可能会多备一份"
+            ));
+        }
+    }
+
+    /// 列出备份目录里的**候选**文件(§3.3 收口那条义务的前一半)。
+    ///
+    /// ⛔ **返回的每一条都只有"盘上事实"(名字 / 大小 / 改动时刻),没有任何"有效 / 无效"** ——
+    /// 那条义务写死了「**文件名 / 扩展名绝不能当『这是一份有效备份』的判据**」,唯一判据是
+    /// [`verify_backup`](Self::verify_backup) 把它整个解一遍。⇒ 类型里**根本不给**「valid」这一格,
+    /// 让"想当然地标成有效"在编译期就写不出来。
+    ///
+    /// ⚠ **不走操作准入**:纯读目录,不碰 staging、不碰明文、与正在跑的备份无冲突
+    /// (产物是 `create_new` 直落新名、写完永不改写)。⇒ 不给 [`Busy`] 加第三种态,
+    /// 那台状态机是评审过的形,不为一个只读列表动它。
+    ///
+    /// 排序:改动时刻**新的在前**(取不到时刻的排最后,按名字兜底,保证顺序稳定)。
+    pub fn list_backups(&self) -> Result<Vec<BackupEntry>, BackupError> {
+        let settings = self.settings()?;
+        let dir = &settings.dir;
+        let rd = match std::fs::read_dir(dir) {
+            Ok(rd) => rd,
+            // 目录还不存在 = 一份都还没备过,不是故障。
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(e) => {
+                return Err(BackupError::Target(format!("读不了备份目录 {}:{e}", dir.display())))
+            }
+        };
+        let mut out = Vec::new();
+        for entry in rd.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if !super::looks_like_artifact(&name) {
+                continue;
+            }
+            let meta = match entry.metadata() {
+                Ok(m) if m.is_file() => m,
+                // 不是普通文件(目录 / symlink / 读不到)就不列 —— 列出来也没法验。
+                _ => continue,
+            };
+            out.push(BackupEntry {
+                path: entry.path().to_string_lossy().into_owned(),
+                file_name: name,
+                bytes: meta.len(),
+                modified_ms: meta
+                    .modified()
+                    .ok()
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_millis() as u64),
+            });
+        }
+        out.sort_by(|a, b| {
+            b.modified_ms.cmp(&a.modified_ms).then_with(|| a.file_name.cmp(&b.file_name))
+        });
+        Ok(out)
+    }
+
+    /// 验一份备份:**整个读回来解一遍**,与恢复(笔②)走的是同一条路
+    /// ([`super::verify_file`] → `read_backup`)。⛔ 不抽验、不看文件名。
+    ///
+    /// ⚠ **只认备份目录里的文件**:传进来的路径必须**就在**当前配置的备份目录下(逐层比对
+    /// 规范化后的父目录),否则拒。理由 = 这条命令的入参来自前端,不设这道闸就等于给了
+    /// 「拿备份钥去解任意路径的文件」这个能力面。
+    ///
+    /// 成功回 trailer 里那几格给人看;失败把**四种读错分开报**(§3.3 那台状态机的读者半):
+    /// 尤其 `WrongKey` = 「这份不是当前备份码对应的」,与"文件坏了"是两回事,别糊成一句。
+    pub fn verify_backup(&self, path: &str) -> Result<VerifiedBackup, BackupError> {
+        let settings = self.settings()?;
+        let target = PathBuf::from(path);
+        let parent = target.parent().unwrap_or(Path::new(""));
+        // 规范化两边再比:用户目录可能带 `..` 或大小写/短名差异,直接比字符串会漏。
+        let canon = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+        if canon(parent) != canon(&settings.dir) {
+            return Err(BackupError::Target(format!(
+                "只能验备份目录({})里的文件",
+                settings.dir.display()
+            )));
+        }
+        let name = target.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        if !super::looks_like_artifact(&name) {
+            return Err(BackupError::Target("这不是一个 .zjbak 文件".into()));
+        }
+        // ⚠ 420 起 `verify_file` 一并交出 header 里那枚 salt(自动备份的轮转拿它当**身份指纹**);
+        // 这条路只要 trailer。
+        let t = super::verify_file(&target, &settings.key)
+            .map_err(|e| BackupError::VerifyFailed(e.to_string()))?
+            .trailer;
+        Ok(VerifiedBackup {
+            space_id: t.space_id,
+            space_name: t.space_name,
+            created_at: t.created_at,
+            app_version: t.app_version,
+            plain_bytes: t.plain_bytes,
+        })
+    }
+
+    /// 读配置,把「还没配过」翻成 [`BackupError::NotConfigured`](那不是故障,是该走仪式)。
+    fn settings(&self) -> Result<config::BackupSettings, BackupError> {
+        config::load(&self.paths.config_path).map_err(|e| match e {
+            ConfigError::NotConfigured => BackupError::NotConfigured,
+            other => BackupError::Config(other.to_string()),
         })
     }
 

@@ -16,6 +16,16 @@
         document.documentElement.dataset.theme = m;
       })();
     </script>
+    <!-- 无合成器的桌面(418):本窗是透明浮窗,没有合成器时那圈透明底在屏幕上是一块黑
+         (为什么,见 src-tauri 的 wm_composited)。真答案只有壳知道、且是异步的,而晚一帧
+         就是黑框闪一下 —— 故这里先用**上一次问到的**结论(main.ts 每次启动都回写),没有
+         记录就按「有合成器」= 今天的样子。首次在这种桌面上启动仍会闪一下,第二次起不会。 -->
+    <script>
+      (function () {
+        if (localStorage.getItem("zhujian.wm") === "flat")
+          document.documentElement.dataset.wm = "flat";
+      })();
+    </script>
     <link rel="stylesheet" href="/src/theme.css" />
     <style>
       * { box-sizing: border-box; }
@@ -31,6 +41,18 @@
         /* generous, bottom-weighted margin so our own drop shadow isn't clipped
            (the OS shadow is off — see tauri.conf.json shadow:false) */
         padding: 16px 22px 26px;
+      }
+      /* 没有合成器的桌面上,上面那个 transparent 没人往桌面上混,在屏幕上就是一块黑。
+         换成不透明的窗口底色即可 —— 纸片、圆角、投影一概不动,看起来就是「一张纸片摆在
+         一小块面板上」;窗本来就无边框,方角在这种桌面上也是常态。 */
+      html[data-wm="flat"] body {
+        background: var(--paper);
+        /* ⛔ 顺带露出来的一件事:这一端的窗口有个 **200×200 的地板**(GTK/WebKitGTK 的最小
+           尺寸请求,不是我们设的 —— 实测请求 199 实得 200、请求 150×400 实得 200×400,而
+           变大一律照给),可这张纸片的自然高度只有 ~128 ⇒ fitWindow 求到 128、窗仍是 200。
+           透明时那多出来的一截看不见,画成不透明就成了纸片底下一条空白。居中放,让多出来的
+           高度上下均分(flex 的 center 不拉伸,纸片照旧保自然高度,长文照旧撑窗)。 */
+        align-items: center;
       }
 
       .slip {

@@ -29,6 +29,7 @@
 //! 自包含格式识别不了 —— 那是「你手上这份是不是你要的那份」的问题,靠文件名与 trailer 里的
 //! `created_at` / `space_id` 给人看。
 
+mod auto;
 mod config;
 mod coordinator;
 mod engine;
@@ -38,8 +39,9 @@ mod staging;
 /// 「备份码字符串」「文件路径」「人话状态」,拿不到 `BackupKey` 的字节,也碰不到
 /// 引擎与 staging —— 所有入口必须经 [`BackupCoordinator`]。
 pub use coordinator::{
-    BackupCoordinator, BackupError, BackupFailed, BackupMade, BackupPaths, BackupReport,
-    BackupStatus, Busy, Leftover,
+    AutoRun, AutoSkip, AutoStatus, AutoTick, BackupCoordinator, BackupEntry, BackupError,
+    BackupFailed, BackupMade, BackupPaths, BackupReport, BackupStatus, Busy, Leftover,
+    SpaceRotation, VerifiedBackup,
 };
 
 use chacha20poly1305::aead::{Aead, KeyInit, Payload};
@@ -159,8 +161,16 @@ struct TrailerMeta {
 
 /// ⭐ **分三档是给测试用的**(§10 的通用纪律):每只测都要断到「失败发生在哪一阶段」,
 /// 只断 `is_err()` 会被同一条路上更靠后的另一道闸背书成绿。
+/// ⭐ **`Missing` / `Io` 与其余三支的分界是「瞬时」对「已证明无效」**(420 设计审四弹 M1):
+/// 轮转要据此决定「留账下轮再试」还是「摘账、从此不管」,而一次 SMB 断连 / 云占位文件正在
+/// hydration / 杀软临时拦读,若与真正的结构损坏共用同一个变体,**就会因为失败发生在哪个
+/// syscall 而随机分流**。⛔ 别把 IO 错误再塞回 `Parse`,也⛔ 别靠解析错误文案分档。
 #[derive(Debug, PartialEq, Eq)]
 enum ReadError {
+    /// 文件不在了(用户自己删了 / 搬走了)。**不是故障**。
+    Missing,
+    /// **瞬时** I/O:打开失败、读到一半失败、写出明文失败。
+    Io(String),
     /// 结构闸:魔数 / 长度 / 帧序 / 未知键 / trailer 不在末尾 / 其后还有字节。
     Parse(String),
     /// AEAD 认证失败(篡改、换帧、改头、翻 kind)。
@@ -174,6 +184,8 @@ enum ReadError {
 impl std::fmt::Display for ReadError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            ReadError::Missing => write!(f, "备份文件不在了"),
+            ReadError::Io(m) => write!(f, "读备份文件失败(可能只是一时读不到):{m}"),
             ReadError::Parse(m) => write!(f, "备份文件结构不对:{m}"),
             ReadError::Auth => write!(f, "备份文件认证失败(被改过,或不是这把钥的)"),
             ReadError::Digest => write!(f, "备份文件长度或校验和对不上"),
@@ -354,7 +366,7 @@ fn read_backup<R: Read, W: Write>(
     src: &mut R,
     out: &mut W,
     key: &BackupKey,
-) -> Result<Trailer, ReadError> {
+) -> Result<(Trailer, [u8; SALT_LEN]), ReadError> {
     // ---- 头 ----
     let mut magic = [0u8; 6];
     read_exact(src, &mut magic)?;
@@ -404,7 +416,7 @@ fn read_backup<R: Read, W: Write>(
                 return Err(ReadError::Parse("文件在 trailer 之前就结束了(被截断?)".into()));
             }
             Ok(_) => {}
-            Err(e) => return Err(ReadError::Parse(format!("读帧类型失败:{e}"))),
+            Err(e) => return Err(ReadError::Io(format!("读帧类型失败:{e}"))),
         }
         let kind = kindb[0];
         let mut lenb = [0u8; 4];
@@ -428,21 +440,23 @@ fn read_backup<R: Read, W: Write>(
                 Ok(_) => {
                     return Err(ReadError::Parse("trailer 之后还有字节(追加了东西?)".into()))
                 }
-                Err(e) => return Err(ReadError::Parse(format!("读 trailer 尾失败:{e}"))),
+                Err(e) => return Err(ReadError::Io(format!("读 trailer 尾失败:{e}"))),
             }
             let t: Trailer = ciborium::from_reader(plain.as_slice())
                 .map_err(|e| ReadError::Parse(format!("trailer 解码失败:{e}")))?;
             if t.plain_bytes != total || t.plain_sha256.as_slice() != hasher.finalize().as_slice() {
                 return Err(ReadError::Digest);
             }
-            return Ok(t);
+            // ⭐ salt 一并交出去:轮转拿它当**这份文件的身份指纹**(§15.3 的 H2 那格)——
+            // 它每份文件都不同、就在明文头里,而伪造它文件就解不开(AAD 绑整个头)。
+            return Ok((t, salt));
         }
 
         hasher.update(&plain);
         total = total
             .checked_add(plain.len() as u64)
             .ok_or_else(|| ReadError::Parse("明文长度溢出 u64".into()))?;
-        out.write_all(&plain).map_err(|e| ReadError::Parse(format!("写出明文失败:{e}")))?;
+        out.write_all(&plain).map_err(|e| ReadError::Io(format!("写出明文失败:{e}")))?;
         idx = idx
             .checked_add(1)
             .ok_or_else(|| ReadError::Parse("帧序号溢出 u64".into()))?;
@@ -459,10 +473,28 @@ fn read_backup<R: Read, W: Write>(
 /// 都相符」,抽验背书不了这个口径。
 /// ⚠ 它证明的是「**刚写出的这个逻辑文件完整可读**」(很可能读的还是 page cache),
 /// **不是**「介质经历断电之后这份文件还完好」。别把它说成后者。
-fn verify_file(path: &std::path::Path, key: &BackupKey) -> Result<Trailer, ReadError> {
-    let mut f = std::fs::File::open(path)
-        .map_err(|e| ReadError::Parse(format!("打开备份文件失败:{e}")))?;
-    read_backup(&mut f, &mut std::io::sink(), key)
+fn verify_file(path: &std::path::Path, key: &BackupKey) -> Result<Verified, ReadError> {
+    let mut f = std::fs::File::open(path).map_err(|e| match e.kind() {
+        std::io::ErrorKind::NotFound => ReadError::Missing,
+        _ => ReadError::Io(format!("打开备份文件失败:{e}")),
+    })?;
+    let (trailer, salt) = read_backup(&mut f, &mut std::io::sink(), key)?;
+    Ok(Verified { trailer, salt })
+}
+
+/// 一份验过的产物:trailer(元数据)+ header 里那枚 salt(**身份指纹**,§15.3)。
+struct Verified {
+    trailer: Trailer,
+    salt: [u8; SALT_LEN],
+}
+
+/// 备份目录里那些 `.zjbak` 的**候选名**判据。
+///
+/// ⛔ **这只回答「要不要把它列出来」,永远不回答「它是不是一份有效备份」** ——
+/// §3.3 那条义务写死了:**文件名 / 扩展名绝不能当「这是一份有效备份」的判据**。
+/// 唯一的判据是把它整个解一遍([`verify_file`],与恢复同一条路)。
+pub(crate) fn looks_like_artifact(name: &str) -> bool {
+    name.ends_with(".zjbak") && name.len() > ".zjbak".len()
 }
 
 // ---- 小工具 -------------------------------------------------------------------------
@@ -480,7 +512,8 @@ fn read_full<R: Read>(r: &mut R, buf: &mut [u8]) -> std::io::Result<usize> {
 }
 
 fn read_exact<R: Read>(r: &mut R, buf: &mut [u8]) -> Result<(), ReadError> {
-    let n = read_full(r, buf).map_err(|e| ReadError::Parse(format!("读失败:{e}")))?;
+    // ⚠ 读**失败**是 IO(瞬时);读**不满**是截断(已证明的结构问题)——两者分档不同。
+    let n = read_full(r, buf).map_err(|e| ReadError::Io(format!("读失败:{e}")))?;
     if n != buf.len() {
         return Err(ReadError::Parse(format!(
             "文件提前结束(还差 {} 字节)",

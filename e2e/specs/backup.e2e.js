@@ -1,4 +1,6 @@
 import { $, $$, expect, browser } from "@wdio/globals";
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { goNotebook, invoke, shownText, tryInvoke } from "./support.js";
 
 // 加密备份的最小端到端(backup-plan §10 的那只默认 e2e,412):**仪式 → 命令 → 产物在列**。
@@ -113,5 +115,76 @@ describe("加密备份(笔①-a):仪式 → 备份 → 产物在列", () => {
     expect(Array.isArray(await invoke("list_inbox"))).toBe(true);
     // 暂存区没留下明文(留了的话状态会是封锁)。
     expect((await invoke("backup_status")).blocked).toBe(null);
+  });
+
+  // ⭐ 这一只钉的是 backup-plan §3.3 收口那条义务本身:
+  // 「UI 的备份列表要显示**验证状态**,⛔ **文件名 / 扩展名绝不能当『这是一份有效备份』的判据**」。
+  // 413 真 SIGKILL 造出来的两份半截产物与成功产物**同目录、同名族、同扩展名**,其中一份还
+  // 完全解得开 —— 所以「列出来了」与「能打开」必须是两件事,而且要在**产品里**分得开。
+  //
+  // ⚠ 冒牌货由 **spec 自己用 node:fs 写**(wdio 的 spec 跑在 Node 进程里,与 app 同机):
+  // ⛔ 刻意**不为它加一条 e2e 专用的写文件命令** —— 那是给生产壳加一个只为测试存在的能力面。
+  it("备份列表:冒牌货照样在列表里,但默认都是「还没验过」,且只有真的那份验得过", async () => {
+    const dir = (await invoke("backup_status")).dir;
+    const fake = "zhujian-main-20260101T000000Z-01ZZZZZZZZZZZZZZZZZZZZZZZZZ.zjbak";
+    writeFileSync(join(dir, fake), Buffer.alloc(4096, 0x5a));
+
+    await openBackupSection();
+    await browser.waitUntil(async () => (await $$(".bkup-item")).length === 2, {
+      timeout: 10000,
+      timeoutMsg: "冒牌货该和真产物一起被列出来(列表只回盘上事实,不判有效性)",
+    });
+
+    // ⭐ 默认每一行都是「还没验过」—— ⛔ 不是空白、更不是「有效」。这就是那条义务的 UI 面。
+    const states = await browser.execute(() =>
+      [...document.querySelectorAll(".bkup-item-state")].map((n) => n.textContent.trim()),
+    );
+    expect(states).toEqual(["还没验过", "还没验过"]);
+
+    // 冒牌货与真产物在**列表这一层**长得一样(名字同族、都在列)——分得开它们的只有验证。
+    const names = await browser.execute(() =>
+      [...document.querySelectorAll(".bkup-item-name")].map((n) => n.textContent.trim()),
+    );
+    expect(names).toContain(fake);
+
+    // 命令层两种结局:真的那份「解得开」,冒牌那份**响亮拒且理由具体**(结构不对,不是"钥不对")。
+    const listed = await invoke("backup_list");
+    const realName = listed.map((e) => e.file_name).find((n) => n !== fake);
+    // ⚠ 成功那半走 `invoke`(它回真值);`tryInvoke` 只在**失败路径**用 —— 它成功时
+    // 回的是 `{ok:true}`、**没有 value**(我第一版写成 `good.value.space_id`,当场 TypeError)。
+    const good = await invoke("backup_verify", { path: join(dir, realName) });
+    expect(good.space_id).toBe("main");
+
+    const bad = await tryInvoke("backup_verify", { path: join(dir, fake) });
+    expect(bad.ok).toBe(false);
+    expect(bad.err).toContain("结构不对");
+
+    // ⛔ 目录之外的文件一律拒 —— 不设这道闸,这条命令就等于「拿备份钥去解任意路径的文件」。
+    const outside = await tryInvoke("backup_verify", { path: join(dir, "..", fake) });
+    expect(outside.ok).toBe(false);
+
+    // UI 那半:点真产物那一行的「验证」,状态从「还没验过」变成「现在打得开」。
+    await browser.execute((realN) => {
+      const row = [...document.querySelectorAll(".bkup-item")].find(
+        (r) => r.querySelector(".bkup-item-name").textContent.trim() === realN,
+      );
+      row.querySelector("button").click();
+    }, realName);
+    await browser.waitUntil(
+      async () => {
+        const ok = await $$(".bkup-item-state.ok");
+        return ok.length === 1;
+      },
+      { timeout: 60000, timeoutMsg: "真产物验过之后该有恰一行是「现在打得开」" },
+    );
+    const okText = await shownText($(".bkup-item-state.ok"));
+    expect(okText).toContain("现在打得开");
+    // ⛔ 另一行**不许**被连带标成好的 —— 验证是逐份的。
+    expect((await $$(".bkup-item-state.err")).length).toBe(0);
+    expect(
+      (await browser.execute(() =>
+        [...document.querySelectorAll(".bkup-item-state")].map((n) => n.textContent.trim()),
+      )).filter((x) => x === "还没验过").length,
+    ).toBe(1);
   });
 });

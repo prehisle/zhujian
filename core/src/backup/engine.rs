@@ -48,6 +48,11 @@ pub(crate) struct SpaceBackupOutcome {
 pub(crate) struct MadeBackup {
     pub path: PathBuf,
     pub bytes: u64,
+    /// 幕⑦自验时从 header 里读回来的 salt。⭐ **它是这份文件的身份指纹**(backup-plan §15.3):
+    /// 自动备份把它连同文件名一起记进本机产出账,轮转删任何东西之前都要比一次 ——
+    /// ⛔ 少了它,「同名文件被换成另一份**同钥同空间的手动 checkpoint**」会两道全过而被删掉。
+    /// ⚠ 取的是**自验读回来的那一枚**(盘上的实况),不是写的时候那一枚。
+    pub salt: [u8; super::SALT_LEN],
 }
 
 /// 失败时盘上那个 `.zjbak` 处于什么状态 —— 就是 backup-plan §3.3 的那台状态机
@@ -221,10 +226,11 @@ fn backup_one(
     if let Err(e) = fsync_dir(target_dir) {
         return SpaceStep::PerSpaceErr(discard(&path, e));
     }
-    if let Err(e) = super::verify_file(&path, key) {
-        return SpaceStep::PerSpaceErr(discard(&path, format!("自验没过:{e}")));
-    }
-    SpaceStep::Ok(made)
+    let salt = match super::verify_file(&path, key) {
+        Ok(v) => v.salt,
+        Err(e) => return SpaceStep::PerSpaceErr(discard(&path, format!("自验没过:{e}"))),
+    };
+    SpaceStep::Ok(MadeBackup { salt, ..made })
 }
 
 /// 幕④之后的失败要**先清明文再回**;明文清不掉的话失败等级当场升成整批 fatal。
@@ -342,7 +348,9 @@ fn seal_into(
         .and_then(|t| out.sync_all().map(|_| t).map_err(|e| format!("刷写备份文件失败:{e}")));
 
     match sealed {
-        Ok(t) => Ok(MadeBackup { path: target.to_path_buf(), bytes: t.plain_bytes }),
+        // ⚠ salt 这里先填写入时那一枚;幕⑦自验之后会用**读回来的那一枚**覆盖它
+        //(盘上的实况才是入账凭据)。
+        Ok(t) => Ok(MadeBackup { path: target.to_path_buf(), bytes: t.plain_bytes, salt }),
         Err(msg) => {
             drop(out);
             Err(match std::fs::remove_file(target) {
