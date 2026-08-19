@@ -12,8 +12,13 @@ name: ci
 #    真正 fail-closed 的那道是 `preflight` 被两条 release tag 线用 `needs` 挂着的那次调用,
 #    **本文件一个字都不改它**。
 #
-# ⛔ **跑不了 e2e**:那要 Windows + 真 WebView2 + 先停掉占全局热键的生产实例(判据见
-#    preflight.yml 头注)。ci-plan 阶段 3/4 才谈它,别在这里顺手加。
+# ⭐ 450(ci-plan 阶段 3)接上第二格:**Linux 真 GUI e2e**(下面的 `linux-e2e`)。448 立本文件时
+#    这儿写的是「⛔ 跑不了 e2e」,那句话**只对 Windows 那趟成立**(要真 WebView2 + 先停掉占全局
+#    热键的生产实例);Linux 这一端两个前提一个都不在:WebKitWebDriver 是 apt 装的系统包,
+#    托管 runner 上也没有谁占着 Ctrl+Alt+N。
+# ⛔ **Windows/WebView2 那趟仍不在这里** —— 它才是**判发版**的那趟(396 起口径没变),
+#    归 ci-plan 阶段 4「夜跑」。别在这里顺手加:per-push 上再串一趟生产端 e2e,
+#    就把「快速警报」变成慢闸了。
 
 permissions:
   contents: read
@@ -52,3 +57,148 @@ jobs:
   gates:
     if: github.repository == 'prehisle/zhujian'
     uses: ./.github/workflows/preflight.yml
+
+  # ⭐ 450(ci-plan 阶段 3):**Linux 真 GUI e2e**,跑在托管 runner 上。
+  #
+  # 在此之前 e2e 只在两台开发机上跑,而**共用面改动的主要验收面就是它** —— 规矩 5
+  # (「改了共用面,另一台的下一轮必须复跑」)那笔债因此只能靠人还:已经触发 15 次,
+  # 其中六轮是整轮零代码的纯复跑。这一格把「Linux 那趟」接过来。
+  #
+  # ⛔ **它判不了发版**:WebKitGTK 不是生产渲染引擎(396 起口径没变)。所以它落在本文件
+  #    (警报)而**不是** `preflight.yml`(发版闸)—— 往一道 fail-closed 的发版闸里塞一个
+  #    「判不了发版、却带着三支未分诊抖动(backlog 测试与工装 19/20/23)」的套件,
+  #    换来的只有「抖动挡住发版」,一分发布判据都不多。
+  # ⚠ 它与 `gates` **互不依赖**,同时开跑;`gates` 两三分钟就完,这一格是几十分钟那一档。
+  linux-e2e:
+    if: github.repository == 'prehisle/zhujian'
+    name: e2e(Linux / WebKitGTK,39 spec)
+    runs-on: ubuntu-22.04
+    # 兜住「挂死」那一形:本机全量 10 分钟,托管 runner 慢几倍(448 实测 core 慢 ≈6.5 倍)。
+    # ⚠ 超时 = 红,而且是**判不出**那一档的红(日志里不会有汇总行)—— 那正是 440 那把尺的三态。
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+
+      # 与 preflight 的 `shells` 那格逐字同一串(Tauri v2 在 Linux 上编壳要的那套),
+      # 另加两样只有 e2e 要的:
+      #   · `webkit2gtk-driver` = `/usr/bin/WebKitWebDriver`(wdio.conf.js 里写死的那条路径,
+      #     Linux 端的原生 WebDriver;在 jammy 的 **universe** 里,与 libwebkit2gtk-4.1 同源同版);
+      #   · `xvfb` = 无显示器时的虚拟 X。
+      - name: 系统依赖(Tauri v2 + WebKitWebDriver + Xvfb)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file \
+            libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev pkg-config \
+            webkit2gtk-driver xvfb
+
+      # ⭐ **394 那一课,这里是它唯一的落点**:整套断言是中文串,而 358 起语言「自动」档在
+      # Linux 上跟的是**进程 locale** —— 英文 locale 的机器上 app 渲染英文、断言一条也对不上
+      # (2026-08-16 在 en_US 容器里实测 **32/36 红**,换 zh_CN 立刻回到 30/6)。
+      # `wdio.conf.js` 给 app 钉死了 `LANG=LC_ALL=zh_CN.UTF-8`,但**钉死的是变量、不是 locale 本身**:
+      # 机器上没生成 zh_CN.utf8 时,那两个变量指向一个不存在的 locale,glibc 静静退回 C ⇒
+      # 现象与「没钉」一模一样。⇒ 这里生成它,并**当场核一句**:核不到就停,别拿三十来支
+      # 看着像真缺陷的假红去浪费下一个人半小时。
+      - name: 中文 locale(394:英文 locale 下 32/36 假红)
+        run: |
+          sudo locale-gen zh_CN.UTF-8
+          if ! locale -a | grep -qix 'zh_CN.utf8'; then
+            echo "::error::zh_CN.UTF-8 没生成 —— 硬跑下去是三十来支假红,而它们看着像真缺陷(394 判例)"
+            locale -a | head -20
+            exit 1
+          fi
+          echo "locale OK:$(locale -a | grep -ix 'zh_CN.utf8')"
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      # ⚠ **钉版本**:`tauri-driver` 是我们自己的台架件(不解析它的输出),钉住它 = CI 与
+      # 开发机跑的是同一个东西 —— 而这一格存在的理由正是「替开发机跑那趟」。
+      # 2.0.6 = Linux 那台开发机实测在用的版本;哪天开发机升了,这里跟着改一个数字。
+      # ⛔ 别把它跟 §8-2 那条(msedgedriver 必须跟着 runner 的 WebView2 漂)混起来 ——
+      #    那条说的是**我们解析其输出 / 必须与系统组件配对**的工具,方向相反。
+      # ⚠ 每趟花 1-2 分钟从源码编;没给它单独加缓存 —— 这一格总长是几十分钟那一档,
+      #    为它加一层缓存键(还要猜 actions/cache 的大版本)不划算。
+      - name: tauri-driver(wdio.conf.js 认 ~/.cargo/bin/tauri-driver)
+        run: cargo install tauri-driver --locked --version 2.0.6
+
+      # ⭐ **前置检查:`wdio.conf.js` 里写死了三条绝对路径**,它们在开发机上天然成立,
+      # 在 runner 上是**假设**(尤其 `~/.cargo/bin` —— 它认的是 `homedir()`,而不是 `CARGO_HOME`)。
+      # 缺了任一条,现象是会话起不来那种看不懂的红。⇒ 当场问一句,答不上来就停。
+      - name: 前置检查(wdio.conf.js 写死的三条路径)
+        run: |
+          fail=0
+          for f in "$HOME/.cargo/bin/cargo" "$HOME/.cargo/bin/tauri-driver" /usr/bin/WebKitWebDriver; do
+            if [ -x "$f" ]; then echo "✓ $f"; else echo "::error::缺 $f(wdio.conf.js 写死认这条路径)"; fail=1; fi
+          done
+          exit $fail
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+
+      # ⚠ **fast 形**是 Linux 上唯一跑得了的形(wdio.conf.js 那道响亮拒:release 的资产源在
+      # Linux/WebKitGTK 是 `tauri://localhost`,而配置里写的是 wry 在 Windows/Android 的
+      # workaround URL,硬跑 36 支全红在 goShow)。fast 形要两样:debug 二进制 + vite。
+      #
+      # ⚠ 这一步 `wdio.conf.js` 的 `onPrepare` 自己也会做一遍(增量,秒级)——**故意重复**:
+      # 放在这儿,编译失败就红在「编 debug 壳」这一步、看得见 rustc 原话;埋在 e2e 里则表现为
+      # 「日志里没有汇总行」⇒ 判不出。⛔ 别为「省一步」把它删掉。
+      # ⚠ 刻意**不**跑 `npm run build`:`cargo build` 不开 `custom-protocol` ⇒ 走 devUrl 那支,
+      #    `dist/` 缺席照样编得过(与 preflight 两格同口径)。
+      - name: 编 debug 壳(fast 形要它)
+        run: cd src-tauri && cargo build
+
+      - name: vite dev server(fast 形的资产源)
+        run: |
+          nohup npm run dev > "$RUNNER_TEMP/vite.log" 2>&1 &
+          # 等端口。⚠ 探针用 `localhost` 而不是 127.0.0.1 —— 与 wdio.conf.js 的 portOpen 同口径
+          # (vite 绑 IPv4 还是 IPv6 由环境定,那里为此专门写过一句注释)。
+          node -e '
+            const net = require("node:net");
+            const deadline = Date.now() + 60000;
+            (function probe() {
+              const s = net.connect({ host: "localhost", port: 1420 });
+              s.on("connect", () => { s.destroy(); console.log("vite 起来了"); process.exit(0); });
+              s.on("error", () => {
+                if (Date.now() > deadline) { console.error("::error::vite 60 秒没起来"); process.exit(1); }
+                setTimeout(probe, 500);
+              });
+            })();
+          ' || { cat "$RUNNER_TEMP/vite.log"; exit 1; }
+
+      # ⭐ **判红不看退出码,走 440 那把三态尺**(`scripts/lib/test-verdict.mjs`,25 格回归网 + 六刀):
+      # **绿必须有正面字据**,读不出是 `unknown`(⛔ 不许退回「那就算它绿吧」)。壳在
+      # `scripts/e2e-verdict.mjs`,它另外把「零重试」落成真判据。
+      # ⚠ `--specFileRetries=0`:配置里常态开着 `specFileRetries:1` 吸收冷启假红,CI 上要的是
+      #    **未经吸收的原始读数**。开关与「日志里有没有重试痕迹」两半**互为背书**,见那个壳的头注。
+      # ⚠ `xvfb-run -a`:⭐ 顺带记一格 450 实测出来的事实 —— **WebKitWebDriver 在 DISPLAY 缺席时
+      #    会自己 `xvfb-run` 一个 `:100` 出来**(字据:app 进程 environ 里 `DISPLAY=:100`,
+      #    Xvfb 的命令行带 `-auth /tmp/xvfb-run.XXXX/Xauthority`)⇒ 不套也跑得起来。仍然显式套:
+      #    这样「CI 跑的那条命令」与 dev-and-testing 里写给人的那条**逐字相同**,而 `xvfb` 这个包
+      #    两条路都要装。
+      - name: e2e(39 spec,零重试)
+        env:
+          YS_E2E_FAST: "1"
+        run: |
+          set +e
+          xvfb-run -a npx wdio run e2e/wdio.conf.js --specFileRetries=0 2>&1 | tee "$RUNNER_TEMP/e2e.log"
+          status=${PIPESTATUS[0]}
+          set -e
+          node scripts/e2e-verdict.mjs "$RUNNER_TEMP/e2e.log" --status="$status"
+
+      # 红的时候要能拿到整份日志(spec reporter 只在结尾汇总,而 GitHub 的日志页对几万行
+      # 不好翻)。⚠ `if: always()` —— 绿的那趟也留,它是「与人跑的读数对不对得上」的底稿。
+      - name: 日志存档
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-linux-log
+          path: |
+            ${{ runner.temp }}/e2e.log
+            ${{ runner.temp }}/vite.log
+          if-no-files-found: warn
+          retention-days: 14

@@ -16,14 +16,25 @@
 //   而它自己也在排除清单里 —— 自指但稳定,别去"修"。
 import { execFileSync } from "node:child_process";
 import { cpSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const argv = process.argv.slice(2);
 const acceptExclusions = argv.includes("--accept-exclusions");
 const target = resolve(argv.find((a) => !a.startsWith("--")) ?? join(repoRoot, "..", "zhujian-public"));
-if (target === repoRoot || repoRoot.startsWith(target)) {
+// 这道闸守的是「别把自己清空」——下面会把 target 里除 .git 外的东西全删掉。
+// ⚠ **按路径分段比,别用裸 `startsWith`**(450 在 Linux 那台真撞上):公开仓的工作副本在
+// 那台叫 `/exworkspace/zhujian`,而工作仓叫 `/exworkspace/zhujian-dev` ⇒ 裸字符串前缀
+// 判定「工作仓在目标目录里面」**成立**,导出当场被拒。它是**假阳性不是安全洞**(fail-closed
+// 那一侧),但它把这台机器整条「导出 → 推公开仓 → CI」的路堵死了。
+// ⛔ **而修法本身栽了一次,原样记着**:第一版写的是 `repoRoot.startsWith(target + sep)`,
+//    看着对,却把 **`/`** 这一格漏了 —— `resolve("/")` 已经以分隔符结尾,再拼一个就是 `//`,
+//    于是 `node scripts/export-public.mjs /` **不再被拒**,当场走进下面那个 `rmSync` 循环
+//    (450 的阴性对照真的跑到了那一步;这台没有 root、`/` 又是 root 属主 0755,
+//    一个条目都没删成 —— **是环境救的,不是代码救的**)。⇒ 拼分隔符前先看它有没有。
+const targetPrefix = target.endsWith(sep) ? target : target + sep;
+if (target === repoRoot || repoRoot.startsWith(targetPrefix)) {
   console.error(`目标目录不能是仓库自身或其祖先:${target}`);
   process.exit(1);
 }

@@ -38,8 +38,14 @@ const acceptExclusions = argv.includes("--accept-exclusions");
 const msgIdx = argv.findIndex((a) => a === "-m" || a === "--message");
 const customMsg = msgIdx >= 0 ? argv[msgIdx + 1] : null;
 if (msgIdx >= 0 && !customMsg) die("`-m` 后面要跟一句提交说明。");
+// ⚠ **`msgIdx < 0` 那一格 450 在 Linux 那台真撞上**:没给 `-m` 时 `msgIdx` 是 **-1**,
+// 而下面原本写的是 `i !== msgIdx + 1` ⇒ `i !== 0` ⇒ **第 0 个位置参数(也就是目标目录)
+// 被自己排除掉了**,于是 `node scripts/sync-public.mjs /exworkspace/zhujian` 静默退回默认路径,
+// 报「公开仓工作副本不在 ../zhujian-public」。⛔ 那一条排除只在**真有 `-m`** 时才该生效。
+// ⭐ 与 `export-public.mjs` 那道闸同族:**这两支至今只在一台机器上、只按默认路径跑过**。
 const target = resolve(
-  argv.find((a, i) => !a.startsWith("-") && i !== msgIdx + 1) ?? join(repoRoot, "..", "zhujian-public"),
+  argv.find((a, i) => !a.startsWith("-") && (msgIdx < 0 || i !== msgIdx + 1)) ??
+    join(repoRoot, "..", "zhujian-public"),
 );
 // 走代理(GitHub 直连不稳);要换端口设 ZJ_GIT_PROXY。
 const proxy = process.env.ZJ_GIT_PROXY ?? "socks5h://127.0.0.1:10808";

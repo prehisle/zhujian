@@ -157,7 +157,23 @@ export const config = {
       // 实测 **32/36 红**,同一棵树换成 zh_CN 后 30 passed / 6 failed。故这里把语言钉死,
       // 别让「机器的 locale」变成判绿的隐藏入参(Windows 的 WebView2 语言由系统设置定,
       // 这两个变量它不看 = 生产端那条链一字不变)。
-      env: { ...process.env, YS_DB_PATH: testDb, LANG: "zh_CN.UTF-8", LC_ALL: "zh_CN.UTF-8" },
+      // 450:**上面那条 locale 钉死自己带了一个副作用,而它被本机装的输入法遮了两个月** ——
+      // GTK 在 `GTK_IM_MODULE` 没设时**按 locale 自动挑输入法模块**,而 `immodules.cache` 里
+      // `im-xim.so` 那条声明的正是 `"ko:ja:th:zh"` ⇒ 钉成 zh_CN 就等于顺手选了 **xim** 那条路。
+      // XIM 会把合成出来的键事件按 keycode+state **重新翻译一遍**,而 WebKit 合成时没带 Shift
+      // ⇒ **大写 ASCII 到了页面里全变小写**(`"UI 写下的第一句"` 收到 `"ui 写下的第一句"`)。
+      // 本机看不见,是因为桌面环境给了 `GTK_IM_MODULE=fcitx` 把那个自动选择顶掉了;
+      // 一到干净机器(CI 的 ubuntu-22.04 runner)当场四支红,而**每一支都长得像真缺陷**。
+      // ⇒ 与 394 同一个道理:**别让「这台机器碰巧装了什么」变成判绿的隐藏入参**,显式钉死。
+      // 阴性对照(450 本机实跑,三格):不设 ⇒ 红 / `=xim` ⇒ 红(= 自动选择那条路)/
+      // `=gtk-im-context-simple` ⇒ 绿。⚠ Windows 的 WebView2 不读这个变量,那条链一字不变。
+      env: {
+        ...process.env,
+        YS_DB_PATH: testDb,
+        LANG: "zh_CN.UTF-8",
+        LC_ALL: "zh_CN.UTF-8",
+        GTK_IM_MODULE: "gtk-im-context-simple",
+      },
       stdio: [null, process.stdout, process.stderr],
     });
     // Give tauri-driver + the native driver a moment to bind their ports.
