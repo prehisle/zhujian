@@ -587,3 +587,82 @@ fn the_wall_clock_advances_on_any_success_including_a_partial_one() {
 fn file_name(p: &Path) -> String {
     p.file_name().unwrap().to_string_lossy().into_owned()
 }
+
+// ---- 交还清单(420 补:验收撞出来的那格 —— 路径必须留得住)-----------------------------
+
+/// ⭐ 「不再自动管」的那几份**必须带路径留下来**,而且**活过下一趟**。
+/// ⛔ 只把计数放进那一趟的结论里 = 用户要处置它的时候恰好没有了(这正是真机验收抓到的形)。
+#[test]
+fn released_artifacts_are_remembered_with_their_paths_and_survive_later_rounds() {
+    let r = rig("released");
+    let mut a = AutoFile::default();
+    let old = seed(&r, &mut a, 4);
+    // 把最旧那份截断 ⇒ 它会被判「已证明无效」⇒ 摘账 + 交还
+    let f = std::fs::OpenOptions::new().write(true).open(&old[0].path).unwrap();
+    f.set_len(64).unwrap();
+    drop(f);
+    let fresh = back_up(&r, &r.space);
+    let out = rotate_space(&mut a, &r.space.id, &fresh, &r.settings.key);
+    assert_eq!(out.unmanaged.len(), 1, "夹具前提");
+
+    assert_eq!(a.released.len(), 1, "要记进交还清单:{:?}", a.released);
+    assert_eq!(a.released[0].file, file_name(&old[0].path));
+    assert!(!a.released[0].why.is_empty(), "原因也要带上");
+
+    // ⭐ 再跑一趟:它**还在**(⛔ 不是"上一趟的快照",那样就白记了)。
+    let again = back_up(&r, &r.space);
+    rotate_space(&mut a, &r.space.id, &again, &r.settings.key);
+    assert_eq!(a.released.len(), 1, "下一趟不许把它冲掉:{:?}", a.released);
+
+    // ⭐ 用户处置掉(删了那个文件)⇒ 下一趟自己消失(⛔ 别让他去点一个不存在的路径)。
+    std::fs::remove_file(&old[0].path).unwrap();
+    let third = back_up(&r, &r.space);
+    rotate_space(&mut a, &r.space.id, &third, &r.settings.key);
+    assert!(a.released.is_empty(), "处置完就该自己走:{:?}", a.released);
+}
+
+/// 同一份文件只记一条(⛔ 每轮都往里塞 = 清单变噪音),且**有界**。
+#[test]
+fn the_released_list_dedupes_and_stays_bounded() {
+    let mut a = AutoFile { next_seq: 1, ..AutoFile::default() };
+    let dir = tmp_dir("released-bound");
+    let mk = |n: usize| format!("zhujian-main-2026081{}T030000Z-01J0000000000000000000000A.zjbak", n % 10);
+    // 造一份真存在的文件,连报两次 ⇒ 只该有一条
+    let live = dir.join(mk(1));
+    std::fs::write(&live, b"x").unwrap();
+    let note = |p: &std::path::Path| RotationReport {
+        unmanaged: vec![(p.display().to_string(), "验不过".into())],
+        ..RotationReport::default()
+    };
+    super::record_notes(&mut a, &note(&live));
+    super::record_notes(&mut a, &note(&live));
+    assert_eq!(a.released.len(), 1, "同一份只记一条:{:?}", a.released);
+
+    // 塞满到上界之上:只留最近 RELEASED_MAX 条
+    for i in 0..RELEASED_MAX + 5 {
+        let p = dir.join(format!("zhujian-main-20260817T0300{:02}Z-01J0000000000000000000000A.zjbak", i));
+        std::fs::write(&p, b"x").unwrap();
+        super::record_notes(&mut a, &note(&p));
+    }
+    assert_eq!(a.released.len(), RELEASED_MAX, "有界");
+    assert!(a.validate().is_ok(), "刚好在上界内要合法");
+}
+
+/// `retry` 那半是**每趟替换**的:它们还在管辖内,下一趟就会重试 ——
+/// ⛔ 别跟 `released` 一样累积(那会让"已经删掉了"的那几份永远挂在界面上)。
+#[test]
+fn the_retry_list_is_replaced_every_round_unlike_the_released_one() {
+    let mut a = AutoFile { next_seq: 1, ..AutoFile::default() };
+    let dir = tmp_dir("retry-replace");
+    let one = dir.join("zhujian-main-20260817T030001Z-01J0000000000000000000000A.zjbak");
+    super::record_notes(
+        &mut a,
+        &RotationReport {
+            retry: vec![(one.display().to_string(), "删不掉".into())],
+            ..RotationReport::default()
+        },
+    );
+    assert_eq!(a.last_retry.len(), 1);
+    super::record_notes(&mut a, &RotationReport::default()); // 下一趟一切正常
+    assert!(a.last_retry.is_empty(), "该被替换成空:{:?}", a.last_retry);
+}

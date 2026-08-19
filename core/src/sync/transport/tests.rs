@@ -9718,3 +9718,169 @@ async fn a_shrinking_roster_aborts_the_in_flight_dial_to_the_dropped_peer() {
     r.dial.abort_denied(&denied);
     assert_eq!(r.dial.inflight(), 0, "名册摘掉它的那一刻,在飞握手就该从表里消失");
 }
+
+// ---- 启动清扫:明文引导快照残留(升档,backup-plan §3.4 那张三档表) --------------
+//
+// ⚠ 这个函数在升档之前**零测试** —— 它是「明文整库永久静默残留」那个病的载体,
+// 而没有任何一只测钉住过它。下面五只按 §3.4 算法逐条:①认识的才删 ②不早退、聚合
+// ③失败要响亮 ④展示上界与总数是两件事 ⑤读不到目录 ≠ 干净。
+
+/// 造一个名字对、但 `remove_file` 一定失败的候选:**目录**。
+/// ⭐ 这不是为了造失败而造的人工形 —— 名字长得跟残留一模一样却删不掉,正是
+/// 「实现漂移 / 手工干预」会留下的东西,而本函数按**名字前缀**收候选(刻意不筛
+/// `is_file`:筛掉的话它会被静默跳过,那又回到了「安静」这个病)。
+/// ⚠ 跨平台成立:Unix `EISDIR` / Windows 也拒 —— 不靠权限位(§3.4 三轮 M4 判过
+/// 「只读目录造失败」不可靠:root 无视权限位、Windows ACL 语义不同)。
+fn undeletable_candidate(dir: &Path, name: &str) {
+    std::fs::create_dir(dir.join(name)).expect("mkdir candidate");
+}
+
+fn touch(dir: &Path, name: &str) {
+    std::fs::write(dir.join(name), b"x").expect("touch");
+}
+
+#[test]
+fn boot_sweep_deletes_only_what_it_owns() {
+    let dir = temp_dir("bootsweep-clean");
+    touch(&dir, "boot-snapshot-01AAAAAAAAAAAAAAAAAAAAAAAA.sqlite3");
+    touch(&dir, "boot-snapshot-01BBBBBBBBBBBBBBBBBBBBBBBB.sqlite3");
+    touch(&dir, "boot-recv-01CCCCCCCCCCCCCCCCCCCCCCCC.sqlite3");
+    // ⭐ 下界断言的材料:安卓那端 boot 目录**就是 data_dir**(`coord.rs` 的
+    // `boot_dir: self.data_dir`)—— 里面躺着真正的空间库。误删 = 把用户数据删了。
+    touch(&dir, "01DDDDDDDDDDDDDDDDDDDDDDDD.sqlite3");
+    touch(&dir, "catalog.json");
+
+    let got = sweep_stale_boot_files(&dir);
+
+    assert_eq!(got, BootSweep::Clean { removed: 3 }, "三份认识的候选都该删掉");
+    assert!(got.is_clean());
+    // 下界:只断「删干净了」是假绿 —— 把前缀判断整个拿掉它照样是 Clean。
+    assert!(dir.join("01DDDDDDDDDDDDDDDDDDDDDDDD.sqlite3").exists(), "空间库不许被碰");
+    assert!(dir.join("catalog.json").exists(), "目录里别的东西不许被碰");
+}
+
+#[test]
+fn boot_sweep_empty_dir_is_clean() {
+    let dir = temp_dir("bootsweep-empty");
+    assert_eq!(sweep_stale_boot_files(&dir), BootSweep::Clean { removed: 0 });
+}
+
+#[test]
+fn boot_sweep_aggregates_and_does_not_early_return() {
+    let dir = temp_dir("bootsweep-residue");
+    // ⭐ **判据不许靠 `read_dir` 的枚举顺序**(codex 实现审 M2):它不保证字典序,
+    // 上一版拿「坏项排在前面」当前提 —— 换个平台先返回两个好文件,早退版本照样
+    // `removed == 2` 且两个好文件真被删掉,**整只测全绿**。
+    // 改成 **2 坏 2 好**,承重的断言换成 `failed.len() == 2`:早退版本无论什么顺序
+    // 都会停在**第一个**坏项上 ⇒ 它永远凑不出 2。
+    undeletable_candidate(&dir, "boot-recv-01AAAAAAAAAAAAAAAAAAAAAAAA.sqlite3");
+    undeletable_candidate(&dir, "boot-snapshot-01DDDDDDDDDDDDDDDDDDDDDDDD.sqlite3");
+    touch(&dir, "boot-snapshot-01BBBBBBBBBBBBBBBBBBBBBBBB.sqlite3");
+    touch(&dir, "boot-snapshot-01CCCCCCCCCCCCCCCCCCCCCCCC.sqlite3");
+
+    let got = sweep_stale_boot_files(&dir);
+
+    let BootSweep::Residue { removed, failed, omitted, unreadable, .. } = &got else {
+        panic!("删不掉的候选必须报出来,不许静默:{got:?}");
+    };
+    assert_eq!(failed.len(), 2, "两个坏项都要被试过 —— 早退版本停在第一个,凑不出 2");
+    assert_eq!(*removed, 2, "两份好的照样要被删掉");
+    assert_eq!(*omitted, 0);
+    assert_eq!(*unreadable, 0, "这只测里没有读不出的目录项");
+    assert!(!got.is_clean());
+    // 盘上的地面真相,别只信返回值。
+    assert!(!dir.join("boot-snapshot-01BBBBBBBBBBBBBBBBBBBBBBBB.sqlite3").exists());
+    assert!(!dir.join("boot-snapshot-01CCCCCCCCCCCCCCCCCCCCCCCC.sqlite3").exists());
+    // ⛔ 话术:说的是「可能是明文数据库的完整或半截残留」,**不许**一概说「完整库」
+    // (codex 实现审 M1:`boot-recv-*` 建出来是空文件、逐块写、终块才校验)。
+    let said = got.to_string();
+    assert!(said.contains("明文数据库的完整或半截残留"), "{said}");
+    assert!(!said.contains("明文完整库"), "别退回那句过度承诺:{said}");
+}
+
+/// H1(codex 实现审):**读不出的目录项只许计数,绝不许把父目录当成删除目标**。
+/// ⚠ 造不出真的 `ReadDir` 逐项 `Err`(portable),所以直接构造那个值验**它说什么** ——
+/// 观测面就是这句话本身,而 H1 的后果也正是这句话(安卓那端父目录 = 用户的数据目录)。
+#[test]
+fn boot_sweep_unreadable_entries_never_point_at_the_directory() {
+    let got = BootSweep::Residue {
+        removed: 0,
+        failed: Vec::new(),
+        omitted: 0,
+        unreadable: 2,
+        unreadable_kind: Some(std::io::ErrorKind::PermissionDenied),
+    };
+    let said = got.to_string();
+
+    assert!(!got.is_clean(), "没扫全 ≠ 干净");
+    assert!(said.contains("没扫全"), "要说清这趟没扫全:{said}");
+    // ⛔ 承重的那条:读不出的项没有路径,就不许给删除建议。
+    assert!(!said.contains("建议手工删除"), "读不出的项没有路径,不许给删除建议:{said}");
+    // 诊断力那半(复核轮 L3):种类要说出来。
+    // ⛔ 判据带上前缀:光 `contains("PermissionDenied")` 对 `Some(PermissionDenied)`
+    // 也成立 —— 复核轮 L1 逮到的就是这个,我印的是整个 `Option`。
+    assert!(said.contains("首个原因:PermissionDenied"), "只印种类本身:{said}");
+
+    // ⭐ **「印不出路径」这条由签名背书,不由字符串断言背书**(复核轮 L2 判掉了我上一版
+    // 那句 `!said.contains('/')`:Windows 路径用 `\` 时它假绿,将来文案里出现「文件/目录」
+    // 时它又假红)。一枚 fn 指针强制转换 —— 谁想给 `note_unreadable` 加回一个路径参数,
+    // 这里当场**编译不过**,轮不到断言去看字符串。
+    let _: fn(&mut BootSweepAcc, std::io::ErrorKind) = BootSweepAcc::note_unreadable;
+
+    // 计数那一路也要钉住:**只有**读不出的项、一个删不掉的都没有,照样不算干净。
+    // ⚠ 造不出真的 `ReadDir` 逐项 `Err`(portable),所以从累加器这一层量;
+    // 剩下那半(「真的 Err 会不会走到 `note_unreadable`」)是**诚实降级**,没有测
+    // (复核轮判「够」:中间那一跳就是 `Err → note_unreadable(e.kind())` 两行)。
+    //
+    // ⚠ **上面那些断言看的是我直接构造的值,走不到 `note_unreadable`** —— 第一版就栽在这儿:
+    // 「丢掉 kind」那把刀**假绿**,因为判据那一格根本不由被测那句决定。下面这段才是从
+    // 累加器一路量到话里的。
+    let mut acc = BootSweepAcc::default();
+    acc.note_unreadable(std::io::ErrorKind::PermissionDenied);
+    acc.note_unreadable(std::io::ErrorKind::NotFound);
+    let done = acc.finish();
+    assert!(!done.is_clean(), "只有读不出的项也不算干净");
+    let said = done.to_string();
+    assert!(said.contains("2 个目录项读不出"), "个数要累加:{said}");
+    // ⭐ 报的是**头一个**的种类(`get_or_insert` 的语义),不是最后一个。
+    assert!(said.contains("首个原因:PermissionDenied"), "原因要从累加器带到话里:{said}");
+    assert!(!said.contains("NotFound"), "说的是头一个,不是最后一个:{said}");
+}
+
+#[test]
+fn boot_sweep_unreadable_dir_is_not_clean() {
+    let dir = temp_dir("bootsweep-unscanned").join("nope");
+    let got = sweep_stale_boot_files(&dir);
+
+    assert!(matches!(got, BootSweep::Unscanned { .. }), "读不到目录 ≠ 干净:{got:?}");
+    // ⭐ 这一格就是升档前那个 `let Ok(..) else { return }` 吃掉的东西:整趟清扫没跑,
+    // 而调用方拿到的是「什么事都没有」。
+    assert!(!got.is_clean(), "不知道盘上有什么,不许报干净");
+    assert!(got.to_string().contains("未知"), "话里要说清「未知」而不是「没有」:{got}");
+    // ⚠ 与 `backup::staging::sweep` 刻意不同:那边「目录不存在 = 从没备份过 = 干净」,
+    // 这边**两壳都保证 boot 目录在**(桌面 `create_dir_all` 紧挨着调用点、安卓给的是
+    // app 自己的 data_dir)⇒ 读不到它不是「还没用过」,是异常。
+}
+
+#[test]
+fn boot_sweep_truncates_the_list_but_not_the_count() {
+    let dir = temp_dir("bootsweep-cap");
+    let total = MAX_REPORTED_RESIDUE + 3;
+    for i in 0..total {
+        undeletable_candidate(&dir, &format!("boot-snapshot-{i:026}.sqlite3"));
+    }
+
+    let got = sweep_stale_boot_files(&dir);
+
+    let BootSweep::Residue { removed, failed, omitted, unreadable, .. } = &got else {
+        panic!("{got:?}");
+    };
+    assert_eq!(*unreadable, 0);
+    assert_eq!(*removed, 0);
+    assert_eq!(failed.len(), MAX_REPORTED_RESIDUE, "清单有展示上界");
+    assert_eq!(*omitted, 3, "超出的要计数,不许悄悄丢");
+    let said = got.to_string();
+    // ⭐ 上界与总数是两件事,而且**每个上界都要有一句如实的话跟着它**(432 那条教训)。
+    assert!(said.contains(&format!("{total} 项删不掉")), "说的总数要是真总数:{said}");
+    assert!(said.contains("另有 3 项未列出"), "截断本身要说出来:{said}");
+}

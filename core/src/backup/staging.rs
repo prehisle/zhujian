@@ -6,8 +6,15 @@
 //!
 //! | 既有 | 清的是 | 删不掉怎么办 |
 //! |---|---|---|
-//! | `sweep_stale_boot_files` | 明文引导快照 | ⚠ 纯 best-effort(`let _`,连 `read_dir` 失败都静默) |
+//! | `sweep_stale_boot_files` | 明文引导快照(⚠ 可能完整、也可能半截) | ⚠ 402 当时是纯 best-effort;**438 已升档**(聚合、不早退、响亮;仍不封锁引导) |
 //! | `sweep_stale_joining` | 槽(含完整明文数据 / K_acc / 设备私钥) | ⛔ 任一删除失败 = **拒启** |
+//!
+//! ⚠ **438 起 boot 那一行不再是本模块的反例** —— 它也升档了(见
+//! [`crate::sync::transport::sweep_stale_boot_files`] 头注),但**刻意少两格**:没有「未知项 =
+//! 不删 + 封锁」那道闸(安卓那端 boot 目录就是 `data_dir`,共享目录里「读得出名字的非候选」是常态)、
+//! 「目录不存在」算异常不算干净。⚠ **那句「没有 unknown」只对读得出名字的项成立** ——
+//! **读不出的目录项本身就是 unknown**,那边走单独的计数,⛔ 不混进「请手工删除」的清单
+//! (混进去会把**父目录**端给用户,而那一端父目录就是数据目录;438 复核轮 H1)。
 //!
 //! 本模块清的东西与 joining 槽**同一内容类**(明文整库),⇒ 照严格那一档;但**不拒启**
 //! (用户还得能用 app 看自己的数据),改为**封锁备份功能** —— 比 boot 强、比 joining 弱,
@@ -94,6 +101,17 @@ thread_local! {
     pub(crate) static FAIL_CLEANUP: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
+// 显式测试注入:让**下一次** [`SnapshotGuard::arm`] 用一个指定的快照名(用完即自动复位)。
+//
+// ⭐ 为什么要有它:恢复的落位是原子 no-clobber,而目标名 = arm() 现取的随机 ULID ——
+// 「目标名已经有文件了 ⇒ 拒,且原文件一个字节没动」这条测**没有别的办法造**
+// (测试预先造不出一个猜不到的名字)。⛔ `cfg(test)` 门控:发版二进制里一个字节都没有。
+#[cfg(test)]
+thread_local! {
+    pub(crate) static FORCE_SNAPSHOT_NAME: std::cell::RefCell<Option<String>> =
+        const { std::cell::RefCell::new(None) };
+}
+
 /// 一份在制的明文快照。**建它 = armed**;⛔ 必须在取快照**之前**建。
 pub(crate) struct SnapshotGuard {
     path: PathBuf,
@@ -112,10 +130,13 @@ impl SnapshotGuard {
         // `set_permissions` 都会**跟着走**,明文整库就落到别人的目录里去了。
         ensure_real_dir(staging)?;
         harden_dir(staging)?;
-        Ok(SnapshotGuard {
-            path: staging.join(format!("{}.sqlite3", ulid::Ulid::new())),
-            done: false,
-        })
+        #[cfg(test)]
+        let name = FORCE_SNAPSHOT_NAME
+            .with(|c| c.borrow_mut().take())
+            .unwrap_or_else(|| format!("{}.sqlite3", ulid::Ulid::new()));
+        #[cfg(not(test))]
+        let name = format!("{}.sqlite3", ulid::Ulid::new());
+        Ok(SnapshotGuard { path: staging.join(name), done: false })
     }
 
     pub(crate) fn path(&self) -> &Path {

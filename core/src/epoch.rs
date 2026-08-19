@@ -272,7 +272,9 @@ fn compact_inner(conn: &mut Connection, fp: FailPointOpt) -> Result<CompactRepor
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(|e| e.to_string())?;
 
-    // §2.6.6 终态等价的「前」快照:六表指纹 + sync_meta 全量。
+    // §2.6.6 终态等价的「前」快照:用户数据表指纹 + sync_meta 全量。
+    // ⚠ 别在注释里数张数(下面 `table_fingerprints` 头注同款警告)——423 逮到这一句写着
+    // 「六表」而当时已是九张,数字是唯一一种改了代码还看不出已经错了的写法。
     let pre_tables = table_fingerprints(&tx)?;
     let pre_meta = meta_all(&tx)?;
     // §2.6.7 第二层:oplog 的规范化 schema(表 + 索引 + 触发器),重建前后必须相等。
@@ -875,7 +877,10 @@ fn probe_hlc(device_id: &str, n: u32) -> String {
 /// 含 space_profile、0033 起含 device_profile、0035 起含 item_comment——名字 / 别名 /
 /// 留言都是用户数据,压实前后
 /// 必须逐字相等)。
-fn table_fingerprints(tx: &Connection) -> Result<Vec<Vec<String>>, String> {
+///
+/// ⚠ **`pub(crate)` 是 423 放宽的**(backup-plan §16.12 测 1):恢复的往返测要断
+/// 「用户数据指纹前后相等」,⛔ 别另写一份指纹 —— 那就是同一条规则的第二份描述。
+pub(crate) fn table_fingerprints(tx: &Connection) -> Result<Vec<Vec<String>>, String> {
     let text_rows = |sql: &str| -> Result<Vec<String>, String> {
         let mut stmt = tx.prepare(sql).map_err(|e| e.to_string())?;
         let rows = stmt.query_map([], |r| r.get::<_, String>(0)).map_err(|e| e.to_string())?;

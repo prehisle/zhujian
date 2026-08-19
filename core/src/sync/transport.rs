@@ -568,11 +568,43 @@ pub(crate) fn boot_serve_snapshot(
 /// 已被别的空间占用的账户配了进来 → 本空间当场退回,绝不留下「两库同账户」的
 /// 持久状态让下次上线互灌数据)。device_id 行不动(设备身份是史实,有冻结触发器);
 /// 服务器端已注册的设备身份由将来的 revoke_device 清理,多一台永不上线的设备无害。
+///
+/// # ⛔ 清的是**十键**,`pending_*` 那四键不是"顺便捎上的"(backup-plan §16.3.1)
+///
+/// 本函数的契约是「**清全部同步配置**」,而 `pending_*`(纪元切换的两阶段预注册材料)
+/// **就是同步配置的一部分** —— 它是"下一枚身份的材料"。留着它,这句契约本身就没兑现:
+/// 一份**完全合法的生产备份**可以带着预注册状态(catalog 只核配置四元组、不看 pending,
+/// `spaces.rs:318`),清完配置去跑 [`crate::epoch::compact`] 就会分到 `Unconfigured` 分支
+/// 而当场被拒(「未配置库不该有 pending 身份」,`epoch.rs:255`)⇒ **备份没坏,却恢复不了**。
+/// ⛔ 修法必须在这个事务里,**不许**让调用方另写一句 `DELETE`(那就成了同一条规则的
+/// 第二份描述,checklist §14)。
+///
+/// ⚠ 连带代价如实说:那枚 pending 身份**可能已经注册到服务器上**,清掉之后服务器上会留下
+/// 一台永不上线的设备(= 一个席位)。这与上面那句「多一台永不上线的设备无害」是**同一条
+/// 已拍的板**,原样适用。
+///
+/// ⚠ **本函数在 402-420 那几轮之前零调用方、零测试**(`pub fn` 所以不触发 `dead_code`;
+/// 它文档里写的那个用法已被 `lib.rs:1325` 的「预检 + join reservation + 磁盘重扫」取代 ——
+/// 那条路**不写脏配置**,而不是写完再回滚)。⇒ 它的正确性**没有历史证据背书**,
+/// backup-plan §16.3.1 因此要求把它**当新代码逐键测**(`backup::restore` 的测 17)。
 pub fn clear_config(conn: &mut Connection) -> Result<(), String> {
     let tx = conn.transaction().map_err(|e| e.to_string())?;
-    for key in
-        ["account_id", "k_acc", "device_key", "server_url", "last_pushed", "bootstrapped_at"]
-    {
+    for key in [
+        // 配置四元组(全空或全有的不变量,`transport.rs:217`)。
+        "account_id",
+        "k_acc",
+        "device_key",
+        "server_url",
+        // 出站游标与引导标记。⛔ `last_pushed` 漏删的后果最阴:遗留的旧 Ack 游标会被新账户
+        // 首连直接传给引擎(`ctx_impl.rs:52`)⇒ **新压实基线被当成"已经推过",静默不推**。
+        "last_pushed",
+        "bootstrapped_at",
+        // 纪元切换的两阶段预注册材料(见上面那段:它也是同步配置)。
+        "pending_device_id",
+        "pending_device_key",
+        "pending_pubkey",
+        "pending_state",
+    ] {
         tx.execute("DELETE FROM sync_meta WHERE key = ?1", [key]).map_err(|e| e.to_string())?;
     }
     tx.commit().map_err(|e| e.to_string())
@@ -1108,21 +1140,227 @@ pub async fn register_pending_identity(
 
 // ---- 传输任务主循环 ----
 
-/// 传输任务入口(tauri setup 或测试 spawn;随控制通道关闭而退出)。
-/// #4(codex 二审):清理上次进程 kill/crash 残留的明文引导快照临时文件(Drop 跑不到的
-/// 兜底)。**由 app setup 在任何 transport 启动前调一次**——桌面多空间共享同一 `.boot`
-/// 目录,若放进 `run()` 里各 transport 无条件扫,会删掉别的空间正在传输的快照(codex 二审)。
-pub fn sweep_stale_boot_files(dir: &std::path::Path) {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let name = entry.file_name();
-        let name = name.to_string_lossy();
-        if name.starts_with("boot-snapshot-") || name.starts_with("boot-recv-") {
-            let _ = std::fs::remove_file(entry.path());
+/// 上报清单的**展示上界**(条数)。⭐ 与「工作量上界」是两件事,两个都要有:
+/// 工作量那半由 §3.4 算法第 4 条钉死 —— **对全部候选都要试删、聚合错误**,⛔ 不许
+/// 逐项早退(早退 = 后面那些明文连试都没试过)⇒ 扫描量由目录项数说了算,那是清扫
+/// 本身的要求,如实记在这里而不是假装有闸。展示那半就是这个常量,超出的只计数。
+const MAX_REPORTED_RESIDUE: usize = 8;
+
+/// 一趟启动清扫的结果。⭐ **刻意不叫 `Blocked`** —— 本轮没有任何东西被封锁,
+/// 名字不许比事实强(为什么不封锁,见 [`sweep_stale_boot_files`] 头注末那格)。
+///
+/// # ⛔ 与 [`crate::backup::staging`] 的形在一处**刻意分家**:没有「未知项 = 封锁」那道闸
+///
+/// 那边「未知项 = 不删 + 封锁」成立的前提是**扫的是本功能专用的 0700 目录**。引导
+/// 这条路两壳给的**不是同一种目录**:桌面是专用的 `<data>/.boot`(`src-tauri` 自己建),
+/// 安卓直接拿 `data_dir` 当 boot 目录(`android/src-tauri/src/coord.rs` 的
+/// `boot_dir: self.data_dir`)⇒ 那一端目录里全是合法的空间库 / catalog / 配置,
+/// 「未知项」是**常态**,照抄过来就是一条恒真的噪声闸。
+/// ⭐ 翻案的门:**两壳统一成专用 boot 目录**;⚠ 那时要连「升级那一刻,老位置的残留
+/// 归谁清」一起想清楚,否则老明文就成了没人认领的那一份。
+///
+/// ⚠ **但「读不出的目录项」是另一回事**(codex 实现审 H1):那种项**连名字都拿不到**
+/// (`ReadDir` 的逐项 `Err` 不带文件名)⇒ 它既可能是残留、也可能是别人的东西,
+/// **不能混进已确认的 [`BootSweep::Residue::failed`]**,只能单独计数报「这趟没扫全」。
+#[derive(Debug, PartialEq, Eq)]
+#[must_use = "删不掉的可能是明文数据库残留:丢掉这个返回值 = 把这道清扫退回它升档之前的样子"]
+pub enum BootSweep {
+    /// 认识的候选一个不剩,而且整个目录都扫全了。`removed` = 这一趟真删了几个。
+    Clean { removed: usize },
+    /// ⛔ **目录根本没扫成** —— 盘上有没有明文残留**未知**,别把它读成「没有」。
+    /// 这一格正是升档前那个 `let Ok(..) else { return }` 吃掉的东西。
+    Unscanned { dir: PathBuf, why: String },
+    /// 扫了,但没做干净。
+    Residue {
+        removed: usize,
+        /// **已确认**「我们认识、该删、却删不掉」的候选,逐项 `(路径, 为什么)`;
+        /// 最多 [`MAX_REPORTED_RESIDUE`] 条。⛔ **只有这些才配给「手工删除」的建议**。
+        failed: Vec<(PathBuf, String)>,
+        /// 因展示上界没被列出来的 `failed` 条数;0 = 上面那份清单是全的。
+        omitted: usize,
+        /// 连目录项都读不出的**个数**(codex 实现审 H1)。
+        /// ⛔ **没有路径可给,也绝不许把父目录当成删除目标** —— 安卓那端父目录就是
+        /// `data_dir`,那句话会变成「请删掉你的数据库目录」。它只证明**这趟没扫全**。
+        unreadable: usize,
+        /// 头一个读不出的项的**错误种类**(复核轮 L3:光计数丢了诊断力)。
+        /// ⭐ 刻意存 [`std::io::ErrorKind`] 而不是错误文本 —— 它是个枚举,
+        /// **结构上就带不了路径**,于是 H1 那条保证仍由类型背书,不靠我记得别拼路径。
+        unreadable_kind: Option<std::io::ErrorKind>,
+    },
+}
+
+impl BootSweep {
+    /// `true` = 这一趟确实把整个目录扫全了、且认识的候选一个不剩。
+    /// ⛔ `Unscanned` 与「有读不出的目录项」一律 `false` —— **不知道 ≠ 干净**。
+    pub fn is_clean(&self) -> bool {
+        matches!(self, BootSweep::Clean { .. })
+    }
+}
+
+impl std::fmt::Display for BootSweep {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            BootSweep::Clean { removed } => {
+                write!(f, "引导快照残留已清干净(这趟删了 {removed} 个)")
+            }
+            BootSweep::Unscanned { dir, why } => write!(
+                f,
+                "引导快照目录没扫成,盘上有没有明文残留未知:{} —— {why}",
+                dir.display()
+            ),
+            BootSweep::Residue { removed, failed, omitted, unreadable, unreadable_kind } => {
+                write!(f, "引导快照清扫没做干净(这趟删了 {removed} 个)")?;
+                if !failed.is_empty() || *omitted > 0 {
+                    // ⛔ **别说「明文完整库」**(codex 实现审 M1):`boot-recv-*` 建出来是空
+                    // 文件、逐块写、终块才校验 ⇒ 进程被 kill 时最常留下的正是**空的或半截的**。
+                    write!(
+                        f,
+                        ":{} 项删不掉 —— 它们可能是**明文数据库的完整或半截残留**,建议手工删除。{}{}",
+                        failed.len() + omitted,
+                        failed
+                            .iter()
+                            .map(|(p, e)| format!("\n  {} —— {e}", p.display()))
+                            .collect::<String>(),
+                        if *omitted > 0 {
+                            format!("\n  (另有 {omitted} 项未列出)")
+                        } else {
+                            String::new()
+                        },
+                    )?;
+                }
+                if *unreadable > 0 {
+                    // ⛔ 这一句**不给路径、不给删除建议**(H1);种类是枚举,带不了路径(L3)。
+                    // ⚠ **别把 `Option` 整个 `{:?}` 出去**(复核轮 L1:那样印的是
+                    // `Some(PermissionDenied)`,而 `unreadable > 0` 配 `None` 会印成
+                    // 「首个原因:None」)。⚠ 我原来那句断言用的是 `contains`,所以没逮到。
+                    let why = match unreadable_kind {
+                        Some(kind) => format!("{kind:?}"),
+                        None => "未知".to_string(),
+                    };
+                    write!(
+                        f,
+                        "。另有 {unreadable} 个目录项读不出(首个原因:{why})⇒ 这一趟没扫全,\
+                         不知道还有没有残留;⛔ 读不出的项拿不到文件名,别去动这个目录本身。"
+                    )?;
+                }
+                if failed.is_empty() && *omitted == 0 && *unreadable == 0 {
+                    // 累加器产不出这个组合(`finish()` 那道判断挡着),但 `BootSweep` 是**公开**
+                    // 枚举、外部造得出来(复核轮 L1)。别让它印出一句没头没尾的话。
+                    write!(f, " —— 没有更多细节。")?;
+                }
+                Ok(())
+            }
         }
     }
+}
+
+/// 清扫累加器:把「展示上界」这一格收在一处,别让三个调用点各写一遍。
+#[derive(Default)]
+struct BootSweepAcc {
+    removed: usize,
+    failed: Vec<(PathBuf, String)>,
+    omitted: usize,
+    unreadable: usize,
+    unreadable_kind: Option<std::io::ErrorKind>,
+}
+
+impl BootSweepAcc {
+    /// 记一条**已确认**的「该删却删不掉」。⛔ 只有拿得到路径的候选才许走这条。
+    fn note_failed(&mut self, path: PathBuf, why: String) {
+        if self.failed.len() < MAX_REPORTED_RESIDUE {
+            self.failed.push((path, why));
+        } else {
+            self.omitted += 1;
+        }
+    }
+
+    /// 记一条「这个目录项连读都读不出」。**只计数 + 头一个的错误种类** ——
+    /// 拿不到名字,也就无从判断它是不是残留;⛔ 参数是 [`std::io::ErrorKind`] 而不是
+    /// `io::Error`,**这个签名本身就是 H1 那条保证**(带不进路径,也就拼不出路径)。
+    fn note_unreadable(&mut self, kind: std::io::ErrorKind) {
+        self.unreadable += 1;
+        self.unreadable_kind.get_or_insert(kind);
+    }
+
+    fn finish(self) -> BootSweep {
+        if self.failed.is_empty() && self.unreadable == 0 {
+            BootSweep::Clean { removed: self.removed }
+        } else {
+            BootSweep::Residue {
+                removed: self.removed,
+                failed: self.failed,
+                omitted: self.omitted,
+                unreadable: self.unreadable,
+                unreadable_kind: self.unreadable_kind,
+            }
+        }
+    }
+}
+
+/// 清理上次进程 kill/crash 残留的明文引导快照临时文件(Drop 跑不到的兜底,#4 codex 二审)。
+/// **由 app setup 在任何 transport 启动前调一次**——桌面多空间共享同一 `.boot`
+/// 目录,若放进 `run()` 里各 transport 无条件扫,会删掉别的空间正在传输的快照(codex 二审)。
+///
+/// # 它清的东西照 `.joining-*` / `.backup-staging` 那一档,不照升档前那一档
+///
+/// ⚠ **两种残留都可能是半截,别一概说「完整库」**(codex 实现审 M1 + 复核轮 M1,后者
+/// 打的正是我修前一条时留下的另一半):
+/// - `boot-snapshot-*`:**成功跑完**的是 `VACUUM INTO` 的整库快照;但 `make_snapshot` 里
+///   那句注释自己就写着「VACUUM 失败可能已产部分目标文件」,而那时的删除是 best-effort ——
+///   删不掉、或进程被 kill 在 VACUUM 中途,清扫看到的就是**半截**。
+/// - `boot-recv-*`:**建出来就是空的**,逐块写、终块才校验 ⇒ 完成前恒是空的或半截的。
+///
+/// 两者与 [`crate::spaces::sweep_stale_joining`]、[`crate::backup::staging::sweep`]
+/// 同一内容类(**明文数据库字节**)。⇒ **严格:聚合错误、不早退、失败要响亮**。
+///
+/// ⚠ 升档之前它是**纯 best-effort**(`let _ = remove_file`,连 `read_dir` 失败都静默
+/// `return`、`entries.flatten()` 还会把读不出的目录项一起吃掉)—— 那正是「明文数据库
+/// 永久**静默**残留」,与 backup-plan 二轮 H1 判的完全同病。
+///
+/// # ⛔ 本轮**没有**给它加运行期引导闸(封锁「再造新快照」),判据写死免得下一个人以为漏了
+///
+/// 真加的话闸要落在 `boot_serve_snapshot` 与 `BootReceiver::start` 两处,而那个「脏」的
+/// 事实是**启动那一刻**读出来的,要穿过 supervisor → transport → ctx 传成**运行期**判据
+/// —— 首版自检清单第 10 条正打在这上面。
+/// ⚠ **别把「收益薄」说过头**(codex 实现审的保守化建议):造快照那两处确实是 no-clobber
+/// (`VACUUM INTO` 要求目标不存在、`BootReceiver::start` 用 `create_new(true)`)⇒ 残留
+/// 不会被覆盖也不会撞上;**但 no-clobber 只防覆盖、不防累积** —— 删除持续失败而创建
+/// 仍成功的话,明文残留与占盘会从有限变成**无界累积**。
+/// ⭐ 触发门:**残留在真机上真的出现过一次**(那时就有了「删不掉是常态还是偶发」的地面
+/// 事实),或**两壳统一成专用 boot 目录**(那时「未知项」那道闸也一起回来)。
+pub fn sweep_stale_boot_files(dir: &Path) -> BootSweep {
+    let mut acc = BootSweepAcc::default();
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        // 升档前这里是 `return` —— 整趟清扫没跑,而且**零信号**。
+        Err(e) => {
+            return BootSweep::Unscanned { dir: dir.to_path_buf(), why: format!("读目录失败:{e}") }
+        }
+    };
+    for entry in entries {
+        // 升档前这里是 `.flatten()`:读不出的目录项被静默吃掉,而它**可能正是**一份残留。
+        // ⛔ 只计数,不记路径(H1:这里唯一拿得到的路径是**父目录**,而它可能是用户的数据目录)。
+        let entry = match entry {
+            Ok(e) => e,
+            Err(e) => {
+                acc.note_unreadable(e.kind());
+                continue;
+            }
+        };
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if !(name.starts_with("boot-snapshot-") || name.starts_with("boot-recv-")) {
+            continue;
+        }
+        let path = entry.path();
+        match std::fs::remove_file(&path) {
+            Ok(()) => acc.removed += 1,
+            // 别人先删掉了 = 目的已达成,不算失败(幂等)。
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => acc.note_failed(path, format!("删不掉:{e}")),
+        }
+    }
+    acc.finish()
 }
 
 /// 释放并删除源端引导快照临时文件:**先 drop(bo) 落 BootSender 的 File 句柄再 remove**
@@ -1376,6 +1614,10 @@ impl Drop for AdmitLease {
     }
 }
 
+/// 传输任务入口(tauri setup 或测试 spawn;随控制通道关闭而退出)。
+///
+/// ⚠ 这句头注 80 那轮(`85b09d5`)本来就是写给它的,后来 `sweep_stale_boot_files`
+/// 被插在它上面,它就一直挂在那个清扫函数上当摘要行 —— 438 归位。
 pub async fn run(t: Transport) -> TransportExit {
     // 生产路的链路来路 = app 级监听器(`t.lan` 为 `Some` 时;拨号器归 L-c3b)。发送端
     // 一份留在 `Pumps` 上,故那条 select 臂恒挂着而不是立刻返回 None(返回 None 的臂

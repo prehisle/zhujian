@@ -63,6 +63,27 @@ pub(crate) struct LedgerEntry {
     pub seq: u64,
 }
 
+/// 一份**已经交还给用户**的产物(轮转判定它「不再自动管」时记下)。
+///
+/// ⭐ **为什么要持久记、而不是只报在那一趟的结论里**(420 补验收撞出来的):
+/// 「不再自动管」的意思正是**从此归你自己处置** —— 而用户看到它的时刻,
+/// 多半不是备份跑完那一秒(app 常驻托盘、也可能早重启过)。只留在那一趟的
+/// `last_result` 里,等于**在他需要处置的时候恰好没有了**。
+/// ⛔ 所以它**不随下一趟被替换**,只在两种情况下离场:①文件已经不在盘上(用户处置完了);
+/// ②超过 [`RELEASED_MAX`] 条时丢最旧的(有界)。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Released {
+    pub file: String,
+    pub dir: String,
+    /// 人话原因(验不过 / 身份变了 / 落点改过……)。
+    pub why: String,
+}
+
+/// 交还清单的上界。⚠ 它是**有界性**那一格,不是"够不够用" —— 真到这个数,
+/// 说明用户早就该去处置了。
+pub(crate) const RELEASED_MAX: usize = 50;
+
 /// `.backup-auto.json` 的全部内容。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -86,6 +107,13 @@ pub(crate) struct AutoFile {
     /// `space_id → 本机自动产出账`。
     #[serde(default)]
     pub ledger: BTreeMap<String, Vec<LedgerEntry>>,
+    /// **已交还给用户**的那些产物(累积,见 [`Released`])。
+    #[serde(default)]
+    pub released: Vec<Released>,
+    /// 上一趟「删不掉、下轮再试」的那几份(**每趟替换**——它们还在我的管辖内,
+    /// 下一趟就会重试,所以不该像 `released` 那样累积)。
+    #[serde(default)]
+    pub last_retry: Vec<Released>,
 }
 
 fn default_every() -> u32 {
@@ -105,6 +133,8 @@ impl Default for AutoFile {
             last_success_at: None,
             last_result: None,
             ledger: BTreeMap::new(),
+            released: Vec::new(),
+            last_retry: Vec::new(),
         }
     }
 }
@@ -151,6 +181,20 @@ impl AutoFile {
             return bad(format!(
                 "keep 至少是 {MIN_KEEP}(留 1 份等于每次把该空间的历史删光,\
                  而新产出那份可能恰好是数据被删之后的空库)"
+            ));
+        }
+        for r in self.released.iter().chain(&self.last_retry) {
+            if !is_plain_basename(&r.file) {
+                return bad(format!("交还清单里的文件名不是单纯的文件名:{}", r.file));
+            }
+            if r.dir.trim().is_empty() {
+                return bad(format!("交还清单里 {} 没有目录", r.file));
+            }
+        }
+        if self.released.len() > RELEASED_MAX {
+            return bad(format!(
+                "交还清单有 {} 条,超过上界 {RELEASED_MAX}",
+                self.released.len()
             ));
         }
         let mut seen_files: BTreeMap<(&str, &str), &str> = BTreeMap::new();
@@ -555,7 +599,42 @@ pub(crate) fn rotate_space(
     }
     kept.sort_by_key(|e| e.seq);
     *file.ledger.entry(space_id.to_string()).or_default() = kept;
+    record_notes(file, &out);
     out
+}
+
+/// 把这一趟的「交还」与「下轮再试」记进设置文件,供 UI **随时**读得到
+/// (420 补:只报在那一趟的结论里,等于在用户要处置的时候恰好没有了)。
+///
+/// 三条纪律:①**先剪掉已经不在盘上的**(用户处置完了就该自己消失,别让他去点一个不存在的路径);
+/// ②同一份文件只记一条(去重);③**有界**(超过 [`RELEASED_MAX`] 丢最旧的)。
+/// ⛔ `retry` 那半是**每趟替换**的:它们还在管辖内,下一趟就会重试。
+fn record_notes(file: &mut AutoFile, out: &RotationReport) {
+    file.released.retain(|r| Path::new(&r.dir).join(&r.file).exists());
+    for (path, why) in &out.unmanaged {
+        let p = Path::new(path);
+        let (Some(dir), Some(name)) = (p.parent(), p.file_name().and_then(|n| n.to_str())) else {
+            continue;
+        };
+        let (dir, name) = (dir.display().to_string(), name.to_string());
+        if file.released.iter().any(|r| r.dir == dir && r.file == name) {
+            continue;
+        }
+        file.released.push(Released { file: name, dir, why: why.clone() });
+    }
+    while file.released.len() > RELEASED_MAX {
+        file.released.remove(0);
+    }
+    file.last_retry = out
+        .retry
+        .iter()
+        .filter_map(|(path, why)| {
+            let p = Path::new(path);
+            let dir = p.parent()?.display().to_string();
+            let name = p.file_name()?.to_str()?.to_string();
+            Some(Released { file: name, dir, why: why.clone() })
+        })
+        .collect();
 }
 
 /// 删一份**刚刚验过**的旧备份。

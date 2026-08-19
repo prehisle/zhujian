@@ -9,6 +9,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 import { signerSha256Digests } from "./lib/apk-signer.mjs";
+import { pickBuildTools, describeBuildToolsPick } from "./lib/build-tools.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const BASE_URL = "https://zhujian.app/updates";
@@ -63,7 +64,15 @@ if (!sdk) {
   process.exit(1);
 }
 const btDir = join(sdk, "build-tools");
-const bt = readdirSync(btDir).sort().at(-1);
+// ⛔ 别改回 `.sort().at(-1)`:那是**字典序**,`35.0.9` 会赢 `35.0.10`、rc 会赢正式版。
+// 判据与三种挑错逐条钉在 scripts/lib/build-tools.mjs 与 check-build-tools-pick.mjs 里。
+const btPick = pickBuildTools(readdirSync(btDir));
+for (const line of describeBuildToolsPick(btPick)) console.error(line);
+if (!btPick.name) {
+  console.error(`${fwd(btDir)} 底下一个认得出版本号的 build-tools 都没有——判不了,拒发(fail-closed)。`);
+  process.exit(1);
+}
+const bt = btPick.name;
 const aapt = join(btDir, bt, process.platform === "win32" ? "aapt.exe" : "aapt");
 const badging = execFileSync(aapt, ["dump", "badging", apkPath], { encoding: "utf8" });
 const apkCode = badging.match(/versionCode='(\d+)'/)?.[1];

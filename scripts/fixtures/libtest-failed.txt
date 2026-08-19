@@ -1,0 +1,21 @@
+
+running 2 tests
+test tests::a_green_one ... ok
+test tests::a_red_one ... FAILED
+
+failures:
+
+---- tests::a_red_one stdout ----
+
+thread 'tests::a_red_one' (18572) panicked at /tmp/claude-1000/-exworkspace-zhujian-dev/8e52fabf-13d5-4ff1-b12e-c87aeb7c0d79/scratchpad/sample.rs:6:22:
+assertion `left == right` failed
+  left: 4
+ right: 5
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    tests::a_red_one
+
+test result: FAILED. 1 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

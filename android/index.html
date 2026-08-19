@@ -742,7 +742,12 @@
         font-size: var(--fs-13); word-break: break-all; color: var(--ink-soft);
         background: var(--raised); border: 1px solid var(--line);
         border-radius: var(--radius-md); padding: 10px 12px;
+        /* 434:诊断串要能被长按选中抄走——收进折叠区之后,这是它唯一的出口。 */
+        user-select: text; -webkit-user-select: text;
       }
+      /* 434:折叠区只要一点间距。⛔ 刻意不给 summary 单开颜色/字号规则 —— 复用既有的
+         `.fine`,不给 contrast 那道门禁新增一个没人核过的签名。 */
+      .gate details { margin-top: 14px; }
 
       /* 底部固定确认条(ui-audit P0 #4):两拍确认的第二拍统一落在这条 fixed 条上。
          此前第一拍原位换长文案(「删除」→「确认删除?进回收站」)会变宽换行、3s 又
@@ -967,6 +972,36 @@
          选择器写成双类 = 特异性 (0,2,0):要压过 .sync .fine 这类同权重容器规则(同权重
          按文档序后者胜,故本条必须住样式表末尾);单类 (0,1,0) 会输给它们。 */
       .warn-ink.warn-ink { color: var(--seal); }
+
+      /* 备份一节(backup-plan §17)。⚠ 复用 .row / .fine / .warn-ink 那套面板骨架,
+         这里只补三样它们给不出的:①备份码要能一眼抄下来(等宽 + 撑开字距 + 可换行);
+         ②列表行一行一份;③「其他文件」那条恒显的路要看得出可点。 */
+      .bkup-h { font-size: var(--fs-13); color: var(--ink-soft); margin: 12px 0 6px; font-weight: 600; }
+      .bkup-code {
+        /* 等宽照桌面 `.bkup-code` 那条(仓里没有 --font-mono 令牌,两端都是就地写族)。 */
+        font-family: Consolas, "Courier New", monospace; font-size: var(--fs-16); letter-spacing: 0.12em;
+        line-height: 1.7; word-break: break-all; margin: 8px 0;
+        padding: 10px 12px; border: 1px solid var(--seal-line); border-radius: var(--radius-md);
+        background: var(--seal-tint); color: var(--ink);
+      }
+      .bkup-out { margin-bottom: 6px; }
+      .bkup-file { font-size: var(--fs-12); color: var(--ink-soft); word-break: break-all; margin: 2px 0; }
+      .bkup-item {
+        display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center;
+        padding: 8px 0; border-top: 1px dashed var(--line); font-size: var(--fs-13);
+      }
+      .bkup-item-name { flex: 1 1 100%; min-width: 0; word-break: break-all; color: var(--ink); }
+      .bkup-item-meta { flex: none; font-size: var(--fs-12); color: var(--ink-faint); }
+      .bkup-item-state { flex: 1 1 auto; min-width: 0; font-size: var(--fs-12); color: var(--ink-soft); }
+      .bkup-item-state.warn-ink { color: var(--seal); }
+      .bkup-item button {
+        flex: none; min-height: 32px; padding: 4px 12px;
+        border: 1px solid var(--line-strong); border-radius: var(--radius-sm);
+        background: none; color: var(--ink-soft); font-size: var(--fs-13); font-family: var(--font-sans);
+      }
+      /* 触区扩展(§2.3):这一条是恒显的「其他文件」入口,不是装饰字。 */
+      .bkup-others { position: relative; color: var(--ink-soft); text-decoration: underline; }
+      .bkup-others::before { content: ""; position: absolute; left: 0; right: 0; top: -12px; bottom: -12px; }
     </style>
   </head>
   <body>
@@ -1125,7 +1160,7 @@
 
     <!-- 归档册面(120):已完成入册的任务(史实,可查);取消入册回看板已完成。 -->
     <section id="sealed-pane" class="sync" hidden>
-      <h2 data-i18n="shell.navSealed">归档册</h2>
+      <h2 data-i18n="shell.navSealed">归档</h2>
       <div id="sealed-list" class="timeline"></div>
       <p class="fine" data-i18n="shell.sealedNote">完成的任务「入册」后在这里安放;归档是史实,不可删除。</p>
     </section>
@@ -1233,6 +1268,17 @@
       <p class="fine"><span data-i18n="shell.aliasNotePre">给这台设备起个名字(如「娟娟的手机」)。它会</span><b data-i18n="shell.aliasNoteBold">同步</b><span data-i18n="shell.aliasNotePost">给同一账户的其他设备,让他们看到条目是谁记的。留空 = 不起名。</span></p>
       <p id="alias-msg" class="fine" hidden></p>
 
+      <!-- 加密备份(backup-plan §17 笔③):排在「界面字号」之后、「关于」之前。
+           ⛔ 三条诚实边界原样进 UI,别在文案里软化(§17.12):手机上能备份不能还原 /
+           落点在本机挡不住手机丢了 / 清数据会抹掉备份码。整节内容由 src/backup.ts 渲染
+           ——它有六种态(没设置 / 仪式中 / 没落点 / 已就绪 / 封锁 / 配置坏了),
+           静态 markup 给不出任何一种。 -->
+      <h2 data-i18n="backup.title">备份</h2>
+      <div id="backup-body"></div>
+      <p class="fine" data-i18n="backup.footRestore">手机上能做备份,但不能从备份还原 —— 真出事时把 .zjbak 文件拿到电脑上的朱简里恢复。</p>
+      <p class="fine" data-i18n="backup.footCode">备份码保存在这台手机上(明文),卸载或清除数据会一起抹掉;抄在纸上的那份是唯一的。</p>
+      <p class="fine" data-i18n="backup.footValid">「有效」只有验过才算 —— 文件名和扩展名证明不了任何事。</p>
+
       <h2 data-i18n="shell.aboutTitle">关于</h2>
       <div id="about" class="kv"></div>
 
@@ -1267,7 +1313,7 @@
       <button data-mode="ideas" class="active" data-i18n="shell.navIdeas">随记</button>
       <button data-mode="tasks" data-i18n="shell.navTasks">任务</button>
       <button data-pane="trash" data-i18n="shell.navTrash">回收站</button>
-      <button data-pane="sealed" data-i18n="shell.navSealed">归档册</button>
+      <button data-pane="sealed" data-i18n="shell.navSealed">归档</button>
     </nav>
 
     <!-- 启动闸封锁页(工序 6,multispace-plan §2.1/§19):**默认在场**(问闸之前页面
@@ -1279,29 +1325,47 @@
     <div id="gate" class="gate">
       <p id="gate-checking" class="muted" data-i18n="shell.gateChecking">正在检查本机空间…</p>
       <div id="gate-blocked" hidden>
+        <!-- ⭐ 那句 Rust 诊断串**收进折叠区、排在人话之后**(434):它是 core 原样吐出来的
+             (例:「空间 main 库打不开(升级预检)/data/…/notebook.sqlite3:unable to open
+             database file: /data/…」),对用户没有意义,却曾是这一页里**第一眼看到的东西**。
+             ⛔ **但绝不能删掉它** —— 434 刚查实:它是「setup 为什么没跑完」唯一的载体,
+             另外两处(logcat / `startup_gate` 返回值)用户都够不着。⇒ 折叠 + 可选中,
+             要排查时用户能自己展开抄给我们。⚠ 四个 kind 都照这一个形,别只改一个。 -->
         <div id="gate-upgrade" hidden>
           <h2 data-i18n="shell.gateUpgradeTitle">需要更新朱简</h2>
-          <p id="gate-msg-upgrade" class="gate-msg"></p>
           <p><span data-i18n="shell.gateUpgradePre">本机数据由更新版本的朱简创建,当前装的是旧版:请到官网</span> <b>zhujian.app</b> <span data-i18n="shell.gateUpgradePost">下载安装最新版,数据即可继续使用。</span></p>
           <p class="fine" data-i18n="shell.gateUpgradeFine">不要清除数据——清除会把这些较新的记录永久删掉。</p>
+          <details>
+            <summary class="fine" data-i18n="shell.gateDetail">技术详情(排查时抄给开发者)</summary>
+            <p id="gate-msg-upgrade" class="gate-msg"></p>
+          </details>
         </div>
         <div id="gate-retry" hidden>
           <h2 data-i18n="shell.gateRetryTitle">启动暂时失败</h2>
-          <p id="gate-msg-retry" class="gate-msg"></p>
           <p data-i18n="shell.gateRetryBody">这是环境问题(例如存储空间不足),记录数据本身无恙:请释放存储空间后,完全关闭朱简再重新打开。</p>
           <p class="fine" data-i18n="shell.gateRetryFine">不要清除数据——重试即可恢复。</p>
+          <details>
+            <summary class="fine" data-i18n="shell.gateDetail">技术详情(排查时抄给开发者)</summary>
+            <p id="gate-msg-retry" class="gate-msg"></p>
+          </details>
         </div>
         <div id="gate-repair" hidden>
           <h2 data-i18n="shell.gateRepairTitle">升级遇到问题</h2>
-          <p id="gate-msg-repair" class="gate-msg"></p>
           <p><span data-i18n="shell.gateRepairPre">记录数据完好,是这一版朱简升级数据时出了问题:请到官网</span> <b>zhujian.app</b> <span data-i18n="shell.gateRepairPost">重新下载安装最新版再试。</span></p>
           <p class="fine" data-i18n="shell.gateRepairFine">不要清除数据——问题在程序,不在你的记录。</p>
+          <details>
+            <summary class="fine" data-i18n="shell.gateDetail">技术详情(排查时抄给开发者)</summary>
+            <p id="gate-msg-repair" class="gate-msg"></p>
+          </details>
         </div>
         <div id="gate-reset" hidden>
           <h2 data-i18n="shell.gateResetTitle">本机空间数据异常</h2>
-          <p id="gate-msg-reset" class="gate-msg"></p>
           <p><span data-i18n="shell.gateResetPre">本版本不修复受损数据:请到 系统设置 → 应用 → 朱简 → 存储 →</span> <b data-i18n="shell.gateResetBold">清除数据</b><span data-i18n="shell.gateResetPost">,再重新打开并配对。</span></p>
           <p class="fine" data-i18n="shell.gateResetFine">清除后,本机尚未被其他设备实际接收的记录将永久丢失;服务器不是完整备份。请先在桌面朱简确认数据完整、并保持它在线,再清除。</p>
+          <details>
+            <summary class="fine" data-i18n="shell.gateDetail">技术详情(排查时抄给开发者)</summary>
+            <p id="gate-msg-reset" class="gate-msg"></p>
+          </details>
         </div>
       </div>
     </div>

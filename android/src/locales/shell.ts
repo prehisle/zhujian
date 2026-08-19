@@ -14,7 +14,7 @@ export const shell = defineMessages({
   "shell.navTags": { zh: "标签", en: "Tags" },
   "shell.navSearch": { zh: "搜索", en: "Search" },
   "shell.navTrash": { zh: "回收站", en: "Trash" },
-  "shell.navSealed": { zh: "归档册", en: "Archive" },
+  "shell.navSealed": { zh: "归档", en: "Archive" },
   "shell.sync": { zh: "同步", en: "Sync" },
   "shell.settings": { zh: "设置", en: "Settings" },
   "shell.updateGo": { zh: "下载", en: "Download" },
@@ -96,6 +96,9 @@ export const shell = defineMessages({
   "shell.gateResetBold": { zh: "清除数据", en: "Clear data" },
   "shell.gateResetPost": { zh: ",再重新打开并配对。", en: ", then open the app again and pair it." },
   "shell.gateResetFine": { zh: "清除后,本机尚未被其他设备实际接收的记录将永久丢失;服务器不是完整备份。请先在桌面朱简确认数据完整、并保持它在线,再清除。", en: "After clearing, any records this device has not actually delivered to another device are lost for good; the server is not a full backup. Check on desktop Zhujian that your data is complete and keep it online before clearing." },
+  // 434:四个封锁页共用这一句。⛔ 它下面那段是 core 原样吐的诊断串(中文 + 英文 SQLite
+  // 原文混排、路径可能印两遍),刻意不翻也不美化 —— 它的受众是排查的人,不是用户。
+  "shell.gateDetail": { zh: "技术详情(排查时抄给开发者)", en: "Technical details (copy these when reporting a problem)" },
   "shell.ritualTitle": { zh: "账户恢复码", en: "Account recovery code" },
   "shell.ritualBody": { zh: "这是账户恢复码——请抄写在纸上,存放在安全的地方。", en: "This is the account recovery code — write it on paper and keep it somewhere safe." },
   "shell.ritualFine": { zh: "恢复码是账户密钥,不是数据备份:恢复数据还必须有至少一台在线的完整副本。它不存在服务器上,丢了无人能帮你找回。", en: "The recovery code is the account key, not a data backup: restoring data also requires at least one complete copy online. It is not stored on the server — if you lose it, nobody can get it back for you." },

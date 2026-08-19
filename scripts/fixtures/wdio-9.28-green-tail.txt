@@ -1,0 +1,12 @@
+[wry 0.55.1 linux #0-38] Session ID: 38d818d8-10df-4bbe-810e-24b4ad1f615b
+[wry 0.55.1 linux #0-38]
+[wry 0.55.1 linux #0-38] » e2e/specs/zz-verify-focustrap.e2e.js
+[wry 0.55.1 linux #0-38] a11y · lightbox 焦点陷阱
+[wry 0.55.1 linux #0-38]    ✓ 开图移焦进遮罩;Tab/Shift+Tab 困在遮罩内不溜到背后
+[wry 0.55.1 linux #0-38]    ✓ 关闭把焦点还回打开前的元素
+[wry 0.55.1 linux #0-38]
+[wry 0.55.1 linux #0-38] 2 passing (6.1s)
+
+
+Spec Files:	 39 passed, 39 total (100% completed) in 00:10:11  
+

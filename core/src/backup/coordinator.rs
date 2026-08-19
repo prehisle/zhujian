@@ -39,7 +39,9 @@ use std::sync::{Mutex, MutexGuard};
 use super::auto;
 use super::config::{self, ConfigError};
 use super::engine::{self, Artifact, BatchFatal};
+use super::restore::RestoreStage;
 use super::staging;
+use super::ReadError;
 use crate::spaces::SpaceCatalog;
 
 /// 三处路径的域。⛔ **必须与 `WriterLease` 一一对应**(§3.4 那张表)——
@@ -113,6 +115,23 @@ pub struct BackupEntry {
     pub modified_ms: Option<u64>,
 }
 
+/// 一趟恢复的产出(§16)。⭐ **它是「一个未配置的新空间」,不是"你的库回来了、原样在原处"**
+/// —— UI 的话术要照 §16.11 那六条诚实边界说,⛔ 别暗示它覆盖了什么或接回了旧账户。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RestoredSpace {
+    /// 新空间的 ULID(全新的;⛔ **不是**备份里那个 space_id)。
+    pub space_id: String,
+    pub path: String,
+    /// 备份里那个空间叫什么(trailer)。⚠ v1 刻意**不自动改名** ⇒ 同机恢复后两个空间同名。
+    pub source_space_name: Option<String>,
+    /// 这份备份是什么时候取的(RFC3339 UTC;本地时间由前端转)。
+    pub created_at: String,
+    /// 恢复出来的库的新设备身份。
+    pub device_id: String,
+    /// 已发布,但暂存名没清掉 —— ⛔ **不是失败**(下次启动 sweep 再清一次名字)。
+    pub cleanup_error: Option<String>,
+}
+
 /// 验过之后才拿得到的那几格(全部来自 trailer,不是从文件名猜的)。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VerifiedBackup {
@@ -128,6 +147,12 @@ pub struct VerifiedBackup {
 pub enum Busy {
     Backup,
     Cleanup,
+    /// ⭐ **第三个活动态,424 加的**(backup-plan §16.7)。419 写过「⛔ 不给 `Busy` 加第三态
+    /// (不为只读列表动评审过的状态机)」—— **那条判据不适用于恢复**:`list_backups` /
+    /// `verify_backup` 是只读的,而恢复**写数据目录、造明文整库、与启动清扫抢同一个 staging
+    /// 域**。它是第三种**破坏性**入口,不进准入的话 §3.4.1 第 7 维那条(「重试清扫会删掉
+    /// 正在用的那份快照」)对恢复原样复发。
+    Restore,
 }
 
 impl Busy {
@@ -135,6 +160,7 @@ impl Busy {
         match self {
             Busy::Backup => "备份",
             Busy::Cleanup => "清扫",
+            Busy::Restore => "恢复",
         }
     }
 }
@@ -259,6 +285,24 @@ pub struct AutoStatus {
     pub problem: Option<String>,
     /// ⭐ 进程内那枚待读通知,**取走即清**(设计审 H5)。
     pub pending_notice: Option<String>,
+    /// **已交还给用户**的产物:`(完整路径, 人话原因)`。⛔ **与 `pending_notice` 相反,
+    /// 读了不清** —— 它是一张"待你处置"的清单,不是一次性通知;文件被处置掉(不在盘上了)
+    /// 之后它自己会在下一趟轮转时消失。
+    /// ⚠ 420 补的真机验收撞出来的:此前这份信息**只有计数进了 `last_result`,路径只到 stderr**,
+    /// 用户知道"有 3 份不再自动管",却不知道**是哪三份**。
+    pub released: Vec<(String, String)>,
+    /// 上一趟「删不掉、下轮再试」的那几份(每趟替换)。
+    pub retry: Vec<(String, String)>,
+}
+
+/// 把设置文件里那两张清单翻成 `(完整路径, 原因)`。
+/// `only_existing` = 只显示还在盘上的那些(交还清单用;`retry` 是上一趟的快照,原样显示)。
+fn notes(list: &[auto::Released], only_existing: bool) -> Vec<(String, String)> {
+    list.iter()
+        .map(|r| (Path::new(&r.dir).join(&r.file), r.why.clone()))
+        .filter(|(p, _)| !only_existing || p.exists())
+        .map(|(p, why)| (p.display().to_string(), why))
+        .collect()
 }
 
 /// 一句人话结论。⛔ 别把「轮转停滞」这种事只放进那条每进程弹一次的 banner ——
@@ -300,6 +344,12 @@ pub enum BackupError {
     BackupBusy(Busy),
     /// 这次**清扫**请求被拒:有一趟别的操作在跑。
     CleanupBusy(Busy),
+    /// 这次**恢复**请求被拒:有一趟别的操作在跑(§16.7 那张表的第三行)。
+    /// ⛔ UI 必须明确认领这一格,不许退化成"操作失败"。
+    RestoreBusy(Busy),
+    /// 恢复没跑成。里面那句是 [`restore`](super::restore) 的**分档原话**
+    /// (哪一幕 / 哪一格),⛔ 别在上层糊成一句"恢复失败"。
+    RestoreFailed(String),
     /// 暂存区里还躺着明文,备份被封锁 —— 只有「重试清扫」能解。
     Blocked(String),
     /// 还没设置备份(该走仪式了)。**这不是故障**。
@@ -330,6 +380,10 @@ impl std::fmt::Display for BackupError {
             BackupError::CleanupBusy(b) => {
                 write!(f, "现在有一趟{}在跑,等它结束再清扫", b.label())
             }
+            BackupError::RestoreBusy(b) => {
+                write!(f, "现在有一趟{}在跑,等它结束再恢复", b.label())
+            }
+            BackupError::RestoreFailed(m) => write!(f, "{m}"),
             BackupError::Blocked(m) => write!(f, "{m}"),
             BackupError::NotConfigured => write!(f, "还没设置备份:先生成并抄下备份码"),
             BackupError::CeremonyPending => {
@@ -437,6 +491,7 @@ impl BackupCoordinator {
             Activity::Running(running) => Err(match want {
                 Busy::Backup => BackupError::BackupBusy(running),
                 Busy::Cleanup => BackupError::CleanupBusy(running),
+                Busy::Restore => BackupError::RestoreBusy(running),
             }),
         }
     }
@@ -691,6 +746,10 @@ impl BackupCoordinator {
                 last_result: a.last_result,
                 problem: None,
                 pending_notice,
+                // ⚠ 只显示**还在盘上**的:用户处置掉之后不该还留着一条点不动的路径。
+                // (真正的剪枝在下一趟轮转时落盘,这里只是显示面的过滤。)
+                released: notes(&a.released, true),
+                retry: notes(&a.last_retry, false),
             },
             // ⛔ 坏了 / 越界 = **响亮拒绝自动备份**,不许静默按默认值跑(那会把用户
             // 「我关掉了自动备份」的意思悄悄改回"开着")。UI 显示原话 + 给「重置」按钮。
@@ -702,6 +761,8 @@ impl BackupCoordinator {
                 last_result: None,
                 problem: Some(e.to_string()),
                 pending_notice,
+                released: Vec::new(),
+                retry: Vec::new(),
             },
         }
     }
@@ -930,6 +991,75 @@ impl BackupCoordinator {
         })
     }
 
+    // ---- 恢复(笔②,backup-plan §16)-------------------------------------------------
+
+    /// 从一份 `.zjbak` 恢复出**一个未配置(不同步)的新空间**(幕⓪ + ①…⑥)。
+    /// ⛔ **绝不覆盖任何现有数据**;幕⑦(集成进 catalog / 装配运行时)在壳里。
+    ///
+    /// # ⛔ 三条要点(每条都有一个会静默毁掉东西的反面)
+    ///
+    /// 1. **备份码是用户手输的**,⛔ 不读 `.backup.json`、⛔ 也不要求本机已完成备份仪式 ——
+    ///    换了机器 / 重装系统之后那份配置根本不存在,而那正是恢复的主场景。
+    /// 2. ⛔ **输进来的钥绝不写回 `.backup.json`**:那会覆盖本机自己的备份钥,此后产出的
+    ///    所有备份都用别人那把钥,而用户抄的是自己那张纸 —— 静默、无提示。
+    ///    (本方法与它的下游没有任何一条通向 [`config::create`] / [`config::set_dir`] 的路。)
+    /// 3. **它是破坏性入口,必须占准入**(§16.7):写数据目录、造明文整库、与启动清扫抢
+    ///    同一个 staging 域。`Blocked` 时立即拒 —— staging 里已知有清不掉的明文,不许再造一份。
+    ///
+    /// ⚠ **没有进度、也不能取消**(§16.9,与 `0a-进度` 同一条已拍的板:用户全部 5 个空间
+    /// 今天合计 28.4 MiB,恢复一份 ≈ 秒级)。⛔ 别顺手做进度条。
+    pub fn restore_backup(&self, file: &str, code: &str) -> Result<RestoredSpace, BackupError> {
+        let _admitted = self.admit(Busy::Restore)?;
+        {
+            // §16.7 表末行:Blocked + 恢复 = 立即拒。
+            let inner = self.lock();
+            if let Some(reason) = &inner.blocked {
+                return Err(BackupError::Blocked(reason.clone()));
+            }
+        }
+        // 落点 = 空间扫描目录(生产的数据目录)。⚠ e2e(`YS_DB_PATH`)禁扫也禁建空间
+        // (§六③),恢复照同一条纪律拒 —— 与壳里「测试模式不加入 / 不建 / 不重置空间」
+        // 那三处同形。
+        let target_dir = self.paths.scan_dir.clone().ok_or_else(|| {
+            BackupError::Target("测试模式(YS_DB_PATH)不恢复空间".into())
+        })?;
+        let file = file.trim();
+        if file.is_empty() {
+            return Err(BackupError::Target("要恢复哪一份?先选一个 .zjbak 文件".into()));
+        }
+        // 备份码 → 一次性的钥。⚠ 走的是与显示 / 回输核对**同一支编码的逆**,
+        // 大小写 / `-` / O↔0 / I↔1 这些抄录容错口径一致。
+        let key = crate::sync::crypto::crockford_decode32(code.trim()).map_err(|e| {
+            BackupError::RestoreFailed(format!("备份码不对(抄漏了一位?):{e}"))
+        })?;
+        let key = super::BackupKey::from_bytes(key);
+
+        match super::restore::restore(
+            Path::new(file),
+            &key,
+            &self.paths.staging,
+            &target_dir,
+        ) {
+            Ok(r) => Ok(RestoredSpace {
+                space_id: r.space_id,
+                path: r.path.display().to_string(),
+                source_space_name: r.source_space_name,
+                created_at: r.created_at,
+                device_id: r.device_id,
+                cleanup_error: r.cleanup_error,
+            }),
+            Err(f) => {
+                // 明文删不掉 ⇒ **封锁**(与备份同一条规则、同一句话术):已知盘上有明文,
+                // 不许再造下一份。⛔ 不在这里顺手重扫解封 —— 只有 `retry_cleanup` 能解。
+                if let Some(stuck) = f.plaintext_stuck {
+                    let reason = BatchFatal::PlaintextStuck(stuck).to_string();
+                    self.lock().blocked = Some(reason);
+                }
+                Err(BackupError::RestoreFailed(restore_message(f.stage, f.message)))
+            }
+        }
+    }
+
     /// 读配置,把「还没配过」翻成 [`BackupError::NotConfigured`](那不是故障,是该走仪式)。
     fn settings(&self) -> Result<config::BackupSettings, BackupError> {
         config::load(&self.paths.config_path).map_err(|e| match e {
@@ -947,6 +1077,29 @@ impl BackupCoordinator {
         // 先放准入再取状态,否则回给 UI 的那份 status 恒带着 busy=清扫。
         drop(admitted);
         Ok(self.status())
+    }
+}
+
+/// 恢复失败的那句话 —— 绝大多数原样带出,**只有 `WrongKey` 那一格要改口**。
+///
+/// # ⭐ 为什么只有这一格
+///
+/// [`ReadError::WrongKey`] 的 `Display` 写的是「这份备份不是**当前备份码**对应的」。
+/// 那句话是给 [`BackupCoordinator::verify_backup`] 写的,在那条路上**准确**:验证用的
+/// 确实是本机 `.backup.json` 里那把钥。
+///
+/// ⛔ **但恢复用的是用户刚手输的那把**(§16.6:换了机器 / 重装系统之后本机根本没有配置)——
+/// 把「当前备份码」原样端给一个刚敲完码的人,他会读成「它没用我输的码」,**恰是 §16.6
+/// 要避免的那种误解**。三个端都真机撞见过同一句(Linux 427 / Windows 428 补 / 433 桌面对拍)。
+///
+/// ⇒ 换的是**恢复这条路的措辞**,话照 §16.6 末那句规格(「这份备份不是**这个**备份码的」),
+/// 并点名两个可能的因;⛔ **别去动 `Display` 本身** —— 那会把 verify 那边已经准确的话弄错。
+fn restore_message(stage: RestoreStage, message: String) -> String {
+    match stage {
+        RestoreStage::Read(ReadError::WrongKey) => {
+            "这份备份不是你输入的这个备份码的:码抄错了,或者选错了文件".into()
+        }
+        _ => message,
     }
 }
 

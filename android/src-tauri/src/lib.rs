@@ -1738,6 +1738,271 @@ async fn net_probe(url: String) -> Vec<transport::ProbeStep> {
     steps
 }
 
+// ── 加密备份:安卓那半(backup-plan §17 笔③;core 一个字未改)───────────────────
+//
+// 形一句话:**Kotlin 只搬密文,整库明文快照的字节不出 core**(§17.3)。备份仍由
+// `BackupCoordinator` 在 app 私有区里整套跑完(明文全程锁在 0700 的 `.backup-staging`
+// 里),产出的**密文**落私有 **outbox**(= `BackupPaths::production` 的 `default_dir`),
+// 再由 Kotlin 那条 SAF 桥拷进用户自己挑的目录。
+//
+// ⛔ **这一层与桌面同纪律:不做任何策略** —— 准入 / 封锁 / 仪式全在 core。
+// 与桌面壳的三处**刻意不同**,每处都是判据不是口味:
+//
+// 1. **`BackupStatusDto` 没有 `dir` 这一格**(§17.3 末):在这一端 `status().dir` 是
+//    **中转 outbox**,不是用户的落点(落点是那个 tree URI,core 永远不知道它存在)。
+//    把它显示出来等于骗人 ⇒ 干脆不交给前端,「想当然地显示它」在类型上就写不出来。
+// 2. **命令面两个入口都只收「裸文件名」**(`backup_verify`),路径由 Rust 自己 join ——
+//    与 §17.5 那条 H-1 的桥面闸同形:前端手里从来就没有一条完整路径可传。
+// 3. **没有 `backup_set_dir` / `backup_open_dir` / 自动备份那几条**:v1 不做
+//    (§17.2 / §17.15),而不做的意思是**入口不存在**,不是"按钮先藏起来"。
+
+/// 那个 outbox 的期望路径(§17.5 的运行时相等闸)。⭐ 它是**用来比对的期望值**,
+/// ⛔ **不是**用来打开文件的路径 —— 后者恒由 Kotlin 自己 join(H-1)。
+struct BackupOutbox(String);
+
+#[derive(serde::Serialize)]
+struct BackupStatusDto {
+    configured: bool,
+    blocked: Option<String>,
+    /// "backup" | "cleanup" | "restore" | null。
+    busy: Option<&'static str>,
+    awaiting_ceremony: bool,
+    problem: Option<String>,
+}
+
+/// 一份刚产出的密文。⭐ **只给文件名不给路径**(见本节头注 2)。
+#[derive(serde::Serialize)]
+struct BackupMadeDto {
+    space_id: String,
+    file_name: String,
+    bytes: u64,
+}
+
+#[derive(serde::Serialize)]
+struct BackupFailedDto {
+    space_id: String,
+    message: String,
+    /// "unverified"(写完没验过)| "invalid"(验不过又删不掉)。⛔ 两种都不得计作一份备份。
+    leftover_kind: Option<&'static str>,
+    leftover_name: Option<String>,
+}
+
+#[derive(serde::Serialize)]
+struct BackupReportDto {
+    made: Vec<BackupMadeDto>,
+    failed: Vec<BackupFailedDto>,
+    /// 剩余**根本没跑**的空间数;UI 必须与「跑了但失败」显著区分。
+    skipped: usize,
+    fatal: Option<String>,
+    blocked: Option<String>,
+}
+
+#[derive(serde::Serialize)]
+struct VerifiedBackupDto {
+    space_id: String,
+    space_name: Option<String>,
+    created_at: String,
+    app_version: String,
+    plain_bytes: u64,
+    /// 验完那份回拷**没能删掉**(实现审一弹 M-4)。⛔ **不是失败** —— 验证结论本身照旧成立,
+    /// 留下的是一份**密文**垃圾,下次启动壳会接着清。但它也**不许静默**:
+    /// 「无论成败都要删掉」这条义务没兑现,就得让人看得见(照 core 的 `RestoredSpace.cleanup_error` 那个形)。
+    cleanup_error: Option<String>,
+}
+
+fn backup_status_dto(s: zhujian_core::backup::BackupStatus) -> BackupStatusDto {
+    use zhujian_core::backup::Busy;
+    BackupStatusDto {
+        configured: s.configured,
+        blocked: s.blocked,
+        busy: s.busy.map(|b| match b {
+            Busy::Backup => "backup",
+            Busy::Cleanup => "cleanup",
+            Busy::Restore => "restore",
+        }),
+        awaiting_ceremony: s.awaiting_ceremony,
+        problem: s.problem,
+    }
+}
+
+/// 只取 `path` 的最后一段。⛔ 前端不该拿到路径(本节头注 2),core 的产物名
+/// (`zhujian-<8>-<UTC>-<ULID>.zjbak`)自己就是唯一的。
+fn base_name(path: &str) -> String {
+    path.rsplit(['/', '\\']).next().unwrap_or(path).to_string()
+}
+
+/// **回拷名闸**(与 §17.5 那张表里 `putFile` 的裸名校验同形,⛔ 这不是重复,是同一条
+/// 规则在两条入口上各落一次)。四条:不含路径分隔符 / 不是 `.`|`..` / 以 `.zjbak` 收尾 /
+/// **以 `verify-` 开头**。
+///
+/// ⭐ **第四条是承重的那条,别当装饰**:验完要把这份回拷删掉(§17.10「无论成败都要删」),
+/// 而那把删除动作绑在这条命令上 —— 若名字可以是任意 `.zjbak`,它就能删掉 outbox 里
+/// **一份刚做好、还没搬进用户目录的真产物**(那正是 `put` 唯一的、不可再生的锚)。
+/// ⇒ 只许删「壳自己造的尺 4 名字」。
+///
+/// ⭐ 单独成函数是为了让它**可被直接测**(§17.16 那几刀要逐条真红)。
+fn fetched_name_gate(name: &str) -> Result<(), String> {
+    if name.is_empty() || name == "." || name == ".." {
+        return Err("备份文件名不合法".into());
+    }
+    if name.contains('/') || name.contains('\\') || name.contains('\0') || name.contains("..") {
+        return Err("备份文件名不许带路径".into());
+    }
+    if !name.ends_with(".zjbak") {
+        return Err("这不是一个 .zjbak 文件".into());
+    }
+    if !name.starts_with("verify-") {
+        return Err("这不是一份回拷来验的文件".into());
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn backup_status(app: AppHandle) -> BackupStatusDto {
+    backup_status_dto(app.state::<zhujian_core::backup::BackupCoordinator>().status())
+}
+
+/// ⭐ **给 Kotlin 比对用的期望值**(§17.5 那道运行时相等闸):壳自己算的
+/// `context.dataDir/backups` 与这个不相等 ⇒ **一趟 transfer 都不许起**。
+/// 理由 = 这是**漂移**类风险(tauri 改了 `getDataDir` / 我们换了 identifier),
+/// 而漂移的表现会是「备份说成功了、文件搬不过去」—— 最不能静默的一类。
+#[tauri::command]
+fn backup_outbox_dir(app: AppHandle) -> String {
+    app.state::<BackupOutbox>().0.clone()
+}
+
+/// 仪式第一步:生成备份钥(**只在内存**)并返回要抄的码。
+/// ⛔ 没有 `dir` 入参 —— 这一端的落点由 SAF 定,core 那边恒用默认 outbox。
+#[tauri::command]
+fn backup_begin_setup(app: AppHandle) -> Result<String, String> {
+    app.state::<zhujian_core::backup::BackupCoordinator>()
+        .begin_setup(None)
+        .map_err(|e| e.to_string())
+}
+
+/// 仪式第二步:回输核对。**对上了才落盘**(⛔ 不许退化成勾「我已抄下」——
+/// 在这一端它更要紧:清数据 / 卸载之后抄下来那份是**唯一**的钥,§17.7)。
+#[tauri::command]
+fn backup_confirm_setup(app: AppHandle, code: String) -> Result<(), String> {
+    app.state::<zhujian_core::backup::BackupCoordinator>()
+        .confirm_setup(&code)
+        .map_err(|e| e.to_string())
+}
+
+/// 放弃仪式(关面 / 点取消):进程内那把钥当场丢掉,盘上什么都没写过。
+#[tauri::command]
+fn backup_cancel_setup(app: AppHandle) {
+    app.state::<zhujian_core::backup::BackupCoordinator>().cancel_setup();
+}
+
+/// 跑一趟备份(所有空间,逐空间串行)——产物落**私有 outbox**,还没进用户的目录。
+///
+/// ⭐ `spawn_blocking` 不是礼节:整库 `VACUUM INTO` + 全量加密 + 全量自验,大库好几秒;
+/// 手机上把 UI 线程占住会被系统判成无响应。
+#[tauri::command]
+async fn backup_run(app: AppHandle) -> Result<BackupReportDto, String> {
+    use zhujian_core::backup::Leftover;
+    tauri::async_runtime::spawn_blocking(move || {
+        let report = app
+            .state::<zhujian_core::backup::BackupCoordinator>()
+            .run_backup()
+            .map_err(|e| e.to_string())?;
+        Ok(BackupReportDto {
+            made: report
+                .made
+                .into_iter()
+                .map(|m| BackupMadeDto {
+                    space_id: m.space_id,
+                    file_name: base_name(&m.path),
+                    bytes: m.bytes,
+                })
+                .collect(),
+            failed: report
+                .failed
+                .into_iter()
+                .map(|f| {
+                    let (kind, name) = match f.leftover {
+                        None => (None, None),
+                        Some(Leftover::Unverified(p)) => (Some("unverified"), Some(base_name(&p))),
+                        Some(Leftover::Invalid(p)) => (Some("invalid"), Some(base_name(&p))),
+                    };
+                    BackupFailedDto {
+                        space_id: f.space_id,
+                        message: f.message,
+                        leftover_kind: kind,
+                        leftover_name: name,
+                    }
+                })
+                .collect(),
+            skipped: report.skipped,
+            fatal: report.fatal,
+            blocked: report.blocked,
+        })
+    })
+    .await
+    .map_err(|e| format!("备份任务没跑起来:{e}"))?
+}
+
+/// 验一份**已回拷进 outbox** 的备份:整个解一遍(与恢复同一条路)。
+///
+/// 入参是 Kotlin 造的那把「尺 4」名字(`verify-<ULID>.zjbak`),⛔ 不是 SAF 的回读名
+/// (provider 可能把它改成 `.bin`,而 core 那道扩展名闸会在解之前就拒掉,§17.4-6)。
+#[tauri::command]
+async fn backup_verify(app: AppHandle, name: String) -> Result<VerifiedBackupDto, String> {
+    fetched_name_gate(&name)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let path = std::path::Path::new(&app.state::<BackupOutbox>().0).join(&name);
+        let verified = app
+            .state::<zhujian_core::backup::BackupCoordinator>()
+            .verify_backup(&path.to_string_lossy())
+            .map_err(|e| e.to_string());
+        // ⭐ **无论成败都删掉那份回拷**(§17.10 幕⑤ 那行;checklist §4「已提交的义务不许随
+        // `?` 蒸发」)。⚠ 它与消费者在同一处 —— 于是桥上不必再开第六个入口,
+        // 也就没有「删任意 outbox 文件」这个能力面。
+        let cleanup_error = match std::fs::remove_file(&path) {
+            Ok(()) => None,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+            Err(e) => {
+                log::warn!("BACKUP_VERIFY 回拷删不掉 {}:{e}", path.display());
+                Some(format!("验完的临时副本没能删掉({e});它是密文,下次启动会再清一次"))
+            }
+        };
+        // ⛔ **删不掉不翻案**(把一次成功的验证报成失败才是真的误导),
+        // ⛔ **但也不许静默**(实现审一弹 M-4:那时 UI 会说「验证成功」而义务没兑现)⇒
+        // 成功那支把它挂在 DTO 上,失败那支缀在原话后面。
+        match verified {
+            Ok(v) => Ok(VerifiedBackupDto {
+                space_id: v.space_id,
+                space_name: v.space_name,
+                created_at: v.created_at,
+                app_version: v.app_version,
+                plain_bytes: v.plain_bytes,
+                cleanup_error,
+            }),
+            Err(e) => Err(match cleanup_error {
+                None => e,
+                Some(c) => format!("{e}(另:{c})"),
+            }),
+        }
+    })
+    .await
+    .map_err(|e| format!("验证任务没跑起来:{e}"))?
+}
+
+/// 重试清扫暂存区(封锁态的**唯一**出路;⛔ 没有「忽略」按钮 —— 封锁的意思是盘上
+/// 真躺着明文整库副本)。
+#[tauri::command]
+async fn backup_retry_cleanup(app: AppHandle) -> Result<BackupStatusDto, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        app.state::<zhujian_core::backup::BackupCoordinator>()
+            .retry_cleanup()
+            .map(backup_status_dto)
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("清扫任务没跑起来:{e}"))?
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // wss:// 的 TLS 提供者(android-plan §1 M2,与桌面壳同纪律):启动即装,坏了当场
@@ -1764,6 +2029,32 @@ pub fn run() {
             let lease = spaces::WriterLease::acquire(&data_dir.join("writer.lock"))
                 .unwrap_or_else(|e| panic!("{e}"));
             app.manage(lease);
+            // 加密备份(backup-plan §17):路径域**必须与上面那把租约一一对应**,故就
+            // 插在取到租约之后 —— 启动清扫要删明文,那时才排他、才敢删。
+            // ⭐ `BackupPaths::production` 在这一端**直接可用、core 零改动**:tauri 的
+            // `getConfigDir` 与 `getDataDir` 在安卓返回同一个 `activity.dataDir`(§17.3
+            // 源码级核过)⇒ 六个字段全落在 app 私有区、与 `writer.lock` 同域。
+            // ⚠ `default_dir` 在这一端的语义是**中转 outbox,不是用户的落点**。
+            {
+                let config_dir = app.path().app_config_dir().expect("resolve app config dir");
+                let paths = zhujian_core::backup::BackupPaths::production(
+                    &config_dir,
+                    &data_dir,
+                    &data_dir.join("notebook.sqlite3"),
+                );
+                app.manage(BackupOutbox(paths.default_dir.display().to_string()));
+                let coordinator = zhujian_core::backup::BackupCoordinator::new(
+                    paths,
+                    app.package_info().version.to_string(),
+                );
+                // 清不掉 = **封锁备份**(不拒启:用户还得能用 app 看自己的数据)。
+                // ⚠ 这是 core 那半(staging 里的**明文**);私有 outbox 里的密文垃圾归壳
+                // 自己清(§17.6,在 MainActivity 启动那四步里),两边**刻意不同档**。
+                if let Some(reason) = coordinator.sweep_on_start() {
+                    log::warn!("BACKUP_SWEEP {reason}");
+                }
+                app.manage(coordinator);
+            }
             // ---- 启动装配挪 blocking worker(codex 设计审 H4):前滚迁移是潜在
             // O(库大小) 的同步工作,不占启动线程——setup 只 manage「进行中」闸即返,
             // 前端轮询 startup_gate 等 ready/blocked(封锁页按 kind 分流处置)。
@@ -1778,7 +2069,11 @@ pub fn run() {
                 let joined = tauri::async_runtime::spawn_blocking(move || {
                     // #4(codex 二审):清上次进程 kill/crash 残留的明文引导快照(手机
                     // 常被系统 kill);必须在任何 transport 启动前。
-                    transport::sweep_stale_boot_files(&data_dir);
+                    // 升档:清不掉 = **响亮**(明文完整库副本)。判据见 core 那边的头注。
+                    let boot_sweep = transport::sweep_stale_boot_files(&data_dir);
+                    if !boot_sweep.is_clean() {
+                        log::error!("BOOT_SWEEP {boot_sweep}");
+                    }
                     assemble_spaces(&handle, data_dir)
                 })
                 .await;
@@ -1895,7 +2190,16 @@ pub fn run() {
             sync_set_server,
             sync_recovery_code,
             db_info,
-            net_probe
+            net_probe,
+            // 加密备份的安卓半(backup-plan §17):⛔ 没有 set_dir / open_dir / 自动那几条
+            backup_status,
+            backup_outbox_dir,
+            backup_begin_setup,
+            backup_confirm_setup,
+            backup_cancel_setup,
+            backup_run,
+            backup_verify,
+            backup_retry_cleanup
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -2029,5 +2333,67 @@ mod tests {
         assert_eq!(n, 1);
         assert_eq!(fingerprint(&conn), before, "启动全链不追加/不改写任何 op");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ---- 加密备份的安卓半(backup-plan §17)------------------------------------------
+
+    /// H-1 那道闸在**命令面**这一半的逐条阴性面(§17.16:⛔ 别只测正例)。
+    ///
+    /// ⭐ 它与 Kotlin 侧的 `SafPure.resolveOutboxChild` 是**同一条规则的两次落地**
+    /// (命令面一次、桥面一次),两处都必须真拒 —— 少一处就等于没封。
+    #[test]
+    fn fetched_name_gate_rejects_everything_but_the_shell_made_name() {
+        // 正例:壳自己造的「尺 4」名字。
+        assert!(fetched_name_gate("verify-01JT0000000000000000000000.zjbak").is_ok());
+
+        // ①路径分隔符与 `..` —— 桥面两个方向都只收**裸名**。
+        let sep = format!("..{}verify-x.zjbak", std::path::MAIN_SEPARATOR);
+        for bad in ["../verify-x.zjbak", "sub/verify-x.zjbak", "verify-..x.zjbak", &sep] {
+            assert!(fetched_name_gate(bad).is_err(), "该拒:{bad}");
+        }
+        // ②扩展名(provider 可能把它改成 .bin —— 那种名字**不许**当落地名,§17.4-6)。
+        assert!(fetched_name_gate("verify-x.bin").is_err());
+        // ③⭐ **承重的那条**:不是 `verify-` 开头的一律拒 —— 验完要删掉这个文件,
+        //    放行 core 的产物名等于给出一条「删掉一份还没搬走的真备份」的路,
+        //    而那正是 `put` 唯一的、**不可再生**的锚。
+        assert!(fetched_name_gate("zhujian-abcd1234-20260818T000000Z-01JT.zjbak").is_err());
+        // ④空与点。
+        for bad in ["", ".", ".."] {
+            assert!(fetched_name_gate(bad).is_err(), "该拒:{bad}");
+        }
+    }
+
+    /// outbox 的推导契约(§17.5 那道运行时相等闸的 Rust 那一半)。
+    ///
+    /// ⚠ **诚实边界**:这只测**只钉得住 Rust 这一侧** —— Kotlin 那边是
+    /// `File(context.dataDir, "backups")`,跑不进 cargo,而两边硬编码同一个常量就是
+    /// 判据自指(memory `verification-independence`;codex 二弹当场点名过这一格)。
+    /// ⇒ **承重的是运行时那道闸**:开面时把这个值交给壳当场比,不等就一趟 transfer 都不许起。
+    /// 这只测守的是另一件事:**哪天 core 把目录名从 `backups` 改掉,这里当场红** ——
+    /// 否则壳会安安静静地去一个空目录里找文件。
+    #[test]
+    fn production_outbox_is_data_dir_slash_backups() {
+        let data = PathBuf::from("/data/user/0/app.zhujian.notebook");
+        let paths = zhujian_core::backup::BackupPaths::production(
+            &data,
+            &data,
+            &data.join("notebook.sqlite3"),
+        );
+        assert_eq!(paths.default_dir.file_name().unwrap(), "backups");
+        assert_eq!(paths.default_dir.parent().unwrap(), data.as_path());
+        // ⭐ 安卓上 config 与 data 是**同一个** `activity.dataDir`(§17.3 源码级核过),
+        // 于是钥与 staging 也落在这个域里,与 `writer.lock` 同域 —— 那正是 `BackupPaths`
+        // 头注钉死的那条对应关系。
+        assert_eq!(paths.config_path.parent().unwrap(), data.as_path());
+        assert_eq!(paths.staging.parent().unwrap(), data.as_path());
+    }
+
+    /// 只给文件名不给路径(§17 那一节头注 2):前端手里从来没有一条完整路径可传。
+    #[test]
+    fn base_name_strips_both_separators() {
+        assert_eq!(base_name("/data/user/0/pkg/backups/a.zjbak"), "a.zjbak");
+        assert_eq!(base_name("a.zjbak"), "a.zjbak");
+        let win = format!("C:{s}x{s}a.zjbak", s = '\\');
+        assert_eq!(base_name(&win), "a.zjbak");
     }
 }

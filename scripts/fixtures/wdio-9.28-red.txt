@@ -1,0 +1,55 @@
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.59s
+
+Execution of 1 workers started at 2026-08-19T00:40:31.315Z
+
+[0-0] RUNNING in undefined - file:///e2e/specs/zz-verify-163.e2e.js
+[0-0] Error in "163 · 手势即回执 + 布局未定不显示.超高图点开:可见帧宽度恒为终态整图宽(无「先宽后缩」裸渲染帧)"
+Error: expect(received).toBeLessThanOrEqual(expected)
+
+Expected: <= 2
+Received:    48
+  现场:dpr=1 帧 79(可见 34)
+  视口:t=18:1000x700 → t=979:900x1181
+  亮相:t=889 视口 1000x700 宽 64;终态宽 112
+  resize 事件:t=978 900x1181 img=visible
+  偏离帧 6/34,最大 48px @t=889
+    at Context.<anonymous> (file:///exworkspace/zhujian-dev/e2e/specs/zz-verify-163.e2e.js:143:13)
+[0-0] FAILED in undefined - file:///e2e/specs/zz-verify-163.e2e.js
+
+ "spec" Reporter:
+------------------------------------------------------------------
+[wry 0.55.1 linux #0-0] Running: wry (v0.55.1) on linux
+[wry 0.55.1 linux #0-0] Session ID: 1f4503fe-1d00-4347-8063-9d8b4622c1ad
+[wry 0.55.1 linux #0-0]
+[wry 0.55.1 linux #0-0] » e2e/specs/zz-verify-163.e2e.js
+[wry 0.55.1 linux #0-0] 163 · 手势即回执 + 布局未定不显示
+[wry 0.55.1 linux #0-0]    ✓ 拖放 drop 同帧:卡已插入目标列(乐观移位,不等 IPC)
+[wry 0.55.1 linux #0-0]    ✖ 超高图点开:可见帧宽度恒为终态整图宽(无「先宽后缩」裸渲染帧)
+[wry 0.55.1 linux #0-0]
+[wry 0.55.1 linux #0-0] 1 passing (4.3s)
+[wry 0.55.1 linux #0-0] 1 failing
+[wry 0.55.1 linux #0-0]
+[wry 0.55.1 linux #0-0] 1) 163 · 手势即回执 + 布局未定不显示 超高图点开:可见帧宽度恒为终态整图宽(无「先宽后缩」裸渲染帧)
+[wry 0.55.1 linux #0-0] expect(received).toBeLessThanOrEqual(expected)
+
+Expected: <= 2
+Received:    48
+  现场:dpr=1 帧 79(可见 34)
+  视口:t=18:1000x700 → t=979:900x1181
+  亮相:t=889 视口 1000x700 宽 64;终态宽 112
+  resize 事件:t=978 900x1181 img=visible
+  偏离帧 6/34,最大 48px @t=889
+[wry 0.55.1 linux #0-0] Error: expect(received).toBeLessThanOrEqual(expected)
+[wry 0.55.1 linux #0-0]
+[wry 0.55.1 linux #0-0] Expected: <= 2
+[wry 0.55.1 linux #0-0] Received:    48
+[wry 0.55.1 linux #0-0]   现场:dpr=1 帧 79(可见 34)
+[wry 0.55.1 linux #0-0]   视口:t=18:1000x700 → t=979:900x1181
+[wry 0.55.1 linux #0-0]   亮相:t=889 视口 1000x700 宽 64;终态宽 112
+[wry 0.55.1 linux #0-0]   resize 事件:t=978 900x1181 img=visible
+[wry 0.55.1 linux #0-0]   偏离帧 6/34,最大 48px @t=889
+[wry 0.55.1 linux #0-0]     at Context.<anonymous> (file:///exworkspace/zhujian-dev/e2e/specs/zz-verify-163.e2e.js:143:13)
+
+
+Spec Files:	 0 passed, 1 failed, 1 total (100% completed) in 00:00:12  
+

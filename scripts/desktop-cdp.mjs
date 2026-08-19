@@ -10,7 +10,17 @@
 // 系统临时目录攒了一堆同类)。钉死后每次复用同一目录,不再新增。
 // 用法: node scripts/desktop-cdp.mjs eval '<js>' | evalfile <path>
 //       node scripts/desktop-cdp.mjs shot <out.png> [--clip x,y,w,h] [--scale N]
-//       (默认选 notebook 页;所有命令带 [--page capture] 可切页)
+//       (默认选 notebook 页;所有命令带 [--page capture] 可切页,
+//        **旗标一律放在位置参数后面** —— 位置参数是按 argv[2]/argv[3] 取的)
+//       [--timeout 毫秒] 等一条 CDP 应答多久,默认 30000
+//
+// ⚠ **别把驱动的超时读成「操作失败」**(428 实栽):debug 形的恢复要 **43 秒**,
+//   驱动这边抛「CDP 超时」,而**页面里那段脚本照旧跑到底、事情真做成了**(那次是去盘上
+//   看见第三个空间文件真的出现了才发现的)。⇒ 结论一律去**盘上与 DOM 上**取。
+//   慢命令把 `--timeout` 调大即可,⛔ **别把默认值一律加长** —— 30 秒短,正是它抓得住
+//   「页面挂死」的原因。
+// ⚠ 同族第二格:`evalfile` 走的是**文件内容当表达式**,而 `\n` 一类转义在 shell heredoc /
+//   `node -e` 里会被吃掉 ⇒ **别用管道拼脚本**,用编辑器把文件写出来再喂给它。
 // shot 走 Page.captureScreenshot,窗口即使 visible:false 也能出图(核验 UI 美观/布局);
 // 要按元素定位先用 eval 读 getBoundingClientRect() 拿坐标,再把 --clip 传进来。
 //
@@ -21,6 +31,18 @@
 import { readFileSync, writeFileSync } from "node:fs";
 
 const PORT = 9223;
+// 默认 30 秒:**短是它的功能**(页面挂死时早点告诉你),慢命令显式放大。
+// 坏值不静默退回默认(「绝不回退兜底」):写错了当场说,免得下一句超时读数没人信。
+const TIMEOUT = (() => {
+  const i = process.argv.indexOf("--timeout");
+  if (i < 0) return 30000;
+  const v = Number(process.argv[i + 1]);
+  if (!Number.isFinite(v) || v <= 0) {
+    console.error(`--timeout 要一个正数(毫秒),收到:${process.argv[i + 1]}`);
+    process.exit(2);
+  }
+  return v;
+})();
 const pageMatch = process.argv.includes("--page")
   ? process.argv[process.argv.indexOf("--page") + 1]
   : "notebook";
@@ -31,6 +53,16 @@ const pageMatch = process.argv.includes("--page")
 function matches(url) {
   if (pageMatch === "capture") return /\/(index\.html)?(\?.*)?$/.test(url);
   return url.includes(pageMatch);
+}
+
+// ⛔ 超时 ≠ 操作失败:428 那次页面里的脚本照旧跑到底了。话里必须把这句带上,
+//    否则下一个人会照着「失败」去回滚一件其实已经做成的事。
+function timeoutSay(method) {
+  return (
+    `CDP 等 ${method} 的应答超过 ${TIMEOUT}ms —— ⚠ 这只说明**驱动这边不等了**,` +
+    `页面里那段脚本很可能照旧跑到底、事情真做成了(428 判例)。` +
+    `结论去盘上 / DOM 上取;确实是慢命令就 --timeout 调大(⛔ 别改默认值)。`
+  );
 }
 
 async function pageTarget() {
@@ -49,11 +81,14 @@ async function evaluate(expr) {
     ws.addEventListener("error", () => rej(new Error("ws 连接失败")), { once: true });
   });
   const out = await new Promise((res, rej) => {
-    const to = setTimeout(() => rej(new Error("CDP 超时")), 30000);
+    const to = setTimeout(() => rej(new Error(timeoutSay("Runtime.evaluate"))), TIMEOUT);
     ws.addEventListener("message", (ev) => {
       const m = JSON.parse(ev.data);
       if (m.id === 1) {
         clearTimeout(to);
+        // 协议层报错(不是页面里抛的)也要说人话 —— 否则下面读 out.result 会
+        // 崩成「Cannot read properties of undefined」,把 CDP 的原话吃掉。
+        if (m.error) return rej(new Error("Runtime.evaluate: " + JSON.stringify(m.error)));
         res(m.result);
       }
     });
@@ -81,7 +116,7 @@ async function screenshot(outPath, clip) {
   const send = (method, params = {}) =>
     new Promise((res, rej) => {
       const myId = ++seq;
-      const to = setTimeout(() => rej(new Error(`CDP 超时:${method}`)), 30000);
+      const to = setTimeout(() => rej(new Error(timeoutSay(method))), TIMEOUT);
       const on = (ev) => {
         const m = JSON.parse(ev.data);
         if (m.id === myId) {
@@ -118,6 +153,6 @@ if (cmd === "eval") {
   }
   console.log("saved " + (await screenshot(out, clip)));
 } else {
-  console.error("用法: eval '<js>' | evalfile <path> | shot <out.png> [--clip x,y,w,h] [--scale N]  [--page capture]");
+  console.error("用法: eval '<js>' | evalfile <path> | shot <out.png> [--clip x,y,w,h] [--scale N]  [--page capture] [--timeout 毫秒]");
   process.exit(1);
 }

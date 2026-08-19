@@ -507,6 +507,13 @@ fn enable_auto(r: &Rig, every_minutes: u32) {
     auto::save(&r.paths.auto_path, &a).expect("写回");
 }
 
+/// 把墙钟那把尺清零(测试里连着跑好几趟用)。⛔ 产品里没有这条路 —— 它就是那把尺本身。
+fn force_due(r: &Rig) {
+    let mut a = auto::load(&r.paths.auto_path).expect("读回");
+    a.last_success_at = None;
+    auto::save(&r.paths.auto_path, &a).expect("写回");
+}
+
 /// ⭐ 每次「重启」造一只新 coordinator:**单调尺只活在进程内**,
 /// 新实例 = 新进程(跨重启只剩墙钟那把尺)。
 fn restart(r: &Rig) -> BackupCoordinator {
@@ -732,4 +739,264 @@ fn a_blocked_staging_area_refuses_the_automatic_path_too() {
         other => panic!("⛔ 封锁态必须响亮拒(不是跳过),实得 {other:?}"),
     }
     assert!(zjbaks(&r.paths.default_dir).is_empty(), "封锁着的时候一个文件都不许产");
+}
+
+/// ⭐ 420 补:交还清单要**从状态面出得来**,而且 ⛔ **读了不清**
+///(与 `pending_notice` 恰好相反 —— 那枚是一次性通知,这张是"待你处置"的清单)。
+#[test]
+fn the_released_list_reaches_the_status_face_and_is_not_consumed_by_reading() {
+    let r = rig("auto-released-status");
+    setup(&r);
+    enable_auto(&r, 1440);
+    // 先备几趟攒出账,再把最旧那份截断 ⇒ 下一趟它被交还。
+    // ⚠ 每趟都要**同时**绕开两把尺:换新实例(单调尺只活在进程内)+ 清掉 `last_success_at`
+    //(墙钟)—— 少一样后面几趟就会被判「还没到点」,夹具会静静地只跑一趟。
+    for _ in 0..3 {
+        force_due(&r);
+        let _ = restart(&r).run_auto_if_due();
+    }
+    let mut files: Vec<_> = std::fs::read_dir(&r.paths.default_dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .collect();
+    files.sort();
+    let victim = files.first().expect("该有产物").clone();
+    let f = std::fs::OpenOptions::new().write(true).open(&victim).unwrap();
+    f.set_len(64).unwrap();
+    drop(f);
+    force_due(&r);
+    let _ = restart(&r).run_auto_if_due();
+
+    let st = r.coord.auto_status();
+    assert_eq!(st.released.len(), 1, "交还清单要出现在状态面:{:?}", st.released);
+    assert!(st.released[0].0.contains(victim.file_name().unwrap().to_str().unwrap()), "要带**路径**");
+    assert!(!st.released[0].1.is_empty(), "要带原因");
+    // ⛔ 再拉一次照旧在(这是它与 pending_notice 的分界)。
+    assert_eq!(r.coord.auto_status().released.len(), 1, "读了不许清");
+}
+
+// ---- 恢复(笔②,backup-plan §16.7 / §16.12 里落在准入与配置面上的那几只)---------------
+
+/// 一台「**生产形**」的机器:配置目录与数据目录分开,`scan_dir` = 数据目录。
+///
+/// ⚠ 恢复只有这一形跑得起来:`for_db`(e2e / `YS_DB_PATH`)**禁扫也禁建空间**(§六③),
+/// 恢复照同一条纪律拒 —— 那一格由 [`restoring_is_refused_in_the_e2e_single_database_form`] 钉住。
+fn prod_rig(tag: &str) -> Rig {
+    let root = tmp_dir(tag);
+    let data = root.join("data");
+    let config = root.join("config");
+    std::fs::create_dir_all(&data).unwrap();
+    std::fs::create_dir_all(&config).unwrap();
+    let db = data.join("notebook.sqlite3");
+    {
+        let mut conn = crate::db::open(&db).expect("建库");
+        let mut clock = crate::clock::Clock::load(&conn).expect("取时钟");
+        for i in 0..12 {
+            crate::notes::capture(&mut conn, &mut clock, &format!("条目 {i}")).expect("记一条");
+        }
+    }
+    let paths = BackupPaths::production(&config, &data, &db);
+    let coord = BackupCoordinator::new(paths.clone(), "0.0.0-test".into());
+    Rig { root, paths, coord }
+}
+
+/// 备份 → 恢复:**真的走一趟引擎产出的那份文件**(手封的样本证明不了引擎的产物能恢复)。
+fn backup_then_restore(r: &Rig, code: &str) -> Result<RestoredSpace, BackupError> {
+    let report = r.coord.run_backup().expect("备份");
+    assert_eq!(report.made.len(), 1, "夹具前提:恰一个空间");
+    r.coord.restore_backup(&report.made[0].path, code)
+}
+
+/// 备份码(仪式那一步返回的就是它;这里为「恢复要能手输」再取一次同一支编码)。
+fn code_for(key: &[u8; 32]) -> String {
+    crate::sync::crypto::crockford_encode32(key)
+}
+
+/// ⭐ 恢复**恒产出一个新空间,绝不覆盖**:原库原样在,数据目录里多出一份。
+#[test]
+fn restoring_produces_a_new_space_and_never_touches_the_old_one() {
+    let r = prod_rig("restore-new-space");
+    let code = r.coord.begin_setup(None).expect("开始仪式");
+    r.coord.confirm_setup(&code).expect("回输核对");
+
+    let before = std::fs::read(&r.paths.main_db).expect("原库");
+    let out = backup_then_restore(&r, &code).expect("恢复");
+
+    assert!(crate::spaces::is_ulid_name(&out.space_id));
+    assert!(Path::new(&out.path).exists(), "新空间要真的在盘上");
+    assert_eq!(std::fs::read(&r.paths.main_db).unwrap(), before, "⛔ 原库一个字节都不许动");
+    assert_eq!(out.cleanup_error, None);
+    assert!(r.coord.status().busy.is_none(), "成功之后准入必须放开");
+    assert!(r.coord.status().blocked.is_none());
+    // 明文暂存区清空(⭐ 顺带钉住幕③没切 WAL:那会留下 sidecar,`close()` 当场拒)。
+    let left: Vec<_> = std::fs::read_dir(&r.paths.staging)
+        .map(|rd| rd.flatten().map(|e| e.file_name()).collect())
+        .unwrap_or_default();
+    assert!(left.is_empty(), "暂存区必须清空:{left:?}");
+}
+
+/// §16.7 那张表:`Restoring` 期间**每一种别的入口各自拿到自己的那一格**。
+#[test]
+fn while_restoring_every_other_entry_point_gets_its_own_busy() {
+    let r = prod_rig("restore-admission");
+    setup(&r);
+    enable_auto(&r, 1);
+
+    let running = r.coord.admit(Busy::Restore).expect("占住恢复");
+    assert_eq!(r.coord.run_backup().unwrap_err(), BackupError::BackupBusy(Busy::Restore));
+    assert_eq!(r.coord.retry_cleanup().unwrap_err(), BackupError::CleanupBusy(Busy::Restore));
+    // ⭐ 新错误码:恢复撞恢复要能被 UI 单独认领,⛔ 不许退化成"操作失败"。
+    assert_eq!(
+        r.coord.restore_backup("x.zjbak", "code").unwrap_err(),
+        BackupError::RestoreBusy(Busy::Restore)
+    );
+    match r.coord.run_auto_if_due() {
+        AutoTick::Skipped(AutoSkip::Busy(Busy::Restore)) => {}
+        other => panic!("自动那格该按既有语义**跳过**,实得 {other:?}"),
+    }
+    assert_eq!(r.coord.status().busy, Some(Busy::Restore));
+    drop(running);
+    assert!(r.coord.status().busy.is_none());
+}
+
+/// ⛔ **失败那条路也要放开准入** —— 只测成功路径会漏掉「失败之后活动态没复位」那一格。
+#[test]
+fn a_failed_restore_still_releases_admission() {
+    let r = prod_rig("restore-release");
+    setup(&r);
+    let e = r.coord.restore_backup("/nowhere/nothing.zjbak", &code_for(&[1u8; 32])).unwrap_err();
+    // ⚠ 话要说的是**文件不在**。⛔ 别让恢复那条改口(`restore_message`)把整个「读」那一档
+    // 都糊成「备份码不对」—— 文件根本没打开,怪到码头上就是把人往错方向支。
+    match &e {
+        BackupError::RestoreFailed(m) => assert!(m.contains("不在了"), "实得「{m}」"),
+        other => panic!("实得 {other:?}"),
+    }
+    assert!(r.coord.status().busy.is_none(), "失败之后准入必须放开");
+    assert!(r.coord.status().blocked.is_none(), "文件都没打开,不该封锁");
+}
+
+/// `Blocked` + 恢复 = **立即拒**:staging 里已知有清不掉的明文,不许再造一份。
+#[test]
+fn a_blocked_staging_area_refuses_restoring_too() {
+    let r = prod_rig("restore-blocked");
+    setup(&r);
+    let report = r.coord.run_backup().expect("先备一份出来");
+    let file = report.made[0].path.clone();
+    let code = code_for(&[2u8; 32]);
+
+    std::fs::create_dir_all(&r.paths.staging).unwrap();
+    std::fs::write(r.paths.staging.join("mystery.txt"), b"?").unwrap();
+    let fresh = restart(&r);
+    assert!(fresh.sweep_on_start().is_some(), "夹具前提:这只实例现在是封锁态");
+
+    match fresh.restore_backup(&file, &code) {
+        Err(BackupError::Blocked(_)) => {}
+        other => panic!("封锁态下恢复必须立即拒,实得 {:?}", other.map(|_| "Ok")),
+    }
+}
+
+/// ⛔ **恢复绝不把手输的那把钥写回 `.backup.json`**:那会覆盖本机自己的备份钥,
+/// 此后产出的所有备份都用别人那把钥,而用户抄的是自己那张纸 —— 静默、无提示。
+/// ⇒ 用**一把与本机不同**的备份码跑完整整一趟,断配置文件**逐字节未变**。
+#[test]
+fn restoring_with_someone_elses_backup_code_never_rewrites_the_local_key() {
+    let r = prod_rig("restore-foreign-key");
+    setup(&r); // 本机自己的钥(随机生成的那把)
+    let before = std::fs::read(&r.paths.config_path).expect("本机配置");
+
+    // 另一台机器的备份:另一把钥、手工封(⚠ 本机引擎只会用本机那把钥)。
+    const FOREIGN: [u8; 32] = [0x5au8; 32];
+    let src = r.root.join("foreign.sqlite3");
+    {
+        let mut conn = crate::db::open(&src).expect("建库");
+        let mut clock = crate::clock::Clock::load(&conn).expect("取时钟");
+        crate::notes::capture(&mut conn, &mut clock, "别人机器上的一条").expect("记一条");
+    }
+    // ⚠ `db::open` 走 WAL ⇒ 先取一份自包含的单文件快照再封(照备份引擎幕②同一支)。
+    let snapshot = r.root.join("foreign-snapshot.sqlite3");
+    {
+        let conn = crate::db::open(&src).expect("再开");
+        conn.execute("VACUUM INTO ?1", [snapshot.to_str().unwrap()]).expect("取快照");
+    }
+    let file = r.root.join("foreign.zjbak");
+    {
+        let mut plain = std::fs::File::open(&snapshot).unwrap();
+        let mut out = std::fs::File::create(&file).unwrap();
+        super::super::write_backup(
+            &mut plain,
+            &mut out,
+            &super::super::BackupKey::from_bytes(FOREIGN),
+            [9u8; super::super::SALT_LEN],
+            super::super::CHUNK_MIN,
+            &super::super::TrailerMeta {
+                space_id: "01FOREIGNSPACEFOREIGNSPA".into(),
+                space_name: Some("别人的书房".into()),
+                created_at: "2026-08-17T00:00:00Z".into(),
+                app_version: "0.2.34-test".into(),
+                user_version: crate::db::SCHEMA_VERSION,
+            },
+        )
+        .expect("封");
+    }
+
+    let out = r
+        .coord
+        .restore_backup(file.to_str().unwrap(), &code_for(&FOREIGN))
+        .expect("别人的备份 + 别人的码 = 恢复得出来");
+    assert_eq!(out.source_space_name.as_deref(), Some("别人的书房"));
+    assert_eq!(
+        std::fs::read(&r.paths.config_path).unwrap(),
+        before,
+        "⛔ `.backup.json` 必须逐字节未变"
+    );
+}
+
+/// ⭐ **同一个 `WrongKey`,两条路要说两句话**(backlog `0b-话术`;427 / 428 补 / 433 三端撞见)。
+///
+/// 验证用的是本机 `.backup.json` 里那把钥 ⇒ 「不是**当前备份码**对应的」**准确**;
+/// 而恢复用的是用户**刚手输**的那把 ⇒ 同一句话会被读成「它没用我输的码」,恰是 §16.6
+/// 要避免的误解。⇒ 拿**同一份文件**同时问两条路,把两句话一起钉住:
+/// 谁哪天想「顺手统一措辞」,这只测两边都会红。
+#[test]
+fn the_same_wrong_key_says_current_code_when_verifying_and_your_code_when_restoring() {
+    let r = prod_rig("wrongkey-two-voices");
+    setup(&r); // 第一把钥
+    let old = r.coord.run_backup().expect("用第一把钥备一份").made[0].clone();
+    // 重做仪式 = 换一把钥(用户"重新设置了备份")⇒ 本机当前的钥不再是这份文件的钥。
+    std::fs::remove_file(&r.paths.config_path).unwrap();
+    setup(&r);
+
+    // ---- 验证这条路:用的确实是「当前备份码」,话照旧、⛔ 不许被顺手改掉 ----
+    let v = r.coord.verify_backup(&old.path).expect_err("该拒").to_string();
+    assert!(v.contains("当前备份码"), "验证那句要点名是本机当前那把钥:「{v}」");
+
+    // ---- 恢复这条路:钥是用户刚敲进来的,⛔ 绝不许说「当前备份码」 ----
+    let msg = match r.coord.restore_backup(&old.path, &code_for(&[0x7eu8; 32])) {
+        Err(BackupError::RestoreFailed(m)) => m,
+        other => panic!("钥不对该在读那一格拒,实得 {:?}", other.map(|_| "Ok")),
+    };
+    assert!(
+        !msg.contains("当前"),
+        "⛔ 恢复用的不是本机配置里那把钥,说「当前」就是在否认用户刚输的那个码:「{msg}」"
+    );
+    assert!(msg.contains("你输入的"), "话要认下用户刚敲的那个码:「{msg}」");
+    // ⚠ 与「码本身不合法」那一格分得开(那句是「备份码不对(抄漏了一位?)」)——
+    // 这里的码解析得出来、只是不对这份文件,话里要有「选错了文件」这条出路。
+    assert!(msg.contains("选错了文件"), "话要给第二个可能的因:「{msg}」");
+    assert!(r.coord.status().busy.is_none(), "失败之后准入必须放开");
+    assert!(r.coord.status().blocked.is_none(), "钥不对不该封锁");
+}
+
+/// e2e(`YS_DB_PATH`)形:**禁扫也禁建空间** ⇒ 恢复照同一条纪律响亮拒,
+/// ⛔ 不许悄悄落到库旁边(那儿的空间谁也发现不了)。
+#[test]
+fn restoring_is_refused_in_the_e2e_single_database_form() {
+    let r = rig("restore-e2e");
+    setup(&r);
+    let e = r.coord.restore_backup("whatever.zjbak", &code_for(&[3u8; 32])).unwrap_err();
+    match e {
+        BackupError::Target(m) => assert!(m.contains("测试模式"), "{m}"),
+        other => panic!("实得 {other:?}"),
+    }
 }

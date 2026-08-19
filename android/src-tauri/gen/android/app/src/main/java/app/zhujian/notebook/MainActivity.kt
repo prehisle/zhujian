@@ -12,6 +12,10 @@ class MainActivity : TauriActivity() {
   override fun onWebViewCreate(webView: WebView) {
     this.webView = webView
     webView.addJavascriptInterface(SystemBars(), "__zhujianSystemBars")
+    // 加密备份的 SAF 桥(backup-plan §17)。⛔ 这里只**新建一只桥并指向进程级单例**
+    // (`SafState`)——`onWebViewCreate` 会在 Activity 重建时再跑一遍,而 single-flight
+    // 那把锁与后台 worker 若跟着新桥实例走,旧的那趟拷贝还在跑、新桥却又放行一趟。
+    webView.addJavascriptInterface(SafBridge(this), "__zhujianSaf")
     // 界面字号(251):基准取 WebView 创建时的初始 textZoom——它已含系统「字体大小」
     // 的放大,我们的百分比乘在上面、不覆盖用户的系统级选择。
     webView.addJavascriptInterface(TextSize(webView.settings.textZoom), "__zhujianTextSize")
@@ -78,12 +82,43 @@ class MainActivity : TauriActivity() {
     }
   }
 
+  // 加密备份(§17)挑落点那条路:`ACTION_OPEN_DOCUMENT_TREE` 起的是**真原生 Activity**
+  // (⛔ 414 那条 CDP 拦截只对 `<input type=file>` 成立,这条 CDP 够不着 —— 这一笔最弱的
+  // 一格就在这儿,§17.16 已记档别假装它有回归网)。
+  // ⚠ 注册必须在 STARTED 之前 ⇒ 放在 onCreate 里(与 wry 自己那两个 launcher 同期)。
+  private var treePicker: androidx.activity.result.ActivityResultLauncher<Intent>? = null
+
+  fun launchTreePicker() {
+    val l = treePicker
+    if (l == null) {
+      SafBridgeResolve.fail(this, "这台设备上打不开文件夹选择器")
+      return
+    }
+    runCatching { l.launch(openDocumentTreeIntent()) }
+      .onFailure { SafBridgeResolve.fail(this, "打不开文件夹选择器:${it.message}") }
+  }
+
+  /** 桥的应答口(`evaluateJavascript` 必须在 UI 线程上;WebView 没就绪就自然丢掉——
+   *  ⛔ 回调本来就不是真相源,面每次打开都会重新问一次状态)。 */
+  fun evalInWebView(js: String) {
+    webView?.evaluateJavascript(js, null)
+  }
+
   override fun onCreate(savedInstanceState: Bundle?) {
     enableEdgeToEdge()
+    // 故障注入的旋钮:只在**编译期开了 ZJ_FAULT** 的验收包里有效,且只从启动 Intent 读一次
+    // (⛔ 桥面不新增入口)。发版包里 [SafFault] 的每个 hook 第一行就短路。
+    SafFault.configure(intent)
     clearCaptureLeftovers()
+    // 备份中转区的启动四步(§17.10):**先读**在飞记录 → 按 kind 收尸 → 再清扫 outbox →
+    // 最后落两个健康位。⛔ 顺序不许换:清扫在读之前,就把「上次那趟干到哪儿了」删没了。
+    SafStore.startupSettle(this)
     stashSharedText(intent) // 冷启动:分享拉起进程,先落文件再起 WebView。
     stashDeepLink(intent) // 冷启动:深链接拉起进程,同样先落文件(前端 take_deep_link 取走)。
     super.onCreate(savedInstanceState)
+    treePicker = registerForActivityResult(
+      androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()
+    ) { result -> SafBridgeResolve.picked(this, result.data?.data) }
     onBackPressedDispatcher.addCallback(this, object : androidx.activity.OnBackPressedCallback(true) {
       // single-flight(codex 补审 M3):JS 应答/超时未归前,重复返回丢弃(JS 侧对
       // back 在飞另有合并,这里挡的是「应答窗口内的连按」);应答与超时用 CAS 决出

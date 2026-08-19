@@ -33,6 +33,7 @@ mod auto;
 mod config;
 mod coordinator;
 mod engine;
+mod restore;
 mod staging;
 
 /// ⭐ **本模块对 crate 外只出这一组名字**(lib.rs 那条窄公开面):壳拿到的是
@@ -41,7 +42,7 @@ mod staging;
 pub use coordinator::{
     AutoRun, AutoSkip, AutoStatus, AutoTick, BackupCoordinator, BackupEntry, BackupError,
     BackupFailed, BackupMade, BackupPaths, BackupReport, BackupStatus, Busy, Leftover,
-    SpaceRotation, VerifiedBackup,
+    RestoredSpace, SpaceRotation, VerifiedBackup,
 };
 
 use chacha20poly1305::aead::{Aead, KeyInit, Payload};
@@ -165,7 +166,10 @@ struct TrailerMeta {
 /// 轮转要据此决定「留账下轮再试」还是「摘账、从此不管」,而一次 SMB 断连 / 云占位文件正在
 /// hydration / 杀软临时拦读,若与真正的结构损坏共用同一个变体,**就会因为失败发生在哪个
 /// syscall 而随机分流**。⛔ 别把 IO 错误再塞回 `Parse`,也⛔ 别靠解析错误文案分档。
-#[derive(Debug, PartialEq, Eq)]
+///
+/// ⚠ `Clone` 是给恢复用的(§16.8 幕①②):那条路要**同时**把「哪一档」放进
+/// `restore::RestoreStage` 供测试断,又把它的人话放进给用户看的那句消息里。
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum ReadError {
     /// 文件不在了(用户自己删了 / 搬走了)。**不是故障**。
     Missing,
@@ -358,16 +362,20 @@ fn write_frame<W: Write>(
 
 // ---- 读 ---------------------------------------------------------------------------
 
-/// 解一份 `.zjbak`:逐帧解进 `out`,末尾比对 `plain_bytes` 与 `plain_sha256` **两格**。
+/// 头读完、钥验过之后的一份文件:逐帧解密要的一切。
 ///
-/// 自验(§3 幕⑦)= 拿 `std::io::sink()` 当 `out` 调它 —— **同一条路**,不另写一份校验逻辑
-/// (checklist §14:同一条规则的第二份描述就是漂移源)。
-fn read_backup<R: Read, W: Write>(
-    src: &mut R,
-    out: &mut W,
-    key: &BackupKey,
-) -> Result<(Trailer, [u8; SALT_LEN]), ReadError> {
-    // ---- 头 ----
+/// ⭐ **它存在只为一件事**:让「验钥」与「产明文」成为**两个可以分开调用的时刻**
+/// (backup-plan §16 幕① / 幕②)—— 恢复要在造出任何明文之前就能答「这份不是这把钥的」。
+/// ⛔ 别为此另写一份头解析:那是同一条规则的第二份描述(checklist §14)。
+struct OpenedFile {
+    /// AAD 绑的那一段(`magic ‖ hdr_len ‖ hdr` 原始字节)。
+    hdr_frame: Vec<u8>,
+    salt: [u8; SALT_LEN],
+    chunk: u32,
+}
+
+/// 幕①:读头 → 结构闸 → **验钥**。⛔ 一个字节明文都不产。
+fn read_header<R: Read>(src: &mut R, key: &BackupKey) -> Result<OpenedFile, ReadError> {
     let mut magic = [0u8; 6];
     read_exact(src, &mut magic)?;
     if magic != MAGIC {
@@ -401,9 +409,19 @@ fn read_backup<R: Read, W: Write>(
     hdr_frame.extend_from_slice(&MAGIC);
     hdr_frame.extend_from_slice(&hdr_len.to_le_bytes());
     hdr_frame.extend_from_slice(&hdr_bytes);
+    Ok(OpenedFile { hdr_frame, salt, chunk: hdr.chunk })
+}
 
-    // ---- 帧 ----
-    let cipher = XChaCha20Poly1305::new(Key::from_slice(&key.file_key(&salt)));
+/// 幕②:逐帧解进 `out`,末尾比对 `plain_bytes` 与 `plain_sha256` **两格**。
+/// 调用方必须先过 [`read_header`](同一个 `src`,位置接着往下读)。
+fn read_frames<R: Read, W: Write>(
+    src: &mut R,
+    out: &mut W,
+    key: &BackupKey,
+    opened: &OpenedFile,
+) -> Result<Trailer, ReadError> {
+    let (hdr_frame, salt) = (&opened.hdr_frame, &opened.salt);
+    let cipher = XChaCha20Poly1305::new(Key::from_slice(&key.file_key(salt)));
     let mut hasher = Sha256::new();
     let mut total: u64 = 0;
     let mut idx: u64 = 0;
@@ -421,14 +439,14 @@ fn read_backup<R: Read, W: Write>(
         let kind = kindb[0];
         let mut lenb = [0u8; 4];
         read_exact(src, &mut lenb)?;
-        let n = checked_frame_len(kind, u32::from_le_bytes(lenb), hdr.chunk)?;
+        let n = checked_frame_len(kind, u32::from_le_bytes(lenb), opened.chunk)?;
         let mut ct = vec![0u8; n];
         read_exact(src, &mut ct)?;
 
         let plain = cipher
             .decrypt(
                 &nonce_for(idx),
-                Payload { msg: &ct, aad: &frame_aad(&hdr_frame, idx, kind) },
+                Payload { msg: &ct, aad: &frame_aad(hdr_frame, idx, kind) },
             )
             .map_err(|_| ReadError::Auth)?;
 
@@ -447,9 +465,7 @@ fn read_backup<R: Read, W: Write>(
             if t.plain_bytes != total || t.plain_sha256.as_slice() != hasher.finalize().as_slice() {
                 return Err(ReadError::Digest);
             }
-            // ⭐ salt 一并交出去:轮转拿它当**这份文件的身份指纹**(§15.3 的 H2 那格)——
-            // 它每份文件都不同、就在明文头里,而伪造它文件就解不开(AAD 绑整个头)。
-            return Ok((t, salt));
+            return Ok(t);
         }
 
         hasher.update(&plain);
@@ -461,6 +477,21 @@ fn read_backup<R: Read, W: Write>(
             .checked_add(1)
             .ok_or_else(|| ReadError::Parse("帧序号溢出 u64".into()))?;
     }
+}
+
+/// 解一份 `.zjbak`:头 + 全部帧,一趟走完(= [`read_header`] 接 [`read_frames`],
+/// **不是第二份实现**)。
+///
+/// 自验(§3 幕⑦)= 拿 `std::io::sink()` 当 `out` 调它 —— **同一条路**,不另写一份校验逻辑
+/// (checklist §14:同一条规则的第二份描述就是漂移源)。
+fn read_backup<R: Read, W: Write>(
+    src: &mut R,
+    out: &mut W,
+    key: &BackupKey,
+) -> Result<(Trailer, [u8; SALT_LEN]), ReadError> {
+    let opened = read_header(src, key)?;
+    let trailer = read_frames(src, out, key, &opened)?;
+    Ok((trailer, opened.salt))
 }
 
 /// 自验:把一份落好的 `.zjbak` 整个读回来解一遍,明文丢进 `io::sink()`。

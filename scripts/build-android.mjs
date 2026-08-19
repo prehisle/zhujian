@@ -22,6 +22,7 @@ import {
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
+import { pickBuildTools, describeBuildToolsPick } from "./lib/build-tools.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const devtools = process.argv.includes("--devtools");
@@ -76,7 +77,14 @@ if (!sdk) {
   process.exit(1);
 }
 const btDir = join(sdk, "build-tools");
-const bt = readdirSync(btDir).sort().at(-1);
+// ⛔ 别改回 `.sort().at(-1)`(字典序,见 scripts/lib/build-tools.mjs 头注三种挑错)。
+const btPick = pickBuildTools(readdirSync(btDir));
+for (const line of describeBuildToolsPick(btPick)) console.error(line);
+if (!btPick.name) {
+  console.error(`${btDir} 底下一个认得出版本号的 build-tools 都没有——核不了 versionCode,停。`);
+  process.exit(1);
+}
+const bt = btPick.name;
 const aapt = join(btDir, bt, process.platform === "win32" ? "aapt.exe" : "aapt");
 const badging = execFileSync(aapt, ["dump", "badging", apkPath], { encoding: "utf8" });
 const apkCode = badging.match(/versionCode='(\d+)'/)?.[1];

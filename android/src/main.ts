@@ -35,6 +35,7 @@ import {
 import { $, actionBar, confirmBar, esc, fmtWhen, hideConfirmBar, showBar, showError, STAGE_LABEL } from "./ui";
 import { capturePhoto, composeImages, PICK_MAX, pickImages } from "./images";
 import { INPUT_DEBOUNCE_MS } from "./timing";
+import * as backup from "./backup";
 import * as cardPanel from "./cardpanel";
 import * as filter from "./filter";
 import * as panes from "./panes";
@@ -1093,6 +1094,9 @@ function renderBottomBar() {
 /** 关面回时间轴的 DOM 部分(143 拆出):popstate(返回键)与 UI 关面共用;
  *  history 账目由调用方处置——UI 关面随后 settleHistory(),popstate 已经弹掉。 */
 function closePaneNow() {
+  // 备份码仪式还开着就让后端把那把**只在内存里**的钥丢掉(盘上此刻什么都没写过 ⇒
+  // 下次是干净的首次使用)。⛔ 反过来「先落盘再让用户抄」会留下一把没人抄过的钥。
+  if (activePane === "settings") backup.closeBackup();
   activePane = null;
   hideConfirmBar(); // 关面 = 放弃面内挂着的两拍确认(ui-audit P0 #4)
   for (const id of Object.values(PANE_EL)) $(id).hidden = true;
@@ -1112,6 +1116,7 @@ function openPane(name: string) {
     return;
   }
   const wasOpen = activePane !== null;
+  if (activePane === "settings") backup.closeBackup(); // 面换面同理(toggle 那条走 closePaneNow)
   activePane = name;
   hideConfirmBar(); // 面换面:上一面挂着的确认作废
   for (const [key, id] of Object.entries(PANE_EL)) $(id).hidden = key !== name;
@@ -1132,6 +1137,9 @@ function openPane(name: string) {
     paintLangSeg();
     void loadAlias();
     void loadAbout();
+    // 备份一节(§17):⛔ 每次开面都重新问一遍状态 —— 回调不是真相源(进程可能在
+    // 系统选择器开着的时候被杀,那时挂在 JS 里的 promise 早就没了)。
+    backup.loadBackup();
   }
   else if (name === "diag" && !diagLoaded) {
     diagLoaded = true;

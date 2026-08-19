@@ -60,7 +60,47 @@ pub struct Spaces {
     pub reserved_accounts: std::sync::Mutex<std::collections::HashSet<String>>,
 }
 
+/// 持着「空间生命周期」那把锁的**凭证**(backup-plan §16.3.2,三弹 M1)。
+///
+/// ⭐ **它存在的唯一理由**:共享集成 helper(`db::open` → 身份全表裁决 → activate)
+/// 必须在这把锁里跑,而「新来的调用方漏拿锁照样编译得过」是真实反例 —— 两个集成同时
+/// 快照 identity、各自都看不见对方、随后都 activate,全表裁决的原子性当场破掉。
+/// ⇒ helper **只收 `&LifecyclePermit`**,拿不到凭证就调不了它:这件事交编译器判,
+/// ⛔ 不靠调用纪律、⛔ 也不靠源码文本锚(checklist §8)。
+///
+/// ⛔ **两条别改坏的**:
+/// 1. 字段**必须非公开**,唯一产法是 [`Spaces::lock_lifecycle`] —— 谁能凭空造一只,
+///    这个类型就退化成一句注释。
+/// 2. helper **从凭证里取 `Spaces`**(见 [`LifecyclePermit::spaces`]),⛔ 不再另收一个
+///    可错配的 `&Spaces`:收两个就等于没封(两者可以来自不同的表)。
+///
+/// ⚠ **裸 `MutexGuard<'_, ()>` 不够**:它只证明「拿过某一把同类型的锁」,证明不了拿的是
+/// **这张空间表的** `lifecycle`。
+///
+/// ✅ 其余**不调用集成 helper**的取锁点不必迁(§16.3.2 四弹判据):它们只需要与同一枚
+/// 底层 mutex 互斥,而 permit 路与裸取锁路照样互斥 —— 锁对象仍只有一枚,身份裁决与
+/// activate 的规则也仍只有 helper 一份。⇒ 规则一句话:**凡调用集成 helper 必须持凭证;
+/// 只需要生命周期 single-flight 的其它命令,可以继续裸取同一把 mutex。**
+pub struct LifecyclePermit<'a> {
+    spaces: &'a Spaces,
+    _guard: tokio::sync::MutexGuard<'a, ()>,
+}
+
+impl<'a> LifecyclePermit<'a> {
+    /// 凭证锁着的**就是这张表** —— helper 要的 `&Spaces` 只许从这里取。
+    pub fn spaces(&self) -> &'a Spaces {
+        self.spaces
+    }
+}
+
 impl Spaces {
+    /// 取生命周期凭证([`LifecyclePermit`] 的唯一产法)。
+    ///
+    /// ⚠ **别先裸取 guard 再来这里取一次凭证 —— 那会自锁**(§16.3.2 那条明写的坑)。
+    pub async fn lock_lifecycle(&self) -> LifecyclePermit<'_> {
+        LifecyclePermit { _guard: self.lifecycle.lock().await, spaces: self }
+    }
+
     pub fn new(
         sup: SpaceSupervisor,
         dir: Option<PathBuf>,
@@ -327,6 +367,59 @@ mod tests {
         assert_eq!(n, 1, "注入的失败发生在写入前,源条目原样保留");
         drop(conn);
         drop(rt);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ── 集成 helper 的身份裁决(backup-plan §16.12 测 7b,426)──────────────────
+    //
+    // ⭐ **这只测钉的是一条概率结论不是结构保证**:恢复的幕⑤ 由 `epoch::compact` 生出
+    // 新 `device_id`,而那只是一枚 `Ulid::new()`、**不过跨空间唯一闸**(`epoch.rs:151`
+    // 自己注明)⇒ 「恢复出来的空间恒无 veto」是**概率上**成立,⛔ 不是结构上成立。
+    // 真撞上的那一天,集成段必须**当场判出来并给一句照做得了的话**,⛔ 不许静默装配。
+    //
+    // ⚠ 造碰撞的手法:**整库复制**(与真实场景同形 —— 那正是 `identity_vetoes` 里
+    // device_id 那条闸的设计反例)。⛔ 不用「改 device_id」:0019 冻结触发器不让改,
+    // 而绕开触发器造出来的样本证明不了生产路径上的事。
+
+    /// 幕⑦ 撞身份:必须 `Veto`,而且指路话术要**可执行**(⛔ 不许说「重启就好」——
+    /// 重启一百次也还是撞)。同轮的阴性对照:身份不撞的新库必须放行(否则这只测恒绿)。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn restore_integration_catches_device_id_collision() {
+        let (spaces, dir) = boot_two("collide").await;
+        // ① 撞号样本:把主库整个复制一份当作「恢复落位出来的新空间」——同 device_id、
+        //    不同文件。真实世界里这正是 device_id 那条闸要防的形。
+        let clash_id = "01JZZZZZZZZZZZZZZZZZZRESTB";
+        let clash = dir.join(format!("{clash_id}.sqlite3"));
+        std::fs::copy(dir.join("notebook.sqlite3"), &clash).unwrap();
+
+        let permit = spaces.lock_lifecycle().await;
+        // ⚠ 调的是**生产那一支**(开库 + 时钟 + 裁决三步一体):它的产出是唯一能喂给
+        // `activate_space` 的那对句柄 ⇒ 「把裁决从 helper 里摘掉」在编译期就红,
+        // 而不是靠这只测抓(codex 实现审 L1)。
+        let err = crate::integrate::open_and_adjudicate(&permit, clash_id, &clash)
+            .err()
+            .expect("整库复制出来的库与主库同 device_id,集成段必须判下来");
+        assert!(
+            matches!(err, crate::IntegrateError::Veto(_)),
+            "撞身份要落在 Veto 那一支(它与「开库失败」的出路不同)"
+        );
+        assert!(err.text().contains("device_id"), "诊断要说清撞的是什么:{}", err.text());
+
+        // ⭐ 话术那一半:库**已经在盘上**、**没有覆盖任何东西**、出路是删了重来。
+        let hint = crate::restore_integrate_hint(&err, &clash.display().to_string());
+        assert!(hint.contains("没有覆盖"), "{hint}");
+        assert!(hint.contains("再恢复一次"), "指路必须可执行(⛔ 不是「重启就好」):{hint}");
+        assert!(hint.contains(&clash.display().to_string()), "要点名是哪一份:{hint}");
+        assert!(!hint.contains("重启朱简"), "撞号这一支重启没用,⛔ 别把用户指到那条死路:{hint}");
+
+        // ② 阴性对照:身份不撞的新库必须放行 —— 没有它,上面那两句断言在
+        //    「裁决恒 veto」的坏实现下也照样绿。
+        let (fresh_id, fresh_path) = core_spaces::create_space(&dir, "干净的").unwrap();
+        assert!(
+            crate::integrate::open_and_adjudicate(&permit, &fresh_id, &fresh_path).is_ok(),
+            "身份不撞的新库该放行"
+        );
+        drop(permit);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

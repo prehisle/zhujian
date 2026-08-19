@@ -12,8 +12,12 @@
 // * e2e    = 真 GUI 那一层(331 排队第 2 条)。与上面两形的关键差别是**强制
 //            `--specFileRetries=0`**:仓里 wdio.conf.js 常态开着 1 次重试(164 立的,
 //            用来吸收冷启假红),而**被 retry 吸收的红不会进任何人的视野** —— 331 那
-//            只 compose-recovery 就是这么在「35/35 全绿」里藏了一整轮。本形还额外
-//            **按输出里的 FAILED 行判红、不只看退出码**,免得哪天又冒出别的吸收机制。
+//            只 compose-recovery 就是这么在「35/35 全绿」里藏了一整轮。
+//
+// ⭐ **判「这趟红没红」的那把尺住 scripts/lib/test-verdict.mjs,三态不是两态**:
+//    绿要有**正面字据**(跑手自己印的那行汇总),读不出就报 `判不出` 并**按红处理**
+//    —— 而不是像原来那样退回「没看见红就是绿」。两处 fail-open 的实测原委在那个文件
+//    头注;它自己的回归网是 `node scripts/check-test-verdict.mjs`。
 //
 // 判读与修法见 memory `flaky-test-three-shapes` 与 progress-log 313 / 331。
 // ⚠ 修完必须**在原来那种负载形下**逐只复跑,并跑 `mutation-check`(e2e 侧=手工变异
@@ -24,6 +28,7 @@ import { copyFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import net from 'node:net';
+import { libtestVerdict, wdioVerdict } from './lib/test-verdict.mjs';
 
 const argv = process.argv.slice(2);
 const mode = argv.shift();
@@ -147,11 +152,17 @@ async function runE2e() {
       );
       const out = `${res.stdout ?? ''}${res.stderr ?? ''}`;
       const secs = Math.round((Date.now() - t0) / 1000);
-      // **判红不只看退出码**:哪天再冒出别的「吸收」机制(retry / 容忍阈值),退出码会
-      // 骗人,而输出里的 FAILED / ✖ 不会。两者取或。
-      const sawFailed = /\bFAILED in\b/.test(out) || /[✖✗×]\s+\S/.test(out);
-      if (res.status === 0 && !sawFailed) {
-        console.log(`轮 ${r + 1}/${rounds} 全绿(${secs}s)`);
+      const v = wdioVerdict(out, res.status);
+      if (v.state === 'green') {
+        console.log(`轮 ${r + 1}/${rounds} 全绿(${secs}s · ${v.why})`);
+        continue;
+      }
+      // **判不出**单独记一格:它是工装的故障,不是哪只用例在抖 —— 记进某只用例的账
+      // 就等于伪造证据(那正是这把尺骗人的另一种方式)。日志照存,按红处理。
+      if (v.state === 'unknown') {
+        writeFileSync(join('tmp-flaky', `e2e-r${r}.txt`), out);
+        bump(`(判不出这趟结果:${v.why})`);
+        console.log(`轮 ${r + 1}/${rounds} **判不出**(${secs}s):${v.why}(输出存 tmp-flaky/e2e-r${r}.txt)`);
         continue;
       }
       // 逐行状态机:含 .e2e.js 的行更新「当前 spec」,✖ 行记一笔 —— 用例名单独看认不出
@@ -201,8 +212,15 @@ if (mode === 'e2e') {
   for (let r = 0; r < rounds; r++) {
     const res = spawnSync(frozen, [], { encoding: 'utf8', timeout: 900_000 });
     const out = `${res.stdout ?? ''}${res.stderr ?? ''}`;
-    if (res.status === 0) {
-      console.log(`轮 ${r + 1}/${rounds} 全绿`);
+    const v = libtestVerdict(out, res.status);
+    if (v.state === 'green') {
+      console.log(`轮 ${r + 1}/${rounds} 全绿(${v.why})`);
+      continue;
+    }
+    if (v.state === 'unknown') {
+      writeFileSync(join('tmp-flaky', `suite-r${r}.txt`), out);
+      bump(`(判不出这趟结果:${v.why})`);
+      console.log(`轮 ${r + 1}/${rounds} **判不出**:${v.why}(输出存 tmp-flaky/suite-r${r}.txt)`);
       continue;
     }
     // cargo 的 failures 段每行是四个空格 + 用例全名。
@@ -225,12 +243,22 @@ if (mode === 'e2e') {
           encoding: 'utf8',
           timeout: 300_000,
         });
-        if (res.status === 0) continue;
+        const out = `${res.stdout ?? ''}${res.stderr ?? ''}`;
+        const v = libtestVerdict(out, res.status);
+        if (v.state === 'green') continue;
+        // ⛔ **判不出就当场停**,别接着跑完剩下的轮:这一形里最常见的判不出就是
+        //    「`--exact` 名字拼错」,而它是**结构性**的 —— 再跑一百轮也还是零只测试,
+        //    最后印出来的却是一张漂亮的「一轮不红」。停在这里,让人去改名字。
+        if (v.state === 'unknown') {
+          writeFileSync(join('tmp-flaky', `${t.replaceAll('::', '_')}-r${r}.txt`), out);
+          console.error(`\n⛔ 判不出 ${t} 这一趟跑了什么:${v.why}`);
+          console.error(`   (第 ${r + 1} 轮;输出存 tmp-flaky/${t.replaceAll('::', '_')}-r${r}.txt)`);
+          console.error('   ⇒ 这不是「不复现」,是**没跑**。先把它跑绿一次,再来抓抖动。');
+          loaders.forEach((p) => p.kill());
+          process.exit(2);
+        }
         bump(t);
-        writeFileSync(
-          join('tmp-flaky', `${t.replaceAll('::', '_')}-r${r}.txt`),
-          `${res.stdout ?? ''}${res.stderr ?? ''}`,
-        );
+        writeFileSync(join('tmp-flaky', `${t.replaceAll('::', '_')}-r${r}.txt`), out);
       }
       const line = tests
         .map((t) => `${t.split('::').pop()}=${r + 1 - (tally.get(t) ?? 0)}/${r + 1}`)
@@ -247,5 +275,11 @@ if (tally.size === 0) {
   console.log('一轮不红。⚠ 全绿不等于没病 —— 换另一种负载形再跑一遍。');
 } else {
   for (const [k, v] of [...tally].sort((a, b) => b[1] - a[1])) console.log(`  ${v} 轮  ${k}`);
+  // 「(判不出…)」那种条目是**工装读不出这趟结果**,不是某只用例在抖 —— 先把它治好,
+  // 这一批读数才算数(见 scripts/lib/test-verdict.mjs 头注)。
+  if ([...tally.keys()].some((k) => k.startsWith('(判不出'))) {
+    console.log('\n⚠ 上面有「判不出」的轮次:那几轮**这把尺自己没读懂**,别把它们读成抖动;');
+    console.log('   也别把剩下几轮的「绿」当成结论 —— 先看 tmp-flaky/ 里那几份日志。');
+  }
 }
 process.exit(tally.size === 0 ? 0 : 1);

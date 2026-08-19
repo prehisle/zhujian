@@ -68,9 +68,37 @@ export const backup = defineMessages({
   "backup.everyDays": { zh: "每 {n} 天", en: "every {n} {n|day|days}" },
   "backup.everyHours": { zh: "每 {n} 小时", en: "every {n} {n|hour|hours}" },
   "backup.everyMinutes": { zh: "每 {n} 分钟", en: "every {n} {n|minute|minutes}" },
+  // ⭐ 420 补:这两条是「路径要列出来」那一格的落点 —— ⛔ 别退回只报数量。
+  "backup.releasedLead": { zh: "⚠ 这 {n} 份自动备份已经不再自动清理,归你自己处置:", en: "⚠ These {n} automatic backups are no longer cleaned up automatically — they are yours to handle:" },
+  "backup.retryLead": { zh: "⚠ 这 {n} 份旧备份这次没删掉,下次会再试:", en: "⚠ {n} older {n|backup|backups} could not be deleted this time; it will be retried:" },
   "backup.autoReset": { zh: "重置自动备份设置", en: "Reset automatic backup settings" },
   // ⭐ 与 problemHint 那条正相反:这份文件里没有备份钥,重置不会让任何备份变得打不开。
   "backup.autoResetHint": { zh: "这份设置里没有备份钥,重置它不会让任何已有备份打不开;代价是:已经备出来的旧文件从此不再被自动清理,归你自己管。", en: "These settings hold no backup key — resetting them cannot make any existing backup unreadable. The cost: older files already produced will no longer be cleaned up automatically; they become yours to manage." },
   "backup.autoBannerLead": { zh: "自动备份没跑顺", en: "Automatic backup had trouble" },
   "backup.autoBannerClose": { zh: "知道了", en: "Got it" },
+  // 恢复(笔②,backup-plan §16;426)。⛔ **这几句是判据不是修辞**,改词前先读 §16.11:
+  // ⛔ 不许写成「你的库回来了」(拿到的是**多出来的一个空间**);⛔ 不许暗示它覆盖了什么
+  // 或接回了旧账户(恢复出来的空间**不同步**,直到你给它创建账户、把别的设备重新加进来)。
+  "backup.restoreName": { zh: "从备份恢复", en: "Restore from a backup" },
+  "backup.restoreDesc": { zh: "把一份 .zjbak 恢复成一个新空间", en: "Turns a .zjbak file into a new space" },
+  "backup.restoreOpen": { zh: "恢复…", en: "Restore…" },
+  "backup.restoreClose": { zh: "收起", en: "Close" },
+  // 前置提示:§16.2 的形 + §16.11 的诚实边界 + §16.9 的两个数(⛔ 一条都别删)。
+  "backup.restoreLead1": { zh: "⭐ 恢复绝不覆盖任何现有数据:它新建一个空间,原来的空间原样在那儿,要不要删由你决定。", en: "⭐ Restoring never overwrites existing data: it creates a new space, and your current spaces stay exactly as they are — deleting them is your call." },
+  "backup.restoreLead2": { zh: "恢复出来的空间不同步,直到你给它创建账户、把别的设备重新加进来;它也不会踢掉任何设备、不会让旧账户消失。", en: "The restored space does not sync until you create an account for it and pair your other devices again; it removes no device and makes no old account disappear." },
+  "backup.restoreLead3": { zh: "恢复回来的是备份那一刻的数据;同一台机器上恢复会多出一个空间,而且可能与原来那个同名。", en: "You get the data as of the moment the backup was taken; restoring on the same machine leaves you with one extra space, possibly sharing its name with the original." },
+  "backup.restoreLead4": { zh: "⚠ 跑起来之后不能取消、也没有进度;过程中临时需要大约 3 倍于库大小的磁盘空间。", en: "⚠ Once started it cannot be cancelled and shows no progress; it temporarily needs roughly three times the library's size in free disk space." },
+  "backup.restoreFilePh": { zh: "备份文件(.zjbak)的完整路径", en: "Full path of the backup file (.zjbak)" },
+  "backup.restoreCodePh": { zh: "备份码", en: "Backup code" },
+  // ⭐ 这一句是 §16.6 那条坑的产品面:恢复不读本机配置,也绝不把输进来的码存下来。
+  "backup.restoreCodeHint": { zh: "填取这份备份的那台设备的备份码。这台机器有没有设置过备份都不影响恢复,输进来的码也不会被存下来。", en: "Enter the backup code of the device that made this file. It does not matter whether this machine has backup set up, and the code you type is never stored." },
+  "backup.restoreGo": { zh: "开始恢复", en: "Start restoring" },
+  "backup.restoreRunning": { zh: "恢复中…(整份解密 + 版本前滚 + 全库校验,不能取消)", en: "Restoring… (decrypting, migrating and fully checking the library — cannot be cancelled)" },
+  "backup.restoreNeedFile": { zh: "要恢复哪一份?先填备份文件的完整路径", en: "Which file? Enter the full path of the backup first" },
+  "backup.restoreNeedCode": { zh: "还差备份码", en: "The backup code is still missing" },
+  // 成功:⛔ 说的是「多了一个空间」,不是「你的库回来了、原样在原处」。
+  "backup.restoreDone": { zh: "已恢复成一个新空间:{space}(备份取于 {when})——切到那个空间就能看到里面的内容。", en: "Restored as a new space: {space} (backed up {when}) — switch to it to see what is inside." },
+  "backup.restoreDoneUnnamed": { zh: "这个空间", en: "this space" },
+  // 库已经在盘上、只是这一趟没装配上:⛔ 绝不许显示成「恢复失败」。
+  "backup.restoreOnDisk": { zh: "⚠ 库已经恢复到盘上了(⛔ 没有覆盖任何东西),只是这一趟没接进空间列表:", en: "⚠ The library is already restored on disk (nothing was overwritten); it just was not attached to the space list this time:" },
 });

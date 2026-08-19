@@ -1681,7 +1681,9 @@ async fn join_space_inner(
         );
     };
     // 账户绑定互斥:建槽到 Integrated 全程持有(与创号/配对/建空间同锁)。
-    let _life = spaces.lifecycle.lock().await;
+    // ⚠ **必须是凭证形而不是裸取**(§16.3.2):集成段要把同一枚 permit 一路带到共享
+    // helper;保留裸 guard、到 helper 前再取一次凭证 = **自锁**。
+    let permit = spaces.lock_lifecycle().await;
     progress("preparing", 0, 0);
     let slot = spaces::JoiningSlot::create(dir)?;
     let reserved: Mutex<Option<String>> = Mutex::new(None);
@@ -1885,20 +1887,9 @@ async fn join_space_inner(
     // 集成段到 activate(插表 + 事件桥)为止是可失败区;activate 一成功即 Integrated
     // (codex 一轮 M4:activate 之后再 Err 会把「实已在表」误报成 PublishedNeeds
     // Restart 并错误保留 reservation)。
-    let integrate = (|| -> Result<Arc<SpaceRuntime>, String> {
-        // 正式打开走 db::open 正道(桌面策略;版本恰当前,迁移为 no-op)。
-        let conn = db::open(&published.path).map_err(|e| format!("打开新空间库失败:{e}"))?;
-        let clk = clock::Clock::load(&conn).map_err(|e| format!("初始化空间时钟失败:{e}"))?;
-        // §六④ 身份全表裁决(新者垫底:真撞上时败的是新空间,不连坐已有空间)。
-        let mut idents = live_identities(spaces)?;
-        idents.push(spaces::read_identity(&id, &published.path, &conn, &clk)?);
-        if let Some(spaces::Veto::Hard(m) | spaces::Veto::Soft(m)) =
-            spaces::identity_vetoes(&idents).remove(&id)
-        {
-            return Err(m);
-        }
-        activate_space(app, spaces, id.clone(), published.path.clone(), conn, clk, None)
-    })();
+    // ⭐ 这五步自 426 起住共享 helper(§16.3.2):恢复的幕⑦ 调的是同一处 —— 全仓
+    // `desktop/lib.rs` 里那道锚要求的「唯一集成入口」就是它。
+    let integrate = integrate_space(&permit, app, &id, &published.path);
     match integrate {
         Ok(rt) => {
             release_join_reservation(spaces, &reserved);
@@ -1921,9 +1912,12 @@ async fn join_space_inner(
         }
         // reservation 保留(fail-closed 到重启):publish 成功、集成失败的重试会
         // 二次加入同一账户,必须拒到重启(§3.5)。
+        // ⚠ join 这半的话术**一字未改**(两支合成同一句):加入的失败面里撞身份是
+        // 天方夜谭(新库刚从别人那儿引导下来、device_id 是本机新生成的),而恢复那半
+        // 分得开两支,见 `restore_integrate_hint`。
         Err(e) => Ok(JoinOutcome::PublishedNeedsRestart {
             space_id: id,
-            error: format!("空间已加入,但装配失败:{e}——重启朱简后空间会出现"),
+            error: format!("空间已加入,但装配失败:{}——重启朱简后空间会出现", e.text()),
         }),
     }
 }
@@ -2353,6 +2347,128 @@ fn space_has_item(conn: &Connection) -> rusqlite::Result<bool> {
     .map(|n| n != 0)
 }
 
+// ── 共享集成 helper(backup-plan §16.3.2,一弹 M3)───────────────────────────────
+//
+// 「把一个**盘上已经存在、本进程还没装配**的空间接进来」这件事,今天有两个调用方:
+// 「加入空间」的 Published → Integrated 那一段,与恢复的幕⑦。⛔ **两处不许各写一份** ——
+// 判据不是"重复代码不好看",是 `db.rs` 那道工作区级审计锚把 `db::open` 的调用点数
+// 钉死成 `desktop/lib.rs` 恰 4 处:另写一处会把 4 顶成 5、当场红。**那是对的**,
+// 它守的正是「唯一集成入口」。
+//
+// ⛔ **必须留在调用方、不许进 helper**(§16.3.2 写死的边界;抽太大会把 join 的账户
+// 提交语义污染进恢复):`progress("integrating")` / `cleanup_error` 与 `needs_reopen` /
+// `post_commit_error` / **`release_join_reservation`** / warnings 与 `SpaceInfo` 拼装 /
+// 各自的失败话术。⭐ 判据是 reservation:**只有集成成功才释放,失败要保留到重启** ——
+// 那是 join 的账户提交语义,恢复根本没有 reservation 这回事。
+
+/// 集成失败的两支。⛔ **分开不是为了好看,是因为两支的「接下来怎么办」不一样**:
+/// 撞身份重启也没用(下次启动照样撞),而另一支**重启值得先试**(启动时会重新装配一遍)。
+/// 糊成一句 = 对着撞号的用户说「重启就行」,而他重启一百次也还是那样。
+/// ⚠ **`Failed` 只是"值得先试",不是"重启就好"**(复核轮 L3/L2):它还盖着开库 / 时钟 /
+/// 读别的空间身份失败,权限错、文件身份错那几种重启修不好 —— 话术里如实说了,别改回去。
+#[derive(Debug)]
+enum IntegrateError {
+    /// 身份全表裁决把它判下来了(§六④ 新者垫底:败的是新来的,不连坐已有空间)。
+    Veto(String),
+    /// 开库 / 时钟 / activate 失败 —— 与身份无关的那一族。
+    Failed(String),
+}
+
+impl IntegrateError {
+    fn text(&self) -> &str {
+        match self {
+            IntegrateError::Veto(m) | IntegrateError::Failed(m) => m,
+        }
+    }
+}
+
+/// 集成一个盘上已存在的空间:**恰五步**(开库 → 时钟 → 身份全表裁决 → activate)。
+///
+/// ⛔ **只收 `&LifecyclePermit`**(§16.3.2 三弹 M1):那把锁不许只靠调用纪律 ——
+/// 「新调用方漏拿锁照样编译得过」是真实反例(两个集成同时快照 identity、各自都看不见
+/// 对方、随后都 activate,全表裁决的原子性当场破掉)。`Spaces` 也从凭证里取,
+/// ⛔ 不另收一个可错配的引用。
+fn integrate_space(
+    permit: &spaces::LifecyclePermit<'_>,
+    app: &AppHandle,
+    id: &str,
+    path: &std::path::Path,
+) -> Result<Arc<SpaceRuntime>, IntegrateError> {
+    // ⭐ **开库 + 时钟 + 身份裁决是一件事,不是三件**(见 [`integrate`] 的头注):
+    // 拿得到这对 `(conn, clk)` 就等于裁决过了,⛔ 摘掉裁决不是变异、是编译错误。
+    let (conn, clk) = integrate::open_and_adjudicate(permit, id, path)?.into_parts();
+    activate_space(
+        app,
+        permit.spaces(),
+        id.to_string(),
+        path.to_path_buf(),
+        conn,
+        clk,
+        None,
+    )
+    .map_err(IntegrateError::Failed)
+}
+
+/// helper 的前三步(开库 → 时钟 → **身份全表裁决**),封在一个私有子模块里。
+///
+/// ⭐ **为什么是子模块而不是三行内联**(codex 实现审 426 的 L1):测 7b 得能直接调裁决
+/// 那一支(它不碰 `AppHandle`,否则整条撞号路径一格测都写不成),而那样一来
+/// **「把裁决从 helper 里摘掉」那条变异就抓不到** —— 测照样绿。⇒ 把裁决的产出做成
+/// **[`integrate_space`] 里唯一拿得到 `conn`/`clk` 的来路**:父模块造不出
+/// [`integrate::Adjudicated`],摘掉这一步就没有句柄可传给 `activate_space`,
+/// **编译期当场红**(照 `core/src/backup/restore.rs` 的 `ClosedLibrary` 同形,checklist §8)。
+///
+/// ⚠ **诚实边界,别把它读强了**(codex 实现审 426 复核轮 L3):
+/// - `activate_space` 收的**仍是裸 `Connection` + `Clock`**,而且另有两处合法调用点
+///   (建空间 / 启动装配)—— 这个类型**没有**让「裸调 activate」从此不可写;
+/// - 它挡的只是**这条集成路径**上「跳过裁决」;谁另开一条 `rusqlite::Connection::open`
+///   照样绕得过去(那条既不碰 `db::open` 锚也不碰 `open_space` 锚)。
+///   ⇒ **那个残留缺口是被接受的**(codex 复核轮的判据):绕过者必须显式新增一条**违反桌面
+///   正式开库契约**的路线,而本文件今天零处这种调用,`activate_space` 又是文件内私有 fn、
+///   调用点肉眼可数。⛔ 别拿「两道审计锚兜着」当它的论证 —— 那两道锚数的是另外两个符号。
+mod integrate {
+    use super::{clock, db, live_identities, spaces, IntegrateError};
+    use std::path::Path;
+
+    /// 「这个库开好了、时钟加载了、**而且身份全表裁决过了**」——字段私有在本模块,
+    /// 唯一产法是 [`open_and_adjudicate`]。
+    pub(super) struct Adjudicated {
+        conn: rusqlite::Connection,
+        clk: clock::Clock,
+    }
+
+    impl Adjudicated {
+        pub(super) fn into_parts(self) -> (rusqlite::Connection, clock::Clock) {
+            (self.conn, self.clk)
+        }
+    }
+
+    /// ⚠ 那条撞号路径**必须**有网:`epoch::compact` 生出来的新 `device_id` 只是
+    /// `Ulid::new()`、**不过跨空间唯一闸** ⇒「恢复后恒无 veto」是概率结论,
+    /// ⛔ 不是结构保证(backup-plan §16.12 测 7b)。
+    pub(super) fn open_and_adjudicate(
+        permit: &spaces::LifecyclePermit<'_>,
+        id: &str,
+        path: &Path,
+    ) -> Result<Adjudicated, IntegrateError> {
+        // 正式打开走 db::open 正道(桌面策略;版本恰当前,迁移为 no-op)。
+        let conn =
+            db::open(path).map_err(|e| IntegrateError::Failed(format!("打开新空间库失败:{e}")))?;
+        let clk = clock::Clock::load(&conn)
+            .map_err(|e| IntegrateError::Failed(format!("初始化空间时钟失败:{e}")))?;
+        // §六④ 身份全表裁决(**新者垫底**——真撞上时败的是新空间,不连坐已有空间)。
+        let mut idents = live_identities(permit.spaces()).map_err(IntegrateError::Failed)?;
+        idents
+            .push(spaces::read_identity(id, path, &conn, &clk).map_err(IntegrateError::Failed)?);
+        if let Some(spaces::Veto::Hard(m) | spaces::Veto::Soft(m)) =
+            spaces::identity_vetoes(&idents).remove(id)
+        {
+            return Err(IntegrateError::Veto(m));
+        }
+        Ok(Adjudicated { conn, clk })
+    }
+}
+
 /// 装配一个空间:activate(core supervisor——库连接 + update_hook 写通知 + HLC
 /// 时钟 + transport 常驻,未配置账户时任务睡在控制通道上零打扰)+ 事件桥(给每个
 /// 事件贴空间标,§六⑥ 前端按空间路由)。开库策略在调用方(桌面 eager 全开所有
@@ -2729,6 +2845,9 @@ fn backup_status_dto(s: zhujian_core::backup::BackupStatus) -> BackupStatusDto {
         busy: s.busy.map(|b| match b {
             Busy::Backup => "backup",
             Busy::Cleanup => "cleanup",
+            // 424:第三个活动态(恢复)。⚠ 前端今天不读这一格,但类型面要如实
+            //(`src/backup.ts` 那个联合同轮加了 "restore")。
+            Busy::Restore => "restore",
         }),
         awaiting_ceremony: s.awaiting_ceremony,
         problem: s.problem,
@@ -2885,6 +3004,128 @@ async fn backup_verify(app: AppHandle, path: String) -> Result<VerifiedBackupDto
     .map_err(|e| format!("验证任务没跑起来:{e}"))?
 }
 
+// ── 恢复(笔②,backup-plan §16;426 = 壳这半)────────────────────────────────────
+//
+// 形一句话:**任何成功发布的恢复必产出一个「未配置(不同步)的新空间」,⛔ 绝不覆盖
+// 任何现有数据。** 幕①…⑥ 在 core(coordinator 取 `Restoring` 准入 → 验钥 → 解密 →
+// 前滚 → 预检 → 清身份 → no-clobber 落位),这里只做幕⑦:**同一个共享集成 helper**。
+//
+// ⛔ 三条别改坏的:
+// 1. **提交点 = 幕⑥ publish 成功**。此后任何失败都不许把「库已经在盘上」这件事撤销 ——
+//    集成失败照 `pair_join` 的 `PublishedNeedsRestart` 那条裁决:**不许删库**。
+//    ⇒ 本命令的失败回执里,「库还在不在盘上」必须一眼看得出来。
+// 2. **备份码是用户手输的**,⛔ 不读 `.backup.json`、也⛔ 不要求本机已完成备份仪式 ——
+//    换了机器 / 重装系统之后那份配置根本不存在,而那正是恢复的主场景。
+// 3. **生命周期凭证在整趟里全程持有**:落位是往空间扫描目录里放文件,而「谁占着哪个
+//    账户 / 表里有哪些空间」的判断必须与它原子 —— 与 join 同锁同形。
+
+#[derive(Serialize)]
+struct RestoredSpaceDto {
+    /// 新空间的 ULID(全新的;⛔ **不是**备份里那个 space_id)。
+    space_id: String,
+    path: String,
+    /// 备份里那个空间叫什么。⚠ v1 刻意**不自动改名** ⇒ 同机恢复后两个空间同名。
+    source_space_name: Option<String>,
+    /// 备份是什么时候取的(RFC3339 UTC;本地时间由前端转)。
+    created_at: String,
+    /// 已装配进空间表 = 现在就能切过去;`false` = 库在盘上但这一趟没接进来。
+    integrated: bool,
+    /// ⭐ **原样摊开**:暂存名没清掉 / 集成失败的指路 —— ⛔ 不许收成一句「恢复失败」。
+    warnings: Vec<String>,
+}
+
+/// 幕⑦ 失败时给用户的**可执行指路**(§16.12 测 7b 那条「真撞上了也不许静默」的另一半)。
+///
+/// ⭐ **两支分开是判据不是修辞**:撞身份**重启也没用**(下次启动照样撞),唯一出路是
+/// 删掉那份库再恢复一次(每一趟恢复都由压实重新生成一枚设备身份);而另一支**重启值得先试**
+/// (启动时会重新装配一遍)。⛔ 糊成一句 = 对着撞号的用户说「重启就行」,他重启一百次也一样。
+/// ⚠ **但另一支也只是"值得先试",不是保证**(复核轮 L3):它还盖着开库 / 时钟 / 读别的空间
+/// 身份失败,权限错、文件身份错那几种**重启修不好** —— 话术里那半句如实说了,别改回去。
+fn restore_integrate_hint(err: &IntegrateError, path: &str) -> String {
+    match err {
+        IntegrateError::Veto(m) => format!(
+            "⚠ 恢复出来的库已经落在盘上({path}),⛔ 没有覆盖任何东西 —— 但它的身份与\
+             已有空间撞上了,这一趟没装配进来:{m}。出路:先删掉那个文件,再恢复一次\
+             (每一趟恢复都会重新生成一枚设备身份)"
+        ),
+        // ⚠ **别把这句写成保证**(codex 实现审 426 的 L3):这一支不只是"瞬时的 activate
+        // 出错",它还盖着开库失败 / 时钟加载失败 / 读别的空间身份失败 —— 权限错、文件身份
+        // 错这类是**重启修不好的**。⇒ 先给最省事的那一步,再如实说它可能不够。
+        IntegrateError::Failed(m) => format!(
+            "⚠ 恢复出来的库已经落在盘上({path}),⛔ 没有覆盖任何东西 —— 但这一趟没装配\
+             进来:{m}。先重启一次朱简(启动时会重新装配一遍);若它仍然没出现在空间列表里,\
+             那就不是重启能修的,按上面那句原因处理那个文件"
+        ),
+    }
+}
+
+/// 从一份 `.zjbak` 恢复出**一个未配置(不同步)的新空间**。
+///
+/// ⚠ **没有进度、也不能取消**(§16.9,与 `0a-进度` 同一条已拍的板);大库要等,
+/// 故 `spawn_blocking`(同步命令会把主窗冻住)。
+#[tauri::command]
+async fn backup_restore(
+    app: AppHandle,
+    spaces: State<'_, Spaces>,
+    file: String,
+    code: String,
+) -> Result<RestoredSpaceDto, String> {
+    // ⚠ **凭证在 core 那半开跑之前就取**:落位那一刻起,盘上多了一个空间文件 ——
+    // 「谁占着哪个账户 / 表里有哪些空间」的判断(account_free_desktop 的磁盘重扫、
+    // 建空间、加入)不许在这中间打进来看见半个世界。
+    let permit = spaces.lock_lifecycle().await;
+    let core = app.clone();
+    let restored = tauri::async_runtime::spawn_blocking(move || {
+        core.state::<zhujian_core::backup::BackupCoordinator>()
+            .restore_backup(&file, &code)
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("恢复任务没跑起来:{e}"))??;
+
+    // ⭐ **提交点已过**:从这里往下,任何失败都不许翻成 `Err` —— 那会让用户以为
+    // 什么都没发生,而库真的已经在盘上了(照 `pair_join` 的 `PublishedNeedsRestart`
+    // 那条既有裁决,⛔ 也不许删库)。
+    let mut warnings = Vec::new();
+    if let Some(w) = restored.cleanup_error {
+        warnings.push(format!(
+            "⚠ 空间已经恢复好了,只是暂存目录里那个名字没清掉:{w}(库本体无损,下次启动会再清一次)"
+        ));
+    }
+    let integrated = match integrate_space(
+        &permit,
+        &app,
+        &restored.space_id,
+        std::path::Path::new(&restored.path),
+    ) {
+        Ok(_) => {
+            // ⭐ 空间**表**变了,不只是设置面里多了一句话:侧栏那枚空间徽章按空间数显隐
+            // (411/D2 —— 单空间时它整个藏着),不通知的话「恢复好了,切过去看」这句话
+            // 在只有一个空间的机器上是**指向一个看不见的入口**。两窗都发,与改名那条同形。
+            for win in ["notebook", "capture"] {
+                let _ = app.emit_to(
+                    win,
+                    "space-name-changed",
+                    serde_json::json!({ "space": restored.space_id }),
+                );
+            }
+            true
+        }
+        Err(e) => {
+            warnings.push(restore_integrate_hint(&e, &restored.path));
+            false
+        }
+    };
+    Ok(RestoredSpaceDto {
+        space_id: restored.space_id,
+        path: restored.path,
+        source_space_name: restored.source_space_name,
+        created_at: restored.created_at,
+        integrated,
+        warnings,
+    })
+}
+
 #[derive(Serialize)]
 struct BackupAutoStatusDto {
     enabled: bool,
@@ -2897,6 +3138,17 @@ struct BackupAutoStatusDto {
     /// ⭐ 进程内那枚待读通知(设计审 H5):**每拉一次就取走** ——
     /// 它是「结论连盘都写不进去」时唯一还能到达用户的路,而 `emit` 在主窗没开时会丢。
     pending_notice: Option<String>,
+    /// **已交还给用户**的产物(⛔ 与上面那枚相反:读了**不清**,它是"待你处置"的清单)。
+    /// ⚠ 420 补的验收撞出来的缺口:此前只有**计数**到得了用户眼前,**路径只进了 stderr**。
+    released: Vec<BackupNoteDto>,
+    /// 上一趟「删不掉、下轮再试」的那几份。
+    retry: Vec<BackupNoteDto>,
+}
+
+#[derive(Serialize)]
+struct BackupNoteDto {
+    path: String,
+    why: String,
 }
 
 fn backup_auto_dto(s: zhujian_core::backup::AutoStatus) -> BackupAutoStatusDto {
@@ -2908,6 +3160,8 @@ fn backup_auto_dto(s: zhujian_core::backup::AutoStatus) -> BackupAutoStatusDto {
         last_result: s.last_result,
         problem: s.problem,
         pending_notice: s.pending_notice,
+        released: s.released.into_iter().map(|(path, why)| BackupNoteDto { path, why }).collect(),
+        retry: s.retry.into_iter().map(|(path, why)| BackupNoteDto { path, why }).collect(),
     }
 }
 
@@ -3239,7 +3493,12 @@ pub fn run() {
             // #4(codex 二审):清上次进程 kill/crash 残留的明文引导快照;必须在任何空间
             // transport 启动前跑一次(多空间共享 .boot,放进各 transport 的 run() 会互删
             // 别的空间正在传输的快照)。
-            sync::transport::sweep_stale_boot_files(&boot_dir);
+            // 升档:清不掉 = **响亮**(它们是明文完整库副本)。⛔ 不拒启、也不封锁引导 ——
+            // 判据与触发门写在 `sweep_stale_boot_files` 头注里,别在这里另写一份。
+            let boot_sweep = sync::transport::sweep_stale_boot_files(&boot_dir);
+            if !boot_sweep.is_clean() {
+                eprintln!("WARN {boot_sweep}");
+            }
             // 建库暂存残留(multispace-plan §3):`.creating-*` 从未 rename 归位就
             // 不是空间,启动无条件清(含其 -journal;epoch-plan §7 起并清重置孤儿
             // -wal/-shm)。main 重置续完(§7)必须在发现/装配**之前**——journal 在场
@@ -3684,6 +3943,7 @@ pub fn run() {
             backup_open_dir,
             backup_list,
             backup_verify,
+            backup_restore,
             backup_auto_status,
             backup_set_auto,
             backup_reset_auto

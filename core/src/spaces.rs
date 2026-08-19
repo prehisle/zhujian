@@ -873,8 +873,11 @@ fn stage_and_publish(
 /// 桌面/宿主:hard_link(目标存在即失败;rename 会静默覆盖)+ unlink staging 名
 /// ——与正式库同 inode,删失败无害(启动 [`sweep_stale_creating`] 再删一次名字,
 /// 库本体无损)。
+///
+/// ⚠ **`pub(crate)` 是 402/423 那两笔放宽的**(backup-plan §7.2 / §16 幕⑥):加密备份的
+/// **恢复**要把 staging 里那份解出来的库原子落位成一个新空间 —— 同一条规则,⛔ 不许另写一份。
 #[cfg(not(target_os = "android"))]
-fn publish_no_clobber(staging: &Path, path: &Path) -> std::io::Result<()> {
+pub(crate) fn publish_no_clobber(staging: &Path, path: &Path) -> std::io::Result<()> {
     std::fs::hard_link(staging, path)?;
     let _ = std::fs::remove_file(staging);
     Ok(())
@@ -886,7 +889,7 @@ fn publish_no_clobber(staging: &Path, path: &Path) -> std::io::Result<()> {
 /// /data 私有区 f2fs/ext4 支持该 flag;不支持则响亮 errno 上抛(fail-fast,不静默
 /// 覆盖、不回退)。
 #[cfg(target_os = "android")]
-fn publish_no_clobber(staging: &Path, path: &Path) -> std::io::Result<()> {
+pub(crate) fn publish_no_clobber(staging: &Path, path: &Path) -> std::io::Result<()> {
     use std::ffi::CString;
     use std::os::unix::ffi::OsStrExt;
     let from = CString::new(staging.as_os_str().as_bytes())
