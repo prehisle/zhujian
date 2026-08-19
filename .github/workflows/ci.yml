@@ -84,7 +84,14 @@ jobs:
       #   · `webkit2gtk-driver` = `/usr/bin/WebKitWebDriver`(wdio.conf.js 里写死的那条路径,
       #     Linux 端的原生 WebDriver;在 jammy 的 **universe** 里,与 libwebkit2gtk-4.1 同源同版);
       #   · `xvfb` = 无显示器时的虚拟 X。
+      # ⚠ **步级超时 450 当天就用上了**:落地那趟 main 上,这一步与 `preflight` 的 `shells` 那格
+      # (同样装 apt 的那个)**一起卡在 `apt-get` 上 52 分钟**,而同一趟里**不装 apt 的两格早就绿了**
+      # ⇒ 是 runner 的 apt 镜像挂住,不是我们的树。不设步级上限的话,它会一路吃掉 job 那 90 分钟,
+      # 最后报成「job 超时」——**把一次基础设施事件呈现成一次说不清的红**。15 分钟对一次正常的
+      # apt(实测 ~60 秒)绰绰有余。⚠ `preflight.yml` 的 `shells` 那格有同样的暴露面,本轮**没动**
+      # (那是发版闸,单轮单件事)—— 记在 ci-plan §8。
       - name: 系统依赖(Tauri v2 + WebKitWebDriver + Xvfb)
+        timeout-minutes: 15
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file \

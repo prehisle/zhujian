@@ -157,7 +157,7 @@ export const config = {
       // 实测 **32/36 红**,同一棵树换成 zh_CN 后 30 passed / 6 failed。故这里把语言钉死,
       // 别让「机器的 locale」变成判绿的隐藏入参(Windows 的 WebView2 语言由系统设置定,
       // 这两个变量它不看 = 生产端那条链一字不变)。
-      // 450:**上面那条 locale 钉死自己带了一个副作用,而它被本机装的输入法遮了两个月** ——
+      // 450:**上面那条 locale 钉死自己带了一个副作用,而它一直被本机装的输入法遮着** ——
       // GTK 在 `GTK_IM_MODULE` 没设时**按 locale 自动挑输入法模块**,而 `immodules.cache` 里
       // `im-xim.so` 那条声明的正是 `"ko:ja:th:zh"` ⇒ 钉成 zh_CN 就等于顺手选了 **xim** 那条路。
       // XIM 会把合成出来的键事件按 keycode+state **重新翻译一遍**,而 WebKit 合成时没带 Shift
