@@ -17,6 +17,18 @@ name: preflight
 # 385 把它记成可优化项时,五套里恰好漏掉的就是这两套。两格**并行**跑,故 preflight 的
 # 墙钟 = 两格里慢的那个,不是相加。
 #
+# ⭐ 448 补上第三格 `windows`(ci-plan 阶段 2)。**在此之前,CI 里从来没有一条 Rust 测试
+# 在 Windows 上跑过** —— 上面两格都钉死 `ubuntu-22.04`,nightly 的 Windows 那格只 build
+# 不 test,而 **Windows 是今天唯一的生产桌面端**。425 那支缺陷正好长在这个洞里:
+# `restore.rs` 落位前那次 fsync 拿的是只读句柄,Unix 上对 `O_RDONLY` 合法、而 Windows 的
+# `FlushFileBuffers` 直接 `ERROR_ACCESS_DENIED` ⇒ **恢复在生产端根本落不了位**,形状是
+# 「core 8 支全红」;`windows-latest` 上一格 `cargo test` 当场就抓得住,实际却是靠人工
+# 复跑一整轮才抓到的,而**设计审与实现审都读不出平台 API 语义差**。
+# ⚠ 它落在 preflight 里 ⇒ **每次发版都会等这一格**(墙钟 +5~10 分钟)。那是有意的:
+# 发版闸正是这个洞最该被堵上的地方。
+# ⚠ 两端 core 的**测试条数本来就不同**(Windows 955 / Linux 960,backup 模块有多处
+# `#[cfg(unix)]` 测试)—— 这里只判过不过,⛔ 别去对数。
+#
 # ⛔ 刻意**不**放进来的两样(判据见 progress-log 385/386):
 #   · e2e —— 要 Windows + 真 WebView2 + 先停掉占全局热键的生产实例,塞进来产的是
 #     环境噪声而不是发布判据;
@@ -92,5 +104,39 @@ jobs:
       # `generate_context!` 只有在开了 `custom-protocol` 特性时才去嵌 `frontendDist`
       # (tauri-macros:`dev: cfg!(not(feature = "custom-protocol"))`),而 cargo test
       # 不开它 ⇒ 走 devUrl 那支,`dist/` 缺席照样编得过。别顺手补一步前端构建。
+      - run: cd src-tauri && cargo test --quiet
+      - run: cd android/src-tauri && cargo test --quiet
+
+  # 448(ci-plan 阶段 2):**五套全在 Windows 上再跑一遍**。
+  # 与上面两格互不依赖,三格同时开跑。
+  #
+  # ⛔ **不在这一格跑那十道门禁**:它们是平台无关的 node 脚本(判的是仓里几份表对不对得上),
+  #    在第二个操作系统上跑一遍不产生任何新判据,只是把墙钟拉长。这一格要的是**平台 API 语义**。
+  # ⚠ **不拆成两格**(Linux 那边拆是因为 `shells` 要先 apt 装 webkit2gtk 一套):Windows 上
+  #    WebView2 是镜像预装的,没有那步 ⇒ 拆开只是多付一次检出 + rust-cache 还原。
+  # ⚠ 安卓壳这里同样编的是 **host target(x86_64-windows)**,跑纯 Rust 单测,**不需要 NDK**。
+  windows:
+    name: cargo test 五套(Windows,唯一的生产桌面端)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            core
+            server
+            sync-proto
+            src-tauri
+            android/src-tauri
+
+      # 与 Linux 那两格同口径的五套。⚠ `core` 含起真同步服务器的双库端到端集成测、
+      # `server` 含真时间短 TTL 集成测,故这一格刻意串行跑,别为省墙钟并发它们。
+      - run: cd core && cargo test --quiet
+      - run: cd server && cargo test --quiet
+      - run: cd sync-proto && cargo test --quiet
+      # ⚠ 同 `shells` 那格:刻意**不**跑 `npm run build`,`cargo test` 不开 `custom-protocol`
+      # ⇒ 走 devUrl 那支,`dist/` 缺席照样编得过。
       - run: cd src-tauri && cargo test --quiet
       - run: cd android/src-tauri && cargo test --quiet

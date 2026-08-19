@@ -1,15 +1,28 @@
 #!/usr/bin/env node
 // 开源导出:把「拟公开白名单」内的 git 跟踪文件快照复制到公开仓目录。
 // 白名单是 fail-closed:新增路径默认不导出,须显式加进 ALLOW 才会公开;
-// 每次运行打印被排除的跟踪文件清单(防「以为都公开了」的静默漏配)。
-// 用法:node scripts/export-public.mjs [目标目录]   (默认 ../zhujian-public)
+// 每次运行核对被排除的跟踪文件清单(防「以为都公开了」的静默漏配)。
+// 用法:node scripts/export-public.mjs [目标目录] [--accept-exclusions]  (默认 ../zhujian-public)
+//
+// ⭐ 448(ci-plan 阶段 2)把那条「打印的排除清单**逐条过目**」换了形。原因很实:
+// 排除清单今天 100+ 条、每轮几乎一模一样,而「每次都要逐条看一遍」的东西人只会越看越快,
+// 到最后等于没看 —— 它要防的那件事(**某个本该公开的新文件被默认排除掉了**)恰恰只发生在
+// 清单**变了**的那一刻。于是改成与基线 `.export-excluded.json` 比对:
+//   · 一模一样  ⇒ 一行带过;
+//   · **多出排除项** ⇒ 逐条打印并 **fail-closed 退出**(那正是要人看的那一刻),
+//     确认无误后带 `--accept-exclusions` 再跑一趟,把新基线落盘;
+//   · 少了排除项(某文件进了 ALLOW、或被删了)⇒ 只提示不拦,同样靠那个开关落基线。
+// ⚠ 基线文件**不在 ALLOW 里**(同 `.export-redlines.json`)⇒ 它自己不进公开仓,
+//   而它自己也在排除清单里 —— 自指但稳定,别去"修"。
 import { execFileSync } from "node:child_process";
-import { cpSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { cpSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const target = resolve(process.argv[2] ?? join(repoRoot, "..", "zhujian-public"));
+const argv = process.argv.slice(2);
+const acceptExclusions = argv.includes("--accept-exclusions");
+const target = resolve(argv.find((a) => !a.startsWith("--")) ?? join(repoRoot, "..", "zhujian-public"));
 if (target === repoRoot || repoRoot.startsWith(target)) {
   console.error(`目标目录不能是仓库自身或其祖先:${target}`);
   process.exit(1);
@@ -86,11 +99,69 @@ for (const rel of allowed) {
 }
 
 console.log(`已导出 ${copied} 个文件 → ${target}`);
-console.log(`未导出的跟踪文件 ${excluded.length} 个(白名单外,逐条确认无遗漏):`);
-for (const p of excluded) console.log(`  - ${p}`);
+
 if (hits.length) {
   console.error(`\n❌ 内容红线命中,导出树不可发布:`);
   for (const p of hits) console.error(`  - ${p}`);
   process.exit(1);
 }
-console.log("\n内容红线扫描通过。");
+console.log("内容红线扫描通过。");
+
+// ---- 排除清单与基线比对(448 起,替代「每轮逐条过目」)----------------------------
+const baselinePath = join(repoRoot, ".export-excluded.json");
+let baseline = null;
+try {
+  const raw = JSON.parse(readFileSync(baselinePath, "utf8"));
+  if (Array.isArray(raw?.excluded) && raw.excluded.every((s) => typeof s === "string")) {
+    baseline = new Set(raw.excluded);
+  }
+} catch {
+  // 缺文件 / 解析不动 ⇒ 当作"没有基线",走下面 fail-closed 那支要人签一次字。
+}
+
+const nowSorted = [...excluded].sort();
+const added = baseline ? nowSorted.filter((p) => !baseline.has(p)) : nowSorted;
+const removed = baseline ? [...baseline].filter((p) => !excluded.includes(p)).sort() : [];
+
+function writeBaseline() {
+  writeFileSync(
+    baselinePath,
+    `${JSON.stringify(
+      {
+        note: "export-public.mjs 的排除清单基线:白名单外、故不进公开仓的跟踪文件。变了才提醒,新增即 fail-closed。改它的唯一正当方式是 `node scripts/export-public.mjs --accept-exclusions`。",
+        excluded: nowSorted,
+      },
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
+}
+
+if (!baseline) {
+  console.error(`\n❌ 读不到排除清单基线 ${baselinePath} —— 这是第一次,得有人签一次字。`);
+  console.error(`   白名单外的跟踪文件共 ${nowSorted.length} 个:`);
+  for (const p of nowSorted) console.error(`  - ${p}`);
+  if (!acceptExclusions) {
+    console.error(`\n   逐条确认「这些确实都不该公开」之后,重跑一次并带上 --accept-exclusions。`);
+    process.exit(1);
+  }
+  writeBaseline();
+  console.log(`\n✅ 已落基线 → ${baselinePath}(${nowSorted.length} 条)`);
+} else if (added.length === 0 && removed.length === 0) {
+  console.log(`排除清单与基线一致(${nowSorted.length} 条,未导出的跟踪文件)。`);
+} else {
+  if (removed.length) {
+    console.log(`\nℹ 少了 ${removed.length} 条排除项(进了 ALLOW,或文件被删):`);
+    for (const p of removed) console.log(`  - ${p}`);
+  }
+  if (added.length) {
+    console.error(`\n❌ 多出 ${added.length} 条排除项 —— **这就是要你看一眼的那一刻**:`);
+    for (const p of added) console.error(`  - ${p}`);
+    console.error(`   逐条问一句「它该公开吗」:该公开就把路径加进本脚本的 ALLOW;`);
+    console.error(`   确实不该公开,就带 --accept-exclusions 再跑一趟把新基线落盘。`);
+  }
+  if (!acceptExclusions) process.exit(added.length ? 1 : 0);
+  writeBaseline();
+  console.log(`\n✅ 已落新基线 → ${baselinePath}(${nowSorted.length} 条)`);
+}

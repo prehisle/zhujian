@@ -53,17 +53,32 @@
   background: color-mix(in srgb, var(--paper) 55%, transparent);
   backdrop-filter: blur(2px);
 }
+/* ⭐ **444:420 → 720**。420 是 232 那轮为「两枚热键」定的尺寸,今天这面板装着 6 节、
+   30 多行控件,备份那一节自己又有落点 / 立即备份 / 列表 / 自动 / 恢复五块。
+   ⚠ 720 不是拍脑袋:444 用真 Chrome 在默认窗(1040×680)上量过修前那棵树 ——
+   列表行里三块**不可挤**的东西(大小时间 176.3 + 状态 191.6 + 验证钮 46 + 间隙 24)
+   合计 **437.9px**,而那一行只有 **363px** 可用 ⇒ 差 75px。720 给到 655px 可用。
+   ⚠ **445 把可用宽吃掉了一截**:左栏 132 + 分隔线 1 + 右栏左右内边距 40 ⇒ 内容只剩 **545px**。
+   仍然宽于那 437.9(444 的判据一格没破),⛔ 但下一个人再往左栏加宽度之前先量这条。
+   ⛔ **上限由主窗兜着**:`tauri.conf.json` 的 notebook `minWidth: 900` ⇒ 900-48=852 > 720;
+   `min()` 那半是给缩放留的(WebView setZoom 会把视口 CSS px 变少)。 */
 .settings-panel {
-  width: min(420px, calc(100vw - 48px));
+  width: min(720px, calc(100vw - 48px));
   /* 412:面板长到装不下了(热键 2 + 外观 + 语言 + 字号 + 别名 + 备份)。不封高的话
      底部那几节在矮窗上直接够不着——不是"看着挤",是**点不到**。 */
   max-height: calc(100vh - 48px);
-  overflow-y: auto;
+  /* ⭐ **445:滚动条从面板下放到右栏**(`.settings-content`)。左栏与标题不该跟着内容滚 ——
+     滚到备份列表底下时左栏若也滚走了,「换一类」就得先滚回去。
+     ⚠ 连带一格:444 记的那条「`overflow-y:auto` 会把 x 轴一并算成 auto ⇒ 出横条」的观测点
+     也跟着搬家了 —— **横向溢出现在要量 `.settings-content`,量面板已经量不到**。 */
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
   background: linear-gradient(180deg, var(--raised), var(--raised-edge));
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-lg);
   box-shadow: var(--float-shadow);
-  padding: 18px 20px 20px;
+  padding: 0;
 }
 .settings-title {
   margin: 0 0 4px;
@@ -72,6 +87,75 @@
   letter-spacing: 0.04em;
   color: var(--ink);
 }
+
+/* ---- 445:左栏分类 + 右栏内容 ----
+   444 做完第一步(行的形)之后面板还是**一条 2546px 的滚动流**:要改备份落点得先滚过
+   热键 / 外观 / 语言 / 字号 / 别名。这一步把它切成三类,右栏一次只显一类。
+   ⛔ **只切显隐,不重建**(理由在 settings.ts 那段注释:仪式态 / 轮询 / 一发请求都挂在
+   自己的 DOM 上)⇒ 三个 `.settings-pane` 始终在文档里,非当前那两个带 `hidden`。 */
+.settings-head {
+  flex: none;
+  margin: 0;
+  padding: 15px 20px 13px;
+  border-bottom: 1px solid var(--line);
+}
+.settings-cols {
+  display: flex;
+  /* ⚠ 这句是右栏能滚的前提:flex 子项默认 `min-height:auto`(= 内容高),不压成 0 的话
+     整根柱子会把面板的 max-height 顶破,`overflow` 永远等不到内容。 */
+  min-height: 0;
+  flex: 1;
+}
+/* ⚠ **156 是量出来的,不是拍的** —— 而且第一版拍的 132 是错的:
+   三个分类名里最长的不是中文那个,是**英文档的「Backup & restore」**(真 Chrome 实测
+   文字真实宽 **104.9px**,而 132 的栏只给到 95px 的内容区 ⇒ **溢出 9.9px**,`nowrap` 会让它
+   直接压出按钮、压到分隔线上)。156 ⇒ 内容区 120px,余 15px(≈14%)给别的字体栈。
+   ⛔ **别再用 `scrollWidth` 判这一格**:按钮是 `overflow:visible`,它恒等于 clientWidth、
+   什么都证明不了;判据要用 `Range.getBoundingClientRect()` 量**文字真实宽**。
+   ⚠ 代价盘过:右栏可用宽 545 → 521,仍远宽于列表行那三块不可挤的 437.9(444 的判据没破)。 */
+.settings-nav {
+  flex: none;
+  width: 156px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 12px 8px;
+  border-right: 1px solid var(--line);
+}
+.settings-cat {
+  font-family: var(--font-serif);
+  font-size: var(--fs-13);
+  letter-spacing: 0.03em;
+  text-align: left;
+  color: var(--ink-soft);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  /* 上下 8+8 + 13px 字 ⇒ 热区高 ≥24(§2.3);宽由 132px 的栏撑满,不靠内容。 */
+  padding: 8px 10px;
+  cursor: pointer;
+  /* ⛔ **刻意不写 `white-space: nowrap`**:量准了宽度是第一道,这是第二道 —— 哪天某个
+     字体栈 / 某种语言把标签撑得更宽,让它**折成两行**(难看但读得全),⛔ 而不是压出按钮
+     去盖住分隔线。两道都要,别只留一道。 */
+  transition: background 0.14s, color 0.14s;
+}
+.settings-cat:hover {
+  background: color-mix(in srgb, var(--ink) 6%, transparent);
+  color: var(--ink);
+}
+/* 选中态与 `.seg-btn.on` 同一形(朱砂 + 淡朱底),整个面板里"当前是哪一档"只有一种读法。 */
+.settings-cat.on {
+  color: var(--seal);
+  background: var(--seal-tint);
+}
+.settings-content {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 14px 20px 20px;
+}
+/* 每一类的第一个小节标题不要那 20px 上留白(它是给**同一类里**小节之间开的)。 */
+.settings-pane > .settings-title:first-child { margin-top: 0; }
 .settings-sub {
   margin: 0 0 16px;
   font-size: var(--fs-12);
@@ -81,27 +165,49 @@
 
 /* 一行 = 一枚热键:左边名字,右边当前键 + 更改按钮。
    前缀是 hkset-(settings 的热键行):裸 hk- 已被共享件 hotkey-menu.css(卡片 ⋯ 速查菜单)
-   占用,两族同在 notebook 文档里,同前缀裸类将来新增自然名(.hk-btn/.hk-key)会静默串样式。 */
+   占用,两族同在 notebook 文档里,同前缀裸类将来新增自然名(.hk-btn/.hk-key)会静默串样式。
+
+   ⭐ **444 把这一族从「三列并排」改成「标题行 + 说明行」**(元宝那张参考图给对的就是这个形)。
+   修前是 `名字 76px | 说明 flex:1 | 控件 flex:none` 三列**抢同一行的水平空间**,而那一行
+   只有 380px ⇒ 说明列实测只剩 **129.1px**、「从任何地方弹出快速记录窗」**折 2 行**。
+   现在:**说明整行独占第二行**,拿满面板宽,一行就放得下。
+   做法是纯 CSS —— `flex-wrap` + 给说明 `order:2` 与 `flex-basis:100%`,
+   ⛔ **刻意不加包装元素**:那要动 settings.ts / backup.ts 里十来处 `row.append(name, desc, ctrls)`,
+   而这一步的判据是「不动 DOM、不动 e2e 选择器」。 */
 .hkset-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 10px;
+  /* 行间距(说明贴着自己的标题)与列间距是两回事:3px / 12px。 */
+  gap: 3px 12px;
   padding: 10px 0;
   border-top: 1px solid var(--line);
 }
 .hkset-row:first-of-type { border-top: 0; }
+/* ⛔ 不再是 76px 固定列:名字现在是这一行的**标题**,左对齐即可,不必与别行对齐成一栏
+   (对齐成栏正是修前把说明挤成 129px 的那半)。 */
 .hkset-name {
   flex: none;
-  width: 76px;
   font-size: var(--fs-13);
   color: var(--ink);
 }
 .hkset-desc {
-  flex: 1;
+  order: 2; /* 排到所有控件之后 */
+  flex: 1 1 100%; /* 占满 ⇒ 与标题挤不进同一行,必换行 */
   font-size: var(--fs-12);
   color: var(--ink-faint);
   line-height: 1.5;
 }
+/* ⚠ 有几行的说明是**空串**(retryRow / 自动备份坏配置那两处传的就是 ""):空的 flex item
+   仍会占掉一整根换行 + 一个 row-gap。⛔ 别去改那两处的 DOM,这里一句就够。 */
+.hkset-desc:empty { display: none; }
+/* 控件推到行右端。⚠ 这条吃的是「一行里除了名字与说明之外的那一个元素」——
+   `.hkset-keys` / `.seg` / `.zoom-ctrls` / `.alias-ctrls` / 裸 `button.hkset-change` 都在内。
+   ⚠ **前提:每行恰有一个** —— 今天 settings.ts 与 backup.ts 里 11 处 `.hkset-row` 全是如此;
+   哪天出现两个,自动外边距会把空隙**均分**给两个,那时要改成只给第一个。
+   ⛔ 对 `.bkup-body .alias-ctrls` 那只(flex:1)它是 no-op:flex-grow 先把空隙吃光,
+   自动外边距只分**剩下的**——那正是我们要的(落点那行的输入框该拿满剩余宽)。 */
+.hkset-row > :not(.hkset-name):not(.hkset-desc) { margin-left: auto; }
 .hkset-keys {
   flex: none;
   display: flex;
@@ -141,12 +247,16 @@
   color: var(--ink);
 }
 
-/* 行下的一句话:成功=墨绿淡提示,失败=朱砂。 */
+/* 行下的一句话:成功=墨绿淡提示,失败=朱砂。
+   ⭐ 444 加 `overflow-wrap` —— 这里显的是**后端原话**(路径 / 错误串),Windows 路径里
+   没有浏览器肯断的字符,长了就整条捅出面板右缘。⛔ 这不是"藏起来"是"让它读得到":
+   备份那一族到处写着「原样摊开后端那句」,溢到面板外面的话等于没摊开。 */
 .hkset-msg {
   margin: 2px 0 0;
   font-size: var(--fs-12);
   line-height: 1.5;
   min-height: 0;
+  overflow-wrap: anywhere;
 }
 .hkset-msg.ok { color: var(--ink-soft); }
 .hkset-msg.err { color: var(--seal); }
@@ -164,8 +274,11 @@
   font-size: var(--fs-14);
 }
 
-/* 字号一行:左名字,右边 −  100%  ＋  复位。 */
-.zoom-row .hkset-name { width: auto; flex: 1; }
+/* 字号一行:左名字,右边 −  100%  ＋  复位。
+   ⛔ 444 删掉了这里原有的 `.zoom-row .hkset-name { width:auto; flex:1 }` —— 它是给
+   76px 固定列开的口子,而那根固定列已经没了(名字本来就是 auto),右对齐由上面那条
+   自动外边距统一管。`.zoom-row` 这个类名还留着(theme / lang / zoom 三行都挂着它),
+   只是眼下没有专属规则了。 */
 .zoom-ctrls {
   flex: none;
   display: flex;
@@ -278,7 +391,13 @@
    ⚠ 也别改成 `flex: 1 1 200px`:那样只有「打开文件夹」掉下去、「保存」留在第一行,
    两个按钮分居两行更难看(437 试过)。 */
 .bkup-body .alias-ctrls { flex: 1; min-width: 0; flex-wrap: wrap; }
-.bkup-body .alias-ctrls button { white-space: nowrap; }
+.bkup-body .alias-ctrls button { white-space: nowrap; flex: none; }
+/* ⭐ **444:那个取舍的前提没了**。437 让按钮整体掉到第二行,是因为这一行**只有 292px**
+   ——三样并排就得把输入框压到 148px(比它想修的 150 还窄)。面板加宽之后这一行有 663px,
+   并排放完输入框仍有 ≈460px(远宽于 437 拿到的 292)⇒ **一行放得下,还更宽**,
+   两条目标不再打架。⚠ `flex-wrap: wrap` 那道保险**留着**:窗口被拉到很窄时
+   (面板退化成 `100vw - 48px`)按钮照旧整体掉行,而不是把输入框挤没。 */
+.bkup-body .alias-ctrls .bkup-input { flex: 1 1 260px; width: auto; }
 .bkup-acts {
   display: flex;
   gap: 8px;
@@ -295,27 +414,49 @@
 }
 .bkup-out { margin-top: 2px; }
 
-/* 备份列表的一行:文件名可挤、事实与状态不挤、右端是「验证」钮。
-   ⚠ 每层 flex item 都要 min-width:0,否则长文件名会把整行撑出横条(249 那条)。 */
+/* 备份列表的一行。**444 之前是一根柱子**,这里记清楚是怎么坏的 ——
+   原设计写的是「文件名可挤、事实与状态不挤」:名字 `flex:1 + min-width:0 + overflow-wrap:anywhere`,
+   右边三样全 `flex:none`。⛔ **那个前提在 380px 上根本不成立**:三样合计 437.9px > 可用 363px
+   ⇒ 名字分到的宽度是 **0**,`anywhere` 于是**逐字换行** —— 真 Chrome 实测:文件名宽 **0px**、
+   **66 行**、单行高 **1483.8px**;而落点目录里真有 **20 个**文件(名字恒 66 字符:
+   `zhujian-<空间8位>-<时间戳>-<26位 ULID>.zjbak`)⇒ 这一节实际是**约 3 万像素高**。
+   同一个因还让面板横向溢出 **57px**(`overflow-y:auto` 会把 x 轴一并算成 auto ⇒ 那条横条)。
+
+   ⭐ **修法不是"把面板加宽"** —— 66 字符的名字要 ≈430px,加上那三样 437.9px 得 870px 才排得下,
+   而主窗最小宽才 900。所以**换行的形**:
+     行①  大小 · 时刻   …   状态   [验证]
+     行②  文件名(小一号、灰、整行)
+   ⛔ **文件名降级 ≠ 从文件名读内容**:backup-plan §3.3 那条义务(文件名 / 扩展名绝不能当
+   「这是一份有效备份」的判据)照旧 —— 行①左边只放**盘上事实**,空间名仍然只有点过「验证」
+   才出现。 */
 .bkup-item {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
-  gap: 8px;
+  gap: 2px 10px;
   min-width: 0;
-  padding: 3px 0 3px 2px;
+  padding: 5px 0 5px 2px;
 }
 .bkup-item-name {
-  flex: 1;
+  order: 2; /* 掉到第二行 */
+  flex: 1 1 100%;
   min-width: 0;
+  font-size: var(--fs-12);
   overflow-wrap: anywhere;
   color: var(--ink-soft);
 }
 .bkup-item-meta { flex: none; }
-/* 默认(还没验过)= 与事实同一档灰,⛔ 不给它任何"看起来已就绪"的颜色。 */
-.bkup-item-state { flex: none; }
+/* 默认(还没验过)= 与事实同一档灰,⛔ 不给它任何"看起来已就绪"的颜色。
+   ⚠ 这一格装的可能是**后端原话**(验证失败那句),长度没有上界 ⇒ 允许它收缩并折行,
+   ⛔ 别再写 `flex:none`(那正是把名字挤成 0 宽的三分之一)。 */
+.bkup-item-state {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
 .bkup-item-state.ok { color: var(--ok); }
 .bkup-item-state.err { color: var(--seal); }
-.bkup-item .hkset-change { flex: none; align-self: center; }
+.bkup-item .hkset-change { flex: none; align-self: center; margin-left: auto; }
 
 /* ---- 本机别名(identity-plan §2.4)---- */
 .alias-ctrls {

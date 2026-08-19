@@ -27,11 +27,20 @@ let ceremonyCode = null;
  *  (codex 实现审 426 复核轮 L1;同形判例见 `e2e/probes/linux-clipboard.e2e.js` 的 afterEach)。 */
 let seededNote = null;
 
-/** 打开设置面板并把「备份」那一节滚进视野。 */
+/** 打开设置面板、点进「备份与恢复」那一类,并把「备份」那一节滚进视野。
+ *
+ * ⚠ **445 起那一步是必须的**:设置面板分了三类,备份那一类默认不显示。
+ * ⛔ 按 `data-cat` 认那枚按钮,**别按可见文字** —— 文字随界面语言变(i18n-plan)。
+ * ⚠ 三类的 DOM 一直都在(只切 `hidden`),所以 `.bkup-body` 就算没点进去也 `waitForExist`
+ * 得到 —— 那正是这里**必须真点一下**的原因:不点就走不到用户走的那条路,
+ * 而 `scrollIntoView` 与真点击都要它可见。 */
 async function openBackupSection() {
   await goNotebook("inbox");
   await browser.execute(() => document.getElementById("settings-entry").click());
   await $(".settings-panel").waitForExist({ timeout: 5000 });
+  const cat = await $('.settings-cat[data-cat="backup"]');
+  await cat.waitForExist({ timeout: 5000 });
+  await browser.execute(() => document.querySelector('.settings-cat[data-cat="backup"]').click());
   const body = await $(".bkup-body");
   await body.waitForExist({ timeout: 5000 });
   await body.scrollIntoView();

@@ -30,10 +30,14 @@ async function bannerCount() {
   return browser.execute((s) => document.querySelectorAll(s).length, SEL);
 }
 
+/** 同 backup.e2e.js:445 起要先点进「备份与恢复」那一类(按 `data-cat` 认,不按文字)。 */
 async function openBackupSection() {
   await goNotebook("inbox");
   await browser.execute(() => document.getElementById("settings-entry").click());
   await $(".settings-panel").waitForExist({ timeout: 5000 });
+  const cat = await $('.settings-cat[data-cat="backup"]');
+  await cat.waitForExist({ timeout: 5000 });
+  await browser.execute(() => document.querySelector('.settings-cat[data-cat="backup"]').click());
   const body = await $(".bkup-body");
   await body.waitForExist({ timeout: 5000 });
   await body.scrollIntoView();

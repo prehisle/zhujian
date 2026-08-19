@@ -294,7 +294,8 @@ void consumeDeepLink();
 // 即 no-op,绝不重复弹、也不会把旧旗留到下次重启误弹。
 async function consumeOpenSettings(): Promise<void> {
   try {
-    if (await rawInvoke<boolean>("take_open_settings")) await openSettingsPanel();
+    // 直接落在「快捷键」那一类:提示条说的就是「点此改键」,落在默认的「通用」上等于没接上。
+    if (await rawInvoke<boolean>("take_open_settings")) await openSettingsPanel("hotkeys");
   } catch {
     // 壳未就绪(不该发生):静默,设置入口另有侧栏「设置」可点。
   }

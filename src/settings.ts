@@ -3,6 +3,10 @@
 // 后端 set_hotkey(注销旧+注册新+存盘+刷托盘)。外观(250)——明暗三档,自动 / 亮 / 暗。
 // 语言(358)——自动 / 中文 / English,改档 reload 两窗。字号——整体缩放主窗。
 // 侧栏底部「设置」入口点开。全部纯设备本地、不进同步。可见文案走字典(i18n-plan)。
+//
+// ⭐ **445:左栏分类 + 右栏内容两栏**(444 那轮拍板「分两步走」的第二步;444 做的是第一步 =
+// 行的形,纯 CSS)。此前 6 节 30 多行控件全在同一个滚动流里,要改备份落点得滚过热键 /
+// 外观 / 语言 / 字号 / 别名(444 实测面板整高 2546px,而它之前是 6649px)。
 import { invoke } from "@tauri-apps/api/core";
 import { buildBackupSection, closeBackupSection } from "./backup";
 import { currentZoomPercent, zoomIn, zoomOut, zoomReset, onZoomChange } from "./zoom";
@@ -13,6 +17,9 @@ import "./settings.css";
 
 type Hotkeys = { capture: string; notebook: string };
 type Which = "capture" | "notebook";
+/** 左栏那三类。⛔ **别加第四类**:判据在 backlog 用户面 27 —— 我们统共 4 个小节,
+ *  3 个只有一两行,分细了是另一种难看(参考的那个产品有 8 类是因为它真有那么多东西)。 */
+export type SettingsCat = "general" | "hotkeys" | "backup";
 /** lib.rs `device_identity` 的镜像。别名**进同步**(与热键/明暗/字号刻意不同)。 */
 type DeviceIdentity = { this_device: string; devices: { device_id: string; alias: string | null }[] };
 
@@ -35,8 +42,13 @@ export function initSettings(): void {
   entry.addEventListener("click", () => void openSettingsPanel());
 }
 
-/** 弹出设置面板。侧栏「设置」入口 + 捕获窗热键冲突提示条「点此改键」(经壳 open-settings 事件)共用。 */
-export async function openSettingsPanel(): Promise<void> {
+/**
+ * 弹出设置面板。侧栏「设置」入口 + 捕获窗热键冲突提示条「点此改键」(经壳 open-settings 事件)共用。
+ *
+ * ⭐ **`cat` 不是可有可无的装饰**:445 分类之后,「点此改键」那条路若落在默认的「通用」上,
+ * 用户点了「改键」却看不见热键行 —— 那条提示条的全部意义就没了。故那条路显式传 "hotkeys"。
+ */
+export async function openSettingsPanel(cat: SettingsCat = "general"): Promise<void> {
   if (overlay) return;
   hotkeys = await invoke<Hotkeys>("get_hotkeys");
   overlay = document.createElement("div");
@@ -50,7 +62,7 @@ export async function openSettingsPanel(): Promise<void> {
   overlay.appendChild(panel);
   document.body.appendChild(overlay);
   document.addEventListener("keydown", onPanelEsc);
-  renderPanel(panel);
+  renderPanel(panel, cat);
 }
 
 function closePanel(): void {
@@ -71,42 +83,97 @@ function onPanelEsc(e: KeyboardEvent): void {
   }
 }
 
-function renderPanel(panel: HTMLDivElement): void {
+const CATS: { cat: SettingsCat; label: string }[] = [
+  { cat: "general", label: t("settings.catGeneral") },
+  { cat: "hotkeys", label: t("settings.hotkeysTitle") },
+  { cat: "backup", label: t("settings.catBackup") },
+];
+
+function renderPanel(panel: HTMLDivElement, initial: SettingsCat): void {
   panel.innerHTML = "";
-  panel.append(
-    el("h2", "settings-title", t("settings.title")),
-    el("p", "settings-sub", t("settings.hotkeysIntro")),
-  );
-  for (const row of ROWS) panel.appendChild(buildRow(row));
-  panel.appendChild(el("p", "settings-foot", IS_MAC ? t("settings.recordHintMac") : t("settings.recordHint")));
+  panel.appendChild(el("h2", "settings-title settings-head", t("settings.title")));
 
-  panel.append(
-    el("h2", "settings-title settings-sect", t("settings.appearance")),
-    el("p", "settings-sub", t("settings.appearanceSub")),
-    buildThemeRow(),
-  );
+  const cols = document.createElement("div");
+  cols.className = "settings-cols";
+  const nav = document.createElement("div");
+  nav.className = "settings-nav";
+  const content = document.createElement("div");
+  content.className = "settings-content";
+  cols.append(nav, content);
+  panel.appendChild(cols);
 
-  panel.append(
-    el("h2", "settings-title settings-sect", t("settings.langTitle")),
-    el("p", "settings-sub", t("settings.langSub")),
-    buildLangRow(),
-  );
+  // ⛔ **三类的内容一次全建好,切分类只切显隐 —— 别改成「点哪类才建哪类」**。
+  // 判据不是省事,是这几节各自挂着状态:备份那节有仪式态(只在内存里的那把钥)与自动备份
+  // 轮询、别名那行有一发 `device_identity` 请求、字号那行往 `onZoomChange` 注册了唯一那个
+  // 回调槽。按需重建 = 每次切回来重发请求、丢掉仪式态、把旧 DOM 上的回调悬空
+  // (memory `module-state-hoisting-checklist` 那五坑)。
+  // ⭐ 代价是零:今天打开面板本来就把这些全建了一遍,445 一个 invoke 都没多发也没少发。
+  const panes = new Map<SettingsCat, HTMLElement>();
+  for (const { cat } of CATS) {
+    const pane = document.createElement("section");
+    pane.className = "settings-pane";
+    pane.dataset.cat = cat;
+    buildPane(cat, pane);
+    panes.set(cat, pane);
+    content.appendChild(pane);
+  }
 
-  panel.append(
-    el("h2", "settings-title settings-sect", t("settings.textSize")),
-    el("p", "settings-sub", t("settings.textSizeSub")),
-    buildZoomRow(),
-  );
+  const btns = CATS.map(({ cat, label }) => {
+    const b = el("button", "settings-cat", label) as HTMLButtonElement;
+    b.dataset.cat = cat; // e2e 与将来的深链按它认人,不认可见文字(文字随语言变)
+    b.addEventListener("click", () => show(cat));
+    return b;
+  });
+  nav.append(...btns);
 
-  panel.append(
-    el("h2", "settings-title settings-sect", t("settings.aliasTitle")),
-    el("p", "settings-sub", t("settings.aliasSub")),
-    buildAliasRow(),
-  );
+  // 高亮与显隐的单一渲染点:按当前分类重画全部三枚,不在点击处各自 toggle(同 paintSeg)。
+  function show(cat: SettingsCat): void {
+    CATS.forEach(({ cat: c }, i) => {
+      btns[i].classList.toggle("on", c === cat);
+      const pane = panes.get(c);
+      if (pane) pane.hidden = c !== cat;
+    });
+    content.scrollTop = 0; // 换一类从头看起,别把上一类滚到一半的位置带过来
+  }
+  show(initial);
+}
+
+function buildPane(cat: SettingsCat, pane: HTMLElement): void {
+  if (cat === "hotkeys") {
+    pane.append(
+      el("h2", "settings-title settings-sect", t("settings.hotkeysTitle")),
+      el("p", "settings-sub", t("settings.hotkeysIntro")),
+    );
+    for (const row of ROWS) pane.appendChild(buildRow(row));
+    pane.appendChild(el("p", "settings-foot", IS_MAC ? t("settings.recordHintMac") : t("settings.recordHint")));
+    return;
+  }
+
+  if (cat === "general") {
+    pane.append(
+      el("h2", "settings-title settings-sect", t("settings.appearance")),
+      el("p", "settings-sub", t("settings.appearanceSub")),
+      buildThemeRow(),
+
+      el("h2", "settings-title settings-sect", t("settings.langTitle")),
+      el("p", "settings-sub", t("settings.langSub")),
+      buildLangRow(),
+
+      el("h2", "settings-title settings-sect", t("settings.textSize")),
+      el("p", "settings-sub", t("settings.textSizeSub")),
+      buildZoomRow(),
+
+      el("h2", "settings-title settings-sect", t("settings.aliasTitle")),
+      el("p", "settings-sub", t("settings.aliasSub")),
+      buildAliasRow(),
+    );
+    return;
+  }
 
   // 备份(412,backup-plan 笔①-a):与上面几样一样是**每台机器自己的事**(钥与落点
   // 都在本机配置,不进 DB、不同步)。整节住 src/backup.ts —— 这里只挂标题与位置。
-  panel.append(
+  // ⚠ 恢复那半也在这一节里(§16),故左栏那枚按钮叫「备份与恢复」。
+  pane.append(
     el("h2", "settings-title settings-sect", t("backup.title")),
     el("p", "settings-sub", t("backup.sub")),
     buildBackupSection(),

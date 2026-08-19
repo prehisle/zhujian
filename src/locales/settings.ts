@@ -3,6 +3,12 @@ import { defineMessages } from "./entry";
 
 export const settings = defineMessages({
   "settings.title": { zh: "设置", en: "Settings" },
+  // 左栏分类(445)。⭐ **只分 3 类**:我们 4 个小节里有 3 个只有一两行,分细了是另一种难看。
+  // 「快捷键」一词两处共用(左栏那枚按钮 + 右栏那一节的标题),刻意同一个键 —— 两处说的
+  // 就是同一件事,分成两个键迟早会漂。
+  "settings.catGeneral": { zh: "通用", en: "General" },
+  "settings.catBackup": { zh: "备份与恢复", en: "Backup & restore" },
+  "settings.hotkeysTitle": { zh: "快捷键", en: "Shortcuts" },
   "settings.hotkeysIntro": { zh: "全局快捷键——在任何程序里都能唤起朱简。若和别的软件撞了用不了,在这里换一个。", en: "Global shortcuts — summon Zhujian from anywhere. If one clashes with another app, change it here." },
   "settings.captureWin": { zh: "捕获窗", en: "Capture window" },
   "settings.captureWinDesc": { zh: "从任何地方弹出快速记录窗", en: "Pop up the quick capture slip from anywhere" },

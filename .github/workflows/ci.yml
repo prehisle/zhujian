@@ -1,0 +1,48 @@
+name: ci
+
+# ⭐ 448 立(ci-plan 阶段 2):**per-push 快速警报**。
+#
+# 在此之前 **CI 一次 `push` 都不跑** —— 五条 workflow 只在「定时」与「打 tag」两个时刻
+# 存在(447 查出来的),于是「这棵树跑不跑得过」这件事的唯一答案来源是**人在本地记得跑**,
+# 而两台机器之间那条「改了共用面,另一台下一轮必须全量复跑」的规矩(398 规矩 5)已经触发
+# 15 次,其中六轮是**整轮零代码的纯复跑** ≈ 1/10 的轮次在做「另一台机器把同一棵树再跑
+# 一遍」—— 那正是 CI 矩阵的定义。
+#
+# ⛔ **它不是合并闸,是警报**:两人自用、直推 master、没有 PR 流程 ⇒ CI 红 = master 红。
+#    真正 fail-closed 的那道是 `preflight` 被两条 release tag 线用 `needs` 挂着的那次调用,
+#    **本文件一个字都不改它**。
+#
+# ⛔ **跑不了 e2e**:那要 Windows + 真 WebView2 + 先停掉占全局热键的生产实例(判据见
+#    preflight.yml 头注)。ci-plan 阶段 3/4 才谈它,别在这里顺手加。
+
+permissions:
+  contents: read
+
+on:
+  push:
+    # ⚠ **只排除 tag、不写 `branches`**:两个原因 ——
+    #   ①`tags-ignore` 保证日常推快照**绝不会**顺手启动 tag 触发的发版线(`release.yml` = `v*`,
+    #     `android-release.yml` = `android-v*`);
+    #   ②不钉死分支名,**探针分支照样跑得到** —— 阶段 2 的阴性对照(把 425 那行改回只读句柄,
+    #     看 Windows 那格真不真红)就是靠推一条临时分支做的,不必把半截改动推上 main。
+    tags-ignore: ["**"]
+
+# 连推压成一次:同一条 ref 上新的一趟把还在跑的旧趟掐掉。
+# ⚠ **独立 group**,与 `release.yml` 的 `release-${{ github.ref }}` 不同名 ——
+#    那条写死了 `cancel-in-progress: false`(发版中途绝不取消),两者井水不犯河水。
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ⭐ **这道 `if` 守的是钱,不是洁癖**:同一份文件既在私有工作仓 `zhujian-dev`、也在公开仓
+  # (公开仓那份是 `export-public.mjs` 导出的快照)。§6 拍板 = **per-push CI 跑在公开仓**
+  # (免费无限、含 Windows 与 macOS runner),而私有仓的 Windows runner 是 **10 倍计费** ——
+  # 不守这一句,每推一次就在私有仓白烧一趟五套 cargo。
+  #
+  # ⛔ **这道 `if` 不许挪进 `preflight.yml`**:那个文件是**发版闸**,把「在哪个仓」写成它的
+  #    条件,就等于给它开了一条「条件不成立时安静地跳过」的路 —— 而门禁失灵的方式正是安静的绿。
+  #    这里安全,是因为本文件本来就只负责警报,跳过 = 没有警报,不冒充「已经验过了」。
+  gates:
+    if: github.repository == 'prehisle/zhujian'
+    uses: ./.github/workflows/preflight.yml
