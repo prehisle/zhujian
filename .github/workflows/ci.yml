@@ -20,12 +20,18 @@ permissions:
 
 on:
   push:
-    # ⚠ **只排除 tag、不写 `branches`**:两个原因 ——
-    #   ①`tags-ignore` 保证日常推快照**绝不会**顺手启动 tag 触发的发版线(`release.yml` = `v*`,
-    #     `android-release.yml` = `android-v*`);
-    #   ②不钉死分支名,**探针分支照样跑得到** —— 阶段 2 的阴性对照(把 425 那行改回只读句柄,
-    #     看 Windows 那格真不真红)就是靠推一条临时分支做的,不必把半截改动推上 main。
-    tags-ignore: ["**"]
+    # ⚠ **写 `branches: ["**"]`,别写 `tags-ignore`** —— 这里栽过一次,原样记着:
+    #   第一版写的是 `tags-ignore: ["**"]`,推理是「只排除 tag,分支就都开着」。**反了**:
+    #   GitHub 的规则是「**只定义了 tags/tags-ignore(或只定义 branches/branches-ignore),
+    #   工作流就不会为那个没被定义到的 ref 类型跑**」⇒ 那一版对**分支推送根本不触发**。
+    #   字据 = 448 第一次推上公开仓,`ci` 已登记为 active、main 的头也确实换了,
+    #   而 `actions/runs` 里**一趟都没有** —— 不是慢,是压根没建。
+    #   ⭐ `branches: ["**"]` 一条同时给了要的两样:
+    #     ①任何分支都跑 ⇒ **探针分支照样跑得到**(阶段 2 的阴性对照就是推一条临时分支做的,
+    #       不必把半截改动推上 main);
+    #     ②tag 是「没被定义到的 ref 类型」⇒ 日常推快照**绝不会**顺手启动 tag 触发的发版线
+    #       (`release.yml` = `v*`,`android-release.yml` = `android-v*`)。
+    branches: ["**"]
 
 # 连推压成一次:同一条 ref 上新的一趟把还在跑的旧趟掐掉。
 # ⚠ **独立 group**,与 `release.yml` 的 `release-${{ github.ref }}` 不同名 ——
