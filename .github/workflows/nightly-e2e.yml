@@ -197,24 +197,38 @@ jobs:
       #    排除的**,第一问因此改成**问调试口答不答话**(⭐ 这是 memory `test-negative-control`
       #    那条「造不出行为测 → 缺的常是装配台不是观测面」的同族:观测面一直都在,只是没去问)。
       #
-      # ⭐ **453 第一趟(run 32336848886)已经用第一问把它问出来了,读数写在这儿当账**:
-      #    | | 开发机 | 托管 runner |
-      #    |---|---|---|
-      #    | 调试口答不答话 | ✓ 1.0s | ✗ **90.5s 一直不答,进程还活着,一个字没说** |
-      #    | 默认用户数据目录 | 在(热的) | **跑完还是不在 —— 从没被创建过** |
-      #    | msedgedriver 单独驱一次 | ✓ 0.7s | ✗ 60s 后 `Failed to connect to msedge` |
-      #    ⇒ **朱简这一侧从来没把 WebView2 拉起来**(⛔ 不是「驱动附不上」),而且它连
-      #      `%LOCALAPPDATA%\app.zhujian.notebook\EBWebView` 都没建过 ⇒ 卡点在 WebView2 环境
-      #      创建**之前或之中**。⭐ 那一趟顺带把「msedgedriver ↔ app 通不通」也问掉了(不通,
-      #      同一句话)⇒ 第二问的名额腾出来问下一个问题。
+      # ⭐ **453 前两趟的读数摆在这儿当账(⛔ 别再重跑那几问)**:
+      #    - 第一趟 run `32336848886`:调试口 **开发机 ✓ 1.0s / runner ✗ 90.5s 不答话、进程还活着、
+      #      一个字没说**;msedgedriver 单独驱一次 **开发机 ✓ 0.7s / runner ✗ 60.2s**
+      #      (verbose 原话 `Failed to connect to msedge`)。
+      #    - 第二趟 run `32338229587`,**两格把方向整个扭过来了**:
+      #      ①**朱简在 runner 上是完整起来的** —— 进度阶梯:库文件 在 / 默认 EBWebView **在** /
+      #        `msedgewebview2.exe` **6 个** / 主窗口句柄 **590176、标题「朱简 · 捕获」** /
+      #        explorer **在**。⇒ ⛔ **「卡在 WebView2 创建之前」那句(第一趟据私有目录那一形
+      #        推的)不成立** —— 缺的**只是那个调试口**。
+      #      ②同一台上,**普通 Edge 有头形 1.0s 就答话**(headless 也 ✓)⇒ 有头没问题,
+      #        **⛔ 「托管 runner 跑不了有头浏览器」这条最坏的可能被排除了**。
+      #    ⭐ 并白捡一格从来没人看过的地面事实:**runner 的 WebView2 是 `151.0.4129.72`,
+      #      开发机是 `138.0.3351.121`** —— 差 13 个大版本。它不是缺陷(那一步本来就按 runner
+      #      的运行时取驱动),但它正是 §8-2/§8-3 那句「本机跑绿证明不了 CI 跑得过」的实体。
       #
-      # **第二、三问(453 第二趟)问的是「卡在哪」,而顺序刻意是这样的**:
-      #   ②先问**与朱简无关**的那半 —— 这台 runner 给不给得起一个**有头的** Chromium
-      #     (直接起 `msedge.exe` 自己开调试口,连驱动都不经过)。WebView2 **没有 headless 形**,
-      #     若这台只跑得了 headless,结论就不是「修个 bug」而是「**这条路在托管 runner 上走不通**」。
-      #   ③再问朱简自己的**进度阶梯**(库文件 → 配置目录 → EBWebView → 浏览器进程 → 窗口句柄
-      #     → 有没有外壳),哪一格开始变「不在」,卡点就在它前面。
-      # ⚠ 三问都**不判红**:这一步只负责把现场记进日志,判红仍归下面那道冒烟闸。
+      # **本趟(453 第三趟)只问两件事,而第一件里那格「浏览器进程的命令行」是决定性的**:
+      #   一问 = 朱简 + **私有**用户数据目录 + **固定**调试口 —— 挑这一形是因为它是唯一一处
+      #     **两台可以逐字对照**的(同样的开关、同一份源码:开发机 1.0s 答话 / runner 90s 不答话)。
+      #     ⭐ 同一刻直接问 **WebView2 浏览器进程的命令行里有没有 `--remote-debugging-port`**:
+      #       **有** ⇒ 开关传下去了,是 Chromium **拒绝**开这个口;
+      #       **没有** ⇒ **WebView2 加载器把它丢了** —— 两个方向完全不同,而在此之前没人分得开。
+      #     ⚠ 并补上第二趟漏的那格:那个私有目录**到底建出来没有**(建了 = 环境变量认了)。
+      #   二问 = 同一台上**普通 Edge**(与 WebView2 无关)给不给得起调试口,给/不给
+      #     `--user-data-dir` 各一次 —— 待验的因是「较新的 Chromium 拒绝在默认档案上开这个口」。
+      #     ⚠ 开发机(138)实测**两形都 ✓**,所以这一对照在 runner 上才有分辨力。
+      # ⚠ **453 预飞查实一格,别再走一遍**:把 `--user-data-dir` 塞进
+      #    `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` **不起作用**(那个目录根本不会被建出来)——
+      #    用户数据目录归 WebView2 加载器管;而 caps 里的 `args` 被 msedgedriver 拼到
+      #    **app.exe 自己的命令行**上(verbose 原话可见),Tauri 不认、也不会转给浏览器进程。
+      #    ⇒ **今天没有任何一条路能把浏览器开关从测试这一侧传进 WebView2**,别再找了。
+      # ⚠ 因**仍是假设**:读数要么坐实要么否掉,**否掉就照 452 立的规矩当场撤掉**。
+      # ⚠ 两问都**不判红**:这一步只负责把现场记进日志,判红仍归下面那道冒烟闸。
       - name: 分诊:WebView2 起得来吗 / msedgedriver 附得上吗(不判红,只留现场)
         shell: bash
         continue-on-error: true
@@ -225,16 +239,12 @@ jobs:
           import { existsSync, readFileSync } from "node:fs";
 
           const app = resolve(process.cwd(), "src-tauri/target/debug/app.exe");
-          const driver = resolve(process.cwd(), "e2e/drivers/msedgedriver.exe");
           const tmp = process.env.RUNNER_TEMP;
-          // msedgedriver **自己不指定**用户数据目录(它只设 ADDITIONAL_BROWSER_ARGUMENTS)
-          // ⇒ app 用的是自己的默认值。开发机上这个目录是**热的**(生产朱简早建好了),
-          // runner 上是**冷的** —— 那是两台之间一处结构性差别,本机拆不出来,这里如实问一句。
-          const defaultUdf = resolve(process.env.LOCALAPPDATA, "app.zhujian.notebook/EBWebView");
           const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
           const killTree = (pid) => {
             if (pid) spawnSync("taskkill", ["/PID", String(pid), "/T", "/F"], { stdio: "ignore" });
           };
+          const ps = (c) => String(spawnSync("powershell", ["-NoProfile", "-Command", c], { encoding: "utf8" }).stdout || "").trim();
           async function ask(port) {
             try {
               const c = new AbortController();
@@ -245,17 +255,21 @@ jobs:
             } catch { return null; }
           }
 
-          console.log("默认用户数据目录 " + defaultUdf);
-          console.log("   跑之前它存在吗:" + (existsSync(defaultUdf) ? "在(热的)" : "不在(冷的 —— 这一趟是它第一次被创建)"));
+          console.log("WebView2 运行时 = " + ps("(Get-ItemProperty 'HKLM:\\SOFTWARE\\WOW6432Node\\Microsoft\\EdgeUpdate\\Clients\\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}').pv"));
+          console.log("(开发机是 138.0.3351.121,那一端这一形 1.0 秒就答话)");
 
           console.log("");
-          console.log("──── 第一问:app 这一侧把 WebView2 拉起来了吗(固定调试口 + 私有用户数据目录)────");
-          const udf = resolve(tmp, "zj-diag-udf");
+          console.log("──── 一问:朱简 + 私有用户数据目录 + 固定调试口 —— 这一形开发机 1.0s 就通 ────");
+          // ⭐ 挑这一形是因为它是**唯一一处两台可以逐字对照**的:同一个开关组合、同一份源码,
+          // 开发机(WebView2 138)1.0 秒答话,runner(151)90 秒不答话。
+          // ⚠ 453 第二趟漏了一格,本轮补上:**那个私有目录到底建出来没有** ——
+          //    建出来了 ⇒ 环境变量认了,是「调试口」这一件事没成;没建 ⇒ 连环境变量都没认,是另一类病。
+          const udf = resolve(tmp, "wv2-priv");
           const PORT = 9223;
           const p1 = spawn(app, [], {
             env: {
               ...process.env,
-              YS_DB_PATH: resolve(tmp, "diag1.sqlite3"),
+              YS_DB_PATH: resolve(tmp, "diag-priv.sqlite3"),
               WEBVIEW2_USER_DATA_FOLDER: udf,
               WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: "--remote-debugging-port=" + PORT,
             },
@@ -265,90 +279,66 @@ jobs:
           p1.stdout.on("data", (d) => (said += d));
           p1.stderr.on("data", (d) => (said += d));
           let alive = true;
-          p1.on("exit", (code) => { alive = false; said += "\n(进程自己退了,退出码 " + code + ")"; });
+          p1.on("exit", (c) => { alive = false; said += "\n(进程自己退了,退出码 " + c + ")"; });
           const t0 = Date.now();
-          let ver = null;
-          for (let i = 0; i < 90 && alive; i++) { await sleep(1000); ver = await ask(PORT); if (ver) break; }
-          const dt1 = ((Date.now() - t0) / 1000).toFixed(1);
-          if (ver) {
-            console.log("   ✓ " + dt1 + "s 后调试口答话了:" + ver.Browser);
-            console.log("   ⇒ WebView2 在这台 runner 上真的起得来(⛔ 这次不是「进程没退」那种弱证据)");
-          } else {
-            console.log("   ✗ " + dt1 + "s 内调试口一直不答话(进程" + (alive ? "还活着" : "已经退了") + ")");
-            console.log("   ⇒ ⭐ 病在 app / WebView2 这一侧,与 msedgedriver 无关 —— 452 排除的那条因要翻案");
-          }
-          console.log("   ──── app 自己说了什么 ────");
-          console.log(said.trim() || "(它一个字都没说)");
+          let v = null;
+          for (let i = 0; i < 45 && alive; i++) { await sleep(1000); v = await ask(PORT); if (v) break; }
+          const dt = ((Date.now() - t0) / 1000).toFixed(1);
+          console.log("   调试口:" + (v ? "✓ " + dt + "s 答话了 " + v.Browser : "✗ " + dt + "s 不答话(进程" + (alive ? "还活着" : "已经退了") + ")"));
+          console.log("   私有用户数据目录建出来了吗:" + (existsSync(udf) ? "✓ 在(环境变量认了)" : "✗ 不在(连环境变量都没认)"));
+          console.log("   同一刻的现场:主窗口 " + ps("$p=Get-Process -Id " + p1.pid + " -ErrorAction SilentlyContinue; if($p){[string]$p.MainWindowHandle}else{'GONE'}") +
+                      " · msedgewebview2 进程 " + ps("@(Get-Process msedgewebview2 -ErrorAction SilentlyContinue).Count"));
+          // ⭐⭐ **这一格才是决定性的**:直接看 WebView2 的**浏览器进程**命令行里有没有那个开关。
+          //   有 ⇒ 开关传下去了,是 Chromium **拒绝**开这个口(那才轮到「默认档案被拒」那类解释);
+          //   没有 ⇒ **WebView2 加载器把它丢了**,与 Chromium 的策略无关,方向完全不同。
+          //   ⚠ 浏览器进程 = 命令行里**没有** `--type=` 的那个(有 --type= 的是渲染/GPU 等子进程)。
+          console.log("   浏览器进程命令行里有 --remote-debugging-port 吗:" +
+            ps("$b=Get-CimInstance Win32_Process -Filter \"Name='msedgewebview2.exe'\" | Where-Object { $_.CommandLine -and $_.CommandLine -notmatch '--type=' }; if(-not $b){'(找不到浏览器进程)'}else{ ($b | ForEach-Object { if($_.CommandLine -match 'remote-debugging-port=(\\d+)'){'YES port=' + $Matches[1]}else{'NO'} }) -join ' ; ' }"));
+          console.log("   app 说:" + (said.trim() ? said.trim().split("\n").slice(0, 2).join(" | ") : "(一个字都没说)"));
           killTree(p1.pid);
           await sleep(2000);
 
           console.log("");
-          console.log("──── 第二问:这台 runner 到底能不能跑「有头的」Chromium(与朱简无关的对照)────");
-          // ⭐ 第一问红了之后,下一个该问的**不是**「朱简哪儿写错了」,而是**这台机器给不给得起
-          // 一个有头的浏览器进程** —— 因为 WebView2 **没有 headless 形**(它就是嵌在窗口里的),
-          // 若这台 runner 只跑得了 headless,那整条 Windows e2e 在托管 runner 上就是走不通的,
-          // 而那是个比「修一个 bug」大得多的结论。⛔ 别拿朱简当探针去问这件事:朱简这一侧还有
-          // 托盘 / 全局热键 / 两个窗口一堆东西,任一处卡住都长成同一个样。
-          // ⚠ 刻意**不经过 msedgedriver**:直接起 msedge.exe 自己开调试口 ——
-          //    这样连「驱动与浏览器版本配不配对」那一环都摘掉了(那正是 Edge 与 WebView2 可能
-          //    不同版本的地方,拿它当因会指错方向)。
-          // ⛔ 这只探针**只印适用于本趟读数的那一句结论** —— 把几种可能的结论一起印出来
-          // 看着信息量大,实际上其中至少一句是假的(440 那条「工装在读数上骗人」;
-          // 453 预飞时第一版正是这么干的:两个都 ✓ 却照样印了「有头 ✗」那句)。
-          async function edgeProbe(tag, extra, port) {
-            const dir = resolve(tmp, "edge-" + tag);
+          console.log("──── 二问:同一台上,普通 Edge 给不给得起调试口(与 WebView2 无关的对照)────");
+          // ⭐ 待验的因:较新的 Chromium **拒绝在「默认用户数据目录」上开远程调试口**,而
+          // msedgedriver 驱普通 Edge 时**一定**传 `--user-data-dir`、驱 WebView2 app 时**传不了**
+          // (那时用户数据目录归 WebView2 加载器管 —— ⚠ 453 预飞实测:把 `--user-data-dir` 塞进
+          //  `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` 那个目录根本不会被建出来,那个开关它不认)。
+          // ⇒ 这一对照把「是不是默认目录被拒」这件事,拿一个**跟朱简完全无关**的进程问一遍。
+          async function edge(tag, withDir, port) {
             const exe = ["C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe",
                          "C:/Program Files/Microsoft/Edge/Application/msedge.exe"].find((p) => existsSync(p));
             if (!exe) { console.log("   ⚠ 这台没有 msedge.exe,这一格问不了"); return null; }
-            const p = spawn(exe, ["--remote-debugging-port=" + port, "--user-data-dir=" + dir,
-                                  "--no-first-run", "--no-default-browser-check", "about:blank"].concat(extra),
-                            { stdio: ["ignore", "ignore", "ignore"] });
+            const args = ["--remote-debugging-port=" + port, "--no-first-run", "--no-default-browser-check", "about:blank"];
+            if (withDir) args.push("--user-data-dir=" + resolve(tmp, "edge-" + tag));
+            const p = spawn(exe, args, { stdio: ["ignore", "ignore", "ignore"] });
             const t = Date.now();
-            let v = null;
-            for (let i = 0; i < 30; i++) { await sleep(1000); v = await ask(port); if (v) break; }
-            const dt = ((Date.now() - t) / 1000).toFixed(1);
-            console.log("   " + (v ? "✓" : "✗") + " " + tag + ":" + dt + "s " + (v ? "答话了 " + v.Browser : "不答话"));
+            let r = null;
+            for (let i = 0; i < 25; i++) { await sleep(1000); r = await ask(port); if (r) break; }
+            console.log("   " + (r ? "✓" : "✗") + " " + tag + ":" + ((Date.now() - t) / 1000).toFixed(1) + "s " + (r ? "答话了 " + r.Browser : "不答话"));
             killTree(p.pid);
             await sleep(1500);
-            return !!v;
+            return r === null ? null : !!r;
           }
-          const headed = await edgeProbe("有头", [], 9224);
-          const headless = await edgeProbe("headless", ["--headless=new"], 9225);
-          if (headed === null || headless === null) {
-            console.log("   ⇒ 这一格没问成,别据此下结论");
-          } else if (!headed && headless) {
-            console.log("   ⇒ ⭐ 有头 ✗ / headless ✓ ⇒ 这台 runner 跑不了有头浏览器,而 WebView2 没有 headless 形");
-            console.log("     ⇒ **Windows e2e 在托管 runner 上走不通**,这不是一个能修的 bug(要重估 ci-plan 阶段 4)");
-          } else if (headed) {
-            console.log("   ⇒ 有头没问题(headless " + (headless ? "也 ✓" : "反而 ✗,记下但不挡结论") + ")⇒ 病是朱简 / WebView2 运行时这一侧的,看第三问");
-          } else {
-            console.log("   ⇒ ⚠ 两个都 ✗ ⇒ 连普通 Edge 都起不来,这台 runner 的浏览器环境本身有问题(与朱简无关)");
-          }
+          const withDir = await edge("给了 --user-data-dir", true, 9224);
+          const noDir = await edge("没给 --user-data-dir(默认档案)", false, 9225);
 
           console.log("");
-          console.log("──── 第三问:朱简卡在哪儿(进度阶梯,零代码,靠盘上与进程的事实)────");
-          // 每一格都是启动路径上一个**更靠后**的位置:哪一格开始变成「不在」,卡点就在它前面。
-          const p3 = spawn(app, [], {
-            env: { ...process.env, YS_DB_PATH: resolve(tmp, "diag3.sqlite3"),
-                   WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: "--remote-debugging-port=9226" },
-            stdio: ["ignore", "pipe", "pipe"],
-          });
-          let said3 = "";
-          p3.stdout.on("data", (d) => (said3 += d));
-          p3.stderr.on("data", (d) => (said3 += d));
-          await sleep(25000);
-          const ps = (c) => String(spawnSync("powershell", ["-NoProfile", "-Command", c], { encoding: "utf8" }).stdout || "").trim();
-          console.log("   ①库文件(setup 开过库没有)        :" + (existsSync(resolve(tmp, "diag3.sqlite3")) ? "在" : "不在"));
-          console.log("   ②%APPDATA%\\app.zhujian.notebook   :" + (existsSync(resolve(process.env.APPDATA, "app.zhujian.notebook")) ? "在" : "不在"));
-          console.log("   ③默认 EBWebView(WebView2 环境建过没有):" + (existsSync(defaultUdf) ? "在" : "不在"));
-          // ⚠ PS 命令里一律只用 ASCII 与单引号(memory `powershell-utf8-readfile-trap`:
-          //    经 argv 传中文会被按 ANSI 读、变乱码;双引号还要过一层 Windows 参数转义)。
-          console.log("   ④msedgewebview2.exe 进程数         :" + ps("@(Get-Process msedgewebview2 -ErrorAction SilentlyContinue).Count"));
-          console.log("   ⑤app 的主窗口句柄 / 标题           :" + ps("$p=Get-Process -Id " + p3.pid + " -ErrorAction SilentlyContinue; if($p){[string]$p.MainWindowHandle + ' / ' + $p.MainWindowTitle}else{'GONE'}"));
-          console.log("   ⑥explorer.exe(有没有外壳/托盘)   :" + ps("if(Get-Process explorer -ErrorAction SilentlyContinue){'YES'}else{'NO'}"));
-          console.log("   ──── app 自己说了什么 ────");
-          console.log(said3.trim() || "(它一个字都没说)");
-          killTree(p3.pid);
+          console.log("──── 判读(⛔ 只印适用于本趟读数的那一句)────");
+          if (v) {
+            console.log("   ⚠ 一问这次通了 ⇒ 与前两趟读数不一致,先当抖动记下,别据此改任何东西");
+          } else if (!existsSync(udf)) {
+            console.log("   ⇒ 环境变量都没认 ⇒ 病不在「调试口」,在 WebView2 环境创建那一段");
+          } else if (withDir === true && noDir === false) {
+            console.log("   ⇒ ⭐ 因坐实:这一版 Chromium **只在显式给了 --user-data-dir 时才开调试口**,");
+            console.log("     而 WebView2 app 这条路上**没有任何人能传那个开关**(它归加载器管、caps 的 args");
+            console.log("     只落到 app.exe 自己的命令行上)⇒ ⛔ 修法不在我们这一侧,记账并重估阶段 4");
+          } else if (withDir === true && noDir === true) {
+            console.log("   ⇒ ⚠ 因不成立:普通 Edge 不给 --user-data-dir 照样开得了调试口 ⇒ 撤掉这个猜法;");
+            console.log("     剩下的差别只有「WebView2 嵌入形 vs 独立浏览器」与 **151 vs 138** 这两条");
+          } else {
+            console.log("   ⇒ ⚠ 对照本身没问成(withDir=" + withDir + " / noDir=" + noDir + "),别据此下结论");
+          }
           DIAGEOF
           node "$RUNNER_TEMP/diag.mjs"
 
