@@ -25,9 +25,17 @@ permissions:
 
 on:
   workflow_dispatch:
-  schedule:
-    # 每日 UTC 19:00(北京 03:00)—— 错开桌面 nightly 的 18:00 与安卓 nightly 的 18:30。
-    - cron: "0 19 * * *"
+  # ⛔ **定时那条 452 收口时刻意关着,别顺手打开** —— 今天这一格**跑不到底**:
+  #    msedgedriver 附不上 app 的调试口(`session not created: DevToolsActivePort file
+  #    doesn't exist`),逐条读数与已排除的因见 ci-plan §4 阶段 4。
+  #    ⭐ 判据很硬:**一条明知会红的 cron 比没有更糟** —— 那正是 ci-plan 阶段 0
+  #    (私有仓 android-nightly 连红四晚没人看)治的病,而这条会每晚红一次、每晚烧 20 分钟
+  #    Windows runner,并且把「夜跑红了」这个信号提前训练成噪声。
+  #    ⭐ **打开它的判据只有一条**:手动 dispatch 一趟**跑到底并且拿到全量读数**
+  #    (39 spec / N 例、零重试)。那一天把下面两行的注释去掉即可,别的都已就位。
+  # schedule:
+  #   # 每日 UTC 19:00(北京 03:00)—— 错开桌面 nightly 的 18:00 与安卓 nightly 的 18:30。
+  #   - cron: "0 19 * * *"
 
 concurrency:
   group: nightly-e2e
