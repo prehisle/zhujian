@@ -45,19 +45,6 @@ jobs:
     # 本机全量 5:26;托管 runner 上 cargo 慢 ≈6.5 倍、e2e 那条更贴墙钟(450 实测 Linux 慢 2.6 倍)。
     # ⚠ 超时 = 红,而且是**判不出**那一档(日志里不会有汇总行)—— 那正是 440 那把尺的三态。
     timeout-minutes: 90
-    env:
-      # ⭐⭐ **452 首趟 CI 就栽在这一格上,而它是 450 那一课的同族:隐藏入参。**
-      # 首趟(run 32321242755)vite **自己印了** `VITE v6.4.3 ready in 438 ms ·
-      # Local: http://localhost:1420/`,而探针在那之后**整整 60 秒连不上** ⇒ ⛔ **不是启动慢**,
-      # 是两边对「`localhost` 指谁」的理解不一致:Windows Server 2025 上 `localhost` 同时是
-      # `::1` 与 `127.0.0.1`,而 Node 的 `net.connect(host)` **只连解析出来的第一个地址**
-      # (`wdio.conf.js` 里 `portOpen` 那句注释写的「用 localhost 就能同时匹配两种绑法」
-      # ——**那句话在这一端不成立**,它假设了 connect 会两个都试)。
-      # ⇒ 把口径钉死在 job 上,让**这个 job 里所有 node 进程**(vite / 探针 / wdio 自己那次
-      # `portOpen`)对 localhost 得到同一个答案。⛔ **不改 `wdio.conf.js`** —— 那是两端共用面,
-      # 为一台 runner 的解析顺序去动它,等于把这台机器的偏好焊进另一端。
-      # ⚠ WebView2 那一侧不受影响:Chromium 对 localhost 走的是两个都试那条路。
-      NODE_OPTIONS: --dns-result-order=ipv4first
     steps:
       - uses: actions/checkout@v7
 
@@ -187,26 +174,35 @@ jobs:
       - name: 编 debug 壳(fast 形要它)
         run: cd src-tauri && cargo build
 
-      # fast 形的资产源。⚠ Windows 上用 `Start-Process` 而不是 `nohup &` —— 后者在 pwsh 步里
-      # 没有对应物,而混着用两种起后台的机制正是 memory `background-task-single-mechanism` 那条坑。
-      - name: vite dev server(fast 形的资产源)
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          Start-Process -FilePath "npm.cmd" -ArgumentList "run","dev" -PassThru `
-            -RedirectStandardOutput "$env:RUNNER_TEMP\vite.log" `
-            -RedirectStandardError  "$env:RUNNER_TEMP\vite.err.log" | Out-Null
-
-      # ⭐ **与 `linux-e2e` 那支探针的差别只有一处,而那一处是首趟红换来的**:这里**三个地址
-      # 各问一遍并把结果印出来**,而不是只问 `localhost`。理由见上面 `NODE_OPTIONS` 那段 ——
-      # 「vite 起来了没有」与「你连的是不是它绑的那个地址」是**两件事**,而首趟把它们混成了一句
-      # 「vite 60 秒没起来」⇒ **指的修法方向是启动慢**,而真因是地址对不上(同 433 那句
-      # `unable to open database file`:下游症状冒充根因)。
-      # ⚠ **判据仍是 `localhost` 那一格** —— 那是 `wdio.conf.js::portOpen` 与 app 的 devUrl
-      #    真正用的那个名字;另两格只是**留在日志里的现场**,红了一眼判。
-      - name: 等 vite 起来(顺带记下它绑在谁身上)
+      # ⭐⭐ **起 vite、等它、跑 e2e 收在同一步里 —— 这不是图省事,是两趟 CI 红换来的。**
+      #
+      # 原本照 `linux-e2e` 的形分成两步(pwsh `Start-Process` 起 → 下一步 bash 探端口),
+      # **两趟都红在探端口那步**,而 vite 自己在日志里印着 `VITE v6.4.3 ready in 425 ms ·
+      # Local: http://localhost:1420/`。
+      # ⭐ 首趟我把因猜成「两边对 localhost 是谁没谈拢」(Node 的 `net.connect` 只连解析出来的
+      #   第一个地址),**第二趟的诊断当场把它证伪**:三个地址**全不通**
+      #   —— `localhost=✗ 127.0.0.1=✗ ::1=✗`(run 32322213068)。
+      # ⇒ 剩下的解释只有一个:**那个进程活不过步骤边界**。`nohup &` 在 Linux 那格跨得过去,
+      #   Windows 这端跨不过去(⚠ 别把 Linux 那格的形当成「两端都成立」——
+      #   同 438 那条「照抄仓里已有的形之前,先核对那个形的前提在我这条路上成立吗」)。
+      #
+      # ⛔ **别把「三个地址各问一遍」那段诊断当多余留着** —— 它值钱的地方正是**证伪了我的猜法**;
+      #    留在这里,下次任一端再红时它仍然一眼分档:全 ✗ = 进程不在了,只有 localhost ✗ = 地址对不上。
+      # ⚠ 这一端**不套 xvfb、不设 `GTK_IM_MODULE`**:WebView2 两样都不读(450 那条 XIM 的课只落在
+      #    GTK 那一端)⇒ 那条 `npx wdio` 与 CLAUDE.md 写给人的那条逐字相同。
+      # ⚠ 判红走 440 那把三态尺(`scripts/e2e-verdict.mjs`):**绿必须有正面字据**,读不出是
+      #    `unknown` 而不是「那就算它绿吧」;`--specFileRetries=0` 与「日志里有没有重试痕迹」互为背书。
+      - name: vite + e2e(39 spec,零重试;⛔ 同一步,理由见上)
         shell: bash
+        env:
+          YS_E2E_FAST: "1"
         run: |
+          set -o pipefail
+          # 后台起 vite,并把它的 pid 记下来 —— 同一步内它是本 shell 的子进程,活得到 wdio 跑完。
+          npm run dev > "$RUNNER_TEMP/vite.log" 2>&1 &
+          vite_pid=$!
+          echo "vite pid=$vite_pid"
+
           node -e '
             const net = require("node:net");
             const hosts = ["localhost", "127.0.0.1", "::1"];
@@ -220,39 +216,25 @@ jobs:
               for (;;) {
                 const got = {};
                 for (const h of hosts) got[h] = await open(h);
-                if (got.localhost) {
-                  console.log("vite 起来了 —— 1420 可达性:" +
-                    hosts.map((h) => `${h}=${got[h] ? "✓" : "✗"}`).join(" "));
-                  process.exit(0);
-                }
+                const reach = hosts.map((h) => `${h}=${got[h] ? "✓" : "✗"}`).join(" ");
+                if (got.localhost) { console.log("vite 起来了 —— 1420 可达性:" + reach); process.exit(0); }
                 if (Date.now() > deadline) {
-                  console.error("::error::60 秒内 localhost:1420 连不上 —— 可达性:" +
-                    hosts.map((h) => `${h}=${got[h] ? "✓" : "✗"}`).join(" "));
+                  console.error("::error::60 秒内 localhost:1420 连不上 —— 可达性:" + reach);
                   console.error(got["127.0.0.1"] || got["::1"]
-                    ? "⇒ vite 起来了,但它绑的地址与 localhost 解析到的不是同一个(⛔ 不是启动慢)"
-                    : "⇒ 三个地址全不通,那才是 vite 自己没起来 —— 看下面它的日志");
+                    ? "⇒ vite 在跑,但它绑的地址与 localhost 解析到的不是同一个(⛔ 不是启动慢)"
+                    : "⇒ 三个地址全不通 ⇒ 那个进程不在了(或从没绑上)—— 看下面它自己的日志");
                   process.exit(1);
                 }
                 await new Promise((r) => setTimeout(r, 500));
               }
             })();
-          ' || { cat "$RUNNER_TEMP/vite.log" "$RUNNER_TEMP/vite.err.log" 2>/dev/null; exit 1; }
+          ' || { cat "$RUNNER_TEMP/vite.log" 2>/dev/null; kill "$vite_pid" 2>/dev/null; exit 1; }
 
-      # ⭐ **判红不看退出码,走 440 那把三态尺**(`scripts/lib/test-verdict.mjs`,25 格回归网 + 六刀):
-      # **绿必须有正面字据**,读不出是 `unknown`(⛔ 不许退回「那就算它绿吧」)。
-      # ⚠ `--specFileRetries=0`:配置里常态开着 `specFileRetries:1` 吸收冷启假红,CI 上要的是
-      #    **未经吸收的原始读数**;开关与「日志里有没有重试痕迹」两半互为背书。
-      # ⚠ **这一端不套 xvfb 也不设 `GTK_IM_MODULE`**:WebView2 两样都不读(450 那条 XIM 的课
-      #    只落在 GTK 那一端),⇒ 这条命令与 CLAUDE.md 写给人的那条逐字相同。
-      - name: e2e(39 spec,零重试)
-        shell: bash
-        env:
-          YS_E2E_FAST: "1"
-        run: |
           set +e
           npx wdio run e2e/wdio.conf.js --specFileRetries=0 2>&1 | tee "$RUNNER_TEMP/e2e.log"
           status=${PIPESTATUS[0]}
           set -e
+          kill "$vite_pid" 2>/dev/null || true
           node scripts/e2e-verdict.mjs "$RUNNER_TEMP/e2e.log" --status="$status" --label="Windows / WebView2"
 
       # 红的时候要能拿到整份日志。⚠ `if: always()` —— 绿的那趟也留,它是「与人跑的读数
@@ -265,6 +247,5 @@ jobs:
           path: |
             ${{ runner.temp }}/e2e.log
             ${{ runner.temp }}/vite.log
-            ${{ runner.temp }}/vite.err.log
           if-no-files-found: warn
           retention-days: 14
