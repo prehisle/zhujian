@@ -25,14 +25,22 @@ permissions:
 
 on:
   workflow_dispatch:
-  # ⛔ **定时那条 452 收口时刻意关着,别顺手打开** —— 今天这一格**跑不到底**:
-  #    msedgedriver 附不上 app 的调试口(`session not created: DevToolsActivePort file
-  #    doesn't exist`),逐条读数与已排除的因见 ci-plan §4 阶段 4。
+  # ⛔ **定时那条 452 立时就刻意关着,453 查清根因之后照旧关着,别顺手打开。**
+  #    **根因(453 定死,逐条读数在 ci-plan §4 阶段 4)**:托管 runner 的 WebView2 是
+  #    **151.0.4129.72**,而**它的加载器把 `--remote-debugging-port` 从
+  #    `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` 里丢掉了** —— 字据是浏览器进程的命令行里
+  #    根本没有那个开关(开发机的 138 上同一形是 `YES port=9223`)。msedgedriver 151 照旧
+  #    在传它(artifact 里的 verbose 原话),所以它等了 60 秒拿不到 `DevToolsActivePort`。
+  #    ⛔ **这不是我们能修的**:唯一能把浏览器开关送进 WebView2 的通道是那个环境变量,
+  #    而 msedgedriver **自己会覆盖它**;caps 里的 `args` 被拼到 **app.exe 自己的命令行**上,
+  #    Tauri 不认也不转发。⇒ 修法只有「换一个运行时版本」,而固定版运行时不在 nuget 上、
+  #    下载 URL 带不可推导的 GUID(453 实查),在 CI 里不好自动化。
   #    ⭐ 判据很硬:**一条明知会红的 cron 比没有更糟** —— 那正是 ci-plan 阶段 0
   #    (私有仓 android-nightly 连红四晚没人看)治的病,而这条会每晚红一次、每晚烧 20 分钟
   #    Windows runner,并且把「夜跑红了」这个信号提前训练成噪声。
-  #    ⭐ **打开它的判据只有一条**:手动 dispatch 一趟**跑到底并且拿到全量读数**
-  #    (39 spec / N 例、零重试)。那一天把下面两行的注释去掉即可,别的都已就位。
+  #    ⭐ **打开它的判据(453 改写,两级)**:①先手动 dispatch 一趟,看**分诊那步**说
+  #    「调试口通了」没有 —— 它现在是一只**探子**,≈8 分钟就答得出「Microsoft 修好没有」;
+  #    ②通了之后再跑到底、拿到全量读数(39 spec / N 例、零重试),那一天才把下面两行去掉。
   # schedule:
   #   # 每日 UTC 19:00(北京 03:00)—— 错开桌面 nightly 的 18:00 与安卓 nightly 的 18:30。
   #   - cron: "0 19 * * *"
@@ -305,10 +313,11 @@ jobs:
           // (那时用户数据目录归 WebView2 加载器管 —— ⚠ 453 预飞实测:把 `--user-data-dir` 塞进
           //  `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` 那个目录根本不会被建出来,那个开关它不认)。
           // ⇒ 这一对照把「是不是默认目录被拒」这件事,拿一个**跟朱简完全无关**的进程问一遍。
+          let edgeMissing = false;
           async function edge(tag, withDir, port) {
             const exe = ["C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe",
                          "C:/Program Files/Microsoft/Edge/Application/msedge.exe"].find((p) => existsSync(p));
-            if (!exe) { console.log("   ⚠ 这台没有 msedge.exe,这一格问不了"); return null; }
+            if (!exe) { console.log("   ⚠ 这台没有 msedge.exe,这一格问不了"); edgeMissing = true; return false; }
             const args = ["--remote-debugging-port=" + port, "--no-first-run", "--no-default-browser-check", "about:blank"];
             if (withDir) args.push("--user-data-dir=" + resolve(tmp, "edge-" + tag));
             const p = spawn(exe, args, { stdio: ["ignore", "ignore", "ignore"] });
@@ -318,26 +327,31 @@ jobs:
             console.log("   " + (r ? "✓" : "✗") + " " + tag + ":" + ((Date.now() - t) / 1000).toFixed(1) + "s " + (r ? "答话了 " + r.Browser : "不答话"));
             killTree(p.pid);
             await sleep(1500);
-            return r === null ? null : !!r;
+            // ⚠ 453 实撞:这里原来写的是 `r === null ? null : !!r` —— 而「没答话」时 `r` 本来就是 null
+            // ⇒ 一次正常的 ✗ 被返回成了「没问成」,判读当场印出「对照本身没问成」这句**与屏幕上的
+            //   ✗/✓ 打架**的话。⛔ 别拿同一个值同时表示「没有这个东西」和「答案是否」。
+            return !!r;
           }
           const withDir = await edge("给了 --user-data-dir", true, 9224);
           const noDir = await edge("没给 --user-data-dir(默认档案)", false, 9225);
 
           console.log("");
           console.log("──── 判读(⛔ 只印适用于本趟读数的那一句)────");
+          // ⭐ 453 收口后这一步的**主要用途变了**:它不再是「查根因」,是一只**探子** ——
+          //   根因已经定死(见下),而它什么时候被 Microsoft 修好,只有真跑一趟才知道。
+          //   ⇒ 以后想问「今天修好没有」,一条 `gh workflow run nightly-e2e.yml` 就够,≈8 分钟。
           if (v) {
-            console.log("   ⚠ 一问这次通了 ⇒ 与前两趟读数不一致,先当抖动记下,别据此改任何东西");
+            console.log("   ⇒ ⭐⭐ **调试口通了** —— 453 记的那个根因(WebView2 加载器丢掉 --remote-debugging-port)");
+            console.log("     在这一版运行时上**不再成立**。⇒ 去 backlog 测试与工装 27 按它写的判据往下走:");
+            console.log("     手动 dispatch 一趟跑到底、拿到全量读数,那一天才把 cron 的注释去掉。");
           } else if (!existsSync(udf)) {
-            console.log("   ⇒ 环境变量都没认 ⇒ 病不在「调试口」,在 WebView2 环境创建那一段");
-          } else if (withDir === true && noDir === false) {
-            console.log("   ⇒ ⭐ 因坐实:这一版 Chromium **只在显式给了 --user-data-dir 时才开调试口**,");
-            console.log("     而 WebView2 app 这条路上**没有任何人能传那个开关**(它归加载器管、caps 的 args");
-            console.log("     只落到 app.exe 自己的命令行上)⇒ ⛔ 修法不在我们这一侧,记账并重估阶段 4");
-          } else if (withDir === true && noDir === true) {
-            console.log("   ⇒ ⚠ 因不成立:普通 Edge 不给 --user-data-dir 照样开得了调试口 ⇒ 撤掉这个猜法;");
-            console.log("     剩下的差别只有「WebView2 嵌入形 vs 独立浏览器」与 **151 vs 138** 这两条");
+            console.log("   ⇒ ⚠ 与 453 的读数不同:连私有用户数据目录都没建出来 ⇒ 病换了一类,");
+            console.log("     在 WebView2 环境创建那一段,⛔ 别照 453 的结论办事,重新分诊。");
           } else {
-            console.log("   ⇒ ⚠ 对照本身没问成(withDir=" + withDir + " / noDir=" + noDir + "),别据此下结论");
+            console.log("   ⇒ 照旧:app 完整起来了(窗口在、浏览器进程在),但**浏览器进程拿不到那个开关**");
+            console.log("     ⇒ 与 453 记的根因一致(逐条在 ci-plan §4 阶段 4);普通 Edge 对照:" +
+              "给 --user-data-dir=" + (withDir ? "✓" : "✗") + " / 不给=" + (noDir ? "✓" : "✗") +
+              (edgeMissing ? "(⚠ 这台没有 msedge.exe,对照没问成)" : ""));
           }
           DIAGEOF
           node "$RUNNER_TEMP/diag.mjs"
@@ -412,6 +426,7 @@ jobs:
           if grep -q "session not created" "$RUNNER_TEMP/e2e-smoke.log"; then
             kill "$vite_pid" 2>/dev/null || true
             echo "::error::WebView2 会话起不来(session not created)—— ⛔ 不再跑另外 38 支,那只会把同一句话重复 39 遍并撞上 job 超时"
+            echo "⇒ 453 已把根因定死:这台 runner 的 WebView2 加载器丢掉了 --remote-debugging-port(⛔ 不是驱动配错版、不是 vite、不是沙箱)。上面那步「分诊」印的就是现场,逐条在 ci-plan §4 阶段 4"
             grep -m3 "session not created" "$RUNNER_TEMP/e2e-smoke.log"
             exit 1
           fi
