@@ -174,6 +174,32 @@ jobs:
       - name: 编 debug 壳(fast 形要它)
         run: cd src-tauri && cargo build
 
+      # ⭐⭐ **分诊探针(452 第五趟加的):把「app 自己起不来」和「驱动附不上」分开。**
+      # 第三、四趟都红在同一句 `session not created: DevToolsActivePort file doesn't exist`
+      # —— 那是 Chromium 系「浏览器进程没起来」的**通用症状**,而它盖住了两个完全不同的病:
+      #   ① app 进程在这台 runner 上根本活不起来(托盘 / 窗口 / WebView2 初始化任一处);
+      #   ② app 活得好好的,是 msedgedriver 那条附加调试口的路走不通。
+      # 两者在 wdio 的输出里**一模一样**,所以这里直接问 app 自己 —— ⛔ 别再靠猜
+      # (⚠ 第四趟那个 `--no-sandbox` 的猜法已经被证伪了,理由不成立就撤掉了)。
+      # ⚠ 它**不判红**:这一步只负责把现场记进日志,判红仍归下面那道冒烟闸。
+      - name: 分诊:app 自己起得来吗(不判红,只留现场)
+        shell: bash
+        continue-on-error: true
+        run: |
+          export YS_DB_PATH="$RUNNER_TEMP/probe.sqlite3"
+          ./src-tauri/target/debug/app.exe > "$RUNNER_TEMP/app-probe.log" 2>&1 &
+          pid=$!
+          sleep 20
+          if kill -0 "$pid" 2>/dev/null; then
+            echo "✓ app 起来了并且活过 20 秒(pid=$pid)⇒ 病不在 app 自己,在驱动附加那条路"
+            kill "$pid" 2>/dev/null || true
+          else
+            wait "$pid"; rc=$?
+            echo "✗ app 20 秒内自己退了(退出码 $rc)⇒ 病在 app 起不来,与 msedgedriver 无关"
+          fi
+          echo "──── app 自己说了什么 ────"
+          cat "$RUNNER_TEMP/app-probe.log" 2>/dev/null || echo "(它一个字都没说)"
+
       # ⭐⭐ **起 vite、等它、跑 e2e 收在同一步里 —— 这不是图省事,是两趟 CI 红换来的。**
       #
       # 原本照 `linux-e2e` 的形分成两步(pwsh `Start-Process` 起 → 下一步 bash 探端口),
@@ -196,13 +222,6 @@ jobs:
         shell: bash
         env:
           YS_E2E_FAST: "1"
-          # ⭐ **452 第三趟换来的**:会话根本起不来 —— `session not created: DevToolsActivePort
-          # file doesn't exist`(run 32322796017)。那是 Chromium 系「浏览器进程自己没起来」的
-          # 通用症状,而托管 runner 上最常见的因就是**沙箱起不来**(runner 以服务账户跑)。
-          # WebView2 认这个环境变量往浏览器进程传参。
-          # ⚠ **这是一条待验的假设,不是已证的结论** —— 它要么让下面那道冒烟闸变绿(那就是字据),
-          #    要么照旧红在同一句上(那说明因在别处,⛔ 别把这一行留着当"反正没坏处")。
-          WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: "--no-sandbox --disable-gpu"
         run: |
           set -o pipefail
           # 后台起 vite,并把它的 pid 记下来 —— 同一步内它是本 shell 的子进程,活得到 wdio 跑完。
