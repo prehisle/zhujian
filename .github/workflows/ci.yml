@@ -195,7 +195,7 @@ jobs:
           xvfb-run -a npx wdio run e2e/wdio.conf.js --specFileRetries=0 2>&1 | tee "$RUNNER_TEMP/e2e.log"
           status=${PIPESTATUS[0]}
           set -e
-          node scripts/e2e-verdict.mjs "$RUNNER_TEMP/e2e.log" --status="$status"
+          node scripts/e2e-verdict.mjs "$RUNNER_TEMP/e2e.log" --status="$status" --label="Linux / WebKitGTK"
 
       # 红的时候要能拿到整份日志(spec reporter 只在结尾汇总,而 GitHub 的日志页对几万行
       # 不好翻)。⚠ `if: always()` —— 绿的那趟也留,它是「与人跑的读数对不对得上」的底稿。

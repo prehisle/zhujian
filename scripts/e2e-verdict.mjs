@@ -2,7 +2,7 @@
 // 判一趟 e2e 到底绿没绿 —— 给 CI 用的那把尺(450 立,ci-plan 阶段 3)。
 //
 // 用法:
-//   node scripts/e2e-verdict.mjs <wdio 日志文件> --status=<跑手的退出码>
+//   node scripts/e2e-verdict.mjs <wdio 日志文件> --status=<跑手的退出码> [--label=<这趟是哪一端>]
 //
 // **为什么不是直接看退出码**:440 那轮把这件事查透了 —— 「这趟红没红」的判据本身会骗人,
 // 而它骗人的方式是**安静的绿**。那把三态尺(`lib/test-verdict.mjs`,25 格回归网 + 六刀)
@@ -31,6 +31,11 @@ import { wdioVerdict } from "./lib/test-verdict.mjs";
 const argv = process.argv.slice(2);
 const logPath = argv.find((a) => !a.startsWith("--"));
 const statusArg = argv.find((a) => a.startsWith("--status="));
+// 452:两格共用这把尺了(`linux-e2e` 与 `nightly-e2e`)⇒ job summary 那行标题不能再写死成
+// 「Linux / WebKitGTK」。⚠ **不给它兜底成某一端** —— 没传就说「没说是哪一端」,
+// 冒名顶替比缺名字难查得多(两格的结论会并排出现在同一个 Actions 页面上)。
+const labelArg = argv.find((a) => a.startsWith("--label="));
+const endLabel = labelArg ? labelArg.slice("--label=".length) : "没说是哪一端";
 
 function die(msg) {
   console.error(`\n❌ ${msg}\n\n用法:node scripts/e2e-verdict.mjs <wdio 日志文件> --status=<跑手退出码>`);
@@ -99,7 +104,7 @@ if (process.env.GITHUB_STEP_SUMMARY) {
   try {
     appendFileSync(
       process.env.GITHUB_STEP_SUMMARY,
-      `### e2e(Linux / WebKitGTK)\n\n${label}\n\n\`\`\`\n${reading}\n${why}\n\`\`\`\n`,
+      `### e2e(${endLabel})\n\n${label}\n\n\`\`\`\n${reading}\n${why}\n\`\`\`\n`,
       "utf8",
     );
   } catch {

@@ -1,0 +1,234 @@
+name: nightly-e2e
+
+# ⭐ 452 立(ci-plan 阶段 4):**Windows / WebView2 全量 e2e,定时夜跑**。
+#
+# 在此之前,这一趟**只在作者的 Windows 本机上由人跑**,而它正是规矩 5(「改了两端共用面,
+# 另一台的下一轮必须复跑」)降级之后**唯一还压在人身上的那一格** —— 450 把 Linux 那趟接上
+# per-push CI 之后,共用面的债就只剩它。447 量到的数摆在那儿:规矩 5 已触发 16 次,其中
+# **六轮是整轮零代码的纯复跑**,而每一趟 e2e 跑动期间**整台开发机动不了**(5:22–10:28)。
+#
+# ⛔ **它不是发版闸,和 `linux-e2e` 同一个道理**(450 判例,逐字照搬):
+#    `preflight.yml` 被两条 release tag 线用 `needs` 挂着、fail-closed,而这套 e2e 今天带着
+#    **三支未分诊的抖动**(backlog 测试与工装 19 `viewkeys` / 20 `inbox-manual` / 23 `capture`)
+#    ⇒ 塞进发版闸换来的只有「抖动挡住发版」。⚠ **这条与 `linux-e2e` 那条的理由不同,别抄串了**:
+#    那格是「WebKitGTK 判不了发版」,而**这一趟恰恰判得了发版**(WebView2 是生产渲染引擎)——
+#    挡着它的是**抖动**,不是资格。哪天 19/20/23 三条分诊完,这道判据要重读一遍。
+# ⛔ **dev-and-testing 分工表里「发版前最终 e2e = Windows 那台」那一行,本轮一个字没动** ——
+#    夜跑接管的是**日常那趟**(规矩 5 的债),不是发版那趟。
+#
+# ⚠ **诚实边界,别读大了**:cron 每天只跑一趟,验的是那一刻 `main` 的头 ⇒
+#    **一天里推了两次,只有最后那棵树被验过**。要立刻要一趟就手动
+#    `workflow_dispatch`(可选 `ref` = 任意分支)。
+
+permissions:
+  contents: read
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 每日 UTC 19:00(北京 03:00)—— 错开桌面 nightly 的 18:00 与安卓 nightly 的 18:30。
+    - cron: "0 19 * * *"
+
+concurrency:
+  group: nightly-e2e
+  cancel-in-progress: true
+
+jobs:
+  # ⛔ **这道 `if` 是必须的,而且比 `ci.yml` 那道更要紧**:新 workflow 文件在私有工作仓里
+  # 默认就是 `active`(447 查过:当初「私有仓 workflow 已 disable 防双跑」是**逐条手动关**的,
+  # 关的是那几条已存在的),⇒ 不写这一句,这条 cron 每天夜里会在私有仓 `zhujian-dev` 上
+  # 白烧一趟 **Windows runner(10 倍计费)**。§6 拍板 = CI 跑在公开仓。
+  windows-e2e:
+    if: github.repository == 'prehisle/zhujian'
+    name: e2e(Windows / WebView2,生产渲染引擎)
+    runs-on: windows-latest
+    # 本机全量 5:26;托管 runner 上 cargo 慢 ≈6.5 倍、e2e 那条更贴墙钟(450 实测 Linux 慢 2.6 倍)。
+    # ⚠ 超时 = 红,而且是**判不出**那一档(日志里不会有汇总行)—— 那正是 440 那把尺的三态。
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+
+      # ⭐ **这一步是本格的核心,而且它是 416 那一课的正传**(ci-plan §8-2 点名的那条):
+      # `msedgedriver` 必须与**这台机器上的 WebView2 运行时**配对,而 runner 镜像的版本会漂
+      # ⇒ ⛔ **绝不许把版本号钉死在仓里**。本机今天是 138.0.3351.121(驱动与运行时逐位相同),
+      # 那个数**只是本机的事实**,不是判据。
+      #
+      # 三件事按顺序做,每一步都 fail-closed:
+      #   ①问 registry 要 WebView2 运行时的 `pv`(三个可能的位置都问,一个都没有就停);
+      #   ②看镜像预装的 Edge WebDriver 版本 —— **逐位相同才用**(⛔ 不做「大版本对得上就凑合」:
+      #     那是静默降级,而这条链失灵的方式恰好是「会话起不来」那种看不懂的红);
+      #   ③不相同就按 `pv` **精确下载**一份。
+      # ⛔ **`e2e/drivers/` 在 `.gitignore` 里**(`/e2e/drivers/`)⇒ 公开仓那棵树里没有驱动,
+      #    这一步不是优化、是这一格能不能跑起来的前提;落点必须正是 `wdio.conf.js:36`
+      #    写死的那条相对路径,别改配置去迁就 CI(那是共用面,改它等于给对端添债)。
+      - name: msedgedriver(按本机 WebView2 版本取,⛔ 不钉死)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $guid = "{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"   # Evergreen WebView2 Runtime
+          $pv = $null
+          foreach ($k in @(
+              "HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\$guid",
+              "HKLM:\SOFTWARE\Microsoft\EdgeUpdate\Clients\$guid",
+              "HKCU:\Software\Microsoft\EdgeUpdate\Clients\$guid")) {
+            if (Test-Path $k) {
+              $v = (Get-ItemProperty $k -ErrorAction SilentlyContinue).pv
+              if ($v) { $pv = $v; Write-Host "WebView2 运行时:$pv($k)"; break }
+            }
+          }
+          if (-not $pv) {
+            Write-Host "::error::这台 runner 上找不到 WebView2 运行时的版本号(EdgeUpdate 三个 registry 位置都没有) —— 没有它,msedgedriver 配哪一版都是猜的"
+            exit 1
+          }
+
+          $dest = "e2e/drivers"
+          New-Item -ItemType Directory -Force -Path $dest | Out-Null
+          $out = Join-Path $dest "msedgedriver.exe"
+
+          # ② 镜像预装的那份(`EdgeWebDriver` 是 runner 镜像设的环境变量)
+          $pre = $null
+          foreach ($c in @($env:EdgeWebDriver, "C:\SeleniumWebDrivers\EdgeDriver")) {
+            if ($c -and (Test-Path (Join-Path $c "msedgedriver.exe"))) { $pre = Join-Path $c "msedgedriver.exe"; break }
+          }
+          $preVer = $null
+          if ($pre) {
+            # `--version` 印的是 `Microsoft Edge WebDriver 138.0.3351.121 (<sha>)`
+            $preVer = ((& $pre --version) -join " " | Select-String -Pattern '\d+\.\d+\.\d+\.\d+').Matches.Value
+            Write-Host "镜像预装驱动:$preVer($pre)"
+          } else {
+            Write-Host "镜像预装驱动:没有"
+          }
+
+          if ($preVer -eq $pv) {
+            Copy-Item $pre $out -Force
+            Write-Host "→ 预装那份与运行时逐位相同,直接用"
+          } else {
+            # ③ 精确下载。⚠ 只认 `$pv` 这一个版本:下不到就停,⛔ 别退到「最新的那个」——
+            #    那正是 416 那道签名闸栽的形(拿一个看着能用的工具去解析,答案错得很像对的)。
+            $url = "https://msedgedriver.microsoft.com/$pv/edgedriver_win64.zip"
+            Write-Host "→ 预装那份不匹配(或没有),精确下载:$url"
+            $zip = Join-Path $env:RUNNER_TEMP "edgedriver.zip"
+            try {
+              # ⚠ `-MaximumRetryCount` / `-RetryIntervalSec` 是 **PowerShell 6+ 才有的参数**,
+              #    Actions 的 `shell: pwsh` 正是 7 ⇒ 这里合法。⛔ 但**在 Windows PowerShell 5.1
+              #    上照抄这段会当场 `ParameterBindingException`**(452 在开发机上实撞:那台没有
+              #    pwsh 7,报的是「找不到与参数名称 MaximumRetryCount 匹配的参数」)——
+              #    下面那句 `$_.Exception.Message` 就是为这一类准备的。
+              Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing -MaximumRetryCount 3 -RetryIntervalSec 5
+            } catch {
+              # ⭐ **把原话印出来,别只说「下不到」** —— 452 第一版就吞了它:真因是参数不认
+              # (PS 5.1),而报出来的是「下不到」⇒ **指的修法方向是网络**,和 433 那句
+              # `unable to open database file` 同一类错误(下游症状冒充根因)。
+              Write-Host "::error::取 msedgedriver 失败($url):$($_.Exception.GetType().Name) —— $($_.Exception.Message)"
+              Write-Host "⛔ 别改成「下个最新的凑合」:先看上面那句原话是网络、是这个版本没发布、还是这段脚本自己有问题"
+              exit 1
+            }
+            Expand-Archive -Path $zip -DestinationPath (Join-Path $env:RUNNER_TEMP "edgedriver") -Force
+            Copy-Item (Join-Path $env:RUNNER_TEMP "edgedriver\msedgedriver.exe") $out -Force
+          }
+
+          # 落点复核 —— ⛔ 这一句别省:上面两条支路都可能拷了个「看着对」的东西,
+          # 而配错版的现象是会话起不来那种看不懂的红,查起来要半小时。
+          $got = ((& $out --version) -join " " | Select-String -Pattern '\d+\.\d+\.\d+\.\d+').Matches.Value
+          if ($got -ne $pv) {
+            Write-Host "::error::驱动版本 $got 与 WebView2 运行时 $pv 对不上 —— msedgedriver 只驱动同版本的 WebView2"
+            exit 1
+          }
+          Write-Host "✓ $out = $got(与 WebView2 运行时逐位相同)"
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      # ⚠ **钉版本,理由与 `linux-e2e` 那格逐字相同**:`tauri-driver` 是我们自己的台架件
+      # (不解析它的输出),钉住它 = CI 与开发机跑的是同一个东西,而这一格存在的理由正是
+      # 「替开发机跑那趟」。2.0.6 = **Windows 那台开发机实测在用的版本**(`cargo install --list`)。
+      # ⛔ 别把它跟上面 msedgedriver 那条混起来 —— 那条必须跟着 runner 漂,方向相反。
+      - name: tauri-driver(wdio.conf.js 认 ~/.cargo/bin/tauri-driver.exe)
+        run: cargo install tauri-driver --locked --version 2.0.6
+
+      # ⭐ 与 `linux-e2e` 同形:`wdio.conf.js` 里写死了三条路径,在开发机上天然成立、
+      # 在 runner 上是**假设**。⚠ 那两条 `~/.cargo/bin` 认的是 node 的 `homedir()`,
+      # **不是 `CARGO_HOME`** —— 镜像哪天把 cargo 装到别处,现象是会话起不来那种红。
+      - name: 前置检查(wdio.conf.js 写死的三条路径)
+        shell: bash
+        run: |
+          fail=0
+          for f in "$HOME/.cargo/bin/cargo.exe" "$HOME/.cargo/bin/tauri-driver.exe" "e2e/drivers/msedgedriver.exe"; do
+            if [ -f "$f" ]; then echo "✓ $f"; else echo "::error::缺 $f(wdio.conf.js 写死认这条路径)"; fail=1; fi
+          done
+          exit $fail
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+
+      # ⚠ 这一步 `wdio.conf.js` 的 `onPrepare` 自己也会做一遍(增量,秒级)——**故意重复**,
+      # 判据与 `linux-e2e` 逐字相同:放在这儿,编译失败就红在这一步、看得见 rustc 原话;
+      # 埋在 e2e 里则表现为「日志里没有汇总行」⇒ 判不出。⛔ 别为「省一步」把它删掉。
+      # ⚠ 刻意**不**跑 `npm run build`:`cargo build` 不开 `custom-protocol` ⇒ 走 devUrl 那支,
+      #    `dist/` 缺席照样编得过(与 preflight 三格同口径)。
+      - name: 编 debug 壳(fast 形要它)
+        run: cd src-tauri && cargo build
+
+      # fast 形的资产源。⚠ Windows 上用 `Start-Process` 而不是 `nohup &` —— 后者在 pwsh 步里
+      # 没有对应物,而混着用两种起后台的机制正是 memory `background-task-single-mechanism` 那条坑。
+      - name: vite dev server(fast 形的资产源)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          Start-Process -FilePath "npm.cmd" -ArgumentList "run","dev" -PassThru `
+            -RedirectStandardOutput "$env:RUNNER_TEMP\vite.log" `
+            -RedirectStandardError  "$env:RUNNER_TEMP\vite.err.log" | Out-Null
+
+      # ⭐ 探针与 `linux-e2e` **逐字相同**(含那句「用 localhost 不用 127.0.0.1」的理由):
+      # vite 绑 IPv4 还是 IPv6 由环境定,`wdio.conf.js` 的 `portOpen` 为此专门写过一句注释。
+      - name: 等 vite 起来
+        shell: bash
+        run: |
+          node -e '
+            const net = require("node:net");
+            const deadline = Date.now() + 60000;
+            (function probe() {
+              const s = net.connect({ host: "localhost", port: 1420 });
+              s.on("connect", () => { s.destroy(); console.log("vite 起来了"); process.exit(0); });
+              s.on("error", () => {
+                if (Date.now() > deadline) { console.error("::error::vite 60 秒没起来"); process.exit(1); }
+                setTimeout(probe, 500);
+              });
+            })();
+          ' || { cat "$RUNNER_TEMP/vite.log" "$RUNNER_TEMP/vite.err.log" 2>/dev/null; exit 1; }
+
+      # ⭐ **判红不看退出码,走 440 那把三态尺**(`scripts/lib/test-verdict.mjs`,25 格回归网 + 六刀):
+      # **绿必须有正面字据**,读不出是 `unknown`(⛔ 不许退回「那就算它绿吧」)。
+      # ⚠ `--specFileRetries=0`:配置里常态开着 `specFileRetries:1` 吸收冷启假红,CI 上要的是
+      #    **未经吸收的原始读数**;开关与「日志里有没有重试痕迹」两半互为背书。
+      # ⚠ **这一端不套 xvfb 也不设 `GTK_IM_MODULE`**:WebView2 两样都不读(450 那条 XIM 的课
+      #    只落在 GTK 那一端),⇒ 这条命令与 CLAUDE.md 写给人的那条逐字相同。
+      - name: e2e(39 spec,零重试)
+        shell: bash
+        env:
+          YS_E2E_FAST: "1"
+        run: |
+          set +e
+          npx wdio run e2e/wdio.conf.js --specFileRetries=0 2>&1 | tee "$RUNNER_TEMP/e2e.log"
+          status=${PIPESTATUS[0]}
+          set -e
+          node scripts/e2e-verdict.mjs "$RUNNER_TEMP/e2e.log" --status="$status" --label="Windows / WebView2"
+
+      # 红的时候要能拿到整份日志。⚠ `if: always()` —— 绿的那趟也留,它是「与人跑的读数
+      # 对不对得上」的底稿(规矩 4:数字打架取实跑)。
+      - name: 日志存档
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-windows-log
+          path: |
+            ${{ runner.temp }}/e2e.log
+            ${{ runner.temp }}/vite.log
+            ${{ runner.temp }}/vite.err.log
+          if-no-files-found: warn
+          retention-days: 14
