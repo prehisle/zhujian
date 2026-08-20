@@ -2,6 +2,7 @@ use super::*;
 // 建号的带参形只有测试用得着(生产走 `create_account` 那层尾调用包装),故这句 use 住在
 // 这里而不是主文件 —— 放主文件的话生产构建会响一句 unused import(312 拆子模块的遗留)。
 use super::account::create_account_as;
+use crate::sync::engine::QUARANTINE_REVERIFY_BATCH;
 use crate::sync::production_src;
 use crate::test_src::strip_line_comments;
 use crate::{db, images, notes, task};
@@ -304,7 +305,13 @@ fn engine_slot_retires_on_identity_change_not_on_address_change() {
 /// 不变量 6 的接线:**没有中转会话时心跳照跳**。`on_tick` 是路由惩罚到期与拉流
 /// stale 判定的唯一时间轴(刻意用心跳刻度不用墙钟),只在会话里跳的话,断 WAN
 /// 期间惩罚永不到期、lan 半死链路上的图永远换不了腿。
-#[tokio::test]
+///
+/// **走虚拟时钟**(`start_paused`:全部任务空闲时 tokio 自动把时间跳到下一枚定时器),
+/// 判据因此是「跳了几拍」而不是「过了多少墙钟」——那笔 CI 抖动的账写在下一只测的头注里
+/// (它俩是同一个形,291 收尾时也是一起放宽的)。transport.rs 那条「跑真 socket 就别
+/// `pause`」的告诫在这两只上不适用:`bare_transport` 的 `lan: None`、无会话、控制通道由
+/// 测试自己攥着,**这条链路上一个 I/O 就绪面都没有**,剩下的全是定时器与通道。
+#[tokio::test(flavor = "current_thread", start_paused = true)]
 async fn offline_wait_keeps_the_engine_heartbeat_ticking() {
     let (db, clock, dir) = test_db("offline-tick");
     let cfg = saved_cfg(&db);
@@ -320,17 +327,19 @@ async fn offline_wait_keeps_the_engine_heartbeat_ticking() {
     // 驱动」这条接线,不是周期取值)。
     let period = Duration::from_millis(20);
     let (mut pumps, _handoff) = test_pumps(slot, _lan_rx, _lan_faults, period);
-    // 窗口给足 25 拍去要 3 拍(291 收尾放宽了这一族的**零余量**时限):判据是「离线期间
-    // 心跳照跳」,不是「一拍不许掉」。同批跑的用例一多,这台 Windows 上 20ms 周期的
-    // 定时器真会在 110ms 里只轮到一次 —— 那是宿主调度,不是被测行为。
-    let resume = Instant::now() + period * 25;
+    // 窗口开在**两拍中间**(首拍在 t0+period,见 `test_pumps` 的 `interval_at`):虚拟时间
+    // 轴上「n 拍都跳完了、第 n+1 拍还没到」是确定的。半拍那个偏移是刻意的 —— 边界与拍点
+    // 重合的话截止臂与心跳臂同时就绪,而这个 select 刻意不 biased(见
+    // `offline_pump_keeps_ticking_while_pair_requests_flood_in` 末尾那道结构锚)⇒ 又变回抛硬币。
+    let t0 = Instant::now();
+    let after = |n: u32| t0 + period * n + period / 2;
     let end =
-        offline_wait(&mut t, &mut pumps, &mut shutdown, Some(&cfg), Some(resume), "测试").await;
+        offline_wait(&mut t, &mut pumps, &mut shutdown, Some(&cfg), Some(after(3)), "测试").await;
     assert!(matches!(end, Idle::Elapsed), "睡到点才该出来");
-    assert!(
-        pumps.slot.get().unwrap().tick_count() >= 3,
-        "离线等待期间心跳必须照跳,实得 {}",
-        pumps.slot.get().unwrap().tick_count()
+    assert_eq!(
+        pumps.slot.get().unwrap().tick_count(),
+        3,
+        "三拍宽的窗口就该跳满三拍 —— 虚拟时钟下这是确定的,不是「至少」"
     );
 }
 
@@ -344,16 +353,30 @@ async fn offline_wait_keeps_the_engine_heartbeat_ticking() {
 /// * 全程**没有中转会话、也没有任何入站帧**(`offline_wait` 就是断网那六档),故驱动
 ///   它的只可能是心跳;
 /// * 引擎是新装的、**没跑过会话仪式**,故这条同时钉住「装配即置位」那一格。
-#[tokio::test]
+///
+/// ⭐ **判据是「心跳跳了几拍」,不是「过了多少墙钟」**(448/451 那笔 CI 抖动的修法,
+/// backlog 测试与工装 26)。原来的形是「给一个够宽的墙钟窗口,在窗口末尾断言 20 行全做完」:
+/// 291 收尾时它红过一次,当时的修法是把窗口从 `period * 5 + 10ms` 放宽到 `period * 25` ——
+/// **没堵住**。per-push CI 第一天就在**同一棵树**上红成 `left: 4  right: 0`(= 只跳了一拍、
+/// 16 行做完剩 4 行),而同一棵树 push 那趟是全绿的;三个样本 2 绿 1 红,红的那趟 `core`
+/// 用时比绿的多 70%。⛔ **加时间压不下去的随机红,病在判据读错了东西**:它读的是宿主
+/// 调度,不是被测行为——这条任务一被饿死,那 500ms 里就跳不满两拍(而窗口末尾拍点与
+/// 截止点同时就绪时,不 biased 的 select 随机选臂又添一层)。448 没把根因追到底,但
+/// 上面两条都是宿主调度,**虚拟时钟把它们一起摘掉**:时间只在运行时空闲时才推进,
+/// 于是 `left: 4` 从**随机红**变成**一拍之后的必然中间态**,由第一个窗口正面断言下来。
+#[tokio::test(flavor = "current_thread", start_paused = true)]
 async fn heartbeat_drains_quarantine_reverify_backlog() {
     let (db, clock, dir) = test_db("reverify-tick");
     let cfg = saved_cfg(&db);
     let (mut slot, _lan_rx, _lan_faults) = EngineSlot::new(BlobPolicy::Full, None);
+    // **N > 一批**(实现审二轮 M3):一拍清不完,故这条同时证明「跨多拍自动清空」,
+    // 而不只是「首拍会跑一次」。批上限哪天涨过这个数,下面这句当场红 —— 那不是误报,
+    // 是「跨拍那半从此没人证了」在喊。
+    const ROWS: usize = 20;
+    assert!(ROWS > QUARANTINE_REVERIFY_BATCH, "夹具必须真的越过批上限");
     {
         let conn = db.lock().unwrap();
-        // **N > 一批**(实现审二轮 M3):一拍清不完,故这条同时证明「跨多拍自动清空」,
-        // 而不只是「首拍会跑一次」。
-        for i in 0..20 {
+        for i in 0..ROWS {
             conn.execute(
                 "INSERT INTO sync_quarantine (origin, op_id, origin_seq, op_blob, reason, \
                  error_stage, validator_ver, at) VALUES (?1, ?2, 1, ?3, '毒', 'shape', 0, '2026-07-31')",
@@ -377,19 +400,36 @@ async fn heartbeat_drains_quarantine_reverify_backlog() {
             )
             .unwrap()
     };
-    assert_eq!(stale(&db), 20, "夹具:开跑前 20 行都是旧校验器版本");
+    assert_eq!(stale(&db), ROWS as i64, "夹具:开跑前 20 行都是旧校验器版本");
 
     let (mut t, _ctl) = bare_transport(db.clone(), clock, dir);
     let mut shutdown = t.shutdown.clone();
     let period = Duration::from_millis(20);
     let (mut pumps, _handoff) = test_pumps(slot, _lan_rx, _lan_faults, period);
-    // 同上放宽:20 行 / 每批 [`QUARANTINE_REVERIFY_BATCH`] = 16 → **要 2 拍**,原来的
-    // `period * 5 + 10ms` 看着有 3 拍余量,实测在满载并行下那 110ms 里只跳了一拍
-    // (16 行做完、剩 4 行)。291 收尾把那只 65s 的心跳测压短之后并行密度上来了,
-    // 这条零余量时限当场被顶出来 —— 记在这里是因为它是**我这轮改动的真实副作用**。
-    let resume = Instant::now() + period * 25;
-    offline_wait(&mut t, &mut pumps, &mut shutdown, Some(&cfg), Some(resume), "测试").await;
+    // 窗口开在**两拍中间**:第 n 个窗口 = 恰好 n 拍(理由同上一只测那段注释)。
+    let t0 = Instant::now();
+    let after = |n: u32| t0 + period * n + period / 2;
 
+    // 第一拍:至多放一批,**做不完**。这一格正是 448 在 CI 上红的那个 `left: 4` ——
+    // 它不是缺陷,是必然的中间态。
+    let end =
+        offline_wait(&mut t, &mut pumps, &mut shutdown, Some(&cfg), Some(after(1)), "测试").await;
+    assert!(matches!(end, Idle::Elapsed), "睡到点才该出来");
+    assert_eq!(pumps.slot.get().unwrap().tick_count(), 1, "第一个窗口恰好一拍");
+    assert_eq!(
+        stale(&db),
+        (ROWS - QUARANTINE_REVERIFY_BATCH) as i64,
+        "一拍至多放一批,剩下的必须留到下一拍"
+    );
+    assert!(
+        pumps.slot.get().unwrap().has_reverify_backlog(),
+        "还欠一批:续做的那一位必须留着,否则下一拍不会再来"
+    );
+
+    // 第二拍:剩下的做完。**没有第二个触发器**——无会话、无入站帧、这批全是读不懂的
+    // 字节(连 want 都不产),故做完它的只可能是下一拍心跳。
+    offline_wait(&mut t, &mut pumps, &mut shutdown, Some(&cfg), Some(after(2)), "测试").await;
+    assert_eq!(pumps.slot.get().unwrap().tick_count(), 2, "第二个窗口再一拍");
     assert_eq!(
         stale(&db),
         0,
@@ -409,6 +449,10 @@ async fn heartbeat_drains_quarantine_reverify_backlog() {
 /// (泵取走一枚后发送侧才被调度,通道必然瞬空、维护臂就轮得上)。故本测只证
 /// 「洪流下泵照常推进心跳」这一半;另一半由末尾的结构锚守着——`biased` 一旦回来,
 /// 排序保证就没了,而那正是变异对照唯一抓得住的形。
+///
+/// ⛔ **同族那两只改走了虚拟时钟,这一只不许照抄**:`start_paused` 的时间只在**运行时
+/// 空闲**时才推进,而洪流那只任务的存在意义就是「一刻不空」⇒ 时间永远不动,测试当场挂死
+/// (不是变慢,是不返回)。它因此留在真时钟上,判据也只能是「至少 N 拍」。
 #[tokio::test]
 async fn offline_pump_keeps_ticking_while_pair_requests_flood_in() {
     let (db, clock, dir) = test_db("offline-flood");
@@ -432,7 +476,7 @@ async fn offline_pump_keeps_ticking_while_pair_requests_flood_in() {
     let mut shutdown = t.shutdown.clone();
     let period = Duration::from_millis(20);
     let (mut pumps, _handoff) = test_pumps(slot, _lan_rx, _lan_faults, period);
-    // 同族的零余量时限,一并放宽(见上一只的理由)。
+    // 真时钟(见头注:这一只 pause 不得),故窗口给足 25 拍去要 2 拍。
     let resume = Instant::now() + period * 25;
     let end =
         offline_wait(&mut t, &mut pumps, &mut shutdown, Some(&cfg), Some(resume), "测试").await;

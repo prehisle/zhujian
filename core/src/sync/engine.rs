@@ -103,7 +103,10 @@ const QUARANTINE_REASON_MAX: usize = 512;
 /// * 尾部那次 `outbound`(二轮 H4 补的)**293(L-d″ 第⑤笔)起至多产一枚描述符** ——
 ///   它此后只登记义务,帧由消费腿逐帧惰性取,不再由本常量之外的任何东西封住帧数。
 /// 故准确口径 = 「恢复 N 行 → 至多 2N ≤ 32 枚 want,外加至多一枚 `ServeOps`」。
-const QUARANTINE_REVERIFY_BATCH: usize = 16;
+// `pub(crate)`:transport 那只「跨多拍把隔离表清空」的接线测要拿它算**一拍之后剩几行**
+// (夹具 20 行 - 一批 16 = 4)。写死那个 4 的话,批上限一改,那只测就在错的期望上红,
+// 而它真正该喊的是「夹具不再越过批上限了」。
+pub(crate) const QUARANTINE_REVERIFY_BATCH: usize = 16;
 /// 时钟偏斜提示阈值(§11 SHOULD,评审 P2-h 轮 L1):远端 op 的 HLC 墙钟比本机快过
 /// 24h = LWW 长期偏向它,一次性提示查系统时间(不拒帧——对端时间可能真错,拒了反而
 /// 卡住同步)。
