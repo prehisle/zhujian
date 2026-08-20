@@ -361,9 +361,13 @@ async fn offline_wait_keeps_the_engine_heartbeat_ticking() {
 /// 16 行做完剩 4 行),而同一棵树 push 那趟是全绿的;三个样本 2 绿 1 红,红的那趟 `core`
 /// 用时比绿的多 70%。⛔ **加时间压不下去的随机红,病在判据读错了东西**:它读的是宿主
 /// 调度,不是被测行为——这条任务一被饿死,那 500ms 里就跳不满两拍(而窗口末尾拍点与
-/// 截止点同时就绪时,不 biased 的 select 随机选臂又添一层)。448 没把根因追到底,但
-/// 上面两条都是宿主调度,**虚拟时钟把它们一起摘掉**:时间只在运行时空闲时才推进,
-/// 于是 `left: 4` 从**随机红**变成**一拍之后的必然中间态**,由第一个窗口正面断言下来。
+/// 截止点同时就绪时,不 biased 的 select 随机选臂又添一层)。
+/// ⭐ **这两条不是推测,454 在本机造出来过**:同一个 runtime 上 `tokio::spawn` 一枚
+/// `std::thread::sleep(period*25)`(current_thread 形下它把整个 runtime 堵死)= 一发可控的
+/// 饿死 —— **旧形三趟全红**(一趟 0 拍 `left: 20`、两趟 1 拍 **`left: 4  right: 0`,与 CI 那次
+/// 逐字相同**),**新形同一发饿死下三趟全绿**。⇒ 下次改它之前,先拿那发饿死跑一遍。
+/// **虚拟时钟把两条一起摘掉**:时间只在运行时空闲时才推进,于是 `left: 4` 从**随机红**
+/// 变成**一拍之后的必然中间态**,由第一个窗口正面断言下来。
 #[tokio::test(flavor = "current_thread", start_paused = true)]
 async fn heartbeat_drains_quarantine_reverify_backlog() {
     let (db, clock, dir) = test_db("reverify-tick");
