@@ -197,16 +197,24 @@ jobs:
       #    排除的**,第一问因此改成**问调试口答不答话**(⭐ 这是 memory `test-negative-control`
       #    那条「造不出行为测 → 缺的常是装配台不是观测面」的同族:观测面一直都在,只是没去问)。
       #
-      # ⭐ 两问都在**开发机上先跑通过、拿到了成功底稿**(照 ci-plan §8-8:能在本机拆掉一个再跑
-      #    一遍的,别拿 CI 一趟去换答案),本机读数写在这儿当对照:
-      #    ①app + `--remote-debugging-port=9223`(**私有**用户数据目录 ⇒ 把「靠 DevToolsActivePort
-      #      反查端口」那一环整个摘掉,只问「WebView2 起没起来」)⇒ 本机调试口答话;
-      #    ②msedgedriver **单独**驱一次(绕开 tauri-driver)+ `--verbose` ⇒ 本机 **≈0.4 秒**就
-      #      `DevTools HTTP Request` 到了那个端口,会话 0.7 秒起来。
-      # ⚠ **第二问的诚实边界**:那份 capabilities 是按 WebView2 自动化的标准形**手写**的,
-      #    不保证与 tauri-driver 发的逐字相同 ⇒ 它回答的是「msedgedriver ↔ app 这一段通不通」,
-      #    回答不了「tauri-driver 发的那份 caps 有没有别的毛病」。**成了才说明病在 tauri-driver 那一段。**
-      # ⚠ 两问都**不判红**:这一步只负责把现场记进日志,判红仍归下面那道冒烟闸。
+      # ⭐ **453 第一趟(run 32336848886)已经用第一问把它问出来了,读数写在这儿当账**:
+      #    | | 开发机 | 托管 runner |
+      #    |---|---|---|
+      #    | 调试口答不答话 | ✓ 1.0s | ✗ **90.5s 一直不答,进程还活着,一个字没说** |
+      #    | 默认用户数据目录 | 在(热的) | **跑完还是不在 —— 从没被创建过** |
+      #    | msedgedriver 单独驱一次 | ✓ 0.7s | ✗ 60s 后 `Failed to connect to msedge` |
+      #    ⇒ **朱简这一侧从来没把 WebView2 拉起来**(⛔ 不是「驱动附不上」),而且它连
+      #      `%LOCALAPPDATA%\app.zhujian.notebook\EBWebView` 都没建过 ⇒ 卡点在 WebView2 环境
+      #      创建**之前或之中**。⭐ 那一趟顺带把「msedgedriver ↔ app 通不通」也问掉了(不通,
+      #      同一句话)⇒ 第二问的名额腾出来问下一个问题。
+      #
+      # **第二、三问(453 第二趟)问的是「卡在哪」,而顺序刻意是这样的**:
+      #   ②先问**与朱简无关**的那半 —— 这台 runner 给不给得起一个**有头的** Chromium
+      #     (直接起 `msedge.exe` 自己开调试口,连驱动都不经过)。WebView2 **没有 headless 形**,
+      #     若这台只跑得了 headless,结论就不是「修个 bug」而是「**这条路在托管 runner 上走不通**」。
+      #   ③再问朱简自己的**进度阶梯**(库文件 → 配置目录 → EBWebView → 浏览器进程 → 窗口句柄
+      #     → 有没有外壳),哪一格开始变「不在」,卡点就在它前面。
+      # ⚠ 三问都**不判红**:这一步只负责把现场记进日志,判红仍归下面那道冒烟闸。
       - name: 分诊:WebView2 起得来吗 / msedgedriver 附得上吗(不判红,只留现场)
         shell: bash
         continue-on-error: true
@@ -275,47 +283,72 @@ jobs:
           await sleep(2000);
 
           console.log("");
-          console.log("──── 第二问:msedgedriver 单独起得来会话吗(绕开 tauri-driver,开 verbose)────");
-          const logPath = resolve(tmp, "msedgedriver-verbose.log");
-          const dport = 9515;
-          const p2 = spawn(driver, ["--port=" + dport, "--verbose", "--log-path=" + logPath], {
-            env: { ...process.env, YS_DB_PATH: resolve(tmp, "diag2.sqlite3") },
-            stdio: ["ignore", "ignore", "ignore"],
+          console.log("──── 第二问:这台 runner 到底能不能跑「有头的」Chromium(与朱简无关的对照)────");
+          // ⭐ 第一问红了之后,下一个该问的**不是**「朱简哪儿写错了」,而是**这台机器给不给得起
+          // 一个有头的浏览器进程** —— 因为 WebView2 **没有 headless 形**(它就是嵌在窗口里的),
+          // 若这台 runner 只跑得了 headless,那整条 Windows e2e 在托管 runner 上就是走不通的,
+          // 而那是个比「修一个 bug」大得多的结论。⛔ 别拿朱简当探针去问这件事:朱简这一侧还有
+          // 托盘 / 全局热键 / 两个窗口一堆东西,任一处卡住都长成同一个样。
+          // ⚠ 刻意**不经过 msedgedriver**:直接起 msedge.exe 自己开调试口 ——
+          //    这样连「驱动与浏览器版本配不配对」那一环都摘掉了(那正是 Edge 与 WebView2 可能
+          //    不同版本的地方,拿它当因会指错方向)。
+          // ⛔ 这只探针**只印适用于本趟读数的那一句结论** —— 把几种可能的结论一起印出来
+          // 看着信息量大,实际上其中至少一句是假的(440 那条「工装在读数上骗人」;
+          // 453 预飞时第一版正是这么干的:两个都 ✓ 却照样印了「有头 ✗」那句)。
+          async function edgeProbe(tag, extra, port) {
+            const dir = resolve(tmp, "edge-" + tag);
+            const exe = ["C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe",
+                         "C:/Program Files/Microsoft/Edge/Application/msedge.exe"].find((p) => existsSync(p));
+            if (!exe) { console.log("   ⚠ 这台没有 msedge.exe,这一格问不了"); return null; }
+            const p = spawn(exe, ["--remote-debugging-port=" + port, "--user-data-dir=" + dir,
+                                  "--no-first-run", "--no-default-browser-check", "about:blank"].concat(extra),
+                            { stdio: ["ignore", "ignore", "ignore"] });
+            const t = Date.now();
+            let v = null;
+            for (let i = 0; i < 30; i++) { await sleep(1000); v = await ask(port); if (v) break; }
+            const dt = ((Date.now() - t) / 1000).toFixed(1);
+            console.log("   " + (v ? "✓" : "✗") + " " + tag + ":" + dt + "s " + (v ? "答话了 " + v.Browser : "不答话"));
+            killTree(p.pid);
+            await sleep(1500);
+            return !!v;
+          }
+          const headed = await edgeProbe("有头", [], 9224);
+          const headless = await edgeProbe("headless", ["--headless=new"], 9225);
+          if (headed === null || headless === null) {
+            console.log("   ⇒ 这一格没问成,别据此下结论");
+          } else if (!headed && headless) {
+            console.log("   ⇒ ⭐ 有头 ✗ / headless ✓ ⇒ 这台 runner 跑不了有头浏览器,而 WebView2 没有 headless 形");
+            console.log("     ⇒ **Windows e2e 在托管 runner 上走不通**,这不是一个能修的 bug(要重估 ci-plan 阶段 4)");
+          } else if (headed) {
+            console.log("   ⇒ 有头没问题(headless " + (headless ? "也 ✓" : "反而 ✗,记下但不挡结论") + ")⇒ 病是朱简 / WebView2 运行时这一侧的,看第三问");
+          } else {
+            console.log("   ⇒ ⚠ 两个都 ✗ ⇒ 连普通 Edge 都起不来,这台 runner 的浏览器环境本身有问题(与朱简无关)");
+          }
+
+          console.log("");
+          console.log("──── 第三问:朱简卡在哪儿(进度阶梯,零代码,靠盘上与进程的事实)────");
+          // 每一格都是启动路径上一个**更靠后**的位置:哪一格开始变成「不在」,卡点就在它前面。
+          const p3 = spawn(app, [], {
+            env: { ...process.env, YS_DB_PATH: resolve(tmp, "diag3.sqlite3"),
+                   WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: "--remote-debugging-port=9226" },
+            stdio: ["ignore", "pipe", "pipe"],
           });
-          for (let i = 0; i < 40; i++) {
-            await sleep(250);
-            try { if ((await fetch("http://127.0.0.1:" + dport + "/status")).ok) break; } catch {}
-          }
-          const t2 = Date.now();
-          try {
-            const r = await fetch("http://127.0.0.1:" + dport + "/session", {
-              method: "POST",
-              headers: { "content-type": "application/json" },
-              body: JSON.stringify({
-                capabilities: { alwaysMatch: { browserName: "webview2", "ms:edgeOptions": { binary: app, args: [] } } },
-              }),
-            });
-            const body = await r.json();
-            const dt = ((Date.now() - t2) / 1000).toFixed(1);
-            if (body && body.value && body.value.error) {
-              console.log("   ✗ " + dt + "s 后会话没起来:" + body.value.error);
-              console.log("     " + String(body.value.message).split("\n")[0]);
-              console.log("   ⇒ 与 wdio 那趟同一句 ⇒ 病在 msedgedriver ↔ app 这一段(⛔ 不在 tauri-driver)");
-            } else {
-              console.log("   ✓ " + dt + "s 后会话起来了:" + (body && body.value && body.value.sessionId));
-              console.log("   ⇒ ⭐ msedgedriver ↔ app 这一段是通的 ⇒ 病在 **tauri-driver 那一段**(它发的 caps / 它挑的端口)");
-              await fetch("http://127.0.0.1:" + dport + "/session/" + body.value.sessionId, { method: "DELETE" }).catch(() => {});
-            }
-          } catch (e) { console.log("   ✗ 请求本身失败:" + e.name + " — " + e.message); }
-          killTree(p2.pid);
-          await sleep(500);
-          console.log("   跑完之后默认用户数据目录存在吗:" + (existsSync(defaultUdf) ? "在" : "不在"));
-          if (existsSync(logPath)) {
-            const lines = readFileSync(logPath, "utf8").split("\n");
-            const key = lines.filter((l) => /Launching|WEBVIEW2_ADDITIONAL|DevTools HTTP Request|Failed|error|timed out|Waiting/i.test(l));
-            console.log("   ──── verbose 的关键行(共 " + lines.length + " 行,整份见 artifact)────");
-            for (const l of key.slice(0, 14)) console.log("   " + l.slice(0, 230));
-          }
+          let said3 = "";
+          p3.stdout.on("data", (d) => (said3 += d));
+          p3.stderr.on("data", (d) => (said3 += d));
+          await sleep(25000);
+          const ps = (c) => String(spawnSync("powershell", ["-NoProfile", "-Command", c], { encoding: "utf8" }).stdout || "").trim();
+          console.log("   ①库文件(setup 开过库没有)        :" + (existsSync(resolve(tmp, "diag3.sqlite3")) ? "在" : "不在"));
+          console.log("   ②%APPDATA%\\app.zhujian.notebook   :" + (existsSync(resolve(process.env.APPDATA, "app.zhujian.notebook")) ? "在" : "不在"));
+          console.log("   ③默认 EBWebView(WebView2 环境建过没有):" + (existsSync(defaultUdf) ? "在" : "不在"));
+          // ⚠ PS 命令里一律只用 ASCII 与单引号(memory `powershell-utf8-readfile-trap`:
+          //    经 argv 传中文会被按 ANSI 读、变乱码;双引号还要过一层 Windows 参数转义)。
+          console.log("   ④msedgewebview2.exe 进程数         :" + ps("@(Get-Process msedgewebview2 -ErrorAction SilentlyContinue).Count"));
+          console.log("   ⑤app 的主窗口句柄 / 标题           :" + ps("$p=Get-Process -Id " + p3.pid + " -ErrorAction SilentlyContinue; if($p){[string]$p.MainWindowHandle + ' / ' + $p.MainWindowTitle}else{'GONE'}"));
+          console.log("   ⑥explorer.exe(有没有外壳/托盘)   :" + ps("if(Get-Process explorer -ErrorAction SilentlyContinue){'YES'}else{'NO'}"));
+          console.log("   ──── app 自己说了什么 ────");
+          console.log(said3.trim() || "(它一个字都没说)");
+          killTree(p3.pid);
           DIAGEOF
           node "$RUNNER_TEMP/diag.mjs"
 
