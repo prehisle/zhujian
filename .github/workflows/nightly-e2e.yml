@@ -182,31 +182,142 @@ jobs:
       - name: 编 debug 壳(fast 形要它)
         run: cd src-tauri && cargo build
 
-      # ⭐⭐ **分诊探针(452 第五趟加的):把「app 自己起不来」和「驱动附不上」分开。**
+      # ⭐⭐ **分诊探针(452 第五趟加的,453 升档):把「app 起不来」和「驱动附不上」分开。**
       # 第三、四趟都红在同一句 `session not created: DevToolsActivePort file doesn't exist`
       # —— 那是 Chromium 系「浏览器进程没起来」的**通用症状**,而它盖住了两个完全不同的病:
-      #   ① app 进程在这台 runner 上根本活不起来(托盘 / 窗口 / WebView2 初始化任一处);
-      #   ② app 活得好好的,是 msedgedriver 那条附加调试口的路走不通。
-      # 两者在 wdio 的输出里**一模一样**,所以这里直接问 app 自己 —— ⛔ 别再靠猜
+      #   ① app 这一侧根本没把 WebView2 拉起来(托盘 / 窗口 / 环境创建任一处);
+      #   ② WebView2 起来了,是 msedgedriver 那条附加调试口的路走不通。
+      # 两者在 wdio 的输出里**一模一样**,所以这里直接问 —— ⛔ 别再靠猜
       # (⚠ 第四趟那个 `--no-sandbox` 的猜法已经被证伪了,理由不成立就撤掉了)。
-      # ⚠ 它**不判红**:这一步只负责把现场记进日志,判红仍归下面那道冒烟闸。
-      - name: 分诊:app 自己起得来吗(不判红,只留现场)
+      #
+      # ⚠⚠ **453 把 452 那一版的话改准了,这一格值得单独记**:那一版跑 `app.exe` 20 秒、
+      #    看进程在不在,然后据此写下「WebView2 初始化在托管 runner 上没问题」。
+      #    ⛔ **它证明不了那句话** —— 一个 WebView2 创建**挂住**(不是失败)的进程,同样活得过
+      #    20 秒,而现场看起来一模一样。⇒「app 起不来 / WebView2 没问题」当时是**按不足的证据
+      #    排除的**,第一问因此改成**问调试口答不答话**(⭐ 这是 memory `test-negative-control`
+      #    那条「造不出行为测 → 缺的常是装配台不是观测面」的同族:观测面一直都在,只是没去问)。
+      #
+      # ⭐ 两问都在**开发机上先跑通过、拿到了成功底稿**(照 ci-plan §8-8:能在本机拆掉一个再跑
+      #    一遍的,别拿 CI 一趟去换答案),本机读数写在这儿当对照:
+      #    ①app + `--remote-debugging-port=9223`(**私有**用户数据目录 ⇒ 把「靠 DevToolsActivePort
+      #      反查端口」那一环整个摘掉,只问「WebView2 起没起来」)⇒ 本机调试口答话;
+      #    ②msedgedriver **单独**驱一次(绕开 tauri-driver)+ `--verbose` ⇒ 本机 **≈0.4 秒**就
+      #      `DevTools HTTP Request` 到了那个端口,会话 0.7 秒起来。
+      # ⚠ **第二问的诚实边界**:那份 capabilities 是按 WebView2 自动化的标准形**手写**的,
+      #    不保证与 tauri-driver 发的逐字相同 ⇒ 它回答的是「msedgedriver ↔ app 这一段通不通」,
+      #    回答不了「tauri-driver 发的那份 caps 有没有别的毛病」。**成了才说明病在 tauri-driver 那一段。**
+      # ⚠ 两问都**不判红**:这一步只负责把现场记进日志,判红仍归下面那道冒烟闸。
+      - name: 分诊:WebView2 起得来吗 / msedgedriver 附得上吗(不判红,只留现场)
         shell: bash
         continue-on-error: true
         run: |
-          export YS_DB_PATH="$RUNNER_TEMP/probe.sqlite3"
-          ./src-tauri/target/debug/app.exe > "$RUNNER_TEMP/app-probe.log" 2>&1 &
-          pid=$!
-          sleep 20
-          if kill -0 "$pid" 2>/dev/null; then
-            echo "✓ app 起来了并且活过 20 秒(pid=$pid)⇒ 病不在 app 自己,在驱动附加那条路"
-            kill "$pid" 2>/dev/null || true
-          else
-            wait "$pid"; rc=$?
-            echo "✗ app 20 秒内自己退了(退出码 $rc)⇒ 病在 app 起不来,与 msedgedriver 无关"
-          fi
-          echo "──── app 自己说了什么 ────"
-          cat "$RUNNER_TEMP/app-probe.log" 2>/dev/null || echo "(它一个字都没说)"
+          cat > "$RUNNER_TEMP/diag.mjs" <<'DIAGEOF'
+          import { spawn, spawnSync } from "node:child_process";
+          import { resolve } from "node:path";
+          import { existsSync, readFileSync } from "node:fs";
+
+          const app = resolve(process.cwd(), "src-tauri/target/debug/app.exe");
+          const driver = resolve(process.cwd(), "e2e/drivers/msedgedriver.exe");
+          const tmp = process.env.RUNNER_TEMP;
+          // msedgedriver **自己不指定**用户数据目录(它只设 ADDITIONAL_BROWSER_ARGUMENTS)
+          // ⇒ app 用的是自己的默认值。开发机上这个目录是**热的**(生产朱简早建好了),
+          // runner 上是**冷的** —— 那是两台之间一处结构性差别,本机拆不出来,这里如实问一句。
+          const defaultUdf = resolve(process.env.LOCALAPPDATA, "app.zhujian.notebook/EBWebView");
+          const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+          const killTree = (pid) => {
+            if (pid) spawnSync("taskkill", ["/PID", String(pid), "/T", "/F"], { stdio: "ignore" });
+          };
+          async function ask(port) {
+            try {
+              const c = new AbortController();
+              const t = setTimeout(() => c.abort(), 2000);
+              const r = await fetch("http://127.0.0.1:" + port + "/json/version", { signal: c.signal });
+              clearTimeout(t);
+              return r.ok ? await r.json() : null;
+            } catch { return null; }
+          }
+
+          console.log("默认用户数据目录 " + defaultUdf);
+          console.log("   跑之前它存在吗:" + (existsSync(defaultUdf) ? "在(热的)" : "不在(冷的 —— 这一趟是它第一次被创建)"));
+
+          console.log("");
+          console.log("──── 第一问:app 这一侧把 WebView2 拉起来了吗(固定调试口 + 私有用户数据目录)────");
+          const udf = resolve(tmp, "zj-diag-udf");
+          const PORT = 9223;
+          const p1 = spawn(app, [], {
+            env: {
+              ...process.env,
+              YS_DB_PATH: resolve(tmp, "diag1.sqlite3"),
+              WEBVIEW2_USER_DATA_FOLDER: udf,
+              WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: "--remote-debugging-port=" + PORT,
+            },
+            stdio: ["ignore", "pipe", "pipe"],
+          });
+          let said = "";
+          p1.stdout.on("data", (d) => (said += d));
+          p1.stderr.on("data", (d) => (said += d));
+          let alive = true;
+          p1.on("exit", (code) => { alive = false; said += "\n(进程自己退了,退出码 " + code + ")"; });
+          const t0 = Date.now();
+          let ver = null;
+          for (let i = 0; i < 90 && alive; i++) { await sleep(1000); ver = await ask(PORT); if (ver) break; }
+          const dt1 = ((Date.now() - t0) / 1000).toFixed(1);
+          if (ver) {
+            console.log("   ✓ " + dt1 + "s 后调试口答话了:" + ver.Browser);
+            console.log("   ⇒ WebView2 在这台 runner 上真的起得来(⛔ 这次不是「进程没退」那种弱证据)");
+          } else {
+            console.log("   ✗ " + dt1 + "s 内调试口一直不答话(进程" + (alive ? "还活着" : "已经退了") + ")");
+            console.log("   ⇒ ⭐ 病在 app / WebView2 这一侧,与 msedgedriver 无关 —— 452 排除的那条因要翻案");
+          }
+          console.log("   ──── app 自己说了什么 ────");
+          console.log(said.trim() || "(它一个字都没说)");
+          killTree(p1.pid);
+          await sleep(2000);
+
+          console.log("");
+          console.log("──── 第二问:msedgedriver 单独起得来会话吗(绕开 tauri-driver,开 verbose)────");
+          const logPath = resolve(tmp, "msedgedriver-verbose.log");
+          const dport = 9515;
+          const p2 = spawn(driver, ["--port=" + dport, "--verbose", "--log-path=" + logPath], {
+            env: { ...process.env, YS_DB_PATH: resolve(tmp, "diag2.sqlite3") },
+            stdio: ["ignore", "ignore", "ignore"],
+          });
+          for (let i = 0; i < 40; i++) {
+            await sleep(250);
+            try { if ((await fetch("http://127.0.0.1:" + dport + "/status")).ok) break; } catch {}
+          }
+          const t2 = Date.now();
+          try {
+            const r = await fetch("http://127.0.0.1:" + dport + "/session", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({
+                capabilities: { alwaysMatch: { browserName: "webview2", "ms:edgeOptions": { binary: app, args: [] } } },
+              }),
+            });
+            const body = await r.json();
+            const dt = ((Date.now() - t2) / 1000).toFixed(1);
+            if (body && body.value && body.value.error) {
+              console.log("   ✗ " + dt + "s 后会话没起来:" + body.value.error);
+              console.log("     " + String(body.value.message).split("\n")[0]);
+              console.log("   ⇒ 与 wdio 那趟同一句 ⇒ 病在 msedgedriver ↔ app 这一段(⛔ 不在 tauri-driver)");
+            } else {
+              console.log("   ✓ " + dt + "s 后会话起来了:" + (body && body.value && body.value.sessionId));
+              console.log("   ⇒ ⭐ msedgedriver ↔ app 这一段是通的 ⇒ 病在 **tauri-driver 那一段**(它发的 caps / 它挑的端口)");
+              await fetch("http://127.0.0.1:" + dport + "/session/" + body.value.sessionId, { method: "DELETE" }).catch(() => {});
+            }
+          } catch (e) { console.log("   ✗ 请求本身失败:" + e.name + " — " + e.message); }
+          killTree(p2.pid);
+          await sleep(500);
+          console.log("   跑完之后默认用户数据目录存在吗:" + (existsSync(defaultUdf) ? "在" : "不在"));
+          if (existsSync(logPath)) {
+            const lines = readFileSync(logPath, "utf8").split("\n");
+            const key = lines.filter((l) => /Launching|WEBVIEW2_ADDITIONAL|DevTools HTTP Request|Failed|error|timed out|Waiting/i.test(l));
+            console.log("   ──── verbose 的关键行(共 " + lines.length + " 行,整份见 artifact)────");
+            for (const l of key.slice(0, 14)) console.log("   " + l.slice(0, 230));
+          }
+          DIAGEOF
+          node "$RUNNER_TEMP/diag.mjs"
 
       # ⭐⭐ **起 vite、等它、跑 e2e 收在同一步里 —— 这不是图省事,是两趟 CI 红换来的。**
       #
@@ -301,5 +412,6 @@ jobs:
             ${{ runner.temp }}/e2e.log
             ${{ runner.temp }}/e2e-smoke.log
             ${{ runner.temp }}/vite.log
+            ${{ runner.temp }}/msedgedriver-verbose.log
           if-no-files-found: warn
           retention-days: 14
