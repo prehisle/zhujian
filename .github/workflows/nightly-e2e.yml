@@ -196,6 +196,13 @@ jobs:
         shell: bash
         env:
           YS_E2E_FAST: "1"
+          # ⭐ **452 第三趟换来的**:会话根本起不来 —— `session not created: DevToolsActivePort
+          # file doesn't exist`(run 32322796017)。那是 Chromium 系「浏览器进程自己没起来」的
+          # 通用症状,而托管 runner 上最常见的因就是**沙箱起不来**(runner 以服务账户跑)。
+          # WebView2 认这个环境变量往浏览器进程传参。
+          # ⚠ **这是一条待验的假设,不是已证的结论** —— 它要么让下面那道冒烟闸变绿(那就是字据),
+          #    要么照旧红在同一句上(那说明因在别处,⛔ 别把这一行留着当"反正没坏处")。
+          WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: "--no-sandbox --disable-gpu"
         run: |
           set -o pipefail
           # 后台起 vite,并把它的 pid 记下来 —— 同一步内它是本 shell 的子进程,活得到 wdio 跑完。
@@ -230,6 +237,25 @@ jobs:
             })();
           ' || { cat "$RUNNER_TEMP/vite.log" 2>/dev/null; kill "$vite_pid" 2>/dev/null; exit 1; }
 
+          # ⭐⭐ **冒烟闸:先只跑一支,起得来会话再跑另外 38 支。**
+          # 452 第三趟的读数就是这道闸存在的理由:会话起不来时,**每一支要 4 分钟才放弃**
+          # (02:02:06 开跑 → 02:06:13 第一支报错),39 支 × 4 分 = 156 分 ⇒ 整个 job 撞上
+          # 90 分钟上限被砍,而它要说的其实只有一句话「WebView2 起不来」。
+          # ⇒ 同 450 那道 locale 闸的判据:**答不上来就当场停,别拿三十来支看着像真缺陷的红
+          #   去浪费下一个人半小时**。⚠ 这一支跑完库会被下面那趟的 `onPrepare` 清掉,不留残留。
+          set +e
+          npx wdio run e2e/wdio.conf.js --spec e2e/specs/capture.e2e.js --specFileRetries=0 2>&1 \
+            | tee "$RUNNER_TEMP/e2e-smoke.log"
+          smoke=${PIPESTATUS[0]}
+          set -e
+          if grep -q "session not created" "$RUNNER_TEMP/e2e-smoke.log"; then
+            kill "$vite_pid" 2>/dev/null || true
+            echo "::error::WebView2 会话起不来(session not created)—— ⛔ 不再跑另外 38 支,那只会把同一句话重复 39 遍并撞上 job 超时"
+            grep -m3 "session not created" "$RUNNER_TEMP/e2e-smoke.log"
+            exit 1
+          fi
+          echo "冒烟过了(退出码 $smoke)—— 会话起得来,往下跑全量"
+
           set +e
           npx wdio run e2e/wdio.conf.js --specFileRetries=0 2>&1 | tee "$RUNNER_TEMP/e2e.log"
           status=${PIPESTATUS[0]}
@@ -246,6 +272,7 @@ jobs:
           name: e2e-windows-log
           path: |
             ${{ runner.temp }}/e2e.log
+            ${{ runner.temp }}/e2e-smoke.log
             ${{ runner.temp }}/vite.log
           if-no-files-found: warn
           retention-days: 14
