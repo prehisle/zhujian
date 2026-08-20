@@ -29,12 +29,28 @@ const shown = () =>
     return { w: i ? i.naturalWidth : 0, alt: i ? i.alt : "", vis: i ? i.style.visibility : "?", count: c ? c.textContent : null };
   });
 
-/** 等到大图换成自然宽为 w 的那张、且已亮相(visibility 复位)。 */
-const waitShown = (w) =>
-  browser.waitUntil(async () => {
-    const s = await shown();
-    return s.w === w && s.vis === "";
-  }, { timeout: 10000, timeoutMsg: `大图没换到自然宽 ${w}` });
+/** 等到大图换成自然宽为 w 的那张、且已亮相(visibility 复位)。
+ *  ⭐ 红了自带现场(455,同 439 的形):这句原来只说「大图没换到自然宽 N」,而它**盖住了
+ *  两个不同的病** —— ①图根本没换(`w` 还是上一张 / 是 0 = 压根没 `<img>`)⇒ 换图那条路断了;
+ *  ②图换了但**没亮相**(`vis === "hidden"`)⇒ 是「布局未定不显示」那条取舍还没放行,
+ *  与 zz-verify-163 例② 同族(几何/撑窗敏感)。两种在屏幕上一模一样,而这支是**已记档的
+ *  老抖动支**(progress-log 8547「基线已记档的抖动支」;455 在 Windows 全量第一趟又见一次,
+ *  三格分诊全绿)⇒ 下次再红,现场直接把 w/vis/alt/角标 摆出来,一眼分档。 */
+const waitShown = async (w) => {
+  let last = null;
+  try {
+    await browser.waitUntil(async () => {
+      last = await shown();
+      return last.w === w && last.vis === "";
+    }, { timeout: 10000, timeoutMsg: `大图没换到自然宽 ${w}` });
+  } catch (e) {
+    throw new Error(
+      `大图没换到自然宽 ${w} —— 实读 ${last === null ? "(一次都没读到)" : JSON.stringify(last)}` +
+        `(w 不对=没换图;vis="hidden"=换了没亮相,那是「布局未定不显示」那条取舍)` +
+        `(原始报错:${String(e).split("\n")[0]})`,
+    );
+  }
+};
 
 describe("配图 · 大图遮罩内翻同条目的多图(224)", () => {
   before(async () => {

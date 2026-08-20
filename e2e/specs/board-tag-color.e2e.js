@@ -6,6 +6,18 @@ import { invoke, goNotebook } from "./support.js";
 //   · 筛选条里该标签的钮带一颗同色色点(.tf-dot);
 //   · 标签视图:⋯「颜色」的调色板点一下就落色、行首色点亮起,选「无」清色。
 // 并在最后存一张看板截图,供人工看实物(纸墨底 + 少量点色的观感)。
+
+// 标签视图里那一行的行首色点,读成一个值:`false` = 没挂 `.on`(= 无色/还没重渲),
+// 有色时 = 它身上的 `--tag-color`。两种失败因此在失败信息里分得开(455)。
+function readDot(tag) {
+  return browser.execute((t) => {
+    const sec = [...document.querySelectorAll(".topic")].find((s) => s.querySelector(".topic-title")?.textContent === t);
+    if (!sec) return "该标签的行不在标签视图里";
+    const dot = sec.querySelector(".topic-dot");
+    return dot.classList.contains("on") && dot.style.getPropertyValue("--tag-color").trim();
+  }, tag);
+}
+
 describe("标签颜色 · 看板呈现", () => {
   const TAG = "E2E-颜色标签";
   const HEX = "#3f7a99"; // 黛蓝
@@ -106,11 +118,20 @@ describe("标签颜色 · 标签视图设色/清色", () => {
       async () => (await invoke("list_topics")).find((t) => t.id === topicId)?.color === HEX,
       { timeout: 8000, timeoutMsg: "点色块后后端未落色" },
     );
-    const dotOn = await browser.execute((tag) => {
-      const sec = [...document.querySelectorAll(".topic")].find((s) => s.querySelector(".topic-title")?.textContent === tag);
-      const dot = sec.querySelector(".topic-dot");
-      return dot.classList.contains("on") && dot.style.getPropertyValue("--tag-color").trim();
-    }, TAG);
+    // ⛔ **别只等后端就直接读 DOM**(454 那次 Linux CI 红就是这么来的,backlog「测试与工装 29」):
+    // 上一句 `waitUntil` 等的是 `list_topics` 里 color 落了,而下面读的是 **DOM**,两者之间隔着
+    // 一次重渲 ⇒ 断言可能早到一拍,收到的是 `false`(= `.on` 还没挂上),看着却像「颜色错了」。
+    // = memory `flaky-test-three-shapes`「**等的东西和读的东西不是一件事**」。
+    // ⛔ 修法不是加超时:把等待条件挪到**读的那一侧**。两条都留 ⇒ 判据不削反增
+    //(后端那条先落,DOM 这条再等它跟上;哪一格没到,timeoutMsg 分得开)。
+    let dotOn;
+    await browser.waitUntil(
+      async () => {
+        dotOn = await readDot(TAG);
+        return dotOn === HEX;
+      },
+      { timeout: 8000, timeoutMsg: "后端已落色,但行首色点没跟上(false=.on 未挂;别的值=颜色不对)" },
+    );
     expect(dotOn).toBe(HEX);
   });
 
@@ -127,5 +148,16 @@ describe("标签颜色 · 标签视图设色/清色", () => {
       async () => (await invoke("list_topics")).find((t) => t.id === topicId)?.color == null,
       { timeout: 8000, timeoutMsg: "点「无」后后端未清色" },
     );
+    // 例①同一条纪律的另一半:这只测的**名字**里写着「行首色点隐去」,而 455 之前它
+    // 只断了后端 ⇒ 名字承诺的那一半从来没被验过。同样等在 DOM 那一侧。
+    let dotOff;
+    await browser.waitUntil(
+      async () => {
+        dotOff = await readDot(TAG);
+        return dotOff === false;
+      },
+      { timeout: 8000, timeoutMsg: "后端已清色,但行首色点还亮着(.on 没摘掉)" },
+    );
+    expect(dotOff).toBe(false);
   });
 });

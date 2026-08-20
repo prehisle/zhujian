@@ -108,8 +108,13 @@ describe("灵感 · 打标签(手动,不经 AI)", () => {
     // 标签只是元数据:打标签后想法留在「想法」列表(不再离开),只是长出一个 chip。
     const taggedA = await $(".note*=E2E-主题-甲");
     await taggedA.$(".tag*=E2E-新主题-X").waitForExist({ timeout: 10000 });
+    // ⭐ 取证(455,backlog「测试与工装 20」):425 撞见过一次「chip 已经长出来了,紧接着
+    // `list_topics` 里没有那个标签」,而当时现场只剩一个 `false`、判不了「那次 invoke 读到了
+    // 什么」。⇒ 断在**清单**上而不是 bool 上:红了 expect 自己就把实读的全部标题印出来。
+    // ⚠ 顺带把两把尺的差别摆明:上面那句 chip 等待是 `*=` **包含**匹配(多一个字/多一个
+    // 空格照样过),而这句是**全等** —— 真要是标题多带了字符,印出来的清单里一眼看得见。
     let topics = await invoke("list_topics");
-    expect(topics.some((t) => t.title === "E2E-新主题-X")).toBe(true);
+    expect(topics.map((t) => t.title)).toContain("E2E-新主题-X");
 
     // 第二条:打开选择器,不输入 → 候选列出全部未加标签,点已存在的那个 .choice 归入。
     await invoke("capture_note", { content: "E2E-主题-乙" });

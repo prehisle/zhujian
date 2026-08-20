@@ -40,6 +40,21 @@ export async function goNotebook(view) {
   // harness drives the tiny 560px capture window, so size it up to a
   // representative width or narrow views (e.g. the board header) overflow.
   await browser.setWindowSize(1000, 700);
+  // ⭐ **先等壳启动完再点**(455)。侧栏那四枚按钮是 **notebook.html 里的静态 HTML**,
+  // `browser.url()` 一回来就存在 ⇒ 「按钮存在」这条判据**证明不了壳已经起来了**。notebook 的
+  // 启动序是 `src/notebook.ts` 末尾那条**异步 IIFE**(`await initCurrentSpace()` →
+  // `await initSync()` → `navigate(上次视图)`);`e2e/probes/boot-race.e2e.js` 量过:
+  // **`url()` 回来那一刻壳几乎从来没起来**(本机 7-8/8 趟,还差 12-38ms),而这之后的
+  // show/focus + setWindowSize + waitForExist 那几条往返要 56-102ms ⇒ 平时点得比它晚,靠的是
+  // 这 **40-70ms 的余量**、不是靠构造。余量被负载吃掉(全量累积那趟 / 更慢的机器)时点就落在
+  // 启动序前面 ⇒ **同一个视图被挂两次**(我点一次、启动序末尾再挂一次):第二次挂把第一棵 DOM
+  // 整个换掉 ⇒ 紧跟着取到的元素句柄变陈旧,第一次挂发出的异步刷新落在死 mount 上。
+  // 判据换成**正面字据**:`#view` 里已经挂上任意一个视图 = 启动序那句 navigate 已经跑过
+  // (`.v-* .view` 只由 `navigate` 产出)。阴性对照(把启动序人为拖慢 800ms):这一句之前
+  // **8/8 被重挂**,加上之后 **0/8**。
+  // ⛔ **别把它读成 backlog「测试与工装 19」的根** —— 那个 `.v-topics 5000ms` 的根**没查到**,
+  // 而两条最像的推断已被那只探针当场证伪(①监听还没挂上 ②启动序把视图换走了),逐条在探针文件头。
+  await $("#view > .view").waitForExist({ timeout: 15000 });
   const trigger = `.sidebar nav button[data-view="${view}"]`;
   await $(trigger).waitForExist({ timeout: 5000 });
   await browser.execute((sel) => document.querySelector(sel).click(), trigger);

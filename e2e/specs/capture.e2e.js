@@ -156,13 +156,27 @@ describe("捕获 · 斜杠命令", () => {
     await browser.pause(300);
     expect(await panelHidden()).toBe(true); // 没有命令叫 etc,不吞正文
     await browser.keys("Enter");
-    await browser.waitUntil(
-      async () => {
-        const inbox = await invoke("list_inbox");
-        return inbox.length === 1 && inbox[0].content === "/etc/hosts要改";
-      },
-      { timeout: 6000, timeoutMsg: "/etc… 未原样入库" },
-    );
+    // ⭐ 取证(455,backlog「测试与工装 23」):这句原来只说「/etc… 未原样入库」,而那一句
+    // **盖住了两个完全不同的病** —— ①往 WebView2 打字丢字(`setValue`,401 那件)⇒ content
+    // 对不上;②`clearInbox()` 与上一支的残留竞态 ⇒ 条数 ≠ 1。两种在屏幕上一模一样,
+    // 445 那次自然红因此什么都没留下。⇒ 红了把**实读的 inbox**(条数 + 每条原文)压进消息。
+    // ⛔ `timeoutMsg` 是**调用那一刻就求值**的静态串、带不了现场,只能接在 catch 里补。
+    let seen = null;
+    try {
+      await browser.waitUntil(
+        async () => {
+          seen = (await invoke("list_inbox")).map((n) => n.content);
+          return seen.length === 1 && seen[0] === "/etc/hosts要改";
+        },
+        { timeout: 6000, timeoutMsg: "/etc… 未原样入库" },
+      );
+    } catch (e) {
+      throw new Error(
+        `/etc… 未原样入库 —— 实读 inbox ` +
+          (seen === null ? "(一次都没读到)" : `${seen.length} 条:${JSON.stringify(seen)}`) +
+          `(原始报错:${String(e).split("\n")[0]})`,
+      );
+    }
   });
 
   it("/task 回车 → 任务 chip;写标题回车 → 存进看板(非灵感)", async () => {
