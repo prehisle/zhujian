@@ -175,10 +175,37 @@ export function tryInvoke(cmd, args) {
 // ⚠ **别退回裸 click**:`wdio.conf.js` 那道清草稿的 `before` 只堵住「上次会话留下的」那条路,
 // 另一条是「同一份 spec 里上游把 compose 留开了」——396 真见过一次。414 把这只 helper 从
 // board.e2e.js 提到这里,就是为了让另外两处(compose-recovery / compose-images)也走同一条路。
+//
+// ⭐ **456:「看一眼」与「点下去」必须是同一刻**(backlog 测试与工装 6 那笔重开的账)。
+// 414 那版是「先 `isDisplayed()` 读一次、再 `click()`」——**两次 WebDriver 往返**,中间有个窗口。
+// 而把 compose 开出来的不止我一个:`board.ts` 的 `restoreImagesOnce(…)` 回调
+// (`if (… && compose.hidden) setComposeOpen(true)`)是 **IndexedDB 异步**回来才跑的。它若正好落在
+// 「读完」与「点下去」之间,我这一点就把**已经开着的** compose 关上 ⇒ 后面 5 秒当然等不到,
+// 现场 `element ("#compose-input") still not displayed after 5000ms`(455 在 Linux CI 上真红过一次)。
+// **它防住了「已经开着」,没防住「正要开」。** 收进一次 `browser.execute`(页内单线程,一个同步回合)
+// 之后那个窗口没有了 —— `e2e/probes/compose-open-race.e2e.js` 拿人为放大的窗口做过一红两绿的对照。
+//
+// ⛔ **另外三条候选各自为什么没选**(456 摆开之后选的,别再挑回来):
+//   ②保留真点击 + 「点完没显出来就再点一次」——要先等一个超时才知道"没显出来",而"等多久"
+//     正是这条账明令禁止换上去的判据;
+//   ③从根上让回填同步 —— **办不到**:暂存图存在 IndexedDB(`compose-draft.ts` 头注:图走 IDB
+//     是因为 localStorage 会被大图撑爆),而 IDB 没有同步 API;
+//   ④改用 `N` 那枚单键(`board.ts` 里它是**幂等开**、不是开关)—— `hotkey-menu.ts:336` 那句
+//     「焦点在 INPUT/TEXTAREA 里就不抢键」会把它吞掉,而 `board.e2e.js` 那支正好是**筛着**
+//     调用的(焦点在 `#board-filter` 里)⇒ 那一下会往过滤框里打个 "N"。
+// ⚠ **`cornerMenuAction` 头注那条「别折进一次 execute」在这里不适用,理由要说准**:那条的因是
+// **两次点击**之间需要一帧绘制(菜单建好 → 样式变 → `transitionend`);这里只有**一次**点击、
+// 不牵扯任何过渡。同理 `goNotebook` 里那次侧栏导航本来就是页内合成 click,两端跑了很多轮。
+// 换掉的那一点真实性由前面那句 `waitForClickable` 兜着(它仍是驱动的可点判定:存在、可见、没被盖住)。
 export async function openCompose() {
   await $("#add-task").waitForClickable({ timeout: 8000 });
-  if (await $("#compose-input").isDisplayed()) return; // 已经开着(草稿回填 / 上一条测试留的)
-  await $("#add-task").click();
+  await browser.execute(() => {
+    const compose = document.querySelector("#compose");
+    const btn = document.querySelector("#add-task");
+    if (!compose || !btn) throw new Error("看板 compose 不在(#compose / #add-task 缺一)");
+    // 已经开着(草稿回填 / 上一条测试留的)就别点——`#add-task` 是开关,点了就是关上。
+    if (compose.hidden) btn.click();
+  });
   await $("#compose-input").waitForDisplayed({ timeout: 5000 });
 }
 
