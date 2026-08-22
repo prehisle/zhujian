@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <title>朱简(鸿蒙 · C3 骨架)</title>
+  </head>
+  <body>
+    <!-- ⛔ 这一页是 C3 的**验收面**,不是产品界面 —— 它要在真机上把六条复核面各显成
+         一个读数。产品前端(基本抄 android/src 那 7.7k 行)是 OH-d 的事。 -->
+    <main id="app">
+      <h1>朱简 · 鸿蒙骨架</h1>
+      <section>
+        <h2>启动闸</h2>
+        <pre id="gate">正在准备…</pre>
+      </section>
+      <section>
+        <h2>路径落点(面④)</h2>
+        <button id="paths-btn">问一次</button>
+        <pre id="paths">—</pre>
+      </section>
+      <section>
+        <h2>真 command → core 读写(面⑥)</h2>
+        <input id="text" type="text" placeholder="随便写一句" />
+        <button id="capture-btn">写进去</button>
+        <button id="inbox-btn">读回来</button>
+        <pre id="smoke">—</pre>
+      </section>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

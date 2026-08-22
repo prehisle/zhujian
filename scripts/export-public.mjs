@@ -41,7 +41,7 @@ if (target === repoRoot || repoRoot.startsWith(targetPrefix)) {
 
 // 公开白名单(目录以 / 结尾按前缀匹配,其余精确匹配)
 const ALLOW = [
-  ".github/", "android/", "core/", "e2e/", "scripts/", "server/", "site/", "src/",
+  ".github/", "android/", "core/", "e2e/", "ohos/", "scripts/", "server/", "site/", "src/",
   "src-tauri/", "sync-proto/",
   "docs/sync-protocol.md", "docs/design-rules.md", "docs/why-no-framework.md",
   // 385:三道门禁(timing / radius / fs)会 readFileSync 它——§2.2/§2.4/§2.5 那三张表

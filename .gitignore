@@ -18,6 +18,25 @@
 /android/src-tauri/gen/schemas
 /android/gradle-*.zip
 
+# 鸿蒙端(OH-c):独立 npm 工程 + 独立 crate target
+/ohos/node_modules
+/ohos/dist
+/ohos/src-tauri/target
+/ohos/src-tauri/gen/schemas
+# HAP 工程的构建产物与本机件(hvigor 缓存 / 编出来的 .so / DevEco 本地配置)
+/ohos/src-tauri/gen/ohos/.hvigor
+/ohos/src-tauri/gen/ohos/oh_modules
+/ohos/src-tauri/gen/ohos/local.properties
+/ohos/src-tauri/gen/ohos/entry/build
+/ohos/src-tauri/gen/ohos/entry/.cxx
+/ohos/src-tauri/gen/ohos/entry/oh_modules
+/ohos/src-tauri/gen/ohos/entry/libs
+# ⛔ 签名材料绝不进 git(照安卓 keystore.properties 那条先例):作者的 .p12/.cer/.p7b
+# 路径与 DevEco 加密口令都在这一份里,仓里那份 build-profile.json5 恒是**未签名形**。
+/ohos/src-tauri/gen/ohos/signing.local.json5
+# 同族:本机 debug profile 绑的 bundleName(与仓里那个真身份可能不同)也是本机件。
+/ohos/src-tauri/gen/ohos/bundle-name.local.txt
+
 # Tauri 自动生成
 /src-tauri/gen/schemas
 

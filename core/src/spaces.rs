@@ -876,20 +876,33 @@ fn stage_and_publish(
 ///
 /// ⚠ **`pub(crate)` 是 402/423 那两笔放宽的**(backup-plan §7.2 / §16 幕⑥):加密备份的
 /// **恢复**要把 staging 里那份解出来的库原子落位成一个新空间 —— 同一条规则,⛔ 不许另写一份。
-#[cfg(not(target_os = "android"))]
+#[cfg(not(any(target_os = "android", target_env = "ohos")))]
 pub(crate) fn publish_no_clobber(staging: &Path, path: &Path) -> std::io::Result<()> {
     std::fs::hard_link(staging, path)?;
     let _ = std::fs::remove_file(staging);
     Ok(())
 }
 
-/// Android 专路:app 私有目录(SELinux `app_data_file`)拒 `link()`(os error 13,
-/// 真机 create_space 归位崩），改 renameat2 的 `RENAME_NOREPLACE`——同为原子
-/// no-clobber(目标存在即 `EEXIST`),且 rename 后 staging 名随之消失、无需再 unlink。
-/// /data 私有区 f2fs/ext4 支持该 flag;不支持则响亮 errno 上抛(fail-fast,不静默
-/// 覆盖、不回退)。
-#[cfg(target_os = "android")]
+/// Android 与鸿蒙专路:app 私有目录拒 `link()`(os error 13,真机 create_space 归位崩)
+/// ——安卓是 SELinux `app_data_file`,**鸿蒙 461 前哨在真机上量到完全同形**;两端都改走
+/// [`renameat2_noreplace`]。
+///
+/// ⚠ 鸿蒙 `target_os = "linux"` + `target_family = "unix"`,判别式是 **`target_env = "ohos"`**
+/// (459 补 `rustc --print cfg` 实测)——⛔ 别去猜 `target_os`,core 里所有
+/// `cfg(target_os = "android")` 在鸿蒙上一条都不选中,这一支的由来正是它。
+#[cfg(any(target_os = "android", target_env = "ohos"))]
 pub(crate) fn publish_no_clobber(staging: &Path, path: &Path) -> std::io::Result<()> {
+    renameat2_noreplace(staging, path)
+}
+
+/// `renameat2` 的 `RENAME_NOREPLACE`:与 hard_link 同为**原子 no-clobber**(目标存在即
+/// `EEXIST`),且 rename 后 staging 名随之消失、无需再 unlink。/data 私有区 f2fs/ext4
+/// 支持该 flag;不支持则响亮 errno 上抛(fail-fast,不静默覆盖、不回退)。
+///
+/// ⛔ **两端共用这一个入口,别再各写一份** —— 平台差异只有「怎么发出这一个系统调用」,
+/// 收在下面那对 [`renameat2_raw`] 里。
+#[cfg(any(target_os = "android", target_env = "ohos"))]
+fn renameat2_noreplace(staging: &Path, path: &Path) -> std::io::Result<()> {
     use std::ffi::CString;
     use std::os::unix::ffi::OsStrExt;
     let from = CString::new(staging.as_os_str().as_bytes())
@@ -897,22 +910,80 @@ pub(crate) fn publish_no_clobber(staging: &Path, path: &Path) -> std::io::Result
     let to = CString::new(path.as_os_str().as_bytes())
         .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "目标路径含 NUL"))?;
     // SAFETY: 两个指针指向本函数局部 CString 的 NUL 结尾缓冲,活到 syscall 返回;
-    // renameat2 只在调用期间读它们、不留存。minSdk=30 保证该符号在目标设备存在。
-    let rc = unsafe {
-        libc::renameat2(
-            libc::AT_FDCWD,
-            from.as_ptr(),
-            libc::AT_FDCWD,
-            to.as_ptr(),
-            // android 的 renameat2 flags 形参是 u32,而 RENAME_NOREPLACE 常量是 i32。
-            libc::RENAME_NOREPLACE as libc::c_uint,
-        )
-    };
+    // renameat2 只在调用期间读它们、不留存。
+    let rc = unsafe { renameat2_raw(from.as_ptr(), to.as_ptr()) };
     if rc == 0 {
         Ok(())
     } else {
         Err(std::io::Error::last_os_error())
     }
+}
+
+/// Android:bionic 导出了 `renameat2` 包装函数,minSdk=30 保证该符号在目标设备存在。
+/// ⚠ 该平台 `renameat2` 的 flags 形参是 `u32`,而它的 `RENAME_NOREPLACE` 常量是 `i32`,故要转。
+///
+/// # Safety
+/// `from` / `to` 必须是活到本调用返回的、NUL 结尾的合法 C 字符串指针。
+#[cfg(target_os = "android")]
+unsafe fn renameat2_raw(from: *const libc::c_char, to: *const libc::c_char) -> i64 {
+    libc::renameat2(
+        libc::AT_FDCWD,
+        from,
+        libc::AT_FDCWD,
+        to,
+        libc::RENAME_NOREPLACE as libc::c_uint,
+    ) as i64
+}
+
+/// 鸿蒙:`libc` crate 在 `*-linux-ohos` 上**没有导出 `renameat2` 包装函数**(462/C1 编译期
+/// 实测,引用它得 E0425),musl 侧只给系统调用号 ⇒ 只能走裸 `syscall`。
+/// ⛔ **别照抄上面安卓那支**,两处都不一样:①那个函数在这个平台压根不存在;
+/// ②该平台的 `RENAME_NOREPLACE` **本来就是 `c_uint`**,别照抄安卓那行的 `as libc::c_uint`
+/// (那会让下一个人以为这里也有同样的类型不一致要处理)。
+///
+/// ⚠ **两个整型实参显式转 `c_long`,别省**:`syscall` 是变参函数,整型实参按 C 默认提升
+/// 只到 32 位,而内核按 `long` 读那几个槽 —— AArch64 变参 ABI 不规定 64 位槽的高半,
+/// `AT_FDCWD`(-100)靠运气被符号扩展。461 前哨在真机上跑通的是不带转换的形,
+/// 那是**一台设备的经验、不是 ABI 保证**;显式转换严格更安全且零代价。
+///
+/// # Safety
+/// `from` / `to` 必须是活到本调用返回的、NUL 结尾的合法 C 字符串指针。
+#[cfg(target_env = "ohos")]
+unsafe fn renameat2_raw(from: *const libc::c_char, to: *const libc::c_char) -> i64 {
+    libc::syscall(
+        libc::SYS_renameat2,
+        libc::AT_FDCWD as libc::c_long,
+        from,
+        libc::AT_FDCWD as libc::c_long,
+        to,
+        libc::RENAME_NOREPLACE as libc::c_long,
+    ) as i64
+}
+
+/// [`ClosedJoiningSlot::publish`] 的文件步(「加入空间」那条路的归位)。与
+/// [`publish_no_clobber`] 同一条规则,只是多带一个回执:`Ok(Some(msg))` = **已发布**、
+/// 但暂存名没清掉(**绝不当作未发布**);`Ok(None)` = 干净发布。
+///
+/// ⚠ 这里刻意**不**转调 [`publish_no_clobber`]:桌面支要拿到 unlink 那一步的错误做回执,
+/// 而那个函数把它吞了(`let _ =`)。两者的 no-clobber 语义与平台分区必须恒等——
+/// 结构锚 `platform_cfg_sites_are_signed` 与 `hard_link_only_in_non_renameat2_branch` 守着。
+#[cfg(not(any(target_os = "android", target_env = "ohos")))]
+fn publish_slot_files(staging: &Path, path: &Path) -> std::io::Result<Option<String>> {
+    std::fs::hard_link(staging, path)?;
+    Ok(std::fs::remove_file(staging)
+        .err()
+        .map(|e| format!("空间已发布,但暂存名清理失败(重启后自动清理):{e}")))
+}
+
+/// Android / 鸿蒙:renameat2 成功即同时完成目录项替换,**没有独立的 unlink 步骤**,
+/// 故没有「清不掉暂存名」这个**运行期回执态**,回执恒为 `None`。
+///
+/// ⚠ 措辞刻意收窄到「运行期回执」(codex 462 实现审 L):本仓不做目录 fsync,
+/// **断电后的目录耐久性不在这个系统调用的成功语义之内**,启动清扫该扫的照扫。
+#[cfg(any(target_os = "android", target_env = "ohos"))]
+fn publish_slot_files(staging: &Path, path: &Path) -> std::io::Result<Option<String>> {
+    publish_no_clobber(staging, path)?;
+    Ok(None)
 }
 
 /// 新建一个空间库(ULID 命名,[`stage_and_publish`] 原子骨架 + 显示名必填)。
@@ -1259,28 +1330,18 @@ impl ClosedJoiningSlot {
         &self.staging
     }
 
-    /// no-clobber 原子发布成正式 `<ulid>.sqlite3`。桌面/宿主 hard_link + unlink
-    /// staging(unlink 失败 = `Published { cleanup_error }`,**绝不当作未发布**);
-    /// Android renameat2(RENAME_NOREPLACE,staging 名随之消失)。失败(link/rename
-    /// 本身)= Err,槽文件原样留在 staging(调用方 abort 或留给启动清扫)。
+    /// no-clobber 原子发布成正式 `<ulid>.sqlite3`。失败(link/rename 本身)= Err,槽文件
+    /// 原样留在 staging(调用方 abort 或留给启动清扫)。
+    ///
+    /// ⚠ **平台分支收在 [`publish_slot_files`] 里,本体一个 `cfg` 都不带** —— 462 之前这里
+    /// **内联了第二份 `hard_link`**(为的是那个 `cleanup_error` 回执),于是给安卓开 renameat2
+    /// 时只改了 [`publish_no_clobber`]、漏了这一处;鸿蒙第三支要开时才发现「加入空间」那条路
+    /// 从来没跟上过。⛔ 别再把归位原语内联回来。
     pub fn publish(self) -> Result<PublishedSlot, (ClosedJoiningSlot, String)> {
         let path = self.staging.parent().expect("槽必有父目录").join(format!("{}.sqlite3", self.id));
-        #[cfg(not(target_os = "android"))]
-        {
-            if let Err(e) = std::fs::hard_link(&self.staging, &path) {
-                return Err((self, format!("空间库发布失败(hard_link):{e}")));
-            }
-            let cleanup_error = std::fs::remove_file(&self.staging)
-                .err()
-                .map(|e| format!("空间已发布,但暂存名清理失败(重启后自动清理):{e}"));
-            Ok(PublishedSlot { id: self.id, path, cleanup_error })
-        }
-        #[cfg(target_os = "android")]
-        {
-            match publish_no_clobber(&self.staging, &path) {
-                Ok(()) => Ok(PublishedSlot { id: self.id, path, cleanup_error: None }),
-                Err(e) => Err((self, format!("空间库发布失败(renameat2):{e}"))),
-            }
+        match publish_slot_files(&self.staging, &path) {
+            Ok(cleanup_error) => Ok(PublishedSlot { id: self.id, path, cleanup_error }),
+            Err(e) => Err((self, format!("空间库发布失败:{e}"))),
         }
     }
 
@@ -2514,5 +2575,203 @@ mod tests {
         let _again = WriterLease::acquire(&lock).unwrap();
         assert!(lock.exists(), "锁文件永不 unlink");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+    // ---- 结构锚:归位原语的平台分区(462,OH-c/C2)----
+    //
+    // 为什么要锚:462 之前 `ClosedJoiningSlot::publish` **内联了第二份 hard_link**,于是
+    // 给安卓开 renameat2 时只改了 `publish_no_clobber`、漏掉了「加入空间」那条路,而
+    // 两端开发机与 CI 都编不到那个 cfg 分支 —— **单测与变异工装一格都覆盖不了它**。
+    // ⚠ 诚实边界:锚只能证「源码里的平台分区是签过字的形」,**证不了那几行在目标平台上
+    // 跑对了**(那半靠真机验收,见 progress-log 462 的 C4 清单)。
+
+    /// 本文件生产段(剔注释),结构锚的输入。
+    /// ⚠ 切点认**测试模块**不认第一处 `#[cfg(test)]` 属性(284 判例:往生产段加一枚
+    /// `#[cfg(test)]` 探针会把锚静默切成空测)。
+    fn production_src() -> String {
+        let stripped = crate::test_src::strip_line_comments(include_str!("spaces.rs"));
+        let at = stripped
+            .find("\nmod tests {")
+            .expect("spaces.rs 的测试模块头改形了 —— 锚的切点要跟着改");
+        stripped[..at].to_string()
+    }
+
+    /// 一段源码里每一处提到 android / ohos 的 `cfg`,配上它守的那个符号。
+    ///
+    /// ⭐ **形状是 fail-closed 的,不向后找任意 `fn`**(codex 462 实现审 M):平台 `cfg`
+    /// 与它守的 `fn` 之间只许有文档注释与属性;一撞到别的东西(典型 = 函数体内的
+    /// `#[cfg] { … }` 块)就当场 panic 说「非法形状」。
+    /// ⛔ 首版是「往后找最近的一个 `fn`」—— 那样写,函数体中间新加的 `#[cfg]` 块会被
+    /// **错配到后面某个不相干的函数**上:它照样会红(签字表对不上),但**红出来的话是
+    /// 误导的**,而误导的诊断比不红好不了多少。
+    /// 「平台分支一律挂在函数定义上」正是本笔的形 —— 462 之前 `publish` 里那份内联
+    /// hard_link 就是反例,也正是它能被漏掉的原因。
+    fn platform_cfg_sites(src: &str) -> Vec<(String, String)> {
+        let mut out = Vec::new();
+        for (i, _) in src.match_indices("#[cfg(") {
+            let cfg = crate::test_src::balanced(src, i + "#[cfg".len(), '(', ')', "cfg 属性");
+            if !cfg.contains("target_os = \"android\"") && !cfg.contains("target_env = \"ohos\"") {
+                continue;
+            }
+            // 跨过该属性本身,然后只允许「空白 / `///` 文档注释 / 别的 `#[…]` 属性」,
+            // 直到撞上 `fn`。撞上任何别的东西 = 非法形状。
+            // 跨过整个 `#[cfg(…)]`:`#[cfg(` + 括号内容 + `)]`。
+            let after = i + "#[cfg(".len() + cfg.len() + ")]".len();
+            let mut rest = &src[after..];
+            let name = loop {
+                rest = rest.trim_start();
+                if let Some(r) = rest.strip_prefix("fn ") {
+                    break r.chars().take_while(|c| c.is_alphanumeric() || *c == '_').collect::<String>();
+                }
+                // `///` 文档注释在 strip_line_comments 之后已消失;剩下可能的只有属性。
+                if rest.starts_with("#[") {
+                    let inner = crate::test_src::balanced(rest, 1, '[', ']', "属性");
+                    rest = &rest[1 + inner.len() + 2..];
+                    continue;
+                }
+                // `pub` / `pub(crate)` / `unsafe` 这些修饰词照过。
+                if let Some(r) = ["pub(crate)", "pub", "unsafe", "async"]
+                    .iter()
+                    .find_map(|k| rest.strip_prefix(k))
+                {
+                    rest = r;
+                    continue;
+                }
+                panic!(
+                    "平台 cfg `{cfg}` 后面不是函数定义 —— 平台分支只许挂在 `fn` 上,\
+                     ⛔ 别写成函数体内的 `#[cfg] {{ … }}` 块(那正是 462 之前能被漏掉的形)。\
+                     它后面是:{:?}",
+                    &rest[..rest.len().min(60)]
+                );
+            };
+            out.push((name, cfg.split_whitespace().collect::<Vec<_>>().join(" ")));
+        }
+        out
+    }
+
+    /// ⭐ 承重锚①:每一处平台 `cfg` 都要在这张表里签字。
+    ///
+    /// 加一处没签字的会红、删掉一处签过字的也会红 —— 后者才是本轮真正要防的
+    /// (「给两端开支时漏掉其中一个站点」)。
+    #[test]
+    fn platform_cfg_sites_are_signed() {
+        // (符号, cfg 原文) —— 顺序即源码顺序。
+        let signed: Vec<(&str, &str)> = vec![
+            // ① 归位:两端 app 私有区都拒 link(),故 android 与 ohos **恒同进同出**。
+            //    ⛔ 这三行里任何一行少了 ohos,鸿蒙上建空间/加入空间就会崩在归位那一步。
+            ("publish_no_clobber", r#"not(any(target_os = "android", target_env = "ohos"))"#),
+            ("publish_no_clobber", r#"any(target_os = "android", target_env = "ohos")"#),
+            ("renameat2_noreplace", r#"any(target_os = "android", target_env = "ohos")"#),
+            // ② 「怎么发出这一个系统调用」—— 这里两端**必须**分开:462/C1 编译期实测,
+            //    libc 在 `*-linux-ohos` 上没有导出 renameat2 包装函数(E0425)。
+            ("renameat2_raw", r#"target_os = "android""#),
+            ("renameat2_raw", r#"target_env = "ohos""#),
+            // ③ 「加入空间」那条路的归位,与 ① 同分区(462 把内联的第二份 hard_link 收到这里)。
+            ("publish_slot_files", r#"not(any(target_os = "android", target_env = "ohos"))"#),
+            ("publish_slot_files", r#"any(target_os = "android", target_env = "ohos")"#),
+            // ④ 写者租约:只有 bionic 的 std `try_lock` 是未实现桩;**鸿蒙是 musl、走 std 正路**
+            //    (461 真机三问全过)⇒ 这里刻意**只**分安卓,⛔ 别顺手把 ohos 加进来。
+            ("try_lock_exclusive", r#"not(target_os = "android")"#),
+            ("try_lock_exclusive", r#"target_os = "android""#),
+        ];
+        let owned = platform_cfg_sites(&production_src());
+        let found: Vec<(&str, &str)> =
+            owned.iter().map(|(a, b)| (a.as_str(), b.as_str())).collect();
+        assert_eq!(
+            found, signed,
+            "生产段的平台 cfg 分区与签字表对不上 —— 多一处 = 新开的平台分支没在表里签字\
+             说明「它为什么是这个形」;少一处 = 有个站点没跟上,鸿蒙/安卓上会崩在归位那一步。\n\
+             实测:{found:#?}\n签字:{signed:#?}"
+        );
+    }
+
+    /// ⭐ 承重锚①b:**平台分支全 crate 只此一处文件**(codex 462 实现审 M)。
+    ///
+    /// 锚① 只扫 `spaces.rs`,于是它证的是「这个文件里的平台 cfg 签过字」,**证不了
+    /// 别处不会新开一个没人看的平台分支** —— 而错误信息读起来像是后者。两条修法里
+    /// (把话说小 / 把守护做实)取后者:今天 `core/src` 里 android/ohos 的平台 cfg
+    /// **确实一处都不在别的文件**,那就把这个事实钉住。
+    ///
+    /// ⚠ 诚实边界:它只管 `core/`。两个 app 壳(`src-tauri` / `android/src-tauri`)
+    /// 本就是分平台的工程,不在本锚面内。
+    #[test]
+    fn platform_cfgs_live_only_in_this_file() {
+        let repo = crate::test_src::Repo::open();
+        let mut files = Vec::new();
+        crate::test_src::rs_files(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
+            &mut files,
+        );
+        assert!(files.len() > 20, "扫描面塌了(只找到 {} 个 .rs)", files.len());
+        let mut offenders = Vec::new();
+        for f in &files {
+            let rel = format!(
+                "core/src/{}",
+                f.strip_prefix(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"))
+                    .expect("都在 core/src 下")
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            );
+            if rel == "core/src/spaces.rs" {
+                continue;
+            }
+            let src = crate::test_src::strip_line_comments(&repo.read(&rel));
+            if src.contains("target_os = \"android\"") || src.contains("target_env = \"ohos\"") {
+                offenders.push(rel);
+            }
+        }
+        assert!(
+            offenders.is_empty(),
+            "core/ 里除 spaces.rs 之外出现了平台分支:{offenders:?} —— \
+             要么把它并进 spaces.rs 那张签字表管辖的形,要么本锚连同签字表一起扩面;\
+             ⛔ 别让一处没人签字的平台分支在 crate 里裸奔(462 那处内联 hard_link 就是这么被漏掉的)。"
+        );
+    }
+
+    /// ⭐ 承重锚②:`hard_link` 只许出现在**排除了 android 与 ohos** 的那一支里。
+    ///
+    /// 这条独立于锚① —— 锚①管「分区形状对不对」,这条管「归位原语有没有跑到不该在的
+    /// 分支里去」。把 `publish_slot_files` 退回内联 hard_link、或把某处 cfg 改回
+    /// `not(target_os = "android")`,都会被它逮到。
+    #[test]
+    fn hard_link_lives_only_in_the_non_renameat2_branch() {
+        let src = production_src();
+        let sites: Vec<usize> = src.match_indices("hard_link(").map(|(i, _)| i).collect();
+        assert_eq!(
+            sites.len(),
+            2,
+            "生产段里 hard_link 的处数变了(实测 {} 处)—— 它只该有两处:\
+             publish_no_clobber 与 publish_slot_files 的非 renameat2 支。",
+            sites.len()
+        );
+        for at in sites {
+            let before = &src[..at];
+            let cfg_at = before.rfind("#[cfg(").expect("hard_link 之前必有平台 cfg");
+            let cfg = crate::test_src::balanced(&src, cfg_at + "#[cfg".len(), '(', ')', "cfg 属性");
+            let cfg = cfg.split_whitespace().collect::<Vec<_>>().join(" ");
+            assert_eq!(
+                cfg, r#"not(any(target_os = "android", target_env = "ohos"))"#,
+                "hard_link 落在了错误的分支上:{cfg} —— 安卓与鸿蒙的 app 私有区都拒 link()。"
+            );
+        }
+    }
+
+    /// ⭐ 承重锚③:归位原语**全仓只此一份**——备份恢复必须转调共享的
+    /// `publish_no_clobber`,不许自带第三份 link/rename(codex 462 设计审点名)。
+    #[test]
+    fn restore_reuses_the_shared_publish_primitive() {
+        let src = crate::test_src::strip_line_comments(
+            &crate::test_src::Repo::open().read("core/src/backup/restore.rs"),
+        );
+        assert!(
+            src.contains("spaces::publish_no_clobber("),
+            "backup/restore.rs 不再转调 spaces::publish_no_clobber —— 归位规则被抄了第二份?"
+        );
+        for banned in ["hard_link(", "renameat2", "SYS_renameat2"] {
+            assert!(
+                !src.contains(banned),
+                "backup/restore.rs 里出现了 `{banned}` —— 归位原语只许有一份,\
+                 它的平台分区由 spaces.rs 那张签字表守着。"
+            );
+        }
     }
 }

@@ -1,0 +1,20 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "朱简主模块"
+    },
+    {
+      "name": "EntryAbility_desc",
+      "value": "朱简"
+    },
+    {
+      "name": "EntryAbility_label",
+      "value": "朱简"
+    },
+    {
+      "name": "perm_internet_reason",
+      "value": "端到端加密同步需要联网"
+    }
+  ]
+}

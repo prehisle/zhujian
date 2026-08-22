@@ -35,8 +35,11 @@ const WATCH = [
   "curve25519-dalek",
 ];
 
-// 全部应提交 lock 的 crate(P4-b 起含安卓壳)。
-const LOCK_DIRS = ["src-tauri", "core", "server", "sync-proto", "android/src-tauri"];
+// 全部应提交 lock 的 crate(P4-b 起含安卓壳;OH-c/C3 起含鸿蒙壳)。
+// ⚠ 鸿蒙壳那份是**第六份**,加进来的理由与安卓壳同条:它经 path 依赖把 core 整套
+// 协议/密码学 crate 解析了一遍,漂了同样会静默破线协议。⛔ 别因为「鸿蒙还没发版」
+// 把它排除在外 —— 漂移是在合库那一刻发生的,不是在发版那一刻。
+const LOCK_DIRS = ["src-tauri", "core", "server", "sync-proto", "android/src-tauri", "ohos/src-tauri"];
 
 function versionsIn(lockPath) {
   // 缺文件不吞:点名的 lock 必须在(fail-fast,别让门禁静默变窄)。
@@ -74,7 +77,7 @@ for (const name of WATCH) {
 // `npm ci`(npm 会一直重试同一个 502 —— 桌面三平台各卡满 16 分钟才失败)。
 // 本地装包用什么源是 `.npmrc` 的事,**不该由 lock 替所有人决定**。
 // 这颗雷从 npmmirror 上线起就一直装填着,只是此前它没坏过;318 之后仍是零防护,故补此闸。
-const NPM_LOCKS = ["package-lock.json", "android/package-lock.json"];
+const NPM_LOCKS = ["package-lock.json", "android/package-lock.json", "ohos/package-lock.json"];
 const OFFICIAL = "registry.npmjs.org";
 
 let srcDrift = false;

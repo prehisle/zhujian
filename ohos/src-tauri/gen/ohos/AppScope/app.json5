@@ -1,0 +1,12 @@
+{
+  "app": {
+    // ⚠ 与 ohos/src-tauri/tauri.conf.json 的 identifier **必须一致** —— tauri-build 从
+    // identifier 派生入口宏要的两个环境变量,而签名 profile 也绑这个 bundleName。
+    "bundleName": "app.zhujian.notebook",
+    "vendor": "prehisle",
+    "versionCode": 1,
+    "versionName": "0.1.0",
+    "icon": "$media:app_icon",
+    "label": "$string:app_name"
+  }
+}

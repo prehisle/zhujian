@@ -1,0 +1,8 @@
+{
+  "identifier": "default",
+  "description": "最小权限面:core + 「打开链接」跳系统浏览器。⛔ 刻意不含相机 / 扫码 —— 鸿蒙侧配对走手输码(backlog 条 18 / C3 面③)",
+  "//platforms": "⚠ 值是 openHarmony(camelCase)不是 open-harmony —— tauri_utils 的 Target 有**两套字符串**:serde 那套(capability JSON 读的就是它)是 rename_all=camelCase,Display 那套(路径 / 日志)才是 open-harmony。写错当场编译失败,不是运行期静默拒。",
+  "platforms": ["openHarmony"],
+  "windows": ["main"],
+  "permissions": ["core:default", "opener:default"]
+}

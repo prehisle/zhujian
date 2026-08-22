@@ -1,0 +1,40 @@
+{
+  "app": {
+    // ⛔ **仓里这份恒是「未签名形」** —— 签名材料(作者的 .p12 / .cer / .p7b 路径与
+    // DevEco 加密口令)绝不进 git,照安卓 `keystore.properties` 那条先例。
+    // 本机签名构建走 `node scripts/build-ohos.mjs`:它读 gitignore 的
+    // `signing.local.json5`,把签名段**临时**注进来、构建完原样还回去。
+    // ⚠ 直接 `hvigorw assembleHap` 出的是 **unsigned** HAP,装不进设备(那是对的,
+    // 不是故障):纯血鸿蒙默认不允许侧载,没有签名 = `not trusted app source`。
+    "signingConfigs": [],
+    "products": [
+      {
+        "name": "default",
+        "compatibleSdkVersion": "5.0.0(12)",
+        "runtimeOS": "HarmonyOS",
+        "buildOption": {
+          "strictMode": {
+            "caseSensitiveCheck": true,
+            "useNormalizedOHMUrl": true
+          }
+        }
+      }
+    ],
+    "buildModeSet": [
+      { "name": "debug" },
+      { "name": "release" }
+    ]
+  },
+  "modules": [
+    {
+      "name": "entry",
+      "srcPath": "./entry",
+      "targets": [
+        {
+          "name": "default",
+          "applyToProducts": ["default"]
+        }
+      ]
+    }
+  ]
+}

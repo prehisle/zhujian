@@ -1,0 +1,31 @@
+{
+  "apiType": "stageMode",
+  // ⛔ **刻意没有 `externalNativeOptions`** —— demo 模板带一个 C++ napi 模块
+  // (`src/main/cpp` 里那个 `add(a,b)` 示例),朱简一行都不用它:Rust 那只 .so 由
+  // `@ohos-rs/ability` 的 `NativeAbility` 按 `moduleName` 直接加载,不经 CMake。
+  // 留着它等于把 CMake + NDK 拉进鸿蒙侧的构建依赖里,白背一份。
+  "buildOption": {},
+  "buildOptionSet": [
+    {
+      "name": "release",
+      "arkOptions": {
+        "obfuscation": {
+          "ruleOptions": {
+            "enable": false,
+            "files": ["./obfuscation-rules.txt"]
+          }
+        }
+      },
+      "nativeLib": {
+        "debugSymbol": {
+          // ⚠ 12.6 MB 的 .so 里绝大部分是符号;发版形要 strip。
+          "strip": true,
+          "exclude": []
+        }
+      }
+    }
+  ],
+  "targets": [
+    { "name": "default" }
+  ]
+}

@@ -117,7 +117,14 @@ const DARK_FORMS = [':root[data-theme="dark"]', "@media (prefers-color-scheme: d
  * 有了它,css-docs 的 DOCS 就是两个方向都核的:DOCS 里点名的文件读不到会当场抛,
  * 地面上多出来的 html 会被下面那道探针拦住 —— 少一个文档是安静的少判(336 ⑩ 刀那族)。
  */
-const NOT_A_DOC = [];
+const NOT_A_DOC = [
+  {
+    file: "ohos/index.html",
+    why: "OH-c/C3 的**验收面**不是产品界面:它把六条复核面各显成一个读数(启动闸 JSON / 路径落点 / \
+真 command 往返),整页零 CSS、零颜色声明、只有浏览器默认样式 —— 没有配色可判。\
+⚠ **触发门**:OH-d 抄 android/src 那份真前端进来时,这一条就该删掉,鸿蒙端按第四个前端产物登记进 DOCS",
+  },
+];
 
 /**
  * 低于 AA 但**判定可接受**的登记表。一条 = 一个决定,必须写清楚为什么。

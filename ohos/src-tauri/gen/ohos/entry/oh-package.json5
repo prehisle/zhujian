@@ -1,0 +1,15 @@
+{
+  "name": "entry",
+  "version": "0.1.0",
+  "description": "朱简鸿蒙端 entry 模块",
+  "main": "",
+  "author": "prehisle",
+  "license": "",
+  "dependencies": {
+    // Rust 那只 .so 的 ArkTS 侧加载器(NativeAbility)。⚠ demo 那份还依赖
+    // `libtauri_demo_lib.so` 的 .d.ts 类型包 —— 那是给它自己那条 ArkTS 回调桥用的;
+    // 朱简的 ETS 侧**一行都不 import 那只 .so**(NativeAbility 按 moduleName 加载),
+    // 故不需要类型包。
+    "@ohos-rs/ability": "0.4.0-beta.5"
+  }
+}

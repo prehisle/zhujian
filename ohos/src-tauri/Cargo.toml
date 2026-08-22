@@ -1,0 +1,74 @@
+[package]
+name = "zhujian-ohos"
+version = "0.1.0"
+description = "朱简鸿蒙端(OH-c/C3 骨架)——tauri 壳;数据层与同步全在共享 crate zhujian-core"
+authors = ["prehisle"]
+license = ""
+edition = "2021"
+# 与 path 依赖 zhujian-core 对齐(core 的 WriterLease 用 1.89 稳定化的 File::try_lock)。
+rust-version = "1.89"
+
+# 沿用「sibling crate 不建 workspace」纪律(各自 target/ 与 Cargo.lock)。
+# ⚠ 本 lock 是第六份,须与另外五份一起进 scripts/check-lock-drift.mjs ——
+# 关键协议/密码学 crate 版本漂移会静默破协议。
+
+[lib]
+# ⚠ 这个名字**不是自由的**:ArkTS 侧三处按它引用(entry/oh-package.json5 的
+# `libzhujian_ohos_lib.so` 依赖项、cpp/types/ 下那份 .d.ts 包名、EntryAbility 的
+# `moduleName`)。改名要四处一起改,否则装机后 NativeAbility 找不到 .so、白屏无提示。
+name = "zhujian_ohos_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { git = "https://github.com/richerfu/tauri", branch = "feat/open-harmony", features = [] }
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+log = "0.4"
+# ⛔ tauri 系五个 crate 全部指向 fork(见文件末尾 [patch.crates-io])——OpenHarmony
+# 支持至今**只活在分支上**,tauri 官方支持平台列表不含它(backlog 条 18)。
+# ⚠ 461 的全部真机字据都出自 richerfu 这条链;官方 tauri-apps/tauri 的
+# feat/open-harmony 更新(07-30 升 tao 0.36 / wry 0.56),但**换链是另一个未知数**,
+# 骨架轮刻意不动,免得「壳不通」与「fork 不对」混成一个问题。
+tauri = { git = "https://github.com/richerfu/tauri", branch = "feat/open-harmony", features = [] }
+# 共享核心:数据层(items/oplog/HLC/35 条迁移)+ 同步客户端侧,与桌面/安卓逐字节同一套。
+zhujian-core = { path = "../../core" }
+# 壳层直接用到的底座(版本声明与 core 一致,同一 lock 内解析成同一实例)。
+rusqlite = { version = "0.32", features = ["bundled", "hooks"] }
+# 传输任务的控制通道(mpsc)与写通知(Notify);运行时仍是 tauri 的 async_runtime。
+tokio = { version = "1", features = ["sync"] }
+# rustls 0.23 须恰好一个加密提供者(ring 特性由 core 钉死);壳层职责 = run() 启动时
+# install_default,不装则首次 wss:// 在 ClientConfig::builder() panic(84 真机踩过)。
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
+# 「打开链接」跳系统浏览器(demo 已在鸿蒙真机上验过这个 crate 编得过、装得进)。
+tauri-plugin-opener = "2"
+# ⚠ **这两个不是「我们要用 napi」,是入口宏逼的**:`#[tauri::mobile_entry_point]` 在
+# ohos 上展开成 `#[openharmony_ability_derive::ability(webview, …)]`,而那个宏往展开
+# 代码里写的是**未限定的** `napi_derive_ohos::napi` 与 `napi_ohos::Env` 等路径
+# ⇒ 它们必须是**本 crate 的直接依赖**,哪怕壳里一行都不调。
+# ⛔ 别因为「grep 不到 napi_ohos::」就把它们当无用依赖删掉 —— 删了报的是
+# 「cannot find module or crate `napi_ohos`」,指着 `#[cfg_attr(mobile, …)]` 那一行,
+# 与依赖表看不出关系。
+napi-ohos = "1.1"
+napi-derive-ohos = "1.1"
+
+# ⛔ **刻意不带的三样,每样都有判据**(别顺手加回来):
+# ① tauri-plugin-barcode-scanner —— 它的依赖 gate 写死在 target_os = android|ios,
+#    而 `cfg(mobile)` 在 ohos 上**为真**(tauri-utils 的 Target::is_mobile 含
+#    OpenHarmony)⇒ 照抄安卓壳那句 `#[cfg(mobile)] .plugin(barcode_scanner::init())`
+#    会编不过。鸿蒙侧配对**走手输码**,加入空间仍走 core 的 JoiningSlot/publish。
+# ② tauri-plugin-log —— 安卓那份靠 logcat 后端;鸿蒙的日志通道是 hilog,
+#    本壳自带 src/hilog.rs 那 ~50 行 log::Log 实现直连 OH_LOG_PrintMsg。
+# ③ ureq(自动更新检查)—— 鸿蒙没有对应的分发通道,不在 C3 范围内。
+
+# 固定 openharmony-ability 到 295a276a(2026-06-30,#64;c6c4c9a #67 移除 webview
+# feature 之前的最后可用状态)。wry/tauri/tao fork 的 manifest 已声明同 rev。
+[patch.crates-io]
+openharmony-ability = { git = "https://github.com/harmony-contrib/openharmony-ability.git", rev = "295a276a699ba2352addc69b8cacb6acd3be6ab1" }
+openharmony-ability-derive = { git = "https://github.com/harmony-contrib/openharmony-ability.git", rev = "295a276a699ba2352addc69b8cacb6acd3be6ab1" }
+tauri = { git = "https://github.com/richerfu/tauri", branch = "feat/open-harmony" }
+tauri-runtime = { git = "https://github.com/richerfu/tauri", branch = "feat/open-harmony" }
+tauri-utils = { git = "https://github.com/richerfu/tauri", branch = "feat/open-harmony" }
+tauri-macros = { git = "https://github.com/richerfu/tauri", branch = "feat/open-harmony" }
+tauri-runtime-wry = { git = "https://github.com/richerfu/tauri", branch = "feat/open-harmony" }
