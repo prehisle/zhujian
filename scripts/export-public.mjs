@@ -80,9 +80,20 @@ function loadRedlines() {
 }
 const FORBIDDEN = loadRedlines();
 
+// ALLOW 里那几条以 `/` 结尾的是**整目录**放行,于是偶尔会有一份「住在放行目录里、却明显不该公开」
+// 的文件。DENY 就是给这种逐条挖的洞 —— **它不削弱 fail-closed**:被挖掉的文件照样落进下面的
+// 排除清单,基线变了一样要人签字。⛔ 别拿它当「先放行再挑刺」的口子,每条都要写清为什么。
+const DENY = [
+  // 换机器搬迁工装:它逐条点名作者本机上私钥/凭据的落点(~/.tauri 那几把、memory 目录)。
+  // 对开源用户零用处,对旁人则是一张「钥匙都放在哪」的清单 ⇒ 不公开。
+  "scripts/migrate-machine.mjs",
+];
+
 const tracked = execFileSync("git", ["ls-files", "-z"], { cwd: repoRoot })
   .toString("utf8").split("\0").filter(Boolean);
-const allowed = tracked.filter((p) => ALLOW.some((a) => a.endsWith("/") ? p.startsWith(a) : p === a));
+const allowed = tracked.filter(
+  (p) => !DENY.includes(p) && ALLOW.some((a) => (a.endsWith("/") ? p.startsWith(a) : p === a)),
+);
 const excluded = tracked.filter((p) => !allowed.includes(p));
 
 // 清空目标(保留其 .git,公开仓自身历史不动)
