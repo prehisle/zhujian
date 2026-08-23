@@ -27,12 +27,24 @@
 //   node scripts/ohos-drive.mjs tap <x> <y> [名字]       点一下,收该轮日志 + 截图
 //   node scripts/ohos-drive.mjs swipe <x1> <y1> <x2> <y2> [毫秒] [名字]
 //   node scripts/ohos-drive.mjs text <字符串> [名字]     往当前焦点打字
+//   node scripts/ohos-drive.mjs key <键码> [名字]        发一次按下+抬起
+//   node scripts/ohos-drive.mjs clear [次数] [名字]      退格 N 次(默认 40)清空当前输入框
 //   node scripts/ohos-drive.mjs back [名字]              返回键
 //   node scripts/ohos-drive.mjs watch <秒> [名字]        只挂着收日志
 //   node scripts/ohos-drive.mjs restart [名字]           force-stop → start
 //
 // 坐标 = **物理像素**,与 `shot` 出来的截图同一套(这台 Mate 60 Pro 是 1260×2720)。
 // ⇒ 从截图上量到多少就填多少,⛔ 别再乘设备缩放比(那是 C4 那份要算 CSS px 才需要的)。
+//
+// # 往输入框里填东西的两条(OH-e 真机踩出来的,别再问一遍)
+//
+// ①**退格键码 = `2055`**(实测,⛔ 不是安卓那套号)。`clear` 就是发 N 次它;
+//   多条 `uinput` 用 `;` 串在一句里,设备端 shell 吃得下(每次它会回一行
+//   `you raised the key 2055`,那是 uinput 自己的回显,不是错)。
+// ②⛔ **`clear` 之前必须自己先 `tap` 一下那个框的右侧空白** —— 光标落在你点的地方,
+//   点在文字中间就只删得掉左半边。跑手不替你点:哪个框、右边空白在哪,只有截图上量得出来。
+// ⭐ `text` 打**大写 ASCII 与短横**实测没问题(OH-e 那趟把 64 位恢复码原样打进去,
+//   app 自己核码通过)—— ⛔ 但仍只限 ASCII,中文这一端打不进去。
 //
 // 环境:`OHOS_HDC` 指到 hdc.exe(默认 `G:\ohos-sdk\toolchains\hdc.exe`,零华为 ID)。
 
@@ -197,6 +209,21 @@ switch (step) {
     // ⚠ `uinput -K -t` 只吃 ASCII —— 中文打不进去(要中文得靠剪贴板或前端注入,这一端两条都没有)。
     if (!/^[\x20-\x7e]*$/.test(s)) die(`uinput 只打得进 ASCII,这串里有别的字符:${s}`);
     act({ stem: stemOf(argv[2], "text"), cmd: `uinput -K -t '${s}'` });
+    break;
+  }
+
+  case "key": {
+    const code = num(argv[1], "键码");
+    act({ stem: stemOf(argv[2], `key-${code}`), cmd: `uinput -K -d ${code} -u ${code}` });
+    break;
+  }
+
+  case "clear": {
+    // 退格 N 次。⛔ 调用方要先 tap 到框的**右侧空白**把光标带到末尾(见头注②)。
+    const n = argv[1] ? num(argv[1], "次数") : 40;
+    if (n < 1 || n > 200) die(`次数 ${n} 不像话(1..200)`);
+    const one = "uinput -K -d 2055 -u 2055";
+    act({ stem: stemOf(argv[2], `clear-${n}`), cmd: Array.from({ length: n }, () => one).join("; ") });
     break;
   }
 
