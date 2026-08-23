@@ -22,9 +22,12 @@
 //! (blocking worker)引导快照清扫 → `prepare_mobile_catalog` → Gate 落 Ready。
 //! ⛔ 租约必须先于任何开库;清扫必须先于任何 transport 启动。
 
+/// C4 真机验收命令面。⛔ **编译期门控,默认不进包**(判据与诚实边界写在 `c4.rs` 头注)。
+#[cfg(feature = "c4-harness")]
+mod c4;
 mod hilog;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use serde::Serialize;
@@ -106,10 +109,39 @@ struct SpaceBrief {
 /// 壳的全部运行期状态。骨架轮**刻意不缓存连接**:每条命令现开现关
 /// (`spaces::open_space` 自带「先验后写」三条铁律),要证的是「这条路通」,
 /// 不是连接池的形。
-struct Shell {
-    data_dir: PathBuf,
+pub(crate) struct Shell {
+    pub(crate) data_dir: PathBuf,
     gate: Mutex<GateStatus>,
     catalog: Mutex<Option<spaces::SpaceCatalog>>,
+}
+
+/// 数据目录的一行速写(名字 + 字节数),**只给日志用**。
+///
+/// ⭐ **为什么它是产品代码而不是 harness 的一部分**:这一端没有控制台、没有 `adb logcat`
+/// 的等价物、私有区 `hdc` 也够不着 —— 「冷启之后目录里还剩什么」除了应用自己说,
+/// **没有第二个人能回答**。而这正是引导清扫 / 重置续跑 / 归位残留三条路唯一的可观测面。
+/// ⚠ 代价是一次 `read_dir`(几项),放在启动的 blocking worker 里,不占启动线程。
+/// ⛔ 读不出的项要**留痕**,别 `.flatten()` 吃掉 —— 那可能正是要找的那份残留(438 的判据)。
+fn dir_brief(dir: &Path) -> String {
+    let rd = match std::fs::read_dir(dir) {
+        Ok(rd) => rd,
+        Err(e) => return format!("<读目录失败:{e}>"),
+    };
+    let mut items: Vec<String> = rd
+        .map(|entry| match entry {
+            Ok(e) => match e.metadata() {
+                Ok(m) if m.is_dir() => format!("{}/", e.file_name().to_string_lossy()),
+                Ok(m) => format!("{}({})", e.file_name().to_string_lossy(), m.len()),
+                Err(err) => format!("<读不出 {}:{err}>", e.file_name().to_string_lossy()),
+            },
+            Err(e) => format!("<读不出目录项:{e}>"),
+        })
+        .collect();
+    items.sort();
+    if items.is_empty() {
+        return "<空>".into();
+    }
+    items.join(" ")
 }
 
 // ---- 命令面(骨架四条,每条对着 C3 的一格复核面)---------------------------
@@ -237,7 +269,7 @@ pub fn run() {
     let data_dir = ohos_data_dir();
     log::info!("私有目录(ability filesDir)= {}", data_dir.display());
 
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .setup(move |app| {
             // ⛔ 见 `ohos_data_dir` 的头注:这一端**不走** `app.path().app_data_dir()`。
@@ -266,13 +298,21 @@ pub fn run() {
             tauri::async_runtime::spawn(async move {
                 let dir = data_dir.clone();
                 let joined = tauri::async_runtime::spawn_blocking(move || {
+                    // ⭐ **装配之前先把目录原样报一遍**:重置续跑 / 引导清扫 / 归位残留
+                    // 三条恢复路都发生在下面这几行里,而它们**做完之后现场就没了**。
+                    // 一前一后两条日志 = 这一端唯一的「恢复真跑了」字据。
+                    log::info!("DIR_BEFORE {}", dir_brief(&dir));
                     // 清上次进程被系统 kill 留下的**明文**引导快照;必须在任何
                     // transport 启动前。清不掉 = 响亮(明文完整库副本)。
                     let sweep = transport::sweep_stale_boot_files(&dir);
                     if !sweep.is_clean() {
                         log::error!("BOOT_SWEEP {sweep}");
                     }
-                    spaces::prepare_mobile_catalog(&dir)
+                    // ⚠ 它内部串着 sweep_stale_joining → sweep_stale_creating →
+                    // resume_main_reset → fresh 裁决 → 建库 → 前滚迁移 → 严格 catalog。
+                    let catalog = spaces::prepare_mobile_catalog(&dir);
+                    log::info!("DIR_AFTER {}", dir_brief(&dir));
+                    catalog
                 })
                 .await;
                 let shell = handle.state::<Shell>();
@@ -307,13 +347,35 @@ pub fn run() {
                 *shell.gate.lock().expect("gate mutex poisoned") = done;
             });
             Ok(())
-        })
-        .invoke_handler(tauri::generate_handler![
-            startup_gate,
-            ohos_paths,
-            smoke_capture,
-            smoke_inbox,
-        ])
-        .run(tauri::generate_context!())
-        .expect("tauri 应用启动失败");
+        });
+
+    // ⛔ **两份清单刻意写全、不折成一份** —— `generate_handler!` 的宏参数上挂不了 `#[cfg]`,
+    // 而更要紧的是:**正式包的命令面要一眼看得见就是骨架那四条**。折成一份再靠条件拼接,
+    // 「验收后门有没有进正式包」这件事就得靠读宏展开去答(同 465 那三个坑的族:
+    // 不报错、只给一个别的答案)。
+    #[cfg(not(feature = "c4-harness"))]
+    let builder = builder.invoke_handler(tauri::generate_handler![
+        startup_gate,
+        ohos_paths,
+        smoke_capture,
+        smoke_inbox,
+    ]);
+    #[cfg(feature = "c4-harness")]
+    let builder = builder.invoke_handler(tauri::generate_handler![
+        startup_gate,
+        ohos_paths,
+        smoke_capture,
+        smoke_inbox,
+        c4::c4_schema,
+        c4::c4_entries,
+        c4::c4_create_space,
+        c4::c4_publish_clobber,
+        c4::c4_backup_cycle,
+        c4::c4_reset_main,
+        c4::c4_plant,
+    ]);
+    #[cfg(feature = "c4-harness")]
+    log::warn!("⚠ 本包带 c4-harness 验收命令面 —— 不是正式包");
+
+    builder.run(tauri::generate_context!()).expect("tauri 应用启动失败");
 }

@@ -19,7 +19,12 @@
 // 结束原样还回。⚠ **未签名 HAP 装不进纯血鸿蒙**(`not trusted app source`),那是
 // 平台规矩不是故障。
 //
-// 用法:node scripts/build-ohos.mjs [--skip-frontend] [--skip-cargo]
+// 用法:node scripts/build-ohos.mjs [--skip-frontend] [--skip-cargo] [--c4]
+//
+// ⚠ `--c4` = 带上 `c4-harness` feature 编(C4 真机验收那批命令)。**默认不带**:
+// 那批里有 `c4_plant`(往数据目录里放半截文件)与明文回报备份码,做成运行期开关
+// 迟早有人忘在生产包里,做成 feature 则「忘了关」在产物里根本不存在(判据同 433
+// 在安卓那边立的编译期故障注入先例)。⛔ 别为了省事把它改成默认开。
 
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, copyFileSync, cpSync, statSync } from "node:fs";
@@ -77,6 +82,12 @@ const run = (label, cmd, args, opts = {}) => {
 
 // ---- 1. 前端 ---------------------------------------------------------------
 
+// ⛔⛔ **`--skip-cargo` 会连前端一起跳过,哪怕这一步真的重跑了 vite** ——
+// `--features tauri/custom-protocol` 下前端产物是**在 cargo 编译期烤进 `.so`** 的
+// (`generate_context!` 把 `dist/` 整个嵌进二进制),`dist/` 更新了而 cargo 不重编
+// = 装到机器上的还是上一版页面。**它不报错,只是给你一个旧界面**(2026-08-23 真栽:
+// 改完版式 `--skip-cargo` 重打包,截图与改之前逐像素一样,查了半天才想起这条)。
+// ⇒ **动了 `ohos/index.html` 或 `ohos/src/` 就别带 `--skip-cargo`。**
 if (!argv.includes("--skip-frontend")) {
   run("前端 vite build", "npm", ["run", "build"], { cwd: ohosRoot });
 }
@@ -88,14 +99,20 @@ const soName = "libzhujian_ohos_lib.so";
 const soPath = join(crateDir, "target", TRIPLE, "release", soName);
 const startedAt = Date.now();
 
+const withC4 = argv.includes("--c4");
+if (withC4) {
+  console.log(`\n⚠⚠ 本趟带 **c4-harness** 验收命令面 —— 出来的是验收包,不是正式包。`);
+}
+
 if (!argv.includes("--skip-cargo")) {
   // ⚠ `--features tauri/custom-protocol` 不能省:dev/prod 由 `dev = !custom-protocol`
   // 这个 feature 决定,平时靠 tauri CLI 代传;手编不带它,装到设备上的包会去连
   // localhost:1420(白屏,且不报错)。
+  const features = withC4 ? "tauri/custom-protocol,c4-harness" : "tauri/custom-protocol";
   run(
-    "cargo build(aarch64-ohos, release)",
+    `cargo build(aarch64-ohos, release${withC4 ? " + c4-harness" : ""})`,
     "cargo",
-    ["build", "--lib", "--release", "--target", TRIPLE, "--features", "tauri/custom-protocol"],
+    ["build", "--lib", "--release", "--target", TRIPLE, "--features", features],
     { cwd: crateDir },
   );
 }

@@ -3,13 +3,50 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-    <title>朱简(鸿蒙 · C3 骨架)</title>
+    <title>朱简(鸿蒙 · C3 骨架 / C4 验收)</title>
+    <style>
+      /* ⛔ 这不是"美化" —— 是**为了让 PC 侧脚本能按坐标点得中**。
+         鸿蒙这一端没有 CDP、没有 WebDriver:唯一的驱动手段是 `hdc shell uinput -T -c X Y`,
+         而坐标一旦跟着上方读数的高度漂,脚本就永远点不准。
+         ⇒ 三条写死:①C4 按钮区**排在最前**(上面不许有会变高的东西);
+                    ②每枚按钮**定高、通栏、零外边距** ⇒ 第 i 枚的中心 y 可以**算**出来;
+                    ③所有读数只往**按钮下方**那一个 <pre> 里写,永远不推动按钮。
+         ⚠ 改了下面任何一个数字,`scripts/ohos-c4.mjs` 里那三个常数要跟着改(它自己会核一格)。 */
+      /* ⚠ 这些数是**量出来定的**,不是拍脑袋:这台真机上 1 个 CSS px ≈ 3.23 个物理像素
+         (2026-08-23 实测,顶上还有 ≈119 物理像素的状态栏内缩)⇒ 视口高度只有 ≈850 CSS px。
+         第一版给了 140 + 13×110 = 1570,**装不下、后 7 枚在屏幕外**,点不着。
+         现在 60 + 13×48 = 684 CSS px ≈ 2210 物理像素,13 枚全在一屏内。 */
+      body { margin: 0; font-family: system-ui, sans-serif; }
+      #c4-head { height: 60px; line-height: 60px; font-size: 15px; font-weight: 700; padding-left: 12px; overflow: hidden; }
+      #c4 button { display: block; width: 100%; height: 48px; margin: 0; border: 0; border-top: 1px solid #999; background: #eee; font-size: 17px; text-align: left; padding-left: 12px; }
+      #c4 button:active { background: #ccc; }
+      pre { white-space: pre-wrap; word-break: break-all; font-size: 24px; padding: 0 12px; }
+      h2 { font-size: 30px; padding-left: 12px; }
+    </style>
   </head>
   <body>
-    <!-- ⛔ 这一页是 C3 的**验收面**,不是产品界面 —— 它要在真机上把六条复核面各显成
-         一个读数。产品前端(基本抄 android/src 那 7.7k 行)是 OH-d 的事。 -->
+    <!-- ⛔ 这一页是**验收面**,不是产品界面 —— 产品前端(基本抄 android/src 那 7.7k 行)
+         是 OH-d 的事。C4 那批按钮另受 `c4-harness` feature 门控:不带那个 feature 编出来的
+         包里,这些 invoke 会**响亮地**答「命令不存在」,而不是静悄悄什么都不做。 -->
+    <div id="c4-head">C4 验收 · 按钮定高,勿改版式</div>
+    <section id="c4">
+      <button id="c4-schema">1 schema(建库对不对)</button>
+      <button id="c4-entries">2 目录清单</button>
+      <button id="c4-create">3 新建空间</button>
+      <button id="c4-clobber">4 归位撞名 EEXIST</button>
+      <button id="c4-backup">5 备份 → 恢复</button>
+      <button id="c4-plant-creating">6 预置 .creating-*</button>
+      <button id="c4-plant-joining">7 预置 .joining-*</button>
+      <button id="c4-plant-orphan">8 预置孤儿 -wal/-shm</button>
+      <button id="c4-plant-boot">9 预置引导残留</button>
+      <button id="c4-plant-reset-a">10 重置半态 a(只 journal)</button>
+      <button id="c4-plant-reset-b">11 重置半态 b(库已删)</button>
+      <button id="c4-plant-reset-c">12 重置半态 c(带 staging)</button>
+      <button id="c4-reset">13 重置 main(破坏性)</button>
+    </section>
+    <pre id="c4-out">—</pre>
+
     <main id="app">
-      <h1>朱简 · 鸿蒙骨架</h1>
       <section>
         <h2>启动闸</h2>
         <pre id="gate">正在准备…</pre>
