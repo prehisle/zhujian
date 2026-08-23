@@ -21,7 +21,9 @@
 //   node scripts/ohos-c4.mjs fresh            **卸了重装**(格① 要的「全新安装」)
 //   node scripts/ohos-c4.mjs install          覆盖装(不清数据)
 //   node scripts/ohos-c4.mjs restart          force-stop → start,收启动那几行
-//   node scripts/ohos-c4.mjs tap <1..13>      点第 n 枚 C4 按钮,收该轮日志
+//   node scripts/ohos-c4.mjs tap <1..14>      点第 n 枚 C4 按钮,收该轮日志
+//                                             ⚠ 第 14 枚(加入空间)要 PC 侧台架先起着:
+//                                               `node scripts/ohos-c4-join.mjs`(它自带 hdc rport)
 //   node scripts/ohos-c4.mjs shot [名字]      截一张图存 .zjshots/
 //   node scripts/ohos-c4.mjs watch <秒>       只挂着收日志
 //
@@ -192,8 +194,10 @@ const tap = (n) => {
   const cap = startCapture(`tap${String(n).padStart(2, "0")}`);
   sleep(1500);
   sh(`uinput -T -c ${TAP_X} ${y}`, { quiet: true });
-  // ⚠ 备份那一格(第 5 枚)会真跑一趟 VACUUM INTO + 加密 + 恢复 ⇒ 等久一点。
-  sleep(n === 5 ? 40000 : 9000);
+  // ⚠ 两格要等久一点:第 5 枚(备份)真跑一趟 VACUUM INTO + 加密 + 恢复;
+  // 第 14 枚(加入空间)要走配对短连接 + 完整引导 + 归位 + catalog 重扫,
+  // 且那条路上还有一次「向 PC 侧现要配对码」的往返。
+  sleep(n === 5 ? 40000 : n === 14 ? 90000 : 9000);
   cap.stop();
   return report(cap.file);
 };
@@ -228,7 +232,7 @@ switch (step) {
     restart();
     break;
   case "tap":
-    tap(Number.parseInt(arg ?? "", 10) || die("要点第几枚?`tap 1` .. `tap 13`"));
+    tap(Number.parseInt(arg ?? "", 10) || die("要点第几枚?`tap 1` .. `tap 14`"));
     break;
   case "shot":
     shot(arg);

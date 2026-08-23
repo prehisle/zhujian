@@ -6564,6 +6564,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "zhujian-mobile"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "log",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tokio",
+ "zhujian-core",
+]
+
+[[package]]
 name = "zhujian-ohos"
 version = "0.1.0"
 dependencies = [
@@ -6579,6 +6593,7 @@ dependencies = [
  "tauri-plugin-opener",
  "tokio",
  "zhujian-core",
+ "zhujian-mobile",
 ]
 
 [[package]]

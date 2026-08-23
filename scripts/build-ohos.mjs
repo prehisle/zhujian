@@ -87,9 +87,17 @@ const run = (label, cmd, args, opts = {}) => {
 // (`generate_context!` 把 `dist/` 整个嵌进二进制),`dist/` 更新了而 cargo 不重编
 // = 装到机器上的还是上一版页面。**它不报错,只是给你一个旧界面**(2026-08-23 真栽:
 // 改完版式 `--skip-cargo` 重打包,截图与改之前逐像素一样,查了半天才想起这条)。
-// ⇒ **动了 `ohos/index.html` 或 `ohos/src/` 就别带 `--skip-cargo`。**
+// ⇒ **动了前端就别带 `--skip-cargo`**(OH-d/D3 起「前端」= 共用那棵树 `android/index.html`
+//    + `android/src/`,不再只是 `ohos/src/`)。
+//
+// ⭐ **`--c4` 同时决定前端出哪一页**(OH-d/D3):`ZJ_OHOS_C4=1` 让 `ohos/vite.config.ts`
+// 把 root 从共用那棵树切回 `ohos/`,出的是验收面板。⇒ 验收命令面(`c4-harness` feature)
+// 与验收按钮**成对出现、成对消失**,⛔ 不会有「包里有后门命令但没按钮」或反过来的半态。
 if (!argv.includes("--skip-frontend")) {
-  run("前端 vite build", "npm", ["run", "build"], { cwd: ohosRoot });
+  run("前端 vite build", "npm", ["run", "build"], {
+    cwd: ohosRoot,
+    env: { ...process.env, ZJ_OHOS_C4: argv.includes("--c4") ? "1" : "" },
+  });
 }
 
 // ---- 2. Rust .so -----------------------------------------------------------

@@ -15,7 +15,8 @@
       /* ⚠ 这些数是**量出来定的**,不是拍脑袋:这台真机上 1 个 CSS px ≈ 3.23 个物理像素
          (2026-08-23 实测,顶上还有 ≈119 物理像素的状态栏内缩)⇒ 视口高度只有 ≈850 CSS px。
          第一版给了 140 + 13×110 = 1570,**装不下、后 7 枚在屏幕外**,点不着。
-         现在 60 + 13×48 = 684 CSS px ≈ 2210 物理像素,13 枚全在一屏内。 */
+         现在 60 + 14×48 = 732 CSS px ≈ 2364 物理像素(+119 状态栏 = 2483 < 2720),
+         14 枚全在一屏内。⚠ 再加按钮前先算这道:每枚 48 CSS px ≈ 155 物理像素。 */
       body { margin: 0; font-family: system-ui, sans-serif; }
       #c4-head { height: 60px; line-height: 60px; font-size: 15px; font-weight: 700; padding-left: 12px; overflow: hidden; }
       #c4 button { display: block; width: 100%; height: 48px; margin: 0; border: 0; border-top: 1px solid #999; background: #eee; font-size: 17px; text-align: left; padding-left: 12px; }
@@ -43,6 +44,9 @@
       <button id="c4-plant-reset-b">11 重置半态 b(库已删)</button>
       <button id="c4-plant-reset-c">12 重置半态 c(带 staging)</button>
       <button id="c4-reset">13 重置 main(破坏性)</button>
+      <!-- ⚠ 新按钮一律**往末尾加**:1..13 的坐标是量出来的,插在中间会让脚本
+           点错格(它自己有活的自检 —— 日志会说点中的是哪条命令)。 -->
+      <button id="c4-join">14 加入空间(要 PC 侧台架)</button>
     </section>
     <pre id="c4-out">—</pre>
 

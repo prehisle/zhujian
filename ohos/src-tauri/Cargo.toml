@@ -40,10 +40,19 @@ log = "0.4"
 tauri = { git = "https://github.com/richerfu/tauri", branch = "feat/open-harmony", features = [] }
 # 共享核心:数据层(items/oplog/HLC/35 条迁移)+ 同步客户端侧,与桌面/安卓逐字节同一套。
 zhujian-core = { path = "../../core" }
+# ⭐ OH-d/D1 起:空间协调器 + 93 条命令面 + 启动装配,与安卓壳**同一份源码**。
+# ⚠ 它按 crates.io 声明 `tauri = "2"`,于是被本文件末尾那份 `[patch.crates-io]` 一起
+# 换成 fork ⇒ 两只 crate 链进的是**同一个** tauri 实例(与 tauri-plugin-opener 同理)。
+# ⛔ 若哪天 patch 表里漏了某个 tauri 子 crate,症状是 `State<'_, Coord>` 类型对不上,
+# 而报错处与依赖表看不出关系。
+zhujian-mobile = { path = "../../mobile" }
 # 壳层直接用到的底座(版本声明与 core 一致,同一 lock 内解析成同一实例)。
 rusqlite = { version = "0.32", features = ["bundled", "hooks"] }
 # 传输任务的控制通道(mpsc)与写通知(Notify);运行时仍是 tauri 的 async_runtime。
-tokio = { version = "1", features = ["sync"] }
+# ⚠ `time`/`macros` 是 C4 那条「加入空间」用的(引导封顶 + select!);feature 是全图
+# 并集,不带也可能因 tauri 打开而"碰巧能编" —— 显式写出来,免得哪天它悄悄没了。
+# ⛔ 加 feature 不动 Cargo.lock(lock 里不存 feature),`check-lock-drift` 那道不受影响。
+tokio = { version = "1", features = ["sync", "time", "macros"] }
 # rustls 0.23 须恰好一个加密提供者(ring 特性由 core 钉死);壳层职责 = run() 启动时
 # install_default,不装则首次 wss:// 在 ClientConfig::builder() panic(84 真机踩过)。
 rustls = { version = "0.23", default-features = false, features = ["ring"] }

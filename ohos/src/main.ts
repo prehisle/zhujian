@@ -1,4 +1,9 @@
-// C3 骨架 + C4 验收页。⛔ 不是产品前端 —— 它只把每条复核面显成一个读数。
+// C4 验收页。⛔ **不是产品前端** —— 它只把每条复核面显成一个读数。
+//
+// ⭐ OH-d/D3 起产品前端是**共用的那棵树**(`android/index.html` + `android/src`),
+// 由 `ohos/vite.config.ts` 的 root 决定用哪一份:带 `ZJ_OHOS_C4=1`(= `build-ohos.mjs --c4`)
+// 出的才是这一页。**它与 Rust 侧的 `c4-harness` feature 成对** —— 验收命令面在哪一趟,
+// 验收按钮就在哪一趟。⛔ 产品包里不许出现这一页(里头有 `c4_plant` 与明文回报备份码)。
 import { invoke } from "@tauri-apps/api/core";
 
 const $ = (id: string): HTMLElement => {
@@ -20,13 +25,15 @@ const run = async (id: string, task: () => Promise<unknown>): Promise<void> => {
   }
 };
 
-// 启动闸:轮到不是 pending 为止(与安卓同形)。
+// 启动闸:轮到不是 pending 为止。
+// ⚠ **判别键是 `status` 不是 `state`**(OH-d/D1 起这条命令来自共享 crate,
+// 那边的 `#[serde(tag = "status")]` 才是权威)——写错了它会永远轮询下去,不报错。
 const pollGate = async (): Promise<void> => {
   for (;;) {
     try {
-      const gate = (await invoke("startup_gate")) as { state: string };
+      const gate = (await invoke("startup_gate")) as { status: string };
       show("gate", gate);
-      if (gate.state !== "pending") return;
+      if (gate.status !== "pending") return;
     } catch (e) {
       show("gate", `失败:${e}`);
       return;
@@ -36,11 +43,18 @@ const pollGate = async (): Promise<void> => {
 };
 
 $("paths-btn").addEventListener("click", () => void run("paths", () => invoke("ohos_paths")));
+// ⚠ 这两条 OH-d/D1 起走的是**产品命令**(共享 crate 那 93 条里的两条),
+// 不再是骨架轮那两条 `smoke_*` —— 那两条已删。⭐ 这样这一格验的是真路径,不是旁路。
 $("capture-btn").addEventListener("click", () => {
   const content = ($("text") as HTMLInputElement).value.trim();
-  void run("smoke", () => invoke("smoke_capture", { content }));
+  void run("smoke", () => invoke("capture_idea", { spaceId: "main", content }));
 });
-$("inbox-btn").addEventListener("click", () => void run("smoke", () => invoke("smoke_inbox")));
+$("inbox-btn").addEventListener("click", () =>
+  void run("smoke", async () => {
+    const rows = (await invoke("list_ideas", { spaceId: "main" })) as { content: string }[];
+    return { count: rows.length, latest: rows[0]?.content ?? null };
+  }),
+);
 
 // ---- C4 那批 -------------------------------------------------------------
 //
@@ -79,5 +93,8 @@ c4("c4-plant-reset-a", "10 半态 a", () => invoke("c4_plant", { kind: "reset-a"
 c4("c4-plant-reset-b", "11 半态 b", () => invoke("c4_plant", { kind: "reset-b" }));
 c4("c4-plant-reset-c", "12 半态 c", () => invoke("c4_plant", { kind: "reset-c" }));
 c4("c4-reset", "13 重置 main", () => invoke("c4_reset_main"));
+// ⚠ 无参 —— 服务器地址与配对码由壳那边从 PC 侧参数口现取(`hdc rport`,见 c4.rs);
+// 手机上打字这条路太脆,而配对码是一次性、十分钟过期的凭据。
+c4("c4-join", "14 加入空间", () => invoke("c4_join_space"));
 
 void pollGate();

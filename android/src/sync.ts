@@ -6,13 +6,9 @@
 // 事件不丢);空间切换编排与事件代次账本仍住 main.ts,经 Deps 注入。行为零改动。
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import {
-  scan,
-  cancel,
-  checkPermissions,
-  requestPermissions,
-  Format,
-} from "@tauri-apps/plugin-barcode-scanner";
+// **平台接缝**(OH-d/D3):扫码只在安卓壳上存在,鸿蒙那端由 vite 换成另一份实现
+// (`HAS_SCANNER` 为 false、两枚按钮整个不渲染)。判据见 `platform.ts` 那一节。
+import { cancelScan, ensureCameraPermission, HAS_SCANNER, scanQrContent } from "./platform";
 import {
   getCurrentSpace,
   sinvoke,
@@ -113,7 +109,9 @@ export function renderSync(s: SyncStatus) {
   // onboarding:扫码/输码把本机并进已有账户);**非 main 只有创号一条路**——
   // 「把别处的账户带过来」的入口是空间面板的「加入空间」,不在这里。
   const isMain = getCurrentSpace() === "main";
-  (($("sync-scan-btn").parentElement) as HTMLElement).hidden = !isMain;
+  // ⚠ 两个条件**都要**:非 main 空间没有这条路(space-entry-plan §4),
+  // 而没有扫码器的端(鸿蒙)连 main 上也没有 —— 那时只剩「输码」那半。
+  (($("sync-scan-btn").parentElement) as HTMLElement).hidden = !isMain || !HAS_SCANNER;
   $("sync-alt-pair").hidden = !isMain;
   const altCreate = $("sync-alt-create") as HTMLButtonElement;
   altCreate.textContent = isMain ? t("sync.altCreateMain") : t("sync.altCreateOther");
@@ -221,7 +219,7 @@ let scanCancelled = false;
  *  scanning/挖空层立即收,与 startScan.finally 幂等;返回键与取消按钮共用这一条。 */
 export function dismissScanOverlay() {
   scanCancelled = true;
-  void cancel().catch(() => {});
+  void cancelScan().catch(() => {});
   document.body.classList.remove("scanning");
   $("scan").hidden = true;
 }
@@ -231,9 +229,7 @@ const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 /** 扫码取一枚配对载荷,交给 `onGot` 路由(两条消费路:main 装机配对 doJoin /
  *  「加入空间」doJoinSpace——扫码只管拿码,去哪由入口按钮决定)。 */
 async function startScan(onGot: (p: PairPayload) => Promise<void>) {
-  let perm = await checkPermissions();
-  if (perm !== "granted" && perm !== "denied") perm = await requestPermissions();
-  if (perm !== "granted") {
+  if (!(await ensureCameraPermission())) {
     showError(t("sync.noCamera"));
     return;
   }
@@ -241,8 +237,7 @@ async function startScan(onGot: (p: PairPayload) => Promise<void>) {
   document.body.classList.add("scanning");
   $("scan").hidden = false;
   try {
-    const got = await scan({ windowed: true, formats: [Format.QRCode] });
-    const p = parsePairQr(got.content);
+    const p = parsePairQr(await scanQrContent());
     document.body.classList.remove("scanning");
     $("scan").hidden = true;
     await onGot(p);
@@ -304,7 +299,8 @@ async function doJoinSpace(serverUrl: string, code: string) {
     });
     // 结果分道**先于**任何后续收尾(codex 一轮 M4):后端事实(Integrated /
     // PublishedNeedsRestart)不许被前端刷新的任何闪失盖成「普通失败」。
-    $("join-form").hidden = true;
+    // ⚠ 收表单只在**有扫码那条路**的端上做:没有扫码器时它是唯一入口,收了就没路了。
+    $("join-form").hidden = HAS_SCANNER;
     ($("join-code") as HTMLInputElement).value = "";
     if (out.kind === "integrated") {
       const label = spaceLabel({ id: out.space.id, name: out.space.name });
@@ -459,6 +455,13 @@ export function initSync(d: Deps): void {
       await doJoinSpace(p.server, p.code);
     }).catch((e) => showError(errMsg(e))),
   );
+  // OH-d/D3:没有扫码器的端(鸿蒙)—— 那一行两枚按钮(「扫码加入」+ 切换用的「输码加入」)
+  // 整个不渲染,输码表单**直接摊开**。⛔ 别只禁用扫码钮:那样这一端会剩一个点不动的
+  // 主按钮和一个用来展开表单的次按钮,而表单本来就该是唯一那条路。
+  if (!HAS_SCANNER) {
+    ($("join-scan-btn").parentElement as HTMLElement).hidden = true;
+    $("join-form").hidden = false;
+  }
   $("join-alt-btn").addEventListener("click", () => {
     const f = $("join-form");
     f.hidden = !f.hidden;

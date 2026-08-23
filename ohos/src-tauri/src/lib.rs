@@ -1,8 +1,14 @@
-//! 朱简鸿蒙壳(OH-c/C3 骨架)。
+//! 朱简鸿蒙壳。
 //!
-//! **这一笔是「壳骨架」不是「全功能端」**:范围 = 让 `zhujian-core` 在鸿蒙上真正跑起来,
-//! 并把 backlog 条 18 里 C3 那六条复核面各自落到一个可观测的读数上。⛔ 完整命令面
-//! (灵感 / 看板 / 标签 / 搜索 / 同步 / 备份)是 OH-d 的事,别在这里长出第二份 coord.rs。
+//! **OH-c/C3 那轮它是「壳骨架」(四条命令);OH-d/D1 起它是「薄壳」** —— 空间协调器、
+//! 93 条命令面、启动装配整段都在共享 crate [`zhujian_mobile`](仓根 `mobile/`),
+//! 与安卓壳**同一份源码**。这个文件里只剩**鸿蒙自己那三样**:
+//!
+//! | 留在这里的 | 为什么它没法共享 |
+//! |---|---|
+//! | [`ohos_data_dir`] | ⛔ 这一端**不许**用 `app.path().app_data_dir()`,判据见该函数头注 |
+//! | `hilog` | 日志通道不是 logcat,是 `OH_LOG_PrintMsg` |
+//! | [`ohos_paths`] + C4 harness | 这一端没有控制台、私有区 `hdc` 也够不着,唯一的可观测面 |
 //!
 //! # 与另外两只壳的关系
 //!
@@ -11,6 +17,7 @@
 //!   `db::open` 隐式建库,一次归位原语都不碰;而鸿蒙私有区**拒 `hard_link`**
 //!   (461 真机字据,与安卓 SELinux 同形),归位必须走 462/463 开出来的
 //!   `renameat2` 那一支。走错编排 = 建空间当场崩在归位那一步。
+//!   ⇒ D1 之后这条由共享层的 `setup_shell` 保证,两端**同一段代码**。
 //! - **`cfg(mobile)` 在鸿蒙上为真**(`tauri_utils::platform::Target::is_mobile` 含
 //!   `OpenHarmony`)⇒ ⛔ 安卓壳那句 `#[cfg(mobile)] .plugin(barcode_scanner::init())`
 //!   **不能照抄**:那个 crate 的依赖 gate 写死在 `target_os = android|ios`,
@@ -18,8 +25,9 @@
 //!
 //! # 启动时序(与安卓同序,顺序本身是判据)
 //!
-//! `hilog` → panic 钩子 → rustls provider → 数据目录 → **WriterLease** →
-//! (blocking worker)引导快照清扫 → `prepare_mobile_catalog` → Gate 落 Ready。
+//! `hilog` → panic 钩子 → rustls provider → 数据目录 → `setup_shell`
+//! (**WriterLease** → 备份路径域 → Gate → blocking worker:引导快照清扫 →
+//! `prepare_mobile_catalog` → 协调器 → 激活主空间 → 事件桥)。
 //! ⛔ 租约必须先于任何开库;清扫必须先于任何 transport 启动。
 
 /// C4 真机验收命令面。⛔ **编译期门控,默认不进包**(判据与诚实边界写在 `c4.rs` 头注)。
@@ -27,13 +35,10 @@
 mod c4;
 mod hilog;
 
-use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::path::PathBuf;
 
 use serde::Serialize;
 use tauri::{Manager, State};
-use zhujian_core::spaces;
-use zhujian_core::sync::transport;
 
 // ---- 应用私有目录 ----------------------------------------------------------
 
@@ -52,6 +57,9 @@ use zhujian_core::sync::transport;
 /// ⚠ **它不报错、只是给一条别的路径** —— 如果哪天那条路径碰巧建得出来(比如沙箱里
 /// `HOME` 指到某个可写处),库就会静默落在错的地方,而不是崩。⇒ 这一处必须显式绕开,
 /// **不许"先试 app_data_dir、失败再退回"**(那正是 fail-fast 铁律禁止的静默默认值)。
+///
+/// ⭐ **D1 之后这条约束的作用面更大了**:共享层的 `setup_shell` 把数据目录当**入参**收,
+/// 一次都不碰 `app.path()` —— 正是为了让这一端不会顺着安卓那条路走下去。
 ///
 /// 正道:`@ohos-rs/ability` 的 `NativeAbility` 在 `onCreate` 里把
 /// `AbilityInitContext { basePath: context.filesDir, … }` 交给 Rust 侧,
@@ -76,87 +84,24 @@ fn ohos_data_dir() -> PathBuf {
     PathBuf::from(base)
 }
 
-// ---- 启动闸 ---------------------------------------------------------------
+// ---- 壳自己的那点状态 ------------------------------------------------------
 
-fn gate_kind_str(kind: spaces::StartupBlockKind) -> &'static str {
-    match kind {
-        spaces::StartupBlockKind::UpgradeRequired => "upgrade-required",
-        spaces::StartupBlockKind::Retryable => "retryable",
-        spaces::StartupBlockKind::RepairRequired => "repair-required",
-        spaces::StartupBlockKind::ResetRequired => "reset-required",
-    }
-}
-
-#[derive(Clone, Serialize)]
-#[serde(tag = "state", rename_all = "lowercase")]
-enum GateStatus {
-    /// 启动装配还在跑。前端显示「正在准备」并轮询。
-    Pending,
-    /// 装配整段成功才落这一态(⛔ 不许「闸已放行、装配死在半路」)。
-    Ready { spaces: Vec<SpaceBrief> },
-    /// 按 kind 分流处置(升级 / 重试 / 修复 / 清库),话术由前端拼。
-    Blocked { kind: &'static str, message: String },
-}
-
-#[derive(Clone, Serialize)]
-struct SpaceBrief {
-    id: String,
-    name: Option<String>,
-    device_id: String,
-    configured: bool,
-}
-
-/// 壳的全部运行期状态。骨架轮**刻意不缓存连接**:每条命令现开现关
-/// (`spaces::open_space` 自带「先验后写」三条铁律),要证的是「这条路通」,
-/// 不是连接池的形。
+/// 这一端的诊断面要用到数据目录(C4 harness 亦然)。
+///
+/// ⚠ **它不再持 catalog** —— D1 起 catalog 住在共享层的 `Coord` 里,由 `setup_shell`
+/// 装配。⛔ 别在这儿再存第二份:两份 catalog 会在「加入空间 / 重置」之后**各说各话**,
+/// 而且不报错。
 pub(crate) struct Shell {
     pub(crate) data_dir: PathBuf,
-    gate: Mutex<GateStatus>,
-    catalog: Mutex<Option<spaces::SpaceCatalog>>,
 }
 
-/// 数据目录的一行速写(名字 + 字节数),**只给日志用**。
-///
-/// ⭐ **为什么它是产品代码而不是 harness 的一部分**:这一端没有控制台、没有 `adb logcat`
-/// 的等价物、私有区 `hdc` 也够不着 —— 「冷启之后目录里还剩什么」除了应用自己说,
-/// **没有第二个人能回答**。而这正是引导清扫 / 重置续跑 / 归位残留三条路唯一的可观测面。
-/// ⚠ 代价是一次 `read_dir`(几项),放在启动的 blocking worker 里,不占启动线程。
-/// ⛔ 读不出的项要**留痕**,别 `.flatten()` 吃掉 —— 那可能正是要找的那份残留(438 的判据)。
-fn dir_brief(dir: &Path) -> String {
-    let rd = match std::fs::read_dir(dir) {
-        Ok(rd) => rd,
-        Err(e) => return format!("<读目录失败:{e}>"),
-    };
-    let mut items: Vec<String> = rd
-        .map(|entry| match entry {
-            Ok(e) => match e.metadata() {
-                Ok(m) if m.is_dir() => format!("{}/", e.file_name().to_string_lossy()),
-                Ok(m) => format!("{}({})", e.file_name().to_string_lossy(), m.len()),
-                Err(err) => format!("<读不出 {}:{err}>", e.file_name().to_string_lossy()),
-            },
-            Err(e) => format!("<读不出目录项:{e}>"),
-        })
-        .collect();
-    items.sort();
-    if items.is_empty() {
-        return "<空>".into();
-    }
-    items.join(" ")
-}
-
-// ---- 命令面(骨架四条,每条对着 C3 的一格复核面)---------------------------
-
-/// 前端轮询启动闸。
-#[tauri::command]
-fn startup_gate(shell: State<'_, Shell>) -> GateStatus {
-    shell.gate.lock().expect("gate mutex poisoned").clone()
-}
+// ---- 诊断命令(这一端唯一的可观测面)---------------------------------------
 
 /// **C3 面④**:各目录到底落在哪。⛔ 这条不是调试摆设 —— 「`app_data_dir` 在鸿蒙上
 /// 返回什么」今天没有任何字据,而备份 staging / `writer.lock` / catalog 全挂在它下面。
 /// 报的是**实得路径 + 存在性**,不是配置里写的期望值。
 #[derive(Serialize)]
-struct PathReport {
+pub struct PathReport {
     /// 真正在用的那个(= ability context 的 `filesDir`)。
     data_dir: String,
     /// ⚠ **对照项,不是在用的** —— tauri 的 path 解析器在这一端给的是什么。
@@ -203,47 +148,6 @@ fn ohos_paths(app: tauri::AppHandle, shell: State<'_, Shell>) -> Result<PathRepo
     })
 }
 
-/// **C3 面⑥ 的写半**:从 WebView 一路打到 core 的**真写入**(items + oplog + HLC),
-/// 不是空壳页面启动。⛔ 别把它换成「只读一下版本号」——读路径不碰 `renameat2`、
-/// 不碰触发器、不碰 WAL 写,证不到这条链。
-#[tauri::command]
-fn smoke_capture(shell: State<'_, Shell>, content: String) -> Result<String, String> {
-    with_main_space(&shell, |conn| {
-        let mut clock = zhujian_core::clock::Clock::load(conn)?;
-        zhujian_core::notes::capture(conn, &mut clock, &content)
-    })
-}
-
-/// **C3 面⑥ 的读半**:把刚写进去的读回来(走 core 的真投影,不自己拼 SQL)。
-#[derive(Serialize)]
-struct InboxBrief {
-    count: usize,
-    latest: Option<String>,
-}
-
-#[tauri::command]
-fn smoke_inbox(shell: State<'_, Shell>) -> Result<InboxBrief, String> {
-    with_main_space(&shell, |conn| {
-        let rows = zhujian_core::repo::inbox_items(conn).map_err(|e| e.to_string())?;
-        Ok(InboxBrief {
-            count: rows.len(),
-            latest: rows.first().map(|r| r.content.clone()),
-        })
-    })
-}
-
-/// 主空间开库 → 干活 → 关。**catalog 未就绪时响亮拒**(⛔ 不隐式重建 catalog:
-/// 那会把「启动装配失败」伪装成「命令偶发失败」)。
-fn with_main_space<T>(
-    shell: &Shell,
-    f: impl FnOnce(&mut rusqlite::Connection) -> Result<T, String>,
-) -> Result<T, String> {
-    let guard = shell.catalog.lock().expect("catalog mutex poisoned");
-    let catalog = guard.as_ref().ok_or("启动装配还没完成(或已封锁),这条命令还不能用")?;
-    let mut conn = spaces::open_space(catalog.main())?;
-    f(&mut conn)
-}
-
 // ---- 入口 -----------------------------------------------------------------
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -256,7 +160,7 @@ pub fn run() {
         hilog::raw(&format!("PANIC {info}"));
         default_hook(info);
     }));
-    log::info!("run() 进入 —— 朱简鸿蒙壳(C3 骨架)");
+    log::info!("run() 进入 —— 朱简鸿蒙壳(OH-d 薄壳)");
 
     // wss:// 的 TLS 提供者(与另外两只壳同纪律):启动即装,坏了当场响亮,
     // 不留到第一次连接才在 async 命令里 panic(84 真机踩过)。
@@ -272,100 +176,26 @@ pub fn run() {
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .setup(move |app| {
-            // ⛔ 见 `ohos_data_dir` 的头注:这一端**不走** `app.path().app_data_dir()`。
-            std::fs::create_dir_all(&data_dir).expect("建不出 app 数据目录");
-            log::info!("数据目录 = {}", data_dir.display());
-
-            // 单写者租约(multispace-plan §5 门 1):先于开库取目录级 OS 排他锁。
-            // 锁文件永不删,句柄 manage 持到进程退出。
-            // ⚠ 461 已在真机上量过 `try_lock` 在鸿蒙(musl)上三问全过 —— 没有 bionic
-            // 那个「恒 Unsupported」的桩;但那是平台层复现,这里才是 core 的真路径。
-            let lease = spaces::WriterLease::acquire(&data_dir.join("writer.lock"))
-                .unwrap_or_else(|e| panic!("{e}"));
-            app.manage(lease);
-            log::info!("WriterLease 已持");
-
-            app.manage(Shell {
-                data_dir: data_dir.clone(),
-                gate: Mutex::new(GateStatus::Pending),
-                catalog: Mutex::new(None),
-            });
-
-            // 启动装配挪 blocking worker(照安卓 codex 设计审 H4):前滚迁移是潜在
-            // O(库大小) 的同步工作,不占启动线程。JoinHandle 必须被消费——worker 内
-            // 任意 panic 若只是被丢弃,Gate 永远停在 Pending、前端无限「正在准备」。
-            let handle = app.handle().clone();
-            tauri::async_runtime::spawn(async move {
-                let dir = data_dir.clone();
-                let joined = tauri::async_runtime::spawn_blocking(move || {
-                    // ⭐ **装配之前先把目录原样报一遍**:重置续跑 / 引导清扫 / 归位残留
-                    // 三条恢复路都发生在下面这几行里,而它们**做完之后现场就没了**。
-                    // 一前一后两条日志 = 这一端唯一的「恢复真跑了」字据。
-                    log::info!("DIR_BEFORE {}", dir_brief(&dir));
-                    // 清上次进程被系统 kill 留下的**明文**引导快照;必须在任何
-                    // transport 启动前。清不掉 = 响亮(明文完整库副本)。
-                    let sweep = transport::sweep_stale_boot_files(&dir);
-                    if !sweep.is_clean() {
-                        log::error!("BOOT_SWEEP {sweep}");
-                    }
-                    // ⚠ 它内部串着 sweep_stale_joining → sweep_stale_creating →
-                    // resume_main_reset → fresh 裁决 → 建库 → 前滚迁移 → 严格 catalog。
-                    let catalog = spaces::prepare_mobile_catalog(&dir);
-                    log::info!("DIR_AFTER {}", dir_brief(&dir));
-                    catalog
-                })
-                .await;
-                let shell = handle.state::<Shell>();
-                let done = match joined {
-                    Ok(Ok(catalog)) => {
-                        let brief = catalog
-                            .spaces()
-                            .iter()
-                            .map(|d| SpaceBrief {
-                                id: d.id.clone(),
-                                name: d.name.clone(),
-                                device_id: d.device_id.clone(),
-                                configured: d.account_id.is_some(),
-                            })
-                            .collect();
-                        log::info!("catalog 就绪,{} 个空间", catalog.spaces().len());
-                        *shell.catalog.lock().expect("catalog mutex poisoned") = Some(catalog);
-                        GateStatus::Ready { spaces: brief }
-                    }
-                    Ok(Err(e)) => {
-                        log::error!("SPACE_GATE blocked [{}]: {}", gate_kind_str(e.kind), e.message);
-                        GateStatus::Blocked { kind: gate_kind_str(e.kind), message: e.message }
-                    }
-                    Err(join_err) => {
-                        log::error!("SPACE_GATE worker died: {join_err}");
-                        GateStatus::Blocked {
-                            kind: "retryable",
-                            message: format!("启动任务异常中断:{join_err}"),
-                        }
-                    }
-                };
-                *shell.gate.lock().expect("gate mutex poisoned") = done;
-            });
+            app.manage(Shell { data_dir: data_dir.clone() });
+            // ⚠ **config_dir 与 data_dir 同一个目录**,这是知情的:安卓那端 tauri 的
+            // `getConfigDir` 与 `getDataDir` 本来就返回同一个 `activity.dataDir`
+            // (backup-plan §17.3 源码级核过)⇒ 这一端照同一个语义显式给同一个,
+            // ⛔ 而不是去问 `app.path()`(那一问会落进桌面那支,见 `ohos_data_dir`)。
+            let outbox = zhujian_mobile::setup_shell(app.handle(), data_dir.clone(), data_dir.clone());
+            log::info!("BACKUP_OUTBOX {outbox}");
             Ok(())
         });
 
     // ⛔ **两份清单刻意写全、不折成一份** —— `generate_handler!` 的宏参数上挂不了 `#[cfg]`,
-    // 而更要紧的是:**正式包的命令面要一眼看得见就是骨架那四条**。折成一份再靠条件拼接,
+    // 而更要紧的是:**正式包的命令面要一眼看得见就是产品那些条**。折成一份再靠条件拼接,
     // 「验收后门有没有进正式包」这件事就得靠读宏展开去答(同 465 那三个坑的族:
     // 不报错、只给一个别的答案)。
+    // ⭐ 93 条产品命令由 `zhujian_mobile::shared_handler!` 出,**两只壳零抄写**。
     #[cfg(not(feature = "c4-harness"))]
-    let builder = builder.invoke_handler(tauri::generate_handler![
-        startup_gate,
-        ohos_paths,
-        smoke_capture,
-        smoke_inbox,
-    ]);
+    let builder = builder.invoke_handler(zhujian_mobile::shared_handler![ohos_paths]);
     #[cfg(feature = "c4-harness")]
-    let builder = builder.invoke_handler(tauri::generate_handler![
-        startup_gate,
+    let builder = builder.invoke_handler(zhujian_mobile::shared_handler![
         ohos_paths,
-        smoke_capture,
-        smoke_inbox,
         c4::c4_schema,
         c4::c4_entries,
         c4::c4_create_space,
@@ -373,6 +203,7 @@ pub fn run() {
         c4::c4_backup_cycle,
         c4::c4_reset_main,
         c4::c4_plant,
+        c4::c4_join_space,
     ]);
     #[cfg(feature = "c4-harness")]
     log::warn!("⚠ 本包带 c4-harness 验收命令面 —— 不是正式包");

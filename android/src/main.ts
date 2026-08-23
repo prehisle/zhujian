@@ -35,6 +35,8 @@ import {
 import { $, actionBar, confirmBar, esc, fmtWhen, hideConfirmBar, showBar, showError, STAGE_LABEL } from "./ui";
 import { capturePhoto, composeImages, PICK_MAX, pickImages } from "./images";
 import { INPUT_DEBOUNCE_MS } from "./timing";
+// **平台接缝**(OH-d/D3):只在安卓壳里存在的那三条命令。鸿蒙那端由 vite 换成另一份实现。
+import { checkUpdate, takeDeepLink, takeSharedText, type MobileUpdate } from "./platform";
 import * as backup from "./backup";
 import * as cardPanel from "./cardpanel";
 import * as filter from "./filter";
@@ -715,7 +717,7 @@ async function pullSharedText() {
   pullingShare = true;
   try {
     for (;;) {
-      const text = await invoke<string | null>("take_shared_text");
+      const text = await takeSharedText();
       if (!text) break;
       const ta = $("text") as HTMLTextAreaElement;
       ta.value = ta.value.trim() ? `${ta.value}\n${text}` : text;
@@ -768,7 +770,7 @@ async function pullDeepLink(): Promise<void> {
   if (pullingDeepLink) return;
   pullingDeepLink = true;
   try {
-    const raw = await invoke<string | null>("take_deep_link");
+    const raw = await takeDeepLink();
     if (!raw) return;
     const p = parseDeepLink(raw);
     if (!p) return;
@@ -1652,12 +1654,12 @@ async function loadAbout() {
 
 // ---- 半自动更新(106):启动静默查 + 后台切回再查(149 后用户点名),有新版出提示条 ----
 
-type AndroidUpdate = { version: string; versionCode: number; notes: string; url: string };
+// ⚠ 类型与那条 invoke 一起住在平台接缝 `platform.ts` 里(OH-d/D3):鸿蒙那端没有更新通道。
 
 // 检查会被反复触发(启动 + 每次回前台),按钮监听只在模块加载挂一次、经这两个
 // 模块态取当前值;「以后再说」按 versionCode 记账,同一版本本会话内不再打扰
 // (进程被杀重开自然复位=旧「重启才再提示」语义不变)。
-let updateFound: AndroidUpdate | null = null;
+let updateFound: MobileUpdate | null = null;
 let updateDismissedCode = 0;
 
 // 更新说明值不值得显(296):空的不显;只是把版本号又说一遍的也不显——历史发版的
@@ -1678,7 +1680,7 @@ export function meaningfulNotes(notes: string | undefined, version: string): str
 async function initUpdate() {
   lastUpdateCheckedAt = Date.now();
   try {
-    const u = await invoke<AndroidUpdate | null>("check_update");
+    const u = await checkUpdate();
     if (!u || u.versionCode === updateDismissedCode) return;
     updateFound = u;
     $("update-msg").textContent = t("main.updateFound", { version: u.version });

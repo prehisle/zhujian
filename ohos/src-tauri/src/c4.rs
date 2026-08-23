@@ -32,11 +32,14 @@
 //!   把读数摊开」。它要是自己写了一份归位 / 清扫 / 迁移,验的就是 harness 不是产品。
 
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use serde::Serialize;
 use tauri::State;
 use zhujian_core::backup::{BackupCoordinator, BackupPaths};
 use zhujian_core::spaces;
+use zhujian_core::sync::transport::{self, BootCommitLatch, SyncEvent};
 
 use crate::Shell;
 
@@ -484,4 +487,318 @@ pub fn c4_plant(shell: State<'_, Shell>, kind: String) -> Result<PlantOut, Strin
         brief(&entries_after)
     );
     Ok(PlantOut { kind, planted, removed, entries_after })
+}
+
+// ---- ③ 加入空间正路 -------------------------------------------------------
+
+/// PC 侧参数口在**设备这一侧**的地址。恒是 127.0.0.1:`hdc rport tcp:8792 tcp:8792`
+/// 在设备上开一个本地监听、把流量反接到 PC 的同名端口(2026-08-23 实测:设备
+/// `netstat -an` 里真有这条 LISTEN)。⇒ 手机不必上 Wi-Fi、不必开 PC 防火墙。
+///
+/// ⭐ **为什么参数不做成命令参数**:这一端没有 CDP、没有 WebDriver,唯一的输入手段
+/// 是 `uinput` 按坐标点屏幕 —— 要把 `slot-XXXX-XXXX` 一位一位打进手机,既脆又慢,
+/// 而配对码是**一次性、十分钟过期**的凭据。⇒ PC 侧 `scripts/ohos-c4-join.mjs` 起一个
+/// 参数口:**连上来那一刻**才向老设备现要一枚新码,答两行(服务器地址 / 配对码)就关。
+/// 于是「码在等按钮的时候过期」这条赛道根本不存在。
+/// ⛔ 别给它加「取不到就用个默认值」的退路(fail-fast 铁律):取参失败要当场响亮,
+/// 否则「台架没起」会被读成「加入空间失败」。
+const JOIN_PARAM_ADDR: &str = "127.0.0.1:8792";
+
+/// 引导封顶。⛔ **不无限等**:这一端没有取消按钮,挂住就只能强停 app,而那会把
+/// 「引导卡死」与「我等腻了」混成同一个读数。
+const JOIN_BOOT_CAP: Duration = Duration::from_secs(240);
+
+/// 取参:连上去、读到对端关闭为止,要恰两行。
+fn fetch_join_params() -> Result<(String, String), String> {
+    use std::io::Read;
+    let addr: std::net::SocketAddr =
+        JOIN_PARAM_ADDR.parse().map_err(|e| format!("参数口地址写错了 {JOIN_PARAM_ADDR}:{e}"))?;
+    let mut s = std::net::TcpStream::connect_timeout(&addr, Duration::from_secs(10)).map_err(|e| {
+        format!("连不上参数口 {JOIN_PARAM_ADDR}(PC 侧 ohos-c4-join.mjs 没起?`hdc rport tcp:8792 tcp:8792` 没挂?):{e}")
+    })?;
+    // 60 秒是给 PC 侧「现向老设备要一枚码」留的:那一步要走一趟真配对槽开启。
+    s.set_read_timeout(Some(Duration::from_secs(60))).map_err(|e| format!("设读超时失败:{e}"))?;
+    let mut buf = String::new();
+    s.read_to_string(&mut buf).map_err(|e| format!("读参数口失败:{e}"))?;
+    let mut lines = buf.lines();
+    let url = lines.next().unwrap_or("").trim().to_string();
+    let code = lines.next().unwrap_or("").trim().to_string();
+    if url.is_empty() || code.is_empty() {
+        return Err(format!("参数口答的不是两行(原样):{buf:?}"));
+    }
+    Ok((url, code))
+}
+
+fn note(phases: &mut Vec<String>, p: &str) {
+    log::info!("C4 join 相位={p}");
+    phases.push(p.to_string());
+}
+
+#[derive(Serialize)]
+pub struct JoinOut {
+    server_url: String,
+    /// ⚠ 只报**槽号**(码的第一段,9 位数字),⛔ 整条配对码不进日志/回执 ——
+    /// 后两段是 SPAKE2 的共享秘密,而这份读数是要贴进进度日志的。
+    code_slot: String,
+    /// 走过的相位,顺序即判据(space-entry-plan §3.2)。
+    phases: Vec<String>,
+    space_id: String,
+    path: String,
+    space_name: Option<String>,
+    account_id: Option<String>,
+    device_id: String,
+    /// 引导导入报告:与 PC 侧种的那几条对拍(⭐ 判据不是「成功了」,是**数目对得上**)。
+    boot_items: usize,
+    boot_topics: usize,
+    boot_links: usize,
+    boot_images: usize,
+    boot_revisions: usize,
+    boot_ops: usize,
+    /// 归位之后**在新空间库里现读**的条目数(与 boot_items 各自独立取,一个是导入
+    /// 报的、一个是盘上那份库答的)。
+    inbox_count: usize,
+    inbox_latest: Option<String>,
+    /// catalog 重扫后的空间数与 id 清单 —— Integrated 的判据。
+    catalog_ids: Vec<String>,
+    warnings: Vec<String>,
+    entries_after: Vec<Entry>,
+}
+
+/// **C4 面③:加入空间正路**。
+///
+/// ⚠⚠ **这一格的诚实边界比别的格都要紧,先读完再看读数**:
+/// 「加入空间」的编排今天**只存在于安卓壳**(`android/src-tauri/src/coord.rs` 的
+/// `Coord::join_space`),core 里没有。鸿蒙的那一份是 OH-d 的活,今天不存在。
+/// ⇒ 下面这段是那份编排的**誊抄**(§3.2 五相位 + 装配参数逐字照搬),**刻意减掉**
+/// 三样壳层并发件:`HeavyOpGuard`(重活单飞)/ `lifecycle`(账户绑定互斥)/
+/// 取消通道 —— 这一端没有第二个入口能并发触发它,减掉的部分**本轮一个字都没验**。
+/// ⇒ 它证的是「**core 那几件在鸿蒙上真能连成一条链**」:配对短连接 → staging 库上的
+/// 完整 `Transport::run` 引导 → `close` → **`publish_slot_files` 的 renameat2 支**
+/// (463 开的第二处归位站点,461 的平台层探针没碰过它)→ catalog 重扫认得出。
+/// ⛔ 它**不证明** OH-d 的编排写对了。
+///
+/// 参数来路见 [`JOIN_PARAM_ADDR`]。
+#[tauri::command]
+pub async fn c4_join_space(shell: State<'_, Shell>) -> Result<JoinOut, String> {
+    let dir = shell.data_dir.clone();
+    let (server_url, code) = fetch_join_params()?;
+    // 槽号可以进日志(9 位数字,服务器侧的公开路由标识);**共享秘密那部分不行**。
+    // ⚠ 配对码的形是 `<9位槽号>-<秘密上半>-<秘密下半>`(`pair::parse_pair_code`)——
+    // 第一版写的 `.take(2)` 把秘密的上半也印出去了,⛔ 只取第一段。
+    let code_slot = code.split('-').next().unwrap_or("<形不对>").to_string();
+    log::info!("C4 join 取参 服务器={server_url} 槽={code_slot}");
+
+    let mut phases: Vec<String> = Vec::new();
+    let mut warnings: Vec<String> = Vec::new();
+
+    // ---- Preparing:建 `.joining-<ULID>` staging 槽 ----
+    note(&mut phases, "preparing");
+    let slot = spaces::JoiningSlot::create(&dir)?;
+    log::info!("C4 join staging={}", slot.staging_path().display());
+
+    // ---- Paired:专用短连接跑 SPAKE2;账户唯一闸照 coord.rs::account_free 的形 ----
+    note(&mut phases, "pairing");
+    let gate_dir = dir.clone();
+    let gate = move |acc: &str| -> Result<(), String> {
+        let main_db = gate_dir.join("notebook.sqlite3");
+        // ⛔ 磁盘现扫、任一候选读不出即 Err(fail-closed):绝不「读不到就当没有」。
+        for (id, path) in spaces::discover(&main_db, Some(&gate_dir), None)? {
+            let d = spaces::read_descriptor(&id, &path)?;
+            if d.account_id.as_deref() == Some(acc) {
+                return Err(format!(
+                    "这个账户已被空间「{}」使用——空间=账户,一空间一账户",
+                    d.name.unwrap_or(id)
+                ));
+            }
+        }
+        log::info!("C4 join 账户闸过 account={acc}");
+        Ok(())
+    };
+    // ⚠⚠ **`slot.db()` 那个 Arc 必须在 `abort()` 之前先死** —— 写成
+    // `pair_join(&slot.db(), …).await` 的话,那个临时 Arc 活到**整条语句结束**,
+    // 而 abort 就在同一条语句里 ⇒ 槽的引用计数不为 1、`abort()` 响亮拒:
+    // 「放弃槽时连接仍被引用(文件未删,启动清扫兜底)」。
+    // ⭐ **这不是假想** —— 2026-08-23 第一版就这么写的,账户闸拒掉那一趟当场撞上,
+    // 盘上真留了一份 `.joining-*`(靠冷启清扫兜回来)。coord.rs 那边把配对整段包在
+    // 一个 `{}` 里正是为了这个,誊抄时别把那对花括号"顺手"去掉。
+    let pair_outcome = {
+        let slot_db = slot.db();
+        transport::pair_join(&slot_db, &server_url, &code, gate).await
+    };
+    if let Err(e) = pair_outcome {
+        return Err(match slot.abort() {
+            Ok(()) => format!("配对未成:{e}(staging 已清)"),
+            Err(c) => format!("配对未成:{e};且 staging 清理失败:{c}"),
+        });
+    }
+    note(&mut phases, "paired");
+
+    // ---- BootCommitted:staging 库上跑**完整** Transport::run(⛔ 不发明「boot 短连接」)
+    // 装配参数逐字照 coord.rs:Full / 不当源 / 保留 control sender / 独立 shutdown / 共享 latch。
+    let status = Arc::new(Mutex::new(transport::SyncStatus::default()));
+    let (ev_tx, mut ev_rx) = tokio::sync::mpsc::unbounded_channel();
+    // ⚠ ctl_tx 必须活过整个引导期:drop 掉 = run 以 HostGone 退出。
+    let (ctl_tx, ctl_rx) = tokio::sync::mpsc::channel(8);
+    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+    let (notice_tx, notice_rx) = tokio::sync::oneshot::channel();
+    let latch: BootCommitLatch = Arc::new(Mutex::new(Some(notice_tx)));
+    let wrote = Arc::new(tokio::sync::Notify::new());
+    {
+        let db = slot.db();
+        let conn = db.lock().expect("db mutex poisoned");
+        transport::hook_oplog_writes(&conn, wrote.clone());
+    }
+    let task = transport::Transport {
+        db: slot.db(),
+        clock: slot.clock(),
+        status: status.clone(),
+        events: ev_tx,
+        control: ctl_rx,
+        wrote,
+        data_dir: dir.clone(),
+        blob_policy: transport::BlobPolicy::Full,
+        allow_boot_source: false,
+        shutdown: shutdown_rx,
+        boot_commit: latch,
+        restart_flag: Arc::new(Mutex::new(None)),
+        // 手机壳不监听局域网(lan-direct-plan §6:只拨出)。
+        lan: None,
+    };
+    let mut handle = tauri::async_runtime::spawn(transport::run(task));
+    // 引导字节进度转发到日志(⭐ 它是「真的在传东西」的唯一实时字据 —— 这一端没有进度条)。
+    let fwd = tauri::async_runtime::spawn(async move {
+        let mut last = -1i64;
+        while let Some(ev) = ev_rx.recv().await {
+            if let SyncEvent::BootProgress { received, total } = ev {
+                if received == total || received - last > 200_000 {
+                    last = received;
+                    log::info!("C4 join 引导 {received}/{total} 字节");
+                }
+            }
+        }
+    });
+    note(&mut phases, "booting");
+
+    let notice = tokio::select! {
+        n = notice_rx => match n {
+            Ok(n) => n,
+            // latch 的 sender 随 transport 任务消亡而 drop ⇒ 通道关 = 任务已退 = 终败。
+            Err(_) => {
+                fwd.abort();
+                // ⚠ 同上那条引用计数纪律:transport 任务手里也攥着一份槽库的 Arc,
+                // **等它真消亡**再 abort,否则清不掉(tokio abort 是协作式的)。
+                let _ = (&mut handle).await;
+                let err = status.lock().expect("status mutex poisoned").error.clone()
+                    .unwrap_or_else(|| "同步会话意外退出".into());
+                return Err(match slot.abort() {
+                    Ok(()) => format!("引导失败:{err}(staging 已清)"),
+                    Err(c) => format!("引导失败:{err};且 staging 清理失败:{c}"),
+                });
+            }
+        },
+        _ = tokio::time::sleep(JOIN_BOOT_CAP) => {
+            fwd.abort();
+            handle.abort();
+            let _ = (&mut handle).await; // 同上:等它真死,不然槽 abort 不掉
+            let err = status.lock().expect("status mutex poisoned").error.clone()
+                .unwrap_or_else(|| "<状态里没有错>".into());
+            return Err(match slot.abort() {
+                Ok(()) => format!("引导超过 {} 秒没提交(status:{err})", JOIN_BOOT_CAP.as_secs()),
+                Err(c) => format!("引导超时;且 staging 清理失败:{c}"),
+            });
+        }
+    };
+    note(&mut phases, "boot-committed");
+    let r = &notice.report;
+    log::info!(
+        "C4 join 引导报告 items={} topics={} links={} images={} revisions={} ops={} needs_reopen={}",
+        r.items, r.topics, r.links, r.images, r.revisions, r.ops, notice.needs_reopen
+    );
+
+    // ---- Published:停 transport → close → publish(**这一步走 renameat2 那支**)----
+    note(&mut phases, "publishing");
+    let _ = shutdown_tx.send(true);
+    if tokio::time::timeout(Duration::from_secs(10), &mut handle).await.is_err() {
+        handle.abort();
+        let _ = (&mut handle).await;
+        warnings.push("同步任务没在 10 秒内自己停下,已强杀".into());
+    }
+    fwd.abort();
+    drop(ctl_tx);
+    if !notice.needs_reopen {
+        if let Some(w) = notice.post_commit_error.clone() {
+            warnings.push(w);
+        }
+    }
+    let closed = slot
+        .close()
+        .map_err(|f| format!("加入未完成(收尾失败,重启后重试):{}", f.error))?;
+    let published = match closed.publish() {
+        Ok(p) => p,
+        Err((closed, e)) => {
+            return Err(match closed.abort() {
+                Ok(()) => format!("归位失败:{e}(staging 已清)"),
+                Err(c) => format!("归位失败:{e};且 staging 清理失败:{c}"),
+            });
+        }
+    };
+    if let Some(w) = published.cleanup_error.clone() {
+        warnings.push(w);
+    }
+    note(&mut phases, "published");
+    log::info!("C4 join 归位 id={} path={}", published.id, published.path.display());
+
+    // ---- Integrated = 正式文件进 catalog(⛔ 不含任何界面切换,这一端也没界面)----
+    note(&mut phases, "integrating");
+    let catalog = spaces::SpaceCatalog::load(&dir.join("notebook.sqlite3"), Some(&dir), None)?;
+    let catalog_ids: Vec<String> = catalog.spaces().iter().map(|d| d.id.clone()).collect();
+    let desc = catalog
+        .spaces()
+        .iter()
+        .find(|d| d.id == published.id)
+        .ok_or_else(|| format!("归位成功了,但 catalog 里没有 {} —— 这本身就是缺陷", published.id))?
+        .clone();
+    // ⭐ 独立取一次数:引导报告是**导入那一刻**说的,这一句是**盘上那份库**答的
+    // (memory `verification-independence`:期望别与被测数据同源)。
+    let (inbox_count, inbox_latest) = {
+        let conn = spaces::open_space(&desc)?;
+        let rows = zhujian_core::repo::inbox_items(&conn).map_err(|e| e.to_string())?;
+        (rows.len(), rows.first().map(|r| r.content.clone()))
+    };
+    *shell.catalog.lock().expect("catalog mutex poisoned") = Some(catalog);
+    note(&mut phases, "integrated");
+
+    let entries_after = list_dir(&dir);
+    log::info!(
+        "C4 join 成了 空间={} 名={} 账户={} device_id={} 条目={} catalog=[{}] 提醒=[{}] 之后 {}",
+        desc.id,
+        desc.name.as_deref().unwrap_or("<没有名字>"),
+        desc.account_id.as_deref().unwrap_or("<没有>"),
+        desc.device_id,
+        inbox_count,
+        catalog_ids.join(" "),
+        warnings.join(" | "),
+        brief(&entries_after)
+    );
+    Ok(JoinOut {
+        server_url,
+        code_slot,
+        phases,
+        space_id: desc.id.clone(),
+        path: desc.path.display().to_string(),
+        space_name: desc.name.clone(),
+        account_id: desc.account_id.clone(),
+        device_id: desc.device_id.clone(),
+        boot_items: r.items,
+        boot_topics: r.topics,
+        boot_links: r.links,
+        boot_images: r.images,
+        boot_revisions: r.revisions,
+        boot_ops: r.ops,
+        inbox_count,
+        inbox_latest,
+        catalog_ids,
+        warnings,
+        entries_after,
+    })
 }

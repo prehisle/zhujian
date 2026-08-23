@@ -78,7 +78,7 @@ jobs:
 
   # 386:两壳的 cargo test。与上面那格**互不依赖**,同时开跑。
   shells:
-    name: cargo test 两壳(桌面 8 / 安卓 29)
+    name: cargo test 三格(桌面 9 / 安卓 3 / 共享手机层 29)
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v7
@@ -99,6 +99,7 @@ jobs:
           workspaces: |
             src-tauri
             android/src-tauri
+            mobile
 
       # ⚠ 刻意**不**跑 `npm run build`:`dist/` 是 gitignore 的,CI 检出里没有,但
       # `generate_context!` 只有在开了 `custom-protocol` 特性时才去嵌 `frontendDist`
@@ -106,8 +107,12 @@ jobs:
       # 不开它 ⇒ 走 devUrl 那支,`dist/` 缺席照样编得过。别顺手补一步前端构建。
       - run: cd src-tauri && cargo test --quiet
       - run: cd android/src-tauri && cargo test --quiet
+      # OH-d/D1:两只手机壳共用的那一层(coord + 93 条命令面 + 启动装配)搬来了这里。
+      # ⚠ 它含**起真同步服务的「加入空间」端到端集成测**(随源自 android/src-tauri),
+      # 别与重负载并行。
+      - run: cd mobile && cargo test --quiet
 
-  # 448(ci-plan 阶段 2):**五套全在 Windows 上再跑一遍**。
+  # 448(ci-plan 阶段 2):**全套在 Windows 上再跑一遍**(OH-d/D1 起是六套)。
   # 与上面两格互不依赖,三格同时开跑。
   #
   # ⛔ **不在这一格跑那十道门禁**:它们是平台无关的 node 脚本(判的是仓里几份表对不对得上),
@@ -116,7 +121,7 @@ jobs:
   #    WebView2 是镜像预装的,没有那步 ⇒ 拆开只是多付一次检出 + rust-cache 还原。
   # ⚠ 安卓壳这里同样编的是 **host target(x86_64-windows)**,跑纯 Rust 单测,**不需要 NDK**。
   windows:
-    name: cargo test 五套(Windows,唯一的生产桌面端)
+    name: cargo test 六套(Windows,唯一的生产桌面端)
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
@@ -130,8 +135,9 @@ jobs:
             sync-proto
             src-tauri
             android/src-tauri
+            mobile
 
-      # 与 Linux 那两格同口径的五套。⚠ `core` 含起真同步服务器的双库端到端集成测、
+      # 与 Linux 那两格同口径的六套。⚠ `core` 含起真同步服务器的双库端到端集成测、
       # `server` 含真时间短 TTL 集成测,故这一格刻意串行跑,别为省墙钟并发它们。
       - run: cd core && cargo test --quiet
       - run: cd server && cargo test --quiet
@@ -140,3 +146,4 @@ jobs:
       # ⇒ 走 devUrl 那支,`dist/` 缺席照样编得过。
       - run: cd src-tauri && cargo test --quiet
       - run: cd android/src-tauri && cargo test --quiet
+      - run: cd mobile && cargo test --quiet

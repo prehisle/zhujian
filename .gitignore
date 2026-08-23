@@ -9,6 +9,9 @@
 /server/target
 /sync-proto/target
 /core/target
+# 468(OH-d):两只手机壳共用的壳层(zhujian-mobile)。⚠ 逐工程列的清单**加一只 crate
+# 就要来这里加一行** —— 漏了它 `git add -A` 会开始吞 target/(实测:一次 add 卡满 2 分钟)。
+/mobile/target
 
 # 安卓端(P4-b):独立 npm 工程 + 独立 crate target;gradle 分发 zip(137MB,
 # services.gradle.org 被墙,从腾讯镜像下载后放这里供 wrapper file:// 引用)不进 git

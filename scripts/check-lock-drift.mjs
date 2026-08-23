@@ -35,11 +35,22 @@ const WATCH = [
   "curve25519-dalek",
 ];
 
-// 全部应提交 lock 的 crate(P4-b 起含安卓壳;OH-c/C3 起含鸿蒙壳)。
+// 全部应提交 lock 的 crate(P4-b 起含安卓壳;OH-c/C3 起含鸿蒙壳;OH-d/D1 起含共享手机壳层)。
 // ⚠ 鸿蒙壳那份是**第六份**,加进来的理由与安卓壳同条:它经 path 依赖把 core 整套
 // 协议/密码学 crate 解析了一遍,漂了同样会静默破线协议。⛔ 别因为「鸿蒙还没发版」
 // 把它排除在外 —— 漂移是在合库那一刻发生的,不是在发版那一刻。
-const LOCK_DIRS = ["src-tauri", "core", "server", "sync-proto", "android/src-tauri", "ohos/src-tauri"];
+// ⚠ `mobile` 那份是**第七份**。它自己不出产物(两只壳都是 path 依赖它、各自的 lock 才
+// 决定真编进 app 的版本),但**它的 lock 决定 `cd mobile && cargo test` 那 29 支跑在哪一版
+// 密码学实现上** —— 那正是「加入空间」端到端集成测所在的地方。
+const LOCK_DIRS = [
+  "src-tauri",
+  "core",
+  "server",
+  "sync-proto",
+  "android/src-tauri",
+  "ohos/src-tauri",
+  "mobile",
+];
 
 function versionsIn(lockPath) {
   // 缺文件不吞:点名的 lock 必须在(fail-fast,别让门禁静默变窄)。
