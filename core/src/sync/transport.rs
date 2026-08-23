@@ -1153,7 +1153,7 @@ const MAX_REPORTED_RESIDUE: usize = 8;
 ///
 /// 那边「未知项 = 不删 + 封锁」成立的前提是**扫的是本功能专用的 0700 目录**。引导
 /// 这条路两壳给的**不是同一种目录**:桌面是专用的 `<data>/.boot`(`src-tauri` 自己建),
-/// 安卓直接拿 `data_dir` 当 boot 目录(`android/src-tauri/src/coord.rs` 的
+/// 安卓直接拿 `data_dir` 当 boot 目录(`mobile/src/coord.rs` 的
 /// `boot_dir: self.data_dir`)⇒ 那一端目录里全是合法的空间库 / catalog / 配置,
 /// 「未知项」是**常态**,照抄过来就是一条恒真的噪声闸。
 /// ⭐ 翻案的门:**两壳统一成专用 boot 目录**;⚠ 那时要连「升级那一刻,老位置的残留

@@ -100,6 +100,7 @@ mod tests {
         "server/examples",
         "src-tauri/src",
         "android/src-tauri/src",
+        "mobile/src",
         "sync-proto/src",
     ];
 
@@ -116,7 +117,7 @@ mod tests {
         "core/src/test_temp_cleanup.rs",
         "server/src/test_temp.rs",
         "src-tauri/src/test_temp.rs",
-        "android/src-tauri/src/test_temp.rs",
+        "mobile/src/test_temp.rs",
         // example 是独立二进制,看不见任何 crate 的 `#[cfg(test)]` helper;它只建一个
         // 固定名目录、跑一次就完,量级可忽略,故如实记成例外而不是硬塞进 helper。
         "core/examples/migrate-check-0035.rs",

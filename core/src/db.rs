@@ -737,6 +737,9 @@ mod tests {
             ("core", repo.join("core/src")),
             ("desktop", repo.join("src-tauri/src")),
             ("android", repo.join("android/src-tauri/src")),
+            // 468/OH-d:两只手机壳共用的那一层搬来了这里(coord + 93 条命令面 + 启动装配)。
+            // ⛔ 少了它,「谁在调回收入口」这道审计会**安静地少扫一整个 crate**。
+            ("mobile", repo.join("mobile/src")),
         ];
 
         // ---- 自证一:每个参与裁决的文件都给一对哨兵(留生产符号 / 摘测试符号)。
@@ -746,7 +749,7 @@ mod tests {
             ("core/src/spaces.rs", "pub fn create_space", "fn heal_legacy_space_name_migrates_once"),
             ("core/src/sync/boot.rs", "pub fn make_snapshot", "fn raw_snapshot"),
             ("src-tauri/src/lib.rs", "fn get_item_thumb", "mod tests"),
-            ("android/src-tauri/src/coord.rs", "pub async fn move_between", "mod tests"),
+            ("mobile/src/coord.rs", "pub async fn move_between", "mod tests"),
         ] {
             let src = std::fs::read_to_string(repo.join(path)).expect("读源文件");
             let prod = production(&src);
@@ -932,9 +935,11 @@ mod tests {
         );
         assert_eq!(
             open_space,
-            want(&[("android/coord.rs", 2)]),
-            "open_space 会跑回收:安卓装配一处 + 跨空间移动的目标一处。新增一处必须先证明 \
-             那个空间此刻完全无槽(现有两处靠 sup.reserve 与 lifecycle+orchestrate 双锁)"
+            want(&[("mobile/coord.rs", 2)]),
+            "open_space 会跑回收:手机端装配一处 + 跨空间移动的目标一处。新增一处必须先证明 \
+             那个空间此刻完全无槽(现有两处靠 sup.reserve 与 lifecycle+orchestrate 双锁)。\
+             ⚠ 468/OH-d 起这两处住在**两只手机壳共用的 mobile/ 里**(此前在 android 壳)\
+             ⇒ 同一段代码现在同时跑在安卓与鸿蒙上"
         );
     }
 

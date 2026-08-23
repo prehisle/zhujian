@@ -27,7 +27,7 @@
 // 在安卓那边立的编译期故障注入先例)。⛔ 别为了省事把它改成默认开。
 
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync, mkdirSync, copyFileSync, cpSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync, copyFileSync, cpSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -235,10 +235,66 @@ function ohpmInstallOutOfTree() {
   console.log(`   → oh_modules 已解引用拷回 ${hapProject}`);
 }
 
+// ---- 4b. ⭐ 给 WebView 开 DOM 存储(468/OH-d 真机逮到的平台缺陷)----------------
+//
+// **现象**:装上产品包,界面永远停在启动闸那一屏「正在检查本机空间…」。
+// 屏幕上看不出任何异常 —— 那句中文是 `index.html` 里的静态原文(163 契约:壳里保留
+// 中文防首帧闪),**它在 JS 一行都没跑的情况下照样显示**。
+//
+// **真因**(hilog 的 `ARKWEB-CONSOLE` 标签,⛔ 不是猜的):
+// ```text
+// Uncaught TypeError: Cannot read properties of null (reading 'getItem')
+//   source: tauri://localhost/ (20)      ← index.html 明暗档内联脚本
+//   source: .../assets/index-*.js (3)    ← bundle 模块顶层
+// ```
+// ⇒ **ArkWeb 上 `localStorage` 是 `null`**:`@ohos-rs/ability` 建 `Web(...)` 组件时设了
+// `.javaScriptAccess(...)` 却没设 `.domStorageAccess(...)`,而那个属性在 ArkWeb 上
+// **默认 false**。于是前端在第一行就抛,整棵树没起来。
+//
+// ⛔ **刻意不做 localStorage 的 JS shim**:那会是个「看起来能用、重启就丢」的静默兜底
+// (铁律禁),而且要给两处内联脚本 + bundle 各垫一份。这里补的是**根因**,补完
+// `localStorage` 就是 ArkWeb 自己那份,**真的落盘**。
+//
+// ⚠ **为什么是构建期打补丁而不是改仓里的文件**:那一行住在 `oh_modules/`(ohpm 装出来的
+// 依赖,gitignore)。形照本文件对 `build-profile.json5` 那套:**fail-closed 找锚**,
+// 找不到就当场红 —— ⛔ 别改成「找不到就跳过」,那样哪天包升级换了形,症状会是
+// 「装上去又停在启动闸」,而构建一声不吭。
+// ⚠ 它**幂等**:每趟构建都跑,已经打过就跳过(`ohpm install` 每趟重新解引用拷贝)。
+function enableDomStorage() {
+  const rel = join(
+    hapProject,
+    "oh_modules",
+    ".ohpm",
+  );
+  const hits = [];
+  const walk = (dir, depth) => {
+    if (depth > 8) return;
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      const p = join(dir, e.name);
+      if (e.isDirectory()) walk(p, depth + 1);
+      else if (e.name === "DefaultWebview.ets") hits.push(p);
+    }
+  };
+  if (!existsSync(rel)) die(`没有 ${rel} —— ohpm install 那步没跑?`);
+  walk(rel, 0);
+  if (hits.length === 0) die("找不到 DefaultWebview.ets —— @ohos-rs/ability 换形了?(见本函数头注)");
+  let patched = 0;
+  for (const f of hits) {
+    const before = readFileSync(f, "utf8");
+    if (before.includes(".domStorageAccess(")) continue;
+    const anchor = ".javaScriptAccess(data?.javascriptEnable)";
+    if (!before.includes(anchor)) die(`${f} 里找不到 javaScriptAccess 锚 —— 包换形了,别猜,去读那份源码`);
+    writeFileSync(f, before.replace(anchor, `${anchor}\n    .domStorageAccess(true)`), "utf8");
+    patched++;
+  }
+  console.log(`\n── WebView DOM 存储:${patched} 处已开(共 ${hits.length} 份;0 = 本来就开着)`);
+}
+
 // ---- 5. 打包 ---------------------------------------------------------------
 
 try {
   ohpmInstallOutOfTree();
+  enableDomStorage();
   run("hvigorw assembleHap", hvigorw, ["assembleHap", "--no-daemon"], { cwd: hapProject, env: devecoEnv });
 } finally {
   // 正常路径上早点还原(退出钩子里那份是兜底,两处都要有:钩子挡的是 process.exit,
