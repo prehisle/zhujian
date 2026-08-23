@@ -14,6 +14,7 @@
 import { invoke } from "@tauri-apps/api/core";
 
 import { t } from "./i18n";
+import { HAS_SAF_BRIDGE } from "./platform";
 import * as saf from "./saf";
 import { $ } from "./ui";
 
@@ -93,7 +94,15 @@ function render(body: HTMLElement, st: Status, outboxProblem: string): void {
   body.replaceChildren();
 
   if (!saf.hasBridge()) {
-    body.appendChild(el("p", "fine warn-ink", t("backup.noBridge")));
+    // ⭐ **同一个"桥不在",两种完全不同的事实**(471,用户面 33 第②格):
+    //   · 这一端本来就没有 SAF(鸿蒙)⇒ 说「这一端还没有备份,去电脑版做」;
+    //   · 声明有却没挂上(安卓)⇒ 那是构建坏了,照旧说「前端与壳版本不配」。
+    // ⛔ 468 之前只有后一句 —— 它按「只有安卓一个端」写的,搬到鸿蒙上说法就错了
+    //   (没骗人,但把一个平台边界说成了安装故障)。
+    // ⚠ 两句**各自静态**地写出来(⛔ 别写成 `t(cond ? "a" : "b")`):`check-i18n-drift`
+    // 静态核键,动态调用要另进 DYNAMIC_T 登记表 —— 为省一行让门禁少看一处不划算。
+    const why = HAS_SAF_BRIDGE ? t("backup.noBridge") : t("backup.notOnThisEnd");
+    body.appendChild(el("p", "fine warn-ink", why));
     return;
   }
   // ⛔ **不等就什么都不给点**(⛔ 不静默重试、⛔ 不回退到别的落点):这是**漂移**类风险

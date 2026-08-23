@@ -1238,14 +1238,19 @@
       </div>
       <p class="fine" data-i18n="shell.appearanceNote">「自动」跟随系统的浅色 / 深色设置(手机常按日夜自动切);想固定成一种就选亮或暗。只影响这台设备,不同步到别的设备。</p>
 
-      <h2 data-i18n="shell.textSize">界面字号</h2>
-      <div id="textsize-seg" class="seg">
+      <!-- 界面字号(251)。⛔ 三个元素上那枚 data-needs="textzoom" 不是装饰:没有 textZoom 桥的端
+           (鸿蒙)由 main.ts 按构建期常数 HAS_TEXT_ZOOM 把**这三个一起**摘掉(用户面 33 / 471)。
+           ⚠ 刻意**不包一层 div** —— 那会让这枚 h2 变成容器的 :first-child,
+           #settings-pane h2:not(:first-child) 那条节间距当场失效、与上一节的说明字贴死。
+           ⇒ 新增本节的元素时,记得同样带上这枚标记。 -->
+      <h2 data-i18n="shell.textSize" data-needs="textzoom">界面字号</h2>
+      <div id="textsize-seg" class="seg" data-needs="textzoom">
         <button data-textsize="90" data-i18n="shell.size90">小</button>
         <button data-textsize="100" data-i18n="shell.size100">标准</button>
         <button data-textsize="115" data-i18n="shell.size115">大</button>
         <button data-textsize="130" data-i18n="shell.size130">特大</button>
       </div>
-      <p class="fine" data-i18n="shell.textSizeNote">调整全 app 的文字大小(在系统「字体大小」的基础上叠加)。只影响这台设备,不同步到别的设备。</p>
+      <p class="fine" data-i18n="shell.textSizeNote" data-needs="textzoom">调整全 app 的文字大小(在系统「字体大小」的基础上叠加)。只影响这台设备,不同步到别的设备。</p>
 
       <!-- 语言(358 第②笔):与外观 / 字号同族的设备偏好,**不进同步**,也**绝不作
            计费判据**(i18n-plan §0-1:海外华人用中文界面照样是付费目标用户)。改档
@@ -1275,9 +1280,14 @@
            静态 markup 给不出任何一种。 -->
       <h2 data-i18n="backup.title">备份</h2>
       <div id="backup-body"></div>
-      <p class="fine" data-i18n="backup.footRestore">手机上能做备份,但不能从备份还原 —— 真出事时把 .zjbak 文件拿到电脑上的朱简里恢复。</p>
-      <p class="fine" data-i18n="backup.footCode">备份码保存在这台手机上(明文),卸载或清除数据会一起抹掉;抄在纸上的那份是唯一的。</p>
-      <p class="fine" data-i18n="backup.footValid">「有效」只有验过才算 —— 文件名和扩展名证明不了任何事。</p>
+      <!-- ⛔ 这三句诚实边界带 data-needs="saf":**没有 SAF 那条桥的端(鸿蒙)上它们句句不成立**
+           ——「手机上能做备份」这一端做不了、「备份码保存在这台手机上」这一端根本没有码
+           (471 真机上先看见:降级那句刚说完"这一端还没有备份",下面三句接着讲怎么用备份)。
+           ⇒ 由 main.ts 按 HAS_SAF_BRIDGE 一起摘掉;h2 与 body 那句留着,那才是这一端的事实。
+           ⚠ 别把它读成「诚实边界可以省」(§17.12 的义务):有备份的那一端一个字都不少。 -->
+      <p class="fine" data-i18n="backup.footRestore" data-needs="saf">手机上能做备份,但不能从备份还原 —— 真出事时把 .zjbak 文件拿到电脑上的朱简里恢复。</p>
+      <p class="fine" data-i18n="backup.footCode" data-needs="saf">备份码保存在这台手机上(明文),卸载或清除数据会一起抹掉;抄在纸上的那份是唯一的。</p>
+      <p class="fine" data-i18n="backup.footValid" data-needs="saf">「有效」只有验过才算 —— 文件名和扩展名证明不了任何事。</p>
 
       <h2 data-i18n="shell.aboutTitle">关于</h2>
       <div id="about" class="kv"></div>

@@ -113,6 +113,12 @@ export function renderSync(s: SyncStatus) {
   // 而没有扫码器的端(鸿蒙)连 main 上也没有 —— 那时只剩「输码」那半。
   (($("sync-scan-btn").parentElement) as HTMLElement).hidden = !isMain || !HAS_SCANNER;
   $("sync-alt-pair").hidden = !isMain;
+  // 471(用户面 33 第③格):`ghost` 是「这是辅路」的视觉记号。没有扫码器的端(鸿蒙)
+  // 主路整行已经摘掉,输码**就是**这一屏唯一的配对入口 —— 还长着辅路的样子就是排版在
+  // 说另一件事(主按钮位置空着、剩两条像文字链)。⇒ 那时它按主按钮画。
+  // ⛔ 刻意**不**顺手把输码表单也自动摊开(那是空间面「加入空间」的形,那一屏的
+  //   「输码加入」按钮整个不在;这一屏两条辅路互斥折叠,摊开一条 = 得替用户先选一条)。
+  $("sync-alt-pair").classList.toggle("ghost", HAS_SCANNER);
   const altCreate = $("sync-alt-create") as HTMLButtonElement;
   altCreate.textContent = isMain ? t("sync.altCreateMain") : t("sync.altCreateOther");
   altCreate.classList.toggle("ghost", isMain);

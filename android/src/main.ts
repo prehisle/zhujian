@@ -36,7 +36,7 @@ import { $, actionBar, confirmBar, esc, fmtWhen, hideConfirmBar, showBar, showEr
 import { capturePhoto, composeImages, PICK_MAX, pickImages } from "./images";
 import { INPUT_DEBOUNCE_MS } from "./timing";
 // **平台接缝**(OH-d/D3):只在安卓壳里存在的那三条命令。鸿蒙那端由 vite 换成另一份实现。
-import { checkUpdate, takeDeepLink, takeSharedText, type MobileUpdate } from "./platform";
+import { checkUpdate, HAS_SAF_BRIDGE, HAS_TEXT_ZOOM, takeDeepLink, takeSharedText, type MobileUpdate } from "./platform";
 import * as backup from "./backup";
 import * as cardPanel from "./cardpanel";
 import * as filter from "./filter";
@@ -1856,6 +1856,15 @@ async function init() {
   initTheme();
   // 界面字号(251):首帧应用同样已由内联脚本做掉,这里兜同一规则(幂等)。
   initTextSize();
+  // 471(用户面 33):**这一端没有的桥,静态壳里对应那几块整个摘掉**。⛔ 不是禁用、更不是
+  // 留着让它点了高亮却什么也不动(469 在鸿蒙真机上量到的正是后者 = 界面在说谎),也不是
+  // 留着几句只有另一端才成立的说明(471 真机上第二眼看见的那三句备份脚注)。
+  // ⚠ 放在启动闸之前:这些都是静态壳的一部分,摘早不摘晚(晚一帧就是"闪一下才消失")。
+  // ⭐ 加新的桥专属 UI 时:元素上挂 data-needs="<桥名>",然后在这张表里加一行。
+  for (const [need, has] of [["textzoom", HAS_TEXT_ZOOM], ["saf", HAS_SAF_BRIDGE]] as const) {
+    if (has) continue;
+    document.querySelectorAll<HTMLElement>(`[data-needs="${need}"]`).forEach((e) => (e.hidden = true));
+  }
   // 语言(358 第②笔):壳里保留中文原文防首帧闪(163 契约),这里按生效语言统一
   // 覆写静态文案 + 落 <html lang>。放在启动闸之前——封锁页也要说用户那门语言。
   initLang();

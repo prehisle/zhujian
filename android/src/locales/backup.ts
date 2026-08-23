@@ -90,6 +90,9 @@ export const backup = defineMessages({
   "backup.healthCleanupFailed": { zh: "上次的中转文件没清干净(不影响再备份,下次启动会接着清)。", en: "Some staging files were not cleaned up (harmless — the app will keep trying at startup)." },
   "backup.outboxMismatch": { zh: "装的形与预期不符,备份暂时不能用:", en: "The install layout is not what was expected, so backup is unavailable: " },
   "backup.noBridge": { zh: "这个版本的壳没有备份落点桥(前端与壳版本不配)。", en: "This shell build has no backup-folder bridge (front end and shell versions do not match)." },
+  // ⭐ 与上一句**刻意分成两句**(471):上一句说的是「该有却没有」= 装的形不对;
+  // 这一句说的是「这一端就没有这条路」= 平台边界(鸿蒙没有 SAF 那样的文件夹授权入口)。
+  "backup.notOnThisEnd": { zh: "这一端还没有备份 —— 挑文件夹存放的那条系统入口在这个系统上还没接。要备份请用电脑版的朱简。", en: "Backup is not available on this build — the system “pick a folder” entry point is not wired up on this platform yet. Use Zhujian on a computer to back up." },
   "backup.replyUnreadable": { zh: "壳的应答读不懂(前端与壳版本不配?)。", en: "The shell reply could not be read (front end and shell versions may not match)." },
   "backup.notStarted": { zh: "这一趟没能开始。", en: "That attempt could not be started." },
   "backup.notDone": { zh: "这一趟没跑成。", en: "That attempt did not complete." },

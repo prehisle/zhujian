@@ -14,6 +14,26 @@
 /** 与安卓那份同名同形(那边是 `android.json` 里的一条)。这一端恒不产生它。 */
 export type MobileUpdate = { version: string; versionCode: number; notes: string; url: string };
 
+// ---- 两条原生窄桥:这一端一条都没有(471,用户面 33)---------------------------------
+//
+// 三条窄桥全长在安卓壳的 `MainActivity.kt` 上(`__zhujianSystemBars` / `__zhujianTextSize` /
+// `__zhujianSaf`),鸿蒙壳里一条都没有。⇒ 下面两个常数**不是"还没接"的占位**,
+// 它们就是这一端今天的事实;真接上其中一条时改的是这个文件。
+
+/**
+ * ⛔ 这一端没有 textZoom(ArkWeb 有没有对位 API 今天**没有字据**,别当"马上就能补")。
+ * ⇒ 设置面里「界面字号」那一整节不渲染 —— 469 真机实测:留着它就是四档点了会高亮、
+ * 屏幕上一个像素不动,而铁律禁静默兜底。
+ */
+export const HAS_TEXT_ZOOM = false;
+
+/**
+ * ⛔ 这一端没有 SAF(那是安卓的文档选择器,鸿蒙的对位物要另写一条 ArkTS 桥)。
+ * ⇒ 备份那一节说的是「这一端还没有备份」,⛔ **不是**安卓那句「前端与壳版本不配」
+ * (468 补记到的那格:说法错、虽然没骗人)。备份要在电脑版上做,同 backup-plan §17.2 那条边界。
+ */
+export const HAS_SAF_BRIDGE = false;
+
 /**
  * 系统分享:**这一端没有这条入口**。
  *

@@ -5,9 +5,16 @@
 // 任何一道门禁守得住这种规模的复制)。
 //
 // 绝大多数模块本来就是端无关的,少数带原生桥的也**天生降级**:
-//   · `theme.ts` / `textsize.ts` —— `window.__zhujianXxx?.set(…)`,桥不在就静默跳过;
-//   · `saf.ts` —— `hasBridge()` 返 false,备份那一节自己显示「这一端没有那条桥」;
+//   · `theme.ts` —— `window.__zhujianSystemBars?.setDark(…)`,桥不在就静默跳过。⭐ **它是这一栏里
+//     唯一一个真站得住的**:明暗档本身由 CSS 生效(`<html data-theme>`)⇒ 用户选的那档**真的翻了**,
+//     选中态没说谎;缺的只是「系统状态栏图标跟着翻」那一格(⚠ 鸿蒙上确实缺,记在 progress-log 471,
+//     ⛔ 别读成"已修");
+//   · `saf.ts` —— `hasBridge()` 返 false,备份那一节显式降级(⭐ 说哪一句由 `HAS_SAF_BRIDGE` 定,见下);
 //   · `images.ts` —— 走的是 WebView 自己的 `<input type=file>`,压根没有桥。
+//
+// ⛔ **`textsize.ts` 曾经也被算进"天生降级"那一栏,那是错的**(469 真机逮到,用户面 33):
+// 那条桥缺席时,字号那四档**点了会高亮、屏幕上一个像素不动**,冷启后还高亮在你选的那档
+// ⇒ **界面在说谎**。⇒ 它不能靠 `?.` 兜,得靠下面的 `HAS_TEXT_ZOOM` 在**构建期**把整节摘掉。
 //
 // **只有这三样不是** —— 它们是三条 `invoke`,而那三条命令**只在安卓壳里存在**
 // (Intent 薄桥的取走端 ×2 + `android.json` 更新检查)。在鸿蒙上调它们会被
@@ -25,6 +32,29 @@ import { cancel, checkPermissions, Format, requestPermissions, scan } from "@tau
 
 /** 安卓更新清单里的一条(`android.json` 与 `tauri.conf.json` 同源)。 */
 export type MobileUpdate = { version: string; versionCode: number; notes: string; url: string };
+
+// ---- 两条原生窄桥「这一端有没有」(471,用户面 33)-----------------------------------
+//
+// ⭐ 它们与 `HAS_SCANNER` 同族:**构建期常数,不是运行期探测**。为什么不直接问
+// `window.__zhujianXxx` 在不在 —— 那答的是「今天挂上没有」,答不了「这一端**该不该**有」,
+// 而这两件事的处置**正好相反**:该有却没有 = 构建坏了(要响亮),本来就没有 = 显式降级。
+
+/**
+ * 界面字号那四档(251)靠 WebView 的 textZoom,桥在安卓壳的 `MainActivity.kt`。
+ *
+ * ⛔ **false 时设置面里那一整节(标题 + 四档 + 说明)不渲染** —— 469 在鸿蒙真机上量到:
+ * 桥不在时那四档**点了会高亮、整屏文字逐像素不变、冷启后还高亮着**,是「界面在说谎」。
+ * ⇒ 同 `HAS_SCANNER` 的处置:入口**不存在**,而不是"入口在、只是永远不说话"。
+ */
+export const HAS_TEXT_ZOOM = true;
+
+/**
+ * 备份落点那条 SAF 桥(§17.5)在不在这一端。⚠ 与 `saf.hasBridge()` **不是一回事**,
+ * 两个一起看才分得开备份那一节该说哪句话:
+ *   · `HAS_SAF_BRIDGE=true` 而 `hasBridge()=false` ⇒ **该有却没挂上** = 前端与壳版本不配;
+ *   · `HAS_SAF_BRIDGE=false` ⇒ **这一端本来就没有备份这条路**(鸿蒙),说的得是这句。
+ */
+export const HAS_SAF_BRIDGE = true;
 
 /** 系统分享(ACTION_SEND)攒下的文本,取一条走一条;没有了返回 null。 */
 export function takeSharedText(): Promise<string | null> {
