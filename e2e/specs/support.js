@@ -222,3 +222,33 @@ export async function shownText(el) {
   if (!(await node.isDisplayed())) throw new Error("元素存在但不可见");
   return browser.execute((n) => n.textContent.trim(), node);
 }
+
+// 点**标签轴**上文字含 `label` 的那枚 pill(共享件,别再各 spec 抄一份选择器)。
+//
+// ⛔ **必须限定在标签轴那一行**:`.tf-pill` 在一条筛选行里**不唯一** —— 类型轴
+// (`#kind-filter`)与时间轴(`#time-filter`,461 起)发的也是 `.tf-pill`,而时间轴的
+// 重置档**复用同一个词「所有」**、且在 DOM 里排在标签轴**之前**(`board.ts` / `inbox.ts`
+// 的 `.filter-row`:kind → time → main>topic)⇒ 裸 `querySelectorAll(".tf-pill")` 再
+// `.find()` 取的是**文档序第一枚**,点「所有」会被时间轴截胡。
+//
+// **475 补的判例**:那笔时间轴没跟着改 spec,公开仓 CI 上 `board.e2e.js` 1 例 +
+// `inbox-filter.e2e.js` 4 例全部 `waitUntil 8s` 超时;更阴的是 `board-multitag` 与
+// `board-tag-collapse` 的 `after` 钩子 —— 它们**静默**没复位(点在了时间轴上),把标签选态
+// 泄漏给后面的 spec,而那两只自己是绿的。⭐ 第五根轴进来时**改这一处就够了**。
+//
+// ⚠ 找不到就**抛**,不做 `if (p) p.click()` 那种宽容:复位钩子悄悄不复位,正是上面那半。
+async function pickTopicPill(bar, label) {
+  await browser.execute(
+    (sel, l) => {
+      const p = [...document.querySelectorAll(`${sel} .tf-pill`)].find((x) =>
+        x.textContent.includes(l),
+      );
+      if (!p) throw new Error(`标签轴(${sel})上没有这枚 pill:${l}`);
+      p.click();
+    },
+    bar,
+    label,
+  );
+}
+export const boardPickTopicPill = (label) => pickTopicPill("#topic-filter", label);
+export const inboxPickTopicPill = (label) => pickTopicPill("#idea-topic-filter", label);

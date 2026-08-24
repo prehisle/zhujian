@@ -1,5 +1,5 @@
 import { browser, $, expect } from "@wdio/globals";
-import { invoke, goNotebook, boardAction, openCompose } from "./support.js";
+import { invoke, goNotebook, boardAction, openCompose, boardPickTopicPill } from "./support.js";
 
 // The backend status of a task by title — the real closed loop we assert against
 // (the DOM is driven by drags; the DB is the source of truth).
@@ -204,12 +204,9 @@ describe("任务看板 · 按主题筛选", () => {
   const TAGGED = "看板戊-带主题";
   const UNTAGGED = "看板己-无主题";
 
-  // Click the filter pill whose text contains `label`.
-  async function clickPill(label) {
-    await browser.execute((l) => {
-      [...document.querySelectorAll(".tf-pill")].find((p) => p.textContent.includes(l)).click();
-    }, label);
-  }
+  // 点标签轴上文字含 `label` 的那枚 pill。⛔ 走共享件,别在这里裸取 `.tf-pill`
+  // ——一条筛选行里它不唯一(理由与判例见 support.js 的 pickTopicPill 头注)。
+  const clickPill = boardPickTopicPill;
   const exists = (title) => $(`.tcard*=${title}`).isExisting();
 
   before(async () => {

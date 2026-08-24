@@ -1,5 +1,5 @@
 import { $, expect, browser } from "@wdio/globals";
-import { invoke, goNotebook, boardAction, shownText } from "./support.js";
+import { invoke, goNotebook, boardAction, shownText, boardPickTopicPill } from "./support.js";
 
 // Feature 3: a board card carries SEVERAL tags (M:N). Add one via the ＋ picker, drop one
 // via a chip's ✕; the filter bar treats a card as belonging to EACH of its tags.
@@ -58,10 +58,7 @@ describe("任务看板 · 多标签", () => {
 
   it("多标签筛选 → 同一任务在它挂的每个标签下都出现", async () => {
     const exists = () => $(`.tcard*=${TASK}`).isExisting();
-    const clickPill = (label) =>
-      browser.execute((l) => {
-        [...document.querySelectorAll(".tf-pill")].find((p) => p.textContent.includes(l)).click();
-      }, label);
+    const clickPill = boardPickTopicPill;
 
     // Tagged with BOTH — it shows under A and under B.
     await clickPill(A);
@@ -159,10 +156,9 @@ describe("任务看板 · 多标签筛选(OR/并集)", () => {
 
   after(async () => {
     // 复位到「所有」,别把选态泄漏给后续共享同库的 spec。
-    await browser.execute(() => {
-      const all = [...document.querySelectorAll(".tf-pill")].find((p) => p.textContent.includes("所有"));
-      if (all) all.click();
-    });
+    // ⚠ 475 补:这里原先裸取 `.tf-pill` + `if (all)`,时间轴一进来就**静默**点在了时间轴上
+    // ——本 spec 照样绿,泄漏的选态却让后面的 board.e2e.js 超时。走共享件,找不到就抛。
+    await boardPickTopicPill("所有");
     for (const id of ids) {
       await invoke("archive_task", { id });
       await invoke("purge_task", { id });
@@ -222,9 +218,7 @@ describe("任务看板 · 多标签筛选(OR/并集)", () => {
       timeout: 8000,
     });
     // 点「无标签」应清掉甲、只显无标签条目(不是与甲 OR 到一起)。
-    await browser.execute(() => {
-      [...document.querySelectorAll(".tf-pill")].find((p) => p.textContent.includes("无标签")).click();
-    });
+    await boardPickTopicPill("无标签");
     await browser.waitUntil(
       async () => (await exists(NONE)) && !(await exists(ONLY_A)) && !(await exists(BOTH)),
       { timeout: 8000, timeoutMsg: "无标签未与具体标签互斥" },

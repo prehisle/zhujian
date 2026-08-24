@@ -1,5 +1,5 @@
 import { $, expect, browser } from "@wdio/globals";
-import { invoke, goNotebook } from "./support.js";
+import { invoke, goNotebook, boardPickTopicPill } from "./support.js";
 
 // 筛选条里父子标签折叠(共享件 filter-bar.ts,看板/灵感同源——这里覆盖看板侧接线):
 // `父/子` 前缀且存在同名父 → 子标签 pill 收到父 pill 下,默认收起(不显),点父 pill 上的
@@ -84,9 +84,8 @@ describe("任务看板 · 筛选条父子标签折叠", () => {
         ),
       { timeout: 8000, timeoutMsg: "点父 pill 主体未筛选" },
     );
-    // 复位到「所有」,别把选态泄漏给后续 spec。
-    await browser.execute(() => {
-      [...document.querySelectorAll(".tf-pill")].find((p) => p.textContent.includes("所有")).click();
-    });
+    // 复位到「所有」,别把选态泄漏给后续 spec。⚠ 同 board-multitag 那处:475 补之前
+    // 这一句被时间轴截胡,静默没复位(共享件的头注记着整条判例)。
+    await boardPickTopicPill("所有");
   });
 });

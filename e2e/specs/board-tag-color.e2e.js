@@ -44,7 +44,8 @@ describe("标签颜色 · 看板呈现", () => {
 
   it("筛选条里该标签的钮带一颗同色的色点(.tf-dot)", async () => {
     const dotColor = await browser.execute((tag) => {
-      const pill = [...document.querySelectorAll(".tf-pill")].find((p) => p.textContent.includes(tag));
+      // ⛔ 限定标签轴:`.tf-pill` 在筛选行里不唯一(support.js pickTopicPill 头注)。
+      const pill = [...document.querySelectorAll("#topic-filter .tf-pill")].find((p) => p.textContent.includes(tag));
       const dot = pill?.querySelector(".tf-dot");
       return dot ? dot.style.getPropertyValue("--tag-color").trim() : null;
     }, TAG);

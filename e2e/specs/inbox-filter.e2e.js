@@ -33,7 +33,7 @@ describe("灵感 · 标签筛选与文本过滤", () => {
   // Click the pill whose label contains `label` (textContent also carries the count).
   async function pickPill(label) {
     await browser.execute((l) => {
-      const p = [...document.querySelectorAll(".v-inbox .tf-pill")].find((x) =>
+      const p = [...document.querySelectorAll("#idea-topic-filter .tf-pill")].find((x) =>
         x.textContent.includes(l),
       );
       if (!p) throw new Error("pill not found: " + l);
@@ -159,7 +159,7 @@ describe("灵感 · 标签筛选与文本过滤", () => {
 
     // 两维正交:文本只收窄列表,不改「T1 下有多少」——pill 计数仍是全量 2。
     const n = await browser.execute((l) => {
-      const p = [...document.querySelectorAll(".v-inbox .tf-pill")].find((x) =>
+      const p = [...document.querySelectorAll("#idea-topic-filter .tf-pill")].find((x) =>
         x.textContent.includes(l),
       );
       return p.querySelector(".tf-n").textContent;
