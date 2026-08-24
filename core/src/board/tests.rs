@@ -697,3 +697,188 @@ fn items_schema_survives_the_rebuild_byte_for_byte() {
     drop(conn);
     cleanup(&path);
 }
+
+// ---- 5) read model 与「什么是任务态」的唯一判据(B-b 第 2 段) -------------------------
+
+/// 在库里直接种一个用户建的任务列。
+///
+/// ⚠ **直插是本版唯一的造法**:建列命令要发 `board_column/create` op,而 oplog 的词汇表
+/// 归 B-c(plan §11 的排序问题按出路 ① 定)⇒ 此刻造不出那枚 op。故这些行是**无 create
+/// 背书**的 —— B-c 的 `count_unbacked_rows` 会认得它们,本段的读模型与耦合判据不看背书。
+fn plant_user_column(conn: &Connection, id: &str, title: &str, position: &str) {
+    conn.execute(
+        "INSERT INTO board_column (id, title, kind, system, position, created_at) \
+         VALUES (?1, ?2, 'task', 0, ?3, '2026-08-24T00:00:00.000Z')",
+        [id, title, position],
+    )
+    .expect("用户建的 task 列");
+}
+
+/// 给一列盖上墓碑。**绕开 ④** —— 本版盖不上(见模块头注(一));而「远端一枚合法
+/// tombstone 到了」是 §4.3 明确要支持的形,读模型与目标列判据都得答得出。
+///
+/// ⚠ 同时开着回放语境:① 非空列不许删**带豁免**,正是为这条路留的
+/// (本地拦、合法的远端事实放行,§2.3)。
+fn plant_tombstone(conn: &Connection, id: &str) {
+    conn.execute_batch("DROP TRIGGER IF EXISTS trg_board_column_tombstone_reject").unwrap();
+    conn.execute("INSERT INTO sync_replay_active (flag) VALUES (1)", []).unwrap();
+    conn.execute(&set_marker(id, &format!("'{REMOTE_HLC}'")), []).expect("远端墓碑落地");
+    conn.execute("DELETE FROM sync_replay_active", []).unwrap();
+}
+
+/// read model 的三格:读序 `(position, id)`、**含已删列**、`live_items` 只数活的。
+#[test]
+fn read_model_lists_every_column_in_key_order_with_live_counts() {
+    let mut conn = fresh_db("read-model");
+    let ids = |conn: &Connection| -> Vec<String> {
+        list_columns(conn).unwrap().into_iter().map(|c| c.id).collect()
+    };
+    assert_eq!(
+        ids(&conn),
+        ["inbox", "filed", "todo", "doing", "confirming", "done"],
+        "读序 = position 升序(a0..a5),⛔ 别按 id 或插入序"
+    );
+    for c in list_columns(&conn).unwrap() {
+        assert_eq!(c.live_items, 0, "新库每列都是空的");
+        assert!(!c.deleted);
+        assert_eq!(c.system, c.kind == "idea", "今天恰是灵感两列 = 系统列");
+    }
+
+    // 新列按 position 插进序列中间(b00 在 a5 之后;a15 在 a1 与 a2 之间)。
+    plant_user_column(&conn, "u_tail", "验收中", "b00");
+    plant_user_column(&conn, "u_mid", "插队", "a15");
+    assert_eq!(
+        ids(&conn),
+        ["inbox", "filed", "u_mid", "todo", "doing", "confirming", "done", "u_tail"]
+    );
+
+    // live_items:回收站与成就归档里的都不算(那两根轴上的卡不在看板上)。
+    let mut clock = crate::clock::Clock::load(&conn).unwrap();
+    let idea = crate::notes::capture(&mut conn, &mut clock, "一条灵感").unwrap();
+    let t1 = crate::task::create(&mut conn, &mut clock, "活的", None, None, None).unwrap();
+    let t2 = crate::task::create(&mut conn, &mut clock, "要进回收站的", None, None, None).unwrap();
+    let t3 = crate::task::create(&mut conn, &mut clock, "要进成就册的", None, None, None).unwrap();
+    crate::task::archive(&mut conn, &mut clock, &t2).unwrap();
+    crate::task::transition(&mut conn, &mut clock, &t3, "done").unwrap();
+    crate::task::seal(&mut conn, &mut clock, &t3).unwrap();
+    let by_id: std::collections::HashMap<String, i64> =
+        list_columns(&conn).unwrap().into_iter().map(|c| (c.id, c.live_items)).collect();
+    assert_eq!(by_id["inbox"], 1, "{idea} 在未归类");
+    assert_eq!(by_id["todo"], 1, "{t1} 活着;{t2} 进了回收站、{t3} 进了成就册,都不算");
+    assert_eq!(by_id["done"], 0);
+}
+
+/// §7.1d:`is_title_overridden` 是**终态判据**,不是「查 oplog 有没有改过名」。
+///
+/// ⭐ 判据选型的要害就在**改回默认名**那一格:历史判据(有没有 `set_field{title}` 背书)
+/// 会答「改过」,而压实还会 DROP 掉旧 oplog 让它连历史都读不到(§7.1d,同 `born_device`
+/// 那条判例)。终态判据两边都答得准。
+#[test]
+fn title_override_is_a_terminal_judgement_so_renaming_back_clears_it() {
+    let conn = fresh_db("title-override");
+    let overridden = |conn: &Connection, id: &str| -> bool {
+        list_columns(conn).unwrap().into_iter().find(|c| c.id == id).unwrap().is_title_overridden
+    };
+    for seed in SEED_COLUMNS {
+        assert!(!overridden(&conn, seed.id), "{} 出厂就是 canonical 名", seed.id);
+    }
+
+    let rename = |title: &str| {
+        conn.execute("UPDATE board_column SET title = ?1 WHERE id = 'todo'", [title]).unwrap();
+    };
+    rename("我的待办");
+    assert!(overridden(&conn, "todo"), "改过名 ⇒ 显示同步来的那份");
+    rename("待办");
+    assert!(
+        !overridden(&conn, "todo"),
+        "改回 canonical ⇒ 回到「按 id 查本端字典」——⛔ 别改成查历史"
+    );
+
+    plant_user_column(&conn, "u1", "待办", "b00");
+    assert!(
+        overridden(&conn, "u1"),
+        "用户建的列没有 canonical 可比,哪怕名字与某个种子撞了也只能照显"
+    );
+}
+
+/// 不变量 3:「这一行是不是任务」只由列的 `kind` 说了算 —— 一个**自定义** task 列上的卡,
+/// 全部任务面(看板 / CAS / 归档 / 统计轴)都要认得它,灵感面都不许收它。
+///
+/// ⚠ 这只测的样本坐标**只有 kind 判据答得出**(首版自检清单 13):`u_task` 是个 ULID 形的
+/// 新 id,六值字面量那版会把它当灵感 ⇒ 一旦有人把 `TASK_STAGES` 改回字面量,这里必红。
+#[test]
+fn taskness_is_read_from_the_column_kind_not_a_literal_list() {
+    let mut conn = fresh_db("taskness");
+    plant_user_column(&conn, "01USERCOLUMN00000000000001", "验收中", "a45");
+    let col = "01USERCOLUMN00000000000001";
+    assert!(is_live_task_column(&conn, col).unwrap());
+    assert!(!is_live_task_column(&conn, "inbox").unwrap(), "灵感列不是拖拽落点");
+    assert!(!is_live_task_column(&conn, "01NOSUCHCOLUMN0000000001").unwrap(), "没有的列不是落点");
+
+    let mut clock = crate::clock::Clock::load(&conn).unwrap();
+    let id = crate::task::create(&mut conn, &mut clock, "拖进自定义列", None, None, None).unwrap();
+    crate::task::transition(&mut conn, &mut clock, &id, col).expect("todo → 自定义列");
+
+    assert_eq!(crate::repo::active_task_stage(&conn, &id).unwrap().as_deref(), Some(col));
+    assert_eq!(crate::repo::column_task_ids(&conn, col).unwrap(), vec![id.clone()]);
+    let board = crate::repo::list_tasks(&conn).unwrap();
+    assert_eq!(board.len(), 1, "看板读得到它");
+    assert_eq!(board[0].stage, col);
+    assert!(crate::repo::live_ideas(&conn).unwrap().is_empty(), "⛔ 不许漏进灵感视图");
+    let position: Option<String> = conn
+        .query_row("SELECT position FROM items WHERE id = ?1", [&id], |r| r.get(0))
+        .unwrap();
+    assert!(position.is_some(), "任务列必须有排序键(不变量 3,耦合触发器守)");
+
+    // 回收站也走同一条轴:任务的回收站与灵感的回收站是两个面。
+    crate::task::archive(&mut conn, &mut clock, &id).unwrap();
+    assert_eq!(crate::repo::archived_tasks(&conn).unwrap().len(), 1);
+    assert!(crate::repo::idea_trash(&conn).unwrap().is_empty());
+}
+
+/// §4.3 已删的列 = **只读收容区**:卡还在、还算任务,但只出不进。
+///
+/// ⚠ 三条断言各由**不同**的一句话决定(清单 13):`deleted` 由读模型算、
+/// 「进不去」由 `is_live_task_column` 那句 `!deleted` 决定、「还算任务」由
+/// `TASK_COLUMN_IDS` **不带** `tombstoned_at` 条件决定 —— 后者要是被人「顺手补严」,
+/// 卡会当场从看板与回收站里一起消失。
+#[test]
+fn a_deleted_column_is_a_read_only_containment_area() {
+    let mut conn = fresh_db("deleted-col");
+    let col = "01USERCOLUMN00000000000002";
+    plant_user_column(&conn, col, "要被删的列", "a45");
+    let mut clock = crate::clock::Clock::load(&conn).unwrap();
+    let inside = crate::task::create(&mut conn, &mut clock, "留在收容区的卡", None, None, None)
+        .unwrap();
+    crate::task::transition(&mut conn, &mut clock, &inside, col).unwrap();
+    plant_tombstone(&conn, col);
+
+    let row = list_columns(&conn).unwrap().into_iter().find(|c| c.id == col).unwrap();
+    assert!(row.deleted, "读模型要报出「已删」");
+    assert_eq!(row.live_items, 1, "「已删除的列(N)」的那个 N");
+    assert!(!is_live_task_column(&conn, col).unwrap(), "已删的列不再是合法落点");
+
+    // 还算任务:看板读得到、CAS 认得它的当前列。
+    assert_eq!(crate::repo::list_tasks(&conn).unwrap().len(), 1);
+    assert_eq!(crate::repo::active_task_stage(&conn, &inside).unwrap().as_deref(), Some(col));
+
+    // 只出不进。⚠ 排序那条路的样本**只有 ⓪ 那道闸拒得掉**(清单 13):基准列表给的是
+    // 收容区此刻的真实顺序、新序也是一次合法的单卡拖动 ⇒ 后面「看板已变化」「一次只移一张」
+    // 那几把尺全都放行,唯一拦得住它的就是「目标列不是活的任务列」。
+    let outside = crate::task::create(&mut conn, &mut clock, "外面的卡", None, None, None).unwrap();
+    let err = crate::task::transition(&mut conn, &mut clock, &outside, col).unwrap_err();
+    assert!(err.contains("非法的状态流转"), "拖不进去:{err}");
+    let err = crate::task::reorder(
+        &mut conn,
+        &mut clock,
+        &outside,
+        "todo",
+        col,
+        &[inside.clone()],
+        &[inside.clone(), outside.clone()],
+    )
+    .unwrap_err();
+    assert!(err.contains("非法的目标列"), "拖不进去(排序那条路):{err}");
+    crate::task::transition(&mut conn, &mut clock, &inside, "todo").expect("卡拖得出来");
+    assert_eq!(list_columns(&conn).unwrap().into_iter().find(|c| c.id == col).unwrap().live_items, 0);
+}

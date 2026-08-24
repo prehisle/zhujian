@@ -24,11 +24,12 @@ use ulid::Ulid;
 
 use crate::frindex;
 
-/// The four board (task) stages as a SQL list literal — `stage IN (...)`. A fixed
-/// constant from this module, never user input.
-const TASK_STAGES: &str = "('todo', 'doing', 'confirming', 'done')";
-/// The two idea stages as a SQL list literal.
-const IDEA_STAGES: &str = "('inbox', 'filed')";
+/// 任务态列的 id 集合 —— `stage IN {TASK_STAGES}`。0036 起**不再是四值字面量**,而是
+/// `board::TASK_COLUMN_IDS` 那句按 `kind` 取的子查询(不变量 3;⛔ 判据只许有一个正式子,
+/// 别在本模块另写一份)。固定常量,永非用户输入。
+const TASK_STAGES: &str = crate::board::TASK_COLUMN_IDS;
+/// 灵感态列的 id 集合,同上。
+const IDEA_STAGES: &str = crate::board::IDEA_COLUMN_IDS;
 
 /// 单条正文/标题的字节上限(P2-g,codex 轮 M 级):正文全文进同步 op(set_field
 /// payload),服务器帧硬上限 1 MiB——超限的 op 上不了通道,发送端会反复断连、该设备
@@ -1020,6 +1021,18 @@ pub(crate) fn insert_task(
 /// **born_device = 执行移动的这台设备**(0033,identity-plan §3.5 第 3 条已拍板接受):
 /// 这行确实是它在**这个空间**创建的,填本机是诚实的;代价是原作者信息不跨空间。
 /// 记档不修——源空间那行是墓碑、目标是新 ULID 的新生行,署名跟着「在哪个库出生」走。
+///
+/// # ⛔ 两道 0036 起才有的闸(board-columns-plan §8.3)
+///
+/// 1. **只收六个 legacy seed id**。跨空间移动**不保真搬运列身份**:源空间的列 id 在目标
+///    空间不存在、也不该存在(§8.3 十一轮定形),目标 stage 恒 ∈ `{inbox, filed, todo}`
+///    —— 全是旧端认识的值 ⇒ 这条路上没有任何一枚 op 携带自定义 stage。落点由
+///    `move_item::target_stage_for` 算,本函数只是**最后一道**:凡不是 seed 的一律响亮拒,
+///    ⛔ 别改成「不认识就当灵感落 NULL」。
+/// 2. **`position` 按列的 `kind` 判,⛔ 不按字面量列表判**。旧写法是
+///    `match stage { "todo"|"doing"|"confirming"|"done" => front_key, _ => None }` ——
+///    一个自定义 task 列 id 会掉进 `_` 得 `position = NULL`,当场违反不变量 3,
+///    被 `trg_item_stage_kind_coupling_insert` 直接 ABORT。
 pub(crate) fn insert_moved_item(
     conn: &Connection,
     id: &str,
@@ -1028,10 +1041,19 @@ pub(crate) fn insert_moved_item(
     created_at: &str,
     due_on: Option<&str>,
     priority: Option<i64>,
-) -> rusqlite::Result<usize> {
-    let position = match stage {
-        "todo" | "doing" | "confirming" | "done" => Some(front_key(conn, stage, id)?),
-        _ => None,
+) -> Result<usize, String> {
+    if !crate::board::is_seed_column(stage) {
+        return Err(format!(
+            "跨空间移动的目标列只能是内置列,收到「{stage}」——列身份不跨空间(§8.3)"
+        ));
+    }
+    let col = crate::board::column_kind(conn, stage)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("目标空间没有内置列「{stage}」,库结构残缺,拒绝落行"))?;
+    let position = if col.is_task() {
+        Some(front_key(conn, stage, id).map_err(|e| e.to_string())?)
+    } else {
+        None
     };
     conn.execute(
         "INSERT INTO items (id, content, stage, created_at, updated_at, due_on, priority, position, born_stage, born_device) \
@@ -1039,6 +1061,7 @@ pub(crate) fn insert_moved_item(
                  (SELECT value FROM sync_meta WHERE key = 'device_id'))",
         (id, content, stage, created_at, now_iso(), due_on, priority, position),
     )
+    .map_err(|e| e.to_string())
 }
 
 /// Shared board read: task-stage items matching `where_sql` (alias `i`), ordered by

@@ -24,8 +24,53 @@ use ulid::Ulid;
 use crate::clock::Clock;
 use crate::{oplog, repo, replay};
 
-/// 六个活跃 stage(v1 只移活跃条目:回收站/成就归档是史实轴,不给入口,§4)。
-const ACTIVE_STAGES: [&str; 6] = ["inbox", "filed", "todo", "doing", "confirming", "done"];
+/// §8.3「其余组合」那条**损坏断言**的固定说法。⛔ 它不是 fallback 分支:
+/// 三条不变量叠起来钉死了 `kind='idea'` ⟹ `id ∈ {inbox, filed}`(不变量 2 +
+/// §2.3 那条 `CHECK (system = 1 OR kind = 'task')` + 出生校验「非保留 id 却 system=1」)
+/// ⇒ 健康路径下这句话永远说不出口;说出来了就是库坏了,响亮拒,**绝不许默认迁到某个 seed**。
+const CORRUPT_STAGE_KIND: &str = "条目的列身份自相矛盾";
+
+/// 跨空间移动的**目标落点**(board-columns-plan §8.3,十一轮定形)。
+///
+/// ```text
+/// 源 kind = idea:  inbox → inbox;filed → filed
+/// 源 kind = task:  一律   → todo
+/// 其余组合      → 损坏断言(CORRUPT_STAGE_KIND)
+/// ```
+///
+/// ⭐ **列身份不跨空间**:移动的既有形本来就是「源墓碑 + 目标新生 + 新 ULID」
+/// (cross-space-move-plan),不是保真搬运;源空间的列 id 在目标空间不存在也不该存在,
+/// 照搬要么落成悬空引用、要么就得替用户在目标空间凭空建列(§4.3 已用同样理由否掉)。
+/// ⇒ 目标 `item/create.stage` **恒 ∈ `{inbox, filed, todo}`,全是旧端认识的 legacy 值**
+/// ⇒ 这条路上没有任何一枚 op 携带自定义 stage,**整条路径不进 §5 的发送端闸**。
+///
+/// **代价照实记**:`doing`/`confirming`/`done`/任意自定义 task 列 → 目标 `todo`(流程态降级)。
+/// 这是「跨空间 = 新建一条」的既有语义,**不是数据丢失**;`done_at` 仍按既有移动语义保留。
+///
+/// ⚠ 十轮曾判「目标空间没有 transport ⇒ 拒绝移动」,**十一轮撤回**:手机 `max_live=1` ⇒
+/// 做跨空间移动时目标空间**按定义**没有 runtime,照那条办等于手机上住在自定义列里的卡
+/// 永远移不走。⛔ 别把那半挑回来(§8.3)。
+fn target_stage_for(source_stage: &str, source_kind: &str) -> Result<&'static str, String> {
+    match (source_kind, source_stage) {
+        ("idea", "inbox") => Ok("inbox"),
+        ("idea", "filed") => Ok("filed"),
+        ("task", _) => Ok("todo"),
+        _ => Err(format!(
+            "{CORRUPT_STAGE_KIND}:列「{source_stage}」的 kind 是「{source_kind}」,\
+             这个组合在健康的库里不可能出现,拒绝移动"
+        )),
+    }
+}
+
+/// 读源条目那一列的 `kind`。**列不存在 = 库坏了**(0036 起 `items.stage` 是 FK),响亮拒。
+fn source_kind_of(tx: &Connection, stage: &str) -> Result<String, String> {
+    Ok(crate::board::column_kind(tx, stage)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| {
+            format!("{CORRUPT_STAGE_KIND}:条目指着一个不存在的列「{stage}」,拒绝移动")
+        })?
+        .kind)
+}
 
 /// 一张随迁配图(字节全量在内存里过手——本机两库间没有「旁路」概念,§2.3)。
 #[derive(Clone, PartialEq, Debug)]
@@ -51,7 +96,16 @@ pub(crate) struct CommentPack {
 /// 未必更新它)。counter 区分「无行」与具体值;position 不迁移不比。
 #[derive(PartialEq, Debug)]
 pub(crate) struct Fingerprint {
-    item: (String, String, Option<String>, Option<i64>, String, Option<String>, Option<String>, Option<String>),
+    /// `(content, stage, 那一列的 kind, due_on, priority, created_at, archived_at, sealed_at, done_at)`。
+    /// ⭐ `kind` 是 0036 起加的第三格(§8.3 那条 M):落点由 `(stage, kind)` **这一对**算出
+    /// ⇒ 重验时两格都得没变,否则导出后源列语义被改、二次映射可能与首次不同。
+    ///
+    /// ⚠ **诚实边界**:今天这一格是被 `stage` 那格**蕴含**的 —— `kind` 是出生字段,由
+    /// `trg_board_column_birth_immutable` 冻结 ⇒ 同一个 stage 的 kind 不会变。故它挨不到一刀
+    /// 能把它单独打红(变异对照里是**预期的绿**,归类「另一条的推论」)。留着的理由是
+    /// 规格点名要它、且成本是一次已在同快照里的点查:真有一天 kind 能改(或库被外力改过),
+    /// 承重的就是它。⛔ 别当漏测去补一只「造不出来的」测。
+    item: (String, String, String, Option<String>, Option<i64>, String, Option<String>, Option<String>, Option<String>),
     /// 排序后的 (source_topic_id, exact_title)——不能只比去重后的名字。
     topics: Vec<(String, String)>,
     /// 排序后的 (id, seq, mime, byte_len, sha256)。
@@ -72,7 +126,16 @@ pub(crate) struct Fingerprint {
 pub struct MovePackage {
     pub source_id: String,
     pub(crate) content: String,
-    pub(crate) stage: String,
+    /// 源库里那一列的 id。⛔ **它不是目标落点** —— 0036 起自定义列的 id 是本空间的 ULID,
+    /// 原样发出去就成了目标空间的悬空引用(§8.3 那条 H)。三个名字各有各的用处:
+    /// 这一格只用于**重验**(finalize 时确认源没被搬走)。
+    pub(crate) source_stage: String,
+    /// 源列的 `kind`(`idea` | `task`)。落点由它决定,故它与 [`Self::source_stage`] 一起
+    /// 进指纹、一起重验(§8.3 那条 M)。
+    pub(crate) source_kind: String,
+    /// 目标空间的落点,**恒 ∈ `{inbox, filed, todo}`**(`target_stage_for` 算出、
+    /// import 前再复核一次)。
+    pub(crate) target_stage: String,
     pub(crate) created_at: String,
     pub(crate) due_on: Option<String>,
     pub(crate) priority: Option<i64>,
@@ -311,9 +374,11 @@ pub fn export(conn: &mut Connection, item_id: &str) -> Result<ExportOutcome, Str
     // done_at 保号(0030 单版 writer):带完成时间的条目照常移动——包携 done_at,目标 create
     // 后补一次 set_field 落同值(见 import)。done_at 进移动指纹(下方 + finalize 重验守 H1),
     // 导出后并发改完成时刻会被 finalize 拒删。工序1 的「响亮拒绝已带完成时间的条目」已撤。
-    if !ACTIVE_STAGES.contains(&stage.as_str()) {
-        return Err(format!("条目 stage 异常({stage}),拒绝移动"));
-    }
+
+    // 边界一(§8.3:source export 与 target import 两处各做一次显式损坏断言):
+    // 源列的 kind 决定目标落点,现在就算出来并连同源身份一起封进包里。
+    let source_kind = source_kind_of(&tx, &stage)?;
+    let target_stage = target_stage_for(&stage, &source_kind)?;
 
     // 预检①(§2.3①):活但未物化的图——判据复用 engine 缺字节清单的同一份 SQL
     // 按 item 过滤(不读引擎内存集合)。
@@ -348,7 +413,9 @@ pub fn export(conn: &mut Connection, item_id: &str) -> Result<ExportOutcome, Str
     Ok(ExportOutcome::Ready(Box::new(MovePackage {
         source_id: item_id.to_string(),
         content,
-        stage,
+        source_stage: stage,
+        source_kind,
+        target_stage: target_stage.to_string(),
         created_at,
         due_on,
         priority,
@@ -369,6 +436,20 @@ pub fn import(conn: &mut Connection, clock: &mut Clock, pkg: &MovePackage) -> Re
     repo::ensure_content_fits(&pkg.content)?;
     let tx = conn.transaction().map_err(|e| e.to_string())?;
 
+    // 边界二(§8.3):落点在**这一侧**再算一次,与包里那格对上才往下走。
+    // ⚠ 两边算的是同一个纯函数(唯一正式子),这一句防的不是「算错」,是**包在两个空间
+    //   之间过手时那一格被换掉 / 与另外两格漂开**。
+    let expect = target_stage_for(&pkg.source_stage, &pkg.source_kind)?;
+    if pkg.target_stage != expect {
+        return Err(format!(
+            "{CORRUPT_STAGE_KIND}:移动包的目标列是「{}」,而源身份({}/{})算出的是「{expect}」",
+            pkg.target_stage, pkg.source_kind, pkg.source_stage
+        ));
+    }
+    // 目标侧不查 roster、不求 §5 的闸(§8.3:这条路径整个不进闸),但**六个内置列必须在**
+    // ——落点就钉在它们身上,少一行就是库结构残缺(§8.3 那条 M3)。事务内问,与落行同快照。
+    crate::board::audit_seed_columns(&tx).map_err(|e| format!("目标空间不可用:{e}"))?;
+
     // 新 item ULID:查目标表 + 目标 oplog 历史(entity='item',§2.1 M4——PK 抓不到
     // 已 tombstone、行已消失的旧 id;「移出去再移回来」全靠这道防墓碑压死)。
     let new_id = fresh_id(&tx, "items", "item")?;
@@ -376,7 +457,7 @@ pub fn import(conn: &mut Connection, clock: &mut Clock, pkg: &MovePackage) -> Re
         &tx,
         &new_id,
         &pkg.content,
-        &pkg.stage,
+        &pkg.target_stage,
         &pkg.created_at,
         pkg.due_on.as_deref(),
         pkg.priority,
@@ -596,6 +677,13 @@ pub fn finalize_source(
     }
 
     // 规范指纹重验(H1):任一变化拒删——按 id 盲删会把并发改出的 S1 永久丢掉。
+    //
+    // §8.3 那条 M 要求重验「`source_stage` 未变 ∧ `source_kind` 未变 ∧ 组合仍合法」:
+    // 前两格 0036 起就在指纹的 `item` 元组里(第 2、3 格),这一句一并守掉;
+    // ⚠ **第三格是被前两格结构性蕴含的**,故刻意不再调一次 `target_stage_for` ——
+    // 那是个纯函数,包里的两格是不可变的,且包不跨进程存活(重试拿的是同一个包,
+    // 内存里那一份)⇒ 指纹相等 ⟹ 组合与 export 那一刻逐字相同 ⟹ 仍是它当初判过的合法组合。
+    // 再调一次是不可达的防护(首版自检清单 5),⛔ 别当漏项补回来。
     let now = read_fingerprint(&tx, id)?;
     if now != pkg.fingerprint {
         return Ok(FinalizeOutcome::Kept {
@@ -734,7 +822,7 @@ fn image_digests(tx: &Connection, item_id: &str) -> Result<Vec<(String, i64, Str
 
 /// 当前源状态的规范指纹(export 与 finalize 重验**共用**;字段清单单一来源)。
 fn read_fingerprint(tx: &Connection, item_id: &str) -> Result<Fingerprint, String> {
-    let item = tx
+    let row = tx
         .query_row(
             "SELECT content, stage, due_on, priority, created_at, archived_at, sealed_at, done_at \
              FROM items WHERE id = ?1",
@@ -753,6 +841,10 @@ fn read_fingerprint(tx: &Connection, item_id: &str) -> Result<Fingerprint, Strin
             },
         )
         .map_err(|e| e.to_string())?;
+    // 列的 kind 与 stage 同属一对(§8.3 M),走 board 那份唯一判据取,⛔ 别在这句 SQL 里
+    // 内联第二份「什么是任务态」。
+    let kind = source_kind_of(tx, &row.1)?;
+    let item = (row.0, row.1, kind, row.2, row.3, row.4, row.5, row.6, row.7);
     let topics = read_topics(tx, item_id)?;
     let images = image_digests(tx, item_id)?;
     let counter = read_counter(tx, item_id)?;
@@ -1768,6 +1860,199 @@ tx.execute(\"DELETE FROM sync_replay_active\", []) \
                 FinalizeOutcome::Deleted => panic!("{how}:导出后留言变了,竟把源删了"),
                 FinalizeOutcome::AlreadyGone => panic!("{how}:源不该已消失"),
             }
+        }
+    }
+
+    // ---- §8.3 跨空间移动:目标列解析(B-b 第 2 段) ------------------------------------
+
+    /// 在库里直接种一个用户建的任务列(同 `board::tests::plant_user_column`:本版没有
+    /// 建列命令,词汇归 B-c)。
+    fn plant_user_column(conn: &Connection, id: &str, position: &str) {
+        conn.execute(
+            "INSERT INTO board_column (id, title, kind, system, position, created_at) \
+             VALUES (?1, '验收中', 'task', 0, ?2, '2026-08-24T00:00:00.000Z')",
+            [id, position],
+        )
+        .unwrap();
+    }
+
+    /// §8.3 的映射表就是这个纯函数,**逐格**量它本身。
+    ///
+    /// ⚠ 为什么直接量函数而不走端到端(首版自检清单 13):「其余组合」在健康的库里
+    /// **不可达** —— 三条不变量叠起来钉死了 `kind='idea'` ⟹ `id ∈ {inbox, filed}`
+    /// ⇒ 端到端造不出那个样本,能造出来的话拒它的也会是别的尺(表 CHECK / 出生校验)。
+    #[test]
+    fn target_stage_is_a_pure_function_of_source_kind_and_stage() {
+        assert_eq!(target_stage_for("inbox", "idea").unwrap(), "inbox");
+        assert_eq!(target_stage_for("filed", "idea").unwrap(), "filed");
+        for s in ["todo", "doing", "confirming", "done", "01USERCOLUMN00000000000001"] {
+            assert_eq!(target_stage_for(s, "task").unwrap(), "todo", "{s}:任务列一律降级到 todo");
+        }
+        // 其余组合 = 损坏断言,⛔ 不是 fallback 到某个 seed。
+        for (stage, kind) in [("01USERCOLUMN00000000000001", "idea"), ("inbox", "task2")] {
+            let err = target_stage_for(stage, kind).unwrap_err();
+            assert!(err.contains(CORRUPT_STAGE_KIND), "{stage}/{kind}: {err}");
+        }
+    }
+
+    /// ⭐ §8.3 那条 H 的行为面:自定义 task 列上的卡搬到另一个空间,落 `todo`,
+    /// 且**目标 oplog 里没有任何一枚 op 提到源列的 id**(这正是「这条路上没有自定义
+    /// stage 出门」那句话的可观测形 —— 混版旧端只会看见它认识的六个值)。
+    #[test]
+    fn a_custom_task_column_lands_on_todo_in_the_target_space() {
+        let (mut src, mut sc) = fresh_db("cust-src");
+        let (mut dst, mut dc) = fresh_db("cust-dst");
+        let col = "01USERCOLUMN00000000000001";
+        plant_user_column(&src, col, "a45");
+        let id = task::create(&mut src, &mut sc, "住在自定义列里", Some("2026-09-01"), Some(3), None)
+            .unwrap();
+        task::transition(&mut src, &mut sc, &id, col).unwrap();
+
+        let pkg = export_ready(&mut src, &id);
+        assert_eq!((pkg.source_stage.as_str(), pkg.source_kind.as_str()), (col, "task"));
+        assert_eq!(pkg.target_stage, "todo", "流程态降级 = 既有的「跨空间 = 新建一条」语义");
+
+        let new_id = import(&mut dst, &mut dc, &pkg).unwrap();
+        let (stage, born, position): (String, String, Option<String>) = dst
+            .query_row(
+                "SELECT stage, born_stage, position FROM items WHERE id = ?1",
+                [&new_id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!((stage.as_str(), born.as_str()), ("todo", "todo"));
+        assert!(position.is_some(), "落 todo 列首 ⇒ 必须有排序键(不变量 3)");
+        assert_eq!(repo::column_task_ids(&dst, "todo").unwrap(), vec![new_id.clone()]);
+        let leaked: i64 = dst
+            .query_row(
+                "SELECT COUNT(*) FROM oplog WHERE payload LIKE '%' || ?1 || '%'",
+                [col],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(leaked, 0, "⛔ 目标空间的日志里不许出现源列的 id");
+        // 目标库里也不该凭空多出一个列(§4.3 否掉的那个 (c):替用户建列)。
+        let cols: i64 =
+            dst.query_row("SELECT COUNT(*) FROM board_column", [], |r| r.get(0)).unwrap();
+        assert_eq!(cols, 6, "目标空间还是那六个内置列");
+        assert!(matches!(finalize_source(&mut src, &mut sc, &pkg).unwrap(), FinalizeOutcome::Deleted));
+    }
+
+    /// 灵感两列**保座**(§8.3 的另一半):inbox → inbox、filed → filed。
+    #[test]
+    fn idea_columns_keep_their_seat_across_spaces() {
+        let (mut src, mut sc) = fresh_db("idea-seat-src");
+        let (mut dst, mut dc) = fresh_db("idea-seat-dst");
+        let raw = notes::capture(&mut src, &mut sc, "未归类的").unwrap();
+        let filed = notes::capture(&mut src, &mut sc, "已归类的").unwrap();
+        notes::file_to_topic(&mut src, &mut sc, &filed, None, Some("工作")).unwrap();
+
+        for (id, expect) in [(&raw, "inbox"), (&filed, "filed")] {
+            let pkg = export_ready(&mut src, id);
+            assert_eq!((pkg.source_kind.as_str(), pkg.target_stage.as_str()), ("idea", expect));
+            let new_id = import(&mut dst, &mut dc, &pkg).unwrap();
+            let (stage, position): (String, Option<String>) = dst
+                .query_row("SELECT stage, position FROM items WHERE id=?1", [&new_id], |r| {
+                    Ok((r.get(0)?, r.get(1)?))
+                })
+                .unwrap();
+            assert_eq!(stage, expect);
+            assert_eq!(position, None, "灵感列的 position 必须是 NULL(不变量 3)");
+        }
+    }
+
+    /// 最后一道:`insert_moved_item` 只收六个 legacy seed。
+    ///
+    /// ⚠ 样本坐标只有**这一句**拒得掉(清单 13):`u_task` 在目标库里确实**存在**且是
+    /// `kind='task'` —— FK、耦合触发器、position 值域全都会放行,拒它的只能是这道闸。
+    #[test]
+    fn insert_moved_item_refuses_anything_but_a_seed_column() {
+        let (conn, _c) = fresh_db("seed-only");
+        let col = "01USERCOLUMN00000000000001";
+        plant_user_column(&conn, col, "a45");
+        let err = repo::insert_moved_item(
+            &conn,
+            "01MOVEDITEM0000000000000001",
+            "正文",
+            col,
+            "2026-01-01T00:00:00Z",
+            None,
+            None,
+        )
+        .unwrap_err();
+        assert!(err.contains("只能是内置列"), "{err}");
+        // 六个 seed 都收(灵感两个落 NULL position、任务四个落列首)。
+        for (n, seed) in ["inbox", "filed", "todo", "doing", "confirming", "done"].iter().enumerate()
+        {
+            let id = format!("01MOVEDITEM000000000000{n:04}");
+            repo::insert_moved_item(&conn, &id, "正文", seed, "2026-01-01T00:00:00Z", None, None)
+                .expect(seed);
+        }
+    }
+
+    /// 边界二:包里那格被换掉 / 与源身份漂开 ⇒ import **响亮拒**,且目标一行不落。
+    #[test]
+    fn import_refuses_a_package_whose_target_stage_drifted() {
+        let (mut src, mut sc) = fresh_db("drift-src");
+        let (mut dst, mut dc) = fresh_db("drift-dst");
+        let id = task::create(&mut src, &mut sc, "搬家的", None, None, None).unwrap();
+        let mut pkg = export_ready(&mut src, &id);
+        pkg.target_stage = "doing".to_string(); // 合法 stage、却不是源身份算出来的那个
+
+        let err = import(&mut dst, &mut dc, &pkg).unwrap_err();
+        assert!(err.contains(CORRUPT_STAGE_KIND), "{err}");
+        let rows: i64 =
+            dst.query_row("SELECT COUNT(*) FROM items", [], |r| r.get(0)).unwrap();
+        assert_eq!(rows, 0, "拒了就一行都不许落");
+    }
+
+    /// §8.3 那条 M3:目标侧**不是「无检查」** —— 六个内置列必须在;
+    /// 且**目标事务失败时源分毫未动**(十二轮点名的那格:源不发 tombstone)。
+    ///
+    /// ⚠ 这只测的是 core 这一层的结构事实:`import` 返回 Err ⇒ 编排层的 `?` 在
+    /// `finalize_source` **之前**就退了(`src-tauri/src/spaces.rs` / `mobile/src/coord.rs`
+    /// 两处同形)。源侧断言直接量「有没有 tombstone op」,不经端到端。
+    #[test]
+    fn a_broken_target_space_blocks_the_move_and_leaves_the_source_intact() {
+        let (mut src, mut sc) = fresh_db("broken-dst-src");
+        let (mut dst, mut dc) = fresh_db("broken-dst");
+        let id = task::create(&mut src, &mut sc, "搬不过去的", None, None, None).unwrap();
+        let pkg = export_ready(&mut src, &id);
+        // 目标库的种子被改坏(created_at 不由触发器冻结,是 audit 那一格守的)。
+        dst.execute("UPDATE board_column SET created_at='2020-01-01T00:00:00.000Z' WHERE id='todo'", [])
+            .unwrap();
+
+        let err = import(&mut dst, &mut dc, &pkg).unwrap_err();
+        assert!(err.contains("目标空间不可用"), "{err}");
+        let rows: i64 = dst.query_row("SELECT COUNT(*) FROM items", [], |r| r.get(0)).unwrap();
+        assert_eq!(rows, 0, "目标一行不落");
+        let alive: i64 =
+            src.query_row("SELECT COUNT(*) FROM items WHERE id=?1", [&id], |r| r.get(0)).unwrap();
+        assert_eq!(alive, 1, "源条目还在");
+        assert!(
+            ops_for(&src, "item", &id).iter().all(|o| o.kind != "tombstone"),
+            "⛔ 目标事务失败时源不许发 tombstone"
+        );
+    }
+
+    /// §8.3 那条 M:`(source_stage, source_kind)` 进指纹 ⇒ 导出后源被搬去另一列,
+    /// finalize **拒删**(否则二次映射可能与首次不同,而源那次改动会被静默丢掉)。
+    #[test]
+    fn moving_the_source_to_another_column_blocks_finalize() {
+        let (mut src, mut sc) = fresh_db("stage-moved");
+        let (mut dst, mut dc) = fresh_db("stage-moved-dst");
+        let col = "01USERCOLUMN00000000000001";
+        plant_user_column(&src, col, "a45");
+        let id = task::create(&mut src, &mut sc, "导出后被拖走", None, None, None).unwrap();
+        task::transition(&mut src, &mut sc, &id, col).unwrap();
+        let pkg = export_ready(&mut src, &id);
+        import(&mut dst, &mut dc, &pkg).unwrap();
+
+        task::transition(&mut src, &mut sc, &id, "todo").unwrap(); // 源被拖回内置列
+        match finalize_source(&mut src, &mut sc, &pkg).unwrap() {
+            FinalizeOutcome::Kept { reason } => assert!(reason.contains("被改动"), "{reason}"),
+            FinalizeOutcome::Deleted => panic!("源列变了还把源删了"),
+            FinalizeOutcome::AlreadyGone => panic!("源不该已消失"),
         }
     }
 }

@@ -20,10 +20,11 @@
 /// 所有备份 / 清扫入口必须经 coordinator(⛔ 这一条是冲着笔①-b 的自动备份去的:
 /// 它不会走桌面命令层,门开在壳里就等于没门)。
 pub mod backup;
-/// 看板列(`board_column`,board-columns-plan B 系列,迁移 0036 起)。今天只有唯一的
-/// seed 描述源 `SEED_COLUMNS` 与跟着它走的两道审计 —— 命令面与 read model 是 B-b 第 2 段,
-/// 实体面(词汇 / replay / boot / epoch / registry)整个归 B-c。
-mod board;
+/// 看板列(`board_column`,board-columns-plan B 系列,迁移 0036 起)。公开面只有 read model
+/// (`list_columns` / `BoardColumnRow`);seed 描述源、两道审计与「什么是任务态」那三个判据
+/// 都是 crate 内件。⚠ **写命令面(建/改名/排序/删)随 B-c 落** —— 它要发 `board_column` op,
+/// 而 oplog 词汇表归 B-c(plan §11 的排序问题按出路 ① 定)。
+pub mod board;
 pub mod clock;
 pub mod comments;
 pub mod db;

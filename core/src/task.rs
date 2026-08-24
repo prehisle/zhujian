@@ -12,16 +12,30 @@
 use rusqlite::Connection;
 
 use crate::clock::Clock;
-use crate::{frindex, oplog, repo};
+use crate::{board, frindex, oplog, repo};
 
-/// The four board stages, in pipeline order. Single source of truth: both `legal` and
-/// the drag column-guard read it, so a new stage is added here alone.
-pub(crate) const STATES: [&str; 4] = ["todo", "doing", "confirming", "done"];
+/// 目标列合法性(拖拽 / 流转共用的那一句)。0036 起**列不再是写死的四个**
+/// (board-columns-plan 不变量 3)⇒ 判据从「in 四值字面量」换成
+/// [`board::is_live_task_column`]:行在 ∧ `kind='task'` ∧ 未盖墓碑。
+///
+/// ⚠ **只判 `to`,不判 `from`**:`from` 一律取自 `repo::active_task_stage`,而那句 SQL 的
+/// `stage IN {TASK_STAGES}` 已经保证它是任务列 ⇒ 再判一次是**不可达的防护**
+/// (首版自检清单 5:不可达的防护 = 死码,别加)。
+/// ⚠ 已删的列**只出不进**(plan §4.3 只读收容区):卡拖得出去、拖不进来,
+/// 正是靠这里只卡 `to` 兑现的。
+fn legal(conn: &Connection, from: &str, to: &str) -> Result<bool, String> {
+    if from == to {
+        return Ok(false);
+    }
+    board::is_live_task_column(conn, to).map_err(|e| e.to_string())
+}
 
-/// Whether `from → to` is a legal board move (any stage to any other; not a self-move,
-/// not an unknown stage).
-fn legal(from: &str, to: &str) -> bool {
-    from != to && STATES.contains(&from) && STATES.contains(&to)
+/// 「目标列非法」的统一说法(`reorder` / `reorder_visible` 入口那道)。
+fn ensure_live_task_column(conn: &Connection, to_status: &str) -> Result<(), String> {
+    if board::is_live_task_column(conn, to_status).map_err(|e| e.to_string())? {
+        return Ok(());
+    }
+    Err(format!("非法的目标列:{to_status}"))
 }
 
 /// Move a card to a new stage, validating against its current one. Fails fast if the
@@ -31,7 +45,7 @@ pub fn transition(conn: &mut Connection, clock: &mut Clock, id: &str, to: &str) 
     let from = repo::active_task_stage(&tx, id)
         .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("任务不存在或已归档: {id}"))?;
-    if !legal(&from, to) {
+    if !legal(&tx, &from, to)? {
         return Err(format!("非法的状态流转:{from} → {to}"));
     }
     let changed = repo::set_task_stage(&tx, id, &from, to).map_err(|e| e.to_string())?;
@@ -72,11 +86,10 @@ pub fn reorder(
     base_target_ids: &[String],
     ordered_ids: &[String],
 ) -> Result<(), String> {
-    if !STATES.contains(&to_status) {
-        return Err(format!("非法的目标列:{to_status}"));
-    }
-
     let tx = conn.transaction().map_err(|e| e.to_string())?;
+    // ⓪ 目标列合法性。0036 起这一句要**查库**(列是数据不是常量)⇒ 挪进事务里问,
+    //    与后面那些判据读同一个快照(首版自检清单 10:别隔着一次往返再拿旧事实动手)。
+    ensure_live_task_column(&tx, to_status)?;
 
     // ① the dragged card is on the board and still in the column we dragged it from.
     let cur = repo::active_task_stage(&tx, id)
@@ -122,13 +135,12 @@ pub fn reorder(
         return Ok(());
     }
 
-    // ④ cross-column move: validate against the state machine, then CAS the stage
-    //    (lands provisionally at the target column's end — a valid unique slot; the
-    //    dropped-slot key overwrites it in ⑤).
+    // ④ cross-column move: CAS the stage (lands provisionally at the target column's
+    //    end — a valid unique slot; the dropped-slot key overwrites it in ⑤).
+    //    ⚠ 这里原先还有一句 `legal(from,to)`,0036 起它**恒真**:⓪ 已判过目标列活着且是
+    //    任务列,本 if 判过 from≠to,而 `cur == from_status` 保证 from 本就是任务列
+    //    ⇒ 留着就是不可达的防护(首版自检清单 5)。不变量由测钉住,不由死码守。
     if from_status != to_status {
-        if !legal(from_status, to_status) {
-            return Err(format!("非法的状态流转:{from_status} → {to_status}"));
-        }
         let changed =
             repo::set_task_stage(&tx, id, from_status, to_status).map_err(|e| e.to_string())?;
         if changed != 1 {
@@ -189,10 +201,6 @@ pub fn reorder_visible(
     base_visible_ids: &[String],
     visible_after: &[String],
 ) -> Result<(), String> {
-    if !STATES.contains(&to_status) {
-        return Err(format!("非法的目标列:{to_status}"));
-    }
-
     let mut after_set = std::collections::HashSet::new();
     for x in visible_after {
         if !after_set.insert(x.as_str()) {
@@ -210,6 +218,8 @@ pub fn reorder_visible(
     }
 
     let tx = conn.transaction().map_err(|e| e.to_string())?;
+    // ⓪ 同 `reorder`:目标列合法性 0036 起要查库,故与其余判据同一个快照(清单 10)。
+    ensure_live_task_column(&tx, to_status)?;
 
     let cur = repo::active_task_stage(&tx, id)
         .map_err(|e| e.to_string())?
@@ -261,9 +271,8 @@ pub fn reorder_visible(
         if after_wo != base_visible_ids.iter().map(String::as_str).collect::<Vec<_>>() {
             return Err("跨列拖动不应改变目标列其它可见任务的顺序,已忽略".to_string());
         }
-        if !legal(from_status, to_status) {
-            return Err(format!("非法的状态流转:{from_status} → {to_status}"));
-        }
+        // ⚠ 同 `reorder` ④:那句 `legal` 0036 起恒真(⓪ + 本分支 + `cur == from_status`),
+        //   已按首版自检清单 5 拿掉。
         let changed =
             repo::set_task_stage(&tx, id, from_status, to_status).map_err(|e| e.to_string())?;
         if changed != 1 {

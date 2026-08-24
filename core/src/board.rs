@@ -6,9 +6,20 @@
 //!
 //! # 本模块今天负责什么
 //!
-//! **B-b 第 1 段(本轮)= schema 检查点**:只有 [`SEED_COLUMNS`] 这份唯一 seed 描述源,
+//! **B-b 第 1 段**(476)= schema 检查点:[`SEED_COLUMNS`] 这份唯一 seed 描述源,
 //! 以及两道跟着它走的审计([`audit_seed_columns`] / [`audit_tombstone_apply_empty`],
-//! 由 `boot::strict_battery` 消费)。**本地命令面与 read model 是 B-b 第 2 段**,
+//! 由 `boot::strict_battery` 消费)。
+//!
+//! **B-b 第 2 段(本轮)= read model + 「什么是任务态」的唯一判据**:[`list_columns`]
+//! (两端 UI 的读模型,含 §7.1d 那个 [`BoardColumnRow::is_title_overridden`])、
+//! [`column_kind`] / [`is_live_task_column`],以及给 SQL 用的两片 id 集合
+//! [`TASK_COLUMN_IDS`] / [`IDEA_COLUMN_IDS`]。⭐ **不变量 3「灵感态 vs 任务态由列的 `kind`
+//! 承载」的唯一正式子就在本模块** —— `repo` / `task` / `move_item` 一律引用这里,
+//! ⛔ 别在别处再写一遍六值字面量(清单 14:同一条规则的第二份描述就是漂移源)。
+//!
+//! **写命令面(建列 / 改名 / 排序 / 删列)不在本段**:它要发 `board_column/create` 等 op,
+//! 而 oplog 的词汇表 CHECK 归 **B-c** ⇒ 本版的库里造不出那种 op(plan §11 那个排序问题,
+//! 已按出路 ① 定:第 2 段只做「不发 op 的那半」,写命令随 B-c 落)。
 //! 实体面(oplog 词汇 / replay 两臂 / shape / boot 审计 / epoch 基线与指纹 /
 //! `entity_registry` 十一面)整个归 **B-c**(plan §8.1-1)。
 //!
@@ -39,7 +50,7 @@
 //! | `inbox`/`filed`(`system=1`) | 真 schema-owned:**永无** create/set_field/tombstone | 与 canonical 行**逐字段严格相等**,`tombstoned_at` 必须 NULL |
 //! | 四个 task 种子(`system=0`) | **schema-seeded implicit genesis**:不发 create,但此后 `title`/`position`/`tombstone` **全走普通 op** | 只核出生字段;⛔ **title/position/墓碑不与默认值盲比**——按不变量 2 它们可改名、可排序、可删,那就是用户数据 |
 
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 
 /// 一个种子列的 canonical 出生形。**六行的唯一描述源**(见模块头注)。
 ///
@@ -121,6 +132,145 @@ pub(crate) const SEED_COLUMNS: &[SeedColumn] = &[
         created_at: "2026-08-24T00:00:00.000Z",
     },
 ];
+
+// ---- 「什么是任务态」的唯一正式子(不变量 3) ------------------------------------------
+
+/// SQL 片段:**任务态列的 id 集合**,给 `stage IN {TASK_COLUMN_IDS}` 用。
+///
+/// ⭐ 0036 之前这里是六值字面量 `('todo','doing','confirming','done')`,并由 `items` 上那条
+/// stage 枚举 CHECK 在底下兜着;0036 起 CHECK 换成了指向 `board_column` 的 FK,**「这一行是
+/// 不是任务」只有一个答案:它那列的 `kind`**(不变量 3)。
+///
+/// ⚠ **含已盖墓碑的列**,这是刻意的:删掉的列是「只读收容区」,行永不物理删除(不变量 5),
+/// 上面的卡**仍然是任务** —— 回收站 / 成就归档 / 统计轴都还要数得到它们(plan §4.3)。
+/// 要「活着的列」用 [`is_live_task_column`],别在 SQL 里另拼一份带 `tombstoned_at` 的。
+pub(crate) const TASK_COLUMN_IDS: &str = "(SELECT id FROM board_column WHERE kind = 'task')";
+
+/// SQL 片段:**灵感态列的 id 集合**(同 [`TASK_COLUMN_IDS`] 的形)。
+///
+/// ⚠ 今天它恒等于 `('inbox','filed')` —— 不变量 2 + §2.3 那条 `CHECK (system = 1 OR
+/// kind = 'task')` 合起来钉死「`kind='idea'` ⟹ id ∈ {inbox, filed}」。**照样走 kind**:
+/// 判据只许有一个正式子,不许因为「今天算出来一样」就退回字面量。
+pub(crate) const IDEA_COLUMN_IDS: &str = "(SELECT id FROM board_column WHERE kind = 'idea')";
+
+/// 这个 id 是不是**迁移种下的那六个之一**。
+///
+/// ⚠ 它答的是「id 在不在 [`SEED_COLUMNS`] 这份清单里」,**不查库** —— 故意的:
+/// 跨空间移动要在**目标库**上判「这个落点是不是内置列」,而那句判断必须与本机库的
+/// 现状无关(§8.3:目标 stage 恒 ∈ `{inbox, filed, todo}`,全是旧端也认识的值)。
+/// 行在不在、是什么 kind,另问 [`column_kind`]。
+pub(crate) fn is_seed_column(id: &str) -> bool {
+    SEED_COLUMNS.iter().any(|s| s.id == id)
+}
+
+/// 一列的当前身份。⛔ 别用 stage 字面量代答这两格中的任何一格。
+///
+/// ⚠ **刻意不含 `system`**:这一层的消费者(拖拽目标判据 / 跨空间落点 / 指纹)一个都不看
+/// 「是不是系统列」,那一格只有 read model 的 UI 要(见 [`BoardColumnRow::system`])
+/// —— 算出来没人用的值就是判据缺失的影子(首版自检清单「修完之后」第 3 问)。
+pub(crate) struct ColumnKind {
+    /// `idea` | `task`(出生字段,`trg_board_column_birth_immutable` 冻结)。
+    pub(crate) kind: String,
+    /// 已盖墓碑 = 只读收容区(不变量 5:行永不物理删除)。
+    pub(crate) deleted: bool,
+}
+
+impl ColumnKind {
+    pub(crate) fn is_task(&self) -> bool {
+        self.kind == "task"
+    }
+}
+
+/// 读一列的身份;**列不存在 → `None`**。
+///
+/// ⚠ 拿 `items.stage` 来查时 `None` 是**不可达**的(0036 起那是 FK)⇒ 调用方碰上它要响亮报
+/// 「数据损坏」,⛔ 别写成默认值分支。
+pub(crate) fn column_kind(conn: &Connection, id: &str) -> rusqlite::Result<Option<ColumnKind>> {
+    conn.query_row(
+        "SELECT kind, tombstoned_at IS NOT NULL FROM board_column WHERE id = ?1",
+        [id],
+        |r| Ok(ColumnKind { kind: r.get(0)?, deleted: r.get(1)? }),
+    )
+    .optional()
+}
+
+/// 「这个 id 是不是一个**活着的任务列**」——看板拖拽 / 流转的**目标**判据。
+///
+/// 三格缺一不可:行在(不是凭空一个 id)、`kind='task'`(不许把卡拖进灵感列)、
+/// **未盖墓碑**(已删列是只读收容区,卡只出不进,plan §4.3)。
+pub(crate) fn is_live_task_column(conn: &Connection, id: &str) -> rusqlite::Result<bool> {
+    Ok(column_kind(conn, id)?.is_some_and(|c| c.is_task() && !c.deleted))
+}
+
+// ---- read model(两端 UI 的唯一读法) ---------------------------------------------------
+
+/// 一列的当前态。**两端 UI 只读这个**,⛔ 别各自去查 `board_column`。
+pub struct BoardColumnRow {
+    pub id: String,
+    /// 同步来的原文。⚠ **系统列的显示文案不一定是它** —— 见 [`Self::is_title_overridden`]。
+    pub title: String,
+    /// `idea` | `task`。灵感视图取前者两列,看板取后者。
+    pub kind: String,
+    /// 系统列:不可改名、不可删、不可改 kind(不变量 2)。
+    pub system: bool,
+    /// frindex 排序键。⚠ 读序已由本函数按 `(position, id)` 排好,**同键并列是合法结局**
+    /// (0022:两端在同一空隙插列必得同一个键)⇒ ⛔ 前端别拿它再排一次。
+    pub position: String,
+    /// §7.1d 的**终态判据**,⛔ 不是「查过 oplog 有没有改名」(压实会 DROP 旧 oplog)。
+    ///
+    /// * `true` → 显示 [`Self::title`](用户/同步来的名);
+    /// * `false` → **按 [`Self::id`] 查本端字典**(六个种子的 canonical 名是各端各自的语言)。
+    ///
+    /// ⭐ 判据在 core 求值 ⇒ **canonical 串只活在迁移 SQL 与 [`SEED_COLUMNS`] 两处、不进前端**,
+    /// 「三份 canonical title 会漂」这个问题被消掉而不是被门禁看住。
+    /// ⚠ 用户自己建的列没有 canonical ⇒ 恒 `true`。
+    pub is_title_overridden: bool,
+    /// 已删 = 只读收容区(不变量 5)。⚠ 只给布尔,不给时刻:库里存的是 HLC 原文
+    /// (§3,为了 `min` 有全序),而今天没有任何一处 UI 要显示「什么时候删的」
+    /// ⇒ 需要人类时间那天再在这一层把 wall-ms 转 RFC3339,⛔ 别改存储形态。
+    pub deleted: bool,
+    /// 该列上**未归档未封存**的条目数。UI 的「已删除的列(N)」用它(plan §4.3),
+    /// 删列前的「先清空」提示也用它。⚠ 回收站 / 成就归档里的条目不计。
+    pub live_items: i64,
+}
+
+/// 全部列(**含已删的**),按 `(position, id)` 升序 —— 与 `items` 的读序同一条规矩。
+///
+/// ⚠ 一次全量返回而不分「活的 / 删的」两个查询:列是个位数量级,分两趟只会给 UI 造出
+/// **第二份口径**;要哪一族由调用方按 [`BoardColumnRow::kind`] / [`BoardColumnRow::deleted`] 分。
+pub fn list_columns(conn: &Connection) -> rusqlite::Result<Vec<BoardColumnRow>> {
+    let mut stmt = conn.prepare(
+        "SELECT c.id, c.title, c.kind, c.system, c.position, c.tombstoned_at IS NOT NULL, \
+                (SELECT COUNT(*) FROM items i \
+                  WHERE i.stage = c.id AND i.archived_at IS NULL AND i.sealed_at IS NULL) \
+         FROM board_column c ORDER BY c.position, c.id",
+    )?;
+    let rows = stmt.query_map([], |r| {
+        let id: String = r.get(0)?;
+        let title: String = r.get(1)?;
+        let is_title_overridden = title_is_overridden(&id, &title);
+        Ok(BoardColumnRow {
+            id,
+            title,
+            kind: r.get(2)?,
+            system: r.get::<_, i64>(3)? == 1,
+            position: r.get(4)?,
+            is_title_overridden,
+            deleted: r.get(5)?,
+            live_items: r.get(6)?,
+        })
+    })?;
+    rows.collect()
+}
+
+/// §7.1d 的终态判据(单一正式子;[`list_columns`] 是它唯一的生产消费者)。
+fn title_is_overridden(id: &str, title: &str) -> bool {
+    match SEED_COLUMNS.iter().find(|s| s.id == id) {
+        Some(seed) => title != seed.canonical_title,
+        // 用户建的列:没有 canonical 可比,那名字本来就只能照显。
+        None => true,
+    }
+}
 
 /// 种子行的值一致性审计(plan §7.1e:「并进已有的 migration / strict-battery 验收」)。
 ///
