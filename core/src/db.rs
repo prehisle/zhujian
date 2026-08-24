@@ -48,9 +48,13 @@
 //!
 //! ⛔ **1-28 那条老路径不消费这个字段**(它连 authorizer 都不挂,SQL 自带事务)。为免
 //! 声明位在那儿被静默忽略,`< 29` 的条目若声明 `DisabledDuringBody` 一律**当场拒**。
-//! ⚠ 今天 35 条**全是** `Enforced`,即**没有任何一条走新路径** —— 「老迁移填 `Enforced`
-//! 即无行为变化」这句由 `foreign_keys_declaration_is_consumed` 那几格与
-//! `migration_table_declares_foreign_keys` 一起当**假设**验,不是当已知(六轮处置 4)。
+//!
+//! ⭐ **0036 起恰有一条走新路径**(board-columns-plan B-b:`items` 整表重建 + stage 改 FK)。
+//! 在它之前,「老迁移填 `Enforced` 即无行为变化」那条**条件性推论**(六轮处置 4)靠
+//! 「35 条全是 `Enforced` ⇒ 没有任何一条走得到新路径」当第三格字据;0036 之后那一格
+//! 换了形 —— 现在由 `migration_table_declares_foreign_keys` **逐条钉死哪些条目关外键**
+//! (今天恰 `[36]`),即「除它之外仍无一条走新路径」。⛔ 再有下一条要关外键,先回来读
+//! 这一节与 §7.0,别只顾着改那个断言里的数组。
 
 use std::path::Path;
 
@@ -60,7 +64,7 @@ use rusqlite::Connection;
 /// 当前 schema 版本 = 迁移链末位。spaces 的只读 exact-match 检查(multispace-plan §10)
 /// 与 staging 建库都以它为锚;加新迁移时此常量跟着 MIGRATIONS 一起动
 /// (migration_sets_user_version 测试与下方一致性测试双守)。
-pub const SCHEMA_VERSION: i64 = 35;
+pub const SCHEMA_VERSION: i64 = 36;
 
 /// 安卓前滚迁移下限(codex 设计审 H1):手机端只对 `user_version >= 28` 的既有
 /// 正式库做原地前滚(现网手机全部诞生于 v28 干净装)。1-27 的老迁移不自带崩溃窗
@@ -82,7 +86,8 @@ enum ForeignKeys {
     Enforced,
     /// 整表重建型迁移:runner 在 `BEGIN` **之前**关外键,返回时归位成进来时那样。
     /// ⚠ 只对 `>= RUNNER_OWNS_TXN_FROM` 的条目有意义,更老的一律拒。
-    #[allow(dead_code, reason = "B-b 的迁移是第一个用它的;声明位先于用法落地(§7.0)")]
+    /// ⭐ 第一个(也是今天唯一一个)用它的是 **0036**(board-columns-plan B-b):`items`
+    /// 被 5 张子表 FK 引用,`DROP TABLE items` 在外键开着时要先跑一次隐式 DELETE、当场违例。
     DisabledDuringBody,
 }
 
@@ -122,6 +127,9 @@ const MIGRATIONS: &[(i64, ForeignKeys, &str)] = &[
     (33, ForeignKeys::Enforced, include_str!("../migrations/0033_device_profile_and_born_device.sql")),
     (34, ForeignKeys::Enforced, include_str!("../migrations/0034_recover_born_device_from_log.sql")),
     (35, ForeignKeys::Enforced, include_str!("../migrations/0035_item_comment.sql")),
+    // ⭐ 仓里第一条 `DisabledDuringBody`(board-columns-plan B-b):items 整表重建,
+    // stage 的六值枚举 CHECK 换成指向 board_column(id) 的外键。
+    (36, ForeignKeys::DisabledDuringBody, include_str!("../migrations/0036_board_column.sql")),
 ];
 
 /// Open the database at `path`, enforce foreign keys, and apply migrations.
@@ -590,22 +598,27 @@ mod tests {
     /// B-b0(board-columns-plan §7.0):声明位在**表里**的形。
     ///
     /// ⭐ 这只测同时是「老迁移填 `Enforced` 即无行为变化」那条**条件性推论**的第三格
-    /// 字据(六轮判它「仓内无证据」,处置 = 当假设跑):**今天 35 条全是 `Enforced`,
-    /// 即没有任何一条走得到新路径**。B 系列那条迁移会把恰好一行翻成
-    /// `DisabledDuringBody`,翻的当轮这只测会红,红了正是要人回来重读 §7.0。
+    /// 字据(六轮判它「仓内无证据」,处置 = 当假设跑)。**475/B-b0 那轮它的形是「35 条
+    /// 全是 `Enforced`,没有任何一条走得到新路径」;B-b 把 0036 翻成 `DisabledDuringBody`
+    /// 之后,同一格改由这份逐条白名单承担** —— 即「除了名单上的,仍无一条走新路径」。
+    /// ⛔ 再有下一条要关外键,别只顾着往数组里加数字:先回本文件头「外键声明位」那节
+    /// 与 board-columns-plan §7.0,确认它真的是「重建被 FK 引用的表」那一类。
     #[test]
     fn migration_table_declares_foreign_keys() {
+        /// 允许关外键的迁移版本号,逐条列出(整表重建型才配)。
+        const FK_DISABLED: &[i64] = &[36]; // 0036 = board_column + items.stage 改 FK(B-b)
         let disabled: Vec<i64> = MIGRATIONS
             .iter()
             .filter(|(_, fk, _)| *fk == ForeignKeys::DisabledDuringBody)
             .map(|(v, _, _)| *v)
             .collect();
-        assert!(
-            disabled.is_empty(),
-            "今天不该有任何一条迁移关外键(实为 {disabled:?});真要加,先读 §7.0 与本文件头"
+        assert_eq!(
+            disabled, FK_DISABLED,
+            "关外键的迁移必须逐条登记在案(实为 {disabled:?});真要加,先读 §7.0 与本文件头"
         );
         // 声明位在老路径上会被静默忽略,故 `< 29` 的条目一律只能是 Enforced。
-        // 上面那条今天蕴含这条,B 系列翻了行之后就不再蕴含 —— 两条都留着。
+        // ⭐ 0036 之前上面那条(「一条都没有」)蕴含这条;**翻了行之后就不再蕴含**
+        // ——白名单里放一个 < 29 的数字,上面那条照样绿,只有这条会红。两条都留着。
         for (version, fk, _) in MIGRATIONS {
             assert!(
                 *version >= RUNNER_OWNS_TXN_FROM || *fk == ForeignKeys::Enforced,

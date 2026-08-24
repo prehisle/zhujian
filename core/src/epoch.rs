@@ -337,13 +337,31 @@ fn compact_inner(conn: &mut Connection, fp: FailPointOpt) -> Result<CompactRepor
     hit(&fp, FailPoint::BeforeOplogRebuild)?;
     let baseline = synthesize_baseline(&tx)?;
 
-    // ---- oplog 整表重建(0021/0022/0024 同手法;staging 与正式表同一 DDL 常量) ----
-    tx.execute(&OPLOG_TABLE_DDL.replace("{name}", "oplog_new"), [])
-        .map_err(|e| format!("建 staging oplog 失败:{e}"))?;
+    // ---- oplog 整表重建 ----
+    //
+    // ⛔ **不再走「建 staging → 拷 → DROP 旧 → RENAME 顶上」那条老路**(0021/0022/0024 与
+    //    历条 oplog 迁移的手法),原因是 0036 起 `board_column` 上多了一只**引用 oplog 的
+    //    触发器**(`trg_board_column_tombstone_reject`:墓碑授权必须有那一枚 op 背书,
+    //    board-columns-plan §2.3 八轮定形):
+    //
+    //      `ALTER TABLE … RENAME` 在非 legacy 模式下会**重解析整个 schema**,而此刻
+    //      `oplog` 刚被 DROP 掉 ⇒ 解析那只触发器时报
+    //      `error in trigger trg_board_column_tombstone_reject: no such table: main.oplog`
+    //      ⇒ **每一次压实都失败**(连带备份恢复的幕⑤ —— 它复用 compact 重建身份)。
+    //
+    // ⇒ 改成**先 DROP、再用最终名建**:全程没有 RENAME,也就没有那次重解析;窗口期内没有
+    //    任何语句碰 board_column,`oplog` 在同一事务里当场补回。基线 op 在 DROP 之后写,
+    //    与老路等价 —— `synthesize_baseline` 早已把要写的东西读进内存了(上一句),
+    //    `clock.tick` 只动 `sync_meta`。
+    // ⚠ **同一件事会咬到 B-c**:那条给 oplog 词汇表加 `board_column` 三 kind 的迁移同样
+    //    不能用 DROP+RENAME 的老手法 —— 照 0035 抄会当场撞同一句报错。
+    tx.execute("DROP TABLE oplog", []).map_err(|e| e.to_string())?;
+    tx.execute(&OPLOG_TABLE_DDL.replace("{name}", "oplog"), [])
+        .map_err(|e| format!("重建 oplog 失败:{e}"))?;
     {
         let mut ins = tx
             .prepare(
-                "INSERT INTO oplog_new (op_id, hlc, entity, entity_id, kind, payload, origin_seq) \
+                "INSERT INTO oplog (op_id, hlc, entity, entity_id, kind, payload, origin_seq) \
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             )
             .map_err(|e| e.to_string())?;
@@ -361,8 +379,6 @@ fn compact_inner(conn: &mut Connection, fp: FailPointOpt) -> Result<CompactRepor
             .map_err(|e| format!("写基线 op 失败({entity}/{kind} {entity_id}):{e}"))?;
         }
     }
-    tx.execute("DROP TABLE oplog", []).map_err(|e| e.to_string())?;
-    tx.execute("ALTER TABLE oplog_new RENAME TO oplog", []).map_err(|e| e.to_string())?;
     for ddl in OPLOG_AUX_DDL {
         tx.execute(ddl, []).map_err(|e| format!("重建 oplog 索引/触发器失败:{e}"))?;
     }

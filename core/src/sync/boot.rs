@@ -738,6 +738,12 @@ pub(crate) fn strict_battery(conn: &Connection) -> Result<(), String> {
     audit_tombstone_resurrection(conn)?; // 5. tombstone 复活三查空转
     audit_counter_governance(conn)?;   // 5. counter 治理(缺行/落后行上最大编号)
     audit_op_backed_semantics(conn)?;  // 2+4+5. 恰一 create / LWW / OR-set / 图N / 图字节验货 / counter 水位
+    // 0036(board-columns-plan §7.1e / §2.3):看板列那两格**值一致性**断言。
+    // ⚠ 它们**不是** entity_registry 的第 12 面(七轮明确否):seed 例外不是新实体面,
+    // 而是同一个 board_column 在已有五个面上的特殊值策略。判据 = 最坏后果已达数据/同步级
+    // (漏掉一个真 seed id ⇒ boot/fresh 可能永久拒;错列一个 ⇒ 无背书的行静默穿过电池)。
+    crate::board::audit_seed_columns(conn)?;
+    crate::board::audit_tombstone_apply_empty(conn)?;
     Ok(())
 }
 

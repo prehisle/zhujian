@@ -1651,12 +1651,17 @@ tx.execute(\"DELETE FROM sync_replay_active\", []) \
         let pkg = export_ready(&mut src, &id);
 
         // 只有开着旗才插得进去的行:born_device 为 NULL 的条目。
+        //
+        // ⚠ **`position` 必须是 NULL**(0036 改的):`stage='inbox'` 配一个非空 position
+        // 同时踩中**两只** BEFORE INSERT 守护(署名那只 + stage↔kind 耦合那只),而 SQLite
+        // **不保证同时机触发器的顺序** ⇒ 报哪一句是碰运气。0036 重建 items 时触发器的创建
+        // 序变了,这条断言当场翻面(此前它一直在靠那个巧合绿)。现在的形只踩署名那一只。
         let illegal = |conn: &Connection, iid: &str| -> String {
             conn.execute(
                 "INSERT INTO items (id, content, stage, created_at, updated_at, position, \
                                     born_stage, born_device) \
                  VALUES (?1, 'x', 'inbox', '2026-08-07T12:00:00.000Z', \
-                         '2026-08-07T12:00:00.000Z', 'a0', 'inbox', NULL)",
+                         '2026-08-07T12:00:00.000Z', NULL, 'inbox', NULL)",
                 [iid],
             )
             .expect_err("非可信语境下 NULL 署名必须 ABORT")

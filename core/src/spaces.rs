@@ -246,6 +246,12 @@ const CORE_TABLES: &[&str] = &[
     "device_profile",
     // 0035 的条目留言(identity-plan §4)。op-backed 正表:进引导导入与 strict_battery。
     "item_comment",
+    // 0036 的看板列(board-columns-plan §2.1)。⚠ **它是 `items.stage` 的外键父表** ——
+    // 缺了不是「少一个功能」,是第一笔条目写入就撞外键;catalog 就要拒,不许拖到写入时。
+    "board_column",
+    // 0036 的墓碑写者授权表(§2.3「④ 的形」)。常态恒空,但**缺表 = 每一枚合法的列墓碑
+    // 都落不了地**(④ 的 EXISTS 子查询查的就是它),同样是 catalog 级的结构缺失。
+    "sync_board_column_tombstone_apply",
 ];
 
 /// 只读读取一个空间的描述符:**不跑迁移、不写库、不切 WAL**(`db::open` 是读写
