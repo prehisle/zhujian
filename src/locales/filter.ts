@@ -13,4 +13,10 @@ export const filter = defineMessages({
   "filter.pillTitle": { zh: "单击只筛此标签 · 按住 Ctrl 多选", en: "Click to filter by this tag only · Ctrl-click to multi-select" },
   "filter.collapseKids": { zh: "收起子标签", en: "Hide child tags" },
   "filter.expandKids": { zh: "展开 {n} 个子标签", en: "Show {n} child {n|tag|tags}" },
+  // 时间轴(461):按创建时间三档互斥分区 + 「所有」重置(复用 filter.all)。仅桌面接线,
+  // 未进 CROSS_END_KEYS——安卓这条轴还没做,补齐时再登记。
+  "filter.timeAxis": { zh: "时间", en: "Time" },
+  "filter.time1d": { zh: "近1天", en: "Last 1 day" },
+  "filter.time7d": { zh: "近7天", en: "Last 7 days" },
+  "filter.timeOld": { zh: "7天前", en: "7+ days ago" },
 });

@@ -45,4 +45,6 @@ export const inbox = defineMessages({
   "inbox.filterNoMatchHint": { zh: "换个词,或清空过滤框(Esc)。", en: "Try another word, or clear the filter (Esc)." },
   "inbox.filterEmptyTag": { zh: "「{tag}」下没有随记", en: "No notes under “{tag}”" },
   "inbox.filterEmptyTagHint": { zh: "切到「所有」看全部随记。", en: "Switch to “All” to see every note." },
+  "inbox.filterEmptyTime": { zh: "这段时间内没有随记", en: "No notes in this time range" },
+  "inbox.filterEmptyTimeHint": { zh: "切到「时间」轴的「全部」看全部随记。", en: "Switch “Time” to “All” to see every note." },
 });

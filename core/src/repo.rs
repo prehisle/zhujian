@@ -169,6 +169,10 @@ pub struct TaskRow {
     pub id: String,
     pub content: String,
     pub stage: String,
+    /// 创建时刻(RFC3339,恒有值——items.created_at 建行时必填)。461 起供看板「时间」
+    /// 筛选轴用(近1天/近7天/7天前,前端按本地日历日分桶,同 due_on 的哲学:后端
+    /// 只搬运时刻字符串,从不算「今天」)。
+    pub created_at: String,
     pub due_on: Option<String>,
     pub priority: Option<i64>,
     /// 成就归档时间(0017 sealed_at 轴):Some = 已入归档册(不在看板上)。活跃看板行与
@@ -1066,7 +1070,7 @@ fn task_rows(
 
     let sql = format!(
         "SELECT i.id, i.content, i.stage, i.due_on, i.priority, i.sealed_at, i.done_at, \
-                i.born_device FROM items i \
+                i.born_device, i.created_at FROM items i \
          WHERE {where_sql} ORDER BY {order_sql}"
     );
     let mut stmt = conn.prepare(&sql)?;
@@ -1080,16 +1084,18 @@ fn task_rows(
             r.get::<_, Option<String>>(5)?,
             r.get::<_, Option<String>>(6)?,
             r.get::<_, Option<String>>(7)?,
+            r.get::<_, String>(8)?,
         ))
     })?;
     let mut out = Vec::new();
     for row in rows {
-        let (id, content, stage, due_on, priority, sealed_at, done_at, born_device) = row?;
+        let (id, content, stage, due_on, priority, sealed_at, done_at, born_device, created_at) = row?;
         let topics = tags_by_item.remove(&id).unwrap_or_default();
         out.push(TaskRow {
             id,
             content,
             stage,
+            created_at,
             due_on,
             priority,
             sealed_at,

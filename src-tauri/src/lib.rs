@@ -437,6 +437,9 @@ struct TaskItem {
     id: String,
     title: String,
     status: String,
+    /// 创建时刻(RFC3339,461)。看板「时间」筛选轴据它分桶——同 due_on 的哲学,
+    /// 后端只搬运时刻字符串,「近1天/近7天/7天前」的本地日历日换算全在前端。
+    created_at: String,
     /// User-local calendar day `YYYY-MM-DD`, or null. The frontend (which alone
     /// knows local "today") decides 今天到期/逾期 from this.
     due_on: Option<String>,
@@ -469,6 +472,7 @@ impl From<repo::TaskRow> for TaskItem {
             id: t.id,
             title: t.content,
             status: t.stage,
+            created_at: t.created_at,
             due_on: t.due_on,
             priority: t.priority,
             sealed_at: t.sealed_at,

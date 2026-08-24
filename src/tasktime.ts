@@ -16,6 +16,8 @@ export type TaskItem = {
   id: string;
   title: string;
   status: string;
+  /** 创建时刻(RFC3339,461)。看板「时间」筛选轴据它分桶,见 filter-bar.ts::timeBucketOf。 */
+  created_at: string;
   due_on: string | null;
   priority: number | null;
   /** 成就归档时间(RFC3339),null = 不在归档册。只有 list_sealed_tasks 返回的行非

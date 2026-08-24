@@ -20,12 +20,15 @@ import { buildItemDeepLink } from "./deeplink";
 import { armLocate } from "./locate";
 import {
   type FilterState,
+  type TimeBucket,
   applyFilter,
+  applyTimeFilter,
   filterActive,
   reconcileKindFilter,
   reconcileTopicFilter,
   renderFilterPills,
   renderKindPills,
+  renderTimePills,
   selectedTopicLabels,
   soleTopicFilter,
   wireFilterInput,
@@ -134,6 +137,7 @@ const SKELETON = `
   </div>
   <div class="filter-row" id="filter-row" hidden>
     <div class="kind-filter" id="kind-filter"></div>
+    <div class="time-filter" id="time-filter"></div>
     <div class="filter-main">
       <div class="topic-filter" id="topic-filter"></div>
       <input class="filter-text" id="board-filter" type="search" placeholder="${t("board.filterPlaceholder")}" autocomplete="off" spellcheck="false" />
@@ -185,6 +189,11 @@ type BoardView = "board" | "trash" | "sealed";
 // board, not the trash. 行为(pills/口径/Esc)在共享件 filter-bar.ts,与灵感同源。
 const filter: FilterState = { kind: "all", topics: [], text: "" };
 
+// 时间轴(461):与 filter 同款模块态存活理由(跨 mount/切视图保住选择)。与 kind/
+// topics/text 三维正交,单独一格状态——不塞进 FilterState,免得 check-filter-parity
+// 的逐字一致门禁把它当成两端必须同步的一部分(那道闸只钉 FilterState 里已有的三维)。
+let timeFilter: TimeBucket = "all";
+
 // 新建任务的草稿/暂存配图过桥、断电恢复、失败通知与 in-flight 闸:模块态与保存链
 // 骨架全在共享编排件 compose-controller.ts(353,与灵感「记下灵感」同源收拢;历轮
 // codex 修复的出处注释随迁到那边)。看板特有的载荷/空输入策略/错误落点等在 mount 里
@@ -218,6 +227,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
   const filterRow = view.querySelector("#filter-row") as HTMLElement;
   const filterBar = view.querySelector("#topic-filter") as HTMLElement;
   const kindBar = view.querySelector("#kind-filter") as HTMLElement;
+  const timeBar = view.querySelector("#time-filter") as HTMLElement;
   const filterInput = view.querySelector("#board-filter") as HTMLInputElement;
   const trashToggle = view.querySelector("#trash-toggle") as HTMLButtonElement;
   const trashN = view.querySelector("#trash-n") as HTMLElement;
@@ -583,6 +593,11 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       // 新卡天然在视野,不清)。
       if (topicId === null && filter.topics.length > 0 && !filter.topics.includes("none")) {
         filter.topics = [];
+      }
+      // 时间筛选下新建:新卡创建时刻=现在,归「近1天」桶;筛的是别的档(近7天/7天前)
+      // 会把新卡当场筛没——清掉让它可见(同上面文本/标签筛选的处理,461)。
+      if (timeFilter !== "all" && timeFilter !== "1d") {
+        timeFilter = "all";
       }
       composeErr.textContent = failed > 0 ? partialImgMsg(failed) : "";
       pulseId = id; // 下一次渲染给这张新卡一记朱砂脉冲
@@ -1513,6 +1528,15 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       );
       return;
     }
+    // 只有时间轴在筛(类型/标签都是「全部」):selectedTopicLabels 会给出空标签,
+    // 「「」下没有任务」是句坏文案——单独给时间轴一句话(461)。
+    if (filter.kind === "all" && filter.topics.length === 0 && timeFilter !== "all") {
+      renderCentered(
+        el("div", { className: "big", textContent: t("board.noTasksInTime") }),
+        el("div", { textContent: t("board.noTasksInTimeHint") }),
+      );
+      return;
+    }
     const label = selectedTopicLabels(filter, allTopics).join(t("board.listSeparator"));
     renderCentered(
       el("div", { className: "big", textContent: t("board.noTasksUnder", { label }) }),
@@ -1572,6 +1596,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         boardView,
         filter.kind,
         filter.topics,
+        timeFilter,
         q,
         today,
         active,
@@ -1675,26 +1700,35 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         filter.topics = [];
         filter.text = "";
         filterInput.value = "";
+        timeFilter = "all"; // 时间轴同理清掉,别让旧选中把跳转目标筛没了
         locateId = focus;
       }
 
-      // The filter row (标签 pills + 文本过滤框) only appears once there is something
-      // to filter. Pills 计数与两维应用都在共享件(与灵感同源);文本只匹配当前标题。
+      // The filter row (状态[时间]/标签 pills + 文本过滤框) only appears once there is
+      // something to filter. Pills 计数与三维应用都在共享件(与灵感同源);文本只匹配
+      // 当前标题。时间轴(461)在类型轴之下、标签轴之上——独立第四维,先按创建时间
+      // 分区圈定,类型/标签 pill 的计数与筛选都在这个已收窄的集合里算(同 kind 圈定
+      // topics 的先后关系)。
       filterRow.hidden = visible.length === 0;
+      const timeNarrowed = applyTimeFilter(visible, timeFilter, (t) => t.created_at);
       if (visible.length > 0) {
+        renderTimePills(timeBar, visible, (t) => t.created_at, timeFilter, (b) => {
+          timeFilter = b;
+          void load();
+        });
         // 类型轴在标签 pills 之上(路线 A 钻取器);renderKindPills 无 kind 时清空、CSS
         // :empty 隐整行。标签 pills 随 kind 收到该类型内(见 filter-bar.ts)。
-        renderKindPills(kindBar, visible, allTopics, filter, () => void load());
-        renderFilterPills(filterBar, visible, allTopics, filter, () => void load());
+        renderKindPills(kindBar, timeNarrowed, allTopics, filter, () => void load());
+        renderFilterPills(filterBar, timeNarrowed, allTopics, filter, () => void load());
         wireTagPills();
       }
 
-      const shown = applyFilter(visible, filter, (t) => t.title, allTopics);
+      const shown = applyFilter(timeNarrowed, filter, (t) => t.title, allTopics);
 
-      // Filtered(标签或文本任一激活): the column DOM is only the visible subset, so drops
-      // route through reorder_task_visible (merged server-side). Unfiltered: the
+      // Filtered(时间/标签/文本任一激活): the column DOM is only the visible subset, so
+      // drops route through reorder_task_visible (merged server-side). Unfiltered: the
       // strong-contract path.
-      filtered = filterActive(filter);
+      filtered = timeFilter !== "all" || filterActive(filter);
 
       if (visible.length === 0) renderEmpty();
       else if (shown.length === 0) renderFilteredEmpty();

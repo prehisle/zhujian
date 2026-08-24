@@ -344,3 +344,67 @@ export function wireFilterInput(
     onChange();
   });
 }
+
+// ---- 时间轴(461)——独立于 kind/topics/text 三维,一个正交的第四轴。⚠ 不进
+// check-filter-parity 的逐字一致门禁(先落桌面;安卓补齐同款后,把 timeBucketOf/
+// applyTimeFilter/renderTimePills 登记进那道闸的 DESKTOP.fns)。
+//
+// 三档互斥分区,不是「近N天」层层嵌套的累计窗口:近1天=今天,近7天=第2~7天(不含
+// 今天),7天前=第8天起。三档相加=全量,故 "all" 是纯粹的重置态,不必再算并集。
+// 按本地日历日算,同 due_on 的哲学——后端只搬运 created_at 时刻字符串,「今天」
+// 从不由后端决定。
+export type TimeBucket = "all" | "1d" | "7d" | "old";
+
+function startOfLocalDay(d: Date): number {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+}
+
+/** `created_at`(RFC3339)相对本地「今天」差几个日历日(0 = 今天,1 = 昨天…)。 */
+function daysAgo(createdAt: string): number {
+  return Math.round((startOfLocalDay(new Date()) - startOfLocalDay(new Date(createdAt))) / 86_400_000);
+}
+
+export function timeBucketOf(createdAt: string): Exclude<TimeBucket, "all"> {
+  const n = daysAgo(createdAt);
+  if (n <= 0) return "1d";
+  if (n <= 6) return "7d";
+  return "old";
+}
+
+export function applyTimeFilter<T>(items: T[], bucket: TimeBucket, createdAtOf: (item: T) => string): T[] {
+  return bucket === "all" ? items : items.filter((it) => timeBucketOf(createdAtOf(it)) === bucket);
+}
+
+/** 时间轴 pill 行:全部 + 三档互斥分区。计数口径同类型轴 pill——挂哪一档的条目数
+ * (全量,不随当前时间选中收缩)。时间与标签/类型正交:选时间不清标签选集(不像切
+ * kind 那样是「重新圈定」,时间只是另一把独立的尺)。 */
+export function renderTimePills<T>(
+  bar: HTMLElement,
+  items: T[],
+  createdAtOf: (item: T) => string,
+  current: TimeBucket,
+  onPick: (bucket: TimeBucket) => void,
+): void {
+  const countOf = (bucket: TimeBucket) =>
+    bucket === "all" ? items.length : items.filter((it) => timeBucketOf(createdAtOf(it)) === bucket).length;
+  const pill = (bucket: TimeBucket, label: string) => {
+    const b = document.createElement("button");
+    b.className = `tf-pill${current === bucket ? " active" : ""}`;
+    const nEl = document.createElement("span");
+    nEl.className = "tf-n";
+    nEl.textContent = String(countOf(bucket));
+    b.append(document.createTextNode(label), nEl);
+    b.onclick = () => onPick(bucket);
+    return b;
+  };
+  const axis = document.createElement("span");
+  axis.className = "tf-axis";
+  axis.textContent = t("filter.timeAxis");
+  bar.replaceChildren(
+    axis,
+    pill("all", t("filter.all")),
+    pill("1d", t("filter.time1d")),
+    pill("7d", t("filter.time7d")),
+    pill("old", t("filter.timeOld")),
+  );
+}

@@ -1,8 +1,9 @@
 //! Database open + migration runner.
 //!
 //! Migrations are plain SQL files applied in order, gated on SQLite's
-//! `user_version` pragma. No framework: each entry is `(version, sql)` and the
-//! file is embedded at compile time. To add a migration, drop a new
+//! `user_version` pragma. No framework: each entry is
+//! `(version, foreign_keys, sql)` and the file is embedded at compile time.
+//! To add a migration, drop a new
 //! `migrations/000N_*.sql` and append one line to `MIGRATIONS` — and bump the
 //! expected version in repo.rs's `migration_sets_user_version_*` test (it
 //! asserts the latest `user_version`, so a new migration turns it red until
@@ -33,10 +34,23 @@
 //! 末位比),自维护、加迁移不用动它 —— 别把它跟上面两处搞混。加迁移的当轮把上面两处
 //! 一起改掉,别指望事后想起来。
 //!
-//! **已声明的债(codex 实现审 M4)**:新 runner 下事务体里 `PRAGMA foreign_keys=OFF`
-//! 是事务内 no-op——将来第一条需要重建被 FK 引用表的真实迁移,必须先把 MIGRATIONS
-//! 元组升级出 `foreign_keys: Enforced | DisabledDuringBody` 声明位(runner 在 BEGIN
-//! 前关、所有返回路径恢复,事务内仍跑 foreign_key_check),不许让 SQL 自己控 FK。
+//! # 外键声明位(B-b0 兑现了上面那张欠条;board-columns-plan §7.0)
+//!
+//! 原债(codex 实现审 M4):新 runner 下事务体里 `PRAGMA foreign_keys=OFF` 是**事务内
+//! no-op**,于是「重建一张被 FK 引用的表」这类迁移根本写不了。**不许让 SQL 自己控 FK**
+//! ——改由 `MIGRATIONS` 每条显式声明 [`ForeignKeys`],runner 在 `BEGIN` **之前**处理:
+//!
+//! * [`ForeignKeys::Enforced`]:runner **不碰** FK 状态,只**断言它当前是开的**——
+//!   声明与现实对不上就响亮失败(否则这个字段就是死的,§7.0 五轮 M 点名的那格)。
+//! * [`ForeignKeys::DisabledDuringBody`]:BEGIN 前关、**提交 / 异常 / panic 三条路径都
+//!   归位成进来时那样**(RAII,见 [`FkGuard`]);事务内照旧跑 `foreign_key_check`,
+//!   所以「整表重建」的最终一致性由它兜,不由逐行拦截兜。
+//!
+//! ⛔ **1-28 那条老路径不消费这个字段**(它连 authorizer 都不挂,SQL 自带事务)。为免
+//! 声明位在那儿被静默忽略,`< 29` 的条目若声明 `DisabledDuringBody` 一律**当场拒**。
+//! ⚠ 今天 35 条**全是** `Enforced`,即**没有任何一条走新路径** —— 「老迁移填 `Enforced`
+//! 即无行为变化」这句由 `foreign_keys_declaration_is_consumed` 那几格与
+//! `migration_table_declares_foreign_keys` 一起当**假设**验,不是当已知(六轮处置 4)。
 
 use std::path::Path;
 
@@ -58,42 +72,56 @@ pub const MOBILE_MIGRATION_FLOOR: i64 = 28;
 /// 0029 起 runner 拥有迁移事务与 user_version(见文件头「迁移作者规则」)。
 const RUNNER_OWNS_TXN_FROM: i64 = 29;
 
-const MIGRATIONS: &[(i64, &str)] = &[
-    (1, include_str!("../migrations/0001_init.sql")),
-    (2, include_str!("../migrations/0002_task_guards.sql")),
-    (3, include_str!("../migrations/0003_note_history.sql")),
-    (4, include_str!("../migrations/0004_note_archive_guard.sql")),
-    (5, include_str!("../migrations/0005_task_archive.sql")),
-    (6, include_str!("../migrations/0006_task_time.sql")),
-    (7, include_str!("../migrations/0007_task_topic.sql")),
-    (8, include_str!("../migrations/0008_task_order.sql")),
-    (9, include_str!("../migrations/0009_task_archive_any_active.sql")),
-    (10, include_str!("../migrations/0010_drop_ai_suggested.sql")),
-    (11, include_str!("../migrations/0011_heal_note_history_triggers.sql")),
-    (12, include_str!("../migrations/0012_task_note_one_to_one.sql")),
-    (13, include_str!("../migrations/0013_task_confirming.sql")),
-    (14, include_str!("../migrations/0014_unify_items.sql")),
-    (15, include_str!("../migrations/0015_drop_topic_summary.sql")),
-    (16, include_str!("../migrations/0016_add_item_image.sql")),
-    (17, include_str!("../migrations/0017_add_item_sealed.sql")),
-    (18, include_str!("../migrations/0018_add_item_born_stage.sql")),
-    (19, include_str!("../migrations/0019_sync_meta.sql")),
-    (20, include_str!("../migrations/0020_oplog.sql")),
-    (21, include_str!("../migrations/0021_position_fractional.sql")),
-    (22, include_str!("../migrations/0022_replay_exemption.sql")),
-    (23, include_str!("../migrations/0023_image_seq_replay.sql")),
-    (24, include_str!("../migrations/0024_oplog_origin_seq.sql")),
-    (25, include_str!("../migrations/0025_boot_import_exemption.sql")),
-    (26, include_str!("../migrations/0026_topic_color.sql")),
-    (27, include_str!("../migrations/0027_sync_quarantine.sql")),
-    (28, include_str!("../migrations/0028_space_profile.sql")),
-    (29, include_str!("../migrations/0029_migrator_canary.sql")),
-    (30, include_str!("../migrations/0030_add_item_done_at.sql")),
-    (31, include_str!("../migrations/0031_topic_position_and_kind.sql")),
-    (32, include_str!("../migrations/0032_item_image_thumb.sql")),
-    (33, include_str!("../migrations/0033_device_profile_and_born_device.sql")),
-    (34, include_str!("../migrations/0034_recover_born_device_from_log.sql")),
-    (35, include_str!("../migrations/0035_item_comment.sql")),
+/// 一条迁移在**事务体执行期间**要的外键模式(board-columns-plan §7.0)。
+///
+/// 无 `Default`、无 `#[non_exhaustive]`:元组第二格必须逐条显式写出——加迁移时忘了填
+/// 是**编译错**,不是一个悄悄取默认值的字段(首版自检清单 8)。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum ForeignKeys {
+    /// 常态:runner 不碰 FK 状态,只断言它当前是开的。
+    Enforced,
+    /// 整表重建型迁移:runner 在 `BEGIN` **之前**关外键,返回时归位成进来时那样。
+    /// ⚠ 只对 `>= RUNNER_OWNS_TXN_FROM` 的条目有意义,更老的一律拒。
+    #[allow(dead_code, reason = "B-b 的迁移是第一个用它的;声明位先于用法落地(§7.0)")]
+    DisabledDuringBody,
+}
+
+const MIGRATIONS: &[(i64, ForeignKeys, &str)] = &[
+    (1, ForeignKeys::Enforced, include_str!("../migrations/0001_init.sql")),
+    (2, ForeignKeys::Enforced, include_str!("../migrations/0002_task_guards.sql")),
+    (3, ForeignKeys::Enforced, include_str!("../migrations/0003_note_history.sql")),
+    (4, ForeignKeys::Enforced, include_str!("../migrations/0004_note_archive_guard.sql")),
+    (5, ForeignKeys::Enforced, include_str!("../migrations/0005_task_archive.sql")),
+    (6, ForeignKeys::Enforced, include_str!("../migrations/0006_task_time.sql")),
+    (7, ForeignKeys::Enforced, include_str!("../migrations/0007_task_topic.sql")),
+    (8, ForeignKeys::Enforced, include_str!("../migrations/0008_task_order.sql")),
+    (9, ForeignKeys::Enforced, include_str!("../migrations/0009_task_archive_any_active.sql")),
+    (10, ForeignKeys::Enforced, include_str!("../migrations/0010_drop_ai_suggested.sql")),
+    (11, ForeignKeys::Enforced, include_str!("../migrations/0011_heal_note_history_triggers.sql")),
+    (12, ForeignKeys::Enforced, include_str!("../migrations/0012_task_note_one_to_one.sql")),
+    (13, ForeignKeys::Enforced, include_str!("../migrations/0013_task_confirming.sql")),
+    (14, ForeignKeys::Enforced, include_str!("../migrations/0014_unify_items.sql")),
+    (15, ForeignKeys::Enforced, include_str!("../migrations/0015_drop_topic_summary.sql")),
+    (16, ForeignKeys::Enforced, include_str!("../migrations/0016_add_item_image.sql")),
+    (17, ForeignKeys::Enforced, include_str!("../migrations/0017_add_item_sealed.sql")),
+    (18, ForeignKeys::Enforced, include_str!("../migrations/0018_add_item_born_stage.sql")),
+    (19, ForeignKeys::Enforced, include_str!("../migrations/0019_sync_meta.sql")),
+    (20, ForeignKeys::Enforced, include_str!("../migrations/0020_oplog.sql")),
+    (21, ForeignKeys::Enforced, include_str!("../migrations/0021_position_fractional.sql")),
+    (22, ForeignKeys::Enforced, include_str!("../migrations/0022_replay_exemption.sql")),
+    (23, ForeignKeys::Enforced, include_str!("../migrations/0023_image_seq_replay.sql")),
+    (24, ForeignKeys::Enforced, include_str!("../migrations/0024_oplog_origin_seq.sql")),
+    (25, ForeignKeys::Enforced, include_str!("../migrations/0025_boot_import_exemption.sql")),
+    (26, ForeignKeys::Enforced, include_str!("../migrations/0026_topic_color.sql")),
+    (27, ForeignKeys::Enforced, include_str!("../migrations/0027_sync_quarantine.sql")),
+    (28, ForeignKeys::Enforced, include_str!("../migrations/0028_space_profile.sql")),
+    (29, ForeignKeys::Enforced, include_str!("../migrations/0029_migrator_canary.sql")),
+    (30, ForeignKeys::Enforced, include_str!("../migrations/0030_add_item_done_at.sql")),
+    (31, ForeignKeys::Enforced, include_str!("../migrations/0031_topic_position_and_kind.sql")),
+    (32, ForeignKeys::Enforced, include_str!("../migrations/0032_item_image_thumb.sql")),
+    (33, ForeignKeys::Enforced, include_str!("../migrations/0033_device_profile_and_born_device.sql")),
+    (34, ForeignKeys::Enforced, include_str!("../migrations/0034_recover_born_device_from_log.sql")),
+    (35, ForeignKeys::Enforced, include_str!("../migrations/0035_item_comment.sql")),
 ];
 
 /// Open the database at `path`, enforce foreign keys, and apply migrations.
@@ -491,23 +519,30 @@ mod tests {
                 == 1
         };
         assert_eq!(uv(&conn), 28);
+        let fk_on = |conn: &Connection| -> bool { foreign_keys_on(conn).unwrap() };
         // ① 半路失败 = 整笔回滚:前半 CREATE 也不留、uv 不动。
-        let err = apply_runner_owned(&conn, 99, "CREATE TABLE half(x); INSERT INTO nope VALUES(1);")
-            .unwrap_err();
+        let err = apply_runner_owned(
+            &conn,
+            99,
+            ForeignKeys::Enforced,
+            "CREATE TABLE half(x); INSERT INTO nope VALUES(1);",
+        )
+        .unwrap_err();
         assert!(err.to_string().contains("nope"), "{err}");
         assert!(!has_table(&conn, "half"), "失败迁移的前半不许留下");
         assert_eq!(uv(&conn), 28);
         // ② 事务体里写事务控制 = SQLITE_AUTH 响亮拒(结构闸,文本骗不过)。
         //    SAVEPOINT 是独立 authorizer variant、ATTACH 逃证明范围,一并负例
         //    (codex 实现审 M2)。
-        assert!(apply_runner_owned(&conn, 99, "COMMIT; CREATE TABLE t(x);").is_err());
-        assert!(apply_runner_owned(&conn, 99, "CREATE TABLE t(x); BEGIN;").is_err());
+        let owned = |sql: &str| apply_runner_owned(&conn, 99, ForeignKeys::Enforced, sql);
+        assert!(owned("COMMIT; CREATE TABLE t(x);").is_err());
+        assert!(owned("CREATE TABLE t(x); BEGIN;").is_err());
         assert!(
-            apply_runner_owned(&conn, 99, "SAVEPOINT x; CREATE TABLE t(x); RELEASE x;").is_err(),
+            owned("SAVEPOINT x; CREATE TABLE t(x); RELEASE x;").is_err(),
             "SAVEPOINT 必须被拒(局部回滚可骗过『body 全有效』)"
         );
         assert!(
-            apply_runner_owned(&conn, 99, "ATTACH DATABASE ':memory:' AS side;").is_err(),
+            owned("ATTACH DATABASE ':memory:' AS side;").is_err(),
             "ATTACH 必须被拒(写扩散逃出 main+uv 同事务证明)"
         );
         assert!(!has_table(&conn, "t"));
@@ -515,15 +550,19 @@ mod tests {
         // 后滚」语义)。
         conn.execute_batch("BEGIN; ROLLBACK;").expect("authorizer 不许泄漏到迁移之外");
         // ③ 事务体里自设 user_version = 拒。
-        assert!(apply_runner_owned(&conn, 99, "PRAGMA user_version = 99;").is_err());
+        assert!(owned("PRAGMA user_version = 99;").is_err());
         assert_eq!(uv(&conn), 28);
-        // ④ FK 自验收:留下外键违例的迁移整笔回滚。临时关 FK 模拟「事务内没被
-        //    逐行拦」(表重建型迁移的真实形态),此时提交前的 foreign_key_check
-        //    是唯一防线。
-        conn.pragma_update(None, "foreign_keys", false).unwrap();
+        // ④ FK 自验收:留下外键违例的迁移整笔回滚。⭐ **B-b0 起这一格由声明位驱动**
+        //    ——`DisabledDuringBody` 让 runner 自己在 BEGIN 前关掉外键(表重建型迁移
+        //    的真实形态),此时提交前的 foreign_key_check 是唯一防线。
+        //    ⚠ 这只样本同时是「关在 BEGIN **之前**」的行为字据:若那次关闭落在
+        //    BEGIN 之后(= 静默 no-op),下面那句 INSERT 会被**逐行**拦下,报的是
+        //    SQLite 的 FOREIGN KEY constraint failed,而不是我们这句「外键违例」。
+        assert!(fk_on(&conn), "进入 ④ 前外键必须是开的,否则这一格测的不是同一件事");
         let err = apply_runner_owned(
             &conn,
             99,
+            ForeignKeys::DisabledDuringBody,
             "CREATE TABLE p(id INTEGER PRIMARY KEY); \
              CREATE TABLE c(pid REFERENCES p(id)); \
              INSERT INTO c VALUES (999);",
@@ -532,11 +571,12 @@ mod tests {
         assert!(err.to_string().contains("外键违例"), "{err}");
         assert!(!has_table(&conn, "p"), "FK 违例迁移整笔回滚");
         assert_eq!(uv(&conn), 28);
-        conn.pragma_update(None, "foreign_keys", true).unwrap();
+        assert!(fk_on(&conn), "失败路径也必须把外键归位");
         // ⑤ 幸福路:触发器体的 BEGIN…END 正常过 authorizer;uv 随事务原子前进。
         apply_runner_owned(
             &conn,
             30,
+            ForeignKeys::Enforced,
             "CREATE TABLE ok_t(x); \
              CREATE TRIGGER trg_ok AFTER INSERT ON ok_t BEGIN SELECT 1; END;",
         )
@@ -545,6 +585,201 @@ mod tests {
         assert_eq!(uv(&conn), 30);
         drop(conn);
         let _ = std::fs::remove_file(&path);
+    }
+
+    /// B-b0(board-columns-plan §7.0):声明位在**表里**的形。
+    ///
+    /// ⭐ 这只测同时是「老迁移填 `Enforced` 即无行为变化」那条**条件性推论**的第三格
+    /// 字据(六轮判它「仓内无证据」,处置 = 当假设跑):**今天 35 条全是 `Enforced`,
+    /// 即没有任何一条走得到新路径**。B 系列那条迁移会把恰好一行翻成
+    /// `DisabledDuringBody`,翻的当轮这只测会红,红了正是要人回来重读 §7.0。
+    #[test]
+    fn migration_table_declares_foreign_keys() {
+        let disabled: Vec<i64> = MIGRATIONS
+            .iter()
+            .filter(|(_, fk, _)| *fk == ForeignKeys::DisabledDuringBody)
+            .map(|(v, _, _)| *v)
+            .collect();
+        assert!(
+            disabled.is_empty(),
+            "今天不该有任何一条迁移关外键(实为 {disabled:?});真要加,先读 §7.0 与本文件头"
+        );
+        // 声明位在老路径上会被静默忽略,故 `< 29` 的条目一律只能是 Enforced。
+        // 上面那条今天蕴含这条,B 系列翻了行之后就不再蕴含 —— 两条都留着。
+        for (version, fk, _) in MIGRATIONS {
+            assert!(
+                *version >= RUNNER_OWNS_TXN_FROM || *fk == ForeignKeys::Enforced,
+                "迁移 {version:04} 在老路径上,不许声明 {fk:?}"
+            );
+        }
+    }
+
+    /// B-b0:声明位**必须被真正消费**(§7.0 五轮 M:否则它就是个死字段)。
+    ///
+    /// 逐格对应六轮给「老迁移填 `Enforced` 即无行为变化」列的四条实现约束:
+    /// (a)(b)(c) = 29 起两个模式各自真的做了它声称的事 + 归位归的是「进来时那样」;
+    /// (d) 前置闸;(e) **`< 29` 逐字走旧 runner 且新 metadata 不参与旧路径**;
+    /// (g) 归位时事务悬挂 = 修好并报出来。第三条约束(「只有 B 迁移在 BEGIN 前关」)
+    /// 由 `migration_table_declares_foreign_keys` 守。
+    ///
+    /// ⚠ 用内存库:这几格验的全是 **runner 自己的形**,不需要真 schema;真库上的形
+    /// 由 `runner_owned_migration_shape` / `canary_0029_forward_migrates_v28` 覆盖。
+    #[test]
+    fn foreign_keys_declaration_is_consumed() {
+        let mem = || Connection::open_in_memory().expect("内存库");
+        let uv = |conn: &Connection| -> i64 {
+            conn.pragma_query_value(None, "user_version", |r| r.get(0)).unwrap()
+        };
+
+        // (a) Enforced + 外键关着 = 响亮拒。
+        // ⚠ 每一格都**显式**摆好外键这一位,别吃默认值:仓里这份 SQLite 是
+        //   `bundled` 编译的,libsqlite3-sys 给它带了 `SQLITE_DEFAULT_FOREIGN_KEYS=1`
+        //   ⇒ 新连接进来外键是**开**的,与上游 SQLite 的默认相反(首版一稿照上游
+        //   写成「默认关」,这只测当场红)。
+        let conn = mem();
+        conn.pragma_update(None, "foreign_keys", false).unwrap();
+        assert!(!foreign_keys_on(&conn).unwrap());
+        let err = apply_migration(&conn, 99, ForeignKeys::Enforced, "CREATE TABLE a(x);")
+            .unwrap_err();
+        assert!(err.to_string().contains("声明 Enforced"), "{err}");
+        assert_eq!(uv(&conn), 0, "被拒的迁移不许推 user_version");
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM sqlite_master WHERE name='a'", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            0,
+            "被拒的迁移一个字节都不许写"
+        );
+
+        // (b) DisabledDuringBody 幸福路 = **真做一次「重建被 FK 引用的表」**,也就是
+        //     §7.0 那张欠条等的那种迁移(照 SQLite 自己那份 "Making Other Kinds Of
+        //     Table Schema Changes" 的九步:建新表 → 拷数 → DROP 旧表 → RENAME 顶上)。
+        //     ⭐ **承重的那一句是 `DROP TABLE p`**:外键开着时它要先跑一次隐式
+        //     DELETE,而 `c` 里有指着 p 的行 ⇒ 当场 FOREIGN KEY constraint failed。
+        //     所以这一格只有「BEGIN 之前真的关掉了」才跑得完 —— 关晚了(事务内 =
+        //     静默 no-op)会红在这句 expect 上,报的是 SQLite 自己那句违例。
+        //     ⚠ 一稿曾拿「RENAME 会不会改写别人的 REFERENCES 子句」当判据,实测
+        //     **两个模式下都改写**(与 lang_altertable 那句读起来的意思相反),
+        //     换成了这条 DROP 的差别,两边都真跑过。
+        let conn = mem();
+        conn.pragma_update(None, "foreign_keys", true).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE p(id INTEGER PRIMARY KEY, v TEXT); \
+             CREATE TABLE c(id INTEGER PRIMARY KEY, pid REFERENCES p(id)); \
+             INSERT INTO p VALUES (1, 'a'); INSERT INTO c VALUES (1, 1);",
+        )
+        .unwrap();
+        apply_migration(
+            &conn,
+            99,
+            ForeignKeys::DisabledDuringBody,
+            "CREATE TABLE p_new(id INTEGER PRIMARY KEY, v TEXT NOT NULL, extra TEXT); \
+             INSERT INTO p_new(id, v) SELECT id, v FROM p; \
+             DROP TABLE p; \
+             ALTER TABLE p_new RENAME TO p;",
+        )
+        .expect("整表重建必须跑得完 —— 这正是 §7.0 那张欠条要解的事");
+        assert_eq!(uv(&conn), 99);
+        let p_ddl: String = conn
+            .query_row("SELECT sql FROM sqlite_master WHERE name='p'", [], |r| r.get(0))
+            .unwrap();
+        assert!(p_ddl.contains("extra"), "重建的是新形那张表:{p_ddl}");
+        assert_eq!(
+            conn.query_row("SELECT v FROM p WHERE id = 1", [], |r| r.get::<_, String>(0))
+                .unwrap(),
+            "a",
+            "数据要跟过来"
+        );
+        assert!(foreign_keys_on(&conn).unwrap(), "幸福路也必须归位");
+        // 提交前那道 foreign_key_check 本来就跑过一遍;这里再问一次,钉「关外键期间
+        // 攒下的不是一堆违例」——它无行即无违例,故用 optional() 判空。
+        {
+            use rusqlite::OptionalExtension;
+            let violation: Option<String> = conn
+                .query_row("PRAGMA foreign_key_check", [], |r| r.get(0))
+                .optional()
+                .unwrap();
+            assert_eq!(violation, None, "重建之后不许留下外键违例");
+        }
+
+        // (c) 归位归的是「**进来时那样**」,不是恒开:进来关着 → 出去还是关着。
+        //     runner 不替调用方决定这条连接的外键策略。
+        let conn = mem();
+        conn.pragma_update(None, "foreign_keys", false).unwrap();
+        apply_migration(&conn, 99, ForeignKeys::DisabledDuringBody, "CREATE TABLE t(x);").unwrap();
+        assert!(!foreign_keys_on(&conn).unwrap(), "进来时是关的,就该还它一个关的");
+
+        // (d) 进来时已在事务里 = 拒。⚠ 这一格守的是**静默失效**:事务内那句
+        //     `PRAGMA foreign_keys = 0` 不报错也不生效。
+        let conn = mem();
+        conn.pragma_update(None, "foreign_keys", true).unwrap();
+        conn.execute_batch("BEGIN").unwrap();
+        let err = apply_migration(&conn, 99, ForeignKeys::DisabledDuringBody, "CREATE TABLE t(x);")
+            .unwrap_err();
+        assert!(err.to_string().contains("已在事务中"), "{err}");
+        assert!(!conn.is_autocommit(), "拒开跑就别动调用方的事务");
+        assert!(foreign_keys_on(&conn).unwrap(), "拒开跑就别动外键");
+        conn.execute_batch("ROLLBACK").unwrap();
+
+        // (e) `< 29` 的老路径:**逐字原样,新 metadata 不参与**。两格都只有这条分支
+        //     决定得了 ——
+        //     ①老路径不挂 authorizer,所以顶层 BEGIN/COMMIT 照过(1-28 正是这么写的);
+        //      同一份 SQL 走新路径会被 SQLITE_AUTH 拒(见 runner_owned_migration_shape ②)。
+        //     ②老路径对 `Enforced` 连断言都不做:外键关着照跑,跑完还是关着
+        //      (对照 (a) —— 同样的声明、同样的连接状态,只差版本号那一格)。
+        let conn = mem();
+        conn.pragma_update(None, "foreign_keys", false).unwrap();
+        apply_migration(
+            &conn,
+            5,
+            ForeignKeys::Enforced,
+            "BEGIN; CREATE TABLE legacy_ok(x); COMMIT;",
+        )
+        .expect("老路径逐字原样:自带事务、不挂 authorizer、不核外键声明");
+        assert_eq!(uv(&conn), 5, "老形的 uv 由 runner 外层那句 pragma 推");
+        assert!(!foreign_keys_on(&conn).unwrap(), "老路径不碰外键状态");
+        // 而 `DisabledDuringBody` 落在老路径上只会被静默忽略 ⇒ 当场拒(不留死字段)。
+        let err = apply_migration(&conn, 5, ForeignKeys::DisabledDuringBody, "SELECT 1;")
+            .unwrap_err();
+        assert!(err.to_string().contains("不消费外键声明位"), "{err}");
+
+        // (g) 归位那一刻事务还挂着(runner bug / ROLLBACK 自己失败):**修好并报出来**。
+        let conn = mem();
+        conn.pragma_update(None, "foreign_keys", true).unwrap();
+        let guard = FkGuard::arm(&conn, 99, ForeignKeys::DisabledDuringBody).unwrap();
+        conn.execute_batch("BEGIN IMMEDIATE; CREATE TABLE dangling(x);").unwrap();
+        let err = guard.restore().unwrap_err();
+        assert!(err.to_string().contains("事务仍悬挂"), "{err}");
+        assert!(conn.is_autocommit(), "报出来之前先得把状态修回来");
+        assert!(foreign_keys_on(&conn).unwrap(), "外键必须真的归位(事务内改它是 no-op)");
+    }
+
+    /// B-b0(§14 第一行:「提交 / 异常 / panic 三条路径都恢复 FK 状态」)。
+    ///
+    /// 前两条由 `runner_owned_migration_shape` ④⑤ 与上面那只覆盖;panic 这条只能在
+    /// 守卫这一层验 —— `apply_runner_owned` 里那六个可失败点没有一个 panic 得起来
+    /// (rusqlite 把用户回调里的 panic 自己 catch 掉了),而 Drop 是不是真会跑,
+    /// 只有 `catch_unwind` 答得出。⚠ 这只测**预期**在 stderr 打一行 panic 日志。
+    #[test]
+    fn fk_guard_restores_on_panic() {
+        let conn = Connection::open_in_memory().expect("内存库");
+        conn.pragma_update(None, "foreign_keys", true).unwrap();
+        let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = FkGuard::arm(&conn, 99, ForeignKeys::DisabledDuringBody).unwrap();
+            assert!(!foreign_keys_on(&conn).unwrap(), "守卫武装之后外键就该是关的");
+            conn.execute_batch("BEGIN IMMEDIATE; CREATE TABLE half(x);").unwrap();
+            panic!("模拟迁移半途 panic(这一行 stderr 是预期的)");
+        }));
+        assert!(caught.is_err(), "这只测靠的就是那次 panic");
+        assert!(conn.is_autocommit(), "panic 路径:事务必须收掉(否则下一句归位是 no-op)");
+        assert!(foreign_keys_on(&conn).unwrap(), "panic 路径:外键必须归位");
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM sqlite_master WHERE name='half'", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            0,
+            "顺带:回滚是真回滚"
+        );
     }
 
     /// 金丝雀 0029(M6):v28 库前滚到 29,业务数据与 oplog 原样。用 `open_through(29)`
@@ -1168,30 +1403,203 @@ pub(crate) fn run_migrations(conn: &Connection, max_version: i64) -> rusqlite::R
     // 照跑会走已退役的路径(如 0028 前的 sync_meta.space_name)静默分叉。fail-fast
     // 与本文件 WAL 断言同款;更新分发不提供降级,触发即人为装旧包,人话提示升级。
     assert_downgrade_gate(current);
-    for (version, sql) in MIGRATIONS {
+    for (version, foreign_keys, sql) in MIGRATIONS {
         if *version > current && *version <= max_version {
-            if *version >= RUNNER_OWNS_TXN_FROM {
-                apply_runner_owned(conn, *version, sql)?;
-            } else {
-                // 1-28 老形原样(不回改历史):SQL 文件自带事务(0028 起连 uv 也自设,
-                // 外层 pragma 是幂等重写)。安卓**既有正式库**绝不原地跑 1-27(下限
-                // 28 挡在门外);fresh/staging 建库从 1 全跑属建库事务,半成品整库
-                // 弃置重来,不吃崩溃窗(codex 实现审 L 措辞钉正)。
-                conn.execute_batch(sql)?;
-                conn.pragma_update(None, "user_version", version)?;
-            }
+            apply_migration(conn, *version, *foreign_keys, sql)?;
         }
     }
     Ok(())
 }
 
+/// 单条迁移的分派:新形(runner 自有事务 + 外键声明位)/ 老形(1-28 原样)。
+///
+/// 独立成函数是为了让测试能拿**合成的**条目驱动它(真表里今天一条 `DisabledDuringBody`
+/// 都没有,而「老路径不消费声明位」这一格只有合成条目验得了)。
+fn apply_migration(
+    conn: &Connection,
+    version: i64,
+    foreign_keys: ForeignKeys,
+    sql: &str,
+) -> rusqlite::Result<()> {
+    if version >= RUNNER_OWNS_TXN_FROM {
+        return apply_runner_owned(conn, version, foreign_keys, sql);
+    }
+    // 1-28 老形原样(不回改历史):SQL 文件自带事务(0028 起连 uv 也自设,外层
+    // pragma 是幂等重写)。安卓**既有正式库**绝不原地跑 1-27(下限 28 挡在门外);
+    // fresh/staging 建库从 1 全跑属建库事务,半成品整库弃置重来,不吃崩溃窗
+    // (codex 实现审 L 措辞钉正)。
+    //
+    // ⛔ **声明位不参与这条路径**——它没有 runner 事务可言,`BEGIN` 在 SQL 文件自己
+    // 手里。故 `Enforced` 在这儿连断言都不做(那才叫「逐字走旧 runner」),而
+    // `DisabledDuringBody` 会被静默忽略 ⇒ 当场拒,不给死字段留活路(§7.0)。
+    if foreign_keys != ForeignKeys::Enforced {
+        return Err(runner_misuse(format!(
+            "迁移 {version:04} 声明了 {foreign_keys:?},但 v{RUNNER_OWNS_TXN_FROM} 以前的老\
+             路径不消费外键声明位(事务在 SQL 文件自己手里)——这条声明只会被静默忽略"
+        )));
+    }
+    conn.execute_batch(sql)?;
+    conn.pragma_update(None, "user_version", version)
+}
+
+/// runner 自己的用法错(声明与现实对不上 / 调用契约没兑现),与「迁移 SQL 写错了」
+/// 分开报:后者是 SQLite 自己的错码,这个是 `SQLITE_MISUSE`。
+fn runner_misuse(message: String) -> rusqlite::Error {
+    rusqlite::Error::SqliteFailure(
+        rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_MISUSE),
+        Some(message),
+    )
+}
+
+fn foreign_keys_on(conn: &Connection) -> rusqlite::Result<bool> {
+    conn.pragma_query_value(None, "foreign_keys", |r| r.get(0))
+}
+
+/// 外键状态的 RAII 归位器(board-columns-plan §7.0 / §14 第一行)。
+///
+/// **为什么必须是 RAII 而不是「记得在每条返回路径上写一句」**:关掉外键之后到归位
+/// 之间那段里,`apply_runner_owned` 有 BEGIN、authorizer、execute_batch、
+/// `foreign_key_check`、pragma、COMMIT 六个可失败点 —— 靠 `?` 逐条兜就是首版自检
+/// 清单第 4 条那个「已提交的义务随 `?` 蒸发」。这里的义务是**连接上的一位状态**:
+/// 漏归位 = 此后这条连接上的所有写都不再逐行验外键,而且**一声不吭**。
+///
+/// ⛔ **归位必须在事务结束之后**:`PRAGMA foreign_keys` 在事务内是静默 no-op,所以
+/// 两条归位路径(显式 [`Self::restore`] 与 [`Drop`])都先确认 `is_autocommit`、
+/// 必要时先回滚,再改 pragma。顺序反了就是「归位了个寂寞」。
+struct FkGuard<'c> {
+    conn: &'c Connection,
+    /// `None` = 无需归位([`ForeignKeys::Enforced`],runner 没碰过它)。
+    restore_to: Option<bool>,
+}
+
+impl<'c> FkGuard<'c> {
+    /// 在 `BEGIN` **之前**按声明位处理外键;返回的守卫负责归位。
+    fn arm(conn: &'c Connection, version: i64, foreign_keys: ForeignKeys) -> rusqlite::Result<Self> {
+        match foreign_keys {
+            // 不改状态,只把「声明」降级成**被核对的断言**:调用方本来就该先开外键
+            // (`db::open` / `spaces` 两处建库 / `backup::restore` 全是这么干的)。
+            // 对不上就响亮拒——否则这条迁移会在一个比它声明的更弱的模式下跑完,
+            // 而唯一还兜着的只剩提交前那道 `foreign_key_check`。
+            ForeignKeys::Enforced => {
+                if !foreign_keys_on(conn)? {
+                    return Err(runner_misuse(format!(
+                        "迁移 {version:04} 声明 Enforced,但这条连接上 foreign_keys 是关的\
+                         ——调用方必须先开外键再跑迁移"
+                    )));
+                }
+                Ok(Self { conn, restore_to: None })
+            }
+            ForeignKeys::DisabledDuringBody => {
+                // 前置:必须在事务外。事务内改这个 pragma **不报错也不生效**,于是
+                // 「BEGIN 之前关」会退化成「什么都没关」,而迁移体照跑 —— 一个整表
+                // 重建型迁移会当场撞逐行外键拦截,报出的错跟 SQL 写错了长得一样。
+                if !conn.is_autocommit() {
+                    return Err(runner_misuse(format!(
+                        "迁移 {version:04} 声明 DisabledDuringBody,但进来时连接已在事务中\
+                         ——事务内 PRAGMA foreign_keys 是静默 no-op,拒绝在这种状态下开跑"
+                    )));
+                }
+                let before = foreign_keys_on(conn)?;
+                conn.pragma_update(None, "foreign_keys", false)?;
+                // 写后读回(同本文件 `open` 对 WAL 的 set-and-verify:静默不生效是这类
+                // pragma 的真实死法)。⚠ 不能用 `pragma_update_and_check` ——
+                // `PRAGMA foreign_keys = 0` 的赋值形不回行,那个 helper 会报「无行」。
+                //
+                // ⚠ **承重的是上面那道 `is_autocommit`,这一句是第二道**:有了前一道,
+                // 这一句今天恒真(变异阴性对照里单拆它是绿的,归类「它今天是另一条的
+                // 推论」)。留着的理由 = 拆掉前一道时**接住的正是它**(那条变异之所以
+                // 红,是因为这句把「关了个寂寞」当场报了出来,而不是让迁移带着开着的
+                // 外键跑完)。两条都留,别只留一条。
+                if foreign_keys_on(conn)? {
+                    return Err(runner_misuse(format!(
+                        "迁移 {version:04}:SQLite 拒绝关闭 foreign_keys"
+                    )));
+                }
+                Ok(Self { conn, restore_to: Some(before) })
+            }
+        }
+    }
+
+    /// 幸福路与普通错误路共用的显式归位:**失败会被报出来**,不像 [`Drop`] 只能吞。
+    fn restore(mut self) -> rusqlite::Result<()> {
+        let Some(to) = self.restore_to.take() else { return Ok(()) };
+        // 走到这儿事务本该已经终结(提交或回滚)。还挂着 = runner 自己有 bug,
+        // 或者那句 `let _ = ROLLBACK` 自己失败了。**先把状态修回来**(事务内改
+        // pragma 是静默 no-op,不回滚就归不了位),**再响亮报出来** —— 只修不报
+        // 会把一个 runner bug 变成没人知道的事,只报不修会留下一条外键悄悄关着
+        // 的连接,两样都要。
+        let dangling = !self.conn.is_autocommit();
+        if dangling {
+            let _ = self.conn.execute_batch("ROLLBACK");
+        }
+        self.conn.pragma_update(None, "foreign_keys", to)?;
+        if foreign_keys_on(self.conn)? != to {
+            return Err(runner_misuse(format!(
+                "迁移收尾:SQLite 拒绝把 foreign_keys 归位成 {to}"
+            )));
+        }
+        if dangling {
+            return Err(runner_misuse(
+                "迁移收尾:归位外键时事务仍悬挂(已强制回滚并归位)".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+impl Drop for FkGuard<'_> {
+    /// 只剩 **panic** 这一条路会走到这儿(正常两条路都先经 [`Self::restore`] 摘位)。
+    /// 展开中不许再 panic,所以这里只能尽力而为、吞掉错误 —— 显式归位那条才是
+    /// 「归位失败也要报出来」的所有者。
+    fn drop(&mut self) {
+        let Some(to) = self.restore_to.take() else { return };
+        if !self.conn.is_autocommit() {
+            let _ = self.conn.execute_batch("ROLLBACK");
+        }
+        let _ = self.conn.pragma_update(None, "foreign_keys", to);
+    }
+}
+
 /// 0029 起的迁移执行形(codex 设计审 H2:结构原子,不靠文本 lint):
-/// `BEGIN IMMEDIATE → 事务体 → foreign_key_check → user_version → COMMIT`,
+/// **外键声明位(BEGIN 之前)** → `BEGIN IMMEDIATE → 事务体 → foreign_key_check →
+/// user_version → COMMIT` → **外键归位(事务之后)**。
 /// 事务体执行期间挂 SQLite authorizer 拒事务控制与 `PRAGMA user_version`——
 /// 迁移文件写了顶层 BEGIN/COMMIT 或自设 uv 会在预备语句时就响亮失败(SQLITE_AUTH),
 /// 整笔回滚。断电/系统 kill 于任一点:事务中=回滚重跑;COMMIT 后=uv 已随事务
 /// 原子落盘、重启跳过(user_version 存 db header、参与事务)。
-fn apply_runner_owned(conn: &Connection, version: i64, sql: &str) -> rusqlite::Result<()> {
+///
+/// ⛔ **事务那一段刻意关在 [`apply_runner_owned_txn`] 里**:外壳里绝不许出现 `?` ——
+/// 关掉外键之后每一个 `?` 都是一条绕过归位的返回路径(首版自检清单 4)。两个结果
+/// 用 `match` 强制面对,**归位失败优先报**(库已回滚/已提交都无所谓,而一条外键悄悄
+/// 关着的连接是接下来所有写的隐患)。
+///
+/// ⚠ **诚实记账**:「归位失败」那一支今天**造不出行为测** —— 经这条路进来时,
+/// `apply_runner_owned_txn` 的每条返回路径都已终结事务,于是 `restore` 只在「SQLite
+/// 拒绝一条 pragma」时才失败,而那个态造不出来(变异阴性对照里把这一支改成吞掉是绿的,
+/// 归类「压根不是闸」= 它是 `Result` 的处置而非守卫)。**它守的那件事本身**由
+/// `foreign_keys_declaration_is_consumed` (g) 直接测 `FkGuard::restore` 覆盖:悬挂事务
+/// 下先修好状态再响亮报出来。
+fn apply_runner_owned(
+    conn: &Connection,
+    version: i64,
+    foreign_keys: ForeignKeys,
+    sql: &str,
+) -> rusqlite::Result<()> {
+    let guard = FkGuard::arm(conn, version, foreign_keys)?;
+    let body = apply_runner_owned_txn(conn, version, sql);
+    match (body, guard.restore()) {
+        (body, Ok(())) => body,
+        (body, Err(e)) => Err(runner_misuse(format!(
+            "迁移 {version:04} 之后外键归位失败:{e}{}",
+            match body {
+                Ok(()) => String::new(),
+                Err(inner) => format!(";该迁移本身也失败了:{inner}"),
+            }
+        ))),
+    }
+}
+
+fn apply_runner_owned_txn(conn: &Connection, version: i64, sql: &str) -> rusqlite::Result<()> {
     conn.execute_batch("BEGIN IMMEDIATE")?;
     conn.authorizer(Some(|ctx: AuthContext| match ctx.action {
         // 事务控制三族全拒(codex 实现审 M2):BEGIN/COMMIT/ROLLBACK 之外,SAVEPOINT

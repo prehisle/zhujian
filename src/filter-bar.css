@@ -18,6 +18,13 @@
   gap: 8px;
 }
 .kind-filter:empty { display: none; }
+/* 时间轴行(461,renderTimePills):同类型轴皮肤,恒显(不像类型轴那样可能清空)。 */
+.time-filter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
 /* 轴名小标(「类型」):与 pills 同排,弱化以示这是分组标签而非可点项。 */
 .tf-axis {
   font-size: var(--fs-12);

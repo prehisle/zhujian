@@ -70,6 +70,8 @@ export const board = defineMessages({
   "board.listSeparator": { zh: "、", en: ", " },
   "board.noTasksUnder": { zh: "「{label}」下没有任务", en: "No tasks under “{label}”" },
   "board.noTasksUnderHint": { zh: "切到「所有」看全部任务,或在卡片上给任务打个标签。", en: "Switch to All to see every task, or tag a task on its card." },
+  "board.noTasksInTime": { zh: "这段时间内没有任务", en: "No tasks in this time range" },
+  "board.noTasksInTimeHint": { zh: "切到「时间」轴的「全部」看全部任务。", en: "Switch “Time” to “All” to see every task." },
   "board.loadFailed": { zh: "读取失败", en: "Failed to load" },
   "board.retry": { zh: "重试", en: "Retry" },
   "tasktime.priLow": { zh: "低", en: "Low" },

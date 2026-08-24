@@ -21,11 +21,14 @@ import { buildItemDeepLink } from "./deeplink";
 import { armLocate } from "./locate";
 import {
   type FilterState,
+  type TimeBucket,
   applyFilter,
+  applyTimeFilter,
   reconcileKindFilter,
   reconcileTopicFilter,
   renderFilterPills,
   renderKindPills,
+  renderTimePills,
   selectedTopicLabels,
   soleTopicFilter,
   wireFilterInput,
@@ -120,6 +123,8 @@ export function inboxHasStashedDraft(): boolean {
 // 三维正交筛选 kind→topic→text(行为在共享件,与看板同源):类型轴(kind)是钻取器,
 // 选一个类型先圈定「挂了该类型任一标签的想法」,再把标签 pill 收到该类型内。
 const filter: FilterState = { kind: "all", topics: [], text: "" };
+// 时间轴(461):与 filter 同款模块态存活理由,独立第四维——见 board.ts 同名变量的注释。
+let timeFilter: TimeBucket = "all";
 // Scroll offset of the list, captured on unmount and restored on the next mount so a
 // view switch returns you to where you were reading (not snapped back to the top).
 // Belongs to the tab in `active` above — since that tab is preserved too, the offset
@@ -167,6 +172,7 @@ const SKELETON = `
   </nav>
   <div class="filter-row" id="filter-row" hidden>
     <div class="kind-filter" id="idea-kind-filter"></div>
+    <div class="time-filter" id="idea-time-filter"></div>
     <div class="filter-main">
       <div class="topic-filter" id="idea-topic-filter"></div>
       <input class="filter-text" id="idea-filter" type="search" placeholder="${t("inbox.filterPlaceholder")}" autocomplete="off" spellcheck="false" />
@@ -193,6 +199,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
   const filterRow = view.querySelector("#filter-row") as HTMLElement;
   const filterBar = view.querySelector("#idea-topic-filter") as HTMLElement;
   const kindBar = view.querySelector("#idea-kind-filter") as HTMLElement;
+  const timeBar = view.querySelector("#idea-time-filter") as HTMLElement;
   const filterInput = view.querySelector("#idea-filter") as HTMLInputElement;
   const tabEls: Record<Tab, HTMLButtonElement> = {
     ideas: view.querySelector("#tab-ideas") as HTMLButtonElement,
@@ -327,6 +334,11 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         // 筛选让它可见(单选具体标签已自动挂上、本就可见;含「无标签」筛选时新卡天然在视野)。
         if (soleTopic === null && filter.topics.length > 0 && !filter.topics.includes("none")) {
           filter.topics = [];
+        }
+        // 时间筛选下记灵感:新卡创建时刻=现在,归「近1天」桶;筛的是别的档(近7天/
+        // 7天前)会把新卡当场筛没——清掉让它可见(同上面文本/标签筛选的处理,461)。
+        if (timeFilter !== "all" && timeFilter !== "1d") {
+          timeFilter = "all";
         }
         pulseId = id;
         void refresh();
@@ -1109,6 +1121,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
           filter.topics = [];
           filter.text = "";
           filterInput.value = "";
+          timeFilter = "all"; // 时间轴同理清掉(461)
         }
         const pool = focus.tab === "ideas" ? ideas : archived;
         if (pool.some((i) => i.id === focus.id)) locateId = focus.id;
@@ -1131,6 +1144,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         active,
         filter.kind,
         filter.topics,
+        timeFilter,
         q,
         todayKey,
         ideas,
@@ -1183,28 +1197,40 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
           : t("inbox.weekStatsNoRatio", { n: stats.captured_week });
       if (active === "ideas") {
         // 筛选行:有想法才出现(同看板);pills 计数从全量想法派生(不随文本过滤
-        // 收缩,两维正交——口径在共享件 filter-bar.ts,与看板同源)。
+        // 收缩,三维正交——口径在共享件 filter-bar.ts,与看板同源)。时间轴(461)
+        // 是独立第四维,在类型轴之下、标签轴之上圈定,类型/标签 pill 与 applyFilter
+        // 都吃已按时间收窄的集合(同 board.ts 的先后关系)。
         filterRow.hidden = ideas.length === 0;
+        const timeNarrowed = applyTimeFilter(ideas, timeFilter, (i) => i.created_at);
         if (ideas.length > 0) {
+          renderTimePills(timeBar, ideas, (i) => i.created_at, timeFilter, (b) => {
+            timeFilter = b;
+            void refresh();
+          });
           // 类型轴在标签 pills 之上(路线 A 钻取器);renderKindPills 无 kind 时清空、CSS
           // :empty 隐整行。标签 pills 随 kind 收到该类型内(见 filter-bar.ts)。
-          renderKindPills(kindBar, ideas, topics, filter, () => void refresh());
-          renderFilterPills(filterBar, ideas, topics, filter, () => void refresh());
+          renderKindPills(kindBar, timeNarrowed, topics, filter, () => void refresh());
+          renderFilterPills(filterBar, timeNarrowed, topics, filter, () => void refresh());
         }
-        const shown = applyFilter(ideas, filter, (i) => i.content, topics);
+        const shown = applyFilter(timeNarrowed, filter, (i) => i.content, topics);
         // The compose bar always sits at the top of 想法, empty or not.
         const bar = composeBar();
         if (ideas.length === 0) {
           list.replaceChildren(bar, centerNode(t("inbox.emptyIdeasTitle"), t("inbox.emptyIdeasHint")));
         } else if (shown.length === 0) {
           // 筛空 ≠ 没有灵感:提示当前筛选(词优先),别让用户以为灵感全没了(同看板)。
+          // 只有时间轴在筛(类型/标签都是「全部」)时,selectedTopicLabels 给出空标签
+          // ——单独给时间轴一句话,别显「「」下没有随记」这种坏文案(461)。
           const qRaw = filter.text.trim();
           const label = selectedTopicLabels(filter, topics).join("、");
+          const onlyTimeNarrowed = filter.kind === "all" && filter.topics.length === 0 && timeFilter !== "all";
           list.replaceChildren(
             bar,
             qRaw !== ""
               ? centerNode(t("inbox.filterNoMatch", { q: qRaw }), t("inbox.filterNoMatchHint"))
-              : centerNode(t("inbox.filterEmptyTag", { tag: label }), t("inbox.filterEmptyTagHint")),
+              : onlyTimeNarrowed
+                ? centerNode(t("inbox.filterEmptyTime"), t("inbox.filterEmptyTimeHint"))
+                : centerNode(t("inbox.filterEmptyTag", { tag: label }), t("inbox.filterEmptyTagHint")),
           );
         } else {
           // 按天分组成时间轴:同一天的灵感归到一个日期标头下(后端已按时间倒序;
