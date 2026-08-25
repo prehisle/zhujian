@@ -686,7 +686,7 @@ fn import_rejects_space_profile_state_log_mismatch_both_sides() {
 fn import_preserves_nonnull_done_at() {
     let mut a = peer("done-a");
     let id = task::create(&mut a.conn, &mut a.clock, "干完的活", None, None, None).unwrap();
-    task::transition(&mut a.conn, &mut a.clock, &id, "done").unwrap();
+    task::transition(&mut a.conn, &mut a.clock, &id, "done", &crate::board::gate::DETACHED).unwrap();
     // 工序1 无本地 writer:合法远端 done_at set_field 落值 + 记 op(strict battery 要求行值
     // == oplog LWW 赢家,故经 apply_remote_op 落值,而非裸 UPDATE)。
     let done_ts = "2026-07-20T10:00:00.000Z";
@@ -735,7 +735,7 @@ fn import_merges_all_shapes_and_advances_clock() {
     let task_id = task::create(&mut a.conn, &mut a.clock, "任务乙", Some("2026-08-01"), Some(2), None).unwrap();
     images::attach(&mut a.conn, &mut a.clock, &task_id, &[9, 9, 9], "image/png").unwrap();
     let done_id = task::create(&mut a.conn, &mut a.clock, "已完事", None, None, None).unwrap();
-    task::transition(&mut a.conn, &mut a.clock, &done_id, "done").unwrap();
+    task::transition(&mut a.conn, &mut a.clock, &done_id, "done", &crate::board::gate::DETACHED).unwrap();
     task::seal(&mut a.conn, &mut a.clock, &done_id).unwrap(); // 归档成就(sealed 行)
     let trash_id = notes::capture(&mut a.conn, &mut a.clock, "进回收站").unwrap();
     notes::archive(&mut a.conn, &mut a.clock, &trash_id).unwrap();

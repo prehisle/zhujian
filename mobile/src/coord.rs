@@ -675,6 +675,11 @@ impl Coord {
         server_url: &str,
     ) -> Result<CreateAccountOutcome, String> {
         let _life = self.lifecycle.lock().await;
+        // ⭐ **配置转换 veto**(board-columns-plan §5.6):这段时间里**全部空间**都不许发
+        // 自定义 stage / `board_column` op。⛔ 不新造锁 —— 互斥仍由上面那把既有的
+        // `lifecycle`(§4 的 account-binding mutex)提供,这一句只是把「那把锁此刻被持着」
+        // 投影进 core,好让 core 侧的写闸看得见。释放走 RAII,三条路一视同仁。
+        let _config_transition = self.sup.begin_config_transition();
         let rt = self.control_runtime(space_id)?;
         let _op = rt
             .begin_op()
@@ -912,6 +917,11 @@ impl Coord {
         // 账户绑定互斥:建槽到 Integrated 全程持有(§3.3;幸福路上账户唯一裁决
         // 无需扫 staging——staging 本就不在发现面里)。
         let _life = self.lifecycle.lock().await;
+        // ⭐ **配置转换 veto**(board-columns-plan §5.6):这段时间里**全部空间**都不许发
+        // 自定义 stage / `board_column` op。⛔ 不新造锁 —— 互斥仍由上面那把既有的
+        // `lifecycle`(§4 的 account-binding mutex)提供,这一句只是把「那把锁此刻被持着」
+        // 投影进 core,好让 core 侧的写闸看得见。释放走 RAII,三条路一视同仁。
+        let _config_transition = self.sup.begin_config_transition();
 
         // ---- Preparing:建槽 + 配对(专用短连接;完成 = 配置四键落槽库) ----
         on_progress("preparing", 0, 0);
@@ -985,6 +995,8 @@ impl Coord {
             shutdown: shutdown_rx,
             boot_commit: latch,
             restart_flag: Arc::new(Mutex::new(None)),
+            // 不在 supervisor 表里 ⇒ 没有壳侧写闸在读这一格(board-columns-plan §5.4)。
+            engine_present: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             // 手机壳不监听(lan-direct-plan §6:只拨出,拨号器归 L-c3b)。
             lan: None,
         };
@@ -2012,6 +2024,8 @@ mod tests {
             shutdown: src_sd_rx,
             boot_commit: Arc::new(Mutex::new(None)),
             restart_flag: Arc::new(Mutex::new(None)),
+            // 不在 supervisor 表里 ⇒ 没有壳侧写闸在读这一格(board-columns-plan §5.4)。
+            engine_present: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             // 手机壳不监听(lan-direct-plan §6:只拨出,拨号器归 L-c3b)。
             lan: None,
         }));

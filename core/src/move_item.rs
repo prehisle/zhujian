@@ -1143,7 +1143,7 @@ mod tests {
         let (mut src, mut sc) = fresh_db("done-keep");
         let (mut dst, mut dc) = fresh_db("done-keep-dst");
         let id = task::create(&mut src, &mut sc, "干完的活", None, None, None).unwrap();
-        task::transition(&mut src, &mut sc, &id, "done").unwrap(); // writer 盖 done_at
+        task::transition(&mut src, &mut sc, &id, "done", &crate::board::gate::DETACHED).unwrap(); // writer 盖 done_at
         let src_done: String =
             src.query_row("SELECT done_at FROM items WHERE id=?1", [&id], |r| r.get(0)).unwrap();
 
@@ -1171,7 +1171,7 @@ mod tests {
     fn concurrent_done_at_blocks_finalize() {
         let (mut src, mut sc) = fresh_db("done-h1");
         let id = task::create(&mut src, &mut sc, "干完的活", None, None, None).unwrap();
-        task::transition(&mut src, &mut sc, &id, "done").unwrap(); // done_at=T1
+        task::transition(&mut src, &mut sc, &id, "done", &crate::board::gate::DETACHED).unwrap(); // done_at=T1
         let pkg = export_ready(&mut src, &id); // 导出捕获 T1
         inject_done_at(&mut src, &mut sc, &id, "2026-07-20T10:00:00.000Z"); // 并发改成 T2(LWW 胜)
         let before = oplog_rows(&src);
@@ -1335,7 +1335,7 @@ mod tests {
         notes::archive(&mut src, &mut sc, &trashed).unwrap();
         assert!(export(&mut src, &trashed).unwrap_err().contains("回收站"));
         let sealed = task::create(&mut src, &mut sc, "已归档成就", None, None, None).unwrap();
-        task::transition(&mut src, &mut sc, &sealed, "done").unwrap();
+        task::transition(&mut src, &mut sc, &sealed, "done", &crate::board::gate::DETACHED).unwrap();
         task::seal(&mut src, &mut sc, &sealed).unwrap();
         assert!(export(&mut src, &sealed).unwrap_err().contains("成就归档"));
     }
@@ -1906,7 +1906,7 @@ tx.execute(\"DELETE FROM sync_replay_active\", []) \
         plant_user_column(&src, col, "a45");
         let id = task::create(&mut src, &mut sc, "住在自定义列里", Some("2026-09-01"), Some(3), None)
             .unwrap();
-        task::transition(&mut src, &mut sc, &id, col).unwrap();
+        task::transition(&mut src, &mut sc, &id, col, &crate::board::gate::DETACHED).unwrap();
 
         let pkg = export_ready(&mut src, &id);
         assert_eq!((pkg.source_stage.as_str(), pkg.source_kind.as_str()), (col, "task"));
@@ -2044,11 +2044,11 @@ tx.execute(\"DELETE FROM sync_replay_active\", []) \
         let col = "01USERCOLUMN00000000000001";
         plant_user_column(&src, col, "a45");
         let id = task::create(&mut src, &mut sc, "导出后被拖走", None, None, None).unwrap();
-        task::transition(&mut src, &mut sc, &id, col).unwrap();
+        task::transition(&mut src, &mut sc, &id, col, &crate::board::gate::DETACHED).unwrap();
         let pkg = export_ready(&mut src, &id);
         import(&mut dst, &mut dc, &pkg).unwrap();
 
-        task::transition(&mut src, &mut sc, &id, "todo").unwrap(); // 源被拖回内置列
+        task::transition(&mut src, &mut sc, &id, "todo", &crate::board::gate::DETACHED).unwrap(); // 源被拖回内置列
         match finalize_source(&mut src, &mut sc, &pkg).unwrap() {
             FinalizeOutcome::Kept { reason } => assert!(reason.contains("被改动"), "{reason}"),
             FinalizeOutcome::Deleted => panic!("源列变了还把源删了"),

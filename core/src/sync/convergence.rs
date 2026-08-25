@@ -619,7 +619,7 @@ fn random_command(conn: &mut Connection, clock: &mut Clock, rng: &mut Rng, step:
         //    [`LIVE_TASK_COLUMNS`] 头注。`from == to` 与「目标列刚被对端删掉」都走 Err = 合法跳过。
         7 => match rng.pick(&ids(conn, &live_tasks())).cloned() {
             Some(id) => match rng.pick(&ids(conn, LIVE_TASK_COLUMNS)).cloned() {
-                Some(to) => task::transition(conn, clock, &id, &to),
+                Some(to) => task::transition(conn, clock, &id, &to, &crate::board::gate::DETACHED),
                 None => Ok(()),
             },
             None => Ok(()),
@@ -789,13 +789,13 @@ fn random_command(conn: &mut Connection, clock: &mut Clock, rng: &mut Rng, step:
         // ⚠ 前置不满足的一律走 Err = 合法跳过 —— 删 `todo`/`done`(480 定案:不可删)、
         //   删非空列(不变量 4)、改名撞已被对端删掉的列(只读收容区),这三条都会真发生。
         27 => match rng.below(8) {
-            0..=1 => board::create_column(conn, clock, &format!("列{}", rng.below(4)))
+            0..=1 => board::create_column(conn, clock, &format!("列{}", rng.below(4)), &crate::board::gate::DETACHED)
                 .inspect(|_| {
                     COLUMN_CREATES.fetch_add(1, Ordering::Relaxed);
                 })
                 .map(|_| ()),
             2..=3 => match rng.pick(&ids(conn, EDITABLE_COLUMNS)).cloned() {
-                Some(id) => board::rename_column(conn, clock, &id, &format!("列名{}", rng.below(4)))
+                Some(id) => board::rename_column(conn, clock, &id, &format!("列名{}", rng.below(4)), &crate::board::gate::DETACHED)
                     .inspect(|()| {
                         COLUMN_RENAMES.fetch_add(1, Ordering::Relaxed);
                     }),
@@ -806,7 +806,7 @@ fn random_command(conn: &mut Connection, clock: &mut Clock, rng: &mut Rng, step:
                 let cols = ids(conn, EDITABLE_COLUMNS);
                 match (rng.pick(&cols).cloned(), rng.pick(&cols).cloned()) {
                     (Some(c), Some(n)) if c != n => {
-                        board::reorder_column(conn, clock, &c, None, Some(&n)).inspect(|()| {
+                        board::reorder_column(conn, clock, &c, None, Some(&n), &crate::board::gate::DETACHED).inspect(|()| {
                             COLUMN_REORDERS.fetch_add(1, Ordering::Relaxed);
                         })
                     }
@@ -814,7 +814,7 @@ fn random_command(conn: &mut Connection, clock: &mut Clock, rng: &mut Rng, step:
                 }
             }
             _ => match rng.pick(&ids(conn, EDITABLE_COLUMNS)).cloned() {
-                Some(id) => board::delete_column(conn, clock, &id).inspect(|()| {
+                Some(id) => board::delete_column(conn, clock, &id, &crate::board::gate::DETACHED).inspect(|()| {
                     COLUMN_DELETES.fetch_add(1, Ordering::Relaxed);
                 }),
                 None => Ok(()),
@@ -1043,9 +1043,9 @@ fn the_task_selectors_reach_cards_that_live_in_a_custom_column() {
     let mut conn = db::open(&path).expect("open migrated db");
     let mut clock = Clock::load(&conn).expect("load clock");
 
-    let col = board::create_column(&mut conn, &mut clock, "自建").expect("建列");
+    let col = board::create_column(&mut conn, &mut clock, "自建", &crate::board::gate::DETACHED).expect("建列");
     let card = task::create(&mut conn, &mut clock, "住在自建列里", None, None, None).unwrap();
-    task::transition(&mut conn, &mut clock, &card, &col).expect("拖进去");
+    task::transition(&mut conn, &mut clock, &card, &col, &crate::board::gate::DETACHED).expect("拖进去");
 
     assert!(ids(&conn, &live_tasks()).contains(&card), "live_tasks 必须够得着自定义列上的活卡");
     assert!(!ids(&conn, &trash_tasks()).contains(&card));

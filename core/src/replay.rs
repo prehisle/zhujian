@@ -2702,7 +2702,7 @@ mod tests {
     fn apply_remote_done_at_set_field_lands_and_rejects_garbage() {
         let (mut r, mut rc) = fresh();
         let id = task::create(&mut r, &mut rc, "远端完成的活", None, None, None).unwrap();
-        task::transition(&mut r, &mut rc, &id, "done").unwrap();
+        task::transition(&mut r, &mut rc, &id, "done", &crate::board::gate::DETACHED).unwrap();
         let mut ops = all_ops(&r);
         let done_ts = "2026-07-20T10:00:00.000Z";
         ops.push(mk(
@@ -2747,7 +2747,7 @@ mod tests {
         notes::rename_topic(&mut r, &mut rc, &topic, "标签甲(新名)").unwrap();
         notes::set_topic_color(&mut r, &mut rc, &topic, Some("#3f7a99".into())).unwrap();
         let task_id = task::create(&mut r, &mut rc, "远端任务", Some("2026-07-10"), Some(2), Some(topic.as_str())).unwrap();
-        task::transition(&mut r, &mut rc, &task_id, "doing").unwrap();
+        task::transition(&mut r, &mut rc, &task_id, "doing", &crate::board::gate::DETACHED).unwrap();
         task::set_due(&mut r, &mut rc, &task_id, None).unwrap();
         task::set_priority(&mut r, &mut rc, &task_id, Some(1)).unwrap();
         let t2 = notes::create_topic(&mut r, &mut rc, "标签乙").unwrap();
@@ -2757,7 +2757,7 @@ mod tests {
         images::remove(&mut r, &mut rc, &img).unwrap();
         let (_img2, _s2) = images::attach(&mut r, &mut rc, &task_id, &[4, 5], "image/png").unwrap();
         let done = task::create(&mut r, &mut rc, "干完归档", None, None, None).unwrap();
-        task::transition(&mut r, &mut rc, &done, "done").unwrap();
+        task::transition(&mut r, &mut rc, &done, "done", &crate::board::gate::DETACHED).unwrap();
         task::seal(&mut r, &mut rc, &done).unwrap();
         let trashed = task::create(&mut r, &mut rc, "进回收站再销毁", None, None, None).unwrap();
         task::archive(&mut r, &mut rc, &trashed).unwrap();
@@ -2835,7 +2835,7 @@ mod tests {
         notes::file_to_topic(&mut l, &mut lc, &idea, Some(topic.as_str()), None).unwrap();
         // sealed 行(带图):归档不可删守护同样让路。
         let sealed = task::create(&mut l, &mut lc, "已入册", None, None, None).unwrap();
-        task::transition(&mut l, &mut lc, &sealed, "done").unwrap();
+        task::transition(&mut l, &mut lc, &sealed, "done", &crate::board::gate::DETACHED).unwrap();
         task::seal(&mut l, &mut lc, &sealed).unwrap();
         // (图挂在 filed 那条上,顺便验 CASCADE。)
         images::attach(&mut l, &mut lc, &idea, &[9], "image/png").unwrap();

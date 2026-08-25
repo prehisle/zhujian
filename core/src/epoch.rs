@@ -1285,7 +1285,7 @@ mod tests {
     fn compact_preserves_done_at_and_emits_baseline_set_field() {
         let mut p = peer("done-at");
         let id = task::create(&mut p.conn, &mut p.clock, "干完的活", None, None, None).unwrap();
-        task::transition(&mut p.conn, &mut p.clock, &id, "done").unwrap();
+        task::transition(&mut p.conn, &mut p.clock, &id, "done", &crate::board::gate::DETACHED).unwrap();
         // 工序1 无本地 writer,用一条合法远端 done_at set_field 注值(RFC3339)。
         let done_ts = "2026-07-20T10:00:00.000Z";
         let op = RemoteOp {
@@ -1399,7 +1399,7 @@ mod tests {
         let dead = notes::capture(c, k, "回收站里的").unwrap();
         notes::archive(c, k, &dead).unwrap();
         let sealed = task::create(c, k, "已入册", None, None, None).unwrap();
-        task::transition(c, k, &sealed, "done").unwrap();
+        task::transition(c, k, &sealed, "done", &crate::board::gate::DETACHED).unwrap();
         task::seal(c, k, &sealed).unwrap();
         let purged = notes::capture(c, k, "彻底删的").unwrap();
         notes::archive(c, k, &purged).unwrap();
@@ -1712,7 +1712,7 @@ mod tests {
             [(&mut a.conn, &mut a.clock), (&mut conn_b, &mut clock_b)] as [(_, _); 2]
         {
             task::rename(c, k, &task_id, "任务乙(后缀改)").unwrap();
-            task::transition(c, k, &task_id, "doing").unwrap();
+            task::transition(c, k, &task_id, "doing", &crate::board::gate::DETACHED).unwrap();
             task::set_due(c, k, &task_id, Some("2026-08-01")).unwrap();
             task::set_priority(c, k, &task_id, Some(3)).unwrap();
             // 删过最高编号图(图2):新图必须续高水位(图3),洞不复用、两库同号。

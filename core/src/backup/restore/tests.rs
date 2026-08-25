@@ -127,7 +127,7 @@ fn seed_rich(c: &mut Connection, k: &mut Clock) {
     let dead = notes::capture(c, k, "回收站里的").unwrap();
     notes::archive(c, k, &dead).unwrap();
     let sealed = task::create(c, k, "已入册", None, None, None).unwrap();
-    task::transition(c, k, &sealed, "done").unwrap();
+    task::transition(c, k, &sealed, "done", &crate::board::gate::DETACHED).unwrap();
     task::seal(c, k, &sealed).unwrap();
 }
 

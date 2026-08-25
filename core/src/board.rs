@@ -56,6 +56,8 @@ use ulid::Ulid;
 use crate::clock::Clock;
 use crate::{frindex, oplog, repo};
 
+pub mod gate;
+
 /// 能力 token:「本端认识 `board_column` 这套词汇」(plan §6 / §5.5,B-d 落)。
 ///
 /// ⭐ **它只有这一份,两个用途共用**(清单 14:同一条规则的第二份描述就是漂移源):
@@ -725,6 +727,14 @@ pub(crate) fn audit_tombstone_apply_empty(conn: &Connection) -> Result<(), Strin
 //
 // ⚠ **刻意不拒重名**:两台设备离线各建一个「本周」是完全合法的,拒不掉也不该拒
 // (topic 那边拒重名是因为 `topic_id_by_title` 真有按名查找的消费者;列只按 id 认人)。
+//
+// ⭐ **四条一律先过发送端闸**([`gate::ensure_can_emit`],plan §5;B-e 第 1 段起):
+// 它们发的是 `board_column/*` op —— 旧端的词汇表 CHECK 认不得 ⇒ `UnsupportedVocab` ⇒
+// **整条 origin 挂起**。⚠ 这一档比拖卡那条(`item/set_field{stage}` 带自定义列 id ⇒
+// `InvalidOp` = per-origin **持久隔离**)轻,但同样会把对端的同步停住,故**不分 seed 还是
+// 自定义列、一律要闸**:给 `todo` 改个名发的也是 `board_column/set_field`。
+// ⛔ 别照「拖卡那条只在目标是自定义列时才要闸」的形去给这四条也加个条件 —— 那条的判据是
+// 「op 的 payload 里有没有旧端不认识的值」,这四条的判据是「op 的 entity 旧端认不认识」。
 
 /// 建一个新的任务列,落在**全部列的末键之后**。返回它的 id(新铸 ULID)。
 ///
@@ -735,7 +745,12 @@ pub(crate) fn audit_tombstone_apply_empty(conn: &Connection) -> Result<(), Strin
 ///
 /// ⚠ **末键取的是全表最大值,含已 tombstone 的行**:列行永不物理删除(不变量 5),
 /// 让新列去顶一个死列的键只会造出并列。⇒ 键单调增长,新列恒在最右。
-pub fn create_column(conn: &mut Connection, clock: &mut Clock, title: &str) -> Result<String, String> {
+pub fn create_column(
+    conn: &mut Connection,
+    clock: &mut Clock,
+    title: &str,
+    facts: &gate::RuntimeFacts,
+) -> Result<String, String> {
     let title = title.trim();
     if title.is_empty() {
         return Err("列名不能为空".to_string());
@@ -754,6 +769,10 @@ pub fn create_column(conn: &mut Connection, clock: &mut Clock, title: &str) -> R
     let created_at = repo::now_iso_millis();
 
     let tx = conn.transaction().map_err(|e| e.to_string())?;
+    // ⭐ **闸排在全部本地前置之前**(plan §5.1 是顶层谓词):它问的是「本机此刻能不能
+    //    往外发这种 op」,与改的是哪一列无关。在事务里问,故它读到的配置键与下面
+    //    这笔写是同一个快照(首版自检清单 10)。
+    gate::ensure_can_emit(&tx, facts)?;
     let last: Option<String> = tx
         .query_row("SELECT position FROM board_column ORDER BY position DESC LIMIT 1", [], |r| {
             r.get(0)
@@ -777,13 +796,23 @@ pub fn create_column(conn: &mut Connection, clock: &mut Clock, title: &str) -> R
 ///
 /// ⭐ **`todo`/`done` 照改不误**:[`undeletable_reason`] 那条只禁删 —— 「待办」改名成
 /// 「本周」时 id 没变,挂在这一列上的产品语义一格都没动。
-pub fn rename_column(conn: &mut Connection, clock: &mut Clock, id: &str, title: &str) -> Result<(), String> {
+pub fn rename_column(
+    conn: &mut Connection,
+    clock: &mut Clock,
+    id: &str,
+    title: &str,
+    facts: &gate::RuntimeFacts,
+) -> Result<(), String> {
     let title = title.trim();
     if title.is_empty() {
         return Err("列名不能为空".to_string());
     }
     repo::ensure_content_fits(title)?;
     let tx = conn.transaction().map_err(|e| e.to_string())?;
+    // ⭐ **闸排在全部本地前置之前**(plan §5.1 是顶层谓词):它问的是「本机此刻能不能
+    //    往外发这种 op」,与改的是哪一列无关。在事务里问,故它读到的配置键与下面
+    //    这笔写是同一个快照(首版自检清单 10)。
+    gate::ensure_can_emit(&tx, facts)?;
     ensure_editable(&tx, id, "改名")?;
     let n = tx
         .execute("UPDATE board_column SET title = ?2 WHERE id = ?1", (id, title))
@@ -811,8 +840,13 @@ pub fn reorder_column(
     id: &str,
     prev_id: Option<&str>,
     next_id: Option<&str>,
+    facts: &gate::RuntimeFacts,
 ) -> Result<(), String> {
     let tx = conn.transaction().map_err(|e| e.to_string())?;
+    // ⭐ **闸排在全部本地前置之前**(plan §5.1 是顶层谓词):它问的是「本机此刻能不能
+    //    往外发这种 op」,与改的是哪一列无关。在事务里问,故它读到的配置键与下面
+    //    这笔写是同一个快照(首版自检清单 10)。
+    gate::ensure_can_emit(&tx, facts)?;
     ensure_editable(&tx, id, "排序")?;
     let resolve = |who: &str, nb: Option<&str>| -> Result<Option<String>, String> {
         let Some(nid) = nb else { return Ok(None) };
@@ -858,8 +892,17 @@ pub fn reorder_column(
 /// 真有这一枚 tombstone op;⑥(AFTER)在行真的改了之后当场消费掉授权行。
 /// ⛔ 别在这里写 `DELETE FROM sync_board_column_tombstone_apply` —— 「事务提交了但忘删」
 /// 那条路正是八轮用触发器消费堵死的。
-pub fn delete_column(conn: &mut Connection, clock: &mut Clock, id: &str) -> Result<(), String> {
+pub fn delete_column(
+    conn: &mut Connection,
+    clock: &mut Clock,
+    id: &str,
+    facts: &gate::RuntimeFacts,
+) -> Result<(), String> {
     let tx = conn.transaction().map_err(|e| e.to_string())?;
+    // ⭐ **闸排在全部本地前置之前**(plan §5.1 是顶层谓词):它问的是「本机此刻能不能
+    //    往外发这种 op」,与改的是哪一列无关。在事务里问,故它读到的配置键与下面
+    //    这笔写是同一个快照(首版自检清单 10)。
+    gate::ensure_can_emit(&tx, facts)?;
     let row: Option<(i64, Option<String>)> = tx
         .query_row(
             "SELECT system, tombstoned_at FROM board_column WHERE id = ?1",

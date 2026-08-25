@@ -670,11 +670,11 @@ fn legacy_six_stages_survive_the_rebuild_and_still_work() {
     let mut clock = crate::clock::Clock::load(&conn).unwrap();
     let id = crate::notes::capture(&mut conn, &mut clock, "迁移后的新卡").expect("捕获");
     crate::notes::promote_to_task(&mut conn, &mut clock, &id, "迁移后的新卡").expect("转待办");
-    crate::task::transition(&mut conn, &mut clock, &id, "doing").expect("todo → doing");
-    crate::task::transition(&mut conn, &mut clock, &id, "done").expect("doing → done");
+    crate::task::transition(&mut conn, &mut clock, &id, "doing", &crate::board::gate::DETACHED).expect("todo → doing");
+    crate::task::transition(&mut conn, &mut clock, &id, "done", &crate::board::gate::DETACHED).expect("doing → done");
     crate::task::seal(&mut conn, &mut clock, &id).expect("入成就册");
     crate::task::unseal(&mut conn, &mut clock, &id).expect("取消归档");
-    crate::task::transition(&mut conn, &mut clock, &id, "todo").expect("done → todo");
+    crate::task::transition(&mut conn, &mut clock, &id, "todo", &crate::board::gate::DETACHED).expect("done → todo");
     crate::notes::revert_task_to_inbox(&mut conn, &mut clock, &id).expect("撤回为灵感");
     crate::notes::archive(&mut conn, &mut clock, &id).expect("进回收站");
     crate::notes::restore(&mut conn, &mut clock, &id).expect("从回收站还原");
@@ -851,7 +851,7 @@ fn read_model_lists_every_column_in_key_order_with_live_counts() {
     let t2 = crate::task::create(&mut conn, &mut clock, "要进回收站的", None, None, None).unwrap();
     let t3 = crate::task::create(&mut conn, &mut clock, "要进成就册的", None, None, None).unwrap();
     crate::task::archive(&mut conn, &mut clock, &t2).unwrap();
-    crate::task::transition(&mut conn, &mut clock, &t3, "done").unwrap();
+    crate::task::transition(&mut conn, &mut clock, &t3, "done", &crate::board::gate::DETACHED).unwrap();
     crate::task::seal(&mut conn, &mut clock, &t3).unwrap();
     let by_id: std::collections::HashMap<String, i64> =
         list_columns(&conn).unwrap().into_iter().map(|c| (c.id, c.live_items)).collect();
@@ -909,7 +909,7 @@ fn taskness_is_read_from_the_column_kind_not_a_literal_list() {
 
     let mut clock = crate::clock::Clock::load(&conn).unwrap();
     let id = crate::task::create(&mut conn, &mut clock, "拖进自定义列", None, None, None).unwrap();
-    crate::task::transition(&mut conn, &mut clock, &id, col).expect("todo → 自定义列");
+    crate::task::transition(&mut conn, &mut clock, &id, col, &crate::board::gate::DETACHED).expect("todo → 自定义列");
 
     assert_eq!(crate::repo::active_task_stage(&conn, &id).unwrap().as_deref(), Some(col));
     assert_eq!(crate::repo::column_task_ids(&conn, col).unwrap(), vec![id.clone()]);
@@ -942,7 +942,7 @@ fn a_deleted_column_is_a_read_only_containment_area() {
     let mut clock = crate::clock::Clock::load(&conn).unwrap();
     let inside = crate::task::create(&mut conn, &mut clock, "留在收容区的卡", None, None, None)
         .unwrap();
-    crate::task::transition(&mut conn, &mut clock, &inside, col).unwrap();
+    crate::task::transition(&mut conn, &mut clock, &inside, col, &crate::board::gate::DETACHED).unwrap();
     plant_tombstone(&conn, col);
 
     let row = list_columns(&conn).unwrap().into_iter().find(|c| c.id == col).unwrap();
@@ -958,7 +958,7 @@ fn a_deleted_column_is_a_read_only_containment_area() {
     // 收容区此刻的真实顺序、新序也是一次合法的单卡拖动 ⇒ 后面「看板已变化」「一次只移一张」
     // 那几把尺全都放行,唯一拦得住它的就是「目标列不是活的任务列」。
     let outside = crate::task::create(&mut conn, &mut clock, "外面的卡", None, None, None).unwrap();
-    let err = crate::task::transition(&mut conn, &mut clock, &outside, col).unwrap_err();
+    let err = crate::task::transition(&mut conn, &mut clock, &outside, col, &crate::board::gate::DETACHED).unwrap_err();
     assert!(err.contains("非法的状态流转"), "拖不进去:{err}");
     let err = crate::task::reorder(
         &mut conn,
@@ -968,10 +968,11 @@ fn a_deleted_column_is_a_read_only_containment_area() {
         col,
         &[inside.clone()],
         &[inside.clone(), outside.clone()],
+        &crate::board::gate::DETACHED,
     )
     .unwrap_err();
     assert!(err.contains("非法的目标列"), "拖不进去(排序那条路):{err}");
-    crate::task::transition(&mut conn, &mut clock, &inside, "todo").expect("卡拖得出来");
+    crate::task::transition(&mut conn, &mut clock, &inside, "todo", &crate::board::gate::DETACHED).expect("卡拖得出来");
     assert_eq!(list_columns(&conn).unwrap().into_iter().find(|c| c.id == col).unwrap().live_items, 0);
 }
 
@@ -1021,7 +1022,7 @@ fn wire_shape_ok(op: &crate::oplog::Op, id: &str) {
 fn a_new_column_lands_at_the_end_and_its_op_is_something_the_far_end_can_take() {
     let (mut conn, mut clock) = fresh_rw("create-col");
     let before: Vec<String> = list_columns(&conn).unwrap().into_iter().map(|c| c.position).collect();
-    let id = create_column(&mut conn, &mut clock, "  下周  ").expect("建列");
+    let id = create_column(&mut conn, &mut clock, "  下周  ", &crate::board::gate::DETACHED).expect("建列");
 
     // id 过的是**收端那把严尺**(首字符 ≤ '7'),不是 clock 那把松的。
     assert!(crate::replay::is_new_column_id(&id), "列 id 必须是 26 位严格 ULID:{id}");
@@ -1047,18 +1048,18 @@ fn a_new_column_lands_at_the_end_and_its_op_is_something_the_far_end_can_take() 
     wire_shape_ok(&ops[0], &id);
 
     // 空标题拒(trim 之后)。
-    assert!(create_column(&mut conn, &mut clock, "   ").unwrap_err().contains("不能为空"));
+    assert!(create_column(&mut conn, &mut clock, "   ", &crate::board::gate::DETACHED).unwrap_err().contains("不能为空"));
 }
 
 #[test]
 fn renaming_and_reordering_emit_one_lww_set_field_each_and_refuse_the_idea_columns() {
     let (mut conn, mut clock) = fresh_rw("rename-col");
-    let id = create_column(&mut conn, &mut clock, "甲").unwrap();
+    let id = create_column(&mut conn, &mut clock, "甲", &crate::board::gate::DETACHED).unwrap();
 
-    rename_column(&mut conn, &mut clock, &id, " 乙 ").expect("改名");
+    rename_column(&mut conn, &mut clock, &id, " 乙 ", &crate::board::gate::DETACHED).expect("改名");
     assert_eq!(row_of(&conn, &id).title, "乙");
     // 拖到 `todo` 之前(prev=None,next=todo)。
-    reorder_column(&mut conn, &mut clock, &id, None, Some("todo")).expect("排序");
+    reorder_column(&mut conn, &mut clock, &id, None, Some("todo"), &crate::board::gate::DETACHED).expect("排序");
     let key = row_of(&conn, &id).position;
     assert!(key < row_of(&conn, "todo").position, "落在 todo 之前:{key}");
 
@@ -1072,20 +1073,20 @@ fn renaming_and_reordering_emit_one_lww_set_field_each_and_refuse_the_idea_colum
 
     // 系统列(灵感两列):改名与排序**一起**禁(不变量 2),⛔ 与「不可删」是两根轴。
     for sys in ["inbox", "filed"] {
-        assert!(rename_column(&mut conn, &mut clock, sys, "别的名").unwrap_err().contains("系统列"));
-        assert!(reorder_column(&mut conn, &mut clock, sys, None, Some("todo")).unwrap_err().contains("系统列"));
+        assert!(rename_column(&mut conn, &mut clock, sys, "别的名", &crate::board::gate::DETACHED).unwrap_err().contains("系统列"));
+        assert!(reorder_column(&mut conn, &mut clock, sys, None, Some("todo"), &crate::board::gate::DETACHED).unwrap_err().contains("系统列"));
         assert!(ops_of(&conn, sys).is_empty(), "系统列身上一枚 op 都不许有");
     }
     // 指名的邻居必须有行 —— ⛔ 别把它当开边界(那会静默错排到列端)。
-    let err = reorder_column(&mut conn, &mut clock, &id, None, Some("没这一列")).unwrap_err();
+    let err = reorder_column(&mut conn, &mut clock, &id, None, Some("没这一列"), &crate::board::gate::DETACHED).unwrap_err();
     assert!(err.contains("已不存在"), "{err}");
 }
 
 #[test]
 fn deleting_a_column_keeps_the_row_consumes_its_grant_and_refuses_a_second_go() {
     let (mut conn, mut clock) = fresh_rw("delete-col");
-    let id = create_column(&mut conn, &mut clock, "临时").unwrap();
-    delete_column(&mut conn, &mut clock, &id).expect("空列删得掉");
+    let id = create_column(&mut conn, &mut clock, "临时", &crate::board::gate::DETACHED).unwrap();
+    delete_column(&mut conn, &mut clock, &id, &crate::board::gate::DETACHED).expect("空列删得掉");
 
     let row = row_of(&conn, &id);
     assert!(row.deleted, "行还在,只是盖了墓碑(不变量 5)");
@@ -1107,21 +1108,21 @@ fn deleting_a_column_keeps_the_row_consumes_its_grant_and_refuses_a_second_go() 
 
     // 已删的列:再删拒,命令层的改名 / 排序也拒(⚠ **回放那边照收** —— 判据见
     // `apply_board_column_set_field` 头注,「只读」是命令层的事)。
-    assert!(delete_column(&mut conn, &mut clock, &id).unwrap_err().contains("已经删除"));
-    assert!(rename_column(&mut conn, &mut clock, &id, "还想改").unwrap_err().contains("已删除"));
-    assert!(reorder_column(&mut conn, &mut clock, &id, None, Some("todo")).unwrap_err().contains("已删除"));
-    assert!(delete_column(&mut conn, &mut clock, "根本没这列").unwrap_err().contains("列不存在"));
+    assert!(delete_column(&mut conn, &mut clock, &id, &crate::board::gate::DETACHED).unwrap_err().contains("已经删除"));
+    assert!(rename_column(&mut conn, &mut clock, &id, "还想改", &crate::board::gate::DETACHED).unwrap_err().contains("已删除"));
+    assert!(reorder_column(&mut conn, &mut clock, &id, None, Some("todo"), &crate::board::gate::DETACHED).unwrap_err().contains("已删除"));
+    assert!(delete_column(&mut conn, &mut clock, "根本没这列", &crate::board::gate::DETACHED).unwrap_err().contains("列不存在"));
 }
 
 #[test]
 fn a_column_with_live_cards_refuses_to_go_and_says_how_many() {
     let (mut conn, mut clock) = fresh_rw("delete-nonempty");
-    let id = create_column(&mut conn, &mut clock, "在用").unwrap();
+    let id = create_column(&mut conn, &mut clock, "在用", &crate::board::gate::DETACHED).unwrap();
     let card = crate::task::create(&mut conn, &mut clock, "一件事", None, None, None).unwrap();
-    crate::task::transition(&mut conn, &mut clock, &card, &id).expect("拖进新列");
+    crate::task::transition(&mut conn, &mut clock, &card, &id, &crate::board::gate::DETACHED).expect("拖进新列");
     assert_eq!(row_of(&conn, &id).live_items, 1);
 
-    let err = delete_column(&mut conn, &mut clock, &id).unwrap_err();
+    let err = delete_column(&mut conn, &mut clock, &id, &crate::board::gate::DETACHED).unwrap_err();
     // ⚠ 断言必须是**命令层那句的原文**。头一版写的是 `err.contains('1')`,变异对照当场判它
     // 假绿:摘掉命令层这道之后触发器 ① 照样 ABORT,而那条错误里带着列的 ULID ——
     // **ULID 里就有数字 '1'**,断言被一个毫不相干的东西满足了。
@@ -1135,7 +1136,7 @@ fn a_column_with_live_cards_refuses_to_go_and_says_how_many() {
     // 回收站与成就归档里的条目**不算** live —— 那两根轴上的卡只出不进,不挡删列。
     crate::task::archive(&mut conn, &mut clock, &card).unwrap();
     assert_eq!(row_of(&conn, &id).live_items, 0);
-    delete_column(&mut conn, &mut clock, &id).expect("清空后删得掉");
+    delete_column(&mut conn, &mut clock, &id, &crate::board::gate::DETACHED).expect("清空后删得掉");
     // 卡还指着这一列 = §4.3 的只读收容区。
     assert_eq!(
         conn.query_row("SELECT stage FROM items WHERE id = ?1", [&card], |r| r.get::<_, String>(0))
@@ -1189,7 +1190,7 @@ fn whatever_column_a_product_line_pins_itself_to_must_be_undeletable() {
         if stage_of(&conn, &card) == *col {
             continue; // 已经在那儿了,transition 会判 from == to
         }
-        crate::task::transition(&mut conn, &mut clock, &card, col).unwrap();
+        crate::task::transition(&mut conn, &mut clock, &card, col, &crate::board::gate::DETACHED).unwrap();
         let stamped: Option<String> = conn
             .query_row("SELECT done_at FROM items WHERE id = ?1", [&card], |r| r.get(0))
             .unwrap();
@@ -1213,7 +1214,7 @@ fn whatever_column_a_product_line_pins_itself_to_must_be_undeletable() {
         for c in cards {
             crate::task::archive(&mut conn, &mut clock, &c).unwrap();
         }
-        delete_column(&mut conn, &mut clock, col).unwrap_or_else(|e| panic!("「{col}」本该删得掉:{e}"));
+        delete_column(&mut conn, &mut clock, col, &crate::board::gate::DETACHED).unwrap_or_else(|e| panic!("「{col}」本该删得掉:{e}"));
     }
     // ⑥ 而两列角色列即使空着也删不掉,且**改名与排序照旧**(只禁删这一件事)。
     for col in ["todo", "done"] {
@@ -1223,9 +1224,9 @@ fn whatever_column_a_product_line_pins_itself_to_must_be_undeletable() {
         }
         assert_eq!(row_of(&conn, col).live_items, 0);
         assert!(!row_of(&conn, col).deletable, "读模型也要照实说(B-f 靠它决定按钮灰不灰)");
-        assert!(delete_column(&mut conn, &mut clock, col).unwrap_err().contains("不可删除"));
-        rename_column(&mut conn, &mut clock, col, "换个说法").expect("角色列可改名");
-        reorder_column(&mut conn, &mut clock, col, None, Some("filed")).expect("角色列可排序");
+        assert!(delete_column(&mut conn, &mut clock, col, &crate::board::gate::DETACHED).unwrap_err().contains("不可删除"));
+        rename_column(&mut conn, &mut clock, col, "换个说法", &crate::board::gate::DETACHED).expect("角色列可改名");
+        reorder_column(&mut conn, &mut clock, col, None, Some("filed"), &crate::board::gate::DETACHED).expect("角色列可排序");
     }
 }
 

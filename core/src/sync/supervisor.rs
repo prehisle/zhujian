@@ -22,7 +22,7 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, RwLock};
 use std::time::Duration;
 
@@ -63,6 +63,16 @@ pub struct ActiveRuntime {
     /// 再切回、开出第二条写连接」。**独立 Arc**:OpGuard 只持它、不持 ActiveRuntime,
     /// 故 guard drop 通知 stop 时,命令侧不因 guard 还残着一个连接 Arc 而留下短窗口。
     ops: Arc<OpTracker>,
+    /// **这个空间此刻有没有一台装配着的引擎**(board-columns-plan §5.4 第四合取)。
+    ///
+    /// 由 transport 自己的 `EngineSlot` 在**装配成功**与**整台撤台**两处写,读者是
+    /// [`crate::board::gate::RuntimeFacts::observe`]。⚠ 形与 [`Self::restart_required`]
+    /// 同源:transport 把一格自己才知道的事实投影给壳侧的写闸,⛔ 不靠壳「记得问」。
+    ///
+    /// ⚠ **它不是 `bootstrapped_at` 在不在的第二份描述**:`reconcile_inner` 那条「标记缺席
+    /// 即无条件撤台」只在它跑过之后成立,而 `clear_config` 删掉标记到下一次 `reconcile`
+    /// 之间有真实窗口 —— 这一格守的正是那个窗口。
+    engine_present: Arc<AtomicBool>,
 }
 
 /// 跨 await 长命令的登记器(H1)。独立于 [`ActiveRuntime`],故 [`OpGuard`] 不持连接。
@@ -142,6 +152,11 @@ impl ActiveRuntime {
     pub fn restart_required(&self) -> Option<String> {
         self.restart_required.lock().expect("restart mutex poisoned").clone()
     }
+
+    /// 这个空间此刻有没有一台装配着的引擎(见 [`Self::engine_present`])。
+    pub fn engine_present(&self) -> bool {
+        self.engine_present.load(Ordering::SeqCst)
+    }
 }
 
 /// 表槽:Running 可查可用;Stopping 占着 permit、对命令面不可见(`get` 拒),
@@ -201,6 +216,42 @@ pub struct SpaceSupervisor {
     lan: Option<Arc<transport::LanAdmission>>,
     generation: AtomicU64,
     live: RwLock<HashMap<String, Slot>>,
+    /// **全局 writer veto**(board-columns-plan §5.6):Pair / Create / clear / compact
+    /// 正在进行 —— 期间**任何**空间都不许发自定义 stage 与 `board_column` op。
+    ///
+    /// # ⛔ 它是 §5.1 的顶层否决,不是 `is_solo_space` 的判据之一
+    ///
+    /// 十二轮那条 H 打的就是「把它写成 solo 的一个合取项」:已配置空间在闩为真时进入
+    /// clear/restore/compact,会走成「lease 已持有 ∧ solo=false ∧ 闩=true ⇒ 整式仍 true」
+    /// = **闩把 lease 整个绕过去**。⇒ 顶层,见 [`crate::board::gate::ensure_can_emit`]。
+    ///
+    /// # ⛔ 不落库,也不是新造的锁
+    ///
+    /// * **不落库**:落库就成了仓里**第二个「半途态」**(`pending_*` 已经是一个)。
+    ///   崩溃时进程连同这一格一起没,下次启动按库里的配置重算 —— 这是安全侧。
+    /// * **不是新锁**:互斥仍由两只壳**既有**的 account-binding mutex 提供
+    ///   (桌面 `Spaces::lifecycle` / 手机 `Coord::lifecycle`,multispace-plan §4
+    ///   「从命令起持到正式配置事务结束」)。这一格只是把「那把锁此刻被持着」这件
+    ///   **壳才知道的事实**投影进 core,好让 core 侧的写闸看得见 —— 规格要的是
+    ///   「闸在 core」,而那把锁在壳里,少了这条投影两者接不上。
+    config_transition: AtomicBool,
+}
+
+/// [`SpaceSupervisor::begin_config_transition`] 的 RAII 凭据(§5.6「成功与失败**统一由
+/// RAII guard 释放**,⛔ 不许靠 UI 记得清」)。
+///
+/// ⚠ **持有期的正确顺序**(§5.6 那张表的最后一行,B-e 第 2 段补全中间那步):
+/// `取 lease → writer 置 false → retire() 旧 runtime → 网络/配置事务 →`
+/// **`清或设 latch`(第 2 段)**` → reconcile → 释放 lease`。
+/// ⇒ 本凭据的 `Drop` 只负责最后那一步;⛔ 别在 Drop 里做任何别的事。
+pub struct ConfigTransition<'a> {
+    sup: &'a SpaceSupervisor,
+}
+
+impl Drop for ConfigTransition<'_> {
+    fn drop(&mut self) {
+        self.sup.config_transition.store(false, Ordering::SeqCst);
+    }
 }
 
 impl SpaceSupervisor {
@@ -217,7 +268,25 @@ impl SpaceSupervisor {
             lan,
             generation: AtomicU64::new(0),
             live: RwLock::new(HashMap::new()),
+            config_transition: AtomicBool::new(false),
         }
+    }
+
+    /// 开一段配置转换(Pair / Create / clear / compact),期间全局禁发自定义 stage。
+    ///
+    /// ⛔ **调用方必须已经持着本端那把 account-binding mutex**(桌面 `Spaces::lock_lifecycle`
+    /// / 手机 `Coord::lifecycle`)—— 本函数**不提供互斥**,它只投影「那把锁此刻被持着」
+    /// 这件事实(见 [`SpaceSupervisor::config_transition`])。⚠ 那把锁保证同刻至多一段
+    /// 转换,故这里用一枚 `bool` 而不是计数器;真出现嵌套 = 那条不变量已经破了,
+    /// 让第二枚凭据的 `Drop` 提前放行反而更响亮地暴露它,不掩盖。
+    pub fn begin_config_transition(&self) -> ConfigTransition<'_> {
+        self.config_transition.store(true, Ordering::SeqCst);
+        ConfigTransition { sup: self }
+    }
+
+    /// 此刻有配置转换在飞吗(§5.1 的顶层否决项)。
+    pub fn config_transition_in_flight(&self) -> bool {
+        self.config_transition.load(Ordering::SeqCst)
     }
 
     /// 命令面唯一入口:读锁查表 → clone Arc → 放锁,绝不持表锁做 SQL/网络/等控制
@@ -346,6 +415,10 @@ impl SpaceSupervisor {
         let (ctl_tx, ctl_rx) = mpsc::channel(8);
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
         let restart_required: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+        // 引擎在场的投影位(board-columns-plan §5.4 第四合取)。**初值 false**:此刻
+        // 一台引擎都还没装配 —— transport 起来后由 `EngineSlot` 自己在装配 / 撤台两处写。
+        // veto 空间根本不起 transport ⇒ 它恒停在 false,而那正是事实。
+        let engine_present = Arc::new(AtomicBool::new(false));
         let join = if let Some(v) = &spec.sync_veto {
             // 拒启 transport;状态照实(configured 反映库里配置)+ error 说明原因,
             // 前端状态点见 error 即红。ctl_rx 随此分支 drop = 控制通道死信箱。
@@ -373,6 +446,9 @@ impl SpaceSupervisor {
                 // transport 在 DETACH 终败**判定那一刻**置位,壳层写闸即时拒写——
                 // 下面 run 返回后的 wrapper 赋值只是幂等兜底。
                 restart_flag: restart_required.clone(),
+                // 引擎在场的投影位(§5.4 第四合取)。同 `restart_flag` 那条:由
+                // transport 自己在唯一知情的那两处写,壳侧写闸只读。
+                engine_present: engine_present.clone(),
                 // 本空间在 app 级监听器上的席位(§6 准入表的键 = 空间 id)。壳没给
                 // 监听器(手机)= None,直连的监听面整个不存在。
                 lan: self.lan.as_ref().map(|a| transport::LanHost {
@@ -409,6 +485,7 @@ impl SpaceSupervisor {
             join: Mutex::new(join),
             restart_required,
             ops: Arc::new(OpTracker::default()),
+            engine_present,
         });
         // 发布:Starting(token) → Running(仍持着上面验预留时取的同一把 live 写锁,
         // 验→建→插整段原子;槽从验到此从未放开)。

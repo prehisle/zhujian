@@ -517,7 +517,14 @@ fn update_task_status(space_id: String, id: String, to: String, spaces: State<'_
     if let Some(e) = rt.restart_required() {
         return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
     }
-    task::transition(&mut conn, &mut clk, &id, &to)
+    // 发送端闸的运行期事实(board-columns-plan §5;B-e 第 1 段)。**在写锁内现采**,
+    // 与上面那句 ReopenRequired 复核同一个理由(codex 二轮 M2:锁前查有「查后置位抢锁」
+    // 竞态)。⚠ 诚实边界:`config_transition_in_flight` 由 `lifecycle` 锁那条路置位,
+    // 与本空间的写锁不互斥 ⇒ 「刚采完、转换才开始」这个窗口仍在。§5.6 的顺序(**先置位、
+    // 再 retire**)与 supervisor 那条既有裁决(「切换/停机与业务写的互斥由壳编排」)一起
+    // 承重,⛔ 别为它新造第三把锁。
+    let facts = zhujian_core::board::gate::RuntimeFacts::observe(&spaces.sup, &space_id);
+    task::transition(&mut conn, &mut clk, &id, &to, &facts)
 }
 
 /// Reorder a card within (or into) a board column by drag-and-drop. `ordered_ids`
@@ -541,6 +548,13 @@ fn reorder_task(space_id: String,
     if let Some(e) = rt.restart_required() {
         return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
     }
+    // 发送端闸的运行期事实(board-columns-plan §5;B-e 第 1 段)。**在写锁内现采**,
+    // 与上面那句 ReopenRequired 复核同一个理由(codex 二轮 M2:锁前查有「查后置位抢锁」
+    // 竞态)。⚠ 诚实边界:`config_transition_in_flight` 由 `lifecycle` 锁那条路置位,
+    // 与本空间的写锁不互斥 ⇒ 「刚采完、转换才开始」这个窗口仍在。§5.6 的顺序(**先置位、
+    // 再 retire**)与 supervisor 那条既有裁决(「切换/停机与业务写的互斥由壳编排」)一起
+    // 承重,⛔ 别为它新造第三把锁。
+    let facts = zhujian_core::board::gate::RuntimeFacts::observe(&spaces.sup, &space_id);
     task::reorder(
         &mut conn,
         &mut clk,
@@ -549,6 +563,7 @@ fn reorder_task(space_id: String,
         &to_status,
         &base_target_ids,
         &ordered_ids,
+        &facts,
     )
 }
 
@@ -574,6 +589,13 @@ fn reorder_task_visible(space_id: String,
     if let Some(e) = rt.restart_required() {
         return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
     }
+    // 发送端闸的运行期事实(board-columns-plan §5;B-e 第 1 段)。**在写锁内现采**,
+    // 与上面那句 ReopenRequired 复核同一个理由(codex 二轮 M2:锁前查有「查后置位抢锁」
+    // 竞态)。⚠ 诚实边界:`config_transition_in_flight` 由 `lifecycle` 锁那条路置位,
+    // 与本空间的写锁不互斥 ⇒ 「刚采完、转换才开始」这个窗口仍在。§5.6 的顺序(**先置位、
+    // 再 retire**)与 supervisor 那条既有裁决(「切换/停机与业务写的互斥由壳编排」)一起
+    // 承重,⛔ 别为它新造第三把锁。
+    let facts = zhujian_core::board::gate::RuntimeFacts::observe(&spaces.sup, &space_id);
     task::reorder_visible(
         &mut conn,
         &mut clk,
@@ -582,6 +604,7 @@ fn reorder_task_visible(space_id: String,
         &to_status,
         &base_visible_ids,
         &visible_after,
+        &facts,
     )
 }
 
@@ -1423,6 +1446,12 @@ async fn sync_create_account(
     }
     // 生命周期互斥:创号/配对/建空间/其余控制命令串行。
     let _life = spaces.lifecycle.lock().await;
+    // ⭐ **配置转换 veto**(board-columns-plan §5.6):这段时间里**全部空间**都不许发
+    // 自定义 stage / `board_column` op。⛔ 不新造锁 —— 互斥仍由上面那把既有的
+    // `lifecycle`(multispace-plan §4 的 account-binding mutex)提供,这一句只是把
+    // 「那把锁此刻被持着」投影进 core,好让 core 侧的写闸看得见。释放走 RAII,
+    // 成功 / 失败 / panic 三条路一视同仁(⛔ 不许靠谁记得清)。
+    let _config_transition = spaces.sup.begin_config_transition();
     // ReopenRequired 复核在 lifecycle 取得之后(codex 二轮 M2:等待锁期间旗可能落下)。
     if let Some(e) = rt.restart_required() {
         return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
@@ -1552,6 +1581,12 @@ async fn sync_pair_join(
     // 「Grant 解出之后、Enroll 发出之前」——误配进别的空间已用的账户 = PairClose
     // 走人,老端从不注册、配置一个键都不写,本机设备身份不烧(工序 7/8 H1)。
     let _life = spaces.lifecycle.lock().await;
+    // ⭐ **配置转换 veto**(board-columns-plan §5.6):这段时间里**全部空间**都不许发
+    // 自定义 stage / `board_column` op。⛔ 不新造锁 —— 互斥仍由上面那把既有的
+    // `lifecycle`(multispace-plan §4 的 account-binding mutex)提供,这一句只是把
+    // 「那把锁此刻被持着」投影进 core,好让 core 侧的写闸看得见。释放走 RAII,
+    // 成功 / 失败 / panic 三条路一视同仁(⛔ 不许靠谁记得清)。
+    let _config_transition = spaces.sup.begin_config_transition();
     // ReopenRequired 复核在 lifecycle 取得之后(codex 二轮 M2:等待锁期间旗可能落下)。
     if let Some(e) = rt.restart_required() {
         return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
@@ -1688,6 +1723,12 @@ async fn join_space_inner(
     // ⚠ **必须是凭证形而不是裸取**(§16.3.2):集成段要把同一枚 permit 一路带到共享
     // helper;保留裸 guard、到 helper 前再取一次凭证 = **自锁**。
     let permit = spaces.lock_lifecycle().await;
+    // ⭐ **配置转换 veto**(board-columns-plan §5.6):这段时间里**全部空间**都不许发
+    // 自定义 stage / `board_column` op。⛔ 不新造锁 —— 互斥仍由上面那把既有的
+    // `lifecycle`(multispace-plan §4 的 account-binding mutex)提供,这一句只是把
+    // 「那把锁此刻被持着」投影进 core,好让 core 侧的写闸看得见。释放走 RAII,
+    // 成功 / 失败 / panic 三条路一视同仁(⛔ 不许靠谁记得清)。
+    let _config_transition = spaces.sup.begin_config_transition();
     progress("preparing", 0, 0);
     let slot = spaces::JoiningSlot::create(dir)?;
     let reserved: Mutex<Option<String>> = Mutex::new(None);
@@ -1756,6 +1797,9 @@ async fn join_space_inner(
         shutdown: shutdown_rx,
         boot_commit: latch,
         restart_flag: Arc::new(Mutex::new(None)),
+        // staging 不在 supervisor 的表里,没有壳侧写闸在读这一格(board-columns-plan
+        // §5.4:那条一次性连接天然属 detached)⇒ 给一枚没人订阅的位。
+        engine_present: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         // staging(「加入空间」的一次性连接)不是一个 live 空间,不进准入表。
         lan: None,
     };
@@ -3078,6 +3122,11 @@ async fn backup_restore(
     // 「谁占着哪个账户 / 表里有哪些空间」的判断(account_free_desktop 的磁盘重扫、
     // 建空间、加入)不许在这中间打进来看见半个世界。
     let permit = spaces.lock_lifecycle().await;
+    // ⭐ **配置转换 veto**(board-columns-plan §5.6):恢复里含 `clear_config` 与
+    // `epoch::compact` 两件 —— §5.6 那张表点名的四件里的两件。⛔ 不新造锁,理由同创号/
+    // 配对那两处;释放走 RAII,故下面那条「提交点已过、任何失败都不许翻成 Err」的分叉
+    // 不会漏掉它。
+    let _config_transition = spaces.sup.begin_config_transition();
     let core = app.clone();
     let restored = tauri::async_runtime::spawn_blocking(move || {
         core.state::<zhujian_core::backup::BackupCoordinator>()

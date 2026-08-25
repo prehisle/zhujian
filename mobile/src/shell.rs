@@ -512,7 +512,14 @@ pub async fn complete_task(
     id: String,
     coord: State<'_, Coord>,
 ) -> Result<(), String> {
-    coord.write(&space_id, |conn, clock| task::transition(conn, clock, &id, "done")).await
+    coord
+        .write(&space_id, |conn, clock| {
+            // 发送端闸的运行期事实(board-columns-plan §5;B-e 第 1 段)。**在 `write`
+            // 的临界区里现采**,与桌面那三处同一个理由(锁前查有「查后置位抢锁」竞态)。
+            let facts = zhujian_core::board::gate::RuntimeFacts::observe(&coord.sup, &space_id);
+            task::transition(conn, clock, &id, "done", &facts)
+        })
+        .await
 }
 
 /// 一枚标签(时间轴 chip 展示与归类选择器共用;color 为 `#RRGGBB` 或 null=无色)。
@@ -1006,7 +1013,14 @@ pub async fn update_task_status(
     to: String,
     coord: State<'_, Coord>,
 ) -> Result<(), String> {
-    coord.write(&space_id, |conn, clock| task::transition(conn, clock, &id, &to)).await
+    coord
+        .write(&space_id, |conn, clock| {
+            // 发送端闸的运行期事实(board-columns-plan §5;B-e 第 1 段)。**在 `write`
+            // 的临界区里现采**,与桌面那三处同一个理由(锁前查有「查后置位抢锁」竞态)。
+            let facts = zhujian_core::board::gate::RuntimeFacts::observe(&coord.sup, &space_id);
+            task::transition(conn, clock, &id, &to, &facts)
+        })
+        .await
 }
 
 /// 列内/跨列拖动排序(无过滤的强契约路;ordered_ids = 目标列完整新序)。
@@ -1022,7 +1036,19 @@ pub async fn reorder_task(
 ) -> Result<(), String> {
     coord
         .write(&space_id, |conn, clock| {
-            task::reorder(conn, clock, &id, &from_status, &to_status, &base_target_ids, &ordered_ids)
+            // 发送端闸的运行期事实(board-columns-plan §5;B-e 第 1 段)。**在 `write`
+            // 的临界区里现采**,与桌面那三处同一个理由(锁前查有「查后置位抢锁」竞态)。
+            let facts = zhujian_core::board::gate::RuntimeFacts::observe(&coord.sup, &space_id);
+            task::reorder(
+                conn,
+                clock,
+                &id,
+                &from_status,
+                &to_status,
+                &base_target_ids,
+                &ordered_ids,
+                &facts,
+            )
         })
         .await
 }
@@ -1040,6 +1066,9 @@ pub async fn reorder_task_visible(
 ) -> Result<(), String> {
     coord
         .write(&space_id, |conn, clock| {
+            // 发送端闸的运行期事实(board-columns-plan §5;B-e 第 1 段)。**在 `write`
+            // 的临界区里现采**,与桌面那三处同一个理由(锁前查有「查后置位抢锁」竞态)。
+            let facts = zhujian_core::board::gate::RuntimeFacts::observe(&coord.sup, &space_id);
             task::reorder_visible(
                 conn,
                 clock,
@@ -1048,6 +1077,7 @@ pub async fn reorder_task_visible(
                 &to_status,
                 &base_visible_ids,
                 &visible_after,
+                &facts,
             )
         })
         .await

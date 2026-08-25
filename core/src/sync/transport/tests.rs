@@ -232,6 +232,7 @@ fn bare_transport(
         shutdown: shutdown_rx,
         boot_commit: Arc::new(Mutex::new(None)),
         restart_flag: Arc::new(Mutex::new(None)),
+        engine_present: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         lan: None,
     };
     (t, ctl_tx)
@@ -246,7 +247,7 @@ fn engine_slot_tracks_bootstrap_marker_and_assembles_exactly_once() {
     let (db, _clock, _dir) = test_db("slot-boot");
     let conn = db.lock().unwrap();
     let cfg = slot_cfg("01DEVAAAAAAAAAAAAAAAAAAAAA", 1);
-    let (mut slot, _lan_rx, _lan_faults) = EngineSlot::new(BlobPolicy::Full, None);
+    let (mut slot, _lan_rx, _lan_faults) = EngineSlot::new(BlobPolicy::Full, None, std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)));
     slot.reconcile(&conn, &cfg).unwrap();
     assert!(slot.booting(), "bootstrapped_at 没落标就不装配(引擎在场 ⟺ 已引导)");
     meta_put(&conn, "bootstrapped_at", "t").unwrap();
@@ -265,6 +266,47 @@ fn engine_slot_tracks_bootstrap_marker_and_assembles_exactly_once() {
     assert!(slot.booting(), "引导标记消失必须整台丢弃");
 }
 
+/// ⭐ **引擎在场的投影位与槽逐格同步**(board-columns-plan §5.4 第四合取;B-e 第 1 段)。
+///
+/// 它是 core 侧发送端闸([`crate::board::gate::RuntimeFacts::observe`])唯一读得到的
+/// 「这个空间此刻有没有引擎」。⚠ 承重的是「投影紧贴字段」这条**代码相邻**的事实,
+/// 故这只测按四件事逐格压:建槽即假 / 装配即真 / 撤台即假 / **槽本身没了也必须落回假**。
+///
+/// ⛔ 最后那一格别当多余:少了 `Drop`,transport 任务退出之后那一位会停在 `true`。
+/// 今天读者读不到那个陈旧值(runtime 一停,supervisor 的槽先没了),但那是**读者那边**
+/// 的性质 —— 本格的正确性不许挂在别人身上。
+#[test]
+fn the_engine_present_projection_follows_the_slot() {
+    let (db, _clock, _dir) = test_db("slot-projection");
+    let conn = db.lock().unwrap();
+    let cfg = slot_cfg("01DEVAAAAAAAAAAAAAAAAAAAAA", 1);
+    // 初值故意给 `true`:建槽那一句必须自己把它按下去,⛔ 不许信调用方传进来的数。
+    let present = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let read = || present.load(std::sync::atomic::Ordering::SeqCst);
+    {
+        let (mut slot, _lan_rx, _lan_faults) =
+            EngineSlot::new(BlobPolicy::Full, None, present.clone());
+        assert!(!read(), "① 建槽即宣告「此刻无引擎」");
+
+        slot.reconcile(&conn, &cfg).unwrap();
+        assert!(slot.booting() && !read(), "② 没落引导标记 ⇒ 不装配 ⇒ 投影仍是假");
+
+        meta_put(&conn, "bootstrapped_at", "t").unwrap();
+        slot.reconcile(&conn, &cfg).unwrap();
+        assert!(!slot.booting() && read(), "③ 装配成功 ⇒ 投影为真");
+
+        conn.execute("DELETE FROM sync_meta WHERE key = 'bootstrapped_at'", []).unwrap();
+        slot.reconcile(&conn, &cfg).unwrap();
+        assert!(slot.booting() && !read(), "④ 撤台 ⇒ 投影落回假");
+
+        // 再装一次,好让下面那一格验的是「Drop 真的清了」而不是「本来就是假的」。
+        meta_put(&conn, "bootstrapped_at", "t").unwrap();
+        slot.reconcile(&conn, &cfg).unwrap();
+        assert!(read(), "前提:槽这一刻确实有引擎");
+    }
+    assert!(!read(), "⑤ 槽随作用域没了 ⇒ 投影必须跟着落下(`Drop`)");
+}
+
 /// 该丢弃的判据是**身份**,不是「壳层记不记得发 Reconfigured」:换账户/设备/K_acc
 /// 整台丢弃(纪元压实换代正是这一形),只换服务器地址不丢。
 #[test]
@@ -272,7 +314,7 @@ fn engine_slot_retires_on_identity_change_not_on_address_change() {
     let (db, _clock, _dir) = test_db("slot-stale");
     let conn = db.lock().unwrap();
     meta_put(&conn, "bootstrapped_at", "t").unwrap();
-    let (mut slot, _lan_rx, _lan_faults) = EngineSlot::new(BlobPolicy::Full, None);
+    let (mut slot, _lan_rx, _lan_faults) = EngineSlot::new(BlobPolicy::Full, None, std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)));
     fn probe(slot: &mut EngineSlot) {
         slot.get().unwrap().missing_blobs.insert("PROBE".into());
     }
@@ -315,7 +357,7 @@ fn engine_slot_retires_on_identity_change_not_on_address_change() {
 async fn offline_wait_keeps_the_engine_heartbeat_ticking() {
     let (db, clock, dir) = test_db("offline-tick");
     let cfg = saved_cfg(&db);
-    let (mut slot, _lan_rx, _lan_faults) = EngineSlot::new(BlobPolicy::Full, None);
+    let (mut slot, _lan_rx, _lan_faults) = EngineSlot::new(BlobPolicy::Full, None, std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)));
     {
         let conn = db.lock().unwrap();
         slot.reconcile(&conn, &cfg).unwrap();
@@ -372,7 +414,7 @@ async fn offline_wait_keeps_the_engine_heartbeat_ticking() {
 async fn heartbeat_drains_quarantine_reverify_backlog() {
     let (db, clock, dir) = test_db("reverify-tick");
     let cfg = saved_cfg(&db);
-    let (mut slot, _lan_rx, _lan_faults) = EngineSlot::new(BlobPolicy::Full, None);
+    let (mut slot, _lan_rx, _lan_faults) = EngineSlot::new(BlobPolicy::Full, None, std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)));
     // **N > 一批**(实现审二轮 M3):一拍清不完,故这条同时证明「跨多拍自动清空」,
     // 而不只是「首拍会跑一次」。批上限哪天涨过这个数,下面这句当场红 —— 那不是误报,
     // 是「跨拍那半从此没人证了」在喊。
@@ -461,7 +503,7 @@ async fn heartbeat_drains_quarantine_reverify_backlog() {
 async fn offline_pump_keeps_ticking_while_pair_requests_flood_in() {
     let (db, clock, dir) = test_db("offline-flood");
     let cfg = saved_cfg(&db);
-    let (mut slot, _lan_rx, _lan_faults) = EngineSlot::new(BlobPolicy::Full, None);
+    let (mut slot, _lan_rx, _lan_faults) = EngineSlot::new(BlobPolicy::Full, None, std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)));
     {
         let conn = db.lock().unwrap();
         slot.reconcile(&conn, &cfg).unwrap();
@@ -642,7 +684,7 @@ struct AdRig {
 fn ad_rig(tag: &str) -> AdRig {
     let (db, clock, dir) = test_db(tag);
     let cfg = slot_cfg("01DEVSELFAAAAAAAAAAAAAAAAA", 1);
-    let (mut slot, _lan_rx, _lan_faults) = EngineSlot::new(BlobPolicy::Full, None);
+    let (mut slot, _lan_rx, _lan_faults) = EngineSlot::new(BlobPolicy::Full, None, std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)));
     {
         let conn = db.lock().unwrap();
         meta_put(&conn, "bootstrapped_at", "t").unwrap();
@@ -1790,6 +1832,7 @@ fn rig_over_beat_lan(
         shutdown: shutdown_rx,
         boot_commit: Arc::new(Mutex::new(None)),
         restart_flag: Arc::new(Mutex::new(None)),
+        engine_present: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         lan,
     };
     let (handoff, handoff_rx) = mpsc::channel(LAN_HANDOFF_CAP);
@@ -1826,7 +1869,7 @@ fn deck_cfg(db: &Arc<Mutex<Connection>>) -> SyncConfig {
 fn deck_rig(tag: &str) -> DeckRig {
     let (db, clock, dir) = test_db(tag);
     let cfg = saved_cfg(&db); // 连 bootstrapped_at 一起落(引擎装配的前提)
-    let (mut slot, lan_rx, fault_rx) = EngineSlot::new(BlobPolicy::Full, None);
+    let (mut slot, lan_rx, fault_rx) = EngineSlot::new(BlobPolicy::Full, None, std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)));
     {
         let conn = db.lock().unwrap();
         slot.reconcile(&conn, &cfg).unwrap();
@@ -5970,7 +6013,7 @@ async fn the_session_wrapup_rewants_only_while_the_identity_still_holds() {
     for recast in [false, true] {
         let (db, clock, dir) = test_db(if recast { "wrapup-recast" } else { "wrapup-plain" });
         let cfg = saved_cfg(&db);
-        let (mut slot, lan_rx, lan_faults) = EngineSlot::new(BlobPolicy::Full, None);
+        let (mut slot, lan_rx, lan_faults) = EngineSlot::new(BlobPolicy::Full, None, std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)));
         {
             let conn = db.lock().unwrap();
             slot.reconcile(&conn, &cfg).unwrap();
@@ -6324,6 +6367,7 @@ fn spawn_transport_full(
         shutdown: shutdown_rx,
         boot_commit,
         restart_flag: Arc::new(Mutex::new(None)),
+        engine_present: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         lan: None,
     };
     let task = tokio::spawn(run(t));
@@ -7462,7 +7506,7 @@ async fn metadata_only_peer_syncs_ops_and_tasks_without_pulling_blobs() {
     {
         let mut conn = db_b.lock().unwrap();
         let mut clk = clock_b.lock().unwrap();
-        task::transition(&mut conn, &mut clk, &task_id, "done").unwrap();
+        task::transition(&mut conn, &mut clk, &task_id, "done", &crate::board::gate::DETACHED).unwrap();
     }
     wait_until("A 看到任务被 B 勾成 done", || {
         let conn = db_a.lock().unwrap();
@@ -7660,6 +7704,7 @@ async fn listen_rig(tag: &str, seed: u8) -> ListenRig {
         shutdown: shutdown_rx,
         boot_commit: Arc::new(Mutex::new(None)),
         restart_flag: Arc::new(Mutex::new(None)),
+        engine_present: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         lan: Some(LanHost { space_id: tag.into(), admission: Arc::clone(&adm), owner: 1 }),
     };
     let task = tokio::spawn(run(t));
@@ -8501,7 +8546,7 @@ async fn retiring_the_engine_slot_also_retires_the_dialer() {
     let l = TcpListener::bind(("127.0.0.1", 0)).await.expect("假对端监听口");
     pin_peer_listen(&db, DIAL_PEER, &pubkey_of(&DIAL_PEER_SEED), l.local_addr().unwrap().port());
     let (handoff, _rx) = mpsc::channel(LAN_HANDOFF_CAP);
-    let (mut slot, _lan_rx, _faults) = EngineSlot::new(BlobPolicy::Full, Some(handoff));
+    let (mut slot, _lan_rx, _faults) = EngineSlot::new(BlobPolicy::Full, Some(handoff), std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)));
     {
         let conn = db.lock().unwrap();
         slot.reconcile(&conn, &cfg).unwrap();
@@ -8557,7 +8602,7 @@ async fn a_network_change_refreshes_the_local_ad_and_republishes_it() {
         handoff,
     };
     let (dial_handoff, _dial_rx) = mpsc::channel(LAN_HANDOFF_CAP);
-    let (mut slot, _lan_rx, _faults) = EngineSlot::new(BlobPolicy::Full, Some(dial_handoff));
+    let (mut slot, _lan_rx, _faults) = EngineSlot::new(BlobPolicy::Full, Some(dial_handoff), std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)));
     {
         let conn = db.lock().unwrap();
         slot.reconcile(&conn, &cfg).unwrap();
@@ -8676,7 +8721,7 @@ async fn a_revoked_seat_is_not_resurrected_by_the_dial_tick() {
         handoff: handoff.clone(),
     };
     let (dial_handoff, _dial_rx) = mpsc::channel(LAN_HANDOFF_CAP);
-    let (mut slot, _lan_rx, _faults) = EngineSlot::new(BlobPolicy::Full, Some(dial_handoff));
+    let (mut slot, _lan_rx, _faults) = EngineSlot::new(BlobPolicy::Full, Some(dial_handoff), std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)));
     {
         let conn = db.lock().unwrap();
         slot.reconcile(&conn, &cfg).unwrap();
@@ -8797,7 +8842,7 @@ async fn a_dial_failure_only_lands_in_the_advisory_slot() {
     }));
     let (ev_tx, _ev_rx) = mpsc::unbounded_channel();
     let (dial_handoff, _dial_rx) = mpsc::channel(LAN_HANDOFF_CAP);
-    let (mut slot, _lan_rx, _faults) = EngineSlot::new(BlobPolicy::Full, Some(dial_handoff));
+    let (mut slot, _lan_rx, _faults) = EngineSlot::new(BlobPolicy::Full, Some(dial_handoff), std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)));
     {
         let conn = db.lock().unwrap();
         slot.reconcile(&conn, &cfg).unwrap();
@@ -9640,7 +9685,7 @@ fn gate_wire_rig(tag: &str, seed: u8) -> GateWireRig {
     let status = Arc::new(Mutex::new(SyncStatus::default()));
     let (ev_tx, _ev_rx) = mpsc::unbounded_channel();
     let (handoff, _adopted) = mpsc::channel(LAN_HANDOFF_CAP);
-    let (slot, _lan_rx, _faults) = EngineSlot::new(BlobPolicy::Full, Some(handoff.clone()));
+    let (slot, _lan_rx, _faults) = EngineSlot::new(BlobPolicy::Full, Some(handoff.clone()), std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)));
     let adm = LanAdmission::ephemeral();
     // 同生产(`lan_sync_admission`):交进表里的是**槽自己那只**名册闸把手。
     let port = adm

@@ -249,6 +249,64 @@ async fn is_stopped_reflects_slot_presence() {
     assert!(!sup.is_stopped("resetme"), "Resetting 墓碑在场");
 }
 
+/// ⭐ **`RuntimeFacts::observe` 的三档取法**(board-columns-plan §5.4 第四合取;B-e 第 1 段)。
+///
+/// | 槽 | `engine_present` | 为什么 |
+/// |---|---|---|
+/// | 无槽 | `false` | 没有任何 transport 在跑 ⇒ **确定**没有引擎 |
+/// | `Running` | 读那枚投影 | 由 `EngineSlot` 自己在装配 / 撤台两处写 |
+/// | 瞬态(`Stopping`/`Starting`/`Resetting`) | `true` | 说不准 ⇒ 当作有,让 solo 算成 `false` |
+///
+/// ⛔ **别把它简化成 `sup.is_stopped(id)`**:桌面壳 eager 装配**全部**已发现的空间(含从没
+/// 配过账户的),故一个纯本地空间在表里恒有槽 —— 拿 `is_stopped` 当判据会把「没有旧端可言」
+/// 的纯本地用户整个关在门外,正是 §5.4 抬头点名要防的那个灾难。这只测的第一段就是那条。
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn runtime_facts_read_engine_presence_in_three_tiers() {
+    use crate::board::gate::RuntimeFacts;
+    let sup = SpaceSupervisor::new(tokio::runtime::Handle::current(), 2, None);
+    let (path, conn, clock) = test_db("facts");
+    let (s, _ev) = spec("main", &path, None);
+    let rt = sup.activate(s, conn, clock).unwrap();
+
+    // ① 无槽:确定没有引擎。
+    assert!(!RuntimeFacts::observe(&sup, "never").engine_present(), "① 从未激活的 id 无槽");
+
+    // ② Running + 未引导:transport 在跑,但槽里没有引擎 ⇒ 纯本地空间照样判得了 solo。
+    //    ⭐ 这一格就是「⛔ 别用 is_stopped」那条:`is_stopped("main")` 此刻是 **false**。
+    assert!(!sup.is_stopped("main"), "前提:空间在表里有槽(桌面 eager 装配的形)");
+    assert!(!rt.engine_present(), "前提:未配置 / 未引导 ⇒ 槽里没有引擎");
+    assert!(
+        !RuntimeFacts::observe(&sup, "main").engine_present(),
+        "② 有槽但无引擎 ⇒ 必须报 false,否则纯本地用户永远开不了自定义列"
+    );
+
+    // ③ Running + 引擎在场:读投影。
+    rt.engine_present.store(true, Ordering::SeqCst);
+    assert!(RuntimeFacts::observe(&sup, "main").engine_present(), "③ 读的是槽自己那枚投影");
+
+    // ④ 瞬态槽:说不准就当作有(fail-closed)。Resetting 墓碑是最好造的那一档。
+    let _ticket = sup.begin_reset("resetme").await.unwrap();
+    assert!(!sup.is_stopped("resetme"), "前提:墓碑在场");
+    assert!(
+        RuntimeFacts::observe(&sup, "resetme").engine_present(),
+        "④ 瞬态档必须落 fail-closed 侧"
+    );
+
+    // ⑤ 全局否决与空间无关:一段配置转换在飞时,问哪个空间都得报在飞。
+    {
+        let _t = sup.begin_config_transition();
+        for id in ["main", "never", "resetme"] {
+            assert!(
+                RuntimeFacts::observe(&sup, id).config_transition_in_flight(),
+                "⑤ {id}:§5.6 那道否决是**全局**的"
+            );
+        }
+    }
+    assert!(!RuntimeFacts::observe(&sup, "main").config_transition_in_flight(), "⑤ 放锁即清");
+
+    sup.stop("main").await.unwrap();
+}
+
 /// restart_required(space-entry-plan §3.2):旗与 transport 的 restart_flag 是
 /// 同一枚 Arc(判定那一刻置位即读得到),壳层写闸据 accessor 拒写。
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

@@ -12,6 +12,7 @@
 use rusqlite::Connection;
 
 use crate::clock::Clock;
+use crate::board::gate;
 use crate::{board, frindex, oplog, repo};
 
 /// 目标列合法性(拖拽 / 流转共用的那一句)。0036 起**列不再是写死的四个**
@@ -30,17 +31,31 @@ fn legal(conn: &Connection, from: &str, to: &str) -> Result<bool, String> {
     board::is_live_task_column(conn, to).map_err(|e| e.to_string())
 }
 
-/// 「目标列非法」的统一说法(`reorder` / `reorder_visible` 入口那道)。
-fn ensure_live_task_column(conn: &Connection, to_status: &str) -> Result<(), String> {
-    if board::is_live_task_column(conn, to_status).map_err(|e| e.to_string())? {
-        return Ok(());
+/// 「目标列非法」的统一说法(`reorder` / `reorder_visible` 入口那道)+ 发送端闸。
+///
+/// ⭐ **两件事合在这一句里是有意的**:「这一列收不收这张卡」与「本机此刻能不能把这张卡
+/// 落进这一列」是同一个决定的两半,拆开写就会出现「一处判了、另一处忘了」的漂移
+/// (plan §5.2 那张清单的最后一格)。
+fn ensure_live_task_column(
+    conn: &Connection,
+    to_status: &str,
+    facts: &gate::RuntimeFacts,
+) -> Result<(), String> {
+    if !board::is_live_task_column(conn, to_status).map_err(|e| e.to_string())? {
+        return Err(format!("非法的目标列:{to_status}"));
     }
-    Err(format!("非法的目标列:{to_status}"))
+    gate::ensure_card_may_land(conn, to_status, facts)
 }
 
 /// Move a card to a new stage, validating against its current one. Fails fast if the
 /// card is missing/archived or the move is illegal — no fallback, no silent no-op.
-pub fn transition(conn: &mut Connection, clock: &mut Clock, id: &str, to: &str) -> Result<(), String> {
+pub fn transition(
+    conn: &mut Connection,
+    clock: &mut Clock,
+    id: &str,
+    to: &str,
+    facts: &gate::RuntimeFacts,
+) -> Result<(), String> {
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     let from = repo::active_task_stage(&tx, id)
         .map_err(|e| e.to_string())?
@@ -48,6 +63,9 @@ pub fn transition(conn: &mut Connection, clock: &mut Clock, id: &str, to: &str) 
     if !legal(&tx, &from, to)? {
         return Err(format!("非法的状态流转:{from} → {to}"));
     }
+    // 发送端闸(plan §5.2 最后一格)。⛔ 刻意**不**并进 `legal`:那一句是纯谓词
+    // (`bool`),而闸拒绝时要给一句能行动的人话,合成一个 `bool` 就把原因丢了。
+    gate::ensure_card_may_land(&tx, to, facts)?;
     let changed = repo::set_task_stage(&tx, id, &from, to).map_err(|e| e.to_string())?;
     if changed != 1 {
         return Err(format!("流转失败:任务状态已变化(期望 {from}),已忽略本次操作"));
@@ -87,11 +105,12 @@ pub fn reorder(
     to_status: &str,
     base_target_ids: &[String],
     ordered_ids: &[String],
+    facts: &gate::RuntimeFacts,
 ) -> Result<(), String> {
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     // ⓪ 目标列合法性。0036 起这一句要**查库**(列是数据不是常量)⇒ 挪进事务里问,
     //    与后面那些判据读同一个快照(首版自检清单 10:别隔着一次往返再拿旧事实动手)。
-    ensure_live_task_column(&tx, to_status)?;
+    ensure_live_task_column(&tx, to_status, facts)?;
 
     // ① the dragged card is on the board and still in the column we dragged it from.
     let cur = repo::active_task_stage(&tx, id)
@@ -202,6 +221,7 @@ pub fn reorder_visible(
     to_status: &str,
     base_visible_ids: &[String],
     visible_after: &[String],
+    facts: &gate::RuntimeFacts,
 ) -> Result<(), String> {
     let mut after_set = std::collections::HashSet::new();
     for x in visible_after {
@@ -221,7 +241,7 @@ pub fn reorder_visible(
 
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     // ⓪ 同 `reorder`:目标列合法性 0036 起要查库,故与其余判据同一个快照(清单 10)。
-    ensure_live_task_column(&tx, to_status)?;
+    ensure_live_task_column(&tx, to_status, facts)?;
 
     let cur = repo::active_task_stage(&tx, id)
         .map_err(|e| e.to_string())?
@@ -660,11 +680,11 @@ mod tests {
         let (mut conn, mut clock) = fresh_db();
         let id = mk(&conn, "做点事");
         assert_eq!(stage_of(&conn, &id), "todo");
-        transition(&mut conn, &mut clock, &id, "doing").unwrap();
-        transition(&mut conn, &mut clock, &id, "done").unwrap();
+        transition(&mut conn, &mut clock, &id, "doing", &crate::board::gate::DETACHED).unwrap();
+        transition(&mut conn, &mut clock, &id, "done", &crate::board::gate::DETACHED).unwrap();
         assert_eq!(stage_of(&conn, &id), "done");
-        transition(&mut conn, &mut clock, &id, "doing").unwrap();
-        transition(&mut conn, &mut clock, &id, "todo").unwrap();
+        transition(&mut conn, &mut clock, &id, "doing", &crate::board::gate::DETACHED).unwrap();
+        transition(&mut conn, &mut clock, &id, "todo", &crate::board::gate::DETACHED).unwrap();
         assert_eq!(stage_of(&conn, &id), "todo");
         // 每次流转发 stage+position 两条 op;四次流转共 8 条,按 HLC 序可复原全程。
         let stages: Vec<serde_json::Value> = field_ops(&conn, &id)
@@ -690,19 +710,19 @@ mod tests {
         let (mut conn, mut clock) = fresh_db();
         let id = mk(&conn, "干活");
         // 进 doing:不碰 done_at。
-        transition(&mut conn, &mut clock, &id, "doing").unwrap();
+        transition(&mut conn, &mut clock, &id, "doing", &crate::board::gate::DETACHED).unwrap();
         assert!(done_at(&conn, &id).is_none());
         assert!(done_at_ops(&conn, &id).is_empty(), "非 done 流转不发 done_at");
         // 进 done:盖完成时刻 + 一条非空 done_at op。
-        transition(&mut conn, &mut clock, &id, "done").unwrap();
+        transition(&mut conn, &mut clock, &id, "done", &crate::board::gate::DETACHED).unwrap();
         let t1 = done_at(&conn, &id).expect("进 done 盖了完成时刻");
         assert_eq!(done_at_ops(&conn, &id), vec![serde_json::json!(t1)], "一条非空 done_at op");
         // 离开 done:完成时刻天然保住,不发新的 done_at op。
-        transition(&mut conn, &mut clock, &id, "todo").unwrap();
+        transition(&mut conn, &mut clock, &id, "todo", &crate::board::gate::DETACHED).unwrap();
         assert_eq!(done_at(&conn, &id).as_deref(), Some(t1.as_str()), "离开 done 不清完成时刻");
         assert_eq!(done_at_ops(&conn, &id).len(), 1, "离开 done 不发 done_at op");
         // 再进 done:刷新完成时刻(第二条 op)。
-        transition(&mut conn, &mut clock, &id, "done").unwrap();
+        transition(&mut conn, &mut clock, &id, "done", &crate::board::gate::DETACHED).unwrap();
         assert_eq!(done_at_ops(&conn, &id).len(), 2, "再进 done 刷新");
         assert_eq!(done_at_ops(&conn, &id).last().unwrap(), &serde_json::json!(done_at(&conn, &id).unwrap()));
     }
@@ -713,14 +733,14 @@ mod tests {
         let (mut conn, mut clock) = fresh_db();
         let a = mk(&conn, "A");
         let b = mk(&conn, "B");
-        transition(&mut conn, &mut clock, &b, "done").unwrap(); // b 先进 done
+        transition(&mut conn, &mut clock, &b, "done", &crate::board::gate::DETACHED).unwrap(); // b 先进 done
         assert_eq!(done_at_ops(&conn, &b).len(), 1);
         // a 从 todo 拖进 done 列(落 b 之前)。
-        reorder(&mut conn, &mut clock, &a, "todo", "done", &[b.clone()], &[a.clone(), b.clone()]).unwrap();
+        reorder(&mut conn, &mut clock, &a, "todo", "done", &[b.clone()], &[a.clone(), b.clone()], &crate::board::gate::DETACHED).unwrap();
         assert_eq!(done_at_ops(&conn, &a).len(), 1, "拖进 done 盖并发 done_at");
         assert!(!done_at_ops(&conn, &a)[0].is_null());
         // b 在 done 列内与 a 换序 —— stage 不变,不该再发 done_at。
-        reorder(&mut conn, &mut clock, &b, "done", "done", &[a.clone(), b.clone()], &[b.clone(), a.clone()]).unwrap();
+        reorder(&mut conn, &mut clock, &b, "done", "done", &[a.clone(), b.clone()], &[b.clone(), a.clone()], &crate::board::gate::DETACHED).unwrap();
         assert_eq!(done_at_ops(&conn, &b).len(), 1, "done 列内拖动不发 done_at");
     }
 
@@ -730,9 +750,9 @@ mod tests {
         let (mut conn, mut clock) = fresh_db();
         let x = mk(&conn, "X"); // todo
         let d = mk(&conn, "D");
-        transition(&mut conn, &mut clock, &d, "done").unwrap(); // done 列已有 d
+        transition(&mut conn, &mut clock, &d, "done", &crate::board::gate::DETACHED).unwrap(); // done 列已有 d
         // x 从 todo 拖进 done(可见基准 [d]、可见新序 [x,d],x 落 d 前)。
-        reorder_visible(&mut conn, &mut clock, &x, "todo", "done", &[d.clone()], &[x.clone(), d.clone()]).unwrap();
+        reorder_visible(&mut conn, &mut clock, &x, "todo", "done", &[d.clone()], &[x.clone(), d.clone()], &crate::board::gate::DETACHED).unwrap();
         assert_eq!(stage_of(&conn, &x), "done");
         assert_eq!(done_at_ops(&conn, &x).len(), 1, "筛选态拖进 done 盖并发 done_at");
         assert!(!done_at_ops(&conn, &x)[0].is_null());
@@ -742,8 +762,8 @@ mod tests {
     fn user_state_allows_direct_todo_done_both_ways() {
         let (mut conn, mut clock) = fresh_db();
         let id = mk(&conn, "快事");
-        transition(&mut conn, &mut clock, &id, "done").unwrap();
-        transition(&mut conn, &mut clock, &id, "todo").unwrap();
+        transition(&mut conn, &mut clock, &id, "done", &crate::board::gate::DETACHED).unwrap();
+        transition(&mut conn, &mut clock, &id, "todo", &crate::board::gate::DETACHED).unwrap();
         assert_eq!(stage_of(&conn, &id), "todo");
     }
 
@@ -751,9 +771,9 @@ mod tests {
     fn illegal_moves_are_rejected_and_leave_state_intact() {
         let (mut conn, mut clock) = fresh_db();
         let id = mk(&conn, "x");
-        assert!(transition(&mut conn, &mut clock, &id, "inbox").is_err()); // idea stage, not a board stage
-        assert!(transition(&mut conn, &mut clock, &id, "bogus").is_err());
-        assert!(transition(&mut conn, &mut clock, &id, "todo").is_err()); // self-move
+        assert!(transition(&mut conn, &mut clock, &id, "inbox", &crate::board::gate::DETACHED).is_err()); // idea stage, not a board stage
+        assert!(transition(&mut conn, &mut clock, &id, "bogus", &crate::board::gate::DETACHED).is_err());
+        assert!(transition(&mut conn, &mut clock, &id, "todo", &crate::board::gate::DETACHED).is_err()); // self-move
         assert_eq!(stage_of(&conn, &id), "todo");
         assert!(ops_for(&conn, "item", &id).is_empty(), "被拒的流转不发射 op");
     }
@@ -762,15 +782,15 @@ mod tests {
     fn confirming_is_an_optional_fourth_state() {
         let (mut conn, mut clock) = fresh_db();
         let id = mk(&conn, "等对方确认");
-        transition(&mut conn, &mut clock, &id, "doing").unwrap();
-        transition(&mut conn, &mut clock, &id, "confirming").unwrap();
+        transition(&mut conn, &mut clock, &id, "doing", &crate::board::gate::DETACHED).unwrap();
+        transition(&mut conn, &mut clock, &id, "confirming", &crate::board::gate::DETACHED).unwrap();
         assert_eq!(stage_of(&conn, &id), "confirming");
-        transition(&mut conn, &mut clock, &id, "done").unwrap();
-        transition(&mut conn, &mut clock, &id, "confirming").unwrap();
-        transition(&mut conn, &mut clock, &id, "doing").unwrap();
-        transition(&mut conn, &mut clock, &id, "done").unwrap();
-        transition(&mut conn, &mut clock, &id, "todo").unwrap();
-        transition(&mut conn, &mut clock, &id, "confirming").unwrap();
+        transition(&mut conn, &mut clock, &id, "done", &crate::board::gate::DETACHED).unwrap();
+        transition(&mut conn, &mut clock, &id, "confirming", &crate::board::gate::DETACHED).unwrap();
+        transition(&mut conn, &mut clock, &id, "doing", &crate::board::gate::DETACHED).unwrap();
+        transition(&mut conn, &mut clock, &id, "done", &crate::board::gate::DETACHED).unwrap();
+        transition(&mut conn, &mut clock, &id, "todo", &crate::board::gate::DETACHED).unwrap();
+        transition(&mut conn, &mut clock, &id, "confirming", &crate::board::gate::DETACHED).unwrap();
         assert_eq!(stage_of(&conn, &id), "confirming");
     }
 
@@ -778,10 +798,10 @@ mod tests {
     fn reorder_into_confirming_column_works() {
         let (mut conn, mut clock) = fresh_db();
         let a = mk(&conn, "A");
-        transition(&mut conn, &mut clock, &a, "doing").unwrap();
+        transition(&mut conn, &mut clock, &a, "doing", &crate::board::gate::DETACHED).unwrap();
         let c = mk(&conn, "C");
-        transition(&mut conn, &mut clock, &c, "confirming").unwrap();
-        reorder(&mut conn, &mut clock, &a, "doing", "confirming", &[c.clone()], &[a.clone(), c.clone()]).unwrap();
+        transition(&mut conn, &mut clock, &c, "confirming", &crate::board::gate::DETACHED).unwrap();
+        reorder(&mut conn, &mut clock, &a, "doing", "confirming", &[c.clone()], &[a.clone(), c.clone()], &crate::board::gate::DETACHED).unwrap();
         assert_eq!(stage_of(&conn, &a), "confirming");
         assert_eq!(ids(&conn, "confirming"), vec![a, c]);
     }
@@ -789,7 +809,7 @@ mod tests {
     #[test]
     fn transition_missing_task_fails() {
         let (mut conn, mut clock) = fresh_db();
-        assert!(transition(&mut conn, &mut clock, "nope", "todo").is_err());
+        assert!(transition(&mut conn, &mut clock, "nope", "todo", &crate::board::gate::DETACHED).is_err());
     }
 
     #[test]
@@ -798,7 +818,7 @@ mod tests {
         let id = mk(&conn, "走完整流程");
         assert!(purge(&mut conn, &mut clock, &id).is_err(), "live task is not in the 回收站");
         assert!(restore(&mut conn, &mut clock, &id).is_err(), "nothing to restore");
-        transition(&mut conn, &mut clock, &id, "done").unwrap();
+        transition(&mut conn, &mut clock, &id, "done", &crate::board::gate::DETACHED).unwrap();
         archive(&mut conn, &mut clock, &id).unwrap();
         assert!(archive(&mut conn, &mut clock, &id).is_err());
         assert_eq!(stage_of(&conn, &id), "done", "stage kept while archived");
@@ -824,7 +844,7 @@ mod tests {
         let (mut conn, mut clock) = fresh_db();
         let todo = mk(&conn, "待办的活");
         let doing = mk(&conn, "进行中的活");
-        transition(&mut conn, &mut clock, &doing, "doing").unwrap();
+        transition(&mut conn, &mut clock, &doing, "doing", &crate::board::gate::DETACHED).unwrap();
         archive(&mut conn, &mut clock, &todo).unwrap();
         archive(&mut conn, &mut clock, &doing).unwrap();
         assert!(repo::list_tasks(&conn).unwrap().is_empty());
@@ -851,9 +871,9 @@ mod tests {
     fn purge_all_empties_only_the_trash() {
         let (mut conn, mut clock) = fresh_db();
         let live = mk(&conn, "活跃");
-        transition(&mut conn, &mut clock, &live, "done").unwrap();
+        transition(&mut conn, &mut clock, &live, "done", &crate::board::gate::DETACHED).unwrap();
         let trashed = mk(&conn, "待清");
-        transition(&mut conn, &mut clock, &trashed, "done").unwrap();
+        transition(&mut conn, &mut clock, &trashed, "done", &crate::board::gate::DETACHED).unwrap();
         archive(&mut conn, &mut clock, &trashed).unwrap();
         assert_eq!(purge_all(&mut conn, &mut clock).unwrap(), 1);
         assert_eq!(stage_of(&conn, &live), "done");
@@ -867,12 +887,12 @@ mod tests {
         let id = mk(&conn, "干完的活");
         // 未完成不可归档。
         assert!(seal(&mut conn, &mut clock, &id).is_err());
-        transition(&mut conn, &mut clock, &id, "done").unwrap();
+        transition(&mut conn, &mut clock, &id, "done", &crate::board::gate::DETACHED).unwrap();
         seal(&mut conn, &mut clock, &id).unwrap();
         assert!(seal(&mut conn, &mut clock, &id).is_err(), "already sealed fails fast");
         // 归档中:看板上没有它,一切活跃操作 fail fast。
         assert!(repo::list_tasks(&conn).unwrap().is_empty());
-        assert!(transition(&mut conn, &mut clock, &id, "todo").is_err());
+        assert!(transition(&mut conn, &mut clock, &id, "todo", &crate::board::gate::DETACHED).is_err());
         assert!(rename(&mut conn, &mut clock, &id, "改名").is_err());
         assert!(archive(&mut conn, &mut clock, &id).is_err(), "sealed can't go to the 回收站");
         assert!(purge(&mut conn, &mut clock, &id).is_err(), "sealed can't be purged");
@@ -897,8 +917,8 @@ mod tests {
         assert_eq!(seal_all(&mut conn, &mut clock).unwrap(), 0, "empty done column is a 0, not an error");
         let a = mk(&conn, "A");
         let b = mk(&conn, "B");
-        transition(&mut conn, &mut clock, &a, "done").unwrap();
-        transition(&mut conn, &mut clock, &b, "done").unwrap();
+        transition(&mut conn, &mut clock, &a, "done", &crate::board::gate::DETACHED).unwrap();
+        transition(&mut conn, &mut clock, &b, "done", &crate::board::gate::DETACHED).unwrap();
         assert_eq!(seal_all(&mut conn, &mut clock).unwrap(), 2);
         assert!(ids(&conn, "done").is_empty());
         for t in [&a, &b] {
@@ -921,7 +941,7 @@ mod tests {
         // 四次成功设置 = 四条 op(设值/清空各二),被拒的不发射。
         assert_eq!(field_ops(&conn, &id).len(), 4);
         let arch = mk(&conn, "待归档");
-        transition(&mut conn, &mut clock, &arch, "done").unwrap();
+        transition(&mut conn, &mut clock, &arch, "done", &crate::board::gate::DETACHED).unwrap();
         archive(&mut conn, &mut clock, &arch).unwrap();
         assert!(set_due(&mut conn, &mut clock, &arch, Some("2026-06-25")).is_err());
         assert!(set_priority(&mut conn, &mut clock, &arch, Some(1)).is_err());
@@ -939,7 +959,7 @@ mod tests {
         assert_eq!(title_of(&conn, &id), "新标题");
         assert!(rename(&mut conn, &mut clock, "ghost", "x").is_err());
         let arch = mk(&conn, "待归档");
-        transition(&mut conn, &mut clock, &arch, "done").unwrap();
+        transition(&mut conn, &mut clock, &arch, "done", &crate::board::gate::DETACHED).unwrap();
         archive(&mut conn, &mut clock, &arch).unwrap();
         assert!(rename(&mut conn, &mut clock, &arch, "归档后改名").is_err());
         assert_eq!(title_of(&conn, &arch), "待归档");
@@ -1017,7 +1037,7 @@ mod tests {
         assert!(add_topic(&mut conn, &mut clock, "ghost", &g1).is_err());
         assert!(remove_topic(&mut conn, &mut clock, "ghost", &g1).is_err());
         let arch = mk(&conn, "待归档");
-        transition(&mut conn, &mut clock, &arch, "done").unwrap();
+        transition(&mut conn, &mut clock, &arch, "done", &crate::board::gate::DETACHED).unwrap();
         archive(&mut conn, &mut clock, &arch).unwrap();
         assert!(add_topic(&mut conn, &mut clock, &arch, &g1).is_err());
         assert!(remove_topic(&mut conn, &mut clock, &arch, &g1).is_err());
@@ -1035,13 +1055,13 @@ mod tests {
     fn reorder_within_column_writes_only_the_dragged_key() {
         let (mut conn, mut clock) = fresh_db();
         let (a, b, c) = three_todos(&conn); // a0 a1 a2
-        reorder(&mut conn, &mut clock, &c, "todo", "todo", &[a.clone(), b.clone(), c.clone()], &[c.clone(), a.clone(), b.clone()]).unwrap();
+        reorder(&mut conn, &mut clock, &c, "todo", "todo", &[a.clone(), b.clone(), c.clone()], &[c.clone(), a.clone(), b.clone()], &crate::board::gate::DETACHED).unwrap();
         assert_eq!(ids(&conn, "todo"), vec![c.clone(), a.clone(), b.clone()]);
         // 只有被拖卡换键(列首前插),其余卡的键纹丝不动。
         assert_eq!(positions(&conn, "todo"), keys(&["Zz", "a0", "a1"]));
         assert!(field_ops(&conn, &a).is_empty() && field_ops(&conn, &b).is_empty(),
             "未被拖动的卡不发射任何 op");
-        reorder(&mut conn, &mut clock, &a, "todo", "todo", &[c.clone(), a.clone(), b.clone()], &[c.clone(), b.clone(), a.clone()]).unwrap();
+        reorder(&mut conn, &mut clock, &a, "todo", "todo", &[c.clone(), a.clone(), b.clone()], &[c.clone(), b.clone(), a.clone()], &crate::board::gate::DETACHED).unwrap();
         assert_eq!(ids(&conn, "todo"), vec![c.clone(), b.clone(), a.clone()]);
         // 一次拖动 = 被拖卡一条 position op,值是落点键。
         let a_pos: Vec<serde_json::Value> = field_ops(&conn, &a)
@@ -1056,8 +1076,7 @@ mod tests {
     fn reorder_drop_in_place_is_an_idempotent_no_op() {
         let (mut conn, mut clock) = fresh_db();
         let (a, b, c) = three_todos(&conn);
-        reorder(&mut conn, &mut clock, &b, "todo", "todo",
-            &[a.clone(), b.clone(), c.clone()], &[a.clone(), b.clone(), c.clone()]).unwrap();
+        reorder(&mut conn, &mut clock, &b, "todo", "todo", &[a.clone(), b.clone(), c.clone()], &[a.clone(), b.clone(), c.clone()], &crate::board::gate::DETACHED).unwrap();
         assert_eq!(positions(&conn, "todo"), keys(&["a0", "a1", "a2"]), "原位落下不写库");
         let total: i64 = conn.query_row("SELECT COUNT(*) FROM oplog", [], |r| r.get(0)).unwrap();
         assert_eq!(total, 0, "原位落下不发射 op");
@@ -1069,9 +1088,9 @@ mod tests {
         let (a, b, c) = three_todos(&conn);
         let x = mk(&conn, "X");
         let y = mk(&conn, "Y");
-        transition(&mut conn, &mut clock, &x, "doing").unwrap();
-        transition(&mut conn, &mut clock, &y, "doing").unwrap();
-        reorder(&mut conn, &mut clock, &b, "todo", "doing", &[x.clone(), y.clone()], &[x.clone(), b.clone(), y.clone()]).unwrap();
+        transition(&mut conn, &mut clock, &x, "doing", &crate::board::gate::DETACHED).unwrap();
+        transition(&mut conn, &mut clock, &y, "doing", &crate::board::gate::DETACHED).unwrap();
+        reorder(&mut conn, &mut clock, &b, "todo", "doing", &[x.clone(), y.clone()], &[x.clone(), b.clone(), y.clone()], &crate::board::gate::DETACHED).unwrap();
         assert_eq!(stage_of(&conn, &b), "doing");
         assert_eq!(ids(&conn, "doing"), vec![x, b.clone(), y]);
         // 落点键在两侧邻居之间,邻居的键不动。
@@ -1088,12 +1107,12 @@ mod tests {
     fn reorder_rejects_stale_or_malformed_input() {
         let (mut conn, mut clock) = fresh_db();
         let (a, b, c) = three_todos(&conn);
-        assert!(reorder(&mut conn, &mut clock, &c, "todo", "todo", &[a.clone(), b.clone()], &[c.clone(), a.clone(), b.clone()]).is_err());
-        assert!(reorder(&mut conn, &mut clock, &c, "todo", "todo", &[a.clone(), b.clone(), c.clone()], &[a.clone(), a.clone(), b.clone()]).is_err());
-        assert!(reorder(&mut conn, &mut clock, &c, "todo", "todo", &[a.clone(), b.clone(), c.clone()], &[a.clone(), b.clone()]).is_err());
-        assert!(reorder(&mut conn, &mut clock, &c, "doing", "doing", &[], &[c.clone()]).is_err());
+        assert!(reorder(&mut conn, &mut clock, &c, "todo", "todo", &[a.clone(), b.clone()], &[c.clone(), a.clone(), b.clone()], &crate::board::gate::DETACHED).is_err());
+        assert!(reorder(&mut conn, &mut clock, &c, "todo", "todo", &[a.clone(), b.clone(), c.clone()], &[a.clone(), a.clone(), b.clone()], &crate::board::gate::DETACHED).is_err());
+        assert!(reorder(&mut conn, &mut clock, &c, "todo", "todo", &[a.clone(), b.clone(), c.clone()], &[a.clone(), b.clone()], &crate::board::gate::DETACHED).is_err());
+        assert!(reorder(&mut conn, &mut clock, &c, "doing", "doing", &[], &[c.clone()], &crate::board::gate::DETACHED).is_err());
         // 单卡拖动契约:除被拖卡外还动了别的卡(a、b 互换)=> 拒绝,不猜。
-        assert!(reorder(&mut conn, &mut clock, &c, "todo", "todo", &[a.clone(), b.clone(), c.clone()], &[b.clone(), a.clone(), c.clone()]).is_err());
+        assert!(reorder(&mut conn, &mut clock, &c, "todo", "todo", &[a.clone(), b.clone(), c.clone()], &[b.clone(), a.clone(), c.clone()], &crate::board::gate::DETACHED).is_err());
         assert_eq!(ids(&conn, "todo"), vec![a, b, c]);
         assert_eq!(positions(&conn, "todo"), keys(&["a0", "a1", "a2"]));
         let total: i64 = conn.query_row("SELECT COUNT(*) FROM oplog", [], |r| r.get(0)).unwrap();
@@ -1106,9 +1125,9 @@ mod tests {
         let b = mk(&conn, "B");
         let x = mk(&conn, "X");
         let y = mk(&conn, "Y");
-        transition(&mut conn, &mut clock, &x, "doing").unwrap();
-        transition(&mut conn, &mut clock, &y, "doing").unwrap();
-        assert!(reorder(&mut conn, &mut clock, &b, "todo", "doing", &[x.clone(), y.clone()], &[y.clone(), b.clone(), x.clone()]).is_err());
+        transition(&mut conn, &mut clock, &x, "doing", &crate::board::gate::DETACHED).unwrap();
+        transition(&mut conn, &mut clock, &y, "doing", &crate::board::gate::DETACHED).unwrap();
+        assert!(reorder(&mut conn, &mut clock, &b, "todo", "doing", &[x.clone(), y.clone()], &[y.clone(), b.clone(), x.clone()], &crate::board::gate::DETACHED).is_err());
         assert_eq!(stage_of(&conn, &b), "todo");
         assert_eq!(ids(&conn, "doing"), vec![x, y]);
         assert!(ops_for(&conn, "item", &b).is_empty(), "被拒的跨列拖动整体回滚、不发射 op");
@@ -1118,9 +1137,9 @@ mod tests {
     fn reorder_of_archived_task_fails_fast() {
         let (mut conn, mut clock) = fresh_db();
         let id = mk(&conn, "完成并归档");
-        transition(&mut conn, &mut clock, &id, "done").unwrap();
+        transition(&mut conn, &mut clock, &id, "done", &crate::board::gate::DETACHED).unwrap();
         archive(&mut conn, &mut clock, &id).unwrap();
-        assert!(reorder(&mut conn, &mut clock, &id, "done", "done", &[], &[id.clone()]).is_err());
+        assert!(reorder(&mut conn, &mut clock, &id, "done", "done", &[], &[id.clone()], &crate::board::gate::DETACHED).is_err());
     }
 
     #[test]
@@ -1177,8 +1196,7 @@ mod tests {
         let h2 = mk(&conn, "H2");
         let v2 = mk(&conn, "V2");
         let v3 = mk(&conn, "V3"); // 完整列 a0..a4
-        reorder_visible(&mut conn, &mut clock, &v3, "todo", "todo",
-            &[v1.clone(), v2.clone(), v3.clone()], &[v3.clone(), v1.clone(), v2.clone()]).unwrap();
+        reorder_visible(&mut conn, &mut clock, &v3, "todo", "todo", &[v1.clone(), v2.clone(), v3.clone()], &[v3.clone(), v1.clone(), v2.clone()], &crate::board::gate::DETACHED).unwrap();
         // 0021 语义:只有被拖卡(v3)换键——落到新可见后邻 v1 的紧前面;隐藏卡 **和**
         // 未被拖动的可见卡(v1/v2)全部原地不动(0021 前的槽位轮换会把 v1/v2 也搬走)。
         assert_eq!(ids(&conn, "todo"), vec![h1, v3, v1, h2, v2]);
@@ -1194,10 +1212,9 @@ mod tests {
         let h2 = mk(&conn, "H2");
         let v2 = mk(&conn, "V2");
         for t in [&h1, &v1, &h2, &v2] {
-            transition(&mut conn, &mut clock, t, "doing").unwrap();
+            transition(&mut conn, &mut clock, t, "doing", &crate::board::gate::DETACHED).unwrap();
         }
-        reorder_visible(&mut conn, &mut clock, &x, "todo", "doing",
-            &[v1.clone(), v2.clone()], &[v1.clone(), x.clone(), v2.clone()]).unwrap();
+        reorder_visible(&mut conn, &mut clock, &x, "todo", "doing", &[v1.clone(), v2.clone()], &[v1.clone(), x.clone(), v2.clone()], &crate::board::gate::DETACHED).unwrap();
         assert_eq!(stage_of(&conn, &x), "doing");
         assert_eq!(ids(&conn, "doing"), vec![h1, v1, x, h2, v2]);
         assert!(ids(&conn, "todo").is_empty());
@@ -1209,9 +1226,9 @@ mod tests {
         let x = mk(&conn, "X");
         let h1 = mk(&conn, "H1");
         let h2 = mk(&conn, "H2");
-        transition(&mut conn, &mut clock, &h1, "doing").unwrap();
-        transition(&mut conn, &mut clock, &h2, "doing").unwrap();
-        reorder_visible(&mut conn, &mut clock, &x, "todo", "doing", &[], &[x.clone()]).unwrap();
+        transition(&mut conn, &mut clock, &h1, "doing", &crate::board::gate::DETACHED).unwrap();
+        transition(&mut conn, &mut clock, &h2, "doing", &crate::board::gate::DETACHED).unwrap();
+        reorder_visible(&mut conn, &mut clock, &x, "todo", "doing", &[], &[x.clone()], &crate::board::gate::DETACHED).unwrap();
         assert_eq!(stage_of(&conn, &x), "doing");
         assert_eq!(ids(&conn, "doing"), vec![h1, h2, x]);
     }
@@ -1224,9 +1241,9 @@ mod tests {
         let v1 = mk(&conn, "V1");
         let h2 = mk(&conn, "H2");
         for t in [&h1, &v1, &h2] {
-            transition(&mut conn, &mut clock, t, "doing").unwrap();
+            transition(&mut conn, &mut clock, t, "doing", &crate::board::gate::DETACHED).unwrap();
         }
-        reorder_visible(&mut conn, &mut clock, &x, "todo", "doing", &[v1.clone()], &[x.clone(), v1.clone()]).unwrap();
+        reorder_visible(&mut conn, &mut clock, &x, "todo", "doing", &[v1.clone()], &[x.clone(), v1.clone()], &crate::board::gate::DETACHED).unwrap();
         assert_eq!(ids(&conn, "doing"), vec![h1, x, v1, h2]);
     }
 
@@ -1236,17 +1253,13 @@ mod tests {
         let v1 = mk(&conn, "V1");
         let v2 = mk(&conn, "V2");
         let v3 = mk(&conn, "V3");
-        assert!(reorder_visible(&mut conn, &mut clock, &v1, "todo", "todo",
-            &[v1.clone(), v2.clone(), v3.clone()], &[v1.clone(), v1.clone(), v2.clone()]).is_err());
-        assert!(reorder_visible(&mut conn, &mut clock, &v1, "todo", "todo",
-            &[v2.clone(), v3.clone()], &[v2.clone(), v3.clone()]).is_err());
-        assert!(reorder_visible(&mut conn, &mut clock, &v1, "todo", "todo",
-            &[v2.clone(), v1.clone(), v3.clone()], &[v1.clone(), v2.clone(), v3.clone()]).is_err());
+        assert!(reorder_visible(&mut conn, &mut clock, &v1, "todo", "todo", &[v1.clone(), v2.clone(), v3.clone()], &[v1.clone(), v1.clone(), v2.clone()], &crate::board::gate::DETACHED).is_err());
+        assert!(reorder_visible(&mut conn, &mut clock, &v1, "todo", "todo", &[v2.clone(), v3.clone()], &[v2.clone(), v3.clone()], &crate::board::gate::DETACHED).is_err());
+        assert!(reorder_visible(&mut conn, &mut clock, &v1, "todo", "todo", &[v2.clone(), v1.clone(), v3.clone()], &[v1.clone(), v2.clone(), v3.clone()], &crate::board::gate::DETACHED).is_err());
         let x = mk(&conn, "X");
-        transition(&mut conn, &mut clock, &v1, "doing").unwrap();
-        transition(&mut conn, &mut clock, &v2, "doing").unwrap();
-        assert!(reorder_visible(&mut conn, &mut clock, &x, "todo", "doing",
-            &[v1.clone(), v2.clone()], &[v2.clone(), x.clone(), v1.clone()]).is_err());
+        transition(&mut conn, &mut clock, &v1, "doing", &crate::board::gate::DETACHED).unwrap();
+        transition(&mut conn, &mut clock, &v2, "doing", &crate::board::gate::DETACHED).unwrap();
+        assert!(reorder_visible(&mut conn, &mut clock, &x, "todo", "doing", &[v1.clone(), v2.clone()], &[v2.clone(), x.clone(), v1.clone()], &crate::board::gate::DETACHED).is_err());
         assert_eq!(stage_of(&conn, &x), "todo");
         assert_eq!(ids(&conn, "doing"), vec![v1, v2]);
         assert_eq!(ids(&conn, "todo"), vec![v3, x]);

@@ -31,7 +31,7 @@
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering as AtomicOrdering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
@@ -367,6 +367,17 @@ pub struct Transport {
     /// (那之间还有 ws.close 等 await,写可能溜进旧连接)。staging 路/测试传
     /// `Arc::new(Mutex::new(None))` 即可(staging 由 JoinManager 收口,无人写)。
     pub restart_flag: Arc<Mutex<Option<String>>>,
+    /// **引擎在场的投影位**(board-columns-plan §5.4 第四合取)。由 [`EngineSlot`] 在
+    /// 装配成功与整台撤台两处写,读者是 core 的发送端闸
+    /// ([`crate::board::gate::RuntimeFacts::observe`])。
+    ///
+    /// ⚠ 与 [`Self::restart_flag`] 同一个形:**一格只有 transport 知情的事实,投影给壳侧
+    /// 写闸**;⛔ 别改成「壳自己去问库」——`bootstrapped_at` 缺席到 `reconcile` 真跑之间
+    /// 有窗口,而这一格守的正是那个窗口。
+    ///
+    /// 不用 latch 的装配点(staging 传输、单测)传 `Arc::new(AtomicBool::new(false))` 即可:
+    /// 那些语境本就没有壳侧写闸在读。
+    pub engine_present: Arc<AtomicBool>,
     /// 局域网直连的宿主(lan-direct-plan §6;L-c3a)。`Some` = 本空间参与直连:LanReady
     /// 置位时把准入条目注册进 **app 级监听器**、撤位与收场时摘掉;拿回的监听端口写进
     /// `LanAd.listen` 随 Hello 通告出去(§2)。
@@ -928,6 +939,34 @@ fn human_err(code: &str, msg: &str) -> String {
 
 // ---- 纪元切换:锚点新身份预注册(epoch-plan §2.2,两阶段状态机) ----
 
+/// 预注册的**材料**三键(状态键 `pending_state` 不在内,它是状态机本身)。
+///
+/// ⛔ **唯一描述源**:[`pending_identity_block`] 的残留检查、[`register_pending_identity`]
+/// 消费成功后的清理、以及 [`has_pending_identity_material`](board-columns-plan §5.4 的
+/// 第三合取)全部消费这一份。
+///
+/// ⚠ [`clear_config`] 那张十键清单**刻意仍是字面量**:它的每一行都挂着「为什么它也算同步
+/// 配置」的注释,讲的是另一件事(「清全部同步配置」的契约面),不是这三个键的身份。
+pub(crate) const PENDING_IDENTITY_MATERIAL: [&str; 3] =
+    ["pending_device_id", "pending_device_key", "pending_pubkey"];
+
+/// 纪元切换的两阶段材料**还剩没剩**(board-columns-plan §5.4 第三合取)。
+///
+/// ⚠ 与 [`pending_identity_block`] 刻意不合并:那道问的是「该不该封同步」(要分 prepared /
+/// registered / 异常三档给人话),这道只问「还剩没剩」——solo 判据要的是后者,而**状态键
+/// 异常的那几档在这里同样算「剩着」**(非法中间态 ⇒ 不判 solo)。
+pub(crate) fn has_pending_identity_material(conn: &Connection) -> Result<bool, String> {
+    if meta_get(conn, "pending_state")?.is_some() {
+        return Ok(true);
+    }
+    for k in PENDING_IDENTITY_MATERIAL {
+        if meta_get(conn, k)?.is_some() {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 /// pending 身份封闸判定(§2.2):pending 键存在 = 纪元切换进行中,本库**禁普通同步**
 /// ——Prepared 态只允许 [`register_pending_identity`] 的专用注册短连接重试;Registered
 /// 态起以任何身份都拒,直到 `epoch::compact` 消费 bundle 后闸自动解除。Some(人话) = 封。
@@ -949,7 +988,7 @@ pub(crate) fn pending_identity_block(conn: &Connection) -> Result<Option<String>
         }
     }
     // 无状态键但材料键残留 = 状态机被绕过/写入撕裂(M2:任一在场即封,不挑着看)。
-    for k in ["pending_device_id", "pending_device_key", "pending_pubkey"] {
+    for k in PENDING_IDENTITY_MATERIAL {
         if meta_get(conn, k)?.is_some() {
             return Ok(Some(format!("pending 身份材料残留({k} 无状态键):库状态异常,拒绝同步")));
         }
@@ -1024,7 +1063,7 @@ pub async fn register_pending_identity(
             None => {
                 // M2:无状态键但材料键残留 = 上次写入撕裂/被绕过——响亮拒,不静默
                 // 覆盖(覆盖会把「异常现场」洗成「正常新预注册」)。
-                for k in ["pending_device_id", "pending_device_key", "pending_pubkey"] {
+                for k in PENDING_IDENTITY_MATERIAL {
                     if meta_get(&conn, k)?.is_some() {
                         return Err(format!("pending 材料残留({k} 无状态键):库状态异常,先人工核对"));
                     }
@@ -1671,7 +1710,8 @@ async fn run_inner(
     heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     // 引擎与 lan 链路集活到整个 run 的生命期(不变量 6,见 [`EngineSlot`])——会话来去,
     // 它们不动。拨号器同住槽里,拿的是移交通道的另一枚发送端。
-    let (slot, lan_inbound, lan_faults) = EngineSlot::new(t.blob_policy, handoff_keep.clone());
+    let (slot, lan_inbound, lan_faults) =
+        EngineSlot::new(t.blob_policy, handoff_keep.clone(), t.engine_present.clone());
     let mut pumps = Pumps {
         slot,
         tick: heartbeat,
@@ -2704,6 +2744,13 @@ struct EngineSlot {
     /// 指纹与引擎**同生共死**(装在一个 Option 里,不是两个字段):没有「引擎还在、
     /// 指纹丢了」这种半态可写错,`reconcile` 的判据永远有依据。
     engine: Option<(EngineKey, Engine)>,
+    /// [`Self::engine`] 是不是 `Some` 的**对外投影**(board-columns-plan §5.4 第四合取;
+    /// 见 [`Transport::engine_present`])。
+    ///
+    /// ⚠ **只有两处写**:装配成功那一句之后、[`EngineSlot::retire`] 里。两处都紧贴着对
+    /// `engine` 字段的赋值 ⇒ 「投影与字段同步」是**代码相邻**这一件事实,不是一条纪律。
+    /// ⛔ 别在第三处写它;要加新的撤台路径,让它走 `retire()`。
+    present: Arc<AtomicBool>,
     blob_policy: BlobPolicy,
     /// 局域网链路集(§3/§6)。非空**必然**意味着槽里有引擎([`EngineSlot::retire`] 一并
     /// 清),故不存在「有链路没引擎」的路由幻影。
@@ -2828,11 +2875,16 @@ impl EngineSlot {
     fn new(
         blob_policy: BlobPolicy,
         handoff: Option<mpsc::Sender<AdoptedLink>>,
+        present: Arc<AtomicBool>,
     ) -> (EngineSlot, mpsc::Receiver<LanInbound>, mpsc::Receiver<LanFault>) {
         let (lan, inbound, faults) = LanLinks::new();
+        // 建槽即宣告「此刻无引擎」:`run` 可能在装配之前就走别的分支(未配置 / 未引导),
+        // ⛔ 别指望调用方传进来的初值 —— 这一格的真相源只能是槽自己。
+        present.store(false, AtomicOrdering::SeqCst);
         (
             EngineSlot {
                 engine: None,
+                present,
                 blob_policy,
                 lan,
                 dial: lan_net::Dialer::new(handoff),
@@ -3009,9 +3061,13 @@ impl EngineSlot {
         self.engine.as_ref().map(|(k, _)| k)
     }
 
+
     /// 整台丢弃(未配置 / 配置残缺 / 纪元 pending 封闸——即 LanReady 撤位的那几档)。
     fn retire(&mut self) {
         self.engine = None;
+        // 投影紧贴字段(见 [`EngineSlot::present`])。⚠ 排在**最前**:下面几句会 abort
+        // 任务、拆链路,任何一句将来若提前返回,这一格已经是准的了。
+        self.present.store(false, AtomicOrdering::SeqCst);
         // 链路一起拆(§4「本机身份换代由 session_gate 拆全部 lan 链路」/ 不变量 6 的撤位
         // 清单):撤位后残留的链路是拿旧 K_acc 建的,封解不了新纪元的任何一帧,留着只会
         // 让选路指向死腿。丢弃 = `LanLink::drop` 里 abort 两只任务、socket 落地。
@@ -3076,10 +3132,25 @@ impl EngineSlot {
         // 一半、缺图清单没派生」的半成品在槽里(部分成功登记)。
         engine.on_runtime_started(conn)?;
         self.engine = Some((key, engine));
+        // 投影紧贴字段(见 [`EngineSlot::present`])。⚠ 排在**赋值之后**:上面两步任一
+        // 出错都走 `?` 返回,槽里没有引擎,这一格也就不该翻起来。
+        self.present.store(true, AtomicOrdering::SeqCst);
         // 装配好了就该看一眼要不要拨号:**冷启动全靠这一下**(断 WAN 起步时一枚通告都不会
         // 到,没有它就得干等第一次空闲巡查——而撤位期计时器是摘掉的,压根没有「第一次」)。
         self.dial.kick();
         Ok(())
+    }
+}
+
+/// 槽本身没了(`run` 收场 / 任务被取消)⇒ 投影跟着落下。
+///
+/// ⚠ 这不是 [`EngineSlot::present`] 头注说的「第三处写」,是**同一格随槽的生命期归零**:
+/// 少了它,transport 任务退出之后那一位会停在 `true`。今天读者读不到那个陈旧值
+/// (runtime 一停,`SpaceSupervisor` 的槽先没了,`RuntimeFacts::observe` 走 `is_stopped`
+/// 那一档),但那是**读者那边**的性质 —— ⛔ 别让本格的正确性挂在别人身上。
+impl Drop for EngineSlot {
+    fn drop(&mut self) {
+        self.present.store(false, AtomicOrdering::SeqCst);
     }
 }
 
