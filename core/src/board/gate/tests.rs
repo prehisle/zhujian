@@ -21,6 +21,14 @@
 //!   —— 「原子一致」来自绑定,不来自某处记得删。
 //! * **闩不会自己在后台立起来** —— 唯一置位路径是 roster 臂第一次成立的**那一趟写**
 //!   (§8.5)。[`the_latch_is_armed_by_the_roster_arm_and_never_by_itself`] 把这条边界压成断言。
+//!
+//! # ⭐ B-f 第 2 段新增的那一格:**只读探针**
+//!
+//! [`explain`] 是给 UI 的同源答案。它有一条硬约束(2026-08-25 用户拍板②):
+//! **⛔ 不许成为闩的第二条置位路径**。压这一格的是
+//! [`explaining_the_gate_never_arms_the_latch`] —— 它挑的样本恰恰是「名册臂此刻成立」
+//! (换成 `ensure_can_emit` 就会当场立闩的那一格),故这只测**只有被测那一句**决定得了
+//! (自检清单 13:别让样本落在别的尺也拒得掉的坐标上)。
 
 use super::*;
 use crate::board::{create_column, delete_column, rename_column, reorder_column};
@@ -484,4 +492,93 @@ fn a_pure_local_space_may_use_all_five_doors() {
     crate::task::transition(&mut conn, &mut clock, &card, &a, &f).expect("⑤ 拖进自定义列");
     crate::task::transition(&mut conn, &mut clock, &card, super::super::LANDING_COLUMN, &f).expect("⑤ 拖回来");
     delete_column(&mut conn, &mut clock, &a, &f).expect("④ 删列");
+}
+
+// ---- B-f 第 2 段:只读探针 --------------------------------------------------------------
+
+/// ⭐ **问一句「现在能不能用」⛔ 不许把闩立起来**(2026-08-25 用户拍板②)。
+///
+/// # 样本坐标为什么落在「名册臂成立」这一格(自检清单 13:这条路上有几把尺)
+///
+/// 别的坐标这只测都答不出问题:solo / 已闩 / 顶层否决 / 三臂全不成立那四格,
+/// `ensure_can_emit` 本来就不写闩 ⇒ 拿它们当样本,「探针没立闩」是被**别的原因**背书的。
+/// **只有名册臂这一格**是「换成 `ensure_can_emit` 就会当场立闩」的 —— 故它是唯一一格由
+/// 被测那一句说了算的。
+///
+/// # 断言分两层,⛔ 别只留第一层
+///
+/// ① 库里那一行没出现(直接观测);
+/// ② **判词真的翻回去了** —— 名册臂塌掉之后写命令必须重新被拒。少了这一层的话,哪天
+/// 闩改成存在别处(内存 / 另一张表),第一层会安静地继续绿。
+#[test]
+fn explaining_the_gate_never_arms_the_latch() {
+    let mut conn = fresh_db("explain-no-arm");
+    let mut clock = Clock::load(&conn).unwrap();
+    configure(&conn);
+
+    // 前提:这一格换成 `ensure_can_emit` 就会立闩(下面 ② 的反向对照证明了这一点)。
+    let armed_facts = facts_with_capable_roster(true);
+    assert!(matches!(explain(&conn, &armed_facts).unwrap(), GateVerdict::Open), "名册臂成立 ⇒ 判词是「能用」");
+    assert_eq!(latch_row(&conn), None, "① 只读探针⛔ 不许留下任何授权痕迹");
+
+    // ② 名册臂塌掉(会话断 / 观测清)⇒ 写必须重新被拒。探针若偷偷立了闩,这里会放行。
+    let e = create_column(&mut conn, &mut clock, "本周", &facts(false, true)).unwrap_err();
+    assert!(e.contains("已加入账户"), "② 探针立过闩的话这里会放行,得到:{e}");
+
+    // 反向对照:同一格走**写**那条路,闩确实会立起来 —— 证明上面挑的坐标不是个平凡格。
+    create_column(&mut conn, &mut clock, "本周", &armed_facts).expect("写那条路该放行");
+    assert!(latch_row(&conn).is_some(), "反向对照:写那条路确实立闩");
+}
+
+/// 探针与真闸**逐格同源**:同一份事实进去,「放行 / 拒」必须是同一个答案,
+/// 而拒的那句人话必须**逐字**相同(⛔ 别让「按钮为什么灰」与「点下去为什么失败」是两套说法)。
+///
+/// ⚠ 四格覆盖 [`GateVerdict`] 的三个变体 + solo 那条放行路;⛔ 别删成两格 —— 三臂各有
+/// 各的短路位置,一格背书不了另一格(清单 14 末那条:笼统的一只会被最容易成立的那格背书)。
+#[test]
+fn the_probe_and_the_gate_answer_with_one_voice() {
+    // ① solo:放行。
+    let conn = fresh_db("probe-solo");
+    let f = facts(false, false);
+    assert!(matches!(explain(&conn, &f).unwrap(), GateVerdict::Open));
+    assert!(ensure_can_emit(&conn, &f).is_ok());
+
+    // ② 顶层否决。
+    let conn = fresh_db("probe-veto");
+    configure(&conn);
+    let f = facts(true, true);
+    let v = explain(&conn, &f).unwrap();
+    assert!(matches!(v, GateVerdict::ShutByConfigTransition));
+    assert_eq!(v.reason(), Some(ensure_can_emit(&conn, &f).unwrap_err().as_str()));
+
+    // ③ 三臂全不成立。
+    let conn = fresh_db("probe-peers");
+    configure(&conn);
+    let f = facts(false, true);
+    let v = explain(&conn, &f).unwrap();
+    assert!(matches!(v, GateVerdict::ShutUntilPeersUpgrade));
+    assert_eq!(v.reason(), Some(ensure_can_emit(&conn, &f).unwrap_err().as_str()));
+
+    // ④ 闩已立着:放行(⛔ 别漏这一格 —— 它是 §5.3 后两行在 UI 上的兑现:
+    //    本机离线时按钮**不该**是灰的)。
+    let mut conn = fresh_db("probe-latched");
+    let mut clock = Clock::load(&conn).unwrap();
+    configure(&conn);
+    create_column(&mut conn, &mut clock, "本周", &facts_with_capable_roster(true)).expect("先把闩立起来");
+    let offline = facts(false, true);
+    assert!(matches!(explain(&conn, &offline).unwrap(), GateVerdict::Open), "闩立着 ⇒ 断网也该给写入口");
+    assert!(ensure_can_emit(&conn, &offline).is_ok());
+}
+
+/// **四键残缺 ⇒ 探针照样响亮报错**,⛔ 不许兜底成「能用」或「不能用」。
+///
+/// ⚠ 它与 [`a_torn_config_is_refused_not_guessed`] 是**同一条 fail-closed 的两端**:
+/// 那只压写路径,这只压读路径。少了这只,探针可能给出一个 `ShutUntilPeersUpgrade` 的
+/// 「安静的拒」,而库其实是坏的 —— 那两件事对用户是不同的处置(等对端升级 vs 库出事了)。
+#[test]
+fn a_torn_config_makes_the_probe_shout_too() {
+    let conn = fresh_db("probe-torn");
+    put(&conn, "account_id", "01ACCOUNT00000000000000000");
+    let e = explain(&conn, &facts(false, false)).unwrap_err();
+    assert!(e.contains("残缺"), "要的是 load_config 那句响亮的话,得到:{e}");
 }

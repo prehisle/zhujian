@@ -536,6 +536,109 @@ fn list_board_columns(space_id: String, spaces: State<'_, Spaces>) -> Result<Vec
     Ok(rows.into_iter().map(BoardColumn::from).collect())
 }
 
+// ---- 列管理面(B-f 第 2 段,**纯桌面**:安卓只做读侧,2026-08-25 用户拍板) ------------
+//
+// ⭐ 四条写命令一条不少地照 `notes::*_topic` 那五条的形:取写锁 → 锁内复核 ReopenRequired →
+// **锁内现采** `RuntimeFacts` → 调 core。⛔ 三件事一件都不许省:
+//
+// * `RuntimeFacts` 是 core 那道发送端闸的必填参数(board-columns-plan §5.6a-4),生产唯一
+//   产法是 `observe` —— ⛔ 壳里不许用 `detached()`(那等于把闸关掉);
+// * 「在写锁内采」的理由与 `update_task_status` 那句 ReopenRequired 复核同源(codex 二轮 M2:
+//   锁前查有「查后置位抢锁」竞态)。诚实边界照旧:`config_transition_in_flight` 由 `lifecycle`
+//   那条路置位,与本空间的写锁不互斥 ⇒ 「刚采完、转换才开始」那个窗口仍在(plan §5.6a 末);
+// * 每道拒绝的人话一律由 core 出(`String(e)` 原样透传给前端)。⛔ 壳不加工、不翻译、
+//   不补第二套说法 —— 「按钮为什么灰」与「点下去为什么失败」必须是同一句(gate.rs 那两枚 const)。
+
+/// 新建一个任务列(落在最右)。返回新列 id。
+#[tauri::command]
+fn create_board_column(space_id: String, title: String, spaces: State<'_, Spaces>) -> Result<String, String> {
+    let rt = spaces.get(&space_id)?;
+    let (mut conn, mut clk) = rt.write_locks();
+    if let Some(e) = rt.restart_required() {
+        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
+    }
+    let facts = zhujian_core::board::gate::RuntimeFacts::observe(&spaces.sup, &space_id);
+    zhujian_core::board::create_column(&mut conn, &mut clk, &title, &facts)
+}
+
+/// 给一列改名。系统列(灵感那两列)与已删的列由 core 拒。
+#[tauri::command]
+fn rename_board_column(space_id: String, id: String, title: String, spaces: State<'_, Spaces>) -> Result<(), String> {
+    let rt = spaces.get(&space_id)?;
+    let (mut conn, mut clk) = rt.write_locks();
+    if let Some(e) = rt.restart_required() {
+        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
+    }
+    let facts = zhujian_core::board::gate::RuntimeFacts::observe(&spaces.sup, &space_id);
+    zhujian_core::board::rename_column(&mut conn, &mut clk, &id, &title, &facts)
+}
+
+/// 把一列拖到两个邻居之间(`prev_id`/`next_id`,None = 真·列端边界)。形同 `reorder_topic`。
+#[tauri::command]
+fn reorder_board_column(
+    space_id: String,
+    id: String,
+    prev_id: Option<String>,
+    next_id: Option<String>,
+    spaces: State<'_, Spaces>,
+) -> Result<(), String> {
+    let rt = spaces.get(&space_id)?;
+    let (mut conn, mut clk) = rt.write_locks();
+    if let Some(e) = rt.restart_required() {
+        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
+    }
+    let facts = zhujian_core::board::gate::RuntimeFacts::observe(&spaces.sup, &space_id);
+    zhujian_core::board::reorder_column(&mut conn, &mut clk, &id, prev_id.as_deref(), next_id.as_deref(), &facts)
+}
+
+/// 删一列 = 盖墓碑(行永不物理删除)。系统列 / 角色列 / 非空列由 core 逐条响亮拒。
+#[tauri::command]
+fn delete_board_column(space_id: String, id: String, spaces: State<'_, Spaces>) -> Result<(), String> {
+    let rt = spaces.get(&space_id)?;
+    let (mut conn, mut clk) = rt.write_locks();
+    if let Some(e) = rt.restart_required() {
+        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
+    }
+    let facts = zhujian_core::board::gate::RuntimeFacts::observe(&spaces.sup, &space_id);
+    zhujian_core::board::delete_column(&mut conn, &mut clk, &id, &facts)
+}
+
+/// 发送端闸此刻放不放行(列管理面据它决定给不给写入口、灰的理由是哪一句)。
+#[derive(Serialize)]
+struct BoardColumnGate {
+    can_manage: bool,
+    /// 拒的那句人话,**core 出的原文**;放行时 null。
+    reason: Option<String>,
+    /// 机器可读的拒因。⭐ 前端**只**据它决定要不要在 `reason` 后面再接一句补充说明,
+    /// ⛔ 别去 match 中文文案(482 自曝 ②:靠错误文案当判据比结构断言脆)。
+    blocked_by: Option<&'static str>,
+}
+
+/// 「现在能不能管理列」——**只读**探针(board-columns-plan §8 那行)。
+///
+/// ⛔ **它绝不会立闩**:走的是 core 那条无副作用的 `gate::explain`,而不是把
+/// `ensure_can_emit` 包一层(那会让「打开一次列管理面」变成闩的第二条置位路径,
+/// 与 2026-08-25 用户拍板② 直接打架)。理由全文在 `core/src/board/gate.rs` 的 `explain` 头注。
+///
+/// ⚠ **答的是问的那一刻**:真正的授权永远是四条写命令自己事务里的那道闸。
+#[tauri::command]
+fn board_column_gate(space_id: String, spaces: State<'_, Spaces>) -> Result<BoardColumnGate, String> {
+    use zhujian_core::board::gate::GateVerdict;
+    let rt = spaces.get(&space_id)?;
+    let conn = rt.db.lock().expect("db mutex poisoned");
+    let facts = zhujian_core::board::gate::RuntimeFacts::observe(&spaces.sup, &space_id);
+    let verdict = zhujian_core::board::gate::explain(&conn, &facts)?;
+    Ok(BoardColumnGate {
+        can_manage: matches!(verdict, GateVerdict::Open),
+        reason: verdict.reason().map(str::to_string),
+        blocked_by: match verdict {
+            GateVerdict::Open => None,
+            GateVerdict::ShutByConfigTransition => Some("config_transition"),
+            GateVerdict::ShutUntilPeersUpgrade => Some("peers"),
+        },
+    })
+}
+
 /// Every *active* task, for the board. The frontend buckets them into status
 /// columns; within a column the backend orders by urgency — soonest due first
 /// (undated last), then higher priority, with last-touched only as a tie-breaker
@@ -3973,6 +4076,11 @@ pub fn run() {
             purge_note,
             purge_archived,
             list_board_columns,
+            create_board_column,
+            rename_board_column,
+            reorder_board_column,
+            delete_board_column,
+            board_column_gate,
             list_tasks,
             list_archived_tasks,
             update_task_status,

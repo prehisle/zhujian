@@ -1,4 +1,4 @@
-// 看板列的**读侧**共享件(B-f 第 1 段)。
+// 看板列的**读侧**共享件(B-f 第 1 段)+ **桌面独有的写侧四条 + 一枚只读探针**(第 2 段)。
 //
 // board-columns-plan 起 `items.stage` 不再是六值枚举,而是指向 `board_column` 一行的身份
 // ⇒ 「有哪几列、叫什么、哪几列进看板」全部来自库。这三件事在 core 已有唯一正式子
@@ -88,3 +88,43 @@ export function columnName(c: BoardColumn): string {
 export function boardColumns(cols: BoardColumn[]): BoardColumn[] {
   return cols.filter((c) => c.kind === "task" && (!c.deleted || c.live_items > 0));
 }
+
+// ---- 写侧(B-f 第 2 段;⭐ **只有桌面有这一半** —— 安卓只做读侧,2026-08-25 用户拍板) ----
+//
+// ⛔ **这四条不是「前端的写命令」,是 core 那四条的搬运工**:每一道拒绝(空名 / 系统列 /
+// 已删的列 / 角色列 / 非空列 / 发送端闸)都在 core 里,壳原样透传那句人话。
+// ⛔ 前端**一句谓词都不许写**(plan §8.1-2:B-f 不拥有任何数据安全判定)——「按钮该不该灰」
+// 的答案只有两个来源:`list_board_columns` 给的 `deletable`/`live_items`/`deleted`,
+// 与下面那枚只读探针给的 `can_manage`。
+
+/** 新建一个任务列(落在最右)。返回新列 id。 */
+export const createColumn = (title: string): Promise<string> => invoke<string>("create_board_column", { title });
+
+/** 给一列改名。⚠ 调用前先过 no-op 闸,见 column-manager.ts 里那段(英文档下的真陷阱)。 */
+export const renameColumn = (id: string, title: string): Promise<void> =>
+  invoke<void>("rename_board_column", { id, title });
+
+/** 把一列落到 `prevId` 与 `nextId` 之间(null = 真·列端边界)。形同 `reorder_topic`(189)。 */
+export const reorderColumn = (id: string, prevId: string | null, nextId: string | null): Promise<void> =>
+  invoke<void>("reorder_board_column", { id, prevId, nextId });
+
+/** 删一列 = 盖墓碑(行永不物理删除)。非空 / 系统列 / 角色列由 core 响亮拒。 */
+export const deleteColumn = (id: string): Promise<void> => invoke<void>("delete_board_column", { id });
+
+/** 发送端闸此刻的判词(§5)。 */
+export type ColumnGate = {
+  can_manage: boolean;
+  /** 拒的那句人话,**core 出的原文**;放行时 null。 */
+  reason: string | null;
+  /** 机器可读的拒因。⛔ 前端只据它分支,别去 match 中文文案。 */
+  blocked_by: "config_transition" | "peers" | null;
+};
+
+/**
+ * 「现在能不能管理列」——**只读**探针。
+ *
+ * ⛔ **它绝不会立闩**(2026-08-25 用户拍板②:不给闩加新的置位路径):壳走的是 core 那条
+ * 无副作用的 `gate::explain`,不是把写闸包一层。⚠ 它答的是**问的那一刻** —— 真正的授权
+ * 永远是四条写命令自己事务里的那道闸,故上面四条该失败时照样会失败,⛔ 别把它当前置校验。
+ */
+export const loadColumnGate = (): Promise<ColumnGate> => invoke<ColumnGate>("board_column_gate");

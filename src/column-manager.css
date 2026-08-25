@@ -1,0 +1,192 @@
+/* 列管理面(B-f 第 2 段)。视觉沿用 settings / sync 面板那一路的纸墨令牌,保持一致。
+   ⛔ 颜色、圆角、字号一律走令牌(四道视觉门禁的判据);热区靠各按钮自己的 min-height
+   自保(check-hit-zone 那道:它问的是「自己声明的东西能不能保证 ≥24」,不是估算)。 */
+
+/* 遮罩取浅雾玻璃 = 「操作型面板」那一路(348 分野判据:阅读型深压、操作型浅雾;
+   全文见 item-comments.css 遮罩处注)。z-index 与 settings 面板同层——两者不会同时开。 */
+.bcm-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  background: color-mix(in srgb, var(--paper) 55%, transparent);
+  backdrop-filter: blur(2px);
+}
+
+/* 宽度按内容里最宽的那一行给:一行 = 手柄 + 列名 + 条数 + 两枚钮,420 在中英两档下都不挤。
+   ⛔ 上限由主窗兜着(notebook minWidth 900),`min()` 那半是给 WebView setZoom 留的。 */
+.bcm-panel {
+  width: min(420px, calc(100vw - 48px));
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: linear-gradient(180deg, var(--raised), var(--raised-edge));
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--float-shadow);
+  padding: 18px 20px 20px;
+}
+
+.bcm-title {
+  margin: 0;
+  font-family: var(--font-serif);
+  font-size: var(--fs-16);
+  letter-spacing: 0.04em;
+  color: var(--ink);
+}
+.bcm-hint {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: var(--fs-12);
+  line-height: 1.6;
+  color: var(--ink-faint);
+}
+
+/* 闸关着那条横幅:两句分行(第一句是 core 出的原文,第二句是本端补的那句人话)。 */
+.bcm-shut {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 9px 12px;
+  border: 1px solid var(--seal-line);
+  border-radius: var(--radius-sm);
+  background: var(--seal-tint);
+  font-family: var(--font-sans);
+  font-size: var(--fs-12);
+  line-height: 1.6;
+}
+.bcm-why { color: var(--seal); }
+.bcm-tip { color: var(--ink-soft); }
+
+.bcm-list {
+  display: flex;
+  flex-direction: column;
+}
+
+/* 一行列。上下 1px 透明边是给拖放指示线留的槽位——直接加 border 会让行在悬停时跳 1px。 */
+.bcm-col {
+  border-top: 1px solid transparent;
+  border-bottom: 1px solid transparent;
+}
+.bcm-col + .bcm-col { border-top-color: var(--line); }
+.bcm-col.dragging { opacity: 0.45; }
+.bcm-col.drop-before { border-top-color: var(--seal); }
+.bcm-col.drop-after { border-bottom-color: var(--seal); }
+
+.bcm-col-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 2px;
+}
+.bcm-col-drag {
+  flex: none;
+  min-width: 24px;
+  min-height: 24px;
+  display: grid;
+  place-items: center;
+  font-size: var(--fs-13);
+  color: var(--ink-faint);
+  cursor: grab;
+}
+.bcm-col-drag:hover { color: var(--ink-soft); }
+.bcm-col-name {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-serif);
+  font-size: var(--fs-14);
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 已删的列 = 只读收容区(§4.3):压暗 + 划掉,与看板列头那一枚同口径。 */
+.bcm-col.gone .bcm-col-name { color: var(--ink-faint); text-decoration: line-through; }
+.bcm-col-count {
+  flex: none;
+  font-family: var(--font-sans);
+  font-size: var(--fs-12);
+  color: var(--ink-faint);
+}
+/* 与看板 .col-gone 同一枚虚边徽章(那边的注写着为什么用 height 而不是行高)。 */
+.bcm-col-gone {
+  flex: none;
+  font-size: var(--fs-12);
+  color: var(--ink-faint);
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius-pill);
+  height: 19px;
+  padding: 0 8px;
+  display: grid;
+  place-items: center;
+}
+.bcm-col-acts {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.bcm-col-q {
+  font-family: var(--font-sans);
+  font-size: var(--fs-12);
+  color: var(--ink-soft);
+}
+
+/* 行内改名 / 新建共用的输入框。 */
+.bcm-col-input {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-serif);
+  font-size: var(--fs-14);
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  padding: 6px 10px;
+}
+.bcm-col-input:focus { outline: none; border-color: var(--seal-line); }
+.bcm-col-edit,
+.bcm-new {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 2px 8px;
+}
+.bcm-new { padding-top: 10px; border-top: 1px solid var(--line); }
+
+/* 小按钮。min-height 是**热区自保的那一格**(≥24,§2.3);padding 只管观感。 */
+.bcm-btn {
+  flex: none;
+  min-height: 24px;
+  font-family: var(--font-sans);
+  font-size: var(--fs-12);
+  letter-spacing: 0.03em;
+  color: var(--ink-soft);
+  background: transparent;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-pill);
+  padding: 3px 11px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.14s, color 0.14s, border-color 0.14s;
+}
+.bcm-btn:hover { color: var(--ink); border-color: var(--seal-line); background: var(--seal-tint); }
+.bcm-btn.danger:hover { color: var(--seal); }
+.bcm-btn:disabled {
+  color: var(--ink-faint);
+  border-color: var(--line);
+  background: transparent;
+  cursor: default;
+}
+
+/* 写失败的非破坏性行内报错(⛔ 不换错误页:面板里那几行还得留着让人接着操作)。 */
+.bcm-err {
+  font-family: var(--font-sans);
+  font-size: var(--fs-12);
+  line-height: 1.6;
+  color: var(--seal);
+}
+.bcm-err[hidden] { display: none; }

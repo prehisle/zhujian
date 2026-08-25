@@ -41,6 +41,7 @@ import {
   columnName,
   loadBoardColumns,
 } from "./board-columns";
+import { closeColumnManager, openColumnManager } from "./column-manager";
 import { type Act, SATELLITE_LAYERS, armDismiss, createHotkeyController, registerViewKeys } from "./hotkey-menu";
 import {
   type ImageMeta,
@@ -128,6 +129,7 @@ const SKELETON = `
     <button class="hbtn" id="add-task" type="button" title="${t("board.newTask")}">+ <span class="lbl">${t("board.newTask")}</span> <kbd class="k">N</kbd></button>
     <span class="copy-slot" id="copy-slot"></span>
     <span class="head-tools">
+      <button class="hbtn" id="manage-cols" title="${t("board.manageColsTitle")}">≡ <span class="lbl">${t("board.manageCols")}</span></button>
       <button class="hbtn" id="seal-toggle" title="${t("board.sealTitle")}"><span class="lbl">${t("board.sealLbl")}</span><span class="tn" id="seal-n">0</span> <kbd class="k">G</kbd></button>
       <button class="hbtn" id="trash-toggle" title="${t("board.trashTitle")}"><span class="lbl">${t("board.trashLbl")}</span><span class="tn" id="trash-n">0</span> <kbd class="k">R</kbd></button>
     </span>
@@ -237,6 +239,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
   const sealToggle = view.querySelector("#seal-toggle") as HTMLButtonElement;
   const sealN = view.querySelector("#seal-n") as HTMLElement;
   const addTaskBtn = view.querySelector("#add-task") as HTMLButtonElement;
+  const manageColsBtn = view.querySelector("#manage-cols") as HTMLButtonElement;
   const compose = view.querySelector("#compose") as HTMLElement;
   const composeInput = view.querySelector("#compose-input") as HTMLTextAreaElement;
   const composeAdd = view.querySelector("#compose-add") as HTMLButtonElement;
@@ -653,6 +656,9 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
   }
 
   addTaskBtn.addEventListener("click", () => setComposeOpen(compose.hidden));
+  // 列管理面(B-f 第 2 段)。每笔写落地就回调这里重画看板 —— 面板开着的时候看板就该
+  // 已经是新的了(⛔ 不是关掉才刷:改完名还得回来确认列头真变了才算数)。
+  manageColsBtn.addEventListener("click", () => openColumnManager({ onChanged: () => void load() }));
   composeAdd.addEventListener("click", () => void submitNewTask());
   composeClose.addEventListener("click", () => setComposeOpen(false));
   composeInput.addEventListener("input", () => {
@@ -1713,6 +1719,8 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
 
       // 新建任务 only makes sense on the board, not in the 回收站/归档.
       addTaskBtn.hidden = boardView !== "board";
+      // 「管理列」同理:回收站 / 归档册里根本没有列(B-f 第 2 段)。
+      manageColsBtn.hidden = boardView !== "board";
       if (boardView !== "board") setComposeOpen(false);
 
       // 搜索直达回收站/归档(P1 #8):目标在列表才脉冲+滚动;已离场(还原/取消归档的
@@ -1842,6 +1850,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       }
       activeEditFlush = null;
       closeComments(); // 浮层 portal 在 body 上,不随视图根节点走:切视图/切空间必须自己收
+      closeColumnManager(); // 同上:列管理面也 portal 在 body 上,且它的 onChanged 指着这一棵 mount 的 load()
       teardownViewKeys();
       hk.destroy(); // tear down the document keydown + any lingering menu listeners
       // (P1 #9d)compose 草稿与暂存图跨视图存活:文字过桥进模块态,composeCtl.imgs 本身

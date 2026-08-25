@@ -33,6 +33,13 @@
 //! 第 1 段落的是前三格(已配置空间恒拒);**第 2 段补的是那条析取的后两臂**,并把
 //! §5.3 失败方向表的后五行整片接进验收面。
 //!
+//! # ⭐ 求值与副作用分家(B-f 第 2 段)
+//!
+//! 谓词本身住在无副作用的 [`evaluate`];**立闩**这一笔只长在 [`ensure_can_emit`] 那条
+//! 「真的要发 op」的路上。⇒ UI 要的那个「按钮该不该灰」由 [`explain`] 回答,而它
+//! **结构上**写不了库 —— ⛔ 不许把 `ensure_can_emit` 包一层当探针用(2026-08-25 用户拍板②:
+//! 不给闩加新的置位路径;理由全文见 [`explain`] 头注)。
+//!
 //! # ⭐ 闩「随身份清场」那条(§5.5 (β))在本仓的形 = **强绑 `account_id`**
 //!
 //! §5.6 末给了二选一(纳入 `clear_config` 同一事务 / 让 latch 强绑 `account_id`),
@@ -309,9 +316,34 @@ fn arm_latch(tx: &Connection, account_id: &str) -> Result<(), String> {
 #[cfg(test)]
 pub(crate) const DETACHED: RuntimeFacts = RuntimeFacts::detached();
 
-/// §5.1 那条合取的**今天这一半**;过不了就给一句人话(⛔ 不静默 no-op)。
+/// 两句拒绝的原文,**各只有一份**(清单 14)。
 ///
-/// 调用点必须在**写命令自己的事务里**(`tx`),理由见 [`RuntimeFacts`] 头注。
+/// ⭐ 它们同时是 [`ensure_can_emit`] 的 `Err` 与 [`explain`] 的 [`GateVerdict::reason`] ——
+/// 「写的时候拒你的那句话」与「按钮为什么是灰的那句话」必须逐字相同,否则用户看见的是
+/// 两套说法。⛔ 别在壳或前端再抄一份(B-f 第 2 段起前端**原样透传**这两句,只在后一句
+/// 后面**另接**一句本端字典里的补充说明,见 plan §8 那行「闩那句人话的补充说明」)。
+const DENY_CONFIG_TRANSITION: &str = "正在改同步配置(创号 / 加入账户 / 恢复备份),这一步稍后再试";
+const DENY_PEERS: &str = "这个空间已加入账户,自定义看板列要等账户里全部设备都升到支持它的版本才能用";
+
+/// [`evaluate`] 的判词 —— **谁做的主**,不只是「过没过」。
+///
+/// ⭐ 分出 [`Self::RosterFresh`] 这一支不是为了好看:**它是唯一会立闩的那条路**(§8.5),
+/// 而「立闩」这个副作用必须留在 [`ensure_can_emit`] 里、⛔ 不许跟着求值一起跑
+/// (否则只读探针就成了一条新的置位路径,见 [`explain`] 头注)。
+enum Eval {
+    /// §5.4 单机空间。
+    Solo,
+    /// §5.5 闩已立着。
+    Latched,
+    /// §5.1 名册臂**这一趟**成立。⚠ 带着账户 id,因为立闩要用它。
+    RosterFresh { account_id: String },
+    /// §5.6 顶层否决。
+    ShutByConfigTransition,
+    /// 三臂全不成立。
+    ShutUntilPeersUpgrade,
+}
+
+/// §5.1 那条谓词的**纯求值** —— ⛔ **一个字节都不许写库**。
 ///
 /// # 三格的顺序刻意是这个
 ///
@@ -331,31 +363,95 @@ pub(crate) const DETACHED: RuntimeFacts = RuntimeFacts::detached();
 /// * 闩排第二:它是**已经成立过**的持久事实,不必再问名册与观测。§5.3 那两行
 ///   (「本机离线」「两端从不同时在线」)全靠它在这个位置**先于**下一臂答话;
 /// * 名册臂排末:唯一会去问运行期的一臂,也是**唯一会立闩**的那条路。
-pub(crate) fn ensure_can_emit(tx: &Connection, facts: &RuntimeFacts) -> Result<(), String> {
+fn evaluate(conn: &Connection, facts: &RuntimeFacts) -> Result<Eval, String> {
     // ② 顶层否决(§5.6)。⛔ 别把它挪进 `is_solo_space`,也⛔ 别挪到闩后面 —— 十二轮那条 H
     //    就是「闩为真时整式仍 true」,而闩正是从第 2 段起真会为真的那一格。
     if facts.config_transition_in_flight {
-        return Err("正在改同步配置(创号 / 加入账户 / 恢复备份),这一步稍后再试".to_string());
+        return Ok(Eval::ShutByConfigTransition);
     }
     // ③-1 solo(§5.4)。⛔ 刻意让它自带「四键全无」那一格、不把下面读到的 config 传进去:
     //     那条五合取是一整块判据,拆开就成了同一条规则的两份描述(清单 14)。
-    if is_solo_space(tx, facts.engine_present)? {
-        return Ok(());
+    if is_solo_space(conn, facts.engine_present)? {
+        return Ok(Eval::Solo);
     }
     // 已配置(残缺那档在 `is_solo_space` 里已经响亮报错了)。零配置却走到这里的只有
     // 「引擎还在场」那一档 —— 它没有 `account_id`,闩与名册两臂对它都不成立,照样落到末尾。
-    if let Some(cfg) = crate::sync::transport::load_config(tx)? {
+    if let Some(cfg) = crate::sync::transport::load_config(conn)? {
         // ③-2 单调闩(§5.5)。
-        if is_latched(tx, &cfg.account_id)? {
-            return Ok(());
+        if is_latched(conn, &cfg.account_id)? {
+            return Ok(Eval::Latched);
         }
-        // ③-3 名册臂(§5.1)。第一次成立即立闩 —— **唯一置位路径**(§8.5)。
+        // ③-3 名册臂(§5.1)。
         if facts.roster_fully_capable {
-            arm_latch(tx, &cfg.account_id)?;
-            return Ok(());
+            return Ok(Eval::RosterFresh { account_id: cfg.account_id });
         }
     }
-    Err("这个空间已加入账户,自定义看板列要等账户里全部设备都升到支持它的版本才能用".to_string())
+    Ok(Eval::ShutUntilPeersUpgrade)
+}
+
+/// §5.1 那条合取的**今天这一半**;过不了就给一句人话(⛔ 不静默 no-op)。
+///
+/// 调用点必须在**写命令自己的事务里**(`tx`),理由见 [`RuntimeFacts`] 头注。
+///
+/// ⭐ **这里是 `arm_latch` 在全仓的唯一调用点**(§8.5「让闩为真的唯一生产路径就是名册臂
+/// 第一次成立」在仓里的形):判据本身住在无副作用的 [`evaluate`] 里,写这一笔只发生在
+/// **真的要发 op** 的那条路上。⛔ 别把这个副作用往下推进 `evaluate` —— 那会让 [`explain`]
+/// 那条只读路径跟着变成置位路径(2026-08-25 用户拍板②:⛔ 不给闩加新的置位路径)。
+pub(crate) fn ensure_can_emit(tx: &Connection, facts: &RuntimeFacts) -> Result<(), String> {
+    match evaluate(tx, facts)? {
+        Eval::Solo | Eval::Latched => Ok(()),
+        // 第一次成立即立闩 —— **唯一置位路径**(§8.5),且写在调用方那笔写命令自己的
+        // 事务里 ⇒ 那笔写回滚,闩跟着不立。
+        Eval::RosterFresh { account_id } => arm_latch(tx, &account_id),
+        Eval::ShutByConfigTransition => Err(DENY_CONFIG_TRANSITION.to_string()),
+        Eval::ShutUntilPeersUpgrade => Err(DENY_PEERS.to_string()),
+    }
+}
+
+/// 闸此刻的判词,给 UI 用(「管理列」那一面该不该给写入口、灰按钮的理由是哪一句)。
+///
+/// ⚠ **它不是承诺**:闸每次写都现算(§5.2 那张重算清单),这里答的是**问的那一刻**。
+/// 真正的授权永远是写命令自己事务里的 [`ensure_can_emit`] —— 这一枚只决定 UI 长什么样。
+#[derive(Debug, Clone, Copy)]
+pub enum GateVerdict {
+    /// 此刻可写。
+    Open,
+    /// §5.6 顶层否决:创号 / 加入账户 / 恢复备份正在进行。⚠ 这一档是**暂时**的。
+    ShutByConfigTransition,
+    /// 三臂全不成立:已加入账户,而「全员都认得这套词汇」这件事还没成立过。
+    ShutUntilPeersUpgrade,
+}
+
+impl GateVerdict {
+    /// 拒的那句人话;放行时 `None`。**与 [`ensure_can_emit`] 的 `Err` 逐字同源。**
+    pub fn reason(&self) -> Option<&'static str> {
+        match self {
+            GateVerdict::Open => None,
+            GateVerdict::ShutByConfigTransition => Some(DENY_CONFIG_TRANSITION),
+            GateVerdict::ShutUntilPeersUpgrade => Some(DENY_PEERS),
+        }
+    }
+}
+
+/// [`ensure_can_emit`] 的**只读**同源答案(B-f 第 2 段;plan §8 那行「『能不能用』的只读命令」)。
+///
+/// # ⛔ 为什么不能把 `ensure_can_emit` 直接包成探针
+///
+/// 它在名册臂第一次成立时会**立闩**(`arm_latch`)⇒ 那样一来「打开一次列管理面」就成了
+/// 一条新的置位路径,与 2026-08-25 用户拍板②(⛔ 不给闩加新的置位路径)直接打架,也破坏
+/// §5.5 那条「授权与被授权的那笔写同生共死」——闩会在**没有任何 op 被发出**的情况下永久立起来。
+/// ⇒ 本函数走的是无副作用的 [`evaluate`],**结构上**写不了库。
+///
+/// # ⛔ 前端不许拿它当谓词的替代品
+///
+/// 它答的是「UI 该长什么样」,不是「这一笔可以发」(§8.1-2:B-f 不拥有任何数据安全判定)。
+/// 四条 board 命令与拖卡照旧各自过闸 —— 探针与真写之间隔着用户的手,中间什么都可能变。
+pub fn explain(conn: &Connection, facts: &RuntimeFacts) -> Result<GateVerdict, String> {
+    Ok(match evaluate(conn, facts)? {
+        Eval::Solo | Eval::Latched | Eval::RosterFresh { .. } => GateVerdict::Open,
+        Eval::ShutByConfigTransition => GateVerdict::ShutByConfigTransition,
+        Eval::ShutUntilPeersUpgrade => GateVerdict::ShutUntilPeersUpgrade,
+    })
 }
 
 /// §5.2 那张清单的最后一格:**把卡移进新列**之前。

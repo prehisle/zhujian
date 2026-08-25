@@ -39,7 +39,14 @@ export async function goNotebook(view) {
   // The notebook is a real ≥760px window (a 172px sidebar + content). The e2e
   // harness drives the tiny 560px capture window, so size it up to a
   // representative width or narrow views (e.g. the board header) overflow.
-  await browser.setWindowSize(1000, 700);
+  // ⭐ **485:1000 → 1100,跟着 `board.css` 那个断点一起挪的**。看板 header 的「窄窗缩成
+  // 字母」断点本轮从 999 抬到 1099(它多了第六枚控件「管理列」,量出来的账见 board.css 那段)
+  // ⇒ 窗还停在 1000 的话,这套 e2e 从此**只跑得到字母态**,而 `viewkeys.e2e.js` 有两只用例
+  // 拿 `#trash-toggle` 的**可见文字**当观测面(「回收站」在字母态下是隐掉的)。
+  // ⚠ 485 实测:不挪窗那两只当场红 —— ⛔ 别把那当抖动,它是这条耦合的字据。
+  // ⛔ **别改成「把断点抬了但窗不动」**:那等于悄悄放弃「全名态也在测」这半覆盖面
+  // (69 当初把断点定在 999 的原话就是「e2e 驱动窗恰 1000,保持全名态」)。
+  await browser.setWindowSize(1100, 700);
   // ⭐ **先等壳启动完再点**(455)。侧栏那四枚按钮是 **notebook.html 里的静态 HTML**,
   // `browser.url()` 一回来就存在 ⇒ 「按钮存在」这条判据**证明不了壳已经起来了**。notebook 的
   // 启动序是 `src/notebook.ts` 末尾那条**异步 IIFE**(`await initCurrentSpace()` →
