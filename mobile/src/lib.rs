@@ -5,7 +5,7 @@
 //! **这是 D1 抽取时当场撞出来的,不是排版口味**:`#[tauri::command]` 只在函数是 `pub`
 //! 时给包装宏加 `#[macro_export]`,而 `#[macro_export]` 的宏**一律落在 crate 根**;
 //! 同时宏展开末尾还有一句 `pub use {__cmd__x, __tauri_command_name_x};`。两者都在根 ⇒
-//! **自己与自己撞名**,93 条命令一次报 186 个 `E0255`:
+//! **自己与自己撞名**,94 条命令一次报 188 个 `E0255`:
 //!
 //! ```text
 //! error[E0255]: the name `__cmd__capture_idea` is defined multiple times
@@ -82,6 +82,7 @@ macro_rules! shared_handler {
             $crate::file_note_to_topic,
             $crate::remove_note_topic,
             // 119 全功能底座:任务
+            $crate::list_board_columns,
             $crate::list_tasks,
             $crate::list_archived_tasks,
             $crate::list_sealed_tasks,

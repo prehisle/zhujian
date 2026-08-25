@@ -16,6 +16,7 @@
 // 所有读方(包括 main.ts 的判弃逻辑)从这里取。
 import { invoke } from "@tauri-apps/api/core";
 import { t } from "./i18n";
+import type { BoardColumn } from "./columns";
 
 export const MAIN_SPACE = "main";
 
@@ -55,12 +56,18 @@ export function sinvoke<T>(cmd: string, args?: Record<string, unknown>): Promise
 
 // ---- 类型(与安卓壳 lib.rs 的 DTO 逐字段一致;后者又与桌面壳同形) ----------------
 
-// 值域钉死在类型上(codex 119 一审 L1):状态/优先级写错在 tsc 就死,不等真机
-// 才被 Rust 拒;状态映射可做编译期穷尽检查。词汇表与 core 的 CHECK 约束同源。
-export type TaskStatus = "todo" | "doing" | "confirming" | "done";
+// 值域钉死在类型上(codex 119 一审 L1):**优先级 / 搜索视图词**写错在 tsc 就死,不等真机
+// 才被 Rust 拒;词汇表与 core 的 CHECK 约束同源。
+// ⛔ **stage 那两枚已经不在这条规矩里了**,见下:
+// ⭐ **B-f 第 1 段起 stage 不再是闭集**:`items.stage` 指向 `board_column` 一行的身份,
+// 任务列可由用户增删改名(board-columns-plan)⇒ 这里**不能**再写成四值联合。
+// ⚠ 119 一审 L1 当年靠这个联合做编译期穷尽检查,那道保险随之失效 —— 换来的守卫是
+// `columns.ts` 那个唯一登记处:凡「这是不是任务列 / 它叫什么 / 能不能落卡」一律问它,
+// 查不到就**响亮抛**(不写兜底)。⛔ 别为了找回 tsc 那道检查把四值表抄回来。
+export type TaskStatus = string;
 export type IdeaStage = "inbox" | "filed";
-/** items.stage 全部六态(时间轴行原样透传)。 */
-export type ItemStage = IdeaStage | TaskStatus;
+/** items.stage(时间轴行原样透传;值域 = board_column 的 id)。 */
+export type ItemStage = string;
 /** 搜索命中的视图词汇(repo::view_status)。 */
 export type SearchStatus = "inbox" | "processed" | "task" | "archived" | "sealed";
 export type TaskPriority = 1 | 2 | 3;
@@ -138,6 +145,11 @@ export type IdeaStats = { captured_week: number; born_inbox: number; converted: 
 
 export const listTimeline = (space: string) =>
   invoke<TimelineItem[]>("list_timeline", { spaceId: space });
+
+/** 全部看板列(含已删的),已由 core 按 (position, id) 排好(B-f 第 1 段)。
+ *  ⛔ 拿到之后交给 `columns.ts` 的 setColumns 统一登记,别在调用处自己解读。 */
+export const listBoardColumns = (space: string) =>
+  invoke<BoardColumn[]>("list_board_columns", { spaceId: space });
 
 export const listIdeas = (space: string) => invoke<IdeaItem[]>("list_ideas", { spaceId: space });
 

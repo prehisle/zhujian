@@ -49,7 +49,8 @@ import {
   type TopicItem,
 } from "./api";
 import { t } from "./i18n";
-import { $, actionBar, confirmBar, esc, hideConfirmBar, isTaskStage, showBar, showError } from "./ui";
+import { $, actionBar, confirmBar, esc, hideConfirmBar, showBar, showError } from "./ui";
+import { DONE_COLUMN, LANDING_COLUMN, isTaskStage, liveTaskColumns, stageLabel } from "./columns";
 import { capturePhoto, PICK_MAX, pickImages, toBase64 } from "./images";
 
 type Mode = "actions" | "edit" | "tags" | "move";
@@ -88,12 +89,12 @@ type Deps = {
   openComments: (itemId: string) => void;
 };
 
-const STATUSES: { key: TaskStatus; label: string }[] = [
-  { key: "todo", label: t("ui.stageTodo") },
-  { key: "doing", label: t("ui.stageDoing") },
-  { key: "confirming", label: t("ui.stageConfirming") },
-  { key: "done", label: t("ui.stageDone") },
-];
+// 状态 picker 的目标域 = **能落卡的那几列**(B-f 第 1 段起从库里来;已删的列不在内 ——
+// core 的 `is_live_task_column` 会拒,UI 不给一条注定被拒的路)。
+// ⚠ 卡自己正待在一个已删的列里时,它的当前态不在这一行 pill 里 ⇒ 一枚都不高亮,点哪一枚
+// 就搬去哪一列。那正是 §4.3 要的:收容区里的卡**只能往外走**。
+const statuses = (): { key: TaskStatus; label: string }[] =>
+  liveTaskColumns().map((c) => ({ key: c.id, label: stageLabel(c.id)! }));
 const PRIORITIES: { key: 1 | 2 | 3 | null; label: string }[] = [
   { key: null, label: t("cardpanel.prioNone") },
   { key: 1, label: t("cardpanel.prioLow") },
@@ -219,13 +220,13 @@ function renderActions(item: TimelineItem): string {
     actBtn("comment", t("cardpanel.actComment")),
   ];
   if (!task) acts.push(actBtn("promote", t("cardpanel.actPromote")));
-  if (item.stage === "todo") acts.push(actBtn("revert", t("cardpanel.actRevert"), { warn: true }));
-  if (item.stage === "done") acts.push(actBtn("seal", t("cardpanel.actSeal")));
+  if (item.stage === LANDING_COLUMN) acts.push(actBtn("revert", t("cardpanel.actRevert"), { warn: true }));
+  if (item.stage === DONE_COLUMN) acts.push(actBtn("seal", t("cardpanel.actSeal")));
   // 移动入口:仅 ≥2 空间、且本条无未处理的部分移动登记时出现(§4)。
   if (!partial && deps.getSpaces().length >= 2) acts.push(actBtn("move", t("cardpanel.actMove")));
   acts.push(actBtn("del", t("cardpanel.actDelete"), { warn: true }));
   const lanes = task
-    ? `<div class="lane"><span class="lab">${t("cardpanel.laneStatus")}</span><span class="pillrow">${STATUSES.map((s) =>
+    ? `<div class="lane"><span class="lab">${t("cardpanel.laneStatus")}</span><span class="pillrow">${statuses().map((s) =>
         pill(s.label, `data-status="${s.key}"`, item.stage === s.key, busy || item.stage === s.key),
       ).join("")}</span></div>
       <div class="lane"><span class="lab">${t("cardpanel.laneDue")}</span>

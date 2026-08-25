@@ -483,6 +483,59 @@ impl From<repo::TaskRow> for TaskItem {
     }
 }
 
+/// 一列看板列的当前态(board-columns-plan §2.1 的 read model 原样透传)。
+///
+/// ⛔ **前端别再自己拼一份「有哪几列」** —— 不变量 3(「灵感态 vs 任务态由列的 `kind`
+/// 说了算」)的唯一正式子在 core(`board::list_columns`),这里只是搬运。
+#[derive(Serialize)]
+struct BoardColumn {
+    id: String,
+    /// 同步来的原文。⚠ **`title_overridden == false` 时它不是要显示的字符串** ——
+    /// 那时按 `id` 查本端字典(§7.1d:canonical 串只活在迁移 SQL 与 `SEED_COLUMNS` 两处)。
+    title: String,
+    /// `idea` | `task`。灵感视图取前者,看板取后者。
+    kind: String,
+    /// 系统列(灵感那两列):不可改名、不可删(不变量 2)。
+    system: bool,
+    /// §7.1d 的终态判据。`false` ⇒ 前端按 `id` 查字典。
+    title_overridden: bool,
+    /// 已删 = 只读收容区(§4.3):卡只出不进,列身仍要画出来,否则卡就「不见了」。
+    deleted: bool,
+    /// 该列上未归档未封存的条目数(删列前的「先清空」提示与「已删除的列(N)」都用它)。
+    live_items: i64,
+    /// 这一列**允许**被删吗(480 定案)。⚠ 不是「现在能不能删」——非空还要先清空。
+    deletable: bool,
+}
+
+impl From<zhujian_core::board::BoardColumnRow> for BoardColumn {
+    fn from(c: zhujian_core::board::BoardColumnRow) -> Self {
+        // `position` 刻意不出壳:读序已由 core 按 `(position, id)` 排好,给了前端只会诱使
+        // 它再排一次(0022:同键并列是合法结局)。
+        BoardColumn {
+            id: c.id,
+            title: c.title,
+            kind: c.kind,
+            system: c.system,
+            title_overridden: c.is_title_overridden,
+            deleted: c.deleted,
+            live_items: c.live_items,
+            deletable: c.deletable,
+        }
+    }
+}
+
+/// 全部看板列(**含已删的**),已按 `(position, id)` 排好。
+///
+/// ⚠ 一次全量返回、不分「活的 / 删的」两趟:分趟只会给 UI 造出第二份口径,
+/// 要哪一族由前端按 `kind` / `deleted` 分(`board::list_columns` 头注)。
+#[tauri::command]
+fn list_board_columns(space_id: String, spaces: State<'_, Spaces>) -> Result<Vec<BoardColumn>, String> {
+    let rt = spaces.get(&space_id)?;
+    let conn = rt.db.lock().expect("db mutex poisoned");
+    let rows = zhujian_core::board::list_columns(&conn).map_err(|e| e.to_string())?;
+    Ok(rows.into_iter().map(BoardColumn::from).collect())
+}
+
 /// Every *active* task, for the board. The frontend buckets them into status
 /// columns; within a column the backend orders by urgency — soonest due first
 /// (undated last), then higher priority, with last-touched only as a tie-breaker
@@ -3919,6 +3972,7 @@ pub fn run() {
             restore_note,
             purge_note,
             purge_archived,
+            list_board_columns,
             list_tasks,
             list_archived_tasks,
             update_task_status,

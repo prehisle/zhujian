@@ -18,6 +18,7 @@ export const board = defineMessages({
   "board.colDoing": { zh: "进行中", en: "In progress" },
   "board.colConfirming": { zh: "待确认", en: "To confirm" },
   "board.colDone": { zh: "已完成", en: "Done" },
+  "board.colDeleted": { zh: "已删除", en: "Deleted" },
   "board.partialImg": { zh: "任务已建,但 {n} 张图未能附加", en: "Task created, but {n} {n|image|images} could not be attached" },
   "board.titleBeforeImages": { zh: "先写个任务标题,配图会随任务一起保存", en: "Write a task title first — the images will be saved with it" },
   "board.restore": { zh: "还原", en: "Restore" },

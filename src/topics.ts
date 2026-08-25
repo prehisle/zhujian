@@ -1,4 +1,5 @@
 import { invoke } from "./space";
+import { type BoardColumn, columnName, loadBoardColumns } from "./board-columns";
 import type { View, ViewCtx } from "./notebook";
 import { type TaskItem, PRIORITY_LABEL, dueLabel, dueState, localToday, when } from "./tasktime";
 import { copyButton } from "./clipboard";
@@ -25,13 +26,10 @@ type TopicTree = {
   notes: TopicNote[];
 };
 
-// 任务状态 -> 看板列中文名(mirror board.ts COLUMNS),下钻态只读展示用。
-const COL_NAME: Record<string, string> = {
-  todo: t("topics.colTodo"),
-  doing: t("topics.colDoing"),
-  confirming: t("topics.colConfirming"),
-  done: t("topics.colDone"),
-};
+// 任务的列名(下钻态只读展示用)。**B-f 第 1 段起从库里来** —— 列可改名 / 增删,这里
+// 曾经是 board.ts 那份四值表的**第二份复制品**(连字典键都复制了一份 topics.col*),
+// 现在两处共用 `board-columns.ts` 的 columnName()。⛔ 别再抄第三份。
+let colName = new Map<string, string>();
 
 // ---- small DOM helper (same shape as inbox.ts) -----------------------------
 function el<K extends keyof HTMLElementTagNameMap>(
@@ -496,7 +494,10 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
   // One read-only task row in an expanded tag (column + due/priority + 复制). No
   // click-to-jump — the tag view only browses; act on tasks over on the board.
   function taskRow(task: TaskItem, today: string): HTMLElement {
-    const meta: Node[] = [el("span", { className: "dtask-col", textContent: COL_NAME[task.status] ?? task.status })];
+    // 列名查不到 = 这张卡的列凭空没了(FK 保证不可达)。⛔ 不静默显 id,响亮抛。
+    const cn = colName.get(task.status);
+    if (cn === undefined) throw new Error(`task ${task.id} sits in unknown column ${task.status}`);
+    const meta: Node[] = [el("span", { className: "dtask-col", textContent: cn })];
     if (task.due_on) {
       const st = dueState(task.due_on, today);
       meta.push(el("span", { className: `dtask-due ${st}`, textContent: dueLabel(task.due_on, today) }));
@@ -755,14 +756,23 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
   }
   async function refresh(refocus = false): Promise<void> {
     try {
-      const [t, tasks] = await Promise.all([
+      const [t, tasks, cols] = await Promise.all([
         invoke<TopicTree[]>("list_topics_full"),
         invoke<TaskItem[]>("list_tasks"),
+        // 列名(B-f 第 1 段):这里**要全部列、不过 boardColumns()** —— 下钻列表连已删列
+        // 里的卡也要显示得出名字,而那道滤子是「看板画哪几列」的判据,不是命名的。
+        loadBoardColumns(),
       ]);
-      const sig = JSON.stringify([t, tasks]);
+      const sig = JSON.stringify([t, tasks, cols]);
       // `=== true` 同 inbox:防未来把 refresh 直接接成事件回调时 Event 误当 refocus。
       if (refocus === true && sig === lastSig) return;
       lastSig = sig;
+      // ⛔ **只取任务列**:`columnName()` 对「没改过名却查不到 canonical」是响亮抛,而灵感那两
+      // 列(`inbox`/`filed`)刻意没有显示名(灵感是纸面的默认态,不印列名)—— 整份 map 过去
+      // 会在第一行就炸。⚠ 已删的任务列**要留着**:它里头的卡照样在这份下钻列表里。
+      colName = new Map(
+        (cols as BoardColumn[]).filter((c) => c.kind === "task").map((c) => [c.id, columnName(c)]),
+      );
       trees = t;
       tasksByTopic = new Map();
       for (const task of tasks) {

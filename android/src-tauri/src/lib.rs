@@ -3,7 +3,7 @@
 //! 定位:**119 起手机 = 全功能主力端**(用户拍板「手机须能独立作唯一端」)。
 //!
 //! ⭐ **OH-d/D1 起,这只壳只剩「安卓自己那一层」** —— 空间协调器(`coord`)、97 条命令面里的
-//! 93 条、启动装配整段,都搬进了共享 crate [`zhujian_mobile`](仓根 `mobile/`),与鸿蒙壳
+//! 94 条、启动装配整段,都搬进了共享 crate [`zhujian_mobile`](仓根 `mobile/`),与鸿蒙壳
 //! 逐字节同一套(形照 `zhujian-core`)。搬走的东西**一个字都没改**,判据与两只壳各自留下
 //! 什么的对照表在 `mobile/src/shell.rs` 的头注。
 //!
@@ -108,7 +108,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(zhujian_mobile::shared_handler![
-            // ⬇ 只有这四条是安卓自己的(判据见本文件头注那张表);其余 93 条在共享清单里
+            // ⬇ 只有这四条是安卓自己的(判据见本文件头注那张表);其余 94 条在共享清单里
             take_shared_text,
             take_deep_link,
             check_update,

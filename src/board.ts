@@ -33,6 +33,14 @@ import {
   soleTopicFilter,
   wireFilterInput,
 } from "./filter-bar";
+import {
+  type BoardColumn,
+  DONE_COLUMN,
+  LANDING_COLUMN,
+  boardColumns,
+  columnName,
+  loadBoardColumns,
+} from "./board-columns";
 import { type Act, SATELLITE_LAYERS, armDismiss, createHotkeyController, registerViewKeys } from "./hotkey-menu";
 import {
   type ImageMeta,
@@ -74,16 +82,10 @@ export function focusBoardView(v: BoardView): void {
   pendingView = v;
 }
 
-// The board's columns, in pipeline order. Manual tool: no AI 'suggested' column —
-// every task is born user-state ('todo'), then dragged freely across these four.
-// '待确认' is an optional holding place between 进行中 and 已完成 for work that's
-// done but awaiting external confirmation (see task.rs); it is never forced.
-const COLUMNS: { status: string; name: string }[] = [
-  { status: "todo", name: t("board.colTodo") },
-  { status: "doing", name: t("board.colDoing") },
-  { status: "confirming", name: t("board.colConfirming") },
-  { status: "done", name: t("board.colDone") },
-];
+// 看板的列。**B-f 第 1 段起从库里来**(board-columns-plan:`items.stage` 指向 `board_column`
+// 一行的身份,列可改名 / 排序 / 增删)⇒ ⛔ 这里不再有四值字面量,取法与「画哪几列」的判据
+// 都在共享件 `board-columns.ts`。手工工具照旧:没有 AI「建议」列,新任务恒生在落点列
+// (`LANDING_COLUMN`),此后随手拖。'待确认' 仍只是 进行中 与 已完成 之间的可选停靠位。
 
 // ---- small DOM helper (same shape as inbox.ts) ------------------------------
 function el<K extends keyof HTMLElementTagNameMap>(
@@ -100,19 +102,20 @@ const btn = (label: string, kind: string, onclick: () => void) =>
   el("button", { className: `act ${kind}`, textContent: label, onclick });
 
 // ---- 一键复制为 Markdown ----------------------------------------------------
-// One task → one bullet. done is a checked item, todo/doing both unchecked (a
-// Markdown task list has no standard "doing" mark — status is the column it sits
-// under). A multi-line title is collapsed to one line so it stays a single bullet.
+// One task → one bullet. A card in the 完成 column is a checked item, every other
+// column unchecked (a Markdown task list has only those two marks — the column a card
+// sits under is the状态). A multi-line title is collapsed to one line so it stays one bullet.
 function mdLine(item: TaskItem, status: string): string {
-  const box = status === "done" ? "[x]" : "[ ]";
+  const box = status === DONE_COLUMN ? "[x]" : "[ ]";
   return `- ${box} ${item.title.replace(/\s*\n\s*/g, " ").trim()}`;
 }
 function columnMarkdown(name: string, status: string, items: TaskItem[]): string {
   return [`## ${name}`, ...items.map((t) => mdLine(t, status))].join("\n");
 }
-// The whole board: each non-empty column in pipeline order, blank line between.
-function boardMarkdown(items: TaskItem[]): string {
-  return COLUMNS.map(({ status, name }) => ({ name, status, inCol: items.filter((t) => t.status === status) }))
+// The whole board: each non-empty column in board order, blank line between.
+function boardMarkdown(cols: BoardColumn[], items: TaskItem[]): string {
+  return cols
+    .map((c) => ({ name: columnName(c), status: c.id, inCol: items.filter((t) => t.status === c.id) }))
     .filter((c) => c.inCol.length > 0)
     .map((c) => columnMarkdown(c.name, c.status, c.inCol))
     .join("\n\n");
@@ -264,6 +267,12 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
   // topicFilter is module-scope (survives view switches); allTopics feeds the filter
   // bar and the per-card picker, rebuilt each load.
   let allTopics: TopicOpt[] = [];
+
+  // 本看板要画的列(= 任务列 ∧ 活着或还扣着卡,判据在 board-columns.ts),每次 load 重取。
+  // ⚠ **mount 级,不是模块级**:切空间 = 换一整套列,模块级会把 A 空间的列画到 B 上
+  // (memory `module-state-hoisting-checklist` 那五坑的第一条)。首帧空数组 —— load()
+  // 之前没有任何渲染路径读它。
+  let cols: BoardColumn[] = [];
 
   // Fingerprint of the last rendered state. load() runs on every window refocus
   // (alt-tab back) but skips the DOM rebuild when this matches — refresh without flicker.
@@ -417,10 +426,13 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
 
   // 乐观移位改了某列的成员数,同一帧把列头计数徽章也改掉——否则它要等随后的 load() 才刷新,
   // 会留下「卡已挪走、数字还没动」的一拍延迟(手势即回执 ui-guidelines §3.6 的完形)。真相仍
-  // 由 load() 校正:成功值相同、失败时连卡带数字一起复原。列 section 的 class 是 `col ${status}`、
-  // 每列只有一个 .col-count,按状态即可唯一定位(状态恒是字母数字 CSS token,选择器安全)。
+  // 由 load() 校正:成功值相同、失败时连卡带数字一起复原。列 section 身上带 `data-col="<列 id>"`、
+  // 每列只有一个 .col-count,按列 id 即可唯一定位。
   function bumpColCount(status: string, delta: number): void {
-    const span = board.querySelector<HTMLElement>(`.col.${status} .col-count`);
+    // ⛔ 走 `[data-col=…]` 而不是 `.col.${status}`:自定义列的 id 是 ULID、可能以数字开头,
+    // 那种 class 选择器**非法**(querySelector 直接抛)。ULID 与种子 id 都只含字母数字,
+    // 属性选择器里安全。
+    const span = board.querySelector<HTMLElement>(`.col[data-col="${status}"] .col-count`);
     if (span) span.textContent = String(Number(span.textContent) + delta);
   }
 
@@ -1008,7 +1020,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     } else {
       // 完成时刻(0030):已完成卡显示「完成于 <日>」。done_at 可能为 null(本功能上线前
       // 完成的老卡)——那就不显示。dayLabel 与归档册同口径(今天/昨天/M月D日)。
-      if (item.status === "done" && item.done_at) {
+      if (item.status === DONE_COLUMN && item.done_at) {
         c.append(el("div", { className: "done-at", textContent: t("board.doneAt", { day: dayLabel(item.done_at) }) }));
       }
       // due/priority: pure-display chips on the card; edits open from the ⋯ menu (㊺).
@@ -1081,11 +1093,14 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       // topic filter is honoured (visible-merge server-side).
       function moveCol(dir: number): void {
         if (busy) return;
-        const i = COLUMNS.findIndex((col) => col.status === item.status);
+        // ⚠ 序就是 `cols` 的序(core 已按 position 排好)。已删的列虽然画在看板上,却**不是
+        // 移动目标** —— 与拖放同规(core 会拒),故先滤掉它们再找左右邻居。
+        const live = cols.filter((c) => !c.deleted);
+        const i = live.findIndex((col) => col.id === item.status);
         const t = i + dir;
-        if (t < 0 || t >= COLUMNS.length) return;
-        const toStatus = COLUMNS[t].status;
-        const targetBody = board.querySelector(`.col.${toStatus} .col-body`);
+        if (i < 0 || t < 0 || t >= live.length) return;
+        const toStatus = live[t].id;
+        const targetBody = board.querySelector(`.col[data-col="${toStatus}"] .col-body`);
         const base = targetBody
           ? [...targetBody.querySelectorAll<HTMLElement>(".tcard")].map((x) => x.dataset.taskId!)
           : [];
@@ -1109,20 +1124,23 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
           // 留言(§4.7,与灵感同键):N=0 时卡片上没有徽章,这里是写第一条的唯一入口。
           { label: t("board.comments"), key: "Y", run: () => openComments(mountSpace, item.id, () => void load()) },
         ];
-        const i = COLUMNS.findIndex((col) => col.status === item.status);
-        if (i < COLUMNS.length - 1)
-          list.push({ label: t("board.moveToCol", { col: COLUMNS[i + 1].name }), key: "]", run: () => moveCol(1) });
+        // 左右邻居按**活着的**列算(同 moveCol:已删的列不是移动目标)。卡自己在一个已删
+        // 的列里时 `i < 0` ⇒ 两条都不出 —— 那是对的:它只能被拖走或走别的动作。
+        const live = cols.filter((col) => !col.deleted);
+        const i = live.findIndex((col) => col.id === item.status);
+        if (i >= 0 && i < live.length - 1)
+          list.push({ label: t("board.moveToCol", { col: columnName(live[i + 1]) }), key: "]", run: () => moveCol(1) });
         if (i > 0)
-          list.push({ label: t("board.moveToCol", { col: COLUMNS[i - 1].name }), key: "[", run: () => moveCol(-1) });
+          list.push({ label: t("board.moveToCol", { col: columnName(live[i - 1]) }), key: "[", run: () => moveCol(-1) });
         // 归档: only a 已完成 card can enter the 成就册 (viewable, undeletable). Key A
         // (Archive) — the view-level key for the 归档 view is G, deliberately different
         // (card keys and view keys share the document and must not collide).
-        if (item.status === "done")
+        if (item.status === DONE_COLUMN)
           list.push({ label: t("board.seal"), key: "A", run: () => sealOne(item.id) });
         // 撤回为灵感: a 灵感 is just a not-yet-clarified task, so only the least-mature
         // column (待办) may retreat into it. Single-entity: flips the SAME subject's stage
         // back to 灵感 (已归类 if it still carries a tag, else 未归类) — nothing is deleted.
-        if (item.status === "todo")
+        if (item.status === LANDING_COLUMN)
           list.push({
             label: t("board.revertToIdea"),
             key: "B",
@@ -1157,7 +1175,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         dragging = { id: item.id, from: item.status };
         c.classList.add("dragging");
         // 归档条只对能落进去的拖动现身(done 卡),显示条件=接收条件。
-        if (item.status === "done") board.classList.add("drag-done");
+        if (item.status === DONE_COLUMN) board.classList.add("drag-done");
         e.dataTransfer?.setData("text/plain", item.id);
         if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
       });
@@ -1336,18 +1354,23 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     board.className = "board-wrap";
     // 复制看板: copies every non-empty column as Markdown. Built from the currently
     // shown tasks, so it respects the active filters (标签 and/or 文本).
-    copySlot.replaceChildren(copyButton(boardMarkdown(items), "hbtn", t("board.copyBoard")));
-    const cols = COLUMNS.map(({ status, name }) => {
+    copySlot.replaceChildren(copyButton(boardMarkdown(cols, items), "hbtn", t("board.copyBoard")));
+    const sections = cols.map((col) => {
+      const status = col.id;
+      const name = columnName(col);
       const inCol = items.filter((t) => t.status === status);
       const head = el("div", { className: "col-head" }, [
         el("span", { className: "col-name", textContent: name }),
         el("span", { className: "col-count", textContent: String(inCol.length) }),
       ]);
+      // §4.3 的只读收容区:这一列已被(多半是对端)删掉,但本端还有卡扣在里面。列头挂一枚
+      // 「已删除」标,卡只出不进(下面不给它接 dragover/drop);卡拖光了它自然不再出现。
+      if (col.deleted) head.append(el("span", { className: "col-gone", textContent: t("board.colDeleted") }));
       // 复制本列为 Markdown (only when the column has cards).
       if (inCol.length > 0) head.append(copyButton(columnMarkdown(name, status, inCol), "col-copy", t("board.copy")));
       // 一键全部归档(仅 已完成 列、非空时):干完的活整列入成就册。非破坏、可逐条取消
       // 归档,但批量动一整列仍值得一次行内确认(swap 在列头的 slot 里,不弹窗)。
-      if (status === "done" && inCol.length > 0) {
+      if (status === DONE_COLUMN && inCol.length > 0) {
         const slot = el("span", { className: "seal-all-slot" });
         slot.append(
           btn(t("board.sealAll"), "ghost", () =>
@@ -1358,6 +1381,21 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       const body = el("div", { className: "col-body" });
       // 空列不放占位符:col-body 是 flex:1 自撑满、仍是有效拖放目标,列头的「0」计数已说明空。
       if (inCol.length > 0) body.append(...inCol.map((t) => card(t, "board")));
+
+      // 一节列身。⭐ **class 与 data-col 两份是有意的**:`class` 那份是 CSS 与 e2e 选择器
+      // 的老口径(`.col.done` 之类),而**查列一律走 `data-col`** —— 自定义列的 id 是 ULID,
+      // 可能以数字开头,`.col.01J…` 是**非法 CSS 选择器**(querySelector 当场抛)。
+      // ⛔ 别把机器读的那一份挪回 class。
+      const section = (extra: string): HTMLElement => {
+        const sec = el("section", { className: `col ${status}${extra}` }, [head, body]);
+        sec.dataset.col = status;
+        return sec;
+      };
+
+      // 已删的列**不接放**:core 的 `is_live_task_column` 会拒(§4.3「卡只出不进」),
+      // 这里不注册 dragover ⇒ 光标就是「不可放下」,而不是放下去再报错。⛔ 别改成
+      // 「接下来再报错」——那是把一条已知的拒绝演成一次失败操作。
+      if (col.deleted) return section(" col-readonly");
 
       // The column body is a drop target: a drop reorders within this column, or —
       // from another column — moves the task here AND inserts it at the dropped spot.
@@ -1407,7 +1445,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         if (filtered) reorderVisible(d.id, d.from, status, base, ordered);
         else reorder(d.id, d.from, status, base, ordered);
       });
-      return el("section", { className: `col ${status}` }, [head, body]);
+      return section("");
     });
 
     // The 归档 drop strip below the columns — only a 已完成 card may land here.
@@ -1415,7 +1453,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       el("span", { className: "az-label", textContent: t("board.archiveZoneHint") }),
     ]);
     zone.addEventListener("dragover", (e) => {
-      if (dragging && dragging.from === "done") {
+      if (dragging && dragging.from === DONE_COLUMN) {
         e.preventDefault();
         clearDropHovers();
         zone.classList.add("drop-hover");
@@ -1428,21 +1466,21 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       zone.classList.remove("drop-hover");
       const d = dragging;
       dragging = null;
-      if (!d || d.from !== "done") return;
+      if (!d || d.from !== DONE_COLUMN) return;
       // 真归档(成就册),不再是丢回收站——「归档」一词自此只有一个意思(概念隔离)。
       // 手势即回执:松手即离场,不等重载才消失;失败由 sealOne 内的 load() 复原。
       board.querySelector(`[data-task-id="${d.id}"]`)?.remove();
-      bumpColCount("done", -1); // 卡即刻离场,「已完成」计数同帧扣掉,别等 sealOne 内的 load()
+      bumpColCount(DONE_COLUMN, -1); // 卡即刻离场,计数同帧扣掉,别等 sealOne 内的 load()
       sealOne(d.id);
     });
 
-    const cols_wrap = el("div", { className: "cols" }, cols);
+    const cols_wrap = el("div", { className: "cols" }, sections);
     board.replaceChildren(cols_wrap, zone);
     // 还原各列滚动位(记录见 load() 重画定局处;列变短时 scrollTop 由浏览器自钳位)。
     for (const sec of board.querySelectorAll<HTMLElement>(".col")) {
       const colBody = sec.querySelector<HTMLElement>(".col-body");
-      const col = COLUMNS.find(({ status }) => sec.classList.contains(status));
-      if (colBody && col) colBody.scrollTop = colScroll.get(col.status) ?? 0;
+      const id = sec.dataset.col;
+      if (colBody && id) colBody.scrollTop = colScroll.get(id) ?? 0;
     }
   }
 
@@ -1564,11 +1602,16 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     today = localToday();
     const seq = ++loadSeq;
     try {
-      const [active, archived, sealed, topics, , cmCounts] = await Promise.all([
+      const [active, archived, sealed, topics, allCols, , cmCounts] = await Promise.all([
         invoke<TaskItem[]>("list_tasks"),
         invoke<TaskItem[]>("list_archived_tasks"),
         invoke<TaskItem[]>("list_sealed_tasks"),
         invoke<TopicOpt[]>("list_topics"),
+        // 看板列(B-f 第 1 段):同样**并发**取。⚠ 它与 list_tasks 是两次独立读,中间那一
+        // 瞬对端可能刚删掉一列 —— 无害:两份都是快照,最坏是这一帧少画/多画一列的收容区,
+        // 下一次 load 就对上了。⛔ 别为它去开一条「一次读两样」的合并命令(那要在 core 里
+        // 造第二份口径)。
+        loadBoardColumns(),
         // 设备名册(0033 署名):与列表**并发**取,不给渲染加一跳延迟。
         loadIdentity(mountSpace),
         // 留言计数(0035 徽章):同样并发;列表另走分页(§4.14.2 第 4 条)。
@@ -1580,6 +1623,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       const focus = focusId;
       focusId = null;
       allTopics = topics;
+      cols = boardColumns(allCols);
 
       // 死标签回落 + 匹配口径归一(trim+忽略大小写)都在共享件;回落是纯状态修正
       // (no DOM),必须先于指纹。
@@ -1603,6 +1647,9 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         archived,
         sealed,
         topics,
+        // 列进指纹:别台设备给列改了名 / 调了顺序 / 删了一列,任务数据一个字节没变、
+        // 变的只有列头与列序 —— 不进指纹的话 refocus 刷新会在这一格短路掉(同 cmCounts)。
+        cols,
         cmCounts,
         // 设备名册(317):同 cmCounts 的理由——别台设备改别名时任务数据不动,变的
         // 只有署名 chip 与留言层里那行作者。
@@ -1640,8 +1687,8 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       // 来,还原的也是看板上一次的现场)。
       for (const sec of board.querySelectorAll<HTMLElement>(".col")) {
         const colBody = sec.querySelector<HTMLElement>(".col-body");
-        const col = COLUMNS.find(({ status }) => sec.classList.contains(status));
-        if (colBody && col) colScroll.set(col.status, colBody.scrollTop);
+        const id = sec.dataset.col;
+        if (colBody && id) colScroll.set(id, colBody.scrollTop);
       }
       hk.reset();
       // 留言浮层:宿主还在就重拉第一页,已经离开这个视图(删了 / 移走了 / 撤回成灵感)
@@ -1684,10 +1731,12 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         if (focus !== null) board.querySelector(".just-located")?.scrollIntoView({ block: "center" });
         return;
       }
-      // Only tasks that belong to a visible column are shown/counted. Any stray
-      // 'suggested' row (legacy AI data — the column is gone) is ignored, so the
-      // column counts never disagree with what's on the board.
-      const visible = active.filter((t) => COLUMNS.some((c) => c.status === t.status));
+      // 只显示 / 只计数「落在画出来的那几列里」的卡,列头计数因此永远与看板上的卡一致。
+      // ⭐ **B-f 第 1 段起这一句不再会静默吞卡**:`cols` 是从库里查来的,已删但还扣着卡的
+      // 列也在里面(§4.3 收容区)⇒ 每张活着的任务卡都必有归宿。⚠ 它仍是一道 fail-safe:
+      // 真出现「卡的 stage 不在任何画出来的列里」= 那一列凭空消失了,那时宁可少画一张卡也
+      // 不让列头计数与看板打架 —— 但那是**损坏**,不是常态。
+      const visible = active.filter((t) => cols.some((c) => c.id === t.status));
 
       // 跨视图跳转(搜索命中任务 → 看板):focus 已在上方 seq 守卫之后取走(`focus`)。
       // 目标仍在看板(boardView==='board' 且在 visible)才动作——**在过滤之前**清掉标签/

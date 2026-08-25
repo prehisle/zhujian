@@ -9,19 +9,10 @@ export const $ = (id: string) => document.getElementById(id)!;
 export const esc = (s: string) =>
   s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 
-/** stage → 印文(单一真相源)。灵感态(inbox/filed)不入表:灵感是纸面的默认态,
- *  不盖印;任务行盖 stage 印,done 行另有勾框与淡化背书。
- *  ⚠ 模块求值期取文案:i18n 的生效语言在它自己的模块求值时就定好了(见 i18n.ts),
- *  故顶层常量表天然拿到正确语言,不存在「initLang 之前调 t」的时序坑。 */
-export const STAGE_LABEL: Record<string, string> = {
-  todo: t("ui.stageTodo"),
-  doing: t("ui.stageDoing"),
-  confirming: t("ui.stageConfirming"),
-  done: t("ui.stageDone"),
-};
-
-/** 任务态判定(与 STAGE_LABEL 同一词汇表)。 */
-export const isTaskStage = (stage: string): boolean => STAGE_LABEL[stage] !== undefined;
+// ⛔ **stage → 印文的那张表已搬去 `columns.ts`**(B-f 第 1 段):列可由用户增删改名 ⇒
+//    它不再是一张能在模块求值期算完的常量表,而是每轮加载登记的库内事实。
+//    印文取 `stageLabel(stage)`、任务态判定取 `isTaskStage(stage)`,语义与从前一字不差
+//    (灵感态仍答 undefined —— 灵感是纸面的默认态,不盖印)。
 
 /** 时间戳:今天只报时刻,今年带月日,跨年带年。 */
 export function fmtWhen(iso: string): string {

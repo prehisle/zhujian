@@ -22,6 +22,7 @@ import {
   deviceIdentity,
   setDeviceAlias,
   deleteItemImage,
+  listBoardColumns,
   listSpaces,
   listTimeline,
   listTopicsFull,
@@ -32,7 +33,8 @@ import {
   type TaskStatus,
   type TimelineItem,
 } from "./api";
-import { $, actionBar, confirmBar, esc, fmtWhen, hideConfirmBar, showBar, showError, STAGE_LABEL } from "./ui";
+import { $, actionBar, confirmBar, esc, fmtWhen, hideConfirmBar, showBar, showError } from "./ui";
+import { DONE_COLUMN, boardColumns, isTaskStage, setColumns, stageLabel } from "./columns";
 import { capturePhoto, composeImages, PICK_MAX, pickImages } from "./images";
 import { INPUT_DEBOUNCE_MS } from "./timing";
 // **平台接缝**(OH-d/D3):只在安卓壳里存在的那三条命令。鸿蒙那端由 vite 换成另一份实现。
@@ -180,29 +182,26 @@ $("compose-photo").addEventListener("click", async () => {
   refocusCompose();
 });
 
-// stage → 主视图归属。穷尽映射,未知值响亮抛(铁律:不写兜底)。
-const MODE_OF_STAGE: Record<string, ViewMode> = {
-  inbox: "ideas",
-  filed: "ideas",
-  todo: "tasks",
-  doing: "tasks",
-  confirming: "tasks",
-  done: "tasks",
-};
+/** 灵感那两列是**系统固定**的(不变量 2:不可改名 / 不可删 / 永不新增)⇒ 这两个字面量
+ *  安全。⛔ 任务那边**没有**这样的常量表,别照着这里再抄一张。 */
+const IDEA_STAGES = new Set(["inbox", "filed"]);
+
+// stage → 主视图归属。未知值响亮抛(铁律:不写兜底)。
+// ⭐ **B-f 第 1 段起任务那半靠列的 kind 判**,不再是一张六值映射表(不变量 3:灵感态 vs
+// 任务态由 `board_column.kind` 说了算)。两边都答不上 = 库里出了一个谁都不认识的 stage
+// (FK 保证它不可达)。
 function modeOfStage(stage: string): ViewMode {
-  const m = MODE_OF_STAGE[stage];
-  if (!m) throw new Error(`未知 stage:${stage}`);
-  return m;
+  if (isTaskStage(stage)) return "tasks";
+  if (IDEA_STAGES.has(stage)) return "ideas";
+  throw new Error(`未知 stage:${stage}`);
 }
 
-// 任务面四态分组(看板列同一套中文、固定顺序,空组不显;组内沿时间倒序——
-// 手机不读 position/不做拖排,组内时间序是本端自己的确定性顺序,146 §2.1)。
-const TASK_SECTIONS: { stage: string; label: string }[] = [
-  { stage: "todo", label: t("ui.stageTodo") },
-  { stage: "doing", label: t("ui.stageDoing") },
-  { stage: "confirming", label: t("ui.stageConfirming") },
-  { stage: "done", label: t("ui.stageDone") },
-];
+// 任务面的分组 = **当前空间真实的那几列**(B-f 第 1 段起从库里来;此前是四值字面量)。
+// 序 = core 按 position 排好的序;空组不显;组内沿时间倒序 —— 手机不读 position、不做拖排,
+// 组内时间序是本端自己的确定性顺序(146 §2.1)。
+// ⚠ 已删但还扣着卡的列也在里面(§4.3 只读收容区),卡挪光后它自然不再出现。
+const taskSections = (): { stage: string; label: string }[] =>
+  boardColumns().map((c) => ({ stage: c.id, label: stageLabel(c.id)! }));
 
 // 优先级角标的三档词(1..3;下标 0 恒不取——priority 有值才画这枚 chip)。
 const PRIORITY_LABEL: Record<number, string> = {
@@ -216,9 +215,9 @@ const PRIORITY_LABEL: Record<number, string> = {
 // hideTopic:恰好单选一枚标签筛选时,卡上那枚同名 chip 是纯冗余(筛出来的卡本就都带它),
 // 直接不渲染(同桌面 218 灵感侧;安卓 chip 无拖拽去重等 DOM 依赖,面板真值走 lastItems)。
 function renderCard(it: TimelineItem, hideTopic: string | null): string {
-  const label = STAGE_LABEL[it.stage];
+  const label = stageLabel(it.stage);
   const isTask = label !== undefined;
-  const done = it.stage === "done";
+  const done = it.stage === DONE_COLUMN;
   const tick = isTask
     ? `<label class="tick"><input type="checkbox" data-id="${esc(it.id)}"
          ${done ? "checked disabled" : ""} /><span class="box"></span></label>`
@@ -476,7 +475,7 @@ function projectTimeline(): void {
     // 优先(shown 已空),三维有结果、被状态维筛空才说「该状态下没有任务」。
     const stageShown = taskStageFilter === null ? shown : shown.filter((t) => t.stage === taskStageFilter);
     box.innerHTML = stageShown.length
-      ? TASK_SECTIONS.filter((s) => stageShown.some((t) => t.stage === s.stage))
+      ? taskSections().filter((s) => stageShown.some((t) => t.stage === s.stage))
           .map(
             (s) =>
               `<section class="tl-group"><h3 class="tl-sec">${s.label}</h3>${stageShown
@@ -488,7 +487,7 @@ function projectTimeline(): void {
       : modeItems.length === 0
         ? `<p class="muted empty">${t("main.emptyTasks")}<br />${t("main.emptyTasksHint")}</p>`
         : shown.length > 0 && taskStageFilter !== null
-          ? `<p class="muted empty">${t("main.noneUnderStage", { stage: STAGE_LABEL[taskStageFilter] })}</p>`
+          ? `<p class="muted empty">${t("main.noneUnderStage", { stage: stageLabel(taskStageFilter)! })}</p>`
           : filteredEmptyHtml(f);
   }
   hydrateThumbs(box);
@@ -534,7 +533,7 @@ function renderStagePills(bar: HTMLElement, modeItems: TimelineItem[]): void {
   axis.className = "faxis";
   axis.textContent = t("main.stageAxis");
   const nodes: HTMLElement[] = [axis, mk(t("main.stageAll"), null, null)];
-  for (const s of TASK_SECTIONS) {
+  for (const s of taskSections()) {
     nodes.push(mk(s.label, s.stage, modeItems.filter((i) => i.stage === s.stage).length));
   }
   bar.replaceChildren(...nodes);
@@ -598,10 +597,11 @@ async function refreshOnce(): Promise<void> {
     // 署名少显一轮也绝不让整屏内容陪葬。
     // 留言计数(0035 徽章)与设备名册同批并发:它是**聚合计数**这一个真相源,列表另走
     // 分页(§4.14.2 第 4 条)——别为了对齐把留言正文整批拉过来。同样内部吞错(装饰)。
-    const [items, ftopics, counts] = await Promise.all([
+    const [items, ftopics, counts, cols] = await Promise.all([
       listTimeline(space),
       listTopicsFull(space),
       paneCounts(space), // 底栏两枚 pane 钮的显形真值(408-A1);失败同走整轮错误页
+      listBoardColumns(space), // 看板列(B-f 第 1 段):没有它连「这行是不是任务」都答不了 ⇒ 失败同走整轮错误页
       loadIdentity(space),
       loadCommentCounts(space),
     ]);
@@ -610,6 +610,12 @@ async function refreshOnce(): Promise<void> {
       refreshDeferred = true;
       return;
     }
+    // ⚠ **列必须先于任何投影落定**:renderCard / 分组 / 滑动链全问 columns.ts,
+    // 早一行晚一行的差别是「这一帧的卡按新列画还是按旧列画」。
+    setColumns(cols);
+    // 状态维的死筛回落(同标签轴的 reconcile):被筛的那一列若已彻底消失(删掉且卡也挪光),
+    // 该筛选就成了一条永远筛空的死路 ⇒ 清掉。⛔ 别改成在渲染处回落显 id。
+    if (taskStageFilter !== null && !boardColumns().some((c) => c.id === taskStageFilter)) taskStageFilter = null;
     lastItems = new Map(items.map((i) => [i.id, i])); // 全量真值,只在成功读取后更新
     allFilterTopics = ftopics.map((t) => ({ id: t.id, title: t.title, color: t.color, kind: t.kind }));
     paneHas = { trash: counts.trash > 0, sealed: counts.sealed > 0 };
@@ -658,6 +664,10 @@ function blankTimelineForSpaceChange(): void {
   resetPanesForSpaceChange(); // 统一复位:关全部面 + 清陈旧内容 + 诊断缓存作废
   disconnectThumbObserver();
   lastItems = new Map();
+  // 列同 lastItems 一起作废:每个空间是自己一套列(B-f 第 1 段)。⭐ **清空比留着旧的安全** ——
+  // 留着 = 万一有一帧漏网,卡会**安静地**顶着旧空间的列名画出来;清空 = `modeOfStage` 两条臂
+  // 都答不上,当场响亮抛。⇒ 错的方向落在 fail-fast 这一侧。
+  setColumns([]);
   paneHas = { trash: false, sealed: false }; // 旧空间的 pane 钮不许挂到新空间数据到达前
   renderBottomBar();
   lastRefreshOk = false; // 快照失效(146 ▲▲M2):新空间读到之前,mode 切换不许投影旧数据

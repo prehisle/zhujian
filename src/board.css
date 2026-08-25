@@ -282,7 +282,22 @@
   letter-spacing: 0.02em;
   color: var(--ink-soft);
 }
-.v-board .col.doing .col-name { color: var(--seal); }
+.v-board .col[data-col="doing"] .col-name { color: var(--seal); }
+/* §4.3 只读收容区:这一列已被删掉、本端还有卡扣在里面。整列压暗 + 列头一枚「已删除」标,
+   卡只出不进(dragover 根本没接)。卡拖光了这一列就不再出现。 */
+.v-board .col-readonly .col-name { color: var(--ink-faint); text-decoration: line-through; }
+/* 与 .col-count 同一枚徽章几何(高度靠 height 而不是 px 行高——热区门禁按行盒算下界,
+   px/em 行高它算不准,见那道闸的判词),只把实底换成虚边以区分「这不是计数」。 */
+.v-board .col-gone {
+  font-size: var(--fs-12);
+  color: var(--ink-faint);
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius-pill);
+  height: 19px;
+  padding: 0 8px;
+  display: grid;
+  place-items: center;
+}
 .v-board .col-count {
   font-size: var(--fs-12);
   color: var(--ink-faint);

@@ -1,16 +1,19 @@
 // 任务卡左右滑改状态(182):落在任务卡上的横滑 → 前进/后退一个 stage。
-// 待办→进行中→待确认→已完成 是一条线性链,右滑前进、左滑后退;端点(待办再左滑、
-// 已完成再右滑)不响应——撤回/入册/转待办仍走操作面板(守克制,不把 off-axis 动作塞进滑动)。
+// 看板的那几列排成一条线性链(**列由用户定,不再恒是四态**),右滑前进、左滑后退;
+// 端点(首列再左滑、末列再右滑)不响应——撤回/入册/转待办仍走操作面板(守克制,不把 off-axis 动作塞进滑动)。
 // 只拦「pointerdown 命中任务卡」的横滑;顶部标题栏等非卡区域的横滑一概不吃,给日后
 // 「横滑切视图」留一条干净通道。竖向滚动交回原生(.card { touch-action: pan-y }),
 // 横向占优才锁定为滑动。进 done 走 update_task_status,后端照常盖 done_at(与勾框一致)。
 
 import { updateTaskStatus, type TaskStatus, type TimelineItem } from "./api";
 import { t } from "./i18n";
-import { actionBar, isTaskStage, showError, STAGE_LABEL } from "./ui";
+import { actionBar, showError } from "./ui";
+import { isTaskStage, liveTaskColumns, stageLabel } from "./columns";
 
-// 任务四态线性链(与 STAGE_LABEL 同词汇表;数组顺序即右滑前进方向)。
-const CHAIN: TaskStatus[] = ["todo", "doing", "confirming", "done"];
+// 任务列的线性链(**B-f 第 1 段起从库里来**;此前是四值字面量)。序 = core 按 position
+// 排好的序,数组顺序即右滑前进方向。⚠ 取的是**活着的**任务列 —— 已删的列不是落点
+// (core 的 `is_live_task_column` 会拒),卡从收容区里只能滑出、不能滑进另一个已删列。
+const chain = (): string[] => liveTaskColumns().map((c) => c.id);
 
 // 提交阈值(横移达卡宽 35% 或硬下限 84px)、锁定阈值、端点方向的橡皮筋阻尼。
 const COMMIT_RATIO = 0.35;
@@ -31,12 +34,13 @@ type Deps = {
   refresh: () => Promise<void>;
 };
 
-/** from 态按方向算目标态;端点方向返回 null(不响应)。 */
+/** from 态按方向算目标态;端点方向、或 from 本身不在链上(已删列里的卡)返回 null。 */
 function targetStage(from: string, dir: 1 | -1): TaskStatus | null {
-  const i = CHAIN.indexOf(from as TaskStatus);
+  const c = chain();
+  const i = c.indexOf(from);
   if (i < 0) return null;
   const j = i + dir;
-  return j >= 0 && j < CHAIN.length ? CHAIN[j] : null;
+  return j >= 0 && j < c.length ? c[j] : null;
 }
 
 export function initCardSwipe(deps: Deps): void {
@@ -138,7 +142,7 @@ export function initCardSwipe(deps: Deps): void {
         const track = document.createElement("div");
         track.className = "swipe-track";
         track.dataset.dir = active.dir > 0 ? "right" : "left";
-        track.textContent = (active.dir > 0 ? "→ " : "← ") + STAGE_LABEL[active.to];
+        track.textContent = (active.dir > 0 ? "→ " : "← ") + stageLabel(active.to)!;
         track.style.top = `${active.card.offsetTop}px`;
         track.style.height = `${active.card.offsetHeight}px`;
         active.section.appendChild(track);
@@ -193,7 +197,7 @@ export function initCardSwipe(deps: Deps): void {
     flash(id);
     // 回执 + 撤销:滑动是低门槛手势,给一记 6s 可撤销窗口替代两拍确认(误滑可召回)。
     // 走操作型回执而非 confirmBar——动作已成事实,确认条的「取消」在这儿是反义歧义。
-    actionBar(t("swipe.changedTo", { stage: STAGE_LABEL[to] }), t("ui.undo"), () => {
+    actionBar(t("swipe.changedTo", { stage: stageLabel(to)! }), t("ui.undo"), () => {
       if (deps.isSwitching() || deps.getCurrentSpace() !== space) return; // 换空间的旧撤销作废
       void (async () => {
         try {

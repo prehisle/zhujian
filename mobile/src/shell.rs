@@ -899,6 +899,48 @@ pub async fn remove_note_topic(
 
 // ---- 任务(看板能力;title=content、status=stage 的桌面前端契约照搬) ----
 
+/// 一列看板列的当前态(与桌面 `BoardColumn` 同形;board-columns-plan §2.1 的 read model)。
+///
+/// ⛔ **前端别再自己拼一份「有哪几列」** —— 不变量 3 的唯一正式子在 core
+/// (`board::list_columns`),两只壳都只是搬运。⚠ `position` 刻意不出壳(读序已排好)。
+#[derive(serde::Serialize)]
+pub struct BoardColumn {
+    id: String,
+    /// ⚠ `title_overridden == false` 时**不是**要显示的字符串:那时按 `id` 查本端字典(§7.1d)。
+    title: String,
+    kind: String,
+    system: bool,
+    title_overridden: bool,
+    /// 已删 = 只读收容区(§4.3):卡只出不进,列身仍要画,否则卡就「不见了」。
+    deleted: bool,
+    live_items: i64,
+    deletable: bool,
+}
+
+impl From<zhujian_core::board::BoardColumnRow> for BoardColumn {
+    fn from(c: zhujian_core::board::BoardColumnRow) -> Self {
+        BoardColumn {
+            id: c.id,
+            title: c.title,
+            kind: c.kind,
+            system: c.system,
+            title_overridden: c.is_title_overridden,
+            deleted: c.deleted,
+            live_items: c.live_items,
+            deletable: c.deletable,
+        }
+    }
+}
+
+/// 全部看板列(**含已删的**),已按 `(position, id)` 排好。
+#[tauri::command]
+pub fn list_board_columns(space_id: String, coord: State<'_, Coord>) -> Result<Vec<BoardColumn>, String> {
+    coord.with_read(&space_id, |conn| {
+        let rows = zhujian_core::board::list_columns(conn).map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(BoardColumn::from).collect())
+    })
+}
+
 /// 一张看板卡(与桌面 TaskItem 同形)。
 #[derive(serde::Serialize)]
 pub struct TaskItem {

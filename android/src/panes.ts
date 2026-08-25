@@ -5,6 +5,7 @@
 // 第二拍可能落到毗邻单拍的「恢复」上;固定条几何恒定,onYes 复核行还在才执行)。
 import {
   getCurrentSpace,
+  listBoardColumns,
   listSealedTasks,
   listTrash,
   purgeAllTrash,
@@ -17,7 +18,8 @@ import {
   type SearchStatus,
 } from "./api";
 import { t } from "./i18n";
-import { $, confirmBar, esc, fmtWhen, hideConfirmBar, isTaskStage, showBar, showError, STAGE_LABEL } from "./ui";
+import { $, confirmBar, esc, fmtWhen, hideConfirmBar, showBar, showError } from "./ui";
+import { isTaskStage, setColumns, stageLabel } from "./columns";
 
 type Deps = {
   refreshTimeline: () => Promise<void>;
@@ -47,8 +49,12 @@ export async function loadTrash(): Promise<void> {
   const box = $("trash-list");
   box.innerHTML = `<p class="muted empty">${t("panes.loading")}</p>`;
   try {
-    const rows = await listTrash(space);
+    // 列与行同批取:回收站每行要印「这是灵感还是哪一列的任务」,而列名来自库
+    // (B-f 第 1 段)。⛔ 别指望主时间轴那轮已经登记过 —— 首轮 refresh 失败时它是空的,
+    // 那会让每一行都退化成「灵感」而**不报错**。
+    const [rows, cols] = await Promise.all([listTrash(space), listBoardColumns(space)]);
     if (space !== getCurrentSpace() || seq !== trashSeq) return;
+    setColumns(cols);
     trashRows = rows;
     clearConfirm();
     renderTrash();
@@ -67,7 +73,7 @@ function renderTrash() {
   }
   box.innerHTML = trashRows
     .map((r) => {
-      const kind = STAGE_LABEL[r.stage] ?? t("panes.kindIdea");
+      const kind = stageLabel(r.stage) ?? t("panes.kindIdea");
       const chips = r.topics
         .map(
           (t) =>

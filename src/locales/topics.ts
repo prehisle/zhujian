@@ -5,10 +5,6 @@
 import { defineMessages } from "./entry";
 
 export const topics = defineMessages({
-  "topics.colTodo": { zh: "待办", en: "To do" },
-  "topics.colDoing": { zh: "进行中", en: "In progress" },
-  "topics.colConfirming": { zh: "待确认", en: "To confirm" },
-  "topics.colDone": { zh: "已完成", en: "Done" },
   "topics.header": { zh: "标签", en: "Tags" },
   "topics.newTag": { zh: "新建标签", en: "New tag" },
   "topics.mergeTags": { zh: "合并标签", en: "Merge tags" },

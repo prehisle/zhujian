@@ -1,7 +1,7 @@
 //! 朱简鸿蒙壳。
 //!
 //! **OH-c/C3 那轮它是「壳骨架」(四条命令);OH-d/D1 起它是「薄壳」** —— 空间协调器、
-//! 93 条命令面、启动装配整段都在共享 crate [`zhujian_mobile`](仓根 `mobile/`),
+//! 94 条命令面、启动装配整段都在共享 crate [`zhujian_mobile`](仓根 `mobile/`),
 //! 与安卓壳**同一份源码**。这个文件里只剩**鸿蒙自己那三样**:
 //!
 //! | 留在这里的 | 为什么它没法共享 |
@@ -190,7 +190,7 @@ pub fn run() {
     // 而更要紧的是:**正式包的命令面要一眼看得见就是产品那些条**。折成一份再靠条件拼接,
     // 「验收后门有没有进正式包」这件事就得靠读宏展开去答(同 465 那三个坑的族:
     // 不报错、只给一个别的答案)。
-    // ⭐ 93 条产品命令由 `zhujian_mobile::shared_handler!` 出,**两只壳零抄写**。
+    // ⭐ 94 条产品命令由 `zhujian_mobile::shared_handler!` 出,**两只壳零抄写**。
     #[cfg(not(feature = "c4-harness"))]
     let builder = builder.invoke_handler(zhujian_mobile::shared_handler![ohos_paths]);
     #[cfg(feature = "c4-harness")]
