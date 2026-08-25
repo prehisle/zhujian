@@ -1797,9 +1797,10 @@ async fn join_space_inner(
         shutdown: shutdown_rx,
         boot_commit: latch,
         restart_flag: Arc::new(Mutex::new(None)),
-        // staging 不在 supervisor 的表里,没有壳侧写闸在读这一格(board-columns-plan
-        // §5.4:那条一次性连接天然属 detached)⇒ 给一枚没人订阅的位。
+        // staging 不在 supervisor 的表里,没有壳侧写闸在读这两格(board-columns-plan
+        // §5.4:那条一次性连接天然属 detached)⇒ 给一枚没人订阅的位、一张没人读的表。
         engine_present: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        peer_caps: Arc::new(sync::transport::PeerCaps::default()),
         // staging(「加入空间」的一次性连接)不是一个 live 空间,不进准入表。
         lan: None,
     };

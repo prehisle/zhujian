@@ -73,6 +73,18 @@ pub struct ActiveRuntime {
     /// 即无条件撤台」只在它跑过之后成立,而 `clear_config` 删掉标记到下一次 `reconcile`
     /// 之间有真实窗口 —— 这一格守的正是那个窗口。
     engine_present: Arc<AtomicBool>,
+    /// **per-peer 能力观测表**(board-columns-plan §5.1 那条
+    /// `every_registered_device_is_capable`;B-e 第 2 段)。
+    ///
+    /// 语义、三态、生命期与叶子锁纪律全在 [`transport::PeerCaps`] 头注里,⛔ 别在这儿抄。
+    /// 这里只记它为什么住在 **runtime** 上而不是引擎上:读者是 core 的写闸
+    /// ([`crate::board::gate::RuntimeFacts::observe`]),它拿得到的最深的东西就是这只
+    /// `ActiveRuntime`;而写者住在 transport 任务里的引擎中。⇒ 与 [`Self::engine_present`]
+    /// 同一个形:**runtime 建、transport 写、写闸读**。
+    ///
+    /// ⚠ **veto 空间(不起 transport)的这一只恒空** —— 那正是事实:没有 transport
+    /// 就一台对端也没听说过,而闸读到「一台都不认得」就关着(fail-closed)。
+    peer_caps: Arc<transport::PeerCaps>,
 }
 
 /// 跨 await 长命令的登记器(H1)。独立于 [`ActiveRuntime`],故 [`OpGuard`] 不持连接。
@@ -156,6 +168,11 @@ impl ActiveRuntime {
     /// 这个空间此刻有没有一台装配着的引擎(见 [`Self::engine_present`])。
     pub fn engine_present(&self) -> bool {
         self.engine_present.load(Ordering::SeqCst)
+    }
+
+    /// 本代次的 per-peer 能力观测表(见 [`Self::peer_caps`])。
+    pub(crate) fn peer_caps(&self) -> &transport::PeerCaps {
+        &self.peer_caps
     }
 }
 
@@ -419,6 +436,9 @@ impl SpaceSupervisor {
         // 一台引擎都还没装配 —— transport 起来后由 `EngineSlot` 自己在装配 / 撤台两处写。
         // veto 空间根本不起 transport ⇒ 它恒停在 false,而那正是事实。
         let engine_present = Arc::new(AtomicBool::new(false));
+        // per-peer 能力观测表(§5.1)。**初值空**:一枚 Hello 都还没收到 —— transport 起来后
+        // 由引擎写、`EngineSlot` 按代次清。veto 空间不起 transport ⇒ 恒空,而那正是事实。
+        let peer_caps = Arc::new(transport::PeerCaps::default());
         let join = if let Some(v) = &spec.sync_veto {
             // 拒启 transport;状态照实(configured 反映库里配置)+ error 说明原因,
             // 前端状态点见 error 即红。ctl_rx 随此分支 drop = 控制通道死信箱。
@@ -449,6 +469,8 @@ impl SpaceSupervisor {
                 // 引擎在场的投影位(§5.4 第四合取)。同 `restart_flag` 那条:由
                 // transport 自己在唯一知情的那两处写,壳侧写闸只读。
                 engine_present: engine_present.clone(),
+                // 能力观测表的把手(§5.1)。同上:transport 侧写、写闸侧读,**只清不换**。
+                peer_caps: peer_caps.clone(),
                 // 本空间在 app 级监听器上的席位(§6 准入表的键 = 空间 id)。壳没给
                 // 监听器(手机)= None,直连的监听面整个不存在。
                 lan: self.lan.as_ref().map(|a| transport::LanHost {
@@ -486,6 +508,7 @@ impl SpaceSupervisor {
             restart_required,
             ops: Arc::new(OpTracker::default()),
             engine_present,
+            peer_caps,
         });
         // 发布:Starting(token) → Running(仍持着上面验预留时取的同一把 live 写锁,
         // 验→建→插整段原子;槽从验到此从未放开)。

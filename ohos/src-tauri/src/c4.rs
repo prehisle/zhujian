@@ -661,6 +661,15 @@ pub async fn c4_join_space(shell: State<'_, Shell>) -> Result<JoinOut, String> {
         shutdown: shutdown_rx,
         boot_commit: latch,
         restart_flag: Arc::new(Mutex::new(None)),
+        // 这条一次性引导连接不在 supervisor 表里 ⇒ 没有壳侧写闸在读这两格
+        // (board-columns-plan §5.4:一次性连接天然属 detached)。
+        //
+        // ⚠ **`engine_present` 那一格是 482/B-e 第 1 段加的,而本文件当时没跟上** ——
+        // `c4-harness` 不是默认 feature,故它编不进任何一次常规构建,**编译器一声没吭**。
+        // 483 补齐两格时才发现。⛔ 往 `transport::Transport` 加必填字段的人,记得
+        // `rg "Transport \{"` 要带上 feature 门后的这一处。
+        engine_present: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        peer_caps: Arc::new(transport::PeerCaps::default()),
         // 手机壳不监听局域网(lan-direct-plan §6:只拨出)。
         lan: None,
     };

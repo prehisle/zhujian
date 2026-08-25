@@ -1,4 +1,4 @@
-//! 发送端闸(board-columns-plan §5;**B-e 第 1 段**)。
+//! 发送端闸(board-columns-plan §5;第 1 段 + **B-e 第 2 段**)。
 //!
 //! # 它守什么
 //!
@@ -15,7 +15,7 @@
 //! 被换成了编译期义务(照 475/B-b0 给 `MIGRATIONS` 加 `ForeignKeys` 声明位那一手:
 //! **给每个站点加一格必填声明,而不是加一条带默认值的旁路**)。
 //!
-//! # 今天到哪儿了:**五合取里只落了三格**
+//! # 今天到哪儿了:**五合取全部落齐**(B-e 第 2 段收口)
 //!
 //! §5.1 的完整谓词是
 //!
@@ -24,22 +24,28 @@
 //!       local_schema_supports_board_columns
 //!     ∧ NOT config_transition_in_flight          // §5.6 顶层否决
 //!     ∧ ( is_solo_space                          // §5.4
-//!       ∨ capability_latched                     // §5.5 单调闩      ← 第 2 段
-//!       ∨ ( fresh_roster_is_known                //                  ← 第 2 段
-//!         ∧ every_registered_device_is_capable ) //                  ← 第 2 段
+//!       ∨ capability_latched                     // §5.5 单调闩
+//!       ∨ ( fresh_roster_is_known                // §5.1:None = 不知道,不是空集合
+//!         ∧ every_registered_device_is_capable ) // §6.2 的 per-peer 观测
 //!       ) )
 //! ```
 //!
-//! **第 1 段落的是** `local_schema… ∧ NOT config_transition_in_flight ∧ is_solo_space`,
-//! 那条析取的后两臂**还没有**。⇒ 今天的闸是最终式的**真子集**:已配置空间恒拒。
-//! 错算方向落在 §5.3 那张表的「错算成 `false` = 用户暂时不能建/改列 = 可接受,合 fail-closed」
-//! 那一格,⛔ 不落「错算成 `true`」那一格(那是 H)。
+//! 第 1 段落的是前三格(已配置空间恒拒);**第 2 段补的是那条析取的后两臂**,并把
+//! §5.3 失败方向表的后五行整片接进验收面。
 //!
-//! ⚠ **别把第 1 段的绿读成「闸已验完」**:§5.3 失败方向表里第 3/4/5 行(刷新失败仍沿用旧
-//! 授权 / capability Hello 晚到 / 本机离线 / 两端从不同时在线)整片都在第 2 段的验收面上,
-//! 而 §5.6 那张表的「顺序」行(`取 lease → … → **清或设 latch** → reconcile → 释放 lease`)
-//! **中间那一步在第 2 段才存在** ⇒ 顺序那一格的测整格归第 2 段,本段只测「lease 持有 ⇒ 闸拒」
-//! 与「三条释放路径都放锁」。切段的理由与这张账见 plan §8.5。
+//! # ⭐ 闩「随身份清场」那条(§5.5 (β))在本仓的形 = **强绑 `account_id`**
+//!
+//! §5.6 末给了二选一(纳入 `clear_config` 同一事务 / 让 latch 强绑 `account_id`),
+//! 并判后者「一次盖住两个面」。第 2 段照它办,⇒ **一条重要的结构后果**:
+//!
+//! * 闩不是一格「记得在配置变了之后去清」的状态,而是一条**相对当前 `account_id` 求值**
+//!   的记录([`LATCH_KEY`] 的值恒是 `"{CAP_GEN} {account_id}"`,读法是整串相等);
+//! * ⇒ `clear_config` / 新账户 `save_config` **一个字都不用改** —— 它们把
+//!   `account_id` 换掉的那一瞬,旧闩就对不上号了。「原子一致」于是是**同一个事务、
+//!   同一次读**这件结构事实,不是两处写之间的时序纪律。
+//! * ⇒ §5.6 那张表「顺序」行里 `→ 清或设 latch →` 那一步**塌成了空** ——
+//!   ⚠ 不是漏做,是这一支不需要它。⛔ 别为了「顺序表上有这一格」再去补一条显式清理:
+//!   那就成了同一条规则的第二份描述(清单 14),而两份描述之一漂掉的方向是朝 `true`。
 //!
 //! # ⛔ §5 里那四处翻过案的地方(别照着被推翻的那半办)
 //!
@@ -47,12 +53,12 @@
 //! |---|---|---|
 //! | §5.0 | 二轮:服务端拒绝旧端会话 | 三轮:闸放**发送端** |
 //! | §5.4 末 | 十轮第一版:「尚未 `save_config`」判**暂时 true** | 改判 **false**,判据整个搬去 §5.6 |
-//! | §5.5 | 九轮:选 B、**不做 latch** | 十轮:**A 单调闩可采用**(第 2 段落) |
+//! | §5.5 | 九轮:选 B、**不做 latch** | 十轮:**A 单调闩可采用**,见 [`is_latched`] |
 //! | §5.6 | B-a 十一轮:lease 写成 `is_solo_space` 的一个合取项 | 十二轮:**顶层否决**,见 [`ensure_can_emit`] |
 
 use rusqlite::Connection;
 
-use crate::sync::supervisor::SpaceSupervisor;
+use crate::sync::supervisor::{ActiveRuntime, SpaceSupervisor};
 
 /// 壳采下来的**运行期事实** —— 闸的那一半判据在库里问不到。
 ///
@@ -84,6 +90,17 @@ pub struct RuntimeFacts {
     /// 的空间(含从没配过账户的),故一个纯本地空间在表里恒有槽 —— 拿 `is_stopped` 当判据
     /// 会把「没有旧端可言」的纯本地用户整个关在门外,正是 §5.4 抬头点名要防的那个灾难。
     engine_present: bool,
+    /// §5.1 那条析取的第三臂 —— `fresh_roster_is_known ∧ every_registered_device_is_capable`
+    /// 的**已合成形**。合成点见 [`roster_fully_capable`]。
+    ///
+    /// ⚠ **`false` 是三种态合成的一个**(⛔ 别把它读成「有人是旧端」):名册**不知道**
+    /// (`None`,§5.1「不知道不是空集合」)/ 名册里某台**本代次没听说过**(观测缺席)/
+    /// 某台**听说了、是旧端**。三态都让这一臂为假,而它们对用户的处置完全相同
+    /// (等、或升级对端),故这里不分。要分辨去读 [`crate::sync::transport::PeerCaps`]。
+    ///
+    /// ⭐ **它是这三格里唯一会「自己变回 false」的**:名册随会话结束清成 `None`、
+    /// 观测随引擎代次清空。⇒ 这一臂**扛不住本机离线**,那一格由 §5.5 的闩扛(§5.3 后两行)。
+    roster_fully_capable: bool,
 }
 
 impl RuntimeFacts {
@@ -109,16 +126,27 @@ impl RuntimeFacts {
     ///
     /// ⚠ 反过来,**「在写锁内采」不等于「与写同一个临界区」**:`config_transition_in_flight`
     /// 由壳的 `lifecycle` 那条路置位,与本空间的写锁并不互斥。那道诚实边界见 plan §5.6a 末。
+    ///
+    /// ⚠ **三档取法对第三格同样适用,且方向一致**:无槽 / 瞬态都给 `false`
+    /// (「问不清楚就当没授权」),故两格的 fail-closed 是同向的 —— ⛔ 别给瞬态档写成
+    /// `roster_fully_capable = true`,那会让「正在切空间」变成一扇后门。
     pub fn observe(sup: &SpaceSupervisor, space_id: &str) -> RuntimeFacts {
+        // ⛔ 先 `is_stopped` 再 `get`,两句之间的窗口无害:`is_stopped` 说无槽而随后建了槽,
+        //    读到的是「上一瞬确实没有」——比新槽更关,落 fail-closed 侧。
+        let slot = if sup.is_stopped(space_id) { None } else { Some(sup.get(space_id)) };
+        let (engine_present, roster_fully_capable) = match &slot {
+            // 表里完全没有这个 id:没有任何 transport 在跑 ⇒ **确定**没有引擎,
+            // 也**确定**一份名册都没收到过。
+            None => (false, false),
+            // `get` 只在 Running 那一档给 Arc;其余三档(Stopping/Starting/Resetting)
+            // 是切换瞬态 ⇒ 两格都落 fail-closed 侧。
+            Some(Err(_)) => (true, false),
+            Some(Ok(rt)) => (rt.engine_present(), roster_fully_capable(rt)),
+        };
         RuntimeFacts {
             config_transition_in_flight: sup.config_transition_in_flight(),
-            engine_present: if sup.is_stopped(space_id) {
-                false
-            } else {
-                // `get` 只在 Running 那一档给 Arc;其余三档(Stopping/Starting/Resetting)
-                // 是切换瞬态 ⇒ 落进 `true` 的 fail-closed 侧。
-                sup.get(space_id).map(|rt| rt.engine_present()).unwrap_or(true)
-            },
+            engine_present,
+            roster_fully_capable,
         }
     }
 
@@ -135,9 +163,61 @@ impl RuntimeFacts {
     /// 3. 两只壳的集成测里那些不装 transport 的夹具。
     ///
     /// ⛔ **生产写路径不许用它**:那等于把闸关掉。生产走 [`RuntimeFacts::observe`]。
+    ///
+    /// ⚠ 三格取值刻意**不是**「全放行」:`roster_fully_capable` 给的是 `false` —— 没有
+    /// 同步机械 = 没有名册可言,而它给 `true` 的话,detached 就从「本地库,solo 判得了」
+    /// 变成「连已配置库也放行」,那才是真的把闸关掉。
     pub const fn detached() -> RuntimeFacts {
-        RuntimeFacts { config_transition_in_flight: false, engine_present: false }
+        RuntimeFacts {
+            config_transition_in_flight: false,
+            engine_present: false,
+            roster_fully_capable: false,
+        }
     }
+}
+
+/// §5.1 那条 `fresh_roster_is_known ∧ every_registered_device_is_capable` 的**合成点**。
+///
+/// # 两格分别从哪儿来,为什么不是同一处
+///
+/// * `fresh_roster_is_known` —— 读 `SyncStatus::roster`。那是 identity-plan §5.4 已拍板的
+///   那份**服务器权威名册**:`None` = **不知道**(未连接 / 推送丢了 / 服务器版本旧),
+///   会话结束即清成 `None`(`Ctx::Drop`),**不缓存不落库**。⇒ 类型本身就是 §5.1 要的语义,
+///   ⛔ 别在这里另造一个「上次见过的名册」。
+/// * `every_registered_device_is_capable` —— 逐台问 [`crate::sync::transport::PeerCaps`]
+///   (§6.2 的 per-peer 观测,随引擎代次清)。
+///
+/// # ⚠ 两把锁分开取,⛔ 不许套着取
+///
+/// 名册与观测是两只**叶子锁**;本函数先取完 status、放掉,再去问观测表。中间那一瞬两者
+/// 可能来自不同时刻 —— **无害且已被更宽的一条盖住**:名册本来就每 `ROSTER_PULL_TICKS`
+/// (≈5 分钟)才刷一次,§5.5 的闩更是把「曾成立过一次」变成永久事实。真正承重的从来不是
+/// 这两读之间的原子性,是 §5.5 那三条 fail-closed(旧端进不了引导 ⇒ 拿不到引擎 ⇒ 收不到帧)。
+///
+/// # ⭐ 名册里没有本机 ⇒ 判 `false`(实现填的形,规格没写)
+///
+/// 两种可达情形:名册**空**(服务器答了个不该出现的零设备)与**本机已被移除**。
+/// 空名册若照 `all()` 的数学答 `true`,那是**朝 `true` 错算**(§5.3 判 H)。⇒ 要求名册
+/// 里认得出本机;这是给这条析取臂加的一个合取项,**方向恒是更关**,不影响另外两臂。
+/// ⚠ 记账见 plan §11(B-e 第 2 段自曝)。
+fn roster_fully_capable(rt: &ActiveRuntime) -> bool {
+    // 锁内只取两格就放(叶子锁纪律)。
+    let (roster, me) = {
+        let s = rt.status.lock().expect("sync status mutex poisoned");
+        (s.roster.clone(), s.device_id.clone())
+    };
+    // `None` = 不知道,不是空集合(§5.1)。未配置的空间没有 device_id,这一臂对它无意义
+    // (它走的是 solo 那一臂)。
+    let (Some(roster), Some(me)) = (roster, me) else { return false };
+    if !roster.iter().any(|e| e.device == me) {
+        return false;
+    }
+    let caps = rt.peer_caps();
+    // 本机不问观测表:本机的能力由谓词第一格 `local_schema_supports_board_columns` 管
+    // (§5.5 (α) 的 token 就是本端 Hello 宣告的那一枚)。
+    // ⭐ 「名册只有自己 ⇒ 谓词平凡为真」是 §5.4 明写否掉「registry 只有本机一台」那个候选时
+    //    给的结论,不是这里顺手放宽的。
+    roster.iter().filter(|e| e.device != me).all(|e| caps.supports(&e.device))
 }
 
 /// 两格的读口,**只给测试**。
@@ -153,6 +233,62 @@ impl RuntimeFacts {
     pub(crate) fn config_transition_in_flight(&self) -> bool {
         self.config_transition_in_flight
     }
+
+    pub(crate) fn roster_fully_capable(&self) -> bool {
+        self.roster_fully_capable
+    }
+}
+
+// ---- §5.5 单调闩 -----------------------------------------------------------------------
+
+/// 闩住在 `sync_meta` 的这一个键上。
+///
+/// # 为什么是 `sync_meta` 而不是新开一张表
+///
+/// 它是**纯本地、不进同步、不进备份物件清单**的一格运行期事实,与 `bootstrapped_at` /
+/// `last_pushed` 同族;而 `sync_meta` 的 KV 面本就是这一族的家。
+///
+/// ⭐ **压实已经替它守着了**:`epoch::compact` 的自验收逐键核「白名单外的键不许被改动」
+/// (`epoch.rs`),而本键不在白名单里 ⇒ **纪元轮换必须原样保留它**。那是对的:换 `device_id`
+/// 与 `K_acc` 不改变「这个账户的那几台设备跑的是哪一版软件」这件事。
+const LATCH_KEY: &str = "board_columns_latch";
+
+/// 闩的值 = `"{CAP_GEN} {account_id}"`,读法是**整串相等**。
+///
+/// ⭐ **刻意不解析、不比较字段**:两件事一起钉在一个值里,比对就只有「一样 / 不一样」
+/// 两种结果 —— 没有「解析出半截」「只对上一半」这类中间态可写错。
+///
+/// * `CAP_GEN` 那半 = [`crate::board::CAP_BOARD_COLUMNS_V1`],与**出站 Hello 宣告的是同一枚
+///   常量**(§6.4 末,481 已合并)。⇒ 「凡与 board_columns 语义有关的 schema / validator /
+///   线上形态变化必须 bump 它」这条(§5.5 (α))一 bump 就自动清闩,不必另写清理。
+///   ⛔ 反过来:与本案无关的迁移或 `VALIDATOR_VER` bump **不许**动它。
+/// * `account_id` 那半 = §5.5 (β) 的「身份清场」。见模块头注那一段。
+fn latch_value(account_id: &str) -> String {
+    format!("{} {}", crate::board::CAP_BOARD_COLUMNS_V1, account_id)
+}
+
+/// 闩立着吗(§5.5:「本账户全员已具备 board_column 能力」一旦为真就永远为真)。
+///
+/// ⛔ **它不是一份缓存的名册**:值里一台设备 id 都没有。存的是一条**单调的能力事实**,
+/// 九轮据以否掉 A 的那个反例(「A 离线期间旧版 C 加入账户 → C 上 `InvalidOp` 隔离」)
+/// 十轮已带反证撤回 —— C 做不完引导(快照 `user_version` 必须等于本机)、没有引擎
+/// (`bootstrapped_at` 缺席即整帧丢弃)⇒ 它收不到那枚 op。⛔ **别照被推翻的那半办。**
+fn is_latched(tx: &Connection, account_id: &str) -> Result<bool, String> {
+    Ok(crate::sync::transport::meta_get(tx, LATCH_KEY)? == Some(latch_value(account_id)))
+}
+
+/// 立闩。**唯一置位点**,且它就长在 [`ensure_can_emit`] 里那条 roster 臂第一次成立的地方
+/// (§8.5:「让它为真的唯一生产路径就是 `fresh_roster ∧ every_capable` 第一次成立」)。
+///
+/// ⭐ **写在调用方那笔写命令自己的事务里** ⇒ 那笔写失败回滚,闩跟着不立。
+/// 「授权与被授权的那笔写同生共死」于是是结构事实。
+///
+/// ⚠ **诚实边界(第 2 段自曝)**:闩只在用户**真的动了一次手**时才立,不会自己在后台立
+/// 起来 —— 观测在 transport 任务里,那条路上没有本空间的写事务。⇒ 功能第一次打开需要
+/// 「两端重叠在线」与「用户此刻正好在建列 / 拖卡」同时发生;此后永久打开。
+/// 记账见 plan §11,⛔ 别把它读成「闩会自己立起来」。
+fn arm_latch(tx: &Connection, account_id: &str) -> Result<(), String> {
+    crate::sync::transport::meta_put(tx, LATCH_KEY, &latch_value(account_id))
 }
 
 /// [`RuntimeFacts::detached`] 的写法糖,给 core 自己那几百处测试调用点用。
@@ -176,16 +312,39 @@ pub(crate) const DETACHED: RuntimeFacts = RuntimeFacts::detached();
 ///    都拒(`db.rs:279-282`)⇒ **拿得到 `Connection` 就已经蕴含它**。⛔ 因此这里**不写**
 ///    一句「查一下 `user_version`」的平凡检查(477 判例:别为结构性蕴含造平凡绿的测);
 ///    承重的是那两道既有 fail-closed,这段注释就是它的记账。
-/// 2. `NOT config_transition_in_flight` —— **顶层否决**,排在 solo 之前。§5.6。
-/// 3. 那条析取 —— 今天只有 [`is_solo_space`] 一臂。
+/// 2. `NOT config_transition_in_flight` —— **顶层否决**,排在整条析取之前。§5.6。
+/// 3. 那条析取 —— `solo ∨ 闩 ∨ (名册新鲜 ∧ 全员具备)`,**短路序就是这个**。
+///
+/// # ⭐ 析取三臂为什么是这个顺序
+///
+/// * `solo` 排头:纯本地空间连 `account_id` 都没有,后两臂对它无从谈起(且**不写闩** ——
+///   闩是账户级事实,一个还没有账户的库立不出来);
+/// * 闩排第二:它是**已经成立过**的持久事实,不必再问名册与观测。§5.3 那两行
+///   (「本机离线」「两端从不同时在线」)全靠它在这个位置**先于**下一臂答话;
+/// * 名册臂排末:唯一会去问运行期的一臂,也是**唯一会立闩**的那条路。
 pub(crate) fn ensure_can_emit(tx: &Connection, facts: &RuntimeFacts) -> Result<(), String> {
-    // ② 顶层否决(§5.6)。⛔ 别把它挪进 `is_solo_space` —— 十二轮那条 H。
+    // ② 顶层否决(§5.6)。⛔ 别把它挪进 `is_solo_space`,也⛔ 别挪到闩后面 —— 十二轮那条 H
+    //    就是「闩为真时整式仍 true」,而闩正是从第 2 段起真会为真的那一格。
     if facts.config_transition_in_flight {
         return Err("正在改同步配置(创号 / 加入账户 / 恢复备份),这一步稍后再试".to_string());
     }
-    // ③ 析取:今天只有 solo 那一臂(闩与 roster 归第 2 段)。
+    // ③-1 solo(§5.4)。⛔ 刻意让它自带「四键全无」那一格、不把下面读到的 config 传进去:
+    //     那条五合取是一整块判据,拆开就成了同一条规则的两份描述(清单 14)。
     if is_solo_space(tx, facts.engine_present)? {
         return Ok(());
+    }
+    // 已配置(残缺那档在 `is_solo_space` 里已经响亮报错了)。零配置却走到这里的只有
+    // 「引擎还在场」那一档 —— 它没有 `account_id`,闩与名册两臂对它都不成立,照样落到末尾。
+    if let Some(cfg) = crate::sync::transport::load_config(tx)? {
+        // ③-2 单调闩(§5.5)。
+        if is_latched(tx, &cfg.account_id)? {
+            return Ok(());
+        }
+        // ③-3 名册臂(§5.1)。第一次成立即立闩 —— **唯一置位路径**(§8.5)。
+        if facts.roster_fully_capable {
+            arm_latch(tx, &cfg.account_id)?;
+            return Ok(());
+        }
     }
     Err("这个空间已加入账户,自定义看板列要等账户里全部设备都升到支持它的版本才能用".to_string())
 }

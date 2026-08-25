@@ -207,6 +207,98 @@ const BLOB_PENALTY_TICKS: u64 = 10;
 /// [`Engine::peer_caps`] 头注。故上界要按「本代次内**露过面**的对端数」算,不是「此刻在线数」。
 const PEER_CAPS_SLOTS: usize = 64;
 
+/// per-peer 能力观测表(board-columns-plan §6.2)**与它给壳侧写闸的投影,是同一张表**。
+///
+/// # 为什么是一张不是两张(B-e 第 2 段定形)
+///
+/// §5.1 那条 `every_registered_device_is_capable` 的读者在 core 的**写闸**里
+/// ([`crate::board::gate::RuntimeFacts::observe`]),而观测只有引擎学得到 —— 引擎住在
+/// transport 任务里,写闸够不着它。⇒ 必须投影。
+///
+/// **投影的形照 [`crate::sync::transport::Transport::engine_present`] 那条既有先例**
+/// (transport 把一格只有它知情的事实交给壳侧写闸),但**多走一步**:那一格是布尔、
+/// 复制一份不会漂;这一格是一张会长会改的表,复制一份就有两份会各说各话。
+/// ⇒ 照 `EngineSlot::gate` 那条现成纪律办:**把手共享,物理上只有一份** ——
+/// 「引擎那张表与闸读到的那张会不会不一致」这个问题在类型层就不存在。
+///
+/// # 三态,别读成两态
+///
+/// 表里没有 = **本代次没听它说过话**(≠ 它没有能力);`Some(false)` = 听过了、它是旧端;
+/// `Some(true)` = 听过了、它认得。§5.1 要的是「Roster 每台都有**当前代次**的肯定观测」
+/// ⇒ 前两态都让合取为假,故 [`PeerCaps::supports`] 把它们合成一个 `false`。
+///
+/// # 生命期:随引擎代次整只清,⛔ 不落库、不随对端上下线收缩
+///
+/// 清的两处都紧贴 `EngineSlot::engine` 字段归零([`crate::sync::transport`] 里的
+/// `retire()` 与 `Drop`)—— ⚠ **这是第 2 段与 B-d 的差别**:B-d 那张表住在 `Engine` 里,
+/// 引擎一丢它跟着没;投影的把手是**跨代次活着的**,故「清」从结构事实降级成两处显式动作。
+/// ⛔ 漏清 = 上一代的 `true` 被下一代读到 = 朝 `true` 错算(§5.3 判 **H**)。
+///
+/// ⛔ **只存布尔,绝不存对端给的那份 `Vec<String>`**:入站 caps 是对端可控的,
+/// `sync_proto::has_capability` 的 `.take(16)` 只是扫描上界、拦不住 1000 项的列表。
+///
+/// ⛔ **叶子锁**:持有它时不许再取任何别的锁(db / clock / status / work / lan)。今天两个
+/// 持有点都是「锁内只做一次点查或一次插入,拿到结果就放」。
+#[derive(Default)]
+pub struct PeerCaps {
+    seen: Mutex<HashMap<String, bool>>,
+}
+
+impl PeerCaps {
+    /// 记下一台对端**在本代次里**的观测。有界见 [`PEER_CAPS_SLOTS`]。
+    ///
+    /// **表满 ⇒ 不插新条,但已在册的照常更新**:后半是必要的 —— 否则一台对端升级之后,
+    /// 它那条 `false` 会被表满**永久钉住**。
+    fn observe(&self, peer: &str, capable: bool) {
+        let mut seen = self.seen.lock().expect("peer caps mutex poisoned");
+        if let Some(slot) = seen.get_mut(peer) {
+            *slot = capable;
+            return;
+        }
+        if seen.len() < PEER_CAPS_SLOTS {
+            seen.insert(peer.to_string(), capable);
+        }
+    }
+
+    /// 这台对端**在本代次里**宣告过 [`crate::board::CAP_BOARD_COLUMNS_V1`] 吗
+    /// (§5.1 那条 `every_registered_device_is_capable` 拿它逐台问)。
+    ///
+    /// ⭐ **实时读,不给快照**(§5.2「⛔ 不许在 UI mount 时算好一个 `bool` 长期缓存」):
+    /// 调用方每次要发 board op 之前重新问一遍。
+    ///
+    /// ⛔ **刻意不写成 `has_capability(peer, cap)` 那种通用形**:表里只有这一枚能力的布尔,
+    /// 通用签名对别的 token 只能安静地答 `false` —— 那正是设计铁律里的「静默默认值」。
+    /// 真加第二枚能力时,把表改成显式的枚举/位集,别让签名先替它撒谎。
+    pub(crate) fn supports(&self, peer: &str) -> bool {
+        self.seen.lock().expect("peer caps mutex poisoned").get(peer).copied().unwrap_or(false)
+    }
+
+    /// 整只清空(引擎撤台 / 槽消亡)。见本类型头注「生命期」那一段。
+    pub(crate) fn clear(&self) {
+        self.seen.lock().expect("peer caps mutex poisoned").clear();
+    }
+
+    /// 三态直读,**只给测试**:[`PeerCaps::supports`] 把两种否定态合成了一个 `false`,而
+    /// 「没听说过」与「听说了、是旧端」这两格得分得开才验得出观测有没有真落地。
+    #[cfg(test)]
+    pub(crate) fn observed(&self, peer: &str) -> Option<bool> {
+        self.seen.lock().expect("peer caps mutex poisoned").get(peer).copied()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn len(&self) -> usize {
+        self.seen.lock().expect("peer caps mutex poisoned").len()
+    }
+
+    /// 直接摆一条观测进去,**只给测试**:生产里唯一写者是
+    /// [`Engine::observe_peer_caps`](经一枚入站 Hello),而它要一整台引擎 + 一条真连接
+    /// 才跑得到 —— 那对「闸怎么读这张表」那几格是夹具成本,不是被测面。
+    #[cfg(test)]
+    pub(crate) fn observe_for_test(&self, peer: &str, capable: bool) {
+        self.observe(peer, capable);
+    }
+}
+
 /// 一枚出站 Hello 上 `caps` 的字节上界(§6.3「两把尺」的第二把:**wire-frame budget**)。
 ///
 /// **算式**(照 [`sync_proto::has_capability`] 那套入口卫生的上限反推):
@@ -709,26 +801,16 @@ pub struct Engine {
     /// 路由健康表(§5.1):(对端, 路由) → 连接态 × 惩罚态。表里没有的 = Absent 无惩罚。
     routes: HashMap<(String, Route), RouteState>,
     /// per-peer 能力观测(board-columns-plan §6.2):对端 device id → 它宣告了
-    /// [`crate::board::CAP_BOARD_COLUMNS_V1`] 吗。
+    /// [`crate::board::CAP_BOARD_COLUMNS_V1`] 吗。**语义、三态与生命期全在 [`PeerCaps`]
+    /// 头注里**,⛔ 别在这儿抄第二份。
     ///
-    /// **三态,别读成两态**:表里没有 = **本代次没听它说过话**(≠ 它没有能力);
-    /// `Some(false)` = 听过了、它是旧端;`Some(true)` = 听过了、它认得。§5.1 那条
-    /// `every_registered_device_is_capable` 要的正是「Roster 每台都有**当前代次**的观测」
-    /// ⇒ 前两态都让合取为假。
+    /// **`Arc` 是把手不是所有权**(同 [`Engine::ops`] 那条):所有权在 `EngineSlot.caps`,
+    /// 那里 `retire` 时整只清 —— 而**读者在 core 的写闸里**
+    /// ([`crate::board::gate::RuntimeFacts::observe`]),它够不着引擎,只够得着这只把手。
     ///
-    /// ⭐ **「代次一换就清」是结构事实,不是要记得做的动作**(自检第 7 条):观测住引擎,
-    /// 而 `EngineSlot::retire` 换的是整只引擎(`transport.rs`),新一代拿到的是空表。
-    /// ⛔ 因此**不落库**、也**不随会话/对端上下线收缩** —— 后者是刻意的:relay 断一下
-    /// 就把观测清掉,等于把 §5.3 那条「两端从不同时在线」的死结又系回去。
-    ///
-    /// ⛔ **只存布尔,绝不存对端给的字符串**(自检第 2 条):入站 caps 是对端可控的
-    /// `Vec<String>`,`has_capability` 的 `.take(16)` 只是扫描上界、拦不住 1000 项的列表。
-    /// 存布尔 ⇒ 对端字符串的生命期终结在 [`Engine::observe_peer_caps`] 那一句里。
-    ///
-    /// `pub(crate)` 是给测试直接检视**三态**用的(同 `slots`/`frozen` 那几格的理由):
-    /// [`Engine::peer_supports_board_columns`] 把两种否定态合成了一个 `false`,而
-    /// 「没听说过」与「听说了、是旧端」这两格得分得开才验得出观测有没有真落地。
-    pub(crate) peer_caps: HashMap<String, bool>,
+    /// ⛔ **别改回裸 `HashMap` 再往外镜像一份**:那就是「两份会各说各话」的形,而这张表
+    /// 说错话的方向是朝 `true`(§5.3 判 **H**)。
+    pub(crate) peer_caps: Arc<PeerCaps>,
     /// 心跳刻度(on_tick 单调加):惩罚到期判定的时间轴,**不用墙钟**(回拨即失效不了)。
     tick: u64,
     /// 装配初始化已跑过吗([`Engine::on_runtime_started`] 每引擎只许一次)。
@@ -783,11 +865,14 @@ impl Engine {
     /// 出站游标起点 = 本机当前水位——重启后不盲目全量重推,增量靠双向 hello 互补。
     /// `blob_policy` 显式注入(M1),不做默认值——桌面 Full、手机轻端 MetadataOnly。
     /// `ops` 是**当时那只**供流计划表的把手(§6.2 ⑤(a)):做成必填参数而不是事后
-    /// `set_ops`,免得存在「引擎在槽里、把手还没接上」这种半态。
+    /// `set_ops`,免得存在「引擎在槽里、把手还没接上」这种半态。`peer_caps` 同理
+    /// ([`PeerCaps`]):它的读者是壳侧写闸,「引擎已在槽里、投影还没接上」那一瞬
+    /// 读到的会是空表 = 一台对端都不认得,虽落 fail-closed 侧,但那是**碰巧**安全。
     pub fn new(
         conn: &Connection,
         blob_policy: BlobPolicy,
         ops: Arc<Mutex<OpsWorks>>,
+        peer_caps: Arc<PeerCaps>,
     ) -> Result<Engine, String> {
         let device_id: String = conn
             .query_row("SELECT value FROM sync_meta WHERE key = 'device_id'", [], |r| r.get(0))
@@ -824,7 +909,7 @@ impl Engine {
             want_cursor: 0,
             hello_want_cursor: HashMap::new(),
             routes: HashMap::new(),
-            peer_caps: HashMap::new(),
+            peer_caps,
             tick: 0,
             runtime_started: false,
             relay_session: None,
@@ -881,17 +966,23 @@ impl Engine {
         Ok(out)
     }
 
-    /// 测试用装配:**自带一张谁也不共享的计划表**。
+    /// 测试用装配:**自带一张谁也不共享的计划表 + 一张谁也不共享的能力观测表**。
     ///
-    /// 名字里的 solo 是诚实的:生产里那只把手来自 [`EngineSlot`],换代时整只换掉;
-    /// 这里造的是私有的一只,故拿它**验不了**「引擎与槽同一只表」那条。
+    /// 名字里的 solo 是诚实的:生产里那两只把手都来自 [`EngineSlot`](计划表换代时整只
+    /// 换掉、观测表换代时整只清空),这里造的是私有的,故拿它**验不了**「引擎与槽同一只表」
+    /// 那条。
     ///
-    /// 那条由 transport 那半的行为测断:夹具经 `publish_ops_handle` 挂出来的把手往表里
+    /// 计划表那条由 transport 那半的行为测断:夹具经 `publish_ops_handle` 挂出来的把手往表里
     /// 塞 work(`seed_ops_work`),而帧是**引擎那一侧**取出来发的 —— 两侧不是同一只表
-    /// 的话一帧也出不来。
+    /// 的话一帧也出不来。观测表那条同理,由 `transport/tests.rs` 那边压。
     #[cfg(test)]
     pub(crate) fn new_solo(conn: &Connection, blob_policy: BlobPolicy) -> Result<Engine, String> {
-        Engine::new(conn, blob_policy, Arc::new(Mutex::new(OpsWorks::default())))
+        Engine::new(
+            conn,
+            blob_policy,
+            Arc::new(Mutex::new(OpsWorks::default())),
+            Arc::new(PeerCaps::default()),
+        )
     }
 
     /// 挂起中的 origin 数(transport 照进状态快照;收敛测试检视终局)。
@@ -1229,44 +1320,15 @@ impl Engine {
     ///   一枚不带能力的 Hello** —— §5.1 要区分这两态(见 [`Engine::peer_caps`] 头注);
     /// * `from` 不是规范设备 id ⇒ **一条都不落**。Roster 的键是规范 id,落进来的条目
     ///   永远匹配不上,只是白占格子;
-    /// * 表满 ⇒ **不插新条,但已在册的照常更新**。fail-closed 的方向(见
-    ///   [`PEER_CAPS_SLOTS`]);允许更新已在册的那半是必要的 —— 否则一台对端升级之后,
-    ///   它那条 `false` 会被表满**永久钉住**。
+    /// * 表满 ⇒ **不插新条,但已在册的照常更新**(处置在 [`PeerCaps::observe`] 里,
+    ///   ⛔ 别在这儿再写一遍)。
     fn observe_peer_caps(&mut self, from: &str, caps: Option<&Vec<String>>) {
         if !crate::clock::is_canonical_device_id(from) {
             return;
         }
         let capable = caps
             .is_some_and(|c| sync_proto::has_capability(c, crate::board::CAP_BOARD_COLUMNS_V1));
-        // 已在册的先更新并**当场返回**:借用就此结束,下面那句才读得到 `len()`
-        // (也顺手把「表满时仍允许更新已在册者」写成了结构上的先后,而不是一条注释)。
-        if let Some(slot) = self.peer_caps.get_mut(from) {
-            *slot = capable;
-            return;
-        }
-        if self.peer_caps.len() < PEER_CAPS_SLOTS {
-            self.peer_caps.insert(from.to_string(), capable);
-        }
-    }
-
-    /// 这台对端**在本代次里**宣告过 [`crate::board::CAP_BOARD_COLUMNS_V1`] 吗
-    /// (B-e 的 §5.1 那条 `every_registered_device_is_capable` 拿它逐台问)。
-    ///
-    /// ⭐ **实时读,不给快照**(自检第 10 条 + §5.2「⛔ 不许在 UI mount 时算好一个 `bool`
-    /// 长期缓存」):调用方每次要发 board op 之前重新问一遍。
-    ///
-    /// ⛔ **刻意不写成 `peer_has_capability(peer, cap)` 那种通用形**:表里只有这一枚能力
-    /// 的布尔,通用签名对别的 token 只能安静地答 `false` —— 那正是设计铁律里的「静默默认
-    /// 值」。真加第二枚能力时,把这里改成显式的枚举/位集,别让签名先替它撒谎。
-    ///
-    /// 「没听说过」与「听说了但它是旧端」在这里**同归 `false`** —— 判据是「有当前代次的
-    /// 肯定观测」,两种否定态没有区别对待的必要;要分辨它们直接读 [`Engine::peer_caps`]。
-    ///
-    /// ⚠ **生产调用者随 B-e 落**(§5.1 那条合取的 owner 是 core 写编排层,不是本笔);
-    /// B-d 只负责把观测**记准**,并有测钉住。照 `lan` 模块那条先例挂 `allow`。
-    #[allow(dead_code)]
-    pub fn peer_supports_board_columns(&self, peer: &str) -> bool {
-        self.peer_caps.get(peer).copied().unwrap_or(false)
+        self.peer_caps.observe(from, capable);
     }
 
     // ---- 路由健康表(§5.1;表里没有的条目 = Absent 且无惩罚) --------------------------

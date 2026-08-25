@@ -995,8 +995,9 @@ impl Coord {
             shutdown: shutdown_rx,
             boot_commit: latch,
             restart_flag: Arc::new(Mutex::new(None)),
-            // 不在 supervisor 表里 ⇒ 没有壳侧写闸在读这一格(board-columns-plan §5.4)。
+            // 不在 supervisor 表里 ⇒ 没有壳侧写闸在读这两格(board-columns-plan §5.4)。
             engine_present: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            peer_caps: Arc::new(transport::PeerCaps::default()),
             // 手机壳不监听(lan-direct-plan §6:只拨出,拨号器归 L-c3b)。
             lan: None,
         };
@@ -2024,8 +2025,9 @@ mod tests {
             shutdown: src_sd_rx,
             boot_commit: Arc::new(Mutex::new(None)),
             restart_flag: Arc::new(Mutex::new(None)),
-            // 不在 supervisor 表里 ⇒ 没有壳侧写闸在读这一格(board-columns-plan §5.4)。
+            // 不在 supervisor 表里 ⇒ 没有壳侧写闸在读这两格(board-columns-plan §5.4)。
             engine_present: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            peer_caps: Arc::new(transport::PeerCaps::default()),
             // 手机壳不监听(lan-direct-plan §6:只拨出,拨号器归 L-c3b)。
             lan: None,
         }));

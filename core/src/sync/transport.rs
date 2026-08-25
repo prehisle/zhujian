@@ -108,6 +108,9 @@ pub use sync_proto::{DeviceAction, RosterEntry};
 /// app 级局域网监听器与准入表(lan-direct-plan §6)。壳层建一枚给 supervisor,
 /// 同样从 transport 出 crate(窄公开面:sync 模块对外只露 transport 与 supervisor)。
 pub use crate::sync::lan_net::LanAdmission;
+/// per-peer 能力观测表(board-columns-plan §6.2)。壳层建一枚给 supervisor(正式 runtime)
+/// 或一枚扔掉的(staging 传输),同样从 transport 出 crate。
+pub use crate::sync::engine::PeerCaps;
 
 type Ws = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
@@ -378,6 +381,13 @@ pub struct Transport {
     /// 不用 latch 的装配点(staging 传输、单测)传 `Arc::new(AtomicBool::new(false))` 即可:
     /// 那些语境本就没有壳侧写闸在读。
     pub engine_present: Arc<AtomicBool>,
+    /// **per-peer 能力观测表的把手**(board-columns-plan §5.1 那条
+    /// `every_registered_device_is_capable`;B-e 第 2 段)。语义见 [`PeerCaps`],
+    /// 所有权与清空归 `EngineSlot`。
+    ///
+    /// ⚠ 与 [`Self::engine_present`] 同一个形、同一条边界:staging 传输与单测传
+    /// `Arc::new(PeerCaps::default())` 即可 —— 那些语境本就没有壳侧写闸在读。
+    pub peer_caps: Arc<PeerCaps>,
     /// 局域网直连的宿主(lan-direct-plan §6;L-c3a)。`Some` = 本空间参与直连:LanReady
     /// 置位时把准入条目注册进 **app 级监听器**、撤位与收场时摘掉;拿回的监听端口写进
     /// `LanAd.listen` 随 Hello 通告出去(§2)。
@@ -423,7 +433,7 @@ pub(crate) fn meta_get(conn: &Connection, key: &str) -> Result<Option<String>, S
         .map_err(|e| e.to_string())
 }
 
-fn meta_put(conn: &Connection, key: &str, value: &str) -> Result<(), String> {
+pub(crate) fn meta_put(conn: &Connection, key: &str, value: &str) -> Result<(), String> {
     // UPSERT;device_id 行有冻结触发器,本层永不碰它。
     conn.execute(
         "INSERT INTO sync_meta (key, value) VALUES (?1, ?2) \
@@ -1710,8 +1720,12 @@ async fn run_inner(
     heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     // 引擎与 lan 链路集活到整个 run 的生命期(不变量 6,见 [`EngineSlot`])——会话来去,
     // 它们不动。拨号器同住槽里,拿的是移交通道的另一枚发送端。
-    let (slot, lan_inbound, lan_faults) =
-        EngineSlot::new(t.blob_policy, handoff_keep.clone(), t.engine_present.clone());
+    let (slot, lan_inbound, lan_faults) = EngineSlot::new(
+        t.blob_policy,
+        handoff_keep.clone(),
+        t.engine_present.clone(),
+        t.peer_caps.clone(),
+    );
     let mut pumps = Pumps {
         slot,
         tick: heartbeat,
@@ -2751,6 +2765,17 @@ struct EngineSlot {
     /// `engine` 字段的赋值 ⇒ 「投影与字段同步」是**代码相邻**这一件事实,不是一条纪律。
     /// ⛔ 别在第三处写它;要加新的撤台路径,让它走 `retire()`。
     present: Arc<AtomicBool>,
+    /// **per-peer 能力观测表的所有权**(board-columns-plan §6.2 / §5.1;B-e 第 2 段)。
+    ///
+    /// 语义、三态、上界与叶子锁纪律全在 [`engine::PeerCaps`] 头注里,⛔ 别在这儿抄第二份。
+    /// 这里只记**所有权**那一面:把手同时给了引擎(写)与壳侧写闸(读),而**清空归槽** ——
+    /// 见 [`EngineSlot::retire`] 与本槽的 `Drop`。
+    ///
+    /// ⚠ **它与 [`EngineSlot::ops`] 的处置刻意不同**:`ops` 在 `retire` 时换**整只新的**
+    /// (让将死的写任务把回滚落在孤儿表上),而这一只**不能换** —— 壳侧写闸手上那只把手是
+    /// `ActiveRuntime` 建的、跨代次活着,换掉它闸就永远读一张再也没人写的空表
+    /// (那是朝 `false` 错算,功能静默失灵)。⇒ **只清不换**。
+    caps: Arc<PeerCaps>,
     blob_policy: BlobPolicy,
     /// 局域网链路集(§3/§6)。非空**必然**意味着槽里有引擎([`EngineSlot::retire`] 一并
     /// 清),故不存在「有链路没引擎」的路由幻影。
@@ -2876,15 +2901,20 @@ impl EngineSlot {
         blob_policy: BlobPolicy,
         handoff: Option<mpsc::Sender<AdoptedLink>>,
         present: Arc<AtomicBool>,
+        caps: Arc<PeerCaps>,
     ) -> (EngineSlot, mpsc::Receiver<LanInbound>, mpsc::Receiver<LanFault>) {
         let (lan, inbound, faults) = LanLinks::new();
         // 建槽即宣告「此刻无引擎」:`run` 可能在装配之前就走别的分支(未配置 / 未引导),
-        // ⛔ 别指望调用方传进来的初值 —— 这一格的真相源只能是槽自己。
+        // ⛔ 别指望调用方传进来的初值 —— 这一格的真相源只能是槽自己。同理观测表:
+        // 上一次装配留下的条目对这一次是**上一辈子的事**(⚠ 那只把手跨代次活着,
+        // 见 [`EngineSlot::caps`])。
         present.store(false, AtomicOrdering::SeqCst);
+        caps.clear();
         (
             EngineSlot {
                 engine: None,
                 present,
+                caps,
                 blob_policy,
                 lan,
                 dial: lan_net::Dialer::new(handoff),
@@ -3068,6 +3098,10 @@ impl EngineSlot {
         // 投影紧贴字段(见 [`EngineSlot::present`])。⚠ 排在**最前**:下面几句会 abort
         // 任务、拆链路,任何一句将来若提前返回,这一格已经是准的了。
         self.present.store(false, AtomicOrdering::SeqCst);
+        // 能力观测同代次作废(见 [`EngineSlot::caps`])。⚠ 它**不像** `peer_caps` 住在
+        // 引擎里那时那样「随引擎一起没」—— 把手是跨代次活着的,故这一句是**必须的动作**,
+        // 漏了就是拿上一代的 `true` 授权这一代发 op(§5.3 判 **H**)。
+        self.caps.clear();
         // 链路一起拆(§4「本机身份换代由 session_gate 拆全部 lan 链路」/ 不变量 6 的撤位
         // 清单):撤位后残留的链路是拿旧 K_acc 建的,封解不了新纪元的任何一帧,留着只会
         // 让选路指向死腿。丢弃 = `LanLink::drop` 里 abort 两只任务、socket 落地。
@@ -3127,7 +3161,13 @@ impl EngineSlot {
         self.retire();
         // 把手交的是**当时**那只表(§6.2 ⑤(a))。顺序天然正确:上面刚 `retire()` 换过整只,
         // 故新引擎拿到的必然是新那只 —— 不是「记得在换表之后再造引擎」的自律。
-        let mut engine = Engine::new(conn, self.blob_policy, Arc::clone(&self.ops))?;
+        // 观测表那只把手是**同一只**(只清不换,见 [`EngineSlot::caps`]),`retire()` 刚清空。
+        let mut engine = Engine::new(
+            conn,
+            self.blob_policy,
+            Arc::clone(&self.ops),
+            Arc::clone(&self.caps),
+        )?;
         // 两步都成了才入槽:`on_runtime_started` 崩了就整台丢弃重来,不留「装配到
         // 一半、缺图清单没派生」的半成品在槽里(部分成功登记)。
         engine.on_runtime_started(conn)?;
@@ -3151,6 +3191,7 @@ impl EngineSlot {
 impl Drop for EngineSlot {
     fn drop(&mut self) {
         self.present.store(false, AtomicOrdering::SeqCst);
+        self.caps.clear();
     }
 }
 

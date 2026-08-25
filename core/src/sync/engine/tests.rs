@@ -3685,26 +3685,30 @@ fn caps_hello(caps: Option<Vec<&str>>) -> Msg {
 fn peer_capability_observation_has_three_states() {
     let (mut conn, mut clock, mut eng) = fresh();
 
-    // ① 刚装配的引擎:一条观测都没有。⭐ 这同时钉住「代次一换就清」那条**结构事实**
-    //    ——`EngineSlot::retire` 换的是整只引擎,新一代拿到的必然是这张空表。
-    assert!(eng.peer_caps.is_empty(), "新引擎不许带着上一代的观测");
-    assert!(!eng.peer_supports_board_columns(PEER_ULID), "没听说过 ⇒ 不算具备");
+    // ① 刚装配的引擎:一条观测都没有。
+    //    ⚠ **B-e 第 2 段起,这一格只说明「`new_solo` 这只夹具给的是张空表」** —— 表已经
+    //    从引擎的私有字段变成跨代次活着的共享把手([`PeerCaps`]),「代次一换就清」于是从
+    //    结构事实降级成 `EngineSlot::retire` / `Drop` 里的**两处显式动作**,
+    //    由 `transport/tests.rs` 的 `a_retired_engine_leaves_no_capability_behind` 压。
+    //    ⛔ 别再把这一句读成那条的字据。
+    assert_eq!(eng.peer_caps.len(), 0, "新引擎不许带着上一代的观测");
+    assert!(!eng.peer_caps.supports(PEER_ULID), "没听说过 ⇒ 不算具备");
 
     // ② 旧端的 Hello(压根没有 caps 字段)⇒ 落一条**否定**观测。
     //    这一格与 ① **必须分得开**:①是「不知道」,②是「知道了,它没有」。
     eng.on_relay_msg(&mut conn, &mut clock, PEER_ULID, caps_hello(None)).unwrap();
-    assert_eq!(eng.peer_caps.get(PEER_ULID), Some(&false), "旧端 Hello = 一条否定观测");
-    assert!(!eng.peer_supports_board_columns(PEER_ULID));
+    assert_eq!(eng.peer_caps.observed(PEER_ULID), Some(false), "旧端 Hello = 一条否定观测");
+    assert!(!eng.peer_caps.supports(PEER_ULID));
 
     // ③ 同一台对端升级之后再来一枚 ⇒ 观测翻正(⛔ 不许被 ② 那条钉死)。
     eng.on_relay_msg(&mut conn, &mut clock, PEER_ULID, caps_hello(Some(vec![CAP])))
         .unwrap();
-    assert!(eng.peer_supports_board_columns(PEER_ULID), "升级后的对端必须观测得到");
+    assert!(eng.peer_caps.supports(PEER_ULID), "升级后的对端必须观测得到");
 
     // ④ 再降回旧端(理论上只发生在换设备/换版本):观测跟着翻负,**不是单调的**。
     //    单调的是 §5.5 那枚闩(B-e),⛔ 别把它提前塞进观测这一层。
     eng.on_relay_msg(&mut conn, &mut clock, PEER_ULID, caps_hello(None)).unwrap();
-    assert!(!eng.peer_supports_board_columns(PEER_ULID), "观测层不做单调,闩才做");
+    assert!(!eng.peer_caps.supports(PEER_ULID), "观测层不做单调,闩才做");
 }
 
 /// ⛔ §6.2 那条禁令的行为面:**观测绝不能绑在 `ops_serve::on_hello` 的冷却 / 折叠结果上**。
@@ -3735,7 +3739,7 @@ fn capability_observation_lands_even_when_the_hello_is_folded_into_pending() {
         "第二枚必须撞冷却被折进 pending —— 否则这只测根本没测到那一格:{second:?}"
     );
     assert!(
-        eng.peer_supports_board_columns(PEER_ULID),
+        eng.peer_caps.supports(PEER_ULID),
         "被折叠的 Hello,它的能力宣告照样必须已经落地(§6.2 那条 ⛔)"
     );
 }
@@ -3753,7 +3757,7 @@ fn capability_observation_uses_the_shared_entry_hygiene() {
     let long = "x".repeat(33);
     let messy = vec![long.as_str(), "naïve", CAP];
     eng.on_relay_msg(&mut conn, &mut clock, PEER_ULID, caps_hello(Some(messy))).unwrap();
-    assert!(eng.peer_supports_board_columns(PEER_ULID), "垃圾项不许连坐掉真 token");
+    assert!(eng.peer_caps.supports(PEER_ULID), "垃圾项不许连坐掉真 token");
 
     // ② 扫描上界 16 项:真 token 排在**第 17 位** ⇒ 扫不到 ⇒ 观测为否。
     //    ⭐ 这一格正是「用的是 has_capability 还是 contains」的分水岭。
@@ -3761,13 +3765,13 @@ fn capability_observation_uses_the_shared_entry_hygiene() {
     overflow.push(CAP);
     eng.on_relay_msg(&mut conn, &mut clock, PEER_ULID, caps_hello(Some(overflow))).unwrap();
     assert!(
-        !eng.peer_supports_board_columns(PEER_ULID),
+        !eng.peer_caps.supports(PEER_ULID),
         "第 17 项扫不到 —— 答 true 就说明这条路上没走 has_capability"
     );
 
     // ③ 空表 = 明确的「我没有」,与缺席同义。
     eng.on_relay_msg(&mut conn, &mut clock, PEER_ULID, caps_hello(Some(vec![]))).unwrap();
-    assert_eq!(eng.peer_caps.get(PEER_ULID), Some(&false));
+    assert_eq!(eng.peer_caps.observed(PEER_ULID), Some(false));
 }
 
 /// **水位图不合形 ⇒ 整枚帧拒收 ⇒ 什么都不学**(本笔自己定的形,规格没给)。
@@ -3790,7 +3794,7 @@ fn a_frame_rejected_hello_teaches_the_engine_nothing() {
         "前提:这枚帧真的被拒了(否则下面那格由别的原因背书):{outs:?}"
     );
     assert!(
-        eng.peer_caps.get(PEER_ULID).is_none(),
+        eng.peer_caps.observed(PEER_ULID).is_none(),
         "被拒的帧不许留下任何观测 —— 连一条否定观测都不留"
     );
 }
@@ -3800,7 +3804,7 @@ fn a_frame_rejected_hello_teaches_the_engine_nothing() {
 fn a_malformed_sender_leaves_no_observation_slot() {
     let (mut conn, mut clock, mut eng) = fresh();
     let _ = eng.on_relay_msg(&mut conn, &mut clock, "PEERX", caps_hello(Some(vec![CAP])));
-    assert!(eng.peer_caps.is_empty(), "非规范 from 不许占格");
+    assert_eq!(eng.peer_caps.len(), 0, "非规范 from 不许占格");
 }
 
 /// 表满 fail-closed:**不插新条,但已在册的照常更新**。
@@ -3823,12 +3827,12 @@ fn a_full_observation_table_still_updates_the_peers_it_already_knows() {
     let extra = "01PEERZAAAAAAAAAAAAAAAAAAA";
     eng.on_relay_msg(&mut conn, &mut clock, extra, caps_hello(Some(vec![CAP]))).unwrap();
     assert_eq!(eng.peer_caps.len(), PEER_CAPS_SLOTS, "满了就不再长");
-    assert!(!eng.peer_supports_board_columns(extra), "挤不进来 ⇒ 观测缺席 ⇒ 不算具备");
+    assert!(!eng.peer_caps.supports(extra), "挤不进来 ⇒ 观测缺席 ⇒ 不算具备");
 
     // 已在册那台升级了:照样更新得到。
     eng.on_relay_msg(&mut conn, &mut clock, PEER_ULID, caps_hello(Some(vec![CAP]))).unwrap();
     assert!(
-        eng.peer_supports_board_columns(PEER_ULID),
+        eng.peer_caps.supports(PEER_ULID),
         "表满不许把已在册对端的观测永久钉死"
     );
 }

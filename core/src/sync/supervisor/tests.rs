@@ -307,6 +307,86 @@ async fn runtime_facts_read_engine_presence_in_three_tiers() {
     sup.stop("main").await.unwrap();
 }
 
+/// ⭐ **`RuntimeFacts::observe` 怎么把 §5.1 那条第三臂合成出来**(board-columns-plan §5.1;
+/// B-e 第 2 段)。
+///
+/// 那一臂是 `fresh_roster_is_known ∧ every_registered_device_is_capable`,两格分家:
+/// 名册来自 `SyncStatus::roster`(identity-plan §5.4 的服务器权威名册,`None` = **不知道**),
+/// 观测来自 [`transport::PeerCaps`](§6.2,随引擎代次清)。
+///
+/// **这只测同时是 §5.3 失败方向表第 3/4/5 行的兑现面**,逐格标出来:
+///
+/// | 档 | §5.3 那一行 |
+/// |---|---|
+/// | ① `roster = None` | 「刷新失败仍沿用旧授权」**H** —— 不知道就是不知道,⛔ 不是空集合 |
+/// | ② 名册有它、**没听说过它** | 「capability Hello 晚到 / 丢失」+「长期离线**设备**」⛔ 没有「离线就忽略」的兜底 |
+/// | ③ 名册有它、**听说了是旧端** | 同上的另一态(两态刻意不分,处置相同) |
+/// | ④ 全员肯定观测 | 这一臂唯一为真的形 |
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn runtime_facts_synthesize_the_roster_arm_in_four_tiers() {
+    use crate::board::gate::RuntimeFacts;
+    let sup = SpaceSupervisor::new(tokio::runtime::Handle::current(), 2, None);
+    let (path, conn, clock) = test_db("roster-arm");
+    let (s, _ev) = spec("main", &path, None);
+    let rt = sup.activate(s, conn, clock).unwrap();
+
+    const ME: &str = "01SELFAAAAAAAAAAAAAAAAAAAA";
+    const PEER: &str = "01PEERAAAAAAAAAAAAAAAAAAAA";
+    let set_roster = |devices: Option<Vec<&str>>| {
+        let mut s = rt.status.lock().unwrap();
+        s.device_id = Some(ME.to_string());
+        s.roster = devices.map(|ds| {
+            ds.into_iter().map(|d| transport::RosterEntry { device: d.to_string(), admin: false }).collect()
+        });
+    };
+    let arm = || RuntimeFacts::observe(&sup, "main").roster_fully_capable();
+
+    // ① 名册**不知道**。⚠ 观测这一半刻意先备齐 —— 否则这一格的 `false` 会被「反正也
+    //    没观测」顺手背书,测不到被测的那一句(自检第 13 条:几把尺)。
+    rt.peer_caps().observe_for_test(PEER, true);
+    set_roster(None);
+    assert!(!arm(), "① `None` = 不知道 ⇒ ⛔ 不许当授权(§5.3「刷新失败仍沿用旧授权」= H)");
+
+    // ② 名册里有它,但本代次**一个字都没听它说过**。
+    rt.peer_caps().clear();
+    set_roster(Some(vec![ME, PEER]));
+    assert!(!arm(), "② 观测缺席 ⇒ 这一臂为假(Hello 晚到 / 对端长期离线,同一格)");
+
+    // ③ 听说了,它是旧端。
+    rt.peer_caps().observe_for_test(PEER, false);
+    assert!(!arm(), "③ 否定观测 ⇒ 这一臂为假");
+
+    // ④ 全员肯定观测 ⇒ 唯一为真的形。
+    rt.peer_caps().observe_for_test(PEER, true);
+    assert!(arm(), "④ 名册每一台都有当前代次的肯定观测");
+
+    // ⑤ 名册只有自己 ⇒ 谓词**平凡为真**(§5.4 否掉「registry 只有本机一台」那个候选时
+    //    给的结论;⛔ 别把它当漏洞去"修")。本机不问观测表 —— 它的能力归谓词第一格管。
+    rt.peer_caps().clear();
+    set_roster(Some(vec![ME]));
+    assert!(arm(), "⑤ 名册只有自己 ⇒ 没有旧端可言");
+
+    // ⑥ ⭐ 名册里**没有本机**(空名册 / 本机已被移除)⇒ 判假(实现填的形,plan §11 自曝)。
+    //    ⛔ 别照 `all()` 的数学让空名册平凡为真 —— 那是朝 `true` 错算。
+    set_roster(Some(vec![]));
+    assert!(!arm(), "⑥ 空名册⛔ 不许平凡为真");
+    rt.peer_caps().observe_for_test(PEER, true);
+    set_roster(Some(vec![PEER]));
+    assert!(!arm(), "⑥ 名册里没有本机 = 这份名册不在描述我们这台的账户");
+
+    // ⑦⑧ 三档取法对这一格同样适用、且**与 engine_present 同向**(⛔ 别给瞬态档写成
+    //    `true`,那会让「正在切空间」变成一扇后门):无槽 ⇒ 假,瞬态 ⇒ 假。
+    assert!(!RuntimeFacts::observe(&sup, "never").roster_fully_capable(), "⑦ 无槽 ⇒ 假");
+    let _ticket = sup.begin_reset("resetme").await.unwrap();
+    assert!(!sup.is_stopped("resetme"), "前提:墓碑在场 = 瞬态档");
+    assert!(
+        !RuntimeFacts::observe(&sup, "resetme").roster_fully_capable(),
+        "⑧ 瞬态档:引擎当作**有**(更关)、名册臂当作**不成立**(也更关)—— 两格同向"
+    );
+
+    sup.stop("main").await.unwrap();
+}
+
 /// restart_required(space-entry-plan §3.2):旗与 transport 的 restart_flag 是
 /// 同一枚 Arc(判定那一刻置位即读得到),壳层写闸据 accessor 拒写。
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
