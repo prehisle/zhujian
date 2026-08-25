@@ -102,11 +102,20 @@ pub struct RemoteOp {
 /// ⚠ **v7 这一跳今天救不出任何一条隔离行,照样 bump**(§4.4 的纪律是「改了 shape 规则
 /// 就 +1」,不是「有人要救才 +1」):v36 及更早的库里根本造不出 `board_column` op
 /// (词汇表 CHECK 拦着),而对端更新时旧端落的是 `UnsupportedVocab` = **挂起不隔离**。
-/// ⇒ 真正会有隔离人口要救的是 **B-c 第 2 段**(§4 那套 stage/born_stage 的分型改判:
-/// 未知 stage 值今天归 `InvalidOp` = per-origin 持久隔离),那一笔会再 +1。
+///
+/// v8 = §4 的分型改判(B-c 第 2 段):`stage`/`born_stage` 的值域从「六值枚举」换成
+/// 「六个种子 ∪ 26 位严格 ULID」,「这列在不在」下沉到 apply 层的 `DependencyMissing`。
+/// ⭐ **这一跳才是真有隔离人口要救的那一条**,与 v7 的空跳不同:v7 的库遇到一枚
+/// `stage` 为 ULID 的 op 归 `InvalidOp` = **per-origin 持久隔离**,升级到 v8 后
+/// [`crate::sync::engine::Engine::reverify_quarantined`] 以新 shape 重跑那份 `op_blob`
+/// —— 过了就清隔离、把 op 放回 pending 并发 `want{水位+1}` 追回隔离期间帧到即丢的后续帧。
+/// ⚠ 别把「本轮之前谁也发不出 ULID stage」当成「这一跳没人要救」:一枚**畸形/恶意**的
+/// ULID 形 stage 今天就能把某个 origin 打进隔离,而它升级后该被放出来(放出来之后归
+/// `DependencyMissing` 挂起,不是再隔离一次)——这正是这条自助恢复路的设计意图。
+///
 /// ⭐ 另记:B-e 的 `BOARD_COLUMNS_CAP_GEN` 与本常量**不是一回事**(§5.5 (α))——
 /// B-b / B-c / B-d 共用**同一枚** CAP_GEN,⛔ 别因为这里 bump 了就顺手清闩。
-pub(crate) const VALIDATOR_VER: i64 = 7;
+pub(crate) const VALIDATOR_VER: i64 = 8;
 
 /// typed poison 错误分型(epoch-plan §4):`validate_op_shape` 与 `apply_remote_op`
 /// 返回**同一枚举**,分型在源头、不靠错误字符串事后分类。engine 按型分道:
@@ -245,6 +254,37 @@ pub fn apply_remote_op(
 
 // ---- 分发:item / topic ----------------------------------------------------------
 
+/// item op 的 stage 坐标在 apply 层的**存在性**前置(board-columns-plan §4.2)。
+///
+/// shape 只判形态(它不许查库);「这列在不在」是状态,判在这里:
+/// * **有行**(含已 tombstone 的 —— 不变量 5 下列行永不物理删除,tombstone 了的列仍是
+///   合法归宿,§4.3 的只读收容区就住在那儿)→ 继续,余下的交给 FK 与那两只耦合触发器;
+/// * **无行** → 跨 origin 因果依赖未到(对端刚建的列,它的 `board_column/create` 还在路上)
+///   ⇒ `DependencyMissing`:引擎挂起、每有进展重试、崩溃即丢无害。
+///
+/// ⛔ **这一格不许归 `InvalidOp`**——那正是 §4.0 那条病根:合法的跨 origin 建列乱序会被
+/// 打进 per-origin **持久隔离**(0027 头注:此后该 origin 的帧到即丢)。既有
+/// [`apply_item_set_field`] 在父行未到时归的也是 `DependencyMissing`,本条与它同语义、
+/// 不是新造(§4.2 引的就是这条判例)。
+///
+/// ⚠ **留在账上的可用性 M**(§4.2 记档不修):形态合法但永远不存在的 ULID 能把某个 origin
+/// 的队头长期甚至永久挂住。现有上界封得住**资源**(每 origin ≤10,000 条 / 64 MiB、全局
+/// ≤64 槽,超限丢整槽保水位),**封不住时间** ⇒ 数据安全 GO、可用性 M 级残留。
+/// ⛔ 不许因此改回 `InvalidOp`。
+fn require_stage_column(
+    tx: &Connection,
+    stage: &str,
+    what: &str,
+    item_id: &str,
+) -> Result<(), OpError> {
+    if row_exists(tx, "board_column", stage).map_err(local)? {
+        return Ok(());
+    }
+    Err(OpError::DependencyMissing(format!(
+        "回放依赖未到:item {item_id} 的 {what} 指向本机还没有的看板列 {stage}(引擎挂起重试,§4.2)"
+    )))
+}
+
 /// item create:出生快照落行。updated_at = 快照 created_at(出生时刻两者相等,不伪造
 /// 新鲜度);archived_at/sealed_at 生而 NULL(不在快照里,0014/0017 语义)。单机发射的
 /// 快照 stage 恒 == born_stage(发射端出生时刻读行);**纪元压实基线的 create 是现值
@@ -264,6 +304,14 @@ fn apply_item_create(tx: &Connection, op: &RemoteOp) -> Result<Outcome, OpError>
     }
     let p = &op.payload;
     let inv = OpError::InvalidOp;
+    let stage = str_field(p, "stage").map_err(inv)?;
+    require_stage_column(tx, &stage, "create.stage", &op.entity_id)?;
+    // ⚠ **born_stage 刻意不过这道闸**(§4.2 只给了 stage 的形,这一格是我判的,记在此):
+    // 它不是外键、是「出生在哪一列」的**史实文本**(0025 起 `trg_item_born_stage_required`
+    // 带回放豁免,回放路径上没有任何 DB 约束会因它悬空而失败),而**压实基线的 create 恰恰
+    // 会让两者分道** —— stage = 压实时刻现值、born_stage = 史实(epoch-plan §2.3)⇒ 判严
+    // 只会把一条无害的史实变成永久挂起。读它的只有 `idea_stats`(只数 born_stage='inbox'
+    // 的已知出生行),悬空值在那儿既不计入也不报错。
     tx.execute(
         "INSERT INTO items (id, content, stage, created_at, updated_at, archived_at, \
                             due_on, priority, position, sealed_at, born_stage, born_device) \
@@ -271,7 +319,7 @@ fn apply_item_create(tx: &Connection, op: &RemoteOp) -> Result<Outcome, OpError>
         (
             &op.entity_id,
             str_field(p, "content").map_err(inv)?,
-            str_field(p, "stage").map_err(inv)?,
+            &stage,
             str_field(p, "created_at").map_err(inv)?,
             opt_str_field(p, "due_on").map_err(inv)?,
             opt_int_field(p, "priority").map_err(inv)?,
@@ -303,6 +351,16 @@ fn apply_item_set_field(tx: &Connection, op: &RemoteOp) -> Result<Outcome, OpErr
     let field = str_field(&op.payload, "field").map_err(OpError::InvalidOp)?;
     let value = item_field_value(&field, field_value(&op.payload).map_err(OpError::InvalidOp)?)
         .map_err(OpError::InvalidOp)?;
+    // stage 的列前置(§4.2)。⭐ **放在 LWW 之前是刻意的**:这样「凡是被本机收下的 item
+    // stage op —— 赢家还是输家 —— 它点名的列在本机必有行」才是条真不变量,而
+    // `boot::audit_op_preconditions` 扫的正是 oplog 全量、**不分输赢**。判在 LWW 之后的话
+    // 两边就是两把尺:一个输家 op 带着悬空列 id 在 live 这边落了账,同一份快照到 boot 那儿
+    // 却被拒(memory `test-negative-control` 那条「boot 与 live 反向分歧」)。
+    // 代价说清楚:一枚注定输掉的 stage op 也要等它的列到齐才落账 —— 多挂一会儿,换同口径。
+    if field == "stage" {
+        let target = str_field(&op.payload, "value").map_err(OpError::InvalidOp)?;
+        require_stage_column(tx, &target, "set_field{stage}", &op.entity_id)?;
+    }
     if !is_latest_field_write(tx, "item", &op.entity_id, &field, &op.hlc).map_err(local)? {
         return Ok(Outcome::LwwStale);
     }
@@ -1375,7 +1433,7 @@ fn validate_board_column_entity_id(op: &RemoteOp) -> Result<(), String> {
             "board_column {id} 是系统列(灵感两列),永不接受任何 op(不变量 2)"
         ));
     }
-    if crate::board::is_seed_column(id) || sync_proto::is_ulid(id) {
+    if is_column_coordinate(id) {
         return Ok(());
     }
     Err(format!(
@@ -1383,7 +1441,20 @@ fn validate_board_column_entity_id(op: &RemoteOp) -> Result<(), String> {
     ))
 }
 
-const STAGES: [&str; 6] = ["inbox", "filed", "todo", "doing", "confirming", "done"];
+/// 线上「一个看板列的坐标」的**形态**判据(纯形态,不查库)——六个种子的旧字面量
+/// (schema-seeded,plan §7.1a)∨ 26 位**严格** ULID(用户建的列)。
+///
+/// ⭐ **两处必须同源,故只此一份**(plan §4.1;清单 14):`board_column` op 的 entity_id
+/// 与 `items.stage` 的值域用的是同一把尺。松尺(`clock::is_canonical_ulid`,首字符上限
+/// 没收紧)放行的列 id 会被严尺在 stage 上拒掉 ⇒ 造出「列建得出来、卡却拖不进去」的死态。
+/// ⛔ 别在任一侧另写一份 `sync_proto::is_ulid(...)`。
+///
+/// 两侧唯一的差别不在形态而在**所有权**:`inbox`/`filed` 是合法的 stage(灵感卡就住在
+/// 那儿),却永不接受任何 board_column op(不变量 2)⇒ 那一格由
+/// [`validate_board_column_entity_id`] 在调用本函数**之前**单独拒,不进这里。
+fn is_column_coordinate(id: &str) -> bool {
+    crate::board::is_seed_column(id) || sync_proto::is_ulid(id)
+}
 
 /// item set_field 的**形态 + 内在值域**校验(shape 层,boot+live 共用)。值域(stage 枚举 /
 /// priority 1..3 / due_on 规范日历日)**必须放共享层、不能只放 boot** ——否则 live 会在 LWW
@@ -1554,14 +1625,17 @@ fn validate_device_id_value(v: &Value) -> Result<(), String> {
     }
 }
 
-/// born_stage 值域(create 专用):stage 六枚举 ∪ **null**。null 是 pre-0018「未知
-/// 不回填」史实的协议承载(epoch-plan §2.3 收编)——压实基线以它出生,live 也合法;
+/// born_stage 值域(create 专用):**与 stage 同一把尺** ∪ `null`。null 是 pre-0018
+/// 「未知不回填」史实的协议承载(epoch-plan §2.3 收编)——压实基线以它出生,live 也合法;
 /// born_stage 不可 set_field 的规则不变、`idea_stats` 只数已知出生行,无副作用面。
+///
+/// ⛔ 三臂之一(plan §4.1):它必须与 [`validate_stage_value`] **同源**——0036 之后
+/// 「出生在哪一列」同样是列身份,漏了这一臂,一枚出生在自定义列的 create 照样进隔离。
 fn validate_born_stage_value(v: &Value) -> Result<(), String> {
     match v {
         Value::Null => Ok(()),
         other => validate_stage_value(other)
-            .map_err(|_| format!("item born_stage 期待 stage 枚举或 null:{other}")),
+            .map_err(|_| format!("item born_stage 期待列 id 或 null:{other}")),
     }
 }
 
@@ -1616,11 +1690,32 @@ fn validate_done_at_value(v: &Value) -> Result<(), String> {
     }
 }
 
-/// stage 值域(6 枚举;mirror 0021 列 CHECK,该 CHECK 未被 0022 回放豁免,故 live 回放会撞)。
+/// stage 值域(plan §4.1 的判定顺序,boot+live 共用)。
+///
+/// **0036 起 stage 不再是六值枚举,而是指向 `board_column` 一行的身份** ⇒ 0021 那条
+/// `CHECK (stage IN (六值))` 已随整表重建消失,「live 回放撞枚举 CHECK」那一格改由
+/// [`require_stage_column`] 的 `DependencyMissing` 前置承接。判定恰四格(对 JSON `Value`
+/// 穷尽,codex 四轮):
+///
+/// | 值 | 判 | 为什么 |
+/// |---|---|---|
+/// | 非字符串 | `InvalidOp` | 类型损坏,⛔ 不许伪装成版本偏斜去走挂起自愈 |
+/// | 六个种子的旧字面量 | `Ok` | schema-seeded,每台库里恒有行 |
+/// | 26 位严格 ULID | `Ok` | 「这列在不在」是**状态**,交给 apply 层判 |
+/// | 其余 | `InvalidOp` | 既不是种子也不是 ULID = 损坏 |
+///
+/// ⚠ **「语法合法但永远不存在的 ULID」会被放行**,这是 `DependencyMissing` 的定义边界、
+/// 不可避免:shape 层不许查库,而形态合法的 ULID 可能是「对端刚建、create 未到」或
+/// 「create 与 tombstone 乱序」——⛔ 这两种不能误杀。恶意伪造的那种由 pending 上界限
+/// **资源**(§4.2 的残留 M:封得住资源、封不住时间),⛔ 不靠 shape 假装能识别它。
+///
+/// ⛔ **只降 `stage`/`born_stage` 这两个字段**(§4 定的边界):`priority`/`due_on`/
+/// `position` 的值域非法仍是 `InvalidOp`——那三个不是「有意扩展的身份」,合法版本
+/// 确实不该发出界的值。
 fn validate_stage_value(v: &Value) -> Result<(), String> {
     match v {
-        Value::String(s) if STAGES.contains(&s.as_str()) => Ok(()),
-        other => Err(format!("item stage 不在枚举 {STAGES:?}:{other}")),
+        Value::String(s) if is_column_coordinate(s) => Ok(()),
+        other => Err(format!("item stage 既不是内置列、也不是 26 位严格 ULID:{other}")),
     }
 }
 
@@ -3708,5 +3803,338 @@ mod tests {
         ));
         // tombstone 恰零键。
         assert!(matches!(bad(&ulid, "tombstone", json!({"why": "手滑"})), OpError::InvalidOp(_)));
+    }
+
+    // ---- B-c 第 2 段:§4 的分型改判 --------------------------------------------------
+
+    /// item create 的七/八键 payload。任务列要 position、灵感列必须没有(耦合触发器,
+    /// 回放路径豁免,但单机路径认它)。
+    fn item_create_payload(stage: &str, position: Option<&str>) -> Value {
+        json!({
+            "content": "一张卡",
+            "stage": stage,
+            "created_at": "2026-08-25T10:00:00Z",
+            "born_stage": stage,
+            "due_on": null,
+            "priority": null,
+            "position": position,
+        })
+    }
+
+    fn stage_of(conn: &Connection, item: &str) -> String {
+        conn.query_row("SELECT stage FROM items WHERE id = ?1", [item], |r| r.get(0)).unwrap()
+    }
+
+    /// 一枚 item op 塞进**三条臂**各自的形(§4.1 点名的那三处)。
+    ///
+    /// ⛔ **必须逐臂喂**,不许「反正它们都调 `validate_stage_value`」就只喂一臂:
+    /// 漏接一臂正是 codex 二轮 H3 点名的那个洞(合法新列照样进隔离),而「谁真的调了它」
+    /// 只有把值从三条臂各送一次才验得出来。
+    fn stage_arms(v: &Value) -> [(&'static str, &'static str, Value); 3] {
+        [
+            ("set_field", "set_field{stage}", json!({"field": "stage", "value": v})),
+            (
+                "create",
+                "create.stage",
+                json!({"content": "x", "stage": v, "created_at": "t", "born_stage": "inbox",
+                       "due_on": null, "priority": null, "position": null}),
+            ),
+            (
+                "create",
+                "create.born_stage",
+                json!({"content": "x", "stage": "inbox", "created_at": "t", "born_stage": v,
+                       "due_on": null, "priority": null, "position": null}),
+            ),
+        ]
+    }
+
+    fn shape_of_stage(kind: &str, payload: Value) -> Result<(), OpError> {
+        validate_op_shape(&mk(
+            &remote_hlc(FUTURE_MS, 1),
+            "item",
+            "01ITEMSTAGESHAPE000000000X",
+            kind,
+            payload,
+        ))
+    }
+
+    /// §4.1 的四格判定,**三条臂逐臂过一遍**。
+    #[test]
+    fn stage_takes_seed_ids_and_strict_ulids_and_nothing_else() {
+        let ulid = Ulid::new().to_string();
+        // ① 六个种子的旧字面量 + 形态合法的 ULID:三臂全收。
+        //    ⚠ 「这列在不在」**不在这一层判** —— 下面那个 ULID 谁也没建过,shape 照样放行,
+        //    交给 apply 层的 `require_stage_column` 归 DependencyMissing(§4.1 的定义边界)。
+        for good in [json!("inbox"), json!("filed"), json!("todo"), json!("done"), json!(ulid)] {
+            for (kind, what, payload) in stage_arms(&good) {
+                assert!(
+                    shape_of_stage(kind, payload).is_ok(),
+                    "{what} 应接受 {good}(§4.1 前三格)"
+                );
+            }
+        }
+        // ② 非字符串 / 既非种子亦非严格 ULID:三臂全拒,且**恒是 InvalidOp**——
+        //    ⛔ 不许伪装成版本偏斜去走「挂起等升级」,那种值等不到任何升级。
+        let bads = [
+            json!(7),
+            json!(true),
+            json!({"stage": "todo"}),
+            json!(""),
+            json!("bogus"),
+            // 小写 = 出了 Crockford 字符集。
+            json!("01arbcdefghjkmnpqrstvwxyz0"),
+            // 25 位 / 27 位:长度差一位。
+            json!("0123456789ABCDEFGHJKMNPQR"),
+            json!("0123456789ABCDEFGHJKMNPQRST"),
+            // ⭐ **这一格是整只测的要害**(清单 13「数一数这条路上有几把尺」):26 位、
+            //    全 Crockford,只有**首字符 > '7'** —— 松尺 `clock::is_canonical_ulid`
+            //    放行它,严尺 `sync_proto::is_ulid` 拒。两把尺必须同源,否则
+            //    `board_column/create` 建得出这么一枚列 id,而卡的 stage 却拖不进去 =
+            //    死态(plan §4.1 钉死的就是这一条)。
+            json!("80000000000000000000000000"),
+        ];
+        for bad in bads {
+            for (kind, what, payload) in stage_arms(&bad) {
+                assert!(
+                    matches!(shape_of_stage(kind, payload), Err(OpError::InvalidOp(_))),
+                    "{what} 必须以 InvalidOp 拒 {bad}"
+                );
+            }
+        }
+        // ③ null 只在 born_stage 那一臂合法(epoch-plan §2.3 收编的正式词汇);
+        //    两条 stage 臂拒它 —— stage 是 NOT NULL 外键,没有「未知」这一档。
+        for (kind, what, payload) in stage_arms(&json!(null)) {
+            let got = shape_of_stage(kind, payload);
+            if what == "create.born_stage" {
+                assert!(got.is_ok(), "born_stage: null 是正式词汇");
+            } else {
+                assert!(matches!(got, Err(OpError::InvalidOp(_))), "{what} 必须拒 null");
+            }
+        }
+    }
+
+    /// §4.2:列还没到 = **挂起**,不是毒 op。两条臂(create / set_field)各走一遍,
+    /// 且都要证「列一到,原样那枚 op 就落地」——否则这条自愈路只证了一半。
+    #[test]
+    fn a_stage_naming_a_column_we_do_not_have_yet_suspends_instead_of_poisoning() {
+        let (mut conn, mut clock) = fresh();
+        let col = Ulid::new().to_string();
+        let item = Ulid::new().to_string();
+        let create =
+            mk(&remote_hlc(FUTURE_MS, 1), "item", &item, "create", item_create_payload(&col, Some("a0")));
+        assert!(
+            matches!(
+                apply_remote_op(&mut conn, &mut clock, &create),
+                Err(OpError::DependencyMissing(_))
+            ),
+            "出生在一列本机还没有的列上 = 因果依赖未到,⛔ 不是 InvalidOp(那会持久隔离整条流)"
+        );
+        // 整体回滚(连 oplog 记账一起)—— 这是 engine 能拿同一枚 op 重试的前提。
+        assert_eq!(oplog_rows(&conn), 0, "挂起的 op 一个字节都不许落账");
+        let mkcol = mk(
+            &remote_hlc(FUTURE_MS, 2),
+            "board_column",
+            &col,
+            "create",
+            column_create_payload("新列", "a6"),
+        );
+        apply_remote_op(&mut conn, &mut clock, &mkcol).unwrap();
+        assert_eq!(
+            apply_remote_op(&mut conn, &mut clock, &create).unwrap(),
+            Outcome::Applied,
+            "列到齐后,同一枚 op 原样落地"
+        );
+        // set_field 臂:再搬去第二列(也还没到)。
+        let col2 = Ulid::new().to_string();
+        let mv = mk(
+            &remote_hlc(FUTURE_MS, 3),
+            "item",
+            &item,
+            "set_field",
+            json!({"field": "stage", "value": col2}),
+        );
+        assert!(matches!(
+            apply_remote_op(&mut conn, &mut clock, &mv),
+            Err(OpError::DependencyMissing(_))
+        ));
+        assert_eq!(stage_of(&conn, &item), col, "挂起期间行不许被动过");
+        let mkcol2 = mk(
+            &remote_hlc(FUTURE_MS, 4),
+            "board_column",
+            &col2,
+            "create",
+            column_create_payload("二号", "a7"),
+        );
+        apply_remote_op(&mut conn, &mut clock, &mkcol2).unwrap();
+        assert_eq!(apply_remote_op(&mut conn, &mut clock, &mv).unwrap(), Outcome::Applied);
+        assert_eq!(stage_of(&conn, &item), col2);
+    }
+
+    /// ⭐ 承重的是 `apply_item_set_field` 里「列前置**排在 LWW 之前**」那一句。
+    ///
+    /// 判据**不是**「行有没有被改坏」(输家本来就不改行,判在哪边都一样),而是
+    /// **它有没有落账**:判在 LWW 之后的话,一枚输掉的 stage op 会带着悬空列 id 进 oplog,
+    /// 而 `boot::audit_op_preconditions` 扫的是 oplog **全量、不分输赢** ⇒ 同一份快照
+    /// live 这边收、boot 那边拒 = 反向分歧。
+    #[test]
+    fn even_a_stale_stage_op_waits_for_its_column() {
+        let (mut conn, mut clock) = fresh();
+        let item = Ulid::new().to_string();
+        apply_remote_op(
+            &mut conn,
+            &mut clock,
+            &mk(
+                &remote_hlc(FUTURE_MS, 1),
+                "item",
+                &item,
+                "create",
+                item_create_payload("todo", Some("a0")),
+            ),
+        )
+        .unwrap();
+        // 赢家先落:HLC 更高。
+        let win = mk(
+            &remote_hlc(FUTURE_MS, 9),
+            "item",
+            &item,
+            "set_field",
+            json!({"field": "stage", "value": "done"}),
+        );
+        assert_eq!(apply_remote_op(&mut conn, &mut clock, &win).unwrap(), Outcome::Applied);
+        // 迟到的输家,指向一列本机没有的列:注定输 LWW,**照样先等列**。
+        let ghost = Ulid::new().to_string();
+        let stale = mk(
+            &remote_hlc(FUTURE_MS, 2),
+            "item",
+            &item,
+            "set_field",
+            json!({"field": "stage", "value": ghost}),
+        );
+        assert!(
+            matches!(
+                apply_remote_op(&mut conn, &mut clock, &stale),
+                Err(OpError::DependencyMissing(_))
+            ),
+            "输家也要等列到齐;若这里返回 LwwStale,悬空列 id 就落进了 oplog"
+        );
+        assert_eq!(stage_of(&conn, &item), "done");
+        // 阳性对照:列一到,它就正常地**输掉** LWW(证明上面拦住它的是列前置、不是别的)。
+        apply_remote_op(
+            &mut conn,
+            &mut clock,
+            &mk(
+                &remote_hlc(FUTURE_MS, 4),
+                "board_column",
+                &ghost,
+                "create",
+                column_create_payload("迟到的列", "a8"),
+            ),
+        )
+        .unwrap();
+        assert_eq!(apply_remote_op(&mut conn, &mut clock, &stale).unwrap(), Outcome::LwwStale);
+        assert_eq!(stage_of(&conn, &item), "done");
+    }
+
+    /// §4.3 孤儿卡的收敛形(定形 (b)),两半:
+    /// * 远端合法 tombstone **照落**,哪怕本地并发还有 live 卡(① 那只守护带豁免);
+    /// * 已 tombstone 的列**仍是合法归宿**(不变量 5:行还在)—— 卡照样搬得进去,
+    ///   ⛔ 不许判成 DependencyMissing、更不许判成毒 op。
+    #[test]
+    fn a_tombstoned_column_keeps_its_cards_and_still_accepts_new_ones() {
+        let (mut conn, mut clock) = fresh();
+        let col = Ulid::new().to_string();
+        apply_remote_op(
+            &mut conn,
+            &mut clock,
+            &mk(
+                &remote_hlc(FUTURE_MS, 1),
+                "board_column",
+                &col,
+                "create",
+                column_create_payload("要删的列", "a6"),
+            ),
+        )
+        .unwrap();
+        let card = Ulid::new().to_string();
+        apply_remote_op(
+            &mut conn,
+            &mut clock,
+            &mk(
+                &remote_hlc(FUTURE_MS, 2),
+                "item",
+                &card,
+                "create",
+                item_create_payload(&col, Some("a0")),
+            ),
+        )
+        .unwrap();
+        // 本地这列还有 live 卡,远端那枚 tombstone 照样落(不带豁免的话它会归 InvalidOp,
+        // 把整条流隔离 —— 而两端各自都只是做了件合法的事)。
+        let tomb = mk(&remote_hlc(FUTURE_MS, 3), "board_column", &col, "tombstone", json!({}));
+        assert_eq!(apply_remote_op(&mut conn, &mut clock, &tomb).unwrap(), Outcome::Applied);
+        assert!(marker(&conn, &col).is_some());
+        assert_eq!(stage_of(&conn, &card), col, "⛔ 不伪造用户没做的批量移动(否掉的方案 (c))");
+        // 另一张卡照样能搬进这列(§4.2 那句「含已 tombstone 的」)。
+        let other = Ulid::new().to_string();
+        apply_remote_op(
+            &mut conn,
+            &mut clock,
+            &mk(
+                &remote_hlc(FUTURE_MS, 4),
+                "item",
+                &other,
+                "create",
+                item_create_payload("todo", Some("a1")),
+            ),
+        )
+        .unwrap();
+        let mv = mk(
+            &remote_hlc(FUTURE_MS, 5),
+            "item",
+            &other,
+            "set_field",
+            json!({"field": "stage", "value": col}),
+        );
+        assert_eq!(apply_remote_op(&mut conn, &mut clock, &mv).unwrap(), Outcome::Applied);
+        assert_eq!(stage_of(&conn, &other), col);
+    }
+
+    /// `born_stage` 是**史实文本**、不是外键 ⇒ 它**不过**列前置那道闸。
+    ///
+    /// 形取自纪元压实基线(epoch-plan §2.3):stage = 压实时刻现值、born_stage = 出生史实,
+    /// 两者本就会分道。⭐ 后半段是「谁承重」的对照:同一个列 id 换到 `stage` 上就必须等 ——
+    /// 证明这一格分道的是**字段**,不是那个列 id 本身。
+    #[test]
+    fn born_stage_records_history_not_a_reference_so_it_never_waits() {
+        let (mut conn, mut clock) = fresh();
+        let gone = Ulid::new().to_string();
+        let id = Ulid::new().to_string();
+        let baseline = mk(
+            &remote_hlc(FUTURE_MS, 1),
+            "item",
+            &id,
+            "create",
+            json!({"content": "压实基线合成的", "stage": "todo", "created_at": "t",
+                   "born_stage": gone, "due_on": null, "priority": null, "position": "a0"}),
+        );
+        assert_eq!(apply_remote_op(&mut conn, &mut clock, &baseline).unwrap(), Outcome::Applied);
+        let born: Option<String> =
+            conn.query_row("SELECT born_stage FROM items WHERE id = ?1", [&id], |r| r.get(0)).unwrap();
+        assert_eq!(born.as_deref(), Some(gone.as_str()), "史实原样落列,不猜也不清空");
+        let other = Ulid::new().to_string();
+        let as_stage = mk(
+            &remote_hlc(FUTURE_MS, 2),
+            "item",
+            &other,
+            "create",
+            item_create_payload(&gone, Some("a1")),
+        );
+        assert!(
+            matches!(
+                apply_remote_op(&mut conn, &mut clock, &as_stage),
+                Err(OpError::DependencyMissing(_))
+            ),
+            "同一个列 id 换到 stage 上就得等 —— 分道的是字段,不是这个 id"
+        );
     }
 }

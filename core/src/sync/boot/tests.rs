@@ -2475,3 +2475,86 @@ fn both_sides_deleting_the_same_seed_column_converge_on_the_smaller_hlc() {
     assert_eq!(got, smaller, "合并后 marker = 两枚里 HLC 小的那一枚");
     crate::board::audit_tombstone_apply_empty(&b.conn).unwrap();
 }
+
+/// stage 的依赖前置(§4.2 的 **boot 半边**,B-c 第 2 段随 apply 层那道
+/// `require_stage_column` 一并加):item op 点名的看板列必须在本库**有行**。
+///
+/// ⚠ 少了它就能构造出「批量复制过得去、live 逐条回放**永久挂住**」的快照 —— 与
+/// image_add / comment 那两格逐字同型:批量复制不看依赖,而 live 按 origin_seq 逐条应用
+/// 会在那枚 op 上挂死。
+///
+/// 两条来路各走一遍(`set_field` 的 `$.value` 与 `create` 的 `$.stage`),中间夹一句
+/// 阳性对照:**列的行一在,同一份日志就过** —— 证明拦住它的是「有没有行」,不是别的。
+/// ⚠ create 那一臂**必须放最后**:注入的 create op 没有对应的行,它过了本格之后必然撞
+/// 电池里那条「有 create op 且未 tombstone 的 item 无行」——那是另一格的正常职责,
+/// 与本格无关,但会盖住后面的断言。
+#[test]
+fn item_ops_may_not_name_a_column_this_library_has_no_row_for() {
+    let mut a = peer("stage-dep");
+    let card = notes::capture(&mut a.conn, &mut a.clock, "一张灵感卡").unwrap();
+    strict_battery(&a.conn).expect("阳性对照:种子列上的 item op 当然合法");
+
+    // ① set_field 臂:把卡搬去一列谁也没建过的列。
+    let ghost = ulid::Ulid::new().to_string();
+    inject_raw_op(
+        &a.conn,
+        &mut a.clock,
+        "item",
+        &card,
+        "set_field",
+        &format!(r#"{{"field":"stage","value":"{ghost}"}}"#),
+    );
+    let err = strict_battery(&a.conn).unwrap_err();
+    assert!(err.contains("看板列"), "{err}");
+
+    // ② 那一列的行到位、卡也真搬过去 ⇒ 同一份日志立刻过闸。
+    local_column_op(
+        &mut a,
+        &ghost,
+        "create",
+        serde_json::json!({"title":"迟到的列","kind":"task","system":false,"position":"a6",
+                           "created_at":"2026-08-25T00:00:00.000Z"}),
+    );
+    local_item_op(&mut a, &card, "set_field", serde_json::json!({"field":"stage","value":&ghost}));
+    strict_battery(&a.conn).expect("列的行在了就不再是孤儿");
+
+    // ③ create 臂:同一条判据的第二条来路($.stage,不是 $.value)。
+    let ghost2 = ulid::Ulid::new().to_string();
+    inject_raw_op(
+        &a.conn,
+        &mut a.clock,
+        "item",
+        &ulid::Ulid::new().to_string(),
+        "create",
+        &format!(
+            r#"{{"content":"孤儿卡","stage":"{ghost2}","created_at":"2026-08-25T00:00:00Z",
+                 "born_stage":"{ghost2}","due_on":null,"priority":null,"position":"a0"}}"#
+        ),
+    );
+    let err = strict_battery(&a.conn).unwrap_err();
+    assert!(err.contains("看板列"), "{err}");
+}
+
+/// [`local_column_op`] 的 item 版:以**本机 origin** 走回放路径落一枚 item op
+/// (行与日志同时动,不像 `inject_raw_op` 只写日志)。
+fn local_item_op(p: &mut Peer, entity_id: &str, kind: &str, payload: serde_json::Value) {
+    let hlc = p.clock.tick(&p.conn).unwrap();
+    let seq: i64 = p
+        .conn
+        .query_row(
+            "SELECT COALESCE(MAX(origin_seq), 0) + 1 FROM oplog WHERE origin = ?1",
+            [hlc.device_id.as_str()],
+            |r| r.get(0),
+        )
+        .unwrap();
+    let op = crate::replay::RemoteOp {
+        op_id: ulid::Ulid::new().to_string(),
+        hlc: hlc.encode(),
+        entity: "item".into(),
+        entity_id: entity_id.into(),
+        kind: kind.into(),
+        payload,
+        origin_seq: seq,
+    };
+    crate::replay::apply_remote_op(&mut p.conn, &mut p.clock, &op).expect("落 item op");
+}

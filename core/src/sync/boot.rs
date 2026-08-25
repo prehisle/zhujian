@@ -1582,6 +1582,57 @@ fn audit_op_preconditions(live: &Connection) -> Result<(), String> {
             "导入后语义审计:{bad_column_order} 条 board_column op 的 create 晚于它(set-before-create,live 挂起),整体回滚"
         ));
     }
+    // item op 的 **stage 坐标**前置(§4.2 的 boot 半边 —— B-c 第 2 段随 apply 层那道
+    // `require_stage_column` 一并加)。live 在「那一列本机没有行」时归 `DependencyMissing`
+    // = 挂起,故 boot 必须**同口径**拒:少了它就能构造出「批量复制过得去、live 逐条回放
+    // 永久挂住」的快照(与上面 image_add / comment 那两格逐字同型)。
+    //
+    // 两条来路合成一列再判(create 的 `$.stage` 与 set_field 的 `$.value`),⛔ 别拆成两
+    // 条 SQL —— 判据只有一条,写两遍就是两份会各自腐烂的描述(清单 14)。
+    //
+    // ⭐ **判据只有一句:那一列必须有行。** ⛔ 这里**没有** item/topic 那两条出口,不是漏写:
+    //   * 「有更早的 tombstone」—— 列行**永不物理删除**(不变量 5,tombstone 只是行上一枚
+    //     marker)⇒ 「无行」在列这边根本没有合法解释;
+    //   * 「有 create 背书,只是还没回放到」—— `board::audit_board_column_semantics` 第 ②
+    //     格已硬性要求「有 create op 的列必须有行」,而它与本函数同在一趟电池里 ⇒ 这条出口
+    //     **恒真不了任何一格**,写进来就是一条改变不了取舍的死条件(清单 5)。
+    // ⭐ 同样**刻意没有 seed 豁免**:六个种子的行由迁移种下、`trg_board_column_no_delete`
+    // 禁删、缺行的库过不了 `board::audit_seed_columns` ⇒ 它们恒落在这句 `NOT EXISTS` 里
+    // (478 那把变异刀判过一次「seed 豁免是死码」,⛔ 别再加回来)。
+    //
+    // ⚠ 它扫的是 **oplog 全量,不分输赢、也不看宿主 item 有没有 tombstone** —— 这与 live
+    // 的 `apply_item_*`(先墓碑压制、再判列)是**故意的不对称**,方向是 boot **更严**:
+    //   * 更严不会误拒 —— 一枚点名列 X 的 item op 能合法存在,只可能因为发它的那台见过 X,
+    //     而列行永不消失、压实基线又会把每一行重新合成出 create ⇒ 快照里必有行或有 create;
+    //   * 反过来(boot 更松)才是那条要闭合的病:坏快照过审 → 诚实设备回放挂起 → 静默分叉。
+    //
+    // ⛔ **刻意没有配一条「列的 create 必须 HLC 早于这枚 item op」的因果序审计**
+    //   (上面 board_column 自己那格有,这一格没有,不是漏写):跨实体这边 HLC 先后
+    //   **不参与任何判定** —— item.stage 与列之间没有 LWW 关系,live 也只等「行在不在」,
+    //   晚到的 create 一到就解开。加了它只会误拒合法快照(两台并发:B 把卡拖进 A 刚建的列,
+    //   两枚 op 的 HLC 谁大谁小由各自墙钟定),而 §4.2 一个消费者都没有 ⇒ 又一个「算出来
+    //   却没人用的值」。列自己那格要因果序,是因为 tombstone 的 apply 要求父行**已物化**。
+    let orphan_stage: i64 = live
+        .query_row(
+            "SELECT COUNT(*) FROM ( \
+               SELECT CASE WHEN o.kind = 'create' THEN json_extract(o.payload, '$.stage') \
+                           ELSE json_extract(o.payload, '$.value') END AS col \
+                 FROM oplog o \
+                WHERE o.entity = 'item' \
+                  AND (o.kind = 'create' \
+                       OR (o.kind = 'set_field' \
+                           AND json_extract(o.payload, '$.field') = 'stage')) \
+             ) s \
+             WHERE NOT EXISTS (SELECT 1 FROM board_column c WHERE c.id = s.col)",
+            [],
+            |r| r.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    if orphan_stage > 0 {
+        return Err(format!(
+            "导入后语义审计:{orphan_stage} 条 item op 的 stage 指向本库没有行的看板列(live 挂起),整体回滚"
+        ));
+    }
     // comment create 的宿主前置(identity-plan §4.3 第 14 条,设计审一轮 H3):与 image_add
     // 逐字同型。少了它能构造出「boot 批量复制过得去、live 顺序回放**永久 DependencyMissing**」
     // 的快照——批量复制不看依赖,而 live 按 origin_seq 逐条应用会在孤儿 comment 上挂住。

@@ -3586,3 +3586,81 @@ fn route_state_table_property_holds_under_random_event_streams() {
         );
     }
 }
+
+/// ⭐ **§4.4 那枚 `VALIDATOR_VER` bump 的自助恢复路**(B-c 第 2 段)。
+///
+/// 场景是真的混版:一台跑着 **v7 校验器**的库收到一枚 `stage` 为 ULID 的 op,按当时的规则
+/// 归 `InvalidOp` = **per-origin 持久隔离**(此后该 origin 的帧到即丢);升级到带 §4 改判的
+/// 这一版之后,`reverify_quarantined` 必须把它放出来。⚠ 版本号写的是**字面量 7**,不是
+/// `VALIDATOR_VER - 1`:后者恒成立、证不了任何事,而写死 7 之后**一旦有人把 bump 撤回去,
+/// `WHERE validator_ver < 7` 当场不命中,这只测就红** —— 那正是它要守的东西。
+///
+/// 两半都要:改判**认得的**放出来并真落地,改判**仍不认**的留在隔离里、只把版本抬到当前。
+#[test]
+fn a_ulid_stage_op_quarantined_by_the_old_ruler_is_released_by_the_bump() {
+    const OLD_VALIDATOR_VER: i64 = 7; // 478(B-c 第 1 段)发出去的那一版
+    const FIXED: &str = "RVSTAGEDEV0000000000000FX1";
+    const STILL: &str = "RVSTAGEDEV0000000000000BD2";
+    let (mut conn, mut clock, mut eng) = fresh();
+    // 那一列本机已有(靠另一台的 create op 落的)—— 于是放出来之后 drain 能真把 op 应用掉,
+    // 观测面是「行落没落」而不只是「隔离表空没空」。
+    let col = Ulid::new().to_string();
+    crate::replay::apply_remote_op(
+        &mut conn,
+        &mut clock,
+        &RemoteOp {
+            op_id: Ulid::new().to_string(),
+            hlc: Hlc { wall_ms: 500, counter: 0, device_id: "RVSTAGEDEV0000000000000C03".into() }
+                .encode(),
+            entity: "board_column".into(),
+            entity_id: col.clone(),
+            kind: "create".into(),
+            payload: json!({"title":"对端建的列","kind":"task","system":false,"position":"a6",
+                            "created_at":"2026-08-25T00:00:00.000Z"}),
+            origin_seq: 1,
+        },
+    )
+    .expect("列先到");
+
+    // 两个 origin 各隔离一条(材料随后换成「v7 会拒、v8 该怎么判」的真 op)。
+    for (i, dev) in [FIXED, STILL].iter().enumerate() {
+        let bad = poison_op(dev, 1_000 + i as u64, 1);
+        eng.on_relay_msg(&mut conn, &mut clock, "R", Msg::Ops { origin: dev.to_string(), ops: vec![bad] })
+            .unwrap();
+    }
+    conn.execute("UPDATE sync_quarantine SET validator_ver = ?1", [OLD_VALIDATOR_VER]).unwrap();
+    let item = Ulid::new().to_string();
+    let swap = |conn: &Connection, origin: &str, stage: &str| {
+        let op = RemoteOp {
+            op_id: Ulid::new().to_string(),
+            hlc: Hlc { wall_ms: 2_000, counter: 0, device_id: origin.into() }.encode(),
+            entity: "item".into(),
+            entity_id: item.clone(),
+            kind: "create".into(),
+            payload: json!({"content":"对端的卡","stage":stage,"created_at":"2026-08-25T00:00:00Z",
+                            "born_stage":stage,"due_on":null,"priority":null,"position":"a0"}),
+            origin_seq: 1,
+        };
+        conn.execute(
+            "UPDATE sync_quarantine SET op_blob = ?2 WHERE origin = ?1",
+            rusqlite::params![origin, serde_json::to_vec(&op).unwrap()],
+        )
+        .unwrap();
+    };
+    swap(&conn, FIXED, &col); // v7 判 InvalidOp、v8 判合法
+    swap(&conn, STILL, "既不是种子也不是 ULID"); // 两版都判 InvalidOp
+
+    let _ = reverify_ok(&mut eng, &mut conn, &mut clock);
+
+    // 改判认得的:清隔离、归池、经 drain 真落地。
+    assert!(quarantine_row(&conn, FIXED).is_none(), "新规则接受了它,必须放出来");
+    assert!(!eng.quarantined.contains(FIXED));
+    assert_eq!(watermark(&conn, FIXED).unwrap(), 1, "归池后由 drain 应用");
+    let stage: String =
+        conn.query_row("SELECT stage FROM items WHERE id = ?1", [&item], |r| r.get(0)).unwrap();
+    assert_eq!(stage, col, "卡真的落在那列自定义列上");
+    // 改判仍不认的:留在隔离里,只把版本抬到当前(下次升级前不再重跑)。
+    let (.., ver) = quarantine_row(&conn, STILL).expect("仍非法必须保留");
+    assert_eq!(ver, crate::replay::VALIDATOR_VER);
+    assert!(eng.quarantined.contains(STILL));
+}
