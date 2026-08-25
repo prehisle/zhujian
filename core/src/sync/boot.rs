@@ -238,9 +238,11 @@ pub fn check_fresh_to_account(conn: &Connection) -> Result<(), String> {
     // 这里不再重复 origin 谓词。少了 (b),无背书行永不进水位视野——全网只此一份、
     // 还自以为同步了,是水位协议照不见的静默不收敛(评审①-H1)。
     let legacy_msg = "这台设备有早于同步纪元的历史数据,只能作为账户首台,或清空后加入";
-    let (orphan_items, orphan_topics, orphan_links, orphan_images, orphan_comments) =
+    let (orphan_items, orphan_topics, orphan_links, orphan_images, orphan_comments, orphan_columns) =
         count_unbacked_rows(conn)?;
-    if orphan_items + orphan_topics + orphan_links + orphan_images + orphan_comments > 0 {
+    if orphan_items + orphan_topics + orphan_links + orphan_images + orphan_comments + orphan_columns
+        > 0
+    {
         return Err(legacy_msg.into());
     }
     // 判据 (c)(fresh 第四闸,epoch-plan §3.5):本地 oplog 全部 op 过严格 shape。
@@ -518,6 +520,11 @@ fn import_attached(conn: &mut Connection, clock: &mut Clock) -> Result<ImportRep
     // 留言同样**双侧独立预审**(identity-plan §4.3 第 6 条):理由与上面两只逐字相同。
     audit_comment_semantics(&tx, "", "本机")?;
     audit_comment_semantics(&tx, "boot.", "快照")?;
+    // 看板列**双侧独立预审**(board-columns-plan §7.1a)。理由与上面三只同源,而且这里更
+    // 尖锐:下方要把四个 task 种子**从合并后的日志物化**,于是「快照的种子行与它自己的
+    // 日志矛盾」这种损坏会被合并**顺手修好**、再让 battery 误过。⇒ 先各自查各自的账。
+    crate::board::audit_board_column_semantics(&tx, "", "本机")?;
+    crate::board::audit_board_column_semantics(&tx, "boot.", "快照")?;
     tx.execute("INSERT INTO sync_replay_active (flag) VALUES (1)", [])
         .map_err(|e| e.to_string())?;
 
@@ -531,6 +538,31 @@ fn import_attached(conn: &mut Connection, clock: &mut Clock) -> Result<ImportRep
             [],
         )
         .map_err(|e| format!("导入 topics 失败:{e}"))?;
+    // 看板列 —— ⛔ **必须排在 items 之前**(FK 父先子:`items.stage REFERENCES board_column(id)`)。
+    //
+    // ⭐ **只复制用户建的列**(board-columns-plan §7.1a)。过滤条件是 **`id NOT IN` 那六个
+    // 明确的种子 id**,⛔ 不是 `system = 0` —— 四个 task 种子正是 `system = 0`,只看它会把
+    // 种子当用户行直接复制,而种子在两端**必然相交**(schema 提供的)⇒ 当场撞 PRIMARY KEY。
+    // 表级复制那条路的前提是「fresh 端 id 全不相交」,对种子**不成立**。
+    //
+    // 六个种子的处置分两类,都在下方 oplog 合并**之后**:
+    //   * `inbox`/`filed`(system=1)真 schema-owned,永无任何 op ⇒ **什么都不做**,
+    //     由目标库自己的迁移提供;一致性由 `board::audit_seed_columns` 逐字段核。
+    //   * 四个 task 种子 = implicit genesis ⇒ **从合并后的日志物化**(见下方那段)。
+    //
+    // ⚠ `tombstoned_at` 随行 INSERT 进来,**不需要授权行** —— §2.3 ④ 是
+    // `BEFORE UPDATE OF tombstoned_at`,INSERT 根本不触发它。而这个值就是合并后的赢家:
+    // fresh 端不可能对一个自己没有的列发过 tombstone op ⇒ 该列的全部 op 都在快照里。
+    tx.execute(
+        &format!(
+            "INSERT INTO board_column (id, title, kind, system, position, created_at, tombstoned_at) \
+             SELECT id, title, kind, system, position, created_at, tombstoned_at \
+               FROM boot.board_column WHERE id NOT IN {}",
+            crate::board::seed_ids_sql()
+        ),
+        [],
+    )
+    .map_err(|e| format!("导入 board_column 失败:{e}"))?;
     let items = tx
         .execute(
             "INSERT INTO items (id, content, stage, created_at, updated_at, archived_at, \
@@ -649,6 +681,12 @@ fn import_attached(conn: &mut Connection, clock: &mut Clock) -> Result<ImportRep
         [],
     )
     .map_err(|e| format!("物化 device_profile 失败:{e}"))?;
+    // 四个 task 种子**从合并后的日志物化**(board-columns-plan §7.1a)。手法与上面
+    // space_profile / device_profile 逐条同源(`ORDER BY hlc DESC LIMIT 1` 取赢家),理由也
+    // 同源:表级复制的前提「两侧 id 不相交」对种子**不成立** —— 它们是 schema 提供的,
+    // 两边必然都有。⛔ 也别与迁移里那份 canonical 默认值盲比:按不变量 2 它们可改名、
+    // 可排序、可删,那就是用户数据(`board::audit_seed_columns` 因此刻意不核这三格)。
+    materialize_task_seed_columns(&tx)?;
 
     // ---- 导入后校验(§6.2 步骤 4;任一不过 = 整体回滚,连豁免标志一起消失) ----
     // 结构校验四件套(双序 / 墓碑复活 / counter 治理 / 连续性+FK)抽成共享审计函数,
@@ -720,6 +758,81 @@ fn import_attached(conn: &mut Connection, clock: &mut Clock) -> Result<ImportRep
     tx.execute("DELETE FROM sync_replay_active", []).map_err(|e| e.to_string())?;
     tx.commit().map_err(|e| e.to_string())?;
     Ok(ImportReport { items, topics, links, images, revisions, ops })
+}
+
+/// 四个 task 种子的 title / position / 墓碑,**从合并后的 oplog 物化**
+/// (board-columns-plan §7.1a;`import_attached` 是唯一调用方,故不带 prefix)。
+///
+/// ⚠ 灵感那两列(`system = 1`)**什么都不做**:它们是真 schema-owned、永无任何 op,
+/// 由目标库自己的迁移提供,一致性由 [`crate::board::audit_seed_columns`] 逐字段核。
+fn materialize_task_seed_columns(tx: &Connection) -> Result<(), String> {
+    let seeds = crate::board::task_seed_ids_sql();
+    // ① title / position:字段级 LWW 赢家,与 `replay::is_latest_field_write` 同口径 ——
+    //    参赛者**只有 set_field**(种子没有 create,那正是 implicit genesis 的定义)。
+    //    `WHERE EXISTS` 那一句是承重的:一条 op 都没有时**不动行**,保留迁移里的 canonical
+    //    值;写成无条件 UPDATE 会把没改过名的种子清成 NULL。
+    for field in ["title", "position"] {
+        tx.execute(
+            &format!(
+                "UPDATE board_column SET {field} = ( \
+                     SELECT json_extract(w.payload, '$.value') FROM oplog w \
+                      WHERE w.entity = 'board_column' AND w.entity_id = board_column.id \
+                        AND w.kind = 'set_field' \
+                        AND json_extract(w.payload, '$.field') = '{field}' \
+                      ORDER BY w.hlc DESC LIMIT 1) \
+                 WHERE id IN {seeds} AND EXISTS ( \
+                     SELECT 1 FROM oplog w \
+                      WHERE w.entity = 'board_column' AND w.entity_id = board_column.id \
+                        AND w.kind = 'set_field' \
+                        AND json_extract(w.payload, '$.field') = '{field}')"
+            ),
+            [],
+        )
+        .map_err(|e| format!("物化内置列的 {field} 失败:{e}"))?;
+    }
+    // ② 墓碑:赢家是该列全部 tombstone op 里 **HLC 最小**的那枚(§2.3 定形 2 的确定性 min,
+    //    ⛔ 不是 MAX)。要连 `op_id` 一起取 —— ④ 那只守护要求授权行绑到**具体那一枚日志
+    //    事实**上。
+    let winners: Vec<(String, String, String)> = {
+        let mut stmt = tx
+            .prepare(&format!(
+                "SELECT o.entity_id, o.op_id, o.hlc FROM oplog o \
+                  WHERE o.entity = 'board_column' AND o.kind = 'tombstone' \
+                    AND o.entity_id IN {seeds} \
+                    AND o.hlc = (SELECT MIN(m.hlc) FROM oplog m \
+                                  WHERE m.entity = 'board_column' AND m.kind = 'tombstone' \
+                                    AND m.entity_id = o.entity_id)"
+            ))
+            .map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .map_err(|e| e.to_string())?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(|e| e.to_string())?;
+        rows
+    };
+    for (id, op_id, hlc) in winners {
+        let current: Option<String> = tx
+            .query_row("SELECT tombstoned_at FROM board_column WHERE id = ?1", [&id], |r| r.get(0))
+            .map_err(|e| e.to_string())?;
+        if current.as_deref() == Some(hlc.as_str()) {
+            continue; // 本机自己盖的那枚就是赢家:等值 = no-op,不必惊动授权表。
+        }
+        // 方向由 ④ 那只守护当场验(`apply_min` 要求 `from IS NULL OR to < from`)。
+        // 它**必然成立**:本机 marker 若非空,它自己那枚 op 也在合并后的日志里 ⇒ min ≤ 它,
+        // 而等值已在上一句 `continue` 掉。⚠ 这条推理不写成 assert —— 触发器就是那道断言,
+        // 推理错了它当场 ABORT、整个引导回滚,比多一条 Rust 判断响亮。
+        tx.execute(
+            "INSERT INTO sync_board_column_tombstone_apply \
+                 (column_id, op_id, from_hlc, to_hlc, mode) \
+             VALUES (?1, ?2, ?3, ?4, 'apply_min')",
+            (&id, &op_id, &current, &hlc),
+        )
+        .map_err(|e| format!("登记内置列「{id}」的墓碑授权失败:{e}"))?;
+        tx.execute("UPDATE board_column SET tombstoned_at = ?1 WHERE id = ?2", (&hlc, &id))
+            .map_err(|e| format!("物化内置列「{id}」的墓碑失败:{e}"))?;
+    }
+    Ok(())
 }
 
 // ---- 严格电池:结构 + 语义审计的单一来源(epoch-plan §2.6/§3.3/§3.4) ------------
@@ -804,6 +917,26 @@ fn audit_tombstone_resurrection(conn: &Connection) -> Result<(), String> {
                 "{undead} 个已 tombstone 的 {what} 仍有行(墓碑不可逆),快照损坏?整体回滚"
             ));
         }
+    }
+    // ⛔ **看板列的墓碑形态是反过来的,别套上面那条**(board-columns-plan §7.2 点名):
+    // 列的 tombstone 是**标志位不是删行**(不变量 5:回收站与成就归档里的条目仍指着它们
+    // 出生 / 被删时所在的列,而「归档 = 史实,可查不可删」是铁律)⇒ 对 `board_column`,
+    // 「有墓碑 op 却还有行」是**健康终态**,而**「有墓碑 op 却没盖 marker」才是复活**。
+    // ⚠ 这里只判「盖没盖」这一半;「盖的值必须是全部墓碑 op 的 MIN(hlc)」那一半在
+    // [`crate::board::audit_board_column_semantics`],⛔ 别在这儿再写一遍(清单 14)。
+    let (what, sql) = (
+        "board_column",
+        "SELECT COUNT(*) FROM board_column c \
+          WHERE c.tombstoned_at IS NULL \
+            AND EXISTS (SELECT 1 FROM oplog o WHERE o.entity = 'board_column' \
+                         AND o.kind = 'tombstone' AND o.entity_id = c.id)",
+    );
+    let unmarked: i64 = conn.query_row(sql, [], |r| r.get(0)).map_err(|e| e.to_string())?;
+    if unmarked > 0 {
+        return Err(format!(
+            "{unmarked} 个已 tombstone 的 {what} 没盖墓碑标记(列的墓碑是标志位不是删行,\
+             marker 空 = 复活),快照损坏?整体回滚"
+        ));
     }
     Ok(())
 }
@@ -898,8 +1031,20 @@ const ITEM_LWW_FIELDS: &[&str] = &[
 /// 全部 set_field 中 HLC 最大者的值)。返回不符的实体数。`create_key` = create payload
 /// 里该字段初值的键——多数字段同字段名;`topic.updated_at` 出生态 = created_at(create
 /// 不带 updated_at 键,`apply_topic_create` 落 updated_at = created_at),故传 created_at。
-fn count_field_mismatches(
+///
+/// ⭐ **`entity` 是显式参数,不再由 `table` 猜**(0037 起):原先那句
+/// `if table == "items" { "item" } else { "topic" }` 在第三个消费者(`board_column`)进来时
+/// 会**静默**把它当成 topic 审 —— 一个「答错了也不报错、只是少干活」的形。
+/// `prefix` 同 [`audit_device_profile_semantics`]:`""` = 本库,`"boot."` = 只读挂载的快照。
+///
+/// ⚠ 首句 `EXISTS (… kind = 'create')` 顺带定义了扫描面:**只审有 create 背书的行**。
+/// board_column 的六个种子没有 create(schema-seeded implicit genesis,plan §7.1a),
+/// 于是天然落在这条之外 —— 它们那半由 [`crate::board::audit_board_column_semantics`]
+/// 用 canonical 兜底值审,⛔ 两处别互相抄。
+pub(crate) fn count_field_mismatches(
     conn: &Connection,
+    prefix: &str,
+    entity: &str,
     table: &str,
     field: &str,
     create_key: Option<&str>,
@@ -913,19 +1058,18 @@ fn count_field_mismatches(
         None => "NULL".to_string(),
     };
     let sql = format!(
-        "SELECT COUNT(*) FROM {table} t \
-         WHERE EXISTS (SELECT 1 FROM oplog WHERE entity = ?1 AND entity_id = t.id AND kind = 'create') \
+        "SELECT COUNT(*) FROM {prefix}{table} t \
+         WHERE EXISTS (SELECT 1 FROM {prefix}oplog WHERE entity = ?1 AND entity_id = t.id AND kind = 'create') \
            AND NOT (t.{field} IS ( \
                 SELECT value FROM ( \
-                    SELECT hlc, {create_value_expr} AS value FROM oplog \
+                    SELECT hlc, {create_value_expr} AS value FROM {prefix}oplog \
                       WHERE entity = ?1 AND entity_id = t.id AND kind = 'create' \
                     UNION ALL \
-                    SELECT hlc, json_extract(payload, '$.value') AS value FROM oplog \
+                    SELECT hlc, json_extract(payload, '$.value') AS value FROM {prefix}oplog \
                       WHERE entity = ?1 AND entity_id = t.id AND kind = 'set_field' \
                         AND json_extract(payload, '$.field') = '{field}') \
                 ORDER BY hlc DESC LIMIT 1))"
     );
-    let entity = if table == "items" { "item" } else { "topic" };
     conn.query_row(&sql, [entity], |r| r.get(0)).map_err(|e| e.to_string())
 }
 
@@ -940,7 +1084,7 @@ fn audit_op_backed_semantics(live: &Connection) -> Result<(), String> {
         // archived_at/sealed_at/done_at:apply_item_create 强制 NULL、忽略 payload——create 初值恒
         // NULL(否则恶意 create 注入同名键即过审,codex 二审);其余字段读 payload 初值。
         let create_key = if matches!(field, "archived_at" | "sealed_at" | "done_at") { None } else { Some(field) };
-        if count_field_mismatches(live, "items", field, create_key)? > 0 {
+        if count_field_mismatches(live, "", "item", "items", field, create_key)? > 0 {
             return Err(format!(
                 "导入后语义审计:有 item 的 {field} 终态与自身日志的 LWW 结果不符(快照与日志矛盾),整体回滚"
             ));
@@ -957,7 +1101,7 @@ fn audit_op_backed_semantics(live: &Connection) -> Result<(), String> {
         ("position", None),
         ("kind", None),
     ] {
-        if count_field_mismatches(live, "topics", field, create_key)? > 0 {
+        if count_field_mismatches(live, "", "topic", "topics", field, create_key)? > 0 {
             return Err(format!(
                 "导入后语义审计:有 topic 的 {field} 终态与自身日志的 LWW 结果不符(快照与日志矛盾),整体回滚"
             ));
@@ -984,6 +1128,9 @@ fn audit_op_backed_semantics(live: &Connection) -> Result<(), String> {
             ));
         }
     }
+    // ②′ 看板列的四轴(词汇/坐标、op 在行缺、值 == 日志赢家、墓碑 marker == 确定性 min)。
+    //    ⭐ 与 `import_attached` 的双侧预审是**同一份描述**,只是 prefix/话术不同。
+    crate::board::audit_board_column_semantics(live, "", "本库")?;
     // ③ 标签关联 OR-set:op-backed link(有 link_add)的存活集必须 == 表里的 op-backed 行。
     audit_link_or_set(live)?;
     // ④ 「图N」有效编号:有 image_add op 的每张已落行图,行 seq 必须 == reconcile 值。
@@ -1221,23 +1368,24 @@ fn audit_create_multiplicity(live: &Connection) -> Result<(), String> {
             "导入后语义审计:{dup} 个实体有重复 create/image_add(每实体恰一条),整体回滚"
         ));
     }
-    let (items, topics, links, images, comments) = count_unbacked_rows(live)?;
-    if items + topics + links + images + comments > 0 {
+    let (items, topics, links, images, comments, columns) = count_unbacked_rows(live)?;
+    if items + topics + links + images + comments + columns > 0 {
         return Err(format!(
-            "导入后语义审计:存在无 op 背书的行(item {items} / topic {topics} / link {links} / image {images} / comment {comments})\
-            ——严格纪元下每行必有恰一条 create/link_add/image_add 背书(pre-0020 遗产先在锚点压实),整体回滚"
+            "导入后语义审计:存在无 op 背书的行(item {items} / topic {topics} / link {links} / image {images} / comment {comments} / board_column {columns})\
+            ——严格纪元下每行必有恰一条 create/link_add/image_add 背书(pre-0020 遗产先在锚点压实;\
+            看板列的六个内置种子是 schema 提供的、按 id 显式豁免),整体回滚"
         ));
     }
     Ok(())
 }
 
-/// 无 op 背书的现存行计数(items/topics/item_topic/item_image/item_comment 五表)。
+/// 无 op 背书的现存行计数(items/topics/item_topic/item_image/item_comment/board_column 六表)。
 /// 两处消费者、同一判据:`check_fresh_to_account` 的判据 (b)(legacy 只能当首台)与
 /// `audit_create_multiplicity` 的「恰一条」下半(§3.2)——判据必须单一来源,否则
 /// fresh 闸与导入审计对「什么算无背书」各说各话。
 pub(crate) fn count_unbacked_rows(
     conn: &Connection,
-) -> Result<(i64, i64, i64, i64, i64), String> {
+) -> Result<(i64, i64, i64, i64, i64, i64), String> {
     let one = |sql: &str| -> Result<i64, String> {
         conn.query_row(sql, [], |r| r.get(0)).map_err(|e| e.to_string())
     };
@@ -1264,6 +1412,17 @@ pub(crate) fn count_unbacked_rows(
             "SELECT COUNT(*) FROM item_comment WHERE id NOT IN \
              (SELECT entity_id FROM oplog WHERE entity = 'comment' AND kind = 'create')",
         )?,
+        // 0037(board-columns-plan §7.1a/§7.2):用户建的列必须有 create 背书。
+        // ⛔ **只豁免那六个明确的 seed id**,不是豁免所有 `system = 1`、也不是所有
+        // `system = 0` —— 四个 task 种子正是 `system = 0` 的 **schema-seeded implicit
+        // genesis**(不发 create,但此后 title/position/tombstone 全走普通 op)。
+        // ⛔ 若为了绕开这一格干脆不计 board_column,**无背书的用户列就能穿过 fresh/battery**
+        //    = 一个静默不同步的洞(§7.2 那张表点名警告过这条)。
+        one(&format!(
+            "SELECT COUNT(*) FROM board_column WHERE id NOT IN {} AND id NOT IN \
+             (SELECT entity_id FROM oplog WHERE entity = 'board_column' AND kind = 'create')",
+            crate::board::seed_ids_sql()
+        ))?,
     ))
 }
 
@@ -1373,6 +1532,54 @@ fn audit_op_preconditions(live: &Connection) -> Result<(), String> {
     if orphan_img > 0 {
         return Err(format!(
             "导入后语义审计:{orphan_img} 条 image_add 的宿主无行且无更早 tombstone(孤儿,live 挂起),整体回滚"
+        ));
+    }
+    // board_column 的依赖前置(board-columns-plan §7.2 那张表的「boot 依赖前置」一行):
+    // set_field / tombstone 的坐标必须「有行,或有 create 背书,或有**更早的** tombstone」——
+    // 与 item/topic 那只循环逐条同型。
+    // ⚠ 少了它能构造出「boot 批量复制过得去、live 顺序回放**永久 DependencyMissing**」
+    // 的快照 —— 批量复制不看依赖,而 live 按 origin_seq 逐条应用会在孤儿列 op 上挂住。
+    //
+    // ⭐ **这里刻意没有 seed 豁免**(首版写过一条 `entity_id NOT IN {六个种子}`,变异对照
+    // 当场判它是死码,拆掉一个字节的行为差别都做不出来)。承重的是**第一句 `NOT EXISTS`**:
+    // 六个种子的行由迁移种下、`trg_board_column_no_delete` 禁物理删除、缺行的库过不了
+    // `board::audit_seed_columns` ⇒ **种子的行恒在** ⇒ 它们永远落不进这个计数。
+    // ⛔ 别再把那条豁免加回来 —— 加回去只是把「行恒在」这条事实抄了第二遍(清单 14),
+    //    而真要有一天种子的行会缺,该响亮红的正是这一格。
+    let orphan_column: i64 = live
+        .query_row(
+            "SELECT COUNT(*) FROM oplog o \
+              WHERE o.entity = 'board_column' AND o.kind IN ('set_field', 'tombstone') \
+                AND NOT EXISTS (SELECT 1 FROM board_column c WHERE c.id = o.entity_id) \
+                AND NOT EXISTS (SELECT 1 FROM oplog x WHERE x.entity = 'board_column' \
+                                 AND x.entity_id = o.entity_id \
+                                 AND (x.kind = 'create' \
+                                      OR (x.kind = 'tombstone' AND x.hlc < o.hlc)))",
+            [],
+            |r| r.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    if orphan_column > 0 {
+        return Err(format!(
+            "导入后语义审计:{orphan_column} 条 board_column op 指向无行且无 create 背书的列(孤儿,live 挂起),整体回滚"
+        ));
+    }
+    // 因果序:有 create 背书的列,create 必须 HLC 早于它的 set_field / tombstone。
+    // ⚠ 与上面 item/topic 那只循环不同,**tombstone 也在扫描面里** —— 列的 tombstone apply
+    // 要求父行已物化(§4.2:行不在 → DependencyMissing),故它与 set_field 同样怕 set-before-create。
+    let bad_column_order: i64 = live
+        .query_row(
+            "SELECT COUNT(*) FROM oplog o \
+              WHERE o.entity = 'board_column' AND o.kind IN ('set_field', 'tombstone') \
+                AND EXISTS (SELECT 1 FROM oplog c WHERE c.entity = 'board_column' \
+                             AND c.entity_id = o.entity_id AND c.kind = 'create' AND c.hlc >= o.hlc)",
+            [],
+            |r| r.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    if bad_column_order > 0 {
+        return Err(format!(
+            "导入后语义审计:{bad_column_order} 条 board_column op 的 create 晚于它(set-before-create,live 挂起),整体回滚"
         ));
     }
     // comment create 的宿主前置(identity-plan §4.3 第 14 条,设计审一轮 H3):与 image_add

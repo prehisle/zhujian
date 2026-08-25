@@ -6,13 +6,17 @@
 //! 3. **两只耦合触发器**:单机路径照拦、回放语境放行中间态;
 //! 4. **旧六 stage 的存量数据全链路**(§8 那条「硬验收」与 §14 第八行)。
 //!
-//! # ⚠ 两处诚实边界,别当成漏测
+//! # ⚠ 诚实边界,别当成漏测
 //!
-//! **(一)④ 的肯定半边在本版测不了**:oplog 的词汇表 CHECK 要到 B-c 才认识 `board_column`
-//! ⇒ 此刻库里造不出任何一枚 `board_column/tombstone` op ⇒ ④ 里那句
-//! `EXISTS (... FROM oplog ...)` 恒假 ⇒ **每一条 marker 改写都会被拒**。首次盖墓碑 /
-//! 并发取 min / `epoch_rebase` / 等值 no-op 那四格是 **B-c 的验收项**(plan §14 第六行)。
-//! ⛔ 若那时发现 0036 里的 ④ 写错了,只能新增一条迁移 DROP + CREATE 修(0034 判例)。
+//! **(一)④ 的肯定半边 0037 起补齐了**(B-c 第 1 段):476 那版的 oplog 词汇表还不认识
+//! `board_column` ⇒ 库里造不出那种 op ⇒ ④ 里那句 `EXISTS (... FROM oplog ...)` 恒假 ⇒
+//! 每一条 marker 改写都会被拒,于是首次盖 / 并发取 min / `epoch_rebase` / 等值 no-op
+//! 那四格当时**测不了**(plan §14 第六行把它们挪给了 B-c)。现在它们住在
+//! [`the_marker_takes_the_smaller_hlc_and_epoch_rebase_is_the_only_way_up`],
+//! 而 [`tombstone_marker_needs_a_registered_writer`] 的 (c)/(c′) 两句正是那句
+//! `EXISTS` 承重的字据 —— 前后只差一枚 op,同一条 UPDATE 从拒变成过。
+//! ⚠ 本节的夹具**刻意绕开 `replay::apply_remote_op` 直接种 op**:验的是触发器自己的真值表,
+//! 把 apply 层夹在中间就分不清是谁拒的(清单 13)。apply 层的行为在 `replay::tests`。
 //!
 //! **(二)①②④ 三只同时挂在 `BEFORE UPDATE OF tombstoned_at` 上,SQLite 不保证它们的触发
 //! 顺序**(文档原文:the order of firing is undefined)⇒ 三只都在场时「报的是哪一句话」
@@ -66,6 +70,47 @@ fn trigger_sql(conn: &Connection, name: &str) -> String {
 
 fn set_marker(id: &str, value: &str) -> String {
     format!("UPDATE board_column SET tombstoned_at = {value} WHERE id = '{id}'")
+}
+
+/// 一枚合法 ULID 形态的 op_id(④ 要求授权绑到**具体那一枚日志事实**上)。
+const TOMB_OP_ID: &str = "01TESTBOARDTOMBSTONE000001";
+
+/// 直接往 oplog 里种一枚 `board_column/tombstone`(0037 起词汇表认它)。
+///
+/// ⚠ 这是**存储层**的夹具,刻意绕开 `replay::apply_remote_op` —— 本节验的是 ④ 那只触发器
+/// 自己的真值表,把 apply 层夹在中间就分不清「是谁拒的」(清单 13:先数这条路上有几把尺)。
+/// apply 层的行为另在 `replay::tests` 里验。
+fn plant_tombstone_op(conn: &Connection, op_id: &str, column_id: &str, hlc: &str) {
+    // `origin` 是从 hlc 第 24 字符起派生的生成列,`(origin, origin_seq)` 有 UNIQUE ——
+    // 夹具按调用序发号即可(连续性是收端引擎的喂入契约,不是本节要验的东西)。
+    static SEQ: AtomicU32 = AtomicU32::new(1);
+    conn.execute(
+        "INSERT INTO oplog (op_id, hlc, entity, entity_id, kind, payload, origin_seq) \
+         VALUES (?1, ?2, 'board_column', ?3, 'tombstone', '{}', ?4)",
+        (op_id, hlc, column_id, SEQ.fetch_add(1, Ordering::SeqCst)),
+    )
+    .expect("0037 起 board_column 已在 oplog 词汇表内");
+}
+
+fn authorize(
+    conn: &Connection,
+    column_id: &str,
+    op_id: &str,
+    from: Option<&str>,
+    to: &str,
+    mode: &str,
+) {
+    conn.execute(
+        "INSERT INTO sync_board_column_tombstone_apply \
+             (column_id, op_id, from_hlc, to_hlc, mode) VALUES (?1, ?2, ?3, ?4, ?5)",
+        (column_id, op_id, from, to, mode),
+    )
+    .expect("登记授权行");
+}
+
+fn marker_of(conn: &Connection, id: &str) -> Option<String> {
+    conn.query_row("SELECT tombstoned_at FROM board_column WHERE id = ?1", [id], |r| r.get(0))
+        .expect("列在")
 }
 
 // ---- 1) 六个种子 ---------------------------------------------------------------------
@@ -261,8 +306,8 @@ fn tombstone_marker_needs_a_registered_writer() {
     // (c) 授权行四格全对、方向也对,**但 oplog 里没有那枚 op** = 仍拒。
     conn.execute(
         "INSERT INTO sync_board_column_tombstone_apply (column_id, op_id, from_hlc, to_hlc, mode) \
-         VALUES ('todo', '01TESTBOARDTOMBSTONE000001', NULL, ?1, 'apply_min')",
-        [REMOTE_HLC],
+         VALUES ('todo', ?1, NULL, ?2, 'apply_min')",
+        [TOMB_OP_ID, REMOTE_HLC],
     )
     .unwrap();
     assert!(
@@ -270,40 +315,87 @@ fn tombstone_marker_needs_a_registered_writer() {
             .contains("登记的 tombstone writer"),
         "没有 op 背书的授权不算授权"
     );
-    // 顺带钉住上一句的前提:B-b 的 oplog 词汇表**确实**还不认识 board_column。
-    let vocab = conn.execute(
-        "INSERT INTO oplog (op_id, hlc, entity, entity_id, kind, payload, origin_seq) \
-         VALUES ('01TESTBOARDTOMBSTONE000001', ?1, 'board_column', 'todo', 'tombstone', '{}', 1)",
-        [REMOTE_HLC],
-    );
-    assert!(vocab.is_err(), "B-b 不接新词汇:board_column op 进不了 oplog(那是 B-c 的面)");
 
-    // (d) 残留的授权行会被空表审计逮到(它的定位 = 报告残留状态,不是清理工)。
-    let err = audit_tombstone_apply_empty(&conn).unwrap_err();
-    assert!(err.contains("残留 1 行"), "{err}");
-    conn.execute("DELETE FROM sync_board_column_tombstone_apply", []).unwrap();
-    audit_tombstone_apply_empty(&conn).unwrap();
+    // (c′) ⭐ **那句 `EXISTS (… FROM oplog …)` 是承重的**:上一句与下一句之间**只多了
+    //      一枚 op**,同一条 UPDATE 就从「拒」变成「过」。
+    //      ⚠ 476 那版这里断的是反面(「B-b 不接新词汇 ⇒ 这枚 op 进不了 oplog」),那是当时
+    //      「④ 的肯定半边结构上不可达」这句话的字据;0037 接上词汇之后,那一格自然翻面 ——
+    //      **这只测的红正是 B-c 生效的证明**,不是回归。
+    plant_tombstone_op(&conn, TOMB_OP_ID, "todo", REMOTE_HLC);
+    conn.execute(&set_marker("todo", &format!("'{REMOTE_HLC}'")), []).expect("有 op 背书就该过");
+    assert_eq!(marker_of(&conn, "todo").as_deref(), Some(REMOTE_HLC));
+
+    // (d) ⑥ 是 **AFTER 触发器**,行真的改了就当场把授权行消费掉 ⇒ 空表审计恒绿。
+    //     ⛔ 它不是「防止第二枚正常 op 重复授权」的机制(八轮把定位改准了),那件事由
+    //     ⑥ 做掉;这道审计只负责发现实现 bug、报告残留状态、在电池上 fail-closed。
+    audit_tombstone_apply_empty(&conn).expect("⑥ 应已当场消费授权行");
 }
 
-/// 今天这棵树上的**总账**:任何语境、任何列,marker 一个字也改不动(④ 挡着全部)。
-/// 这不是缺陷,是 B-b 的定义 —— 它本就不该有能盖墓碑的路径。
+/// ④ 的**肯定半边**(§14 第六行,476 从 B-b 挪来 —— 那一版的库里造不出 board_column op)。
+///
+/// 四格:**首次盖墓碑**已在上一只测里;这里是**并发取 min**、**等值 no-op**、
+/// **`epoch_rebase` 向上改写**,外加**错 mode / 错 op_id** 两条阴面。
 #[test]
-fn no_path_in_this_version_can_tombstone_a_column() {
-    let conn = fresh_db("tomb-none");
-    for id in SEED_COLUMNS.iter().map(|s| s.id) {
-        for replaying in [false, true] {
-            if replaying {
-                conn.execute("INSERT INTO sync_replay_active (flag) VALUES (1)", []).unwrap();
-            }
-            assert!(
-                conn.execute(&set_marker(id, &format!("'{REMOTE_HLC}'")), []).is_err(),
-                "{id}(replay={replaying})的墓碑本该盖不上"
-            );
-            if replaying {
-                conn.execute("DELETE FROM sync_replay_active", []).unwrap();
-            }
-        }
-    }
+fn the_marker_takes_the_smaller_hlc_and_epoch_rebase_is_the_only_way_up() {
+    let conn = fresh_db("tomb-min");
+    // 造三枚 HLC,字典序 早 < 中 < 晚(HLC 编码的字典序就是逻辑序)。
+    let early = "0000018e00000-00000000-RMTDEV0000000000000000000A";
+    let mid = REMOTE_HLC;
+    let late = "0000018f00000-00000000-RMTDEV0000000000000000000Z";
+
+    // 首次盖:NULL → mid。
+    plant_tombstone_op(&conn, "01TESTBOARDTOMB0000000MID", "todo", mid);
+    authorize(&conn, "todo", "01TESTBOARDTOMB0000000MID", None, mid, "apply_min");
+    conn.execute(&set_marker("todo", &format!("'{mid}'")), []).expect("首次盖墓碑");
+
+    // 并发取 min:更小的那枚赢(**HLC 全序的小,不是网络先到**)。
+    plant_tombstone_op(&conn, "01TESTBOARDTOMB000000EARLY", "todo", early);
+    authorize(&conn, "todo", "01TESTBOARDTOMB000000EARLY", Some(mid), early, "apply_min");
+    conn.execute(&set_marker("todo", &format!("'{early}'")), []).expect("min 收敛");
+    assert_eq!(marker_of(&conn, "todo").as_deref(), Some(early));
+
+    // ⛔ `apply_min` 不许向上改写(方向那一格由 mode 定,不由 from/to 的值自己说了算)。
+    plant_tombstone_op(&conn, "01TESTBOARDTOMB0000000LATE", "todo", late);
+    authorize(&conn, "todo", "01TESTBOARDTOMB0000000LATE", Some(early), late, "apply_min");
+    assert!(
+        err_of(&conn, &set_marker("todo", &format!("'{late}'")))
+            .contains("登记的 tombstone writer"),
+        "apply_min 只许 NULL→X 或向小改写"
+    );
+    conn.execute("DELETE FROM sync_board_column_tombstone_apply", []).unwrap();
+
+    // ⭐ **`epoch_rebase` 是唯一能向上改写的契约**(压实给基线 tombstone 重新取了 HLC,
+    //    §7.1c 定形 (a):marker 是可重写的派生元数据)。
+    authorize(&conn, "todo", "01TESTBOARDTOMB0000000LATE", Some(early), late, "epoch_rebase");
+    conn.execute(&set_marker("todo", &format!("'{late}'")), []).expect("epoch_rebase 向上");
+    assert_eq!(marker_of(&conn, "todo").as_deref(), Some(late));
+
+    // 等值 = **no-op 放行**,不 ABORT(七轮 M:「本地只做 NULL→HLC」是规格推论不是实现
+    // 事实,幂等重试会被误伤)。⚠ 此刻授权表是空的 —— 等值那一臂根本不查它。
+    audit_tombstone_apply_empty(&conn).expect("上一句的授权行已被 ⑥ 消费");
+    conn.execute(&set_marker("todo", &format!("'{late}'")), []).expect("等值 = no-op");
+
+    // 阴面:mode 与 op_id 各错一格,其余全对 —— 都得拒。
+    // ⚠ 每枚 op 各用一枚**独有**的 HLC:`idx_oplog_hlc` 是 UNIQUE,复用会撞在夹具上、
+    //   让这几格红得不是它该红的理由(清单 13)。
+    let d1 = "0000018e00001-00000000-RMTDEV0000000000000000000A";
+    let d2 = "0000018e00002-00000000-RMTDEV0000000000000000000A";
+    plant_tombstone_op(&conn, "01TESTBOARDTOMB00000WRONG1", "doing", d1);
+    authorize(&conn, "doing", "01TESTBOARDTOMB00000WRONG1", None, d1, "epoch_rebase");
+    assert!(
+        err_of(&conn, &set_marker("doing", &format!("'{d1}'")))
+            .contains("登记的 tombstone writer"),
+        "epoch_rebase 要求 to > from,首次盖(from=NULL)不属于它"
+    );
+    conn.execute("DELETE FROM sync_board_column_tombstone_apply", []).unwrap();
+    // op_id 指向一枚**存在但不是这一列**的 op:四格全对也不算授权。
+    plant_tombstone_op(&conn, "01TESTBOARDTOMB00000WRONG2", "confirming", d2);
+    authorize(&conn, "doing", "01TESTBOARDTOMB00000WRONG2", None, d2, "apply_min");
+    assert!(
+        err_of(&conn, &set_marker("doing", &format!("'{d2}'")))
+            .contains("登记的 tombstone writer"),
+        "op_id 必须绑到**这一列**的那一枚日志事实上"
+    );
 }
 
 /// ① 带豁免、② 不带 —— **哪只带豁免、哪只不带是 §2.3 的全部要害**(codex 四轮 H1)。

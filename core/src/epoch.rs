@@ -45,6 +45,9 @@ use crate::sync::crypto;
 /// 内注释**——sqlite_schema 保存的是语句原文,任何漂移都会被下方「规范化 sqlite_schema
 /// 比对」在压实现场拒绝,不是靠人眼对齐。首跑就抓到过:常量少了迁移里的两段行内注释,
 /// 比对当场红——这正是比对该有的灵敏度,修法是把常量对齐迁移原文,不是放松比对)。
+/// ⚠ **0037 起「最新那条」是 `0037_board_column_vocab.sql`**,而它已经照本模块的做法改成了
+/// 「先 DROP、再用最终名建」——`ALTER TABLE … RENAME` 会重解析整个 schema,而 0036 起
+/// `board_column` 上有一只引用 `oplog` 的触发器(见下方 `compact_inner` 里那段长注)。
 const OPLOG_TABLE_DDL: &str = "CREATE TABLE {name} (
     op_id      TEXT NOT NULL PRIMARY KEY,
     hlc        TEXT NOT NULL,
@@ -69,6 +72,11 @@ const OPLOG_TABLE_DDL: &str = "CREATE TABLE {name} (
         -- 条目留言(identity-plan §4.1):有真实出生事件、要能删,故 create + tombstone;
         -- **刻意无 set_field** —— 留言不可编辑,改错了删掉重写。
         OR (entity = 'comment' AND kind IN ('create', 'tombstone'))
+        -- 看板列(board-columns-plan §3):形近 topic —— 有出生事件、可改名可排序可删。
+        -- ⛔ 六个种子**不发 create**(§7.1a);⛔ set_field 白名单只有 title | position,
+        -- kind/system/created_at 是出生字段(改 kind 会让该列上全部条目的耦合约束当场
+        -- 反转,改 system 能把灵感列降级成可删——两者都没有合法用途)。
+        OR (entity = 'board_column' AND kind IN ('create', 'set_field', 'tombstone'))
     )
 )";
 
@@ -353,11 +361,16 @@ fn compact_inner(conn: &mut Connection, fp: FailPointOpt) -> Result<CompactRepor
     //    任何语句碰 board_column,`oplog` 在同一事务里当场补回。基线 op 在 DROP 之后写,
     //    与老路等价 —— `synthesize_baseline` 早已把要写的东西读进内存了(上一句),
     //    `clock.tick` 只动 `sync_meta`。
-    // ⚠ **同一件事会咬到 B-c**:那条给 oplog 词汇表加 `board_column` 三 kind 的迁移同样
-    //    不能用 DROP+RENAME 的老手法 —— 照 0035 抄会当场撞同一句报错。
+    // ⚠ **同一件事咬到了 B-c**:0037(给 oplog 词汇表加 `board_column` 三 kind)同样不能用
+    //    DROP+RENAME 的老手法,已照本段改成「carry 裸表 → DROP → 用最终名建 → 灌回」。
+    //    ⇒ **再有下一条重建 oplog 的迁移,先读这一段。**
     tx.execute("DROP TABLE oplog", []).map_err(|e| e.to_string())?;
     tx.execute(&OPLOG_TABLE_DDL.replace("{name}", "oplog"), [])
         .map_err(|e| format!("重建 oplog 失败:{e}"))?;
+    // 基线里那些 `board_column/tombstone` 各自的 (列 id, 新 op_id, 新 hlc) —— 写完 op 之后
+    // 要拿它们把行上的 marker 改基线(§7.1c;⛔ 必须在 op 落库**之后**,授权表的 `op_id`
+    // 那一格要求「先有 op、再改行」)。
+    let mut column_rebases: Vec<(String, String, String)> = vec![];
     {
         let mut ins = tx
             .prepare(
@@ -367,8 +380,9 @@ fn compact_inner(conn: &mut Connection, fp: FailPointOpt) -> Result<CompactRepor
             .map_err(|e| e.to_string())?;
         for (i, (entity, entity_id, kind, payload)) in baseline.iter().enumerate() {
             let hlc = clock.tick(&tx)?; // 严格升序;last_hlc 随取号落盘(白名单键)。
+            let op_id = Ulid::new().to_string();
             ins.execute(rusqlite::params![
-                Ulid::new().to_string(),
+                &op_id,
                 hlc.encode(),
                 entity,
                 entity_id,
@@ -377,7 +391,36 @@ fn compact_inner(conn: &mut Connection, fp: FailPointOpt) -> Result<CompactRepor
                 (i + 1) as i64,
             ])
             .map_err(|e| format!("写基线 op 失败({entity}/{kind} {entity_id}):{e}"))?;
+            if entity == "board_column" && kind == "tombstone" {
+                column_rebases.push((entity_id.clone(), op_id, hlc.encode()));
+            }
         }
+    }
+    // 已删的列:把行上的墓碑 marker 改成本次基线那枚 tombstone 的**新 HLC**
+    // (board-columns-plan §7.1c 定形 (a):marker 是**可重写的派生元数据**,不是史实 ——
+    // 「删除」这件事实由「行的 tombstone 状态 + 当前纪元 oplog」共同承载)。
+    //
+    // 不这么做的后果:压实给基线 op 重新取了 HLC,而 §3 规定 `tombstoned_at = op.hlc`
+    // ⇒ 行上还留着**旧**纪元的 HLC、日志里却是新的 ⇒ 两端各自压实后精确 marker 不一致,
+    // 且 `board::audit_board_column_semantics` 的「marker == 自身日志的 min」当场红。
+    //
+    // ⚠ 走 ④ 的 **`epoch_rebase`** mode(方向 `to > from`,与普通 apply 的 min 相反)。
+    // 方向必然成立:上方已 `clock.observe(旧 MAX(hlc))`,此后每一次 `tick` 都严格大于它,
+    // 而旧 marker 本身就是某枚旧 op 的 HLC ⇒ 新 > 旧。⛔ 这条推理**不写成 Rust 断言** ——
+    // ④ 那只触发器就是断言,推错了它当场 ABORT、整个压实回滚,比多一句判断响亮。
+    for (id, op_id, new_hlc) in column_rebases {
+        let from: Option<String> = tx
+            .query_row("SELECT tombstoned_at FROM board_column WHERE id = ?1", [&id], |r| r.get(0))
+            .map_err(|e| e.to_string())?;
+        tx.execute(
+            "INSERT INTO sync_board_column_tombstone_apply \
+                 (column_id, op_id, from_hlc, to_hlc, mode) \
+             VALUES (?1, ?2, ?3, ?4, 'epoch_rebase')",
+            rusqlite::params![&id, &op_id, &from, &new_hlc],
+        )
+        .map_err(|e| format!("登记列「{id}」的压实墓碑授权失败:{e}"))?;
+        tx.execute("UPDATE board_column SET tombstoned_at = ?1 WHERE id = ?2", (&new_hlc, &id))
+            .map_err(|e| format!("压实重写列「{id}」的墓碑标记失败:{e}"))?;
     }
     for ddl in OPLOG_AUX_DDL {
         tx.execute(ddl, []).map_err(|e| format!("重建 oplog 索引/触发器失败:{e}"))?;
@@ -595,6 +638,73 @@ fn synthesize_baseline(tx: &Connection) -> Result<Vec<(String, String, String, V
                     "set_field".into(),
                     json!({"field": "kind", "value": k}),
                 ));
+            }
+        }
+    }
+    // board_column(board-columns-plan §7.1a/§7.1b,codex 六轮定形)。
+    // ⛔ **必须整段排在 items 之前** —— item create 的 stage 指着它们,而基线的发射顺序
+    // 就是因果顺序(目标端按 origin_seq 逐条回放,列没到 item 就 DependencyMissing)。
+    //
+    // **三类各走各的,⛔ 别合并**:
+    //   * `inbox`/`filed`(system=1)—— **一条 op 都不合成**:真 schema-owned,永无
+    //     create/set_field/tombstone,目标库自己的迁移会种出这两行。
+    //   * 四个 task 种子(system=0,schema-seeded implicit genesis)—— **只合成
+    //     `title`/`position` 的 set_field 快照**(已 tombstone 的再补一条 tombstone)。
+    //     ⛔ **不给它们合成 create**(codex 六轮 H):目标端已有同 id 的 schema 行,
+    //     create 会把「预置 genesis」误当成第二次出生,当场撞 `apply_board_column_create`
+    //     那条「create 撞上已存在的行」。
+    //     ⚠ set_field **无条件发**(哪怕值就是 canonical):`board::audit_board_column_semantics`
+    //     的判据是「行 == 自身日志赢家,无 op 才回落 canonical」,改过名的种子若不发就当场
+    //     判不符。这不会把种子误判成「改过名」—— i18n 那条走的是**终态**判据
+    //     (`title != canonical`),不是「查日志有没有 set_field」(§7.1d)。
+    //   * 用户建的列 —— 正常 `create`(出生快照取现值),已 tombstone 的补一条 tombstone。
+    //
+    // ⚠ 墓碑的 HLC 会在写基线时**换成新的**,行上的 marker 随后由 compact 走 ④ 的
+    // `epoch_rebase` 改写(§7.1c 定形 (a):marker 是可重写的派生元数据)。
+    {
+        let mut stmt = tx
+            .prepare(
+                "SELECT id, title, kind, system, position, created_at, tombstoned_at \
+                 FROM board_column ORDER BY id",
+            )
+            .map_err(|e| e.to_string())?;
+        type ColumnBaseline = (String, String, String, i64, String, String, Option<String>);
+        let rows: Vec<ColumnBaseline> = stmt
+            .query_map([], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?))
+            })
+            .map_err(|e| e.to_string())?
+            .collect::<rusqlite::Result<_>>()
+            .map_err(|e| e.to_string())?;
+        for (id, title, kind, system, position, created_at, tombstoned_at) in rows {
+            if crate::board::is_system_seed_column(&id) {
+                continue;
+            }
+            if crate::board::is_seed_column(&id) {
+                for (field, value) in [("title", &title), ("position", &position)] {
+                    ops.push((
+                        "board_column".into(),
+                        id.clone(),
+                        "set_field".into(),
+                        json!({"field": field, "value": value}),
+                    ));
+                }
+            } else {
+                ops.push((
+                    "board_column".into(),
+                    id.clone(),
+                    "create".into(),
+                    json!({
+                        "title": title,
+                        "kind": kind,
+                        "system": system == 1,
+                        "position": position,
+                        "created_at": created_at,
+                    }),
+                ));
+            }
+            if tombstoned_at.is_some() {
+                ops.push(("board_column".into(), id, "tombstone".into(), json!({})));
             }
         }
     }
@@ -918,6 +1028,16 @@ pub(crate) fn table_fingerprints(tx: &Connection) -> Result<Vec<Vec<String>>, St
             "SELECT id||'|'||title||'|'||created_at||'|'||updated_at||'|'||COALESCE(color,'∅') \
              ||'|'||COALESCE(position,'∅')||'|'||quote(kind) \
              FROM topics ORDER BY id",
+        )?,
+        // 看板列(board-columns-plan §7.2 那张表的「epoch 指纹」一行)。
+        // ⛔⛔ **`tombstoned_at` 只比 `IS NULL` 的布尔状态,不比字符串**(§7.1c 定形):
+        // 压实会给基线 tombstone **重新取 HLC**,而 marker 存的就是那枚 op 的 HLC 原文
+        // ⇒ 拿字符串进指纹,每一次压实的自验收都会当场判「用户数据变了」而拒绝提交。
+        // ⚠ 这与 `convergence::FINGERPRINTS` 里那份**刻意不同口径**(那边比原字符串):
+        // 收敛测要证明两端收敛到**同一枚** min HLC,布尔比不出分叉。⛔ 别顺手「统一」。
+        text_rows(
+            "SELECT id||'|'||title||'|'||kind||'|'||system||'|'||position||'|'||created_at \
+             ||'|'||(tombstoned_at IS NOT NULL) FROM board_column ORDER BY id",
         )?,
         text_rows("SELECT item_id||'|'||topic_id FROM item_topic ORDER BY item_id, topic_id")?,
         text_rows("SELECT item_id||'|'||last_seq FROM item_image_counter ORDER BY item_id")?,
@@ -1794,5 +1914,117 @@ mod tests {
         // §3.3 收端:严格审计全过 + 导入事务落 epoch=2 → 立即具备当快照源资格。
         assert!(epoch_certified(&b.conn).unwrap(), "引导出来的设备随导入取得纪元标记");
         boot::make_snapshot(&b.conn, &b.dir).expect("引导出来的设备立即可当引导源(供货闸放行)");
+    }
+    /// 以**本机 origin** 落一枚 `board_column` op(写命令面归 B-c 第 3 段,这里用回放路径
+    /// 造与它等价的终态:op 进本机日志 + 行按 apply 语义物化)。
+    fn local_column_op(p: &mut P, entity_id: &str, kind: &str, payload: Value) {
+        let hlc = p.clock.tick(&p.conn).unwrap();
+        let seq: i64 = p
+            .conn
+            .query_row(
+                "SELECT COALESCE(MAX(origin_seq), 0) + 1 FROM oplog WHERE origin = ?1",
+                [hlc.device_id.as_str()],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let op = RemoteOp {
+            op_id: Ulid::new().to_string(),
+            hlc: hlc.encode(),
+            entity: "board_column".into(),
+            entity_id: entity_id.into(),
+            kind: kind.into(),
+            payload,
+            origin_seq: seq,
+        };
+        replay::apply_remote_op(&mut p.conn, &mut p.clock, &op).expect("落 board_column op");
+    }
+
+    /// 压实往返带看板列(board-columns-plan §7.1a/§7.1b/§7.1c):
+    ///
+    /// 1. **三类各走各的** —— 灵感两列零 op、四个 task 种子只合成 set_field 快照(⛔ 无
+    ///    create)、用户列走正常 create;
+    /// 2. 基线里 **board_column 整段排在 item create 之前**(item.stage 指着它们);
+    /// 3. 已删的列:marker 被 `epoch_rebase` **向上改写**成本次基线那枚 tombstone 的新 HLC,
+    ///    而**终态指纹只比布尔**(§7.1c 第 2 条)—— 否则每次压实的自验收都会当场判「用户
+    ///    数据变了」而拒绝提交;
+    /// 4. 压实后 `strict_battery` 全过(那一族里含看板列的四轴语义审计)。
+    #[test]
+    fn compact_round_trips_board_columns_and_rebases_the_tombstone_marker() {
+        let mut p = peer("bcol-compact");
+        let item = notes::capture(&mut p.conn, &mut p.clock, "让库非空").unwrap();
+        local_column_op(&mut p, "todo", "set_field", json!({"field":"title","value":"本周"}));
+        let keep = Ulid::new().to_string();
+        let gone = Ulid::new().to_string();
+        for (id, title, pos) in [(&keep, "复盘", "a6"), (&gone, "临时", "a7")] {
+            local_column_op(
+                &mut p,
+                id,
+                "create",
+                json!({"title":title,"kind":"task","system":false,"position":pos,
+                       "created_at":"2026-08-24T10:00:00.000Z"}),
+            );
+        }
+        local_column_op(&mut p, &gone, "tombstone", json!({}));
+        let before_marker: String = p
+            .conn
+            .query_row("SELECT tombstoned_at FROM board_column WHERE id = ?1", [&gone], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        let before = crate::board::list_columns(&p.conn).unwrap();
+
+        compact(&mut p.conn).expect("压实");
+
+        // ① 基线顺序:board_column 那段整个在第一枚 item create 之前。
+        let kinds: Vec<(String, String, String)> = {
+            let mut stmt = p
+                .conn
+                .prepare("SELECT entity, kind, entity_id FROM oplog ORDER BY hlc")
+                .unwrap();
+            let rows = stmt
+                .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+                .unwrap()
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .unwrap();
+            rows
+        };
+        let last_column = kinds.iter().rposition(|(e, _, _)| e == "board_column").unwrap();
+        let first_item = kinds.iter().position(|(e, k, _)| e == "item" && k == "create").unwrap();
+        assert!(last_column < first_item, "board_column 基线必须整段排在 item create 之前");
+
+        // ② 灵感两列零 op;四个 task 种子只有 set_field(⛔ 无 create);用户列有 create。
+        for id in ["inbox", "filed"] {
+            assert!(!kinds.iter().any(|(e, _, i)| e == "board_column" && i == id), "{id} 不该有 op");
+        }
+        for id in ["todo", "doing", "confirming", "done"] {
+            let mine: Vec<&str> =
+                kinds.iter().filter(|(e, _, i)| e == "board_column" && i == id).map(|(_, k, _)| k.as_str()).collect();
+            assert_eq!(mine, vec!["set_field", "set_field"], "{id}:只合成 title/position 快照");
+        }
+        assert!(kinds.iter().any(|(e, k, i)| e == "board_column" && k == "create" && i == &keep));
+        assert!(kinds.iter().any(|(e, k, i)| e == "board_column" && k == "tombstone" && i == &gone));
+
+        // ③ marker 被向上改基线;终态(含 deleted 布尔)一格不变。
+        let after_marker: String = p
+            .conn
+            .query_row("SELECT tombstoned_at FROM board_column WHERE id = ?1", [&gone], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert!(after_marker > before_marker, "epoch_rebase 是向上改写(新 HLC 严格更大)");
+        let after = crate::board::list_columns(&p.conn).unwrap();
+        let shape = |v: &[crate::board::BoardColumnRow]| -> Vec<(String, String, String, bool, bool)> {
+            v.iter()
+                .map(|c| (c.id.clone(), c.title.clone(), c.position.clone(), c.deleted, c.is_title_overridden))
+                .collect()
+        };
+        assert_eq!(shape(&after), shape(&before), "压实是等价变换,看板列终态一格不变");
+        crate::board::audit_tombstone_apply_empty(&p.conn).unwrap();
+
+        // ④ 压实后的库能被新设备引导(严格电池是 compact 自验收的一部分,这里再点一次名)。
+        boot::strict_battery(&p.conn).unwrap();
+        assert!(p.conn.query_row("SELECT COUNT(*) FROM items WHERE id = ?1", [&item], |r| r
+            .get::<_, i64>(0))
+            .unwrap() == 1);
     }
 }

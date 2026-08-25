@@ -3,6 +3,14 @@
 //! 三个引擎实例(各配真 SQLite)+ 内存服务器模型(§4 信箱语义:每收件设备一条 FIFO
 //! 队列、离线堆积按容量丢最老、随机衰减模拟 TTL、重启清空、direct 不入信箱)。随机
 //! 命令流(覆盖词汇表**全部** entity·kind(计数别写死在这里——0028 space、0033 device、0035 comment 三次都是它先腐;以 random_command 的臂为准))× 随机上下线 ×
+//!
+//! ⚠⚠ **0037 起有一个诚实缺口:`board_column` 进了词汇表与下方 [`FINGERPRINTS`],但
+//! [`random_command`] 还没有它的臂** —— 本地写命令面(建列 / 改名 / 排序 / 删列)是
+//! board-columns-plan B-c 的**第 3 段**,此刻还不存在,发不出 op。⇒ 那一格今天是
+//! **平凡绿**(三端的 board_column 都是六个原样种子,恒相等),⛔ **别把它读成「已覆盖」**。
+//! 补上的同轮要一并加覆盖计数(照 `COMMENT_ADDS` / `DEVICE_ALIAS_SETS` 那两只把「零覆盖
+//! 的空绿」堵掉的形)。B-c 第 1 段的收敛证据在 `replay::tests` 的 board_column 那四只
+//! 行为测里,不在这份 property test 里。
 //! 乱序交错投递 × 引擎重启;终局全员在线、反复 hello 互补直到静默,断言六张同步表
 //! 逐行相等(items 刨去本地簿记 updated_at;item_image 含字节)+ per-origin 水位
 //! 相等且连续 + 无冻结无拒帧。
@@ -719,6 +727,17 @@ const FINGERPRINTS: &[(&str, &str)] = &[
         "SELECT id||'|'||title||'|'||created_at||'|'||updated_at \
          ||'|'||COALESCE(color,'∅')||'|'||COALESCE(position,'∅')||'|'||quote(kind) \
          FROM topics ORDER BY id",
+    ),
+    // 0037 看板列(board-columns-plan §7.2「收敛指纹」一行)。
+    // ⛔⛔ **`tombstoned_at` 比的是原字符串,不是 `IS NULL` 的布尔** —— 与
+    // `epoch::table_fingerprints` 那份**刻意不同口径**:那边因为压实会重新取 HLC
+    // (§7.1c)只能比布尔;这边要证明的恰恰是「两端各自删同一个空列之后,收敛到**同一枚**
+    // min HLC」,布尔比不出这种分叉。⛔ 别顺手「统一」这两把尺。
+    // quote():marker 的 NULL(还活着)不与某个字符串同指纹。
+    (
+        "board_column",
+        "SELECT id||'|'||title||'|'||kind||'|'||system||'|'||position||'|'||created_at \
+         ||'|'||quote(tombstoned_at) FROM board_column ORDER BY id",
     ),
     ("item_topic", "SELECT item_id||'|'||topic_id FROM item_topic ORDER BY item_id, topic_id"),
     // 0035 留言:四列全进(quote() 让 born_device 的 NULL 与字面「∅」不同指纹)。

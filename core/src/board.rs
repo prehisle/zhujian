@@ -133,6 +133,33 @@ pub(crate) const SEED_COLUMNS: &[SeedColumn] = &[
     },
 ];
 
+/// 六个种子 id 的 SQL 集合字面量 `('inbox', 'filed', …)`,给 `id IN {…}` / `NOT IN {…}` 用。
+///
+/// ⛔ **判据是「那六个明确 id」,不是 `system = 0`、也不是 `kind = 'task'`**(plan §7.1a/§7.1e):
+/// 四个 task 种子正是 `system = 0`,拿 system 当过滤条件会把它们当用户行处理 —— 而它们在
+/// 两端**必然相交**(种子由 schema 提供),表级复制当场撞 PRIMARY KEY。反过来把用户 id 错
+/// 列成种子,则会让无 create 背书的行被豁免、**静默穿过 boot/battery**。
+pub(crate) fn seed_ids_sql() -> String {
+    id_set_sql(SEED_COLUMNS.iter().map(|s| s.id))
+}
+
+/// 四个 **task** 种子(`system = 0` 的那半:可改名 / 可排序 / 可删)的 SQL 集合字面量。
+///
+/// 它们是 **schema-seeded implicit genesis**(plan §7.1a):不发 create,但此后
+/// `title` / `position` / `tombstone` 全走普通 op ⇒ 引导时**必须从合并后的 oplog 物化**,
+/// ⛔ 不与迁移里那份默认值盲比(按不变量 2 它们就是用户数据)。
+pub(crate) fn task_seed_ids_sql() -> String {
+    id_set_sql(SEED_COLUMNS.iter().filter(|s| !s.system).map(|s| s.id))
+}
+
+/// ⚠ 拼的是 **`SEED_COLUMNS` 里那六个写死的字面量**,没有任何一格来自外部输入 ——
+/// 这不是「用字符串拼 SQL」的那个坑。真要换成绑定参数就得把 `IN (?,?,…)` 的元数也拼出来,
+/// 那才是把同一份知识写第二遍。
+fn id_set_sql<'a>(ids: impl Iterator<Item = &'a str>) -> String {
+    let inner: Vec<String> = ids.map(|id| format!("'{id}'")).collect();
+    format!("({})", inner.join(", "))
+}
+
 // ---- 「什么是任务态」的唯一正式子(不变量 3) ------------------------------------------
 
 /// SQL 片段:**任务态列的 id 集合**,给 `stage IN {TASK_COLUMN_IDS}` 用。
@@ -161,6 +188,19 @@ pub(crate) const IDEA_COLUMN_IDS: &str = "(SELECT id FROM board_column WHERE kin
 /// 行在不在、是什么 kind,另问 [`column_kind`]。
 pub(crate) fn is_seed_column(id: &str) -> bool {
     SEED_COLUMNS.iter().any(|s| s.id == id)
+}
+
+/// 这个 id 是不是**系统种子**(`system=1` 的那两个,即灵感的 `inbox`/`filed`)。
+///
+/// ⭐ 它与 [`is_seed_column`] 的差别正是 plan §7.1a 那条「六个种子**分两类**」:
+/// 系统那两个是**真 schema-owned** —— 永无 create / set_field / tombstone,任何一枚
+/// 打在它们身上的 op 都是坏 op(不变量 2 是全局的,远端也不许违反);四个 task 种子是
+/// **schema-seeded implicit genesis**,不发 create 但此后 title/position/tombstone 全走普通 op。
+///
+/// ⚠ 同 [`is_seed_column`],它**不查库**:判据是「这个 id 在不在 [`SEED_COLUMNS`] 里且
+/// `system` 为真」,shape 层要在不开事务的前提下用它(plan §4.1:shape 层不许查库)。
+pub(crate) fn is_system_seed_column(id: &str) -> bool {
+    SEED_COLUMNS.iter().any(|s| s.id == id && s.system)
 }
 
 /// 一列的当前身份。⛔ 别用 stage 字面量代答这两格中的任何一格。
@@ -344,6 +384,179 @@ pub(crate) fn audit_seed_columns(conn: &Connection) -> Result<(), String> {
         if tombstoned_at.is_some() {
             return Err(format!("系统列「{}」带着墓碑标记——系统列不可删除", seed.id));
         }
+    }
+    Ok(())
+}
+
+/// 看板列的 op-backed 语义审计 —— **词汇 / 坐标 / 值 / 墓碑 marker 四轴**,双侧可跑。
+///
+/// `prefix` 同 `boot::audit_device_profile_semantics`:`""` = 本库,`"boot."` = 只读挂载的
+/// 快照(**attached 库的 CHECK/PK 可被篡改,不信 schema、实查**);`who` 只进话术。
+///
+/// ⭐ **为什么快照侧也要单独跑一遍**(照 space / device / comment 三次同型的判例):引导会把
+/// 四个 task 种子**从合并后的日志物化**,于是「快照的行与它自己的日志矛盾」这种损坏会被
+/// 合并**顺手修好**、再让 battery 误过。⇒ 绝不让下方的合并物化替源库掩盖问题。
+///
+/// # 分工(⛔ 每条只写一遍,别在别处再描述一次)
+///
+/// * 「无 create 背书的用户列」→ `boot::count_unbacked_rows`(它是登记表第 ⑦ 面,
+///   且 `check_fresh_to_account` 与导入审计两个消费者共用同一条判据);
+/// * 「有墓碑 op 却没盖 marker」→ `boot::audit_tombstone_resurrection`(第 ⑥ 面);
+/// * 「set_field/tombstone 指向无行无背书的列 / set-before-create」→
+///   `boot::audit_op_preconditions`(第 ⑧ 面);
+/// * 出生字段是否还是 canonical → [`audit_seed_columns`]。
+pub(crate) fn audit_board_column_semantics(
+    conn: &Connection,
+    prefix: &str,
+    who: &str,
+) -> Result<(), String> {
+    let one = |sql: &str| -> Result<i64, String> {
+        conn.query_row(sql, [], |r| r.get(0)).map_err(|e| e.to_string())
+    };
+    let seeds = seed_ids_sql();
+    let system_seeds = id_set_sql(SEED_COLUMNS.iter().filter(|s| s.system).map(|s| s.id));
+
+    // ① 词汇与坐标合规。NULL 语义照 space/device 那两只:`json_extract` 缺键、被篡改的
+    //    attached 库列为 NULL 时 `<>` 是三值逻辑、不计入 ⇒ 一律先 COALESCE 再比。
+    //    (a) kind 只有三种;(b) set_field 的字段名只有 title | position。
+    let bad_ops = one(&format!(
+        "SELECT COUNT(*) FROM {prefix}oplog WHERE entity = 'board_column' AND ( \
+             COALESCE(kind, '') NOT IN ('create', 'set_field', 'tombstone') \
+             OR (COALESCE(kind, '') = 'set_field' \
+                 AND COALESCE(json_extract(payload, '$.field'), '') NOT IN ('title', 'position')))"
+    ))?;
+    if bad_ops > 0 {
+        return Err(format!(
+            "看板列语义审计({who}):{bad_ops} 条 board_column op 词汇非法\
+             (只认 create/set_field/tombstone,且 set_field 只改 title|position),整体回滚"
+        ));
+    }
+    // (c) **灵感那两列身上一枚 op 都不许有**(不变量 2 是全局的,远端也不许违反)。
+    //     ⚠ 这一格与 replay 的 shape 闸是同一条规则的两个入口:那道守 live,这道守
+    //     **快照直接携带**的日志 —— boot 是 `INSERT … SELECT`,根本不过 shape 校验。
+    let system_ops = one(&format!(
+        "SELECT COUNT(*) FROM {prefix}oplog \
+          WHERE entity = 'board_column' AND entity_id IN {system_seeds}"
+    ))?;
+    if system_ops > 0 {
+        return Err(format!(
+            "看板列语义审计({who}):{system_ops} 条 op 打在系统列(灵感两列)身上\
+             ——它们不可改名、不可删、不可改 kind(不变量 2),整体回滚"
+        ));
+    }
+    // (d) **六个种子都不发 create**(§7.1a):收到即坏。
+    let seed_creates = one(&format!(
+        "SELECT COUNT(*) FROM {prefix}oplog \
+          WHERE entity = 'board_column' AND kind = 'create' AND entity_id IN {seeds}"
+    ))?;
+    if seed_creates > 0 {
+        return Err(format!(
+            "看板列语义审计({who}):{seed_creates} 条内置列的 create op\
+             ——六个种子是 schema 提供的,永无 create(§7.1a),整体回滚"
+        ));
+    }
+
+    // ② op 在行缺:有 create 背书的列必须有行。⛔ **与 item/topic 那条不同 —— 有 tombstone
+    //    也照样必须有行**(不变量 5:列行永不物理删除,墓碑只是标志位)。
+    let missing = one(&format!(
+        "SELECT COUNT(*) FROM (SELECT DISTINCT entity_id FROM {prefix}oplog \
+             WHERE entity = 'board_column' AND kind = 'create') o \
+         WHERE NOT EXISTS (SELECT 1 FROM {prefix}board_column c WHERE c.id = o.entity_id)"
+    ))?;
+    if missing > 0 {
+        return Err(format!(
+            "看板列语义审计({who}):{missing} 个有 create op 的列没有行\
+             ——列行永不物理删除(不变量 5),整体回滚"
+        ));
+    }
+
+    // ③ 值不符(**用户列**):title / position == 自身日志的 LWW 赢家。走共享的
+    //    `count_field_mismatches`,它的扫描面就是「有 create 背书的行」⇒ 六个种子天然在外。
+    for field in ["title", "position"] {
+        let bad = crate::sync::boot::count_field_mismatches(
+            conn,
+            prefix,
+            "board_column",
+            "board_column",
+            field,
+            Some(field),
+        )?;
+        if bad > 0 {
+            return Err(format!(
+                "看板列语义审计({who}):{bad} 个用户列的 {field} 与自身日志的 LWW 赢家不符\
+                 (状态与日志矛盾),整体回滚"
+            ));
+        }
+    }
+
+    // ④ 值不符(**四个 task 种子**,schema-seeded implicit genesis):它们没有 create,
+    //    故赢家 = 该字段全部 set_field 里 HLC 最大者;**一条 op 都没有时兜底值是
+    //    [`SEED_COLUMNS`] 里那份 canonical**(⛔ 不是「没 op 就不查」——那样快照随手改一个
+    //    种子标题就能穿过审计)。
+    for seed in SEED_COLUMNS.iter().filter(|s| !s.system) {
+        for (field, canonical) in
+            [("title", seed.canonical_title), ("position", seed.position)]
+        {
+            let winner: Option<Option<String>> = conn
+                .query_row(
+                    &format!(
+                        "SELECT json_extract(payload, '$.value') FROM {prefix}oplog \
+                          WHERE entity = 'board_column' AND entity_id = ?1 AND kind = 'set_field' \
+                            AND json_extract(payload, '$.field') = ?2 \
+                          ORDER BY hlc DESC LIMIT 1"
+                    ),
+                    (seed.id, field),
+                    |r| r.get(0),
+                )
+                .optional()
+                .map_err(|e| e.to_string())?;
+            // 赢家的 value 为 JSON null 在 shape 层就被拒了(title/position 都不接受 null)
+            // ⇒ 这里落到 `None` 只可能是「日志被篡改」,当损坏拒,⛔ 别退回 canonical。
+            let expect = match winner {
+                Some(Some(v)) => v,
+                Some(None) => {
+                    return Err(format!(
+                        "看板列语义审计({who}):内置列「{}」的 {field} 赢家是 null\
+                         ——协议不接受(排序键永不清、标题不可为空),整体回滚",
+                        seed.id
+                    ))
+                }
+                None => canonical.to_string(),
+            };
+            let actual: Option<String> = conn
+                .query_row(
+                    &format!("SELECT {field} FROM {prefix}board_column WHERE id = ?1"),
+                    [seed.id],
+                    |r| r.get(0),
+                )
+                .optional()
+                .map_err(|e| e.to_string())?;
+            if actual.as_deref() != Some(expect.as_str()) {
+                return Err(format!(
+                    "看板列语义审计({who}):内置列「{}」的 {field} 是 {actual:?},\
+                     按自身日志应为「{expect}」(状态与日志矛盾),整体回滚",
+                    seed.id
+                ));
+            }
+        }
+    }
+
+    // ⑤ 墓碑 marker 的**值**:非空时必须 == 该列全部 tombstone op 的 **MIN(hlc)**。
+    //    ⚠ 是 **MIN 不是 MAX**(plan §2.3 定形 2 的确定性 min):两端各自删同一个空列是
+    //    完全合法的用户操作,取 min 才让两端收敛到同一枚。
+    //    ⚠ 反方向那半(「有墓碑 op 却没盖 marker」)在 `boot::audit_tombstone_resurrection`。
+    //    ⚠ 「marker 非空却一条 tombstone op 都没有」也在这条里:`MIN` 取不到值 ⇒ 不相等。
+    let bad_marker = one(&format!(
+        "SELECT COUNT(*) FROM {prefix}board_column c WHERE c.tombstoned_at IS NOT NULL \
+           AND NOT (c.tombstoned_at IS (SELECT MIN(o.hlc) FROM {prefix}oplog o \
+                     WHERE o.entity = 'board_column' AND o.kind = 'tombstone' \
+                       AND o.entity_id = c.id))"
+    ))?;
+    if bad_marker > 0 {
+        return Err(format!(
+            "看板列语义审计({who}):{bad_marker} 个列的墓碑标记 ≠ 自身日志里最小的那枚\
+             tombstone HLC(确定性 min 被破坏,两端会分叉),整体回滚"
+        ));
     }
     Ok(())
 }

@@ -96,7 +96,17 @@ pub struct RemoteOp {
 /// alias 值域)、item create 的 `born_device` 值域(26 位 ULID ∪ null,**缺键合法**——
 /// 老端的历史 create op 永远长不出这个键,判严 = 把那台设备整条 op 流打进持久隔离,
 /// identity-plan §3.5)、`born_device` 进「协议禁 set_field」那一臂。
-pub(crate) const VALIDATOR_VER: i64 = 6;
+/// v7 = 0037 看板列进词汇(`board_column` 的 create / set_field / tombstone 三臂 +
+/// 严格 ULID 坐标 + 恰五键 create + title|position 白名单,board-columns-plan §3)。
+///
+/// ⚠ **v7 这一跳今天救不出任何一条隔离行,照样 bump**(§4.4 的纪律是「改了 shape 规则
+/// 就 +1」,不是「有人要救才 +1」):v36 及更早的库里根本造不出 `board_column` op
+/// (词汇表 CHECK 拦着),而对端更新时旧端落的是 `UnsupportedVocab` = **挂起不隔离**。
+/// ⇒ 真正会有隔离人口要救的是 **B-c 第 2 段**(§4 那套 stage/born_stage 的分型改判:
+/// 未知 stage 值今天归 `InvalidOp` = per-origin 持久隔离),那一笔会再 +1。
+/// ⭐ 另记:B-e 的 `BOARD_COLUMNS_CAP_GEN` 与本常量**不是一回事**(§5.5 (α))——
+/// B-b / B-c / B-d 共用**同一枚** CAP_GEN,⛔ 别因为这里 bump 了就顺手清闩。
+pub(crate) const VALIDATOR_VER: i64 = 7;
 
 /// typed poison 错误分型(epoch-plan §4):`validate_op_shape` 与 `apply_remote_op`
 /// 返回**同一枚举**,分型在源头、不靠错误字符串事后分类。engine 按型分道:
@@ -212,6 +222,10 @@ pub fn apply_remote_op(
         ("topic", "create") => apply_topic_create(&tx, op)?,
         ("topic", "set_field") => apply_topic_set_field(&tx, op)?,
         ("topic", "tombstone") => apply_entity_tombstone(&tx, "topics", &op.entity_id)?,
+        ("board_column", "create") => apply_board_column_create(&tx, op)?,
+        ("board_column", "set_field") => apply_board_column_set_field(&tx, op)?,
+        // ⛔ **刻意不走 `apply_entity_tombstone`**:列的墓碑是标志位不是删行(不变量 5)。
+        ("board_column", "tombstone") => apply_board_column_tombstone(&tx, op)?,
         ("link", _) => apply_link(&tx, op)?,
         ("image", "image_add") => apply_image_add(&tx, clock, op, &hlc)?,
         ("image", "image_tombstone") => apply_image_tombstone(&tx, op)?,
@@ -352,6 +366,156 @@ fn apply_topic_set_field(tx: &Connection, op: &RemoteOp) -> Result<Outcome, OpEr
         (value, &op.entity_id),
     )
     .map_err(|e| db_err(&format!("回放 topic set_field {field} 失败({})", op.entity_id), e))?;
+    Ok(Outcome::Applied)
+}
+
+// ---- 分发:board_column(board-columns-plan §3 / §4.2;形近 topic,差别逐条写在下面) ----
+
+/// 看板列 create:出生快照落行。payload 恰五键(shape 层钉死),`updated_at` 一类的
+/// 本地簿记列这张表根本没有 —— 列只有 title / position 两个可改字段。
+///
+/// ⚠ **六个种子永远走不到这里**(plan §7.1a):`inbox`/`filed` 是真 schema-owned、
+/// 四个 task 种子是 **schema-seeded implicit genesis**(不发 create,此后 title/position/
+/// tombstone 全走普通 op)。shape 层要求 `entity_id` 是规范 ULID ⇒ 六个旧字面量当场出局。
+///
+/// ⭐ **自曝:头一句墓碑压制今天不可达**(plan §3 点名要「create 与 set_field 都要有墓碑
+/// 压制前置」,照办了,但账要记在明处)。承重的是 §4.2 那条 —— `board_column/tombstone`
+/// 在行不存在时归 `DependencyMissing` 且**整条事务连 oplog 记账一起回滚** ⇒ 墓碑 op 永远
+/// 不会先于 create 进日志 ⇒ `has_tombstone ⟹ row_exists`,而下一句 `row_exists` 给出的是
+/// **更响亮的 `InvalidOp`(身份分叉)**。⛔ 别据此顺手删掉它:它是 topic 那套的逐条同构,
+/// 真删要先证明「墓碑先于 create 入日志」在四个入口(live / boot / epoch / 迁移直写)上
+/// 都不可达。送 B-c 的审时点名让 codex 判这一格。
+fn apply_board_column_create(tx: &Connection, op: &RemoteOp) -> Result<Outcome, OpError> {
+    if has_tombstone(tx, "board_column", &op.entity_id).map_err(local)? {
+        return Ok(Outcome::SuppressedByTombstone);
+    }
+    if row_exists(tx, "board_column", &op.entity_id).map_err(local)? {
+        return Err(OpError::InvalidOp(format!(
+            "回放异常:board_column {} 的 create 撞上已存在的行",
+            op.entity_id
+        )));
+    }
+    let p = &op.payload;
+    let inv = OpError::InvalidOp;
+    tx.execute(
+        "INSERT INTO board_column (id, title, kind, system, position, created_at) \
+         VALUES (?1, ?2, ?3, 0, ?4, ?5)",
+        (
+            &op.entity_id,
+            str_field(p, "title").map_err(inv)?,
+            // shape 已把 kind 钉死成 'task'、system 钉死成 false(推导见 validate_op_shape
+            // 那一臂):用户建得出的列只有 task 列。这里照 payload 写 kind、把 system 写死 0
+            // —— 两者都进表级 `CHECK (system = 1 OR kind = 'task')` 与 ③ 的出生冻结。
+            str_field(p, "kind").map_err(inv)?,
+            str_field(p, "position").map_err(inv)?,
+            str_field(p, "created_at").map_err(inv)?,
+        ),
+    )
+    .map_err(|e| db_err(&format!("回放 board_column create 失败({})", op.entity_id), e))?;
+    Ok(Outcome::Applied)
+}
+
+/// 看板列 set_field:白名单 **title | position**(shape 层限死),字段级 LWW 同 topic。
+///
+/// ⚠ **四个 task 种子没有 create**,故 [`is_latest_field_write`] 的参赛者只有 set_field ——
+/// 那正是 implicit genesis 想要的语义(plan §7.1a);用户列的 create payload 里带着
+/// title/position 初值,同一句 SQL 自然把它算成参赛者。**两类共用一条判据,不分支。**
+///
+/// ⚠ 行不存在 → `DependencyMissing`:这一格只对**用户列**成立 —— 六个种子的行是迁移种下的,
+/// 恒在。⛔ 别在这儿给种子写「行不在就补一行」的兜底,那会把 schema 所有权让给回放。
+fn apply_board_column_set_field(tx: &Connection, op: &RemoteOp) -> Result<Outcome, OpError> {
+    if has_tombstone(tx, "board_column", &op.entity_id).map_err(local)? {
+        // 已删的列是**只读收容区**(plan §4.3):晚到的改名 / 排序 op 不许再改写它。
+        return Ok(Outcome::SuppressedByTombstone);
+    }
+    if !row_exists(tx, "board_column", &op.entity_id).map_err(local)? {
+        return Err(OpError::DependencyMissing(format!(
+            "回放依赖未到:board_column {} 的 set_field 先于 create(引擎挂起重试,§5.3)",
+            op.entity_id
+        )));
+    }
+    let field = str_field(&op.payload, "field").map_err(OpError::InvalidOp)?;
+    let value = board_column_field_value(&field, field_value(&op.payload).map_err(OpError::InvalidOp)?)
+        .map_err(OpError::InvalidOp)?;
+    if !is_latest_field_write(tx, "board_column", &op.entity_id, &field, &op.hlc).map_err(local)? {
+        return Ok(Outcome::LwwStale);
+    }
+    tx.execute(
+        &format!("UPDATE board_column SET {field} = ?1 WHERE id = ?2"),
+        (value, &op.entity_id),
+    )
+    .map_err(|e| {
+        db_err(&format!("回放 board_column set_field {field} 失败({})", op.entity_id), e)
+    })?;
+    Ok(Outcome::Applied)
+}
+
+/// 看板列 tombstone:**盖标志位,⛔ 不删行**(不变量 5 —— 回收站与成就归档里的条目仍指着
+/// 它们出生/被删时所在的列,而「归档 = 史实,可查不可删」是铁律)。
+///
+/// ⛔ **不许复用通用的 [`apply_entity_tombstone`]**(plan §3,codex 四轮 H2):那只是
+/// `DELETE FROM {table} WHERE id = ?1` 且「行本就不在 = 幂等,同样 Applied」,照抄会直接
+/// 违背不变量 5,并造出这条死路 —— tombstone 先到 → 只有 oplog 墓碑、没有物化行 → 后到的
+/// create 被 sticky 压制 → 引用该列的 item op **永远等不到 FK 行**。
+///
+/// ⛔ **这里不能用 [`has_tombstone`]**:op 是**先记 oplog 再分发**的
+/// ([`apply_remote_op`]),它会看见**当前这枚 op 自己的墓碑**(plan §2.3)。判据只能读**行**。
+///
+/// 收敛规则 = **`winner = min(已有 marker, op.hlc)`**(plan §2.3 定形 2)。⚠ 这个「小」是
+/// **HLC 全序的小,不是网络先到**(HLC 编码字典序即逻辑序,`clock.rs:10,35`)。两端各自删
+/// 同一个空列是完全合法的用户操作,两枚 op 的 HLC 不同 —— 取 min 让两端确定性收敛到同一枚。
+///
+/// 写入顺序被授权表的 `op_id` 那一格钉死:**先有 op、再改行**(§2.3「④ 的形」)。本函数
+/// 落在 [`apply_remote_op`] 的 oplog 记账**之后**,天然满足。
+fn apply_board_column_tombstone(tx: &Connection, op: &RemoteOp) -> Result<Outcome, OpError> {
+    let row: Option<(i64, Option<String>)> = tx
+        .query_row(
+            "SELECT system, tombstoned_at FROM board_column WHERE id = ?1",
+            [&op.entity_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()
+        .map_err(local)?;
+    // plan §4.2:列不存在 ≠ 毒 op —— 这是**跨 origin 因果依赖未到**(对端刚建的列,它的
+    // create 还没到),既有分型里有专门的一档。⛔ 别照通用 tombstone 那条「删 0 行也算
+    // Applied」办,那会让后到的 create 被 sticky 压制、item op 永远等不到 FK 行。
+    let Some((system, current)) = row else {
+        return Err(OpError::DependencyMissing(format!(
+            "回放依赖未到:board_column {} 的 tombstone 先于 create(引擎挂起重试,§5.3)",
+            op.entity_id
+        )));
+    };
+    // 系统列不可删(不变量 2)。⚠ 今天**不可达**:shape 层已拒 `inbox`/`filed` 这两个
+    // entity_id,而「非保留 id 却 system=1」由 boot 的出生审计拒 ⇒ 能走到这儿的行恒 system=0。
+    // 留着是因为 plan §2.3 定形 2 点名要「先查父行存在 + system=0」,且代价是同一次点查里
+    // 多读一列;⛔ 但它是**响亮的损坏断言**,不是 fallback 分支。存储层 ② 是第三道。
+    if system != 0 {
+        return Err(OpError::InvalidOp(format!(
+            "回放异常:board_column {} 是系统列却收到 tombstone(库损坏?系统列不可删)",
+            op.entity_id
+        )));
+    }
+    // 已有更小(或相等)的 marker ⇒ 本枚输掉这次合并,只记账不动行。
+    // ⚠ 相等在 live 路径上不可达(HLC 全局唯一 + `logged_op_matches` 早已把重放挡在
+    // `AlreadySeen`),折进 `<=` 是为了让判据只有一条;存储层 ④ 另有「等值一律 no-op」那臂
+    // 兜幂等重试(七轮 M)。
+    if current.as_deref().is_some_and(|cur| cur <= op.hlc.as_str()) {
+        return Ok(Outcome::LwwStale);
+    }
+    // 登记授权行 → 改行 → ⑥(AFTER)当场消费它。⛔ 别把 DELETE 写在这儿:「事务提交了
+    // 但忘删」那条路正是八轮用触发器消费堵死的(plan §2.3「授权行泄漏」)。
+    tx.execute(
+        "INSERT INTO sync_board_column_tombstone_apply \
+             (column_id, op_id, from_hlc, to_hlc, mode) \
+         VALUES (?1, ?2, ?3, ?4, 'apply_min')",
+        (&op.entity_id, &op.op_id, &current, &op.hlc),
+    )
+    .map_err(|e| db_err(&format!("登记列墓碑授权失败({})", op.entity_id), e))?;
+    tx.execute(
+        "UPDATE board_column SET tombstoned_at = ?1 WHERE id = ?2",
+        (&op.hlc, &op.entity_id),
+    )
+    .map_err(|e| db_err(&format!("回放 board_column tombstone 失败({})", op.entity_id), e))?;
     Ok(Outcome::Applied)
 }
 
@@ -1142,6 +1306,83 @@ fn topic_field_value(field: &str, v: &Value) -> Result<SqlValue, String> {
     }
 }
 
+/// board_column 同步字段白名单 + 值域(board-columns-plan §3:**只有 title | position**)。
+///
+/// ⭐ **这一份同时是 shape 层与 apply 层的判据**(与 topic 那对刻意不同:那边 position 的
+/// frindex 校验只写在 shape 里、apply 靠它跑过)。理由 = 清单 14 —— 同一条规则的第二份
+/// 描述就是漂移源;这里是新写的,没有历史包袱,就一次写对。
+fn board_column_field_value(field: &str, v: &Value) -> Result<SqlValue, String> {
+    match field {
+        // 与 topic.title 逐字同口径:非 null 的字符串即可。
+        // ⚠ **诚实边界:不限长** —— topic.title 今天也没有长度闸,在这儿单开一把尺就是
+        // 仓里第二把「标题多长算合法」的尺。真要限,两处一起限,那是另一笔。
+        "title" => match v {
+            Value::String(s) => Ok(SqlValue::Text(s.clone())),
+            other => Err(format!("board_column 字段 title 期待字符串,收到:{other}")),
+        },
+        // position 是 frindex 排序键(同 topics.position,0031),**永不清**(拒 null),
+        // 且走**完整** `frindex::validate` —— 不是 items 那种「首字母 + 全字母数字」的松
+        // 形态。plan §2.1a:DDL 只写 `TEXT NOT NULL` 不够,而 §2.2 那句 base62 CHECK
+        // **只覆盖 items、不覆盖 board_column**;松形态会放行 "z"/"a00" 等非规范键,一旦
+        // 成为最大键就让后续 `key_between(last, None)` 永久失败。
+        "position" => match v {
+            Value::String(s) => {
+                crate::frindex::validate(s).map(|()| SqlValue::Text(s.clone()))
+            }
+            Value::Null => {
+                Err("board_column 字段 position 不接受 null(排序键永不清)".into())
+            }
+            other => Err(format!("board_column position 期待 frindex 键字符串,收到:{other}")),
+        },
+        other => Err(format!("board_column set_field 不认识的字段:{other}")),
+    }
+}
+
+/// board_column set_field 的形态校验;分型口径同 [`validate_item_field_shape`]:
+/// 已知词汇但禁 set = InvalidOp,未知字段 = UnsupportedVocab(版本偏斜,挂起等升级)。
+fn validate_board_column_field_shape(field: &str, v: &Value) -> Result<(), OpError> {
+    match field {
+        "title" | "position" => {
+            board_column_field_value(field, v).map(|_| ()).map_err(OpError::InvalidOp)
+        }
+        // 出生字段 + 墓碑 marker:已知词汇,**协议禁 set_field**(plan §2.1a)。
+        // 改 `kind` 会让该列上全部条目的耦合约束当场反转(有 position 的行忽然要求 NULL);
+        // 改 `system` 能把灵感列降级成可删;`tombstoned_at` 由 tombstone 那种 kind 盖,
+        // 从 set_field 这条路进来就等于绕开了 §2.3 ④ 那整套授权。
+        "kind" | "system" | "created_at" | "tombstoned_at" => Err(OpError::InvalidOp(format!(
+            "board_column 字段 {field} 是出生/墓碑字段,协议禁 set_field"
+        ))),
+        other => Err(OpError::UnsupportedVocab(format!(
+            "board_column set_field 不认识的字段:{other}"
+        ))),
+    }
+}
+
+/// board_column 的 `set_field` / `tombstone` 的 entity_id 值域(**纯形态,不查库**)。
+///
+/// 两类合法坐标:**四个 task 种子的旧字面量**(schema-seeded implicit genesis,可改名 /
+/// 可排序 / 可删)∨ **26 位严格 ULID**(用户建的列)。
+///
+/// ⛔ `inbox`/`filed` 一律拒(plan §7.1b):否则「不可改名、不可删」这条不变量就只剩命令层,
+/// 而命令层有 §2.3 那三条已证实的旁路(远端 op 不过命令层 / boot 直接 INSERT…SELECT /
+/// epoch 基线直写 staging oplog)。⚠ 存储层 ② 那只不带豁免的守护是第二道,两道都要。
+///
+/// 分型 = **InvalidOp**:任何合法版本都不会发这种 op —— 不是版本偏斜,不该走挂起自愈。
+fn validate_board_column_entity_id(op: &RemoteOp) -> Result<(), String> {
+    let id = op.entity_id.as_str();
+    if crate::board::is_system_seed_column(id) {
+        return Err(format!(
+            "board_column {id} 是系统列(灵感两列),永不接受任何 op(不变量 2)"
+        ));
+    }
+    if crate::board::is_seed_column(id) || sync_proto::is_ulid(id) {
+        return Ok(());
+    }
+    Err(format!(
+        "board_column op 的 entity_id 既不是内置任务列、也不是 26 位严格 ULID:{id}"
+    ))
+}
+
 const STAGES: [&str; 6] = ["inbox", "filed", "todo", "doing", "confirming", "done"];
 
 /// item set_field 的**形态 + 内在值域**校验(shape 层,boot+live 共用)。值域(stage 枚举 /
@@ -1328,7 +1569,9 @@ fn validate_born_stage_value(v: &Value) -> Result<(), String> {
 /// 这里用**对称的 Rfc3339 解析**校验——format→parse 往返保证绝不误拒任何合法写入值(否则 v2
 /// 发的 done_at 会被别端自相拒收、把同步搞分叉),同时拒空串/垃圾/非法日期,兑现头注「防
 /// NaN月NaN日」。done_at **只增不清**:协议值恒非空字符串——null 落 `other` 臂被拒,守「永不清除」。
-/// comment `created_at` 的**定宽**规范判据(identity-plan §4.6.1,设计审三轮 M2)。
+/// **定宽** ISO 毫秒串 `YYYY-MM-DDTHH:MM:SS.sssZ`(恰 24 字节)的规范判据。
+/// 两个消费者共用一份(identity-plan §4.6.1 的 comment `created_at`;
+/// board-columns-plan §3 的 board_column `created_at`),`what` 只换话术。
 ///
 /// 判据 = **parse → 用同一个具名 formatter 重新格式化 → 逐字相等**,而**不是**
 /// `parse RFC3339 && ends_with('Z')`:后者挡不住小数秒宽度,而宽度不定会破坏
@@ -1337,15 +1580,23 @@ fn validate_born_stage_value(v: &Value) -> Result<(), String> {
 /// 即不等)与超毫秒精度(`.123456Z` → `.123Z` 不等)。
 ///
 /// 唯一的格式定义在 [`crate::repo::format_iso_millis`],产出与校验共用它。
-fn validate_comment_created_at(s: &str) -> Result<(), String> {
+/// ⚠ board_column 这一路要它的理由与 comment **不同**:列的读序由 `(position, id)` 定、
+/// 与 `created_at` 无关。这里图的是「六个种子那份写死在迁移里的 canonical 字面量」与
+/// 用户列的出生时刻**同一种形态** —— 否则 `board::audit_seed_columns` 那格逐字比对与
+/// 用户列的值就活在两套规范里。
+fn validate_iso_millis(what: &str, s: &str) -> Result<(), String> {
     let t = time::OffsetDateTime::parse(s, &time::format_description::well_known::Rfc3339)
-        .map_err(|e| format!("comment created_at 非合法 RFC3339 时间戳({s:?}):{e}"))?;
+        .map_err(|e| format!("{what} 非合法 RFC3339 时间戳({s:?}):{e}"))?;
     if crate::repo::format_iso_millis(t) != s {
         return Err(format!(
-            "comment created_at 必须是定宽规范串 YYYY-MM-DDTHH:MM:SS.sssZ(恰 24 字节,UTC),收到:{s:?}"
+            "{what} 必须是定宽规范串 YYYY-MM-DDTHH:MM:SS.sssZ(恰 24 字节,UTC),收到:{s:?}"
         ));
     }
     Ok(())
+}
+
+fn validate_comment_created_at(s: &str) -> Result<(), String> {
+    validate_iso_millis("comment created_at", s)
 }
 
 /// 测试转发:让 comment 的行为锚能验「本地产出的值过的是同一把尺」。
@@ -1504,6 +1755,80 @@ pub(crate) fn validate_op_shape(op: &RemoteOp) -> Result<(), OpError> {
             validate_topic_field_shape(&field, field_value(p).map_err(inv)?)?;
         }
         ("item", "tombstone") | ("topic", "tombstone") => {}
+        ("board_column", "create") => {
+            // **用户建的列恒是 ULID**:六个种子一枚 create 都不发(plan §7.1a),故这道闸
+            // 顺带把「seed id 的 create」整个挡在门外 —— §7.1b 那张表点名的
+            // `audit_create_multiplicity` 禁令由它承重(六个旧字面量都不是 26 位 ULID),
+            // ⛔ 别再去那儿写第二份(清单 14);boot 的 `audit_op_shapes` 全量扫描是第二道。
+            //
+            // ⛔ 用 `sync_proto::is_ulid`(**严**:26 字符 + Crockford + 首字符 ≤ '7'),
+            // 不是 `clock::is_canonical_ulid`(**松**:首字符上限没收紧)。理由不是洁癖 ——
+            // plan §4.1 给 `stage` 值域钉死的就是这把严尺,两处**必须同源**:松尺放行的
+            // 列 id 会被严尺在 stage 上拒掉 ⇒ 造出「列建得出来、卡却拖不进去」的死态。
+            if !sync_proto::is_ulid(&op.entity_id) {
+                return Err(inv(format!(
+                    "board_column create 的 entity_id 必须是 26 位严格 ULID(六个种子不发 create),收到:{}",
+                    op.entity_id
+                )));
+            }
+            // **恰五键**(照 comment 的判例):board_column 是新 entity,只有 v37+ 发得出,
+            // 不存在「老端缺键」的兼容面,故可以严。代价同 identity-plan §4.12 第 1 条:
+            // 日后连非语义元数据也不能直接追加,扩展必须走新 kind / 新 entity。
+            let obj = p
+                .as_object()
+                .ok_or_else(|| inv("board_column create 的 payload 必须是对象".into()))?;
+            const KEYS: [&str; 5] = ["title", "kind", "system", "position", "created_at"];
+            if obj.len() != KEYS.len() || !KEYS.iter().all(|k| obj.contains_key(*k)) {
+                return Err(inv(format!(
+                    "board_column create 的 payload 必须恰含 {KEYS:?},收到:{:?}",
+                    obj.keys().collect::<Vec<_>>()
+                )));
+            }
+            board_column_field_value("title", p.get("title").expect("上一句已核键在")).map_err(inv)?;
+            // ⭐ `kind` 恒 'task'、`system` 恒 false —— 这不是随手收紧,是**推导**:
+            // 六个种子都不发 create ⇒ create 的 entity_id 恒非保留 id ⇒ `system` 恒 0
+            // ⇒ 表级 `CHECK (system = 1 OR kind = 'task')` 逼出 `kind = 'task'`。
+            // ⇒ 比 plan §2.3-2 那条「拦非保留 id 却 system=1」**更强**,且不留任何
+            //   「shape 放行、apply 撞表 CHECK 归 InvalidOp」的反向分歧。
+            // ⚠ 两个键**仍留在 payload 里**(照 §3 那张表):payload 形状是协议,今天砍掉
+            //   将来要加就是一次协议变更;而将来若真有「system=1 的不可删 task 列」,它也是
+            //   schema-seeded 的(同今天的 inbox/filed),照样不走 create。
+            match p.get("kind") {
+                Some(Value::String(s)) if s == "task" => {}
+                other => {
+                    return Err(inv(format!(
+                        "board_column create 的 kind 只能是 'task'(用户建不出灵感列),收到:{other:?}"
+                    )))
+                }
+            }
+            match p.get("system") {
+                Some(Value::Bool(false)) => {}
+                other => {
+                    return Err(inv(format!(
+                        "board_column create 的 system 只能是 false(系统列由 schema 提供),收到:{other:?}"
+                    )))
+                }
+            }
+            board_column_field_value("position", p.get("position").expect("上一句已核键在"))
+                .map_err(inv)?;
+            validate_iso_millis("board_column created_at", &str_field(p, "created_at").map_err(inv)?)
+                .map_err(inv)?;
+        }
+        ("board_column", "set_field") => {
+            validate_board_column_entity_id(op).map_err(inv)?;
+            let field = str_field(p, "field").map_err(inv)?;
+            validate_board_column_field_shape(&field, field_value(p).map_err(inv)?)?;
+        }
+        ("board_column", "tombstone") => {
+            validate_board_column_entity_id(op).map_err(inv)?;
+            // 恰零键(同 comment tombstone);`tombstoned_at` 取的是 **op.hlc 原文**,
+            // 不在 payload 里 —— ⛔ 别让它进 payload:那样同一枚墓碑就有了两个真相源。
+            if !p.as_object().is_some_and(|o| o.is_empty()) {
+                return Err(inv(format!(
+                    "board_column tombstone 的 payload 必须是空对象,收到:{p}"
+                )));
+            }
+        }
         ("link", "link_add") | ("link", "link_remove") => {
             let item_id = str_field(p, "item_id").map_err(inv)?;
             let topic_id = str_field(p, "topic_id").map_err(inv)?;
@@ -3109,5 +3434,279 @@ mod tests {
             })
             .unwrap();
         assert_eq!((stage.as_str(), pos.is_some()), ("todo", true));
+    }
+
+    // ---- board_column 的三臂(board-columns-plan B-c 第 1 段) --------------------------
+
+    /// 一枚合法的 `board_column/create` payload(恰五键)。
+    fn column_create_payload(title: &str, position: &str) -> Value {
+        json!({
+            "title": title,
+            "kind": "task",
+            "system": false,
+            "position": position,
+            "created_at": "2026-08-24T10:00:00.000Z",
+        })
+    }
+
+    fn column_row(conn: &Connection, id: &str) -> Option<(String, String, i64, String)> {
+        conn.query_row(
+            "SELECT title, kind, system, position FROM board_column WHERE id = ?1",
+            [id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )
+        .optional()
+        .unwrap()
+    }
+
+    fn marker(conn: &Connection, id: &str) -> Option<String> {
+        conn.query_row("SELECT tombstoned_at FROM board_column WHERE id = ?1", [id], |r| r.get(0))
+            .unwrap()
+    }
+
+    /// create 落行;第二枚 create(同坐标、不同 op_id)= **身份分叉**,持久隔离级。
+    #[test]
+    fn a_remote_column_create_lands_and_a_second_one_is_poison() {
+        let (mut conn, mut clock) = fresh();
+        let id = Ulid::new().to_string();
+        let create = mk(
+            &remote_hlc(FUTURE_MS, 1),
+            "board_column",
+            &id,
+            "create",
+            column_create_payload("复盘", "a6"),
+        );
+        assert_eq!(apply_remote_op(&mut conn, &mut clock, &create).unwrap(), Outcome::Applied);
+        assert_eq!(
+            column_row(&conn, &id),
+            Some(("复盘".into(), "task".into(), 0, "a6".into())),
+            "system 由 apply 写死 0(shape 已钉死 payload 恒 false)"
+        );
+        let dup = mk(
+            &remote_hlc(FUTURE_MS, 2),
+            "board_column",
+            &id,
+            "create",
+            column_create_payload("复盘", "a6"),
+        );
+        assert!(matches!(
+            apply_remote_op(&mut conn, &mut clock, &dup),
+            Err(OpError::InvalidOp(_))
+        ));
+    }
+
+    /// set_field:**先于 create 到 = `DependencyMissing`**(挂起重试,不是毒 op);
+    /// 到齐后 LWW 与 topic 同款。
+    #[test]
+    fn column_set_field_waits_for_its_create_then_takes_the_latest_write() {
+        let (mut conn, mut clock) = fresh();
+        let id = Ulid::new().to_string();
+        let rename = mk(
+            &remote_hlc(FUTURE_MS, 5),
+            "board_column",
+            &id,
+            "set_field",
+            json!({"field": "title", "value": "改过的名"}),
+        );
+        assert!(matches!(
+            apply_remote_op(&mut conn, &mut clock, &rename),
+            Err(OpError::DependencyMissing(_))
+        ));
+        // ⚠ 失败即整体回滚,连 oplog 记账一起 —— 这条正是 `apply_board_column_create` 里
+        //   那句墓碑压制「今天不可达」的承重理由(见该函数头注的自曝)。
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM oplog WHERE entity = 'board_column'",
+                [],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+            0
+        );
+        let create = mk(
+            &remote_hlc(FUTURE_MS, 1),
+            "board_column",
+            &id,
+            "create",
+            column_create_payload("原名", "a6"),
+        );
+        apply_remote_op(&mut conn, &mut clock, &create).unwrap();
+        assert_eq!(apply_remote_op(&mut conn, &mut clock, &rename).unwrap(), Outcome::Applied);
+        assert_eq!(column_row(&conn, &id).unwrap().0, "改过的名");
+        // 更低 HLC 的迟到写:LWW 输,行不动。
+        let stale = mk(
+            &remote_hlc(FUTURE_MS, 3),
+            "board_column",
+            &id,
+            "set_field",
+            json!({"field": "title", "value": "更早的名"}),
+        );
+        assert_eq!(apply_remote_op(&mut conn, &mut clock, &stale).unwrap(), Outcome::LwwStale);
+        assert_eq!(column_row(&conn, &id).unwrap().0, "改过的名");
+    }
+
+    /// ⭐ 四个 task 种子是 **schema-seeded implicit genesis**:没有 create,`set_field`
+    /// 照样落地(§7.1a)。⛔ 这一格漏了的话,「改名 / 拖顺序」在内置列上永远 DependencyMissing。
+    #[test]
+    fn the_four_task_seeds_take_set_field_without_any_create() {
+        let (mut conn, mut clock) = fresh();
+        for (i, id) in ["todo", "doing", "confirming", "done"].iter().enumerate() {
+            let op = mk(
+                &remote_hlc(FUTURE_MS, i as u32),
+                "board_column",
+                id,
+                "set_field",
+                json!({"field": "title", "value": format!("列{i}")}),
+            );
+            assert_eq!(apply_remote_op(&mut conn, &mut clock, &op).unwrap(), Outcome::Applied);
+            assert_eq!(column_row(&conn, id).unwrap().0, format!("列{i}"));
+        }
+    }
+
+    /// ⛔ 灵感那两列**永不接受任何 op**(不变量 2 是全局的,远端也不许违反,§7.1b)。
+    /// 分型 = `InvalidOp`:任何合法版本都不会发,不是版本偏斜。
+    #[test]
+    fn the_two_idea_seeds_reject_every_op() {
+        let (mut conn, mut clock) = fresh();
+        for id in ["inbox", "filed"] {
+            for (kind, payload) in [
+                ("set_field", json!({"field": "title", "value": "改名"})),
+                ("tombstone", json!({})),
+            ] {
+                let op = mk(&remote_hlc(FUTURE_MS, 7), "board_column", id, kind, payload);
+                assert!(
+                    matches!(apply_remote_op(&mut conn, &mut clock, &op), Err(OpError::InvalidOp(_))),
+                    "{id}/{kind} 本该被 shape 层拒"
+                );
+            }
+        }
+    }
+
+    /// tombstone:**行不在 = `DependencyMissing`**(§4.2 —— 跨 origin 因果依赖未到,
+    /// ⛔ 不是毒 op、也⛔不是通用 tombstone 那条「删 0 行也算 Applied」);
+    /// 行在则盖 marker、**不删行**;并发两枚取 **min**;墓碑后的改名被压制。
+    #[test]
+    fn column_tombstone_marks_the_row_and_converges_on_the_smaller_hlc() {
+        let (mut conn, mut clock) = fresh();
+        let id = Ulid::new().to_string();
+        let late = mk(&remote_hlc(FUTURE_MS + 9, 0), "board_column", &id, "tombstone", json!({}));
+        assert!(matches!(
+            apply_remote_op(&mut conn, &mut clock, &late),
+            Err(OpError::DependencyMissing(_))
+        ));
+        let create = mk(
+            &remote_hlc(FUTURE_MS, 1),
+            "board_column",
+            &id,
+            "create",
+            column_create_payload("要删掉的列", "a6"),
+        );
+        apply_remote_op(&mut conn, &mut clock, &create).unwrap();
+        assert_eq!(apply_remote_op(&mut conn, &mut clock, &late).unwrap(), Outcome::Applied);
+        assert_eq!(marker(&conn, &id).as_deref(), Some(late.hlc.as_str()));
+        assert!(column_row(&conn, &id).is_some(), "列是史实,只可 tombstone 不可删行(不变量 5)");
+
+        // 另一端并发删同一个空列:**HLC 小的赢**(不是网络先到)。
+        let early = mk(&remote_hlc(FUTURE_MS + 1, 0), "board_column", &id, "tombstone", json!({}));
+        assert!(early.hlc < late.hlc);
+        assert_eq!(apply_remote_op(&mut conn, &mut clock, &early).unwrap(), Outcome::Applied);
+        assert_eq!(marker(&conn, &id).as_deref(), Some(early.hlc.as_str()));
+        // 再来一枚更大的:输掉合并,行不动。
+        let later = mk(&remote_hlc(FUTURE_MS + 99, 0), "board_column", &id, "tombstone", json!({}));
+        assert_eq!(apply_remote_op(&mut conn, &mut clock, &later).unwrap(), Outcome::LwwStale);
+        assert_eq!(marker(&conn, &id).as_deref(), Some(early.hlc.as_str()));
+        // ⑥ 每次都当场消费掉授权行 —— 空表审计是它的兜底,不是清理工。
+        crate::board::audit_tombstone_apply_empty(&conn).unwrap();
+
+        // 已删的列是**只读收容区**:晚到的改名 op 被墓碑压制(§4.3)。
+        let rename = mk(
+            &remote_hlc(FUTURE_MS + 999, 0),
+            "board_column",
+            &id,
+            "set_field",
+            json!({"field": "title", "value": "还想改"}),
+        );
+        assert_eq!(
+            apply_remote_op(&mut conn, &mut clock, &rename).unwrap(),
+            Outcome::SuppressedByTombstone
+        );
+        assert_eq!(column_row(&conn, &id).unwrap().0, "要删掉的列");
+    }
+
+    /// shape 层的值域(**纯形态,不查库**)。每格只有被测那一句拒得掉 —— 走
+    /// [`validate_op_shape`] **直接量**,不经 `apply_remote_op`(清单 13:那条路上还有
+    /// 表 CHECK / FK / 父缺失几把尺,`InvalidOp` 这个形分不出是谁拒的)。
+    #[test]
+    fn column_op_shapes_are_pinned_field_by_field() {
+        let ulid = Ulid::new().to_string();
+        let ok = mk(
+            &remote_hlc(FUTURE_MS, 1),
+            "board_column",
+            &ulid,
+            "create",
+            column_create_payload("正常", "a6"),
+        );
+        validate_op_shape(&ok).expect("基准样本必须过,否则下面每一格红的都不是它该红的理由");
+
+        let bad = |entity_id: &str, kind: &str, payload: Value| {
+            validate_op_shape(&mk(&remote_hlc(FUTURE_MS, 1), "board_column", entity_id, kind, payload))
+                .expect_err("本该被拒")
+        };
+        // create 的坐标必须是**严格** ULID:首字符 > '7' 的松形态也要拒 —— 与 §4.1 给
+        // stage 值域钉死的那把尺同源,两处不同源会造出「列建得出来、卡拖不进去」的死态。
+        assert!(matches!(
+            bad("ZZZZZZZZZZZZZZZZZZZZZZZZZZ", "create", column_create_payload("x", "a6")),
+            OpError::InvalidOp(_)
+        ));
+        // 六个种子一枚 create 都不发(§7.1a)—— 这一格顺带承重了 §7.1b 点名的
+        // 「seed id 禁 create」那条禁令。
+        for seed in ["inbox", "todo"] {
+            assert!(matches!(
+                bad(seed, "create", column_create_payload("x", "a6")),
+                OpError::InvalidOp(_)
+            ));
+        }
+        // 恰五键:多一个、少一个都拒。
+        let mut extra = column_create_payload("x", "a6");
+        extra["额外"] = json!(1);
+        assert!(matches!(bad(&ulid, "create", extra), OpError::InvalidOp(_)));
+        let mut missing = column_create_payload("x", "a6");
+        missing.as_object_mut().unwrap().remove("created_at");
+        assert!(matches!(bad(&ulid, "create", missing), OpError::InvalidOp(_)));
+        // kind 恒 'task'、system 恒 false(推导见 validate_op_shape 那一臂)。
+        let mut idea = column_create_payload("x", "a6");
+        idea["kind"] = json!("idea");
+        assert!(matches!(bad(&ulid, "create", idea), OpError::InvalidOp(_)));
+        let mut sys = column_create_payload("x", "a6");
+        sys["system"] = json!(true);
+        assert!(matches!(bad(&ulid, "create", sys), OpError::InvalidOp(_)));
+        // position 走**完整** frindex::validate(不是 items 那种松形态)。
+        let mut loose = column_create_payload("x", "a6");
+        loose["position"] = json!("a00");
+        assert!(matches!(bad(&ulid, "create", loose), OpError::InvalidOp(_)));
+        // created_at 是定宽 24 字节规范串。
+        let mut wide = column_create_payload("x", "a6");
+        wide["created_at"] = json!("2026-08-24T10:00:00Z");
+        assert!(matches!(bad(&ulid, "create", wide), OpError::InvalidOp(_)));
+        // set_field 白名单只有 title | position;出生字段 = InvalidOp,未知字段 = 版本偏斜。
+        assert!(matches!(
+            bad(&ulid, "set_field", json!({"field": "kind", "value": "idea"})),
+            OpError::InvalidOp(_)
+        ));
+        assert!(matches!(
+            bad(&ulid, "set_field", json!({"field": "tombstoned_at", "value": "x"})),
+            OpError::InvalidOp(_)
+        ));
+        assert!(matches!(
+            bad(&ulid, "set_field", json!({"field": "颜色", "value": "红"})),
+            OpError::UnsupportedVocab(_)
+        ));
+        // position 永不清。
+        assert!(matches!(
+            bad(&ulid, "set_field", json!({"field": "position", "value": Value::Null})),
+            OpError::InvalidOp(_)
+        ));
+        // tombstone 恰零键。
+        assert!(matches!(bad(&ulid, "tombstone", json!({"why": "手滑"})), OpError::InvalidOp(_)));
     }
 }

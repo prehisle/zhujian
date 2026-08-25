@@ -233,6 +233,30 @@ const ENTITIES: &[Entity] = &[
         replay_dispatch: Facet::Required,
         replay_shape: Facet::Required,
     },
+    // 0037(board-columns-plan B-c 第 1 段):看板列成为一等实体。十一格全 Required ——
+    // ⚠ 这是本表**第一个带「种子例外」的实体**:六个内置列由**迁移**种下、不发 create,
+    // 于是 ⑤⑦⑧ 三面各自带一条按 `board::SEED_COLUMNS` 的显式豁免。⛔ 那份种子清单
+    // **不进本表**(plan §7.1e 七轮明确否):它是同一个实体在已有几个面上的**值**策略,
+    // 不是一个新的实体面;本表继续只负责确认 `board_column` 出现在那些面里。
+    // 值一致性另由 `board::audit_seed_columns` / `audit_board_column_semantics` 在
+    // strict battery 上守(判据 = 最坏后果已达数据/同步级,过得了停止扩张线那条尺)。
+    Entity {
+        name: "board_column",
+        table: "board_column",
+        vocab: Facet::Required,
+        core_tables: Facet::Required,
+        compact_fingerprint: Facet::Required,
+        compact_baseline: Facet::Required,
+        boot_import: Facet::Required,
+        // ⚠ 它的「墓碑复活」形态是**反的**:列的 tombstone 是标志位不是删行(不变量 5),
+        // 故那一面查的是「有墓碑 op 却没盖 marker」。仍是 Required,只是判据换了形。
+        tombstone_audit: Facet::Required,
+        unbacked_rows: Facet::Required,
+        op_preconditions: Facet::Required,
+        convergence: Facet::Required,
+        replay_dispatch: Facet::Required,
+        replay_shape: Facet::Required,
+    },
     Entity {
         name: "comment",
         table: "item_comment",

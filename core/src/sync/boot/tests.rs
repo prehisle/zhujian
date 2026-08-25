@@ -2204,3 +2204,274 @@ fn import_rejects_orphan_and_out_of_order_comment_ops() {
     let err = import_snapshot(&mut z.conn, &mut z.clock, &snap.path).unwrap_err();
     assert!(err.contains("宿主 create 晚于它"), "②{err}");
 }
+
+// ---- 看板列(board-columns-plan B-c 第 1 段) ------------------------------------------
+
+/// 以**本机 origin** 落一枚 `board_column` op。
+///
+/// ⚠ 本地写命令面(建列 / 改名 / 排序 / 删列)归 **B-c 第 3 段**,此刻还没有 —— 这里用
+/// 回放路径造出与它**等价的终态**:op 进本机日志(origin = 本机、seq 连续)+ 行按 apply
+/// 语义物化。⛔ 别改成手插行:那样造出的是「无 op 背书的行」,测的就不是这件事了。
+fn local_column_op(p: &mut Peer, entity_id: &str, kind: &str, payload: serde_json::Value) {
+    let hlc = p.clock.tick(&p.conn).unwrap();
+    let seq: i64 = p
+        .conn
+        .query_row(
+            "SELECT COALESCE(MAX(origin_seq), 0) + 1 FROM oplog WHERE origin = ?1",
+            [hlc.device_id.as_str()],
+            |r| r.get(0),
+        )
+        .unwrap();
+    let op = crate::replay::RemoteOp {
+        op_id: ulid::Ulid::new().to_string(),
+        hlc: hlc.encode(),
+        entity: "board_column".into(),
+        entity_id: entity_id.into(),
+        kind: kind.into(),
+        payload,
+        origin_seq: seq,
+    };
+    crate::replay::apply_remote_op(&mut p.conn, &mut p.clock, &op).expect("落 board_column op");
+}
+
+fn column_snapshot(conn: &Connection) -> Vec<(String, String, bool)> {
+    crate::board::list_columns(conn)
+        .unwrap()
+        .into_iter()
+        .map(|c| (c.id, c.title, c.deleted))
+        .collect()
+}
+
+/// 引导把**用户列表级复制**、把**四个 task 种子从合并后的日志物化**(§7.1a)。
+///
+/// ⭐ 种子那半是这只测的要害:它们在两端**必然相交**(schema 提供的),表级复制会当场
+/// 撞 PRIMARY KEY;而拿迁移里的 canonical 默认值盲比又会把「改过名的内置列」判成不符。
+#[test]
+fn boot_rebuilds_task_seeds_from_the_merged_log_and_copies_user_columns() {
+    let mut a = peer("bcol-src");
+    notes::capture(&mut a.conn, &mut a.clock, "让快照非空").unwrap();
+    // 改名一个内置列 + 拖动另一个内置列的顺序(implicit genesis:没有 create)。
+    local_column_op(&mut a, "todo", "set_field", serde_json::json!({"field":"title","value":"本周"}));
+    local_column_op(&mut a, "done", "set_field", serde_json::json!({"field":"position","value":"a9"}));
+    // 建两个用户列,其中一个随后删掉(空列,①那只守护放行)。
+    let keep = ulid::Ulid::new().to_string();
+    let gone = ulid::Ulid::new().to_string();
+    for (id, title, pos) in [(&keep, "复盘", "a6"), (&gone, "临时", "a7")] {
+        local_column_op(
+            &mut a,
+            id,
+            "create",
+            serde_json::json!({"title":title,"kind":"task","system":false,"position":pos,
+                               "created_at":"2026-08-24T10:00:00.000Z"}),
+        );
+    }
+    local_column_op(&mut a, &gone, "tombstone", serde_json::json!({}));
+    let expect = column_snapshot(&a.conn);
+    let tomb_hlc: Option<String> = a
+        .conn
+        .query_row("SELECT tombstoned_at FROM board_column WHERE id = ?1", [&gone], |r| r.get(0))
+        .unwrap();
+    assert!(tomb_hlc.is_some(), "源端那一列已盖墓碑");
+
+    let snap = raw_snapshot(&a.conn, &a.dir);
+    let mut b = peer("bcol-dst");
+    import_snapshot(&mut b.conn, &mut b.clock, &snap.path).expect("引导应当成功");
+
+    assert_eq!(column_snapshot(&b.conn), expect, "八列(六种子 + 两用户列)逐格一致");
+    let got: Option<String> = b
+        .conn
+        .query_row("SELECT tombstoned_at FROM board_column WHERE id = ?1", [&gone], |r| r.get(0))
+        .unwrap();
+    assert_eq!(got, tomb_hlc, "墓碑 marker 是 HLC 原文,两端逐字相同");
+    // 授权表常态恒空(⑥ 当场消费);电池是导入内跑过的,这里再点一次名。
+    crate::board::audit_tombstone_apply_empty(&b.conn).unwrap();
+    crate::board::audit_board_column_semantics(&b.conn, "", "本库").unwrap();
+}
+
+/// 快照的**种子行与它自己的日志矛盾** = 源库损坏,⛔ 绝不让合并物化顺手修好再放行
+/// (space / device / comment 三次同型判例)。
+///
+/// ⚠ 这一格没有第二把尺替它答:少了双侧预审,下方的 `materialize_task_seed_columns`
+/// 会按合并日志把 `todo` 改成「本周」,post-import 的审计再一比 —— **正好相等**,绿。
+#[test]
+fn import_rejects_a_snapshot_whose_seed_row_disagrees_with_its_own_log() {
+    let mut a = peer("bcol-div-src");
+    notes::capture(&mut a.conn, &mut a.clock, "让快照非空").unwrap();
+    // 只发 op、不改行:日志说「本周」,行还是 canonical 的「待办」。
+    inject_raw_op(&a.conn, &mut a.clock, "board_column", "todo", "set_field",
+        r#"{"field":"title","value":"本周"}"#);
+    let snap = raw_snapshot(&a.conn, &a.dir);
+    let mut b = peer("bcol-div-dst");
+    let err = import_snapshot(&mut b.conn, &mut b.clock, &snap.path).unwrap_err();
+    assert!(err.contains("快照") && err.contains("内置列"), "{err}");
+    assert!(meta_get(&b.conn, "bootstrapped_at").unwrap().is_none(), "整体回滚不留痕");
+}
+
+/// 无 create 背书的**用户列**必须被拦(§7.2 点名警告过的那个洞:若为了绕开编译干脆
+/// 不计 board_column,它就能穿过 fresh/battery = 静默不同步)。
+#[test]
+fn an_unbacked_user_column_never_passes_the_battery() {
+    let mut a = peer("bcol-unbacked");
+    notes::capture(&mut a.conn, &mut a.clock, "让快照非空").unwrap();
+    a.conn
+        .execute(
+            "INSERT INTO board_column (id, title, kind, system, position, created_at) \
+             VALUES (?1, '凭空冒出来的列', 'task', 0, 'a6', '2026-08-24T10:00:00.000Z')",
+            [ulid::Ulid::new().to_string()],
+        )
+        .unwrap();
+    // (a) 供货前的严格电池就该拒。
+    let err = strict_battery(&a.conn).unwrap_err();
+    assert!(err.contains("board_column"), "{err}");
+    // (b) fresh 闸也用同一条判据(legacy 只能当首台)。
+    assert!(check_fresh_to_account(&a.conn).is_err());
+    // (c) 绕闸的坏快照,收端独立自卫。
+    let snap = raw_snapshot(&a.conn, &a.dir);
+    let mut b = peer("bcol-unbacked-dst");
+    let err = import_snapshot(&mut b.conn, &mut b.clock, &snap.path).unwrap_err();
+    assert!(err.contains("board_column"), "{err}");
+}
+
+/// 依赖前置:**用户列**的 op 必须有行或 create 背书;而**内置种子**的 op 恰恰没有 create。
+///
+/// ⭐ 种子那半靠的是**「行恒在」**,不是一条显式的 id 豁免 —— 首版真写过
+/// `entity_id NOT IN {六个种子}`,变异对照当场判它是死码(拆掉一个字节的行为差别都做不出来)。
+/// 承重的是判据里第一句 `NOT EXISTS (… FROM board_column …)`:种子的行由迁移种下、
+/// `trg_board_column_no_delete` 禁物理删除、缺行的库过不了 `board::audit_seed_columns`。
+/// 下面那句阳性对照就是这条事实的字据。
+#[test]
+fn column_op_preconditions_flag_orphans_but_seed_rows_are_always_there() {
+    let mut a = peer("bcol-orphan");
+    notes::capture(&mut a.conn, &mut a.clock, "让快照非空").unwrap();
+    // 阳性对照先立:内置列的无 create set_field 是**合法**的(下面那半才是要拒的)。
+    local_column_op(&mut a, "doing", "set_field", serde_json::json!({"field":"title","value":"在做"}));
+    strict_battery(&a.conn).expect("内置种子的 implicit genesis 必须放行");
+    // 用户列坐标:无行、无 create ⇒ 孤儿。
+    inject_raw_op(&a.conn, &mut a.clock, "board_column", &ulid::Ulid::new().to_string(),
+        "set_field", r#"{"field":"title","value":"幽灵列"}"#);
+    let err = strict_battery(&a.conn).unwrap_err();
+    assert!(err.contains("孤儿"), "{err}");
+}
+
+/// 墓碑那条不变量的**两半**,各由一处守(⛔ 别在一处写两遍):
+///
+/// * 「有墓碑 op 却没盖 marker」= 复活 → `audit_tombstone_resurrection`
+///   (⚠ 形态与 item/topic **反过来**:列的墓碑是标志位不是删行,「有墓碑还有行」对它是
+///   健康终态);
+/// * 「marker 的值 ≠ 自身日志里最小的那枚」→ `board::audit_board_column_semantics` ⑤。
+#[test]
+fn a_column_marker_must_match_the_smallest_tombstone_in_its_own_log() {
+    let mut a = peer("bcol-marker");
+    notes::capture(&mut a.conn, &mut a.clock, "让库非空").unwrap();
+    let id = ulid::Ulid::new().to_string();
+    local_column_op(
+        &mut a,
+        &id,
+        "create",
+        serde_json::json!({"title":"临时","kind":"task","system":false,"position":"a6",
+                           "created_at":"2026-08-24T10:00:00.000Z"}),
+    );
+    // (一) 只发墓碑 op、行上不盖 marker = 复活。
+    inject_raw_op(&a.conn, &mut a.clock, "board_column", &id, "tombstone", "{}");
+    let err = strict_battery(&a.conn).unwrap_err();
+    assert!(err.contains("没盖墓碑标记"), "{err}");
+    // (二) 再来一枚**更晚**的 tombstone(两端各删同一列 = 完全合法),然后把 marker 盖成
+    //      **晚的那枚**。⚠ 样本坐标是这只测的要害(清单 13):日志里必须有**两枚**墓碑,
+    //      MIN 与 MAX 才分得开 —— 只放一枚的话「取最小」与「取最大」在这条路上同解,
+    //      那道判据的变异会**假绿**(首版就是这么写的,变异对照当场抓到)。
+    inject_raw_op(&a.conn, &mut a.clock, "board_column", &id, "tombstone", "{}");
+    let mut hlcs: Vec<(String, String)> = {
+        let mut stmt = a
+            .conn
+            .prepare(
+                "SELECT hlc, op_id FROM oplog \
+                  WHERE entity = 'board_column' AND kind = 'tombstone' ORDER BY hlc",
+            )
+            .unwrap();
+        stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap()
+    };
+    assert_eq!(hlcs.len(), 2, "要两枚才分得开 MIN 与 MAX");
+    let (late_hlc, late_op) = hlcs.pop().unwrap();
+    let (early_hlc, early_op) = hlcs.pop().unwrap();
+    let mark = |hlc: &str, op_id: &str| {
+        a.conn
+            .execute(
+                "INSERT INTO sync_board_column_tombstone_apply \
+                     (column_id, op_id, from_hlc, to_hlc, mode) \
+                 VALUES (?1, ?2, NULL, ?3, 'apply_min')",
+                (&id, op_id, hlc),
+            )
+            .unwrap();
+        a.conn
+            .execute("UPDATE board_column SET tombstoned_at = ?1 WHERE id = ?2", (hlc, &id))
+            .unwrap();
+    };
+    mark(&late_hlc, &late_op);
+    let err = strict_battery(&a.conn).unwrap_err();
+    assert!(err.contains("最小的那枚"), "{err}");
+
+    // (三) 改盖成 MIN 那枚 —— ⚠ 走 ④ 的 `apply_min` 授权(`to < from`,方向对得上)。
+    a.conn
+        .execute(
+            "INSERT INTO sync_board_column_tombstone_apply \
+                 (column_id, op_id, from_hlc, to_hlc, mode) VALUES (?1, ?2, ?3, ?4, 'apply_min')",
+            (&id, &early_op, &late_hlc, &early_hlc),
+        )
+        .unwrap();
+    a.conn
+        .execute("UPDATE board_column SET tombstoned_at = ?1 WHERE id = ?2", (&early_hlc, &id))
+        .unwrap();
+    strict_battery(&a.conn).expect("盖对了就该过");
+}
+
+/// 内置种子的 title 被人**直接改行、不发 op** —— 无 op 时的兜底值是 `SEED_COLUMNS` 里那份
+/// canonical,⛔ 不是「没 op 就不查」(那样快照随手改一个种子标题就能穿过审计)。
+#[test]
+fn a_seed_title_changed_without_any_op_is_refused() {
+    let mut a = peer("bcol-seed-drift");
+    notes::capture(&mut a.conn, &mut a.clock, "让库非空").unwrap();
+    a.conn.execute("UPDATE board_column SET title = '偷改的' WHERE id = 'todo'", []).unwrap();
+    let err = strict_battery(&a.conn).unwrap_err();
+    assert!(err.contains("内置列") && err.contains("待办"), "{err}");
+}
+
+/// 两端各自删掉**同一个内置种子**(完全合法的用户操作),引导合并后取 **HLC 最小**的那枚
+/// (§2.3 定形 2)。⛔ 取 MAX 会让两端的 marker 各不相同 = 精确指纹分叉。
+#[test]
+fn both_sides_deleting_the_same_seed_column_converge_on_the_smaller_hlc() {
+    let mut a = peer("bcol-bothdel-src");
+    notes::capture(&mut a.conn, &mut a.clock, "让快照非空").unwrap();
+    local_column_op(&mut a, "confirming", "tombstone", serde_json::json!({}));
+    let a_hlc: String = a
+        .conn
+        .query_row("SELECT tombstoned_at FROM board_column WHERE id = 'confirming'", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    let snap = raw_snapshot(&a.conn, &a.dir);
+
+    // 收端也在自己这边删过同一列(fresh 判据只排除**他人 origin** 的 op,本机 op 是许的)。
+    let mut b = peer("bcol-bothdel-dst");
+    local_column_op(&mut b, "confirming", "tombstone", serde_json::json!({}));
+    let b_hlc: String = b
+        .conn
+        .query_row("SELECT tombstoned_at FROM board_column WHERE id = 'confirming'", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    assert_ne!(a_hlc, b_hlc, "两端各发一枚,HLC 必不同");
+    let smaller = if a_hlc < b_hlc { a_hlc.clone() } else { b_hlc.clone() };
+
+    import_snapshot(&mut b.conn, &mut b.clock, &snap.path).expect("引导应当成功");
+    let got: String = b
+        .conn
+        .query_row("SELECT tombstoned_at FROM board_column WHERE id = 'confirming'", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    assert_eq!(got, smaller, "合并后 marker = 两枚里 HLC 小的那一枚");
+    crate::board::audit_tombstone_apply_empty(&b.conn).unwrap();
+}
