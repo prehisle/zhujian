@@ -374,7 +374,7 @@ jobs:
       #    GTK 那一端)⇒ 那条 `npx wdio` 与 CLAUDE.md 写给人的那条逐字相同。
       # ⚠ 判红走 440 那把三态尺(`scripts/e2e-verdict.mjs`):**绿必须有正面字据**,读不出是
       #    `unknown` 而不是「那就算它绿吧」;`--specFileRetries=0` 与「日志里有没有重试痕迹」互为背书。
-      - name: vite + e2e(39 spec,零重试;⛔ 同一步,理由见上)
+      - name: vite + e2e(40 spec,零重试;⛔ 同一步,理由见上)
         shell: bash
         env:
           YS_E2E_FAST: "1"

@@ -42,6 +42,7 @@ const PREFIXES: &[&str] = &[
     "zj-",            // 两壳的 per-pid 目录(`zj-shell-<pid>` / `zj-android-<pid>`)
     "zhujian-syncd-", // server 的 per-pid 目录(`server/src/test_temp.rs`)
     "zhujian-0035-",  // core/examples/migrate-check-0035(example 二进制,见 TEMP_DIR_OWNERS)
+    "zhujian-0037-",  // core/examples/migrate-check-0036-0037(同上)
 ];
 
 #[cfg(test)]
@@ -121,6 +122,7 @@ mod tests {
         // example 是独立二进制,看不见任何 crate 的 `#[cfg(test)]` helper;它只建一个
         // 固定名目录、跑一次就完,量级可忽略,故如实记成例外而不是硬塞进 helper。
         "core/examples/migrate-check-0035.rs",
+        "core/examples/migrate-check-0036-0037.rs",
     ];
 
     /// 结构锚:全仓每一处 `std::env::temp_dir()` 建的容器,名字前缀都必须在

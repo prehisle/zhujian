@@ -71,7 +71,7 @@ jobs:
   # ⚠ 它与 `gates` **互不依赖**,同时开跑;`gates` 两三分钟就完,这一格是几十分钟那一档。
   linux-e2e:
     if: github.repository == 'prehisle/zhujian'
-    name: e2e(Linux / WebKitGTK,39 spec)
+    name: e2e(Linux / WebKitGTK,40 spec)
     runs-on: ubuntu-22.04
     # 兜住「挂死」那一形:本机全量 10 分钟,托管 runner 慢几倍(448 实测 core 慢 ≈6.5 倍)。
     # ⚠ 超时 = 红,而且是**判不出**那一档的红(日志里不会有汇总行)—— 那正是 440 那把尺的三态。
@@ -187,7 +187,7 @@ jobs:
       #    Xvfb 的命令行带 `-auth /tmp/xvfb-run.XXXX/Xauthority`)⇒ 不套也跑得起来。仍然显式套:
       #    这样「CI 跑的那条命令」与 dev-and-testing 里写给人的那条**逐字相同**,而 `xvfb` 这个包
       #    两条路都要装。
-      - name: e2e(39 spec,零重试)
+      - name: e2e(40 spec,零重试)
         env:
           YS_E2E_FAST: "1"
         run: |
