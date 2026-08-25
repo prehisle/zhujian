@@ -1,6 +1,9 @@
 /// 夹具用的对端设备 id。**必须是规范 ULID**:第5笔起 `from` 要过
 /// [`ops_serve::vet_target`] 那把尺,随手起的 "PEERX" 会被整帧拒收。
 const PEER_ULID: &str = "01PEERXAAAAAAAAAAAAAAAAAAA";
+/// 本案那枚能力 token。⛔ **引常量不写字面量**:写死一份就成了「同一条规则的第二份
+/// 描述」(自检第 14 条),而那正是 `board_columns_v1` 这种串最容易漂的地方。
+const CAP: &str = crate::board::CAP_BOARD_COLUMNS_V1;
 
 use super::*;
 use crate::sync::production_src;
@@ -417,7 +420,7 @@ fn hello_answers_with_ops_the_peer_lacks() {
     notes::edit(&mut conn, &mut clock, &idea, "改一笔").unwrap();
     // 对端 hello:水位空 → 「我高你低」,回我全量(单帧)。
     let outs = eng
-        .on_relay_msg(&mut conn, &mut clock, PEER_ULID, Msg::Hello { watermarks: BTreeMap::new(), lan: None })
+        .on_relay_msg(&mut conn, &mut clock, PEER_ULID, Msg::Hello { watermarks: BTreeMap::new(), lan: None, caps: None })
         .unwrap();
     let me = clock.device_id();
     // 第5笔:Hello 不再当场物化补给帧,只登记一份对账计划并产一枚「来取活」的描述符;
@@ -440,7 +443,7 @@ fn hello_answers_with_ops_the_peer_lacks() {
     let mut theirs = BTreeMap::new();
     theirs.insert(me.to_string(), watermark(&conn, me).unwrap());
     let outs = eng
-        .on_relay_msg(&mut conn, &mut clock, PEER_ULID, Msg::Hello { watermarks: theirs, lan: None })
+        .on_relay_msg(&mut conn, &mut clock, PEER_ULID, Msg::Hello { watermarks: theirs, lan: None, caps: None })
         .unwrap();
     assert!(sends(&outs).iter().all(|m| !matches!(m, Msg::Ops { .. })));
 }
@@ -465,7 +468,7 @@ fn a_hello_from_a_peer_that_is_ahead_asks_it_for_the_gap() {
     let (mut conn, mut clock, mut eng) = fresh();
     let theirs = BTreeMap::from([(PEER_ULID.to_string(), 7)]);
     let outs = eng
-        .on_relay_msg(&mut conn, &mut clock, PEER_ULID, Msg::Hello { watermarks: theirs, lan: None })
+        .on_relay_msg(&mut conn, &mut clock, PEER_ULID, Msg::Hello { watermarks: theirs, lan: None, caps: None })
         .unwrap();
     let asked: Vec<(&str, &str, i64)> = outs
         .iter()
@@ -496,7 +499,7 @@ fn a_hello_from_a_peer_that_is_not_ahead_asks_for_nothing() {
         (PEER_ULID.to_string(), 0),       // 齐平(两边都是 0)
     ]);
     let outs = eng
-        .on_relay_msg(&mut conn, &mut clock, PEER_ULID, Msg::Hello { watermarks: theirs, lan: None })
+        .on_relay_msg(&mut conn, &mut clock, PEER_ULID, Msg::Hello { watermarks: theirs, lan: None, caps: None })
         .unwrap();
     assert!(asked_origins(&outs).is_empty(), "没落后就别问:{outs:?}");
 }
@@ -508,7 +511,7 @@ fn the_gap_wants_from_one_hello_are_capped_and_rotate() {
     let (mut conn, mut clock, mut eng) = fresh();
     let ids: Vec<String> = (1..=(HELLO_GAP_WANT_BATCH + 4)).map(|i| format!("{i:026}")).collect();
     let theirs: BTreeMap<String, i64> = ids.iter().map(|o| (o.clone(), 3)).collect();
-    let hello = || Msg::Hello { watermarks: theirs.clone(), lan: None };
+    let hello = || Msg::Hello { watermarks: theirs.clone(), lan: None, caps: None };
     let first =
         asked_origins(&eng.on_relay_msg(&mut conn, &mut clock, PEER_ULID, hello()).unwrap());
     assert_eq!(first.len(), HELLO_GAP_WANT_BATCH, "一枚 Hello 至多换回这么多枚:{first:?}");
@@ -531,7 +534,7 @@ fn gap_wants_skip_frozen_and_quarantined_origins() {
     eng.quarantined.insert(quar.clone());
     let theirs = BTreeMap::from([(froze, 9), (quar, 9), (ok.clone(), 9)]);
     let outs = eng
-        .on_relay_msg(&mut conn, &mut clock, PEER_ULID, Msg::Hello { watermarks: theirs, lan: None })
+        .on_relay_msg(&mut conn, &mut clock, PEER_ULID, Msg::Hello { watermarks: theirs, lan: None, caps: None })
         .unwrap();
     assert_eq!(asked_origins(&outs), vec![ok], "只问那一个还能收的:{outs:?}");
 }
@@ -580,7 +583,7 @@ fn two_senders_do_not_drag_each_others_rotation_cursor() {
     let a_map: BTreeMap<String, i64> =
         (1..=20).map(|i| (format!("{i:026}"), 3)).collect();
     let c_map = BTreeMap::from([(format!("{:026}", 0), 3)]);
-    let hello = |m: &BTreeMap<String, i64>| Msg::Hello { watermarks: m.clone(), lan: None };
+    let hello = |m: &BTreeMap<String, i64>| Msg::Hello { watermarks: m.clone(), lan: None, caps: None };
 
     let first =
         asked_origins(&eng.on_relay_msg(&mut conn, &mut clock, a, hello(&a_map)).unwrap());
@@ -665,7 +668,7 @@ fn two_windows_sharing_a_smallest_origin_keep_separate_progress() {
                     &mut conn,
                     &mut clock,
                     PEER_ULID,
-                    Msg::Hello { watermarks: w.clone(), lan: None },
+                    Msg::Hello { watermarks: w.clone(), lan: None, caps: None },
                 )
                 .unwrap();
             asked.extend(asked_origins(&outs));
@@ -707,7 +710,7 @@ fn more_windows_than_cursor_slots_still_sweep_to_the_end() {
                     &mut conn,
                     &mut clock,
                     PEER_ULID,
-                    Msg::Hello { watermarks: w.clone(), lan: None },
+                    Msg::Hello { watermarks: w.clone(), lan: None, caps: None },
                 )
                 .unwrap();
             asked.extend(asked_origins(&outs));
@@ -744,7 +747,7 @@ fn stale_cursor_slots_do_not_poison_a_later_steady_window() {
     let (mut conn, mut clock, mut eng) = fresh();
     let mut feed = |eng: &mut Engine, conn: &mut Connection, clock: &mut Clock, w: &BTreeMap<String, i64>| {
         let outs = eng
-            .on_relay_msg(conn, clock, PEER_ULID, Msg::Hello { watermarks: w.clone(), lan: None })
+            .on_relay_msg(conn, clock, PEER_ULID, Msg::Hello { watermarks: w.clone(), lan: None, caps: None })
             .unwrap();
         eng.on_tick();
         asked_origins(&outs)
@@ -793,7 +796,7 @@ fn the_same_origins_with_moved_watermarks_stay_in_one_slot() {
             &mut conn,
             &mut clock,
             PEER_ULID,
-            Msg::Hello { watermarks: at(seq), lan: None },
+            Msg::Hello { watermarks: at(seq), lan: None, caps: None },
         )
         .unwrap();
     }
@@ -874,7 +877,7 @@ fn a_rotating_sender_still_gets_every_window_swept() {
                     &mut b_conn,
                     &mut b_clock,
                     &a_id,
-                    Msg::Hello { watermarks: w.clone(), lan: None },
+                    Msg::Hello { watermarks: w.clone(), lan: None, caps: None },
                 )
                 .unwrap();
             asked.extend(asked_origins(&outs));
@@ -975,7 +978,7 @@ fn blob_sidechannel_pulls_bytes_and_builds_the_row() {
     // 第5笔:Hello 只登记计划,帧要抽;且 `from` 从此过规范设备 id 那把尺,故这里
     // 用真身份(原先的 "A"/"B" 会被整帧拒收 —— 那正是新形该有的样子)。
     let mut frames = a_eng
-        .on_relay_msg(&mut a_conn, &mut a_clock, &b_id, Msg::Hello { watermarks: BTreeMap::new(), lan: None })
+        .on_relay_msg(&mut a_conn, &mut a_clock, &b_id, Msg::Hello { watermarks: BTreeMap::new(), lan: None, caps: None })
         .unwrap();
     frames.extend(a_eng.drain_ops_for_test(&a_conn).unwrap());
     let mut b_out = vec![];
@@ -1485,7 +1488,7 @@ fn metadata_only_never_wants_blobs_but_ops_and_counter_converge() {
 
     // 收 hello:补给帧照回,blob want 一枚不发。
     let outs = b_eng
-        .on_relay_msg(&mut b_conn, &mut b_clock, &a_id, Msg::Hello { watermarks: BTreeMap::new(), lan: None })
+        .on_relay_msg(&mut b_conn, &mut b_clock, &a_id, Msg::Hello { watermarks: BTreeMap::new(), lan: None, caps: None })
         .unwrap();
     assert!(!any_blob_want(&outs), "hello 不重发 want:{outs:?}");
 
@@ -2956,7 +2959,7 @@ fn one_input_never_produces_more_wants_than_the_link_queue_can_take() {
             &mut b_conn,
             &mut b_clock,
             &a_id,
-            Msg::Hello { watermarks: BTreeMap::new(), lan: None },
+            Msg::Hello { watermarks: BTreeMap::new(), lan: None, caps: None },
         )
         .unwrap();
     let wants = outs.iter().filter(|o| want_image_of(o).is_some()).count();
@@ -3070,7 +3073,7 @@ fn arrival_leg_affinity_pins_directed_answers_only() {
             &mut clock,
             &a_id,
             Route::Lan,
-            Msg::Hello { watermarks: BTreeMap::new(), lan: None },
+            Msg::Hello { watermarks: BTreeMap::new(), lan: None, caps: None },
         )
         .unwrap();
     // 第5笔:**来路亲和搬到了描述符上**。补给帧不再由引擎当场产出,故「沿来路答」
@@ -3111,7 +3114,7 @@ fn arrival_leg_affinity_pins_directed_answers_only() {
             &mut conn,
             &mut clock,
             &a_id,
-            Msg::Hello { watermarks: BTreeMap::new(), lan: None },
+            Msg::Hello { watermarks: BTreeMap::new(), lan: None, caps: None },
         )
         .unwrap();
     // 同前:来路亲和钉在描述符上。中转到达 → 描述符绑 `Route::Relay`。
@@ -3325,7 +3328,7 @@ fn stale_lan_pull_penalizes_that_leg_then_falls_back_to_relay() {
             &mut clock,
             &a_id,
             Route::Lan,
-            Msg::Hello { watermarks: BTreeMap::new(), lan: None },
+            Msg::Hello { watermarks: BTreeMap::new(), lan: None, caps: None },
         )
         .unwrap();
     assert!(
@@ -3663,4 +3666,193 @@ fn a_ulid_stage_op_quarantined_by_the_old_ruler_is_released_by_the_bump() {
     let (.., ver) = quarantine_row(&conn, STILL).expect("仍非法必须保留");
     assert_eq!(ver, crate::replay::VALIDATOR_VER);
     assert!(eng.quarantined.contains(STILL));
+}
+
+// ---- §6.2 收端能力观测(board-columns-plan B-d) --------------------------------------
+
+/// 一枚只为观测 caps 而生的 Hello:水位图恒空,别的尺一概碰不着(自检第 13 条)。
+fn caps_hello(caps: Option<Vec<&str>>) -> Msg {
+    Msg::Hello {
+        watermarks: BTreeMap::new(),
+        lan: None,
+        caps: caps.map(|c| c.into_iter().map(String::from).collect()),
+    }
+}
+
+/// **三态,不是两态**(§5.1「Roster 每台都有**当前代次**的观测」):
+/// 没听说过 / 听说了是旧端 / 听说了认得 —— 前两态都要让那条合取算不出 `true`。
+#[test]
+fn peer_capability_observation_has_three_states() {
+    let (mut conn, mut clock, mut eng) = fresh();
+
+    // ① 刚装配的引擎:一条观测都没有。⭐ 这同时钉住「代次一换就清」那条**结构事实**
+    //    ——`EngineSlot::retire` 换的是整只引擎,新一代拿到的必然是这张空表。
+    assert!(eng.peer_caps.is_empty(), "新引擎不许带着上一代的观测");
+    assert!(!eng.peer_supports_board_columns(PEER_ULID), "没听说过 ⇒ 不算具备");
+
+    // ② 旧端的 Hello(压根没有 caps 字段)⇒ 落一条**否定**观测。
+    //    这一格与 ① **必须分得开**:①是「不知道」,②是「知道了,它没有」。
+    eng.on_relay_msg(&mut conn, &mut clock, PEER_ULID, caps_hello(None)).unwrap();
+    assert_eq!(eng.peer_caps.get(PEER_ULID), Some(&false), "旧端 Hello = 一条否定观测");
+    assert!(!eng.peer_supports_board_columns(PEER_ULID));
+
+    // ③ 同一台对端升级之后再来一枚 ⇒ 观测翻正(⛔ 不许被 ② 那条钉死)。
+    eng.on_relay_msg(&mut conn, &mut clock, PEER_ULID, caps_hello(Some(vec![CAP])))
+        .unwrap();
+    assert!(eng.peer_supports_board_columns(PEER_ULID), "升级后的对端必须观测得到");
+
+    // ④ 再降回旧端(理论上只发生在换设备/换版本):观测跟着翻负,**不是单调的**。
+    //    单调的是 §5.5 那枚闩(B-e),⛔ 别把它提前塞进观测这一层。
+    eng.on_relay_msg(&mut conn, &mut clock, PEER_ULID, caps_hello(None)).unwrap();
+    assert!(!eng.peer_supports_board_columns(PEER_ULID), "观测层不做单调,闩才做");
+}
+
+/// ⛔ §6.2 那条禁令的行为面:**观测绝不能绑在 `ops_serve::on_hello` 的冷却 / 折叠结果上**。
+///
+/// `RECONCILE_COOLDOWN_TICKS = 2` 而本用例一拍心跳都不走 ⇒ 第二枚 Hello **必然**撞在
+/// 冷却里、被合并进 pending(它换不回任何 `ServeOps` 描述符)。若观测挂在 admit 的结果上,
+/// 「对端升级了」这个事实就要等下一个冷却期才被看见 —— 而 Hello 不周期发送,那可能是
+/// **永远**。
+///
+/// 自检第 11 条(「我新加的这个条件在这只用例里到底取什么值」):两枚 Hello 的 caps
+/// **刻意不同**,故这只测分得出「观测落地了」与「第一枚顺手把值填对了」。
+#[test]
+fn capability_observation_lands_even_when_the_hello_is_folded_into_pending() {
+    let (mut conn, mut clock, mut eng) = fresh();
+    let first = eng
+        .on_relay_msg(&mut conn, &mut clock, PEER_ULID, caps_hello(None))
+        .unwrap();
+    assert!(
+        first.iter().any(|o| matches!(o, Output::ServeOps(_))),
+        "第一枚 Hello 开得了对账计划(冷却起点),这是下面那格成立的前提:{first:?}"
+    );
+
+    let second = eng
+        .on_relay_msg(&mut conn, &mut clock, PEER_ULID, caps_hello(Some(vec![CAP])))
+        .unwrap();
+    assert!(
+        !second.iter().any(|o| matches!(o, Output::ServeOps(_))),
+        "第二枚必须撞冷却被折进 pending —— 否则这只测根本没测到那一格:{second:?}"
+    );
+    assert!(
+        eng.peer_supports_board_columns(PEER_ULID),
+        "被折叠的 Hello,它的能力宣告照样必须已经落地(§6.2 那条 ⛔)"
+    );
+}
+
+/// 入口卫生走的是 `sync_proto::has_capability` **本尊**,不是随手一个 `contains`。
+///
+/// 自检第 13 条(几把尺):样本坐标必须落在**只有被测那一句能决定**的那一格 ——
+/// 「垃圾项 + 真 token」两种写法都会答 `true`,分不出;**第 17 项**才分得出:
+/// `contains` 答 `true`,而 `has_capability` 的 `.take(16)` 答 `false`。
+#[test]
+fn capability_observation_uses_the_shared_entry_hygiene() {
+    let (mut conn, mut clock, mut eng) = fresh();
+
+    // ① 垃圾项跳过而**不拒整枚 Hello**:超长项 / 非 ASCII 项都在,真 token 仍认得出。
+    let long = "x".repeat(33);
+    let messy = vec![long.as_str(), "naïve", CAP];
+    eng.on_relay_msg(&mut conn, &mut clock, PEER_ULID, caps_hello(Some(messy))).unwrap();
+    assert!(eng.peer_supports_board_columns(PEER_ULID), "垃圾项不许连坐掉真 token");
+
+    // ② 扫描上界 16 项:真 token 排在**第 17 位** ⇒ 扫不到 ⇒ 观测为否。
+    //    ⭐ 这一格正是「用的是 has_capability 还是 contains」的分水岭。
+    let mut overflow: Vec<&str> = (0..16).map(|_| "filler").collect();
+    overflow.push(CAP);
+    eng.on_relay_msg(&mut conn, &mut clock, PEER_ULID, caps_hello(Some(overflow))).unwrap();
+    assert!(
+        !eng.peer_supports_board_columns(PEER_ULID),
+        "第 17 项扫不到 —— 答 true 就说明这条路上没走 has_capability"
+    );
+
+    // ③ 空表 = 明确的「我没有」,与缺席同义。
+    eng.on_relay_msg(&mut conn, &mut clock, PEER_ULID, caps_hello(Some(vec![]))).unwrap();
+    assert_eq!(eng.peer_caps.get(PEER_ULID), Some(&false));
+}
+
+/// **水位图不合形 ⇒ 整枚帧拒收 ⇒ 什么都不学**(本笔自己定的形,规格没给)。
+///
+/// 反方向(先学再 vet)会让一枚形态不合的 Hello 也把对端记成「有能力」= 朝 `true` 错算,
+/// 而 §5.3 把那个方向判成 H。⚠ 这一格是**自曝项**,送审时点名让 codex 盯。
+#[test]
+fn a_frame_rejected_hello_teaches_the_engine_nothing() {
+    let (mut conn, mut clock, mut eng) = fresh();
+    let bad = Msg::Hello {
+        // key 不是规范设备 id ⇒ `vet_watermarks` 整帧拒收。
+        watermarks: BTreeMap::from([("不是设备id".to_string(), 1)]),
+        lan: None,
+        caps: Some(vec![CAP.to_string()]),
+    };
+    let outs = eng.on_relay_msg(&mut conn, &mut clock, PEER_ULID, bad).unwrap();
+    assert!(
+        outs.iter()
+            .any(|o| matches!(o, Output::Event(Event::FrameRejected { .. }))),
+        "前提:这枚帧真的被拒了(否则下面那格由别的原因背书):{outs:?}"
+    );
+    assert!(
+        eng.peer_caps.get(PEER_ULID).is_none(),
+        "被拒的帧不许留下任何观测 —— 连一条否定观测都不留"
+    );
+}
+
+/// 非规范 `from` **一条观测都不落**:Roster 的键是规范 id,落进来只是白占格子。
+#[test]
+fn a_malformed_sender_leaves_no_observation_slot() {
+    let (mut conn, mut clock, mut eng) = fresh();
+    let _ = eng.on_relay_msg(&mut conn, &mut clock, "PEERX", caps_hello(Some(vec![CAP])));
+    assert!(eng.peer_caps.is_empty(), "非规范 from 不许占格");
+}
+
+/// 表满 fail-closed:**不插新条,但已在册的照常更新**。
+///
+/// 后半格非有不可 —— 否则一台对端升级之后,它那条 `false` 会被表满**永久钉住**,
+/// 而 §5.1 那条合取要求 Roster 每台都有肯定观测 ⇒ 功能永久打不开。
+#[test]
+fn a_full_observation_table_still_updates_the_peers_it_already_knows() {
+    let (mut conn, mut clock, mut eng) = fresh();
+    // 先用 PEER_ULID 占一格(否定观测),再把表填满。
+    eng.on_relay_msg(&mut conn, &mut clock, PEER_ULID, caps_hello(None)).unwrap();
+    for i in 1..PEER_CAPS_SLOTS {
+        let id = format!("01PEER{i:020}");
+        assert!(crate::clock::is_canonical_device_id(&id), "夹具自身要过规范 id 那把尺");
+        eng.on_relay_msg(&mut conn, &mut clock, &id, caps_hello(None)).unwrap();
+    }
+    assert_eq!(eng.peer_caps.len(), PEER_CAPS_SLOTS, "前提:表恰好满了");
+
+    // 第 65 台:插不进去(fail-closed = 观测缺席 = 闸关着)。
+    let extra = "01PEERZAAAAAAAAAAAAAAAAAAA";
+    eng.on_relay_msg(&mut conn, &mut clock, extra, caps_hello(Some(vec![CAP]))).unwrap();
+    assert_eq!(eng.peer_caps.len(), PEER_CAPS_SLOTS, "满了就不再长");
+    assert!(!eng.peer_supports_board_columns(extra), "挤不进来 ⇒ 观测缺席 ⇒ 不算具备");
+
+    // 已在册那台升级了:照样更新得到。
+    eng.on_relay_msg(&mut conn, &mut clock, PEER_ULID, caps_hello(Some(vec![CAP]))).unwrap();
+    assert!(
+        eng.peer_supports_board_columns(PEER_ULID),
+        "表满不许把已在册对端的观测永久钉死"
+    );
+}
+
+/// 出站那一枚:[`Engine::make_hello`] **恒带**能力宣告(§6「每一枚出站 Hello 都带」)。
+///
+/// 广播与定向两个入口都验 —— 它俩共用同一个构造点,但「共用」是今天的实现事实,
+/// 不是类型保证。
+#[test]
+fn every_outbound_hello_carries_the_capability() {
+    let (conn, _clock, eng) = fresh();
+    for to in [BROADCAST, PEER_ULID] {
+        let outs = eng.make_hello(&conn, to, Route::Relay).unwrap();
+        let caps = sends(&outs)
+            .into_iter()
+            .find_map(|m| match m {
+                Msg::Hello { caps, .. } => Some(caps),
+                _ => None,
+            })
+            .expect("必须产出一枚 Hello");
+        assert_eq!(
+            caps.as_deref(),
+            Some(&[CAP.to_string()][..]),
+            "发往 {to} 的 Hello 漏了能力宣告"
+        );
+    }
 }

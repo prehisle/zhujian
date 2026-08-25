@@ -195,6 +195,60 @@ const PULL_STALE_TICKS: u32 = 2;
 /// (lan.rs 的重复抑制缓存同一条纪律);惩罚只挡该路由的 blob 选路,mail/Hello 照走。
 const BLOB_PENALTY_TICKS: u64 = 10;
 
+/// per-peer 能力观测表存几条(board-columns-plan §6.2)。
+///
+/// **它封的是「对端数」**:键只收规范 26 字符设备 id(与 Roster 同一把尺),而一个账户的
+/// 设备数由服务端席位管着 —— 64 与 `MAX_LAN_PEER_RECORDS` 同量级,**不借它的语义**。
+/// 满额处置 = **不插新条**([`Engine::observe_peer_caps`]),方向是「观测缺席 ⇒ §5.1 的
+/// `every_registered_device_is_capable` 算不出 true ⇒ 闸关着」= fail-closed(§5.3:
+/// 错算成 `false` 只是功能暂时不能用,错算成 `true` 才是 H)。
+///
+/// ⚠ 表**不随对端上下线收缩**,只随引擎(= runtime 代次)整只丢 —— 见
+/// [`Engine::peer_caps`] 头注。故上界要按「本代次内**露过面**的对端数」算,不是「此刻在线数」。
+const PEER_CAPS_SLOTS: usize = 64;
+
+/// 一枚出站 Hello 上 `caps` 的字节上界(§6.3「两把尺」的第二把:**wire-frame budget**)。
+///
+/// **算式**(照 [`sync_proto::has_capability`] 那套入口卫生的上限反推):
+/// 16 项 × (32 字节文本 + 2 字节 CBOR text 头) + 数组头 1 + `"caps"` 键 5 ≈ **550 B**。
+/// 取 1 KiB 作固定准备金,余量给将来多一两枚 token。
+///
+/// ⛔ **它不从 [`ops_serve::OPS_WATERMARK_BYTES_PER_TARGET`] 的 64 KiB 里扣**(§6.3:
+/// 那 64 KiB 量的是**水位图本身**,出站与入站共用同一把尺,扣了就会让新版客户端发出的
+/// 正常满额 Hello 一到收端被折叠成全量重扫)。它要计入的是**帧**那一头的 headroom:
+///
+/// | 那一幕 | 同时算进帧里的 | 上限 |
+/// |---|---|---|
+/// | 出站中转 | 水位图 64 KiB + caps 1 KiB + lan 通告 | 服务器 `MAX_FRAME_BYTES` = 1 MiB |
+/// | 出站 LAN | 同上(lan 腿不注入通告) | `lan::LAN_FRAME_MAX` = 1 MiB |
+///
+/// ⇒ 两头都还剩 ~950 KiB 余量,**这就是「不许把水位图恰好填满 64 KiB 之后再无条件追加
+/// 字段」那句话在本仓的兑现**:追加的量由常量定、且已经与承载它的上界比过大小。
+///
+/// ⚠ **入站方向这个数封不住任何东西**(自检第 2 条,如实记账):`has_capability` 的
+/// `.take(16)` 是**扫描**上界不是**拒收**上界 —— 对端发 1000 项照样先全量解成
+/// `Vec<String>`,那一刻的峰值只由帧上界封(LAN 1 MiB 有 [`lan::checked_body_len`] 在
+/// **分配前**过闸;中转那条客户端侧是裸 `connect_async`,吃 tungstenite 0.29 默认的
+/// 64 MiB message / 16 MiB frame,**我们自己没有闸**——既有事实,非本笔引入)。
+/// ⇒ 承重的不是这个常量,是[`Engine::observe_peer_caps`]**只存布尔、绝不留对端字符串**。
+const HELLO_CAPS_BUDGET_BYTES: usize = 1024;
+
+/// 编译期把「本端宣告的**这一枚** token 装得进准备金」钉死:`"caps"` 键 5 + 数组头 1 +
+/// text 头 2 = 8 字节固定开销。
+///
+/// ⚠ **它只管今天这一枚,别把它读成整份 `local_caps()` 的闸**(注释说了什么就得守得住
+/// 什么):真加第二枚 token 时这句算式里没有它、**不会替你红** —— 那时要做的是回头看
+/// 上面那张帧预算表,并把这句改成对整份 [`local_caps`] 求和。
+const _: () =
+    assert!(crate::board::CAP_BOARD_COLUMNS_V1.len() + 8 <= HELLO_CAPS_BUDGET_BYTES);
+
+/// 本端这一枚出站 Hello 宣告的能力集(§6「每一枚出站 Hello 都带」)。
+///
+/// **唯一构造点**;`caps` 的键空间只此一处产。
+fn local_caps() -> Vec<String> {
+    vec![crate::board::CAP_BOARD_COLUMNS_V1.to_string()]
+}
+
 /// 图字节旁路策略(android-plan §4 M1,P4-d):由 `Engine::new` / Transport 显式注入,
 /// 不做默认值,由调用端按端上需求选(桌面恒 Full;安卓 100-116 注 MetadataOnly、
 /// **117 起反转为 Full** 时间轴显图)。`MetadataOnly`——`image_add` op 照记账、照推
@@ -236,10 +290,18 @@ pub enum Msg {
     /// advisory 字段」;`LegacyMsgV1` 冻结对拍测试守着这条兼容性。
     ///
     /// 注入点在**传输层封帧前**——引擎产出的 Hello 恒 `None`(§2)。
+    ///
+    /// `caps` = **对端设备**能力宣告(board-columns-plan §6,B-d)。照 `lan` 那条已付过
+    /// 学费的零偏斜形:`Option` + `skip_serializing_if` ⇒ `None` 的字节与现网逐字节一致,
+    /// 旧端解新帧忽略未知字段、新端解旧帧得 `None`(`LegacyMsgV1` 那四条断言守着)。
+    /// ⛔ **与 `ClientMsg` 上那套 `caps` 是两个键空间**:那套讲服务器认不认、服务器看得见;
+    /// 这枚在 E2EE 内层,服务器一个字节都看不到。见 [`crate::board::CAP_BOARD_COLUMNS_V1`]。
     Hello {
         watermarks: BTreeMap<String, i64>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         lan: Option<super::lan::LanAd>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        caps: Option<Vec<String>>,
     },
     /// 定向补洞:请把 origin 从 from_seq 起的 op 给我(谁有谁答,没有则静默)。
     Want { origin: String, from_seq: i64 },
@@ -646,6 +708,27 @@ pub struct Engine {
     hello_want_cursor: HashMap<(String, u64), HelloSweep>,
     /// 路由健康表(§5.1):(对端, 路由) → 连接态 × 惩罚态。表里没有的 = Absent 无惩罚。
     routes: HashMap<(String, Route), RouteState>,
+    /// per-peer 能力观测(board-columns-plan §6.2):对端 device id → 它宣告了
+    /// [`crate::board::CAP_BOARD_COLUMNS_V1`] 吗。
+    ///
+    /// **三态,别读成两态**:表里没有 = **本代次没听它说过话**(≠ 它没有能力);
+    /// `Some(false)` = 听过了、它是旧端;`Some(true)` = 听过了、它认得。§5.1 那条
+    /// `every_registered_device_is_capable` 要的正是「Roster 每台都有**当前代次**的观测」
+    /// ⇒ 前两态都让合取为假。
+    ///
+    /// ⭐ **「代次一换就清」是结构事实,不是要记得做的动作**(自检第 7 条):观测住引擎,
+    /// 而 `EngineSlot::retire` 换的是整只引擎(`transport.rs`),新一代拿到的是空表。
+    /// ⛔ 因此**不落库**、也**不随会话/对端上下线收缩** —— 后者是刻意的:relay 断一下
+    /// 就把观测清掉,等于把 §5.3 那条「两端从不同时在线」的死结又系回去。
+    ///
+    /// ⛔ **只存布尔,绝不存对端给的字符串**(自检第 2 条):入站 caps 是对端可控的
+    /// `Vec<String>`,`has_capability` 的 `.take(16)` 只是扫描上界、拦不住 1000 项的列表。
+    /// 存布尔 ⇒ 对端字符串的生命期终结在 [`Engine::observe_peer_caps`] 那一句里。
+    ///
+    /// `pub(crate)` 是给测试直接检视**三态**用的(同 `slots`/`frozen` 那几格的理由):
+    /// [`Engine::peer_supports_board_columns`] 把两种否定态合成了一个 `false`,而
+    /// 「没听说过」与「听说了、是旧端」这两格得分得开才验得出观测有没有真落地。
+    pub(crate) peer_caps: HashMap<String, bool>,
     /// 心跳刻度(on_tick 单调加):惩罚到期判定的时间轴,**不用墙钟**(回拨即失效不了)。
     tick: u64,
     /// 装配初始化已跑过吗([`Engine::on_runtime_started`] 每引擎只许一次)。
@@ -741,6 +824,7 @@ impl Engine {
             want_cursor: 0,
             hello_want_cursor: HashMap::new(),
             routes: HashMap::new(),
+            peer_caps: HashMap::new(),
             tick: 0,
             runtime_started: false,
             relay_session: None,
@@ -1069,6 +1153,16 @@ impl Engine {
     ///
     /// **广播与定向 Hello 的唯一构造点**(第⑤笔把会话仪式那份内联构造并了进来)。返回
     /// `Vec` 而不是单枚:水位游标满额时要顺带带出一条 advisory(见下)。
+    ///
+    /// **能力宣告恒在**(board-columns-plan §6「每一枚出站 Hello 都带」):⛔ 不只挂 lan
+    /// 广告那四个时机、**不新造心跳**,复用既有触发(会话仪式 / LAN 链建立 / 断网期低频
+    /// 重发)。无条件带是因为本端 schema 支持与否在**编译期**就定了 —— 这份代码在,
+    /// 迁移 0036/0037 就在。
+    ///
+    /// ⚠ 传输层的两条 Hello **重构**臂(`deck.rs::send_relay_as`)会把它整枚拆开重装,
+    /// 那两处必须原样带上 `caps`(§6.1 那条 H)。两处都是**全字段显式解构、无 `..`**
+    /// ⇒ 加字段是编译期逼答;真正的风险是「顺手写 `caps: None` 让它编译过」= 把能力声明
+    /// 主动丢了,守它的是 `transport/tests.rs` 那四组保真测。
     pub fn make_hello(
         &self,
         conn: &Connection,
@@ -1081,7 +1175,7 @@ impl Engine {
             to: to.into(),
             lane: Lane::Mail,
             route_hint: RouteHint::Require(route),
-            msg: Msg::Hello { watermarks, lan: None },
+            msg: Msg::Hello { watermarks, lan: None, caps: Some(local_caps()) },
         });
         Ok(out)
     }
@@ -1116,6 +1210,63 @@ impl Engine {
             ops_serve::OPS_WATERMARK_BYTES_PER_TARGET,
         )?;
         Ok((map, None))
+    }
+
+    // ---- per-peer 能力观测(board-columns-plan §6.2) ---------------------------------
+
+    /// 记下一枚入站 Hello 宣告的能力(§6.2 的接线:**卫生化 → 落观测 → 再做水位对账**)。
+    ///
+    /// **不可失败、不产 `Output`**,故调用点可以排在任何 `?` 之前(自检第 4 条:观测是
+    /// 已提交的义务,不许随后面某个 `?` 一起蒸发)。
+    ///
+    /// ⛔ **入口卫生只此一条 = [`sync_proto::has_capability`]**(§6:≤16 项 / ≤32 字节 /
+    /// 仅 ASCII / 未知忽略 / 垃圾项跳过而**不因垃圾项拒整枚 Hello**)。⛔ 别在这里另写一遍
+    /// `take(16)`(清单 14:同一条规则的第二份描述就是漂移源)。
+    ///
+    /// **三条边界,逐条写明**:
+    ///
+    /// * `caps` 缺席(`None`)= 旧端 ⇒ 照样落一条 `false`。这不是「没听到」,是**听到了
+    ///   一枚不带能力的 Hello** —— §5.1 要区分这两态(见 [`Engine::peer_caps`] 头注);
+    /// * `from` 不是规范设备 id ⇒ **一条都不落**。Roster 的键是规范 id,落进来的条目
+    ///   永远匹配不上,只是白占格子;
+    /// * 表满 ⇒ **不插新条,但已在册的照常更新**。fail-closed 的方向(见
+    ///   [`PEER_CAPS_SLOTS`]);允许更新已在册的那半是必要的 —— 否则一台对端升级之后,
+    ///   它那条 `false` 会被表满**永久钉住**。
+    fn observe_peer_caps(&mut self, from: &str, caps: Option<&Vec<String>>) {
+        if !crate::clock::is_canonical_device_id(from) {
+            return;
+        }
+        let capable = caps
+            .is_some_and(|c| sync_proto::has_capability(c, crate::board::CAP_BOARD_COLUMNS_V1));
+        // 已在册的先更新并**当场返回**:借用就此结束,下面那句才读得到 `len()`
+        // (也顺手把「表满时仍允许更新已在册者」写成了结构上的先后,而不是一条注释)。
+        if let Some(slot) = self.peer_caps.get_mut(from) {
+            *slot = capable;
+            return;
+        }
+        if self.peer_caps.len() < PEER_CAPS_SLOTS {
+            self.peer_caps.insert(from.to_string(), capable);
+        }
+    }
+
+    /// 这台对端**在本代次里**宣告过 [`crate::board::CAP_BOARD_COLUMNS_V1`] 吗
+    /// (B-e 的 §5.1 那条 `every_registered_device_is_capable` 拿它逐台问)。
+    ///
+    /// ⭐ **实时读,不给快照**(自检第 10 条 + §5.2「⛔ 不许在 UI mount 时算好一个 `bool`
+    /// 长期缓存」):调用方每次要发 board op 之前重新问一遍。
+    ///
+    /// ⛔ **刻意不写成 `peer_has_capability(peer, cap)` 那种通用形**:表里只有这一枚能力
+    /// 的布尔,通用签名对别的 token 只能安静地答 `false` —— 那正是设计铁律里的「静默默认
+    /// 值」。真加第二枚能力时,把这里改成显式的枚举/位集,别让签名先替它撒谎。
+    ///
+    /// 「没听说过」与「听说了但它是旧端」在这里**同归 `false`** —— 判据是「有当前代次的
+    /// 肯定观测」,两种否定态没有区别对待的必要;要分辨它们直接读 [`Engine::peer_caps`]。
+    ///
+    /// ⚠ **生产调用者随 B-e 落**(§5.1 那条合取的 owner 是 core 写编排层,不是本笔);
+    /// B-d 只负责把观测**记准**,并有测钉住。照 `lan` 模块那条先例挂 `allow`。
+    #[allow(dead_code)]
+    pub fn peer_supports_board_columns(&self, peer: &str) -> bool {
+        self.peer_caps.get(peer).copied().unwrap_or(false)
     }
 
     // ---- 路由健康表(§5.1;表里没有的条目 = Absent 且无惩罚) --------------------------
@@ -1716,10 +1867,17 @@ impl Engine {
     ) -> Result<(), String> {
         match msg {
             Msg::Ops { origin, ops } => self.on_ops(conn, clock, from, origin, ops, out),
-            // `lan` 在此刻意不看:通告缓存的写入权归传输层(lan-direct-plan §2——只有
-            // 经中转 deliver 到达的帧才算权威路,而「来路」是 socket 所有者的事实,
-            // 引擎不该拿它当缓存依据)。水位处理与它无关,照常走。
-            Msg::Hello { watermarks, lan: _ } => self.on_hello(conn, from, route, &watermarks, out),
+            // 两个可选字段在这里的处置**刻意相反**,理由也不同:
+            //
+            // * `lan` 不看 —— 通告缓存的写入权归传输层(lan-direct-plan §2:只有经中转
+            //   deliver 到达的帧才算权威路,而「来路」是 socket 所有者的事实,引擎不该
+            //   拿它当缓存依据)。水位处理与它无关,照常走。
+            // * `caps` **由引擎自己收,两条腿共用** —— board-columns-plan §6 明写能力观测
+            //   「来自 Relay 还是 LAN 一视同仁」:它喂的是「对方认不认新词汇」,与来路无关
+            //   (lan 通告那条只认 relay 来路,因为它喂的是拨号授权)。
+            Msg::Hello { watermarks, lan: _, caps } => {
+                self.on_hello(conn, from, route, &watermarks, caps.as_ref(), out)
+            }
             Msg::Want { origin, from_seq } => {
                 self.on_want(from, route, &origin, from_seq, out);
                 Ok(())
@@ -2207,6 +2365,7 @@ impl Engine {
         from: &str,
         route: Route,
         theirs: &BTreeMap<String, i64>,
+        caps: Option<&Vec<String>>,
         out: &mut Vec<Output>,
     ) -> Result<(), String> {
         let snapshot = ops_serve::snapshot_rowid(conn)?;
@@ -2217,6 +2376,20 @@ impl Engine {
                 out.push(Output::Event(Event::FrameRejected { from: from.into(), reason }))
             }
             Ok(vetted) => {
+                // ⭐ **能力观测落在这里**(board-columns-plan §6.2 那条接线),三件事各有理由:
+                //
+                // * **在 `ops_serve::on_hello` 之前** —— 规格那条 ⛔ 的正文:观测**绝不能**
+                //   绑在冷却 / 折叠 / `Admit::Overload` 的结果上。`RECONCILE_COOLDOWN_TICKS`
+                //   管的是「收到 Hello 之后何时开对账计划」,与「这枚 Hello 说了什么」无关;
+                //   一枚被折进 pending 的 Hello,它的能力宣告**照样必须已经落地**。
+                // * **在 `hello_gap_wants` 之前** —— 那一句带 `?`(要读本机水位)。观测本身
+                //   不可失败,排在失败点之后就等于让它随那个 `?` 一起蒸发(自检第 4 条)。
+                // * **在 `Ok(vetted)` 里面而不是 match 之前** —— 水位图不合形 = **整枚帧
+                //   拒收**(`vet_watermarks` 的处置:一处不合就整帧不收,不做静默清洗)。
+                //   拒收的帧不该教会本机任何事实。⚠ 这一格**规格没给形、是本笔自己定的**:
+                //   两个方向都满足「先于折叠」,选这个是因为反方向(先学再 vet)会让一枚
+                //   形态不合的 Hello 也把对端记成「有能力」= 朝 `true` 错算(§5.3 判 H)。
+                self.observe_peer_caps(from, caps);
                 // 「我低你高」那一半(322)。**排在 admission 之前**:它要读本机水位、
                 // 带 `?`,而 `settle_ops_admission` 之后到函数结束不许有失败点(③″)。
                 //

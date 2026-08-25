@@ -1108,19 +1108,31 @@ impl Deck<'_> {
         msg: &Msg,
         kind: Option<Sent>,
     ) -> Result<(), String> {
+        // ⚠ **这两条臂是把 Hello 整枚拆开重构的**(board-columns-plan §6.1 那条 H):
+        // `Engine::make_hello` 自称「广播与定向 Hello 的唯一构造点」,但那只是**引擎侧**
+        // —— 帧真正上线前还要过这里。两条臂都是**全字段显式解构 + 显式重构、没有 `..`**,
+        // 故给 `Msg::Hello` 加字段是**编译期逼答**而不是静默漂移;⛔ 但「顺手写
+        // `caps: None` 让它编译过」就等于把能力声明主动丢了 —— 那是本仓不新开结构锚、
+        // 改用**会红的测**来守的那一格(§6.1 四组:本文件的 `hello_caps_survive_both_
+        // relay_reconstruct_arms` / `hello_caps_reach_a_lan_peer_on_the_direct_leg` /
+        // `the_session_ritual_broadcast_hello_carries_the_capability`,加 engine 侧的
+        // `every_outbound_hello_carries_the_capability`)。
+        // ⇒ **凡是往 `Hello` 上加的、需要送达对端的字段,这里都必须原样带过去。**
         let injected = match msg {
-            Msg::Hello { watermarks, lan: None } => {
+            Msg::Hello { watermarks, lan: None, caps } => {
                 let ad = self.ad().and_then(|mut face| face.local_lan_ad());
-                Some(Msg::Hello { watermarks: watermarks.clone(), lan: ad })
+                Some(Msg::Hello { watermarks: watermarks.clone(), lan: ad, caps: caps.clone() })
             }
             // 引擎产出的 Hello 恒 `None`(engine.rs 单测锚着)。真带了 = 接线漂移:原样
             // 发出去会把一枚**没落库**的序号封上线(收端从此只认更大的),响亮记一笔、
             // 把通告摘掉再发——水位该到的照到。
-            Msg::Hello { watermarks, lan: Some(_) } => {
+            //
+            // ⚠ 摘的**只有通告那一格**:`caps` 与这条漂移无关,照原样带走(§6.1 第 2 组测)。
+            Msg::Hello { watermarks, lan: Some(_), caps } => {
                 self.set_status(|s| {
                     s.error = Some("内部错:引擎产出的 Hello 带了局域网通告(已摘除)".into());
                 });
-                Some(Msg::Hello { watermarks: watermarks.clone(), lan: None })
+                Some(Msg::Hello { watermarks: watermarks.clone(), lan: None, caps: caps.clone() })
             }
             _ => None,
         };

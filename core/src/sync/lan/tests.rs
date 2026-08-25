@@ -786,7 +786,7 @@ fn sample_ad() -> LanAd {
 fn hello_without_lan_is_byte_identical_to_the_frozen_legacy_form() {
     // ①(探针实证的四项之一)None 的字节形态与现网**逐字节一致** → 黄金向量与
     // 混版解密全不受影响,这正是「不升 PROTO_VER」得以成立的前提。
-    let new_none = cbor(&Msg::Hello { watermarks: sample_watermarks(), lan: None });
+    let new_none = cbor(&Msg::Hello { watermarks: sample_watermarks(), lan: None, caps: None });
     let legacy = cbor(&LegacyMsgV1::Hello { watermarks: sample_watermarks() });
     assert_eq!(hex(&new_none), hex(&legacy));
     // 顺带钉死这一形态的字节(map(1) Hello → map(1) watermarks)。
@@ -808,23 +808,92 @@ fn hello_without_lan_is_byte_identical_to_the_frozen_legacy_form() {
 #[test]
 fn hello_with_lan_is_readable_by_the_frozen_old_decoder() {
     // ② 旧端解新帧 = Ok 且忽略 lan(水位照读)→ 混版下老端不 Codec、不骚扰 skew。
-    let with_lan = cbor(&Msg::Hello { watermarks: sample_watermarks(), lan: Some(sample_ad()) });
+    let with_lan = cbor(&Msg::Hello { watermarks: sample_watermarks(), lan: Some(sample_ad()), caps: None });
     let old: LegacyMsgV1 = ciborium::from_reader(with_lan.as_slice())
         .expect("旧解码器必须能读新帧(serde 派生忽略未知字段)");
     assert_eq!(old, LegacyMsgV1::Hello { watermarks: sample_watermarks() });
     // ③ 新端解旧帧 = Ok 得 None(serde 对缺席 Option 特判)。
     let legacy = cbor(&LegacyMsgV1::Hello { watermarks: sample_watermarks() });
     let new: Msg = ciborium::from_reader(legacy.as_slice()).unwrap();
-    assert_eq!(new, Msg::Hello { watermarks: sample_watermarks(), lan: None });
+    assert_eq!(new, Msg::Hello { watermarks: sample_watermarks(), lan: None, caps: None });
     // ④ 新端解新帧 = 原样往返(通告不丢)。
     let back: Msg = ciborium::from_reader(with_lan.as_slice()).unwrap();
-    assert_eq!(back, Msg::Hello { watermarks: sample_watermarks(), lan: Some(sample_ad()) });
+    assert_eq!(back, Msg::Hello { watermarks: sample_watermarks(), lan: Some(sample_ad()), caps: None });
     // 手机形态(listen: None)也往返无损。
     let phone = LanAd { listen: None, ..sample_ad() };
-    let bytes = cbor(&Msg::Hello { watermarks: BTreeMap::new(), lan: Some(phone.clone()) });
+    let bytes = cbor(&Msg::Hello { watermarks: BTreeMap::new(), lan: Some(phone.clone()), caps: None });
     let back: Msg = ciborium::from_reader(bytes.as_slice()).unwrap();
-    assert_eq!(back, Msg::Hello { watermarks: BTreeMap::new(), lan: Some(phone) });
+    assert_eq!(back, Msg::Hello { watermarks: BTreeMap::new(), lan: Some(phone), caps: None });
     assert!(ciborium::from_reader::<LegacyMsgV1, _>(bytes.as_slice()).is_ok());
+}
+
+/// **`caps` 那一格的零版本偏斜**(board-columns-plan §6,B-d)——与上面 `lan` 那两只同形、
+/// 同一个 [`LegacyMsgV1`] 冻结类型对拍。⛔ **别为 caps 去改那个冻结类型**:它冻的是
+/// 「桌面 0.2.24 / 安卓 0.3.21 起在产的那个形」,真要升协议改的是 `PROTO_VER`。
+///
+/// 四条断言与 lan 那次逐条同源,但**第 ① 条在这里意义更重**:caps 是 B-e 那道发送端闸的
+/// 唯一信息来源,而 V1 的整个混版策略(§8「V1 必须一次带齐 B-b…B-e」)建立在「新端发的
+/// Hello 旧端照读不误」之上 —— 这一条一红,那条策略就不成立。
+///
+/// ⭐ **plan §8 给 B-d 的门禁是「跨版本四组(billing-plan §6 既有纪律)」**,那四组在本案
+/// 是**端对端**不是客对服(服务器看不见这枚字段)。逐格落点记在这儿,免得下一个人重数:
+///
+/// | billing §6 那一组 | 本案的形 | 落在哪 |
+/// |---|---|---|
+/// | 旧客 → 新服 | **旧端 → 新端**:不带 caps 的 Hello,水位照读、落一条否定观测 | `engine::tests::peer_capability_observation_has_three_states` ② |
+/// | 新客 → 旧服 | **新端 → 旧端**:带 caps 的 Hello,旧解码器 Ok 且忽略 | 本测 ① |
+/// | 旧黄金向量不变 | `caps: None` 的字节与冻结形逐字节相等 | `hello_without_lan_is_byte_identical_to_the_frozen_legacy_form` |
+/// | 能力开启后的新状态向量 | 带 caps 那一形的字节钉死 | 本测 ④ |
+#[test]
+fn hello_caps_are_invisible_to_the_frozen_old_decoder() {
+    let caps = || Some(vec!["board_columns_v1".to_string()]);
+    let with_caps =
+        cbor(&Msg::Hello { watermarks: sample_watermarks(), lan: None, caps: caps() });
+
+    // ① 旧端解「带 caps 的新帧」= Ok 且**水位一字不差**(未知字段被 serde 派生忽略)。
+    let old: LegacyMsgV1 = ciborium::from_reader(with_caps.as_slice())
+        .expect("旧解码器必须能读带 caps 的新帧");
+    assert_eq!(old, LegacyMsgV1::Hello { watermarks: sample_watermarks() });
+
+    // ② 新端解新帧 = 原样往返(能力宣告不丢)。
+    let back: Msg = ciborium::from_reader(with_caps.as_slice()).unwrap();
+    assert_eq!(back, Msg::Hello { watermarks: sample_watermarks(), lan: None, caps: caps() });
+
+    // ③ 三个字段同时在场也互不干扰(lan 与 caps 各自独立的 `skip_serializing_if`)。
+    let both = cbor(&Msg::Hello {
+        watermarks: sample_watermarks(),
+        lan: Some(sample_ad()),
+        caps: caps(),
+    });
+    assert!(
+        ciborium::from_reader::<LegacyMsgV1, _>(both.as_slice()).is_ok(),
+        "两个可选字段一起在场,旧端照样解得开"
+    );
+    let back: Msg = ciborium::from_reader(both.as_slice()).unwrap();
+    assert_eq!(
+        back,
+        Msg::Hello { watermarks: sample_watermarks(), lan: Some(sample_ad()), caps: caps() }
+    );
+
+    // ④ **黄金向量**:字段序 = 声明序(watermarks → caps),⛔ 别拿实现跟自己对拍。
+    // 这串一旦漂了就是线上格式漂了 —— 别端实现照此对拍。
+    assert_eq!(
+        hex(&with_caps),
+        concat!(
+            "a1",                                     // map(1)
+            "6548656c6c6f",                           // "Hello"
+            "a2",                                     // map(2):watermarks + caps
+            "6a77617465726d61726b73",                 // "watermarks"
+            "a1",                                     // map(1)
+            "781a",                                   // text(26)
+            "30314a5a46414b454f524947494e303030303030303041414141", // origin ULID
+            "182a",                                   // 42
+            "6463617073",                             // "caps"
+            "81",                                     // array(1)
+            "70",                                     // text(16)
+            "626f6172645f636f6c756d6e735f7631",       // "board_columns_v1"
+        )
+    );
 }
 
 #[test]
@@ -897,7 +966,7 @@ fn same_hello_ciphertext_updates_cache_via_relay_but_never_via_lan() {
     let (_seed, pubkey) = crate::sync::pair::gen_device_key();
     let k_acc = [7u8; 32];
     let ad = LanAd { pubkey: pubkey.to_vec(), ad_seq: 3, listen: sample_ad().listen };
-    let hello = Msg::Hello { watermarks: sample_watermarks(), lan: Some(ad) };
+    let hello = Msg::Hello { watermarks: sample_watermarks(), lan: Some(ad), caps: None };
     // 真封一帧 ctl 域密文,两条来路解出的是同一个 Msg(字节完全同源)。
     let addr = FrameAddr {
         account_id: ACCT,
@@ -1547,7 +1616,7 @@ fn every_msg_variant_is_accounted_for_against_the_frozen_type() {
     }
     assert_eq!(legacy_counterpart(&Msg::Want { origin: "o".into(), from_seq: 1 }), Some("Want"));
     assert_eq!(
-        legacy_counterpart(&Msg::Hello { watermarks: BTreeMap::new(), lan: None }),
+        legacy_counterpart(&Msg::Hello { watermarks: BTreeMap::new(), lan: None, caps: None }),
         None
     );
 }

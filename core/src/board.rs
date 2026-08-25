@@ -56,6 +56,35 @@ use ulid::Ulid;
 use crate::clock::Clock;
 use crate::{frindex, oplog, repo};
 
+/// 能力 token:「本端认识 `board_column` 这套词汇」(plan §6 / §5.5,B-d 落)。
+///
+/// ⭐ **它只有这一份,两个用途共用**(清单 14:同一条规则的第二份描述就是漂移源):
+///
+/// * **线上**——每一枚出站 [`crate::sync::engine::Msg::Hello`] 的 `caps` 都带它,
+///   收端据此记下 per-peer 观测(plan §6 / §6.2);
+/// * **闩**——§5.5 那枚单调闩存的是 `(account_id, BOARD_COLUMNS_CAP_GEN)`,而规格原文
+///   写死「Hello 宣告**同一枚 token**」⇒ **B-e 直接引本常量**,⛔ 别另定一个
+///   `BOARD_COLUMNS_CAP_GEN`(两份必漂,而漂的方向是「闩认为全员具备、线上宣告的却是别的
+///   token」= 朝 `true` 错算 = §5.3 判 H)。
+///
+/// ⚠ **什么时候必须 bump**(plan §14 那行,§5.5 (α)):凡与 board_columns 语义有关的
+/// schema / validator / 线上形态变化,一律显式换新 token 串(如 `board_columns_v2`);
+/// ⛔ 反过来,与本案无关的迁移或 `VALIDATOR_VER` bump **不许**无谓换它 —— 换一次就把
+/// 全账户已立起来的闩清一次,功能跟着关一轮。
+///
+/// ⛔ **与 `sync_proto::CAP_ACCOUNT_STATUS_V1` / `CAP_DEVICE_ROSTER_V1` 是两个键空间**
+/// (plan §6):那两枚讲「**服务器**认不认」、挂 `ClientMsg::Auth`,服务器看得见;这一枚讲
+/// 「**对端设备**认不认」、挂 E2EE 内层的 `Msg::Hello`,服务器一个字节都看不到。不许串。
+pub(crate) const CAP_BOARD_COLUMNS_V1: &str = "board_columns_v1";
+
+/// ⭐ **编译期钉死「这枚 token 过得了入口卫生」**。
+///
+/// `sync_proto::has_capability` 会**跳过**超 32 字节或含非 ASCII 的项(§6:垃圾项跳过而
+/// 不拒整枚 Hello)。⇒ 哪天有人把 token 改长或改成中文,后果不是报错,而是:本端照发、
+/// 对端照收、`has_capability` 一声不吭地滤掉它 ⇒ **全账户的能力观测永远为假、功能永久
+/// 关着**,而且没有任何一条日志会说为什么。这句 `assert!` 把那个静默失败搬到编译期。
+const _: () = assert!(CAP_BOARD_COLUMNS_V1.len() <= 32 && CAP_BOARD_COLUMNS_V1.is_ascii());
+
 /// 一个种子列的 canonical 出生形。**六行的唯一描述源**(见模块头注)。
 ///
 /// ⚠ 字段全是 `&'static str` / `bool` 的**值**而不是从库里读出来的:它要能在「库还没建

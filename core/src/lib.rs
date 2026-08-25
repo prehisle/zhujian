@@ -20,10 +20,13 @@
 /// 所有备份 / 清扫入口必须经 coordinator(⛔ 这一条是冲着笔①-b 的自动备份去的:
 /// 它不会走桌面命令层,门开在壳里就等于没门)。
 pub mod backup;
-/// 看板列(`board_column`,board-columns-plan B 系列,迁移 0036 起)。公开面只有 read model
-/// (`list_columns` / `BoardColumnRow`);seed 描述源、两道审计与「什么是任务态」那三个判据
-/// 都是 crate 内件。⚠ **写命令面(建/改名/排序/删)随 B-c 落** —— 它要发 `board_column` op,
-/// 而 oplog 词汇表归 B-c(plan §11 的排序问题按出路 ① 定)。
+/// 看板列(`board_column`,board-columns-plan B 系列,迁移 0036 起)。公开面 = read model
+/// (`list_columns` / `BoardColumnRow`)+ **480/B-c 第 3 段起的四条写命令**
+/// (`create_column` / `rename_column` / `reorder_column` / `delete_column` —— **全仓唯一会
+/// 往外发 `board_column` op 的路**);seed 描述源、两道审计、「什么是任务态」那三个判据、
+/// 以及「哪几列永不可删」(`undeletable_reason`,plan §2.3a)都是 crate 内件。
+/// ⛔ 两壳的 UI 接线归 **B-f**,且它**不拥有任何数据安全判定**(plan §8.1-2)——
+/// 「这一列能不能删」读 `BoardColumnRow::deletable`,别在壳里另算一份。
 pub mod board;
 pub mod clock;
 pub mod comments;

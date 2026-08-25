@@ -3918,7 +3918,7 @@ async fn the_wire_only_admits_a_full_canonical_device_id_as_from() {
         );
     }
     // 「BROADCAST 不得拥有 active 计划」:`vet_target` 放行 `"*"`,故挡它的只能是入口闸。
-    let hello = Msg::Hello { watermarks: Default::default(), lan: None };
+    let hello = Msg::Hello { watermarks: Default::default(), lan: None, caps: None };
     offline_face(&mut r)
         .on_wire(Ingress::RelayDeliver, BROADCAST, &cfg.device_id, &seal(BROADCAST, &hello))
         .await
@@ -4313,7 +4313,7 @@ async fn a_missing_link_drops_the_leg_instead_of_warning_forever() {
             to: BROADCAST.into(),
             lane: Lane::Mail,
             route_hint: RouteHint::Auto,
-            msg: Msg::Hello { watermarks: Default::default(), lan: None },
+            msg: Msg::Hello { watermarks: Default::default(), lan: None, caps: None },
         }]
     };
     offline_face(&mut r).dispatch(mail()).await.unwrap();
@@ -6404,7 +6404,7 @@ fn open_deliver_enforces_domain_variant_mapping() {
             msg,
         )
     };
-    let hello = Msg::Hello { watermarks: Default::default(), lan: None };
+    let hello = Msg::Hello { watermarks: Default::default(), lan: None, caps: None };
     // 正道:Hello 封 ctl 域 → Data;Ops 封 op 域 → Data。
     assert!(matches!(open_deliver(&cfg, "F", "*", &seal(Domain::Ctl, &hello)), Opened::Data(_)));
     let ops = Msg::Ops { origin: "O".into(), ops: vec![] };
@@ -9931,4 +9931,136 @@ fn boot_sweep_truncates_the_list_but_not_the_count() {
     // ⭐ 上界与总数是两件事,而且**每个上界都要有一句如实的话跟着它**(432 那条教训)。
     assert!(said.contains(&format!("{total} 项删不掉")), "说的总数要是真总数:{said}");
     assert!(said.contains("另有 3 项未列出"), "截断本身要说出来:{said}");
+}
+
+// ---- §6.1 Hello 能力宣告的**保真**四组(board-columns-plan B-d) ---------------------
+//
+// **为什么是四只会红的测,而不是一道结构锚**(§6.1 十轮定形):`Deck::send_relay_as` 把
+// Hello **整枚拆开重构**,两条臂都是全字段显式解构、无 `..` ⇒ 加字段是**编译期逼答**,
+// 漂移不了;真正的风险是有人「顺手写 `caps: None` 让它编译过」,把能力声明主动丢了。
+// 那种改动编译得过、既有测也全绿 —— 只有下面这四只会红。⛔ 别把它们并成一只:四组各
+// 覆盖一条**独立的送达路**,合并之后哪条断了都只报一次。
+//
+// ⚠ **诚实记账(自检第 11 条)**:第 4 组的 **LAN 那半今天是平凡的** —— `seal_for_lan`
+// 把 `msg` 原样封,一个字段都不重构,故它「保真」不是因为谁保住了它。留着的理由是:
+// 哪天有人给 LAN 那条也加一条注入/剥离臂(lan 通告当年就是这么长出来的),这只测是唯一
+// 会当场红的东西。
+
+/// 本端那枚能力 token(⛔ 引常量不写字面量,自检第 14 条)。
+const CAP_BC: &str = crate::board::CAP_BOARD_COLUMNS_V1;
+
+fn hello_with(lan: Option<lan::LanAd>, caps: &[&str]) -> Msg {
+    Msg::Hello {
+        watermarks: Default::default(),
+        lan,
+        caps: Some(caps.iter().map(|c| c.to_string()).collect()),
+    }
+}
+
+fn relay_hello(to: &str, msg: Msg) -> Output {
+    Output::Send { to: to.into(), lane: Lane::Mail, route_hint: RouteHint::Require(Route::Relay), msg }
+}
+
+/// 从一枚出站帧里取 caps;不是 Hello 就 panic(调用方已筛过)。
+fn caps_of(msg: &Msg) -> Vec<String> {
+    match msg {
+        Msg::Hello { caps, .. } => caps.clone().expect("这枚 Hello 的能力宣告被丢掉了"),
+        other => panic!("该是 Hello,实见 {other:?}"),
+    }
+}
+
+/// **组 1 + 组 2**:`send_relay_as` 那两条重构臂各走一遍,caps 都必须原样过去。
+///
+/// * 组 1 —— `lan: None` 那条(**生产恒走这条**:引擎产出的 Hello 恒 `None`,通告在这里注入);
+/// * 组 2 —— `lan: Some(_)` 那条**漂移剥离臂**:它摘掉通告并响亮记一笔,⛔ 但 caps 与那条
+///   漂移无关,不许被一起摘掉。
+///
+/// ⚠ 夹具那一句 warm-up:[`fake_relay`] 的服务端在进主循环之前会 `let _ = ws.next().await`
+/// 把**第一枚**帧当作 Auth 吞掉(它不验签,要的是时序),而 [`raw_relay_leg`] 刻意不走
+/// 握手 ⇒ 不先喂一枚,组 1 那枚就会被当成 Auth 丢掉,这只测会以「读不到帧」的形式假红。
+#[tokio::test]
+async fn hello_caps_survive_both_relay_reconstruct_arms() {
+    let mut r = deck_rig("hello-caps-relay");
+    let cfg = deck_cfg(&r.db);
+    let mut relay = fake_relay().await;
+    let (mut ws, mut sess) = raw_relay_leg(&relay).await;
+    {
+        let mut deck = relay_face(&mut r, &mut ws, &mut sess);
+        // warm-up(见头注):这一枚注定被夹具当 Auth 吞掉。
+        deck.dispatch(vec![Output::Send {
+            to: PEER_ONE.into(),
+            lane: Lane::Mail,
+            route_hint: RouteHint::Require(Route::Relay),
+            msg: Msg::Want { origin: PEER_ONE.into(), from_seq: 1 },
+        }])
+        .await
+        .unwrap();
+        // 组 1:lan = None 那条臂。
+        deck.dispatch(vec![relay_hello(BROADCAST, hello_with(None, &[CAP_BC]))]).await.unwrap();
+        // 组 2:lan = Some 那条漂移剥离臂。
+        let ad = lan::LanAd { pubkey: vec![9u8; 32], ad_seq: 3, listen: None };
+        deck.dispatch(vec![relay_hello(BROADCAST, hello_with(Some(ad), &[CAP_BC]))])
+            .await
+            .unwrap();
+    }
+
+    let (_, to, msg) = relay.next_out(&cfg, 5000).await.expect("组 1 那枚 Hello");
+    assert_eq!(to, BROADCAST);
+    assert_eq!(caps_of(&msg), vec![CAP_BC.to_string()], "组 1:注入通告那条臂丢了 caps");
+
+    let (_, _, msg) = relay.next_out(&cfg, 5000).await.expect("组 2 那枚 Hello");
+    assert!(
+        matches!(&msg, Msg::Hello { lan, .. } if lan.is_none()),
+        "前提:漂移剥离臂真的走到了(通告被摘掉),否则组 2 测的不是那条臂:{msg:?}"
+    );
+    assert_eq!(caps_of(&msg), vec![CAP_BC.to_string()], "组 2:剥离通告时把 caps 一起摘了");
+    assert!(
+        r.status.lock().unwrap().error.is_some(),
+        "前提:那条臂本就该响亮记一笔 —— 没有它就说明走的是别的臂"
+    );
+    relay.task.abort();
+}
+
+/// **组 3(定向)+ 组 4(LAN 那条真发送路)**:走的是**生产自己的**构造点
+/// [`Engine::make_hello`],不是手搓的帧 —— 故它同时钉住「出站恒带」这一半。
+#[tokio::test]
+async fn hello_caps_reach_a_lan_peer_on_the_direct_leg() {
+    let mut r = deck_rig("hello-caps-lan");
+    let (mine, theirs) = tcp_pair().await;
+    let mut peer = FakeLink { stream: theirs };
+    let cfg = deck_cfg(&r.db);
+    {
+        // 建链即发一枚**定向** Hello(`Require(Lan)`),由 `Engine::on_lan_link_up` 产出。
+        offline_face(&mut r).lan_adopt(adopted(PEER_ONE, 1, mine)).await.unwrap();
+    }
+    let (from, to, msg) = peer.next_msg(&cfg, 5000).await.expect("建链那枚定向 Hello");
+    assert_eq!((from, to.as_str()), (cfg.device_id.clone(), PEER_ONE), "定向,不是广播");
+    assert!(
+        matches!(&msg, Msg::Hello { lan, .. } if lan.is_none()),
+        "lan 腿上不注入通告(§2 单一权威路)—— 这一格与 caps 互不牵动:{msg:?}"
+    );
+    assert_eq!(
+        caps_of(&msg),
+        vec![CAP_BC.to_string()],
+        "定向 Hello / LAN 腿上,能力宣告一样要送到"
+    );
+}
+
+/// **组 3(广播)**:会话仪式那枚广播 Hello —— 端到端走真传输任务与真握手。
+///
+/// 与上面两只的分工(自检第 13 条「几把尺」):那两只**直接量 deck 的出站帧**,验的是
+/// 重构臂;这一只验的是**产它的那条生产路径真的带了** —— 会话仪式的 Hello 经
+/// `on_relay_session_up` → `make_hello` → `send_relay_as` 整条链走下来。
+#[tokio::test]
+async fn the_session_ritual_broadcast_hello_carries_the_capability() {
+    let (mut relay, rig, cfg) = relay_rig("hello-caps-ritual", 61).await;
+    let (_, to, msg) = relay.next_out(&cfg, 8000).await.expect("仪式那枚广播 Hello");
+    assert_eq!(to, BROADCAST, "仪式第一枚是广播 Hello");
+    assert_eq!(
+        caps_of(&msg),
+        vec![CAP_BC.to_string()],
+        "会话仪式那枚广播 Hello 漏了能力宣告"
+    );
+    rig.task.abort();
+    relay.task.abort();
 }

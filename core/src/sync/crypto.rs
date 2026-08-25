@@ -457,7 +457,7 @@ f3a82f4eda7e39ae64c6708c54c216cb96b72e1213b4522f8c9ba40db5d945b11b69b982c1bb9e3f
     fn seal_uses_fresh_random_nonce_each_time() {
         let k_acc = k(7);
         let a = addr("acct", "dev-a", "dev-b", Domain::Op);
-        let msg = Msg::Hello { watermarks: BTreeMap::new(), lan: None };
+        let msg = Msg::Hello { watermarks: BTreeMap::new(), lan: None, caps: None };
         let b1 = seal_msg(&k_acc, &a, &msg);
         let b2 = seal_msg(&k_acc, &a, &msg);
         assert_ne!(b1, b2, "同帧两封必须得不同 blob(随机 nonce)");
