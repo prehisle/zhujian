@@ -96,6 +96,19 @@ impl RuntimeFacts {
     /// | 表里完全没有这个 id | `false` | [`SpaceSupervisor::is_stopped`] 的语义就是「无槽」⇒ 没有任何 transport 在跑,**确定**没有引擎 |
     /// | `Running` | 读那枚投影 | 引擎在场与否由 `EngineSlot` 自己在装配 / 撤台两处写,见 [`crate::sync::supervisor::ActiveRuntime::engine_present`] |
     /// | `Stopping` / `Starting` / `Resetting` | `true` | 瞬态,说不准 ⇒ **当作有**,让 solo 算成 `false`(朝 `false` 错算是可接受那一格) |
+    ///
+    /// # ⚠ 锁序:本函数在**写锁之内**被调用,那是 `db → live`
+    ///
+    /// 两只壳都是先拿到空间的写锁(桌面 `rt.write_locks()` / 手机 `Coord::with_write`),
+    /// 再调本函数;而本函数内部会取 `SpaceSupervisor` 的 `live` 读锁。⇒ 顺序是 **db → live**。
+    ///
+    /// **不会死锁,依据是 supervisor 自己那条既有纪律**:「命令面唯一入口:读锁查表 → clone
+    /// Arc → 放锁,**绝不持表锁做 SQL / 网络 / 等控制通道**」(`supervisor.rs` `get` 的头注)
+    /// ⇒ 仓里**没有** `live → db` 那个方向。⛔ 哪天有人在持 `live` 时去拿某个空间的 db 锁,
+    /// 这条就断了 —— 回来读这一段。
+    ///
+    /// ⚠ 反过来,**「在写锁内采」不等于「与写同一个临界区」**:`config_transition_in_flight`
+    /// 由壳的 `lifecycle` 那条路置位,与本空间的写锁并不互斥。那道诚实边界见 plan §5.6a 末。
     pub fn observe(sup: &SpaceSupervisor, space_id: &str) -> RuntimeFacts {
         RuntimeFacts {
             config_transition_in_flight: sup.config_transition_in_flight(),
@@ -145,6 +158,10 @@ impl RuntimeFacts {
 /// [`RuntimeFacts::detached`] 的写法糖,给 core 自己那几百处测试调用点用。
 ///
 /// ⛔ **不是第二份描述**:它就是那个 `const fn` 的一次求值,值从函数来。
+///
+/// ⚠ `#[cfg(test)]` 是**故意**的:生产写路径一处都不该用 detached 的事实(用了 = 把闸关掉),
+/// 故它连编进生产构建都不必 —— 少一条能走的路。
+#[cfg(test)]
 pub(crate) const DETACHED: RuntimeFacts = RuntimeFacts::detached();
 
 /// §5.1 那条合取的**今天这一半**;过不了就给一句人话(⛔ 不静默 no-op)。
