@@ -1181,9 +1181,10 @@ mod tests {
         );
         assert_eq!(
             db_open,
-            want(&[("core/sync/convergence.rs", 1), ("desktop/lib.rs", 4)]),
-            "db::open 会跑回收,调用点数目钉死;convergence.rs 那处是 `#[cfg(test)] mod \
-             convergence` 整模块门控的 property test(文件里没有 mod tests,扫不掉)"
+            want(&[("core/sync/convergence.rs", 2), ("desktop/lib.rs", 4)]),
+            "db::open 会跑回收,调用点数目钉死;convergence.rs 那**两**处都是 `#[cfg(test)] \
+             mod convergence` 整模块门控的 property test(文件里没有 mod tests,扫不掉)\
+             —— `Sim::new` 一处 + 480 那只单跑的选择器覆盖测一处"
         );
         assert_eq!(
             open_space,

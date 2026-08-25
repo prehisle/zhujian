@@ -49,6 +49,27 @@ fn append(
     kind: &str,
     payload: Value,
 ) -> Result<(), String> {
+    append_returning(conn, clock, entity, entity_id, kind, payload).map(|_| ())
+}
+
+/// 同 [`append`],但把这一枚 op 的 **`(op_id, hlc)`** 交回调用方。
+///
+/// ⭐ **只有一个消费者,且那是被规格逼出来的**:`board_column` 的墓碑授权表
+/// (board-columns-plan §2.3「④ 的形」)按 `op_id` + `to_hlc` 把「谁允许改这一格 marker」
+/// 绑到**具体那一枚日志事实**上 ⇒ 本地删列命令必须先知道自己刚发的是哪一枚。
+/// ⚠ 写入顺序被这条钉死:**先有 op、再改行**(replay 那条路天然如此 ——
+/// `apply_remote_op` 先记 oplog 再分发;本地这条路靠调用方自觉,别改序)。
+///
+/// ⛔ 别为了「顺手」把别的发射器也改成用它:多一个能拿到 op_id 的口子,就多一处可能
+/// 绕过「读行发声」去自己攒 payload 的路。
+fn append_returning(
+    conn: &Connection,
+    clock: &mut Clock,
+    entity: &str,
+    entity_id: &str,
+    kind: &str,
+    payload: Value,
+) -> Result<(String, String), String> {
     let hlc = clock.tick(conn)?;
     let origin_seq: i64 = conn
         .query_row(
@@ -57,21 +78,15 @@ fn append(
             |r| r.get(0),
         )
         .map_err(|e| e.to_string())?;
+    let op_id = Ulid::new().to_string();
+    let hlc = hlc.encode();
     conn.execute(
         "INSERT INTO oplog (op_id, hlc, entity, entity_id, kind, payload, origin_seq) \
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-        (
-            Ulid::new().to_string(),
-            hlc.encode(),
-            entity,
-            entity_id,
-            kind,
-            payload.to_string(),
-            origin_seq,
-        ),
+        (&op_id, &hlc, entity, entity_id, kind, payload.to_string(), origin_seq),
     )
     .map_err(|e| e.to_string())?;
-    Ok(())
+    Ok((op_id, hlc))
 }
 
 /// 远端 op 原样入库(回放层 replay.rs 专用):保留远端的 op_id、HLC 与 origin_seq,
@@ -221,6 +236,81 @@ pub fn topic_set(
 /// 标签销毁。它名下 link 的死亡由 FK 级联承载(回放同样生效),不逐条发 link_remove。
 pub fn topic_tombstone(conn: &Connection, clock: &mut Clock, id: &str) -> Result<(), String> {
     append(conn, clock, "topic", id, "tombstone", json!({}))
+}
+
+// ---- board_column(看板列,board-columns-plan §3) -----------------------------------
+
+/// 看板列出生:payload **恰五键** `{title, kind, system, position, created_at}`
+/// (shape 层按这个数钉死,`validate_op_shape` 的 `board_column/create` 那一臂)。
+///
+/// ⚠ **`system` 落 JSON 布尔,不落 0/1**:库里那一列是 INTEGER(SQLite 没有布尔),
+/// 而线上形态是 `Value::Bool(false)` —— 读回 i64 再转,⛔ 别把 `r.get::<_, i64>` 的结果
+/// 直接塞进 payload(shape 当场拒,而那是**发出去之后**在对端才红)。
+///
+/// ⚠ 这张表没有 `updated_at` 那种本地簿记列:列只有 title / position 两个可改字段。
+/// 六个种子**永不走这条路**(§7.1a:不发 create),故这里读到的行恒是用户自建列。
+pub fn board_column_create(conn: &Connection, clock: &mut Clock, id: &str) -> Result<(), String> {
+    let payload = conn
+        .query_row(
+            "SELECT title, kind, system, position, created_at FROM board_column WHERE id = ?1",
+            [id],
+            |r| {
+                Ok(json!({
+                    "title": r.get::<_, String>(0)?,
+                    "kind": r.get::<_, String>(1)?,
+                    "system": r.get::<_, i64>(2)? == 1,
+                    "position": r.get::<_, String>(3)?,
+                    "created_at": r.get::<_, String>(4)?,
+                }))
+            },
+        )
+        .map_err(|e| format!("读取看板列出生快照失败({id}):{e}"))?;
+    append(conn, clock, "board_column", id, "create", payload)
+}
+
+/// 看板列字段变更(**只有 title | position**,§3 的白名单)。值从行上读回(读行发声)。
+///
+/// ⚠ 两个字段都是 `TEXT NOT NULL` ⇒ 读成 `String`、payload 恒是 JSON 字符串;
+/// `board_column_field_value` 那把尺**拒 null**(排序键永不清、标题不可为空),
+/// 读到 NULL 会在 `r.get::<_, String>` 当场 fail-fast —— 那是库损坏,不是可空字段。
+pub fn board_column_set(
+    conn: &Connection,
+    clock: &mut Clock,
+    id: &str,
+    fields: &[&str],
+) -> Result<(), String> {
+    for field in fields {
+        let sql = match *field {
+            "title" | "position" => format!("SELECT {field} FROM board_column WHERE id = ?1"),
+            other => panic!("board_column set_field 不认识的字段(必是 bug):{other}"),
+        };
+        let value: String = conn
+            .query_row(&sql, [id], |r| r.get(0))
+            .map_err(|e| format!("读取看板列字段 {field} 失败({id}):{e}"))?;
+        append(
+            conn,
+            clock,
+            "board_column",
+            id,
+            "set_field",
+            json!({ "field": field, "value": value }),
+        )?;
+    }
+    Ok(())
+}
+
+/// 看板列销毁:payload **恰零键**,墓碑时刻取的是 **`op.hlc` 原文**、不进 payload
+/// (§3:那样同一枚墓碑就有了两个真相源)。
+///
+/// ⭐ **它是全仓唯一交回 `(op_id, hlc)` 的发射器**,因为调用方紧接着要拿这两格去登记
+/// §2.3 ④ 的授权行 —— 那只触发器逐字段核 `op_id` / `from_hlc` / `to_hlc` / `mode`,
+/// 并要求 oplog 里真有这一枚 op。⇒ **先发 op、再登记、再改行**,⛔ 别调序。
+pub fn board_column_tombstone(
+    conn: &Connection,
+    clock: &mut Clock,
+    id: &str,
+) -> Result<(String, String), String> {
+    append_returning(conn, clock, "board_column", id, "tombstone", json!({}))
 }
 
 // ---- space(profile 单例寄存器,space-name-sync-plan §3) ---------------------------

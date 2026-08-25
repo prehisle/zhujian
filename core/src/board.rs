@@ -51,6 +51,10 @@
 //! | 四个 task 种子(`system=0`) | **schema-seeded implicit genesis**:不发 create,但此后 `title`/`position`/`tombstone` **全走普通 op** | 只核出生字段;⛔ **title/position/墓碑不与默认值盲比**——按不变量 2 它们可改名、可排序、可删,那就是用户数据 |
 
 use rusqlite::{Connection, OptionalExtension};
+use ulid::Ulid;
+
+use crate::clock::Clock;
+use crate::{frindex, oplog, repo};
 
 /// 一个种子列的 canonical 出生形。**六行的唯一描述源**(见模块头注)。
 ///
@@ -242,6 +246,79 @@ pub(crate) fn is_live_task_column(conn: &Connection, id: &str) -> rusqlite::Resu
     Ok(column_kind(conn, id)?.is_some_and(|c| c.is_task() && !c.deleted))
 }
 
+/// 该列上**未归档未封存**的条目数 —— 「删列要先清空」(不变量 4)那条判据的唯一 Rust 侧
+/// 正式子;[`list_columns`] 与 [`delete_column`] 共用。
+///
+/// ⚠ **仓里还有第三份,住在迁移 0036 里**:`trg_board_column_no_tombstone_nonempty`
+/// 那只**带回放豁免**的守护(plan §2.3 ①)。它与这里必须逐字同口径。⛔ 那份改不了
+/// (迁移是 append-only 史实),所以要漂只会往这边漂 —— 两边分工写在 [`delete_column`] 头上。
+pub(crate) fn live_item_count(conn: &Connection, column_id: &str) -> rusqlite::Result<i64> {
+    conn.query_row(
+        "SELECT COUNT(*) FROM items \
+          WHERE stage = ?1 AND archived_at IS NULL AND sealed_at IS NULL",
+        [column_id],
+        |r| r.get(0),
+    )
+}
+
+// ---- 477 那笔账:两列身上挂着**产品语义** ⇒ 永不可删(480 用户拍板) -----------------
+
+/// 「新任务落哪一列」的唯一正式子。**三条产品主线共用**:转待办
+/// (`repo::promote_to_todo`)、新建任务(`repo::insert_task`,连 `born_stage` 一起)、
+/// 撤回为灵感的前提(`repo::revert_to_idea` —— 只有这一列的卡能退回灵感)。
+pub(crate) const LANDING_COLUMN: &str = "todo";
+
+/// 「完成」这个**角色**住在哪一列。**四条产品主线共用**:进这一列才盖 `done_at`
+/// (`task::done_fields`)、单卡与一键成就归档(`repo::seal_task` / `seal_all_done`)、
+/// 取消归档的回落点(`repo::unseal_task`)、归档统计。
+pub(crate) const DONE_COLUMN: &str = "done";
+
+/// 挂着产品语义、故**永不可删**的那两列。
+///
+/// ⭐ **它与上面两个常量是同一份知识**(数组由常量本身构成)⇒ 改常量必然改这里,
+/// 结构上漂不了。这正是 477 那笔账要的:落点与「不许删」若各写一份,某天把 `done`
+/// 从禁删名单里拿掉,`seal_all` 会**安静地**变成恒 0 条 —— 不是响亮拒。
+const ROLE_COLUMNS: [&str; 2] = [LANDING_COLUMN, DONE_COLUMN];
+
+/// 这一列**永远**不许删的理由;`None` = 允许删。
+///
+/// ⚠ 「允许删」**不等于**「现在能删」:非空列要先清空(不变量 4),那一格是**动态**的、
+/// 由 [`live_item_count`] 说了算,不在这儿。
+///
+/// 两条判据是**两根不同的轴**,⛔ 别合并成一条:
+///
+/// * `system = 1`(灵感两列)—— **不变量 2**,连改名、改 kind 一起禁,是**全局**不变量
+///   (远端也不许违反 ⇒ shape 层 `validate_board_column_entity_id` 与存储层 ② 那只
+///   **不带豁免**的守护另有两道);
+/// * [`ROLE_COLUMNS`](`todo` / `done`)—— **477 那笔账**:产品语义钉在这一列身上,
+///   删了它那条主线会**安静地**停摆。⭐ 它**只禁删** —— 这两列照样可改名、可排序,
+///   用户把「待办」改名成「本周」是合法的,id 没变、语义就没变。
+///
+/// ⭐ **这条只放命令层,⛔ 不进 shape / 不加触发器**,判据是「最坏后果」:一枚打在
+/// `done` 上的远端 tombstone 顶多让**这台**的成就归档退化,既不丢数据也不分叉 ⇒ 与
+/// 不变量 4 同一类(plan §2.3 那张分类表第一行「本地命令前置 → 豁免,放行合法远端事实」)。
+/// 放进 shape 就成了硬协议规则:哪天产品改主意允许删,旧端会把新端整条 origin 隔离
+/// —— 那正是 §4.0 那条病根。
+pub(crate) fn undeletable_reason(id: &str, system: bool) -> Option<String> {
+    if system {
+        return Some(format!("「{id}」是系统列(灵感),不可删除"));
+    }
+    if id == LANDING_COLUMN {
+        return Some(
+            "这一列是新任务的落点(转待办 / 新建任务都落在这里),不可删除;想换个说法可以改名"
+                .to_string(),
+        );
+    }
+    if id == DONE_COLUMN {
+        return Some(
+            "这一列承载「完成」(完成时刻、成就归档都认它),不可删除;想换个说法可以改名"
+                .to_string(),
+        );
+    }
+    debug_assert!(!ROLE_COLUMNS.contains(&id), "ROLE_COLUMNS 多了一格却没在上面逐条给理由");
+    None
+}
+
 // ---- read model(两端 UI 的唯一读法) ---------------------------------------------------
 
 /// 一列的当前态。**两端 UI 只读这个**,⛔ 别各自去查 `board_column`。
@@ -272,6 +349,12 @@ pub struct BoardColumnRow {
     /// 该列上**未归档未封存**的条目数。UI 的「已删除的列(N)」用它(plan §4.3),
     /// 删列前的「先清空」提示也用它。⚠ 回收站 / 成就归档里的条目不计。
     pub live_items: i64,
+    /// 这一列**允许**被删吗(480 定案,判据的唯一正式子见 [`undeletable_reason`])。
+    ///
+    /// ⚠ **不是「现在能不能删」**:非空列还要先清空 —— 那一格看 [`Self::live_items`]。
+    /// UI 该按 `deletable && live_items == 0` 决定「删除」是可点还是灰,⛔ 别自己重写
+    /// 这条规则(plan §8.1-2:B-f 不拥有任何数据安全判定)。
+    pub deletable: bool,
 }
 
 /// 全部列(**含已删的**),按 `(position, id)` 升序 —— 与 `items` 的读序同一条规矩。
@@ -279,28 +362,44 @@ pub struct BoardColumnRow {
 /// ⚠ 一次全量返回而不分「活的 / 删的」两个查询:列是个位数量级,分两趟只会给 UI 造出
 /// **第二份口径**;要哪一族由调用方按 [`BoardColumnRow::kind`] / [`BoardColumnRow::deleted`] 分。
 pub fn list_columns(conn: &Connection) -> rusqlite::Result<Vec<BoardColumnRow>> {
+    // 两趟:先把行读完(`live_items` 要另调 [`live_item_count`],不能在 query_map 的闭包里
+    // 借着同一个 conn 再查)。⚠ 那是**刻意**的 N+1 —— 列是个位数量级,而把「什么算 live
+    // 条目」的判据写成本文件里的第二份子查询才是真代价(清单 14;那条判据还有第三份住在
+    // 迁移 0036 的守护 ① 里,改不动)。
     let mut stmt = conn.prepare(
-        "SELECT c.id, c.title, c.kind, c.system, c.position, c.tombstoned_at IS NOT NULL, \
-                (SELECT COUNT(*) FROM items i \
-                  WHERE i.stage = c.id AND i.archived_at IS NULL AND i.sealed_at IS NULL) \
-         FROM board_column c ORDER BY c.position, c.id",
+        "SELECT id, title, kind, system, position, tombstoned_at IS NOT NULL \
+         FROM board_column ORDER BY position, id",
     )?;
-    let rows = stmt.query_map([], |r| {
-        let id: String = r.get(0)?;
-        let title: String = r.get(1)?;
-        let is_title_overridden = title_is_overridden(&id, &title);
-        Ok(BoardColumnRow {
-            id,
-            title,
-            kind: r.get(2)?,
-            system: r.get::<_, i64>(3)? == 1,
-            position: r.get(4)?,
-            is_title_overridden,
-            deleted: r.get(5)?,
-            live_items: r.get(6)?,
+    let rows: Vec<(String, String, String, bool, String, bool)> = stmt
+        .query_map([], |r| {
+            Ok((
+                r.get(0)?,
+                r.get(1)?,
+                r.get(2)?,
+                r.get::<_, i64>(3)? == 1,
+                r.get(4)?,
+                r.get(5)?,
+            ))
+        })?
+        .collect::<rusqlite::Result<_>>()?;
+    rows.into_iter()
+        .map(|(id, title, kind, system, position, deleted)| {
+            let is_title_overridden = title_is_overridden(&id, &title);
+            let deletable = undeletable_reason(&id, system).is_none();
+            let live_items = live_item_count(conn, &id)?;
+            Ok(BoardColumnRow {
+                id,
+                title,
+                kind,
+                system,
+                position,
+                is_title_overridden,
+                deleted,
+                live_items,
+                deletable,
+            })
         })
-    })?;
-    rows.collect()
+        .collect()
 }
 
 /// §7.1d 的终态判据(单一正式子;[`list_columns`] 是它唯一的生产消费者)。
@@ -580,6 +679,221 @@ pub(crate) fn audit_tombstone_apply_empty(conn: &Connection) -> Result<(), Strin
             "墓碑授权表残留 {n} 行(常态恒空)——有路径绕过了 trg_board_column_tombstone_consume,\
              整体拒;⛔ 别直接删了事,先查那条路径"
         ));
+    }
+    Ok(())
+}
+
+// ---- 写命令面(建列 / 改名 / 排序 / 删列;plan §8.1-2、B-c 第 3 段) -------------------
+//
+// ⭐ **这是唯一会往外发 `board_column` op 的路**(plan §8.4)。四条命令都照 topic 那套
+// 的形(`notes::create_topic` / `rename_topic` / `reorder_topic` / `delete_topic`):
+// 自持事务、改行 + 发 op 同一笔、fail-fast 不静默 no-op。
+//
+// ⛔ **命令层不是唯一入口**(plan §2.3 那三条已证实的旁路:远端 op 不过命令层 / boot 是
+// `INSERT…SELECT` / epoch 基线直写 staging oplog)⇒ 这里每一道拒绝都要先想清楚它属哪一类:
+// **全局不变量**(远端也不许违反)要在 shape/存储层另有守护;**本地命令前置**(合法的
+// 远端事实要放行)才只住在这儿。逐条见各函数头注与 [`undeletable_reason`]。
+//
+// ⚠ **刻意不拒重名**:两台设备离线各建一个「本周」是完全合法的,拒不掉也不该拒
+// (topic 那边拒重名是因为 `topic_id_by_title` 真有按名查找的消费者;列只按 id 认人)。
+
+/// 建一个新的任务列,落在**全部列的末键之后**。返回它的 id(新铸 ULID)。
+///
+/// ⛔ **只能建 task 列**:`kind='task'` + `system=0` 是写死的,不给参数 —— 灵感那两列由
+/// schema 提供(不变量 2),而 shape 层的 create 那一臂正是按这个推导把两个键钉死的
+/// (「六个种子都不发 create ⇒ entity_id 恒非保留 id ⇒ system 恒 0 ⇒ 表级
+/// `CHECK (system = 1 OR kind = 'task')` 逼出 kind='task'」)。
+///
+/// ⚠ **末键取的是全表最大值,含已 tombstone 的行**:列行永不物理删除(不变量 5),
+/// 让新列去顶一个死列的键只会造出并列。⇒ 键单调增长,新列恒在最右。
+pub fn create_column(conn: &mut Connection, clock: &mut Clock, title: &str) -> Result<String, String> {
+    let title = title.trim();
+    if title.is_empty() {
+        return Err("列名不能为空".to_string());
+    }
+    repo::ensure_content_fits(title)?;
+    let id = Ulid::new().to_string();
+    // ⛔ **`now_iso_millis` 不是 `now_iso`**:shape 层的 create 那一臂走 `validate_iso_millis`
+    // (定宽 `…THH:MM:SS.sssZ`),而 `now_iso` 出的是不带毫秒的 RFC3339 ⇒ 换成它,本机
+    // 一切正常、op 到**对端**才被判 `InvalidOp` = per-origin 持久隔离(plan §4.0)。
+    // ⚠ 这类「本地发端与收端 shape 不同源」的缺陷本地测照不出来,故那只建列测把刚发的 op
+    // 原样送去过一遍 `validate_op_shape`(`wire_shape_ok`)—— 那才是这一句的守卫。
+    //
+    // ⚠ 这里**刻意没有**「id 是不是 26 位严格 ULID」的自检:`Ulid::new()` 的首字符由 48 位
+    // 毫秒时间戳的高 3 位定,要越过 `'7'` 得等到公元 3084 年 ⇒ 那是不可达的防护(清单 5)。
+    // 形态由那只测的 `is_new_column_id` 断言钉住,不由死码守。
+    let created_at = repo::now_iso_millis();
+
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    let last: Option<String> = tx
+        .query_row("SELECT position FROM board_column ORDER BY position DESC LIMIT 1", [], |r| {
+            r.get(0)
+        })
+        .optional()
+        .map_err(|e| e.to_string())?;
+    let position = frindex::key_between(last.as_deref(), None)?;
+    tx.execute(
+        "INSERT INTO board_column (id, title, kind, system, position, created_at) \
+         VALUES (?1, ?2, 'task', 0, ?3, ?4)",
+        (&id, title, &position, &created_at),
+    )
+    .map_err(|e| format!("建列失败({id}):{e}"))?;
+    // 读行发声:payload 的五格全从刚落的行上读回,⛔ 别在这里另攒一份。
+    oplog::board_column_create(&tx, clock, &id)?;
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(id)
+}
+
+/// 给一列改名。系统列拒(不变量 2)、已删的列拒(只读收容区,plan §4.3)。
+///
+/// ⭐ **`todo`/`done` 照改不误**:[`undeletable_reason`] 那条只禁删 —— 「待办」改名成
+/// 「本周」时 id 没变,挂在这一列上的产品语义一格都没动。
+pub fn rename_column(conn: &mut Connection, clock: &mut Clock, id: &str, title: &str) -> Result<(), String> {
+    let title = title.trim();
+    if title.is_empty() {
+        return Err("列名不能为空".to_string());
+    }
+    repo::ensure_content_fits(title)?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    ensure_editable(&tx, id, "改名")?;
+    let n = tx
+        .execute("UPDATE board_column SET title = ?2 WHERE id = ?1", (id, title))
+        .map_err(|e| format!("改列名失败({id}):{e}"))?;
+    if n != 1 {
+        return Err(format!("改列名失败:影响行数 {n}"));
+    }
+    oplog::board_column_set(&tx, clock, id, &["title"])?;
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// 把一列拖到两个邻居之间(`prev_id` / `next_id`,`None` = 真·列端边界)。
+///
+/// 形与 `notes::reorder_topic` 逐条同构:**只重写被拖那一列**(一条 op),新键由邻居的
+/// **当前**键算出;指名的邻居若没有行则 fail-fast —— ⛔ 别把它当开边界,那会让
+/// `key_between` 悄悄落到列首/尾、静默错排。
+///
+/// ⚠ **邻居不筛死活、也不筛 kind**:列行永不物理删除,一个已 tombstone 的列仍然占着
+/// 排序轴上的那个位置,拿它的键算中点是正确的。UI 只在活着的任务列之间拖 ⇒ 那一格
+/// 由调用方的可见集合决定,不由这里再判一次(判了也只是把 UI 的取舍抄第二遍)。
+pub fn reorder_column(
+    conn: &mut Connection,
+    clock: &mut Clock,
+    id: &str,
+    prev_id: Option<&str>,
+    next_id: Option<&str>,
+) -> Result<(), String> {
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    ensure_editable(&tx, id, "排序")?;
+    let resolve = |who: &str, nb: Option<&str>| -> Result<Option<String>, String> {
+        let Some(nid) = nb else { return Ok(None) };
+        let key: Option<String> = tx
+            .query_row("SELECT position FROM board_column WHERE id = ?1", [nid], |r| r.get(0))
+            .optional()
+            .map_err(|e| e.to_string())?;
+        key.map(Some).ok_or_else(|| format!("{who}的列已不存在,已忽略本次排序,请重试"))
+    };
+    let prev = resolve("前一个", prev_id)?;
+    let next = resolve("后一个", next_id)?;
+    let key = frindex::key_between(prev.as_deref(), next.as_deref())?;
+    let n = tx
+        .execute("UPDATE board_column SET position = ?2 WHERE id = ?1", (id, &key))
+        .map_err(|e| format!("列排序写入失败({id}):{e}"))?;
+    if n != 1 {
+        return Err(format!("列排序写入失败:影响行数 {n}"));
+    }
+    oplog::board_column_set(&tx, clock, id, &["position"])?;
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// 删一列 = **盖墓碑,⛔ 不删行**(不变量 5)。四道拒绝,逐条见下。
+///
+/// # 四道拒绝分别属哪一类(⛔ 别把它们当成同一种东西)
+///
+/// | 拒 | 类别 | 别处还有谁守 |
+/// |---|---|---|
+/// | 行不在 | 本地前置 | — |
+/// | 不许删(系统列 / 角色列) | 系统列 = **全局不变量**(shape + 存储层 ②);角色列 = **本地命令前置**(仅此一道,理由见 [`undeletable_reason`]) | |
+/// | 已经删过了 | 本地前置(幂等在**回放**那边:`apply` 取 min、等值 no-op) | |
+/// | 还有 live 条目(不变量 4) | **本地命令前置** | 存储层 ① 那只**带回放豁免**的守护 |
+///
+/// ⭐ 最后一道**刻意两处都写**,分工是:这里给用户一句可行动的话(**带条数**,触发器给不出),
+/// 触发器挡住任何绕过命令层的本地写。两份判据逐字同口径([`live_item_count`] 头注)。
+/// ⚠ 它俩漂了的话是**响亮**的(一边放一边拒,当场看得见),不是静默错 —— 这是接受
+/// 这份重复的理由。
+///
+/// # 写入顺序被授权表钉死:**先发 op → 再登记授权 → 再改行**
+///
+/// §2.3 ④ 那只不带豁免的守护逐字段核 `op_id`/`from_hlc`/`to_hlc`/`mode`,并要求 oplog 里
+/// 真有这一枚 tombstone op;⑥(AFTER)在行真的改了之后当场消费掉授权行。
+/// ⛔ 别在这里写 `DELETE FROM sync_board_column_tombstone_apply` —— 「事务提交了但忘删」
+/// 那条路正是八轮用触发器消费堵死的。
+pub fn delete_column(conn: &mut Connection, clock: &mut Clock, id: &str) -> Result<(), String> {
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    let row: Option<(i64, Option<String>)> = tx
+        .query_row(
+            "SELECT system, tombstoned_at FROM board_column WHERE id = ?1",
+            [id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?;
+    let Some((system, tombstoned_at)) = row else {
+        return Err(format!("列不存在:{id}"));
+    };
+    if let Some(why) = undeletable_reason(id, system == 1) {
+        return Err(why);
+    }
+    if tombstoned_at.is_some() {
+        return Err(format!("这一列已经删除了:{id}"));
+    }
+    let live = live_item_count(&tx, id).map_err(|e| e.to_string())?;
+    if live > 0 {
+        return Err(format!("该列还有 {live} 个未归档条目,请先移走再删除"));
+    }
+    let (op_id, hlc) = oplog::board_column_tombstone(&tx, clock, id)?;
+    // ⚠ `from_hlc` 恒 NULL:上面刚判过这一列没有 marker。⛔ 别改成「读回当前值」——
+    // 那会让「本地删一个已删的列」看起来像合法的 min 合并,而本地那条路只许 NULL → hlc
+    // (plan §2.3 定形 3);已有 marker 的合并是**回放**的事。
+    tx.execute(
+        "INSERT INTO sync_board_column_tombstone_apply \
+             (column_id, op_id, from_hlc, to_hlc, mode) \
+         VALUES (?1, ?2, NULL, ?3, 'apply_min')",
+        (id, &op_id, &hlc),
+    )
+    .map_err(|e| format!("登记列墓碑授权失败({id}):{e}"))?;
+    let n = tx
+        .execute("UPDATE board_column SET tombstoned_at = ?2 WHERE id = ?1", (id, &hlc))
+        .map_err(|e| format!("删列失败({id}):{e}"))?;
+    if n != 1 {
+        return Err(format!("删列失败:影响行数 {n}"));
+    }
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// 改名 / 排序共用的前置:行要在、不是系统列、没盖墓碑。
+///
+/// ⛔ **系统列这一道与「不许删」是两回事**:`inbox`/`filed` 连改名和排序一起禁
+/// (不变量 2),而 [`ROLE_COLUMNS`] 那两列只禁删。别把两者合并成一个谓词。
+fn ensure_editable(tx: &Connection, id: &str, what: &str) -> Result<(), String> {
+    let row: Option<(i64, Option<String>)> = tx
+        .query_row(
+            "SELECT system, tombstoned_at FROM board_column WHERE id = ?1",
+            [id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()
+        .map_err(|e| e.to_string())?;
+    let Some((system, tombstoned_at)) = row else {
+        return Err(format!("列不存在:{id}"));
+    };
+    if system == 1 {
+        return Err(format!("「{id}」是系统列(灵感),不可{what}"));
+    }
+    if tombstoned_at.is_some() {
+        return Err(format!("这一列已删除,不可{what}(已删的列是只读的)"));
     }
     Ok(())
 }

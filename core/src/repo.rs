@@ -30,6 +30,12 @@ use crate::frindex;
 const TASK_STAGES: &str = crate::board::TASK_COLUMN_IDS;
 /// 灵感态列的 id 集合,同上。
 const IDEA_STAGES: &str = crate::board::IDEA_COLUMN_IDS;
+/// 「新任务落哪一列」/「完成住哪一列」的**唯一正式子**在 `board`;这里只是把名字拉近
+/// (480 结清 477 那笔账)。⛔ 别在本模块的 SQL 里再写 `'todo'` / `'done'` 字面量 ——
+/// 那两个 id 之所以敢写死,靠的是 `board::undeletable_reason` 保证它们永不可删,
+/// 而**只有引用同一份常量,那条保证才跟得过来**。
+const LANDING: &str = crate::board::LANDING_COLUMN;
+const DONE: &str = crate::board::DONE_COLUMN;
 
 /// 单条正文/标题的字节上限(P2-g,codex 轮 M 级):正文全文进同步 op(set_field
 /// payload),服务器帧硬上限 1 MiB——超限的 op 上不了通道,发送端会反复断连、该设备
@@ -673,9 +679,9 @@ pub(crate) fn delete_inbox_item(conn: &Connection, id: &str) -> rusqlite::Result
 /// rejects an already-task, archived, or missing item as a 0-row no-op. due/priority
 /// stay NULL (idea attrs were none). Returns rows changed.
 pub(crate) fn promote_to_todo(conn: &Connection, id: &str) -> rusqlite::Result<usize> {
-    let key = front_key(conn, "todo", id)?;
+    let key = front_key(conn, LANDING, id)?;
     let sql = format!(
-        "UPDATE items SET stage = 'todo', updated_at = ?2, position = ?3 \
+        "UPDATE items SET stage = '{LANDING}', updated_at = ?2, position = ?3 \
          WHERE id = ?1 AND stage IN {IDEA_STAGES} AND archived_at IS NULL"
     );
     conn.execute(&sql, (id, now_iso(), key))
@@ -688,9 +694,11 @@ pub(crate) fn promote_to_todo(conn: &Connection, id: &str) -> rusqlite::Result<u
 /// task. Returns rows changed.
 pub(crate) fn revert_to_idea(conn: &Connection, id: &str, to_stage: &str) -> rusqlite::Result<usize> {
     conn.execute(
-        "UPDATE items SET stage = ?2, updated_at = ?3, \
-                position = NULL, due_on = NULL, priority = NULL \
-         WHERE id = ?1 AND stage = 'todo' AND archived_at IS NULL",
+        &format!(
+            "UPDATE items SET stage = ?2, updated_at = ?3, \
+                    position = NULL, due_on = NULL, priority = NULL \
+             WHERE id = ?1 AND stage = '{LANDING}' AND archived_at IS NULL"
+        ),
         (id, to_stage, now_iso()),
     )
 }
@@ -1002,11 +1010,13 @@ pub(crate) fn insert_task(
 ) -> rusqlite::Result<String> {
     let id = Ulid::new().to_string();
     let now = now_iso();
-    let key = end_key(conn, "todo", &id)?;
+    let key = end_key(conn, LANDING, &id)?;
     conn.execute(
-        "INSERT INTO items (id, content, stage, created_at, updated_at, due_on, priority, position, born_stage, born_device) \
-         VALUES (?1, ?2, 'todo', ?3, ?3, ?4, ?5, ?6, 'todo', \
-                 (SELECT value FROM sync_meta WHERE key = 'device_id'))",
+        &format!(
+            "INSERT INTO items (id, content, stage, created_at, updated_at, due_on, priority, position, born_stage, born_device) \
+             VALUES (?1, ?2, '{LANDING}', ?3, ?3, ?4, ?5, ?6, '{LANDING}', \
+                     (SELECT value FROM sync_meta WHERE key = 'device_id'))"
+        ),
         (&id, content, &now, due_on, priority, &key),
     )?;
     Ok(id)
@@ -1392,8 +1402,10 @@ pub(crate) fn purge_archived_tasks(conn: &Connection) -> rusqlite::Result<usize>
 pub(crate) fn seal_task(conn: &Connection, id: &str) -> rusqlite::Result<usize> {
     let now = now_iso();
     conn.execute(
-        "UPDATE items SET sealed_at = ?2, updated_at = ?2 \
-         WHERE id = ?1 AND stage = 'done' AND archived_at IS NULL AND sealed_at IS NULL",
+        &format!(
+            "UPDATE items SET sealed_at = ?2, updated_at = ?2 \
+             WHERE id = ?1 AND stage = '{DONE}' AND archived_at IS NULL AND sealed_at IS NULL"
+        ),
         (id, &now),
     )
 }
@@ -1403,8 +1415,10 @@ pub(crate) fn seal_task(conn: &Connection, id: &str) -> rusqlite::Result<usize> 
 pub(crate) fn seal_all_done(conn: &Connection) -> rusqlite::Result<usize> {
     let now = now_iso();
     conn.execute(
-        "UPDATE items SET sealed_at = ?1, updated_at = ?1 \
-         WHERE stage = 'done' AND archived_at IS NULL AND sealed_at IS NULL",
+        &format!(
+            "UPDATE items SET sealed_at = ?1, updated_at = ?1 \
+             WHERE stage = '{DONE}' AND archived_at IS NULL AND sealed_at IS NULL"
+        ),
         [&now],
     )
 }
@@ -1412,7 +1426,7 @@ pub(crate) fn seal_all_done(conn: &Connection) -> rusqlite::Result<usize> {
 /// 取消归档:sealed_at 置回 NULL,任务回到看板「已完成」列的末尾(冻结的旧排序键
 /// 可能已被活跃卡占用,重发一枚列尾键,同 restore_task)。guard 使 未归档/不存在 为 0 行。
 pub(crate) fn unseal_task(conn: &Connection, id: &str) -> rusqlite::Result<usize> {
-    let key = end_key(conn, "done", id)?;
+    let key = end_key(conn, DONE, id)?;
     conn.execute(
         "UPDATE items SET sealed_at = NULL, updated_at = ?2, position = ?3 \
          WHERE id = ?1 AND sealed_at IS NOT NULL",

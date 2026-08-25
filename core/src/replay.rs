@@ -481,11 +481,32 @@ fn apply_board_column_create(tx: &Connection, op: &RemoteOp) -> Result<Outcome, 
 ///
 /// ⚠ 行不存在 → `DependencyMissing`:这一格只对**用户列**成立 —— 六个种子的行是迁移种下的,
 /// 恒在。⛔ 别在这儿给种子写「行不在就补一行」的兜底,那会把 schema 所有权让给回放。
+///
+/// # ⛔⛔ 这里**刻意没有**墓碑压制前置(480 推翻 plan §3 那条,理由是它真的不收敛)
+///
+/// §3 原文点名要「`create` 与 `set_field` 都要有墓碑压制前置」,依据是 topic 就这么做的。
+/// **那个类比不成立**,差别恰在本案最核心的那条不变量上:
+///
+/// * topic 的 tombstone 会**物理 DELETE 行**(`apply_entity_tombstone`)⇒ 被压制的
+///   set_field 没有任何可观测状态,两端都「没有这一行」,收敛;
+/// * `board_column` 的 tombstone **只盖标志位、永不删行**(不变量 5)⇒ 被压制的 set_field
+///   留下的是「title 停在墓碑到达那一刻的值」,而**那一刻由到达顺序决定**。
+///
+/// 480 的三端收敛 property test 当场把它打出来了(种子 7):同一个 `confirming` 列,
+/// 一端 `title=待确认`(墓碑先到,改名被压制)、另一端 `title=列名0`(改名先到),
+/// 墓碑 marker 两端还是相同的 —— **纯粹的到达序分叉**。
+///
+/// ⭐ 更硬的一条旁证:`board::audit_board_column_semantics` 的 ③④ 两格早就按
+/// 「title/position == 自身日志里 HLC 最大的那枚 set_field」判,**根本不看墓碑**
+/// ⇒ 留着压制的话,live 与 boot 是两把尺(479 在 LWW 排序那格踩到的同一个形)。
+///
+/// ⇒ 定形:**set_field 一律参与 LWW,不看墓碑**。终态是 op 集合的纯函数,与到达序无关。
+/// 「已删的列改不了名」是**命令层**的事(`board::rename_column` 拒),不是协议层的事 ——
+/// 同 §2.3 那张分类表第一行(本地命令前置,放行合法远端事实)。
+/// ⚠ 代价照实记:并发「改名 + 删列」之后,那一列会带着新名字躺在收容区里。无害。
+/// ⛔ 别据此把 `apply_board_column_create` 那句压制也顺手删了 —— 它是**另一回事**
+/// (那一格今天不可达,因为墓碑在行不在时归 `DependencyMissing` 连日志一起回滚,见它的头注)。
 fn apply_board_column_set_field(tx: &Connection, op: &RemoteOp) -> Result<Outcome, OpError> {
-    if has_tombstone(tx, "board_column", &op.entity_id).map_err(local)? {
-        // 已删的列是**只读收容区**(plan §4.3):晚到的改名 / 排序 op 不许再改写它。
-        return Ok(Outcome::SuppressedByTombstone);
-    }
     if !row_exists(tx, "board_column", &op.entity_id).map_err(local)? {
         return Err(OpError::DependencyMissing(format!(
             "回放依赖未到:board_column {} 的 set_field 先于 create(引擎挂起重试,§5.3)",
@@ -1453,7 +1474,18 @@ fn validate_board_column_entity_id(op: &RemoteOp) -> Result<(), String> {
 /// 那儿),却永不接受任何 board_column op(不变量 2)⇒ 那一格由
 /// [`validate_board_column_entity_id`] 在调用本函数**之前**单独拒,不进这里。
 fn is_column_coordinate(id: &str) -> bool {
-    crate::board::is_seed_column(id) || sync_proto::is_ulid(id)
+    crate::board::is_seed_column(id) || is_new_column_id(id)
+}
+
+/// 一个**新建**列的 id 形态:**26 位严格 ULID**(`sync_proto::is_ulid` —— 26 字符 +
+/// Crockford + 首字符 ≤ `'7'`),⛔ **不是**松尺 `clock::is_canonical_ulid`。
+///
+/// ⭐ **两个消费者共用这一份**(清单 14):`validate_op_shape` 的 `board_column/create`
+/// 那一臂(收端),与 `board::create_column`(本地发端 —— 它必须先自己过一遍同一把尺,
+/// 否则发出去的 op 会在**对端**被判 `InvalidOp`,而那已经是 per-origin 持久隔离了)。
+/// ⛔ 别在任一侧另写一份 `sync_proto::is_ulid(...)`。
+pub(crate) fn is_new_column_id(id: &str) -> bool {
+    sync_proto::is_ulid(id)
 }
 
 /// item set_field 的**形态 + 内在值域**校验(shape 层,boot+live 共用)。值域(stage 枚举 /
@@ -1860,7 +1892,7 @@ pub(crate) fn validate_op_shape(op: &RemoteOp) -> Result<(), OpError> {
             // 不是 `clock::is_canonical_ulid`(**松**:首字符上限没收紧)。理由不是洁癖 ——
             // plan §4.1 给 `stage` 值域钉死的就是这把严尺,两处**必须同源**:松尺放行的
             // 列 id 会被严尺在 stage 上拒掉 ⇒ 造出「列建得出来、卡却拖不进去」的死态。
-            if !sync_proto::is_ulid(&op.entity_id) {
+            if !is_new_column_id(&op.entity_id) {
                 return Err(inv(format!(
                     "board_column create 的 entity_id 必须是 26 位严格 ULID(六个种子不发 create),收到:{}",
                     op.entity_id
@@ -3713,7 +3745,10 @@ mod tests {
         // ⑥ 每次都当场消费掉授权行 —— 空表审计是它的兜底,不是清理工。
         crate::board::audit_tombstone_apply_empty(&conn).unwrap();
 
-        // 已删的列是**只读收容区**:晚到的改名 op 被墓碑压制(§4.3)。
+        // ⭐ 晚到的改名 op **照收**(480 推翻 §3 那条墓碑压制,理由见
+        // `apply_board_column_set_field` 头注)。判据不是「已删的列该不该能改名」——
+        // 而是「压制的话终态由到达序决定」:墓碑先到就压死、改名先到就改成了,两端分叉。
+        // 「已删的列改不了名」由**命令层** `board::rename_column` 兑现,不由回放兑现。
         let rename = mk(
             &remote_hlc(FUTURE_MS + 999, 0),
             "board_column",
@@ -3721,11 +3756,10 @@ mod tests {
             "set_field",
             json!({"field": "title", "value": "还想改"}),
         );
-        assert_eq!(
-            apply_remote_op(&mut conn, &mut clock, &rename).unwrap(),
-            Outcome::SuppressedByTombstone
-        );
-        assert_eq!(column_row(&conn, &id).unwrap().0, "要删掉的列");
+        assert_eq!(apply_remote_op(&mut conn, &mut clock, &rename).unwrap(), Outcome::Applied);
+        assert_eq!(column_row(&conn, &id).unwrap().0, "还想改");
+        // 而且它与 boot 那把尺现在是同一把:③④ 两格判的正是「title == 自身日志的 LWW 赢家」。
+        crate::board::audit_board_column_semantics(&conn, "", "本地").unwrap();
     }
 
     /// shape 层的值域(**纯形态,不查库**)。每格只有被测那一句拒得掉 —— 走

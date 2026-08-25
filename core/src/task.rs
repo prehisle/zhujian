@@ -64,7 +64,9 @@ pub fn transition(conn: &mut Connection, clock: &mut Clock, id: &str, to: &str) 
 /// 只在真正换列(stage 变)时调用——列内拖动(stage 不变)走另一条只发 position 的路,
 /// 永不带 done_at(那张卡本就在 done、done_at 未变)。
 fn done_fields(to: &str) -> &'static [&'static str] {
-    if to == "done" {
+    // ⛔ 别写死 "done":那一列之所以敢被写死,靠的是 `board::undeletable_reason` 保证它
+    // 永不可删(480 结清 477 那笔账)—— 引用同一份常量,那条保证才跟得过来。
+    if to == board::DONE_COLUMN {
         &["stage", "position", "done_at"]
     } else {
         &["stage", "position"]
@@ -357,8 +359,9 @@ pub fn create(
 
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     let id = repo::insert_task(&tx, title, due_on, priority).map_err(|e| e.to_string())?;
-    let key = repo::front_key(&tx, "todo", &id).map_err(|e| e.to_string())?;
-    let n = repo::set_task_position(&tx, &id, "todo", &key).map_err(|e| e.to_string())?;
+    let key = repo::front_key(&tx, board::LANDING_COLUMN, &id).map_err(|e| e.to_string())?;
+    let n =
+        repo::set_task_position(&tx, &id, board::LANDING_COLUMN, &key).map_err(|e| e.to_string())?;
     if n != 1 {
         return Err(format!("置顶写入失败(任务 {id},影响 {n} 行)"));
     }
@@ -570,7 +573,7 @@ pub fn seal(conn: &mut Connection, clock: &mut Clock, id: &str) -> Result<(), St
 /// 一键归档全部「已完成」。空列是 0 条的正常结果,不是错误(UI 自己决定说什么)。
 pub fn seal_all(conn: &mut Connection, clock: &mut Clock) -> Result<usize, String> {
     let tx = conn.transaction().map_err(|e| e.to_string())?;
-    let ids = repo::column_task_ids(&tx, "done").map_err(|e| e.to_string())?;
+    let ids = repo::column_task_ids(&tx, board::DONE_COLUMN).map_err(|e| e.to_string())?;
     let sealed = repo::seal_all_done(&tx).map_err(|e| e.to_string())?;
     if sealed != ids.len() {
         return Err(format!(

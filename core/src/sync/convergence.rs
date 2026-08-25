@@ -4,13 +4,13 @@
 //! 队列、离线堆积按容量丢最老、随机衰减模拟 TTL、重启清空、direct 不入信箱)。随机
 //! 命令流(覆盖词汇表**全部** entity·kind(计数别写死在这里——0028 space、0033 device、0035 comment 三次都是它先腐;以 random_command 的臂为准))× 随机上下线 ×
 //!
-//! ⚠⚠ **0037 起有一个诚实缺口:`board_column` 进了词汇表与下方 [`FINGERPRINTS`],但
-//! [`random_command`] 还没有它的臂** —— 本地写命令面(建列 / 改名 / 排序 / 删列)是
-//! board-columns-plan B-c 的**第 3 段**,此刻还不存在,发不出 op。⇒ 那一格今天是
-//! **平凡绿**(三端的 board_column 都是六个原样种子,恒相等),⛔ **别把它读成「已覆盖」**。
-//! 补上的同轮要一并加覆盖计数(照 `COMMENT_ADDS` / `DEVICE_ALIAS_SETS` 那两只把「零覆盖
-//! 的空绿」堵掉的形)。B-c 第 1 段的收敛证据在 `replay::tests` 的 board_column 那四只
-//! 行为测里,不在这份 property test 里。
+//! ⭐ **480 起 `board_column` 那一格真被跑了**(0037 立表时它是个诚实缺口 —— 词汇表与
+//! 下方 [`FINGERPRINTS`] 都有它,而 [`random_command`] 没有臂 ⇒ 三端恒是六个原样种子、
+//! 指纹**平凡绿**)。补的是两件,缺一格就还是空绿:①第 27 支的建 / 改名 / 排序 / 删
+//! 四条本地写命令 + 四只覆盖计数 + [`COLUMN_LWW_COLLISIONS`];②**第 7 支的目标列改成
+//! 查库**([`LIVE_TASK_COLUMNS`])—— 否则卡永远只落在六个种子上,§4.2 那道
+//! 「stage 指着本机还没有的列 = `DependencyMissing` 挂起重试」的闸在乱序交错里一次都
+//! 跑不到,守卫是 [`CARDS_IN_CUSTOM_COLUMNS`]。
 //! 乱序交错投递 × 引擎重启;终局全员在线、反复 hello 互补直到静默,断言六张同步表
 //! 逐行相等(items 刨去本地簿记 updated_at;item_image 含字节)+ per-origin 水位
 //! 相等且连续 + 无冻结无拒帧。
@@ -27,7 +27,7 @@ use crate::clock::Clock;
 use crate::sync::engine::{
     serve_chunks, BlobPolicy, Engine, Event, Lane, Msg, Output, Route, RouteHint, BROADCAST,
 };
-use crate::{db, images, notes, task};
+use crate::{board, db, images, notes, task};
 
 // ---- 确定性随机(xorshift64*,无外部依赖) -------------------------------------------
 
@@ -442,15 +442,53 @@ fn ids(conn: &Connection, sql: &str) -> Vec<String> {
 
 const LIVE_IDEAS: &str =
     "SELECT id FROM items WHERE stage IN ('inbox','filed') AND archived_at IS NULL ORDER BY id";
-const LIVE_TASKS: &str = "SELECT id FROM items WHERE stage IN ('todo','doing','confirming','done') \
-     AND archived_at IS NULL AND sealed_at IS NULL ORDER BY id";
 const TRASH_IDEAS: &str =
     "SELECT id FROM items WHERE stage IN ('inbox','filed') AND archived_at IS NOT NULL ORDER BY id";
-const TRASH_TASKS: &str = "SELECT id FROM items WHERE stage IN ('todo','doing','confirming','done') \
-     AND archived_at IS NOT NULL ORDER BY id";
 const SEALED: &str = "SELECT id FROM items WHERE sealed_at IS NOT NULL ORDER BY id";
-const DONE_TASKS: &str = "SELECT id FROM items WHERE stage = 'done' \
-     AND archived_at IS NULL AND sealed_at IS NULL ORDER BY id";
+
+/// ⚠⚠ **任务侧的三个选择器 0037 起必须按 `kind` 取,不能再写四值字面量**(480):
+/// 随机流一旦能建自定义列,住在那些列上的卡就**不在**四值里 —— 选择器窄了不会红,
+/// 只会让「改名 / 设截止 / 归档 / 删除」这些支**悄悄够不着**新列上的卡(memory
+/// `match-surface-from-distribution-not-sample`:扫描面变窄时是全绿的)。
+/// ⇒ 一律引 [`board::TASK_COLUMN_IDS`] 那个唯一正式子。因为要 `format!`,它们是函数不是常量。
+fn live_tasks() -> String {
+    format!(
+        "SELECT id FROM items WHERE stage IN {} \
+         AND archived_at IS NULL AND sealed_at IS NULL ORDER BY id",
+        board::TASK_COLUMN_IDS
+    )
+}
+fn trash_tasks() -> String {
+    format!(
+        "SELECT id FROM items WHERE stage IN {} AND archived_at IS NOT NULL ORDER BY id",
+        board::TASK_COLUMN_IDS
+    )
+}
+/// 成就归档的来源列 —— 「完成」那个角色(见 `board::DONE_COLUMN`),不是随便一列。
+fn done_tasks() -> String {
+    format!(
+        "SELECT id FROM items WHERE stage = '{}' \
+         AND archived_at IS NULL AND sealed_at IS NULL ORDER BY id",
+        board::DONE_COLUMN
+    )
+}
+
+/// 拖拽 / 流转的**目标池** = 活着的任务列(含随机流刚建的自定义列)。
+///
+/// ⭐ 这一条是本轮覆盖面上最要紧的改动:0036 之前目标写死四值,于是**没有任何一枚
+/// `item` op 的 `stage` 会携带自定义列 id** —— §4.2 那道「列不在 = `DependencyMissing`
+/// 挂起重试」的闸在乱序交错里一次都跑不到。改成查库之后,「对端刚建的列的 create 还在
+/// 路上、指着它的卡先到」这条路才真的被走。
+const LIVE_TASK_COLUMNS: &str =
+    "SELECT id FROM board_column WHERE kind = 'task' AND tombstoned_at IS NULL ORDER BY id";
+
+/// 改名 / 排序 / 删列的**对象池** = 非系统且未删的列(含四个 task 种子与对端建的列)。
+///
+/// ⚠ **刻意不只挑自己刚建的那些**(同 [`SEEN_DEVICES`] 那条判例):三端各改各的
+/// entity_id 的话,列的字段级 LWW 撞写那一格**永远验不到**,而全部指纹断言照样相等。
+/// 守卫是 [`COLUMN_LWW_COLLISIONS`]。
+const EDITABLE_COLUMNS: &str =
+    "SELECT id FROM board_column WHERE system = 0 AND tombstoned_at IS NULL ORDER BY id";
 const TOPICS: &str = "SELECT id FROM topics ORDER BY id";
 const IMAGES: &str = "SELECT id FROM item_image ORDER BY id";
 /// 0035:全部现存留言(随机命令流的删除面)。
@@ -496,6 +534,48 @@ fn device_op_count(conn: &Connection) -> i64 {
 /// 写者,根本没有赢家可选)。上面那两个 SETS/CLEARS 计数也照样 > 0,同样兜不住。
 static DEVICE_LWW_COLLISIONS: AtomicUsize = AtomicUsize::new(0);
 
+/// 看板列四支的**覆盖计数**(480,理由同上面留言与设备别名那几只)。
+///
+/// ⚠ 与设备别名那两只不同的是:这四条命令**没有幂等 no-op 路径** —— 成功即恰发一枚 op
+/// (建 create / 改名 set_field / 排序 set_field / 删 tombstone),故按 `Ok` 计数是诚实的。
+/// 前置不满足的那些(改名撞系统列、删非空列、删 `todo`/`done`)一律走 `Err` = 合法跳过。
+static COLUMN_CREATES: AtomicUsize = AtomicUsize::new(0);
+static COLUMN_RENAMES: AtomicUsize = AtomicUsize::new(0);
+static COLUMN_REORDERS: AtomicUsize = AtomicUsize::new(0);
+static COLUMN_DELETES: AtomicUsize = AtomicUsize::new(0);
+
+/// 住在**自定义列**(非六个种子)上的活卡数 —— [`LIVE_TASK_COLUMNS`] 那条改动的唯一守卫。
+///
+/// ⚠ 缺了它谁都发现不了:把目标池退化回四值字面量之后,三端的 `items.stage` 照样处处
+/// 相等、`board_column` 指纹照样相等、上面四只覆盖计数照样 > 0 —— 而 §4.2 那道闸
+/// (「卡指着一个本机还没有的列」)**一次都没被走到**。判据必须是「卡真的落在自定义列上」。
+static CARDS_IN_CUSTOM_COLUMNS: AtomicUsize = AtomicUsize::new(0);
+
+fn cards_in_custom_columns(conn: &Connection) -> i64 {
+    conn.query_row(
+        // 「自定义列」= 不在那六个种子里的列(判据引 `board::seed_ids_sql` 那份唯一描述源)。
+        &format!("SELECT COUNT(*) FROM items WHERE stage NOT IN {}", board::seed_ids_sql()),
+        [],
+        |r| r.get(0),
+    )
+    .expect("count cards in custom columns")
+}
+
+/// 累计「同一列被**两台以上不同机器**改过」的列数 = 列的字段级 LWW 真的撞过写。
+/// 守的是 [`EDITABLE_COLUMNS`] 那个设计选择(见它的头注),形同 [`DEVICE_LWW_COLLISIONS`]。
+static COLUMN_LWW_COLLISIONS: AtomicUsize = AtomicUsize::new(0);
+
+fn column_lww_collisions(conn: &Connection) -> i64 {
+    conn.query_row(
+        "SELECT COUNT(*) FROM (SELECT entity_id FROM oplog \
+          WHERE entity = 'board_column' AND kind = 'set_field' \
+          GROUP BY entity_id HAVING COUNT(DISTINCT origin) > 1)",
+        [],
+        |r| r.get(0),
+    )
+    .expect("count board_column lww collisions")
+}
+
 fn device_lww_collisions(conn: &Connection) -> i64 {
     conn.query_row(
         "SELECT COUNT(*) FROM (SELECT entity_id FROM oplog WHERE entity = 'device' \
@@ -514,7 +594,7 @@ fn random_command(conn: &mut Connection, clock: &mut Clock, rng: &mut Rng, step:
     // ⚠ 改这个上限会**重排全部种子的命令序列**(328 从 27 加到 28 时如此)。这只 property
     // test 靠广度不靠特定路径,故可接受;但「种子 1 当年抓到活锁」那条战绩指的是旧序列,
     // 别拿它当今天还在复现的回归锚。
-    let roll = rng.below(28);
+    let roll = rng.below(29);
     let done: Result<(), String> = match roll {
         0..=3 => notes::capture(conn, clock, &format!("灵感 {step}-{}", rng.below(1000))).map(|_| ()),
         4 => match rng.pick(&ids(conn, LIVE_IDEAS)).cloned() {
@@ -534,22 +614,25 @@ fn random_command(conn: &mut Connection, clock: &mut Clock, rng: &mut Rng, step:
             None,
         )
         .map(|_| ()),
-        7 => match rng.pick(&ids(conn, LIVE_TASKS)).cloned() {
-            Some(id) => {
-                let to = ["todo", "doing", "confirming", "done"][rng.below(4)];
-                task::transition(conn, clock, &id, to)
-            }
+        // ⭐ 目标列**查库**取(480):0036 之前这里是四值字面量,于是没有任何一枚 item op
+        //    的 stage 会携带自定义列 id,§4.2 那道闸在乱序交错里一次都跑不到。见
+        //    [`LIVE_TASK_COLUMNS`] 头注。`from == to` 与「目标列刚被对端删掉」都走 Err = 合法跳过。
+        7 => match rng.pick(&ids(conn, &live_tasks())).cloned() {
+            Some(id) => match rng.pick(&ids(conn, LIVE_TASK_COLUMNS)).cloned() {
+                Some(to) => task::transition(conn, clock, &id, &to),
+                None => Ok(()),
+            },
             None => Ok(()),
         },
-        8 => match rng.pick(&ids(conn, LIVE_TASKS)).cloned() {
+        8 => match rng.pick(&ids(conn, &live_tasks())).cloned() {
             Some(id) => task::set_due(conn, clock, &id, [None, Some("2026-09-01")][rng.below(2)]),
             None => Ok(()),
         },
-        9 => match rng.pick(&ids(conn, LIVE_TASKS)).cloned() {
+        9 => match rng.pick(&ids(conn, &live_tasks())).cloned() {
             Some(id) => task::set_priority(conn, clock, &id, [None, Some(1), Some(2)][rng.below(3)]),
             None => Ok(()),
         },
-        10 => match rng.pick(&ids(conn, LIVE_TASKS)).cloned() {
+        10 => match rng.pick(&ids(conn, &live_tasks())).cloned() {
             Some(id) => task::rename(conn, clock, &id, &format!("改名 {step}")),
             None => Ok(()),
         },
@@ -572,13 +655,13 @@ fn random_command(conn: &mut Connection, clock: &mut Clock, rng: &mut Rng, step:
             _ => Ok(()),
         },
         15 => match (
-            rng.pick(&ids(conn, LIVE_TASKS)).cloned(),
+            rng.pick(&ids(conn, &live_tasks())).cloned(),
             rng.pick(&ids(conn, TOPICS)).cloned(),
         ) {
             (Some(task_id), Some(topic)) => task::add_topic(conn, clock, &task_id, &topic),
             _ => Ok(()),
         },
-        16 => match rng.pick(&ids(conn, LIVE_TASKS)).cloned() {
+        16 => match rng.pick(&ids(conn, &live_tasks())).cloned() {
             Some(task_id) => match rng
                 .pick(&ids(conn, &format!(
                     "SELECT topic_id FROM item_topic WHERE item_id = '{task_id}' ORDER BY topic_id"
@@ -598,7 +681,7 @@ fn random_command(conn: &mut Connection, clock: &mut Clock, rng: &mut Rng, step:
                     None => Ok(()),
                 }
             } else {
-                match rng.pick(&ids(conn, LIVE_TASKS)).cloned() {
+                match rng.pick(&ids(conn, &live_tasks())).cloned() {
                     Some(id) => task::archive(conn, clock, &id),
                     None => Ok(()),
                 }
@@ -611,7 +694,7 @@ fn random_command(conn: &mut Connection, clock: &mut Clock, rng: &mut Rng, step:
                     Some(id) => notes::restore(conn, clock, &id),
                     None => Ok(()),
                 },
-                (0, 1) => match rng.pick(&ids(conn, TRASH_TASKS)).cloned() {
+                (0, 1) => match rng.pick(&ids(conn, &trash_tasks())).cloned() {
                     Some(id) => task::restore(conn, clock, &id),
                     None => Ok(()),
                 },
@@ -619,7 +702,7 @@ fn random_command(conn: &mut Connection, clock: &mut Clock, rng: &mut Rng, step:
                     Some(id) => notes::purge(conn, clock, &id),
                     None => Ok(()),
                 },
-                _ => match rng.pick(&ids(conn, TRASH_TASKS)).cloned() {
+                _ => match rng.pick(&ids(conn, &trash_tasks())).cloned() {
                     Some(id) => task::purge(conn, clock, &id),
                     None => Ok(()),
                 },
@@ -628,7 +711,7 @@ fn random_command(conn: &mut Connection, clock: &mut Clock, rng: &mut Rng, step:
         19 => {
             // 成就归档往返(sealed_at 两个方向的 set_field)。
             if rng.below(2) == 0 {
-                match rng.pick(&ids(conn, DONE_TASKS)).cloned() {
+                match rng.pick(&ids(conn, &done_tasks())).cloned() {
                     Some(id) => task::seal(conn, clock, &id),
                     None => Ok(()),
                 }
@@ -701,6 +784,41 @@ fn random_command(conn: &mut Connection, clock: &mut Clock, rng: &mut Rng, step:
                 r
             }
             None => Ok(()),
+        },
+        // 0037 看板列的**本地写命令面**(B-c 第 3 段起才存在):建 / 改名 / 排序 / 删。
+        // ⚠ 前置不满足的一律走 Err = 合法跳过 —— 删 `todo`/`done`(480 定案:不可删)、
+        //   删非空列(不变量 4)、改名撞已被对端删掉的列(只读收容区),这三条都会真发生。
+        27 => match rng.below(8) {
+            0..=1 => board::create_column(conn, clock, &format!("列{}", rng.below(4)))
+                .inspect(|_| {
+                    COLUMN_CREATES.fetch_add(1, Ordering::Relaxed);
+                })
+                .map(|_| ()),
+            2..=3 => match rng.pick(&ids(conn, EDITABLE_COLUMNS)).cloned() {
+                Some(id) => board::rename_column(conn, clock, &id, &format!("列名{}", rng.below(4)))
+                    .inspect(|()| {
+                        COLUMN_RENAMES.fetch_add(1, Ordering::Relaxed);
+                    }),
+                None => Ok(()),
+            },
+            // 拖到另一列**之前**(prev=None,next=目标),同 22 那支标签排序的形。
+            4..=5 => {
+                let cols = ids(conn, EDITABLE_COLUMNS);
+                match (rng.pick(&cols).cloned(), rng.pick(&cols).cloned()) {
+                    (Some(c), Some(n)) if c != n => {
+                        board::reorder_column(conn, clock, &c, None, Some(&n)).inspect(|()| {
+                            COLUMN_REORDERS.fetch_add(1, Ordering::Relaxed);
+                        })
+                    }
+                    _ => Ok(()),
+                }
+            }
+            _ => match rng.pick(&ids(conn, EDITABLE_COLUMNS)).cloned() {
+                Some(id) => board::delete_column(conn, clock, &id).inspect(|()| {
+                    COLUMN_DELETES.fetch_add(1, Ordering::Relaxed);
+                }),
+                None => Ok(()),
+            },
         },
         // 空间改名(0028 space 单例寄存器):小池子名跨机并发撞写,LWW 收敛由
         // space_profile 指纹断言(space-name-sync-plan §7)。
@@ -851,6 +969,11 @@ fn run(seed: u64, policies: &[BlobPolicy]) -> usize {
     // DEVICE_LWW_COLLISIONS 头注(它守的退化形是全部指纹断言都兜不住的那种)。
     DEVICE_LWW_COLLISIONS
         .fetch_add(device_lww_collisions(&sim.peers[0].conn) as usize, Ordering::Relaxed);
+    // 480:同上,收敛后取任一台数「同一列被多机改过」与「卡真落在自定义列上」两格。
+    COLUMN_LWW_COLLISIONS
+        .fetch_add(column_lww_collisions(&sim.peers[0].conn) as usize, Ordering::Relaxed);
+    CARDS_IN_CUSTOM_COLUMNS
+        .fetch_add(cards_in_custom_columns(&sim.peers[0].conn) as usize, Ordering::Relaxed);
     sim.peers
         .iter()
         .filter(|p| p.policy == BlobPolicy::MetadataOnly)
@@ -887,6 +1010,53 @@ fn three_peers_converge_under_partitions_reorder_and_loss() {
         "没有任何一台设备被两台以上机器命名过 —— 那 device 的字段级 LWW 一次都没被验到\
          (每台设备只有一个写者时根本没有赢家可选),而全部指纹断言都不会因此变红",
     );
+    // 看板列四支同理(480)。分开断言:建 / 改名 / 排序 / 删在存储层、指纹层、
+    // 授权表三处都不同形,合成一条会让其中三支假绿。
+    assert!(COLUMN_CREATES.load(Ordering::Relaxed) > 0, "随机流里一个看板列都没建成");
+    assert!(COLUMN_RENAMES.load(Ordering::Relaxed) > 0, "随机流里一次列改名都没成");
+    assert!(COLUMN_REORDERS.load(Ordering::Relaxed) > 0, "随机流里一次列排序都没成");
+    assert!(COLUMN_DELETES.load(Ordering::Relaxed) > 0, "随机流里一个看板列都没删成");
+    assert!(
+        COLUMN_LWW_COLLISIONS.load(Ordering::Relaxed) > 0,
+        "没有任何一列被两台以上机器改过 —— board_column 的字段级 LWW 一次都没被验到\
+         (每列只有一个写者时根本没有赢家可选),而全部指纹断言都不会因此变红",
+    );
+    assert!(
+        CARDS_IN_CUSTOM_COLUMNS.load(Ordering::Relaxed) > 0,
+        "没有任何一张卡落在自定义列上 —— 那 §4.2 那道「stage 指着本机还没有的列 = \
+         DependencyMissing 挂起」的闸在乱序交错里一次都没跑到,而三端指纹照样处处相等",
+    );
+}
+
+/// 三个任务侧选择器**够得着自定义列上的卡**(480)。
+///
+/// ⭐ 这只测守的是一个**扫描面**,而扫描面变窄时是全绿的:把 [`live_tasks`] 那句退回
+/// 0036 之前的四值字面量,随机流照样跑、三端照样收敛、四只列覆盖计数照样 > 0 —— 只是
+/// 「改名 / 设截止 / 归档 / 回收站」那几支**再也够不着**住在自定义列上的卡,广度悄悄少了
+/// 一块(memory `match-surface-from-distribution-not-sample` 那条形状)。
+/// ⇒ 判据必须直接问选择器本身,不能靠随机流的终局断言代答。
+#[test]
+fn the_task_selectors_reach_cards_that_live_in_a_custom_column() {
+    let path = crate::test_temp::dir()
+        .join(format!("ys-nb-conv-sel-{}.sqlite3", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+    let mut conn = db::open(&path).expect("open migrated db");
+    let mut clock = Clock::load(&conn).expect("load clock");
+
+    let col = board::create_column(&mut conn, &mut clock, "自建").expect("建列");
+    let card = task::create(&mut conn, &mut clock, "住在自建列里", None, None, None).unwrap();
+    task::transition(&mut conn, &mut clock, &card, &col).expect("拖进去");
+
+    assert!(ids(&conn, &live_tasks()).contains(&card), "live_tasks 必须够得着自定义列上的活卡");
+    assert!(!ids(&conn, &trash_tasks()).contains(&card));
+    assert!(!ids(&conn, &done_tasks()).contains(&card), "自定义列不是「完成」那个角色");
+    assert!(ids(&conn, LIVE_TASK_COLUMNS).contains(&col), "它也要能当拖拽目标");
+    assert!(ids(&conn, EDITABLE_COLUMNS).contains(&col));
+
+    task::archive(&mut conn, &mut clock, &card).unwrap();
+    assert!(ids(&conn, &trash_tasks()).contains(&card), "trash_tasks 同样够得着");
+    assert!(!ids(&conn, &live_tasks()).contains(&card));
+    let _ = std::fs::remove_file(&path);
 }
 
 /// 留言的**确定性**三端场景(codex 实现审二弹 M4;随机流管广度,这只管「本案那条路」)。

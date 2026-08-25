@@ -974,3 +974,277 @@ fn a_deleted_column_is_a_read_only_containment_area() {
     crate::task::transition(&mut conn, &mut clock, &inside, "todo").expect("卡拖得出来");
     assert_eq!(list_columns(&conn).unwrap().into_iter().find(|c| c.id == col).unwrap().live_items, 0);
 }
+
+// ============ 写命令面(B-c 第 3 段,480)==============================================
+//
+// ⚠ 上面那几组验的是**存储层**(触发器的真值表),这一组验的是**命令层**:
+// 谁拒、拒的理由、发了几枚什么形状的 op。两层刻意不互相代答(清单 13)。
+
+/// 一把可写的库:命令面要 `&mut Connection` + `&mut Clock`。
+fn fresh_rw(tag: &str) -> (Connection, crate::clock::Clock) {
+    let conn = db::open(&temp_path(tag)).expect("open migrated db");
+    let clock = crate::clock::Clock::load(&conn).expect("init device identity");
+    (conn, clock)
+}
+
+fn ops_of(conn: &Connection, id: &str) -> Vec<crate::oplog::Op> {
+    crate::oplog::ops_for(conn, "board_column", id)
+}
+
+fn row_of(conn: &Connection, id: &str) -> BoardColumnRow {
+    list_columns(conn)
+        .expect("list_columns")
+        .into_iter()
+        .find(|c| c.id == id)
+        .unwrap_or_else(|| panic!("列 {id} 不在读模型里"))
+}
+
+/// 把本地刚发的那一枚 op 送去过**收端**那把 shape 尺。
+///
+/// ⭐ 这是本组最要紧的一句:本地命令发出去的 op 若过不了 shape,红的地方在**对端**
+/// (`InvalidOp` = per-origin 持久隔离,plan §4.0),本机一切正常 —— 那种缺陷本地测
+/// 一辈子也照不出来。⇒ 每条写命令都要在这儿把自己的产物过一遍。
+fn wire_shape_ok(op: &crate::oplog::Op, id: &str) {
+    crate::replay::validate_op_shape(&crate::replay::RemoteOp {
+        op_id: op.op_id.clone(),
+        hlc: op.hlc.clone(),
+        entity: "board_column".to_string(),
+        entity_id: id.to_string(),
+        kind: op.kind.clone(),
+        payload: op.payload.clone(),
+        origin_seq: 1,
+    })
+    .unwrap_or_else(|e| panic!("本地发的 {} op 过不了收端 shape:{e:?}", op.kind));
+}
+
+#[test]
+fn a_new_column_lands_at_the_end_and_its_op_is_something_the_far_end_can_take() {
+    let (mut conn, mut clock) = fresh_rw("create-col");
+    let before: Vec<String> = list_columns(&conn).unwrap().into_iter().map(|c| c.position).collect();
+    let id = create_column(&mut conn, &mut clock, "  下周  ").expect("建列");
+
+    // id 过的是**收端那把严尺**(首字符 ≤ '7'),不是 clock 那把松的。
+    assert!(crate::replay::is_new_column_id(&id), "列 id 必须是 26 位严格 ULID:{id}");
+    let row = row_of(&conn, &id);
+    assert_eq!((row.title.as_str(), row.kind.as_str(), row.system), ("下周", "task", false), "标题 trim 过、恒是可删的 task 列");
+    assert!(row.deletable && !row.deleted && row.live_items == 0);
+    assert!(row.is_title_overridden, "用户建的列没有 canonical 可比,恒照显");
+    assert!(before.iter().all(|p| *p < row.position), "新列落在全部既有列的末键之后:{:?} vs {}", before, row.position);
+    // 读序:新列排最后。
+    assert_eq!(list_columns(&conn).unwrap().last().unwrap().id, id);
+
+    let ops = ops_of(&conn, &id);
+    assert_eq!(ops.len(), 1, "建列恰发一枚 op");
+    assert_eq!(ops[0].kind, "create");
+    assert_eq!(
+        ops[0].payload,
+        serde_json::json!({
+            "title": "下周", "kind": "task", "system": false,
+            "position": row.position, "created_at": ops[0].payload["created_at"],
+        }),
+        "payload 恰五键、读行发声;⚠ system 是 JSON **布尔**不是 0/1(库里那列是 INTEGER)"
+    );
+    wire_shape_ok(&ops[0], &id);
+
+    // 空标题拒(trim 之后)。
+    assert!(create_column(&mut conn, &mut clock, "   ").unwrap_err().contains("不能为空"));
+}
+
+#[test]
+fn renaming_and_reordering_emit_one_lww_set_field_each_and_refuse_the_idea_columns() {
+    let (mut conn, mut clock) = fresh_rw("rename-col");
+    let id = create_column(&mut conn, &mut clock, "甲").unwrap();
+
+    rename_column(&mut conn, &mut clock, &id, " 乙 ").expect("改名");
+    assert_eq!(row_of(&conn, &id).title, "乙");
+    // 拖到 `todo` 之前(prev=None,next=todo)。
+    reorder_column(&mut conn, &mut clock, &id, None, Some("todo")).expect("排序");
+    let key = row_of(&conn, &id).position;
+    assert!(key < row_of(&conn, "todo").position, "落在 todo 之前:{key}");
+
+    let ops = ops_of(&conn, &id);
+    assert_eq!(ops.len(), 3, "create + title + position,一次改动一枚");
+    assert_eq!(ops[1].payload, serde_json::json!({"field": "title", "value": "乙"}));
+    assert_eq!(ops[2].payload, serde_json::json!({"field": "position", "value": key}));
+    for op in &ops {
+        wire_shape_ok(op, &id);
+    }
+
+    // 系统列(灵感两列):改名与排序**一起**禁(不变量 2),⛔ 与「不可删」是两根轴。
+    for sys in ["inbox", "filed"] {
+        assert!(rename_column(&mut conn, &mut clock, sys, "别的名").unwrap_err().contains("系统列"));
+        assert!(reorder_column(&mut conn, &mut clock, sys, None, Some("todo")).unwrap_err().contains("系统列"));
+        assert!(ops_of(&conn, sys).is_empty(), "系统列身上一枚 op 都不许有");
+    }
+    // 指名的邻居必须有行 —— ⛔ 别把它当开边界(那会静默错排到列端)。
+    let err = reorder_column(&mut conn, &mut clock, &id, None, Some("没这一列")).unwrap_err();
+    assert!(err.contains("已不存在"), "{err}");
+}
+
+#[test]
+fn deleting_a_column_keeps_the_row_consumes_its_grant_and_refuses_a_second_go() {
+    let (mut conn, mut clock) = fresh_rw("delete-col");
+    let id = create_column(&mut conn, &mut clock, "临时").unwrap();
+    delete_column(&mut conn, &mut clock, &id).expect("空列删得掉");
+
+    let row = row_of(&conn, &id);
+    assert!(row.deleted, "行还在,只是盖了墓碑(不变量 5)");
+    let ops = ops_of(&conn, &id);
+    assert_eq!(ops.last().unwrap().kind, "tombstone");
+    assert_eq!(ops.last().unwrap().payload, serde_json::json!({}), "payload 恰零键");
+    wire_shape_ok(ops.last().unwrap(), &id);
+    // marker == 那一枚 op 的 HLC 原文(§3:不许在接收端读本地时钟)。
+    assert_eq!(
+        conn.query_row("SELECT tombstoned_at FROM board_column WHERE id = ?1", [&id], |r| r
+            .get::<_, Option<String>>(0))
+            .unwrap()
+            .as_deref(),
+        Some(ops.last().unwrap().hlc.as_str())
+    );
+    // ⑥(AFTER)当场消费掉授权行 —— 空表审计是兜底,不是清理工。
+    audit_tombstone_apply_empty(&conn).expect("授权表必须已空");
+    audit_board_column_semantics(&conn, "", "本地").expect("marker == 自身日志的 MIN(hlc)");
+
+    // 已删的列:再删拒,命令层的改名 / 排序也拒(⚠ **回放那边照收** —— 判据见
+    // `apply_board_column_set_field` 头注,「只读」是命令层的事)。
+    assert!(delete_column(&mut conn, &mut clock, &id).unwrap_err().contains("已经删除"));
+    assert!(rename_column(&mut conn, &mut clock, &id, "还想改").unwrap_err().contains("已删除"));
+    assert!(reorder_column(&mut conn, &mut clock, &id, None, Some("todo")).unwrap_err().contains("已删除"));
+    assert!(delete_column(&mut conn, &mut clock, "根本没这列").unwrap_err().contains("列不存在"));
+}
+
+#[test]
+fn a_column_with_live_cards_refuses_to_go_and_says_how_many() {
+    let (mut conn, mut clock) = fresh_rw("delete-nonempty");
+    let id = create_column(&mut conn, &mut clock, "在用").unwrap();
+    let card = crate::task::create(&mut conn, &mut clock, "一件事", None, None, None).unwrap();
+    crate::task::transition(&mut conn, &mut clock, &card, &id).expect("拖进新列");
+    assert_eq!(row_of(&conn, &id).live_items, 1);
+
+    let err = delete_column(&mut conn, &mut clock, &id).unwrap_err();
+    // ⚠ 断言必须是**命令层那句的原文**。头一版写的是 `err.contains('1')`,变异对照当场判它
+    // 假绿:摘掉命令层这道之后触发器 ① 照样 ABORT,而那条错误里带着列的 ULID ——
+    // **ULID 里就有数字 '1'**,断言被一个毫不相干的东西满足了。
+    // ⇒ 判例:断言「输出里有没有某个字符」时,先想清楚那个字符**还能从哪儿来**。
+    assert!(
+        err.contains("该列还有 1 个未归档条目"),
+        "要给出**条数**(触发器 ① 给不出,它只会说「还有未归档条目」):{err}"
+    );
+    assert!(ops_of(&conn, &id).len() == 1, "拒了就不许留下墓碑 op(只剩建列那枚)");
+
+    // 回收站与成就归档里的条目**不算** live —— 那两根轴上的卡只出不进,不挡删列。
+    crate::task::archive(&mut conn, &mut clock, &card).unwrap();
+    assert_eq!(row_of(&conn, &id).live_items, 0);
+    delete_column(&mut conn, &mut clock, &id).expect("清空后删得掉");
+    // 卡还指着这一列 = §4.3 的只读收容区。
+    assert_eq!(
+        conn.query_row("SELECT stage FROM items WHERE id = ?1", [&card], |r| r.get::<_, String>(0))
+            .unwrap(),
+        id
+    );
+}
+
+/// ⭐ **477 那笔账的守卫**(480 用户拍板:按「有没有产品语义挂着」分)。
+///
+/// ⚠ 判据**刻意不写成「`todo`/`done` 不可删」** —— 那样只是把常量抄第二遍,把 `LANDING_COLUMN`
+/// 换成别的值它照样绿。这里问的是反过来的那句:**产品主线实际落在哪一列,那一列就必须
+/// 不可删** —— 落点由生产代码算出来,禁删名单由 [`ROLE_COLUMNS`] 说了算,两边任一处漂了就红。
+#[test]
+fn whatever_column_a_product_line_pins_itself_to_must_be_undeletable() {
+    let (mut conn, mut clock) = fresh_rw("role-cols");
+    let stage_of = |c: &Connection, id: &str| {
+        c.query_row("SELECT stage FROM items WHERE id = ?1", [id], |r| r.get::<_, String>(0)).unwrap()
+    };
+    let must_be_safe = |conn: &Connection, col: &str, who: &str| {
+        let system = conn
+            .query_row("SELECT system FROM board_column WHERE id = ?1", [col], |r| r.get::<_, i64>(0))
+            .unwrap();
+        assert!(
+            undeletable_reason(col, system == 1).is_some(),
+            "{who}落在「{col}」上,而那一列是可删的 —— 删掉之后这条主线会**安静地**\
+             把卡塞进只读收容区(或干脆再也走不到),不是响亮拒"
+        );
+    };
+
+    // ① 新建任务 / ② 转待办:落点必须受保护。
+    let a = crate::task::create(&mut conn, &mut clock, "新任务", None, None, None).unwrap();
+    must_be_safe(&conn, &stage_of(&conn, &a), "新建任务");
+    let idea = crate::notes::capture(&mut conn, &mut clock, "灵感").unwrap();
+    let b = crate::notes::promote_to_task(&mut conn, &mut clock, &idea, "转来的").unwrap();
+    must_be_safe(&conn, &stage_of(&conn, &b), "转待办");
+    // ③ 撤回为灵感:只有落点那一列的卡退得回去 ⇒ 它同样承重。
+    crate::notes::revert_task_to_inbox(&mut conn, &mut clock, &b).expect("落点上的卡退得回灵感");
+
+    // ④ 「完成」那个角色:遍历全部活着的任务列,凡是**进去会盖 done_at** 的那一列都必须受保护。
+    //    ⛔ 这一段不许写死 "done" —— 那就成了把常量抄第二遍。
+    let live_cols: Vec<String> = list_columns(&conn)
+        .unwrap()
+        .into_iter()
+        .filter(|c| c.kind == "task" && !c.deleted)
+        .map(|c| c.id)
+        .collect();
+    let mut stamping = 0;
+    for col in &live_cols {
+        let card = crate::task::create(&mut conn, &mut clock, "探针", None, None, None).unwrap();
+        if stage_of(&conn, &card) == *col {
+            continue; // 已经在那儿了,transition 会判 from == to
+        }
+        crate::task::transition(&mut conn, &mut clock, &card, col).unwrap();
+        let stamped: Option<String> = conn
+            .query_row("SELECT done_at FROM items WHERE id = ?1", [&card], |r| r.get(0))
+            .unwrap();
+        if stamped.is_some() {
+            stamping += 1;
+            must_be_safe(&conn, col, "「完成」的盖章");
+            crate::task::seal(&mut conn, &mut clock, &card).expect("盖了章的那一列也正是成就归档收的那一列");
+        } else {
+            assert!(crate::task::seal(&mut conn, &mut clock, &card).is_err(), "只有完成列收得进归档册");
+        }
+    }
+    assert_eq!(stamping, 1, "恰有一列承载「完成」——多一列或零列都说明产品语义漂了");
+
+    // ⑤ 反面那半:**没有**语义挂着的内置任务列照样删得掉(⛔ 否则这条规则就退化成
+    //    「内置的都不许删」,而那是用户明确没选的那个选项)。
+    let free: Vec<&String> = live_cols.iter().filter(|c| undeletable_reason(c, false).is_none()).collect();
+    assert!(!free.is_empty(), "内置任务列里必须还有可删的那几个");
+    for col in free {
+        // 先把探针卡清走,再删。
+        let cards: Vec<String> = crate::repo::column_task_ids(&conn, col).unwrap();
+        for c in cards {
+            crate::task::archive(&mut conn, &mut clock, &c).unwrap();
+        }
+        delete_column(&mut conn, &mut clock, col).unwrap_or_else(|e| panic!("「{col}」本该删得掉:{e}"));
+    }
+    // ⑥ 而两列角色列即使空着也删不掉,且**改名与排序照旧**(只禁删这一件事)。
+    for col in ["todo", "done"] {
+        let cards: Vec<String> = crate::repo::column_task_ids(&conn, col).unwrap();
+        for c in cards {
+            crate::task::archive(&mut conn, &mut clock, &c).unwrap();
+        }
+        assert_eq!(row_of(&conn, col).live_items, 0);
+        assert!(!row_of(&conn, col).deletable, "读模型也要照实说(B-f 靠它决定按钮灰不灰)");
+        assert!(delete_column(&mut conn, &mut clock, col).unwrap_err().contains("不可删除"));
+        rename_column(&mut conn, &mut clock, col, "换个说法").expect("角色列可改名");
+        reorder_column(&mut conn, &mut clock, col, None, Some("filed")).expect("角色列可排序");
+    }
+}
+
+/// 登记表一致性:[`ROLE_COLUMNS`] 里的每一格都得是**真实存在的、非系统的任务种子**。
+///
+/// ⚠ 与上面那只分工:那只问「产品落在哪儿」,这只问「名单本身合不合法」。
+/// 反方向(名单里多了一格却没在 [`undeletable_reason`] 里给理由)由那个函数里的
+/// `debug_assert` 兜。
+#[test]
+fn the_role_columns_are_real_non_system_task_seeds() {
+    let conn = fresh_db("role-registry");
+    for id in ROLE_COLUMNS {
+        assert!(is_seed_column(id), "角色列必须是迁移种下的六个之一:{id}");
+        assert!(!is_system_seed_column(id), "角色列不是系统列 —— 它可改名可排序,只是不可删:{id}");
+        let k = column_kind(&conn, id).unwrap().unwrap_or_else(|| panic!("{id} 没有行"));
+        assert_eq!(k.kind, "task", "角色列必须是任务列:{id}");
+        assert!(undeletable_reason(id, false).is_some(), "名单里的每一格都要给得出理由:{id}");
+    }
+    // 其余四个种子照 480 的定案分两边:系统那两个连改名一起禁,doing/confirming 全放。
+    assert!(undeletable_reason("inbox", true).is_some() && undeletable_reason("filed", true).is_some());
+    assert!(undeletable_reason("doing", false).is_none() && undeletable_reason("confirming", false).is_none());
+}
