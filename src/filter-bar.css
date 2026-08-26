@@ -99,6 +99,10 @@
 
 /* ---- 父子标签在筛选条折叠(0031 需求扩展)---- */
 .tf-pill.hidden { display: none; } /* 收起态:子标签 pill 藏起来 */
+/* 计数为 0 的 pill(499:一族里的空位,整族有内容就连它一起画出来,层级才看得见)——
+   弱一档表示「这儿现在是空的」,但仍是可点的筛选钮(点了走筛空空态)。选中态照常压过。 */
+.tf-pill.empty { color: var(--ink-faint); border-color: var(--line); }
+.tf-pill.empty:hover { color: var(--ink-soft); border-color: var(--seal-line); }
 /* 子标签 pill:虚线描边 + 一枚淡连接符,一眼读作「父的子项」(横排里以皮肤区分,不缩进)。 */
 .tf-pill.child { border-style: dashed; }
 .tf-pill.child::before {

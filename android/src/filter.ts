@@ -217,6 +217,8 @@ export function renderTopicPills(
   const pushTopic = (tp: FilterTopic, label: string, child: boolean, parentId?: string): HTMLElement => {
     const p = pill(label, f.topics.includes(tp.id), () => onPick({ topics: toggled(tp.id) }), counts.get(tp.id) ?? 0, tp.color);
     p.dataset.topicId = tp.id;
+    // 计数为 0 = 这一族里的空位(499 起画得出来了,见下),弱化一档但仍可点。
+    if ((counts.get(tp.id) ?? 0) === 0) p.classList.add("empty");
     if (child) {
       p.classList.add("child");
       if (parentId) p.dataset.parent = parentId;
@@ -229,12 +231,12 @@ export function renderTopicPills(
     for (const tp of domain) if (visible(tp)) pushTopic(tp, tp.title, false);
   } else {
     for (const g of groupPills(domain)) {
-      const kids = g.kids.filter((k) => visible(k.topic));
-      if (!visible(g.parent)) {
-        // 父标签自己没内容也没被选:它的可见子标签退化成平铺全名 pill(别让子标签凭空消失)。
-        for (const k of kids) pushTopic(k.topic, k.topic.title, false);
-        continue;
-      }
+      // ⭐ 499 起去留按**整族**算,不再逐枚按计数滤(与桌面 filter-bar.ts 同一口径 ——
+      // check-filter-parity 两端同压这一格)。此前「零计数不画」会把子 pill 逐枚滤光,
+      // 于是「父下有任务、子标签这阵子空着」时父 pill 上连折叠箭头都不出,屏上一点层级
+      // 痕迹都没有。⇒ 族里但凡有一条内容,整族就画:父 + ▸ + 全部子,空的灰显(.empty)。
+      const kids = g.kids;
+      if (!visible(g.parent) && !kids.some((k) => visible(k.topic))) continue;
       const parentPill = pushTopic(g.parent, g.parent.title, false);
       if (kids.length === 0) continue;
       // 有子标签:父 pill 右侧挂展开/收起箭头。默认收起;某子标签正被选中则自动展开(别把

@@ -345,6 +345,8 @@
   transition: background 0.14s;
 }
 .v-inbox .choice:hover { background: color-mix(in srgb, var(--seal) 18%, var(--paper)); }
+/* 子标签候选(499):虚线描边 = 「父的子项」,与筛选条 .tf-pill.child / 看板侧同一套语汇。 */
+.v-inbox .choice.child { border-style: dashed; }
 .v-inbox .choice.create { border-style: dashed; color: var(--seal); border-color: var(--seal-line); }
 .v-inbox .choice.create:hover { background: var(--seal-tint); border-color: var(--seal); }
 .v-inbox .topic-hint { font-size: var(--fs-13); color: var(--ink-soft); }

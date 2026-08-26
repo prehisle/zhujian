@@ -95,19 +95,46 @@
         transition: background 0.14s, color 0.14s;
       }
       .sb-toggle:hover { background: color-mix(in srgb, var(--ink) 8%, transparent); color: var(--ink); }
-      /* 折叠态:侧栏收成一根细条,brand/nav/同步全藏,开关居中留作展开入口。 */
+      /* 折叠态(501 改形):侧栏收成一根窄条,**只把文字藏起、图标留着** —— 此前是
+         nav/空间/同步/设置整个 display:none,折叠后那根条上除了展开钮什么都没有,
+         等于「折叠 = 关掉侧栏」。现在四个视图仍一键可达,悬停有 title 说是什么。
+         brand 仍整个藏(它和居中的展开钮抢同一格位置)。 */
       body.sb-collapsed .sidebar {
-        width: 36px;
-        padding-left: 0;
-        padding-right: 0;
+        width: 52px;
+        /* 顶部 44px 是给居中的展开钮让位:brand 一藏,nav 就顶上去、第一枚图标会被
+           钮压住(实拍逮到,两者都在 x 轴正中)。钮 top:12px + 高 22px = 底边 34,留 10 的气。 */
+        padding: 44px 0 16px;
         gap: 0;
       }
-      body.sb-collapsed .sidebar .brand,
-      body.sb-collapsed .sidebar nav,
-      body.sb-collapsed .sidebar #space-entry,
+      body.sb-collapsed .sidebar .brand { display: none; }
+      body.sb-collapsed .sidebar .nav-lbl,
+      body.sb-collapsed .sidebar .entry-lbl,
+      body.sb-collapsed .sidebar #space-name,
+      body.sb-collapsed .sidebar .space-caret { display: none; }
+      /* 图标居中:三处入口的内边距收成对称,文字走后不留半边空当。 */
+      body.sb-collapsed .sidebar nav button,
       body.sb-collapsed .sidebar #sync-entry,
-      body.sb-collapsed .sidebar #settings-entry { display: none; }
+      body.sb-collapsed .sidebar #settings-entry { justify-content: center; padding-left: 0; padding-right: 0; }
+      body.sb-collapsed .sidebar #space-entry { justify-content: center; margin-left: 0; margin-right: 0; max-width: none; }
+      /* 同步那枚本来就是一粒点(7px),折叠态下太小、点不准;给它一个与图标同宽的槽。 */
+      body.sb-collapsed .sidebar #sync-dot { margin: 0 5px; }
       body.sb-collapsed .sb-toggle { right: 50%; transform: translateX(50%); }
+      /* ---- 侧栏图标(501):细线 SVG,同 settings-gear / 搜索放大镜那一路 ---- */
+      .nav-ico, .space-ico {
+        flex: none;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .nav-ico svg { width: 17px; height: 17px; }
+      .space-ico svg { width: 13px; height: 13px; }
+      .nav-ico svg, .space-ico svg {
+        fill: none;
+        stroke: currentColor;
+        stroke-width: 1.6;
+        stroke-linejoin: round;
+        stroke-linecap: round;
+      }
       .brand {
         display: flex;
         align-items: center;
@@ -224,6 +251,9 @@
         cursor: pointer;
         position: relative;
         transition: background 0.14s, color 0.14s;
+        display: flex;
+        align-items: center;
+        gap: 9px;
       }
       .sidebar nav button:hover { background: color-mix(in srgb, var(--ink) 6%, transparent); color: var(--ink); }
       .sidebar nav button.active {
@@ -314,22 +344,26 @@
       <!-- 411/D2:静态 markup 即 hidden,由 refreshSpaceEntry 在「≥2 空间」时开——单空间
            (绝大多数首用者)首帧就不闪一下再消失,与安卓 space-chip 同一写法。 -->
       <button id="space-entry" class="space-entry" title="切换空间" data-i18n-title="shell.switchSpace" hidden>
-        <span id="space-name" data-i18n="shell.personalSpace">个人空间</span><span class="space-caret">▾</span>
+        <span class="space-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3.2 21 8l-9 4.8L3 8Z"/><path d="m3 12.6 9 4.8 9-4.8"/></svg></span><span id="space-name" data-i18n="shell.personalSpace">个人空间</span><span class="space-caret">▾</span>
       </button>
+      <!-- 501:每项一枚细线 SVG(fill:none / stroke:currentColor / 1.6,同 settings-gear
+           与搜索放大镜那一路,212「图标一律内联 SVG」)。侧栏折叠后文字藏起、只留图标,
+           title 补住「这是什么」。⛔ data-i18n 必须挂在**内层 span** 上——门禁判据②:
+           data-i18n 元素不得有子元素(textContent 覆写会把 svg 吞掉)。 -->
       <nav>
-        <button data-view="inbox" data-i18n="shell.navIdeas">随记</button>
-        <button data-view="board" data-i18n="shell.navTasks">任务</button>
-        <button data-view="topics" data-i18n="shell.navTags">标签</button>
-        <button data-view="search" data-i18n="shell.navSearch">搜索</button>
+        <button data-view="inbox" title="随记" data-i18n-title="shell.navIdeas"><span class="nav-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M6.5 3h8L19 7.5V20a1 1 0 0 1-1 1H6.5a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Z"/><path d="M14.5 3v4.5H19"/><path d="M9 12.5h6M9 16.5h4"/></svg></span><span class="nav-lbl" data-i18n="shell.navIdeas">随记</span></button>
+        <button data-view="board" title="任务" data-i18n-title="shell.navTasks"><span class="nav-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3.5 7.8 5.6 9.9 9.4 6"/><path d="M3.5 16.4 5.6 18.5 9.4 14.6"/><path d="M12.6 8h8M12.6 16.6h8"/></svg></span><span class="nav-lbl" data-i18n="shell.navTasks">任务</span></button>
+        <button data-view="topics" title="标签" data-i18n-title="shell.navTags"><span class="nav-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M11.7 3.5H20a.8.8 0 0 1 .8.8v8.3a1 1 0 0 1-.3.7l-7.2 7.2a1 1 0 0 1-1.4 0l-8-8a1 1 0 0 1 0-1.4L11 3.8a1 1 0 0 1 .7-.3Z"/><circle cx="16.4" cy="7.6" r="1.5"/></svg></span><span class="nav-lbl" data-i18n="shell.navTags">标签</span></button>
+        <button data-view="search" title="搜索" data-i18n-title="shell.navSearch"><span class="nav-ico" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m15.4 15.4 4.6 4.6"/></svg></span><span class="nav-lbl" data-i18n="shell.navSearch">搜索</span></button>
       </nav>
       <!-- 同步入口(P2-g):nav 之外(不参与视图切换),沉在侧栏底部;
            未配置时只是一枚安静的灰点,零打扰。样式在 sync.css。 -->
       <button id="sync-entry" class="sync-entry" title="同步" data-i18n-title="shell.sync">
-        <span id="sync-dot" class="sync-dot off"></span><span data-i18n="shell.sync">同步</span>
+        <span id="sync-dot" class="sync-dot off"></span><span class="entry-lbl" data-i18n="shell.sync">同步</span>
       </button>
       <!-- 设置(232):目前只有全局热键一项;样式在 settings.css,逻辑在 settings.ts。 -->
       <button id="settings-entry" class="settings-entry" title="设置" data-i18n-title="shell.settings">
-        <span class="settings-gear" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.1"/><path d="M19.14 12.94a7.49 7.49 0 0 0 .05-.94 7.49 7.49 0 0 0-.05-.94l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.61-.22l-2.39.96a7.3 7.3 0 0 0-1.62-.94l-.36-2.54a.5.5 0 0 0-.5-.42h-3.84a.5.5 0 0 0-.5.42l-.36 2.54a7.3 7.3 0 0 0-1.62.94l-2.39-.96a.5.5 0 0 0-.61.22L2.7 8.84a.5.5 0 0 0 .12.64l2.03 1.58a7.49 7.49 0 0 0 0 1.88L2.82 14.5a.5.5 0 0 0-.12.64l1.92 3.32a.5.5 0 0 0 .61.22l2.39-.96a7.3 7.3 0 0 0 1.62.94l.36 2.54a.5.5 0 0 0 .5.42h3.84a.5.5 0 0 0 .5-.42l.36-2.54a7.3 7.3 0 0 0 1.62-.94l2.39.96a.5.5 0 0 0 .61-.22l1.92-3.32a.5.5 0 0 0-.12-.64l-2.03-1.58Z"/></svg></span><span data-i18n="shell.settings">设置</span>
+        <span class="settings-gear" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.1"/><path d="M19.14 12.94a7.49 7.49 0 0 0 .05-.94 7.49 7.49 0 0 0-.05-.94l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.61-.22l-2.39.96a7.3 7.3 0 0 0-1.62-.94l-.36-2.54a.5.5 0 0 0-.5-.42h-3.84a.5.5 0 0 0-.5.42l-.36 2.54a7.3 7.3 0 0 0-1.62.94l-2.39-.96a.5.5 0 0 0-.61.22L2.7 8.84a.5.5 0 0 0 .12.64l2.03 1.58a7.49 7.49 0 0 0 0 1.88L2.82 14.5a.5.5 0 0 0-.12.64l1.92 3.32a.5.5 0 0 0 .61.22l2.39-.96a7.3 7.3 0 0 0 1.62.94l.36 2.54a.5.5 0 0 0 .5.42h3.84a.5.5 0 0 0 .5-.42l.36-2.54a7.3 7.3 0 0 0 1.62-.94l2.39.96a.5.5 0 0 0 .61-.22l1.92-3.32a.5.5 0 0 0-.12-.64l-2.03-1.58Z"/></svg></span><span class="entry-lbl" data-i18n="shell.settings">设置</span>
       </button>
     </aside>
     <div class="main-col">

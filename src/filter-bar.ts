@@ -53,12 +53,17 @@ const expandedParents = new Set<string>();
 // 把 domain 标签按 `父/子` 前缀分组(与标签视图 topics.ts::groupByPrefix 同规:仅当存在
 // 同名父标签才算子;首尾斜杠不算)。返回顶层序(保 domain 原序)+ 每个顶层的子标签(后缀
 // 标签)。只按第一段分一层,多级斜杠不再细分;没有同名父的照平铺。
-function groupPills(
-  domain: FilterTopic[],
-): { parent: FilterTopic; kids: { topic: FilterTopic; label: string }[] }[] {
+//
+// ⭐ 499 起 export:打标签选择器(tag-picker.ts)也要按同一口径分组。⛔ **别在那边另抄
+// 一份** —— 前缀分组今天恰好三份复制品(这份 / 安卓 / topics.ts),`check-filter-parity`
+// 逐字压着这三份;第四份出现它**不会自动发现**(那道闸自己的诚实边界)。
+// 泛型只要 {id,title},门禁喂的 FilterTopic 与选择器的 PickerTopic 都满足。
+export function groupPills<T extends { id: string; title: string }>(
+  domain: T[],
+): { parent: T; kids: { topic: T; label: string }[] }[] {
   const titles = new Set(domain.map((t) => t.title));
-  const kidsOf = new Map<string, FilterTopic[]>();
-  const tops: FilterTopic[] = [];
+  const kidsOf = new Map<string, T[]>();
+  const tops: T[] = [];
   for (const t of domain) {
     const i = t.title.indexOf("/");
     const prefix = i > 0 && i < t.title.length - 1 ? t.title.slice(0, i) : null;
@@ -203,6 +208,9 @@ export function renderFilterPills(
     const p = pill(tp.id, label, counts.get(tp.id) ?? 0, tp.color);
     p.dataset.topicId = tp.id;
     p.title = t("filter.pillTitle"); // 多选是隐藏能力,靠 hover 提示补可发现性
+    // 计数为 0 = 这一族里的空位(499 起画得出来了,见下),弱化一档但仍可点(点了走
+    // 「筛空」空态,那是有效回答)。
+    if ((counts.get(tp.id) ?? 0) === 0) p.classList.add("empty");
     if (child) {
       p.classList.add("child");
       if (parentId) p.dataset.parent = parentId;
@@ -216,12 +224,14 @@ export function renderFilterPills(
     for (const tp of domain) if (visible(tp)) pushTopic(tp, tp.title, false);
   } else {
     for (const g of groupPills(domain)) {
-      const kids = g.kids.filter((k) => visible(k.topic));
-      if (!visible(g.parent)) {
-        // 父标签自己没内容也没被选:它的可见子标签退化成平铺全名 pill(别让子标签凭空消失)。
-        for (const k of kids) pushTopic(k.topic, k.topic.title, false);
-        continue;
-      }
+      // ⭐ 499 起去留按**整族**算,不再逐枚按计数滤。
+      // 此前的规则是「零计数的标签不画」,于是「父下有任务、子标签这阵子空着」时,子 pill
+      // 被逐枚滤光 → `kids.length === 0` → 父 pill 上**连折叠箭头都不出**,屏上一点层级痕迹
+      // 都没有(用户实报「看板上的标签层级怎么看不到了」;那两枚子标签下的任务只是做完
+      // 归档了)。⇒ 族里但凡有一条内容,整族就画:父 + ▸ + 全部子,空的灰显(.empty)。
+      // 整族零内容仍不画 —— 筛选条的口径还是「当前有什么可筛」,不是标签总目录。
+      const kids = g.kids;
+      if (!visible(g.parent) && !kids.some((k) => visible(k.topic))) continue;
       const parentPill = pushTopic(g.parent, g.parent.title, false);
       if (kids.length === 0) continue;
       // 有子标签:父 pill 挂展开/收起小箭头。默认收起;某子标签正被选中则自动展开(别把

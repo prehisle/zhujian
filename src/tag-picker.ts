@@ -7,6 +7,7 @@
 // 本件只产出 .topic-search + .topic-choices 的 DOM 与筛选/新建/Enter 行为;类名与两视图
 // 各自 scoped 的 CSS(.v-inbox / .v-board .task-topic)对齐、原样保留,故视觉不变、e2e
 // 选择器不动。
+import { groupPills } from "./filter-bar";
 import { t } from "./i18n";
 
 // ---- small DOM helper (same shape as the views / hotkey-menu.ts) ------------
@@ -64,19 +65,41 @@ export function renderTagPicker(container: HTMLElement, opts: TagPickerOpts): vo
   search.spellcheck = false;
   const choices = el("div", { className: "topic-choices" });
 
+  // 一枚候选。`label` 是屏上显示的字(子标签只显后缀),`full` 恒是全名 —— 挂 title 兜底,
+  // 免得「发布」这种后缀离开父上下文后认不出是谁的。
+  function choiceBtn(tp: PickerTopic, label: string, full: string, child: boolean): HTMLElement {
+    const b = el("button", {
+      className: child ? "choice child" : "choice",
+      textContent: label,
+      title: full,
+      draggable: false,
+      onclick: () => commit(() => onPick(tp.id)),
+    });
+    return b;
+  }
+
   function renderChoices(): void {
     const q = search.value.trim();
     const ql = q.toLowerCase();
     const avail = allTopics.filter((tp) => !have.has(tp.id));
-    const shown = q ? avail.filter((tp) => tp.title.toLowerCase().includes(ql)) : avail;
-    const nodes: Node[] = shown.map((tp) =>
-      el("button", {
-        className: "choice",
-        textContent: tp.title,
-        draggable: false,
-        onclick: () => commit(() => onPick(tp.id)),
-      }),
-    );
+    const nodes: Node[] = [];
+    if (q) {
+      // 搜索态**平铺显全名**:搜出来的很可能只有子没有父,缩进/后缀失去参照物
+      // (同 filter-bar 在类型态下不分组的取舍)。
+      for (const tp of avail.filter((tp) => tp.title.toLowerCase().includes(ql))) {
+        nodes.push(choiceBtn(tp, tp.title, tp.title, false));
+      }
+    } else {
+      // 空搜索态按 `父/子` 分组(499)。⛔ 分组函数从 filter-bar 借,别在这儿另抄一份 ——
+      // 前缀分组的复制品今天恰好三份,`check-filter-parity` 逐字压着那三份,第四份出现
+      // 它不会自动发现。⚠ 父已挂在本条目上(被 have 滤掉)时,它的子会自然落进「顶层」
+      // 那半、平铺显全名 —— 那正是想要的,不必另写分支。
+      // 这里**刻意不做折叠**:候选本来就短,且上头就是搜索框。
+      for (const g of groupPills(avail)) {
+        nodes.push(choiceBtn(g.parent, g.parent.title, g.parent.title, false));
+        for (const k of g.kids) nodes.push(choiceBtn(k.topic, k.label, k.topic.title, true));
+      }
+    }
     // 精确同名(忽略大小写)已存在就不给「创建」—— 避免造重复;它要么在上面可选、要么已在卡上。
     const exists = ql !== "" && allTopics.some((tp) => tp.title.toLowerCase() === ql);
     if (q && !exists) {

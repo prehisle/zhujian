@@ -88,6 +88,41 @@ export function focusBoardView(v: BoardView): void {
 // 都在共享件 `board-columns.ts`。手工工具照旧:没有 AI「建议」列,新任务恒生在落点列
 // (`LANDING_COLUMN`),此后随手拖。'待确认' 仍只是 进行中 与 已完成 之间的可选停靠位。
 
+// ---- 列内排序轴(500)--------------------------------------------------------
+// 默认「手动」= 用户拖出来的 `position` 序,那是看板的本义;另两档按 `created_at` 正/逆序。
+//
+// ⛔ **刻意没有「更新时间」那一档**,虽然用户是那么问的:`items.updated_at` 是**本地簿记、
+// 不同步** —— 回放收到远端 op 时写的是**本机 now**(`core/src/oplog.rs`),三端收敛测试明确
+// 把它排除在指纹外(`core/src/replay.rs`「排除 items.updated_at——它是本地簿记,两端刻意
+// 不同」)⇒ 按它排,两台设备顺序会不一样,而用户看到的会是「手机和电脑排得不一样」这种
+// 说不清的毛病。`created_at` 是同步字段、恒有值、两端一致。要真做「更新时间」得先把它升成
+// 同步字段(迁移 + 词汇 + 旧端归型)= 数据层红线,不是一次排序功能顺手能带的。
+//
+// 存 localStorage、**不进同步**(同 last-view / zoom / theme:这是「我这台屏幕怎么看」的
+// 属性)。读不到 / 不认识的值一律回落 manual —— 这不是「静默兜底」,是「用户还没选过」。
+export type BoardSort = "manual" | "newest" | "oldest";
+const SORT_KEY = "zhujian.board-sort";
+const SORT_CYCLE: BoardSort[] = ["manual", "newest", "oldest"];
+let boardSort: BoardSort = readBoardSort();
+function readBoardSort(): BoardSort {
+  const raw = localStorage.getItem(SORT_KEY);
+  return raw === "newest" || raw === "oldest" ? raw : "manual";
+}
+function sortLabel(s: BoardSort): string {
+  return s === "newest" ? t("board.sortNewest") : s === "oldest" ? t("board.sortOldest") : t("board.sortManual");
+}
+/** 一列之内按当前轴排。manual = 原样(后端已按 position 给);时间档按 `created_at`
+ *  字符串比 —— RFC3339 同一形状下字典序 == 时序,同刻再按 id(ULID)定序,免得两张
+ *  同秒建的卡每次重画都换位置。⚠ 不原地改数组:调用方那份 `items` 还要给别处用。 */
+function sortColumn(items: TaskItem[], s: BoardSort): TaskItem[] {
+  if (s === "manual") return items;
+  // dir = 「早的排前面」时的符号。oldest 取 +1(早的返回负数 = 在前),newest 取 −1。
+  const dir = s === "newest" ? -1 : 1;
+  return [...items].sort((a, b) =>
+    a.created_at === b.created_at ? (a.id < b.id ? -dir : dir) : a.created_at < b.created_at ? -dir : dir,
+  );
+}
+
 // ---- small DOM helper (same shape as inbox.ts) ------------------------------
 function el<K extends keyof HTMLElementTagNameMap>(
   tag: K,
@@ -129,6 +164,8 @@ const SKELETON = `
     <button class="hbtn" id="add-task" type="button" title="${t("board.newTask")}">+ <span class="lbl">${t("board.newTask")}</span> <kbd class="k">N</kbd></button>
     <span class="copy-slot" id="copy-slot"></span>
     <span class="head-tools">
+      <button class="hbtn due-soon" id="due-soon" title="${t("board.dueSoonTitle")}" hidden><span class="lbl" id="due-soon-lbl"></span></button>
+      <button class="hbtn" id="board-sort" title="${t("board.sortTitle")}"><span class="lbl" id="board-sort-lbl">${t("board.sortManual")}</span></button>
       <button class="hbtn" id="manage-cols" title="${t("board.manageColsTitle")}">≡ <span class="lbl">${t("board.manageCols")}</span></button>
       <button class="hbtn" id="seal-toggle" title="${t("board.sealTitle")}"><span class="lbl">${t("board.sealLbl")}</span><span class="tn" id="seal-n">0</span> <kbd class="k">G</kbd></button>
       <button class="hbtn" id="trash-toggle" title="${t("board.trashTitle")}"><span class="lbl">${t("board.trashLbl")}</span><span class="tn" id="trash-n">0</span> <kbd class="k">R</kbd></button>
@@ -239,6 +276,10 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
   const sealToggle = view.querySelector("#seal-toggle") as HTMLButtonElement;
   const sealN = view.querySelector("#seal-n") as HTMLElement;
   const addTaskBtn = view.querySelector("#add-task") as HTMLButtonElement;
+  const sortBtn = view.querySelector("#board-sort") as HTMLButtonElement;
+  const sortLbl = view.querySelector("#board-sort-lbl") as HTMLElement;
+  const dueSoonBtn = view.querySelector("#due-soon") as HTMLButtonElement;
+  const dueSoonLbl = view.querySelector("#due-soon-lbl") as HTMLElement;
   const manageColsBtn = view.querySelector("#manage-cols") as HTMLButtonElement;
   const compose = view.querySelector("#compose") as HTMLElement;
   const composeInput = view.querySelector("#compose-input") as HTMLTextAreaElement;
@@ -266,6 +307,27 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
   // Local calendar day for due-date highlighting; refreshed on each load so the
   // board stays correct if the window is left open across midnight.
   let today = localToday();
+
+  // ---- 到期汇总(502)---------------------------------------------------------
+  // 「截止时间提醒」的**最小可用形**:不加通知插件、不动数据模型,只把已经在库里的
+  // `due_on` 汇总到顶栏 —— 「逾期 M · 今天 N」,点一下把看板收成只剩这些卡。
+  // ⛔ 这不是「提醒」:应用没开它不会说话。真正的系统通知要么加插件(桌面)、要么后台
+  //    闹钟 + 权限(安卓),而且 `due_on` 今天只有**日**没有时刻 —— 那是另一笔账。
+  // ⚠ 显示条件 = 有内容:一条到期/逾期都没有时整枚藏起(别在顶栏摆一个恒亮的 0)。
+  let dueOnly = false; // mount 级(同 boardView 的 peek 语义,不跨视图记忆)
+  /** 跨过本地午夜自动重算一次:`today` 只在 load() 里刷新,而「今天到期」这件事**没人
+   *  操作也会变**。算到下一个本地零点的毫秒数,到点重画并再排一次。unmount 清。 */
+  let midnightTimer: ReturnType<typeof setTimeout> | undefined;
+  function armMidnightRefresh(): void {
+    clearTimeout(midnightTimer);
+    const now = new Date();
+    const next = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 5).getTime();
+    midnightTimer = setTimeout(() => {
+      if (unmounted) return;
+      void load();
+      armMidnightRefresh();
+    }, Math.max(1000, next - now.getTime()));
+  }
 
   // topicFilter is module-scope (survives view switches); allTopics feeds the filter
   // bar and the per-card picker, rebuilt each load.
@@ -473,6 +535,67 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     if (dropLine.parentElement === body && dropLine.nextElementSibling === ref) return;
     if (after) body.insertBefore(dropLine, after);
     else body.append(dropLine);
+  }
+
+  // ---- 拖拽期的边缘自动滚动 ---------------------------------------------------
+  // 原生 HTML5 DnD **不会**替我们滚内层滚动容器(`.col-body` 是 overflow-y:auto)⇒ 长列里
+  // 「把最下面那张卡拖到最上面」根本做不到:拖到列顶边缘,列一动不动。这里自己接:指针进
+  // 上下(列体)/ 左右(`.cols`,自定义列多到要横滚时)EDGE 像素带内就逐帧推滚动位,越贴边
+  // 越快。
+  //
+  // ⚠ 两条真踩过的边界:
+  //  · **指针不动时 dragover 不再触发** ⇒ 滚完必须拿上一次的 clientY 重跑 placeDropLine,
+  //    否则插入线钉在滚动前那个槽上(松手就落错位置)。
+  //  · 循环的活性只绑 `dragging`:drop / dragend / unmount 三处都把它清成 null,rAF 自然收尾;
+  //    ⛔ 别再另设一个「该不该滚」的布尔,那就是两个真相源。
+  const AUTOSCROLL_EDGE = 48; // 触发带宽度(px)
+  const AUTOSCROLL_MAX_V = 18; // 贴边时每帧位移(px)
+  let scrollRaf: number | null = null;
+  let scrollPtrX = 0;
+  let scrollPtrY = 0;
+  let scrollBody: HTMLElement | null = null;
+
+  /** 一根轴上的每帧位移:`near`/`far` = 指针到起始边 / 终止边的距离,带内线性加速,带外 0。 */
+  function edgeVelocity(near: number, far: number): number {
+    if (near < AUTOSCROLL_EDGE) return -AUTOSCROLL_MAX_V * (1 - Math.max(near, 0) / AUTOSCROLL_EDGE);
+    if (far < AUTOSCROLL_EDGE) return AUTOSCROLL_MAX_V * (1 - Math.max(far, 0) / AUTOSCROLL_EDGE);
+    return 0;
+  }
+
+  function autoScrollTick(): void {
+    scrollRaf = null;
+    if (!dragging) return; // 手势结束(drop/dragend/unmount 已清)——不续帧
+    const body = scrollBody;
+    if (body?.isConnected) {
+      const r = body.getBoundingClientRect();
+      const v = edgeVelocity(scrollPtrY - r.top, r.bottom - scrollPtrY);
+      if (v !== 0) {
+        const before = body.scrollTop;
+        body.scrollTop = before + v;
+        if (body.scrollTop !== before) placeDropLine(body, scrollPtrY); // 指针没动也要重算落点
+      }
+    }
+    const wrap = board.querySelector<HTMLElement>(".cols");
+    if (wrap) {
+      const r = wrap.getBoundingClientRect();
+      const v = edgeVelocity(scrollPtrX - r.left, r.right - scrollPtrX);
+      if (v !== 0) wrap.scrollLeft += v;
+    }
+    scrollRaf = requestAnimationFrame(autoScrollTick);
+  }
+
+  /** 每次 dragover 报一次指针位置与所在列体;循环没跑就起一趟。 */
+  function pumpAutoScroll(body: HTMLElement | null, e: DragEvent): void {
+    scrollBody = body;
+    scrollPtrX = e.clientX;
+    scrollPtrY = e.clientY;
+    if (scrollRaf === null) scrollRaf = requestAnimationFrame(autoScrollTick);
+  }
+
+  function stopAutoScroll(): void {
+    if (scrollRaf !== null) cancelAnimationFrame(scrollRaf);
+    scrollRaf = null;
+    scrollBody = null;
   }
 
   // Persist an UNFILTERED drag-reorder (within a column, or across columns inserting
@@ -1117,6 +1240,31 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         if (filtered) reorderVisible(item.id, item.status, toStatus, base, ordered);
         else reorder(item.id, item.status, toStatus, base, ordered);
       }
+      // 列内置顶 / 置底:同列重排,故 from === to === item.status;`base` 含自己(同列口径,
+      // 与 drop 那条一致)。长列里这是「不用拖」的那条路——边缘自动滚动能拖到另一头了,但
+      // 二十屏的列拖过去要按着不放好几秒。过滤态下走 visible-merge(隐藏的卡原地不动)。
+      // ⛔ 键位刻意不用 B(Bottom):待办列的 B 是「撤回为随记」,同一张卡上会两义。
+      /** 本卡所在列的列体(DOM 口径,与 moveEnd 的 `base` 同源;actionsFor 只在开菜单/按键时
+       *  现读,那时卡早已挂上 DOM)。 */
+      function ownColBody(): HTMLElement | null {
+        return board.querySelector<HTMLElement>(`.col[data-col="${item.status}"] .col-body`);
+      }
+      function moveEnd(toTop: boolean): void {
+        if (busy) return;
+        const colBody = ownColBody();
+        if (!colBody) return;
+        const base = [...colBody.querySelectorAll<HTMLElement>(".tcard")].map((x) => x.dataset.taskId!);
+        const others = base.filter((x) => x !== item.id);
+        const ordered = toTop ? [item.id, ...others] : [...others, item.id];
+        if (ordered.join(" ") === base.join(" ")) return; // 已在那一头:不落账、不动 DOM
+        // 手势即回执(同 moveCol / drop):按键即挪,真相由随后的 load() 校正。挪完把卡滚
+        // 进视野——否则长列里按完键,卡跑到了看不见的另一头,屏上「什么也没发生」。
+        if (toTop) colBody.prepend(c);
+        else colBody.append(c);
+        c.scrollIntoView({ block: "nearest" });
+        if (filtered) reorderVisible(item.id, item.status, item.status, base, ordered);
+        else reorder(item.id, item.status, item.status, base, ordered);
+      }
       // 截止 / 优先级 / 标签: the on-card chips are pure display now (㊺), so the menu opens
       // the editors directly via the meta/tag controllers — one source of truth, no chip click.
       function actionsFor(): Act[] {
@@ -1134,6 +1282,13 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         // 的列里时 `i < 0` ⇒ 两条都不出 —— 那是对的:它只能被拖走或走别的动作。
         const live = cols.filter((col) => !col.deleted);
         const i = live.findIndex((col) => col.id === item.status);
+        // 列内置顶/置底同理只给活着的列(已删的列 core 会拒重排);列里只有它一张时不出
+        // (显示条件 = 接收条件,别摆一条点了必然无事发生的动作)。时间序下同样不出 ——
+        // 它写的是 `position`,而那时列里根本不按 position 排,按了屏上不会动(500)。
+        if (boardSort === "manual" && i >= 0 && (ownColBody()?.querySelectorAll(".tcard").length ?? 0) > 1) {
+          list.push({ label: t("board.moveToTop"), key: "T", run: () => moveEnd(true) });
+          list.push({ label: t("board.moveToBottom"), key: "F", run: () => moveEnd(false) });
+        }
         if (i >= 0 && i < live.length - 1)
           list.push({ label: t("board.moveToCol", { col: columnName(live[i + 1]) }), key: "]", run: () => moveCol(1) });
         if (i > 0)
@@ -1172,7 +1327,12 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       // Board cards move by drag, not buttons. The closure `dragging` carries the id;
       // dataset.taskId lets a drop read the column's order straight from the DOM.
       c.dataset.taskId = item.id;
-      c.draggable = true;
+      // ⛔ 时间序下不许拖(500):列里的顺序由 `created_at` 决定,拖到哪儿松手都会弹回去
+      // ——那是「点了没反应」的同族,比不能拖更糟。切回「手动」即恢复。
+      // 一并被停掉的还有拖动改列 / 拖卡片打标签 / 拖到归档区(它们共用这一个 dragstart),
+      // 但**每条都有等价的非拖拽入口**:`]`/`[` 改列 · `L` 打标签 · `A` 归档,⋯ 菜单里都在。
+      // (拖标签 pill 到卡片那条方向不走这里,时间序下照常可用。)
+      c.draggable = boardSort === "manual";
       c.addEventListener("dragstart", (e) => {
         if (busy) {
           e.preventDefault();
@@ -1187,6 +1347,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       });
       c.addEventListener("dragend", () => {
         dragging = null;
+        stopAutoScroll();
         c.classList.remove("dragging");
         board.classList.remove("drag-done");
         clearDropHovers();
@@ -1364,7 +1525,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     const sections = cols.map((col) => {
       const status = col.id;
       const name = columnName(col);
-      const inCol = items.filter((t) => t.status === status);
+      const inCol = sortColumn(items.filter((t) => t.status === status), boardSort);
       const head = el("div", { className: "col-head" }, [
         el("span", { className: "col-name", textContent: name }),
         el("span", { className: "col-count", textContent: String(inCol.length) }),
@@ -1416,11 +1577,13 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         clearDropHovers();
         body.classList.add("drop-hover");
         placeDropLine(body, e.clientY);
+        pumpAutoScroll(body, e); // 贴着列的上下边就自动滚(长列里拖到另一头的唯一路)
       });
       body.addEventListener("drop", (e) => {
         e.preventDefault();
         const d = dragging;
         dragging = null;
+        stopAutoScroll();
         const after = dragAfterElement(body, e.clientY);
         clearDropHovers();
         detachDropLine();
@@ -1464,6 +1627,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         clearDropHovers();
         zone.classList.add("drop-hover");
         detachDropLine(); // a column line shouldn't linger while hovering 归档
+        stopAutoScroll(); // 已离开列体:别让上一节列继续自己滚(回到列上由它的 dragover 重启)
       }
     });
     zone.addEventListener("dragleave", () => zone.classList.remove("drop-hover"));
@@ -1472,6 +1636,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       zone.classList.remove("drop-hover");
       const d = dragging;
       dragging = null;
+      stopAutoScroll();
       if (!d || d.from !== DONE_COLUMN) return;
       // 真归档(成就册),不再是丢回收站——「归档」一词自此只有一个意思(概念隔离)。
       // 手势即回执:松手即离场,不等重载才消失;失败由 sealOne 内的 load() 复原。
@@ -1569,6 +1734,15 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       renderCentered(
         el("div", { className: "big", textContent: t("board.noMatch", { q }) }),
         el("div", { textContent: t("board.noMatchHint") }),
+      );
+      return;
+    }
+    // 筛着「到期」又叠了别的维度而筛空(单独筛到期不可能空 —— 钮只在有内容时才在):
+    // 说清是这两把尺的交集为空,别让人以为到期那些卡没了(502)。
+    if (dueOnly) {
+      renderCentered(
+        el("div", { className: "big", textContent: t("board.noDueMatch") }),
+        el("div", { textContent: t("board.noDueMatchHint") }),
       );
       return;
     }
@@ -1721,6 +1895,10 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       addTaskBtn.hidden = boardView !== "board";
       // 「管理列」同理:回收站 / 归档册里根本没有列(B-f 第 2 段)。
       manageColsBtn.hidden = boardView !== "board";
+      // 排序轴同理只属看板(回收站按 archived_at、归档册按完成日,各有各的轴,500 不碰)。
+      sortBtn.hidden = boardView !== "board";
+      paintSortBtn();
+      if (boardView !== "board") dueSoonBtn.hidden = true; // 汇总也只属看板;计数在下面算
       if (boardView !== "board") setComposeOpen(false);
 
       // 搜索直达回收站/归档(P1 #8):目标在列表才脉冲+滚动;已离场(还原/取消归档的
@@ -1780,12 +1958,26 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         wireTagPills();
       }
 
-      const shown = applyFilter(timeNarrowed, filter, (t) => t.title, allTopics);
+      // 到期汇总(502):计数按**整块看板**算(不随任何筛选收缩)—— 它回答的是「今天我
+      // 该处理什么」,那句话的意思不该被当前视野改写。跳转定位那条路把筛选清空时它也一并
+      // 关掉(不然「跳转即揭示」会被它筛掉)。
+      if (focusOnBoard) dueOnly = false;
+      const dueNow = visible.filter((t) => dueState(t.due_on, today) === "today").length;
+      const dueLate = visible.filter((t) => dueState(t.due_on, today) === "overdue").length;
+      paintDueSoon(dueNow, dueLate);
 
-      // Filtered(时间/标签/文本任一激活): the column DOM is only the visible subset, so
+      const shownAll = applyFilter(timeNarrowed, filter, (t) => t.title, allTopics);
+      const shown = dueOnly
+        ? shownAll.filter((t) => {
+            const st = dueState(t.due_on, today);
+            return st === "today" || st === "overdue";
+          })
+        : shownAll;
+
+      // Filtered(时间/标签/文本/到期任一激活): the column DOM is only the visible subset, so
       // drops route through reorder_task_visible (merged server-side). Unfiltered: the
       // strong-contract path.
-      filtered = timeFilter !== "all" || filterActive(filter);
+      filtered = timeFilter !== "all" || filterActive(filter) || dueOnly;
 
       if (visible.length === 0) renderEmpty();
       else if (shown.length === 0) renderFilteredEmpty();
@@ -1805,6 +1997,41 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       renderError(String(err));
     }
   }
+
+  // 排序钮:点一下换下一档(手动 → 最新在前 → 最早在前 → 手动)。非默认档高亮成朱砂,
+  // 且 title 明说「拖动已停用」—— 否则用户会以为拖拽坏了(那正是 498 那条账的教训)。
+  function paintSortBtn(): void {
+    sortLbl.textContent = sortLabel(boardSort);
+    sortBtn.classList.toggle("active", boardSort !== "manual");
+    sortBtn.title = boardSort === "manual" ? t("board.sortTitle") : t("board.sortTitleLocked");
+  }
+  sortBtn.addEventListener("click", () => {
+    boardSort = SORT_CYCLE[(SORT_CYCLE.indexOf(boardSort) + 1) % SORT_CYCLE.length];
+    localStorage.setItem(SORT_KEY, boardSort);
+    lastSig = ""; // 排序不改数据,指纹不会变 —— 不清它这一次重画会被短路掉
+    void load();
+  });
+  paintSortBtn(); // 首帧就按记住的档显示,别先闪一下「手动」再被 load() 改掉(163 契约)
+
+  /** 到期汇总钮:有逾期就说逾期(朱砂),否则只说今天;两者皆无整枚藏起。 */
+  function paintDueSoon(dueNow: number, dueLate: number): void {
+    if (dueNow + dueLate === 0) {
+      dueSoonBtn.hidden = true;
+      dueOnly = false; // 筛着到期时把最后一条做掉了:别留下一个筛空的看板
+      return;
+    }
+    dueSoonBtn.hidden = false;
+    dueSoonLbl.textContent =
+      dueLate > 0 ? t("board.dueSoonLate", { late: dueLate, now: dueNow }) : t("board.dueSoonToday", { now: dueNow });
+    dueSoonBtn.classList.toggle("late", dueLate > 0);
+    dueSoonBtn.classList.toggle("active", dueOnly);
+  }
+  dueSoonBtn.addEventListener("click", () => {
+    dueOnly = !dueOnly;
+    lastSig = ""; // 同排序钮:数据没变,不清指纹这一次重画会被短路
+    void load();
+  });
+  armMidnightRefresh();
 
   function toggleTrash(): void {
     boardView = boardView === "trash" ? "board" : "trash";
@@ -1837,6 +2064,9 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       // mount 的 focusId、在已脱离 DOM 的旧看板上渲染,新看板反而拿不到跳转。顺带清 focusId,
       // 明确取消"离开看板时尚未落地的这次定位"。
       unmounted = true;
+      dragging = null;
+      stopAutoScroll(); // 拖到一半切视图:rAF 循环不许活过这棵 mount
+      clearTimeout(midnightTimer); // 跨午夜重算的定时器同理不跨 mount(502)
       composeCtl.setLiveReload(null); // navigate 恒先 unmount 再 mount:新 mount 会立即接管
       loadSeq++;
       focusId = null;

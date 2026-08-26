@@ -1,5 +1,5 @@
 import { browser, $, expect } from "@wdio/globals";
-import { invoke, goNotebook, boardAction, openCompose, boardPickTopicPill } from "./support.js";
+import { invoke, goNotebook, boardAction, cornerMenuHas, openCompose, boardPickTopicPill } from "./support.js";
 
 // The backend status of a task by title — the real closed loop we assert against
 // (the DOM is driven by drags; the DB is the source of truth).
@@ -196,6 +196,158 @@ describe("任务看板 · 拖动排序", () => {
       { timeout: 8000 },
     );
     void x;
+  });
+
+  // ---- 长列里挪到另一头 ------------------------------------------------------
+  // 用户实报:列长到出滚动条时,「把最下面那张拖到最上面」做不到 —— 拖到列顶边缘,列
+  // 一动不动(原生 HTML5 DnD 不替我们滚内层滚动容器)。两条修法各一组例。
+  const S1 = "长列-甲";
+  const S2 = "长列-乙";
+  const S3 = "长列-丙";
+
+  it("拖到列的上边缘 → 列自动向上滚(边缘自动滚动)", async () => {
+    await invoke("create_task", { title: S3 });
+    await invoke("create_task", { title: S2 });
+    await invoke("create_task", { title: S1 });
+    await goNotebook("board");
+    await (await cardInColumn("todo", S3)).waitForExist({ timeout: 8000 });
+
+    // 「可滚」是前提不是被测对象:与其塞几十张卡把列撑长,直接把列体压矮 —— 要验的
+    // 是「容器可滚时拖到边缘会不会滚」,它怎么变可滚无关。inline style 随下一次重画消失。
+    const before = await browser.execute(() => {
+      const body = document.querySelector(".col.todo .col-body");
+      body.style.maxHeight = "100px";
+      body.scrollTop = 9999; // 先滚到底,才有「向上滚」可言
+      return body.scrollTop;
+    });
+    expect(before).toBeGreaterThan(0); // 前置断言:这一格真的可滚(否则下面测的是空气)
+
+    // 一次 dragstart + 一次 dragover(clientY 落在列体顶边 4px 处 = EDGE 带内),此后
+    // 指针不动 —— rAF 循环自己续帧,这正是真实拖拽里「按住不动等它滚」的形。
+    await browser.execute(() => {
+      const card = [...document.querySelectorAll(".tcard")].find((c) => c.textContent.includes("长列-丙"));
+      const body = document.querySelector(".col.todo .col-body");
+      const dt = new DataTransfer();
+      card.dispatchEvent(new DragEvent("dragstart", { bubbles: true, dataTransfer: dt }));
+      const y = body.getBoundingClientRect().top + 4;
+      body.dispatchEvent(new DragEvent("dragover", { bubbles: true, cancelable: true, dataTransfer: dt, clientY: y }));
+    });
+    try {
+      await browser.waitUntil(
+        async () => (await browser.execute(() => document.querySelector(".col.todo .col-body").scrollTop)) < before,
+        { timeout: 4000, timeoutMsg: "拖到上边缘后列没有自动向上滚" },
+      );
+    } finally {
+      // 收手势必须无条件执行:本例断言失败时若把手势留在半途(卡上挂着 .dragging、
+      // 列体还压着 100px、rAF 还在转),下面两例会跟着变红 —— 那是**假红**,查起来
+      // 会指向错的地方(阴性对照第一刀当场演过这一幕)。
+      await browser.execute(() => {
+        const card = [...document.querySelectorAll(".tcard")].find((c) => c.textContent.includes("长列-丙"));
+        card?.dispatchEvent(new DragEvent("dragend", { bubbles: true, dataTransfer: new DataTransfer() }));
+        const body = document.querySelector(".col.todo .col-body");
+        if (body) body.style.maxHeight = "";
+      });
+    }
+  });
+
+  it("⋯ 菜单「移到列首」→ 卡落到整列最前,顺序落库", async () => {
+    await goNotebook("board");
+    await (await cardInColumn("todo", S3)).waitForExist({ timeout: 8000 });
+    expect(await columnOrder("todo", [S1, S2, S3])).toEqual([S1, S2, S3]);
+    await boardAction(S3, "移到列首");
+    await browser.waitUntil(
+      async () => JSON.stringify(await columnOrder("todo", [S1, S2, S3])) === JSON.stringify([S3, S1, S2]),
+      { timeout: 8000, timeoutMsg: "「移到列首」没有把丙挪到列首" },
+    );
+  });
+
+  it("⋯ 菜单「移到列尾」→ 卡落到整列最后", async () => {
+    await goNotebook("board");
+    await (await cardInColumn("todo", S3)).waitForExist({ timeout: 8000 });
+    await boardAction(S3, "移到列尾");
+    await browser.waitUntil(
+      async () => JSON.stringify(await columnOrder("todo", [S1, S2, S3])) === JSON.stringify([S1, S2, S3]),
+      { timeout: 8000, timeoutMsg: "「移到列尾」没有把丙挪到列尾" },
+    );
+  });
+});
+
+// 500:列内排序轴(手动 / 最新在前 / 最早在前)。排序是**前端**做的(created_at 已随
+// list_tasks 带出),故断言读 DOM 顺序而不是 list_tasks —— 读后者等于在测后端那条没动过
+// 的路。⛔ 排序档存 localStorage 且跨 spec 存活,after() 必须复位,否则本文件后面靠拖拽
+// 的例会因为「拖不动了」全红。
+describe("任务看板 · 列内排序轴", () => {
+  const O1 = "排序轴-先建";
+  const O2 = "排序轴-后建";
+
+  // 某列 DOM 里我这两张卡的先后(忽略别的 spec 留下的卡)。
+  async function domOrder(status, titles) {
+    return browser.execute(
+      (s, ts) =>
+        [...document.querySelectorAll(`.col[data-col="${s}"] .col-body .tcard`)]
+          .map((c) => ts.find((t) => c.textContent.includes(t)))
+          .filter(Boolean),
+      status,
+      titles,
+    );
+  }
+  const pickSort = async (label) => {
+    // 循环钮:最多点三下必然轮到目标档(三档一圈)。
+    for (let i = 0; i < 3; i += 1) {
+      const cur = await $("#board-sort-lbl").getText();
+      if (cur === label) return;
+      await browser.execute(() => document.querySelector("#board-sort").click());
+      await browser.pause(120);
+    }
+    throw new Error(`排序钮转了一圈也没到「${label}」`);
+  };
+  const draggableOf = (title) =>
+    browser.execute(
+      (t) => [...document.querySelectorAll(".tcard")].find((c) => c.textContent.includes(t)).draggable,
+      title,
+    );
+
+  before(async () => {
+    await invoke("create_task", { title: O1 });
+    await browser.pause(1100); // created_at 是秒级以上的时刻串:两张卡必须落在不同刻
+    await invoke("create_task", { title: O2 });
+    await goNotebook("board");
+    await (await cardInColumn("todo", O2)).waitForExist({ timeout: 8000 });
+  });
+
+  after(async () => {
+    await pickSort("顺序:手动"); // ⛔ 别把排序态泄漏给后面靠拖拽的例
+  });
+
+  it("默认「手动」:新建的落列首(position 序),卡片可拖", async () => {
+    await pickSort("顺序:手动");
+    expect(await domOrder("todo", [O1, O2])).toEqual([O2, O1]); // create_task 插列首
+    expect(await draggableOf(O1)).toBe(true);
+  });
+
+  it("切「最早在前」→ 先建的排前面;且拖动被停用", async () => {
+    await pickSort("顺序:最早在前");
+    await browser.waitUntil(async () => JSON.stringify(await domOrder("todo", [O1, O2])) === JSON.stringify([O1, O2]), {
+      timeout: 8000,
+      timeoutMsg: "切到「最早在前」后顺序没变",
+    });
+    expect(await draggableOf(O1)).toBe(false);
+    // 时间序下 ⋯ 菜单里不该再有「移到列首」(它写 position,按了屏上不会动)
+    expect(await cornerMenuHas(".tcard", O1, "移到列首")).toBe(false);
+  });
+
+  it("切「最新在前」→ 反过来;切回「手动」→ position 序与拖动都回来", async () => {
+    await pickSort("顺序:最新在前");
+    await browser.waitUntil(async () => JSON.stringify(await domOrder("todo", [O1, O2])) === JSON.stringify([O2, O1]), {
+      timeout: 8000,
+      timeoutMsg: "切到「最新在前」后顺序没变",
+    });
+    await pickSort("顺序:手动");
+    await browser.waitUntil(async () => (await draggableOf(O1)) === true, {
+      timeout: 8000,
+      timeoutMsg: "切回手动后卡片仍不可拖",
+    });
+    expect(await cornerMenuHas(".tcard", O1, "移到列首")).toBe(true);
   });
 });
 

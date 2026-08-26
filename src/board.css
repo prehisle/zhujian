@@ -60,6 +60,11 @@
 .v-board .trash-toggle .tn,
 .v-board #trash-toggle .tn { font-variant-numeric: tabular-nums; opacity: 0.8; }
 
+/* 到期汇总(502):有逾期时整枚描成朱砂 —— 与卡片上的 due-overdue 同一套语汇
+   (那儿也是朱砂),让「屏上有一处红」这件事在顶栏与卡片之间对得上。
+   ⚠ 只描边不填底:填底会和它自己的 .active(点开只看到期)撞成同一个样子。 */
+.v-board #due-soon.late { color: var(--seal); border-color: var(--seal-line); }
+
 /* 复制为 Markdown — 每列列头那颗(header 那颗「复制看板」走共享 .hbtn 标准 pill) */
 .v-board .col-copy {
   flex: none;
@@ -180,6 +185,9 @@
 }
 .v-board .task-topic .topic-search:focus { outline: none; border-color: var(--seal-line); }
 .v-board .task-topic .topic-choices { display: inline-flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+/* 子标签候选(499):虚线描边 = 「父的子项」,与筛选条的 .tf-pill.child 同一套语汇。
+   横排 pill 流里缩进表达不了层级,故靠皮肤;全名挂在 title 上兜底。 */
+.v-board .task-topic .choice.child { border-style: dashed; }
 .v-board .task-topic .choice.create { border-style: dashed; color: var(--seal); border-color: var(--seal-line); }
 .v-board .task-topic .choice.create:hover { background: var(--seal-tint); border-color: var(--seal); }
 

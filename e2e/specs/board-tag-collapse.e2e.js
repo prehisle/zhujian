@@ -88,4 +88,35 @@ describe("任务看板 · 筛选条父子标签折叠", () => {
     // 这一句被时间轴截胡,静默没复位(共享件的头注记着整条判例)。
     await boardPickTopicPill("所有");
   });
+
+  // 499:用户实报「看板上的标签层级怎么看不到了」。现场 = 父标签下有任务、子标签这阵子
+  // 一条都没有(做完归档了),而旧规则「零计数的标签不画」把子 pill 逐枚滤光 ⇒ 父 pill
+  // 上连折叠箭头都不出,屏上一点层级痕迹都没有。新口径:族里但凡有一条内容,整族就画。
+  it("子标签一条任务都没有时,层级仍在:父带箭头,展开见到空子 pill(灰)", async () => {
+    // 把子任务删干净 → 子标签计数归 0(父仍有一条)。
+    const childTask = ids[1];
+    await invoke("archive_task", { id: childTask });
+    await goNotebook("board");
+    await $(`.tf-pill[data-topic-id="${pid}"]`).waitForExist({ timeout: 10000 });
+    try {
+      // ① 父 pill 上箭头还在(旧规则下这里会没有 = 层级塌掉)。
+      expect(
+        await browser.execute((p) => !!document.querySelector(`.tf-pill[data-topic-id="${p}"] .tf-caret`), pid),
+      ).toBe(true);
+      // ② 展开后空子 pill 在场,计数 0 且挂 .empty(弱化一档,仍可点)。
+      await clickCaret();
+      await browser.waitUntil(async () => (await childState()).hidden === false, {
+        timeout: 8000,
+        timeoutMsg: "父下唯一的子标签空了之后,展开看不到它",
+      });
+      const s = await browser.execute((c) => {
+        const pill = document.querySelector(`.tf-pill.child[data-topic-id="${c}"]`);
+        return { empty: pill.classList.contains("empty"), n: pill.querySelector(".tf-n").textContent };
+      }, cid);
+      expect(s).toEqual({ empty: true, n: "0" });
+      await clickCaret(); // 收起,别把展开态泄漏给后续 spec(expandedParents 是模块级)
+    } finally {
+      await invoke("restore_task", { id: childTask }); // 还原,after() 仍按原样清场
+    }
+  });
 });
