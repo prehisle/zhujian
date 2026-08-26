@@ -83,7 +83,10 @@ const COUNTS: &[(&str, &str)] = &[
     ("oplog", "SELECT COUNT(*) FROM oplog"),
     ("图字节", "SELECT COALESCE(SUM(length(data)), 0) FROM item_image"),
     ("oplog 的 origin 数", "SELECT COUNT(DISTINCT origin) FROM oplog"),
-    ("活着的任务卡", "SELECT COUNT(*) FROM items WHERE archived_at IS NULL AND sealed_at IS NULL"),
+    // ⚠ 488 改名:486 这一格印的是「活着的任务卡」,而查的是**全部**未归档未入册的条目
+    //    (没有任何 stage 过滤)—— 差点让人拿它去反证下面 ① 那格的「四个任务列都空」。
+    //    读数一个字没变,只是把名字改成它真正查的东西。
+    ("活着的条目(未归档未入册)", "SELECT COUNT(*) FROM items WHERE archived_at IS NULL AND sealed_at IS NULL"),
 ];
 
 /// plan §7.1a 那张表:`(id, kind, position, system)`,`tombstoned_at` 一律必须是 NULL。
@@ -197,21 +200,35 @@ fn guards_bite(conn: &mut Connection) -> bool {
         live(conn, "filed"),
         live(conn, "confirming")
     );
-    if live(conn, "todo") == 0 {
-        println!("    ⚠ 这枚库的 todo 列是空的 —— ① 那一只这里只能空跑,换一枚有活卡的库才算数");
-    }
+    // ⭐ **488 在 Windows 第二枚副本上栽的那一跤,焊在这里**:① 守的是「**非空**列不许删」
+    //    (`trg_board_column_no_tombstone_nonempty` 的 `WHEN` 里有 `EXISTS(… 活卡 …)`)⇒
+    //    拿一枚**空**列去探它,**放行才是对的**。486 那版把探针列写死成 `todo`,只印一句
+    //    ⚠ 就照旧要求「必须被拒」,于是在 `todo` 为空的库上把一次**正确行为**印成了
+    //    `!! 守护探针不过 / 别动真库` —— 那是**工装的判据没覆盖这一形**,不是产品缺陷。
+    //    ⇒ 探针列改成**现算**:四个 task 种子里第一个有活卡的那个;一个都没有就如实跳过。
+    let probe_col = ["todo", "doing", "confirming", "done"]
+        .into_iter()
+        .find(|id| live(conn, id) > 0);
 
     let tx = conn.transaction().expect("开事务");
     let mut bad = false;
 
     // ① 非空列不许删(带豁免,但 sync_replay_active 空 ⇒ 豁免不成立)。授权齐 ⇒ ④ 让路。
-    let h = authorize(&tx, "todo", 1);
-    bad |= must_reject(
-        &tx,
-        "① 删非空的 todo(授权齐)",
-        &format!("UPDATE board_column SET tombstoned_at = '{h}' WHERE id = 'todo'"),
-        "该列还有未归档条目",
-    );
+    match probe_col {
+        Some(col) => {
+            let h = authorize(&tx, col, 1);
+            bad |= must_reject(
+                &tx,
+                &format!("① 删非空的 {col}(授权齐,{} 张活卡)", live(&tx, col)),
+                &format!("UPDATE board_column SET tombstoned_at = '{h}' WHERE id = '{col}'"),
+                "该列还有未归档条目",
+            );
+        }
+        None => println!(
+            "    ⊘ ① 跳过:这枚库四个任务列一张活卡都没有 —— ① 的 WHEN 结构上不成立,\
+             此时「放行」才是对的。⛔ 别把它算成红(换一枚有活卡的库才验得了这一格)"
+        ),
+    }
 
     // ② 系统列不可删(不带豁免)。先把 filed 搬空,否则 ① 与 ② 同时成立、谁答不确定。
     let moved = empty_out(&tx, "filed", "inbox");
