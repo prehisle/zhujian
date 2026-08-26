@@ -4,6 +4,14 @@ import { dirname, resolve } from "node:path";
 import { homedir, tmpdir } from "node:os";
 import { rmSync } from "node:fs";
 import net from "node:net";
+import {
+  initProfileRoot,
+  report as reportProfiles,
+  sessionProfile,
+  sessionProfileCount,
+  snapshotSystemTemp,
+  sweep as sweepProfiles,
+} from "./webview2-profile.js";
 
 // Real GUI e2e: WebdriverIO -> tauri-driver -> 平台原生 WebDriver -> the built app's
 // WebView. Drives real clicks against real IPC against a throwaway SQLite DB.
@@ -79,6 +87,8 @@ const e2eWindowState = resolve(
 process.env.YS_E2E_BASE = fast ? "http://localhost:1420" : "http://tauri.localhost";
 
 let tauriDriver;
+// launcher 侧的两笔账(worker 里这两个变量恒为初值,别在 worker 里读)。
+let systemTempBefore = null;
 
 function portOpen(port) {
   return new Promise((res) => {
@@ -124,6 +134,11 @@ export const config = {
   path: "/",
 
   onPrepare: async () => {
+    // Windows:给 msedgedriver 一个我们自己的 user data folder 根,并记下动手前
+    // `C:\Windows\SystemTemp` 里已有哪些 `scoped_dir`(收尾时靠差集判「本轮有没有漏」)。
+    // 理由与失效方式见 `e2e/webview2-profile.js` 头注。
+    initProfileRoot();
+    systemTempBefore = snapshotSystemTemp();
     rmSync(testDb, { force: true }); // fresh DB each run
     rmSync(e2eWindowState, { force: true });
     // 412:备份的三处路径**按库派生**(lib.rs setup 里那段:e2e 下绝不碰真实用户配置,
@@ -149,7 +164,12 @@ export const config = {
       }
     }
   },
-  beforeSession: async () => {
+  beforeSession: async (_config, capabilities, _specs, cid) => {
+    // Windows:每个会话各给一个 user data folder,免得 msedgedriver 自己去
+    // `C:\Windows\SystemTemp` 建一个用完不删的(一个 spec 漏 20 MB)。
+    // ⚠ 这里改的是 worker 自己那份 `caps`,`_initSession` 就在本钩子之后用它。
+    const profile = sessionProfile(cid);
+    if (profile) capabilities["tauri:options"].webviewOptions = { userDataFolder: profile };
     tauriDriver = spawn(tauriDriverBin, ["--native-driver", nativeDriver], {
       // 394:整套 spec 的断言都是**中文串**(⋯ 菜单项、筛选 pill、空态文案),而 358 起
       // 语言「自动」档跟 `navigator.language` 走 —— Linux 上那是**进程 locale**。英文
@@ -219,5 +239,13 @@ export const config = {
 
   afterSession: () => {
     tauriDriver?.kill();
+  },
+
+  // 收尾两件(只在 Windows 上有内容):删掉本轮那批 WebView2 profile,并把两个读数印出来
+  // —— 「我们那个根收到几个」与「SystemTemp 又长了几个」。两个方向都印,是因为这条链有
+  // 三节不在我们手里,而它失效的方式是**安静的绿**(见 `e2e/webview2-profile.js` 头注)。
+  onComplete: () => {
+    const sessions = sessionProfileCount();
+    reportProfiles(sessions, sweepProfiles(systemTempBefore));
   },
 };

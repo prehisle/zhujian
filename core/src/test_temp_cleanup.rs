@@ -28,6 +28,14 @@
 //! 是 `created()`,而 Windows 上 `touch` 只动 mtime,拿 `touch -t` 造的「三小时前」
 //! 在这里是假的,会让一次没生效的清理看着像生效了。
 //!
+//! **诚实边界:这只清洁工只管 `std::env::temp_dir()`,Windows 上 = `%TEMP%`**。同一台机器上
+//! 还有第二个临时目录根 —— `C:\Windows\SystemTemp`(SYSTEM 上下文进程用的),它**不在
+//! `temp_dir()` 底下**,本文件与末尾那道结构锚对它零覆盖。2026-08-24 就是在那儿量出
+//! **34.4 GB / 44.4 万文件**的 WebView2 profile,而在此期间本文件这条轴上的信号全是绿的。
+//! 那一族的源头(Windows e2e 的 msedgedriver)已在 `e2e/webview2-profile.js` 里堵掉 ——
+//! 修法正是**把它挪进本文件管得着的 `%TEMP%`**(前缀 `ys-nb-e2e-udd-<pid>`,走上面那张表)。
+//! ⛔ 别把「%TEMP% 干净」读成「这台机器的临时目录都干净了」,那正是 34 GB 攒起来的方式。
+//!
 //! **前缀表由结构锚守着**(见文件末尾 `every_temp_dir_call_site_uses_a_swept_prefix`):
 //! 这张表要和横跨四个 crate 的五十多处调用点保持一致,而在锚写出来之前,守着这件事的
 //! 只有上面那段注释 —— 那正是它漏掉两族的原因。锚一写出来当场又咬出两族
@@ -38,7 +46,12 @@
 /// 326 起每个 crate 的测试容器都收进各自的 per-pid 目录,所以这张表已收敛成
 /// **一个 crate 一条**(而不是「一族测试一条」)。
 const PREFIXES: &[&str] = &[
-    "ys-nb-",         // core 的 per-pid 目录(`core/src/test_temp.rs`)
+    // core 的 per-pid 目录(`core/src/test_temp.rs`);⚠ **Windows e2e 也搭这一条**:
+    // `e2e/webview2-profile.js` 把 msedgedriver 的 WebView2 profile 根命名成
+    // `ys-nb-e2e-udd-<launcher pid>`,靠的就是它落进这张表(那边正常收尾会自己删,
+    // 这里是 Ctrl+C / 崩了那条路的兜底)。⛔ 改这条前缀要连那份一起改 —— 结构锚只扫
+    // `.rs`,那边是 JS,**它守不住**。
+    "ys-nb-",
     "zj-",            // 两壳的 per-pid 目录(`zj-shell-<pid>` / `zj-android-<pid>`)
     "zhujian-syncd-", // server 的 per-pid 目录(`server/src/test_temp.rs`)
     "zhujian-0035-",  // core/examples/migrate-check-0035(example 二进制,见 TEMP_DIR_OWNERS)
