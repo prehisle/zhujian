@@ -972,7 +972,7 @@ impl Coord {
         // control sender 必须存活整个引导期:drop 会让 run 以 HostGone 退出。
         let (ctl_tx, ctl_rx) = tokio::sync::mpsc::channel(8);
         let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-        let (notice_tx, notice_rx) = tokio::sync::oneshot::channel();
+        let (notice_tx, mut notice_rx) = tokio::sync::oneshot::channel();
         let latch: BootCommitLatch = Arc::new(Mutex::new(Some(notice_tx)));
         let wrote = Arc::new(tokio::sync::Notify::new());
         {
@@ -1010,38 +1010,61 @@ impl Coord {
         heavy_guard.attach_staging(staging_task.clone());
         *staging_task.lock().expect("staging slot mutex poisoned") =
             Some(tokio::spawn(transport::run(transport_task)));
-        // 进度转发(独立任务:BootProgress → booting 相位;通道随 transport 退出关闭)。
-        let fwd_progress = on_progress.clone();
-        let fwd = tokio::spawn(async move {
-            while let Some(ev) = ev_rx.recv().await {
-                if let SyncEvent::BootProgress { received, total } = ev {
-                    fwd_progress("booting", received, total);
-                }
-            }
-        });
         on_progress("booting", 0, 0);
 
         enum Waited {
             Committed(transport::BootCommitNotice),
             Cancelled,
             TransportGone(String),
+            GaveUp(String),
         }
-        // biased 且提交臂在前:BootCommitted 与 cancel 同时就绪只走成功一次(§3.2)。
-        // latch 的 sender 只随 transport 任务消亡而 drop(latch Arc 已整个移进
-        // Transport):receiver 关闭 = 任务已退,按终败处理(三轮 M1 的接收侧合同)。
-        let waited = tokio::select! {
-            biased;
-            n = notice_rx => match n {
-                Ok(notice) => Waited::Committed(notice),
-                Err(_) => Waited::TransportGone("同步会话意外退出".into()),
-            },
-            _ = cancel_rx.wait_for(|v| *v) => Waited::Cancelled,
+        // ⭐ **事件在本地循环里看,不再另起转发任务**(用户面 34):加入这条前台仪式要
+        // 拿引导事件当收场判据,而判据的状态若住在一个随时被 `abort()` 的任务里就取不
+        // 回来(first-draft-checklist 第 7 条:别把状态挂在会被强杀的对象上)。顺带
+        // 少一个任务、少三处 `fwd.abort()`。
+        let mut watch = transport::JoinBootWatch::new();
+        let silence = tokio::time::sleep(transport::JoinBootWatch::silence_window());
+        tokio::pin!(silence);
+        let waited = loop {
+            // biased 且提交臂恒在最前:BootCommitted 与 cancel / 收场同时就绪时只走成功
+            // 那一次(§3.2;first-draft-checklist 第 10 条 —— 破坏性判据不许抢在已经
+            // 就绪的提交前面)。latch 的 sender 只随 transport 任务消亡而 drop:
+            // receiver 关闭 = 任务已退,按终败处理(三轮 M1 的接收侧合同)。
+            tokio::select! {
+                biased;
+                n = &mut notice_rx => break match n {
+                    Ok(notice) => Waited::Committed(notice),
+                    Err(_) => Waited::TransportGone("同步会话意外退出".into()),
+                },
+                _ = cancel_rx.wait_for(|v| *v) => break Waited::Cancelled,
+                ev = ev_rx.recv() => {
+                    // 通道关 = transport 已退。⚠ 这一臂**必须收场不许 continue**:
+                    // 关掉的通道恒就绪回 None,`continue` 会把这个 loop 变成忙等。
+                    // (走到这里说明上面那臂刚才不就绪 ⇒ 没有提交通知在飞,理由去
+                    // status 里取,与既有 TransportGone 同一条路。)
+                    let Some(ev) = ev else {
+                        break Waited::TransportGone("同步会话意外退出".into());
+                    };
+                    if let SyncEvent::BootProgress { received, total } = &ev {
+                        on_progress("booting", *received, *total);
+                    }
+                    match watch.on_event(&ev) {
+                        transport::JoinBootVerdict::Keep => {}
+                        transport::JoinBootVerdict::KeepAndRefresh => {
+                            let next = tokio::time::Instant::now()
+                                + transport::JoinBootWatch::silence_window();
+                            silence.as_mut().reset(next);
+                        }
+                        transport::JoinBootVerdict::GiveUp(why) => break Waited::GaveUp(why),
+                    }
+                }
+                _ = &mut silence => break Waited::GaveUp(watch.on_silence()),
+            }
         };
         let notice = match waited {
             Waited::Committed(n) => n,
             Waited::Cancelled => {
                 stop_staging(&shutdown_tx, &staging_task).await;
-                fwd.abort();
                 return Err(match slot.abort() {
                     Ok(()) => {
                         self.release_reservation(&reserved);
@@ -1052,8 +1075,21 @@ impl Coord {
                     Err(c) => format!("已取消加入,但暂存清理失败(重启应用后自动清理):{c}"),
                 });
             }
+            // 引导那半收场(用户面 34)。⛔ **清理走的就是取消那条已经验过的路**
+            // (`stop_staging` → `slot.abort()` → 只在清干净时才交还 reservation),
+            // 别自己发明一条:transport 此刻**还活着且还在轮转重试**,不停掉它就会留下
+            // 一个 detached 会话与下一轮并存。
+            Waited::GaveUp(why) => {
+                stop_staging(&shutdown_tx, &staging_task).await;
+                return Err(match slot.abort() {
+                    Ok(()) => {
+                        self.release_reservation(&reserved);
+                        format!("{why}(已停止本次加入,暂存已清理;可以重试)")
+                    }
+                    Err(c) => format!("{why};且暂存清理失败(重启应用后自动清理):{c}"),
+                });
+            }
             Waited::TransportGone(why) => {
-                fwd.abort();
                 let err = status
                     .lock()
                     .expect("status mutex poisoned")
@@ -1073,7 +1109,6 @@ impl Coord {
         // ---- BootCommitted → Published:shutdown → join 任务 → close → publish ----
         on_progress("publishing", 0, 0);
         stop_staging(&shutdown_tx, &staging_task).await;
-        fwd.abort();
         drop(ctl_tx);
         let closed = match slot.close() {
             Ok(c) => c,

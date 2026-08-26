@@ -26,6 +26,15 @@ impl Ctx<'_> {
         let _ = self.events.send(SyncEvent::Toast(msg));
     }
 
+    /// 这一次引导尝试失败了(见 [`SyncEvent::BootFailed`])。
+    ///
+    /// ⛔ **它只是多发一枚信号,不改这条路的任何处置** —— 调用点的 toast /
+    /// `status.error` / `boot_rotate` 一个字节都没动:已引导空间靠那套无限轮转自愈,
+    /// 而**这枚事件是给「加入空间」那条前台仪式用的**(两处刻意不同,别顺手统一)。
+    fn boot_failed(&self, reason: String, retry_soon: bool) {
+        let _ = self.events.send(SyncEvent::BootFailed { reason, retry_soon });
+    }
+
     /// 引导中吗(引擎槽空 = 还没拿到首份快照)。
     fn booting(&self) -> bool {
         self.engine.booting()
@@ -870,7 +879,11 @@ impl Ctx<'_> {
                                     BOOT_SPACE_RETRY_SECS / 60
                                 );
                                 self.toast(text.clone());
-                                self.set_status(|s| s.error = Some(text));
+                                self.set_status(|s| s.error = Some(text.clone()));
+                                // ⚠ 这一格 `retry_soon: false`:不是「换一台再来」,是固定等
+                                // BOOT_SPACE_RETRY_SECS(5 分钟)且要用户先清出空间 ⇒ 前台
+                                // 仪式不该把它记进「失败几次」的计数里干等,当场收场说这句话。
+                                self.boot_failed(text, false);
                                 self.space_blocked = true;
                                 return Ok(());
                             }
@@ -883,7 +896,9 @@ impl Ctx<'_> {
                             .send(SyncEvent::BootProgress { received: 0, total: bytes });
                     }
                     Err(e) => {
-                        self.set_status(|s| s.error = Some(format!("引导流开启失败:{e}")));
+                        let text = format!("引导流开启失败:{e}");
+                        self.set_status(|s| s.error = Some(text.clone()));
+                        self.boot_failed(text, true);
                         self.boot_rotate();
                         self.try_boot_request(ws).await?;
                     }
@@ -909,7 +924,9 @@ impl Ctx<'_> {
                         self.finish_boot(ws).await
                     }
                     Err(e) => {
-                        self.set_status(|s| s.error = Some(format!("引导流中断:{e}")));
+                        let text = format!("引导流中断:{e}");
+                        self.set_status(|s| s.error = Some(text.clone()));
+                        self.boot_failed(text, true);
                         self.boot_rotate();
                         self.try_boot_request(ws).await
                     }
@@ -1002,7 +1019,11 @@ impl Ctx<'_> {
             Err(e) => {
                 // 整体回滚无痕:报错并稍后换一台重试(快照损坏/版本不同,文案已是人话)。
                 self.toast(format!("初始同步失败:{e}"));
-                self.set_status(|s| s.error = Some(e));
+                self.set_status(|s| s.error = Some(e.clone()));
+                // ⭐ 490 那次真机现场就落在这条臂上(旧端加入已升级的账户 ⇒ 版本偏斜)。
+                // 下面这套「轮转 + 30 秒后再来」是**已引导空间的自愈轴,一个字没动**;
+                // 这枚事件是加入仪式的出口(⛔ 别把两者统一,见 boot_failed 头注)。
+                self.boot_failed(e, true);
                 self.boot_rotate();
                 self.boot_deadline =
                     Some(Instant::now() + Duration::from_secs(BOOT_STEP_SECS));

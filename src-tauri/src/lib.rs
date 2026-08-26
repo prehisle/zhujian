@@ -1931,7 +1931,7 @@ async fn join_space_inner(
     let (ev_tx, mut ev_rx) = tokio::sync::mpsc::unbounded_channel();
     let (ctl_tx, ctl_rx) = tokio::sync::mpsc::channel(8);
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-    let (notice_tx, notice_rx) = tokio::sync::oneshot::channel();
+    let (notice_tx, mut notice_rx) = tokio::sync::oneshot::channel();
     let latch: sync::transport::BootCommitLatch = Arc::new(Mutex::new(Some(notice_tx)));
     let wrote = Arc::new(tokio::sync::Notify::new());
     {
@@ -1990,45 +1990,56 @@ async fn join_space_inner(
     }
     *staging_task.lock().expect("staging slot mutex poisoned") =
         Some(tokio::spawn(sync::transport::run(t)));
-    let fwd = tauri::async_runtime::spawn({
-        let app = app.clone();
-        let aid = attempt_id.to_string();
-        async move {
-            while let Some(ev) = ev_rx.recv().await {
-                if let sync::transport::SyncEvent::BootProgress { received, total } = ev {
-                    let _ = app.emit_to(
-                        "notebook",
-                        "join-progress",
-                        serde_json::json!({
-                            "attempt_id": aid, "phase": "booting",
-                            "received": received, "total": total
-                        }),
-                    );
-                }
-            }
-        }
-    });
     progress("booting", 0, 0);
 
     enum Waited {
         Committed(sync::transport::BootCommitNotice),
         Cancelled,
         TransportGone(String),
+        GaveUp(String),
     }
-    // biased 且提交臂在前:BootCommitted 与取消同时就绪只走成功一次(§3.2)。
-    let waited = tokio::select! {
-        biased;
-        n = notice_rx => match n {
-            Ok(notice) => Waited::Committed(notice),
-            Err(_) => Waited::TransportGone("同步会话意外退出".into()),
-        },
-        _ = cancel_rx.wait_for(|v| *v) => Waited::Cancelled,
+    // ⭐ **事件在本地循环里看,不再另起转发任务**(用户面 34;⛔ 与 `mobile` 那只
+    // `coord.rs::join_space` **同一个形、同一份判据** —— 两只壳的 join 编排逐格同形,
+    // 各写一份收场判据 = 保证漂移,故判据住在 `transport::JoinBootWatch`)。
+    let mut watch = sync::transport::JoinBootWatch::new();
+    let silence = tokio::time::sleep(sync::transport::JoinBootWatch::silence_window());
+    tokio::pin!(silence);
+    let waited = loop {
+        // biased 且提交臂恒在最前:BootCommitted 与取消 / 收场同时就绪时只走成功那一次
+        // (§3.2;first-draft-checklist 第 10 条)。
+        tokio::select! {
+            biased;
+            n = &mut notice_rx => break match n {
+                Ok(notice) => Waited::Committed(notice),
+                Err(_) => Waited::TransportGone("同步会话意外退出".into()),
+            },
+            _ = cancel_rx.wait_for(|v| *v) => break Waited::Cancelled,
+            ev = ev_rx.recv() => {
+                // 通道关 = transport 已退。⚠ 必须收场不许 continue:关掉的通道恒就绪
+                // 回 None,`continue` 会把这个 loop 变成忙等。
+                let Some(ev) = ev else {
+                    break Waited::TransportGone("同步会话意外退出".into());
+                };
+                if let sync::transport::SyncEvent::BootProgress { received, total } = &ev {
+                    progress("booting", *received, *total);
+                }
+                match watch.on_event(&ev) {
+                    sync::transport::JoinBootVerdict::Keep => {}
+                    sync::transport::JoinBootVerdict::KeepAndRefresh => {
+                        let next = tokio::time::Instant::now()
+                            + sync::transport::JoinBootWatch::silence_window();
+                        silence.as_mut().reset(next);
+                    }
+                    sync::transport::JoinBootVerdict::GiveUp(why) => break Waited::GaveUp(why),
+                }
+            }
+            _ = &mut silence => break Waited::GaveUp(watch.on_silence()),
+        }
     };
     let notice = match waited {
         Waited::Committed(n) => n,
         Waited::Cancelled => {
             stop_staging(&shutdown_tx, staging_task).await;
-            fwd.abort();
             return Err(match slot.abort() {
                 Ok(()) => {
                     release_join_reservation(spaces, &reserved);
@@ -2039,8 +2050,19 @@ async fn join_space_inner(
                 Err(c) => format!("已取消加入,但暂存清理失败(重启朱简后自动清理):{c}"),
             });
         }
+        // 引导那半收场(用户面 34)。⛔ **清理走取消那条已经验过的路** —— transport
+        // 此刻**还活着且还在轮转重试**,不 `stop_staging` 就会留下一个 detached 会话。
+        Waited::GaveUp(why) => {
+            stop_staging(&shutdown_tx, staging_task).await;
+            return Err(match slot.abort() {
+                Ok(()) => {
+                    release_join_reservation(spaces, &reserved);
+                    format!("{why}(已停止本次加入,暂存已清理;可以重试)")
+                }
+                Err(c) => format!("{why};且暂存清理失败(重启朱简后自动清理):{c}"),
+            });
+        }
         Waited::TransportGone(why) => {
-            fwd.abort();
             let err = status.lock().expect("status mutex poisoned").error.clone().unwrap_or(why);
             return Err(match slot.abort() {
                 Ok(()) => {
@@ -2055,7 +2077,6 @@ async fn join_space_inner(
     // BootCommitted → Published:shutdown(不退则 abort 强杀)→ close → publish。
     progress("publishing", 0, 0);
     stop_staging(&shutdown_tx, staging_task).await;
-    fwd.abort();
     drop(ctl_tx);
     let closed = match slot.close() {
         Ok(c) => c,
@@ -2747,6 +2768,12 @@ fn activate_space(
                     "sync-toast",
                     serde_json::json!({ "space": space, "msg": m }),
                 ),
+                // ⛔ **这一格刻意不转发,不是漏了**:`BootFailed` 是给「加入空间」那条
+                // 前台仪式当收场判据用的(用户面 34),而**已引导**空间的报错面一个字
+                // 没变 —— 同一次失败照旧走上面那条 Toast 与 `status.error`,转发它等于
+                // 把同一句话对用户说两遍。⚠ 真要在这一端另做处置,先读
+                // `transport::JoinBootWatch` 的头注:那两条路刻意不同。
+                SyncEvent::BootFailed { .. } => continue,
                 SyncEvent::Pair { phase, detail } => bridge.emit_to(
                     "notebook",
                     "sync-pair",

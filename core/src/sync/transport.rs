@@ -80,6 +80,7 @@ mod account;
 mod ad_deck;
 mod ctx_impl;
 mod deck;
+mod join_watch;
 mod lan_pump;
 mod roster;
 /// M3 网络栈真机闸门诊断(android-plan §9)。两壳的「诊断」入口按 `transport::net_probe` 调,
@@ -88,6 +89,8 @@ mod selftest;
 mod session_loop;
 
 pub use account::{create_account, pair_join};
+/// 「加入空间」引导那半的收场判据(用户面 34;⛔ 两只壳共用这一份,别各写一份)。
+pub use join_watch::{JoinBootVerdict, JoinBootWatch, MAX_BOOT_FAILURES, SILENCE_SECS};
 pub use selftest::{net_probe, ProbeStep};
 use ad_deck::{offline_deck, AdDeck};
 use deck::{Deck, RelayLeg};
@@ -282,6 +285,20 @@ pub enum SyncEvent {
     /// 引导快照传输进度(android-plan §3 引导 UI 义务):received 按块推进;
     /// received == total 之后是「校验 + 导入」段,完成走 Toast/Status。
     BootProgress { received: i64, total: i64 },
+    /// **这一次引导尝试失败了**,`reason` 是给人看的那句话。
+    ///
+    /// ⭐ 它是**加在既有 Toast/Status 之上的第二枚信号,不替代它们** —— 已引导空间的
+    /// 自愈路径一个字节没变(照旧 toast + `status.error` + 轮转重试)。存在的理由只有
+    /// 一个:**「加入空间」是前台仪式,它需要一个精确到「引导那半失败了几次」的判据**,
+    /// 而 `status.error` 是被很多条路共用的一格,数它数不准(见 [`JoinBootWatch`])。
+    ///
+    /// `retry_soon` = 下一次尝试在 [`BOOT_STEP_SECS`] 量级(换一台再来);`false` =
+    /// 这一端短期内做不成、还要用户动手(今天唯一那格 = 磁盘不足,固定等
+    /// [`BOOT_SPACE_RETRY_SECS`] = 5 分钟)。⛔ 两者**不能**记进同一个计数。
+    ///
+    /// ⚠ 收不到它**不等于**引导顺利:对端根本不应答那条路(`session_loop` 的
+    /// boot deadline 臂)是**静默轮转**,一枚事件都不发 —— 那一格由静默时限管。
+    BootFailed { reason: String, retry_soon: bool },
 }
 
 /// 引导持久提交的通知(space-entry-plan §3.2:「加入空间」的 JoinManager 靠它知道

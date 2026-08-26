@@ -113,6 +113,12 @@ fn spawn_bridge(
                     bridge_emit(&app, "space-name-changed", &space, generation, ())
                 }
                 SyncEvent::Toast(m) => bridge_emit(&app, "sync-toast", &space, generation, m),
+                // ⛔ **这一格刻意不转发,不是漏了**:`BootFailed` 是给「加入空间」那条
+                // 前台仪式当收场判据用的(用户面 34),而**已引导**空间的报错面一个字
+                // 没变 —— 同一次失败照旧走上面那条 Toast 与 `status.error`,转发它等于
+                // 把同一句话对用户说两遍。⚠ 真要在这一端另做处置,先读
+                // `transport::JoinBootWatch` 的头注:那两条路刻意不同。
+                SyncEvent::BootFailed { .. } => continue,
                 SyncEvent::BootProgress { received, total } => bridge_emit(
                     &app,
                     "sync-boot",

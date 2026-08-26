@@ -29,6 +29,7 @@ fn transport_sources() -> Vec<(&'static str, &'static str)> {
         ("ad_deck.rs", include_str!("ad_deck.rs")),
         ("ctx_impl.rs", include_str!("ctx_impl.rs")),
         ("deck.rs", include_str!("deck.rs")),
+        ("join_watch.rs", include_str!("join_watch.rs")),
         ("lan_pump.rs", include_str!("lan_pump.rs")),
         ("roster.rs", include_str!("roster.rs")),
         ("selftest.rs", include_str!("selftest.rs")),
@@ -7253,6 +7254,93 @@ async fn boot_commit_latch_fires_once_before_engine_start() {
     }
     wait_state(&rig_b.status, "online").await;
     wait_until("B 拿到数据", || count_items(&db_b) == 1).await;
+    rig_a.task.abort();
+    rig_b.task.abort();
+}
+
+/// 用户面 34:**引导那半失败时必须发得出 [`SyncEvent::BootFailed`]**,而且理由就是
+/// `import_attached` 那句人话。
+///
+/// 复刻的正是 490 真机现场那条路(旧端加入一个已升级的账户 ⇒ 快照版本不同):把源库的
+/// `user_version` 拨开,`VACUUM INTO` 会把它原样带进快照,于是 `import_attached` 的第一道
+/// sanity 当场拒。
+///
+/// ⭐ **同轮钉住三件,别只看第一件**:
+/// 1. 事件发得出来、`retry_soon` 是 `true`(= 「换一台再来」那一档,归失败计数管);
+/// 2. **既有的自愈行为一个字节没变** —— 那条 Toast 照旧在(⛔ 新事件是**加在它之上**的
+///    第二枚信号,不是替代;谁哪天把 toast 换成事件,这一句当场红);
+/// 3. **`latch` 绝不 ready** —— 那正是这条缺陷的成因:join 只等 latch,而引导失败时
+///    它永远不落 ⇒ 进度条永远转。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_version_skewed_snapshot_reports_boot_failed_and_never_fires_the_latch() {
+    let addr = start_server().await;
+    let url = format!("ws://{addr}");
+    let (db_a, clock_a, dir_a) = test_db("skew-a");
+    {
+        let mut conn = db_a.lock().unwrap();
+        let mut clk = clock_a.lock().unwrap();
+        notes::capture(&mut conn, &mut clk, "甲的灵感").unwrap();
+    }
+    create_account_as(&db_a, &url, Some(ACCT)).await.unwrap();
+    let rig_a = spawn_transport(db_a.clone(), clock_a.clone(), dir_a);
+    wait_state(&rig_a.status, "online").await;
+    let (db_b, clock_b, dir_b) = join_via(&rig_a, &url, "skew-b").await;
+
+    // 配对之后再拨:配对那条路自己也开库,拨早了会连它一起搅。
+    {
+        let conn = db_a.lock().unwrap();
+        conn.pragma_update(None, "user_version", 4242).unwrap();
+    }
+
+    let (notice_tx, notice_rx) = oneshot::channel();
+    let latch: BootCommitLatch = Arc::new(Mutex::new(Some(notice_tx)));
+    let mut rig_b = spawn_transport_full(
+        db_b.clone(),
+        clock_b.clone(),
+        dir_b,
+        BlobPolicy::Full,
+        true,
+        latch.clone(),
+    );
+
+    let mut failed: Option<(String, bool)> = None;
+    let mut toasted: Option<String> = None;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
+    while failed.is_none() || toasted.is_none() {
+        let left = deadline.saturating_duration_since(tokio::time::Instant::now());
+        assert!(!left.is_zero(), "60 秒没等到 BootFailed + Toast:failed={failed:?} toast={toasted:?}");
+        match timeout(left, rig_b.events.recv()).await {
+            Ok(Some(SyncEvent::BootFailed { reason, retry_soon })) => {
+                failed = Some((reason, retry_soon))
+            }
+            Ok(Some(SyncEvent::Toast(m))) if m.contains("初始同步失败") => toasted = Some(m),
+            Ok(Some(_)) => {}
+            Ok(None) => panic!("事件通道不该关"),
+            Err(_) => panic!("60 秒没等到 BootFailed + Toast:failed={failed:?} toast={toasted:?}"),
+        }
+    }
+
+    let (reason, retry_soon) = failed.unwrap();
+    assert!(
+        reason.contains("快照版本不同") && reason.contains("4242"),
+        "理由要原样是 import_attached 那句人话(含两端版本号):{reason}"
+    );
+    assert!(retry_soon, "版本偏斜是「换一台再来」那一档,归失败计数管:{reason}");
+    assert!(
+        toasted.unwrap().contains("初始同步失败"),
+        "既有的 Toast 自愈报错面一个字节没变(新事件是加在它之上的第二枚信号)"
+    );
+    assert!(
+        latch.lock().unwrap().is_some(),
+        "⭐ latch 绝不该 ready —— join 只等它,而这正是「进度条永远转」的成因"
+    );
+    {
+        let conn = db_b.lock().unwrap();
+        assert!(
+            meta_get(&conn, "bootstrapped_at").unwrap().is_none(),
+            "引导整体回滚无痕:一个字节都不许落地"
+        );
+    }
     rig_a.task.abort();
     rig_b.task.abort();
 }
