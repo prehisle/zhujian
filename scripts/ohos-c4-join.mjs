@@ -28,6 +28,12 @@
 //   ANDROID_SERIAL=<serial> ZJ_RIG_FORWARD=adb node scripts/ohos-c4-join.mjs
 //   两端只差**反向端口那一格**(`hdc rport` ↔ `adb reverse`),别为它复制第二份台架。
 //
+// ⭐ **494 起第三种被测端:本机第二只桌面朱简**(用户面 35 的桌面那半 ——
+// 「加入空间」的引导失败路在桌面壳上至今零真机字据):
+//   ZJ_RIG_FORWARD=none node scripts/ohos-c4-join.mjs
+//   配对码自己去参数口取(`node -e "require('node:net').connect(8792).pipe(process.stdout)"`),
+//   ⛔ 被测端**不能**再用 `YS_DB_PATH` —— 那个模式明确「不加入空间」(lib.rs::join_space)。
+//
 // 起好之后另开一个终端点手机上那枚按钮:`node scripts/ohos-c4.mjs tap 14`。
 //
 // ⛔ **停子进程一律按 pid,别按进程名** —— `app.exe` 这个名字用户的真朱简也叫它,
@@ -63,14 +69,19 @@ const hdc = (args) =>
 // 的服务器 + 一台已在账户里的老设备」,一模一样。⇒ 只有**反向端口那一格**按端换:
 // 鸿蒙 `hdc rport`,安卓 `adb reverse`(设备由 adb 自己的 `ANDROID_SERIAL` 认,别再造第二个入参)。
 // ⛔ 别为此复制一份台架 —— 除了这三行,两端一个字都不差。
+// ⭐ **494 起多一个 `none`**:用户面 35 的**桌面那半**要的是同一套「服务器 + 老设备 +
+// 配对码」,而被测端就在本机(第二只桌面朱简)⇒ **根本没有设备要反接端口**。
+// ⛔ 别把它读成「反向端口可选」:hdc/adb 那两支一个字没动,`none` 只是把「没有设备」
+// 这件事显式说出来(缺 hdc / adb 认不出设备时照旧当场死,不静默跳过)。
 const FORWARD = (process.env.ZJ_RIG_FORWARD ?? "hdc").toLowerCase();
-if (!["hdc", "adb"].includes(FORWARD)) die(`ZJ_RIG_FORWARD 只认 hdc | adb,实得 ${FORWARD}`);
+if (!["hdc", "adb", "none"].includes(FORWARD)) die(`ZJ_RIG_FORWARD 只认 hdc | adb | none,实得 ${FORWARD}`);
 const adb = (args) => spawnSync("adb", args, { encoding: "utf8", env: { ...process.env, MSYS_NO_PATHCONV: "1" } });
+const noDevice = { stdout: "(ZJ_RIG_FORWARD=none:本机被测端,无设备可反接)", stderr: "" };
 const addForward = (p) =>
-  FORWARD === "adb" ? adb(["reverse", `tcp:${p}`, `tcp:${p}`]) : hdc(["rport", `tcp:${p}`, `tcp:${p}`]);
+  FORWARD === "none" ? noDevice : FORWARD === "adb" ? adb(["reverse", `tcp:${p}`, `tcp:${p}`]) : hdc(["rport", `tcp:${p}`, `tcp:${p}`]);
 const rmForward = (p) =>
-  FORWARD === "adb" ? adb(["reverse", "--remove", `tcp:${p}`]) : hdc(["fport", "rm", `tcp:${p}`, `tcp:${p}`]);
-const listForward = () => (FORWARD === "adb" ? adb(["reverse", "--list"]) : hdc(["fport", "ls"]));
+  FORWARD === "none" ? noDevice : FORWARD === "adb" ? adb(["reverse", "--remove", `tcp:${p}`]) : hdc(["fport", "rm", `tcp:${p}`, `tcp:${p}`]);
+const listForward = () => (FORWARD === "none" ? noDevice : FORWARD === "adb" ? adb(["reverse", "--list"]) : hdc(["fport", "ls"]));
 
 // ---- stop ------------------------------------------------------------------
 
@@ -105,6 +116,7 @@ for (const [what, p] of [["同步服务端", syncd], ["桌面朱简(老设备)",
   if (!existsSync(p)) die(`找不到${what}:${p}`);
 }
 if (FORWARD === "hdc" && !existsSync(hdcPath)) die(`找不到 hdc:${hdcPath}(设 OHOS_HDC 指过去)`);
+if (FORWARD === "none") console.log("── ZJ_RIG_FORWARD=none:被测端在本机,跳过反向端口(设备那条路一个字没动)");
 if (FORWARD === "adb" && adb(["get-state"]).status !== 0) {
   die(`adb 认不出设备(ANDROID_SERIAL=${process.env.ANDROID_SERIAL ?? "(没设)"})—— 先 \`adb devices\``);
 }
@@ -266,7 +278,9 @@ param.listen(PARAM_PORT, "127.0.0.1", () => {
       `  老设备库    ${JSON.stringify(counts)}`,
       `  参数口      127.0.0.1:${PARAM_PORT}(连上才现要码)`,
       "",
-      "  下一步(另一个终端):node scripts/ohos-c4.mjs tap 14",
+      FORWARD === "none"
+        ? "  下一步(另一个终端):连一下参数口取「服务器地址 + 配对码」,再拿被测端那只桌面朱简去加入"
+        : "  下一步(另一个终端):node scripts/ohos-c4.mjs tap 14",
       "  收场        :node scripts/ohos-c4-join.mjs stop",
       "",
     ].join("\n"),
