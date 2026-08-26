@@ -22,7 +22,11 @@
 // # 用法
 //
 //   node scripts/ohos-c4-join.mjs            起台架并**挂着**(参数口要一直在)
-//   node scripts/ohos-c4-join.mjs stop       收场:按 pid 停两个子进程 + 撤 rport
+//   node scripts/ohos-c4-join.mjs stop       收场:按 pid 停两个子进程 + 撤反向端口
+//
+// ⭐ **490 起安卓也用这套台架**(§15a-3「旧 APK 新加入」要的东西与鸿蒙 C4③ 一模一样):
+//   ANDROID_SERIAL=<serial> ZJ_RIG_FORWARD=adb node scripts/ohos-c4-join.mjs
+//   两端只差**反向端口那一格**(`hdc rport` ↔ `adb reverse`),别为它复制第二份台架。
 //
 // 起好之后另开一个终端点手机上那枚按钮:`node scripts/ohos-c4.mjs tap 14`。
 //
@@ -55,6 +59,19 @@ const hdcPath = process.env.OHOS_HDC ?? "G:\\ohos-sdk\\toolchains\\hdc.exe";
 const hdc = (args) =>
   spawnSync(hdcPath, args, { encoding: "utf8", env: { ...process.env, MSYS_NO_PATHCONV: "1" } });
 
+// ⭐ **490 起这套台架两端共用**:除了鸿蒙 C4,安卓的 §15a-3(旧 APK 新加入)也要「一台够得着
+// 的服务器 + 一台已在账户里的老设备」,一模一样。⇒ 只有**反向端口那一格**按端换:
+// 鸿蒙 `hdc rport`,安卓 `adb reverse`(设备由 adb 自己的 `ANDROID_SERIAL` 认,别再造第二个入参)。
+// ⛔ 别为此复制一份台架 —— 除了这三行,两端一个字都不差。
+const FORWARD = (process.env.ZJ_RIG_FORWARD ?? "hdc").toLowerCase();
+if (!["hdc", "adb"].includes(FORWARD)) die(`ZJ_RIG_FORWARD 只认 hdc | adb,实得 ${FORWARD}`);
+const adb = (args) => spawnSync("adb", args, { encoding: "utf8", env: { ...process.env, MSYS_NO_PATHCONV: "1" } });
+const addForward = (p) =>
+  FORWARD === "adb" ? adb(["reverse", `tcp:${p}`, `tcp:${p}`]) : hdc(["rport", `tcp:${p}`, `tcp:${p}`]);
+const rmForward = (p) =>
+  FORWARD === "adb" ? adb(["reverse", "--remove", `tcp:${p}`]) : hdc(["fport", "rm", `tcp:${p}`, `tcp:${p}`]);
+const listForward = () => (FORWARD === "adb" ? adb(["reverse", "--list"]) : hdc(["fport", "ls"]));
+
 // ---- stop ------------------------------------------------------------------
 
 if (process.argv[2] === "stop") {
@@ -69,8 +86,8 @@ if (process.argv[2] === "stop") {
     // ⚠ **两个独立参数,不是一个带空格的串** —— `fport ls` 印出来的是
     // `tcp:8791 tcp:8791`,照着当一个 taskstr 传进去,hdc 答
     // 「ruler is not exist "tcp:8791 tcp:8791"」(2026-08-23 实测,三种写法只有这种成)。
-    const r = hdc(["fport", "rm", `tcp:${p}`, `tcp:${p}`]);
-    console.log(`撤 rport tcp:${p}:${(r.stdout + r.stderr).trim()}`);
+    const r = rmForward(p);
+    console.log(`撤反向端口 tcp:${p}(${FORWARD}):${(r.stdout + r.stderr).trim()}`);
   }
   console.log(`\n⚠ 台架目录还在:${stage}(一份临时库 + 一枚一次性账户密钥,可整目录删)`);
   process.exit(0);
@@ -87,7 +104,10 @@ const openerExe = join(repoRoot, "src-tauri", "target", "release", "app.exe");
 for (const [what, p] of [["同步服务端", syncd], ["桌面朱简(老设备)", openerExe]]) {
   if (!existsSync(p)) die(`找不到${what}:${p}`);
 }
-if (!existsSync(hdcPath)) die(`找不到 hdc:${hdcPath}(设 OHOS_HDC 指过去)`);
+if (FORWARD === "hdc" && !existsSync(hdcPath)) die(`找不到 hdc:${hdcPath}(设 OHOS_HDC 指过去)`);
+if (FORWARD === "adb" && adb(["get-state"]).status !== 0) {
+  die(`adb 认不出设备(ANDROID_SERIAL=${process.env.ANDROID_SERIAL ?? "(没设)"})—— 先 \`adb devices\``);
+}
 
 mkdirSync(stage, { recursive: true });
 const syncdData = join(stage, "syncd");
@@ -213,12 +233,12 @@ const counts = await setup();
 // ---- 反向端口 + 参数口 ------------------------------------------------------
 
 for (const p of [SERVER_PORT, PARAM_PORT]) {
-  const r = hdc(["rport", `tcp:${p}`, `tcp:${p}`]);
+  const r = addForward(p);
   const out = (r.stdout + r.stderr).trim();
-  // 已经挂过会答 "TCP Port listen failed" 之类 —— 那不是错,`fport ls` 里在就行。
-  console.log(`── rport tcp:${p} → 127.0.0.1:${p}:${out}`);
+  // 已经挂过会答 "TCP Port listen failed" 之类 —— 那不是错,列表里在就行。
+  console.log(`── 反向端口 tcp:${p} → 127.0.0.1:${p}(${FORWARD}):${out}`);
 }
-console.log((hdc(["fport", "ls"]).stdout ?? "").trim());
+console.log((listForward().stdout ?? "").trim());
 
 let served = 0;
 const param = createServer((sock) => {

@@ -31,11 +31,31 @@ const CDP_TIMEOUT_MS = Number(process.env.CDP_TIMEOUT_MS || 10000);
 // execFileSync 直调 adb.exe、参数逐个透传 => 不过 bash/MSYS,/proc 路径不被转义。
 const adb = (args) => execFileSync("adb", args, { encoding: "utf8" });
 
+// ⛔ **别拿「第一条 webview_devtools socket」当答案**(490 真栽):socket 名字里那个数字是
+// **进程 pid**,而一台手机上可能同时有别的 app 也开着可调试 WebView —— 那台 vivo 上就有两条
+// (`…_17737` 是别的 app、`…_26559` 才是朱简)。抓错了的现象是**没有报错的沉默**:forward 建得
+// 好好的,`/json/version` 却连不上或答的是别人的页面。⇒ 先问「朱简的 pid 是多少」,只认那一条;
+// 认不到就响亮说,⛔ 不许退回「那就用第一条吧」(设计铁律「绝不回退兜底」)。
+const PKG = "app.zhujian.notebook";
+
 function findSocket() {
+  const ps = adb(["shell", "ps", "-A", "-o", "PID,NAME"]);
+  const pids = ps
+    .split("\n")
+    .filter((l) => l.trim().endsWith(PKG))
+    .map((l) => l.trim().split(/\s+/)[0]);
   const out = adb(["shell", "grep", "-a", "webview", "/proc/net/unix"]);
-  const m = out.match(/(webview_devtools_remote_\d+)/);
-  if (!m) throw new Error("未找到 webview devtools socket——app 是否为 devtools 构建且在前台?");
-  return m[1];
+  const socks = [...new Set(out.match(/webview_devtools_remote_\d+/g) ?? [])];
+  if (!socks.length) throw new Error("未找到 webview devtools socket——app 是否为 devtools 构建且在前台?");
+  if (!pids.length) throw new Error(`设备上没有 ${PKG} 的进程——先把 app 拉到前台`);
+  const mine = socks.filter((s) => pids.includes(s.replace("webview_devtools_remote_", "")));
+  if (!mine.length) {
+    throw new Error(
+      `设备上有 ${socks.length} 条 devtools socket(${socks.join(" ")}),但没有一条属于 ${PKG}` +
+        `(pid ${pids.join(" ")})——装的是发版包(WebView 不可调试)?先装 devtools 包。`,
+    );
+  }
+  return mine[0];
 }
 
 function forward() {

@@ -30,7 +30,18 @@
 // KeyboardEvent("keydown",{key:"Enter"}) 提交。验收完记得重启 app 关调试口。
 import { readFileSync, writeFileSync } from "node:fs";
 
-const PORT = 9223;
+// ⚠ **490 起可换口**:验收里会同时开两只桌面朱简(一只当"老设备"、一只当被测端),
+// 两只不能挤同一个调试口。⛔ 坏值不静默退回默认(「绝不回退兜底」)。
+const PORT = (() => {
+  const raw = process.env.ZJ_CDP_PORT;
+  if (raw === undefined || raw === "") return 9223;
+  const v = Number(raw);
+  if (!Number.isInteger(v) || v <= 0 || v > 65535) {
+    console.error(`ZJ_CDP_PORT 不是合法端口:${raw}`);
+    process.exit(2);
+  }
+  return v;
+})();
 // 默认 30 秒:**短是它的功能**(页面挂死时早点告诉你),慢命令显式放大。
 // 坏值不静默退回默认(「绝不回退兜底」):写错了当场说,免得下一句超时读数没人信。
 const TIMEOUT = (() => {
