@@ -4171,4 +4171,224 @@ mod tests {
             "同一个列 id 换到 stage 上就得等 —— 分道的是字段,不是这个 id"
         );
     }
+
+    // ---- 验收工装(486,board-columns-plan §15-2 的「回放」半)-----------------------
+
+    /// 把一枚**真实库副本**的全部历史 op 逐条喂给 v37 的收端引擎,再与源库的物化状态对账。
+    ///
+    /// **为什么这道验收只能落在测试里**:`replay` 模块对 crate 外不可见(core 的窄公开面),
+    /// example 够不到 `apply_remote_op`。
+    ///
+    /// 默认 `#[ignore]`,只在真实库迁移验收时手动跑(⛔ 只喂**副本**,别拿生产库当试验田):
+    /// ```text
+    /// # 先前滚:cargo run --example migrate-check-0036-0037 -- <副本>
+    /// ZHUJIAN_REPLAY_DB=<副本> cargo test --lib replay_a_real_oplog_into_a_fresh_db \
+    ///   -- --ignored --nocapture
+    /// ```
+    ///
+    /// ⭐ **它证的是什么**:源库的每一行都有 op 背书(strict battery 的 `count_unbacked_rows`
+    /// 那几道审计管这一格)⇒ 把日志重放一遍**应当**得到同一个状态。于是这一趟同时压到:
+    /// 全部历史 op 在 **v37 的词汇表 + §4 新判定顺序**下逐条通过、`items.stage` 的 FK 指得到
+    /// 六个种子、LWW 合并到同一个终局。
+    ///
+    /// ⚠ **对不上的那几张表是预期内的,逐条写在断言旁边**:图字节走的是另一条通道
+    /// (`apply_image_bytes`),`item_revisions` 是本地触发器的派生物。
+    #[test]
+    #[ignore = "验收工装:要 ZHUJIAN_REPLAY_DB 指向一枚已前滚到 v37 的真实库副本"]
+    fn replay_a_real_oplog_into_a_fresh_db() {
+        let path = std::env::var("ZHUJIAN_REPLAY_DB")
+            .expect("用法:ZHUJIAN_REPLAY_DB=<副本路径> cargo test ... -- --ignored");
+        let src = Connection::open(&path).expect("开副本");
+        src.pragma_update(None, "foreign_keys", true).unwrap();
+        let uv: i64 = src.pragma_query_value(None, "user_version", |r| r.get(0)).unwrap();
+        assert_eq!(uv, 37, "先用 migrate-check-0036-0037 把副本前滚到 v37");
+
+        let ops = all_ops(&src);
+        println!("源库 {path}\n  oplog {} 条", ops.len());
+        assert!(!ops.is_empty(), "空日志证明不了任何事");
+
+        let (mut conn, mut clock) = fresh();
+
+        // 按 HLC 升序喂;喂不动的(依赖还没到)排进下一轮,直到不动点 —— 与收端引擎的
+        // 「挂起头每有 op 落地就再试一轮」同构(sync-protocol §5.3)。
+        let mut pending: Vec<&RemoteOp> = ops.iter().collect();
+        let (mut applied, mut seen, mut rounds) = (0usize, 0usize, 0usize);
+        loop {
+            rounds += 1;
+            let before = pending.len();
+            let mut still: Vec<&RemoteOp> = Vec::new();
+            for op in pending {
+                match apply_remote_op(&mut conn, &mut clock, op) {
+                    Ok(Outcome::AlreadySeen) => seen += 1,
+                    Ok(_) => applied += 1,
+                    Err(OpError::DependencyMissing(_)) => still.push(op),
+                    Err(e) => panic!(
+                        "op {} ({}/{}) 被拒:{e:?} —— 真实库的历史 op 在 v37 上必须全通",
+                        op.op_id, op.entity, op.kind
+                    ),
+                }
+            }
+            pending = still;
+            if pending.is_empty() || pending.len() == before {
+                break;
+            }
+        }
+        println!(
+            "  回放:{rounds} 轮到不动点 —— 落地 {applied} / 已见 {seen} / 仍挂起 {}",
+            pending.len()
+        );
+        assert!(pending.is_empty(), "还有 {} 条永远等不到依赖", pending.len());
+        assert_eq!(applied + seen, ops.len(), "每条 op 都要有着落");
+
+        assert_per_origin_seq_contiguous(&conn);
+
+        // ---- 逐表对账 -----------------------------------------------------------------
+        let fp = |c: &Connection, sql: &str| -> String {
+            c.query_row(sql, [], |r| r.get::<_, String>(0)).unwrap_or_default()
+        };
+        let n = |c: &Connection, sql: &str| -> i64 { c.query_row(sql, [], |r| r.get(0)).unwrap_or(-1) };
+
+        const ITEMS_FP: &str = "SELECT COALESCE(group_concat(f, char(10)), '') FROM ( \
+             SELECT id || '|' || content || '|' || stage || '|' || created_at || '|' || \
+                    COALESCE(due_on, '~') || '|' || COALESCE(priority, '~') || '|' || \
+                    COALESCE(position, '~') || '|' || COALESCE(archived_at, '~') || '|' || \
+                    COALESCE(sealed_at, '~') || '|' || COALESCE(born_stage, '~') || '|' || \
+                    COALESCE(done_at, '~') || '|' || COALESCE(born_device, '~') AS f \
+               FROM items ORDER BY id)";
+        const TOPICS_FP: &str = "SELECT COALESCE(group_concat(f, char(10)), '') FROM ( \
+             SELECT id || '|' || title || '|' || COALESCE(position, '~') || '|' || \
+                    COALESCE(kind, '~') AS f FROM topics ORDER BY id)";
+        const LINKS_FP: &str = "SELECT COALESCE(group_concat(item_id || '|' || topic_id, char(10)), '') \
+             FROM (SELECT item_id, topic_id FROM item_topic ORDER BY item_id, topic_id)";
+        const COMMENTS_FP: &str = "SELECT COALESCE(group_concat(f, char(10)), '') FROM ( \
+             SELECT id || '|' || item_id || '|' || content || '|' || created_at || '|' || \
+                    COALESCE(born_device, '~') AS f FROM item_comment ORDER BY id)";
+        const DEVICES_FP: &str = "SELECT COALESCE(group_concat(device_id || '|' || COALESCE(alias, '~'), char(10)), '') \
+             FROM (SELECT device_id, alias FROM device_profile ORDER BY device_id)";
+        const COLUMNS_FP: &str = "SELECT COALESCE(group_concat(f, char(10)), '') FROM ( \
+             SELECT id || '|' || title || '|' || kind || '|' || system || '|' || position || '|' || \
+                    COALESCE(tombstoned_at, '~') AS f FROM board_column ORDER BY position)";
+
+        for (label, sql) in [
+            ("items", ITEMS_FP),
+            ("topics", TOPICS_FP),
+            ("item_topic", LINKS_FP),
+            ("item_comment", COMMENTS_FP),
+            ("device_profile", DEVICES_FP),
+            ("board_column", COLUMNS_FP),
+        ] {
+            let (a, b) = (fp(&src, sql), fp(&conn, sql));
+            assert_eq!(a, b, "{label} 回放后与源库不符");
+            println!("  {label}:与源库一字不差 ✓({} 字节)", a.len());
+        }
+
+        // ⚠ 这两张**预期不等**,如实印出来,别拿它们当红:
+        //   * item_image:op 通道上的 `image_add` 只登记事实,行要等 `apply_image_bytes`
+        //     把真字节送到才建(sync-protocol §7)⇒ 只回放 op 时恒 0;
+        //   * item_revisions:DB 触发器在**每次内容改写**时归档旧版,是本地派生物,
+        //     两侧的改写次数本就不同(源库那份还含引导快照带来的历史)。
+        println!(
+            "  item_image 源 {} → 回放 {}(预期 0:字节走另一条通道)\n  \
+             item_revisions 源 {} → 回放 {}(预期不等:本地触发器派生)\n  \
+             oplog 源 {} → 回放 {}",
+            n(&src, "SELECT COUNT(*) FROM item_image"),
+            n(&conn, "SELECT COUNT(*) FROM item_image"),
+            n(&src, "SELECT COUNT(*) FROM item_revisions"),
+            n(&conn, "SELECT COUNT(*) FROM item_revisions"),
+            n(&src, "SELECT COUNT(*) FROM oplog"),
+            n(&conn, "SELECT COUNT(*) FROM oplog"),
+        );
+        assert_eq!(n(&conn, "SELECT COUNT(*) FROM oplog"), ops.len() as i64, "日志逐条记账");
+        assert_eq!(n(&conn, "SELECT COUNT(*) FROM sync_quarantine"), 0, "一条都不许进隔离表");
+        assert_eq!(n(&conn, "SELECT COUNT(*) FROM sync_replay_active"), 0, "回放豁免开关必须已清");
+
+        println!("✓ 真实日志 {} 条在 v37 上全通,物化状态与源库一致", ops.len());
+
+        // ---- 第 2 段:同一批 op 再喂一遍给**刚前滚的真实库**,必须条条 `AlreadySeen` -----
+        //
+        // 上面那一段喂的是 fresh 库,证的是「历史 op 能物化出同一个状态」;这一段换成真实库
+        // 本身,证的是另一件事:**0037 整表重建过的 `oplog` 里,那 2168 行仍能被 `logged_op_matches`
+        // 逐条认出来**(六字段完整比对)。认不出 = 迟到重复帧会被当新 op 记两次账,那是分叉。
+        let mut src = src;
+        let mut src_clock = Clock::load(&src).expect("载入源库时钟");
+        let mut again = 0usize;
+        for op in &ops {
+            match apply_remote_op(&mut src, &mut src_clock, op) {
+                Ok(Outcome::AlreadySeen) => again += 1,
+                other => panic!("op {} 重放应当是 AlreadySeen,实得 {other:?}", op.op_id),
+            }
+        }
+        assert_eq!(again, ops.len(), "每一条都得被认出来");
+        assert_eq!(n(&src, "SELECT COUNT(*) FROM oplog"), ops.len() as i64, "重放一行都不许多记");
+        println!("✓ 同一批 {again} 条 op 重放到真实库上,条条 AlreadySeen、日志零增长");
+
+        // ---- 第 3 段:**新**的远端 op 落到刚前滚的真实库上(⚠ 这一段真写副本)-----------
+        //
+        // 前两段都只碰历史。这一段才是 §15-2 那句「迁移**与回放**」的正面:一枚 V1 之后的
+        // 对端发来的 op,落在一枚刚从 v35 爬上来的真实库上。⭐ 第三条是本案最要命那一格
+        // (§4 的改判)在真实数据上的兑现:**列不存在 ≠ 毒 op**。
+        let new_item = Ulid::new().to_string();
+        let create = mk(
+            &remote_hlc(FUTURE_MS, 101),
+            "item",
+            &new_item,
+            "create",
+            item_create_payload("todo", Some("zz")),
+        );
+        assert_eq!(
+            apply_remote_op(&mut src, &mut src_clock, &create).unwrap(),
+            Outcome::Applied,
+            "新 item 落在种子列 todo 上"
+        );
+        let moved = mk(
+            &remote_hlc(FUTURE_MS, 102),
+            "item",
+            &new_item,
+            "set_field",
+            json!({"field": "stage", "value": "doing", "position": "zz"}),
+        );
+        assert_eq!(
+            apply_remote_op(&mut src, &mut src_clock, &moved).unwrap(),
+            Outcome::Applied,
+            "拖到另一个种子列"
+        );
+        assert_eq!(stage_of(&src, &new_item), "doing");
+
+        let unknown = Ulid::new().to_string(); // 一枚本端还没听说过的自定义列
+        let to_unknown = mk(
+            &remote_hlc(FUTURE_MS, 103),
+            "item",
+            &new_item,
+            "set_field",
+            json!({"field": "stage", "value": unknown, "position": "zz"}),
+        );
+        match apply_remote_op(&mut src, &mut src_clock, &to_unknown) {
+            Err(OpError::DependencyMissing(_)) => {}
+            other => panic!(
+                "§4 的改判:列还没到只能**挂起**(DependencyMissing),实得 {other:?} \
+                 —— 归 InvalidOp 就是 per-origin 持久隔离,正是 B-c 第 2 段修掉的那件事"
+            ),
+        }
+        assert_eq!(stage_of(&src, &new_item), "doing", "挂起的 op 一个字节都不许落地");
+
+        // ⭐ 上面那格的**阴性对照**,与它同生共死:改判只把「种子 ∪ 严格 ULID」那一族放进
+        // 「等依赖」,**形态就不合法的 id 仍是 `InvalidOp`**(§4.1 的判定顺序)。少了这一句,
+        // 上面那句「拒了」也可能只是因为「什么都判成 DependencyMissing」——那反而是新的洞。
+        let junk = mk(
+            &remote_hlc(FUTURE_MS, 104),
+            "item",
+            &new_item,
+            "set_field",
+            json!({"field": "stage", "value": "不是ULID的列名", "position": "zz"}),
+        );
+        match apply_remote_op(&mut src, &mut src_clock, &junk) {
+            Err(OpError::InvalidOp(_)) => {}
+            other => panic!("形态非法的列 id 必须是 InvalidOp,实得 {other:?}"),
+        }
+        assert_eq!(stage_of(&src, &new_item), "doing");
+        println!(
+            "✓ 新远端 op 落在真实库上:两条落地 + 未知列那条挂起(DependencyMissing)\
+             + 形态非法那条判毒(InvalidOp)"
+        );
+    }
 }
