@@ -301,7 +301,35 @@
         border: 1px solid var(--line-strong); border-radius: var(--radius-sm);
         overflow: hidden; background: var(--seal-tint);
       }
-      .cthumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+      /* 起手 opacity:0,解码完(images.ts 挂的 load / error)才添 .in 淡入 —— 用户面 36 报的
+         「突然又出现了图片」就是硬切上屏那一下。时长走字面量:这是一枚入场动画,不是
+         §2.4 那张全局节奏表上的东西(立成命名常量要连桌面 timing.ts 与规范表一起改,
+         而 check-timing-drift 只核命名常量、字面量诚实地不在它的扫描面内)。 */
+      .cthumb img {
+        width: 100%; height: 100%; object-fit: cover; display: block;
+        opacity: 0; transition: opacity 0.22s ease-out;
+      }
+      .cthumb img.in { opacity: 1; }
+      /* 占位骨架:从「选中 / 拍完」到「降采样完」那几秒(相机原图 4000×3000 那一趟最久),
+         屏上必须有东西在动,否则用户读成「没加上」。这期间不给「×」——还没有字节,
+         摘一张不存在的图没有意义;也不给点开大图(images.ts 那侧同判)。 */
+      .cthumb.pending .cthumb-del { display: none; }
+      .cspin {
+        position: absolute; left: 50%; top: 50%; width: 18px; height: 18px;
+        margin: -9px 0 0 -9px;
+        border: 2px solid var(--line-strong); border-top-color: var(--seal);
+        border-radius: var(--radius-circle);
+        animation: cspin 0.8s linear infinite;
+      }
+      .cthumb:not(.pending) .cspin { display: none; }
+      @keyframes cspin { to { transform: rotate(360deg); } }
+      /* 本端解不开的原图(HEIC 等,downsampleForUpload 判定「该拒的让后端响亮拒」原样放行):
+         与卡上缩略图同形(.thumb.err),别留一个永远转下去的圈。 */
+      .cthumb.err { border-color: var(--seal); }
+      .cthumb.err::before {
+        content: "!"; color: var(--seal); font-weight: 700;
+        position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+      }
       /* 压在缩略图上的圆形删图钮:捕获层(.cthumb-del)与卡片图管理(.thumb-del,住
          时间轴节)是同一枚控件共形(348 拍板,两家取优:尺寸取大 22px 稳触、白描边保
          任意底图上的辨识——339「压在照片上」同族)。此前两处各写一份,四项取值各漂
@@ -922,12 +950,36 @@
         font-size: 11px; color: var(--ink-faint);
       }
       .fpill.active .fcaret { color: var(--seal); }
+      /* 摊开 / 收起标签行的开关(用户面 36)。皮肤与 .fpill 逐条同形(含选中态),它读起来
+         就该是这一行的一员。⛔ 它**只翻布局,不动父子折叠** —— 那是另一根轴(父 pill 上
+         那枚箭头),两件事挤到一枚钮上会让「摊开」有两种意思。 */
+      .fexpand {
+        flex: none; font: inherit; font-size: var(--fs-13); line-height: 1;
+        color: var(--ink-soft); background: transparent;
+        border: 1px solid var(--line-strong); border-radius: var(--radius-pill);
+        padding: 5px 10px; min-height: 30px;
+        display: inline-flex; align-items: center;
+      }
+      .fexpand[hidden] { display: none; }
+      .fexpand.on { color: var(--seal); border-color: var(--seal); background: var(--seal-tint); }
+      /* 摊开态:标签行换行全展;文本框顶到第一行右端(同桌面 .filter-main 的 flex-start,
+         否则它会在长高了的标签块中间浮着)。 */
+      #filterbar.tags-open .ftopics { flex-wrap: wrap; overflow-x: visible; row-gap: 8px; }
+      #filterbar.tags-open .fmain { align-items: flex-start; }
+      /* 用户面 36:9.5em 缩到 6em —— 它此前吃掉 360dp 屏的三分之一,而这一行真正要给的是
+         标签。⭐ 张开态挂 `.wide`(main.ts 的 focusin/focusout):一直 6em 的话打三个字就
+         看不见自己打了什么,那是把一个患换成另一个患;歇着时它只是个提示,不影响读。
+         ⛔ **刻意不用 `.ftext:focus` 来张开** —— Chromium 在**窗口**失去焦点时不套 `:focus`,
+         于是「框里打了半句话,切出去看一眼再回来」的路上它会自己缩回去(顺带:CDP 驱动下
+         这条规则根本不生效,那一格验收会随窗口焦点随机红,本轮实测逮到)。 */
       .ftext {
-        flex: none; width: 9.5em; font: inherit; font-size: var(--fs-13);
+        flex: none; width: 6em; font: inherit; font-size: var(--fs-13);
         color: var(--ink); background: var(--raised);
         border: 1px solid var(--line-strong); border-radius: var(--radius-pill);
         padding: 5px 12px; min-height: 30px;
+        transition: width 0.18s ease-out;
       }
+      .ftext.wide { width: 11em; }
       .ftext:focus { outline: none; border-color: var(--seal); }
       .ftext::placeholder { color: var(--ink-faint); }
 
@@ -1220,7 +1272,12 @@
       <div id="filter-kinds" class="fkinds"></div>
       <div class="fmain">
         <div id="filter-topics" class="ftopics"></div>
-        <input id="filter-text" class="ftext" type="search" placeholder="过滤当前列表…" data-i18n-placeholder="shell.filterPh"
+        <!-- 摊开 / 收起标签行(用户面 36)。平时单行横滑,屏幕上常常一枚真标签都露不出来;
+             点它翻成多行全展(桌面 `.topic-filter` 本来就是全展开的)。收起态一行装得下时
+             main.ts 把整枚藏起 —— 一枚点了没变化的钮比没有更糟。 -->
+        <button id="filter-expand" class="fexpand" type="button" aria-label="摊开全部标签"
+                data-i18n-aria-label="shell.tagsExpand" hidden>▾</button>
+        <input id="filter-text" class="ftext" type="search" placeholder="过滤…" data-i18n-placeholder="shell.filterPh"
                autocapitalize="off" autocomplete="off" spellcheck="false" />
       </div>
     </section>

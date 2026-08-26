@@ -58,7 +58,7 @@ import {
   refreshOpenComments,
 } from "./comments";
 import { disconnectThumbObserver, fillThumb, hydrateThumbs } from "./thumbs";
-import { closeViewerNow, initViewer, isViewerOpen, openViewer } from "./viewer";
+import { closeViewerNow, initViewer, isViewerOpen, openLocalViewer, openViewer } from "./viewer";
 import {
   dismissScanOverlay,
   initSync,
@@ -158,28 +158,51 @@ $("text").addEventListener("input", () => {
 // 记灵感时的暂存配图(195 slice1):点「加图」贴进 compose 暂存条,「记下」建条目后
 // 随之挂上(save() 的两缓冲结算)。暂存不随切面/切空间清(与文字草稿同律),存到保存
 // 那刻落到当前空间。取图/转码走共享件 images.ts,与卡片操作面「加图」同一套。
-const compImgs = composeImages($("compose-thumbs"));
+// 点缩略图看大图(用户面 36):暂存图还没入库、没有「图N」的号,故走查看器的 local 那一路
+// ——字节(objectURL)由暂存条持有,查看器只读不 revoke;那边「删除」= 回调 remove 摘掉这张。
+const compImgs = composeImages($("compose-thumbs"), (items, idx) => void openLocalViewer(items, idx));
 function holdComposeImage(file: File): void {
   compImgs.add(file);
   if (captureSaving) captureLiveTouched = true; // 罕见:选图期间「记下」在飞=新输入
 }
+// 取图在飞(系统选择器开着 + 回来那几秒的降采样):两枚加图钮整体不受理。⛔ 没有这道闸
+// 连点两下会**真的起两个系统选择器** —— `await` 期间按钮照样可点,而降采样是主线程活,
+// 那几秒正是最容易被再戳一下的时候。
+let picking = false;
 // 取图/取消都回到输入:系统选择器会背景化 webview 让输入掉焦,回来须重聚焦——
 // 捕获层(232)据此不误关、键盘回来,顺手写配文。
 function refocusCompose(): void {
   ($("text") as HTMLTextAreaElement).focus();
 }
 $("compose-addimg").addEventListener("click", async () => {
-  if (captureSaving || switching) return; // 在飞/切换中不受理(与「记下」同闸)
-  // 多选逐张交付(391):每张降采样完就进暂存条,缩略图一张张长出来。
-  const res = await pickImages(holdComposeImage);
-  if (res.kind === "tooMany") showError(t("images.tooMany", { max: PICK_MAX, n: res.count }));
-  refocusCompose();
+  if (captureSaving || switching || picking) return; // 在飞/切换中不受理(与「记下」同闸)
+  picking = true;
+  refreshSaveDisabled(); // 骨架摆着的时候「记下」不许点(理由见那个函数)
+  try {
+    // 多选逐张交付(391):每张降采样完就进暂存条,缩略图一张张长出来。
+    // reserve 那枚回调在**降采样之前**就跑(images.ts),于是这几秒屏上先有 N 个骨架在转。
+    const res = await pickImages(holdComposeImage, (n) => compImgs.reserve(n));
+    if (res.kind === "tooMany") showError(t("images.tooMany", { max: PICK_MAX, n: res.count }));
+  } finally {
+    compImgs.dropReserved(); // 与 reserve 配对:没被填上的骨架一律收掉(取消 / 中途抛)
+    picking = false;
+    refreshSaveDisabled();
+    refocusCompose();
+  }
 });
 $("compose-photo").addEventListener("click", async () => {
-  if (captureSaving || switching) return;
-  const file = await capturePhoto();
-  if (file) holdComposeImage(file);
-  refocusCompose();
+  if (captureSaving || switching || picking) return;
+  picking = true;
+  refreshSaveDisabled();
+  try {
+    const file = await capturePhoto(() => compImgs.reserve(1));
+    if (file) holdComposeImage(file);
+  } finally {
+    compImgs.dropReserved();
+    picking = false;
+    refreshSaveDisabled();
+    refocusCompose();
+  }
 });
 
 /** 灵感那两列是**系统固定**的(不变量 2:不可改名 / 不可删 / 永不新增)⇒ 这两个字面量
@@ -504,6 +527,50 @@ function renderFilterBar(modeItems: TimelineItem[]): void {
   const f = filters[viewMode];
   filter.renderKindPills($("filter-kinds"), modeItems, allFilterTopics, f, onFilterPick);
   filter.renderTopicPills($("filter-topics"), modeItems, allFilterTopics, f, onFilterPick);
+  syncTagsToggle(); // pills 换了 = 「一行装不装得下」的答案可能也换了
+}
+
+// ---- 标签行摊开 / 收起(用户面 36)---------------------------------------------
+// 标签行平时是**单行横滑**,窄屏上常常一枚真标签都露不出来(屏上只剩「所有 / 无标签」),
+// 找标签只能盲着往右滑。这枚钮把它翻成多行全展 —— 桌面 `.topic-filter` 本来就是
+// `flex-wrap: wrap` 全展开的,安卓这一格是当初为窄屏做的取舍,现在把选择权交回用户。
+// ⛔ **它只翻布局,不动父子折叠**(那是父 pill 上那枚箭头的事)。
+// 纯设备本地 UI 偏好,**不进同步** —— 同明暗档 / 字号:它是「这块屏幕多宽」的属性。
+// ⛔ 刻意不放进 `filter.ts`:那份是与桌面逐字对齐、被 check-filter-parity 压着的纯逻辑,
+//    而「这一端要不要换行」恰恰是两端**该**不一样的地方。
+const TAGS_OPEN_KEY = "zhujian.filter-tags-open";
+let tagsOpen = localStorage.getItem(TAGS_OPEN_KEY) === "1";
+
+function syncTagsToggle(): void {
+  const topics = $("filter-topics");
+  const btn = $("filter-expand") as HTMLButtonElement;
+  $("filterbar").classList.toggle("tags-open", tagsOpen);
+  btn.classList.toggle("on", tagsOpen);
+  btn.textContent = tagsOpen ? "▴" : "▾";
+  btn.setAttribute("aria-label", tagsOpen ? t("shell.tagsCollapse") : t("shell.tagsExpand"));
+  // 一行装得下就整枚藏起(一枚点了没变化的钮比没有更糟)。⚠ 量的是**收起态**装不装得下:
+  // 摊开着的时候 scrollWidth 恒等于 clientWidth,直接问会恒答「装得下」⇒ 钮把自己藏了,
+  // 再也收不回来。故 `!tagsOpen &&` 那半是短路,不是顺手写的。
+  btn.hidden = !tagsOpen && topics.scrollWidth <= topics.clientWidth + 1;
+}
+$("filter-expand").addEventListener("click", () => {
+  tagsOpen = !tagsOpen;
+  localStorage.setItem(TAGS_OPEN_KEY, tagsOpen ? "1" : "0");
+  syncTagsToggle();
+});
+// ⚠ 那枚钮的显隐是**量出来的**,而量的结果会随视口(转屏)与字号(251 的 textZoom:
+// `.ftext` 是 em,放大字号就吃掉更多横向空间)一起变 —— 只在 renderFilterBar 里算的话,
+// 钮会停在上一个答案上。**实测**:把视口从 1138 压到 412,标签行溢出了而钮还藏着,
+// 也就是这个功能在竖屏上整个消失。⇒ 再接一只 ResizeObserver 盯标签行自己的盒。
+// 不会自激:藏钮只会让它更宽(装得下的仍装得下)、显钮只会让它更窄(装不下的仍装不下),
+// 两个方向都单调,量一次就稳。
+new ResizeObserver(() => syncTagsToggle()).observe($("filter-topics"));
+// 过滤框歇着 6em、动笔才张到 11em(用户面 36:那个框此前吃掉窄屏三分之一宽,而这一行
+// 真正要给的是标签)。⛔ 张开走**类**不走 `.ftext:focus`,理由印在 index.html 那条 CSS 上头。
+{
+  const ft = $("filter-text");
+  ft.addEventListener("focusin", () => ft.classList.add("wide"));
+  ft.addEventListener("focusout", () => ft.classList.remove("wide"));
 }
 
 /** 任务面的状态 chips 行:全部 + 四态(固定成员,含 0 计数——行的成员不随数据增减,
@@ -812,9 +879,15 @@ async function pullDeepLink(): Promise<void> {
 // (liveDraft),与已提交段互不沾染——绝不「保留全文再存一遍」(A 会重复入库)。
 // 成功只消费取走的那份;失败放回(有新输入则合并,先写在前)。textarea 是静态节点、
 // 从不重建,框内现值即 liveDraft 的单一真相源。刻意不走 sinvoke(§16.2-4)。
-// 「记下」按钮禁用态(在飞/切换中禁,单一入口免漏一处)。
-function setSaveDisabled(v: boolean): void {
-  ($("save") as HTMLButtonElement).disabled = v;
+// 「记下」按钮禁用态:三根轴任一在飞就禁,**由状态派生**(单一入口免漏一处;此前是
+// 逐处传真假,于是每个 finally 都要自己记得别的轴还在不在飞)。
+// ⭐ `picking` 那根是用户面 36 加的:屏上摆着 N 个骨架时若还点得动「记下」,takeBatch 只
+// 带走**已经有字节的那几张** —— 用户看着三张、实际入库一张,剩下两张悄悄落到下一条。
+// ⛔ 那不是「在飞期间新贴的图属于下一条」那条契约管得住的(它管的是 save 往返那一段
+// 窗口),是一次**静默的分批**。真机上第一次跑回归网就是这么红的:`记下` 抢在降采样
+// 前面,三张只挂上一张。
+function refreshSaveDisabled(): void {
+  ($("save") as HTMLButtonElement).disabled = switching || captureSaving || picking;
 }
 
 // 捕获层(232)收起入口:由下方捕获块赋值,save() 存成功后调它收层露出新卡。
@@ -822,7 +895,7 @@ let dismissCapture: (() => void) | null = null;
 
 async function save() {
   const ta = $("text") as HTMLTextAreaElement;
-  if (captureSaving) return;
+  if (captureSaving || picking) return; // picking:钮此刻是 disabled 的,这条兜非点击的路子
   if (!ta.value.trim()) {
     // 图不能独立成条(条目正文非空):只贴图没写字时给可辨识提示,不静默无反应。
     if (compImgs.count() > 0) showError(t("main.textBeforeImages"));
@@ -843,7 +916,7 @@ async function save() {
   captureSaving = true;
   captureLiveTouched = false;
   navSeq++; // 作废在途 focus 定位:不许其内部切面打破「新卡在当前面」承诺
-  setSaveDisabled(true);
+  refreshSaveDisabled();
   try {
     const capture = mode === "ideas" ? captureIdea : captureTodo;
     const newId = await capture(space, savingDraft);
@@ -884,7 +957,7 @@ async function save() {
     ta.setSelectionRange(ta.value.length, ta.value.length);
   } finally {
     captureSaving = false;
-    setSaveDisabled(!!switching);
+    refreshSaveDisabled();
   }
 }
 $("save").addEventListener("click", save);
@@ -1052,7 +1125,7 @@ async function switchSpace(id: string) {
     return;
   }
   switching = true;
-  setSaveDisabled(true);
+  refreshSaveDisabled();
   try {
     await invoke("activate_space", { spaceId: id });
     setCurrentSpace(id);
@@ -1064,7 +1137,7 @@ async function switchSpace(id: string) {
     await reconcileForeground(); // 失败已回滚(§9):对账回真前台。
   } finally {
     switching = false;
-    setSaveDisabled(false);
+    refreshSaveDisabled();
   }
 }
 

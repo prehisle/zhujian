@@ -109,13 +109,22 @@ export type PickOutcome =
 /** 相册多选(≤ PICK_MAX 张)。**每张降采样完就 onEach 交付一次**——9 张原图串行解码
  *  重编码要几秒,逐张交付才有「图在一张张长出来」的反馈,而不是干等一个大 Promise;
  *  故本函数不返回文件数组,onEach 是唯一交付通道(免调用方两处重复处理同一批)。
- *  取消(没选)= cancelled;超上界 = tooMany 且一张都不收。 */
-export async function pickImages(onEach: (file: File) => void): Promise<PickOutcome> {
+ *  取消(没选)= cancelled;超上界 = tooMany 且一张都不收。
+ *
+ *  ⭐ `onPicked(n)` 在**降采样开跑之前**报「选中了几张」(用户面 36)。为什么要多这一枚:
+ *  `downsampleForUpload` 是解码位图(相机原图 4000×3000 ≈ 48MiB)+ canvas 重绘 + JPEG
+ *  重编码,全在主线程,几百 ms 到几秒;在它之前屏幕上**一个像素都不动**,用户读成「没加上」。
+ *  调用方据此先摆占位。⛔ 它排在 tooMany 之后 —— 整批不收的时候一个占位也不该冒出来。 */
+export async function pickImages(
+  onEach: (file: File) => void,
+  onPicked?: (n: number) => void,
+): Promise<PickOutcome> {
   const files = await openPicker((el) => {
     el.multiple = true;
   });
   if (!files.length) return { kind: "cancelled" };
   if (files.length > PICK_MAX) return { kind: "tooMany", count: files.length };
+  onPicked?.(files.length);
   for (const f of files) onEach(await downsampleForUpload(f));
   return { kind: "picked", count: files.length };
 }
@@ -125,13 +134,15 @@ export async function pickImages(onEach: (file: File) => void): Promise<PickOutc
  *  权限再开相机),用户拒了等同取消——不另弹说明,系统框本身已经说清楚了。
  *  相机原图动辄 4000×3000,必过降采样主闸;EXIF 方向由 Chromium 的
  *  `image-orientation: from-image` 默认值在解码时校正,竖拍不会躺倒。 */
-export async function capturePhoto(): Promise<File | null> {
+export async function capturePhoto(onPicked?: () => void): Promise<File | null> {
   const files = await openPicker((el) => {
     // `capture` 不在 lib.dom 的 HTMLInputElement 上(各 TS 版本不一),走属性写死。
     el.setAttribute("capture", "environment"); // 后置摄像头:拍的是东西不是人
   });
   const f = files[0];
-  return f ? await downsampleForUpload(f) : null;
+  if (!f) return null;
+  onPicked?.(); // 同 pickImages:降采样之前先报信,调用方摆占位(相机原图那一趟最久)
+  return await downsampleForUpload(f);
 }
 
 // ---- compose 暂存图的断电恢复(197 下一步①):图走 IndexedDB(存 Blob 原生、容量够,
@@ -248,14 +259,23 @@ function newDraftId(): string {
   return `${Date.now().toString(36)}-${draftIdSeq.toString(36)}`;
 }
 
+/** 暂存条里一张图的对外形(点开大图时交给查看器):字节已经在手上,`remove` 摘掉它。 */
+export type ComposePreview = { url: string; remove: () => void };
+
 /** compose 暂存图(记灵感时先贴、条目还没建):holder 在给定容器里渲染缩略图(带
  *  「×」移除),对外只暴露 File[] 批次。与 save() 的两缓冲对齐(桌面 pendingImages 同律):
  *  点「记下」那刻 takeBatch 冻结带走并清预览,在飞期间新贴的图属于下一条;创建成功
  *  attachBatch 逐张挂上、失败图按张计数(条目已建、图可去卡片「加图」重贴);创建失败
  *  putBack 原样退回可重试。objectURL 是纯渲染态,取批/退回时按需重建。 */
 export type ComposeImages = {
+  /** 已经拿到字节的张数(占位不算 —— 它还不是一张图)。 */
   count: () => number;
   add: (file: File) => void;
+  /** 选中/拍完的那一刻先摆 n 个占位(降采样要几百 ms 到几秒,见 pickImages 的注)。 */
+  reserve: (n: number) => void;
+  /** 收尾:清掉没被填上的占位(取消 / 解码半途没交付)。**每次 reserve 都要有一次配对的
+   *  这个** —— 漏了就在屏上留一个永远转下去的骨架。 */
+  dropReserved: () => void;
   takeBatch: () => File[];
   putBack: (batch: File[]) => void;
   clear: () => void;
@@ -265,84 +285,165 @@ export type ComposeImages = {
   restore: () => Promise<void>;
 };
 
-export function composeImages(container: HTMLElement): ComposeImages {
-  type Held = { id: string; file: File; url: string };
-  let held: Held[] = [];
+/** `openPreview` = 点缩略图看大图(桌面 `src/item-images.ts` 的暂存图从 53 起就能点开,
+ *  安卓这一格一直空着 —— 用户面 36 报的正是它)。刻意由调用方注入而不在这里 import
+ *  viewer:取图这一层不该知道查看器长什么样,注入也免了一条模块环。不传 = 不可点。 */
+export function composeImages(
+  container: HTMLElement,
+  openPreview?: (items: ComposePreview[], idx: number) => void,
+): ComposeImages {
+  /** 一格暂存位。`held === null` = **占位骨架**:字节还在降采样,节点已经在屏上转着。
+   *  节点在这一格出生时就造好、此后**只填不重建** —— 整条 replaceChildren 会把已在跑的
+   *  淡入过场打断(加第二张时第一张会闪一下),也白白重解一遍前面每张图。 */
+  type Slot = {
+    node: HTMLElement;
+    img: HTMLImageElement;
+    del: HTMLButtonElement;
+    held: { id: string; file: File; url: string } | null;
+  };
+  let slots: Slot[] = [];
 
-  /** id 在 held 内必须唯一——`syncDraft` 的「库里已经有这个键就不重写字节」全靠它;
+  const ready = (): Slot[] => slots.filter((s) => s.held !== null);
+
+  /** id 在暂存条内必须唯一——`syncDraft` 的「库里已经有这个键就不重写字节」全靠它;
    *  撞了就会拿上一张的字节冒充这一张(静默错图,不是报错)。会话前缀让跨会话天然
    *  不撞,**除非系统时钟被往回拨**,故这里再挡一道:撞了就继续往下取号。 */
   function freshId(): string {
     let id = newDraftId();
-    while (held.some((h) => h.id === id)) id = newDraftId();
+    while (slots.some((s) => s.held?.id === id)) id = newDraftId();
     return id;
   }
 
-  // held 一变就把 IndexedDB 收敛到它(串行成链防并发写乱序;失败吞掉——持久化尽力而为,
-  // 不拦业务)。**快照要在链外同步取**:等轮到这一环时 held 可能已经又变了,那一变自己
+  // 暂存条一变就把 IndexedDB 收敛到它(串行成链防并发写乱序;失败吞掉——持久化尽力而为,
+  // 不拦业务)。**快照要在链外同步取**:等轮到这一环时它可能已经又变了,那一变自己
   // 会排在后面再收敛一次。写的是 File(结构化克隆含字节),读回可当 Blob 用。
+  // ⛔ 占位不入快照:它还没有字节,进去就是个空洞。
   let persistChain: Promise<void> = Promise.resolve();
   function persist(): void {
-    const snapshot = held.map((h) => ({ id: h.id, blob: h.file as Blob }));
+    const snapshot = ready().map((s) => ({ id: s.held!.id, blob: s.held!.file as Blob }));
     persistChain = persistChain.then(() => syncDraft(snapshot)).catch(() => {});
   }
 
-  function render(): void {
-    container.replaceChildren();
-    container.hidden = held.length === 0;
-    for (const h of held) {
-      const img = document.createElement("img");
-      img.src = h.url;
-      const del = document.createElement("button");
-      del.type = "button";
-      del.className = "cthumb-del";
-      del.textContent = "×";
-      del.setAttribute("aria-label", t("images.removeThis"));
-      del.addEventListener("click", () => {
-        URL.revokeObjectURL(h.url);
-        held = held.filter((x) => x !== h);
-        render();
-        persist();
-      });
-      const wrap = document.createElement("div");
-      wrap.className = "cthumb";
-      wrap.append(img, del);
-      container.append(wrap);
-    }
+  /** 一张都没有(含占位)才整条收起 —— 占位期间这条得**留在屏上**,它就是那个反馈。 */
+  function syncVisibility(): void {
+    container.hidden = slots.length === 0;
   }
-  render();
+
+  function drop(slot: Slot): void {
+    if (slot.held) URL.revokeObjectURL(slot.held.url);
+    slot.node.remove();
+    slots = slots.filter((s) => s !== slot);
+    syncVisibility();
+  }
+
+  function makeSlot(): Slot {
+    const img = document.createElement("img");
+    // 解码完才淡入(CSS `.cthumb img` 起手 opacity:0)。**error 也要摘骨架**:HEIC 这类
+    // 本端解不开的原图会原样放行(downsampleForUpload 的诚实边界),不接这一路就留下
+    // 一个永远转下去的圈。标 .err 与卡上缩略图同形(`.thumb.err`)。
+    img.addEventListener("load", () => img.classList.add("in"), { once: true });
+    img.addEventListener(
+      "error",
+      () => {
+        img.classList.add("in");
+        node.classList.add("err");
+      },
+      { once: true },
+    );
+    const spin = document.createElement("span");
+    spin.className = "cspin";
+    spin.setAttribute("aria-label", t("images.processing"));
+    const del = document.createElement("button");
+    del.type = "button";
+    del.className = "cthumb-del";
+    del.textContent = "×";
+    del.setAttribute("aria-label", t("images.removeThis"));
+    const node = document.createElement("div");
+    node.className = "cthumb pending";
+    node.append(img, spin, del);
+    const slot: Slot = { node, img, del, held: null };
+    del.addEventListener("click", (e) => {
+      e.stopPropagation(); // 别连带触发下面那条「点缩略图看大图」
+      drop(slot);
+      persist();
+    });
+    // 点开大图。占位态不响应 —— 那时候还没有字节可看,点了只能是「没反应」。
+    node.addEventListener("click", () => {
+      if (!openPreview || !slot.held) return;
+      const items = ready();
+      const idx = items.indexOf(slot);
+      if (idx < 0) return;
+      openPreview(
+        items.map((s) => ({ url: s.held!.url, remove: () => (drop(s), persist()) })),
+        idx,
+      );
+    });
+    return slot;
+  }
+
+  /** 把字节填进一格(新贴 / 启动回填共用)。`id` 传了 = 回填,库里已有这份字节。 */
+  function fill(slot: Slot, file: File, id?: string): void {
+    const url = URL.createObjectURL(file);
+    slot.held = { id: id ?? freshId(), file, url };
+    slot.node.classList.remove("pending");
+    slot.img.src = url; // load 回来自己淡入
+  }
+
+  function appendFilled(file: File, id?: string): Slot {
+    const slot = makeSlot();
+    slots.push(slot);
+    container.append(slot.node);
+    fill(slot, file, id);
+    syncVisibility();
+    return slot;
+  }
+
+  syncVisibility();
 
   return {
-    count: () => held.length,
+    count: () => ready().length,
     add(file) {
-      held.push({ id: freshId(), file, url: URL.createObjectURL(file) });
-      render();
+      // 有占位就填最前面那个空的(次序 = 选图次序);没有就当场长一格
+      // (拍照那条路若 onPicked 没走到、或字节比占位来得还早)。
+      const waiting = slots.find((s) => s.held === null);
+      if (waiting) fill(waiting, file);
+      else appendFilled(file);
       persist();
     },
+    reserve(n) {
+      for (let i = 0; i < n; i += 1) {
+        const slot = makeSlot();
+        slots.push(slot);
+        container.append(slot.node);
+      }
+      syncVisibility(); // 占位不 persist:没有字节可写
+    },
+    dropReserved() {
+      for (const s of [...slots]) if (s.held === null) drop(s);
+    },
     takeBatch() {
-      const files = held.map((h) => h.file);
-      for (const h of held) URL.revokeObjectURL(h.url);
-      held = [];
-      render();
+      // ⛔ 只带走**已经有字节**的那些;占位留在屏上 —— 它们的字节还在路上,按两缓冲
+      // 的规矩属于下一条,骨架也该继续给着反馈。
+      const taken = ready();
+      const files = taken.map((s) => s.held!.file);
+      for (const s of taken) drop(s);
       persist(); // 冻结带走即清持久化(记下成功=草稿了结;失败由 putBack 复写回)
       return files;
     },
     putBack(batch) {
       // 退回的旧批插在在飞期间新贴的图之前(重试时次序不变),objectURL 重建。
       // id 也是新的:takeBatch 那一刻这些键已从库里删掉,退回等于重新写一遍字节。
-      const restored = batch.map((file) => ({
-        id: freshId(),
-        file,
-        url: URL.createObjectURL(file),
-      }));
-      held = [...restored, ...held];
-      render();
+      // ⚠ **先进 DOM 再填字节**(同 appendFilled 的次序):过渡要有「插进来那一刻是
+      // opacity:0」这一步才跑得起来,填完再插等于直接以终态露面。
+      const restored = batch.map(() => makeSlot());
+      slots = [...restored, ...slots];
+      container.prepend(...restored.map((s) => s.node));
+      restored.forEach((s, i) => fill(s, batch[i]));
+      syncVisibility();
       persist();
     },
     clear() {
-      for (const h of held) URL.revokeObjectURL(h.url);
-      held = [];
-      render();
+      for (const s of [...slots]) drop(s);
       persist();
     },
     async attachBatch(space, itemId, batch) {
@@ -357,19 +458,16 @@ export function composeImages(container: HTMLElement): ComposeImages {
       return failed;
     },
     async restore() {
-      if (held.length) return; // 启动后用户已抢先贴图:不覆盖
+      if (slots.length) return; // 启动后用户已抢先贴图/正在取图:不覆盖
       let items: DraftItem[];
       try {
         items = await loadDraft();
       } catch {
         return; // IndexedDB 不可用/读失败:恢复尽力而为,不拦启动
       }
-      if (!items.length || held.length) return; // await 期间可能已被贴入:再核一次
+      if (!items.length || slots.length) return; // await 期间可能已被贴入:再核一次
       // **id 原样带回**:这些字节库里已经有了,下一次 persist 只写清单不重写它们。
-      for (const it of items) {
-        held.push({ id: it.id, file: it.blob as File, url: URL.createObjectURL(it.blob) });
-      }
-      render();
+      for (const it of items) appendFilled(it.blob as File, it.id);
     },
   };
 }

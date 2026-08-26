@@ -10,6 +10,7 @@ export const misc = defineMessages({
   "api.mainSuffix": { zh: "(默认空间)", en: " (default space)" },
   "identity.authorUnknown": { zh: "作者未知", en: "Author unknown" },
   "images.removeThis": { zh: "移除这张图", en: "Remove this image" },
+  "images.processing": { zh: "正在处理这张图…", en: "Processing this image…" },
   "images.imageN": { zh: "图{n}", en: "Image {n}" },
   "images.tooMany": { zh: "一次最多 {max} 张,这次选了 {n} 张;分几次加吧", en: "At most {max} at a time — you picked {n}. Add them in a few batches." },
   "swipe.changedTo": { zh: "已改为「{stage}」", en: "Moved to “{stage}”" },

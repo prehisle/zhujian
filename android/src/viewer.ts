@@ -22,14 +22,29 @@ type Deps = {
 let deps: Deps;
 
 let viewerSeq = 0;
-let viewerImgId: string | null = null; // 当前大图的 image id(删图按钮据此删这张)
+// 组员两种。**入库那种**(stored)按 id 现取字节、删是永久销毁;**暂存那种**(local)是
+// compose 暂存条里还没记下的图,字节(objectURL)已经在手上、不必取,「删」= 从暂存条
+// 摘掉(用户面 36:安卓暂存缩略图一直点不开,而桌面 src/item-images.ts 从 53 起就能点)。
+// ⛔ 刻意不为暂存图另造一只查看器:捏合 / 双击 / 翻页 / 返回键层这一整套只该有一份。
+type ViewerItem =
+  | { kind: "stored"; id: string; seq: number }
+  | { kind: "local"; url: string; remove: () => void };
+
+let viewerShown: ViewerItem | null = null; // 屏幕上真显示着的那张(删除按钮据此)
 // 225:查看器收**同条目的整组图**,未放大时单指横滑翻页(左滑下一张、右滑上一张,首尾循环)。
 // 组来自 lastItems 里那条的 images(时间轴本来就带下来,不另取);只一张时横滑不接管。
-let viewerGroup: ImageMeta[] = [];
+let viewerGroup: ViewerItem[] = [];
 let viewerIdx = 0;
 
 export function openViewer(group: ImageMeta[], idx: number) {
-  viewerGroup = group;
+  viewerGroup = group.map((m) => ({ kind: "stored" as const, id: m.id, seq: m.seq }));
+  return showViewerAt(idx);
+}
+
+/** compose 暂存条那一组(还没记下的图)。`url` 是调用方持有的 objectURL —— 本模块只读不
+ *  revoke(它的主人是暂存条,关了大图那张图还得在缩略条上摆着)。 */
+export function openLocalViewer(group: { url: string; remove: () => void }[], idx: number) {
+  viewerGroup = group.map((g) => ({ kind: "local" as const, url: g.url, remove: g.remove }));
   return showViewerAt(idx);
 }
 
@@ -77,7 +92,10 @@ async function showViewerAt(i: number, dir: -1 | 0 | 1 = 0) {
     img.style.visibility = "";
     applyTransform(true);
   };
-  const bytes = fetchImageUrl(space, m.id); // 与飞出动画并行跑,不串行等
+  // 与飞出动画并行跑,不串行等。暂存图的字节已经在手上(objectURL),这一格是个空跑
+  // ——但下面那套代次/换图时序照旧走,免得两种图各有一条路。
+  const bytes: Promise<string | null> =
+    m.kind === "stored" ? fetchImageUrl(space, m.id) : Promise.resolve(m.url);
   if (dir !== 0) flipping = true; // 过场期间手势闸(同轮只有一次过场,故清标不会踩到别人)
   try {
     if (dir !== 0) {
@@ -92,17 +110,22 @@ async function showViewerAt(i: number, dir: -1 | 0 | 1 = 0) {
       abortSlide(); // 空间已切走
       return;
     }
-    viewerImgId = m.id; // 现显的这张(删图按钮据此),迟到响应被 my!==viewerSeq 挡在上面
+    viewerShown = m; // 现显的这张(删图按钮据此),迟到响应被 my!==viewerSeq 挡在上面
     if (dir !== 0) img.style.visibility = "hidden"; // 先隐,免得 resetZoom 把旧图瞬移回中心
     resetZoom(); // 换图不继承上一张的缩放(连带清 vSwipeX)
     await loadViewerImage(img, url);
     if (my !== viewerSeq) return;
-    img.alt = t("images.imageN", { n: m.seq }); // 读屏语义与角标同源
+    // 「图N」的 N 是入库才发的号(高水位、永不复用),暂存图**还没有号** ⇒ 那一格说的是
+    // 「还没记下」,⛔ 别为了格式整齐给它编一个,那是在说假话。
+    const one = m.kind === "stored" ? t("images.imageN", { n: m.seq }) : t("viewer.pending");
+    img.alt = one; // 读屏语义与角标同源
     // 多图时角标兼作「还有几张」的读数(手机上没有左右箭头,这是唯一的组内位置提示)。
     $("viewer-cap").textContent =
       viewerGroup.length > 1
-        ? t("viewer.badgeOfN", { n: m.seq, i: i + 1, total: viewerGroup.length })
-        : t("images.imageN", { n: m.seq });
+        ? m.kind === "stored"
+          ? t("viewer.badgeOfN", { n: m.seq, i: i + 1, total: viewerGroup.length })
+          : t("viewer.pendingOfN", { i: i + 1, total: viewerGroup.length })
+        : one;
     if (dir !== 0) {
       vSwipeX = dir * window.innerWidth; // 瞬移到另一侧屏外(同一帧里连同亮相一起提交)
       applyTransform(false);
@@ -128,7 +151,7 @@ async function showViewerAt(i: number, dir: -1 | 0 | 1 = 0) {
 
 export function closeViewerNow() {
   viewerSeq++; // 在途的打开请求作废
-  viewerImgId = null;
+  viewerShown = null;
   viewerGroup = [];
   viewerIdx = 0;
   hideConfirmBar(); // 关图即弃挂着的删图确认(旧确认不许作用到下一张/下个语境)
@@ -415,11 +438,24 @@ export function initViewer(d: Deps): void {
   // settleHistory(平掉开图压的历史层)+ 刷新轴(缩略图随之消失)。
   $("viewer-del").addEventListener("click", (e) => {
     e.stopPropagation();
-    const id = viewerImgId;
-    if (!id) return;
+    const shown = viewerShown;
+    if (!shown) return;
+    if (shown.kind === "local") {
+      // 暂存图还没入库 ⇒ 这一下**不是永久销毁**,只是从暂存条里摘掉(与缩略图上那枚 ×
+      // 同一件事),故文案说的是「移除」。两拍照给:同一枚按钮不该有两种拍数。
+      confirmBar(t("viewer.removeQ"), t("viewer.removeYes"), () => {
+        if (viewerShown !== shown) return; // 期间换图/关闭:这一拍作废
+        shown.remove(); // 暂存条那侧 drop + persist(objectURL 由它 revoke,本模块不碰)
+        closeViewerNow();
+        deps.settleHistory();
+        showBar(t("viewer.removed"), true);
+      });
+      return;
+    }
+    const id = shown.id;
     const space = getCurrentSpace();
     confirmBar(t("viewer.deleteQ"), t("viewer.deleteYes"), () => {
-      if (viewerImgId !== id || getCurrentSpace() !== space) return;
+      if (viewerShown?.kind !== "stored" || viewerShown.id !== id || getCurrentSpace() !== space) return;
       void (async () => {
         try {
           await deleteItemImage(space, id);
