@@ -132,6 +132,53 @@ describe("任务看板 · 归档(成就册,可查不可删)", () => {
     expect(await statusOf(TODO)).toBe("todo");
   });
 
+  // 504:窄列的列头。用户报「主窗较小时『已完成』折成两行、确认钮只剩一个『归』字」——
+  // 根因是列头一行不换行、四件里只有列名能缩,而确认态还要再塞三件。判据不是「看着像」:
+  // 折行看行高、裁字看 scrollWidth>clientWidth,两者都量得到。
+  // ⭐ 阈值走的是**列宽**不是窗口宽(列数用户自定义、侧栏可折叠 ⇒ 窗口宽算不出列宽),
+  // 所以这两格锚的是 900×700 下那个 158px 的列宽,别改成断言窗口宽。
+  it("504:900px 窄窗下列头不折行、不裁字(常态与确认态各一格)", async () => {
+    await seedDoneTask("504-窄列");
+    await goNotebook("board");
+    await $(".col.done").$(".tcard*=504-窄列").waitForExist({ timeout: 10000 });
+    await browser.setWindowSize(900, 700);
+    await browser.pause(300);
+
+    const geom = () =>
+      browser.execute(() => {
+        const head = document.querySelector('.col[data-col="done"] .col-head');
+        const name = head.querySelector(".col-name");
+        const line = parseFloat(getComputedStyle(name).fontSize) * 1.6; // 一行的宽松上界
+        return {
+          nameWrapped: name.getBoundingClientRect().height > line,
+          nameClipped: name.scrollWidth > name.clientWidth + 1,
+          headOverflow: head.scrollWidth > head.clientWidth + 1,
+          // 窄列下「复制本列」让位、「全部归档」换短标签,但那枚钮**永不退场**
+          copyGone: !head.querySelector(".col-copy") || getComputedStyle(head.querySelector(".col-copy")).display === "none",
+          sealShown: !!head.querySelector(".seal-all-slot .act"),
+          clipped: [...head.querySelectorAll(".seal-all-slot .act, .seal-all-slot .confirm-q")].map(
+            (el) => el.scrollWidth > el.clientWidth + 1,
+          ),
+        };
+      });
+
+    const normal = await geom();
+    expect(normal).toMatchObject({ nameWrapped: false, nameClipped: false, headOverflow: false });
+    expect(normal.copyGone).toBe(true);
+    expect(normal.sealShown).toBe(true);
+    expect(normal.clipped).toEqual([false]);
+
+    // 确认态:常态那几件让位,问句 + 两枚钮独占列头,一件都不许被裁。
+    await browser.execute(() => document.querySelector('.col[data-col="done"] .seal-all-slot .act').click());
+    await browser.pause(300);
+    const confirming = await geom();
+    expect(confirming.headOverflow).toBe(false);
+    expect(confirming.clipped).toEqual([false, false, false]); // 问句 / 取消 / 归档
+    await browser.execute(() => document.body.click());
+    await browser.setWindowSize(1100, 700); // 还原驱动窗宽(support.js 的口径)
+    await browser.pause(300);
+  });
+
   after(async () => {
     // 收尾:自己的 todo 卡走软删+彻底删;归档的 A/B 留在册里(对别的 spec 不可见,
     // 每轮 e2e 全新库,不积累)。

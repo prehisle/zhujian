@@ -134,7 +134,8 @@ export function createHotkeyController(): HotkeyController {
     // Reassigned by menu() each render so the row-level cleanup always tears down
     // whatever menu is currently shown, and the keyboard (`/`) can pop the latest one.
     let closeMenu: () => void = () => {};
-    let openMenuRef: () => void = () => {};
+    // `at` = 光标位置(右键那条路);不带 = 老路,按 ⋯ 图标的 rect 定位。
+    let openMenuRef: (at?: { x: number; y: number }) => void = () => {};
 
     const api: Row = { card, actions: getActions, suspended, openMenu: () => openMenuRef() };
     rows.push(api);
@@ -152,6 +153,29 @@ export function createHotkeyController(): HotkeyController {
     card.addEventListener("mouseleave", () => {
       hovering = false;
       if (!menuOpenFlag) clearActiveIfMine();
+    });
+    // 右键 = 开同一枚 ⋯ 菜单。菜单与单键本来就读同一份 actions,右键因此不可能比 ⋯ 少
+    // 一项或多一项(单一真相源不动);它给的只是「不必先找到那枚只在悬停时才显形的图标」
+    // 这个入口。⛔ 三条让位判据一条都别省 —— 在这些地方右键本来就有更该做的事,抢过来
+    // 就是负优化:
+    //   ① 输入框 / 可编辑区:编辑态右键要粘贴(配图那条路正是粘贴);
+    //   ② 链接与图片:各自已有右键约定(item-images 的「右键复制链接」);
+    //   ③ 本卡内有非空选区:用户正想右键复制选中的那段字。
+    // 另外 suspended()(行内编辑 / 确认中)整个让位 —— 那时键盘也是让位的,同一条规矩。
+    card.addEventListener("contextmenu", (e) => {
+      const target = e.target as HTMLElement | null;
+      if (!target || target.closest("input, textarea, [contenteditable='true'], a, img")) return;
+      if (suspended()) return;
+      const sel = window.getSelection();
+      if (sel && !sel.isCollapsed && sel.rangeCount > 0 && card.contains(sel.getRangeAt(0).commonAncestorContainer))
+        return;
+      e.preventDefault();
+      // 已经开着的先收:别的卡片那枚(保持「全视图至多一枚」),或本卡那枚(⋯ 点开的 /
+      // 上一次右键的)——后者要收掉才能挪到新的光标位置,openMenu 见 menuEl 非空会直接返回。
+      if (openMenuCloser && openMenuCloser !== closeMenu) openMenuCloser();
+      if (menuEl) closeMenu();
+      setActive();
+      openMenuRef({ x: e.clientX, y: e.clientY });
     });
     function setActive(): void {
       activeRow = api;
@@ -196,7 +220,7 @@ export function createHotkeyController(): HotkeyController {
           closeMenu();
         }
       }
-      function openMenu(): void {
+      function openMenu(at?: { x: number; y: number }): void {
         clearTimeout(closeTimer);
         if (menuEl) return;
         openMenuCloser?.(); // at most one menu open across the view
@@ -241,11 +265,21 @@ export function createHotkeyController(): HotkeyController {
         const M = 6;
         const vw = window.innerWidth;
         const vh = window.innerHeight;
-        const r = iconBtn.getBoundingClientRect();
-        menuEl.style.right = `${Math.max(M, vw - r.right)}px`;
         const mh = menuEl.offsetHeight; // measured now that it is in the DOM
-        let top = r.bottom + 4;
-        if (top + mh > vh - M) top = r.top - 4 - mh; // won't fit below → flip above the icon
+        let top: number;
+        if (at) {
+          // 右键那条路:左上角贴着光标(常规右键菜单的形)。⭐ 横向也要钳 —— ⋯ 那条是
+          // 右对齐图标、天然不会出右边界,这条会(靠视口右缘右键时菜单整个跑出去)。
+          menuEl.style.right = "auto";
+          menuEl.style.left = `${Math.max(M, Math.min(at.x, vw - M - menuEl.offsetWidth))}px`;
+          top = at.y;
+        } else {
+          const r = iconBtn.getBoundingClientRect();
+          menuEl.style.left = "auto";
+          menuEl.style.right = `${Math.max(M, vw - r.right)}px`;
+          top = r.bottom + 4;
+          if (top + mh > vh - M) top = r.top - 4 - mh; // won't fit below → flip above the icon
+        }
         // Hard clamp so the WHOLE menu (every row, incl. the last) is on-screen even when the
         // icon sits low in / below the fold of a full scrolling column.
         top = Math.max(M, Math.min(top, vh - M - mh));

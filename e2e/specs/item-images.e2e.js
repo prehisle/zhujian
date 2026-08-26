@@ -1,5 +1,5 @@
 import { $, browser, expect } from "@wdio/globals";
-import { invoke, goNotebook, clearInbox, tryInvoke } from "./support.js";
+import { invoke, goNotebook, clearInbox, tryInvoke, boardAction } from "./support.js";
 
 // ㊴ 配图(item images). Two layers:
 //  1) command layer through the real IPC bridge — add/list/get/delete, asserting the 「图N」
@@ -125,5 +125,71 @@ describe("配图 · 灵感卡(缩略图 + 正文「图N」可点链接)", () => 
     const ref = await card.$(".img-ref");
     await ref.waitForExist({ timeout: 10000 });
     await expect(ref).toHaveText("图1");
+  });
+});
+
+// 504:有图卡片重画不再「先空后有」。用户报「PC 端把有图的任务卡移到其他状态时会闪烁」。
+// 根因:图条初始 `.empty`(display:none),每次重画都要等 `list_item_images` 那发 IPC 回来
+// 才显形 ⇒ 一屏有图的卡集体矮 80px 再长回来。修法=元数据层也做乐观呈现(item-images.ts
+// 的 metaCache),重画时同步先画、IPC 回来只对账。
+//
+// 观测面:MutationObserver 在**微任务检查点**跑,而 IPC 至少要一个宏任务周期 ⇒ 「图条插进
+// DOM 那一刻带不带 .empty」能干净地把两种时序分开。⛔ 别改成「等一会儿再看图在不在」——
+// 那样改回旧实现也照样绿(IPC 早回来了),这条测就成了空测。
+describe("配图 · 重画不闪(504)", () => {
+  const TITLE = "E2E-504-有图卡";
+
+  const armObserver = () =>
+    browser.execute(() => {
+      window.__504 = [];
+      const obs = new MutationObserver((recs) => {
+        for (const r of recs)
+          for (const n of r.addedNodes) {
+            if (!(n instanceof HTMLElement)) continue;
+            const strips = n.matches?.(".img-strip") ? [n] : [...(n.querySelectorAll?.(".img-strip") ?? [])];
+            for (const s of strips) window.__504.push({ empty: s.classList.contains("empty"), thumbs: s.children.length });
+          }
+      });
+      obs.observe(document.querySelector("#view"), { childList: true, subtree: true });
+      window.__504stop = () => obs.disconnect();
+    });
+  const readObserver = () =>
+    browser.execute(() => {
+      window.__504stop?.();
+      return window.__504;
+    });
+
+  before(async () => {
+    await goNotebook("board");
+    for (const t of await invoke("list_tasks")) await invoke("archive_task", { id: t.id });
+    await invoke("purge_archived_tasks", {});
+    const id = await invoke("create_task", { title: TITLE });
+    await addPng(id);
+    await addPng(id);
+  });
+
+  it("阴性对照:首次渲染(缓存空)——图条确实是先空后有", async () => {
+    // 整页重来 = 模块态连同 metaCache 一起清掉,这正是改动前每次重画的时序。
+    // ⭐ 没有这一格,下一格证明不了判据有区分力(恒绿的断言看起来和真绿一模一样)。
+    await goNotebook("board");
+    await armObserver();
+    await browser.execute(() => document.querySelector('.sidebar nav button[data-view="inbox"]').click());
+    await $(".v-inbox").waitForExist({ timeout: 5000 });
+    await browser.execute(() => document.querySelector('.sidebar nav button[data-view="board"]').click());
+    await $(".v-board").waitForExist({ timeout: 5000 });
+    await browser.pause(600);
+    const seen = await readObserver();
+    expect(seen.length).toBeGreaterThan(0);
+    expect(seen.some((s) => s.empty)).toBe(true);
+  });
+
+  it("移到另一列:图条插进 DOM 那一刻就已经带着两张图", async () => {
+    await browser.pause(400); // 让首屏那发 IPC 落定(metaCache 填上)
+    await armObserver();
+    await boardAction(TITLE, "移到「进行中」");
+    await browser.pause(600);
+    const seen = await readObserver();
+    expect(seen.length).toBeGreaterThan(0); // 真的重画了(否则这条什么也没测)
+    expect(seen.every((s) => !s.empty && s.thumbs === 2)).toBe(true);
   });
 });

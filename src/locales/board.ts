@@ -87,7 +87,12 @@ export const board = defineMessages({
   "board.renameFailed": { zh: "「{title}」的标题改动未能保存:{err}(草稿:{draft})", en: "Could not save the title change for “{title}”: {err} (draft: {draft})" },
   "board.copyBoard": { zh: "复制看板", en: "Copy board" },
   "board.sealAll": { zh: "全部归档", en: "Archive all" },
-  "board.sealAllQ": { zh: "归档全部 {n} 条?", en: "Archive all {n}?" },
+  // 窄列(列宽 ≤185px:900px 最小窗口下的四列,或列多了以后的任何窗口)用的短标签 —— 同一枚
+  // 钮,只是把「全部」让给列名。⛔ 别复用 board.seal:那是**单条**归档,两个概念各占一个键。
+  "board.sealAllShort": { zh: "归档", en: "Archive" },
+  // 短句是有意的:这句连同两枚钮要一起挤进列头那一行,窄列下每个字都在跟按钮抢宽度。
+  // 上下文已经把「全部」说清了(点的就是「全部归档」),问句只需答「归档几条」。
+  "board.sealAllQ": { zh: "归档 {n} 条?", en: "Archive {n}?" },
   "board.archiveZoneHint": { zh: "把「已完成」的任务拖到这里归档", en: "Drag a Done task here to archive it" },
   "board.trashEmpty": { zh: "回收站是空的", en: "Trash is empty" },
   "board.trashEmptyHint": { zh: "删除的任务会落到这里,可还原或彻底删除。干完的活请走「归档」——那是成就册,不是垃圾桶。", en: "Deleted tasks land here — restore them or delete them forever. Finished work belongs in Archive: a book of achievements, not a bin." },

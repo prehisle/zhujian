@@ -40,6 +40,25 @@ export function listImages(itemId: string): Promise<ImageMeta[]> {
   return invoke<ImageMeta[]>("list_item_images", { itemId });
 }
 
+// 「这条有哪几张图」的元数据缓存 —— 163② 修的是**图字节**那层(thumbCache),漏了这一层。
+// 症状:两个视图都是「数据一变就全量重画」,每张卡重建时图条初始是 `.empty`(display:none),
+// 要等 `list_item_images` 的 IPC 回来才显形 ⇒ 一屏有图的卡集体「矮 80px 再长回来」。拖卡换列
+// 时最扎眼,但凡是真重画都闪(编辑一条、打个标签、对端同步下来一条)。
+//
+// 修法与 163 那轮同一条契约:**乐观呈现** —— 缓存只用来「先画」,每次仍照发 IPC 对账。
+// ⭐ 因此它不会画错,只会画早:对端新加的图照常出现,只是晚一帧;删掉的图晚一帧消失。
+// ⛔ 别把它改成「有缓存就不发 IPC」—— 那才是把「早一帧」换成「永远不对」。
+// 缓的是**已到手的数组**、不缓 Promise(同 thumbCache 的理由:跨空间迟到响应永不决议,
+// 缓 Promise 会把挂起永久钉进 Map,163③ 教训)。
+// 内存:每条几个 {id,seq,mime},比 thumbCache 的 base64 小两个数量级,但**同样随浏览过的
+// 条目线性增长、不是有界的** —— 别读成有界。
+const metaCache = new Map<string, ImageMeta[]>();
+
+/** 两份 metas 是不是同一批图(顺序也算)。对账用:相同就一个 DOM 节点都不碰。 */
+function sameMetas(a: ImageMeta[] | null, b: ImageMeta[]): boolean {
+  return a !== null && a.length === b.length && a.every((m, i) => m.id === b[i].id && m.seq === b[i].seq);
+}
+
 // 图字节内存纪律(163② 学安卓 117):缩略图条**每张卡都渲染只读小图**、桌面又无懒加载,
 // 若像 163③ 那样按 id 缓「全尺寸 data URL」,缓存会随图库线性膨胀且永不释放——base64 是 JS
 // 强引用字符串,不受 WebView 图片缓存的压力驱逐;且每个 <img> 还常驻解码整张全尺寸位图。
@@ -940,10 +959,13 @@ export function openLightboxUrl(
  *  delete so the host can re-linkify its 正文 (a 图N whose image just left becomes plain text). */
 export function imageStrip(
   itemId: string,
-  opts: { editable: boolean; onChange?: () => void },
+  opts: { editable: boolean; onChange?: () => void; onMetas?: (metas: ImageMeta[]) => void },
 ): { root: HTMLElement; reload: () => Promise<void> } {
   // 初始即 .empty(隐藏):reload 前默认无图,免得配图工具条在 load 完成前闪一下再收起。
+  // ⭐ 但**上次见过这条的图就不必再空一帧**——下面的乐观首帧会当场把它画出来。
   const root = el("div", { className: "img-strip empty" });
+  // 当前已画的那批(乐观首帧画的,或对账后画的)。null = 还没画过任何一批。
+  let shown: ImageMeta[] | null = null;
 
   // `all` = 本条同批列出的整组图:点开任一张后 ←/→ 能在组内翻页(224)。
   function thumb(m: ImageMeta, all: ImageMeta[]): HTMLElement {
@@ -980,16 +1002,34 @@ export function imageStrip(
     return wrap;
   }
 
+  function paint(metas: ImageMeta[]): void {
+    shown = metas;
+    root.classList.toggle("empty", metas.length === 0);
+    root.replaceChildren(...metas.map((m) => thumb(m, metas)));
+  }
+
   async function reload(): Promise<void> {
     let metas: ImageMeta[];
     try {
       metas = await listImages(itemId);
     } catch {
+      shown = null;
       root.replaceChildren();
       return;
     }
-    root.classList.toggle("empty", metas.length === 0);
-    root.replaceChildren(...metas.map((m) => thumb(m, metas)));
+    metaCache.set(itemId, metas); // 唯一的写入点:取图这一步就是缓存这一步
+    // 对账:与已画的那批逐项相同就**一个节点都别碰** —— 否则乐观首帧之后立刻再
+    // replaceChildren 一次,等于把刚消掉的那次闪烁原样搬了回来(图还要重新解码)。
+    if (!sameMetas(shown, metas)) paint(metas);
+    opts.onMetas?.(metas);
+  }
+
+  // 乐观首帧:上次见过这条的图,**同步**画出来(不等 IPC)。重画时图条不再「消失再出现」,
+  // 卡片高度也不跳。紧接着的 reload() 仍会对账,画早了的那一帧由它纠正。
+  const known = metaCache.get(itemId);
+  if (known) {
+    paint(known);
+    opts.onMetas?.(known);
   }
 
   void reload();

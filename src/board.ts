@@ -43,14 +43,7 @@ import {
 } from "./board-columns";
 import { closeColumnManager, openColumnManager } from "./column-manager";
 import { type Act, SATELLITE_LAYERS, armDismiss, createHotkeyController, registerViewKeys } from "./hotkey-menu";
-import {
-  type ImageMeta,
-  REPASTE_HINT,
-  imageStrip,
-  listImages,
-  renderContent,
-  wirePasteToAttach,
-} from "./item-images";
+import { type ImageMeta, REPASTE_HINT, imageStrip, renderContent, wirePasteToAttach } from "./item-images";
 import {
   closeComments,
   commentBadge,
@@ -1133,12 +1126,11 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     function paintTitle(): void {
       titleP.replaceChildren(renderContent(item.title, imgs));
     }
-    async function loadImages(): Promise<void> {
-      try {
-        imgs = await listImages(item.id);
-      } catch {
-        imgs = [];
-      }
+    // 标题里「图N」的链接化要知道这条有哪几张图,而缩略图条本来就在取同一份 metas ——
+    // 复用它那一发(onMetas),别再自己发一次:此前一屏 N 张卡要发 **2N 次**
+    // list_item_images。乐观首帧时 onMetas 是同步回调,标题的链接从第一帧起就是对的。
+    function onMetas(metas: ImageMeta[]): void {
+      imgs = metas;
       paintTitle();
     }
 
@@ -1511,8 +1503,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
 
     // Read-only thumbnail strip — both board & trash cards show their images (editing them
     // lives in board-mode openEdit). Appended last so it sits below the meta/tags.
-    c.append(imageStrip(item.id, { editable: false }).root);
-    void loadImages(); // linkify the 标题 once the metas arrive
+    c.append(imageStrip(item.id, { editable: false, onMetas }).root);
 
     return c;
   }
@@ -1527,7 +1518,8 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       const name = columnName(col);
       const inCol = sortColumn(items.filter((t) => t.status === status), boardSort);
       const head = el("div", { className: "col-head" }, [
-        el("span", { className: "col-name", textContent: name }),
+        // title 挂全名:列窄时列名是单行截断(board.css .col-name),悬停才看得到全称。
+        el("span", { className: "col-name", textContent: name, title: name }),
         el("span", { className: "col-count", textContent: String(inCol.length) }),
       ]);
       // §4.3 的只读收容区:这一列已被(多半是对端)删掉,但本端还有卡扣在里面。列头挂一枚
@@ -1539,10 +1531,22 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       // 归档,但批量动一整列仍值得一次行内确认(swap 在列头的 slot 里,不弹窗)。
       if (status === DONE_COLUMN && inCol.length > 0) {
         const slot = el("span", { className: "seal-all-slot" });
-        slot.append(
-          btn(t("board.sealAll"), "ghost", () =>
-            confirmInline(slot, t("board.sealAllQ", { n: inCol.length }), t("board.seal"), sealAllDone)),
+        // 两份标签常驻 DOM、由 container query 二选一显形(与 header 那排 .hbtn 的
+        // 「窄窗缩成字母」同一套手法):窄列下「全部」让位给列名,钮仍在原地。
+        const sealBtn = btn("", "ghost", () => {
+          // 列头让位:常态那几件(名 / 计数 / 复制)退场,问句与两枚钮独占这一行,
+          // 否则窄列下确认钮会被裁成一个字(board.css .col-head.confirming)。
+          // ⭐ 只需在进确认时加 —— 取消 / 点别处 / 确认三条退出路径都走 load() 全量
+          // 重画,列头连同这枚 class 一起重建,不必手动摘。
+          head.classList.add("confirming");
+          confirmInline(slot, t("board.sealAllQ", { n: inCol.length }), t("board.seal"), sealAllDone);
+        });
+        sealBtn.title = t("board.sealAll"); // 窄列显短标签时,悬停仍说得出全称
+        sealBtn.append(
+          el("span", { className: "lbl-long", textContent: t("board.sealAll") }),
+          el("span", { className: "lbl-short", textContent: t("board.sealAllShort") }),
         );
+        slot.append(sealBtn);
         head.append(slot);
       }
       const body = el("div", { className: "col-body" });

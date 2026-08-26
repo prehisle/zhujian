@@ -624,3 +624,104 @@ describe("任务看板 · 乐观移位即时更新列头计数(163 可优化项�
     await expect(await cardInColumn("doing", M)).toExist();
   });
 });
+
+// 504:卡片右键 = 开同一枚 ⋯ 菜单。用户要「右键菜单」,做法是给已有的菜单加第二个开门方式
+// (菜单与单键本就共读一份 actions ⇒ 右键不可能比 ⋯ 少一项或多一项),而不是新造一个菜单。
+// ⚠ 合成 contextmenu 证明不了原生菜单真被抑制(preventDefault 拦的是自己派发的事件),
+// 那半只有真鼠标能验;这里守的是「开不开、开在哪、什么时候必须让位」。
+describe("看板 · 卡片右键开 ⋯ 菜单(504)", () => {
+  const R = "E2E-504-右键卡";
+
+  const rightClick = (sel, dx, dy) =>
+    browser.execute(
+      (s, x, y) => {
+        const el = document.querySelector(s);
+        const r = el.getBoundingClientRect();
+        el.dispatchEvent(
+          new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: r.left + x, clientY: r.top + y }),
+        );
+      },
+      sel,
+      dx,
+      dy,
+    );
+
+  before(async () => {
+    await goNotebook("board");
+    for (const t of await invoke("list_tasks")) await invoke("archive_task", { id: t.id });
+    await invoke("purge_archived_tasks", {});
+    await invoke("create_task", { title: R });
+    await goNotebook("board");
+    // ⭐ 特意把窗开高:菜单**放不下时会被硬钳回视口内**(那是设计,见 hotkey-menu.ts 的
+    // clamp),而全量套件里前面的 spec 留下的标签会把筛选行撑成两行、把卡片往下推 ⇒ 同一
+    // 段断言单跑绿、全量红(实测差 33px)。要验「贴光标」就得先保证它放得下 —— 700 高时
+    // 十项菜单(≈390px)从卡片位置展开正好越界。⛔ 别把断言放宽成「差 40px 以内」:
+    // 那样真的定位错了也照样绿。
+    await browser.setWindowSize(1100, 900);
+    await $(`.tcard*=${R}`).waitForExist({ timeout: 10000 });
+  });
+
+  after(async () => {
+    await browser.setWindowSize(1100, 700); // 还原 support.js 的驱动窗口口径
+  });
+
+  // 收干净再进下一格。⛔ 别用 `.hk-menu.remove()`:那只摘 DOM,控制器里的 `menuEl` 还指着
+  // 那个死节点 ⇒ 下次 `openMenu` 见它非空直接 return,菜单再也开不出来(第一版就这么白得
+  // 一格假红)。点 body 走的是它自己的 onDocClick → closeMenu,内部状态才真被清。
+  afterEach(async () => {
+    await browser.execute(() => document.body.click());
+    await browser.pause(200);
+  });
+
+  it("右键卡片 → 菜单弹在光标处,项就是 ⋯ 那一份", async () => {
+    await rightClick(".tcard", 30, 20);
+    await $(".hk-menu").waitForExist({ timeout: 5000 });
+    // ⚠ 量位置前必须等 hk-rise 跑完(0.14s,from{translateY(6px)}):动画中读 rect 会读到
+    // 途中的偏移,白得一个「差 3px」的假红。
+    await browser.pause(300);
+    const info = await browser.execute(() => {
+      const m = document.querySelector(".hk-menu");
+      const card = document.querySelector(".tcard").getBoundingClientRect();
+      const r = m.getBoundingClientRect();
+      return {
+        n: m.querySelectorAll(".hk-label").length,
+        dx: Math.abs(r.left - (card.left + 30)),
+        dy: Math.abs(r.top - (card.top + 20)),
+        onScreen: r.left >= 0 && r.top >= 0 && r.right <= innerWidth && r.bottom <= innerHeight,
+      };
+    });
+    expect(info.n).toBeGreaterThan(3);
+    expect(info.onScreen).toBe(true);
+    expect(info.dx).toBeLessThan(3);
+    expect(info.dy).toBeLessThan(3);
+  });
+
+  it("让位①:编辑态输入框上右键不接管(留给原生粘贴——配图那条路正是粘贴)", async () => {
+    await boardAction(R, "编辑");
+    await $(".edit-form").waitForExist({ timeout: 5000 });
+    await rightClick(".tcard .edit-input", 10, 10);
+    await browser.pause(300);
+    expect(await browser.execute(() => !!document.querySelector(".hk-menu"))).toBe(false);
+    await browser.keys(["Escape"]);
+    await browser.pause(300);
+  });
+
+  it("让位②:卡内有选区时不接管(留给原生复制)", async () => {
+    const opened = await browser.execute(() => {
+      const card = document.querySelector(".tcard");
+      const range = document.createRange();
+      range.selectNodeContents(card.querySelector(".ttitle") ?? card);
+      const sel = getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+      const r = card.getBoundingClientRect();
+      card.dispatchEvent(
+        new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: r.left + 30, clientY: r.top + 20 }),
+      );
+      const hit = !!document.querySelector(".hk-menu");
+      sel.removeAllRanges();
+      return hit;
+    });
+    expect(opened).toBe(false);
+  });
+});

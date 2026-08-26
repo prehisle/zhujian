@@ -35,14 +35,7 @@ import {
 } from "./filter-bar";
 import { type Act, SATELLITE_LAYERS, armDismiss, createHotkeyController, registerViewKeys } from "./hotkey-menu";
 import { t } from "./i18n";
-import {
-  type ImageMeta,
-  REPASTE_HINT,
-  imageStrip,
-  listImages,
-  renderContent,
-  wirePasteToAttach,
-} from "./item-images";
+import { type ImageMeta, REPASTE_HINT, imageStrip, renderContent, wirePasteToAttach } from "./item-images";
 import {
   closeComments,
   commentBadge,
@@ -565,19 +558,17 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     function paintContent(): void {
       textP.replaceChildren(renderContent(currentContent, imgs));
     }
-    async function loadImages(): Promise<void> {
-      try {
-        imgs = await listImages(item.id);
-      } catch {
-        imgs = [];
-      }
+    // 正文「图N」的链接化复用缩略图条那一发 metas(onMetas),别再自己发一次 —— 理由与
+    // 乐观首帧见 item-images.ts 的 metaCache 注释(此前一屏 N 张卡是 2N 次 list_item_images)。
+    function onMetas(metas: ImageMeta[]): void {
+      imgs = metas;
       paintContent();
     }
 
     // ---- view (default) ----
     function showView(): void {
       note.classList.remove("editing", "confirming");
-      const strip = imageStrip(item.id, { editable: false });
+      const strip = imageStrip(item.id, { editable: false, onMetas });
       const kids: Node[] = [textP, timeT, ...(tagsEl ? [tagsEl] : []), strip.root];
       // 部分成功登记(cross-space-move):目标已建、源还在——提示常驻卡面、随重渲
       // /重启存续(localStorage),「移动」入口同时被 actionsFor 藏起;处理完(手动
@@ -599,7 +590,6 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         );
       }
       body.replaceChildren(...kids);
-      void loadImages(); // linkify 「图N」 once the metas arrive (text shows immediately meanwhile)
       // Operations no longer sit in a permanent button row — they live behind the
       // ⋯ corner menu (hover it for the shortcut cheat-sheet) and on the single-key
       // shortcuts when this card is active. The menu is rebuilt each render so it
@@ -620,11 +610,10 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       // ＋图 选文件入口已删——配图统一靠粘贴(Ctrl+V)。
       const imgEditor = el("div", { className: "img-editor" });
       const imgErr = el("p", { className: "img-err", hidden: true });
-      const strip = imageStrip(item.id, { editable: true, onChange: () => void loadImages() });
+      const strip = imageStrip(item.id, { editable: true, onMetas });
       const afterAttach = () => {
         imgErr.hidden = true;
-        void strip.reload();
-        void loadImages();
+        void strip.reload(); // 取回来那一发会经 onMetas 把正文的「图N」一并重画
       };
       const onImgErr = (e: unknown) => {
         imgErr.textContent = String(e);

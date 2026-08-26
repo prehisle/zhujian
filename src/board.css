@@ -285,6 +285,11 @@
   min-height: 0;
   display: flex;
   flex-direction: column;
+  /* 列头按**这一列自己有多宽**取舍(下面的 @container),⛔ 不按窗口宽:列数是用户
+     自定义的(B 系列),同一个窗口宽下 4 列与 6 列的列宽差一半,窗口断点根本算不出
+     列宽;侧栏一折叠(172→52)每列又多 30px。inline-size 对这里安全 —— 列宽由
+     flex:1 1 0 定,本来就不受内容影响。 */
+  container-type: inline-size;
 }
 .v-board .col-head {
   flex: none;
@@ -301,6 +306,27 @@
   font-weight: 600;
   letter-spacing: 0.02em;
   color: var(--ink-soft);
+  /* 列头一行里只有它可缩(别的都 flex:none / nowrap),不钉死就是它先折行 ——
+     实拍逮到「已完成」在默认窗口尺寸下折成两行。改为单行截断 + title 挂全名;
+     自定义列名可以任意长(485 起),这条同时是那半的兜底。 */
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* 列窄到装不下常态那四件时,分两档让位(阈值都是实测的,见下)。
+   ⛔ 「全部归档」自己**永不退场**:那是这一列唯一的批量入口,退场就没路了 —— 它只换短标签。
+   ① ≤240px:「复制本列」退场。顶栏还有「复制看板」那颗兜着,与 header 在窄窗口下藏
+      .copy-slot 是同一条规矩(只是判据从窗口宽换成列宽)。带它时列头要 235px。
+   ② ≤185px:「全部归档」换成短标签「归档」(-25px)。不换的话列名会被挤成「已…」——
+      900px 最小窗口下四列各 158px,实拍量到的就是这一格。 */
+@container (max-width: 240px) {
+  .v-board .col-copy { display: none; }
+}
+.v-board .seal-all-slot .lbl-short { display: none; }
+@container (max-width: 185px) {
+  .v-board .seal-all-slot .lbl-long { display: none; }
+  .v-board .seal-all-slot .lbl-short { display: inline; }
 }
 .v-board .col[data-col="doing"] .col-name { color: var(--seal); }
 /* §4.3 只读收容区:这一列已被删掉、本端还有卡扣在里面。整列压暗 + 列头一枚「已删除」标,
@@ -417,6 +443,19 @@
 }
 .v-board .seal-all-slot .act { padding: 2px 10px; font-size: var(--fs-12); white-space: nowrap; }
 .v-board .seal-all-slot .confirm-q { font-size: var(--fs-12); white-space: nowrap; }
+/* 确认态:列头常态那一行(名 + 计数 + 复制 + 全部归档)本来就贴着列宽,再塞一句问句
+   加两枚钮必然压爆 —— 实拍逮到确认钮被裁成一个「归」字。进确认态就让常态那几件整个
+   退场,问句与两枚钮独占列头;真还不够宽就换行(临时多一行,总比裁字强)。
+   ⚠ 退场用 display:none 而不是 visibility —— 后者仍占着那 130px 宽度,等于没让。 */
+.v-board .col-head.confirming { flex-wrap: wrap; }
+.v-board .col-head.confirming > :not(.seal-all-slot) { display: none; }
+.v-board .col-head.confirming .seal-all-slot { flex: 1 1 100%; flex-wrap: wrap; }
+/* 窄到一行放不下这三件(问句 65 + 取消 47 + 归档 47 + 两道 gap + 内边距 ≈ 179px)时,
+   让**问句**独占一行,两枚钮就并排落在第二行。⛔ 别让它自由换行:那会把「取消」留在
+   问句尾巴上、把「归档」孤零零挤到第二行(实拍长这样),两枚钮该待在一起。 */
+@container (max-width: 185px) {
+  .v-board .col-head.confirming .seal-all-slot .confirm-q { flex: 1 1 100%; }
+}
 .v-board .trash-bar {
   max-width: 560px;
   margin: 0 auto 14px;
