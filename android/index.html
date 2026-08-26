@@ -245,10 +245,14 @@
         border-radius: var(--radius-lg) var(--radius-lg) 0 0;
         padding: 12px 14px calc(12px + env(safe-area-inset-bottom));
         box-shadow: 0 -8px 28px rgba(0, 0, 0, 0.18);
-        transform: translateY(110%); /* 收起态:滑到屏下;开态由 JS 设 inline transform 覆盖 */
+        transform: translateY(110%); /* 收起态:滑到屏下;开态一般由 JS 设 inline transform 覆盖 */
         transition: transform 0.22s ease;
         will-change: transform;
       }
+      /* 开态兜底位置。平时够不着(JS 的 inline transform 恒覆盖它),**只有判定这台设备
+         不弹软键盘时** kbsheet 才把 transform 交回 CSS —— 层于是靠这条从屏下滑上来。
+         ⛔ 别把它当成「开态就该在这儿」:有键盘的设备上层要贴键盘上沿,那是 JS 的活。 */
+      .compose.open { transform: translateY(0); }
       /* 捕获层遮罩:压住时间轴/底栏,点它=收层。 */
       #capture-scrim {
         position: fixed; inset: 0; z-index: 13;
@@ -354,10 +358,12 @@
         border-top: 1px solid var(--line);
         border-radius: var(--radius-lg) var(--radius-lg) 0 0;
         box-shadow: 0 -8px 28px rgba(0, 0, 0, 0.18);
-        transform: translateY(110%); /* 收起态:滑到屏下;开态由 JS 设 inline transform 覆盖 */
+        transform: translateY(110%); /* 收起态:滑到屏下;开态一般由 JS 设 inline transform 覆盖 */
         transition: transform 0.22s ease;
         will-change: transform;
       }
+      /* 同 .compose.open:只有判定这台设备不弹软键盘时才够得着(见 kbsheet.ts kbNeverShows)。 */
+      .cmsheet.open { transform: translateY(0); }
       #comments-scrim { position: fixed; inset: 0; z-index: 13; background: rgba(0, 0, 0, 0.35); }
       /* 悬浮 ＋ 在遮罩之下,留着只是个灰疙瘩:留言层开着就让位(同 body.pane-open)。 */
       body.cm-open #capture-fab { display: none !important; }

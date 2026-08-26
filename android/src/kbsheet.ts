@@ -45,6 +45,38 @@ export type KbSheetOpts = {
 /** 限高层的下限:再挤也留这么高,免得键盘高的机器上层被压成一条缝。 */
 const MIN_SHEET_H = 240;
 
+/** 「键盘算不算起来了」的阈值:innerH − vvH 超过它才当键盘在。 */
+const KB_MIN_H = 80;
+
+// ---- 这台设备到底会不会弹软键盘(模块级 —— 是设备属性,不是某一层的属性)---------
+//
+// 模拟器 / 接了物理键盘的平板上软键盘**永不出现**,而 `raise()` 的抢先抬是**为键盘让位**:
+// 抬上去没有对象,只能干等 600ms 兜底把层落回来 —— 屏上就是「层跳到半空停一下再回底部」。
+// (用户 2026-08-26 在 MuMu 上报的正是这个;真机 vivo 上键盘 151ms 就起来,看不出来。)
+//
+// ⚠ 判据刻意**保守**:默认照旧抢先抬,只有连着 ABSENT_LIMIT 次开层都没见到键盘才停。
+// 两边的代价不对称 —— 错判「没有键盘」会让 232/240 那个「弹键盘背景乱滚」的老患回来一次,
+// 而多抬一次只是难看一下。见到键盘立即清零(平板拔掉物理键盘即自愈)。
+// 纯设备本地、**不进同步**(与语言 / 明暗 / 字号同一条规矩:这是这块屏幕的属性)。
+const KB_ABSENT_KEY = "zhujian.kb-absent";
+const ABSENT_LIMIT = 2;
+let kbAbsent = Number(localStorage.getItem(KB_ABSENT_KEY) ?? "0") || 0;
+
+/** 判定这台设备不会弹软键盘 ⇒ 抢先抬无意义。 */
+function kbNeverShows(): boolean {
+  return kbAbsent >= ABSENT_LIMIT;
+}
+function noteKbAbsent(): void {
+  if (kbAbsent >= ABSENT_LIMIT) return;
+  kbAbsent += 1;
+  localStorage.setItem(KB_ABSENT_KEY, String(kbAbsent));
+}
+function noteKbPresent(): void {
+  if (kbAbsent === 0) return;
+  kbAbsent = 0;
+  localStorage.setItem(KB_ABSENT_KEY, "0");
+}
+
 export function createKbSheet(o: KbSheetOpts): KbSheet {
   const { sheet, scrim, input } = o;
   const vv = window.visualViewport;
@@ -69,11 +101,26 @@ export function createKbSheet(o: KbSheetOpts): KbSheet {
     void sheet.offsetHeight; // 强制回流,让这次「无过场」定位即时落地
     sheet.style.transition = "";
   }
+  /** 键盘此刻在不在(单一判据,place 与 raise 的兜底共用)。 */
+  function kbIsUp(): boolean {
+    return !!vv && window.innerHeight - vv.height > KB_MIN_H;
+  }
+
   /** 几何单一落点:限高层顺带按同一份「可见区高」定 max-height——抢先抬期间键盘还没起、
    *  vv 还是满屏高,不一起夹的话层顶会被顶出屏外(高层特有,捕获层那种小层碰不到)。 */
   function apply(y: number, visible: number): void {
     if (o.reserveTop !== undefined) {
       sheet.style.maxHeight = `${Math.max(MIN_SHEET_H, visible - o.reserveTop)}px`;
+    }
+    // 没有软键盘的设备、且层就该待在屏底:把 transform **交回 CSS**,层于是走
+    // `.open` 那条 0.22s 过场从屏下滑上来(用户要的那个观感)。
+    // ⛔ 这一路**只在没有键盘时才安全** —— 有键盘时任何过场都会让输入框在 focus 那刻
+    // 还留在键盘区一瞬,浏览器就去滚文档露它,那正是 240 反复栽的「背景乱滚」。
+    // ⚠ 容差不是洁癖:vv.height 带小数(MuMu 实测 1138.22),`y === 0` 恒不成立。
+    if (Math.abs(y) < 1 && kbNeverShows()) {
+      sheet.style.transition = "";
+      sheet.style.transform = "";
+      return;
     }
     setTransform(y);
   }
@@ -81,8 +128,11 @@ export function createKbSheet(o: KbSheetOpts): KbSheet {
   function place(): void {
     if (!opened) return;
     const kbH = vv ? window.innerHeight - vv.height : 0;
-    const kbUp = kbH > 80;
-    if (kbUp) lastKbH = kbH;
+    const kbUp = kbH > KB_MIN_H;
+    if (kbUp) {
+      lastKbH = kbH;
+      noteKbPresent(); // 这台真会弹键盘:把「没有键盘」的计数清掉
+    }
     // 键盘由起转落(用户按了收起键、且已过抢先抬窗口)→ 主动 blur:层「停屏底待着」不变,
     // 但下次点输入框能重新触发 focus 事件——据此再抢先抬,躲开二次露出滚动(点已聚焦的
     // 输入框不发 focus)。
@@ -105,10 +155,25 @@ export function createKbSheet(o: KbSheetOpts): KbSheet {
   // 键盘真起了按实测贴上沿、没起就落回屏底,故绝不会卡在半空。
   function raise(): void {
     if (!opened) return;
+    // 判定这台设备不弹软键盘:抢先抬没有对象,抬了只会跳到半空再落回来。直接按当前可见区
+    // 贴(= 屏底),由 apply 交回 CSS 走滑入过场。键盘哪天真起了,vv 的 resize 会接管。
+    if (kbNeverShows()) {
+      place();
+      return;
+    }
+    // 同一轮开层里本函数会被调**两次**(open() 一次、随后 input.focus() 又一次):保护窗口
+    // 还没过就说明是同一轮,直接走人。抬升本身是幂等的,但**记账不是** —— 不去重的话一次
+    // 开层会把「没见到键盘」记成两笔,ABSENT_LIMIT 当场被腰斩(2026-08-27 真机实测逮到)。
+    if (Date.now() < raiseUntil) return;
     raiseUntil = Date.now() + 550;
     suppressScrimUntil = Date.now() + 450;
     apply(-lastKbH, window.innerHeight - lastKbH);
-    window.setTimeout(place, 600);
+    window.setTimeout(() => {
+      // 兜底重贴;顺带记一笔「抬上去 600ms 键盘还没露面」,连着几次就判这台没有软键盘。
+      // ⚠ 只在层**还开着**时记:用户开层随手又关掉,不能算作「这台没有键盘」的证据。
+      if (opened && !kbIsUp()) noteKbAbsent();
+      place();
+    }, 600);
   }
 
   function open(): void {
