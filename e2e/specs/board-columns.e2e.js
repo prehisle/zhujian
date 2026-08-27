@@ -128,8 +128,17 @@ describe("看板列管理 · 新建 / 改名 / 排序 / 删", () => {
     await browser.waitUntil(async () => (await colById(target.id)).title === "这一周", { timeout: 8000 });
 
     await closeManager();
+    // ⛔ **这一句别退回 `.getText()`**(396 那条纪律的第二种形,505 从 CI 上逮到):
+    // 504 给 `.col-name` 加了 `overflow:hidden + text-overflow:ellipsis`,此后 WebKitGTK 的
+    // WebDriver 对它 `getText()` 再也读不出这几个字,`waitUntil` 只能等到超时 —— 而**产品是好的**:
+    // 同一棵树、同一次 CI 里,上一格对**同一个元素**用 `shownText` 断言列名**是绿的**。
+    // ⇒ 判据换成 `textContent`(与 `shownText` 同一条读法),下面那句 `shownText` 照旧兼管可见性。
     await browser.waitUntil(
-      async () => (await $(`.col[data-col="${target.id}"] .col-name`).getText()) === "这一周",
+      async () =>
+        (await browser.execute(
+          (id) => document.querySelector(`.col[data-col="${id}"] .col-name`)?.textContent.trim() ?? null,
+          target.id,
+        )) === "这一周",
       { timeout: 8000, timeoutMsg: "看板列头没跟着改名重画" },
     );
     await expect(await shownText($(`.col[data-col="${target.id}"] .col-name`))).toBe("这一周");

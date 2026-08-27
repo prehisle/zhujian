@@ -116,7 +116,9 @@ describe("自动备份(笔①-b):开关真落盘 + 失败提示条与去抖", ()
     await goNotebook("inbox");
     await emitAuto("refused:测试原因 A", "自动备份没跑成:测试原因 A");
     const banner = await $(SEL);
-    await banner.waitForExist({ timeout: 5000 });
+    // ⚠ **等的是「显出来了」不是「存在」**:下一句 shownText 里那道 isDisplayed 闸要的是可见,
+    // 而提示条有入场过渡 —— waitForExist 满足得更早,中间那一段就是纯运气。
+    await banner.waitForDisplayed({ timeout: 5000 });
     expect(await shownText($(`${SEL} .update-notes`))).toContain("测试原因 A");
 
     // ②用户关掉
@@ -133,7 +135,11 @@ describe("自动备份(笔①-b):开关真落盘 + 失败提示条与去抖", ()
 
     // ④换一个原因 —— 照旧弹(证明不是监听器死了)
     await emitAuto("refused:测试原因 B", "自动备份没跑成:测试原因 B");
-    await $(SEL).waitForExist({ timeout: 5000 });
+    // ⭐ **这一处是 505 从 CI 上逮到的那格**(Linux/WebKitGTK 红在 shownText 的「元素存在但不可见」):
+    // ④ 比 ① 更险 —— 提示条刚在 ② 被收掉、这里是**重建**的一张,入场过渡还没跑完就被断言了。
+    // ⚠ **诚实边界:Windows 这一端两种写法都绿,分不出差别** ⇒ 这一改能不能真销掉那格红,
+    // 判官只有公开仓那趟 Linux e2e。
+    await $(SEL).waitForDisplayed({ timeout: 5000 });
     expect(await shownText($(`${SEL} .update-notes`))).toContain("测试原因 B");
     await clickInBanner("知道了");
   });
