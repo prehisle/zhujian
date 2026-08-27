@@ -212,6 +212,41 @@ describe("任务看板 · 多标签筛选(OR/并集)", () => {
     expect(await pillActive(idB)).toBe(true);
   });
 
+  // 49:多选此前是个「隐藏能力」(平点=替换、Ctrl 点才多选,可发现性只有一句 hover title)。
+  // 行尾说明位两态各钉一格,外加两格**不该出现**的——只筛「无标签」时教那个手势会是假话
+  // (none 与具体标签互斥、不参与 Ctrl 多选),不筛时它不该常驻。
+  it("行尾说明位:1 枚教 Ctrl 多选 / 2 枚说清是并集 / 「无标签」与不筛时不出现", async () => {
+    // 在页内一次取完:pill 行每次筛选都整条重建,拿住的元素句柄会游离。
+    const hintText = () =>
+      browser.execute(() => document.querySelector("#topic-filter .tf-hint")?.textContent.trim() ?? null);
+
+    await clickPill(idA); // 单击 = 只筛甲
+    await browser.waitUntil(async () => (await hintText()) === "按住 Ctrl 点另一枚可多选", {
+      timeout: 8000,
+      timeoutMsg: "选 1 枚具体标签时,行尾说明位没在教 Ctrl 多选那个手势",
+    });
+    // ⚠ 别退回 toHaveText,见 support.js:这句连「确实显示」一起断。
+    expect(await shownText($("#topic-filter .tf-hint"))).toBe("按住 Ctrl 点另一枚可多选");
+
+    await ctrlPill(idB); // Ctrl+单击 = 把乙加进选集
+    await browser.waitUntil(async () => (await hintText()) === "2 个标签 · 挂任一个都算", {
+      timeout: 8000,
+      timeoutMsg: "选 2 枚时,行尾说明位没说清这是并集",
+    });
+
+    await boardPickTopicPill("无标签");
+    await browser.waitUntil(async () => (await hintText()) === null, {
+      timeout: 8000,
+      timeoutMsg: "只筛「无标签」时不该有说明位(它不参与 Ctrl 多选)",
+    });
+
+    await boardPickTopicPill("所有"); // 复位;不筛时同样不该在
+    await browser.waitUntil(async () => (await hintText()) === null, {
+      timeout: 8000,
+      timeoutMsg: "不筛时说明位不该常驻",
+    });
+  });
+
   it("无标签与具体标签互斥:选甲后点无标签 → 只剩无标签的", async () => {
     await clickPill(idA);
     await browser.waitUntil(async () => (await exists(ONLY_A)) && !(await exists(NONE)), {

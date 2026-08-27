@@ -25,6 +25,13 @@
   align-items: center;
   gap: 8px;
 }
+/* 标签 pill 行尾那枚说明位(49):选 1 枚具体标签 = 教「按住 Ctrl 点另一枚可多选」,
+   选 ≥2 枚 = 说清这是并集。同轴名小标的皮肤(弱一档、不可点),不筛时压根不发。 */
+.tf-hint {
+  font-size: var(--fs-12);
+  letter-spacing: 0.04em;
+  color: var(--ink-faint);
+}
 /* 轴名小标(「类型」):与 pills 同排,弱化以示这是分组标签而非可点项。 */
 .tf-axis {
   font-size: var(--fs-12);

@@ -11,6 +11,10 @@ export const filter = defineMessages({
   "filter.kindAxis": { zh: "类型", en: "Kind" },
   "filter.allKinds": { zh: "全部类型", en: "All kinds" },
   "filter.pillTitle": { zh: "单击只筛此标签 · 按住 Ctrl 多选", en: "Click to filter by this tag only · Ctrl-click to multi-select" },
+  // 49:pill 行尾那枚说明位的两态(桌面独有——安卓点按即切换,天然多选、无此手势)。
+  // ⚠ 只写 Ctrl 不写 ⌘,与上面 pillTitle 同口径(mac 桌面未正式对外发)。
+  "filter.multiHint": { zh: "按住 Ctrl 点另一枚可多选", en: "Ctrl-click another tag to add it" },
+  "filter.unionHint": { zh: "{n} 个标签 · 挂任一个都算", en: "{n} tags · any one counts" },
   "filter.collapseKids": { zh: "收起子标签", en: "Hide child tags" },
   "filter.expandKids": { zh: "展开 {n} 个子标签", en: "Show {n} child {n|tag|tags}" },
   // 时间轴(461):按创建时间三档互斥分区 + 「所有」重置(复用 filter.all)。仅桌面接线,

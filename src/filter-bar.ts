@@ -264,6 +264,20 @@ export function renderFilterPills(
       }
     }
   }
+
+  // ⭐ 49:多选一直是个**隐藏能力** —— 桌面平点 = 只筛这一个、Ctrl/⌘ 点才是多选,而可
+  // 发现性此前只有一句 hover title(用户据此以为「筛选不支持多标签」)。⇒ 筛着具体标签
+  // 时在 pill 行尾挂一枚说明位,两态一个位置答完两件事:选 1 枚 = 教那个手势;选 ≥2 枚 =
+  // 说清这是并集(挂其中任一个的条目都在,不是「同时挂全部」)。
+  // ⛔ 不筛时整枚不发(只读面不常驻新元素);⛔ 只选「无标签」时也不发——它与具体标签
+  // 互斥、不参与 Ctrl 多选(见上面 onclick),对它说「点另一枚可多选」是句假话。
+  const picked = f.topics.filter((tok) => tok !== "none").length;
+  if (picked > 0) {
+    const hint = document.createElement("span");
+    hint.className = "tf-hint";
+    hint.textContent = picked === 1 ? t("filter.multiHint") : t("filter.unionHint", { n: picked });
+    pills.push(hint);
+  }
   bar.replaceChildren(...pills);
 }
 
