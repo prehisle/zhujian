@@ -80,10 +80,9 @@ describe("任务看板 · 归档(成就册,可查不可删)", () => {
     // 冻结:归档中的成就连改名都不行。
     expect((await tryInvoke("rename_task", { id: row.id, title: "篡改" })).ok).toBe(false);
 
-    // 取消归档(卡上唯一按钮)→ 回看板「已完成」列。
-    const btn = await card.$("button*=取消归档");
-    await btn.waitForClickable({ timeout: 5000 });
-    await btn.click();
+    // 取消归档 → 回看板「已完成」列。508 起它住 ⋯ 菜单(卡上不再有常驻按钮),
+    // 走与看板卡同一条驱动路径。
+    await boardAction(A, "取消归档");
     await browser.waitUntil(async () => (await statusOf(A)) === "done" && !(await sealedRow(A)), {
       timeout: 8000,
     });
@@ -177,6 +176,44 @@ describe("任务看板 · 归档(成就册,可查不可删)", () => {
     await browser.execute(() => document.body.click());
     await browser.setWindowSize(1100, 700); // 还原驱动窗宽(support.js 的口径)
     await browser.pause(300);
+  });
+
+  // 508:归档册是**只读视图** —— 唯一的离场动作不常驻(design-rules 那条新铁律)。
+  // 三格,每格都带阴性对照的意味:
+  //   ①卡上除了那枚 ⋯ 一个按钮都没有(⛔ 判据不是「看不见」——`.hk-btn` 是 `opacity:0`
+  //     而非 `display:none`,`isDisplayed()` 照样为真,量的必须是**存在的 button 有几个**);
+  //   ②菜单里**只有**「取消归档」一项 —— 归档是史实,连删除入口都不该在(把设计铁律
+  //     从注释变成断言;此前只有命令层 fail-fast 的字据,UI 那半没人守);
+  //   ③右键开出**同一枚**菜单(505 那扇门在这一视图同样在,且读的是同一份 actions)。
+  // ⚠ 本例跑在「全部归档」那一测之后 —— A 那时又入了册,故这里拿得到它。
+  it("508:归档卡无常驻按钮;⋯ 菜单只有「取消归档」;右键同门", async () => {
+    await goNotebook("board");
+    await openSealed();
+    await $(".trash-list").$(`.tcard*=${A}`).waitForExist({ timeout: 8000 });
+
+    const probe = (title) =>
+      browser.execute((t) => {
+        const card = [...document.querySelectorAll(".trash-list .tcard")].find((n) => n.textContent.includes(t));
+        if (!card) throw new Error("sealed card not found: " + t);
+        const buttons = [...card.querySelectorAll("button")].map((b) =>
+          b.classList.contains("hk-btn") ? "⋯" : b.textContent,
+        );
+        const labels = () => [...document.querySelectorAll(".hk-menu .hk-label")].map((s) => s.textContent);
+        card.querySelector(".hk-btn").click(); // ⋯ 那条路
+        const viaIcon = labels();
+        document.body.click();
+        const afterClose = labels(); // 关得掉才算数(否则下一格读的是残留)
+        card.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 40, clientY: 40 }));
+        const viaRightClick = labels();
+        document.body.click();
+        return { buttons, viaIcon, afterClose, viaRightClick };
+      }, title);
+
+    const r = await probe(A);
+    expect(r.buttons).toEqual(["⋯"]); // ①常驻按钮一个都没有
+    expect(r.viaIcon).toEqual(["取消归档"]); // ②唯一的离场动作,无删除入口
+    expect(r.afterClose).toEqual([]);
+    expect(r.viaRightClick).toEqual(r.viaIcon); // ③右键 = 同一枚菜单
   });
 
   after(async () => {

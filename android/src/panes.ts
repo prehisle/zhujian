@@ -157,6 +157,11 @@ function onTrashClick(e: Event) {
 
 let sealedSeq = 0;
 let sealedBusy = false;
+let sealedRows: import("./api").TaskItem[] = [];
+/** 展开着操作面板的那张卡(同一时刻至多一张,与时间轴卡片同一个手势);null = 一张都没开。
+ *  归档册是只读视图,**静默才是常态** —— 508 起那枚「取消入册」不再常驻(design-rules
+ *  「只读视图只留离场动作、且不常驻」),点卡片才出、再点收起。 */
+let sealedOpenId: string | null = null;
 
 export async function loadSealed(): Promise<void> {
   const space = getCurrentSpace();
@@ -166,34 +171,62 @@ export async function loadSealed(): Promise<void> {
   try {
     const rows = await listSealedTasks(space);
     if (space !== getCurrentSpace() || seq !== sealedSeq) return;
-    box.innerHTML = rows.length
-      ? rows
-          .map(
-            (r) => `<article class="card" data-sealed="${esc(r.id)}"><div class="body">
-              <p class="content">${esc(r.title)}</p>
-              <footer><time>${
-                r.done_at
-                  ? t("panes.doneAt", { when: esc(fmtWhen(r.done_at)) })
-                  : t("panes.sealedAt", { when: esc(fmtWhen(r.sealed_at!)) })
-              }</time></footer>
-              <div class="panel"><div class="acts">
-                <button data-unseal="${esc(r.id)}"${sealedBusy ? " disabled" : ""}>${t("panes.unseal")}</button>
-              </div></div>
-            </div></article>`,
-          )
-          .join("")
-      : `<p class="muted empty">${t("panes.sealedEmpty")}</p>`;
+    sealedRows = rows;
+    // 重载后那张卡可能已经不在(自己刚取消入册 / 对端动过):展开态跟着作废。
+    // ⛔ 别留着 —— 那个 id 若还挂着,下一次渲染会把面板开在一张**别的**卡上是不可能的
+    // (按 id 匹配),但它会让「其实没有卡开着」的状态无声地存活到下一轮。
+    if (sealedOpenId !== null && !rows.some((r) => r.id === sealedOpenId)) sealedOpenId = null;
+    renderSealed();
   } catch (err) {
     if (space !== getCurrentSpace() || seq !== sealedSeq) return;
+    sealedRows = [];
+    sealedOpenId = null;
     box.innerHTML = `<p class="empty warn-ink">${t("panes.sealedLoadFailed", { error: esc(String(err)) })}</p>`;
   }
 }
 
+function renderSealed() {
+  const box = $("sealed-list");
+  if (!sealedRows.length) {
+    box.innerHTML = `<p class="muted empty">${t("panes.sealedEmpty")}</p>`;
+    return;
+  }
+  box.innerHTML = sealedRows
+    .map((r) => {
+      const panel =
+        r.id === sealedOpenId
+          ? `<div class="panel"><div class="acts">
+              <button data-unseal="${esc(r.id)}"${sealedBusy ? " disabled" : ""}>${t("panes.unseal")}</button>
+            </div></div>`
+          : "";
+      return `<article class="card" data-sealed="${esc(r.id)}"><div class="body">
+        <p class="content">${esc(r.title)}</p>
+        <footer><time>${
+          r.done_at
+            ? t("panes.doneAt", { when: esc(fmtWhen(r.done_at)) })
+            : t("panes.sealedAt", { when: esc(fmtWhen(r.sealed_at!)) })
+        }</time></footer>${panel}
+      </div></article>`;
+    })
+    .join("");
+}
+
 function onSealedClick(e: Event) {
-  const id = (e.target as HTMLElement).closest<HTMLElement>("[data-unseal]")?.dataset.unseal;
-  if (!id || sealedBusy) return;
+  const el = e.target as HTMLElement;
+  const id = el.closest<HTMLElement>("[data-unseal]")?.dataset.unseal;
+  if (!id) {
+    // 点卡片本身 = 开合它的操作面板(至多一张开着,同时间轴那套)。写在途时整面禁点,
+    // 与那枚按钮的 disabled 同一条闸。
+    const card = el.closest<HTMLElement>("[data-sealed]");
+    if (!card || sealedBusy) return;
+    sealedOpenId = sealedOpenId === card.dataset.sealed ? null : card.dataset.sealed!;
+    renderSealed();
+    return;
+  }
+  if (sealedBusy) return;
   const space = getCurrentSpace();
   sealedBusy = true;
+  renderSealed(); // 立即画出禁用态(同 trashRun 的形):连点不许并发提交同一条
   void (async () => {
     try {
       await unsealTask(space, id);
@@ -276,6 +309,8 @@ export function resetPanesForSpaceChange() {
   sealedSeq++;
   searchSeq++;
   trashRows = [];
+  sealedRows = [];
+  sealedOpenId = null;
   clearConfirm();
   $("trash-list").innerHTML = "";
   $("sealed-list").innerHTML = "";

@@ -803,13 +803,8 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     return acts;
   }
 
-  // 归档卡片的唯一操作:取消归档(可逆、无确认,同回收站「还原」)。刻意没有删除入口——
-  // 归档是史实(不可删);想删先取消归档回看板,再走正常两段式删除。
-  function sealedActions(item: TaskItem): HTMLElement {
-    const acts = el("div", { className: "acts" });
-    acts.append(btn(t("board.unseal"), "ghost", () => unseal(item.id)));
-    return acts;
-  }
+  // 归档卡片的唯一操作「取消归档」不再是常驻按钮 —— 508 起搬进 ⋯ / 右键 / 单键 A
+  // (见 card() 的 sealed 分支)。刻意仍没有删除入口:归档是史实(不可删)。
 
   // Two-step confirm — no modal, swap the pills in place (matches inbox.ts).
   // 移动到其他空间(cross-space-move v1):picker 进卡片的 .acts 行内宿主(与删除
@@ -1137,7 +1132,16 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     if (mode === "trash") {
       c.append(trashActions(item));
     } else if (mode === "sealed") {
-      c.append(sealedActions(item));
+      // 归档册是**只读视图**:唯一的离场动作「取消归档」不常驻(design-rules「只读视图的
+      // 动作只留离场动作、且不常驻」),走与灵感 / 看板同一套 hotkey-menu —— 悬停 ⋯ /
+      // 右键 / 单键。⛔ 刻意只有这一条:归档是史实,没有删除入口(想删先取消归档回看板,
+      // 再走正常两段式)。键位 A 与看板卡的「归档」同键,是同一根轴上的一进一出;
+      // 视图键 G(切归档视图)本就与卡片单键错开。
+      // ⚠ 无编辑态 / 无行内确认 ⇒ suspended 用默认的恒 false(没有第二个键盘域要让位)。
+      const handle = hk.register(c, () => [
+        { label: t("board.unseal"), key: "A", run: () => unseal(item.id) },
+      ]);
+      c.append(handle.menu());
     } else {
       // 完成时刻(0030):已完成卡显示「完成于 <日>」。done_at 可能为 null(本功能上线前
       // 完成的老卡)——那就不显示。dayLabel 与归档册同口径(今天/昨天/M月D日)。
