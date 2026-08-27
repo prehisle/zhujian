@@ -81,7 +81,9 @@
   font-weight: 600;
 }
 
-/* priority: high = 朱砂, medium = ink, low = faint */
+/* priority: high = 朱砂, medium = ink, low = faint
+   ⚠ 506 起屏上是 P 记号,类名与它反向:.p3 = **P0(最高)** / .p2 = P1 / .p1 = P2。
+   类名钉的是库里的 1/2/3(命名铁律:标识符不动),⛔ 别照 `.p1` 猜成「最高」。 */
 .task-meta .chip.pri.set { border-color: var(--line-strong); }
 .task-meta .chip.pri.set.p3 { color: var(--seal); border-color: var(--seal-line); background: var(--seal-tint); font-weight: 600; }
 .task-meta .chip.pri.set.p2 { color: var(--ink); }

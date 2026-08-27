@@ -391,6 +391,7 @@
 } /* 其余声明 = 共享件徽记 chip 族(controls.css,352) */
 .v-topics .dtask-due.overdue { color: var(--seal); border-color: var(--seal-line); background: var(--seal-tint); }
 .v-topics .dtask-due.today { color: var(--ink); border-color: var(--ink-faint); }
+/* .p3 = 库里的 priority=3 = 屏上的 **P0(最高)**,只有它上朱砂(同 tasktime.css) */
 .v-topics .dtask-pri.p3 { color: var(--seal); border-color: var(--seal-line); background: var(--seal-tint); }
 .v-topics .dtask-copy {
   position: absolute;

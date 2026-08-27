@@ -55,8 +55,9 @@ describe("任务时间维度 · 看板设置截止/优先级", () => {
     expect(hasAccent).toBe(true);
   });
 
-  it("⋯ 菜单优先级 → 选「高」→ 落库 priority=3", async () => {
-    // ㊺: open the priority picker from the ⋯ menu's 优先级, then pick 高 (.choice.p3).
+  it("⋯ 菜单优先级 → 选「P0」→ 落库 priority=3", async () => {
+    // ㊺: open the priority picker from the ⋯ menu's 优先级, then pick P0 (.choice.p3;
+    // 506 起最高档屏上读作 P0,库里仍是 3 —— 选择器与断言走类名,不受改名影响)。
     await boardAction(T, "优先级");
     await $(`.tcard*=${T}`).$(".choice.p3").waitForExist({ timeout: 5000 });
     await browser.execute((title) => {

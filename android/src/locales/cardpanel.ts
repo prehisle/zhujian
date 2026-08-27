@@ -4,9 +4,10 @@ import { defineMessages } from "./entry";
 
 export const cardpanel = defineMessages({
   "cardpanel.prioNone": { zh: "无", en: "None" },
-  "cardpanel.prioLow": { zh: "低", en: "Low" },
-  "cardpanel.prioMid": { zh: "中", en: "Medium" },
-  "cardpanel.prioHigh": { zh: "高", en: "High" },
+  // 506:三档改用 P 记号(高→P0 / 中→P1 / 低→P2),同桌面 tasktime.pri*。⛔ 库里仍是 1/2/3。
+  "cardpanel.prioLow": { zh: "P2", en: "P2" },
+  "cardpanel.prioMid": { zh: "P1", en: "P1" },
+  "cardpanel.prioHigh": { zh: "P0", en: "P0" },
   "cardpanel.draftDropped": { zh: "未保存的编辑已丢弃", en: "Unsaved changes were discarded" },
   "cardpanel.moveAck": { zh: "我已处理", en: "Handled" },
   "cardpanel.actEdit": { zh: "编辑", en: "Edit" },

@@ -4,13 +4,15 @@
 import { defineMessages } from "./entry";
 
 export const main = defineMessages({
-  "main.prioLow": { zh: "低", en: "low" },
-  "main.prioMid": { zh: "中", en: "medium" },
-  "main.prioHigh": { zh: "高", en: "high" },
+  // 506:三档改用 P 记号(高→P0 / 中→P1 / 低→P2),同桌面 tasktime.pri*。⛔ 库里仍是 1/2/3。
+  "main.prioLow": { zh: "P2", en: "P2" },
+  "main.prioMid": { zh: "P1", en: "P1" },
+  "main.prioHigh": { zh: "P0", en: "P0" },
   "main.viewImage": { zh: "查看图{n}", en: "View image {n}" },
   "main.deleteImage": { zh: "删除图{n}", en: "Delete image {n}" },
   "main.dueChip": { zh: "截止 {day}", en: "Due {day}" },
-  "main.priorityChip": { zh: "{p}优先", en: "{p} priority" },
+  // 506:改名后「P0优先」不成话 ⇒ 角标换成与桌面 tasktime.priorityChip 逐字同形。
+  "main.priorityChip": { zh: "优先级·{p}", en: "Priority · {p}" },
   "main.doneAt": { zh: "完成于 {when}", en: "Done {when}" },
   "main.completed": { zh: "已完成", en: "Completed" },
   "main.deleteImageQ": { zh: "删除图{n}?删了不可恢复", en: "Delete image {n}? It cannot be recovered" },

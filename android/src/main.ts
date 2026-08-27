@@ -227,6 +227,7 @@ const taskSections = (): { stage: string; label: string }[] =>
   boardColumns().map((c) => ({ stage: c.id, label: stageLabel(c.id)! }));
 
 // 优先级角标的三档词(1..3;下标 0 恒不取——priority 有值才画这枚 chip)。
+// ⚠ 506 起是 P 记号且方向相反:3 = **P0(最高)** / 2 = P1 / 1 = P2,库里仍存 1/2/3。
 const PRIORITY_LABEL: Record<number, string> = {
   1: t("main.prioLow"),
   2: t("main.prioMid"),

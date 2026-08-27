@@ -95,11 +95,15 @@ type Deps = {
 // 就搬去哪一列。那正是 §4.3 要的:收容区里的卡**只能往外走**。
 const statuses = (): { key: TaskStatus; label: string }[] =>
   liveTaskColumns().map((c) => ({ key: c.id, label: stageLabel(c.id)! }));
+// 506:排列改成高档在前(无 · P0 · P1 · P2)—— P 记号下「P0 最高」是读法的一部分,
+// 3→2→1 倒序列才读得顺,也与桌面 tasktime.ts::openPri 的 [3,2,1,清除] 同向。
+// ⚠ key 仍是库里的 1/2/3(1=低),⛔ 别照 label 的顺序去改 key。「无」留在最前不动:
+// 它是「未设」那一态、不是第四档,位置也是老用户的肌肉记忆。
 const PRIORITIES: { key: 1 | 2 | 3 | null; label: string }[] = [
   { key: null, label: t("cardpanel.prioNone") },
-  { key: 1, label: t("cardpanel.prioLow") },
-  { key: 2, label: t("cardpanel.prioMid") },
   { key: 3, label: t("cardpanel.prioHigh") },
+  { key: 2, label: t("cardpanel.prioMid") },
+  { key: 1, label: t("cardpanel.prioLow") },
 ];
 
 let deps: Deps;
