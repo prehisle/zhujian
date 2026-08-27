@@ -82,6 +82,13 @@
            ——与桌面 --winctl-dead 同族:跨处派生约束收成令牌(344 的形)。FAB 用的
            是 ResizeObserver 实测的 --nav-h(main.ts),两套的合并待拍板、别顺手改。 */
         --nav-clear: 64px;
+        /* 511:宽屏(平板 / 横屏)上内容列的上限宽。⭐ **它不是断点** —— 窄屏上
+           `max-width` 压根不生效、`margin:auto` 解出 0,手机竖屏一像素不变(这也是
+           本轮刻意不写 `@media` 的理由:少一个要维护的断点)。
+           ⚠ **只罩「内容」不罩「条」**:顶栏 / 底栏照旧满幅铺(它们是 bar,满幅才对),
+           收窄的只有筛选条 / 时间轴 / 各面板 / 捕获层。⛔ 底栏改侧栏那档用户已否(A 档
+           范围,backlog 用户面 47),别顺手扩。 */
+        --content-max: 640px;
       }
       /* 暗色令牌。挂在 <html data-theme="dark"> 上而**不是** @media——明暗有三档
          (自动 / 亮 / 暗),生效色由 src/theme.ts 单点算出后写进这个属性,CSS 里不再
@@ -260,7 +267,11 @@
       }
       /* 悬浮 ＋ 钮:右下角,坐在底栏上方;平时唯一的捕获入口(捕获中隐去)。 */
       #capture-fab {
-        position: fixed; right: 16px; z-index: 8;
+        position: fixed; z-index: 8;
+        /* 511:窄屏恒 16px(`max()` 里那半算出负数,取不到);宽屏上跟着内容列的右缘走,
+           否则内容收窄居中之后它会独自飘在屏幕最右、离正文两百多 px。
+           ⚠ fixed 元素的百分比按视口算,故 `100%` = 视口宽。 */
+        right: max(16px, calc((100% - var(--content-max)) / 2 + 16px));
         bottom: calc(var(--nav-h, var(--nav-clear)) + 16px);
         width: 56px; height: 56px; border: none; border-radius: var(--radius-circle);
         background: var(--seal); color: var(--on-seal);
@@ -503,6 +514,19 @@
       /* 时间轴:灵感行素卡;任务行带勾框 + stage 印。146:主视图分灵感/任务两面,
          任务面按四态分组,组头轻标题、组内沿列 gap。 */
       .timeline { display: flex; flex-direction: column; gap: 8px; }
+
+      /* 511:宽屏上把「内容」收成一根居中的列。⭐ 四处共用一条规则,别各写各的。
+         ⚠ 这里**没有 `@media`**:窄屏上 max-width 不生效 + auto 边距解出 0 ⇒ 手机零变化。
+         ⛔ `header` / `#bottombar` 刻意不在这份名单里 —— 它们是满幅的条,收窄反而怪;
+         底栏改侧栏那档用户已否(backlog 用户面 47 的 A 档范围)。 */
+      #filterbar,
+      #timeline,
+      .sync,
+      .compose {
+        max-width: var(--content-max);
+        margin-left: auto;
+        margin-right: auto;
+      }
       /* position:relative = swipe-track(182 卡下亮出目标印)的定位基;不改流内布局。 */
       .timeline .tl-group { display: flex; flex-direction: column; gap: 8px; position: relative; }
       .timeline .tl-sec {
