@@ -8,6 +8,7 @@ import { saveTextDraft, loadTextDraft, clearTextDraft } from "./compose-draft";
 import { createCaptureCommands } from "./capture-commands";
 import { initTheme } from "./theme-mode";
 import { t, initLang, applyStaticI18n } from "./i18n";
+import { armAppContextMenu } from "./context-menu";
 
 const input = document.getElementById("capture") as HTMLTextAreaElement;
 const slip = document.querySelector(".slip") as HTMLElement;
@@ -436,6 +437,12 @@ initTheme();
 // 「主窗改档 → 本窗 reload」(捕获窗自己没有语言开关,只跟)。
 initLang();
 applyStaticI18n();
+
+// 505:浮窗上的右键同样归应用管 —— 纸条背景 / 徽章 / 提示行右键不再弹浏览器菜单
+// (这里那个「刷新」重载的是捕获窗本身,正在打的草稿看着就没了)。⭐ 正文那个 textarea
+// 在让位名单里 ⇒ **粘贴照常**,而「凡是能输入条目正文的地方都能 Ctrl+V 配图」那条
+// 规则正靠它。
+armAppContextMenu();
 
 // Capture-first: Enter saves, Shift+Enter is a newline, Esc hides but KEEPS the draft.
 // in-flight 闸(ui-audit P0 #2):capture_note 往返窗口里第二记 Enter 会用同一内容再建

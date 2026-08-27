@@ -13,6 +13,7 @@ import { initSettings, openSettingsPanel } from "./settings";
 import { initZoom } from "./zoom";
 import { initTheme } from "./theme-mode";
 import { initUpdate, checkForUpdateOnFocus } from "./update";
+import { armAppContextMenu } from "./context-menu";
 import { initAutoBackupBanner } from "./backup";
 import {
   createSpace,
@@ -750,6 +751,11 @@ void (async () => {
   // 并挂「别窗改档 → 本窗 reload」。同样纯设备本地、不进同步。
   initLang();
   applyStaticI18n();
+
+  // 505:卡片以外的右键也归应用管 —— 列空白 / 看板背景 / 侧栏 / 标签视图上不再弹
+  // WebView2 那份「返回 · 刷新 · 另存为 · 打印 · 检查」(那个「刷新」点下去是重载整个
+  // app)。输入框 / 链接与图片 / 选区照旧让位,判据与卡片那条路共读一份。
+  armAppContextMenu();
 
   // 自动更新(88):启动静默查一次。只在生产构建跑(dev/e2e 是 vite dev server,
   // import.meta.env.PROD 为 false),开发/测试期不打网络也不弹 banner。

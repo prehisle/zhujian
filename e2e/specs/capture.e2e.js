@@ -284,3 +284,31 @@ describe("捕获 · 斜杠命令", () => {
     if (work) await invoke("delete_topic", { id: work.id });
   });
 });
+
+// 505:浮窗上的右键同样归应用管 —— 纸条背景 / 徽章 / 提示行不再弹浏览器菜单(这里那个
+// 「刷新」重载的是捕获窗本身,正在打的草稿看着就没了)。⭐ 正文那个 textarea 必须让位:
+// 「凡是能输入条目正文的地方,都能 Ctrl+V 配图」那条规则的入口正是它的原生粘贴。
+// ⚠ 判据同 board 那一族 = `defaultPrevented`(我们这一侧的决定),真鼠标那格在探针里。
+describe("捕获 · 右键归应用管(505)", () => {
+  it("纸条背景接管 / 正文框让位(两格互为阴性对照)", async () => {
+    await goShow("/index.html");
+    await $("#capture").waitForExist({ timeout: 10000 });
+    const r = await browser.execute(() => {
+      const fire = (sel) => {
+        const el = document.querySelector(sel);
+        if (!el) return null;
+        const rc = el.getBoundingClientRect();
+        const ev = new MouseEvent("contextmenu", {
+          bubbles: true,
+          cancelable: true,
+          clientX: rc.left + 2,
+          clientY: rc.top + 2,
+        });
+        el.dispatchEvent(ev);
+        return ev.defaultPrevented;
+      };
+      return { slip: fire(".slip"), ta: fire("#capture") };
+    });
+    expect(r).toEqual({ slip: true, ta: false });
+  });
+});

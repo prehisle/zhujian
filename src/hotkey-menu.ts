@@ -1,5 +1,6 @@
 import "./hotkey-menu.css";
 import { t } from "./i18n";
+import { NATIVE_MENU_KEEP } from "./context-menu";
 
 // 悬停即选中 + ⋯ 速查菜单 + 单键直达 —— 抽自 inbox 的原型,做成视图无关的公共件,
 // 让「同一个键 = 同一个概念」跨视图(灵感 / 任务看板 / …)一致,肌肉记忆才能迁移。
@@ -162,9 +163,12 @@ export function createHotkeyController(): HotkeyController {
     //   ② 链接与图片:各自已有右键约定(item-images 的「右键复制链接」);
     //   ③ 本卡内有非空选区:用户正想右键复制选中的那段字。
     // 另外 suspended()(行内编辑 / 确认中)整个让位 —— 那时键盘也是让位的,同一条规矩。
+    // ⭐ 505 起 ①② 那两项的选择器住 `context-menu.ts`(`NATIVE_MENU_KEEP`)—— 文档级那条路
+    // 要读同一份,抄两份必漂移。⚠ ③ 刻意仍是**卡片内**的选区(`card.contains`),与文档级
+    // 那条「点在选区上」不是同一个判据:这里让位的理由是「这张卡上有选区」。
     card.addEventListener("contextmenu", (e) => {
       const target = e.target as HTMLElement | null;
-      if (!target || target.closest("input, textarea, [contenteditable='true'], a, img")) return;
+      if (!target || target.closest(NATIVE_MENU_KEEP)) return;
       if (suspended()) return;
       const sel = window.getSelection();
       if (sel && !sel.isCollapsed && sel.rangeCount > 0 && card.contains(sel.getRangeAt(0).commonAncestorContainer))

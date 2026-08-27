@@ -725,3 +725,120 @@ describe("看板 · 卡片右键开 ⋯ 菜单(504)", () => {
     expect(opened).toBe(false);
   });
 });
+
+// 505:卡片**以外**的右键也归应用管。504 只接管了卡片那一处,挪开一寸(列空白 / 看板背景 /
+// 侧栏)弹的仍是 WebView2 那份「返回 · 刷新 · 另存为 · 打印 · 检查」——而那个「刷新」在桌面
+// 应用里点下去是重载整个 app。v1 只做「不弹浏览器那份」,⛔ 不新造动作表。
+//
+// ⚠ **判据是 `defaultPrevented`,不是「原生菜单没出现」** —— 合成事件上的 preventDefault
+// 只证明**我们这一侧的决定**;浏览器认不认那半合成事件永远证明不了,那格在探针
+// `e2e/probes/context-menu-native.e2e.js` 里(真 OS 鼠标)。这里守的正是决定本身。
+// ⭐ **阴性对照是自带的**:接管那几格要求 `true`、让位那几格要求 `false`,两边互为对照 ——
+// 监听没挂上时接管格必红,判据写死成「一律接管」时让位格必红。
+describe("右键 · 卡片以外也归应用管(505)", () => {
+  const R = "E2E-505-右键";
+
+  // 在 `sel` 这个元素上合成一次右键,读回三件:元素在不在、事件被没被接管、⋯ 菜单开没开。
+  const ctx = (sel) =>
+    browser.execute((s) => {
+      const el = document.querySelector(s);
+      if (!el) return { found: false, prevented: null, menu: null };
+      const r = el.getBoundingClientRect();
+      const ev = new MouseEvent("contextmenu", {
+        bubbles: true,
+        cancelable: true,
+        clientX: r.left + 4,
+        clientY: r.top + 4,
+      });
+      el.dispatchEvent(ev);
+      return { found: true, prevented: ev.defaultPrevented, menu: !!document.querySelector(".hk-menu") };
+    }, sel);
+
+  before(async () => {
+    await goNotebook("board");
+    for (const t of await invoke("list_tasks")) await invoke("archive_task", { id: t.id });
+    await invoke("purge_archived_tasks", {});
+    await invoke("create_task", { title: R });
+    await goNotebook("board");
+    await $(`.tcard*=${R}`).waitForExist({ timeout: 10000 });
+  });
+
+  // 选区会跨格残留(让位判据正读它),菜单同理 —— 每格收干净。⛔ 别用 `.hk-menu.remove()`,
+  // 理由同上一个 describe(那只摘 DOM,控制器内部还指着死节点)。
+  afterEach(async () => {
+    await browser.execute(() => {
+      getSelection()?.removeAllRanges();
+      document.body.click();
+    });
+    await browser.pause(150);
+  });
+
+  it("接管:列空白 / 看板背景 / 侧栏三处都不再弹浏览器菜单", async () => {
+    for (const sel of [".col-body", "#board", ".sidebar"]) {
+      // 把 sel 折进期望里 —— 红的时候一眼看得出是哪一处,不必回头数循环轮次。
+      expect({ sel, ...(await ctx(sel)) }).toEqual({ sel, found: true, prevented: true, menu: false });
+    }
+  });
+
+  it("让位:正文输入框上的右键留给原生粘贴(配图那条路正是粘贴)", async () => {
+    await openCompose();
+    expect(await ctx("#compose-input")).toEqual({ found: true, prevented: false, menu: false });
+  });
+
+  it("卡片那条路照旧是 504 的:菜单开出来,事件也确实被接管", async () => {
+    expect(await ctx(".tcard")).toEqual({ found: true, prevented: true, menu: true });
+  });
+
+  // ⭐ **这一格是 505 真正的风险面**:卡片子树整个交给 504 那条路判,文档级见 `.hk-host`
+  // 就撒手。写漏这一条的后果不是「多弹个菜单」,是**用户什么菜单都拿不到** —— 卡片刚
+  // 让位,文档级紧接着把同一次右键吞掉,比 505 之前还差。
+  //
+  // ⚠ **判据挑的是「行内编辑态」不是「卡内有选区」,而这是被阴性对照逼出来的**:第一版写的
+  // 是选区那格,把 `.hk-host` 那半摘掉它**照样绿** —— 因为文档级自己的选区判据(两个方向
+  // 都算「点在选区上」)把同一次右键又接住了。⇒ 那一格证明不了 `.hk-host` 在干活。
+  // 四条卡片让位判据里,只有 `suspended()` 这一条在文档级**没有任何对位判据**兜着
+  // (输入框那条 `NATIVE_MENU_KEEP` 兜着、链接与图片同理、选区那条如上),它才是刀口。
+  it("⭐ 卡片让位之后文档级不许接着吞:行内编辑态在卡身上右键 → 两级都让位", async () => {
+    await boardAction(R, "编辑");
+    await $(".tcard .edit-form").waitForExist({ timeout: 5000 });
+    // 落点是卡片本身(不是那个 input)⇒ 让位的理由只可能来自 `suspended()` 这一条。
+    const r = await ctx(".tcard");
+    await browser.keys(["Escape"]);
+    await browser.pause(300);
+    expect(r).toEqual({ found: true, prevented: false, menu: false });
+  });
+
+  // 卡片以外也要有选区那条让位,否则「选中列名 → 右键复制」就没了。
+  // ⚠ **选区刻意建在文本节点内部(`setStart/setEnd`),不是 `selectNodeContents`** —— 后者的
+  // `commonAncestorContainer` 是**元素**,走不到 `rightClickOnSelection` 里那一步「文本节点
+  // 要先抬到元素父级」;而用户拖着选一段字,拿到的正是文本节点内部的 range。
+  // ⇒ 用 `selectNodeContents` 写这一格,把那行抬升删掉它照样绿(阴性对照当场证伪过)。
+  it("让位:卡片以外选中的文字上右键,留给原生复制", async () => {
+    const r = await browser.execute(() => {
+      const head = document.querySelector(".col-name");
+      const tn = head.firstChild;
+      const range = document.createRange();
+      range.setStart(tn, 0);
+      range.setEnd(tn, Math.min(2, tn.length));
+      const sel = getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+      const rc = head.getBoundingClientRect();
+      const ev = new MouseEvent("contextmenu", {
+        bubbles: true,
+        cancelable: true,
+        clientX: rc.left + 2,
+        clientY: rc.top + 2,
+      });
+      head.dispatchEvent(ev);
+      return {
+        // 两件前置一并断死,否则这一格可能是空过的(恒 false 也叫「让位」):
+        // 选区真建起来了、且它的 commonAncestorContainer 真是文本节点(3)。
+        collapsed: sel.isCollapsed,
+        ancType: sel.getRangeAt(0).commonAncestorContainer.nodeType,
+        prevented: ev.defaultPrevented,
+      };
+    });
+    expect(r).toEqual({ collapsed: false, ancType: 3, prevented: false });
+  });
+});
