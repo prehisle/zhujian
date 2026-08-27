@@ -8,7 +8,16 @@
   align-items: center;
   gap: 7px;
 }
-.task-meta .slot { display: inline-flex; align-items: center; gap: 6px; }
+/* 窄列里这一行会挤,挤不下就**整枚换行**(与下面 topic-slot 一套做法)。510 立:
+   不换行时同一处会同时长出两个患 —— ①「清除」被排成「清 / 除」(卡宽 ≲173 起);
+   ②P0/P1/P2 缩到 min-content 就顶住不动,整行撑破卡片、列体长出横滚条
+   (实测卡宽 161 时溢出 5px、98 时 68px)。这一条把两个一起解掉。
+   ⛔ **别再往 `.choice` 上补 `white-space: nowrap`** —— 510 试过并撤回,两条理由:
+   ①**它变不红**:有 wrap 之后 flex 是先断行再谈收缩,钮根本到不了「缩到要折字」那一步
+     (阴性对照刀 B 落上了、测试照绿);②**它的打击面不止这里**:`.choice` 是与
+     `tag-picker.ts` 共用的类,那边的字是**用户自己起的标签名**、可以任意长,nowrap 会让
+     长名字撑破卡片。真要治那半,照 `inbox.css` 的 `.v-inbox .choice`(省略号)那套,别用 nowrap。 */
+.task-meta .slot { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 
 /* chips: a quiet at-a-glance DISPLAY of the set due/priority/tag (㊺ — editing is via the
    ⋯ menu now, so a chip is no longer clickable; it just shows the value). */

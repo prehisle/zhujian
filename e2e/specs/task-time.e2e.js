@@ -188,3 +188,77 @@ describe("任务时间维度 · 到期汇总", () => {
     }
   });
 });
+
+// 510:窄列里 `.task-meta` 的两个行内编辑器,文字不许排成两行、卡片不许被撑破。
+//
+// ⚠ **判据走「这段文字排了几行」,不看高度** —— 拿 Range 数 client rects(一行文字恰好一个
+// 矩形)。高度会随字号档 / 行高 / padding 漂,而「排了几行」是那件事本身。
+// ⚠ **窗宽 950 是量出来的,别改成 1100**:1100 那档卡宽 198,改前改后都不折
+// ⇒ 在那儿断言等于什么都没断言(改前的实测:折行只在 1000 及以下出现)。
+// ⚠ 四条断言**缺一不可**,它们盯的是两个不同的患:`lines` 盯钮在自己内部折(屏上读作
+// 「清 / 除」),两条 `overflow` 盯「只加 nowrap 不让整枚换行」那个替代患 —— 钮缩到
+// min-content 就顶住不动,整行撑破卡片、列体长出横滚条。
+describe("任务时间维度 · 窄列里行内编辑器不折行也不撑破卡片", () => {
+  const T = "窄列甲-缴水电费";
+  let id;
+
+  before(async () => {
+    id = await invoke("create_task", { title: T });
+    await invoke("set_task_due", { id, dueOn: ymd(0) });
+    await goNotebook("board"); // 它自己会把窗摆回 1100,故窄窗必须在它之后设
+    await $(`.tcard*=${T}`).waitForExist({ timeout: 8000 });
+    await browser.setWindowSize(950, 700);
+    await browser.pause(250);
+  });
+
+  after(async () => {
+    await browser.setWindowSize(1100, 700); // ⛔ 别把窄窗泄漏给后面的 spec
+    await invoke("archive_task", { id });
+    await invoke("purge_task", { id });
+  });
+
+  /** slot 里每个**有文字**的孩子各排了几行(`.due-input` 是 input,没有文字节点,自然落选)
+      + 卡片与列体的横向溢出。 */
+  const measure = (title, slotSel) =>
+    browser.execute(
+      (t, sel) => {
+        const card = [...document.querySelectorAll(".tcard")].find((c) => c.textContent.includes(t));
+        const slot = card.querySelector(sel);
+        const body = card.closest(".col-body") ?? card.parentElement;
+        const lines = (elm) => {
+          const r = document.createRange();
+          r.selectNodeContents(elm);
+          return r.getClientRects().length;
+        };
+        return {
+          cardW: card.clientWidth,
+          cardOverflow: card.scrollWidth - card.clientWidth,
+          bodyOverflow: body.scrollWidth - body.clientWidth,
+          lines: [...slot.children].filter((b) => b.textContent.trim()).map(lines),
+        };
+      },
+      title,
+      slotSel,
+    );
+
+  it("优先级选择器:四枚钮各排一行,卡片与列体都不横向溢出", async () => {
+    await boardAction(T, "优先级");
+    await $(`.tcard*=${T}`).$(".pri-slot .choice").waitForExist({ timeout: 5000 });
+    const m = await measure(T, ".pri-slot");
+    // 前置断言:确认真的在窄列里量。⛔ 少了它,窗宽哪天被别处改宽,上面三条会安静地恒绿。
+    expect(m.cardW).toBeLessThan(180);
+    expect(m.lines).toEqual([1, 1, 1, 1]);
+    expect(m.cardOverflow).toBe(0);
+    expect(m.bodyOverflow).toBe(0);
+  });
+
+  it("截止编辑器:「清除」链接排一行,卡片与列体都不横向溢出", async () => {
+    await boardAction(T, "截止");
+    await $(`.tcard*=${T}`).$(".due-slot .due-input").waitForExist({ timeout: 5000 });
+    const m = await measure(T, ".due-slot");
+    expect(m.cardW).toBeLessThan(180);
+    expect(m.lines).toEqual([1]);
+    expect(m.cardOverflow).toBe(0);
+    expect(m.bodyOverflow).toBe(0);
+  });
+});
