@@ -792,15 +792,30 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     }
   });
 
-  // Trash-card actions: restore (reversible, no confirm) or permanently delete.
-  function trashActions(item: TaskItem): HTMLElement {
-    const acts = el("div", { className: "acts" });
-    acts.append(
-      btn(t("board.restore"), "primary", () => restore(item.id)),
-      btn(t("board.deleteForever"), "ghost", () =>
-        confirmInline(acts, t("board.deleteForeverQ"), t("board.deleteForever"), () => purgeOne(item.id))),
-    );
-    return acts;
+  // 回收站卡片的两枚离场动作:还原(可逆、无确认)/ 彻底删除(不可逆、行内两段式)。
+  // 51 起不再是常驻按钮 —— 与归档册(508)、灵感回收站(㊱ 起)同一套:⋯ / 右键 / 单键。
+  // `acts` 留着但**渲染成空的**:它仍是「彻底删除」那道行内确认的宿主(`.acts:empty` 会塌掉,
+  // 视图态下不占位),同看板卡的用法。
+  //
+  // ⚠ **键义与灵感回收站(`inbox.ts::actionsFor` 的 archived 分支)只差一枚,而那是被迫的**:
+  //    彻底删除同为 `D`(danger),而「还原」那边是 `R`、**这边只能不是 `R`** ——
+  //    看板的**视图级**单键 `R` 是「回收站开关」(`registerViewKeys`,它不看有没有悬停卡片),
+  //    两个监听器都挂在 document 上会**同时触发** = 一个键干两件事(board.ts 末尾那句
+  //    「键义和卡片单键错开」说的正是这个)。故这边取 `U`(Un-delete)。灵感那侧没这约束
+  //    (那个视图只注册了 `N`),⛔ 别去「修」它成一致 —— 改的是用户已有的快捷键。
+  // ⛔ **能力一格没加**:今天卡上就这两枚,本轮只换呈现。灵感回收站多的「复制 / 复制链接」
+  //    刻意没搬过来 —— 那是既有的端内差异、不是本轮造的(账在 backlog 用户面)。
+  function trashActionsFor(item: TaskItem, acts: HTMLElement): Act[] {
+    return [
+      { label: t("board.restore"), key: "U", run: () => restore(item.id) },
+      {
+        label: t("board.deleteForever"),
+        key: "D",
+        danger: true,
+        run: () =>
+          confirmInline(acts, t("board.deleteForeverQ"), t("board.deleteForever"), () => purgeOne(item.id)),
+      },
+    ];
   }
 
   // 归档卡片的唯一操作「取消归档」不再是常驻按钮 —— 508 起搬进 ⋯ / 右键 / 单键 A
@@ -1130,7 +1145,16 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     }
 
     if (mode === "trash") {
-      c.append(trashActions(item));
+      // 空的 `.acts` 先挂上:它是「彻底删除」行内确认的宿主(视图态下 `:empty` 塌掉,
+      // 不占位),而 actionsFor 要在闭包里拿到它。
+      const acts = el("div", { className: "acts" });
+      c.append(acts);
+      const handle = hk.register(
+        c,
+        () => trashActionsFor(item, acts),
+        () => !!c.querySelector(".confirm-q"), // 确认中:键盘归那张表单自己(同看板卡)
+      );
+      c.append(handle.menu());
     } else if (mode === "sealed") {
       // 归档册是**只读视图**:唯一的离场动作「取消归档」不常驻(design-rules「只读视图的
       // 动作只留离场动作、且不常驻」),走与灵感 / 看板同一套 hotkey-menu —— 悬停 ⋯ /

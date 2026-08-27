@@ -42,6 +42,9 @@ function clearConfirm() {
 let trashSeq = 0;
 let trashBusy = false;
 let trashRows: import("./api").TrashItem[] = [];
+/** 展开着操作面板的那张卡(同 `sealedOpenId`,至多一张);null = 一张都没开。
+ *  51 起回收站跟上 508 的形 —— 只读视图的离场动作不常驻,点卡片才出。 */
+let trashOpenId: string | null = null;
 
 export async function loadTrash(): Promise<void> {
   const space = getCurrentSpace();
@@ -56,6 +59,8 @@ export async function loadTrash(): Promise<void> {
     if (space !== getCurrentSpace() || seq !== trashSeq) return;
     setColumns(cols);
     trashRows = rows;
+    // 重载后那张卡可能已经不在(自己刚还原/彻底删了、对端动过):展开态跟着作废(同 sealed)。
+    if (trashOpenId !== null && !rows.some((r) => r.id === trashOpenId)) trashOpenId = null;
     clearConfirm();
     renderTrash();
   } catch (err) {
@@ -80,13 +85,17 @@ function renderTrash() {
             `<span class="chip${t.color ? " tinted" : ""}"${t.color ? ` style="--tc:${esc(t.color)}"` : ""}>${esc(t.title)}</span>`,
         )
         .join("");
+      // 51:两枚离场动作不常驻 —— 点卡片才出面板,再点收起(同 sealed / 同时间轴)。
+      const panel =
+        r.id === trashOpenId
+          ? `<div class="panel"><div class="acts">
+              <button data-trash-act="restore"${trashBusy ? " disabled" : ""}>${t("panes.restore")}</button>
+              <button data-trash-act="purge" class="warn"${trashBusy ? " disabled" : ""}>${t("panes.purge")}</button>
+            </div></div>`
+          : "";
       return `<article class="card" data-trash="${esc(r.id)}"><div class="body">
         <p class="content">${esc(r.content)}</p>
-        <footer><span class="pill">${kind}</span><time>${t("panes.deletedAt", { when: esc(fmtWhen(r.archived_at)) })}</time>${chips}</footer>
-        <div class="panel"><div class="acts">
-          <button data-trash-act="restore"${trashBusy ? " disabled" : ""}>${t("panes.restore")}</button>
-          <button data-trash-act="purge" class="warn"${trashBusy ? " disabled" : ""}>${t("panes.purge")}</button>
-        </div></div>
+        <footer><span class="pill">${kind}</span><time>${t("panes.deletedAt", { when: esc(fmtWhen(r.archived_at)) })}</time>${chips}</footer>${panel}
       </div></article>`;
     })
     .join("");
@@ -129,7 +138,19 @@ function onTrashClick(e: Event) {
     return;
   }
   const act = el.closest<HTMLElement>("[data-trash-act]")?.dataset.trashAct;
-  if (!act || trashBusy) return;
+  if (!act) {
+    // 点卡片本身 = 开合它的操作面板(至多一张开着,同归档册 / 同时间轴)。写在途整面禁点,
+    // 与那两枚按钮的 disabled 同一条闸。
+    // ⭐ **开合必须连底部确认条一起收**(照 `cardpanel.ts` 的 toggle:收面与换卡都 `clearConfirm()`)
+    //    —— 否则「彻底删除」问到一半把卡收起来,屏底还挂着一句问谁都不知道的确认。
+    const card = el.closest<HTMLElement>("[data-trash]");
+    if (!card || trashBusy) return;
+    clearConfirm();
+    trashOpenId = trashOpenId === card.dataset.trash ? null : card.dataset.trash!;
+    renderTrash();
+    return;
+  }
+  if (trashBusy) return;
   const id = el.closest<HTMLElement>("[data-trash]")?.dataset.trash;
   const row = trashRows.find((r) => r.id === id);
   if (!row) return;
@@ -309,6 +330,7 @@ export function resetPanesForSpaceChange() {
   sealedSeq++;
   searchSeq++;
   trashRows = [];
+  trashOpenId = null;
   sealedRows = [];
   sealedOpenId = null;
   clearConfirm();

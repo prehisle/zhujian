@@ -379,9 +379,9 @@
 .v-board .tcard:hover { border-color: var(--line-strong); }
 /* board cards carry the ⋯ corner menu (灵感 parity): a right gutter on the title row
    clears the icon, and the active (hovered / menu-open) card gets the seal accent.
-   508 起归档册的卡片也挂同一枚菜单(它唯一的「取消归档」不再常驻)⇒ 同样要留出这条
-   留白;只有回收站(.archived)今天还没接,那半的账在 backlog 用户面。 */
-.v-board .tcard:not(.archived) .ttitle { padding-right: 22px; }
+   508 起归档册、51 起回收站也挂同一枚菜单(那几枚离场动作都不再常驻)⇒ **三种卡片
+   一律留出这条留白**,`:not()` 整个退役。 */
+.v-board .tcard .ttitle { padding-right: 22px; }
 .v-board .tcard.is-active { border-color: var(--seal-line); }
 /* the .acts row is only the inline-confirm host now (删除 / 撤回); empty = no row */
 .v-board .acts:empty { display: none; }
