@@ -1,26 +1,31 @@
 import { browser, $, expect } from "@wdio/globals";
 import { invoke, goNotebook, clearInbox, waitItemImages } from "./support.js";
 
-// 回填的草稿图**不许欠 IndexedDB**(526)。
+// 回填的草稿图**不许欠 IndexedDB**(526 立,526 补当轮自我更正)。
 //
-// 背景:`compose-recovery.e2e.js` 在 Linux CI 上红过两次,报的都是「图真没挂上」
-// (app 自己弹 `.form-err`「N 张图未能附加」)。根在次序上,而那个次序是硬的:
+// 次序是硬的,这一半是读代码就看得见的**事实**:
 //   takeBatch() ──同步──> persist() ──> saveImageDraft(桶, []) ──> 删掉 `桶::img:<id>`
 //   ──await 一整趟创建条目的 IPC──> attachBlob() ──> toBase64() ──> blob.arrayBuffer()
-// 回填进来的那张图,手上的 Blob **底下就是刚被删掉的那条 IndexedDB 记录**。
-// 于是「这张图挂不挂得上」取决于引擎肯不肯让一个记录已删的 Blob 继续读 —— 那不是我们
-// 该赌的东西。修法在 `src/item-images.ts::restore()`:回填时当场把字节读进内存,
-// 让回填的图和粘贴进来的图是同一种东西。
+// 回填进来的那张图,手上的 Blob **底下就是刚被删掉的那条 IndexedDB 记录** ⇒ 代码在
+// **读一份自己刚刚删掉的字节**。修法在 `src/item-images.ts::restore()`:回填时当场把
+// 字节读进内存,让回填的图和粘贴进来的图是同一种东西。
 //
-// ⚠⚠ **这支 spec 的诚实边界(别把它读成全覆盖)**:
-//   · **在 Chromium 上它对未修的代码也是绿的** —— 实测 Chromium 记录删了 Blob 照样读得动
-//     (`RESULT: SURVIVES`),旧代码在那儿本来就是对的。⇒ **Windows 上跑它证明不了什么**,
-//     它是 **Linux 的 WebKitGTK 与 macOS 的 WKWebView** 那两端的网。
-//   · 它也**不复现**那个随机红:随机红要赌 takeBatch 那次删有没有赶在读之前。这里改成
-//     **测试自己把记录删掉**,把那个赌变成确定的一步 ⇒ 红得稳、红得早。
+// ⚠⚠ **别把「Linux CI 上那两次红是它造成的」当已证** —— 526 当轮就被自己的探针打脸了:
+//   `compose-recovery.e2e.js` 在 Linux 上红过两次(app 自己弹 `.form-err`「N 张图未能
+//   附加」),我据此写下「Chromium 肯让记录已删的 Blob 活、WebKit 不肯」。而探针在
+//   **Chromium 与 WebKitGTK 上都答 SURVIVES** ⇒ 那个解释没有字据。**那两次红的根至今
+//   未查实**(backlog 测试与工装 44)。⇒ 本 spec 守的是**次序**这条自明的契约,
+//   ⛔ 别把它读成「那个随机红被修好了」。
 //
-// ⏳ 第一例(`引擎探针`)是**临时的**:它只把引擎的答案印进 CI 日志,不断言任何东西
-//    ——立它就是为了拿到 WebKit 那半的字据。读到答案的那一轮就该删掉它,别留成空测。
+// ⚠ **这支 spec 的诚实边界**:它**不复现**那个随机红(随机红要赌 takeBatch 那次删有没有
+//   赶在读之前),而是把那个赌**换成测试自己确定地删** ⇒ 红得稳、红得早。而只要引擎肯让
+//   记录已删的 Blob 继续活(今天量到的两个引擎都肯),**它对未修的代码就是绿的** ——
+//   ⛔ 那意味着它今天在**任何**已知平台上都没有牙齿,留着是为了钉住「不许再改回去读那份
+//   已删字节」这条契约,不是因为它能逮住谁。这一格是如实记的,别读大了。
+//
+// ⏳ 第一例(`引擎探针`)仍是**临时的**:只报告不断言。526 那版问错了形(同一个连接、
+//    删完立刻读),这一版照产品的形状问(读完关连接 / 另开连接删 / 删完等一段再读)。
+//    ⛔ 读到答案就该删掉它,别留成空测。
 
 const PNG =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
@@ -118,16 +123,27 @@ describe("回填的草稿图不欠 IndexedDB", () => {
     await clearInbox();
   });
 
-  // ⏳ 临时:只报告,不断言。目的是把「这台跑的引擎,记录删了之后 Blob 还读不读得动」
-  //    这句话印进 CI 日志 —— Windows 会印 SURVIVES,想要的是 Linux 那台印什么。
+  // ⏳ 临时:只报告,不断言。
+  //
+  // ⚠ **526 那一版问错了形,这一版是更正**。旧版是「同一个连接里 put → get → delete →
+  //   立刻读」,两个引擎都答 SURVIVES —— 而**两组本该分道的输入给出同一个答案,第一嫌疑
+  //   人是管道不是被测对象**(memory `test-negative-control` 361 那条)。回头比对,它与
+  //   产品那条路至少差三处,每一处都可能就是差异所在:
+  //     ① 产品里 `loadImageDraft` 读完在 `finally` 里 **`db.close()`** —— 旧版连接一直开着;
+  //     ② 产品里删是 `saveImageDraft` **另开一个连接**干的 —— 旧版同一个连接;
+  //     ③ 产品里删到读之间隔着**一整趟创建条目的 IPC** —— 旧版是几微秒。
+  //       ⭐ ③ 尤其可疑:blob 文件回收若是延后做的,「删完立刻读」必然成功,
+  //         而那也正好解释了那个红为什么是**间歇**的。
+  //   ⇒ 这一版把三处逐个铺开成四格,让日志自己说是哪一格(或者哪一格都不是)。
   it("引擎探针(临时,只报告不断言):记录删掉之后,手上那个 Blob 还读得动吗", async () => {
     const report = await browser.execute(async () => {
-      const open = () =>
+      const openDb = (name) =>
         new Promise((res, rej) => {
-          const r = indexedDB.open("probe-idb-blob", 1);
+          const r = indexedDB.open(name, 1);
           r.onupgradeneeded = () => r.result.createObjectStore("s");
           r.onsuccess = () => res(r.result);
           r.onerror = () => rej(r.error);
+          r.onblocked = () => rej(new Error("open blocked"));
         });
       const run = (db, mode, fn) =>
         new Promise((res, rej) => {
@@ -137,36 +153,65 @@ describe("回填的草稿图不欠 IndexedDB", () => {
           t.onerror = () => rej(t.error);
           t.onabort = () => rej(t.error);
         });
-      try {
-        const db = await open();
-        await run(db, "readwrite", (s) => s.put(new Blob([new Uint8Array(4096).fill(7)], { type: "image/png" }), "k"));
-        const blob = await run(db, "readonly", (s) => {
+      const getK = (db) =>
+        run(db, "readonly", (s) => {
           const q = s.get("k");
           return new Promise((res) => {
             q.onsuccess = () => res(q.result);
           });
         });
-        const before = (await blob.arrayBuffer()).byteLength; // 对照组:删之前是好的
-        await run(db, "readwrite", (s) => s.delete("k"));
-        let verdict;
-        try {
-          verdict = `SURVIVES(删后仍读得动 ${(await blob.arrayBuffer()).byteLength} 字节)`;
-        } catch (e) {
-          verdict = `DIES(${e.name}: ${e.message})`;
-        }
-        db.close();
-        await new Promise((r) => {
-          const d = indexedDB.deleteDatabase("probe-idb-blob");
+      const wipe = (name) =>
+        new Promise((r) => {
+          const d = indexedDB.deleteDatabase(name);
           d.onsuccess = r;
           d.onerror = r;
           d.onblocked = r;
         });
-        return `删前 ${before} 字节 → ${verdict}`;
-      } catch (e) {
-        return `探针自己炸了:${e && e.name}: ${e && e.message}`;
-      }
+      const readBack = async (blob) => {
+        try {
+          return `SURVIVES(${(await blob.arrayBuffer()).byteLength}B)`;
+        } catch (e) {
+          return `DIES(${e && e.name}: ${e && e.message})`;
+        }
+      };
+      // sameConn=true 复刻 526 那个旧形(基线);false 走产品的形(每步各开各的连接、用完就关)。
+      const trial = async (label, sameConn, delayMs) => {
+        const name = `probe-idb-blob-${label}`;
+        try {
+          await wipe(name);
+          let db = await openDb(name);
+          await run(db, "readwrite", (s) =>
+            s.put(new Blob([new Uint8Array(4096).fill(7)], { type: "image/png" }), "k"),
+          );
+          if (!sameConn) {
+            db.close();
+            db = await openDb(name);
+          }
+          const blob = await getK(db);
+          // 对照组:此刻必须是好的。⭐ 产品里这一读也真实发生 —— 回填出来的缩略图
+          // `<img src=objectURL>` 解码时就把字节读过一遍了,故留着它是**照产品的形**。
+          const pre = (await blob.arrayBuffer()).byteLength;
+          if (!sameConn) db.close();
+          const killer = sameConn ? db : await openDb(name);
+          await run(killer, "readwrite", (s) => s.delete("k"));
+          if (!sameConn) killer.close();
+          if (delayMs) await new Promise((r) => setTimeout(r, delayMs));
+          const verdict = await readBack(blob);
+          if (sameConn) db.close();
+          await wipe(name);
+          return `${label}=${pre}B→${verdict}`;
+        } catch (e) {
+          return `${label}=探针自己炸了(${e && e.name}: ${e && e.message})`;
+        }
+      };
+      const out = [];
+      out.push(await trial("同连接·立刻", true, 0)); // ← 526 旧版就是这一格
+      out.push(await trial("产品形·立刻", false, 0)); // ← 加上 ①②
+      out.push(await trial("产品形·等300ms", false, 300)); // ← 再加上 ③
+      out.push(await trial("产品形·等1500ms", false, 1500)); // ← CI 那台慢,给足
+      return out.join("  |  ");
     });
-    console.log(`\n[引擎探针] IndexedDB 记录删掉之后手上那个 Blob:${report}\n`);
+    console.log(`\n[引擎探针] 记录删掉之后手上那个 Blob:${report}\n`);
   });
 
   it("回填之后把它那条 IndexedDB 记录删掉,记下仍要把图挂上", async () => {

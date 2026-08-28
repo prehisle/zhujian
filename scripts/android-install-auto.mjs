@@ -20,6 +20,10 @@ const GEOMETRY = {
   // checkbox/cont = 升级时「外部来源」风险页的勾选框 + 继续安装;
   // reinstall = 同 versionCode 反装时「已安装相同版本」拦截页的「重新安装」(181 标定)。
   "1260x2800": { checkbox: [658, 2440], cont: [630, 2622], reinstall: [631, 2363] },
+  // vivo V1986A / Android 12(1080×2408):uiautomator dump 标定(2026-08-28)。
+  // 坐标取自控件 bounds 中心(deleted_file_state_cb / android:id/button1 内层可点 LinearLayout)。
+  // reinstall:"none" —— 这台同版本反装**不弹**「已安装相同版本」拦截页,直接进同一张风险页(与 V2352GA 不同 ROM 行为)。
+  "1080x2408": { checkbox: [540, 2090], cont: [540, 2237], reinstall: "none" },
 };
 
 const [, , apk, ...rest] = process.argv;
@@ -104,10 +108,12 @@ function focusIsInstalling() {
     // 两者都是 PackageInterceptActivity、焦点区分不了,故按已知顺序处理——先(仅反装)点一次
     // 「重新安装」,再进「勾选框 + 继续安装」重试循环。升级场景没有第一步,直接进循环。
     if (sameVersion) {
-      if (!coords.reinstall)
-        throw new Error(`分辨率 ${dim} 未标定 reinstall 坐标——同版本反装请先手动量「重新安装」位置补进 GEOMETRY 表`);
-      sh(["shell", "input", "tap", String(coords.reinstall[0]), String(coords.reinstall[1])]); // 已安装相同版本 → 重新安装
-      await sleep(2500);
+      if (coords.reinstall === undefined)
+        throw new Error(`分辨率 ${dim} 未标定 reinstall 坐标——同版本反装请先手动量「重新安装」位置补进 GEOMETRY 表(若该机型反装不弹此拦截页,标 "none")`);
+      if (coords.reinstall !== "none") {
+        sh(["shell", "input", "tap", String(coords.reinstall[0]), String(coords.reinstall[1])]); // 已安装相同版本 → 重新安装
+        await sleep(2500);
+      }
     }
     let dismissed = false;
     for (let a = 0; a < 6 && !dismissed; a++) {
