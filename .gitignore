@@ -87,6 +87,12 @@ Thumbs.db
 # flaky-hunt 的失败输出(临时诊断产物)
 tmp-flaky/
 
+# 按需探针存的截图(`e2e/probes/*.e2e.js` 里的 saveScreenshot 落点)。
+# ⛔ 与上面 `.zjshots/` 那条同一个形:它们**不是**测试资产、是一次性看图用的产物,
+# 而公开仓是从这棵树导出的 —— 一次 `git add -A` 就推上 github(2026-08-28 真的差一步)。
+# ⚠ 只忽略 `out-` 前缀,别整个 `*.png`:哪天探针要钉一张**基准图**当断言,那份该进仓。
+/e2e/probes/out-*.png
+
 # e2e 期间 app 崩出的 GB 级 core dump(340 实测单轮 4 枚共 22GB;/core.* 锚定仓根,
 # 与 /core/ 目录不同形不误伤)
 /core.*

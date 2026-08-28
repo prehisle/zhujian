@@ -184,7 +184,27 @@
   max-width: 100%;
 }
 .v-board .task-topic .topic-search:focus { outline: none; border-color: var(--seal-line); }
-.v-board .task-topic .topic-choices { display: inline-flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.v-board .task-topic .topic-choices { display: inline-flex; flex-wrap: wrap; gap: 6px; align-items: center; min-width: 0; }
+/* 长标签名的候选 pill:名字**在 pill 内部折行**,一枚就摊成三行高(实测窗 950 / 卡宽 161、
+   24 个汉字 ⇒ 3 行、高 46)。灵感那侧早有整套省略号(inbox.css 的 `.v-inbox .choice`),
+   看板这侧一条都没有 —— 同端内的漂移,此处补齐,两边一套做法。
+   ⛔ **不是只搬 nowrap**:单搬它 = 长名字当场撑破卡片,510 正是为此撤回的(理由原文在
+      tasktime.css 顶部那段;`.choice` 与优先级选择器共用,那边的字是固定短词、不受本条影响
+      —— 本条 scoped 在 `.task-topic` 下)。
+   ⭐ 承重的第二处在**上一行**(`.topic-choices` 的 `min-width: 0`),别把它当顺手加的:
+      它是 `.topic-slot`(已 min-width:0)的 flex item、自身 overflow 是 visible ⇒ 自动最小
+      尺寸 = min-content = 里头那枚 nowrap pill 的整条字宽,不显式解开就一路顶着不缩
+      —— 阴性对照单摘它一处,卡片当场溢出 160px(卡宽才 161)、pill 撑到 306。
+   ⚠ 两处**刻意没写**的,都是阴性对照当场量掉的死声明,别"补齐"回来:
+      ①pill 自己的 `min-width: 0` —— 下面那句 `overflow: hidden` 已经把它的自动最小尺寸
+        解成 0(单摘 min-width 那一刀,四格读数与修好后逐字相同);
+      ②inbox 那条 `max-width: 100%` —— 这一侧的祖先 `.topic-slot` 是 shrink-to-fit(宽度未定),
+        百分比在这里不解析(tasktime.css 第 45 行实测过同一形)。 */
+.v-board .task-topic .choice {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 /* 子标签候选(499):虚线描边 = 「父的子项」,与筛选条的 .tf-pill.child 同一套语汇。
    横排 pill 流里缩进表达不了层级,故靠皮肤;全名挂在 title 上兜底。 */
 .v-board .task-topic .choice.child { border-style: dashed; }

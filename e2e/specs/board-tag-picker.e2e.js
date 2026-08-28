@@ -9,13 +9,21 @@ describe("任务看板 · 标签选择器(Esc 收起 + 内联新建)", () => {
   const TASK = "E2E-选择器任务";
   const EXIST = "E2E-已存在标签";
   const NEW = "E2E-内联新建标签";
+  // 24 个汉字 ≈ 288px(--fs-12)—— 比窄列里的卡片内容宽(≈134)宽一倍有余。
+  const LONG = "E2E特别长的标签名字用来看它会不会把卡片撑破哦";
   let taskId;
 
   before(async () => {
     await invoke("create_topic", { title: EXIST });
+    await invoke("create_topic", { title: LONG }).catch(() => {}); // 只当候选,不挂到任务上
     taskId = await invoke("create_task", { title: TASK, topicId: null }); // 生而无标签
     await goNotebook("board");
     await $(`.tcard*=${TASK}`).waitForExist({ timeout: 10000 });
+  });
+
+  // ⛔ 别把窄窗泄漏给后面的 spec(同 task-time.e2e.js 那条纪律)——最后一例会把窗设窄。
+  after(async () => {
+    await browser.setWindowSize(1100, 700);
   });
 
   // 后端真相:TASK 当前挂的标签名。
@@ -170,5 +178,48 @@ describe("任务看板 · 标签选择器(Esc 收起 + 内联新建)", () => {
       timeout: 5000,
       timeoutMsg: "Esc 后选择器未收起",
     });
+  });
+
+  // 长标签名的候选 pill:名字曾在 pill **内部**折行(窗 950 / 卡宽 161 / 24 个汉字 ⇒ 3 行、
+  // 高 46),灵感那侧早有整套省略号、看板这侧一条都没有 = 同端内的漂移。
+  // ⛔ **两半判据缺一不可**:只断言「收成一行」,单搬 `white-space: nowrap` 就能骗过它,
+  //    而那正是 510 试过并撤回的形(长名字当场撑破卡片);只断言「不撑破」,今天不改也是绿的
+  //    (它本来就折在卡片里面)。⇒ 一行 **且** 不溢出,两条一起才钉得住。
+  it("长标签名的候选 pill:窄卡上省略号收成一行,卡片与列体都不横向溢出", async () => {
+    await browser.setWindowSize(950, 700);
+    await browser.pause(250);
+    await boardAction(TASK, "标签");
+    const card = await $(`.tcard*=${TASK}`);
+    await card.$(".topic-choices").waitForExist({ timeout: 5000 });
+    await card.$(`.choice=${LONG}`).waitForExist({ timeout: 5000 });
+
+    const m = await browser.execute(
+      (task, long) => {
+        const c = [...document.querySelectorAll(".tcard")].find((x) => x.textContent.includes(task));
+        const pill = [...c.querySelectorAll(".topic-choices .choice")].find((b) => b.textContent === long);
+        const body = c.closest(".col-body") ?? c.parentElement;
+        // ⛔ 行数**别数 rect 个数**:同一行上会有多个 rect(修好之后这枚实测 2 个 rect 同 y、
+        //    同高)。数**不同的 y** 才是行数。字据与复现见 e2e/probes/tagpick-long.e2e.js 头注。
+        const rg = document.createRange();
+        rg.selectNodeContents(pill);
+        const ys = new Set([...rg.getClientRects()].map((r) => Math.round(r.y)));
+        return {
+          cardW: c.clientWidth,
+          cardOverflow: c.scrollWidth - c.clientWidth,
+          bodyOverflow: body.scrollWidth - body.clientWidth,
+          pillLines: ys.size,
+          clipped: pill.scrollWidth > pill.clientWidth,
+        };
+      },
+      TASK,
+      LONG,
+    );
+
+    // 前置断言:确认真的在窄列里量。⛔ 少了它,窗宽哪天被别处改宽,下面四条会安静地恒绿。
+    expect(m.cardW).toBeLessThan(180);
+    expect(m.pillLines).toBe(1); // 收成一行
+    expect(m.clipped).toBe(true); // 且那一行真的被裁了(省略号在干活,不是名字碰巧够短)
+    expect(m.cardOverflow).toBe(0); // ⛔ 没拿「撑破卡片」换「收成一行」
+    expect(m.bodyOverflow).toBe(0);
   });
 });
