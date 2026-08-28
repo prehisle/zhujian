@@ -112,6 +112,21 @@ function verify() {
   const dirty = git(repoRoot, ["status", "--porcelain", "--untracked-files=no"]);
   if (dirty) die(`工作仓有未提交的改动 —— 闸绑的是「哪一笔提交」,先提交:\n${dirty}`);
 
+  // ⛔⛔ **这一问必须排在 sync 之前**(521 补二栽的就是这个):放在后面问,东西已经被
+  //    sync 提交掉了,于是它**恒答「没有」** —— 而那句话与刚刚发生的事**正好相反**。
+  //    ⚠ 那次没造成损失(`land` 先 `ls-remote`,照样走对路),但**一句与事实相反的收尾话**
+  //    正是最该修的那类:下一个人会照它办事。
+  const d = exportDelta();
+  if (d.state === "none") {
+    console.log(`⚠ **这一轮没有任何东西进公开仓**(纯文档 / 全在导出排除单里)⇒ 没有 CI 可跑。`);
+    console.log(`   ⇒ 直接 \`land\` 即可,它会走「无导出面」那条路:核公开仓 main 当前那笔的 CI`);
+    console.log(`     仍是绿的(代码面一个字没动),然后只推私有 master。`);
+    return;
+  }
+  if (d.state !== "some") {
+    die(`问不出「这一轮有没有东西要进公开仓」(${d.state})—— fail-closed,⛔ 不猜。\n  ${d.why ?? ""}`);
+  }
+
   console.log(`本轮闸分支:${gateBranch}(私有 HEAD ${headSha})\n`);
   try {
     execFileSync(process.execPath, ["scripts/sync-public.mjs", "--to-branch", gateBranch], {
@@ -119,13 +134,6 @@ function verify() {
     });
   } catch {
     die("sync-public 非零退出(上面就是理由)—— 什么都没推。");
-  }
-  // sync-public 自己会说「已经一致」;这里把那种情形**讲明白**,别让人以为推了。
-  if (exportDelta().state === "none") {
-    console.log(`\n⚠ **这一轮没有任何东西进公开仓**(纯文档 / 全在导出排除单里)⇒ 没有 CI 可跑。`);
-    console.log(`   ⇒ 直接 \`land\` 即可,它会走「无导出面」那条路:核公开仓 main 当前那笔的 CI`);
-    console.log(`     仍是绿的(代码面一个字没动),然后只推私有 master。`);
-    return;
   }
   console.log(`\n⭐ 去做别的(⛔ 别前台等,整趟约 29 分钟)。回来跑:`);
   console.log(`   node scripts/branch-gate.mjs status`);
