@@ -13,4 +13,10 @@ export const topics = defineMessages({
   "topics.count": { zh: "{n} 项", en: "{n} {n|item|items}" },
   "topics.kindSet": { zh: "已设类型", en: "Kind set" },
   "topics.kindCleared": { zh: "已清类型", en: "Kind cleared" },
+  // 改名(514):点名字进编辑态。⛔ 键空间与桌面独立(两份字典),别去和 src/locales 对齐。
+  "topics.renameHint": { zh: "点一下改名", en: "Tap to rename" },
+  "topics.renamePh": { zh: "标签名", en: "Tag name" },
+  "topics.renameSave": { zh: "存", en: "Save" },
+  "topics.renameCancel": { zh: "取消", en: "Cancel" },
+  "topics.renamed": { zh: "已改名", en: "Renamed" },
 });

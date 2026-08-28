@@ -369,11 +369,14 @@ export const unsealTask = (space: string, id: string) =>
 export const createTopic = (space: string, title: string) =>
   invoke<string>("create_topic", { spaceId: space, title });
 
-// ⚠ 下面四个标签写包装(改名/颜色/删除/合并)**安卓 UI 端无调用点**:190/258 拍板
+// ⚠ 下面这几个标签写包装里,**颜色 / 删除 / 合并三个至今 UI 端无调用点**:190/258 拍板
 // 「重命名/删除/合并/颜色仍只桌面有(克制,不搬)」,包装是 119 命令面 1:1 搬运时随
 // Rust 命令带进来的、留作命令面对称。日后要做入口直接接线;巡查双端能力对齐时别把
-// 它们误读成「已具备入口、只差接线」,也别当死代码删(有主的登记项,四件一体)。
-/** 标签改名。 */
+// 它们误读成「已具备入口、只差接线」,也别当死代码删(有主的登记项)。
+// ⭐ **514 起 `updateTopic` 不在此列了** —— 用户 2026-08-28 拍板「只做重命名」,
+// 标签面点名字即改名(`topics.ts`)。⛔ **别顺手把另外三个也接上**:删除与合并是
+// **破坏性且合并不可撤**,搬到触屏上要重想确认形 = 新造动作表(backlog 用户面 44)。
+/** 标签改名(514 起安卓也有入口:标签面点名字)。 */
 export const updateTopic = (space: string, id: string, title: string) =>
   invoke<void>("update_topic", { spaceId: space, id, title });
 

@@ -729,9 +729,14 @@
 
       /* 标签管理面(190):每行 = 拖手柄 + 名 + 计数 + 类型;拖手柄纵向拖排序。 */
       #topics-list { position: relative; }
+      /* 514:上下 padding 10 → 12,行实高 40.4 → 44.4 —— 名字成了可点元素(改名入口),
+         而 §2.3 要 ≥44。⭐ 提行高是为了让名字的 halo **吃满行内就够 44**:halo 只要
+         溢出行外,上下两行的名字热区就互叠(既有判例 `.space-row .act.reset-*` 明写
+         「上下条互叠会让边界含糊」⇒ 那一族到 40px 就不再叠 halo)。⇒ 这 4px 换的是
+         「达标 ∧ 零互叠」两者兼得。 */
       .trow {
         display: flex; align-items: center; gap: 10px;
-        padding: 10px 4px; border-bottom: 1px solid var(--line);
+        padding: 12px 4px; border-bottom: 1px solid var(--line);
         background: var(--paper);
       }
       .trow.off { opacity: 0.5; pointer-events: none; }
@@ -744,8 +749,19 @@
         color: var(--ink-faint); font-size: var(--fs-17); line-height: 1;
         touch-action: none; user-select: none; -webkit-user-select: none;
       }
+      /* 514:名字本身就是改名入口(点一下进编辑态)。这一行上「可点」的惯例是长得像钮
+         (.tk-add/.tk-badge),而名字是整行的主体、做成钮会喧宾夺主 ⇒ 保持文本外观,
+         只用一条很淡的虚线下划线暗示它可改。⛔ 别加边框/背景。 */
+      /* 触区:文字本身只有 20.4px 高,按这一端的惯例只垂直扩(水平扩会跟计数/类型钮抢点)。
+         ⛔ **这里不能用 `::before` halo** —— `.tname` 自己有 `overflow:hidden`(省略号要它),
+         会把伪元素**裁掉**,而屏上一点看不出来:514 第一版就是这么写的,`elementFromPoint`
+         打上下缘命中的是 `.trow` 不是 `.tname`(⇒ 判据必须真打点,别读 CSS 里写没写)。
+         ⇒ 改用 padding 撑盒(padding 不受 overflow 影响)+ 等量负 margin 抵消对行高的影响:
+         盒高 20.4+24 = **44.4** 恰好吃满行内,与相邻行还留 2.4px 间隙、零互叠。 */
       .tname { flex: 1; min-width: 0; font-size: var(--fs-14); color: var(--ink);
-        overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        background: none; border: 0; padding: 12px 0; margin: -12px 0; font-family: inherit; text-align: left;
+        text-decoration: underline dotted var(--line-strong); text-underline-offset: 3px; }
       /* 标签色点(8px 圆,注入色 --tc):标签管理面行内(.tdot)与筛选 pill(.fdot,住
          筛选节)是同一枚记号共形——此前两处各写一份。布局差(行内对齐 vs flex 子项)
          留在各自规则里。 */
@@ -767,8 +783,21 @@
         border: 1px solid var(--seal-line); border-radius: var(--radius-sm);
         background: var(--paper); color: var(--ink);
       }
-      .tk-edit button { font-size: var(--fs-12); padding: 4px 10px; border-radius: var(--radius-sm); }
-      .tk-edit button.ghost { background: none; color: var(--ink-soft); border: 1px solid var(--line-strong); }
+      /* 改名态(514):整行只剩它,输入框拿满剩余宽度 —— 标签名可以很长,而 .tk-input 那个
+         8.5em 是给「类型」这种短词的。两种编辑态的按钮共形,规则并成一条别抄两份。 */
+      .tn-edit { flex: 1; min-width: 0; display: inline-flex; align-items: center; gap: 6px; }
+      .tn-input {
+        flex: 1; min-width: 0; font: inherit; font-size: var(--fs-14); padding: 4px 8px;
+        min-height: 44px; /* §2.3:输入框是 void 元素,给不了 ::before halo,只能自己长够 */
+        border: 1px solid var(--seal-line); border-radius: var(--radius-sm);
+        background: var(--paper); color: var(--ink);
+      }
+      /* 存/取消:视觉保持小巧,触区同样只垂直扩(±10 ⇒ ~44,仍在行内不越到相邻行)。
+         ⛔ halo 只给 .tn-edit 这半 —— `.tk-edit` 那两枚是既有形,不在本轮范围(账在 ui-guidelines §2.3)。 */
+      .tn-edit button { position: relative; }
+      .tn-edit button::before { content: ""; position: absolute; left: 0; right: 0; top: -10px; bottom: -10px; }
+      .tk-edit button, .tn-edit button { font-size: var(--fs-12); padding: 4px 10px; border-radius: var(--radius-sm); }
+      .tk-edit button.ghost, .tn-edit button.ghost { background: none; color: var(--ink-soft); border: 1px solid var(--line-strong); }
       /* 拖动落点指示线(朱砂),按指针位置浮在目标间隙上。 */
       .drop-line {
         position: absolute; left: 34px; right: 4px; height: 2px; margin-top: -1px;

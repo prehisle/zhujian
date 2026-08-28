@@ -1,16 +1,24 @@
-// 标签管理面(190,安卓精简版):标签列表 + 触摸拖排序(1c)+ 点类型入口(kind)。
-// 桌面标签视图的重命名/删除/合并/颜色本轮不搬——移动端只补「排序 + 类型」两件缺口。
-// 顺序/类型走 core 已审的 oplog topic set_field,跨端 LWW(与桌面互通,189 已验)。
+// 标签管理面(190,安卓精简版):标签列表 + 触摸拖排序(1c)+ 点类型入口(kind)
+// + **点名字改名(514)**。
+// 顺序/类型/名字都走 core 已审的 oplog topic set_field,跨端 LWW(与桌面互通,189 已验)。
+//
+// ⛔ **删除 / 合并 / 颜色 / 显式「新建标签」仍只桌面有,别顺手补齐**(190/258 拍的克制,
+// 514 用户重申「只做重命名」):删除与合并是**破坏性且合并不可撤**,搬到触屏上要重想
+// 确认形 = 新造动作表,不是「照桌面抄一份」那个成本。范围与逐项差在 backlog 用户面 44。
+//
+// ⭐ **改名为什么是这一批里最该先做的那件**:标签名打错字,今天在手机上**没救** ——
+// 而移动端从 119 起就是全功能主力端,不是「桌面的只读伴侣」。
 //
 // 纪律同 panes.ts:load 取定 {space,seq},迟到响应弃;写 in-flight 禁重入(busy 置灰);
-// **拖动/类型编辑进行中不被动重载**(topicsInteracting → main.ts refreshActivePane 躲开,
-// 免远端刷新把正在拖/正在填类型的行从脚下拆掉)。
+// **拖动/类型编辑/改名进行中不被动重载**(topicsInteracting → main.ts refreshActivePane 躲开,
+// 免远端刷新把正在拖/正在填的行从脚下拆掉)。
 import {
   getCurrentSpace,
   listTasks,
   listTopicsFull,
   reorderTopic,
   setTopicKind,
+  updateTopic,
   type TopicTreeItem,
 } from "./api";
 import { t } from "./i18n";
@@ -29,11 +37,12 @@ let busy = false; // 写(排序/类型)在飞:全行置灰、禁重入
 let rows: TopicTreeItem[] = [];
 let counts = new Map<string, number>(); // topic id → 挂载合计(想法 + 任务)
 let kindEditId: string | null = null; // 正在编辑类型的行(渲染成 input 形态)
+let renameId: string | null = null; // 正在改名的行(整行换成改名形,514)
 let dragging = false; // 拖排序进行中
 
-/** 拖动或类型编辑进行中:远端变更不被动重载(免拆掉正在操作的行)。 */
+/** 拖动 / 类型编辑 / 改名进行中:远端变更不被动重载(免拆掉正在操作的行)。 */
 export function topicsInteracting(): boolean {
-  return dragging || kindEditId !== null;
+  return dragging || kindEditId !== null || renameId !== null;
 }
 
 export async function loadTopics(): Promise<void> {
@@ -65,6 +74,18 @@ function render(): void {
   }
   box.innerHTML = rows
     .map((tp) => {
+      // 改名态:整行只剩改名 UI(手柄/计数/类型让位)——标签名可以很长,输入框要拿满整行,
+      // 而 `.tk-input` 那个 8.5em 是给「类型」这种短词的。⛔ 别把两个编辑态并排渲。
+      if (tp.id === renameId) {
+        return `<article class="trow${busy ? " off" : ""}" data-topic="${esc(tp.id)}">
+          <span class="tn-edit">
+            <input class="tn-input" value="${esc(tp.title)}" placeholder="${t("topics.renamePh")}"
+                   autocapitalize="off" autocomplete="off" />
+            <button data-rename-save="${esc(tp.id)}">${t("topics.renameSave")}</button>
+            <button data-rename-cancel="1" class="ghost">${t("topics.renameCancel")}</button>
+          </span>
+        </article>`;
+      }
       const n = counts.get(tp.id) ?? 0;
       const editing = tp.id === kindEditId;
       const kindZone = editing
@@ -79,9 +100,9 @@ function render(): void {
           : `<button class="tk-add" data-kind-edit="${esc(tp.id)}">${t("topics.kindAdd")}</button>`;
       return `<article class="trow${busy ? " off" : ""}" data-topic="${esc(tp.id)}">
         <span class="thandle" data-drag="${esc(tp.id)}" aria-label="${t("topics.dragHint")}">⠿</span>
-        <span class="tname">${esc(tp.title)}${
+        <button class="tname" data-rename="${esc(tp.id)}" title="${t("topics.renameHint")}">${esc(tp.title)}${
           tp.color ? `<i class="tdot" style="--tc:${esc(tp.color)}"></i>` : ""
-        }</span>
+        }</button>
         <span class="tcount">${t("topics.count", { n })}</span>
         ${kindZone}
       </article>`;
@@ -114,12 +135,69 @@ async function saveKind(id: string, clear = false): Promise<void> {
   }
 }
 
+// ---- 改名(514;点名字进,Enter/存 落库,Esc/取消 退出) ----------------------
+//
+// ⛔ **不做前端预校验**(fail-fast 铁律):空名 / 重名 / 超长 / 不存在,core 的 `rename_topic`
+// 四种各有自己的话(「主题标题不能为空」/「标签「X」已存在」/…),原样端给用户比这边
+// 猜一遍准 —— 前端只拦一格「一个字没改」,那不是校验,是**别发一趟没意义的写**。
+async function saveRename(id: string): Promise<void> {
+  if (busy) return;
+  const inp = $("topics-list").querySelector<HTMLInputElement>(".tn-input");
+  const title = (inp?.value ?? "").trim();
+  const before = rows.find((r) => r.id === id)?.title ?? "";
+  if (title === before) {
+    // 没改:直接退出编辑态,不发写(也不弹「已改名」那句假消息)。
+    renameId = null;
+    render();
+    return;
+  }
+  const space = getCurrentSpace();
+  busy = true;
+  renameId = null; // 收编辑态(render 置灰;失败在 finally 重载恢复真相,同 saveKind)
+  render();
+  try {
+    await updateTopic(space, id, title);
+    if (space === getCurrentSpace()) showBar(t("topics.renamed"), true);
+  } catch (err) {
+    if (space === getCurrentSpace()) showError(String(err));
+  } finally {
+    busy = false;
+    if (space === getCurrentSpace()) {
+      await loadTopics();
+      // 名字进了卡片 chip,主视图要跟着重画(同 saveKind/commitReorder)。
+      void deps.refreshTimeline();
+    }
+  }
+}
+
 function onClick(e: Event): void {
   const el = e.target as HTMLElement;
+  const renameFor = el.closest<HTMLElement>("[data-rename]")?.dataset.rename;
+  if (renameFor) {
+    if (busy || deps.isSwitching()) return;
+    renameId = renameFor;
+    kindEditId = null; // 两个编辑态互斥:同一行不会既在改名又在填类型
+    render();
+    const inp = $("topics-list").querySelector<HTMLInputElement>(".tn-input");
+    inp?.focus();
+    inp?.select();
+    return;
+  }
+  const renameSaveId = el.closest<HTMLElement>("[data-rename-save]")?.dataset.renameSave;
+  if (renameSaveId) {
+    void saveRename(renameSaveId);
+    return;
+  }
+  if (el.closest("[data-rename-cancel]")) {
+    renameId = null;
+    render();
+    return;
+  }
   const editId = el.closest<HTMLElement>("[data-kind-edit]")?.dataset.kindEdit;
   if (editId) {
     if (busy || deps.isSwitching()) return;
     kindEditId = editId;
+    renameId = null; // 两个编辑态互斥(另一半在上面那个分支)
     render();
     $("topics-list").querySelector<HTMLInputElement>(".tk-input")?.focus();
     return;
@@ -135,7 +213,17 @@ function onClick(e: Event): void {
 
 function onKeydown(e: Event): void {
   const ke = e as KeyboardEvent;
-  if (ke.isComposing || kindEditId === null) return; // IME 组合期的 Enter 是上屏
+  if (ke.isComposing) return; // IME 组合期的 Enter 是上屏,不是保存
+  if (renameId !== null) {
+    if (ke.key === "Escape") {
+      renameId = null;
+      render();
+    } else if (ke.key === "Enter") {
+      void saveRename(renameId);
+    }
+    return;
+  }
+  if (kindEditId === null) return;
   if (ke.key === "Escape") {
     kindEditId = null;
     render();
@@ -269,6 +357,7 @@ export function resetTopicsForSpaceChange(): void {
   rows = [];
   counts = new Map();
   kindEditId = null;
+  renameId = null;
   dragging = false;
   $("topics-list").innerHTML = "";
 }
