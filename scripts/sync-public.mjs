@@ -38,13 +38,24 @@ const acceptExclusions = argv.includes("--accept-exclusions");
 const msgIdx = argv.findIndex((a) => a === "-m" || a === "--message");
 const customMsg = msgIdx >= 0 ? argv[msgIdx + 1] : null;
 if (msgIdx >= 0 && !customMsg) die("`-m` 后面要跟一句提交说明。");
+// ⭐ 分支闸用(`branch-gate.mjs`):**本地照旧在 main 上提交,只把这一笔推到另一条 ref**。
+// 这样做的理由是绑定 —— CI 跑的那笔提交与日后落上 main 的那笔是**同一个 sha**,
+// ⛔ 不是「再导出一次,希望它一样」(那属于 memory `verify-artifact-predates-fix` 那一族:
+// 它失灵时不报错,只给一个看着合理的错答案)。
+const toBranchIdx = argv.findIndex((a) => a === "--to-branch");
+const toBranch = toBranchIdx >= 0 ? argv[toBranchIdx + 1] : null;
+if (toBranchIdx >= 0 && !toBranch) die("`--to-branch` 后面要跟分支名。");
+if (toBranch === "main") die("`--to-branch main` 就是默认行为,别绕这一圈。");
 // ⚠ **`msgIdx < 0` 那一格 450 在 Linux 那台真撞上**:没给 `-m` 时 `msgIdx` 是 **-1**,
 // 而下面原本写的是 `i !== msgIdx + 1` ⇒ `i !== 0` ⇒ **第 0 个位置参数(也就是目标目录)
 // 被自己排除掉了**,于是 `node scripts/sync-public.mjs /exworkspace/zhujian` 静默退回默认路径,
 // 报「公开仓工作副本不在 ../zhujian-public」。⛔ 那一条排除只在**真有 `-m`** 时才该生效。
 // ⭐ 与 `export-public.mjs` 那道闸同族:**这两支至今只在一台机器上、只按默认路径跑过**。
+// ⚠ 位置参数的挑法要把**所有**「跟在开关后面的值」排掉,不然 `--to-branch gate/x` 那个
+// 分支名会被当成目标目录(与 `-m` 那条同一个坑,原注在下面几行)。
+const valueIdxs = new Set([msgIdx + 1, toBranchIdx + 1].filter((i) => i > 0));
 const target = resolve(
-  argv.find((a, i) => !a.startsWith("-") && (msgIdx < 0 || i !== msgIdx + 1)) ??
+  argv.find((a, i) => !a.startsWith("-") && !valueIdxs.has(i)) ??
     join(repoRoot, "..", "zhujian-public"),
 );
 // 走代理(GitHub 直连不稳);要换端口设 ZJ_GIT_PROXY。
@@ -115,10 +126,22 @@ if (dryRun) {
 
 // ---- ⑤ 提交 + 推 -----------------------------------------------------------------
 git(target, ["commit", "-m", message]);
-console.log("→ push …");
+// ⛔ `--to-branch` 时**强推**那条闸分支:同一个题目重跑一趟很常见(改一行再验),
+//    而闸分支是**一次性**的,没有任何人以它为基础工作 ⇒ 非快进是常态,不是事故。
+//    ⚠ main 那条**绝不强推**,它的非快进正是规则 ② 要拦的东西。
+const refspec = toBranch ? `HEAD:refs/heads/${toBranch}` : "main";
+const pushArgs = ["-c", `http.proxy=${proxy}`, "push", ...(toBranch ? ["--force"] : []), "origin", refspec];
+console.log(`→ push${toBranch ? ` → 闸分支 ${toBranch}(强推)` : ""} …`);
 try {
-  execFileSync("git", ["-c", `http.proxy=${proxy}`, "push", "origin", "main"], { cwd: target, stdio: "inherit" });
+  execFileSync("git", pushArgs, { cwd: target, stdio: "inherit" });
 } catch {
-  die(`push 失败 —— 提交已在公开仓本地(${git(target, ["rev-parse", "--short", "HEAD"])}),修好网络后 \`git -C ${target} -c http.proxy=${proxy} push\` 即可。`);
+  die(`push 失败 —— 提交已在公开仓本地(${git(target, ["rev-parse", "--short", "HEAD"])}),修好网络后 \`git -C ${target} -c http.proxy=${proxy} push origin ${refspec}\` 即可。`);
 }
-console.log(`\n✅ 已推到公开仓。CI:https://github.com/prehisle/zhujian/actions`);
+const pushedSha = git(target, ["rev-parse", "HEAD"]);
+if (toBranch) {
+  console.log(`\n✅ 已推到闸分支 \`${toBranch}\`(公开仓 sha ${pushedSha.slice(0, 7)})。`);
+  console.log(`   CI 会在那条分支上跑(ci.yml 的 \`branches: ["**"]\`,448 刻意设的)。`);
+  console.log(`   ⛔ **本地 main 现在领先 origin/main 一笔,还没落地** —— 回来跑 \`branch-gate.mjs land\`。`);
+} else {
+  console.log(`\n✅ 已推到公开仓。CI:https://github.com/prehisle/zhujian/actions`);
+}
