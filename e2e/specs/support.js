@@ -34,28 +34,75 @@ export function invoke(cmd, args) {
 //
 // ⚠ 超时话术带**实际读数**,且把「读命令一直在抛」与「张数不对」分开报 —— 否则一条 IPC
 // 层面的真故障会被印成一句看着合理的「图没挂上」。
+// 判据本身(超过它就算红)。⛔ **515 刻意没动这个数** —— 见下面那段为什么。
+const IMG_BUDGET_MS = 6000;
+// 超预算之后**只为分诊**再等的宽限:它不参与判定(到点照样红),只回答「是慢还是真没挂上」。
+const IMG_GRACE_MS = 14000;
+
+/** 挂图失败时,把 app 自己说的话捞出来 —— 挂图**真失败**时产品是会响亮报的
+ *  (`main.ts` 的 capture.savedImagesFailed / compose 的就地落点),而「只是慢」时这里是空的。
+ *  ⚠ 尽力而为的**提示**不是判据:窗口已经关掉 / 换页时读不到,读不到就不说。 */
+async function appErrorText() {
+  try {
+    return await browser.execute(() => {
+      const out = [];
+      for (const sel of ["#cap-err", "#compose-err", ".form-err"]) {
+        for (const el of document.querySelectorAll(sel)) {
+          const t = (el.textContent || "").trim();
+          if (t) out.push(`${sel}「${t}」`);
+        }
+      }
+      return out.join(" / ");
+    });
+  } catch {
+    return "";
+  }
+}
+
 export async function waitItemImages(itemId, n, where) {
   let list = [];
   let lastErr = null;
+  const read = async () => {
+    try {
+      list = await invoke("list_item_images", { itemId });
+      lastErr = null;
+    } catch (e) {
+      lastErr = e;
+      return false;
+    }
+    return list.length === n;
+  };
+  const t0 = Date.now();
   try {
-    await browser.waitUntil(
-      async () => {
-        try {
-          list = await invoke("list_item_images", { itemId });
-          lastErr = null;
-        } catch (e) {
-          lastErr = e;
-          return false;
-        }
-        return list.length === n;
-      },
-      { timeout: 6000 },
-    );
+    await browser.waitUntil(read, { timeout: IMG_BUDGET_MS });
   } catch {
     if (lastErr) {
       throw new Error(`${where}:读 list_item_images 一直在抛 —— ${lastErr.message || lastErr}`);
     }
-    throw new Error(`${where}:条目已入库,但 6 秒内挂上的图是 ${list.length} 张、要 ${n} 张`);
+    // ⛔ **别在这儿直接报「图没挂上」** —— 那句话把两件不同的事说成同一句。
+    // 515 拿两把刀量过(往 `attachBlob` 里分别注入 `throw` 与 8 秒延迟,跑同一支 spec):
+    // 「挂图真失败了」与「挂图只是慢」打出来的失败消息**逐字相同** ⇒ CI 上红一次,
+    // 读完那句话你仍然不知道该改测试还是该修产品(backlog 测试与工装 39 就是这么来的)。
+    // 故这里再等一段**只用于分诊**的宽限,把两者分开;判据(IMG_BUDGET_MS)一个字没动。
+    let lateMs = null;
+    try {
+      await browser.waitUntil(read, { timeout: IMG_GRACE_MS });
+      lateMs = Date.now() - t0;
+    } catch {
+      /* 宽限期内也没来 —— 那就不是「慢」 */
+    }
+    const said = await appErrorText();
+    const tail = said ? ` app 自己说的话:${said}` : " app 那边没留下任何错误提示。";
+    if (lateMs !== null) {
+      throw new Error(
+        `${where}:图**最终挂上了**,用了 ${lateMs} ms(判据预算 ${IMG_BUDGET_MS} ms)` +
+          `⇒ 这是**预算不够 / 机器慢**,不是产品没挂上图。${tail}`,
+      );
+    }
+    throw new Error(
+      `${where}:预算 ${IMG_BUDGET_MS} ms 之后又等了 ${IMG_GRACE_MS} ms,挂上的图仍是 ` +
+        `${list.length} 张、要 ${n} 张 ⇒ **不是慢,是真没挂上**。${tail}`,
+    );
   }
   return list;
 }
