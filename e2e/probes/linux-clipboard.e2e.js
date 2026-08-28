@@ -18,7 +18,7 @@ import { browser, $, $$, expect } from "@wdio/globals";
 import { writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { goShow, clearInbox, invoke } from "../specs/support.js";
+import { goShow, clearInbox, invoke, waitItemImages } from "../specs/support.js";
 import {
   clipboardTargets,
   setClipboardImage,
@@ -120,9 +120,8 @@ describe("395 · 真剪贴板 Ctrl+V(Linux / X11 / WebKitGTK)", () => {
       },
       { timeout: 8000, timeoutMsg: "回车后未入库" },
     );
-    const imgs = await invoke("list_item_images", { itemId: noteId });
+    const imgs = await waitItemImages(noteId, 1, "真剪贴板·Linux");
     console.log("入库配图:", JSON.stringify(imgs));
-    expect(imgs).toHaveLength(1);
     await clearInbox();
   });
 

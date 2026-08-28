@@ -18,6 +18,48 @@ export function invoke(cmd, args) {
   );
 }
 
+// 等「图真的挂到条目上了」。⛔ **别在等到 `list_ideas`/`list_tasks` 里出现这条之后,
+// 直接一句 `expect(await invoke("list_item_images", …)).toHaveLength(n)`** ——
+// 那**按构造就有竞态**,不是抖动运气不好(508 全量第一趟就红在它身上,512 补的这只共享件)。
+//
+// **根读码就看得见**(`src/compose-controller.ts::doSave`,顺序是硬的):
+// `id = await invoke(w.command, …)` **先**决议 ⇒ 条目这一刻已经进 `list_tasks`;
+// `imgs.attachBatch(id, batch, w.space)` 是**之后**另一趟 IPC。而调用方的等待条件是
+// 「`list_*` 里出现了这条」—— **它满足得比挂图早**,断言正落在那个窗口里,机器一忙窗口就够宽。
+// 同这支 spec 家族 `compose-recovery.e2e.js` 文件头 ① 那条:**等的东西 ≠ 读的东西**。
+//
+// ⛔ **别把上游那条等待改成「等图挂上了再取 id」** —— 那会把「条目建成了、但图挂失败」
+// 这一格一起等没,而它恰恰是 `onSaved` 的 `failed` 分支要守的东西。两条各等各的,判据不削反增:
+// 上游守「条目入库」,这只守「图挂上」,哪一格没到由两句不同的话分得开。
+//
+// ⚠ 超时话术带**实际读数**,且把「读命令一直在抛」与「张数不对」分开报 —— 否则一条 IPC
+// 层面的真故障会被印成一句看着合理的「图没挂上」。
+export async function waitItemImages(itemId, n, where) {
+  let list = [];
+  let lastErr = null;
+  try {
+    await browser.waitUntil(
+      async () => {
+        try {
+          list = await invoke("list_item_images", { itemId });
+          lastErr = null;
+        } catch (e) {
+          lastErr = e;
+          return false;
+        }
+        return list.length === n;
+      },
+      { timeout: 6000 },
+    );
+  } catch {
+    if (lastErr) {
+      throw new Error(`${where}:读 list_item_images 一直在抛 —— ${lastErr.message || lastErr}`);
+    }
+    throw new Error(`${where}:条目已入库,但 6 秒内挂上的图是 ${list.length} 张、要 ${n} 张`);
+  }
+  return list;
+}
+
 // Navigate the live window to an app page and make it visible+focused, so its
 // DOM is interactable regardless of any earlier hide() (capture hides on save).
 export async function goShow(path) {

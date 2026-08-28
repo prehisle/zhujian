@@ -1,5 +1,5 @@
 import { browser, $, $$, expect } from "@wdio/globals";
-import { invoke, goShow, goNotebook, clearInbox, openCompose } from "./support.js";
+import { invoke, goShow, goNotebook, clearInbox, openCompose, waitItemImages } from "./support.js";
 
 // compose 草稿断电恢复(198 桌面侧):三入口(捕获浮窗 / 灵感记下灵感 / 看板新建任务)的
 // 未记下草稿——文字 + 暂存图——存到设备本地,断电 / 杀进程后重开还在。这里用「整页重载」
@@ -155,7 +155,7 @@ describe("草稿断电恢复 · 捕获浮窗", () => {
       },
       { timeout: 6000, timeoutMsg: "回填稿记下后未入库" },
     );
-    expect(await invoke("list_item_images", { itemId: noteId })).toHaveLength(1);
+    await waitItemImages(noteId, 1, "断电恢复·捕获");
 
     // 记下 = 稿了结:持久化已清(权威判据,见顶部 ②),故再重载也复现不出来。
     await waitDraftCleared("capture", "捕获浮窗记下后");
@@ -207,7 +207,7 @@ describe("草稿断电恢复 · 灵感「记下灵感」", () => {
       },
       { timeout: 6000, timeoutMsg: "回填灵感记下后未入库" },
     );
-    expect(await invoke("list_item_images", { itemId: noteId })).toHaveLength(1);
+    await waitItemImages(noteId, 1, "断电恢复·灵感");
 
     await waitDraftCleared("inbox", "灵感记下后"); // ← 权威判据,见顶部 ②
     await goNotebook("inbox");
@@ -258,7 +258,7 @@ describe("草稿断电恢复 · 看板「新建任务」", () => {
       },
       { timeout: 6000, timeoutMsg: "回填任务记下后未入库" },
     );
-    expect(await invoke("list_item_images", { itemId: taskId })).toHaveLength(1);
+    await waitItemImages(taskId, 1, "断电恢复·任务");
 
     await waitDraftCleared("board", "任务记下后"); // ← 权威判据,见顶部 ②
     await goNotebook("board");
@@ -329,7 +329,7 @@ describe("草稿断电恢复 · 跨入口互不串", () => {
       },
       { timeout: 6000, timeoutMsg: "跨桶:捕获那份记下后未入库" },
     );
-    expect(await invoke("list_item_images", { itemId: noteId })).toHaveLength(1);
+    await waitItemImages(noteId, 1, "跨桶·捕获");
     await waitDraftCleared("capture", "跨桶收场");
     await clearInbox();
   });

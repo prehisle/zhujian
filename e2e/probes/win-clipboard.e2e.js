@@ -15,7 +15,7 @@ import { browser, $, $$, expect } from "@wdio/globals";
 import { execFileSync } from "node:child_process";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { goShow, clearInbox, invoke } from "../specs/support.js";
+import { goShow, clearInbox, invoke, waitItemImages } from "../specs/support.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -64,8 +64,7 @@ describe("395 · 真剪贴板 Ctrl+V(Windows)", () => {
       },
       { timeout: 8000, timeoutMsg: "回车后未入库" },
     );
-    const imgs = await invoke("list_item_images", { itemId: noteId });
-    expect(imgs).toHaveLength(1);
+    const imgs = await waitItemImages(noteId, 1, "真剪贴板·Windows");
     console.log("入库配图:", JSON.stringify(imgs));
     await clearInbox();
   });

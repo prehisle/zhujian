@@ -1,5 +1,5 @@
 import { browser, $, expect } from "@wdio/globals";
-import { invoke, goShow, clearInbox } from "./support.js";
+import { invoke, goShow, clearInbox, waitItemImages } from "./support.js";
 
 describe("捕获 · 打字回车入 Inbox", () => {
   before(async () => {
@@ -116,8 +116,7 @@ describe("捕获 · 打字回车入 Inbox", () => {
       },
       { timeout: 6000, timeoutMsg: "回车后配图想法未入库" },
     );
-    const imgs = await invoke("list_item_images", { itemId: noteId });
-    expect(imgs).toHaveLength(1);
+    const imgs = await waitItemImages(noteId, 1, "捕获窗配图");
     expect(imgs[0].seq).toBe(1);
   });
 });

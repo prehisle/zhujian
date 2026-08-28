@@ -1,5 +1,5 @@
 import { browser, $, $$, expect } from "@wdio/globals";
-import { invoke, goNotebook, clearInbox, openCompose } from "./support.js";
+import { invoke, goNotebook, clearInbox, openCompose, waitItemImages } from "./support.js";
 
 // 新建入口配图一致性:凡是能输入条目正文的地方,都能 Ctrl+V 配图(共享件 pendingImages)。
 // 捕获浮窗一例在 capture.e2e.js;这里补另外两个新建入口 —— 灵感「记下灵感」和看板「新建任务」。
@@ -55,8 +55,7 @@ describe("新建入口配图 · 灵感「记下灵感」粘贴", () => {
       },
       { timeout: 6000, timeoutMsg: "回车后配图灵感未入库" },
     );
-    const imgs = await invoke("list_item_images", { itemId: noteId });
-    expect(imgs).toHaveLength(1);
+    const imgs = await waitItemImages(noteId, 1, "compose 配图·灵感");
     expect(imgs[0].seq).toBe(1);
 
     // 暂存条清空收起(attachAll 后 clear;refresh 重建 bar 也不会把它带回来)。
@@ -94,8 +93,7 @@ describe("新建入口配图 · 看板「新建任务」粘贴", () => {
       },
       { timeout: 6000, timeoutMsg: "回车后配图任务未入库" },
     );
-    const imgs = await invoke("list_item_images", { itemId: taskId });
-    expect(imgs).toHaveLength(1);
+    const imgs = await waitItemImages(taskId, 1, "compose 配图·任务");
     expect(imgs[0].seq).toBe(1);
 
     // 收尾:归档+彻底删,不给后续 spec 留卡片(连图带计数随条目 CASCADE)。

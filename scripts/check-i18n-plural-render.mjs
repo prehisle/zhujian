@@ -23,6 +23,9 @@
 //
 // 用法:node scripts/check-i18n-plural-render.mjs
 // ⚠ 非发版门禁,是 check-i18n-drift 复数那几条判据的回归网(照 check-site-i18n-render 的定位)。
+// ⛔ **什么时候跑**:不只是「动了这只脚本」——**动了它扫的那份东西(两端 locales/ 的 en 值)也要跑**。
+//    512 判例:412 只改字典、按「改了对应那道才跑」的旧口径确实不必跑它,于是它在干净树上
+//    红了十一天;而它一红,check-gate-knives 的 i18n 那节阳性对照当场破 ⇒ 那节下面的刀全部作废。
 
 import { build } from "esbuild";
 import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
@@ -39,6 +42,11 @@ const PLURAL = /\{([A-Za-z0-9_]+)\|([^|{}]*)\|([^|{}]*)\}/g;
 // **不来自字典**的知识:英语复数几乎恒是 one + s/es,例外逐条签字。
 const IRREGULAR = [
   { one: "has", many: "have", why: "主谓一致,不是名词复数(「{n} attached image has / images have」)" },
+  // 512 补签(⚠ 这条从 412 起红了十一天,见 progress-log 512):两端 backup.reportSkipped 共用这一对。
+  // 复数那半**一次做了两件事** —— 名词 space→spaces 与 be 动词 was→were,而「单数 + s/es」那把尺
+  // 只量得了前一半 ⇒ 它是真不规则形,不是两支写反。读一遍就知道没写反:
+  // n=1「1 further space was not attempted」/ n=2「2 further spaces were not attempted」。
+  { one: "space was", many: "spaces were", why: "名词与 be 动词一起变(「{n} space was / spaces were not attempted」)" },
 ];
 
 const PROJECTS = [
