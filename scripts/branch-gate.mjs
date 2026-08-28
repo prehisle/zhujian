@@ -87,6 +87,26 @@ function ciVerdict(sha) {
   return { state: "red", why: `${ci.length} 趟全非绿,最近一趟 = ${last.conclusion}`, url: last.url };
 }
 
+// ── 「这一轮有没有东西进公开仓」────────────────────────────────────────────────
+// ⛔ **纯文档轮次导不出任何东西**(`docs/` 与 `CLAUDE.md` 本就不在导出白名单里,451 查实)
+//    ⇒ 那种轮次**没有 CI 可跑**,而闸不能因此把人卡死(521 补:第一版真卡住了 —— `verify`
+//    正确地什么都没推,`land` 却去找一条不存在的闸分支、报「先跑 verify」,而它明明跑过了)。
+// ⚠ **判据靠解析 sync-public 的那句话,是有耦合的** ⇒ 两句都没匹配上就 fail-closed,
+//    ⛔ 别兜底成「那就当它没东西要推吧」—— 那会让一棵没验过的树从这个洞里落地。
+function exportDelta() {
+  let out;
+  try {
+    out = execFileSync(process.execPath, ["scripts/sync-public.mjs", "--dry-run"], {
+      cwd: repoRoot, encoding: "utf8",
+    });
+  } catch (e) {
+    return { state: "error", why: String(e.stdout || e.stderr || e.message).trim().slice(-400) };
+  }
+  if (out.includes("已经一致,没有要推的")) return { state: "none" };
+  if (out.includes("要推的改动:")) return { state: "some" };
+  return { state: "unknown", why: out.trim().slice(-400) };
+}
+
 // ── verify ────────────────────────────────────────────────────────────────────
 function verify() {
   const dirty = git(repoRoot, ["status", "--porcelain", "--untracked-files=no"]);
@@ -99,6 +119,13 @@ function verify() {
     });
   } catch {
     die("sync-public 非零退出(上面就是理由)—— 什么都没推。");
+  }
+  // sync-public 自己会说「已经一致」;这里把那种情形**讲明白**,别让人以为推了。
+  if (exportDelta().state === "none") {
+    console.log(`\n⚠ **这一轮没有任何东西进公开仓**(纯文档 / 全在导出排除单里)⇒ 没有 CI 可跑。`);
+    console.log(`   ⇒ 直接 \`land\` 即可,它会走「无导出面」那条路:核公开仓 main 当前那笔的 CI`);
+    console.log(`     仍是绿的(代码面一个字没动),然后只推私有 master。`);
+    return;
   }
   console.log(`\n⭐ 去做别的(⛔ 别前台等,整趟约 29 分钟)。回来跑:`);
   console.log(`   node scripts/branch-gate.mjs status`);
@@ -123,14 +150,39 @@ function land() {
   const dirty = git(repoRoot, ["status", "--porcelain", "--untracked-files=no"]);
   if (dirty) die(`工作仓有未提交的改动 —— 验过的不是这棵树。要么提交后重跑 verify,要么先 stash:\n${dirty}`);
 
-  // ②公开仓本地那笔必须还在,且**尚未**在 origin/main 上(否则这趟早就落过了)。
-  const publicSha = git(target, ["rev-parse", "HEAD"]);
+  // ②闸分支在不在?不在有两种可能,**必须分开处理**,别一律报「先跑 verify」。
   console.log(`→ 问公开仓远端(代理 ${proxy})…`);
+  let gateExists = true;
   try {
-    gitProxy(target, ["fetch", "origin", "main", gateBranch]);
+    gitProxy(target, ["ls-remote", "--exit-code", "origin", `refs/heads/${gateBranch}`]);
   } catch {
-    die(`fetch 公开仓失败 —— 代理不通?或者闸分支 ${gateBranch} 不在远端(先跑 verify)。`);
+    gateExists = false;
   }
+
+  if (!gateExists) {
+    // 可能①:这一轮压根没有东西进公开仓(纯文档轮)⇒ 代码面没动,main 上那笔的绿仍然作数。
+    // 可能②:你真的忘了 verify ⇒ fail-closed。
+    const d = exportDelta();
+    if (d.state !== "none") {
+      die(
+        `闸分支 ${gateBranch} 不在远端,而这一轮**确实有东西要进公开仓**(${d.state}${d.why ? `:${d.why}` : ""})。\n` +
+          `  ⇒ 先跑 \`node scripts/branch-gate.mjs verify\`。`,
+      );
+    }
+    gitProxy(target, ["fetch", "origin", "main"]);
+    const mainSha = git(target, ["rev-parse", "origin/main"]);
+    const v0 = ciVerdict(mainSha);
+    if (v0.state !== "green") {
+      die(`公开仓 main 当前那笔(${mainSha.slice(0, 7)})的 CI 不是绿的:${v0.state} —— ${v0.why}\n  ⛔ 闸不放行。`);
+    }
+    console.log(`⚠ 这一轮**没有东西进公开仓**(纯文档 / 全在排除单里)⇒ 代码面一个字没动。`);
+    console.log(`✅ 公开 main ${mainSha.slice(0, 7)} 的 CI 是绿的:${v0.url}`);
+    landPrivateOnly();
+    return;
+  }
+
+  const publicSha = git(target, ["rev-parse", "HEAD"]);
+  gitProxy(target, ["fetch", "origin", "main", gateBranch]);
   const gateRemote = git(target, ["rev-parse", `origin/${gateBranch}`]);
   if (gateRemote !== publicSha) {
     die(
@@ -146,7 +198,24 @@ function land() {
   }
   console.log(`✅ CI 绿:${v.url}`);
 
-  // ④私有仓不许落后(另一台推过) —— 落后就先 rebase,别在这里覆盖。
+  // ④公开 main ← 那一笔(快进,同一个 sha)+ 删闸分支。
+  console.log(`→ 公开仓 main ← ${publicSha.slice(0, 7)}(同一笔提交,快进)…`);
+  gitProxy(target, ["push", "origin", "HEAD:main"]);
+  console.log(`→ 删掉闸分支 ${gateBranch} …`);
+  try {
+    gitProxy(target, ["push", "origin", "--delete", gateBranch]);
+  } catch {
+    console.log(`  ⚠ 闸分支没删掉(不致命,手动 \`git -C ${target} push origin --delete ${gateBranch}\`)。`);
+  }
+
+  landPrivateOnly();
+  console.log(`⭐ 这棵树的公开 CI 是绿的,而落上去的**就是被验的那一笔**。`);
+}
+
+// 私有仓那半 —— 两条路(正常闸 / 无导出面)共用。
+// ⛔ 那道**落后检查**是承重的:对端推过 ⇒ 树变了 ⇒ 旧的绿不算数,必须重跑 verify。
+//    别为了快把它关掉(dev-and-testing「分支闸」那节明写)。
+function landPrivateOnly() {
   console.log(`→ 问私有仓远端…`);
   git(repoRoot, ["fetch", "-q", "origin"]);
   const branch = git(repoRoot, ["rev-parse", "--abbrev-ref", "HEAD"]);
@@ -157,17 +226,6 @@ function land() {
         `  ⇒ 先 \`git rebase origin/master\`,然后**重跑 verify**(树变了,旧的绿不算数)。`,
     );
   }
-
-  // ⑤落地:公开 main(快进,同一笔提交)+ 私有 master。
-  console.log(`→ 公开仓 main ← ${publicSha.slice(0, 7)}(同一笔提交,快进)…`);
-  gitProxy(target, ["push", "origin", "HEAD:main"]);
-  console.log(`→ 删掉闸分支 ${gateBranch} …`);
-  try {
-    gitProxy(target, ["push", "origin", "--delete", gateBranch]);
-  } catch {
-    console.log(`  ⚠ 闸分支没删掉(不致命,手动 \`git -C ${target} push origin --delete ${gateBranch}\`)。`);
-  }
-
   if (branch !== "master") {
     console.log(`→ 私有仓 ${branch} → master(快进)…`);
     git(repoRoot, ["checkout", "-q", "master"]);
@@ -179,8 +237,7 @@ function land() {
     }
   }
   git(repoRoot, ["push", "-q", "origin", "master"]);
-  console.log(`\n✅ 落地完成。私有 master 与公开 main 都到 ${headSha}${branch !== "master" ? `(并已合掉 ${branch})` : ""}。`);
-  console.log(`⭐ 这棵树的公开 CI 是绿的,而落上去的**就是被验的那一笔**。`);
+  console.log(`\n✅ 落地完成。私有 master 到 ${headSha}${branch !== "master" ? `(并已合掉 ${branch})` : ""}。`);
 }
 
 // ── abandon ───────────────────────────────────────────────────────────────────
