@@ -361,6 +361,69 @@ class SafPureTest {
         assertTrue(SafPure.claim(lock, "C"))
     }
 
+    // ---- 可空字段的解码:Android 的 optString 对 JSON null 回的是字符串 "null" ----------
+
+    /**
+     * ⭐ **这一刀是这条账里唯一能被证伪的那把**(517)。
+     *
+     * Android 的 `optString(k, fallback)` 对 JSON `null` 回的是**字符串 `"null"`**(不是
+     * fallback)⇒ 老写法 `optString(k,"").ifEmpty{null}` 把 `docId` 读成 `"null"`,
+     * [SafPure.isValid] 当场判假 ⇒ `parseRecord` 抛 ⇒ **整条记录读不出来**。
+     *
+     * ⚠⚠ **别改写成「拿 `parseRecord` 喂一段 JSON」的形** —— 单测类路径上的 `org.json` 是
+     * **参考实现**,它的 `optString` 对 JSON null **回 fallback**(517 当场实测:
+     * `optString("docId","")` = `[]`,而未修的 `parseRecord` 照样答 `docId = null`)
+     * ⇒ 那种写法在**未修的代码上就是绿的** = 假绿。承重的判据只有下面第一句。
+     */
+    @Test
+    fun `可空字段 —— JSON null 恒解成 null(哪怕读数是字符串 "null")`() {
+        // ⭐ 承重的那一句:Android 上 isNull=true 时 raw 恰恰就是 "null"。
+        assertNull("这一句红 = isNull 那一格被忽略了", SafPure.optional(true, "null"))
+        assertNull(SafPure.optional(true, ""))
+        // 键缺席与值为 JSON null 在 isNull 上同答案,处置也同。
+        assertNull(SafPure.optional(true, "content:whatever"))
+        // ⛔ 反面同样要钉住:**真有值的时候一个字都不许丢**。
+        assertEquals("content:x/y", SafPure.optional(false, "content:x/y"))
+        // ⛔ 「null」当成真实显示名时不许被吞掉 —— 这正是「把 "null" 当哨兵」那种错修法的靶子。
+        assertEquals("null", SafPure.optional(false, "null"))
+        assertNull("空串照旧当没有", SafPure.optional(false, ""))
+    }
+
+    /**
+     * 接线锚(517):上面那把刀只管得了 [SafPure.optional] 自己,**管不到「`parseRecord`
+     * 有没有真去问 `isNull`」** —— 而那正是这次的病灶所在,且行为测在这套类路径上假绿。
+     *
+     * ⇒ 这里守的是**接线事实**(memory `text-anchor-cannot-guard-a-type` 那条正例):
+     * `parseRecord` 体内不许再出现 `optString`。⛔ 锚里只留稳定标识符(函数名 / 方法名),
+     * 不含任何会被改名的可见文案(515 的教训)。
+     */
+    @Test
+    fun `接线锚 —— parseRecord 里不许直接用 optString`() {
+        val src = safKtSource()
+        val from = src.indexOf("fun parseRecord(")
+        assertTrue("锚落不上:Saf.kt 里找不到 parseRecord", from >= 0)
+        // 到下一个同缩进的成员为止 = parseRecord 的函数体。
+        val rest = src.substring(from)
+        val end = rest.indexOf("\n    fun ", 1).let { if (it < 0) rest.length else it }
+        val body = rest.substring(0, end)
+        assertFalse(
+            "parseRecord 又直接读 optString 了 —— Android 那只对 JSON null 回字符串 \"null\"," +
+                "docId 会被 isValid 判假、整条记录读不出来。走 optionalField / SafPure.optional。",
+            body.contains("optString"),
+        )
+        assertTrue("三个可空字段都该走同一只 helper", body.contains("optionalField(o, \"docId\")"))
+        assertTrue(body.contains("optionalField(o, \"displayName\")"))
+        assertTrue(body.contains("optionalField(o, \"reason\")"))
+    }
+
+    /** ⛔ 找不到就**响亮红**,不许当成「这条没什么可查的」悄悄绿过去。 */
+    private fun safKtSource(): String {
+        val rel = "src/main/java/app/zhujian/notebook/Saf.kt"
+        val tried = listOf(File(rel), File("app/$rel"), File("../app/$rel"))
+        for (f in tried) if (f.isFile) return f.readText()
+        throw AssertionError("读不到 Saf.kt,锚无从落下(试过:${tried.map { it.absolutePath }})")
+    }
+
     // ---- transferId:永不复用 ---------------------------------------------------------
 
     @Test

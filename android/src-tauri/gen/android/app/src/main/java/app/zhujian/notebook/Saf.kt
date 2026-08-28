@@ -145,6 +145,14 @@ object SafStore {
         return prefs(c).edit().putString(K_XFER, o.toString()).commit()
     }
 
+    /**
+     * 可空字段的**唯一**读法(517)。⛔ **别在 [parseRecord] 里直接写 `optString`** ——
+     * Android 那只对 JSON `null` 回的是字符串 `"null"` 而不是 fallback,理由与判据全文
+     * 在 [SafPure.optional] 头上。⚠ `isNull` 那一格是权威答案,不许省。
+     */
+    private fun optionalField(o: JSONObject, key: String): String? =
+        SafPure.optional(o.isNull(key), o.optString(key, ""))
+
     fun parseRecord(raw: String?): SafPure.Transfer? {
         if (raw.isNullOrEmpty()) return null
         val o = JSONObject(raw) // 抛 = 记录损坏,由调用方按「状态未知」处置
@@ -152,10 +160,10 @@ object SafStore {
             transferId = o.getString("transferId"),
             kind = o.getString("kind"),
             outboxName = o.getString("outboxName"),
-            docId = o.optString("docId", "").ifEmpty { null },
-            displayName = o.optString("displayName", "").ifEmpty { null },
+            docId = optionalField(o, "docId"),
+            displayName = optionalField(o, "displayName"),
             state = o.getString("state"),
-            reason = o.optString("reason", "").ifEmpty { null },
+            reason = optionalField(o, "reason"),
             retryable = o.optBoolean("retryable", false),
         )
         // ⛔ **键在不在 ≠ 值合不合法**(实现审一弹 M-3):一条 `kind:"potato"` 或空

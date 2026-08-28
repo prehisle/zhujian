@@ -235,6 +235,30 @@ object SafPure {
     )
 
     /**
+     * 在飞记录里那几个**可空**字段的解码(517)。
+     *
+     * ⛔⛔ **Android 的 `JSONObject.optString(key, fallback)` 对 JSON `null` 回的不是 fallback,
+     * 是字符串 `"null"`** —— `opt()` 拿到的是 `JSONObject.NULL` 这个哨兵对象(非 Java null),
+     * 于是 `JSON.toString()` 走 `String.valueOf(it)` = `"null"`,fallback 那条分支根本到不了。
+     * 原先那个 `optString(k, "").ifEmpty { null }` 因此**从来没把 null 读回来过**:
+     * `docId` 读成 `"null"` ⇒ [isValid] 当场判假(既不是 null、也不以 `content:` 开头)
+     * ⇒ `parseRecord` 抛 ⇒ 整条记录读不出来(不是"某一格脏了")。
+     *
+     * ⇒ 调用方必须把 **`o.isNull(key)`** 一起传进来,那一格才是「这是不是 JSON null」的
+     * 权威答案(两套实现语义一致)。
+     *
+     * ⚠⚠ **这只函数抽出来只有一个理由:让那一刀落得下去**(同 [claim]/[release] 的形)——
+     * 单测类路径上的 `org.json` 是**参考实现**,它的 `optString` 对 JSON null **回 fallback**,
+     * 与 Android 相反 ⇒ **拿 `parseRecord` 写行为测在这套类路径上是假绿**(517 实测:
+     * 未修的代码上那只测照样全绿)。真正能被证伪的判据只有 `optional(true, "null") == null`。
+     *
+     * @param isNull 调用方问 `JSONObject.isNull(key)` 的答案 —— 键缺席或值是 JSON null 都为真。
+     * @param raw    `optString(key, "")` 的读数;⚠ [isNull] 为真时它在 Android 上是 `"null"`。
+     */
+    fun optional(isNull: Boolean, raw: String): String? =
+        if (isNull) null else raw.ifEmpty { null }
+
+    /**
      * 值域校验(实现审一弹 M-3)。⛔ **「键都在」不等于「值合法」** —— 一条 `kind:"potato"`
      * 或空 `transferId` 的记录字段齐全却语义已坏,放它过去,收尸与轮询都会拿它当正常记录。
      */
