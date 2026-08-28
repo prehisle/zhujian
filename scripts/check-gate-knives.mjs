@@ -66,6 +66,15 @@ function run(script, env) {
 // ---- 刀 ------------------------------------------------------------------------------
 // 一刀 = { n 名字, expect 期望在红里出现的话(串或串数组), edits [[文件, 找, 换]],
 //          tool 打在哪只工装上(默认本组的门禁), note 值得记一句的 }
+//
+// 「找」可以是**串**(逐字匹配)也可以是**正则**(`to` 里能用 `$1`)。
+// ⭐ **锚里嵌了会变的可见文案就用正则**(515,四把刀腐烂后立的):锚点串是会腐烂的 ——
+// 406 把「灵感 → 随记」(连带 en 的 idea → note)、501 给一枚 span 加了 class,四把 i18n 刀
+// 就此**落不上去**,而它们坏了多久没人知道(那一节的阳性对照当时正被别的红盖着)。
+// 判据一句:**锚里只许留稳定标识符**(`data-i18n` 的键、字典键、选择器),会变的那半
+// (中文原文 / 英文单复数 / class 列表)一律用捕获组带过去,别写死。
+// ⚠ 正则一律**不带 `g`**,且**必须恰好命中一处** —— 放宽锚点的代价就是可能撞上第二处,
+// 那会让刀悄悄落错地方(与「锚停在旧文本上」一样是安静的失效)。两条都在下面当场断言。
 
 const SUITES = {
   // ===== 341:圆角阶 =====================================================================
@@ -251,7 +260,8 @@ const SUITES = {
       { n: "① TS 里新写死可见中文", expect: "写死的可见中文",
         edits: [["src/toast.ts", "export function", 'const KNIFE = "刀一中文";' + NL + "export function"]] },
       { n: "② 壳原文与 zh 字典漂移", expect: "原文与 zh 字典漂移",
-        edits: [["notebook.html", 'data-i18n="shell.navIdeas">灵感<', 'data-i18n="shell.navIdeas">灵感X<']] },
+        edits: [["notebook.html", /(data-i18n="shell\.navIdeas">)([^<]+)</, "$1$2X<"]],
+        note: "锚只钉键、原文用捕获组带过去 —— 406 把「灵感 → 随记」时,写死原文的老锚当场落不上去" },
       { n: "③ 壳中文摘掉 data-i18n(未绑)", expect: "未绑 data-i18n 的中文",
         edits: [["notebook.html", ' data-i18n="shell.navSearch">搜索', ">搜索"]] },
       { n: "④ 字典键存而不用", expect: "存而不用",
@@ -272,13 +282,16 @@ const SUITES = {
         edits: [["src/update.ts", '"安卓版"', '"安卓版本"']],
         note: "顺带也触发「写死的可见中文」(改出的新值未登记)—— 锚的是「没命中」那半边的牙齿" },
       { n: "⑫ data-i18n 元素塞进子元素", expect: "带子元素",
-        edits: [["notebook.html", '<span data-i18n="shell.sync">同步</span>', '<span data-i18n="shell.sync">同<b>步</b></span>']] },
+        edits: [["notebook.html", /(<span[^>]*data-i18n="shell\.sync"[^>]*>)([^<]*)(<\/span>)/, "$1$2<b>x</b>$3"]],
+        note: "属性与原文都用捕获组带过去(501 给它加了 class,写死整个标签的老锚就此落不上去);" +
+              "⭐ 顺带把刀改锐了:子元素**接在原文后面**(像给按钮加图标),原文不动 ⇒ 只触发「带子元素」这一条," +
+              "不再顺带触发「原文漂移」(纪律③:红被别的断言吸收掉就证不了自己那条规则)" },
       // 359(第②笔)起安卓也进正扫描面:上面①-⑦、⑨-⑫ 全打在桌面那一份上,下面四刀
       // 证「同一套判据在安卓工程上也真在跑」——两个工程各扫一遍,漏扫一整个工程是安静的绿。
       { n: "⑬ 安卓 TS 里新写死可见中文", expect: "写死的可见中文",
         edits: [["android/src/swipe.ts", "import ", 'const KNIFE_I18N = "新写死";' + NL + "import "]] },
       { n: "⑭ 安卓壳原文与 zh 字典漂移", expect: "原文与 zh 字典漂移",
-        edits: [["android/index.html", 'data-i18n="shell.navIdeas">灵感<', 'data-i18n="shell.navIdeas">灵感X<']] },
+        edits: [["android/index.html", /(data-i18n="shell\.navIdeas">)([^<]+)</, "$1$2X<"]] },
       { n: "⑮ 安卓壳中文摘掉 data-i18n(未绑)", expect: "未绑 data-i18n 的中文",
         edits: [["android/index.html", ' data-i18n="shell.navTasks">任务', ">任务"]] },
       { n: "⑯ 两端同名键值漂移(CROSS_END_KEYS)", expect: "两端 zh 值不同",
@@ -313,8 +326,10 @@ const SUITES = {
       // 363:复数选择器 {n|单数|复数}。三刀分别打三条新判据 —— 少任何一条,写错的写法
       // 都会**原样印到界面上**(而界面上多一对花括号,看着像数据问题不像文案问题)。
       { n: "㉖ en 只在选词里用了变量、忘了打印数字", expect: "占位符集合不等",
-        edits: [["src/locales/topics.ts", '"{ideas} {ideas|idea|ideas} · {tasks}', '"{ideas|idea|ideas} · {tasks}']],
-        note: "去重后集合仍要相等 —— 这刀证明去重没把「en 少一个变量」一起去掉" },
+        edits: [["src/locales/topics.ts", /("topics\.counts":[^\n]*en:\s*")\{ideas\} (\{ideas\|)/, "$1$2"]],
+        note: "去重后集合仍要相等 —— 这刀证明去重没把「en 少一个变量」一起去掉;" +
+              "锚钉的是字典键 + 占位符名(都是稳定标识符),⛔ 别把选词那两个单词写进锚 —— " +
+              "406 把 en 的 idea|ideas 改成 note|notes,老锚就是这么落不上去的" },
       { n: "㉗ zh 侧写了复数选择器(中文没有复数形)", expect: "zh 值里出现复数选择器",
         edits: [["src/locales/topics.ts", 'zh: "{n} 个子标签"', 'zh: "{n} 个{n|子标签|子标签}"']] },
       { n: "㉘ 选择器形不对(少一支),t() 认不出会原样印出去", expect: "形不对的复数选择器",
@@ -373,7 +388,10 @@ for (const name of picked) {
   }
 }
 
-let bad = 0, ran = 0, skipped = 0;
+// ⚠ `ran` 只数**真落下去并跑完**的刀;「刀下不去」走 throw,不进 `ran`(512 收尾复核查实的口径)。
+// ⇒ 末行必须把两者分开说,否则「N 刀里 M 刀有问题」读起来像 M 把是那 N 里的,而实际上那 N 把全绿、
+//   出事的是压根没落上去的另外几把 —— 512 点名留给「下一个碰这只脚本的人」改准的就是这句。
+let bad = 0, ran = 0, skipped = 0, stuck = 0;
 
 for (const name of picked) {
   const suite = SUITES[name];
@@ -414,7 +432,19 @@ for (const name of picked) {
         const cur = readFileSync(p, "utf8");
         // 锚点找不到 = 这一刀根本没下去。**必须当场报**:它与「注入了但门禁没红」在
         // 输出上长得一样,而后者才是真发现。
-        if (!cur.includes(from)) throw new Error(`这一刀下不去:${file} 里找不到「${from.slice(0, 46)}」`);
+        let hits;
+        if (from instanceof RegExp) {
+          if (from.global) throw new Error(`锚点正则不许带 g:${String(from)}`); // test() 有 lastIndex,replace() 会改全部
+          hits = (cur.match(new RegExp(from.source, from.flags + "g")) ?? []).length;
+        } else {
+          hits = cur.split(from).length - 1;
+        }
+        if (hits === 0) throw new Error(`这一刀下不去:${file} 里找不到「${String(from).slice(0, 46)}」`);
+        // 只对正则锚较真:串锚逐字写死,多处命中是作者知情的;正则是**放宽**过的,
+        // 撞上第二处就会落错地方,而落错地方和落对地方在输出上长得一样。
+        if (from instanceof RegExp && hits > 1) {
+          throw new Error(`锚点不唯一:${file} 里「${String(from).slice(0, 46)}」命中 ${hits} 处,刀会落在第一处`);
+        }
         writeFileSync(p, cur.replace(from, to));
       }
       const r = run(tool, k.env);
@@ -439,6 +469,7 @@ for (const name of picked) {
       if (k.note) console.log(`     ${k.note}`);
     } catch (e) {
       bad++;
+      stuck++;
       console.log(`✗ 这一刀本身出错  ${k.n}${NL}    ${e.message}`);
     } finally {
       for (const [p, text] of saved) writeFileSync(p, text);
@@ -460,7 +491,12 @@ for (const name of picked) {
 }
 
 console.log(
-  `${NL}${bad ? `✗ ${ran} 刀里 ${bad} 刀有问题。` : `✓ ${ran} 刀全部真红,且全红在该红的地方。`}` +
-    (skipped ? `(另 ${skipped} 刀要 Chrome,没跑)` : ""),
+  `${NL}${
+    bad
+      ? `✗ ${bad} 处有问题:真跑 ${ran} 刀` +
+        (stuck ? `,另有 ${stuck} 刀**根本没落上去**(⛔ 不含在那 ${ran} 里)` : "") +
+        "。"
+      : `✓ ${ran} 刀全部真红,且全红在该红的地方。`
+  }` + (skipped ? `(另 ${skipped} 刀要 Chrome,没跑)` : ""),
 );
 process.exit(bad ? 1 : 0);
