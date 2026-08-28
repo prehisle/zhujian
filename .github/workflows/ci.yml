@@ -38,12 +38,33 @@ on:
     #       (`release.yml` = `v*`,`android-release.yml` = `android-v*`)。
     branches: ["**"]
 
-# 连推压成一次:同一条 ref 上新的一趟把还在跑的旧趟掐掉。
-# ⚠ **独立 group**,与 `release.yml` 的 `release-${{ github.ref }}` 不同名 ——
-#    那条写死了 `cancel-in-progress: false`(发版中途绝不取消),两者井水不犯河水。
-concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+# ⛔ **刻意没有 `concurrency`**(517 补立账、518 拿掉;backlog 测试与工装 41)。
+#
+# 原先这里是 `group: ci-${{ github.ref }}` + `cancel-in-progress: true`,想省的是「连推时
+# 重复跑」。**它省错了东西**:517 收口那趟推上去,把 516 那趟(已跑到 **25m50s**、
+# `linux-e2e` 离完事约 1 分钟)当场掐成 `cancelled`;查近 14 趟,**cancelled 占 4**,
+# 而 515 与 516 连着两趟都没跑完 ⇒ 那阵子最后一趟真正跑到底的 ci 就是那趟**红的**。
+#
+# ⭐ **代价说准,别夸大**:被掐那趟的树是新那趟的**子集** ⇒ **覆盖面一点没丢**
+#   (同「合并树一趟顶两趟」)。丢的是另外两样,而恰好两样都是本文件存在的理由:
+#     ①**墙钟** —— 连着推就永远拿不到裁决,而规矩 5 降级的硬前提正是「Linux 那半由
+#       per-push CI 兑现」;②**观测机会** —— backlog 测试与工装 39 等的就是「下一次红
+#       那句话」,516 刚把分诊话术装上去,接着两趟就都没跑完。
+#
+# ⛔ **另外两条路都查过了,别再挑回来**:
+#   · 「保留开关、补一条『推之前先 `gh run list` 一眼』的纪律」—— 那是要人去补偿一台
+#     正在主动毁证据的机器(memory `guards-must-bind-to-the-automatic-edge`);505 那条
+#     「下一轮开工前看一眼」已经在了,而它看到的恰恰是 `cancelled` —— **既不是绿也不是红**。
+#   · 「只给 `linux-e2e` 开豁免」—— 救不了。`gates` 是 `uses:` 调 `preflight.yml`,job 级
+#     `concurrency` 一挂就把它里头三格全掐,而最长的那格是 **Windows 六套 cargo(≈29 分)**,
+#     与 `linux-e2e` 同一档 ⇒ 豁免一根长杆、掐掉另一根,等于没做。
+#   · 「留 group、只把 `cancel-in-progress` 改 false」—— **更糟**:那样新趟变成**排队**而不是
+#     并行(墙钟按趟数累加),且 GitHub 只保留**最新那个 pending**、中间排着的照样被取消。
+#
+# ⚠ **代价是真的**:连推 N 次就有 N 趟并行。公开仓 runner 免费无限,超出并发上限的那些是
+#   **排队**(仍会跑完、仍给裁决),不是取消 ⇒ 这条轴上换到的是「每一次推都有一份裁决」。
+# ⚠ 其余四条 workflow 的 `concurrency` 一个字没动:`nightly*` / `android-nightly` 是定时线
+#   (同一时刻只该有一趟),两条 release 线写死 `cancel-in-progress: false`(发版中途绝不取消)。
 
 jobs:
   # ⭐ **这道 `if` 守的是钱,不是洁癖**:同一份文件既在私有工作仓 `zhujian-dev`、也在公开仓
@@ -71,7 +92,11 @@ jobs:
   # ⚠ 它与 `gates` **互不依赖**,同时开跑;`gates` 两三分钟就完,这一格是几十分钟那一档。
   linux-e2e:
     if: github.repository == 'prehisle/zhujian'
-    name: e2e(Linux / WebKitGTK,40 spec)
+    # ⛔ **名字里刻意不写 spec 数**(518,backlog 测试与工装 31):job 名在 job 起来**之前**
+    #    就要定 ⇒ 它拿不到运行期读数,写进去的那个数只会静静腐烂,而 job 名恰是 Actions 页面上
+    #    第一眼看见的那行字(同 memory `stale-number-in-docs-and-fixtures`)。真数在
+    #    `e2e-verdict.mjs` 印的读数行与 job summary 里,那两处是跑出来的。
+    name: e2e(Linux / WebKitGTK)
     runs-on: ubuntu-22.04
     # 兜住「挂死」那一形:本机全量 10 分钟,托管 runner 慢几倍(448 实测 core 慢 ≈6.5 倍)。
     # ⚠ 超时 = 红,而且是**判不出**那一档的红(日志里不会有汇总行)—— 那正是 440 那把尺的三态。
@@ -88,8 +113,8 @@ jobs:
       # (同样装 apt 的那个)**一起卡在 `apt-get` 上 52 分钟**,而同一趟里**不装 apt 的两格早就绿了**
       # ⇒ 是 runner 的 apt 镜像挂住,不是我们的树。不设步级上限的话,它会一路吃掉 job 那 90 分钟,
       # 最后报成「job 超时」——**把一次基础设施事件呈现成一次说不清的红**。15 分钟对一次正常的
-      # apt(实测 ~60 秒)绰绰有余。⚠ `preflight.yml` 的 `shells` 那格有同样的暴露面,本轮**没动**
-      # (那是发版闸,单轮单件事)—— 记在 ci-plan §8。
+      # apt(实测 ~60 秒)绰绰有余。✅ `preflight.yml` 的 `shells` 那格(同样的暴露面)518 顺手补齐了
+      # —— 那格更要紧:它是**发版闸**,不设上限时吃的是 job 的默认 360 分钟。
       - name: 系统依赖(Tauri v2 + WebKitWebDriver + Xvfb)
         timeout-minutes: 15
         run: |
@@ -187,7 +212,7 @@ jobs:
       #    Xvfb 的命令行带 `-auth /tmp/xvfb-run.XXXX/Xauthority`)⇒ 不套也跑得起来。仍然显式套:
       #    这样「CI 跑的那条命令」与 dev-and-testing 里写给人的那条**逐字相同**,而 `xvfb` 这个包
       #    两条路都要装。
-      - name: e2e(40 spec,零重试)
+      - name: e2e(零重试)
         env:
           YS_E2E_FAST: "1"
         run: |

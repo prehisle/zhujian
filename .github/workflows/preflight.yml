@@ -10,12 +10,19 @@ name: preflight
 # 用来验证「这些门禁与测试在 Linux runner 上跑得起来」——它们原本只在作者的 Windows
 # 本机跑过。⭐ 十道门禁 385 已这样探过两趟(第一趟红在白名单漏了 `docs/ui-guidelines.md`,
 # 加白名单后第二趟全绿);386 的 `shells` 格也这样探过一趟(run 31887693994,首趟即绿,
-# 两壳的数与 Windows 逐个相同 = 8 / 29)。**改了门禁或本文件之后照旧先探一趟,别拿发版当首测。**
+# 两壳的数与 Windows 逐个相同 —— ⚠ **那是 386 当时的读数,不是当前态**,别拿它对今天的数)。
+# **改了门禁或本文件之后照旧先探一趟,别拿发版当首测。**
 #
-# ⭐ 386 补上第二格 `shells`:两壳的 cargo test(桌面 8 / 安卓 29)。它们守的是**壳装配
-# 契约**(单实例门 / 设备身份保持 / 坏库版本拒绝 / 主库丢失保护),此前不在任何 CI 里 ——
-# 385 把它记成可优化项时,五套里恰好漏掉的就是这两套。两格**并行**跑,故 preflight 的
-# 墙钟 = 两格里慢的那个,不是相加。
+# ⭐ 386 补上第二格 `shells`:两只壳 crate 的 cargo test(468/OH-d 抽出共享的 `mobile/` 之后
+# 是三格)。它们守的是**壳装配契约**(单实例门 / 设备身份保持 / 坏库版本拒绝 / 主库丢失保护),
+# 此前不在任何 CI 里 —— 385 把它记成可优化项时,五套里恰好漏掉的就是这两套。两格**并行**跑,
+# 故 preflight 的墙钟 = 两格里慢的那个,不是相加。
+#
+# ⛔ **518 起:job 名与注释里一律不写「跑出来多少支」那种数**(backlog 测试与工装 31)——
+# job 名在 job 起来之前就要定,拿不到运行期读数;写死的那个数会静静腐烂,而它正是 Actions
+# 页面上第一眼看见的那行字(同 memory `stale-number-in-docs-and-fixtures`)。⭐ 但**「跑几套」
+# 这类结构数照留**(「三套」「六套」「十道」):它们数的是紧接在下面那几行 `run:`,
+# 改本文件才会变,不会背着人腐烂。
 #
 # ⭐ 448 补上第三格 `windows`(ci-plan 阶段 2)。**在此之前,CI 里从来没有一条 Rust 测试
 # 在 Windows 上跑过** —— 上面两格都钉死 `ubuntu-22.04`,nightly 的 Windows 那格只 build
@@ -26,8 +33,8 @@ name: preflight
 # 复跑一整轮才抓到的,而**设计审与实现审都读不出平台 API 语义差**。
 # ⚠ 它落在 preflight 里 ⇒ **每次发版都会等这一格**(墙钟 +5~10 分钟)。那是有意的:
 # 发版闸正是这个洞最该被堵上的地方。
-# ⚠ 两端 core 的**测试条数本来就不同**(Windows 955 / Linux 960,backup 模块有多处
-# `#[cfg(unix)]` 测试)—— 这里只判过不过,⛔ 别去对数。
+# ⚠ 两端 core 的**测试条数本来就不同**(backup 模块有多处 `#[cfg(unix)]` 测试,Linux 恒多
+# 那几支)—— 这里只判过不过,⛔ 别去对数,也别在这儿写下当时的读数(写下就腐烂)。
 #
 # ⛔ 刻意**不**放进来的两样(判据见 progress-log 385/386):
 #   · e2e —— 要 Windows + 真 WebView2 + 先停掉占全局热键的生产实例,塞进来产的是
@@ -78,7 +85,7 @@ jobs:
 
   # 386:两壳的 cargo test。与上面那格**互不依赖**,同时开跑。
   shells:
-    name: cargo test 三格(桌面 9 / 安卓 3 / 共享手机层 29)
+    name: cargo test 三格(桌面壳 / 安卓壳 / 共享手机层)
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v7
@@ -87,7 +94,13 @@ jobs:
       # 那格逐字同一串;缺了会停在 pkg-config 找不到 webkit2gtk-4.1)。
       # ⚠ 安卓壳这里编的是 **host target(x86_64-linux)**——跑的是纯 Rust 单测与起真
       # 同步服务的集成测,**不需要 NDK**(NDK 只在真出 aarch64 的 .so 时才要)。
+      # ⭐ 518 补上步级上限(ci-plan §8-9 记的那笔:「谁下次碰 preflight 顺手加一行即可」)。
+      # 450 那天 main 上这一步与 `ci.yml` 的 `linux-e2e`(同样装 apt 的那格)**一起卡在
+      # `apt-get` 上 52 分钟**,而同趟不装 apt 的两格早绿了 ⇒ 是 runner 的 apt 镜像挂住、
+      # 不是我们的树。不设上限的话它会一路吃掉 job 的默认 360 分钟,最后报成一次说不清的红
+      # ——**把一次基础设施事件呈现成一次发版被卡**。15 分钟对正常 apt(实测 ~60 秒)绰绰有余。
       - name: Linux 系统依赖(Tauri v2)
+        timeout-minutes: 15
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file \

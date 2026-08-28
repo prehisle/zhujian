@@ -107,6 +107,30 @@ jobs:
           echo "NDK_HOME=$NDK_HOME"
           node scripts/build-android.mjs
 
+      # ⭐ 518 接上(backlog 测试与工装 40):**发版闸那半**。这套 Kotlin JVM 单测守的是 SAF 桥
+      # 那几道**安全闸**的纯逻辑(H-1 的四条校验 / 尺 4 / single-flight / 收尸分支),坏了是
+      # 「私有区文件被搬进用户目录」那一档;而在此之前 `.github/workflows/` 里 `gradlew` 零出现
+      # ⇒ 它只在有人手跑时才跑,红着和绿着对外一模一样。
+      # ⛔ **位置有讲究:排在 scp 之前** —— 它红了这趟就发不出去,这才叫闸。
+      #    (每晚那趟警报在 `android-nightly.yml`,同一步。只有闸没有警报 = 平时不跑、
+      #     红的时候你正在发版。)
+      # ⛔ **排不到构建前面去**:`gen/android` 在干净检出里编不了 —— `tauri.settings.gradle`、
+      #    `app/tauri.build.gradle.kts`、整个 `app/src/main/**/generated/` 都是 gitignore 的
+      #    tauri CLI 生成物,且前者写着**作者机器**的绝对路径;上一步 `tauri android build` 才
+      #    按本 runner 重新生成它们(`keystore.properties` 同理,缺它 gradle 配置期就死)。
+      #    逐条字据与「不需要 NDK」那次实测,记在 `android-nightly.yml` 同一步的注释里,⛔ 别抄第二份。
+      # ⚠ 判绿走 `kotlin-test-verdict.mjs`(0 绿 / 1 红 / 2 判不出):gradle 的 test 任务在一支都
+      #    没跑时照样 `BUILD SUCCESSFUL`。那把尺的十刀阴性对照 = `node scripts/check-kotlin-test-verdict.mjs`。
+      - name: Kotlin JVM 单测(SAF 桥那几道闸的纯逻辑,不过就不发版)
+        run: |
+          set +e
+          (cd android/src-tauri/gen/android && ./gradlew :app:testUniversalDebugUnitTest)
+          status=$?
+          set -e
+          node scripts/kotlin-test-verdict.mjs \
+            android/src-tauri/gen/android/app/build/test-results/testUniversalDebugUnitTest \
+            --status="$status" --label="android-release(发版闸)"
+
       # gen 脚本自带四道闸(三处版本一致 / aapt 拆 APK 验 versionCode / build-profile.json 非 devtools /
       # 386 补的 apksigner 验签名证书是不是那把 release key——签错钥=存量用户报「应用未安装」;
       # 它跑的是 build-tools 里的 apksigner.jar,靠上面那步的 JDK 17 与 build-tools 36),

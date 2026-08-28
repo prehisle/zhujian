@@ -95,3 +95,43 @@ jobs:
             android/apk-out/build-profile.json
           retention-days: 14
           if-no-files-found: error
+
+      # ⭐ 518 接上(backlog 测试与工装 40):那套 Kotlin JVM 单测此前**没有任何自动边界会去
+      # 跑它** —— `.github/workflows/` 里 `gradlew` 零出现,`preflight` 的 `shells` 那格跑的是
+      # 壳的 cargo、不含它 ⇒ 红着和绿着对外一模一样(同 512 那条:`check-i18n-plural-render`
+      # 在干净树上红了十一天没人知道)。它守的是 SAF 桥那几道**安全闸**的纯逻辑
+      # (H-1 的四条校验 / 尺 4 / single-flight / 收尸分支),坏了是「私有区文件被搬进用户目录」
+      # 那一档,不是「圆角差 2px」。
+      # ⚠ **这一格是警报**(每晚一趟,早知道);**发版闸那半在 `android-release.yml`**,同一步、
+      #    排在 scp 之前 —— 只有闸没有警报,就成了「平时不跑、红的时候你正在发版」。
+      #
+      # ⛔ **为什么排在构建之后**(不是「想晚点跑」,是排不到前面去):`gen/android` 在干净检出里
+      # **根本编不了** —— `tauri.settings.gradle`、`app/tauri.build.gradle.kts`、整个
+      # `app/src/main/**/generated/` 都是 gitignore 的 tauri CLI 生成物,而 `tauri.settings.gradle`
+      # 里写的还是**作者机器**的绝对路径(指向本机 cargo registry 里 tauri / barcode-scanner /
+      # opener 三个安卓子工程)。上面那步 `tauri android build` 会按**本 runner** 的路径把这几样
+      # 重新生成,之后 gradle 才配置得起来 ⇒ **顺车跑最省**;单独立一格要么重跑一整趟安卓构建,
+      # 要么把 CLI 模板搬进仓里。⚠ `keystore.properties` 同理 —— 缺它 gradle 在配置期就死在
+      # `app/build.gradle.kts` 的 `keyAlias ... as String`(实测:`null cannot be cast to
+      # non-null type kotlin.String`),而上面「复现 release 签名配置」那步已经写好了。
+      #
+      # ⚠ **不需要 NDK、也不会顺带去构 `.so`** —— 实测不是推断:
+      #    `:app:testUniversalDebugUnitTest --dry-run` 的任务图里 `rust`/`jni`/`ndk`/`cargo`
+      #    **零出现**(`buildSrc` 的 `RustPlugin.kt` 把 `rustBuild*` 挂在 `merge*JniLibFolders` 上,
+      #    那是打包 APK 那条链,单测这条不经过)。也**不重开 daemon**:复用上一步那只热的。
+      #
+      # ⚠ **判绿不看 gradle 的退出码** —— test 任务在一支都没跑时照样 `BUILD SUCCESSFUL`
+      #    (源文件被挪走 / 任务名改了 / 变体改了名,三种形都安静地绿)⇒ 走
+      #    `kotlin-test-verdict.mjs`(0 绿 / 1 红 / 2 判不出,同 `e2e-verdict.mjs` 口径)。
+      #    那把尺自己的十刀阴性对照:`node scripts/check-kotlin-test-verdict.mjs`。
+      # ⚠ `if: always()` —— 上面收产物那步失败也照跑:这一格问的是「树对不对」,与「产物收没收上」无关。
+      - name: Kotlin JVM 单测(SAF 桥那几道闸的纯逻辑)
+        if: always()
+        run: |
+          set +e
+          (cd android/src-tauri/gen/android && ./gradlew :app:testUniversalDebugUnitTest)
+          status=$?
+          set -e
+          node scripts/kotlin-test-verdict.mjs \
+            android/src-tauri/gen/android/app/build/test-results/testUniversalDebugUnitTest \
+            --status="$status" --label="android-nightly(警报)"
