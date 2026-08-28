@@ -105,6 +105,21 @@
 .task-meta .chip.pri.set.p1 { color: var(--ink-soft); }
 
 /* inline editors */
+/* 原生 `<input type=date>` 有自己的最小内在宽度(实测恒 128px),窄卡上单它一个就顶破整行
+   —— 510 的 `flex-wrap` 治不了这一格(换行只在「两个以上的东西挤不下」时有用,这里是**一个
+   东西自己就太宽**)。⇒ 与上面 topic-slot/chip **同一套做法:两层 min-width:0 缺一不可**
+   (slot 与 input 都是 flex item,自动最小尺寸=内容宽,不解开就一路顶着不缩)。
+   ⭐ **两条各自都是死的,合起来才治净**,别只留一条 —— 524 两把刀各红一次(窗 820 / 卡宽 128,
+   两刀下 input 都**恒 128 没缩**);⚠ 如实记口径:**九档**那组「与基线逐字节相同」的读数量的是
+   另外两个形(只给 input 加 `min-width+max-width`、以及把 slot 那条写在 `.slot` 上),
+   ⛔ 别把两组读数当成同一趟。
+   ⛔ **别把它提到 `.task-meta .slot` 上**:那样会顺带罩住 `.topic-slot`,把上面
+   `.task-meta.task-topic .topic-slot` 那条 min-width 变成死声明(三个 slot 都带 `slot` 类);
+   pri-slot 也不需要(510 已治,实测零溢出)。
+   ⚠ 知情的取舍:input 跟着卡宽缩,卡宽 98 时它只剩 72px,**日期字串显示不全** ——
+   换来的是不撑破、列体不长横滚条。⭐ **可达区间(卡宽 138 / 128)整个落在纯改善那侧**
+   (那两档日期仍完整),118 起才开始裁。逐档截图与门槛见 progress-log 524。 */
+.task-meta .due-slot { min-width: 0; }
 .task-meta .due-input {
   font: inherit;
   font-size: var(--fs-12);
@@ -114,6 +129,7 @@
   border-radius: var(--radius-sm);
   padding: 3px 7px;
   outline: none;
+  min-width: 0;
 }
 .task-meta .link {
   font: inherit;

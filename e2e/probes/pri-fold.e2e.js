@@ -29,13 +29,17 @@ function readSlot(title, slotSel) {
   };
 }
 
-async function sweep(title, slotSel, tag) {
+async function sweep(title, slotSel, tag, shoot = false) {
   const rows = [];
   for (const w of WIDTHS) {
     await browser.setWindowSize(w, 700);
     await browser.pause(250);
     const r = await browser.execute(readSlot, title, slotSel);
     rows.push({ win: w, ...(r ?? { GONE: true }) });
+    // 524:日期框那半的取舍是「不撑破」换「可能看不全」,而**能不能读**只有渲出来才知道
+    // (memory `gates-green-is-not-looks-right`)⇒ 逐档截图,别拿 scrollWidth 猜
+    // (原生 date 的内容在 UA shadow DOM 里,那个读数答不了这一问)。
+    if (shoot) await browser.saveScreenshot(`e2e/probes/out-${tag.toLowerCase()}-${w}.png`);
   }
   console.log(`${tag} ` + JSON.stringify(rows, null, 1));
   const folded = rows.filter((r) => r.kids && r.kids.some((b) => b.endsWith("/2L") || b.endsWith("/3L")));
@@ -72,7 +76,7 @@ describe("探针 · task-meta 行内编辑器折行", () => {
     await $(`.tcard*=${T}`).waitForExist({ timeout: 8000 });
     await boardAction(T, "截止");
     await $(`.tcard*=${T}`).$(".due-slot .due-input").waitForExist({ timeout: 5000 });
-    const rows = await sweep(T, ".due-slot", "DUE");
+    const rows = await sweep(T, ".due-slot", "DUE", true);
     expect(rows.length).toBe(WIDTHS.length);
   });
 

@@ -268,3 +268,56 @@ describe("任务时间维度 · 窄列里行内编辑器不折行也不撑破卡
     expect(m.bodyOverflow).toBe(0);
   });
 });
+
+// 524:更窄的一档 —— 原生 `<input type=date>` 有自己的最小内在宽度(实测恒 128px),
+// 510 的 `flex-wrap` 治不了它(换行只在「两个以上的东西挤不下」时有用,这里是**一个东西
+// 自己就太宽**)。修法 = 与 topic-slot/chip 同一套的**两层 `min-width: 0`**。
+//
+// ⚠ **窗宽 820 是量出来的,别改宽**:上面那只用的 950 → 卡宽 161,而这个患的门槛在**卡宽 138**
+// ⇒ 在 950 那档断言等于什么都没断言(改前改后都是 0)。820 → 卡宽 **128**,改前 `card+13`
+// / 列体横滚条 `body+8`,余量够大。
+// ⚠ **只断言不溢出,不断言「日期读得全」**:原生 date 的内容在 UA shadow DOM 里,页内量不到;
+// 逐档可读性是**截图**判的(探针 `pri-fold` 的 `out-due-*.png`),读数在 progress-log 524 ——
+// ⭐ 卡宽 ≥128 日期完整,118 起裁成 `2026/08/`。**那是知情的取舍,不是这只测该管的事。**
+describe("任务时间维度 · 更窄的列里截止编辑器也不撑破卡片", () => {
+  const T = "窄列乙-缴水电费";
+  let id;
+
+  before(async () => {
+    id = await invoke("create_task", { title: T });
+    await invoke("set_task_due", { id, dueOn: ymd(0) });
+    await goNotebook("board"); // 它自己会把窗摆回 1100,故窄窗必须在它之后设
+    await $(`.tcard*=${T}`).waitForExist({ timeout: 8000 });
+    await browser.setWindowSize(820, 700);
+    await browser.pause(250);
+  });
+
+  after(async () => {
+    await browser.setWindowSize(1100, 700); // ⛔ 别把窄窗泄漏给后面的 spec
+    await invoke("archive_task", { id });
+    await invoke("purge_task", { id });
+  });
+
+  it("卡宽 ~128 时:截止编辑器缩得下去,卡片与列体都不横向溢出", async () => {
+    await boardAction(T, "截止");
+    await $(`.tcard*=${T}`).$(".due-slot .due-input").waitForExist({ timeout: 5000 });
+    const m = await browser.execute((t) => {
+      const card = [...document.querySelectorAll(".tcard")].find((c) => c.textContent.includes(t));
+      const body = card.closest(".col-body") ?? card.parentElement;
+      const input = card.querySelector(".due-slot .due-input");
+      return {
+        cardW: card.clientWidth,
+        inputW: Math.round(input.getBoundingClientRect().width),
+        cardOverflow: card.scrollWidth - card.clientWidth,
+        bodyOverflow: body.scrollWidth - body.clientWidth,
+      };
+    }, T);
+    // 前置断言:确认真的在那一档量。⛔ 少了它,窗宽哪天被别处改宽,下面三条会安静地恒绿。
+    expect(m.cardW).toBeLessThan(140);
+    // ⭐ 承重的那一格:输入框**真的缩了**(改前它在任何窗宽下恒 128)。
+    // ⛔ 只断言「不溢出」不够 —— 哪天有人把整个编辑器藏起来,那两格也会是 0。
+    expect(m.inputW).toBeLessThan(120);
+    expect(m.cardOverflow).toBe(0);
+    expect(m.bodyOverflow).toBe(0);
+  });
+});
