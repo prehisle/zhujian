@@ -16,7 +16,13 @@
    ①**它变不红**:有 wrap 之后 flex 是先断行再谈收缩,钮根本到不了「缩到要折字」那一步
      (阴性对照刀 B 落上了、测试照绿);②**它的打击面不止这里**:`.choice` 是与
      `tag-picker.ts` 共用的类,那边的字是**用户自己起的标签名**、可以任意长,nowrap 会让
-     长名字撑破卡片。真要治那半,照 `inbox.css` 的 `.v-inbox .choice`(省略号)那套,别用 nowrap。 */
+     长名字撑破卡片。真要治那半,照 `inbox.css` 的 `.v-inbox .choice`(省略号)那套,别用 nowrap。
+   ⭐ **那半 522 已经治了**(照上面那句办的,别再当开着的账):`board.css` 里
+     `.v-board .task-topic .choice` 拿到 `overflow:hidden + text-overflow:ellipsis +
+     white-space:nowrap`,父容器 `.topic-choices` 拿到 `min-width: 0`。
+     ⛔ **那三条 scoped 在 `.task-topic` 下,够不到本文件这几枚优先级钮** —— 上面①②那两条
+     理由对**这里**照旧成立,别看见"看板那边加了 nowrap"就往这儿也补一条。
+     回归网 = `e2e/specs/board-tag-picker.e2e.js` 最后那例(两半判据:收成一行 **且** 不撑破)。 */
 .task-meta .slot { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 
 /* chips: a quiet at-a-glance DISPLAY of the set due/priority/tag (㊺ — editing is via the
