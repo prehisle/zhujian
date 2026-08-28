@@ -968,8 +968,10 @@ $("save").addEventListener("click", save);
 // 「一步回捕获」/系统分享)→ 捕获层从屏底滑入。
 //
 // 键盘避让(232 重做)已上抬成共享件 `src/kbsheet.ts`(314 第③笔:留言层要的是同一套
-// 几何,抄第二份必漂移)。那边有全部由头与阈值来历;这里只剩捕获层自己的接线:
-// 开层即抢先抬、聚焦输入即开层、不限高。回车仍换行;收层只由遮罩点击/保存成功/返回触发。
+// 几何,抄第二份必漂移)。那边有全部由头;这里只剩捕获层自己的接线:聚焦输入即开层、
+// 不限高。回车仍换行;收层只由遮罩点击/保存成功/返回触发。
+// ⭐ 键盘一起视口就真的缩(原生 `applyImeInsets()`),层贴 `bottom:0` 即在键盘上沿 ——
+// 此处**不再有**「抢先抬」那类接线。
 {
   const sheet = $("compose-card");
   const fab = $("capture-fab");
@@ -981,7 +983,6 @@ $("save").addEventListener("click", save);
     scrim: $("capture-scrim"),
     input: ta,
     openOnFocus: true, // 任何路径聚焦输入都进入捕获态(顶栏「一步回捕获」/系统分享追加)
-    raiseOnOpen: true, // 开层就是要写字
     onOpen: () => {
       fab.hidden = true;
     },

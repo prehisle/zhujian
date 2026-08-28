@@ -241,9 +241,9 @@
 
       /* 捕获区:抬升的纸面。textarea 随内容自增高(field-sizing,安卓 WebView 够新)。 */
       /* 捕获层(232 优化,聊天/Keep 式):平时零占屏——只在点悬浮 ＋ 或聚焦输入时从屏底滑入。
-         开合与「贴键盘上沿」的位置都由 JS 按 visualViewport 定(main.ts placeSheet):键盘起→
-         贴键盘上沿、键盘落→贴屏底;关键是让输入框始终留在可见区内,浏览器就不去滚文档露它=
-         背景不动。收起态 transform 滑到屏下(留 DOM 与草稿,不 display:none 以便过场)。回车仍
+         「贴键盘上沿」不再由 JS 算(2026-08-28):原生侧把 ime inset 变成内容视图的 padding
+         (`MainActivity.applyImeInsets()`),键盘一起视口就真的缩 ⇒ 这里的 `bottom:0` 就是
+         键盘上沿。收起态 transform 滑到屏下(留 DOM 与草稿,不 display:none 以便过场)。回车仍
          换行,提交靠层内「记下」。z 高于遮罩(13)、低于错误条(18)。 */
       .compose {
         position: fixed; left: 0; right: 0; bottom: 0; z-index: 14;
@@ -252,14 +252,17 @@
         border-radius: var(--radius-lg) var(--radius-lg) 0 0;
         padding: 12px 14px calc(12px + env(safe-area-inset-bottom));
         box-shadow: 0 -8px 28px rgba(0, 0, 0, 0.18);
-        transform: translateY(110%); /* 收起态:滑到屏下;开态一般由 JS 设 inline transform 覆盖 */
+        transform: translateY(110%); /* 收起态:滑到屏下 */
         transition: transform 0.22s ease;
         will-change: transform;
       }
-      /* 开态兜底位置。平时够不着(JS 的 inline transform 恒覆盖它),**只有判定这台设备
-         不弹软键盘时** kbsheet 才把 transform 交回 CSS —— 层于是靠这条从屏下滑上来。
-         ⛔ 别把它当成「开态就该在这儿」:有键盘的设备上层要贴键盘上沿,那是 JS 的活。 */
+      /* 开态位置 = 贴视口底。⭐ 这是**唯一**的开态几何(2026-08-28 起):JS 不再设 inline
+         transform,键盘的高度由原生 ime inset 从视口那头解决。⛔ 别再往 JS 里加抬升。 */
       .compose.open { transform: translateY(0); }
+      /* 底部层(捕获/留言)开着时锁住背景滚动 —— 由 kbsheet.ts 上下这个类,由头写在那边:
+         键盘一起 Chromium 会滚文档去露焦点输入框,而层是 fixed 的,滚了只有背后的时间轴在动
+         (240 报的「弹键盘背景乱滚」,2026-08-28 换了个形回来,A/B 各 5 次实测)。 */
+      html.kb-locked { overflow: hidden; }
       /* 捕获层遮罩:压住时间轴/底栏,点它=收层。 */
       #capture-scrim {
         position: fixed; inset: 0; z-index: 13;
@@ -369,11 +372,11 @@
         border-top: 1px solid var(--line);
         border-radius: var(--radius-lg) var(--radius-lg) 0 0;
         box-shadow: 0 -8px 28px rgba(0, 0, 0, 0.18);
-        transform: translateY(110%); /* 收起态:滑到屏下;开态一般由 JS 设 inline transform 覆盖 */
+        transform: translateY(110%); /* 收起态:滑到屏下 */
         transition: transform 0.22s ease;
         will-change: transform;
       }
-      /* 同 .compose.open:只有判定这台设备不弹软键盘时才够得着(见 kbsheet.ts kbNeverShows)。 */
+      /* 同 .compose.open:开态就贴视口底,键盘由原生 ime inset 从视口那头让位。 */
       .cmsheet.open { transform: translateY(0); }
       #comments-scrim { position: fixed; inset: 0; z-index: 13; background: rgba(0, 0, 0, 0.35); }
       /* 悬浮 ＋ 在遮罩之下,留着只是个灰疙瘩:留言层开着就让位(同 body.pane-open)。 */

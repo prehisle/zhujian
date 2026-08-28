@@ -19,6 +19,37 @@ class MainActivity : TauriActivity() {
     // 界面字号(251):基准取 WebView 创建时的初始 textZoom——它已含系统「字体大小」
     // 的放大,我们的百分比乘在上面、不覆盖用户的系统级选择。
     webView.addJavascriptInterface(TextSize(webView.settings.textZoom), "__zhujianTextSize")
+    applyImeInsets()
+  }
+
+  // 软键盘让位的原生半截(⛔ 这一格没有它,前端怎么写都够不着 —— 2026-08-28 实测)。
+  //
+  // 病根:`enableEdgeToEdge()` 之后窗口不再为输入法收缩(窗口属性里 `sim={adjust=resize}` 仍在,
+  // 但同时 `FIT_INSETS_CONTROLLED` = 「inset 由 app 自己消费」),而 **WebView 自己直接缩
+  // visual viewport 是 M139 才有的能力**(官方版本表:M136 safe-area 仅全屏 / **M139 ime** /
+  // M144 safe-area 全部,见 developer.android.com/develop/ui/views/layout/webapps/understand-window-insets)。
+  // 那台 vivo V1986A(Android 12)的 WebView 是 **138**.0.7204.179 —— 正好差一格:键盘起来时页面里
+  // `innerHeight` / `visualViewport` / `scrollY` **一个数都不动**,捕获层贴 `bottom:0` 就贴到了键盘
+  // 底下(CDP 实测:层 rect 690–803,而键盘顶沿在 553)。`navigator.virtualKeyboard` 与 viewport
+  // meta 的 `interactive-widget` 在这台上同样恒 0 —— 它们吃的是同一份没送到的 inset。
+  //
+  // 做法照官方那条:把 ime 的 bottom 变成内容视图的 padding(WebView 是 wry 用 `setContentView`
+  // 放进来的 MATCH_PARENT 子视图,父一缩它就缩),**并把 ime 那一格归零再往下发**:
+  //  - ⛔ 归零用 `Insets.NONE`,**不是** `WindowInsetsCompat.CONSUMED` —— 后者会让 WebView 收不到
+  //    后续 inset 更新,键盘收起时留下「幽灵 padding」(官方文档点名的坑)。
+  //  - 归零同时让 M139+ 那套「自动缩 visual viewport」停手 ⇒ **新旧 WebView 行为归一**:永远是
+  //    「视图真的缩了」。前端因此只需照常贴 `bottom:0`,不必再猜键盘多高(kbsheet.ts 那套猜测
+  //    因此退休)。⛔ 别为了「新机器上让平台自己做」而按版本分叉:两套行为的前端要写两份。
+  private fun applyImeInsets() {
+    val content = findViewById<android.view.View>(android.R.id.content)
+    androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(content) { v, insets ->
+      val ime = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.ime())
+      v.setPadding(v.paddingLeft, v.paddingTop, v.paddingRight, ime.bottom)
+      androidx.core.view.WindowInsetsCompat.Builder(insets)
+        .setInsets(androidx.core.view.WindowInsetsCompat.Type.ime(), androidx.core.graphics.Insets.NONE)
+        .build()
+    }
+    androidx.core.view.ViewCompat.requestApplyInsets(content)
   }
 
   // 明暗三档(250)的原生半截。页面里换色换不动**系统状态栏/导航栏的图标颜色**:用户手动
