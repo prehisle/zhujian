@@ -1268,8 +1268,34 @@ export function pendingImages(
         return; // IndexedDB 不可用 / 读失败:恢复尽力而为,不拦启动
       }
       if (items.length === 0 || held.length > 0) return; // await 期间可能已被贴入:再核一次
+      // ⛔ **字节必须在这里就脱手,不许攥着 IndexedDB 背书的 Blob 走**(526,Linux CI 上
+      // 红了两次的那个)。`loadImageDraft` 交回来的 Blob 底下是 IndexedDB 里那条记录,而
+      // 「记下」那一刻的次序是硬的:`takeBatch()` 同步调 `persist()` 把本桶收敛到空
+      // ——**先把这些记录删掉**;真正去读它们(`attachBlob` → `toBase64` →
+      // `blob.arrayBuffer()`)要等创建条目那趟 IPC 回来**之后**。删在前、读在后,中间
+      // 隔着一整趟 IPC ⇒ 这段代码在**读一份自己刚刚删掉的字节**。
+      // ⚠⚠ **别把下面这条因果读成已证的**(526 当轮被自己的探针打脸,如实记在这儿):
+      // Linux CI 上「回填的草稿一记下就『N 张图未能附加』」红过两次(app 自己弹的
+      // `.form-err`),我据此写下「Chromium 肯让记录已删的 Blob 继续活、WebKit 不肯」——
+      // 而探针在 **Chromium 与 WebKitGTK 上都答 SURVIVES**,那个解释**没有字据**,
+      // 那两次红的根**至今未查实**(backlog 测试与工装 44)。
+      // ⇒ 改这里的理由因此收窄成一条**不依赖那个解释**的:**不该去读一份自己刚删掉的
+      // 字节** —— 那是拿引擎的实现细节当契约,而它今天连契约都算不上(规格没保证)。
+      // ⛔ 修法**不是**去调那个先后:`takeBatch()` 同步取批是 codex P1 二审 H2 钉死的
+      // (IPC 等待期间新粘贴的图必须归下一条)。修的是**让回填出来的图跟粘贴进来的图是
+      // 同一种东西** —— 当场把字节读进内存,从此不欠 IndexedDB 任何东西。
       // **id 原样带回**:这些字节桶里已经有了,下一次 persist 只写清单不重写它们。
-      for (const it of items) add(it.blob, it.id);
+      const loaded: DraftImage[] = [];
+      for (const it of items) {
+        try {
+          loaded.push({ id: it.id, blob: new Blob([await it.blob.arrayBuffer()], { type: it.blob.type }) });
+        } catch {
+          // 这一张此刻就读不出字节:跳过它,别回填一个注定挂不上的缩略图
+          // (回填本就是尽力而为,与上面那条 catch 同一纪律;下次 persist 会顺手删掉它)。
+        }
+      }
+      if (held.length > 0) return; // 读字节也是 await:再核一次(同上)
+      for (const it of loaded) add(it.blob, it.id);
     },
   };
 }
