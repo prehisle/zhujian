@@ -87,6 +87,12 @@ const DENY = [
   // 换机器搬迁工装:它逐条点名作者本机上私钥/凭据的落点(~/.tauri 那几把、memory 目录)。
   // 对开源用户零用处,对旁人则是一张「钥匙都放在哪」的清单 ⇒ 不公开。
   "scripts/migrate-machine.mjs",
+  // 条目落号工装:它的**整个作用对象**(`docs/progress-log.md`)不在 ALLOW 里 ⇒ 推上去
+  // 只会是一个在公开仓那棵树上必然报错的脚本。⚠ 与上一条的理由**不同**:那条是"不该公开",
+  // 这条是"公开了也没法用"。⛔ 别把它读成"内部工装一律不公开" ——
+  // `e2e-session.mjs` / `run-on-desktop.ps1` / `lib/win-desktop.cs` 同样是内部工装,
+  // 但它们跑的是这个项目自己的 e2e,对着公开仓那棵树是成立的,故照旧公开。
+  "scripts/claim-entry.mjs",
 ];
 
 const tracked = execFileSync("git", ["ls-files", "-z"], { cwd: repoRoot })
