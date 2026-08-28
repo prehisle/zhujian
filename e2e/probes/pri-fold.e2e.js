@@ -2,8 +2,10 @@ import { browser, $, expect } from "@wdio/globals";
 import { invoke, goNotebook, boardAction } from "../specs/support.js";
 
 // 按需探针(默认套件扫不到,要 --spec 点名):量看板 `.task-meta` 那两个行内编辑器在窄列里的折行。
-// 判据不是「高度像不像两行」,而是**这段文字被排成了几行** —— 拿 Range 数 client rects,
-// 一行文字恰好一个矩形,折了就 ≥2。窗宽从宽扫到窄,同时记卡片有没有被撑出横向溢出。
+// 判据不是「高度像不像两行」,而是**这段文字被排成了几行** —— 拿 Range 量 client rects,
+// 数**不同的 y** 有几个,折了就 ≥2。窗宽从宽扫到窄,同时记卡片有没有被撑出横向溢出。
+// ⛔ **别退回「数 rect 个数」**(510 那版就是这么写的,522 实测证伪:同一行上可以有多个 rect,
+// 同 `y` 同高)—— 那把尺答的是「被切成了几段」。字据见 e2e/probes/tagpick-long.e2e.js 头注。
 const WIDTHS = [1100, 1000, 950, 900, 860, 820, 780, 740, 700];
 
 function readSlot(title, slotSel) {
@@ -14,7 +16,7 @@ function readSlot(title, slotSel) {
   const lineCount = (elm) => {
     const r = document.createRange();
     r.selectNodeContents(elm);
-    return r.getClientRects().length;
+    return new Set([...r.getClientRects()].map((rc) => Math.round(rc.y))).size;
   };
   const body = card.closest(".col-body") ?? card.parentElement;
   const n1 = (v) => Math.round(v * 10) / 10;
