@@ -45,14 +45,43 @@ describe("任务时间维度 · 看板设置截止/优先级", () => {
       timeout: 8000,
       timeoutMsg: "due_on 未写入库",
     });
-    // The card reloaded; it now wears the due-today accent class.
-    const hasAccent = await browser.execute((title) => {
-      const card = [...document.querySelectorAll(".tcard")].find((c) =>
-        c.textContent.includes(title),
-      );
-      return card?.classList.contains("due-today") ?? false;
-    }, T);
-    expect(hasAccent).toBe(true);
+    // 上一句等的是**库**,这一句看的是 **DOM** —— 中间必须有一次等重渲,不能靠"应该已经好了"。
+    // 旧形是一次性 `browser.execute` + 一句 `expect`,而应用侧落账之后还要再走一趟 `list_tasks`
+    // 才重渲整卡(`src/tasktime.ts::call` → `refresh`)⇒ 库满足的那一刻卡片往往还是**改之前**
+    // 那张。旧注释「The card reloaded」是**假设**不是等待,529 那趟公开仓 CI(run 33225838969)
+    // 上它真红过一次。⛔ 修法不是加 sleep(那是把判据错误当成时间不够治)。
+    //
+    // ⭐ 读数刻意做成**三态**:旧形那个 `?? false` 把「卡片还不在 DOM 上」和「卡片在、但没有
+    // 那个类」压成同一个 false —— 前者是抖动、后者才是真缺陷,红了却分不出是哪一种。
+    const readAccent = () =>
+      browser.execute((title) => {
+        const card = [...document.querySelectorAll(".tcard")].find((c) =>
+          c.textContent.includes(title),
+        );
+        if (!card) return "absent";
+        return card.classList.contains("due-today") ? "accent" : "no-accent";
+      }, T);
+    let seen = "never-read";
+    await browser
+      .waitUntil(async () => (seen = await readAccent()) === "accent", {
+        timeout: 8000,
+        timeoutMsg: "卡片没等到 due-today",
+      })
+      // `timeoutMsg` 是**调用那一刻**就定死的字符串,带不进最后一眼的读数 ⇒ 在这儿分岔。
+      .catch((e) => {
+        // ⛔ **别把「一次都没读成」也改写成「没等到那个类」** —— `readAccent` 自己抛(会话断了 /
+        // execute 失败)时 `seen` 还是初值,照下面那两支写出来的话,消息会**指着一个没出问题的
+        // 地方**,而那正是这条账本身在治的病。原样抛。⭐ 这条有刀:摘掉它之后,一次
+        // `javascript error` 被改写成「卡片一直在 DOM 上⋯这是真缺陷」(读数在 progress-log 533)。
+        if (seen === "never-read") throw e;
+        throw new Error(
+          seen === "absent"
+            ? "8s 内卡片一直不在 DOM 上 —— 这是重渲/驱动那一侧的事,不是 due-today 没上"
+            : seen === "accent"
+              ? "恰在超时边界上才读到 due-today(条件已满足但 waitUntil 已判超时)"
+              : `8s 内卡片一直在 DOM 上、却始终没有 due-today(最后一眼:${seen})—— 这是真缺陷`,
+        );
+      });
   });
 
   it("⋯ 菜单优先级 → 选「P0」→ 落库 priority=3", async () => {
