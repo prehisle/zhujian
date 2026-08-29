@@ -140,7 +140,7 @@ try {
 const pushedSha = git(target, ["rev-parse", "HEAD"]);
 if (toBranch) {
   console.log(`\n✅ 已推到闸分支 \`${toBranch}\`(公开仓 sha ${pushedSha.slice(0, 7)})。`);
-  console.log(`   CI 会在那条分支上跑(ci.yml 的 \`branches: ["**"]\`,448 刻意设的)。`);
+  console.log(`   CI 会在那条分支上跑(ci.yml 的 \`branches: ["gate/**"]\`,535 起从 ["**"] 收窄,per-push 那层已关掉)。`);
   console.log(`   ⛔ **本地 main 现在领先 origin/main 一笔,还没落地** —— 回来跑 \`branch-gate.mjs land\`。`);
 } else {
   console.log(`\n✅ 已推到公开仓。CI:https://github.com/prehisle/zhujian/actions`);
