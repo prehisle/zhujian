@@ -189,6 +189,51 @@ function sweep({ quiet = false } = {}) {
   note();
 }
 
+// ── 「这一轮要不要走闸」(535 立)─────────────────────────────────────────────
+// ⭐ **闸从「每轮都走」改成「按需」**,判据就是这个函数(用户 2026-08-29 点名:
+//    「CI 要 30 分钟…现在太影响效率」;数据与取舍在 progress-log 535)。
+//
+// ⭐ **判据不是「碰了哪个目录」,是「只有 CI 答得出的是什么」** —— 逐格算过:
+//   · **十道门禁** → 本机 3 秒跑完 ⇒ CI 答不出新东西(而且「改了那道闸或它扫的那份东西
+//     就跑它」这条纪律早就在,见 CLAUDE.md「非发版门禁」);
+//   · **六套 cargo** → 本机按 crate 跑得了;**只有跨平台那半**(Windows vs Linux 的
+//     `cfg` 分支、平台 API 语义差)非 CI 不可 —— 425 那支缺陷就长在这儿;
+//   · **Linux e2e** → **今天没有一台开发机跑得了它**(Windows 两台都是 WebKitGTK 之外的
+//     引擎;`win-min-home` 连 GUI e2e 都跑不了[语言 + WebView2 151,backlog 27/28])。
+//  ⇒ 真正只有 CI 能答的,是**产品面与测试面**那几个目录。`scripts/` 与 `docs/` 不在内。
+//
+// ⚠ **诚实边界(⛔ 别读大了)**:①改坏一支门禁脚本,从此**当轮没有机器会说话** ——
+//   靠的是上面那条既有纪律 + 夜跑兜底(最多晚一天);②`scripts/` 里也有 `sync-public` /
+//   `export-public`,改坏它们**导出当场就会响**(每轮都跑),故不列入;③这份清单是**白名单式
+//   的反面** —— 漏列一个真产品目录 = 那类改动从此不走闸。⛔ 新增一只 crate / 一棵前端树时
+//   **必须回来加一行**(与 `export-public.mjs` 的 ALLOW 同一类维护负担,那份已经栽过)。
+const GATED_PATHS = [
+  "core/", "src/", "e2e/", "src-tauri/", "mobile/", "sync-proto/", "server/",
+  "android/src/", "android/src-tauri/", "ohos/", "index.html", "notebook.html",
+  // ⭐ **`.github/` 在里头,而它不是「产品面」** —— 判据是本函数头上那句「只有 CI 答得出的
+  //    是什么」的一个特例:**改了 CI 自己的定义,就该让 CI 当场证明它还会跑**。
+  //    ⛔ 这不是洁癖:触发条件写错的失灵方式是**安静地不跑**(448 第一版把 `branches` 写成
+  //    `tags-ignore`,「文件语法对 + 已登记 active」全成立,而 run 一趟都没建)。
+  //    ⇒ 唯一能证伪它的动作,就是真推一条闸分支、看 run 出不出来。
+  ".github/",
+];
+
+/**
+ * 本地 HEAD 相对 `origin/master` 动过、且落在 `GATED_PATHS` 里的路径。
+ * ⛔ fail-closed:`git diff` 问不出来就当**要走闸**(宁可多走一趟,也别安静地跳过)。
+ */
+function gatedDelta() {
+  let out;
+  try {
+    out = git(repoRoot, ["diff", "--name-only", "origin/master...HEAD"]);
+  } catch (e) {
+    console.log(`  ⚠ 问不出改动面(${String(e.message).trim().slice(0, 120)})—— fail-closed,当作动了产品面。`);
+    return ["<问不出来>"];
+  }
+  const files = out.split("\n").filter(Boolean);
+  return files.filter((f) => GATED_PATHS.some((p) => (p.endsWith("/") ? f.startsWith(p) : f === p)));
+}
+
 // ── 「私有仓落后了吗」─────────────────────────────────────────────────────────
 // ⛔ **承重的不只是这道检查本身,还有它排在第几位**(backlog 46;527 实撞,不是推断)。
 //    527 那趟 `land` 的顺序是「①推公开 main → ②删闸分支 → ③**这才**问私有仓」,而 ① 推上去的
@@ -231,6 +276,18 @@ function verify() {
   // ⛔ **落后就直接拒**(backlog 46 的第二半)——⛔ 别兜底成「先验着,land 再说」:
   //    land 那道拒绝在**收口**才说话,那时 29 分钟已经烧掉了。
   assertNotBehind();
+
+  // ⭐ **535:没动那几面就不走闸** —— 判据与三处诚实边界焊在 `gatedDelta()` 头上。
+  //    ⛔ 别把这一格读成「跳过验证」:①十道门禁与那几套 cargo 本机跑得了(而且本来就该跑);
+  //    ②夜跑每天一趟兜底(最多晚一天);③真想立刻要一趟 ⇒ `gh workflow run ci.yml`。
+  const pd = gatedDelta();
+  if (!pd.length) {
+    console.log(`⚠ **这一轮没动要走闸的那几面** ⇒ 不走闸(535 起的形)。`);
+    console.log(`   本地该跑的别省:改了哪道门禁/它扫的那份东西就跑那道、动了哪只 crate 就跑它。`);
+    console.log(`   ⇒ 直接 \`node scripts/branch-gate.mjs land\`,它会导出 + 推公开 main + 推私有 master。`);
+    return;
+  }
+  console.log(`本轮动了要走闸的面 ${pd.length} 处(${pd.slice(0, 4).join(" / ")}${pd.length > 4 ? " …" : ""})⇒ 走闸。\n`);
 
   // ⛔⛔ **这一问必须排在 sync 之前**(521 补二栽的就是这个):放在后面问,东西已经被
   //    sync 提交掉了,于是它**恒答「没有」** —— 而那句话与刚刚发生的事**正好相反**。
@@ -285,7 +342,33 @@ function land() {
   //    而不是像 527 那样排在最后(那时公开 main 已经被推回去了)。理由见 assertNotBehind 头注。
   assertNotBehind();
 
-  // ③闸分支在不在?不在有两种可能,**必须分开处理**,别一律报「先跑 verify」。
+  // ③⭐ **535:没动那几面 ⇒ 不走闸,直接落地**(判据与三处诚实边界在 `gatedDelta()` 头上)。
+  //    ⚠ 与下面那条「纯文档轮」**不是同一条路,别合并**:那条是「压根没东西进公开仓」
+  //    ⇒ 只推私有;这条是「有东西进公开仓、但不值得为它等 29 分钟」⇒ **照样把公开 main 推上去**
+  //    (公开快照该保持跟手 —— 它是 CI 与外部读者看到的那棵树),只是不等裁决。
+  //    ⛔ 别为了省事改成「也不推公开仓」:那会让快照一直落后,而夜跑验的正是它。
+  if (!gatedDelta().length) {
+    const d0 = exportDelta();
+    if (d0.state === "none") {
+      console.log(`⚠ 这一轮**没动那几面、也没有东西进公开仓**(纯文档)⇒ 只推私有 master。`);
+    } else if (d0.state === "some") {
+      console.log(`⚠ 这一轮**没动那几面** ⇒ 不等 CI 裁决,直接导出并推公开 main(535 起的形)。`);
+      console.log(`   ⛔ 这不等于「验过了」:兑现物是**今晚那趟夜跑**(19:30Z),红了会发邮件。`);
+      try {
+        execFileSync(process.execPath, ["scripts/sync-public.mjs"], { cwd: repoRoot, stdio: "inherit" });
+      } catch {
+        die("sync-public 非零退出(上面就是理由)—— 公开仓没推成,私有仓也一个字没动。");
+      }
+    } else {
+      die(`问不出「这一轮有没有东西要进公开仓」(${d0.state})—— fail-closed,⛔ 不猜。\n  ${d0.why ?? ""}`);
+    }
+    // ⭐ 顺手清掉本环境的孤儿闸分支(上一轮 amend/rebase 留下的);⛔ 只碰自己那个前缀。
+    sweep({ quiet: true });
+    landPrivateOnly();
+    return;
+  }
+
+  // ④闸分支在不在?不在有两种可能,**必须分开处理**,别一律报「先跑 verify」。
   console.log(`→ 问公开仓远端(代理 ${proxy})…`);
   let gateExists = true;
   try {
@@ -326,14 +409,14 @@ function land() {
     );
   }
 
-  // ④CI 必须绿,且绿的是**这个 sha**。
+  // ⑤CI 必须绿,且绿的是**这个 sha**。
   const v = ciVerdict(publicSha);
   if (v.state !== "green") {
     die(`CI 不是绿的:${v.state} —— ${v.why}${v.url ? `\n  ${v.url}` : ""}\n  ⛔ 闸不放行(这正是它存在的理由)。`);
   }
   console.log(`✅ CI 绿:${v.url}`);
 
-  // ⑤公开 main ← 那一笔(快进,同一个 sha)+ 删闸分支。
+  // ⑥公开 main ← 那一笔(快进,同一个 sha)+ 删闸分支。
   console.log(`→ 公开仓 main ← ${publicSha.slice(0, 7)}(同一笔提交,快进)…`);
   gitProxy(target, ["push", "origin", "HEAD:main"]);
   console.log(`→ 删掉闸分支 ${gateBranch} …`);
