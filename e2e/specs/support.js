@@ -59,6 +59,22 @@ async function appErrorText() {
   }
 }
 
+/** 挂图失败的**原因**(528 起 `src/item-images.ts` 把它留在一个有上界的环里)。
+ *  ⭐ 这一格是 526 缺的那半:此前只读得到屏幕上那句「N 张图未能附加」——**它答的是
+ *  「失败了」,答不出「为什么」**,于是只能靠猜(526 就猜错了一次,代价是半天)。
+ *  ⚠ wry 上浏览器 console 到不了 CI 日志,所以走 `window` 上那个读口,不走 console。
+ *  ⚠ 读不到就不说:它是诊断不是判据(环会被后来的失败挤掉)。 */
+async function attachFailureText() {
+  try {
+    const lines = await browser.execute(() =>
+      typeof window.__zhujianAttachFailures === "function" ? window.__zhujianAttachFailures() : [],
+    );
+    return lines && lines.length ? ` 挂图那边留下的原因:${lines.join(" ⏎ ")}` : "";
+  } catch {
+    return "";
+  }
+}
+
 export async function waitItemImages(itemId, n, where) {
   let list = [];
   let lastErr = null;
@@ -92,7 +108,8 @@ export async function waitItemImages(itemId, n, where) {
       /* 宽限期内也没来 —— 那就不是「慢」 */
     }
     const said = await appErrorText();
-    const tail = said ? ` app 自己说的话:${said}` : " app 那边没留下任何错误提示。";
+    const why = await attachFailureText(); // ← 526 缺的那半:不止「失败了」,还有「为什么」
+    const tail = (said ? ` app 自己说的话:${said}` : " app 那边没留下任何错误提示。") + why;
     if (lateMs !== null) {
       throw new Error(
         `${where}:图**最终挂上了**,用了 ${lateMs} ms(判据预算 ${IMG_BUDGET_MS} ms)` +

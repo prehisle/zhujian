@@ -199,6 +199,34 @@ export async function attachBlob(itemId: string, blob: Blob, space?: string): Pr
   return invoke<ImageMeta>("add_item_image", { itemId, mime: use.type, dataB64 });
 }
 
+// ---- 挂图失败的原因留在哪儿(528,backlog 测试与工装 45)-------------------
+// `attachBatch` / `attachAll` 逐张挂、**一张失败不拖垮其余张**,所以 `catch` 本身是对的;
+// 错的是此前那两处是**裸 `catch`** —— 只把张数加一、**原因整个丢掉**。⇒ 用户看到「N 张图
+// 未能附加」,而开发者手上一个字都没有:526 那条账因此卡了三轮(515 只好绕道去读屏幕上
+// 那句提示,那是**从外面**看,读不到异常本身;而 526 拿探针猜根,猜错了)。
+//
+// 形(刻意小):①`console.error` 一份,本机开发直接看得见;②压进一个**有上界**的环,
+// 挂在 `window` 上给 e2e / 诊断读 —— 理由是 **wry 上浏览器 console 到不了 CI 日志**,
+// 而 e2e 的失败消息到得了(`e2e/specs/support.js::waitItemImages` 现在会带上它)。
+// ⛔ **不进 DB / 不进同步 / 不进用户可见文案** —— 给用户的那句仍是 `savedImagesFailed`
+// (用户看不懂 `NotFoundError`,也帮不上忙)。⚠ 它是**诊断**不是判据:环会被后来的失败挤掉,
+// 读不到不代表没失败过。
+const ATTACH_FAIL_KEEP = 8;
+const attachFailures: string[] = [];
+function noteAttachFailure(itemId: string, e: unknown): void {
+  const why = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
+  // ⚠ 这一句**刻意写成英文**:它是给开发者看的诊断(落 CI 日志 / console),不是用户文案。
+  // 第一版写的是中文,`check-i18n-drift` 当场逮到(「写死的可见中文」)—— 那道闸没判错:
+  // 它扫的就是前端产物里的中文。⛔ 别去 STRING_REGISTRY 里签字绕过它,**把非用户文案挪出
+  // 那个面**才是对的;给用户的那句仍是 `savedImagesFailed`,在字典里。
+  const line = `add_item_image(${itemId}) failed: ${why}`;
+  console.error(line);
+  attachFailures.push(line);
+  if (attachFailures.length > ATTACH_FAIL_KEEP) attachFailures.shift();
+}
+(window as unknown as { __zhujianAttachFailures?: () => string[] }).__zhujianAttachFailures = () =>
+  attachFailures.slice();
+
 /** The first image on a paste, or null if the clipboard carried none (so the caller can let
  *  a normal text paste through). Screenshots arrive as a `file`-kind image item. */
 export function imageFromPaste(e: ClipboardEvent): Blob | null {
@@ -1232,7 +1260,8 @@ export function pendingImages(
       for (const p of batch) {
         try {
           await attachBlob(itemId, p.blob, space);
-        } catch {
+        } catch (e) {
+          noteAttachFailure(itemId, e); // ⛔ 别退回裸 catch:原因丢了就只剩「几张」,查不动
           failed += 1;
         }
       }
@@ -1251,7 +1280,8 @@ export function pendingImages(
       for (const p of batch) {
         try {
           await attachBlob(itemId, p.blob);
-        } catch {
+        } catch (e) {
+          noteAttachFailure(itemId, e); // 同 attachBatch,别退回裸 catch
           failed += 1;
         }
       }
