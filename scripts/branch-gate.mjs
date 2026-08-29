@@ -189,10 +189,48 @@ function sweep({ quiet = false } = {}) {
   note();
 }
 
+// ── 「私有仓落后了吗」─────────────────────────────────────────────────────────
+// ⛔ **承重的不只是这道检查本身,还有它排在第几位**(backlog 46;527 实撞,不是推断)。
+//    527 那趟 `land` 的顺序是「①推公开 main → ②删闸分支 → ③**这才**问私有仓」,而 ① 推上去的
+//    是一棵**没有对端 526** 的导出 ⇒ 公开 main 上 `compose-recovery-blob.e2e.js` 被删、
+//    `src/item-images.ts` 被回退,直到重跑一趟闸(约 30 分钟)才补回来。
+//    ⚠ **私有仓(唯一真相源)全程没坏**,坏的是公开那份快照 —— 而**公开仓正是 CI 跑的地方**:
+//    那半小时里别人推上去的任何一趟 CI,验的都是一棵少了 526 的树。
+// ⇒ **今天它叫三次,前两次的位置都是「这条路上任何一次远端写之前」**:
+//    ·`verify`:导出之前 —— 否则那 29 分钟验的是一棵**注定要被 rebase 掉的树**(527 白跑一趟)。
+//    ·`land`:问闸分支之前 —— 那正是上面那笔损失的落点。
+//    ·`landPrivateOnly`:**第二道**,只兜「前一次检查之后、推上去之前那几秒里对端刚好推了」。
+//      ⚠ 它救不了已经推出去的公开 main(窗口从整趟 land 缩到几秒,**不是缩到零**);
+//      留着是因为它免费,且比 git 自己那句 non-fast-forward 说得清楚。
+// ⛔ **别顺手改成「落后就自动 rebase」**:rebase 会有冲突(527 那次 `progress-log` 就冲突了),
+//    工装不该替人解冲突 —— 拒了、让人自己 rebase 再来,是对的。
+function assertNotBehind() {
+  // ⛔ fetch 失败就停:拿过期的远端状态算出来的「没落后」错得很安静(同 claim-entry 取号那格)。
+  try {
+    git(repoRoot, ["fetch", "-q", "origin"], { stdio: ["ignore", "pipe", "pipe"] });
+  } catch (e) {
+    die(
+      `问不到私有仓远端(git fetch 失败)—— fail-closed,⛔ 不猜「大概没落后吧」:\n` +
+        `  ${String(e.stderr || e.message).trim().slice(0, 200)}`,
+    );
+  }
+  const behind = git(repoRoot, ["rev-list", "--count", "HEAD..origin/master"]);
+  if (behind !== "0") {
+    die(
+      `私有仓落后 origin/master ${behind} 笔 —— 另一个环境推过。\n` +
+        `  ⇒ 先 \`git rebase origin/master\`,然后**重跑 verify**(树变了,旧的绿不算数)。`,
+    );
+  }
+}
+
 // ── verify ────────────────────────────────────────────────────────────────────
 function verify() {
   const dirty = git(repoRoot, ["status", "--porcelain", "--untracked-files=no"]);
   if (dirty) die(`工作仓有未提交的改动 —— 闸绑的是「哪一笔提交」,先提交:\n${dirty}`);
+
+  // ⛔ **落后就直接拒**(backlog 46 的第二半)——⛔ 别兜底成「先验着,land 再说」:
+  //    land 那道拒绝在**收口**才说话,那时 29 分钟已经烧掉了。
+  assertNotBehind();
 
   // ⛔⛔ **这一问必须排在 sync 之前**(521 补二栽的就是这个):放在后面问,东西已经被
   //    sync 提交掉了,于是它**恒答「没有」** —— 而那句话与刚刚发生的事**正好相反**。
@@ -243,7 +281,11 @@ function land() {
   const dirty = git(repoRoot, ["status", "--porcelain", "--untracked-files=no"]);
   if (dirty) die(`工作仓有未提交的改动 —— 验过的不是这棵树。要么提交后重跑 verify,要么先 stash:\n${dirty}`);
 
-  // ②闸分支在不在?不在有两种可能,**必须分开处理**,别一律报「先跑 verify」。
+  // ②⛔ **落后检查排在这儿就是 backlog 46 的修法** —— 它必须在**任何一次远端写之前**,
+  //    而不是像 527 那样排在最后(那时公开 main 已经被推回去了)。理由见 assertNotBehind 头注。
+  assertNotBehind();
+
+  // ③闸分支在不在?不在有两种可能,**必须分开处理**,别一律报「先跑 verify」。
   console.log(`→ 问公开仓远端(代理 ${proxy})…`);
   let gateExists = true;
   try {
@@ -284,14 +326,14 @@ function land() {
     );
   }
 
-  // ③CI 必须绿,且绿的是**这个 sha**。
+  // ④CI 必须绿,且绿的是**这个 sha**。
   const v = ciVerdict(publicSha);
   if (v.state !== "green") {
     die(`CI 不是绿的:${v.state} —— ${v.why}${v.url ? `\n  ${v.url}` : ""}\n  ⛔ 闸不放行(这正是它存在的理由)。`);
   }
   console.log(`✅ CI 绿:${v.url}`);
 
-  // ④公开 main ← 那一笔(快进,同一个 sha)+ 删闸分支。
+  // ⑤公开 main ← 那一笔(快进,同一个 sha)+ 删闸分支。
   console.log(`→ 公开仓 main ← ${publicSha.slice(0, 7)}(同一笔提交,快进)…`);
   gitProxy(target, ["push", "origin", "HEAD:main"]);
   console.log(`→ 删掉闸分支 ${gateBranch} …`);
@@ -308,17 +350,12 @@ function land() {
 // 私有仓那半 —— 两条路(正常闸 / 无导出面)共用。
 // ⛔ 那道**落后检查**是承重的:对端推过 ⇒ 树变了 ⇒ 旧的绿不算数,必须重跑 verify。
 //    别为了快把它关掉(dev-and-testing「分支闸」那节明写)。
+// ⚠ **这儿是第二道**(backlog 46 之后):真正挡住 527 那笔损失的是 `land` 开头那一次,
+//    这次只兜两次之间那几秒。⛔ 别因为「上面已经查过了」把它删掉 —— 它免费。
 function landPrivateOnly() {
   console.log(`→ 问私有仓远端…`);
-  git(repoRoot, ["fetch", "-q", "origin"]);
+  assertNotBehind();
   const branch = git(repoRoot, ["rev-parse", "--abbrev-ref", "HEAD"]);
-  const behind = git(repoRoot, ["rev-list", "--count", "HEAD..origin/master"]);
-  if (behind !== "0") {
-    die(
-      `私有仓落后 origin/master ${behind} 笔 —— 另一台推过。\n` +
-        `  ⇒ 先 \`git rebase origin/master\`,然后**重跑 verify**(树变了,旧的绿不算数)。`,
-    );
-  }
   if (branch !== "master") {
     console.log(`→ 私有仓 ${branch} → master(快进)…`);
     git(repoRoot, ["checkout", "-q", "master"]);
