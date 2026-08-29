@@ -49,13 +49,16 @@ export type SaveWiring = {
   afterCreate?: (id: string, notices: string[]) => Promise<string | null>;
   /** 挂图落定后、unmounted 判定前的通知落点(inbox:拼 notices 过桥进模块态——refresh
    *  会重建 bar,提示恒由新 bar 领走显示,活 mount 与死 mount 同一条路)。 */
-  onSettled?: (notices: string[], failed: number) => void;
+  /** `why` = 挂图失败时**说得准的那句话**(538,用户面 56):具体原因,或 `""` = 说不准。
+   *  ⛔ 说得准时它**替掉** `REPASTE_HINT`,不是并列 —— 那几种拒法都是确定性的,
+   *  「再贴一次」注定还是失败。三个 compose 落点判据相同。 */
+  onSettled?: (notices: string[], failed: number, why: string) => void;
   /** 本 mount 已死时视图特有的部分失败落点(board:活着的看板 mount 用 op-err 横幅
    *  当场亮出来,不在场就过桥;inbox 不传——onSettled 已把提示过完桥)。 */
-  onDeadMount?: (failed: number) => void;
+  onDeadMount?: (failed: number, why: string) => void;
   /** 成功且 mount 还活着的视图收尾(清过滤 / 脉冲 / 重读 / 焦点;board 还在这里写就地
    *  部分失败提示)。soleTopic = 归属标签的最终值(条件清标签筛选用)。 */
-  onSaved: (id: string, soleTopic: string | null, failed: number) => void;
+  onSaved: (id: string, soleTopic: string | null, failed: number, why: string) => void;
 };
 
 export type ComposeController = {
@@ -198,17 +201,17 @@ export function createComposeController(opts: {
       const notices: string[] = [];
       if (w.afterCreate) soleTopic = await w.afterCreate(id, notices);
       // 挂图也在必落账链上(同一保存的一部分),同样恒决议;挂失败不吞掉(fail-fast)。
-      const failed = await imgs.attachBatch(id, batch, w.space);
-      w.onSettled?.(notices, failed);
+      const { failed, why } = await imgs.attachBatch(id, batch, w.space);
+      w.onSettled?.(notices, failed, why);
       if (w.isUnmounted()) {
         // 本 mount 已死但落账已完成(codex 四审 M):视图特有的部分失败落点先走
         // (onDeadMount),再通知同空间活 mount 马上重读——别让「正文被清了、卡片
         // 没出现」等到下次 refocus。
-        w.onDeadMount?.(failed);
+        w.onDeadMount?.(failed, why);
         if (currentSpaceId() === w.space) liveReload?.();
         return;
       }
-      w.onSaved(id, soleTopic, failed);
+      w.onSaved(id, soleTopic, failed, why);
     };
     // in-flight 闸(ui-audit P0 #2)在模块级 saving:创建 IPC 往返窗口里第二记 Enter /
     // 点按会用同一份内容再建一条重复条目;闸跨 mount / 跨 bar 才挡得住「保存中切走再

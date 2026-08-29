@@ -309,8 +309,9 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         }
         return soleTopic;
       },
-      onSettled: (notices, failed) => {
-        if (failed > 0) notices.push(t("inbox.savedImagesFailed", { n: failed }) + REPASTE_HINT);
+      onSettled: (notices, failed, why) => {
+        // ⛔ why 说得准就替掉 REPASTE_HINT(538,同 board.partialImgMsg 的判据)。
+        if (failed > 0) notices.push(t("inbox.savedImagesFailed", { n: failed }) + (why || REPASTE_HINT));
         if (notices.length > 0) {
           // 过桥进模块态:refresh 会重建 bar,提示恒由同空间的新 bar 领走显示
           // (活 mount 与死 mount 同一条路;codex 三审 M)。

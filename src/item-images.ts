@@ -24,6 +24,43 @@ export type ImageMeta = { id: string; seq: number; mime: string };
  *  一份、已漂成两种说法(「卡片编辑态」vs「卡片里」)——同一语义收成一处。 */
 export const REPASTE_HINT = t("itemImages.repasteHint");
 
+// ---- 挂图失败时,能对用户说的那句话(538,backlog 用户面 56)-------------------
+// **病**:批量挂图(compose / 捕获窗)失败时只数得出「N 张」,配的话是「可在卡片编辑态
+// 重新粘贴」—— 而 537 量到:够得着的拒法(不支持的类型 / 过大)**全是确定性的**,同样的
+// 字节再贴一次还是同样被拒 ⇒ 那句指引把用户支去做一件注定失败的事;对**回填来的草稿**
+// 更是空话(那张图早就不在用户手上了)。而后端**本来就说得出一句照着能行动的话**,
+// 却在 `catch` 里被扔掉了(诊断那半 528 已接住,给用户看的那半没有)。
+//
+// **形:前端自己推那句话,⛔ 不是把后端那串原样贴出来。** 两个理由:
+//   ①后端诊断串**拍板不翻**(i18n-plan)⇒ 原样贴出去,英文界面上会冒出中文;
+//   ②后端也会回内部错(`FOREIGN KEY constraint failed` 之类),那种给用户看没用(528 立的界)。
+// ⚠ **这是副本,后端仍是权威** —— 而且是**安全的那个方向**:本函数**只在挂图已经失败
+// 之后**才跑,⇒ 名单漂了最坏是「话说得不够准」,⛔ 绝不可能挡下一张后端本来收得下的图。
+// ⛔ **判定顺序照抄 `core/src/images.rs::attach`(空 → 过大 → MIME)** —— 顺序错了会答错原因。
+const ATTACH_MAX_MB = 32; // = core 的 MAX_IMAGE_BYTES
+const ATTACH_MIME = ["image/png", "image/jpeg", "image/webp", "image/gif"]; // = core 的 ALLOWED_MIME
+
+/** 挂图失败的原因里**能对用户说的那句**;前端看不出来就回 `""`。
+ *  ⛔ 回 `""` 时调用方该退回原来那句泛指引,**别猜一个像样的原因** —— 猜错正是这条账在修的病。 */
+export function whyAttachFailed(blob: Blob): string {
+  if (blob.size === 0) return t("itemImages.failEmpty");
+  if (blob.size > ATTACH_MAX_MB * 1024 * 1024)
+    return t("itemImages.failTooBig", {
+      mb: Math.round(blob.size / (1024 * 1024)),
+      max: ATTACH_MAX_MB,
+    });
+  if (!ATTACH_MIME.includes(blob.type)) return t("itemImages.failBadType", { mime: blob.type || "?" });
+  return "";
+}
+
+/** 一批挂完的结果:几张没挂上 + **那句话**(说得准就是具体原因,说不准是 `""`)。 */
+export type AttachOutcome = { failed: number; why: string };
+
+/** 批里逐张失败原因 → 一句话:去重、按批内顺序拼;⛔ 一条都说不准时回 `""`。 */
+function joinWhy(whys: string[]): string {
+  return [...new Set(whys.filter((w) => w !== ""))].join("");
+}
+
 // ---- small DOM helper (kept local so this module stands alone) -------------
 function el<K extends keyof HTMLElementTagNameMap>(
   tag: K,
@@ -1147,11 +1184,11 @@ export function pendingImages(
   root: HTMLElement;
   count: () => number;
   wire: (area: HTMLTextAreaElement) => void;
-  attachAll: (itemId: string) => Promise<number>;
+  attachAll: (itemId: string) => Promise<AttachOutcome>;
   takeBatch: () => PendingImage[];
   putBack: (batch: PendingImage[]) => void;
   disposeBatch: (batch: PendingImage[]) => void;
-  attachBatch: (itemId: string, batch: PendingImage[], space?: string) => Promise<number>;
+  attachBatch: (itemId: string, batch: PendingImage[], space?: string) => Promise<AttachOutcome>;
   clear: () => void;
   /** 启动回填:从 IndexedDB 读回上次没记下的暂存图(仅当前无暂存时,不覆盖已贴的)。
    *  未传 persistKey 时为 no-op。 */
@@ -1255,20 +1292,22 @@ export function pendingImages(
       // 空间已切走的失败批:不许追加进别的空间的预览区(codex 三审 H),revoke 即弃。
       for (const p of batch) URL.revokeObjectURL(p.url);
     },
-    async attachBatch(itemId: string, batch: PendingImage[], space?: string): Promise<number> {
+    async attachBatch(itemId: string, batch: PendingImage[], space?: string): Promise<AttachOutcome> {
       let failed = 0;
+      const whys: string[] = [];
       for (const p of batch) {
         try {
           await attachBlob(itemId, p.blob, space);
         } catch (e) {
           noteAttachFailure(itemId, e); // ⛔ 别退回裸 catch:原因丢了就只剩「几张」,查不动
+          whys.push(whyAttachFailed(p.blob)); // 给**用户**的那句(诊断那句仍归上面那行)
           failed += 1;
         }
       }
       for (const p of batch) URL.revokeObjectURL(p.url);
-      return failed;
+      return { failed, why: joinWhy(whys) };
     },
-    async attachAll(itemId: string): Promise<number> {
+    async attachAll(itemId: string): Promise<AttachOutcome> {
       // 兼容入口(捕获浮窗:mirrorSpace 保证保存期间空间不动、响应恒到达):
       // 同一套「先取批再挂」,失败图随批清走(可重粘)。
       const batch = held;
@@ -1277,16 +1316,18 @@ export function pendingImages(
       sync();
       persist();
       let failed = 0;
+      const whys: string[] = [];
       for (const p of batch) {
         try {
           await attachBlob(itemId, p.blob);
         } catch (e) {
           noteAttachFailure(itemId, e); // 同 attachBatch,别退回裸 catch
+          whys.push(whyAttachFailed(p.blob));
           failed += 1;
         }
       }
       for (const p of batch) URL.revokeObjectURL(p.url);
-      return failed;
+      return { failed, why: joinWhy(whys) };
     },
     clear,
     async restore(): Promise<void> {

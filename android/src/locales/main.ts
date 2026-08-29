@@ -38,7 +38,8 @@ export const main = defineMessages({
   "main.loading": { zh: "正在载入…", en: "Loading…" },
   "main.spaceNotOnDevice": { zh: "这条所在的空间不在这台设备上", en: "The space this item belongs to is not on this device" },
   "main.textBeforeImages": { zh: "先写点文字,图片作为配文一起记下", en: "Write something first — images are saved along with the text" },
-  "main.imagesNotAttached": { zh: "有 {n} 张配图没挂上,可在该卡片「加图」重贴", en: "{n} {n|image|images} could not be attached — use “Add image” on that card to retry" },
+  // 538:句尾那半拆成 {hint} —— 说得准就填具体原因(images.fail*),说不准才填 images.retryHint。
+  "main.imagesNotAttached": { zh: "有 {n} 张配图没挂上{hint}", en: "{n} {n|image|images} could not be attached{hint}" },
   "main.syncTitle": { zh: "同步", en: "Sync" },
   "main.syncTitleSpaced": { zh: "同步 · {name}", en: "Sync · {name}" },
   "main.renameOk": { zh: "确定", en: "OK" },

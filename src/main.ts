@@ -546,12 +546,13 @@ input.addEventListener("keydown", async (e) => {
       // swallowed): the note is already saved, so keep the window open with a note that the
       // image didn't stick — the user can re-paste it on the idea card.
       const kind = mode === "task" ? t("capture.kindTask") : t("capture.kindIdea");
-      const failed = await pend.attachBatch(id, batch);
+      const { failed, why } = await pend.attachBatch(id, batch);
       if (failed > 0) {
         errLine.textContent = t("capture.savedImagesFailed", {
           kind,
           failed,
-          hint: REPASTE_HINT,
+          // ⛔ why 说得准就替掉 REPASTE_HINT(538,同 board/inbox 的判据)。
+          hint: why || REPASTE_HINT,
           tagWarn: tagErr ? t("capture.tagWarnSuffix", { err: tagErr }) : "",
         });
         void fitWindow();

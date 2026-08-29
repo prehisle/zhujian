@@ -161,3 +161,70 @@ describe("新建入口配图 · 点暂存预览开 lightbox(无放大分支)", (
     if (await del.isExisting()) await del.click();
   });
 });
+
+// 538(backlog 用户面 56):**挂图失败时那句话要说得准。**
+// 537 量到:够得着的拒法(不支持的类型 / 过大)全是**确定性**的 —— 同样的字节再贴一次
+// 还是同样被拒 ⇒ 旧那句「(可在卡片编辑态重新粘贴)」是把用户支去做一件注定失败的事;
+// 而后端本来就说得出一句照着能行动的话,却在 `catch` 里只剩「N 张」。
+//
+// ⭐ **样本刻意是「真 PNG 字节 + 谎报 image/heic」**,不是随机字节:
+//   ①真字节 ⇒ 暂存缩略图正常出得来,验的是挂图那一步而不是预览那一步;
+//   ②`blob.type` 才是交给后端的 MIME(`attachBlob` 传的就是它)⇒ 后端照样按「不支持的
+//     图片类型」拒 —— **这一路与用户真粘一张 HEIC 完全同形**,且不必把第三方样本搬进仓。
+describe("新建入口配图 · 挂图失败时那句话说得准不准", () => {
+  before(async () => {
+    await goNotebook("inbox");
+    await clearInbox();
+  });
+
+  it("后端不收的格式:提示要说出是哪种格式,且不许再叫人「重新粘贴」", async () => {
+    const input = await $(".v-inbox .compose-input");
+    await input.waitForExist({ timeout: 10000 });
+    await input.click();
+
+    await browser.execute((b64) => {
+      const bin = atob(b64);
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      // 字节是真 PNG、type 谎报 heic —— 后端看的是 type(见文件头那段)。
+      const file = new File([bytes], "photo.heic", { type: "image/heic" });
+      const dt = new DataTransfer();
+      dt.items.add(file);
+      const ev = new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true });
+      document.querySelector(".v-inbox .compose-input").dispatchEvent(ev);
+    }, PNG);
+    await $(".v-inbox .compose .img-pending .img-thumb").waitForExist({ timeout: 5000 });
+
+    await input.setValue("E2E-挂图失败-说得准");
+    await browser.keys("Enter"); // capture_note 成功 → attachBatch 里那张图被后端拒
+
+    // 条目本身要建成(挂图失败**不拖垮**条目,这是既有行为,顺带钉住)。
+    await browser.waitUntil(
+      async () => (await invoke("list_ideas")).some((n) => n.content === "E2E-挂图失败-说得准"),
+      { timeout: 8000, timeoutMsg: "挂图失败时条目本身也没建成" },
+    );
+
+    // 提示过桥进重建后的 compose 条(inbox 走 postNotice → 新 bar 的 .form-err)。
+    let msg = "";
+    await browser.waitUntil(
+      async () => {
+        msg = await browser.execute(() => {
+          const el = document.querySelector(".v-inbox .compose .form-err");
+          return el && !el.hidden ? (el.textContent || "").trim() : "";
+        });
+        return msg !== "";
+      },
+      { timeout: 8000, timeoutMsg: "挂图失败后 compose 条没给出任何提示" },
+    );
+
+    // ⭐ 承重的两格:说出了是哪种格式 / 不再叫人做那件注定失败的事。
+    expect(msg).toContain("image/heic");
+    expect(msg).not.toContain("重新粘贴");
+    // 顺带:张数那半没被这次改动弄丢。
+    expect(msg).toContain("1");
+
+    // 收尾:条目连同它的空图位一起清掉,不给后续 spec 留状态。
+    const hit = (await invoke("list_ideas")).find((n) => n.content === "E2E-挂图失败-说得准");
+    if (hit) await invoke("delete_note", { id: hit.id });
+  });
+});

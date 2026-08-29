@@ -245,8 +245,10 @@ export function boardHasStashedDraft(): boolean {
 }
 
 // 图部分失败的看板文案(353:原先两处同串手抄——unmount 过桥横幅与就地提示——收成一处)。
-function partialImgMsg(failed: number): string {
-  return t("board.partialImg", { n: failed }) + REPASTE_HINT;
+// ⛔ `why`(538,用户面 56)说得准就**替掉** REPASTE_HINT,不是并列:不支持的格式 /
+// 过大都是确定性拒法,「再贴一次」注定还是失败;说不准(`""`)才退回原来那句泛指引。
+function partialImgMsg(failed: number, why: string): string {
+  return t("board.partialImg", { n: failed }) + (why || REPASTE_HINT);
 }
 
 export function mount(root: HTMLElement, _ctx: ViewCtx): View {
@@ -698,11 +700,11 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     showErr: (el, msg) => {
       el.textContent = msg;
     },
-    onDeadMount: (failed) => {
+    onDeadMount: (failed, why) => {
       // 部分失败先记账(活的看板 mount 用 op-err 横幅当场亮出来;不在场就过桥给
       // 下一个 mount)。
       if (failed > 0 && currentSpaceId() === mountSpace) {
-        const msg = partialImgMsg(failed);
+        const msg = partialImgMsg(failed, why);
         const liveMsg = document.querySelector<HTMLElement>(".v-board #op-err-msg");
         const liveBar = document.querySelector<HTMLElement>(".v-board #op-err");
         if (liveMsg !== null && liveBar !== null) {
@@ -713,7 +715,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         }
       }
     },
-    onSaved: (id, topicId, failed) => {
+    onSaved: (id, topicId, failed, why) => {
       // 文本过滤下新建:新卡多半不含过滤词,会被当场滤到隐身——清掉过滤让它可见。
       if (filter.text !== "") {
         filter.text = "";
@@ -730,7 +732,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       if (timeFilter !== "all" && timeFilter !== "1d") {
         timeFilter = "all";
       }
-      composeErr.textContent = failed > 0 ? partialImgMsg(failed) : "";
+      composeErr.textContent = failed > 0 ? partialImgMsg(failed, why) : "";
       pulseId = id; // 下一次渲染给这张新卡一记朱砂脉冲
       load(); // the new 'todo' appears at the front of the 待办 column
       composeInput.focus(); // stay open for rapid entry

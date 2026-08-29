@@ -924,8 +924,11 @@ async function save() {
     // 条目已建 → 把冻结的暂存图逐张挂上(失败按张计,条目在、图可去卡片「加图」重贴)。
     // 挂完再刷新,新卡带着缩略图一次呈现。
     if (savingImgs.length) {
-      const failed = await compImgs.attachBatch(space, newId, savingImgs);
-      if (failed > 0) showError(t("main.imagesNotAttached", { n: failed }));
+      const { failed, why } = await compImgs.attachBatch(space, newId, savingImgs);
+      // ⛔ why 说得准就**替掉**「可在该卡片『加图』重贴」那句(538,用户面 56):
+      // 不支持的格式 / 过大都是确定性拒法,叫用户重贴等于支他去做一件注定失败的事。
+      if (failed > 0)
+        showError(t("main.imagesNotAttached", { n: failed, hint: why || t("images.retryHint") }));
     }
     // 新卡落 mode 面:清掉该面停留的筛选,免得刚记的记录被藏起(「记了却没出现」的
     // 错觉)。桌面在筛着标签时改为自动挂标签保留可见,安卓这版先取「清筛见新卡」的

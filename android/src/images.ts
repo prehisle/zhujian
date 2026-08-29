@@ -25,6 +25,37 @@ export async function toBase64(blob: Blob): Promise<string> {
   return btoa(bin);
 }
 
+// ---- 挂图失败时,能对用户说的那句话(538,backlog 用户面 56)-------------------
+// **病**:批量挂图(compose)失败时只数得出「N 张」,配的话是「可在该卡片『加图』重贴」
+// —— 而 537 量到:够得着的拒法(不支持的类型 / 过大)**全是确定性的**,同样的字节再贴
+// 一次还是同样被拒 ⇒ 那句指引把用户支去做一件注定失败的事。而后端**本来就说得出一句
+// 照着能行动的话**,却在这只 `attachBatch` 的**裸 catch** 里被整个扔了(⚠ 528 销
+// 「测试与工装 45」时只修了桌面那半,这只同名函数从来没进过覆盖面)。
+//
+// **形:前端自己推那句话,⛔ 不是把后端那串原样贴出来。** 两个理由:
+//   ①后端诊断串**拍板不翻**(i18n-plan)⇒ 原样贴出去,英文界面上会冒出中文;
+//   ②后端也会回内部错(`FOREIGN KEY constraint failed` 之类),那种给用户看没用。
+// ⚠ **这是副本,后端仍是权威** —— 而且是**安全的那个方向**:本函数**只在挂图已经失败
+// 之后**才跑,⇒ 名单漂了最坏是「话说得不够准」,⛔ 绝不可能挡下一张后端本来收得下的图。
+// ⛔ **判定顺序照抄 `core/src/images.rs::attach`(空 → 过大 → MIME)** —— 顺序错了会答错原因。
+// ⚠ **桌面孪生 = `src/item-images.ts::whyAttachFailed`**,两端各一份(独立 vite 工程,
+//   物理上合不成一份;同 filter / timing / theme 那族)。改一处**必须改另一处**。
+const ATTACH_MAX_MB = 32; // = core 的 MAX_IMAGE_BYTES
+const ATTACH_MIME = ["image/png", "image/jpeg", "image/webp", "image/gif"]; // = core 的 ALLOWED_MIME
+
+/** 挂图失败的原因里**能对用户说的那句**;前端看不出来就回 `""`。
+ *  ⛔ 回 `""` 时调用方该退回泛指引,**别猜一个像样的原因** —— 猜错正是这条账在修的病。 */
+export function whyAttachFailed(file: File): string {
+  if (file.size === 0) return t("images.failEmpty");
+  if (file.size > ATTACH_MAX_MB * 1024 * 1024)
+    return t("images.failTooBig", { mb: Math.round(file.size / (1024 * 1024)), max: ATTACH_MAX_MB });
+  if (!ATTACH_MIME.includes(file.type)) return t("images.failBadType", { mime: file.type || "?" });
+  return "";
+}
+
+/** 一批挂完的结果:几张没挂上 + **那句话**(说得准就是具体原因,说不准是 `""`)。 */
+export type AttachOutcome = { failed: number; why: string };
+
 // 上传前降采样(194 可优化项①):相册原图动辄几 MB,全量入 E2EE 库并下行到所有设备=同步
 // 体积负担。两道闸——**主闸** 长边 > UPLOAD_MAX_EDGE 按比例缩;**副闸(B)** 尺寸达标但字节
 // 偏大的**照片**(JPEG 源)也重编码,补「小尺寸大体积」漏网。副闸只认 JPEG:透明 PNG 与文字
@@ -280,7 +311,7 @@ export type ComposeImages = {
   putBack: (batch: File[]) => void;
   clear: () => void;
   /** 逐张挂到刚建好的条目;返回挂失败张数(fail-fast,调用方告诉用户)。 */
-  attachBatch: (space: string, itemId: string, batch: File[]) => Promise<number>;
+  attachBatch: (space: string, itemId: string, batch: File[]) => Promise<AttachOutcome>;
   /** 启动回填:从 IndexedDB 读回上次没记下的暂存图(仅当前无暂存时,不覆盖已贴的)。 */
   restore: () => Promise<void>;
 };
@@ -448,14 +479,17 @@ export function composeImages(
     },
     async attachBatch(space, itemId, batch) {
       let failed = 0;
+      const whys: string[] = [];
       for (const file of batch) {
         try {
           await addItemImage(space, itemId, file.type, await toBase64(file));
         } catch {
+          // ⛔ 别退回裸 catch(538):原因丢了就只剩「几张」,而用户那句话也就只能是泛指引。
+          whys.push(whyAttachFailed(file));
           failed += 1;
         }
       }
-      return failed;
+      return { failed, why: [...new Set(whys.filter((w) => w !== ""))].join("") };
     },
     async restore() {
       if (slots.length) return; // 启动后用户已抢先贴图/正在取图:不覆盖
