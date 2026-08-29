@@ -268,6 +268,88 @@ function assertNotBehind() {
   }
 }
 
+// ── 「公开仓本地 main 上有没有悬着的导出」(536 立,backlog 测试与工装 52)─────────
+// ⛔⛔ **这道闸曾经有一个洞,而它打的正是闸自己的承诺**(534 收口时实撞,逐格在 backlog):
+//   ①`verify` 一趟 ⇒ 公开仓**本地** main 上多一笔导出、并推成闸分支;
+//   ②私有 HEAD 一动(amend / 补一笔)⇒ 闸分支名跟着变,在飞那条成了孤儿;
+//   ③再问 `exportDelta()` —— 它比的是「工作仓导出 **vs 公开仓本地 main**」,而本地 main 上
+//     **已经躺着 ① 那笔** ⇒ 恒答「一致」⇒ `land` 走「无导出面」那条路:核的是 `origin/main`
+//     当前那笔的 CI(**对端的树**,当然绿),然后**只推私有 master、不推公开 main**。
+//   ⇒ **一棵含新代码的树落进了私有 master,而它自己那趟 CI 的结论一次都没被问过。**
+//
+// ⭐ **修法选的是「fail-closed 前置」,不是「把 `exportDelta()` 改成跟 origin/main 比」** ——
+//    ⛔ 后者只把那**一句答案**修对,而**悬着的那笔导出仍然躺在本地 main 上**:下一趟 `land`
+//    走 535 那条「没动那几面 ⇒ 直接推公开 main」的路时,照样会把它一起推上去。
+//    前置把这个**状态**整个拦住,与这道闸的性格一致:**它宁可停也不猜**(同 46:判据比错了参照物)。
+// ⛔ **别把「本地 main 领先」本身当成错误状态** —— `verify` 之后到 `land` 之前它**本来就该领先**,
+//    那是正常态。要分的是两种领先:**绑在当前这棵树的闸分支上**(正常)/ **对不上**(要拦的)。
+/**
+ * @returns {{state:"even"|"bound", ahead:number, sha:string}} —— 另两种(落后 / 悬空)当场 die
+ */
+// ⚠ 数不出来就停：`Number("")` 是 **0**，而 0 恰好等于「没落后 / 没领先」
+//   ⇒ 它会把一个问不出来的状态安静地翻成「一切正常」。⛔ 同本文件里每一处 fail-closed。
+function count(cwd, range) {
+  const raw = git(cwd, ["rev-list", "--count", range]);
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 0) {
+    die(`数不出这个区间有几笔(${range})—— git 答的是「${raw}」,fail-closed。`);
+  }
+  return n;
+}
+
+function assertPublicMainBound() {
+  // ⛔ 这道绑定的根是「公开仓那份 clone 始终在 main 上提交」(见文件头「承重的那一格」)
+  //    ⇒ 不在 main 上时下面每一句都在算别的东西,先停。
+  const branch = git(target, ["rev-parse", "--abbrev-ref", "HEAD"]);
+  if (branch !== "main") {
+    die(`公开仓那份 clone 当前在 ${branch},不是 main —— 承重的绑定就是「始终在 main 上提交」。\n` +
+        `  ⇒ 先 \`git -C ${target} checkout main\`。`);
+  }
+  // ⛔ fetch 失败就停:拿过期的远端状态算出来的「没悬着」错得很安静(同 assertNotBehind)。
+  try {
+    gitProxy(target, ["fetch", "origin", "main"]);
+  } catch (e) {
+    die(`问不到公开仓远端(fetch 失败)—— fail-closed,⛔ 不猜「大概没悬着吧」:\n` +
+        `  ${String(e.stderr || e.message).trim().slice(0, 200)}`);
+  }
+  // ⚠ 落后这一格 `sync-public.mjs` 的规则 ② 本来就会拒,**这里只是把它前移** ——
+  //    别等到远端写那一步才响(46 那一课);而且从那边冒出来的是「问不出导出面(error)」,
+  //    看不出真正发生了什么。
+  const behind = count(target, "HEAD..origin/main");
+  if (behind > 0) {
+    die(`公开仓本地 main 落后 origin/main ${behind} 笔 —— 对端推过。\n` +
+        `  ⇒ 先 \`git -C ${target} pull --ff-only\`(⚠ 若同时还领先,那就是分叉:先跑 \`abandon\`)。`);
+  }
+  const localHead = git(target, ["rev-parse", "HEAD"]);
+  const ahead = count(target, "origin/main..HEAD");
+  if (ahead === 0) return { state: "even", ahead, sha: localHead };
+
+  // 领先 ⇒ 只剩一问:领先的那几笔,是不是**这一轮** verify 推上闸分支的那一笔。
+  let branches;
+  try {
+    branches = listGateBranches();
+  } catch (e) {
+    die(`公开仓本地 main 领先 ${ahead} 笔,而**问不到远端的闸分支** —— fail-closed,⛔ 不猜它绑没绑上:\n` +
+        `  ${String(e.stderr || e.message).trim().slice(0, 200)}`);
+  }
+  const mine = branches.find((b) => b.ref === gateBranch);
+  if (mine && mine.sha === localHead) return { state: "bound", ahead, sha: localHead };
+
+  const what = mine
+    ? `闸分支 \`${gateBranch}\` 在远端,但它指向 ${mine.sha.slice(0, 7)},而公开仓本地 main 是 ${localHead.slice(0, 7)}`
+    : `远端**没有** \`${gateBranch}\` 这条闸分支`;
+  die(
+    `公开仓本地 main 领先 origin/main ${ahead} 笔,而${what}。\n` +
+      `  ⇒ **那几笔导出是悬着的:没有任何一趟 CI 在验它**,而下一句判断会被它带偏\n` +
+      `     (534 实撞的那个洞 —— \`exportDelta()\` 会因此恒答「一致」;backlog 测试与工装 52)。\n` +
+      `  两种来路,处置一样:\n` +
+      `    ①上一趟 \`verify\` 之后又 amend / 补了一笔 ⇒ 闸分支名跟着变,旧那条成了孤儿;\n` +
+      `    ②上一趟 \`verify\` 的 push 没推成(网络)。\n` +
+      `  ⇒ \`node scripts/branch-gate.mjs abandon\`(公开仓本地退回 origin/main,⛔ 私有仓一个字不动),\n` +
+      `     然后重跑 \`verify\`。`,
+  );
+}
+
 // ── verify ────────────────────────────────────────────────────────────────────
 function verify() {
   const dirty = git(repoRoot, ["status", "--porcelain", "--untracked-files=no"]);
@@ -276,6 +358,19 @@ function verify() {
   // ⛔ **落后就直接拒**(backlog 46 的第二半)——⛔ 别兜底成「先验着,land 再说」:
   //    land 那道拒绝在**收口**才说话,那时 29 分钟已经烧掉了。
   assertNotBehind();
+
+  // ⭐ **536:悬着的导出要在任何一句判断之前拦下** —— 它会把下面 `exportDelta()` 那一问答坏
+  //    (534 那个洞;判据与两种领先的分法焊在 `assertPublicMainBound()` 头上)。
+  const pub = assertPublicMainBound();
+  if (pub.state === "bound") {
+    console.log(`⚠ **这棵树已经在闸上了** —— \`${gateBranch}\` 指向公开仓 ${pub.sha.slice(0, 7)},与本地 main 同一笔。`);
+    console.log(`   ⇒ 去问结论:node scripts/branch-gate.mjs status`);
+    console.log(`   ⛔ 想再跑一趟 CI 排抖动**别重跑 verify**(那只会原样强推一次同样的树),`);
+    console.log(`      用 \`gh run rerun <id> -R ${PUBLIC_REPO}\` —— \`ciVerdict\` 那句「只要有一趟绿就算绿」正是为它写的。`);
+    // ⚠ 别把原来那一下漏了：此前第二趟 `verify` 推完是会顺手 sweep 一次的。
+    sweep({ quiet: true });
+    return;
+  }
 
   // ⭐ **535:没动那几面就不走闸** —— 判据与三处诚实边界焊在 `gatedDelta()` 头上。
   //    ⛔ 别把这一格读成「跳过验证」:①十道门禁与那几套 cargo 本机跑得了(而且本来就该跑);
@@ -342,7 +437,12 @@ function land() {
   //    而不是像 527 那样排在最后(那时公开 main 已经被推回去了)。理由见 assertNotBehind 头注。
   assertNotBehind();
 
-  // ③⭐ **535:没动那几面 ⇒ 不走闸,直接落地**(判据与三处诚实边界在 `gatedDelta()` 头上)。
+  // ③⭐ **536:同一道前置** —— 悬着的导出会让下面每一问都答错(backlog 测试与工装 52)。
+  //    ⚠ 正常闸那条路走到这儿必然是 `bound`(verify 推过、树没变);`even` = 这一轮压根没走闸
+  //    (纯文档 / 535 那条不走闸的路)。两种都放行,**第三种在函数里当场停**。
+  assertPublicMainBound();
+
+  // ④⭐ **535:没动那几面 ⇒ 不走闸,直接落地**(判据与三处诚实边界在 `gatedDelta()` 头上)。
   //    ⚠ 与下面那条「纯文档轮」**不是同一条路,别合并**:那条是「压根没东西进公开仓」
   //    ⇒ 只推私有;这条是「有东西进公开仓、但不值得为它等 29 分钟」⇒ **照样把公开 main 推上去**
   //    (公开快照该保持跟手 —— 它是 CI 与外部读者看到的那棵树),只是不等裁决。
@@ -368,7 +468,7 @@ function land() {
     return;
   }
 
-  // ④闸分支在不在?不在有两种可能,**必须分开处理**,别一律报「先跑 verify」。
+  // ⑤闸分支在不在?不在有两种可能,**必须分开处理**,别一律报「先跑 verify」。
   console.log(`→ 问公开仓远端(代理 ${proxy})…`);
   let gateExists = true;
   try {
@@ -409,14 +509,14 @@ function land() {
     );
   }
 
-  // ⑤CI 必须绿,且绿的是**这个 sha**。
+  // ⑥CI 必须绿,且绿的是**这个 sha**。
   const v = ciVerdict(publicSha);
   if (v.state !== "green") {
     die(`CI 不是绿的:${v.state} —— ${v.why}${v.url ? `\n  ${v.url}` : ""}\n  ⛔ 闸不放行(这正是它存在的理由)。`);
   }
   console.log(`✅ CI 绿:${v.url}`);
 
-  // ⑥公开 main ← 那一笔(快进,同一个 sha)+ 删闸分支。
+  // ⑦公开 main ← 那一笔(快进,同一个 sha)+ 删闸分支。
   console.log(`→ 公开仓 main ← ${publicSha.slice(0, 7)}(同一笔提交,快进)…`);
   gitProxy(target, ["push", "origin", "HEAD:main"]);
   console.log(`→ 删掉闸分支 ${gateBranch} …`);
