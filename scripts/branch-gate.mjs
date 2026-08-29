@@ -5,6 +5,7 @@
 //   node scripts/branch-gate.mjs status    问那棵树的 CI 绿了没(⛔ 别前台等,过会儿再问)
 //   node scripts/branch-gate.mjs land      fail-closed:绿了才落地(私有 master + 公开 main)
 //   node scripts/branch-gate.mjs abandon   放弃这一趟,把公开仓本地 main 退回 origin/main
+//   node scripts/branch-gate.mjs sweep     清掉**本环境**留下的孤儿闸分支(529 加,见下面 sweep())
 //
 // ── 为什么是这个形,不是 GitHub 的 PR 闸 ────────────────────────────────────────
 // ⛔ **私有仓在 Free 计划上没有分支保护**(520 实测:`branches/master/protection` 回
@@ -19,8 +20,12 @@
 // ⭐ **公开仓那份 clone 始终留在 `main` 上提交,只是先把那笔提交推到闸分支**;CI 绿之后
 //    推上 main 的**是同一笔提交(同一个 sha)**。⛔ 不是「合并后再导出一次,希望它一样」——
 //    那属于 memory `verify-artifact-predates-fix` 那族:失灵时不报错,只给一个看着合理的错答案。
-// ⭐ **一律不存状态文件**,闸分支名从私有 HEAD 推导(`gate/<短 sha>`)。私有 HEAD 一动,
-//    推导出来的名字就对不上 ⇒ 当场 fail-closed。**状态文件会腐烂,推导不会。**
+// ⭐ **闸分支名 = `gate/<环境名>/<短 sha>`,两半的来源刻意不同**(529 起):
+//    ·`<短 sha>` **推导,不存** —— 私有 HEAD 一动,名字就对不上 ⇒ 当场 fail-closed。
+//      **状态文件会腐烂,推导不会。**(521 承重的那格,⛔ 一个字没动)
+//    ·`<环境名>` **存**在各自的 `.git/config` 里(`scripts/lib/dev-env.mjs`)—— 它**不随树变**,
+//      是身份不是状态,存下来不会腐烂。⇒ **会变的推导,不会变的存。**
+//    有了前缀,`sweep` 才敢删:只碰 `gate/<我这个环境>/*`,够不着对端正在验的那笔。
 //
 // ⚠ **两处诚实边界,别读大了**:
 //   ①**这是脚本闸不是平台闸** —— 谁直接敲 `git push origin master` 都绕得过去。它与
@@ -32,10 +37,9 @@ import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { PUBLIC_REPO, devEnv, listGateBranches, proxy } from "./lib/dev-env.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const PUBLIC_REPO = "prehisle/zhujian";
-const proxy = process.env.ZJ_GIT_PROXY ?? "socks5h://127.0.0.1:10808";
 const target = resolve(join(repoRoot, "..", "zhujian-public"));
 
 const cmd = process.argv[2];
@@ -53,9 +57,20 @@ function gitProxy(cwd, args) {
 
 if (!existsSync(join(target, ".git"))) die(`公开仓工作副本不在:${target}(它是独立 clone,不是本仓的子目录)`);
 
-// 闸分支名 = 私有 HEAD 的短 sha 推导出来的。⛔ 别改成随机名 / 时间戳:那样就不再"树一动就对不上"了。
+// 闸分支名 = **环境名** + 私有 HEAD 的短 sha。
+// ⛔ sha 那半别改成随机名 / 时间戳:那样就不再"树一动就对不上"了(521 承重的那格)。
+// ⭐ 环境名那半是 529 加的,为的是让 `sweep` 认得出「哪条是我推的」——⛔ 别把它也改成推导,
+//    也别改成「一台一条固定分支」(那会把「验的是哪棵树」这个绑定弄丢)。
+// ⭐ 用**斜杠**分段不用连字符:清理时按前缀 `gate/<env>/` 匹配,斜杠天然无歧义;
+//    连字符的话名叫 `win` 的环境会误匹配到 `gate/win-desk-<sha>` —— 那正好是删错人的分支。
 const headSha = git(repoRoot, ["rev-parse", "--short", "HEAD"]);
-const gateBranch = `gate/${headSha}`;
+let env;
+try {
+  env = devEnv(repoRoot);
+} catch (e) {
+  die(e.message);
+}
+const gateBranch = `gate/${env}/${headSha}`;
 
 // ── 判 CI ─────────────────────────────────────────────────────────────────────
 // 三态,⛔ 别塌成两态:`cancelled` **既不是绿也不是红**(518 那一课 —— 近 14 趟里占 4,
@@ -107,6 +122,73 @@ function exportDelta() {
   return { state: "unknown", why: out.trim().slice(-400) };
 }
 
+// ── sweep(529 立):清掉**我这个环境**留下的孤儿闸分支 ─────────────────────────
+// **要治的**(backlog 43):闸分支名由当前 HEAD 推导 ⇒ 一轮里 amend / 补一笔 / rebase 之后
+// 再 `verify`,推的是**新**分支,旧那条成孤儿,而四条命令没有一条够得着它。两个后果:
+// ①公开仓上攒 `gate/*`;②⭐ **孤儿那趟 CI 还在跑**(522 实测手动取消时已烧约 10 分钟 runner,
+// 而那趟结论永远不会有人看)。
+//
+// ⭐ **环境名把 43 那三条候选的死结一次解开**:
+//   - 「推新的之前把 `gate/*` 全删了」原本不行(会掐掉对端正在验的那笔)—— 加了前缀就**够不着别人**。
+//   - 「只删同一轮那几条」原本难在:amend 之后旧 sha **不再是**新 HEAD 的祖先,
+//     `merge-base --is-ancestor` 恰好答不出。⇒ **那个判据整个不需要了**:不问「是不是同一轮」,
+//     只问「是不是我这个环境推的、且不是当前这条」,两个条件当场都算得出来。
+//   - 「交给人手动 sweep」最省,但把责任交回给人(而人正是会忘的那个)⇒ 挂在 `verify` 里自动跑。
+//
+// ⛔ **顺序:先 cancel,后删分支。** 43 里问的「`gh run cancel` 对分支已删的那趟还灵不灵」
+//    是**没验过**的 —— 与其去验一个不确定的行为,不如排到根本不需要问的位置。
+// ⚠ **老形 `gate/<sha>`(529 之前推的)一律不碰**:它认不出是谁推的,删了可能是别人的。
+function sweep({ quiet = false } = {}) {
+  let branches;
+  try {
+    branches = listGateBranches();
+  } catch (e) {
+    console.log(`  ⚠ 问不到公开仓的闸分支,这次没清:${String(e.stderr || e.message).trim().slice(0, 150)}`);
+    return;
+  }
+  const mine = branches.filter((b) => b.env === env && b.ref !== gateBranch);
+  // ⚠ 剩下的分两种,**别混成一句**:认得出是别的环境的 / 老形认不出是谁的。
+  //    两种都不碰,但**理由不一样** —— 说成「别的环境的」会让人以为对端正在验一笔,
+  //    而它可能就是自己上一轮留下的老形分支(529 自己第一次跑就撞见这一格)。
+  const others = branches.filter((b) => b.env && b.env !== env);
+  const legacy = branches.filter((b) => !b.env);
+  const note = () => {
+    if (others.length) console.log(`   (另有 ${others.length} 条**别的环境**的:${others.map((b) => b.ref).join(" / ")} —— ⛔ 不碰)`);
+    if (legacy.length) console.log(`   (另有 ${legacy.length} 条**老形 \`gate/<sha>\`**、认不出是谁推的:${legacy.map((b) => b.ref).join(" / ")} —— ⛔ 不碰,手动处置)`);
+  };
+  if (!mine.length) {
+    if (!quiet) console.log(`✅ 没有 ${env} 的孤儿闸分支要清。`);
+    note();
+    return;
+  }
+  console.log(`\n→ 清掉 ${mine.length} 条 ${env} 的孤儿闸分支(⛔ 只碰自己这个前缀下的):`);
+  for (const b of mine) {
+    // ① 先取消还在跑的那趟 —— 贵的是这个(runner 分钟数),不是分支本身。
+    try {
+      const raw = execFileSync(
+        "gh",
+        ["api", `repos/${PUBLIC_REPO}/actions/runs?head_sha=${b.sha}&per_page=50`,
+         "--jq", ".workflow_runs[] | select(.status != \"completed\") | .id"],
+        { encoding: "utf8" },
+      ).trim();
+      for (const id of raw.split("\n").filter(Boolean)) {
+        execFileSync("gh", ["run", "cancel", id, "-R", PUBLIC_REPO], { stdio: "ignore" });
+        console.log(`   · ${b.ref}  取消了还在跑的 run ${id}`);
+      }
+    } catch {
+      console.log(`   · ${b.ref}  ⚠ 问不到/取消不了它的 run(不致命,继续删分支)`);
+    }
+    // ② 再删分支。
+    try {
+      gitProxy(target, ["push", "origin", "--delete", b.ref]);
+      console.log(`   · ${b.ref}  已删`);
+    } catch {
+      console.log(`   · ${b.ref}  ⚠ 没删掉(手动:git -C ${target} push origin --delete ${b.ref})`);
+    }
+  }
+  note();
+}
+
 // ── verify ────────────────────────────────────────────────────────────────────
 function verify() {
   const dirty = git(repoRoot, ["status", "--porcelain", "--untracked-files=no"]);
@@ -135,6 +217,9 @@ function verify() {
   } catch {
     die("sync-public 非零退出(上面就是理由)—— 什么都没推。");
   }
+  // ⭐ 推完再清 —— 当前这条已经在远端了,`sweep` 按名字把它排掉,剩下的就都是孤儿。
+  sweep({ quiet: true });
+
   console.log(`\n⭐ 去做别的(⛔ 别前台等,整趟约 29 分钟)。回来跑:`);
   console.log(`   node scripts/branch-gate.mjs status`);
 }
@@ -262,13 +347,14 @@ function abandon() {
   console.log(`\n✅ 已放弃这一趟。⛔ 私有仓一个字没动 —— 你的提交都还在。`);
 }
 
-const table = { verify, status: statusCmd, land, abandon };
+const table = { verify, status: statusCmd, land, abandon, sweep };
 if (!table[cmd]) {
-  console.error("用法:node scripts/branch-gate.mjs verify|status|land|abandon");
-  console.error("  verify   把这棵树推到公开仓闸分支,CI 跑起来");
+  console.error("用法:node scripts/branch-gate.mjs verify|status|land|abandon|sweep");
+  console.error("  verify   把这棵树推到公开仓闸分支,CI 跑起来(末尾自动 sweep 一次)");
   console.error("  status   问 CI 绿了没(三态:green / running / red / unknown)");
   console.error("  land     fail-closed:绿了才落地(公开 main + 私有 master)");
   console.error("  abandon  放弃这一趟,公开仓本地退回;私有仓不动");
+  console.error("  sweep    清掉**本环境**留下的孤儿闸分支(先取消它的 run,再删分支)");
   process.exit(1);
 }
 table[cmd]();
