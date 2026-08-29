@@ -96,3 +96,8 @@ tmp-flaky/
 # e2e 期间 app 崩出的 GB 级 core dump(340 实测单轮 4 枚共 22GB;/core.* 锚定仓根,
 # 与 /core/ 目录不同形不误伤)
 /core.*
+
+# 格式探针的第三方样本(`e2e/probes/format-samples.js` 按需取到这儿)。
+# ⛔ 这条不是「杂物」而是**许可证**:HEIC 那份仓里没 LICENSE 不可再分发,AVIF 那份是
+# CC-BY-SA-4.0(传染性)—— 而本仓 MIT 且公开。⇒ 样本各自取,不随快照走。
+/.fmt-samples/
