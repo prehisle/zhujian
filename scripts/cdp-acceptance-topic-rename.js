@@ -68,8 +68,12 @@
     await inv("file_note_to_topic", { id: note, topicId: a, newTitle: null });
 
     toggle();
-    ok("标签面开得出来", await until(async () => !!rowOf(A0), 4000));
-    if (!rowOf(A0)) throw new Error("播种的标签没出现在列表里,后面全不用跑了");
+    // ⛔ 判据连身份一起判(data-topic === 这一趟的 id),不能只看「同名行在」:关面不清列表
+    // DOM,残余行以旧 id 站在屏上,拿旧 id 去写被 core 拒「主题不存在」。这支此前没炸只是
+    // 运气 —— 结尾把 A0 改成了 A1,下一趟旧 DOM 恰好不与 A0 同名(color-create 那支首版栽了)。
+    const freshRow = () => rowOf(A0)?.closest(".trow")?.dataset.topic === a;
+    ok("标签面开得出来(且是这一趟的行,不是残余 DOM)", await until(freshRow, 4000));
+    if (!freshRow()) throw new Error("播种的标签没出现在列表里(或屏上是旧残余),后面全不用跑了");
 
     // ---- ① 名字是可点的,且看得出可改 ----
     const nm = rowOf(A0);

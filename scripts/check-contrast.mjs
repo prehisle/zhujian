@@ -144,6 +144,13 @@ const ALLOW = [
     selector: ".v-topics .dtask-copy",
     why: "同上,--ink-faint 的提示级:标签详情里那个复制按钮,悬停时才升到 --ink",
   },
+  {
+    source: "安卓",
+    file: "android/index.html#style",
+    selector: ".tc-swatch.none",
+    why: "桌面 .color-swatch.none 的安卓同族(user-44 第二刀把调色板搬上手机):同一枚「不着色」\
+占位符号、同一条理由 —— 不是要读的字,两端同形优先于单侧改设计",
+  },
 ];
 
 /**

@@ -737,7 +737,18 @@
       .devices .err { color: var(--seal); font-size: var(--fs-13); word-break: break-all; margin: 8px 0; }
       .devices .row button.danger { background: var(--seal); color: var(--on-seal); }
 
-      /* 标签管理面(190):每行 = 拖手柄 + 名 + 计数 + 类型;拖手柄纵向拖排序。 */
+      /* 标签管理面(190):每行 = 拖手柄 + 名 + 色点 + 计数 + 类型;拖手柄纵向拖排序。 */
+      /* 面头(user-44 第二刀):标题 + 「新建标签」同一行;规则放在 .sync h2 之后,
+         同特异性靠文档顺序把 margin 归零(间距由 .phead 自己出)。 */
+      .phead { display: flex; align-items: center; justify-content: space-between; margin: 0 0 8px; }
+      .phead h2 { margin: 0; }
+      #topics-new {
+        font-size: var(--fs-12); padding: 4px 12px; border-radius: var(--radius-pill);
+        border: 1px solid var(--line-strong); background: none; color: var(--ink-soft);
+        position: relative;
+      }
+      /* 触区只垂直扩(同 .tn-edit button 那形):视觉小钮,盒外 halo 补到 ~44。 */
+      #topics-new::before { content: ""; position: absolute; left: 0; right: 0; top: -10px; bottom: -10px; }
       #topics-list { position: relative; }
       /* 514:上下 padding 10 → 12,行实高 40.4 → 44.4 —— 名字成了可点元素(改名入口),
          而 §2.3 要 ≥44。⭐ 提行高是为了让名字的 halo **吃满行内就够 44**:halo 只要
@@ -774,12 +785,21 @@
         text-decoration: underline dotted var(--line-strong); text-underline-offset: 3px; }
       /* 标签色点(8px 圆,注入色 --tc):标签管理面行内(.tdot)与筛选 pill(.fdot,住
          筛选节)是同一枚记号共形——此前两处各写一份。布局差(行内对齐 vs flex 子项)
-         留在各自规则里。 */
-      .tname .tdot, .fdot {
+         留在各自规则里。user-44 第二刀:.tdot 的宿主从名字内挪到独立色钮 .tcolor
+         (改颜色入口),记号本身没变。 */
+      .tcolor .tdot, .fdot {
         width: 8px; height: 8px; border-radius: var(--radius-circle);
         background: var(--tc, var(--ink-faint));
       }
-      .tname .tdot { display: inline-block; margin-left: 6px; vertical-align: middle; }
+      /* 色钮:常驻、每行一枚(无色也要有入口)。触区 30×44 吃满行内(同行内钮的
+         垂直纪律);无色渲空圈(虚线描边、无底)暗示「还没上色」。 */
+      .tcolor {
+        flex: none; width: 30px; min-height: 44px; margin: -12px 0;
+        display: inline-flex; align-items: center; justify-content: center;
+        background: none; border: 0; padding: 0;
+      }
+      .tcolor .tdot { display: block; }
+      .tcolor .tdot.none { background: none; border: 1px dashed var(--ink-faint); box-sizing: border-box; }
       .tcount { flex: none; font-size: var(--fs-12); color: var(--ink-faint); font-variant-numeric: tabular-nums; }
       .tk-add, .tk-badge {
         flex: none; font-size: var(--fs-12); padding: 3px 10px; border-radius: var(--radius-pill);
@@ -802,12 +822,28 @@
         border: 1px solid var(--seal-line); border-radius: var(--radius-sm);
         background: var(--paper); color: var(--ink);
       }
+      /* 颜色编辑态(user-44 第二刀):整行换成调色板(8 色 + 无色 + 取消),点色块即写。
+         wrap 由宽度定(360px 屏摆不下一行十件);色块 36×36 无 halo —— wrap 成两行时
+         halo 会上下互叠(判例同 .space-row 那族),36 的实盒 + 8 gap 已零互叠。 */
+      .tc-edit { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+      .tc-swatch {
+        box-sizing: border-box; flex: none; width: 36px; height: 36px; padding: 0;
+        border-radius: var(--radius-circle);
+        border: 1px solid var(--line-strong);
+        background: var(--tc);
+      }
+      .tc-swatch.none {
+        display: inline-flex; align-items: center; justify-content: center;
+        background: var(--paper); border-style: dashed;
+        font-size: var(--fs-12); color: var(--ink-faint);
+      }
+      .tc-swatch.current { outline: 2px solid var(--ink); outline-offset: 2px; }
       /* 存/取消:视觉保持小巧,触区同样只垂直扩(±10 ⇒ ~44,仍在行内不越到相邻行)。
          ⛔ halo 只给 .tn-edit 这半 —— `.tk-edit` 那两枚是既有形,不在本轮范围(账在 ui-guidelines §2.3)。 */
       .tn-edit button { position: relative; }
       .tn-edit button::before { content: ""; position: absolute; left: 0; right: 0; top: -10px; bottom: -10px; }
-      .tk-edit button, .tn-edit button { font-size: var(--fs-12); padding: 4px 10px; border-radius: var(--radius-sm); }
-      .tk-edit button.ghost, .tn-edit button.ghost { background: none; color: var(--ink-soft); border: 1px solid var(--line-strong); }
+      .tk-edit button, .tn-edit button, .tc-edit .tc-cancel { font-size: var(--fs-12); padding: 4px 10px; border-radius: var(--radius-sm); }
+      .tk-edit button.ghost, .tn-edit button.ghost, .tc-edit .tc-cancel { background: none; color: var(--ink-soft); border: 1px solid var(--line-strong); }
       /* 拖动落点指示线(朱砂),按指针位置浮在目标间隙上。 */
       .drop-line {
         position: absolute; left: 34px; right: 4px; height: 2px; margin-top: -1px;
@@ -1289,12 +1325,16 @@
       <p class="fine" data-i18n="shell.sealedNote">完成的任务「入册」后在这里安放;归档是史实,不可删除。</p>
     </section>
 
-    <!-- 标签管理面(190,安卓精简版):拖手柄调顺序(1c)+ 点「类型」标自由文本类型(kind);
-         顺序/类型跨端同步。重命名/删除/合并/颜色暂在桌面做。 -->
+    <!-- 标签管理面(190,安卓精简版):拖手柄调顺序(1c)+ 点「类型」标自由文本类型(kind)
+         + 点名字改名(514)+ 点色点改颜色 + 面头「新建标签」(user-44 第二刀);全部跨端同步。
+         删除/合并暂在桌面做(破坏性动作,搬到触屏要重想确认形 —— backlog 用户面 44)。 -->
     <section id="topics-pane" class="sync" hidden>
-      <h2 data-i18n="shell.navTags">标签</h2>
+      <div class="phead">
+        <h2 data-i18n="shell.navTags">标签</h2>
+        <button id="topics-new" data-i18n="topics.newBtn">+ 新建标签</button>
+      </div>
       <div id="topics-list"></div>
-      <p class="fine" data-i18n="shell.topicsNote">按住左侧 ⠿ 拖动调顺序;点「类型」给标签标个类型(如「人名」),顺序与类型都会同步到其它设备。</p>
+      <p class="fine" data-i18n="shell.topicsNote">按住左侧 ⠿ 拖动调顺序;点名字改名、点色点改颜色、点「类型」给标签标个类型(如「人名」)——这些改动都会同步到其它设备。</p>
     </section>
 
     <!-- 146:seg 两态删除——输入落点=当前主视图(灵感面记灵感/任务面记待办),

@@ -9,6 +9,8 @@ export type TagColor = { hex: string; name: string };
 
 // 八个可区分的暗调色(避开纯朱红——那是截止/新生脉冲的强调色,别撞)。手选热标签用,
 // 不铺满。顺序即调色板里的排布。
+// ⚠ 安卓 android/src/topics.ts 的 PALETTE 是同一组八色(user-44 第二刀搬上手机),
+// 加色/改色两边一起动;没有闸压这两份 —— 色值存库存的是 hex,调色板漂了最坏是两端候选不同。
 export const TAG_COLORS: TagColor[] = [
   { hex: "#c0563f", name: t("tagColor.ochre") },
   { hex: "#cc8b3c", name: t("tagColor.loess") },

@@ -44,7 +44,7 @@ export const shell = defineMessages({
   "shell.emptyTrash": { zh: "清空回收站", en: "Empty Trash" },
   "shell.trashNote": { zh: "删除的记录先到这里;恢复回到原来的位置;彻底删除后无法找回。", en: "Deleted items land here first; restoring puts them back where they were; deleting forever cannot be undone." },
   "shell.sealedNote": { zh: "完成的任务「入册」后在这里安放;归档是史实,不可删除。", en: "Finished tasks rest here once archived; the archive is a record of fact and cannot be deleted." },
-  "shell.topicsNote": { zh: "按住左侧 ⠿ 拖动调顺序;点「类型」给标签标个类型(如「人名」),顺序与类型都会同步到其它设备。", en: "Hold the ⠿ handle on the left to reorder; tap Kind to label a tag (e.g. Person). Order and kind both sync to your other devices." },
+  "shell.topicsNote": { zh: "按住左侧 ⠿ 拖动调顺序;点名字改名、点色点改颜色、点「类型」给标签标个类型(如「人名」)——这些改动都会同步到其它设备。", en: "Hold the ⠿ handle on the left to reorder; tap a name to rename, the color dot to recolor, or Kind to label a tag (e.g. Person). All of these sync to your other devices." },
   "shell.addImage": { zh: "＋ 加图", en: "＋ Image" },
   "shell.takePhoto": { zh: "＋ 拍照", en: "＋ Photo" },
   "shell.saveIt": { zh: "记下", en: "Note it" },
