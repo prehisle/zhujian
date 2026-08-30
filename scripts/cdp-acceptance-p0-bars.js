@@ -45,6 +45,29 @@
   ok("确认条落在下半屏(远离卡面单拍控件)", cb.getBoundingClientRect().top > innerHeight / 2);
   cb.hidden = cbWasHidden;
 
+  // ④ 更新条与悬浮 ＋ 钮互不遮挡(543:真机上 FAB z8 正压死「稍后」——条抬到 FAB 上方;
+  //    面板态 FAB 让位,条跟着落回底栏上沿,别独自悬在半空)。临时揭开量几何,量完复原。
+  const fab = document.getElementById("capture-fab");
+  const updWasHidden2 = upd.hidden;
+  const msgEl = document.getElementById("update-msg");
+  const msgWas = msgEl.textContent;
+  msgEl.textContent = "CDP 几何探针 v9.9.9";
+  upd.hidden = false;
+  const paneWasOpen = document.body.classList.contains("pane-open");
+  document.body.classList.remove("pane-open");
+  await new Promise((r) => setTimeout(r, 50));
+  const ub = upd.getBoundingClientRect();
+  const fb = fab.getBoundingClientRect();
+  // ⚠ fixed 元素 offsetParent 恒 null,可见性只认「盒子量得出来」
+  ok("更新条整条在 FAB 上方(不相交)", fb.width > 0 && ub.bottom <= fb.top);
+  document.body.classList.add("pane-open");
+  await new Promise((r) => setTimeout(r, 50));
+  const ubPane = upd.getBoundingClientRect();
+  ok("面板态 FAB 让位、更新条落回底栏上沿", cs(fab).display === "none" && ubPane.bottom > ub.bottom);
+  if (!paneWasOpen) document.body.classList.remove("pane-open");
+  upd.hidden = updWasHidden2;
+  msgEl.textContent = msgWas;
+
   out.pass = out.steps.every((s) => s.ok);
   return JSON.stringify(out);
 })();

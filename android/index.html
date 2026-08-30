@@ -468,7 +468,10 @@
          点「稍后」又弹回。悬浮于底栏上方,可点「稍后」收起,不再挤动任何内容。 */
       .update {
         position: fixed; left: 14px; right: 14px; z-index: 6;
-        bottom: calc(var(--nav-clear) + env(safe-area-inset-bottom));
+        /* 抬到悬浮 ＋ 钮上方(FAB 底 16px + 高 56px + 间距 12px,故意用 FAB 自己的
+           --nav-h 坐标系算,免得两套底距令牌各涨各的又撞回来)——FAB z-index 更高且
+           正压在「稍后」上,真机上盖得死死的。 */
+        bottom: calc(var(--nav-h, var(--nav-clear)) + 84px);
         display: flex; align-items: center; justify-content: space-between; gap: 8px;
         /* 悬浮层要不透底:seal-tint 是半透明,混进纸面色打底。 */
         background: color-mix(in srgb, var(--seal) 10%, var(--raised));
@@ -487,6 +490,10 @@
         overflow-wrap: anywhere; /* 网址这类不断词长串否则横向溢出被切掉(桌面量过) */
       }
       .update .update-acts { flex: none; }
+      /* FAB 让位的两个态(面板/留言层)条跟着落回底栏上沿——抬升条件与 FAB 的
+         CSS 显隐保持同一份判据,免得面板视图里它独自悬在半空。 */
+      body.pane-open .update,
+      body.cm-open .update { bottom: calc(var(--nav-clear) + env(safe-area-inset-bottom)); }
       .update .go {
         border: none; border-radius: var(--radius-pill);
         background: var(--seal); color: var(--on-seal);
