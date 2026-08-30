@@ -87,6 +87,8 @@ on:
 #   · 「只给 `linux-e2e` 开豁免」—— 救不了。`gates` 是 `uses:` 调 `preflight.yml`,job 级
 #     `concurrency` 一挂就把它里头三格全掐,而最长的那格是 **Windows 六套 cargo(≈29 分)**,
 #     与 `linux-e2e` 同一档 ⇒ 豁免一根长杆、掐掉另一根,等于没做。
+#     (⚠ **539 起 `preflight.yml` 里那格已拆成 `windows-core` 三片 + `windows-rest`**,
+#      「六套 cargo ≈29 分」是**当时**的读数、这段推理照旧成立;⛔ 别拿它当今天的墙钟。)
 #   · 「留 group、只把 `cancel-in-progress` 改 false」—— **更糟**:那样新趟变成**排队**而不是
 #     并行(墙钟按趟数累加),且 GitHub 只保留**最新那个 pending**、中间排着的照样被取消。
 #

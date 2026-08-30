@@ -126,37 +126,160 @@ jobs:
       - run: cd mobile && cargo test --quiet
 
   # 448(ci-plan 阶段 2):**全套在 Windows 上再跑一遍**(OH-d/D1 起是六套)。
-  # 与上面两格互不依赖,三格同时开跑。
+  # 539 把它从一格拆成两格 + `core` 再分三片,理由见下面那条翻案。
   #
-  # ⛔ **不在这一格跑那十道门禁**:它们是平台无关的 node 脚本(判的是仓里几份表对不对得上),
-  #    在第二个操作系统上跑一遍不产生任何新判据,只是把墙钟拉长。这一格要的是**平台 API 语义**。
-  # ⚠ **不拆成两格**(Linux 那边拆是因为 `shells` 要先 apt 装 webkit2gtk 一套):Windows 上
-  #    WebView2 是镜像预装的,没有那步 ⇒ 拆开只是多付一次检出 + rust-cache 还原。
+  # ⛔ **不在这几格跑那十道门禁**:它们是平台无关的 node 脚本(判的是仓里几份表对不对得上),
+  #    在第二个操作系统上跑一遍不产生任何新判据,只是把墙钟拉长。这几格要的是**平台 API 语义**。
   # ⚠ 安卓壳这里同样编的是 **host target(x86_64-windows)**,跑纯 Rust 单测,**不需要 NDK**。
-  windows:
-    name: cargo test 六套(Windows,唯一的生产桌面端)
+  #
+  # ⭐⭐ **539 翻案:原来这里写着「不拆成两格」,现在拆了。**
+  #    原文:「⚠ **不拆成两格**(Linux 那边拆是因为 `shells` 要先 apt 装 webkit2gtk 一套):
+  #    Windows 上 WebView2 是镜像预装的,没有那步 ⇒ 拆开只是多付一次检出 + rust-cache 还原。」
+  #    **那句话没说错,是它比较的两个量在这半年里换了个数量级**,539 当场量到的:
+  #      · 「多付的一次检出 + rust-cache 还原」= **45~65 秒**(三趟实测)
+  #      · 而 `cd core && cargo test` 这**一步** = **19~38 分钟**(同日三趟:20m53s / 20m27s / 37m50s)
+  #    ⇒ 为省 1 分钟的重复 setup,让 20~38 分钟串在一根杆上。**判据不是「拆不拆更干净」,
+  #      是「最长那根杆有多长」。**
+  #
+  # ⭐ 539 同轮查实的三条(⛔ 都是量出来的,别当推断):
+  #    ①**不是编译慢**:CI 日志时间戳,`cd core && cargo test` 开跑 71 秒后就打出
+  #      `running 1060 tests`,而 libtest 自报 `finished in 1154.50s` ⇒ 19 分钟全在**跑测**;
+  #    ②**不是 CPU 并行度**:本机 12 核跑 132.15s、`--test-threads=4`(= runner 核数)跑 2m49s
+  #      ⇒ **少 8 个线程只贵 13 秒**;
+  #    ③**像是磁盘 I/O**:把 `TMP`/`TEMP` 指到本机 5400 转机械盘再跑同一套,15 分钟才到
+  #      **261/1060**,libtest 反复打 `has been running for over 60 seconds`,慢的集中在
+  #      `backup::` / `move_item::` / `replay::`(它们真写真读 SQLite 与备份档)。
+  #      ⚠ **这条是推断不是定论** —— runner 的盘我们量不了,别把它写成结论。
+  #
+  # ⚠ 原注里那句「`core` 含起真同步服务器的双库端到端集成测…故这一格刻意串行跑,别为省墙钟
+  #   并发它们」**依然成立,而分片没有违反它**:分片分的是**job**(各自独立的 runner VM),
+  #   同一台机器上的并发度不升反降。⛔ 别据此把同一格里的几套 `cargo test` 并起来跑。
+  windows-core:
+    # core 一家就占了整格的九成墙钟 ⇒ 单独拎出来再分三片,三片并行。
+    name: cargo test core(Windows · ${{ matrix.shard.name }})
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false # ⛔ 一片红别掐掉另外两片:三片的红各是独立信息
+      matrix:
+        # ⭐ **这三片是一个「完全划分」,不是抽样**。539 当场证过(零重叠 + 计数相加等于全量):
+        #      cd core && cargo test --lib -- --list | grep -c ": test$"                  → 1060
+        #      …| grep ": test$" | grep -c "sync::"                                       →  566
+        #      …| grep ": test$" | grep -c "backup::"                                     →  127
+        #      …| grep ": test$" | grep -v "sync::" | grep -v "backup::" | wc -l          →  367
+        #                                                              566+127+367 = 1060 ✓
+        #    且 `grep "sync::" | grep "backup::"` 一条不中 ⇒ 没有测试会被两片同时跑。
+        # ⛔ **改动这三条过滤串,就要把上面那四行重跑一遍**(数不对上就是有测试没人跑了)。
+        # ⚠ 第三片用 `--skip` 取前两片的补集 ⇒ **新增的模块自动落进第三片**,不会漏跑。
+        #    这是刻意的:漏跑的失灵方式是**安静的绿**,而多跑只是慢一点。
+        shard:
+          - name: sync
+            args: "sync::"
+          - name: backup
+            args: "backup::"
+          - name: 其余
+            args: "-- --skip sync:: --skip backup::"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core
+          # 三片共用同一份缓存键(同一个 crate、同一套依赖),互不覆盖。
+          shared-key: win-core
+
+      # ⛔ **别把 `cargo test` 直接当判据**:分片是靠给 libtest 传过滤串实现的,而
+      #    **过滤串打错一个字 = `0 passed` + 退出码 0 = 这一格绿着,却一只测试都没跑**
+      #    (`lib/test-verdict.mjs` 头注记的第 ② 种 fail-open,那把三态尺已焊死)。
+      #    ⇒ 走 `cargo-verdict.mjs`:`passed === 0` 判 `unknown`(退 2),不是绿。
+      # ⚠ 重定向到文件再判,**别管道接 tail/head**(会吞掉真实退出码,memory
+      #   `test-output-pipe-loses-exit-code`)。
+      - name: core 分片 ${{ matrix.shard.name }}
+        shell: bash
+        run: |
+          set -uo pipefail
+          cd core
+          rc=0
+          cargo test --quiet ${{ matrix.shard.args }} > "$RUNNER_TEMP/core.log" 2>&1 || rc=$?
+          cat "$RUNNER_TEMP/core.log"
+          node ../scripts/cargo-verdict.mjs "$RUNNER_TEMP/core.log" \
+            --status="$rc" --label="core · ${{ matrix.shard.name }}(Windows)"
+
+  windows-rest:
+    # 除 core 外的五套。合计约 5 分钟(539 实测:server 0.4s / sync-proto 0.05s /
+    # src-tauri 33.6s / android 0.7s / mobile 128.4s,其余是各自的编译)。
+    name: cargo test 五套(Windows · core 以外)
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
-
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: |
-            core
             server
             sync-proto
             src-tauri
             android/src-tauri
             mobile
 
-      # 与 Linux 那两格同口径的六套。⚠ `core` 含起真同步服务器的双库端到端集成测、
-      # `server` 含真时间短 TTL 集成测,故这一格刻意串行跑,别为省墙钟并发它们。
-      - run: cd core && cargo test --quiet
-      - run: cd server && cargo test --quiet
-      - run: cd sync-proto && cargo test --quiet
+      # ⚠ `server` 含真时间短 TTL 集成测、`mobile` 含起真同步服务的「加入空间」端到端集成测
+      # ⇒ 这一格**刻意串行**,别为省墙钟并发它们(448 立的判据,539 原样保留)。
       # ⚠ 同 `shells` 那格:刻意**不**跑 `npm run build`,`cargo test` 不开 `custom-protocol`
       # ⇒ 走 devUrl 那支,`dist/` 缺席照样编得过。
-      - run: cd src-tauri && cargo test --quiet
-      - run: cd android/src-tauri && cargo test --quiet
-      - run: cd mobile && cargo test --quiet
+      - name: 五套(串行)
+        shell: bash
+        run: |
+          set -uo pipefail
+          for c in server sync-proto src-tauri android/src-tauri mobile; do
+            echo "── $c"
+            rc=0
+            (cd "$c" && cargo test --quiet) > "$RUNNER_TEMP/rest.log" 2>&1 || rc=$?
+            cat "$RUNNER_TEMP/rest.log"
+            node scripts/cargo-verdict.mjs "$RUNNER_TEMP/rest.log" \
+              --status="$rc" --label="$c(Windows)" || exit $?
+          done
+
+  # ⭐⭐ 539 立:**调用方唯一该看的那一格**。
+  #
+  # **为什么需要它**(codex 设计审当轮抓的那条 H):调用方写的是 `needs: preflight`,等的是
+  # 这份 reusable workflow 的**全部 job**。红 / 取消都会让调用 job 失败 —— 这半是 fail-closed 的。
+  # **但 `skipped` 不是**:内部 job 若被跳过(今天做不到 —— 下面那条查实),调用 job 仍可能
+  # 报 success,于是**门禁没跑完而产物照发**。那正是这仓最怕的那一形:「门禁失灵的方式是
+  # **安静的绿**」「一道被跳过的门禁和一道通过的门禁,在 job 那一格上长得一模一样」。
+  #
+  # ⚠⚠ **如实记:这个洞今天够不着,我加的是结构性保险不是修活缺陷。** 539 当轮查实 ——
+  #    本文件这几个 job **一个 `if:` 都没有**,两条 release workflow 调 preflight 时也**没带 `if:`**
+  #    ⇒ 今天没有任何一条路径能让它们被 skip。⛔ 别把这段读成「曾经发过一次事故」。
+  #    它防的是**将来有人给某一格加 `if:`** —— 那一刻上面那扇门会**安静地**开,而
+  #    Actions 页面上看不出来。⇒ 把「全绿」从**默认语义**变成**一条显式断言**。
+  all-green:
+    name: 全绿汇总(⛔ 调用方只认这一格)
+    if: always() # ⛔ 必须 always:默认语义下上游一红这格自己就被 skip,那就白设了
+    needs: [preflight, shells, windows-core, windows-rest]
+    runs-on: ubuntu-latest
+    steps:
+      - name: 逐格断言 success(⛔ skipped / cancelled 一律不算绿)
+        run: |
+          set -euo pipefail
+          fail=0
+          # ⭐ 断的是 `== success`,**不是 `!= failure`** —— 后者会把 skipped 与 cancelled 放过去,
+          #    而那正是本格存在的全部理由。
+          for pair in \
+            "preflight=${{ needs.preflight.result }}" \
+            "shells=${{ needs.shells.result }}" \
+            "windows-core=${{ needs.windows-core.result }}" \
+            "windows-rest=${{ needs.windows-rest.result }}"; do
+            name="${pair%%=*}"; got="${pair#*=}"
+            if [ "$got" = "success" ]; then
+              echo "  ✅ $name = $got"
+            else
+              echo "  ❌ $name = $got（要 success）"
+              fail=1
+            fi
+          done
+          test "$fail" -eq 0
