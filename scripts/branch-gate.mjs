@@ -11,7 +11,8 @@
 //   还没出的结论,不是已经出了的红。红了修完再来,这是「红了再修」的「修」被强制执行的挂点。
 //
 //   node scripts/branch-gate.mjs verify    把当前这棵树推到公开仓的一条闸分支,CI 就跑起来
-//   node scripts/branch-gate.mjs land      落地(私有 master + 公开 main);⛔ 已知红拒
+//   node scripts/branch-gate.mjs land      落地(私有 master + 公开 main);⛔ 已知红拒;
+//                                          544 起先本地跑十道静态门禁,红了拒(几秒)
 //   node scripts/branch-gate.mjs status    问那棵树的 CI 结论(不用等它才 land;红了要修)
 //   node scripts/branch-gate.mjs abandon   放弃这一趟,把公开仓本地 main 退回 origin/main
 //   node scripts/branch-gate.mjs sweep     清掉**本环境**留下的孤儿闸分支(529 加,见下面 sweep())
@@ -220,6 +221,9 @@ function sweep({ quiet = false } = {}) {
 const GATED_PATHS = [
   "core/", "src/", "e2e/", "src-tauri/", "mobile/", "sync-proto/", "server/",
   "android/src/", "android/src-tauri/", "ohos/", "index.html", "notebook.html",
+  // ⚠ 544 补:它与 `android/src/` 是同一棵前端树(样式与静态壳都在这份里),此前漏列
+  //    —— 543 那轮只改它,于是没走闸。「编辑 src/ 走闸、编辑它不走」没有道理。
+  "android/index.html",
   // ⭐ **`.github/` 在里头,而它不是「产品面」** —— 判据是本函数头上那句「只有 CI 答得出的
   //    是什么」的一个特例:**改了 CI 自己的定义,就该让 CI 当场证明它还会跑**。
   //    ⛔ 这不是洁癖:触发条件写错的失灵方式是**安静地不跑**(448 第一版把 `branches` 写成
@@ -391,6 +395,37 @@ function assertPublicMainBound() {
   );
 }
 
+// ── 本地十道静态门禁(544 立)────────────────────────────────────────────────
+// **要治的**:「改了哪道门禁 / 它扫的那份东西就跑那道」此前只是一句印出来的提醒,已经
+// 失守过两次(512:一道在干净树上红了十一天没人知道;544 前一轮:改了 android/index.html
+// 收口时没跑 CSS 那几道,用户追问才补)。十道全跑一遍只要几秒 ⇒ 与其让人记「该跑哪道」,
+// 不如把全套接到 land 这个自动边界上(385 那课:加新检查前先问「已有的接上了吗」)。
+// ⚠ 诚实边界:①**只有这十道** —— 「非发版门禁」那一族(要 Chrome / 样本冻结的)不在内,
+//   512 那支 `check-i18n-plural-render` 恰恰属于后者,它那类失守仍靠既有纪律 + 夜跑;
+//   ②清单与 preflight.yml 那十道**同口径**(以 CLAUDE.md「怎么跑」为准),两处要同改;
+//   ③红了拒 land,与「已知红拒」同一性格 —— 这里的红是本机 3 秒就能问出来的,没有「不等」可言。
+const LOCAL_GATES = [
+  "lock-drift", "theme-drift", "contrast", "hardcoded-colors", "timing-drift",
+  "radius-drift", "fs-drift", "filter-parity", "hit-zone", "i18n-drift",
+];
+function runLocalGates() {
+  console.log(`→ 本地十道静态门禁(几秒量级)…`);
+  for (const g of LOCAL_GATES) {
+    try {
+      execFileSync(process.execPath, [`scripts/check-${g}.mjs`], {
+        cwd: repoRoot, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
+      });
+    } catch (e) {
+      const out = `${e.stdout ?? ""}${e.stderr ?? ""}`.trim();
+      die(
+        `门禁 check-${g} 红了 —— ⛔ 不落地(它是本机几秒就答得出的红,没有「不等」可言):\n\n` +
+          `${out.slice(-1500)}\n\n  ⇒ 修绿(或按那道闸的说法登记签字)后重跑 land。`,
+      );
+    }
+  }
+  console.log(`  ✅ 十道全绿。`);
+}
+
 // ── verify ────────────────────────────────────────────────────────────────────
 function verify() {
   const dirty = git(repoRoot, ["status", "--porcelain", "--untracked-files=no"]);
@@ -482,6 +517,9 @@ function land() {
   // ①私有仓仍须干净:verify 之后又改了东西 ⇒ 落地的就不是验过的那棵树。
   const dirty = git(repoRoot, ["status", "--porcelain", "--untracked-files=no"]);
   if (dirty) die(`工作仓有未提交的改动 —— 验过的不是这棵树。要么提交后重跑 verify,要么先 stash:\n${dirty}`);
+
+  // ①b ⭐ 544:十道静态门禁本地全跑,红了拒(排在任何一次远端写之前;理由在 runLocalGates 头上)。
+  runLocalGates();
 
   // ②⛔ **落后检查排在这儿就是 backlog 46 的修法** —— 它必须在**任何一次远端写之前**,
   //    而不是像 527 那样排在最后(那时公开 main 已经被推回去了)。理由见 assertNotBehind 头注。
@@ -636,7 +674,7 @@ const table = { verify, status: statusCmd, land, abandon, sweep };
 if (!table[cmd]) {
   console.error("用法:node scripts/branch-gate.mjs verify|land|status|abandon|sweep");
   console.error("  verify   把这棵树推到公开仓闸分支,CI 跑起来(末尾自动 sweep 一次)");
-  console.error("  land     落地(公开 main + 私有 master);541 起不等 CI 结论,⛔ 已知红拒");
+  console.error("  land     落地(公开 main + 私有 master);先本地跑十道静态门禁(红拒),不等 CI 结论,⛔ 已知红拒");
   console.error("  status   问 CI 结论(green / running / red / unknown;红了要修)");
   console.error("  abandon  放弃这一趟,公开仓本地退回;私有仓不动");
   console.error("  sweep    清掉**本环境**留下的孤儿闸分支(先取消它的 run,再删分支)");
