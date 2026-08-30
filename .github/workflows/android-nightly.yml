@@ -86,16 +86,6 @@ jobs:
           echo "NDK_HOME=$NDK_HOME"
           node scripts/build-android.mjs
 
-      - name: 收集签名 APK
-        uses: actions/upload-artifact@v7
-        with:
-          name: android-nightly-aarch64
-          path: |
-            android/apk-out/*.apk
-            android/apk-out/build-profile.json
-          retention-days: 14
-          if-no-files-found: error
-
       # ⭐ 518 接上(backlog 测试与工装 40):那套 Kotlin JVM 单测此前**没有任何自动边界会去
       # 跑它** —— `.github/workflows/` 里 `gradlew` 零出现,`preflight` 的 `shells` 那格跑的是
       # 壳的 cargo、不含它 ⇒ 红着和绿着对外一模一样(同 512 那条:`check-i18n-plural-render`
@@ -124,9 +114,11 @@ jobs:
       #    (源文件被挪走 / 任务名改了 / 变体改了名,三种形都安静地绿)⇒ 走
       #    `kotlin-test-verdict.mjs`(0 绿 / 1 红 / 2 判不出,同 `e2e-verdict.mjs` 口径)。
       #    那把尺自己的十刀阴性对照:`node scripts/check-kotlin-test-verdict.mjs`。
-      # ⚠ `if: always()` —— 上面收产物那步失败也照跑:这一格问的是「树对不对」,与「产物收没收上」无关。
+      # ⚠ 542 起**排在收集产物之前**(codex 逮的现行形:此前 upload 在这一步之前、这一步还
+      #    `if: always()` ⇒ **测试红了 APK 照样存档 14 天**,「测试通过后的版本」这个语义并不存在)。
+      #    调序后:测试红 ⇒ 收集那步被跳过 ⇒ 存档里只有全绿的包;那个 `always()` 原本兜的
+      #    「收产物失败也照测」随调序失去所指,一并拿掉。
       - name: Kotlin JVM 单测(SAF 桥那几道闸的纯逻辑)
-        if: always()
         run: |
           set +e
           (cd android/src-tauri/gen/android && ./gradlew :app:testUniversalDebugUnitTest)
@@ -135,3 +127,14 @@ jobs:
           node scripts/kotlin-test-verdict.mjs \
             android/src-tauri/gen/android/app/build/test-results/testUniversalDebugUnitTest \
             --status="$status" --label="android-nightly(警报)"
+
+      # 542 起在 Kotlin 单测之后:红了就没有这一步 ⇒ 「存档的包 = 测试通过的包」。
+      - name: 收集签名 APK(测试绿了才存)
+        uses: actions/upload-artifact@v7
+        with:
+          name: android-nightly-aarch64
+          path: |
+            android/apk-out/*.apk
+            android/apk-out/build-profile.json
+          retention-days: 14
+          if-no-files-found: error

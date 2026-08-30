@@ -56,8 +56,10 @@ on:
 
   # ⭐ 夜跑那一半(535):每天一趟全矩阵,验的是**那一刻 `main` 的头**。
   # ⚠ **诚实边界,别读大了**:一天里推了五次,只有最后那棵树被验过。要立刻要一趟就手动 dispatch。
-  # ⚠ 时刻挑 19:30Z 是为了错开已有三条:`nightly` 18:00Z / `android-nightly` 18:30Z /
-  #   `nightly-e2e` 那条注释着的 19:00Z(backlog 27,它醒来时不会跟这条撞)。
+  # ⚠ 时刻挑 19:30Z 是为了错开:`android-nightly` 18:30Z / `nightly-e2e` 那条注释着的 19:00Z
+  #   (backlog 27,它醒来时不会跟这条撞)。⚠ 542 之前还有一条 `nightly` 18:00Z ——
+  #   它已随 542 退役(三平台构建挪到本文件 `nightly-build` 那格,**全绿才构建**;
+  #   它那格 3 套 cargo 测试早被 `gates` 里的 preflight 盖住)。
   # ⭐ **红了怎么知道**:靠 GitHub 的**失败邮件**(用户 2026-08-29 确认收得到)。
   #   ⚠ 这个仓上「失败会发邮件」**还没被证实过** —— 现有夜跑一直是绿的 ⇒ 535 会故意让它红一次
   #   来验;没验之前别把它当已知(memory `doc-claims-a-test-exists-verify-it` 那一族)。
@@ -65,7 +67,13 @@ on:
     - cron: "30 19 * * *"
 
   # 手动:探针分支的阴性对照、想立刻要一趟裁决、或夜跑红了要复跑,都走这里。
+  # ⭐ 542:`build_artifacts` 开着才顺带出三平台产物(schedule 恒出);日常手动要裁决用不到它。
   workflow_dispatch:
+    inputs:
+      build_artifacts:
+        description: "全绿后构建三平台桌面产物并存档(schedule 恒开,这里只管手动那趟)"
+        type: boolean
+        default: false
 
 # ⛔ **刻意没有 `concurrency`**(517 补立账、518 拿掉;backlog 测试与工装 41)。
 #
@@ -265,3 +273,91 @@ jobs:
             ${{ runner.temp }}/vite.log
           if-no-files-found: warn
           retention-days: 14
+
+  # ⭐ 542(用户点名「每日构建测试、保存通过后的版本」):**全矩阵绿了才构建存档**。
+  #
+  # 在此之前「每晚的包」是 `nightly.yml` 出的,而那份 workflow 里 build 与 test 是**并列** job
+  # (没有 `needs`)、test 又只有 3 套 Linux cargo ⇒ 「测试通过后的版本」这个语义**并不存在**:
+  # 红树的包照样存档 14 天,与全矩阵(19:30Z 这趟)验的还可能不是同一棵树(18:00Z vs 19:30Z)。
+  # 542 起 `nightly.yml` 退役,构建挪到这里、挂在两根裁决后面 —— **同一趟、同一个 sha**。
+  #
+  # ⛔ `needs` 两格都要列:`gates` 是 reusable preflight(内部有 540 那格 `all-green` 逐格
+  #    `== success` 汇总),`linux-e2e` 是本文件的独立 job —— 只挂 `gates` 就把 e2e 的红放过去了。
+  #    needs 的默认语义 = 上游任一 failure / cancelled / skipped ⇒ 本 job skip ⇒ **没有产物**,
+  #    而「没有产物」正是要的答案(别给它加 always() 之类的豁免)。
+  # ⚠ 产物名带 sha:下载下来隔了几天也认得出它构建自哪棵树(run 页面上那个 sha 会随页面走丢)。
+  # ⚠ 只在 schedule(恒)与手动带 `build_artifacts=true` 时构建;闸分支的 push 不构建 ——
+  #    那条要的是裁决,不是包。
+  nightly-build:
+    needs: [gates, linux-e2e]
+    if: >-
+      github.repository == 'prehisle/zhujian' &&
+      (github.event_name == 'schedule' ||
+       (github.event_name == 'workflow_dispatch' && inputs.build_artifacts))
+    name: 全绿后构建 ${{ matrix.label }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            label: windows-x86_64
+          - os: macos-latest # Apple Silicon(arm64)
+            label: darwin-aarch64
+          - os: ubuntu-22.04
+            label: linux-x86_64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Linux 系统依赖(Tauri v2)
+        if: matrix.os == 'ubuntu-22.04'
+        timeout-minutes: 15
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file \
+            libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev pkg-config
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "src-tauri"
+
+      - run: npm ci
+
+      # createUpdaterArtifacts:true 要求签名;mac 未配 Apple 证书 → app 为 adhoc(公证留 release 时补)
+      # bash 统一三平台;tr 去掉粘贴 secret 时可能带入的尾换行(base64 单行钥无内部换行,删 CR/LF 安全)
+      # 重试 3 次:Linux AppImage 打包从 GitHub 拉 linuxdeploy/AppRun,偶发 Connection reset(os error 104)
+      - name: tauri build(签名更新产物)
+        shell: bash
+        env:
+          RAW_SIGNING_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          export TAURI_SIGNING_PRIVATE_KEY="$(printf '%s' "$RAW_SIGNING_KEY" | tr -d '\r\n')"
+          export TAURI_SIGNING_PRIVATE_KEY_PASSWORD=""
+          n=0
+          until npm run tauri build; do
+            n=$((n + 1))
+            if [ "$n" -ge 3 ]; then echo "::error::tauri build 连续 3 次失败"; exit 1; fi
+            echo "::warning::tauri build 第 $n 次失败,10s 后重试(多为 AppImage 工具下载瞬时 reset)"
+            sleep 10
+          done
+
+      - name: 收集产物(名带 sha —— 它构建自哪棵树要认得出)
+        uses: actions/upload-artifact@v7
+        with:
+          name: nightly-${{ matrix.label }}-${{ github.sha }}
+          path: |
+            src-tauri/target/release/bundle/**/*-setup.exe
+            src-tauri/target/release/bundle/**/*.dmg
+            src-tauri/target/release/bundle/**/*.AppImage
+            src-tauri/target/release/bundle/**/*.deb
+            src-tauri/target/release/bundle/**/*.sig
+            src-tauri/target/release/bundle/**/*.tar.gz
+          retention-days: 14
+          if-no-files-found: error

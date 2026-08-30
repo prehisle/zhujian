@@ -62,7 +62,8 @@ jobs:
             core
             server
             sync-proto
-      # 与 nightly.yml 同口径的三套(两壳那两套在下面的 `shells` 格,386 起)。
+      # core / server / sync-proto 三套(两壳那两套在下面的 `shells` 格,386 起;
+      # 542 前这儿写「与 nightly.yml 同口径」—— 那份已退役,构建挪进 ci.yml 全绿之后)。
       - run: cd core && cargo test --quiet
       - run: cd server && cargo test --quiet
       - run: cd sync-proto && cargo test --quiet
