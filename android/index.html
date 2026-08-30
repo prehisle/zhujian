@@ -844,6 +844,9 @@
       .tn-edit button::before { content: ""; position: absolute; left: 0; right: 0; top: -10px; bottom: -10px; }
       .tk-edit button, .tn-edit button, .tc-edit .tc-cancel { font-size: var(--fs-12); padding: 4px 10px; border-radius: var(--radius-sm); }
       .tk-edit button.ghost, .tn-edit button.ghost, .tc-edit .tc-cancel { background: none; color: var(--ink-soft); border: 1px solid var(--line-strong); }
+      /* 删除(user-44 第三刀):warn ghost 形(同 .panel .acts button.warn 的调)——
+         第一拍只是开确认,不该长成实底朱砂;实底那枚在底部确认条的第二拍上。 */
+      .tn-edit button.tn-del { background: none; color: var(--seal); border: 1px solid var(--seal-line); }
       /* 拖动落点指示线(朱砂),按指针位置浮在目标间隙上。 */
       .drop-line {
         position: absolute; left: 34px; right: 4px; height: 2px; margin-top: -1px;

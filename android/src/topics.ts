@@ -1,16 +1,18 @@
 // 标签管理面(190,安卓精简版):标签列表 + 触摸拖排序(1c)+ 点类型入口(kind)
-// + **点名字改名(514)** + **点色点改颜色 + 面头「新建标签」(user-44 第二刀)**。
+// + **点名字改名(514)** + **点色点改颜色 + 面头「新建标签」(user-44 第二刀)**
+// + **删除(user-44 第三刀)**:改名态里第三枚「删除」→ 底部全局两拍确认条(cardpanel 同律,
+//   不新造确认形)。core 语义 = 只删标签投影,item_topic 链随 FK 级联消失、条目本身不动。
 // 全部走 core 已审的 oplog topic 命令,跨端 LWW(与桌面互通,189 已验)。
 //
-// ⛔ **删除 / 合并仍只桌面有,别顺手补齐**(190/258 拍的克制):两件都是**破坏性且合并
-// 不可撤**,搬到触屏上要重想确认形 = 新造动作表,不是「照桌面抄一份」那个成本。
-// 范围与逐项差在 backlog 用户面 44(改名 514 / 颜色与新建 = 546 选定、547 用户认可的下一刀)。
+// ⛔ **合并仍只桌面有,别顺手补齐**(190/258 拍的克制):合并**不可撤**,搬到触屏要新造
+// 「勾选多源 → 选目标」的模式态,不是「照桌面抄一份」那个成本。范围账在 backlog 用户面 44。
 //
 // 纪律同 panes.ts:load 取定 {space,seq},迟到响应弃;写 in-flight 禁重入(busy 置灰);
 // **拖动/编辑态(类型/改名/颜色/新建)进行中不被动重载**(topicsInteracting →
 // main.ts refreshActivePane 躲开,免远端刷新把正在拖/正在填的行从脚下拆掉)。
 import {
   createTopic,
+  deleteTopic,
   getCurrentSpace,
   listTasks,
   listTopicsFull,
@@ -21,7 +23,7 @@ import {
   type TopicTreeItem,
 } from "./api";
 import { t } from "./i18n";
-import { $, esc, showBar, showError } from "./ui";
+import { $, confirmBar, esc, showBar, showError } from "./ui";
 
 type Deps = {
   /** 顺序变 → 主视图卡片 chip 顺序跟随(chip 按 position 序);改类型无妨顺手重拉。 */
@@ -107,6 +109,7 @@ function render(): void {
                    autocapitalize="off" autocomplete="off" />
             <button data-rename-save="${esc(tp.id)}">${t("topics.renameSave")}</button>
             <button data-rename-cancel="1" class="ghost">${t("topics.renameCancel")}</button>
+            <button data-del="${esc(tp.id)}" class="tn-del">${t("topics.deleteBtn")}</button>
           </span>
         </article>`;
         }
@@ -213,6 +216,50 @@ async function saveRename(id: string): Promise<void> {
   }
 }
 
+// ---- 删除(user-44 第三刀;改名态里的「删除」→ 底部两拍确认条) ---------------
+//
+// 第一拍先把改名态收掉再弹确认条:取消 / 6s 超时自动收之后行已是常态,零残留;
+// 也免得确认条挂着时用户又去点「存」造出两个在飞语境。话术带名字与挂载数
+// (0 挂载用简版 —— 「0 项」是句空话),但**不做前端预拦**:挂多少都能删,
+// core 语义就是链级联摘掉、条目不动。
+
+function askDelete(id: string): void {
+  if (busy || deps.isSwitching()) return;
+  const row = rows.find((r) => r.id === id);
+  if (!row) return;
+  const n = counts.get(id) ?? 0;
+  const space = getCurrentSpace();
+  renameId = null;
+  render();
+  confirmBar(
+    n > 0
+      ? t("topics.deleteQ", { name: row.title, n })
+      : t("topics.deleteQEmpty", { name: row.title }),
+    t("topics.deleteYes"),
+    () => void doDelete(space, id),
+  );
+}
+
+async function doDelete(space: string, id: string): Promise<void> {
+  // 第二拍复核语境未变(cardpanel 同律):确认条挂着时切了空间/进了别的写,旧确认作废。
+  if (busy || deps.isSwitching() || space !== getCurrentSpace()) return;
+  busy = true;
+  render();
+  try {
+    await deleteTopic(space, id);
+    if (space === getCurrentSpace()) showBar(t("topics.deleted"), true);
+  } catch (err) {
+    if (space === getCurrentSpace()) showError(String(err));
+  } finally {
+    busy = false;
+    if (space === getCurrentSpace()) {
+      await loadTopics();
+      // 卡片 chip / 筛选 pills 都挂着这枚标签,删了要跟着摘(refreshTimeline 唯一重拉处)。
+      void deps.refreshTimeline();
+    }
+  }
+}
+
 // ---- 颜色(user-44 第二刀;点色点开调色板,点色块即写) ----------------------
 //
 // 与 saveKind 同构:busy 置灰、先收编辑态、失败 showError、finally 重载恢复真相。
@@ -303,6 +350,11 @@ function onClick(e: Event): void {
   if (el.closest("[data-rename-cancel]")) {
     renameId = null;
     render();
+    return;
+  }
+  const delId = el.closest<HTMLElement>("[data-del]")?.dataset.del;
+  if (delId) {
+    askDelete(delId);
     return;
   }
   const colorFor = el.closest<HTMLElement>("[data-color]")?.dataset.color;

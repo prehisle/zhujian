@@ -25,6 +25,13 @@ export const topics = defineMessages({
   "topics.colorCancel": { zh: "取消", en: "Cancel" },
   "topics.colorSet": { zh: "已改颜色", en: "Color set" },
   "topics.colorCleared": { zh: "已清颜色", en: "Color cleared" },
+  // 删除(user-44 第三刀):改名态里的第三枚钮 → 底部两拍确认条。话术要说清
+  // core 的真语义 —— 只摘标签、条目内容不动(0 挂载用简版,「0 项」是句空话)。
+  "topics.deleteBtn": { zh: "删除", en: "Delete" },
+  "topics.deleteQ": { zh: "删除标签「{name}」?{n} 项只摘掉这枚标签,内容不动", en: "Delete tag “{name}”? It comes off {n} {n|item|items} — their content stays." },
+  "topics.deleteQEmpty": { zh: "删除标签「{name}」?", en: "Delete tag “{name}”?" },
+  "topics.deleteYes": { zh: "删除", en: "Delete" },
+  "topics.deleted": { zh: "已删除标签", en: "Tag deleted" },
   // 新建标签(user-44 第二刀):面头按钮开一行输入框,与改名行同形。
   "topics.newBtn": { zh: "+ 新建标签", en: "+ New tag" },
   "topics.newPh": { zh: "标签名", en: "Tag name" },
