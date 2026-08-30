@@ -86,7 +86,11 @@ fn add_list_remove_round_trip() {
     assert_eq!(page.rows[0].created_at.len(), 24, "created_at 是定宽规范串");
     assert!(!page.has_more);
     assert_eq!(page.rows[0].born_device.as_deref(), Some(k.device_id()), "本机写的必带署名");
-    assert_eq!(counts_all(&c).unwrap().get(&item).copied(), Some(2));
+    // 本机写的两条:计数 2,且**不亮未读**(add 同事务自推水位 —— 自己写的必然自己读过)。
+    assert_eq!(
+        counts_all(&c).unwrap().get(&item).copied(),
+        Some(CommentBadge { n: 2, unread: false })
+    );
     assert_eq!(ops_of(&c, "create"), 2);
 
     remove(&mut c, &mut k, &a).unwrap();
@@ -613,4 +617,121 @@ fn two_deferred_readers_cannot_both_pass_the_soft_cap() {
         .query_row("SELECT COUNT(*) FROM item_comment WHERE item_id = ?1", [&item], |r| r.get(0))
         .unwrap();
     assert_eq!(total, MAX_COMMENTS_PER_ITEM, "终态恰 500:{err}");
+}
+
+// ---- 已读水位(0038,backlog 用户面 38)------------------------------------------------
+
+fn unread_of(conn: &Connection, item: &str) -> Option<CommentBadge> {
+    counts_all(conn).unwrap().get(item).copied()
+}
+
+/// 未读的全生命周期:远端来的亮 → mark 消 → 单调不回退 → 远端删除不复活未读。
+#[test]
+fn unread_lifecycle_lights_marks_and_never_regresses() {
+    let (mut c, mut k) = fresh_db("unread");
+    let item = notes::capture(&mut c, &mut k, "宿主").unwrap();
+
+    // 远端来第一条:没有水位行 = 未读(条目收到第一条留言就是这个形)。
+    let r1 = "01CMTRRRRRRRRRRRRRRRRRRRR1";
+    apply_remote_op(&mut c, &mut k, &remote("create", r1, 1, create_payload(&item, "远一"))).unwrap();
+    assert_eq!(unread_of(&c, &item), Some(CommentBadge { n: 1, unread: true }));
+
+    // mark 到它 ⇒ 消。
+    mark_seen(&c, &item, r1).unwrap();
+    assert_eq!(unread_of(&c, &item), Some(CommentBadge { n: 1, unread: false }));
+
+    // 再来一条更大的 id ⇒ 重新点亮;把水位往**回**推(旧 id)必须是 no-op(MAX 单调)。
+    let r2 = "01CMTRRRRRRRRRRRRRRRRRRRR2";
+    apply_remote_op(&mut c, &mut k, &remote("create", r2, 2, create_payload(&item, "远二"))).unwrap();
+    assert_eq!(unread_of(&c, &item).unwrap().unread, true);
+    mark_seen(&c, &item, r1).unwrap();
+    assert_eq!(unread_of(&c, &item).unwrap().unread, true, "水位只进不退,旧值不许盖新值");
+    mark_seen(&c, &item, r2).unwrap();
+    assert_eq!(unread_of(&c, &item), Some(CommentBadge { n: 2, unread: false }));
+    // 单调的**分辨输入**:水位已在高处(r2)再推低值(r1)—— 裸覆盖会把已读的 r2 复活成
+    // 未读;MAX 版不动。⚠ 上面那句「mark r1 不许盖新值」在裸覆盖下**恰好也过**(那一步
+    // 水位本来就是 r1,两版同形),变异对照第④刀就是被它放过的 —— 分辨力全在这一句。
+    // 这不是纸上情形:前端 refreshOpenComments 重拉第一页时,对端刚删掉最新留言会让页首
+    // id 变小,markSeen 真的会带低值进来。
+    mark_seen(&c, &item, r1).unwrap();
+    assert_eq!(
+        unread_of(&c, &item).unwrap().unread,
+        false,
+        "已读之后推一个更低的水位,已读的不许复活成未读(MAX 单调承重处)"
+    );
+
+    // 远端 tombstone 删掉最新那条:水位停在删掉那条的 id(比剩余都大)⇒ 剩余全已读。
+    // **删除不是「新留言」,不许复活未读。**
+    apply_remote_op(&mut c, &mut k, &remote("tombstone", r2, 3, serde_json::json!({}))).unwrap();
+    assert_eq!(unread_of(&c, &item), Some(CommentBadge { n: 1, unread: false }));
+
+    // 本机自己写(add 同事务自推)⇒ 不亮;此后远端又来 ⇒ 亮(本机写不许把远端的顶成已读)。
+    add(&mut c, &mut k, &item, "本机的").unwrap();
+    assert_eq!(unread_of(&c, &item).unwrap().unread, false, "自己写的必然自己读过");
+    let r3 = "07ZCMTRRRRRRRRRRRRRRRRRRR3"; // 时戳前缀晚于任何本机 2026 年 ULID
+    apply_remote_op(&mut c, &mut k, &remote("create", r3, 4, create_payload(&item, "远三"))).unwrap();
+    assert_eq!(unread_of(&c, &item).unwrap().unread, true);
+}
+
+/// 水位是纯本地簿记:不发 op、不动时钟;条目不在 = 幂等 no-op;非规范 seen_id 响亮拒。
+#[test]
+fn mark_seen_is_local_only_idempotent_and_shape_gated() {
+    let (mut c, mut k) = fresh_db("marklocal");
+    let item = notes::capture(&mut c, &mut k, "宿主").unwrap();
+    let cid = add(&mut c, &mut k, &item, "一条").unwrap();
+
+    let ops_before: i64 = c.query_row("SELECT COUNT(*) FROM oplog", [], |r| r.get(0)).unwrap();
+    mark_seen(&c, &item, &cid).unwrap();
+    mark_seen(&c, &item, &cid).unwrap(); // 重复 = no-op
+    let ops_after: i64 = c.query_row("SELECT COUNT(*) FROM oplog", [], |r| r.get(0)).unwrap();
+    assert_eq!(ops_before, ops_after, "水位绝不进 oplog");
+
+    // 条目不在(并发里对端刚删了宿主)= 幂等 no-op,不是错误(照 remove 的先例)。
+    mark_seen(&c, "01GHZ5TGHZ5TGHZ5TGHZ5TGHZ5", &cid).unwrap();
+    let rows: i64 =
+        c.query_row("SELECT COUNT(*) FROM item_comment_seen", [], |r| r.get(0)).unwrap();
+    assert_eq!(rows, 1, "no-op 不许落孤儿水位行");
+
+    // 非规范 seen_id 响亮拒(值域 = item_comment.id 的形)。
+    let err = mark_seen(&c, &item, "not-a-ulid").unwrap_err();
+    assert!(err.contains("不是规范留言 id"), "{err}");
+}
+
+/// [`backfill_seen_all`]:把存量留言全体归「已读」,且不回退已有的更大水位。
+/// (0038 迁移里的存量回填与它同一句 SQL,各管各的时机 —— 这里锚的是共用的那句。)
+#[test]
+fn backfill_marks_everything_read_without_regressing() {
+    let (mut c, mut k) = fresh_db("backfill");
+    let item = notes::capture(&mut c, &mut k, "宿主").unwrap();
+    // 远端来两条,没人读过。
+    let r1 = "01CMTBACKF0000000000000001";
+    let r2 = "01CMTBACKF0000000000000002";
+    apply_remote_op(&mut c, &mut k, &remote("create", r1, 1, create_payload(&item, "一"))).unwrap();
+    apply_remote_op(&mut c, &mut k, &remote("create", r2, 2, create_payload(&item, "二"))).unwrap();
+    assert_eq!(unread_of(&c, &item).unwrap().unread, true);
+    backfill_seen_all(&c).unwrap();
+    assert_eq!(unread_of(&c, &item), Some(CommentBadge { n: 2, unread: false }));
+    // 已有更大水位时回填不回退:先 mark 到 r2,直灌一条更小 id 的行(模拟迟到),再回填
+    // —— 水位仍是 r2(MAX),那条更小 id 的照样算已读。
+    let seen: String = c
+        .query_row("SELECT seen_id FROM item_comment_seen WHERE item_id = ?1", [&item], |r| r.get(0))
+        .unwrap();
+    assert_eq!(seen, r2, "回填的水位 = 现存最大留言 id");
+}
+
+/// 水位行的生命周期与审计面:随条目 CASCADE 走;在场时 `strict_battery` 照过
+/// (纯本地状态不该被当成「无背书的行」拒 —— 同 thumbs 那支的性质①)。
+#[test]
+fn seen_rows_cascade_with_the_item_and_do_not_disturb_the_battery() {
+    let (mut c, mut k) = fresh_db("seencascade");
+    let item = notes::capture(&mut c, &mut k, "宿主").unwrap();
+    add(&mut c, &mut k, &item, "一条").unwrap();
+    let rows = |conn: &Connection| -> i64 {
+        conn.query_row("SELECT COUNT(*) FROM item_comment_seen", [], |r| r.get(0)).unwrap()
+    };
+    assert_eq!(rows(&c), 1, "add 自推水位落了行");
+    crate::sync::boot::strict_battery(&c).expect("有水位行照样过严格电池");
+    notes::archive(&mut c, &mut k, &item).unwrap();
+    notes::purge(&mut c, &mut k, &item).unwrap();
+    assert_eq!(rows(&c), 0, "条目死则水位随 FK CASCADE 走");
 }

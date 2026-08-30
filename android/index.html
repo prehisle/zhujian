@@ -432,6 +432,11 @@
         color: var(--ink-faint); font-size: var(--fs-12); font-family: var(--font-sans);
       }
       .cm-badge::before { content: ""; position: absolute; left: -8px; right: -8px; top: -12px; bottom: -12px; }
+      /* 未读态(0038):右上角一枚朱砂点,开过留言层即消(::before 是触区,点走 ::after)。 */
+      .cm-badge.unread::after {
+        content: ""; position: absolute; top: -4px; right: -6px;
+        width: 6px; height: 6px; border-radius: var(--radius-circle); background: var(--seal);
+      }
 
       /* 错误条:后端原话,响亮但会自己退场。notice = 非错误的同步提示(墨绿)。
          fixed 悬浮不进文档流(ui-audit P0 #3):此前在 compose 与时间轴之间,每次

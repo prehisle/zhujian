@@ -9,6 +9,13 @@ import { invoke, tryInvoke, goNotebook, clearInbox, inboxAction } from "./suppor
 //
 // **e2e 造不出 `born_device = NULL` 的留言**(唯一来源是跨空间搬迁,而 e2e 恒单空间),
 // 故「作者未知」那一格只有 core 的行为测覆盖,这里如实不测。
+// **e2e 同样造不出 `unread = true`**(0038):未读 = 留言 id 高过本机已读水位,而单机
+// e2e 的每条留言都出自 add_item_comment —— 它同事务自推水位(自己写的必然自己读过),
+// 推上去就 MAX 单调退不回来。⇒ 「远端留言点亮红点 → 开层即消」那条全链只有 core 的
+// 行为测覆盖(unread_lifecycle_lights_marks_and_never_regresses);这里验得到的三半是
+// ①聚合的返回形(n/unread)与「本机写的恒不亮」、②mark 命令的幂等与拒、③`.unread`
+// 那枚朱砂点的 CSS 真渲染(手动挂 class 量 ::after)。「unread:true 时 class 真挂上」
+// 那一行分支两端 e2e 都够不着,由真机双设备顺手看一眼(backlog 记诚实边界)。
 
 describe("留言 · 命令层(分页 + 计数 + 四道拒)", () => {
   before(async () => {
@@ -31,8 +38,9 @@ describe("留言 · 命令层(分页 + 计数 + 四道拒)", () => {
     const me = await invoke("device_identity");
     expect(page.rows[0].born_device).toBe(me.this_device);
 
+    // 0038 起聚合是 {n, unread}:本机写的**恒不亮**(add 同事务自推水位)。
     const counts = await invoke("item_comment_counts");
-    expect(counts[id]).toBe(2);
+    expect(counts[id]).toEqual({ n: 2, unread: false });
 
     await invoke("delete_item_comment", { id: c2 });
     const after = await invoke("list_item_comments", { itemId: id, cursor: null });
@@ -40,7 +48,23 @@ describe("留言 · 命令层(分页 + 计数 + 四道拒)", () => {
     // 幂等:同一条再删一次不报错(另一端删了并同步过来是正常并发,不是错误)。
     await invoke("delete_item_comment", { id: c2 });
     const counts2 = await invoke("item_comment_counts");
-    expect(counts2[id]).toBe(1);
+    expect(counts2[id]).toEqual({ n: 1, unread: false });
+  });
+
+  it("已读水位(0038):mark 幂等、非规范 seen_id 拒、纯本地不改计数", async () => {
+    const id = await invoke("capture_note", { content: "E2E-留言-水位" });
+    const cid = await invoke("add_item_comment", { itemId: id, content: "看过了" });
+    // 幂等:同一个水位推两次都成功(MAX 单调,重复是 no-op)。
+    await invoke("mark_item_comments_seen", { itemId: id, seenId: cid });
+    await invoke("mark_item_comments_seen", { itemId: id, seenId: cid });
+    // 条目不在 = 幂等 no-op(并发里对端刚删了宿主,不是错误)。
+    await invoke("mark_item_comments_seen", { itemId: "01JZZZZZZZZZZZZZZZZZZZZZZZ", seenId: cid });
+    // 非规范 seen_id 响亮拒(值域 = 留言 id 的形)。
+    const bad = await tryInvoke("mark_item_comments_seen", { itemId: id, seenId: "not-a-ulid" });
+    expect(bad.ok).toBe(false);
+    expect(bad.err).toContain("不是规范留言 id");
+    const counts = await invoke("item_comment_counts");
+    expect(counts[id]).toEqual({ n: 1, unread: false });
   });
 
   it("分页:51 条 → 第一页 50 条带 has_more,拿 cursor 取回剩下那条且不重不漏", async () => {
@@ -110,6 +134,22 @@ describe("留言 · UI(徽章 → 浮层 → 两拍销毁)", () => {
     await browser.keys("Escape");
     await $(".cm-badge").waitForExist({ timeout: 5000 });
     expect(await $(".cm-badge").getText()).toContain("1");
+    // 本机写的不亮红点(0038:add 自推水位 ⇒ unread=false ⇒ 不挂 .unread)。
+    expect(await browser.execute(() => document.querySelector(".cm-badge").classList.contains("unread"))).toBe(false);
+    // 朱砂点的 CSS 真渲染(文件头注释:数据侧的 true 单机造不出,视觉那半在这儿量):
+    // 手动挂 class → ::after 真的画出一枚 6px 的点;摘掉即消。
+    const dot = await browser.execute(() => {
+      const b = document.querySelector(".cm-badge");
+      b.classList.add("unread");
+      const on = getComputedStyle(b, "::after");
+      const painted = { w: on.width, bg: on.backgroundColor };
+      b.classList.remove("unread");
+      const off = getComputedStyle(b, "::after").width;
+      return { painted, off };
+    });
+    expect(dot.painted.w).toBe("6px");
+    expect(dot.painted.bg).not.toBe("rgba(0, 0, 0, 0)");
+    expect(dot.off).not.toBe("6px");
 
     // 点徽章重开(第二个入口),两拍销毁:第一拍出确认,第二拍才真删。
     await $(".cm-badge").click();

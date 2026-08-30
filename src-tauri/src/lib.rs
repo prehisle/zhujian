@@ -1465,17 +1465,35 @@ fn list_item_comments(
     comments::list_for_item(&conn, &item_id, cur)
 }
 
-/// 每条目留言数(徽章用):一次 `GROUP BY` 聚合读,**不 N+1**;零留言的条目不在
-/// 返回里(前端按 0 处理 —— N=0 不显示徽章)。徽章与列表是两个真相源(§4.14.2
-/// 第 4 条):这里只回计数,别为了「对齐」去全量拉留言正文。
+/// 每条目徽章聚合(留言数 + 未读,0038):一次 `GROUP BY` 聚合读,**不 N+1**;零留言
+/// 的条目不在返回里(前端按 0 处理 —— N=0 不显示徽章)。徽章与列表是两个真相源
+/// (§4.14.2 第 4 条):这里只回聚合,别为了「对齐」去全量拉留言正文。
 #[tauri::command]
 fn item_comment_counts(
     space_id: String,
     spaces: State<'_, Spaces>,
-) -> Result<std::collections::HashMap<String, i64>, String> {
+) -> Result<std::collections::HashMap<String, comments::CommentBadge>, String> {
     let rt = spaces.get(&space_id)?;
     let conn = rt.db.lock().expect("db mutex poisoned");
     comments::counts_all(&conn)
+}
+
+/// 推进一条条目的留言已读水位(0038):留言面第一页渲染成功后带上页首那条的 id。
+/// 纯本地簿记:不发 op、不动时钟,故只取库锁(同 put_item_thumb 的形)。
+#[tauri::command]
+fn mark_item_comments_seen(
+    space_id: String,
+    item_id: String,
+    seen_id: String,
+    spaces: State<'_, Spaces>,
+) -> Result<(), String> {
+    let rt = spaces.get(&space_id)?;
+    let conn = rt.db.lock().expect("db mutex poisoned");
+    // 与其余写命令同纪律:ReopenRequired 复核在锁内(space-entry-plan §3.2)。
+    if let Some(e) = rt.restart_required() {
+        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
+    }
+    comments::mark_seen(&conn, &item_id, &seen_id)
 }
 
 /// 跨空间移动条目(cross-space-move v1,codex 设计审三轮已折入):三原语在全局
@@ -4153,6 +4171,7 @@ pub fn run() {
             delete_item_comment,
             list_item_comments,
             item_comment_counts,
+            mark_item_comments_seen,
             sync_status,
             sync_create_account,
             sync_pair_start,

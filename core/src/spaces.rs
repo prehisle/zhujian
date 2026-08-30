@@ -242,7 +242,8 @@ const CORE_TABLES: &[&str] = &[
     "space_profile",
     // 0033 的设备 profile 物化表(设备别名跨端同步的状态侧,identity-plan §2.1)。
     // 与 space_profile 同性质:op-backed 正表,进引导导入与 strict_battery 审计。
-    // (0032 的 item_image_thumb 是纯本地派生表,刻意**不**在此列。)
+    // (0032 的 item_image_thumb 是纯本地派生表、0038 的 item_comment_seen 是纯本地
+    // 用户状态,两张都刻意**不**在此列。)
     "device_profile",
     // 0035 的条目留言(identity-plan §4)。op-backed 正表:进引导导入与 strict_battery。
     "item_comment",

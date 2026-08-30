@@ -38,14 +38,17 @@ function el<K extends keyof HTMLElementTagNameMap>(
   return node;
 }
 
-// ---- 徽章计数(按空间键住的模块快照,照 identity.ts 的形)-------------------
+// ---- 徽章聚合(按空间键住的模块快照,照 identity.ts 的形)-------------------
 
-let counts: { space: string; map: Map<string, number> } | null = null;
+/** core `comments::CommentBadge` 的镜像(0038:留言数 + 有没有本机没看过的)。 */
+export type CommentBadgeInfo = { n: number; unread: boolean };
 
-/** 取一次全库留言计数并落进快照。视图在 `Promise.all` 里与列表查询**并发**发起。
- *  返回值给调用方进重渲指纹——同步来了新留言时,徽章数字要跟着变。 */
-export async function loadCommentCounts(space: string): Promise<Record<string, number>> {
-  const m = await invoke<Record<string, number>>("item_comment_counts");
+let counts: { space: string; map: Map<string, CommentBadgeInfo> } | null = null;
+
+/** 取一次全库徽章聚合并落进快照。视图在 `Promise.all` 里与列表查询**并发**发起。
+ *  返回值给调用方进重渲指纹——同步来了新留言时,徽章数字与未读点都要跟着变。 */
+export async function loadCommentCounts(space: string): Promise<Record<string, CommentBadgeInfo>> {
+  const m = await invoke<Record<string, CommentBadgeInfo>>("item_comment_counts");
   counts = { space, map: new Map(Object.entries(m)) };
   return m;
 }
@@ -53,18 +56,19 @@ export async function loadCommentCounts(space: string): Promise<Record<string, n
 /** 这条条目的留言数;快照没到 / 空间对不上 = 0(不猜,也不显徽章)。 */
 export function commentCountFor(space: string, itemId: string): number {
   if (!counts || counts.space !== space) return 0;
-  return counts.map.get(itemId) ?? 0;
+  return counts.map.get(itemId)?.n ?? 0;
 }
 
 /** 卡片上的 `💬 N` 徽章;**N=0 返回 null**(布局未定不显示,ui-guidelines)。
+ *  有本机没看过的留言时挂 `.unread` 点一枚朱砂点(0038;开过留言层即消)。
  *  N=0 时的写入口不在这里——它在卡片 ⋯ 菜单的「留言」上(否则第一条留言无从写起)。 */
 export function commentBadge(space: string, itemId: string, onChanged: () => void): HTMLElement | null {
-  const n = commentCountFor(space, itemId);
-  if (n === 0) return null;
+  const info = counts && counts.space === space ? counts.map.get(itemId) : undefined;
+  if (!info || info.n === 0) return null;
   const b = el("button", {
-    className: "cm-badge",
-    textContent: t("comments.badge", { n }),
-    title: t("comments.badgeTitle"),
+    className: info.unread ? "cm-badge unread" : "cm-badge",
+    textContent: t("comments.badge", { n: info.n }),
+    title: info.unread ? t("comments.badgeTitleUnread") : t("comments.badgeTitle"),
     draggable: false, // 看板卡可拖:点徽章绝不许变成拖卡片
   });
   b.addEventListener("click", (e) => {
@@ -127,6 +131,20 @@ export function openComments(space: string, itemId: string, onChanged: () => voi
   // ---- 分页:cursor 只在**成功纳入页面之后**推进 ----------------------------
   let cursor: [string, string] | null = null;
   let loading = false;
+  // ---- 已读水位(0038):第一页渲染成功 = 「看见了」,把水位推到页首那条 -------
+  // 只在**值真的前进**时才推并刷徽章 —— refreshOpenComments(视图刷新)会重拉第一页,
+  // 若无条件推+onChanged,会形成「推 → 刷视图 → 重拉 → 再推」的循环。
+  let lastMarked: string | null = null;
+  function markSeen(page: CommentPage): void {
+    const top = page.rows[0]?.id;
+    if (!top || top === lastMarked) return;
+    lastMarked = top;
+    // 纯本地簿记:写失败唯一后果是红点多亮一轮,弹给用户反而莫名其妙 —— 记 console 即可
+    // (这不是「静默吞错」:数据面命令的失败仍然全部上屏,这里吞的只是装饰的簿记)。
+    invokeInSpace(space, "mark_item_comments_seen", { itemId, seenId: top })
+      .then(() => onChanged())
+      .catch((e) => console.error("留言已读水位没推上去:", e));
+  }
   function renderRow(c: Comment): HTMLElement {
     const row = el("article", { className: "cm-item" });
     const text = el("p", { className: "cm-text", textContent: c.content });
@@ -168,6 +186,8 @@ export function openComments(space: string, itemId: string, onChanged: () => voi
       if (!next) list.replaceChildren();
       appendRows(page);
       clearErr();
+      if (!next) markSeen(page); // 翻旧页不推:旧留言的 id 都在水位之下
+
     } catch (e) {
       if (live()) showErr(e);
     } finally {

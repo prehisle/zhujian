@@ -1492,13 +1492,31 @@ pub fn list_item_comments(
     })
 }
 
-/// 每条目留言数(徽章用):一次 `GROUP BY` 聚合读,不 N+1;零留言的条目不在返回里。
+/// 每条目徽章聚合(留言数 + 未读,0038):一次 `GROUP BY` 聚合读,不 N+1;零留言的
+/// 条目不在返回里。
 #[tauri::command]
 pub fn item_comment_counts(
     space_id: String,
     coord: State<'_, Coord>,
-) -> Result<std::collections::HashMap<String, i64>, String> {
+) -> Result<std::collections::HashMap<String, comments::CommentBadge>, String> {
     coord.with_read(&space_id, |conn| comments::counts_all(conn))
+}
+
+/// 推进一条条目的留言已读水位(0038):留言层第一页渲染成功后带上页首那条的 id。
+/// 纯本地簿记:不发 op、不动时钟。走**非阻塞** `with_write`、`Busy` 静默跳过
+/// (同 put_item_thumb 的理由:绝不让一次红点簿记把用户的「全部同步」取消掉;
+/// 这次没推进,下次开层重渲会再推,无损)。
+#[tauri::command]
+pub fn mark_item_comments_seen(
+    space_id: String,
+    item_id: String,
+    seen_id: String,
+    coord: State<'_, Coord>,
+) -> Result<(), String> {
+    match coord.with_write(&space_id, |conn, _clock| comments::mark_seen(conn, &item_id, &seen_id)) {
+        WriteAttempt::Done(r) => r,
+        WriteAttempt::Busy => Ok(()),
+    }
 }
 
 // ---- 同步命令面(与桌面对称:创号 / 邀请 / 加入 / 状态 / 改服务器,phone-space-plan) ----

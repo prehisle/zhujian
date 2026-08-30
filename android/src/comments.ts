@@ -22,7 +22,9 @@ import {
   getCurrentSpace,
   itemCommentCounts,
   listItemComments,
+  markItemCommentsSeen,
   type Comment,
+  type CommentBadgeInfo,
 } from "./api";
 import { t } from "./i18n";
 import { authorLabel } from "./identity";
@@ -43,9 +45,9 @@ let kb: KbSheet | null = null;
 
 // ---- 徽章计数(按空间键住的模块快照,照 identity.ts 的形)-----------------------
 
-let counts: { space: string; map: Map<string, number> } | null = null;
+let counts: { space: string; map: Map<string, CommentBadgeInfo> } | null = null;
 
-/** 取一次全库留言计数并落进快照。调用方在 `Promise.all` 里与时间轴查询**并发**发起。
+/** 取一次全库徽章聚合并落进快照。调用方在 `Promise.all` 里与时间轴查询**并发**发起。
  *  失败**不抛**——徽章同署名一样是装饰,不该让整屏内容陪葬(旧快照保留,下次刷新再试)。 */
 export async function loadCommentCounts(space: string): Promise<void> {
   try {
@@ -57,12 +59,15 @@ export async function loadCommentCounts(space: string): Promise<void> {
 }
 
 /** 卡上的 `💬 N` 徽章 HTML;**N=0 返回空串**(布局未定不显示,ui-guidelines)。
+ *  有本机没看过的留言时挂 `.unread` 点一枚朱砂点(0038;开过留言层即消)。
  *  N=0 时第一条留言的写入口不在这里——它在卡片操作面板的「留言」上(§4.7 第 1 条:
  *  手机没有 ⋯ 菜单,入口归操作面板,**必须有一个**)。 */
 export function commentBadgeHtml(space: string, itemId: string): string {
-  const n = counts && counts.space === space ? (counts.map.get(itemId) ?? 0) : 0;
-  if (n === 0) return "";
-  return `<button class="cm-badge" data-cm="${esc(itemId)}" aria-label="${t("comments.badgeAria")}">💬 ${n}</button>`;
+  const info = counts && counts.space === space ? counts.map.get(itemId) : undefined;
+  if (!info || info.n === 0) return "";
+  const cls = info.unread ? "cm-badge unread" : "cm-badge";
+  const aria = info.unread ? t("comments.badgeAriaUnread") : t("comments.badgeAria");
+  return `<button class="${cls}" data-cm="${esc(itemId)}" aria-label="${aria}">💬 ${info.n}</button>`;
 }
 
 // ---- 留言层 --------------------------------------------------------------------
@@ -77,6 +82,9 @@ type Sheet = {
   loading: boolean;
   /** 写/删 in-flight:防双击(一次点击 = 一条留言,重复提交造不出「撤销」)。 */
   busy: boolean;
+  /** 已推过的已读水位(0038 防环):refreshOpenComments 会重拉第一页,若无条件
+   *  推+refresh 会形成「推 → 刷时间轴 → 重拉 → 再推」的循环;值没前进就不动。 */
+  lastMarked: string | null;
 };
 
 /** 全 app 至多一层(层只从时间轴开,而开着时遮罩压住时间轴,故天然不会叠)。 */
@@ -126,7 +134,15 @@ export function initComments(d: Deps): void {
 export function openComments(space: string, itemId: string): void {
   if (!kb) return;
   const first = sheet === null;
-  const s: Sheet = { space, itemId, cursor: null, paged: false, loading: false, busy: false };
+  const s: Sheet = {
+    space,
+    itemId,
+    cursor: null,
+    paged: false,
+    loading: false,
+    busy: false,
+    lastMarked: null,
+  };
   sheet = s;
   hideConfirmBar(); // 上一发挂着的确认不许作用到新语境
   setBusy(s, false);
@@ -196,6 +212,7 @@ async function loadPage(s: Sheet, next: boolean): Promise<void> {
     s.cursor = page.next_cursor; // 只有整页真的进了 DOM 才推进
     $("cm-more").hidden = !page.has_more; // has_more=false 才摘掉加载入口
     paintEmpty();
+    if (!next) markSeen(s, page); // 翻旧页不推:旧留言的 id 都在水位之下
   } catch (err) {
     if (!live(s)) return;
     // 后端的话原样展示(宿主不存在 / 游标不合形都是有话可说的拒绝),不吞不改写。
@@ -204,6 +221,20 @@ async function loadPage(s: Sheet, next: boolean): Promise<void> {
   } finally {
     s.loading = false;
   }
+}
+
+/** 已读水位(0038):第一页渲染成功 = 「看见了」,把水位推到页首那条(最大 id)。
+ *  只在值真的前进时才推并刷时间轴(徽章红点即消);推失败只记 console —— 纯本地
+ *  装饰簿记,唯一后果是红点多亮一轮,弹给用户反而莫名其妙。 */
+function markSeen(s: Sheet, page: { rows: Comment[] }): void {
+  const top = page.rows[0]?.id;
+  if (!top || top === s.lastMarked) return;
+  s.lastMarked = top;
+  markItemCommentsSeen(s.space, s.itemId, top)
+    .then(() => {
+      if (s.space === getCurrentSpace()) void deps.refresh();
+    })
+    .catch((e) => console.error("留言已读水位没推上去:", e));
 }
 
 // ---- 写与销毁 ------------------------------------------------------------------

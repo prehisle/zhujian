@@ -16,6 +16,21 @@
   border-color: var(--seal-line);
   color: var(--seal);
 }
+/* 未读态(0038):右上角一枚朱砂点,开过留言层即消。字色不动 —— 点才是「有新的」的
+   信号,整枚变红会与 hover 态混淆。 */
+.cm-badge.unread {
+  position: relative;
+}
+.cm-badge.unread::after {
+  content: "";
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-circle);
+  background: var(--seal);
+}
 
 /* 浮层:遮罩 + 居中面板。portal 到 <body>,不受卡片 overflow / 层叠上下文摆布
    (同 ⋯ 菜单与看大图那两处栽过的坑)。

@@ -453,9 +453,17 @@ export const listItemComments = (
   cursor: [string, string] | null,
 ) => invoke<CommentPage>("list_item_comments", { spaceId: space, itemId, cursor });
 
-/** 每条目留言数(徽章用):一次聚合读,零留言的条目不在返回里。 */
+/** core `comments::CommentBadge` 的镜像(0038:留言数 + 有没有本机没看过的)。 */
+export type CommentBadgeInfo = { n: number; unread: boolean };
+
+/** 每条目徽章聚合(留言数 + 未读):一次聚合读,零留言的条目不在返回里。 */
 export const itemCommentCounts = (space: string) =>
-  invoke<Record<string, number>>("item_comment_counts", { spaceId: space });
+  invoke<Record<string, CommentBadgeInfo>>("item_comment_counts", { spaceId: space });
+
+/** 推进一条条目的留言已读水位(0038,留言层第一页渲染成功后调)。纯本地簿记,
+ *  不发 op;后端「全部同步」相位下会静默跳过,下次开层再推,无损。 */
+export const markItemCommentsSeen = (space: string, itemId: string, seenId: string) =>
+  invoke<void>("mark_item_comments_seen", { spaceId: space, itemId, seenId });
 
 // ---- 同步:创号 / 邀请(phone-space-plan,与桌面对称;写类命令显式 space、正常决议) ----
 

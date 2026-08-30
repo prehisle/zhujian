@@ -5,10 +5,14 @@
 // 第③笔)。这里是它们第一次在真机上真跑:`coord.write` 的空间锁+相位、`with_read` 的
 // 直读前台库、`Option<(String,String)>` 游标经 IPC 的往返,全是安卓壳这一侧独有的路。
 //
-// 分三段:①往返与语义(最近优先 / 署名恒为本机 / 删除幂等 / 计数跟着走)
+// 分五段:①往返与语义(最近优先 / 署名恒为本机 / 删除幂等 / 计数跟着走;0038 起聚合
+//          是 {n, unread},本机写的恒不亮)
 //        ②四道拒原样传上来(空正文 / 宿主 id 非规范 / 宿主不存在 / 正文超 200 KiB)
+//        ②b 已读水位命令(0038:幂等 / 宿主不在 no-op / 非规范拒;⚠ 单机造不出
+//          unread=true —— add 自推水位且 MAX 单调,理由同 e2e spec 头注)
 //        ③51 条两页分页(游标经 IPC 往返;并发写还顺带把「同一毫秒 created_at」造出来,
 //          那正是 `(created_at,id)` 元组游标要靠 id 打平的那一格)
+//        ④`.unread` 朱砂点的 CSS 真渲染(挂/摘 class 量 ::after)
 // 末尾 finally 把临时条目 purge 掉,留言随 FK CASCADE 走(顺带在真实库上走一遍级联)。
 (async () => {
   const invoke = window.__TAURI__.core.invoke;
@@ -55,14 +59,15 @@
     check("单页不满 50 时 has_more=false", page.has_more === false);
     check("next_cursor 是 (created_at,id) 二元组", Array.isArray(page.next_cursor) && page.next_cursor.length === 2, JSON.stringify(page.next_cursor));
 
+    // 0038 起聚合是 {n, unread};本机写的**恒不亮**(add 同事务自推已读水位)。
     let counts = await invoke("item_comment_counts", { spaceId: space });
-    check("聚合计数 = 3", counts[itemId] === 3, String(counts[itemId]));
+    check("聚合 = {n:3, unread:false}", counts[itemId]?.n === 3 && counts[itemId]?.unread === false, JSON.stringify(counts[itemId]));
 
     await invoke("delete_item_comment", { spaceId: space, id: b });
     page = await invoke("list_item_comments", { spaceId: space, itemId, cursor: null });
     counts = await invoke("item_comment_counts", { spaceId: space });
     check("删一条后剩两条", page.rows.length === 2 && !page.rows.some((r) => r.id === b));
-    check("计数跟着走 = 2", counts[itemId] === 2, String(counts[itemId]));
+    check("计数跟着走 = 2 且删除不复活未读", counts[itemId]?.n === 2 && counts[itemId]?.unread === false, JSON.stringify(counts[itemId]));
     // 幂等:行不在 = no-op,不是错误(UI 的两拍确认与远端删除可能撞车)。
     const again = await rejects(invoke("delete_item_comment", { spaceId: space, id: b }));
     check("重复删同一条 = 幂等 no-op(不报错)", again === null, again ?? "");
@@ -83,7 +88,20 @@
     );
     check("正文超 200 KiB 被拒", !!e4, e4 ?? "没拒!");
     const afterRejects = await invoke("item_comment_counts", { spaceId: space });
-    check("四道拒一条都没落库", afterRejects[itemId] === 2, String(afterRejects[itemId]));
+    check("四道拒一条都没落库", afterRejects[itemId]?.n === 2, JSON.stringify(afterRejects[itemId]));
+
+    // ---- ②b 已读水位命令(0038;⚠ 单机造不出 unread=true,理由同 e2e spec 头注:
+    // add 自推水位且 MAX 单调退不回,故这里只验命令面的幂等与拒) ----------------
+    const seenTop = page.rows[0].id;
+    const m1 = await rejects(invoke("mark_item_comments_seen", { spaceId: space, itemId, seenId: seenTop }));
+    const m2 = await rejects(invoke("mark_item_comments_seen", { spaceId: space, itemId, seenId: seenTop }));
+    check("mark 同一水位两次都成功(幂等)", m1 === null && m2 === null, `${m1 ?? ""}${m2 ?? ""}`);
+    const m3 = await rejects(
+      invoke("mark_item_comments_seen", { spaceId: space, itemId: "01JZZZZZZZZZZZZZZZZZZZZZZZ", seenId: seenTop }),
+    );
+    check("宿主不在 = 幂等 no-op(并发删宿主不是错误)", m3 === null, m3 ?? "");
+    const m4 = await rejects(invoke("mark_item_comments_seen", { spaceId: space, itemId, seenId: "not-a-ulid" }));
+    check("非规范 seen_id 被拒", !!m4 && m4.includes("不是规范留言 id"), m4 ?? "没拒!");
 
     // ---- ③ 51 条两页分页 -----------------------------------------------------
     // 先清干净,再灌 51 条(并发写:coord.write 的空间锁排队,顺带把「同一毫秒
@@ -110,6 +128,19 @@
       ids.size === 51,
       dupTs ? "本轮真撞上了同毫秒" : "本轮没撞上同毫秒(该格未被压到)",
     );
+    // ---- ④ `.unread` 朱砂点的 CSS 真渲染(0038;数据侧 true 造不出,视觉半在此量:
+    // 临时造一枚徽章挂/摘 class,::after 必须真画出 6px 的点、摘掉即消) --------------
+    {
+      const probe = document.createElement("button");
+      probe.className = "cm-badge unread";
+      document.body.appendChild(probe);
+      const on = getComputedStyle(probe, "::after");
+      check("unread 点真渲染(6px 非透明)", on.width === "6px" && on.backgroundColor !== "rgba(0, 0, 0, 0)", `w=${on.width} bg=${on.backgroundColor}`);
+      probe.classList.remove("unread");
+      const off = getComputedStyle(probe, "::after").width;
+      check("摘掉 class 点即消", off !== "6px", `w=${off}`);
+      probe.remove();
+    }
   } finally {
     // 宿主一删,留言随 FK CASCADE 走——顺带在**真实库**上走一遍级联。
     if (itemId) {

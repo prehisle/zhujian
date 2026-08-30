@@ -123,6 +123,7 @@ macro_rules! shared_handler {
             $crate::delete_item_comment,
             $crate::list_item_comments,
             $crate::item_comment_counts,
+            $crate::mark_item_comments_seen,
             // 120 UI 第一批的 core 加菜
             $crate::list_trash,
             $crate::purge_all_trash,

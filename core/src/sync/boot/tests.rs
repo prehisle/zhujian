@@ -739,6 +739,7 @@ fn import_merges_all_shapes_and_advances_clock() {
     task::seal(&mut a.conn, &mut a.clock, &done_id).unwrap(); // 归档成就(sealed 行)
     let trash_id = notes::capture(&mut a.conn, &mut a.clock, "进回收站").unwrap();
     notes::archive(&mut a.conn, &mut a.clock, &trash_id).unwrap();
+    crate::comments::add(&mut a.conn, &mut a.clock, &idea, "老端的留言").unwrap();
 
     // 新端:配对前本地数据 + 同名标签(全背书,fresh)。
     let mut b = peer("imp-b");
@@ -792,6 +793,12 @@ fn import_merges_all_shapes_and_advances_clock() {
         .query_row("SELECT data FROM item_image WHERE item_id = ?1", [&task_id], |r| r.get(0))
         .unwrap();
     assert_eq!(img_bytes, vec![9, 9, 9]);
+    // 留言进来了,且**全部落成已读**(0038 性质③:导入尾回填 —— 历史留言的追赶不是
+    // 「新消息」,新设备落地不许满屏红点)。
+    let badge = crate::comments::counts_all(&b.conn).unwrap();
+    let idea_badge = badge.get(&idea).copied().expect("老端那条留言进来了");
+    assert_eq!(idea_badge.n, 1);
+    assert!(!idea_badge.unread, "引导导入的历史留言必须落成已读");
     // 标记落盘 + 重复引导被拒。
     assert!(meta_get(&b.conn, "bootstrapped_at").unwrap().is_some());
     assert!(check_fresh_to_account(&b.conn).is_err());

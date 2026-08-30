@@ -137,6 +137,11 @@ pub fn make_snapshot(conn: &Connection, dir: &Path) -> Result<Snapshot, String> 
 /// **新增纯本地派生表时,这里要跟着加一行**;漏了不会有任何测试变红,除非你也在
 /// `snapshot_carries_no_derived_rows` 里加一格(那只测按表名逐张点名)。
 ///
+/// ⛔ **0038 的 `item_comment_seen` 刻意不在此列**(签字,别当漏加):它不是可重建
+/// 派生缓存,是本机独有的用户状态(「读没读过」剥了就只能保守归已读)——不剥则加密
+/// 备份自然携带、恢复自然回;引导那条路收端本就按 CORE_TABLES 白名单导入(不导它,
+/// 导入尾另有回填),供端快照多带的几十字节无所谓。全文见 0038 迁移头注性质②。
+///
 /// ⚠ **402 起有第二个消费者**:加密备份(`backup::engine`)也走这一支剥派生 ——
 /// 刻意复用而不另写一份(checklist §14:同一条规则的第二份描述就是漂移源)。
 /// ⇒ 上面那句「新增派生表要跟着加一行」现在同时管着备份产物。
@@ -754,6 +759,10 @@ fn import_attached(conn: &mut Connection, clock: &mut Clock) -> Result<ImportRep
         let hlc = Hlc::parse(h)?;
         clock.observe(&tx, &hlc)?;
     }
+
+    // 留言已读水位回填成「全部已读」(0038 性质③):历史留言的追赶不是「新消息」,
+    // 新设备落地满屏红点是误报。纯本地簿记,放在全部审计之后、与导入同事务(半途即无痕)。
+    crate::comments::backfill_seen_all(&tx)?;
 
     tx.execute("DELETE FROM sync_replay_active", []).map_err(|e| e.to_string())?;
     tx.commit().map_err(|e| e.to_string())?;

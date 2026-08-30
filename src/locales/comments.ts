@@ -5,6 +5,7 @@ import { defineMessages } from "./entry";
 export const comments = defineMessages({
   "comments.badge": { zh: "💬 {n}", en: "💬 {n}" },
   "comments.badgeTitle": { zh: "看留言", en: "View comments" },
+  "comments.badgeTitleUnread": { zh: "有新留言", en: "New comments" },
   "comments.title": { zh: "留言", en: "Comments" },
   "comments.closeTitle": { zh: "关闭(Esc)", en: "Close (Esc)" },
   "comments.loadMore": { zh: "加载更多", en: "Load more" },

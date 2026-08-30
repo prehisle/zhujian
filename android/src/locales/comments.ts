@@ -3,6 +3,7 @@ import { defineMessages } from "./entry";
 
 export const comments = defineMessages({
   "comments.badgeAria": { zh: "看留言", en: "View comments" },
+  "comments.badgeAriaUnread": { zh: "有新留言", en: "New comments" },
   "comments.loading": { zh: "读取中…", en: "Loading…" },
   "comments.delete": { zh: "删除", en: "Delete" },
   "comments.empty": { zh: "还没有留言。", en: "No comments yet." },

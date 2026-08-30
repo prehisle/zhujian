@@ -106,8 +106,23 @@ pub fn add(
     )
     .map_err(|e| format!("写留言失败:{e}"))?;
     oplog::comment_create(&tx, clock, &id)?;
+    // 自己写的必然自己读过:同事务把已读水位(0038)顺手推到这条,免得自己的留言
+    // 在自己屏上点亮「未读」。MAX 单调 —— 若已有更大的水位(先读到过别机更新的),不回退。
+    upsert_seen(&tx, item_id, &id)?;
     tx.commit().map_err(|e| e.to_string())?;
     Ok(id)
+}
+
+/// 已读水位的**唯一** UPSERT(0038):MAX 单调只进不退。[`add`] 与 [`mark_seen`] 共用
+/// —— ULID 定长 26、全大写字母数字 ⇒ TEXT 的 BINARY 序 = ULID 序。
+fn upsert_seen(conn: &Connection, item_id: &str, seen_id: &str) -> Result<(), String> {
+    conn.execute(
+        "INSERT INTO item_comment_seen (item_id, seen_id) VALUES (?1, ?2) \
+         ON CONFLICT(item_id) DO UPDATE SET seen_id = MAX(item_comment_seen.seen_id, excluded.seen_id)",
+        rusqlite::params![item_id, seen_id],
+    )
+    .map_err(|e| format!("记录留言已读水位失败:{e}"))?;
+    Ok(())
 }
 
 /// 销毁一条留言(**直接销毁,不进回收站** —— 用户 2026-08-06 拍板;UI 两拍确认兜)。
@@ -197,21 +212,75 @@ pub fn list_for_item(
     Ok(CommentPage { rows, next_cursor, has_more })
 }
 
-/// 每条目的留言数(徽章用):**一次 GROUP BY 聚合读,不 N+1**。
+/// 徽章聚合(每条目一格):留言数 + 有没有本机还没看过的(0038 已读水位)。
+#[derive(serde::Serialize, Debug, Clone, Copy, PartialEq)]
+pub struct CommentBadge {
+    pub n: i64,
+    pub unread: bool,
+}
+
+/// 每条目的徽章聚合(留言数 + 未读):**一次 GROUP BY 聚合读,不 N+1**。
 /// 零留言的条目不在返回里(前端按 0 处理 —— N=0 不显示徽章)。
-pub fn counts_all(conn: &Connection) -> Result<HashMap<String, i64>, String> {
+///
+/// 未读判据 = 存在 `id > seen_id` 的留言;没有水位行 = 全未读(条目收到第一条留言时
+/// 就是这个形)。水位轴为什么是 id 不是 created_at,见 0038 迁移头注(迟到到达那段)。
+pub fn counts_all(conn: &Connection) -> Result<HashMap<String, CommentBadge>, String> {
     let mut stmt = conn
-        .prepare("SELECT item_id, COUNT(*) FROM item_comment GROUP BY item_id")
+        .prepare(
+            "SELECT c.item_id, COUNT(*), \
+                    MAX(CASE WHEN s.item_id IS NULL OR c.id > s.seen_id THEN 1 ELSE 0 END) \
+               FROM item_comment c \
+               LEFT JOIN item_comment_seen s ON s.item_id = c.item_id \
+              GROUP BY c.item_id",
+        )
         .map_err(|e| e.to_string())?;
     let rows = stmt
-        .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))
+        .query_map([], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?))
+        })
         .map_err(|e| e.to_string())?;
     let mut out = HashMap::new();
     for row in rows {
-        let (id, n) = row.map_err(|e| e.to_string())?;
-        out.insert(id, n);
+        let (id, n, unread) = row.map_err(|e| e.to_string())?;
+        out.insert(id, CommentBadge { n, unread: unread != 0 });
     }
     Ok(out)
+}
+
+/// 推进一条条目的已读水位到 `seen_id`(**只进不退**,MAX 单调;0038)。
+///
+/// 调用方 = 两端留言面第一页渲染成功之后,带上这一页最大的留言 id(DESC 序的头一行)。
+/// **纯本地簿记:不发 op、不动时钟**,调用方拿库锁即可(同 thumbs::put 的形)。
+/// 条目不在了 = 幂等 no-op(照 [`remove`] 的先例:面板开着时对端删掉宿主是正常并发,
+/// 不是错误;水位无处可记也无须记)。
+pub fn mark_seen(conn: &Connection, item_id: &str, seen_id: &str) -> Result<(), String> {
+    // 水位值域 = item_comment.id 的形(fail-fast:歪形进库会让 0038 的 CHECK 以难懂的
+    // SQL 错炸出来,这里先给人话)。
+    if !crate::clock::is_canonical_ulid(seen_id) {
+        return Err("已读水位不是规范留言 id,拒绝记录".into());
+    }
+    let host: i64 = conn
+        .query_row("SELECT COUNT(*) FROM items WHERE id = ?1", [item_id], |r| r.get(0))
+        .map_err(|e| e.to_string())?;
+    if host == 0 {
+        return Ok(());
+    }
+    upsert_seen(conn, item_id, seen_id)
+}
+
+/// 把已读水位回填成「全部已读」。唯一消费者 = boot 引导导入尾(import_attached):
+/// 新设备落地时历史留言的追赶不是「新消息」,满屏红点是误报。存量库升级的那份回填
+/// 在 0038 迁移里(同一句 SQL,各管各的时机)。
+pub(crate) fn backfill_seen_all(conn: &Connection) -> Result<(), String> {
+    conn.execute(
+        "INSERT INTO item_comment_seen (item_id, seen_id) \
+         SELECT item_id, MAX(id) FROM item_comment GROUP BY item_id \
+         ON CONFLICT(item_id) DO UPDATE SET \
+            seen_id = MAX(item_comment_seen.seen_id, excluded.seen_id)",
+        [],
+    )
+    .map_err(|e| format!("回填留言已读水位失败:{e}"))?;
+    Ok(())
 }
 
 #[cfg(test)]
