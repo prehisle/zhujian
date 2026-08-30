@@ -111,7 +111,8 @@
     ok("input 自身 ≥44(void 元素给不了 halo,只能自己长够)", input().getBoundingClientRect().height >= 44,
       `${input().getBoundingClientRect().height.toFixed(1)}px`);
     const btns = [...list().querySelectorAll(".tn-edit button")];
-    ok("存 / 取消两枚在", btns.length === 2, btns.map((x) => x.textContent.trim()).join("|"));
+    // 549 起改名行是三枚:存 / 取消 / 删除(user-44 第三刀把删除入口放进了这行)。
+    ok("存 / 取消 / 删除三枚在", btns.length === 3, btns.map((x) => x.textContent.trim()).join("|"));
     const bh = btns[0].getBoundingClientRect();
     const above = document.elementFromPoint(bh.x + bh.width / 2, bh.top - 8);
     ok("存那枚的 halo 生效(上缘 8px 外仍命中它)", above === btns[0] || (above && above.contains?.(btns[0])) || above === btns[0].parentElement && false || above === btns[0],

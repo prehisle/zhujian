@@ -741,14 +741,15 @@
       /* 面头(user-44 第二刀):标题 + 「新建标签」同一行;规则放在 .sync h2 之后,
          同特异性靠文档顺序把 margin 归零(间距由 .phead 自己出)。 */
       .phead { display: flex; align-items: center; justify-content: space-between; margin: 0 0 8px; }
-      .phead h2 { margin: 0; }
-      #topics-new {
+      .phead h2 { margin: 0; flex: 1; }
+      #topics-new, #topics-merge {
         font-size: var(--fs-12); padding: 4px 12px; border-radius: var(--radius-pill);
         border: 1px solid var(--line-strong); background: none; color: var(--ink-soft);
         position: relative;
       }
+      #topics-merge { margin-right: 8px; }
       /* 触区只垂直扩(同 .tn-edit button 那形):视觉小钮,盒外 halo 补到 ~44。 */
-      #topics-new::before { content: ""; position: absolute; left: 0; right: 0; top: -10px; bottom: -10px; }
+      #topics-new::before, #topics-merge::before { content: ""; position: absolute; left: 0; right: 0; top: -10px; bottom: -10px; }
       #topics-list { position: relative; }
       /* 514:上下 padding 10 → 12,行实高 40.4 → 44.4 —— 名字成了可点元素(改名入口),
          而 §2.3 要 ≥44。⭐ 提行高是为了让名字的 halo **吃满行内就够 44**:halo 只要
@@ -847,6 +848,16 @@
       /* 删除(user-44 第三刀):warn ghost 形(同 .panel .acts button.warn 的调)——
          第一拍只是开确认,不该长成实底朱砂;实底那枚在底部确认条的第二拍上。 */
       .tn-edit button.tn-del { background: none; color: var(--seal); border: 1px solid var(--seal-line); }
+      /* 合并态(user-44 第四刀):提示行 + 简行(整行一击即选,视觉即语义)。
+         源行高亮走 outline(负 offset 压在行框内,不挤兄弟行的布局)。 */
+      .mhint { display: flex; align-items: center; gap: 8px; color: var(--ink-soft); }
+      .mhint-txt { flex: 1; min-width: 0; }
+      .mhint button { font-size: var(--fs-12); padding: 4px 10px; border-radius: var(--radius-sm);
+        background: none; color: var(--ink-soft); border: 1px solid var(--line-strong);
+        position: relative; }
+      .mhint button::before { content: ""; position: absolute; left: 0; right: 0; top: -10px; bottom: -10px; }
+      .mname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .mrow.msrc { outline: 2px solid var(--seal); outline-offset: -2px; border-radius: var(--radius-sm); }
       /* 拖动落点指示线(朱砂),按指针位置浮在目标间隙上。 */
       .drop-line {
         position: absolute; left: 34px; right: 4px; height: 2px; margin-top: -1px;
@@ -1329,11 +1340,12 @@
     </section>
 
     <!-- 标签管理面(190,安卓精简版):拖手柄调顺序(1c)+ 点「类型」标自由文本类型(kind)
-         + 点名字改名(514)+ 点色点改颜色 + 面头「新建标签」(user-44 第二刀);全部跨端同步。
-         删除/合并暂在桌面做(破坏性动作,搬到触屏要重想确认形 —— backlog 用户面 44)。 -->
+         + 点名字改名(514)+ 点色点改颜色 + 面头「新建标签」(user-44 第二刀)
+         + 改名态里「删除」(第三刀)+ 面头「合并」一对一两击(第四刀);全部跨端同步。 -->
     <section id="topics-pane" class="sync" hidden>
       <div class="phead">
         <h2 data-i18n="shell.navTags">标签</h2>
+        <button id="topics-merge" data-i18n="topics.mergeBtn" hidden>合并</button>
         <button id="topics-new" data-i18n="topics.newBtn">+ 新建标签</button>
       </div>
       <div id="topics-list"></div>

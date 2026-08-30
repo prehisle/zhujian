@@ -2,10 +2,11 @@
 // + **点名字改名(514)** + **点色点改颜色 + 面头「新建标签」(user-44 第二刀)**
 // + **删除(user-44 第三刀)**:改名态里第三枚「删除」→ 底部全局两拍确认条(cardpanel 同律,
 //   不新造确认形)。core 语义 = 只删标签投影,item_topic 链随 FK 级联消失、条目本身不动。
+// + **合并(user-44 第四刀,一对一两击式 —— 用户在两候选里拍的,⛔ 别照桌面的批量合并态重做)**:
+//   面头「合并」→ 列表换简行,第一击选源(被并掉的)、第二击选目标 → 底部两拍确认条。
+//   一次只并一枚(多枚源 = 重复几次);⛔ 刻意不带「顺带改名」(合完点名字改就是,能力已有)。
+//   core 语义 = 源的链转挂目标(集合并,目标已有的不重复)、源 tombstone,单事务。
 // 全部走 core 已审的 oplog topic 命令,跨端 LWW(与桌面互通,189 已验)。
-//
-// ⛔ **合并仍只桌面有,别顺手补齐**(190/258 拍的克制):合并**不可撤**,搬到触屏要新造
-// 「勾选多源 → 选目标」的模式态,不是「照桌面抄一份」那个成本。范围账在 backlog 用户面 44。
 //
 // 纪律同 panes.ts:load 取定 {space,seq},迟到响应弃;写 in-flight 禁重入(busy 置灰);
 // **拖动/编辑态(类型/改名/颜色/新建)进行中不被动重载**(topicsInteracting →
@@ -16,6 +17,7 @@ import {
   getCurrentSpace,
   listTasks,
   listTopicsFull,
+  mergeTopics,
   reorderTopic,
   setTopicColor,
   setTopicKind,
@@ -41,6 +43,8 @@ let kindEditId: string | null = null; // 正在编辑类型的行(渲染成 inpu
 let renameId: string | null = null; // 正在改名的行(整行换成改名形,514)
 let colorEditId: string | null = null; // 正在挑颜色的行(整行换成调色板,user-44 第二刀)
 let creating = false; // 「新建标签」输入行开着(渲在列表顶,user-44 第二刀)
+let merging = false; // 合并态开着(列表换简行,user-44 第四刀)
+let mergeSourceId: string | null = null; // 第一击选中的源(null = 还在选源阶段)
 let dragging = false; // 拖排序进行中
 
 // 调色板:与桌面 src/tag-color.ts 的 TAG_COLORS **同一组八色、同一顺序**,加色/改色两边一起动
@@ -52,9 +56,9 @@ const PALETTE = [
   "#3f7a99", "#6b5b95", "#a8577e", "#7a7166",
 ];
 
-/** 拖动 / 编辑态(类型/改名/颜色/新建)进行中:远端变更不被动重载(免拆掉正在操作的行)。 */
+/** 拖动 / 编辑态(类型/改名/颜色/新建/合并)进行中:远端变更不被动重载(免拆掉正在操作的行)。 */
 export function topicsInteracting(): boolean {
-  return dragging || kindEditId !== null || renameId !== null || colorEditId !== null || creating;
+  return dragging || kindEditId !== null || renameId !== null || colorEditId !== null || creating || merging;
 }
 
 export async function loadTopics(): Promise<void> {
@@ -80,6 +84,31 @@ export async function loadTopics(): Promise<void> {
 
 function render(): void {
   const box = $("topics-list");
+  // 「合并」入口按数据显形(411/D1 惯例):<2 枚没得并就整个藏,⛔ 别留着让它点了没反应;
+  // 合并态中也藏(提示行已表明在态中,取消是唯一出口,免双入口)。「新建」在合并态中同藏 ——
+  // 它点下去 render 走合并分支、输入行渲不出来 = 点了没反应,正是上一句禁的那形。
+  $("topics-merge").hidden = rows.length < 2 || merging;
+  $("topics-new").hidden = merging;
+  // 合并态:列表换成简行(整行一击即选,手柄/色钮/类型全让位 —— 视觉即语义,
+  // 免得钮还长着钮样、点下去却是选行)。提示行随阶段变:选源 → 选目标(带源名)。
+  if (merging) {
+    const src = mergeSourceId === null ? null : rows.find((r) => r.id === mergeSourceId);
+    const hint = src
+      ? t("topics.mergePickTarget", { name: src.title })
+      : t("topics.mergePickSource");
+    box.innerHTML =
+      `<article class="trow mhint"><span class="mhint-txt">${esc(hint)}</span>
+        <button data-merge-cancel="1" class="ghost">${t("topics.mergeCancel")}</button></article>` +
+      rows
+        .map(
+          (tp) => `<article class="trow mrow${tp.id === mergeSourceId ? " msrc" : ""}${busy ? " off" : ""}" data-topic="${esc(tp.id)}">
+        <span class="mname">${esc(tp.title)}</span>
+        <span class="tcount">${t("topics.count", { n: counts.get(tp.id) ?? 0 })}</span>
+      </article>`,
+        )
+        .join("");
+    return;
+  }
   if (!rows.length && !creating) {
     box.innerHTML = `<p class="muted empty">${t("topics.empty")}</p>`;
     return;
@@ -260,6 +289,77 @@ async function doDelete(space: string, id: string): Promise<void> {
   }
 }
 
+// ---- 合并(user-44 第四刀;一对一两击:第一击源、第二击目标 → 两拍确认) ------
+//
+// 第二击后**先收合并态再弹确认条**(同删除第一拍的纪律):取消 / 6s 超时后列表已是
+// 常态,零残留。方向 = 先点的被并掉、后点的留下;点错方向的代价只是「留下的名字不对」,
+// 改名能力已有、挂载零丢失 —— 这也是敢做两击不做勾选批量的底气。
+
+function startMerge(): void {
+  if (busy || deps.isSwitching()) return;
+  merging = true;
+  mergeSourceId = null;
+  renameId = null; // 五个编辑态互斥:同一时刻只开一处
+  kindEditId = null;
+  colorEditId = null;
+  creating = false;
+  render();
+}
+
+function exitMerge(): void {
+  merging = false;
+  mergeSourceId = null;
+}
+
+function pickMerge(id: string): void {
+  if (busy || deps.isSwitching()) return;
+  if (mergeSourceId === null) {
+    mergeSourceId = id; // 第一击:选源
+    render();
+    return;
+  }
+  if (id === mergeSourceId) {
+    mergeSourceId = null; // 点自己 = 撤源,回到选源阶段
+    render();
+    return;
+  }
+  const src = rows.find((r) => r.id === mergeSourceId);
+  const tgt = rows.find((r) => r.id === id);
+  if (!src || !tgt) return;
+  const n = counts.get(src.id) ?? 0;
+  const space = getCurrentSpace();
+  const sourceId = src.id;
+  exitMerge();
+  render();
+  confirmBar(
+    n > 0
+      ? t("topics.mergeQ", { source: src.title, target: tgt.title, n })
+      : t("topics.mergeQEmpty", { source: src.title, target: tgt.title }),
+    t("topics.mergeYes"),
+    () => void doMerge(space, sourceId, id),
+  );
+}
+
+async function doMerge(space: string, sourceId: string, targetId: string): Promise<void> {
+  // 第二拍复核语境未变(同 doDelete):确认条挂着时切了空间/进了别的写,旧确认作废。
+  if (busy || deps.isSwitching() || space !== getCurrentSpace()) return;
+  busy = true;
+  render();
+  try {
+    await mergeTopics(space, [sourceId], targetId, null);
+    if (space === getCurrentSpace()) showBar(t("topics.merged"), true);
+  } catch (err) {
+    if (space === getCurrentSpace()) showError(String(err));
+  } finally {
+    busy = false;
+    if (space === getCurrentSpace()) {
+      await loadTopics();
+      // 源的挂载全转到目标,卡片 chip / 筛选 pills 都要跟着换(refreshTimeline 唯一重拉处)。
+      void deps.refreshTimeline();
+    }
+  }
+}
+
 // ---- 颜色(user-44 第二刀;点色点开调色板,点色块即写) ----------------------
 //
 // 与 saveKind 同构:busy 置灰、先收编辑态、失败 showError、finally 重载恢复真相。
@@ -321,7 +421,8 @@ function startCreate(): void {
   creating = true;
   renameId = null;
   kindEditId = null;
-  colorEditId = null; // 四个编辑态互斥
+  colorEditId = null; // 五个编辑态互斥(合并态中本钮已藏,这行是防御)
+  exitMerge();
   render();
   const inp = $("topics-list").querySelector<HTMLInputElement>(".tn-input");
   inp?.focus();
@@ -329,6 +430,17 @@ function startCreate(): void {
 
 function onClick(e: Event): void {
   const el = e.target as HTMLElement;
+  // 合并态吞掉列表内全部点击:整行一击即选,别的入口(改名/调色/类型)全让位。
+  if (merging) {
+    if (el.closest("[data-merge-cancel]")) {
+      exitMerge();
+      render();
+      return;
+    }
+    const rowId = el.closest<HTMLElement>(".trow")?.dataset.topic;
+    if (rowId) pickMerge(rowId);
+    return;
+  }
   const renameFor = el.closest<HTMLElement>("[data-rename]")?.dataset.rename;
   if (renameFor) {
     if (busy || deps.isSwitching()) return;
@@ -411,6 +523,14 @@ function onClick(e: Event): void {
 function onKeydown(e: Event): void {
   const ke = e as KeyboardEvent;
   if (ke.isComposing) return; // IME 组合期的 Enter 是上屏,不是保存
+  if (merging) {
+    // 合并态没有输入框,只认 Esc 退出(有实体键盘时;触屏走提示行的「取消」钮)。
+    if (ke.key === "Escape") {
+      exitMerge();
+      render();
+    }
+    return;
+  }
   if (creating) {
     if (ke.key === "Escape") {
       creating = false;
@@ -576,8 +696,12 @@ export function resetTopicsForSpaceChange(): void {
   renameId = null;
   colorEditId = null;
   creating = false;
+  merging = false;
+  mergeSourceId = null;
   dragging = false;
   $("topics-list").innerHTML = "";
+  $("topics-merge").hidden = true; // 下次 loadTopics→render 按新空间的 rows 重定
+  $("topics-new").hidden = false; // 合并态中切空间:别把「新建」藏丢
 }
 
 export function initTopicsPane(d: Deps): void {
@@ -586,5 +710,6 @@ export function initTopicsPane(d: Deps): void {
   box.addEventListener("click", onClick);
   box.addEventListener("keydown", onKeydown);
   $("topics-new").addEventListener("click", startCreate);
+  $("topics-merge").addEventListener("click", startMerge);
   initDrag(box);
 }

@@ -32,6 +32,16 @@ export const topics = defineMessages({
   "topics.deleteQEmpty": { zh: "删除标签「{name}」?", en: "Delete tag “{name}”?" },
   "topics.deleteYes": { zh: "删除", en: "Delete" },
   "topics.deleted": { zh: "已删除标签", en: "Tag deleted" },
+  // 合并(user-44 第四刀):一对一两击(第一击源、第二击目标)→ 底部两拍确认条。
+  // 话术方向要钉死:先点的被并掉、后点的留下。
+  "topics.mergeBtn": { zh: "合并", en: "Merge" },
+  "topics.mergePickSource": { zh: "点要被并掉的标签", en: "Tap the tag to fold away" },
+  "topics.mergePickTarget": { zh: "把「{name}」并入谁?点目标标签", en: "Fold “{name}” into which tag? Tap the target" },
+  "topics.mergeCancel": { zh: "取消", en: "Cancel" },
+  "topics.mergeQ": { zh: "把「{source}」并入「{target}」?{n} 项转挂「{target}」,「{source}」删除", en: "Fold “{source}” into “{target}”? {n} {n|item|items} will re-tag to “{target}”; “{source}” is deleted." },
+  "topics.mergeQEmpty": { zh: "把「{source}」并入「{target}」?「{source}」删除", en: "Fold “{source}” into “{target}”? “{source}” is deleted." },
+  "topics.mergeYes": { zh: "并入", en: "Merge" },
+  "topics.merged": { zh: "已合并", en: "Merged" },
   // 新建标签(user-44 第二刀):面头按钮开一行输入框,与改名行同形。
   "topics.newBtn": { zh: "+ 新建标签", en: "+ New tag" },
   "topics.newPh": { zh: "标签名", en: "Tag name" },
