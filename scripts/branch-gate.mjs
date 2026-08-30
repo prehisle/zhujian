@@ -1,9 +1,18 @@
 #!/usr/bin/env node
-// 分支闸:**私有仓 master 只接收「公开 CI 已经绿过」的树**(520 立,用户点名要)。
+// 分支闸:**动了产品面就送公开 CI 验,但落地不等裁决 —— 「先落地、红了再修」**。
+//
+// ⚠⚠ **541(2026-08-30)用户拍板把 520 的原形翻掉了**,别照旧读成「绿了才落地」:
+//   ·520 立的原形 = `land` 等 CI 绿(用户点名要「私有 master 只接收公开 CI 绿过的树」);
+//   ·541 改成 = `verify` 照旧推闸分支触发 CI(它从此是**警报**),`land` **不等结论**;
+//     红了靠三样兜底:**失败邮件** + **开工前 `gh run list` 那一眼**(505)+ **今晚夜跑**。
+//   ·判据、样本边界(闸同步等待期间拦下真坏树 0 次,但样本里产品代码几乎没动)、
+//     以及**退回同步闸的门**,都在 dev-and-testing「分支闸」那节 —— ⛔ 要翻回去先读它。
+// ⛔ **「不等」不是「无视」**:`land` 那一刻 CI 已经答了 **red** 就拒 —— 不等的是
+//   还没出的结论,不是已经出了的红。红了修完再来,这是「红了再修」的「修」被强制执行的挂点。
 //
 //   node scripts/branch-gate.mjs verify    把当前这棵树推到公开仓的一条闸分支,CI 就跑起来
-//   node scripts/branch-gate.mjs status    问那棵树的 CI 绿了没(⛔ 别前台等,过会儿再问)
-//   node scripts/branch-gate.mjs land      fail-closed:绿了才落地(私有 master + 公开 main)
+//   node scripts/branch-gate.mjs land      落地(私有 master + 公开 main);⛔ 已知红拒
+//   node scripts/branch-gate.mjs status    问那棵树的 CI 结论(不用等它才 land;红了要修)
 //   node scripts/branch-gate.mjs abandon   放弃这一趟,把公开仓本地 main 退回 origin/main
 //   node scripts/branch-gate.mjs sweep     清掉**本环境**留下的孤儿闸分支(529 加,见下面 sweep())
 //
@@ -30,8 +39,9 @@
 // ⚠ **两处诚实边界,别读大了**:
 //   ①**这是脚本闸不是平台闸** —— 谁直接敲 `git push origin master` 都绕得过去。它与
 //     dev-and-testing 那六条规矩同级:绑在可观测的东西上的纪律,不是不可逾越的墙。
-//   ②**落地会比以前慢** —— 整趟 CI 约 29 分钟(493 实测),`land` 之前 master 是不动的。
-//     ⛔ 但**别前台等**(memory `dont-block-on-ci`):verify 完就去做别的,回来再 land。
+//   ②**541 起「红树进 master」从「不可能」变成「窗口 ≤ 一趟 CI」** —— land 时结论未出的
+//     那棵树若最终红了,它已经在两仓里。这是用户知情接受的取舍(换掉的是每笔 29 分钟等待);
+//     兑现「红了再修」靠上面头注那三样,⛔ 别把其中任何一样当成可省。
 
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
@@ -234,6 +244,37 @@ function gatedDelta() {
   return files.filter((f) => GATED_PATHS.some((p) => (p.endsWith("/") ? f.startsWith(p) : f === p)));
 }
 
+// ── 「这一轮是不是纯版本号 bump」(541 立,backlog 测试与工装 56 的落点)────────────
+// 发版 bump 那笔(七处版本串 + 四份 lock)恒命中 `src-tauri/` 与 `android/src-tauri/`
+// ⇒ 539 实测它一定触发闸,白烧一趟 CI 还可能收一封 e2e 抖动的假红邮件。
+// 而那棵树 = 上一棵树 + 版本串,发版的安全判据在 release 线的 preflight(它全跑、fail-closed)。
+//
+// ⭐ **判定是内容级的,不只看文件名**:两层都过才免 ——
+//   ①动过的 gated 文件 ⊆ 下面这张实测白名单(539/491 两笔 bump 的 `git show --name-only`,
+//     两笔逐字相同;package.json / site 那几处不在 GATED_PATHS,轮不到这儿管);
+//   ②那几个文件的 diff 里,每一条 +/- 行都是版本串行(`"version": "x.y.z"` / `version = "x.y.z"`)。
+// ⛔ **fail-closed 的方向要读对**:判不准 ⇒ **照常走闸**,代价只是多跑一趟不等的警报 CI,零风险;
+//   反过来(判宽了把真代码改动放进免闸路)才是要防的,所以 ② 对 lock 也逐行核 ——
+//   ⚠ 539 那格判例:`android/src-tauri/Cargo.lock` 里 `pkg-config` 的版本恰好也是 0.3.33,
+//   **按行模式核**(整行是不是版本串)不会被它骗,按「含不含那个串」核就会。
+const BUMP_FILES = new Set([
+  "src-tauri/tauri.conf.json", "src-tauri/Cargo.toml", "src-tauri/Cargo.lock",
+  "android/src-tauri/tauri.conf.json", "android/src-tauri/Cargo.toml", "android/src-tauri/Cargo.lock",
+]);
+const BUMP_LINE = /^[+-]\s*(?:"version":\s*"\d+\.\d+\.\d+",?|version\s*=\s*"\d+\.\d+\.\d+")\s*$/;
+
+function versionBumpOnly(gatedFiles) {
+  if (!gatedFiles.length || !gatedFiles.every((f) => BUMP_FILES.has(f))) return false;
+  let diff;
+  try {
+    diff = git(repoRoot, ["diff", "-U0", "origin/master...HEAD", "--", ...gatedFiles]);
+  } catch {
+    return false; // 问不出 diff ⇒ 当不是纯 bump,照常走闸(fail-closed 的便宜方向)。
+  }
+  const changed = diff.split("\n").filter((l) => /^[+-]/.test(l) && !/^(\+\+\+|---)/.test(l));
+  return changed.length > 0 && changed.every((l) => BUMP_LINE.test(l));
+}
+
 // ── 「私有仓落后了吗」─────────────────────────────────────────────────────────
 // ⛔ **承重的不只是这道检查本身,还有它排在第几位**(backlog 46;527 实撞,不是推断)。
 //    527 那趟 `land` 的顺序是「①推公开 main → ②删闸分支 → ③**这才**问私有仓」,而 ① 推上去的
@@ -382,6 +423,13 @@ function verify() {
     console.log(`   ⇒ 直接 \`node scripts/branch-gate.mjs land\`,它会导出 + 推公开 main + 推私有 master。`);
     return;
   }
+  // ⭐ 541:纯版本号 bump 轮不为它烧一趟 CI(判据与 fail-closed 方向在 versionBumpOnly 头上)。
+  if (versionBumpOnly(pd)) {
+    console.log(`⚠ **走闸的面只有版本号 bump**(${pd.join(" / ")},且 diff 逐行都是版本串)⇒ 不走闸(541 起)。`);
+    console.log(`   发版的安全判据在 release 线的 preflight(打 tag 全跑、fail-closed),这里省的只是一趟警报。`);
+    console.log(`   ⇒ 直接 \`node scripts/branch-gate.mjs land\`。`);
+    return;
+  }
   console.log(`本轮动了要走闸的面 ${pd.length} 处(${pd.slice(0, 4).join(" / ")}${pd.length > 4 ? " …" : ""})⇒ 走闸。\n`);
 
   // ⛔⛔ **这一问必须排在 sync 之前**(521 补二栽的就是这个):放在后面问,东西已经被
@@ -410,8 +458,9 @@ function verify() {
   // ⭐ 推完再清 —— 当前这条已经在远端了,`sweep` 按名字把它排掉,剩下的就都是孤儿。
   sweep({ quiet: true });
 
-  console.log(`\n⭐ 去做别的(⛔ 别前台等,整趟约 29 分钟)。回来跑:`);
-  console.log(`   node scripts/branch-gate.mjs status`);
+  console.log(`\n⭐ CI 跑起来了(警报,541 起**不必等它**)。接着就落地:`);
+  console.log(`   node scripts/branch-gate.mjs land`);
+  console.log(`   (它红了会发失败邮件;想看结论:node scripts/branch-gate.mjs status)`);
 }
 
 // ── status ────────────────────────────────────────────────────────────────────
@@ -422,8 +471,9 @@ function statusCmd() {
   console.log(`公开仓那笔:${publicSha.slice(0, 7)}`);
   console.log(`CI:${v.state} —— ${v.why}`);
   if (v.url) console.log(`     ${v.url}`);
-  if (v.state === "green") console.log(`\n⇒ 可以落地:node scripts/branch-gate.mjs land`);
-  if (v.state === "red") console.log(`\n⇒ 修完再 verify 一趟(闸分支会强推覆盖,那是设计内的)。`);
+  if (v.state === "red") console.log(`\n⇒ **修**(「先落地、红了再修」的后半句就是这儿)。已 land 的话修完走正常轮次;`);
+  if (v.state === "red") console.log(`   还没 land 的话修完重跑 verify(闸分支会强推覆盖,那是设计内的)。`);
+  if (v.state !== "red") console.log(`\n(541 起 land 不等这个结论 —— 这条命令是给「红了要修」和「想安心」用的。)`);
   process.exit(v.state === "green" ? 0 : 1);
 }
 
@@ -442,17 +492,22 @@ function land() {
   //    (纯文档 / 535 那条不走闸的路)。两种都放行,**第三种在函数里当场停**。
   assertPublicMainBound();
 
-  // ④⭐ **535:没动那几面 ⇒ 不走闸,直接落地**(判据与三处诚实边界在 `gatedDelta()` 头上)。
+  // ④⭐ **535:没动那几面 ⇒ 不走闸,直接落地**(判据与三处诚实边界在 `gatedDelta()` 头上);
+  //    **541 起纯版本号 bump 轮走同一条路**(判据在 `versionBumpOnly()` 头上)。
   //    ⚠ 与下面那条「纯文档轮」**不是同一条路,别合并**:那条是「压根没东西进公开仓」
-  //    ⇒ 只推私有;这条是「有东西进公开仓、但不值得为它等 29 分钟」⇒ **照样把公开 main 推上去**
-  //    (公开快照该保持跟手 —— 它是 CI 与外部读者看到的那棵树),只是不等裁决。
+  //    ⇒ 只推私有;这条是「有东西进公开仓、但不值得为它烧一趟 CI」⇒ **照样把公开 main 推上去**
+  //    (公开快照该保持跟手 —— 它是 CI 与外部读者看到的那棵树)。
   //    ⛔ 别为了省事改成「也不推公开仓」:那会让快照一直落后,而夜跑验的正是它。
-  if (!gatedDelta().length) {
+  const pd = gatedDelta();
+  const bumpOnly = pd.length > 0 && versionBumpOnly(pd);
+  if (!pd.length || bumpOnly) {
     const d0 = exportDelta();
     if (d0.state === "none") {
       console.log(`⚠ 这一轮**没动那几面、也没有东西进公开仓**(纯文档)⇒ 只推私有 master。`);
     } else if (d0.state === "some") {
-      console.log(`⚠ 这一轮**没动那几面** ⇒ 不等 CI 裁决,直接导出并推公开 main(535 起的形)。`);
+      console.log(bumpOnly
+        ? `⚠ 这一轮走闸的面**只有版本号 bump** ⇒ 不烧 CI,直接导出并推公开 main(541 起;发版判据在 release preflight)。`
+        : `⚠ 这一轮**没动那几面** ⇒ 直接导出并推公开 main(535 起的形)。`);
       console.log(`   ⛔ 这不等于「验过了」:兑现物是**今晚那趟夜跑**(19:30Z),红了会发邮件。`);
       try {
         execFileSync(process.execPath, ["scripts/sync-public.mjs"], { cwd: repoRoot, stdio: "inherit" });
@@ -489,12 +544,16 @@ function land() {
     }
     gitProxy(target, ["fetch", "origin", "main"]);
     const mainSha = git(target, ["rev-parse", "origin/main"]);
+    // 541:与 ⑥ 同一把尺 —— **已知红才拒**(green / running / unknown 都放行)。
+    // 这儿问的是 main 当前那笔 = 当前代码面:它红着就先修它,别往红树上继续摞。
     const v0 = ciVerdict(mainSha);
-    if (v0.state !== "green") {
-      die(`公开仓 main 当前那笔(${mainSha.slice(0, 7)})的 CI 不是绿的:${v0.state} —— ${v0.why}\n  ⛔ 闸不放行。`);
+    if (v0.state === "red") {
+      die(`公开仓 main 当前那笔(${mainSha.slice(0, 7)})的 CI **已经红了**:${v0.why}${v0.url ? `\n  ${v0.url}` : ""}\n  ⛔ 「先落地、红了再修」的「修」就是现在 —— 先把它修绿。`);
     }
     console.log(`⚠ 这一轮**没有东西进公开仓**(纯文档 / 全在排除单里)⇒ 代码面一个字没动。`);
-    console.log(`✅ 公开 main ${mainSha.slice(0, 7)} 的 CI 是绿的:${v0.url}`);
+    console.log(v0.state === "green"
+      ? `✅ 公开 main ${mainSha.slice(0, 7)} 的 CI 是绿的:${v0.url}`
+      : `⚠ 公开 main ${mainSha.slice(0, 7)} 的 CI 尚无结论(${v0.state})—— 541 起不等;红了会有邮件。`);
     landPrivateOnly();
     return;
   }
@@ -509,12 +568,16 @@ function land() {
     );
   }
 
-  // ⑥CI 必须绿,且绿的是**这个 sha**。
+  // ⑥ 541 起**不等裁决**(用户拍板「先落地、红了再修」;520 原形是「必须绿」)。
+  //    ⛔ 但**已知红不落地** —— 这一刻 gh 已经答了 red,落下去就不是「不等」是「无视」。
+  //    问的仍是**这个 sha**(绑定那格一个字没动);green / running / unknown 都放行。
   const v = ciVerdict(publicSha);
-  if (v.state !== "green") {
-    die(`CI 不是绿的:${v.state} —— ${v.why}${v.url ? `\n  ${v.url}` : ""}\n  ⛔ 闸不放行(这正是它存在的理由)。`);
+  if (v.state === "red") {
+    die(`CI **已经红了**:${v.why}${v.url ? `\n  ${v.url}` : ""}\n  ⛔ 「不等裁决」不等于「无视已出的红」—— 修完重跑 verify 再来。`);
   }
-  console.log(`✅ CI 绿:${v.url}`);
+  console.log(v.state === "green"
+    ? `✅ CI 绿:${v.url}`
+    : `⚠ CI 尚无结论(${v.state}${v.url ? `,${v.url}` : ""})—— 541 起不等;红了会发失败邮件 + 开工前那一眼(505)+ 今晚夜跑兜底。`);
 
   // ⑦公开 main ← 那一笔(快进,同一个 sha)+ 删闸分支。
   console.log(`→ 公开仓 main ← ${publicSha.slice(0, 7)}(同一笔提交,快进)…`);
@@ -527,7 +590,9 @@ function land() {
   }
 
   landPrivateOnly();
-  console.log(`⭐ 这棵树的公开 CI 是绿的,而落上去的**就是被验的那一笔**。`);
+  console.log(v.state === "green"
+    ? `⭐ 这棵树的公开 CI 是绿的,而落上去的**就是被验的那一笔**。`
+    : `⭐ 落上去的就是送验的那一笔;CI 结论还没出(541 起不等)—— 红了以失败邮件为号,修就是了。`);
 }
 
 // 私有仓那半 —— 两条路(正常闸 / 无导出面)共用。
@@ -569,10 +634,10 @@ function abandon() {
 
 const table = { verify, status: statusCmd, land, abandon, sweep };
 if (!table[cmd]) {
-  console.error("用法:node scripts/branch-gate.mjs verify|status|land|abandon|sweep");
+  console.error("用法:node scripts/branch-gate.mjs verify|land|status|abandon|sweep");
   console.error("  verify   把这棵树推到公开仓闸分支,CI 跑起来(末尾自动 sweep 一次)");
-  console.error("  status   问 CI 绿了没(三态:green / running / red / unknown)");
-  console.error("  land     fail-closed:绿了才落地(公开 main + 私有 master)");
+  console.error("  land     落地(公开 main + 私有 master);541 起不等 CI 结论,⛔ 已知红拒");
+  console.error("  status   问 CI 结论(green / running / red / unknown;红了要修)");
   console.error("  abandon  放弃这一趟,公开仓本地退回;私有仓不动");
   console.error("  sweep    清掉**本环境**留下的孤儿闸分支(先取消它的 run,再删分支)");
   process.exit(1);
