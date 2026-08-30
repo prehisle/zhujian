@@ -8,7 +8,7 @@
 // 行的形,纯 CSS)。此前 6 节 30 多行控件全在同一个滚动流里,要改备份落点得滚过热键 /
 // 外观 / 语言 / 字号 / 别名(444 实测面板整高 2546px,而它之前是 6649px)。
 import { invoke } from "@tauri-apps/api/core";
-import { buildBackupSection, closeBackupSection } from "./backup";
+import { buildBackupSection, closeBackupSection, noteFold } from "./backup";
 import { reminderCfg, saveReminderCfg, reminderPermissionOk, sendTestNotification } from "./reminder";
 import { currentZoomPercent, zoomIn, zoomOut, zoomReset, onZoomChange } from "./zoom";
 import { currentThemeMode, setThemeMode, type ThemeMode } from "./theme-mode";
@@ -92,7 +92,20 @@ const CATS: { cat: SettingsCat; label: string }[] = [
 
 function renderPanel(panel: HTMLDivElement, initial: SettingsCat): void {
   panel.innerHTML = "";
-  panel.appendChild(el("h2", "settings-title settings-head", t("settings.title")));
+  // 标题行 + ✕(2026-08-31 用户点名「只能点面板外关」)。Esc 与点外面照旧;✕ 是显式
+  // 关闭意图,⛔ 不套 `!recording` 保护(那两道是防误触,这枚不是误触)—— closePanel
+  // 自己会先 stopRecording,收干净。形照留言面板的 `.cm-close`(✕ 是符号不进字典,
+  // title / aria-label 走字典)。
+  const head = document.createElement("div");
+  head.className = "settings-head";
+  const close = document.createElement("button");
+  close.className = "settings-close";
+  close.textContent = "✕";
+  close.title = t("settings.closeTitle");
+  close.setAttribute("aria-label", t("settings.closeTitle"));
+  close.addEventListener("click", () => closePanel());
+  head.append(el("h2", "settings-title", t("settings.title")), close);
+  panel.appendChild(head);
 
   const cols = document.createElement("div");
   cols.className = "settings-cols";
@@ -178,9 +191,11 @@ function buildPane(cat: SettingsCat, pane: HTMLElement): void {
   // 备份(412,backup-plan 笔①-a):与上面几样一样是**每台机器自己的事**(钥与落点
   // 都在本机配置,不进 DB、不同步)。整节住 src/backup.ts —— 这里只挂标题与位置。
   // ⚠ 恢复那半也在这一节里(§16),故左栏那枚按钮叫「备份与恢复」。
+  // ⭐ 三段长说明(是什么 / §9 那两段边界)收进一只「说明」折叠(2026-08-31 用户拍板
+  // 「收纳不删」—— 此前字典里那句「常驻」被用户当面重议;⛔ 内容与措辞一字没动)。
   pane.append(
     el("h2", "settings-title settings-sect", t("backup.title")),
-    el("p", "settings-sub", t("backup.sub")),
+    noteFold(t("backup.sub"), t("backup.footSecrets"), t("backup.footUninstall")),
     buildBackupSection(),
   );
 }

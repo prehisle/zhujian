@@ -8,6 +8,10 @@ export const settings = defineMessages({
   // 就是同一件事,分成两个键迟早会漂。
   "settings.catGeneral": { zh: "通用", en: "General" },
   "settings.catBackup": { zh: "备份与恢复", en: "Backup & restore" },
+  // 标题行的 ✕(2026-08-31 用户点名「只能点面板外关」——Esc 与点外面一直能关,缺的是看得见的入口)。
+  "settings.closeTitle": { zh: "关闭", en: "Close" },
+  // 「说明 ▸」折叠(2026-08-31 用户拍板「收纳不删」):长段说明默认收起、点开全文。
+  "settings.notes": { zh: "说明", en: "Details" },
   "settings.hotkeysTitle": { zh: "快捷键", en: "Shortcuts" },
   "settings.hotkeysIntro": { zh: "全局快捷键——在任何程序里都能唤起朱简。若和别的软件撞了用不了,在这里换一个。", en: "Global shortcuts — summon Zhujian from anywhere. If one clashes with another app, change it here." },
   "settings.captureWin": { zh: "捕获窗", en: "Capture window" },

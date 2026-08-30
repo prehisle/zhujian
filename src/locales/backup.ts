@@ -41,6 +41,12 @@ export const backup = defineMessages({
   // 名字 / 扩展名 / 大小都证明不了一份备份能不能打开,只有真解一遍才算。
   "backup.listName": { zh: "已有备份", en: "Existing backups" },
   "backup.listDesc": { zh: "落点目录里的 .zjbak(能不能打开要点「验证」才知道)", en: "The .zjbak files in the folder above (only Verify can tell you whether one opens)" },
+  // 折叠态那行汇总(2026-08-31 用户拍板「整节默认折叠」)。⛔ 「最新」说的是**盘上改动时刻**,
+  // 与「能不能打开」无关 —— 别把这行写成任何形式的「有 N 份好备份」。
+  "backup.listSummary": { zh: "{n} 份 · 最新 {when}", en: "{n} {n|file|files} · latest {when}" },
+  "backup.listSummaryBare": { zh: "{n} 份", en: "{n} {n|file|files}" },
+  "backup.listShow": { zh: "展开", en: "Show" },
+  "backup.listHide": { zh: "收起", en: "Hide" },
   "backup.listReload": { zh: "刷新", en: "Refresh" },
   "backup.listEmpty": { zh: "这个目录里还没有备份文件。", en: "No backup files in this folder yet." },
   "backup.listUnverified": { zh: "还没验过", en: "Not verified yet" },
@@ -51,7 +57,8 @@ export const backup = defineMessages({
   // 坏配置:⛔ 绝不许在这里「重新设置一次」(那会换一把钥,已有备份从此打不开)。
   "backup.problemLead": { zh: "⛔ 备份设置有问题:", en: "⛔ Something is wrong with the backup settings: " },
   "backup.problemHint": { zh: "别重新设置一次——那会生成一把新的备份钥,已有的备份文件将永远打不开。先把那个文件修好或找回。", en: "Do not simply set it up again — that generates a new key and your existing backups would never open again. Repair or restore that file first." },
-  // 常驻的两条诚实边界(§9;⛔ 不是修辞,别删)。
+  // 两条诚实边界(§9;⛔ 不是修辞,别删)。⚠ 2026-08-31 起不再**常驻**:与 backup.sub 一起
+  // 收进 pane 顶「说明」折叠(用户当面拍板「收纳不删」)—— 动的只是默认显不显,措辞照旧受 §9 管。
   "backup.footUninstall": { zh: "⚠ 卸载朱简不会删掉备份钥和数据目录。要彻底清干净得手动删——但删之前先确认备份码另有一份独立副本,否则你存在外面的备份可能永远解不开。", en: "⚠ Uninstalling Zhujian does not delete the backup key or the data folder. Clearing them is manual — but first make sure the backup code exists somewhere else, or the backups you keep elsewhere may never open again." },
   "backup.footSecrets": { zh: "⚠ 备份文件里含这台设备的同步身份与账户密钥(否则恢复出来的库同步不了)——拿到备份文件加备份码,就等于拿到这个账户的完整读写能力。", en: "⚠ A backup contains this device's sync identity and account key (otherwise a restored library could not sync) — a backup file plus the code is full read/write access to the account." },
   // 自动备份(笔①-b,§15.5)。⛔ 频率与份数是**变量**:那个文件可以手改,写死就会说谎。

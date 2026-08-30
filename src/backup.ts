@@ -81,13 +81,28 @@ type Report = {
 /** 仪式进行中(码已显示、还没核对)。关面板时据此通知后端把那把钥丢掉。 */
 let ceremonyOpen = false;
 
-/** 「备份」一节的整块。设置面板每次打开重建一只。 */
+/**
+ * 「说明 ▸」折叠(2026-08-31 用户拍板「收纳不删」):长段说明默认收起、点开全文。
+ * ⛔ **收纳不是删**:backup-plan §9 那几段诚实边界一字不动地住在里面 —— 这只构件动的
+ * 只是「默认显不显」,别拿它当「这段可以砍」的许可。原生 `<details>`:零状态、面板重建即回到收起。
+ */
+export function noteFold(...texts: string[]): HTMLElement {
+  const d = document.createElement("details");
+  d.className = "settings-notes";
+  const s = document.createElement("summary");
+  s.textContent = t("settings.notes");
+  d.appendChild(s);
+  for (const x of texts) d.appendChild(el("p", "settings-sub", x));
+  return d;
+}
+
+/** 「备份」一节的整块。设置面板每次打开重建一只。
+ *  ⚠ §9 那两段常驻边界(footSecrets / footUninstall)不在这儿了 —— 收进 settings.ts
+ *  pane 顶的「说明」折叠(与 backup.sub 同一只)。 */
 export function buildBackupSection(): HTMLElement {
-  const wrap = document.createElement("div");
   const body = el("div", "bkup-body", t("common.loading"));
-  wrap.append(body, el("p", "settings-foot", t("backup.footSecrets")), el("p", "settings-foot", t("backup.footUninstall")));
   void refresh(body);
-  return wrap;
+  return body;
 }
 
 /**
@@ -276,38 +291,69 @@ function renderRestored(out: HTMLElement, r: Restored): void {
 function buildListSection(): HTMLElement {
   const wrap = document.createElement("div");
   const head = el("div", "hkset-row", "");
-  const out = el("div", "bkup-out", "");
-  const reload = button(t("backup.listReload"), () => void loadList(out));
-  head.append(
-    el("div", "hkset-name", t("backup.listName")),
-    el("div", "hkset-desc", t("backup.listDesc")),
-    reload,
-  );
-  wrap.append(head, out);
-  void loadList(out);
+  // ⭐ 2026-08-31 用户拍板「整节默认折叠」:头行只剩 名字 + 一行汇总 + 「展开」,
+  // 列表(与它的说明句、「刷新」)全住进折叠区。⛔ **列表照旧开面板就加载**(汇总要数),
+  // 折叠只是 `hidden` —— DOM 恒建,e2e 与「点开就在」都靠这一点。
+  // ⛔ 默认态**恒为收起、刻意不记住**(每次打开都收,这正是这刀的目的)。
+  // ⚠ `bkup-list-sum` 只是给 e2e 与 loadList 一个准头(`.hkset-desc` 在这节里不唯一),没有样式。
+  const summary = el("div", "hkset-desc bkup-list-sum", "");
+  const zone = el("div", "bkup-out bkup-list", "");
+  zone.hidden = true;
+  const toggle = button(t("backup.listShow"), () => {
+    zone.hidden = !zone.hidden;
+    toggle.textContent = zone.hidden ? t("backup.listShow") : t("backup.listHide");
+  });
+  head.append(el("div", "hkset-name", t("backup.listName")), summary, toggle);
+
+  const out = el("div", "", "");
+  const tools = el("div", "bkup-list-tools", "");
+  const reload = button(t("backup.listReload"), () => void loadList(out, summary));
+  tools.append(el("p", "settings-sub bkup-list-hint", t("backup.listDesc")), reload);
+  zone.append(tools, out);
+
+  wrap.append(head, zone);
+  void loadList(out, summary);
   return wrap;
 }
 
-async function loadList(out: HTMLElement): Promise<void> {
+async function loadList(out: HTMLElement, summary: HTMLElement): Promise<void> {
   out.replaceChildren(el("p", "hkset-msg", t("common.loading")));
   let list: Entry[];
   try {
     list = await invoke<Entry[]>("backup_list");
   } catch (e) {
+    // 折叠着也要看得见出了事:汇总位显后端原话(展开区里同一句)。
+    summary.textContent = String(e);
     out.replaceChildren(el("p", "hkset-msg err", String(e)));
     return;
   }
   out.replaceChildren();
   if (list.length === 0) {
+    summary.textContent = t("backup.listEmpty");
     out.appendChild(el("p", "hkset-msg", t("backup.listEmpty")));
     return;
   }
+  // 汇总 = 盘上事实(份数 + 最新改动时刻)。⛔ 与行里那两格同一条纪律:这不是「有 N 份好备份」。
+  const newest = Math.max(0, ...list.map((e) => e.modified_ms ?? 0));
+  summary.textContent =
+    newest > 0
+      ? t("backup.listSummary", { n: list.length, when: when(newest) })
+      : t("backup.listSummaryBare", { n: list.length });
   for (const e of list) out.appendChild(listRow(e));
 }
 
 function listRow(e: Entry): HTMLElement {
   const row = el("div", "bkup-item", "");
+  // ⭐ 66 字符的文件名默认藏起(2026-08-31 同一刀):平时一行只显 大小·时刻·状态·验证,
+  // 点行任意空白处摊开/收回文件名;hover 的 title 也给全名。⛔ `textContent` 恒在 ——
+  // e2e 与 §3.3 那条「冒牌货也得在列」的义务都按 DOM 读,藏的只是版面。
   const name = el("span", "bkup-item-name", e.file_name);
+  name.hidden = true;
+  row.title = e.file_name;
+  row.addEventListener("click", (ev) => {
+    if (ev.target instanceof Element && ev.target.closest("button")) return;
+    name.hidden = !name.hidden;
+  });
   // 盘上事实那半:大小 + 改动时刻。⛔ 这两格**不是**「它是不是一份好备份」。
   const facts = el("span", "bkup-item-meta", `${size(e.bytes)}${e.modified_ms ? " · " + when(e.modified_ms) : ""}`);
   // ⭐ 默认就是这句「还没验过」,不是空白也不是「有效」。
@@ -401,13 +447,9 @@ function renderAuto(wrap: HTMLElement, a: AutoStatus): void {
     toggle,
   );
 
-  wrap.append(
-    row,
-    // ⭐ 值从状态读(⛔ 别写死),⛔ 那句承诺按 §15.3 末的措辞写。
-    el("p", "settings-sub", t("backup.autoDesc", { every: everyText(a.every_minutes), keep: a.keep })),
-    el("p", "settings-sub", t("backup.autoManualSafe")),
-    msg,
-  );
+  wrap.append(row, msg);
+  // 「上次自动备份」是**状态**,常驻;下面两句是**规则解释**,收进「说明」折叠
+  // (2026-08-31 用户拍板「收纳不删」)。⛔ 值仍从状态读、措辞仍按 §15.3 —— 收纳不动这两条。
   if (a.last_success_at || a.last_result) {
     wrap.appendChild(
       el(
@@ -420,6 +462,9 @@ function renderAuto(wrap: HTMLElement, a: AutoStatus): void {
       ),
     );
   }
+  wrap.appendChild(
+    noteFold(t("backup.autoDesc", { every: everyText(a.every_minutes), keep: a.keep }), t("backup.autoManualSafe")),
+  );
   // ⭐ 那枚「结论没能记下来」的通知:它只活在进程内,拉到就得显(设计审 H5)。
   if (a.pending_notice) wrap.appendChild(el("p", "hkset-msg err", a.pending_notice));
 

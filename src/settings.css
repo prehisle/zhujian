@@ -65,8 +65,15 @@
 .settings-panel {
   width: min(720px, calc(100vw - 48px));
   /* 412:面板长到装不下了(热键 2 + 外观 + 语言 + 字号 + 别名 + 备份)。不封高的话
-     底部那几节在矮窗上直接够不着——不是"看着挤",是**点不到**。 */
-  max-height: calc(100vh - 48px);
+     底部那几节在矮窗上直接够不着——不是"看着挤",是**点不到**。
+     ⭐ 2026-08-31 从 `max-height` 改成**定高**(用户点名):max-height 只是上限、实高由
+     当前分类的内容撑 ⇒ 切「通用 / 快捷键 / 备份与恢复」时面板高度跳变。定高之后内容差
+     全由右栏滚动吸收,短的那类下方留白 —— 那是标准设置窗的形,不是缺陷。
+     780 是量出来的(WebView2 真 app,CDP 读 `.settings-content` 的 scrollHeight):
+     最高的「通用」内容自然高 724 + 标题行 55 ≈ 779 ⇒ 780 让它恰好不滚;快捷键与
+     备份(列表折叠态)都矮于它(读数被容器底 503 顶住 = 真高更小)。
+     ⚠ 默认窗(高 680)上 vh 半接管 ⇒ 面板 632、通用滚一点 —— 那是护栏本来的行为。 */
+  height: min(780px, calc(100vh - 48px));
   /* ⭐ **445:滚动条从面板下放到右栏**(`.settings-content`)。左栏与标题不该跟着内容滚 ——
      滚到备份列表底下时左栏若也滚走了,「换一类」就得先滚回去。
      ⚠ 连带一格:444 记的那条「`overflow-y:auto` 会把 x 轴一并算成 auto ⇒ 出横条」的观测点
@@ -95,9 +102,28 @@
    自己的 DOM 上)⇒ 三个 `.settings-pane` 始终在文档里,非当前那两个带 `hidden`。 */
 .settings-head {
   flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   margin: 0;
   padding: 15px 20px 13px;
   border-bottom: 1px solid var(--line);
+}
+.settings-head .settings-title { margin: 0; }
+/* 标题行的 ✕(2026-08-31):形照留言面板 `.cm-close`,尺寸声明自保 §2.3 热区。 */
+.settings-close {
+  border: none;
+  background: transparent;
+  color: var(--ink-faint);
+  font-size: var(--fs-14);
+  cursor: pointer;
+  width: 28px;
+  height: 24px;
+  line-height: 1;
+  padding: 0;
+}
+.settings-close:hover {
+  color: var(--seal);
 }
 .settings-cols {
   display: flex;
@@ -184,6 +210,26 @@
   font-size: var(--fs-12);
   color: var(--ink-faint);
   line-height: 1.6;
+}
+
+/* 「说明 ▸」折叠(2026-08-31 用户拍板「收纳不删」):原生 <details>,summary 保留
+   系统三角当展开提示。段落是现成的 .settings-sub,只把与下文的间距收一半(在折叠里,
+   16px 的节间距读起来像断开)。summary 的 min-height 声明自保 §2.3 热区。 */
+.settings-notes {
+  margin: 0 0 14px;
+}
+.settings-notes summary {
+  font-size: var(--fs-12);
+  color: var(--ink-faint);
+  cursor: pointer;
+  min-height: 24px;
+  padding: 3px 0;
+}
+.settings-notes summary:hover {
+  color: var(--ink);
+}
+.settings-notes .settings-sub {
+  margin: 6px 0 0;
 }
 
 /* 一行 = 一枚热键:左边名字,右边当前键 + 更改按钮。
@@ -471,8 +517,32 @@
   flex-wrap: wrap;
   align-items: baseline;
   gap: 2px 10px;
-  min-width: 0;
   padding: 5px 0 5px 2px;
+  /* ⭐ 2026-08-31:文件名默认藏、点行摊开 ⇒ 行自己成了可点物,给出可点暗示 +
+     §2.3 热区自保(高 = min-height 声明;宽 = 内容撑的整行,⛔ **刻意不写 min-width:0 /
+     width** —— 它爹是普通 div、这里的 min-width:0 本就是块级冗余,而任何显式宽度值都会
+     让热区闸把「整行可点」误读成「宽 0」)。 */
+  cursor: pointer;
+  min-height: 24px;
+  border-radius: var(--radius-sm);
+  transition: background 0.14s;
+}
+.bkup-item:hover {
+  background: color-mix(in srgb, var(--ink) 4%, transparent);
+}
+/* 展开区顶那一行:说明句 + 「刷新」同排(说明可折行,钮不折)。 */
+.bkup-list-tools {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+.bkup-list-tools .bkup-list-hint {
+  flex: 1;
+  margin: 0 0 6px;
+}
+.bkup-list-tools button {
+  flex: none;
+  white-space: nowrap;
 }
 .bkup-item-name {
   order: 2; /* 掉到第二行 */

@@ -158,10 +158,25 @@ describe("加密备份(笔①-a):仪式 → 备份 → 产物在列", () => {
     writeFileSync(join(dir, fake), Buffer.alloc(4096, 0x5a));
 
     await openBackupSection();
+    // ⭐ 列表**默认折叠**(2026-08-31 用户拍板):DOM 恒建(汇总要数、e2e 靠它),
+    // 版面收起 —— 所以「行数到位」用 $$ 等(不判可见),「用户看得见」另断。
     await browser.waitUntil(async () => (await $$(".bkup-item")).length === 2, {
       timeout: 10000,
       timeoutMsg: "冒牌货该和真产物一起被列出来(列表只回盘上事实,不判有效性)",
     });
+    expect(await (await $(".bkup-list")).isDisplayed()).toBe(false);
+    // 折叠着也要有一行汇总(份数是盘上事实,与「能不能打开」无关)。
+    const sum = await browser.execute(
+      () => document.querySelector(".bkup-list-sum").textContent.trim(),
+    );
+    expect(sum).toContain("2 份");
+    // 点「展开」:列表可见,后面那些 shownText 断言才有意义(它对不可见元素直接抛)。
+    await clickByText("展开");
+    expect(await (await $(".bkup-list")).isDisplayed()).toBe(true);
+    // ⭐ 文件名默认也藏(同一刀的第二半):行可见、名字那格不可见;点行摊开后可见。
+    expect(await (await $(".bkup-item-name")).isDisplayed()).toBe(false);
+    await browser.execute(() => document.querySelector(".bkup-item").click());
+    expect(await (await $(".bkup-item-name")).isDisplayed()).toBe(true);
 
     // ⭐ 默认每一行都是「还没验过」—— ⛔ 不是空白、更不是「有效」。这就是那条义务的 UI 面。
     const states = await browser.execute(() =>
