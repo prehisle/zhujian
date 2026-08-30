@@ -9,6 +9,7 @@
 // 外观 / 语言 / 字号 / 别名(444 实测面板整高 2546px,而它之前是 6649px)。
 import { invoke } from "@tauri-apps/api/core";
 import { buildBackupSection, closeBackupSection } from "./backup";
+import { reminderCfg, saveReminderCfg, reminderPermissionOk, sendTestNotification } from "./reminder";
 import { currentZoomPercent, zoomIn, zoomOut, zoomReset, onZoomChange } from "./zoom";
 import { currentThemeMode, setThemeMode, type ThemeMode } from "./theme-mode";
 import { currentLangChoice, setLangChoice, t, type LangChoice } from "./i18n";
@@ -166,6 +167,10 @@ function buildPane(cat: SettingsCat, pane: HTMLElement): void {
       el("h2", "settings-title settings-sect", t("settings.aliasTitle")),
       el("p", "settings-sub", t("settings.aliasSub")),
       buildAliasRow(),
+
+      el("h2", "settings-title settings-sect", t("reminder.title")),
+      el("p", "settings-sub", t("reminder.sub")),
+      buildReminderRow(),
     );
     return;
   }
@@ -261,6 +266,78 @@ function buildAliasRow(): HTMLDivElement {
   ctrls.className = "alias-ctrls";
   ctrls.append(input, save);
   line.append(el("div", "hkset-name", t("settings.aliasName")), sub, ctrls);
+
+  const wrap = document.createElement("div");
+  wrap.append(line, msg);
+  return wrap as HTMLDivElement;
+}
+
+// ---- 截止提醒(用户面 39 第一版)----
+//
+// 开关 + 报点 + 「试一条」。全部纯设备本地(localStorage,同热键/明暗/字号),调度与
+// 通知在 src/reminder.ts;这里只是它的配置面。「试一条」是用户唯一能确认「通知在这台
+// 机器上真的显得出来」的路(勿扰/专注模式吞通知是安静的),当场把今天的数发一遍。
+function buildReminderRow(): HTMLDivElement {
+  const line = document.createElement("div");
+  line.className = "hkset-row zoom-row";
+
+  const seg = document.createElement("div");
+  seg.className = "seg";
+  const onBtn = el("button", "seg-btn", t("reminder.on")) as HTMLButtonElement;
+  const offBtn = el("button", "seg-btn", t("reminder.off")) as HTMLButtonElement;
+  seg.append(onBtn, offBtn);
+
+  const time = document.createElement("input");
+  time.type = "time";
+  time.className = "remind-time";
+
+  const test = el("button", "hkset-change", t("reminder.test")) as HTMLButtonElement;
+  const msg = el("p", "hkset-msg", "");
+  msg.id = "remind-msg"; // e2e 探针按它认行。⛔ 别改成类:setMsg 会整写 className,类会被冲掉
+
+  const paint = (): void => {
+    const cfg = reminderCfg();
+    onBtn.classList.toggle("on", cfg.on);
+    offBtn.classList.toggle("on", !cfg.on);
+    time.value = cfg.time;
+    time.disabled = !cfg.on;
+  };
+  paint();
+
+  onBtn.addEventListener("click", () => {
+    saveReminderCfg({ ...reminderCfg(), on: true });
+    paint();
+    // 开的那一刻就把权限问清:被系统拒着的话,到点才发现「怎么一直没响」是最糟的形。
+    void reminderPermissionOk().then((ok) => setMsg(msg, ok ? "" : t("reminder.permDenied"), ok ? "" : "err"));
+  });
+  offBtn.addEventListener("click", () => {
+    saveReminderCfg({ ...reminderCfg(), on: false });
+    paint();
+    setMsg(msg, "", "");
+  });
+  time.addEventListener("change", () => {
+    // <input type=time> 清空时 value 是 "":不落半配置,回显已存值。
+    if (!/^\d{2}:\d{2}$/.test(time.value)) {
+      paint();
+      return;
+    }
+    saveReminderCfg({ ...reminderCfg(), time: time.value });
+    setMsg(msg, t("reminder.saved", { time: time.value }), "ok");
+  });
+  test.addEventListener("click", () => {
+    test.disabled = true;
+    sendTestNotification()
+      .then(() => setMsg(msg, t("reminder.testSent"), "ok"))
+      .catch((e) => setMsg(msg, String(e), "err"))
+      .finally(() => {
+        test.disabled = false;
+      });
+  });
+
+  const ctrls = document.createElement("div");
+  ctrls.className = "remind-ctrls";
+  ctrls.append(seg, time, test);
+  line.append(el("div", "hkset-name", t("reminder.rowName")), ctrls);
 
   const wrap = document.createElement("div");
   wrap.append(line, msg);

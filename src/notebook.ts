@@ -15,6 +15,7 @@ import { initTheme } from "./theme-mode";
 import { initUpdate, checkForUpdateOnFocus } from "./update";
 import { armAppContextMenu } from "./context-menu";
 import { initAutoBackupBanner } from "./backup";
+import { initDueReminder } from "./reminder";
 import {
   createSpace,
   currentSpaceId,
@@ -766,6 +767,12 @@ void (async () => {
   // e2e 下根本不起,见 lib.rs)。启动时它还会主动拉一次状态,把「结论没能记下来」
   // 那枚只活在进程内的通知补显出来(backup-plan §15.5)。
   initAutoBackupBanner();
+
+  // 截止提醒(39):每天到点一条系统通知「逾期 M · 今天 N」。开关/报点纯设备本地,
+  // 只挂在 notebook 这一窗(✕ 只是 hide,webview 常驻;capture 不挂 = 单一发声源)。
+  // ⚠ 同 initAutoBackupBanner 不加 PROD 门:e2e 靠注入 zhujian:due-remind-check 事件验
+  // 判定与水位,自动那条首查延后 10 秒 + wdio before 钩子预置「今天已处理」⇒ 测试里安静。
+  initDueReminder();
 
   // Land on the last-used view. Absent or unknown (first run, a since-renamed
   // view name) is the first-run default, not an error path — land on inbox.

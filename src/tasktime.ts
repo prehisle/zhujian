@@ -122,6 +122,13 @@ export function when(iso: string): string {
 
 export type DueState = "none" | "overdue" | "today" | "future";
 
+/** 「逾期 M · 今天 N」/「今天到期 N」—— 看板顶栏汇总钮(502)与截止提醒通知(39)
+ *  共用的一句话。两处必须念同一个数、同一个说法:通知把人引回看板,那枚钮就是落点。
+ *  调用方保证 late+now > 0(两者皆零时钮整枚藏起 / 通知今天不说话)。 */
+export function dueSummaryLabel(late: number, now: number): string {
+  return late > 0 ? t("board.dueSoonLate", { late, now }) : t("board.dueSoonToday", { now });
+}
+
 /** Where a due date sits relative to local today. Both are `YYYY-MM-DD`, so a
  *  plain string compare is a calendar-day compare. */
 export function dueState(due: string | null, today: string): DueState {

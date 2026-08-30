@@ -214,6 +214,16 @@ export const config = {
     await browser.execute(() => {
       for (const k of ["zhujian.capture-draft", "zhujian.inbox-draft", "zhujian.board-draft"])
         localStorage.removeItem(k);
+      // 截止提醒(39)预置「今天已处理」水位:profile 每支 spec 都是新的,不预置的话
+      // 只要墙钟过了默认报点(09:00)、库里又留着别支 spec 的到期卡,每支开跑 10 秒后
+      // 都会真弹一条系统通知(e2e 桌面攒一屏 toast)。它的判定与水位由 due-reminder
+      // spec 用注入事件专门验,那支自己改写这个键。localToday 同款本地日拼法(勿 toISOString)。
+      const d = new Date();
+      const p = (n) => String(n).padStart(2, "0");
+      localStorage.setItem(
+        "zhujian.due-remind.last",
+        `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`,
+      );
     });
     // 清**内容**不删库:删库遇上另一窗还开着连接会走 `blocked`,那一路要么挂住要么静默跳过。
     await browser.executeAsync((done) => {

@@ -31,6 +31,7 @@
     "deep-link:allow-register",
     "clipboard-manager:allow-read-text",
     "clipboard-manager:allow-read-image",
-    "clipboard-manager:allow-write-image"
+    "clipboard-manager:allow-write-image",
+    "notification:default"
   ]
 }

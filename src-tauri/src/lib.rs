@@ -3636,6 +3636,9 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         // 剪贴板读(桌面深链接补路):前端回窗时读一次,合规 zhujian:// 链接才提示打开。
         .plugin(tauri_plugin_clipboard_manager::init())
+        // 截止提醒(用户面 39 第一版):notebook 前端每天到点发一条系统通知。调度、
+        // 开关、报点、文案全在前端(src/reminder.ts;通知文案走 i18n 字典),这里只挂插件。
+        .plugin(tauri_plugin_notification::init())
         // 记住主窗几何(57):尺寸/位置/最大化存 app 配置目录的状态文件,重启后
         // 原样回来;首启无状态文件时窗口保持 tauri.conf.json 默认(1040×680 居中)。
         // capture 是每次居中弹出的浮窗,不该被记住位置。e2e(YS_DB_PATH)换单独

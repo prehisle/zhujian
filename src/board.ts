@@ -54,7 +54,7 @@ import {
 import type { View, ViewCtx } from "./notebook";
 import { applyTagColor } from "./tag-color";
 import { renderTagPicker } from "./tag-picker";
-import { type TaskItem, dayKey, dayLabel, dueState, localToday, metaRow, startOfWeek } from "./tasktime";
+import { type TaskItem, dayKey, dayLabel, dueState, dueSummaryLabel, localToday, metaRow, startOfWeek } from "./tasktime";
 import { identitySig, loadIdentity, signatureChip } from "./identity";
 import { t } from "./i18n";
 import "./board.css";
@@ -2055,8 +2055,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       return;
     }
     dueSoonBtn.hidden = false;
-    dueSoonLbl.textContent =
-      dueLate > 0 ? t("board.dueSoonLate", { late: dueLate, now: dueNow }) : t("board.dueSoonToday", { now: dueNow });
+    dueSoonLbl.textContent = dueSummaryLabel(dueLate, dueNow); // 与截止提醒通知(39)同一把尺
     dueSoonBtn.classList.toggle("late", dueLate > 0);
     dueSoonBtn.classList.toggle("active", dueOnly);
   }

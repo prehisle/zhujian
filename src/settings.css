@@ -522,3 +522,28 @@
 .alias-input::placeholder {
   color: var(--ink-faint);
 }
+
+/* 截止提醒(39):开/关 seg + 报点 time 输入 + 「试一条」。输入框与 .alias-input 同族
+   (同字号/同边框/同圆角档),只是宽度按 HH:MM 收窄;禁用态(开关在「关」)同 alias。 */
+.remind-ctrls {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.remind-time {
+  font-family: var(--font-sans);
+  font-size: var(--fs-13);
+  padding: 4px 6px;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-xs);
+}
+.remind-time:focus {
+  outline: none;
+  border-color: var(--seal-line);
+}
+.remind-time:disabled {
+  opacity: 0.5;
+}

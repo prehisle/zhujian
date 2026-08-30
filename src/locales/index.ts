@@ -10,12 +10,13 @@ import { common } from "./common";
 import { filter } from "./filter";
 import { images } from "./images";
 import { inbox } from "./inbox";
+import { reminder } from "./reminder";
 import { settings } from "./settings";
 import { shell } from "./shell";
 import { sync } from "./sync";
 import { topics } from "./topics";
 
-const parts = [backup, board, capture, chrome, comments, common, filter, images, inbox, settings, shell, sync, topics];
+const parts = [backup, board, capture, chrome, comments, common, filter, images, inbox, reminder, settings, shell, sync, topics];
 {
   const seen = new Set<string>();
   for (const part of parts) {
@@ -36,6 +37,7 @@ export const messages = {
   ...filter,
   ...images,
   ...inbox,
+  ...reminder,
   ...settings,
   ...shell,
   ...sync,
