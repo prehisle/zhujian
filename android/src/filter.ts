@@ -25,6 +25,14 @@ export function soleTopicFilter(f: FilterState): string | null {
   return f.topics.length === 1 && f.topics[0] !== "none" ? f.topics[0] : null;
 }
 
+// 「筛着标签建条目」该自动挂上的标签集 = 选集里的全部具体标签(同桌面 filter-bar.ts;
+// 用户 2026-08-31 拍板「相关的标签都打上」,并同轮要求手机跟上桌面这条行为)。
+// ⛔ "none"(无标签)剔掉:它不是标签,挂不上;只筛它时新条目天然无标签、本就可见。
+// 空数组 = 没什么可挂 ⇒ 调用方改走「清掉筛选让新条目可见」那条路。
+export function autoTagTopicIds(f: FilterState): string[] {
+  return f.topics.filter((tok) => tok !== "none");
+}
+
 // 被筛具体标签的名字列表(供筛空空态提示「「A、B」下没有…」)。none 显「无标签」,
 // id 解析成标签名(找不到 = 已删,显「该标签」占位)。空数组 = 未筛具体标签。
 export function selectedTopicLabels(f: FilterState, all: FilterTopic[]): string[] {

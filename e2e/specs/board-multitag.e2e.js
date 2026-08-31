@@ -1,5 +1,5 @@
 import { $, expect, browser } from "@wdio/globals";
-import { invoke, goNotebook, boardAction, shownText, boardPickTopicPill } from "./support.js";
+import { invoke, goNotebook, boardAction, shownText, boardPickTopicPill, openCompose } from "./support.js";
 
 // Feature 3: a board card carries SEVERAL tags (M:N). Add one via the ＋ picker, drop one
 // via a chip's ✕; the filter bar treats a card as belonging to EACH of its tags.
@@ -259,5 +259,39 @@ describe("任务看板 · 多标签筛选(OR/并集)", () => {
       { timeout: 8000, timeoutMsg: "无标签未与具体标签互斥" },
     );
     expect(await pillActive(idA)).toBe(false);
+  });
+
+  it("筛着甲+乙(并集)新建任务 → 两枚都挂上、新卡留在视野里", async () => {
+    // 用户 2026-08-31 拍板「相关的标签都打上才符合直觉」:此前多选下刻意不猜归属、
+    // 改清标签筛选,现在改为并集里每一枚都挂。头一枚原子随 create_task,其余补挂。
+    const NEW = "E2E-或-筛着两枚建的";
+    await clickPill(idA);
+    await ctrlPill(idB);
+    await browser.waitUntil(async () => (await exists(ONLY_A)) && (await exists(ONLY_B)), {
+      timeout: 8000,
+      timeoutMsg: "甲+乙并集筛选没生效",
+    });
+
+    await openCompose();
+    await browser.execute((v) => {
+      const input = document.querySelector("#compose-input");
+      input.value = v;
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    }, NEW);
+    await $("#compose-add").click();
+
+    // 新卡留在视野 = 至少挂上了并集里的一枚(否则当场被滤掉)。
+    await browser.waitUntil(async () => await exists(NEW), {
+      timeout: 8000,
+      timeoutMsg: "多标签筛选下建的任务没留在视野里",
+    });
+    const tasks = await invoke("list_tasks");
+    const born = tasks.find((t) => t.title === NEW);
+    expect(born).toBeDefined();
+    ids.push(born.id); // 交给 after 清(它按 ids 逐条 archive+purge)
+    expect(born.topics.map((t) => t.title).sort()).toEqual([A, B].sort());
+    // 挂上了就不必清筛选:两枚 pill 仍高亮。
+    expect(await pillActive(idA)).toBe(true);
+    expect(await pillActive(idB)).toBe(true);
   });
 });

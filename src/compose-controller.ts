@@ -36,17 +36,22 @@ export type SaveWiring = {
   command: string;
   /** 空输入策略 + 载荷构造(视图分歧:board 标题必填、拒收时就地提示;inbox 允许纯图)。
    *  返回 null = 本次提交拒收——骨架在取图批**之前**退出,预览区原样不动。
-   *  soleTopic = 载荷已带的单一归属标签(board 的 create_task 原子携带;inbox 的归属
-   *  走 afterCreate 二次挂载,这里缺省)。 */
-  prepare: (submitted: string) => { payload: Record<string, unknown>; soleTopic?: string | null } | null;
+   *  tagged = 载荷已原子带上的标签枚数(board 的 create_task 带头一枚;inbox 缺省 0)。
+   *  autoTags = 还要二次挂载的标签 id(「筛着标签建条目自动挂上」的其余几枚)——**在
+   *  这里冻结**,与图批同理:IPC 往返期间用户点 pill 改了筛选,挂的仍是提交那刻那几枚。 */
+  prepare: (
+    submitted: string,
+  ) => { payload: Record<string, unknown>; tagged?: number; autoTags?: string[] } | null;
   /** 把错误写进落点(board 只写 textContent;inbox 还要掀 hidden)。 */
   showErr: (el: HTMLElement, msg: string) => void;
   /** 创建失败走模块态过桥之后的补刀(inbox:mount 还活着就 refresh 一记,让重建的
    *  bar 当场领走通知)。 */
   onBridgedError?: () => void;
-  /** 建成之后、挂图之前的标签挂载(inbox 二次调 file_note_to_topic,失败 push 提示;
-   *  board 不传——归属已原子随 create_task)。返回值顶替 prepare 的 soleTopic。 */
-  afterCreate?: (id: string, notices: string[]) => Promise<string | null>;
+  /** 建成之后、挂图之前的标签二次挂载(inbox 走 file_note_to_topic、board 走
+   *  add_task_topic —— 命令面按 stage 分家,故挂法留给视图;失败 push 提示)。
+   *  拿到的是 prepare 冻结的那份 autoTags,返回**补挂成功的枚数**(骨架加上
+   *  prepare 的 tagged 即最终枚数)。 */
+  afterCreate?: (id: string, notices: string[], autoTags: string[]) => Promise<number>;
   /** 挂图落定后、unmounted 判定前的通知落点(inbox:拼 notices 过桥进模块态——refresh
    *  会重建 bar,提示恒由新 bar 领走显示,活 mount 与死 mount 同一条路)。 */
   /** `why` = 挂图失败时**说得准的那句话**(538,用户面 56):具体原因,或 `""` = 说不准。
@@ -57,8 +62,9 @@ export type SaveWiring = {
    *  当场亮出来,不在场就过桥;inbox 不传——onSettled 已把提示过完桥)。 */
   onDeadMount?: (failed: number, why: string) => void;
   /** 成功且 mount 还活着的视图收尾(清过滤 / 脉冲 / 重读 / 焦点;board 还在这里写就地
-   *  部分失败提示)。soleTopic = 归属标签的最终值(条件清标签筛选用)。 */
-  onSaved: (id: string, soleTopic: string | null, failed: number, why: string) => void;
+   *  部分失败提示)。tagged = 最终挂上的标签枚数 —— **>0 即「新条目在当前标签筛选下
+   *  必可见」**(OR 并集,挂上任一枚就入选),条件清标签/类型筛选的判据。 */
+  onSaved: (id: string, tagged: number, failed: number, why: string) => void;
 };
 
 export type ComposeController = {
@@ -144,7 +150,8 @@ export function createComposeController(opts: {
       const submitted = w.input.value; // 提交那刻的快照:成功后用它清同内容的输入框/存底
       const prep = w.prepare(submitted);
       if (prep === null) return; // 空输入拒收(策略在视图侧):图批未取,预览区原样不动
-      let soleTopic = prep.soleTopic ?? null;
+      let tagged = prep.tagged ?? 0;
+      const autoTags = prep.autoTags ?? [];
       // 「保存那刻」冻结整份载荷(codex P1 二审 H2):图批同步带走,IPC 等待期间新粘贴
       // 的归下一条。整条链走 invokeInSpace(space)——必落账写不许走「跨空间迟到永不决议」
       // 的统一包装,否则模块级 in-flight 闸的 finally 永不执行、保存锁死(H1)。
@@ -199,7 +206,7 @@ export function createComposeController(opts: {
         clearTextDraft(opts.draftKey); // 模块存底=已保存正文:磁盘也清(切走场景,input 不在场)
       }
       const notices: string[] = [];
-      if (w.afterCreate) soleTopic = await w.afterCreate(id, notices);
+      if (w.afterCreate) tagged += await w.afterCreate(id, notices, autoTags);
       // 挂图也在必落账链上(同一保存的一部分),同样恒决议;挂失败不吞掉(fail-fast)。
       const { failed, why } = await imgs.attachBatch(id, batch, w.space);
       w.onSettled?.(notices, failed, why);
@@ -211,7 +218,7 @@ export function createComposeController(opts: {
         if (currentSpaceId() === w.space) liveReload?.();
         return;
       }
-      w.onSaved(id, soleTopic, failed, why);
+      w.onSaved(id, tagged, failed, why);
     };
     // in-flight 闸(ui-audit P0 #2)在模块级 saving:创建 IPC 往返窗口里第二记 Enter /
     // 点按会用同一份内容再建一条重复条目;闸跨 mount / 跨 bar 才挡得住「保存中切走再

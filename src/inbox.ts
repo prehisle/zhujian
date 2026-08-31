@@ -24,6 +24,7 @@ import {
   type TimeBucket,
   applyFilter,
   applyTimeFilter,
+  autoTagTopicIds,
   reconcileKindFilter,
   reconcileTopicFilter,
   renderFilterPills,
@@ -285,7 +286,9 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       command: "capture_note",
       prepare: (submitted) => {
         if (!submitted.trim() && composeCtl.imgs.count() === 0) return null;
-        return { payload: { content: submitted } };
+        // capture_note 不带归属 ⇒ 被筛的标签整份走 afterCreate 二次挂载(与看板的刻意
+        // 分歧:那边头一枚原子随 create_task)。在这里取 = 提交那刻冻结。
+        return { payload: { content: submitted }, autoTags: autoTagTopicIds(filter) };
       },
       showErr: (el, msg) => {
         el.textContent = msg;
@@ -294,20 +297,24 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       onBridgedError: () => {
         if (!unmounted) void refresh();
       },
-      afterCreate: async (id, notices) => {
-        // 恰好筛了单一具体标签 → 新灵感自动挂上它(同看板「筛着标签建卡」),否则新卡会被
-        // 当前筛选滤到隐身;「无标签」筛选下新卡本就无标签、天然可见。挂失败不吞掉:灵感
-        // 已在,提示一句(切「所有」能找到)。二次挂载是与看板的刻意分歧(capture_note
-        // 不带归属,挂标签是独立命令)。
-        const soleTopic = soleTopicFilter(filter);
-        if (soleTopic !== null) {
+      afterCreate: async (id, notices, autoTags) => {
+        // 筛着标签记灵感 → 被筛的那几枚**全挂上**(用户 2026-08-31 拍板「相关的标签都
+        // 打上才符合直觉」;此前只挂单选的那一枚,多选下改清筛选)。不挂的话新卡会被
+        // 当前筛选滤到隐身;「无标签」筛选下新卡本就无标签、天然可见,故不在这份里。
+        // ⛔ 串行不并行:头一枚会把 stage 从 inbox 翻成 filed(file_to_topic 的副作用),
+        // 并发几笔同改一行是自找写锁竞争,标签枚数是个位数、串行的代价可忽略。
+        // 部分成功照登记(first-draft-checklist):挂上几枚算几枚,失败数提示一句。
+        let ok = 0;
+        for (const topicId of autoTags) {
           try {
-            await invokeInSpace(mountSpace, "file_note_to_topic", { id, topicId: soleTopic, newTitle: null });
+            await invokeInSpace(mountSpace, "file_note_to_topic", { id, topicId, newTitle: null });
+            ok++;
           } catch {
-            notices.push(t("inbox.savedTagFailed"));
+            /* 逐枚计数,循环末统一提示——灵感已在,失败不吞掉也不中断其余几枚 */
           }
         }
-        return soleTopic;
+        if (ok < autoTags.length) notices.push(t("inbox.savedTagFailed", { n: autoTags.length - ok }));
+        return ok;
       },
       onSettled: (notices, failed, why) => {
         // ⛔ why 说得准就替掉 REPASTE_HINT(538,同 board.partialImgMsg 的判据)。
@@ -318,16 +325,24 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
           composeCtl.postNotice(notices.join(";"), mountSpace);
         }
       },
-      onSaved: (id, soleTopic) => {
+      onSaved: (id, tagged) => {
         // 文本过滤下记灵感:新卡多半不含过滤词,会被当场滤到隐身——清掉过滤让它可见。
         if (filter.text !== "") {
           filter.text = "";
           filterInput.value = "";
         }
-        // 多标签(OR)筛选下记灵感:新卡生而无标签、不在任何被筛标签下 = 会隐身,清掉标签
-        // 筛选让它可见(单选具体标签已自动挂上、本就可见;含「无标签」筛选时新卡天然在视野)。
-        if (soleTopic === null && filter.topics.length > 0 && !filter.topics.includes("none")) {
+        // 标签维:挂上了任一枚 ⇒ 新卡在 OR 并集下必然入选,筛选**原样留着**(用户要的正是
+        // 「在这个标签下记的东西留在这个标签下」)。一枚也没挂上(压根没筛具体标签,或几枚
+        // 全挂失败)而又筛着具体标签 ⇒ 会隐身,清掉标签筛选让它可见;只筛「无标签」时新卡
+        // 天然在视野,不清。
+        if (tagged === 0 && filter.topics.length > 0 && !filter.topics.includes("none")) {
           filter.topics = [];
+        }
+        // 类型(kind)维同理——**此前漏了这一格**:只筛了类型、没钻到具体标签时,新卡生而
+        // 无标签 = 不挂该类型任一标签 = 当场隐身,而收尾只清了文本/标签/时间三维。挂上了
+        // 标签就不必清(reconcileKindFilter 保证选集里的标签都属当前类型,新卡随之入选)。
+        if (tagged === 0 && filter.kind !== "all") {
+          filter.kind = "all";
         }
         // 时间筛选下记灵感:新卡创建时刻=现在,归「近1天」桶;筛的是别的档(近7天/
         // 7天前)会把新卡当场筛没——清掉让它可见(同上面文本/标签筛选的处理,461)。

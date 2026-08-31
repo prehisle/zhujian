@@ -46,6 +46,7 @@ export const main = defineMessages({
   "main.textBeforeImages": { zh: "先写点文字,图片作为配文一起记下", en: "Write something first — images are saved along with the text" },
   // 538:句尾那半拆成 {hint} —— 说得准就填具体原因(images.fail*),说不准才填 images.retryHint。
   "main.imagesNotAttached": { zh: "有 {n} 张配图没挂上{hint}", en: "{n} {n|image|images} could not be attached{hint}" },
+  "main.tagsNotAttached": { zh: "有 {n} 枚标签没挂上", en: "{n} {n|tag|tags} could not be attached" },
   "main.syncTitle": { zh: "同步", en: "Sync" },
   "main.syncTitleSpaced": { zh: "同步 · {name}", en: "Sync · {name}" },
   "main.renameOk": { zh: "确定", en: "OK" },

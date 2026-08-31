@@ -10,7 +10,7 @@ export const inbox = defineMessages({
   "inbox.weekStatsNoRatio": { zh: "本周捕获 {n}", en: "Captured {n} this week" },
   "inbox.composePlaceholder": { zh: "随手记一笔… (Enter 保存,Shift+Enter 换行)", en: "Jot something down… (Enter to save, Shift+Enter for a new line)" },
   "inbox.composeAdd": { zh: "记下", en: "Note it" },
-  "inbox.savedTagFailed": { zh: "随记已保存,但标签未能挂上(切到「所有」可见)", en: "Note saved, but the tag could not be attached (switch to “All” to see it)" },
+  "inbox.savedTagFailed": { zh: "随记已保存,但 {n} 枚标签未能挂上(切到「所有」可见)", en: "Note saved, but {n} {n|tag|tags} could not be attached (switch to “All” to see it)" },
   "inbox.savedImagesFailed": { zh: "随记已保存,但 {n} 张图未能附加", en: "Note saved, but {n} {n|image|images} failed to attach" },
   "inbox.loadFailed": { zh: "读取失败", en: "Failed to load" },
   "inbox.retry": { zh: "重试", en: "Retry" },

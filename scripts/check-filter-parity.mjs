@@ -78,7 +78,7 @@ const DESKTOP = {
   dict: "src/locales/index.ts",
   consts: ["expandedParents"],
   fns: [
-    "filterActive", "soleTopicFilter", "selectedTopicLabels", "idsOfKind", "groupPills",
+    "filterActive", "soleTopicFilter", "autoTagTopicIds", "selectedTopicLabels", "idsOfKind", "groupPills",
     "reconcileTopicFilter", "reconcileKindFilter", "applyFilter", "renderFilterPills", "renderKindPills",
   ],
   renderTopics: "renderFilterPills",
@@ -90,7 +90,7 @@ const ANDROID = {
   dict: "android/src/locales/index.ts",
   consts: ["expandedParents"],
   fns: [
-    "filterActive", "soleTopicFilter", "selectedTopicLabels", "idsOfKind", "pill", "groupPills",
+    "filterActive", "soleTopicFilter", "autoTagTopicIds", "selectedTopicLabels", "idsOfKind", "pill", "groupPills",
     "reconcileTopicFilter", "reconcileKindFilter", "applyFilter", "renderTopicPills", "renderKindPills",
   ],
   renderTopics: "renderTopicPills",
@@ -219,6 +219,16 @@ const SOLE_CASES = [
   ["多选不算(chip 要表明凭哪个入选)", ["t_work", "t_life"], "null"],
   ["空选集不算", [], "null"],
 ];
+// autoTagTopicIds:「筛着标签建条目」自动挂哪几枚(两端同一份判据;用户 2026-08-31
+// 拍板「相关的标签都打上」)。⛔ 承重的两格 = 多选要**全给**(此前只给单选那一枚)、
+// "none" 必须剔掉(它不是标签,挂不上)。
+const AUTOTAG_CASES = [
+  ["单选具体标签→就它一枚", ["t_work"], "t_work"],
+  ["多选→全给(并集里每一枚都算「相关」)", ["t_work", "t_life"], "t_work|t_life"],
+  ["「无标签」不是标签,剔掉", ["none"], ""],
+  ["混选:剔掉 none、留下具体标签", ["none", "t_work"], "t_work"],
+  ["空选集→没什么可挂", [], ""],
+];
 const LABEL_CASES = [
   ["none→「无标签」,活 id→标题,死 id→「该标签」占位", ["none", "t_work", "ghost"], "无标签|工作|该标签"],
 ];
@@ -337,7 +347,7 @@ const ENDS = [
   { ...ANDROID, mod: android },
 ];
 
-console.log("=== 纯逻辑:applyFilter / reconcile* / filterActive / soleTopicFilter / selectedTopicLabels ===");
+console.log("=== 纯逻辑:applyFilter / reconcile* / filterActive / soleTopicFilter / autoTagTopicIds / selectedTopicLabels ===");
 for (const end of ENDS) {
   const m = end.mod;
   console.log(`--- ${end.label}(${end.entry})---`);
@@ -357,6 +367,7 @@ for (const end of ENDS) {
   }
   for (const [desc, f, want] of FA_CASES) check(`[${end.label}] filterActive:${desc}`, String(m.filterActive(cf(f))), want);
   for (const [desc, topics, want] of SOLE_CASES) check(`[${end.label}] soleTopicFilter:${desc}`, String(m.soleTopicFilter(F("all", topics, ""))), want);
+  for (const [desc, topics, want] of AUTOTAG_CASES) check(`[${end.label}] autoTagTopicIds:${desc}`, m.autoTagTopicIds(F("all", topics, "")).join("|"), want);
   for (const [desc, topics, want] of LABEL_CASES) check(`[${end.label}] selectedTopicLabels:${desc}`, m.selectedTopicLabels(F("all", topics, ""), ALL).join("|"), want);
 }
 

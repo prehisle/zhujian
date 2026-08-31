@@ -16,12 +16,14 @@ import {
   getCurrentSpace,
   setCurrentSpace,
   sinvoke,
+  addTaskTopic,
   captureIdea,
   captureTodo,
   completeTask,
   deviceIdentity,
   setDeviceAlias,
   deleteItemImage,
+  fileNoteToTopic,
   listBoardColumns,
   listSpaces,
   listTimeline,
@@ -129,7 +131,7 @@ const filters: Record<ViewMode, filter.FilterState> = {
 // 任务面的状态维(404+1):null = 全部,否则只看该 stage 的段。⛔ 刻意不进 filter.ts 的
 // FilterState——那是 check-filter-parity 钉住的两端共享纯逻辑,桌面没有这一维(看板四列
 // 本就并排);本维在本文件外挂、应用在共享 applyFilter 之后。同 filters:切面无关
-// (任务面专属)、切空间清零;新任务落面时随 clearFilter 一并归零(免得新卡被藏)。
+// (任务面专属)、切空间清零;新任务落面时随 settleFilterAfterSave 一并归零(免得新卡被藏)。
 let taskStageFilter: string | null = null;
 let allFilterTopics: filter.FilterTopic[] = [];
 // 用户主动导航(点 mode 钮)/开始保存 → ++,作废在途的 focus 定位(146 ▲M2/▲▲M3:
@@ -676,12 +678,21 @@ function filteredEmptyHtml(f: filter.FilterState): string {
   return `<p class="muted empty">${t("main.noMatch")}</p>`;
 }
 
-/** 清掉某面的筛选并同步文本框(新记录落该面时用,避免被停留的筛选藏起)。 */
-function clearFilter(mode: ViewMode): void {
+/** 新记录落某面之后的筛选收尾(避免刚记的被停留的筛选藏起)。判的是一件事:**这条新记录
+ *  在标签/类型两维下看得见吗** —— 看得见就把那两维原样留着(用户要的正是「在这个标签下
+ *  记的东西留在这个标签下」),看不见才整份清零。三种看得见:①挂上了任一枚被筛的标签
+ *  (OR 并集里挂一枚就入选);②压根没筛这两维;③筛的正是「无标签」——新记录生而无标签,
+ *  天然在那一档里(⛔ 这一格此前跟着一起清了,是多余的,且与桌面 inbox/board 的判据不一致)。
+ *  文本维与状态维恒清:新记录多半不含过滤词,且新任务必落 todo 列(筛着别的列就看不见)。 */
+function settleFilterAfterSave(mode: ViewMode, tagged: number): void {
   if (mode === "tasks") taskStageFilter = null; // 状态维不在 FilterState 里,单独清(新任务必可见)
   const f = filters[mode];
   if (!filter.filterActive(f)) return;
-  filters[mode] = { kind: "all", topics: [], text: "" };
+  const visible =
+    tagged > 0 || (f.kind === "all" && (f.topics.length === 0 || f.topics.includes("none")));
+  filters[mode] = visible
+    ? { kind: f.kind, topics: [...f.topics], text: "" }
+    : { kind: "all", topics: [], text: "" };
   if (mode === viewMode) ($("filter-text") as HTMLInputElement).value = "";
 }
 
@@ -942,6 +953,9 @@ async function save() {
   }
   const space = getCurrentSpace();
   const mode = viewMode; // 落点冻结在点击那刻,响应回来绝不重读
+  // 「筛着标签记录 → 那几枚标签全挂上」的待挂集,同刻冻结(同 mode / 图批):往返期间
+  // 用户点 pill 改了筛选,挂的仍是点「记下」那一刻筛着的几枚。
+  const autoTags = filter.autoTagTopicIds(filters[mode]);
   const savingDraft = ta.value;
   ta.value = "";
   // 图与文字同刻冻结带走(两缓冲,同 takeBatch):在飞期间新贴的图属于下一条,清预览。
@@ -963,10 +977,27 @@ async function save() {
       if (failed > 0)
         showError(t("main.imagesNotAttached", { n: failed, hint: why || t("images.retryHint") }));
     }
-    // 新卡落 mode 面:清掉该面停留的筛选,免得刚记的记录被藏起(「记了却没出现」的
-    // 错觉)。桌面在筛着标签时改为自动挂标签保留可见,安卓这版先取「清筛见新卡」的
-    // 简单形(捕获不自动打标签,故没有可保留的标签维度)。
-    clearFilter(mode);
+    // 筛着标签记录 → 被筛的那几枚**全挂上**(用户 2026-08-31 拍板「相关的标签都打上才
+    // 符合直觉」,并同轮点名手机要跟上桌面这条行为;此前手机只做「清筛见新卡」的简单形)。
+    // 命令面按 stage 分家:任务面走 add_task_topic,灵感面走 file_note_to_topic。
+    // ⛔ 串行不并行:几笔标签写落在同一行上,并发只是自找写锁竞争,枚数是个位数。
+    // 部分成功照登记:挂上几枚算几枚,失败数提示一句——条目已在,不回滚也不吞掉。
+    let tagged = 0;
+    for (const topicId of autoTags) {
+      try {
+        if (mode === "tasks") await addTaskTopic(space, newId, topicId);
+        else await fileNoteToTopic(space, newId, topicId, null);
+        tagged++;
+      } catch {
+        /* 逐枚计数,循环末统一提示;失败不中断其余几枚 */
+      }
+    }
+    if (tagged < autoTags.length)
+      showError(t("main.tagsNotAttached", { n: autoTags.length - tagged }));
+    // 新卡落 mode 面:挂上了任一枚就留着筛选(OR 并集下新卡必然入选,用户要的正是「在这个
+    // 标签下记的东西留在这个标签下」);一枚也没挂上才清筛,免得刚记的记录被藏起(「记了
+    // 却没出现」的错觉)。
+    settleFilterAfterSave(mode, tagged);
     if (!captureLiveTouched) {
       // 在飞期间无新输入:现状回执——收键盘让新卡露出来,滚到顶闪一下
       // (ui-audit P1 #7:原 finally 无条件 ta.focus() 让键盘永不收、新卡被挡)。

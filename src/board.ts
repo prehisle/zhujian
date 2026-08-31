@@ -4,6 +4,7 @@ import {
   currentSpaceId,
   distinctSpaceLabels,
   invoke,
+  invokeInSpace,
   listSpaces,
   moveItemToSpace,
   moveOutcomeText,
@@ -23,6 +24,7 @@ import {
   type TimeBucket,
   applyFilter,
   applyTimeFilter,
+  autoTagTopicIds,
   filterActive,
   reconcileKindFilter,
   reconcileTopicFilter,
@@ -260,6 +262,16 @@ export function boardHasStashedDraft(): boolean {
 // 过大都是确定性拒法,「再贴一次」注定还是失败;说不准(`""`)才退回原来那句泛指引。
 function partialImgMsg(failed: number, why: string): string {
   return t("board.partialImg", { n: failed }) + (why || REPASTE_HINT);
+}
+
+// 一次保存里两类部分失败的合并文案:图没附上(上面那句)+ 标签没挂上(「筛着标签建卡」
+// 把被筛的几枚全挂上,补挂那几枚可能个别失败)。两样都没有 = 空串,顺带清掉上一条提示。
+// 拼接符同灵感侧 notices 的形。
+function partialSaveMsg(imgFailed: number, why: string, tagFailed: number): string {
+  const parts: string[] = [];
+  if (imgFailed > 0) parts.push(partialImgMsg(imgFailed, why));
+  if (tagFailed > 0) parts.push(t("board.partialTag", { n: tagFailed }));
+  return parts.join(";");
 }
 
 export function mount(root: HTMLElement, _ctx: ViewCtx): View {
@@ -684,6 +696,10 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
   // 跳转定位(搜索/深链接/剪贴板「打开」冷着陆命中的卡):下一次渲染给它**持续常亮**的
   // .just-located(区别于 born 的一次性涟漪),留到下次点击/滚动才消(见 locate.ts)。
   let locateId: string | null = null;
+  // 本次保存里补挂失败的标签枚数(「筛着标签建卡」把被筛的几枚全挂上,头一枚随 create_task
+  // 原子落库、其余补挂)。afterCreate 每次保存重写它,onSaved / onDeadMount 两个落点读它
+  // 拼提示。单值够用:模块级 in-flight 闸保证同时只有一笔保存在飞。
+  let tagFailed = 0;
 
   // 保存链走共享编排件(353):in-flight 闸/载荷冻结/必落账/在场守卫在骨架里
   // (compose-controller.ts),这里只接看板特有的形。
@@ -702,20 +718,42 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         if (composeCtl.imgs.count() > 0) composeErr.textContent = t("board.titleBeforeImages");
         return null;
       }
-      // 恰好筛了单一具体标签时,新任务归到它(唯一归属才明确);所有 / 无标签 / 多标签(OR)
-      // → 生而无标签(多标签下归属不明,别猜)。原子随 create_task 携带(与灵感的二次
-      // 挂载是刻意分歧:任务归属是载荷的一部分)。
-      const topicId = soleTopicFilter(filter);
-      return { payload: { title: submitted, topicId }, soleTopic: topicId };
+      // 筛着标签建卡 → 被筛的那几枚**全挂上**(用户 2026-08-31 拍板「相关的标签都打上才
+      // 符合直觉」;此前只有单选那一枚归上去,多标签刻意不猜、改清筛选)。头一枚仍原子随
+      // create_task 携带(与灵感的二次挂载是刻意分歧:任务归属是载荷的一部分,非法 topic
+      // 让整行建不成、不留残骸),其余几枚走 afterCreate 补挂 —— 命令面按 stage 分家,
+      // 任务侧是 add_task_topic。这里取 = 提交那刻冻结。
+      const ids = autoTagTopicIds(filter);
+      const topicId = ids[0] ?? null;
+      return { payload: { title: submitted, topicId }, tagged: topicId === null ? 0 : 1, autoTags: ids.slice(1) };
+    },
+    afterCreate: async (id, _notices, autoTags) => {
+      // 头一枚之外的补挂(串行:同一行的几笔标签写,并发只是自找写锁竞争,枚数是个位数)。
+      // ⛔ 走 invokeInSpace(mountSpace) 而非裸 invoke:整条保存链都拿 mount 顶部捕获的
+      // 空间对照,补挂也不许在切空间的窗口里落进别人的库。
+      // 部分成功照登记:挂上几枚算几枚,失败数记在 tagFailed 上——任务已建,不回滚也不吞掉。
+      // ⛔ notices 这条路看板不接(它不传 onSettled,骨架会把 notices 丢掉);提示走
+      //    composeErr / op-err 横幅两个落点,与图部分失败同一条(见 onSaved / onDeadMount)。
+      let ok = 0;
+      for (const topicId of autoTags) {
+        try {
+          await invokeInSpace(mountSpace, "add_task_topic", { id, topicId });
+          ok++;
+        } catch {
+          /* 逐枚计数,循环末统一记账;失败不中断其余几枚 */
+        }
+      }
+      tagFailed = autoTags.length - ok; // 每次保存都重写(autoTags 空时归零),不累计
+      return ok;
     },
     showErr: (el, msg) => {
       el.textContent = msg;
     },
     onDeadMount: (failed, why) => {
       // 部分失败先记账(活的看板 mount 用 op-err 横幅当场亮出来;不在场就过桥给
-      // 下一个 mount)。
-      if (failed > 0 && currentSpaceId() === mountSpace) {
-        const msg = partialImgMsg(failed, why);
+      // 下一个 mount)。图与标签两类部分失败同一个落点。
+      if ((failed > 0 || tagFailed > 0) && currentSpaceId() === mountSpace) {
+        const msg = partialSaveMsg(failed, why, tagFailed);
         const liveMsg = document.querySelector<HTMLElement>(".v-board #op-err-msg");
         const liveBar = document.querySelector<HTMLElement>(".v-board #op-err");
         if (liveMsg !== null && liveBar !== null) {
@@ -726,24 +764,31 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         }
       }
     },
-    onSaved: (id, topicId, failed, why) => {
+    onSaved: (id, tagged, failed, why) => {
       // 文本过滤下新建:新卡多半不含过滤词,会被当场滤到隐身——清掉过滤让它可见。
       if (filter.text !== "") {
         filter.text = "";
         filterInput.value = "";
       }
-      // 标签筛选下新建:单选具体标签会归到该标签、本就可见,不清;但多标签(OR)下新卡
-      // 生而无标签、不在任何被筛标签下 = 会隐身,清掉标签筛选让它可见(含「无标签」筛选时
-      // 新卡天然在视野,不清)。
-      if (topicId === null && filter.topics.length > 0 && !filter.topics.includes("none")) {
+      // 标签维:挂上了任一枚 ⇒ 新卡在 OR 并集下必然入选,筛选**原样留着**(用户要的正是
+      // 「在这个标签下建的任务留在这个标签下」)。一枚也没挂上(压根没筛具体标签,或几枚
+      // 全挂失败)而又筛着具体标签 ⇒ 会隐身,清掉标签筛选让它可见;只筛「无标签」时新卡
+      // 天然在视野,不清。
+      if (tagged === 0 && filter.topics.length > 0 && !filter.topics.includes("none")) {
         filter.topics = [];
+      }
+      // 类型(kind)维同理——**此前漏了这一格**:只筛了类型、没钻到具体标签时,新卡生而
+      // 无标签 = 不挂该类型任一标签 = 当场隐身,而收尾只清了文本/标签/时间三维。挂上了
+      // 标签就不必清(reconcileKindFilter 保证选集里的标签都属当前类型,新卡随之入选)。
+      if (tagged === 0 && filter.kind !== "all") {
+        filter.kind = "all";
       }
       // 时间筛选下新建:新卡创建时刻=现在,归「近1天」桶;筛的是别的档(近7天/7天前)
       // 会把新卡当场筛没——清掉让它可见(同上面文本/标签筛选的处理,461)。
       if (timeFilter !== "all" && timeFilter !== "1d") {
         timeFilter = "all";
       }
-      composeErr.textContent = failed > 0 ? partialImgMsg(failed, why) : "";
+      composeErr.textContent = partialSaveMsg(failed, why, tagFailed);
       pulseId = id; // 下一次渲染给这张新卡一记朱砂脉冲
       load(); // the new 'todo' appears at the front of the 待办 column
       composeInput.focus(); // stay open for rapid entry

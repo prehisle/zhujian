@@ -1,5 +1,5 @@
 import { $, expect, browser } from "@wdio/globals";
-import { invoke, goNotebook } from "./support.js";
+import { invoke, goNotebook, openCompose } from "./support.js";
 
 // 0031 kind + 按类型筛选(路线 A 钻取器):标签有「类型」(自由文本,如「人名」)。看板筛选
 // 条顶部多一行类型 pill——选中一个类型先圈定「挂了该类型任一标签的任务」,同时把下方标签
@@ -93,5 +93,41 @@ describe("任务看板 · 按标签类型筛选", () => {
     const labels = await topicPillLabels();
     expect(labels.some((l) => l.includes("无标签"))).toBe(true);
     expect(labels.some((l) => l.includes(PROJ))).toBe(true);
+  });
+
+  it("只筛了类型(没钻到具体标签)新建任务 → 类型筛选让位,新卡可见", async () => {
+    // 新任务生而无标签 = 不挂「人名」类任一标签 ⇒ 类型维不让位它就当场隐身(「建了却
+    // 没出现」)。收尾此前只清了文本/标签/时间三维,漏的正是这一格。
+    const NEW = "E2E-类任务-只筛类型时建的";
+    await clickKind("人名");
+    await browser.waitUntil(async () => (await shows(TASK_A)) && !(await shows(TASK_C)), {
+      timeout: 8000,
+      timeoutMsg: "类型筛选没生效",
+    });
+
+    await openCompose();
+    await browser.execute((v) => {
+      const input = document.querySelector("#compose-input");
+      input.value = v;
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    }, NEW);
+    await $("#compose-add").click();
+
+    await browser.waitUntil(async () => await shows(NEW), {
+      timeout: 8000,
+      timeoutMsg: "只筛类型时建的任务没出现(类型筛选没让位)",
+    });
+    const active = await browser.execute(() =>
+      [...document.querySelectorAll("#kind-filter .kind-pill")]
+        .filter((p) => p.classList.contains("active"))
+        .map((p) => p.textContent),
+    );
+    expect(active.length).toBe(1);
+    expect(active[0]).toContain("全部类型");
+
+    // 自清:这支没有 after 钩子,新造的那条别泄漏给后面的 spec。
+    const born = (await invoke("list_tasks")).find((t) => t.title === NEW);
+    await invoke("archive_task", { id: born.id });
+    await invoke("purge_task", { id: born.id });
   });
 });

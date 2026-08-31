@@ -42,6 +42,7 @@ export const board = defineMessages({
   "cols.peersTip": { zh: "若各设备都已升级:让两端同时在线一次,再回来点一次。", en: "If every device is already up to date: bring them online at the same time once, then come back and try again." },
   "cols.shutUnknown": { zh: "现在不能改列", en: "Columns can’t be changed right now" },
   "board.partialImg": { zh: "任务已建,但 {n} 张图未能附加", en: "Task created, but {n} {n|image|images} could not be attached" },
+  "board.partialTag": { zh: "任务已建,但 {n} 枚标签未能挂上", en: "Task created, but {n} {n|tag|tags} could not be attached" },
   "board.titleBeforeImages": { zh: "先写个任务标题,配图会随任务一起保存", en: "Write a task title first — the images will be saved with it" },
   "board.restore": { zh: "还原", en: "Restore" },
   "board.deleteForever": { zh: "彻底删除", en: "Delete forever" },
