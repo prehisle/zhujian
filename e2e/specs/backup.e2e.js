@@ -333,7 +333,14 @@ describe("加密备份(笔①-a):仪式 → 备份 → 产物在列", () => {
     const fakeCode = "NOT-A-BACKUP-CODE";
     const inputs = await $$(".bkup-restore input");
     expect(inputs.length).toBe(2);
+    // ⚠ 554 定高 780 之后,展开的恢复表单常常要滚 `.settings-content`(嵌套滚动容器)
+    // 才够得着 —— WebKitGTK 的 WebDriver 对嵌套滚动容器不做隐式 scroll-into-view
+    // (只有第一个字段吃到产品代码自己的 `file.focus()` 那次滚动,第二个字段够不着,
+    // 报「did not become interactable」;WebView2/Chromium 对嵌套容器隐式滚得动,
+    // 故 Windows 全绿掩盖了这条)。⛔ 别当抖动重跑,两条输入都显式滚一次更稳。
+    await inputs[0].scrollIntoView();
     await inputs[0].setValue(candidate.path);
+    await inputs[1].scrollIntoView();
     await inputs[1].setValue(fakeCode);
     await browser.execute(() => {
       [...document.querySelectorAll(".bkup-restore button")]
