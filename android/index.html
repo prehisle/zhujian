@@ -1069,6 +1069,14 @@
       }
       .fn { font-size: var(--fs-12); color: var(--ink-faint); font-variant-numeric: tabular-nums; }
       .fpill.active .fn { color: var(--seal); }
+      /* 到期汇总钮(用户面 60-D):有逾期时整枚描成朱砂 —— 与卡片上那颗 .chip.due.overdue
+         同一套语汇,让「屏上有一处红」在筛选行与卡片之间对得上(同桌面 #due-soon.late)。
+         ⚠ 只描边不填底:填底会和它自己的 .active(点开只看到期)撞成同一个样子。
+         ⚠ `:not(.active)` 不是装饰 —— 三类选择器的特异性本来会压过两类的 .fpill.active,
+         把选中态的实心边框退成这条更淡的 --seal-line,选中与否就看不出来了。 */
+      .fpill.fdue.late:not(.active) { color: var(--seal); border-color: var(--seal-line); }
+      /* 数字用等宽字形:计数每分钟可能变,不等宽的话整行会跟着抖(同 .fn 的理由)。 */
+      .fpill.fdue { font-variant-numeric: tabular-nums; }
       .fdot { flex: none; } /* 共形声明住标签管理节的「标签色点」一份 */
       /* 父子标签在筛选条折叠(同桌面 filter-bar.css)。收起态子 pill 直接不占位。 */
       .fpill.hidden { display: none; }

@@ -133,6 +133,12 @@ const filters: Record<ViewMode, filter.FilterState> = {
 // 本就并排);本维在本文件外挂、应用在共享 applyFilter 之后。同 filters:切面无关
 // (任务面专属)、切空间清零;新任务落面时随 settleFilterAfterSave 一并归零(免得新卡被藏)。
 let taskStageFilter: string | null = null;
+// 任务面的到期维(用户面 60-D,对齐桌面 502 顶栏那枚汇总钮):true = 只看今天到期与逾期
+// 的任务。⛔ 同 taskStageFilter 刻意不进 filter.ts 的 FilterState(桌面这一维也长在
+// board.ts 自己身上、不在共享件里);应用在共享 applyFilter 与状态维之后。
+// **纯视野状态,不落 localStorage**(同桌面:重开就回全部)——它答的是「此刻我在看什么」,
+// 不是设备偏好。切空间清零、记新任务清零、定位被它藏着时自己清自己。
+let dueOnly = false;
 let allFilterTopics: filter.FilterTopic[] = [];
 // 用户主动导航(点 mode 钮)/开始保存 → ++,作废在途的 focus 定位(146 ▲M2/▲▲M3:
 // 旧定位的内部切面不许反抢用户刚选的面、不许打破保存的「新卡在当前面」承诺)。
@@ -262,6 +268,21 @@ function dueLabel(due: string, today: string): string {
   if (diff < 0) return t("main.dueOverdueDays", { n: -diff });
   if (diff <= 7) return t("main.dueInDays", { n: diff });
   return `${am}/${ad}`;
+}
+
+/** 「这条算不算进『今天该处理什么』」——与桌面 `dueAttentionState` 逐字同形:完成的任务
+ *  恒不算(即使当初设过如今已过去的截止日,556-G 那条裁决)。⛔ 与卡片自己那颗 due chip
+ *  的口径**刻意不同**:那颗答的是「这条哪天到期」这件事实,完成与否是另一回事,历史信息
+ *  留着;「要不要吓人 / 算不算数」的地方才用这个。 */
+function dueAttentionState(it: { stage: string; due_on: string | null }, today: string): DueState | "none" {
+  if (it.stage === DONE_COLUMN || !it.due_on) return "none";
+  return dueState(it.due_on, today);
+}
+
+/** 「逾期 M · 今天 N」/「今天到期 N」—— 到期汇总钮那一句,与桌面 `dueSummaryLabel`
+ *  逐字同形(那边是看板顶栏钮与每日提醒通知共用的一把尺)。调用方保证 late+now > 0。 */
+function dueSummaryLabel(late: number, now: number): string {
+  return late > 0 ? t("main.dueSoonLate", { late, now }) : t("main.dueSoonToday", { now });
 }
 
 // ---- 统一时间轴 -------------------------------------------------------------
@@ -530,24 +551,42 @@ function projectTimeline(): void {
         ? `<p class="muted empty">${t("main.emptyIdeas")}<br />${t("main.emptyIdeasHint")}</p>`
         : filteredEmptyHtml(f);
   } else {
-    // 状态维最后应用(在共享三维之后):空态的话语权也按同序——词/标签/类型筛空的提示
-    // 优先(shown 已空),三维有结果、被状态维筛空才说「该状态下没有任务」。
+    // 本面专属的两维(状态 / 到期)最后应用,在共享三维之后:空态的话语权也按同序——
+    // 词/标签/类型筛空的提示优先(shown 已空),三维有结果、被状态维筛空才说「该状态下
+    // 没有任务」,两者都有结果、只被到期维筛空才说「到期的任务不在当前筛选里」。
+    const today = localToday();
     const stageShown = taskStageFilter === null ? shown : shown.filter((t) => t.stage === taskStageFilter);
-    box.innerHTML = stageShown.length
-      ? taskSections().filter((s) => stageShown.some((t) => t.stage === s.stage))
+    const dueShown = dueOnly
+      ? stageShown.filter((t) => {
+          const st = dueAttentionState(t, today);
+          return st === "today" || st === "overdue";
+        })
+      : stageShown;
+    // 只看到期时段内按截止升序(逾期最久的排最前)—— 同桌面 556-B 的 sortByDue:这枚钮
+    // 的目的就是「最紧急的先出现」,一堆到期卡按原序摊着等于还要自己找。⚠ 排的是 filter
+    // 产出的新数组,不动 lastItems;dueShown 里每张卡必有 due_on(上面的谓词已经保证)。
+    // `YYYY-MM-DD` 上的裸串比较就是日历日比较(同 dueState 里那句 `due < today` 的既有形)。
+    const inSection = (stage: string): TimelineItem[] => {
+      const rows = dueShown.filter((t) => t.stage === stage);
+      if (!dueOnly) return rows;
+      return rows.sort((a, b) => ((a.due_on ?? "") < (b.due_on ?? "") ? -1 : (a.due_on ?? "") > (b.due_on ?? "") ? 1 : 0));
+    };
+    box.innerHTML = dueShown.length
+      ? taskSections().filter((s) => dueShown.some((t) => t.stage === s.stage))
           .map(
             (s) =>
-              `<section class="tl-group"><h3 class="tl-sec">${s.label}</h3>${stageShown
-                .filter((t) => t.stage === s.stage)
+              `<section class="tl-group"><h3 class="tl-sec">${s.label}</h3>${inSection(s.stage)
                 .map((t) => renderCard(t, hideTopic))
                 .join("")}</section>`,
           )
           .join("")
       : modeItems.length === 0
         ? `<p class="muted empty">${t("main.emptyTasks")}<br />${t("main.emptyTasksHint")}</p>`
-        : shown.length > 0 && taskStageFilter !== null
+        : shown.length > 0 && taskStageFilter !== null && stageShown.length === 0
           ? `<p class="muted empty">${t("main.noneUnderStage", { stage: stageLabel(taskStageFilter)! })}</p>`
-          : filteredEmptyHtml(f);
+          : stageShown.length > 0 && dueOnly
+            ? `<p class="muted empty">${t("main.noneDue")}</p>`
+            : filteredEmptyHtml(f);
   }
   hydrateThumbs(box);
   cardPanel.restore(box); // 展开态跨重画恢复(条目已不在=清态)
@@ -639,7 +678,45 @@ function renderStagePills(bar: HTMLElement, modeItems: TimelineItem[]): void {
   for (const s of taskSections()) {
     nodes.push(mk(s.label, s.stage, modeItems.filter((i) => i.stage === s.stage).length));
   }
+  const due = dueSummaryPill(modeItems);
+  if (due) nodes.unshift(due); // 最前,理由见 dueSummaryPill 的注释
   bar.replaceChildren(...nodes);
+}
+
+/** 到期汇总钮(用户面 60-D,对齐桌面 502 那枚):一眼答「今天该处理什么」,点一下只看
+ *  这些。⭐ 计数按**整块任务面**算(`modeItems`,不随状态 / 标签 / 类型 / 文本任一维
+ *  收缩)—— 同桌面的理由:那句话的意思不该被当前视野改写。
+ *  ⭐ **摆在这一行最前面**(「状态」轴标之前),不是末尾:`.fstages` 是单行横滑的,窄屏上
+ *  「全部 + 四态」本就已经滑出去了,摆末尾等于没做。两者皆零时整枚不渲染(同桌面 hidden)。 */
+function dueSummaryPill(modeItems: TimelineItem[]): HTMLButtonElement | null {
+  const today = localToday();
+  let now = 0;
+  let late = 0;
+  for (const it of modeItems) {
+    const st = dueAttentionState(it, today);
+    if (st === "today") now++;
+    else if (st === "overdue") late++;
+  }
+  if (now + late === 0) {
+    dueOnly = false; // 筛着到期时把最后一条做掉了:别留下一个筛空的面(同桌面 paintDueSoon)
+    return null;
+  }
+  const b = document.createElement("button");
+  b.type = "button";
+  b.className = `fpill fdue${late > 0 ? " late" : ""}${dueOnly ? " active" : ""}`;
+  b.textContent = dueSummaryLabel(late, now);
+  b.addEventListener("click", onDuePick);
+  return b;
+}
+
+/** 点到期钮:同 onStagePick 的草稿闸,再翻这一维并重投影(纯客户端,不重新拉数据)。 */
+function onDuePick(): void {
+  if (cardPanel.hasDirtyDraft()) {
+    showError(t("main.finishDraftFirst"));
+    return;
+  }
+  dueOnly = !dueOnly;
+  projectTimeline();
 }
 
 /** 点状态 chip 的落点:同 onFilterPick 的草稿闸;点已选中的状态 = 回「全部」。 */
@@ -683,9 +760,13 @@ function filteredEmptyHtml(f: filter.FilterState): string {
  *  记的东西留在这个标签下」),看不见才整份清零。三种看得见:①挂上了任一枚被筛的标签
  *  (OR 并集里挂一枚就入选);②压根没筛这两维;③筛的正是「无标签」——新记录生而无标签,
  *  天然在那一档里(⛔ 这一格此前跟着一起清了,是多余的,且与桌面 inbox/board 的判据不一致)。
- *  文本维与状态维恒清:新记录多半不含过滤词,且新任务必落 todo 列(筛着别的列就看不见)。 */
+ *  文本维与状态维恒清:新记录多半不含过滤词,且新任务必落 todo 列(筛着别的列就看不见)。
+ *  到期维同理恒清:新任务生而无截止日,筛着到期时它一记下就隐身。 */
 function settleFilterAfterSave(mode: ViewMode, tagged: number): void {
-  if (mode === "tasks") taskStageFilter = null; // 状态维不在 FilterState 里,单独清(新任务必可见)
+  if (mode === "tasks") {
+    taskStageFilter = null; // 状态维不在 FilterState 里,单独清(新任务必可见)
+    dueOnly = false; // 到期维同上:新任务无 due_on,不清的话刚记的当场看不见
+  }
   const f = filters[mode];
   if (!filter.filterActive(f)) return;
   const visible =
@@ -1350,6 +1431,7 @@ function resetPanesForSpaceChange() {
   filters.ideas = { kind: "all", topics: [], text: "" };
   filters.tasks = { kind: "all", topics: [], text: "" };
   taskStageFilter = null;
+  dueOnly = false; // 到期维同状态维:是 A 空间的视野,别带进 B 空间
   allFilterTopics = [];
   ($("filter-text") as HTMLInputElement).value = "";
 }
@@ -1404,10 +1486,22 @@ async function focusTimelineCard(id: string) {
     return;
   }
   const target = modeOfStage(item.stage);
-  if (target === "tasks" && taskStageFilter !== null && item.stage !== taskStageFilter) {
-    // 定位目标被状态维藏着:这一维自己清自己(标签/文本维的既有行为不动,单轮单件事)。
-    taskStageFilter = null;
-    if (viewMode === "tasks") projectTimeline();
+  if (target === "tasks") {
+    // 定位目标被本面专属的两维藏着:各自清自己(标签/文本维的既有行为不动,单轮单件事)。
+    // ⚠ 两维合用一次重投影 —— 各投一次会让屏幕连跳两帧。
+    let cleared = false;
+    if (taskStageFilter !== null && item.stage !== taskStageFilter) {
+      taskStageFilter = null;
+      cleared = true;
+    }
+    if (dueOnly) {
+      const st = dueAttentionState(item, localToday());
+      if (st !== "today" && st !== "overdue") {
+        dueOnly = false;
+        cleared = true;
+      }
+    }
+    if (cleared && viewMode === "tasks") projectTimeline();
   }
   if (target !== viewMode) applyMode(target); // 快照有效,applyMode 同步投影
   const card = document.querySelector<HTMLElement>(`#timeline [data-id="${id}"]`); // ULID 仅字母数字,选择器安全

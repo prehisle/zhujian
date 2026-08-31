@@ -39,6 +39,12 @@ export const main = defineMessages({
   "main.stageAxis": { zh: "状态", en: "Stage" },
   "main.stageAll": { zh: "全部", en: "All" },
   "main.noneUnderStage": { zh: "「{stage}」下没有任务。", en: "No tasks under “{stage}”." },
+  // 到期汇总钮那一句(用户面 60-D):与桌面 board.dueSoonToday / board.dueSoonLate **逐字
+  // 同形** —— 两端与每日提醒说的是同一件事,措辞不该因端而异(键名照本文件的 main.* 前缀,
+  // 两份字典键空间独立)。筛空那句则随本文件既有空态的句读(带句号)。
+  "main.dueSoonToday": { zh: "今天到期 {now}", en: "{now} due today" },
+  "main.dueSoonLate": { zh: "逾期 {late} · 今天 {now}", en: "{late} overdue · {now} today" },
+  "main.noneDue": { zh: "到期的任务不在当前筛选里。", en: "No due task matches the current filter." },
   "main.timelineLoadFailed": { zh: "时间轴读取失败:{error}", en: "Could not load the timeline: {error}" },
   "main.spaceSwitchedDraftDropped": { zh: "空间已切换,未保存的编辑已丢弃", en: "Space switched — unsaved changes were discarded" },
   "main.loading": { zh: "正在载入…", en: "Loading…" },
