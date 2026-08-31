@@ -54,7 +54,7 @@ import {
 import type { View, ViewCtx } from "./notebook";
 import { applyTagColor } from "./tag-color";
 import { renderTagPicker } from "./tag-picker";
-import { type TaskItem, dayKey, dayLabel, dueState, dueSummaryLabel, localToday, metaRow, startOfWeek } from "./tasktime";
+import { type TaskItem, dayKey, dayLabel, dueAttentionState, dueSummaryLabel, localToday, metaRow, startOfWeek } from "./tasktime";
 import { identitySig, loadIdentity, signatureChip } from "./identity";
 import { t } from "./i18n";
 import "./board.css";
@@ -114,6 +114,17 @@ function sortColumn(items: TaskItem[], s: BoardSort): TaskItem[] {
   return [...items].sort((a, b) =>
     a.created_at === b.created_at ? (a.id < b.id ? -dir : dir) : a.created_at < b.created_at ? -dir : dir,
   );
+}
+
+/** 「只看到期」(dueOnly)那一档的列内序:按截止日升序 —— 逾期最久的排最前,今天到期
+ *  的排在逾期后面,不再理会 boardSort(手动位置 / 创建时间对「哪个最火烧眉毛」这个问题
+ *  答不上来)。dueOnly 下的卡必有 due_on(dueAttentionState 已把 today/overdue 筛出来),
+ *  `?? ""` 只是不让类型检查为难,不代表真会撞上 null。同 sortColumn:不原地改数组。 */
+function sortByDue(items: TaskItem[]): TaskItem[] {
+  return [...items].sort((a, b) => {
+    if (a.due_on !== b.due_on) return (a.due_on ?? "") < (b.due_on ?? "") ? -1 : 1;
+    return a.id < b.id ? -1 : 1;
+  });
 }
 
 // ---- small DOM helper (same shape as inbox.ts) ------------------------------
@@ -1105,8 +1116,10 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
   }
 
   function card(item: TaskItem, mode: "board" | "trash" | "sealed"): HTMLElement {
-    // Highlight a due card at a glance: overdue/today wear a 朱砂 accent.
-    const st = mode === "board" ? dueState(item.due_on, today) : "none";
+    // Highlight a due card at a glance: overdue/today wear a 朱砂 accent. 完成的卡不算
+    // (dueAttentionState)——done 列本已靠 .done 的淡出信号说「这条不用管了」,逾期强调
+    // 留着是逆信号。
+    const st = mode === "board" ? dueAttentionState(item, today) : "none";
     const dueCls = st === "overdue" || st === "today" ? ` due-${st}` : "";
     const modeCls = mode === "board" ? item.status : mode === "trash" ? "archived" : "sealed";
     const titleP = el("p", { className: "ttitle", textContent: item.title });
@@ -1306,8 +1319,9 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         const i = live.findIndex((col) => col.id === item.status);
         // 列内置顶/置底同理只给活着的列(已删的列 core 会拒重排);列里只有它一张时不出
         // (显示条件 = 接收条件,别摆一条点了必然无事发生的动作)。时间序下同样不出 ——
-        // 它写的是 `position`,而那时列里根本不按 position 排,按了屏上不会动(500)。
-        if (boardSort === "manual" && i >= 0 && (ownColBody()?.querySelectorAll(".tcard").length ?? 0) > 1) {
+        // 它写的是 `position`,而那时列里根本不按 position 排,按了屏上不会动(500);
+        // dueOnly 同理(sortByDue 接管,同一个「按了屏上不会动」)。
+        if (boardSort === "manual" && !dueOnly && i >= 0 && (ownColBody()?.querySelectorAll(".tcard").length ?? 0) > 1) {
           list.push({ label: t("board.moveToTop"), key: "T", run: () => moveEnd(true) });
           list.push({ label: t("board.moveToBottom"), key: "F", run: () => moveEnd(false) });
         }
@@ -1353,8 +1367,10 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       // ——那是「点了没反应」的同族,比不能拖更糟。切回「手动」即恢复。
       // 一并被停掉的还有拖动改列 / 拖卡片打标签 / 拖到归档区(它们共用这一个 dragstart),
       // 但**每条都有等价的非拖拽入口**:`]`/`[` 改列 · `L` 打标签 · `A` 归档,⋯ 菜单里都在。
-      // (拖标签 pill 到卡片那条方向不走这里,时间序下照常可用。)
-      c.draggable = boardSort === "manual";
+      // (拖标签 pill 到卡片那条方向不走这里,时间序下照常可用。)dueOnly 同理停拖拽——
+      // 那档显示序是 sortByDue 算出来的,拖完下一次重画会被按到期日重新排回去,不停会
+      // 看着像「拖了没用」。
+      c.draggable = boardSort === "manual" && !dueOnly;
       c.addEventListener("dragstart", (e) => {
         if (busy) {
           e.preventDefault();
@@ -1546,7 +1562,9 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     const sections = cols.map((col) => {
       const status = col.id;
       const name = columnName(col);
-      const inCol = sortColumn(items.filter((t) => t.status === status), boardSort);
+      const inCol = dueOnly
+        ? sortByDue(items.filter((t) => t.status === status))
+        : sortColumn(items.filter((t) => t.status === status), boardSort);
       const head = el("div", { className: "col-head" }, [
         // title 挂全名:列窄时列名是单行截断(board.css .col-name),悬停才看得到全称。
         el("span", { className: "col-name", textContent: name, title: name }),
@@ -1931,7 +1949,9 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       manageColsBtn.hidden = boardView !== "board";
       // 排序轴同理只属看板(回收站按 archived_at、归档册按完成日,各有各的轴,500 不碰)。
       sortBtn.hidden = boardView !== "board";
-      paintSortBtn();
+      // ⚠ paintSortBtn() 的调用挪到 paintDueSoon 之后(dueOnly title 要读它这一轮的
+      // 终值——focusOnBoard 与「到期数归零」两条路都会在这之后才把 dueOnly 摆定,这里
+      // 调会读到上一轮的旧值)。
       if (boardView !== "board") dueSoonBtn.hidden = true; // 汇总也只属看板;计数在下面算
       if (boardView !== "board") setComposeOpen(false);
 
@@ -1996,14 +2016,15 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       // 该处理什么」,那句话的意思不该被当前视野改写。跳转定位那条路把筛选清空时它也一并
       // 关掉(不然「跳转即揭示」会被它筛掉)。
       if (focusOnBoard) dueOnly = false;
-      const dueNow = visible.filter((t) => dueState(t.due_on, today) === "today").length;
-      const dueLate = visible.filter((t) => dueState(t.due_on, today) === "overdue").length;
+      const dueNow = visible.filter((t) => dueAttentionState(t, today) === "today").length;
+      const dueLate = visible.filter((t) => dueAttentionState(t, today) === "overdue").length;
       paintDueSoon(dueNow, dueLate);
+      paintSortBtn(); // dueOnly 这一轮的终值已经摆定(上面 paintDueSoon 可能刚把它归零)
 
       const shownAll = applyFilter(timeNarrowed, filter, (t) => t.title, allTopics);
       const shown = dueOnly
         ? shownAll.filter((t) => {
-            const st = dueState(t.due_on, today);
+            const st = dueAttentionState(t, today);
             return st === "today" || st === "overdue";
           })
         : shownAll;
@@ -2034,10 +2055,13 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
 
   // 排序钮:点一下换下一档(手动 → 最新在前 → 最早在前 → 手动)。非默认档高亮成朱砂,
   // 且 title 明说「拖动已停用」—— 否则用户会以为拖拽坏了(那正是 498 那条账的教训)。
+  // dueOnly 同理会停拖拽(sortByDue 接管列内序),即使 boardSort 仍是「手动」也要说清楚,
+  // 不然这颗按钮自己看着还是「手动」、没人告诉你为什么拖不动了。
   function paintSortBtn(): void {
     sortLbl.textContent = sortLabel(boardSort);
     sortBtn.classList.toggle("active", boardSort !== "manual");
-    sortBtn.title = boardSort === "manual" ? t("board.sortTitle") : t("board.sortTitleLocked");
+    sortBtn.title =
+      boardSort !== "manual" ? t("board.sortTitleLocked") : dueOnly ? t("board.sortTitleLockedDue") : t("board.sortTitle");
   }
   sortBtn.addEventListener("click", () => {
     boardSort = SORT_CYCLE[(SORT_CYCLE.indexOf(boardSort) + 1) % SORT_CYCLE.length];

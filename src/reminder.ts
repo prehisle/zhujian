@@ -22,7 +22,7 @@ import {
   sendNotification,
 } from "@tauri-apps/plugin-notification";
 import { invokeInSpace, listSpaces, spaceLabel } from "./space";
-import { dueState, dueSummaryLabel, localToday, type TaskItem } from "./tasktime";
+import { dueAttentionState, dueSummaryLabel, localToday, type TaskItem } from "./tasktime";
 import { t } from "./i18n";
 
 const CFG_KEY = "zhujian.due-remind"; // {on:boolean, time:"HH:MM"}
@@ -64,7 +64,8 @@ function nowHHMM(): string {
 
 /** 通知正文;null = 没有任何到期/逾期。逐空间数(与 502 同尺:list_tasks = 看板活卡全集,
  *  不筛列),多空间时按空间分行 —— 只报「默认空间 逾期 2」而不说是哪个空间,点开看不到
- *  东西的那个人会以为提醒在说谎。 */
+ *  东西的那个人会以为提醒在说谎。完成的任务不算(dueAttentionState)——做完的东西不该
+ *  在每天的通知里继续被当成「要处理」,哪怕当初设过如今已经过去的截止日。 */
 async function digestBody(): Promise<string | null> {
   const today = localToday();
   const spaces = (await listSpaces()).filter((s) => s.alive);
@@ -74,7 +75,7 @@ async function digestBody(): Promise<string | null> {
     let late = 0;
     let now = 0;
     for (const it of tasks) {
-      const st = dueState(it.due_on, today);
+      const st = dueAttentionState(it, today);
       if (st === "overdue") late++;
       else if (st === "today") now++;
     }

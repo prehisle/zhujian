@@ -69,9 +69,10 @@ const clickSeg = (idx) =>
   browser.execute((i) => document.querySelectorAll(".remind-ctrls .seg-btn")[i].click(), idx);
 
 /** 按库现算「逾期 M · 今天 N」的期望句(与 zh 字典同形;基线 + 增量:别的 spec 可能
- *  留了带截止的卡,绝对数是错判据)。 */
+ *  留了带截止的卡,绝对数是错判据)。完成的任务不算(与前端 dueAttentionState 同口径,
+ *  见 G)——做完的不该继续占每天提醒的「逾期/今天」计数。 */
 async function expectedBody() {
-  const tasks = await invoke("list_tasks");
+  const tasks = (await invoke("list_tasks")).filter((t) => t.status !== "done");
   const today = ymd(0);
   const late = tasks.filter((t) => t.due_on && t.due_on < today).length;
   const now = tasks.filter((t) => t.due_on === today).length;

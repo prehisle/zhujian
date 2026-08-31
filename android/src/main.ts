@@ -234,6 +234,34 @@ const PRIORITY_LABEL: Record<number, string> = {
   3: t("main.prioHigh"),
 };
 
+// 截止日期相对表达(抄桌面 src/tasktime.ts 的 dueState/dueLabel 算法,两端不共享代码——
+// 同 PRIORITY_LABEL 那行既有的形)。今天/逾期用朱砂强调追平桌面看板「一眼看出」的效果;
+// 完成态的视觉降噪交给 CSS 的 `.card.done .chip.due`(同 `.pill` 那条已有的做法),这里
+// 不用管 done。
+function localToday(): string {
+  const d = new Date();
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+type DueState = "overdue" | "today" | "future";
+function dueState(due: string, today: string): DueState {
+  if (due < today) return "overdue";
+  if (due === today) return "today";
+  return "future";
+}
+/** 与桌面 dueLabel 逐字同形的相对表达;7 天外退化成 `M/D`(不翻译,数字两端通用)。 */
+function dueLabel(due: string, today: string): string {
+  const [ay, am, ad] = due.split("-").map(Number);
+  const [by, bm, bd] = today.split("-").map(Number);
+  const diff = Math.round((Date.UTC(ay, am - 1, ad) - Date.UTC(by, bm - 1, bd)) / 86_400_000);
+  if (diff === 0) return t("main.dueToday");
+  if (diff === 1) return t("main.dueTomorrow");
+  if (diff === -1) return t("main.dueYesterday");
+  if (diff < 0) return t("main.dueOverdueDays", { n: -diff });
+  if (diff <= 7) return t("main.dueInDays", { n: diff });
+  return `${am}/${ad}`;
+}
+
 // ---- 统一时间轴 -------------------------------------------------------------
 
 // hideTopic:恰好单选一枚标签筛选时,卡上那枚同名 chip 是纯冗余(筛出来的卡本就都带它),
@@ -264,9 +292,14 @@ function renderCard(it: TimelineItem, hideTopic: string | null): string {
         )
         .join("")}</div>`
     : "";
-  // 120:data-id 供卡片操作面板定位;截止/优先级角标(任务行、有值才显)。
+  // 120:data-id 供卡片操作面板定位;截止/优先级角标(任务行、有值才显)。截止追平桌面
+  // 看板:相对日期文字 + 今天/逾期朱砂强调,不再是原始 ISO 串。
   const meta: string[] = [];
-  if (it.due_on) meta.push(`<span class="chip">${t("main.dueChip", { day: esc(it.due_on) })}</span>`);
+  if (it.due_on) {
+    const today = localToday();
+    const st = dueState(it.due_on, today);
+    meta.push(`<span class="chip due ${st}" title="${esc(it.due_on)}">${dueLabel(it.due_on, today)}</span>`);
+  }
   if (it.priority) meta.push(`<span class="chip">${t("main.priorityChip", { p: PRIORITY_LABEL[it.priority] })}</span>`);
   // 完成时刻(0030):已完成卡显示「完成于 <时刻>」;done_at 为 null(本功能前完成的老卡)则不显示。
   const doneAt = done && it.done_at ? `<time class="done-at">${t("main.doneAt", { when: esc(fmtWhen(it.done_at)) })}</time>` : "";

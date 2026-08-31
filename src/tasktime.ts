@@ -1,5 +1,6 @@
 import { invoke } from "./space";
 import { armDismiss } from "./hotkey-menu";
+import { DONE_COLUMN } from "./board-columns";
 import { currentLang, t } from "./i18n";
 import "./tasktime.css";
 
@@ -136,6 +137,16 @@ export function dueState(due: string | null, today: string): DueState {
   if (due < today) return "overdue";
   if (due === today) return "today";
   return "future";
+}
+
+/** 完成的任务不再算「到期需要处理」——即使当初设过如今已经过去的截止日,做完的东西
+ *  不该继续占看板顶栏汇总 / 卡片朱砂强调 / 每日提醒的「逾期/今天」计数。不改卡片自身
+ *  due chip 的颜色(`metaRow` 的 `renderDue` 不经这里)——那颗 chip 答的是「这条哪天到
+ *  期」这件事实,完成与否是另一回事,历史信息留着;三处「要不要吓人 / 算不算数」的口径
+ *  才用这个。 */
+export function dueAttentionState(item: Pick<TaskItem, "due_on" | "status">, today: string): DueState {
+  if (item.status === DONE_COLUMN) return "none";
+  return dueState(item.due_on, today);
 }
 
 /** Calendar days between two `YYYY-MM-DD` days (due - today), via UTC midnights

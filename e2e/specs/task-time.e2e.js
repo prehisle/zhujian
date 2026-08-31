@@ -118,10 +118,11 @@ describe("任务时间维度 · 到期汇总", () => {
   const ids = [];
   let base = { now: 0, late: 0 };
 
-  /** 库里此刻有多少张「今天到期 / 已逾期」(与前端 dueState 同口径:纯日历日字符串比)。 */
+  /** 库里此刻有多少张「今天到期 / 已逾期」(与前端 dueAttentionState 同口径:纯日历日
+   *  字符串比 + 完成的任务不算——做完的不该继续占逾期计数,即使截止日已经过去)。 */
   async function dueCounts() {
     const today = ymd(0);
-    const all = await invoke("list_tasks");
+    const all = (await invoke("list_tasks")).filter((t) => t.status !== "done");
     return {
       now: all.filter((t) => t.due_on === today).length,
       late: all.filter((t) => t.due_on && t.due_on < today).length,
@@ -178,7 +179,7 @@ describe("任务时间维度 · 到期汇总", () => {
     expect((await chip()).active).toBe(false);
   });
 
-  it("点一下 → 只剩到期与逾期的卡;再点 → 全部回来", async () => {
+  it("点一下 → 只剩到期与逾期的卡、按最近到期在前排;再点 → 全部回来", async () => {
     await browser.execute(() => document.querySelector("#due-soon").click());
     await browser.waitUntil(async () => !(await cardTitles()).includes(FREE), {
       timeout: 8000,
@@ -188,6 +189,14 @@ describe("任务时间维度 · 到期汇总", () => {
     expect(titles).toContain(NOW);
     expect(titles).toContain(LATE);
     expect((await chip()).active).toBe(true);
+
+    // B:列内序变成按截止日 —— LATE(逾期 3 天)该排在 NOW(今天到期)前面,尽管创建顺序
+    // 是 NOW 先建、LATE 后建(手动/创建时间序都会把 NOW 排前面,能把两种排序分辨出来)。
+    // 两个都在默认落点 todo 列,故直接在该列内比相对顺序,不受别的 spec 遗留卡干扰。
+    const todoOrder = await browser.execute(() =>
+      [...document.querySelectorAll(".col.todo .tcard .ttitle")].map((p) => p.textContent),
+    );
+    expect(todoOrder.indexOf(LATE)).toBeLessThan(todoOrder.indexOf(NOW));
 
     await browser.execute(() => document.querySelector("#due-soon").click());
     await browser.waitUntil(async () => (await cardTitles()).includes(FREE), {
@@ -214,6 +223,29 @@ describe("任务时间维度 · 到期汇总", () => {
       });
     } finally {
       for (const t of others) await invoke("set_task_due", { id: t.id, dueOn: t.due_on });
+    }
+  });
+
+  it("完成的任务不再计入逾期/今天,卡片也不再带朱砂强调(G)", async () => {
+    const DONE_LATE = "到期戊-已完成但曾逾期";
+    const before = await dueCounts(); // dueCounts() 已排除 done,这是「加一张 done 卡不该变」的基线
+    const id = await invoke("create_task", { title: DONE_LATE });
+    try {
+      await invoke("set_task_due", { id, dueOn: ymd(-5) });
+      await invoke("update_task_status", { id, to: "done" });
+      await goNotebook("board");
+      await $(".col.done").$(`.tcard*=${DONE_LATE}`).waitForExist({ timeout: 8000 });
+      // 顶栏汇总:done 卡不该把逾期数顶上去(数字不变,或本就该藏起的仍然藏着)。
+      await expectChip(before.now, before.late);
+      // 卡片本身:done 列里那张不该再带 due-overdue 朱砂强调。
+      const accent = await browser.execute((title) => {
+        const card = [...document.querySelectorAll(".tcard")].find((c) => c.textContent.includes(title));
+        return card ? card.classList.contains("due-overdue") : "absent";
+      }, DONE_LATE);
+      expect(accent).toBe(false);
+    } finally {
+      await invoke("archive_task", { id });
+      await invoke("purge_task", { id });
     }
   });
 });

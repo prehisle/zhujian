@@ -10,7 +10,13 @@ export const main = defineMessages({
   "main.prioHigh": { zh: "P0", en: "P0" },
   "main.viewImage": { zh: "查看图{n}", en: "View image {n}" },
   "main.deleteImage": { zh: "删除图{n}", en: "Delete image {n}" },
-  "main.dueChip": { zh: "截止 {day}", en: "Due {day}" },
+  // 截止角标相对表达(追平桌面 tasktime.today/tomorrow/yesterday/overdueDays/inDays,
+  // 键名各按本文件既有的 main.* 前缀,不是同一份字典)。
+  "main.dueToday": { zh: "今天", en: "Today" },
+  "main.dueTomorrow": { zh: "明天", en: "Tomorrow" },
+  "main.dueYesterday": { zh: "昨天", en: "Yesterday" },
+  "main.dueOverdueDays": { zh: "逾期 {n} 天", en: "{n} {n|day|days} overdue" },
+  "main.dueInDays": { zh: "{n} 天后", en: "In {n} {n|day|days}" },
   // 506:改名后「P0优先」不成话 ⇒ 角标换成与桌面 tasktime.priorityChip 逐字同形。
   "main.priorityChip": { zh: "优先级·{p}", en: "Priority · {p}" },
   "main.doneAt": { zh: "完成于 {when}", en: "Done {when}" },

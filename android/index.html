@@ -616,6 +616,20 @@
          有 color 时与 --tc 一起挂(桌面 board.css 同名类同法)。 */
       .chip.tinted { color: color-mix(in srgb, var(--tc) 55%, var(--ink)); }
 
+      /* 截止角标(追平桌面 tasktime.css 的 .chip.due.* 同名同值,两端不共享代码):
+         今天/逾期用朱砂强调,未来是平静的墨色。done 卡的降噪同 .card.done .pill 的
+         既有做法——`.card.done .chip.due` 四个类选择器,比 `.chip.due.overdue` 三个
+         类选择器特异性更高(0,0,4,0 > 0,0,3,0),不靠源顺序也赢;放在下面仅为顺读。 */
+      .chip.due::before { content: "📅 "; }
+      .chip.due.future { color: var(--ink-soft); border-color: var(--line-strong); }
+      .chip.due.today {
+        color: var(--seal); border-color: var(--seal-line); background: var(--seal-tint); font-weight: 600;
+      }
+      .chip.due.overdue {
+        color: var(--on-seal); background: var(--seal); border-color: var(--seal); font-weight: 600;
+      }
+      .card.done .chip.due { background: none; border: 1px solid var(--line-strong); color: var(--ink-faint); font-weight: 400; }
+
       /* 配图缩略(117):正文下一排小图。占位框先渲染(编号可见),字节滚到可视区
          才拉(thumbs.ts thumbObserver);点开全屏大图。 */
       .thumbs { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }

@@ -77,6 +77,7 @@ export const board = defineMessages({
   "board.sortOldest": { zh: "顺序:最早在前", en: "Order: oldest first" },
   "board.sortTitle": { zh: "点击切换列内顺序(手动 / 最新在前 / 最早在前)", en: "Click to change order within columns (manual / newest first / oldest first)" },
   "board.sortTitleLocked": { zh: "按创建时间排序中 —— 拖动排序已停用,切回「手动」即恢复", en: "Sorted by creation time — drag to reorder is off; switch back to Manual to restore" },
+  "board.sortTitleLockedDue": { zh: "只看到期时按紧急度排序 —— 拖动排序已停用,再点一次「到期」即恢复", en: "While showing due tasks only, order is by urgency — drag to reorder is off; click the due filter again to restore" },
   "board.moveToTop": { zh: "移到列首", en: "Move to top" },
   "board.moveToBottom": { zh: "移到列尾", en: "Move to bottom" },
   "board.seal": { zh: "归档", en: "Archive" },
