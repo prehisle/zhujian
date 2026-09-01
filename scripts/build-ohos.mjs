@@ -366,10 +366,16 @@ if (wantApp) {
   };
   walkApp(join(hapProject, "build"), 0);
   walkApp(join(hapProject, "entry", "build"), 0);
-  const found = all.filter((p) => statSync(p).mtimeMs >= packStartedAt);
+  // ⚠ `assembleApp` **一趟产两只**:`*-signed.app` 与 `*-unsigned.app`(2026-09-01 首次真跑
+  // 才看见的形 —— 第一版「本趟新落盘的恰好 1 只」当场被自己逮住)。要传的只有签名那只。
+  const fresh = all.filter((p) => statSync(p).mtimeMs >= packStartedAt);
+  const found = fresh.filter((p) => !p.endsWith("-unsigned.app"));
   // ⚠ 「一个都没有」与「只有上一趟那只」是两种不同的处境,**分开说** ——
   // 后者是 hvigor 判输入没变跳过了打包,而**把旧包传上商店**正是 memory
   // `verify-artifact-predates-fix` 那一族最贵的错(不报错,只给一个看着合理的旧答案)。
+  if (found.length === 0 && fresh.length > 0) {
+    die(`本趟只出了未签名的 .app,没有签名那只:\n   ${fresh.join("\n   ")}\n⛔ 别传未签名包(AGC 必拒)。签名段是不是没注进去?`);
+  }
   if (found.length === 0 && all.length > 0) {
     die(`本趟没有新落盘的 .app,但底下有旧的(hvigor 多半判输入没变、跳过了打包):\n   ${
       all.map((p) => `${p}(${new Date(statSync(p).mtimeMs).toISOString()})`).join("\n   ")
