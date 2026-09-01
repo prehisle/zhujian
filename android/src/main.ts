@@ -23,7 +23,9 @@ import {
   deviceIdentity,
   setDeviceAlias,
   deleteItemImage,
+  editNote,
   fileNoteToTopic,
+  renameTask,
   listBoardColumns,
   listSpaces,
   listTimeline,
@@ -35,7 +37,8 @@ import {
   type TaskStatus,
   type TimelineItem,
 } from "./api";
-import { $, actionBar, confirmBar, esc, fmtWhen, hideConfirmBar, showBar, showError } from "./ui";
+import { $, actionBar, confirmBar, contentHtml, esc, fmtWhen, hideConfirmBar, showBar, showError } from "./ui";
+import { toggleChecklistLine } from "./checklist";
 import { DONE_COLUMN, boardColumns, isTaskStage, setColumns, stageLabel } from "./columns";
 import { capturePhoto, composeImages, PICK_MAX, pickImages } from "./images";
 import { INPUT_DEBOUNCE_MS } from "./timing";
@@ -360,7 +363,7 @@ function renderCard(it: TimelineItem, hideTopic: string | null): string {
   // 操作面板的「留言」上。计数走 comments.ts 按空间键住的聚合快照,与列表两个真相源。
   const cmBadge = commentBadgeHtml(getCurrentSpace(), it.id);
   return `<article class="card${done ? " done" : ""}" data-id="${esc(it.id)}">${tick}<div class="body">
-    <p class="content">${esc(it.content)}</p>${thumbs}
+    <p class="content">${contentHtml(it.content, true)}</p>${thumbs}
     <footer>${pill}<time>${esc(fmtWhen(it.created_at))}</time>${doneAt}${sig}${cmBadge}${meta.join("")}${chips}</footer>
   </div></article>`;
 }
@@ -501,9 +504,66 @@ function openCommentsFor(itemId: string): void {
   openComments(getCurrentSpace(), itemId);
 }
 
+// ---- 正文里的待办方框(checklist.ts)-----------------------------------------------
+// 点一下翻那一行的标记、把**整条正文**写回。⚠ 单飞 + 尾随:在飞的那一发回来之前只把
+// 最新文本记在 ckLatest,回来再补发 —— ⛔ 别改成并发直发:每一发都是整条正文,乱序落地
+// 会让先发的那份盖掉后发的(丢掉一勾)。屏上那份是**乐观**的,故与 lastItems 分开记。
+const ckLatest = new Map<string, string>(); // itemId → 屏上这份(乐观)正文
+let ckFlushing = false;
+
+async function flushChecklist(space: string): Promise<void> {
+  if (ckFlushing) return;
+  ckFlushing = true;
+  try {
+    try {
+      for (;;) {
+        const first = ckLatest.entries().next();
+        if (first.done === true) break;
+        const [id, send] = first.value;
+        ckLatest.delete(id);
+        if (getCurrentSpace() !== space) break; // 期间切了空间:这几笔作废(同别处的编排闸)
+        const it = lastItems.get(id);
+        if (it === undefined) continue; // 卡已不在屏上(远端删了):放弃这一笔
+        // 编辑走哪条命令按 stage 分,同卡片操作面板那处:任务 rename_task / 灵感 edit_note。
+        if (isTaskStage(it.stage)) await renameTask(space, id, send);
+        else await editNote(space, id, send);
+      }
+    } catch (err) {
+      showError(String(err));
+      ckLatest.clear();
+    }
+    await refresh(); // 后端是真相源:成败都照它重画,⛔ 不猜该回滚到哪一版
+  } finally {
+    ckFlushing = false;
+  }
+  if (ckLatest.size > 0) void flushChecklist(space); // 重画那几毫秒里又点了:补发
+}
+
+function onChecklistTap(box: HTMLElement): void {
+  const card = box.closest<HTMLElement>("article.card[data-id]");
+  if (card === null) return;
+  const id = card.dataset.id!;
+  const base = ckLatest.get(id) ?? lastItems.get(id)?.content;
+  if (base === undefined) return;
+  const next = toggleChecklistLine(base, Number(box.dataset.ck));
+  if (next === null) return; // 那一行已不是待办项(远端刚改过):放弃这一下,⛔ 别猜别的行
+  ckLatest.set(id, next);
+  // 乐观呈现:先把这一行翻面,不等 IPC(随后的 refresh 会整份重画)。勾没勾挂在外层
+  // `.ckline` 上 —— 一处翻,方框与文字压淡同时跟着走。
+  const row = box.closest<HTMLElement>(".ckline");
+  const on = row === null ? false : row.classList.toggle("on");
+  box.setAttribute("aria-label", on ? t("checklist.uncheck") : t("checklist.check"));
+  void flushChecklist(getCurrentSpace());
+}
+
 $("timeline").addEventListener("click", (e) => {
   if (switching) return; // 切换编排中:屏上还是旧空间的卡,不接受任何取图请求
   const target = e.target as HTMLElement;
+  const ckBox = target.closest<HTMLElement>(".ckbox[data-ck]");
+  if (ckBox) {
+    onChecklistTap(ckBox);
+    return;
+  }
   const badge = target.closest<HTMLElement>(".cm-badge[data-cm]");
   if (badge) {
     openCommentsFor(badge.dataset.cm!);

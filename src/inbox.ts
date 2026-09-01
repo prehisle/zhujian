@@ -37,6 +37,7 @@ import {
 import { type Act, SATELLITE_LAYERS, armDismiss, createHotkeyController, registerViewKeys } from "./hotkey-menu";
 import { t } from "./i18n";
 import { type ImageMeta, REPASTE_HINT, imageStrip, renderContent, wirePasteToAttach } from "./item-images";
+import { toggleChecklistLine } from "./checklist";
 import {
   closeComments,
   commentBadge,
@@ -572,8 +573,45 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     // attach/delete. A 图N with no matching image stays plain text (renderContent's rule).
     let imgs: ImageMeta[] = [];
     function paintContent(): void {
-      textP.replaceChildren(renderContent(currentContent, imgs));
+      textP.replaceChildren(renderContent(currentContent, imgs, mode === "ideas" ? toggleBox : undefined));
     }
+    // 正文里的待办方框(checklist.ts):点一下翻那一行的标记、整条正文写回(灵感走
+    // edit_note)。乐观呈现——点完立刻画,不等 IPC;写失败照后端重画(refresh),⛔ 不猜
+    // 该回滚到哪一版。回收站是只读视图 ⇒ 不传回调,方框照显、不给点。
+    //
+    // 单飞 + 尾随:连着勾几个框时,在飞的那一发回来前只把最新文本记在 ckPending,回来
+    // 再补发。⛔ 别改成并发直发 —— 每发都是「整条正文」,乱序落地会让先发的盖掉后发的。
+    let ckFlushing = false;
+    let ckPending: string | null = null;
+    function flushChecklist(): void {
+      if (ckFlushing || ckPending === null) return;
+      const send = ckPending;
+      ckPending = null;
+      ckFlushing = true;
+      void invoke("edit_note", { id: item.id, content: send }).then(
+        () => {
+          ckFlushing = false;
+          if (ckPending !== null) flushChecklist();
+        },
+        (e) => {
+          ckFlushing = false;
+          ckPending = null;
+          showOpErr(t("checklist.toggleFailed", { err: String(e) }));
+          void refresh();
+        },
+      );
+    }
+    function toggleBox(lineIndex: number): void {
+      const next = toggleChecklistLine(currentContent, lineIndex);
+      if (next === null) return; // 那一行已不是待办项(远端刚改过):放弃这一下,⛔ 别猜别的行
+      currentContent = next; // 编辑态取的也是它:勾完再点编辑,框里就是刚勾过的文本
+      paintContent();
+      ckPending = next;
+      flushChecklist();
+    }
+    // 方框不依赖配图,首帧就画得出 —— 别等 onMetas 那一发回来(否则每张带清单的卡都要
+    // 先闪一下 `- [ ] ` 原文)。图 N 的链接化仍由随后的 onMetas 补上,同一条乐观呈现。
+    paintContent();
     // 正文「图N」的链接化复用缩略图条那一发 metas(onMetas),别再自己发一次 —— 理由与
     // 乐观首帧见 item-images.ts 的 metaCache 注释(此前一屏 N 张卡是 2N 次 list_item_images)。
     function onMetas(metas: ImageMeta[]): void {
@@ -680,7 +718,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
           return;
         }
         currentContent = area.value;
-        textP.textContent = currentContent;
+        paintContent(); // ⛔ 别写成 textP.textContent —— 那会把方框与「图N」链接一起抹成纯文本
         leaveEdit();
       };
 

@@ -131,6 +131,69 @@
   text-decoration-color: var(--seal);
 }
 
+/* 正文里的待办方框(checklist.ts 认行、renderContent 画):行首 `- [ ] ` / `- [x] `。
+   形状**刻意是方的** —— 安卓卡片上那枚「整条任务做完了」的勾是圆的(.tick),两者一眼
+   分得开:圆 = 这条任务,方 = 正文里的一项。尺寸用 em 跟着正文字号走(界面字号四档 /
+   缩放都自动跟)。 */
+/* 一整个待办项 = 一行 flex。⛔ 别退回「方框 + 裸文字」的纯内联排法:那样长条目**折行后
+   第二行会顶格**跑到方框左边,两个待办项的边界糊成一片(真机截图逮到的)。缩进(嵌套清单)
+   化成整行左内边距 —— flex 容器里的纯空白子节点会被丢掉,靠不住 pre-wrap 里那几个空格。 */
+.ckline {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.4em;
+  padding-left: calc(var(--ck-indent, 0) * 1em);
+}
+.cktext {
+  min-width: 0; /* flex item 默认 min-width:auto,长词会把整行撑破(249 那族) */
+}
+.ckbox {
+  position: relative; /* §2.3 热区扩展(::before)必须锚在自己身上 */
+  flex: none;
+  width: 1em;
+  height: 1em;
+  margin-top: 0.28em; /* 与首行文字的字面对齐(flex-start 下对的是行盒顶,不是基线) */
+  padding: 0;
+  border: 1.5px solid var(--line-strong);
+  border-radius: var(--radius-xs);
+  background: transparent;
+  font: inherit;
+  line-height: 1;
+  text-align: center;
+  cursor: pointer;
+}
+/* §2.3 热区扩展(354 技法):方框自身随字号只有 ~1em,鼠标热区靠这层透明的 24×24 垫到
+   底线。⚠ 它比方框宽——相邻两行的热区会在纵向擦边,行高够时不重叠(真机逐像素复核)。*/
+.ckbox::before {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 24px;
+  height: 24px;
+  transform: translate(-50%, -50%);
+}
+.ckline.on .ckbox {
+  background: var(--seal);
+  border-color: var(--seal);
+  color: var(--on-seal);
+}
+.ckline.on .ckbox::after {
+  content: "✓";
+}
+.ckbox:not(:disabled):hover {
+  border-color: var(--seal);
+}
+/* 只读视图(回收站 / 归档册)那形:照显勾没勾,但它不是可点的东西,别给手势暗示。 */
+.ckbox:disabled {
+  cursor: default;
+}
+/* 勾过那一行的文字压淡 —— 清单的用处就是「一眼看出还剩几项」。⛔ 不划删除线:
+   正文是用户的话,划掉它太重(且删除线在中文小字号上糊成一团)。 */
+.ckline.on .cktext {
+  color: var(--ink-faint);
+}
+
 /* 大图遮罩内的回执(Ctrl+C 复制图片):遮罩自身 z-index 9000,默认 1000 会被盖住。 */
 .copy-toast.on-lightbox {
   z-index: 9100;

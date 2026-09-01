@@ -4,6 +4,7 @@
 import { backup } from "./backup";
 import { board } from "./board";
 import { capture } from "./capture";
+import { checklist } from "./checklist";
 import { chrome } from "./chrome";
 import { comments } from "./comments";
 import { common } from "./common";
@@ -16,7 +17,7 @@ import { shell } from "./shell";
 import { sync } from "./sync";
 import { topics } from "./topics";
 
-const parts = [backup, board, capture, chrome, comments, common, filter, images, inbox, reminder, settings, shell, sync, topics];
+const parts = [backup, board, capture, checklist, chrome, comments, common, filter, images, inbox, reminder, settings, shell, sync, topics];
 {
   const seen = new Set<string>();
   for (const part of parts) {
@@ -31,6 +32,7 @@ export const messages = {
   ...backup,
   ...board,
   ...capture,
+  ...checklist,
   ...chrome,
   ...comments,
   ...common,

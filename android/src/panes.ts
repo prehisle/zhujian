@@ -18,7 +18,7 @@ import {
   type SearchStatus,
 } from "./api";
 import { t } from "./i18n";
-import { $, confirmBar, esc, fmtWhen, hideConfirmBar, showBar, showError } from "./ui";
+import { $, confirmBar, contentHtml, esc, fmtWhen, hideConfirmBar, showBar, showError } from "./ui";
 import { isTaskStage, setColumns, stageLabel } from "./columns";
 
 type Deps = {
@@ -94,7 +94,7 @@ function renderTrash() {
             </div></div>`
           : "";
       return `<article class="card" data-trash="${esc(r.id)}"><div class="body">
-        <p class="content">${esc(r.content)}</p>
+        <p class="content">${contentHtml(r.content, false)}</p>
         <footer><span class="pill">${kind}</span><time>${t("panes.deletedAt", { when: esc(fmtWhen(r.archived_at)) })}</time>${chips}</footer>${panel}
       </div></article>`;
     })
@@ -221,7 +221,7 @@ function renderSealed() {
             </div></div>`
           : "";
       return `<article class="card" data-sealed="${esc(r.id)}"><div class="body">
-        <p class="content">${esc(r.title)}</p>
+        <p class="content">${contentHtml(r.title, false)}</p>
         <footer><time>${
           r.done_at
             ? t("panes.doneAt", { when: esc(fmtWhen(r.done_at)) })
@@ -295,7 +295,7 @@ async function runSearch() {
       ? hits
           .map(
             (h) => `<article class="card" data-hit="${esc(h.id)}" data-hit-status="${esc(h.status)}"><div class="body">
-              <p class="content">${esc(h.content)}</p>
+              <p class="content">${contentHtml(h.content, false)}</p>
               <footer><span class="pill">${SEARCH_STATUS_LABEL[h.status] ?? esc(h.status)}</span>
                 <time>${esc(fmtWhen(h.created_at))}</time>
                 ${h.topics.map((t) => `<span class="chip">${esc(t)}</span>`).join("")}</footer>

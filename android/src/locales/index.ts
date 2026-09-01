@@ -3,6 +3,7 @@
 // 重键当场 throw——spread 会静默后者覆前者,这里不许安静。
 import { backup } from "./backup";
 import { cardpanel } from "./cardpanel";
+import { checklist } from "./checklist";
 import { comments } from "./comments";
 import { filter } from "./filter";
 import { images } from "./images";
@@ -15,7 +16,7 @@ import { sync } from "./sync";
 import { topics } from "./topics";
 import { viewer } from "./viewer";
 
-const parts = [backup, cardpanel, comments, filter, images, main, misc, panes, settings, shell, sync, topics, viewer];
+const parts = [backup, cardpanel, checklist, comments, filter, images, main, misc, panes, settings, shell, sync, topics, viewer];
 {
   const seen = new Set<string>();
   for (const part of parts) {
@@ -29,6 +30,7 @@ const parts = [backup, cardpanel, comments, filter, images, main, misc, panes, s
 export const messages = {
   ...backup,
   ...cardpanel,
+  ...checklist,
   ...comments,
   ...filter,
   ...images,

@@ -98,6 +98,11 @@ const ANDROID = {
 };
 // groupByPrefix 是纯串处理、不碰文案,故不必给字典(dict 省略 = 不注入 t)。
 const TOPICS_VIEW = { label: "标签视图", entry: "src/topics.ts", consts: [], fns: ["groupByPrefix"] };
+// 正文待办清单的认行 / 翻标记(src/checklist.ts 与 android/src/checklist.ts,又一对逐字
+// 复制的纯逻辑)。⛔ **并进本闸而不另开一道** —— 门禁停止扩张线(383)那条判据:先问
+// 「能不能并进已有某道」。同样是纯串处理,不碰文案,不给字典。
+const CK_DESKTOP = { label: "桌面", entry: "src/checklist.ts", consts: ["LINE_RE"], fns: ["parseChecklistLine", "toggleChecklistLine"] };
+const CK_ANDROID = { label: "安卓", entry: "android/src/checklist.ts", consts: ["LINE_RE"], fns: ["parseChecklistLine", "toggleChecklistLine"] };
 
 // ---------------------------------------------------------------------------
 // 最小假 DOM(环境替身,不是逻辑替身):只提供渲染函数摸得到的形状。
@@ -241,6 +246,50 @@ const GROUP_CASES = [
   ["首斜杠不算分组", [T.lead], "/开头"],
   ["只按第一段分一层,多级斜杠不再细分", [T.work, T.deep], "工作[甲方/深层]"],
 ];
+// 正文待办清单:认行。⭐ **承重那格 = 裸 `- 文字` 不是待办项**(用户 2026-09-01 拍板:
+// 认了它,用户就再也写不出一个不带勾的普通列表)。其余用例钉的是「行首那个标记的边界
+// 到底划在哪」—— 边界宽一寸,普通正文就会莫名其妙长出方框。
+// [描述, 输入行, 期望 "缩进|勾没勾|剩下那截" 或 "null"]
+const PARSE_CASES = [
+  ["标准未勾", "- [ ] 买菜", "|off| 买菜"],
+  ["标准已勾(小写 x)", "- [x] 买菜", "|on| 买菜"],
+  ["大写 X 也收(markdown 两种写法都有)", "- [X] 买菜", "|on| 买菜"],
+  ["⭐ 裸 `- 文字` 不是待办项(否则普通列表就写不出来了)", "- 买菜", "null"],
+  ["空方框后面没内容也算(空项)", "- [ ]", "|off|"],
+  ["方括号后必须是空白或行尾", "- [x]买菜", "null"],
+  ["`-` 与 `[` 之间恰一个空格", "-[ ] 买菜", "null"],
+  ["两个空格不算", "-  [ ] 买菜", "null"],
+  ["星号列表不算(只认 `-`)", "* [ ] 买菜", "null"],
+  ["缩进(空格)原样留下", "  - [ ] 买菜", "  |off| 买菜"],
+  ["缩进(tab)原样留下", "\t- [x] 买菜", "\t|on| 买菜"],
+  ["非行首不算 —— 整行必须从标记起头", "先说一句 - [ ] 买菜", "null"],
+  ["方框里只许一个字符", "- [xx] 买菜", "null"],
+  ["方框里别的字符不算", "- [o] 买菜", "null"],
+  ["剩下那截原样(含多余空格,与行内长得像标记的文字)", "- [ ]   买 - [x] 菜", "|off|   买 - [x] 菜"],
+  // 正则里的 `.` 不吃行终止符(\r 也是),故 CRLF 正文切出来的行认不出 —— **就让它认不
+  // 出**:textarea 的 value 恒被规范化成 LF,真出现 \r 是异常来路,当普通文字画是安全的
+  // 那一边(不会勾错行)。这一格钉的是「降级方向」,不是「支持 CRLF」。
+  ["CRLF 切出来的行不认(降级成普通文字,不勾错)", "- [ ] 买菜\r", "null"],
+];
+// 正文待办清单:翻标记。⭐ 承重两格 = **只动方括号里那一个字符**(正文是用户的话,勾选
+// 不是编辑它的借口)与**认不出就放弃**(⛔ 别就近找一行勾 —— 勾错行是静默改错数据)。
+// [描述, 正文, 行号, 期望新正文 或 "null"]
+const TOGGLE_CASES = [
+  ["翻第一行:未勾 → 勾", "- [ ] a\n- [x] b", 0, "- [x] a\n- [x] b"],
+  ["翻第二行:勾 → 未勾", "- [ ] a\n- [x] b", 1, "- [ ] a\n- [ ] b"],
+  ["⭐ 只动那一行方括号里那一个字符,别的字节一个不碰", "抬头\n  - [X] 事 · 见图1\n落款", 1, "抬头\n  - [ ] 事 · 见图1\n落款"],
+  ["⭐ 那一行不是待办项 → null(⛔ 别就近找一行)", "普通一行\n- [ ] a", 0, "null"],
+  ["行号越界 → null", "- [ ] a", 5, "null"],
+  ["负行号 → null", "- [ ] a", -1, "null"],
+  ["单行正文", "- [ ] 只有一项", 0, "- [x] 只有一项"],
+  // ⚠ 这一格是阴性对照逼出来的:此前那几格的 rest 都没有尾部空白 ⇒ 在翻标记里顺手
+  // `trimEnd()` **一格都不会红**。正文是用户的话,连他多打的那两个空格都不许动。
+  ["⭐ 剩下那截连尾部空白都原样(⛔ 别顺手 trim)", "- [ ] 待办  ", 0, "- [x] 待办  "],
+];
+function serParse(r) {
+  return r === null ? "null" : `${r.indent}|${r.checked ? "on" : "off"}|${r.rest}`;
+}
+
 // 标签 pill 行(假 DOM 压真渲染):[描述, allTopics, items, f, 期望序列]
 // 记法:label:计数  *=active  °=色点  ▸/▾=折叠箭头  <id=child 挂父  …=hidden
 const RENDER_CASES = [
@@ -380,6 +429,20 @@ const GROUP_TARGETS = [
 for (const t of GROUP_TARGETS) {
   for (const [desc, domain, want] of GROUP_CASES) {
     check(`[${t.label}] 分组:${desc}`, serGroups(t.fn(domain)), want);
+  }
+}
+
+console.log("\n=== 正文待办清单:parseChecklistLine / toggleChecklistLine(两端同压)===");
+const CK_ENDS = [
+  { label: CK_DESKTOP.label, mod: await loadEnd(CK_DESKTOP) },
+  { label: CK_ANDROID.label, mod: await loadEnd(CK_ANDROID) },
+];
+for (const end of CK_ENDS) {
+  for (const [desc, line, want] of PARSE_CASES) {
+    check(`[${end.label}] 认行:${desc}`, serParse(end.mod.parseChecklistLine(line)), want);
+  }
+  for (const [desc, content, i, want] of TOGGLE_CASES) {
+    check(`[${end.label}] 翻标记:${desc}`, String(end.mod.toggleChecklistLine(content, i)), want);
   }
 }
 

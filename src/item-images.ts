@@ -7,6 +7,7 @@
 
 import { invoke, invokeInSpace } from "./space";
 import { t } from "./i18n";
+import { parseChecklistLine } from "./checklist";
 import { saveImageDraft, loadImageDraft, newDraftImageId, type DraftImage } from "./compose-draft";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { copyText } from "./clipboard";
@@ -1105,15 +1106,82 @@ export function imageStrip(
 // "见 https://a.com。" or "(https://a.com)" don't swallow the 。/) into the link.
 const URL_TAIL = /[)\].,;:!?，。、;:!?…）】》」』]+$/;
 
-/** Render `text` with two kinds of inline references linkified in a single left-to-right pass:
+/** Render `text` for a card's content node. Two layers:
+ *
+ *   - **逐行**:行首是 `- [ ] ` / `- [x] ` 的画成一枚方框(checklist.ts 认行)。传了
+ *     `onToggle` 就是可点的按钮(点了回调行号,写回由调用方管);不传 = 只读视图
+ *     (回收站 / 归档册),照样显出勾没勾但不给点。
+ *   - **行内**:每一行(待办项则是标记后面那一截)再走 `appendInline` 那一遍扫描。
+ *
+ *  Returns a fragment the caller drops into the content node. */
+export function renderContent(
+  text: string,
+  images: ImageMeta[],
+  onToggle?: (lineIndex: number) => void,
+): DocumentFragment {
+  const frag = document.createDocumentFragment();
+  const lines = text.split("\n");
+  let prevWasBox = false;
+  lines.forEach((line, i) => {
+    const box = parseChecklistLine(line);
+    if (box === null) {
+      // 正文是 white-space:pre-wrap,换行原样交回去 —— 但**待办项那行是 flex 块、自带
+      // 换行**,紧跟它再补一个 `\n` 就会空出一行。故只在「上一行也是普通文本」时补。
+      if (i > 0 && !prevWasBox) frag.append("\n");
+      appendInline(frag, line, images);
+      prevWasBox = false;
+      return;
+    }
+    // 一整行包成 flex:⛔ 别只把方框摆在文字前面 —— 那样长条目**折行后第二行会顶格**
+    // (跑到方框左边去),两个待办项的边界当场糊成一片(真机截图逮到的)。flex 让折行挂在
+    // 文字那一列下面。缩进(嵌套清单)化成整行的左内边距,不靠 pre-wrap 里的空白字符
+    // ——flex 容器里的纯空白子节点是要被丢掉的。
+    const row = el("span", { className: `ckline${box.checked ? " on" : ""}` });
+    if (box.indent !== "") row.style.setProperty("--ck-indent", String(box.indent.length));
+    const rest = el("span", { className: "cktext" });
+    const inner = document.createDocumentFragment();
+    appendInline(inner, box.rest, images);
+    rest.append(inner);
+    row.append(checkbox(box.checked, i, onToggle), rest);
+    frag.append(row);
+    prevWasBox = true;
+  });
+  return frag;
+}
+
+/** 正文里那枚方框。
+ *
+ *  ⛔ 用 `<button>` 不用 `<input type=checkbox>` —— 后者是替换元素、渲染不出 `::before`,
+ *  §2.3 那套热区扩展技法在它身上用不了(同 backup.ts 那条判据)。
+ *  ⛔ 只读视图(回收站 / 归档册)那形也是 button、只是 `disabled` —— 不是换成 span:
+ *  两形同一个签名才共用同一份 CSS(含那道热区扩展),否则热区门禁看到的是两个签名。
+ *  ⛔ `draggable=false`:看板卡自己是可拖的,按下这枚方框不该变成拖卡。 */
+function checkbox(checked: boolean, lineIndex: number, onToggle?: (lineIndex: number) => void): HTMLElement {
+  // ⚠ 勾没勾这个状态挂在**外层 `.ckline`** 上(一处翻,方框与文字压淡同时跟着走),
+  // 方框自己不带 `.on`。
+  if (onToggle === undefined) {
+    const state = checked ? t("checklist.checked") : t("checklist.unchecked");
+    const box = el("button", { className: "ckbox", type: "button", disabled: true, title: state });
+    box.setAttribute("aria-label", state);
+    return box;
+  }
+  const label = checked ? t("checklist.uncheck") : t("checklist.check");
+  const box = el("button", { className: "ckbox", type: "button", title: label, draggable: false });
+  box.setAttribute("aria-label", label);
+  box.addEventListener("click", (e) => {
+    e.stopPropagation(); // 卡片上还有别的点击主(悬停菜单 / 拖拽),这一下只归方框
+    onToggle(lineIndex);
+  });
+  return box;
+}
+
+/** 一行之内的两种内联引用,单趟从左到右扫出来(两者永不重叠、不重复吃同一段文字):
  *   - 「图N」 that has a matching image → a clickable chip that opens the lightbox. A 图N with NO
  *     such image is left as plain text — we never fake a link.
  *   - an http/https URL → a clickable link that opens in the system browser (never navigates the
- *     webview itself). Only http/https are linkified; any other scheme stays plain text.
- *  Returns a fragment the caller drops into the content node. */
-export function renderContent(text: string, images: ImageMeta[]): DocumentFragment {
+ *     webview itself). Only http/https are linkified; any other scheme stays plain text. */
+function appendInline(frag: DocumentFragment, text: string, images: ImageMeta[]): void {
   const bySeq = new Map(images.map((m) => [m.seq, m]));
-  const frag = document.createDocumentFragment();
   // One combined scanner: alternation of a URL or a 图N, matched in document order so the
   // two never overlap or double-consume a span of text.
   const re = /(https?:\/\/[^\s，。、;：！？）】《」』]+)|图(\d+)/g;
@@ -1160,7 +1228,6 @@ export function renderContent(text: string, images: ImageMeta[]): DocumentFragme
     last = m.index + m[0].length;
   }
   if (last < text.length) frag.append(text.slice(last));
-  return frag;
 }
 
 /** 新建入口的「暂存配图」控制器 —— 捕获浮窗 / 灵感「记下灵感」/ 看板「新建任务」三个入口共用

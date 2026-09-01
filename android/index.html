@@ -578,6 +578,39 @@
         white-space: pre-wrap; word-break: break-word;
       }
       .card.done .content { color: var(--ink-faint); }
+      /* 正文里的待办方框(checklist.ts 认行、ui.ts::contentHtml 画):行首 `- [ ] `/`- [x] `。
+         形状**刻意是方的** —— 左边那枚「整条任务做完了」的勾(.tick)是圆的,两者一眼分得开:
+         圆 = 这条任务,方 = 正文里的一项。尺寸用 em 跟着字号四档走。 */
+      /* 一整个待办项 = 一行 flex。⛔ 别退回「方框 + 裸文字」的纯内联排法:那样长条目
+         **折行后第二行会顶格**跑到方框左边,两个待办项的边界糊成一片(桌面真机截图逮到
+         的,手机上列更窄、更容易撞)。缩进化成整行左内边距 —— flex 容器里的纯空白子节点
+         会被丢掉,靠不住 pre-wrap 里那几个空格。 */
+      .ckline {
+        display: flex; align-items: flex-start; gap: 0.4em;
+        padding-left: calc(var(--ck-indent, 0) * 1em);
+      }
+      .cktext { min-width: 0; } /* flex item 默认 min-width:auto,长词会把整行撑破(249 那族) */
+      .ckbox {
+        position: relative; /* 触区扩展(::before)要锚在自己身上 */
+        flex: none;
+        width: 1.15em; height: 1.15em; padding: 0; margin-top: 0.25em;
+        border: 1.6px solid var(--line-strong); border-radius: var(--radius-xs);
+        background: transparent; font: inherit; line-height: 1; text-align: center;
+      }
+      /* 触区扩展:方框自身只有 ~18px。⚠ §2.3 那条 44px 底线在**行内**目标上够不着——
+         热区一长过行高,相邻两行就重叠、点边缘会命中错行(WCAG 2.5.8 的 inline 豁免说的
+         正是这一类)。取「尽量大 + 绝不重叠」:高度锁在下面那条放宽后的行高之内。 */
+      .ckbox::before {
+        content: ""; position: absolute; left: 50%; top: 50%;
+        width: 40px; height: 32px; transform: translate(-50%, -50%);
+      }
+      .ckline.on .ckbox { background: var(--seal); border-color: var(--seal); color: var(--on-seal); }
+      .ckline.on .ckbox::after { content: "✓"; }
+      /* 有方框的正文行距放宽 —— 上面那条触区要长在这里(且清单本就该比散文松)。 */
+      .content:has(.ckbox) { line-height: 2.2; }
+      /* 勾过那一行的文字压淡:清单的用处就是「一眼看出还剩几项」。⛔ 不划删除线——
+         正文是用户的话,划掉它太重(且删除线在中文小字号上糊成一团)。 */
+      .ckline.on .cktext { color: var(--ink-faint); }
       /* 定位/新卡回执:给目标卡一记朱砂脉冲(1.2s 后由 JS 摘 class)。 */
       .card.flash { animation: card-flash 1.2s ease-out; }
       @keyframes card-flash {

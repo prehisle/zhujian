@@ -2,12 +2,49 @@
 // 供卡片操作面板与回收站/归档册/搜索各面共用(单一真相源,别在模块里各抄一份)。
 
 import { t } from "./i18n";
+import { parseChecklistLine } from "./checklist";
 import { CONFIRM_REVERT_MS, TOAST_ERROR_MS, toastSuccessMs } from "./timing";
 
 export const $ = (id: string) => document.getElementById(id)!;
 
 export const esc = (s: string) =>
   s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
+
+/** 正文 → HTML:行首 `- [ ] ` / `- [x] ` 画成一枚方框(checklist.ts 认行),其余照旧逐字
+ *  转义。⚠ 逐行处理、`\n` 原样接回去(卡片正文是 white-space:pre-wrap)。
+ *
+ *  `clickable=false` 是只读面(回收站 / 归档册 / 搜索结果)那形:照显勾没勾,但 disabled
+ *  ——⛔ 不是换成别的标签,两形同一个签名才共用同一份样式。
+ *  `data-ck` = 行号,点击处理据此翻那一行(main.ts 的时间轴委托)。 */
+export function contentHtml(content: string, clickable: boolean): string {
+  const out: string[] = [];
+  let prevWasBox = false;
+  content.split("\n").forEach((line, i) => {
+    const box = parseChecklistLine(line);
+    if (box === null) {
+      // 正文是 white-space:pre-wrap,换行原样交回去 —— 但**待办项那行是 flex 块、自带
+      // 换行**,紧跟它再补一个 `\n` 就会空出一行。故只在「上一行也是普通文本」时补。
+      if (i > 0 && !prevWasBox) out.push("\n");
+      out.push(esc(line));
+      prevWasBox = false;
+      return;
+    }
+    const act = box.checked ? t("checklist.uncheck") : t("checklist.check");
+    const state = box.checked ? t("checklist.checked") : t("checklist.unchecked");
+    const label = clickable ? act : state;
+    const on = box.checked ? " on" : "";
+    const dis = clickable ? "" : " disabled";
+    // 缩进(嵌套清单)化成整行左内边距 —— flex 容器里的纯空白子节点会被丢掉,靠不住
+    // pre-wrap 里那几个空格。勾没勾挂在**外层 .ckline** 上,一处翻、方框与文字同时跟着走。
+    const ind = box.indent === "" ? "" : ` style="--ck-indent:${box.indent.length}"`;
+    out.push(
+      `<span class="ckline${on}"${ind}><button class="ckbox" type="button" data-ck="${i}"${dis}` +
+        ` aria-label="${esc(label)}"></button><span class="cktext">${esc(box.rest)}</span></span>`,
+    );
+    prevWasBox = true;
+  });
+  return out.join("");
+}
 
 // ⛔ **stage → 印文的那张表已搬去 `columns.ts`**(B-f 第 1 段):列可由用户增删改名 ⇒
 //    它不再是一张能在模块求值期算完的常量表,而是每轮加载登记的库内事实。

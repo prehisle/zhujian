@@ -46,6 +46,7 @@ import {
 import { closeColumnManager, openColumnManager } from "./column-manager";
 import { type Act, SATELLITE_LAYERS, armDismiss, createHotkeyController, registerViewKeys } from "./hotkey-menu";
 import { type ImageMeta, REPASTE_HINT, imageStrip, renderContent, wirePasteToAttach } from "./item-images";
+import { toggleChecklistLine } from "./checklist";
 import {
   closeComments,
   commentBadge,
@@ -1195,9 +1196,48 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     // Cached so the 标题 can linkify 「图N」 and the read-only strip renders without refetching
     // on every paint. A 图N with no matching image stays plain text (renderContent's rule).
     let imgs: ImageMeta[] = [];
+    // 正文里的待办方框(checklist.ts):点一下翻那一行的标记、整条正文写回。屏上这份
+    // 文本是**乐观呈现**的(点完立刻画,不等 IPC),故与 item.title 分开记 —— 写失败时
+    // 由 load() 照后端重画,不猜该回滚到哪一版。
+    let shownTitle = item.title;
     function paintTitle(): void {
-      titleP.replaceChildren(renderContent(item.title, imgs));
+      titleP.replaceChildren(renderContent(shownTitle, imgs, mode === "board" ? toggleBox : undefined));
     }
+    // 单飞 + 尾随:连着勾几个框时,在飞的那一发回来前只把最新文本记在 ckPending,
+    // 回来再补发一次。⛔ 别改成并发直发 —— 每发都是「整条正文」,乱序落地会让先发
+    // 的那份盖掉后发的(丢掉一勾)。
+    let ckFlushing = false;
+    let ckPending: string | null = null;
+    function flushChecklist(): void {
+      if (ckFlushing || ckPending === null) return;
+      const send = ckPending;
+      ckPending = null;
+      ckFlushing = true;
+      void invoke("rename_task", { id: item.id, title: send }).then(
+        () => {
+          ckFlushing = false;
+          if (ckPending !== null) flushChecklist();
+          else load(); // 落盘了才重画:此后 item.title 与屏上这份重新是同一个
+        },
+        (e) => {
+          ckFlushing = false;
+          ckPending = null;
+          showOpError(t("checklist.toggleFailed", { err: String(e) }));
+          load();
+        },
+      );
+    }
+    function toggleBox(lineIndex: number): void {
+      const next = toggleChecklistLine(shownTitle, lineIndex);
+      if (next === null) return; // 那一行已不是待办项(远端刚改过):放弃这一下,⛔ 别猜别的行
+      shownTitle = next;
+      paintTitle();
+      ckPending = next;
+      flushChecklist();
+    }
+    // 方框不依赖配图,首帧就画得出 —— 别等 onMetas 那一发回来(否则每张带清单的卡都
+    // 要先闪一下 `- [ ] ` 原文)。图 N 的链接化仍由随后的 onMetas 补上,同一条乐观呈现。
+    paintTitle();
     // 标题里「图N」的链接化要知道这条有哪几张图,而缩略图条本来就在取同一份 metas ——
     // 复用它那一发(onMetas),别再自己发一次:此前一屏 N 张卡要发 **2N 次**
     // list_item_images。乐观首帧时 onMetas 是同步回调,标题的链接从第一帧起就是对的。

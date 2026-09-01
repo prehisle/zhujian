@@ -161,6 +161,12 @@ const RUNTIME_VARS = [
   { name: "--tag-color", where: "src/tag-color.ts / src/filter-bar.ts 按标签自定义色 setProperty" },
   { name: "--tc", where: "安卓侧同一件事(android/src/filter.ts 等),chip 上的行内 style" },
   { name: "--nav-h", where: "android/src/main.ts 量出底栏实高后写根元素,供悬浮钮定位" },
+  {
+    name: "--ck-indent",
+    where:
+      "正文待办清单的嵌套缩进层数(桌面 src/item-images.ts::renderContent 的 setProperty /" +
+      " 安卓 android/src/ui.ts::contentHtml 的行内 style);兜底 0 = 不缩进,那正是绝大多数行",
+  },
 ];
 
 // ---- 解析 ---------------------------------------------------------------------------
