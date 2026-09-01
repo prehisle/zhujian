@@ -257,11 +257,17 @@ function dueState(due: string, today: string): DueState {
   if (due === today) return "today";
   return "future";
 }
-/** 与桌面 dueLabel 逐字同形的相对表达;7 天外退化成 `M/D`(不翻译,数字两端通用)。 */
-function dueLabel(due: string, today: string): string {
+/** 两个 `YYYY-MM-DD` 之间差几个日历日(due − today),走 UTC 午夜算 —— 夏令时永不多算
+ *  少算一天。与桌面 `dayDiff` 逐字同形。 */
+function dayDiff(due: string, today: string): number {
   const [ay, am, ad] = due.split("-").map(Number);
   const [by, bm, bd] = today.split("-").map(Number);
-  const diff = Math.round((Date.UTC(ay, am - 1, ad) - Date.UTC(by, bm - 1, bd)) / 86_400_000);
+  return Math.round((Date.UTC(ay, am - 1, ad) - Date.UTC(by, bm - 1, bd)) / 86_400_000);
+}
+/** 与桌面 dueLabel 逐字同形的相对表达;7 天外退化成 `M/D`(不翻译,数字两端通用)。 */
+function dueLabel(due: string, today: string): string {
+  const [, am, ad] = due.split("-").map(Number);
+  const diff = dayDiff(due, today);
   if (diff === 0) return t("main.dueToday");
   if (diff === 1) return t("main.dueTomorrow");
   if (diff === -1) return t("main.dueYesterday");
@@ -279,10 +285,30 @@ function dueAttentionState(it: { stage: string; due_on: string | null }, today: 
   return dueState(it.due_on, today);
 }
 
-/** 「逾期 M · 今天 N」/「今天到期 N」—— 到期汇总钮那一句,与桌面 `dueSummaryLabel`
- *  逐字同形(那边是看板顶栏钮与每日提醒通知共用的一把尺)。调用方保证 late+now > 0。 */
+/** 「逾期 M · 今天 N」/「今天到期 N」—— 与桌面 `dueSummaryLabel` 逐字同形(那边这句还喂着
+ *  每日提醒通知;这一端今天没有通知那条路)。调用方保证 late+now > 0。 */
 function dueSummaryLabel(late: number, now: number): string {
   return late > 0 ? t("main.dueSoonLate", { late, now }) : t("main.dueSoonToday", { now });
+}
+
+/** 「快到期」的窗口 —— 与桌面 `DUE_SOON_DAYS` 同值(两端不共享代码,同 dueState 那一族的
+ *  既有形);屏上那句话里的天数由它注入,⛔ 别在字典里写死。 */
+const DUE_SOON_DAYS = 3;
+
+/** 这条算不算「快到期」:未完成 · 有截止日 · 落在今天之后的 `DUE_SOON_DAYS` 天内。
+ *  与桌面 `isDueSoon` 逐字同形,⛔ 同样刻意不做成 `DueState` 的第五档(那个枚举喂着卡片
+ *  那颗 due chip 的上色,加一档会让 chip 跟着变脸)。 */
+function isDueSoon(it: { stage: string; due_on: string | null }, today: string): boolean {
+  if (dueAttentionState(it, today) !== "future") return false;
+  return dayDiff(it.due_on as string, today) <= DUE_SOON_DAYS;
+}
+
+/** 汇总钮的整句 —— 在 `dueSummaryLabel` 之上再挂一段「{days} 天内 {n}」。与桌面
+ *  `dueSummaryFullLabel` 逐字同形。调用方保证 late+now+soon > 0。 */
+function dueSummaryFullLabel(late: number, now: number, soon: number): string {
+  if (late + now === 0) return t("main.dueSoonNextOnly", { n: soon, days: DUE_SOON_DAYS });
+  const head = dueSummaryLabel(late, now);
+  return soon === 0 ? head : `${head} · ${t("main.dueSoonNext", { n: soon, days: DUE_SOON_DAYS })}`;
 }
 
 // ---- 统一时间轴 -------------------------------------------------------------
@@ -559,7 +585,7 @@ function projectTimeline(): void {
     const dueShown = dueOnly
       ? stageShown.filter((t) => {
           const st = dueAttentionState(t, today);
-          return st === "today" || st === "overdue";
+          return st === "today" || st === "overdue" || isDueSoon(t, today);
         })
       : stageShown;
     // 只看到期时段内按截止升序(逾期最久的排最前)—— 同桌面 556-B 的 sortByDue:这枚钮
@@ -692,19 +718,23 @@ function dueSummaryPill(modeItems: TimelineItem[]): HTMLButtonElement | null {
   const today = localToday();
   let now = 0;
   let late = 0;
+  let soon = 0; // 快到期(60-A)
   for (const it of modeItems) {
     const st = dueAttentionState(it, today);
     if (st === "today") now++;
     else if (st === "overdue") late++;
+    else if (isDueSoon(it, today)) soon++;
   }
-  if (now + late === 0) {
+  // ⭐ **三者皆零才不渲染**:「今天没事、但后天有」正是提前预警最该说话的那天(同桌面)。
+  if (now + late + soon === 0) {
     dueOnly = false; // 筛着到期时把最后一条做掉了:别留下一个筛空的面(同桌面 paintDueSoon)
     return null;
   }
   const b = document.createElement("button");
   b.type = "button";
+  // ⛔ 朱砂只跟着逾期走(`late` 的条件一个字没动):快到期不是坏消息,不该抢眼。
   b.className = `fpill fdue${late > 0 ? " late" : ""}${dueOnly ? " active" : ""}`;
-  b.textContent = dueSummaryLabel(late, now);
+  b.textContent = dueSummaryFullLabel(late, now, soon);
   b.addEventListener("click", onDuePick);
   return b;
 }
@@ -1495,8 +1525,9 @@ async function focusTimelineCard(id: string) {
       cleared = true;
     }
     if (dueOnly) {
-      const st = dueAttentionState(item, localToday());
-      if (st !== "today" && st !== "overdue") {
+      const today = localToday();
+      const st = dueAttentionState(item, today);
+      if (st !== "today" && st !== "overdue" && !isDueSoon(item, today)) {
         dueOnly = false;
         cleared = true;
       }

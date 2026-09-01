@@ -107,25 +107,32 @@ describe("任务时间维度 · 看板设置截止/优先级", () => {
 
 // 502:到期汇总(顶栏「逾期 M · 今天 N」+ 点开只看到期)。这是「截止时间提醒」的最小
 // 可用形——不加通知插件、不动数据模型,只把已经在库里的 due_on 汇总到一处。
+// **60-A 起再挂一段「N 天内 K」**(快到期提前预警,窗口 = 前端 DUE_SOON_DAYS = 3):
+// ⛔ 那一段刻意**不进每日提醒通知**(通知仍只说逾期/今天,见 due-reminder.e2e.js)。
 //
 // ⚠ 计数按**整块看板**算,而看板上还有别的 describe / 别的 spec 留下的卡 ⇒ 断言一律走
 // **基线 + 增量**,不写死绝对数(首版写死「今天 1」,同文件上一个 describe 那张「今天」
 // 截止的卡当场把它打成「今天 2」)。
 describe("任务时间维度 · 到期汇总", () => {
+  const SOON_DAYS = 3; // 与前端 src/tasktime.ts 的 DUE_SOON_DAYS 同值(两处都改才算改窗口)
   const NOW = "到期甲-今天交的";
   const LATE = "到期乙-早该做的";
   const FREE = "到期丙-没截止";
+  const SOON = "到期丁-后天要的"; // 落在窗口内(+2)
+  const FAR = "到期己-下周才要"; // 落在窗口外(+SOON_DAYS+1),⭐ 这一张是边界的阴性对照
   const ids = [];
-  let base = { now: 0, late: 0 };
+  let base = { now: 0, late: 0, soon: 0 };
 
-  /** 库里此刻有多少张「今天到期 / 已逾期」(与前端 dueAttentionState 同口径:纯日历日
-   *  字符串比 + 完成的任务不算——做完的不该继续占逾期计数,即使截止日已经过去)。 */
+  /** 库里此刻有多少张「今天到期 / 已逾期 / 快到期」(与前端 dueAttentionState + isDueSoon
+   *  同口径:纯日历日字符串比 + 完成的任务不算——做完的不该继续占计数,即使截止日已过去)。 */
   async function dueCounts() {
     const today = ymd(0);
+    const edge = ymd(SOON_DAYS); // 窗口最后一天(含),再往后不算
     const all = (await invoke("list_tasks")).filter((t) => t.status !== "done");
     return {
       now: all.filter((t) => t.due_on === today).length,
       late: all.filter((t) => t.due_on && t.due_on < today).length,
+      soon: all.filter((t) => t.due_on && t.due_on > today && t.due_on <= edge).length,
     };
   }
   const chip = () =>
@@ -138,23 +145,34 @@ describe("任务时间维度 · 到期汇总", () => {
         active: b.classList.contains("active"),
       };
     });
-  /** 汇总钮此刻该说什么(一条都没有 = 整枚藏起)。 */
-  async function expectChip(now, late) {
+  /** 汇总钮此刻该说什么(三者皆零 = 整枚藏起)。四种组合各有自己的句子,⛔ 别只测有逾期那种。 */
+  async function expectChip(now, late, soon) {
     const c = await chip();
-    if (now + late === 0) {
+    if (now + late + soon === 0) {
       expect(c.shown).toBe(false);
       return;
     }
     expect(c.shown).toBe(true);
-    expect(c.text).toBe(late > 0 ? `逾期 ${late} · 今天 ${now}` : `今天到期 ${now}`);
+    const head = late > 0 ? `逾期 ${late} · 今天 ${now}` : `今天到期 ${now}`;
+    const tail = ` · ${SOON_DAYS} 天内 ${soon}`;
+    expect(c.text).toBe(
+      late + now === 0 ? `${SOON_DAYS} 天内到期 ${soon}` : soon === 0 ? head : head + tail,
+    );
+    // ⛔ 朱砂只跟着逾期走:快到期不是坏消息,不该抢眼。
     expect(c.late).toBe(late > 0);
   }
   const cardTitles = () =>
     browser.execute(() => [...document.querySelectorAll(".tcard .ttitle")].map((p) => p.textContent));
 
   before(async () => {
-    base = await dueCounts(); // 先取基线,再种自己的三张
-    for (const [title, due] of [[NOW, ymd(0)], [LATE, ymd(-3)], [FREE, null]]) {
+    base = await dueCounts(); // 先取基线,再种自己的五张
+    for (const [title, due] of [
+      [NOW, ymd(0)],
+      [LATE, ymd(-3)],
+      [FREE, null],
+      [SOON, ymd(2)],
+      [FAR, ymd(SOON_DAYS + 1)],
+    ]) {
       const id = await invoke("create_task", { title });
       ids.push(id);
       if (due) await invoke("set_task_due", { id, dueOn: due });
@@ -175,11 +193,26 @@ describe("任务时间维度 · 到期汇总", () => {
   });
 
   it("有逾期 → 顶栏报出逾期与今天各几条,并描成朱砂", async () => {
-    await expectChip(base.now + 1, base.late + 1);
+    await expectChip(base.now + 1, base.late + 1, base.soon + 1);
     expect((await chip()).active).toBe(false);
   });
 
-  it("点一下 → 只剩到期与逾期的卡、按最近到期在前排;再点 → 全部回来", async () => {
+  // 60-A 的边界:窗口是「今天之后 SOON_DAYS 天内(含)」。⭐ **判据要能证伪** —— 只断言
+  // 「FAR 没被算进去」证不出边界画在哪儿(把窗口改成 0 天它照样绿)。这里改成一次问两句:
+  // SOON(+2,窗口内)必须被算上,FAR(+SOON_DAYS+1,窗口外)必须没有 ⇒ 边界真的落在
+  // SOON_DAYS 与 SOON_DAYS+1 之间;并且现算一遍「若窗口无上界会是什么样」再断言 ≠ 它。
+  it(`只算窗口内的:+2 天的算进来、+${SOON_DAYS + 1} 天的不算(边界两侧各一张)`, async () => {
+    const c = await dueCounts();
+    expect(c.soon).toBe(base.soon + 1); // SOON 进来了,FAR 没有
+    const noCeiling = (await invoke("list_tasks")).filter(
+      (t) => t.status !== "done" && t.due_on && t.due_on > ymd(0),
+    ).length;
+    // 前置自证:这两个数必须真的不同,否则「有上界」这件事本身没被这批数据考验到。
+    expect(noCeiling).toBeGreaterThan(c.soon);
+    await expectChip(base.now + 1, base.late + 1, base.soon + 1);
+  });
+
+  it("点一下 → 只剩到期/逾期/快到期的卡、按最近到期在前排;再点 → 全部回来", async () => {
     await browser.execute(() => document.querySelector("#due-soon").click());
     await browser.waitUntil(async () => !(await cardTitles()).includes(FREE), {
       timeout: 8000,
@@ -188,15 +221,19 @@ describe("任务时间维度 · 到期汇总", () => {
     const titles = await cardTitles();
     expect(titles).toContain(NOW);
     expect(titles).toContain(LATE);
+    expect(titles).toContain(SOON); // 60-A:快到期的也要留在视野里
+    expect(titles).not.toContain(FAR); // 窗口外的仍被筛掉(⇒ 上面那句不是「筛选整个失灵」)
     expect((await chip()).active).toBe(true);
 
-    // B:列内序变成按截止日 —— LATE(逾期 3 天)该排在 NOW(今天到期)前面,尽管创建顺序
-    // 是 NOW 先建、LATE 后建(手动/创建时间序都会把 NOW 排前面,能把两种排序分辨出来)。
-    // 两个都在默认落点 todo 列,故直接在该列内比相对顺序,不受别的 spec 遗留卡干扰。
+    // B:列内序变成按截止日 —— LATE(逾期 3 天)该排在 NOW(今天到期)前面、NOW 又该排在
+    // SOON(+2 天)前面,尽管创建顺序是 NOW → LATE → SOON(手动/创建时间序都会把 NOW 排
+    // 最前,能把两种排序分辨出来)。三张都在默认落点 todo 列,故直接在该列内比相对顺序,
+    // 不受别的 spec 遗留卡干扰。
     const todoOrder = await browser.execute(() =>
       [...document.querySelectorAll(".col.todo .tcard .ttitle")].map((p) => p.textContent),
     );
     expect(todoOrder.indexOf(LATE)).toBeLessThan(todoOrder.indexOf(NOW));
+    expect(todoOrder.indexOf(NOW)).toBeLessThan(todoOrder.indexOf(SOON));
 
     await browser.execute(() => document.querySelector("#due-soon").click());
     await browser.waitUntil(async () => (await cardTitles()).includes(FREE), {
@@ -205,13 +242,43 @@ describe("任务时间维度 · 到期汇总", () => {
     });
   });
 
-  it("一条到期都没有时整枚藏起(不摆一个恒亮的 0)", async () => {
-    // 这一格要的是「真的一条都没有」,故连基线那几张也临时摘掉截止 —— 记下原值,
-    // finally 里逐条还回去(⛔ 别留下改过的别人的数据)。
+  // 60-A 的核心价值那一格:今天什么事都没有、但后天有 —— 钮**仍要在**,只说快到期那一段,
+  // 且**不描朱砂**。⛔ 这一例正是「按 late+now 藏起」那个旧条件的阴性对照:不改 paintDueSoon
+  // 的隐藏条件,这一例必红(钮会整枚藏起)。
+  it("今天与逾期都为零、只有快到期 → 钮仍在,只说「N 天内到期 K」且不描朱砂", async () => {
     const today = ymd(0);
+    // 把全库「今天到期 / 已逾期」的那些临时摘掉截止(含基线那几张),只留窗口内的。
     const others = (await invoke("list_tasks")).filter(
       (t) => t.due_on && t.due_on <= today && !ids.includes(t.id),
     );
+    try {
+      for (const t of others) await invoke("set_task_due", { id: t.id, dueOn: null });
+      for (const id of [ids[0], ids[1]]) await invoke("set_task_due", { id, dueOn: null }); // NOW / LATE
+      await goNotebook("board");
+      await $(`.tcard*=${FREE}`).waitForExist({ timeout: 8000 });
+      const c = await dueCounts();
+      expect(c.now + c.late).toBe(0); // 前置真的成立了(否则下面那句在验别的东西)
+      expect(c.soon).toBeGreaterThan(0);
+      await browser.waitUntil(async () => (await chip()).text === `${SOON_DAYS} 天内到期 ${c.soon}`, {
+        timeout: 8000,
+        timeoutMsg: "只剩快到期时,汇总钮没说「N 天内到期 K」",
+      });
+      const shown = await chip();
+      expect(shown.shown).toBe(true);
+      expect(shown.late).toBe(false);
+    } finally {
+      for (const t of others) await invoke("set_task_due", { id: t.id, dueOn: t.due_on });
+      await invoke("set_task_due", { id: ids[0], dueOn: ymd(0) });
+      await invoke("set_task_due", { id: ids[1], dueOn: ymd(-3) });
+    }
+  });
+
+  it("一条到期都没有时整枚藏起(不摆一个恒亮的 0)", async () => {
+    // 这一格要的是「真的一条都没有」,故连基线那几张也临时摘掉截止 —— 记下原值,
+    // finally 里逐条还回去(⛔ 别留下改过的别人的数据)。
+    // ⚠ 60-A 起摘的面从「due_on <= today」放宽到**所有有截止日的**:窗口内那些如今也
+    // 会把钮点亮,只摘到期那半的话这一例永远等不到「藏起」。
+    const others = (await invoke("list_tasks")).filter((t) => t.due_on && !ids.includes(t.id));
     try {
       for (const t of others) await invoke("set_task_due", { id: t.id, dueOn: null });
       for (const id of ids) await invoke("set_task_due", { id, dueOn: null });
@@ -236,13 +303,21 @@ describe("任务时间维度 · 到期汇总", () => {
       await goNotebook("board");
       await $(".col.done").$(`.tcard*=${DONE_LATE}`).waitForExist({ timeout: 8000 });
       // 顶栏汇总:done 卡不该把逾期数顶上去(数字不变,或本就该藏起的仍然藏着)。
-      await expectChip(before.now, before.late);
+      await expectChip(before.now, before.late, before.soon);
       // 卡片本身:done 列里那张不该再带 due-overdue 朱砂强调。
+      // ⚠ 这一句要求卡的截止日**此刻仍是过去的**,否则它恒真 ⇒ ⛔ 下面那格挪截止日的动作
+      // 必须排在它后面,别图顺手往上搬。
       const accent = await browser.execute((title) => {
         const card = [...document.querySelectorAll(".tcard")].find((c) => c.textContent.includes(title));
         return card ? card.classList.contains("due-overdue") : "absent";
       }, DONE_LATE);
       expect(accent).toBe(false);
+      // 60-A 把同一条裁决延到新那一档:把这张 done 卡的截止挪进快到期窗口,`soon` 也不许动
+      // (isDueSoon 走的是 dueAttentionState ⇒ 完成的恒不算)。
+      await invoke("set_task_due", { id, dueOn: ymd(2) });
+      await goNotebook("board");
+      await $(".col.done").$(`.tcard*=${DONE_LATE}`).waitForExist({ timeout: 8000 });
+      await expectChip(before.now, before.late, before.soon);
     } finally {
       await invoke("archive_task", { id });
       await invoke("purge_task", { id });

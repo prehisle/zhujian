@@ -44,7 +44,11 @@ export const main = defineMessages({
   // 两份字典键空间独立)。筛空那句则随本文件既有空态的句读(带句号)。
   "main.dueSoonToday": { zh: "今天到期 {now}", en: "{now} due today" },
   "main.dueSoonLate": { zh: "逾期 {late} · 今天 {now}", en: "{late} overdue · {now} today" },
-  "main.noneDue": { zh: "到期的任务不在当前筛选里。", en: "No due task matches the current filter." },
+  // 「快到期」那一段(用户面 60-A):与桌面 board.dueSoonNext / board.dueSoonNextOnly
+  // 逐字同形。{days} 由 DUE_SOON_DAYS 注入,⛔ 别在这儿写死天数。
+  "main.dueSoonNext": { zh: "{days} 天内 {n}", en: "{n} within {days}d" },
+  "main.dueSoonNextOnly": { zh: "{days} 天内到期 {n}", en: "{n} due within {days}d" },
+  "main.noneDue": { zh: "到期与快到期的任务不在当前筛选里。", en: "No due or upcoming task matches the current filter." },
   "main.timelineLoadFailed": { zh: "时间轴读取失败:{error}", en: "Could not load the timeline: {error}" },
   "main.spaceSwitchedDraftDropped": { zh: "空间已切换,未保存的编辑已丢弃", en: "Space switched — unsaved changes were discarded" },
   "main.loading": { zh: "正在载入…", en: "Loading…" },

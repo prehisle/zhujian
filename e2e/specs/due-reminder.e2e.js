@@ -182,6 +182,39 @@ describe("截止提醒 · 判定与水位(39)", () => {
     }
   });
 
+  // 60-A 的取舍那一格:快到期**只进屏上那枚汇总钮,不进通知**。通知今天的克制感来自
+  // 「只在真出事时才说话」,提前预警会让它几乎天天说话 ⇒ 用户 2026-09-01 拍板不破例。
+  // ⭐ **两半一起验才算数**:只断言「通知没说话」证不出取舍成立(数据没到位也会绿),
+  // 所以同一批数据先证看板那枚钮**真的亮着并说了那句话**,再证通知仍是 body=null。
+  it("只有快到期时:看板那枚钮说话,而每日提醒仍不说话(刻意不同口径)", async () => {
+    const dued = (await invoke("list_tasks")).filter((t) => t.due_on !== null);
+    const probe = await invoke("create_task", { title: "提醒己-后天才到期" });
+    try {
+      for (const t of dued) await invoke("set_task_due", { id: t.id, dueOn: null });
+      await invoke("set_task_due", { id: probe, dueOn: ymd(2) }); // 窗口内(DUE_SOON_DAYS=3)
+      // ①前置自证:同一批数据下,看板那枚钮亮着且说的是快到期那一句。
+      await goNotebook("board");
+      await browser.waitUntil(
+        async () =>
+          await browser.execute(() => {
+            const b = document.querySelector("#due-soon");
+            return b && !b.hidden && /天内到期 \d+$/.test(b.querySelector(".lbl").textContent);
+          }),
+        { timeout: 8000, timeoutMsg: "只有快到期时,看板汇总钮没亮 / 没说「N 天内到期 K」" },
+      );
+      // ②通知那条路:同一批数据,判定跑完但一个字不说。
+      await armLog(); // goNotebook 重挂了页面,日志钩子要重新装
+      await clearMark();
+      await fireUntil("07:30", 1, "只有快到期那次该出 done 事件(body=null)没出");
+      const log = await remindLog();
+      expect(log[0].body).toBe(null);
+      expect(await lastMark()).toBe(ymd(0));
+    } finally {
+      await invoke("archive_task", { id: probe });
+      for (const t of dued) await invoke("set_task_due", { id: t.id, dueOn: t.due_on });
+    }
+  });
+
   after(async () => {
     // 收尾:两张种子卡回收(硬删走 delete_note 会被 live 守护拒,软删即可让别的 spec 不受扰),
     // 并把配置还回默认形(别把 07:30 留给后面的 spec —— profile 每支新开,这里只是求稳)。

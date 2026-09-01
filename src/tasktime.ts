@@ -123,9 +123,10 @@ export function when(iso: string): string {
 
 export type DueState = "none" | "overdue" | "today" | "future";
 
-/** 「逾期 M · 今天 N」/「今天到期 N」—— 看板顶栏汇总钮(502)与截止提醒通知(39)
- *  共用的一句话。两处必须念同一个数、同一个说法:通知把人引回看板,那枚钮就是落点。
- *  调用方保证 late+now > 0(两者皆零时钮整枚藏起 / 通知今天不说话)。 */
+/** 「逾期 M · 今天 N」/「今天到期 N」—— **每日提醒通知**那一句,同时是屏上汇总钮那句
+ *  的**前缀**(整句见 `dueSummaryFullLabel`)。通知把人引回看板,那枚钮就是落点 ⇒ 两处
+ *  说到「逾期/今天」时必须念同一个数、同一个说法;钮多出来的「快到期」那一段刻意不进通知。
+ *  调用方保证 late+now > 0(两者皆零时通知今天不说话)。 */
 export function dueSummaryLabel(late: number, now: number): string {
   return late > 0 ? t("board.dueSoonLate", { late, now }) : t("board.dueSoonToday", { now });
 }
@@ -147,6 +148,31 @@ export function dueState(due: string | null, today: string): DueState {
 export function dueAttentionState(item: Pick<TaskItem, "due_on" | "status">, today: string): DueState {
   if (item.status === DONE_COLUMN) return "none";
   return dueState(item.due_on, today);
+}
+
+/** 「快到期」的窗口:今天之后这么多天内到期 = 值得提前预警。⭐ 单一真相源 —— 屏上那句
+ *  话里的天数由它注入(`{days}`),⛔ 别在字典里写死一个 3。 */
+export const DUE_SOON_DAYS = 3;
+
+/** 这条算不算「快到期」:未完成 · 有截止日 · 落在今天之后的 `DUE_SOON_DAYS` 天内。
+ *  ⛔ **刻意不做成 `DueState` 的第五档** —— 那个枚举同时喂着卡片那颗 due chip 的上色
+ *  (`dueState` → `renderDue`),给它加一档会让 chip 跟着变脸,而「汇总的口径与卡片 chip
+ *  刻意不同」是已拍过板的形。这里只答汇总钮 / 只看到期那一根轴。 */
+export function isDueSoon(item: Pick<TaskItem, "due_on" | "status">, today: string): boolean {
+  // "future" 已保证:未完成、due_on 非 null、且严格晚于今天 ⇒ 这里只剩「远不远」要判。
+  if (dueAttentionState(item, today) !== "future") return false;
+  return dayDiff(item.due_on as string, today) <= DUE_SOON_DAYS;
+}
+
+/** 汇总钮的整句 —— 在 `dueSummaryLabel` 之上再挂一段「{days} 天内 {n}」。
+ *  ⛔ **与每日提醒刻意不同口径**(用户 2026-09-01 拍板):通知今天的克制感来自「只在真出
+ *  事时才说话」,把提前预警塞进去会让它几乎天天说话 ⇒ 预警只进屏上这两枚钮(看板顶栏 +
+ *  手机任务面),`reminder.ts` 那条路仍走 `dueSummaryLabel` 一个字不变。两句话的前缀逐字
+ *  相同,屏上这枚只是多说了一段,不是另一把尺。调用方保证 late+now+soon > 0。 */
+export function dueSummaryFullLabel(late: number, now: number, soon: number): string {
+  if (late + now === 0) return t("board.dueSoonNextOnly", { n: soon, days: DUE_SOON_DAYS });
+  const head = dueSummaryLabel(late, now);
+  return soon === 0 ? head : `${head} · ${t("board.dueSoonNext", { n: soon, days: DUE_SOON_DAYS })}`;
 }
 
 /** Calendar days between two `YYYY-MM-DD` days (due - today), via UTC midnights

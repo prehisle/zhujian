@@ -56,7 +56,7 @@ import {
 import type { View, ViewCtx } from "./notebook";
 import { applyTagColor } from "./tag-color";
 import { renderTagPicker } from "./tag-picker";
-import { type TaskItem, dayKey, dayLabel, dueAttentionState, dueSummaryLabel, localToday, metaRow, startOfWeek } from "./tasktime";
+import { type TaskItem, DUE_SOON_DAYS, dayKey, dayLabel, dueAttentionState, dueSummaryFullLabel, isDueSoon, localToday, metaRow, startOfWeek } from "./tasktime";
 import { identitySig, loadIdentity, signatureChip } from "./identity";
 import { t } from "./i18n";
 import "./board.css";
@@ -119,8 +119,10 @@ function sortColumn(items: TaskItem[], s: BoardSort): TaskItem[] {
 }
 
 /** 「只看到期」(dueOnly)那一档的列内序:按截止日升序 —— 逾期最久的排最前,今天到期
- *  的排在逾期后面,不再理会 boardSort(手动位置 / 创建时间对「哪个最火烧眉毛」这个问题
- *  答不上来)。dueOnly 下的卡必有 due_on(dueAttentionState 已把 today/overdue 筛出来),
+ *  的排在逾期后面,快到期(60-A)的再往后,不再理会 boardSort(手动位置 / 创建时间对
+ *  「哪个最火烧眉毛」这个问题答不上来)。⭐ 加了「快到期」这一档之后这句序**一个字没改**
+ *  就还对:升序天然把「逾期 → 今天 → 后天」排成紧急度。dueOnly 下的卡必有 due_on
+ *  (dueAttentionState 与 isDueSoon 都已把无截止日的排除),
  *  `?? ""` 只是不让类型检查为难,不代表真会撞上 null。同 sortColumn:不原地改数组。 */
 function sortByDue(items: TaskItem[]): TaskItem[] {
   return [...items].sort((a, b) => {
@@ -170,7 +172,7 @@ const SKELETON = `
     <button class="hbtn" id="add-task" type="button" title="${t("board.newTask")}">+ <span class="lbl">${t("board.newTask")}</span> <kbd class="k">N</kbd></button>
     <span class="copy-slot" id="copy-slot"></span>
     <span class="head-tools">
-      <button class="hbtn due-soon" id="due-soon" title="${t("board.dueSoonTitle")}" hidden><span class="lbl" id="due-soon-lbl"></span></button>
+      <button class="hbtn due-soon" id="due-soon" title="${t("board.dueSoonTitle", { days: DUE_SOON_DAYS })}" hidden><span class="lbl" id="due-soon-lbl"></span></button>
       <button class="hbtn" id="board-sort" title="${t("board.sortTitle")}"><span class="lbl" id="board-sort-lbl">${t("board.sortManual")}</span></button>
       <button class="hbtn" id="manage-cols" title="${t("board.manageColsTitle")}">≡ <span class="lbl">${t("board.manageCols")}</span></button>
       <button class="hbtn" id="seal-toggle" title="${t("board.sealTitle")}"><span class="lbl">${t("board.sealLbl")}</span><span class="tn" id="seal-n">0</span> <kbd class="k">G</kbd></button>
@@ -2063,14 +2065,15 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       if (focusOnBoard) dueOnly = false;
       const dueNow = visible.filter((t) => dueAttentionState(t, today) === "today").length;
       const dueLate = visible.filter((t) => dueAttentionState(t, today) === "overdue").length;
-      paintDueSoon(dueNow, dueLate);
+      const dueNext = visible.filter((t) => isDueSoon(t, today)).length; // 快到期(60-A)
+      paintDueSoon(dueNow, dueLate, dueNext);
       paintSortBtn(); // dueOnly 这一轮的终值已经摆定(上面 paintDueSoon 可能刚把它归零)
 
       const shownAll = applyFilter(timeNarrowed, filter, (t) => t.title, allTopics);
       const shown = dueOnly
         ? shownAll.filter((t) => {
             const st = dueAttentionState(t, today);
-            return st === "today" || st === "overdue";
+            return st === "today" || st === "overdue" || isDueSoon(t, today);
           })
         : shownAll;
 
@@ -2116,15 +2119,19 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
   });
   paintSortBtn(); // 首帧就按记住的档显示,别先闪一下「手动」再被 load() 改掉(163 契约)
 
-  /** 到期汇总钮:有逾期就说逾期(朱砂),否则只说今天;两者皆无整枚藏起。 */
-  function paintDueSoon(dueNow: number, dueLate: number): void {
-    if (dueNow + dueLate === 0) {
+  /** 到期汇总钮:有逾期就说逾期(朱砂),否则只说今天;60-A 起再挂一段「N 天内 K」。
+   *  ⭐ **三者皆无才整枚藏起** —— 「今天没事、但后天有」正是提前预警最该说话的那天,
+   *  按 late+now 藏起等于这功能永远看不见。
+   *  ⛔ **朱砂只跟着逾期走**(`.late` 的条件一个字没动):快到期不是坏消息,不该抢眼。 */
+  function paintDueSoon(dueNow: number, dueLate: number, dueNext: number): void {
+    if (dueNow + dueLate + dueNext === 0) {
       dueSoonBtn.hidden = true;
       dueOnly = false; // 筛着到期时把最后一条做掉了:别留下一个筛空的看板
       return;
     }
     dueSoonBtn.hidden = false;
-    dueSoonLbl.textContent = dueSummaryLabel(dueLate, dueNow); // 与截止提醒通知(39)同一把尺
+    // 「逾期/今天」那半与每日提醒念同一个数(见 dueSummaryFullLabel:预警那段刻意不进通知)。
+    dueSoonLbl.textContent = dueSummaryFullLabel(dueLate, dueNow, dueNext);
     dueSoonBtn.classList.toggle("late", dueLate > 0);
     dueSoonBtn.classList.toggle("active", dueOnly);
   }

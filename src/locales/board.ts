@@ -70,9 +70,14 @@ export const board = defineMessages({
   "board.moveToCol": { zh: "移到「{col}」", en: "Move to “{col}”" },
   "board.dueSoonToday": { zh: "今天到期 {now}", en: "{now} due today" },
   "board.dueSoonLate": { zh: "逾期 {late} · 今天 {now}", en: "{late} overdue · {now} today" },
-  "board.dueSoonTitle": { zh: "点击只看到期与逾期的任务;再点一次回到全部", en: "Click to show only tasks due today or overdue; click again for all" },
-  "board.noDueMatch": { zh: "到期的任务不在当前筛选里", en: "No due task matches the current filter" },
-  "board.noDueMatchHint": { zh: "放宽标签 / 类型 / 时间 / 过滤词,或再点一次「到期」回到全部。", en: "Loosen the tag / kind / time / text filter, or click the due chip again for all." },
+  // 「快到期」那一段(用户面 60-A)。⚠ 上面两句还喂着每日提醒通知,这两句**不**喂 ——
+  // 预警只进屏上那枚钮,理由见 tasktime.dueSummaryFullLabel 的注释。{days} 由
+  // DUE_SOON_DAYS 注入,⛔ 别在这儿写死天数。
+  "board.dueSoonNext": { zh: "{days} 天内 {n}", en: "{n} within {days}d" },
+  "board.dueSoonNextOnly": { zh: "{days} 天内到期 {n}", en: "{n} due within {days}d" },
+  "board.dueSoonTitle": { zh: "点击只看逾期、今天到期与 {days} 天内到期的任务;再点一次回到全部", en: "Click to show only tasks overdue, due today, or due within {days}d; click again for all" },
+  "board.noDueMatch": { zh: "到期与快到期的任务不在当前筛选里", en: "No due or upcoming task matches the current filter" },
+  "board.noDueMatchHint": { zh: "放宽标签 / 类型 / 时间 / 过滤词,或再点一次顶栏那枚到期钮回到全部。", en: "Loosen the tag / kind / time / text filter, or click the due button in the header again for all." },
   "board.sortManual": { zh: "顺序:手动", en: "Order: manual" },
   "board.sortNewest": { zh: "顺序:最新在前", en: "Order: newest first" },
   "board.sortOldest": { zh: "顺序:最早在前", en: "Order: oldest first" },
