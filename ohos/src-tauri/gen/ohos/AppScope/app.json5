@@ -4,6 +4,11 @@
     // identifier 派生入口宏要的两个环境变量,而签名 profile 也绑这个 bundleName。
     "bundleName": "app.zhujian.notebook",
     "vendor": "prehisle",
+    // ⛔ **这两格是占位,别手改** —— 构建期由 `scripts/build-ohos.mjs` 从
+    // `ohos/src-tauri/tauri.conf.json` 的 `version` 派生后临时注入(versionCode 换算与安卓同源:
+    // `major*1_000_000 + minor*1_000 + patch`),打完包原样还回。要改版本号改那一处。
+    // 由头:2026-09-01 上架前实查,这里停在 1 / "0.1.0",而产品已到安卓 0.3.35 —— 打出来的包
+    // 对外就显示 0.1.0,**而且构建一声不吭**。
     "versionCode": 1,
     "versionName": "0.1.0",
     "icon": "$media:app_icon",

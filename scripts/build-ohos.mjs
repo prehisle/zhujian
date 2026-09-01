@@ -19,7 +19,12 @@
 // 结束原样还回。⚠ **未签名 HAP 装不进纯血鸿蒙**(`not trusted app source`),那是
 // 平台规矩不是故障。
 //
-// 用法:node scripts/build-ohos.mjs [--skip-frontend] [--skip-cargo] [--c4]
+// 用法:node scripts/build-ohos.mjs [--skip-frontend] [--skip-cargo] [--c4] [--app]
+//
+// ⭐ `--app` = 出**上架包 `.app`**(hvigor 的 `assembleApp`),不是平时装机那只 `.hap`。
+// AGC「软件版本 → 版本选取」收的是 `.app`,`.hap` 传上去解析不了。两条硬闸焊在这条路上:
+// **没有 signing.local.json5 就当场死**(未签名的 `.app` 传上去必被拒,白等一趟构建)、
+// **`--app` 与 `--c4` 互斥**(验收命令面绝不许进上架包)。
 //
 // ⚠ `--c4` = 带上 `c4-harness` feature 编(C4 真机验收那批命令)。**默认不带**:
 // 那批里有 `c4_plant`(往数据目录里放半截文件)与明文回报备份码,做成运行期开关
@@ -42,6 +47,11 @@ const die = (msg) => {
   console.error(`\n✖ ${msg}\n`);
   process.exit(1);
 };
+
+// ⛔ 两条互斥先判,别等构建跑完两分钟才说(`--c4` 那批命令面里有 `c4_plant` 与明文
+// 回报备份码,进了上架包就是把后门交给商店审核)。
+const wantApp = argv.includes("--app");
+if (wantApp && argv.includes("--c4")) die("--app 与 --c4 互斥:上架包里绝不许带 c4-harness 验收命令面。");
 
 // ---- 环境 ------------------------------------------------------------------
 
@@ -136,7 +146,7 @@ mkdirSync(libsDir, { recursive: true });
 copyFileSync(soPath, join(libsDir, soName));
 console.log(`   → ${join(libsDir, soName)}`);
 
-// ---- 3. 签名段(有就临时注入,没有就响亮说清后果)---------------------------
+// ---- 3. 版本号 + 签名段(都是「构建期临时改 tracked 文件」)-----------------
 
 const profilePath = join(hapProject, "build-profile.json5");
 const localSigning = join(hapProject, "signing.local.json5");
@@ -144,6 +154,22 @@ const appScopePath = join(hapProject, "AppScope", "app.json5");
 const originalProfile = readFileSync(profilePath, "utf8");
 const originalAppScope = readFileSync(appScopePath, "utf8");
 let signed = false;
+
+// ⛔ **鸿蒙这端的版本号不许手改 `AppScope/app.json5`** —— 它是构建期从
+// `ohos/src-tauri/tauri.conf.json` 的 `version` 派生的,仓里那份只是占位。
+// 立这条的由头(2026-09-01 上架前实查):app.json5 停在 `versionCode 1 / "0.1.0"`,
+// 而产品已到桌面 0.2.39 / 安卓 0.3.35 ⇒ 打出来的包对外显示 0.1.0,**且一声不吭**。
+//
+// ⚠ **换算公式与安卓逐字同源**(`scripts/build-android.mjs` / `gen-android-update-manifest.mjs`:
+// `major*1_000_000 + minor*1_000 + patch`),但**两端各自一条版本线** ——
+// ⛔ 别把鸿蒙的数绑死到安卓那个数上:商店审核驳回后重传要求 versionCode 递增,
+// 那时得单独 +1,而安卓根本没在发版。
+const ohosVersion = JSON.parse(readFileSync(join(crateDir, "tauri.conf.json"), "utf8")).version;
+const vParts = String(ohosVersion).split(".").map((s) => Number(s));
+if (vParts.length !== 3 || vParts.some((n) => !Number.isInteger(n) || n < 0 || n > 999)) {
+  die(`ohos/src-tauri/tauri.conf.json 的 version = ${JSON.stringify(ohosVersion)},不是 x.y.z(每格 0-999)—— 换算不出 versionCode。`);
+}
+const versionCode = vParts[0] * 1_000_000 + vParts[1] * 1_000 + vParts[2];
 
 // ⛔⛔ **还原必须挂在 `process.on("exit")` 上,不能只靠 `finally`** —— 这是踩出来的:
 // `die()` 走的是 `process.exit(1)`,而 **`process.exit` 不跑 `finally`**。第一次
@@ -175,22 +201,38 @@ if (existsSync(localSigning)) {
   writeFileSync(profilePath, patched);
   signed = true;
   console.log(`\n── 签名段已临时注入(来源 signing.local.json5)`);
-
-  // ⚠ debug profile **绑 bundleName**。本机那份若绑的不是 app.zhujian.notebook,
-  // 在 signing.local.json5 旁边放一个 bundle-name.local.txt 写上要用的名字,
-  // 本脚本临时改 AppScope/app.json5 —— 仓里那份永远是真身份。
-  const bundleOverride = join(hapProject, "bundle-name.local.txt");
-  if (existsSync(bundleOverride)) {
-    const name = readFileSync(bundleOverride, "utf8").trim();
-    const before = originalAppScope;
-    const after = before.replace(/"bundleName":\s*"[^"]*"/, `"bundleName": "${name}"`);
-    if (after === before) die("AppScope/app.json5 里找不到 bundleName —— 仓里那份被改过?");
-    writeFileSync(appScopePath, after);
-    console.log(`   ⚠ bundleName 临时改成 ${name}(仓里那份仍是 app.zhujian.notebook)`);
-  }
 } else {
+  if (wantApp) die("--app 要出的是上架包,而没有 signing.local.json5 ⇒ 只能出未签名 .app,AGC 必拒。先配签名。");
   console.log(`\n── ⚠ 没有 signing.local.json5 ⇒ 出的是 **unsigned HAP**`);
   console.log(`   纯血鸿蒙默认不允许侧载,未签名包装机会报 not trusted app source。`);
+}
+
+// AppScope/app.json5 的三格都是构建期算出来的,**一次写完**(版本号恒改;bundleName 只在
+// 本机那份 profile 绑了别的名字时才改)。仓里那份永远是真身份 + 占位版本号。
+{
+  let appScope = originalAppScope;
+  const codeAnchor = /"versionCode":\s*\d+/;
+  const nameAnchor = /"versionName":\s*"[^"]*"/;
+  if (!codeAnchor.test(appScope)) die("AppScope/app.json5 里找不到 versionCode —— 仓里那份被改过?");
+  if (!nameAnchor.test(appScope)) die("AppScope/app.json5 里找不到 versionName —— 仓里那份被改过?");
+  appScope = appScope.replace(codeAnchor, `"versionCode": ${versionCode}`);
+  appScope = appScope.replace(nameAnchor, `"versionName": "${ohosVersion}"`);
+
+  // ⚠ debug profile **绑 bundleName**。本机那份若绑的不是 app.zhujian.notebook,
+  // 在 signing.local.json5 旁边放一个 bundle-name.local.txt 写上要用的名字。
+  const bundleOverride = join(hapProject, "bundle-name.local.txt");
+  if (signed && existsSync(bundleOverride)) {
+    const name = readFileSync(bundleOverride, "utf8").trim();
+    const after = appScope.replace(/"bundleName":\s*"[^"]*"/, `"bundleName": "${name}"`);
+    if (after === appScope) die("AppScope/app.json5 里找不到 bundleName —— 仓里那份被改过?");
+    appScope = after;
+    console.log(`   ⚠ bundleName 临时改成 ${name}(仓里那份仍是 app.zhujian.notebook)`);
+  }
+
+  patchedFiles = true; // ⚠ 先置位再落盘(同上:置位晚一行,中间崩掉就还原不了)。
+  writeFileSync(appScopePath, appScope);
+  console.log(`\n── 版本号已临时注入:versionName ${ohosVersion} / versionCode ${versionCode}`);
+  console.log(`   来源 ohos/src-tauri/tauri.conf.json —— ⛔ 别去手改 AppScope/app.json5。`);
 }
 
 // ---- 4. 依赖:⛔ ohpm 必须在仓外跑,这不是洁癖 -----------------------------
@@ -292,10 +334,12 @@ function enableDomStorage() {
 
 // ---- 5. 打包 ---------------------------------------------------------------
 
+const task = wantApp ? "assembleApp" : "assembleHap";
+const packStartedAt = Date.now();
 try {
   ohpmInstallOutOfTree();
   enableDomStorage();
-  run("hvigorw assembleHap", hvigorw, ["assembleHap", "--no-daemon"], { cwd: hapProject, env: devecoEnv });
+  run(`hvigorw ${task}`, hvigorw, [task, "--no-daemon"], { cwd: hapProject, env: devecoEnv });
 } finally {
   // 正常路径上早点还原(退出钩子里那份是兜底,两处都要有:钩子挡的是 process.exit,
   // 这里挡的是「后面还有代码要跑,而它读到的应当已经是仓里那份」)。
@@ -306,11 +350,47 @@ try {
   }
 }
 
+if (wantApp) {
+  // ⛔ **不写死 `.app` 的落点**:`assembleApp` 的输出目录 hvigor 版本之间挪过位置,
+  // 而写死一条路径的失败形是「打包说成功了,但没有产物」—— 看着像构建坏了,其实只是
+  // 找错地方。这里改成**扫本趟新落盘的 `.app`**,再拿三条 fail-closed 判:
+  // 0 个 = 真没出;>1 个 = 说不清该传哪个,一律停,⛔ 别自作主张挑一个。
+  const all = [];
+  const walkApp = (dir, depth) => {
+    if (depth > 8 || !existsSync(dir)) return;
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      const p = join(dir, e.name);
+      if (e.isDirectory()) walkApp(p, depth + 1);
+      else if (e.name.endsWith(".app")) all.push(p);
+    }
+  };
+  walkApp(join(hapProject, "build"), 0);
+  walkApp(join(hapProject, "entry", "build"), 0);
+  const found = all.filter((p) => statSync(p).mtimeMs >= packStartedAt);
+  // ⚠ 「一个都没有」与「只有上一趟那只」是两种不同的处境,**分开说** ——
+  // 后者是 hvigor 判输入没变跳过了打包,而**把旧包传上商店**正是 memory
+  // `verify-artifact-predates-fix` 那一族最贵的错(不报错,只给一个看着合理的旧答案)。
+  if (found.length === 0 && all.length > 0) {
+    die(`本趟没有新落盘的 .app,但底下有旧的(hvigor 多半判输入没变、跳过了打包):\n   ${
+      all.map((p) => `${p}(${new Date(statSync(p).mtimeMs).toISOString()})`).join("\n   ")
+    }\n⛔ 别把旧包传上去。先 hvigorw clean 再重跑,或自己确认这就是要的那一只。`);
+  }
+  if (found.length === 0) die(`assembleApp 说成功了,但 ${hapProject} 底下一个 .app 都没有 —— 去 build/outputs 底下自己看一眼。`);
+  if (found.length > 1) die(`扫到 ${found.length} 个本趟新落盘的 .app,说不清该传哪个:\n   ${found.join("\n   ")}`);
+  const app = found[0];
+  console.log(`\n✔ 上架包 .app:${app}`);
+  console.log(`   ${(statSync(app).size / 1048576).toFixed(1)} MB · 版本 ${ohosVersion}(versionCode ${versionCode})· 已签名`);
+  console.log(`\n传到 AGC:「我的应用 → 朱简 → 软件版本 → 版本选取」上传这只 .app。`);
+  console.log(`⚠ 传之前先确认 signing.local.json5 用的是**发布证书**(不是 DevEco 那份调试的):`);
+  console.log(`   发布证书 CN 带 ",Release"、且发布 Profile 的设备列表是空的。`);
+  process.exit(0);
+}
+
 const outDir = join(hapProject, "entry", "build", "default", "outputs", "default");
 const hap = join(outDir, signed ? "entry-default-signed.hap" : "entry-default-unsigned.hap");
 if (!existsSync(hap)) die(`打包说成功了,但没有产物:${hap}`);
 console.log(`\n✔ HAP:${hap}`);
-console.log(`   ${(statSync(hap).size / 1048576).toFixed(1)} MB · ${signed ? "已签名,可装机" : "未签名,装不进设备"}`);
+console.log(`   ${(statSync(hap).size / 1048576).toFixed(1)} MB · 版本 ${ohosVersion}(versionCode ${versionCode})· ${signed ? "已签名,可装机" : "未签名,装不进设备"}`);
 if (signed) {
   console.log(`\n装机(MSYS_NO_PATHCONV=1 破 hdc 的远端路径转换坑):`);
   console.log(`   cd /g/ohos-sdk/toolchains && MSYS_NO_PATHCONV=1 ./hdc.exe file send '${hap}' /data/local/tmp/zj.hap`);
