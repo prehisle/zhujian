@@ -38,6 +38,18 @@ describe("待办清单 · 快速输入", () => {
   };
   // 真键盘清空当前输入框(⛔ 别用 execute 设 value:那本身就会清掉撤销栈,
   // 第三例要验的正是撤销栈)。
+  // ⚠⚠ **打完字别立刻读 value —— 要等它变成那个值**。563 真栽:我把一处原本带 waitUntil 的
+  // 断言改成了立即 `expect(await el.getValue()).toBe(…)`,于是 Linux/WebKitGTK 上**最后一个键
+  // 还没落地就被读走** ⇒ 期望 `- [ ] three` 实得 `- [ ] thre`(少最后一个 e),整趟 CI 红。
+  // ⛔ 别把它读成产品缺陷,也 ⛔ 别只修红的那一处 —— 同一支里每一句「打完字读 value」都是同一个
+  // 失败模式,在 Windows 上过只是因为那台快。语义与立即断言**完全相同**(等到期望值、超时才红),
+  // 只是给慢引擎一点时间;超时消息里带上实得,红了一眼看得出差在哪。
+  const expectValue = async (el, want) => {
+    await browser.waitUntil(async () => (await el.getValue()) === want, {
+      timeout: 8000,
+      timeoutMsg: `期望 ${JSON.stringify(want)},实得 ${JSON.stringify(await el.getValue())}`,
+    });
+  };
   const clearField = async () => {
     await browser.keys(["Control", "a"]);
     await browser.keys("Backspace");
@@ -66,19 +78,19 @@ describe("待办清单 · 快速输入", () => {
     await browser.keys("E2ECKI-one");
     await browser.keys(["Control", "l"]);
     // ⭐ 承重:Ctrl+L 真到了、execCommand 真落了笔。
-    expect(await input.getValue()).toBe("- [ ] E2ECKI-one");
+    await expectValue(input, "- [ ] E2ECKI-one");
 
     await browser.keys(["Shift", "Enter"]);
     // ⭐ 承重:Shift+Enter 没被「Enter = 记下」那条抢走(抢走了这条就已经入库、框也空了)。
-    expect(await input.getValue()).toBe("- [ ] E2ECKI-one\n- [ ] ");
+    await expectValue(input, "- [ ] E2ECKI-one\n- [ ] ");
 
     await browser.keys("two");
     await browser.keys(["Shift", "Enter"]);
-    expect(await input.getValue()).toBe("- [ ] E2ECKI-one\n- [ ] two\n- [ ] ");
+    await expectValue(input, "- [ ] E2ECKI-one\n- [ ] two\n- [ ] ");
 
     // ⭐ 承重:空项上再按一次 = 退出清单 —— 那一行整个抹平,**不插新行**。
     await browser.keys(["Shift", "Enter"]);
-    expect(await input.getValue()).toBe("- [ ] E2ECKI-one\n- [ ] two\n");
+    await expectValue(input, "- [ ] E2ECKI-one\n- [ ] two\n");
 
     // 收尾那个换行删掉再提交(留着它库里就多一行空白,与本例要验的事无关)。
     await browser.keys("Backspace");
@@ -102,12 +114,12 @@ describe("待办清单 · 快速输入", () => {
 
     await browser.keys("abc");
     await browser.keys(["Control", "l"]);
-    expect(await input.getValue()).toBe("- [ ] abc");
+    await expectValue(input, "- [ ] abc");
 
     await browser.keys(["Control", "z"]);
     // ⛔ 这里要的是 "abc" 而**不是空串**:`ta.value = …` 那种写法会把整个撤销栈清掉,
     // 一记 Ctrl+Z 就把用户自己打的三个字母也吞了。
-    expect(await input.getValue()).toBe("abc");
+    await expectValue(input, "abc");
 
     await clearField(); // 别给后面的例子留草稿
   });
@@ -123,14 +135,14 @@ describe("待办清单 · 快速输入", () => {
     await area.click();
     await browser.keys(["Control", "End"]); // 光标落到正文末尾(末行是 `- [ ] two`)
     await browser.keys(["Shift", "Enter"]);
-    expect(await area.getValue()).toBe("- [ ] E2ECKI-one\n- [ ] two\n- [ ] ");
+    await expectValue(area, "- [ ] E2ECKI-one\n- [ ] two\n- [ ] ");
 
     await browser.keys("three");
     // ⚠ 承重的是**上面那记 Shift+Enter 没被文档级「Enter = 保存」抢走**,断言就停在框里那份字上。
     // ⛔ 别在这里再补一记裸 Enter 去验保存:那记在 WebKitWebDriver 上发不到文档级监听
     // (562 那趟 Linux CI 实证),而「Enter = 保存」本就由 `inbox-interactions.e2e.js` 用合成
     // 事件钉着 —— 拿一件别处已有网的事,去当这一格的判据,只会把引擎差异记成产品缺陷。
-    expect(await area.getValue()).toBe("- [ ] E2ECKI-one\n- [ ] two\n- [ ] three");
+    await expectValue(area, "- [ ] E2ECKI-one\n- [ ] two\n- [ ] three");
     await browser.keys("Escape"); // 收编辑态,别把草稿留给后面的例子
   });
 
@@ -146,7 +158,7 @@ describe("待办清单 · 快速输入", () => {
     await input.click();
     await browser.keys(["Control", "End"]);
     await browser.keys(["Control", "l"]);
-    expect(await input.getValue()).toBe("- [ ] E2ECKI-task");
+    await expectValue(input, "- [ ] E2ECKI-task");
 
     await browser.keys("Enter"); // rename_task
     await browser.waitUntil(
@@ -164,9 +176,9 @@ describe("待办清单 · 快速输入", () => {
 
     await browser.keys("E2ECKI-bc");
     await browser.keys(["Control", "l"]);
-    expect(await input.getValue()).toBe("- [ ] E2ECKI-bc");
+    await expectValue(input, "- [ ] E2ECKI-bc");
     await browser.keys(["Shift", "Enter"]);
-    expect(await input.getValue()).toBe("- [ ] E2ECKI-bc\n- [ ] ");
+    await expectValue(input, "- [ ] E2ECKI-bc\n- [ ] ");
 
     await clearField(); // 只验手势,不入库(建条任务还要再清一次场)
   });
