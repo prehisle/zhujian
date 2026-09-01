@@ -47,6 +47,7 @@ export const shell = defineMessages({
   "shell.topicsNote": { zh: "按住左侧 ⠿ 拖动调顺序;点名字改名、点色点改颜色、点「类型」给标签标个类型(如「人名」)——这些改动都会同步到其它设备。", en: "Hold the ⠿ handle on the left to reorder; tap a name to rename, the color dot to recolor, or Kind to label a tag (e.g. Person). All of these sync to your other devices." },
   "shell.addImage": { zh: "＋ 加图", en: "＋ Image" },
   "shell.takePhoto": { zh: "＋ 拍照", en: "＋ Photo" },
+  "shell.insertTodo": { zh: "＋ 待办", en: "＋ To-do" },
   "shell.saveIt": { zh: "记下", en: "Note it" },
   "shell.captureAria": { zh: "记一笔", en: "Note something" },
   "shell.commentsTitle": { zh: "留言", en: "Comments" },

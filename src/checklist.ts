@@ -45,3 +45,127 @@ export function toggleChecklistLine(content: string, lineIndex: number): string 
   lines[lineIndex] = `${parsed.indent}- [${parsed.checked ? " " : "x"}]${parsed.rest}`;
   return lines.join("\n");
 }
+
+// ---------------------------------------------------------------------------
+// 快速输入(562):打清单时别一个字一个字敲 `- [ ] `。两件事,都是**编辑器辅助**——
+// 用户看得见改了什么、一个退格/一次撤销就能回去。
+//
+// ⛔ **不做「打 `- ` 自动补成 `- [ ] `」** —— 那是背着人改用户正在打的字,且普通列表
+// 从此每次都要退格。续行与快捷键是用户主动按出来的,性质不同(用户 2026-09-01 拍板)。
+// ---------------------------------------------------------------------------
+
+/** 一次文本框改写的结果:新正文 + 新选区。调用方原样写回 textarea,别再自己算位置。 */
+export type ChecklistEdit = {
+  value: string;
+  selStart: number;
+  selEnd: number;
+};
+
+/** 未勾的标记,含尾随那个空格 —— 插入的永远是它(新写的一项当然还没做)。 */
+const MARK = "- [ ] ";
+
+/** `pos` 所在那一行在 `value` 里的 [起, 止)(止 = 行尾换行符之前)。
+ *
+ *  ⚠ `pos === 0` 必须短路:`lastIndexOf` 的负 fromIndex 会被夹回 0,于是首字符正好是
+ *  换行时它会答 0、把行首算到 1 去。 */
+function lineBoundsAt(value: string, pos: number): [number, number] {
+  const start = pos === 0 ? 0 : value.lastIndexOf("\n", pos - 1) + 1;
+  const nl = value.indexOf("\n", pos);
+  return [start, nl === -1 ? value.length : nl];
+}
+
+/** 行首那截缩进(空格 / 制表符)。 */
+function leadingIndent(line: string): string {
+  return /^[ \t]*/.exec(line)![0];
+}
+
+/** 按下「换行那一记」(桌面 = Shift+Enter,安卓 = 软键盘回车)时的续行。
+ *
+ *  当前行是待办项 ⇒ 换行并带出**同缩进**的 `- [ ] `,写清单时第二项起完全不用动手;
+ *  当前行是个**空的**待办项(标记后没有非空白)⇒ 把整行抹平、**不插新行** = 退出清单,
+ *  和各家编辑器一个手势。别的情况返回 `null`,调用方**放行默认换行**。
+ *
+ *  两处刻意不接管:
+ *  - 选区没折叠(选中了一段再按)—— 那一记的语义是「用换行替换掉选中的」,不是续行;
+ *  - 光标还在标记里头(`- [| ] x`)—— 接管会把标记劈成两半,那不是任何人想要的。 */
+export function continueChecklistOnNewline(
+  value: string,
+  selStart: number,
+  selEnd: number,
+): ChecklistEdit | null {
+  if (selStart !== selEnd) return null;
+  const [ls, le] = lineBoundsAt(value, selStart);
+  const parsed = parseChecklistLine(value.slice(ls, le));
+  if (parsed === null) return null;
+  if (parsed.rest.trim() === "") {
+    // 空项 = 退出清单:连缩进一起抹掉,光标落在原行首。⛔ 别只删标记留下缩进——
+    // 那样下一行看着是空的、实则挂着几个空格,写回去就是正文里的一行空白噪音。
+    return { value: value.slice(0, ls) + value.slice(le), selStart: ls, selEnd: ls };
+  }
+  // 非空项时 rest 必以空白开头(LINE_RE 保证),故正文起点 = 缩进 + `- [x]` + 那个空白。
+  if (selStart < ls + parsed.indent.length + MARK.length) return null;
+  const ins = `\n${parsed.indent}${MARK}`;
+  const at = selStart + ins.length;
+  return { value: value.slice(0, selStart) + ins + value.slice(selStart), selStart: at, selEnd: at };
+}
+
+/** 快捷键 / 按钮:把选中的那一行(或那几行)变成待办项,再按一次摘掉。
+ *
+ *  **方向看整块**:只要还有一行不是待办项就**整块都加**,全是了才**整块都摘** —— 只看
+ *  第一行的话,混排的几行来回按两次会被洗成不可预期的样子。
+ *
+ *  ⚠ 多行选区里的**空行原样留着**(不长出空待办项),单行时即便空也照加 —— 那正是
+ *  「我要在这儿起一条」。摘标记只去掉标记与它后面那**一个**空白,别的原文一字不动。 */
+export function toggleChecklistMarker(value: string, selStart: number, selEnd: number): ChecklistEdit {
+  const [ls] = lineBoundsAt(value, selStart);
+  const [, le] = lineBoundsAt(value, selEnd);
+  const lines = value.slice(ls, le).split("\n");
+  const multi = lines.length > 1;
+  const judged = multi ? lines.filter((l) => l.trim() !== "") : lines;
+  const add = judged.some((l) => parseChecklistLine(l) === null);
+  const out = lines.map((l) => {
+    if (multi && l.trim() === "") return l;
+    const p = parseChecklistLine(l);
+    if (add) {
+      if (p !== null) return l;
+      const ind = leadingIndent(l);
+      return `${ind}${MARK}${l.slice(ind.length)}`;
+    }
+    if (p === null) return l;
+    return `${p.indent}${p.rest.replace(/^\s/, "")}`;
+  });
+  const block = out.join("\n");
+  const next = value.slice(0, ls) + block + value.slice(le);
+  if (multi) {
+    // 跨行:选区盖住改写后的整块(通行做法——用户选了这几行,改完还该是这几行)。
+    return { value: next, selStart: ls, selEnd: ls + block.length };
+  }
+  // 单行:选区两端随该行长度变化平移,并夹在这一行之内(光标本来就在标记里时不许跑出去)。
+  const delta = out[0].length - lines[0].length;
+  const lo = ls;
+  const hi = ls + out[0].length;
+  const clamp = (x: number): number => Math.min(hi, Math.max(lo, x + delta));
+  return { value: next, selStart: clamp(selStart), selEnd: clamp(selEnd) };
+}
+
+/** 一段「把 [from, to) 换成 text」的改写。 */
+export type EditRange = { from: number; to: number; text: string };
+
+/** 老文本 → 新文本之间那一段真正变了的区间(共同前缀 / 共同后缀之外的部分)。
+ *
+ *  ⭐ **接线层落笔靠它**:上面两个函数为了好测好对拍,答的是「整份新正文」,而直接
+ *  `ta.value = 新正文` 会把浏览器的撤销栈整个清掉 —— 连用户此前手打的字都 Ctrl+Z 不
+ *  回来。改成「选中这一段、往里插」(`execCommand`)就还在撤销栈上,与手打无异。 */
+export function minimalEditRange(before: string, after: string): EditRange {
+  let p = 0;
+  while (p < before.length && p < after.length && before[p] === after[p]) p++;
+  let s = 0;
+  while (
+    s < before.length - p &&
+    s < after.length - p &&
+    before[before.length - 1 - s] === after[after.length - 1 - s]
+  ) {
+    s++;
+  }
+  return { from: p, to: before.length - s, text: after.slice(p, after.length - s) };
+}

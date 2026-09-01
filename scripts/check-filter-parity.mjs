@@ -101,8 +101,22 @@ const TOPICS_VIEW = { label: "标签视图", entry: "src/topics.ts", consts: [],
 // 正文待办清单的认行 / 翻标记(src/checklist.ts 与 android/src/checklist.ts,又一对逐字
 // 复制的纯逻辑)。⛔ **并进本闸而不另开一道** —— 门禁停止扩张线(383)那条判据:先问
 // 「能不能并进已有某道」。同样是纯串处理,不碰文案,不给字典。
-const CK_DESKTOP = { label: "桌面", entry: "src/checklist.ts", consts: ["LINE_RE"], fns: ["parseChecklistLine", "toggleChecklistLine"] };
-const CK_ANDROID = { label: "安卓", entry: "android/src/checklist.ts", consts: ["LINE_RE"], fns: ["parseChecklistLine", "toggleChecklistLine"] };
+// ⭐ 562 起多三个(快速输入那半):续行 / 起一条 / 最小改写区间。前两个是**用户手势的
+// 语义**、第三个是接线层落笔的算式,三者全是纯串处理,同样两端逐字对应、同样在这道闸里压。
+// ⚠ 名单里 `lineBoundsAt` / `leadingIndent` 是模块私有 helper —— 本闸按函数名从真源码里
+// 切片再拼,被切的那几个用到谁,谁就得一起切进来(缺了当场 ReferenceError,fail-closed)。
+const CK_FNS = [
+  "parseChecklistLine",
+  "toggleChecklistLine",
+  "lineBoundsAt",
+  "leadingIndent",
+  "continueChecklistOnNewline",
+  "toggleChecklistMarker",
+  "minimalEditRange",
+];
+const CK_CONSTS = ["LINE_RE", "MARK"];
+const CK_DESKTOP = { label: "桌面", entry: "src/checklist.ts", consts: CK_CONSTS, fns: CK_FNS };
+const CK_ANDROID = { label: "安卓", entry: "android/src/checklist.ts", consts: CK_CONSTS, fns: CK_FNS };
 
 // ---------------------------------------------------------------------------
 // 最小假 DOM(环境替身,不是逻辑替身):只提供渲染函数摸得到的形状。
@@ -289,6 +303,82 @@ const TOGGLE_CASES = [
 function serParse(r) {
   return r === null ? "null" : `${r.indent}|${r.checked ? "on" : "off"}|${r.rest}`;
 }
+// ⭐ **记法:正文里用 `|` 标光标**(两枚 = 选区两端),期望也用同一记法写回来。
+// ⚠ 这不是花样 —— 第一版用的是「正文 + 光标下标」,而下标里的中文字符我数错了八格,
+// 于是「期望」变成了拿实得凑出来的数(= 判据自指)。标记法让人**看得见**光标在哪,
+// 期望是照着语义写的,与被测代码无关。
+function cur(s) {
+  const a = s.indexOf("|");
+  if (a === -1) throw new Error(`用例没标光标:${JSON.stringify(s)}`);
+  const rest = s.slice(0, a) + s.slice(a + 1);
+  const b = rest.indexOf("|");
+  return b === -1 ? { value: rest, a, b: a } : { value: rest.slice(0, b) + rest.slice(b + 1), a, b };
+}
+function serEdit(r) {
+  const s = r.value;
+  return r.selStart === r.selEnd
+    ? `${s.slice(0, r.selStart)}|${s.slice(r.selStart)}`
+    : `${s.slice(0, r.selStart)}|${s.slice(r.selStart, r.selEnd)}|${s.slice(r.selEnd)}`;
+}
+// 正文待办清单:续行(562)。⭐ 承重三格 = **不是待办项就返回 null**(放行默认换行,
+// ⛔ 别把普通正文也接管掉)、**空项上再按一次退出清单**(不插新行,和各家编辑器一个手势)、
+// **带出的缩进与当前行一致**。
+// [描述, 带 `|` 的正文, 期望(带 `|` 的新正文)或 "null"]
+const NEWLINE_CASES = [
+  ["待办项行尾按下 → 带出下一项", "- [ ] 买菜|", "- [ ] 买菜\n- [ ] |"],
+  ["⭐ 普通正文 → null(放行默认换行)", "随手记一笔|", "null"],
+  ["⭐ 裸 `- 文字` 也 → null(它不是待办项)", "- 买菜|", "null"],
+  ["已勾的项照样续出**未勾**的下一项", "- [x] 买菜|", "- [x] 买菜\n- [ ] |"],
+  ["缩进跟着走(空格)", "  - [ ] 买菜|", "  - [ ] 买菜\n  - [ ] |"],
+  ["缩进跟着走(tab)", "\t- [ ] 买菜|", "\t- [ ] 买菜\n\t- [ ] |"],
+  ["⭐ 空项上再按一次 = 退出清单:整行抹平、不插新行", "- [ ] 买菜\n- [ ] |", "- [ ] 买菜\n|"],
+  ["⭐ 退出清单连缩进一起抹(⛔ 别留一行空白噪音)", "  - [ ] |", "|"],
+  ["只打了标记、后面一个空格都没有,也算空项", "- [ ]|", "|"],
+  ["行中间按下:后半截被推到新项里", "- [ ] 买菜|和肉", "- [ ] 买菜\n- [ ] |和肉"],
+  ["⭐ 光标还在标记里 → null(⛔ 别把标记劈成两半)", "- [| ] 买菜", "null"],
+  ["光标恰在正文第一个字之前 = 已过标记,接管", "- [ ] |买菜", "- [ ] \n- [ ] |买菜"],
+  ["⭐ 选中了一段再按 → null(那一记的语义是替换,不是续行)", "- [ ] |买|菜", "null"],
+  ["多行正文里认的是**光标那一行**", "抬头\n- [ ] 买菜|\n落款", "抬头\n- [ ] 买菜\n- [ ] |\n落款"],
+  ["光标在第一行行首(pos=0)不越界", "|\n- [ ] 买菜", "null"],
+];
+// 正文待办清单:起一条 / 摘掉(562,桌面 Ctrl+L、安卓「＋ 待办」)。⭐ 承重三格 =
+// **方向看整块**(有一行还不是就整块都加)、**多行里的空行原样留着**(别长出空待办项)、
+// **摘标记只去掉标记与它后面那一个空白**(别的原文一字不动)。
+// [描述, 带 `|` 的正文, 期望(带 `|` 的新正文)]
+const MARKER_CASES = [
+  ["空框里起一条", "|", "- [ ] |"],
+  ["一行普通文字变成待办项(光标随之右移)", "买菜|", "- [ ] 买菜|"],
+  ["再按一次摘掉", "- [ ] 买菜|", "买菜|"],
+  ["摘掉已勾的那种", "- [x] 买菜|", "买菜|"],
+  ["⭐ 摘标记只去掉标记与它后面那**一个**空白(多打的空格留着)", "- [ ]   买菜|", "  买菜|"],
+  ["缩进原样保留在标记之前", "  买菜|", "  - [ ] 买菜|"],
+  ["⭐ 空行上按也照加(那正是「我要在这儿起一条」)", "抬头\n|\n落款", "抬头\n- [ ] |\n落款"],
+  ["光标在标记里时摘掉不许跑到行外", "- |[ ] 买菜", "|买菜"],
+  ["光标在标记里时摘掉不许跑到**上一行**去", "抬头\n- |[ ] 买菜", "抬头\n|买菜"],
+  ["⭐ 光标在最前面、而首字符正是换行(lineBoundsAt 的 pos=0 边角)", "|\n买菜", "- [ ] |\n买菜"],
+  ["多行:三行全变待办项,选区盖住整块", "|买菜\n做饭\n洗碗|", "|- [ ] 买菜\n- [ ] 做饭\n- [ ] 洗碗|"],
+  ["⭐ 多行方向看整块:混排时**整块都加**(⛔ 别只看第一行)", "|- [ ] 买菜\n做饭|", "|- [ ] 买菜\n- [ ] 做饭|"],
+  ["多行全是待办项才整块摘", "|- [ ] 买菜\n- [x] 做饭|", "|买菜\n做饭|"],
+  ["⭐ 多行里的空行原样留着(⛔ 别长出空待办项)", "|买菜\n\n洗碗|", "|- [ ] 买菜\n\n- [ ] 洗碗|"],
+  ["选区在一行之内:选中的那几个字加完标记后**仍被选中**(选区跟着文字走)", "抬头\n|买菜|\n落款", "抬头\n- [ ] |买菜|\n落款"],
+  ["选区两端在同一行内(行中间那一段)", "买|菜做|饭", "- [ ] 买|菜做|饭"],
+];
+// 最小改写区间(562):接线层拿它把「整份新正文」翻译成 execCommand 那一笔,撤销栈才留得住。
+// [描述, 老文本, 新文本, 期望 "from␟to␟插入的文字"]
+const RANGE_CASES = [
+  ["纯插入", "ab", "aXb", "1␟1␟X"],
+  ["纯删除", "aXb", "ab", "1␟2␟"],
+  ["一字不变 → 空区间(什么都不用做)", "ab", "ab", "2␟2␟"],
+  ["整份换掉", "abc", "xyz", "0␟3␟xyz"],
+  ["首尾都有共同部分", "- [ ] 买菜", "- [x] 买菜", "3␟4␟x"],
+  ["从空串起", "", "- [ ] ", "0␟0␟- [ ] "],
+  ["删到空串", "- [ ] ", "", "0␟6␟"],
+  ["⭐ 重复字符:前缀吃满后后缀不许再回头吃(区间不可交叉)", "aaa", "aa", "2␟3␟"],
+  ["⭐ 重复字符的反向(插入)", "aa", "aaa", "2␟2␟a"],
+];
+function serRange(r) {
+  return `${r.from}␟${r.to}␟${r.text}`;
+}
 
 // 标签 pill 行(假 DOM 压真渲染):[描述, allTopics, items, f, 期望序列]
 // 记法:label:计数  *=active  °=色点  ▸/▾=折叠箭头  <id=child 挂父  …=hidden
@@ -443,6 +533,18 @@ for (const end of CK_ENDS) {
   }
   for (const [desc, content, i, want] of TOGGLE_CASES) {
     check(`[${end.label}] 翻标记:${desc}`, String(end.mod.toggleChecklistLine(content, i)), want);
+  }
+  for (const [desc, input, want] of NEWLINE_CASES) {
+    const { value, a, b } = cur(input);
+    const r = end.mod.continueChecklistOnNewline(value, a, b);
+    check(`[${end.label}] 续行:${desc}`, r === null ? "null" : serEdit(r), want);
+  }
+  for (const [desc, input, want] of MARKER_CASES) {
+    const { value, a, b } = cur(input);
+    check(`[${end.label}] 起一条:${desc}`, serEdit(end.mod.toggleChecklistMarker(value, a, b)), want);
+  }
+  for (const [desc, before, after, want] of RANGE_CASES) {
+    check(`[${end.label}] 改写区间:${desc}`, serRange(end.mod.minimalEditRange(before, after)), want);
   }
 }
 

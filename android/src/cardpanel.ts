@@ -52,6 +52,7 @@ import { t } from "./i18n";
 import { $, actionBar, confirmBar, esc, hideConfirmBar, showBar, showError } from "./ui";
 import { DONE_COLUMN, LANDING_COLUMN, isTaskStage, liveTaskColumns, stageLabel } from "./columns";
 import { capturePhoto, PICK_MAX, pickImages, toBase64 } from "./images";
+import { applyChecklistMarker, delegateChecklistNewline } from "./checklist-input";
 
 type Mode = "actions" | "edit" | "tags" | "move";
 
@@ -270,8 +271,11 @@ function renderMove(): string {
 }
 
 function renderEdit(): string {
+  // 562:「＋ 待办」= 桌面那记 Ctrl+L 在这一端的样子(手机没有 Ctrl)。第二项起靠回车续行,
+  // 不用再点它。⛔ 它不是提交动作,故不带 confirm 造型、也不受 busy 禁用之外的别的闸。
   return `<textarea class="edit">${esc(state?.editDraft ?? "")}</textarea>
     <div class="acts">
+      <button data-pact="todo"${busy ? " disabled" : ""}>${t("cardpanel.insertTodo")}</button>
       <button data-pact="save" class="confirm"${busy ? " disabled" : ""}>${t("cardpanel.save")}</button>
       <button data-pact="cancel"${busy ? " disabled" : ""}>${t("cardpanel.cancel")}</button>
     </div>`;
@@ -710,6 +714,13 @@ function handleAct(act: string, card: HTMLElement) {
       movePartialClear(item.id);
       renderPanel(card);
       return;
+    case "todo": {
+      // 562:纯编辑器辅助,不打后端、不动 mode —— 改完那一记 execCommand 会派发 input,
+      // `onTimelineInput` 照常把新草稿写回 state,所以这里不必自己同步 editDraft。
+      const ta = card.querySelector<HTMLTextAreaElement>(".panel textarea.edit");
+      if (ta) applyChecklistMarker(ta);
+      return;
+    }
     case "back":
     case "cancel":
       closeDraft();
@@ -861,4 +872,11 @@ export function initCardPanel(d: Deps) {
   timeline.addEventListener("click", onTimelineClick);
   timeline.addEventListener("change", onTimelineChange);
   timeline.addEventListener("input", onTimelineInput);
+  // 562:回车续待办项(编辑框每次重画都是新节点,只能委托)。
+  delegateChecklistNewline(timeline, "textarea.edit");
+  // 「＋ 待办」按下去那一刻别让编辑框失焦 —— 失了焦 execCommand 就落不到它身上
+  // (同 capture-commands 的手法:动作走 click,拦焦点走 mousedown)。
+  timeline.addEventListener("mousedown", (e) => {
+    if ((e.target as HTMLElement).closest('[data-pact="todo"]')) e.preventDefault();
+  });
 }

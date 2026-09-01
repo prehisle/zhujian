@@ -293,7 +293,13 @@
         caret-color: var(--seal);
       }
       .compose textarea::placeholder { color: var(--ink-faint); }
-      .compose-row { display: flex; align-items: center; justify-content: flex-end; margin-top: 8px; }
+      /* 562 加第三枚左侧小钮(「＋ 待办」)后量过:这一行排开 zh 档 259px / en 档 322px,
+         360px 屏上可用 332px ⇒ 两档都装得下,但**英文档只富余 10px**(还是拿桌面 Chrome
+         的字体度量量的,真机字体回退可能再宽一点)。故补两条保险:装不下时整枚钮换行,
+         ⛔ 而不是让 flex 把按钮压扁、文字折成两行(那正是用户面 23/29/61 那一族患的形)。
+         ⚠ 今天两档都不触发 wrap,这一行的样子一像素没变。 */
+      .compose-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; margin-top: 8px; }
+      .compose-row button { white-space: nowrap; }
       /* 主按钮(朱砂实心)。⚠ 出生在捕获层,后被留言层 #cm-send 复用——改它=改两层。 */
       .primary {
         border: none; border-radius: var(--radius-pill);
@@ -1424,6 +1430,9 @@
       <div class="compose-row">
         <button id="compose-addimg" class="ghost cimg" type="button" data-i18n="shell.addImage">＋ 加图</button>
         <button id="compose-photo" class="ghost cimg" type="button" data-i18n="shell.takePhoto">＋ 拍照</button>
+        <!-- 562:往正文里起一条待办项(手机没有 Ctrl,桌面那记 Ctrl+L 在这一端是一枚钮)。
+             第二项起不用再点它——回车会自己续出下一条。 -->
+        <button id="compose-todo" class="ghost cimg" type="button" data-i18n="shell.insertTodo">＋ 待办</button>
         <button id="save" class="primary" data-i18n="shell.saveIt">记下</button>
       </div>
     </section>

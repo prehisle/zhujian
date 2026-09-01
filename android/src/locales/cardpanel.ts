@@ -29,6 +29,7 @@ export const cardpanel = defineMessages({
   "cardpanel.moveWarnPost": { zh: "。", en: "." },
   "cardpanel.noOtherSpace": { zh: "没有其他空间", en: "No other space" },
   "cardpanel.back": { zh: "返回", en: "Back" },
+  "cardpanel.insertTodo": { zh: "＋ 待办", en: "＋ To-do" },
   "cardpanel.save": { zh: "保存", en: "Save" },
   "cardpanel.cancel": { zh: "取消", en: "Cancel" },
   "cardpanel.tagLocked": { zh: "已挂标签暂不支持摘除", en: "Removing an existing tag is not supported yet" },

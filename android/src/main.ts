@@ -39,6 +39,7 @@ import {
 } from "./api";
 import { $, actionBar, confirmBar, contentHtml, esc, fmtWhen, hideConfirmBar, showBar, showError } from "./ui";
 import { toggleChecklistLine } from "./checklist";
+import { applyChecklistMarker, wireChecklistNewline } from "./checklist-input";
 import { DONE_COLUMN, boardColumns, isTaskStage, setColumns, stageLabel } from "./columns";
 import { capturePhoto, composeImages, PICK_MAX, pickImages } from "./images";
 import { INPUT_DEBOUNCE_MS } from "./timing";
@@ -185,6 +186,10 @@ let picking = false;
 function refocusCompose(): void {
   ($("text") as HTMLTextAreaElement).focus();
 }
+// 562:回车续待办项 +「＋ 待办」起一条。⛔ 那枚钮不进 `captureSaving/switching` 那道闸——
+// 它只改框里的字、不打后端,锁定期照样该让人接着打(与「记下」「加图」性质不同)。
+wireChecklistNewline($("text") as HTMLTextAreaElement);
+$("compose-todo").addEventListener("click", () => applyChecklistMarker($("text") as HTMLTextAreaElement));
 $("compose-addimg").addEventListener("click", async () => {
   if (captureSaving || switching || picking) return; // 在飞/切换中不受理(与「记下」同闸)
   picking = true;
@@ -1238,6 +1243,8 @@ $("save").addEventListener("click", save);
   // 层内按钮不抢输入焦点,免点一下就收键盘、层跳一下。
   ($("save") as HTMLButtonElement).addEventListener("mousedown", (e) => e.preventDefault());
   $("compose-addimg").addEventListener("mousedown", (e) => e.preventDefault());
+  // 562:「＋ 待办」尤其不能失焦——失了焦 execCommand 就落不到输入框身上。
+  $("compose-todo").addEventListener("mousedown", (e) => e.preventDefault());
 
   // FAB 竖直位置吃底栏实高(含安全区);底栏极少变,稳妥观察。
   function setNavH(): void {

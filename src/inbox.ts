@@ -50,6 +50,7 @@ import { applyTagColor } from "./tag-color";
 import { renderTagPicker } from "./tag-picker";
 import { dayKey, dayLabel, startOfWeek, when } from "./tasktime";
 import { identitySig, loadIdentity, signatureChip } from "./identity";
+import { wireChecklistInput } from "./checklist-input";
 import "./inbox.css";
 
 // Mirrors of the Rust contracts (lib.rs) — the fields this view consumes. 想法 = a live
@@ -263,6 +264,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
   function composeBar(): HTMLElement {
     const input = el("textarea", { className: "compose-input", rows: 1 }) as HTMLTextAreaElement;
     input.placeholder = t("inbox.composePlaceholder");
+    wireChecklistInput(input); // Shift+Enter 续待办项 / Ctrl+L 起一条(562)
     if (composeCtl.draftText() !== "" && composeCtl.draftSpace() === mountSpace) {
       input.value = composeCtl.takeDraftText(); // 上个 mount/别的 tab 留下的草稿:同空间才灌回(P1 #9d)
     }
@@ -658,6 +660,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       note.classList.add("editing");
       const area = el("textarea", { className: "edit-area", value: currentContent });
       area.addEventListener("input", () => autoGrow(area)); // no CSS cap — full text stays visible, like the view state
+      wireChecklistInput(area); // Shift+Enter 续待办项 / Ctrl+L 起一条(562)
       const hist = el("div", { className: "history" });
 
       // 配图编辑器:粘贴截图(Ctrl+V)→ 挂为下一张「图N」;每张缩略图可删(编号不复用)。

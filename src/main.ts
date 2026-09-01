@@ -9,8 +9,10 @@ import { createCaptureCommands } from "./capture-commands";
 import { initTheme } from "./theme-mode";
 import { t, initLang, applyStaticI18n } from "./i18n";
 import { armAppContextMenu } from "./context-menu";
+import { wireChecklistInput } from "./checklist-input";
 
 const input = document.getElementById("capture") as HTMLTextAreaElement;
+wireChecklistInput(input); // Shift+Enter 续待办项 / Ctrl+L 起一条(562)
 const slip = document.querySelector(".slip") as HTMLElement;
 const imagesBar = document.getElementById("cap-images") as HTMLElement;
 const errLine = document.getElementById("cap-err") as HTMLElement;
