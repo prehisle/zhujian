@@ -28,6 +28,11 @@ pub mod backup;
 /// ⛔ 两壳的 UI 接线归 **B-f**,且它**不拥有任何数据安全判定**(plan §8.1-2)——
 /// 「这一列能不能删」读 `BoardColumnRow::deletable`,别在壳里另算一份。
 pub mod board;
+/// 「这次改正文只是勾了几个方框吗」—— 编辑历史归档的豁免判据(用户面 63)。
+/// ⚠ 它是那条判据在仓里的**第三份实现、且跨语言**(前两份是两棵前端树里的 `checklist.ts`,
+/// 由 `check-filter-parity` 逐字对拍,而那道闸切的是 TS 源码、核不到这一份)——
+/// 故这一份只求「**不比前端宽**」,理由与两个方向的代价见模块头注。
+mod checklist;
 pub mod clock;
 pub mod comments;
 pub mod db;

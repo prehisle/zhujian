@@ -786,6 +786,69 @@ mod tests {
         assert!(edit(&mut conn, &mut clock, &id, "想改归档的").is_err());
     }
 
+    // ⭐ 用户面 63:勾一下方框 = 整条正文写回,但它**不该**在编辑历史里留一版
+    // (一个 8 项的清单从头勾到尾就是 8 条只差一个 x 的版本,而历史用户看得见)。
+    // 判据在 `crate::checklist`,豁免旗在 0039;⛔ 这一格与下面那两格是一组,别只留一格。
+    #[test]
+    fn ticking_a_checkbox_does_not_grow_a_history_version() {
+        let (mut conn, mut clock) = fresh_db();
+        let id = repo::add_item(&conn, "清单
+- [ ] 甲
+- [x] 乙
+- 丙不是待办项").unwrap();
+
+        edit(&mut conn, &mut clock, &id, "清单
+- [x] 甲
+- [x] 乙
+- 丙不是待办项").unwrap();
+        assert_eq!(content(&conn, &id), "清单
+- [x] 甲
+- [x] 乙
+- 丙不是待办项", "正文照常落地");
+        assert!(repo::item_revisions(&conn, &id).unwrap().is_empty(), "勾选不该长出历史版本");
+        // ⭐ 同步 op 一个字不改 —— 发出去的仍是普通的 content set_field(混版零风险的根据)。
+        let ops = ops_for(&conn, "item", &id);
+        assert_eq!(ops.len(), 1);
+        assert_eq!(ops[0].kind, "set_field");
+        assert_eq!(ops[0].payload["field"], "content");
+
+        // 再勾一次(取消)同样不长历史 —— 顺带证明旗没有泄漏、也没有卡住不清。
+        edit(&mut conn, &mut clock, &id, "清单
+- [ ] 甲
+- [x] 乙
+- 丙不是待办项").unwrap();
+        assert!(repo::item_revisions(&conn, &id).unwrap().is_empty(), "第二次勾选也不长");
+    }
+
+    // ⭐ 承重的反向那半:判 true 判错 = **永久少一版用户看得见的历史**,所以「既翻了勾又
+    // 改了字」必须照常归档。⛔ 别把这一格删了只留上面那格。
+    #[test]
+    fn a_real_edit_still_archives_even_when_a_box_also_flipped() {
+        let (mut conn, mut clock) = fresh_db();
+        let id = repo::add_item(&conn, "- [ ] 买菜").unwrap();
+
+        edit(&mut conn, &mut clock, &id, "- [x] 买肉").unwrap();
+        assert_eq!(
+            repo::item_revisions(&conn, &id).unwrap()[0].content,
+            "- [ ] 买菜",
+            "勾变了、字也变了 ⇒ 那是真编辑,历史必须留着"
+        );
+
+        // 紧接着一次纯勾选:旗立起来又收干净,上一版历史一条不少。
+        edit(&mut conn, &mut clock, &id, "- [ ] 买肉").unwrap();
+        assert_eq!(repo::item_revisions(&conn, &id).unwrap().len(), 1, "纯勾选没多长,也没抹掉旧的");
+    }
+
+    // ⚠ 前端不给它画方框的行(方括号后必须是行尾或空白),这里也绝不许拿它当勾选 ——
+    // 那种改动只可能是用户**手打**的,吞掉它就是吞掉一次真编辑。
+    #[test]
+    fn a_line_the_ui_would_not_draw_a_box_for_still_archives() {
+        let (mut conn, mut clock) = fresh_db();
+        let id = repo::add_item(&conn, "- [ ]买菜").unwrap();
+        edit(&mut conn, &mut clock, &id, "- [x]买菜").unwrap();
+        assert_eq!(repo::item_revisions(&conn, &id).unwrap().len(), 1, "它不是待办项,照常归档");
+    }
+
     #[test]
     fn promote_flips_stage_with_no_duplicate_record() {
         let (mut conn, mut clock) = fresh_db();

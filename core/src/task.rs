@@ -947,6 +947,31 @@ mod tests {
         assert!(set_priority(&mut conn, &mut clock, &arch, Some(1)).is_err());
     }
 
+    // ⭐ 用户面 63 的第二条写正文的路:看板卡走 `rename_task`,与灵感那条是**两个**
+    // 函数(账里说的「同一处」在地面上不成立)。两条都得盖住,故两边各钉一格。
+    #[test]
+    fn ticking_a_checkbox_on_a_board_card_does_not_grow_history() {
+        let (mut conn, mut clock) = fresh_db();
+        let id = mk(&conn, "任务清单
+- [ ] 子项");
+
+        rename(&mut conn, &mut clock, &id, "任务清单
+- [x] 子项").unwrap();
+        assert_eq!(title_of(&conn, &id), "任务清单
+- [x] 子项", "正文照常落地");
+        assert!(repo::item_revisions(&conn, &id).unwrap().is_empty(), "勾选不该长出历史版本");
+
+        // 反向那半:真改名照常归档,且上一次勾选没把旗留下。
+        rename(&mut conn, &mut clock, &id, "改了名
+- [x] 子项").unwrap();
+        assert_eq!(
+            repo::item_revisions(&conn, &id).unwrap()[0].content,
+            "任务清单
+- [x] 子项",
+            "真改名必须留历史"
+        );
+    }
+
     #[test]
     fn rename_trims_and_guards_active_and_keeps_history() {
         let (mut conn, mut clock) = fresh_db();

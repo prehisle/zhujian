@@ -624,14 +624,74 @@ pub fn item_axes(conn: &Connection, id: &str) -> rusqlite::Result<Option<(String
     .optional()
 }
 
+/// 把一次改正文包进 0039 那面「这次只是勾选」的旗里(用户面 63)——**三条写正文的路
+/// 唯一的汇合点**:本地灵感编辑 / 看板改名 / 回放远端 content set_field 各调它一次。
+///
+/// 旧文本 → 新文本 若是纯勾选变更(判据在 `crate::checklist`),就在本事务内立旗,让
+/// `trg_item_archive_on_edit` 跳过这一次;否则一个 SQL 都不多发,行为与从前逐字相同。
+///
+/// ⚠ **写成「传闭包」而不是「传 SQL 片段」,是为了让置旗与清旗必然配对成为结构事实**:
+/// 照 `move_item.rs::insert_moved_comment_rows` 那段学到的 —— **SQLite 单条语句失败不会
+/// 把整个事务标记成不可提交**,所以「写挂了 commit 自然会炸、旗跟着没了」这个前提是假的;
+/// 旗必须自己收干净,故 `write` 的结果**先接住**、清旗**无条件执行**、最后才把结果交出去。
+/// ⛔ 别把清旗挪到 `?` 后面。
+///
+/// ⚠ 这面旗的权力只有一件事:让那一只归档触发器这一次不记账。⛔ 别把它与 0022 的
+/// `sync_replay_active` 合并 —— 那面旗的语义是「这些写来自另一个权威来源,单机守护让路」,
+/// 两者的作用范围、生命周期、谁有权立它都不同,合并会让任何一处置旗顺带拿到另一处的豁免。
+pub(crate) fn without_history_if_checklist_toggle<T>(
+    conn: &Connection,
+    id: &str,
+    new_content: &str,
+    write: impl FnOnce(&Connection) -> rusqlite::Result<T>,
+) -> rusqlite::Result<T> {
+    // 读不到旧文本(行不存在 / 刚被删)就当普通编辑办 —— 判不出来时**不豁免**才是安全方向。
+    let quiet = match current_content(conn, id)? {
+        Some(before) => crate::checklist::is_checklist_toggle_only(&before, new_content),
+        None => false,
+    };
+    if !quiet {
+        return write(conn);
+    }
+    // ⭐ **要立旗了,那就必须身处一个事务里**(codex 单轮审 M-1)。这道闸封的是它列出的
+    // 最坏那一格:裸 autocommit 连接上,置旗那句 INSERT 会**自己先提交**,此后进程若在写入
+    // 或清旗之前崩掉,旗就**永久留在库里** —— 那台机器从此每一次改正文都静默不记历史,
+    // 而它不报错、不丢数据,没有任何信号。
+    //
+    // ⛔ **为什么不用类型封(把签名改成 `&Transaction`)**:回放那条路
+    // (`replay::apply_item_set_field`)收到的本来就是 `&Connection`,要改成事务对象得一路
+    // 往上改 replay 的签名;而运行时这一问反而**盖得更全** —— 它对三条路一视同仁,也拦得住
+    // 将来任何一条拿裸连接进来的新路。⚠ 闸刻意放在「决定要立旗」**之后**:真编辑那条路
+    // (占绝大多数)一个字都不受影响,既有的裸连接调用照旧。
+    if conn.is_autocommit() {
+        // 造错的形照 `db.rs` 那两处(仓里唯一的先例):`SqliteFailure` + 一句人话。
+        return Err(rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_MISUSE),
+            Some(
+                "勾选豁免旗必须在事务里立(裸连接上它会自己先提交,崩溃后永久留库 ⇒ 那台机器此后一律不记历史)"
+                    .to_string(),
+            ),
+        ));
+    }
+    conn.execute("INSERT INTO item_checklist_toggle (flag) VALUES (1)", [])?;
+    let res = write(conn);
+    conn.execute("DELETE FROM item_checklist_toggle", [])?;
+    res
+}
+
 /// Overwrite an item's text, bumping updated_at. The 0014 `trg_item_archive_on_edit`
 /// trigger snapshots the prior version into `item_revisions` first, so history is kept
 /// by the database itself — no caller can bypass it, on any stage. Returns rows updated.
+///
+/// ⭐ 0039 起有**一个**例外,且它不是「调用方可以绕过」:这次编辑若只是勾了/取消了几个
+/// 方框(判据在 `crate::checklist`),那一版不记进历史 —— 详见 `without_history_if_checklist_toggle`。
 pub(crate) fn update_item_content(conn: &Connection, id: &str, content: &str) -> rusqlite::Result<usize> {
-    conn.execute(
-        "UPDATE items SET content = ?2, updated_at = ?3 WHERE id = ?1",
-        (id, content, now_iso()),
-    )
+    without_history_if_checklist_toggle(conn, id, content, |c| {
+        c.execute(
+            "UPDATE items SET content = ?2, updated_at = ?3 WHERE id = ?1",
+            (id, content, now_iso()),
+        )
+    })
 }
 
 /// Rename an active (on-board, non-archived) task — a guarded content edit. The
@@ -639,11 +699,13 @@ pub(crate) fn update_item_content(conn: &Connection, id: &str, content: &str) ->
 /// item a 0-row no-op the caller fails fast on; the history trigger still fires. Returns
 /// rows changed.
 pub(crate) fn rename_task(conn: &Connection, id: &str, content: &str) -> rusqlite::Result<usize> {
-    let sql = format!(
-        "UPDATE items SET content = ?2, updated_at = ?3 \
-         WHERE id = ?1 AND stage IN {TASK_STAGES} AND archived_at IS NULL AND sealed_at IS NULL"
-    );
-    conn.execute(&sql, (id, content, now_iso()))
+    without_history_if_checklist_toggle(conn, id, content, |c| {
+        let sql = format!(
+            "UPDATE items SET content = ?2, updated_at = ?3 \
+             WHERE id = ?1 AND stage IN {TASK_STAGES} AND archived_at IS NULL AND sealed_at IS NULL"
+        );
+        c.execute(&sql, (id, content, now_iso()))
+    })
 }
 
 /// An item's superseded versions, newest-archived first (its edit history). Ordered by
@@ -1614,10 +1676,10 @@ mod tests {
     }
 
     #[test]
-    fn migration_sets_user_version_38_and_enforces_foreign_keys() {
+    fn migration_sets_user_version_39_and_enforces_foreign_keys() {
         let conn = fresh_db();
         let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0)).unwrap();
-        assert_eq!(version, 38);
+        assert_eq!(version, 39);
         let fk: i64 = conn.pragma_query_value(None, "foreign_keys", |r| r.get(0)).unwrap();
         assert_eq!(fk, 1, "foreign keys must be ON");
     }
@@ -1709,6 +1771,30 @@ mod tests {
         assert_eq!(delete_inbox_item(&conn, &filed).unwrap(), 0);
         let direct = conn.execute("DELETE FROM items WHERE id = ?1", [&filed]);
         assert!(direct.is_err(), "trigger blocks raw-deleting a live filed item");
+    }
+
+    /// codex 单轮审 M-1 的那道闸:**要立旗就必须身处事务**。裸 autocommit 连接上置旗那句
+    /// INSERT 会自己先提交,进程随后崩掉的话旗永久留库 ⇒ 那台机器从此一律不记历史,而且
+    /// 不报错、不丢数据、没有任何信号。⛔ 别把这道闸挪到函数开头 —— 真编辑那条路(绝大多数)
+    /// 本就不立旗,既有的裸连接调用(如下面那支 `edit_archives_history_via_trigger_on_any_stage`)
+    /// 必须一个字都不受影响。
+    #[test]
+    fn a_checklist_tick_on_a_bare_connection_is_refused_loudly() {
+        let conn = fresh_db();
+        let id = add_item(&conn, "- [ ] 甲").unwrap();
+
+        // 裸连接 + 纯勾选 ⇒ 响亮拒,且**一个字节都没写进去**。
+        let err = update_item_content(&conn, &id, "- [x] 甲").unwrap_err();
+        assert!(err.to_string().contains("必须在事务里立"), "{err}");
+        assert_eq!(current_content(&conn, &id).unwrap().unwrap(), "- [ ] 甲", "被拒的写不许落地");
+        let flag: i64 = conn
+            .query_row("SELECT COUNT(*) FROM item_checklist_toggle", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(flag, 0, "拒掉的那次连旗都不许立");
+
+        // ⭐ 反向那半(承重):同一条裸连接上的**真编辑**照旧通行 —— 这道闸只拦要立旗的那一种。
+        update_item_content(&conn, &id, "- [ ] 乙").unwrap();
+        assert_eq!(item_revisions(&conn, &id).unwrap()[0].content, "- [ ] 甲");
     }
 
     #[test]

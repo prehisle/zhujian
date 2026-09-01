@@ -238,6 +238,9 @@ const CORE_TABLES: &[&str] = &[
     // 0022 的回放豁免单行标志表:items/item_image 的多只写保护触发器查询它,
     // 缺了 = 第一笔业务写就炸(catalog 就要拒,不许拖到写入时)。
     "sync_replay_active",
+    // 0039 的「这次编辑只是勾选」单行标志表(用户面 63):`trg_item_archive_on_edit` 的
+    // WHEN 查询它 —— 同上,缺了 = 第一笔改正文就炸,故同样在 catalog 这一层就拒。
+    "item_checklist_toggle",
     // 0028 的空间 profile 物化单行表(空间名跨端同步的状态侧)。
     "space_profile",
     // 0033 的设备 profile 物化表(设备别名跨端同步的状态侧,identity-plan §2.1)。

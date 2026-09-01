@@ -64,7 +64,7 @@ use rusqlite::Connection;
 /// 当前 schema 版本 = 迁移链末位。spaces 的只读 exact-match 检查(multispace-plan §10)
 /// 与 staging 建库都以它为锚;加新迁移时此常量跟着 MIGRATIONS 一起动
 /// (migration_sets_user_version 测试与下方一致性测试双守)。
-pub const SCHEMA_VERSION: i64 = 38;
+pub const SCHEMA_VERSION: i64 = 39;
 
 /// 安卓前滚迁移下限(codex 设计审 H1):手机端只对 `user_version >= 28` 的既有
 /// 正式库做原地前滚(现网手机全部诞生于 v28 干净装)。1-27 的老迁移不自带崩溃窗
@@ -136,6 +136,9 @@ const MIGRATIONS: &[(i64, ForeignKeys, &str)] = &[
     (37, ForeignKeys::Enforced, include_str!("../migrations/0037_board_column_vocab.sql")),
     // 留言已读水位(backlog 用户面 38):纯本地用户状态,零协议改动。
     (38, ForeignKeys::Enforced, include_str!("../migrations/0038_item_comment_seen.sql")),
+    // 勾一下方框不再长一版编辑历史(backlog 用户面 63):一面单行旗 + 那只归档触发器的
+    // WHEN 多一个豁免条件。零表重建、零数据变换、**零协议改动**(同步 op 一个字不改)。
+    (39, ForeignKeys::Enforced, include_str!("../migrations/0039_checklist_toggle_no_history.sql")),
 ];
 
 /// Open the database at `path`, enforce foreign keys, and apply migrations.

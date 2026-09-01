@@ -75,6 +75,14 @@ describe("正文待办清单", () => {
       timeoutMsg: "再点一次没翻回未勾",
     });
     expect(await ideaBody()).toBe(BODY);
+
+    // ⭐ 用户面 63:上面勾了两下,而编辑历史**一版都不该长**(0039 那面豁免旗 + Rust 侧的
+    // 文本比对判据)。三条写正文的路各有 core 行为测,这一格钉的是**整条链路** —— 真点击 →
+    // 真 IPC → 库里历史真的没涨。⛔ 别以为上面那几句正文断言顺带证了它:「正文对不对」与
+    // 「有没有顺手记一版历史」是两件事,后者只有这一句在看。
+    // ⚠ 反向那半(真编辑照常留历史)由 `inbox-interactions.e2e.js` 那例钉着,不在这里重复。
+    const idea = (await invoke("list_ideas")).find((i) => i.content.startsWith("E2ECK-清单"));
+    expect(await invoke("list_note_history", { id: idea.id })).toHaveLength(0);
   });
 
   it("看板卡:走的是另一条写回命令(rename_task),照样落库", async () => {

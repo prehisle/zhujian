@@ -719,6 +719,22 @@ fn items_schema_survives_the_rebuild_byte_for_byte() {
     /// 本笔**故意**新增的:改按 `board_column.kind` 判的那 2 只。
     const EXPECTED_NEW: &[&str] =
         &["trg_item_stage_kind_coupling_insert", "trg_item_stage_kind_coupling_update"];
+    /// **故意改写**的(名字还在、全文变了):0039 给归档触发器的 WHEN 加了「这次只是
+    /// 勾选」的豁免(用户面 63)。⛔ **这不是放宽比对** —— 名字仍在集合里,新形在这里
+    /// **逐字钉死**,漂一个字节照样红;放宽的只是「它必须与 v35 那一份相同」这一句。
+    /// ⚠ 将来再有迁移改写 items 上某个 schema 对象,照这个形加一条,别改成模糊匹配。
+    const EXPECTED_CHANGED: &[(&str, &str)] = &[(
+        "trg_item_archive_on_edit",
+        "CREATE TRIGGER trg_item_archive_on_edit\n\
+         BEFORE UPDATE OF content ON items\n\
+         FOR EACH ROW\n\
+         WHEN NEW.content <> OLD.content\n     \
+         AND NOT EXISTS (SELECT 1 FROM item_checklist_toggle)\n\
+         BEGIN\n    \
+         INSERT INTO item_revisions (item_id, content, archived_at)\n    \
+         VALUES (OLD.id, OLD.content, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));\n\
+         END",
+    )];
 
     let objects = |conn: &Connection| -> std::collections::BTreeMap<String, (String, String)> {
         conn.prepare(
@@ -758,10 +774,20 @@ fn items_schema_survives_the_rebuild_byte_for_byte() {
         if EXPECTED_GONE.contains(&name.as_str()) || kind == "table" {
             continue;
         }
+        if let Some((_, want)) = EXPECTED_CHANGED.iter().find(|(n, _)| *n == name) {
+            assert_eq!(&after[name].1, want, "{name} 改写后与登记的新形不逐字相同");
+            continue;
+        }
         assert_eq!(
             &after[name].1, sql,
             "{name}({kind})重建后与 v35 不逐字相同 —— 照真库抄,别照计划书数"
         );
+    }
+    // 登记表自己也要有牙齿:登记了一个「改写过」的名字,它却与 v35 那份逐字相同 ⇒ 那条
+    // 登记是死的(⛔ 别让它变成一张「反正列进来就不比了」的放行单)。
+    for (name, _) in EXPECTED_CHANGED {
+        assert!(before.contains_key(*name), "{name} 在 v35 上就不存在?登记写错了");
+        assert_ne!(&after[*name].1, &before[*name].1, "{name} 登记成改写过,实际却没变");
     }
 
     // ③ 表本身:只许差在 stage 那一格。

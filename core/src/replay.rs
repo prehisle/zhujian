@@ -364,13 +364,25 @@ fn apply_item_set_field(tx: &Connection, op: &RemoteOp) -> Result<Outcome, OpErr
     if !is_latest_field_write(tx, "item", &op.entity_id, &field, &op.hlc).map_err(local)? {
         return Ok(Outcome::LwwStale);
     }
-    tx.execute(
-        &format!(
-            "UPDATE items SET {field} = ?1, \
-             updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?2"
-        ),
-        (value, &op.entity_id),
-    )
+    let sql = format!(
+        "UPDATE items SET {field} = ?1, \
+         updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?2"
+    );
+    let write = |c: &Connection| c.execute(&sql, (&value, &op.entity_id));
+    // 0039(用户面 63):对端勾了一下方框,本机回放时**同样**不长那一版历史 —— 豁免绑的是
+    // 「这次编辑只有几个勾变了」,与 op 从哪来无关,故两端的历史仍然各自完整、仍然对称。
+    // ⛔ 别把它读成第二个「回放豁免」:0022 那条「item_revisions 是本地派生数据、回放照样
+    // 长历史」的裁决没有被推翻,推翻的只是「勾选也算一次编辑」。
+    // ⚠ 只有 content 这一个字段走得到判据 —— 别的字段 `is_checklist_toggle_only` 判不出
+    // 文本变更(它比的是 items.content),故显式只在 content 臂上包。
+    match (field.as_str(), &value) {
+        ("content", SqlValue::Text(new_text)) => {
+            crate::repo::without_history_if_checklist_toggle(tx, &op.entity_id, new_text, write)
+        }
+        // content 臂在 `item_field_value` 里只可能产出 Text —— 真落到这儿说明那份判定变了,
+        // 照普通编辑写(**归档照常发生**,安全方向)。
+        _ => write(tx),
+    }
     .map_err(|e| db_err(&format!("回放 item set_field {field} 失败({})", op.entity_id), e))?;
     Ok(Outcome::Applied)
 }
@@ -2822,6 +2834,40 @@ mod tests {
             .unwrap();
         assert_eq!(revs, 1, "回放远端编辑,本地照样归档旧文(item_revisions 本地派生)");
         assert_eq!(flag_rows(&l), 0);
+    }
+
+    // ⭐ 用户面 63 的第三条写正文的路:对端勾了一下方框,本机回放时**同样**不长那一版
+    // 历史。豁免绑的是「这次编辑只有几个勾变了」,与 op 从哪来无关 ⇒ 两端的历史仍然对称。
+    // ⛔ 别把它读成第二个「回放豁免」:上面那支 `lww_higher_hlc_wins…` 钉的「回放远端**真
+    // 编辑**照样归档」一个字没变,两支是一对。
+    #[test]
+    fn replaying_a_remote_checkbox_tick_does_not_grow_local_history() {
+        let (mut l, mut lc) = fresh();
+        let id = notes::capture(&mut l, &mut lc, "清单
+- [ ] 甲").unwrap();
+
+        let tick = mk(&remote_hlc(FUTURE_MS, 0), "item", &id, "set_field",
+            json!({"field": "content", "value": "清单
+- [x] 甲"}));
+        assert_eq!(apply_remote_op(&mut l, &mut lc, &tick).unwrap(), Outcome::Applied);
+        let content: String =
+            l.query_row("SELECT content FROM items WHERE id=?1", [&id], |r| r.get(0)).unwrap();
+        assert_eq!(content, "清单
+- [x] 甲", "正文照常落地");
+        let revs: i64 = l
+            .query_row("SELECT COUNT(*) FROM item_revisions WHERE item_id=?1", [&id], |r| r.get(0))
+            .unwrap();
+        assert_eq!(revs, 0, "远端勾选同样不长历史");
+        // ⭐ 旗收干净了:紧接着一次**真编辑**照常归档(⛔ 这一句是承重的 —— 只断言上面那个
+        // 0,一个「旗立起来就再也不清」的实现照样全绿,而那会让此后所有编辑都不记历史)。
+        let edit = mk(&remote_hlc(FUTURE_MS + 1_000, 0), "item", &id, "set_field",
+            json!({"field": "content", "value": "清单
+- [x] 乙"}));
+        assert_eq!(apply_remote_op(&mut l, &mut lc, &edit).unwrap(), Outcome::Applied);
+        let revs: i64 = l
+            .query_row("SELECT COUNT(*) FROM item_revisions WHERE item_id=?1", [&id], |r| r.get(0))
+            .unwrap();
+        assert_eq!(revs, 1, "旗必须已经收掉:真编辑照常归档");
     }
 
     // ---- tombstone:删任意行 / sticky / 父子契约 ---------------------------------------
