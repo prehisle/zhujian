@@ -403,6 +403,34 @@ describe("任务时间维度 · 窄列里行内编辑器不折行也不撑破卡
     expect(m.cardOverflow).toBe(0);
     expect(m.bodyOverflow).toBe(0);
   });
+
+  // 566(用户面 61):顶栏字母态(board.css 那个 1099 断点之下)里「到期汇总」与「排序」两枚
+  // 此前只有 .lbl、没有 +/计数/键帽 ⇒ 隐掉文字就塌成两个空椭圆(559 截图照出来的,实测 27×11)。
+  // 现在各留一个记号:到期 = 三段合一的总数、排序 = ↕。这只只断「字母态下钮上有可见的字、且不是
+  // 全名」;⚠ 同一只前面那两例已把窗摆在 950,正好就在字母态里,别另开一只再摆一次窗。
+  // ⛔ 前置断言(全名真的隐了)少不得:窗宽哪天被改回 1100,后面两条会安静地恒绿。
+  it("顶栏字母态:「到期汇总」与「排序」两枚不再是空椭圆", async () => {
+    const m = await browser.execute(() => {
+      const shown = (el) => [...el.querySelectorAll("span")].filter((s) => getComputedStyle(s).display !== "none").map((s) => s.textContent.trim());
+      const due = document.querySelector("#due-soon");
+      const sort = document.querySelector("#board-sort");
+      return {
+        dueHidden: due.hidden,
+        due: shown(due),
+        sort: shown(sort),
+        dueW: Math.round(due.getBoundingClientRect().width),
+        sortW: Math.round(sort.getBoundingClientRect().width),
+      };
+    });
+    expect(m.dueHidden).toBe(false); // 本 describe 造的那条今天到期 ⇒ 这枚钮必在
+    expect(m.due.length).toBe(1); // 全名隐了,只剩记号
+    expect(m.due[0]).toMatch(/^\d+$/); // 记号是个纯数字(三段合一的总数)
+    expect(Number(m.due[0])).toBeGreaterThanOrEqual(1);
+    expect(m.sort).toEqual(["↕"]);
+    // 改前两枚都是 27px(纯 padding + 边框);记号上身后至少得比它宽。
+    expect(m.dueW).toBeGreaterThan(30);
+    expect(m.sortW).toBeGreaterThan(30);
+  });
 });
 
 // 524:更窄的一档 —— 原生 `<input type=date>` 有自己的最小内在宽度(实测恒 128px),

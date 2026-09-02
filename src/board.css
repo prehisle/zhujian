@@ -56,7 +56,14 @@
   .v-board header .hbtn .lbl { display: none; }
   .v-board header .hbtn.active .lbl { display: inline; }
   .v-board header .copy-slot { display: none; }
+  /* 566:「到期汇总」与「排序」两枚只有 .lbl、没有 +/计数/键帽 ⇒ 字母态下塌成两个空椭圆
+     (实测 27×11,用户面 61)。各留一个记号:到期 = 三段合一的总数(朱砂描边仍只跟逾期走)、
+     排序 = ↕;.active 时全名回来、记号让位(与别的钮同一条规矩)。
+     量过(9-02,侧栏开着、计数 201/3):字母态一行的门槛从 863px 挪到约 879px,+16px;
+     ⚠ 760 那档在这之前就已经是两行了(502 加第六枚钮时没人回头量「恒一行」那句)。 */
+  .v-board header .hbtn:not(.active) .lbl-short { display: inline; }
 }
+.v-board header .hbtn .lbl-short { display: none; font-variant-numeric: tabular-nums; }
 .v-board .trash-toggle .tn,
 .v-board #trash-toggle .tn { font-variant-numeric: tabular-nums; opacity: 0.8; }
 

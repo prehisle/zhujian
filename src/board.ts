@@ -174,8 +174,8 @@ const SKELETON = `
     <button class="hbtn" id="add-task" type="button" title="${t("board.newTask")}">+ <span class="lbl">${t("board.newTask")}</span> <kbd class="k">N</kbd></button>
     <span class="copy-slot" id="copy-slot"></span>
     <span class="head-tools">
-      <button class="hbtn due-soon" id="due-soon" title="${t("board.dueSoonTitle", { days: DUE_SOON_DAYS })}" hidden><span class="lbl" id="due-soon-lbl"></span></button>
-      <button class="hbtn" id="board-sort" title="${t("board.sortTitle")}"><span class="lbl" id="board-sort-lbl">${t("board.sortManual")}</span></button>
+      <button class="hbtn due-soon" id="due-soon" title="${t("board.dueSoonTitle", { days: DUE_SOON_DAYS })}" hidden><span class="lbl" id="due-soon-lbl"></span><span class="lbl-short" id="due-soon-n"></span></button>
+      <button class="hbtn" id="board-sort" title="${t("board.sortTitle")}"><span class="lbl" id="board-sort-lbl">${t("board.sortManual")}</span><span class="lbl-short">↕</span></button>
       <button class="hbtn" id="manage-cols" title="${t("board.manageColsTitle")}">≡ <span class="lbl">${t("board.manageCols")}</span></button>
       <button class="hbtn" id="seal-toggle" title="${t("board.sealTitle")}"><span class="lbl">${t("board.sealLbl")}</span><span class="tn" id="seal-n">0</span> <kbd class="k">G</kbd></button>
       <button class="hbtn" id="trash-toggle" title="${t("board.trashTitle")}"><span class="lbl">${t("board.trashLbl")}</span><span class="tn" id="trash-n">0</span> <kbd class="k">R</kbd></button>
@@ -302,6 +302,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
   const sortLbl = view.querySelector("#board-sort-lbl") as HTMLElement;
   const dueSoonBtn = view.querySelector("#due-soon") as HTMLButtonElement;
   const dueSoonLbl = view.querySelector("#due-soon-lbl") as HTMLElement;
+  const dueSoonN = view.querySelector("#due-soon-n") as HTMLElement;
   const manageColsBtn = view.querySelector("#manage-cols") as HTMLButtonElement;
   const compose = view.querySelector("#compose") as HTMLElement;
   const composeInput = view.querySelector("#compose-input") as HTMLTextAreaElement;
@@ -2175,6 +2176,9 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     dueSoonBtn.hidden = false;
     // 「逾期/今天」那半与每日提醒念同一个数(见 dueSummaryFullLabel:预警那段刻意不进通知)。
     dueSoonLbl.textContent = dueSummaryFullLabel(dueLate, dueNow, dueNext);
+    // 窄窗字母态(board.css 那个 1099 断点)只剩这个总数 —— 三段合一,朱砂描边仍只跟逾期走;
+    // 分项看 title 或点开。此前字母态下这枚只有 .lbl,隐掉就成一个空椭圆(用户面 61)。
+    dueSoonN.textContent = String(dueLate + dueNow + dueNext);
     dueSoonBtn.classList.toggle("late", dueLate > 0);
     dueSoonBtn.classList.toggle("active", dueOnly);
   }
