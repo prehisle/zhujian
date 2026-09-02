@@ -142,7 +142,26 @@ describe("待办清单 · 快速输入", () => {
     // ⛔ 别在这里再补一记裸 Enter 去验保存:那记在 WebKitWebDriver 上发不到文档级监听
     // (562 那趟 Linux CI 实证),而「Enter = 保存」本就由 `inbox-interactions.e2e.js` 用合成
     // 事件钉着 —— 拿一件别处已有网的事,去当这一格的判据,只会把引擎差异记成产品缺陷。
-    await expectValue(area, "- [ ] E2ECKI-one\n- [ ] two\n- [ ] three");
+    //
+    // ⚠⚠ **Linux/WebKitGTK 上这一句连红四趟**(de398d8 / 676b5a7 / 88fa43c / 9-01 夜跑),实得恒
+    // `- [ ] thre` —— `expectValue` 等满 8 秒那个 `e` 也没到,⛔ 所以**不是** 563 补三判的「读得太早」。
+    // 核过整套 spec:`browser.keys("字串")` 打完**紧接着读值、中间不再发任何键**的地方全仓只有这一处,
+    // 别处打完字后面都还跟一记键(Ctrl+L / Shift+Enter),那些在 Linux 上都过 ⇒ 最像 WebKitWebDriver
+    // 把一串按键里**最后一记压着、要等下一个键事件才落**。下面取证 + 兜底一趟做完:先等 1.5 秒,
+    // 没到就把实得打进日志、再补一记无害键(End,光标本来就在末尾)看它动不动。
+    // ⭐ 日志里那两行 `[取证·用户面 64]` 就是字据(CI 存档 `e2e-linux-log`);⛔ 别抽成通用 helper ——
+    // 理论要先在那份日志里坐实一次,再谈要不要把「打完字补一记 End」立成纪律。
+    const WANT_THREE = "- [ ] E2ECKI-one\n- [ ] two\n- [ ] three";
+    const landed = await browser
+      .waitUntil(async () => (await area.getValue()) === WANT_THREE, { timeout: 1500 })
+      .then(() => true, () => false);
+    if (!landed) {
+      console.log(`[取证·用户面 64] 打完 "three" 等 1.5s 实得 ${JSON.stringify(await area.getValue())},补一记 End 再看`);
+      await browser.keys("End");
+      await browser.pause(300);
+      console.log(`[取证·用户面 64] 补 End 之后实得 ${JSON.stringify(await area.getValue())}`);
+    }
+    await expectValue(area, WANT_THREE);
     await browser.keys("Escape"); // 收编辑态,别把草稿留给后面的例子
   });
 
