@@ -102,10 +102,12 @@ describe("待办清单 · 快速输入", () => {
     expect(await ideaBody("E2ECKI-one")).toBe("- [ ] E2ECKI-one\n- [ ] two");
   });
 
-  // ⚠ **Linux 上跳过,而且这一格因此在那一端没有任何字据**:`Ctrl+Z` 在 WebKitWebDriver 上
-  // 不触发原生 undo(562 那趟 CI 实得 `- [ ] abc`,= 那一记没生效),于是**测不出**「execCommand
-  // 保住了撤销栈」这件事在 WebKitGTK 上成不成立 —— ⛔ 别把「跳过」读成「那边也没问题」。
-  // 真 Linux 桌面上用户按 Ctrl+Z 会怎样,得有人在真机上按一次才知道(backlog 有账)。
+  // ⚠ **Linux 上跳过 —— 571 起理由变了,别再照旧读**:此前写的是「测不出 execCommand 有没有
+  // 保住撤销栈」(562 那趟 CI 实得 `- [ ] abc`),像是我们这边的嫌疑。**571 用真键盘量过了**
+  // (`e2e/probes/linux-real-keys.sh`,xdotool/XTEST 不经 WebDriver):控制组「只打 `abcdef`、
+  // 全程不碰 execCommand,再 Ctrl+Z」实得**仍是 `abcdef`** ⇒ **这一端整个应用的文本框都没有撤销**。
+  // ⇒ 跳过不是「测不了」,是**那一端没有这个能力**;⛔ 别再往「execCommand 把撤销栈弄没了」
+  // 这个方向查。账已另立成 backlog 用户面 67(带触发门 = Linux 桌面正式对外发)。
   it("⭐ Ctrl+Z 撤得回来 —— 快速输入没把用户手打的字连撤销栈一起吃掉", async function () {
     if (IS_LINUX) this.skip();
     const input = await $(".v-inbox .compose-input");
