@@ -392,3 +392,27 @@ export async function dropColFloor() {
   });
 }
 
+
+// **打字面文本一律走这里,⛔ 别再用 `browser.keys("字串")`。**
+//
+// 为什么(571 在 Linux 桌面上量出来的,backlog 用户面 64 那条连红五趟的根):wdio 9.28 的
+// `browser.keys(字串)` 把序列拼成 **先把每个字符全部 keyDown、pause(10)、再全部 keyUp**
+// (`node_modules/webdriverio/build/index.js` 那支 `async function keys(value)`)—— 相邻重复的
+// 字符于是成了「同一枚键按着不放再按一次」,W3C 把它定义成 **repeat**,而两个引擎处置不同:
+//   · Windows/msedgedriver:照样插字 ⇒ 看不见这个坑
+//   · Linux/WebKitWebDriver:**一个字都不插** ⇒ 相邻重复整个塌成一个
+// 实测读数(`e2e/probes/webkit-keys-dup.e2e.js`,裸 textarea + 产品输入框同结论):
+//   `thre`→`thre` ✅ · `aba`→`aba` ✅ · `three`→`thre` · `aa`→`a` · **`book`→`bok`** · `aaa`→`a`
+// ⭐ `book`→`bok` 那格是承重的:丢的**不是「最后一记」**(563/566 两轮的立论都错在这儿,
+// 566 补的那记 End 催不出来正是因为那个字符压根没生成),是**重复的那一记**。
+// ⛔ 别再往「加等待 / 补一记键」的方向修。
+//
+// 这里发的是每个字符各自 down+up(= 真键盘的模型),**一条动作链一次往返**,不比原来慢;
+// 中日文亦可(实测 `E2E-一二` ✅)。⚠ 只管**字面文本**;组合键(`["Control","l"]`)照旧走
+// `browser.keys`——那一形里没有相邻重复,不受影响。⚠ `setValue` 走的是另一条端点
+// (Element Send Keys),实测不吞(`three`/`aaa`/`book` 全对),不必改。
+export async function typeText(text) {
+  const chain = browser.action("key");
+  for (const ch of text) chain.down(ch).up(ch);
+  await chain.perform();
+}

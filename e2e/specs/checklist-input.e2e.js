@@ -1,5 +1,5 @@
 import { $, expect, browser } from "@wdio/globals";
-import { invoke, tryInvoke, goNotebook, clearInbox, openCompose, boardAction } from "./support.js";
+import { invoke, tryInvoke, goNotebook, clearInbox, openCompose, boardAction, typeText } from "./support.js";
 
 // 待办清单的**快速输入**(562,用户 561 那轮当场问的「`- [ ] ` 这种能比较快速的输入吗?」):
 // Shift+Enter 续出下一项、Ctrl+L 起一条 / 摘掉。
@@ -75,7 +75,7 @@ describe("待办清单 · 快速输入", () => {
     await input.click();
     await clearField();
 
-    await browser.keys("E2ECKI-one");
+    await typeText("E2ECKI-one");
     await browser.keys(["Control", "l"]);
     // ⭐ 承重:Ctrl+L 真到了、execCommand 真落了笔。
     await expectValue(input, "- [ ] E2ECKI-one");
@@ -84,7 +84,7 @@ describe("待办清单 · 快速输入", () => {
     // ⭐ 承重:Shift+Enter 没被「Enter = 记下」那条抢走(抢走了这条就已经入库、框也空了)。
     await expectValue(input, "- [ ] E2ECKI-one\n- [ ] ");
 
-    await browser.keys("two");
+    await typeText("two");
     await browser.keys(["Shift", "Enter"]);
     await expectValue(input, "- [ ] E2ECKI-one\n- [ ] two\n- [ ] ");
 
@@ -112,7 +112,7 @@ describe("待办清单 · 快速输入", () => {
     await input.click();
     await clearField();
 
-    await browser.keys("abc");
+    await typeText("abc");
     await browser.keys(["Control", "l"]);
     await expectValue(input, "- [ ] abc");
 
@@ -137,30 +137,19 @@ describe("待办清单 · 快速输入", () => {
     await browser.keys(["Shift", "Enter"]);
     await expectValue(area, "- [ ] E2ECKI-one\n- [ ] two\n- [ ] ");
 
-    await browser.keys("three");
+    await typeText("three");
     // ⚠ 承重的是**上面那记 Shift+Enter 没被文档级「Enter = 保存」抢走**,断言就停在框里那份字上。
     // ⛔ 别在这里再补一记裸 Enter 去验保存:那记在 WebKitWebDriver 上发不到文档级监听
     // (562 那趟 Linux CI 实证),而「Enter = 保存」本就由 `inbox-interactions.e2e.js` 用合成
     // 事件钉着 —— 拿一件别处已有网的事,去当这一格的判据,只会把引擎差异记成产品缺陷。
     //
-    // ⚠⚠ **Linux/WebKitGTK 上这一句连红四趟**(de398d8 / 676b5a7 / 88fa43c / 9-01 夜跑),实得恒
-    // `- [ ] thre` —— `expectValue` 等满 8 秒那个 `e` 也没到,⛔ 所以**不是** 563 补三判的「读得太早」。
-    // 核过整套 spec:`browser.keys("字串")` 打完**紧接着读值、中间不再发任何键**的地方全仓只有这一处,
-    // 别处打完字后面都还跟一记键(Ctrl+L / Shift+Enter),那些在 Linux 上都过 ⇒ 最像 WebKitWebDriver
-    // 把一串按键里**最后一记压着、要等下一个键事件才落**。下面取证 + 兜底一趟做完:先等 1.5 秒,
-    // 没到就把实得打进日志、再补一记无害键(End,光标本来就在末尾)看它动不动。
-    // ⭐ 日志里那两行 `[取证·用户面 64]` 就是字据(CI 存档 `e2e-linux-log`);⛔ 别抽成通用 helper ——
-    // 理论要先在那份日志里坐实一次,再谈要不要把「打完字补一记 End」立成纪律。
+    // ⚠⚠ **这一句曾在 Linux/WebKitGTK 上连红五趟**(de398d8 / 676b5a7 / 88fa43c / 9-01 夜跑 /
+    // ba76adc),实得恒 `- [ ] thre`。571 在真 Linux 桌面上量出了根:**不是产品缺陷,也不是
+    // 读得太早** —— 是 `browser.keys("three")` 那一形把相邻的两记 `e` 塌成了一记(wdio 把整串
+    // **先全部 keyDown 再全部 keyUp** ⇒ 重复字符 = repeat,而 WebKitWebDriver 对 repeat 不插字)。
+    // ⇒ 改走 `typeText`(逐字符 down+up)后两端同绿。⛔ 563 的「读得太早」与 566 的「压着等下一个
+    // 键事件」两个论都已被推翻,别再照着修;逐格读数在 `e2e/probes/webkit-keys-dup.e2e.js`。
     const WANT_THREE = "- [ ] E2ECKI-one\n- [ ] two\n- [ ] three";
-    const landed = await browser
-      .waitUntil(async () => (await area.getValue()) === WANT_THREE, { timeout: 1500 })
-      .then(() => true, () => false);
-    if (!landed) {
-      console.log(`[取证·用户面 64] 打完 "three" 等 1.5s 实得 ${JSON.stringify(await area.getValue())},补一记 End 再看`);
-      await browser.keys("End");
-      await browser.pause(300);
-      console.log(`[取证·用户面 64] 补 End 之后实得 ${JSON.stringify(await area.getValue())}`);
-    }
     await expectValue(area, WANT_THREE);
     await browser.keys("Escape"); // 收编辑态,别把草稿留给后面的例子
   });
@@ -193,7 +182,7 @@ describe("待办清单 · 快速输入", () => {
     await input.click();
     await clearField();
 
-    await browser.keys("E2ECKI-bc");
+    await typeText("E2ECKI-bc");
     await browser.keys(["Control", "l"]);
     await expectValue(input, "- [ ] E2ECKI-bc");
     await browser.keys(["Shift", "Enter"]);
