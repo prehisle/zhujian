@@ -145,14 +145,17 @@ export async function goNotebook(view) {
   // The notebook is a real ≥760px window (a 172px sidebar + content). The e2e
   // harness drives the tiny 560px capture window, so size it up to a
   // representative width or narrow views (e.g. the board header) overflow.
-  // ⭐ **485:1000 → 1100,跟着 `board.css` 那个断点一起挪的**。看板 header 的「窄窗缩成
-  // 字母」断点本轮从 999 抬到 1099(它多了第六枚控件「管理列」,量出来的账见 board.css 那段)
-  // ⇒ 窗还停在 1000 的话,这套 e2e 从此**只跑得到字母态**,而 `viewkeys.e2e.js` 有两只用例
-  // 拿 `#trash-toggle` 的**可见文字**当观测面(「回收站」在字母态下是隐掉的)。
-  // ⚠ 485 实测:不挪窗那两只当场红 —— ⛔ 别把那当抖动,它是这条耦合的字据。
-  // ⛔ **别改成「把断点抬了但窗不动」**:那等于悄悄放弃「全名态也在测」这半覆盖面
-  // (69 当初把断点定在 999 的原话就是「e2e 驱动窗恰 1000,保持全名态」)。
-  await browser.setWindowSize(1100, 700);
+  // ⭐ **B 轮:1100 → 1260,跟着 `board.css` 那三个断点一起挪的**(同 485 立的规矩:窗与断点
+  // 是一对;485 那次是 1000 → 1100,原话在 git 历史里)。顶栏塌缩本轮改成按**顶栏自己的宽**判、
+  // 分三档,断点 1009 / 929 / 839(顶栏内容宽)。窗 1260 ⇒ 顶栏内容宽 **890**
+  // (= 窗宽 − 172 侧栏 − 30 左内边距 − 138 窗控死区 − 30 右呼吸),落在「摘键帽 + 摘复制看板、
+  // 名字还在」那一档 ⇒ `viewkeys.e2e.js` 拿 `#trash-toggle` 的**可见文字**当观测面的那四句
+  // (`toContain("回收站")`)照旧有得看。
+  // ⚠ 窗还停在 1100 的话顶栏内容宽只有 730 ⇒ 整套 e2e 从此只跑得到字母态,那四句当场红。
+  // ⛔ **别为了覆盖「全形」那一档把窗开到 1380** —— Linux CI 的 xvfb 默认屏只有 1280 宽,
+  // 那样 Linux 那半会以「窗被钳住」的形安静地跑在另一档上。全形与「只摘键帽」两档 e2e 覆盖
+  // 不到,是知情的边界(理由与读数在 board.css 同一段)。
+  await browser.setWindowSize(1260, 700);
   // ⭐ **先等壳启动完再点**(455)。侧栏那四枚按钮是 **notebook.html 里的静态 HTML**,
   // `browser.url()` 一回来就存在 ⇒ 「按钮存在」这条判据**证明不了壳已经起来了**。notebook 的
   // 启动序是 `src/notebook.ts` 末尾那条**异步 IIFE**(`await initCurrentSpace()` →
@@ -365,3 +368,27 @@ async function pickTopicPill(bar, label) {
 }
 export const boardPickTopicPill = (label) => pickTopicPill("#topic-filter", label);
 export const inboxPickTopicPill = (label) => pickTopicPill("#idea-topic-filter", label);
+
+// ⭐ **列宽下限(A)之后,窄窗再也压不出「窄卡」那几个患了** —— 最窄的卡宽 = 下限 200 −
+// 列体内边距 8 = **192px**,而咬人的档位在卡宽 161(窗 950)与 128(窗 820)。那几条
+// `min-width: 0` 的防线(tasktime.css 的 topic-slot / chip、board.css 的 topic-choices、
+// 524 那对)因此**再没有行为网守着**,删掉它们今天所有测试照样绿 —— 那正是 memory
+// `doc-claims-a-test-exists-verify-it` 说的那种空账。
+// ⇒ 三只窄卡用例(task-time 两只 + board-tag-picker 一只)**就地把下限临时摘掉**再量:
+// 摘掉之后的几何与加 A 之前逐字相同(`flex:1 1 0` + `min-width:0` + `.cols` 不滚)。
+// ⛔ 别把它读成「测了一个用户碰不到的状态」:被测的那几条 CSS 防线**在生产代码里活着**,
+// 这几只答的是「它们还有没有用」。
+// ⛔ 也别把它当成「下限可以随便改」的口子 —— 下限自己的网是 `board.e2e.js` 那只
+//「列有下限、装不下就横滚」,两边各守一半。
+// ⚠ 注入生效与否**不用另写断言**:每只各自的前置断言(卡宽 < 180 / < 140)就是它的正面字据
+//   —— 没摘掉的话卡宽是 192,当场红。
+// ⚠ 走 `browser.url()` 重新导航(含 goNotebook)会把它冲掉 ⇒ 设窗之后、量之前注入。
+export async function dropColFloor() {
+  await browser.execute(() => {
+    const s = document.createElement("style");
+    s.id = "e2e-no-col-floor";
+    s.textContent = ".v-board .col{min-width:0}.v-board .cols{overflow-x:visible;overflow-y:visible}";
+    document.head.append(s);
+  });
+}
+

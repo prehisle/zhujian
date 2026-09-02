@@ -1,5 +1,5 @@
 import { $, expect, browser } from "@wdio/globals";
-import { invoke, goNotebook, boardAction } from "./support.js";
+import { invoke, goNotebook, boardAction, dropColFloor } from "./support.js";
 
 // 按 L(⋯ 菜单「标签」)打开的标签选择器(board.ts openPicker)本轮升级:
 //   · 去掉「取消」按钮 —— Esc / 点别处 收起(和 ⋯ 菜单、编辑态同一套手势);
@@ -26,7 +26,7 @@ describe("任务看板 · 标签选择器(Esc 收起 + 内联新建)", () => {
 
   // ⛔ 别把窄窗泄漏给后面的 spec(同 task-time.e2e.js 那条纪律)——最后一例会把窗设窄。
   after(async () => {
-    await browser.setWindowSize(1100, 700);
+    await browser.setWindowSize(1260, 700);
   });
 
   // 后端真相:TASK 当前挂的标签名。
@@ -190,6 +190,7 @@ describe("任务看板 · 标签选择器(Esc 收起 + 内联新建)", () => {
   //    (它本来就折在卡片里面)。⇒ 一行 **且** 不溢出,两条一起才钉得住。
   it("长标签名的候选 pill:窄卡上省略号收成一行,卡片与列体都不横向溢出", async () => {
     await browser.setWindowSize(950, 700);
+    await dropColFloor(); // A 的列宽下限会把卡撑到 192 ⇒ 这只要的是 161 那一档(见 support.js)
     await browser.pause(250);
     await boardAction(TASK, "标签");
     const card = await $(`.tcard*=${TASK}`);

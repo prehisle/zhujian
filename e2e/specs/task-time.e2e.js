@@ -1,5 +1,5 @@
 import { browser, $, expect } from "@wdio/globals";
-import { invoke, goNotebook, boardAction } from "./support.js";
+import { invoke, goNotebook, boardAction, dropColFloor } from "./support.js";
 
 // A local calendar day `YYYY-MM-DD`, offset by N days from today — built from
 // local date parts to match the frontend's localToday() (no UTC shift).
@@ -350,11 +350,12 @@ describe("任务时间维度 · 窄列里行内编辑器不折行也不撑破卡
     await goNotebook("board"); // 它自己会把窗摆回 1100,故窄窗必须在它之后设
     await $(`.tcard*=${T}`).waitForExist({ timeout: 8000 });
     await browser.setWindowSize(950, 700);
+    await dropColFloor();
     await browser.pause(250);
   });
 
   after(async () => {
-    await browser.setWindowSize(1100, 700); // ⛔ 别把窄窗泄漏给后面的 spec
+    await browser.setWindowSize(1260, 700); // ⛔ 别把窄窗泄漏给后面的 spec
     await invoke("archive_task", { id });
     await invoke("purge_task", { id });
   });
@@ -453,11 +454,12 @@ describe("任务时间维度 · 更窄的列里截止编辑器也不撑破卡片
     await goNotebook("board"); // 它自己会把窗摆回 1100,故窄窗必须在它之后设
     await $(`.tcard*=${T}`).waitForExist({ timeout: 8000 });
     await browser.setWindowSize(820, 700);
+    await dropColFloor();
     await browser.pause(250);
   });
 
   after(async () => {
-    await browser.setWindowSize(1100, 700); // ⛔ 别把窄窗泄漏给后面的 spec
+    await browser.setWindowSize(1260, 700); // ⛔ 别把窄窗泄漏给后面的 spec
     await invoke("archive_task", { id });
     await invoke("purge_task", { id });
   });

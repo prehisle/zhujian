@@ -174,7 +174,7 @@ describe("任务看板 · 归档(成就册,可查不可删)", () => {
     expect(confirming.headOverflow).toBe(false);
     expect(confirming.clipped).toEqual([false, false, false]); // 问句 / 取消 / 归档
     await browser.execute(() => document.body.click());
-    await browser.setWindowSize(1100, 700); // 还原驱动窗宽(support.js 的口径)
+    await browser.setWindowSize(1260, 700); // 还原驱动窗宽(support.js 的口径)
     await browser.pause(300);
   });
 

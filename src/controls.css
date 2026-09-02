@@ -130,6 +130,7 @@
    明晃晃的白方块(249;窄窗看板实见)——track/corner 必须铺 transparent。
    新增可滚容器把选择器加进这一组,别再各写各的。 */
 .v-board .col-body::-webkit-scrollbar,
+.v-board .cols::-webkit-scrollbar,
 .v-board main.trash::-webkit-scrollbar,
 .v-inbox main::-webkit-scrollbar,
 .v-topics main::-webkit-scrollbar,
@@ -138,6 +139,7 @@
   height: 10px;
 }
 .v-board .col-body::-webkit-scrollbar-thumb,
+.v-board .cols::-webkit-scrollbar-thumb,
 .v-board main.trash::-webkit-scrollbar-thumb,
 .v-inbox main::-webkit-scrollbar-thumb,
 .v-topics main::-webkit-scrollbar-thumb,
@@ -148,6 +150,8 @@
 }
 .v-board .col-body::-webkit-scrollbar-track,
 .v-board .col-body::-webkit-scrollbar-corner,
+.v-board .cols::-webkit-scrollbar-track,
+.v-board .cols::-webkit-scrollbar-corner,
 .v-board main.trash::-webkit-scrollbar-track,
 .v-board main.trash::-webkit-scrollbar-corner,
 .v-inbox main::-webkit-scrollbar-track,

@@ -1,4 +1,4 @@
-import { browser, $, expect } from "@wdio/globals";
+import { browser, $, $$, expect } from "@wdio/globals";
 import { invoke, goNotebook, boardAction, cornerMenuHas, openCompose, boardPickTopicPill } from "./support.js";
 
 // The backend status of a task by title — the real closed loop we assert against
@@ -688,7 +688,7 @@ describe("看板 · 卡片右键开 ⋯ 菜单(504)", () => {
   });
 
   after(async () => {
-    await browser.setWindowSize(1100, 700); // 还原 support.js 的驱动窗口口径
+    await browser.setWindowSize(1260, 700); // 还原 support.js 的驱动窗口口径
   });
 
   // 收干净再进下一格。⛔ 别用 `.hk-menu.remove()`:那只摘 DOM,控制器里的 `menuEl` 还指着
@@ -866,5 +866,144 @@ describe("右键 · 卡片以外也归应用管(505)", () => {
       };
     });
     expect(r).toEqual({ collapsed: false, ancType: 3, prevented: false });
+  });
+});
+
+// A(窄窗第一件):**列有下限,装不下就横滚**。此前 `.col` 是 `min-width: 0` = 允许压到 0 ——
+// 列数由用户自定(B 系列)⇒ 列越多、窗越窄,每列就无止境地窄下去。实测(5 列、侧栏开着):
+// 窗 900(= `minWidth` 允许的最窄窗)每列 **123px**、卡片正文只剩 55px、24 字标题排成 9 行。
+//
+// ⚠ **两半判据缺一不可**,而且能证伪的是**两边**:
+//  · 窄档只断「每列 ≥ 200」不够 —— 把 `.col` 写死成 `width:200px` 也满足它,那样宽窗上四列
+//    会缩在左边、右边一大片空白。故窄档同时断「`.cols` 真的横滚起来了」,宽档断「列真的长开了」。
+//  · 前置断言(`可用宽 < 列数 × 200`)少不得:窗哪天被改宽,窄档三条会安静地恒绿。
+describe("任务看板 · 列有下限,装不下就横滚", () => {
+  const T = "列宽下限-写季度总结";
+  let id;
+  let n = 0;
+
+  before(async () => {
+    id = await invoke("create_task", { title: T });
+    await goNotebook("board"); // 它自己把窗摆回 1100,故两档窗宽都必须在它之后设
+    await $(`.tcard*=${T}`).waitForExist({ timeout: 8000 });
+    n = (await $$(".v-board .col")).length;
+  });
+
+  after(async () => {
+    await browser.setWindowSize(1260, 700); // ⛔ 别把这两档窗宽泄漏给后面的 spec
+    await invoke("archive_task", { id });
+    await invoke("purge_task", { id });
+  });
+
+  const geom = (title) =>
+    browser.execute((t) => {
+      const wrap = document.querySelector(".v-board .cols");
+      const card = [...document.querySelectorAll(".tcard")].find((c) => c.textContent.includes(t));
+      return {
+        avail: wrap.clientWidth,
+        scrollX: wrap.scrollWidth - wrap.clientWidth,
+        cols: [...document.querySelectorAll(".v-board .col")].map((c) => Math.round(c.getBoundingClientRect().width)),
+        cardOverflow: card ? card.scrollWidth - card.clientWidth : "absent",
+      };
+    }, title);
+
+  it("最窄窗(900):每列不低于 200,列容器横滚,卡片不被撑破", async () => {
+    await browser.setWindowSize(900, 700);
+    await browser.pause(250);
+    const g = await geom(T);
+    // 前置:确认真的在「挤不下」那一档量(否则下面三条恒绿)。
+    expect(g.avail).toBeLessThan(n * 200);
+    expect(Math.min(...g.cols)).toBeGreaterThanOrEqual(199); // 1px 留给亚像素取整
+    expect(g.scrollX).toBeGreaterThan(2);
+    expect(g.cardOverflow).toBe(0);
+  });
+
+  it("宽窗:列照旧平分长开,不横滚", async () => {
+    // 宽到「每列 240 都装得下」为止 —— 列数是别的 spec 可能改过的,别写死一个窗宽。
+    await browser.setWindowSize(172 + 48 + n * 240 + (n - 1) * 16, 700);
+    await browser.pause(250);
+    const g = await geom(T);
+    expect(g.scrollX).toBeLessThanOrEqual(2);
+    expect(Math.min(...g.cols)).toBeGreaterThan(200); // grow 还在,不是钉死的 200
+  });
+});
+
+// B(窄窗第二件):**顶栏恒一行**。改前的断点按「窗口有多宽」判、且是 485 按当时六枚控件量的
+// 机制值(1099),502 加第七枚后没人回头量 ⇒ 1100–1300 一整档掉成两行(首行只剩「新建任务」
+// 被 .spacer 顶到右边,屏上读作「按钮乱了」)。现在按**顶栏自己有多宽**判、分三档让位。
+//
+// ⚠ **能覆盖到的只有②③两档** —— ①(全形)与②之上那档要 1380 / 1300 宽的窗,而 Linux CI 的
+// xvfb 默认屏只有 1280 宽,开那么大会被钳住、安静地跑在别的档上。知情的边界,别以为它们有网。
+// ⚠ 三条判据盯的是三件不同的事,缺一不可:`rows` 盯掉行本身;`trashText` 盯「②那一档名字
+// **还在**」(否则把断点全调成字母态也满足「一行」);`kbd` 盯「③那一档键帽**回来了**」
+// (它是「归档」「回收站」两枚在字母态下唯一的记号 —— 567 刚修掉的那个空椭圆就是这么来的)。
+describe("任务看板 · 顶栏恒一行,逐档只让该让的", () => {
+  const T = "顶栏分档-写年度总结";
+  let id;
+
+  before(async () => {
+    id = await invoke("create_task", { title: T });
+    await invoke("set_task_due", { id, dueOn: "2020-01-01" }); // 让「到期汇总」那枚也在场
+    await goNotebook("board");
+    await $(`.tcard*=${T}`).waitForExist({ timeout: 8000 });
+  });
+
+  after(async () => {
+    await browser.setWindowSize(1260, 700); // ⛔ 别把窄窗泄漏给后面的 spec
+    await invoke("archive_task", { id });
+    await invoke("purge_task", { id });
+  });
+
+  const readHeader = () =>
+    browser.execute(() => {
+      const h = document.querySelector(".v-board header");
+      const cs = getComputedStyle(h);
+      const kbd = h.querySelector("#trash-toggle .k");
+      return {
+        content: Math.round(h.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight)),
+        height: Math.round(h.getBoundingClientRect().height),
+        overflow: h.scrollWidth - h.clientWidth,
+        trashText: document.querySelector("#trash-toggle").innerText.replace(/\s+/g, " ").trim(),
+        kbdShown: kbd ? getComputedStyle(kbd).display !== "none" : "absent",
+        // ⛔ 「复制看板」在不在**别用 querySelector 判**:塌缩走的是 display:none,节点还在
+        //    DOM 里 ⇒ 那么写恒 true(第一版就是这么白得一格的)。
+        copyShown: getComputedStyle(document.querySelector("#copy-slot")).display !== "none",
+      };
+    });
+
+  it("四档窗宽下顶栏都只有一行、不横向溢出", async () => {
+    for (const w of [1260, 1200, 1150, 1000, 900]) {
+      await browser.setWindowSize(w, 700);
+      await browser.pause(250);
+      const h = await readHeader();
+      // 前置:确认真的在「会塌缩」的区间里量(顶栏内容宽 < 全形需要的 1010),否则这一格恒绿。
+      // ⛔ 别改成断言一个写死的宽度:顶栏内容宽 = 窗宽 − 侧栏 − 内边距 − 窗控死区,后两项在
+      // 别的平台上未必是同一个数(Windows 实测 370)。要的是「落在哪一档」,不是那个差值。
+      expect(h.content).toBeLessThan(1010);
+      // 「几行」用**顶栏高度**判,⛔ 别去数子元素有几个不同的顶边:顶栏是 align-items:baseline,
+      // 同一行上 h1 与那几枚钮的 top 本来就不同(第一版这么写,一行的顶栏被判成 3 行)。
+      // 实测:一行 71–73px、两行 116px ⇒ 90 是干净的分界。
+      expect({ w, oneRow: h.height < 90, overflow: h.overflow }).toEqual({ w, oneRow: true, overflow: 0 });
+    }
+  });
+
+  it("②档(窗 1260):名字还在,键帽与「复制看板」让位", async () => {
+    await browser.setWindowSize(1260, 700);
+    await browser.pause(250);
+    const h = await readHeader();
+    expect(h.content).toBeGreaterThanOrEqual(840); // 落在 [840, 929] 那一档
+    expect(h.content).toBeLessThanOrEqual(929);
+    expect(h.trashText).toContain("回收站");
+    expect(h.kbdShown).toBe(false);
+    expect(h.copyShown).toBe(false);
+  });
+
+  it("③档(窗 1000,字母态):名字让位,键帽反而回来", async () => {
+    await browser.setWindowSize(1000, 700);
+    await browser.pause(250);
+    const h = await readHeader();
+    expect(h.content).toBeLessThan(840); // ⇒ 字母态
+    expect(h.trashText).not.toContain("回收站");
+    expect(h.kbdShown).toBe(true);
   });
 });
