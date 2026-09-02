@@ -532,8 +532,9 @@
   padding: 7px 10px;
   outline: none;
   resize: none; /* height auto-grown in JS to fit a multi-line title */
-  max-height: 200px;
-  overflow-y: auto;
+  /* 刻意无 max-height(同 inbox .edit-area):展示态本就全文显示,编辑态也全文可见、
+     列体自己滚动 —— 此前封 200px,长正文一编辑就冒出内滚动条(用户 2026-09-02 点名)。 */
+  overflow-y: hidden;
 }
 .v-board .edit-err { color: var(--seal); font-size: var(--fs-12); letter-spacing: 0.02em; }
 .v-board .edit-err:empty { display: none; } /* 无报错时不占 flex gap,编辑框保持紧凑 */

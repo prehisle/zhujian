@@ -17,4 +17,13 @@ export function autoGrow(ta: HTMLTextAreaElement): void {
   const cap = parseFloat(getComputedStyle(ta).maxHeight) || Infinity;
   ta.style.height = `${Math.min(full, cap)}px`;
   ta.style.overflowY = full > cap ? "auto" : "hidden";
+  // 第二遍:长高本身会改变宽度 —— 框一长,外层可滚容器(看板列体 / 灵感列表)冒出滚动条、
+  // 把框挤窄一截,原本刚好放得下的一行就折了,第一遍量出的高度少一行,而 overflow 已是
+  // hidden ⇒ 最后一行被裁掉(568 判例:20 行正文量出 464、真需要 487)。宽度只会因此变
+  // 一次,所以再量一遍即收敛;封顶的框已经在滚了,不用补。
+  if (full <= cap && ta.scrollHeight > ta.clientHeight) {
+    const full2 = ta.scrollHeight + border;
+    ta.style.height = `${Math.min(full2, cap)}px`;
+    ta.style.overflowY = full2 > cap ? "auto" : "hidden";
+  }
 }

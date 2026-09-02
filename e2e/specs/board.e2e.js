@@ -113,6 +113,32 @@ describe("任务看板 · 手工建任务与拖动流转", () => {
     expect(await statusOf(orig)).toBe(null);
     await expect(await cardInColumn("todo", renamed)).toExist();
   });
+
+  it("编辑长正文 → 编辑框随内容长高、不出内滚动条(此前封 200px)", async () => {
+    // 20 行正文:远超旧上限 200px(≈8 行),旧 CSS 下必出内滚动条。
+    const long = Array.from({ length: 20 }, (_, i) => `看板丙-长正文第${i + 1}行`).join("\n");
+    await invoke("create_task", { title: long });
+    await browser.waitUntil(async () => (await statusOf(long)) === "todo", { timeout: 8000 });
+    await goNotebook("board");
+    await (await cardInColumn("todo", "看板丙-长正文第1行")).waitForExist({ timeout: 8000 });
+
+    await boardAction("看板丙-长正文第1行", "编辑");
+    await $(".edit-input").waitForDisplayed({ timeout: 5000 });
+    const m = await browser.execute(() => {
+      const ta = document.querySelector(".edit-input");
+      return {
+        rows: ta.value.split("\n").length,
+        clientH: ta.clientHeight,
+        scrollH: ta.scrollHeight,
+        overflowY: getComputedStyle(ta).overflowY,
+      };
+    });
+    expect(m.rows).toBe(20); // 前置自证:正文真的是 20 行进了编辑框
+    expect(m.clientH).toBeGreaterThanOrEqual(m.scrollH); // 全文可见 = 内容没被裁进滚动区
+    expect(m.overflowY).toBe("hidden"); // 不出滚动条
+    await browser.keys(["Escape"]);
+    await $(".edit-input").waitForExist({ timeout: 5000, reverse: true });
+  });
 });
 
 describe("任务看板 · 拖动排序", () => {
