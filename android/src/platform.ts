@@ -29,6 +29,7 @@
 //    ⭐ 加新的端专属 `invoke` 时,把它加到这个文件里,**别直接写在业务模块里**。
 import { invoke } from "@tauri-apps/api/core";
 import { cancel, checkPermissions, Format, requestPermissions, scan } from "@tauri-apps/plugin-barcode-scanner";
+import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
 
 /** 安卓更新清单里的一条(`android.json` 与 `tauri.conf.json` 同源)。 */
 export type MobileUpdate = { version: string; versionCode: number; notes: string; url: string };
@@ -55,6 +56,36 @@ export const HAS_TEXT_ZOOM = true;
  *   · `HAS_SAF_BRIDGE=false` ⇒ **这一端本来就没有备份这条路**(鸿蒙),说的得是这句。
  */
 export const HAS_SAF_BRIDGE = true;
+
+// ---- 系统通知(用户面 39①,截止提醒的手机那半)------------------------------------
+//
+// 与上面两条同族:**构建期常数**。安卓这端挂的是 `tauri-plugin-notification`
+// (壳里 `.plugin(tauri_plugin_notification::init())` + capability `notification:default`);
+// 鸿蒙壳里没有这个插件 ⇒ 那一端设置面里「截止提醒」那一整节整个不渲染。
+// ⛔ 别改成「留着开关、发不出去时静默」:那正是 469 逮到的「界面在说谎」(用户以为
+//    每天会响,而它一声不响),铁律禁静默兜底。
+
+/** 这一端有没有系统通知这条路。false ⇒ 设置面「截止提醒」那一节(标题 + 行 + 说明)整节摘掉。 */
+export const HAS_NOTIFICATION = true;
+
+/**
+ * 要一次通知权限;拿不到返回 false(调用方负责说人话)。
+ *
+ * ⚠ **安卓 13+ 的 `POST_NOTIFICATIONS` 是运行期权限**(桌面没有这一格)——插件把
+ * `requestPermission()` 映到系统那道对话框上。⇒ 默认开着的提醒**第一次到点时**会弹一次
+ * 授权框(而不是启动就弹),那是刻意的:启动就弹 = 用户还没见过这个功能就被要权限。
+ * ⚠ 用户按「不允许」两次之后系统不再弹框、恒答 denied —— 那时只能去系统设置里开,
+ * 设置面那句人话说的就是这件事。
+ */
+export async function notifyPermissionOk(): Promise<boolean> {
+  if (await isPermissionGranted()) return true;
+  return (await requestPermission()) === "granted";
+}
+
+/** 发一条系统通知(权限由调用方先过 `notifyPermissionOk`)。 */
+export function showNotification(title: string, body: string): void {
+  sendNotification({ title, body });
+}
 
 /** 系统分享(ACTION_SEND)攒下的文本,取一条走一条;没有了返回 null。 */
 export function takeSharedText(): Promise<string | null> {

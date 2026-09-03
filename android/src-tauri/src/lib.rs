@@ -15,8 +15,10 @@
 //! | `check_update`(见 `update.rs`) | 分发通道是 `android.json` 比 versionCode;鸿蒙没有对应的东西 |
 //! | `backup_outbox_dir` | **给 Kotlin 的 SAF 桥比对用的期望值**(backup-plan §17.5 那道运行时相等闸) |
 //!
-//! 另有两样也只在这一端:`tauri-plugin-log`(logcat 后端)与 107 的 barcode-scanner 扫码插件
-//! (那个 crate 的依赖 gate 写死 `target_os = android|ios`,鸿蒙上编不过)。
+//! 另有三样也只在这一端:`tauri-plugin-log`(logcat 后端)、107 的 barcode-scanner 扫码插件
+//! (那个 crate 的依赖 gate 写死 `target_os = android|ios`,鸿蒙上编不过),以及
+//! `tauri-plugin-notification`(用户面 39① 截止提醒;鸿蒙的对位物是 `@ohos.notificationManager`,
+//! 要另写一条 ArkTS 桥,⇒ 那一端前端由 `HAS_NOTIFICATION=false` 把整节摘掉)。
 
 mod update;
 
@@ -90,7 +92,11 @@ pub fn run() {
         .plugin(tauri_plugin_log::Builder::new().build())
         // 106「下载」跳系统浏览器(android 忽略 openWith 参数);capability 用
         // opener:default——㊾ 踩过 allow-open-url 配空 scope 拒所有 URL 的坑。
-        .plugin(tauri_plugin_opener::init());
+        .plugin(tauri_plugin_opener::init())
+        // 截止提醒(用户面 39①):前端 `reminder.ts` 到点调一条 sendNotification。
+        // 安卓 13+ 的 POST_NOTIFICATIONS 由插件自己的清单声明 + 运行期 requestPermission
+        // 那条路走,壳里不另写桥。capability 用 notification:default(同桌面壳)。
+        .plugin(tauri_plugin_notification::init());
     // 107 扫码配对:官方扫码插件是移动端专属 crate(桌面 dev 构型里没有它)。
     #[cfg(mobile)]
     let builder = builder.plugin(tauri_plugin_barcode_scanner::init());

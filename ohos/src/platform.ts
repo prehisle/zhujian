@@ -35,6 +35,24 @@ export const HAS_TEXT_ZOOM = false;
 export const HAS_SAF_BRIDGE = false;
 
 /**
+ * ⛔ 这一端没有系统通知(壳里没挂 `tauri-plugin-notification`;鸿蒙的对位物是
+ * `@ohos.notificationManager`,要另写一条 ArkTS 桥,今天不存在)。
+ * ⇒ 设置面里「截止提醒」那一整节不渲染 —— 留着它就是「开关点了会亮、到点一声不响」,
+ * 与 469 在真机上逮到的字号那四档同形(界面在说谎)。
+ */
+export const HAS_NOTIFICATION = false;
+
+/** 够不着通知权限。⚠ 它不该被调到(`HAS_NOTIFICATION` 已经把整节摘了),真被调到就是接线漏了。 */
+export function notifyPermissionOk(): Promise<boolean> {
+  return Promise.resolve(false);
+}
+
+/** 同上:不该被调到。⛔ **响亮**,别静默返回 —— 静默 = 用户以为发出去了。 */
+export function showNotification(_title: string, _body: string): void {
+  throw new Error("这一端没有系统通知(HAS_NOTIFICATION=false 却走到了发送路径)");
+}
+
+/**
  * 系统分享:**这一端没有这条入口**。
  *
  * 安卓那半是 MainActivity 接 `ACTION_SEND` 落一个文件、Rust 侧取走;鸿蒙要接的是

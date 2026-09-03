@@ -34,6 +34,7 @@ import {
   spaceLabel,
   updateTaskStatus,
   type SpaceInfo,
+  type TaskItem,
   type TaskStatus,
   type TimelineItem,
 } from "./api";
@@ -44,7 +45,8 @@ import { DONE_COLUMN, boardColumns, isTaskStage, setColumns, stageLabel } from "
 import { capturePhoto, composeImages, PICK_MAX, pickImages } from "./images";
 import { INPUT_DEBOUNCE_MS } from "./timing";
 // **平台接缝**(OH-d/D3):只在安卓壳里存在的那三条命令。鸿蒙那端由 vite 换成另一份实现。
-import { checkUpdate, HAS_SAF_BRIDGE, HAS_TEXT_ZOOM, takeDeepLink, takeSharedText, type MobileUpdate } from "./platform";
+import { checkUpdate, HAS_NOTIFICATION, HAS_SAF_BRIDGE, HAS_TEXT_ZOOM, notifyPermissionOk, takeDeepLink, takeSharedText, type MobileUpdate } from "./platform";
+import { initDueReminder, reminderCfg, saveReminderCfg, sendTestNotification } from "./reminder";
 import * as backup from "./backup";
 import * as cardPanel from "./cardpanel";
 import * as filter from "./filter";
@@ -1467,6 +1469,7 @@ function openPane(name: string) {
     paintThemeSeg();
     paintTextSizeSeg();
     paintLangSeg();
+    paintRemindRow();
     void loadAlias();
     void loadAbout();
     // 备份一节(§17):⛔ 每次开面都重新问一遍状态 —— 回调不是真相源(进程可能在
@@ -1697,6 +1700,87 @@ function paintLangSeg() {
     .querySelectorAll<HTMLButtonElement>("[data-lang]")
     .forEach((b) => b.classList.toggle("on", b.dataset.lang === now));
 }
+
+// ---- 截止提醒(用户面 39①;调度与水位在 reminder.ts,那儿的文件头写着范围与两处端间差异)----
+//
+// ⭐ 这里只有两样东西:**设置面那一节的接线**,与**「今天该报什么」那把尺**(下面的
+// `dueDigest`)。尺留在本文件是刻意的 —— 它必须与任务面那枚汇总钮(558)逐字同源,
+// 而 `dueAttentionState` / `dueSummaryLabel` 都在这儿。
+
+/** 喂通知的那句话;null = 今天没有任何到期/逾期。⛔ **用 `dueSummaryLabel` 不是
+ *  `dueSummaryFullLabel`** —— 559 那段「3 天内 K」刻意不进通知(用户 2026-09-01 拍板:
+ *  通知的克制感来自「只在真出事时才说话」),桌面那半也是这么分的。 */
+function dueDigest(tasks: TaskItem[], today: string): string | null {
+  let late = 0;
+  let now = 0;
+  for (const it of tasks) {
+    // ⚠ `list_tasks` 那条前端契约里这一列叫 `status`,时间轴那条叫 `stage`(同一列两个名字,
+    // ㉞ 起的既有契约)⇒ 这里显式换个名再喂尺,⛔ 别去改 `dueAttentionState` 的入参形
+    // (它同时喂着卡片那颗 due chip,而那条路拿到的是 `stage`)。
+    const st = dueAttentionState({ stage: it.status, due_on: it.due_on }, today);
+    if (st === "overdue") late++;
+    else if (st === "today") now++;
+  }
+  return late + now === 0 ? null : dueSummaryLabel(late, now);
+}
+
+function paintRemindRow() {
+  const cfg = reminderCfg();
+  $("remind-seg")
+    .querySelectorAll<HTMLButtonElement>("[data-remind]")
+    .forEach((b) => b.classList.toggle("on", (b.dataset.remind === "on") === cfg.on));
+  const time = $("remind-time") as HTMLInputElement;
+  time.value = cfg.time;
+  time.disabled = !cfg.on;
+}
+
+function showRemindMsg(text: string, bad: boolean) {
+  const msg = $("remind-msg");
+  if (text === "") {
+    msg.hidden = true;
+    return;
+  }
+  msg.textContent = text;
+  msg.classList.toggle("warn-ink", bad); // 红字走修饰类(同 alias-msg;样式住样式层,门禁看得见)
+  msg.hidden = false;
+}
+
+$("remind-seg").addEventListener("click", (e) => {
+  const c = (e.target as HTMLElement).closest<HTMLButtonElement>("[data-remind]")?.dataset.remind;
+  if (!c) return;
+  const on = c === "on";
+  saveReminderCfg({ ...reminderCfg(), on });
+  paintRemindRow();
+  if (!on) {
+    showRemindMsg("", false);
+    return;
+  }
+  // 拨到「开」的那一刻就把权限问清:被系统拒着的话,到点才发现「怎么一直没响」是最糟的形。
+  // ⚠ 安卓 13+ 这一记会真的弹系统授权框(桌面上通常已授、静默过)。
+  void notifyPermissionOk().then((ok) => showRemindMsg(ok ? "" : t("reminder.permDenied"), !ok));
+});
+
+$("remind-time").addEventListener("change", () => {
+  const time = $("remind-time") as HTMLInputElement;
+  // 清空时 value 是 "":不落半配置,回显已存值(同桌面)。
+  if (!/^\d{2}:\d{2}$/.test(time.value)) {
+    paintRemindRow();
+    return;
+  }
+  saveReminderCfg({ ...reminderCfg(), time: time.value });
+  showRemindMsg(t("reminder.saved", { time: time.value }), false);
+});
+
+$("remind-test").addEventListener("click", () => {
+  const btn = $("remind-test") as HTMLButtonElement;
+  btn.disabled = true;
+  sendTestNotification()
+    .then(() => showRemindMsg(t("reminder.testSent"), false))
+    .catch((e) => showRemindMsg(String(e), true))
+    .finally(() => {
+      btn.disabled = false;
+    });
+});
 
 // ---- 本机别名(identity-plan §2.4)------------------------------------------------
 //
@@ -2205,7 +2289,7 @@ async function init() {
   // 留着几句只有另一端才成立的说明(471 真机上第二眼看见的那三句备份脚注)。
   // ⚠ 放在启动闸之前:这些都是静态壳的一部分,摘早不摘晚(晚一帧就是"闪一下才消失")。
   // ⭐ 加新的桥专属 UI 时:元素上挂 data-needs="<桥名>",然后在这张表里加一行。
-  for (const [need, has] of [["textzoom", HAS_TEXT_ZOOM], ["saf", HAS_SAF_BRIDGE]] as const) {
+  for (const [need, has] of [["textzoom", HAS_TEXT_ZOOM], ["saf", HAS_SAF_BRIDGE], ["notification", HAS_NOTIFICATION]] as const) {
     if (has) continue;
     document.querySelectorAll<HTMLElement>(`[data-needs="${need}"]`).forEach((e) => (e.hidden = true));
   }
@@ -2256,6 +2340,12 @@ async function init() {
   void pullSharedText();
   void pullDeepLink(); // 冷启动:被 zhujian:// 链接拉起时取走暂存的 URI 并定位(空间已恢复后)
   void initUpdate();
+  // 截止提醒(用户面 39①):**接在闸放行与空间恢复之后** —— 它第一件事就是读当前空间的
+  // 任务,早了会撞上「正在切换空间」那道响亮拒(那一形只会白丢一拍,但没必要)。
+  // ⭐ 装配本身也由 `HAS_NOTIFICATION` 门着(不只是把设置面那一节摘掉):没有通知这条路
+  // 的端上,那 30 秒一拍的取数与判定**是纯浪费**,而判定完还会走到 `showNotification`
+  // 那个刻意「响亮抛」的桩上去。⇒ 那一端连定时拍都不起。
+  if (HAS_NOTIFICATION) initDueReminder(dueDigest);
   void refresh();
 }
 

@@ -10,13 +10,14 @@ import { images } from "./images";
 import { main } from "./main";
 import { misc } from "./misc";
 import { panes } from "./panes";
+import { reminder } from "./reminder";
 import { settings } from "./settings";
 import { shell } from "./shell";
 import { sync } from "./sync";
 import { topics } from "./topics";
 import { viewer } from "./viewer";
 
-const parts = [backup, cardpanel, checklist, comments, filter, images, main, misc, panes, settings, shell, sync, topics, viewer];
+const parts = [backup, cardpanel, checklist, comments, filter, images, main, misc, panes, reminder, settings, shell, sync, topics, viewer];
 {
   const seen = new Set<string>();
   for (const part of parts) {
@@ -37,6 +38,7 @@ export const messages = {
   ...main,
   ...misc,
   ...panes,
+  ...reminder,
   ...settings,
   ...shell,
   ...sync,

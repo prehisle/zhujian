@@ -1516,6 +1516,23 @@
       </div>
       <p class="fine" data-i18n="settings.langSub">界面语言。「自动」跟随系统;改档后本页会重新载入。只影响这台设备,不同步到别的设备。</p>
 
+      <!-- 截止提醒(用户面 39①,桌面那半是 553)。⛔ 四个元素上那枚 data-needs="notification"
+           同 textzoom 那族:没有通知插件的端(鸿蒙)由 main.ts 按构建期常数 HAS_NOTIFICATION
+           把**这五个一起**摘掉 —— 留着就是「开关点了会亮、到点一声不响」= 界面在说谎。
+           ⚠ 同样刻意**不包一层 div**(理由见上面「界面字号」那段:节间距靠 h2:not(:first-child))。 -->
+      <h2 data-i18n="reminder.title" data-needs="notification">截止提醒</h2>
+      <div id="remind-seg" class="seg" data-needs="notification">
+        <button data-remind="on" data-i18n="reminder.on">开</button>
+        <button data-remind="off" data-i18n="reminder.off">关</button>
+      </div>
+      <div class="row" data-needs="notification" style="margin-top: 8px; align-items: center">
+        <span class="fine" style="flex: none" data-i18n="reminder.everyDay">每天</span>
+        <input id="remind-time" type="time" />
+        <button id="remind-test" class="ghost" data-i18n="reminder.test">试一条</button>
+      </div>
+      <p class="fine" data-i18n="reminder.sub" data-needs="notification">朱简开着的时候,每天到点用一条系统通知报今天到期与已逾期的任务数;应用没开不会响。只数当前空间。开关与时刻只属于这台手机,不同步到别的设备。</p>
+      <p id="remind-msg" class="fine" data-needs="notification" hidden></p>
+
       <h2 data-i18n="shell.aliasTitle">本机别名</h2>
       <div class="row">
         <input id="alias-input" placeholder="未命名" data-i18n-placeholder="shell.aliasUnnamed" maxlength="60" spellcheck="false"

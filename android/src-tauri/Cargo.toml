@@ -52,6 +52,9 @@ rustls = { version = "0.23", default-features = false, features = ["ring"] }
 ureq = { version = "2", features = ["json"] }
 # 106「下载」跳系统浏览器。
 tauri-plugin-opener = "2"
+# 截止提醒的手机那半(用户面 39①):每天到点一条系统通知。桌面壳同款依赖。
+# ⛔ **鸿蒙壳刻意不带它**(前端那侧由 `HAS_NOTIFICATION=false` 把整节摘掉)。
+tauri-plugin-notification = "2"
 
 # 107 扫码配对:官方扫码插件,移动端专属(桌面 dev 构型不编它,代码 cfg(mobile) 守)。
 [target.'cfg(any(target_os = "android", target_os = "ios"))'.dependencies]

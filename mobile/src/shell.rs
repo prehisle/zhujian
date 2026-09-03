@@ -22,6 +22,7 @@
 //! | `take_shared_text` / `take_deep_link` | 取的是 MainActivity 那条 Intent 薄桥落的文件 |
 //! | `backup_outbox_dir` | 它是**给 Kotlin 的 SAF 桥比对用的期望值**,鸿蒙侧没有那条桥 |
 //! | barcode-scanner 插件 | 依赖 gate 写死 `target_os = android|ios`,鸿蒙上编不过 |
+//! | notification 插件 | 用户面 39① 截止提醒;鸿蒙的对位物要另写一条 ArkTS 桥(前端 `HAS_NOTIFICATION=false`) |
 //!
 //! | 只在鸿蒙壳 | 为什么 |
 //! |---|---|
