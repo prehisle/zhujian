@@ -66,9 +66,9 @@
 // 是因为 337 的层叠是**算出来的**,得有个出口能把它跟真浏览器的 getComputedStyle 对一遍。
 // 发版门禁之一(与 check-lock-drift、check-theme-drift 并列,见 docs/dev-and-testing.md)。
 
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { execFileSync } from "node:child_process";
-import { DOCS, sheetsOf, R } from "./lib/css-docs.mjs";
+import { DOCS, DOCS_ALL, IN_WORK_REPO, PRIVATE_SKIPPED, sheetsOf, R } from "./lib/css-docs.mjs";
 
 /** WCAG AA 正文档。界面里没有「大字号」豁免的地方(按钮 12–14px 是正文档)。 */
 const FLOOR = 4.5;
@@ -126,9 +126,11 @@ const NOT_A_DOC = [
 产物与源一致由 `branch-gate land` 那道 `build-site-cool.mjs --check` 守着。\
 ⚠ **触发门**:备案号下来后 `site-app-docs/` 那三份要撤(deploy §8.1a),那时把这三条一起删 —— \
 留着会被下面那道「过期条目」探针当场逮住",
+    privateOnly: true, // 见下面 IN_WORK_REPO 那段:公开快照上这几份根本不存在
   })),
   {
     file: "site-cool/index.html",
+    privateOnly: true,
     why: "它的 `<style>` 是从 `site/index.html` **整段照抄**的产物(生成器只换下载区与页脚导航)\
 ⇒ 配色 / 字号由「官网·单页」那一格判,判第二遍不产生新信息;而把它登记成文档要把 \
 `check-fs-drift` 与 `check-hardcoded-colors` 的登记表**各抄一份**(实测多出 3 + 8 条同源例外)—— \
@@ -493,6 +495,13 @@ function tokensFor(s) {
   return tok;
 }
 
+// ⚠ 「只在工作仓里有」的那几格由 `css-docs.mjs` 统一过滤(理由与那趟红的经过写在那儿:
+//    四道 CSS 门禁都读这张表,住在这一道里治不好另外三道)。这里只负责**把跳过的印出来**。
+if (PRIVATE_SKIPPED.length) {
+  console.log(`⚠ 公开快照上跳过 ${PRIVATE_SKIPPED.length} 个「只在工作仓里有」的文档:${PRIVATE_SKIPPED.join(" / ")}`);
+  console.log(`   (它们在 .export-excluded.json 里,这棵树上根本没有 —— 判据在工作仓那边跑得到)`);
+}
+
 for (const doc of DOCS) {
   const where = `${doc.source}·${doc.name}`;
   const tok = tokensFor(doc);
@@ -756,7 +765,8 @@ for (const f of readdirSync(R("src")).filter((f) => f.endsWith(".css")).map((f) 
 {
   const tracked = execFileSync("git", ["ls-files", "*.html"], { encoding: "utf8", cwd: R(".") })
     .split("\n").map((s) => s.trim()).filter(Boolean);
-  const known = new Set([...DOCS.map((d) => d.html), ...NOT_A_DOC.map((d) => d.file)]);
+  // ⚠ 这一格用**全量**登记表:公开快照上那几份 private 文件不在 tracked 里,两边都不会误报。
+  const known = new Set([...DOCS_ALL.map((d) => d.html), ...NOT_A_DOC.map((d) => d.file)]);
   for (const f of tracked) {
     if (!known.has(f)) {
       problems.push(
@@ -767,7 +777,10 @@ for (const f of readdirSync(R("src")).filter((f) => f.endsWith(".css")).map((f) 
   }
   for (const d of NOT_A_DOC) {
     if (!d.why?.trim()) problems.push(`NOT_A_DOC 里的 ${d.file} 没写 why —— 空理由 = 没想过`);
-    if (!tracked.includes(d.file)) problems.push(`NOT_A_DOC 里的 ${d.file} 今天不在仓里 —— 过期条目,删掉`);
+    // ⚠ `privateOnly` 那几格在**公开快照**上本来就不该在(见上面那段);工作仓里照旧当过期条目逮。
+    if (!tracked.includes(d.file) && (IN_WORK_REPO || !d.privateOnly)) {
+      problems.push(`NOT_A_DOC 里的 ${d.file} 今天不在仓里 —— 过期条目,删掉`);
+    }
   }
 }
 

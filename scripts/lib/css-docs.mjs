@@ -37,7 +37,7 @@ export const R = (p) => resolve(root, p);
  * 文档 = 一次层叠的作用域。`source` 是「份」(决定用哪张令牌表,与 check-theme-drift 的
  * 三份同名);同一份下可以有多个文档。
  */
-export const DOCS = [
+const DOCS_RAW = [
   { source: "桌面", tokens: "src/theme.css", name: "捕获窗", html: "index.html" },
   { source: "桌面", tokens: "src/theme.css", name: "主窗", html: "notebook.html" },
   { source: "安卓", tokens: "android/index.html", name: "单页", html: "android/index.html" },
@@ -52,8 +52,42 @@ export const DOCS = [
   //   ②**三份协议 × 两个落点 = 六份**共用同一个 `docPage()` 模板,内联样式**逐字节相同**
   //     ⇒ 判**一份**就等于判了模板。⭐ 这一格是真有信息的:登记它的当轮就逮到 `--fs-21`
   //     (白名单里没有 21 ⇒ 整条声明作废 ⇒ 那几页的二级标题一直没比正文大)。
-  { source: "官网", tokens: "site/index.html", name: "协议页(docPage 模板)", html: "site-cool/privacy.html" },
+  // ⚠ `privateOnly` = **只在工作仓里有**(`site-cool/` 在 `.export-excluded.json` 里,公开快照上
+  //    这份文件根本不存在)⇒ 下游按两棵树分开判,判据与那趟红的经过见 check-contrast 里
+  //    `IN_WORK_REPO` 那段(577 补:第一版没标,CI 上 ENOENT 当场抛)。
+  { source: "官网", tokens: "site/index.html", name: "协议页(docPage 模板)", html: "site-cool/privacy.html", privateOnly: true },
 ];
+
+/**
+ * ── 「只在工作仓里有」的那几格(577 补;⛔ 这是 577 笔⑤ 落地当趟 CI 红出来的)────────────
+ * **地面事实**:577 把 `site-cool/privacy.html` 登记进 DOCS —— 本机全绿,而**公开仓那棵快照树上
+ * 这七份文件根本不存在**(它们在 `.export-excluded.json` 里)⇒ CI 上 `sheetsOf()` 当场 ENOENT 抛,
+ * 「十道门禁」那格整个红。⚠ **四道闸一起栽**(contrast / hardcoded-colors / radius-drift / fs-drift
+ * 都读这张表)⇒ 这一格只能住在**这里**,住在某一道闸里治不好另外三道(第一版就修错了地方)。
+ * ⭐ 判据不能用「文件在不在」(那正是两棵树的差别),也不能用 `.export-excluded.json`(那份清单
+ * 自己也不导出)⇒ 登记表里**显式标一格** `privateOnly: true`,再按两棵树分开判:
+ *   · **工作仓**(认得出:`.export-excluded.json` 在)⇒ 必须真在,不在就是过期条目 ⇒ **当场抛**;
+ *   · **公开快照**(那份清单不在)⇒ 允许缺席,记进 `PRIVATE_SKIPPED` 让调用方**印出来**
+ *     (⛔ 不是静默跳过:一只只会说 OK 的门禁与一只没跑的门禁,输出是一样的)。
+ * ⛔ 没标 `privateOnly` 的条目一个字没变:照旧「读不到就当场抛」。
+ */
+export const IN_WORK_REPO = existsSync(R(".export-excluded.json"));
+/** 登记表全量(含只在工作仓里有的那几格)—— 反向探针 ⑧ 拿它当「已登记」的全集。 */
+export const DOCS_ALL = DOCS_RAW;
+/** 这棵树上跳过的那几份(只可能在公开快照上非空)。 */
+export const PRIVATE_SKIPPED = [];
+/** 这棵树上**判得了**的文档。四道 CSS 门禁一律用它。 */
+export const DOCS = DOCS_RAW.filter((d) => {
+  if (!d.privateOnly) return true;
+  if (IN_WORK_REPO) {
+    if (!existsSync(R(d.html))) {
+      throw new Error(`DOCS 里的 ${d.html} 标了 privateOnly,却在工作仓里读不到 —— 过期条目,删掉或改对`);
+    }
+    return true;
+  }
+  PRIVATE_SKIPPED.push(d.html);
+  return false;
+});
 
 /** 内联 `<style>` 的虚拟文件名。故意不带空格 —— 下游 `--list` 按多空格切列。 */
 export const inlineName = (html, i) => `${html}#style${i > 0 ? i + 1 : ""}`;
