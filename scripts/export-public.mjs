@@ -93,6 +93,13 @@ const DENY = [
   // `e2e-session.mjs` / `run-on-desktop.ps1` / `lib/win-desktop.cs` 同样是内部工装,
   // 但它们跑的是这个项目自己的 e2e,对着公开仓那棵树是成立的,故照旧公开。
   "scripts/claim-entry.mjs",
+  // 576:`zhujian.cool` 境内备案站那两支。理由是**第一类**(不该公开,不是"没法用"):
+  // 生成器里写着备案主体的**实名与联系邮箱**(`FILL`),发布脚本里写着**境内服务器的
+  // root 地址与站根路径**。⚠ 那些值最终会印在公开网页上,但「印在自己网站的页脚」与
+  // 「躺在一个开源仓里可被全量检索」是两件事;服务器地址则从头到尾不该出去。
+  // ⛔ 别因为「反正网站上有」就把它们放行。
+  "scripts/build-site-cool.mjs",
+  "scripts/deploy-site-cool.mjs",
 ];
 
 const tracked = execFileSync("git", ["ls-files", "-z"], { cwd: repoRoot })
