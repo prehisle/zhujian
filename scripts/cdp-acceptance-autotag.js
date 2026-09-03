@@ -39,6 +39,28 @@
     return false;
   };
 
+  // ---- 前置:界面语言 ------------------------------------------------------
+  // ⚠ **本资产靠中文文案认 pill**(「全部类型」「所有」「无标签」三枚,④⑤ 承重),而界面语言
+  // 默认跟系统走(android/src/i18n.ts 的 resolve(navigator.language))。英文档的机器上那三枚
+  // 恒 null ⇒ ④ 当场红、⑤ 的前提红并把它下面整段跳过(**22 格安静地缩成 17 格**),
+  // 而红的理由与被测行为无关(559 实撞:MuMu 上 zhujian.lang 未设就是这个形)。
+  // ⇒ 先把这一格单独分出来:是语言不对就说是语言不对(别拿资产的红当产品的红)。
+  // ⛔ **别改成「自己偷偷切中文」** —— 那会把「这一趟验的是哪一档」藏起来,且收尾还原漏一次
+  //   就污染下一轮(558/559 两轮都在人肉做这件事)。
+  // ⭐ 判据读 <html lang>(initLang() 启动时落生效档,android/src/main.ts:2214),
+  //   **不探测英文文案**(timeline-filter 那支抄的是 "All kinds"):与文案脱钩 ⇒ 哪天英文串改了,
+  //   这句前置不会跟着静默失效。读不出值(空)同样当「没跑」= fail-closed。
+  // ⛔ 拦在播种之前:英文档下连种子都不造,不污染库、不留 localStorage 半截种子。
+  const htmlLang = document.documentElement.lang;
+  if (htmlLang !== "zh") {
+    ok("前置:界面语言是中文(本资产的 pill 全按中文文案认)", false, {
+      htmlLang: htmlLang || "(空)",
+      how: '本资产没跑。localStorage.setItem("zhujian.lang","zh") + reload 后再跑;验完 removeItem 设回 auto',
+    });
+    out.pass = false;
+    return out;
+  }
+
   const KEY = "zj.autotag.seed";
   const A = "ZJAT-甲", B = "ZJAT-乙", K = "ZJAT-老张"; // K 打 kind「人名」
   const KIND = "人名";
