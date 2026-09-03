@@ -41,6 +41,39 @@ describe("灵感 · 标签筛选与文本过滤", () => {
     }, label);
   }
 
+  // 超时时把现场压成一行接在断言消息后(同 439 给 zz-verify-163 那例做的取证面)。
+  // ⚠ **由头**:这支在 Linux CI 上红过一趟(gate/win-desk/88fa43c),两例都只报
+  // `waitUntil condition timed out after 8000ms` —— 光这一句**看不出它在等什么**,
+  // 于是那笔账只能记成「疑似 flaky」躺着(backlog 测试与工装 66)。
+  // ⭐ 这五格是照「能分开哪几种局面」选的,不是随手抄 DOM:
+  //   ①`ideas`(库) vs ②`cards`(屏)分得开「压根没落库」与「落了库屏上没有」;
+  //   ③`filter`/④`pills` 说清是不是被筛选滤掉的;⑤`compose` 说清输入框里当时还有没有字
+  //   (compose bar 每次 refresh 都重建 ⇒ 值可能丢在游离的旧节点上,而那是这两例最可疑的一形)。
+  async function scene() {
+    const dom = await browser.execute(() => ({
+      filter: document.querySelector("#idea-filter")?.value ?? "(没有过滤框)",
+      pills: [...document.querySelectorAll("#idea-topic-filter .tf-pill.active")].map((p) =>
+        p.textContent.trim(),
+      ),
+      cards: [...document.querySelectorAll(".note")].map((n) => n.textContent.trim().slice(0, 20)),
+      center: document.querySelector(".v-inbox .center .big")?.textContent ?? "(没有空态)",
+      compose: document.querySelector(".v-inbox .compose-input")?.value ?? "(没有输入框)",
+    }));
+    // 库那半单独问一次:list_ideas = 灵感视图那份(inbox + filed 合并),与屏上那份同源不同路。
+    const ideas = (await invoke("list_ideas")).map((i) => String(i.content ?? "").slice(0, 20));
+    return JSON.stringify({ ...dom, ideas });
+  }
+
+  // waitUntil 的包装:超时时先抄现场再抛。⛔ 别改用 wdio 的 `timeoutMsg` —— 那是**调用前**
+  // 就求好值的字符串,抄不到"超时那一刻"的现场。
+  async function waitScene(cond, what, timeout = 8000) {
+    try {
+      await browser.waitUntil(cond, { timeout });
+    } catch (e) {
+      throw new Error(`${what} —— 超时那一刻的现场:${await scene()}(原始:${e.message})`);
+    }
+  }
+
   before(async () => {
     await goNotebook("inbox");
     await clearInbox();
@@ -181,22 +214,28 @@ describe("灵感 · 标签筛选与文本过滤", () => {
     }, NEW);
     await $(".v-inbox .compose-add").click();
 
-    await browser.waitUntil(async () => (await exists(NEW)) && (await exists(A)), {
-      timeout: 8000,
-    });
+    await waitScene(
+      async () => (await exists(NEW)) && (await exists(A)),
+      "记完新灵感后没能同时看见新卡与那条被过滤词滤掉的(= 过滤词没自动清空,或新卡压根没落库)",
+    );
     expect(await browser.execute(() => document.querySelector("#idea-filter").value)).toBe("");
   });
 
   it("筛着标签删掉其最后一条灵感 → 离场后重渲出「筛空」空态,不留白", async () => {
+    // ⛔ 别省这一句:上一例若红在「过滤词自动清空」那格,词就还留在框里,而空态三档里
+    // **文本过滤优先**(src/inbox.ts:1276)⇒ 屏上是「没有匹配「…」的随记」,本例末尾那句
+    // 便**永远等不到**、跟着一起超时。CI 上那趟(gate/win-desk/88fa43c)两例一起红正是
+    // 这个连带,不是两处各自在抖 —— 清一次让本例只对自己负责(backlog 测试与工装 66)。
+    await setFilter("");
     await pickPill(T2); // 只剩 B
     await browser.waitUntil(async () => (await exists(B)) && !(await exists(A)), {
       timeout: 8000,
     });
 
     await inboxAction(B, "删除"); // 软删进回收站;离场动画完成后 refresh 重渲
-    await browser.waitUntil(
+    await waitScene(
       async () => (await $(".v-inbox .center .big").getText()).includes("下没有随记"),
-      { timeout: 8000 },
+      "删掉筛选下最后一条之后没重渲出「筛空」空态",
     );
   });
 });
