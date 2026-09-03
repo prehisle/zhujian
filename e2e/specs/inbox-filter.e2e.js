@@ -226,7 +226,13 @@ describe("灵感 · 标签筛选与文本过滤", () => {
     // **文本过滤优先**(src/inbox.ts:1276)⇒ 屏上是「没有匹配「…」的随记」,本例末尾那句
     // 便**永远等不到**、跟着一起超时。CI 上那趟(gate/win-desk/88fa43c)两例一起红正是
     // 这个连带,不是两处各自在抖 —— 清一次让本例只对自己负责(backlog 测试与工装 66)。
-    await setFilter("");
+    // ⚠⚠ **条件清,别无条件清**(574 实撞,⛔ 这一句是被 CI 教出来的):`setFilter()` 走的是
+    // input 事件,**即使值没变也会触发一次 refresh**;而下面 `inboxAction` 那两步之间若撞上
+    // 时间轴重建,第一步的 `.hk-btn` 就点在**游离节点**上 —— 菜单永不出现、报
+    // 「element (".hk-menu") still not existing after 5000ms」。573 无条件清那版在 CI 上
+    // 第一趟就红成这个形(run 33705210710)。正常路径下词本来就是空的 ⇒ 一次多余的重渲都别做。
+    const leftover = await browser.execute(() => document.querySelector("#idea-filter").value);
+    if (leftover !== "") await setFilter("");
     await pickPill(T2); // 只剩 B
     await browser.waitUntil(async () => (await exists(B)) && !(await exists(A)), {
       timeout: 8000,
