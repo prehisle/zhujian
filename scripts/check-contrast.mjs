@@ -118,6 +118,22 @@ const DARK_FORMS = [':root[data-theme="dark"]', "@media (prefers-color-scheme: d
  * 地面上多出来的 html 会被下面那道探针拦住 —— 少一个文档是安静的少判(336 ⑩ 刀那族)。
  */
 const NOT_A_DOC = [
+  ...["site-cool/privacy-rights.html", "site-cool/terms.html",
+      "site-app-docs/privacy.html", "site-app-docs/privacy-rights.html", "site-app-docs/terms.html"].map((file) => ({
+    file,
+    why: "同一个 `docPage()` 模板(scripts/build-site-cool.mjs)生成的另一份,内联样式**逐字节相同** \
+⇒ 判据落在已登记进 DOCS 的 `site-cool/privacy.html` 那一份上,判第二遍不产生任何新信息。\
+产物与源一致由 `branch-gate land` 那道 `build-site-cool.mjs --check` 守着。\
+⚠ **触发门**:备案号下来后 `site-app-docs/` 那三份要撤(deploy §8.1a),那时把这三条一起删 —— \
+留着会被下面那道「过期条目」探针当场逮住",
+  })),
+  {
+    file: "site-cool/index.html",
+    why: "它的 `<style>` 是从 `site/index.html` **整段照抄**的产物(生成器只换下载区与页脚导航)\
+⇒ 配色 / 字号由「官网·单页」那一格判,判第二遍不产生新信息;而把它登记成文档要把 \
+`check-fs-drift` 与 `check-hardcoded-colors` 的登记表**各抄一份**(实测多出 3 + 8 条同源例外)—— \
+复制登记表是全仓最会腐的那种东西。两者一致由 `branch-gate land` 那道 `build-site-cool.mjs --check` 守着",
+  },
   {
     file: "ohos/index.html",
     why: "OH-c/C3 的**验收面**不是产品界面:它把六条复核面各显成一个读数(启动闸 JSON / 路径落点 / \
@@ -788,6 +804,12 @@ for (const source of new Set(docSheets.map((d) => d.source))) {
   for (let i = 0; i < mine.length; i++) {
     for (let j = i + 1; j < mine.length; j++) {
       const a = mine[i].ext, b = mine[j].ext;
+      // ⚠ **两边都是空集时不比**(577 加):这道探针的前提是「**模块图遍历**退化成全收」——
+      //    而空集的意思是「这份文档压根没有外部样式、全写在页内」,那是 `site/index.html` 那一族的
+      //    **常态形**,不是退化(576 之后官网那份下有八个这样的文档,两两相比会给出 28 条假红)。
+      // ⛔ 这不开口子:遍历真塌成「什么都收不到」由**探针 ⑥** 逮 —— 它反着问「哪份 src/*.css 谁都
+      //    没加载到」,一份也收不到时它会**整排响**。⇒ 这里让掉的只有「本来就没有外部样式」那一格。
+      if (a.size === 0 && b.size === 0) continue;
       if (a.size === b.size && [...a].every((f) => b.has(f))) {
         problems.push(
           `${mine[i].where} 与 ${mine[j].where} 加载的外部样式一模一样 —— 同一份下的两个文档` +

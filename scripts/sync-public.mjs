@@ -143,5 +143,11 @@ if (toBranch) {
   console.log(`   CI 会在那条分支上跑(ci.yml 的 \`branches: ["gate/**"]\`,535 起从 ["**"] 收窄,per-push 那层已关掉)。`);
   console.log(`   ⛔ **本地 main 现在领先 origin/main 一笔,还没落地** —— 回来跑 \`branch-gate.mjs land\`。`);
 } else {
-  console.log(`\n✅ 已推到公开仓。CI:https://github.com/prehisle/zhujian/actions`);
+  // ⛔ **别在这儿印「CI:<链接>」** —— 535 起推公开 main **根本不触发 CI**
+  //    (`ci.yml` 只认 `gate/**` + 每天 19:30Z 夜跑 + 手动 `workflow_dispatch`),
+  //    那句话是在暗示一件不会发生的事(收纳格 51(c))。兑现物是**今晚那趟夜跑**。
+  console.log(`\n✅ 已推到公开仓 main。`);
+  console.log(`   ⚠ 推 main **不触发 CI**(535 起只认 \`gate/**\` + 19:30Z 夜跑 + 手动)`);
+  console.log(`   ⇒ 这棵树的兑现物 = **今晚那趟夜跑**(红了发邮件);要现在就验,走 \`branch-gate.mjs verify\`。`);
+  console.log(`   夜跑结论:https://github.com/prehisle/zhujian/actions`);
 }

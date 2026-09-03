@@ -42,6 +42,17 @@ export const DOCS = [
   { source: "桌面", tokens: "src/theme.css", name: "主窗", html: "notebook.html" },
   { source: "安卓", tokens: "android/index.html", name: "单页", html: "android/index.html" },
   { source: "官网", tokens: "site/index.html", name: "单页", html: "site/index.html" },
+  // ⭐ 576 起多出七份 html:`zhujian.cool`(境内备案站)四页 + 临时挂在 `zhujian.app` 上的三份协议
+  // —— 全是 `scripts/build-site-cool.mjs` 的产物。**只登记其中一份进 DOCS**,理由分两半、
+  // ⛔ 别把它读成"偷懒":
+  //   ①**首页那份**(`site-cool/index.html`)的样式是从 `site/index.html` **整段照抄**的
+  //     (生成器只换下载区与页脚导航)⇒ 判它一个新信息都没有,却要把 `check-fs-drift` 与
+  //     `check-hardcoded-colors` 的两张登记表**各抄一份**(实测:那样当场多出 3 + 8 条要签字的
+  //     例外,而它们是同一批声明)—— 复制登记表正是最会腐的那种东西。⇒ 归 NOT_A_DOC。
+  //   ②**三份协议 × 两个落点 = 六份**共用同一个 `docPage()` 模板,内联样式**逐字节相同**
+  //     ⇒ 判**一份**就等于判了模板。⭐ 这一格是真有信息的:登记它的当轮就逮到 `--fs-21`
+  //     (白名单里没有 21 ⇒ 整条声明作废 ⇒ 那几页的二级标题一直没比正文大)。
+  { source: "官网", tokens: "site/index.html", name: "协议页(docPage 模板)", html: "site-cool/privacy.html" },
 ];
 
 /** 内联 `<style>` 的虚拟文件名。故意不带空格 —— 下游 `--list` 按多空格切列。 */

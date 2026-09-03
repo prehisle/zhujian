@@ -218,29 +218,66 @@ export async function seedProcessedTaskless(content) {
 // mid-fade (.note.removing, never removed). Real users always click across frames (mouse, or
 // the single-key shortcut via real event dispatch), so we mirror that with a real WebDriver
 // click on the item in a separate command.
+// ⚠ **两步之间那个竞态是真的红过一趟**(backlog 测试与工装 68;run `33705210710`,
+// `inbox-filter` 第二例报 `element (".hk-menu") still not existing after 5000ms`,而**红点不在断言上**)。
+// 两种形,机理不同、⛔ 别混成一句:
+//   (A) **这一记点击根本没建出菜单** —— 点之前卡片已被一次时间轴 refresh 换掉(点在**游离节点**
+//       上一声不响什么也不发生,同 dev-and-testing 安卓 CDP 那条纪律),或那张卡 `suspended()`;
+//   (B) **菜单建出来了又被收掉** —— refresh 走 `leaveCard()` / 重渲会调 `hk.reset()`
+//       (`src/inbox.ts:429` / `:1225` → `openMenuCloser?.()`),portal 到 <body> 的那份当场 remove。
+// ⭐ **(A) 在同一个任务内就答得出**:`openMenu()` 全程同步(`src/hotkey-menu.ts:227`:建 DOM +
+//   定位 + 挂监听,没有 await / rAF)⇒ 点完**立刻**读一次 `.hk-menu`,答的是「这记点击到底有没有
+//   生效」,不是「再等一会儿也许会有」。⇒ 两种形重试都有意义,而红的时候能说清是哪一种。
+// ⛔ **别靠加超时**(memory `flaky-test-three-shapes`:加时间压不下去的随机红 = 判据本身读错了东西;
+//   这里读错的正是「点出去了 = 收到了」)。
+// ⚠ 重试之前先把**残留的别人那份菜单**收掉:那颗 ⋯ 是 **per-card** 开关(`menuEl` 在 `register()`
+//   的闭包里),我方点击若落空而屏上恰好还开着上一步留下的菜单,读回来就是**假的 "opened"**,
+//   第二步会点在**另一张卡**的菜单上(旧形同样有这个口,只是没人读得出来)。
 async function cornerMenuAction(cardSel, key, content, label) {
-  // Step 1: reveal the menu (build .hk-menu).
-  await browser.execute(
-    (sel, c) => {
-      const card = [...document.querySelectorAll(sel)].find((n) => n.textContent.includes(c));
-      if (!card) throw new Error("card not found: " + c);
-      const icon = card.querySelector(".hk-btn");
-      if (!icon) throw new Error("⋯ menu button not found on card: " + c);
-      icon.click();
-    },
-    cardSel,
-    content,
+  const seen = [];
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    // Step 1: reveal the menu (build .hk-menu) —— 并在**同一个任务内**读回它建没建出来。
+    const state = await browser.execute(
+      (sel, c) => {
+        // 残留的菜单先收(onDocClick 挂在 document 捕获阶段);收不掉就别在别人的菜单上点。
+        if (document.querySelector(".hk-menu")) document.body.click();
+        if (document.querySelector(".hk-menu")) return "stale-menu";
+        const card = [...document.querySelectorAll(sel)].find((n) => n.textContent.includes(c));
+        if (!card) return "no-card";
+        const icon = card.querySelector(".hk-btn");
+        if (!icon) return "no-icon";
+        icon.click();
+        return document.querySelector(".hk-menu") ? "opened" : "clicked-no-menu"; // ← (A) 的判据
+      },
+      cardSel,
+      content,
+    );
+    seen.push(`${attempt}:${state}`);
+    if (state !== "opened") continue;
+    // Step 2: REAL click the item. The menu is portaled to <body> (not inside the card) to
+    // escape the column's overflow clip, and at most one is ever open — so scope to the menu,
+    // then the EXACT-text selector (a `=text` match can't follow a descendant combinator, so
+    // it must be the whole selector inside menu.$()). EXACT so "删除" never matches "彻底删除".
+    // ⚠ 走到这一句时菜单**已经在那儿了**(上面刚读到)⇒ 这两句等不到就是 (B),
+    //   不是「超时给得不够」⇒ 故缩到 2s 并拿异常当字据重试,别再干等 5s。
+    try {
+      const menu = await $(".hk-menu");
+      await menu.waitForExist({ timeout: 2000 });
+      const item = await menu.$(`span.hk-label=${label}`);
+      await item.waitForExist({ timeout: 2000 });
+      await item.click();
+      void key;
+      return;
+    } catch (e) {
+      seen[seen.length - 1] += `→菜单没了/点不到(${String(e.message).split("\n")[0].slice(0, 80)})`;
+    }
+  }
+  throw new Error(
+    `⋯ 菜单动作没做成:卡片「${content}」→「${label}」,试了 ${seen.length} 次都没落地。\n` +
+      `  逐次实得:${seen.join(" / ")}\n` +
+      `  读法:clicked-no-menu = (A) 点在游离/挂起的卡上;→菜单没了 = (B) refresh 的 hk.reset() 收掉了它;` +
+      `no-card = 那张卡当时不在树上;stale-menu = 上一步留下的菜单收不掉。见 backlog 测试与工装 68。`,
   );
-  // Step 2: REAL click the item. The menu is portaled to <body> (not inside the card) to
-  // escape the column's overflow clip, and at most one is ever open — so scope to the menu,
-  // then the EXACT-text selector (a `=text` match can't follow a descendant combinator, so
-  // it must be the whole selector inside menu.$()). EXACT so "删除" never matches "彻底删除".
-  const menu = await $(".hk-menu");
-  await menu.waitForExist({ timeout: 5000 });
-  const item = await menu.$(`span.hk-label=${label}`);
-  await item.waitForExist({ timeout: 5000 });
-  await item.click();
-  void key;
 }
 export const inboxAction = (content, label) => cornerMenuAction(".note", null, content, label);
 export const boardAction = (content, label) => cornerMenuAction(".tcard", null, content, label);
@@ -250,9 +287,18 @@ export const boardAction = (content, label) => cornerMenuAction(".tcard", null, 
 export async function cornerMenuHas(cardSel, content, label) {
   return browser.execute(
     (sel, c, l) => {
+      // 残留的菜单先收干净 —— 否则下面那句「读全局的 .hk-menu」读的可能是**别人那份**。
+      if (document.querySelector(".hk-menu")) document.body.click();
       const card = [...document.querySelectorAll(sel)].find((n) => n.textContent.includes(c));
       if (!card) throw new Error("card not found: " + c);
       card.querySelector(".hk-btn").click(); // open
+      // ⚠ 同 `cornerMenuAction` 那条(测试与工装 68):这一记点击可能落在**游离节点**上而
+      //    一声不响什么也不发生 —— 而这支的返回值是个布尔,那时它会安静地答 `false`
+      //    =「菜单里没有这一项」,与真的没有**同形**。⇒ `openMenu()` 是同步的,当场读回来,
+      //    没建出菜单就**响亮地红**,别拿一个读不出的局面冒充一个读数。
+      if (!document.querySelector(".hk-menu")) {
+        throw new Error("⋯ 菜单没打开(卡片可能已被 refresh 换掉,点在了游离节点上):" + c);
+      }
       // The menu is portaled to <body>, not under the card — read it globally (one open at a time).
       const has = [...document.querySelectorAll(".hk-menu .hk-label")].some((s) => s.textContent === l);
       document.body.click(); // close (onDocClick)

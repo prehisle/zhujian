@@ -149,6 +149,32 @@ function exportDelta() {
 // ⛔ **顺序:先 cancel,后删分支。** 43 里问的「`gh run cancel` 对分支已删的那趟还灵不灵」
 //    是**没验过**的 —— 与其去验一个不确定的行为,不如排到根本不需要问的位置。
 // ⚠ **老形 `gate/<sha>`(529 之前推的)一律不碰**:它认不出是谁推的,删了可能是别人的。
+// 取消某个 sha 上还在跑的那几趟 —— `sweep` 与 `abandon` 共用(收纳格 51(a):此前只有 sweep 会
+// 取消,`abandon` 光删分支、run 照烧,只能翻 `gh run list` 手动收场,522 那次烧了约 10 分钟)。
+// ⚠ **`head_sha` 那个过滤器要完整 40 位**:给短 sha 会**安静地返回空表**(534 实测对拍:短
+//   `286ae65` 答 0 条、完整的答 1 条,同一时刻同一趟 run)——「一条都没有」与「真没有」同形。
+//   ⇒ 调用处一律传 `ls-remote` 读回的那个完整 sha,⛔ 别在这儿截短。
+// 返回取消掉几趟;问不到 / 取消不了答 null(不致命,调用方照旧往下走)。
+function cancelRuns(sha, tag) {
+  try {
+    const raw = execFileSync(
+      "gh",
+      ["api", `repos/${PUBLIC_REPO}/actions/runs?head_sha=${sha}&per_page=50`,
+       "--jq", ".workflow_runs[] | select(.status != \"completed\") | .id"],
+      { encoding: "utf8" },
+    ).trim();
+    const ids = raw.split("\n").filter(Boolean);
+    for (const id of ids) {
+      execFileSync("gh", ["run", "cancel", id, "-R", PUBLIC_REPO], { stdio: "ignore" });
+      console.log(`   · ${tag}  取消了还在跑的 run ${id}`);
+    }
+    return ids.length;
+  } catch {
+    console.log(`   · ${tag}  ⚠ 问不到/取消不了它的 run(不致命,继续)`);
+    return null;
+  }
+}
+
 function sweep({ quiet = false } = {}) {
   let branches;
   try {
@@ -175,20 +201,7 @@ function sweep({ quiet = false } = {}) {
   console.log(`\n→ 清掉 ${mine.length} 条 ${env} 的孤儿闸分支(⛔ 只碰自己这个前缀下的):`);
   for (const b of mine) {
     // ① 先取消还在跑的那趟 —— 贵的是这个(runner 分钟数),不是分支本身。
-    try {
-      const raw = execFileSync(
-        "gh",
-        ["api", `repos/${PUBLIC_REPO}/actions/runs?head_sha=${b.sha}&per_page=50`,
-         "--jq", ".workflow_runs[] | select(.status != \"completed\") | .id"],
-        { encoding: "utf8" },
-      ).trim();
-      for (const id of raw.split("\n").filter(Boolean)) {
-        execFileSync("gh", ["run", "cancel", id, "-R", PUBLIC_REPO], { stdio: "ignore" });
-        console.log(`   · ${b.ref}  取消了还在跑的 run ${id}`);
-      }
-    } catch {
-      console.log(`   · ${b.ref}  ⚠ 问不到/取消不了它的 run(不致命,继续删分支)`);
-    }
+    cancelRuns(b.sha, b.ref);
     // ② 再删分支。
     try {
       gitProxy(target, ["push", "origin", "--delete", b.ref]);
@@ -426,6 +439,32 @@ function runLocalGates() {
   console.log(`  ✅ 十道全绿。`);
 }
 
+// ── 生成物与源是否还一致(576 之后立)──────────────────────────────────────────
+// **要治的**:576 起 `site-cool/`(zhujian.cool 四页)与 `site-app-docs/`(挂在 zhujian.app 的三份
+// 协议)**整个是产物** —— 真相源是 `site/index.html` 与 `store-assets/harmonyos/0{3,4,5}-*.md`。
+// 那支脚本自带 `--check`(只核不写,不一致即红),⭐ **可它没有任何自动边界会去跑它**
+// ⇒ 谁改了源忘了重跑,仓里那份产物就静默腐烂,正是 512 那一形(一道闸在干净树上红了十一天没人知道)。
+// ⛔ **这不是新开一道门禁**(工作节奏 5 的停止扩张线):尺是现成的,这里只是把它接到已有的边界上
+//    —— 385 那一课「加新检查前先问『已有的接上了吗』」。
+// ⚠ **诚实边界**:①这一格**只能在本机**跑得到 —— `site-cool/` 与 `build-site-cool.mjs` 都在
+//   `.export-excluded.json` 里,公开仓那棵快照树上根本没有它们,CI 永远看不见;
+//   ②它核的是「产物 == 拿今天的源重新生成一遍」,**不核那两份源本身对不对**;
+//   ③它**不是十道静态门禁之一**,`preflight.yml` 那边不必跟着改(那十道的清单口径不受影响)。
+function runGeneratedArtifactChecks() {
+  try {
+    execFileSync(process.execPath, ["scripts/build-site-cool.mjs", "--check"], {
+      cwd: repoRoot, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
+    });
+  } catch (e) {
+    const out = `${e.stdout ?? ""}${e.stderr ?? ""}`.trim();
+    die(
+      `生成物与源不一致(site-cool / site-app-docs)—— ⛔ 不落地:\n\n${out.slice(-1200)}\n\n` +
+        `  ⇒ 跑 \`node scripts/build-site-cool.mjs\` 重新生成(⛔ 别手改 site-cool/ 里的 HTML),再重跑 land。`,
+    );
+  }
+  console.log(`  ✅ 生成物(site-cool / site-app-docs)与源一致。`);
+}
+
 // ── verify ────────────────────────────────────────────────────────────────────
 function verify() {
   const dirty = git(repoRoot, ["status", "--porcelain", "--untracked-files=no"]);
@@ -520,6 +559,7 @@ function land() {
 
   // ①b ⭐ 544:十道静态门禁本地全跑,红了拒(排在任何一次远端写之前;理由在 runLocalGates 头上)。
   runLocalGates();
+  runGeneratedArtifactChecks();
 
   // ②⛔ **落后检查排在这儿就是 backlog 46 的修法** —— 它必须在**任何一次远端写之前**,
   //    而不是像 527 那样排在最后(那时公开 main 已经被推回去了)。理由见 assertNotBehind 头注。
@@ -661,6 +701,16 @@ function abandon() {
   console.log(`→ 公开仓本地 main 退回 origin/main …`);
   gitProxy(target, ["fetch", "origin", "main"]);
   git(target, ["reset", "--hard", "origin/main"]);
+  // ⛔ **顺序与 sweep 同:先 cancel,后删分支** —— 「`gh run cancel` 对分支已删的那趟还灵不灵」
+  //    是没验过的,与其去验一个不确定的行为,不如排到根本不需要问的位置(529 那段原话)。
+  try {
+    const mine = listGateBranches().find((b) => b.ref === gateBranch);
+    if (mine) cancelRuns(mine.sha, gateBranch);
+    else console.log(`   · ${gateBranch} 不在公开仓上(没推成 / 已删过)⇒ 没有 run 要取消。`);
+  } catch (e) {
+    console.log(`   ⚠ 问不到公开仓的闸分支,这趟没取消 run —— 手动:gh run list -R ${PUBLIC_REPO}` +
+      `(${String(e.stderr || e.message).trim().slice(0, 120)})`);
+  }
   try {
     gitProxy(target, ["push", "origin", "--delete", gateBranch]);
     console.log(`→ 闸分支 ${gateBranch} 已删。`);
