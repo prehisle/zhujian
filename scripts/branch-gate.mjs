@@ -45,7 +45,7 @@
 //     兑现「红了再修」靠上面头注那三样,⛔ 别把其中任何一样当成可省。
 
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, rmSync, statSync, symlinkSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { PUBLIC_REPO, devEnv, listGateBranches, proxy } from "./lib/dev-env.mjs";
@@ -479,6 +479,55 @@ function assertBacklogBudget() {
   }
 }
 
+// ── skill 字节闸(586/1b 立)──────────────────────────────────────────────────
+// **要治的**:六份 `.claude/skills/*/SKILL.md` 长到 **213 KB**(最大一份 67.6 KB ≈ 30k token)——
+// 与 CLAUDE.md 同一个病:每轮把「这次怎么栽的」原样追进去,于是判例叙事、历史快照、手抄的花名册
+// 全住在一份「用之前要整份读」的文件里。1b 把叙事压成「规则 + progress-log 条目号」、把腐烂的
+// 花名册换成 `ls`,拆到 **159.6 KB**;这里把「别再长回去」接到 land 上。
+// ⛔ **不是新开门禁**(停止扩张线):没有 parser、没有登记表、没有阴性刀,就是一张名字→字节数的表。
+//
+// 预算的来路:**每份 = 1b 拆完的实测 + 约 8-10% 余量**,逐份写死而不是给一个统一数 ——
+// 统一数会让今天最小的那份(9.8 KB)有 5 倍的长空间,那正是要防的东西。
+// ⚠ 新加的 skill 落 `DEFAULT`(12 KB):**新写的就该是「步骤 + 最贵的几条坑」**;真需要更大就来
+// 这张表里加一行并写明它凭什么大,⛔ 别抬 DEFAULT。
+// ⚠ 诚实边界:①它只证明**文件**变小,证明不了**被调用时**装进上下文的少了(skill 可以 `@import`
+//   或指向别的大文件);②skill 不进公开仓(`.claude/` 不在 ALLOW 里)⇒ **只有本地 land 跑得到,
+//   CI 永远看不见**,与 `build-site-cool` 那格同一性格。
+// ⭐ **到顶的处置不是抬这个数,是再蒸馏一批**(同 backlog 那道闸)。
+const SKILL_BUDGETS = {
+  "codex-review": 20 * 1024,
+  "fake-origin-sandbox": 11 * 1024,
+  "mutation-check": 29 * 1024,
+  "run-ys-notebook": 23 * 1024,
+  "zhujian-android-verify": 56 * 1024,
+  "zhujian-ops": 33 * 1024,
+};
+const SKILL_BUDGET_DEFAULT = 12 * 1024;
+function assertSkillBudgets() {
+  const dir = join(repoRoot, ".claude/skills");
+  if (!existsSync(dir)) return;
+  const bad = [];
+  for (const name of readdirSync(dir)) {
+    const file = join(dir, name, "SKILL.md");
+    if (!existsSync(file)) continue;
+    const size = statSync(file).size;
+    const budget = SKILL_BUDGETS[name] ?? SKILL_BUDGET_DEFAULT;
+    if (size > budget) {
+      bad.push(
+        `    .claude/skills/${name}/SKILL.md 已 ${(size / 1024).toFixed(1)} KB,` +
+          `超过预算 ${(budget / 1024).toFixed(0)} KB` +
+          (SKILL_BUDGETS[name] ? "" : "(未登记,走 DEFAULT)"),
+      );
+    }
+  }
+  if (!bad.length) return;
+  die(
+    `skill 超预算 —— ⛔ 不落地:\n${bad.join("\n")}\n` +
+      `  skill 是「用之前要整份读」的文件。⇒ 判例叙事压成一行规则 + progress-log 条目号;\n` +
+      `  会腐烂的花名册换成一句 \`ls\`;历史快照删掉。⛔ 别抬这个数(到顶 = 再蒸馏一批)。`,
+  );
+}
+
 // ── 文档新增行的长度闸(586/1a 立)────────────────────────────────────────────
 // **要治的**:同一族的另一个症状 —— 一行写到几千字(architecture 29 行 / progress-log 39 行
 // 过 1,500 字符,最长 16,166),grep 出来是一堵墙、diff 出来整行全红、改一处要动整行。
@@ -514,6 +563,7 @@ function runLocalGates() {
   assertClaudeMdBudget();
   assertBacklogBudget();
   assertNoLongDocLines();
+  assertSkillBudgets();
   console.log(`→ 本地十道静态门禁(几秒量级)…`);
   for (const g of LOCAL_GATES) {
     try {
