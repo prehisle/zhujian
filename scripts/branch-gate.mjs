@@ -45,7 +45,7 @@
 //     兑现「红了再修」靠上面头注那三样,⛔ 别把其中任何一样当成可省。
 
 import { execFileSync } from "node:child_process";
-import { existsSync, rmSync, statSync, symlinkSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, statSync, symlinkSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { PUBLIC_REPO, devEnv, listGateBranches, proxy } from "./lib/dev-env.mjs";
@@ -442,8 +442,78 @@ function assertClaudeMdBudget() {
   );
 }
 
+// ── backlog 队列闸(586/1a 立)────────────────────────────────────────────────
+// **要治的**:backlog 是「挑活只看这一份」,而 19 天里它从 7.8 KB 长到 534 KB —— 大头是
+// 销号叙事与 `<details>` 里折着的立账原文,两样都是**已经不用再读**的史料。1a 把它们搬进
+// `docs/backlog-archive.md`(队列每条销号只留一行),这里把「别再长回去」接到 land 上。
+// ⛔ **不是新开门禁**(停止扩张线):没有 parser / 登记表 / 阴性刀,就两个数 + 一个字面量。
+//
+// 预算 240 KB 的来路:拆完实测 **193.4 KB** = 活账 70 条 163.7 KB(平均 2.3 KB)+ 销号存根
+// 127 行 21.4 KB + 节文 8.3 KB;闸留 +24%(≈ 47 KB)的余量。
+// ⚠ **别拿改造前的增速反推「够几轮」**:那条曲线(19 天 ≈ 28 KB/天)里的大头正是本轮搬走的
+// 销号叙事,改造后的真实增速要等后面几轮才有数。⭐ **到顶的处置不是抬闸,是再归档一批。**
+//
+// `<details>` 那一格治的是另一件事:折叠块里的立账原文与真条目**逐字同形**,它是
+// 「判活账别用 grep」那条纪律的根(458/464/560 三次栽在同一处)。全搬走之后
+// `grep "^~~"` 数销号、其余顶层条目头数活账,两个数才作准 —— 而这个不变量**只靠一句警告守不住**
+// (586 的判据:防膨胀只靠文件里的警告句,不是机制)。⚠ 诚实边界:它只认队列里的**标签**,
+// 行文里用反引号引用那个词不算(472 那把尺栽的就是这一格)。
+const BACKLOG_BUDGET = 240 * 1024;
+function assertBacklogBudget() {
+  const file = join(repoRoot, "docs/backlog.md");
+  const size = statSync(file).size;
+  if (size > BACKLOG_BUDGET) {
+    die(
+      `docs/backlog.md 已 ${(size / 1024).toFixed(1)} KB,超过预算 ${BACKLOG_BUDGET / 1024} KB —— ⛔ 不落地。\n` +
+        `  它是「挑活只看这一份」。⇒ 把销号条目搬进 docs/backlog-archive.md(队列里留一行:\n` +
+        `  标题 + 销于哪轮 + 归档锚),⛔ 别抬这个数。`,
+    );
+  }
+  const text = readFileSync(file, "utf8").replace(/`[^`]*`/g, "");
+  if (text.includes("<details")) {
+    die(
+      `docs/backlog.md 里又出现了 <details> —— ⛔ 不落地。\n` +
+        `  折叠块里的立账原文与真条目逐字同形,grep "^~~" 会把它们一起捞出来(458/464/560 三次)。\n` +
+        `  ⇒ 原文放 docs/backlog-archive.md,队列里留一行指过去。`,
+    );
+  }
+}
+
+// ── 文档新增行的长度闸(586/1a 立)────────────────────────────────────────────
+// **要治的**:同一族的另一个症状 —— 一行写到几千字(architecture 29 行 / progress-log 39 行
+// 过 1,500 字符,最长 16,166),grep 出来是一堵墙、diff 出来整行全红、改一处要动整行。
+// 只管**本轮新增的行**:存量那 81 行是史料,一次性重排是另一回事,⛔ 别在这道闸里顺手做。
+// ⚠ 诚实边界:①判据是**字符数**不是字节;②只看 `origin/master...HEAD` 的加行 ——
+//   本地没有那个 ref 就 die(它是本地 ref,不用网络,正常情况下一定在)。
+const LONG_LINE_MAX = 1500;
+const LONG_LINE_PATHS = ["CLAUDE.md", "docs/", ".claude/rules/"];
+function assertNoLongDocLines() {
+  let diff;
+  try {
+    diff = git(repoRoot, ["diff", "-U0", "origin/master...HEAD", "--", ...LONG_LINE_PATHS]);
+  } catch (e) {
+    die(`问不出 origin/master...HEAD 的文档 diff(${String(e.message).trim().slice(0, 120)})—— ⛔ 不落地。`);
+  }
+  let file = "";
+  const bad = [];
+  for (const l of diff.split("\n")) {
+    if (l.startsWith("+++ b/")) { file = l.slice(6); continue; }
+    if (!l.startsWith("+") || l.startsWith("+++")) continue;
+    const len = l.length - 1;
+    if (len > LONG_LINE_MAX) bad.push(`${file}:${len} 字符 —— ${l.slice(1, 60)}…`);
+  }
+  if (!bad.length) return;
+  die(
+    `本轮往文档里新写了 ${bad.length} 行超过 ${LONG_LINE_MAX} 字符的 —— ⛔ 不落地:\n` +
+      bad.slice(0, 5).map((b) => `    ${b}`).join("\n") +
+      `\n  ⇒ 折行(中文文档一行 80-100 字),或者把那段该进 progress-log / 归档的搬走。`,
+  );
+}
+
 function runLocalGates() {
   assertClaudeMdBudget();
+  assertBacklogBudget();
+  assertNoLongDocLines();
   console.log(`→ 本地十道静态门禁(几秒量级)…`);
   for (const g of LOCAL_GATES) {
     try {
