@@ -151,19 +151,24 @@ jobs:
 
       # 只清旧 apk 与 android.json,绝不碰桌面 *-setup.exe / latest.json / *.dmg 等
       #(两份清单刻意分开、两端发版节奏不绑,deploy §7.4)。APK 上传时改名带版本号。
-      - name: 上传 APK + android.json 到 VPS
+      # ⚠ 583 换掉了这一步的形(与 release.yml 同一支脚本、同一个理由,全文见那边的注释):
+      # 旧形是「先 `rm` 后 `scp`」,而满盘下 `rm` 照样成功 ⇒ 线上进入「旧包已删 / 新包是残骸 /
+      # android.json 被删成 404」态。⛔ 别改回去;阴性对照 = `node scripts/gate-sandbox-release-upload.mjs`。
+      - name: 上传 APK + android.json 到 VPS(空间闸前置 + 临时名换名)
         env:
           VPS_HOST: ${{ secrets.VPS_HOST }}
         run: |
           ver=$(node -p "require('./android/package.json').version")
           rel=android/src-tauri/gen/android/app/build/outputs/apk/universal/release
-          apkName="zhujian_${ver}_aarch64.apk"
-          H="zjci@$(printf '%s' "$VPS_HOST" | tr -d '\r\n')"
-          D=/var/www/zhujian-app/updates
-          ssh -i ~/.ssh/id_ed25519 "$H" "rm -f $D/zhujian_*_aarch64.apk $D/android.json"
-          scp -i ~/.ssh/id_ed25519 "$rel/app-universal-release.apk" "$H:$D/$apkName"
-          scp -i ~/.ssh/id_ed25519 "$rel/android.json" "$H:$D/android.json"
-          ssh -i ~/.ssh/id_ed25519 "$H" "chmod 644 $D/*.apk $D/android.json"
+          # 上传器要「这个目录里的文件恰好就是要发布的那几个」,而构建产物叫
+          # app-universal-release.apk、发布名要带版本号 ⇒ 在这儿改名一次,别让上传器去猜。
+          rm -rf upload-android && mkdir upload-android
+          cp "$rel/app-universal-release.apk" "upload-android/zhujian_${ver}_aarch64.apk"
+          cp "$rel/android.json" upload-android/android.json
+          export ZJ_SSH_KEY="$HOME/.ssh/id_ed25519"
+          export ZJ_UPLOAD_HOST="zjci@$(printf '%s' "$VPS_HOST" | tr -d '\r\n')"
+          export ZJ_UPLOAD_DIR=/var/www/zhujian-app/updates
+          bash scripts/release-upload.sh upload-android android.json 'zhujian_*_aarch64.apk'
 
       - name: 核验线上 android.json
         run: |

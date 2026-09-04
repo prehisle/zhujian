@@ -173,8 +173,13 @@ writeFileSync(outPath, JSON.stringify(manifest, null, 2) + "\n", "utf8");
 console.log(`✔ 生成 ${fwd(outPath)}`);
 console.log(`  版本 ${version} · versionCode ${versionCode} · APK ${apkName}`);
 console.log("");
-console.log("上传到 VPS(先清旧安卓包再传;APK 上传时改名带版本号):");
-console.log('  ssh 69.63.208.74 "rm -f /var/www/zhujian-app/updates/zhujian_*_aarch64.apk"');
-console.log(`  scp "${fwd(apkPath)}" 69.63.208.74:/var/www/zhujian-app/updates/${apkName}`);
-console.log(`  scp "${fwd(outPath)}" 69.63.208.74:/var/www/zhujian-app/updates/`);
+// 583:同桌面那支,改印共用上传器(理由见 gen-update-manifest.mjs 同处 / deploy §7.3a)。
+console.log("上传到 VPS(空间闸前置 + 临时名换名;APK 在 staging 里就改好名):");
+console.log("  mkdir -p upload-manual && rm -f upload-manual/*");
+console.log(`  cp "${fwd(apkPath)}" upload-manual/${apkName}`);
+console.log(`  cp "${fwd(outPath)}" upload-manual/android.json`);
+console.log(
+  "  ZJ_UPLOAD_HOST=69.63.208.74 ZJ_UPLOAD_DIR=/var/www/zhujian-app/updates \\\n" +
+    "    bash scripts/release-upload.sh upload-manual android.json 'zhujian_*_aarch64.apk'",
+);
 console.log(`  curl -s --noproxy "*" ${BASE_URL}/android.json   # 核验`);

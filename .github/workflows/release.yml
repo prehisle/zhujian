@@ -141,15 +141,23 @@ jobs:
           chmod 600 ~/.ssh/id_ed25519
           printf '%s\n' "${{ secrets.VPS_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
 
-      - name: 上传到 VPS updates/(先清旧桌面包,不碰 apk/android.json)
+      # ⚠ 583 换掉了这一步的形,别改回去。此前是「`ssh rm -f 旧包+latest.json` 然后 `scp upload/*`」
+      # —— 582 实测:磁盘满时那个 `rm` **照样成功**,`scp` 每个文件只写进 261,120 字节就断
+      # ⇒ 线上进入「旧包已删 / 新包是残骸 / latest.json 完整且指着这些坏包」态。存量用户看到
+      # 有新版 → 下载 → **验签必失败装不上**,而官网下载卡指着的旧包也没了 ⇒ 新装机同样 404。
+      # 现在走共用的 `scripts/release-upload.sh`:先问空间(不够就在**碰线上任何东西之前**红)
+      # → 传 `.uploading` 临时名 → 逐个核字节数 → 换名(**清单最后**)→ 才清旧包。
+      # ⛔ 清单最后换是承重的一格:先换清单 = 指着还没就位的包。阴性对照(含反向刀)=
+      #    `node scripts/gate-sandbox-release-upload.mjs`。
+      - name: 上传到 VPS updates/(空间闸前置 + 临时名换名,不碰 apk/android.json)
         env:
           VPS_HOST: ${{ secrets.VPS_HOST }}
         run: |
-          H="zjci@$(printf '%s' "$VPS_HOST" | tr -d '\r\n')"
-          D=/var/www/zhujian-app/updates
-          ssh -i ~/.ssh/id_ed25519 "$H" "rm -f $D/*-setup.exe $D/*.app.tar.gz $D/*.AppImage $D/*.dmg $D/*.deb $D/latest.json"
-          scp -i ~/.ssh/id_ed25519 upload/* "$H:$D/"
-          ssh -i ~/.ssh/id_ed25519 "$H" "chmod 644 $D/*.exe $D/*.tar.gz $D/*.AppImage $D/*.dmg $D/*.deb $D/latest.json"
+          export ZJ_SSH_KEY="$HOME/.ssh/id_ed25519"
+          export ZJ_UPLOAD_HOST="zjci@$(printf '%s' "$VPS_HOST" | tr -d '\r\n')"
+          export ZJ_UPLOAD_DIR=/var/www/zhujian-app/updates
+          bash scripts/release-upload.sh upload latest.json \
+            '*-setup.exe' '*.app.tar.gz' '*.AppImage' '*.dmg' '*.deb'
 
       - name: 核验线上清单
         run: |

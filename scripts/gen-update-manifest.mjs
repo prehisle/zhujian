@@ -61,9 +61,14 @@ writeFileSync(outPath, JSON.stringify(manifest, null, 2) + "\n", "utf8");
 console.log(`✔ 生成 ${fwd(outPath)}`);
 console.log(`  版本 ${version} · 安装包 ${installer}`);
 console.log("");
-console.log("上传到 VPS(先清旧包再传):");
-console.log('  ssh 69.63.208.74 "rm -f /var/www/zhujian-app/updates/*-setup.exe"');
+// 583:这里此前印的是「`ssh rm -f 旧包` 然后 `scp`」——与两条 release workflow 同一个形,
+// 而那个形在满盘下会把线上毁掉(582 实栽,deploy §7.3a)。手动这条路人在场、看得见报错,
+// 但**那个 `rm` 照样会先成功**⇒ 一样会进「旧包已删、新包是残骸」态。⇒ 改成印共用那支脚本。
+console.log("上传到 VPS(空间闸前置 + 临时名换名,scripts/release-upload.sh):");
+console.log("  mkdir -p upload-manual && rm -f upload-manual/*");
+console.log(`  cp "${fwd(join(nsisDir, installer))}" "${fwd(outPath)}" upload-manual/`);
 console.log(
-  `  scp "${fwd(join(nsisDir, installer))}" "${fwd(outPath)}" 69.63.208.74:/var/www/zhujian-app/updates/`,
+  "  ZJ_UPLOAD_HOST=69.63.208.74 ZJ_UPLOAD_DIR=/var/www/zhujian-app/updates \\\n" +
+    "    bash scripts/release-upload.sh upload-manual latest.json '*-setup.exe'",
 );
 console.log(`  curl -s --noproxy "*" ${BASE_URL}/latest.json   # 核验`);
