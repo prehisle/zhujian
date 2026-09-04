@@ -70,8 +70,35 @@ const DOCS_RAW = [
  *   · **公开快照**(那份清单不在)⇒ 允许缺席,记进 `PRIVATE_SKIPPED` 让调用方**印出来**
  *     (⛔ 不是静默跳过:一只只会说 OK 的门禁与一只没跑的门禁,输出是一样的)。
  * ⛔ 没标 `privateOnly` 的条目一个字没变:照旧「读不到就当场抛」。
+ *
+ * ── 578 补 / 69 收:那个标记本身也要有人核 ─────────────────────────────────────
+ * 上面那一版**只判「工作仓上文件在不在」,没判「它是不是还在 `.export-excluded.json` 里」**
+ * ⇒ 哪天那几份进了公开白名单(备案号下来后 `site-app-docs/` 那三份要撤,check-contrast 里
+ * 那条触发门写着这件事),**标记就过期了却没人会说**:它会在两棵树上都安静地少判一份,
+ * 而**两棵树都是绿的**。反方向同理 —— 公开快照上那份文件若真的出现了(= 导出白名单漏了),
+ * 今天是过滤掉、不响。⇒ 两侧各多断言一句,把「标记」与「地面」绑上:
+ *   · **工作仓**:标了 privateOnly ⇒ 它必须**真在排除清单里**(不在 = 标记过期);
+ *   · **公开快照**:标了 privateOnly ⇒ 它必须**真的不在这棵树上**(在 = 标记过期或白名单漏了)。
  */
 export const IN_WORK_REPO = existsSync(R(".export-excluded.json"));
+/**
+ * 排除清单(只有工作仓上有;公开快照上是 null)。
+ * ⛔ fail-closed:读得到却解析不出来就抛 —— 一份读不动的清单与一份"什么都没排除"的清单
+ * 在下游长得一样,而后者会让每一条 privateOnly 都被判成过期。
+ */
+const EXCLUDED = (() => {
+  if (!IN_WORK_REPO) return null;
+  let parsed;
+  try {
+    parsed = JSON.parse(readFileSync(R(".export-excluded.json"), "utf8"));
+  } catch (e) {
+    throw new Error(`.export-excluded.json 读不动/解析不了(${e.message})—— 判不了 privateOnly,不猜`);
+  }
+  if (!Array.isArray(parsed.excluded) || !parsed.excluded.length) {
+    throw new Error(".export-excluded.json 里的 excluded 不是非空数组 —— 判不了 privateOnly,不猜");
+  }
+  return new Set(parsed.excluded);
+})();
 /** 登记表全量(含只在工作仓里有的那几格)—— 反向探针 ⑧ 拿它当「已登记」的全集。 */
 export const DOCS_ALL = DOCS_RAW;
 /** 这棵树上跳过的那几份(只可能在公开快照上非空)。 */
@@ -83,7 +110,23 @@ export const DOCS = DOCS_RAW.filter((d) => {
     if (!existsSync(R(d.html))) {
       throw new Error(`DOCS 里的 ${d.html} 标了 privateOnly,却在工作仓里读不到 —— 过期条目,删掉或改对`);
     }
+    // 578 补:光"在"不够,它还得**真的不进公开仓**。哪天它进了导出白名单,这个标记就成了
+    // 一句没人核的断言:两棵树上都少判一份,而两棵树都是绿的。
+    if (!EXCLUDED.has(d.html)) {
+      throw new Error(
+        `DOCS 里的 ${d.html} 标了 privateOnly,而它**不在 .export-excluded.json 的排除清单里** ——` +
+          ` 那就是说它今天真会进公开仓 ⇒ 这个标记已经过期,把 privateOnly 去掉(公开快照上判得了它)`,
+      );
+    }
     return true;
+  }
+  // 公开快照那一侧:同一句断言的反方向。它**必须真的不在这棵树上** —— 若在,要么标记过期、
+  // 要么导出白名单漏了一份不该出去的东西,两种都该当场响,⛔ 不许静默过滤掉。
+  if (existsSync(R(d.html))) {
+    throw new Error(
+      `DOCS 里的 ${d.html} 标了 privateOnly(= 只该在工作仓里有),而这棵**公开快照**树上它真的在 ——` +
+        ` 要么标记过期(它已进导出白名单 ⇒ 去掉 privateOnly),要么导出白名单漏了一份不该公开的文件`,
+    );
   }
   PRIVATE_SKIPPED.push(d.html);
   return false;

@@ -45,7 +45,7 @@
 //     兑现「红了再修」靠上面头注那三样,⛔ 别把其中任何一样当成可省。
 
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, rmSync, symlinkSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { PUBLIC_REPO, devEnv, listGateBranches, proxy } from "./lib/dev-env.mjs";
@@ -465,6 +465,72 @@ function runGeneratedArtifactChecks() {
   console.log(`  ✅ 生成物(site-cool / site-app-docs)与源一致。`);
 }
 
+// ── 导出树上再跑一遍那十道(69 立)────────────────────────────────────────────
+// **要治的**:上面 `runLocalGates()` 跑的是**工作树**,而 CI 跑的是**导出之后那棵**。
+// ⛔ 凡是判据与「仓里有哪些文件」有关的闸(`lib/css-docs.mjs` 的 DOCS、`git ls-files` 那几道),
+//    两棵树的答案**本来就不同** —— 577 笔⑤ 本机十道全绿、`land` 那道本地闸也全绿,推上去
+//    当趟 CI「十道门禁」那格 `ENOENT` 当场硬崩(run 33728218326),而**四道 CSS 闸一起栽**。
+// ⇒ 在**任何一次推之前**,拿导出树上那份脚本再跑一遍同样的十道。
+//
+// ⭐ **跑的必须是 `<导出树>/scripts/check-*.mjs`,不是工作仓那份** —— 那几支的扫描根是从
+//    **脚本自己所在的位置**推出来的(`lib/css-docs.mjs`:`root = 本文件/../..`)⇒ 拿工作仓
+//    那份跑,`cwd` 换到哪儿都还是在扫工作仓,**答的还是同一棵树**。⛔ 别改成「换 cwd」。
+// ⚠ **`check-filter-parity` 是十道里唯一有 npm 依赖的**(`esbuild`),而公开仓那份 clone
+//    没有 `node_modules`(CI 那边由 `npm ci` 喂)⇒ 这里按需补一条指向工作仓的链接:
+//    ·`/node_modules` 在公开仓 `.gitignore` 里 ⇒ `sync-public` 的 `git add -A` 看不见它;
+//    ·`export-public.mjs` 每次导出会把 target 里除 `.git` 外整个 `rmSync` 掉,那条链接随之
+//      消失 —— **本机实测:`rmSync(recursive)` 删的是链接本身,它指向的目录一个文件没少**;
+//    ⇒ 它是**每趟按需重建**的,不是"要人记得先装一次"的前置(那种是愿望不是机制)。
+// ⚠ **诚实边界**:这一格只答「十道在那棵树上绿不绿」,**答不了** CI 上另外那几格
+//    (六套 cargo / Linux e2e)—— 那些的输入是同一份源码,不因导出而变。
+let ranExportGates = false;
+function ensureExportTreeNodeModules() {
+  const nm = join(target, "node_modules");
+  if (existsSync(nm)) return; // 真装了、或上一趟留下的链接还好使
+  // 走到这儿要么没有,要么是断链残骸(工作仓搬过家)—— 后者 `existsSync` 答 false 而 `symlink` 会 EEXIST。
+  try {
+    rmSync(nm, { recursive: true, force: true });
+  } catch {
+    /* 删不掉就让下面那句原样报出来 */
+  }
+  const src = join(repoRoot, "node_modules");
+  if (!existsSync(src)) {
+    die(`工作仓没有 \`node_modules\` —— 导出树上那道 check-filter-parity 要 esbuild。先 \`npm i\`。`);
+  }
+  try {
+    symlinkSync(src, nm, "junction");
+  } catch (e) {
+    die(
+      `给导出树补 node_modules 链接失败(${String(e.message).trim().slice(0, 160)})。\n` +
+        `  ⇒ 手动:在 ${target} 里建一条指向 ${src} 的目录链接(Windows \`mklink /J\`),或直接 \`npm i\`。`,
+    );
+  }
+}
+function runGatesOnExportedTree(what) {
+  if (ranExportGates) return;
+  ranExportGates = true;
+  ensureExportTreeNodeModules();
+  console.log(`→ **导出树**上再跑一遍那十道(${what})…`);
+  for (const g of LOCAL_GATES) {
+    try {
+      execFileSync(process.execPath, [join(target, "scripts", `check-${g}.mjs`)], {
+        cwd: target, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
+      });
+    } catch (e) {
+      const out = `${e.stdout ?? ""}${e.stderr ?? ""}`.trim();
+      die(
+        `门禁 check-${g} 在**导出树**上红了 —— ⛔ 什么都没推(69;577 那趟 CI 红的就是这一格):\n\n` +
+          `${out.slice(-1500)}\n\n` +
+          `  ⚠ **本机工作树上它是绿的** ⇒ 差别来自「这棵树上有哪些文件」:\n` +
+          `     公开快照是白名单导出的,\`.export-excluded.json\` 里那些文件在那边**根本不存在**。\n` +
+          `  ⇒ 要么把那份文件加进导出白名单(\`export-public.mjs\` 的 ALLOW),\n` +
+          `     要么在闸的登记表里把它标成「只在工作仓里有」(见 scripts/lib/css-docs.mjs 的 privateOnly)。`,
+      );
+    }
+  }
+  console.log(`  ✅ 导出树上十道也全绿。`);
+}
+
 // ── verify ────────────────────────────────────────────────────────────────────
 function verify() {
   const dirty = git(repoRoot, ["status", "--porcelain", "--untracked-files=no"]);
@@ -521,6 +587,11 @@ function verify() {
     die(`问不出「这一轮有没有东西要进公开仓」(${d.state})—— fail-closed,⛔ 不猜。\n  ${d.why ?? ""}`);
   }
 
+  // ⭐ 69:`exportDelta()` 那趟 `--dry-run` **已经把导出树铺进 target 了**(它只是没 commit
+  //    没 push)⇒ 这一刻正是问「那棵树上十道绿不绿」最省的位置。⛔ 别挪到 push 之后:
+  //    577 那趟红的代价就是一趟 CI(约 30 分钟)+ 一次要人回头看的失败邮件。
+  runGatesOnExportedTree("闸分支要推的就是这棵");
+
   console.log(`本轮闸分支:${gateBranch}(私有 HEAD ${headSha})\n`);
   try {
     execFileSync(process.execPath, ["scripts/sync-public.mjs", "--to-branch", gateBranch], {
@@ -568,7 +639,13 @@ function land() {
   // ③⭐ **536:同一道前置** —— 悬着的导出会让下面每一问都答错(backlog 测试与工装 52)。
   //    ⚠ 正常闸那条路走到这儿必然是 `bound`(verify 推过、树没变);`even` = 这一轮压根没走闸
   //    (纯文档 / 535 那条不走闸的路)。两种都放行,**第三种在函数里当场停**。
-  assertPublicMainBound();
+  const pub = assertPublicMainBound();
+
+  // ③b ⭐ 69:`bound` ⇒ 公开仓本地 main 上躺着的**就是**这一轮要推上去的那棵导出树
+  //    (绑定由上一句保证)⇒ 在那棵树上把十道再跑一遍。⚠ verify 那趟已经跑过同一棵,
+  //    这里是**落地这个自动边界**上的那一次(同 544 给 runLocalGates 选的位置):
+  //    verify 不是每轮都走(535 那条路),而 land 是。
+  if (pub.state === "bound") runGatesOnExportedTree("公开仓本地 main = 送验的那一笔");
 
   // ④⭐ **535:没动那几面 ⇒ 不走闸,直接落地**(判据与三处诚实边界在 `gatedDelta()` 头上);
   //    **541 起纯版本号 bump 轮走同一条路**(判据在 `versionBumpOnly()` 头上)。
@@ -587,6 +664,10 @@ function land() {
         ? `⚠ 这一轮走闸的面**只有版本号 bump** ⇒ 不烧 CI,直接导出并推公开 main(541 起;发版判据在 release preflight)。`
         : `⚠ 这一轮**没动那几面** ⇒ 直接导出并推公开 main(535 起的形)。`);
       console.log(`   ⛔ 这不等于「验过了」:兑现物是**今晚那趟夜跑**(19:30Z),红了会发邮件。`);
+      // ⭐ 69:这条路**不走闸、不进 CI 的即时反馈**,导出树上那十道只有今晚夜跑会说话 ——
+      //    而 `d0` 那趟 `--dry-run` 已经把导出树铺好了 ⇒ 就在推之前跑掉它。
+      //    ⚠ 这条路比闸那条更需要它:闸那条至少还有一趟 CI 会在半小时内喊,这条只有夜跑。
+      runGatesOnExportedTree("这一轮要推上公开 main 的就是这棵");
       try {
         execFileSync(process.execPath, ["scripts/sync-public.mjs"], { cwd: repoRoot, stdio: "inherit" });
       } catch {
