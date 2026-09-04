@@ -45,7 +45,7 @@
 //     兑现「红了再修」靠上面头注那三样,⛔ 别把其中任何一样当成可省。
 
 import { execFileSync } from "node:child_process";
-import { existsSync, rmSync, symlinkSync } from "node:fs";
+import { existsSync, rmSync, statSync, symlinkSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { PUBLIC_REPO, devEnv, listGateBranches, proxy } from "./lib/dev-env.mjs";
@@ -415,13 +415,35 @@ function assertPublicMainBound() {
 // 不如把全套接到 land 这个自动边界上(385 那课:加新检查前先问「已有的接上了吗」)。
 // ⚠ 诚实边界:①**只有这十道** —— 「非发版门禁」那一族(要 Chrome / 样本冻结的)不在内,
 //   512 那支 `check-i18n-plural-render` 恰恰属于后者,它那类失守仍靠既有纪律 + 夜跑;
-//   ②清单与 preflight.yml 那十道**同口径**(以 CLAUDE.md「怎么跑」为准),两处要同改;
+//   ②清单与 preflight.yml 那十道**同口径**(以 dev-and-testing「命令、测试计数与门禁速记」为准),两处要同改;
 //   ③红了拒 land,与「已知红拒」同一性格 —— 这里的红是本机 3 秒就能问出来的,没有「不等」可言。
 const LOCAL_GATES = [
   "lock-drift", "theme-drift", "contrast", "hardcoded-colors", "timing-drift",
   "radius-drift", "fs-drift", "filter-parity", "hit-zone", "i18n-drift",
 ];
+
+// ── CLAUDE.md 字节闸(586 立)──────────────────────────────────────────────
+// **要治的**:CLAUDE.md 每个会话整份进系统提示,而它四次瘦身四次长回(17→50→24→97→33→128→42→68 KB,
+// 斜率恒约 2 KB/天)—— 防膨胀此前只靠文件里的 ⛔/⚠ 句子,那不是机制。这里把它接到 land 这个
+// 自动边界上:超了拒落地。**不是新开一道门禁**(停止扩张线):没有 parser、登记表、阴性刀,就一个数。
+// 预算 12 KB 的来路:量到 ≈ 2.7 B/token(中英混排),目标「这一格 ≤ 4k token」⇒ 11 KB,留 1 KB 给指针改动。
+// ⚠ 诚实边界:①它只证明**文件**变小,证明不了**启动上下文**变小 —— 把内容挪进无 `paths:` 的
+//   `.claude/rules/*.md` 或 `@import` 进来,字节闸照样绿(codex 586 审时点名);启动量的判据是
+//   开一个干净新会话看 `/context`,那一格在 backlog(测试与工装 72)。②⛔ 只核仓内这一份;本机记忆索引
+//   MEMORY.md 是各环境私有面,走 `scripts/check-memory-index-budget.mjs`(本机 SessionStart hook),不进这儿。
+const CLAUDE_MD_BUDGET = 12 * 1024;
+function assertClaudeMdBudget() {
+  const size = statSync(join(repoRoot, "CLAUDE.md")).size;
+  if (size <= CLAUDE_MD_BUDGET) return;
+  die(
+    `CLAUDE.md 已 ${(size / 1024).toFixed(1)} KB,超过预算 ${CLAUDE_MD_BUDGET / 1024} KB —— ⛔ 不落地。\n` +
+      `  它每个会话整份进上下文。规矩(CLAUDE.md 末节):本文件只改指针与一行状态短语;\n` +
+      `  当前态 → docs/handoff.md,每轮事实 → progress-log,操作与坑 → dev-and-testing,代码地图 → architecture。`,
+  );
+}
+
 function runLocalGates() {
+  assertClaudeMdBudget();
   console.log(`→ 本地十道静态门禁(几秒量级)…`);
   for (const g of LOCAL_GATES) {
     try {
