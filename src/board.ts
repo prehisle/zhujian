@@ -2210,6 +2210,18 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     { key: "G", run: toggleSealed },
   ]);
 
+  // 65:顶栏那颗「复制看板」被塌缩规则收走时,列头那颗「复制本列」就不再让位(两颗互为替身,
+  // 而它们的退场判据是两根不同的轴 —— 顶栏内容宽 / 列宽,窄窗 + 多列时同时成立)。
+  // ⛔ **别在这里重写一遍那个 929** —— 判据是**问 CSS 自己**:顶栏塌缩是 container query
+  // 判的,顶栏可用宽还随侧栏折没折(172↔52)与界面字号档(241 的 setZoom)变,这边算不出。
+  // ⚠ 观察 header 而不是 window:上面那两样都不改窗宽,却都改顶栏宽。
+  const boardHeader = view.querySelector("header") as HTMLElement;
+  const syncHdrCopy = (): void => {
+    view.dataset.hdrcopy = getComputedStyle(copySlot).display === "none" ? "off" : "on";
+  };
+  const hdrRO = new ResizeObserver(syncHdrCopy); // observe() 自己会先派一次,不必手动初始化
+  hdrRO.observe(boardHeader);
+
   composeCtl.setLiveReload(() => void load()); // 本 mount 即当前活看板:旧保存链落账后经它通知重读(codex 四审 M)
   void load();
 
@@ -2238,6 +2250,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       closeComments(); // 浮层 portal 在 body 上,不随视图根节点走:切视图/切空间必须自己收
       closeColumnManager(); // 同上:列管理面也 portal 在 body 上,且它的 onChanged 指着这一棵 mount 的 load()
       teardownViewKeys();
+      hdrRO.disconnect(); // 65:观察的是本 mount 的 header,不许活过这棵 mount
       hk.destroy(); // tear down the document keydown + any lingering menu listeners
       // (P1 #9d)compose 草稿与暂存图跨视图存活:文字过桥进模块态,composeCtl.imgs 本身
       // 模块级、root 随下一个 mount 搬家(此前这里 clear 掉=切个视图就丢图)。空间标记
