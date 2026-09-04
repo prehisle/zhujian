@@ -462,3 +462,84 @@ export async function typeText(text) {
   for (const ch of text) chain.down(ch).up(ch);
   await chain.perform();
 }
+
+// 灵感侧「记下」一条:灌正文 + 真点那颗钮 + **当场自证这一记到底有没有进 onclick**。
+// ⛔ 别再各 spec 抄那两句(`execute` 灌值 → `$(".v-inbox .compose-add").click()`)。
+//
+// **由头**(backlog 测试与工装 66;run `33869136988`,`inbox-filter` 第一例):Linux CI 上
+// `waitScene` 超时,573 装的取证面把现场答清楚了 —— 库里**没有新卡** + compose 框里**字还在**
+// + 过滤词没清(那半挂在 `onSaved`,没保存自然不清,不是第二个病)。⇒ 要查的收窄成一句:
+// **那一记「记下」为什么没把 compose 里的文字提交出去**。而那两句抄来的驱动**答不出**它:
+// 「点出去了」与「收到了」被当成一回事。
+//
+// ⚠ **灵感这条 compose 与看板那条不同**:看板的 `#compose-add` 常驻(每 mount 一次),
+// 灵感的 `.compose-add` **每次 refresh 都随整条 bar 重建**(`src/inbox.ts::refresh` 里
+// `const bar = composeBar()` + `list.replaceChildren(bar, …)`)⇒ 灌值与点钮之间只要撞上一次
+// 重渲,点就落在**游离节点**上,一声不响什么也不发生(同 `cornerMenuAction` 的 (A) 形)。
+//
+// ⭐ **自证的做法**:点之前把那颗钮的 `onclick` 包一层计数器(`btn.onclick` 是
+// `src/inbox.ts` 里 `el()` 直接赋的属性,不是 addEventListener,包得住也还得回去),
+// 点完立刻读回 `ran`。它答的是**「这一记点击有没有进处理器」**,不是「再等等也许会有」。
+// 顺带读 `sameBar` = 现在在场的那颗钮还是不是我方武装过的那颗(false = 中间被换过一次)。
+//
+// ⭐ **两种失败刻意不同待遇**(⛔ 别图省事一律重试 —— 那会把产品侧的病吞掉):
+//   · `ran === 0` = **驱动侧的形**(点在了游离/换掉的节点上)⇒ 重试有意义,最多三次。
+//   · `ran ≥ 1` 而正文没落账 = **保存链自己没产出**(in-flight 闸没开 / `prepare` 把空正文
+//     拒收了 / IPC 还悬着)⇒ **当场响亮地红**,把读数原样印出来。这一格是产品侧的答案,
+//     重试只会把它变成一次运气好的绿。
+// ⚠ 重试前先问一次库:上一趟可能其实落了账、只是慢过了预算 —— 不问就会记出**第二条**。
+// ⚠ 判「落没落账」问的是**库**(`list_ideas`)不是屏:调用方多半正筛着东西,屏上看不见
+// 不等于没记下(那两件恰恰是调用方各自要断言的)。
+const COMPOSE_BUDGET_MS = 8000;
+export async function inboxCompose(text) {
+  const landed = async () => (await invoke("list_ideas")).some((i) => i.content === text);
+  const seen = [];
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    if (attempt > 1 && (await landed())) return;
+    const armed = await browser.execute((v) => {
+      const bar = document.querySelector(".v-inbox .compose");
+      if (!bar) return "no-bar";
+      const input = bar.querySelector(".compose-input");
+      const btn = bar.querySelector(".compose-add");
+      if (!input || !btn) return "no-input-or-btn";
+      input.value = v;
+      input.dispatchEvent(new Event("input", { bubbles: true })); // autoGrow + 断电存底,同真打字
+      if (typeof btn.onclick !== "function") return "btn-not-wired";
+      window.__zjComposeRan = 0;
+      if (btn.__zjArmed !== true) {
+        const orig = btn.onclick;
+        btn.__zjArmed = true;
+        btn.onclick = function (e) {
+          window.__zjComposeRan++;
+          return orig.call(this, e);
+        };
+      }
+      return "armed";
+    }, text);
+    if (armed !== "armed") {
+      seen.push(`${attempt}:${armed}`);
+      continue;
+    }
+    await $(".v-inbox .compose-add").click();
+    const after = await browser.execute(() => ({
+      ran: window.__zjComposeRan,
+      sameBar: document.querySelector(".v-inbox .compose-add")?.__zjArmed === true,
+      value: document.querySelector(".v-inbox .compose-input")?.value ?? "(没有输入框)",
+    }));
+    const deadline = Date.now() + COMPOSE_BUDGET_MS;
+    while (Date.now() < deadline) {
+      if (await landed()) return;
+      await browser.pause(150);
+    }
+    seen.push(`${attempt}:ran=${after.ran} sameBar=${after.sameBar} 框里「${after.value}」→ 没落账`);
+    if (after.ran > 0) break; // 处理器跑了还没产出:产品侧的答案,别用重试盖掉
+  }
+  throw new Error(
+    `「记下」没把正文提交出去:「${text}」。\n` +
+      `  逐次实得:${seen.join(" / ")}\n` +
+      `  读法:ran=0 → 这一记点击根本没进 onclick(点在游离/已被 refresh 换掉的钮上,驱动侧);` +
+      `ran≥1 而没落账 → 保存链没产出(in-flight 闸没开 / 空正文被 prepare 拒收 / IPC 还悬着,产品侧);` +
+      `sameBar=false → 灌值与点钮之间那条 compose 被换过一次;` +
+      `no-bar/no-input-or-btn → 那一刻灵感 compose 压根不在树上。见 backlog 测试与工装 66。`,
+  );
+}

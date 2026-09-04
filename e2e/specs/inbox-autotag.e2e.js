@@ -1,5 +1,5 @@
 import { $, expect, browser } from "@wdio/globals";
-import { invoke, goNotebook, clearInbox, inboxPickTopicPill } from "./support.js";
+import { invoke, goNotebook, clearInbox, inboxPickTopicPill, inboxCompose } from "./support.js";
 
 // 灵感 · 「筛着标签记灵感 → 那几枚标签自动挂上」(用户 2026-08-31 拍板:相关的标签
 // 都打上)。inbox-filter.e2e.js 覆盖的是**单选一枚**那档(它顺带钉着筛选/过滤的其余
@@ -39,15 +39,9 @@ describe("灵感 · 筛着标签记灵感自动挂标签", () => {
       );
       return p ? p.classList.contains("active") : false;
     }, label);
-  // 记一条灵感(compose 常驻,不必先开)。
-  async function captureIdea(text) {
-    await browser.execute((v) => {
-      const input = document.querySelector(".v-inbox .compose-input");
-      input.value = v;
-      input.dispatchEvent(new Event("input", { bubbles: true }));
-    }, text);
-    await $(".v-inbox .compose-add").click();
-  }
+  // 记一条灵感(compose 常驻,不必先开)。灌值+点钮+自证走共享件(测试与工装 66):
+  // 灵感这条 bar 每次 refresh 都重建,两步之间撞上一次重渲就点在游离节点上。
+  const captureIdea = (text) => inboxCompose(text);
   const topicsOf = async (content) => {
     const ideas = await invoke("list_ideas");
     const born = ideas.find((i) => i.content === content);

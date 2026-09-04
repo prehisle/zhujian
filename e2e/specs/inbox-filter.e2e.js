@@ -1,6 +1,6 @@
 import { $, expect } from "@wdio/globals";
 import { browser } from "@wdio/globals";
-import { invoke, goNotebook, clearInbox, inboxAction } from "./support.js";
+import { invoke, goNotebook, clearInbox, inboxAction, inboxCompose } from "./support.js";
 
 // 灵感 · 标签筛选 + 文本过滤(共享件 filter-bar.ts,与看板同源同款——board.e2e.js
 // 覆盖看板侧,这里覆盖灵感侧的接线与灵感特有路径:自动挂标签、离场后重渲筛空空态)。
@@ -155,12 +155,7 @@ describe("灵感 · 标签筛选与文本过滤", () => {
     await pickPill(T1);
     await browser.waitUntil(async () => !(await exists(C)), { timeout: 8000 });
 
-    await browser.execute((v) => {
-      const input = document.querySelector(".v-inbox .compose-input");
-      input.value = v;
-      input.dispatchEvent(new Event("input", { bubbles: true }));
-    }, NEW);
-    await $(".v-inbox .compose-add").click();
+    await inboxCompose(NEW); // 灌值+点钮+自证那一记进没进 onclick(support.js,测试与工装 66)
 
     // 新卡在 T1 筛选下可见(=已挂上 T1,否则会被当场滤掉)。
     await browser.waitUntil(async () => await exists(NEW), { timeout: 8000 });
@@ -207,12 +202,9 @@ describe("灵感 · 标签筛选与文本过滤", () => {
     await setFilter("紫砂");
     await browser.waitUntil(async () => !(await exists(A)), { timeout: 8000 });
 
-    await browser.execute((v) => {
-      const input = document.querySelector(".v-inbox .compose-input");
-      input.value = v;
-      input.dispatchEvent(new Event("input", { bubbles: true }));
-    }, NEW);
-    await $(".v-inbox .compose-add").click();
+    // ⭐ 这一句就是 66 那条账红的那一记:此前是「execute 灌值 → 另一条命令点钮」两步,
+    // 中间撞上一次 compose 重建就点在游离节点上,而现场只答得出「新卡没出现」。
+    await inboxCompose(NEW);
 
     await waitScene(
       async () => (await exists(NEW)) && (await exists(A)),
