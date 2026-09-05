@@ -19,6 +19,10 @@
 #   … "abcdef" ctrl+z Return        # 只打字再撤销 —— 阳性对照 + ①
 #   … "abc" ctrl+l ctrl+z Return    # 快速输入之后再撤销 —— ①
 #   … "abc" ctrl+l shift+Return Return  # 续行手势 —— 顺带
+# ⭐ **键序里可以夹 `type:<字>`**(602 加):中途再打一段字。
+#   ⚠⚠ **量缩进必须用它**,别把缩进只落在第一行 —— 捕获窗提交那步 `main.ts:482` 会 `trim()`,
+#   首行的缩进在库里**看不见**,那个读数对「Tab 生没生效」**不构成判据**(602 第一趟就这么被骗过)。
+#   例:… "abc" ctrl+l shift+Return type:def Tab Return   # 缩进落在第二行,库里读得出
 # 读数从最后那几行 `ROW` 看:打进去的字在不在、那记键有没有改变它。
 set -u
 APP=${ZJ_APP:-./src-tauri/target/debug/app}
@@ -54,7 +58,15 @@ echo "活动窗口=$(xdotool getactivewindow getwindowname)"
 xdotool type --delay 60 -- "$1"   # ⚠ `--`:要打的字以 `-` 开头时,没有它会被当成选项
 shift
 sleep 1
-for k in "$@"; do xdotool key --clearmodifiers "$k"; sleep 0.8; done
+# 601 补:键位里可以夹 `type:<字>`(⚠ **要用它**,别把缩进只落在第一行 —— 捕获窗提交那步
+# `main.ts:482` 会 `trim()`,首行的缩进在库里看不见,读数对「Tab 生没生效」不构成判据)。
+for k in "$@"; do
+  case "$k" in
+    type:*) xdotool type --delay 60 -- "${k#type:}" ;;
+    *) xdotool key --clearmodifiers "$k" ;;
+  esac
+  sleep 0.8
+done
 sleep 2
 
 ZJ_PROBE_DB="$DB" node --experimental-sqlite -e '
