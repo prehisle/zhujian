@@ -15,6 +15,7 @@ import {
   createTopic,
   deleteTopic,
   getCurrentSpace,
+  listBoardColumns,
   listTasks,
   listTopicsFull,
   mergeTopics,
@@ -22,10 +23,12 @@ import {
   setTopicColor,
   setTopicKind,
   updateTopic,
+  type TaskItem,
   type TopicTreeItem,
 } from "./api";
+import { setColumns, stageLabel } from "./columns";
 import { t } from "./i18n";
-import { $, confirmBar, esc, showBar, showError } from "./ui";
+import { $, confirmBar, esc, fmtWhen, showBar, showError } from "./ui";
 
 type Deps = {
   /** 顺序变 → 主视图卡片 chip 顺序跟随(chip 按 position 序);改类型无妨顺手重拉。 */
@@ -39,6 +42,12 @@ let seq = 0;
 let busy = false; // 写(排序/类型/名/色/建)在飞:全行置灰、禁重入
 let rows: TopicTreeItem[] = [];
 let counts = new Map<string, number>(); // topic id → 挂载合计(想法 + 任务)
+let tasksByTopic = new Map<string, TaskItem[]>(); // topic id → 挂着它的任务(展开面按它列)
+// 展开着「名下想法 + 任务」的那一行(user-44 第五刀);null = 一行都没展开。
+// ⛔ **刻意与桌面不同**:桌面那份是 Set(可同时展开多枚),这一端是至多一枚 —— 360 宽的
+// 屏上摊开两三份内容就只剩滚动了,而这一族既有的编辑态(改名/颜色/类型)本来就都是互斥的单开。
+// ⚠ 它**不进 topicsInteracting**:只读、不怕被后台刷新重画(重画按 id 套回来即可)。
+let expandedId: string | null = null;
 let kindEditId: string | null = null; // 正在编辑类型的行(渲染成 input 形态)
 let renameId: string | null = null; // 正在改名的行(整行换成改名形,514)
 let colorEditId: string | null = null; // 正在挑颜色的行(整行换成调色板,user-44 第二刀)
@@ -68,13 +77,34 @@ export async function loadTopics(): Promise<void> {
   if (!rows.length) box.innerHTML = `<p class="muted empty">${t("topics.loading")}</p>`;
   try {
     // 合计口径(想法 notes + 任务交叉):只显想法数会让「只挂在任务上」的标签显 0 条、误导。
-    const [tree, tasks] = await Promise.all([listTopicsFull(space), listTasks(space)]);
+    // 列与行同批取(user-44 第五刀):展开面每条任务要印「它在哪一列」,而列名来自库
+    // (B-f 第 1 段)。⛔ 别指望主时间轴那轮已经登记过 —— 首轮 refresh 失败时 columns 是空的,
+    // 那会让 stageLabel 对每条任务都答 undefined(判例逐字同 panes.ts 的回收站那批)。
+    const [tree, tasks, cols] = await Promise.all([
+      listTopicsFull(space),
+      listTasks(space),
+      listBoardColumns(space),
+    ]);
     if (space !== getCurrentSpace() || s !== seq) return;
+    setColumns(cols);
     const c = new Map<string, number>();
+    const byTopic = new Map<string, TaskItem[]>();
     for (const t of tree) c.set(t.id, t.notes.length);
-    for (const task of tasks) for (const tp of task.topics) c.set(tp.id, (c.get(tp.id) ?? 0) + 1);
+    for (const task of tasks) {
+      // M:N —— 一条任务挂几枚标签就在几枚下面各列一次(同桌面 tasksByTopic 的形)。
+      for (const tp of task.topics) {
+        c.set(tp.id, (c.get(tp.id) ?? 0) + 1);
+        const arr = byTopic.get(tp.id) ?? [];
+        arr.push(task);
+        byTopic.set(tp.id, arr);
+      }
+    }
     rows = tree;
     counts = c;
+    tasksByTopic = byTopic;
+    // 展开着的那枚标签可能已经不在了(自己刚删的、合并掉的、对端动过)⇒ 展开态跟着作废
+    // (判例同 panes.ts 的 trashOpenId)。⛔ 别留着 —— 它下一拍会去 tasksByTopic 里查一个死 id。
+    if (expandedId !== null && !tree.some((r) => r.id === expandedId)) expandedId = null;
     render();
   } catch (err) {
     if (space !== getCurrentSpace() || s !== seq) return;
@@ -140,7 +170,7 @@ function render(): void {
             <button data-rename-cancel="1" class="ghost">${t("topics.renameCancel")}</button>
             <button data-del="${esc(tp.id)}" class="tn-del">${t("topics.deleteBtn")}</button>
           </span>
-        </article>`;
+        </article>${bodyHtml(tp)}`;
         }
         // 颜色编辑态:整行换成调色板(8 色 + 无色 + 取消),点色块即写(saveColor)。
         // current 标在当前色上;「无色」块在没挂色时标 current。
@@ -157,7 +187,7 @@ function render(): void {
             <button class="tc-swatch none${cur === null ? " current" : ""}" data-swatch="">${t("topics.colorNone")}</button>
             <button class="tc-cancel" data-color-cancel="1">${t("topics.colorCancel")}</button>
           </span>
-        </article>`;
+        </article>${bodyHtml(tp)}`;
         }
         const n = counts.get(tp.id) ?? 0;
         const editing = tp.id === kindEditId;
@@ -178,11 +208,51 @@ function render(): void {
         <button class="tcolor" data-color="${esc(tp.id)}" aria-label="${t("topics.colorHint")}">${
           tp.color ? `<i class="tdot" style="--tc:${esc(tp.color)}"></i>` : `<i class="tdot none"></i>`
         }</button>
-        <span class="tcount">${t("topics.count", { n })}</span>
+        <button class="tcount" data-expand="${esc(tp.id)}" aria-expanded="${tp.id === expandedId}"
+                title="${t("topics.expandHint")}">${t("topics.count", { n })}</button>
         ${kindZone}
-      </article>`;
+      </article>${bodyHtml(tp)}`;
       })
       .join("");
+}
+
+// ---- 展开面(user-44 第五刀):点计数看这枚标签名下有什么 ----------------------
+// **纯只读,刻意没有任何动作**(同桌面那份的取舍:标签面只用来翻,要动手去看板上动)。
+// ⛔ 别顺手在这儿加「点一下跳到那张卡」——跨面跳转要新造回来的路,不是本刀的范围。
+//
+// ⚠ **到期日 / 优先级刻意不显**:那两样要 `dueLabel`/`dueState`(住 main.ts,模块私有),
+// 而 main.ts 已经 import 了本文件 ⇒ 反向 import 是循环;抄一份过来就是**同一段日期逻辑的
+// 第三份复制品**(桌面 tasktime.ts / 安卓 main.ts 已有两份)。判「不值」记 backlog,别在
+// 这里顺手抄。列名走 columns.ts 的 stageLabel —— 那是既有的共享读侧,不新增复制品。
+function bodyHtml(tp: TopicTreeItem): string {
+  if (tp.id !== expandedId) return "";
+  const notes = tp.notes
+    .map(
+      (n) => `<article class="tb-item">
+        <p class="tb-text">${esc(n.content)}</p>
+        <time class="tb-when">${esc(fmtWhen(n.created_at))}</time>
+      </article>`,
+    )
+    .join("");
+  const tasks = (tasksByTopic.get(tp.id) ?? [])
+    .map((task) => {
+      // 列名查不到 = 这张卡待在一个不是任务列的 stage 上(FK + is_live_task_column 保证不可达)。
+      // ⛔ 不静默显 stage id、也不退化成「灵感」—— 响亮抛(逐字同桌面 topics.ts 那格的取舍)。
+      // ⚠ 抛在 render 里:loadTopics 那条路被它的 catch 接住显「标签读取失败」,是响亮的。
+      const col = stageLabel(task.status);
+      if (col === undefined) throw new Error(`task ${task.id} sits in unknown column ${task.status}`);
+      return `<article class="tb-item">
+        <p class="tb-text">${esc(task.title)}</p>
+        <span class="tb-col">${esc(col)}</span>
+      </article>`;
+    })
+    .join("");
+  const sec = (label: string, inner: string, empty: string): string =>
+    `<section class="tb-sec"><h3 class="tb-h">${label}</h3>${inner || `<p class="tb-empty">${empty}</p>`}</section>`;
+  return `<div class="tbody" data-body="${esc(tp.id)}">
+    ${sec(t("topics.bodyIdeas", { n: tp.notes.length }), notes, t("topics.bodyNoIdeas"))}
+    ${sec(t("topics.bodyTasks", { n: tasksByTopic.get(tp.id)?.length ?? 0 }), tasks, t("topics.bodyNoTasks"))}
+  </div>`;
 }
 
 // ---- 类型编辑(自由文本;存/清/Esc 取消/Enter 存) --------------------------
@@ -441,6 +511,17 @@ function onClick(e: Event): void {
     if (rowId) pickMerge(rowId);
     return;
   }
+  // 展开 / 收起「名下想法 + 任务」(user-44 第五刀)。至多一枚展开 ⇒ 点别行即换过去。
+  // ⚠ 与三个编辑态**不互斥**:它是只读的,展开着改名/调色都不冲突(改名行 + 下面那份内容
+  // 一起看反而有用 —— 删除确认那句「N 项只摘掉这枚标签」正想让人看清是哪 N 项)。
+  // busy/切换中一律不受理:那时整行是 `.off` 灰态,同 .tname / .tcolor 的既有纪律。
+  const expandFor = el.closest<HTMLElement>("[data-expand]")?.dataset.expand;
+  if (expandFor) {
+    if (busy || deps.isSwitching()) return;
+    expandedId = expandedId === expandFor ? null : expandFor;
+    render();
+    return;
+  }
   const renameFor = el.closest<HTMLElement>("[data-rename]")?.dataset.rename;
   if (renameFor) {
     if (busy || deps.isSwitching()) return;
@@ -692,6 +773,8 @@ export function resetTopicsForSpaceChange(): void {
   seq++;
   rows = [];
   counts = new Map();
+  tasksByTopic = new Map();
+  expandedId = null; // 展开的是上一个空间的标签,跟着作废
   kindEditId = null;
   renameId = null;
   colorEditId = null;

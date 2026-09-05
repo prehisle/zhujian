@@ -48,4 +48,11 @@ export const topics = defineMessages({
   "topics.newSave": { zh: "建", en: "Create" },
   "topics.newCancel": { zh: "取消", en: "Cancel" },
   "topics.created": { zh: "已建标签", en: "Tag created" },
+  // 展开看名下内容(user-44 第五刀):点计数 → 行下摊开随记 + 任务,纯只读。
+  // 可见中文与桌面那份逐字同(「随记 N」/「任务 N」),⛔ 但键空间仍各自独立,别去对齐键名。
+  "topics.expandHint": { zh: "点一下看名下的内容", en: "Tap to see what’s tagged" },
+  "topics.bodyIdeas": { zh: "随记 {n}", en: "Notes {n}" },
+  "topics.bodyTasks": { zh: "任务 {n}", en: "Tasks {n}" },
+  "topics.bodyNoIdeas": { zh: "还没有随记打这个标签", en: "No notes with this tag yet" },
+  "topics.bodyNoTasks": { zh: "还没有任务打这个标签", en: "No tasks with this tag yet" },
 });

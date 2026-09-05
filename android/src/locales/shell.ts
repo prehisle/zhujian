@@ -44,7 +44,9 @@ export const shell = defineMessages({
   "shell.emptyTrash": { zh: "清空回收站", en: "Empty Trash" },
   "shell.trashNote": { zh: "删除的记录先到这里;恢复回到原来的位置;彻底删除后无法找回。", en: "Deleted items land here first; restoring puts them back where they were; deleting forever cannot be undone." },
   "shell.sealedNote": { zh: "完成的任务「入册」后在这里安放;归档是史实,不可删除。", en: "Finished tasks rest here once archived; the archive is a record of fact and cannot be deleted." },
-  "shell.topicsNote": { zh: "按住左侧 ⠿ 拖动调顺序;点名字改名、点色点改颜色、点「类型」给标签标个类型(如「人名」)——这些改动都会同步到其它设备。", en: "Hold the ⠿ handle on the left to reorder; tap a name to rename, the color dot to recolor, or Kind to label a tag (e.g. Person). All of these sync to your other devices." },
+  // ⚠ 末句(点条数)刻意排在「都会同步」之后:那一条是**只读**的,不产生任何 op,
+  //   混进前面那串会让人以为「看一眼」也会同步出去。
+  "shell.topicsNote": { zh: "按住左侧 ⠿ 拖动调顺序;点名字改名、点色点改颜色、点「类型」给标签标个类型(如「人名」)——这些改动都会同步到其它设备。点条数看这枚标签名下有什么。", en: "Hold the ⠿ handle on the left to reorder; tap a name to rename, the color dot to recolor, or Kind to label a tag (e.g. Person). All of these sync to your other devices. Tap the count to see what’s under a tag." },
   "shell.addImage": { zh: "＋ 加图", en: "＋ Image" },
   "shell.takePhoto": { zh: "＋ 拍照", en: "＋ Photo" },
   "shell.insertTodo": { zh: "＋ 待办", en: "＋ To-do" },

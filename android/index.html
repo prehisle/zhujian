@@ -859,7 +859,47 @@
       }
       .tcolor .tdot { display: block; }
       .tcolor .tdot.none { background: none; border: 1px dashed var(--ink-faint); box-sizing: border-box; }
-      .tcount { flex: none; font-size: var(--fs-12); color: var(--ink-faint); font-variant-numeric: tabular-nums; }
+      /* 计数(user-44 第五刀起兼「展开名下内容」的入口):视觉仍是那行小字,但它是钮了 ——
+         触区按行内纪律只往垂直撑到 44(±12 负 margin 抵消,不越到相邻行);⛔ 别用 ::before
+         halo(514 判例:`.tname` 的 overflow:hidden 会把伪元素裁掉,这里改用 padding 撑盒)。
+         `›` 记号是「点得动」的唯一提示 —— 没有它这就又是一处隐藏能力(判例:用户面 49)。 */
+      .tcount {
+        flex: none; font-size: var(--fs-12); color: var(--ink-faint); font-variant-numeric: tabular-nums;
+        min-height: 44px; margin: -12px 0; padding: 0;
+        display: inline-flex; align-items: center; gap: 2px;
+        background: none; border: 0; font-family: inherit;
+      }
+      .tcount::after {
+        content: "›"; font-size: var(--fs-13); line-height: 1;
+        transition: transform 0.12s ease; /* 同 #viewer 那条快档;CSS 时长是字面量,§2.4 那张表管的是 timing.ts */
+      }
+      .tcount[aria-expanded="true"]::after { transform: rotate(90deg); }
+      /* 展开面(user-44 第五刀):纯只读,摊在行下方。缩进对齐名字列(手柄 + gap),
+         左导轨与 .topic-kids 那族共形——「这是上面那行的从属内容」在两端是同一个视觉语汇。 */
+      .tbody {
+        margin: 0 0 8px 26px; padding-left: 10px;
+        border-left: 1px solid var(--line);
+        display: flex; flex-direction: column; gap: 10px;
+      }
+      /* 段头与时间轴的 .tl-sec 同形(这一端「一组内容的头」就长这样);⛔ 用 --ink-soft
+         不用 --ink-faint —— §2.1:faint ≈2.5:1 只许纯装饰,要读的字一律 soft。 */
+      .tb-h {
+        margin: 0 0 4px; font-size: var(--fs-12); font-weight: 600;
+        color: var(--ink-soft); font-family: var(--font-sans); letter-spacing: 0.04em;
+      }
+      .tb-item {
+        display: flex; align-items: baseline; gap: 8px;
+        padding: 4px 0; border-top: 1px solid var(--line);
+      }
+      .tb-text {
+        flex: 1; min-width: 0; margin: 0; font-size: var(--fs-13); color: var(--ink);
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      }
+      /* 时刻:与卡片 footer 里的 <time> 同档(faint),它是元数据不是要读的正文。
+         列名与空态是要读的 ⇒ soft(§2.1)。 */
+      .tb-when { flex: none; font-size: var(--fs-12); color: var(--ink-faint); }
+      .tb-col { flex: none; font-size: var(--fs-12); color: var(--ink-soft); }
+      .tb-empty { margin: 0; font-size: var(--fs-12); color: var(--ink-soft); }
       .tk-add, .tk-badge {
         flex: none; font-size: var(--fs-12); padding: 3px 10px; border-radius: var(--radius-pill);
         border: 1px solid var(--line-strong); background: none;
@@ -1415,7 +1455,7 @@
         <button id="topics-new" data-i18n="topics.newBtn">+ 新建标签</button>
       </div>
       <div id="topics-list"></div>
-      <p class="fine" data-i18n="shell.topicsNote">按住左侧 ⠿ 拖动调顺序;点名字改名、点色点改颜色、点「类型」给标签标个类型(如「人名」)——这些改动都会同步到其它设备。</p>
+      <p class="fine" data-i18n="shell.topicsNote">按住左侧 ⠿ 拖动调顺序;点名字改名、点色点改颜色、点「类型」给标签标个类型(如「人名」)——这些改动都会同步到其它设备。点条数看这枚标签名下有什么。</p>
     </section>
 
     <!-- 146:seg 两态删除——输入落点=当前主视图(灵感面记灵感/任务面记待办),
