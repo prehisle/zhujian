@@ -1,12 +1,16 @@
 // 待办清单快速输入(562)的阴性对照。每刀 = 一个**该被逮到**的改动:注入后
 // check-filter-parity 必须真红、且红的正是该规则那几格。跑完原样还回去。
 //
-// ⚠ 三处是前两版栽出来的:①「刀落上了吗」不能用 `git diff`(本轮这文件本来就是改过
+// ⚠ 四处是前几版栽出来的:①「刀落上了吗」不能用 `git diff`(本轮这文件本来就是改过
 // 的,numstat 恒答 124 行、刀落没落上屏幕上同形)—— 改成拿写进去的内容与 orig 直接比;
 // ②「退出码 1」不等于「用例逮到了」:有把刀带进语法错,闸构建就炸了、一格用例都没跑,
 // 屏幕上同样是「退出码 1」⇒ 须认「N 条全过 / N 条不符」那行确实出现过;③第一把「起一条I」
 // 砍的是 clamp 整体,而目标那格在两种写法下**序列化结果相同** ⇒ 刀逮不到不等于代码没护住,
 // 换成砍下限 `lo→0` 并补一格能观测的用例(摘标记时光标跑到上一行)。
+// ④600 加严:「刀落上了吗」原先只判 `includes`,而 **`includes` 答的是「有没有」不是「有几处」**
+// —— 那一轮「起一条」与新写的「缩进」各有一份**逐字相同**的单行选区夹取,`replace` 只换先
+// 出现的那一处,于是刀 I 自以为在守两处、实际只守一处,后写的那份坏了不会红(输出与真绿同形)。
+// 现改成**必须恰一命中**:0 次 = 刀没落上,>1 次 = 有一处没人守,两种都响亮拒。
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 
@@ -72,7 +76,12 @@ const KNIVES = [
 let bad = 0;
 for (const [name, from, to] of KNIVES) {
   console.log(`\n—— ${name}`);
-  if (!orig.includes(from)) { console.log("   💥 锚点没命中,这刀根本没落上 —— 先修刀再谈红绿"); bad++; continue; }
+  const hits = orig.split(from).length - 1;
+  if (hits !== 1) {
+    console.log(`   💥 锚点在这份源码里命中 ${hits} 次(必须恰 1)—— ${hits === 0 ? "这刀根本没落上" : "replace 只会换第一处,另一处没人守"};先修刀再谈红绿`);
+    bad++;
+    continue;
+  }
   fs.writeFileSync(F, orig.replace(from, to), "utf8");
   console.log(`   刀落上了吗:${fs.readFileSync(F, "utf8") === orig ? "❌ 文件没变!" : "✓ 与基线不同"}`);
   let out = "", code = 0;
