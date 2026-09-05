@@ -82,9 +82,20 @@ export async function notifyPermissionOk(): Promise<boolean> {
   return (await requestPermission()) === "granted";
 }
 
-/** 发一条系统通知(权限由调用方先过 `notifyPermissionOk`)。 */
+/**
+ * 通知栏小图标 = `res/drawable/ic_stat_zhujian.xml`(单色朱字骨架),`iconColor` = 应用图标那枚
+ * 朱红(与 `values/ic_launcher_background.xml` 逐字同值),Android 12+ 拿它画小图标那枚圆形徽章
+ * ⇒ 合起来正是应用图标「朱红底 + 白朱」的关系。⛔ **不给就落系统的 ⓘ**(`ic_dialog_info`),
+ * 而那是**安静的**:名字打错 / drawable 没进包都只是回到 ⓘ,不报任何错。
+ *
+ * ⭐ **刻意逐条带,不走 `tauri.conf.json` 的 `plugins.notification`** —— 官方文档教的是后者,
+ * 而 `tauri-plugin-notification` 2.4.0 的 `Builder::new("notification")` 泛型参数是 `()`,
+ * 配置里一出现这个对象,`serde_json::from_value::<()>` 当场
+ * `invalid type: map, expected unit` ⇒ **app 启动即崩**(实测,progress-log 同号条)。
+ * ⛔ 别看见「配置里更该住这个」就搬回去。
+ */
 export function showNotification(title: string, body: string): void {
-  sendNotification({ title, body });
+  sendNotification({ title, body, icon: "ic_stat_zhujian", iconColor: "#B3402B" });
 }
 
 /** 系统分享(ACTION_SEND)攒下的文本,取一条走一条;没有了返回 null。 */
