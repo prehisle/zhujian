@@ -41,8 +41,9 @@ import { toggleChecklistLine } from "./checklist";
 import {
   closeComments,
   commentBadge,
+  inlineCommentState,
   loadCommentCounts,
-  openComments,
+  openInlineComments,
   refreshOpenComments,
 } from "./item-comments";
 import type { View, ViewCtx } from "./notebook";
@@ -255,6 +256,14 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
   // 跳转定位(搜索/深链接/剪贴板「打开」冷着陆命中的卡):下一次渲染给它**持续常亮**的
   // .just-located(区别于 born 的一次性涟漪),留到下次点击/滚动才消(见 locate.ts)。
   let locateId: string | null = null;
+  // 留言就地展开(随记的形:卡片够宽,展开只影响自己下面的卡;看板列窄故仍走浮层)。
+  // 整列重渲会把展开区连同卡片一起换掉 ⇒ refresh 前存下这一格、渲染 row() 时消费它重挂,
+  // 同 pulseId / locateId 的形。`draft`(没发出去的话)与 `marked`(已读水位)必须一起
+  // 带回:前者不带 = 敲一下别处就毁话;后者不带 = 重挂即再推水位 → 又触发重渲 → 死循环。
+  let restoreComment: { itemId: string; draft: string; marked: string | null; focused: boolean } | null = null;
+  // 重挂那一记要等卡片**真的进了文档**才做(focus / scrollIntoView 对游离节点是空操作),
+  // 所以 row() 只把它存在这里,由 refresh 在 list.replaceChildren 之后执行。
+  let restoreCommentRun: (() => void) | null = null;
   // in-flight 闸(ui-audit P0 #2)在模块级(共享编排件):refresh 会重建 bar 并把草稿
   // 回灌进新框,新 bar 的 Enter 也必须被同一把闸挡住;闸跨 mount 才挡得住「保存中切走
   // 再回来」(codex P1 审 H2)。
@@ -499,10 +508,13 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       if (sig) timeT.append(sig);
       // 留言徽章(§4.7):N=0 不显(那时的入口在 ⋯ 菜单的「留言」)。回收站不显——
       // 那是「决定要不要销毁」的场景,不是读留言的场景(§4.4)。
-      const badge = commentBadge(mountSpace, item.id, () => void refresh());
+      // 点它 = 就地展开/收起,不再弹整版浮层(判据见 item-comments 的 PanelMode)。
+      const badge = commentBadge(mountSpace, item.id, () => void refresh(), () => toggleComments());
       if (badge) timeT.append(badge);
     }
     const body = el("div", { className: "note-body" });
+    // 留言就地展开的落点:空着时 CSS `:empty` 整个收起,不占位、不留 margin。
+    const cmHost = el("div", { className: "cm-host" });
 
     // Tag chips — a 想法 may carry tags (just metadata); show them whenever present.
     // Single-entity model: a task is the same subject at a board stage, so it lives on the
@@ -621,6 +633,26 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       paintContent();
     }
 
+    // ---- 留言(就地展开)----
+    // 再点一次徽章 / ⋯ 菜单的「留言」= 收起,同 ⋯ 菜单那套 toggle 约定。`restore` 只由
+    // 整列重渲后的重挂路径传(带着草稿与已读水位),那一路不许被当成「再点一次」收掉。
+    function toggleComments(restore?: { draft: string; marked: string | null; focused: boolean }): void {
+      if (!restore && inlineCommentState(mountSpace)?.itemId === item.id) {
+        closeComments();
+        return;
+      }
+      // 展开期间单键让位(suspended 判据含 commenting):框里正在打字,按 D 不该删掉这张卡。
+      note.classList.add("commenting");
+      openInlineComments(cmHost, mountSpace, item.id, () => void refresh(), {
+        draft: restore?.draft,
+        marked: restore?.marked,
+        // 手点开的一律给焦点(桌面上开层即能写是对的);重挂只还给本来就握着焦点的人。
+        focus: restore ? restore.focused : true,
+        remount: restore !== undefined, // 决定滚哪儿:手点滚整块,重挂滚输入框(见 openPanel 末)
+        onClose: () => note.classList.remove("commenting"),
+      });
+    }
+
     // ---- view (default) ----
     function showView(): void {
       note.classList.remove("editing", "confirming");
@@ -645,7 +677,9 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
           ]),
         );
       }
-      body.replaceChildren(...kids);
+      // 留言展开区永远排最后(在配图条与部分成功提示之下),且**是同一个节点对象**:
+      // 编辑态收起后回到视图态时它原样回位,展开着的那一层不会被 showView 拆掉。
+      body.replaceChildren(...kids, cmHost);
       // Operations no longer sit in a permanent button row — they live behind the
       // ⋯ corner menu (hover it for the shortcut cheat-sheet) and on the single-key
       // shortcuts when this card is active. The menu is rebuilt each render so it
@@ -657,6 +691,9 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     async function openEdit(): Promise<void> {
       // 单一编辑态:先关掉任何已打开的另一张卡的编辑(回视图 + 拆它的按键监听)。
       if (closeActiveEdit) closeActiveEdit();
+      // 编辑态整块换掉 body(cmHost 随之离开文档),就地展开的留言必须先收——否则那一层
+      // 悬在 DOM 外,而 document 上的 Esc 监听还活着(按 Esc 关一个看不见的层)。
+      if (inlineCommentState(mountSpace)?.itemId === item.id) closeComments();
       note.classList.add("editing");
       const area = el("textarea", { className: "edit-area", value: currentContent });
       area.addEventListener("input", () => autoGrow(area)); // no CSS cap — full text stays visible, like the view state
@@ -1043,7 +1080,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         { label: t("inbox.actTask"), key: "T", run: doPromote },
         { label: t("inbox.actTag"), key: "L", run: openTopic },
         // 留言(§4.7):N=0 时卡片上没有徽章,这里是写第一条的唯一入口。
-        { label: t("inbox.actComments"), key: "Y", run: () => openComments(mountSpace, item.id, () => void refresh()) },
+        { label: t("inbox.actComments"), key: "Y", run: () => toggleComments() },
         { label: t("inbox.actCopy"), key: "C", feedback: copyFeedback },
         { label: t("inbox.actCopyLink"), key: "K", feedback: copyLinkFeedback },
       ];
@@ -1063,7 +1100,10 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     const handle = hk.register(
       note,
       actionsFor,
-      () => note.classList.contains("editing") || note.classList.contains("confirming"),
+      () =>
+        note.classList.contains("editing") ||
+        note.classList.contains("confirming") ||
+        note.classList.contains("commenting"),
     );
 
     // 双击卡片 = 默认操作「编辑」(和单键 E 同一入口)。回收站卡片冻结、不编辑;双击在
@@ -1077,6 +1117,13 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     }
 
     showView();
+    // 重渲前展开着的就是这张:登记重挂(消费一次即清,同 pulseId / locateId 的形)。
+    // ⛔ 别在这里直接展开——此刻 note 还没进文档,focus 与 scrollIntoView 都会落空。
+    if (mode === "ideas" && restoreComment !== null && restoreComment.itemId === item.id) {
+      const r = restoreComment;
+      restoreComment = null;
+      restoreCommentRun = () => toggleComments(r);
+    }
     return note;
   }
 
@@ -1223,9 +1270,15 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       // down an open editor's document-level key listener (it would leak otherwise). After
       // the refocus short-circuit, so an idle refocus that keeps an open editor is untouched.
       hk.reset();
-      // 留言浮层:宿主还在就顺手把第一页重拉一遍(别的设备写的话自己冒出来),宿主
-      // 已经离开这个视图(删了 / 转了待办 / 移走了)就关掉——别让人对着不在了的条目写话。
-      refreshOpenComments(mountSpace, [...ideas, ...archived].map((i) => i.id));
+      // 留言:就地展开的那一层长在马上要被换掉的卡片里,先把「哪条 / 草稿 / 已读水位 /
+      // 焦点」抠出来(⛔ 必须在 refreshOpenComments 之前——它会把这一层收掉),渲染完由
+      // restoreCommentRun 重挂。宿主不在新一发里(删了 / 转了待办 / 移走了)就自然不重挂。
+      const cmSaved = inlineCommentState(mountSpace);
+      const aliveIds = [...ideas, ...archived].map((i) => i.id);
+      restoreComment = cmSaved !== null && aliveIds.includes(cmSaved.itemId) ? cmSaved : null;
+      // 浮层那一形(看板)仍走原路:宿主还在就顺手把第一页重拉一遍(别的设备写的话自己
+      // 冒出来),宿主已经离开这个视图就关掉——别让人对着不在了的条目写话。
+      refreshOpenComments(mountSpace, aliveIds);
       disarmConfirm(); // 卡片将被整批替换:在场确认的文档级监听一并收走(codex M3)
       if (closeActiveEdit) closeActiveEdit();
       counts.ideas = ideas.length;
@@ -1317,6 +1370,12 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         composeCtl.stashDraft(composeDraft, mountSpace);
       }
       if (hadComposeFocus) newCompose?.focus();
+      // 卡片已进文档:把就地展开的留言重挂回去(草稿、已读水位、焦点都在 restoreComment
+      // 里)。放在 compose 还焦之后——两者互斥,谁真的握着焦点谁拿回去。
+      const runRestore = restoreCommentRun;
+      restoreCommentRun = null;
+      restoreComment = null; // 那条卡被筛掉了(row 没渲染到它)也就此作废,不留隔轮的残值
+      runRestore?.();
       // First render after a (re)mount: drop back to where the user was reading before
       // they switched away. scrollTop clamps itself if the list is now shorter.
       if (restorePending) {
@@ -1326,6 +1385,9 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     } catch (err) {
       if (seq !== refreshSeq) return; // 旧请求晚失败:新请求已成功渲染,别用旧错误盖掉(codex 三审 H2)
       lastSig = ""; // error path painted — let the next refresh re-render even if data matches
+      // 这一发没渲染成卡片:两格重挂登记就地作废,别让下一发拿着指向旧 DOM 的闭包去展开。
+      restoreComment = null;
+      restoreCommentRun = null;
       disarmConfirm(); // 换错误页也是整批替换:在场确认的文档级监听一并收走(codex 二审 M)
       renderError(String(err));
     }

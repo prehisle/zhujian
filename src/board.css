@@ -495,8 +495,13 @@
 /* ㊺ 卡片去噪:截止/优先级/标签的「值」是纯展示 chip(信息,逾期/今天仍标红供一眼识别);
    增改清操作不在卡面、全走 ⋯ 菜单 S/P/L(无 ＋ 占位入口)。故只需把「无任何展示内容」的
    空 meta 行连同 margin 收起,免得静止卡片在标题下留空行。当 ⋯ 菜单打开某个编辑器时,该行
-   会含 .due-input / .choice / .link / .topic-hint / .topic-search → 不匹配收起、自然显出。 */
-.v-board .tcard .task-meta:not(:has(.chip:not(.redundant))):not(:has(.due-input)):not(:has(.choice)):not(:has(.link)):not(:has(.topic-hint)):not(:has(.topic-search)) {
+   会含 .due-input / .choice / .link / .topic-hint / .topic-search → 不匹配收起、自然显出。
+   ⭐ **这串 :not 是白名单,往这一行里挂新东西必须同时登记进来**,否则那东西在「其余格都
+   空」的卡上会连行一起消失——而它自己一个 CSS 规则都没写错,极难往这儿想。
+   `.sig-chip`(署名 0033)与 `.cm-badge`(留言 0035/0038)就是这么丢的:两轮都只管了「挂
+   进 meta 行」,没管这条比它们早的收起判据 ⇒ 一张没截止/没优先级/没标签的看板卡,有留言
+   也看不到 💬 N、有署名也不显。e2e「留言 · 两形分野」那组撞出来的,同轮补上。 */
+.v-board .tcard .task-meta:not(:has(.chip:not(.redundant))):not(:has(.due-input)):not(:has(.choice)):not(:has(.link)):not(:has(.topic-hint)):not(:has(.topic-search)):not(:has(.sig-chip)):not(:has(.cm-badge)) {
   display: none;
 }
 

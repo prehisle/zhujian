@@ -58,6 +58,50 @@
   overflow: hidden;
 }
 
+/* 就地展开那一形(随记):没有遮罩、不居中、不投影——它是卡片的一部分,不是浮在上面的
+   另一层。所以几何全部改口径:宽度随卡片、限高按「几句短话」给(不是浮层那种 70vh),
+   顶上一条分隔线接住上面的正文。判据与两形的分野见 item-comments.ts 的 PanelMode。 */
+.cm-host:empty {
+  display: none; /* 没展开时整个不占位,连 margin 都不留 */
+}
+/* ⛔ 别在这里覆盖 border-radius:继承来的 --radius-md 在「无边框 + 透明底 + 不裁剪」下
+   本就一点也看不见,写死 0 只会去撞圆角门禁、换来一条毫无信息量的例外登记。
+   `overflow` 改回 visible 是同一件事的另一半——浮层那侧的 hidden 是为了让圆角裁住内容,
+   这一侧没有要裁的边,留着反而会切掉贴边的字(限高仍由 .cm-list 自己滚)。 */
+.cm-panel.cm-inline {
+  width: auto;
+  max-height: min(46vh, 380px);
+  margin-top: 10px;
+  border: none;
+  box-shadow: none;
+  background: transparent;
+  overflow: visible;
+}
+/* 分隔线挂在 head 而不是面板上:面板带着继承来的圆角,只画上边框会让线的两端往下翘。 */
+.cm-inline .cm-head {
+  padding: 8px 0 4px;
+  border-top: 1px solid var(--line);
+  border-bottom: none;
+}
+.cm-inline .cm-title {
+  font-size: var(--fs-12);
+  font-family: var(--font-sans);
+  color: var(--ink-faint);
+  letter-spacing: 0.05em;
+}
+.cm-inline .cm-list {
+  padding: 0;
+}
+.cm-inline .cm-more,
+.cm-inline .cm-err {
+  margin-left: 0;
+  margin-right: 0;
+}
+.cm-inline .cm-compose {
+  padding: 8px 0 2px;
+  background: transparent;
+}
+
 .cm-head {
   display: flex;
   align-items: center;

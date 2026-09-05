@@ -61,8 +61,17 @@ export function commentCountFor(space: string, itemId: string): number {
 
 /** 卡片上的 `💬 N` 徽章;**N=0 返回 null**(布局未定不显示,ui-guidelines)。
  *  有本机没看过的留言时挂 `.unread` 点一枚朱砂点(0038;开过留言层即消)。
- *  N=0 时的写入口不在这里——它在卡片 ⋯ 菜单的「留言」上(否则第一条留言无从写起)。 */
-export function commentBadge(space: string, itemId: string, onChanged: () => void): HTMLElement | null {
+ *  N=0 时的写入口不在这里——它在卡片 ⋯ 菜单的「留言」上(否则第一条留言无从写起)。
+ *
+ *  `onOpen` = 点徽章时怎么开这一层。**不传 = 浮层**(看板:列窄到 200px,就地展开
+ *  会把同列下面的卡全推走、列内滚动位置乱跳);随记那侧传「卡内就地展开」进来。
+ *  两侧形不同是按容器形状算出来的,不是漂移——判据见本文件末 openInlineComments。 */
+export function commentBadge(
+  space: string,
+  itemId: string,
+  onChanged: () => void,
+  onOpen?: () => void,
+): HTMLElement | null {
   const info = counts && counts.space === space ? counts.map.get(itemId) : undefined;
   if (!info || info.n === 0) return null;
   const b = el("button", {
@@ -73,31 +82,54 @@ export function commentBadge(space: string, itemId: string, onChanged: () => voi
   });
   b.addEventListener("click", (e) => {
     e.stopPropagation();
-    openComments(space, itemId, onChanged);
+    if (onOpen) onOpen();
+    else openComments(space, itemId, onChanged);
   });
   return b;
 }
 
 // ---- 浮层 -------------------------------------------------------------------
 
+/** 这一层长在哪儿。`overlay` = portal 到 body 的居中浮层(看板);`inline` = 就地长在
+ *  卡片里(随记)。**分野判据是容器形状,不是偏好**:随记是一整行全宽、纵向排,展开
+ *  只影响自己下面的卡;看板是 200px 起的窄列、列自己还要滚,同一份内容塞不进去。 */
+type PanelMode = "overlay" | "inline";
+
 type Panel = {
   space: string;
   itemId: string;
   session: number;
+  mode: PanelMode;
   close: () => void;
   /** 同步落地 / 视图重渲时重拉第一页(只在还没翻过页时;见 refreshOpenComments)。 */
   reloadFirstPage: () => void;
   /** 已翻过页 = 用户在读旧留言,自动重拉会把他弹回第一页。 */
   paged: boolean;
+  /** 输入框里还没发出去的草稿。inline 那侧宿主卡片会被整列重渲换掉,重挂时得带回去
+   *  ——照 compose 那条「敲过滤词不许毁正文」的先例(inbox refresh 里存/灌那一对)。 */
+  draft: () => string;
+  /** 本层已经推到的已读水位。inline 重挂时必须带回:新层的 `lastMarked` 是空的,会再推
+   *  一次 `mark_item_comments_seen` → `onChanged` → 重渲 → 再挂 → 再推,**无限循环**。 */
+  marked: () => string | null;
+  /** 光标此刻是不是就在留言输入框里。重挂时只把焦点还给本来就握着它的人——用户在别处
+   *  (compose 框 / 没焦点)时抢过来,等于同步一落地就把他的光标偷走。 */
+  hasFocus: () => boolean;
 };
 
-/** 全视图至多一层(§4.14.2 第 6 条)。 */
+/** 全视图至多一层(§4.14.2 第 6 条),两种形态共用这一格。 */
 let open: Panel | null = null;
 let sessionSeq = 0;
 
-/** 打开某条条目的留言浮层(徽章点击与 ⋯ 菜单「留言」共用这一个入口)。
- *  `onChanged` = 写/删成功后调,让宿主视图重取计数刷新徽章。 */
-export function openComments(space: string, itemId: string, onChanged: () => void): void {
+/** 打开某条条目的留言层。`onChanged` = 写/删成功后调,让宿主视图重取计数刷新徽章。
+ *  `host` 非空 = 就地长在这个容器里(inline);为空 = 老的居中浮层。 */
+function openPanel(
+  space: string,
+  itemId: string,
+  onChanged: () => void,
+  mode: PanelMode,
+  host: HTMLElement | null,
+  opts: { draft?: string; marked?: string | null; focus?: boolean; remount?: boolean; onClose?: () => void } = {},
+): void {
   open?.close(); // 单层:再开一个先关掉旧的(它的会话号随即作废)
   const session = ++sessionSeq;
   const live = (): boolean => open !== null && open.session === session;
@@ -105,9 +137,14 @@ export function openComments(space: string, itemId: string, onChanged: () => voi
   const list = el("div", { className: "cm-list" });
   const err = el("p", { className: "cm-err", hidden: true });
   const more = el("button", { className: "cm-more", textContent: t("comments.loadMore"), hidden: true });
-  const area = el("textarea", { className: "cm-input", rows: 2, placeholder: t("comments.inputPlaceholder") });
+  const area = el("textarea", {
+    className: "cm-input",
+    rows: 2,
+    placeholder: t("comments.inputPlaceholder"),
+    value: opts.draft ?? "",
+  });
   const send = el("button", { className: "cm-send", textContent: t("comments.send") });
-  const panel = el("div", { className: "cm-panel" }, [
+  const panel = el("div", { className: mode === "inline" ? "cm-panel cm-inline" : "cm-panel" }, [
     el("header", { className: "cm-head" }, [
       el("h3", { className: "cm-title", textContent: t("comments.title") }),
       el("button", { className: "cm-close", textContent: "✕", title: t("comments.closeTitle") }),
@@ -117,7 +154,10 @@ export function openComments(space: string, itemId: string, onChanged: () => voi
     err,
     el("div", { className: "cm-compose" }, [area, send]),
   ]);
-  const overlay = el("div", { className: "cm-overlay" }, [panel]);
+  // 遮罩只属于浮层那一形。inline 那侧刻意**没有**遮罩、也没有「点别处收起」:它是卡片的
+  // 一部分(同编辑态),而框里可能有半打的草稿——点旁边看一眼就把话弄丢是不能接受的。
+  // 收起只有三条路:再点一次徽章、点 ✕、Esc。
+  const overlay = mode === "overlay" ? el("div", { className: "cm-overlay" }, [panel]) : null;
 
   const showErr = (e: unknown): void => {
     // 后端的话原样展示(200 KiB / 500 软闸 / 宿主不存在都是有话可说的拒绝),不吞不改写。
@@ -134,7 +174,7 @@ export function openComments(space: string, itemId: string, onChanged: () => voi
   // ---- 已读水位(0038):第一页渲染成功 = 「看见了」,把水位推到页首那条 -------
   // 只在**值真的前进**时才推并刷徽章 —— refreshOpenComments(视图刷新)会重拉第一页,
   // 若无条件推+onChanged,会形成「推 → 刷视图 → 重拉 → 再推」的循环。
-  let lastMarked: string | null = null;
+  let lastMarked: string | null = opts.marked ?? null;
   function markSeen(page: CommentPage): void {
     const top = page.rows[0]?.id;
     if (!top || top === lastMarked) return;
@@ -249,8 +289,9 @@ export function openComments(space: string, itemId: string, onChanged: () => voi
   function close(): void {
     if (open?.session !== session) return; // 已被后来者顶掉:别去拆别人的层
     open = null;
-    overlay.remove();
+    (overlay ?? panel).remove();
     document.removeEventListener("keydown", onKey, true);
+    opts.onClose?.(); // 宿主收尾(inline:把卡片的 commenting 标记摘掉)
   }
   function onKey(e: KeyboardEvent): void {
     if (e.key !== "Escape") return;
@@ -258,16 +299,68 @@ export function openComments(space: string, itemId: string, onChanged: () => voi
     e.stopPropagation();
     close();
   }
-  overlay.addEventListener("mousedown", (e) => {
+  overlay?.addEventListener("mousedown", (e) => {
     if (e.target === overlay) close(); // 点浮层以外收起(同 ⋯ 菜单 / 内联选择器的约定)
   });
   panel.querySelector<HTMLButtonElement>(".cm-close")?.addEventListener("click", () => close());
   document.addEventListener("keydown", onKey, true);
 
-  open = { space, itemId, session, close, reloadFirstPage: () => void loadPage(false), paged: false };
-  document.body.append(overlay);
+  open = {
+    space,
+    itemId,
+    session,
+    mode,
+    close,
+    reloadFirstPage: () => void loadPage(false),
+    paged: false,
+    draft: () => area.value,
+    marked: () => lastMarked,
+    hasFocus: () => document.activeElement === area,
+  };
+  if (overlay) document.body.append(overlay);
+  else host!.append(panel);
   void loadPage(false);
-  area.focus();
+  if (opts.focus !== false) area.focus();
+  // 滚动只在 inline 那一形要管(浮层天然居中)。`nearest` 一律 = 已经看得见就不动。
+  //  · 手点展开:把**整块**带进视口(用户要读的是列表);
+  //  · 重挂(整列重渲后):滚**输入框**——写完一条会多出一行、把框顶到视口外,而他多半
+  //    正要接着写第二条;把面板顶部再对齐一次反而是抢他的位置。
+  //  · 重挂且焦点不在框里:一下都不滚(他正在别处,同步落地不该动他的视口)。
+  if (mode === "inline") {
+    if (!opts.remount) panel.scrollIntoView({ block: "nearest" });
+    else if (opts.focus !== false) area.scrollIntoView({ block: "nearest" });
+  }
+}
+
+/** 居中浮层(看板)。徽章点击与 ⋯ 菜单「留言」共用这一个入口。 */
+export function openComments(space: string, itemId: string, onChanged: () => void): void {
+  openPanel(space, itemId, onChanged, "overlay", null);
+}
+
+/** 卡片内就地展开(随记)。`host` = 卡片里那个空容器,面板直接长在它下面。
+ *
+ *  ⚠ 宿主视图整列重渲(`list.replaceChildren`)会把这块 DOM 连根换掉,故**宿主自己
+ *  负责重挂**:重渲前读 `inlineCommentState()` 存下,重渲后对同一条目再调一次本函数、
+ *  把 `draft` / `marked` 原样传回。不传 `marked` 会推出无限重渲(见 Panel.marked)。
+ *  重挂会丢掉「翻到第几页」和列表滚动位置——刻意接受:这一形是给「一条卡上几句短话」
+ *  的量级设计的,真长成讨论串该重新论证形,而不是在这里补状态。 */
+export function openInlineComments(
+  host: HTMLElement,
+  space: string,
+  itemId: string,
+  onChanged: () => void,
+  opts: { draft?: string; marked?: string | null; focus?: boolean; remount?: boolean; onClose?: () => void } = {},
+): void {
+  openPanel(space, itemId, onChanged, "inline", host, opts);
+}
+
+/** 当前就地展开着的是哪条、框里有什么没发出去的话、已读水位推到哪儿、光标在不在框里。
+ *  不是 inline / 没开 / 空间对不上 = null。宿主重渲前后就靠这一格接力。 */
+export function inlineCommentState(
+  space: string,
+): { itemId: string; draft: string; marked: string | null; focused: boolean } | null {
+  if (!open || open.mode !== "inline" || open.space !== space) return null;
+  return { itemId: open.itemId, draft: open.draft(), marked: open.marked(), focused: open.hasFocus() };
 }
 
 /** 视图刷新(本地写 / 同步落地 / 定时重拉)后调一次,`aliveItemIds` = 本视图这一发
@@ -281,6 +374,14 @@ export function openComments(space: string, itemId: string, onChanged: () => voi
 export function refreshOpenComments(space: string, aliveItemIds: Iterable<string>): void {
   const p = open;
   if (!p || p.space !== space) return;
+  // inline 那侧这一层就长在即将被 replaceChildren 换掉的卡片里:重拉第一页画给一块马上
+  // 要脱离文档的 DOM 毫无意义,而留着 `open` 指向它 = document 上那记 Esc 监听泄漏(按
+  // Esc 会「关掉」一个看不见的层)。一律先收,重挂由宿主按 inlineCommentState() 负责。
+  // ⚠ 调用方必须**先读 inlineCommentState() 再调本函数**,否则草稿与已读水位就丢了。
+  if (p.mode === "inline") {
+    p.close();
+    return;
+  }
   let alive = false;
   for (const id of aliveItemIds) {
     if (id === p.itemId) {

@@ -12,8 +12,11 @@ import { NATIVE_MENU_KEEP } from "./context-menu";
 /** portal 到 body 的「卫星浮层」白名单——落点在这些层里不算「点别处」,不触发
  *  编辑态的默认保存 / 确认态的收起。此前这串选择器以字面量抄在三处(board / inbox 的
  *  onDown 与这里的 armDismiss,顺序还不一致),新增留言层(.cm-overlay)三处都没登记;
- *  收成唯一登记点:**新增 portal 层改这里一处**。 */
-export const SATELLITE_LAYERS = ".hk-menu, .img-lightbox, .cm-overlay";
+ *  收成唯一登记点:**新增 portal 层改这里一处**。
+ *  ⚠ `.cm-panel` 不是 portal 层:随记那侧的留言就地长在卡片里(见 item-comments 的
+ *  PanelMode)。登记它是为了另一件事——那张卡上若同时开着标签/截止选择器,点留言框
+ *  不该把选择器收掉。浮层那一形里它是 `.cm-overlay` 的孩子,登记两次无害。 */
+export const SATELLITE_LAYERS = ".hk-menu, .img-lightbox, .cm-overlay, .cm-panel";
 
 export type Act = {
   /** 菜单行左侧文案。 */

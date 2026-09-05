@@ -1,11 +1,15 @@
-import { $, browser, expect } from "@wdio/globals";
+import { $, $$, browser, expect } from "@wdio/globals";
 import { invoke, tryInvoke, goNotebook, clearInbox, inboxAction } from "./support.js";
 
 // 条目留言(identity-plan §4,0035)。两层,与 item-images.e2e.js 同款分工:
 //  1) 命令层走真 IPC —— 写/读/删/计数、**keyset 分页两页**、后端四道拒(空正文 / 宿主
 //     不存在 / 非规范宿主 id / 200 KiB)原样传上来;
-//  2) UI 层 —— ⋯ 菜单「留言」开浮层(N=0 时它是唯一入口)、写一条 → 徽章 `💬 1` 出现 →
-//     点徽章重开 → 两拍销毁 → 徽章消失;宿主离开视图时浮层自己关掉。
+//  2) UI 层 —— ⋯ 菜单「留言」开层(N=0 时它是唯一入口)、写一条 → 徽章 `💬 1` 出现 →
+//     点徽章重开 → 两拍销毁 → 徽章消失;宿主离开视图时这一层自己关掉。
+//
+// ⚠ **`.cm-panel` 存在**这条判据答的是「有没有」,不是「长在哪」——随记侧已改成就地长在
+// 卡片里、看板侧仍是遮罩浮层,而两形共用这个类名。上面第 2 组因此对本次形变**全绿也说明
+// 不了什么**;分野由末尾那组单独钉(祖先链 + 有没有 .cm-overlay)。
 //
 // **e2e 造不出 `born_device = NULL` 的留言**(唯一来源是跨空间搬迁,而 e2e 恒单空间),
 // 故「作者未知」那一格只有 core 的行为测覆盖,这里如实不测。
@@ -190,5 +194,114 @@ describe("留言 · UI(徽章 → 浮层 → 两拍销毁)", () => {
       timeout: 8000,
       timeoutMsg: "宿主离开视图后留言浮层该关闭",
     });
+  });
+});
+
+// 两形分野(item-comments.ts 的 PanelMode):**判据是容器形状**——随记是全宽单列、展开只
+// 把自己下面的卡往下推;看板列 200px 起、列自己还要滚,同一份内容塞不进去。这一组量的就是
+// 「长在哪」,不是「有没有」。
+describe("留言 · 两形分野(随记就地展开 / 看板遮罩浮层)", () => {
+  before(async () => {
+    await goNotebook("inbox");
+    await clearInbox();
+  });
+
+  it("随记:就地长在卡片里,没有遮罩层", async () => {
+    await invoke("capture_note", { content: "E2E-留言-就地" });
+    await browser.execute(() => document.querySelector('.sidebar nav button[data-view="board"]').click());
+    await browser.execute(() => document.querySelector('.sidebar nav button[data-view="inbox"]').click());
+    await $(".note").waitForExist({ timeout: 5000 });
+
+    await inboxAction("E2E-留言-就地", "留言");
+    await $(".cm-panel").waitForExist({ timeout: 5000 });
+    const where = await browser.execute(() => {
+      const p = document.querySelector(".cm-panel");
+      return {
+        inCard: p.closest(".note") !== null,
+        parentIsBody: p.parentElement === document.body,
+        overlay: document.querySelector(".cm-overlay") !== null,
+        inline: p.classList.contains("cm-inline"),
+        // 展开期间单键必须让位:不然在留言框里打个 D 就把这张卡删了(suspended 判据)。
+        suspended: document.querySelector(".note").classList.contains("commenting"),
+      };
+    });
+    expect(where).toEqual({ inCard: true, parentIsBody: false, overlay: false, inline: true, suspended: true });
+
+    // 收起后那枚 commenting 得摘干净(留着 = 这张卡的单键从此永久失灵)。
+    await browser.keys("Escape");
+    await browser.waitUntil(async () => !(await $(".cm-panel").isExisting()), { timeout: 5000 });
+    expect(await browser.execute(() => document.querySelector(".note").classList.contains("commenting"))).toBe(false);
+  });
+
+  it("整列重渲不毁展开态:写完一条面板还在卡里,半句没发的话与焦点一起活下来", async () => {
+    await inboxAction("E2E-留言-就地", "留言");
+    await $(".cm-panel").waitForExist({ timeout: 5000 });
+
+    // 发一条 → onChanged → refresh() → `list.replaceChildren` 把卡片连同展开区一起换掉。
+    // 浮层那一形 portal 在 body 上,这一记碰不到它;就地展开必须自己重挂回来。
+    await $(".cm-input").setValue("第一句");
+    await $(".cm-send").click();
+    await $(".cm-item").waitForExist({ timeout: 5000 });
+    const after = await browser.execute(() => ({
+      panels: document.querySelectorAll(".cm-panel").length, // 重挂挂重了会留下两块
+      inCard: document.querySelector(".cm-panel")?.closest(".note") !== null,
+      badge: document.querySelector(".cm-badge")?.textContent ?? "",
+    }));
+    expect(after).toEqual({ panels: 1, inCard: true, badge: expect.stringContaining("1") });
+
+    // 草稿与焦点:得让**别处**真变一笔再发同步事件,指纹变了才走整列重渲——数据没变的话
+    // refocus 那条短路会 return,这一例就成了空测(量的是「重渲后还在」,不是「没重渲」)。
+    await $(".cm-input").setValue("这半句还没发");
+    await invoke("capture_note", { content: "E2E-留言-搅局" });
+    await browser.execute(() => window.__TAURI__.event.emit("sync-changed", { space: "main" }));
+    await browser.waitUntil(async () => (await $$(".note")).length >= 2, {
+      timeout: 8000,
+      timeoutMsg: "新卡没进来 = 那一记重渲根本没发生,后面三句会变成空测",
+    });
+    const kept = await browser.execute(() => ({
+      draft: document.querySelector(".cm-input")?.value ?? null,
+      focused: document.activeElement?.classList.contains("cm-input") ?? false,
+      inCard: document.querySelector(".cm-panel")?.closest(".note") !== null,
+    }));
+    expect(kept).toEqual({ draft: "这半句还没发", focused: true, inCard: true });
+
+    // 静止期这一层不许自己重建。重挂时若不把已读水位一起带回,新层的水位是空的 → 又推一次
+    // mark → onChanged → 重渲 → 再挂 → 再推:**无限循环**(肉眼是界面一直闪、CPU 跑满)。
+    // 上面那三格全都察觉不到它——每一轮草稿和焦点都还给了新层,断言照样绿。
+    await browser.execute(() => {
+      document.querySelector(".cm-panel").dataset.stillHere = "1";
+    });
+    await browser.pause(1500);
+    expect(await browser.execute(() => document.querySelector(".cm-panel")?.dataset.stillHere ?? null)).toBe("1");
+    await browser.keys("Escape");
+  });
+
+  it("看板:同一个共享件仍走遮罩浮层(列窄,就地展开塞不下)", async () => {
+    const id = await invoke("create_task", { title: "E2E-留言-看板卡" });
+    await invoke("add_item_comment", { itemId: id, content: "看板上的一句" });
+    await browser.execute(() => document.querySelector('.sidebar nav button[data-view="board"]').click());
+    await $(".tcard .cm-badge").waitForExist({ timeout: 5000 });
+    // 点不到时把现场抄下来(几何 / 可见性 / 那个点上真正接住点击的是谁),别只留一句
+    // 「did not become interactable」——那句话答不出是被裁了、被盖了,还是还在入场动画里。
+    const probe = await browser.execute(() => {
+      const b = document.querySelector(".tcard .cm-badge");
+      const r = b.getBoundingClientRect();
+      const hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+      const cs = getComputedStyle(b);
+      return { w: r.width, h: r.height, x: Math.round(r.x), y: Math.round(r.y), hit: hit?.className ?? null, vis: cs.visibility, op: cs.opacity };
+    });
+    console.log("[badge probe]", JSON.stringify(probe));
+    await $(".tcard .cm-badge").click();
+    await $(".cm-panel").waitForExist({ timeout: 5000 });
+    const where = await browser.execute(() => {
+      const p = document.querySelector(".cm-panel");
+      return {
+        overlay: p.parentElement?.classList.contains("cm-overlay") ?? false,
+        inCard: p.closest(".tcard") !== null,
+        inline: p.classList.contains("cm-inline"),
+      };
+    });
+    expect(where).toEqual({ overlay: true, inCard: false, inline: false });
+    await browser.keys("Escape");
   });
 });
