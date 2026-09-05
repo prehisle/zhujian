@@ -264,6 +264,10 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
   // 重挂那一记要等卡片**真的进了文档**才做(focus / scrollIntoView 对游离节点是空操作),
   // 所以 row() 只把它存在这里,由 refresh 在 list.replaceChildren 之后执行。
   let restoreCommentRun: (() => void) | null = null;
+  // 上一发真正渲染进列表的条目 id。只用来判「这张卡该不该播入场动画」(见 row() 与
+  // .note.fresh)。⚠ 每发 refresh 末尾整个换掉:切 tab / 换筛选后列上是另一批卡,那时
+  // 全体重播才是对的(那是真的入场)。
+  let renderedIds = new Set<string>();
   // in-flight 闸(ui-audit P0 #2)在模块级(共享编排件):refresh 会重建 bar 并把草稿
   // 回灌进新框,新 bar 的 Enter 也必须被同一把闸挡住;闸跨 mount 才挡得住「保存中切走
   // 再回来」(codex P1 审 H2)。
@@ -469,6 +473,10 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
   //   archived — 还原/彻底删除;冻结,不可编辑/转待办/归纳。
   function row(item: CardItem, mode: Mode): HTMLElement {
     const note = el("article", { className: mode === "archived" ? "note archived" : "note" });
+    // 入场动画只给「上一发还不在列上」的卡(601 补;CSS 那半在 .note.fresh 上写着为什么)。
+    // 每次 refresh 都是整列 replaceChildren ⇒ 卡片恒是新 DOM ⇒ 不按 id 判就等于每次重绘
+    // 都当入场演一遍。首次渲染 renderedIds 是空的 ⇒ 全体 fresh,那才是真的入场。
+    if (!renderedIds.has(item.id)) note.classList.add("fresh");
     if (item.id === pulseId) {
       pulseId = null;
       note.classList.add("just-born");
@@ -1294,6 +1302,9 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
               pct: Math.round((stats.converted / stats.born_inbox) * 100),
             })
           : t("inbox.weekStatsNoRatio", { n: stats.captured_week });
+      // 这一发真的画成卡片的那批(空态 / 筛空时就是空)。⚠ 必须在 row() 全部调用完之后
+      // 才写回 renderedIds —— row() 读的是**上一发**那份,提前写等于把 fresh 判据抹平。
+      let painted: string[] = [];
       if (active === "ideas") {
         // 筛选行:有想法才出现(同看板);pills 计数从全量想法派生(不随文本过滤
         // 收缩,三维正交——口径在共享件 filter-bar.ts,与看板同源)。时间轴(461)
@@ -1349,12 +1360,17 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
             group!.append(row(i, "ideas"));
           }
           list.replaceChildren(bar, tl);
+          painted = shown.map((i) => i.id);
         }
       } else {
         filterRow.hidden = true; // 回收站不筛(同看板的回收站/归档视图)
         if (archived.length === 0) renderEmpty("archived");
-        else list.replaceChildren(trashBar(archived.length), ...archived.map((a) => row(a, "archived")));
+        else {
+          list.replaceChildren(trashBar(archived.length), ...archived.map((a) => row(a, "archived")));
+          painted = archived.map((a) => a.id);
+        }
       }
+      renderedIds = new Set(painted);
       // 跳转定位:落 DOM 后滚到高亮卡(row() 渲染时已消费 locateId 加上 .just-located)。
       if (focus) list.querySelector<HTMLElement>(".just-located")?.scrollIntoView({ block: "center" });
       // 回收站 tab 没有输入框:草稿过桥进模块态,切回想法 tab 由 composeBar 灌回
@@ -1388,6 +1404,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       // 这一发没渲染成卡片:两格重挂登记就地作废,别让下一发拿着指向旧 DOM 的闭包去展开。
       restoreComment = null;
       restoreCommentRun = null;
+      renderedIds = new Set(); // 列表被错误页换掉了:下一发那批确实是「重新入场」,该播动画
       disarmConfirm(); // 换错误页也是整批替换:在场确认的文档级监听一并收走(codex 二审 M)
       renderError(String(err));
     }

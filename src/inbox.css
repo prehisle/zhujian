@@ -172,6 +172,13 @@
   background: linear-gradient(180deg, var(--raised), var(--raised-edge));
   box-shadow: var(--card-shadow);
   transition: opacity 0.18s, border-color 0.16s, transform 0.18s, max-height 0.22s;
+}
+/* ⭐ **入场动画只给「这一发才出现」的卡**(601 补)。此前挂在 `.note` 上 = 每次 `refresh` 都播:
+   而 refresh 走 `list.replaceChildren`,**每张卡都是新 DOM** ⇒ 写一条留言 / 打个标签,整列
+   一起淡入闪一下。以前留言是遮罩浮层、注意力不在身后,这一格没人计较;改成就地展开后它
+   闪在眼皮底下(用户实测点名的第 1 条)。判据由 `inbox.ts` 的 `renderedIds` 给:上一发就在
+   列上的卡不挂 `.fresh`,原地保持不动。⛔ 别改回无条件播 —— 那不是「入场」,是重绘。 */
+.v-inbox .note.fresh {
   animation: rise 0.3s ease both;
 }
 .v-inbox .note:hover { border-color: var(--line-strong); }

@@ -1287,7 +1287,11 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         if (sig) meta.root.append(sig);
         // 留言徽章(§4.7):N=0 不显(那时的入口在 ⋯ 菜单的「留言」)。回收站/归档册
         // 不铺——同署名的铺开范围。
-        const badge = commentBadge(mountSpace, item.id, () => void load());
+        // ⭐ 第 4 个实参 = 宿主正文,画在浮层顶上:居中浮层会盖住这张卡本身(601 补,用户
+        // 实测「卡在中间时留言框里看不到原内容」)。⛔ 别省。
+        const badge = commentBadge(mountSpace, item.id, () => void load(), () =>
+          openComments(mountSpace, item.id, () => void load(), item.title),
+        );
         if (badge) meta.root.append(badge);
       }
       c.append(meta.root);
@@ -1401,7 +1405,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
           { label: t("board.due"), key: "S", run: meta.openDue },
           { label: t("board.priority"), key: "P", run: meta.openPri },
           // 留言(§4.7,与灵感同键):N=0 时卡片上没有徽章,这里是写第一条的唯一入口。
-          { label: t("board.comments"), key: "Y", run: () => openComments(mountSpace, item.id, () => void load()) },
+          { label: t("board.comments"), key: "Y", run: () => openComments(mountSpace, item.id, () => void load(), item.title) },
         ];
         // 左右邻居按**活着的**列算(同 moveCol:已删的列不是移动目标)。卡自己在一个已删
         // 的列里时 `i < 0` ⇒ 两条都不出 —— 那是对的:它只能被拖走或走别的动作。

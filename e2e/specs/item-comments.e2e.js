@@ -262,8 +262,12 @@ describe("留言 · 两形分野(随记就地展开 / 看板遮罩浮层)", () =
       draft: document.querySelector(".cm-input")?.value ?? null,
       focused: document.activeElement?.classList.contains("cm-input") ?? false,
       inCard: document.querySelector(".cm-panel")?.closest(".note") !== null,
+      // 重渲后**原本就在列上**的卡不许挂 .fresh —— 挂了就会重播入场淡入,那就是「整列闪
+      // 一下」。⚠ 这一格与上面三格不同族:那三格答「状态活下来了吗」,这格答「活下来的
+      // 那张有没有被当成新卡演一遍入场」。
+      freshOnHost: document.querySelector(".cm-panel")?.closest(".note")?.classList.contains("fresh") ?? null,
     }));
-    expect(kept).toEqual({ draft: "这半句还没发", focused: true, inCard: true });
+    expect(kept).toEqual({ draft: "这半句还没发", focused: true, inCard: true, freshOnHost: false });
 
     // 静止期这一层不许自己重建。重挂时若不把已读水位一起带回,新层的水位是空的 → 又推一次
     // mark → onChanged → 重渲 → 再挂 → 再推:**无限循环**(肉眼是界面一直闪、CPU 跑满)。
@@ -273,6 +277,34 @@ describe("留言 · 两形分野(随记就地展开 / 看板遮罩浮层)", () =
     });
     await browser.pause(1500);
     expect(await browser.execute(() => document.querySelector(".cm-panel")?.dataset.stillHere ?? null)).toBe("1");
+    await browser.keys("Escape");
+  });
+
+  it("点开留言不引发整列重渲 —— 用户看见的那一下闪,本质就是这一记", async () => {
+    // 601 补的由头:用户实测「点击留言图标到展开显示出来,会肉眼可见地闪烁一下」。
+    // 根因不在展开本身,在**已读水位**:第一页画好就推一次 mark,推完无条件 onChanged
+    // ⇒ 整列 replaceChildren ⇒ 全体重播入场淡入。而本机写的留言 unread 恒 false,那一记
+    // 重渲什么可见状态都没改。⇒ 判据 = 卡片的 DOM 节点**根本没被换掉**。
+    await goNotebook("inbox");
+    await clearInbox();
+    const id = await invoke("capture_note", { content: "E2E-留言-不闪" });
+    await invoke("add_item_comment", { itemId: id, content: "点开我不该闪" });
+    await browser.execute(() => document.querySelector('.sidebar nav button[data-view="board"]').click());
+    await browser.execute(() => document.querySelector('.sidebar nav button[data-view="inbox"]').click());
+    await $(".cm-badge").waitForExist({ timeout: 5000 });
+
+    // 在这一发的卡片上按个记号:整列重渲会连节点一起换掉,记号跟着没。
+    await browser.execute(() => {
+      document.querySelector(".note").dataset.sameNode = "1";
+    });
+    await $(".cm-badge").click();
+    await $(".cm-item").waitForExist({ timeout: 5000 });
+    await browser.pause(900); // 等 mark 那一发 IPC 回来(重渲若要发生,就在这段里)
+    const after = await browser.execute(() => ({
+      sameNode: document.querySelector(".note")?.dataset.sameNode ?? null,
+      panels: document.querySelectorAll(".cm-panel").length,
+    }));
+    expect(after).toEqual({ sameNode: "1", panels: 1 });
     await browser.keys("Escape");
   });
 
@@ -299,9 +331,12 @@ describe("留言 · 两形分野(随记就地展开 / 看板遮罩浮层)", () =
         overlay: p.parentElement?.classList.contains("cm-overlay") ?? false,
         inCard: p.closest(".tcard") !== null,
         inline: p.classList.contains("cm-inline"),
+        // ⭐ 浮层盖住宿主卡 ⇒ 宿主正文必须带进面板里(601 补,用户实测点名:卡在中间时
+        // 「留言框里看不到原内容,要看只能先关掉」)。inline 那侧不带,正文就在紧上方。
+        quote: p.querySelector(".cm-quote")?.textContent ?? null,
       };
     });
-    expect(where).toEqual({ overlay: true, inCard: false, inline: false });
+    expect(where).toEqual({ overlay: true, inCard: false, inline: false, quote: "E2E-留言-看板卡" });
     await browser.keys("Escape");
   });
 });

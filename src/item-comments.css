@@ -126,6 +126,24 @@
   color: var(--seal);
 }
 
+/* 宿主正文(只在浮层那一形):居中浮层会盖住看板卡本身,所以把「在给谁留言」带进来。
+   引用体 —— 左侧一道细线 + 淡一档的字色,与下面真正的留言拉开层级;长正文限高自滚,
+   ⛔ 别截断加省略号(看板卡的正文常常是一整段,截了等于没带)。 */
+.cm-quote {
+  margin: 0;
+  padding: 8px 14px 8px 12px;
+  border-left: 2px solid var(--seal-line);
+  margin-left: 12px;
+  max-height: 5.4em;
+  overflow: auto;
+  font-family: var(--font-serif);
+  font-size: var(--fs-13);
+  line-height: 1.6;
+  color: var(--ink-soft);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .cm-list {
   overflow: auto;
   padding: 6px 14px;

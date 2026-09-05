@@ -128,6 +128,7 @@ function openPanel(
   onChanged: () => void,
   mode: PanelMode,
   host: HTMLElement | null,
+  hostText: string | null,
   opts: { draft?: string; marked?: string | null; focus?: boolean; remount?: boolean; onClose?: () => void } = {},
 ): void {
   open?.close(); // 单层:再开一个先关掉旧的(它的会话号随即作废)
@@ -144,11 +145,17 @@ function openPanel(
     value: opts.draft ?? "",
   });
   const send = el("button", { className: "cm-send", textContent: t("comments.send") });
+  // ⭐ **浮层那一形要把宿主正文带进来**(601 补,用户实测点名):看板卡在中间时,居中浮层
+  // 正好盖住它 ⇒ 「在给谁留言、他写的是什么」当场看不到,想看只能先关掉这一层。⇒ 留言与
+  // 它注解的内容必须同框。⚠ inline 那一形**刻意不带**:宿主正文就在紧上方一行,再抄一遍
+  // 是纯冗余(这也正是两形分野的同一条判据 —— 谁提供「在场感」,靠位置还是靠带进来)。
+  const quote = mode === "overlay" && hostText ? el("p", { className: "cm-quote", textContent: hostText }) : null;
   const panel = el("div", { className: mode === "inline" ? "cm-panel cm-inline" : "cm-panel" }, [
     el("header", { className: "cm-head" }, [
       el("h3", { className: "cm-title", textContent: t("comments.title") }),
       el("button", { className: "cm-close", textContent: "✕", title: t("comments.closeTitle") }),
     ]),
+    ...(quote ? [quote] : []),
     list,
     more,
     err,
@@ -179,10 +186,17 @@ function openPanel(
     const top = page.rows[0]?.id;
     if (!top || top === lastMarked) return;
     lastMarked = top;
+    // ⭐ **推完要不要叫宿主重渲,看那枚红点本来亮不亮**(601 补:用户实测「一点开就闪一下」)。
+    // `onChanged` 在两个视图里都是**整列重渲**;红点没亮时推水位是纯 no-op,可见状态一个
+    // 字都不会变,那一记重渲就是白闪 —— 而就地展开那一形里它闪在用户眼皮底下(浮层年代
+    // 被遮罩盖着,同样在闪,只是看不见)。亮着才熄,熄一次值一记重渲。
+    const wasUnread = counts !== null && counts.space === space && counts.map.get(itemId)?.unread === true;
     // 纯本地簿记:写失败唯一后果是红点多亮一轮,弹给用户反而莫名其妙 —— 记 console 即可
     // (这不是「静默吞错」:数据面命令的失败仍然全部上屏,这里吞的只是装饰的簿记)。
     invokeInSpace(space, "mark_item_comments_seen", { itemId, seenId: top })
-      .then(() => onChanged())
+      .then(() => {
+        if (wasUnread) onChanged();
+      })
       .catch((e) => console.error("留言已读水位没推上去:", e));
   }
   function renderRow(c: Comment): HTMLElement {
@@ -332,9 +346,11 @@ function openPanel(
   }
 }
 
-/** 居中浮层(看板)。徽章点击与 ⋯ 菜单「留言」共用这一个入口。 */
-export function openComments(space: string, itemId: string, onChanged: () => void): void {
-  openPanel(space, itemId, onChanged, "overlay", null);
+/** 居中浮层(看板)。徽章点击与 ⋯ 菜单「留言」共用这一个入口。
+ *  `hostText` = 宿主条目的正文,画在面板顶上。⛔ 别省 —— 居中浮层会盖住宿主卡本身,
+ *  不带进来的话「在给谁留言」要靠关掉这一层才看得到(601 补,用户实测点名)。 */
+export function openComments(space: string, itemId: string, onChanged: () => void, hostText?: string): void {
+  openPanel(space, itemId, onChanged, "overlay", null, hostText ?? null);
 }
 
 /** 卡片内就地展开(随记)。`host` = 卡片里那个空容器,面板直接长在它下面。
@@ -351,7 +367,7 @@ export function openInlineComments(
   onChanged: () => void,
   opts: { draft?: string; marked?: string | null; focus?: boolean; remount?: boolean; onClose?: () => void } = {},
 ): void {
-  openPanel(space, itemId, onChanged, "inline", host, opts);
+  openPanel(space, itemId, onChanged, "inline", host, null, opts);
 }
 
 /** 当前就地展开着的是哪条、框里有什么没发出去的话、已读水位推到哪儿、光标在不在框里。
