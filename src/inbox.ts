@@ -795,7 +795,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         }
       };
       // 点这张卡以外的任何地方 = 默认保存(需求:点别处即提交)。落点在本卡内(文本框 /
-      // 缩略图 / 历史 / 提示行)不算离开;落在看大图遮罩、别卡的 ⋯ 菜单浮层、留言浮层(portal 到
+      // 缩略图 / 历史 / 提示行)不算离开;落在看大图遮罩、别卡的 ⋯ 菜单浮层、看板那侧的留言浮层(portal 到
       // body)也放行——那是编辑态的卫星 UI,不该误触发保存(白名单=SATELLITE_LAYERS,一处登记)。
       const onDown = (e: MouseEvent): void => {
         const t = e.target as HTMLElement;
