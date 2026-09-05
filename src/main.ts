@@ -12,7 +12,6 @@ import { armAppContextMenu } from "./context-menu";
 import { wireChecklistInput } from "./checklist-input";
 
 const input = document.getElementById("capture") as HTMLTextAreaElement;
-wireChecklistInput(input); // Shift+Enter 续待办项 / Ctrl+L 起一条(562)
 const slip = document.querySelector(".slip") as HTMLElement;
 const imagesBar = document.getElementById("cap-images") as HTMLElement;
 const errLine = document.getElementById("cap-err") as HTMLElement;
@@ -578,6 +577,13 @@ input.addEventListener("keydown", async (e) => {
     }
   }
 });
+
+// Shift+Enter 续待办项 / Ctrl+L 起一条 / Tab 缩进(562,600 添 Tab)。
+// ⛔ **必须挂在上面那条 keydown 之后**(600,原本在文件开头):`preventDefault()` 拦不住
+// 同一元素上的其它监听 —— 斜杠命令面板开着时 Tab 是「执行选中的命令」,先挂的先跑、这边
+// 认 `defaultPrevented` 让位;挪回开头就变成「缩进与执行命令同时发生」。⚠ 另四个入口的
+// 竞争者都是**文档级**监听(元素级天然先跑),只有这个框上挂着第二条元素级的。
+wireChecklistInput(input);
 
 async function dismiss(): Promise<void> {
   input.value = "";

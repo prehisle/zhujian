@@ -306,7 +306,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
   const manageColsBtn = view.querySelector("#manage-cols") as HTMLButtonElement;
   const compose = view.querySelector("#compose") as HTMLElement;
   const composeInput = view.querySelector("#compose-input") as HTMLTextAreaElement;
-  wireChecklistInput(composeInput); // Shift+Enter 续待办项 / Ctrl+L 起一条(562)
+  wireChecklistInput(composeInput); // Shift+Enter 续待办项 / Ctrl+L 起一条 / Tab 缩进(562,600)
   const composeAdd = view.querySelector("#compose-add") as HTMLButtonElement;
   const composeClose = view.querySelector("#compose-close") as HTMLButtonElement;
   const composeErr = view.querySelector("#compose-err") as HTMLElement;
@@ -1526,7 +1526,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     function openEdit(): void {
       c.draggable = false;
       const input = el("textarea", { className: "edit-input", rows: 1, value: item.title });
-      wireChecklistInput(input); // Shift+Enter 续待办项 / Ctrl+L 起一条(562)
+      wireChecklistInput(input); // Shift+Enter 续待办项 / Ctrl+L 起一条 / Tab 缩进(562,600)
       const err = el("span", { className: "edit-err" });
 
       // 配图编辑器:在标题框粘贴截图(Ctrl+V)→ 挂为下一张「图N」;缩略图可删(编号不复用)。

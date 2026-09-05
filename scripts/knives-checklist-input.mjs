@@ -38,8 +38,11 @@ const KNIVES = [
   ["起一条H 摘标记顺手把前导空白全去掉(该逮到:多打的空格该留着)",
     "${p.indent}${p.rest.replace",
     "${p.indent}${p.rest.trimStart()}${\"\".replace"],
-  ["起一条I 单行选区的下限用 0 而不是本行行首(该逮到:摘掉时光标跑到上一行)",
-    "Math.max(lo, x + delta)",
+  // ⚠ 600 起这把砍的是**两处共用**的那个算子(`lineClamp`)——「起一条」与「缩进」
+  // 原本各写一份一模一样的夹取,而 `String.replace` 只换第一处 ⇒ 后写的那份会无声无息
+  // 地没人守。提成一份之后这一刀该同时红在两族用例上。
+  ["共用I 单行选区的下限用 0 而不是本行行首(该逮到:摘掉 / 反缩进时光标跑到上一行)",
+    "Math.max(ls, x + delta)",
     "Math.max(0, x + delta)"],
   ["起一条K lineBoundsAt 不短路 pos===0(该逮到:首字符是换行那格)",
     "const start = pos === 0 ? 0 : value.lastIndexOf",
@@ -47,6 +50,23 @@ const KNIVES = [
   ["区间J 后缀回头吃掉前缀已认的部分(该逮到:重复字符那两格)",
     "    s < before.length - p &&\n    s < after.length - p &&",
     "    s < before.length &&\n    s < after.length &&"],
+  // 缩进 / 反缩进(600)。⭐ 头两把守的是**别把 Tab 吃掉**那条命 —— 它是键盘用户离开
+  // 输入框的唯一通路,接管面宽一寸就是把人关在框里,而那种坏法在界面上一声不响。
+  ["缩进L 不涉及待办项也接管(该逮到:普通正文 / 裸 `- 文字` / 整块普通正文那三格 null)",
+    "  if (!lines.some((l) => parseChecklistLine(l) !== null)) return null;",
+    "  if (false) return null;"],
+  ["缩进M 一个字都没变也接管(该逮到:两格「已经顶格 → null」)",
+    "  if (out.every((l, i) => l === lines[i])) return null;",
+    "  if (false) return null;"],
+  ["缩进N 反缩进不看实有的缩进、一律削满一级(该逮到:只缩一个空格 / 制表符那两格)",
+    "  return Math.min(INDENT.length, leadingIndent(line).length);",
+    "  return INDENT.length;"],
+  ["缩进O 多行里的空行也跟着推(该逮到:空行原样那格)",
+    "    if (l.trim() === \"\") return l;\n    return deeper",
+    "    if (false) return l;\n    return deeper"],
+  ["缩进P 一级只推一个空格(该逮到:用户拍板的两个空格那几格)",
+    "const INDENT = \"  \";",
+    "const INDENT = \" \";"],
 ];
 
 let bad = 0;

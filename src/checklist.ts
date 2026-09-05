@@ -47,8 +47,9 @@ export function toggleChecklistLine(content: string, lineIndex: number): string 
 }
 
 // ---------------------------------------------------------------------------
-// 快速输入(562):打清单时别一个字一个字敲 `- [ ] `。两件事,都是**编辑器辅助**——
-// 用户看得见改了什么、一个退格/一次撤销就能回去。
+// 快速输入(562;600 添缩进那记):打清单时别一个字一个字敲 `- [ ] `、也别为了起一级
+// 手挪光标去行首敲空格。三件事,都是**编辑器辅助** —— 用户看得见改了什么、一个退格/一次
+// 撤销就能回去。
 //
 // ⛔ **不做「打 `- ` 自动补成 `- [ ] `」** —— 那是背着人改用户正在打的字,且普通列表
 // 从此每次都要退格。续行与快捷键是用户主动按出来的,性质不同(用户 2026-09-01 拍板)。
@@ -64,6 +65,13 @@ export type ChecklistEdit = {
 /** 未勾的标记,含尾随那个空格 —— 插入的永远是它(新写的一项当然还没做)。 */
 const MARK = "- [ ] ";
 
+/** 一级缩进 = 两个空格(用户 2026-09-05 拍板)。
+ *
+ *  ⛔ **插空格不插制表符**:画的那半按**字符数**算缩进(`--ck-indent`,一字符 = 1em),
+ *  一个制表符在那儿只算一级、与一个空格同宽,可它在输入框里显示成一大格 —— 编辑时看见
+ *  的缩进与存下来看见的对不上。 */
+const INDENT = "  ";
+
 /** `pos` 所在那一行在 `value` 里的 [起, 止)(止 = 行尾换行符之前)。
  *
  *  ⚠ `pos === 0` 必须短路:`lastIndexOf` 的负 fromIndex 会被夹回 0,于是首字符正好是
@@ -77,6 +85,15 @@ function lineBoundsAt(value: string, pos: number): [number, number] {
 /** 行首那截缩进(空格 / 制表符)。 */
 function leadingIndent(line: string): string {
   return /^[ \t]*/.exec(line)![0];
+}
+
+/** 单行改写之后拿新选区端点的算子:随该行长度变化平移,并夹在**这一行之内**。
+ *
+ *  ⛔ 下限是**本行行首**(`ls`)不是 0 —— 用 0 的话,光标本来就在标记里(或缩进里)时,
+ *  一记摘标记 / 反缩进会把它甩到上一行去。⚠ 两处单行分支(起一条 / 缩进)共用这一份:
+ *  各留一份的话,阴性对照那把刀只砍得到先出现的那一处,另一处就无声无息了。 */
+function lineClamp(ls: number, lineLen: number, delta: number): (x: number) => number {
+  return (x) => Math.min(ls + lineLen, Math.max(ls, x + delta));
 }
 
 /** 按下「换行那一记」(桌面 = Shift+Enter,安卓 = 软键盘回车)时的续行。
@@ -141,10 +158,52 @@ export function toggleChecklistMarker(value: string, selStart: number, selEnd: n
     return { value: next, selStart: ls, selEnd: ls + block.length };
   }
   // 单行:选区两端随该行长度变化平移,并夹在这一行之内(光标本来就在标记里时不许跑出去)。
-  const delta = out[0].length - lines[0].length;
-  const lo = ls;
-  const hi = ls + out[0].length;
-  const clamp = (x: number): number => Math.min(hi, Math.max(lo, x + delta));
+  const clamp = lineClamp(ls, out[0].length, out[0].length - lines[0].length);
+  return { value: next, selStart: clamp(selStart), selEnd: clamp(selEnd) };
+}
+
+/** 反缩进时该从行首削掉几个字符:一级封顶,但绝不越过实有的那点缩进。
+ *
+ *  ⚠ 按**字符**削,不按「一个制表符 = 一级」削 —— 画的那半就是按字符数算的,且用户手打
+ *  的缩进常常只有一个空格,那时该削的就是那一个。 */
+function outdentWidth(line: string): number {
+  return Math.min(INDENT.length, leadingIndent(line).length);
+}
+
+/** Tab(`deeper` = true)/ Shift+Tab(false):把光标那一行(或选中的那几行)推进一级 /
+ *  退回一级。缩进本来就是待办清单的一等公民(画的那半把它化成整行左内边距、续行还会带出
+ *  同缩进),此前唯独没有「怎么起一级」那记手势 —— 只能自己把光标挪到行首手敲空格。
+ *
+ *  ⭐ **判据窄到「涉及的那几行里至少有一行是待办项」**,别的一概返回 `null` 让浏览器照旧
+ *  把焦点移走 —— Tab 是键盘用户离开输入框的**唯一通路**,无条件接管 = 把人关在框里。
+ *  ⭐ **一个字都没变也返回 `null`**(反缩进时已经顶格),那一记同样还给焦点。
+ *
+ *  接管之后选区跨几行就动几行,⚠ 空行原样留着(同 `toggleChecklistMarker`:给空行加两个
+ *  空格 = 正文里一行看不见的噪音)。⛔ 缩进不设上限:设了就得在某一级上「按了没反应」,
+ *  那是静默默认值;推过头看得见,Shift+Tab 退回来就是。 */
+export function indentChecklistLines(
+  value: string,
+  selStart: number,
+  selEnd: number,
+  deeper: boolean,
+): ChecklistEdit | null {
+  const [ls] = lineBoundsAt(value, selStart);
+  const [, le] = lineBoundsAt(value, selEnd);
+  const lines = value.slice(ls, le).split("\n");
+  if (!lines.some((l) => parseChecklistLine(l) !== null)) return null;
+  const out = lines.map((l) => {
+    if (l.trim() === "") return l;
+    return deeper ? INDENT + l : l.slice(outdentWidth(l));
+  });
+  if (out.every((l, i) => l === lines[i])) return null;
+  const block = out.join("\n");
+  const next = value.slice(0, ls) + block + value.slice(le);
+  if (lines.length > 1) {
+    // 跨行:选区盖住改写后的整块(同 toggleChecklistMarker —— 用户选了这几行,改完还该是这几行)。
+    return { value: next, selStart: ls, selEnd: ls + block.length };
+  }
+  // 单行:选区两端随该行长度变化平移,并夹在这一行之内(反缩进不许把光标甩到上一行去)。
+  const clamp = lineClamp(ls, out[0].length, out[0].length - lines[0].length);
   return { value: next, selStart: clamp(selStart), selEnd: clamp(selEnd) };
 }
 

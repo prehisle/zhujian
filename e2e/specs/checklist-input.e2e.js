@@ -1,16 +1,20 @@
 import { $, expect, browser } from "@wdio/globals";
 import { invoke, tryInvoke, goNotebook, clearInbox, openCompose, boardAction, typeText } from "./support.js";
 
-// 待办清单的**快速输入**(562,用户 561 那轮当场问的「`- [ ] ` 这种能比较快速的输入吗?」):
-// Shift+Enter 续出下一项、Ctrl+L 起一条 / 摘掉。
+// 待办清单的**快速输入**(562,用户 561 那轮当场问的「`- [ ] ` 这种能比较快速的输入吗?」;
+// 600 添缩进那记):Shift+Enter 续出下一项、Ctrl+L 起一条 / 摘掉、Tab / Shift+Tab 推进 /
+// 退回一级缩进。
 //
-// 纯逻辑(续行 / 起一条 / 最小改写区间)由 check-filter-parity 的 80 格两端同压 —— 这支
-// spec 一格都不重复那些,只钉**单测证明不了的那半**:
-//   ① 那两记键真的从 WebView2 走到了我们的处理器(Ctrl+L 没被别的 Ctrl 组合吃掉、
-//      Shift+Enter 没被五个入口那道「Enter = 提交」的文档级监听抢走);
+// 纯逻辑(续行 / 起一条 / 缩进 / 最小改写区间)由 check-filter-parity 的两端同压钉着 ——
+// 这支 spec 一格都不重复那些,只钉**单测证明不了的那半**:
+//   ① 那几记键真的从 WebView2 走到了我们的处理器(Ctrl+L 没被别的 Ctrl 组合吃掉、
+//      Shift+Enter 没被五个入口那道「Enter = 提交」的文档级监听抢走、Tab 没被引擎
+//      当成「移焦点」直接吃掉);
 //   ② 落笔走的 `document.execCommand` 在这个引擎上**真的改得动 textarea**;
 //   ③ ⭐ 撤销栈还在 —— 选 execCommand 而不是 `ta.value = …` 的全部理由就是这一格,
-//      而它在纯逻辑里根本不可观测(纯逻辑答的是「新正文该长什么样」)。
+//      而它在纯逻辑里根本不可观测(纯逻辑答的是「新正文该长什么样」);
+//   ④ ⭐ **焦点去哪了**(600)—— 纯逻辑只答「接不接管」,而「接管了焦点就得留在框里」
+//      与「不接管焦点就得交出去(键盘用户走得出这个框)」只有真引擎答得了。
 // ⚠ 键必须走 `browser.keys` 真发:合成 KeyboardEvent 既不经引擎的快捷键分派,也不会让
 // execCommand 落在正确的焦点上 —— 那样测的是我们自己的假设,不是这台机器上的事实。
 // ⚠⚠ **562 那趟 Linux CI 逮到的两处引擎差异**(gate/win-desk/fdc5535,`e2e(Linux / WebKitGTK)`
@@ -53,6 +57,16 @@ describe("待办清单 · 快速输入", () => {
   const clearField = async () => {
     await browser.keys(["Control", "a"]);
     await browser.keys("Backspace");
+  };
+  // 焦点落在谁身上(600)。⚠ 走 `document.activeElement` 不走 `hasFocus()` ——
+  // `e2e/probes/linux-real-keys.sh` 记着:某些引擎里 webview 的 `hasFocus()` 恒 false,
+  // 而 activeElement 是对的。
+  const focusedClass = async () => browser.execute(() => document.activeElement?.className ?? "");
+  const expectFocus = async (want, inIt) => {
+    await browser.waitUntil(async () => (await focusedClass()).includes(want) === inIt, {
+      timeout: 8000,
+      timeoutMsg: `期望焦点${inIt ? "在" : "不在"} .${want},实得停在 ${JSON.stringify(await focusedClass())}`,
+    });
   };
 
   before(async () => {
@@ -100,6 +114,40 @@ describe("待办清单 · 快速输入", () => {
       timeoutMsg: "Enter 记下之后库里没出现这条",
     });
     expect(await ideaBody("E2ECKI-one")).toBe("- [ ] E2ECKI-one\n- [ ] two");
+  });
+
+  it("⭐ Tab 推进 / Shift+Tab 退回一级,而不是待办项时那一记照旧把焦点交出去", async () => {
+    await goNotebook("inbox");
+    const input = await $(".v-inbox .compose-input");
+    await input.waitForDisplayed({ timeout: 8000 });
+    await input.click();
+    await clearField();
+
+    await typeText("E2ECKI-tab");
+    await browser.keys(["Control", "l"]);
+    await expectValue(input, "- [ ] E2ECKI-tab");
+
+    // ⭐ 承重:Tab 真到了我们的处理器 —— 引擎对这一记的默认动作是「把焦点交给下一个控件」,
+    // 没被 preventDefault 拦住的话框里一个字都不会变、人也已经不在框里了。
+    await browser.keys("Tab");
+    await expectValue(input, "  - [ ] E2ECKI-tab");
+    await expectFocus("compose-input", true);
+
+    await browser.keys(["Shift", "Tab"]);
+    await expectValue(input, "- [ ] E2ECKI-tab");
+    await expectFocus("compose-input", true);
+
+    // ⭐ 承重(另一半,同样只有真引擎答得了):不是待办项时**放行** —— 正文一个字不动,
+    // 焦点照旧交出去。⛔ 这一格就是「别把键盘用户关在输入框里」那条命,别为了让它好看
+    // 而改成无条件接管 Tab。
+    await clearField();
+    await typeText("E2ECKI-plain");
+    await browser.keys("Tab");
+    await expectValue(input, "E2ECKI-plain");
+    await expectFocus("compose-input", false);
+
+    await input.click(); // 焦点已经交出去了,得先回到框里才清得掉草稿
+    await clearField();
   });
 
   // ⚠ **Linux 上跳过 —— 571 起理由变了,别再照旧读**:此前写的是「测不出 execCommand 有没有

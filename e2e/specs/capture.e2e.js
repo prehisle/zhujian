@@ -1,5 +1,5 @@
 import { browser, $, expect } from "@wdio/globals";
-import { invoke, goShow, clearInbox, waitItemImages } from "./support.js";
+import { invoke, goShow, clearInbox, waitItemImages, typeText } from "./support.js";
 
 describe("捕获 · 打字回车入 Inbox", () => {
   before(async () => {
@@ -281,6 +281,49 @@ describe("捕获 · 斜杠命令", () => {
     await invoke("purge_task", { id: taskId });
     const work = (await invoke("list_topics")).find((t) => t.title === "工作");
     if (work) await invoke("delete_topic", { id: work.id });
+  });
+
+  // 600:待办清单多了「Tab = 缩进」那一记,而这个框上**本来就**挂着一条吃 Tab 的监听
+  // (面板开着时 Tab = 执行选中的命令)。⚠ `preventDefault()` **拦不住同一元素上的其它
+  // 监听** —— 两条都会跑,于是「缩进」与「执行命令」会同时发生。接线那侧的处置 = 命令
+  // 那条先挂、缩进那条认 `defaultPrevented` 让位(`src/main.ts` 里 `wireChecklistInput`
+  // 的位置是承重的,不是随手摆的)。这一格就是那件事的判据。
+  it("⭐ 面板开着时 Tab 仍只是「执行命令」—— 缩进那记让位(两条监听不许都跑)", async () => {
+    await goShow("/index.html");
+    await clearInbox();
+    const ta = await $("#capture");
+    await ta.waitForExist({ timeout: 10000 });
+    await ta.click();
+
+    // 造出「首行像命令、光标却停在下面一行待办项上」这个局面。⛔ 中间那个换行只能用
+    // Shift+Enter(裸 Enter 在这个框里是「保存」),且得趁面板还没亮时打完 —— 面板一开,
+    // 带不带 Shift 的 Enter 都归它。
+    await browser.keys(["Control", "a"]);
+    await browser.keys("Backspace");
+    await typeText("x");
+    await browser.keys(["Shift", "Enter"]);
+    await typeText("- [ ] sub");
+    await browser.keys(["Control", "Home"]);
+    await browser.keys(["Shift", "End"]);
+    await typeText("/tas"); // 首行换成命令词(只配 /task 一条),面板亮
+    await browser.waitUntil(async () => !(await panelHidden()), {
+      timeout: 4000,
+      timeoutMsg: `首行换成 /tas 后命令面板未亮,实得正文 ${JSON.stringify(await ta.getValue())}`,
+    });
+
+    await browser.keys(["Control", "End"]); // 光标落回第二行(那条待办项)行尾
+    await browser.keys("Tab");
+
+    // ⭐ 承重:命令真被执行了(首行的命令词被消费掉、任务 chip 亮),而那条待办项
+    // **一个空格都没多** —— 多两个空格就是两条监听都跑了。
+    await $("#cap-mods .cap-chip.mode").waitForExist({ timeout: 4000 });
+    await browser.waitUntil(async () => (await ta.getValue()) === "\n- [ ] sub", {
+      timeout: 4000,
+      timeoutMsg: `期望 "\\n- [ ] sub",实得 ${JSON.stringify(await ta.getValue())}`,
+    });
+
+    await browser.keys(["Control", "a"]); // 别把草稿留给后面的例子
+    await browser.keys("Backspace");
   });
 });
 

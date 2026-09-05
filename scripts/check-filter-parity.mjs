@@ -103,18 +103,25 @@ const TOPICS_VIEW = { label: "标签视图", entry: "src/topics.ts", consts: [],
 // 「能不能并进已有某道」。同样是纯串处理,不碰文案,不给字典。
 // ⭐ 562 起多三个(快速输入那半):续行 / 起一条 / 最小改写区间。前两个是**用户手势的
 // 语义**、第三个是接线层落笔的算式,三者全是纯串处理,同样两端逐字对应、同样在这道闸里压。
-// ⚠ 名单里 `lineBoundsAt` / `leadingIndent` 是模块私有 helper —— 本闸按函数名从真源码里
-// 切片再拼,被切的那几个用到谁,谁就得一起切进来(缺了当场 ReferenceError,fail-closed)。
+// ⭐ 600 再多一个:缩进 / 反缩进(桌面 Tab / Shift+Tab)。⚠ **安卓那一端没有接线**
+// (软键盘上没有 Tab),但纯逻辑那份仍逐字对应 ⇒ 照样两端同压 —— 对拍的是「两份纯逻辑
+// 一不一样」,不是「两端都有这记手势」。
+// ⚠ 名单里 `lineBoundsAt` / `leadingIndent` / `lineClamp` / `outdentWidth` 是模块私有
+// helper —— 本闸按函数名从真源码里切片再拼,被切的那几个用到谁,谁就得一起切进来
+// (缺了当场 ReferenceError,fail-closed)。
 const CK_FNS = [
   "parseChecklistLine",
   "toggleChecklistLine",
   "lineBoundsAt",
   "leadingIndent",
+  "lineClamp",
   "continueChecklistOnNewline",
   "toggleChecklistMarker",
+  "outdentWidth",
+  "indentChecklistLines",
   "minimalEditRange",
 ];
-const CK_CONSTS = ["LINE_RE", "MARK"];
+const CK_CONSTS = ["LINE_RE", "MARK", "INDENT"];
 const CK_DESKTOP = { label: "桌面", entry: "src/checklist.ts", consts: CK_CONSTS, fns: CK_FNS };
 const CK_ANDROID = { label: "安卓", entry: "android/src/checklist.ts", consts: CK_CONSTS, fns: CK_FNS };
 
@@ -363,6 +370,38 @@ const MARKER_CASES = [
   ["选区在一行之内:选中的那几个字加完标记后**仍被选中**(选区跟着文字走)", "抬头\n|买菜|\n落款", "抬头\n- [ ] |买菜|\n落款"],
   ["选区两端在同一行内(行中间那一段)", "买|菜做|饭", "- [ ] 买|菜做|饭"],
 ];
+// 正文待办清单:缩进 / 反缩进(600,桌面 Tab / Shift+Tab;安卓软键盘上没有这一记,
+// 但纯逻辑仍两端逐字对应,故照样两端同压)。⭐ 承重三格 = **不涉及待办项就返回 null**
+// (⛔ 别吃掉 Tab —— 它是键盘用户离开输入框的唯一通路)、**已经顶格也返回 null**
+// (一个字都不会变的那一记同样还给焦点)、**多行里的空行原样留着**(别加出看不见的噪音)。
+// [描述, 带 `|` 的正文, 推进=true / 退回=false, 期望(带 `|` 的新正文)或 "null"]
+const INDENT_CASES = [
+  ["⭐ 普通正文 → null(⛔ 别吃掉 Tab,那是键盘用户走出输入框的唯一通路)", "随手记一笔|", true, "null"],
+  ["⭐ 裸 `- 文字` 也 → null(它不是待办项)", "- 买菜|", true, "null"],
+  ["待办项推进一级 = 行首两个空格", "- [ ] 买菜|", true, "  - [ ] 买菜|"],
+  ["已勾的项照样推得动", "- [x] 买菜|", true, "  - [x] 买菜|"],
+  ["再推一级就是四个", "  - [ ] 买菜|", true, "    - [ ] 买菜|"],
+  ["Shift+Tab 退回一级", "  - [ ] 买菜|", false, "- [ ] 买菜|"],
+  ["⭐ 已经顶格 → null(一个字都不会变,那一记还给焦点)", "- [ ] 买菜|", false, "null"],
+  ["⭐ 只缩了一个空格就只削那一个(⛔ 别越过实有的缩进)", " - [ ] 买菜|", false, "- [ ] 买菜|"],
+  ["制表符那种缩进削一个字符(画的那半也是按字符数算的)", "\t- [ ] 买菜|", false, "- [ ] 买菜|"],
+  ["光标在行首:推进后落在文字之前", "|- [ ] 买菜", true, "  |- [ ] 买菜"],
+  ["退回时光标不许甩出这一行(光标停在缩进里那种)", "  |- [ ] 买菜", false, "|- [ ] 买菜"],
+  // ⚠ 上面那格**量不到**夹取的下限到底是本行行首还是 0 —— 待办项就在第一行时两者恒等,
+  // 把 `Math.max(ls, …)` 砍成 `Math.max(0, …)` 一格都不会红(阴性对照当场逮到)。要让它
+  // 可观测,待办项得**不在第一行**、且光标停在正要被削掉的那截缩进里。同 `起一条` 那族的
+  // 「不许跑到上一行」那格,判据一致。
+  ["⭐ 退回时光标不许甩到**上一行**去(待办项不在首行、光标停在正被削掉的缩进里)", "抬头\n | - [ ] 买菜", false, "抬头\n|- [ ] 买菜"],
+  ["选区在一行之内:选中的那几个字推进后**仍被选中**", "- [ ] |买菜|", true, "  - [ ] |买菜|"],
+  ["多行正文里动的是**光标那一行**", "抬头\n- [ ] 买菜|\n落款", true, "抬头\n  - [ ] 买菜|\n落款"],
+  ["多行:整块一起动,选区盖住改写后的整块", "|- [ ] 买菜\n- [ ] 做饭|", true, "|  - [ ] 买菜\n  - [ ] 做饭|"],
+  ["⭐ 多行里的空行原样留着(⛔ 别给空行加两个空格 —— 正文里一行看不见的噪音)", "|- [ ] 买菜\n\n- [ ] 洗碗|", true, "|  - [ ] 买菜\n\n  - [ ] 洗碗|"],
+  ["⭐ 混排:只要有一行是待办项,整块就都动", "|- [ ] 买菜\n随手一句|", true, "|  - [ ] 买菜\n  随手一句|"],
+  ["⭐ 一行待办项都不涉及 → null(整块普通正文照旧移焦点)", "|买菜\n做饭|", true, "null"],
+  ["多行退回:削得动的削、顶格那行不动(⛔ 不是整块弃权)", "|  - [ ] 买菜\n- [ ] 做饭|", false, "|- [ ] 买菜\n- [ ] 做饭|"],
+  ["⭐ 多行全顶格 → null", "|- [ ] 买菜\n- [ ] 做饭|", false, "null"],
+  ["光标在最前面、而首字符正是换行(lineBoundsAt 的 pos=0 边角)", "|\n- [ ] 买菜", true, "null"],
+];
 // 最小改写区间(562):接线层拿它把「整份新正文」翻译成 execCommand 那一笔,撤销栈才留得住。
 // [描述, 老文本, 新文本, 期望 "from␟to␟插入的文字"]
 const RANGE_CASES = [
@@ -542,6 +581,11 @@ for (const end of CK_ENDS) {
   for (const [desc, input, want] of MARKER_CASES) {
     const { value, a, b } = cur(input);
     check(`[${end.label}] 起一条:${desc}`, serEdit(end.mod.toggleChecklistMarker(value, a, b)), want);
+  }
+  for (const [desc, input, deeper, want] of INDENT_CASES) {
+    const { value, a, b } = cur(input);
+    const r = end.mod.indentChecklistLines(value, a, b, deeper);
+    check(`[${end.label}] ${deeper ? "缩进" : "反缩进"}:${desc}`, r === null ? "null" : serEdit(r), want);
   }
   for (const [desc, before, after, want] of RANGE_CASES) {
     check(`[${end.label}] 改写区间:${desc}`, serRange(end.mod.minimalEditRange(before, after)), want);
