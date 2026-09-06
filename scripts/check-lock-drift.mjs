@@ -11,7 +11,10 @@
 //
 // 用法:node scripts/check-lock-drift.mjs
 // 全一致 = 退出 0;任一 crate 版本漂移 / npm 下载源非官方 / 点名的 lock 缺失 = 非零响亮。
-// 发版门禁之一(与 cargo audit 并列,见 docs/dev-and-testing.md)。
+// 发版门禁之一(见 docs/dev-and-testing.md)。⚠ 611 更正:此处原写「与 cargo audit 并列」——
+// 那句话从 88 轮起就不成立了(cargo audit 跑过一次就消失,没有任何自动边界在跑它)。
+// 611 起它接在 `.github/workflows/audit.yml` 夜跑上,跑手 `scripts/audit-deps.mjs`,
+// **是警报不是发版门禁**(红的来源是外部 advisory 数据库,不该挡发版与落地)。
 
 import { readFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";

@@ -1,0 +1,77 @@
+name: audit
+
+# ⭐ 611 立(backlog 测试与工装 82):**RustSec 依赖通告的夜跑警报**。
+#
+# 在此之前 `cargo audit` 在 80 轮被定成发布门禁、88 轮跑过一次之后**就消失了** ——
+# 不在十一道门禁、不在任何 workflow、不在 `branch-gate`。而 `server/Cargo.lock` 07-11 起、
+# `sync-proto` 07-09 起一个字没动过 ⇒ 密码学 / 网络栈上出通告,**今天没有任何边界会红**。
+# 607 审计当天离线跑一遍,桌面与安卓两份 lock 各有 1 条真通告躺着(rkyv,见脚本里的放行表)。
+#
+# ⛔⛔ **为什么自己一条 workflow,而不是塞进 `ci.yml` 夜跑那一格**(backlog 82 原文写的是
+#   「接进 android-nightly 或 ci.yml 夜跑一步」,做的时候查出来那条路有代价,原样记着):
+#     ①这道闸的红来自**外部数据库** —— 今晚 RustSec 收一条新通告,明早那棵一个字没动的树就红了;
+#     ②而 `branch-gate` 的「已知红拒」是**按 workflow 名 `ci` 判**的(`ciVerdict()` 里
+#       `r.name === "ci"`)⇒ 塞进 `ci.yml`,一条上游 crate 的通告就能把**三个环境的落地**全卡住,
+#       那正是 82 明写「⛔ 不进 preflight 发版闸(外部数据库驱动的红不该挡发版)」要躲的东西,
+#       只是它当时没看到 `land` 这一层也在读同一个名字。
+#   ⇒ 独立一条:红了只发失败邮件(同 `nightly*` 那条路,ci-plan §9 已核过这条路真发得出邮件),
+#     **不挡落地、不挡发版**。
+#
+# ⛔ 它**不是**第十二道门禁 —— 停止扩张线(383)那条问的是「这根轴上的最坏后果值不值」:
+#   值(错加密 / 错同步),但它没有 parser、没有登记表、没有阴性刀那套 200-800 行工装,
+#   只是把一条**早就存在的命令**接到自动边界上(memory `guards-must-bind-to-the-automatic-edge`)。
+
+permissions:
+  contents: read
+
+on:
+  # 每天 UTC 17:30 —— 刻意排在全部夜跑之前(android-nightly 18:30Z / nightly-e2e 19:00Z[关着] /
+  # ci 19:30Z),它三五分钟就完,不跟任何人抢 runner,红了的邮件也先到。
+  schedule:
+    - cron: "30 17 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: audit
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    # 同 `ci.yml` 那道:私有工作仓里那份是同一份文件,别在那边白烧 runner 分钟。
+    if: github.repository == 'prehisle/zhujian'
+    name: RustSec 依赖通告(七份 Cargo.lock)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # ⚠ 每晚现编一次 cargo-audit(约几分钟)。⛔ 刻意不换成「下载预编译二进制」或第三方
+      #    install action:这道闸自己就是供应链那根轴上的,给它加一个新的信任面是反着来的。
+      #    ⛔ 也刻意不缓存 `~/.cargo/bin/cargo-audit`:缓存键写不出「上游发新版了」这个信号,
+      #    而每晚一趟新鲜的工具正是这条线要的。
+      - name: 装 cargo-audit
+        run: cargo install cargo-audit --locked
+
+      # ⛔ 判绿不看 `cargo audit` 的退出码 —— 「发现漏洞」与「连不上 advisory-db」都退 1
+      #    (同 `kotlin-test-verdict` 那一课)。跑手解析 `--json`,三态:0 绿 / 1 红 / 2 判不出,
+      #    ⭐ **判不出也让这一格红** —— 没有结论就是没有结论,不许长得像绿的。
+      # ⛔ 别把它接进管道(`| tee`)—— 本仓栽过:管道丢退出码。
+      - name: 跑依赖通告闸
+        run: |
+          set +e
+          node scripts/audit-deps.mjs > audit.log 2>&1
+          status=$?
+          set -e
+          cat audit.log
+          {
+            echo '## RustSec 依赖通告闸'
+            echo '```'
+            cat audit.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit $status
