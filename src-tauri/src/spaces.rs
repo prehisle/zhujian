@@ -7,6 +7,8 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use rusqlite::Connection;
+use zhujian_core::clock::Clock;
 use zhujian_core::sync::supervisor::{ActiveRuntime, SpaceSupervisor};
 
 /// 逻辑与类型的共享层再导出:97 时这些都定义在本文件,上抬后消费方(lib.rs)
@@ -122,10 +124,43 @@ impl Spaces {
         self.sup.get(id)
     }
 
+    /// 同步业务写命令的**唯一合规写法**(610 起;此前 44 条命令各抄一份同一段板式):
+    /// 取写锁(先库后钟)→ **锁内**复核 ReopenRequired → 闭包在同一临界区里做「改数据 +
+    /// 发射 op + HLC 水位落盘」。复核放锁内是 codex 二轮 M2 的判据:旗与导入共临界区,
+    /// 排队在锁上的写拿到锁时旗必已在;锁前查有「查后落旗抢锁」竞态。
+    /// ⚠ 这不是编译器闸:`write_locks` 得留 pub 给手机壳,lib.rs 里裸 `write_locks` = 评审异味。
+    /// ⚠ 与 [`Self::get_writable`] 的分工:那口子是给**跨 await 的长命令**(配对 / 创号 /
+    /// 改服务器等,持 lifecycle 互斥、要拿 `Arc<ActiveRuntime>` 走 begin_op)用的,复核在
+    /// 锁前;两条本地派生表的裸写(`put_item_thumb` / `mark_item_comments_seen`)刻意不走本口子。
+    pub fn write<T>(
+        &self,
+        id: &str,
+        f: impl FnOnce(&mut Connection, &mut Clock) -> Result<T, String>,
+    ) -> Result<T, String> {
+        let rt = self.sup.get(id)?;
+        let (mut conn, mut clk) = rt.write_locks();
+        if let Some(e) = rt.restart_required() {
+            return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
+        }
+        f(&mut conn, &mut clk)
+    }
+
+    /// 同步读命令的取用口(610 起):只取库锁,不复核 ReopenRequired —— 那面旗只拒写与
+    /// 控制,读照常(space-entry-plan §3.2)。
+    pub fn read<T>(
+        &self,
+        id: &str,
+        f: impl FnOnce(&Connection) -> Result<T, String>,
+    ) -> Result<T, String> {
+        let rt = self.sup.get(id)?;
+        let conn = rt.db.lock().expect("db mutex poisoned");
+        f(&conn)
+    }
+
     /// 写命令/控制命令的取用口(space-entry-plan §3.2,codex 一轮 M3):transport 以
     /// ReopenRequired 收场(引导已提交、原连接还挂着引导库)后,**写与控制拒、读照常**
     /// ——状态面/浏览继续可用(与安卓分层一致),重启或重新装配即恢复(库本体已
-    /// 可信提交,数据无损)。
+    /// 可信提交,数据无损)。⚠ 同步的短写命令别用它,走 [`Self::write`](复核在锁内)。
     pub fn get_writable(&self, id: &str) -> Result<Arc<ActiveRuntime>, String> {
         let rt = self.sup.get(id)?;
         if let Some(e) = rt.restart_required() {

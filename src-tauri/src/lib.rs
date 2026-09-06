@@ -104,14 +104,9 @@ fn capture_note(
             return Err("目标空间已经变化,请确认后重新保存".into());
         }
     }
-    let rt = spaces.get(&space_id)?;
-    let (mut conn, mut clk) = rt.write_locks();
-    // ReopenRequired 复核在锁内(space-entry-plan §3.2,codex 二轮 M2:旗与导入共
-    // 临界区,排队在锁上的写拿到锁时旗必已在;锁前查有「查后落旗抢锁」竞态)。
-    if let Some(e) = rt.restart_required() {
-        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
-    }
-    notes::capture(&mut conn, &mut clk, &content)
+    spaces.write(&space_id, |mut conn, mut clk| {
+        notes::capture(&mut conn, &mut clk, &content)
+    })
 }
 
 /// One row for the Inbox browse window: the raw thought plus when it was caught.
@@ -125,18 +120,18 @@ struct InboxItem {
 /// List every thought still in the Inbox (newest first), for manual review.
 #[tauri::command]
 fn list_inbox(space_id: String, spaces: State<'_, Spaces>) -> Result<Vec<InboxItem>, String> {
-    let rt = spaces.get(&space_id)?;
-    let conn = rt.db.lock().expect("db mutex poisoned");
-    let mut notes = repo::inbox_items(&conn).map_err(|e| e.to_string())?;
-    notes.reverse(); // repo returns oldest-first; browsing wants newest-first
-    Ok(notes
-        .into_iter()
-        .map(|n| InboxItem {
-            id: n.id,
-            content: n.content,
-            created_at: n.created_at,
-        })
-        .collect())
+    spaces.read(&space_id, |conn| {
+        let mut notes = repo::inbox_items(&conn).map_err(|e| e.to_string())?;
+        notes.reverse(); // repo returns oldest-first; browsing wants newest-first
+        Ok(notes
+            .into_iter()
+            .map(|n| InboxItem {
+                id: n.id,
+                content: n.content,
+                created_at: n.created_at,
+            })
+            .collect())
+    })
 }
 
 /// One row for the "已整理" tab: a processed thought and the topics it is filed
@@ -162,24 +157,28 @@ struct ProcessedItem {
     topics: Vec<TopicItem>,
 }
 
-/// List every processed thought (newest first), for the "已整理" browse tab. Notes
-/// still in the Inbox are excluded — they live on the "待处理" tab.
-#[tauri::command]
-fn list_processed(space_id: String, spaces: State<'_, Spaces>) -> Result<Vec<ProcessedItem>, String> {
-    let rt = spaces.get(&space_id)?;
-    let conn = rt.db.lock().expect("db mutex poisoned");
-    let rows = repo::filed_items(&conn).map_err(|e| e.to_string())?;
-    Ok(rows
-        .into_iter()
-        .map(|n| ProcessedItem {
+/// core 的 `OrganizedRow` → 前端契约(610 起一处;此前三条 list 命令各抄一份字段映射)。
+impl From<repo::OrganizedRow> for ProcessedItem {
+    fn from(n: repo::OrganizedRow) -> Self {
+        ProcessedItem {
             id: n.id,
             content: n.content,
             created_at: n.created_at,
             stage: n.stage,
             born_device: n.born_device,
             topics: n.topics.into_iter().map(TopicItem::from).collect(),
-        })
-        .collect())
+        }
+    }
+}
+
+/// List every processed thought (newest first), for the "已整理" browse tab. Notes
+/// still in the Inbox are excluded — they live on the "待处理" tab.
+#[tauri::command]
+fn list_processed(space_id: String, spaces: State<'_, Spaces>) -> Result<Vec<ProcessedItem>, String> {
+    spaces.read(&space_id, |conn| {
+        let rows = repo::filed_items(&conn).map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(ProcessedItem::from).collect())
+    })
 }
 
 /// List every live idea — 未归类 and 已归类 together (newest first), for the merged
@@ -187,20 +186,10 @@ fn list_processed(space_id: String, spaces: State<'_, Spaces>) -> Result<Vec<Pro
 /// an untagged idea has an empty `topics`. Reuses ProcessedItem (chips render the same).
 #[tauri::command]
 fn list_ideas(space_id: String, spaces: State<'_, Spaces>) -> Result<Vec<ProcessedItem>, String> {
-    let rt = spaces.get(&space_id)?;
-    let conn = rt.db.lock().expect("db mutex poisoned");
-    let rows = repo::live_ideas(&conn).map_err(|e| e.to_string())?;
-    Ok(rows
-        .into_iter()
-        .map(|n| ProcessedItem {
-            id: n.id,
-            content: n.content,
-            created_at: n.created_at,
-            stage: n.stage,
-            born_device: n.born_device,
-            topics: n.topics.into_iter().map(TopicItem::from).collect(),
-        })
-        .collect())
+    spaces.read(&space_id, |conn| {
+        let rows = repo::live_ideas(&conn).map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(ProcessedItem::from).collect())
+    })
 }
 
 /// 灵感流转统计(纯派生、只算不存):本周捕获数 + 累计转待办比例的分子分母。
@@ -220,37 +209,37 @@ struct IdeaStatsItem {
 /// 空间不存在(链接来自本机没有的空间,或已彻底删除)。
 #[tauri::command]
 fn locate_item(space_id: String, item_id: String, spaces: State<'_, Spaces>) -> Result<Option<String>, String> {
-    let rt = spaces.get(&space_id)?;
-    let conn = rt.db.lock().expect("db mutex poisoned");
-    let axes = repo::item_axes(&conn, &item_id).map_err(|e| e.to_string())?;
-    Ok(axes.map(|(stage, archived, sealed)| {
-        let is_idea = stage == "inbox" || stage == "filed";
-        if sealed {
-            "sealed"
-        } else if archived {
-            if is_idea {
-                "trash-idea"
+    spaces.read(&space_id, |conn| {
+        let axes = repo::item_axes(&conn, &item_id).map_err(|e| e.to_string())?;
+        Ok(axes.map(|(stage, archived, sealed)| {
+            let is_idea = stage == "inbox" || stage == "filed";
+            if sealed {
+                "sealed"
+            } else if archived {
+                if is_idea {
+                    "trash-idea"
+                } else {
+                    "trash-task"
+                }
+            } else if is_idea {
+                "inbox"
             } else {
-                "trash-task"
+                "task"
             }
-        } else if is_idea {
-            "inbox"
-        } else {
-            "task"
-        }
-        .to_string()
-    }))
+            .to_string()
+        }))
+    })
 }
 
 #[tauri::command]
 fn idea_stats(space_id: String, week_start: String, spaces: State<'_, Spaces>) -> Result<IdeaStatsItem, String> {
-    let rt = spaces.get(&space_id)?;
-    let conn = rt.db.lock().expect("db mutex poisoned");
-    let s = repo::idea_stats(&conn, &week_start).map_err(|e| e.to_string())?;
-    Ok(IdeaStatsItem {
-        captured_week: s.captured_week,
-        born_inbox: s.born_inbox,
-        converted: s.converted,
+    spaces.read(&space_id, |conn| {
+        let s = repo::idea_stats(&conn, &week_start).map_err(|e| e.to_string())?;
+        Ok(IdeaStatsItem {
+            captured_week: s.captured_week,
+            born_inbox: s.born_inbox,
+            converted: s.converted,
+        })
     })
 }
 
@@ -269,48 +258,14 @@ struct TopicTreeItem {
     notes: Vec<InboxItem>,
 }
 
-/// Browse the knowledge structure by topic: every topic that holds at least one
-/// processed note, each carrying those notes (newest first). Read-only — pivots the
-/// 已整理 tab's flat note→topics timeline onto the topic axis.
-#[tauri::command]
-fn list_topic_tree(space_id: String, spaces: State<'_, Spaces>) -> Result<Vec<TopicTreeItem>, String> {
-    let rt = spaces.get(&space_id)?;
-    let conn = rt.db.lock().expect("db mutex poisoned");
-    let rows = repo::topics_with_notes(&conn).map_err(|e| e.to_string())?;
-    Ok(rows
-        .into_iter()
-        .map(|t| TopicTreeItem {
-            id: t.id,
-            title: t.title,
-            color: t.color,
-            position: t.position,
-            kind: t.kind,
-            notes: t
-                .notes
-                .into_iter()
-                .map(|n| InboxItem {
-                    id: n.id,
-                    content: n.content,
-                    created_at: n.created_at,
-                })
-                .collect(),
-        })
-        .collect())
-}
-
 /// Hard-delete one Inbox note. Only notes still in the Inbox can be removed —
 /// already-organized notes are immutable provenance. 73 起 UI 不再走这条路(删除统一
 /// 先进回收站);保留给命令层与 e2e 清库。
 #[tauri::command]
 fn delete_note(space_id: String, id: String, spaces: State<'_, Spaces>) -> Result<(), String> {
-    let rt = spaces.get(&space_id)?;
-    let (mut conn, mut clk) = rt.write_locks();
-    // ReopenRequired 复核在锁内(space-entry-plan §3.2,codex 二轮 M2:旗与导入共
-    // 临界区,排队在锁上的写拿到锁时旗必已在;锁前查有「查后落旗抢锁」竞态)。
-    if let Some(e) = rt.restart_required() {
-        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
-    }
-    notes::delete_inbox(&mut conn, &mut clk, &id)
+    spaces.write(&space_id, |mut conn, mut clk| {
+        notes::delete_inbox(&mut conn, &mut clk, &id)
+    })
 }
 
 /// Soft-delete a live idea into the 回收站 (灵感的「删除」— 73 起未归类与已归类同一
@@ -318,48 +273,28 @@ fn delete_note(space_id: String, id: String, spaces: State<'_, Spaces>) -> Resul
 /// intact. A task-stage / already-archived item affects 0 rows and fails fast.
 #[tauri::command]
 fn archive_note(space_id: String, id: String, spaces: State<'_, Spaces>) -> Result<(), String> {
-    let rt = spaces.get(&space_id)?;
-    let (mut conn, mut clk) = rt.write_locks();
-    // ReopenRequired 复核在锁内(space-entry-plan §3.2,codex 二轮 M2:旗与导入共
-    // 临界区,排队在锁上的写拿到锁时旗必已在;锁前查有「查后落旗抢锁」竞态)。
-    if let Some(e) = rt.restart_required() {
-        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
-    }
-    notes::archive(&mut conn, &mut clk, &id)
+    spaces.write(&space_id, |mut conn, mut clk| {
+        notes::archive(&mut conn, &mut clk, &id)
+    })
 }
 
 /// Restore an archived note from the 回收站 back to the 想法 list (its frozen stage —
 /// inbox or filed — is kept). Only an 'archived' note can be restored.
 #[tauri::command]
 fn restore_note(space_id: String, id: String, spaces: State<'_, Spaces>) -> Result<(), String> {
-    let rt = spaces.get(&space_id)?;
-    let (mut conn, mut clk) = rt.write_locks();
-    // ReopenRequired 复核在锁内(space-entry-plan §3.2,codex 二轮 M2:旗与导入共
-    // 临界区,排队在锁上的写拿到锁时旗必已在;锁前查有「查后落旗抢锁」竞态)。
-    if let Some(e) = rt.restart_required() {
-        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
-    }
-    notes::restore(&mut conn, &mut clk, &id)
+    spaces.write(&space_id, |mut conn, mut clk| {
+        notes::restore(&mut conn, &mut clk, &id)
+    })
 }
 
 /// List the 回收站 (archived notes, newest first) — same shape as 已整理 so chips
 /// still show. Reuses ProcessedItem.
 #[tauri::command]
 fn list_archived(space_id: String, spaces: State<'_, Spaces>) -> Result<Vec<ProcessedItem>, String> {
-    let rt = spaces.get(&space_id)?;
-    let conn = rt.db.lock().expect("db mutex poisoned");
-    let rows = repo::idea_trash(&conn).map_err(|e| e.to_string())?;
-    Ok(rows
-        .into_iter()
-        .map(|n| ProcessedItem {
-            id: n.id,
-            content: n.content,
-            created_at: n.created_at,
-            stage: n.stage,
-            born_device: n.born_device,
-            topics: n.topics.into_iter().map(TopicItem::from).collect(),
-        })
-        .collect())
+    spaces.read(&space_id, |conn| {
+        let rows = repo::idea_trash(&conn).map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(ProcessedItem::from).collect())
+    })
 }
 
 /// One search hit: a matched thought plus enough provenance to place it — its
@@ -384,19 +319,19 @@ fn search_notes(space_id: String, query: String, spaces: State<'_, Spaces>) -> R
     if q.is_empty() {
         return Err("搜索词不能为空".to_string());
     }
-    let rt = spaces.get(&space_id)?;
-    let conn = rt.db.lock().expect("db mutex poisoned");
-    let rows = repo::search_items(&conn, q).map_err(|e| e.to_string())?;
-    Ok(rows
-        .into_iter()
-        .map(|h| SearchHitItem {
-            id: h.id,
-            content: h.content,
-            created_at: h.created_at,
-            status: h.status,
-            topics: h.topics,
-        })
-        .collect())
+    spaces.read(&space_id, |conn| {
+        let rows = repo::search_items(&conn, q).map_err(|e| e.to_string())?;
+        Ok(rows
+            .into_iter()
+            .map(|h| SearchHitItem {
+                id: h.id,
+                content: h.content,
+                created_at: h.created_at,
+                status: h.status,
+                topics: h.topics,
+            })
+            .collect())
+    })
 }
 
 /// Permanently delete one archived note (彻底删除). Only notes already in the 回收站
@@ -406,28 +341,18 @@ fn search_notes(space_id: String, query: String, spaces: State<'_, Spaces>) -> R
 /// notes::purge).
 #[tauri::command]
 fn purge_note(space_id: String, id: String, spaces: State<'_, Spaces>) -> Result<(), String> {
-    let rt = spaces.get(&space_id)?;
-    let (mut conn, mut clk) = rt.write_locks();
-    // ReopenRequired 复核在锁内(space-entry-plan §3.2,codex 二轮 M2:旗与导入共
-    // 临界区,排队在锁上的写拿到锁时旗必已在;锁前查有「查后落旗抢锁」竞态)。
-    if let Some(e) = rt.restart_required() {
-        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
-    }
-    notes::purge(&mut conn, &mut clk, &id)
+    spaces.write(&space_id, |mut conn, mut clk| {
+        notes::purge(&mut conn, &mut clk, &id)
+    })
 }
 
 /// Empty the 回收站 (清空回收站): permanently delete every archived note (and sweep
 /// orphaned suggestions). Returns how many notes were removed, for the UI to report.
 #[tauri::command]
 fn purge_archived(space_id: String, spaces: State<'_, Spaces>) -> Result<usize, String> {
-    let rt = spaces.get(&space_id)?;
-    let (mut conn, mut clk) = rt.write_locks();
-    // ReopenRequired 复核在锁内(space-entry-plan §3.2,codex 二轮 M2:旗与导入共
-    // 临界区,排队在锁上的写拿到锁时旗必已在;锁前查有「查后落旗抢锁」竞态)。
-    if let Some(e) = rt.restart_required() {
-        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
-    }
-    notes::purge_all_archived(&mut conn, &mut clk)
+    spaces.write(&space_id, |mut conn, mut clk| {
+        notes::purge_all_archived(&mut conn, &mut clk)
+    })
 }
 
 /// One task card for the board: the todo plus its current column, due day,
@@ -530,10 +455,10 @@ impl From<zhujian_core::board::BoardColumnRow> for BoardColumn {
 /// 要哪一族由前端按 `kind` / `deleted` 分(`board::list_columns` 头注)。
 #[tauri::command]
 fn list_board_columns(space_id: String, spaces: State<'_, Spaces>) -> Result<Vec<BoardColumn>, String> {
-    let rt = spaces.get(&space_id)?;
-    let conn = rt.db.lock().expect("db mutex poisoned");
-    let rows = zhujian_core::board::list_columns(&conn).map_err(|e| e.to_string())?;
-    Ok(rows.into_iter().map(BoardColumn::from).collect())
+    spaces.read(&space_id, |conn| {
+        let rows = zhujian_core::board::list_columns(&conn).map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(BoardColumn::from).collect())
+    })
 }
 
 // ---- 列管理面(B-f 第 2 段,**纯桌面**:安卓只做读侧,2026-08-25 用户拍板) ------------
@@ -552,25 +477,19 @@ fn list_board_columns(space_id: String, spaces: State<'_, Spaces>) -> Result<Vec
 /// 新建一个任务列(落在最右)。返回新列 id。
 #[tauri::command]
 fn create_board_column(space_id: String, title: String, spaces: State<'_, Spaces>) -> Result<String, String> {
-    let rt = spaces.get(&space_id)?;
-    let (mut conn, mut clk) = rt.write_locks();
-    if let Some(e) = rt.restart_required() {
-        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
-    }
-    let facts = zhujian_core::board::gate::RuntimeFacts::observe(&spaces.sup, &space_id);
-    zhujian_core::board::create_column(&mut conn, &mut clk, &title, &facts)
+    spaces.write(&space_id, |mut conn, mut clk| {
+        let facts = zhujian_core::board::gate::RuntimeFacts::observe(&spaces.sup, &space_id);
+        zhujian_core::board::create_column(&mut conn, &mut clk, &title, &facts)
+    })
 }
 
 /// 给一列改名。系统列(灵感那两列)与已删的列由 core 拒。
 #[tauri::command]
 fn rename_board_column(space_id: String, id: String, title: String, spaces: State<'_, Spaces>) -> Result<(), String> {
-    let rt = spaces.get(&space_id)?;
-    let (mut conn, mut clk) = rt.write_locks();
-    if let Some(e) = rt.restart_required() {
-        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
-    }
-    let facts = zhujian_core::board::gate::RuntimeFacts::observe(&spaces.sup, &space_id);
-    zhujian_core::board::rename_column(&mut conn, &mut clk, &id, &title, &facts)
+    spaces.write(&space_id, |mut conn, mut clk| {
+        let facts = zhujian_core::board::gate::RuntimeFacts::observe(&spaces.sup, &space_id);
+        zhujian_core::board::rename_column(&mut conn, &mut clk, &id, &title, &facts)
+    })
 }
 
 /// 把一列拖到两个邻居之间(`prev_id`/`next_id`,None = 真·列端边界)。形同 `reorder_topic`。
@@ -582,25 +501,19 @@ fn reorder_board_column(
     next_id: Option<String>,
     spaces: State<'_, Spaces>,
 ) -> Result<(), String> {
-    let rt = spaces.get(&space_id)?;
-    let (mut conn, mut clk) = rt.write_locks();
-    if let Some(e) = rt.restart_required() {
-        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
-    }
-    let facts = zhujian_core::board::gate::RuntimeFacts::observe(&spaces.sup, &space_id);
-    zhujian_core::board::reorder_column(&mut conn, &mut clk, &id, prev_id.as_deref(), next_id.as_deref(), &facts)
+    spaces.write(&space_id, |mut conn, mut clk| {
+        let facts = zhujian_core::board::gate::RuntimeFacts::observe(&spaces.sup, &space_id);
+        zhujian_core::board::reorder_column(&mut conn, &mut clk, &id, prev_id.as_deref(), next_id.as_deref(), &facts)
+    })
 }
 
 /// 删一列 = 盖墓碑(行永不物理删除)。系统列 / 角色列 / 非空列由 core 逐条响亮拒。
 #[tauri::command]
 fn delete_board_column(space_id: String, id: String, spaces: State<'_, Spaces>) -> Result<(), String> {
-    let rt = spaces.get(&space_id)?;
-    let (mut conn, mut clk) = rt.write_locks();
-    if let Some(e) = rt.restart_required() {
-        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
-    }
-    let facts = zhujian_core::board::gate::RuntimeFacts::observe(&spaces.sup, &space_id);
-    zhujian_core::board::delete_column(&mut conn, &mut clk, &id, &facts)
+    spaces.write(&space_id, |mut conn, mut clk| {
+        let facts = zhujian_core::board::gate::RuntimeFacts::observe(&spaces.sup, &space_id);
+        zhujian_core::board::delete_column(&mut conn, &mut clk, &id, &facts)
+    })
 }
 
 /// 发送端闸此刻放不放行(列管理面据它决定给不给写入口、灰的理由是哪一句)。
@@ -624,18 +537,18 @@ struct BoardColumnGate {
 #[tauri::command]
 fn board_column_gate(space_id: String, spaces: State<'_, Spaces>) -> Result<BoardColumnGate, String> {
     use zhujian_core::board::gate::GateVerdict;
-    let rt = spaces.get(&space_id)?;
-    let conn = rt.db.lock().expect("db mutex poisoned");
-    let facts = zhujian_core::board::gate::RuntimeFacts::observe(&spaces.sup, &space_id);
-    let verdict = zhujian_core::board::gate::explain(&conn, &facts)?;
-    Ok(BoardColumnGate {
-        can_manage: matches!(verdict, GateVerdict::Open),
-        reason: verdict.reason().map(str::to_string),
-        blocked_by: match verdict {
-            GateVerdict::Open => None,
-            GateVerdict::ShutByConfigTransition => Some("config_transition"),
-            GateVerdict::ShutUntilPeersUpgrade => Some("peers"),
-        },
+    spaces.read(&space_id, |conn| {
+        let facts = zhujian_core::board::gate::RuntimeFacts::observe(&spaces.sup, &space_id);
+        let verdict = zhujian_core::board::gate::explain(&conn, &facts)?;
+        Ok(BoardColumnGate {
+            can_manage: matches!(verdict, GateVerdict::Open),
+            reason: verdict.reason().map(str::to_string),
+            blocked_by: match verdict {
+                GateVerdict::Open => None,
+                GateVerdict::ShutByConfigTransition => Some("config_transition"),
+                GateVerdict::ShutUntilPeersUpgrade => Some("peers"),
+            },
+        })
     })
 }
 
@@ -645,20 +558,20 @@ fn board_column_gate(space_id: String, spaces: State<'_, Spaces>) -> Result<Boar
 /// (see repo::list_tasks). Archived tasks (回收站) come from `list_archived_tasks`.
 #[tauri::command]
 fn list_tasks(space_id: String, spaces: State<'_, Spaces>) -> Result<Vec<TaskItem>, String> {
-    let rt = spaces.get(&space_id)?;
-    let conn = rt.db.lock().expect("db mutex poisoned");
-    let rows = repo::list_tasks(&conn).map_err(|e| e.to_string())?;
-    Ok(rows.into_iter().map(TaskItem::from).collect())
+    spaces.read(&space_id, |conn| {
+        let rows = repo::list_tasks(&conn).map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(TaskItem::from).collect())
+    })
 }
 
 /// Archived (soft-deleted) tasks for the board's 回收站, most-recently-archived
 /// first. Each keeps its pre-archive status (todo/doing/done).
 #[tauri::command]
 fn list_archived_tasks(space_id: String, spaces: State<'_, Spaces>) -> Result<Vec<TaskItem>, String> {
-    let rt = spaces.get(&space_id)?;
-    let conn = rt.db.lock().expect("db mutex poisoned");
-    let rows = repo::archived_tasks(&conn).map_err(|e| e.to_string())?;
-    Ok(rows.into_iter().map(TaskItem::from).collect())
+    spaces.read(&space_id, |conn| {
+        let rows = repo::archived_tasks(&conn).map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(TaskItem::from).collect())
+    })
 }
 
 /// Move a task between board columns (free movement among todo/doing/done in
@@ -666,21 +579,16 @@ fn list_archived_tasks(space_id: String, spaces: State<'_, Spaces>) -> Result<Ve
 /// it — see task.rs. An illegal or stale move fails fast, it is not silently dropped.
 #[tauri::command]
 fn update_task_status(space_id: String, id: String, to: String, spaces: State<'_, Spaces>) -> Result<(), String> {
-    let rt = spaces.get(&space_id)?;
-    let (mut conn, mut clk) = rt.write_locks();
-    // ReopenRequired 复核在锁内(space-entry-plan §3.2,codex 二轮 M2:旗与导入共
-    // 临界区,排队在锁上的写拿到锁时旗必已在;锁前查有「查后落旗抢锁」竞态)。
-    if let Some(e) = rt.restart_required() {
-        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
-    }
-    // 发送端闸的运行期事实(board-columns-plan §5;B-e 第 1 段)。**在写锁内现采**,
-    // 与上面那句 ReopenRequired 复核同一个理由(codex 二轮 M2:锁前查有「查后置位抢锁」
-    // 竞态)。⚠ 诚实边界:`config_transition_in_flight` 由 `lifecycle` 锁那条路置位,
-    // 与本空间的写锁不互斥 ⇒ 「刚采完、转换才开始」这个窗口仍在。§5.6 的顺序(**先置位、
-    // 再 retire**)与 supervisor 那条既有裁决(「切换/停机与业务写的互斥由壳编排」)一起
-    // 承重,⛔ 别为它新造第三把锁。
-    let facts = zhujian_core::board::gate::RuntimeFacts::observe(&spaces.sup, &space_id);
-    task::transition(&mut conn, &mut clk, &id, &to, &facts)
+    spaces.write(&space_id, |mut conn, mut clk| {
+        // 发送端闸的运行期事实(board-columns-plan §5;B-e 第 1 段)。**在写锁内现采**,
+        // 与上面那句 ReopenRequired 复核同一个理由(codex 二轮 M2:锁前查有「查后置位抢锁」
+        // 竞态)。⚠ 诚实边界:`config_transition_in_flight` 由 `lifecycle` 锁那条路置位,
+        // 与本空间的写锁不互斥 ⇒ 「刚采完、转换才开始」这个窗口仍在。§5.6 的顺序(**先置位、
+        // 再 retire**)与 supervisor 那条既有裁决(「切换/停机与业务写的互斥由壳编排」)一起
+        // 承重,⛔ 别为它新造第三把锁。
+        let facts = zhujian_core::board::gate::RuntimeFacts::observe(&spaces.sup, &space_id);
+        task::transition(&mut conn, &mut clk, &id, &to, &facts)
+    })
 }
 
 /// Reorder a card within (or into) a board column by drag-and-drop. `ordered_ids`
@@ -697,30 +605,25 @@ fn reorder_task(space_id: String,
     ordered_ids: Vec<String>,
     spaces: State<'_, Spaces>,
 ) -> Result<(), String> {
-    let rt = spaces.get(&space_id)?;
-    let (mut conn, mut clk) = rt.write_locks();
-    // ReopenRequired 复核在锁内(space-entry-plan §3.2,codex 二轮 M2:旗与导入共
-    // 临界区,排队在锁上的写拿到锁时旗必已在;锁前查有「查后落旗抢锁」竞态)。
-    if let Some(e) = rt.restart_required() {
-        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
-    }
-    // 发送端闸的运行期事实(board-columns-plan §5;B-e 第 1 段)。**在写锁内现采**,
-    // 与上面那句 ReopenRequired 复核同一个理由(codex 二轮 M2:锁前查有「查后置位抢锁」
-    // 竞态)。⚠ 诚实边界:`config_transition_in_flight` 由 `lifecycle` 锁那条路置位,
-    // 与本空间的写锁不互斥 ⇒ 「刚采完、转换才开始」这个窗口仍在。§5.6 的顺序(**先置位、
-    // 再 retire**)与 supervisor 那条既有裁决(「切换/停机与业务写的互斥由壳编排」)一起
-    // 承重,⛔ 别为它新造第三把锁。
-    let facts = zhujian_core::board::gate::RuntimeFacts::observe(&spaces.sup, &space_id);
-    task::reorder(
-        &mut conn,
-        &mut clk,
-        &id,
-        &from_status,
-        &to_status,
-        &base_target_ids,
-        &ordered_ids,
-        &facts,
-    )
+    spaces.write(&space_id, |mut conn, mut clk| {
+        // 发送端闸的运行期事实(board-columns-plan §5;B-e 第 1 段)。**在写锁内现采**,
+        // 与上面那句 ReopenRequired 复核同一个理由(codex 二轮 M2:锁前查有「查后置位抢锁」
+        // 竞态)。⚠ 诚实边界:`config_transition_in_flight` 由 `lifecycle` 锁那条路置位,
+        // 与本空间的写锁不互斥 ⇒ 「刚采完、转换才开始」这个窗口仍在。§5.6 的顺序(**先置位、
+        // 再 retire**)与 supervisor 那条既有裁决(「切换/停机与业务写的互斥由壳编排」)一起
+        // 承重,⛔ 别为它新造第三把锁。
+        let facts = zhujian_core::board::gate::RuntimeFacts::observe(&spaces.sup, &space_id);
+        task::reorder(
+            &mut conn,
+            &mut clk,
+            &id,
+            &from_status,
+            &to_status,
+            &base_target_ids,
+            &ordered_ids,
+            &facts,
+        )
+    })
 }
 
 /// Reorder a card under a topic FILTER, where the frontend only sees a visible subset
@@ -738,135 +641,95 @@ fn reorder_task_visible(space_id: String,
     visible_after: Vec<String>,
     spaces: State<'_, Spaces>,
 ) -> Result<(), String> {
-    let rt = spaces.get(&space_id)?;
-    let (mut conn, mut clk) = rt.write_locks();
-    // ReopenRequired 复核在锁内(space-entry-plan §3.2,codex 二轮 M2:旗与导入共
-    // 临界区,排队在锁上的写拿到锁时旗必已在;锁前查有「查后落旗抢锁」竞态)。
-    if let Some(e) = rt.restart_required() {
-        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
-    }
-    // 发送端闸的运行期事实(board-columns-plan §5;B-e 第 1 段)。**在写锁内现采**,
-    // 与上面那句 ReopenRequired 复核同一个理由(codex 二轮 M2:锁前查有「查后置位抢锁」
-    // 竞态)。⚠ 诚实边界:`config_transition_in_flight` 由 `lifecycle` 锁那条路置位,
-    // 与本空间的写锁不互斥 ⇒ 「刚采完、转换才开始」这个窗口仍在。§5.6 的顺序(**先置位、
-    // 再 retire**)与 supervisor 那条既有裁决(「切换/停机与业务写的互斥由壳编排」)一起
-    // 承重,⛔ 别为它新造第三把锁。
-    let facts = zhujian_core::board::gate::RuntimeFacts::observe(&spaces.sup, &space_id);
-    task::reorder_visible(
-        &mut conn,
-        &mut clk,
-        &id,
-        &from_status,
-        &to_status,
-        &base_visible_ids,
-        &visible_after,
-        &facts,
-    )
+    spaces.write(&space_id, |mut conn, mut clk| {
+        // 发送端闸的运行期事实(board-columns-plan §5;B-e 第 1 段)。**在写锁内现采**,
+        // 与上面那句 ReopenRequired 复核同一个理由(codex 二轮 M2:锁前查有「查后置位抢锁」
+        // 竞态)。⚠ 诚实边界:`config_transition_in_flight` 由 `lifecycle` 锁那条路置位,
+        // 与本空间的写锁不互斥 ⇒ 「刚采完、转换才开始」这个窗口仍在。§5.6 的顺序(**先置位、
+        // 再 retire**)与 supervisor 那条既有裁决(「切换/停机与业务写的互斥由壳编排」)一起
+        // 承重,⛔ 别为它新造第三把锁。
+        let facts = zhujian_core::board::gate::RuntimeFacts::observe(&spaces.sup, &space_id);
+        task::reorder_visible(
+            &mut conn,
+            &mut clk,
+            &id,
+            &from_status,
+            &to_status,
+            &base_visible_ids,
+            &visible_after,
+            &facts,
+        )
+    })
 }
 
 /// Soft-archive (删除) an active task into the 回收站 (recoverable). Any active
 /// todo/doing/done task can be archived; an already-archived/missing task fails fast.
 #[tauri::command]
 fn archive_task(space_id: String, id: String, spaces: State<'_, Spaces>) -> Result<(), String> {
-    let rt = spaces.get(&space_id)?;
-    let (mut conn, mut clk) = rt.write_locks();
-    // ReopenRequired 复核在锁内(space-entry-plan §3.2,codex 二轮 M2:旗与导入共
-    // 临界区,排队在锁上的写拿到锁时旗必已在;锁前查有「查后落旗抢锁」竞态)。
-    if let Some(e) = rt.restart_required() {
-        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
-    }
-    task::archive(&mut conn, &mut clk, &id)
+    spaces.write(&space_id, |mut conn, mut clk| {
+        task::archive(&mut conn, &mut clk, &id)
+    })
 }
 
 /// Restore an archived task from the 回收站 back onto the board (to its original column).
 #[tauri::command]
 fn restore_task(space_id: String, id: String, spaces: State<'_, Spaces>) -> Result<(), String> {
-    let rt = spaces.get(&space_id)?;
-    let (mut conn, mut clk) = rt.write_locks();
-    // ReopenRequired 复核在锁内(space-entry-plan §3.2,codex 二轮 M2:旗与导入共
-    // 临界区,排队在锁上的写拿到锁时旗必已在;锁前查有「查后落旗抢锁」竞态)。
-    if let Some(e) = rt.restart_required() {
-        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
-    }
-    task::restore(&mut conn, &mut clk, &id)
+    spaces.write(&space_id, |mut conn, mut clk| {
+        task::restore(&mut conn, &mut clk, &id)
+    })
 }
 
 /// Permanently delete one archived task from the 回收站 (explicit user cleanup).
 /// Only an archived task can be purged; a live task fails fast.
 #[tauri::command]
 fn purge_task(space_id: String, id: String, spaces: State<'_, Spaces>) -> Result<(), String> {
-    let rt = spaces.get(&space_id)?;
-    let (mut conn, mut clk) = rt.write_locks();
-    // ReopenRequired 复核在锁内(space-entry-plan §3.2,codex 二轮 M2:旗与导入共
-    // 临界区,排队在锁上的写拿到锁时旗必已在;锁前查有「查后落旗抢锁」竞态)。
-    if let Some(e) = rt.restart_required() {
-        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
-    }
-    task::purge(&mut conn, &mut clk, &id)
+    spaces.write(&space_id, |mut conn, mut clk| {
+        task::purge(&mut conn, &mut clk, &id)
+    })
 }
 
 /// Empty the task 回收站: permanently delete every archived task. Returns how many
 /// were removed, for the UI to report.
 #[tauri::command]
 fn purge_archived_tasks(space_id: String, spaces: State<'_, Spaces>) -> Result<usize, String> {
-    let rt = spaces.get(&space_id)?;
-    let (mut conn, mut clk) = rt.write_locks();
-    // ReopenRequired 复核在锁内(space-entry-plan §3.2,codex 二轮 M2:旗与导入共
-    // 临界区,排队在锁上的写拿到锁时旗必已在;锁前查有「查后落旗抢锁」竞态)。
-    if let Some(e) = rt.restart_required() {
-        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
-    }
-    task::purge_all(&mut conn, &mut clk)
+    spaces.write(&space_id, |mut conn, mut clk| {
+        task::purge_all(&mut conn, &mut clk)
+    })
 }
 
 /// 归档一条「已完成」任务进成就册(成就归档,sealed_at 轴——与回收站分开的正经存档:
 /// 可查、不可删)。只有活跃的 done 任务可归档;其余 fail fast — see task::seal.
 #[tauri::command]
 fn seal_task(space_id: String, id: String, spaces: State<'_, Spaces>) -> Result<(), String> {
-    let rt = spaces.get(&space_id)?;
-    let (mut conn, mut clk) = rt.write_locks();
-    // ReopenRequired 复核在锁内(space-entry-plan §3.2,codex 二轮 M2:旗与导入共
-    // 临界区,排队在锁上的写拿到锁时旗必已在;锁前查有「查后落旗抢锁」竞态)。
-    if let Some(e) = rt.restart_required() {
-        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
-    }
-    task::seal(&mut conn, &mut clk, &id)
+    spaces.write(&space_id, |mut conn, mut clk| {
+        task::seal(&mut conn, &mut clk, &id)
+    })
 }
 
 /// 一键归档看板「已完成」列的全部任务。返回归档条数(0 = 列本来就空,由 UI 决定说什么)。
 #[tauri::command]
 fn seal_done_tasks(space_id: String, spaces: State<'_, Spaces>) -> Result<usize, String> {
-    let rt = spaces.get(&space_id)?;
-    let (mut conn, mut clk) = rt.write_locks();
-    // ReopenRequired 复核在锁内(space-entry-plan §3.2,codex 二轮 M2:旗与导入共
-    // 临界区,排队在锁上的写拿到锁时旗必已在;锁前查有「查后落旗抢锁」竞态)。
-    if let Some(e) = rt.restart_required() {
-        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
-    }
-    task::seal_all(&mut conn, &mut clk)
+    spaces.write(&space_id, |mut conn, mut clk| {
+        task::seal_all(&mut conn, &mut clk)
+    })
 }
 
 /// 取消归档:任务离开成就册,回到看板「已完成」列的末尾。归档不可删——想删除须先取消
 /// 归档回看板,再走正常两段式删除(删除主权仍在,只是多一步防冲动)。
 #[tauri::command]
 fn unseal_task(space_id: String, id: String, spaces: State<'_, Spaces>) -> Result<(), String> {
-    let rt = spaces.get(&space_id)?;
-    let (mut conn, mut clk) = rt.write_locks();
-    // ReopenRequired 复核在锁内(space-entry-plan §3.2,codex 二轮 M2:旗与导入共
-    // 临界区,排队在锁上的写拿到锁时旗必已在;锁前查有「查后落旗抢锁」竞态)。
-    if let Some(e) = rt.restart_required() {
-        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
-    }
-    task::unseal(&mut conn, &mut clk, &id)
+    spaces.write(&space_id, |mut conn, mut clk| {
+        task::unseal(&mut conn, &mut clk, &id)
+    })
 }
 
 /// 归档册:全部已归档的成就,最近归档在前(sealed_at 非 null,前端按归档日分组)。
 #[tauri::command]
 fn list_sealed_tasks(space_id: String, spaces: State<'_, Spaces>) -> Result<Vec<TaskItem>, String> {
-    let rt = spaces.get(&space_id)?;
-    let conn = rt.db.lock().expect("db mutex poisoned");
-    let rows = repo::sealed_tasks(&conn).map_err(|e| e.to_string())?;
-    Ok(rows.into_iter().map(TaskItem::from).collect())
+    spaces.read(&space_id, |conn| {
+        let rows = repo::sealed_tasks(&conn).map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(TaskItem::from).collect())
+    })
 }
 
 /// Manually create a standalone todo (no source note) directly on the board, born
@@ -893,28 +756,18 @@ fn create_task(space_id: String,
             return Err("目标空间已经变化,请确认后重新保存".into());
         }
     }
-    let rt = spaces.get(&space_id)?;
-    let (mut conn, mut clk) = rt.write_locks();
-    // ReopenRequired 复核在锁内(space-entry-plan §3.2,codex 二轮 M2:旗与导入共
-    // 临界区,排队在锁上的写拿到锁时旗必已在;锁前查有「查后落旗抢锁」竞态)。
-    if let Some(e) = rt.restart_required() {
-        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
-    }
-    task::create(&mut conn, &mut clk, &title, due_on.as_deref(), priority, topic_id.as_deref())
+    spaces.write(&space_id, |mut conn, mut clk| {
+        task::create(&mut conn, &mut clk, &title, due_on.as_deref(), priority, topic_id.as_deref())
+    })
 }
 
 /// Rename an active task (board/today edit). Title is trimmed and must be non-empty;
 /// an archived/missing task fails fast — see task::rename.
 #[tauri::command]
 fn rename_task(space_id: String, id: String, title: String, spaces: State<'_, Spaces>) -> Result<(), String> {
-    let rt = spaces.get(&space_id)?;
-    let (mut conn, mut clk) = rt.write_locks();
-    // ReopenRequired 复核在锁内(space-entry-plan §3.2,codex 二轮 M2:旗与导入共
-    // 临界区,排队在锁上的写拿到锁时旗必已在;锁前查有「查后落旗抢锁」竞态)。
-    if let Some(e) = rt.restart_required() {
-        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
-    }
-    task::rename(&mut conn, &mut clk, &id, &title)
+    spaces.write(&space_id, |mut conn, mut clk| {
+        task::rename(&mut conn, &mut clk, &id, &title)
+    })
 }
 
 /// Set or clear a task's due date (a user-local calendar day `YYYY-MM-DD`, or null
@@ -922,42 +775,27 @@ fn rename_task(space_id: String, id: String, title: String, spaces: State<'_, Sp
 /// fast — see task::set_due.
 #[tauri::command]
 fn set_task_due(space_id: String, id: String, due_on: Option<String>, spaces: State<'_, Spaces>) -> Result<(), String> {
-    let rt = spaces.get(&space_id)?;
-    let (mut conn, mut clk) = rt.write_locks();
-    // ReopenRequired 复核在锁内(space-entry-plan §3.2,codex 二轮 M2:旗与导入共
-    // 临界区,排队在锁上的写拿到锁时旗必已在;锁前查有「查后落旗抢锁」竞态)。
-    if let Some(e) = rt.restart_required() {
-        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
-    }
-    task::set_due(&mut conn, &mut clk, &id, due_on.as_deref())
+    spaces.write(&space_id, |mut conn, mut clk| {
+        task::set_due(&mut conn, &mut clk, &id, due_on.as_deref())
+    })
 }
 
 /// Set or clear a task's priority (1/2/3 = 低/中/高, or null = 未设). Range-validated;
 /// an archived task fails fast — see task::set_priority.
 #[tauri::command]
 fn set_task_priority(space_id: String, id: String, priority: Option<i64>, spaces: State<'_, Spaces>) -> Result<(), String> {
-    let rt = spaces.get(&space_id)?;
-    let (mut conn, mut clk) = rt.write_locks();
-    // ReopenRequired 复核在锁内(space-entry-plan §3.2,codex 二轮 M2:旗与导入共
-    // 临界区,排队在锁上的写拿到锁时旗必已在;锁前查有「查后落旗抢锁」竞态)。
-    if let Some(e) = rt.restart_required() {
-        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
-    }
-    task::set_priority(&mut conn, &mut clk, &id, priority)
+    spaces.write(&space_id, |mut conn, mut clk| {
+        task::set_priority(&mut conn, &mut clk, &id, priority)
+    })
 }
 
 /// Add one tag to a task (multi-tag, M:N). Idempotent; only an active task can be
 /// tagged; an archived/missing task or a non-existent topic id fails fast — see task::add_topic.
 #[tauri::command]
 fn add_task_topic(space_id: String, id: String, topic_id: String, spaces: State<'_, Spaces>) -> Result<(), String> {
-    let rt = spaces.get(&space_id)?;
-    let (mut conn, mut clk) = rt.write_locks();
-    // ReopenRequired 复核在锁内(space-entry-plan §3.2,codex 二轮 M2:旗与导入共
-    // 临界区,排队在锁上的写拿到锁时旗必已在;锁前查有「查后落旗抢锁」竞态)。
-    if let Some(e) = rt.restart_required() {
-        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
-    }
-    task::add_topic(&mut conn, &mut clk, &id, &topic_id)
+    spaces.write(&space_id, |mut conn, mut clk| {
+        task::add_topic(&mut conn, &mut clk, &id, &topic_id)
+    })
 }
 
 /// 给任务按标题挂标签(同名复用、缺则新建,core 单事务原子;codex 120 设计审 M9:
@@ -970,28 +808,18 @@ fn add_task_topic_by_title(
     title: String,
     spaces: State<'_, Spaces>,
 ) -> Result<String, String> {
-    let rt = spaces.get(&space_id)?;
-    let (mut conn, mut clk) = rt.write_locks();
-    // ReopenRequired 复核在锁内(space-entry-plan §3.2,codex 二轮 M2:旗与导入共
-    // 临界区,排队在锁上的写拿到锁时旗必已在;锁前查有「查后落旗抢锁」竞态)。
-    if let Some(e) = rt.restart_required() {
-        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
-    }
-    task::add_topic_by_title(&mut conn, &mut clk, &id, &title)
+    spaces.write(&space_id, |mut conn, mut clk| {
+        task::add_topic_by_title(&mut conn, &mut clk, &id, &title)
+    })
 }
 
 /// Remove one tag from a task (multi-tag, M:N). Idempotent; only an active task can be
 /// edited; an archived/missing task fails fast — see task::remove_topic.
 #[tauri::command]
 fn remove_task_topic(space_id: String, id: String, topic_id: String, spaces: State<'_, Spaces>) -> Result<(), String> {
-    let rt = spaces.get(&space_id)?;
-    let (mut conn, mut clk) = rt.write_locks();
-    // ReopenRequired 复核在锁内(space-entry-plan §3.2,codex 二轮 M2:旗与导入共
-    // 临界区,排队在锁上的写拿到锁时旗必已在;锁前查有「查后落旗抢锁」竞态)。
-    if let Some(e) = rt.restart_required() {
-        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
-    }
-    task::remove_topic(&mut conn, &mut clk, &id, &topic_id)
+    spaces.write(&space_id, |mut conn, mut clk| {
+        task::remove_topic(&mut conn, &mut clk, &id, &topic_id)
+    })
 }
 
 // ---- Manual idea-flow spine (no AI) -----------------------------------------
@@ -1000,14 +828,9 @@ fn remove_task_topic(space_id: String, id: String, topic_id: String, spaces: Sta
 /// history), so nothing is lost — see notes.rs. A no-op or empty edit fails fast.
 #[tauri::command]
 fn edit_note(space_id: String, id: String, content: String, spaces: State<'_, Spaces>) -> Result<(), String> {
-    let rt = spaces.get(&space_id)?;
-    let (mut conn, mut clk) = rt.write_locks();
-    // ReopenRequired 复核在锁内(space-entry-plan §3.2,codex 二轮 M2:旗与导入共
-    // 临界区,排队在锁上的写拿到锁时旗必已在;锁前查有「查后落旗抢锁」竞态)。
-    if let Some(e) = rt.restart_required() {
-        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
-    }
-    notes::edit(&mut conn, &mut clk, &id, &content)
+    spaces.write(&space_id, |mut conn, mut clk| {
+        notes::edit(&mut conn, &mut clk, &id, &content)
+    })
 }
 
 /// One superseded version of a note, for the history view.
@@ -1021,30 +844,25 @@ struct RevisionItem {
 /// text lives on the note itself; this is the trail behind it.
 #[tauri::command]
 fn list_note_history(space_id: String, id: String, spaces: State<'_, Spaces>) -> Result<Vec<RevisionItem>, String> {
-    let rt = spaces.get(&space_id)?;
-    let conn = rt.db.lock().expect("db mutex poisoned");
-    let rows = repo::item_revisions(&conn, &id).map_err(|e| e.to_string())?;
-    Ok(rows
-        .into_iter()
-        .map(|r| RevisionItem {
-            content: r.content,
-            archived_at: r.archived_at,
-        })
-        .collect())
+    spaces.read(&space_id, |conn| {
+        let rows = repo::item_revisions(&conn, &id).map_err(|e| e.to_string())?;
+        Ok(rows
+            .into_iter()
+            .map(|r| RevisionItem {
+                content: r.content,
+                archived_at: r.archived_at,
+            })
+            .collect())
+    })
 }
 
 /// Manually turn a note into a user todo (no AI). The note moves inbox→processed
 /// and gains a 'todo' task linked for provenance — see notes.rs.
 #[tauri::command]
 fn promote_note_to_task(space_id: String, id: String, title: String, spaces: State<'_, Spaces>) -> Result<String, String> {
-    let rt = spaces.get(&space_id)?;
-    let (mut conn, mut clk) = rt.write_locks();
-    // ReopenRequired 复核在锁内(space-entry-plan §3.2,codex 二轮 M2:旗与导入共
-    // 临界区,排队在锁上的写拿到锁时旗必已在;锁前查有「查后落旗抢锁」竞态)。
-    if let Some(e) = rt.restart_required() {
-        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
-    }
-    notes::promote_to_task(&mut conn, &mut clk, &id, &title)
+    spaces.write(&space_id, |mut conn, mut clk| {
+        notes::promote_to_task(&mut conn, &mut clk, &id, &title)
+    })
 }
 
 /// 撤回为灵感: send a 待办 back to 灵感源 (灵感 = a not-yet-clarified task — the same
@@ -1054,14 +872,9 @@ fn promote_note_to_task(space_id: String, id: String, title: String, spaces: Sta
 /// 未归类 idea from the title if it was manually created. See notes::revert_task_to_inbox.
 #[tauri::command]
 fn revert_task_to_inbox(space_id: String, id: String, spaces: State<'_, Spaces>) -> Result<(), String> {
-    let rt = spaces.get(&space_id)?;
-    let (mut conn, mut clk) = rt.write_locks();
-    // ReopenRequired 复核在锁内(space-entry-plan §3.2,codex 二轮 M2:旗与导入共
-    // 临界区,排队在锁上的写拿到锁时旗必已在;锁前查有「查后落旗抢锁」竞态)。
-    if let Some(e) = rt.restart_required() {
-        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
-    }
-    notes::revert_task_to_inbox(&mut conn, &mut clk, &id)
+    spaces.write(&space_id, |mut conn, mut clk| {
+        notes::revert_task_to_inbox(&mut conn, &mut clk, &id)
+    })
 }
 
 /// One topic for the manual filing picker. `color` = chip tint (`#RRGGBB`) or null = 无色.
@@ -1084,18 +897,18 @@ impl From<repo::TagRef> for TopicItem {
 /// Every topic, for the manual "file into a topic" picker (existing or new).
 #[tauri::command]
 fn list_topics(space_id: String, spaces: State<'_, Spaces>) -> Result<Vec<TopicItem>, String> {
-    let rt = spaces.get(&space_id)?;
-    let conn = rt.db.lock().expect("db mutex poisoned");
-    let rows = repo::all_topics(&conn).map_err(|e| e.to_string())?;
-    Ok(rows
-        .into_iter()
-        .map(|t| TopicItem {
-            id: t.id,
-            title: t.title,
-            color: t.color,
-            kind: t.kind,
-        })
-        .collect())
+    spaces.read(&space_id, |conn| {
+        let rows = repo::all_topics(&conn).map_err(|e| e.to_string())?;
+        Ok(rows
+            .into_iter()
+            .map(|t| TopicItem {
+                id: t.id,
+                title: t.title,
+                color: t.color,
+                kind: t.kind,
+            })
+            .collect())
+    })
 }
 
 /// Manually file a note into a topic (no AI): an existing one by id, or a new one
@@ -1107,14 +920,9 @@ fn file_note_to_topic(space_id: String,
     new_title: Option<String>,
     spaces: State<'_, Spaces>,
 ) -> Result<String, String> {
-    let rt = spaces.get(&space_id)?;
-    let (mut conn, mut clk) = rt.write_locks();
-    // ReopenRequired 复核在锁内(space-entry-plan §3.2,codex 二轮 M2:旗与导入共
-    // 临界区,排队在锁上的写拿到锁时旗必已在;锁前查有「查后落旗抢锁」竞态)。
-    if let Some(e) = rt.restart_required() {
-        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
-    }
-    notes::file_to_topic(&mut conn, &mut clk, &id, topic_id.as_deref(), new_title.as_deref())
+    spaces.write(&space_id, |mut conn, mut clk| {
+        notes::file_to_topic(&mut conn, &mut clk, &id, topic_id.as_deref(), new_title.as_deref())
+    })
 }
 
 /// Remove one tag from a 灵感 (multi-tag, M:N). Idempotent; only an active idea
@@ -1122,69 +930,55 @@ fn file_note_to_topic(space_id: String,
 /// notes::remove_topic. Removing the last tag flips 已整理 -> 未归类.
 #[tauri::command]
 fn remove_note_topic(space_id: String, id: String, topic_id: String, spaces: State<'_, Spaces>) -> Result<(), String> {
-    let rt = spaces.get(&space_id)?;
-    let (mut conn, mut clk) = rt.write_locks();
-    // ReopenRequired 复核在锁内(同 remove_task_topic;旗与导入共临界区)。
-    if let Some(e) = rt.restart_required() {
-        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
-    }
-    notes::remove_topic(&mut conn, &mut clk, &id, &topic_id)
+    spaces.write(&space_id, |mut conn, mut clk| {
+        notes::remove_topic(&mut conn, &mut clk, &id, &topic_id)
+    })
 }
 
 /// List every topic — including empty ones — each with the processed notes filed under
-/// it, for the manual topic-management view. Unlike `list_topic_tree` (read-only browse,
-/// hides empties), this keeps empty topics so they can be edited/deleted, ordered
-/// most-recently-changed first.
+/// it, for the manual topic-management view. It keeps empty topics so they can be
+/// edited/deleted, ordered most-recently-changed first. (610 起桌面只剩这一条标签树命令:
+/// 只读浏览那条 `list_topic_tree` 桌面前端与 e2e 零调用,已删;手机壳自己那份照旧。)
 #[tauri::command]
 fn list_topics_full(space_id: String, spaces: State<'_, Spaces>) -> Result<Vec<TopicTreeItem>, String> {
-    let rt = spaces.get(&space_id)?;
-    let conn = rt.db.lock().expect("db mutex poisoned");
-    let rows = repo::all_topics_with_notes(&conn).map_err(|e| e.to_string())?;
-    Ok(rows
-        .into_iter()
-        .map(|t| TopicTreeItem {
-            id: t.id,
-            title: t.title,
-            color: t.color,
-            position: t.position,
-            kind: t.kind,
-            notes: t
-                .notes
-                .into_iter()
-                .map(|n| InboxItem {
-                    id: n.id,
-                    content: n.content,
-                    created_at: n.created_at,
-                })
-                .collect(),
-        })
-        .collect())
+    spaces.read(&space_id, |conn| {
+        let rows = repo::all_topics_with_notes(&conn).map_err(|e| e.to_string())?;
+        Ok(rows
+            .into_iter()
+            .map(|t| TopicTreeItem {
+                id: t.id,
+                title: t.title,
+                color: t.color,
+                position: t.position,
+                kind: t.kind,
+                notes: t
+                    .notes
+                    .into_iter()
+                    .map(|n| InboxItem {
+                        id: n.id,
+                        content: n.content,
+                        created_at: n.created_at,
+                    })
+                    .collect(),
+            })
+            .collect())
+    })
 }
 
 /// Create a topic (tag) by hand (no AI). Fails fast on an empty title. Returns its id.
 #[tauri::command]
 fn create_topic(space_id: String, title: String, spaces: State<'_, Spaces>) -> Result<String, String> {
-    let rt = spaces.get(&space_id)?;
-    let (mut conn, mut clk) = rt.write_locks();
-    // ReopenRequired 复核在锁内(space-entry-plan §3.2,codex 二轮 M2:旗与导入共
-    // 临界区,排队在锁上的写拿到锁时旗必已在;锁前查有「查后落旗抢锁」竞态)。
-    if let Some(e) = rt.restart_required() {
-        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
-    }
-    notes::create_topic(&mut conn, &mut clk, &title)
+    spaces.write(&space_id, |mut conn, mut clk| {
+        notes::create_topic(&mut conn, &mut clk, &title)
+    })
 }
 
 /// Edit a topic's title. Fails fast on an empty title or a missing id (affected rows != 1).
 #[tauri::command]
 fn update_topic(space_id: String, id: String, title: String, spaces: State<'_, Spaces>) -> Result<(), String> {
-    let rt = spaces.get(&space_id)?;
-    let (mut conn, mut clk) = rt.write_locks();
-    // ReopenRequired 复核在锁内(space-entry-plan §3.2,codex 二轮 M2:旗与导入共
-    // 临界区,排队在锁上的写拿到锁时旗必已在;锁前查有「查后落旗抢锁」竞态)。
-    if let Some(e) = rt.restart_required() {
-        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
-    }
-    notes::rename_topic(&mut conn, &mut clk, &id, &title)
+    spaces.write(&space_id, |mut conn, mut clk| {
+        notes::rename_topic(&mut conn, &mut clk, &id, &title)
+    })
 }
 
 /// Set or clear a topic's chip color (`color` = `#RRGGBB`, or null to clear). Syncs like
@@ -1195,14 +989,9 @@ fn set_topic_color(space_id: String,
     color: Option<String>,
     spaces: State<'_, Spaces>,
 ) -> Result<(), String> {
-    let rt = spaces.get(&space_id)?;
-    let (mut conn, mut clk) = rt.write_locks();
-    // ReopenRequired 复核在锁内(space-entry-plan §3.2,codex 二轮 M2:旗与导入共
-    // 临界区,排队在锁上的写拿到锁时旗必已在;锁前查有「查后落旗抢锁」竞态)。
-    if let Some(e) = rt.restart_required() {
-        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
-    }
-    notes::set_topic_color(&mut conn, &mut clk, &id, color)
+    spaces.write(&space_id, |mut conn, mut clk| {
+        notes::set_topic_color(&mut conn, &mut clk, &id, color)
+    })
 }
 
 /// Reorder a topic in the manual list (0031 1c). `prev_id` / `next_id` are the ids of the
@@ -1216,12 +1005,9 @@ fn reorder_topic(
     next_id: Option<String>,
     spaces: State<'_, Spaces>,
 ) -> Result<(), String> {
-    let rt = spaces.get(&space_id)?;
-    let (mut conn, mut clk) = rt.write_locks();
-    if let Some(e) = rt.restart_required() {
-        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
-    }
-    notes::reorder_topic(&mut conn, &mut clk, &id, prev_id.as_deref(), next_id.as_deref())
+    spaces.write(&space_id, |mut conn, mut clk| {
+        notes::reorder_topic(&mut conn, &mut clk, &id, prev_id.as_deref(), next_id.as_deref())
+    })
 }
 
 /// Set or clear a topic's free-text type label (0031;`kind` = 「人名」等,或 null/空串 = 清
@@ -1234,12 +1020,9 @@ fn set_topic_kind(
     kind: Option<String>,
     spaces: State<'_, Spaces>,
 ) -> Result<(), String> {
-    let rt = spaces.get(&space_id)?;
-    let (mut conn, mut clk) = rt.write_locks();
-    if let Some(e) = rt.restart_required() {
-        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
-    }
-    notes::set_topic_kind(&mut conn, &mut clk, &id, kind)
+    spaces.write(&space_id, |mut conn, mut clk| {
+        notes::set_topic_kind(&mut conn, &mut clk, &id, kind)
+    })
 }
 
 /// Delete a topic (manual maintenance). Only the topic projection goes — its
@@ -1247,14 +1030,9 @@ fn set_topic_kind(
 /// untouched and stay in 灵感源. Fails fast if the topic does not exist.
 #[tauri::command]
 fn delete_topic(space_id: String, id: String, spaces: State<'_, Spaces>) -> Result<(), String> {
-    let rt = spaces.get(&space_id)?;
-    let (mut conn, mut clk) = rt.write_locks();
-    // ReopenRequired 复核在锁内(space-entry-plan §3.2,codex 二轮 M2:旗与导入共
-    // 临界区,排队在锁上的写拿到锁时旗必已在;锁前查有「查后落旗抢锁」竞态)。
-    if let Some(e) = rt.restart_required() {
-        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
-    }
-    notes::delete_topic(&mut conn, &mut clk, &id)
+    spaces.write(&space_id, |mut conn, mut clk| {
+        notes::delete_topic(&mut conn, &mut clk, &id)
+    })
 }
 
 /// Merge several topics into one survivor (manual recluster, no AI): re-point every
@@ -1267,14 +1045,9 @@ fn merge_topics(space_id: String,
     new_title: Option<String>,
     spaces: State<'_, Spaces>,
 ) -> Result<String, String> {
-    let rt = spaces.get(&space_id)?;
-    let (mut conn, mut clk) = rt.write_locks();
-    // ReopenRequired 复核在锁内(space-entry-plan §3.2,codex 二轮 M2:旗与导入共
-    // 临界区,排队在锁上的写拿到锁时旗必已在;锁前查有「查后落旗抢锁」竞态)。
-    if let Some(e) = rt.restart_required() {
-        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
-    }
-    notes::merge_topics(&mut conn, &mut clk, &source_ids, &target_id, new_title.as_deref())
+    spaces.write(&space_id, |mut conn, mut clk| {
+        notes::merge_topics(&mut conn, &mut clk, &source_ids, &target_id, new_title.as_deref())
+    })
 }
 
 /// An image attachment's metadata (no bytes): its id, 「图N」编号, and MIME.
@@ -1306,40 +1079,35 @@ fn add_item_image(space_id: String,
     let bytes = STANDARD
         .decode(data_b64.as_bytes())
         .map_err(|e| format!("图片数据解码失败:{e}"))?;
-    let rt = spaces.get(&space_id)?;
-    let (mut conn, mut clk) = rt.write_locks();
-    // ReopenRequired 复核在锁内(space-entry-plan §3.2,codex 二轮 M2:旗与导入共
-    // 临界区,排队在锁上的写拿到锁时旗必已在;锁前查有「查后落旗抢锁」竞态)。
-    if let Some(e) = rt.restart_required() {
-        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
-    }
-    let (id, seq) = images::attach(&mut conn, &mut clk, &item_id, &bytes, &mime)?;
-    Ok(ImageMeta { id, seq, mime })
+    spaces.write(&space_id, |mut conn, mut clk| {
+        let (id, seq) = images::attach(&mut conn, &mut clk, &item_id, &bytes, &mime)?;
+        Ok(ImageMeta { id, seq, mime })
+    })
 }
 
 /// List an item's images (编号 ascending) — id + 编号 + MIME, no bytes. Deleted 编号 leave gaps
 /// (图1、图3); thumbnail bytes load lazily via get_item_image.
 #[tauri::command]
 fn list_item_images(space_id: String, item_id: String, spaces: State<'_, Spaces>) -> Result<Vec<ImageMeta>, String> {
-    let rt = spaces.get(&space_id)?;
-    let conn = rt.db.lock().expect("db mutex poisoned");
-    let rows = repo::list_item_images(&conn, &item_id).map_err(|e| e.to_string())?;
-    Ok(rows
-        .into_iter()
-        .map(|r| ImageMeta { id: r.id, seq: r.seq, mime: r.mime })
-        .collect())
+    spaces.read(&space_id, |conn| {
+        let rows = repo::list_item_images(&conn, &item_id).map_err(|e| e.to_string())?;
+        Ok(rows
+            .into_iter()
+            .map(|r| ImageMeta { id: r.id, seq: r.seq, mime: r.mime })
+            .collect())
+    })
 }
 
 /// One image's bytes as a ready-to-render `data:` URL (the frontend sets `img.src` directly),
 /// or an error if the id is unknown (fail-fast — no silent placeholder).
 #[tauri::command]
 fn get_item_image(space_id: String, image_id: String, spaces: State<'_, Spaces>) -> Result<String, String> {
-    let rt = spaces.get(&space_id)?;
-    let conn = rt.db.lock().expect("db mutex poisoned");
-    let (bytes, mime) = repo::item_image_data(&conn, &image_id)
-        .map_err(|e| e.to_string())?
-        .ok_or_else(|| format!("图片不存在:{image_id}"))?;
-    Ok(format!("data:{};base64,{}", mime, STANDARD.encode(&bytes)))
+    spaces.read(&space_id, |conn| {
+        let (bytes, mime) = repo::item_image_data(&conn, &image_id)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| format!("图片不存在:{image_id}"))?;
+        Ok(format!("data:{};base64,{}", mime, STANDARD.encode(&bytes)))
+    })
 }
 
 /// 一张图的**缩略图**(image-perf-plan §3.2)。命中本地派生表就只吐几 KB;未命中吐全尺寸
@@ -1349,20 +1117,20 @@ fn get_item_image(space_id: String, image_id: String, spaces: State<'_, Spaces>)
 /// 144/q0.8 与它一致,是伪契约。命中判定归 `thumbs::get`,回存打标归 `thumbs::put`。
 #[tauri::command]
 fn get_item_thumb(space_id: String, image_id: String, spaces: State<'_, Spaces>) -> Result<ThumbData, String> {
-    let rt = spaces.get(&space_id)?;
-    let conn = rt.db.lock().expect("db mutex poisoned");
-    if let Some(bytes) = thumbs::get(&conn, &image_id).map_err(|e| e.to_string())? {
-        return Ok(ThumbData {
-            url: format!("data:{};base64,{}", thumbs::THUMB_MIME, STANDARD.encode(&bytes)),
-            thumb: true,
-        });
-    }
-    let (bytes, mime) = repo::item_image_data(&conn, &image_id)
-        .map_err(|e| e.to_string())?
-        .ok_or_else(|| format!("图片不存在:{image_id}"))?;
-    Ok(ThumbData {
-        url: format!("data:{};base64,{}", mime, STANDARD.encode(&bytes)),
-        thumb: false,
+    spaces.read(&space_id, |conn| {
+        if let Some(bytes) = thumbs::get(&conn, &image_id).map_err(|e| e.to_string())? {
+            return Ok(ThumbData {
+                url: format!("data:{};base64,{}", thumbs::THUMB_MIME, STANDARD.encode(&bytes)),
+                thumb: true,
+            });
+        }
+        let (bytes, mime) = repo::item_image_data(&conn, &image_id)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| format!("图片不存在:{image_id}"))?;
+        Ok(ThumbData {
+            url: format!("data:{};base64,{}", mime, STANDARD.encode(&bytes)),
+            thumb: false,
+        })
     })
 }
 
@@ -1400,14 +1168,9 @@ fn put_item_thumb(
 /// error, not a silent no-op. See repo::delete_item_image.
 #[tauri::command]
 fn delete_item_image(space_id: String, image_id: String, spaces: State<'_, Spaces>) -> Result<(), String> {
-    let rt = spaces.get(&space_id)?;
-    let (mut conn, mut clk) = rt.write_locks();
-    // ReopenRequired 复核在锁内(space-entry-plan §3.2,codex 二轮 M2:旗与导入共
-    // 临界区,排队在锁上的写拿到锁时旗必已在;锁前查有「查后落旗抢锁」竞态)。
-    if let Some(e) = rt.restart_required() {
-        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
-    }
-    images::remove(&mut conn, &mut clk, &image_id)
+    spaces.write(&space_id, |mut conn, mut clk| {
+        images::remove(&mut conn, &mut clk, &image_id)
+    })
 }
 
 // ---- 条目留言(identity-plan §4;第②笔命令面)-------------------------------
@@ -1428,25 +1191,18 @@ fn add_item_comment(
     content: String,
     spaces: State<'_, Spaces>,
 ) -> Result<String, String> {
-    let rt = spaces.get(&space_id)?;
-    let (mut conn, mut clk) = rt.write_locks();
-    // ReopenRequired 复核在锁内(space-entry-plan §3.2,codex 二轮 M2)。
-    if let Some(e) = rt.restart_required() {
-        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
-    }
-    comments::add(&mut conn, &mut clk, &item_id, &content)
+    spaces.write(&space_id, |mut conn, mut clk| {
+        comments::add(&mut conn, &mut clk, &item_id, &content)
+    })
 }
 
 /// 销毁一条留言(**不进回收站** —— 用户 2026-08-06 拍板;UI 两拍确认兜)。
 /// 行不在 = 幂等 no-op(另一端删了并同步过来是正常并发,不是错误)。
 #[tauri::command]
 fn delete_item_comment(space_id: String, id: String, spaces: State<'_, Spaces>) -> Result<(), String> {
-    let rt = spaces.get(&space_id)?;
-    let (mut conn, mut clk) = rt.write_locks();
-    if let Some(e) = rt.restart_required() {
-        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
-    }
-    comments::remove(&mut conn, &mut clk, &id)
+    spaces.write(&space_id, |mut conn, mut clk| {
+        comments::remove(&mut conn, &mut clk, &id)
+    })
 }
 
 /// 一页留言(最近优先)。`cursor` = 上一页的 `next_cursor`,null = 第一页。
@@ -1459,10 +1215,10 @@ fn list_item_comments(
     cursor: Option<(String, String)>,
     spaces: State<'_, Spaces>,
 ) -> Result<comments::CommentPage, String> {
-    let rt = spaces.get(&space_id)?;
-    let conn = rt.db.lock().expect("db mutex poisoned");
-    let cur = cursor.as_ref().map(|(ca, id)| (ca.as_str(), id.as_str()));
-    comments::list_for_item(&conn, &item_id, cur)
+    spaces.read(&space_id, |conn| {
+        let cur = cursor.as_ref().map(|(ca, id)| (ca.as_str(), id.as_str()));
+        comments::list_for_item(&conn, &item_id, cur)
+    })
 }
 
 /// 每条目徽章聚合(留言数 + 未读,0038):一次 `GROUP BY` 聚合读,**不 N+1**;零留言
@@ -1473,9 +1229,9 @@ fn item_comment_counts(
     space_id: String,
     spaces: State<'_, Spaces>,
 ) -> Result<std::collections::HashMap<String, comments::CommentBadge>, String> {
-    let rt = spaces.get(&space_id)?;
-    let conn = rt.db.lock().expect("db mutex poisoned");
-    comments::counts_all(&conn)
+    spaces.read(&space_id, |conn| {
+        comments::counts_all(&conn)
+    })
 }
 
 /// 推进一条条目的留言已读水位(0038):留言面第一页渲染成功后带上页首那条的 id。
@@ -2203,10 +1959,10 @@ async fn sync_set_server(
 /// 数据不可恢复,§2 强制仪式的复读入口)。
 #[tauri::command]
 fn sync_recovery_code(space_id: String, spaces: State<'_, Spaces>) -> Result<String, String> {
-    let rt = spaces.get(&space_id)?;
-    let conn = rt.db.lock().expect("db mutex poisoned");
-    // 密钥材料不出 core(P4-a 窄公开面):k_acc 的读取与转码都在 core 内完成。
-    sync::transport::recovery_code(&conn)
+    spaces.read(&space_id, |conn| {
+        // 密钥材料不出 core(P4-a 窄公开面):k_acc 的读取与转码都在 core 内完成。
+        sync::transport::recovery_code(&conn)
+    })
 }
 
 // ---- 空间命令面(sync-plan §六;空间的存在与身份见 spaces.rs) ----
@@ -2383,14 +2139,14 @@ struct DeviceEntryItem {
 
 #[tauri::command]
 fn device_identity(space_id: String, spaces: State<'_, Spaces>) -> Result<DeviceIdentity, String> {
-    let rt = spaces.get(&space_id)?;
-    let conn = rt.db.lock().expect("db mutex poisoned");
-    let this_device = clock::Clock::load(&conn)?.device_id().to_string();
-    let devices = identity::device_roster(&conn)?
-        .into_iter()
-        .map(|d| DeviceEntryItem { device_id: d.device_id, alias: d.alias })
-        .collect();
-    Ok(DeviceIdentity { this_device, devices })
+    spaces.read(&space_id, |conn| {
+        let this_device = clock::Clock::load(&conn)?.device_id().to_string();
+        let devices = identity::device_roster(&conn)?
+            .into_iter()
+            .map(|d| DeviceEntryItem { device_id: d.device_id, alias: d.alias })
+            .collect();
+        Ok(DeviceIdentity { this_device, devices })
+    })
 }
 
 /// 给一台设备起/改/清别名(identity-plan §2)。`alias` 传 null 或空白 = 清名。
@@ -2405,13 +2161,9 @@ fn set_device_alias(
     alias: Option<String>,
     spaces: State<'_, Spaces>,
 ) -> Result<(), String> {
-    let rt = spaces.get(&space_id)?;
-    let (mut conn, mut clk) = rt.write_locks();
-    // ReopenRequired 复核在锁内(space-entry-plan §3.2,codex 二轮 M2),同 rename_space。
-    if let Some(e) = rt.restart_required() {
-        return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
-    }
-    identity::set_device_alias(&mut conn, &mut clk, &device_id, alias.as_deref())
+    spaces.write(&space_id, |mut conn, mut clk| {
+        identity::set_device_alias(&mut conn, &mut clk, &device_id, alias.as_deref())
+    })
 }
 
 /// 重置空间(epoch-plan §7):清除本机该空间副本,之后走配对重新加入。**UI 义务
@@ -4165,7 +3917,6 @@ pub fn run() {
             idea_stats,
             locate_item,
             list_archived,
-            list_topic_tree,
             search_notes,
             delete_note,
             archive_note,
