@@ -3582,6 +3582,9 @@ pub fn run() {
     // XInitThreads 的多线程 X 客户端会把协议流搅乱,现场是 `xcb_xlib_threads_sequence_lost`
     // 断言 **abort(整个 app 当场没,不是一次失败的查询)** —— 本机三条路各复现过一次。
     // XInitThreads 让 Xlib 自己上锁,三条路当场恢复(winit 的 X11 后端同样开局就调它)。
+    // ⚠ 605:前两条已不复存在 —— 两个「看大图」入口改成 `setFullscreen`,不再查显示器
+    // (`planFullscreen`,item-images.ts)。⛔ 这一句照旧留着:`show_window` 那条还在;
+    // 且 `set_fullscreen` 在 GTK 侧走不走 Xlib **本轮没量**,不拿没量过的东西换掉保险。
     // 必须在任何 Xlib 调用之前,故与下面那条 env 一起放在进程最早点。仅 Linux。
     // 返回值(非零 = Xlib 支持多线程)**刻意不判**:真返回 0 时也只是回到本轮之前的状态
     // (那三条路照旧会崩),没有比「照常启动」更好的处置 —— 不是静默兜底,是无分支可走。
@@ -4010,18 +4013,30 @@ pub fn run() {
                     }
                 });
             }
+            // 全屏期间的几何**不是用户的几何**:605 起「看大图」把窗口切成真全屏
+            // (item-images.ts::planFullscreen),而 WINDOW_STATE_FLAGS 里没有 FULLSCREEN,
+            // 插件的 update_state 只对 maximized/minimized 短路、**对全屏不短路** ⇒ 这段落盘
+            // 会把「整块屏幕 @ (0,0)」写成下次启动的窗口。看图看多久,盘上就错多久(退出全屏
+            // 那记 Resized 会自动把真几何补回来,所以只有「看图期间被硬杀 / 被关窗」才留下)。
+            // ⇒ 两个落盘点各加一道:全屏时整段跳过,别存。查询失败按「不是全屏」办(照旧存,
+            // 等于本轮之前的行为)。
+            let notebook_for_geom = notebook.clone();
             notebook.on_window_event(move |event| match event {
                 // 关窗即存一次几何(别赌干净退出:常驻托盘、可能强杀/断电)。存失败不致命。
                 tauri::WindowEvent::CloseRequested { api, .. } => {
                     api.prevent_close();
-                    let _ = notebook_for_close
-                        .app_handle()
-                        .save_window_state(WINDOW_STATE_FLAGS);
+                    if !notebook_for_close.is_fullscreen().unwrap_or(false) {
+                        let _ = notebook_for_close
+                            .app_handle()
+                            .save_window_state(WINDOW_STATE_FLAGS);
+                    }
                     let _ = notebook_for_close.hide();
                 }
                 // 移动/缩放:防抖落盘(见上)。send 失败(防抖线程已退出)无害。
                 tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_) => {
-                    let _ = geom_tx.send(());
+                    if !notebook_for_geom.is_fullscreen().unwrap_or(false) {
+                        let _ = geom_tx.send(());
+                    }
                 }
                 _ => {}
             });

@@ -15,8 +15,7 @@ import { copyText } from "./clipboard";
 import { readImage, writeImage } from "@tauri-apps/plugin-clipboard-manager";
 import { Image as ShellImage } from "@tauri-apps/api/image";
 import { flashToast, toastAction } from "./toast";
-import { PhysicalPosition, PhysicalSize, LogicalSize } from "@tauri-apps/api/dpi";
-import { currentMonitor, getCurrentWindow } from "@tauri-apps/api/window";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import "./item-images.css";
 
 /** Mirror of lib.rs `ImageMeta` (no bytes): an image's id, 「图N」编号, and MIME. */
@@ -731,10 +730,10 @@ function makeImageViewer(
 }
 
 /** 关闭第一步:把遮罩里的**内容**卸干净,只留纯黑底。遮罩本体还盖着,所以不会露裸窗。
- *  为什么单拎一步:关闭要先把主窗从「撑到近满屏」缩回原尺寸,而缩窗会让 WebView 把整个
- *  主窗重排重绘一遍——此刻若全尺寸位图还挂在遮罩里,它得陪着一起重绘;偏偏遮罩要等
+ *  为什么单拎一步:关闭要先把窗口从全屏退回原来的几何,而那一下会让 WebView 把整个
+ *  窗口重排重绘一遍——此刻若全尺寸位图还挂在遮罩里,它得陪着一起重绘;偏偏遮罩要等
  *  restore 跑完才撤,这一段全发生在用户「已经想关了」之后、且零反馈(用户报的「关闭好卡」
- *  的第二段,第一段是单击延迟)。先卸再缩,缩的是一屏纯色。
+ *  的第二段,第一段是单击延迟)。先卸再退,退的是一屏纯色。
  *  `removeAttribute("src")` 而非 `src=""`:后者在部分 WebView 里会当相对 URL 去重新请求
  *  当前页;移掉属性才是干净地断掉对那份 data URL 的引用,位图可即刻回收。 */
 function shedVisuals(overlay: HTMLElement, img: HTMLImageElement): void {
@@ -742,79 +741,50 @@ function shedVisuals(overlay: HTMLElement, img: HTMLImageElement): void {
   overlay.replaceChildren(); // stage / 左右箭头 / 角标一并撤走
 }
 
-/** 看已保存图时把笔记本主窗放大到「图原尺寸 + 边距」(上限=显示器 92%),返回还原原
- *  几何的闭包;不需要放大(已最大化 / 图比当前窗口还小)时返回 null。lightbox 的暗遮罩
- *  铺满的是窗口而非屏幕,故只有把窗口撑到接近屏幕,CSS 的「适配容器」才等于用户要的
- *  「适配屏幕」——小图近原大、大图缩到屏幕合适。复用捕获窗 openPreviewLarge 验证过的
- *  92%/PAD 算法(main.ts)。所有权限调用失败(没授权/取不到显示器)都吞成 null:lightbox
- *  照常显示,只是仍受窗口边界。scaleFactor 走免权限的 devicePixelRatio。 */
-async function planGrowMainWindow(
-  naturalW: number,
-  naturalH: number,
-): Promise<{ restore: () => Promise<void>; applyGrow: () => Promise<void> } | null> {
+/** 看大图时把**当前这个窗口**切成真全屏,返回退出全屏的闭包;已经是全屏时返回 null
+ *  (用户自己弄的全屏不接管,也就不会在关图时替他退出去——macOS 绿键 / Linux WM 都给得出
+ *  这个态)。两个 lightbox 入口共用:笔记本窗、捕获浮窗一视同仁。
+ *
+ *  ⭐ 605 起是这个形。此前(138 引入)是「把窗口撑到图原尺寸 + 边距、上限显示器 92%」——
+ *  遮罩 `position:fixed` 铺满的是**窗口**而非屏幕,而当时的看图器只会「把图缩进容器」,于是
+ *  绕道去撑窗,让 CSS 的「适配容器」约等于用户要的「适配屏幕」。163 把看图器改成整图/铺宽 +
+ *  Ctrl+滚轮缩放 + 原生滚动之后,那条理由就没了(图自己会适配视口),剩下的全是账:
+ *   ① **窗口形状被图片形状接管** —— 用户报:点开一张横条截图,主窗被拉成又宽又矮;
+ *   ② `devicePixelRatio` 在 WebView 里**含页面缩放**、CSS px 又被当逻辑 px 传给 `setSize`,
+ *      界面字号非 100% 时窗口不是长大而是**缩水一圈**(241 记档、244/245 排队未修);
+ *   ③ 关图路径上多两趟窗口 IPC(setSize + 可能的 setPosition),而遮罩正等着它跑完才撤;
+ *   ④ Linux 上 `currentMonitor()` 是不经事件循环的直接 GDK 调用,这是三条非主线程碰 Xlib
+ *      的真路之一(lib.rs 的 XInitThreads 注释)。
+ *  `setFullscreen` 一个开关把四条一起销掉:没有 DPI 换算、没有 92% 估算、没有边界钳位、
+ *  没有形状变形,遮罩铺满的是**屏幕**。
+ *
+ *  失败(没授权 / 平台拒绝)吞成 null:大图照常显示,只是仍受窗口边界——这不是静默兜底,
+ *  是「看图」本身不该因为窗口调不动就看不成。 */
+async function planFullscreen(): Promise<{ restore: () => Promise<void>; apply: () => Promise<void> } | null> {
   const win = getCurrentWindow();
   try {
-    if (await win.isMaximized()) return null; // 已铺满屏幕,lightbox 本就是屏幕尺寸
-    const sf = window.devicePixelRatio || 1;
-    const prevSize = await win.innerSize(); // physical;原样存、原样还原,免 DPI 换算误差
-    const prevPos = await win.outerPosition(); // physical
-    const prevW = prevSize.width / sf; // 逻辑单位,与 naturalWidth(CSS px)/显示器逻辑尺寸同口径
-    const prevH = prevSize.height / sf;
-    let maxW = 1280;
-    let maxH = 880;
-    const mon = await currentMonitor();
-    if (mon) {
-      const msf = mon.scaleFactor || 1;
-      maxW = Math.floor((mon.size.width / msf) * 0.92);
-      maxH = Math.floor((mon.size.height / msf) * 0.92);
-    }
-    const PAD = 56; // lightbox padding + 一点余量
-    const targetW = Math.max(900, Math.min((naturalW || 600) + PAD, maxW)); // 笔记本 minWidth 900
-    const targetH = Math.max(600, Math.min((naturalH || 400) + PAD, maxH)); // minHeight 600
-    if (targetW <= prevW && targetH <= prevH) return null; // 图已放得下,别动窗口(免无谓跳动)
-    // 原地长大,不再无脑 center(用户报:看张图不该把整个主窗甩到屏幕正中):保持原左上角,只在撑大
-    // 后会超出当前显示器时朝内钳最小的一段(窗比屏还大就贴左上角)。全程用物理像素算——outerPosition
-    // 与显示器 position/size 都是物理量,免 DPI 换算误差;取不到显示器信息(mon 为空)才退回旧的居中。
-    let targetPos: PhysicalPosition | null = null;
-    if (mon) {
-      const msf = mon.scaleFactor || 1;
-      const physW = Math.round(targetW * msf); // setSize 用逻辑尺寸;窗在本显示器上,物理尺寸即 ×msf
-      const physH = Math.round(targetH * msf);
-      const maxX = mon.position.x + mon.size.width - physW; // 右不溢出的左上角上界
-      const maxY = mon.position.y + mon.size.height - physH; // 下不溢出的左上角上界
-      const x = Math.max(mon.position.x, Math.min(prevPos.x, maxX)); // 先钳上界再钳下界:窗>屏时落左上
-      const y = Math.max(mon.position.y, Math.min(prevPos.y, maxY));
-      targetPos = new PhysicalPosition(x, y);
-    }
-    // restore 与 applyGrow 分开返回:调用方先登记 restore 再 applyGrow,故即使关闭抢在
-    // 放大过程中(setSize/setPosition 的 await 间隙)发生,onClose 也能把窗口还原回去。
-    // 位置到底动没动:targetPos 为空走的是 center()(必动),否则只有钳位真把左上角挪开才算动。
-    // 「原地长大」是常态(窗口没越出显示器),那时还原只需改回尺寸——省掉的这次 setPosition
-    // 是关闭路径上一整趟 IPC + 一记窗口消息,而关闭时遮罩正等着它跑完才撤(用户感知的「卡」)。
-    const posMoved = targetPos === null || targetPos.x !== prevPos.x || targetPos.y !== prevPos.y;
-    const restore = async (): Promise<void> => {
-      try {
-        await win.setSize(new PhysicalSize(prevSize.width, prevSize.height));
-        if (posMoved) await win.setPosition(new PhysicalPosition(prevPos.x, prevPos.y));
-      } catch {
-        /* 还原失败无妨——用户可手动调整 */
-      }
+    if (await win.isFullscreen()) return null; // 用户自己就在全屏:不接管
+    // restore 与 apply 分开返回:调用方先登记 restore 再 apply,故即使关闭抢在切换过程中
+    // (apply 的 await 间隙)发生,onClose 也能把窗口退回来。
+    return {
+      apply: () => win.setFullscreen(true),
+      restore: async () => {
+        try {
+          await win.setFullscreen(false);
+        } catch {
+          /* 退不出去无妨——用户可自己退全屏 */
+        }
+      },
     };
-    const applyGrow = async (): Promise<void> => {
-      await win.setSize(new LogicalSize(targetW, targetH));
-      if (targetPos) await win.setPosition(targetPos); // 原地长大 + 边界钳位(替代无脑 center)
-      else await win.center(); // 无显示器信息:退回旧的居中行为
-    };
-    return { restore, applyGrow };
   } catch {
     return null;
   }
 }
 
-/** 放大窗口的 IPC 返回不等于 WebView 视口已更新(WM_SIZE→webview 重排→JS resize 异步
+/** 切全屏的 IPC 返回不等于 WebView 视口已更新(WM_SIZE→webview 重排→JS resize 异步
  *  到达)。init() 若用旧视口布局,亮相后会被迟到的 resize 再排一次——尺寸可见地跳一记
- *  (163 续案,超高图最显眼)。这里等视口真离开放大前的尺寸并连续两帧稳定再放行;600ms
- *  兜底——setSize 被拒/无效时视口永不变,超时按当前视口布局(等于旧行为,不更糟)。 */
+ *  (163 续案,超高图最显眼)。这里等视口真离开切换前的尺寸并连续两帧稳定再放行;600ms
+ *  兜底——setFullscreen 被拒/无效时视口永不变,超时按当前视口布局(等于旧行为,不更糟)。 */
 function viewportSettle(preW: number, preH: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
     const t0 = performance.now();
@@ -840,12 +810,11 @@ function viewportSettle(preW: number, preH: number, signal: AbortSignal): Promis
 
 /** A full-window overlay showing a SAVED image at full size (bytes load lazily as a data:
  *  URL by id). 滚轮缩放 / 滚动、拖动平移、双击切取向;click backdrop 或 Esc 关闭(见 makeImageViewer)。
- *  在暗遮罩下把主窗撑到近屏幕(planGrowMainWindow),关闭时先摘监听再还原窗口——两步都在
+ *  在暗遮罩下把窗口切成全屏(planFullscreen),关闭时先摘监听再退出全屏——两步都在
  *  遮罩仍覆盖时发生,无裸窗闪(与捕获窗同纪律)。
  *  **224 起收同条目的整组图**:`images` 是这条目的全部配图、`index` 是点开的那张;>1 张时
  *  ←/→ 键与左右箭头按钮在组内循环翻页(角标显「图N · i/共」)。只一张时零变化——按钮与角标
- *  都不出现,老路径原样。翻页**不重新撑窗**:窗口按第一张的尺寸定好就不再动,否则每翻一张
- *  窗口跳一次(比看不清更难受)。 */
+ *  都不出现,老路径原样。翻页**不碰窗口**:全屏是开图那次一次性切好的,此后到关图为止都不动。 */
 export async function openLightbox(images: ImageMeta[], index: number): Promise<void> {
   if (images.length === 0) return; // 没图可看:不挂空遮罩
   const multi = images.length > 1;
@@ -858,16 +827,16 @@ export async function openLightbox(images: ImageMeta[], index: number): Promise<
   const stage = el("div", { className: "img-lightbox-stage" }, [loading, img]);
   let closed = false;
   let restore: (() => Promise<void>) | null = null;
-  let grow: Promise<void> | null = null; // 进行中的放大;关闭须等它跑完(成/败)再唯一一次还原(H4)
+  let entering: Promise<void> | null = null; // 进行中的切全屏;关闭须等它跑完(成/败)再唯一一次还原(H4)
   const viewer = makeImageViewer(img, () => close());
   const { overlay, close } = mountLightbox(
     stage,
     async () => {
-      closed = true; // 关标志:让下面异步流(invoke/load/放大)每个 await 后止步
+      closed = true; // 关标志:让下面异步流(invoke/load/切全屏)每个 await 后止步
       viewer.cleanup(); // 摘缩放/滚动监听(含 window resize),不泄漏 img
-      shedVisuals(overlay, img); // 先卸大图、只留黑底,再去缩窗(见 shedVisuals)
-      if (grow) await grow.catch(() => {}); // 等放大真正结束(即便 center 抛错),避免 restore 与放大并发
-      if (restore) await restore(); // 仍在暗遮罩下还原窗口几何(只此一次)
+      shedVisuals(overlay, img); // 先卸大图、只留黑底,再去退全屏(见 shedVisuals)
+      if (entering) await entering.catch(() => {}); // 等切换真正结束(即便抛错),避免 restore 与它并发
+      if (restore) await restore(); // 仍在暗遮罩下退出全屏(只此一次)
     },
     multi ? (delta) => void present((cur + delta + images.length) % images.length, false) : undefined,
   );
@@ -877,7 +846,7 @@ export async function openLightbox(images: ImageMeta[], index: number): Promise<
     overlay.replaceChildren(el("div", { className: "img-lightbox-err", textContent: t("itemImages.loadFail") }));
   };
   // 组内导航件(只在多图时存在):左右箭头 + 「图N · i/共」角标。都 position:fixed 钉在视口,
-  // 放大后拖着滚图时不跟着跑。按钮的 click 必须 stopPropagation——遮罩自身的 click 是「关闭」。
+  // 放大图后拖着滚时不跟着跑。按钮的 click 必须 stopPropagation——遮罩自身的 click 是「关闭」。
   const counter = multi ? el("div", { className: "img-lightbox-count" }) : null;
   const navBtn = (dir: -1 | 1): HTMLButtonElement => {
     const b = el("button", {
@@ -893,7 +862,7 @@ export async function openLightbox(images: ImageMeta[], index: number): Promise<
   };
   if (multi && counter) overlay.append(navBtn(-1), navBtn(1), counter);
 
-  /** 呈现第 i 张。`first`=开图那次(要量图撑窗);换图那次只重新解码 + 重排,窗口不动。 */
+  /** 呈现第 i 张。`first`=开图那次(要切全屏);换图那次只重新解码 + 重排,窗口不动。 */
   async function present(i: number, first: boolean): Promise<void> {
     if (closed) return;
     const my = ++gen;
@@ -910,8 +879,8 @@ export async function openLightbox(images: ImageMeta[], index: number): Promise<
     try {
       const src = await getFullImage(m.id);
       if (closed || my !== gen) return;
-      // 图解码出来才知道自然尺寸 → 据此把主窗撑到近屏幕(在暗遮罩下 resize,无闪)。load 监听走
-      // viewer.signal:关闭时随 cleanup 一起摘、并由 abort 事件让本 Promise 必定 settle(M5)。
+      // 解码拿到自然尺寸,布局才有依据(切全屏本身不依赖它,但两者都必须在 init 之前落定)。
+      // load 监听走 viewer.signal:关闭时随 cleanup 一起摘、并由 abort 事件让本 Promise 必定 settle(M5)。
       // 已经是这张(翻回刚看过的一张、或两张字节相同)则不重新等 load——同 src 不再触发 load 事件。
       if (!(img.src === src && img.complete && img.naturalWidth > 0)) {
         await new Promise<void>((resolve) => {
@@ -927,21 +896,21 @@ export async function openLightbox(images: ImageMeta[], index: number): Promise<
         return;
       }
       if (first) {
-        const plan = await planGrowMainWindow(img.naturalWidth, img.naturalHeight);
-        if (closed || my !== gen) return; // 关在放大前:窗口没动,onClose 里 restore 仍 null,无需还原
+        const plan = await planFullscreen();
+        if (closed || my !== gen) return; // 关在切换前:窗口没动,onClose 里 restore 仍 null,无需还原
         if (plan) {
-          const preW = window.innerWidth; // 放大前的视口:viewportSettle 以「离开此尺寸」为信号
+          const preW = window.innerWidth; // 切全屏前的视口:viewportSettle 以「离开此尺寸」为信号
           const preH = window.innerHeight;
-          restore = plan.restore; // 先登记还原,再启动放大:onClose 会等 grow 完再还原(串行,不并发)
-          grow = plan.applyGrow();
-          await grow.catch(() => {}); // 放大失败不致命(权限/重启未生效时窗口保持原尺寸)
-          if (closed || my !== gen) return; // 关已在放大中发生:onClose 负责等 grow + 还原,这里不再动
+          restore = plan.restore; // 先登记还原,再启动切换:onClose 会等它完再还原(串行,不并发)
+          entering = plan.apply();
+          await entering.catch(() => {}); // 切不过去不致命(没授权/平台拒绝时窗口保持原样)
+          if (closed || my !== gen) return; // 关已在切换中发生:onClose 负责等它 + 还原,这里不再动
           await viewportSettle(preW, preH, viewer.signal); // 视口真落定再布局,亮相后不再被迟到 resize 重排
           if (closed || my !== gen) return;
         }
       }
       loading.remove();
-      viewer.init(); // 窗口已定尺(放大过或没放大)→ 挑取向 + 布局一次 + 亮相
+      viewer.init(); // 窗口已定尺(全屏或原样)→ 挑取向 + 布局一次 + 亮相
     } catch {
       showError();
     }
@@ -952,34 +921,31 @@ export async function openLightbox(images: ImageMeta[], index: number): Promise<
 
 /** A full-window overlay showing an image from a ready src (object URL / data URL) — for an
  *  unsaved preview (e.g. a just-pasted capture image, which has no id yet). `opts.onClose` runs
- *  after it closes; `opts.grow`(捕获窗传入)把浮窗放大到图的近原尺寸——`apply` 在暗遮罩下
- *  放大、`restore` 关闭时缩回。**放大→视口落定→亮相**的无闪时序由本函数统一负责(与已保存图
- *  的 openLightbox 同纪律,163 续案):先前捕获窗是「先小窗 init、放大后 resize 重挑」,亮相后
- *  被迟到的 resize 重排一次(尺寸可见跳一记);现改为图先隐形解码、窗口在暗遮罩下放大、viewport
- *  真落定后一次成形亮相。放大/解码期间显「图片载入中…」加载指示(§3.7,快路径 <0.2s 不露脸)。 */
+ *  after it closes. 与已保存图的 openLightbox 同纪律:在暗遮罩下把窗口切成全屏(planFullscreen),
+ *  关闭时先卸图再退出全屏。**切换→视口落定→亮相**的无闪时序由本函数统一负责(163 续案):
+ *  先前捕获窗是「先小窗 init、放大后 resize 重挑」,亮相后被迟到的 resize 重排一次(尺寸可见跳
+ *  一记);现改为图先隐形解码、窗口在暗遮罩下切全屏、viewport 真落定后一次成形亮相。
+ *  切换/解码期间显「图片载入中…」加载指示(§3.7,快路径 <0.2s 不露脸)。 */
 export function openLightboxUrl(
   src: string,
   alt = t("itemImages.preview"),
-  opts: {
-    onClose?: () => void | Promise<void>;
-    grow?: { apply: () => Promise<void>; restore: () => Promise<void> };
-  } = {},
+  opts: { onClose?: () => void | Promise<void> } = {},
 ): void {
   const img = el("img", { className: "img-lightbox-img", alt });
   const loading = el("div", { className: "img-lightbox-loading", textContent: t("itemImages.loading") });
   const stage = el("div", { className: "img-lightbox-stage" }, [loading, img]);
   let closed = false;
   let restore: (() => Promise<void>) | null = null;
-  let grow: Promise<void> | null = null; // 进行中的放大;关闭须等它跑完(成/败)再唯一一次还原(H4)
+  let entering: Promise<void> | null = null; // 进行中的切全屏;关闭须等它跑完(成/败)再唯一一次还原(H4)
   const viewer = makeImageViewer(img, () => close());
-  // 关闭:先摘缩放/滚动监听(含 window resize),等在途放大跑完再唯一一次还原窗口,最后跑调用方
+  // 关闭:先摘缩放/滚动监听(含 window resize),等在途切换跑完再唯一一次退出全屏,最后跑调用方
   // 的 onClose——都在暗遮罩仍覆盖时发生,无裸窗闪(与 openLightbox 同纪律)。
   const { overlay, close } = mountLightbox(stage, async () => {
     closed = true; // 关标志:让下面异步流每个 await 后止步
     viewer.cleanup();
-    shedVisuals(overlay, img); // 先卸大图、只留黑底,再去缩窗(见 shedVisuals)
-    if (grow) await grow.catch(() => {}); // 等放大真正结束,避免 restore 与放大并发
-    if (restore) await restore(); // 仍在暗遮罩下还原窗口几何(只此一次)
+    shedVisuals(overlay, img); // 先卸大图、只留黑底,再去退全屏(见 shedVisuals)
+    if (entering) await entering.catch(() => {}); // 等切换真正结束,避免 restore 与它并发
+    if (restore) await restore(); // 仍在暗遮罩下退出全屏(只此一次)
     await opts.onClose?.();
   });
   const showError = (): void => {
@@ -1002,18 +968,20 @@ export function openLightboxUrl(
         showError();
         return;
       }
-      if (opts.grow) {
-        const preW = window.innerWidth; // 放大前视口:viewportSettle 以「离开此尺寸」为信号
+      const plan = await planFullscreen();
+      if (closed) return; // 关在切换前:窗口没动,restore 仍 null,无需还原
+      if (plan) {
+        const preW = window.innerWidth; // 切全屏前的视口:viewportSettle 以「离开此尺寸」为信号
         const preH = window.innerHeight;
-        restore = opts.grow.restore; // 先登记还原,再启动放大:onClose 会等 grow 完再还原(串行)
-        grow = opts.grow.apply();
-        await grow.catch(() => {}); // 放大失败不致命(权限/重启未生效时窗口保持原尺寸)
+        restore = plan.restore; // 先登记还原,再启动切换:onClose 会等它完再还原(串行)
+        entering = plan.apply();
+        await entering.catch(() => {}); // 切不过去不致命(没授权/平台拒绝时窗口保持原样)
         if (closed) return;
         await viewportSettle(preW, preH, viewer.signal); // 视口真落定再布局,不被迟到 resize 重排
         if (closed) return;
       }
       loading.remove();
-      viewer.init(); // 窗口已定尺(放大过或没放大)→ 挑取向 + 布局一次 + 亮相
+      viewer.init(); // 窗口已定尺(全屏或原样)→ 挑取向 + 布局一次 + 亮相
     } catch {
       showError();
     }
@@ -1242,8 +1210,8 @@ export function pendingImages(
   opts: {
     /** 增删预览后回调(捕获浮窗用它随内容长/缩窗口)。 */
     onChange?: () => void;
-    /** 点预览看大图的方式;不传就用普通遮罩 openLightboxUrl(捕获浮窗要连窗口一起放大)。 */
-    openPreview?: (url: string, naturalW: number, naturalH: number) => void;
+    /** 点预览看大图的方式;不传就用 openLightboxUrl 的默认 alt(捕获浮窗要换成自己那句)。 */
+    openPreview?: (url: string) => void;
     /** 传了就把暂存图持久化到 IndexedDB(此键分桶),供断电恢复;不传=纯内存(旧行为)。
      *  见 compose-draft.ts:三入口各用一个键。持久化尽力而为,写失败吞掉不拦业务。 */
     persistKey?: string;
@@ -1296,7 +1264,7 @@ export function pendingImages(
     const url = URL.createObjectURL(blob);
     const img = el("img", { className: "img-thumb-img", src: url, title: t("itemImages.clickZoom") });
     img.addEventListener("click", () => {
-      if (opts.openPreview) opts.openPreview(url, img.naturalWidth, img.naturalHeight);
+      if (opts.openPreview) opts.openPreview(url);
       else openLightboxUrl(url);
     });
     const del = el("button", { className: "img-del", textContent: "×", title: t("itemImages.removeImage") });

@@ -2,7 +2,7 @@ import { invoke, mirrorSpace, spaceLabel, listSpaces, dotClass, MAIN_SPACE } fro
 import { invoke as rawInvoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { LogicalSize } from "@tauri-apps/api/dpi";
-import { currentMonitor, getCurrentWindow } from "@tauri-apps/api/window";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { REPASTE_HINT, openLightboxUrl, pendingImages } from "./item-images";
 import { saveTextDraft, loadTextDraft, clearTextDraft } from "./compose-draft";
 import { createCaptureCommands } from "./capture-commands";
@@ -299,10 +299,6 @@ const MIN_H = 110; // floor; one comfortable line is naturally ~114, so it rarel
 const MAX_H = 460;
 const BODY_PAD_V = 16 + 26; // body padding: top + bottom (see index.html)
 
-// The compact box's current height, remembered so the preview-lightbox can restore it after
-// temporarily growing the window to show an image near full size.
-let lastH = MIN_H;
-
 // Grow the textarea to fit its text (CSS min-height keeps a comfortable single-line box).
 function autoGrowInput(): void {
   input.style.height = "auto";
@@ -321,7 +317,6 @@ async function fitWindow(): Promise<void> {
     input.style.overflowY = "hidden";
   }
   const h = Math.max(MIN_H, Math.min(MAX_H, slip.offsetHeight + BODY_PAD_V));
-  lastH = h;
   try {
     await appWindow.setSize(new LogicalSize(WIN_W, h));
   } catch {
@@ -330,48 +325,12 @@ async function fitWindow(): Promise<void> {
   }
 }
 
-// Click a pasted preview → show a lightbox, growing the capture window so the image is near
-// its real size (capped to ~92% of the monitor); restore the compact box on close.
-//
-// 无闪时序全交给 openLightboxUrl(与已保存图的 openLightbox 同纪律,163 续案):它先在暗遮罩
-// 下放大(apply)、等 viewport 真落定再让图一次成形亮相,关闭时(遮罩仍覆盖)先等放大跑完再
-// 缩回(restore)——本函数只提供「怎么放大 / 怎么缩回」两个钩子,放大/关闭的编排不再自管。
-function openPreviewLarge(url: string, naturalW: number, naturalH: number): void {
-  const shrink = async (): Promise<void> => {
-    try {
-      await appWindow.setSize(new LogicalSize(WIN_W, lastH));
-      await appWindow.center();
-    } catch {
-      /* nothing to restore if the grow didn't happen */
-    }
-  };
-  const growWindow = async (): Promise<void> => {
-    let maxW = 1280;
-    let maxH = 880;
-    try {
-      const mon = await currentMonitor();
-      if (mon) {
-        const sf = mon.scaleFactor || 1;
-        maxW = Math.floor((mon.size.width / sf) * 0.92);
-        maxH = Math.floor((mon.size.height / sf) * 0.92);
-      }
-    } catch {
-      // no monitor info — fall back to the generous fixed cap
-    }
-    const PAD = 56; // lightbox padding + a little breathing room
-    const w = Math.max(420, Math.min((naturalW || 600) + PAD, maxW));
-    const h = Math.max(320, Math.min((naturalH || 400) + PAD, maxH));
-    await appWindow.setSize(new LogicalSize(w, h));
-    await appWindow.center();
-  };
-  openLightboxUrl(url, t("capture.preview"), { grow: { apply: growWindow, restore: shrink } });
-}
-
 // Images pasted while composing, held in memory until save — the shared pendingImages
 // controller (item-images.ts, 同灵感/看板的新建输入框). Capture creates the item (and its
 // id) only on Enter, so the images ride along and get attached right after capture_note
-// returns the new id. onChange re-fits the window as previews come and go; clicking a
-// preview goes through openPreviewLarge so the WINDOW grows with the lightbox.
+// returns the new id. onChange re-fits the window as previews come and go.
+// 点预览看大图:605 起两个 lightbox 入口一律把**当前窗口**切成真全屏(item-images.ts 的
+// planFullscreen),浮窗不再按图的尺寸撑大自己 —— 这里只剩「换一句 alt」,几何一概不管。
 const pend = pendingImages({
   // A stale save-error shouldn't linger once the previews change (matches the old paste
   // handler); the failure message from attachAll is set AFTER it resolves, so it survives.
@@ -379,7 +338,7 @@ const pend = pendingImages({
     errLine.textContent = "";
     void fitWindow();
   },
-  openPreview: (url, w, h) => void openPreviewLarge(url, w, h),
+  openPreview: (url) => openLightboxUrl(url, t("capture.preview")),
   // 断电恢复(198 桌面侧):暂存图落 IndexedDB,重开回填。捕获浮窗不分空间(落点在按
   // 回车那刻定),文字草稿见下方 CAPTURE_DRAFT_KEY。
   persistKey: "zhujian.capture-images",

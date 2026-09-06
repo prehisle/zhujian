@@ -27,7 +27,7 @@
     for (let i = 0; i < 40 && !document.querySelector(".img-lightbox"); i++) await sleep(100);
     const scroller = document.querySelector(".img-lightbox");
     if (!scroller) return JSON.stringify({ error: "大图没打开" });
-    await sleep(600); // 等取字节/解码/撑窗定形(163 的 viewportSettle)
+    await sleep(600); // 等取字节/解码/切全屏定形(163 的 viewportSettle)
     const img = scroller.querySelector("img.img-lightbox-img");
     const widthBefore = img ? img.getBoundingClientRect().width : 0;
 

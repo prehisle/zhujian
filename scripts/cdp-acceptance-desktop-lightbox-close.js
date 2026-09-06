@@ -4,9 +4,10 @@
 //  ——脚本点的是页面上第一枚 `.img-thumb-img`。)
 //
 // 立的是 246 那两条:
-//  ① 点图关闭不再白等半秒(CLICK_DELAY 500→250),且**遮罩里的图先卸、窗口后缩**——缩窗要让
-//    WebView 把整个主窗重排一遍,全尺寸位图不该陪着一起重绘;而遮罩要等窗口还原完才撤,这段
-//    是用户报的「关闭好卡」。`shedAt < goneAt` 就是「先卸后缩」的地面真相。
+//  ① 点图关闭不再白等半秒(CLICK_DELAY 500→250),且**遮罩里的图先卸、窗口后还原**——还原
+//    (605 起 = 退出全屏,此前是缩窗)要让 WebView 把整个窗口重排一遍,全尺寸位图不该陪着一起
+//    重绘;而遮罩要等窗口还原完才撤,这段是用户报的「关闭好卡」。`shedAt < goneAt` 就是
+//    「先卸后还原」的地面真相。
 //  ② 缩短延迟不能把双击切取向误关掉:兜底是 pointerdown 一按下就 clearTimeout,所以真双击
 //    (两次**按下**间隔 140ms)必须活下来。这条是阴性对照,别只验关得快。
 // 合成事件够用:这两条都是纯 DOM 时序,不经原生输入管线;`detail:1` 必须给——单击关那支
@@ -23,7 +24,7 @@
   const openIt = async () => {
     q("img.img-thumb-img").click(); // 点内层 img(handler 挂它身上)
     for (let i = 0; i < 40 && !q(".img-lightbox"); i++) await sleep(50);
-    await sleep(900); // 取字节 + 解码 + 撑窗 + viewportSettle 定形
+    await sleep(900); // 取字节 + 解码 + 切全屏 + viewportSettle 定形
     return q("img.img-lightbox-img");
   };
   const at = (img) => {
@@ -50,11 +51,13 @@
   // ---- ① 关闭:多久关掉 + 是不是「先卸图后缩窗」 -------------------------------
   let img = await openIt();
   if (!img) return JSON.stringify({ error: "大图没打开" });
-  out.viewportGrown = window.innerWidth !== vw0; // 撑过窗才有「缩窗」这段可测
+  // 只作信息:切过全屏才有「还原」这段可测。窗口本就最大化时 Windows 上 setFullscreen 是
+  // 无形变的空转(605 实测:fs 标志翻了、几何一动不动),那时这格为 false 属正常。
+  out.viewportGrown = window.innerWidth !== vw0;
   out.clickCloses = img.style.cursor !== "grab"; // 整图放得下 → 单击关那支才生效
   {
-    // 顺序探针走 MutationObserver 而非轮询:没撑过窗时「卸图」与「撤遮罩」落在同一帧里,
-    // 8ms 的轮询根本插不进去,只有 records 的先后能作证。撑过窗时两者之间还隔着整段缩窗。
+    // 顺序探针走 MutationObserver 而非轮询:没切过全屏时「卸图」与「撤遮罩」落在同一帧里,
+    // 8ms 的轮询根本插不进去,只有 records 的先后能作证。切过时两者之间还隔着整段退全屏。
     const seq = [];
     const mo = new MutationObserver((recs) => {
       for (const r of recs) {

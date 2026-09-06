@@ -102,12 +102,14 @@ describe("新建入口配图 · 看板「新建任务」粘贴", () => {
   });
 });
 
-// 点暂存缩略图 → openLightboxUrl(无放大分支,笔记本窗:pendingImages 未传 openPreview)。
+// 点暂存缩略图 → openLightboxUrl(笔记本窗:pendingImages 未传 openPreview,走默认 alt)。
+// ⚠ 605 起这条路**也切全屏**(此前只有已保存图那条撑窗,暂存这条一动不动):窗口一变大,
+// 400px 的图仍是 fit 1:1(小图不放大),故下面那句宽度断言照旧成立、且更不受窗口尺寸影响。
 // 163④/166④ 把这条路径改成与 openLightbox 同一套「布局未定不显示 → 定形亮相」时序:img 出生
 // 即隐形零占位,init() 定形后一次成形亮相。这里断言点开后 img 确实经 init 亮相(visibility 非
 // hidden、渲染宽 == 图宽 = fit 1:1),而非停在出生隐形态。阴性对照:注掉 openLightboxUrl 的
 // viewer.init() → img 停在 width:0/visibility:hidden,waitUntil 超时真红(2026-07-20 实跑验过)。
-describe("新建入口配图 · 点暂存预览开 lightbox(无放大分支)", () => {
+describe("新建入口配图 · 点暂存预览开 lightbox", () => {
   before(async () => {
     await goNotebook("inbox");
     await clearInbox();
@@ -135,7 +137,7 @@ describe("新建入口配图 · 点暂存预览开 lightbox(无放大分支)", (
     });
     const thumb = await $(".v-inbox .compose .img-pending .img-thumb .img-thumb-img");
     await thumb.waitForExist({ timeout: 5000 });
-    await thumb.click(); // → openLightboxUrl(url),无 grow 分支
+    await thumb.click(); // → openLightboxUrl(url)
 
     await $(".img-lightbox .img-lightbox-img").waitForExist({ timeout: 5000 });
     // 定形亮相:非隐形(init 跑过)且渲染宽 == 400(fit 1:1,图 < 视口 → 不放大)。
