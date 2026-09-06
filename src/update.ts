@@ -7,6 +7,7 @@ import { relaunch } from "@tauri-apps/plugin-process";
 import { getVersion } from "@tauri-apps/api/app";
 import { t } from "./i18n";
 import "./update.css";
+import { elText as el, btn } from "./dom";
 
 let banner: HTMLDivElement | null = null;
 // 当前待处理的 Update:banner 收起时 close() 释放后端 resource。
@@ -15,23 +16,6 @@ let pending: Update | null = null;
 // 回窗查更新的节流:频繁切窗口不该每次都打 latest.json。
 const FOCUS_CHECK_THROTTLE_MS = 10 * 60 * 1000;
 let lastCheckedAt = 0;
-
-function el<K extends keyof HTMLElementTagNameMap>(
-  tag: K,
-  cls: string,
-  text?: string,
-): HTMLElementTagNameMap[K] {
-  const n = document.createElement(tag);
-  if (cls) n.className = cls;
-  if (text !== undefined) n.textContent = text;
-  return n;
-}
-
-function btn(label: string, cls: string, onClick: () => void): HTMLButtonElement {
-  const b = el("button", cls, label);
-  b.addEventListener("click", onClick);
-  return b;
-}
 
 function dismiss(): void {
   banner?.remove();

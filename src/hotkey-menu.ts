@@ -1,6 +1,7 @@
 import "./hotkey-menu.css";
 import { t } from "./i18n";
 import { NATIVE_MENU_KEEP } from "./context-menu";
+import { el } from "./dom";
 
 // 悬停即选中 + ⋯ 速查菜单 + 单键直达 —— 抽自 inbox 的原型,做成视图无关的公共件,
 // 让「同一个键 = 同一个概念」跨视图(灵感 / 任务看板 / …)一致,肌肉记忆才能迁移。
@@ -51,16 +52,6 @@ export type HotkeyController = {
 };
 
 // ---- small DOM helper (same shape as the views) ----------------------------
-function el<K extends keyof HTMLElementTagNameMap>(
-  tag: K,
-  props: Partial<HTMLElementTagNameMap[K]> = {},
-  children: (Node | string)[] = [],
-): HTMLElementTagNameMap[K] {
-  const node = Object.assign(document.createElement(tag), props);
-  for (const c of children) node.append(c);
-  return node;
-}
-
 export function createHotkeyController(): HotkeyController {
   // The hovered (or menu-locked) card is the shortcut target; its action list is read
   // live, so the menu and the keyboard can never disagree. `openMenuCloser` keeps at

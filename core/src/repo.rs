@@ -1,4 +1,8 @@
-//! Thin data-access layer. Pure SQL over rusqlite — no business logic, no AI.
+//! Data-access layer for the founding entities: pure SQL over rusqlite for
+//! `items` / `topics` / `item_topic` / `item_image`(+counter). ⚠ 314 起**新实体的 SQL 住各自模块**
+//! (comments / board_column / thumbs …),不再往这里加;本文件唯一带业务判据的写原语是
+//! `without_history_if_checklist_toggle`(0039:纯勾选不进编辑历史)—— 所以头注那句老话
+//! "no business logic" 别当铁律读,判据只许那一处有(607 改准)。
 //!
 //! Single-entity model (migration 0014): one `items` table where 想法 and 待办 are
 //! stages of the SAME subject, not two rows.

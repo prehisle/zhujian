@@ -21,6 +21,7 @@ import { toSvg } from "lean-qr/extras/svg";
 import { TOAST_ERROR_MS } from "./timing";
 import { t } from "./i18n";
 import "./sync.css";
+import { elText as el, btn } from "./dom";
 
 // 同步服务器默认地址——创建账户/加入设备(本文件)+ 加入空间(notebook.ts)三处入口预填。
 export const DEFAULT_SYNC_URL = "wss://sync.zhujian.app";
@@ -229,17 +230,6 @@ function onPanelKey(e: KeyboardEvent): void {
   }
 }
 
-function el<K extends keyof HTMLElementTagNameMap>(
-  tag: K,
-  cls: string,
-  text?: string,
-): HTMLElementTagNameMap[K] {
-  const n = document.createElement(tag);
-  if (cls) n.className = cls;
-  if (text !== undefined) n.textContent = text;
-  return n;
-}
-
 function input(placeholder: string, value = ""): HTMLInputElement {
   const i = document.createElement("input");
   i.className = "sync-input";
@@ -247,12 +237,6 @@ function input(placeholder: string, value = ""): HTMLInputElement {
   i.value = value;
   i.spellcheck = false;
   return i;
-}
-
-function btn(label: string, cls: string, onClick: () => void): HTMLButtonElement {
-  const b = el("button", cls, label);
-  b.addEventListener("click", onClick);
-  return b;
 }
 
 function renderPanel(): void {

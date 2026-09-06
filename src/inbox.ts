@@ -53,6 +53,7 @@ import { dayKey, dayLabel, startOfWeek, when } from "./tasktime";
 import { identitySig, loadIdentity, signatureChip } from "./identity";
 import { wireChecklistInput } from "./checklist-input";
 import "./inbox.css";
+import { el } from "./dom";
 
 // Mirrors of the Rust contracts (lib.rs) — the fields this view consumes. 想法 = a live
 // idea (未归类 + 已归类 merged); a tag is just metadata it may or may not carry, so one
@@ -138,16 +139,6 @@ type CardItem = {
 };
 
 // ---- small DOM helper ------------------------------------------------------
-function el<K extends keyof HTMLElementTagNameMap>(
-  tag: K,
-  props: Partial<HTMLElementTagNameMap[K]> = {},
-  children: (Node | string)[] = [],
-): HTMLElementTagNameMap[K] {
-  const node = Object.assign(document.createElement(tag), props);
-  for (const c of children) node.append(c);
-  return node;
-}
-
 // In the 想法 timeline the day is already the group heading, so each card only needs
 // its time-of-day; 回收站 cards (a flat list) keep the full date+time via the shared
 // when() (tasktime.ts — adds the year across a year boundary).

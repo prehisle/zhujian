@@ -62,6 +62,7 @@ import { identitySig, loadIdentity, signatureChip } from "./identity";
 import { t } from "./i18n";
 import { wireChecklistInput } from "./checklist-input";
 import "./board.css";
+import { el } from "./dom";
 
 // 跨视图「跳到这张任务卡」通道(搜索命中任务 → 跳看板并高亮)。模块级——
 // 发起方先 focusTask(id) 再 navigate("board")。看板 load() 里、**seq 守卫之后**(确认是
@@ -134,16 +135,6 @@ function sortByDue(items: TaskItem[]): TaskItem[] {
 }
 
 // ---- small DOM helper (same shape as inbox.ts) ------------------------------
-function el<K extends keyof HTMLElementTagNameMap>(
-  tag: K,
-  props: Partial<HTMLElementTagNameMap[K]> = {},
-  children: (Node | string)[] = [],
-): HTMLElementTagNameMap[K] {
-  const node = Object.assign(document.createElement(tag), props);
-  for (const c of children) node.append(c);
-  return node;
-}
-
 const btn = (label: string, kind: string, onclick: () => void) =>
   el("button", { className: `act ${kind}`, textContent: label, onclick });
 

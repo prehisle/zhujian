@@ -30,21 +30,12 @@ import {
 } from "./board-columns";
 import { t } from "./i18n";
 import "./column-manager.css";
+import { el } from "./dom";
 
 let overlay: HTMLDivElement | null = null;
 
 /** 列变了要回看板重画(board.ts 传进来的 `load`)。面板关掉即摘。 */
 let onChanged: (() => void) | null = null;
-
-function el<K extends keyof HTMLElementTagNameMap>(
-  tag: K,
-  props: Partial<HTMLElementTagNameMap[K]> = {},
-  children: (Node | string)[] = [],
-): HTMLElementTagNameMap[K] {
-  const node = Object.assign(document.createElement(tag), props);
-  for (const c of children) node.append(c);
-  return node;
-}
 
 /**
  * 打开列管理面。`opts.onChanged` 在**每一笔写成功之后**调用(看板在背后跟着重画),

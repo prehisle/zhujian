@@ -3,7 +3,7 @@ name = "zhujian-syncd"
 version = "0.1.0"
 description = "朱笺同步专用服务(sync-protocol §4)——设备鉴权 + 账户内密文帧路由 + 内存信箱 + 配对盲桥;对一切用户内容零知识"
 edition = "2021"
-rust-version = "1.77.2"
+rust-version = "1.89"
 
 # 刻意不建 cargo workspace(sync-protocol §8):独立编译、独立 target/。
 

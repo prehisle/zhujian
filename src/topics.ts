@@ -8,6 +8,7 @@ import { armDismiss, registerViewKeys } from "./hotkey-menu";
 import { TAG_COLORS } from "./tag-color";
 import { t } from "./i18n";
 import "./topics.css";
+import { el } from "./dom";
 
 // 标签视图。底层数据是 topics/item_topic(命令名、表名沿用 topic),对用户重定位为
 // 「标签」——轻量分类 + 下钻聚合(挂该标签的灵感 + 任务),不再承诺「知识结构」。早期
@@ -32,16 +33,6 @@ type TopicTree = {
 let colName = new Map<string, string>();
 
 // ---- small DOM helper (same shape as inbox.ts) -----------------------------
-function el<K extends keyof HTMLElementTagNameMap>(
-  tag: K,
-  props: Partial<HTMLElementTagNameMap[K]> = {},
-  children: (Node | string)[] = [],
-): HTMLElementTagNameMap[K] {
-  const node = Object.assign(document.createElement(tag), props);
-  for (const c of children) node.append(c);
-  return node;
-}
-
 // ---- 前缀分组(纯视觉层级)---------------------------------------------------
 // 标签名带 `/` 时(如 zhujian/同步),若存在与首段同名的父标签,该行收进父标签下方的子
 // 容器(.topic-kids:缩进 + 一条左导轨)、只显后缀,视觉上「父子成一组」。语义仍是平的:

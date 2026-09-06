@@ -27,6 +27,7 @@ import { authorLabel } from "./identity";
 import { t } from "./i18n";
 import { when } from "./tasktime";
 import "./item-comments.css";
+import { el } from "./dom";
 
 /** core `comments::Comment` 的镜像(壳直接返回 core 类型,故这里是唯一一份 TS 侧抄写)。 */
 export type Comment = { id: string; content: string; created_at: string; born_device: string | null };
@@ -36,16 +37,6 @@ export type Comment = { id: string; content: string; created_at: string; born_de
 export type CommentPage = { rows: Comment[]; next_cursor: [string, string] | null; has_more: boolean };
 
 // ---- small DOM helper(与 item-images.ts 同款,保持共享件自足)-------------
-function el<K extends keyof HTMLElementTagNameMap>(
-  tag: K,
-  props: Partial<HTMLElementTagNameMap[K]> = {},
-  children: (Node | string)[] = [],
-): HTMLElementTagNameMap[K] {
-  const node = Object.assign(document.createElement(tag), props);
-  for (const c of children) node.append(c);
-  return node;
-}
-
 // ---- 徽章聚合(按空间键住的模块快照,照 identity.ts 的形)-------------------
 
 /** core `comments::CommentBadge` 的镜像(0038:留言数 + 有没有本机没看过的)。 */

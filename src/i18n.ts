@@ -64,7 +64,7 @@ export function t(key: MsgKey, params?: Record<string, string | number>): string
   return text;
 }
 
-/** 两个窗口各自在启动时调一次:<html lang> 落生效值 + 听别窗改档。 */
+/** 每个窗口壳(capture / notebook / lightbox)各自在启动时调一次:<html lang> 落生效值 + 听别窗改档。 */
 export function initLang(): void {
   document.documentElement.lang = lang;
   void listen<LangChoice>(EVENT, (e) => {

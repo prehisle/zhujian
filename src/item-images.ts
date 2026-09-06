@@ -27,6 +27,7 @@ import {
   LIGHTBOX_READY,
 } from "./lightbox-msg";
 import "./item-images.css";
+import { el } from "./dom";
 
 // `ImageMeta` 的**唯一定义**住在 lightbox-msg.ts(开图那条跨窗消息也要用它);这里原样再导出,
 // 视图侧照旧 `import { ImageMeta } from "./item-images"`。⛔ 别在这儿再写一份形状。
@@ -74,16 +75,6 @@ function joinWhy(whys: string[]): string {
 }
 
 // ---- small DOM helper (kept local so this module stands alone) -------------
-function el<K extends keyof HTMLElementTagNameMap>(
-  tag: K,
-  props: Partial<HTMLElementTagNameMap[K]> = {},
-  children: (Node | string)[] = [],
-): HTMLElementTagNameMap[K] {
-  const node = Object.assign(document.createElement(tag), props);
-  for (const c of children) node.append(c);
-  return node;
-}
-
 /** List an item's images (编号 ascending; deleted 编号 leave gaps). */
 export function listImages(itemId: string): Promise<ImageMeta[]> {
   return invoke<ImageMeta[]>("list_item_images", { itemId });

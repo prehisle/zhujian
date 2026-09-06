@@ -9,18 +9,9 @@
 // 选择器不动。
 import { groupPills } from "./filter-bar";
 import { t } from "./i18n";
+import { el } from "./dom";
 
 // ---- small DOM helper (same shape as the views / hotkey-menu.ts) ------------
-function el<K extends keyof HTMLElementTagNameMap>(
-  tag: K,
-  props: Partial<HTMLElementTagNameMap[K]> = {},
-  children: (Node | string)[] = [],
-): HTMLElementTagNameMap[K] {
-  const node = Object.assign(document.createElement(tag), props);
-  for (const c of children) node.append(c);
-  return node;
-}
-
 // 一个可选标签。color 本件不用(选择器不着色),但两视图的 topic 类型都带,收成同一
 // 形状省得调用方再映射一层。
 export type PickerTopic = { id: string; title: string; color: string | null };

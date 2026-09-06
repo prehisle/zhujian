@@ -32,19 +32,10 @@ import {
   LIGHTBOX_READY,
 } from "./lightbox-msg";
 import "./lightbox.css";
+import { el } from "./dom";
 
 // 与 item-images.ts 那份同源的小 DOM helper(两个模块各留一份、互不 import:遮罩窗
 // 只该拖进它真正用得上的东西,`item-images.ts` 拖着的是整条配图 / 粘贴 / 草稿依赖链)。
-function el<K extends keyof HTMLElementTagNameMap>(
-  tag: K,
-  props: Partial<HTMLElementTagNameMap[K]> = {},
-  children: (Node | string)[] = [],
-): HTMLElementTagNameMap[K] {
-  const node = Object.assign(document.createElement(tag), props);
-  for (const c of children) node.append(c);
-  return node;
-}
-
 // 全尺寸缓存:只留最近看过的一张(换图即顶掉旧的 → 至多 1 张全尺寸常驻)。缓的是**已到手
 // 的字符串**不是 Promise —— 163③ 的教训:缓 Promise 会把「跨空间迟到 = 永不决议」永久钉进表。
 let lastFull: { id: string; url: string } | null = null;

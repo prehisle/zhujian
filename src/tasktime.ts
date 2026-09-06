@@ -3,6 +3,7 @@ import { armDismiss } from "./hotkey-menu";
 import { DONE_COLUMN } from "./board-columns";
 import { currentLang, t } from "./i18n";
 import "./tasktime.css";
+import { el } from "./dom";
 
 // Shared task time-dimension helpers + a reusable due/priority editor, used by
 // both the board and the Today view (one source of truth). `due_on` is a
@@ -44,16 +45,6 @@ export const PRIORITY_LABEL: Record<number, string> = {
   2: t("tasktime.priMid"),
   3: t("tasktime.priHigh"),
 };
-
-function el<K extends keyof HTMLElementTagNameMap>(
-  tag: K,
-  props: Partial<HTMLElementTagNameMap[K]> = {},
-  children: (Node | string)[] = [],
-): HTMLElementTagNameMap[K] {
-  const node = Object.assign(document.createElement(tag), props);
-  for (const c of children) node.append(c);
-  return node;
-}
 
 /** Today as a local-calendar `YYYY-MM-DD` — built from local date parts, NOT via
  *  toISOString() (which would shift to UTC and reintroduce the off-by-one bug). */

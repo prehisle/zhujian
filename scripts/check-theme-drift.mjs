@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // 设计令牌漂移门禁:仓里**三份**「纸与朱墨」令牌表必须逐字对齐。
 //
-//   桌面 src/theme.css      —— 真相源(两个窗口共用,最全)
+//   桌面 src/theme.css      —— 真相源(三个窗口壳共用,最全)
 //   安卓 android/index.html —— 内联 <style>(安卓是独立 npm 工程)
 //   官网 site/index.html    —— 内联 <style>(纯静态单页,scp 部署)
 //

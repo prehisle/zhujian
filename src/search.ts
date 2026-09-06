@@ -6,6 +6,7 @@ import type { View, ViewCtx } from "./notebook";
 import { when } from "./tasktime";
 import { INPUT_DEBOUNCE_MS } from "./timing";
 import "./search.css";
+import { el } from "./dom";
 
 // Mirror of the Rust contract (lib.rs `search_items`): an item whose current text
 // OR any past version matched. Single-entity model — a hit can be an idea (未归类 /
@@ -19,16 +20,6 @@ type SearchHit = {
 };
 
 // ---- small DOM helper (same shape as inbox.ts / topics.ts) -----------------
-function el<K extends keyof HTMLElementTagNameMap>(
-  tag: K,
-  props: Partial<HTMLElementTagNameMap[K]> = {},
-  children: (Node | string)[] = [],
-): HTMLElementTagNameMap[K] {
-  const node = Object.assign(document.createElement(tag), props);
-  for (const c of children) node.append(c);
-  return node;
-}
-
 // Where the item currently lives. 灵感 is one merged list now (tags are just metadata, no
 // inbox/filed split), so both idea statuses read as 灵感; plus 回收站 and 任务 (the board).
 const STATUS_LABEL: Record<SearchHit["status"], string> = {
