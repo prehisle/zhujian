@@ -1,4 +1,6 @@
 // 143 返回键层账本 + 查看器手势 的页内可断言部分(evalfile 跑,pass=true 才算过)。
+// 604 补:②b 收编「点头部『朱简』回列表顶」那一半(**前置要文档真的可滚**,条目太少时
+// 它会如实报未跑而不是记成过)。
 // 硬件返回键本身没法在页内断言,那半截走 runbook(**146 真机取证照出大坑:wry 层
 // 从未注册,且 WebView.canGoBack() 对 pushState 同文档条目恒 false——返回恒 finish,
 // 页内断言全绿也测不到;终局修复=MainActivity 自注册回调调 JS 原子入口
@@ -30,6 +32,38 @@
   click(document.querySelector("header h1"));
   await new Promise((r) => setTimeout(r, 100));
   ok("头部朱简收面", !paneOpen());
+
+  // ②b(604 补)**没开面板时**点「朱简」= 回到列表顶。此前那一支是空的(点了什么都不发生),
+  // 两支说的是同一件事:「朱简」= 回起点 —— 有面板挡着先收面板,没挡着就回顶。
+  // ⚠ **前置必须自证**:文档不够长时 scrollTo 是 no-op,这一格会安静地变成空测。
+  {
+    const seal = document.querySelector("header h1 .seal");
+    const canScroll = document.documentElement.scrollHeight > window.innerHeight + 50;
+    if (!canScroll) {
+      // ⛔ 不许记成过 —— 空测长得跟真绿一样正是要防的
+      ok("②b 前置:文档可滚(本机条目太少 ⇒ 这一格没跑,不是过了)", false);
+    } else {
+      window.scrollTo(0, Math.round(window.innerHeight * 1.5));
+      // ⚠ 260 > CSS 那条 0.18s 淡入 —— **这个数是判据的一部分**:604 补第一次写 120ms,
+      // 量在过渡中途得 0.187 而阈值是 0.2,红了。⛔ 别把阈值往下调去迁就等待时间:
+      // 这一格要保的是「用户最终看得见这条线」,量的就该是**终值**。
+      await new Promise((r) => setTimeout(r, 260));
+      const y0 = Math.round(window.scrollY);
+      ok(`②b 前置:真的滚下去了(scrollY=${y0})`, y0 > 100);
+      ok("②b 滚出一屏 ⇒「朱简」挂上 .totop", seal.classList.contains("totop"));
+      // ⚠ 判到视觉本体,别只判 class:选择器写错的话 class 在而线根本没画出来
+      const op = parseFloat(getComputedStyle(seal, "::after").opacity);
+      ok(`②b 那条提示线真的可见(::after opacity=${op})`, op > 0.3);
+      // ⚠ 自证:不点它不会自己回顶 —— 没这一格,「scrollTo 压根没被调用」也照样绿
+      await new Promise((r) => setTimeout(r, 200));
+      ok(`②b 自证:不点就不回顶(scrollY=${Math.round(window.scrollY)})`, Math.round(window.scrollY) > 100);
+      click(document.querySelector("header h1"));
+      await new Promise((r) => setTimeout(r, 150));
+      const y1 = Math.round(window.scrollY);
+      ok(`②b 点「朱简」→ 回到顶部(scrollY=${y1})`, y1 === 0);
+      ok("②b 回顶后提示线自己收回去", !seal.classList.contains("totop"));
+    }
+  }
 
   // ③ 查看器手势数学:摆一张 200×200,合成双指 60→160 应得 scale≈2.667;
   //    放大态合成单击不关;数学断言完直接复原(不走关闭路,免动 history 账本)。

@@ -147,7 +147,20 @@
         font-size: var(--fs-17); margin: 0; font-weight: 700;
         display: flex; align-items: baseline; min-width: 0;
       }
-      header h1 .seal { color: var(--seal); flex: none; }
+      header h1 .seal { color: var(--seal); flex: none; position: relative; }
+      /* 滚出一屏之后,「朱简」底下浮出一条很细的朱砂线:提示这两个字**能点、点了回顶**
+         (604 补)。点它回顶这件事本身是隐蔽的 —— 同它旁边那条早就在的「点它收面板」。
+         ⛔ **别改成加一枚 ↑**:「朱简」与空间徽章之间只有 8px(`.space-chip` 的 margin-left),
+         一枚 11px 的箭头进流会推着徽章跳、绝对定位又会压在徽章那块 seal-tint 底色上。
+         ⚠ 绝对定位 + `pointer-events:none`:不占布局(徽章一个像素都不动),也不吃掉点击
+         —— 命中盒仍是 h1 自己那块。 */
+      header h1 .seal::after {
+        content: ""; position: absolute; left: 0; right: 0; bottom: -2px;
+        height: 1.5px; background: var(--seal);
+        opacity: 0; transition: opacity 0.18s ease-out;
+        pointer-events: none;
+      }
+      header h1 .seal.totop::after { opacity: 0.45; }
       .head-acts { flex: none; display: flex; align-items: center; }
       /* 设置齿轮:图标钮,比文字钮省横向空间(顶栏本就四件挤)。描边随文字色,
          不用彩色 emoji——与全局的细线图标一路。 */

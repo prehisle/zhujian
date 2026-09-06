@@ -1629,10 +1629,33 @@ async function focusTimelineCard(id: string) {
 }
 
 // 点头部「朱简」= 回时间轴(143):面板开着就收面,和「再点一次入口」同一条 toggle 路。
+// ⭐ 604 补:**已经在时间轴上时补上另一半 —— 回到顶部**。此前那一支是空的(没开面板时点它
+// 一点反应都没有),而两支说的是同一件事:「朱简」= 回起点,有面板挡着就先收面板,没挡着
+// 就回列表顶。⛔ 这不是新功能,是把写了一半的行为补完。
+// ⛔ **不做平滑滚动**:条目多时离顶好几屏(用户库里随记 53 条 ≈ 9 屏),smooth 要滚几秒还晕;
+// save() 成功后那处回顶用的也是瞬移,两处保持一致。
+// ⚠ 回顶入口刻意不放底栏「再点当前 tab」——那个位置已经是「一步回捕获」(onModeButton 里
+// `target === viewMode` 那支聚焦输入框),抢过来等于回退一个用户已经在用的手势。
 document.querySelector("header h1")!.addEventListener("click", (e) => {
   if ((e.target as HTMLElement).closest("#space-chip")) return; // chip 自己开空间面板
   if (activePane !== null) openPane(activePane);
+  else window.scrollTo({ top: 0 });
 });
+// 滚出一屏才让「朱简」底下那条线浮出来(CSS `.seal.totop`)。⚠ 阈值取一屏是有由头的:
+// 不到一屏时一划就到顶,提示只会是纯噪音。⛔ 别每帧写 DOM —— 只在**跨过阈值那一刻**改 class;
+// passive 监听,别挡滚动。
+{
+  const seal = document.querySelector("header h1 .seal")!;
+  let shown = false;
+  const syncToTopHint = (): void => {
+    const now = window.scrollY > window.innerHeight;
+    if (now === shown) return;
+    shown = now;
+    seal.classList.toggle("totop", now);
+  };
+  window.addEventListener("scroll", syncToTopHint, { passive: true });
+  syncToTopHint();
+}
 $("space-chip").addEventListener("click", () => openPane("spaces"));
 $("sync-spaces-btn").addEventListener("click", () => openPane("spaces"));
 $("topics-toggle").addEventListener("click", () => openPane("topics"));
