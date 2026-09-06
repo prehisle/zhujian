@@ -14,7 +14,7 @@
 // `src/item-images.ts` 从 53 起就能点)。新增四格:占位骨架 / 淡入真在跑 / 骨架态不给「×」
 // 也不开大图 / 暂存图能点开且那里的「删除」= 移除。
 //
-// ⚠ 诚实边界(五条,别把本资产的绿读大):
+// ⚠ 诚实边界(别把本资产的绿读大):
 //  ① 拦下之后**系统那半就没跑**。本资产证的是「我们交出去的是什么」(chooser 的 mode +
 //     那个 input 身上的 multiple / accept / capture 三个属性)与「拿回来之后我们怎么处理」;
 //     **不证明**系统真开的是相机还是相册 —— 那半仍归 391 那条判据(拿掉 manifest 的
@@ -28,6 +28,16 @@
 //  ⑤ 淡入那格量的是 `getComputedStyle().opacity` 的中间值,**要求元素真在渲染** —— 故新增
 //     的前置里先把捕获层开起来。层收着时 `display:none` 祖先下过渡根本不跑,那时候量出来
 //     的恒是 0 或 1,断言会安静地变成空测。
+//  ⑥ ⛔ **「取消」那条路整条在覆盖面之外**(604 立):拦截模式下 chooser 从没真弹出去,本页
+//     也就从没被盖住过 ⇒ `openPicker` 里那条「离开过又回来 ⇒ 判取消」的兜底一次都跑不到。
+//     而 604 的缺陷恰恰全长在那儿:vivo / Android 16 上 window 的 `focus`/`blur` 一次都不发,
+//     旧兜底偏偏挂在 focus 上 ⇒ **取消一次 `picking` 就永久卡住**(加图 / 拍照钮点了没反应、
+//     「记下」钮变灰,只能重启 app)。⇒ **动了 `openPicker` 就必须手跑这四步真机验收**:
+//       adb shell input tap <FAB 坐标>       # 开捕获层
+//       adb shell input tap <＋加图 坐标>     # 相册真弹出来(dumpsys mCurrentFocus 确认 photopicker)
+//       adb shell input keyevent 4          # 返回 = 取消(用户最常走的那条)
+//       node scripts/android-cdp.mjs eval '(()=>document.getElementById("save").disabled)()'
+//     判据:**false**(钮还活着)。改前那一版这里是 true,并且此后加图钮再也唤不起相册。
 //
 // 跑法(前置三步照旧):
 //   node scripts/build-android.mjs --devtools

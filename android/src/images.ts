@@ -98,10 +98,24 @@ async function downsampleForUpload(file: File): Promise<File> {
 }
 
 /** 唤起系统选择器的**唯一**底层:配好隐藏 `<input>` 点开、等结果、清节点,交回原始
- *  File[](降采样在上层逐张做——多选时要边处理边交付)。选择器是系统模态,期间 app 在
- *  后台。change=选中;有些 ROM 取消不发 change,故回到前台 1s 后若仍未 settle 判为取消
- *  (已 settle 则本兜底空转,绝不抢在 change 之前误判)。调用点须由用户手势触发
- *  (input.click 要手势),故只在点击处理器里调。 */
+ *  File[](降采样在上层逐张做——多选时要边处理边交付)。选择器是系统模态,期间本页
+ *  **不可见**。change=选中;有些 ROM 取消不发 change,故「本页被盖住过、又回来了」之后
+ *  1s 仍未 settle 判为取消(已 settle 则本兜底空转,绝不抢在 change 之前误判)。
+ *  调用点须由用户手势触发(input.click 要手势),故只在点击处理器里调。
+ *
+ *  ⛔⛔ **兜底只能挂 `visibilitychange`,别退回 `window` 的 focus** —— 604 在 vivo /
+ *  Android 16 真机上逐个事件量过:整趟「点加图 → 相册 → 返回」里 `focus` 与 `blur`
+ *  **一次都不发**、`document.hasFocus()` 全程恒 true;只有 `visibilitychange` 两个方向
+ *  都准点到(hidden 在选择器起来那一刻、visible 在回来那一刻)。原先那条 `{once:true}`
+ *  的 focus 兜底于是**永远等不到**,取消一次这个 Promise 就再也不 settle ⇒ 上层的
+ *  `picking` 永久卡住:**加图 / 拍照钮点了没反应(它们没有禁用样式,只在 handler 里
+ *  早退)、「记下」钮变灰,只能重启 app**。用户 2026-09-06 报的「加图后跳去截图回来
+ *  加图钮不可用」与「暂存后去做别的事,回来记下钮不可用」是同一个根因。
+ *  ⚠ `left` 那道门不是装饰:没被盖住过就判取消,等于把「选择器压根没起来」和「用户
+ *  取消了」混成一件事;而**取消判定必须可空转** —— 它若抢在 change 前面,后到的图会
+ *  被静默丢掉,那比卡住更糟。
+ *  ⚠ 诚实边界:若某台机器连 `visibilitychange` 都不发(本轮没见过),这条路仍会挂住。
+ *  ⛔ 别为此加「用户一碰屏就判取消」那类保险 —— 它会在 change 迟到时把图丢了。 */
 function openPicker(configure: (el: HTMLInputElement) => void): Promise<File[]> {
   return new Promise((resolve) => {
     const input = document.createElement("input");
@@ -110,18 +124,24 @@ function openPicker(configure: (el: HTMLInputElement) => void): Promise<File[]> 
     input.hidden = true;
     configure(input);
     let settled = false;
-    const settle = (files: File[]): void => {
+    let left = false; // 本页真的被盖住过(= 选择器起来了),没这一步不判取消
+    // 函数声明而非 const:两者互相引用(settle 要摘监听、监听要调 settle),靠提升解环。
+    function settle(files: File[]): void {
       if (settled) return;
       settled = true;
+      document.removeEventListener("visibilitychange", onVisibility); // ⚠ 旧版漏了这一摘
       input.remove();
       resolve(files);
-    };
+    }
+    function onVisibility(): void {
+      if (document.visibilityState === "hidden") {
+        left = true;
+        return;
+      }
+      if (left) window.setTimeout(() => settle([]), 1000);
+    }
     input.addEventListener("change", () => settle([...(input.files ?? [])]), { once: true });
-    window.addEventListener(
-      "focus",
-      () => window.setTimeout(() => settle([]), 1000),
-      { once: true },
-    );
+    document.addEventListener("visibilitychange", onVisibility);
     document.body.appendChild(input);
     input.click();
   });

@@ -555,7 +555,15 @@
         color: var(--ink-soft); font-family: var(--font-sans); letter-spacing: 0.04em;
       }
       .timeline .tl-group:first-child .tl-sec { margin-top: 0; }
-      .empty { text-align: center; margin: 40px 0; }
+      /* 时间轴 / 标签面的空态提示块(`<p class="muted empty">`;main.ts 两处 + topics.ts 一处)。
+         ⛔ **选择器必须钉住 `p`,别退回裸 `.empty`** —— 604 真机逮到:筛选条给**计数为 0 的
+         标签 pill** 也挂 `.empty`(499 的「族里的空位」,`<button class="fpill empty child">`),
+         于是这条通用空态的 `margin: 40px 0` 落到那些 pill 头上,子标签那行上下各撑出 40px、
+         看着就是凭空多了一整行(用户面 71 第二格,599 立账时「根因没查」;当时量的「~170
+         设备 px」正是 48.37 CSS px 的行间隙 × 3.5)。
+         ⚠ 病根是**两个毫不相干的语义共用一个裸类名**;同族风险还剩一枚 `.fpill.child` ——
+         今天没有通用 `.child` 规则纯属运气,不是设计。 */
+      p.empty { text-align: center; margin: 40px 0; }
       .muted { color: var(--ink-faint); font-size: var(--fs-13); }
       .card {
         display: flex; gap: 10px; align-items: flex-start;
@@ -1113,10 +1121,18 @@
       body.pane-open #timeline { display: none; }
 
       /* 时间轴筛选条(filter.ts 渲染):类型行在上、标签行+文本框在下,两行横向可滑。
-         本面无条目时整条 hidden(main.ts)。 */
+         本面无条目时整条 hidden(main.ts)。
+         **常驻(sticky,贴在顶栏下沿)**:此前它是普通内容,往下看几屏后想改筛选只能一路
+         滚回顶(604 用户报的:「没有快速的方法回到选择标签的位置」)。收起态只有一两行,
+         常驻的代价很小;摊开态靠下面那条 `max-height` 兜住。
+         ⚠ `top` 吃的是 JS 量出来的 `--head-h` —— 顶栏高度含 `env(safe-area-inset-top)`,
+         **写不死**。负 margin 拉到左右满幅铺实色底同 header:不铺满的话卡片会从两侧透上来。
+         z 低于 header(5)、高于卡片。 */
       #filterbar {
+        position: sticky; top: var(--head-h, 0px); z-index: 4;
         display: flex; flex-direction: column; gap: 8px;
-        margin-bottom: 12px;
+        margin: 0 -14px 12px; padding: 0 14px 8px;
+        background: var(--paper);
       }
       #filterbar[hidden] { display: none; }
       .fstages, .fkinds, .ftopics {
@@ -1190,10 +1206,21 @@
       }
       .fexpand[hidden] { display: none; }
       .fexpand.on { color: var(--seal); border-color: var(--seal); background: var(--seal-tint); }
-      /* 摊开态:标签行换行全展;文本框顶到第一行右端(同桌面 .filter-main 的 flex-start,
-         否则它会在长高了的标签块中间浮着)。 */
-      #filterbar.tags-open .ftopics { flex-wrap: wrap; overflow-x: visible; row-gap: 8px; }
-      #filterbar.tags-open .fmain { align-items: flex-start; }
+      /* 摊开态:**整条主行换行,标签块独占整行**(用户面 71)。
+         ⛔ 别退回「只给 .ftopics 加 wrap」那一版:它仍与摊开钮 / 过滤框同处一行,`flex:1`
+         分到的只有约六成屏宽 ⇒ 换行发生在那只**已经被缩短的盒子**里,于是第二行起每行右边
+         都在白让位(599 真机量:11 枚标签排了 8 行,把内容往下推了近 1000 设备 px;604 复量
+         时「英语」那行右边空着 335 设备 px,而下一枚要 338 —— 就差 3px 被踢到下一行)。
+         摊开钮靠 `margin-left:auto` 留在第一行右端、与收起态同位置:它是这一行的开关,
+         位置一跳用户就得重新找它。
+         ⚠ 限高只是保险(标签几十枚时不许它把整屏吃光);`overflow: hidden auto` 不能写成
+         `overflow-y: auto` —— 另一轴是 visible 时会被算成 auto,凭空多一条横滚条。 */
+      #filterbar.tags-open .fmain { flex-wrap: wrap; }
+      #filterbar.tags-open .ftopics {
+        order: 1; flex: 0 0 100%;
+        flex-wrap: wrap; overflow: hidden auto; row-gap: 8px; max-height: 40vh;
+      }
+      #filterbar.tags-open .fexpand { margin-left: auto; }
       /* 用户面 36:9.5em 缩到 6em —— 它此前吃掉 360dp 屏的三分之一,而这一行真正要给的是
          标签。⭐ 张开态挂 `.wide`(main.ts 的 focusin/focusout):一直 6em 的话打三个字就
          看不见自己打了什么,那是把一个患换成另一个患;歇着时它只是个提示,不影响读。

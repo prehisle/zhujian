@@ -180,6 +180,14 @@ const RUNTIME_VARS = [
   { name: "--tc", where: "安卓侧同一件事(android/src/filter.ts 等),chip 上的行内 style" },
   { name: "--nav-h", where: "android/src/main.ts 量出底栏实高后写根元素,供悬浮钮定位" },
   {
+    name: "--head-h",
+    where:
+      "android/src/main.ts 量出 sticky 顶栏实高(含 env(safe-area-inset-top),CSS 里写不死)后" +
+      "写根元素,供 #filterbar 贴在它下沿常驻;⚠ 兜底 0px 正是这道闸警告的那种静默退回" +
+      "(筛选条会盖到顶栏底下)⇒ cdp-acceptance-timeline-filter.js 第 ⑫ⓒ 格钉住" +
+      " top 必须等于量出来的顶栏高,JS 那半没跑当场红",
+  },
+  {
     name: "--ck-indent",
     where:
       "正文待办清单的嵌套缩进层数(桌面 src/item-images.ts::renderContent 的 setProperty /" +

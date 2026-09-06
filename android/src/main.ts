@@ -698,6 +698,19 @@ function renderFilterBar(modeItems: TimelineItem[]): void {
   syncTagsToggle(); // pills 换了 = 「一行装不装得下」的答案可能也换了
 }
 
+// ---- 筛选条常驻要的顶栏高度(604)---------------------------------------------
+// `#filterbar` 是 sticky、要贴在顶栏下沿,而顶栏高度含 `env(safe-area-inset-top)`(刘海 /
+// 状态栏那一条),**CSS 里写不死** ⇒ 量出来喂给 `--head-h`。转屏、字号(251 的 textZoom)、
+// 空间徽章变长都会改它的高 ⇒ 接 ResizeObserver 跟着走,⛔ 别只在启动量一次(同下面那枚
+// 摊开钮的由头)。不自激:这个变量只被 filterbar 的 `top` 吃,改不回顶栏自己的高。
+{
+  const head = document.querySelector("header")!;
+  const syncHeadHeight = (): void =>
+    document.documentElement.style.setProperty("--head-h", `${head.offsetHeight}px`);
+  new ResizeObserver(syncHeadHeight).observe(head);
+  syncHeadHeight();
+}
+
 // ---- 标签行摊开 / 收起(用户面 36)---------------------------------------------
 // 标签行平时是**单行横滑**,窄屏上常常一枚真标签都露不出来(屏上只剩「所有 / 无标签」),
 // 找标签只能盲着往右滑。这枚钮把它翻成多行全展 —— 桌面 `.topic-filter` 本来就是

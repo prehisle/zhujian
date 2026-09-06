@@ -249,6 +249,57 @@
   ftext.classList.remove("wide");
   ok("⑪ 挂上 .wide 真的张开(CSS 半;JS 半见文件头)", wWide > wRest + 30, { rest: +wRest.toFixed(1), wide: +wWide.toFixed(1) });
 
+  // ---- ⑫ 摊开态占满宽 + 零计数 pill 的 margin + 筛选条常驻(604)--------------------
+  // 三条都是排版,但都是用户实报的:
+  //  ⓐ 摊开后每行右边白空近一半(用户面 71 第一格)。根因:`.ftopics` 与摊开钮 / 过滤框
+  //     同处一行,`flex:1` 只分到约六成屏宽 ⇒ 换行发生在那只**已经被缩短的盒子**里。
+  //     604 改前在真机上量到 207 / 332 = 62%,14 枚标签排了 9 行。
+  //  ⓑ 族展开时子标签那行上下各撑出 40px(用户面 71 第二格,599 立账时根因没查)。根因:
+  //     通用空态块那条 `.empty { margin: 40px 0 }` 命中了**计数为 0 的 pill**(499 起它也
+  //     挂 `.empty`)⇒ 收窄成 `p.empty`。**必须连正面对照一起判**,否则把那条整个删掉
+  //     这一格照样绿。
+  //  ⓒ 往下看几屏后想改筛选只能一路滚回顶(604 用户报)⇒ `#filterbar` 改 sticky。
+  // ⚠ 这里直接改 class 而不点钮:⑪c 刚验完「装得下 ⇒ 钮把自己藏起来」,藏着的钮点不了。
+  bar.classList.add("tags-open");
+  await sleep(60);
+  const fmain = document.querySelector(".fmain");
+  const wTopics = trow.getBoundingClientRect().width;
+  const wMain = fmain.getBoundingClientRect().width;
+  ok("⑫ⓐ 摊开态:标签块独占整行(不再与摊开钮/过滤框分宽)", wTopics >= wMain - 1, {
+    wTopics: Math.round(wTopics),
+    wMain: Math.round(wMain),
+    ratio: Math.round((wTopics / wMain) * 100) + "%",
+  });
+
+  // ⓑ 当场造两枚探针:判的是**CSS 命中面**,不依赖这一趟种子里恰好有没有零计数标签。
+  const zprobe = document.createElement("button");
+  zprobe.className = "fpill empty child";
+  const pprobe = document.createElement("p");
+  pprobe.className = "muted empty";
+  trow.append(zprobe, pprobe);
+  const zcs = getComputedStyle(zprobe);
+  const pcs = getComputedStyle(pprobe);
+  ok("⑫ⓑ 零计数 pill 不吃通用空态那条 margin:40px", zcs.marginTop === "0px" && zcs.marginBottom === "0px", {
+    mt: zcs.marginTop,
+    mb: zcs.marginBottom,
+  });
+  ok("⑫ⓑ 正面对照:真空态块 <p class='muted empty'> 仍保有 margin:40px", pcs.marginTop === "40px", {
+    mt: pcs.marginTop,
+  });
+  zprobe.remove();
+  pprobe.remove();
+
+  // ⓒ `top` 吃的是 JS 量出来的 `--head-h`(顶栏高含 env(safe-area-inset-top),CSS 写不死)。
+  // ⇒ 这一格顺带钉住了 JS 那半真的跑了:没跑就回落到 `0px`,当场红。
+  const bcs = getComputedStyle(bar);
+  const headH = document.querySelector("header").getBoundingClientRect().height;
+  ok("⑫ⓒ 筛选条常驻(position:sticky)", bcs.position === "sticky", bcs.position);
+  ok("⑫ⓒ 贴在顶栏下沿(top = 量出来的顶栏高,不是写死的 0)", Math.abs(parseFloat(bcs.top) - headH) <= 1.5, {
+    top: bcs.top,
+    headH: Math.round(headH * 10) / 10,
+  });
+  bar.classList.remove("tags-open"); // 还原:⑪ 末尾 localStorage 记的是收起态
+
   out.pass = out.steps.every((s) => s.ok);
   return JSON.stringify(out);
 })();
