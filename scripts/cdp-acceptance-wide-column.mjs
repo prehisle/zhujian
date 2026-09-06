@@ -33,6 +33,11 @@ const send = (method, params = {}) =>
   });
 
 const measure = async (label) => {
+  // 604 补2:除了宽度,**filterbar 的左右边距也要量**。此前这里只有宽度,而
+  // 「宽度确实收到 640 了、却靠左贴着」正是 max-width 生效、但 margin:auto 被后面某条规则
+  // 覆盖掉的样子 —— 那一格真栽过:给 #filterbar 加 sticky 时写了 margin 简写(0 -14px 12px),
+  // 把 auto 冲掉 ⇒ 平板 / 横屏上筛选条不再居中,而**手机竖屏一点看不出来**。
+  // ⚠ 注释别写进下面那个模板字符串里 —— 里头的反引号会把模板提前闭合(本轮真栽,语法错)。
   const { result } = await send("Runtime.evaluate", {
     returnByValue: true,
     expression: `(()=>{
@@ -48,6 +53,8 @@ const measure = async (label) => {
         timelineML: cs("#timeline").marginLeft,
         timelineMR: cs("#timeline").marginRight,
         filterbar: w("#filterbar"),
+        filterbarML: cs("#filterbar").marginLeft,
+        filterbarMR: cs("#filterbar").marginRight,
         fabRightGap: Math.round((innerWidth - q("#capture-fab").getBoundingClientRect().right) * 10) / 10,
       };
     })()`,
@@ -99,6 +106,19 @@ console.log(noop.length === 0
 console.log(capped
   ? `✅ 宽屏真收窄:视口 ${wide.vw} 上 timeline=${wide.timeline}(可用宽 ${wide.avail})、左右边距 ${wide.timelineML} 对称、FAB 距右 ${wide.fabRightGap}`
   : `❌ 宽屏没收窄(这条规则没生效 / 被删了):${JSON.stringify(wide)}`);
-const pass = noop.length === 0 && capped;
+
+// 604 补2:**筛选条居中**单独判一格。⚠ 它落在**有 override 的宽屏档**上,不跟着上面那半
+// 取最后一行 —— 最后一行用的是设备真实宽度,竖屏手机上恒 360(那是 skill 里点名的已知死格,
+// 与本格无关)。⇒ 这一格在竖屏机上照样有牙齿,别让它跟着死格一起沉掉。
+const wideOv = rows.find((r) => r.vw > 668 && !r.label.startsWith("清掉"));
+const fbCentered =
+  !!wideOv &&
+  parseFloat(wideOv.filterbarML) > 1 &&
+  Math.abs(parseFloat(wideOv.filterbarML) - parseFloat(wideOv.filterbarMR)) < 1;
+console.log(fbCentered
+  ? `✅ 宽屏筛选条居中:${wideOv.label} 上 filterbar=${wideOv.filterbar}、左右边距 ${wideOv.filterbarML}/${wideOv.filterbarMR}`
+  : `❌ 宽屏筛选条没居中(margin:auto 被后面的规则覆盖了?):${JSON.stringify(wideOv ?? "没有宽屏档")}`);
+
+const pass = noop.length === 0 && capped && fbCentered;
 console.log(pass ? "\n✅ pass" : "\n❌ FAIL");
 process.exit(pass ? 0 : 1);

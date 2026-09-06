@@ -1139,12 +1139,17 @@
          滚回顶(604 用户报的:「没有快速的方法回到选择标签的位置」)。收起态只有一两行,
          常驻的代价很小;摊开态靠下面那条 `max-height` 兜住。
          ⚠ `top` 吃的是 JS 量出来的 `--head-h` —— 顶栏高度含 `env(safe-area-inset-top)`,
-         **写不死**。负 margin 拉到左右满幅铺实色底同 header:不铺满的话卡片会从两侧透上来。
-         z 低于 header(5)、高于卡片。 */
+         **写不死**。z 低于 header(5)、高于卡片。
+         ⛔⛔ **横向 margin 一个字都不许写**(⛔ 别照 header 那样用 `margin:0 -14px` 去「铺满」)——
+         511 那条宽屏规则(`#filterbar, #timeline, .sync, .compose` 共用)靠 `margin-left/right:auto`
+         把内容收成居中一列,而本规则在它**后面**,`margin` 简写会把 auto 覆盖掉 ⇒ **平板 / 横屏上
+         筛选条不再居中**,且**手机竖屏一点看不出来**(architecture 对这一族的原话:只在宽屏现形的漏)。
+         ⚠ 满幅铺底也**不需要**:body 左右那 14px padding 里没有任何东西会滚上来 —— `.card` 无负
+         margin 无阴影、`.swipe-track` 相对 `.tl-group` 定位、`.tl-sec` 是正 margin,全在内容盒内。 */
       #filterbar {
         position: sticky; top: var(--head-h, 0px); z-index: 4;
         display: flex; flex-direction: column; gap: 8px;
-        margin: 0 -14px 12px; padding: 0 14px 8px;
+        margin-bottom: 12px; padding-bottom: 8px;
         background: var(--paper);
       }
       #filterbar[hidden] { display: none; }
