@@ -1,31 +1,17 @@
-# 依赖
-/node_modules
+# 依赖 / 构建产物 / Tauri 自动生成 —— 按目录名通配,任意深度都命中(607 起)。
+# ⛔ 别改回逐工程列的形:七个独立 crate(刻意不建 workspace,Cargo.lock 各自提交)每加一只
+# 就要多列一行,漏一行 `git add -A` 就开始吞 target/(2026-08-23 真栽过:1.6 GB 松散对象、一次 add 卡满 2 分钟)。
+# 已核:通配不覆盖任何已跟踪路径(`git ls-files -i -c --exclude-standard` 为空)。
+node_modules/
+dist/
+target/
+**/gen/schemas/
 
-# 构建产物
-/dist
-/src-tauri/target
-# 独立 crate(刻意不建 workspace,各自 target;Cargo.lock 都提交):
-# P2-e 的 server/sync-proto + P4-a 的 core(zhujian-core 共享核心)
-/server/target
-/sync-proto/target
-/core/target
-# 468(OH-d):两只手机壳共用的壳层(zhujian-mobile)。⚠ 逐工程列的清单**加一只 crate
-# 就要来这里加一行** —— 漏了它 `git add -A` 会开始吞 target/(实测:一次 add 卡满 2 分钟)。
-/mobile/target
-
-# 安卓端(P4-b):独立 npm 工程 + 独立 crate target;gradle 分发 zip(137MB,
-# services.gradle.org 被墙,从腾讯镜像下载后放这里供 wrapper file:// 引用)不进 git
-/android/node_modules
-/android/dist
-/android/src-tauri/target
-/android/src-tauri/gen/schemas
+# 安卓端(P4-b):gradle 分发 zip(137MB,services.gradle.org 被墙,从腾讯镜像下载后
+# 放这里供 wrapper file:// 引用)不进 git
 /android/gradle-*.zip
 
-# 鸿蒙端(OH-c):独立 npm 工程 + 独立 crate target
-/ohos/node_modules
-/ohos/dist
-/ohos/src-tauri/target
-/ohos/src-tauri/gen/schemas
+# 鸿蒙端(OH-c)
 # HAP 工程的构建产物与本机件(hvigor 缓存 / 编出来的 .so / DevEco 本地配置)
 /ohos/src-tauri/gen/ohos/.hvigor
 /ohos/src-tauri/gen/ohos/oh_modules
@@ -39,9 +25,6 @@
 /ohos/src-tauri/gen/ohos/signing.local.json5
 # 同族:本机 debug profile 绑的 bundleName(与仓里那个真身份可能不同)也是本机件。
 /ohos/src-tauri/gen/ohos/bundle-name.local.txt
-
-# Tauri 自动生成
-/src-tauri/gen/schemas
 
 # 密钥 / 本地配置(含真实 API key)
 .env
