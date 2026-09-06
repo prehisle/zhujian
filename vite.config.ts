@@ -2,8 +2,10 @@ import { defineConfig } from "vite";
 import { resolve } from "node:path";
 
 // Tauri expects a fixed dev port and a static `dist` build output.
-// Two windows = two HTML entry points: capture (the floating quick-capture
-// window) + notebook (the single main window hosting all browse/manage views).
+// Three windows = three HTML entry points: capture (the floating quick-capture
+// window) + notebook (the single main window hosting all browse/manage views)
+// + lightbox(606 起看大图那层遮罩自己是一只铺满显示器的透明置顶窗;此前它长在
+// 主窗的 DOM 上,于是「看起来像全屏」只能靠去动主窗的几何 —— 用户两次否掉了那条路)。
 export default defineConfig({
   clearScreen: false,
   server: {
@@ -33,6 +35,7 @@ export default defineConfig({
       input: {
         capture: resolve(__dirname, "index.html"),
         notebook: resolve(__dirname, "notebook.html"),
+        lightbox: resolve(__dirname, "lightbox.html"),
       },
     },
   },

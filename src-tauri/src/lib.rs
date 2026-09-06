@@ -3582,9 +3582,9 @@ pub fn run() {
     // XInitThreads 的多线程 X 客户端会把协议流搅乱,现场是 `xcb_xlib_threads_sequence_lost`
     // 断言 **abort(整个 app 当场没,不是一次失败的查询)** —— 本机三条路各复现过一次。
     // XInitThreads 让 Xlib 自己上锁,三条路当场恢复(winit 的 X11 后端同样开局就调它)。
-    // ⚠ 605:前两条已不复存在 —— 两个「看大图」入口改成 `setFullscreen`,不再查显示器
-    // (`planFullscreen`,item-images.ts)。⛔ 这一句照旧留着:`show_window` 那条还在;
-    // 且 `set_fullscreen` 在 GTK 侧走不走 Xlib **本轮没量**,不拿没量过的东西换掉保险。
+    // ⚠ 605/606:前两条的**名字**已不复存在,但那条路还在 —— 看大图改成独立遮罩窗之后,
+    // `currentMonitor()` 由**开图那个窗**去查(item-images.ts::openOverlay),仍是同一个
+    // 非主线程上的 GDK 调用。⛔ 这一句照旧留着,一个字都别动。
     // 必须在任何 Xlib 调用之前,故与下面那条 env 一起放在进程最早点。仅 Linux。
     // 返回值(非零 = Xlib 支持多线程)**刻意不判**:真返回 0 时也只是回到本轮之前的状态
     // (那三条路照旧会崩),没有比「照常启动」更好的处置 —— 不是静默兜底,是无分支可走。
@@ -3644,12 +3644,13 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         // 记住主窗几何(57):尺寸/位置/最大化存 app 配置目录的状态文件,重启后
         // 原样回来;首启无状态文件时窗口保持 tauri.conf.json 默认(1040×680 居中)。
-        // capture 是每次居中弹出的浮窗,不该被记住位置。e2e(YS_DB_PATH)换单独
-        // 文件,免得测试窗口几何与真实布局互相覆盖。
+        // capture 是每次居中弹出的浮窗,不该被记住位置;lightbox(606 的看大图遮罩窗)
+        // 每次开图现摆到「开图那个窗所在的那块显示器」上,几何是派生量、存了只会在
+        // 换屏/换分辨率之后摆错。e2e(YS_DB_PATH)换单独文件,免得测试窗口几何与真实布局互相覆盖。
         .plugin({
             let mut ws = tauri_plugin_window_state::Builder::new()
                 .with_state_flags(WINDOW_STATE_FLAGS)
-                .with_denylist(&["capture"]);
+                .with_denylist(&["capture", "lightbox"]);
             if e2e_db_path().is_some() {
                 ws = ws.with_filename(".window-state.e2e.json");
             }
@@ -4013,32 +4014,65 @@ pub fn run() {
                     }
                 });
             }
-            // 全屏期间的几何**不是用户的几何**:605 起「看大图」把窗口切成真全屏
-            // (item-images.ts::planFullscreen),而 WINDOW_STATE_FLAGS 里没有 FULLSCREEN,
-            // 插件的 update_state 只对 maximized/minimized 短路、**对全屏不短路** ⇒ 这段落盘
-            // 会把「整块屏幕 @ (0,0)」写成下次启动的窗口。看图看多久,盘上就错多久(退出全屏
-            // 那记 Resized 会自动把真几何补回来,所以只有「看图期间被硬杀 / 被关窗」才留下)。
-            // ⇒ 两个落盘点各加一道:全屏时整段跳过,别存。查询失败按「不是全屏」办(照旧存,
-            // 等于本轮之前的行为)。
-            let notebook_for_geom = notebook.clone();
             notebook.on_window_event(move |event| match event {
                 // 关窗即存一次几何(别赌干净退出:常驻托盘、可能强杀/断电)。存失败不致命。
                 tauri::WindowEvent::CloseRequested { api, .. } => {
                     api.prevent_close();
-                    if !notebook_for_close.is_fullscreen().unwrap_or(false) {
-                        let _ = notebook_for_close
-                            .app_handle()
-                            .save_window_state(WINDOW_STATE_FLAGS);
-                    }
+                    let _ = notebook_for_close
+                        .app_handle()
+                        .save_window_state(WINDOW_STATE_FLAGS);
                     let _ = notebook_for_close.hide();
                 }
                 // 移动/缩放:防抖落盘(见上)。send 失败(防抖线程已退出)无害。
                 tauri::WindowEvent::Moved(_) | tauri::WindowEvent::Resized(_) => {
-                    if !notebook_for_geom.is_fullscreen().unwrap_or(false) {
-                        let _ = geom_tx.send(());
-                    }
+                    let _ = geom_tx.send(());
                 }
                 _ => {}
+            });
+
+            // 看大图那只遮罩窗(606):无边框、透明、置顶、铺满显示器,**常驻隐藏**,
+            // 由前端 `lightbox.ts` 收到开图事件才摆位 + show,关图 hide。
+            //
+            // ⛔⛔ **刻意不写进 `tauri.conf.json` 的 windows 里,必须在这儿建** —— 606 实测的坑:
+            // 配置里声明的窗口由 `build()` 创建、页面**立刻**开始加载,而 `setup` 是在那之后跑的
+            // ⇒ 前端启动那几记 invoke 会**赶在 `.manage()` 之前**到达。多这第三个壳会把 `build()`
+            // 拉长,于是 `notebook.ts` 启动就发的 `backup_auto_status` 稳定地抢在
+            // `app.manage(BackupCoordinator)` 前面,`state::<T>()` 当场 **panic 在主线程 ⇒ 整个
+            // app 退出**。现场极具误导性:e2e 45 支全红、报的却是 tauri-driver 的
+            // 「目标计算机积极拒绝」,一眼看去像驱动坏了。判别读数(冷 WebView2 profile,各 3 趟):
+            // 三窗形必崩 / 把这只窗从 config 摘掉的两窗形 0/3。
+            // ⇒ **那条竞态本来就在**(任何早发的命令都能踩),第三个窗只是把它从「偶尔」变成
+            // 「必然」;它本身没治,已记 backlog。⛔ 别把这只窗挪回 config,除非那条先治完。
+            // 建在这儿就没问题:此刻全部 state 都 manage 好了,而遮罩窗自己启动时**一条业务命令
+            // 都不发**(只 `listen` / `emit`,那是 core 插件,恒在)。
+            //
+            // ⛔ 关它必须是「藏」不是「毁」:Alt+F4 真把它销毁掉的话,之后每次看大图都开不出来,
+            // 而且一声不响(前端只是 emit 一条没人收的事件)。同 notebook 的 prevent_close 手法。
+            // ⚠ 它的几何**不进窗口状态**(denylist 里有它):那是「铺满哪块显示器」的派生量,
+            // 由开图那个窗每次现算送来,存下来只会在换屏 / 换分辨率之后摆错。
+            let lightbox = tauri::WebviewWindowBuilder::new(
+                app,
+                "lightbox",
+                tauri::WebviewUrl::App("lightbox.html".into()),
+            )
+            .title("朱简 · 看图")
+            .inner_size(800.0, 600.0)
+            .resizable(false)
+            .decorations(false)
+            .transparent(true)
+            .shadow(false)
+            .always_on_top(true)
+            .skip_taskbar(true)
+            .disable_drag_drop_handler()
+            .visible(false)
+            .build()
+            .expect("build lightbox window");
+            let lightbox_for_close = lightbox.clone();
+            lightbox.on_window_event(move |event| {
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                    api.prevent_close();
+                    let _ = lightbox_for_close.hide();
+                }
             });
 
             // Tray: capture is the heartbeat (also Ctrl+Alt+N); the notebook

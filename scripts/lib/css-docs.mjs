@@ -40,6 +40,10 @@ export const R = (p) => resolve(root, p);
 const DOCS_RAW = [
   { source: "桌面", tokens: "src/theme.css", name: "捕获窗", html: "index.html" },
   { source: "桌面", tokens: "src/theme.css", name: "主窗", html: "notebook.html" },
+  // 606 起的第三个窗口壳:看大图的遮罩窗。⚠ 它**只有暗遮罩和一张图**,配色几乎全是写死的
+  // 墨色 rgba 与 #fff(遮罩恒压暗,不随明暗档翻面)—— 那几条各自在 check-hardcoded-colors
+  // 的登记表里签过字;登记进这里是为了让**对比度**那道闸看得见「白字压在 0.78 墨底上」这一格。
+  { source: "桌面", tokens: "src/theme.css", name: "看大图遮罩窗", html: "lightbox.html" },
   { source: "安卓", tokens: "android/index.html", name: "单页", html: "android/index.html" },
   { source: "官网", tokens: "site/index.html", name: "单页", html: "site/index.html" },
   // ⭐ 576 起多出七份 html:`zhujian.cool`(境内备案站)四页 + 临时挂在 `zhujian.app` 上的三份协议

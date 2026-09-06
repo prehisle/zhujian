@@ -5,21 +5,32 @@
 // views. Images are a per-item 1:N attachment; the 编号 is stable and never reused, so a
 // 正文「见图N」 reference always points at the same picture (see migration 0016).
 
-import { invoke, invokeInSpace } from "./space";
+import { invoke, invokeInSpace, currentSpaceId } from "./space";
 import { t } from "./i18n";
 import { parseChecklistLine } from "./checklist";
-import { isTabKey } from "./keys";
 import { saveImageDraft, loadImageDraft, newDraftImageId, type DraftImage } from "./compose-draft";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { copyText } from "./clipboard";
-import { readImage, writeImage } from "@tauri-apps/plugin-clipboard-manager";
-import { Image as ShellImage } from "@tauri-apps/api/image";
+import { readImage } from "@tauri-apps/plugin-clipboard-manager";
+import type { Image as ShellImage } from "@tauri-apps/api/image";
 import { flashToast, toastAction } from "./toast";
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { getCurrentWindow, currentMonitor } from "@tauri-apps/api/window";
+import { emitTo, listen } from "@tauri-apps/api/event";
+import {
+  type ImageMeta,
+  type LightboxBody,
+  type LightboxOpen,
+  type MonitorRect,
+  LIGHTBOX_LABEL,
+  LIGHTBOX_OPEN,
+  LIGHTBOX_PING,
+  LIGHTBOX_READY,
+} from "./lightbox-msg";
 import "./item-images.css";
 
-/** Mirror of lib.rs `ImageMeta` (no bytes): an image's id, 「图N」编号, and MIME. */
-export type ImageMeta = { id: string; seq: number; mime: string };
+// `ImageMeta` 的**唯一定义**住在 lightbox-msg.ts(开图那条跨窗消息也要用它);这里原样再导出,
+// 视图侧照旧 `import { ImageMeta } from "./item-images"`。⛔ 别在这儿再写一份形状。
+export type { ImageMeta };
 
 /** attachBatch 部分失败时的补救指引。此前在 board / inbox / 捕获窗三个 compose 各抄
  *  一份、已漂成两种说法(「卡片编辑态」vs「卡片里」)——同一语义收成一处。 */
@@ -112,17 +123,6 @@ function sameMetas(a: ImageMeta[] | null, b: ImageMeta[]): boolean {
 // 上面那条「按 id 缓全尺寸会膨胀到不可接受」的理由不再适用。别把它读成「有界」。
 const thumbCache = new Map<string, string>(); // imageId → 降采样 ≤144² data URL
 
-// lightbox 的全尺寸缓存:只留最近看过的一张(换图即顶掉旧的 → 至多 1 张全尺寸常驻)。
-let lastFull: { id: string; url: string } | null = null;
-
-/** 全尺寸字节 → data URL(lightbox 用)。命中「刚看过那张」秒回,否则取回并顶掉旧的。 */
-function getFullImage(imageId: string): Promise<string> {
-  if (lastFull && lastFull.id === imageId) return Promise.resolve(lastFull.url);
-  return invoke<string>("get_item_image", { imageId }).then((url) => {
-    lastFull = { id: imageId, url }; // 旧 url 无人引用即可回收(至多留 1 张全尺寸)
-    return url;
-  });
-}
 
 // 降采样(安卓 117 手法):一律过 canvas 重编码成 ≤144² 的 cover 方裁——原图哪怕像素尺寸小
 // 也可能字节巨大(多帧/元数据),直接缓原 data URL = 缓存无界;只钉短边则超宽长图 thumb 仍
@@ -332,660 +332,70 @@ function pasteImage(e: ClipboardEvent, onBlob: (b: Blob) => void, onError: (err:
     .catch(onError);
 }
 
-// 看图时 Ctrl+C 复制整张图(223)。剪贴板写图在 Chromium/WebView2 只保证认 image/png,
-// 而库里存的可能是 jpeg/webp/gif,故一律过 canvas 重绘成 PNG 再写——不是转码洁癖,是不转
-// 就写不进去。已知折损:GIF 动图只得当前帧(canvas 取不到动画),透明 PNG 走 canvas 保 alpha。
-// 走的是 <img> 已解码的像素,不重新取字节(全尺寸图本就在眼前这张 img 上)。
-async function copyImageToClipboard(img: HTMLImageElement): Promise<void> {
-  const c = document.createElement("canvas");
-  c.width = img.naturalWidth;
-  c.height = img.naturalHeight;
-  const ctx = c.getContext("2d");
-  if (!ctx) throw new Error("canvas 2d 上下文不可用");
-  ctx.drawImage(img, 0, 0);
-  const blob = await new Promise<Blob | null>((r) => c.toBlob(r, "image/png"));
-  if (!blob) throw new Error("图片编码失败");
-  try {
-    await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
-  } catch (webErr) {
-    // Linux 真机(progress-log 394):WebKitGTK 的异步剪贴板**只认文本**,写图恒
-    // `NotAllowedError`(真按键、有用户手势也一样)——那条路上用户拿到的是「复制失败」。
-    // 退到壳的剪贴板插件(Rust 侧 arboard)把同一张图交给系统剪贴板。不是兜底默认值:
-    // 它是另一条真机制,两条都不成才失败,而失败照旧响亮(调用方的 copyFail 回执)。
-    // Windows/mac 上第一条本就成功,永远走不到这里(生产端行为一字不变)。
-    // 交的是**canvas 的原始 RGBA**,不是上面那份 PNG 字节:插件的 writeImage 只认 RGBA
-    // (喂 PNG 字节报「expected RGBA image data」),而由 PNG 字节造 Image 的
-    // `Image.fromBytes` 要 tauri 的 `image-png` feature —— 用 RGBA 两样都不欠。
-    try {
-      const rgba = ctx.getImageData(0, 0, c.width, c.height).data;
-      await writeImage(await ShellImage.new(new Uint8Array(rgba.buffer), c.width, c.height));
-    } catch (shellErr) {
-      throw new Error(`剪贴板写图失败(web:${String(webErr)} / shell:${String(shellErr)})`);
-    }
+
+
+
+
+
+
+// ---- 开图 = 请遮罩窗来一趟(606)-------------------------------------------------
+// **606 之前遮罩长在本窗的 DOM 上**,于是「让它看起来像全屏」只能去动本窗:138 把主窗撑成
+// 「图原尺寸 + 边距」、605 改成把主窗切全屏 —— 用户两次都指出同一件事:**看张图不该动我的窗**。
+// ⇒ 遮罩搬进它自己的窗(`lightbox.ts`,常驻隐藏的无边框透明置顶窗),本文件这一侧只剩
+// 「发一条开图事件」。主窗/捕获窗的几何、最大化态、窗口状态落盘,本轮起一个字节都不碰。
+//
+// ⛔ **显示器要在这一侧量**:遮罩窗自己查 `currentMonitor()` 得到的是「它上次在的那块屏」,
+// 双屏下就摆错屏。量不到(没授权 / 取不到)就送 null —— 遮罩窗保持自己的几何照常显示,
+// 不是静默兜底:看图这件事不该因为查不到显示器就做不成。
+// 遮罩窗在不在(它答过 "我在了" 就算)。⚠ 它的页面在 app 启动后约 **1.4 秒**才加载完并装上
+// listener,在那之前发过去的开图事件**没人收、一声不响**;e2e 里这一段更长(驱动一进来时
+// 那只窗还是 about:blank,606 实测)⇒ 不堵就是「点了没反应」+ 一支随机红。
+let lightboxReady = false;
+void listen(LIGHTBOX_READY, () => {
+  lightboxReady = true;
+});
+
+/** 等遮罩窗把 listener 装好:每 100ms ping 一次,它答 "我在了" 就走。
+ *  ⛔ 3 秒上界不是静默兜底 —— 超时之后**照发不误**,让失败留在明处(遮罩不出来是看得见的),
+ *  而不是在这里把「看图」这件事整个吞掉。 */
+async function waitLightboxReady(): Promise<void> {
+  const t0 = Date.now();
+  while (!lightboxReady && Date.now() - t0 < 3000) {
+    await emitTo(LIGHTBOX_LABEL, LIGHTBOX_PING, {});
+    await new Promise((r) => setTimeout(r, 100));
   }
 }
 
-/** Mount a full-window overlay around `inner`; click anywhere or press Esc closes it.
- *  `onClose` runs while the overlay is STILL up and is awaited before teardown — so a caller
- *  that shrinks a grown window does it under the dark backdrop (no bare-window flash on close).
- *  焦点陷阱(a11y):开图即把焦点移进遮罩、Tab/Shift+Tab 焦点困在遮罩内转圈(别溜到背后被盖住
- *  的看板/灵感按钮上误触),关闭时把焦点还给打开前的元素(缩略图/正文链接)。 */
-function mountLightbox(
-  inner: HTMLElement,
-  onClose?: () => void | Promise<void>,
-  onNav?: (delta: -1 | 1) => void,
-): { overlay: HTMLElement; close: () => Promise<void> } {
-  const overlay = el("div", { className: "img-lightbox" }, [inner]);
-  overlay.tabIndex = -1; // 让遮罩自身可聚焦:遮罩内无可聚焦子元素时,焦点有个「家」落回这里
-  const prevFocus = document.activeElement as HTMLElement | null; // 关闭后把焦点还回原处
-  let closing = false;
-  const close = async (): Promise<void> => {
-    if (closing) return; // a click + Esc race shouldn't run teardown twice
-    closing = true;
-    try {
-      await onClose?.();
-    } finally {
-      overlay.remove();
-      document.removeEventListener("keydown", onKey);
-      prevFocus?.focus?.(); // 焦点还给打开前的元素,不留在已摘除的遮罩上(读屏/键盘不迷路)
-    }
-  };
-  // Tab 焦点陷阱:遮罩内通常没有可聚焦子元素(只有图+文字),故 Tab 一律钉回遮罩自身;若日后加了
-  // 按钮等可聚焦项,则在首/末之间环绕——焦点始终困在遮罩内,不落到背后被盖住的界面上。
-  const trapTab = (e: KeyboardEvent): void => {
-    const focusable = Array.from(
-      overlay.querySelectorAll<HTMLElement>(
-        'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])',
-      ),
-    );
-    if (focusable.length === 0) {
-      e.preventDefault();
-      overlay.focus({ preventScroll: true });
-      return;
-    }
-    const first = focusable[0];
-    const last = focusable[focusable.length - 1];
-    const active = document.activeElement;
-    if (e.shiftKey) {
-      if (active === first || !overlay.contains(active)) {
-        e.preventDefault();
-        last.focus();
-      }
-    } else if (active === last || !overlay.contains(active)) {
-      e.preventDefault();
-      first.focus();
-    }
-  };
-  // 遮罩底部中央的一次性回执(z 抬到遮罩之上,否则被 9000 层盖住看不见)。
-  const toast = (text: string): void =>
-    flashToast(window.innerWidth / 2, window.innerHeight - 20, text, { extraClass: "on-lightbox" });
-  const onKey = (e: KeyboardEvent): void => {
-    if (e.key === "Escape") {
-      e.preventDefault();
-      close();
-      return;
-    }
-    // Ctrl/Cmd+C:把眼前这张图复制到剪贴板。遮罩内没有可选文本,这个键位空着。
-    if ((e.ctrlKey || e.metaKey) && (e.key === "c" || e.key === "C")) {
-      e.preventDefault();
-      if (e.repeat) return; // 按住不放不重复编码整张图
-      const shown = overlay.querySelector<HTMLImageElement>("img.img-lightbox-img");
-      if (!shown || shown.naturalWidth === 0) return; // 还没解码出来 / 已换成失败面:不假装复制
-      copyImageToClipboard(shown).then(
-        () => toast(t("itemImages.copiedImage")),
-        () => toast(t("itemImages.copyFail")), // 写剪贴板被拒要响亮,别静默(与 clipboard.ts 同纪律)
-      );
-      return;
-    }
-    // ←/→ 在同条目的整组图内翻页(只有多图时 onNav 才在,单图这两键照旧无义)。
-    if (onNav && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
-      e.preventDefault();
-      onNav(e.key === "ArrowLeft" ? -1 : 1);
-      return;
-    }
-    if (isTabKey(e)) trapTab(e);
-  };
-  overlay.addEventListener("click", close);
-  document.addEventListener("keydown", onKey);
-  document.body.append(overlay);
-  overlay.focus({ preventScroll: true }); // 开图即把焦点移进遮罩,Tab 从此在内部转圈
-  return { overlay, close };
-}
-
-/** Lightbox image viewer:「整图」或「铺满宽度」两种取向 + 原生滚动 + Ctrl+滚轮缩放。图尺寸
- *  由 JS 直接写 width/height(不用 transform),溢出交给 `.img-lightbox`(overflow:auto)原生
- *  滚动——开图默认「整图」先看全貌(超高长截图也不例外;默认铺宽会让人误以为图到视口底为止),
- *  双击切「铺宽」滚看细节。交互(方案 A):无 Ctrl 滚轮=能竖滚就原生滚、否则(整图放得下)缩放;`Ctrl+滚轮`
- *  永远缩放(rect 锚点);双击切「整图↔铺宽」(且此后 resize 不再自动改取向);溢出时拖着滚(手
- *  型),整图放得下时单击关闭(延迟一个双击判定窗口,免与双击抢)。`init()` 在自然尺寸 + 最终窗口
- *  尺寸都定后挑取向并布局一次(mode 未被用户双击改过时,resize 会自动重挑取向,兜住 capture 先小
- *  窗 init 再放大的时序)。`cleanup()` 摘 EVERY 监听(含 window resize)——调用方必须在关闭时调,
- *  否则 resize 监听常驻拽住 img 的全尺寸位图不放,破「不缓存全尺寸图」内存纪律(codex 三审 H3)。 */
-function makeImageViewer(
-  img: HTMLImageElement,
-  requestClose: () => void,
-): { init: () => void; cleanup: () => void; signal: AbortSignal } {
-  const ac = new AbortController();
-  const { signal } = ac;
-  // 布局未定不显示(ui-guidelines §3.7):.img-lightbox-img 无 CSS 尺寸约束,宽高全靠下面
-  // layout() 写——从 src 解码到 init() 之间隔着取字节/量窗/放大窗数个 await,裸渲染会以
-  // 原始尺寸闪现、随窗口放大反排、最后猛缩定位(2026-07-19 用户实测的「过渡状态」)。
-  // 故出生即隐形零占位,init() 定形后一次成形亮相。
-  img.style.visibility = "hidden";
-  img.style.width = "0px";
-  img.style.height = "0px";
-  const PAD = 32; // 与 .img-lightbox-stage padding 一致
-  const DRAG_THRESHOLD = 4; // px:超过才算拖动(否则算单击)
-  // ms:单击关闭的延迟。旧值 500 是照「系统双击判定」定的,白等半秒(用户报「点了图关不掉、卡」);
-  // 但把它一味砍短是拿**双击容错**换的——安卓真机实测:延迟砍到 200ms 后,两次按下间隔 226ms
-  // 的双击第一击就把图关了,第二击落在空处(想放大却关了图)。系统标准的双击窗口是 300ms
-  // (Android)/500ms(Windows),所以这里回到 300 老实覆盖它。
-  // **速度感另有出路**:点下去立刻给遮罩挂 `.closing` 开始淡出(setClosing),延迟这段就不再是
-  // 一段静止的白等——用户读成「卡」的是「点了没反应」,不是「没立刻消失」。第二击一按下就
-  // clearTimeout + 摘 class,淡出被平滑拉回,双击照常放大。
-  const CLICK_DELAY = 300;
-  let mode: "fit" | "fill" = "fit"; // fill = 铺满宽度、竖向可滚
-  let zoom = 1; // 在 mode 基准尺寸上再乘的缩放(Ctrl+滚轮)
-  let userToggled = false; // 用户双击切过取向后,resize 不再自动改 mode
-  let dragged = false;
-  let closeTimer: number | null = null;
-
-  const scroller = (): HTMLElement | null => img.closest<HTMLElement>(".img-lightbox");
-  // 关闭中的淡出开关(246):只淡内容、黑底留着(缩窗要在暗遮罩下发生);撤销时摘掉即平滑拉回。
-  const setClosing = (on: boolean): void => {
-    scroller()?.classList.toggle("closing", on);
-  };
-  const nw = (): number => img.naturalWidth || 1;
-  const nh = (): number => img.naturalHeight || 1;
-  const viewport = (): { w: number; h: number } => {
-    const s = scroller();
-    const w = s ? s.clientWidth : window.innerWidth;
-    const h = s ? s.clientHeight : window.innerHeight;
-    return { w: Math.max(1, w - PAD * 2), h: Math.max(1, h - PAD * 2) };
-  };
-  // fit 基准与最小缩放都封顶 1:1——小图不放大(旧 CSS max-width/height 的行为,M3)。
-  const fitWholeScale = (): number => {
-    const { w, h } = viewport();
-    return Math.min(w / nw(), h / nh(), 1);
-  };
-  const baseScale = (): number => {
-    if (mode === "fit") return fitWholeScale();
-    const { w } = viewport();
-    return Math.min(w / nw(), 1); // 铺宽同样不超 1:1
-  };
-  const canScrollY = (): boolean => {
-    const s = scroller();
-    return !!s && s.scrollHeight - s.clientHeight > 1;
-  };
-  const canScrollX = (): boolean => {
-    const s = scroller();
-    return !!s && s.scrollWidth - s.clientWidth > 1;
-  };
-  const canPan = (): boolean => canScrollX() || canScrollY();
-  const layout = (): void => {
-    const scale = baseScale() * zoom;
-    img.style.width = `${Math.round(nw() * scale)}px`;
-    img.style.height = `${Math.round(nh() * scale)}px`;
-    img.style.cursor = canPan() ? "grab" : "zoom-out";
-  };
-  // 取向:默认恒「整图」——超高长截图也先看全貌(默认铺宽会让人以为图就到那儿为止);
-  // 想看清双击切「铺宽」或 Ctrl+滚轮放大,一步就到(2026-07-18 用户拍板,反转 139 的自动挑)。
-  const decideMode = (): void => {
-    mode = "fit";
-  };
-  const init = (): void => {
-    if (signal.aborted) return;
-    wire(); // 遮罩此时已进 DOM → 把滚轮挂到 scroller(见 onWheel/wire)
-    if (!userToggled) decideMode();
-    zoom = 1;
-    layout();
-    const s = scroller();
-    if (s) {
-      s.scrollTop = 0;
-      s.scrollLeft = 0;
-    }
-    img.style.visibility = ""; // 定形完毕,一次成形亮相(与构造时的出生隐形配对)
-  };
-
-  // 光标锚点缩放:用 img 真实 rect 算光标在图内的归一坐标,缩放后调 scroll 让它回到光标处
-  // (避开 padding + 居中偏移;图仍居中未溢出时无 scroll 范围、这帧锚点近似,浏览器边界钳位)。
-  const zoomAt = (cx: number, cy: number, factor: number): void => {
-    const s = scroller();
-    if (!s) return;
-    const before = img.getBoundingClientRect();
-    // 光标在图内的归一坐标钳到 [0,1]:Ctrl+滚轮落在图外 padding 时也不会算出离谱锚点(退化到边缘)。
-    const fx = before.width > 0 ? Math.min(1, Math.max(0, (cx - before.left) / before.width)) : 0.5;
-    const fy = before.height > 0 ? Math.min(1, Math.max(0, (cy - before.top) / before.height)) : 0.5;
-    const base = baseScale();
-    const oldScale = base * zoom;
-    const maxScale = Math.max(1, fitWholeScale() * 8); // 上限=1:1 或整图基准 8× 取大(避免大图被放到离谱尺寸)
-    const newScale = Math.min(maxScale, Math.max(fitWholeScale(), oldScale * factor));
-    if (newScale === oldScale) return;
-    zoom = newScale / base;
-    layout();
-    const after = img.getBoundingClientRect();
-    s.scrollLeft += after.left + fx * after.width - cx;
-    s.scrollTop += after.top + fy * after.height - cy;
-  };
-  // resize/mode 变后 baseScale 变,把绝对 scale 钳回 [整图可见, 8×](zoom 是相对 baseScale 的乘子)。
-  const clampZoom = (): void => {
-    const base = baseScale();
-    const scale = Math.min(Math.max(1, fitWholeScale() * 8), Math.max(fitWholeScale(), base * zoom));
-    zoom = scale / base;
-  };
-
-  // 滚轮挂在 scroller(整个遮罩,含图外 padding)——Ctrl+滚轮在任何位置都缩放(M1);普通滚轮
-  // 能竖滚就交原生、只横溢出的横滚也交原生、否则(整图放得下)缩放。scroller 挂载后由 init 里的
-  // wire() 接上(makeImageViewer 构造时遮罩还没进 DOM,拿不到 scroller)。
-  const onWheel = (e: WheelEvent): void => {
-    if (e.ctrlKey) {
-      e.preventDefault();
-      // 大图开着时 Ctrl+滚轮**归大图**:必须连冒泡一起掐掉(244 复扫)。241 的界面字号缩放
-      // 挂在 document 上、同样只看 ctrlKey,只 preventDefault 拦不住冒泡——两处会同时缩,
-      // 图缩一档、整个界面字号也被静默改一档还写进 localStorage(关掉大图回不去、重启还在),
-      // 而回执 badge 被遮罩盖住看不见,用户只会觉得「字怎么变了」。
-      e.stopPropagation();
-      if (e.deltaY !== 0) zoomAt(e.clientX, e.clientY, e.deltaY < 0 ? 1.15 : 1 / 1.15);
-      return;
-    }
-    if (canScrollY()) return;
-    if (canScrollX() && (e.deltaX !== 0 || e.shiftKey)) return;
-    if (e.deltaY !== 0) {
-      e.preventDefault();
-      zoomAt(e.clientX, e.clientY, e.deltaY < 0 ? 1.15 : 1 / 1.15);
-    }
-  };
-  let wired = false;
-  const wire = (): void => {
-    if (wired) return;
-    const s = scroller();
-    if (!s) return;
-    wired = true;
-    s.addEventListener("wheel", onWheel, { passive: false, signal });
-  };
-  img.addEventListener(
-    "dblclick",
-    (e) => {
-      e.stopPropagation();
-      if (closeTimer !== null) {
-        clearTimeout(closeTimer);
-        closeTimer = null;
-        setClosing(false); // 双击撤销待关:淡到一半的内容平滑回来
-      }
-      mode = mode === "fit" ? "fill" : "fit";
-      userToggled = true; // 手动切过 → resize 不再自动改取向
-      zoom = 1;
-      layout();
-      const s = scroller();
-      if (s) {
-        s.scrollTop = 0;
-        s.scrollLeft = 0;
-      }
-    },
-    { signal },
-  );
-  // 拖动=拽着滚(手型平移):只在有溢出时接管;主指针左键、过阈值才算拖动。
-  let sx = 0;
-  let sy = 0;
-  let moved = 0;
-  let panning = false;
-  let activePointer: number | null = null;
-  img.addEventListener(
-    "pointerdown",
-    (e) => {
-      if (e.button !== 0 || !e.isPrimary) return;
-      if (closeTimer !== null) {
-        clearTimeout(closeTimer); // 第二次按下 → 取消上一击的待关(双击不误关,H1 兜底)
-        closeTimer = null;
-        setClosing(false); // 连带把淡出拉回来(246)
-      }
-      if (!canPan()) return; // 整图放得下:让单击走 click→关闭
-      panning = true;
-      dragged = false;
-      moved = 0;
-      activePointer = e.pointerId;
-      sx = e.clientX;
-      sy = e.clientY;
-      img.setPointerCapture(e.pointerId);
-      img.style.cursor = "grabbing";
-    },
-    { signal },
-  );
-  img.addEventListener(
-    "pointermove",
-    (e) => {
-      if (!panning || e.pointerId !== activePointer) return;
-      const s = scroller();
-      if (s) {
-        s.scrollLeft -= e.clientX - sx;
-        s.scrollTop -= e.clientY - sy;
-      }
-      moved += Math.abs(e.clientX - sx) + Math.abs(e.clientY - sy);
-      sx = e.clientX;
-      sy = e.clientY;
-      if (moved > DRAG_THRESHOLD) dragged = true;
-    },
-    { signal },
-  );
-  const endPan = (e: PointerEvent): void => {
-    if (!panning || e.pointerId !== activePointer) return;
-    panning = false;
-    activePointer = null;
-    img.style.cursor = canPan() ? "grab" : "zoom-out";
-    try {
-      img.releasePointerCapture(e.pointerId);
-    } catch {
-      /* pointer already released */
-    }
-  };
-  img.addEventListener("pointerup", endPan, { signal });
-  img.addEventListener(
-    "pointercancel",
-    (e) => {
-      endPan(e);
-      dragged = false; // 取消后无 click 收尾:主动复位,免下次单击被误当拖动吞掉(M4)
-      moved = 0;
-    },
-    { signal },
-  );
-  img.addEventListener(
-    "click",
-    (e) => {
-      e.stopPropagation(); // 图上的单击永不直接冒泡到遮罩关(交给下面的延迟判定)
-      if (dragged) {
-        dragged = false;
-        return;
-      }
-      if (canPan()) return; // 长图/放大态:单击不关
-      if (e.detail !== 1) return; // 只有真正的单击(非双击的第二下)才安排关闭
-      if (closeTimer !== null) return;
-      setClosing(true); // 立刻开始淡出 = 立刻有回执(246);延迟这段不再是静止的白等
-      closeTimer = window.setTimeout(() => {
-        closeTimer = null;
-        requestClose();
-      }, CLICK_DELAY); // 延迟关,给双击(dblclick 会 clearTimeout)取消的机会(H1)
-    },
-    { signal },
-  );
-  // resize 后视口变:未被用户双击改过取向则重挑 mode(兜 capture 先小窗后放大),再重排(zoom 留)。
-  // 监听走 signal,关闭时随 cleanup 一起摘(H3:不靠"下次 resize 自摘")。
-  window.addEventListener(
-    "resize",
-    () => {
-      if (signal.aborted) return;
-      if (!userToggled) decideMode();
-      clampZoom(); // 视口变后把绝对 scale 钳回合法区间(zoom 保留;M2/M3 残留)
-      layout();
-    },
-    { signal },
-  );
-  return {
-    init,
-    signal,
-    cleanup: (): void => {
-      if (closeTimer !== null) clearTimeout(closeTimer);
-      ac.abort();
-    },
-  };
-}
-
-/** 关闭第一步:把遮罩里的**内容**卸干净,只留纯黑底。遮罩本体还盖着,所以不会露裸窗。
- *  为什么单拎一步:关闭要先把窗口从全屏退回原来的几何,而那一下会让 WebView 把整个
- *  窗口重排重绘一遍——此刻若全尺寸位图还挂在遮罩里,它得陪着一起重绘;偏偏遮罩要等
- *  restore 跑完才撤,这一段全发生在用户「已经想关了」之后、且零反馈(用户报的「关闭好卡」
- *  的第二段,第一段是单击延迟)。先卸再退,退的是一屏纯色。
- *  `removeAttribute("src")` 而非 `src=""`:后者在部分 WebView 里会当相对 URL 去重新请求
- *  当前页;移掉属性才是干净地断掉对那份 data URL 的引用,位图可即刻回收。 */
-function shedVisuals(overlay: HTMLElement, img: HTMLImageElement): void {
-  img.removeAttribute("src");
-  overlay.replaceChildren(); // stage / 左右箭头 / 角标一并撤走
-}
-
-/** 看大图时把**当前这个窗口**切成真全屏,返回退出全屏的闭包;已经是全屏时返回 null
- *  (用户自己弄的全屏不接管,也就不会在关图时替他退出去——macOS 绿键 / Linux WM 都给得出
- *  这个态)。两个 lightbox 入口共用:笔记本窗、捕获浮窗一视同仁。
- *
- *  ⭐ 605 起是这个形。此前(138 引入)是「把窗口撑到图原尺寸 + 边距、上限显示器 92%」——
- *  遮罩 `position:fixed` 铺满的是**窗口**而非屏幕,而当时的看图器只会「把图缩进容器」,于是
- *  绕道去撑窗,让 CSS 的「适配容器」约等于用户要的「适配屏幕」。163 把看图器改成整图/铺宽 +
- *  Ctrl+滚轮缩放 + 原生滚动之后,那条理由就没了(图自己会适配视口),剩下的全是账:
- *   ① **窗口形状被图片形状接管** —— 用户报:点开一张横条截图,主窗被拉成又宽又矮;
- *   ② `devicePixelRatio` 在 WebView 里**含页面缩放**、CSS px 又被当逻辑 px 传给 `setSize`,
- *      界面字号非 100% 时窗口不是长大而是**缩水一圈**(241 记档、244/245 排队未修);
- *   ③ 关图路径上多两趟窗口 IPC(setSize + 可能的 setPosition),而遮罩正等着它跑完才撤;
- *   ④ Linux 上 `currentMonitor()` 是不经事件循环的直接 GDK 调用,这是三条非主线程碰 Xlib
- *      的真路之一(lib.rs 的 XInitThreads 注释)。
- *  `setFullscreen` 一个开关把四条一起销掉:没有 DPI 换算、没有 92% 估算、没有边界钳位、
- *  没有形状变形,遮罩铺满的是**屏幕**。
- *
- *  失败(没授权 / 平台拒绝)吞成 null:大图照常显示,只是仍受窗口边界——这不是静默兜底,
- *  是「看图」本身不该因为窗口调不动就看不成。 */
-async function planFullscreen(): Promise<{ restore: () => Promise<void>; apply: () => Promise<void> } | null> {
-  const win = getCurrentWindow();
+async function openOverlay(body: LightboxBody): Promise<void> {
+  await waitLightboxReady();
+  let monitor: MonitorRect | null = null;
   try {
-    if (await win.isFullscreen()) return null; // 用户自己就在全屏:不接管
-    // restore 与 apply 分开返回:调用方先登记 restore 再 apply,故即使关闭抢在切换过程中
-    // (apply 的 await 间隙)发生,onClose 也能把窗口退回来。
-    return {
-      apply: () => win.setFullscreen(true),
-      restore: async () => {
-        try {
-          await win.setFullscreen(false);
-        } catch {
-          /* 退不出去无妨——用户可自己退全屏 */
-        }
-      },
-    };
+    const mon = await currentMonitor();
+    if (mon) monitor = { x: mon.position.x, y: mon.position.y, w: mon.size.width, h: mon.size.height };
   } catch {
-    return null;
+    /* 量不到显示器:遮罩窗保持自己当前几何 */
   }
+  await emitTo(LIGHTBOX_LABEL, LIGHTBOX_OPEN, {
+    ...body,
+    from: getCurrentWindow().label,
+    monitor,
+  } satisfies LightboxOpen);
 }
 
-/** 切全屏的 IPC 返回不等于 WebView 视口已更新(WM_SIZE→webview 重排→JS resize 异步
- *  到达)。init() 若用旧视口布局,亮相后会被迟到的 resize 再排一次——尺寸可见地跳一记
- *  (163 续案,超高图最显眼)。这里等视口真离开切换前的尺寸并连续两帧稳定再放行;600ms
- *  兜底——setFullscreen 被拒/无效时视口永不变,超时按当前视口布局(等于旧行为,不更糟)。 */
-function viewportSettle(preW: number, preH: number, signal: AbortSignal): Promise<void> {
-  return new Promise((resolve) => {
-    const t0 = performance.now();
-    let lastW = -1;
-    let lastH = -1;
-    let stable = 0;
-    const tick = (): void => {
-      if (signal.aborted) return resolve(); // 关闭抢先:立即放行,调用方靠 closed 止步
-      const w = window.innerWidth;
-      const h = window.innerHeight;
-      if ((w !== preW || h !== preH) && w === lastW && h === lastH) {
-        stable += 1;
-        if (stable >= 2) return resolve();
-      } else stable = 0;
-      lastW = w;
-      lastH = h;
-      if (performance.now() - t0 > 600) return resolve();
-      requestAnimationFrame(tick);
-    };
-    requestAnimationFrame(tick);
-  });
-}
-
-/** A full-window overlay showing a SAVED image at full size (bytes load lazily as a data:
- *  URL by id). 滚轮缩放 / 滚动、拖动平移、双击切取向;click backdrop 或 Esc 关闭(见 makeImageViewer)。
- *  在暗遮罩下把窗口切成全屏(planFullscreen),关闭时先摘监听再退出全屏——两步都在
- *  遮罩仍覆盖时发生,无裸窗闪(与捕获窗同纪律)。
- *  **224 起收同条目的整组图**:`images` 是这条目的全部配图、`index` 是点开的那张;>1 张时
- *  ←/→ 键与左右箭头按钮在组内循环翻页(角标显「图N · i/共」)。只一张时零变化——按钮与角标
- *  都不出现,老路径原样。翻页**不碰窗口**:全屏是开图那次一次性切好的,此后到关图为止都不动。 */
+/** 看这条目的整组图(已入库)。**只送元数据**:字节由遮罩窗自己 `get_item_image` 取,
+ *  全尺寸 base64 不过事件。`index` = 点开的那张;>1 张时遮罩窗内 ←/→ 组内循环翻页。
+ *  空间 id 显式带上 —— 遮罩窗没有「当前空间」这个概念,它只按送来的那个查。 */
 export async function openLightbox(images: ImageMeta[], index: number): Promise<void> {
-  if (images.length === 0) return; // 没图可看:不挂空遮罩
-  const multi = images.length > 1;
-  let cur = Math.min(Math.max(index, 0), images.length - 1);
-  let gen = 0; // 换图代次:翻得快时迟到的字节/解码不许盖住新的那张(同安卓 viewerSeq)
-  const img = el("img", { className: "img-lightbox-img", alt: t("itemImages.badge", { n: images[cur].seq }) });
-  // 取字节/解码/定窗期间的加载指示(§3.7 审计 #14):CSS 延迟淡入,快路径(命中「刚看过」的
-  // 全尺寸缓存)一闪而过时不露脸;init 前 remove,showError 的 replaceChildren 也会带走它。
-  const loading = el("div", { className: "img-lightbox-loading", textContent: t("itemImages.loading") });
-  const stage = el("div", { className: "img-lightbox-stage" }, [loading, img]);
-  let closed = false;
-  let restore: (() => Promise<void>) | null = null;
-  let entering: Promise<void> | null = null; // 进行中的切全屏;关闭须等它跑完(成/败)再唯一一次还原(H4)
-  const viewer = makeImageViewer(img, () => close());
-  const { overlay, close } = mountLightbox(
-    stage,
-    async () => {
-      closed = true; // 关标志:让下面异步流(invoke/load/切全屏)每个 await 后止步
-      viewer.cleanup(); // 摘缩放/滚动监听(含 window resize),不泄漏 img
-      shedVisuals(overlay, img); // 先卸大图、只留黑底,再去退全屏(见 shedVisuals)
-      if (entering) await entering.catch(() => {}); // 等切换真正结束(即便抛错),避免 restore 与它并发
-      if (restore) await restore(); // 仍在暗遮罩下退出全屏(只此一次)
-    },
-    multi ? (delta) => void present((cur + delta + images.length) % images.length, false) : undefined,
-  );
-  const showError = (): void => {
-    if (closed) return;
-    viewer.cleanup();
-    overlay.replaceChildren(el("div", { className: "img-lightbox-err", textContent: t("itemImages.loadFail") }));
-  };
-  // 组内导航件(只在多图时存在):左右箭头 + 「图N · i/共」角标。都 position:fixed 钉在视口,
-  // 放大图后拖着滚时不跟着跑。按钮的 click 必须 stopPropagation——遮罩自身的 click 是「关闭」。
-  const counter = multi ? el("div", { className: "img-lightbox-count" }) : null;
-  const navBtn = (dir: -1 | 1): HTMLButtonElement => {
-    const b = el("button", {
-      className: `img-lightbox-nav ${dir < 0 ? "prev" : "next"}`,
-      textContent: dir < 0 ? "‹" : "›",
-      title: dir < 0 ? t("itemImages.prev") : t("itemImages.next"),
-    });
-    b.addEventListener("click", (e) => {
-      e.stopPropagation(); // 别冒泡到遮罩的「点背景关闭」
-      void present((cur + dir + images.length) % images.length, false);
-    });
-    return b;
-  };
-  if (multi && counter) overlay.append(navBtn(-1), navBtn(1), counter);
-
-  /** 呈现第 i 张。`first`=开图那次(要切全屏);换图那次只重新解码 + 重排,窗口不动。 */
-  async function present(i: number, first: boolean): Promise<void> {
-    if (closed) return;
-    const my = ++gen;
-    cur = i;
-    const m = images[cur];
-    img.alt = t("itemImages.badge", { n: m.seq });
-    if (counter) counter.textContent = t("itemImages.counter", { n: m.seq, i: cur + 1, total: images.length });
-    if (!first) {
-      // 换图:先隐去旧图(否则新图按旧尺寸闪一下再重排)、把加载指示放回去——与「布局未定
-      // 不显示」同纪律,定形后由 viewer.init() 一次成形亮相。
-      img.style.visibility = "hidden";
-      if (!loading.isConnected) stage.prepend(loading);
-    }
-    try {
-      const src = await getFullImage(m.id);
-      if (closed || my !== gen) return;
-      // 解码拿到自然尺寸,布局才有依据(切全屏本身不依赖它,但两者都必须在 init 之前落定)。
-      // load 监听走 viewer.signal:关闭时随 cleanup 一起摘、并由 abort 事件让本 Promise 必定 settle(M5)。
-      // 已经是这张(翻回刚看过的一张、或两张字节相同)则不重新等 load——同 src 不再触发 load 事件。
-      if (!(img.src === src && img.complete && img.naturalWidth > 0)) {
-        await new Promise<void>((resolve) => {
-          img.addEventListener("load", () => resolve(), { once: true, signal: viewer.signal });
-          img.addEventListener("error", () => resolve(), { once: true, signal: viewer.signal });
-          viewer.signal.addEventListener("abort", () => resolve(), { once: true });
-          img.src = src;
-        });
-        if (closed || my !== gen) return;
-      }
-      if (img.naturalWidth === 0) {
-        showError(); // 解码失败:明确失败 UI + 立刻 cleanup,别留空白遮罩(M5)
-        return;
-      }
-      if (first) {
-        const plan = await planFullscreen();
-        if (closed || my !== gen) return; // 关在切换前:窗口没动,onClose 里 restore 仍 null,无需还原
-        if (plan) {
-          const preW = window.innerWidth; // 切全屏前的视口:viewportSettle 以「离开此尺寸」为信号
-          const preH = window.innerHeight;
-          restore = plan.restore; // 先登记还原,再启动切换:onClose 会等它完再还原(串行,不并发)
-          entering = plan.apply();
-          await entering.catch(() => {}); // 切不过去不致命(没授权/平台拒绝时窗口保持原样)
-          if (closed || my !== gen) return; // 关已在切换中发生:onClose 负责等它 + 还原,这里不再动
-          await viewportSettle(preW, preH, viewer.signal); // 视口真落定再布局,亮相后不再被迟到 resize 重排
-          if (closed || my !== gen) return;
-        }
-      }
-      loading.remove();
-      viewer.init(); // 窗口已定尺(全屏或原样)→ 挑取向 + 布局一次 + 亮相
-    } catch {
-      showError();
-    }
-  }
-
-  await present(cur, true);
+  if (images.length === 0) return; // 没图可看:不惊动遮罩窗
+  await openOverlay({ kind: "saved", spaceId: currentSpaceId(), images, index });
 }
 
-/** A full-window overlay showing an image from a ready src (object URL / data URL) — for an
- *  unsaved preview (e.g. a just-pasted capture image, which has no id yet). `opts.onClose` runs
- *  after it closes. 与已保存图的 openLightbox 同纪律:在暗遮罩下把窗口切成全屏(planFullscreen),
- *  关闭时先卸图再退出全屏。**切换→视口落定→亮相**的无闪时序由本函数统一负责(163 续案):
- *  先前捕获窗是「先小窗 init、放大后 resize 重挑」,亮相后被迟到的 resize 重排一次(尺寸可见跳
- *  一记);现改为图先隐形解码、窗口在暗遮罩下切全屏、viewport 真落定后一次成形亮相。
- *  切换/解码期间显「图片载入中…」加载指示(§3.7,快路径 <0.2s 不露脸)。 */
-export function openLightboxUrl(
-  src: string,
-  alt = t("itemImages.preview"),
-  opts: { onClose?: () => void | Promise<void> } = {},
-): void {
-  const img = el("img", { className: "img-lightbox-img", alt });
-  const loading = el("div", { className: "img-lightbox-loading", textContent: t("itemImages.loading") });
-  const stage = el("div", { className: "img-lightbox-stage" }, [loading, img]);
-  let closed = false;
-  let restore: (() => Promise<void>) | null = null;
-  let entering: Promise<void> | null = null; // 进行中的切全屏;关闭须等它跑完(成/败)再唯一一次还原(H4)
-  const viewer = makeImageViewer(img, () => close());
-  // 关闭:先摘缩放/滚动监听(含 window resize),等在途切换跑完再唯一一次退出全屏,最后跑调用方
-  // 的 onClose——都在暗遮罩仍覆盖时发生,无裸窗闪(与 openLightbox 同纪律)。
-  const { overlay, close } = mountLightbox(stage, async () => {
-    closed = true; // 关标志:让下面异步流每个 await 后止步
-    viewer.cleanup();
-    shedVisuals(overlay, img); // 先卸大图、只留黑底,再去退全屏(见 shedVisuals)
-    if (entering) await entering.catch(() => {}); // 等切换真正结束,避免 restore 与它并发
-    if (restore) await restore(); // 仍在暗遮罩下退出全屏(只此一次)
-    await opts.onClose?.();
-  });
-  const showError = (): void => {
-    if (closed) return;
-    viewer.cleanup();
-    overlay.replaceChildren(el("div", { className: "img-lightbox-err", textContent: t("itemImages.loadFail") }));
-  };
-  void (async () => {
-    try {
-      // src 已就绪(object URL / data URL),但大截图仍要解码——等 load 拿到自然尺寸再走(图此刻
-      // 隐形,不闪)。监听走 viewer.signal:关闭随 cleanup 一起摘、abort 让本 Promise 必定 settle。
-      await new Promise<void>((resolve) => {
-        img.addEventListener("load", () => resolve(), { once: true, signal: viewer.signal });
-        img.addEventListener("error", () => resolve(), { once: true, signal: viewer.signal });
-        viewer.signal.addEventListener("abort", () => resolve(), { once: true });
-        img.src = src;
-      });
-      if (closed) return;
-      if (img.naturalWidth === 0) {
-        showError();
-        return;
-      }
-      const plan = await planFullscreen();
-      if (closed) return; // 关在切换前:窗口没动,restore 仍 null,无需还原
-      if (plan) {
-        const preW = window.innerWidth; // 切全屏前的视口:viewportSettle 以「离开此尺寸」为信号
-        const preH = window.innerHeight;
-        restore = plan.restore; // 先登记还原,再启动切换:onClose 会等它完再还原(串行)
-        entering = plan.apply();
-        await entering.catch(() => {}); // 切不过去不致命(没授权/平台拒绝时窗口保持原样)
-        if (closed) return;
-        await viewportSettle(preW, preH, viewer.signal); // 视口真落定再布局,不被迟到 resize 重排
-        if (closed) return;
-      }
-      loading.remove();
-      viewer.init(); // 窗口已定尺(全屏或原样)→ 挑取向 + 布局一次 + 亮相
-    } catch {
-      showError();
-    }
-  })();
+/** 看一张**还没入库**的图(compose 暂存 / 捕获窗暂存)。object URL 是本窗文档私有的、
+ *  跨不了窗,故把字节读成 data URL 随事件送过去。⚠ 那份 base64 与保存时 `attachBlob`
+ *  过 IPC 的是同一个量级(同一张图、同一种编码),不是本轮新引入的开销。 */
+export async function openLightboxBlob(blob: Blob, alt = t("itemImages.preview")): Promise<void> {
+  const src = `data:${blob.type || "image/png"};base64,${await toBase64(blob)}`;
+  await openOverlay({ kind: "data", src, alt });
 }
 
 /** A thumbnail strip for an item's images. `editable` adds a × to delete each one (used in a
@@ -1028,7 +438,9 @@ export function imageStrip(
           return; // leave the thumb in place if the delete failed
         }
         thumbCache.delete(m.id); // 内存卫生:小图缓存清项
-        if (lastFull && lastFull.id === m.id) lastFull = null; // 连带清掉可能命中的「刚看过」
+        // ⚠ 606:「刚看过那张全尺寸」的缓存搬到遮罩窗去了(lightbox.ts),本窗清不动它。
+        // 不补一条「忘掉这张」的跨窗事件:图 id 永不复用 ⇒ 陈旧条目**不可能**被错服务,
+        // 上界也没变(至多 1 张全尺寸),代价只是那一张要等下次看图才被顶掉。
         await reload();
         opts.onChange?.();
       });
@@ -1210,8 +622,9 @@ export function pendingImages(
   opts: {
     /** 增删预览后回调(捕获浮窗用它随内容长/缩窗口)。 */
     onChange?: () => void;
-    /** 点预览看大图的方式;不传就用 openLightboxUrl 的默认 alt(捕获浮窗要换成自己那句)。 */
-    openPreview?: (url: string) => void;
+    /** 点预览看大图的方式;不传就用默认 alt(捕获浮窗要换成自己那句)。⚠ 交的是 **blob**
+     *  不是 object URL —— 遮罩窗是另一个窗,object URL 跨不过去(606)。 */
+    openPreview?: (blob: Blob) => void;
     /** 传了就把暂存图持久化到 IndexedDB(此键分桶),供断电恢复;不传=纯内存(旧行为)。
      *  见 compose-draft.ts:三入口各用一个键。持久化尽力而为,写失败吞掉不拦业务。 */
     persistKey?: string;
@@ -1264,8 +677,8 @@ export function pendingImages(
     const url = URL.createObjectURL(blob);
     const img = el("img", { className: "img-thumb-img", src: url, title: t("itemImages.clickZoom") });
     img.addEventListener("click", () => {
-      if (opts.openPreview) opts.openPreview(url);
-      else openLightboxUrl(url);
+      if (opts.openPreview) opts.openPreview(blob);
+      else void openLightboxBlob(blob);
     });
     const del = el("button", { className: "img-del", textContent: "×", title: t("itemImages.removeImage") });
     const thumb = el("div", { className: "img-thumb" }, [img, del]);

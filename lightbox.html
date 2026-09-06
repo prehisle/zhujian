@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="zh">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title data-i18n="common.appName">朱简</title>
+    <!-- 第三个窗口壳:看大图的遮罩窗。它**只有暗遮罩和一张图**,没有纸底、没有明暗两档
+         (遮罩恒是压暗的墨色),故刻意不抄另外两个壳里那段「首帧之前定色」的脚本 ——
+         这里没有会闪的底色可定。theme.css 仍要装:字号 / 圆角 / 字体那几枚令牌在它里面。 -->
+    <link rel="stylesheet" href="/src/theme.css" />
+    <style>
+      * { box-sizing: border-box; }
+      /* 窗口是 transparent:true 且铺满整块显示器:body 必须全透,压暗那一层由
+         `.img-lightbox` 自己铺(它 position:fixed inset:0)。⛔ 这里别给背景色 ——
+         给了就等于遮罩没开时也糊着一层,而这个窗口是常驻隐藏、show 才现身的。 */
+      html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; }
+      body { font: var(--fs-14)/1.6 var(--font-sans); color: #fff; }
+    </style>
+  </head>
+  <body>
+    <script type="module" src="/src/lightbox.ts"></script>
+  </body>
+</html>

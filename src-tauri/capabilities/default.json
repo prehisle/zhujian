@@ -4,7 +4,8 @@
   "description": "enables the default permissions",
   "windows": [
     "capture",
-    "notebook"
+    "notebook",
+    "lightbox"
   ],
   "permissions": [
     "core:default",
@@ -19,8 +20,7 @@
     "core:window:allow-inner-size",
     "core:window:allow-outer-position",
     "core:window:allow-center",
-    "core:window:allow-set-fullscreen",
-    "core:window:allow-is-fullscreen",
+    "core:window:allow-current-monitor",
     "core:window:allow-start-dragging",
     "core:webview:allow-set-webview-zoom",
     "opener:allow-open-url",

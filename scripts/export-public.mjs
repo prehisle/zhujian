@@ -49,7 +49,7 @@ const ALLOW = [
   // (385 探路实测:preflight 红在第五道 check-timing-drift)。内容是纯 UI 规范,无商业/
   // 密钥/服务器信息;用户 2026-08-15 拍板公开。
   "docs/ui-guidelines.md",
-  "index.html", "notebook.html", "package.json", "package-lock.json",
+  "index.html", "notebook.html", "lightbox.html", "package.json", "package-lock.json",
   "tsconfig.json", "vite.config.ts", "readme.md", "readme.en.md", "LICENSE",
   ".gitignore", ".gitattributes",
 ];

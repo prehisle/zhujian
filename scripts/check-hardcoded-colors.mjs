@@ -50,9 +50,30 @@ const REGISTERED = [
     file: "src/item-images.css",
     prop: "color",
     color: "#fff",
-    why: OVERLAY_ON_PHOTO + "(删图钮 / 看大图的错误与加载字 / 左右翻页箭头 / 「图N · i/共」角标)",
+    why: OVERLAY_ON_PHOTO + "(缩略图上的删图钮)",
   },
   { file: "src/item-images.css", prop: "background", color: /^rgba\((?:34, 31, 25|20, 16, 10), [\d.]+\)$/, why: OVERLAY_ON_PHOTO + "(同上那几处的蒙版底)" },
+  // ⭐ 606:看大图那一族整段从 `item-images.css` 搬进了它自己的窗(`src/lightbox.css` + `lightbox.html`)。
+  // ⚠ **搬文件也是改动面** —— 这张登记表以**路径**为输入,不跟着改就等于这几条一夜之间没人签字了
+  // (门禁当场逮到;memory `moved-files-are-part-of-the-change-surface` 说的就是这一形)。理由一字未变。
+  {
+    file: "src/lightbox.css",
+    prop: "color",
+    color: "#fff",
+    why: OVERLAY_ON_PHOTO + "(看大图的错误与加载字 / 左右翻页箭头 / 「图N · i/共」角标)",
+  },
+  {
+    file: "src/lightbox.css",
+    prop: "background",
+    color: /^rgba\(20, 16, 10, [\d.]+\)$/,
+    why: OVERLAY_ON_PHOTO + "(遮罩本体、左右箭头、角标的蒙版底)",
+  },
+  {
+    file: "lightbox.html#style",
+    prop: "color",
+    color: "#fff",
+    why: OVERLAY_ON_PHOTO + "(遮罩窗 body 的默认字色 —— 这只窗**只有暗遮罩和一张图**,没有纸面可言)",
+  },
   {
     file: "src/item-comments.css",
     prop: "background",

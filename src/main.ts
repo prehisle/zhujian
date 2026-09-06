@@ -3,7 +3,7 @@ import { invoke as rawInvoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { LogicalSize } from "@tauri-apps/api/dpi";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { REPASTE_HINT, openLightboxUrl, pendingImages } from "./item-images";
+import { REPASTE_HINT, openLightboxBlob, pendingImages } from "./item-images";
 import { saveTextDraft, loadTextDraft, clearTextDraft } from "./compose-draft";
 import { createCaptureCommands } from "./capture-commands";
 import { initTheme } from "./theme-mode";
@@ -329,8 +329,9 @@ async function fitWindow(): Promise<void> {
 // controller (item-images.ts, 同灵感/看板的新建输入框). Capture creates the item (and its
 // id) only on Enter, so the images ride along and get attached right after capture_note
 // returns the new id. onChange re-fits the window as previews come and go.
-// 点预览看大图:605 起两个 lightbox 入口一律把**当前窗口**切成真全屏(item-images.ts 的
-// planFullscreen),浮窗不再按图的尺寸撑大自己 —— 这里只剩「换一句 alt」,几何一概不管。
+// 点预览看大图:606 起遮罩是**独立的一只全屏透明窗**(lightbox.ts),浮窗自己一个字节不动
+// (605 那版把当前窗切全屏、138 那版把当前窗撑成图的尺寸,两条都被用户否掉了)。这里只剩
+// 「换一句 alt」;⚠ 交给它的是 **blob** 不是 object URL —— 那玩意跨不了窗。
 const pend = pendingImages({
   // A stale save-error shouldn't linger once the previews change (matches the old paste
   // handler); the failure message from attachAll is set AFTER it resolves, so it survives.
@@ -338,7 +339,7 @@ const pend = pendingImages({
     errLine.textContent = "";
     void fitWindow();
   },
-  openPreview: (url) => openLightboxUrl(url, t("capture.preview")),
+  openPreview: (blob) => void openLightboxBlob(blob, t("capture.preview")),
   // 断电恢复(198 桌面侧):暂存图落 IndexedDB,重开回填。捕获浮窗不分空间(落点在按
   // 回车那刻定),文字草稿见下方 CAPTURE_DRAFT_KEY。
   persistKey: "zhujian.capture-images",

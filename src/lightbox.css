@@ -1,0 +1,126 @@
+/* 看大图遮罩窗(第三个窗口壳 lightbox)的样式。606 之前这些规则住在 item-images.css 里 ——
+   那时遮罩长在主窗的 DOM 上,于是「让它看起来像全屏」只能去动主窗;606 起遮罩自己就是一只
+   铺满显示器的无边框透明窗,整段随之搬到这里,只有 lightbox.html 装它。
+   ⛔ 别再往 item-images.css 里加 .img-lightbox* —— 那份是主窗与捕获窗装的,加了也不生效。 */
+
+/* 大图遮罩内的回执(Ctrl+C 复制图片):遮罩自身 z-index 9000,默认 1000 会被盖住。 */
+.copy-toast.on-lightbox {
+  z-index: 9100;
+}
+
+
+/* 看大图遮罩。 */
+.img-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 9000;
+  overflow: auto; /* 长图铺满宽度后竖向溢出 → 原生滚动(item-images.ts makeImageViewer) */
+  overscroll-behavior: contain;
+  background: rgba(20, 16, 10, 0.78);
+  cursor: zoom-out;
+}
+/* 舞台:min-100% + flex 居中 → 图小于视口时居中、大于视口时从边缘起可滚(不裁顶/不裁左)。
+   safe center:图超出视口时对齐退回 start,保证正 scroll 能到达两端(否则不安全居中会把
+   左/上侧内容顶到负方向、滚不到)。 */
+.img-lightbox-stage {
+  box-sizing: border-box;
+  min-width: 100%;
+  min-height: 100%;
+  padding: 32px;
+  display: flex;
+  align-items: safe center;
+  justify-content: safe center;
+}
+.img-lightbox-img {
+  display: block;
+  flex: none; /* 不被 flex 收缩:宽高由 JS 直接写(makeImageViewer),超出即溢出交原生滚动 */
+  /* 宽高由 JS 直接写,不用 object-fit/transform。 */
+  border-radius: var(--radius-sm);
+  box-shadow: var(--float-shadow);
+  /* 禁原生图拖影 + 触控手势,平移/缩放全由脚本接管。 */
+  touch-action: none;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+/* 关闭中(246):单击关不是「等一会儿再啪地消失」,而是**点下去立刻开始淡出**——延迟那段
+   必须留着(要给双击留取消的机会),但它不该是一段静止的白等,那正是用户读成「卡」的东西。
+   只淡**内容**、黑底不动:窗口还原(缩窗)要在暗遮罩下发生才无裸窗闪,所以背景撑到最后。
+   淡出时长与 CLICK_DELAY 对齐,到点时恰好淡尽,关闭无缝接上;第二击撤销时移掉这个类,
+   transition 会把它平滑地拉回来(所以这里绝不能加 pointer-events:none——撤销靠的正是
+   落在遮罩上的第二次 pointerdown)。 */
+.img-lightbox-stage,
+.img-lightbox-nav,
+.img-lightbox-count {
+  transition: opacity 0.12s ease;
+}
+.img-lightbox.closing .img-lightbox-stage,
+.img-lightbox.closing .img-lightbox-nav,
+.img-lightbox.closing .img-lightbox-count {
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+.img-lightbox-err {
+  font-family: var(--font-sans);
+  color: #fff;
+}
+
+/* 取字节期间的加载指示(ui-guidelines §3.7):延迟 ~0.2s 淡入——快路径(缓存命中/小图)
+   在指示露脸前就已成形亮相,不给一闪而过的 loading;慢路径才见到它。 */
+.img-lightbox-loading {
+  font-family: var(--font-sans);
+  font-size: var(--fs-13);
+  color: #fff;
+  opacity: 0;
+  animation: img-lightbox-loading-in 0.2s ease 0.2s forwards;
+}
+@keyframes img-lightbox-loading-in {
+  to {
+    opacity: 0.85;
+  }
+}
+
+/* 同条目多图的组内导航(224):左右箭头 + 「图N · i/共」角标。都 fixed 钉在视口——遮罩自身
+   是滚动容器,放大后拖着滚长图时它们不该跟着跑。只在多于一张时才由 JS 挂上,单图零变化。 */
+.img-lightbox-nav {
+  position: fixed;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 9100; /* 抬到遮罩(9000)之上,长图滚动时也不被图盖住 */
+  width: 44px;
+  height: 64px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: rgba(20, 16, 10, 0.5);
+  color: #fff;
+  font-size: var(--fs-30);
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.55;
+  transition: opacity 0.12s ease, background 0.12s ease;
+}
+.img-lightbox-nav:hover,
+.img-lightbox-nav:focus-visible {
+  opacity: 1;
+  background: rgba(20, 16, 10, 0.72);
+}
+.img-lightbox-nav.prev {
+  left: 12px;
+}
+.img-lightbox-nav.next {
+  right: 12px;
+}
+.img-lightbox-count {
+  position: fixed;
+  left: 50%;
+  bottom: 14px;
+  transform: translateX(-50%);
+  z-index: 9100;
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  background: rgba(20, 16, 10, 0.55);
+  color: #fff;
+  font-family: var(--font-sans);
+  font-size: var(--fs-12);
+  pointer-events: none; /* 纯读数,不吃点击(点它等于点遮罩=关闭) */
+}

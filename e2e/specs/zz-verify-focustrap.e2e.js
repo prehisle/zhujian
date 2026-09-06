@@ -1,12 +1,27 @@
-// 常驻回归锚(a11y 焦点陷阱,mountLightbox):焦点陷阱静默失效(用户无感知)→ 值一个锚。验证:
-//   ① 开图把焦点移进遮罩、Tab/Shift+Tab 困在遮罩内不溜到背后被盖住的看板按钮;
-//   ② 关闭把焦点还回打开前的元素(prevFocus 还焦)。
-// 双向阴性对照实跑过:摘掉开图移焦+trapTab → 例① 红;单摘还焦(保留开图移焦)→ 例② 红。
-// 用合成 MouseEvent("click") 触发开图(img 上的 click 监听照收),避开 WebDriver 真点对焦点的副作用,
-// 让「还焦」测试的 prevFocus 确定为那颗侧栏按钮。
-// zz 前缀:openLightbox(已保存图)可能在暗遮罩下撑主窗,窗口几何敏感,放字典序末尾跑。
+// 常驻回归锚(a11y 焦点,mountLightbox + lightbox.ts::dismiss):焦点的事静默失效(用户只觉得
+// 「怎么还要多点一下」)→ 值一个锚。验证:
+//   ① 开图把焦点移进遮罩、Tab/Shift+Tab 困在遮罩内(`trapTab`);
+//   ② 关图把**操作焦点还给开图那个窗**(遮罩窗 hide + 给 opener setFocus)。
+//
+// ⭐ **606 起这两格问的都不再是同一件事了,别照旧读**:遮罩搬进了自己那只窗(`lightbox.html`)。
+//   ·例① 从前的价值在于「Tab 别溜到**背后被盖住的看板按钮**上」——那种误触现在结构上就不可能
+//     (那些按钮压根不在这个文档里)。它今天守的是**剩下的那一半**:`trapTab` 还在不在、焦点
+//     进没进遮罩。⛔ 别因此把它删了:`trapTab` 仍是活代码,且遮罩窗里日后一旦加了可聚焦控件
+//     (翻页箭头就是),环绕逻辑立刻又开始承重。
+//   ·例② 从前量的是遮罩所在文档里的 `prevFocus` 还焦;那个今天只在遮罩窗内部有意义(没人看得见)。
+//     换成量两件**这套架构真会坏、且这里量得到**的事:关图之后 (a) 遮罩窗**真的藏起来了**
+//     ——它是置顶窗,不藏就一直盖着整块屏幕,而 DOM 上一点痕迹都没有;(b) 笔记本窗自己的
+//     `activeElement` **一个字没动**——遮罩在另一个文档里,本就不该碰到这边的焦点。
+//     ⛔ **别拿 `document.hasFocus()` 当判据**(606 第一版就是这么写的,当场红):e2e 跑在
+//     `run-on-desktop.ps1` 开的**后台桌面**上,那儿没有「活动窗口」,`hasFocus()` **恒 false**
+//     ——连开图前那句前置自证都过不了。⚠ 「关图之后 OS 焦点回到笔记本窗」这件事**这里测不了**,
+//     它由 CDP 在真桌面上验(606 实读:关图后笔记本页 `document.hasFocus() === true`),如实记账。
+// 阴性对照(606 实跑):摘掉 `isTabKey(e) → trapTab(e)` → 例① 红;摘掉 `dismiss()` 里的
+// `selfWin.hide()` → 例② 红。
+// 用合成 MouseEvent("click") 触发开图(img 上的 click 监听照收),避开 WebDriver 真点击对焦点的副作用。
+// zz 前缀:这支要在两个窗之间来回切,放字典序末尾跑最省心。
 import { browser, $, expect } from "@wdio/globals";
-import { goNotebook, invoke } from "./support.js";
+import { goNotebook, invoke, toLightbox } from "./support.js";
 
 async function seedTaskWithImage(title) {
   const id = await invoke("create_task", { title });
@@ -39,17 +54,19 @@ const openThumb = (title) =>
     card.querySelector(".img-thumb-img").dispatchEvent(new MouseEvent("click", { bubbles: true }));
   }, title);
 
-describe("a11y · lightbox 焦点陷阱", () => {
+describe("a11y · lightbox 焦点", () => {
   before(async () => {
     await goNotebook("board");
   });
 
-  it("开图移焦进遮罩;Tab/Shift+Tab 困在遮罩内不溜到背后", async () => {
+  it("开图移焦进遮罩;Tab/Shift+Tab 困在遮罩内", async () => {
     const T = "焦点陷阱-Tab";
     await seedTaskWithImage(T);
     await goNotebook("board");
     await $(".tcard*=" + T).$(".img-thumb-img").waitForExist({ timeout: 5000 });
     await openThumb(T);
+
+    const back = await toLightbox();
     await $(".img-lightbox").waitForExist({ timeout: 5000 });
     expect(await inOverlay()).toBe(true); // 开图即把焦点移进遮罩
     // ⭐ 603 起 Shift+Tab 这一步**两端都跑**(396 立、602 推翻、603 修完打开):
@@ -62,32 +79,46 @@ describe("a11y · lightbox 焦点陷阱", () => {
     // ⛔ 别再把它改回「只在 Windows 上跑」:那样这一端的漏就又没人看着了。
     for (const key of ["Tab", "Tab", ["Shift", "Tab"], "Tab"]) {
       await browser.keys(key);
-      expect(await inOverlay()).toBe(true); // 旧代码:焦点会溜到背后看板按钮 → 此处红
+      expect(await inOverlay()).toBe(true); // 摘掉 trapTab → 焦点落到 body → 此处红
     }
     await browser.keys("Escape");
     await $(".img-lightbox").waitForExist({ reverse: true, timeout: 5000 });
-    await browser.pause(400); // 让还原窗口在遮罩下跑完
+    await back();
   });
 
-  it("关闭把焦点还回打开前的元素", async () => {
-    const T = "焦点陷阱-还焦";
+  it("关图:遮罩窗真的藏起来,笔记本窗自己的焦点一个字没动", async () => {
+    const T = "关图收窗";
     await seedTaskWithImage(T);
     await goNotebook("board");
     await $(".tcard*=" + T).$(".img-thumb-img").waitForExist({ timeout: 5000 });
-    const marked = await browser.execute(() => {
+    // 前置自证:开图之前,焦点确实钉在这颗按钮上 —— 否则「关图之后还在那儿」什么都没证明。
+    const parked = await browser.execute(() => {
       const btn = document.querySelector('.sidebar nav button[data-view="board"]');
       btn.focus();
       return document.activeElement === btn;
     });
-    expect(marked).toBe(true);
-    await openThumb(T); // 合成 click 不改焦点 → prevFocus 恒为那颗按钮
+    expect(parked).toBe(true);
+
+    await openThumb(T); // 合成 click 不改焦点
+    const back = await toLightbox();
     await $(".img-lightbox").waitForExist({ timeout: 5000 });
+    // 前置自证 2:开着的时候遮罩窗**是显形的** —— 不然下面那句「藏起来了」恒真。
+    expect(await browser.execute(() => window.__TAURI__.window.getCurrentWindow().isVisible())).toBe(true);
+
     await browser.keys("Escape");
     await $(".img-lightbox").waitForExist({ reverse: true, timeout: 5000 });
-    await browser.pause(400);
-    const restored = await browser.execute(
+    // (a) 遮罩窗真的藏了 —— 摘掉 dismiss() 里的 hide() 就红在这句(它是置顶窗,
+    //     不藏就一直盖着整块屏幕,而 DOM 上一点痕迹都没有)。
+    await browser.waitUntil(
+      async () => browser.execute(() => window.__TAURI__.window.getCurrentWindow().isVisible().then((v) => !v)),
+      { timeout: 5000, timeoutMsg: "关掉大图之后遮罩窗还显形着(dismiss 里的 hide 没生效)" },
+    );
+    await back();
+
+    // (b) 笔记本窗自己的焦点一个字没动(遮罩在另一个文档里,本就不该碰这边)。
+    const still = await browser.execute(
       () => document.activeElement === document.querySelector('.sidebar nav button[data-view="board"]'),
     );
-    expect(restored).toBe(true);
+    expect(still).toBe(true);
   });
 });

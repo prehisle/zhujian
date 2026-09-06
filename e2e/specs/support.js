@@ -155,7 +155,29 @@ export async function goNotebook(view) {
   // ⛔ **别为了覆盖「全形」那一档把窗开到 1380** —— Linux CI 的 xvfb 默认屏只有 1280 宽,
   // 那样 Linux 那半会以「窗被钳住」的形安静地跑在另一档上。全形与「只摘键帽」两档 e2e 覆盖
   // 不到,是知情的边界(理由与读数在 board.css 同一段)。
-  await browser.setWindowSize(1260, 700);
+  // ⭐⭐ **改窗口大小走 Tauri API,⛔ 别用 `browser.setWindowSize`**(606 换掉的)。
+  // 原因是量出来的:606 多了第三个窗口壳(看大图的遮罩窗)之后,**WebDriver 附着到哪个窗
+  // 变成不确定的** —— 同一棵树,探针三趟连着落在 `notebook`(resize 完美生效),而全量里
+  // `settings-shell` 连着两趟读到面板高 **80** = `100vh-48` 于 **148 高的捕获窗**,
+  // 也就是那次 `setWindowSize` **根本没落到被驱动的那个窗上**。
+  // ⇒ 判据换成不依赖「驱动认为当前窗是谁」的那一条:**从页面里改它自己所在的那个窗**
+  // (`getCurrentWindow()`,memory `e2e-window-geometry-trap` 那条判例的同一手法),
+  // 再等视口真的跟上(窗口消息 → webview 重排 → JS 读数是异步三段,API 返回 ≠ 视口已变)。
+  // ⚠ 两个窗都是无边框态(capture 恒是、notebook 在 Windows/Linux 运行时关掉了边框)⇒
+  // `setSize` 的**内**尺寸与此前 WebDriver 的**外**尺寸在这两个窗上等值,那条「窗 1260 ⇒
+  // 顶栏内容宽 890」的换算一个字不用改。⛔ 别改成 `browser.pause(N)`:拿墙钟赌,慢机器照样漏。
+  await browser.execute(
+    async (w, h) => {
+      const W = window.__TAURI__.window;
+      await W.getCurrentWindow().setSize(new W.LogicalSize(w, h));
+    },
+    1260,
+    700,
+  );
+  await browser.waitUntil(async () => (await browser.execute(() => window.innerWidth)) >= 1200, {
+    timeout: 5000,
+    timeoutMsg: "改完窗口大小之后视口宽一直没到 1200 —— 这个窗是不是根本改不动(resizable:false 之外还有别的?)",
+  });
   // ⭐ **先等壳启动完再点**(455)。侧栏那四枚按钮是 **notebook.html 里的静态 HTML**,
   // `browser.url()` 一回来就存在 ⇒ 「按钮存在」这条判据**证明不了壳已经起来了**。notebook 的
   // 启动序是 `src/notebook.ts` 末尾那条**异步 IIFE**(`await initCurrentSpace()` →
@@ -542,4 +564,39 @@ export async function inboxCompose(text) {
       `sameBar=false → 灌值与点钮之间那条 compose 被换过一次;` +
       `no-bar/no-input-or-btn → 那一刻灵感 compose 压根不在树上。见 backlog 测试与工装 66。`,
   );
+}
+
+/** 切到**看大图那只遮罩窗**(`lightbox.html`),返回「切回原来那个窗」的函数。
+ *
+ *  ⭐ 606 起这一步是必须的:看大图的遮罩**不再长在被驱动那个窗的 DOM 上** —— 它自己是一只
+ *  常驻隐藏、开图才铺满显示器的独立窗(理由见 `src/lightbox.ts` 头注:遮罩长在主窗里的时候,
+ *  「让它看起来像全屏」只能去动主窗的几何,而那是用户两次否掉的东西)。⇒ 点完缩略图之后,
+ *  `$(".img-lightbox")` 在原窗里**永远查不到**,得先切过来。
+ *
+ *  ⚠ 句柄顺序不保证,一律按 URL 认;⛔ 别把句柄缓存起来跨 spec 用(每支 spec 自己切、自己切回)。
+ *  ⚠ 遮罩窗由 `lib.rs` 的 setup 在启动时建好、常驻隐藏 ⇒ **句柄恒在**,找不到就响亮报。
+ *  等「遮罩真的挂上了」是调用方的事(切过来之后 `$(".img-lightbox").waitForExist()`)。
+ */
+export async function toLightbox(timeoutMs = 10000) {
+  const back = await browser.getWindowHandle();
+  const t0 = Date.now();
+  for (;;) {
+    for (const h of await browser.getWindowHandles()) {
+      await browser.switchToWindow(h);
+      if ((await browser.getUrl()).includes("lightbox")) {
+        return async () => {
+          await browser.switchToWindow(back);
+        };
+      }
+    }
+    if (Date.now() - t0 > timeoutMs) {
+      await browser.switchToWindow(back);
+      throw new Error(
+        "没找到看大图那只遮罩窗(URL 含 lightbox)—— 它由 `lib.rs` 的 setup 在启动时建好、常驻隐藏," +
+          "句柄本该恒在。找不到的两种来路:①这棵树还没重新 build;②上一例把遮罩开着就退出了," +
+          "窗还在但页面被上一段脚本弄坏了 —— 先看**本支前面那一例**是不是红的。",
+      );
+    }
+    await browser.pause(100);
+  }
 }

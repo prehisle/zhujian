@@ -1,10 +1,12 @@
 import { $, browser, expect } from "@wdio/globals";
-import { invoke, goNotebook, clearInbox } from "./support.js";
+import { invoke, goNotebook, clearInbox, toLightbox } from "./support.js";
 
 // 224 同条目多图:大图遮罩内 ←/→ 键与左右箭头按钮在组内循环翻页。
 // 三张图刻意给不同的自然边长(4/8/12px),这样「翻到了另一张」不是只看角标文字,
 // 而是由 img.naturalWidth 这个只有真换了字节才会变的量作证。
 // 单图那一例是配套的反面对照:导航件必须不出现(不给只有一张图的人多余控件)。
+// ⭐ 606 起遮罩住在**另一只窗**里(lightbox.html):点完缩略图必须 `toLightbox()` 切过去才查得到
+// `.img-lightbox`,断言完 `back()` 切回来。⛔ 别在原窗里 waitForExist —— 那会稳稳地超时 10 秒。
 
 /** 在页面里现造一张 n×n 的 PNG,返回不带 data: 前缀的 base64(add_item_image 要这个形状)。 */
 const mkPng = (n) =>
@@ -69,8 +71,9 @@ describe("配图 · 大图遮罩内翻同条目的多图(224)", () => {
     await card.waitForExist({ timeout: 10000 });
     const thumb = await card.$(".img-thumb-img");
     await thumb.waitForExist({ timeout: 10000 });
-    await thumb.click(); // 点第一张缩略图 → openLightbox(整组, 0)
+    await thumb.click(); // 点第一张缩略图 → openLightbox(整组, 0)→ 发事件给遮罩窗
 
+    const back = await toLightbox();
     const box = await $(".img-lightbox");
     await box.waitForExist({ timeout: 10000 });
     await waitShown(4);
@@ -105,6 +108,7 @@ describe("配图 · 大图遮罩内翻同条目的多图(224)", () => {
       timeout: 10000,
       timeoutMsg: "Esc 没关掉大图",
     });
+    await back();
   });
 
   it("只有一张图时不出导航件(不给单图的人多余控件)", async () => {
@@ -119,6 +123,7 @@ describe("配图 · 大图遮罩内翻同条目的多图(224)", () => {
     await thumb.waitForExist({ timeout: 10000 });
     await thumb.click();
 
+    const back = await toLightbox();
     await (await $(".img-lightbox")).waitForExist({ timeout: 10000 });
     await waitShown(6);
     await expect(await $(".img-lightbox-nav.prev")).not.toExist();
@@ -130,5 +135,6 @@ describe("配图 · 大图遮罩内翻同条目的多图(224)", () => {
       timeout: 10000,
       timeoutMsg: "Esc 没关掉大图",
     });
+    await back();
   });
 });

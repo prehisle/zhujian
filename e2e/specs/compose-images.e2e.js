@@ -1,5 +1,5 @@
 import { browser, $, $$, expect } from "@wdio/globals";
-import { invoke, goNotebook, clearInbox, openCompose, waitItemImages } from "./support.js";
+import { invoke, goNotebook, clearInbox, openCompose, waitItemImages, toLightbox } from "./support.js";
 
 // 新建入口配图一致性:凡是能输入条目正文的地方,都能 Ctrl+V 配图(共享件 pendingImages)。
 // 捕获浮窗一例在 capture.e2e.js;这里补另外两个新建入口 —— 灵感「记下灵感」和看板「新建任务」。
@@ -102,9 +102,10 @@ describe("新建入口配图 · 看板「新建任务」粘贴", () => {
   });
 });
 
-// 点暂存缩略图 → openLightboxUrl(笔记本窗:pendingImages 未传 openPreview,走默认 alt)。
-// ⚠ 605 起这条路**也切全屏**(此前只有已保存图那条撑窗,暂存这条一动不动):窗口一变大,
-// 400px 的图仍是 fit 1:1(小图不放大),故下面那句宽度断言照旧成立、且更不受窗口尺寸影响。
+// 点暂存缩略图 → openLightboxBlob(笔记本窗:pendingImages 未传 openPreview,走默认 alt)。
+// ⚠ 606 起遮罩在**另一只窗**里,且这条路送过去的是 **data URL**(object URL 跨不了窗)——
+// 断言前必须 `toLightbox()` 切过去。400px 的图在铺满显示器的遮罩里仍是 fit 1:1(小图不放大),
+// 故下面那句宽度断言照旧成立、且更不受窗口尺寸影响。
 // 163④/166④ 把这条路径改成与 openLightbox 同一套「布局未定不显示 → 定形亮相」时序:img 出生
 // 即隐形零占位,init() 定形后一次成形亮相。这里断言点开后 img 确实经 init 亮相(visibility 非
 // hidden、渲染宽 == 图宽 = fit 1:1),而非停在出生隐形态。阴性对照:注掉 openLightboxUrl 的
@@ -137,8 +138,9 @@ describe("新建入口配图 · 点暂存预览开 lightbox", () => {
     });
     const thumb = await $(".v-inbox .compose .img-pending .img-thumb .img-thumb-img");
     await thumb.waitForExist({ timeout: 5000 });
-    await thumb.click(); // → openLightboxUrl(url)
+    await thumb.click(); // → openLightboxBlob(blob) → 发事件给遮罩窗
 
+    const back = await toLightbox();
     await $(".img-lightbox .img-lightbox-img").waitForExist({ timeout: 5000 });
     // 定形亮相:非隐形(init 跑过)且渲染宽 == 400(fit 1:1,图 < 视口 → 不放大)。
     await browser.waitUntil(
@@ -157,6 +159,7 @@ describe("新建入口配图 · 点暂存预览开 lightbox", () => {
       timeout: 5000,
       timeoutMsg: "Esc 未关闭 lightbox",
     });
+    await back();
 
     // 清掉暂存预览(未回车 → 未入库,只需摘预览),不给后续 spec 留状态。
     const del = await $(".v-inbox .compose .img-pending .img-del");

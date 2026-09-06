@@ -1,36 +1,55 @@
-// 桌面看大图的缩放通道归属(245 回归资产)。跑法:
-//   node scripts/desktop-cdp.mjs evalfile scripts/cdp-acceptance-desktop-lightbox-zoom.js
-// (先按 desktop-cdp.mjs 文件头带 CDP 环境变量起 app;需要笔记本里**至少有一条带配图的条目**,
-//  灵感/看板都行——脚本点的是页面上第一枚 `.img-thumb-img`。)
+// 桌面看大图的缩放通道(245 立,606 遮罩搬进独立窗之后重写)。跑法:
+//   node scripts/desktop-cdp.mjs evalfile scripts/cdp-acceptance-desktop-lightbox-zoom.js --page lightbox
+// (先按 desktop-cdp.mjs 文件头带 CDP 环境变量起 app;⭐ 606 起本支自给自足,自己造图自己开图。)
 //
-// 立的是 245 那条规矩:**大图开着时,滚轮缩放归大图**。241 的界面字号缩放挂在 document 上、
-// 同样只看 ctrlKey,大图那支若只 preventDefault 不 stopPropagation,两处会同时缩——图缩一档、
-// 界面字号也被静默改一档还写进 localStorage(关掉大图回不去、重启还在),回执 badge 又被遮罩
-// 盖住看不见。四条断言里两条是「不该失效的那一半」,别只验能缩。
+// ⭐ **245 那个患本身已经结构性地不可能了,别把这支读成还在守它**:那时遮罩与界面字号缩放
+// (`zoom.ts`)挂在**同一个 document** 上、又都只看 ctrlKey ⇒ 大图那支若只 preventDefault
+// 不 stopPropagation,一记滚轮会同时缩图和缩界面字号(还写进 localStorage,关掉大图回不去)。
+// 606 起遮罩自己是一只独立窗,那只窗**根本没装 `zoom.ts`** ⇒ 两处同时缩这件事没有发生的地方了。
 //
-// 合成 WheelEvent 够用:这条患是纯 DOM 冒泡行为,与原生滚轮走同一条传播路径(手势/触摸类
-// 才必须走原生输入管线)。`hitsFromPage === 1` 是探针的阴性对照——没它就分不清「冒泡被掐」
-// 和「探针根本没装上」。
+// 于是这一支今天守的是剩下的两格,都还实实在在:
+//  ①**图自己缩得动**(Ctrl+滚轮 → 渲染宽真的变大)—— 那是 makeImageViewer 的活;
+//  ②**遮罩窗一个字都不许写界面字号那个键**。⚠ 这一格不是废话:两个窗**同源**(tauri.localhost)
+//    ⇒ localStorage 是共享的,遮罩窗真要是哪天误引了 zoom.ts,受害的是笔记本窗、而且是持久的。
+//    ⛔ 别因为「它现在没引」就把这格删掉:那正是这格要看着的事。
 (async () => {
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const zoomNow = () => localStorage.getItem("zhujian.zoom");
   const out = { zoomBefore: zoomNow() };
+
+  const cv = document.createElement("canvas");
+  cv.width = 320;
+  cv.height = 240;
+  const cx2 = cv.getContext("2d");
+  cx2.fillStyle = "#c0392b";
+  cx2.fillRect(0, 0, 320, 240);
+  await window.__TAURI__.event.emitTo("lightbox", "lightbox://open", {
+    kind: "data",
+    src: cv.toDataURL("image/png"),
+    alt: "验收",
+    from: "notebook",
+    monitor: null,
+  });
+  for (let i = 0; i < 60 && !document.querySelector(".img-lightbox"); i++) await sleep(50);
+  const scroller = document.querySelector(".img-lightbox");
+  if (!scroller) return JSON.stringify({ ...out, error: "大图没打开" });
+  for (let i = 0; i < 60; i++) {
+    const im = document.querySelector("img.img-lightbox-img");
+    if (im && im.style.visibility !== "hidden" && im.getBoundingClientRect().width > 0) break;
+    await sleep(50);
+  }
+  const img = scroller.querySelector("img.img-lightbox-img");
+  const widthBefore = img ? img.getBoundingClientRect().width : 0;
+
+  // `hitsFromLightbox` 是探针的**阴性对照**:没它就分不清「冒泡被掐住了」和「探针根本没装上」。
+  // 606 起它恒 0 的理由变了(不再是 stopPropagation 挡住,而是本窗 document 上没有别人),
+  // 留着仍有用 —— 它顺带证明「遮罩确实吃掉了这记滚轮、没漏给别人」。
   let hits = 0;
   const probe = (e) => {
     if (e.ctrlKey) hits++;
   };
-  document.addEventListener("wheel", probe); // 与 zoom.ts 同相位(document 冒泡)
+  document.addEventListener("wheel", probe);
   try {
-    const thumb = document.querySelector("img.img-thumb-img");
-    if (!thumb) return JSON.stringify({ error: "页面上没有带配图的条目,先造一条再跑" });
-    thumb.click(); // 点的是内层 img——handler 挂在它身上,点外层 .img-thumb 不开图
-    for (let i = 0; i < 40 && !document.querySelector(".img-lightbox"); i++) await sleep(100);
-    const scroller = document.querySelector(".img-lightbox");
-    if (!scroller) return JSON.stringify({ error: "大图没打开" });
-    await sleep(600); // 等取字节/解码/切全屏定形(163 的 viewportSettle)
-    const img = scroller.querySelector("img.img-lightbox-img");
-    const widthBefore = img ? img.getBoundingClientRect().width : 0;
-
     const r = scroller.getBoundingClientRect();
     const cx = r.x + r.width / 2;
     const cy = r.y + r.height / 2;
@@ -51,41 +70,11 @@
     await sleep(300);
     out.hitsFromLightbox = hits; // 期望 0:事件不该冒到 document
     out.imgGrew = (img ? img.getBoundingClientRect().width : 0) > widthBefore + 1; // 图自己得缩放
-    out.uiZoomUntouched = zoomNow() === out.zoomBefore; // 界面字号纹丝不动
+    out.uiZoomUntouched = zoomNow() === out.zoomBefore; // 界面字号那个键纹丝不动(两窗同源共享)
 
     document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     for (let i = 0; i < 30 && document.querySelector(".img-lightbox"); i++) await sleep(100);
     out.lightboxClosed = !document.querySelector(".img-lightbox");
-    await sleep(300);
-
-    // 不该失效的那一半:大图关着时,Ctrl+滚轮仍归界面字号(且探针确实装上了)。
-    hits = 0;
-    document.body.dispatchEvent(
-      new WheelEvent("wheel", {
-        ctrlKey: true,
-        deltaY: -100,
-        clientX: 400,
-        clientY: 400,
-        bubbles: true,
-        cancelable: true,
-      }),
-    );
-    await sleep(500);
-    out.hitsFromPage = hits; // 期望 1
-    out.globalZoomStillWorks = zoomNow() !== out.zoomBefore;
-    // 复原:反向滚回去,别把跑验收的人的字号留在别处(zoom 是纯本地持久化设置)。
-    document.body.dispatchEvent(
-      new WheelEvent("wheel", {
-        ctrlKey: true,
-        deltaY: 100,
-        clientX: 400,
-        clientY: 400,
-        bubbles: true,
-        cancelable: true,
-      }),
-    );
-    await sleep(500);
-    out.zoomRestored = zoomNow() === out.zoomBefore;
   } finally {
     document.removeEventListener("wheel", probe);
   }
@@ -93,9 +82,6 @@
     out.hitsFromLightbox === 0 &&
     out.imgGrew === true &&
     out.uiZoomUntouched === true &&
-    out.lightboxClosed === true &&
-    out.hitsFromPage === 1 &&
-    out.globalZoomStillWorks === true &&
-    out.zoomRestored === true;
+    out.lightboxClosed === true;
   return JSON.stringify(out);
 })();
