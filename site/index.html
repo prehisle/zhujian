@@ -7,11 +7,11 @@
          启动时按 data-i18n 族属性覆写;原文与 zh 值逐字相等由 check-i18n-drift 核。
          字典与运行期在页面末尾的那段内联 script 里(⚠ 注释里别写闭合标签的字面量:
          按标签切文件的工具会先命中这里,360 当场栽过一次)。 -->
-    <title data-i18n="meta.title">朱简 — 一个纯人工的想法与事务工具</title>
+    <title data-i18n="meta.title">朱简:记想法、管待办,数据在你自己的设备上</title>
     <meta
       name="description"
       data-i18n-content="meta.desc"
-      content="朱简(zhujian)是一个纯人工、本地优先的个人事务工具:快速捕获、手动流转、任务看板。没有 AI 替你整理,数据只留在你自己的机器里;多设备同步端到端加密。"
+      content="朱简(zhujian)是一个记想法、管待办的工具:随手记一笔进随记,要做的事转成待办,在看板上做完。数据存在你自己的设备上,多设备同步端到端加密。免费使用,开源。"
     />
 
     <style>
@@ -352,7 +352,7 @@
         margin-top: 16px;
         padding-top: 13px;
         /* 给右下角那枚钤印让位:它是绝对定位、压在纸条角上,而这一行在英文档下更长
-           (Save / New line / Close 都比「收存 / 换行 / 退出」宽),不留位就压到印上去。 */
+           (Save / Hide 都比「记下 / 收起」宽),不留位就压到印上去。 */
         padding-right: 46px;
         border-top: 1px solid var(--line);
         font-size: var(--fs-13);
@@ -421,29 +421,33 @@
         white-space: nowrap;
       }
 
-      /* ── 信任三点 ──────────────────────────────────────────── */
+      /* ── 事实表 ────────────────────────────────────────────── */
       .trust {
         padding: clamp(48px, 6vw, 78px) 0;
         border-top: 1px solid var(--line);
         border-bottom: 1px solid var(--line);
         background: color-mix(in srgb, var(--raised) 55%, transparent);
       }
-      .trust-grid {
-        margin-top: 44px;
+      /* 一张 <dl> 就是一张表:整个 dl 是**同一个** grid(不是每行各自成 grid),
+         列宽才会跨行对齐;标签列取 max-content,英文档下最长那条(Free and open
+         source)撑多宽,六行就一起多宽。 */
+      .facts {
+        margin: 40px 0 0;
         display: grid;
-        grid-template-columns: repeat(3, 1fr);
-        gap: 40px;
+        grid-template-columns: minmax(6em, max-content) 1fr;
+        column-gap: 32px;
       }
-      .pillar h3 {
+      .facts dt {
         font-family: var(--font-serif);
-        font-size: var(--fs-20);
+        font-size: var(--fs-17);
         font-weight: 600;
-        margin: 0 0 10px;
         display: flex;
         align-items: baseline;
         gap: 11px;
+        padding: 16px 0;
+        border-top: 1px solid var(--line);
       }
-      .pillar h3::before {
+      .facts dt::before {
         content: "";
         width: 8px; height: 8px;
         border-radius: var(--radius-seal);
@@ -451,7 +455,13 @@
         transform: translateY(-1px) rotate(45deg);
         flex: 0 0 auto;
       }
-      .pillar p { color: var(--ink-soft); font-size: var(--fs-15); margin: 0; }
+      .facts dd {
+        margin: 0;
+        color: var(--ink-soft);
+        font-size: var(--fs-15);
+        padding: 16px 0;
+        border-top: 1px solid var(--line);
+      }
 
       /* ── 下载 ──────────────────────────────────────────────── */
       .download { padding: clamp(52px, 7vw, 90px) 0; text-align: center; }
@@ -497,45 +507,33 @@
       }
       .dl-foot { margin-top: 30px; font-size: var(--fs-14); color: var(--ink-faint); }
 
-      /* 尝鲜版卡:mac/Linux 链路已通但未正式发布,视觉降一档、如实标注 */
-      .dl-card.trial { opacity: 0.94; }
-      .dl-card .trial-tag {
+      /* 尝鲜版:mac/Linux 链路已通但未正式发布 —— 一行文字链。
+         此前是两张与正式版并列的卡,半屏面积只装了两句 caveat;降成一行之后
+         「哪两个平台是正式版」在下载区一眼就看得出来。 */
+      .dl-trial {
+        margin: 26px auto 0;
+        max-width: 620px;
+        font-size: var(--fs-13);
+        line-height: 1.9;
+        color: var(--ink-faint);
+      }
+      .dl-trial .trial-tag {
         font-size: var(--fs-12);
         letter-spacing: 0.16em;
         color: var(--seal);
         border: 1px solid var(--seal-line);
         border-radius: var(--radius-pill);
-        padding: 2px 13px;
-        margin-bottom: 12px;
+        padding: 2px 11px;
+        margin-right: 10px;
+        white-space: nowrap;
       }
-      .dl-card .caveat {
-        font-size: var(--fs-12);
-        line-height: 1.55;
-        color: var(--ink-faint);
-        margin: 2px 0 16px;
-        max-width: 24ch;
-      }
-      .dl-card.trial .btn { padding: 10px 18px; font-size: var(--fs-14); }
-      .lin-dls { display: flex; gap: 10px; }
-      .lin-dls .btn { padding: 10px 15px; }
+      .dl-trial a { color: var(--seal); text-decoration: none; margin-left: 14px; white-space: nowrap; }
+      .dl-trial a:hover { text-decoration: underline; }
 
       /* ── 理念 + 开源 ───────────────────────────────────────── */
       .ethos { padding: clamp(56px, 7.5vw, 100px) 0; }
-      .ethos-grid {
-        display: grid;
-        grid-template-columns: 0.9fr 1.1fr;
-        gap: 56px;
-        align-items: start;
-      }
-      .ethos blockquote {
-        margin: 0;
-        font-family: var(--font-serif);
-        font-size: clamp(21px, 2.6vw, 27px);
-        line-height: 1.6;
-        letter-spacing: 0.01em;
-      }
-      .ethos blockquote .accent { color: var(--seal); }
-      .ethos .attrib { margin-top: 22px; font-size: var(--fs-14); color: var(--ink-faint); letter-spacing: 0.04em; }
+      /* 两行第一人称,不再是「宣言 + 三段长文」的两栏版 */
+      .ethos-body { margin-top: 26px; max-width: 52ch; }
       .ethos-body p { color: var(--ink-soft); font-size: var(--fs-16); margin: 0 0 18px; }
       .ethos-body p strong { color: var(--ink); font-weight: 600; }
       .ethos-body p:last-child { margin-bottom: 0; }
@@ -573,8 +571,10 @@
         .hero .wrap { grid-template-columns: 1fr; gap: 44px; }
         .hero-art { max-width: 440px; }
         .flow-grid { grid-template-columns: 1fr; }
-        .trust-grid { grid-template-columns: 1fr; gap: 30px; }
-        .ethos-grid { grid-template-columns: 1fr; gap: 34px; }
+        /* 窄屏收成一列:标签在上、正文在下,行间那道线只留给标签那一格 */
+        .facts { grid-template-columns: 1fr; }
+        .facts dt { padding-bottom: 4px; }
+        .facts dd { padding-top: 0; border-top: 0; }
       }
 
       @media (prefers-reduced-motion: reduce) {
@@ -626,33 +626,32 @@
       <section class="hero">
         <div class="wrap">
           <div class="hero-copy">
-            <span class="eyebrow" data-i18n="hero.eyebrow">纯人工 · 本地优先 · 端到端加密</span>
+            <span class="eyebrow" data-i18n="hero.eyebrow">Windows · Android · 免费使用</span>
             <!-- 主标题的换行与朱砂重音是版式的一部分,故每一段各自成键(data-i18n 只覆写
-                 textContent、带子元素会被吞掉)。末段在中文里是「理清。」、在英文里只剩
-                 句点 —— 重音落在句尾时,这一格就只承担标点。 -->
-            <h1><span data-i18n="hero.line1">把念头,</span><br /><span data-i18n="hero.line2">一笔一笔</span><br /><span class="accent" data-i18n="hero.line3">亲手</span><span data-i18n="hero.line4">理清。</span></h1>
+                 textContent、带子元素会被吞掉)。末段在中文里是句号、在英文里是句点 ——
+                 重音在中文落在「想清楚」、在英文落在 later,故 line3 那一格两档承担的
+                 词不同,而朱砂色始终跟着 line3 这一格。 -->
+            <h1><span data-i18n="hero.line1">随手记一笔,</span><br /><span data-i18n="hero.line2">再慢慢</span><br /><span class="accent" data-i18n="hero.line3">想清楚</span><span data-i18n="hero.line4">。</span></h1>
             <p class="hero-lead" data-i18n="hero.lead">
-              朱简是一个纯人工的想法与事务工具。快速捕获、手动流转、任务看板——没有 AI 替你整理,数据只留在你自己的机器里。
+              朱简是我做的一个记想法、管待办的工具。想到什么,先记进随记;要做的事转成待办,一步步推到完成。数据存在你自己的设备上,不联网也照常用。
             </p>
             <div class="cta-row">
               <a class="btn btn-primary" href="#download" data-i18n="hero.ctaDownload">
-                下载 Windows 客户端
+                下载
               </a>
-              <a class="btn btn-ghost" href="#flow" data-i18n="hero.ctaSee">看看它怎么工作</a>
+              <a class="btn btn-ghost" href="#flow" data-i18n="hero.ctaSee">看看它长什么样</a>
             </div>
-            <p class="cta-note" data-i18n="hero.ctaNote">免费 · 开源方向 · 装好后自动更新</p>
+            <p class="cta-note" data-i18n="hero.ctaNote">开源(MIT) · 不用注册</p>
           </div>
 
           <div class="hero-art">
             <div class="slip" role="img" aria-label="捕获纸条示意:一行手记正在被写下" data-i18n-aria-label="hero.slipAria">
               <div class="slip-text">
-                <span data-i18n="hero.slip1">下雨天该给读者的信重写开头——</span><br /><span data-i18n="hero.slip2">别再从「最近」两个字起</span><span class="caret"></span>
+                <span data-i18n="hero.slip1">给妈打电话,</span><br /><span data-i18n="hero.slip2">问体检结果</span><span class="caret"></span>
               </div>
               <div class="slip-hint">
-                <span><kbd>↵</kbd> <span data-i18n="hero.kbdSave">收存</span></span>
-                <span><kbd>⇧↵</kbd> <span data-i18n="hero.kbdNewline">换行</span></span>
-                <span><kbd>Esc</kbd> <span data-i18n="hero.kbdEsc">退出</span></span>
-                <span data-i18n="hero.kbdPaste">可粘贴图片</span>
+                <span><kbd>↵</kbd> <span data-i18n="hero.kbdSave">记下</span></span>
+                <span><kbd>Esc</kbd> <span data-i18n="hero.kbdEsc">收起</span></span>
               </div>
               <svg class="seal-mark slip-seal" viewBox="0 0 100 100" aria-hidden="true"><use href="#seal-zhu" /></svg>
             </div>
@@ -663,62 +662,56 @@
       <!-- ───────── 三步主线 ───────── -->
       <section class="flow" id="flow">
         <div class="wrap">
-          <span class="eyebrow" data-i18n="flow.eyebrow">一条手动主线</span>
-          <h2 class="section-title" data-i18n="flow.title">从一个念头,到一件做成的事</h2>
-          <p class="section-lead" data-i18n="flow.lead">
-            每一步流转都是你亲手经手的动作——捕获、打标签、转待办、推进。没有自动分类,也没有静默改写。
-          </p>
+          <span class="eyebrow" data-i18n="flow.eyebrow">怎么用</span>
+          <h2 class="section-title" data-i18n="flow.title">从记下到做完,三步</h2>
 
           <div class="flow-grid">
             <article class="card">
-              <div class="step" data-i18n="flow.step1">其一 · 捕获</div>
-              <h3 data-i18n="flow.card1Title">随手记下,立刻消失</h3>
+              <div class="step" data-i18n="flow.step1">一</div>
+              <h3 data-i18n="flow.card1Title">记下</h3>
               <p>
-                <span data-i18n="flow.card1a">全局热键</span> <span class="kbd-inline">Ctrl+Alt+N</span> <span data-i18n="flow.card1b">唤出一张纸条,写完回车就闪退,不打断手头的事。想法可直接粘贴截图,原文永不丢失。</span>
+                <span data-i18n="flow.card1a">全局热键</span> <span class="kbd-inline">Ctrl+Alt+N</span> <span data-i18n="flow.card1b">唤出一张纸条,写完回车就存进随记,窗口自己收起。截图可以直接粘贴。</span>
               </p>
             </article>
             <article class="card">
-              <div class="step" data-i18n="flow.step2">其二 · 流转</div>
-              <h3 data-i18n="flow.card2Title">亲手理,不外包</h3>
+              <div class="step" data-i18n="flow.step2">二</div>
+              <h3 data-i18n="flow.card2Title">理一理</h3>
               <p data-i18n="flow.card2">
-                在「随记」里给念头打标签、转成待办。编辑保留全部历史版本,旧稿永远找得回;删除先进回收站,手滑了随时还原。
+                在随记里给它打标签,或转成待办。每次编辑都保留改动前的版本,旧稿能找回;删了先进回收站,随时还原。
               </p>
             </article>
             <article class="card">
-              <div class="step" data-i18n="flow.step3">其三 · 推进</div>
-              <h3 data-i18n="flow.card3Title">看板上,一列列往前</h3>
+              <div class="step" data-i18n="flow.step3">三</div>
+              <h3 data-i18n="flow.card3Title">做完它</h3>
               <p data-i18n="flow.card3">
-                待办 / 进行中 / 待确认 / 已完成,拖动改状态、排顺序。干完的活拖进「成就册」留档——是历史,不是垃圾,不和回收站挤一个桶。
+                待办、进行中、待确认、已完成,拖着走。做完的归档,可查、不可删。
               </p>
             </article>
           </div>
         </div>
       </section>
 
-      <!-- ───────── 信任三点 ───────── -->
+      <!-- ───────── 事实表 ───────── -->
       <section class="trust">
         <div class="wrap">
-          <span class="eyebrow" data-i18n="trust.eyebrow">为什么可以放心把想法交给它</span>
-          <div class="trust-grid">
-            <div class="pillar">
-              <h3 data-i18n="trust.p1Title">纯人工</h3>
-              <p data-i18n="trust.p1">
-                没有 AI 参与任何一步。整理想法这件事本身有价值,不该外包给模型。早期的 AI 代码已经整段删掉,不留后门。
-              </p>
-            </div>
-            <div class="pillar">
-              <h3 data-i18n="trust.p2Title">本地优先</h3>
-              <p data-i18n="trust.p2">
-                数据是你机器里的一个 SQLite 文件,断网照常用。不上传、不追踪、不需要账号也能开始。
-              </p>
-            </div>
-            <div class="pillar">
-              <h3 data-i18n="trust.p3Title">端到端加密</h3>
-              <p data-i18n="trust.p3">
-                想多设备同步就自己接上服务器:笔记和图片在本机加密后才出门,服务器只见密文、只做转发。恢复码只有你手上有。
-              </p>
-            </div>
-          </div>
+          <span class="eyebrow" data-i18n="trust.eyebrow">几件事先说清</span>
+          <!-- 一行一件事,六行不再多。⛔ 每一行都要能指到仓里的一处地面(哪个字段、
+               哪条代码路径),指不到的话就不许写在这儿 —— 这一节是「自述的事实」,
+               不是卖点(点名对比与极限词见 copy-plan §8)。 -->
+          <dl class="facts">
+            <dt data-i18n="facts.dataLabel">数据在哪</dt>
+            <dd data-i18n="facts.data">在你自己设备上的 SQLite 数据库里。不联网也照常用;开了同步的设备,回到网上再互补。</dd>
+            <dt data-i18n="facts.accountLabel">账号</dt>
+            <dd data-i18n="facts.account">不用注册。要多设备同步时,点「创建账户」就行,不要邮箱和手机号。它只给你一串恢复码,那就是账户密钥,丢了找不回来,请抄好。</dd>
+            <dt data-i18n="facts.syncLabel">同步</dt>
+            <dd data-i18n="facts.sync">可选,端到端加密。文字和图片在你的设备上加密后才发出;服务器经手的只有密文,读不到内容;它不做备份,找回数据靠你自己的设备。同一个 Wi-Fi 下的两台设备直接互传,不经服务器;同网的人看不到内容,但能看出它们在同步。</dd>
+            <dt data-i18n="facts.trackLabel">统计</dt>
+            <dd data-i18n="facts.track">没有统计代码。不开同步时,应用只会连 zhujian.app 查有没有新版本。</dd>
+            <dt data-i18n="facts.aiLabel">AI</dt>
+            <dd data-i18n="facts.ai">没有。不替你归类,不改你写的字;早期做过,已经删掉。</dd>
+            <dt data-i18n="facts.freeLabel">免费与开源</dt>
+            <dd data-i18n="facts.free">免费使用,含多设备同步。开源(MIT),源码在 GitHub。</dd>
+          </dl>
         </div>
       </section>
 
@@ -726,8 +719,8 @@
       <section class="download" id="download">
         <div class="wrap">
           <span class="eyebrow" data-i18n="dl.eyebrow">现在就能用</span>
-          <h2 class="section-title" data-i18n="dl.title">拿起你的朱简</h2>
-          <p class="section-lead" data-i18n="dl.lead">Windows 和 Android 客户端已经可以放心下载。装好后会自动检查、提示更新,无需再手动盯版本。macOS 与 Linux 是尝鲜版,可用但还没打磨完。</p>
+          <h2 class="section-title" data-i18n="dl.title">装一个试试</h2>
+          <p class="section-lead" data-i18n="dl.lead">Windows 和 Android 是正式版,装好后会自动检查新版本并提示你。macOS 与 Linux 是尝鲜版。</p>
 
           <!-- 版本号刻意留在 markup 里、不进字典(deploy §8.1 的「全文替换 + 数命中处数」
                靠的是它只有一种写法);字典只装那半句需要翻的机型说明。 -->
@@ -742,51 +735,31 @@
               <div class="meta"><span data-i18n="dl.androidMeta">11+ · 64 位</span> · v0.3.37</div>
               <span class="btn btn-primary" data-i18n="dl.apkBtn">下载 APK</span>
             </a>
-            <div class="dl-card trial">
-              <span class="trial-tag" data-i18n="dl.trialTag">尝鲜版</span>
-              <div class="os">macOS</div>
-              <div class="meta"><span data-i18n="dl.macMeta">Apple 芯片</span> · v0.2.41</div>
-              <p class="caveat" data-i18n="dl.macCaveat">暂未签名,首次打开需在「系统设置 › 隐私与安全性」里手动放行。</p>
-              <a class="btn btn-ghost" href="https://zhujian.app/updates/zhujian_0.2.41_aarch64.dmg" data-i18n="dl.macBtn">下载 dmg</a>
-            </div>
-            <div class="dl-card trial">
-              <span class="trial-tag" data-i18n="dl.trialTag">尝鲜版</span>
-              <div class="os">Linux</div>
-              <div class="meta">x86_64 · v0.2.41</div>
-              <p class="caveat" data-i18n="dl.linuxCaveat">全局热键 / 托盘在部分桌面环境(尤其 Wayland)可能不全。</p>
-              <div class="lin-dls">
-                <a class="btn btn-ghost" href="https://zhujian.app/updates/zhujian_0.2.41_amd64.AppImage">AppImage</a>
-                <a class="btn btn-ghost" href="https://zhujian.app/updates/zhujian_0.2.41_amd64.deb">.deb</a>
-              </div>
-            </div>
           </div>
-          <p class="dl-foot" data-i18n="dl.foot">安装包由私钥签名 · Windows 从系统托盘或热键唤起 · Android 首次安装需在系统里允许「未知来源」 · macOS / Linux 尚未正式发布,遇到问题欢迎反馈</p>
+          <!-- ⚠ 三个尝鲜版链接的 href 里照旧带版本号(deploy §8.1 「第四处」的一部分):
+               卡降成一行,链接一个没少,发版全文替换那一步该数到的处数不变。 -->
+          <p class="dl-trial">
+            <span class="trial-tag" data-i18n="dl.trialTag">尝鲜版</span>
+            <span data-i18n="dl.trialLine">macOS(Apple 芯片)与 Linux(x86_64):没签名,首次打开要在系统里手动放行;Linux 上热键与托盘在部分桌面环境可能不全。</span>
+            <a href="https://zhujian.app/updates/zhujian_0.2.41_aarch64.dmg" data-i18n="dl.macBtn">下载 dmg</a>
+            <a href="https://zhujian.app/updates/zhujian_0.2.41_amd64.AppImage">AppImage</a>
+            <a href="https://zhujian.app/updates/zhujian_0.2.41_amd64.deb">.deb</a>
+          </p>
+          <p class="dl-foot" data-i18n="dl.foot">安装包和更新包都有开发者签名,装前会核对 · Windows 装好后在系统托盘里,热键唤出 · Android 首次安装要允许「未知来源」,更新也要你点一下装 · 有问题发邮件到 3069848@qq.com</p>
         </div>
       </section>
 
       <!-- ───────── 理念 + 开源 ───────── -->
       <section class="ethos" id="ethos">
         <div class="wrap">
-          <span class="eyebrow" data-i18n="ethos.eyebrow">一点固执</span>
-          <div class="ethos-grid" style="margin-top: 28px;">
-            <blockquote>
-              <span data-i18n="ethos.quote1">在人人都抢着让 AI 替你想的时候,</span><br />
-              <span data-i18n="ethos.quote2">朱简</span><span class="accent" data-i18n="ethos.quote3">什么都不替你想</span><span data-i18n="ethos.quote4">。</span>
-            </blockquote>
-            <div class="ethos-body">
-              <p>
-                <strong data-i18n="ethos.p1Lead">它原本是个 AI 想法系统。</strong><span data-i18n="ethos.p1">后来我们把整理、补提这些 AI 功能连同代码一起删掉,重新定位成一个纯手动的工具。因为想清楚一件事的过程,恰恰是最不该被省略的那部分。</span>
-              </p>
-              <!-- 字源那段里两个词是加粗的,故按加粗边界切片;英文版把「原名朱笺」的来龙去脉
-                   略去(对英文读者是无从对照的旧名),不是漏译。 -->
-              <p>
-                <span data-i18n="ethos.p2a">名字取自「</span><strong data-i18n="ethos.p2Zhusha">朱砂</strong><span data-i18n="ethos.p2b">」与「</span><strong data-i18n="ethos.p2Jiandu">简牍</strong><span data-i18n="ethos.p2c">」——朱色书写、竹木短简记小事,「简」亦取简朴意。(原名「朱笺」,取朱砂笺纸意;现改称朱简,更好认好念,那份安静记小事的心意没变。)</span>
-                <span data-i18n="ethos.p2d">所以你看到的暖纸面、浓墨字、朱砂点缀,不是装饰,是它看待「记录」这件事的态度:安静、可靠、经得起翻旧账。</span>
-              </p>
-              <p>
-                <strong data-i18n="ethos.p3Lead">你的数据,你做主。</strong><span data-i18n="ethos.p3">格式是透明的 SQLite,导出、备份、迁移都不设障碍;朱简以开放源码为方向,同步协议与加密方案都摆在明面上,不靠「相信我们」运转。</span>
-              </p>
-            </div>
+          <span class="eyebrow" data-i18n="ethos.eyebrow">谁做的</span>
+          <div class="ethos-body">
+            <p data-i18n="ethos.p1">我一个人做的。想要一个只记想法和待办、别的都不管的工具,就自己写了。</p>
+            <!-- 字源那段里两个词是加粗的,故按加粗边界切片;英文版把「原名朱笺」的来龙去脉
+                 略去(对英文读者是无从对照的旧名),不是漏译。 -->
+            <p>
+              <span data-i18n="ethos.p2a">名字取自「</span><strong data-i18n="ethos.p2Zhusha">朱砂</strong><span data-i18n="ethos.p2b">」与「</span><strong data-i18n="ethos.p2Jiandu">简牍</strong><span data-i18n="ethos.p2c">」:朱砂的朱,竹简的简。原名「朱笺」,后来改叫朱简,更好认。</span>
+            </p>
           </div>
         </div>
       </section>
@@ -808,7 +781,7 @@
           <a href="#ethos" data-i18n="nav.ethos">理念</a>
           <a href="https://github.com/prehisle/zhujian" data-i18n="nav.source">源码</a>
         </nav>
-        <p class="foot-copy" data-i18n="foot.copy">© 2026 朱简 zhujian · 纯人工 · 本地优先 · 端到端加密同步</p>
+        <p class="foot-copy" data-i18n="foot.copy">© 2026 朱简 zhujian</p>
       </div>
     </footer>
 
@@ -830,8 +803,8 @@
            标记就钉在下面这对花括号自己那一行上 —— 别把它们挪到单独一行。 */
         var M = { /* ⟦i18n-dict⟧ */
           /* — 页面元信息 — */
-          "meta.title": { zh: "朱简 — 一个纯人工的想法与事务工具", en: "Zhujian — a strictly manual tool for ideas and tasks" },
-          "meta.desc": { zh: "朱简(zhujian)是一个纯人工、本地优先的个人事务工具:快速捕获、手动流转、任务看板。没有 AI 替你整理,数据只留在你自己的机器里;多设备同步端到端加密。", en: "Zhujian is a strictly manual, local-first personal task tool: quick capture, everything moved along by hand, a task board. No AI tidies up for you, and your data stays on your own machine; multi-device sync is end-to-end encrypted." },
+          "meta.title": { zh: "朱简:记想法、管待办,数据在你自己的设备上", en: "Zhujian: notes and tasks, kept on your own device" },
+          "meta.desc": { zh: "朱简(zhujian)是一个记想法、管待办的工具:随手记一笔进随记,要做的事转成待办,在看板上做完。数据存在你自己的设备上,多设备同步端到端加密。免费使用,开源。", en: "Zhujian is a tool for notes and tasks. Jot things down into Notes, turn what needs doing into tasks and see them through on the board. Your data lives on your own device; multi-device sync is end-to-end encrypted. Free to use, open source." },
 
           /* — 顶栏 / 页脚导航 — */
           "nav.brand": { zh: "朱简", en: "Zhujian" },
@@ -843,82 +816,75 @@
           "nav.langToggle": { zh: "EN", en: "中文" },
 
           /* — 首屏 — */
-          "hero.eyebrow": { zh: "纯人工 · 本地优先 · 端到端加密", en: "Strictly manual · Local-first · Encrypted" },
-          "hero.line1": { zh: "把念头,", en: "Sort your" },
-          "hero.line2": { zh: "一笔一笔", en: "thoughts out" },
-          "hero.line3": { zh: "亲手", en: "by hand" },
-          "hero.line4": { zh: "理清。", en: "." },
-          "hero.lead": { zh: "朱简是一个纯人工的想法与事务工具。快速捕获、手动流转、任务看板——没有 AI 替你整理,数据只留在你自己的机器里。", en: "Zhujian is a strictly manual tool for ideas and tasks. Capture fast, move things along by hand, push them across a board — no AI tidies up for you, and your data stays on your own machine." },
-          "hero.ctaDownload": { zh: "下载 Windows 客户端", en: "Download for Windows" },
-          "hero.ctaSee": { zh: "看看它怎么工作", en: "See how it works" },
-          "hero.ctaNote": { zh: "免费 · 开源方向 · 装好后自动更新", en: "Free · Open source · Updates itself once installed" },
+          "hero.eyebrow": { zh: "Windows · Android · 免费使用", en: "Windows · Android · Free to use" },
+          "hero.line1": { zh: "随手记一笔,", en: "Jot it down now," },
+          "hero.line2": { zh: "再慢慢", en: "think it through" },
+          "hero.line3": { zh: "想清楚", en: "later" },
+          "hero.line4": { zh: "。", en: "." },
+          "hero.lead": { zh: "朱简是我做的一个记想法、管待办的工具。想到什么,先记进随记;要做的事转成待办,一步步推到完成。数据存在你自己的设备上,不联网也照常用。", en: "Zhujian is a tool I made for notes and tasks. Jot a thought down; when it becomes something to do, turn it into a task and see it through. Your data stays on your own device, and the app works offline." },
+          "hero.ctaDownload": { zh: "下载", en: "Download" },
+          "hero.ctaSee": { zh: "看看它长什么样", en: "See what it looks like" },
+          "hero.ctaNote": { zh: "开源(MIT) · 不用注册", en: "Open source (MIT) · No sign-up" },
           "hero.slipAria": { zh: "捕获纸条示意:一行手记正在被写下", en: "A capture slip: a line being written down" },
-          "hero.slip1": { zh: "下雨天该给读者的信重写开头——", en: "Rewrite the opening of that letter to readers —" },
-          "hero.slip2": { zh: "别再从「最近」两个字起", en: "stop starting it with “Lately”" },
-          "hero.kbdSave": { zh: "收存", en: "Save" },
-          "hero.kbdNewline": { zh: "换行", en: "New line" },
-          "hero.kbdEsc": { zh: "退出", en: "Close" },
-          "hero.kbdPaste": { zh: "可粘贴图片", en: "Paste images" },
+          "hero.slip1": { zh: "给妈打电话,", en: "Call Mum," },
+          "hero.slip2": { zh: "问体检结果", en: "ask how the check-up went" },
+          "hero.kbdSave": { zh: "记下", en: "Save" },
+          "hero.kbdEsc": { zh: "收起", en: "Hide" },
 
           /* — 三步主线 — */
-          "flow.eyebrow": { zh: "一条手动主线", en: "One manual line" },
-          "flow.title": { zh: "从一个念头,到一件做成的事", en: "From a passing thought to a thing that's done" },
-          "flow.lead": { zh: "每一步流转都是你亲手经手的动作——捕获、打标签、转待办、推进。没有自动分类,也没有静默改写。", en: "Every step is something you do by hand — capture, tag, make it a task, push it forward. Nothing is filed automatically, nothing is rewritten behind your back." },
-          "flow.step1": { zh: "其一 · 捕获", en: "One · Capture" },
-          "flow.card1Title": { zh: "随手记下,立刻消失", en: "Jot it down, watch it vanish" },
+          "flow.eyebrow": { zh: "怎么用", en: "How it works" },
+          "flow.title": { zh: "从记下到做完,三步", en: "From noted to done, in three steps" },
+          "flow.step1": { zh: "一", en: "1" },
+          "flow.card1Title": { zh: "记下", en: "Note it" },
           "flow.card1a": { zh: "全局热键", en: "The global hotkey" },
-          "flow.card1b": { zh: "唤出一张纸条,写完回车就闪退,不打断手头的事。想法可直接粘贴截图,原文永不丢失。", en: "pops up a slip; press Enter and it is gone, without breaking what you were doing. Paste a screenshot straight in — the original text is never lost." },
-          "flow.step2": { zh: "其二 · 流转", en: "Two · Sort" },
-          "flow.card2Title": { zh: "亲手理,不外包", en: "Sorted by you, not outsourced" },
-          "flow.card2": { zh: "在「随记」里给念头打标签、转成待办。编辑保留全部历史版本,旧稿永远找得回;删除先进回收站,手滑了随时还原。", en: "In Notes, tag a thought or turn it into a task. Every edit keeps the version before it, so old drafts are always recoverable; deleting puts it in the trash first, so a slip of the hand costs nothing." },
-          "flow.step3": { zh: "其三 · 推进", en: "Three · Push" },
-          "flow.card3Title": { zh: "看板上,一列列往前", en: "Column by column on the board" },
-          "flow.card3": { zh: "待办 / 进行中 / 待确认 / 已完成,拖动改状态、排顺序。干完的活拖进「成就册」留档——是历史,不是垃圾,不和回收站挤一个桶。", en: "To do / In progress / To confirm / Done — drag to change state or reorder. Finished work goes into the Archive: it is history, not garbage, and it never shares a bin with the trash." },
+          "flow.card1b": { zh: "唤出一张纸条,写完回车就存进随记,窗口自己收起。截图可以直接粘贴。", en: "brings up a slip. Press Enter and it's saved to Notes; the window goes away on its own. Screenshots paste straight in." },
+          "flow.step2": { zh: "二", en: "2" },
+          "flow.card2Title": { zh: "理一理", en: "Sort it" },
+          "flow.card2": { zh: "在随记里给它打标签,或转成待办。每次编辑都保留改动前的版本,旧稿能找回;删了先进回收站,随时还原。", en: "In Notes, tag it or turn it into a task. Every edit keeps the previous version, so old drafts can be recovered; deleting puts it in Trash first, and you can restore it any time." },
+          "flow.step3": { zh: "三", en: "3" },
+          "flow.card3Title": { zh: "做完它", en: "Get it done" },
+          "flow.card3": { zh: "待办、进行中、待确认、已完成,拖着走。做完的归档,可查、不可删。", en: "To do, In progress, To confirm, Done. Drag tasks along; finished ones go to Archive, where you can look them up but not delete them." },
 
-          /* — 信任三点 — */
-          "trust.eyebrow": { zh: "为什么可以放心把想法交给它", en: "Why you can trust it with your thoughts" },
-          "trust.p1Title": { zh: "纯人工", en: "Strictly manual" },
-          "trust.p1": { zh: "没有 AI 参与任何一步。整理想法这件事本身有价值,不该外包给模型。早期的 AI 代码已经整段删掉,不留后门。", en: "No AI in any step. Making sense of your own thoughts is the valuable part; it should not be outsourced to a model. The early AI code was deleted outright — no back door left behind." },
-          "trust.p2Title": { zh: "本地优先", en: "Local-first" },
-          "trust.p2": { zh: "数据是你机器里的一个 SQLite 文件,断网照常用。不上传、不追踪、不需要账号也能开始。", en: "Your data is one SQLite file on your machine, and it works offline. Nothing is uploaded, nothing is tracked, and no account is needed to start." },
-          "trust.p3Title": { zh: "端到端加密", en: "End-to-end encrypted" },
-          "trust.p3": { zh: "想多设备同步就自己接上服务器:笔记和图片在本机加密后才出门,服务器只见密文、只做转发。恢复码只有你手上有。", en: "For multi-device sync, point it at a server: notes and images are encrypted on your machine before they leave, and the server only ever sees ciphertext it relays. The recovery code exists only in your hands." },
+          /* — 事实表:一行一件事,每行两键(标签 + 一句) — */
+          "trust.eyebrow": { zh: "几件事先说清", en: "A few things up front" },
+          "facts.dataLabel": { zh: "数据在哪", en: "Where your data is" },
+          "facts.data": { zh: "在你自己设备上的 SQLite 数据库里。不联网也照常用;开了同步的设备,回到网上再互补。", en: "In a SQLite database on your own device. Everything works offline; synced devices catch up when they reconnect." },
+          "facts.accountLabel": { zh: "账号", en: "Account" },
+          "facts.account": { zh: "不用注册。要多设备同步时,点「创建账户」就行,不要邮箱和手机号。它只给你一串恢复码,那就是账户密钥,丢了找不回来,请抄好。", en: "No sign-up. For multi-device sync, tap Create account; no email or phone number. You get a recovery code, which is the account key. Lose it and it cannot be recovered, so write it down." },
+          "facts.syncLabel": { zh: "同步", en: "Sync" },
+          "facts.sync": { zh: "可选,端到端加密。文字和图片在你的设备上加密后才发出;服务器经手的只有密文,读不到内容;它不做备份,找回数据靠你自己的设备。同一个 Wi-Fi 下的两台设备直接互传,不经服务器;同网的人看不到内容,但能看出它们在同步。", en: "Optional, end-to-end encrypted. Notes and images are encrypted on your device before they leave; the server only ever handles ciphertext and cannot read it. It is not a backup; recovery relies on your own devices. Two devices on the same Wi-Fi sync directly, without the server; others on that network cannot read the content, though they can tell the two are syncing." },
+          "facts.trackLabel": { zh: "统计", en: "Analytics" },
+          "facts.track": { zh: "没有统计代码。不开同步时,应用只会连 zhujian.app 查有没有新版本。", en: "No analytics. With sync off, the only place the app talks to is zhujian.app, to check for new versions." },
+          "facts.aiLabel": { zh: "AI", en: "AI" },
+          "facts.ai": { zh: "没有。不替你归类,不改你写的字;早期做过,已经删掉。", en: "None. It does not file or rewrite anything for you; the early version had some, and that code was removed." },
+          "facts.freeLabel": { zh: "免费与开源", en: "Free and open source" },
+          "facts.free": { zh: "免费使用,含多设备同步。开源(MIT),源码在 GitHub。", en: "Free to use, multi-device sync included. Open source (MIT), code on GitHub." },
 
           /* — 下载 — */
           "dl.eyebrow": { zh: "现在就能用", en: "Ready to use" },
-          "dl.title": { zh: "拿起你的朱简", en: "Get Zhujian" },
-          "dl.lead": { zh: "Windows 和 Android 客户端已经可以放心下载。装好后会自动检查、提示更新,无需再手动盯版本。macOS 与 Linux 是尝鲜版,可用但还没打磨完。", en: "The Windows and Android builds are ready to install. Once installed they check for updates and prompt you, so there is no version to keep an eye on. macOS and Linux are early builds: usable, not polished yet." },
+          "dl.title": { zh: "装一个试试", en: "Give it a try" },
+          "dl.lead": { zh: "Windows 和 Android 是正式版,装好后会自动检查新版本并提示你。macOS 与 Linux 是尝鲜版。", en: "Windows and Android are the supported builds; once installed they check for new versions and prompt you. macOS and Linux are early builds." },
           "dl.winMeta": { zh: "10 / 11 · 64 位", en: "10 / 11 · 64-bit" },
           "dl.winBtn": { zh: "下载安装包", en: "Download .exe" },
           "dl.androidMeta": { zh: "11+ · 64 位", en: "11+ · 64-bit" },
           "dl.apkBtn": { zh: "下载 APK", en: "Download APK" },
           "dl.trialTag": { zh: "尝鲜版", en: "Early build" },
-          "dl.macMeta": { zh: "Apple 芯片", en: "Apple silicon" },
-          "dl.macCaveat": { zh: "暂未签名,首次打开需在「系统设置 › 隐私与安全性」里手动放行。", en: "Not signed yet — on first launch, allow it under System Settings › Privacy & Security." },
+          "dl.trialLine": { zh: "macOS(Apple 芯片)与 Linux(x86_64):没签名,首次打开要在系统里手动放行;Linux 上热键与托盘在部分桌面环境可能不全。", en: "macOS (Apple silicon) and Linux (x86_64): unsigned, so allow them by hand on first launch; on Linux the hotkey and tray may be incomplete on some desktops." },
           "dl.macBtn": { zh: "下载 dmg", en: "Download dmg" },
-          "dl.linuxCaveat": { zh: "全局热键 / 托盘在部分桌面环境(尤其 Wayland)可能不全。", en: "Global hotkeys and the tray may be incomplete on some desktops, Wayland especially." },
-          "dl.foot": { zh: "安装包由私钥签名 · Windows 从系统托盘或热键唤起 · Android 首次安装需在系统里允许「未知来源」 · macOS / Linux 尚未正式发布,遇到问题欢迎反馈", en: "Builds are signed with a private key · On Windows, summon it from the tray or a hotkey · On Android, allow “unknown sources” on first install · macOS / Linux are not formally released — feedback welcome" },
+          "dl.foot": { zh: "安装包和更新包都有开发者签名,装前会核对 · Windows 装好后在系统托盘里,热键唤出 · Android 首次安装要允许「未知来源」,更新也要你点一下装 · 有问题发邮件到 3069848@qq.com", en: "Installers and updates are signed by the developer and checked before installing · On Windows it lives in the tray; bring it up with the hotkey · On Android, allow “unknown sources” on first install; updates also take a tap to install · Questions? Email 3069848@qq.com" },
 
           /* — 理念 — */
-          "ethos.eyebrow": { zh: "一点固执", en: "A bit of stubbornness" },
-          "ethos.quote1": { zh: "在人人都抢着让 AI 替你想的时候,", en: "While everyone races to have AI think for you," },
-          "ethos.quote2": { zh: "朱简", en: "Zhujian " },
-          "ethos.quote3": { zh: "什么都不替你想", en: "thinks nothing for you" },
-          "ethos.quote4": { zh: "。", en: "." },
-          "ethos.p1Lead": { zh: "它原本是个 AI 想法系统。", en: "It began as an AI idea system." },
-          "ethos.p1": { zh: "后来我们把整理、补提这些 AI 功能连同代码一起删掉,重新定位成一个纯手动的工具。因为想清楚一件事的过程,恰恰是最不该被省略的那部分。", en: " Later the AI parts — filing, resurfacing — were deleted along with their code, and it was repositioned as a purely manual tool. Because thinking something through is exactly the part that should not be skipped." },
+          "ethos.eyebrow": { zh: "谁做的", en: "Who made it" },
+          "ethos.p1": { zh: "我一个人做的。想要一个只记想法和待办、别的都不管的工具,就自己写了。", en: "I made it on my own. I wanted a tool that keeps notes and tasks and nothing else, so I wrote one." },
           "ethos.p2a": { zh: "名字取自「", en: "The name joins " },
           "ethos.p2Zhusha": { zh: "朱砂", en: "zhūshā" },
           "ethos.p2b": { zh: "」与「", en: " (cinnabar) with " },
           "ethos.p2Jiandu": { zh: "简牍", en: "jiǎndú" },
-          "ethos.p2c": { zh: "」——朱色书写、竹木短简记小事,「简」亦取简朴意。(原名「朱笺」,取朱砂笺纸意;现改称朱简,更好认好念,那份安静记小事的心意没变。)", en: " (bamboo and wooden slips) — writing in red on short strips, for the small things worth keeping. The second character also carries the sense of plain and simple." },
-          "ethos.p2d": { zh: "所以你看到的暖纸面、浓墨字、朱砂点缀,不是装饰,是它看待「记录」这件事的态度:安静、可靠、经得起翻旧账。", en: "So the warm paper, the dark ink and the cinnabar accents are not decoration — they are how it regards the act of writing something down: quiet, dependable, and able to bear being looked up years later." },
-          "ethos.p3Lead": { zh: "你的数据,你做主。", en: "Your data, your call." },
-          "ethos.p3": { zh: "格式是透明的 SQLite,导出、备份、迁移都不设障碍;朱简以开放源码为方向,同步协议与加密方案都摆在明面上,不靠「相信我们」运转。", en: " The format is plain SQLite — exporting, backing up and migrating are unobstructed. Zhujian is open source, and both the sync protocol and the encryption scheme are out in the open; it does not run on “trust us”." },
+          "ethos.p2c": { zh: "」:朱砂的朱,竹简的简。原名「朱笺」,后来改叫朱简,更好认。", en: " (bamboo slips): red ink on a short strip." },
 
           /* — 页脚 — */
           "foot.tagline": { zh: "ZHUJIAN · 纸与朱墨", en: "ZHUJIAN · PAPER AND CINNABAR" },
-          "foot.copy": { zh: "© 2026 朱简 zhujian · 纯人工 · 本地优先 · 端到端加密同步", en: "© 2026 Zhujian · Strictly manual · Local-first · End-to-end encrypted sync" },
+          "foot.copy": { zh: "© 2026 朱简 zhujian", en: "© 2026 Zhujian" },
         }; /* ⟦/i18n-dict⟧ */
 
         /* 属性绑定表。门禁**从这里读**「本页支持哪几个 data-i18n-*」,不另写一份登记表

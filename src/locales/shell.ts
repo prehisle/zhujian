@@ -18,5 +18,5 @@ export const shell = defineMessages({
   "shell.winMax": { zh: "最大化", en: "Maximize" },
   "shell.winClose": { zh: "关闭", en: "Close" },
   "shell.captureTitle": { zh: "朱简 · 捕获", en: "Zhujian · Capture" },
-  "shell.capturePlaceholder": { zh: "记下这个念头……    ↵ 收存    ⇧↵ 换行    Esc 退出    可粘贴图片    / 唤起命令", en: "Jot down the thought…    ↵ save    ⇧↵ new line    Esc dismiss    paste images    / commands" },
+  "shell.capturePlaceholder": { zh: "随手记一笔…    ↵ 记下    Esc 收起(草稿保留)    / 命令", en: "Jot it down…    ↵ Save    Esc hide (draft kept)    / commands" },
 });
