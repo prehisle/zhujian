@@ -7,7 +7,9 @@
     <!-- 明暗定色(250):首帧之前就把生效色写进 <html data-theme>——晚一帧上色就是亮暗
          闪一下(163 闪烁族契约)。规则与 src/theme-mode.ts 完全一致(存的不是 light /
          dark 就算「自动」、跟系统);那边是真正的开关,这里只是提前落地同一条规则。
-         两个窗口壳各一份,内容一字不差,改一处记得改另一处。 -->
+         **两个不透明的窗口壳各一份**(capture / notebook),内容一字不差,改一处记得改另一处。
+         ⛔ 606 起的第三只 lightbox 遮罩窗**刻意没有这段** —— 它只有暗遮罩和一张图,
+         没有会闪的底色可定(理由写在 lightbox.html 里)。 -->
     <script>
       (function () {
         var m = localStorage.getItem("zhujian.theme");

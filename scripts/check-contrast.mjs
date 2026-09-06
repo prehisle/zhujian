@@ -41,7 +41,7 @@
 // # 338 加的那一层:**一次层叠 = 一个文档**
 //
 // 337 版把「桌面」当一整份层叠,src/*.css 全并在一起,而两个 html 壳里的内联 `<style>`
-// 压根没扫(337 排队第 1 条)。桌面其实是**两个窗口壳**:capture 窗(index.html)与
+// 压根没扫(337 排队第 1 条)。桌面其实是**三个窗口壳**(606 起):capture 窗(index.html)、
 // notebook 窗(notebook.html),各自加载各自那批 CSS。现在按文档层叠,清单由
 // `scripts/lib/css-docs.mjs` 从 html + 静态模块图**算出来**(不是手写登记表 —— 那种
 // 东西 336 的 ⑩ 刀判过死刑:登记本身没人核)。当场抓到 `.wc-close:hover` 的前景写死
@@ -483,7 +483,7 @@ let sizeSmall = 0, sizeBig = 0, sizeUnknown = 0; // 签名的字号:小字 / 不
 const bump = (k) => blind.set(k, (blind.get(k) ?? 0) + 1);
 const strip = (v) => v.replace(/\s*!important\s*$/, "").trim();
 
-/** 令牌表按「份」算一次:同一份下的多个文档共用一张表(桌面两个窗口壳就是)。 */
+/** 令牌表按「份」算一次:同一份下的多个文档共用一张表(桌面那三个窗口壳就是)。 */
 const tokCache = new Map();
 function tokensFor(s) {
   if (tokCache.has(s.source)) return tokCache.get(s.source);

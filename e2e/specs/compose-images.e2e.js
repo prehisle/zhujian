@@ -108,8 +108,9 @@ describe("新建入口配图 · 看板「新建任务」粘贴", () => {
 // 故下面那句宽度断言照旧成立、且更不受窗口尺寸影响。
 // 163④/166④ 把这条路径改成与 openLightbox 同一套「布局未定不显示 → 定形亮相」时序:img 出生
 // 即隐形零占位,init() 定形后一次成形亮相。这里断言点开后 img 确实经 init 亮相(visibility 非
-// hidden、渲染宽 == 图宽 = fit 1:1),而非停在出生隐形态。阴性对照:注掉 openLightboxUrl 的
-// viewer.init() → img 停在 width:0/visibility:hidden,waitUntil 超时真红(2026-07-20 实跑验过)。
+// hidden、渲染宽 == 图宽 = fit 1:1),而非停在出生隐形态。阴性对照:注掉那条路上的
+// viewer.init() → img 停在 width:0/visibility:hidden,waitUntil 超时真红(2026-07-20 实跑验过;
+// ⚠ 606 起 init 住在遮罩窗 src/lightbox.ts::renderData 里,不再是 item-images 的 openLightboxUrl)。
 describe("新建入口配图 · 点暂存预览开 lightbox", () => {
   before(async () => {
     await goNotebook("inbox");
