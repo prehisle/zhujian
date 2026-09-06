@@ -21,7 +21,15 @@ fn main() {
     // 提交与切分支都会往 reflog 追一行。这个文件**不存在**时 cargo 的行为是「每次
     // 都重跑」,而那恰好是安全的一侧:指纹只可能偏旧 → 门禁误报「线上落后」(响亮),
     // 绝不会误报「线上已是最新」(静默)。
-    println!("cargo:rerun-if-changed=../.git/logs/HEAD");
+    // ⭐ 608 起**只有 release 形跟着提交重取指纹**:这个指纹的唯一读者是线上那只 musl release
+    // 二进制的 `/health`(`check-deployed-drift` 问的那格),而 dev / test 形跟着它会让每一笔提交
+    // 之后 zhujian-syncd 连带 core / mobile(把它当 dev-dependency)的测试二进制各白重编 14-15 秒
+    // (三个月 1495 笔提交)。dev 形的 commit 可能偏旧,没人读它;集成测只断言字段在且是字符串。
+    // `PROFILE` 是 cargo 给 build script 的既有变量("release" / "debug"),不是本仓的开关;
+    // deploy.md「线上跑的是哪一版」那句同口径。
+    if std::env::var("PROFILE").as_deref() == Ok("release") {
+        println!("cargo:rerun-if-changed=../.git/logs/HEAD");
+    }
 
     let commit = git(&["rev-parse", "--short=12", "HEAD"]);
     // 脏判据**只看服务端自己那两个目录**:桌面前端改没改与这只二进制无关,
