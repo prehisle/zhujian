@@ -31,6 +31,7 @@ import {
   toggleChecklistMarker,
   type ChecklistEdit,
 } from "./checklist";
+import { isTabKey } from "./keys";
 
 /** 把纯逻辑算出的整份新正文落到框里,只改真正变了的那一段(撤销栈得以保留)。 */
 function applyEdit(ta: HTMLTextAreaElement, edit: ChecklistEdit): void {
@@ -47,7 +48,7 @@ export function wireChecklistInput(ta: HTMLTextAreaElement): void {
   ta.addEventListener("keydown", (e) => {
     if (e.isComposing) return; // IME 组合期的回车是上屏,不是换行
     if (e.defaultPrevented) return; // 同一个框上先跑的那条监听已经吃了这一记(见文件头)
-    if (e.key === "Tab" && !e.ctrlKey && !e.altKey && !e.metaKey) {
+    if (isTabKey(e) && !e.ctrlKey && !e.altKey && !e.metaKey) {
       const edit = indentChecklistLines(ta.value, ta.selectionStart, ta.selectionEnd, !e.shiftKey);
       if (edit === null) return; // 不涉及待办项 / 已经顶格:放行,这一记还给「移焦点」
       e.preventDefault();

@@ -52,20 +52,15 @@ describe("a11y · lightbox 焦点陷阱", () => {
     await openThumb(T);
     await $(".img-lightbox").waitForExist({ timeout: 5000 });
     expect(await inOverlay()).toBe(true); // 开图即把焦点移进遮罩
-    // ⚠ Shift+Tab 这一步只在 Windows(msedgedriver)上跑,**但理由 602 起变了,别再照旧读**:
-    // 396 写的是「WebKitWebDriver 自己在 GTK 层处理掉了 Shift+Tab,页面一条 keydown 都收不到
-    // (那一步 `seen: []`)⇒ 拦不了一个收不到的事件 = 驱动差异,不是产品缺陷」。
-    // ⛔ **那句话不成立**(602 两支探针,读数在 progress-log 602):页面**收得到**那一记,
-    // 只是 WebKitGTK 把 `e.key` 报成 `Unidentified`(`code=Tab` / `keyCode=9` / `shiftKey` 全在),
-    // 而**真键盘**(`e2e/probes/linux-real-keys.sh`,xdotool/XTEST 不经 WebDriver)**同形**
-    // ⇒ 不是驱动差异。`item-images.ts` 的 `trapTab` 挂在 `e.key === "Tab"` 上 ⇒ **这一端的焦点
-    // 陷阱对 Shift+Tab 是真的漏**,396 那份读数里焦点跑到 `BUTTON.hk-btn` 正是它,**是产品缺陷**。
-    // ⇒ 这一步今天仍摘掉,但摘的理由是「**已知它在这一端红,修法在账上**」(backlog 测试与工装 78),
-    // ⛔ 别再当成「驱动差异、这一端无事」;修好之后**这一步要在 Linux 上打开**。
-    // 剩下三次真 Tab 照旧全强度跑,Windows 那端一字不动。
-    const seq =
-      process.platform === "linux" ? ["Tab", "Tab", "Tab"] : ["Tab", "Tab", ["Shift", "Tab"], "Tab"];
-    for (const key of seq) {
+    // ⭐ 603 起 Shift+Tab 这一步**两端都跑**(396 立、602 推翻、603 修完打开):
+    // 396 写的是「WebKitWebDriver 在 GTK 层把 Shift+Tab 处理掉了,页面一条 keydown 都收不到
+    // (那一步 `seen: []`)⇒ 拦不了一个收不到的事件 = 驱动差异,不是产品缺陷」。**那句不成立**
+    // ——602 两支探针(WebDriver 一支、xdotool/XTEST 真键盘一支,同形)量出页面**收得到**那一记,
+    // 只是 WebKitGTK 把 `e.key` 报成 `Unidentified`(`code=Tab` / `keyCode=9` / `shiftKey` 全在);
+    // 396 那份读数里焦点跑到背后的 `BUTTON.hk-btn`,是 `trapTab` 判得太窄漏掉的**真 a11y 缺陷**。
+    // 判据现在住 `src/keys.ts` 的 `isTabKey`(认 `key` 或 `code`)⇒ 这一步不再分平台。
+    // ⛔ 别再把它改回「只在 Windows 上跑」:那样这一端的漏就又没人看着了。
+    for (const key of ["Tab", "Tab", ["Shift", "Tab"], "Tab"]) {
       await browser.keys(key);
       expect(await inOverlay()).toBe(true); // 旧代码:焦点会溜到背后看板按钮 → 此处红
     }

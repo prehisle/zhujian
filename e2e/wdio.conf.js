@@ -212,7 +212,23 @@ export const config = {
   // 而文档早已要求跑 e2e 前先退出生产朱简。
   before: async () => {
     await browser.execute(() => {
-      for (const k of ["zhujian.capture-draft", "zhujian.inbox-draft", "zhujian.board-draft"])
+      // 603:名单里补上第四个键 `zhujian.capture-mods` —— 捕获窗的**修饰草稿**
+      // (`main.ts` 的 `MODS_KEY`:`{mode, tags}`,它自己的头注就写着「与 compose-draft
+      // 同体感」),396 立这份名单时漏了它。它只在「成功记下」那条路上被 `resetMods()` 清
+      // ⇒ 一支 spec 亮了任务 chip 又没记下(`capture.e2e.js` 那例「面板开着时 Tab 仍只是
+      // 执行命令」正是),`{"mode":"task"}` 就留给后面的 spec:那边往捕获窗按回车存出来的是
+      // **任务**(`create_task`,进看板)而不是想法 ⇒ `list_ideas` 里找不到。
+      // ⛔ **别拿「Windows 上没红过」当没漏的字据**:Windows 每支 spec 换一个新 WebView2
+      // profile(`webview2-profile.js` 的 `isWin` 门)⇒ localStorage 跟着清,**这一类泄漏
+      // 在那一端结构性地看不见**;Linux/WebKitGTK 全程共用一个 profile,泄漏不但跨 spec、
+      // 还**跨整趟 run**(603 实测:上一趟留下的 mode=task 让下一趟 `capture.e2e.js`
+      // 的第一例红在「回车后想法未进 Inbox」)。
+      for (const k of [
+        "zhujian.capture-draft",
+        "zhujian.inbox-draft",
+        "zhujian.board-draft",
+        "zhujian.capture-mods",
+      ])
         localStorage.removeItem(k);
       // 截止提醒(39)预置「今天已处理」水位:profile 每支 spec 都是新的,不预置的话
       // 只要墙钟过了默认报点(09:00)、库里又留着别支 spec 的到期卡,每支开跑 10 秒后

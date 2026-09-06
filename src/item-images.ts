@@ -8,6 +8,7 @@
 import { invoke, invokeInSpace } from "./space";
 import { t } from "./i18n";
 import { parseChecklistLine } from "./checklist";
+import { isTabKey } from "./keys";
 import { saveImageDraft, loadImageDraft, newDraftImageId, type DraftImage } from "./compose-draft";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { copyText } from "./clipboard";
@@ -443,7 +444,7 @@ function mountLightbox(
       onNav(e.key === "ArrowLeft" ? -1 : 1);
       return;
     }
-    if (e.key === "Tab") trapTab(e);
+    if (isTabKey(e)) trapTab(e);
   };
   overlay.addEventListener("click", close);
   document.addEventListener("keydown", onKey);
