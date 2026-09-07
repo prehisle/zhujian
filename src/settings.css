@@ -205,10 +205,21 @@
 }
 /* 每一类的第一个小节标题不要那 20px 上留白(它是给**同一类里**小节之间开的)。 */
 .settings-pane > .settings-title:first-child { margin-top: 0; }
+/* ⭐ 621:本面板里承载「这一格是干嘛的」的四类说明字(.settings-sub / .settings-notes
+   summary / .hkset-desc / .settings-foot)从 --ink-faint 升一档到 --ink-soft。
+   判据是 336 那条判例(「那句话是这个区的**全部说明**,轻到读不出来就不是提示了」)+
+   §2.2 的数值底线(<14px ≥ 5.0:1);⛔ 不是「--ink-faint 不许承载文字」那条 —— 那个形
+   343 拍板否掉过,别照它去改别处(ui-guidelines §2.1 第一条旁边那行写着)。
+   读数取自真 DOM 探针(面板底是 --raised → --raised-edge 的**渐变**,故按各自在渐变上的
+   位置算,不是压 --raised):亮档 2.35–2.45 → 5.27–5.48,暗档 3.38–3.51 → 5.64–5.84。
+   ⚠ 渐变最底端 --ink-soft 只有 4.93 —— 今天这四类没有一处落到那儿(最深的 .settings-foot
+   在 38% 处 = 5.27),但**面板长高或说明搬到底部就会掉下 5.0**,搬之前重量一次。
+   ⚠ 这个渐变正是对比度门禁判不到这一族的原因(祖先背景是 background-image),
+   ⇒ 改完不会有闸替你守,靠 ui-shots 的图与探针。 */
 .settings-sub {
   margin: 0 0 16px;
   font-size: var(--fs-12);
-  color: var(--ink-faint);
+  color: var(--ink-soft);
   line-height: 1.6;
 }
 
@@ -218,9 +229,11 @@
 .settings-notes {
   margin: 0 0 14px;
 }
+/* summary 与它折起来的那段是同一件东西(点它才读得到),故与 .settings-sub 同档升
+   —— 只升段落会让「入口比内容还淡」,而它还是个可点的控件(§3.8)。 */
 .settings-notes summary {
   font-size: var(--fs-12);
-  color: var(--ink-faint);
+  color: var(--ink-soft);
   cursor: pointer;
   min-height: 24px;
   padding: 3px 0;
@@ -278,7 +291,7 @@
   order: 2; /* 排到所有控件之后 */
   flex: 1 1 100%; /* 占满 ⇒ 与标题挤不进同一行,必换行 */
   font-size: var(--fs-12);
-  color: var(--ink-faint);
+  color: var(--ink-soft); /* 621:同 .settings-sub 那条(它是这一行的全部说明) */
   line-height: 1.5;
 }
 /* ⚠ 有几行的说明是**空串**(retryRow / 自动备份坏配置那两处传的就是 ""):空的 flex item
@@ -347,7 +360,7 @@
 .settings-foot {
   margin: 14px 0 0;
   font-size: var(--fs-12);
-  color: var(--ink-faint);
+  color: var(--ink-soft); /* 621:同 .settings-sub 那条(它是这一页的收尾说明) */
   line-height: 1.6;
 }
 

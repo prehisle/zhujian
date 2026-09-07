@@ -103,10 +103,49 @@
         letter-spacing: 0.005em;
         caret-color: var(--seal);
       }
+      /* 621:从 --ink-faint 升一档到 --ink-soft(照 336 判例:承载「这个区的全部说明」的
+         那句话轻到读不出来就不是提示了)。⚠ 它压的不是纸面色而是 .slip 自己那道渐变
+         (--raised → --raised-edge)⇒ 读数按这行字在渐变上的位置算,不是压两端:
+         亮档 2.29 → 5.19、暗档 3.29 → 5.55(量法 = 真 DOM 的 computed style 探针,
+         见 progress-log 621;⛔ 对比度门禁判不到这里,渐变底是它的盲区之一)。
+         ⚠ 这一处是 16px(继承 #capture),判据是 §2.2 的 4.5 那一档,不是 <14px 的 5.0。 */
       #capture::placeholder {
-        color: var(--ink-faint);
+        color: var(--ink-soft);
         font-style: italic;
         letter-spacing: 0.02em;
+      }
+
+      /* 按键说明条(621,ui-consistency-plan J):正文为空时显,长得像三枚「键帽 + 一句」,
+         与主窗 .hbtn .k 同一套语言。⛔ 别把它写成常显 —— 它此前是 placeholder,
+         「一开始打字就让位」是原本就有的行为,这里只换了形不换时机。 */
+      #cap-keys {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 6px 14px;
+        margin: 0;
+        padding: 0 20px 12px 22px;
+        font: var(--fs-12)/1.5 var(--font-sans);
+        color: var(--ink-soft);
+      }
+      #cap-keys[hidden] { display: none; }
+      #cap-keys .ck {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+      }
+      #cap-keys kbd {
+        font-family: var(--font-sans);
+        font-size: var(--fs-12);
+        font-weight: 600;
+        letter-spacing: 0.04em;
+        color: var(--ink-soft);
+        background: color-mix(in srgb, var(--ink) 6%, transparent);
+        border: 1px solid var(--line-strong);
+        border-radius: var(--radius-xs);
+        padding: 1px 5px;
+        min-width: 15px;
+        text-align: center;
       }
 
       /* 粘贴的图(暂存,回车随灵感一起存)——预览条本体是共享件的 .img-strip(见
@@ -290,7 +329,7 @@
            保留中文原文防首帧闪,原文与 zh 字典逐字相等由 check-i18n-drift 核。 -->
       <textarea
         id="capture"
-        placeholder="随手记一笔…    ↵ 记下    Esc 收起(草稿保留)    / 命令"
+        placeholder="随手记一笔…"
         data-i18n-placeholder="shell.capturePlaceholder"
         autofocus
       ></textarea>
@@ -298,6 +337,14 @@
       <div id="cap-spaces" hidden></div>
       <div id="cap-images"></div>
       <p id="cap-err"></p>
+      <!-- 621:三段按键说明从 placeholder 里搬出来(此前四段同色同字号挤成一条 40 字的灰话)。
+           键帽复用 .hbtn .k 的视觉(controls.css 那份只被主窗加载,这里自带一份)。
+           显隐 = **正文为空时才显**,与它当 placeholder 时一模一样(main.ts 的 fitWindow 统一切)。 -->
+      <p id="cap-keys">
+        <span class="ck"><kbd>↵</kbd><span data-i18n="shell.capKeyNote">记下</span></span>
+        <span class="ck"><kbd>Esc</kbd><span data-i18n="shell.capKeyHide">收起(草稿保留)</span></span>
+        <span class="ck"><kbd>/</kbd><span data-i18n="shell.capKeyCmd">命令</span></span>
+      </p>
     </div>
     <script type="module" src="/src/main.ts"></script>
   </body>

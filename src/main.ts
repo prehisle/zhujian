@@ -20,6 +20,7 @@ const modsBar = document.getElementById("cap-mods") as HTMLElement;
 const hotkeyBar = document.getElementById("cap-hotkey") as HTMLElement;
 const cmdPanel = document.getElementById("cap-cmd") as HTMLElement;
 const spacesPanel = document.getElementById("cap-spaces") as HTMLElement;
+const keyHints = document.getElementById("cap-keys") as HTMLElement;
 const appWindow = getCurrentWindow();
 
 // 捕获目标空间(工序 8,§9「目标可见」/§16.2 提案 B):壳侧 ForegroundSpace 的
@@ -306,6 +307,12 @@ function autoGrowInput(): void {
 }
 
 async function fitWindow(): Promise<void> {
+  // 按键说明条(621):正文一有字就让位 —— 它此前是 placeholder 的后半截,placeholder 本来
+  // 就这么消失。⭐ 切显隐必须在量高之前:它是 slip 高度的一部分(实测这条占 34px),量完再切
+  // 就是差一条说明条的窗。
+  // ⛔ 别把这句散到每个改文字的地方去:改 input.value 的四条路(打字 / 草稿回填 / 记下清空 /
+  // dismiss)本来就各自调 fitWindow,挂在这儿是唯一一处对得齐的地方。
+  keyHints.hidden = input.value !== "";
   autoGrowInput();
   const maxSlip = MAX_H - BODY_PAD_V;
   if (slip.offsetHeight > maxSlip) {

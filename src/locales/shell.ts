@@ -18,5 +18,15 @@ export const shell = defineMessages({
   "shell.winMax": { zh: "最大化", en: "Maximize" },
   "shell.winClose": { zh: "关闭", en: "Close" },
   "shell.captureTitle": { zh: "朱简 · 捕获", en: "Zhujian · Capture" },
-  "shell.capturePlaceholder": { zh: "随手记一笔…    ↵ 记下    Esc 收起(草稿保留)    / 命令", en: "Jot it down…    ↵ Save    Esc hide (draft kept)    / commands" },
+  // 621:标题句与三段按键说明此前是**同一条 placeholder**(四空格分隔、同色同字号同 italic)
+  // ⇒ 屏上读作一句 40 字的灰话,而它是捕获窗**唯一**的功能说明(ui-consistency-plan J)。
+  // 拆开之后:placeholder 只留邀请句(与随记页那句逐字相同,zh/en 都是),三段按键各自成键,
+  // 由 index.html 的 #cap-keys 带键帽渲染。⚠ en 的「记下」照 §4.2 取 `Note it`(与
+  // inbox.composeAdd 同一个词;`Save` 在本仓是**编辑类**动词,cols/common/sync/topics 四处都是它)。
+  "shell.capturePlaceholder": { zh: "随手记一笔…", en: "Jot something down…" },
+  "shell.capKeyNote": { zh: "记下", en: "Note it" },
+  // ⚠ 三段现在各自成一个视觉单元(键帽 + 一句),故 en 各自首字母大写 —— 原先是一句话里的
+  // 三个从句(`↵ Save  Esc hide…  / commands`),那时不大写才对。
+  "shell.capKeyHide": { zh: "收起(草稿保留)", en: "Hide (draft kept)" },
+  "shell.capKeyCmd": { zh: "命令", en: "Commands" },
 });

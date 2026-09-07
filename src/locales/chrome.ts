@@ -48,6 +48,7 @@ export const chrome = defineMessages({
   "space.unnamedName": { zh: "未命名空间 · {id}", en: "Unnamed space · {id}" },
   "hotkeyMenu.actionsTitle": { zh: "操作(点开,或悬停卡片按 / 键)", en: "Actions (click to open, or hover the card and press /)" },
   "zoom.badge": { zh: "界面字号 {percent}%{limit}", en: "Text size {percent}%{limit}" },
-  "zoom.atMax": { zh: "（已到最大）", en: " (at maximum)" },
-  "zoom.atMin": { zh: "（已到最小）", en: " (at minimum)" },
+  // 621:半角括号是本仓家风(zh 值里紧贴汉字的括号 171 处半角、全角只有这两条),收齐。
+  "zoom.atMax": { zh: "(已到最大)", en: " (at maximum)" },
+  "zoom.atMin": { zh: "(已到最小)", en: " (at minimum)" },
 });
