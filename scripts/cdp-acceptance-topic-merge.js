@@ -96,17 +96,27 @@
     ok("① 「合并」钮在且可见(≥2 枚)", !!mergeBtn() && !mergeBtn().hidden);
 
     // ---- ② 进合并态:提示行 + 简行结构 + 两枚面头钮藏 ----
+    // ⛔ **别写死「.mrow 恰 3 枚」**(629 补):那是写给近空库的台架,而用户那台主空间有 21 枚
+    //    真标签 ⇒ 结构上就不可能成立,红的是台架不是产品。判据改成**关系**:进态前有几行、
+    //    进态后就该有几枚简行(`render()` 里两条路走的是同一个 `rows`),外加自己播的三枚都在。
+    const rowsBefore = list().querySelectorAll(".trow[data-topic]").length;
     mergeBtn().click();
     ok("② 进态:提示行在(选源文案)", await until(() => !!list().querySelector(".mhint"), 2000), hintTxt());
     ok("② 取消钮在", !!list().querySelector("[data-merge-cancel]"));
     ok("② 列表 = 简行(无手柄/色钮/类型钮的结构字据)",
-      list().querySelectorAll(".mrow").length === 3 &&
+      list().querySelectorAll(".mrow").length === rowsBefore &&
+      !!mrowOf(a) && !!mrowOf(b) && !!mrowOf(c) &&
       !list().querySelector(".thandle") && !list().querySelector(".tcolor") &&
-      !list().querySelector(".tk-badge") && !list().querySelector(".tk-add"));
+      !list().querySelector(".tk-badge") && !list().querySelector(".tk-add"),
+      { rowsBefore, mrows: list().querySelectorAll(".mrow").length });
     ok("② 「+ 新建标签」藏了", newBtn().hidden);
     ok("② 「合并」钮自己也藏了(取消是唯一出口)", mergeBtn().hidden);
 
     // ---- ③ 简行触区:整行高 ≥44 + 五点真打 ----
+    // ⛔ 先滚进视口再量(629 补,同 topic-rename ②):真机主空间 21 枚标签时,播的种落在
+    // 视口外 ⇒ 五点全 `null`,红得像触区缺陷。⛔ 别把判据放宽成「null 也算过」。
+    mrowOf(a).scrollIntoView({ block: "center" });
+    await sleep(120);
     const r = mrowOf(a).getBoundingClientRect();
     ok("③ 简行高 ≥44", r.height >= 44, `${r.width.toFixed(1)}×${r.height.toFixed(1)}`);
     const cx = r.x + r.width / 2, cy = r.y + r.height / 2;
@@ -206,8 +216,14 @@
     document.getElementById("confirmbar-yes").click();
     ok("⑭ 丙也真并掉了", await until(async () => !(await topicIn(c)), 4000));
 
-    // ---- ⑮ 只剩乙一枚:「合并」钮藏 ----
-    ok("⑮ <2 枚 → 「合并」钮藏(按数据显形)", await until(() => mergeBtn().hidden, 3000));
+    // ---- ⑮ 「合并」钮按**真实枚数**显形 ----
+    // ⛔ **别写死「只剩乙一枚 ⇒ 藏」**(629 补):并掉自己播的甲丙之后,近空库里确实只剩乙,
+    //    可用户那台库里还有 21 枚 ⇒ 钮当然还在。判据改成 `render()` 里那条关系本身
+    //    (`hidden === rows.length < 2`),近空库上「该藏没藏」照样真红。
+    const rowsNow = () => list().querySelectorAll(".trow[data-topic]").length;
+    ok("⑮ 「合并」钮按真实枚数显形(<2 藏 / ≥2 显)",
+      await until(() => mergeBtn().hidden === (rowsNow() < 2), 3000),
+      { rows: rowsNow(), hidden: mergeBtn().hidden });
 
     out.pass = out.steps.every((s) => s.ok);
     return JSON.stringify(out, null, 1);

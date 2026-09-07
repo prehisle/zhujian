@@ -37,12 +37,61 @@
 
 import { readFileSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
-import { resolve, dirname } from "node:path";
+import { resolve, dirname, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const F = (p) => resolve(ROOT, p);
 const NL = String.fromCharCode(10);
+
+/** 还原不掉的文件(见 restore()):非空 = 工作区里还有文件停在刀改过的样子。 */
+const stillCut = [];
+const sleep = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+
+/** 只给「还原失败」那条路的阴性对照用(612 那个占用类瞬时错在真跑里撞不出来):
+ *  `=N` 让还原的**前 N 次**写盘各抛一次(证明重试真能救回来),`=always` 则每次都抛
+ *  (证明救不回来时名单印得出来、退出码非零)。
+ *  ⛔ 它只让还原**更容易失败**,structurally 不可能靠它把一次红哄绿 —— 与
+ *  `check-deployed-drift.mjs` 的 `ZJ_DRIFT_FAKE_SYNCD` 同一个理由留在这儿。 */
+const FAKE_RESTORE = process.env.ZJ_KNIVES_FAKE_RESTORE_FAIL;
+let fakeLeft = FAKE_RESTORE === "always" ? Infinity : Number(FAKE_RESTORE || 0);
+if (FAKE_RESTORE) console.log(`⚠ ZJ_KNIVES_FAKE_RESTORE_FAIL=${FAKE_RESTORE}:还原会被注入写盘失败,本次不是对账。${NL}`);
+
+/** 把刀改过的文件写回去。⛔ 别退回成裸 `writeFileSync`(612 实撞):`finally` 里那一记自己抛了
+ *  Windows 的 `UNKNOWN / syscall: open`(errno -4094,占用类瞬时错),进程带 Node 崩溃横幅退出,
+ *  `src/filter-bar.css` 就停在刀改过的样子 —— **一个字的提示都没有**。
+ *  ⭐ 代价不是「白跑一趟」:紧接着的下一道闸红得**像一条真缺陷**(612 那次 `check-fs-drift` 报
+ *  「登记表第 6 条一处都没命中」,读起来完全是该去改登记表的账)⇒ 人会去查错东西。
+ *  ⇒ ①瞬时错重试(612 手动 `git checkout --` 一次就好);②仍不行就**响亮报出名单**并记账,
+ *  收口恒非零 —— 同 `claim-entry.mjs` ⑥(a) 拍过板的形:崩了不静默,把名单印出来。
+ *  ⛔ 别改成「跑前要求工作树干净」:那是另一件事,且会挡住正常带着改动跑刀。 */
+function restore(saved) {
+  const failed = [];
+  for (const [p, text] of saved) {
+    let err = null;
+    for (let attempt = 1; attempt <= 4; attempt++) {
+      try {
+        if (fakeLeft > 0) {
+          fakeLeft--;
+          throw Object.assign(new Error(`UNKNOWN: unknown error, open '${p}'`), { errno: -4094, syscall: "open" });
+        }
+        writeFileSync(p, text);
+        err = null;
+        break;
+      } catch (e) {
+        err = e;
+        sleep(120 * attempt); // 占用类瞬时错:等一下再来,别原地重试
+      }
+    }
+    if (err) failed.push([p, err]);
+  }
+  if (!failed.length) return;
+  const names = failed.map(([p]) => relative(ROOT, p).split("\\").join("/"));
+  stillCut.push(...names);
+  console.error(`${NL}✗✗ 还原失败:下面这些文件**还停在刀改过的样子**,⛔ 别提交,也别信后面任何一道闸的红:`);
+  for (const [i, [, e]] of failed.entries()) console.error(`     ${names[i]}    (${String(e.message).split(NL)[0]})`);
+  console.error(`   自己复位:git checkout -- ${names.join(" ")}`);
+}
 
 const withChrome = process.argv.includes("--with-chrome");
 const want = process.argv.slice(2).find((a) => !a.startsWith("--")) ?? "all";
@@ -472,7 +521,7 @@ for (const name of picked) {
       stuck++;
       console.log(`✗ 这一刀本身出错  ${k.n}${NL}    ${e.message}`);
     } finally {
-      for (const [p, text] of saved) writeFileSync(p, text);
+      restore(saved);
     }
     // 还原干净了没有:复证基线又绿(否则后一刀会吃前一刀的残留)
     const back = run(suite.gate);
@@ -499,4 +548,13 @@ console.log(
       : `✓ ${ran} 刀全部真红,且全红在该红的地方。`
   }` + (skipped ? `(另 ${skipped} 刀要 Chrome,没跑)` : ""),
 );
+// ⚠ 这句排在最后、且**恒非零**:还原不掉时,上面那份「几刀真红」的结论是拿一棵半改的树跑出来的。
+if (stillCut.length) {
+  const names = [...new Set(stillCut)];
+  console.error(
+    `${NL}✗✗ 收口:${names.length} 个文件还停在刀改过的样子(见上面的还原失败)。` +
+      `${NL}   git checkout -- ${names.join(" ")}`,
+  );
+  process.exit(1);
+}
 process.exit(bad ? 1 : 0);

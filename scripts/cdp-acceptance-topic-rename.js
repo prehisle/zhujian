@@ -84,6 +84,12 @@
     ok("没被做成钮的样子(无背景无边框)", cs.backgroundColor === "rgba(0, 0, 0, 0)" && parseFloat(cs.borderTopWidth) === 0);
 
     // ---- ② 触区:五点真打 + 相邻不互叠 ----
+    // ⛔ **先把这一行滚进视口再量**(629 补,627 在真机上逮到):这支是写给近空库的台架,
+    // 而用户那台主空间有 21 枚真标签 ⇒ 播的种排在列表末尾、**落在视口外**,
+    // `elementFromPoint` 五点全返 `null`,红得像触区缺陷。
+    // ⛔ 别把判据放宽成「null 也算过」—— 那是把这一格改成恒绿。
+    nm.closest(".trow").scrollIntoView({ block: "center" });
+    await sleep(120);
     const r = nm.getBoundingClientRect();
     ok("触区高 ≥44(§2.3)", r.height >= 44, `${r.height.toFixed(1)}px`);
     // ⛔ **打点必须以「要求的 44」为基准,不能以当前盒子的边内缩几 px 为基准** ——

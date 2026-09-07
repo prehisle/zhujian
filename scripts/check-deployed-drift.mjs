@@ -13,6 +13,9 @@
 //
 // ⚠ 583 加了第 ⑤ 格,它**不是第五个漂移面**,是一格资源水位(服务器磁盘)——
 // 放这儿的唯一理由是「这只脚本本来就在发版路径上、本来就要 ssh」,理由与边界见那一节。
+// ⚠ 629 加的 ①b 同理,**也不是第六个漂移面**:格 ① 那条「逐字节相同」答不了
+// 「页上那几个下载链接指的包还在不在」—— 628 两件事同时成立(页面逐字节相同、
+// 五个下载按钮全 404),理由与边界见那一节。
 //
 // **fail-closed**:任何一格问不到(网断 / ssh 不通 / 回体不合形)一律红,绝不
 // 「跳过」——一道会安静跳过的闸和没有闸是一回事。
@@ -29,6 +32,7 @@
 
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
+import { devNull } from "node:os";
 
 // 只给阴性对照用:一段假的 /admin/version 回体。见顶注最后一段。
 const FAKE = process.env.ZJ_DRIFT_FAKE_SYNCD;
@@ -52,6 +56,23 @@ function curl(url, { binary = false } = {}) {
     "--fail", url,
   ];
   return execFileSync("curl", args, binary ? { maxBuffer: 64 << 20 } : { encoding: "utf8" });
+}
+
+/** 只问状态码,不下载正文(一个安装包上百 MB)。⛔ 刻意不带 `--fail`:404 正是要读出来印给人看的
+ *  那个数,`--fail` 会把它变成异常、把「哪几个坏了」压成一句话。
+ *  ⚠ 丢弃处走 `os.devNull`,⛔ 别写死 `/dev/null`:这里是 execFileSync 直起 curl.exe(没有 shell
+ *  替你翻译),Windows 上那个路径 curl 写不进去 —— 表现是 `curl: (23)` 而不是状态码,
+ *  于是每一条真 404 都被报成「问不到」(629 立这一格时当场踩到)。 */
+function head(url) {
+  return execFileSync(
+    "curl",
+    [
+      "-sS", "--noproxy", "*", "--max-time", "20",
+      "--retry", "2", "--retry-delay", "1", "--retry-connrefused",
+      "-o", devNull, "-w", "%{http_code}", "-I", url,
+    ],
+    { encoding: "utf8" },
+  ).trim();
 }
 
 const git = (args) => execFileSync("git", args, { encoding: "utf8" }).trim();
@@ -85,21 +106,54 @@ if (FAKE) {
 // ── ① 官网:线上根页面必须与仓里的 site/index.html 逐字节相同 ───────────────
 // 逐字节而不是「版本号对上就行」:官网不进任何 CI,漂的方式是**整段内容**没上去
 // (360-362 那三笔就是这么躺了一天的),只比版本号一格照样全绿。
+let liveSite = null;
 if (!FAKE) {
   console.log("① 官网 zhujian.app");
   try {
     const local = readFileSync("site/index.html");
-    const live = curl("https://zhujian.app/", { binary: true });
-    if (Buffer.compare(local, live) === 0) {
+    liveSite = curl("https://zhujian.app/", { binary: true });
+    if (Buffer.compare(local, liveSite) === 0) {
       ok(`与 site/index.html 逐字节相同(${local.length} 字节)`);
     } else {
       bad(
-        `线上与 site/index.html 不同(线上 ${live.length} 字节 / 本地 ${local.length} 字节)——` +
+        `线上与 site/index.html 不同(线上 ${liveSite.length} 字节 / 本地 ${local.length} 字节)——` +
           `官网不进 CI,要跑 zhujian-ops 流程 5 才会动`,
       );
     }
   } catch (e) {
     bad(`拉不到官网:${e.message.trim()}`);
+  }
+
+  // ── ①b 官网下载按钮指的那几个包,还在不在服务器上 ───────────────────────
+  // 格 ① 答的是「线上那页 == 仓里那页」,答不了「页上的链接指的东西还在不在」——
+  // 628 两件事同时成立:页面逐字节相同(① 绿),而**五个下载按钮全 404**
+  // (exe / dmg / AppImage / deb + apk;629 逐个探出来的)。两条路都能走到这儿:
+  //   ·授权那半 —— `bump-version.mjs` 629 之前只改显示的 `v<版本>`、不改 href 里的
+  //     `zhujian_<版本>_…`,而旧包在发版收尾时会被清掉(已在那支脚本里堵死);
+  //   ·产物那半 —— 页面全对,但某个平台的包 CI 没传上去。**没有任何一道闸问过这件事**,
+  //     §8.1 那段「传完必验下载按钮真能下」是手工的,628 就是没人跑。
+  // 落在这只脚本里的理由同 ⑤:它本来就在发版路径上、本来就要联网(memory
+  // `guards-must-bind-to-the-automatic-edge`)。⛔ 别为这一格另起一支门禁。
+  // ⚠ 诚实边界:这一格没有注入式阴性对照刀,靠 fail-closed 活着 —— 每个链接的真状态码
+  //    都印出来,捞不到链接也是红(629 立这一格时拿线上那五个真 404 当过一次对照)。
+  console.log("\n①b 官网下载按钮指的包在不在");
+  if (!liveSite) {
+    bad("官网没拉到(见 ①)——这一格没得判");
+  } else {
+    const urls = [...new Set(liveSite.toString("utf8").match(/https:\/\/zhujian\.app\/updates\/zhujian_[^"'\s]+/g) ?? [])];
+    if (!urls.length) bad("页面里一个 updates/zhujian_… 链接都捞不到 —— 下载区的形状变了,先去看页面");
+    for (const u of urls.sort()) {
+      const name = u.replace("https://zhujian.app/updates/", "");
+      let code;
+      try {
+        code = head(u);
+      } catch (e) {
+        bad(`问不到 ${name}:${e.message.trim()}`);
+        continue;
+      }
+      if (code === "200") ok(`200  ${name}`);
+      else bad(`${code}  ${name} —— 官网点这个下载按钮拿不到东西`);
+    }
   }
 
   // ── ② 桌面更新清单 ───────────────────────────────────────────────────────
@@ -227,4 +281,6 @@ if (fails.length) {
   console.error("处置:官网走 zhujian-ops 流程 5 / 更新清单走流程 4 / syncd 走流程 2。");
   process.exit(1);
 }
-console.log("\n线上对账通过:官网、两份更新清单、同步服务端都与仓里当前态一致,磁盘水位够发一趟版。");
+console.log(
+  "\n线上对账通过:官网(含下载按钮指的包真在)、两份更新清单、同步服务端都与仓里当前态一致,磁盘水位够发一趟版。",
+);

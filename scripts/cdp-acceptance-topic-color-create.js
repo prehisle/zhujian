@@ -85,6 +85,10 @@
       getComputedStyle(dot).borderTopStyle === "dashed", dot && getComputedStyle(dot).borderTopStyle);
 
     // ---- ② 色钮触区:≥44 高 + 五点真打 ----
+    // ⛔ 先滚进视口再量(629 补,同 topic-rename ②):真机主空间 21 枚标签时,播的种落在
+    // 视口外 ⇒ 五点全 `null`,红得像触区缺陷。⛔ 别把判据放宽成「null 也算过」。
+    cb.closest(".trow").scrollIntoView({ block: "center" });
+    await sleep(120);
     const r = cb.getBoundingClientRect();
     ok("色钮触区高 ≥44(吃满行内)", r.height >= 44, `${r.width.toFixed(1)}×${r.height.toFixed(1)}`);
     const cx = r.x + r.width / 2, cy = r.y + r.height / 2;

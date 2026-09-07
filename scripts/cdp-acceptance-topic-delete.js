@@ -91,6 +91,10 @@
       `${delBtn() && getComputedStyle(delBtn()).color} vs ${ghost && getComputedStyle(ghost).color}`);
 
     // ---- ③ 触区五点真打(halo 是 ::before,命中算宿主钮) ----
+    // ⛔ 先滚进视口再量(629 补,同 topic-rename ②):真机主空间 21 枚标签时,播的种落在
+    // 视口外 ⇒ 五点全 `null`,红得像触区缺陷。⛔ 别把判据放宽成「null 也算过」。
+    delBtn().closest(".trow").scrollIntoView({ block: "center" });
+    await sleep(120);
     const r = delBtn().getBoundingClientRect();
     const cx = r.x + r.width / 2, cy = r.y + r.height / 2;
     const pts = [[cx, cy - 21], [cx, cy + 21], [r.x + 3, cy], [r.right - 3, cy], [cx, cy]];

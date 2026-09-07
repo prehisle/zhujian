@@ -26,9 +26,14 @@
 //   两处一律走同一条判据:`git diff -U0 <lock>` 改动的行**只许是那一两行版本行**,别的都停。
 //   这同时挡住 npm 顺手漂别的依赖 —— 发版 bump 那笔的改动面不该出现第三种东西。
 //
-// ⚠ **官网命中数不写死**:`site/index.html` 里桌面版本串眼下 3 处、安卓 1 处,但那是页面长什么样
-//   决定的,写死就会腐烂成假绿。这里的判据是 **≥1 处命中 + 改完全文一处旧版串都不剩**,
-//   并把每一处命中的行号与原文印出来给人看。
+// ⚠ **官网有两种版本落点,少认一种就是「线上 404 而脚本印绿」**(614 立、629 修,⛔ 别再收窄):
+//   ①页面上显示的版本字样 `· v0.2.42</div>`;②下载按钮 href 里的**包名** `zhujian_0.2.42_x64-setup.exe`。
+//   ②那一路 629 之前不在命中面里(旧正则是 `v<版本>`,包名里没有那个 `v`),而回读用的是同一条
+//   正则 ⇒ 残留恒报 0。后果 628 兑现了:发完 0.2.42,官网五个下载按钮指的还是 0.2.41 / 0.3.37 的包,
+//   那些包随发版已从服务器清掉 —— 629 逐个探,**五个全 404**(exe / dmg / AppImage / deb + apk)。
+// ⚠ **命中数不写死**(写死会腐烂成假绿),但**两种落点各要 ≥1 处**:两侧页面的形状都是
+//   「1 处版本字样 + ≥1 个下载包名」(桌面 4 个包、安卓 1 个),只数总数时漏掉包名那一路照样过。
+//   改完还要**全文一处旧版串都不剩**,并把每一处命中的行号与原文印出来给人看。
 //
 // ⛔ **鸿蒙(`ohos/`)不在这支里**:564 起它自成一套(只改 `ohos/src-tauri/tauri.conf.json`,
 //   `AppScope/app.json5` 构建期派生),且版本序列刻意与安卓解绑(商店驳回重传要 versionCode 递增)。
@@ -129,8 +134,10 @@ if (dirtyRest) console.log(`\n⚠ 这些落点本来就脏(不挡路,但下面�
 // ── 命中面:先全量清点,一处对不上就停在「一个字节都还没写」 ──────────────────
 const jsonRe = () => new RegExp(`("version":\\s*")${esc(cur)}(")`, "g");
 const cargoRe = () => new RegExp(`(^version\\s*=\\s*")${esc(cur)}(")`, "gm");
-// 官网写的是 `· v0.2.41</div>`;后面跟数字或点则是另一个更长的版本串,不许误伤。
-const siteRe = () => new RegExp(`(v)${esc(cur)}(?![\\d.])`, "g");
+// 官网两种落点见头注:`· v0.2.42</div>` 与 `zhujian_0.2.42_x64-setup.exe`。
+// 后面跟数字或点则是另一个更长的版本串,不许误伤;捕获组 = 前缀,替换时原样带回。
+const siteRe = (v) => new RegExp(`(v|zhujian_)${esc(v)}(?![\\d.])`, "g");
+const SITE_KINDS = { v: "版本字样", zhujian_: "下载包名" };
 
 const lineOf = (text, index) => text.slice(0, index).split("\n").length;
 
@@ -149,12 +156,17 @@ for (const f of side.files) {
 }
 {
   const text = read(SITE);
-  const hits = [...text.matchAll(siteRe())];
+  const hits = [...text.matchAll(siteRe(cur))];
   // 官网不进任何 CI(365 量出三笔躺了一整天)⇒ 它是最容易被漏掉的那一处,0 命中一律当红。
-  if (hits.length === 0) {
-    die(`${SITE} 里一处 v${cur} 都没有 —— 官网不进 CI,漏在这儿没人会报错,先去看页面。`);
+  // 两种落点各要 ≥1 处(见头注):只数总数时,包名那一路整个漏掉照样过。
+  for (const [prefix, kind] of Object.entries(SITE_KINDS)) {
+    if (hits.some((h) => h[1] === prefix)) continue;
+    die(
+      `${SITE} 里「${kind}」那一路一处 ${prefix}${cur} 都没有 —— 官网不进 CI,漏在这儿没人会报错。\n` +
+        `  ⚠ 包名那一路漏掉的后果是**线上下载 404 而这支脚本印绿**(628 真出过),先去看页面。`,
+    );
   }
-  plan.push({ path: SITE, text, re: siteRe(), hits });
+  plan.push({ path: SITE, text, re: siteRe(cur), hits });
 }
 
 console.log(`\n── ${side.label}:${cur} → ${next} ${dry ? "(--dry,不写)" : ""}`);
@@ -272,9 +284,16 @@ for (const f of side.files) {
 }
 {
   const text = read(SITE);
-  const fresh = [...text.matchAll(new RegExp(`v${esc(next)}(?![\\d.])`, "g"))];
-  const stale = [...text.matchAll(siteRe())];
-  checks.push({ rel: SITE, ok: fresh.length > 0 && stale.length === 0, note: `新版 ${fresh.length} 处 / 残留旧版 ${stale.length} 处` });
+  const fresh = [...text.matchAll(siteRe(next))];
+  const stale = [...text.matchAll(siteRe(cur))];
+  // 新版命中数要与上面清点出的**那几处**逐个对上(不是「>0 就行」):替换是同一条正则做的,
+  // 少一处就说明有一路没写进去 —— 而少的那一路多半正是包名(它 629 之前压根不在面里)。
+  const want = plan.find((p) => p.path === SITE).hits.length;
+  checks.push({
+    rel: SITE,
+    ok: fresh.length === want && stale.length === 0,
+    note: `新版 ${fresh.length} 处(期望 ${want})/ 残留旧版 ${stale.length} 处`,
+  });
 }
 {
   const v = read(side.cargo.lock).match(

@@ -722,15 +722,18 @@
           <h2 class="section-title" data-i18n="dl.title">装一个试试</h2>
           <p class="section-lead" data-i18n="dl.lead">Windows 和 Android 是正式版,装好后会自动检查新版本并提示你。macOS 与 Linux 是尝鲜版。</p>
 
-          <!-- 版本号刻意留在 markup 里、不进字典(deploy §8.1 的「全文替换 + 数命中处数」
-               靠的是它只有一种写法);字典只装那半句需要翻的机型说明。 -->
+          <!-- 版本号刻意留在 markup 里、不进字典;字典只装那半句需要翻的机型说明。
+               ⚠ 这一页的版本号有**两种写法**:显示用的 `· v<版本>` 与下载 href 里的包名
+               `zhujian_<版本>_…`。⛔ 别再写「只有一种写法」—— `bump-version.mjs` 629 之前
+               只认前者,628 发版后五个下载按钮全指着上一版的包(线上已清)= 全 404。
+               ⛔ 这段注释里别写真版本号:它会被 bump 的正则一起替换掉。 -->
           <div class="dl-row">
-            <a class="dl-card" href="https://zhujian.app/updates/zhujian_0.2.41_x64-setup.exe">
+            <a class="dl-card" href="https://zhujian.app/updates/zhujian_0.2.42_x64-setup.exe">
               <div class="os">Windows</div>
               <div class="meta"><span data-i18n="dl.winMeta">10 / 11 · 64 位</span> · v0.2.42</div>
               <span class="btn btn-primary" data-i18n="dl.winBtn">下载安装包</span>
             </a>
-            <a class="dl-card" href="https://zhujian.app/updates/zhujian_0.3.37_aarch64.apk">
+            <a class="dl-card" href="https://zhujian.app/updates/zhujian_0.3.38_aarch64.apk">
               <div class="os">Android</div>
               <div class="meta"><span data-i18n="dl.androidMeta">11+ · 64 位</span> · v0.3.38</div>
               <span class="btn btn-primary" data-i18n="dl.apkBtn">下载 APK</span>
@@ -741,9 +744,9 @@
           <p class="dl-trial">
             <span class="trial-tag" data-i18n="dl.trialTag">尝鲜版</span>
             <span data-i18n="dl.trialLine">macOS(Apple 芯片)与 Linux(x86_64):没签名,首次打开要在系统里手动放行;Linux 上热键与托盘在部分桌面环境可能不全。</span>
-            <a href="https://zhujian.app/updates/zhujian_0.2.41_aarch64.dmg" data-i18n="dl.macBtn">下载 dmg</a>
-            <a href="https://zhujian.app/updates/zhujian_0.2.41_amd64.AppImage">AppImage</a>
-            <a href="https://zhujian.app/updates/zhujian_0.2.41_amd64.deb">.deb</a>
+            <a href="https://zhujian.app/updates/zhujian_0.2.42_aarch64.dmg" data-i18n="dl.macBtn">下载 dmg</a>
+            <a href="https://zhujian.app/updates/zhujian_0.2.42_amd64.AppImage">AppImage</a>
+            <a href="https://zhujian.app/updates/zhujian_0.2.42_amd64.deb">.deb</a>
           </p>
           <p class="dl-foot" data-i18n="dl.foot">安装包和更新包都有开发者签名,装前会核对 · Windows 装好后在系统托盘里,热键唤出 · Android 首次安装要允许「未知来源」,更新也要你点一下装 · 有问题发邮件到 3069848@qq.com</p>
         </div>

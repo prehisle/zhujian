@@ -854,14 +854,20 @@
       /* 514:名字本身就是改名入口(点一下进编辑态)。这一行上「可点」的惯例是长得像钮
          (.tk-add/.tk-badge),而名字是整行的主体、做成钮会喧宾夺主 ⇒ 保持文本外观,
          只用一条很淡的虚线下划线暗示它可改。⛔ 别加边框/背景。 */
-      /* 触区:文字本身只有 20.4px 高,按这一端的惯例只垂直扩(水平扩会跟计数/类型钮抢点)。
+      /* 触区:按这一端的惯例只垂直扩(水平扩会跟计数/类型钮抢点)。
          ⛔ **这里不能用 `::before` halo** —— `.tname` 自己有 `overflow:hidden`(省略号要它),
          会把伪元素**裁掉**,而屏上一点看不出来:514 第一版就是这么写的,`elementFromPoint`
          打上下缘命中的是 `.trow` 不是 `.tname`(⇒ 判据必须真打点,别读 CSS 里写没写)。
-         ⇒ 改用 padding 撑盒(padding 不受 overflow 影响)+ 等量负 margin 抵消对行高的影响:
-         盒高 20.4+24 = **44.4** 恰好吃满行内,与相邻行还留 2.4px 间隙、零互叠。 */
+         ⇒ padding 撑盒(padding 不受 overflow 影响)+ 等量负 margin 抵消对行高的影响。
+         ⛔⛔ **44 别再交给「算出来」**(629 修,627 真机量到):514 这里原写着「20.4 + 24 =
+         44.4 恰好吃满行内」—— 那是拿 body 的 1.45 行高算的,而 `.tname` 是 `<button>`、
+         拿的是 UA 的 `line-height: normal`(**不继承**);真机上字号被文字缩放推到 16.1px、
+         行盒只有 18.86 ⇒ 实得 **42.86 < 44**,而钉着它的那格断言就那么红着,没人知道多久了。
+         ⇒ 与同行三个兄弟(`.tcolor` / `.tcount` / `.tn-input`)同形写死 `min-height: 44px`;
+         负 margin 让外边距盒仍是 20 = 兄弟们的高度,**行高一点不变**。 */
       .tname { flex: 1; min-width: 0; font-size: var(--fs-14); color: var(--ink);
         overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        min-height: 44px;
         background: none; border: 0; padding: 12px 0; margin: -12px 0; font-family: inherit; text-align: left;
         text-decoration: underline dotted var(--line-strong); text-underline-offset: 3px; }
       /* 标签色点(8px 圆,注入色 --tc):标签管理面行内(.tdot)与筛选 pill(.fdot,住
