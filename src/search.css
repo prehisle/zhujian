@@ -163,6 +163,19 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 } /* 其余声明 = 共享件徽记 chip 族(controls.css,352) */
+/* ⭐ 624(用户面 74 / C):有色标签画那颗认标签的点 —— 与随记卡的 `.tag.tinted`
+   (inbox.css)、筛选条的 `.tf-dot` 同一套读法,三处从此一致。颜色由 `search_notes` 直接
+   带来(`--tag-color` 由 search.ts 逐枚写),⛔ 别在这里给它设默认值:没颜色的标签就是
+   不画点,那正是它在别处的样子。 */
+.v-search .chip.tinted {
+  border-color: color-mix(in srgb, var(--tag-color) 55%, var(--line-strong));
+  background: color-mix(in srgb, var(--tag-color) 12%, var(--paper));
+}
+.v-search .chip.tinted::before {
+  content: "●";
+  color: var(--tag-color);
+  margin-right: 3px;
+}
 .v-search .hit-time {
   margin-left: auto;
   flex: none;

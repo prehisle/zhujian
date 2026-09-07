@@ -242,7 +242,19 @@ pub struct SearchHit {
     pub content: String,
     pub created_at: String,
     pub status: String,
-    pub topics: Vec<String>,
+    pub topics: Vec<SearchTopic>,
+}
+
+/// 搜索结果上的一枚标签:名字 + 颜色。
+///
+/// ⭐ **624 起带颜色,而且这颗色点前端补不出来**(用户面 74 / C):那颗点是全应用认标签
+/// 的锚(卡片与筛选条都画),搜索页此前只拿到标题、于是只能画灰 chip。前端曾想过拿
+/// `list_topics` 按**标题**回连颜色 —— 不成立:`topics.title` **没有唯一约束**(「合并标签」
+/// 这个功能存在,正因为同名标签会出现),同名两枚时按标题回连是**任取一枚** = 静默给错色。
+/// ⇒ 颜色必须与标题在同一次查询里一起出来(它们同属一行)。
+pub struct SearchTopic {
+    pub title: String,
+    pub color: Option<String>,
 }
 
 /// Map an item's (stage, archived?, sealed?) onto the frontend search vocabulary.
@@ -562,19 +574,23 @@ pub fn search_items(conn: &Connection, query: &str) -> rusqlite::Result<Vec<Sear
     }
     let ids: std::collections::HashSet<&str> = matched.iter().map(|m| m.0.as_str()).collect();
 
-    let mut topics_by_item: std::collections::HashMap<String, Vec<String>> =
+    // 标题与颜色**同一行一起取**(624):按标题回连颜色在同名标签下是静默给错色,见
+    // SearchTopic 头注。
+    let mut topics_by_item: std::collections::HashMap<String, Vec<SearchTopic>> =
         std::collections::HashMap::new();
     {
         let mut stmt = conn.prepare(
-            "SELECT it.item_id, t.title FROM item_topic it \
+            "SELECT it.item_id, t.title, t.color FROM item_topic it \
              JOIN topics t ON t.id = it.topic_id \
              ORDER BY t.position IS NULL, t.position, t.updated_at, t.id",
         )?;
-        let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+        let rows = stmt.query_map([], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, Option<String>>(2)?))
+        })?;
         for row in rows {
-            let (item_id, title) = row?;
+            let (item_id, title, color) = row?;
             if ids.contains(item_id.as_str()) {
-                topics_by_item.entry(item_id).or_default().push(title);
+                topics_by_item.entry(item_id).or_default().push(SearchTopic { title, color });
             }
         }
     }
@@ -2760,6 +2776,36 @@ mod tests {
         assert_eq!(sealed_tasks(&conn).unwrap().len(), 2);
         assert_eq!(list_tasks(&conn).unwrap().len(), 1, "doing stays");
         assert_eq!(archived_tasks(&conn).unwrap().len(), 1, "trash untouched");
+    }
+
+    /// 624(用户面 74 / C):搜索结果要画那颗认标签的色点,颜色**必须与标题同行出来**。
+    /// 这条钉的是「同名两枚各自带各自的颜色」—— 同名标签真会出现(「合并标签」这个功能
+    /// 就是为它建的),而按标题回连颜色在这里是任取一枚 = 静默给错色。
+    #[test]
+    fn search_carries_each_tag_color_even_when_two_tags_share_a_title() {
+        let conn = fresh_db();
+        let a = add_item(&conn, "同名标签下的甲条").unwrap();
+        let b = add_item(&conn, "同名标签下的乙条").unwrap();
+        for (id, color) in [("t1", "#c04851"), ("t2", "#4a6f8a")] {
+            conn.execute(
+                "INSERT INTO topics (id, title, color, created_at, updated_at) VALUES (?1, '工作', ?2, 'c', 'c')",
+                rusqlite::params![id, color],
+            )
+            .unwrap();
+        }
+        conn.execute("INSERT INTO item_topic (item_id, topic_id) VALUES (?1, 't1')", [&a]).unwrap();
+        conn.execute("INSERT INTO item_topic (item_id, topic_id) VALUES (?1, 't2')", [&b]).unwrap();
+
+        let hits = search_items(&conn, "同名标签下").unwrap();
+        let by_id: std::collections::HashMap<&str, &SearchHit> =
+            hits.iter().map(|h| (h.id.as_str(), h)).collect();
+        assert_eq!(by_id[a.as_str()].topics[0].title, "工作");
+        assert_eq!(by_id[a.as_str()].topics[0].color.as_deref(), Some("#c04851"));
+        assert_eq!(
+            by_id[b.as_str()].topics[0].color.as_deref(),
+            Some("#4a6f8a"),
+            "同名的另一枚不许拿到第一枚的颜色"
+        );
     }
 
     #[test]

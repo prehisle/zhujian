@@ -4,6 +4,7 @@ import { t } from "./i18n";
 import { focusInboxItem } from "./inbox";
 import type { View, ViewCtx } from "./notebook";
 import { when } from "./tasktime";
+import { applyTagColor } from "./tag-color";
 import { INPUT_DEBOUNCE_MS } from "./timing";
 import "./search.css";
 import { el } from "./dom";
@@ -16,7 +17,7 @@ type SearchHit = {
   content: string;
   created_at: string;
   status: "inbox" | "processed" | "archived" | "task" | "sealed";
-  topics: string[];
+  topics: { title: string; color: string | null }[];
 };
 
 // ---- small DOM helper (same shape as inbox.ts / topics.ts) -----------------
@@ -145,7 +146,16 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
         className: `badge ${hit.status}`,
         textContent: STATUS_LABEL[hit.status],
       }),
-      ...hit.topics.map((t) => el("span", { className: "chip", textContent: t })),
+      ...hit.topics.map((tp) => {
+        // 624(用户面 74 / C):有色标签在这里也画那颗点 —— 卡片(`.tag.tinted`)与筛选条
+        // (`.tf-dot`)本来就画,而搜索恰恰是最需要「一眼认出是哪个标签」的地方。着色走
+        // 共享助手 `applyTagColor`(全应用一处写 `--tag-color` 与 `.tinted`),⛔ 别在这里
+        // 另抄一份。⛔ 颜色只信这枚 chip 自己带的那份(命令直接给的),别拿标题去
+        // `list_topics` 回连:同名标签下那是任取一枚 = 静默给错色(全文在 `repo::SearchTopic`)。
+        const chip = el("span", { className: "chip", textContent: tp.title });
+        applyTagColor(chip, tp.color);
+        return chip;
+      }),
     ]);
     meta.append(el("time", { className: "hit-time", textContent: when(hit.created_at) }));
 

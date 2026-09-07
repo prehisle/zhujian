@@ -306,7 +306,16 @@ struct SearchHitItem {
     content: String,
     created_at: String,
     status: String,
-    topics: Vec<String>,
+    topics: Vec<SearchTopicItem>,
+}
+
+/// 命中上的一枚标签。⭐ 624 起带 `color`(用户面 74 / C):搜索结果的 chip 要画那颗认标签
+/// 的色点,而颜色**只能从这里来** —— 前端按标题回连会在同名标签下静默给错色(`topics.title`
+/// 无唯一约束,理由全文在 `repo::SearchTopic` 头注)。`null` = 该标签没设颜色,前端不画点。
+#[derive(Serialize)]
+struct SearchTopicItem {
+    title: String,
+    color: Option<String>,
 }
 
 /// Search every thought by content (across inbox / processed / archived), newest
@@ -328,7 +337,11 @@ fn search_notes(space_id: String, query: String, spaces: State<'_, Spaces>) -> R
                 content: h.content,
                 created_at: h.created_at,
                 status: h.status,
-                topics: h.topics,
+                topics: h
+                    .topics
+                    .into_iter()
+                    .map(|t| SearchTopicItem { title: t.title, color: t.color })
+                    .collect(),
             })
             .collect())
     })

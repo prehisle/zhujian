@@ -796,7 +796,10 @@ pub fn search_notes(space_id: String, query: String, coord: State<'_, Coord>) ->
                 content: h.content,
                 created_at: h.created_at,
                 status: h.status,
-                topics: h.topics,
+                // ⚠ 手机端仍只要标题:624 给 `repo::SearchHit` 的标签加了颜色(桌面搜索页
+                // 要画那颗色点),安卓那半没跟着做 ⇒ 这里就地把颜色丢掉,别顺手改安卓的
+                // 契约。哪天安卓也画点,连它的前端一起改。
+                topics: h.topics.into_iter().map(|t| t.title).collect(),
             })
             .collect())
     })
