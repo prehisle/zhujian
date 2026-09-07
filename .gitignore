@@ -53,6 +53,9 @@ target/
 # desktop-cdp.mjs 真机验收固定 WebView2 profile(钉住 WEBVIEW2_USER_DATA_FOLDER,
 # 防止每次带 --remote-debugging-port 启动都在 C:\Windows\SystemTemp 新开 scoped_dir)
 /.cdp-profile/
+# ui-shots-desktop.mjs 的 profile:与上面同一个防漏理由,另开一份是为了两支能同时跑
+# (它每趟起手就删掉重建 ⇒ 明暗/语言/上次视图这些 localStorage 档不会变成隐藏入参)
+/.ui-shots-profile/
 
 # 本地数据库 / 临时
 *.sqlite3
