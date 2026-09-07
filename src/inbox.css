@@ -13,19 +13,28 @@
 
 /* ---- header (also a drag handle; right pad clears the floating win ctls:
    dead zone = --winctl-dead(theme.css,344 收成派生令牌),+12px 呼吸) ---- */
+/* 626(用户面 74 / E):顶栏尾部多了「回收站」开关 ⇒ 三处跟着改,每处都有出处:
+   ①**靠右那组包进共享的 `.head-tools`**(controls.css)—— 统计与钮当一整块右对齐,
+     ⛔ 别给两件各写一个 `margin-left:auto`,两个 auto 边距会**均分**剩余空间,统计会被
+     推到半空中;
+   ②**加 `flex-wrap`**(同看板):900 窗宽(minWidth)+ 界面字号 1.5 档 + 英文,这一行
+     实测要 474px 而只有 428px —— 不换行的话钮右缘落在视口外 646px,**点不到**
+     (626 用真 DOM 探针量的,同条件下看板靠 wrap 是干净的);
+   ③右侧内边距从 +12 收成 +30(同看板):按钮不许贴上浮动窗控。
+   border-bottom 是原先那条 tab 条带来的分隔线,tab 条撤了由 header 自己接着画。 */
 .v-inbox header {
   flex: none;
-  padding: 20px calc(var(--winctl-dead) + 12px) 12px 30px;
+  padding: 20px calc(var(--winctl-dead) + 30px) 12px 30px;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 14px;
+  gap: 8px 14px;
+  border-bottom: 1px solid var(--line);
 }
 /* 标题 h1 与它前面那枚朱砂方印:共享件 .view header h1(见 controls.css,339 抽出)。 */
-/* 灵感流转统计:头部一行淡字(纯信息,和标签视图的计数同性质);
-   margin-left:auto 顶右——原先靠 .sub 说明行 flex:1 撑开,说明行删了(67)。 */
+/* 灵感流转统计:头部一行淡字(纯信息,和标签视图的计数同性质)。 */
 .v-inbox header .idea-stats {
   flex: none;
-  margin-left: auto;
   font-size: var(--fs-12);
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.04em;
@@ -82,51 +91,10 @@
 /* when 未归类 is empty, the centered hint sits below the compose bar, not full-height */
 .v-inbox .compose ~ .center { height: auto; padding: 56px 0; }
 
-/* ---- tab strip (未归类 / 已归类 / 回收站) ---- */
-.v-inbox .tabs {
-  flex: none;
-  display: flex;
-  gap: 6px;
-  padding: 0 30px;
-  border-bottom: 1px solid var(--line);
-  position: relative;
-  z-index: 1;
-}
-/* ⭐ 622(用户面 74 / A2,用户拍板):这一族的判据是「**同屏别处拿不到的信息升一档,
-   旁边内容的摘要留淡**」。未选中的 tab 两条都占:它是**能点的控件**(§3.8 能按的不该是
-   屏上最淡的),而 `.tab-n` 是这枚控件的一部分,只升字不升数会把一个控件劈成两档。
-   ⛔ 纯计数(`.tf-n` / `.col-count` / `.topic-count` / 搜索的「N 条匹配」)**刻意留 `--ink-faint`**
-   —— 它们说的是旁边就摆着的那堆东西,数一眼就有;全升会把三档层次压成两档(343 否掉
-   「按令牌名下禁令」时点名要保的就是这层)。四条出路的代价表在 progress-log 621,
-   拍板与改后读数在 622。 */
-.v-inbox .tab {
-  font-family: var(--font-serif);
-  font-size: var(--fs-14);
-  letter-spacing: 0.02em;
-  color: var(--ink-soft);
-  background: transparent;
-  border: 0;
-  border-bottom: 2px solid transparent;
-  padding: 9px 6px 11px;
-  margin-bottom: -1px;
-  cursor: pointer;
-  display: inline-flex;
-  align-items: baseline;
-  gap: 6px;
-  transition: color 0.14s, border-color 0.14s;
-}
-/* ⚠ 静息已经是 --ink-soft(见上),hover 再写 soft 就是**空规则** ⇒ 往 --ink 走一档
-   (照 337「hover 一律往墨的方向压」);与 .active 同色是有意的 —— hover 预演选中态。 */
-.v-inbox .tab:hover { color: var(--ink); }
-.v-inbox .tab.active { color: var(--ink); border-bottom-color: var(--seal); }
-.v-inbox .tab-n {
-  font-family: var(--font-sans);
-  font-size: var(--fs-12);
-  font-variant-numeric: tabular-nums;
-  letter-spacing: 0.04em;
-  color: var(--ink-soft);
-}
-.v-inbox .tab.active .tab-n { color: var(--seal); }
+/* ---- tab strip 撤于 626(用户面 74 / E):想法 ↔ 回收站的切换搬进顶栏那枚共享 .hbtn
+   (controls.css),与任务页的「归档 / 回收站」同一形。622 给未选中 tab 升的那一档
+   **没有回退** —— .hbtn 静息本就是 `--ink-soft`,同一档;计数 .tn 与它同色(那条
+   「一个控件不劈两档」的判据也一并搬进 controls.css 的 .tn 那节)。 */
 
 /* ---- scrolling list ---- */
 .v-inbox main {

@@ -3,8 +3,8 @@ import { defineMessages } from "./entry";
 
 export const inbox = defineMessages({
   "inbox.title": { zh: "随记", en: "Notes" },
-  "inbox.tabIdeas": { zh: "随记", en: "Notes" },
   "inbox.tabTrash": { zh: "回收站", en: "Trash" },
+  "inbox.backToIdeas": { zh: "← 随记", en: "← Notes" },
   "inbox.filterPlaceholder": { zh: "过滤随记…", en: "Filter notes…" },
   "inbox.weekStats": { zh: "本周捕获 {n} · 转待办 {pct}%", en: "Captured {n} this week · {pct}% became tasks" },
   "inbox.weekStatsNoRatio": { zh: "本周捕获 {n}", en: "Captured {n} this week" },

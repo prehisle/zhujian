@@ -1,29 +1,25 @@
-import { $, expect, browser } from "@wdio/globals";
-import { invoke, goNotebook, seedProcessedTaskless, inboxAction } from "./support.js";
+import { $, expect } from "@wdio/globals";
+import { invoke, inboxShow, seedProcessedTaskless, inboxAction } from "./support.js";
 
 // ㉜ UNRUN: card actions (删除/还原/彻底删除) now open via the ⋯ corner menu (inboxAction);
 // the trash-bar 清空回收站 stays a plain visible button. Verify on a local e2e pass.
 
-async function showTab(id) {
-  await goNotebook("inbox");
-  const tab = await $(`#${id}`);
-  await tab.waitForExist({ timeout: 10000 });
-  await tab.click();
-}
+// 626:想法 ↔ 回收站的切换从 tab 条换成顶栏那枚开关 ⇒ 切换助手搬进 support.js
+// (`inboxShow`,idea-stats 那只也要它),这里只改叫法。
 
 describe("灵感 · 回收站(软删 → 还原 / 彻底删除 / 清空)", () => {
   // The 想法/回收站 tab now persists across view switches (inbox.ts `active` is module
   // scope) and all specs share one app process — leaving this describe on 回收站 would
   // hide later specs' 想法-list assertions. Reset to 想法 on the way out.
   after(async () => {
-    await showTab("tab-ideas");
+    await inboxShow("ideas");
   });
 
   it("带标签想法删除 → 进回收站 → 还原回想法列表 → 再删 → 彻底删除真销毁", async () => {
     const id = await seedProcessedTaskless("E2E-回收-甲");
 
     // Soft-delete from the 想法 list (tagged → 软删): the card leaves; the note is archived.
-    await showTab("tab-ideas");
+    await inboxShow("ideas");
     let card = await $(".note*=E2E-回收-甲");
     await card.waitForExist({ timeout: 10000 });
     await inboxAction("E2E-回收-甲", "删除");
@@ -33,7 +29,7 @@ describe("灵感 · 回收站(软删 → 还原 / 彻底删除 / 清空)", () =>
     expect((await invoke("list_archived")).some((n) => n.id === id)).toBe(true);
 
     // Restore from 回收站: back to the 想法 list, gone from the trash.
-    await showTab("tab-archived");
+    await inboxShow("archived");
     card = await $(".note*=E2E-回收-甲");
     await card.waitForExist({ timeout: 10000 });
     await inboxAction("E2E-回收-甲", "还原");
@@ -43,13 +39,13 @@ describe("灵感 · 回收站(软删 → 还原 / 彻底删除 / 清空)", () =>
     expect((await invoke("list_processed")).some((n) => n.id === id)).toBe(true);
 
     // Archive again, then 彻底删除 (two-step confirm): the row is truly gone.
-    await showTab("tab-ideas");
+    await inboxShow("ideas");
     card = await $(".note*=E2E-回收-甲");
     await card.waitForExist({ timeout: 10000 });
     await inboxAction("E2E-回收-甲", "删除");
     await card.waitForExist({ reverse: true, timeout: 10000 });
 
-    await showTab("tab-archived");
+    await inboxShow("archived");
     card = await $(".note*=E2E-回收-甲");
     await card.waitForExist({ timeout: 10000 });
     await inboxAction("E2E-回收-甲", "彻底删除");
@@ -74,7 +70,7 @@ describe("灵感 · 回收站(软删 → 还原 / 彻底删除 / 清空)", () =>
     const t = topics.find((x) => x.title === "归档-E2E-孤儿-甲");
     await invoke("delete_topic", { id: t.id });
 
-    await showTab("tab-ideas");
+    await inboxShow("ideas");
     const card = await $(".note*=E2E-孤儿-甲");
     await card.waitForExist({ timeout: 10000 });
     // The card shows no chips — yet it must take the soft path, not the hard one.
@@ -94,7 +90,7 @@ describe("灵感 · 回收站(软删 → 还原 / 彻底删除 / 清空)", () =>
     await invoke("archive_note", { id: b });
     expect((await invoke("list_archived")).length).toBeGreaterThanOrEqual(2);
 
-    await showTab("tab-archived");
+    await inboxShow("archived");
     const purge = await $("button*=清空回收站");
     await purge.waitForExist({ timeout: 10000 });
     await purge.click();

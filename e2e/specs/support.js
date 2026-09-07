@@ -199,6 +199,25 @@ export async function goNotebook(view) {
   await $(`.v-${view}`).waitForExist({ timeout: 5000 });
 }
 
+// 随记视图切「想法 ↔ 回收站」。626 起这两半由顶栏那枚 `#inbox-trash-toggle` 开关切
+// (此前是 tab 条,用户面 74 / E),而 `inbox.ts` 的 `active` 是**模块态、跨视图存活**
+// ⇒ 进随记页要断言列表内容的 spec 都得先把它归位,别指望上一只留下的是想法那半
+// (同「每例开头把筛选态归位」那条纪律)。⛔ 别无条件点:它是 toggle,已经在目标那半
+// 时再点一下会切走。
+export async function inboxShow(mode) {
+  await goNotebook("inbox");
+  const btn = await $("#inbox-trash-toggle");
+  await btn.waitForExist({ timeout: 10000 });
+  // 先等首帧画完:`.active` 与计数由 `updateTabs` 同一发写出,而 markup 里计数的初值是
+  // **空的** ⇒ 非空 = 已经画过一发。读早了会把「还停在回收站」误判成「在想法」。
+  await browser.waitUntil(async () => (await (await $("#n-archived")).getText()) !== "", {
+    timeout: 10000,
+    timeoutMsg: "随记顶栏「回收站」计数一直是空的 = 首帧没画出来",
+  });
+  const onTrash = (await btn.getAttribute("class")).split(/\s+/).includes("active");
+  if (onTrash !== (mode === "archived")) await btn.click();
+}
+
 // Reset to a known-empty 想法 list so specs are order-independent. The list merges
 // 未归类 + 已归类, so clear BOTH stages. Route by STAGE (which list an idea appears
 // in), not by topics.length: a filed idea can lose all its tags — topics.e2e.js's

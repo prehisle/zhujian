@@ -73,7 +73,7 @@
 ```
 index.html, src/main.ts          捕获浮窗(纯捕捉,独立窗口)
 notebook.html, src/notebook.ts   笔记本主窗 shell(左侧栏 4 项 + 视图注册表 + 单窗导航)
-src/inbox.ts   (.v-inbox)        随记视图(想法 + 回收站两 Tab;想法列表合并未归类/已归类,标签只是元数据)
+src/inbox.ts   (.v-inbox)        随记视图(想法 + 回收站两半,顶栏一枚开关切换;想法列表合并未归类/已归类,标签只是元数据)
 src/board.ts   (.v-board)        任务看板(四列拖动流转/排序/筛选/回收站,含待确认)
 src/topics.ts  (.v-topics)       标签视图(列表计数 + 点标签行收缩展开看想法+任务 / 新建/重命名/删除/合并;data-view 内部仍叫 topics)
 src/search.ts  (.v-search)       全局搜索(跨状态按内容查找)

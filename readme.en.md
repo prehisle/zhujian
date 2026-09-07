@@ -73,7 +73,7 @@ A single-user, local-first desktop tool. Capture has almost no friction, the ori
 ```
 index.html, src/main.ts          capture slip (capture only, its own window)
 notebook.html, src/notebook.ts   main window shell (4 sidebar entries + view registry + single-window navigation)
-src/inbox.ts   (.v-inbox)        Notes view (notes + trash tabs; one merged list, tags are just metadata)
+src/inbox.ts   (.v-inbox)        Notes view (notes + trash, toggled from one header button; one merged list, tags are just metadata)
 src/board.ts   (.v-board)        task board (columns come from the DB: drag, order, filter, trash; “Columns” opens the manager)
 src/topics.ts  (.v-topics)       tags view (counts + click a row to expand notes and tasks / create, rename, delete, merge;
                                  the internal identifier is still "topics")

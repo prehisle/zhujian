@@ -26,15 +26,8 @@
 }
 /* 标题 h1 与它前面那枚朱砂方印:共享件 .view header h1(见 controls.css,339 抽出)。 */
 .v-board header .spacer { flex: 1; }
-/* header 动作按钮统一走共享 .hbtn(见 controls.css);这里只补本视图的特例。 */
-/* 归档/回收站一组:宽窗随 .spacer 靠右;换行到第二行时 margin-left:auto 接手
-   (spacer 不在该行,auto 边距才吃到剩余空间),整组仍右对齐不散。 */
-.v-board .head-tools {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 14px;
-  margin-left: auto;
-}
+/* header 动作按钮统一走共享 .hbtn、靠右那组走共享 .head-tools(都在 controls.css,
+   626 起随记页也用同一形);这里只补本视图的特例。 */
 /* 窄窗按钮塌缩(69 立、B 轮重做):**恒一行**是这里唯一要守的形 —— 掉成两行时首行只剩
    「新建任务」被 .spacer 顶到右边、其余五枚落在第二行,屏上读作「按钮乱了」(用户 2026-09-02
    点名的第一件)。
@@ -84,8 +77,8 @@
   .v-board header .hbtn:not(.active) .lbl-short { display: inline; }
 }
 .v-board header .hbtn .lbl-short { display: none; font-variant-numeric: tabular-nums; }
-.v-board .trash-toggle .tn,
-.v-board #trash-toggle .tn { font-variant-numeric: tabular-nums; opacity: 0.8; }
+/* 计数徽记 .tn 走共享件(controls.css)—— 626 之前这儿是两条只管 #trash-toggle 的私货,
+   隔壁 #seal-toggle 的那个数根本没吃到(等宽也没有)。 */
 
 /* 到期汇总(502):有逾期时整枚描成朱砂 —— 与卡片上的 due-overdue 同一套语汇
    (那儿也是朱砂),让「屏上有一处红」这件事在顶栏与卡片之间对得上。

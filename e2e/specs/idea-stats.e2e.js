@@ -1,5 +1,5 @@
 import { $, expect } from "@wdio/globals";
-import { invoke, goNotebook } from "./support.js";
+import { invoke, goNotebook, inboxShow } from "./support.js";
 
 // 60(0018 born_stage):灵感流转统计——头部一行「本周捕获 N · 转待办 X%」。
 // 纯派生数、只算不存:捕获一条涨分母,转待办涨分子;直接建的任务不进灵感统计。
@@ -35,7 +35,9 @@ describe("灵感 · 流转统计(born_stage)", () => {
     expect(future.born_inbox).toBe(promoted.born_inbox);
 
     // UI:灵感视图头部的淡字统计行(分母>0 时带比例)。
-    await goNotebook("inbox");
+    // ⚠ 走 `inboxShow("ideas")` 而不是裸 `goNotebook`:626 起这行统计在**回收站那半是收起来的**
+    // (它说的是想法那半),而 `active` 跨视图存活 ⇒ 上一只 spec 停在回收站的话这里会读到空串。
+    await inboxShow("ideas");
     const stats = await $("#idea-stats");
     await stats.waitForExist({ timeout: 5000 });
     expect(/^本周捕获 \d+ · 转待办 \d+%$/.test(await stats.getText())).toBe(true);

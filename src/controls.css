@@ -75,6 +75,23 @@
 .hbtn.on .k,
 .hbtn.active .k { color: var(--seal); border-color: var(--seal-line); }
 
+/* 顶栏靠右那一组(任务页 = 归档 + 回收站两枚钮;随记页 = 流转统计 + 回收站钮)。
+   宽窗时 `margin-left:auto` 把整组顶到右缘;**换行到第二行时也是它接手** —— 那一行里
+   没有别的 flex 项,auto 边距吃掉剩余空间,整组仍右对齐不散。
+   626 之前只有 `.v-board` 写着一份,随记页要用同一形 ⇒ 收进共享件(改这里,两页同步)。 */
+.head-tools {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 14px;
+  margin-left: auto;
+}
+
+/* 计数徽记:「归档 3」「回收站 12」那个数 —— 说的是**按下去会看到几条**,是这枚控件的
+   一部分,故与 .lbl 同色同档(622 那条「一个控件不劈两档」的判据;626 收进共享件时
+   顺手摘掉了 board 那份的 `opacity: .8` —— 它正是把同一枚钮劈成两档的形,且暗档里
+   那个数会掉到读不出)。等宽数字免得计数跳动时按钮宽度抖。 */
+.hbtn .tn { font-variant-numeric: tabular-nums; }
+
 /* 视图中央错误卡 —— 四个主视图 main 区居中态的报错框,同一件东西。
    345 之前四份 CSS 各抄一遍(与本文件头 .view header h1 那次同病:339 收标题时它就在
    隔壁,当时没扫到)。九条声明逐字相同,收进来;**max-width 刻意不收**——board 写 480、

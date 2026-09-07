@@ -80,6 +80,9 @@ type IdeaStats = { captured_week: number; born_inbox: number; converted: number 
 
 // The 想法/回收站 tabs share one card renderer; this is the union it accepts —
 // both route through row(). (146 摘掉只读的「去向」第三 tab后,Tab 收回 Mode。)
+// ⚠ 626 起屏上**没有 tab 条了** —— 切子视图的控件换成顶栏那枚「回收站」开关(与任务页
+// 同形,判据见 updateTabs 头上)。`Tab` / `active` / `switchTo` 这套内部命名照旧
+// (命名铁律:重命名只改可见中文),读的时候把「tab」读成「这一列现在显哪一半」。
 type Mode = "ideas" | "archived";
 type Tab = Mode;
 
@@ -147,17 +150,14 @@ const hm = new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit"
 // ---- timeline grouping (想法 tab) ------------------------------------------
 // dayKey/dayLabel 已提为共享件(tasktime.ts):看板归档视图的时间轴同源复用。
 
-const TABS: Tab[] = ["ideas", "archived"];
-
 const SKELETON = `
   <header data-tauri-drag-region>
     <h1>${t("inbox.title")}</h1>
-    <span class="idea-stats" id="idea-stats"></span>
+    <span class="head-tools">
+      <span class="idea-stats" id="idea-stats"></span>
+      <button class="hbtn" id="inbox-trash-toggle" type="button" title="${t("inbox.tabTrash")}"><span class="lbl" id="inbox-trash-lbl">${t("inbox.tabTrash")}</span><span class="tn" id="n-archived"></span></button>
+    </span>
   </header>
-  <nav class="tabs">
-    <button class="tab active" id="tab-ideas" data-tab="ideas">${t("inbox.tabIdeas")}<span class="tab-n" id="n-ideas"></span></button>
-    <button class="tab" id="tab-archived" data-tab="archived">${t("inbox.tabTrash")}<span class="tab-n" id="n-archived"></span></button>
-  </nav>
   <div class="filter-row" id="filter-row" hidden>
     <div class="kind-filter" id="idea-kind-filter"></div>
     <div class="time-filter" id="idea-time-filter"></div>
@@ -189,14 +189,9 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
   const kindBar = view.querySelector("#idea-kind-filter") as HTMLElement;
   const timeBar = view.querySelector("#idea-time-filter") as HTMLElement;
   const filterInput = view.querySelector("#idea-filter") as HTMLInputElement;
-  const tabEls: Record<Tab, HTMLButtonElement> = {
-    ideas: view.querySelector("#tab-ideas") as HTMLButtonElement,
-    archived: view.querySelector("#tab-archived") as HTMLButtonElement,
-  };
-  const countEls: Record<Tab, HTMLElement> = {
-    ideas: view.querySelector("#n-ideas") as HTMLElement,
-    archived: view.querySelector("#n-archived") as HTMLElement,
-  };
+  const trashToggle = view.querySelector("#inbox-trash-toggle") as HTMLButtonElement;
+  const trashLbl = view.querySelector("#inbox-trash-lbl") as HTMLElement;
+  const trashN = view.querySelector("#n-archived") as HTMLElement;
 
   // 悬停选中 + ⋯ 速查菜单 + 单键派发,统一走共享控制器(单一真相源跨视图一致)。
   const hk = createHotkeyController();
@@ -390,6 +385,9 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
 
   // ---- tab state -----------------------------------------------------------
   // `active` is module-scope (survives view switches, see its declaration).
+  // ⚠ `ideas` 那格今天**没有渲染消费者**(626 起顶栏只报回收站那个数,想法数由筛选条
+  // 第一枚 pill 给)—— 留着是因为 `leaveCard` 的加减按 Mode 通用写:卡片从想法离场时
+  // 减的就是它。⛔ 别照「没人读」把它删了,那会让离场那条路少一半账。
   const counts: Record<Tab, number> = { ideas: 0, archived: 0 };
 
   // Fingerprint of the last rendered state. refresh() runs on every window refocus
@@ -408,11 +406,19 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
   // reapply a stale offset — they start at the top.
   let restorePending = true;
 
+  // 顶栏那枚「回收站」开关(用户面 74 / E,626):与任务页的 `#trash-toggle` 同一形 ——
+  // 进去时钮变成「← 随记」并点亮,再按一下回来;计数只报回收站里有几条(想法数在筛选条
+  // 第一枚 pill 上,别在顶栏再报一遍)。⛔ 这里刻意**没有**键帽 / 视图级单键:随记的卡片
+  // 单键 `R` 是「还原」(`actionsFor` 的 archived 分支),视图键与卡片键挂的是同一个
+  // document 监听 = 一个键干两件事(board.ts::trashActionsFor 那条注释里判过的同一件事,
+  // 那边是被迫把「还原」改成 `U`)。改随记的 `R` 义 = 改用户已有的快捷键,不做。
   function updateTabs(): void {
-    for (const m of TABS) {
-      countEls[m].textContent = counts[m] > 0 ? String(counts[m]) : "";
-      tabEls[m].classList.toggle("active", active === m);
-    }
+    trashN.textContent = String(counts.archived);
+    trashToggle.classList.toggle("active", active === "archived");
+    trashLbl.textContent = active === "archived" ? t("inbox.backToIdeas") : t("inbox.tabTrash");
+    // 「本周捕获 N · 转待办 X%」说的是想法那半:回收站态收起(同看板进回收站时收起
+    // 新建 / 管理列 / 排序 / 到期汇总)。
+    statsEl.hidden = active !== "ideas";
   }
 
   function renderEmpty(mode: Tab): void {
@@ -1414,9 +1420,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
   // 文本过滤:输入即筛,走 refresh() 单一渲染路径(行为在共享件 filter-bar.ts)。
   wireFilterInput(filterInput, filter, () => void refresh());
 
-  for (const m of TABS) {
-    tabEls[m].addEventListener("click", () => switchTo(m));
-  }
+  trashToggle.addEventListener("click", () => switchTo(active === "archived" ? "ideas" : "archived"));
 
   // 视图级全局单键:N 跳到顶部「记下灵感」输入框(全屏时省得把鼠标移上去)。
   // 输入框只在「想法」tab 才有,没有时静默无操作。
