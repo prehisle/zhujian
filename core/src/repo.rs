@@ -2808,6 +2808,39 @@ mod tests {
         );
     }
 
+    /// 625(624 的 codex 实现审补的缺口):上面那只测每条目只挂**一枚**标签,于是「按标题去重」
+    /// 「只留第一枚」这两种错实现在它底下照样绿。这条把两枚同名异色标签挂在**同一条目**上,
+    /// 钉住的是**条数**与**逐枚的颜色**(标签是 M:N,同一条目挂到同名两枚是合法状态)。
+    #[test]
+    fn search_keeps_both_same_title_tags_on_one_item_with_their_own_colors() {
+        let conn = fresh_db();
+        let id = add_item(&conn, "一条挂两枚同名标签").unwrap();
+        for (tid, color, pos) in [("t1", "#c04851", "a0"), ("t2", "#4a6f8a", "a1")] {
+            conn.execute(
+                "INSERT INTO topics (id, title, color, position, created_at, updated_at) \
+                 VALUES (?1, '工作', ?2, ?3, 'c', 'c')",
+                rusqlite::params![tid, color, pos],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO item_topic (item_id, topic_id) VALUES (?1, ?2)",
+                rusqlite::params![&id, tid],
+            )
+            .unwrap();
+        }
+
+        let hits = search_items(&conn, "一条挂两枚").unwrap();
+        let topics = &hits[0].topics;
+        assert_eq!(topics.len(), 2, "同名两枚都要在,⛔ 不许按标题去重");
+        assert!(topics.iter().all(|t| t.title == "工作"));
+        // position 定序(a0 在 a1 前),所以两枚颜色的**次序**也是钉死的。
+        assert_eq!(
+            topics.iter().map(|t| t.color.as_deref()).collect::<Vec<_>>(),
+            vec![Some("#c04851"), Some("#4a6f8a")],
+            "两枚各自带各自的颜色,且按 position 定序"
+        );
+    }
+
     #[test]
     fn search_reports_sealed_status() {
         let conn = fresh_db();

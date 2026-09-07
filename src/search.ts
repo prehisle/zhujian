@@ -149,8 +149,11 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       ...hit.topics.map((tp) => {
         // 624(用户面 74 / C):有色标签在这里也画那颗点 —— 卡片(`.tag.tinted`)与筛选条
         // (`.tf-dot`)本来就画,而搜索恰恰是最需要「一眼认出是哪个标签」的地方。着色走
-        // 共享助手 `applyTagColor`(全应用一处写 `--tag-color` 与 `.tinted`),⛔ 别在这里
-        // 另抄一份。⛔ 颜色只信这枚 chip 自己带的那份(命令直接给的),别拿标题去
+        // 共享助手 `applyTagColor`(chip 族着色的那一处),⛔ 别在这里另抄一份。
+        // ⚠ 625 更正:它**不是**全应用唯一写 `--tag-color` 的地方 —— `filter-bar.ts` 与
+        // `topics.ts` 还有三处直接 `setProperty`,且那两处的 CSS 是 `background:` 而不是
+        // `color-mix()`,值域没人管(backlog「标签颜色值域」)。⛔ 别照这句注释推断「在
+        // 助手里加一道校验就全堵上了」。⛔ 颜色只信这枚 chip 自己带的那份(命令直接给的),别拿标题去
         // `list_topics` 回连:同名标签下那是任取一枚 = 静默给错色(全文在 `repo::SearchTopic`)。
         const chip = el("span", { className: "chip", textContent: tp.title });
         applyTagColor(chip, tp.color);
