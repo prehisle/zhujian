@@ -60,6 +60,14 @@
   const bodies = () => list().querySelectorAll(".tbody").length;
   const dragSiblings = () => list().querySelectorAll(".trow[data-topic]").length;
   const toggle = () => document.getElementById("topics-toggle").click();
+  // ⛔⛔ **这个判据是错的,627 实测逮到 —— 还没改,改了没法当场复验(那时机器上已装回干净包)。**
+  // app 刚起、标签面**一次都没开过**时:`#topics-new` 的 `hidden` 本来就是 false(它只在合并态里
+  // 才被置 true),而面其实是关着的 ⇒ 这里返 true ⇒ 下面那句「开着就先收起来」反而把面**打开**,
+  // 随后 `toggle()` 又把它**关上**,整支从第一格起全跑偏。
+  // 今天它没红,只因为跑之前多半已经有人手动开过那个面。
+  // ⭐ 正确判据 = **看得见没有**:`!!document.getElementById("topics-list").offsetParent`
+  // (`cdp-acceptance-topic-kids.js` 用的就是这条;本页不走 `body.pane-open`,别照抄别处那五支)。
+  // ⇒ 修它连同「播的种落在视口外」「按全库数而不是按自己播的种数」一起做,账在 backlog 用户面 75。
   const paneOpen = () => !document.getElementById("topics-new").hidden;
 
   let full = null, empty = null, note = null, task = null;
