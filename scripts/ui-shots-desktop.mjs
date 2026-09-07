@@ -385,7 +385,10 @@ const exeInfo = assertExeIsFresh();
 // 每趟都从零起:库、window-state、WebView2 profile 全删掉,免得「上一趟留下的档」
 // 变成判读的隐藏入参(e2e 那三处清理同一个道理)。
 rmSync(DB, { force: true });
-for (const side of [".backup.json", ".backup-auto.json", ".backup-staging", ".backups"]) {
+// ⚠ `-wal` / `-shm` / `.writer.lock` 跟着一起删 —— 只删主库的话,下一趟是**新库配一份旧
+// WAL**(收尾实测那份 wal 有 1.4 MB)。SQLite 认 salt、多半自己丢掉它,但「多半」不是判据,
+// 而上面那句「每趟都从零起」得是真话。
+for (const side of ["-wal", "-shm", ".writer.lock", ".backup.json", ".backup-auto.json", ".backup-staging", ".backups"]) {
   rmSync(`${DB}${side}`, { force: true, recursive: true });
 }
 rmSync(resolve(process.env.APPDATA, "app.zhujian.notebook/.window-state.e2e.json"), { force: true });
