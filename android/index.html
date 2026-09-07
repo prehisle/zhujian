@@ -306,11 +306,12 @@
         caret-color: var(--seal);
       }
       .compose textarea::placeholder { color: var(--ink-faint); }
-      /* 562 加第三枚左侧小钮(「＋ 待办」)后量过:这一行排开 zh 档 259px / en 档 322px,
-         360px 屏上可用 332px ⇒ 两档都装得下,但**英文档只富余 10px**(还是拿桌面 Chrome
-         的字体度量量的,真机字体回退可能再宽一点)。故补两条保险:装不下时整枚钮换行,
-         ⛔ 而不是让 flex 把按钮压扁、文字折成两行(那正是用户面 23/29/61 那一族患的形)。
-         ⚠ 今天两档都不触发 wrap,这一行的样子一像素没变。 */
+      /* 562 加第三枚左侧小钮后量过、618(copy-plan 格 1d 把它从「＋ 待办 / ＋ To-do」改成
+         「＋ 清单 / ＋ Checklist」)照同一手法重量:这一行排开 zh 档 259px / en 档 **342px**
+         (改口前 en 是 322px;两趟都拿桌面 Chrome 的字体度量量的,真机字体回退可能再宽一点)。
+         360px 屏上可用 332px ⇒ **中文档仍装得下,英文档超出 10px,会触发下面那条 wrap**。
+         这正是当初补那两条保险的用处:装不下时整枚钮换行,⛔ 而不是让 flex 把按钮压扁、
+         文字折成两行(那正是用户面 23/29/61 那一族患的形)。⚠ 中文档这一行一像素没变。 */
       .compose-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; margin-top: 8px; }
       .compose-row button { white-space: nowrap; }
       /* 主按钮(朱砂实心)。⚠ 出生在捕获层,后被留言层 #cm-send 复用——改它=改两层。 */
@@ -1386,7 +1387,7 @@
         <button id="sync-all-btn" style="flex: 1" data-i18n="shell.syncAll">全部同步(逐空间追赶一次)</button>
       </div>
       <div id="sync-all-result" class="fine"></div>
-      <p class="fine" data-i18n="shell.spacesNote">空间=独立的本子,互相隔离;记录落在当前空间。新建的空间即建即用;想多端同步,在该空间的「同步」里创建账户;要把别处的账户带到手机,用「加入空间」。</p>
+      <p class="fine" data-i18n="shell.spacesNote">每个空间是一本独立的本子,记录落在当前空间。想多端同步,到该空间的「同步」里创建账户;要把别处的账户带到手机,用「加入空间」。</p>
     </section>
 
     <section id="sync" class="sync" hidden>
@@ -1465,7 +1466,7 @@
     <section id="search-pane" class="sync" hidden>
       <h2 data-i18n="shell.navSearch">搜索</h2>
       <div class="row">
-        <input id="search-input" placeholder="搜正文(连编辑历史、含回收站与归档册)" data-i18n-placeholder="shell.searchPh"
+        <input id="search-input" placeholder="搜索…" data-i18n-placeholder="shell.searchPh"
                autocapitalize="off" autocomplete="off" />
         <button id="search-btn" data-i18n="shell.searchGo">搜</button>
       </div>
@@ -1487,7 +1488,7 @@
     <section id="sealed-pane" class="sync" hidden>
       <h2 data-i18n="shell.navSealed">归档</h2>
       <div id="sealed-list" class="timeline"></div>
-      <p class="fine" data-i18n="shell.sealedNote">完成的任务「入册」后在这里安放;归档是史实,不可删除。</p>
+      <p class="fine" data-i18n="shell.sealedNote">归档的任务在这里,可查、不可删。</p>
     </section>
 
     <!-- 标签管理面(190,安卓精简版):拖手柄调顺序(1c)+ 点「类型」标自由文本类型(kind)
@@ -1500,7 +1501,7 @@
         <button id="topics-new" data-i18n="topics.newBtn">+ 新建标签</button>
       </div>
       <div id="topics-list"></div>
-      <p class="fine" data-i18n="shell.topicsNote">按住左侧 ⠿ 拖动调顺序;点名字改名、点色点改颜色、点「类型」给标签标个类型(如「人名」)——这些改动都会同步到其它设备。点条数看这枚标签名下有什么。</p>
+      <p class="fine" data-i18n="shell.topicsNote">拖 ⠿ 调顺序。改名、颜色和类型会同步到别的设备;点条数看标签下有什么。</p>
     </section>
 
     <!-- 146:seg 两态删除——输入落点=当前主视图(灵感面记灵感/任务面记待办),
@@ -1517,7 +1518,7 @@
         <button id="compose-photo" class="ghost cimg" type="button" data-i18n="shell.takePhoto">＋ 拍照</button>
         <!-- 562:往正文里起一条待办项(手机没有 Ctrl,桌面那记 Ctrl+L 在这一端是一枚钮)。
              第二项起不用再点它——回车会自己续出下一条。 -->
-        <button id="compose-todo" class="ghost cimg" type="button" data-i18n="shell.insertTodo">＋ 待办</button>
+        <button id="compose-todo" class="ghost cimg" type="button" data-i18n="shell.insertTodo">＋ 清单</button>
         <button id="save" class="primary" data-i18n="shell.saveIt">记下</button>
       </div>
     </section>
@@ -1574,7 +1575,7 @@
         <button data-theme-mode="light" data-i18n="shell.themeLight">亮</button>
         <button data-theme-mode="dark" data-i18n="shell.themeDark">暗</button>
       </div>
-      <p class="fine" data-i18n="shell.appearanceNote">「自动」跟随系统的浅色 / 深色设置(手机常按日夜自动切);想固定成一种就选亮或暗。只影响这台设备,不同步到别的设备。</p>
+      <p class="fine" data-i18n="shell.appearanceNote">「自动」跟随系统。只影响这台设备。</p>
 
       <!-- 界面字号(251)。⛔ 三个元素上那枚 data-needs="textzoom" 不是装饰:没有 textZoom 桥的端
            (鸿蒙)由 main.ts 按构建期常数 HAS_TEXT_ZOOM 把**这三个一起**摘掉(用户面 33 / 471)。
@@ -1588,7 +1589,7 @@
         <button data-textsize="115" data-i18n="shell.size115">大</button>
         <button data-textsize="130" data-i18n="shell.size130">特大</button>
       </div>
-      <p class="fine" data-i18n="shell.textSizeNote" data-needs="textzoom">调整全 app 的文字大小(在系统「字体大小」的基础上叠加)。只影响这台设备,不同步到别的设备。</p>
+      <p class="fine" data-i18n="shell.textSizeNote" data-needs="textzoom">在系统字号的基础上叠加。只影响这台设备。</p>
 
       <!-- 语言(358 第②笔):与外观 / 字号同族的设备偏好,**不进同步**,也**绝不作
            计费判据**(i18n-plan §0-1:海外华人用中文界面照样是付费目标用户)。改档
