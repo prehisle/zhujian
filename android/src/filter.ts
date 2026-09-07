@@ -102,12 +102,19 @@ const expandedParents = new Set<string>();
 // 把 domain 标签按 `父/子` 前缀分组(与标签视图 topics.ts 同规:仅当存在同名父标签才算子;
 // 首尾斜杠不算)。返回顶层序(保 domain 原序)+ 每个顶层的子标签(后缀标签)。只按第一段
 // 分一层,多级斜杠不再细分;没有同名父的照平铺。
-function groupPills(
-  domain: FilterTopic[],
-): { parent: FilterTopic; kids: { topic: FilterTopic; label: string }[] }[] {
+//
+// ⭐ **本端唯一的一份**:安卓标签管理面(`android/src/topics.ts`)直接 import 它,⛔ 别
+// 在那边另抄一份 —— 这条规则在仓里已有三份(桌面 filter-bar / 桌面 topics / 本份),
+// `check-filter-parity` 三份同压,第四份只会让那张期望表再多一栏。泛型是为了让两处各自
+// 的标签类型(FilterTopic / TopicTreeItem)都喂得进来:分组只读 id 与 title。
+// ⚠ 那道闸按函数名从真源码里切片(`cutFn` 认的是 `function groupPills(`),`export` 与
+// 泛型都在它的正则之外 —— 改名 / 换写法才会让它响亮失败,那正是它该做的。
+export function groupPills<T extends { id: string; title: string }>(
+  domain: T[],
+): { parent: T; kids: { topic: T; label: string }[] }[] {
   const titles = new Set(domain.map((t) => t.title));
-  const kidsOf = new Map<string, FilterTopic[]>();
-  const tops: FilterTopic[] = [];
+  const kidsOf = new Map<string, T[]>();
+  const tops: T[] = [];
   for (const t of domain) {
     const i = t.title.indexOf("/");
     const prefix = i > 0 && i < t.title.length - 1 ? t.title.slice(0, i) : null;

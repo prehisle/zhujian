@@ -978,11 +978,33 @@
       .mhint button::before { content: ""; position: absolute; left: 0; right: 0; top: -10px; bottom: -10px; }
       .mname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .mrow.msrc { outline: 2px solid var(--seal); outline-offset: -2px; border-radius: var(--radius-sm); }
+      /* 子标签组(user-44 第六刀):`父/子` 前缀分组后,子行收在父行下方这一组里。
+         缩进 + 左导轨与展开面 .tbody 逐条同形 —— 这一端「这是上面那行的从属内容」
+         只有一种读法(.tbody 头上那条注释里写的正是这句)。⛔ 别给它 position:relative:
+         落点线的 offsetTop 以 #topics-list 为原点,换了定位祖先就全错位。
+         ⛔ 折叠走 `hidden` 属性,别新造裸类名(604 真机那条 `.empty` 被两个语义共用的判例)。 */
+      .tkids { margin-left: 26px; padding-left: 10px; border-left: 1px solid var(--line); }
+      /* 父行名字右侧的折叠箭头(同筛选条 .fcaret 挂在父 pill 尾上那形)。触区按行内纪律
+         只往垂直撑到 44(±12 负 margin 抵消,不越到相邻行);横向 flex:none 免被名字挤扁。 */
+      .tkid-caret {
+        flex: none; min-height: 44px; margin: -12px 0; padding: 0 8px;
+        display: inline-flex; align-items: center; justify-content: center;
+        font-size: 11px; color: var(--ink-faint);
+        background: none; border: 0; font-family: inherit;
+      }
+      /* ⭐ 有子标签的行:名字**只占它自己那么宽**,余量交给 .tgap —— 否则 `.tname` 的
+         `flex:1` 会把箭头顶到名字列的右端,屏上是一枚浮在空白里的小三角,认不出它属于
+         哪个名字(真机第一版实拍就是这样)。⛔ 别改用 `:has()`:这一端的 WebView 版本跨度
+         很大(<139 的机器还在用),挂了会静默退回旧观感。 */
+      .trow.has-kids .tname { flex: 0 1 auto; }
+      .tgap { flex: 1; min-width: 0; }
       /* 拖动落点指示线(朱砂),按指针位置浮在目标间隙上。 */
       .drop-line {
         position: absolute; left: 34px; right: 4px; height: 2px; margin-top: -1px;
         background: var(--seal); border-radius: var(--radius-pill); z-index: 4; pointer-events: none;
       }
+      /* 在子标签组里拖时线跟着缩进(26 组外距 + 10 组内距 + 4 行内距 + 30 手柄 = 70)。 */
+      .drop-line.in-kids { left: 70px; }
       .bar { height: 6px; border-radius: var(--radius-pill); background: var(--seal-tint); overflow: hidden; margin: 6px 0; }
       .bar > i { display: block; height: 100%; width: 0; background: var(--seal); transition: width 0.2s; }
       /* 恢复码专用:只在组边界(短横)换行、分成规整几行,别从字中间断成长蛇

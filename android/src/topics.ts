@@ -1,4 +1,10 @@
 // 标签管理面(190,安卓精简版):标签列表 + 触摸拖排序(1c)+ 点类型入口(kind)
+// + **父子层级(user-44 第六刀)**:`父/子` 前缀分组 —— 子标签收进父行下方一组、只显后缀,
+//   父行右侧一枚箭头折叠该组。⭐ 它补的是**这一端自己的不一致**:同一台手机上,筛选条
+//   (`filter.ts`)早就分父子、能折叠,标签管理面却把同一批标签摊成一串平铺全名。
+//   分组规则不在本文件里 —— 直接 import `filter.ts::groupPills`(本端唯一的一份),
+//   ⛔ 别抄第四份(仓里已有三份,`check-filter-parity` 同压)。语义仍是平的:分组只影响
+//   排版,改名 / 合并 / 删除 / 计数 / 展开面一律按全名与 id 走,一个字都不感知层级。
 // + **点名字改名(514)** + **点色点改颜色 + 面头「新建标签」(user-44 第二刀)**
 // + **删除(user-44 第三刀)**:改名态里第三枚「删除」→ 底部全局两拍确认条(cardpanel 同律,
 //   不新造确认形)。core 语义 = 只删标签投影,item_topic 链随 FK 级联消失、条目本身不动。
@@ -27,6 +33,7 @@ import {
   type TopicTreeItem,
 } from "./api";
 import { setColumns, stageLabel } from "./columns";
+import { groupPills } from "./filter";
 import { t } from "./i18n";
 import { $, confirmBar, esc, fmtWhen, showBar, showError } from "./ui";
 
@@ -48,6 +55,12 @@ let tasksByTopic = new Map<string, TaskItem[]>(); // topic id → 挂着它的�
 // 屏上摊开两三份内容就只剩滚动了,而这一族既有的编辑态(改名/颜色/类型)本来就都是互斥的单开。
 // ⚠ 它**不进 topicsInteracting**:只读、不怕被后台刷新重画(重画按 id 套回来即可)。
 let expandedId: string | null = null;
+// 把子标签组**收起来**的那些父标签(user-44 第六刀)。⭐ 默认展开(不在集里 = 显子行),
+// 与桌面标签视图同、与本端**筛选条相反** —— 判据是这两处的活儿不同:筛选条是一行横向
+// pill,子标签摊开会把父挤出屏,而这里是竖列表、且它是**管理**面,默认藏起来的行等于
+// 没有改名 / 删除入口。⚠ 它与 expandedId 同属只读 UI 偏好,不进 topicsInteracting
+// (后台刷新重画后按 id 套回来即可)。
+const collapsedKids = new Set<string>();
 let kindEditId: string | null = null; // 正在编辑类型的行(渲染成 input 形态)
 let renameId: string | null = null; // 正在改名的行(整行换成改名形,514)
 let colorEditId: string | null = null; // 正在挑颜色的行(整行换成调色板,user-44 第二刀)
@@ -155,14 +168,34 @@ function render(): void {
         </span>
       </article>`
     : "";
+  // 父子分组(user-44 第六刀):顶层行照旧,有子标签的紧跟一个 .tkids 组(缩进 + 左导轨,
+  // 与展开面 .tbody 同一套「这是上面那行的从属内容」的视觉语汇)。⛔ 折叠靠 `hidden` 属性,
+  // 别新造一个裸类名 —— 604 真机那条(`.empty` 被两个语义共用)就是这么咬人的。
   box.innerHTML =
     createRow +
-    rows
-      .map((tp) => {
-        // 改名态:整行只剩改名 UI(手柄/计数/类型让位)——标签名可以很长,输入框要拿满整行,
-        // 而 `.tk-input` 那个 8.5em 是给「类型」这种短词的。⛔ 别把两个编辑态并排渲。
-        if (tp.id === renameId) {
-          return `<article class="trow${busy ? " off" : ""}" data-topic="${esc(tp.id)}">
+    groupPills(rows)
+      .map(
+        (g) =>
+          rowHtml(g.parent, g.parent.title, g.kids.length) +
+          (g.kids.length
+            ? `<div class="tkids"${collapsedKids.has(g.parent.id) ? " hidden" : ""}>${g.kids
+                .map((k) => rowHtml(k.topic, k.label, 0))
+                .join("")}</div>`
+            : ""),
+      )
+      .join("");
+}
+
+// 一个标签行(+ 它的展开面)。`label` 是**列表里显示的名字** —— 子行只显后缀;⛔ 别处一律
+// 仍用全名 tp.title(改名输入框、删除 / 合并话术、拖排序的 id 都不感知层级)。
+// `kidCount > 0` 的父行在名字右侧多一枚折叠箭头。
+function rowHtml(tp: TopicTreeItem, label: string, kidCount: number): string {
+  // 改名态:整行只剩改名 UI(手柄/计数/类型让位)——标签名可以很长,输入框要拿满整行,
+  // 而 `.tk-input` 那个 8.5em 是给「类型」这种短词的。⛔ 别把两个编辑态并排渲。
+  // ⚠ 输入框里是**全名**(子行也是):改名写的就是全名,把 `父/` 抹掉正是「移出这一组」
+  // 这个真操作 —— 只显后缀会让它变成一次静默的移组。
+  if (tp.id === renameId) {
+    return `<article class="trow${busy ? " off" : ""}" data-topic="${esc(tp.id)}">
           <span class="tn-edit">
             <input class="tn-input" value="${esc(tp.title)}" placeholder="${t("topics.renamePh")}"
                    autocapitalize="off" autocomplete="off" />
@@ -171,40 +204,54 @@ function render(): void {
             <button data-del="${esc(tp.id)}" class="tn-del">${t("topics.deleteBtn")}</button>
           </span>
         </article>${bodyHtml(tp)}`;
-        }
-        // 颜色编辑态:整行换成调色板(8 色 + 无色 + 取消),点色块即写(saveColor)。
-        // current 标在当前色上;「无色」块在没挂色时标 current。
-        if (tp.id === colorEditId) {
-          const cur = tp.color ?? null;
-          const swatches = PALETTE.map(
-            (hex) =>
-              `<button class="tc-swatch${cur === hex ? " current" : ""}" data-swatch="${hex}"
+  }
+  // 颜色编辑态:整行换成调色板(8 色 + 无色 + 取消),点色块即写(saveColor)。
+  // current 标在当前色上;「无色」块在没挂色时标 current。
+  if (tp.id === colorEditId) {
+    const cur = tp.color ?? null;
+    const swatches = PALETTE.map(
+      (hex) =>
+        `<button class="tc-swatch${cur === hex ? " current" : ""}" data-swatch="${hex}"
                      style="--tc:${hex}" aria-label="${hex}"></button>`,
-          ).join("");
-          return `<article class="trow${busy ? " off" : ""}" data-topic="${esc(tp.id)}">
+    ).join("");
+    return `<article class="trow${busy ? " off" : ""}" data-topic="${esc(tp.id)}">
           <span class="tc-edit">
             ${swatches}
             <button class="tc-swatch none${cur === null ? " current" : ""}" data-swatch="">${t("topics.colorNone")}</button>
             <button class="tc-cancel" data-color-cancel="1">${t("topics.colorCancel")}</button>
           </span>
         </article>${bodyHtml(tp)}`;
-        }
-        const n = counts.get(tp.id) ?? 0;
-        const editing = tp.id === kindEditId;
-        const kindZone = editing
-          ? `<span class="tk-edit">
+  }
+  const n = counts.get(tp.id) ?? 0;
+  const editing = tp.id === kindEditId;
+  const kindZone = editing
+    ? `<span class="tk-edit">
              <input class="tk-input" value="${esc(tp.kind ?? "")}" placeholder="${t("topics.kindPh")}"
                     autocapitalize="off" autocomplete="off" maxlength="40" />
              <button data-kind-save="${esc(tp.id)}">${t("topics.kindSave")}</button>
              <button data-kind-clear="${esc(tp.id)}" class="ghost">${t("topics.kindClear")}</button>
            </span>`
-          : tp.kind
-            ? `<button class="tk-badge" data-kind-edit="${esc(tp.id)}">${esc(tp.kind)}</button>`
-            : `<button class="tk-add" data-kind-edit="${esc(tp.id)}">${t("topics.kindAdd")}</button>`;
-        // 色钮常驻(无色渲空圈)—— 无色标签也要有改色入口;.tdot 记号与筛选 pill 的 .fdot 共形。
-        return `<article class="trow${busy ? " off" : ""}" data-topic="${esc(tp.id)}">
+    : tp.kind
+      ? `<button class="tk-badge" data-kind-edit="${esc(tp.id)}">${esc(tp.kind)}</button>`
+      : `<button class="tk-add" data-kind-edit="${esc(tp.id)}">${t("topics.kindAdd")}</button>`;
+  // 折叠箭头:**紧贴名字末尾**(同筛选条 —— 那边的 .fcaret 也是挂在父 pill 尾上)。
+  // ⛔ 别塞到行首:那要给**每一行**都留一个空槽才对得齐名字列,而没有子标签的行占多数。
+  // ⚠ 「紧贴」要靠 `.has-kids` 把 `.tname` 从 `flex:1` 换成 `flex:0 1 auto`、余量交给 `.tgap`
+  // —— 名字撑满整列时箭头会被推到名字列的右端,**浮在一片空白里、离它说明的那个名字半屏远**
+  // (真机第一版就是这样,屏上根本认不出它属于谁 = 又一处隐藏能力,判例:用户面 49)。
+  const collapsed = collapsedKids.has(tp.id);
+  const caret =
+    kidCount > 0
+      ? `<button class="tkid-caret" data-kids="${esc(tp.id)}" aria-expanded="${!collapsed}"
+                aria-label="${collapsed ? t("topics.kidsExpand", { n: kidCount }) : t("topics.kidsCollapse", { n: kidCount })}">${
+                  collapsed ? "▸" : "▾"
+                }</button><span class="tgap"></span>`
+      : "";
+  // 色钮常驻(无色渲空圈)—— 无色标签也要有改色入口;.tdot 记号与筛选 pill 的 .fdot 共形。
+  return `<article class="trow${kidCount > 0 ? " has-kids" : ""}${busy ? " off" : ""}" data-topic="${esc(tp.id)}">
         <span class="thandle" data-drag="${esc(tp.id)}" aria-label="${t("topics.dragHint")}">⠿</span>
-        <button class="tname" data-rename="${esc(tp.id)}" title="${t("topics.renameHint")}">${esc(tp.title)}</button>
+        <button class="tname" data-rename="${esc(tp.id)}" title="${t("topics.renameHint")}">${esc(label)}</button>
+        ${caret}
         <button class="tcolor" data-color="${esc(tp.id)}" aria-label="${t("topics.colorHint")}">${
           tp.color ? `<i class="tdot" style="--tc:${esc(tp.color)}"></i>` : `<i class="tdot none"></i>`
         }</button>
@@ -212,8 +259,6 @@ function render(): void {
                 title="${t("topics.expandHint")}">${t("topics.count", { n })}</button>
         ${kindZone}
       </article>${bodyHtml(tp)}`;
-      })
-      .join("");
 }
 
 // ---- 展开面(user-44 第五刀):点计数看这枚标签名下有什么 ----------------------
@@ -511,6 +556,29 @@ function onClick(e: Event): void {
     if (rowId) pickMerge(rowId);
     return;
   }
+  // 折叠 / 展开子标签组(user-44 第六刀)。⛔ 与下面那个「展开名下内容」是**两根轴**,
+  // 别并到一枚钮上(筛选条那边同一条判例:摊开标签行 vs 父子折叠各有各的钮,一枚钮担两义
+  // 会让「展开」有两种意思)。
+  const kidsFor = el.closest<HTMLElement>("[data-kids]")?.dataset.kids;
+  if (kidsFor) {
+    if (busy || deps.isSwitching()) return;
+    if (collapsedKids.has(kidsFor)) collapsedKids.delete(kidsFor);
+    else {
+      collapsedKids.add(kidsFor);
+      // ⛔ 收起时必须把**落在这一组里**的编辑态一并收掉:那一行藏起来了而状态还开着,
+      // topicsInteracting() 就恒真 —— 后台刷新从此被永久挡在门外,而屏上一点看不出来
+      // (同族判例:loadTopics 里「展开的标签已经不在了 ⇒ 展开态跟着作废」)。
+      // ⚠ 只收这一组的,别一刀清空:三个编辑态是单开的,清掉不相干那行等于吃掉用户
+      // 正在填的字。
+      const kids = groupPills(rows).find((g) => g.parent.id === kidsFor)?.kids ?? [];
+      const inGroup = (id: string | null): boolean => id !== null && kids.some((k) => k.topic.id === id);
+      if (inGroup(renameId)) renameId = null;
+      if (inGroup(colorEditId)) colorEditId = null;
+      if (inGroup(kindEditId)) kindEditId = null;
+    }
+    render();
+    return;
+  }
   // 展开 / 收起「名下想法 + 任务」(user-44 第五刀)。至多一枚展开 ⇒ 点别行即换过去。
   // ⚠ 与三个编辑态**不互斥**:它是只读的,展开着改名/调色都不冲突(改名行 + 下面那份内容
   // 一起看反而有用 —— 删除确认那句「N 项只摘掉这枚标签」正想让人看清是哪 N 项)。
@@ -658,11 +726,19 @@ function initDrag(box: HTMLElement): void {
     line: HTMLElement;
   } | null = null;
 
-  // 排除拖动行后的其余行(DOM 序 == position 序)。⚠ 只认带 data-topic 的行 ——
+  // **同层兄弟**(含被拖那一枚,DOM 序 == position 序)。⚠ 只认带 data-topic 的行 ——
   // 新建行(data-create-row)也是 .trow 但不是标签,混进邻居会让 `dataset.topic!`
-  // 拿到 undefined 当锚点发给 reorder。
-  const siblings = (): HTMLElement[] =>
-    [...box.querySelectorAll<HTMLElement>(".trow")].filter((r) => r !== drag?.row && !!r.dataset.topic);
+  // 拿到 undefined 当锚点发给 reorder;.tbody / .tkids 这两个容器同样滤掉。
+  // ⭐ user-44 第六刀:层 = DOM 父容器(`#topics-list` 或某个 `.tkids`),故只在同一个
+  // parentElement 里取邻居就够。⛔ **必须限层** —— 顶层与子层各自的 DOM 序才等于 position
+  // 序,跨层取到的 prev/next 会是「父在子后」这类逆序,`key_between` 当场 Err(桌面
+  // src/topics.ts 那条注释判过同一格,它的做法是跨层拖放整个忽略)。
+  // ⚠ 这一端不忽略而是**夹住**:拖出组外时落点收敛到本层两端 —— 触屏没有精准落点,
+  // 忽略掉等于「拖了半天什么也没发生」,而夹住给出的 prev/next 仍是同层的,恒合法。
+  const layerRows = (row: HTMLElement): HTMLElement[] =>
+    [...(row.parentElement?.children ?? [])].filter(
+      (r): r is HTMLElement => r instanceof HTMLElement && r.classList.contains("trow") && !!r.dataset.topic,
+    );
 
   // 按指针 y(视口坐标)找插入间隙:第一个「中线在 y 之下」的行即后邻居 next,其前一
   // 行即 prev。都不满足 = 插到列尾。beforeEl 供 drop-line 定位。**判定必须用视口坐标
@@ -673,7 +749,7 @@ function initDrag(box: HTMLElement): void {
     next: string | null;
     beforeEl: HTMLElement | null;
   } {
-    const others = siblings();
+    const others = drag ? layerRows(drag.row).filter((r) => r !== drag!.row) : [];
     let idx = others.length;
     for (let i = 0; i < others.length; i++) {
       const b = others[i].getBoundingClientRect();
@@ -692,7 +768,7 @@ function initDrag(box: HTMLElement): void {
   function positionLine(y: number): void {
     if (!drag) return;
     const { beforeEl } = targetGap(y);
-    const others = siblings();
+    const others = layerRows(drag.row).filter((r) => r !== drag!.row);
     const top = beforeEl
       ? beforeEl.offsetTop
       : others.length
@@ -710,7 +786,10 @@ function initDrag(box: HTMLElement): void {
     e.preventDefault(); // 手柄上不触发原生滚动/文本选择
     dragging = true;
     const line = document.createElement("div");
-    line.className = "drop-line";
+    // 子层的落点线跟着组一起缩进(否则它横在导轨左边,读起来像在顶层落)。⚠ 线仍挂在
+    // #topics-list 上(定位基是它:`position: relative`)——⛔ 别把 .tkids 也设成定位元素,
+    // 那会让 positionLine 的 offsetTop 换一个原点。
+    line.className = row.parentElement === box ? "drop-line" : "drop-line in-kids";
     box.appendChild(line);
     drag = { id: handle.dataset.drag!, row, pointerId: e.pointerId, startY: e.clientY, line };
     row.classList.add("dragging");
@@ -732,6 +811,13 @@ function initDrag(box: HTMLElement): void {
     if (!drag || e.pointerId !== drag.pointerId) return;
     const { id, row, line } = drag;
     const { prev, next } = targetGap(e.clientY);
+    // 现有邻居要在 row 还在原位时读(下面才清 drag)。⛔ 别再拿 `rows` 的扁平序算 ——
+    // user-44 第六刀起它与屏上的行序不再一一对应(子标签收在父行下方的组里),扁平序里
+    // 一枚顶层标签的邻居可能是**别人家的子标签**,那样「原地未动」这一格恒判假。
+    const all = layerRows(row);
+    const cur = all.indexOf(row);
+    const curPrev = cur > 0 ? all[cur - 1].dataset.topic! : null;
+    const curNext = cur >= 0 && cur < all.length - 1 ? all[cur + 1].dataset.topic! : null;
     row.style.transform = "";
     row.classList.remove("dragging");
     line.remove();
@@ -739,9 +825,6 @@ function initDrag(box: HTMLElement): void {
     dragging = false;
     // prev/next 已排除拖动行本身,故只需拒「原地未动」:落点两侧恰是拖动行现有邻居。
     if (cancelled) return;
-    const cur = rows.findIndex((r) => r.id === id);
-    const curPrev = cur > 0 ? rows[cur - 1].id : null;
-    const curNext = cur < rows.length - 1 ? rows[cur + 1].id : null;
     if (prev === curPrev && next === curNext) return; // 没挪
     void commitReorder(id, prev, next);
   }
@@ -775,6 +858,7 @@ export function resetTopicsForSpaceChange(): void {
   counts = new Map();
   tasksByTopic = new Map();
   expandedId = null; // 展开的是上一个空间的标签,跟着作废
+  collapsedKids.clear(); // 同上:收起的是上一个空间那些父标签的 id
   kindEditId = null;
   renameId = null;
   colorEditId = null;

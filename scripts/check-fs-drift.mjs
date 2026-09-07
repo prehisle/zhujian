@@ -90,6 +90,7 @@ const ALLOW = [
   { file: "src/filter-bar.css", selector: ".tf-pill.child::before", value: "11px", why: "content:\"↳\" 层级指示字形,当图标用" },
   { file: "android/index.html", selector: ".fpill.child::before", value: "11px", why: "同上,安卓那份" },
   { file: "android/index.html", selector: ".fcaret", value: "11px", why: "展开/收起箭头字形" },
+  { file: "android/index.html", selector: ".tkid-caret", value: "11px", why: "同上,标签管理面那枚(与 .fcaret 同一记号)" },
   { file: "notebook.html", selector: ".space-caret", value: "9px", why: "▾ 空间下拉箭头" },
   { file: "src/filter-bar.css", selector: ".tf-caret", value: "9px", why: "▸/▾ 过滤条箭头" },
   { file: "src/topics.css", selector: ".v-topics .topic-caret", value: "10px", why: "▸ 标签展开箭头" },
