@@ -92,11 +92,18 @@
   position: relative;
   z-index: 1;
 }
+/* ⭐ 622(用户面 74 / A2,用户拍板):这一族的判据是「**同屏别处拿不到的信息升一档,
+   旁边内容的摘要留淡**」。未选中的 tab 两条都占:它是**能点的控件**(§3.8 能按的不该是
+   屏上最淡的),而 `.tab-n` 是这枚控件的一部分,只升字不升数会把一个控件劈成两档。
+   ⛔ 纯计数(`.tf-n` / `.col-count` / `.topic-count` / 搜索的「N 条匹配」)**刻意留 `--ink-faint`**
+   —— 它们说的是旁边就摆着的那堆东西,数一眼就有;全升会把三档层次压成两档(343 否掉
+   「按令牌名下禁令」时点名要保的就是这层)。四条出路的代价表在 progress-log 621,
+   拍板与改后读数在 622。 */
 .v-inbox .tab {
   font-family: var(--font-serif);
   font-size: var(--fs-14);
   letter-spacing: 0.02em;
-  color: var(--ink-faint);
+  color: var(--ink-soft);
   background: transparent;
   border: 0;
   border-bottom: 2px solid transparent;
@@ -108,14 +115,16 @@
   gap: 6px;
   transition: color 0.14s, border-color 0.14s;
 }
-.v-inbox .tab:hover { color: var(--ink-soft); }
+/* ⚠ 静息已经是 --ink-soft(见上),hover 再写 soft 就是**空规则** ⇒ 往 --ink 走一档
+   (照 337「hover 一律往墨的方向压」);与 .active 同色是有意的 —— hover 预演选中态。 */
+.v-inbox .tab:hover { color: var(--ink); }
 .v-inbox .tab.active { color: var(--ink); border-bottom-color: var(--seal); }
 .v-inbox .tab-n {
   font-family: var(--font-sans);
   font-size: var(--fs-12);
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.04em;
-  color: var(--ink-faint);
+  color: var(--ink-soft);
 }
 .v-inbox .tab.active .tab-n { color: var(--seal); }
 
@@ -144,7 +153,7 @@
   font-family: var(--font-sans);
   font-size: var(--fs-12);
   letter-spacing: 0.05em;
-  color: var(--ink-faint);
+  color: var(--ink-soft);
   margin: 2px 0 9px;
 }
 /* the node on the axis, aligned to the rail centre (x=7); paper halo punches a
@@ -205,7 +214,7 @@
   margin-top: 7px;
   font-size: var(--fs-12);
   letter-spacing: 0.03em;
-  color: var(--ink-faint);
+  color: var(--ink-soft);
   font-variant-numeric: tabular-nums;
 }
 
@@ -420,7 +429,7 @@
 }
 .v-inbox .hist-time {
   font-size: var(--fs-12);
-  color: var(--ink-faint);
+  color: var(--ink-soft);
   letter-spacing: 0.03em;
 }
 

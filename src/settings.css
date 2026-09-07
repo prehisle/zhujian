@@ -310,10 +310,15 @@
   align-items: center;
   gap: 8px;
 }
+/* ⭐ 622(用户面 74 / H):这一行里**只读的当前绑定此前比能按的那枚重** —— 键帽是实底
+   + `--ink`(屏上最重的一档),「更改」是淡描边 + `--ink-soft`;暗档里键帽近白、ghost 的
+   描边几乎看不见,差得更远。⇒ 两头各走一档把倒置扳回来:键帽降到 `--ink-soft`(它仍是
+   要**读**的信息,不能再低)、「更改」升到 `--ink`。⛔ 别把键帽的底和边一起摘掉 ——
+   那个盒子正是「这是一枚按键」的读法。 */
 .hkset-combo {
   font-family: var(--font-sans);
   font-size: var(--fs-12);
-  color: var(--ink);
+  color: var(--ink-soft);
   background: color-mix(in srgb, var(--ink) 6%, transparent);
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
@@ -327,20 +332,26 @@
   border-color: var(--seal);
   background: var(--seal-tint);
 }
+/* 622:静息升到 --ink(见上面 .hkset-combo 那段;备份页那两枚动作走的也是这个类,
+   它们此前是那一页最淡的元素)。⚠ **它与共享的 `.hbtn` 静息不同色是有意的**:`.hbtn` 是
+   顶栏一排六枚里的一员(一排同权),这一枚是**本行唯一的动作**,行里的名字是 --ink、
+   说明是 --ink-soft,它再淡就轮到「静态的比能按的重」了。 */
 .hkset-change {
   font-family: var(--font-serif);
   font-size: var(--fs-12);
-  color: var(--ink-soft);
+  color: var(--ink);
   background: transparent;
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-sm);
   padding: 4px 10px;
   cursor: pointer;
-  transition: background 0.14s, color 0.14s;
+  transition: background 0.14s, color 0.14s, border-color 0.14s;
 }
+/* ⚠ 静息已经是 --ink ⇒ hover 不能再靠**字色**说话(那会是空规则):底走 337 那道 6% 水痕,
+   边框借 .hbtn hover 的朱砂细线,两个信号都在。 */
 .hkset-change:hover {
   background: color-mix(in srgb, var(--ink) 6%, transparent);
-  color: var(--ink);
+  border-color: var(--seal-line);
 }
 
 /* 行下的一句话:成功=墨绿淡提示,失败=朱砂。

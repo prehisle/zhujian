@@ -483,12 +483,17 @@
 .v-board .tcard.sealed { box-shadow: var(--card-shadow), inset 3px 0 0 var(--seal-line); }
 .v-board .tcard.sealed .ttitle::before { content: "✓ "; color: var(--seal); font-weight: 700; }
 
-/* 完成时刻(0030):已完成卡标题下一行「完成于 <日>」,弱化不抢标题(同 tl-date 的 faint)。 */
+/* 完成时刻(0030):已完成卡标题下一行「完成于 <日>」,弱化不抢标题。
+   ⭐ 622:与**同卡标题齐平**(标题本来就是 --ink-soft),此前它比标题还淡一档。
+   ⚠ 别指望这能让它「达标」—— 整张 `.tcard.done` 压着 `opacity: .62`,真 DOM 探针量出来
+   标题与这行改后同为 **2.48**(暗档 3.25),**换什么颜色都过不了底线,只有动 opacity 才行**;
+   而「做完的事退到一边」是有意的观感,用户 2026-09-07 拍板**不动**。⇒ 这里只销掉
+   「卡内莫名其妙多一层更淡」那格,不碰整卡的淡。 */
 .v-board .tcard .done-at {
   font-family: var(--font-sans);
   font-size: var(--fs-12);
   letter-spacing: 0.03em;
-  color: var(--ink-faint);
+  color: var(--ink-soft);
   margin: 3px 0 0;
 }
 
@@ -516,7 +521,7 @@
   font-family: var(--font-sans);
   font-size: var(--fs-12);
   letter-spacing: 0.05em;
-  color: var(--ink-faint);
+  color: var(--ink-soft);
   margin: 14px 0 9px;
 }
 .v-board .tl-date::before { content: "◆ "; color: var(--seal); font-size: 8px; vertical-align: 1px; }

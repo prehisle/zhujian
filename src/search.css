@@ -143,7 +143,12 @@
   letter-spacing: 0.03em;
   border: 1px solid var(--line-strong);
 } /* 其余声明 = 共享件徽记 chip 族(controls.css,352) */
-.v-search .badge.inbox { color: var(--seal); border-color: var(--seal-line); background: var(--seal-tint); }
+/* ⭐ 622(用户面 74 / D):`inbox` 与 `processed` 的**字一模一样**(两枚都是「随记」),
+   此前只有颜色不同 —— 而那颜色借的是全局强调色朱砂,一列灰徽记里那枚红的读作「这条重要 /
+   选中了」,不是「这条还没整理」。⛔ 更要紧的是 §4.1 术语表把「未归类 / 已归类 / processed」
+   列为**已废概念** ⇒ 不许给它一个词让它复活,只能把这层颜色去掉。收成同一形之后,朱砂在
+   这一族里只剩 `sealed`(归档)一处,而那枚的**字**本来就与别的不同 ⇒ 颜色不再重复一个词。 */
+.v-search .badge.inbox,
 .v-search .badge.processed { color: var(--ink-soft); }
 .v-search .badge.task { color: var(--ink); background: color-mix(in srgb, var(--ink) 5%, transparent); }
 .v-search .badge.archived { color: var(--ink-faint); font-style: italic; }
@@ -163,7 +168,7 @@
   flex: none;
   font-size: var(--fs-12);
   letter-spacing: 0.03em;
-  color: var(--ink-faint);
+  color: var(--ink-soft);
   font-variant-numeric: tabular-nums;
 }
 

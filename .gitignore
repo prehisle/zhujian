@@ -56,6 +56,10 @@ target/
 # ui-shots-desktop.mjs 的 profile:与上面同一个防漏理由,另开一份是为了两支能同时跑
 # (它每趟起手就删掉重建 ⇒ 明暗/语言/上次视图这些 localStorage 档不会变成隐藏入参)
 /.ui-shots-profile/
+# 同族:.zjshots/ 里那些一次性探针自起 app 时用的 profile。⚠ 622 实撞过 —— 探针跑完
+# 目录还在,一条 `git add -A` 把 **155 个文件**(含 BrowserMetrics / Crashpad)扫进提交,
+# 而公开仓是从这棵树导出的。⛔ 别指望「跑完记得删」:那是纪律不是闸。
+/.ui-shots-profile-probe/
 
 # 本地数据库 / 临时
 *.sqlite3
