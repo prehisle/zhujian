@@ -76,10 +76,14 @@ const collapsedKids = new Set<string>();
 // switch returns you to where you were reading (same rationale as inbox.ts savedScroll).
 let savedScroll = 0;
 
+// ⭐ 623(用户面 74 / B4):header 两枚钮的字都包在 `.lbl` 里 —— 此前「新建标签」是裸文本
+// 节点、「合并标签」有 `.lbl`,谁将来按 `.lbl` 给本页写窄屏塌缩(看板 header 正是那么写的)
+// 就只塌得动一半。今天是纯 markup 对称:`.lbl` 的样式规则全部锁在 `.v-board` 下,本页一
+// 个像素都不动;`setMerging` 改的是 `#merge-toggle` 那枚的 `.lbl`,与这枚无关。
 const SKELETON = `
   <header data-tauri-drag-region>
     <h1>${t("topics.header")}</h1>
-    <button id="new-toggle" class="hbtn" type="button">${t("topics.newTag")} <kbd class="k">N</kbd></button>
+    <button id="new-toggle" class="hbtn" type="button"><span class="lbl">${t("topics.newTag")}</span> <kbd class="k">N</kbd></button>
     <button id="merge-toggle" class="hbtn" type="button"><span class="lbl">${t("topics.mergeTags")}</span> <kbd class="k">M</kbd></button>
   </header>
   <div id="newform" class="newform" hidden>

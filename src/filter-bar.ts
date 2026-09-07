@@ -204,9 +204,16 @@ export function renderFilterPills(
     };
     return b;
   };
+  // 623(用户面 74 / F):轴名小标,与类型轴 / 时间轴同形同皮肤 —— 此前三条轴里只有这一条
+  // 没名字,pill 左缘比另两行短一个轴名的宽度(每张随记 / 任务图上都看得见)。
+  // ⚠ 它不是 pill:check-filter-parity 的 serPills 只序列化 BUTTON 子节点,故这枚 span 不进
+  // 那道闸的对账面,两端 pill 序列照旧逐字可比。
+  const axis = document.createElement("span");
+  axis.className = "tf-axis";
+  axis.textContent = t("filter.topicAxis");
   const pills: HTMLElement[] = kindActive
-    ? [pill("all", t("filter.all"), scoped.length)]
-    : [pill("all", t("filter.all"), items.length), pill("none", t("filter.none"), none)];
+    ? [axis, pill("all", t("filter.all"), scoped.length)]
+    : [axis, pill("all", t("filter.all"), items.length), pill("none", t("filter.none"), none)];
 
   // 一个标签是否该出现:有条目 或 正被选中(选中的绝不因 0 计数消失)。
   const visible = (tp: FilterTopic) => (counts.get(tp.id) ?? 0) > 0 || f.topics.includes(tp.id);

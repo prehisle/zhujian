@@ -152,6 +152,13 @@ function renderPanel(panel: HTMLDivElement, initial: SettingsCat): void {
   show(initial);
 }
 
+// ⭐ **623(用户面 74 / G):单行组不写行名** —— 一组只有一行控件时,`.settings-title` 那句
+// 已经是这一格的名字,行里再写一遍就是把同一个词说了两遍(改前:语言/语言、界面字号/字号、
+// 本机别名/名字三组字面重复,外加外观/明暗、截止提醒/每日提醒两组近义重复)。⇒ 通用页这
+// 五组的 `.hkset-name` 全摘掉,控件靠 `.hkset-row` 那条自动外边距照旧右对齐。
+// ⛔ **多行组照写行名**(快捷键两行、备份那节):那里行名是「这一行是哪一样」的唯一读法。
+// ⇒ 判据是「**这一组有几行**」,不是「读着重不重复」—— 备份那节的组名与首行同为「备份」,
+// 623 摘过一次又照图退回来了(理由记在 backup.ts 那行旁边)。
 function buildPane(cat: SettingsCat, pane: HTMLElement): void {
   if (cat === "hotkeys") {
     pane.append(
@@ -280,7 +287,7 @@ function buildAliasRow(): HTMLDivElement {
   const ctrls = document.createElement("div");
   ctrls.className = "alias-ctrls";
   ctrls.append(input, save);
-  line.append(el("div", "hkset-name", t("settings.aliasName")), sub, ctrls);
+  line.append(sub, ctrls); // 623:单行组不写行名(见 buildPane 头上那条)
 
   const wrap = document.createElement("div");
   wrap.append(line, msg);
@@ -352,7 +359,7 @@ function buildReminderRow(): HTMLDivElement {
   const ctrls = document.createElement("div");
   ctrls.className = "remind-ctrls";
   ctrls.append(seg, time, test);
-  line.append(el("div", "hkset-name", t("reminder.rowName")), ctrls);
+  line.append(ctrls); // 623:单行组不写行名(见 buildPane 头上那条)
 
   const wrap = document.createElement("div");
   wrap.append(line, msg);
@@ -386,7 +393,7 @@ function buildThemeRow(): HTMLDivElement {
   paintSeg();
   seg.append(...btns);
 
-  line.append(el("div", "hkset-name", t("settings.themeName")), seg);
+  line.append(seg); // 623:单行组不写行名(见 buildPane 头上那条)
   return line;
 }
 
@@ -421,7 +428,7 @@ function buildLangRow(): HTMLDivElement {
   paintSeg();
   seg.append(...btns);
 
-  line.append(el("div", "hkset-name", t("settings.langTitle")), seg);
+  line.append(seg); // 623:单行组不写行名(见 buildPane 头上那条)
   return line;
 }
 
@@ -445,7 +452,7 @@ function buildZoomRow(): HTMLDivElement {
   const ctrls = document.createElement("div");
   ctrls.className = "zoom-ctrls";
   ctrls.append(minus, val, plus, reset);
-  line.append(el("div", "hkset-name", t("settings.zoomName")), ctrls);
+  line.append(ctrls); // 623:单行组不写行名(见 buildPane 头上那条)
   return line;
 }
 

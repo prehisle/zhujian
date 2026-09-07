@@ -166,6 +166,10 @@ function backupHalf(body: HTMLElement, st: BackupStatus): HTMLElement {
           err.textContent = String(e);
         });
     });
+    // ⛔ 623 试过摘掉这枚行名(「备份 / 备份」与组标题重复),**看图之后退回来了**:本节
+    // 从来不是单行组 —— 它下面永远跟着「从备份恢复」那行,摘了就成「一行有名一行没名」;
+    // 而且 `.hkset-desc` 是 order:2 独占一行,没了行名之后「还没设置」会掉到按钮**下面**、
+    // 孤零零挂着。⇒ 按 settings.ts buildPane 那条判据(看这一组有几行),多行组照写行名。
     row.append(el("div", "hkset-name", t("backup.title")), el("div", "hkset-desc", t("backup.notSet")), go);
     wrap.append(row, err);
     return wrap;

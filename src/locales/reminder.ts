@@ -7,7 +7,6 @@ import { defineMessages } from "./entry";
 export const reminder = defineMessages({
   "reminder.title": { zh: "截止提醒", en: "Due reminder" },
   "reminder.sub": { zh: "应用开着时,每天到点用一条系统通知报今天到期与已逾期的任务数;应用没开不会响。开关与时刻只属于这台设备,不同步。", en: "While the app is running, one system notification a day reports how many tasks are due today or overdue; nothing fires when the app is closed. The switch and time are per-device and never synced." },
-  "reminder.rowName": { zh: "每日提醒", en: "Daily reminder" },
   "reminder.on": { zh: "开", en: "On" },
   "reminder.off": { zh: "关", en: "Off" },
   "reminder.test": { zh: "试一条", en: "Send test" },
