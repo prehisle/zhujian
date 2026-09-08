@@ -183,9 +183,14 @@
       .seg button.on { color: var(--seal); background: var(--seal-tint); font-weight: 600; }
       /* 设置面里各节之间留白(.sync h2 本身没有上边距,「关于」会紧贴上一节的说明字)。 */
       #settings-pane h2:not(:first-child) { margin-top: 22px; }
+      /* ⛔ **这一族是控件,不许走 `--ink-faint`**(634,ui-consistency-plan M1):顶栏「标签 / 搜索 /
+         同步 / 设置」四枚主导航就是它,另有 compose 三枚与更新条「稍后」。判据是 A2 拍板里那条
+         **「未选中 tab 是能点的控件(§3.8),一个控件不劈两档」** —— faint 压纸面只有 2.29:1,
+         那是给纯装饰的档。⚠ 它**刻意保持无边框**:三档权重里这一档是「纯文字导航」
+         (另两档 = `.row button` 实心主钮 / `.row button.ghost` 描边次级),别给它加边框。 */
       .ghost {
         border: none; background: none; padding: 4px 6px;
-        color: var(--ink-faint); font-size: var(--fs-12); font-family: var(--font-sans);
+        color: var(--ink-soft); font-size: var(--fs-12); font-family: var(--font-sans);
       }
       /* 触区扩展(ui-audit P1 #10;codex M4 收敛):halo 只垂直扩、水平不扩(宽度本就
          够,水平扩会与同排毗邻按钮抢点);扩量按各自实高补足到 ~44px。单拍即写的
@@ -197,6 +202,15 @@
       .space-row .act::before {
         content: ""; position: absolute; left: 0; right: 0; top: -12px; bottom: -12px;
       }
+      /* ⛔ **「清空回收站」不吃上面那层 halo**:它 634 起挂 `.ghost` 是为了**降权**
+         (§2.1 / §3.8,审计 #23),而那层 halo 是给**小**控件补触区的 —— 往下外扩 9px 会吃掉它与
+         第一张卡片之间 10px 间隙里的九成,于是「点第一张卡的上沿」会落到**清空回收站**上;
+         按 §2.3 那条「落空的代价」判据,这比触区偏小更坏。⇒ 只要那一族的**外观**,不要那层外扩。
+         ⚠⚠ **但它自己也没到 44,这是既有的、633 清单里记着的账,别读成本轮判它不必达标**:
+         `.row button` = 14px 行盒 + 上下 8 padding + 1 边框,四档字号下都在 33–38 之间。
+         ⇒ 正解是**让它自己长够**(`min-height`,同 `.tname` / `.tn-input` / `#bottombar button`
+         那一形),不是靠外扩;并进 ui-consistency-plan 手机端 M4 那一轮做(那轮要上真机逐档打点)。 */
+      #trash-empty::before { content: none; }
       /* 重置确认/取消已是全宽真高 ≥40px:不继承 halo(上下条互叠会让边界含糊,codex 二审) */
       .space-row .act.reset-confirm::before, .space-row .act.reset-cancel::before { content: none; }
       .panel .acts button { position: relative; }
@@ -228,11 +242,11 @@
         color: var(--ink); font-family: var(--font-sans); padding: 0;
       }
       .space-row.current .sname { color: var(--seal); font-weight: 600; }
-      .space-row .tag { flex: none; font-size: var(--fs-12); color: var(--ink-faint); }
+      .space-row .tag { flex: none; font-size: var(--fs-12); color: var(--ink-soft); }
       .space-row .tag.warn { color: var(--seal); }
       .space-row .act {
         flex: none; border: none; background: none; padding: 2px 6px;
-        color: var(--ink-faint); font-size: var(--fs-12); font-family: var(--font-sans);
+        color: var(--ink-soft); font-size: var(--fs-12); font-family: var(--font-sans);
       }
       .space-row input.rename {
         flex: 1; min-width: 0; padding: 4px 8px;
@@ -420,7 +434,7 @@
       }
       .cm-meta {
         display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
-        margin-top: 4px; font-size: var(--fs-12); color: var(--ink-faint);
+        margin-top: 4px; font-size: var(--fs-12); color: var(--ink-soft);
       }
       /* 作者口径与卡片署名 chip 刻意不同(identity.ts authorLabel):留言是逐条的话,
          不知道谁说的就读不懂,故没起别名也显 id 前 6 位、搬迁来的显「作者未知」。
@@ -449,7 +463,7 @@
          (同 .panel .acts button 的手法),12px 的字不能只给 12px 的靶。N=0 不渲染。 */
       .cm-badge {
         position: relative; border: none; background: none; padding: 0;
-        color: var(--ink-faint); font-size: var(--fs-12); font-family: var(--font-sans);
+        color: var(--ink-soft); font-size: var(--fs-12); font-family: var(--font-sans);
       }
       .cm-badge::before { content: ""; position: absolute; left: -8px; right: -8px; top: -12px; bottom: -12px; }
       /* 未读态(0038):右上角一枚朱砂点,开过留言层即消(::before 是触区,点走 ::after)。 */
@@ -578,7 +592,8 @@
          ⚠ 病根是**两个毫不相干的语义共用一个裸类名**;同族风险还剩一枚 `.fpill.child` ——
          今天没有通用 `.child` 规则纯属运气,不是设计。 */
       p.empty { text-align: center; margin: 40px 0; }
-      .muted { color: var(--ink-faint); font-size: var(--fs-13); }
+      /* 空态那句话(「回收站是空的」…)= 这个区的**全部说明**,照 336 判例走 soft,别用 faint(634)。 */
+      .muted { color: var(--ink-soft); font-size: var(--fs-13); }
       .card {
         display: flex; gap: 10px; align-items: flex-start;
         background: var(--raised);
@@ -646,9 +661,11 @@
         100% { box-shadow: 0 0 0 10px transparent; border-color: var(--line); }
       }
       .card .body { flex: 1; min-width: 0; }
+      /* 时间戳走 soft 不走 faint(634):A2 用户拍板的「乙」= **同屏别处拿不到的信息升一档**,
+         日期时间正是那一类;纯计数(`.fn` / `.tcount`)照旧留 faint,别一起改。 */
       .card footer {
         display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
-        margin-top: 4px; font-size: var(--fs-12); color: var(--ink-faint);
+        margin-top: 4px; font-size: var(--fs-12); color: var(--ink-soft);
       }
       /* 条目署名(0033):和时间戳同一档存在感,刻意不用标签 chip 的边框/底色——
          署名不是可点、可筛的实体,只是一句「谁记的」。别名上限 200 字节,截断而不是
@@ -659,7 +676,7 @@
         white-space: nowrap;
         overflow: hidden; text-overflow: ellipsis; max-width: 10em; min-width: 0;
       }
-      .sig-chip { color: var(--ink-faint); }
+      .sig-chip { color: var(--ink-soft); }
       .sig-chip::before, .cm-author::before { content: "·"; margin-right: 4px; opacity: 0.6; }
       .pill {
         padding: 1px 8px; border-radius: var(--radius-pill);
@@ -776,7 +793,9 @@
       .sync h2 { font-size: var(--fs-13); color: var(--ink-soft); margin: 0 0 8px; font-weight: 600; }
       .sync .state { font-size: var(--fs-13); margin-bottom: 8px; }
       .sync .state .err { color: var(--seal); word-break: break-all; }
-      .sync .fine { font-size: var(--fs-12); color: var(--ink-faint); margin: 8px 0 0; }
+      /* 面板与设置面**全部**说明句都是它 ⇒ 照 336 判例(「那句话是这个区的全部说明,轻到读不出来
+         就不是提示了」)走 soft;桌面那半 621 已经这么改过(`.settings-sub` 一族),634 补手机端。 */
+      .sync .fine { font-size: var(--fs-12); color: var(--ink-soft); margin: 8px 0 0; }
 
       /* 设备名单(identity-plan §5.8,367 片⑤):一行一台,收起态只给名字与短 id,
          点开才是完整 26 位 + §5.9 那段说明 + 操作。竖屏摆不下一行摊开,而说明恰恰是
@@ -923,9 +942,9 @@
         flex: 1; min-width: 0; margin: 0; font-size: var(--fs-13); color: var(--ink);
         overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
       }
-      /* 时刻:与卡片 footer 里的 <time> 同档(faint),它是元数据不是要读的正文。
-         列名与空态是要读的 ⇒ soft(§2.1)。 */
-      .tb-when { flex: none; font-size: var(--fs-12); color: var(--ink-faint); }
+      /* 时刻:与卡片 footer 里的 <time> **同档**(634 起两处都是 soft —— A2「乙」把日期时间判为
+         「同屏别处拿不到的信息」)。⚠ 这条注释钉的是**两处同档**这件事,改一处就得改另一处。 */
+      .tb-when { flex: none; font-size: var(--fs-12); color: var(--ink-soft); }
       .tb-col { flex: none; font-size: var(--fs-12); color: var(--ink-soft); }
       .tb-empty { margin: 0; font-size: var(--fs-12); color: var(--ink-soft); }
       /* 触区不在这条规则里:这两枚与改名 / 合并那几枚小药丸共用一条 halo,住 `.tn-edit button`
@@ -934,7 +953,7 @@
         flex: none; font-size: var(--fs-12); padding: 3px 10px; border-radius: var(--radius-pill);
         border: 1px solid var(--line-strong); background: none;
       }
-      .tk-add { color: var(--ink-faint); }
+      .tk-add { color: var(--ink-soft); } /* 控件,不劈两档(634,同 `.ghost` 那条) */
       .tk-badge { color: var(--seal); border-color: var(--seal-line); background: var(--seal-tint); font-weight: 600; }
       /* ⭐ gap 12 是**量出来的判据,不是审美值**(632 补;⛔ 别当富余往回调):这一行里「存」「清」
          是单字钮、横向只有 32.5~39.6 宽,补不到 44(横向撑 halo 会让相邻两枚互叠,理由在下面那条
@@ -1068,7 +1087,7 @@
       }
       .gate h2 { color: var(--seal); font-size: var(--fs-16); margin: 0 0 12px; }
       .gate p { font-size: var(--fs-14); }
-      .gate .fine { font-size: var(--fs-12); color: var(--ink-faint); }
+      .gate .fine { font-size: var(--fs-12); color: var(--ink-soft); }
       .gate .gate-msg {
         font-size: var(--fs-13); word-break: break-all; color: var(--ink-soft);
         background: var(--raised); border: 1px solid var(--line);
@@ -1122,7 +1141,7 @@
       .panel button:disabled { opacity: 0.45; }
       .panel .lane {
         display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
-        font-size: var(--fs-12); color: var(--ink-faint);
+        font-size: var(--fs-12); color: var(--ink-soft);
       }
       .panel .lane .lab { flex: none; }
       .panel .pillrow { display: inline-flex; gap: 5px; flex-wrap: wrap; }
@@ -1343,8 +1362,16 @@
       }
       /* ghost 在 .row 里被 .row button(0,1,1 > 0,1,0)盖成朱底白字,「连接信息」
          「空间…」与未配置态两条辅路全渲成通栏主按钮——133 的「一主两辅」在安卓端
-         被压塌(143 评测实锤);按更高优先级把低调外观钉回。 */
-      .row button.ghost { background: none; color: var(--ink-soft); font-weight: 400; }
+         被压塌(143 评测实锤);按更高优先级把低调外观钉回。
+         ⛔ **边框那一半 634 才补上,别再拿掉**:`.row button` 写死 `border:none` 配朱砂底,
+         而这条此前只把底与字色撤了 ⇒ 「辅」在屏上是**一行居中的灰字**,看不出能按
+         (同步面首屏四个可点目标读作「两个按钮 + 两行说明」)。边框取的是仓里已有的那一形
+         (`.tk-edit button.ghost` 同款 `1px solid var(--line-strong)`)。
+         ⚠ `.row` 是 `align-items: stretch` ⇒ 多出的 2px 由整行一起长,不会与同排主钮错位。 */
+      .row button.ghost {
+        background: none; color: var(--ink-soft); font-weight: 400;
+        border: 1px solid var(--line-strong);
+      }
       .row button:disabled { opacity: 0.5; }
       .step { display: flex; gap: 8px; padding: 6px 0; border-top: 1px dashed var(--line); font-size: var(--fs-13); }
       .step:first-child { border-top: none; }
@@ -1381,7 +1408,7 @@
         padding: 8px 0; border-top: 1px dashed var(--line); font-size: var(--fs-13);
       }
       .bkup-item-name { flex: 1 1 100%; min-width: 0; word-break: break-all; color: var(--ink); }
-      .bkup-item-meta { flex: none; font-size: var(--fs-12); color: var(--ink-faint); }
+      .bkup-item-meta { flex: none; font-size: var(--fs-12); color: var(--ink-soft); }
       .bkup-item-state { flex: 1 1 auto; min-width: 0; font-size: var(--fs-12); color: var(--ink-soft); }
       .bkup-item-state.warn-ink { color: var(--seal); }
       .bkup-item button {
@@ -1541,8 +1568,13 @@
          彻底删/清空都是两拍确认。 -->
     <section id="trash-pane" class="sync" hidden>
       <h2 data-i18n="shell.navTrash">回收站</h2>
+      <!-- ⛔ **这枚必须是次级(`ghost`),别改回主钮**(634):§2.1「危险色只出现在破坏性确认的
+           **执行钮**上,不用于常驻入口」,§3.8 把「清空回收站」列在**重破坏**一档 —— 而 2026-07-17
+           审计 #23 的【违例】原句点的就是这里(通栏朱红、常驻在列表最上方)。桌面同一个动作早就是
+           次级(`board.ts` 的 ghost / `inbox.ts` 的 `.no`),手机端 634 才跟上。
+           ⚠ 两拍确认一直都有(`panes.ts::confirmBar`),这一改动的是**权重**不是保险。 -->
       <div class="row">
-        <button id="trash-empty" style="flex: 1" data-i18n="shell.emptyTrash">清空回收站</button>
+        <button id="trash-empty" class="ghost" style="flex: 1" data-i18n="shell.emptyTrash">清空回收站</button>
       </div>
       <div id="trash-list" class="timeline"></div>
       <p class="fine" data-i18n="shell.trashNote">删除的记录先到这里;恢复回到原来的位置;彻底删除后无法找回。</p>
