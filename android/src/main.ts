@@ -1427,15 +1427,21 @@ let paneHas = { trash: false, sealed: false };
  *  ——popstate/closePaneNow 关面后必须回到 mode 高亮,不能清光。显形也收在这里:
  *  该面正开着时钮保显(否则清空回收站的那一刻,高亮着的关面入口凭空消失)。 */
 function renderBottomBar() {
+  let anyPane = false;
   document.querySelectorAll<HTMLButtonElement>("#bottombar button").forEach((b) => {
     const pane = b.dataset.pane;
-    if (pane === "trash" || pane === "sealed")
+    if (pane === "trash" || pane === "sealed") {
       b.hidden = !paneHas[pane] && activePane !== pane;
+      if (!b.hidden) anyPane = true;
+    }
     b.classList.toggle(
       "active",
       activePane !== null ? b.dataset.pane === activePane : b.dataset.mode === viewMode,
     );
   });
+  // 主视图 ↔ 覆盖面的分隔线(635 / M6-丙):两枚覆盖面钮**按数据显形**(408-A1),
+  // 两面都空时底栏只剩「随记 / 任务」——那时留一条孤零零的竖线比没有更糟。
+  $("nav-sep").hidden = !anyPane;
 }
 
 /** 关面回时间轴的 DOM 部分(143 拆出):popstate(返回键)与 UI 关面共用;

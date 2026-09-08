@@ -218,7 +218,16 @@ export function renderTopicPills(
     return rest;
   };
 
-  const nodes: HTMLElement[] = [];
+  // 635(ui-consistency-plan M7):轴名小标,与状态轴(main.ts renderStagePills)/ 类型轴
+  // 同形同皮肤 —— 此前三条轴里只有这一条没名字,屏上是「三条轴两条有名一条没名」的语汇不齐。
+  // ⚠ 手机端的后果比桌面 623 轻:到期汇总钮**刻意摆在状态轴名之前**(dueSummaryPill 头注)
+  // ⇒ 两行左缘本来就是齐的,这里补的只是那个名字,不是对齐。
+  // ⚠ 它不是 pill:check-filter-parity 的 serPills 只序列化 BUTTON 子节点,故这枚 span 不进
+  // 那道闸的对账面,两端 pill 序列照旧逐字可比(同桌面 filter-bar.ts 那条)。
+  const axis = document.createElement("span");
+  axis.className = "faxis";
+  axis.textContent = t("filter.topicAxis");
+  const nodes: HTMLElement[] = [axis];
   nodes.push(
     pill(t("filter.all"), f.topics.length === 0, () => onPick({ topics: [] }), kindActive ? scoped.length : items.length),
   );

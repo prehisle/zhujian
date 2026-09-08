@@ -10,8 +10,8 @@ export const filter = defineMessages({
   "filter.thatTag": { zh: "该标签", en: "that tag" },
   "filter.kindAxis": { zh: "类型", en: "Kind" },
   // 623(用户面 74 / F):标签轴此前是三条轴里唯一没有轴名的一条,pill 左缘比另两行短一个
-  // 轴名的宽度。⚠ 与 timeAxis 同款的桌面独有键(安卓筛选条另有版面账,没跟着加)——
-  // 故同样不进 CROSS_END_KEYS;哪天安卓补上再登记。
+  // 轴名的宽度。⚠ 635 起**两端都有了**(手机端 M7),已按那条注释说的进 CROSS_END_KEYS
+  // 恰等登记 ⇒ 改这枚的值就得两端一起改,否则 check-i18n-drift 当场红。
   "filter.topicAxis": { zh: "标签", en: "Tags" },
   "filter.allKinds": { zh: "全部类型", en: "All kinds" },
   "filter.pillTitle": { zh: "单击只筛此标签 · 按住 Ctrl 多选", en: "Click to filter by this tag only · Ctrl-click to multi-select" },
