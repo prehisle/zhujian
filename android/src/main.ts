@@ -383,6 +383,13 @@ let lastItems = new Map<string, TimelineItem>();
 // 守门条目,返回键触发 popstate 时关最上层;UI 主动关层则补一记 history.back() 把
 // 守门条目消掉(popSuppress 标记让 popstate 只记账不再关层),账本与屏幕恒一致。
 let histDepth = 0;
+// ⭐ 滚动位归我们自己管(79,真机 A/B 量出来的):浏览器的「历史条目自动恢复滚动位」在这
+// 本账上只会捣乱 —— 这里的 history 条目全是**守门层**(面板 / 大图 / 仪式),不是「另一个
+// 页面」,给它们各自存一个滚动位没有任何意义。而 `settleHistory()` 那记 `history.back()`
+// 一弹,浏览器就把守门条目上存的那个数(0)贴回来,**把 closePaneNow 刚还原好的位置冲掉**。
+// vivo/Android 16 实测:关面同步读到的是 1200(我们写进去的),400ms 后变 0;
+// 同一段脚本把这一行的值换成 `manual`,400ms 后仍是 1200。⇒ 两档只差这一个字。
+history.scrollRestoration = "manual";
 // popSuppress 兼任「back 在飞」标志(146 ▲▲M4):settleHistory 发出的 history.back()
 // 到对应 popstate 之间,histDepth 还没递减——这段窗口内再调 settleHistory 会看着
 // histDepth>0 又 back 一次(双弹)。settle 只在无 back 在飞时发;窗口内的开层请求
@@ -1444,6 +1451,14 @@ function renderBottomBar() {
   $("nav-sep").hidden = !anyPane;
 }
 
+/** 开面前时间轴滚到哪儿(用户面 79 / ui-guidelines §3.6 第一条:「openPane 记 scrollY,
+ *  closePaneNow 后恢复」)。⚠ 这一端的面板与时间轴共用**文档滚动**,`pane-open` 把
+ *  `.compose`/`#filterbar`/`#timeline` 一起 display:none ⇒ 文档变矮、`scrollY` 被浏览器
+ *  钳到新的文档底,**面板于是从时间轴停的那一段开始显示**(真机 CDP 量:时间轴在
+ *  `scrollTop=1200` 时开标签面,页面停在 550,标签面第一行落在视口上方 405px、前几枚在屏外)。
+ *  面板是另一堆内容,不是时间轴的续篇 ⇒ 开面归零、关面还原。 */
+let timelineScrollY = 0;
+
 /** 关面回时间轴的 DOM 部分(143 拆出):popstate(返回键)与 UI 关面共用;
  *  history 账目由调用方处置——UI 关面随后 settleHistory(),popstate 已经弹掉。 */
 function closePaneNow() {
@@ -1454,6 +1469,9 @@ function closePaneNow() {
   hideConfirmBar(); // 关面 = 放弃面内挂着的两拍确认(ui-audit P0 #4)
   for (const id of Object.values(PANE_EL)) $(id).hidden = true;
   document.body.classList.remove("pane-open"); // 恢复 compose+时间轴
+  // 还原开面前的位置 —— ⛔ 必须在上一行**之后**:时间轴还 display:none 时文档不够高,
+  // 滚过去会被当场钳回文档底(正是本条要修的那个钳)。
+  window.scrollTo({ top: timelineScrollY });
   renderBottomBar();
 }
 
@@ -1469,11 +1487,15 @@ function openPane(name: string) {
     return;
   }
   const wasOpen = activePane !== null;
+  // ⚠ 只在「从时间轴进面板」那一次记账:面换面同层,此刻的 scrollY 是**上一个面板**的
+  // 位置,记了就把时间轴那个数冲掉(关面还原到面板的偏移量 = 更怪的一跳)。
+  if (!wasOpen) timelineScrollY = window.scrollY;
   if (activePane === "settings") backup.closeBackup(); // 面换面同理(toggle 那条走 closePaneNow)
   activePane = name;
   hideConfirmBar(); // 面换面:上一面挂着的确认作废
   for (const [key, id] of Object.entries(PANE_EL)) $(id).hidden = key !== name;
   document.body.classList.add("pane-open"); // 开面板接管视图:收 compose+时间轴
+  window.scrollTo({ top: 0 }); // 面板从自己的顶部开始(79);面换面同样归零
   renderBottomBar();
   if (!wasOpen) pushLayer(); // 首层才压守门条目;面换面同层,返回键一次回时间轴
   if (name === "spaces") {
@@ -1539,6 +1561,8 @@ function onModeButton(target: ViewMode) {
 /** 空间变化的统一复位(实现审 M5):关全部面、activePane 归零、诊断缓存作废
  *  (diagLoaded 跨空间残留会把 A 空间的库信息端给 B)、低频面内容清空。 */
 function resetPanesForSpaceChange() {
+  // 新空间是另一份时间轴 ⇒ 旧空间那个偏移量没有意义,先清账再关面(79)。
+  timelineScrollY = 0;
   closePaneNow();
   settleHistory(); // 守门条目同轮消掉,不给返回键留「按一下没反应」的空炮
   diagLoaded = false;

@@ -38,6 +38,10 @@
     const r = el.getBoundingClientRect();
     const x = Math.round(r.x + r.width / 2);
     const cy = r.y + r.height / 2;
+    // ⛔ 先分清「被盖住」和「这个节点已经不在文档里了」—— 两者都会让下面那句不等,而
+    // 报成同一句「中心未命中」会把人引向完全错的方向(639 就为此查了半轮:那句红被 634
+    // 记成「第一行落在视口外」,真相是**列表在脚下整片重画**,节点游离了)。
+    if (!document.contains(el)) return { detached: true };
     if (document.elementFromPoint(x, cy) !== el) return null; // 中心都不归它 = 被谁盖住了,别往下量
     const top = edge(x, cy, -1, 60, el);
     const bot = edge(x, cy, +1, 60, el);
@@ -56,7 +60,18 @@
     await sleep(120);
     const s = haloSpan(el);
     out.hit[label] = s;
-    if (!ok(`${label} 触区高 ≥44(§2.3)`, s && s.h >= 44, s ? `${s.w.toFixed(1)}×${s.h.toFixed(1)}(药丸本身 ${s.boxH.toFixed(1)})` : "中心未命中")) return;
+    if (
+      !ok(
+        `${label} 触区高 ≥44(§2.3)`,
+        s && !s.detached && s.h >= 44,
+        s?.detached
+          ? "⚠ 节点已游离(列表在脚下重画过,资产没重取)—— 这不是触区的读数"
+          : s
+            ? `${s.w.toFixed(1)}×${s.h.toFixed(1)}(药丸本身 ${s.boxH.toFixed(1)})`
+            : "中心未命中",
+      )
+    )
+      return;
     const gaps = [];
     for (const sib of [row.previousElementSibling, row.nextElementSibling]) {
       const other = sib?.classList?.contains("trow") ? sib.querySelector(PILL) : null;
@@ -96,6 +111,22 @@
   await until(() => box.querySelector(".trow") || box.textContent.includes("还没有标签"), 6000);
   if (!ok("列表渲染完成", box.querySelector(".trow") || box.textContent.includes("还没有标签")))
     return JSON.stringify(out);
+  // ⛔⛔ **「.trow 出现了」≠「不会再重画了」**:开面这一路会画**两遍** —— 639 真机挂
+  // MutationObserver 量到:第一遍在 t=60ms(资产的 until 就是在这一拍拿到节点的),
+  // t=109ms 整片重建(21 行拆、21 行建),于是手里那个节点**当场游离**,后面
+  // `elementFromPoint` 拿它去比必然不等 ⇒ 报成「中心未命中」的假红,634 撞过两次。
+  // ⇒ 等它**静下来**再往下走:childList 连续 300ms 没动静才算定局。
+  // ⛔ 别改成 `sleep(固定毫秒)` —— 那是拿运气当判据;也别退回「出现即用」。
+  const settled = await (async () => {
+    let last = performance.now();
+    const mo = new MutationObserver(() => (last = performance.now()));
+    mo.observe(box, { childList: true, subtree: true });
+    const t0 = performance.now();
+    while (performance.now() - last < 300 && performance.now() - t0 < 4000) await sleep(60);
+    mo.disconnect();
+    return performance.now() - t0 < 4000;
+  })();
+  ok("列表已定局(不会再在脚下重画)", settled);
 
   const rows = () => [...document.querySelectorAll("#topics-list .trow")];
   out.order = rows().map((r) => r.dataset.topic);

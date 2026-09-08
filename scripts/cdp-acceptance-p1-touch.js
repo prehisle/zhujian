@@ -3,8 +3,8 @@
 // 只读断言 + 空间面板开合(不碰 reset-ok),evalfile 跑,pass=true 才算过。
 (async () => {
   const out = { pass: false, steps: [] };
-  const ok = (name, cond) => {
-    out.steps.push({ name, ok: !!cond });
+  const ok = (name, cond, extra) => {
+    out.steps.push(extra === undefined ? { name, ok: !!cond } : { name, ok: !!cond, ...extra });
     return !!cond;
   };
   const click = (el) => el.dispatchEvent(new MouseEvent("click", { bubbles: true }));
@@ -30,6 +30,26 @@
   await new Promise((r) => setTimeout(r, 200));
   const tick = document.querySelector("#timeline .tick");
   ok(tick ? ".tick 宽 ≥48px" : ".tick 无任务行可测(跳过)", tick ? tick.offsetWidth >= 48 : true);
+  // ⭐ M12(UI 一致性手机半):触区照旧 48 宽 × 整卡高,而**记号钉在正文第一行** ——
+  //    这两条是对着来的(⛔ 别为了对齐把上面那个 48/stretch 改小),所以判据挨着放:
+  //    谁改一条,另一条当场说话。判据 = 圈心与第一行行心的距离 ≤2px。
+  //    ⚠ 只有**长卡**判得出来 —— 单行卡上「整卡居中」与「钉第一行」是同一个位置
+  //    ⇒ 挑正文高过两行半的那张,一张都没有就如实跳过,别让空测长得像真绿。
+  //    ⛔ **阈值 1px 是量出来的,别放宽**:对的写法四档实测偏差全是 0(639),而被它逮到的
+  //    那个错写法(`em` 不跟 textZoom)在 115% 档偏 1.92 —— 阈值放到 2 就恰好放它过去。
+  const tallCard = [...document.querySelectorAll("#timeline .card")].find((c) => {
+    const p = c.querySelector(".content");
+    if (!c.querySelector(".tick .box") || !p) return false;
+    return p.getBoundingClientRect().height > parseFloat(getComputedStyle(p).lineHeight) * 2.5;
+  });
+  if (tallCard) {
+    const p = tallCard.querySelector(".content");
+    const pr = p.getBoundingClientRect();
+    const br = tallCard.querySelector(".tick .box").getBoundingClientRect();
+    const lh = parseFloat(getComputedStyle(p).lineHeight);
+    const drift = Math.round((br.top + br.height / 2 - (pr.top + lh / 2)) * 10) / 10;
+    ok(".tick 圈心钉在正文第一行", Math.abs(drift) <= 1, { drift, lineH: Math.round(lh * 10) / 10, contentH: Math.round(pr.height) });
+  } else ok(".tick 无长任务卡可测(跳过)", true, { skipped: true });
   click(document.querySelector('#bottombar [data-mode="ideas"]'));
   await new Promise((r) => setTimeout(r, 200));
 

@@ -320,7 +320,14 @@ function onSearchClick(e: Event) {
   else deps.focusCard(card.dataset.hit!);
 }
 
+/** 开搜索面(main.ts::openPane 调):聚焦输入框,顺带把空态那句话画上(UI 一致性 M8)。
+ *  此前这一面开出来是「标题 + 输入框 + 四分之三屏的空白」,而**搜的范围**(回收站 / 归档 /
+ *  改过的旧版本)一个字都没说 —— 那句话 `runSearch` 里早就有,却只在「搜了个空词」时才露脸,
+ *  第一次开面反而看不到。桌面那边(`src/search.ts`)进搜索视图就画 idle 态,这是把两端拉齐。
+ *  ⚠ 只在真空时画:关面再开时上一轮的结果与输入框里的词都还留着(既有行为),别拿空态盖掉。 */
 export function focusSearch() {
+  const box = $("search-results");
+  if (box.innerHTML === "") box.innerHTML = `<p class="muted empty">${t("panes.searchPrompt")}</p>`;
   ($("search-input") as HTMLInputElement).focus();
 }
 

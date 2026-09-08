@@ -36,6 +36,38 @@
     }
     return null;
   };
+  // 回收站行的动作钮**要先点开那一行才存在**(509 / 用户面 51:「恢复 / 彻底删」不再常驻,
+  // `panes.ts` 只给 `trashOpenId === r.id` 的那一行渲 `.panel`)。⛔ 别退回「直接 querySelector」——
+  // 那正是本资产 639 复跑时当场炸掉的地方(`click(null)`):它 2026-08-16 写成,产品 8-27 改了形,
+  // 中间**没有人复跑过它**,于是断了 100 多轮没人知道(550 那条「改了哪个前端文件就复跑盯着它的
+  // 既有资产」说的就是这个)。同 `openAct` 的形:点开 → 等 → 拿。
+  const trashAct = async (id, act) => {
+    const rowOf = () => document.querySelector(`[data-trash="${id}"]`);
+    for (let i = 0; i < 3; i++) {
+      const hit = rowOf()?.querySelector(`[data-trash-act="${act}"]`);
+      if (hit) return hit;
+      const r = rowOf();
+      if (!r) return null;
+      click(r.querySelector(".content") ?? r);
+      const got = await until(() => rowOf()?.querySelector(`[data-trash-act="${act}"]`), 1500);
+      if (got) return got;
+    }
+    return null;
+  };
+  // 归档册同形(`sealedOpenId` 才渲 `[data-unseal]`),同一个坑同一天逮到,写法照抄上面那只。
+  const sealedAct = async (id) => {
+    const rowOf = () => document.querySelector(`[data-sealed="${id}"]`);
+    for (let i = 0; i < 3; i++) {
+      const hit = rowOf()?.querySelector(`[data-unseal="${id}"]`);
+      if (hit) return hit;
+      const r = rowOf();
+      if (!r) return null;
+      click(r.querySelector(".content") ?? r);
+      const got = await until(() => rowOf()?.querySelector(`[data-unseal="${id}"]`), 1500);
+      if (got) return got;
+    }
+    return null;
+  };
   // 二拍:点动作钮 → 确认条 → yes,全在一发内连点
   const twoTap = async (btn) => {
     click(btn);
@@ -76,8 +108,9 @@
     if (!ok("回收站面开了", await until(() => paneOpen(), 2000))) return JSON.stringify(out);
     const probeRow = await until(() => document.querySelector(`[data-trash="${id}"]`), 2500);
     if (!ok("探针在回收站", !!probeRow)) return JSON.stringify(out);
-    if (!ok("彻底删二拍成立", await twoTap(probeRow.querySelector('[data-trash-act="purge"]'))))
-      return JSON.stringify(out);
+    const purgeBtn = await trashAct(id, "purge");
+    if (!ok("探针行点得开、彻底删钮在", !!purgeBtn)) return JSON.stringify(out);
+    if (!ok("彻底删二拍成立", await twoTap(purgeBtn))) return JSON.stringify(out);
     await until(() => !document.querySelector(`[data-trash="${id}"]`), 3000);
     const trashLeft = document.querySelectorAll("[data-trash]").length;
     ok("面开着时钮保显(activePane 保护)", !btnOf("trash").hidden);
@@ -108,11 +141,15 @@
     // 开归档册,取消归档探针(把归档册清回初态;存量归档不动)
     click(btnOf("sealed"));
     await until(() => paneOpen(), 2000);
-    const unsealBtn = await until(() => document.querySelector(`[data-unseal="${id}"]`), 2500);
-    if (!ok("归档册里有探针", !!unsealBtn)) return JSON.stringify(out);
+    if (!ok("归档册里有探针", (await until(() => document.querySelector(`[data-sealed="${id}"]`), 2500)) !== null))
+      return JSON.stringify(out);
+    const unsealBtn = await sealedAct(id);
+    if (!ok("探针行点得开、取消入册钮在", !!unsealBtn)) return JSON.stringify(out);
     click(unsealBtn);
-    await until(() => !document.querySelector(`[data-unseal="${id}"]`), 3000);
-    const sealedLeft = document.querySelectorAll("[data-unseal]").length;
+    await until(() => !document.querySelector(`[data-sealed="${id}"]`), 3000);
+    // ⛔ 数的是**行**(`[data-sealed]`),不是钮(`[data-unseal]`)—— 钮只长在展开的那一行上,
+    //    照旧数钮的话「归档册还剩几条」恒 0,下面那条显隐谓词就永远走空库那一支。
+    const sealedLeft = document.querySelectorAll("[data-sealed]").length;
     ok("面开着时 sealed 钮保显", !btnOf("sealed").hidden);
     click(btnOf("sealed"));
     await until(() => !paneOpen(), 2000);
@@ -146,10 +183,12 @@
       if ((await until(() => !btnOf("trash").hidden, 3000)) !== null) {
         click(btnOf("trash"));
         await until(() => paneOpen(), 2000);
-        const row = await until(() => document.querySelector(`[data-trash="${id}"]`), 2500);
-        if (row) {
-          await twoTap(row.querySelector('[data-trash-act="purge"]'));
-          await until(() => !document.querySelector(`[data-trash="${id}"]`));
+        if ((await until(() => document.querySelector(`[data-trash="${id}"]`), 2500)) !== null) {
+          const purge = await trashAct(id, "purge"); // ⛔ 同上:钮要先点开那一行才有(509)
+          if (purge) {
+            await twoTap(purge);
+            await until(() => !document.querySelector(`[data-trash="${id}"]`));
+          }
         }
         if (paneOpen()) {
           click(btnOf("trash"));

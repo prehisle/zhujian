@@ -794,8 +794,27 @@
       }
       #viewer.zoomed .viewer-del { opacity: 0; pointer-events: none; }
 
-      /* 勾框:任务行的「标完成」。触区放大到整块 label,视觉是一枚圆圈,勾上即朱砂。 */
-      .tick { flex: none; display: grid; place-items: center; width: 48px; align-self: stretch; margin: -10px 0 -10px -12px; }
+      /* 勾框:任务行的「标完成」。触区放大到整块 label,视觉是一枚圆圈,勾上即朱砂。
+         ⭐ **记号钉在第一行,盒子照旧整卡高**(UI 一致性 M12):`align-self:stretch` 那句是
+         §2.3「勾选区拓到 48」明写要的,⛔ 别为了对齐把触区改小;此前配的是 `place-items:center`
+         ⇒ 圈**竖直居中在整张卡上**,五行的长卡上它离自己管的那行标题约 130px,读作「浮在正文
+         中间的一枚圈」。⇒ 只挪记号:`start` 把圈顶到盒子上沿,再用 padding 压回第一行的行心。
+         padding 的来历(⛔ 别改成整数,它是算出来的):`.tick` 的上负 margin 是 10px ⇒ 盒子上沿
+         比正文上沿高 10;行心在半个行高处;圈高 22、半高 11 ⇒ 10 + 0.5lh - 11 = 0.5lh - 1px。
+         ⛔⛔ **单位必须是 `lh`,`em` 在这里是错的 —— 而它错得很安静**(639 真机四档逐档量出来的):
+         安卓的字号四档走 WebView 原生 textZoom(textsize.ts),它把**计算后字号**推大了
+         (四档读到 14.4 / 16 / 18.4 / 20.8),`getComputedStyle` 也照实报 ⇒ 看着 em 该跟着走。
+         **实测不跟**:`calc(0.8em - 1px)` 算出来的 padding 四档**恒是 11.8px**(em 拿的是缩放前
+         那个 16),于是 100% 档偏 0、130% 档偏 **-3.84px**;而 `lh` 四档给 10.52 / 11.80 / 13.72 /
+         15.64,**四档偏差全是 0**。⇒ 教训是「computed 报的字号变了」证明不了「em 会跟着变」。
+         ⚠ `font-size` 那句是让这个 `lh` 与**正文**同源:body 是 `--fs-15`、`.card .content` 是
+         `--fs-16`,不钉住就按 15 算。行高倍率 1.6 从 body 继承,与 `.content` 那句同值。
+         ⚠ 圈里那枚 ✓ 有自己的 `--fs-14`,不受这行影响。
+         ⚠ `lh` 要 WebView ≥ 109 —— 这一端早就踩在更高的台阶上了(`.compose textarea` 的
+         `field-sizing: content` 要 123),⛔ 别为它加一条 em 兜底:老机器上那条兜底只会**安静地**
+         偏一两像素,没人会发现(= 静默默认值,设计铁律里明写不写)。 */
+      .tick { flex: none; display: grid; place-items: start center; width: 48px; align-self: stretch;
+        margin: -10px 0 -10px -12px; font-size: var(--fs-16); padding-top: calc(0.5lh - 1px); }
       .tick input { position: absolute; opacity: 0; pointer-events: none; }
       .tick .box {
         width: 22px; height: 22px; border-radius: var(--radius-circle);
