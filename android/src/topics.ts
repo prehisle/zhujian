@@ -222,18 +222,30 @@ function rowHtml(tp: TopicTreeItem, label: string, kidCount: number): string {
           </span>
         </article>${bodyHtml(tp)}`;
   }
+  // 类型编辑态(632 补把它并回上面两态那一形):**整行让位**给编辑 UI,手柄 / 色点 / 计数收起来。
+  // ⚠ 但**名字要留着、且是静态文字不是钮**:改名态的输入框里就是名字、改色态整行是色板,
+  // 唯独这一态输入框里装的是「类型」⇒ 不留名字就不知道在给哪一枚设。名字复用 `.mname`
+  // (合并行那个只读名字,同一件事 —— ⛔ 别新造第四个只读名字类)。
+  // ⛔ **这不是新加的态**,是把一个漏了让位的态并回来:此前它保留整行,手柄 + 名字 + 色点 +
+  // 计数 + 输入框 + 两枚钮全挤在 360 宽里 ⇒ 真机实测**内容 341 / 可用 332 = 溢出 9px**,
+  // 而被压掉的恰恰是 `.tname`(**0 宽**)—— 本该留下的那一样反而先没了。
+  // ⚠ 让位腾出的约 100px 正是 `.tk-edit` 把 gap 抬到 12 的前提(判据在 index.html 那条注释里):
+  // 不让位就抬 gap,溢出从 9 变 21、整页开始横向滚(632 补 实测,当场退回)。
+  if (tp.id === kindEditId) {
+    return `<article class="trow${busy ? " off" : ""}" data-topic="${esc(tp.id)}">
+          <span class="mname">${esc(label)}</span>
+          <span class="tk-edit">
+            <input class="tk-input" value="${esc(tp.kind ?? "")}" placeholder="${t("topics.kindPh")}"
+                   autocapitalize="off" autocomplete="off" maxlength="40" />
+            <button data-kind-save="${esc(tp.id)}">${t("topics.kindSave")}</button>
+            <button data-kind-clear="${esc(tp.id)}" class="ghost">${t("topics.kindClear")}</button>
+          </span>
+        </article>${bodyHtml(tp)}`;
+  }
   const n = counts.get(tp.id) ?? 0;
-  const editing = tp.id === kindEditId;
-  const kindZone = editing
-    ? `<span class="tk-edit">
-             <input class="tk-input" value="${esc(tp.kind ?? "")}" placeholder="${t("topics.kindPh")}"
-                    autocapitalize="off" autocomplete="off" maxlength="40" />
-             <button data-kind-save="${esc(tp.id)}">${t("topics.kindSave")}</button>
-             <button data-kind-clear="${esc(tp.id)}" class="ghost">${t("topics.kindClear")}</button>
-           </span>`
-    : tp.kind
-      ? `<button class="tk-badge" data-kind-edit="${esc(tp.id)}">${esc(tp.kind)}</button>`
-      : `<button class="tk-add" data-kind-edit="${esc(tp.id)}">${t("topics.kindAdd")}</button>`;
+  const kindZone = tp.kind
+    ? `<button class="tk-badge" data-kind-edit="${esc(tp.id)}">${esc(tp.kind)}</button>`
+    : `<button class="tk-add" data-kind-edit="${esc(tp.id)}">${t("topics.kindAdd")}</button>`;
   // 折叠箭头:**紧贴名字末尾**(同筛选条 —— 那边的 .fcaret 也是挂在父 pill 尾上)。
   // ⛔ 别塞到行首:那要给**每一行**都留一个空槽才对得齐名字列,而没有子标签的行占多数。
   // ⚠ 「紧贴」要靠 `.has-kids` 把 `.tname` 从 `flex:1` 换成 `flex:0 1 auto`、余量交给 `.tgap`

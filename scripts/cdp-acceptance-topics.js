@@ -131,6 +131,17 @@
   const kbtns = [...document.querySelectorAll(`.trow[data-topic="${id0}"] .tk-edit button`)];
   ok("编辑态两枚钮在(存 / 清)", kbtns.length === 2, kbtns.map((b) => b.textContent.trim()).join("|"));
   for (const b of kbtns) await pillOk(b, `编辑态「${b.textContent.trim()}」`);
+  // ⭐ 横向那半的判据是**中心距**,不是各自多宽(632 补,用户拍板走「拉开间距」那条路)。
+  // 理由:原生触摸有一层吸附,手指落在两枚之间会被吸到**更近的那一枚** ⇒ 决定「点不点得对」的
+  // 是两心之隔,把 halo 横向撑大一点也不改变边界在哪。
+  // ⛔ 别把这一格改成 `width >= 44`:单字钮「存」「清」补不到 44(横向撑 halo 会让相邻两枚
+  // 互叠、点「存」落到「清」上),那样写等于把一条永远红的线钉在这儿。
+  for (let i = 1; i < kbtns.length; i += 1) {
+    const a = kbtns[i - 1].getBoundingClientRect(), b = kbtns[i].getBoundingClientRect();
+    const d = b.x + b.width / 2 - (a.x + a.width / 2);
+    ok(`编辑态「${kbtns[i - 1].textContent.trim()}」↔「${kbtns[i].textContent.trim()}」中心距 ≥44`, d >= 44,
+      `${d.toFixed(1)}px(两钮 ${a.width.toFixed(1)} / ${b.width.toFixed(1)},缝 ${(b.x - a.right).toFixed(1)})`);
+  }
   input.value = "人名";
   click(document.querySelector(`.trow[data-topic="${id0}"] [data-kind-save]`));
   const badge = await until(() => {

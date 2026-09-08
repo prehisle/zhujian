@@ -150,6 +150,16 @@
       : null;
     ok("存那枚触区高 ≥44(halo 真生效)", bspan !== null && bspan >= 44,
       bspan === null ? "中心未命中" : `${bspan.toFixed(1)}px(钮本身 ${bh.height.toFixed(1)})`);
+    // ⭐ 横向那半判**中心距**,不判各自的宽(632 补):原生触摸会把落点吸到更近的那一枚,
+    // ⇒ 决定「点不点得对」的是两心之隔。这一行是「存 / 取消 / 删除」,点错的代价是**删掉一枚标签**。
+    // ⛔ 别改成 `width >= 44`:单字的「存」补不到 44,那样写是钉一条永远红的线(判据见
+    // `android/index.html` 里 `.tk-edit` 头上那条 gap 的注释)。
+    for (let i = 1; i < btns.length; i += 1) {
+      const a = btns[i - 1].getBoundingClientRect(), b2 = btns[i].getBoundingClientRect();
+      const d = b2.x + b2.width / 2 - (a.x + a.width / 2);
+      ok(`「${btns[i - 1].textContent.trim()}」↔「${btns[i].textContent.trim()}」中心距 ≥44`, d >= 44,
+        `${d.toFixed(1)}px(两钮 ${a.width.toFixed(1)} / ${b2.width.toFixed(1)},缝 ${(b2.x - a.right).toFixed(1)})`);
+    }
     ok("另一行仍是正常态(只换了这一行)", !!rowOf(B0));
 
     // ---- ⑥ 一个字没改:不发写、也不弹「已改名」 ----

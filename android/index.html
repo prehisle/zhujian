@@ -936,7 +936,15 @@
       }
       .tk-add { color: var(--ink-faint); }
       .tk-badge { color: var(--seal); border-color: var(--seal-line); background: var(--seal-tint); font-weight: 600; }
-      .tk-edit { flex: none; display: inline-flex; align-items: center; gap: 6px; }
+      /* ⭐ gap 12 是**量出来的判据,不是审美值**(632 补;⛔ 别当富余往回调):这一行里「存」「清」
+         是单字钮、横向只有 32.5~39.6 宽,补不到 44(横向撑 halo 会让相邻两枚互叠,理由在下面那条
+         halo 规则里)。而**原生触摸有一层吸附** —— 手指落在两枚之间会被吸到更近的那一枚 ⇒ 决定
+         「点不点得对」的是**两枚钮的中心距**,不是各自多宽。gap 6 时 42.7(最小字号档 39.6,四档
+         全不到 44),gap 12 时 48.7(四档全过)。
+         ⛔ **抬 gap 的前提是这一态整行让位**(`topics.ts` 里那个 `kindEditId` 分支):不让位就抬,
+         行内容从 341 涨到 353 / 可用 332 ⇒ 溢出 9 变 21、**整页开始横向滚**(632 补 实测,当场退回)。
+         ⚠ `.tc-edit` 的 8 不用动:那行是 36×36 色块,36+8 = 44 恰好达标。 */
+      .tk-edit { flex: none; display: inline-flex; align-items: center; gap: 12px; }
       .tk-input {
         width: 8.5em; font: inherit; font-size: var(--fs-13); padding: 4px 8px;
         border: 1px solid var(--seal-line); border-radius: var(--radius-sm);
@@ -944,7 +952,10 @@
       }
       /* 改名态(514):整行只剩它,输入框拿满剩余宽度 —— 标签名可以很长,而 .tk-input 那个
          8.5em 是给「类型」这种短词的。两种编辑态的按钮共形,规则并成一条别抄两份。 */
-      .tn-edit { flex: 1; min-width: 0; display: inline-flex; align-items: center; gap: 6px; }
+      /* gap 12 与 `.tk-edit` 同(判据写在那儿)。⚠ 这一行的三枚**在 gap 6 时本来就达标**
+         (「取消」「删除」是两字钮,中心距 49.6 / 55.3)—— 跟着改是为了两个编辑态一个节奏,
+         不是这里有病;这一行有余量(输入框 151.6 → 133.6),溢出仍是 0。 */
+      .tn-edit { flex: 1; min-width: 0; display: inline-flex; align-items: center; gap: 12px; }
       .tn-input {
         flex: 1; min-width: 0; font: inherit; font-size: var(--fs-14); padding: 4px 8px;
         min-height: 44px; /* §2.3:输入框是 void 元素,给不了 ::before halo,只能自己长够 */
@@ -1005,6 +1016,8 @@
       .mhint-txt { flex: 1; min-width: 0; }
       .mhint button { font-size: var(--fs-12); padding: 4px 10px; border-radius: var(--radius-sm);
         background: none; color: var(--ink-soft); border: 1px solid var(--line-strong); }
+      /* 「这一行里那个**只读**的标签名」——合并态与类型编辑态共用(632 补起两处)。
+         ⛔ 别为其中一处单开一个类:它俩要的是同一件事(占满余量、长名字省略号)。 */
       .mname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .mrow.msrc { outline: 2px solid var(--seal); outline-offset: -2px; border-radius: var(--radius-sm); }
       /* 子标签组(user-44 第六刀):`父/子` 前缀分组后,子行收在父行下方这一组里。
