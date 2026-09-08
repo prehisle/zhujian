@@ -26,6 +26,30 @@
   const cb = document.getElementById("confirmbar");
   const cardOf = (id) => document.querySelector(`#timeline [data-id="${id}"]`);
   const isDone = (id) => !!cardOf(id)?.classList.contains("done");
+  const trashRow = (id) => document.querySelector(`[data-trash="${id}"]`);
+  const trashOpen = () => !document.getElementById("trash-pane").hidden;
+  // 回收站面是 toggle:要开就开、要收就收,⛔ 别盲点(盲点一次 = 该开的时候把它收了)。
+  const setTrash = async (want) => {
+    if (trashOpen() === want) return true;
+    click(document.querySelector('#bottombar [data-pane="trash"]'));
+    return (await until(() => trashOpen() === want, 1500)) !== null;
+  };
+  // ⭐ 51 起回收站的「还原 / 彻底删除」两枚**不常驻**:点卡片才出面板(panes.ts 的 trashOpenId)。
+  //    ⇒ 取钮前先点卡片正文;renderTrash() 整段重画 ⇒ 行节点跨点击游离,一律按 id 现查。
+  //    ⛔ 这正是 91 那条账:从前直接 `click(row.querySelector('[data-trash-act="purge"]'))`
+  //       恒 null ⇒ 整支崩在清场路上,而探针条目已经躺进库里了。
+  const openTrashAct = async (id, act) => {
+    for (let i = 0; i < 3; i++) {
+      const hit = trashRow(id)?.querySelector(`[data-trash-act="${act}"]`);
+      if (hit) return hit;
+      const body = trashRow(id)?.querySelector(".content");
+      if (!body) return null;
+      click(body);
+      const got = await until(() => trashRow(id)?.querySelector(`[data-trash-act="${act}"]`), 1500);
+      if (got) return got;
+    }
+    return null;
+  };
   // actionBar 在场且形态对(结构断言,语言无关)
   const barShape = () => {
     if (err.hidden) return false;
@@ -49,6 +73,7 @@
 
   const marker = `【CDP验收】回执撤销 ${Date.now()}`;
   let id = null;
+  let residueSeen = null;
   try {
     // ---- 种探针任务 ----
     const tasksBtn = document.querySelector('#bottombar [data-mode="tasks"]');
@@ -122,19 +147,22 @@
         click(document.getElementById("confirmbar-yes"));
         await until(() => !cardOf(id));
       }
-      click(document.querySelector('#bottombar [data-pane="trash"]'));
-      const row = await until(() => document.querySelector(`[data-trash="${id}"]`), 2500);
-      if (row) {
-        click(row.querySelector('[data-trash-act="purge"]'));
+      await setTrash(true);
+      await until(() => trashRow(id), 2500);
+      const purge = await openTrashAct(id, "purge");
+      if (purge) {
+        click(purge);
         await until(() => !cb.hidden, 1500);
         click(document.getElementById("confirmbar-yes"));
-        await until(() => !document.querySelector(`[data-trash="${id}"]`));
+        await until(() => !trashRow(id), 2000);
       }
-      click(document.querySelector('#bottombar [data-pane="trash"]'));
-      await until(() => !document.body.classList.contains("pane-open"), 1500);
+      // ⚠ 趁面还开着量 —— 收了面之后 `[data-trash]` 本来就不在 DOM 里,那时再问恒「干净」。
+      residueSeen = !!trashRow(id);
+      await setTrash(false);
     }
   }
-  ok("清场:探针条目零残留", !cardOf(id) && !document.querySelector(`[data-trash="${id}"]`));
+  out.residueSeen = residueSeen;
+  ok("清场:探针条目零残留", !!id && !cardOf(id) && residueSeen === false);
   out.pass = out.steps.every((s) => s.ok);
   return JSON.stringify(out);
 })();

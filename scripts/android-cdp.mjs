@@ -25,7 +25,7 @@
 // ⭐ 连接那一层 80 起收进 `lib/cdp.mjs`(此前它与那 10 支抄本各写各的一份)。
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
-import { openSession, pageTarget, sleep } from "./lib/cdp.mjs";
+import { openSession, pageTarget, touchSwipe } from "./lib/cdp.mjs";
 
 const PORT = 9222;
 
@@ -91,21 +91,8 @@ async function session(fn) {
 /** ⚠ 返回的是**页面里那个值本身**(lib 已经剥掉 RemoteObject 那层壳),不再是 `{type,value}`。 */
 const evaluate = (expr) => session((s) => s.evaluate(expr));
 
-// 真实触摸滑动:一次 touchStart → 若干 touchMove → touchEnd。坐标是 CSS 视口像素
-// (直接用 getBoundingClientRect 的值,不换算设备像素);走原生输入管线,故 touch-action、
-// 滚动识别、pointer capture 都真实生效——正是合成 PointerEvent 测不到的那半截。
-async function swipe(x1, y1, x2, y2, steps = 12) {
-  await session(async ({ send }) => {
-    await send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: x1, y: y1 }] });
-    for (let i = 1; i <= steps; i++) {
-      const x = x1 + ((x2 - x1) * i) / steps;
-      const y = y1 + ((y2 - y1) * i) / steps;
-      await send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x, y }] });
-      await sleep(16);
-    }
-    await send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
-  });
-}
+// 真实触摸滑动 ⇒ `lib/cdp.mjs::touchSwipe`(⛔ 别在这儿抄第二份:驱动形资产也要用它)。
+const swipe = (x1, y1, x2, y2, steps = 12) => session((s) => touchSwipe(s, x1, y1, x2, y2, steps));
 
 const [cmd, ...rest] = process.argv.slice(2);
 try {

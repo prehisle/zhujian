@@ -85,3 +85,22 @@ export async function openSession(wsUrl, { timeoutMs = 15000 } = {}) {
 }
 
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * 真实触摸滑动:一次 touchStart → 若干 touchMove → touchEnd,走**原生输入管线**
+ * ⇒ `touch-action`、滚动识别、pointer capture 都真实生效(合成 PointerEvent 测不到那半截)。
+ * ⚠ 坐标是 **CSS 视口像素**(`getBoundingClientRect()` 直接给的那个),⛔ 不是截图上量的设备像素
+ * (差一个 `devicePixelRatio`,搞混了是「点了没反应」而不报错,627 栽两趟)。
+ * @param {{send:Function}} session `openSession` 开出来的会话(⛔ 同一条连接上连发,别一发一开)
+ */
+export async function touchSwipe({ send }, x1, y1, x2, y2, steps = 12) {
+  await send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: x1, y: y1 }] });
+  for (let i = 1; i <= steps; i++) {
+    await send("Input.dispatchTouchEvent", {
+      type: "touchMove",
+      touchPoints: [{ x: x1 + ((x2 - x1) * i) / steps, y: y1 + ((y2 - y1) * i) / steps }],
+    });
+    await sleep(16);
+  }
+  await send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+}

@@ -140,6 +140,29 @@ export function readVerdict(raw) {
 /** 一次库普查的键。⚠ 六个都得在,少一个就有一整面的残留看不见。 */
 export const CENSUS_KEYS = ["timeline", "topics", "trash", "archived", "sealed", "archivedTasks"];
 
+/** 一次库普查的**页内脚本**。⚠ 六面全问 —— 少问一面就有一整面的残留看不见。
+ *  fail-closed:哪一条命令报错就把错原样带回来,⛔ 别 catch 成 0(那会让残留看着像「没变」)。
+ *  ⛔ 跑手与驱动形资产共用这一份,别抄第二份(91:`swipe-undo` 改驱动形时要的就是它)。 */
+export const JS_CENSUS = `(async () => {
+  const I = window.__TAURI__.core.invoke;
+  const spaces = await I("list_spaces");
+  const cur = spaces.find((s) => s.current);
+  if (!cur) return { error: "没有前台空间(list_spaces 里一条 current 都没有)" };
+  const n = async (cmd) => {
+    try { return (await I(cmd, { spaceId: cur.id })).length; }
+    catch (e) { return "ERR:" + String(e && e.message ? e.message : e); }
+  };
+  return {
+    space: cur.id,
+    timeline: await n("list_timeline"),
+    topics: await n("list_topics"),
+    trash: await n("list_trash"),
+    archived: await n("list_archived"),
+    sealed: await n("list_sealed_tasks"),
+    archivedTasks: await n("list_archived_tasks"),
+  };
+})()`;
+
 /**
  * 比两次库普查。⭐ 这才是 639 那场事故真正缺的那道自证:**跑完这支,用户的库回没回到起跑时的样子**。
  * @returns {Array<{key:string, before:number, after:number, delta:number}>} 只含变了的键

@@ -34,6 +34,22 @@
     )?.dataset.mode;
   const paneOpen = () => document.body.classList.contains("pane-open");
   const cardOf = (id) => document.querySelector(`#timeline [data-id="${id}"]`);
+  const trashRow = (id) => document.querySelector(`[data-trash="${id}"]`);
+  // ⭐ 51 起回收站的「还原 / 彻底删除」两枚**不常驻**:点卡片才出面板(panes.ts 的 trashOpenId)。
+  //    ⇒ 取钮前先点卡片正文;renderTrash() 整段重画 ⇒ 行节点跨点击游离,一律按 id 现查。
+  //    ⛔ 91 那条账:从前直接取 purge 钮恒 null ⇒ 清场当场崩,两条探针留在用户库里。
+  const openTrashAct = async (id, act) => {
+    for (let i = 0; i < 3; i++) {
+      const hit = trashRow(id)?.querySelector(`[data-trash-act="${act}"]`);
+      if (hit) return hit;
+      const body = trashRow(id)?.querySelector(".content");
+      if (!body) return null;
+      click(body);
+      const got = await until(() => trashRow(id)?.querySelector(`[data-trash-act="${act}"]`), 1500);
+      if (got) return got;
+    }
+    return null;
+  };
   const findCard = (text) =>
     [...document.querySelectorAll("#timeline [data-id]")].find((c) =>
       c.querySelector(".content")?.textContent.includes(text),
@@ -51,13 +67,17 @@
       await until(() => activeMode() === "ideas");
     }
     ok("灵感面无任务勾框", !document.querySelector("#timeline .tick"));
-    ok("灵感面 placeholder", ta.placeholder.includes("灵感"));
+    // ⚠ 91 换了判据:从前写死 `includes("灵感")`,而那句文案早已改成「随手记一笔…」
+    //   ⇒ 这一格红了不知多少轮,红的是**文案腐烂**不是产品(memory `stale-number-in-docs-and-fixtures`)。
+    //   现在判「两面各有一句、且不是同一句、切回来还原样」—— 换文案不会再红,接错线照样红。
+    const phIdea = ta.placeholder;
+    ok("灵感面 placeholder 有话", !!phIdea.trim());
 
     // ② compose 草稿跨面保留 + placeholder 随面换
     typeInto(ta, "【CDP验收146】草稿跨面");
     click(modeBtn("tasks"));
     await until(() => activeMode() === "tasks");
-    ok("切任务面 placeholder 换", ta.placeholder.includes("待办"));
+    ok("切任务面 placeholder 换了一句", !!ta.placeholder.trim() && ta.placeholder !== phIdea);
     ok("草稿随面走", ta.value === "【CDP验收146】草稿跨面");
     typeInto(ta, "");
 
@@ -75,6 +95,7 @@
     // ④ 灵感面记下 + 保存在飞追加(真 input 事件)不被成功回包清掉
     click(modeBtn("ideas"));
     await until(() => activeMode() === "ideas");
+    ok("切回灵感面 placeholder 还原", ta.placeholder === phIdea);
     const markerI = `【CDP验收146】灵感转待办 ${Date.now()}`;
     typeInto(ta, markerI);
     click(document.getElementById("save")); // save 同步取走并清框
@@ -205,12 +226,14 @@
       click(document.querySelector('#bottombar [data-pane="trash"]'));
       await until(() => paneOpen(), 1000);
       for (const id of created) {
-        const row = await until(() => document.querySelector(`[data-trash="${id}"]`), 800);
+        const row = await until(() => trashRow(id), 800);
         if (!row) continue;
-        click(row.querySelector('[data-trash-act="purge"]'));
+        const purge = await openTrashAct(id, "purge");
+        if (!purge) continue;
+        click(purge);
         await until(() => !cb.hidden, 1500);
         click(document.getElementById("confirmbar-yes"));
-        await until(() => !document.querySelector(`[data-trash="${id}"]`), 2000);
+        await until(() => !trashRow(id), 2000);
       }
       click(document.querySelector('#bottombar [data-pane="trash"]'));
       await until(() => !paneOpen(), 1000);

@@ -30,7 +30,7 @@ import { readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { openSession, pageTarget, sleep } from "./lib/cdp.mjs";
-import { readVerdict, censusDiff, censusEqual, CENSUS_KEYS, PASS, FAIL, NOT_RUN } from "./lib/cdp-assets.mjs";
+import { readVerdict, censusDiff, censusEqual, JS_CENSUS, PASS, FAIL, NOT_RUN } from "./lib/cdp-assets.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "..");
@@ -125,27 +125,7 @@ const JS_READY = `(() => ({
   epoch: window.__cdpRunEpoch ?? null,
 }))()`;
 
-/** 一次库普查。⚠ 六面全问 —— 少问一面就有一整面的残留看不见。
- *  fail-closed:哪一条命令报错就把错原样带回来,⛔ 别 catch 成 0(那会让残留看着像「没变」)。 */
-const JS_CENSUS = `(async () => {
-  const I = window.__TAURI__.core.invoke;
-  const spaces = await I("list_spaces");
-  const cur = spaces.find((s) => s.current);
-  if (!cur) return { error: "没有前台空间(list_spaces 里一条 current 都没有)" };
-  const n = async (cmd) => {
-    try { return (await I(cmd, { spaceId: cur.id })).length; }
-    catch (e) { return "ERR:" + String(e && e.message ? e.message : e); }
-  };
-  return {
-    space: cur.id,
-    timeline: await n("list_timeline"),
-    topics: await n("list_topics"),
-    trash: await n("list_trash"),
-    archived: await n("list_archived"),
-    sealed: await n("list_sealed_tasks"),
-    archivedTasks: await n("list_archived_tasks"),
-  };
-})()`;
+// 库普查那段页内脚本住在 `lib/cdp-assets.mjs::JS_CENSUS`(驱动形资产也要用它,别抄第二份)。
 
 const jsReload = (token, lang) => `(() => {
   window.__cdpRunEpoch = ${JSON.stringify(token)};
