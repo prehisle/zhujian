@@ -17,9 +17,9 @@ name = "app_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [features]
-# **台架专用**(305 真机复验,验完即撤):打开 core 的 ops 供流埋点,并把 log 插件
-# 从「只在 debug 装」改成恒装(见 lib.rs 那处 `cfg!(debug_assertions)`)——release
-# 壳没有日志出口,埋点就落不到盘上。默认关、发版包不带。
+# **台架专用**(305 真机复验,验完即撤):打开 core 的 ops 供流埋点。默认关、发版包不带。
+# ⚠ 它此前还兼一件事 —— 把 log 插件从「只在 debug 装」翻成恒装;2026-09-08 起日志出口
+# 本来就恒装(见 lib.rs `.setup` 头上那段),这个 feature 只剩埋点这一件事。
 probe305 = ["zhujian-core/probe305"]
 
 [build-dependencies]

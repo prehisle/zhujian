@@ -3454,15 +3454,34 @@ pub fn run() {
         .manage(HotkeyConflicts(Mutex::new(Vec::new())))
         .manage(PendingOpenSettings(AtomicBool::new(false)))
         .setup(|app| {
-            // `probe305` 是台架 feature(305 真机复验,验完即撤):release 壳本来没有
-            // 日志出口,core 那边的埋点就落不到盘上,故这里连带恒装。
-            if cfg!(debug_assertions) || cfg!(feature = "probe305") {
-                app.handle().plugin(
-                    tauri_plugin_log::Builder::default()
-                        .level(log::LevelFilter::Info)
-                        .build(),
-                )?;
+            // 日志出口**恒装**(用户 2026-09-08 拍板):此前只在 debug / `probe305` 台架下装,
+            // 于是正式版壳里每一处 `log::error!` 都落空 —— 别的机器出问题时用户手上拿不出
+            // 任何东西(手机端与服务端都一直有出口,只有桌面没有)。落点 = OS 日志目录,
+            // Windows 上是 `%LOCALAPPDATA%\app.zhujian.notebook\logs\`。
+            // **盘上有硬上限**:单份 2 MiB、另留 1 份轮转 ⇒ 最多 4 MiB,不设保留期。
+            // ⛔ 别改回插件默认的 `KeepOne`:它到上限时把当前那份**删掉**重开,最想看的
+            //    那一段正好没了;`KeepSome(1)` 是「有上限」与「拿得出东西」都成立的最小形。
+            // ⛔ 别把 `Stdout` 也放进 release:`main.rs` 的 `windows_subsystem = "windows"`
+            //    下正式版没有控制台,那一路是白写。
+            // ⚠ 行首时刻是 **UTC**(插件默认 `TimezoneStrategy::UseUtc`),不是本地时间 ——
+            //    拿用户交来的日志对时间要按这个读。⛔ 别改成 `UseLocal`:它取不到时区时
+            //    静默退回 UTC,而行里没有偏移标记 ⇒ 同一份文件里两种时刻分不出来。
+            let mut log_targets = vec![tauri_plugin_log::Target::new(
+                tauri_plugin_log::TargetKind::LogDir { file_name: None },
+            )];
+            if cfg!(debug_assertions) {
+                log_targets.push(tauri_plugin_log::Target::new(
+                    tauri_plugin_log::TargetKind::Stdout,
+                ));
             }
+            app.handle().plugin(
+                tauri_plugin_log::Builder::default()
+                    .level(log::LevelFilter::Info)
+                    .targets(log_targets)
+                    .max_file_size(2 * 1024 * 1024)
+                    .rotation_strategy(tauri_plugin_log::RotationStrategy::KeepSome(1))
+                    .build(),
+            )?;
 
             // 主库位置:e2e(YS_DB_PATH)显式覆盖并禁扫空间(§六③);生产 = app 数据
             // 目录,主库 notebook.sqlite3 单列保留 + 严格 ULID 白名单发现其余空间。

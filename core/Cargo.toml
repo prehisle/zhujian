@@ -64,8 +64,8 @@ futures-util = { version = "0.3", default-features = false, features = ["sink"] 
 # GetAdaptersAddresses;传递依赖只有 libc 与 windows-sys(两个树里本就有),不扩供应链面。
 # 安卓:getifaddrs 是 __INTRODUCED_IN(24) < minSdk 30,aarch64/armv7 两 ABI 已 cross-check。
 if-addrs = "0.15"
-# 台架埋点出口(feature `probe305` 才拉进来):两壳都已装 tauri-plugin-log,
-# 安卓那端直达 logcat、桌面那端落 %APPDATA%\app.zhujian.notebook\logs\。
+# 台架埋点出口(feature `probe305` 才拉进来):两壳都恒装 tauri-plugin-log,
+# 安卓那端直达 logcat、桌面那端落 %LOCALAPPDATA%\app.zhujian.notebook\logs\。
 log = { version = "0.4", optional = true }
 
 # 引导快照的可用空间预检(P4-d,android-plan §3:导入峰值≈三份并存)——unix
