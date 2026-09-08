@@ -3,11 +3,71 @@
 // 顺序变了 = 后端真落库(set_topic_kind / reorder_topic)。拖排序需真触摸(touch-action
 // 分区),走 android-cdp.mjs swipe 单独串——本脚本读出初始顺序 + 手柄坐标供那一步用。
 // evalfile 跑,pass=true 才算过;库里 <1 个标签时类型验收 skip(算过)。
+// ⭐ 用户面 77 起本支还守「小药丸钮」那一族的触区(`.tk-add` / `.tk-badge` / `.tk-edit` 两枚)。
+// ⛔⛔ **它们的高度读不到 `getBoundingClientRect()`** —— 触区是 `::before` 的透明 halo,不进
+// 宿主的 rect(rect 恒是药丸自己那 24)。⇒ 判据只能是**从中心往外逐像素打点**量真实命中范围,
+// 这也正是 §2.3 / 514 那条「必须真打点,别读 CSS 里写没写」。⛔ 别改成读 rect,那是恒红;
+// 也别改成读 `getComputedStyle(el,'::before')`,那又退回「CSS 里写没写」。
 (async () => {
-  const out = { pass: false, steps: [], order: [], handle: null };
-  const ok = (name, cond) => {
-    out.steps.push({ name, ok: !!cond });
+  const out = { pass: false, steps: [], order: [], handle: null, hit: {} };
+  const ok = (name, cond, detail) => {
+    out.steps.push({ name, ok: !!cond, ...(detail === undefined ? {} : { detail }) });
     return !!cond;
+  };
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  // 往外走,量「还命中 el」的连续纵向范围 = 真实触区高。⛔ 别从 rect 的边起步(subpixel 上
+  // 边界那一点归谁不定),从中心起步往两头走。
+  // ⛔⛔ **别用整像素步长**:中心是小数,整步走出来的读数**永远是整数、且最多少报 1px** ⇒
+  // 一个真 44 的 halo 会报 43,判据当场变成不可执行(本轮第一版就是这么红的)。⇒ 粗走找到
+  // 跨界的那一步之后再二分细到 0.02,读数才敢跟 44 这条线比。
+  const edge = (x, from, dir, limit, el) => {
+    let hit = from, miss = null;
+    for (let d = 1; d <= limit; d += 1) {
+      const y = from + dir * d;
+      if (document.elementFromPoint(x, y) === el) hit = y;
+      else { miss = y; break; }
+    }
+    if (miss === null) return hit;
+    for (let i = 0; i < 12; i += 1) { // 二分到 ~0.02px
+      const mid = (hit + miss) / 2;
+      if (document.elementFromPoint(x, mid) === el) hit = mid; else miss = mid;
+    }
+    return hit;
+  };
+  const haloSpan = (el) => {
+    const r = el.getBoundingClientRect();
+    const x = Math.round(r.x + r.width / 2);
+    const cy = r.y + r.height / 2;
+    if (document.elementFromPoint(x, cy) !== el) return null; // 中心都不归它 = 被谁盖住了,别往下量
+    const top = edge(x, cy, -1, 60, el);
+    const bot = edge(x, cy, +1, 60, el);
+    return { top, bot, h: bot - top, w: r.width, boxH: r.height };
+  };
+  // 这一列上「谁占着位」:普通行是 .tk-add / .tk-badge,进了类型编辑态的那行是两枚钮。
+  const PILL = ".tk-add, .tk-badge, .tk-edit button";
+  // 一枚药丸的完整判据:①触区高 ≥44 ②与上下相邻行**同一列**那一枚的触区不互叠(§2.3 那条
+  // 「上下两行热区互叠 ⇒ 边界含糊」)。
+  // ⛔ **别把 ② 写成「halo 不越出本行」** —— 那是过严的代餐,会把好的修法判红:90% 字号档上
+  // 实测 halo 顶探出行外 **0.1px**(行 45.2 高、halo 44.3,行的上下 padding 因为底边框而不等分),
+  // 而与上一行同列那枚之间**仍隔着 0.9px**、一点没叠。判据要判「有没有真叠上」,别判替身。
+  const pillOk = async (el, label) => {
+    const row = el.closest(".trow");
+    row.scrollIntoView({ block: "center" });
+    await sleep(120);
+    const s = haloSpan(el);
+    out.hit[label] = s;
+    if (!ok(`${label} 触区高 ≥44(§2.3)`, s && s.h >= 44, s ? `${s.w.toFixed(1)}×${s.h.toFixed(1)}(药丸本身 ${s.boxH.toFixed(1)})` : "中心未命中")) return;
+    const gaps = [];
+    for (const sib of [row.previousElementSibling, row.nextElementSibling]) {
+      const other = sib?.classList?.contains("trow") ? sib.querySelector(PILL) : null;
+      if (!other) continue;
+      const os = haloSpan(other);
+      if (!os) continue; // 滚出视口 / 被盖住:这一侧没量到,如实不计,别当过
+      gaps.push(os.top > s.top ? os.top - s.bot : s.top - os.bot);
+    }
+    // ⛔ 一侧都没量到 = 这一格是空的,别让它长得跟真绿一样
+    ok(`${label} 与相邻行同列那枚不互叠(边界不含糊)`, gaps.length > 0 && gaps.every((g) => g >= 0),
+      gaps.length ? gaps.map((g) => g.toFixed(1)).join(",") : "两侧都没量到(空测)");
   };
   const click = (el) => el.dispatchEvent(new MouseEvent("click", { bubbles: true }));
   const until = async (fn, ms = 4000) => {
@@ -60,9 +120,17 @@
   // ② 类型设置:第一行 → 点类型入口展开 input → 填「人名」→ 存 → 徽标出现且文字对
   const row0 = rows()[0];
   const id0 = row0.dataset.topic;
+  // ②a 触区:进编辑态之前先量入口那一枚(第一行本来有没有类型都行,量在的那个形)
+  const entry = row0.querySelector(".tk-add") || row0.querySelector(".tk-badge");
+  if (entry) await pillOk(entry, entry.classList.contains("tk-add") ? "「+ 类型」" : "类型徽记");
   click(row0.querySelector("[data-kind-edit]"));
   const input = await until(() => document.querySelector(`.trow[data-topic="${id0}"] .tk-input`));
   if (!ok("点类型展开输入框", !!input)) return JSON.stringify(out);
+  // ②b 触区:编辑态那两枚(存 / 清)。⚠ 单字钮 ⇒ 横向本就不到 44,那是**知情的取舍**
+  // (横向撑开会让相邻两枚 halo 互叠,理由焊在 android/index.html 那条规则头上)⇒ 这里只判纵向。
+  const kbtns = [...document.querySelectorAll(`.trow[data-topic="${id0}"] .tk-edit button`)];
+  ok("编辑态两枚钮在(存 / 清)", kbtns.length === 2, kbtns.map((b) => b.textContent.trim()).join("|"));
+  for (const b of kbtns) await pillOk(b, `编辑态「${b.textContent.trim()}」`);
   input.value = "人名";
   click(document.querySelector(`.trow[data-topic="${id0}"] [data-kind-save]`));
   const badge = await until(() => {
@@ -70,6 +138,8 @@
     return b && b.textContent.trim() === "人名" ? b : null;
   });
   ok("设类型后徽标显「人名」(后端落库)", !!badge);
+  // ②c 触区:徽记态(与「+ 类型」同一条 CSS,但宽度随用户起的类型名变 ⇒ 单量一次)
+  if (badge) await pillOk(badge, "类型徽记");
 
   // ③ 类型清除:点徽标展开 → 清 → 回到「+ 类型」
   click(document.querySelector(`.trow[data-topic="${id0}"] [data-kind-edit]`));

@@ -119,10 +119,37 @@
     const btns = [...list().querySelectorAll(".tn-edit button")];
     // 549 起改名行是三枚:存 / 取消 / 删除(user-44 第三刀把删除入口放进了这行)。
     ok("存 / 取消 / 删除三枚在", btns.length === 3, btns.map((x) => x.textContent.trim()).join("|"));
+    // ⛔ **这一格此前是空测**(用户面 77 的阴性刀当场坐实):判据写的是
+    // `above === btns[0] || above.contains(btns[0])` —— `contains()` 对**祖先**也返 true,
+    // 于是「上缘 8px 外」那一点落在 `.tn-edit` / `.trow` 上照样算过 ⇒ **把 halo 整条
+    // `display:none` 掉,它仍然绿**。而它声称守的正是那条 halo。
+    // ⇒ 换成量真实触区高(§2.3 的 44):从中心往外走,粗走跨界后二分细到 ~0.02。
+    // ⛔ 别用整像素步长 —— 中心是小数,整步走出来的读数**永远是整数、最多少报 1px**,
+    // 一个真 44 的 halo 会报 43(77 那轮第一版就这么假红过)。
+    // ⛔ 也别退回读 `getComputedStyle(el,'::before')`:那又是「CSS 里写没写」,不是打点。
+    const edge = (x, from, dir, el) => {
+      let hit = from, miss = null;
+      for (let d = 1; d <= 60; d += 1) {
+        const y = from + dir * d;
+        if (document.elementFromPoint(x, y) === el) hit = y;
+        else { miss = y; break; }
+      }
+      if (miss === null) return hit;
+      for (let i = 0; i < 12; i += 1) {
+        const mid = (hit + miss) / 2;
+        if (document.elementFromPoint(x, mid) === el) hit = mid; else miss = mid;
+      }
+      return hit;
+    };
+    btns[0].closest(".trow").scrollIntoView({ block: "center" });
+    await sleep(120);
     const bh = btns[0].getBoundingClientRect();
-    const above = document.elementFromPoint(bh.x + bh.width / 2, bh.top - 8);
-    ok("存那枚的 halo 生效(上缘 8px 外仍命中它)", above === btns[0] || (above && above.contains?.(btns[0])) || above === btns[0].parentElement && false || above === btns[0],
-      above ? above.className || above.tagName : "null");
+    const bx = Math.round(bh.x + bh.width / 2), bcy = bh.y + bh.height / 2;
+    const bspan = document.elementFromPoint(bx, bcy) === btns[0]
+      ? edge(bx, bcy, +1, btns[0]) - edge(bx, bcy, -1, btns[0])
+      : null;
+    ok("存那枚触区高 ≥44(halo 真生效)", bspan !== null && bspan >= 44,
+      bspan === null ? "中心未命中" : `${bspan.toFixed(1)}px(钮本身 ${bh.height.toFixed(1)})`);
     ok("另一行仍是正常态(只换了这一行)", !!rowOf(B0));
 
     // ---- ⑥ 一个字没改:不发写、也不弹「已改名」 ----

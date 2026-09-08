@@ -928,6 +928,8 @@
       .tb-when { flex: none; font-size: var(--fs-12); color: var(--ink-faint); }
       .tb-col { flex: none; font-size: var(--fs-12); color: var(--ink-soft); }
       .tb-empty { margin: 0; font-size: var(--fs-12); color: var(--ink-soft); }
+      /* 触区不在这条规则里:这两枚与改名 / 合并那几枚小药丸共用一条 halo,住 `.tn-edit button`
+         那一族(往下找「小药丸钮的触区」)。⛔ 别在这儿另加 `min-height` —— 药丸是可见的。 */
       .tk-add, .tk-badge {
         flex: none; font-size: var(--fs-12); padding: 3px 10px; border-radius: var(--radius-pill);
         border: 1px solid var(--line-strong); background: none;
@@ -965,10 +967,33 @@
         font-size: var(--fs-12); color: var(--ink-faint);
       }
       .tc-swatch.current { outline: 2px solid var(--ink); outline-offset: 2px; }
-      /* 存/取消:视觉保持小巧,触区同样只垂直扩(±10 ⇒ ~44,仍在行内不越到相邻行)。
-         ⛔ halo 只给 .tn-edit 这半 —— `.tk-edit` 那两枚是既有形,不在本轮范围(账在 ui-guidelines §2.3)。 */
-      .tn-edit button { position: relative; }
-      .tn-edit button::before { content: ""; position: absolute; left: 0; right: 0; top: -10px; bottom: -10px; }
+      /* 标签面「小药丸钮」的触区,整族共用这一条(§2.3;此前 .tn-edit / .mhint 各写一份、
+         .tk-add / .tk-badge / .tk-edit 三处没有)。
+         ⛔ 别照同行 `.tname` / `.tcolor` / `.tcount` 那一形写 `min-height:44px` —— 那三个是
+         `background:none;border:0` 的隐形盒,撑到 44 屏上看不出来;这一族是**有边框有底色的
+         药丸**,撑到 44 就是把小 chip 变成占满整行的大按钮。§2.3 给的另一条路正是这里走的:
+         视觉保持小巧、`::before` 撑触区。
+         ⛔⛔ **底线写死在 halo 上,别再交给「±10 算出来」**:629 判例(`.tname` 那句
+         「20.4 + 24 = 44.4」算着达标、真机实测 42.86,钉着它的断言红着没人知道)在这一族同样
+         成立 —— 药丸高度随**界面字号四档**(90/100/115/130,`textsize.ts`)变,90% 档上药丸只有
+         20.3,±10 够不到 44。⇒ **以药丸中心对称的一个 44 定高盒**,与药丸自己多高无关。
+         ⚠ 别改回「`inset:-10px 0` + `min-height:44px`」那一形:它 top/bottom/min-height 三者
+         过约束,下缘时而生效时而被忽略,四档真机实测 44.3 / 44.3 / 44.6 / 46.6 **不成规律**
+         (居中形恒 44.3),而说不清的规则下一个人就会照错的那句去改。
+         ⚠ 药丸自己长过 44 时(超大系统字号)halo 反而更小 —— 那时**药丸自己的盒子接管**,
+         两者取并集恒 ≥44,不必再补。
+         ⛔ **只垂直扩,别加横向**(同 `.tname` 那条惯例)。这一族里「存」「清」「建」是**单字钮**,
+         而 `.tk-edit` / `.tn-edit` 的 gap 只有 6px ⇒ 横向撑到 44 会让相邻两枚的 halo **互叠**,
+         点「存」落到「取消」甚至「删除」上 —— 按 §2.3 那条「落空的代价」判据,这比触区偏小更坏。
+         ⇒ 横向那一半今天不达标,是**知情的**,不是漏做。
+         ⛔ `.tc-edit .tc-cancel` 刻意不在这一族里:它与 36×36 色块同住一个 `flex-wrap:wrap` 的行,
+         wrap 成两行时 halo 会上下互叠 —— 理由写在 `.tc-edit` 头上,别顺手补进来。 */
+      .tk-add, .tk-badge, .tk-edit button, .tn-edit button, .mhint button { position: relative; }
+      .tk-add::before, .tk-badge::before, .tk-edit button::before,
+      .tn-edit button::before, .mhint button::before {
+        content: ""; position: absolute; left: 0; right: 0;
+        top: 50%; height: 44px; transform: translateY(-50%);
+      }
       .tk-edit button, .tn-edit button, .tc-edit .tc-cancel { font-size: var(--fs-12); padding: 4px 10px; border-radius: var(--radius-sm); }
       .tk-edit button.ghost, .tn-edit button.ghost, .tc-edit .tc-cancel { background: none; color: var(--ink-soft); border: 1px solid var(--line-strong); }
       /* 删除(user-44 第三刀):warn ghost 形(同 .panel .acts button.warn 的调)——
@@ -979,9 +1004,7 @@
       .mhint { display: flex; align-items: center; gap: 8px; color: var(--ink-soft); }
       .mhint-txt { flex: 1; min-width: 0; }
       .mhint button { font-size: var(--fs-12); padding: 4px 10px; border-radius: var(--radius-sm);
-        background: none; color: var(--ink-soft); border: 1px solid var(--line-strong);
-        position: relative; }
-      .mhint button::before { content: ""; position: absolute; left: 0; right: 0; top: -10px; bottom: -10px; }
+        background: none; color: var(--ink-soft); border: 1px solid var(--line-strong); }
       .mname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .mrow.msrc { outline: 2px solid var(--seal); outline-offset: -2px; border-radius: var(--radius-sm); }
       /* 子标签组(user-44 第六刀):`父/子` 前缀分组后,子行收在父行下方这一组里。
