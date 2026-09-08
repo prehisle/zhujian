@@ -12,16 +12,25 @@
 .v-topics main { position: relative; z-index: 1; }
 
 /* ---- header (also a drag handle; right pad clears floating win ctls:
-   dead zone = --winctl-dead(theme.css,344 收成派生令牌),+12px 呼吸)。
+   dead zone = --winctl-dead(theme.css,344 收成派生令牌),+30px 呼吸)。
    底边距 14px 比 inbox/search 的 12px 多 2px:本视图头带 border-bottom,贴线前
    多留一口气 —— 建仓第一笔就是 14(inbox/search 的 12 是 58 抄形时另选的),
    与 border 的有无严格对应,344 判「有意」留着。 ---- */
+/* 638(用户面 80):呼吸量 +12 → +30 并**加 `flex-wrap`**,与另两个有动作钮的头
+   (board.css / inbox.css,626 起都是这一形)对齐 —— 此前本视图是 +12 + nowrap,
+   900 窗宽(minWidth)+ 界面字号 1.5 档下这一行排不开,靠右那组**整块溢出到窗控底下**
+   (`.winctl` 的 `z-index:6` 压过 header 的 `1`):英文交叠 70.82×14.67px、中文
+   42.91×14.67px,交叠区中心 `elementFromPoint` 判给 `#win-min` ⇒ 点那一角会**最小化窗口**。
+   ⚠ 缺的只是**那一角**,钮的中心与右缘照旧点得到(637 量过)。
+   配 wrap:排不开时 `.head-tools` 整块落到第二行,首行高 ≥36px ⇒ 第二行天然在窗控下方
+   (同 board.css 那段的道理)。搜索页也是 +12,但它没有动作钮 ⇒ 不在这条账里,没跟着改。 */
 .v-topics header {
   flex: none;
-  padding: 20px calc(var(--winctl-dead) + 12px) 14px 30px;
+  padding: 20px calc(var(--winctl-dead) + 30px) 14px 30px;
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
-  gap: 14px;
+  gap: 8px 14px;
   border-bottom: 1px solid var(--line);
 }
 /* 标题 h1 与它前面那枚朱砂方印:共享件 .view header h1(见 controls.css,339 抽出)。 */
