@@ -1,3 +1,4 @@
+// @cdp-run single
 // 121 面板接管视图验收 —— 开任一面板应收起时间轴、面板落在顶部(诊断不再埋底);全关回时间轴。
 //   node scripts/android-cdp.mjs evalfile scripts/cdp-acceptance-panes.js
 (async () => {

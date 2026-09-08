@@ -1,3 +1,4 @@
+// @cdp-run single timeout=60000
 // 514(安卓):标签面「点名字改名」的回归资产。安卓侧没有 wdio 套件,这一面的回归全靠它。
 //
 // 跑法:node scripts/android-cdp.mjs evalfile scripts/cdp-acceptance-topic-rename.js

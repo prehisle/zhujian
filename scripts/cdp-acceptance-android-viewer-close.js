@@ -1,3 +1,4 @@
+// @cdp-run single
 // 安卓大图查看器的**关闭手感**(246 回归资产)。跑法(需 devtools 包 + 已 forward):
 //   adb -s <serial> shell input tap <缩略图坐标>      # 先真机点开一张图(CSS 坐标 ×3.5)
 //   node scripts/android-cdp.mjs evalfile scripts/cdp-acceptance-android-viewer-close.js

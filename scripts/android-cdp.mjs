@@ -17,15 +17,22 @@
 //   node scripts/android-cdp.mjs swipe x1 y1 x2 y2 [steps]  # 真实触摸滑动(CSS 视口坐标,
 //                                                   走 Input.dispatchTouchEvent 原生管线,含 touch-action)
 // 依赖:node ≥ 22(全局 WebSocket/fetch)、adb 在 PATH。
+//
+// ⭐ **跑验收资产别用这支的 `evalfile`,用 `node scripts/cdp-run.mjs`**(80):裸 `evalfile` 的
+//   退出码恒 0、三种返回形状靠人扫 JSON,639 就是这么让三支坏资产断了 100 多轮没人知道的。
+//   这支今天的职分只剩三样:**建 forward**(找 socket 那段焊着 490 判例)、**临场 `eval` 探状态**、
+//   **`swipe` 走原生触摸管线**。
+// ⭐ 连接那一层 80 起收进 `lib/cdp.mjs`(此前它与那 10 支抄本各写各的一份)。
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
+import { openSession, pageTarget, sleep } from "./lib/cdp.mjs";
 
 const PORT = 9222;
 
 // 单条 CDP 调用的上限。默认 10s 够绝大多数断言;**阴性对照那种「专等失败」的跑法**
 // 每个失败的 until 都要等满超时,总时长会翻几倍 —— 那时用 CDP_TIMEOUT_MS 放宽。
-// ⚠ 必须在模块级:evaluate 与 session(swipe 的路)都用它——曾被误塞进 evaluate
-// 函数体内,swipe 一跑就 ReferenceError。
+// ⚠ 必须在模块级:evaluate 与 swipe 两条路都用它——曾被误塞进 evaluate 函数体内,
+// swipe 一跑就 ReferenceError。
 const CDP_TIMEOUT_MS = Number(process.env.CDP_TIMEOUT_MS || 10000);
 
 // execFileSync 直调 adb.exe、参数逐个透传 => 不过 bash/MSYS,/proc 路径不被转义。
@@ -69,83 +76,26 @@ async function targets() {
   return r.json();
 }
 
-async function pageTarget() {
-  const ts = await targets();
-  const p = ts.find((t) => t.type === "page" && t.webSocketDebuggerUrl);
-  if (!p) throw new Error("无 page target(先跑 forward,且 app 在前台)");
-  return p;
-}
-
-async function evaluate(expr) {
-  const p = await pageTarget();
-  const ws = new WebSocket(p.webSocketDebuggerUrl);
-  await new Promise((res, rej) => {
-    ws.addEventListener("open", res, { once: true });
-    ws.addEventListener("error", () => rej(new Error("ws 连接失败")), { once: true });
-  });
-  const id = 1;
-  const out = await new Promise((res, rej) => {
-    const to = setTimeout(() => rej(new Error("CDP 超时")), CDP_TIMEOUT_MS);
-    ws.addEventListener("message", (ev) => {
-      const m = JSON.parse(ev.data);
-      if (m.id !== id) return;
-      clearTimeout(to);
-      if (m.error) return rej(new Error(JSON.stringify(m.error)));
-      const r = m.result;
-      if (r?.exceptionDetails)
-        return rej(new Error(r.exceptionDetails.exception?.description || "页面 JS 抛异常"));
-      res(r?.result);
-    });
-    ws.send(
-      JSON.stringify({
-        id,
-        method: "Runtime.evaluate",
-        params: { expression: expr, returnByValue: true, awaitPromise: true },
-      }),
-    );
-  });
-  ws.close();
-  return out;
-}
-
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
-// 开一条 CDP 会话跑多条命令(swipe 要在同一连接上连发 touchStart/Move/End)。
+// 开一条 CDP 会话跑一条或多条命令(swipe 要在同一连接上连发 touchStart/Move/End)。
+// ⛔ 连接、发命令、超时、剥 `exceptionDetails` 那一层全在 `lib/cdp.mjs`,别在这儿再抄一份。
 async function session(fn) {
-  const p = await pageTarget();
-  const ws = new WebSocket(p.webSocketDebuggerUrl);
-  await new Promise((res, rej) => {
-    ws.addEventListener("open", res, { once: true });
-    ws.addEventListener("error", () => rej(new Error("ws 连接失败")), { once: true });
-  });
-  let id = 0;
-  const send = (method, params) =>
-    new Promise((res, rej) => {
-      const myId = ++id;
-      const to = setTimeout(() => rej(new Error(`CDP 超时: ${method}`)), CDP_TIMEOUT_MS);
-      const onMsg = (ev) => {
-        const m = JSON.parse(ev.data);
-        if (m.id !== myId) return;
-        ws.removeEventListener("message", onMsg);
-        clearTimeout(to);
-        if (m.error) return rej(new Error(JSON.stringify(m.error)));
-        res(m.result);
-      };
-      ws.addEventListener("message", onMsg);
-      ws.send(JSON.stringify({ id: myId, method, params }));
-    });
+  const p = await pageTarget(PORT);
+  const s = await openSession(p.webSocketDebuggerUrl, { timeoutMs: CDP_TIMEOUT_MS });
   try {
-    return await fn(send);
+    return await fn(s);
   } finally {
-    ws.close();
+    s.close();
   }
 }
+
+/** ⚠ 返回的是**页面里那个值本身**(lib 已经剥掉 RemoteObject 那层壳),不再是 `{type,value}`。 */
+const evaluate = (expr) => session((s) => s.evaluate(expr));
 
 // 真实触摸滑动:一次 touchStart → 若干 touchMove → touchEnd。坐标是 CSS 视口像素
 // (直接用 getBoundingClientRect 的值,不换算设备像素);走原生输入管线,故 touch-action、
 // 滚动识别、pointer capture 都真实生效——正是合成 PointerEvent 测不到的那半截。
 async function swipe(x1, y1, x2, y2, steps = 12) {
-  await session(async (send) => {
+  await session(async ({ send }) => {
     await send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: x1, y: y1 }] });
     for (let i = 1; i <= steps; i++) {
       const x = x1 + ((x2 - x1) * i) / steps;
@@ -162,11 +112,11 @@ try {
   if (cmd === "forward") forward();
   else if (cmd === "info") console.log(JSON.stringify(await targets(), null, 2));
   else if (cmd === "eval") {
-    const r = await evaluate(rest.join(" "));
-    console.log(JSON.stringify(r?.value ?? r, null, 2));
+    console.log(JSON.stringify(await evaluate(rest.join(" ")), null, 2));
   } else if (cmd === "evalfile") {
-    const r = await evaluate(readFileSync(rest[0], "utf8"));
-    console.log(JSON.stringify(r?.value ?? r, null, 2));
+    // ⛔ **跑验收资产别走这条**(退出码恒 0、返回形状靠人判):`node scripts/cdp-run.mjs <名>`。
+    //    这条留给播种 / 清场那类「不是判据」的脚本。
+    console.log(JSON.stringify(await evaluate(readFileSync(rest[0], "utf8")), null, 2));
   } else if (cmd === "swipe") {
     const [x1, y1, x2, y2, steps] = rest.map(Number);
     if ([x1, y1, x2, y2].some(Number.isNaN)) throw new Error("用法: swipe x1 y1 x2 y2 [steps]");

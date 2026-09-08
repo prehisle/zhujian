@@ -1,3 +1,4 @@
+// @cdp-run single timeout=120000
 // 安卓「截止提醒」的回归资产(用户面 39①;桌面那半由 e2e `due-reminder.e2e.js` 盯着,
 // 安卓没有 wdio 套件,回归全靠它)。
 //

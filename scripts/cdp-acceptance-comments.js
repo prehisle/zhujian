@@ -1,3 +1,4 @@
+// @cdp-run single
 // 314 条目留言(迁移 0035,identity-plan §4)安卓**命令层**真机验收:
 //   node scripts/android-cdp.mjs evalfile scripts/cdp-acceptance-comments.js
 //

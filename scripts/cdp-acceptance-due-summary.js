@@ -1,3 +1,4 @@
+// @cdp-run phase timeout=90000  —— 四趟:seed→reload→验→reload→验+清场→reload→验
 // 安卓任务面「到期汇总钮」的回归资产(用户面 60-D:对齐桌面 502 顶栏那枚「逾期 M · 今天 N」
 // + 556-B 的紧急度排序;**60-A 起再挂一段「N 天内 K」**= 快到期提前预警,窗口 3 天)。
 // 桌面那半由 e2e 两支盯着(task-time / due-reminder),安卓没有 wdio 套件,回归全靠它。

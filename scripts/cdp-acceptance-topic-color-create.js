@@ -1,3 +1,4 @@
+// @cdp-run single timeout=60000
 // user-44 第二刀(安卓):标签面「点色点改颜色 + 面头新建标签」的回归资产。
 // 安卓侧没有 wdio 套件,这两件的回归全靠它(与 514 的 cdp-acceptance-topic-rename.js 同族)。
 //

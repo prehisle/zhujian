@@ -1,3 +1,4 @@
+// @cdp-run part  —— timeline-filter 的播种步
 // 时间轴筛选验收 · 播种(三步流程之一):建人名类两标签 FFV-张三/FFV-李四 + 无类型标签
 // FFV-项目甲 + **一组父子标签 FFV-家 / FFV-家/买菜 / FFV-家/修灯**(验多选并集与父子折叠,
 // 229),各挂一条灵感。ids 存 localStorage 跨 reload 存活,-cleanup 读回删净(它按 topics/

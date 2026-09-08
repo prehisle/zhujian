@@ -1,3 +1,4 @@
+// @cdp-run single
 // 133 同步 UI 简化验收 —— 单空间藏空间概念、已配置态收「连接信息」折叠、
 // 「添加设备」改名、恢复码警示随码同现;未配置态(若在)一主两辅互斥折叠。
 //   node scripts/android-cdp.mjs evalfile scripts/cdp-acceptance-sync-ui.js

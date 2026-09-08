@@ -17,7 +17,18 @@
 
 /** 问 `/json` 要一条 page target。挑不出来就响亮说,⛔ 别退回「那就用第一条吧」。 */
 export async function pageTarget(port = 9222) {
-  const res = await fetch(`http://127.0.0.1:${port}/json`);
+  let res;
+  try {
+    res = await fetch(`http://127.0.0.1:${port}/json`);
+  } catch (e) {
+    // ⚠ **app 切到后台时这里抛的是一行 `TypeError: fetch failed`**,跟「app 在后台」毫无字面关系
+    //   (629 实撞:跑到一半用户拿起手机开了微信)。手机端 runtime 只在前台跑 ⇒ 把话补全,
+    //   ⛔ 别让人对着 undici 的堆栈猜。
+    throw new Error(
+      `连不上 CDP :${port}(${e.message})—— ① adb forward 建了吗(node scripts/android-cdp.mjs forward)?` +
+        ` ② app 还在**前台**吗(手机端 runtime 只在前台跑)? ③ 装的是 devtools 构建吗?`,
+    );
+  }
   if (!res.ok) throw new Error(`CDP /json 回 ${res.status} —— adb forward 建了吗?app 是 devtools 构建吗?`);
   const list = await res.json();
   const pages = list.filter((t) => t.type === "page" && t.webSocketDebuggerUrl);

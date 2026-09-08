@@ -1,3 +1,4 @@
+// @cdp-run single
 // 190 安卓标签面拖排序(1c):合成 PointerEvent 驱动拖手柄验「手势逻辑 + 顺序落库」。
 // 把列表最后一行 B 拖到倒数第二行 A 之前 → 断言 B 排到 A 前(loadTopics 重查后端后
 // 仍成立 = reorder_topic 真落库)。touch-action 不被滚动抢的原生半截另用真触摸 swipe 眼看。

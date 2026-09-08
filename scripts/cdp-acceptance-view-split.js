@@ -1,3 +1,4 @@
+// @cdp-run single
 // 146 主视图分面(灵感/任务)验收 —— 经 android-cdp.mjs evalfile 注入 WebView。
 //   node scripts/android-cdp.mjs evalfile scripts/cdp-acceptance-view-split.js
 // 断言:灵感面无任务卡 / compose 草稿跨面保留+placeholder 随面换 / 任务面记下落

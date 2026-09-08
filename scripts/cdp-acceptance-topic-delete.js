@@ -1,3 +1,4 @@
+// @cdp-run single timeout=90000
 // user-44 第三刀(安卓):标签面「删除」的回归资产。
 // 安卓侧没有 wdio 套件,这件的回归全靠它(与 514 rename / 548 color-create 同族)。
 //

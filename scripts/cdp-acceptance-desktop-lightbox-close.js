@@ -1,3 +1,4 @@
+// @cdp-run desktop  —— 桌面面,走 desktop-cdp.mjs
 // 桌面看大图的**关闭手感**(246 立的两条,606 遮罩搬进独立窗之后重写)。跑法:
 //   node scripts/desktop-cdp.mjs evalfile scripts/cdp-acceptance-desktop-lightbox-close.js --page lightbox
 // (先按 desktop-cdp.mjs 文件头带 CDP 环境变量起 app。⭐ **606 起本支自给自足**:它自己画一张

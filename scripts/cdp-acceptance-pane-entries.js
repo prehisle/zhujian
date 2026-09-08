@@ -1,3 +1,4 @@
+// @cdp-run single
 // 首用入口分层(408-A1/A2):底栏「回收站/归档册」按数据显形 + 空库空态引导副行。
 //   node scripts/android-cdp.mjs evalfile scripts/cdp-acceptance-pane-entries.js
 // 断言是**谓词式**的(库里有没有存量回收站/归档数据都能跑):

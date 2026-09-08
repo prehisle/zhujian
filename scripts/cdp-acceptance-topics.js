@@ -1,3 +1,4 @@
+// @cdp-run single
 // 190 安卓标签管理面:开面 + 点类型入口(设/清 kind)+ 读顺序(供拖排序步骤前后对比)。
 // 纯 DOM 断言即端到端:render 的数据来自 loadTopics 的后端查询(listTopicsFull),徽标/
 // 顺序变了 = 后端真落库(set_topic_kind / reorder_topic)。拖排序需真触摸(touch-action

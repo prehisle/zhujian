@@ -1,3 +1,4 @@
+// @cdp-run single
 // 151 安卓恢复前滚迁移验收 —— 启动闸放行 + 逐空间库版本对账(地面真相=PRAGMA)。
 //   node scripts/android-cdp.mjs evalfile scripts/cdp-acceptance-db-migrate.js
 // 断言:gate=ready(封锁页没出现)、每个空间 user_version=EXPECT_UV、journal_mode=wal、

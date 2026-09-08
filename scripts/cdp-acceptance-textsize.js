@@ -1,3 +1,4 @@
+// @cdp-run single
 // 251 界面字号(安卓)验收 —— 设置面四档 seg 走 __zhujianTextSize 桥调 WebView textZoom。
 //   node scripts/android-cdp.mjs evalfile scripts/cdp-acceptance-textsize.js
 // 量测铁律:wry 的 zoom() 在安卓是「返回 Ok 什么都不做」的空实现(241/250 教训),所以

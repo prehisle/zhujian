@@ -1,3 +1,4 @@
+// @cdp-run single
 // 299 缩略图本地派生表(迁移 0032,image-perf-plan §3)安卓真机验收。
 //   node scripts/android-cdp.mjs evalfile scripts/cdp-acceptance-thumbs.js
 //

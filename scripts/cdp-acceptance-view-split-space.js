@@ -1,3 +1,4 @@
+// @cdp-run single
 // 146 分面 × 多空间:空间切换清屏、mode 保留 —— 经 android-cdp.mjs evalfile 注入。
 //   node scripts/android-cdp.mjs evalfile scripts/cdp-acceptance-view-split-space.js
 // 多空间守卫:单空间设备(space-chip 隐藏)直接 skip=true 算过、报出来。

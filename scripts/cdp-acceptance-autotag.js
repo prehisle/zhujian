@@ -1,3 +1,4 @@
+// @cdp-run phase timeout=90000  —— 两趟:自播种回 {needReload:true} → reload → 第二趟才验
 // 「筛着标签记录 → 那几枚标签自动挂上」的安卓回归资产(用户 2026-08-31 拍板:相关的
 // 标签都打上;并点名手机要跟上桌面这条行为)。桌面那半由 e2e 三支盯着
 // (inbox-autotag / board-multitag / board-kind-filter),安卓没有 wdio 套件,回归全靠它。

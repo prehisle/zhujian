@@ -1,3 +1,4 @@
+// @cdp-run single
 // 367 片⑤ 安卓设备名单验收(identity-plan §5.8/§5.9,§5.16.3 点名的「安卓 CDP 资产一支」)。
 //   node scripts/android-cdp.mjs evalfile scripts/cdp-acceptance-devices.js
 //

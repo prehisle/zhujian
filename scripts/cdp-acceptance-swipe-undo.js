@@ -1,3 +1,4 @@
+// @cdp-run single
 // 滑动改状态的回执条(402):操作型回执 actionBar 替换 confirmBar 挪用——
 // 断言「恰一枚『撤销』钮、条上无『取消』、#confirmbar 全程不出场」+ 点撤销真回退。
 // 依赖真触摸(swipe 判定走原生管线),故分两相、中间夹一发 CLI swipe:

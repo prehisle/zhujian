@@ -1,3 +1,4 @@
+// @cdp-run single
 // 314 条目留言 安卓 **UI 层**真机验收(第③笔):
 //   node scripts/android-cdp.mjs evalfile scripts/cdp-acceptance-comments-ui.js
 //

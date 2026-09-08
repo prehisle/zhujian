@@ -1,3 +1,4 @@
+// @cdp-run single
 // 用户面 79 + UI 一致性 M8 验收 —— 「开面板」这件事的三格:面板从自己的顶部开始、关面把
 // 时间轴还原到开面前的位置、搜索面开出来先说一句「搜得到什么」。
 //   node scripts/android-cdp.mjs evalfile scripts/cdp-acceptance-pane-open.js

@@ -1,3 +1,4 @@
+// @cdp-run single
 // 144 P0 #3:提示条(#error)/更新条(#update)改 fixed 悬浮——出现/消失不再挤动
 // 文档流(143 真机实测「整轴跳 ~37px 误点状态 pill」的根因)。静态样式锚 + 显隐前后
 // 时间轴零位移断言。evalfile 跑,pass=true 才算过。
