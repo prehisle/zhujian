@@ -25,9 +25,10 @@
   border-bottom: 1px solid var(--line);
 }
 /* 标题 h1 与它前面那枚朱砂方印:共享件 .view header h1(见 controls.css,339 抽出)。 */
-/* header 动作按钮(新建标签 / 合并标签)统一走共享 .hbtn,见 controls.css;
-   新建标签 margin-left:auto 把两颗钮顶右——原先靠 .sub 说明行 flex:1 撑开,说明行删了(67)。 */
-.v-topics header #new-toggle { margin-left: auto; }
+/* header 动作按钮(新建标签 / 合并标签)统一走共享 .hbtn,靠右那组走共享 .head-tools
+   (都在 controls.css)—— 顶右那枚 margin-left:auto 由 .head-tools 自己带,本文件不再写
+   (637 / B1;更早的形是 #new-toggle 自带 auto 边距,原先则靠 .sub 说明行 flex:1 撑开,
+   说明行删了(67))。⛔ 别在这里给组内某一枚补 auto 边距:两个 auto 会均分剩余空间。 */
 
 /* ---- new-tag compose bar ---- */
 .v-topics .newform {

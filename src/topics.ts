@@ -80,11 +80,19 @@ let savedScroll = 0;
 // 节点、「合并标签」有 `.lbl`,谁将来按 `.lbl` 给本页写窄屏塌缩(看板 header 正是那么写的)
 // 就只塌得动一半。今天是纯 markup 对称:`.lbl` 的样式规则全部锁在 `.v-board` 下,本页一
 // 个像素都不动;`setMerging` 改的是 `#merge-toggle` 那枚的 `.lbl`,与这枚无关。
+// ⭐ 637(用户面 74 / B1,用户 2026-09-08 拍「乙」):两枚钮包进共享的 `.head-tools`
+// (controls.css)—— 此前是 header 的两个直接 flex 项、靠 `#new-toggle{margin-left:auto}`
+// 把它俩一起顶右,那是四个视图头里唯一一处「靠右组不是 `.head-tools`」的写法。⛔ 别给
+// 组内某一枚再写 `margin-left:auto`(626 的判例:两个 auto 边距会均分剩余空间)。
+// ⚠ 屏上位置不变:header 与 `.head-tools` 的 `gap` / `align-items` 逐条相同,右缘由那枚
+// auto 边距换成 `.head-tools` 自己的 auto 边距接手,量过是同一像素。
 const SKELETON = `
   <header data-tauri-drag-region>
     <h1>${t("topics.header")}</h1>
-    <button id="new-toggle" class="hbtn" type="button"><span class="lbl">${t("topics.newTag")}</span> <kbd class="k">N</kbd></button>
-    <button id="merge-toggle" class="hbtn" type="button"><span class="lbl">${t("topics.mergeTags")}</span> <kbd class="k">M</kbd></button>
+    <span class="head-tools">
+      <button id="new-toggle" class="hbtn" type="button"><span class="lbl">${t("topics.newTag")}</span> <kbd class="k">N</kbd></button>
+      <button id="merge-toggle" class="hbtn" type="button"><span class="lbl">${t("topics.mergeTags")}</span> <kbd class="k">M</kbd></button>
+    </span>
   </header>
   <div id="newform" class="newform" hidden>
     <input id="nt-title" class="nt-title" type="text" placeholder="${t("topics.namePlaceholder")}" />
