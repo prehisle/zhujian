@@ -254,6 +254,13 @@ const SIZE_TOKEN = /^(?:\d+(?:\.\d+)?px|var\(--fs-[a-z0-9-]+\))(?:\/\S*)?$/;
  * ⚠ 认不出字号的 `font:` 一律抛,不许静静跳过 —— 342 那条 `font: 600 15px/1.4 …`
  * (字号前面还能有字重)就是靠这条纪律才露出来的:少认一种写法 = 安静地少判。
  */
+/** 取同一条规则里**最后一条**匹配的声明(CSS 里同属性写两遍是后者赢)。⛔ 别退回 `exec`。 */
+function lastDecl(body, re) {
+  let out = null;
+  for (const m of body.matchAll(re)) out = m;
+  return out;
+}
+
 function fontSizeIn(body, where) {
   let out = null;
   for (const m of body.matchAll(/(?:^|;)\s*(font-size|font)\s*:\s*([^;]+)/g)) {
@@ -559,8 +566,12 @@ for (const doc of DOCS) {
       const body = rule[2];
       // 幽灵令牌那条规则要看**全部**颜色位置的 var(),不只自带前后景的那些
       for (const m of body.matchAll(/var\(\s*(--[a-z0-9-]+)/g)) varsSeen.add(m[1]);
-      const fgm = /(?:^|;)\s*color\s*:\s*([^;]+)/.exec(body);
-      const bgm = /(?:^|;)\s*background(?:-color)?\s*:\s*([^;]+)/.exec(body);
+      // ⚠ **同一条规则里同一个属性写两遍时,赢的是最后一条**(CSS 层叠的最后一层)——
+      // ⛔ 别用 `exec` 取第一条(用户面 82 那批「老引擎兜底 + 新引擎 color-mix」正是这种写法,
+      // 取第一条会把整道门禁算在一个用户永远看不到的值上;`check-contrast-xcheck` 当场逮到 2 组)。
+      // `fontSizeIn` 早就是「循环覆盖 = 取最后一条」,这两格补齐同一条纪律。
+      const fgm = lastDecl(body, /(?:^|;)\s*color\s*:\s*([^;]+)/g);
+      const bgm = lastDecl(body, /(?:^|;)\s*background(?:-color)?\s*:\s*([^;]+)/g);
       const fsv = fontSizeIn(body, `${where} ${file}「${selRaw}」`);
       order++;
       if (!fgm && !bgm && !fsv) continue;

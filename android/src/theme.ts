@@ -19,7 +19,9 @@ let mode: ThemeMode = "auto";
  *  桥缺席就是构建出了问题(不是可容忍的降级),验收里直接断言它在。 */
 declare global {
   interface Window {
-    __zhujianSystemBars?: { setDark(dark: boolean): void };
+    // `topInset()` 是状态栏高度(设备 px),用户面 83 的原生那半;吃它的是 index.html
+    // 头里那段首帧脚本(写 `--sat`),这里只把类型登记在同一处,别在两处各写一份。
+    __zhujianSystemBars?: { setDark(dark: boolean): void; topInset?(): number };
   }
 }
 

@@ -19,8 +19,14 @@ class MainActivity : TauriActivity() {
     // 界面字号(251):基准取 WebView 创建时的初始 textZoom——它已含系统「字体大小」
     // 的放大,我们的百分比乘在上面、不覆盖用户的系统级选择。
     webView.addJavascriptInterface(TextSize(webView.settings.textZoom), "__zhujianTextSize")
-    applyImeInsets()
+    applyWindowInsets()
   }
+
+  // 状态栏高度(**设备 px**),由下面那条 inset 监听缓存、`SystemBars.topInset()` 读走。
+  // ⚠ `@JavascriptInterface` 的方法跑在 binder 线程上 ⇒ ⛔ 别在桥里现碰 View 树取 inset,
+  //    读这个缓存。⚠ 监听先于页面加载跑(`requestApplyInsets` 在 onWebViewCreate 里),
+  //    万一还是 0,前端那段就不覆盖 `--sat`、退回 env() = 与改前同(⛔ 不写 0 进去)。
+  @Volatile private var statusBarTopPx = 0
 
   // 软键盘让位的原生半截(⛔ 这一格没有它,前端怎么写都够不着 —— 2026-08-28 实测)。
   //
@@ -40,11 +46,16 @@ class MainActivity : TauriActivity() {
   //  - 归零同时让 M139+ 那套「自动缩 visual viewport」停手 ⇒ **新旧 WebView 行为归一**:永远是
   //    「视图真的缩了」。前端因此只需照常贴 `bottom:0`,不必再猜键盘多高(kbsheet.ts 那套猜测
   //    因此退休)。⛔ 别为了「新机器上让平台自己做」而按版本分叉:两套行为的前端要写两份。
-  private fun applyImeInsets() {
+  //
+  // ⭐ **643 起它还捎带一格:状态栏那一格的真值**(用户面 83)。⛔ 别把这一格也做成 padding ——
+  // 那会把顶栏的纸面底色从状态栏底下抽走(今天它是画到状态栏底下的,状态栏文字压在纸上)。
+  // 只把数字交出去,让位由前端那条 `--sat` 做。⇒ 一份 inset 监听,两格各取所需。
+  private fun applyWindowInsets() {
     val content = findViewById<android.view.View>(android.R.id.content)
     androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(content) { v, insets ->
       val ime = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.ime())
       v.setPadding(v.paddingLeft, v.paddingTop, v.paddingRight, ime.bottom)
+      statusBarTopPx = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.statusBars()).top
       androidx.core.view.WindowInsetsCompat.Builder(insets)
         .setInsets(androidx.core.view.WindowInsetsCompat.Type.ime(), androidx.core.graphics.Insets.NONE)
         .build()
@@ -65,6 +76,11 @@ class MainActivity : TauriActivity() {
         c.isAppearanceLightNavigationBars = !dark
       }
     }
+
+    /** 状态栏高度,**设备 px**(前端按 devicePixelRatio 换算成 CSS px 写进 `--sat`)。
+     *  ⛔ 别改成「返回 CSS px」—— 换算要的那个比值只有页面里才知道(textZoom / 缩放都影响)。 */
+    @android.webkit.JavascriptInterface
+    fun topInset(): Int = statusBarTopPx
   }
 
   // 界面字号(251)的原生半截。wry 0.55.1 的安卓 zoom() 是空实现(返回 Ok 什么都不做),

@@ -140,6 +140,31 @@ const TOKENS = [
 写的话 —— 桌面此前写死 #4c9a6a 且两档同一个值,已把安卓那份的值抄过来。官网没有同步状态",
   },
   {
+    name: "--paper-veil",
+    in: ["安卓"],
+    dark: true,
+    why: "顶栏 / 底栏那层「纸纱」= --paper 带 94% alpha(与 --seal-tint 同一种写法)。⛔ 别改回\
+`color-mix(… var(--paper) …)`:含 var() 的值到**计算期**才失败(IACVT)⇒ 属性归 unset、\
+⛔ 不回退到前一条兜底 —— Chrome ≤110 上那两条就是整个透明的(用户面 82,MuMu 实测)。\
+桌面/官网不在系统栏底下画东西,也没有这层贴边的半透明条",
+  },
+  {
+    name: "--ink-veil",
+    in: ["安卓"],
+    dark: true,
+    why: "分段钮未选中态那层极淡的墨底 = --ink 带 4% alpha;来路同 --paper-veil(用户面 82)。\
+桌面那边分段控件走的是另一套(.seg 只在手机端)",
+  },
+  {
+    name: "--sat",
+    in: ["安卓"],
+    dark: false,
+    why: "状态栏让位那一格的高度(用户面 83)。默认值是 `env(safe-area-inset-top)`,安卓壳里\
+由原生下发的状态栏真值覆盖 —— ⛔ 别直接用 env():Chromium 把 safe-area 映到**显示屏挖孔**、\
+不是状态栏,没挖孔的机器上它恒 0,顶栏会压着系统时钟。与 --wrap / --wc-w 同族:布局尺寸不是颜色\
+令牌,故 dark:false。桌面/官网不在系统栏底下画东西",
+  },
+  {
     name: "--wc-w",
     in: ["桌面"],
     dark: false,

@@ -35,11 +35,36 @@
           window.__zhujianTextSize && window.__zhujianTextSize.set(s);
       })();
     </script>
+    <!-- 状态栏让位(643,用户面 83):首帧之前把状态栏真高写进 `--sat`——晚一帧就是顶栏
+         跳一下。⛔ 这一格没有原生那半就够不着:CSS 的 `env(safe-area-inset-top)` 在 Chromium 里
+         映的是**挖孔**不是状态栏,没挖孔的机器上恒 0(桥在 MainActivity.kt 的 `topInset()`,
+         值是**设备 px**,这里按 devicePixelRatio 换算成 CSS px)。
+         桥不在(鸿蒙 / 桌面浏览器里开这页)就整段跳过,`--sat` 留在 :root 那个 env() 默认值上。
+         ⚠ 旋转 / 分屏会改状态栏高度 ⇒ 挂 resize 重取(⛔ 别只在启动取一次)。 -->
+    <script>
+      (function () {
+        var b = window.__zhujianSystemBars;
+        if (!b || !b.topInset) return;
+        var apply = function () {
+          var px = b.topInset();
+          if (px > 0) document.documentElement.style.setProperty("--sat", px / devicePixelRatio + "px");
+        };
+        apply();
+        window.addEventListener("resize", apply);
+      })();
+    </script>
     <!-- P4-c 捕获页 + 统一时间轴 + 勾标完成(android-plan §0 ②③④);诊断面(P4-b)收进
          设置面「诊断」入口(250 自同步面挪来)。令牌取值对齐桌面 src/theme.css「纸与朱墨」,
          单位手机化。 -->
     <style>
       :root {
+        /* 状态栏让位(643,用户面 83)。⛔ **别直接写 `env(safe-area-inset-top)`** ——
+           Chromium 把 safe-area 映到**显示屏挖孔**、**不是**状态栏 ⇒ 没挖孔的机器上它恒 0,
+           而 `enableEdgeToEdge()` 让内容画到状态栏底下 ⇒ 顶栏压着系统时钟(MuMu 实测
+           header top=0 / padding-top=10px)。用户那台 vivo 有挖孔,恰好把这个患挡住了。
+           ⇒ 这里只是**默认值**:安卓壳里那段内联脚本会拿原生的状态栏 inset 真值把它覆盖掉;
+           鸿蒙 / 浏览器里没有那条桥,就照旧退回 env()(与改前逐位相同)。 */
+        --sat: env(safe-area-inset-top);
         --paper: #f3eee3;
         --raised: #faf6ec;
         --raised-edge: #f0eadd;
@@ -51,6 +76,13 @@
         --seal: #b3402b;
         --seal-tint: rgba(179, 64, 43, 0.1);
         --seal-line: rgba(179, 64, 43, 0.38);
+        /* 两张「纱」(643,用户面 82)。它们就是 `--paper` / `--ink` 带上 alpha ——
+           与上面 --line / --seal-tint 同一种写法。⛔ **别改回 `color-mix(… var(--X) …)`**:
+           含 var() 的值在解析期合法、能盖掉前一条声明,到计算期才失败(IACVT)⇒ 属性归 unset,
+           ⛔ 不回退到「前一条兜底」。Chrome ≤110 不认 color-mix ⇒ 顶栏 / 底栏 / 分段钮的底
+           **整个透明**(MuMu 实测 rgba(0,0,0,0),用户当场看见的就是这个)。 */
+        --paper-veil: rgba(243, 238, 227, 0.94); /* = --paper 94% */
+        --ink-veil: rgba(34, 31, 25, 0.04); /* = --ink 4% */
         --on-seal: #fdf6ee; /* 压在朱砂上的字,随明暗翻面(理由见桌面 src/theme.css) */
         --ok: #3d7a4e;
         --font-serif: "Georgia", "SimSun", "Songti SC", "Source Han Serif SC", serif;
@@ -105,6 +137,8 @@
         --seal: #df6a4f;
         --seal-tint: rgba(223, 106, 79, 0.14);
         --seal-line: rgba(223, 106, 79, 0.45);
+        --paper-veil: rgba(27, 24, 19, 0.94); /* = --paper 94% */
+        --ink-veil: rgba(236, 228, 213, 0.04); /* = --ink 4% */
         --on-seal: #1b1813;
         --ok: #6fa47e;
         color-scheme: dark; /* 原生控件(输入框选区/滚动条)跟着走 */
@@ -135,8 +169,8 @@
         position: sticky; top: 0; z-index: 5;
         display: flex; align-items: baseline; justify-content: space-between;
         margin: 0 -14px 10px;
-        padding: calc(10px + env(safe-area-inset-top)) 16px 8px;
-        background: color-mix(in srgb, var(--paper) 94%, transparent);
+        padding: calc(10px + var(--sat)) 16px 8px;
+        background: var(--paper-veil);
         backdrop-filter: blur(6px);
         border-bottom: 1px solid var(--line);
       }
@@ -176,7 +210,7 @@
       .seg { display: flex; border: 1px solid var(--line); border-radius: var(--radius-md); overflow: hidden; }
       .seg button {
         flex: 1; height: 44px; border: 0; border-left: 1px solid var(--line);
-        background: color-mix(in srgb, var(--ink) 4%, transparent);
+        background: var(--ink-veil);
         color: var(--ink-soft); font-size: var(--fs-14); font-family: var(--font-sans);
       }
       .seg button:first-child { border-left: 0; }
@@ -502,7 +536,7 @@
          把已完成任务误点回待办即源于此。z 高于大图查看层(15)、低于封锁页(20)。 */
       .error {
         position: fixed; left: 14px; right: 14px; z-index: 18;
-        top: calc(8px + env(safe-area-inset-top));
+        top: calc(8px + var(--sat));
         background: var(--seal); color: var(--on-seal);
         border-radius: var(--radius-md); padding: 8px 12px;
         /* 14px 而不是 13px(343):notice 那一档是墨绿底(--ok),压 --on-seal 只有 4.79,
@@ -537,7 +571,8 @@
         bottom: calc(var(--nav-h, var(--nav-clear)) + 84px);
         display: flex; align-items: center; justify-content: space-between; gap: 8px;
         /* 悬浮层要不透底:seal-tint 是半透明,混进纸面色打底。 */
-        background: color-mix(in srgb, var(--seal) 10%, var(--raised));
+        background-color: var(--raised);
+        background-image: linear-gradient(var(--seal-tint), var(--seal-tint));
         border: 1px solid var(--seal-line);
         border-radius: var(--radius-md); padding: 6px 6px 6px 12px;
         font-size: var(--fs-13);
@@ -707,6 +742,8 @@
         background: var(--seal-tint); color: var(--seal); font-weight: 600;
       }
       .card.done .pill { background: none; border: 1px solid var(--line-strong); color: var(--ink-faint); font-weight: 400; }
+      /* ⚠ 这一对(边框与字色)吃的是每个元素自己的 `--tc`,老引擎(≤110)上 `color-mix` 算不出
+         ⇒ 退成 unset:边框走 currentColor、字色继承。刻意不给兜底,理由同 `.panel button.p` 那条。 */
       .chip {
         padding: 1px 8px; border-radius: var(--radius-pill);
         border: 1px solid color-mix(in srgb, var(--tc, var(--ink-faint)) 45%, transparent);
@@ -770,7 +807,7 @@
         position: fixed; inset: 0; z-index: 15; overflow: hidden;
         display: flex; flex-direction: column; align-items: center; justify-content: center;
         gap: 10px; background: rgba(0, 0, 0, 0.88);
-        padding: calc(10px + env(safe-area-inset-top)) 0 calc(16px + env(safe-area-inset-bottom));
+        padding: calc(10px + var(--sat)) 0 calc(16px + env(safe-area-inset-bottom));
         touch-action: none; -webkit-user-select: none; user-select: none;
         transition: opacity 0.12s ease; /* 撤销待关时用这个快档把整层平滑拉回来 */
       }
@@ -786,7 +823,7 @@
       #viewer.zoomed .cap { opacity: 0; }
       /* 删图按钮:右上角,低调描边;放大态淡出并禁点(与角标同,防平移误触)。 */
       .viewer-del {
-        position: absolute; top: calc(12px + env(safe-area-inset-top)); right: 16px;
+        position: absolute; top: calc(12px + var(--sat)); right: 16px;
         border: 1px solid rgba(255, 255, 255, 0.5); border-radius: var(--radius-pill);
         background: rgba(0, 0, 0, 0.45); color: #fff;
         padding: 8px 18px; font-size: var(--fs-14); font-family: var(--font-sans);
@@ -1145,7 +1182,7 @@
       .gate {
         position: fixed; inset: 0; z-index: 20;
         background: var(--paper);
-        padding: calc(28px + env(safe-area-inset-top)) 20px calc(24px + env(safe-area-inset-bottom));
+        padding: calc(28px + var(--sat)) 20px calc(24px + env(safe-area-inset-bottom));
         overflow: auto;
       }
       .gate h2 { color: var(--seal); font-size: var(--fs-16); margin: 0 0 12px; }
@@ -1213,7 +1250,7 @@
         font-size: var(--fs-12); color: var(--ink-soft); line-height: 1.5;
         margin-bottom: 8px; padding: 6px 8px;
         border: 1px solid var(--seal-line); border-radius: var(--radius-sm);
-        background: color-mix(in srgb, var(--seal) 6%, transparent);
+        background: var(--seal-tint);
       }
       .panel .movewarn b { color: var(--seal); }
       .panel .movenote {
@@ -1221,9 +1258,13 @@
         font-size: var(--fs-12); color: var(--seal); line-height: 1.5;
         margin-bottom: 8px; padding: 6px 8px;
         border: 1px solid var(--seal-line); border-radius: var(--radius-sm);
-        background: color-mix(in srgb, var(--seal) 8%, transparent);
+        background: var(--seal-tint);
       }
       .panel .movenote span { flex: 1; min-width: 0; }
+      /* ⚠ 下面这几处吃的是每个元素自己的 `--tc`(标签色),老引擎(≤110)上 `color-mix` 算不出
+         ⇒ 属性退成 unset(晕没有了 / 字色继承 / 边框走 currentColor)。**刻意不给兜底** ——
+         ⛔ 「前一条兜底」那招对含 `var()` 的值**无效**(IACVT 置 unset,不回退,643 真机量过);
+         而选中态另有 `border-color` 与 `color` 两路带着,退化是掉一层装饰、不是掉功能。 */
       .panel button.p {
         border: 1px solid color-mix(in srgb, var(--tc, var(--line-strong)) 60%, transparent);
         border-radius: var(--radius-pill); background: none;
@@ -1261,7 +1302,7 @@
       #bottombar {
         position: fixed; left: 0; right: 0; bottom: 0; z-index: 5;
         display: flex; justify-content: space-around; align-items: center;
-        background: color-mix(in srgb, var(--paper) 94%, transparent);
+        background: var(--paper-veil);
         backdrop-filter: blur(6px);
         border-top: 1px solid var(--line);
         padding: 6px 8px calc(6px + env(safe-area-inset-bottom));
@@ -1297,7 +1338,7 @@
          **常驻(sticky,贴在顶栏下沿)**:此前它是普通内容,往下看几屏后想改筛选只能一路
          滚回顶(604 用户报的:「没有快速的方法回到选择标签的位置」)。收起态只有一两行,
          常驻的代价很小;摊开态靠下面那条 `max-height` 兜住。
-         ⚠ `top` 吃的是 JS 量出来的 `--head-h` —— 顶栏高度含 `env(safe-area-inset-top)`,
+         ⚠ `top` 吃的是 JS 量出来的 `--head-h` —— 顶栏高度含 `var(--sat)`,
          **写不死**。z 低于 header(5)、高于卡片。
          ⛔⛔ **横向 margin 一个字都不许写**(⛔ 别照 header 那样用 `margin:0 -14px` 去「铺满」)——
          511 那条宽屏规则(`#filterbar, #timeline, .sync, .compose` 共用)靠 `margin-left/right:auto`
