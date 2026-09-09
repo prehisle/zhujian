@@ -33,6 +33,15 @@
         --seal-line: rgba(179, 64, 43, 0.38);
         --on-seal: #fdf6ee; /* 压在朱砂上的字,随明暗翻面(理由见桌面 src/theme.css) */
 
+        /* ── 三层「纱」= 令牌色 + alpha(与上面 --line / --seal-tint 同一种写法)──
+           ⛔ **别改回 `color-mix(… var(--X) …)`**:含 var() 的值解析期就合法、能盖掉前一条,
+           到计算期才失败(IACVT)⇒ 属性归 unset、**不回退到兜底声明**。不认 color-mix 的引擎
+           (Chrome ≤110 / Safari ≤16.1 / 微信 X5 那一族)上这三处会整个透明 —— 顶栏那处是
+           **字叠字**(用户面 84 量:2x 下最大色差 208)。app 那边同一个病见用户面 82。 */
+        --topbar-veil: rgba(243, 238, 227, 0.82); /* = --paper 82% */
+        --band-veil: rgba(250, 246, 236, 0.55); /* = --raised 55% */
+        --seal-select: rgba(179, 64, 43, 0.26); /* = --seal 26%,比 --seal-tint 深一档 */
+
         /* 三层字面:楷体(书写/品牌)· 宋体(书卷/想法原文)· 黑体(界面) */
         /* 西文排在栈首:font-family 是逐字符回退,故英文走人文衬线、汉字照旧落楷体。
            不排的话,普通 Windows 的英文标题会落到 KaiTi 的等宽拉丁字形上(字距被撑开)。 */
@@ -84,6 +93,9 @@
           --seal-tint: rgba(223, 106, 79, 0.14);
           --seal-line: rgba(223, 106, 79, 0.45);
           --on-seal: #1b1813;
+          --topbar-veil: rgba(27, 24, 19, 0.82); /* = --paper 82% */
+          --band-veil: rgba(36, 32, 25, 0.55); /* = --raised 55% */
+          --seal-select: rgba(223, 106, 79, 0.26); /* = --seal 26% */
           --float-shadow: 0 22px 55px -18px rgba(0, 0, 0, 0.7), 0 2px 8px rgba(0, 0, 0, 0.4);
           --card-shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 16px 34px -22px rgba(0, 0, 0, 0.7);
         }
@@ -118,7 +130,7 @@
       }
 
       input, textarea { caret-color: var(--seal); }
-      ::selection { background: color-mix(in srgb, var(--seal) 26%, transparent); }
+      ::selection { background: var(--seal-select); }
 
       a { color: inherit; }
 
@@ -142,7 +154,7 @@
         top: 0;
         z-index: 20;
         backdrop-filter: saturate(1.1) blur(8px);
-        background: color-mix(in srgb, var(--paper) 82%, transparent);
+        background: var(--topbar-veil);
         border-bottom: 1px solid var(--line);
       }
       .topbar .wrap {
@@ -426,7 +438,7 @@
         padding: clamp(48px, 6vw, 78px) 0;
         border-top: 1px solid var(--line);
         border-bottom: 1px solid var(--line);
-        background: color-mix(in srgb, var(--raised) 55%, transparent);
+        background: var(--band-veil);
       }
       /* 一张 <dl> 就是一张表:整个 dl 是**同一个** grid(不是每行各自成 grid),
          列宽才会跨行对齐;标签列取 max-content,英文档下最长那条(Free and open
