@@ -10,10 +10,10 @@ export const reminder = defineMessages({
   "reminder.on": { zh: "开", en: "On" },
   "reminder.off": { zh: "关", en: "Off" },
   "reminder.test": { zh: "试一条", en: "Send test" },
-  "reminder.testSent": { zh: "已发送,请看系统通知", en: "Sent — check your system notifications" },
+  "reminder.testSent": { zh: "已发送,请看系统通知", en: "Sent, check your system notifications" },
   "reminder.testEmpty": { zh: "目前没有今天到期或已逾期的任务", en: "No tasks due today or overdue right now" },
-  "reminder.saved": { zh: "已保存,每天 {time} 报一次", en: "Saved — daily at {time}" },
+  "reminder.saved": { zh: "已保存,每天 {time} 报一次", en: "Saved, daily at {time}" },
   "reminder.notifTitle": { zh: "截止提醒", en: "Due reminder" },
   "reminder.spaceLine": { zh: "「{name}」{sum}", en: "{name}: {sum}" },
-  "reminder.permDenied": { zh: "系统未授权通知:请在系统设置里允许朱简发通知", en: "Notifications not permitted — allow Zhujian notifications in system settings" },
+  "reminder.permDenied": { zh: "系统未授权通知:请在系统设置里允许朱简发通知", en: "Notifications not permitted. Allow Zhujian notifications in system settings" },
 });

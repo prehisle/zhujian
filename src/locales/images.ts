@@ -7,7 +7,7 @@ export const images = defineMessages({
   // 这三种拒法都是确定性的,同样的字节再贴一次还是同样被拒 ⇒ 叫用户「重新粘贴」是错的。
   "itemImages.failEmpty": { zh: "(图片是空的)", en: " (the image is empty)" },
   "itemImages.failTooBig": { zh: "({mb} MB 超过 {max} MB 上限)", en: " ({mb} MB is over the {max} MB limit)" },
-  "itemImages.failBadType": { zh: "(不支持 {mime} 这种格式,只收 png / jpeg / webp / gif)", en: " ({mime} isn’t a supported format — only png / jpeg / webp / gif)" },
+  "itemImages.failBadType": { zh: "(不支持 {mime} 这种格式,只收 png / jpeg / webp / gif)", en: " ({mime} isn’t a supported format; only png / jpeg / webp / gif)" },
   "itemImages.copiedImage": { zh: "已复制图片", en: "Image copied" },
   "itemImages.copyFail": { zh: "复制失败", en: "Copy failed" },
   "itemImages.pasteFail": { zh: "粘贴图片失败", en: "Failed to paste image" },

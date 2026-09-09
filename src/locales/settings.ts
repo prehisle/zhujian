@@ -38,10 +38,10 @@ export const settings = defineMessages({
   "settings.aliasUnnamed": { zh: "未命名", en: "Unnamed" },
   "settings.thisDevice": { zh: "本机 · {id}", en: "This device · {id}" },
   "settings.aliasCleared": { zh: "已清除别名", en: "Alias cleared" },
-  "settings.aliasSaved": { zh: "已保存,会同步到其他设备", en: "Saved — will sync to your other devices" },
+  "settings.aliasSaved": { zh: "已保存,会同步到其他设备", en: "Saved, will sync to your other devices" },
   "settings.change": { zh: "更改", en: "Change" },
   "settings.pressNewHotkey": { zh: "按下新快捷键…", en: "Press the new shortcut…" },
   "settings.needModifier": { zh: "要按住至少一个修饰键(Ctrl / Alt …)", en: "Hold at least one modifier key (Ctrl / Alt …)" },
-  "settings.keyUnsupported": { zh: "这个键不支持,换一个", en: "That key is not supported — try another" },
-  "settings.hotkeyUpdated": { zh: "已更新,立即生效", en: "Updated — effective immediately" },
+  "settings.keyUnsupported": { zh: "这个键不支持,换一个", en: "That key is not supported, try another" },
+  "settings.hotkeyUpdated": { zh: "已更新,立即生效", en: "Updated, effective immediately" },
 });

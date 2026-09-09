@@ -1633,7 +1633,7 @@
           <div class="row">
             <button id="sync-create-btn" style="flex: 1" data-i18n="sync.createAccount">创建新账户</button>
           </div>
-          <p class="fine" data-i18n="shell.syncCreateNote">把本机创建为账户的第一台设备。创建后请尽快让电脑加入——加入前唯一副本只在本机。</p>
+          <p class="fine" data-i18n="shell.syncCreateNote">把本机创建为账户的第一台设备。创建后请尽快让电脑加入;加入前唯一副本只在本机。</p>
         </div>
       </div>
       <div id="sync-boot" hidden>
@@ -1860,9 +1860,9 @@
            (471 真机上先看见:降级那句刚说完"这一端还没有备份",下面三句接着讲怎么用备份)。
            ⇒ 由 main.ts 按 HAS_SAF_BRIDGE 一起摘掉;h2 与 body 那句留着,那才是这一端的事实。
            ⚠ 别把它读成「诚实边界可以省」(§17.12 的义务):有备份的那一端一个字都不少。 -->
-      <p class="fine" data-i18n="backup.footRestore" data-needs="saf">手机上能做备份,但不能从备份还原 —— 真出事时把 .zjbak 文件拿到电脑上的朱简里恢复。</p>
+      <p class="fine" data-i18n="backup.footRestore" data-needs="saf">手机上能做备份,但不能从备份还原。真出事时把 .zjbak 文件拿到电脑上的朱简里恢复。</p>
       <p class="fine" data-i18n="backup.footCode" data-needs="saf">备份码保存在这台手机上(明文),卸载或清除数据会一起抹掉;抄在纸上的那份是唯一的。</p>
-      <p class="fine" data-i18n="backup.footValid" data-needs="saf">「有效」只有验过才算 —— 文件名和扩展名证明不了任何事。</p>
+      <p class="fine" data-i18n="backup.footValid" data-needs="saf">「有效」只有验过才算。文件名和扩展名证明不了任何事。</p>
 
       <h2 data-i18n="shell.aboutTitle">关于</h2>
       <div id="about" class="kv"></div>
@@ -1922,7 +1922,7 @@
         <div id="gate-upgrade" hidden>
           <h2 data-i18n="shell.gateUpgradeTitle">需要更新朱简</h2>
           <p><span data-i18n="shell.gateUpgradePre">本机数据由更新版本的朱简创建,当前装的是旧版:请到官网</span> <b>zhujian.app</b> <span data-i18n="shell.gateUpgradePost">下载安装最新版,数据即可继续使用。</span></p>
-          <p class="fine" data-i18n="shell.gateUpgradeFine">不要清除数据——清除会把这些较新的记录永久删掉。</p>
+          <p class="fine" data-i18n="shell.gateUpgradeFine">不要清除数据。清除会把这些较新的记录永久删掉。</p>
           <details>
             <summary class="fine" data-i18n="shell.gateDetail">技术详情(排查时抄给开发者)</summary>
             <p id="gate-msg-upgrade" class="gate-msg"></p>
@@ -1931,7 +1931,7 @@
         <div id="gate-retry" hidden>
           <h2 data-i18n="shell.gateRetryTitle">启动暂时失败</h2>
           <p data-i18n="shell.gateRetryBody">这是环境问题(例如存储空间不足),记录数据本身无恙:请释放存储空间后,完全关闭朱简再重新打开。</p>
-          <p class="fine" data-i18n="shell.gateRetryFine">不要清除数据——重试即可恢复。</p>
+          <p class="fine" data-i18n="shell.gateRetryFine">不要清除数据。重试即可恢复。</p>
           <details>
             <summary class="fine" data-i18n="shell.gateDetail">技术详情(排查时抄给开发者)</summary>
             <p id="gate-msg-retry" class="gate-msg"></p>
@@ -1940,7 +1940,7 @@
         <div id="gate-repair" hidden>
           <h2 data-i18n="shell.gateRepairTitle">升级遇到问题</h2>
           <p><span data-i18n="shell.gateRepairPre">记录数据完好,是这一版朱简升级数据时出了问题:请到官网</span> <b>zhujian.app</b> <span data-i18n="shell.gateRepairPost">重新下载安装最新版再试。</span></p>
-          <p class="fine" data-i18n="shell.gateRepairFine">不要清除数据——问题在程序,不在你的记录。</p>
+          <p class="fine" data-i18n="shell.gateRepairFine">不要清除数据。问题在程序,不在你的记录。</p>
           <details>
             <summary class="fine" data-i18n="shell.gateDetail">技术详情(排查时抄给开发者)</summary>
             <p id="gate-msg-repair" class="gate-msg"></p>
@@ -1962,7 +1962,7 @@
          输对才放行;全屏盖住一切导航。恢复码=账户密钥,不是数据备份。 -->
     <div id="ritual" class="gate" hidden>
       <h2 data-i18n="shell.ritualTitle">账户恢复码</h2>
-      <p data-i18n="shell.ritualBody">这是账户恢复码——请抄写在纸上,存放在安全的地方。</p>
+      <p data-i18n="shell.ritualBody">这是账户恢复码。请抄写在纸上,存放在安全的地方。</p>
       <div id="ritual-code" class="gate-msg" style="font-family: ui-monospace, monospace; user-select: text; max-width: 16em; margin-left: auto; margin-right: auto; text-align: center; word-break: normal; overflow-wrap: normal"></div>
       <p class="fine" data-i18n="shell.ritualFine">恢复码是账户密钥,不是数据备份:恢复数据还必须有至少一台在线的完整副本。它不存在服务器上,丢了无人能帮你找回。</p>
       <p id="ritual-post" class="gate-msg" hidden></p>

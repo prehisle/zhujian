@@ -19,7 +19,7 @@ export const inbox = defineMessages({
   "inbox.emptyTrashTitle": { zh: "回收站是空的", en: "Trash is empty" },
   "inbox.emptyTrashHint": { zh: "删掉的随记会先来这里,可还原或彻底删除。", en: "Deleted notes land here first. Restore them or delete them forever." },
   "inbox.removeTagTitle": { zh: "去掉这个标签", en: "Remove this tag" },
-  "inbox.movePartialDone": { zh: "我已处理,解除", en: "Handled — dismiss" },
+  "inbox.movePartialDone": { zh: "我已处理,解除", en: "Handled, dismiss" },
   "inbox.editedAt": { zh: "于 {time} 改", en: "Edited {time}" },
   "inbox.historyToggle": { zh: "历史 {n} 版", en: "History · {n} {n|version|versions}" },
   "inbox.cancel": { zh: "取消", en: "Cancel" },

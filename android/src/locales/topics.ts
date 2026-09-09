@@ -4,7 +4,7 @@ import { defineMessages } from "./entry";
 export const topics = defineMessages({
   "topics.loading": { zh: "读取中…", en: "Loading…" },
   "topics.loadFailed": { zh: "标签读取失败:{error}", en: "Could not load tags: {error}" },
-  "topics.empty": { zh: "还没有标签——点上方「+ 新建标签」直接建一个,或在卡片上打标签。", en: "No tags yet — tap “+ New tag” above to create one, or tag an item on its card." },
+  "topics.empty": { zh: "还没有标签。点上方「+ 新建标签」直接建一个,或在卡片上打标签。", en: "No tags yet. Tap “+ New tag” above to create one, or tag an item on its card." },
   "topics.kindPh": { zh: "类型(如 人名)", en: "Kind (e.g. Person)" },
   "topics.kindSave": { zh: "存", en: "Save" },
   "topics.kindClear": { zh: "清", en: "Clear" },
@@ -28,7 +28,7 @@ export const topics = defineMessages({
   // 删除(user-44 第三刀):改名态里的第三枚钮 → 底部两拍确认条。话术要说清
   // core 的真语义 —— 只摘标签、条目内容不动(0 挂载用简版,「0 项」是句空话)。
   "topics.deleteBtn": { zh: "删除", en: "Delete" },
-  "topics.deleteQ": { zh: "删除标签「{name}」?{n} 项只摘掉这枚标签,内容不动", en: "Delete tag “{name}”? It comes off {n} {n|item|items} — their content stays." },
+  "topics.deleteQ": { zh: "删除标签「{name}」?{n} 项只摘掉这枚标签,内容不动", en: "Delete tag “{name}”? It comes off {n} {n|item|items}; their content stays." },
   "topics.deleteQEmpty": { zh: "删除标签「{name}」?", en: "Delete tag “{name}”?" },
   "topics.deleteYes": { zh: "删除", en: "Delete" },
   "topics.deleted": { zh: "已删除标签", en: "Tag deleted" },

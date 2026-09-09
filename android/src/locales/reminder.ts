@@ -13,10 +13,10 @@ export const reminder = defineMessages({
   "reminder.off": { zh: "关", en: "Off" },
   "reminder.everyDay": { zh: "每天", en: "Daily at" },
   "reminder.test": { zh: "试一条", en: "Send test" },
-  "reminder.testSent": { zh: "已发送,请下拉看通知栏", en: "Sent — pull down to check your notifications" },
+  "reminder.testSent": { zh: "已发送,请下拉看通知栏", en: "Sent, pull down to check your notifications" },
   "reminder.testEmpty": { zh: "目前没有今天到期或已逾期的任务", en: "No tasks due today or overdue right now" },
-  "reminder.saved": { zh: "已保存,每天 {time} 报一次", en: "Saved — daily at {time}" },
+  "reminder.saved": { zh: "已保存,每天 {time} 报一次", en: "Saved, daily at {time}" },
   "reminder.notifTitle": { zh: "截止提醒", en: "Due reminder" },
   "reminder.spaceLine": { zh: "「{name}」{sum}", en: "{name}: {sum}" },
-  "reminder.permDenied": { zh: "系统没允许朱简发通知:去手机「设置 → 应用 → 朱简 → 通知」里打开", en: "Notifications are not allowed — turn them on in Settings › Apps › Zhujian › Notifications" },
+  "reminder.permDenied": { zh: "系统没允许朱简发通知:去手机「设置 → 应用 → 朱简 → 通知」里打开", en: "Notifications are not allowed. Turn them on in Settings › Apps › Zhujian › Notifications" },
 });

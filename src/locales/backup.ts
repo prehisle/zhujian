@@ -8,35 +8,35 @@ import { defineMessages } from "./entry";
 
 export const backup = defineMessages({
   "backup.title": { zh: "备份", en: "Backup" },
-  "backup.sub": { zh: "把每个空间的完整数据加密成一个文件,存到你自己拿得到的地方(U 盘 / 网盘都行)。没有备份码,文件里的内容读不出来。⚠ 备份是把保管权交到你手上,不等于「不会丢」。", en: "Encrypts each space into a single file you keep yourself — a USB stick, a cloud drive, anywhere. Without the backup code its contents cannot be read. ⚠ A backup hands custody to you; it is not a promise that nothing can be lost." },
+  "backup.sub": { zh: "把每个空间的完整数据加密成一个文件,存到你自己拿得到的地方(U 盘 / 网盘都行)。没有备份码,文件里的内容读不出来。⚠ 备份是把保管权交到你手上,不等于「不会丢」。", en: "Encrypts each space into a single file you keep yourself: a USB stick, a cloud drive, anywhere. Without the backup code its contents cannot be read. ⚠ A backup hands custody to you; it is not a promise that nothing can be lost." },
   "backup.notSet": { zh: "还没设置", en: "Not set up yet" },
   "backup.setUp": { zh: "设置备份", en: "Set up backup" },
   "backup.dirName": { zh: "备份到", en: "Back up to" },
   "backup.dirPh": { zh: "备份文件夹的完整路径", en: "Full path of the backup folder" },
-  "backup.dirSaved": { zh: "已保存,下次备份就落这里", en: "Saved — the next backup lands here" },
+  "backup.dirSaved": { zh: "已保存,下次备份就落这里", en: "Saved, the next backup lands here" },
   "backup.openDir": { zh: "打开文件夹", en: "Open folder" },
   "backup.runName": { zh: "手动备份", en: "Manual backup" },
   "backup.runDesc": { zh: "点一下,所有空间各备一份", en: "One click backs up every space" },
   "backup.runNow": { zh: "立即备份", en: "Back up now" },
-  "backup.running": { zh: "备份中…(整库加密 + 全量校验,大库要等一会)", en: "Backing up… (encrypting and fully verifying — a large library takes a moment)" },
+  "backup.running": { zh: "备份中…(整库加密 + 全量校验,大库要等一会)", en: "Backing up… (encrypting and fully verifying; a large library takes a moment)" },
   "backup.retryCleanup": { zh: "重试清扫", en: "Retry cleanup" },
   "backup.cleaning": { zh: "清扫中…", en: "Cleaning…" },
-  "backup.cleanNowOk": { zh: "暂存区已清干净,可以备份了", en: "The staging area is clean — backups are available again" },
+  "backup.cleanNowOk": { zh: "暂存区已清干净,可以备份了", en: "The staging area is clean, backups are available again" },
   // 仪式(§5:显示 → 完整回输 → 对上了才落盘;⛔ 不许退化成勾「我已抄下」)。
-  "backup.ceremonyIntro": { zh: "这是你的备份码。现在就抄下来——纸上、密码管理器都行,别只留在这台电脑上。", en: "This is your backup code. Write it down now — on paper or in a password manager, not only on this computer." },
-  "backup.ceremonyWarn": { zh: "⚠ 备份码,以及所有还存着这把钥的设备,全都失去之后,已有的备份文件谁也解不开,包括我们。没有找回通道。", en: "⚠ Once the backup code and every device that still holds this key are gone, no one can open your existing backups — including us. There is no recovery channel." },
+  "backup.ceremonyIntro": { zh: "这是你的备份码。现在就抄下来。纸上、密码管理器都行,别只留在这台电脑上。", en: "This is your backup code. Write it down now: on paper or in a password manager, not only on this computer." },
+  "backup.ceremonyWarn": { zh: "⚠ 备份码,以及所有还存着这把钥的设备,全都失去之后,已有的备份文件谁也解不开,包括我们。没有找回通道。", en: "⚠ Once the backup code and every device that still holds this key are gone, no one can open your existing backups, including us. There is no recovery channel." },
   "backup.ceremonyConfirmPh": { zh: "把上面的备份码抄回来", en: "Type the backup code back in" },
-  "backup.ceremonyConfirm": { zh: "抄好了,核对", en: "I wrote it down — check it" },
+  "backup.ceremonyConfirm": { zh: "抄好了,核对", en: "I wrote it down; check it" },
   "backup.ceremonyCancel": { zh: "取消", en: "Cancel" },
   "backup.ceremonyDone": { zh: "备份已设置好", en: "Backup is set up" },
   // 结果(⭐ 部分成功必须摊开;有 fatal 时「剩下的根本没跑」要与「跑了但失败」显著区分)。
   "backup.reportMade": { zh: "备好 {n} 个空间", en: "Backed up {n} {n|space|spaces}" },
   "backup.reportNone": { zh: "这一趟一个空间都没备成", en: "Nothing was backed up this time" },
   "backup.reportFailed": { zh: "失败 {n} 个", en: "{n} failed" },
-  "backup.reportSkipped": { zh: "⚠ 还有 {n} 个空间根本没跑(整批停下了)", en: "⚠ {n} further {n|space was|spaces were} not attempted at all — the batch stopped" },
+  "backup.reportSkipped": { zh: "⚠ 还有 {n} 个空间根本没跑(整批停下了)", en: "⚠ {n} further {n|space was|spaces were} not attempted at all; the batch stopped" },
   "backup.reportFatal": { zh: "⚠ 整批停下:", en: "⚠ The batch stopped: " },
-  "backup.leftoverUnverified": { zh: "这个文件写出来了,但没来得及校验——先别把它当成一份可用的备份。", en: "This file was written but never verified — do not count it as a usable backup yet." },
-  "backup.leftoverInvalid": { zh: "⛔ 这个文件校验不过、又删不掉,它不是一份备份。请手动删掉它。", en: "⛔ This file failed verification and could not be deleted — it is not a backup. Please delete it by hand." },
+  "backup.leftoverUnverified": { zh: "这个文件写出来了,但没来得及校验。先别把它当成一份可用的备份。", en: "This file was written but never verified. Do not count it as a usable backup yet." },
+  "backup.leftoverInvalid": { zh: "⛔ 这个文件校验不过、又删不掉,它不是一份备份。请手动删掉它。", en: "⛔ This file failed verification and could not be deleted; it is not a backup. Please delete it by hand." },
   // 备份列表(§3.3 那条义务的落点)。⛔ **默认那句是「还没验过」,不是「有效」** ——
   // 名字 / 扩展名 / 大小都证明不了一份备份能不能打开,只有真解一遍才算。
   "backup.listName": { zh: "已有备份", en: "Existing backups" },
@@ -56,11 +56,11 @@ export const backup = defineMessages({
   "backup.listOk": { zh: "现在打得开:{space} · 原库 {size}", en: "Opens right now: {space} · {size} of library data" },
   // 坏配置:⛔ 绝不许在这里「重新设置一次」(那会换一把钥,已有备份从此打不开)。
   "backup.problemLead": { zh: "⛔ 备份设置有问题:", en: "⛔ Something is wrong with the backup settings: " },
-  "backup.problemHint": { zh: "别重新设置一次——那会生成一把新的备份钥,已有的备份文件将永远打不开。先把那个文件修好或找回。", en: "Do not simply set it up again — that generates a new key and your existing backups would never open again. Repair or restore that file first." },
+  "backup.problemHint": { zh: "别重新设置一次。那会生成一把新的备份钥,已有的备份文件将永远打不开。先把那个文件修好或找回。", en: "Do not simply set it up again. That generates a new key and your existing backups would never open again. Repair or restore that file first." },
   // 两条诚实边界(§9;⛔ 不是修辞,别删)。⚠ 2026-08-31 起不再**常驻**:与 backup.sub 一起
   // 收进 pane 顶「说明」折叠(用户当面拍板「收纳不删」)—— 动的只是默认显不显,措辞照旧受 §9 管。
-  "backup.footUninstall": { zh: "⚠ 卸载朱简不会删掉备份钥和数据目录。要彻底清干净得手动删——但删之前先确认备份码另有一份独立副本,否则你存在外面的备份可能永远解不开。", en: "⚠ Uninstalling Zhujian does not delete the backup key or the data folder. Clearing them is manual — but first make sure the backup code exists somewhere else, or the backups you keep elsewhere may never open again." },
-  "backup.footSecrets": { zh: "⚠ 备份文件里含这台设备的同步身份与账户密钥(否则恢复出来的库同步不了)——拿到备份文件加备份码,就等于拿到这个账户的完整读写能力。", en: "⚠ A backup contains this device's sync identity and account key (otherwise a restored library could not sync) — a backup file plus the code is full read/write access to the account." },
+  "backup.footUninstall": { zh: "⚠ 卸载朱简不会删掉备份钥和数据目录。要彻底清干净得手动删,但删之前先确认备份码另有一份独立副本,否则你存在外面的备份可能永远解不开。", en: "⚠ Uninstalling Zhujian does not delete the backup key or the data folder. Clearing them is manual, but first make sure the backup code exists somewhere else, or the backups you keep elsewhere may never open again." },
+  "backup.footSecrets": { zh: "⚠ 备份文件里含这台设备的同步身份与账户密钥(否则恢复出来的库同步不了)。拿到备份文件加备份码,就等于拿到这个账户的完整读写能力。", en: "⚠ A backup contains this device's sync identity and account key (otherwise a restored library could not sync). A backup file plus the code is full read/write access to the account." },
   // 自动备份(笔①-b,§15.5)。⛔ 频率与份数是**变量**:那个文件可以手改,写死就会说谎。
   "backup.autoName": { zh: "自动备份", en: "Automatic backup" },
   "backup.autoOn": { zh: "开启", en: "Turn on" },
@@ -76,11 +76,11 @@ export const backup = defineMessages({
   "backup.everyHours": { zh: "每 {n} 小时", en: "every {n} {n|hour|hours}" },
   "backup.everyMinutes": { zh: "每 {n} 分钟", en: "every {n} {n|minute|minutes}" },
   // ⭐ 420 补:这两条是「路径要列出来」那一格的落点 —— ⛔ 别退回只报数量。
-  "backup.releasedLead": { zh: "⚠ 这 {n} 份自动备份已经不再自动清理,归你自己处置:", en: "⚠ These {n} automatic backups are no longer cleaned up automatically — they are yours to handle:" },
+  "backup.releasedLead": { zh: "⚠ 这 {n} 份自动备份已经不再自动清理,归你自己处置:", en: "⚠ These {n} automatic backups are no longer cleaned up automatically; they are yours to handle:" },
   "backup.retryLead": { zh: "⚠ 这 {n} 份旧备份这次没删掉,下次会再试:", en: "⚠ {n} older {n|backup|backups} could not be deleted this time; it will be retried:" },
   "backup.autoReset": { zh: "重置自动备份设置", en: "Reset automatic backup settings" },
   // ⭐ 与 problemHint 那条正相反:这份文件里没有备份钥,重置不会让任何备份变得打不开。
-  "backup.autoResetHint": { zh: "这份设置里没有备份钥,重置它不会让任何已有备份打不开;代价是:已经备出来的旧文件从此不再被自动清理,归你自己管。", en: "These settings hold no backup key — resetting them cannot make any existing backup unreadable. The cost: older files already produced will no longer be cleaned up automatically; they become yours to manage." },
+  "backup.autoResetHint": { zh: "这份设置里没有备份钥,重置它不会让任何已有备份打不开;代价是:已经备出来的旧文件从此不再被自动清理,归你自己管。", en: "These settings hold no backup key. Resetting them cannot make any existing backup unreadable. The cost: older files already produced will no longer be cleaned up automatically; they become yours to manage." },
   "backup.autoBannerLead": { zh: "自动备份没跑顺", en: "Automatic backup had trouble" },
   "backup.autoBannerClose": { zh: "知道了", en: "Got it" },
   // 恢复(笔②,backup-plan §16;426)。⛔ **这几句是判据不是修辞**,改词前先读 §16.11:
@@ -91,7 +91,7 @@ export const backup = defineMessages({
   "backup.restoreOpen": { zh: "恢复…", en: "Restore…" },
   "backup.restoreClose": { zh: "收起", en: "Close" },
   // 前置提示:§16.2 的形 + §16.11 的诚实边界 + §16.9 的两个数(⛔ 一条都别删)。
-  "backup.restoreLead1": { zh: "⭐ 恢复绝不覆盖任何现有数据:它新建一个空间,原来的空间原样在那儿,要不要删由你决定。", en: "⭐ Restoring never overwrites existing data: it creates a new space, and your current spaces stay exactly as they are — deleting them is your call." },
+  "backup.restoreLead1": { zh: "⭐ 恢复绝不覆盖任何现有数据:它新建一个空间,原来的空间原样在那儿,要不要删由你决定。", en: "⭐ Restoring never overwrites existing data: it creates a new space, and your current spaces stay exactly as they are; deleting them is your call." },
   "backup.restoreLead2": { zh: "恢复出来的空间不同步,直到你给它创建账户、把别的设备重新加进来;它也不会踢掉任何设备、不会让旧账户消失。", en: "The restored space does not sync until you create an account for it and pair your other devices again; it removes no device and makes no old account disappear." },
   "backup.restoreLead3": { zh: "恢复回来的是备份那一刻的数据;同一台机器上恢复会多出一个空间,而且可能与原来那个同名。", en: "You get the data as of the moment the backup was taken; restoring on the same machine leaves you with one extra space, possibly sharing its name with the original." },
   "backup.restoreLead4": { zh: "⚠ 跑起来之后不能取消、也没有进度;过程中临时需要大约 3 倍于库大小的磁盘空间。", en: "⚠ Once started it cannot be cancelled and shows no progress; it temporarily needs roughly three times the library's size in free disk space." },
@@ -100,11 +100,11 @@ export const backup = defineMessages({
   // ⭐ 这一句是 §16.6 那条坑的产品面:恢复不读本机配置,也绝不把输进来的码存下来。
   "backup.restoreCodeHint": { zh: "填取这份备份的那台设备的备份码。这台机器有没有设置过备份都不影响恢复,输进来的码也不会被存下来。", en: "Enter the backup code of the device that made this file. It does not matter whether this machine has backup set up, and the code you type is never stored." },
   "backup.restoreGo": { zh: "开始恢复", en: "Start restoring" },
-  "backup.restoreRunning": { zh: "恢复中…(整份解密 + 版本前滚 + 全库校验,不能取消)", en: "Restoring… (decrypting, migrating and fully checking the library — cannot be cancelled)" },
+  "backup.restoreRunning": { zh: "恢复中…(整份解密 + 版本前滚 + 全库校验,不能取消)", en: "Restoring… (decrypting, migrating and fully checking the library; cannot be cancelled)" },
   "backup.restoreNeedFile": { zh: "要恢复哪一份?先填备份文件的完整路径", en: "Which file? Enter the full path of the backup first" },
   "backup.restoreNeedCode": { zh: "还差备份码", en: "The backup code is still missing" },
   // 成功:⛔ 说的是「多了一个空间」,不是「你的库回来了、原样在原处」。
-  "backup.restoreDone": { zh: "已恢复成一个新空间:{space}(备份取于 {when})——切到那个空间就能看到里面的内容。", en: "Restored as a new space: {space} (backed up {when}) — switch to it to see what is inside." },
+  "backup.restoreDone": { zh: "已恢复成一个新空间:{space}(备份取于 {when})。切到那个空间就能看到里面的内容。", en: "Restored as a new space: {space} (backed up {when}). Switch to it to see what is inside." },
   "backup.restoreDoneUnnamed": { zh: "这个空间", en: "this space" },
   // 库已经在盘上、只是这一趟没装配上:⛔ 绝不许显示成「恢复失败」。
   "backup.restoreOnDisk": { zh: "⚠ 库已经恢复到盘上了(⛔ 没有覆盖任何东西),只是这一趟没接进空间列表:", en: "⚠ The library is already restored on disk (nothing was overwritten); it just was not attached to the space list this time:" },
