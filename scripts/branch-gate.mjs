@@ -479,6 +479,40 @@ function assertBacklogBudget() {
   }
 }
 
+// ── 参考文档字节闸(测试与工装 85 ③ 立;一张表,加下一份就是加一行)──────────────
+// **要治的**:`docs/dev-and-testing.md` 是「动手前先读哪一块」的那一份,30 天从 48 KB 长到
+// 218 KB 而**没有任何边界看着它** —— 与 CLAUDE.md / backlog 同一个病:每轮把「这次怎么栽的」
+// 原样追进去。85② 把「多环境并行 / 分支闸 / 编号」三节按「判例 → 规则 + progress-log 条目号」
+// 压掉之后,这里把「别再长回去」接到 land 上。
+// ⛔ **不是新开门禁**(停止扩张线):没有 parser、没有登记表、没有阴性刀那一整套,就是一张
+//    名字 → 字节数的表(阴性对照只一把,住在假 origin 沙箱里)。
+//
+// 预算 230 KB 的来路:85② 压完**实测 209.8 KB** + 约 10% 余量 —— 同 SKILL_BUDGETS 那张表的形,
+// ⛔ 不是拍的数。⚠ **别拿改造前那条约 5.7 KB/天的曲线反推「够几轮」**:那段里的大头正是这一轮
+// 压掉的判例叙事,压完之后的真实增速要等后面几轮才有数。
+// ⭐ **到顶的处置不是抬这个数,是再蒸馏一节**(这份文件还有十几节一个字没压过)。
+// ⚠ 诚实边界:它只证明**文件**变小,证明不了「真读的人装进上下文的少了」——
+//    自动装载的是 `.claude/rules/*.md` 那几份,它们的预算另有账(backlog 测试与工装 86)。
+const DOC_SIZE_BUDGETS = {
+  "docs/dev-and-testing.md": 230 * 1024,
+};
+function assertDocSizeBudgets() {
+  const bad = [];
+  for (const rel of Object.keys(DOC_SIZE_BUDGETS)) {
+    const budget = DOC_SIZE_BUDGETS[rel];
+    const size = statSync(join(repoRoot, rel)).size;
+    if (size > budget) {
+      bad.push(`    ${rel} 已 ${(size / 1024).toFixed(1)} KB,超过预算 ${(budget / 1024).toFixed(0)} KB`);
+    }
+  }
+  if (!bad.length) return;
+  die(
+    `参考文档超预算 —— ⛔ 不落地:\n${bad.join("\n")}\n` +
+      `  ⇒ 挑一节按「判例 → 规则 + progress-log 条目号」压掉(590 压 skill、85② 压这份的手法),\n` +
+      `  叙事留在 progress-log 同号条目里。⛔ 别抬这个数。`,
+  );
+}
+
 // ── skill 字节闸(586/1b 立)──────────────────────────────────────────────────
 // **要治的**:六份 `.claude/skills/*/SKILL.md` 长到 **213 KB**(最大一份 67.6 KB ≈ 30k token)——
 // 与 CLAUDE.md 同一个病:每轮把「这次怎么栽的」原样追进去,于是判例叙事、历史快照、手抄的花名册
@@ -562,6 +596,7 @@ function assertNoLongDocLines() {
 function runLocalGates() {
   assertClaudeMdBudget();
   assertBacklogBudget();
+  assertDocSizeBudgets();
   assertNoLongDocLines();
   assertSkillBudgets();
   console.log(`→ 本地十道静态门禁(几秒量级)…`);
@@ -943,9 +978,20 @@ function abandon() {
   console.log(`\n✅ 已放弃这一趟。⛔ 私有仓一个字没动 —— 你的提交都还在。`);
 }
 
-const table = { verify, status: statusCmd, land, abandon, sweep };
+// ── gate = verify → land(测试与工装 85 ①)─────────────────────────────────
+// 纯别名,**零语义变化**:541 起 `land` 不等 CI 结论 ⇒ 两条之间没有要人判断的那一步,
+// 而 `verify` 每条非致命返回路径的收尾话本来就是「⇒ 直接 land」。die() 会当场退出,
+// 所以「verify 拒了还接着 land」不可能发生。⛔ 别在这里加任何新判断 —— 加了它就不是别名了。
+function gateCmd() {
+  verify();
+  console.log("");
+  land();
+}
+
+const table = { gate: gateCmd, verify, status: statusCmd, land, abandon, sweep };
 if (!table[cmd]) {
-  console.error("用法:node scripts/branch-gate.mjs verify|land|status|abandon|sweep");
+  console.error("用法:node scripts/branch-gate.mjs gate|verify|land|status|abandon|sweep");
+  console.error("  gate     ⭐ 日常走这一条 = verify 跑完接着 land(零语义变化的别名)");
   console.error("  verify   把这棵树推到公开仓闸分支,CI 跑起来(末尾自动 sweep 一次)");
   console.error("  land     落地(公开 main + 私有 master);先本地跑十道静态门禁(红拒),不等 CI 结论,⛔ 已知红拒");
   console.error("  status   问 CI 结论(green / running / red / unknown;红了要修)");
