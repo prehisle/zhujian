@@ -49,6 +49,10 @@ const ALLOW = [
   // (385 探路实测:preflight 红在第五道 check-timing-drift)。内容是纯 UI 规范,无商业/
   // 密钥/服务器信息;用户 2026-08-15 拍板公开。
   "docs/ui-guidelines.md",
+  // 646+:面向用户的公开用户指南 —— readme 首屏那句「一件不藏」指的就是它,
+  // 不导出的话公开仓 readme 当场多一条死链(copy-plan §6-2)。它是产品说明,
+  // 内容与官网 / 商店稿同源,无内部流程、无服务器信息。
+  "docs/user-guide.md",
   "index.html", "notebook.html", "lightbox.html", "package.json", "package-lock.json",
   "tsconfig.json", "vite.config.ts", "readme.md", "readme.en.md", "LICENSE",
   ".gitignore", ".gitattributes",
