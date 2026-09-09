@@ -118,14 +118,14 @@ const DARK_FORMS = [':root[data-theme="dark"]', "@media (prefers-color-scheme: d
  * 地面上多出来的 html 会被下面那道探针拦住 —— 少一个文档是安静的少判(336 ⑩ 刀那族)。
  */
 const NOT_A_DOC = [
-  ...["site-cool/privacy-rights.html", "site-cool/terms.html",
-      "site-app-docs/privacy.html", "site-app-docs/privacy-rights.html", "site-app-docs/terms.html"].map((file) => ({
+  ...["site-cool/privacy-rights.html", "site-cool/terms.html"].map((file) => ({
     file,
     why: "同一个 `docPage()` 模板(scripts/build-site-cool.mjs)生成的另一份,内联样式**逐字节相同** \
 ⇒ 判据落在已登记进 DOCS 的 `site-cool/privacy.html` 那一份上,判第二遍不产生任何新信息。\
 产物与源一致由 `branch-gate land` 那道 `build-site-cool.mjs --check` 守着。\
-⚠ **触发门**:备案号下来后 `site-app-docs/` 那三份要撤(deploy §8.1a),那时把这三条一起删 —— \
-留着会被下面那道「过期条目」探针当场逮住",
+⭐ 曾经还有 `site-app-docs/` 那三份(寄放在 zhujian.app 上的临时落点),备案号 2026-09-08 下来后\
+按 deploy §8.1a 撤掉,这三条同轮删 —— **那道触发门真打响了**:先删目录再跑,下面那道\
+「过期条目」探针当场点名三条",
     privateOnly: true, // 见下面 IN_WORK_REPO 那段:公开快照上这几份根本不存在
   })),
   {

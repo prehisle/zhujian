@@ -617,8 +617,10 @@ function runLocalGates() {
 }
 
 // ── 生成物与源是否还一致(576 之后立)──────────────────────────────────────────
-// **要治的**:576 起 `site-cool/`(zhujian.cool 四页)与 `site-app-docs/`(挂在 zhujian.app 的三份
-// 协议)**整个是产物** —— 真相源是 `site/index.html` 与 `store-assets/harmonyos/0{3,4,5}-*.md`。
+// **要治的**:576 起 `site-cool/`(zhujian.cool 四页)**整个是产物** —— 真相源是
+// `site/index.html` 与 `store-assets/harmonyos/0{3,4,5}-*.md`。
+// (曾经还核着 `site-app-docs/`,那是寄放在 zhujian.app 上的三份协议;备案号 2026-09-08
+//  下来后按 deploy §8.1a 撤掉了,见 `build-site-cool.mjs` 的 TARGETS 头注。)
 // 那支脚本自带 `--check`(只核不写,不一致即红),⭐ **可它没有任何自动边界会去跑它**
 // ⇒ 谁改了源忘了重跑,仓里那份产物就静默腐烂,正是 512 那一形(一道闸在干净树上红了十一天没人知道)。
 // ⛔ **这不是新开一道门禁**(工作节奏 5 的停止扩张线):尺是现成的,这里只是把它接到已有的边界上
@@ -635,11 +637,11 @@ function runGeneratedArtifactChecks() {
   } catch (e) {
     const out = `${e.stdout ?? ""}${e.stderr ?? ""}`.trim();
     die(
-      `生成物与源不一致(site-cool / site-app-docs)—— ⛔ 不落地:\n\n${out.slice(-1200)}\n\n` +
+      `生成物与源不一致(site-cool)—— ⛔ 不落地:\n\n${out.slice(-1200)}\n\n` +
         `  ⇒ 跑 \`node scripts/build-site-cool.mjs\` 重新生成(⛔ 别手改 site-cool/ 里的 HTML),再重跑 land。`,
     );
   }
-  console.log(`  ✅ 生成物(site-cool / site-app-docs)与源一致。`);
+  console.log(`  ✅ 生成物(site-cool)与源一致。`);
 }
 
 // ── 导出树上再跑一遍那十道(69 立)────────────────────────────────────────────
