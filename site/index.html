@@ -41,6 +41,10 @@
         --topbar-veil: rgba(243, 238, 227, 0.82); /* = --paper 82% */
         --band-veil: rgba(250, 246, 236, 0.55); /* = --raised 55% */
         --seal-select: rgba(179, 64, 43, 0.26); /* = --seal 26%,比 --seal-tint 深一档 */
+        /* 看大图的遮罩底(653)。⛔ **刻意不随明暗档翻面**:遮罩压的是截图不是纸面,亮色档下
+           翻成浅色 = 图与底糊在一起、也不再有「这是一层浮层」的信号。值与桌面客户端那只看大图
+           窗(`src/lightbox.css` 的 `.img-lightbox`)逐字相同。 */
+        --shot-veil: rgba(20, 16, 10, 0.78);
 
         /* 三层字面:楷体(书写/品牌)· 宋体(书卷/想法原文)· 黑体(界面) */
         /* 西文排在栈首:font-family 是逐字符回退,故英文走人文衬线、汉字照旧落楷体。
@@ -263,7 +267,12 @@
         gap: 56px;
         align-items: center;
         padding-top: clamp(48px, 6vw, 82px);
-        padding-bottom: clamp(48px, 6vw, 82px);
+        /* ⭐ 下边距比上边距**刻意小一档**(653,用户报「首屏底下中间是空的」):它与下一节的
+           上边距是**叠加**的,量过 —— 改前 1440 宽下「开源(MIT)…」到「怎么用」之间足足
+           189px 纯空白,而右列那张纸条是垂直居中的、底下另有 253px 空档 ⇒ 右下角连成一片。
+           ⛔ 别把两边改回一样大:上边距顶着顶栏、要的是呼吸,下边距顶着的是另一节自己的
+           上边距。 */
+        padding-bottom: clamp(36px, 4vw, 56px);
       }
       .hero-copy { position: relative; z-index: 1; }
       .hero h1 {
@@ -348,7 +357,10 @@
         font-size: var(--fs-18);
         line-height: 1.85;
         color: var(--ink);
-        min-height: 96px;
+        /* 653:纸条是**垂直居中**摆在右列的,而左列有五段内容 ⇒ 它太矮就成了「浮在中间的
+           一小张卡」,右下角空一大片(量过:1440 宽下纸条底沿离首屏底沿 253px)。撑高它
+           不是装饰 —— 捕获纸条本来就是个还能接着写的输入框,留白是它该有的样子。 */
+        min-height: 156px;
       }
       .slip-text .caret {
         display: inline-block;
@@ -394,7 +406,8 @@
       }
 
       /* ── 三步主线 ──────────────────────────────────────────── */
-      .flow { padding: clamp(52px, 7vw, 90px) 0; }
+      /* 上边距收一档:它与首屏的下边距叠加,理由见 `.hero .wrap` 那段(653)。 */
+      .flow { padding: clamp(40px, 4.5vw, 60px) 0 clamp(52px, 7vw, 90px); }
       .flow-grid {
         margin-top: 46px;
         display: grid;
@@ -441,18 +454,92 @@
         outline-offset: -1px;
       }
       .shot-box img { display: block; width: 100%; height: auto; }
+      /* ⭐ 每张图外面包一枚按钮 = 点开看大图的入口(653)。⛔ 用 `<button>` 不是 `<div>`:
+         键盘走得到、有 focus 环、读屏念得出 aria-label。宽度约束从 `img` 挪到按钮身上
+         (按钮成了 grid 项,图恒 100% 填满它)。
+         ⭐ **这不是锦上添花,是 651 那条尺寸判据在窄屏上缺的另一半**:量过 —— 视口 800 时
+         那两张全界面图只显示到 692px = app CSS 宽的 0.55 倍(界面里 15px 的字剩 8px),
+         600 时 0.39 倍(6px),手机 390 时 **0.22 倍(3px)** ⇒ 正是 651 判定为「一团纹理」
+         的那一档。⛔ 别把这枚入口去掉,除非那几张图不再是全界面截图。 */
+      .shot-zoom {
+        display: block;
+        width: 100%;
+        padding: 0;
+        border: 0;
+        background: none;
+        font: inherit;
+        color: inherit;
+        cursor: zoom-in;
+        border-radius: var(--radius-md);
+      }
       /* 纸条那张原生就只有 840px 宽:拉到整行会糊 ⇒ 到原寸为止,居中摆着。 */
-      .shot-box.slip-shot img { width: min(100%, 840px); }
+      .shot-box.slip-shot .shot-zoom { width: min(100%, 840px); }
       /* 手机那张(651):⚠ 它和桌面那张**不能并排** —— 并排后桌面那张只剩约 700px,
          相对 app 的 1260 CSS 宽是 0.56 倍,界面文字掉回 8px,又回到「一团纹理」那一档。
          ⇒ 叠在桌面那张下面,自己按 300px 显示(真机 1260 设备像素 ⇒ 4.2 倍密度,
          认得出是一列随记卡)。它与上面那张是**同一个视图的两端**,故同住第二张卡。 */
       .shot-pair { display: grid; gap: 16px; justify-items: center; }
-      .shot-pair .phone {
+      .shot-pair .shot-zoom.phone {
         width: min(100%, 300px);
-        border-radius: var(--radius-md);
         box-shadow: var(--card-shadow);
       }
+      .shot-pair .shot-zoom.phone img { border-radius: var(--radius-md); }
+
+      /* ── 看大图的浮层(653)────────────────────────────────────────────
+         两档:进来先**整屏装得下**(desktop 上 1890 的源图铺到 1440 屏 = app CSS 宽的
+         1.14 倍,界面文字反而比 app 里还大);再点图切 1:1 原寸、超出部分交原生滚动
+         —— 手机上这一档才是真读得清的那一档(整屏装下时仍只有 0.3 倍)。
+         ⚠ 视口 meta 没写 `maximum-scale`,故系统的双指缩放照旧能用,这两档是它的补充不是替代。 */
+      .shot-view {
+        position: fixed;
+        inset: 0;
+        z-index: 40;
+        background: var(--shot-veil);
+        overflow: auto;
+        overscroll-behavior: contain;
+        cursor: zoom-out;
+      }
+      /* UA 的 `[hidden]{display:none}` 特指度最低,哪天有人给 `.shot-view` 加一条 display
+         就会把它盖掉、浮层从此常驻挡住整页 ⇒ 显式写死一条同类名的。 */
+      .shot-view[hidden] { display: none; }
+      /* 舞台:min-100% + flex 居中 —— 图小于视口时居中,大于视口时从边缘起可滚(不裁顶/不裁左)。
+         `safe center` 少不得:不安全居中会把左/上侧顶到负方向,正向滚动到不了那一端。 */
+      .shot-stage {
+        box-sizing: border-box;
+        min-width: 100%;
+        min-height: 100%;
+        padding: 28px;
+        display: flex;
+        align-items: safe center;
+        justify-content: safe center;
+      }
+      .shot-view img {
+        display: block;
+        flex: none;
+        max-width: 100%;
+        height: auto;
+        border-radius: var(--radius-sm);
+        box-shadow: var(--float-shadow);
+        cursor: zoom-in;
+      }
+      .shot-view.at-full img { max-width: none; cursor: zoom-out; }
+      .shot-view-close {
+        position: fixed;
+        top: 14px;
+        right: 16px;
+        z-index: 1;
+        width: 44px;
+        height: 44px;
+        border: 1px solid var(--line-strong);
+        border-radius: var(--radius-circle);
+        background: var(--paper);
+        color: var(--ink);
+        font-size: var(--fs-16);
+        line-height: 1;
+        cursor: pointer;
+      }
+      .shot-view-close:hover { background: var(--raised); }
+      body.shot-open { overflow: hidden; }
       .card .kbd-inline {
         font-family: var(--font-sans);
         font-size: var(--fs-12);
@@ -610,8 +697,16 @@
 
       /* ── 响应式 ────────────────────────────────────────────── */
       @media (max-width: 860px) {
-        .hero .wrap { grid-template-columns: 1fr; gap: 44px; }
-        .hero-art { max-width: 440px; }
+        /* 收成一列之后**把两块都居中**(653,用户报「小窗口内容靠左对齐」)。
+           ⭐ 病根是算得出来的:正文块被自己的 `max-width`(hero-lead 40ch ≈ 422px)钉死,
+           而容器随视口长 —— 量过,855 宽下容器 799px、正文只有 422px ⇒ **右边空掉 47%**,
+           整页看着像贴着左边的一根窄柱子。⛔ 修法不是把 `max-width` 放大(那是把「一行多少
+           字才好读」这条排版判据拿去填空白),而是**让那根柱子站中间**。
+           ⚠ `width:100%` 少不得:grid 的 `justify-items:center` 会把子项收成 `max-content`,
+           不写的话 h1 那三行会各自按自己的宽度排、参差不齐。 */
+        .hero .wrap { grid-template-columns: 1fr; gap: 44px; justify-items: center; }
+        .hero-copy { width: 100%; max-width: 460px; }
+        .hero-art { width: 100%; max-width: 440px; }
 
         /* 窄屏收成一列:标签在上、正文在下,行间那道线只留给标签那一格 */
         .facts { grid-template-columns: 1fr; }
@@ -715,8 +810,10 @@
                 <span data-i18n="flow.card1a">全局热键</span> <span class="kbd-inline">Ctrl+Alt+N</span> <span data-i18n="flow.card1b">唤出一张纸条,写完回车就存进随记,窗口自己收起。截图可以直接粘贴。</span>
               </p>
               <div class="shot-box slip-shot">
-                <img src="shots/desktop-capture.webp" width="840" height="192" loading="lazy" decoding="async"
-                     alt="捕获纸条:一行「明早顺路取体检报告」写在纸色的输入框里" data-i18n-alt="flow.card1Alt" />
+                <button class="shot-zoom" type="button" aria-label="点开看大图" data-i18n-aria-label="shot.zoom">
+                  <img src="shots/desktop-capture.webp" width="840" height="192" loading="lazy" decoding="async"
+                       alt="捕获纸条:一行「明早顺路取体检报告」写在纸色的输入框里" data-i18n-alt="flow.card1Alt" />
+                </button>
               </div>
             </article>
             <article class="card">
@@ -726,10 +823,14 @@
                 在随记里给它打标签,或转成待办。每次编辑都保留改动前的版本,旧稿能找回;删了先进回收站,随时还原。
               </p>
               <div class="shot-box shot-pair">
-                <img src="shots/desktop-inbox.webp" width="1890" height="1050" loading="lazy" decoding="async"
-                     alt="随记:今天记下的几条排成一条时间轴,各自挂着标签" data-i18n-alt="flow.card2Alt" />
-                <img class="phone" src="shots/phone-inbox.webp" width="630" height="1360" loading="lazy" decoding="async"
-                     alt="同一份随记在手机上:一列卡片,其中一条正文里带着可以打勾的小清单" data-i18n-alt="flow.card2AltPhone" />
+                <button class="shot-zoom" type="button" aria-label="点开看大图" data-i18n-aria-label="shot.zoom">
+                  <img src="shots/desktop-inbox.webp" width="1890" height="1050" loading="lazy" decoding="async"
+                       alt="随记:今天记下的几条排成一条时间轴,各自挂着标签" data-i18n-alt="flow.card2Alt" />
+                </button>
+                <button class="shot-zoom phone" type="button" aria-label="点开看大图" data-i18n-aria-label="shot.zoom">
+                  <img src="shots/phone-inbox.webp" width="630" height="1360" loading="lazy" decoding="async"
+                       alt="同一份随记在手机上:一列卡片,其中一条正文里带着可以打勾的小清单" data-i18n-alt="flow.card2AltPhone" />
+                </button>
               </div>
             </article>
             <article class="card">
@@ -739,8 +840,10 @@
                 待办、进行中、待确认、已完成,拖着走。做完的归档,可查、不可删。
               </p>
               <div class="shot-box">
-                <img src="shots/desktop-board.webp" width="1890" height="1050" loading="lazy" decoding="async"
-                     alt="任务看板:待办、进行中、待确认、已完成四列,卡片上标着截止日期和标签" data-i18n-alt="flow.card3Alt" />
+                <button class="shot-zoom" type="button" aria-label="点开看大图" data-i18n-aria-label="shot.zoom">
+                  <img src="shots/desktop-board.webp" width="1890" height="1050" loading="lazy" decoding="async"
+                       alt="任务看板:待办、进行中、待确认、已完成四列,卡片上标着截止日期和标签" data-i18n-alt="flow.card3Alt" />
+                </button>
               </div>
             </article>
           </div>
@@ -844,6 +947,15 @@
       </div>
     </footer>
 
+    <!-- ───────── 看大图的浮层(653)─────────────────────────────────────────
+         ⛔ 它必须在 `</footer>` 之后:境内站生成器(`scripts/build-site-cool.mjs`)拿
+         「下载区那两条注释」「`<nav class="foot-links">`」「`foot-copy` 那一行」当结构锚,
+         插在它们中间会把那三处切错。 -->
+    <div class="shot-view" id="shot-view" hidden>
+      <button class="shot-view-close" id="shot-close" type="button" aria-label="关闭大图" data-i18n-aria-label="shot.close">✕</button>
+      <div class="shot-stage"><img id="shot-img" alt="" /></div>
+    </div>
+
     <!-- ───────── 多语言(360,i18n-plan 第③笔)─────────────────────────────────
          官网是**无构建步骤的静态单文件**(scp 部署,deploy §8),故字典与运行期都内联
          在这里。形状与两个客户端工程的字典分片一字对齐(一键一行、双引号、zh/en 并排),
@@ -908,6 +1020,9 @@
           "flow.card2Alt": { zh: "随记:今天记下的几条排成一条时间轴,各自挂着标签", en: "Notes: today's entries laid out as a timeline, each carrying its tags" },
           "flow.card2AltPhone": { zh: "同一份随记在手机上:一列卡片,其中一条正文里带着可以打勾的小清单", en: "The same notes on a phone: a column of cards, one of them holding a tickable checklist in its body" },
           "flow.card3Alt": { zh: "任务看板:待办、进行中、待确认、已完成四列,卡片上标着截止日期和标签", en: "The task board: four columns (To do, In progress, To confirm, Done) with due dates and tags on the cards" },
+          /* — 看大图(653):两枚都只挂 aria-label,屏上不多一个字 — */
+          "shot.zoom": { zh: "点开看大图", en: "Open a larger view" },
+          "shot.close": { zh: "关闭大图", en: "Close the larger view" },
 
           /* — 事实表:一行一件事,每行两键(标签 + 一句) — */
           "trust.eyebrow": { zh: "几件事先说清", en: "A few things up front" },
@@ -994,6 +1109,98 @@
           current = current === "zh" ? "en" : "zh";
           localStorage.setItem(KEY, current);
           apply(current);
+        });
+      })();
+    </script>
+
+    <!-- ───────── 看大图的运行期(653)─────────────────────────────────────────
+         ⛔ **单独一段 IIFE,别并进上面那段** —— 官网 i18n 门禁靠 `var M = {` 与
+         `var BIND = {` 两个字面量取块,合进去只会给那只解析器添乱。
+         ⛔ **这一段里一个中文字面量都不许有**:两句话走上面那张字典的 aria-label
+         (`check-i18n-drift` 会把散在脚本里的中文当成写死文案)。
+         ⚠ **诚实边界**:开层时把焦点移到 ✕、Esc 关、关掉还焦,但**没做焦点陷阱** ——
+         一直按 Tab 仍会走到浮层背后的页面里去。桌面客户端那只看大图窗有陷阱
+         (`e2e/specs/zz-verify-focustrap.e2e.js` 钉着),这一页是静态单文件、刻意没抄。 -->
+    <script>
+      (function () {
+        "use strict";
+        var view = document.getElementById("shot-view");
+        var img = document.getElementById("shot-img");
+        var closeBtn = document.getElementById("shot-close");
+        var opener = null; /* 关掉之后把焦点还回原来那枚按钮 */
+
+        /* 切到 1:1 原寸,并把滚动位摆到中心。
+           ⚠ 居中少不得 —— 否则 1890 宽的图在手机上停在最左边,看到的是一条空白页边,
+           而不是刚才点开的那块。 */
+        function toFull() {
+          view.classList.add("at-full");
+          view.scrollLeft = (view.scrollWidth - view.clientWidth) / 2;
+          view.scrollTop = (view.scrollHeight - view.clientHeight) / 2;
+        }
+
+        /* ⭐ **进来该落哪一档是量出来的,不是猜的**:「整屏装得下」那一档若只比刚才页面上
+           那张大一点点,这一层就等于白开。实测视口 390 时页面上 282px、装得下也才 334px
+           = **1.18 倍**,而那是张 1890 设备像素的全界面截图 —— 那一档里界面文字只有 4px,
+           跟没点开一样。⇒ 放大不到 1.25 倍就直接落原寸那一档(手机上 1.50 倍、字 22px)。
+           ⛔ 别改成「按视口宽写死一个断点」:同一个视口下四张图的原生宽各不相同(840 /
+           1890 / 630),写死断点会把手机那张也一并推到原寸去。
+           ⚠ 必须等浮层这张**解码完**再量:即使字节在缓存里,`src` 一换 `naturalWidth`
+           也要下一拍才回来,当场量恒得 0。 */
+        function settle(tappedW) {
+          var fitW = img.getBoundingClientRect().width;
+          if (fitW > 0 && img.naturalWidth > fitW && fitW < tappedW * 1.25) toFull();
+        }
+
+        function open(btn) {
+          var src = btn.querySelector("img");
+          var tappedW = src.getBoundingClientRect().width; /* 页面上那张有多宽,趁没被遮住先量 */
+          opener = btn;
+          /* alt 一并搬过来:字典改的是那张原图的 alt,浮层里这张跟着它走,不另立一份。 */
+          img.onload = function () {
+            settle(tappedW);
+          };
+          img.setAttribute("src", src.getAttribute("src"));
+          img.setAttribute("alt", src.getAttribute("alt"));
+          view.classList.remove("at-full"); /* 每次进来都从「整屏装得下」那一档起 */
+          view.hidden = false;
+          document.body.classList.add("shot-open");
+          view.scrollTop = 0;
+          view.scrollLeft = 0;
+          closeBtn.focus();
+          if (img.complete && img.naturalWidth > 0) settle(tappedW); /* 已解码就不必等那一拍 */
+        }
+
+        function close() {
+          if (view.hidden) return;
+          view.hidden = true;
+          document.body.classList.remove("shot-open");
+          img.onload = null; /* 关得比图解码还快时,别让迟到的那一拍再去 settle 一个关掉的层 */
+          img.removeAttribute("src"); /* ⛔ 别写成 src="":那会当相对 URL 去请求本页 */
+          if (opener) opener.focus();
+          opener = null;
+        }
+
+        var zooms = document.querySelectorAll(".shot-zoom");
+        for (var i = 0; i < zooms.length; i++) {
+          (function (btn) {
+            btn.addEventListener("click", function () {
+              open(btn);
+            });
+          })(zooms[i]);
+        }
+
+        /* 点图 = 在「整屏装下」与「1:1 原寸」之间翻;点图以外(遮罩、✕)= 关。 */
+        view.addEventListener("click", function (ev) {
+          if (ev.target !== img) {
+            close();
+            return;
+          }
+          if (view.classList.contains("at-full")) view.classList.remove("at-full");
+          else toFull();
+        });
+
+        document.addEventListener("keydown", function (ev) {
+          if (ev.key === "Escape") close();
         });
       })();
     </script>
