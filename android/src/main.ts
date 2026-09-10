@@ -46,6 +46,8 @@ import { capturePhoto, composeImages, PICK_MAX, pickImages } from "./images";
 import { INPUT_DEBOUNCE_MS } from "./timing";
 // **平台接缝**(OH-d/D3):只在安卓壳里存在的那三条命令。鸿蒙那端由 vite 换成另一份实现。
 import { checkUpdate, HAS_NOTIFICATION, HAS_SAF_BRIDGE, HAS_TEXT_ZOOM, notifyPermissionOk, takeDeepLink, takeSharedText, type MobileUpdate } from "./platform";
+// **渠道接缝**(651):这份包发给谁 —— 鸿蒙那端同样由 vite 换成国内渠道那份。
+import { PRIVACY_URL, SYNC_DEFAULT_URL } from "./channel";
 import { initDueReminder, reminderCfg, saveReminderCfg, sendTestNotification } from "./reminder";
 import * as backup from "./backup";
 import * as cardPanel from "./cardpanel";
@@ -2344,6 +2346,36 @@ async function resolveStartupGate(): Promise<GateStatus & { status: "blocked" } 
   }
 }
 
+/** 「这台设备已经同意过隐私政策」。⚠ 与 index.html 头里那段内联脚本**共用同一个键与
+ *  同一条判据**(值恰等于 "1"),改一处必须改两处 —— 它们一个管首帧、一个管接线。
+ *  纯设备本地、不进同步(同语言 / 明暗 / 字号那一族)。 */
+const PRIVACY_KEY = "zhujian.privacy";
+
+/** 首启隐私政策告知(651;华为 2026-09-04 驳回第 3 条)。
+ *
+ *  已同意 = 立即返回;没同意 = 就挡在这儿,直到用户点「同意」。
+ *  ⛔ 点「不同意」时这个 Promise **永不兑现** —— 那是刻意的:`app_exit` 是异步的,
+ *  在进程真的没掉之前,后面那些启动动作(装配空间 / 查更新)一步都不该开始跑。
+ *  ⚠ 那一页**默认就在场**(静态壳里没有 hidden),所以这里不需要"显示"它,只接线。 */
+function privacyGate(): Promise<void> {
+  if (localStorage.getItem(PRIVACY_KEY) === "1") return Promise.resolve();
+  return new Promise<void>((resolve) => {
+    $("privacy-link").addEventListener("click", (e) => {
+      e.preventDefault();
+      void openUrl(PRIVACY_URL).catch((err) => showError(String(err)));
+    });
+    $("privacy-agree").addEventListener("click", () => {
+      localStorage.setItem(PRIVACY_KEY, "1");
+      document.documentElement.dataset.privacy = "ok";
+      resolve();
+    });
+    // ⛔ JS 关不掉原生应用 ⇒ 这颗钮唯一的出口是壳里那条命令(mobile/src/shell.rs)。
+    $("privacy-decline").addEventListener("click", () => {
+      void invoke("app_exit").catch((err) => showError(String(err)));
+    });
+  });
+}
+
 async function init() {
   // 明暗三档(250):首帧定色已由 index.html 头里的内联脚本做掉,这里只接上「自动」档
   // 对系统的跟随。放在启动闸之前——封锁页也得是用户选的那个色。
@@ -2359,10 +2391,18 @@ async function init() {
     if (has) continue;
     document.querySelectorAll<HTMLElement>(`[data-needs="${need}"]`).forEach((e) => (e.hidden = true));
   }
+  // 651(渠道接缝):三处服务器地址输入框的默认值来自**渠道**,不再写死在静态壳里
+  // (国内渠道连境内那台,境外渠道连 sync.zhujian.app)。⛔ 静态壳里刻意不留 value ——
+  // 这段没跑到就是**空框**,而空框会被创号/加入那两条路当场拒(`if (!serverUrl) return;`)。
+  // 留个旧值在那儿才危险:那是「不报错、只连去另一台服务器」。
+  document.querySelectorAll<HTMLInputElement>("input[data-default-server]").forEach((e) => (e.value = SYNC_DEFAULT_URL));
   // 语言(358 第②笔):壳里保留中文原文防首帧闪(163 契约),这里按生效语言统一
   // 覆写静态文案 + 落 <html lang>。放在启动闸之前——封锁页也要说用户那门语言。
   initLang();
   applyStaticI18n();
+  // 651:首启隐私政策告知。⭐ **位置是有讲究的** —— 语言已经生效(告知要说用户那门
+  // 话),而后面每一件会碰数据或联网的事(装配空间 / 查更新)都还没开始。
+  await privacyGate();
   // 先用空缓存画一次空间入口(按单空间态:chip 藏、兜底「空间…」显)——否则首次
   // list_spaces 失败时 chip 与兜底都停在静态 hidden,空间面板整个不可达(codex 必修 3)。
   renderSpaceChip();

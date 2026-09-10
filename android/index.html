@@ -35,6 +35,15 @@
           window.__zhujianTextSize && window.__zhujianTextSize.set(s);
       })();
     </script>
+    <!-- 首启隐私政策告知(651):同意过的设备在**首帧之前**把那一页撤掉,否则每次启动
+         都要闪一下。⛔ 判据写成「值恰等于 1 才放行」:没写过 / 被清掉 / 被改坏,三种
+         情形都该重新问一次(fail-closed)。真正的那道告知在 body 里的 #privacy-gate。 -->
+    <script>
+      (function () {
+        if (localStorage.getItem("zhujian.privacy") === "1")
+          document.documentElement.dataset.privacy = "ok";
+      })();
+    </script>
     <!-- 状态栏让位(643,用户面 83):首帧之前把状态栏真高写进 `--sat`——晚一帧就是顶栏
          跳一下。⛔ 这一格没有原生那半就够不着:CSS 的 `env(safe-area-inset-top)` 在 Chromium 里
          映的是**挖孔**不是状态栏,没挖孔的机器上恒 0(桥在 MainActivity.kt 的 `topInset()`,
@@ -1199,6 +1208,11 @@
          `.fine`,不给 contrast 那道门禁新增一个没人核过的签名。 */
       .gate details { margin-top: 14px; }
 
+      /* 651 首启隐私告知:压在启动闸之上(两者可能同时在场,同 z-index 时靠 DOM 次序
+         决胜太脆);同意过的设备由头里那段内联脚本置的 data-privacy 撤掉整页。 */
+      #privacy-gate { z-index: 21; }
+      :root[data-privacy="ok"] #privacy-gate { display: none; }
+
       /* 底部固定确认条(ui-audit P0 #4):两拍确认的第二拍统一落在这条 fixed 条上。
          此前第一拍原位换长文案(「删除」→「确认删除?进回收站」)会变宽换行、3s 又
          自动复原——第二拍可能落到毗邻的单拍即写控件(状态 pill/「恢复」)。fixed 条
@@ -1584,7 +1598,7 @@
       </div>
       <div id="join-form" hidden>
         <div class="row">
-          <input id="join-server" value="wss://sync.zhujian.app" spellcheck="false"
+          <input id="join-server" data-default-server spellcheck="false"
                  autocapitalize="off" autocomplete="off" />
         </div>
         <div class="row">
@@ -1618,7 +1632,7 @@
           <button id="sync-alt-create" class="ghost" style="flex: 1" data-i18n="sync.altCreateMain">没有其他设备?创建新账户</button>
         </div>
         <div id="sync-server-row" class="row" hidden>
-          <input id="sync-server" value="wss://sync.zhujian.app" spellcheck="false"
+          <input id="sync-server" data-default-server spellcheck="false"
                  autocapitalize="off" autocomplete="off" />
         </div>
         <div id="sync-manual" hidden>
@@ -1877,7 +1891,7 @@
       <div id="db" class="kv"><span class="muted" data-i18n="main.diagLoading">读取中…</span></div>
       <h2 data-i18n="shell.diagNetTitle">网络栈诊断</h2>
       <div class="row">
-        <input id="url" value="wss://sync.zhujian.app" spellcheck="false"
+        <input id="url" data-default-server spellcheck="false"
                autocapitalize="off" autocomplete="off" />
         <button id="run" data-i18n="shell.runProbe">跑诊断</button>
       </div>
@@ -1955,6 +1969,27 @@
             <p id="gate-msg-reset" class="gate-msg"></p>
           </details>
         </div>
+      </div>
+    </div>
+
+    <!-- 首启隐私政策告知(651;华为 2026-09-04 上架审核驳回第 3 条原话:「应用在首次
+         启动、注册登录界面均未明确提示用户阅读隐私政策」)。朱简没有注册登录这一步,
+         ⇒ 只剩「首次启动弹窗」这一条路。
+         ⭐ **默认在场、由 CSS 撤掉**(与上面 #gate 同一条纪律):同意过的设备靠头里那段
+         内联脚本在**首帧之前**置 `data-privacy=ok`,于是不闪;没同意过的设备从第一帧
+         起就被盖住,不给「还没同意、页面已经能点」的窗口。⛔ 别改成「默认 hidden、
+         JS 再显示」—— 那是 fail-open:脚本没跑到就等于没有这道告知。
+         ⛔ 「不同意」必须真的退出应用(用户 2026-09-10 拍板),它走 `app_exit` 命令:
+         WebView 里的 JS 关不掉原生应用,没有那条命令这颗钮就是点了没反应还不报错。 -->
+    <div id="privacy-gate" class="gate">
+      <h2 data-i18n="shell.privacyTitle">隐私政策</h2>
+      <p data-i18n="shell.privacyIntro">你写下的内容默认只存在这台设备上,不上传任何服务器。只有你自己开启「多设备同步」之后,才会有数据离开这台设备;而且离开之前已在本机加密,我们读不到。</p>
+      <p data-i18n="shell.privacyNone">应用里没有广告,没有第三方 SDK,也没有任何 AI。</p>
+      <p><a id="privacy-link" href="#" data-i18n="shell.privacyLink">阅读完整隐私政策</a></p>
+      <p class="fine" data-i18n="shell.privacyFine">开始使用前请读一遍完整的隐私政策。不同意就无法使用朱简。</p>
+      <div class="row" style="margin-top: 12px">
+        <button id="privacy-agree" style="flex: 1" data-i18n="shell.privacyAgree">同意并开始使用</button>
+        <button id="privacy-decline" class="ghost" data-i18n="shell.privacyDecline">不同意</button>
       </div>
     </div>
 

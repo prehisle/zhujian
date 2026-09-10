@@ -48,6 +48,8 @@ macro_rules! shared_handler {
     ($($extra:path),* $(,)?) => {
         ::tauri::generate_handler![
             $crate::startup_gate,
+            // 651:首启隐私告知里「不同意」的出口(JS 关不掉原生应用)
+            $crate::app_exit,
             $crate::list_spaces,
             $crate::create_space,
             $crate::rename_space,

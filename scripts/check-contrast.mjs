@@ -118,14 +118,22 @@ const DARK_FORMS = [':root[data-theme="dark"]', "@media (prefers-color-scheme: d
  * 地面上多出来的 html 会被下面那道探针拦住 —— 少一个文档是安静的少判(336 ⑩ 刀那族)。
  */
 const NOT_A_DOC = [
-  ...["site-cool/privacy-rights.html", "site-cool/terms.html"].map((file) => ({
+  ...[
+    "site-cool/privacy-rights.html",
+    "site-cool/terms.html",
+    "site-app/privacy.html",
+    "site-app/privacy-rights.html",
+    "site-app/terms.html",
+  ].map((file) => ({
     file,
     why: "同一个 `docPage()` 模板(scripts/build-site-cool.mjs)生成的另一份,内联样式**逐字节相同** \
 ⇒ 判据落在已登记进 DOCS 的 `site-cool/privacy.html` 那一份上,判第二遍不产生任何新信息。\
 产物与源一致由 `branch-gate land` 那道 `build-site-cool.mjs --check` 守着。\
-⭐ 曾经还有 `site-app-docs/` 那三份(寄放在 zhujian.app 上的临时落点),备案号 2026-09-08 下来后\
-按 deploy §8.1a 撤掉,这三条同轮删 —— **那道触发门真打响了**:先删目录再跑,下面那道\
-「过期条目」探针当场点名三条",
+⚠ 651 起两个落点的 `docPage()` 多了一个 `icp` 开关(备案号只印 zhujian.cool 那份)—— \
+那是**页脚里多不多一个链接**,不是样式:内联 `<style>` 仍逐字节相同,本条理由原样成立。\
+⭐ 史实(⛔ 别读成「已撤」):`site-app` 那三份 576 立(临时寄放)、650 撤、**651 又回来了**, \
+但性质变了 —— 两条渠道的协议正文**刻意不同**(deploy §8.1a)。650 删这几条时下面那道\
+「过期条目」探针当场点名三条,**那道触发门真打响过**",
     privateOnly: true, // 见下面 IN_WORK_REPO 那段:公开快照上这几份根本不存在
   })),
   {

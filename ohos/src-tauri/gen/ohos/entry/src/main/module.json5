@@ -15,7 +15,11 @@
         "description": "$string:EntryAbility_desc",
         "icon": "$media:app_icon",
         "label": "$string:EntryAbility_label",
-        "startWindowIcon": "$media:app_icon",
+        // ⚠ 651:启动页**刻意不用** `app_icon` —— 那张按华为上架要求换成了「满幅、直角、
+        // 不透明」(2026-09-04 驳回:图标存在透明背景 / 单层图为圆角),而启动页底色是
+        // 白(暗色档黑),满幅朱红方块压上去就是一块硬边红方块。`start_icon` 是原来那张
+        // 圆角带透明的,只服务启动页。⛔ 别图省事把这两处并回同一枚资源。
+        "startWindowIcon": "$media:start_icon",
         "startWindowBackground": "$color:start_window_background",
         "exported": true,
         "skills": [

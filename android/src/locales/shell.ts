@@ -84,6 +84,16 @@ export const shell = defineMessages({
   "shell.runProbe": { zh: "跑诊断", en: "Run" },
   "shell.cancel": { zh: "取消", en: "Cancel" },
   "shell.confirm": { zh: "确认", en: "Confirm" },
+  // 首启隐私政策告知(651;华为 2026-09-04 上架审核驳回第 3 条)。⛔ 别在这几条里
+  // 写破折号(649 刚把两端字典里 125 枚清零),也别写成条款腔:它是这个应用给用户的
+  // 第一印象。
+  "shell.privacyTitle": { zh: "隐私政策", en: "Privacy policy" },
+  "shell.privacyIntro": { zh: "你写下的内容默认只存在这台设备上,不上传任何服务器。只有你自己开启「多设备同步」之后,才会有数据离开这台设备;而且离开之前已在本机加密,我们读不到。", en: "What you write stays on this device by default and is not uploaded anywhere. Data leaves this device only after you turn on multi-device sync yourself, and it is encrypted on your device first, so we cannot read it." },
+  "shell.privacyNone": { zh: "应用里没有广告,没有第三方 SDK,也没有任何 AI。", en: "There are no ads, no third-party SDKs, and no AI anywhere in the app." },
+  "shell.privacyLink": { zh: "阅读完整隐私政策", en: "Read the full privacy policy" },
+  "shell.privacyFine": { zh: "开始使用前请读一遍完整的隐私政策。不同意就无法使用朱简。", en: "Please read the full privacy policy before you start. Without your agreement Zhujian cannot be used." },
+  "shell.privacyAgree": { zh: "同意并开始使用", en: "Agree and start" },
+  "shell.privacyDecline": { zh: "不同意", en: "Decline" },
   "shell.gateChecking": { zh: "正在检查本机空间…", en: "Checking local spaces…" },
   "shell.gateUpgradeTitle": { zh: "需要更新朱简", en: "Zhujian needs updating" },
   "shell.gateUpgradePre": { zh: "本机数据由更新版本的朱简创建,当前装的是旧版:请到官网", en: "This device's data was created by a newer Zhujian and the installed build is older. Get the latest from" },

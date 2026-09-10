@@ -85,6 +85,18 @@ pub fn startup_gate(gate: State<'_, Gate>) -> GateStatus {
     gate.0.lock().expect("gate mutex poisoned").clone()
 }
 
+/// 首启隐私政策告知里「不同意」那条路的收场(651;华为 2026-09-04 驳回第 3 条要的
+/// 就是这道告知)。⛔ **WebView 里的 JS 关不掉原生应用** —— 这条命令是那颗按钮
+/// 唯一的出口,没有它,「不同意」就是一颗点了没反应的按钮(而且不报错)。
+/// ⚠ 走 Tauri 自己的退场(`AppHandle::exit`),⛔ 别换成 `std::process::exit`:
+/// 那会跳过 Tauri 的收尾钩子。
+/// ⚠ 两只手机壳共用本 crate ⇒ 安卓与鸿蒙同得同失;**真机上必须各点一次**
+/// (「退出」这种事失灵的样子就是「什么也没发生」)。
+#[tauri::command]
+pub fn app_exit(app: AppHandle) {
+    app.exit(0);
+}
+
 /// 事件桥:一个 runtime 一任务,事件信封带**空间标 + 代次**(§12「事件按
 /// space+generation 过滤」):emit 前复核现任代次提前退场只是快路,check 与 emit
 /// 之间仍有换代窗口(codex 工序 7/8 M6)——信封携带 generation,前端按每空间
