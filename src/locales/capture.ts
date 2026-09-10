@@ -2,7 +2,7 @@
 import { defineMessages } from "./entry";
 
 export const capture = defineMessages({
-  "capture.hotkeyConflict": { zh: "⚠ 快捷键 {keys} 被占用,点此改键", en: "⚠ Shortcut {keys} is taken by another app, click here to change it" },
+  "capture.hotkeyConflict": { zh: "快捷键 {keys} 被占用,点此改键", en: "Shortcut {keys} is taken by another app, click here to change it" },
   "capture.listSep": { zh: "、", en: ", " },
   "capture.gotIt": { zh: "知道了", en: "Got it" },
   "capture.kindTask": { zh: "任务", en: "Task" },

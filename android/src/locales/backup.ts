@@ -23,7 +23,7 @@ export const backup = defineMessages({
 
   // ---- ② 仪式 ----
   "backup.ceremonyIntro": { zh: "把下面这串码抄在纸上(或存进密码管理器),然后原样输一遍。它是解开所有备份的唯一钥匙。", en: "Copy the code below onto paper (or into a password manager), then type it back exactly. It is the only key that opens your backups." },
-  "backup.ceremonyWarn": { zh: "⚠ 这串码只在这台手机上。卸载 app 或在系统设置里「清除数据」,它就没了;到那时,没抄下来的备份永远打不开。", en: "⚠ This code lives only on this phone. Uninstalling the app or clearing its data erases it; after that, backups you did not write down can never be opened." },
+  "backup.ceremonyWarn": { zh: "这串码只在这台手机上。卸载 app 或在系统设置里「清除数据」,它就没了;到那时,没抄下来的备份永远打不开。", en: "This code lives only on this phone. Uninstalling the app or clearing its data erases it; after that, backups you did not write down can never be opened." },
   "backup.ceremonyConfirmPh": { zh: "把上面那串码输在这里", en: "Type the code here" },
   "backup.ceremonyConfirm": { zh: "我抄好了,核对", en: "Check what I typed" },
   "backup.ceremonyCancel": { zh: "取消", en: "Cancel" },
