@@ -443,6 +443,16 @@
       .shot-box img { display: block; width: 100%; height: auto; }
       /* 纸条那张原生就只有 840px 宽:拉到整行会糊 ⇒ 到原寸为止,居中摆着。 */
       .shot-box.slip-shot img { width: min(100%, 840px); }
+      /* 手机那张(651):⚠ 它和桌面那张**不能并排** —— 并排后桌面那张只剩约 700px,
+         相对 app 的 1260 CSS 宽是 0.56 倍,界面文字掉回 8px,又回到「一团纹理」那一档。
+         ⇒ 叠在桌面那张下面,自己按 300px 显示(真机 1260 设备像素 ⇒ 4.2 倍密度,
+         认得出是一列随记卡)。它与上面那张是**同一个视图的两端**,故同住第二张卡。 */
+      .shot-pair { display: grid; gap: 16px; justify-items: center; }
+      .shot-pair .phone {
+        width: min(100%, 300px);
+        border-radius: var(--radius-md);
+        box-shadow: var(--card-shadow);
+      }
       .card .kbd-inline {
         font-family: var(--font-sans);
         font-size: var(--fs-12);
@@ -715,9 +725,11 @@
               <p data-i18n="flow.card2">
                 在随记里给它打标签,或转成待办。每次编辑都保留改动前的版本,旧稿能找回;删了先进回收站,随时还原。
               </p>
-              <div class="shot-box">
+              <div class="shot-box shot-pair">
                 <img src="shots/desktop-inbox.webp" width="1890" height="1050" loading="lazy" decoding="async"
                      alt="随记:今天记下的几条排成一条时间轴,各自挂着标签" data-i18n-alt="flow.card2Alt" />
+                <img class="phone" src="shots/phone-inbox.webp" width="630" height="1360" loading="lazy" decoding="async"
+                     alt="同一份随记在手机上:一列卡片,其中一条正文里带着可以打勾的小清单" data-i18n-alt="flow.card2AltPhone" />
               </div>
             </article>
             <article class="card">
@@ -894,6 +906,7 @@
           /* — 三张真图的 alt:写图上真有的东西,别把它当第二条广告位 — */
           "flow.card1Alt": { zh: "捕获纸条:一行「明早顺路取体检报告」写在纸色的输入框里", en: "The capture slip: one line typed on a paper-toned field, reading 'Pick up the health report tomorrow'" },
           "flow.card2Alt": { zh: "随记:今天记下的几条排成一条时间轴,各自挂着标签", en: "Notes: today's entries laid out as a timeline, each carrying its tags" },
+          "flow.card2AltPhone": { zh: "同一份随记在手机上:一列卡片,其中一条正文里带着可以打勾的小清单", en: "The same notes on a phone: a column of cards, one of them holding a tickable checklist in its body" },
           "flow.card3Alt": { zh: "任务看板:待办、进行中、待确认、已完成四列,卡片上标着截止日期和标签", en: "The task board: four columns (To do, In progress, To confirm, Done) with due dates and tags on the cards" },
 
           /* — 事实表:一行一件事,每行两键(标签 + 一句) — */
