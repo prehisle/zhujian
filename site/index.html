@@ -398,8 +398,8 @@
       .flow-grid {
         margin-top: 46px;
         display: grid;
-        grid-template-columns: repeat(3, 1fr);
-        gap: 22px;
+        grid-template-columns: 1fr; /* 651 起一行一张卡,理由在下面 .shot-box 那段 */
+        gap: 30px;
       }
       .card {
         position: relative;
@@ -423,6 +423,26 @@
         margin: 12px 0 0;
       }
       .card p { color: var(--ink-soft); font-size: var(--fs-15); margin: 12px 0 0; }
+      /* 流程卡里的真图(651,copy-plan 格 2)。
+         ⭐ **三列卡装不下界面截图,这是算出来的不是觉出来的**:app 窗口 1890 设备像素宽,
+         三列时每张卡只有约 270px ⇒ 缩到 0.14 倍,界面里 15px 的字落到 2px,读者看到的是
+         一团纹理不是一张截图。⇒ 流程卡改成**一行一张**,图按整行宽(约 1050px)显示,
+         相对 app 的 CSS 宽度(1260)是 0.83 倍,界面文字还有 12px,认得出。
+         ⛔ 别改回三列 —— 那等于把图退化成装饰。 */
+
+      .shot-box {
+        margin-top: 18px;
+        display: grid;
+        place-items: center;
+        overflow: hidden;
+        background: var(--paper);
+        border-radius: var(--radius-md);
+        outline: 1px solid var(--line);
+        outline-offset: -1px;
+      }
+      .shot-box img { display: block; width: 100%; height: auto; }
+      /* 纸条那张原生就只有 840px 宽:拉到整行会糊 ⇒ 到原寸为止,居中摆着。 */
+      .shot-box.slip-shot img { width: min(100%, 840px); }
       .card .kbd-inline {
         font-family: var(--font-sans);
         font-size: var(--fs-12);
@@ -582,7 +602,7 @@
       @media (max-width: 860px) {
         .hero .wrap { grid-template-columns: 1fr; gap: 44px; }
         .hero-art { max-width: 440px; }
-        .flow-grid { grid-template-columns: 1fr; }
+
         /* 窄屏收成一列:标签在上、正文在下,行间那道线只留给标签那一格 */
         .facts { grid-template-columns: 1fr; }
         .facts dt { padding-bottom: 4px; }
@@ -684,6 +704,10 @@
               <p>
                 <span data-i18n="flow.card1a">全局热键</span> <span class="kbd-inline">Ctrl+Alt+N</span> <span data-i18n="flow.card1b">唤出一张纸条,写完回车就存进随记,窗口自己收起。截图可以直接粘贴。</span>
               </p>
+              <div class="shot-box slip-shot">
+                <img src="shots/desktop-capture.webp" width="840" height="192" loading="lazy" decoding="async"
+                     alt="捕获纸条:一行「明早顺路取体检报告」写在纸色的输入框里" data-i18n-alt="flow.card1Alt" />
+              </div>
             </article>
             <article class="card">
               <div class="step" data-i18n="flow.step2">二</div>
@@ -691,6 +715,10 @@
               <p data-i18n="flow.card2">
                 在随记里给它打标签,或转成待办。每次编辑都保留改动前的版本,旧稿能找回;删了先进回收站,随时还原。
               </p>
+              <div class="shot-box">
+                <img src="shots/desktop-inbox.webp" width="1890" height="1050" loading="lazy" decoding="async"
+                     alt="随记:今天记下的几条排成一条时间轴,各自挂着标签" data-i18n-alt="flow.card2Alt" />
+              </div>
             </article>
             <article class="card">
               <div class="step" data-i18n="flow.step3">三</div>
@@ -698,6 +726,10 @@
               <p data-i18n="flow.card3">
                 待办、进行中、待确认、已完成,拖着走。做完的归档,可查、不可删。
               </p>
+              <div class="shot-box">
+                <img src="shots/desktop-board.webp" width="1890" height="1050" loading="lazy" decoding="async"
+                     alt="任务看板:待办、进行中、待确认、已完成四列,卡片上标着截止日期和标签" data-i18n-alt="flow.card3Alt" />
+              </div>
             </article>
           </div>
         </div>
@@ -859,6 +891,10 @@
           "flow.step3": { zh: "三", en: "3" },
           "flow.card3Title": { zh: "做完它", en: "Get it done" },
           "flow.card3": { zh: "待办、进行中、待确认、已完成,拖着走。做完的归档,可查、不可删。", en: "To do, In progress, To confirm, Done. Drag tasks along; finished ones go to Archive, where you can look them up but not delete them." },
+          /* — 三张真图的 alt:写图上真有的东西,别把它当第二条广告位 — */
+          "flow.card1Alt": { zh: "捕获纸条:一行「明早顺路取体检报告」写在纸色的输入框里", en: "The capture slip: one line typed on a paper-toned field, reading 'Pick up the health report tomorrow'" },
+          "flow.card2Alt": { zh: "随记:今天记下的几条排成一条时间轴,各自挂着标签", en: "Notes: today's entries laid out as a timeline, each carrying its tags" },
+          "flow.card3Alt": { zh: "任务看板:待办、进行中、待确认、已完成四列,卡片上标着截止日期和标签", en: "The task board: four columns (To do, In progress, To confirm, Done) with due dates and tags on the cards" },
 
           /* — 事实表:一行一件事,每行两键(标签 + 一句) — */
           "trust.eyebrow": { zh: "几件事先说清", en: "A few things up front" },
@@ -904,7 +940,7 @@
 
         /* 属性绑定表。门禁**从这里读**「本页支持哪几个 data-i18n-*」,不另写一份登记表
            —— 「登记本身没人核」是 336 ⑩ 刀判过死刑的形状(改坏了照样绿)。 */
-        var BIND = { "data-i18n-title": "title", "data-i18n-aria-label": "aria-label", "data-i18n-content": "content" };
+        var BIND = { "data-i18n-title": "title", "data-i18n-aria-label": "aria-label", "data-i18n-content": "content", "data-i18n-alt": "alt" };
 
         var KEY = "zhujian.lang"; /* 与两个客户端同一个键;纯本机、不进同步 */
 

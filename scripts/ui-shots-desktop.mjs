@@ -351,10 +351,22 @@ async function shootNotebook(cdp, page, lang, theme, file) {
   await cdp.shot(file);
 }
 
+// 纸条上摆什么字:⭐ **651 之前这一格是隐藏入参** —— 捕获窗的草稿是**断电恢复**的
+// (`zhujian.capture-draft`,main.ts:360),于是隔离 profile 里上一趟遗留的半句话会原样
+// 出现在下一趟的基线图里(651 那趟截出来的是一张写着「wf」的纸条,没人写过它)。
+// ⇒ 每趟**显式写死**一句,同 hotkey 冲突条那条判据:不许有人没写过的东西进图。
+// ⛔ 刻意不复用演示库里那六条,也不用官网首屏 CSS 仿纸条里那句(copy-plan §2.4:
+//    「与流程卡里的桌面截图不重复」)—— 三处各说各的,读者才不会觉得在看同一张图。
+const CAPTURE_DRAFT = { zh: "明早顺路取体检报告", en: "Pick up the health report tomorrow" };
+
 async function shootCapture(cdp, lang, theme, file) {
   await cdp.evaluate(`(() => {
     localStorage.setItem("zhujian.lang", ${JSON.stringify(lang)});
     localStorage.setItem("zhujian.theme", ${JSON.stringify(theme)});
+    // ⚠ 这个键的载荷是 **JSON \`{text, space}\`**(compose-draft.ts 的 TextDraft),不是裸串 ——
+    // 写裸串的话 loadTextDraft 的 JSON.parse 抛、catch 掉、返回 null ⇒ 纸条**空着**出图,
+    // 不报错(651 写这段时先踩了一次)。捕获窗的落点在回车那刻才定 ⇒ space 恒 null。
+    localStorage.setItem("zhujian.capture-draft", JSON.stringify({ text: ${JSON.stringify(CAPTURE_DRAFT[lang])}, space: null }));
     location.reload();
     return true;
   })()`);
