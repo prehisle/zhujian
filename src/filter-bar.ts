@@ -111,8 +111,9 @@ export function reconcileKindFilter(f: FilterState, allTopics: FilterTopic[]): v
 
 // 应用三维过滤:先类型(圈定挂该类型标签的条目)、再标签、后文本。textOf 由视图给
 // (看板=当前标题,灵感=当前正文——连历史、跨回收站的找回忆是全局「搜索」视图的事,
-// 这里是干活时缩小视野)。allTopics 只在 kind 激活时用于把类型解析成标签 id 集(灵感
-// 恒 kind="all",故不传也无妨)。
+// 这里是干活时缩小视野)。allTopics 只在 kind 激活时用于把类型解析成标签 id 集
+// ⚠ **两个视图都可能 kind ≠ all,两处都得传真的 allTopics**(此前这里写着「灵感恒
+// kind="all",故不传也无妨」,随记接上类型轴之后就不成立了)。
 export function applyFilter<T extends { topics: { id: string }[] }>(
   items: T[],
   f: FilterState,
@@ -299,7 +300,9 @@ export function renderFilterPills(
 // 类型轴 pill 行(0031 kind):全部类型 + 库里出现过的每个 kind。仅当至少一个标签标了
 // kind 才有内容(否则清空 bar,CSS `:empty` 隐藏整行——无 kind 就一条不多)。计数口径
 // 同标签 pill:挂该类型任一标签的条目数(全量,不随文本收缩)。选一个 kind 会把标签轴
-// 回落 所有(重新圈定,躲死筛)。只看板接线,灵感不调故无 kind 行。
+// 回落 所有(重新圈定,躲死筛)。⚠ **看板与随记两处都接**(此前这里写着「只看板接线,
+// 灵感不调故无 kind 行」,随记接上之后没人回来改 —— 而正是那句话让 652 那个空态漏洞
+// 看着不可能发生)。
 export function renderKindPills(
   bar: HTMLElement,
   items: { topics: FilterTopic[] }[],

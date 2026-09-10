@@ -9,10 +9,14 @@ describe("灵感 · 按标签类型筛选", () => {
   const P1 = "E2EIK-张三";
   const P2 = "E2EIK-李四";
   const PROJ = "E2EIK-项目甲"; // 无 kind
+  // 652:一枚**没有任何想法挂着**的标签 + 它自己的类型 —— 类型 pill 的计数由 items 算,
+  // 而 pill 本身由 allTopics 派生 ⇒ 计数 0 的类型照样出现在轴上、点得着(用户就是这么撞上的)。
+  const THING = "E2EIK-器物甲";
+  const KIND_EMPTY = "E2EIK-器物";
   const IDEA_A = "E2EIK-想到张三";
   const IDEA_B = "E2EIK-想到李四";
   const IDEA_C = "E2EIK-想到项目";
-  let idP1, idP2, idProj, idA, idB, idC;
+  let idP1, idP2, idProj, idThing, idA, idB, idC;
 
   const kindPills = () =>
     browser.execute(() =>
@@ -43,6 +47,9 @@ describe("灵感 · 按标签类型筛选", () => {
     // 两个人名标签打上 kind「人名」,项目标签不打(无类型)。
     await invoke("set_topic_kind", { id: idP1, kind: "人名" });
     await invoke("set_topic_kind", { id: idP2, kind: "人名" });
+    // 器物类:标签建了、类型标了,但一条想法都不挂 ⇒ 该类型 pill 显 0(最后一例点它)。
+    idThing = await invoke("create_topic", { title: THING });
+    await invoke("set_topic_kind", { id: idThing, kind: KIND_EMPTY });
     idA = await invoke("capture_note", { content: IDEA_A });
     await invoke("file_note_to_topic", { id: idA, topicId: idP1, newTitle: null });
     idB = await invoke("capture_note", { content: IDEA_B });
@@ -61,6 +68,7 @@ describe("灵感 · 按标签类型筛选", () => {
     await invoke("delete_topic", { id: idP1 });
     await invoke("delete_topic", { id: idP2 });
     await invoke("delete_topic", { id: idProj });
+    await invoke("delete_topic", { id: idThing });
   });
 
   it("库里有标了 kind 的标签 → 类型 pill 行出现(全部类型 + 人名 2)", async () => {
@@ -105,5 +113,22 @@ describe("灵感 · 按标签类型筛选", () => {
     const labels = await topicPillLabels();
     expect(labels.some((l) => l.includes("无标签"))).toBe(true);
     expect(labels.some((l) => l.includes(PROJ))).toBe(true);
+  });
+
+  // 652(用户报的):**只筛类型、没钻到具体标签**时,空态此前落在「按标签」那句上,而
+  // `selectedTopicLabels` 只认标签维、这一维给的是空数组 ⇒ 屏上是「「」下没有随记」。
+  // ⚠ 判据两格缺一不可:①新那句真的在(正面);②书名号里**不是空的**(反面)——只断 ①
+  // 的话,一个把两句都印出来的坏实现照样绿。
+  it("选一个一条随记都没有的类型 → 空态说「「…」类型下没有随记」,不是空书名号", async () => {
+    await clickKind(KIND_EMPTY);
+    const big = $(".v-inbox .center .big");
+    await big.waitForExist({ timeout: 8000 });
+    await browser.waitUntil(async () => (await big.getText()).includes("类型下没有随记"), {
+      timeout: 8000,
+      timeoutMsg: `选空类型后未出现类型空态,屏上是:${await big.getText().catch(() => "(取不到)")}`,
+    });
+    const text = await big.getText();
+    expect(text).toContain(`「${KIND_EMPTY}」类型下没有随记`);
+    expect(text).not.toContain("「」");
   });
 });

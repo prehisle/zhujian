@@ -1884,19 +1884,32 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       );
       return;
     }
-    // 只有时间轴在筛(类型/标签都是「全部」):selectedTopicLabels 会给出空标签,
-    // 「「」下没有任务」是句坏文案——单独给时间轴一句话(461)。
-    if (filter.kind === "all" && filter.topics.length === 0 && timeFilter !== "all") {
+    // 余下三维**按「哪一维最具体」排**:标签 → 类型 → 时间。⚠ 排到最后那一档不必再判
+    // `timeFilter !== "all"`:调用方只在 `visible` 非空而 `shown` 空时进来 ⇒ 至少一维在筛,
+    // 前面几维都已排除就只可能是时间。
+    //
+    // ⛔ **别把类型那一档去掉**(652,用户报的):`selectedTopicLabels` 只认标签维,光筛
+    // 类型时它给空数组 ⇒ 落到标签那句就是「「」下没有任务」。461 只给时间那一维补了出口
+    // (判据写成 `kind === "all" && topics.length === 0 && time !== "all"`),类型这一维照旧
+    // 漏在标签那句里。⭐ 四档全的那份在 `android/src/main.ts::filteredEmptyHtml`。
+    if (filter.topics.length > 0) {
+      const label = selectedTopicLabels(filter, allTopics).join(t("board.listSeparator"));
       renderCentered(
-        el("div", { className: "big", textContent: t("board.noTasksInTime") }),
-        el("div", { textContent: t("board.noTasksInTimeHint") }),
+        el("div", { className: "big", textContent: t("board.noTasksUnder", { label }) }),
+        el("div", { textContent: t("board.noTasksUnderHint") }),
       );
       return;
     }
-    const label = selectedTopicLabels(filter, allTopics).join(t("board.listSeparator"));
+    if (filter.kind !== "all") {
+      renderCentered(
+        el("div", { className: "big", textContent: t("board.noTasksInKind", { kind: filter.kind }) }),
+        el("div", { textContent: t("board.noTasksInKindHint") }),
+      );
+      return;
+    }
     renderCentered(
-      el("div", { className: "big", textContent: t("board.noTasksUnder", { label }) }),
-      el("div", { textContent: t("board.noTasksUnderHint") }),
+      el("div", { className: "big", textContent: t("board.noTasksInTime") }),
+      el("div", { textContent: t("board.noTasksInTimeHint") }),
     );
   }
 

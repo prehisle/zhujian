@@ -3,7 +3,8 @@ import { invoke, goNotebook, openCompose } from "./support.js";
 
 // 0031 kind + 按类型筛选(路线 A 钻取器):标签有「类型」(自由文本,如「人名」)。看板筛选
 // 条顶部多一行类型 pill——选中一个类型先圈定「挂了该类型任一标签的任务」,同时把下方标签
-// pill 收到该类型内(可再钻到具体某人)。只看板接线;无 kind 的库不显类型行。
+// pill 收到该类型内(可再钻到具体某人)。无 kind 的库不显类型行。⚠ **随记那边也接了这条轴**
+// (镜像那支 = `inbox-kind-filter.e2e.js`;此前这里写着「只看板接线」,已腐)。
 describe("任务看板 · 按标签类型筛选", () => {
   const P1 = "E2E-类-张三";
   const P2 = "E2E-类-李四";
@@ -129,5 +130,36 @@ describe("任务看板 · 按标签类型筛选", () => {
     const born = (await invoke("list_tasks")).find((t) => t.title === NEW);
     await invoke("archive_task", { id: born.id });
     await invoke("purge_task", { id: born.id });
+  });
+
+  // 652(用户报的,随记那边同形):**只筛类型、没钻到具体标签**时,空态此前落在「按标签」
+  // 那句上,而 `selectedTopicLabels` 只认标签维、这一维给的是空数组 ⇒ 屏上是「「」下没有任务」。
+  // ⚠ 判据两格缺一不可:①新那句真的在(正面);②书名号里**不是空的**(反面)——只断 ① 的话,
+  // 一个把两句都印出来的坏实现照样绿。
+  // ⚠ 计数 0 的类型 pill 照样在轴上:pill 由 allTopics 派生,计数才由 items 算(用户就是这么撞上的)。
+  it("选一个一个任务都没有的类型 → 空态说「「…」类型下没有任务」,不是空书名号", async () => {
+    const KIND_EMPTY = "E2E-类-器物";
+    const idThing = await invoke("create_topic", { title: "E2E-类-器物甲" });
+    await invoke("set_topic_kind", { id: idThing, kind: KIND_EMPTY });
+    await goNotebook("board"); // 重挂才重取 allTopics(类型轴由它派生)
+    await browser.waitUntil(async () => (await kindPills()).some((k) => k.includes(KIND_EMPTY)), {
+      timeout: 8000,
+      timeoutMsg: `新类型没进类型轴,轴上是:${JSON.stringify(await kindPills().catch(() => "(取不到)"))}`,
+    });
+
+    await clickKind(KIND_EMPTY);
+    const big = $(".center .big");
+    await big.waitForExist({ timeout: 8000 });
+    await browser.waitUntil(async () => (await big.getText()).includes("类型下没有任务"), {
+      timeout: 8000,
+      timeoutMsg: `选空类型后未出现类型空态,屏上是:${await big.getText().catch(() => "(取不到)")}`,
+    });
+    const text = await big.getText();
+    expect(text).toContain(`「${KIND_EMPTY}」类型下没有任务`);
+    expect(text).not.toContain("「」");
+
+    // 自清(同上,这支没有 after):先归还类型轴再删标签,别把筛选态与这枚标签泄漏出去。
+    await clickKind("全部类型");
+    await invoke("delete_topic", { id: idThing });
   });
 });

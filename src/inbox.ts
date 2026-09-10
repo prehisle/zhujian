@@ -1325,19 +1325,27 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         if (ideas.length === 0) {
           list.replaceChildren(bar, centerNode(t("inbox.emptyIdeasTitle"), t("inbox.emptyIdeasHint")));
         } else if (shown.length === 0) {
-          // 筛空 ≠ 没有灵感:提示当前筛选(词优先),别让用户以为灵感全没了(同看板)。
-          // 只有时间轴在筛(类型/标签都是「全部」)时,selectedTopicLabels 给出空标签
-          // ——单独给时间轴一句话,别显「「」下没有随记」这种坏文案(461)。
+          // 筛空 ≠ 没有灵感:提示当前筛选,别让用户以为灵感全没了(同看板)。四维各一句,
+          // **按「哪一维最具体」排**:词 → 标签 → 类型 → 时间。⚠ 排到最后那一档不必再判
+          // `timeFilter !== "all"`:走到这儿意味着四维里至少一维在筛(见上面的 shown/ideas
+          // 判据),而前三维都已排除 ⇒ 只可能是时间。
+          //
+          // ⛔ **别把类型那一档去掉**(652,用户报的):`selectedTopicLabels` 只认标签维,
+          // 光筛类型时它给的是空数组 ⇒ 落到标签那句就是「「」下没有随记」。461 只给时间那一维
+          // 补了出口(判据写成 `kind === "all" && topics.length === 0 && time !== "all"`),
+          // 类型这一维照旧漏在标签那句里。⭐ 手机端一直是对的,四档全的那份在
+          // `android/src/main.ts::filteredEmptyHtml`。
           const qRaw = filter.text.trim();
           const label = selectedTopicLabels(filter, topics).join("、");
-          const onlyTimeNarrowed = filter.kind === "all" && filter.topics.length === 0 && timeFilter !== "all";
           list.replaceChildren(
             bar,
             qRaw !== ""
               ? centerNode(t("inbox.filterNoMatch", { q: qRaw }), t("inbox.filterNoMatchHint"))
-              : onlyTimeNarrowed
-                ? centerNode(t("inbox.filterEmptyTime"), t("inbox.filterEmptyTimeHint"))
-                : centerNode(t("inbox.filterEmptyTag", { tag: label }), t("inbox.filterEmptyTagHint")),
+              : filter.topics.length > 0
+                ? centerNode(t("inbox.filterEmptyTag", { tag: label }), t("inbox.filterEmptyTagHint"))
+                : filter.kind !== "all"
+                  ? centerNode(t("inbox.filterEmptyKind", { kind: filter.kind }), t("inbox.filterEmptyKindHint"))
+                  : centerNode(t("inbox.filterEmptyTime"), t("inbox.filterEmptyTimeHint")),
           );
         } else {
           // 按天分组成时间轴:同一天的灵感归到一个日期标头下(后端已按时间倒序;
