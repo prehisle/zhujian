@@ -49,6 +49,10 @@ target/
 # (2026-08-23 立:此前只有 `*.log` 命中,`.jpeg` / `.txt` 一直是"未忽略"状态,
 #  仓里那几处引用它的地方也都写着「⚠ 未入库」——纪律在,闸不在。)
 /.zjshots/
+# 651:上架包(.app)的落点 —— 打包产物,7 MB 二进制,⛔ 不进仓。
+# 留在仓里是因为「改前那只会被下一趟构建冲掉」(memory before-after-artifact-overwritten):
+# 每次打完就 cp 一份到这儿并带上版本号,传 AGC 时传这儿这只。
+/.zjout/
 
 # desktop-cdp.mjs 真机验收固定 WebView2 profile(钉住 WEBVIEW2_USER_DATA_FOLDER,
 # 防止每次带 --remote-debugging-port 启动都在 C:\Windows\SystemTemp 新开 scoped_dir)

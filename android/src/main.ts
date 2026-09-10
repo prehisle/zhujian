@@ -2360,9 +2360,19 @@ const PRIVACY_KEY = "zhujian.privacy";
 function privacyGate(): Promise<void> {
   if (localStorage.getItem(PRIVACY_KEY) === "1") return Promise.resolve();
   return new Promise<void>((resolve) => {
+    // ⛔ **不跳浏览器**:鸿蒙上 `openUrl` 会去调 `xdg-open`(它的编译目标是 linux),
+    // 真机报 `No such file or directory (os error 2)` —— 651 实撞。政策页由构建期插件
+    // 按渠道烤进产物,这里就地展开;`PRIVACY_URL` 只用来告诉用户最新版发布在哪儿
+    // (包里这份是构建那一刻的快照)。
+    $("policy-canonical").textContent = PRIVACY_URL;
     $("privacy-link").addEventListener("click", (e) => {
       e.preventDefault();
-      void openUrl(PRIVACY_URL).catch((err) => showError(String(err)));
+      const frame = $("policy-frame") as HTMLIFrameElement;
+      if (!frame.getAttribute("src")) frame.setAttribute("src", "privacy.html");
+      $("policy-view").hidden = false;
+    });
+    $("policy-close").addEventListener("click", () => {
+      $("policy-view").hidden = true;
     });
     $("privacy-agree").addEventListener("click", () => {
       localStorage.setItem(PRIVACY_KEY, "1");

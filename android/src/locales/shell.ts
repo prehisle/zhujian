@@ -92,6 +92,7 @@ export const shell = defineMessages({
   "shell.privacyNone": { zh: "应用里没有广告,没有第三方 SDK,也没有任何 AI。", en: "There are no ads, no third-party SDKs, and no AI anywhere in the app." },
   "shell.privacyLink": { zh: "阅读完整隐私政策", en: "Read the full privacy policy" },
   "shell.privacyFine": { zh: "开始使用前请读一遍完整的隐私政策。不同意就无法使用朱简。", en: "Please read the full privacy policy before you start. Without your agreement Zhujian cannot be used." },
+  "shell.privacyCanonical": { zh: "最新版本发布在:", en: "The current version is published at:" },
   "shell.privacyAgree": { zh: "同意并开始使用", en: "Agree and start" },
   "shell.privacyDecline": { zh: "不同意", en: "Decline" },
   "shell.gateChecking": { zh: "正在检查本机空间…", en: "Checking local spaces…" },

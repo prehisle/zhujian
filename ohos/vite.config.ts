@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineConfig, type Plugin } from "vite";
+import { policyAsset } from "../scripts/lib/policy-asset.mjs";
 
 // 朱简鸿蒙端的前端构建(OH-d/D3 起是**产品前端**,不再是那一页验收面板)。
 //
@@ -79,7 +80,11 @@ function seam(mod: string, label: string): Plugin {
 export default defineConfig({
   clearScreen: false,
   root: c4 ? here : androidRoot,
-  plugins: c4 ? [] : [seam("platform", "平台接缝"), seam("channel", "渠道接缝")],
+  // 651:渠道接缝之外还烤一份**境内渠道**的隐私政策页进产物(鸿蒙上没有 xdg-open,
+  // 「阅读完整隐私政策」只能在应用内看)。⛔ 别指到 site-app/ —— 那是境外那一版正文。
+  plugins: c4
+    ? []
+    : [seam("platform", "平台接缝"), seam("channel", "渠道接缝"), policyAsset(resolve(here, "../site-cool/privacy.html"))],
   build: {
     outDir: resolve(here, "dist"),
     emptyOutDir: true,

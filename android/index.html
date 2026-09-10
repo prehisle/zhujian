@@ -543,8 +543,12 @@
          fixed 悬浮不进文档流(ui-audit P0 #3):此前在 compose 与时间轴之间,每次
          出现/6s 消失都让整轴跳 ~37px——「手指落下时和抬起时屏幕不一样」,143 实测
          把已完成任务误点回待办即源于此。z 高于大图查看层(15)、低于封锁页(20)。 */
+      /* ⚠ 651 把它从 18 抬到 23:错误条必须压在**一切遮罩之上** —— `.gate` 一族是 20、
+         首启隐私告知 21、政策全文 22,而这几页上恰恰会有原生调用失败(651 实撞:鸿蒙上
+         「不同意」与「阅读完整隐私政策」都失败了,报错却被弹窗盖住 ⇒ 现场看到的是
+         「点了没反应」,我花了半小时才排除掉「点击没送到」这条)。⛔ 别再把它压回遮罩下面。 */
       .error {
-        position: fixed; left: 14px; right: 14px; z-index: 18;
+        position: fixed; left: 14px; right: 14px; z-index: 23;
         top: calc(8px + var(--sat));
         background: var(--seal); color: var(--on-seal);
         border-radius: var(--radius-md); padding: 8px 12px;
@@ -1209,9 +1213,18 @@
       .gate details { margin-top: 14px; }
 
       /* 651 首启隐私告知:压在启动闸之上(两者可能同时在场,同 z-index 时靠 DOM 次序
-         决胜太脆);同意过的设备由头里那段内联脚本置的 data-privacy 撤掉整页。 */
+         决胜太脆);同意过的设备由头里那段内联脚本置的 data-privacy 撤掉整页。
+         层级从下到上:.gate 20 → 隐私告知 21 → 政策全文 22 → 错误条 23。 */
       #privacy-gate { z-index: 21; }
       :root[data-privacy="ok"] #privacy-gate { display: none; }
+
+      /* ⚠ 写成 `:not([hidden])` 是承重的:直接给 `#policy-view` 写 display:flex 会**盖掉**
+         `[hidden]` 自带的 display:none(选择器更具体)⇒ 那一页从此永远在场。 */
+      #policy-view:not([hidden]) { z-index: 22; display: flex; flex-direction: column; }
+      #policy-view iframe {
+        flex: 1; width: 100%; border: 1px solid var(--line);
+        border-radius: var(--radius-md); background: var(--paper);
+      }
 
       /* 底部固定确认条(ui-audit P0 #4):两拍确认的第二拍统一落在这条 fixed 条上。
          此前第一拍原位换长文案(「删除」→「确认删除?进回收站」)会变宽换行、3s 又
@@ -1991,6 +2004,19 @@
         <button id="privacy-agree" style="flex: 1" data-i18n="shell.privacyAgree">同意并开始使用</button>
         <button id="privacy-decline" class="ghost" data-i18n="shell.privacyDecline">不同意</button>
       </div>
+    </div>
+
+    <!-- 隐私政策全文(651)。⭐ **在应用内看,不跳浏览器**:鸿蒙的编译目标是 linux,
+         `tauri-plugin-opener` 会去调 `xdg-open`,而鸿蒙上没有这个程序(真机实测报
+         `No such file or directory (os error 2)`)。政策页由构建期插件
+         `scripts/lib/policy-asset.mjs` 按渠道烤进产物 ⇒ 离线也读得到、且与官网同源。
+         ⚠ 它是**构建那一刻的快照**,所以页顶印着官网网址告诉用户最新版在哪儿。 -->
+    <div id="policy-view" class="gate" hidden>
+      <div class="row" style="margin-bottom: 10px">
+        <button id="policy-close" style="flex: 1" data-i18n="shell.close">关闭</button>
+      </div>
+      <p class="fine"><span data-i18n="shell.privacyCanonical">最新版本发布在:</span> <span id="policy-canonical"></span></p>
+      <iframe id="policy-frame"></iframe>
     </div>
 
     <!-- 恢复码强制仪式(phone-space-plan §3,对齐桌面 §2):展示+警示+回输核对,
