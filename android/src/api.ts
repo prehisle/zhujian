@@ -272,6 +272,10 @@ export const fileNoteToTopic = (
   newTitle: string | null,
 ) => invoke<string>("file_note_to_topic", { spaceId: space, id, topicId, newTitle });
 
+/** 摘掉灵感的一个标签(幂等;摘掉最后一个会把「已整理」退回「未归类」)。 */
+export const removeNoteTopic = (space: string, id: string, topicId: string) =>
+  invoke<void>("remove_note_topic", { spaceId: space, id, topicId });
+
 /** 新建任务(生而 todo、置列首;可带截止/优先级/标签)。返回 id。 */
 export const createTask = (
   space: string,

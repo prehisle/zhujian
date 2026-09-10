@@ -33,6 +33,7 @@ import {
   movePartialMark,
   movePartialNote,
   promoteNoteToTask,
+  removeNoteTopic,
   removeTaskTopic,
   renameTask,
   restoreNote,
@@ -283,27 +284,19 @@ function renderEdit(): string {
 
 function renderTags(item: TimelineItem): string {
   if (!state) return "";
-  const task = isTaskStage(item.stage);
   const linked = new Set(item.topics.map((t) => t.id));
+  // 652:灵感与任务在这一排上同形——点亮的再点一次就摘掉(`remove_note_topic` /
+  // `remove_task_topic`)。⛔ 别再按 stage 分岔:此前灵感的已挂标签是 disabled 的,
+  // 而那句「core 没有该原语、与桌面能力一致」两头都不成立(原语一直在,桌面随记有 ✕)。
   const pills = state.topics
     .map((tp) => {
       const on = linked.has(tp.id);
-      // 灵感的已挂标签不可摘(core 没有该原语,与桌面能力一致——不造假入口)。
-      const disabled = busy || (!task && on);
       return `<button data-topic="${esc(tp.id)}" class="p${on ? " on" : ""}${tp.color ? " tinted" : ""}"${
-        disabled ? " disabled" : ""
-      }${!task && on ? ` title="${t("cardpanel.tagLocked")}" aria-disabled="true"` : ""}${
-        tp.color ? ` style="--tc:${esc(tp.color)}"` : ""
-      }>${esc(tp.title)}</button>`;
+        busy ? " disabled" : ""
+      }${tp.color ? ` style="--tc:${esc(tp.color)}"` : ""}>${esc(tp.title)}</button>`;
     })
     .join("");
-  // 有已挂标签的灵感:一行弱提示把「禁点」讲明白(实现审 L8,克制不造假入口)。
-  const ideaHint =
-    !task && item.topics.length
-      ? `<div class="lane"><span class="lab">${t("cardpanel.ideaTagAddOnly")}</span></div>`
-      : "";
   return `<div class="lane"><span class="pillrow">${pills || `<span class="lab">${t("cardpanel.noTags")}</span>`}</span></div>
-    ${ideaHint}
     <div class="lane">
       <input class="tagnew" placeholder="${t("cardpanel.newTagPh")}" autocapitalize="off" autocomplete="off"
              value="${esc(state.tagDraft)}"${busy ? " disabled" : ""} />
@@ -602,12 +595,15 @@ function onTimelineClick(e: Event) {
     const topicId = topicBtn.dataset.topic!;
     const linked = item.topics.some((x) => x.id === topicId);
     const task = isTaskStage(item.stage);
-    if (!task && linked) return; // 灵感已挂:不可摘(按钮本就 disabled,兜底)
     void run(
       async (space) => {
         if (task) {
           if (linked) await removeTaskTopic(space, item.id, topicId);
           else await addTaskTopic(space, item.id, topicId);
+        } else if (linked) {
+          // 摘掉最后一个标签会把「已整理」退回「未归类」,两个 stage 都在随记面里
+          // (`IDEA_STAGES`),故卡片只是标签消失、不会跳走。
+          await removeNoteTopic(space, item.id, topicId);
         } else {
           await fileNoteToTopic(space, item.id, topicId, null);
         }

@@ -13,8 +13,11 @@
   const upd = document.getElementById("update");
   const cb = document.getElementById("confirmbar");
 
-  // ① 三条 bar 全部 fixed(z 序:error 18 > confirmbar 17 > update 6)
-  ok("#error fixed z18", cs(err).position === "fixed" && cs(err).zIndex === "18");
+  // ① 三条 bar 全部 fixed(z 序:error 23 > confirmbar 17 > update 6)
+  // ⚠ 654 更正:651 把 `.error` 由 18 抬到 **23** —— 18 压在 `.gate` 一族(20)之下,
+  // 那几页上的报错谁都看不见。这一行当时没跟着改,红了两轮没人看见(643 的 MuMu 全扫里
+  // 它还是绿的,651 之后才腐)。⛔ 抄这个数之前先看 `android/index.html` 那条声明。
+  ok("#error fixed z23", cs(err).position === "fixed" && cs(err).zIndex === "23");
   ok("#update fixed z6", cs(upd).position === "fixed" && cs(upd).zIndex === "6");
   ok("#confirmbar fixed z17", cs(cb).position === "fixed" && cs(cb).zIndex === "17");
 

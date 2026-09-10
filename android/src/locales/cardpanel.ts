@@ -32,8 +32,6 @@ export const cardpanel = defineMessages({
   "cardpanel.insertTodo": { zh: "＋ 清单", en: "＋ Checklist" },
   "cardpanel.save": { zh: "保存", en: "Save" },
   "cardpanel.cancel": { zh: "取消", en: "Cancel" },
-  "cardpanel.tagLocked": { zh: "已挂标签暂不支持摘除", en: "Removing an existing tag is not supported yet" },
-  "cardpanel.ideaTagAddOnly": { zh: "随记的标签暂只支持添加", en: "Note tags can only be added for now" },
   "cardpanel.noTags": { zh: "还没有标签", en: "No tags yet" },
   "cardpanel.newTagPh": { zh: "新标签名", en: "New tag name" },
   "cardpanel.createAndTag": { zh: "建并挂上", en: "Create and attach" },
