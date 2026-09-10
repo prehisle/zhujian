@@ -38,7 +38,7 @@ import {
   type TaskStatus,
   type TimelineItem,
 } from "./api";
-import { $, actionBar, confirmBar, contentHtml, esc, fmtWhen, hideConfirmBar, showBar, showError } from "./ui";
+import { $, actionBar, confirmBar, contentHtml, dayKey, dayLabel, esc, fmtTimeOfDay, fmtWhen, hideConfirmBar, showBar, showError } from "./ui";
 import { toggleChecklistLine } from "./checklist";
 import { applyChecklistMarker, wireChecklistNewline } from "./checklist-input";
 import { DONE_COLUMN, boardColumns, isTaskStage, setColumns, stageLabel } from "./columns";
@@ -327,7 +327,10 @@ function dueSummaryFullLabel(late: number, now: number, soon: number): string {
 
 // hideTopic:恰好单选一枚标签筛选时,卡上那枚同名 chip 是纯冗余(筛出来的卡本就都带它),
 // 直接不渲染(同桌面 218 灵感侧;安卓 chip 无拖拽去重等 DOM 依赖,面板真值走 lastItems)。
-function renderCard(it: TimelineItem, hideTopic: string | null): string {
+// underDayHead:这张卡挂在日期节头下面(随记时间轴)⇒ 时间戳只报时刻,别把节头那句再说一遍。
+// ⛔ 只有随记面传 true —— 回收站与搜索是平铺的,那儿的卡必须保留完整日期(同桌面 inbox.ts
+//    「想法 sits in a per-day timeline → time-of-day only; 回收站 is flat → full stamp」)。
+function renderCard(it: TimelineItem, hideTopic: string | null, underDayHead = false): string {
   const label = stageLabel(it.stage);
   const isTask = label !== undefined;
   const done = it.stage === DONE_COLUMN;
@@ -373,8 +376,28 @@ function renderCard(it: TimelineItem, hideTopic: string | null): string {
   const cmBadge = commentBadgeHtml(getCurrentSpace(), it.id);
   return `<article class="card${done ? " done" : ""}" data-id="${esc(it.id)}">${tick}<div class="body">
     <p class="content">${contentHtml(it.content, true)}</p>${thumbs}
-    <footer>${pill}<time>${esc(fmtWhen(it.created_at))}</time>${doneAt}${sig}${cmBadge}${meta.join("")}${chips}</footer>
+    <footer>${pill}<time>${esc(underDayHead ? fmtTimeOfDay(it.created_at) : fmtWhen(it.created_at))}</time>${doneAt}${sig}${cmBadge}${meta.join("")}${chips}</footer>
   </div></article>`;
+}
+
+// 随记时间轴:同一天的卡归到一个日期节头下(用户面 86)。
+// ⚠ **假定 items 已按 created_at 倒序**(后端保证,与平铺那版吃的是同一个序)⇒ 顺着扫、
+//   `dayKey` 一变就起新段:不重排、不建索引,卡与卡之间的先后逐条与从前相同。
+// ⛔ 别改成「先 group 再 sort」——那会引进一个本来不存在的排序真相源。
+function renderDayGroups(items: TimelineItem[], hideTopic: string | null): string {
+  const out: string[] = [];
+  let key: string | null = null;
+  for (const it of items) {
+    const k = dayKey(it.created_at);
+    if (k !== key) {
+      if (key !== null) out.push("</section>");
+      out.push(`<section class="tl-group"><h3 class="tl-sec">${esc(dayLabel(it.created_at))}</h3>`);
+      key = k;
+    }
+    out.push(renderCard(it, hideTopic, true));
+  }
+  if (key !== null) out.push("</section>");
+  return out.join("");
 }
 
 // 时间轴最新一次渲染的条目快照(卡片操作面板的真值来源;refreshOnce 每轮重建)。
@@ -647,8 +670,13 @@ function projectTimeline(): void {
   const shown = filter.applyFilter(modeItems, f, (i) => i.content, allFilterTopics);
   const hideTopic = filter.soleTopicFilter(f); // 单选一枚标签时,卡上同名 chip 不渲染(218 同法)
   if (viewMode === "ideas") {
+    // 按天分组(用户面 86):这一端是主力端,而随记正是天天往里扔东西的那一面 —— 平铺一条
+    // 列表时「这一周记了什么」只能一张张读卡角的时刻。⭐ 不是新设计:桌面 `src/inbox.ts` 早
+    // 就是 `.tl-group` + 日期节头,这里补的是它缺的那一半;节头沿用本面任务侧已有的 `.tl-sec`
+    // (零新 CSS —— 「一组内容的头」在这一端就长这样)。
+    // ⚠ 后端已按 created_at 倒序 ⇒ 顺着扫、`key` 一变就起新段即可,别再排一次。
     box.innerHTML = shown.length
-      ? shown.map((i) => renderCard(i, hideTopic)).join("")
+      ? renderDayGroups(shown, hideTopic)
       : modeItems.length === 0
         ? `<p class="muted empty">${t("main.emptyIdeas")}<br />${t("main.emptyIdeasHint")}</p>`
         : filteredEmptyHtml(f);

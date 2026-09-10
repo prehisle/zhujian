@@ -51,11 +51,44 @@ export function contentHtml(content: string, clickable: boolean): string {
 //    印文取 `stageLabel(stage)`、任务态判定取 `isTaskStage(stage)`,语义与从前一字不差
 //    (灵感态仍答 undefined —— 灵感是纸面的默认态,不盖印)。
 
+/** 只报时刻。随记时间轴用:日期已经是节头,卡上再写一遍是同一句话说两遍。 */
+export function fmtTimeOfDay(iso: string): string {
+  const d = new Date(iso);
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+
+// ---- 按天分组(随记时间轴)------------------------------------------------
+// 桌面那半早就有(`src/tasktime.ts` 的 dayKey / dayLabel,`src/inbox.ts` 的 .tl-group),
+// 这一端一直是平铺一条列表。⛔ 两份不是同一个模块,是**逐字孪生**:改一端的语义就两端一起改。
+/** 本地日的零点(毫秒),同天判定与「今天 / 昨天」的算子。 */
+function startOfDay(d: Date): number {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+}
+/** 同一天分到同一组的键。⛔ 别拿 ISO 串前 10 位顶 —— 那是 UTC 日,东八区凌晨八点前记的会归错天。 */
+export function dayKey(iso: string): string {
+  const d = new Date(iso);
+  return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+}
+/** 今天 / 昨天 / 前天,else M月D日(跨年带年)。值与桌面 tasktime.* 逐字同形。 */
+export function dayLabel(iso: string): string {
+  const d = new Date(iso);
+  const now = new Date();
+  const diff = Math.round((startOfDay(now) - startOfDay(d)) / 86_400_000);
+  if (diff === 0) return t("ui.dayToday");
+  if (diff === 1) return t("ui.dayYesterday");
+  if (diff === 2) return t("ui.dayBeforeYesterday");
+  const m = d.getMonth() + 1;
+  const day = d.getDate();
+  return d.getFullYear() === now.getFullYear()
+    ? t("ui.dayMonthDay", { m, d: day })
+    : t("ui.dayYearMonthDay", { y: d.getFullYear(), m, d: day });
+}
+
 /** 时间戳:今天只报时刻,今年带月日,跨年带年。 */
 export function fmtWhen(iso: string): string {
   const d = new Date(iso);
   const now = new Date();
-  const hm = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  const hm = fmtTimeOfDay(iso);
   if (d.toDateString() === now.toDateString()) return hm;
   const md = { m: d.getMonth() + 1, d: d.getDate(), hm };
   return d.getFullYear() === now.getFullYear()

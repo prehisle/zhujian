@@ -21,4 +21,13 @@ export const misc = defineMessages({
   "ui.stageDone": { zh: "已完成", en: "Done" },
   "ui.whenThisYear": { zh: "{m}月{d}日 {hm}", en: "{m}/{d} {hm}" },
   "ui.whenOtherYear": { zh: "{y}年{m}月{d}日 {hm}", en: "{m}/{d}/{y} {hm}" },
+  // 随记时间轴的日期节头(dayLabel)。值与桌面 tasktime.today / yesterday /
+  // dayBeforeYesterday / monthDay / yearMonthDay **逐字同形**,键名按本端 ui.* 前缀
+  // (两份字典键空间独立)。⛔ 别拿 main.dueToday / main.dueYesterday 顶——那两枚是
+  // 截止角标的字,同形不同物,哪天截止改说「今日到期」这儿会跟着坏(一物一名)。
+  "ui.dayToday": { zh: "今天", en: "Today" },
+  "ui.dayYesterday": { zh: "昨天", en: "Yesterday" },
+  "ui.dayBeforeYesterday": { zh: "前天", en: "2 days ago" },
+  "ui.dayMonthDay": { zh: "{m}月{d}日", en: "{m}/{d}" },
+  "ui.dayYearMonthDay": { zh: "{y}年{m}月{d}日", en: "{m}/{d}/{y}" },
 });
