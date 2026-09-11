@@ -111,10 +111,10 @@ export function renderSync(s: SyncStatus) {
   // 「把别处的账户带过来」的入口是空间面板的「加入空间」,不在这里。
   const isMain = getCurrentSpace() === "main";
   // ⚠ 两个条件**都要**:非 main 空间没有这条路(space-entry-plan §4),
-  // 而没有扫码器的端(鸿蒙)连 main 上也没有 —— 那时只剩「输码」那半。
+  // 而没有扫码器的端(658 之前的鸿蒙;今天两端都有)连 main 上也没有 —— 那时只剩「输码」那半。
   (($("sync-scan-btn").parentElement) as HTMLElement).hidden = !isMain || !HAS_SCANNER;
   $("sync-alt-pair").hidden = !isMain;
-  // 471(用户面 33 第③格):`ghost` 是「这是辅路」的视觉记号。没有扫码器的端(鸿蒙)
+  // 471(用户面 33 第③格):`ghost` 是「这是辅路」的视觉记号。没有扫码器的端(658 前的鸿蒙)
   // 主路整行已经摘掉,输码**就是**这一屏唯一的配对入口 —— 还长着辅路的样子就是排版在
   // 说另一件事(主按钮位置空着、剩两条像文字链)。⇒ 那时它按主按钮画。
   // ⛔ 刻意**不**顺手把输码表单也自动摊开(那是空间面「加入空间」的形,那一屏的
@@ -465,7 +465,7 @@ export function initSync(d: Deps): void {
       await doJoinSpace(p.server, p.code);
     }).catch((e) => showError(errMsg(e))),
   );
-  // OH-d/D3:没有扫码器的端(鸿蒙)—— 那一行两枚按钮(「扫码加入」+ 切换用的「输码加入」)
+  // OH-d/D3:没有扫码器的端(658 前的鸿蒙;今天没有这样的端,路留着)—— 那一行两枚按钮(「扫码加入」+ 切换用的「输码加入」)
   // 整个不渲染,输码表单**直接摊开**。⛔ 别只禁用扫码钮:那样这一端会剩一个点不动的
   // 主按钮和一个用来展开表单的次按钮,而表单本来就该是唯一那条路。
   if (!HAS_SCANNER) {

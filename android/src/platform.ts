@@ -8,7 +8,7 @@
 //   · `theme.ts` —— `window.__zhujianSystemBars?.setDark(…)`,桥不在就静默跳过。⭐ **它是这一栏里
 //     唯一一个真站得住的**:明暗档本身由 CSS 生效(`<html data-theme>`)⇒ 用户选的那档**真的翻了**,
 //     选中态没说谎;缺的只是「系统状态栏图标跟着翻」那一格(⚠ 鸿蒙上这格 657 起**跟的是系统明暗档**
-//     不是朱简这三档 —— `EntryAbility.ets` 按 `colorMode` 拧,页面→ArkTS 那条路不存在;默认档「自动」
+//     不是朱简这三档 —— `EntryAbility.ets` 按 `colorMode` 拧,657 时页面→ArkTS 那条路不存在、658 起有了但这格还没接;默认档「自动」
 //     逐格对,手动档与系统相反时仍不对,账在 backlog 用户面 94。⛔ 别读成"已修");
 //   · `saf.ts` —— `hasBridge()` 返 false,备份那一节显式降级(⭐ 说哪一句由 `HAS_SAF_BRIDGE` 定,见下);
 //   · `images.ts` —— 走的是 WebView 自己的 `<input type=file>`,压根没有桥。
