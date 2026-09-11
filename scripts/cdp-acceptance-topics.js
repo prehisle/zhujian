@@ -48,7 +48,8 @@
     const bot = edge(x, cy, +1, 60, el);
     return { top, bot, h: bot - top, w: r.width, boxH: r.height };
   };
-  // 这一列上「谁占着位」:普通行是 .tk-add / .tk-badge,进了类型编辑态的那行是两枚钮。
+  // 这一列上「谁占着位」:常态行只有带类型的才露 .tk-badge(85 ⑤ 起没类型的行这一列是空的),
+  // 改名态里是 .tk-add,进了类型编辑态的那行是两枚钮。
   const PILL = ".tk-add, .tk-badge, .tk-edit button";
   // 一枚药丸的完整判据:①触区高 ≥44 ②与上下相邻行**同一列**那一枚的触区不互叠(§2.3 那条
   // 「上下两行热区互叠 ⇒ 边界含糊」)。
@@ -74,14 +75,21 @@
     )
       return;
     const gaps = [];
+    let candidates = 0;
     for (const sib of [row.previousElementSibling, row.nextElementSibling]) {
       const other = sib?.classList?.contains("trow") ? sib.querySelector(PILL) : null;
-      if (!other) continue;
+      if (!other) continue; // 这一行这一列上没有钮(85 ⑤ 起没类型的行不摆「+ 类型」)= 无叠可言
+      candidates += 1;
       const os = haloSpan(other);
-      if (!os) continue; // 滚出视口 / 被盖住:这一侧没量到,如实不计,别当过
+      if (!os || os.detached) continue; // 滚出视口 / 被盖住:这一侧没量到,如实不计,别当过
       gaps.push(os.top > s.top ? os.top - s.bot : s.top - os.bot);
     }
-    // ⛔ 一侧都没量到 = 这一格是空的,别让它长得跟真绿一样
+    // ⛔ 相邻行有钮却一侧都没量到 = 这一格是空的,别让它长得跟真绿一样;
+    //    相邻行本来就没有钮(常态行只有带类型的才露徽记)则没有对象,如实写「无叠可言」。
+    if (candidates === 0) {
+      ok(`${label} 相邻行同列没有钮,无叠可言`, true, "两侧常态行都没有类型徽记");
+      return;
+    }
     ok(`${label} 与相邻行同列那枚不互叠(边界不含糊)`, gaps.length > 0 && gaps.every((g) => g >= 0),
       gaps.length ? gaps.map((g) => g.toFixed(1)).join(",") : "两侧都没量到(空测)");
   };
@@ -152,10 +160,19 @@
   // ② 类型设置:第一行 → 点类型入口展开 input → 填「人名」→ 存 → 徽标出现且文字对
   const row0 = rows()[0];
   const id0 = row0.dataset.topic;
-  // ②a 触区:进编辑态之前先量入口那一枚(第一行本来有没有类型都行,量在的那个形)
-  const entry = row0.querySelector(".tk-add") || row0.querySelector(".tk-badge");
-  if (entry) await pillOk(entry, entry.classList.contains("tk-add") ? "「+ 类型」" : "类型徽记");
-  click(row0.querySelector("[data-kind-edit]"));
+  const rowOf = () => document.querySelector(`.trow[data-topic="${id0}"]`);
+  // ②a 触区:进编辑态之前先量入口那一枚。⭐ 入口今天有两个形(用户面 85 ⑤):有类型的行常态
+  //   露徽记;没有类型的行常态**不摆**「+ 类型」,入口住在改名态里 —— 先点名字进改名态再量。
+  //   ⚠ 进改名态会整列重画,`row0` 那个节点从此游离,下面一律用 `rowOf()` 现取。
+  ok("常态行不常驻「+ 类型」(85 ⑤)", !row0.querySelector(".tk-add"));
+  let entry = row0.querySelector(".tk-badge");
+  if (!entry) {
+    click(row0.querySelector(".tname"));
+    entry = await until(() => rowOf()?.querySelector(".tn-edit .tk-add"));
+    if (!ok("无类型的行:改名态里有「+ 类型」入口", !!entry)) return JSON.stringify(out);
+  }
+  await pillOk(entry, entry.classList.contains("tk-add") ? "「+ 类型」" : "类型徽记");
+  click(rowOf().querySelector("[data-kind-edit]"));
   const input = await until(() => document.querySelector(`.trow[data-topic="${id0}"] .tk-input`));
   if (!ok("点类型展开输入框", !!input)) return JSON.stringify(out);
   // ②b 触区:编辑态那两枚(存 / 清)。⚠ 单字钮 ⇒ 横向本就不到 44,那是**知情的取舍**
@@ -184,16 +201,16 @@
   // ②c 触区:徽记态(与「+ 类型」同一条 CSS,但宽度随用户起的类型名变 ⇒ 单量一次)
   if (badge) await pillOk(badge, "类型徽记");
 
-  // ③ 类型清除:点徽标展开 → 清 → 回到「+ 类型」
+  // ③ 类型清除:点徽标展开 → 清 → 徽标消失、回到常态行(常态行不摆「+ 类型」,入口在改名态)
   click(document.querySelector(`.trow[data-topic="${id0}"] [data-kind-edit]`));
   await until(() => document.querySelector(`.trow[data-topic="${id0}"] .tk-input`));
   click(document.querySelector(`.trow[data-topic="${id0}"] [data-kind-clear]`));
   const cleared = await until(() => {
-    const add = document.querySelector(`.trow[data-topic="${id0}"] .tk-add`);
-    const badgeGone = !document.querySelector(`.trow[data-topic="${id0}"] .tk-badge`);
-    return add && badgeGone ? add : null;
+    const r = rowOf();
+    return r && !r.querySelector(".tk-badge") && !r.querySelector(".tk-input") ? r : null;
   });
-  ok("清类型后回「+ 类型」(后端清库)", !!cleared);
+  ok("清类型后徽标消失、回常态行(后端清库)", !!cleared && !cleared.querySelector(".tk-add"),
+    cleared ? "常态行上无徽记、无「+ 类型」" : "徽记没消失或没回常态行");
 
   out.pass = out.steps.every((s) => s.ok);
   return JSON.stringify(out);

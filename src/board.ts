@@ -2044,7 +2044,8 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
 
       // 新建任务 only makes sense on the board, not in the 回收站/归档.
       addTaskBtn.hidden = boardView !== "board";
-      // 「管理列」同理:回收站 / 归档册里根本没有列(B-f 第 2 段)。
+      // 「管理列」同理:回收站 / 归档册里根本没有列(B-f 第 2 段)。⚠ 看板态下这两枚还要
+      // 过一道「有没有卡」(下面算完 visible 再定),这里先按视图收。
       manageColsBtn.hidden = boardView !== "board";
       // 排序轴同理只属看板(回收站按 archived_at、归档册按完成日,各有各的轴,500 不碰)。
       sortBtn.hidden = boardView !== "board";
@@ -2076,6 +2077,11 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       // 真出现「卡的 stage 不在任何画出来的列里」= 那一列凭空消失了,那时宁可少画一张卡也
       // 不让列头计数与看板打架 —— 但那是**损坏**,不是常态。
       const visible = active.filter((t) => cols.some((c) => c.id === t.status));
+      // 空看板不摆「管理列」「顺序」(用户面 85 ②,渐进式披露):visible 为空时下面画的是
+      // 居中空态、一根列都没有(renderEmpty),这两枚钮没有对象;有卡时逐位不变。⚠ 「新建任务」
+      // 不在此列 —— 空态那句提示指的就是它。⛔ 按数据藏,不按视图藏,不造开关(408-411)。
+      manageColsBtn.hidden = visible.length === 0;
+      sortBtn.hidden = visible.length === 0;
 
       // 跨视图跳转(搜索命中任务 → 看板):focus 已在上方 seq 守卫之后取走(`focus`)。
       // 目标仍在看板(boardView==='board' 且在 visible)才动作——**在过滤之前**清掉标签/

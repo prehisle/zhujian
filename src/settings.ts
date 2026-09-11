@@ -226,7 +226,10 @@ function buildAliasRow(): HTMLDivElement {
   const save = el("button", "hkset-change", t("common.save")) as HTMLButtonElement;
   save.disabled = true;
   const msg = el("p", "hkset-msg", "");
-  const sub = el("div", "hkset-desc", t("common.loading"));
+  // 取回身份面之前留空(用户面 85 ③):那一跳几十毫秒,「读取中…」只是一闪的噪音;留空不是
+  // 编造 —— 下一句那条纪律说的是「不编造占位**值**」,空串不是值。⚠ 只动这一处,
+  // `devices.refreshing` 是另一处同名文案,那儿是用户点了「刷新」之后的真等待。
+  const sub = el("div", "hkset-desc", "");
 
   // 本机 device_id 只有取回身份面之后才知道;取回前整行禁用,**不编造占位值**。
   let thisDevice: string | null = null;

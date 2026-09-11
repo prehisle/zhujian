@@ -13,7 +13,7 @@
 // 真触摸滑动要走 `Input.dispatchTouchEvent`(协议层)⇒ 按 skill 的分界它本来就该是驱动形:
 // 三相(播种 → 滑 → 断言)全在**同一条 CDP 会话**里连着跑,撤销窗口 6s 再也磨蹭不掉。
 //
-// 断言与语言无关:前后态以卡上 .pill 文本自证(swipe 前记下、swipe 后必变、撤销后必回),
+// 断言与语言无关:前后态以卡头顶那段节头的文本自证(swipe 前记下、swipe 后必变、撤销后必回;85 ④ 起卡上没有 .pill 了),
 // 「没有取消钮」以结构自证(恰一枚 .bar-act + #confirmbar 全程 hidden)——别绑死中文词,
 // 模拟器常是 en 界面。
 // ⭐ 清场**恒跑**(driver 的 finally),且自己做一次六面库普查对账 —— 判据不是「资产说它清干净了」
@@ -40,9 +40,13 @@ const HELPERS = `
   const err = document.getElementById("error");
   const cb = document.getElementById("confirmbar");
   const cardOf = (id) => document.querySelector('#timeline [data-id="' + id + '"]');
+  // 卡的状态读它头顶那段的节头(任务面恒按状态分段,.tl-sec 就是 stageLabel 那行字)。
+  // ⛔ 85 ④ 起卡上不再盖 .pill —— 节头是屏上唯一写着状态名的地方,回执文案点名的也是它。
+  // ⚠ 这段住在模板字符串里,注释里别写反引号。
   const pillOf = (id) => {
-    const p = cardOf(id) && cardOf(id).querySelector(".pill");
-    return p ? p.textContent : null;
+    const c = cardOf(id);
+    const h = c && c.closest(".tl-group") && c.closest(".tl-group").querySelector(".tl-sec");
+    return h ? h.textContent : null;
   };
   const trashRow = (id) => document.querySelector('[data-trash="' + id + '"]');
   const trashOpen = () => !document.getElementById("trash-pane").hidden;
@@ -106,7 +110,7 @@ const JS_SEED = `(async () => {
   if (!ok("探针任务入时间轴", !!card)) return out;
   out.id = card.dataset.id;
   out.fromLabel = pillOf(out.id);
-  if (!ok("出生带 stage 印(待办)", !!out.fromLabel)) return out;
+  if (!ok("出生落在带状态节头的段里(待办)", !!out.fromLabel)) return out;
   card.scrollIntoView({ block: "center" });
   await new Promise((r) => setTimeout(r, 200));
   const r = cardOf(out.id).getBoundingClientRect();

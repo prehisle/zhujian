@@ -412,13 +412,17 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
   // 单键 `R` 是「还原」(`actionsFor` 的 archived 分支),视图键与卡片键挂的是同一个
   // document 监听 = 一个键干两件事(board.ts::trashActionsFor 那条注释里判过的同一件事,
   // 那边是被迫把「还原」改成 `U`)。改随记的 `R` 义 = 改用户已有的快捷键,不做。
+  // 统计行今天有没有数可报(用户面 85 ①,渐进式披露):本周一条没捕获、也没有出生态已知的
+  // 灵感可算比例 ⇒ 那一行只会写「本周捕获 0」,空库上摆着它等于在说一句废话。⛔ 按数据藏,
+  // 不按视图藏:有数那一刻它自己出现,不需要任何开关(408-411 拍的「不造首启旗」)。
+  let statsBlank = true;
   function updateTabs(): void {
     trashN.textContent = String(counts.archived);
     trashToggle.classList.toggle("active", active === "archived");
     trashLbl.textContent = active === "archived" ? t("inbox.backToIdeas") : t("inbox.tabTrash");
     // 「本周捕获 N · 转待办 X%」说的是想法那半:回收站态收起(同看板进回收站时收起
-    // 新建 / 管理列 / 排序 / 到期汇总)。
-    statsEl.hidden = active !== "ideas";
+    // 新建 / 管理列 / 排序 / 到期汇总);没数可报时也收起(statsBlank)。
+    statsEl.hidden = active !== "ideas" || statsBlank;
   }
 
   function renderEmpty(mode: Tab): void {
@@ -1288,10 +1292,11 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       if (closeActiveEdit) closeActiveEdit();
       counts.ideas = ideas.length;
       counts.archived = archived.length;
+      statsBlank = stats.captured_week === 0 && stats.born_inbox === 0;
       updateTabs();
       // 头部一行淡字统计(和标签计数同性质的纯信息)。比例=累计:生而为灵感的条目里
       // 有多少转过待办(含后来归档/进回收站的——经历是史实);分母 0(全是 0018 前的
-      // 老数据)时只显捕获数,不显「—」的哑谜。
+      // 老数据)时只显捕获数,不显「—」的哑谜;两个数都是 0 时整行不显(statsBlank)。
       statsEl.textContent =
         stats.born_inbox > 0
           ? t("inbox.weekStats", {

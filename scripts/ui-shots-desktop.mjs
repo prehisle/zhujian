@@ -8,6 +8,7 @@
 // 怎么跑(Windows;⛔ 别在 Linux 上跑 —— 见下面的响亮拒):
 //   node scripts/ui-shots-desktop.mjs .zjshots/619/desktop
 //   node scripts/ui-shots-desktop.mjs .zjshots/619/desktop --only zh-dark-board   # 调试单张
+//   node scripts/ui-shots-desktop.mjs .zjshots/661/desktop-empty --empty         # 空库 / 空看板那一态(不播种)
 //
 // 它自己起一只**隔离的** app,与用户日常跑的那只并存,三条隔离各有出处:
 //   ①`YS_DB_PATH` 换掉 SQLite ⇒ 碰不到真实笔记本(e2e 同一手法;memory
@@ -66,6 +67,9 @@ const flag = (name, dflt) => {
   return v;
 };
 const only = flag("--only", null);
+// --empty:不播种,截的是**空库**那一态(用户面 85:「按数据显形」的那几处只有在空库上才看得见
+// 它们真没了)。⚠ 它与常态那批不同目录、不可比,判读是「空库上那几处不在、有数据那批逐位不变」。
+const empty = argv.includes("--empty");
 // 默认 9224 而不是 desktop-cdp.mjs 那个 9223:两支同时跑时不抢口。
 const PORT = Number(flag("--port", "9224"));
 if (!Number.isInteger(PORT) || PORT <= 0 || PORT > 65535) throw new Error(`--port 不是合法端口:${PORT}`);
@@ -320,7 +324,7 @@ async function shootNotebook(cdp, page, lang, theme, file) {
     return true;
   })()`);
   await cdp.waitFor(`window.innerWidth >= ${NB_W - 60}`, `视口宽跟上 ${NB_W}`, 8000);
-  if (page.query) {
+  if (page.query && !empty) {
     await cdp.evaluate(`(() => {
       const q = document.querySelector("#q");
       q.value = ${JSON.stringify(page.query)};
@@ -457,8 +461,12 @@ try {
     "notebook 页加载完且 Tauri 桥注入、启动序已挂上视图",
     30000,
   );
-  const seeded = await nb.evaluate(SEED);
-  console.log(`种子库:随记 ${seeded.ideas} 条 · 任务 ${seeded.tasks} 条 · 标签 ${seeded.topics} 个`);
+  if (empty) {
+    console.log("空库(--empty):不播种,搜索页也不输入查询词");
+  } else {
+    const seeded = await nb.evaluate(SEED);
+    console.log(`种子库:随记 ${seeded.ideas} 条 · 任务 ${seeded.tasks} 条 · 标签 ${seeded.topics} 个`);
+  }
 
   const cap = new Cdp(isCapture);
   for (const lang of LANGS) {
@@ -496,6 +504,7 @@ if (only) {
       gitHead: head,
       exe: { path: EXE, mtime: new Date(exeInfo.exeMs).toISOString(), sha1: exeInfo.sha1 },
       window: { width: NB_W, height: NB_H },
+      seed: empty ? "empty(--empty:没播种)" : "demo",
       note: "截止日期按截图当天现算 ⇒ 日期文字每天不同,别拿它做 pixel diff;演示数据恒中文,en 那半只换 UI 外壳",
       shots,
     },

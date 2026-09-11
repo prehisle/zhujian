@@ -650,11 +650,20 @@
       }
       /* position:relative = swipe-track(182 卡下亮出目标印)的定位基;不改流内布局。 */
       .timeline .tl-group { display: flex; flex-direction: column; gap: 8px; position: relative; }
+      /* 节头**吸顶**(用户面 85 ④ / ui-consistency M10 的前置,639 补钉的):任务卡上的状态印摘掉之后,
+         节头是屏上唯一写着状态名的地方 —— 不吸顶的话滚过一屏它就出屏了,那时卡上再没有状态出处。
+         贴在筛选条下沿:`top` = 顶栏高 + 筛选条高,两个都是 JS 量出来喂的变量(筛选条收起 / 摊开 /
+         hidden 三态高度不同,CSS 写不死)。z 低于筛选条(4)、高于卡(swiping 时 1)。
+         纸底 + 上 8px 内边距顶替原来的 8px 外边距:吸住时卡从它底下滚过,得有底盖住;下沿再借 4px
+         进 gap 里(padding 4 + margin -4,流内位置一点不变),免得吸住时卡的上边贴着字。
+         随记面的日期节头(656)同一条规则 ⇒ 「今天」也跟着吸顶,那是顺带的、不是另一笔。 */
       .timeline .tl-sec {
-        margin: 8px 2px 0; font-size: var(--fs-12); font-weight: 600;
+        position: sticky; top: calc(var(--head-h, 0px) + var(--fbar-h, 0px)); z-index: 3;
+        margin: 0 0 -4px; padding: 8px 2px 4px; background: var(--paper); /* 横向 2px 从 margin 换成 padding:纸底铺满整行,字的位置不变 */
+        font-size: var(--fs-12); font-weight: 600;
         color: var(--ink-soft); font-family: var(--font-sans); letter-spacing: 0.04em;
       }
-      .timeline .tl-group:first-child .tl-sec { margin-top: 0; }
+      .timeline .tl-group:first-child .tl-sec { padding-top: 0; }
       /* 时间轴 / 标签面的空态提示块(`<p class="muted empty">`;main.ts 两处 + topics.ts 一处)。
          ⛔ **选择器必须钉住 `p`,别退回裸 `.empty`** —— 604 真机逮到:筛选条给**计数为 0 的
          标签 pill** 也挂 `.empty`(499 的「族里的空位」,`<button class="fpill empty child">`),
@@ -750,11 +759,12 @@
       }
       .sig-chip { color: var(--ink-soft); }
       .sig-chip::before, .cm-author::before { content: "·"; margin-right: 4px; opacity: 0.6; }
+      /* 只剩回收站 / 搜索结果两处在用(panes.ts):时间轴上的任务卡不再盖状态印
+         (用户面 85 ④,节头已经说过了)⇒ 从前那条 `.card.done .pill` 降噪规则没有对象,一并删。 */
       .pill {
         padding: 1px 8px; border-radius: var(--radius-pill);
         background: var(--seal-tint); color: var(--seal); font-weight: 600;
       }
-      .card.done .pill { background: none; border: 1px solid var(--line-strong); color: var(--ink-faint); font-weight: 400; }
       /* ⚠ 这一对(边框与字色)吃的是每个元素自己的 `--tc`,老引擎(≤110)上 `color-mix` 算不出
          ⇒ 退成 unset:边框走 currentColor、字色继承。刻意不给兜底,理由同 `.panel button.p` 那条。 */
       .chip {
@@ -778,8 +788,8 @@
       .chip.tinted::before { content: "●"; color: var(--tc); margin-right: 3px; }
 
       /* 截止角标(追平桌面 tasktime.css 的 .chip.due.* 同名同值,两端不共享代码):
-         今天/逾期用朱砂强调,未来是平静的墨色。done 卡的降噪同 .card.done .pill 的
-         既有做法——`.card.done .chip.due` 四个类选择器,比 `.chip.due.overdue` 三个
+         今天/逾期用朱砂强调,未来是平静的墨色。done 卡降噪成描边淡字——
+         `.card.done .chip.due` 四个类选择器,比 `.chip.due.overdue` 三个
          类选择器特异性更高(0,0,4,0 > 0,0,3,0),不靠源顺序也赢;放在下面仅为顺读。 */
       .chip.due::before { content: "📅 "; }
       .chip.due.future { color: var(--ink-soft); border-color: var(--line-strong); }
@@ -984,7 +994,7 @@
         touch-action: none; user-select: none; -webkit-user-select: none;
       }
       /* 514:名字本身就是改名入口(点一下进编辑态)。这一行上「可点」的惯例是长得像钮
-         (.tk-add/.tk-badge),而名字是整行的主体、做成钮会喧宾夺主 ⇒ 保持文本外观,
+         (.tk-badge / .tcount),而名字是整行的主体、做成钮会喧宾夺主 ⇒ 保持文本外观,
          只用一条很淡的虚线下划线暗示它可改。⛔ 别加边框/背景。 */
       /* 触区:按这一端的惯例只垂直扩(水平扩会跟计数/类型钮抢点)。
          ⛔ **这里不能用 `::before` halo** —— `.tname` 自己有 `overflow:hidden`(省略号要它),
@@ -1082,14 +1092,19 @@
         border: 1px solid var(--seal-line); border-radius: var(--radius-sm);
         background: var(--paper); color: var(--ink);
       }
-      /* 改名态(514):整行只剩它,输入框拿满剩余宽度 —— 标签名可以很长,而 .tk-input 那个
+      /* 改名态(514):整行只剩它,输入框拿满整行 —— 标签名可以很长,而 .tk-input 那个
          8.5em 是给「类型」这种短词的。两种编辑态的按钮共形,规则并成一条别抄两份。 */
       /* gap 12 与 `.tk-edit` 同(判据写在那儿)。⚠ 这一行的三枚**在 gap 6 时本来就达标**
          (「取消」「删除」是两字钮,中心距 49.6 / 55.3)—— 跟着改是为了两个编辑态一个节奏,
-         不是这里有病;这一行有余量(输入框 151.6 → 133.6),溢出仍是 0。 */
-      .tn-edit { flex: 1; min-width: 0; display: inline-flex; align-items: center; gap: 12px; }
+         不是这里有病。
+         ⭐ 两行版式(用户面 85 ⑤):「+ 类型」的入口挪进这一态之后是**四枚钮**,一行摆不下 ——
+         632 补量过三枚时输入框只剩 133.6(可用 332),再加一枚 ≈58 + gap 12 就把输入框压到
+         60 上下(四个汉字都装不下),而改名恰恰是要看全名的地方。⇒ 输入框独占第一行
+         (`flex-basis:100%`),四枚钮落第二行;行距同 gap 12,比钮的 halo 上探(≤ 9px)大,
+         第二行的 halo 够不到输入框。⛔ 别改回单行 + 缩输入框。 */
+      .tn-edit { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
       .tn-input {
-        flex: 1; min-width: 0; font: inherit; font-size: var(--fs-14); padding: 4px 8px;
+        flex: 1 1 100%; min-width: 0; font: inherit; font-size: var(--fs-14); padding: 4px 8px;
         min-height: 44px; /* §2.3:输入框是 void 元素,给不了 ::before halo,只能自己长够 */
         border: 1px solid var(--seal-line); border-radius: var(--radius-sm);
         background: var(--paper); color: var(--ink);

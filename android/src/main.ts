@@ -331,14 +331,16 @@ function dueSummaryFullLabel(late: number, now: number, soon: number): string {
 // ⛔ 只有随记面传 true —— 回收站与搜索是平铺的,那儿的卡必须保留完整日期(同桌面 inbox.ts
 //    「想法 sits in a per-day timeline → time-of-day only; 回收站 is flat → full stamp」)。
 function renderCard(it: TimelineItem, hideTopic: string | null, underDayHead = false): string {
-  const label = stageLabel(it.stage);
-  const isTask = label !== undefined;
+  const isTask = stageLabel(it.stage) !== undefined;
   const done = it.stage === DONE_COLUMN;
   const tick = isTask
     ? `<label class="tick"><input type="checkbox" data-id="${esc(it.id)}"
          ${done ? "checked disabled" : ""} /><span class="box"></span></label>`
     : "";
-  const pill = isTask ? `<span class="pill">${label}</span>` : "";
+  // ⛔ 卡上不再盖状态印(用户面 85 ④ / ui-consistency M10):任务面**恒按状态分段**
+  // (projectTimeline 里每段头上就是 `stageLabel` 那一行),每张卡再印一遍等于把节头说第二遍;
+  // 随记面上没有任务卡。状态改挂在 `data-stage` 上给工装认(swipe-undo 那支资产读它),
+  // ⚠ 回收站 / 搜索结果那两枚 `.pill`(panes.ts)头上没有节头,不是冗余,别一起摘。
   const chips = it.topics
     .filter((t) => t.id !== hideTopic)
     .map(
@@ -374,9 +376,9 @@ function renderCard(it: TimelineItem, hideTopic: string | null, underDayHead = f
   // 留言徽章(0035):`💬 N`,N=0 不渲染(布局未定不显示)——第一条留言的入口在卡片
   // 操作面板的「留言」上。计数走 comments.ts 按空间键住的聚合快照,与列表两个真相源。
   const cmBadge = commentBadgeHtml(getCurrentSpace(), it.id);
-  return `<article class="card${done ? " done" : ""}" data-id="${esc(it.id)}">${tick}<div class="body">
+  return `<article class="card${done ? " done" : ""}" data-id="${esc(it.id)}" data-stage="${esc(it.stage)}">${tick}<div class="body">
     <p class="content">${contentHtml(it.content, true)}</p>${thumbs}
-    <footer>${pill}<time>${esc(underDayHead ? fmtTimeOfDay(it.created_at) : fmtWhen(it.created_at))}</time>${doneAt}${sig}${cmBadge}${meta.join("")}${chips}</footer>
+    <footer><time>${esc(underDayHead ? fmtTimeOfDay(it.created_at) : fmtWhen(it.created_at))}</time>${doneAt}${sig}${cmBadge}${meta.join("")}${chips}</footer>
   </div></article>`;
 }
 
@@ -746,6 +748,16 @@ function renderFilterBar(modeItems: TimelineItem[]): void {
     document.documentElement.style.setProperty("--head-h", `${head.offsetHeight}px`);
   new ResizeObserver(syncHeadHeight).observe(head);
   syncHeadHeight();
+}
+// 时间轴节头吸顶要的筛选条高度(用户面 85 ④ / ui-consistency M10 的前置):节头贴在筛选条下沿,
+// 而筛选条收起 / 摊开 / 整条 hidden 时高度都不同 ⇒ 同上量出来喂给 `--fbar-h`。hidden 时
+// offsetHeight = 0,节头自然贴到顶栏下沿。不自激:这个变量只被 `.tl-sec` 的 `top` 吃。
+{
+  const bar = $("filterbar");
+  const syncBarHeight = (): void =>
+    document.documentElement.style.setProperty("--fbar-h", `${bar.offsetHeight}px`);
+  new ResizeObserver(syncBarHeight).observe(bar);
+  syncBarHeight();
 }
 
 // ---- 标签行摊开 / 收起(用户面 36)---------------------------------------------

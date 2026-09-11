@@ -118,8 +118,13 @@
     ok("input 自身 ≥44(void 元素给不了 halo,只能自己长够)", input().getBoundingClientRect().height >= 44,
       `${input().getBoundingClientRect().height.toFixed(1)}px`);
     const btns = [...list().querySelectorAll(".tn-edit button")];
-    // 549 起改名行是三枚:存 / 取消 / 删除(user-44 第三刀把删除入口放进了这行)。
-    ok("存 / 取消 / 删除三枚在", btns.length === 3, btns.map((x) => x.textContent.trim()).join("|"));
+    // 549 起改名行是三枚:存 / 取消 / 删除(user-44 第三刀把删除入口放进了这行);
+    // 85 ⑤ 起没有类型的行在这儿多一枚「+ 类型」(入口从常态行挪进来的),播的种没有类型 ⇒ 恰四枚。
+    ok("存 / 取消 / 删除 / + 类型 四枚在", btns.length === 4, btns.map((x) => x.textContent.trim()).join("|"));
+    ok("「+ 类型」是最后一枚且指向类型编辑态", btns[3]?.classList.contains("tk-add") && !!btns[3]?.dataset.kindEdit);
+    // 两行版式:输入框独占第一行,四枚钮在第二行 —— 钮的 halo(上探 ≤ 9px)够不到输入框(行距 12)。
+    const inTop = input().getBoundingClientRect().bottom, btnTop = Math.min(...btns.map((b) => b.getBoundingClientRect().top));
+    ok("四枚钮在输入框下一行,且行距 ≥ 10(halo 不压输入框)", btnTop - inTop >= 10, `${(btnTop - inTop).toFixed(1)}px`);
     // ⛔ **这一格此前是空测**(用户面 77 的阴性刀当场坐实):判据写的是
     // `above === btns[0] || above.contains(btns[0])` —— `contains()` 对**祖先**也返 true,
     // 于是「上缘 8px 外」那一点落在 `.tn-edit` / `.trow` 上照样算过 ⇒ **把 halo 整条

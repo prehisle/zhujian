@@ -196,6 +196,13 @@ const RUNTIME_VARS = [
       " top 必须等于量出来的顶栏高,JS 那半没跑当场红",
   },
   {
+    name: "--fbar-h",
+    where:
+      "android/src/main.ts 量出 sticky 筛选条实高(收起 / 摊开 / hidden 三态不同)后写根元素," +
+      "供时间轴节头 `.tl-sec` 贴在它下沿吸顶(用户面 85 ④ 摘掉卡上状态印的前置);" +
+      "兜底 0px 时节头会吸到筛选条底下 —— 同 --head-h 那条,运行期没跑就是这个样子",
+  },
+  {
     name: "--ck-indent",
     where:
       "正文待办清单的嵌套缩进层数(桌面 src/item-images.ts::renderContent 的 setProperty /" +

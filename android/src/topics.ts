@@ -194,7 +194,15 @@ function rowHtml(tp: TopicTreeItem, label: string, kidCount: number): string {
   // 而 `.tk-input` 那个 8.5em 是给「类型」这种短词的。⛔ 别把两个编辑态并排渲。
   // ⚠ 输入框里是**全名**(子行也是):改名写的就是全名,把 `父/` 抹掉正是「移出这一组」
   // 这个真操作 —— 只显后缀会让它变成一次静默的移组。
+  // ⭐ 「+ 类型」住在这儿(用户面 85 ⑤,渐进式披露):从前每一行常驻一枚,21 行就是 21 枚
+  // 「+ 类型」,而类型是少数人才用的分组;改名态本来就是「这一行的编辑面」(删除也住这儿),
+  // 没有类型的标签从这儿进类型编辑态。已有类型的行在常态就露着徽记(那是数据),不重复给入口。
+  // ⚠ 版式因此是两行(输入框独占一行、四枚钮一行):一行摆不下 —— 四枚钮 + 三个 gap 会把
+  // 输入框压到 60px 上下,判据与读数在 index.html `.tn-edit` 那条规则头上。
   if (tp.id === renameId) {
+    const kindEntry = tp.kind
+      ? ""
+      : `<button class="tk-add" data-kind-edit="${esc(tp.id)}">${t("topics.kindAdd")}</button>`;
     return `<article class="trow${busy ? " off" : ""}" data-topic="${esc(tp.id)}">
           <span class="tn-edit">
             <input class="tn-input" value="${esc(tp.title)}" placeholder="${t("topics.renamePh")}"
@@ -202,6 +210,7 @@ function rowHtml(tp: TopicTreeItem, label: string, kidCount: number): string {
             <button data-rename-save="${esc(tp.id)}">${t("topics.renameSave")}</button>
             <button data-rename-cancel="1" class="ghost">${t("topics.renameCancel")}</button>
             <button data-del="${esc(tp.id)}" class="tn-del">${t("topics.deleteBtn")}</button>
+            ${kindEntry}
           </span>
         </article>${bodyHtml(tp)}`;
   }
@@ -243,9 +252,8 @@ function rowHtml(tp: TopicTreeItem, label: string, kidCount: number): string {
         </article>${bodyHtml(tp)}`;
   }
   const n = counts.get(tp.id) ?? 0;
-  const kindZone = tp.kind
-    ? `<button class="tk-badge" data-kind-edit="${esc(tp.id)}">${esc(tp.kind)}</button>`
-    : `<button class="tk-add" data-kind-edit="${esc(tp.id)}">${t("topics.kindAdd")}</button>`;
+  // 类型徽记只在有类型时渲(是数据);没有类型的行不再常驻「+ 类型」—— 入口挪进改名态(见上)。
+  const kindZone = tp.kind ? `<button class="tk-badge" data-kind-edit="${esc(tp.id)}">${esc(tp.kind)}</button>` : "";
   // 折叠箭头:**紧贴名字末尾**(同筛选条 —— 那边的 .fcaret 也是挂在父 pill 尾上)。
   // ⛔ 别塞到行首:那要给**每一行**都留一个空槽才对得齐名字列,而没有子标签的行占多数。
   // ⚠ 「紧贴」要靠 `.has-kids` 把 `.tname` 从 `flex:1` 换成 `flex:0 1 auto`、余量交给 `.tgap`
