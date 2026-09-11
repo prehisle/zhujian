@@ -1,6 +1,6 @@
 import { NativeAbility } from '@ohos-rs/ability'
 import Want from '@ohos.app.ability.Want'
-import { AbilityConstant } from '@kit.AbilityKit';
+import { AbilityConstant, Configuration, ConfigurationConstant } from '@kit.AbilityKit';
 import window from '@ohos.window';
 
 /**
@@ -12,8 +12,12 @@ import window from '@ohos.window';
  *
  * ⛔ **别照抄 demo 那份的 `registerArkTsCallbacks()`** —— 那是 demo 自己的 Rust↔ArkTS
  * 回调示例(而且 460 实测那条路上 String 参数到 ArkTS 侧是 `null`,病因没隔离)。
- * 朱简今天不需要那条桥:安卓那两条窄桥(状态栏图标明暗 / textZoom)在这一端的对位
- * 要用时再谈,不在 C3 范围内。
+ *
+ * ⚠ **系统栏那两格只有这个类碰得到**:`@ohos-rs/ability` 交给 Rust 的 `ArkHelper` 只有
+ * `exit` / `createWebview` / `requestPermission` / `getWindowAvoidArea` 四个方法,**没有
+ * 系统栏**(type.ets 的 `ArkHelper`)⇒ Rust 侧与前端都够不着 `setWindowSystemBarProperties`。
+ * 这就是为什么下面那格只能按**系统**明暗档拧,拧不了朱简自己的外观档 —— 判据与余账见
+ * `applySystemBarContentColor()` 的头注。
  */
 export default class EntryAbility extends NativeAbility {
   // ⚠ 这个字符串 = Rust 那只 .so 的库名(libzhujian_ohos_lib.so 去掉 lib/.so)。
@@ -21,14 +25,57 @@ export default class EntryAbility extends NativeAbility {
   public moduleName: string = "zhujian_ohos_lib"
   public defaultPage: boolean = true;
 
+  // 主窗口。`onConfigurationUpdate` 那条路上没有 windowStage,只能在这里留一手。
+  private mainWindow: window.Window | null = null;
+
   async onCreate(want: Want, launchParam: AbilityConstant.LaunchParam): Promise<void> {
     await super.onCreate(want, launchParam);
   }
 
   async onWindowStageCreate(windowStage: window.WindowStage): Promise<void> {
     const win = windowStage.getMainWindowSync();
-    // 不铺满状态栏区(false = 系统给出安全区内的布局);沉浸式留给 OH-d 的 UI 轮。
-    await win.setWindowLayoutFullScreen(false);
+    this.mainWindow = win;
+    // 铺满整屏(含状态栏与手势条那两条)。⛔ 别改回 `false`:那样系统按**窗口底色**去画
+    // 状态栏与手势条,而窗口底色是白的 ⇒ 上下两条白边(用户面 93,用户拍图报的)。
+    // ⭐ **铺满之后让位不用我们操心**:真机实测 ArkWeb 的 `env(safe-area-inset-top)` 给的
+    // 就是**状态栏真高**(这台 Mate 60 Pro = 123 物理 px,与 hidumper 报的一致)——
+    // ⛔ 别照安卓那条经验推:Chromium 把 safe-area 映到**挖孔**、状态栏恒 0,所以安卓那端
+    // 才要 `MainActivity.topInset()` 那座桥(`android/index.html` 里那段脚本);
+    // 鸿蒙这端桥不在、那段整个跳过,靠的就是 `env()` 自己,逐像素对齐(用户面 93 实测)。
+    await win.setWindowLayoutFullScreen(true);
+    await this.applySystemBarContentColor();
     await super.onWindowStageCreate(windowStage);
+  }
+
+  /**
+   * 系统栏图标(时钟 / 信号 / 电量 / 手势条)的明暗。
+   *
+   * ⚠ **铺满之前不需要这一格**:那时状态栏坐在**窗口底色(白)**上,深色图标怎么都看得见。
+   * 铺满之后它坐在朱简自己的顶栏上 ⇒ 暗色档下深图标压在深底上,时钟基本看不见(93 实测)。
+   *
+   * ⛔ **它跟的是「系统」明暗档,不是朱简自己那三档**(外观 = 自动 / 亮 / 暗)。
+   * 朱简的档住在 WebView 的 localStorage 里(`android/src/theme.ts`),而这个类够不着它:
+   * 页面 → ArkTS 那条路在 `@ohos-rs/ability` 0.4.0-beta.5 上**不存在**(见类头注)。
+   * ⇒ 默认档「自动」= 跟随系统,这一格**逐格正确**;只有用户把朱简手动拧到与系统**相反**
+   * 的那一档时,图标色仍旧不对(backlog 用户面有账)。⛔ 别拿「加个轮询读文件」去补它。
+   *
+   * ⚠ `COLOR_MODE_NOT_SET` 按亮色处理 —— 那不是静默默认值,是平台把「没表态」画成亮色。
+   */
+  private async applySystemBarContentColor(): Promise<void> {
+    const win = this.mainWindow;
+    if (!win) {
+      return;
+    }
+    const dark = this.context.config.colorMode === ConfigurationConstant.ColorMode.COLOR_MODE_DARK;
+    await win.setWindowSystemBarProperties({
+      statusBarContentColor: dark ? '#FFFFFF' : '#000000',
+      navigationBarContentColor: dark ? '#FFFFFF' : '#000000',
+    });
+  }
+
+  onConfigurationUpdate(newConfig: Configuration): void {
+    super.onConfigurationUpdate(newConfig);
+    // 系统在「日夜自动切」时走这条路 ⇒ 图标色当场跟上,别等下次冷启。
+    this.applySystemBarContentColor();
   }
 }
