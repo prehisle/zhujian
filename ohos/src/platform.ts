@@ -7,7 +7,8 @@
 //
 // ⛔ **这里的每一条都不许"看起来能用"**:返回 null 的两条是**真的没有待取的东西**
 // (这一端根本没有系统分享 / 深链接那两条入口),不是"暂时取不到";
-// `HAS_SCANNER = false` 会让两枚扫码按钮**整个不渲染**,而不是渲染出来点了报错。
+// `HAS_TEXT_ZOOM = false` 那一族会让对应那块 UI **整个不渲染**,而不是渲染出来点了报错。
+// ⭐ 扫码是这一端**第一条真接上的桥**(658,Scan Kit),形见文末那一节。
 //
 // ⚠ 将来真给鸿蒙接上其中某一条时,**改的是这个文件**,不是去业务模块里加 if。
 
@@ -83,26 +84,64 @@ export function checkUpdate(): Promise<MobileUpdate | null> {
   return Promise.resolve(null);
 }
 
-// ---- 扫码配对:这一端没有 ----------------------------------------------------------
+// ---- 扫码配对:走华为 Scan Kit 的系统扫码页(658 起) ------------------------------
 //
-// `tauri-plugin-barcode-scanner` 的依赖 gate 写死 `target_os = android|ios`,在鸿蒙上
-// **编不过**(ohos/src-tauri/Cargo.toml 里"刻意不带的三样"第①条)。配对**走手输码**,
-// 加入空间仍走 core 的 `JoiningSlot`/publish —— 协议一个字不改。
+// `tauri-plugin-barcode-scanner` 在鸿蒙上编不过(依赖 gate 写死 `target_os = android|ios`,
+// ohos/src-tauri/Cargo.toml 里"刻意不带的三样"第①条),这一端的扫码是**另一座桥**:
+// 壳里 `shell/ScanBridge.ets` 经 `registerJavaScriptProxy` 挂成 `window.__zhujianScan`,
+// 页面调 `start()` 发令、结果由壳 `runJavaScript` 回推到 `window.__zhujianScanDone`
+// (ArkWeb 的异步接口拿不到返回值,只能这么来回)。扫到的文本喂给同一条 `parsePairQr` →
+// 加入路,协议一个字不改。
+//
+// ⚠ 与安卓那条的三处形差,调用方(`sync.ts::startScan`)不用知道:
+//   · 相机权限:Scan Kit 默认界面拿的是系统预授权,本 app 不申请 ⇒ `ensureCameraPermission` 恒 true;
+//   · 取景框:系统扫码页整页盖上来,`#scan` 那层挖空取景框被盖在底下(不碍事,也不用摘);
+//   · 取消:系统页自带返回,`cancelScan` 无事可做;用户按返回时 Scan Kit 以错误码回来,
+//     这里把它翻成 `name = "ScanCancelled"` 的错,`startScan` 见到就静默收场。
 
-/** ⛔ false ⇒ 两枚扫码按钮整个不渲染,「输码」那半直接摊开(见 sync.ts 那两处)。 */
-export const HAS_SCANNER = false;
+/** 这一端有摄像头扫码(经 Scan Kit)。⚠ 构建期常数,不是运行期探测。 */
+export const HAS_SCANNER = true;
 
-/** 够不着相机。⚠ 它不该被调到(`HAS_SCANNER` 已经把入口摘了),真被调到就是接线漏了。 */
+/** 与壳 `ScanBridge.ets` 的 `ScanOutcome` 逐字对应,改一边就改另一边。 */
+type ScanOutcome = { ok: boolean; text?: string; code?: number; message?: string };
+
+declare global {
+  interface Window {
+    __zhujianScan?: { start(): void };
+    __zhujianScanDone?: (out: ScanOutcome) => void;
+  }
+}
+
+/** Scan Kit 报「用户退出扫码页」用的错误码(1000500002 "The user canceled the barcode scanning.",
+ *  Mate 60 Pro 真机实测,见 progress-log 658;⚠ 网上两种说法 201 / 1300006 都不对,别照抄)。 */
+const SCAN_CANCEL_CODES = new Set<number>([1000500002]);
+
+/** Scan Kit 默认界面不需要本 app 的相机权限 ⇒ 恒 true。 */
 export function ensureCameraPermission(): Promise<boolean> {
-  return Promise.resolve(false);
+  return Promise.resolve(true);
 }
 
-/** 同上:不该被调到。⛔ **响亮**,别返回空串 —— 空串会被当成一枚扫到的码去解析。 */
+/** 拉起系统扫码页,扫到一枚二维码就返回它的文本。 */
 export function scanQrContent(): Promise<string> {
-  return Promise.reject(new Error("这一端没有扫码(HAS_SCANNER=false 却走到了扫码路径)"));
+  const bridge = window.__zhujianScan;
+  // ⛔ 响亮:桥缺席 = 壳没接上(`ZhujianXComponent.bridges()` 没跑到),不是"这一端没有扫码"。
+  if (!bridge) return Promise.reject(new Error("壳没接上扫码桥(window.__zhujianScan 缺席)"));
+  return new Promise<string>((resolve, reject) => {
+    window.__zhujianScanDone = (out) => {
+      window.__zhujianScanDone = undefined;
+      if (out.ok && typeof out.text === "string") {
+        resolve(out.text);
+        return;
+      }
+      const err = new Error(`扫码失败(${out.code ?? "?"}):${out.message ?? ""}`);
+      if (out.code !== undefined && SCAN_CANCEL_CODES.has(out.code)) err.name = "ScanCancelled";
+      reject(err);
+    };
+    bridge.start();
+  });
 }
 
-/** 没有在飞的扫码可取消。 */
+/** 系统扫码页自带返回,这一端没有可从页面取消的在飞扫码。 */
 export function cancelScan(): Promise<void> {
   return Promise.resolve();
 }

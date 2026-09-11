@@ -6,8 +6,9 @@
 // 事件不丢);空间切换编排与事件代次账本仍住 main.ts,经 Deps 注入。行为零改动。
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-// **平台接缝**(OH-d/D3):扫码只在安卓壳上存在,鸿蒙那端由 vite 换成另一份实现
-// (`HAS_SCANNER` 为 false、两枚按钮整个不渲染)。判据见 `platform.ts` 那一节。
+// **平台接缝**(OH-d/D3):扫码的实现按端分,由 vite 换成各自那份 `platform.ts`
+// (安卓 = tauri 扫码插件;鸿蒙 658 起 = Scan Kit 系统扫码页,此前 `HAS_SCANNER` 为 false、
+// 两枚按钮整个不渲染 —— 那条摘 UI 的路还留着给将来没有扫码器的端)。判据见 `platform.ts`。
 import { cancelScan, ensureCameraPermission, HAS_SCANNER, scanQrContent } from "./platform";
 import {
   getCurrentSpace,
@@ -248,7 +249,10 @@ async function startScan(onGot: (p: PairPayload) => Promise<void>) {
     $("scan").hidden = true;
     await onGot(p);
   } catch (err) {
-    if (!scanCancelled) showError(errMsg(err));
+    // 两种「取消」都静默:本页「取消扫码」钮(scanCancelled)/ 系统扫码页上按返回
+    // (鸿蒙那份 platform.ts 把 Scan Kit 的退出码翻成 name = "ScanCancelled";安卓那条
+    // 取消时不 reject,永远走不到这儿)。
+    if (!scanCancelled && !(err instanceof Error && err.name === "ScanCancelled")) showError(errMsg(err));
   } finally {
     document.body.classList.remove("scanning");
     $("scan").hidden = true;

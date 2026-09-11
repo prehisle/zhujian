@@ -72,7 +72,8 @@ napi-derive-ohos = "1.1"
 # ① tauri-plugin-barcode-scanner —— 它的依赖 gate 写死在 target_os = android|ios,
 #    而 `cfg(mobile)` 在 ohos 上**为真**(tauri-utils 的 Target::is_mobile 含
 #    OpenHarmony)⇒ 照抄安卓壳那句 `#[cfg(mobile)] .plugin(barcode_scanner::init())`
-#    会编不过。鸿蒙侧配对**走手输码**,加入空间仍走 core 的 JoiningSlot/publish。
+#    会编不过。鸿蒙侧扫码 658 起走**另一座桥**(ArkTS 的 Scan Kit,`entry/src/main/ets/shell/`,
+#    与 Rust 无关);加入空间仍走 core 的 JoiningSlot/publish。
 # ② tauri-plugin-log —— 安卓那份靠 logcat 后端;鸿蒙的日志通道是 hilog,
 #    本壳自带 src/hilog.rs 那 ~50 行 log::Log 实现直连 OH_LOG_PrintMsg。
 # ③ ureq(自动更新检查)—— 鸿蒙没有对应的分发通道,不在 C3 范围内。

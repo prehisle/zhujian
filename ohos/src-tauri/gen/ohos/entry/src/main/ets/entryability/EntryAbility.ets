@@ -2,6 +2,7 @@ import { NativeAbility } from '@ohos-rs/ability'
 import Want from '@ohos.app.ability.Want'
 import { AbilityConstant, Configuration, ConfigurationConstant } from '@kit.AbilityKit';
 import window from '@ohos.window';
+import { RouteName as ShellRoute } from '../shell/ZhujianPage';
 
 /**
  * 朱简鸿蒙端的 UIAbility。
@@ -15,15 +16,20 @@ import window from '@ohos.window';
  *
  * ⚠ **系统栏那两格只有这个类碰得到**:`@ohos-rs/ability` 交给 Rust 的 `ArkHelper` 只有
  * `exit` / `createWebview` / `requestPermission` / `getWindowAvoidArea` 四个方法,**没有
- * 系统栏**(type.ets 的 `ArkHelper`)⇒ Rust 侧与前端都够不着 `setWindowSystemBarProperties`。
- * 这就是为什么下面那格只能按**系统**明暗档拧,拧不了朱简自己的外观档 —— 判据与余账见
- * `applySystemBarContentColor()` 的头注。
+ * 系统栏**(type.ets 的 `ArkHelper`)⇒ Rust 侧够不着 `setWindowSystemBarProperties`。
+ * 下面那格今天仍按**系统**明暗档拧 —— 判据与余账见 `applySystemBarContentColor()` 的头注。
+ *
+ * ⭐ **页面 → ArkTS 那条路 658 起有了**:`defaultPage = false`,窗口装的是我们自己的
+ * `shell/ZhujianPage`(照抄依赖那页 + 给 WebView 挂 `registerJavaScriptProxy`),第一座桥是扫码
+ * (`shell/ScanBridge.ets`)。再要给页面开一条原生能力就往 `ZhujianXComponent.bridges()` 里加,
+ * ⛔ 别再开第二种通路。
  */
 export default class EntryAbility extends NativeAbility {
   // ⚠ 这个字符串 = Rust 那只 .so 的库名(libzhujian_ohos_lib.so 去掉 lib/.so)。
   // 与 ohos/src-tauri/Cargo.toml 的 `[lib] name` 必须一致,写错 = 装机后白屏、无提示。
   public moduleName: string = "zhujian_ohos_lib"
-  public defaultPage: boolean = true;
+  // ⛔ false:依赖自带的 MainPage 不装,`onWindowStageCreate` 末尾装我们自己那页(见类头注)。
+  public defaultPage: boolean = false;
 
   // 主窗口。`onConfigurationUpdate` 那条路上没有 windowStage,只能在这里留一手。
   private mainWindow: window.Window | null = null;
@@ -45,6 +51,8 @@ export default class EntryAbility extends NativeAbility {
     await win.setWindowLayoutFullScreen(true);
     await this.applySystemBarContentColor();
     await super.onWindowStageCreate(windowStage);
+    // 依赖在 `defaultPage` 下就是这一句(`loadContentByName`),只是页换成带桥的那份。
+    await windowStage.loadContentByName(ShellRoute);
   }
 
   /**
@@ -54,10 +62,11 @@ export default class EntryAbility extends NativeAbility {
    * 铺满之后它坐在朱简自己的顶栏上 ⇒ 暗色档下深图标压在深底上,时钟基本看不见(93 实测)。
    *
    * ⛔ **它跟的是「系统」明暗档,不是朱简自己那三档**(外观 = 自动 / 亮 / 暗)。
-   * 朱简的档住在 WebView 的 localStorage 里(`android/src/theme.ts`),而这个类够不着它:
-   * 页面 → ArkTS 那条路在 `@ohos-rs/ability` 0.4.0-beta.5 上**不存在**(见类头注)。
-   * ⇒ 默认档「自动」= 跟随系统,这一格**逐格正确**;只有用户把朱简手动拧到与系统**相反**
-   * 的那一档时,图标色仍旧不对(backlog 用户面有账)。⛔ 别拿「加个轮询读文件」去补它。
+   * 朱简的档住在 WebView 的 localStorage 里(`android/src/theme.ts`)。657 时页面 → ArkTS
+   * 那条路不存在,只能这么拧;**658 起路有了**(见类头注),但这一格还没接上桥 ——
+   * 默认档「自动」= 跟随系统,这一格**逐格正确**;只有用户把朱简手动拧到与系统**相反**
+   * 的那一档时,图标色仍旧不对(backlog 用户面 94)。⛔ 别拿「加个轮询读文件」去补它,
+   * 要补就走 `ZhujianXComponent.bridges()` 那条路。
    *
    * ⚠ `COLOR_MODE_NOT_SET` 按亮色处理 —— 那不是静默默认值,是平台把「没表态」画成亮色。
    */
