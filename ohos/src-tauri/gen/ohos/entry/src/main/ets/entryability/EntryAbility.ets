@@ -3,6 +3,7 @@ import Want from '@ohos.app.ability.Want'
 import { AbilityConstant, Configuration, ConfigurationConstant } from '@kit.AbilityKit';
 import window from '@ohos.window';
 import { RouteName as ShellRoute } from '../shell/ZhujianPage';
+import { SystemBars } from '../shell/SystemBars';
 
 /**
  * 朱简鸿蒙端的 UIAbility。
@@ -14,15 +15,14 @@ import { RouteName as ShellRoute } from '../shell/ZhujianPage';
  * ⛔ **别照抄 demo 那份的 `registerArkTsCallbacks()`** —— 那是 demo 自己的 Rust↔ArkTS
  * 回调示例(而且 460 实测那条路上 String 参数到 ArkTS 侧是 `null`,病因没隔离)。
  *
- * ⚠ **系统栏那两格只有这个类碰得到**:`@ohos-rs/ability` 交给 Rust 的 `ArkHelper` 只有
+ * ⚠ **系统栏那两格只有 ArkTS 碰得到**:`@ohos-rs/ability` 交给 Rust 的 `ArkHelper` 只有
  * `exit` / `createWebview` / `requestPermission` / `getWindowAvoidArea` 四个方法,**没有
  * 系统栏**(type.ets 的 `ArkHelper`)⇒ Rust 侧够不着 `setWindowSystemBarProperties`。
- * 下面那格今天仍按**系统**明暗档拧 —— 判据与余账见 `applySystemBarContentColor()` 的头注。
  *
  * ⭐ **页面 → ArkTS 那条路 658 起有了**:`defaultPage = false`,窗口装的是我们自己的
  * `shell/ZhujianPage`(照抄依赖那页 + 给 WebView 挂 `registerJavaScriptProxy`),第一座桥是扫码
- * (`shell/ScanBridge.ets`)。再要给页面开一条原生能力就往 `ZhujianXComponent.bridges()` 里加,
- * ⛔ 别再开第二种通路。
+ * (`shell/ScanBridge.ets`),第二座是系统栏明暗(`shell/SystemBars.ets`,659)。再要给页面开
+ * 一条原生能力就往 `ZhujianXComponent.bridges()` 里加,⛔ 别再开第二种通路。
  */
 export default class EntryAbility extends NativeAbility {
   // ⚠ 这个字符串 = Rust 那只 .so 的库名(libzhujian_ohos_lib.so 去掉 lib/.so)。
@@ -56,35 +56,30 @@ export default class EntryAbility extends NativeAbility {
   }
 
   /**
-   * 系统栏图标(时钟 / 信号 / 电量 / 手势条)的明暗。
+   * 系统栏图标(时钟 / 信号 / 电量 / 手势条)的明暗 —— **冷启首帧那一下**。
    *
    * ⚠ **铺满之前不需要这一格**:那时状态栏坐在**窗口底色(白)**上,深色图标怎么都看得见。
    * 铺满之后它坐在朱简自己的顶栏上 ⇒ 暗色档下深图标压在深底上,时钟基本看不见(93 实测)。
    *
-   * ⛔ **它跟的是「系统」明暗档,不是朱简自己那三档**(外观 = 自动 / 亮 / 暗)。
-   * 朱简的档住在 WebView 的 localStorage 里(`android/src/theme.ts`)。657 时页面 → ArkTS
-   * 那条路不存在,只能这么拧;**658 起路有了**(见类头注),但这一格还没接上桥 ——
-   * 默认档「自动」= 跟随系统,这一格**逐格正确**;只有用户把朱简手动拧到与系统**相反**
-   * 的那一档时,图标色仍旧不对(backlog 用户面 94)。⛔ 别拿「加个轮询读文件」去补它,
-   * 要补就走 `ZhujianXComponent.bridges()` 那条路。
+   * 这里只知道**系统**明暗档;朱简自己那三档(自动 / 亮 / 暗)住在 WebView 的 localStorage,
+   * 由页面经 `__zhujianSystemBars.setDark()` 那座桥送过来(`shell/SystemBars.ets`,659)。
+   * ⇒ 这一格只管页面还没开口之前的首帧;页面一开口(`SystemBars.pageOwned`)就归页面管,
+   * 连日夜自动切也不再从这里覆盖(那时是页面的 `prefers-color-scheme` 监听在调桥)。
    *
    * ⚠ `COLOR_MODE_NOT_SET` 按亮色处理 —— 那不是静默默认值,是平台把「没表态」画成亮色。
    */
   private async applySystemBarContentColor(): Promise<void> {
     const win = this.mainWindow;
-    if (!win) {
+    if (!win || SystemBars.pageOwned) {
       return;
     }
     const dark = this.context.config.colorMode === ConfigurationConstant.ColorMode.COLOR_MODE_DARK;
-    await win.setWindowSystemBarProperties({
-      statusBarContentColor: dark ? '#FFFFFF' : '#000000',
-      navigationBarContentColor: dark ? '#FFFFFF' : '#000000',
-    });
+    await SystemBars.apply(win, dark);
   }
 
   onConfigurationUpdate(newConfig: Configuration): void {
     super.onConfigurationUpdate(newConfig);
-    // 系统在「日夜自动切」时走这条路 ⇒ 图标色当场跟上,别等下次冷启。
+    // 页面开口之前系统「日夜自动切」走这条路;之后由页面的桥接管(见上)。
     this.applySystemBarContentColor();
   }
 }

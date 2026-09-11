@@ -15,7 +15,8 @@ const media = window.matchMedia("(prefers-color-scheme: dark)");
 let mode: ThemeMode = "auto";
 
 /** 系统状态栏/导航栏的图标颜色是原生的,CSS 管不着——锁「暗」而系统仍是浅色时,系统
- *  会继续把时间/信号画成深色顶在深色纸面上(几乎看不见)。桥在 MainActivity.kt。
+ *  会继续把时间/信号画成深色顶在深色纸面上(几乎看不见)。桥在 MainActivity.kt(安卓)/
+ *  `shell/SystemBars.ets`(鸿蒙,659),同名同形。
  *  桥缺席就是构建出了问题(不是可容忍的降级),验收里直接断言它在。 */
 declare global {
   interface Window {
