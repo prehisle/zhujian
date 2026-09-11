@@ -205,14 +205,10 @@
       }
       header h1 .seal.totop::after { opacity: 0.45; }
       .head-acts { flex: none; display: flex; align-items: center; }
-      /* 设置齿轮:图标钮,比文字钮省横向空间(顶栏本就四件挤)。描边随文字色,
-         不用彩色 emoji——与全局的细线图标一路。 */
-      .gear { display: flex; align-items: center; padding: 4px 4px 4px 8px; }
-      .gear svg {
-        width: 16px; height: 16px; overflow: visible;
-        fill: none; stroke: currentColor; stroke-width: 1.7;
-        stroke-linejoin: round; stroke-linecap: round;
-      }
+      /* 顶栏四枚一律是词(ui-consistency M11):此前「设置」是一枚齿轮图标、另三枚是词,
+         同一排两种语汇;这一端的导航全是词(底栏四枚也是),孤例归队。⚠ 换成词多占 8px
+         (130% 字号档 15px),360 宽 + 四字空间名下徽章仍有 5px 余量不省略;更长的名字
+         本来就靠徽章那条省略号规则收。 */
       /* 三档分段(明暗:自动 / 亮 / 暗 + 字号四档):连体按钮,选中那枚上朱砂;整高 44px
          够拇指。⚠ 只被设置面用(#settings-pane),定义住在顶栏样式区是历史位置——
          判影响面认选择器、别认所在小节的节名。 */
@@ -276,7 +272,7 @@
         border: 1px solid var(--seal-line); border-radius: var(--radius-pill);
         background: var(--seal-tint); color: var(--seal);
         padding: 2px 10px; font-size: var(--fs-12); font-weight: 600; font-family: var(--font-sans);
-        /* 250:顶栏加了齿轮后横向更紧,徽章从「至多 40vw」改成「有多少给多少、不够
+        /* 250:顶栏加了第四枚后横向更紧,徽章从「至多 40vw」改成「有多少给多少、不够
            就缩」——min-width:0 是 flex 里让省略号真能生效的那一半(249)。 */
         flex: 0 1 auto; min-width: 0;
         overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -1593,7 +1589,7 @@
         <button id="topics-toggle" class="ghost" data-i18n="shell.navTags">标签</button>
         <button id="search-toggle" class="ghost" data-i18n="shell.navSearch">搜索</button>
         <button id="sync-toggle" class="ghost"><span id="sync-dot" class="dot"></span><span data-i18n="shell.sync">同步</span></button>
-        <button id="settings-toggle" class="ghost gear" aria-label="设置" data-i18n-aria-label="shell.settings"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.1"/><path d="M19.14 12.94a7.49 7.49 0 0 0 .05-.94 7.49 7.49 0 0 0-.05-.94l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.61-.22l-2.39.96a7.3 7.3 0 0 0-1.62-.94l-.36-2.54a.5.5 0 0 0-.5-.42h-3.84a.5.5 0 0 0-.5.42l-.36 2.54a7.3 7.3 0 0 0-1.62.94l-2.39-.96a.5.5 0 0 0-.61.22L2.7 8.84a.5.5 0 0 0 .12.64l2.03 1.58a7.49 7.49 0 0 0 0 1.88L2.82 14.5a.5.5 0 0 0-.12.64l1.92 3.32a.5.5 0 0 0 .61.22l2.39-.96a7.3 7.3 0 0 0 1.62.94l.36 2.54a.5.5 0 0 0 .5.42h3.84a.5.5 0 0 0 .5-.42l.36-2.54a7.3 7.3 0 0 0 1.62-.94l2.39.96a.5.5 0 0 0 .61-.22l1.92-3.32a.5.5 0 0 0-.12-.64l-2.03-1.58Z"/></svg></button>
+        <button id="settings-toggle" class="ghost" data-i18n="shell.settings">设置</button>
       </div>
     </header>
 
