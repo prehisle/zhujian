@@ -40,6 +40,8 @@ target/
 # 安卓构建统一入口(scripts/build-android.mjs)的干净包副本 + 构建来源标记
 # (构建目录外,gradle clean 清不到;产物可重 build,不进 git)
 /android/apk-out/
+# 同上,--channel-cn 出的国内渠道包(独立目录,与境外渠道产物物理隔离)
+/android/apk-out-cn/
 
 # 本地工作杂物(图标出稿中间产物 / 验收截图等,不进 git)
 /work_data/

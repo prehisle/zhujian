@@ -12,9 +12,6 @@
 //
 // ⚠ 将来真给鸿蒙接上其中某一条时,**改的是这个文件**,不是去业务模块里加 if。
 
-/** 与安卓那份同名同形(那边是 `android.json` 里的一条)。这一端恒不产生它。 */
-export type MobileUpdate = { version: string; versionCode: number; notes: string; url: string };
-
 // ---- 两条原生窄桥:这一端一条都没有(471,用户面 33)---------------------------------
 //
 // 三条窄桥全长在安卓壳的 `MainActivity.kt` 上(`__zhujianSystemBars` / `__zhujianTextSize` /
@@ -68,19 +65,6 @@ export function takeSharedText(): Promise<string | null> {
  * skill、再由 ability 的 `want` 送进来)。⇒ 恒无待取。
  */
 export function takeDeepLink(): Promise<string | null> {
-  return Promise.resolve(null);
-}
-
-/**
- * 查更新:**这一端没有更新通道**。
- *
- * 安卓那条是拉 `android.json` 比 versionCode、提示条跳浏览器装 APK;鸿蒙的自用装机
- * 走的是 `hdc file send` + `bm install`(还绕不过华为 ID 与设备 UDID 白名单,
- * backlog 条 18)⇒ **没有可以比对的清单**,也没有"下载装上"这个动作。
- * ⚠ 返回 null 的语义是「不提示更新」,调用方那边本来就 `catch` 静默 —— 这里给 null
- * 只是让它连一次失败的 IPC 都不发。
- */
-export function checkUpdate(): Promise<MobileUpdate | null> {
   return Promise.resolve(null);
 }
 

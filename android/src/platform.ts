@@ -17,10 +17,11 @@
 // 那条桥缺席时,字号那四档**点了会高亮、屏幕上一个像素不动**,冷启后还高亮在你选的那档
 // ⇒ **界面在说谎**。⇒ 它不能靠 `?.` 兜,得靠下面的 `HAS_TEXT_ZOOM` 在**构建期**把整节摘掉。
 //
-// **只有这三样不是** —— 它们是三条 `invoke`,而那三条命令**只在安卓壳里存在**
-// (Intent 薄桥的取走端 ×2 + `android.json` 更新检查)。在鸿蒙上调它们会被
-// `Command xxx not found` 拒掉,其中 `take_shared_text` 那条的调用点还会
-// `showError(...)` ⇒ **每次启动弹一次错**。
+// **只有这两样不是** —— 它们是两条 `invoke`(Intent 薄桥的取走端),而这两条命令
+// **只在安卓壳里存在**。在鸿蒙上调它们会被 `Command xxx not found` 拒掉,其中
+// `take_shared_text` 那条的调用点还会 `showError(...)` ⇒ **每次启动弹一次错**。
+// ⚠ 原来还有第三条 `check_update`(`android.json` 更新检查),668 起挪去了
+// `channel.ts` —— 「有没有自升级」是渠道政策不是平台能力,见那边头注。
 //
 // ⛔ **刻意不用「运行期探一下是哪个端」那种写法** —— 那是静默兜底(铁律禁);
 // ⛔ **也刻意不在鸿蒙壳里加三条恒返回 null 的假命令** —— 「不做」的意思是**入口不存在**,
@@ -31,9 +32,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { cancel, checkPermissions, Format, requestPermissions, scan } from "@tauri-apps/plugin-barcode-scanner";
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
-
-/** 安卓更新清单里的一条(`android.json` 与 `tauri.conf.json` 同源)。 */
-export type MobileUpdate = { version: string; versionCode: number; notes: string; url: string };
 
 // ---- 两条原生窄桥「这一端有没有」(471,用户面 33)-----------------------------------
 //
@@ -107,11 +105,6 @@ export function takeSharedText(): Promise<string | null> {
 /** 深链接(ACTION_VIEW 的 `zhujian://`)攒下的 URI;没有返回 null。 */
 export function takeDeepLink(): Promise<string | null> {
   return invoke<string | null>("take_deep_link");
-}
-
-/** 查更新:有更新回条目、已最新回 null。 */
-export function checkUpdate(): Promise<MobileUpdate | null> {
-  return invoke<MobileUpdate | null>("check_update");
 }
 
 // ---- 扫码配对(107)-----------------------------------------------------------------

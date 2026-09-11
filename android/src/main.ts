@@ -45,9 +45,9 @@ import { DONE_COLUMN, boardColumns, isTaskStage, setColumns, stageLabel } from "
 import { capturePhoto, composeImages, PICK_MAX, pickImages } from "./images";
 import { INPUT_DEBOUNCE_MS } from "./timing";
 // **平台接缝**(OH-d/D3):只在安卓壳里存在的那三条命令。鸿蒙那端由 vite 换成另一份实现。
-import { checkUpdate, HAS_NOTIFICATION, HAS_SAF_BRIDGE, HAS_TEXT_ZOOM, notifyPermissionOk, takeDeepLink, takeSharedText, type MobileUpdate } from "./platform";
+import { HAS_NOTIFICATION, HAS_SAF_BRIDGE, HAS_TEXT_ZOOM, notifyPermissionOk, takeDeepLink, takeSharedText } from "./platform";
 // **渠道接缝**(651):这份包发给谁 —— 鸿蒙那端同样由 vite 换成国内渠道那份。
-import { PRIVACY_URL, SYNC_DEFAULT_URL } from "./channel";
+import { checkUpdate, PRIVACY_URL, SYNC_DEFAULT_URL, type MobileUpdate } from "./channel";
 import { initDueReminder, reminderCfg, saveReminderCfg, sendTestNotification } from "./reminder";
 import * as backup from "./backup";
 import * as cardPanel from "./cardpanel";

@@ -8,9 +8,16 @@
 // devtools feature = WebView 远程调试(Chrome DevTools 协议),只给真机 UI 验收用
 // (见 scripts/android-cdp.mjs);发版包绝不能带(WebView 可被任意调试是安全风险)。
 //
+// 668 起再加一条独立轴:`--channel-cn` 出**国内商店渠道包**(华为应用市场/小米/
+// OPPO/vivo 等,见 android/src/channel.cn.ts)—— 连境内同步服务器、不带应用内自升级
+// (国内商店审核规范禁自升级)、产物落**另一个目录** `android/apk-out-cn/`,绝不会被
+// 境外渠道那条 `gen-android-update-manifest.mjs` 流水线误捡到。⚠ 它与 devtools/probe305
+// 是两根独立的轴,能叠加(`--channel-cn --devtools` = 国内渠道的真机验收包)。
+//
 // 用法:
-//   node scripts/build-android.mjs            # 干净发版包(默认,不带 devtools)
-//   node scripts/build-android.mjs --devtools # 验收调试包(WebView 远程可调试)
+//   node scripts/build-android.mjs               # 干净发版包(默认,境外渠道,不带 devtools)
+//   node scripts/build-android.mjs --devtools     # 验收调试包(WebView 远程可调试)
+//   node scripts/build-android.mjs --channel-cn   # 国内商店渠道包(干净、不带自升级)
 import {
   readFileSync,
   writeFileSync,
@@ -30,6 +37,11 @@ const devtools = process.argv.includes("--devtools");
 // tauri-plugin-log 直达 logcat(`adb logcat | grep P305`)。与 --devtools 同属
 // 「不许发版」那一档。
 const probe305 = process.argv.includes("--probe305");
+// 国内商店渠道包(668;android/src/channel.cn.ts):不带自升级、连境内服务器。
+// ⚠ 与 devtools/probe305 是独立轴,只影响**哪份 channel.ts 被编进去**与**产物落哪儿**,
+// 不影响「干不干净」的判据 —— 这仍是一份完整的发版质量产物,只是给另一条流水线用。
+const channelCn = process.argv.includes("--channel-cn");
+if (channelCn) process.env.ZJ_ANDROID_CHANNEL = "cn";
 
 // ── 1. 三处版本号一致(与 gen-android-update-manifest.mjs 同锚,构建前先拦) ──
 const pkg = JSON.parse(readFileSync(join(root, "android/package.json"), "utf8")).version;
@@ -54,7 +66,8 @@ const versionCode = parts[0] * 1_000_000 + parts[1] * 1_000 + parts[2];
 
 // ── 2. 构建 ──
 console.log(
-  `构建安卓${devtools ? "验收调试包(devtools)" : "发版干净包"} v${version} / versionCode ${versionCode}…`,
+  `构建安卓${devtools ? "验收调试包(devtools)" : channelCn ? "国内渠道发版包" : "发版干净包"}` +
+    ` v${version} / versionCode ${versionCode}…`,
 );
 const args = ["tauri", "android", "build", "--apk", "--target", "aarch64"];
 const feats = [];
@@ -102,6 +115,9 @@ const profile = {
   clean: !tainted,
   devtools,
   probe305,
+  // 独立于 clean:哪个渠道编的(见上面 668 那段)。gen-android-update-manifest.mjs
+  // 拿它挡「国内渠道包被误传进境外那条自升级流水线」,与 clean 答的不是同一个问题。
+  channel: channelCn ? "cn" : "overseas",
   version,
   versionCode,
 };
@@ -109,17 +125,27 @@ writeFileSync(join(apkDir, "build-profile.json"), JSON.stringify(profile, null, 
 
 // ── 5. 干净包复制到构建目录外(gradle clean 清不到;发版从这里取) ──
 if (!tainted) {
-  const outDir = join(root, "android/apk-out");
+  // 国内渠道包落**另一个目录**(gitignore 同款),文件名也带 `_cn` 后缀 —— 双重保险,
+  // 绝不会被境外渠道发版那条 `rm -f zhujian_*_aarch64.apk` 式的 glob 扫进去(deploy §7.2)。
+  const outDir = join(root, channelCn ? "android/apk-out-cn" : "android/apk-out");
   if (!existsSync(outDir)) mkdirSync(outDir, { recursive: true });
-  const outApk = join(outDir, `zhujian_${version}_aarch64.apk`);
+  const outApk = join(outDir, `zhujian_${version}_aarch64${channelCn ? "_cn" : ""}.apk`);
   copyFileSync(apkPath, outApk);
   writeFileSync(join(outDir, "build-profile.json"), JSON.stringify(profile, null, 2) + "\n");
-  console.log(`\n✔ 干净发版包已就位:`);
-  console.log(`  产物 ${apkPath}`);
-  console.log(`  副本 ${outApk}(构建目录外,gradle clean 清不到)`);
-  console.log(`  下一步:node scripts/gen-android-update-manifest.mjs "更新说明"`);
+  if (channelCn) {
+    console.log(`\n✔ 国内渠道发版包已就位(不带自升级、连境内服务器):`);
+    console.log(`  产物 ${apkPath}`);
+    console.log(`  副本 ${outApk}`);
+    console.log(`  ⛔ 别把它喂进 gen-android-update-manifest.mjs —— 那是境外渠道的发版清单流水线,`);
+    console.log(`     且脚本本身见到 channel:"cn" 会硬拒。上架走对应商店各自的提交流程。`);
+  } else {
+    console.log(`\n✔ 干净发版包已就位:`);
+    console.log(`  产物 ${apkPath}`);
+    console.log(`  副本 ${outApk}(构建目录外,gradle clean 清不到)`);
+    console.log(`  下一步:node scripts/gen-android-update-manifest.mjs "更新说明"`);
+  }
 } else {
-  console.log(`\n✔ 验收包已就位(${profile.profile}):`);
+  console.log(`\n✔ 验收包已就位(${profile.profile}${channelCn ? " · 国内渠道" : ""}):`);
   console.log(`  ${apkPath}`);
   console.log(`  装机后:adb install -r <apk> → node scripts/android-cdp.mjs forward`);
   console.log(`  ⚠ 此包带台架 feature,gen-android-update-manifest.mjs 会拒绝用它发版。`);

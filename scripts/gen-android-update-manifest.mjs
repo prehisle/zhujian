@@ -109,6 +109,17 @@ if (prof.versionCode !== versionCode) {
   process.exit(1);
 }
 
+// ── 3.65 渠道护栏(668):这条流水线只认**境外渠道**产物 —— 它生成的 android.json
+//        是给 zhujian.app 那条应用内自升级链路用的,国内商店渠道包(--channel-cn 出、
+//        不带自升级)绝不能被它捡走。旧标记没有 `channel` 字段,`undefined !== "cn"`
+//        自然放行,不影响存量产物。 ──
+if (prof.channel === "cn") {
+  console.error("这是国内渠道包(build-profile.json 的 channel=\"cn\"),不发这条清单。");
+  console.error("国内商店审核规范禁应用内自升级,这份产物本来就不该进 android.json / latest.json。");
+  console.error("上架走对应商店各自的提交流程,不走这支脚本。");
+  process.exit(1);
+}
+
 // ── 3.7 签的必须是那把 release key(386 可优化项第⑥条补的第四道闸)。前三道管的是
 //        「版本对不对 / 包干不干净」,签名证书本身从来没核过。签错 key 的后果不是报错而是
 //        **用户覆盖装报「应用未安装」**:安卓按签名证书认同一个应用,换了证书就是另一个应用,
