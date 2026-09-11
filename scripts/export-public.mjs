@@ -53,6 +53,14 @@ const ALLOW = [
   // 不导出的话公开仓 readme 当场多一条死链(copy-plan §6-2)。它是产品说明,
   // 内容与官网 / 商店稿同源,无内部流程、无服务器信息。
   "docs/user-guide.md",
+  // @@N@@:境外那三份协议页产物(`site-app/`)。651 起安卓包把它们**烤进产物**
+  // (`android/vite.config.ts` 的 policyAsset 插件,fail-fast:文件不在就拒建),而 CI 在
+  // **公开仓**那棵树上构建 —— 不导出,`android-v0.3.40` 那趟就红在 `site-app/privacy.html` 不在
+  // (651 之后第一次发安卓版才撞上;闸分支 CI 只 cargo test 安卓壳、不构建 APK,故此前一直看不见)。
+  // 内容 = 官网上公开挂着的隐私政策 / 隐私权利 / 用户协议(zhujian.app/privacy.html 那几页),
+  // 联系邮箱早已在 readme / user-guide / site/index.html 里公开,红线扫描过零命中。
+  // ⛔ 境内那份 `site-cool/` 照旧不导出(国内渠道包只在本机 `--channel-cn` 打,不走 CI)。
+  "site-app/",
   "index.html", "notebook.html", "lightbox.html", "package.json", "package-lock.json",
   "tsconfig.json", "vite.config.ts", "readme.md", "readme.en.md", "LICENSE",
   ".gitignore", ".gitattributes",

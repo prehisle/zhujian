@@ -1,0 +1,304 @@
+<!doctype html>
+<html lang="zh">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>朱简 隐私权利</title>
+    <meta name="description" content="朱简(zhujian)隐私权利" />
+    <meta name="robots" content="index, follow" />
+    <style>
+      :root {
+        --paper: #f3eee3;
+        --raised: #faf6ec;
+        --raised-edge: #f0eadd;
+        --ink: #221f19;
+        --ink-soft: #6c6354;
+        --ink-faint: #a89e8c;
+        --line: rgba(34, 31, 25, 0.1);
+        --line-strong: rgba(34, 31, 25, 0.16);
+        --seal: #b3402b;
+        --seal-tint: rgba(179, 64, 43, 0.1);
+        --seal-line: rgba(179, 64, 43, 0.38);
+        --on-seal: #fdf6ee; /* 压在朱砂上的字,随明暗翻面(理由见桌面 src/theme.css) */
+
+        /* ── 三层「纱」= 令牌色 + alpha(与上面 --line / --seal-tint 同一种写法)──
+           ⛔ **别改回 `color-mix(… var(--X) …)`**:含 var() 的值解析期就合法、能盖掉前一条,
+           到计算期才失败(IACVT)⇒ 属性归 unset、**不回退到兜底声明**。不认 color-mix 的引擎
+           (Chrome ≤110 / Safari ≤16.1 / 微信 X5 那一族)上这三处会整个透明 —— 顶栏那处是
+           **字叠字**(用户面 84 量:2x 下最大色差 208)。app 那边同一个病见用户面 82。 */
+        --topbar-veil: rgba(243, 238, 227, 0.82); /* = --paper 82% */
+        --band-veil: rgba(250, 246, 236, 0.55); /* = --raised 55% */
+        --seal-select: rgba(179, 64, 43, 0.26); /* = --seal 26%,比 --seal-tint 深一档 */
+        /* 看大图的遮罩底(653)。⛔ **刻意不随明暗档翻面**:遮罩压的是截图不是纸面,亮色档下
+           翻成浅色 = 图与底糊在一起、也不再有「这是一层浮层」的信号。值与桌面客户端那只看大图
+           窗(`src/lightbox.css` 的 `.img-lightbox`)逐字相同。 */
+        --shot-veil: rgba(20, 16, 10, 0.78);
+
+        /* 三层字面:楷体(书写/品牌)· 宋体(书卷/想法原文)· 黑体(界面) */
+        /* 西文排在栈首:font-family 是逐字符回退,故英文走人文衬线、汉字照旧落楷体。
+           不排的话,普通 Windows 的英文标题会落到 KaiTi 的等宽拉丁字形上(字距被撑开)。 */
+        --font-brush: "Palatino Linotype", "Palatino", "Book Antiqua", "Kaiti SC", "STKaiti", "KaiTi", "楷体", "Songti SC", "SimSun", serif;
+        --font-serif: "Georgia", "SimSun", "Songti SC", "Source Han Serif SC", serif;
+        --font-sans: "Microsoft YaHei", "PingFang SC", system-ui, -apple-system, sans-serif;
+
+        --float-shadow: 0 18px 50px -20px rgba(40, 30, 18, 0.55), 0 2px 6px rgba(40, 30, 18, 0.12);
+        --card-shadow: 0 1px 2px rgba(40, 30, 18, 0.06), 0 14px 30px -22px rgba(40, 30, 18, 0.5);
+
+        --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.78' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+
+        --wrap: 1060px;
+        /* 圆角阶(341)。四档 = 4px 栅格;后三个是**形状**不是尺寸阶上的档。
+           完整理由与三份的对齐关系见桌面 src/theme.css。 */
+        --radius-xs: 4px;
+        --radius-sm: 8px;
+        --radius-md: 12px;
+        --radius-lg: 16px;
+        --radius-pill: 999px;
+        --radius-circle: 50%;
+        --radius-seal: 25%;
+        /* 字号阶(342)。十档 = 一张白名单;最小档 12px 就是 §2.2 第一条(信息性文字
+           最小 12px),阶下无档、小于 12px 的一律进门禁登记表签字。为什么用数值命名
+           而不是 xs/sm/md/lg,见桌面 src/theme.css。 */
+        --fs-12: 12px;
+        --fs-13: 13px;
+        --fs-14: 14px;
+        --fs-15: 15px;
+        --fs-16: 16px;
+        --fs-17: 17px;
+        --fs-18: 18px;
+        --fs-20: 20px;
+        --fs-24: 24px;
+        --fs-30: 30px;
+      }
+
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --paper: #1b1813;
+          --raised: #242019;
+          --raised-edge: #2c2820;
+          --ink: #ece4d5;
+          --ink-soft: #a59a87;
+          --ink-faint: #7d7463;
+          --line: rgba(236, 228, 213, 0.12);
+          --line-strong: rgba(236, 228, 213, 0.2);
+          --seal: #df6a4f;
+          --seal-tint: rgba(223, 106, 79, 0.14);
+          --seal-line: rgba(223, 106, 79, 0.45);
+          --on-seal: #1b1813;
+          --topbar-veil: rgba(27, 24, 19, 0.82); /* = --paper 82% */
+          --band-veil: rgba(36, 32, 25, 0.55); /* = --raised 55% */
+          --seal-select: rgba(223, 106, 79, 0.26); /* = --seal 26% */
+          --float-shadow: 0 22px 55px -18px rgba(0, 0, 0, 0.7), 0 2px 8px rgba(0, 0, 0, 0.4);
+          --card-shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 16px 34px -22px rgba(0, 0, 0, 0.7);
+        }
+      }
+
+      * { box-sizing: border-box; }
+
+      body {
+        margin: 0;
+        background: var(--paper);
+        color: var(--ink);
+        font-family: var(--font-sans);
+        line-height: 1.85;
+        -webkit-font-smoothing: antialiased;
+        text-rendering: optimizeLegibility;
+      }
+      body::before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        z-index: 0;
+        background-image: var(--grain);
+        opacity: 0.035;
+        mix-blend-mode: multiply;
+      }
+      @media (prefers-color-scheme: dark) {
+        body::before { mix-blend-mode: screen; opacity: 0.05; }
+      }
+      a { color: var(--seal); }
+      /* ⛔ 这两处别改回 color-mix:令牌块是从 site/index.html 整段取来的,那三层「纱」的
+         理由与实测就写在取来的那段注释里(用户面 84)。⚠ 三份协议页正是 AGC 表单里填的
+         那两个网址 —— 打开它们的浏览器比首页还杂。 */
+      ::selection { background: var(--seal-select); }
+
+      .wrap { width: 100%; max-width: 760px; margin: 0 auto; padding: 0 24px; position: relative; z-index: 1; }
+
+      .topbar {
+        position: sticky; top: 0; z-index: 20;
+        backdrop-filter: saturate(1.1) blur(8px);
+        background: var(--topbar-veil);
+        border-bottom: 1px solid var(--line);
+      }
+      .topbar .wrap { display: flex; align-items: center; gap: 18px; height: 62px; max-width: 1060px; }
+      .brand {
+        display: inline-flex; align-items: center; gap: 11px;
+        font-family: var(--font-brush); font-size: var(--fs-24); font-weight: 700;
+        letter-spacing: 0.06em; text-decoration: none; color: var(--ink);
+      }
+      .brand svg { width: 30px; height: 30px; border-radius: var(--radius-sm); }
+      .brand svg rect { fill: var(--seal); }
+      .brand svg text { fill: var(--raised); font-family: var(--font-brush); font-weight: 700; }
+      .topnav { margin-left: auto; display: flex; align-items: center; gap: 22px; }
+      .topnav a { text-decoration: none; color: var(--ink-soft); font-size: var(--fs-15); }
+      .topnav a:hover { color: var(--ink); }
+      .topnav a[aria-current="page"] { color: var(--seal); }
+
+      main { padding: 46px 0 8px; }
+      h1.doc-title {
+        font-family: var(--font-brush);
+        font-size: var(--fs-30);
+        letter-spacing: 0.04em;
+        margin: 0 0 10px;
+      }
+      .doc-sub { color: var(--ink-faint); font-size: var(--fs-14); margin: 0 0 34px; }
+
+      .prose h2 {
+        font-size: var(--fs-20); /* ⛔ 只许用 §2.2 那十档,见本文件 docPage() 头注 */
+        margin: 44px 0 14px;
+        padding-top: 18px;
+        border-top: 1px solid var(--line);
+        letter-spacing: 0.02em;
+      }
+      .prose h3 { font-size: var(--fs-17); margin: 28px 0 10px; color: var(--ink); }
+      .prose h4 { font-size: var(--fs-15); margin: 22px 0 8px; color: var(--ink-soft); }
+      .prose p { margin: 0 0 14px; font-size: var(--fs-16); }
+      .prose ul { margin: 0 0 16px; padding-left: 1.4em; }
+      .prose li { margin: 0 0 7px; font-size: var(--fs-16); }
+      .prose li > ul { margin: 7px 0 0; }
+      .prose strong { color: var(--ink); font-weight: 700; }
+      .prose code {
+        font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+        font-size: var(--fs-14);
+        background: var(--raised);
+        border: 1px solid var(--line);
+        border-radius: var(--radius-xs);
+        padding: 1px 5px;
+      }
+      .tablewrap { overflow-x: auto; margin: 0 0 18px; }
+      .prose table { border-collapse: collapse; width: 100%; font-size: var(--fs-14); }
+      .prose th, .prose td {
+        border: 1px solid var(--line-strong);
+        padding: 9px 12px;
+        text-align: left;
+        vertical-align: top;
+      }
+      .prose th { background: var(--raised); font-weight: 700; }
+
+      .foot {
+        margin-top: 56px;
+        border-top: 1px solid var(--line);
+        padding: 26px 0 40px;
+        color: var(--ink-faint);
+        font-size: var(--fs-13);
+      }
+      .foot .wrap { max-width: 1060px; display: flex; flex-wrap: wrap; gap: 14px 22px; align-items: center; }
+      .foot a { color: var(--ink-soft); text-decoration: none; }
+      .foot a:hover { color: var(--ink); }
+      .foot .spacer { margin-left: auto; }
+    </style>
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="wrap">
+        <a class="brand" href="/"><svg viewBox="0 0 100 100" aria-hidden="true"><rect x="2" y="2" width="96" height="96" rx="25%" /><text x="50" y="50" text-anchor="middle" dominant-baseline="central" font-size="58">朱</text></svg>朱简</a>
+        <nav class="topnav">
+          <a href="/privacy.html">隐私政策</a>
+          <a href="/privacy-rights.html" aria-current="page">隐私权利</a>
+          <a href="/terms.html">用户协议</a>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <div class="wrap">
+        <h1 class="doc-title">朱简 隐私权利</h1>
+        <p class="doc-sub">开发者:张大云 · 联系邮箱:3069848@qq.com</p>
+        <div class="prose">
+<p>生效日期:2026年9月10日</p>
+<p>本页告诉你:对于你在「朱简」里留下的信息,你享有哪些权利,以及<strong>每一项具体怎么行使</strong>。</p>
+<p>这一页是《朱简隐私政策》的配套说明。若你想先了解我们处理哪些信息、为什么处理,请阅读《朱简隐私政策》。</p>
+<h2>先说清楚一件事</h2>
+<p>朱简的绝大部分信息<strong>从来没有离开过你的设备</strong>。你写下的随记、任务、标签、图片、编辑历史,都保存在你自己设备上的一个数据库文件里。</p>
+<p>这意味着:<strong>下面这些权利,大多数是你自己在应用里按几下就完成的,不需要向我们提出申请,也不需要等待我们答复。</strong> 需要联系我们的只有一种情形——你开启过多设备同步,想删除服务器上那几行账户与设备的注册信息。</p>
+<h2>一、查阅与复制</h2>
+<p><strong>你想做的事</strong>:看到自己都记了些什么,或者把它们拿出来。</p>
+<p><strong>怎么做</strong>:</p>
+<ul>
+<li><strong>查阅</strong>:打开应用即可。所有内容都在「灵感」「任务」「回收站」「归档册」四个视图里,全部可读、可搜索。</li>
+<li><strong>查阅历史版本</strong>:你每次编辑一条内容,修改前的旧版本会自动留存。在该条目的编辑历史里可以逐版查看。</li>
+<li><strong>获取副本</strong>:电脑版提供「加密备份」功能,可把你的完整数据导出成一个备份文件。<strong>该文件由你设定的备份码加密</strong>,请妥善保管备份码——丢了它,这个备份文件谁也打不开,包括我们。</li>
+<li>底层数据格式是标准的 SQLite 数据库文件,我们不设任何导出障碍。</li>
+</ul>
+<p><strong>我们能替你做什么</strong>:不能。你的内容以端到端加密方式存在于你自己的设备上,<strong>我们无法查看,因而也无法代你查阅或导出</strong>。</p>
+<h2>二、更正与补充</h2>
+<p><strong>你想做的事</strong>:把记错的地方改过来。</p>
+<p><strong>怎么做</strong>:在应用里直接编辑该条目即可,随时生效。修改前的版本会自动进入编辑历史,原文不会被静默覆盖。</p>
+<h2>三、删除</h2>
+<p><strong>你想做的事</strong>:让某条内容、或全部内容消失。</p>
+<p><strong>怎么做</strong>:</p>
+<ul>
+<li><strong>删除单条</strong>:在条目上选择「删除」——它会先进入<strong>回收站</strong>,不会立即销毁。</li>
+<li><strong>彻底销毁</strong>:进入回收站,对该条目再次确认「彻底删除」。<strong>这一步之后不可恢复。</strong></li>
+<li><strong>归档册里的条目</strong>:成就归档是史实记录,刻意不提供删除入口。若要删除,请先「取消归档」把它退回任务看板,再走上面的两段式删除。</li>
+<li><strong>删除全部本地数据</strong>:卸载本应用即可。本应用<strong>刻意未接入系统备份能力</strong>,因此不会有一份副本被系统留在云端或其它设备上。</li>
+</ul>
+<p><strong>关于同步过的内容</strong>:同步服务器只作<strong>临时中转</strong>,不落盘、取走即清、最长保留 72 小时,重启即失。你在设备上删除后,不需要另外去服务器上删——那里本来就不存放你的内容,且它拿到的一直是无法解密的密文。</p>
+<h2>四、撤回同意</h2>
+<p><strong>你想做的事</strong>:不再让任何数据离开设备。</p>
+<p><strong>怎么做</strong>:</p>
+<ul>
+<li><strong>停用多设备同步</strong>。停用后,本应用不再向同步服务器发送数据,也不再有任何数据出境。</li>
+</ul>
+<ul>
+<li>若某台设备你不再使用(例如换机、丢失),可在设备名单里<strong>移除该设备</strong>,它将无法再接入你的账户。</li>
+</ul>
+<p><strong>我们要诚实说明它的边界</strong>:移除一台设备,能做到的是「服务器不再向它投递、也不再接受它接入」;但<strong>那台设备上已经同步下去的旧数据仍在它本地,我们没有办法远程抹掉</strong>。这是端到端加密结构的固有限制,不是我们不愿意做。</p>
+<p><strong>另外</strong>:当你的两台设备处于同一个局域网时,本应用会自动尝试点对点直传。<strong>本版本暂未提供关闭该功能的开关。</strong> 若你介意在公共网络下被同网络的人观察到「这两台设备正在同步」这一事实,请在这类网络下暂时停用多设备同步。</p>
+<h2>五、注销账户</h2>
+<p><strong>你想做的事</strong>:删除服务器上与你有关的那几行注册信息。</p>
+<p><strong>这里指的是什么</strong>:如果你开启过多设备同步,同步服务器上会有你的<strong>账户标识、设备标识、设备公钥、设备别名</strong>这几项记录(它们是同步得以进行的必要信息,不含你的任何内容)。注销即删除这几行。</p>
+<p><strong>怎么做</strong>:发邮件到 3069848@qq.com,在信中说明你要注销,并附上你的<strong>账户标识</strong>(在应用的同步设置界面里可以看到)。</p>
+<p>我们会在核实后 <strong>15 个工作日内</strong>处理完毕并回复你。</p>
+<p><strong>注销之后</strong>:你在自己设备上的全部内容<strong>不受影响</strong>,照常可以查看、编辑、导出——本应用的本机功能不依赖我们的任何服务。</p>
+<h2>六、要求解释说明</h2>
+<p>对我们处理个人信息的规则有疑问,可以要求我们作出解释。请发邮件到 3069848@qq.com,我们会在 <strong>15 个工作日内</strong>答复。</p>
+<h2>七、已故用户近亲属的权利</h2>
+<p>若本应用用户不幸离世,其近亲属为自身合法、正当的利益,可以就上述查阅、复制、更正、删除等权利与我们联系(用户生前另有安排的除外)。</p>
+<p>⚠ 请注意一个技术事实:<strong>用户的内容以端到端加密方式保存,解密密钥只在其本人的设备与恢复码中。</strong> 因此我们能够配合处理的,仅限服务器上那几行注册信息;<strong>内容本身我们无法读取,也无法代为提供。</strong> 若需要访问内容,唯一的途径是取得其设备或恢复码。</p>
+<h2>八、投诉与举报</h2>
+<p>如果你认为我们的处理行为侵害了你的权益,或者对我们的答复不满意:</p>
+<ul>
+<li>请先发邮件到 3069848@qq.com,我们会认真对待并尽快答复;</li>
+<li>你也有权向履行个人信息保护职责的部门投诉、举报,或依法向人民法院提起诉讼。</li>
+</ul>
+<h2>九、我们的响应</h2>
+<ul>
+<li><strong>响应时限</strong>:自收到你的请求之日起 <strong>15 个工作日</strong>内答复。</li>
+<li><strong>核验</strong>:为防止他人冒用你的身份行使权利,我们可能需要你提供必要的信息以核验身份。我们只收集为此所必需的最少信息,核验完成后即删除。</li>
+<li><strong>不收费</strong>:上述请求一律免费处理。</li>
+<li><strong>可能拒绝的情形</strong>:法律法规另有规定的,以及请求明显缺乏依据、需要过多重复劳动的,我们可能拒绝或收取合理成本费用,并向你说明理由。</li>
+</ul>
+<h2>十、联系我们</h2>
+<ul>
+<li>电子邮箱:3069848@qq.com</li>
+</ul>
+<p>本页与《朱简隐私政策》一并发布于 <a href="https://zhujian.app/">https://zhujian.app/</a>。</p>
+        </div>
+      </div>
+    </main>
+
+    <footer class="foot">
+      <div class="wrap">
+        <span>© 2026 朱简 zhujian</span>
+        <a href="/">首页</a>
+        <a href="/privacy.html">隐私政策</a>
+        <a href="/privacy-rights.html">隐私权利</a>
+        <a href="/terms.html">用户协议</a>
+        <span class="spacer"></span>
+        
+      </div>
+    </footer>
+  </body>
+</html>
