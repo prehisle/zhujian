@@ -62,7 +62,7 @@ import { identitySig, loadIdentity, signatureChip } from "./identity";
 import { t } from "./i18n";
 import { wireChecklistInput } from "./checklist-input";
 import "./board.css";
-import { el } from "./dom";
+import { el, onDragTarget } from "./dom";
 
 // 跨视图「跳到这张任务卡」通道(搜索命中任务 → 跳看板并高亮)。模块级——
 // 发起方先 focusTask(id) 再 navigate("board")。看板 load() 里、**seq 守卫之后**(确认是
@@ -486,7 +486,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       });
       // 任务卡拖到本 pill = 给那张卡打这个标签(card→pill)。只认 dragging(卡片重排轴);
       // 已挂该标签则不作落点(dropTagOnTask 里也再兜一道)。
-      pill.addEventListener("dragover", (e) => {
+      onDragTarget(pill, (e) => {
         if (!dragging || taskHasTopic(dragging.id, topicId)) return;
         e.preventDefault();
         clearTagHovers();
@@ -1478,9 +1478,9 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       });
 
       // 标签 pill 拖到本卡 = 给本卡打这个标签(pill→card)。只认 draggingTopic;卡片重排
-      // (dragging)时早返回,交给列体处理。stopPropagation 免得冒泡到列体的 dragover/drop
-      // (列体本就 !dragging 自退,双保险)。已挂该标签则不作接收目标(无高亮、不落库)。
-      c.addEventListener("dragover", (e) => {
+      // (dragging)时早返回,交给列处理。stopPropagation 免得冒泡到列的 dragenter/dragover/drop
+      // (列本就 !dragging 自退,双保险)。已挂该标签则不作接收目标(无高亮、不落库)。
+      onDragTarget(c, (e) => {
         if (draggingTopic === null || item.topics.some((t) => t.id === draggingTopic)) return;
         e.preventDefault();
         e.stopPropagation();
@@ -1701,15 +1701,20 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       // 这里不注册 dragover ⇒ 光标就是「不可放下」,而不是放下去再报错。⛔ 别改成
       // 「接下来再报错」——那是把一条已知的拒绝演成一次失败操作。
       if (col.deleted) return section(" col-readonly");
+      const sec = section("");
 
-      // The column body is a drop target: a drop reorders within this column, or —
+      // The column is a drop target: a drop reorders within this column, or —
       // from another column — moves the task here AND inserts it at the dropped spot.
       // Under a topic filter the DOM is only the visible subset, so the drop routes to
       // reorder_task_visible (merged server-side); see the drop handler below.
       // Hover highlight is managed centrally here (clear all, set the one under the
       // pointer) rather than via dragleave — dragleave fires as the pointer crosses
       // child cards, and toggling the class off/on each time made the column blink.
-      body.addEventListener("dragover", (e) => {
+      // ⭐ 落点是**整根列**(列头 + 列体),不只列体(666):此前列头那条 35px 的带子不接放,
+      // 往一列的「上面」拖过去松手就退回。列头上松手 = 指针在第一张卡之上 ⇒ dragAfterElement
+      // 给出首卡,自然落到列首;高亮 / 插入线 / 自动滚仍画在列体上。列与列之间那 16px 的缝
+      // 刻意仍不接:那儿松手退回是「没放进任何一列」,不是误伤。
+      onDragTarget(sec, (e) => {
         if (!dragging) return;
         e.preventDefault();
         clearDropHovers();
@@ -1717,7 +1722,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         placeDropLine(body, e.clientY);
         pumpAutoScroll(body, e); // 贴着列的上下边就自动滚(长列里拖到另一头的唯一路)
       });
-      body.addEventListener("drop", (e) => {
+      sec.addEventListener("drop", (e) => {
         e.preventDefault();
         const d = dragging;
         dragging = null;
@@ -1752,14 +1757,14 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         if (filtered) reorderVisible(d.id, d.from, status, base, ordered);
         else reorder(d.id, d.from, status, base, ordered);
       });
-      return section("");
+      return sec;
     });
 
     // The 归档 drop strip below the columns — only a 已完成 card may land here.
     const zone = el("div", { className: "archive-zone" }, [
       el("span", { className: "az-label", textContent: t("board.archiveZoneHint") }),
     ]);
-    zone.addEventListener("dragover", (e) => {
+    onDragTarget(zone, (e) => {
       if (dragging && dragging.from === DONE_COLUMN) {
         e.preventDefault();
         clearDropHovers();

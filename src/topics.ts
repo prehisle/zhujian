@@ -8,7 +8,7 @@ import { armDismiss, registerViewKeys } from "./hotkey-menu";
 import { TAG_COLORS } from "./tag-color";
 import { t } from "./i18n";
 import "./topics.css";
-import { el } from "./dom";
+import { el, onDragTarget } from "./dom";
 
 // 标签视图。底层数据是 topics/item_topic(命令名、表名沿用 topic),对用户重定位为
 // 「标签」——轻量分类 + 下钻聚合(挂该标签的灵感 + 任务),不再承诺「知识结构」。早期
@@ -263,7 +263,8 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     ]);
 
     // 拖排序落点:只认同层兄弟(同 parentElement);按指针在目标行上/下半决定插前/插后。
-    sec.addEventListener("dragover", (e) => {
+    // dragenter 也走这一份(onDragTarget 头注:只接 dragover 的落点会在跨进子元素那一拍答「不可放」)。
+    onDragTarget(sec, (e) => {
       if (draggingTopicId === null || draggingTopicId === topic.id) return;
       if (sec.parentElement !== sections.get(draggingTopicId)?.parentElement) return; // 跨层不收
       e.preventDefault();

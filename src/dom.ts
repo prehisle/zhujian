@@ -31,3 +31,15 @@ export function btn(label: string, cls: string, onClick: () => void): HTMLButton
   b.addEventListener("click", onClick);
   return b;
 }
+
+/** 把一个元素接成原生拖放的落点:`dragenter` 与 `dragover` 挂**同一个**处理器(里面该 preventDefault
+ *  的照旧由它自己判)。⛔ 只接 dragover 不够 —— 引擎每次指针**跨进一个新元素**(卡片标题、chip、
+ *  日期…)那一拍只发 dragenter、不发 dragover,而那一拍有没有 preventDefault 就是引擎回给系统的
+ *  「可不可放」;要到下一次鼠标移动的 dragover 才再答一遍。⇒ 每跨一个元素就有一拍「不可放」,
+ *  松手恰好落在那一拍(最后一次移动正好是跨界那一下、或长列自动滚动时卡片在指针下面滑过)=
+ *  系统按取消收场、卡片弹回原位(666,用户报「拖到别的列有时会退回来」;CDP 驱动引擎实测:
+ *  跨进新元素那一拍确实只有一枚未被取消的 dragenter,而最后一拍未取消时 drop 根本不派发)。 */
+export function onDragTarget(target: HTMLElement, handler: (e: DragEvent) => void): void {
+  target.addEventListener("dragenter", handler);
+  target.addEventListener("dragover", handler);
+}

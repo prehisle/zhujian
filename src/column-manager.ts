@@ -30,7 +30,7 @@ import {
 } from "./board-columns";
 import { t } from "./i18n";
 import "./column-manager.css";
-import { el } from "./dom";
+import { el, onDragTarget } from "./dom";
 
 let overlay: HTMLDivElement | null = null;
 
@@ -189,7 +189,8 @@ async function render(panel: HTMLElement): Promise<void> {
     });
     headRow.insertBefore(handle, name);
 
-    sec.addEventListener("dragover", (e) => {
+    // dragenter 也走这一份(onDragTarget 头注:只接 dragover 的落点会在跨进子元素那一拍答「不可放」)。
+    onDragTarget(sec, (e) => {
       if (draggingId === null || draggingId === c.id) return;
       e.preventDefault();
       if (e.dataTransfer) e.dataTransfer.dropEffect = "move";

@@ -224,6 +224,68 @@ describe("任务看板 · 拖动排序", () => {
     void x;
   });
 
+  // ---- 落点的「可放」要在 dragenter 那一拍就答(666)---------------------------
+  // 用户实报「拖到别的列有时会退回来」。引擎每次指针跨进新元素那一拍只发 dragenter;它没被
+  // preventDefault,系统就按「不可放」记着,松手恰好落在这一拍 = 卡片弹回原位。合成事件只能
+  // 证「处理器接上了」(dragenter 真被取消),证不了系统那半 —— 那半的机制与 CDP 读数在
+  // src/dom.ts onDragTarget 头注。
+  it("拖动中:列头 / 列体 / 卡片标题 / 归档条上的 dragenter 都被取消(= 可放)", async () => {
+    const Z = "归档条-丁";
+    const z = await invoke("create_task", { title: Z });
+    await invoke("update_task_status", { id: z, to: "done" });
+    await goNotebook("board");
+    await (await cardInColumn("done", Z)).waitForExist({ timeout: 8000 });
+    const prevented = await browser.execute((zt) => {
+      const fire = (el, type) => {
+        const ev = new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: new DataTransfer() });
+        el.dispatchEvent(ev);
+        return ev.defaultPrevented;
+      };
+      const q = (sel) => document.querySelector(sel);
+      // 一张普通卡在拖:列头 / 列体 / 另一张卡的标题都该答「可放」
+      const card = q(".col.doing .tcard");
+      fire(card, "dragstart");
+      const out = {
+        head: fire(q(".col.todo .col-head"), "dragenter"),
+        body: fire(q(".col.todo .col-body"), "dragenter"),
+        title: fire(q(".col.todo .tcard .ttitle"), "dragenter"),
+        zoneForTodoCard: fire(q(".archive-zone"), "dragenter"), // 非已完成卡:归档条不接,答「不可放」
+      };
+      fire(card, "dragend");
+      // 已完成卡在拖:归档条答「可放」
+      const done = [...document.querySelectorAll(".col.done .tcard")].find((c) => c.textContent.includes(zt));
+      fire(done, "dragstart");
+      out.zoneForDoneCard = fire(q(".archive-zone"), "dragenter");
+      fire(done, "dragend");
+      return out;
+    }, Z);
+    expect(prevented).toEqual({ head: true, body: true, title: true, zoneForTodoCard: false, zoneForDoneCard: true });
+  });
+
+  it("拖到列头松手 → 落到那一列的列首(列头也是落点)", async () => {
+    // 进行中此刻是 D1,C1,D2(上一例留下的);把待办里的乙拖到「进行中」**列头**上松手。
+    await goNotebook("board");
+    await (await cardInColumn("todo", R2)).waitForExist({ timeout: 8000 });
+    await browser.execute((t) => {
+      const card = [...document.querySelectorAll(".tcard")].find((c) => c.textContent.includes(t));
+      const head = document.querySelector(".col.doing .col-head");
+      const r = head.getBoundingClientRect();
+      const y = r.top + r.height / 2;
+      const dt = new DataTransfer();
+      card.dispatchEvent(new DragEvent("dragstart", { bubbles: true, dataTransfer: dt }));
+      head.dispatchEvent(new DragEvent("dragenter", { bubbles: true, cancelable: true, dataTransfer: dt, clientY: y }));
+      head.dispatchEvent(new DragEvent("dragover", { bubbles: true, cancelable: true, dataTransfer: dt, clientY: y }));
+      head.dispatchEvent(new DragEvent("drop", { bubbles: true, cancelable: true, dataTransfer: dt, clientY: y }));
+      card.dispatchEvent(new DragEvent("dragend", { bubbles: true, dataTransfer: dt }));
+    }, R2);
+    await browser.waitUntil(async () => (await statusOf(R2)) === "doing", { timeout: 8000 });
+    await browser.waitUntil(
+      async () =>
+        JSON.stringify(await columnOrder("doing", [R2, D1, C1, D2])) === JSON.stringify([R2, D1, C1, D2]),
+      { timeout: 8000, timeoutMsg: "列头上松手没有把卡放到那一列的列首" },
+    );
+  });
+
   // ---- 长列里挪到另一头 ------------------------------------------------------
   // 用户实报:列长到出滚动条时,「把最下面那张拖到最上面」做不到 —— 拖到列顶边缘,列
   // 一动不动(原生 HTML5 DnD 不替我们滚内层滚动容器)。两条修法各一组例。
