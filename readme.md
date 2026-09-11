@@ -6,7 +6,7 @@
 
 ![朱简的任务看板:待办 / 进行中 / 待确认 / 已完成四列](site/shots/desktop-board.png)
 
-- **下载**:Windows 与 Android 是正式版,在 [zhujian.app](https://zhujian.app);macOS 与 Linux 是尝鲜版。
+- **下载**:Windows 与 Android 是正式版,在 [zhujian.app](https://zhujian.app);鸿蒙版在[华为应用市场](https://appgallery.huawei.com/app/detail?id=C6917614407069105862);macOS 与 Linux 是尝鲜版。
 - **免费使用 · 开源(MIT)** · 不用注册。
 - **没有 AI 功能,也不依赖大模型**:从记下到做完,每一步都由你自己动手。
 

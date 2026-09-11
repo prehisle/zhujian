@@ -608,7 +608,8 @@
         justify-content: center;
         flex-wrap: wrap;
         gap: 20px;
-        max-width: 560px;
+        /* 三张主卡(Windows / Android / HarmonyOS)一行放下;窄屏靠 wrap 自己叠。 */
+        max-width: 840px;
         margin-inline: auto;
       }
       .dl-card {
@@ -768,7 +769,7 @@
       <section class="hero">
         <div class="wrap">
           <div class="hero-copy">
-            <span class="eyebrow" data-i18n="hero.eyebrow">Windows · Android · 免费使用</span>
+            <span class="eyebrow" data-i18n="hero.eyebrow">Windows · Android · HarmonyOS · 免费使用</span>
             <!-- 主标题的换行与朱砂重音是版式的一部分,故每一段各自成键(data-i18n 只覆写
                  textContent、带子元素会被吞掉)。末段在中文里是句号、在英文里是句点 ——
                  重音在中文落在「想清楚」、在英文落在 later,故 line3 那一格两档承担的
@@ -884,7 +885,7 @@
         <div class="wrap">
           <span class="eyebrow" data-i18n="dl.eyebrow">现在就能用</span>
           <h2 class="section-title" data-i18n="dl.title">装一个试试</h2>
-          <p class="section-lead" data-i18n="dl.lead">Windows 和 Android 是正式版,装好后会自动检查新版本并提示你。macOS 与 Linux 是尝鲜版。</p>
+          <p class="section-lead" data-i18n="dl.lead">Windows 和 Android 是正式版,装好后会自动检查新版本并提示你;鸿蒙版在华为应用市场,更新由商店管。macOS 与 Linux 是尝鲜版。</p>
 
           <!-- 版本号刻意留在 markup 里、不进字典;字典只装那半句需要翻的机型说明。
                ⚠ 这一页的版本号有**两种写法**:显示用的 `· v<版本>` 与下载 href 里的包名
@@ -901,6 +902,14 @@
               <div class="os">Android</div>
               <div class="meta"><span data-i18n="dl.androidMeta">11+ · 64 位</span> · v0.3.39</div>
               <span class="btn btn-primary" data-i18n="dl.apkBtn">下载 APK</span>
+            </a>
+            <!-- 鸿蒙:商店链接,⛔ 刻意不印版本号 —— 它自成一条版本线(与安卓解绑),
+                 bump-version.mjs 只认桌面 / 安卓两侧,印了就是没人核的第五处;商店页自己会显版本。
+                 APP ID 是 AGC 分的,商店详情页只在 HarmonyOS 5 及以上设备的应用市场里能装。 -->
+            <a class="dl-card" href="https://appgallery.huawei.com/app/detail?id=C6917614407069105862">
+              <div class="os">HarmonyOS</div>
+              <div class="meta" data-i18n="dl.hmMeta">5 及以上 · 华为应用市场</div>
+              <span class="btn btn-primary" data-i18n="dl.hmBtn">去应用市场</span>
             </a>
           </div>
           <!-- ⚠ 三个尝鲜版链接的 href 里照旧带版本号(deploy §8.1 「第四处」的一部分):
@@ -992,7 +1001,7 @@
           "nav.langToggle": { zh: "EN", en: "中文" },
 
           /* — 首屏 — */
-          "hero.eyebrow": { zh: "Windows · Android · 免费使用", en: "Windows · Android · Free to use" },
+          "hero.eyebrow": { zh: "Windows · Android · HarmonyOS · 免费使用", en: "Windows · Android · HarmonyOS · Free to use" },
           "hero.line1": { zh: "随手记一笔,", en: "Jot it down now," },
           "hero.line2": { zh: "再慢慢", en: "think it through" },
           "hero.line3": { zh: "想清楚", en: "later" },
@@ -1047,11 +1056,13 @@
           /* — 下载 — */
           "dl.eyebrow": { zh: "现在就能用", en: "Ready to use" },
           "dl.title": { zh: "装一个试试", en: "Give it a try" },
-          "dl.lead": { zh: "Windows 和 Android 是正式版,装好后会自动检查新版本并提示你。macOS 与 Linux 是尝鲜版。", en: "Windows and Android are the supported builds; once installed they check for new versions and prompt you. macOS and Linux are early builds." },
+          "dl.lead": { zh: "Windows 和 Android 是正式版,装好后会自动检查新版本并提示你;鸿蒙版在华为应用市场,更新由商店管。macOS 与 Linux 是尝鲜版。", en: "Windows and Android are the supported builds; once installed they check for new versions and prompt you. The HarmonyOS build is on Huawei AppGallery, which handles its updates. macOS and Linux are early builds." },
           "dl.winMeta": { zh: "10 / 11 · 64 位", en: "10 / 11 · 64-bit" },
           "dl.winBtn": { zh: "下载安装包", en: "Download .exe" },
           "dl.androidMeta": { zh: "11+ · 64 位", en: "11+ · 64-bit" },
           "dl.apkBtn": { zh: "下载 APK", en: "Download APK" },
+          "dl.hmMeta": { zh: "5 及以上 · 华为应用市场", en: "5 and up · Huawei AppGallery" },
+          "dl.hmBtn": { zh: "去应用市场", en: "Open AppGallery" },
           "dl.trialTag": { zh: "尝鲜版", en: "Early build" },
           "dl.trialLine": { zh: "macOS(Apple 芯片)与 Linux(x86_64):没签名,首次打开要在系统里手动放行;Linux 上热键与托盘在部分桌面环境可能不全。", en: "macOS (Apple silicon) and Linux (x86_64): unsigned, so allow them by hand on first launch; on Linux the hotkey and tray may be incomplete on some desktops." },
           "dl.macBtn": { zh: "下载 dmg", en: "Download dmg" },

@@ -6,7 +6,7 @@ Zhujian is a tool for notes and tasks. Jot a thought down; when it becomes somet
 
 ![Zhujian's task board: To do / In progress / To confirm / Done](site/shots/desktop-board.png)
 
-- **Download**: Windows and Android are the supported builds, at [zhujian.app](https://zhujian.app); macOS and Linux are early builds.
+- **Download**: Windows and Android are the supported builds, at [zhujian.app](https://zhujian.app); the HarmonyOS build is on [Huawei AppGallery](https://appgallery.huawei.com/app/detail?id=C6917614407069105862); macOS and Linux are early builds.
 - **Free to use · Open source (MIT)** · No sign-up.
 - **No AI features, and no dependency on large language models**: from noting something down to getting it done, every step is yours.
 
