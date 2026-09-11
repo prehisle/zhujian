@@ -1,0 +1,38 @@
+{
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+  "app": {
+    "windows": [
+      {
+        "label": "capture",
+        "title": "朱简 · 捕获",
+        "width": 560,
+        "height": 140,
+        "center": true,
+        "resizable": false,
+        "decorations": false,
+        "transparent": true,
+        "shadow": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "visible": false
+      },
+      {
+        "label": "notebook",
+        "title": "朱简",
+        "url": "notebook.html",
+        "width": 1040,
+        "height": 680,
+        "minWidth": 900,
+        "minHeight": 600,
+        "center": true,
+        "resizable": true,
+        "decorations": true,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "shadow": false,
+        "dragDropEnabled": false,
+        "visible": false
+      }
+    ]
+  }
+}

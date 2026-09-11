@@ -2244,25 +2244,134 @@ fn wm_composited() -> bool {
 /// 再召唤直接 show 即可,不必重摆。
 static NOTEBOOK_MAXIMIZE_RESTORED: AtomicBool = AtomicBool::new(false);
 
-/// 读 window-state 插件写的状态文件,看 notebook 上次是否记为最大化。插件把它存在
-/// app 配置目录(`app_config_dir`)、e2e 换 `.window-state.e2e.json` 文件名。读不到 /
+/// window-state 插件写的状态文件(app 配置目录下,e2e 换 `.window-state.e2e.json` —— 文件名
+/// 由插件装配时定,这里只问它)。读的两处(`saved_notebook_maximized` / Windows 那条回写)共用。
+fn window_state_path<R: Runtime>(app: &AppHandle<R>) -> Option<PathBuf> {
+    Some(app.path().app_config_dir().ok()?.join(app.filename()))
+}
+
+/// 读 window-state 插件写的状态文件,看 notebook 上次是否记为最大化。读不到 /
 /// 解析失败都当「非最大化」(fail-safe:大不了按记住的尺寸显示,不强行最大化)。
 fn saved_notebook_maximized<R: Runtime>(app: &AppHandle<R>) -> bool {
-    let name = if e2e_db_path().is_some() {
-        ".window-state.e2e.json"
-    } else {
-        ".window-state.json"
-    };
-    let Ok(dir) = app.path().app_config_dir() else {
+    let Some(path) = window_state_path(app) else {
         return false;
     };
-    let Ok(text) = std::fs::read_to_string(dir.join(name)) else {
+    let Ok(text) = std::fs::read_to_string(path) else {
         return false;
     };
     serde_json::from_str::<serde_json::Value>(&text)
         .ok()
         .and_then(|v| v.get("notebook")?.get("maximized")?.as_bool())
         .unwrap_or(false)
+}
+
+/// 主窗几何落盘(两处调用:关窗即存、移动 / 缩放防抖后存)。
+/// ⛔ **最小化时不存**(667):tao 收到最小化那记 WM_SIZE 会把自己的「最大化」标志清掉,而插件
+/// 读的正是这枚标志 ⇒ 最大化的窗一最小化就会被存成「非最大化」,此刻强杀 / 崩掉,重启就不再
+/// 最大化(隔离实例实测);最小化之前那份本就是对的,留着。存失败只记一笔,不拖垮别的。
+fn save_notebook_geometry<R: Runtime>(window: &tauri::WebviewWindow<R>) {
+    if window.is_minimized().unwrap_or(false) {
+        return;
+    }
+    if let Err(e) = window.app_handle().save_window_state(WINDOW_STATE_FLAGS) {
+        log::warn!("主窗几何落盘失败:{e}");
+        return;
+    }
+    #[cfg(windows)]
+    {
+        if let Err(e) = win_placement::patch_saved_normal_rect(window) {
+            log::warn!("主窗「还原矩形」回写状态文件失败:{e}");
+        }
+    }
+}
+
+// ── Windows:主窗「还原矩形」以系统为准(667)──────────────────────────────────────
+// window-state 插件记「最大化之前窗口在哪」靠 prev_x/prev_y,而那两格是在 Moved 事件里
+// 「prev := x, x := 新位置」这么滚的:最大化那一下 Moved 一次(prev 对了),从最小化还原又
+// Moved 一次(prev 变成最大化的原点),重启后首次召唤再 Moved 一次(同样)⇒ 经历过一次
+// 「最大化态重启」之后 prev 必错(隔离实例三条路各错了一次)。系统自己在
+// WINDOWPLACEMENT.rcNormalPosition 里记着这块矩形且从不弄丢,故:落盘后把插件文件里 notebook
+// 的 prev / 尺寸改成它(patch_saved_normal_rect);首次召唤让系统「以最大化显示、还原矩形不动」
+// 一步到位(show_maximized_keeping_normal)。
+// ⚠ rcNormalPosition 是**工作区坐标**(相对该显示器工作区左上角;任务栏在上 / 在左时与屏幕坐标
+// 差一条任务栏),插件的 x/y 是屏幕坐标 ⇒ 回写前按窗口所在显示器换算(Chromium 的
+// HWNDMessageHandler::GetWindowPlacement 同一算法)。⛔ 别拿主显示器的工作区替:窗在副屏时会错。
+#[cfg(windows)]
+mod win_placement {
+    use tauri::{Manager, Runtime};
+    use tauri_plugin_window_state::AppHandleExt as _;
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::Graphics::Gdi::{
+        GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+    };
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetWindowPlacement, SetWindowPlacement, SW_SHOWMAXIMIZED, WINDOWPLACEMENT,
+    };
+
+    fn placement(hwnd: HWND) -> Result<WINDOWPLACEMENT, String> {
+        let mut wp = WINDOWPLACEMENT {
+            length: std::mem::size_of::<WINDOWPLACEMENT>() as u32,
+            ..Default::default()
+        };
+        unsafe { GetWindowPlacement(hwnd, &mut wp) }.map_err(|e| e.to_string())?;
+        Ok(wp)
+    }
+
+    /// 以最大化态显示,`rcNormalPosition`(取消最大化后回到哪块)原样保留 —— 插件在窗口
+    /// 还隐藏时已把它摆成上次那块。
+    pub fn show_maximized_keeping_normal<R: Runtime>(
+        window: &tauri::WebviewWindow<R>,
+    ) -> Result<(), String> {
+        let hwnd = window.hwnd().map_err(|e| e.to_string())?;
+        let mut wp = placement(hwnd)?;
+        wp.showCmd = SW_SHOWMAXIMIZED.0 as u32;
+        unsafe { SetWindowPlacement(hwnd, &wp) }.map_err(|e| e.to_string())
+    }
+
+    /// 插件落盘之后:窗口此刻最大化的话,把文件里 notebook 的 prev_x/prev_y/width/height 改成
+    /// 系统记的还原矩形(屏幕坐标)。非最大化时插件自己记的 x/y/宽高就是对的,一字不碰。
+    pub fn patch_saved_normal_rect<R: Runtime>(
+        window: &tauri::WebviewWindow<R>,
+    ) -> Result<(), String> {
+        let hwnd = window.hwnd().map_err(|e| e.to_string())?;
+        let wp = placement(hwnd)?;
+        if wp.showCmd != SW_SHOWMAXIMIZED.0 as u32 {
+            return Ok(());
+        }
+        let mut mi = MONITORINFO {
+            cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+            ..Default::default()
+        };
+        let mon = unsafe { MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST) };
+        if !unsafe { GetMonitorInfoW(mon, &mut mi) }.as_bool() {
+            return Err("GetMonitorInfoW 失败".to_string());
+        }
+        let rc = wp.rcNormalPosition;
+        let (w, h) = (rc.right - rc.left, rc.bottom - rc.top);
+        if w <= 0 || h <= 0 {
+            return Err(format!("系统记的还原矩形不成立:{w}×{h}"));
+        }
+        let x = rc.left + (mi.rcWork.left - mi.rcMonitor.left);
+        let y = rc.top + (mi.rcWork.top - mi.rcMonitor.top);
+        let app = window.app_handle();
+        let path = app
+            .path()
+            .app_config_dir()
+            .map_err(|e| e.to_string())?
+            .join(app.filename());
+        let text = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+        let mut v: serde_json::Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
+        let nb = v
+            .get_mut("notebook")
+            .and_then(|n| n.as_object_mut())
+            .ok_or_else(|| "状态文件里没有 notebook 这一格".to_string())?;
+        nb.insert("prev_x".into(), x.into());
+        nb.insert("prev_y".into(), y.into());
+        nb.insert("width".into(), w.into());
+        nb.insert("height".into(), h.into());
+        let bytes = serde_json::to_vec_pretty(&v).map_err(|e| e.to_string())?;
+        std::fs::write(&path, bytes).map_err(|e| e.to_string())
+    }
 }
 
 /// 把召唤出来的窗口抬到最前并给键盘焦点。分平台:Windows/macOS 的 set_focus() 够用;
@@ -2306,17 +2415,31 @@ fn show_window<R: Runtime>(app: &AppHandle<R>, label: &str) {
 
     // 57 的几何恢复:插件在窗口还隐藏时就把尺寸/位置摆好了——非最大化场景足够。但
     // 「上次是最大化」不行:maximize() 在隐藏窗上不生效、show() 之后才认,若等 show
-    // 完再 maximize 会先闪一下小窗。所以在 notebook 首个召唤、且上次记为最大化时,先把
-    // 窗口摆成显示器工作区(与最大化后同一块矩形),再 show,最后 maximize 只翻状态位、
-    // 几何不动 —— 打开即最大化、全程无闪。只做一次:之后隐藏/召唤都保留几何。
+    // 完再 maximize 会先闪一下小窗。所以在 notebook 首个召唤、且上次记为最大化时补一手,
+    // 打开即最大化、全程无闪。只做一次:之后隐藏/召唤都保留几何。
+    // ⭐ Windows(667)让系统「以最大化显示、还原矩形不动」一步到位(`SetWindowPlacement`):
+    // 插件摆好的那块矩形就是系统记的 rcNormalPosition,用户点「取消最大化」回到的正是它。
+    // ⛔ 89 那手「先摆成整块工作区再 show 再 maximize」在 Windows 上撤了 —— 它把还原矩形
+    // 改成了整块工作区,取消最大化得到的是铺满工作区的窗,原尺寸随即被存回文件、从此没了
+    // (隔离实例实测:文件记 1200×800,取消最大化后 3840×2114)。其余平台照旧走 89 那手。
+    // 后面的 show() / maximize() 在 Windows 上只是让 tao 的可见 / 最大化两枚标志跟上系统。
     if label == "notebook"
         && !NOTEBOOK_MAXIMIZE_RESTORED.swap(true, Ordering::Relaxed)
         && saved_notebook_maximized(app)
     {
-        if let Ok(Some(mon)) = window.current_monitor() {
-            let wa = mon.work_area();
-            let _ = window.set_position(wa.position);
-            let _ = window.set_size(wa.size);
+        #[cfg(windows)]
+        {
+            if let Err(e) = win_placement::show_maximized_keeping_normal(&window) {
+                log::error!("按最大化召唤主窗失败,退回 show + maximize:{e}");
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            if let Ok(Some(mon)) = window.current_monitor() {
+                let wa = mon.work_area();
+                let _ = window.set_position(wa.position);
+                let _ = window.set_size(wa.size);
+            }
         }
         if window.is_minimized().unwrap_or(false) {
             let _ = window.unminimize();
@@ -3763,11 +3886,12 @@ pub fn run() {
             let notebook = app
                 .get_webview_window("notebook")
                 .expect("notebook window must exist");
-            // 窗口装饰分平台:config 里 notebook 开了 decorations + titleBarStyle Overlay,
-            // 让 macOS 显示系统原生红绿灯(左上角);Windows/Linux 无红绿灯、用前端自绘按钮,
-            // 运行时把原生边框关掉回到无边框态。窗口启动即隐藏(visible:false),此刻关无闪烁。
-            #[cfg(not(target_os = "macos"))]
-            let _ = notebook.set_decorations(false);
+            // 窗口装饰分平台**在配置里分**:`tauri.conf.json` 的 notebook 是无边框(Windows/Linux
+            // 用前端自绘按钮),`tauri.macos.conf.json` 整份覆盖 windows 数组、给 mac 开 decorations
+            // + titleBarStyle Overlay(系统原生红绿灯)。⛔ 别改回 212 那手「config 开边框、非 mac
+            // 运行时 set_decorations(false)」(667):窗口几何的恢复发生在 setup 之前、那时窗还带着
+            // 系统边框,恢复的是「内容区 W×H」,setup 里再关边框,边框那圈就变成内容区 ⇒ 每次重启
+            // 窗口长大一圈(150% DPI 下 22×56 像素,隔离实例三次重启 1100×750 → 1122×806 → 1144×862)。
             // mac 原生窗口阴影:config 的 shadow:false 是为 Windows/Linux 无边框态保留,
             // 这里只在 mac 运行时开启——原生阴影 + 系统窗口边,是「与同色背景区分」的地道办法
             // (mac 上前端自绘的方形外框线 body::after 已隐,见 notebook.html)。
@@ -3782,6 +3906,7 @@ pub fn run() {
             let (geom_tx, geom_rx) = std::sync::mpsc::channel::<()>();
             {
                 let app_geom = notebook.app_handle().clone();
+                let notebook_geom = notebook.clone();
                 std::thread::spawn(move || {
                     while geom_rx.recv().is_ok() {
                         // 收到一个事件后持续吸收后续事件,直到 600ms 无新动静才落盘。
@@ -3791,10 +3916,8 @@ pub fn run() {
                         {}
                         // save_window_state 要读窗口几何(tao 要求主线程),从后台线程直调会
                         // 失败;调度到主线程执行(CloseRequested 那次本就在主线程,故无需)。
-                        let app_save = app_geom.clone();
-                        let _ = app_geom.run_on_main_thread(move || {
-                            let _ = app_save.save_window_state(WINDOW_STATE_FLAGS);
-                        });
+                        let nb = notebook_geom.clone();
+                        let _ = app_geom.run_on_main_thread(move || save_notebook_geometry(&nb));
                     }
                 });
             }
@@ -3802,9 +3925,7 @@ pub fn run() {
                 // 关窗即存一次几何(别赌干净退出:常驻托盘、可能强杀/断电)。存失败不致命。
                 tauri::WindowEvent::CloseRequested { api, .. } => {
                     api.prevent_close();
-                    let _ = notebook_for_close
-                        .app_handle()
-                        .save_window_state(WINDOW_STATE_FLAGS);
+                    save_notebook_geometry(&notebook_for_close);
                     let _ = notebook_for_close.hide();
                 }
                 // 移动/缩放:防抖落盘(见上)。send 失败(防抖线程已退出)无害。

@@ -106,3 +106,15 @@ objc2-foundation = { version = "0.3", default-features = false, features = [
 [target.'cfg(target_os = "linux")'.dependencies]
 gtk = "0.18"
 gdkx11 = "0.18"
+
+# Windows 主窗几何的「还原矩形」直接问系统(lib.rs `win_placement`,667):window-state 插件
+# 记的 prev_x/prev_y 每一次 Moved 都会滚一格,经历过一次「最大化态重启」就必错,而
+# WINDOWPLACEMENT.rcNormalPosition 从不弄丢。GetWindowPlacement / SetWindowPlacement 住在
+# `windows` 0.61 —— tauri 自己就依赖它(`hwnd()` 交出来的 HWND 就是这个版本的类型),这里只是
+# 提成直接依赖、**只挂 Windows target 段**,mac/Linux 构建拉都不拉;特性按需勾。
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_UI_WindowsAndMessaging",
+] }
