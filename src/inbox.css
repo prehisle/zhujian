@@ -167,6 +167,20 @@
 .v-inbox .note.editing { flex-direction: column; align-items: stretch; gap: 10px; }
 .v-inbox .note.editing .note-time { margin-top: 4px; }
 
+/* ---- 拖拽打标签(用户面 92 第三半;与看板 .tcard 同一套语汇,pill 那半在 filter-bar.css) ---- */
+/* 字是字、纸是纸:按住正文是选字、按住纸面(内边距、时间行、标签行)才是拖卡 —— 分家的活在
+   inbox.ts 的 mousedown 里做(Blink 只要祖先 draggable 就优先起拖,CSS 压不过它,那里有读数)。
+   这里两条只管**长相**:`draggable=true` 是 Chromium 的表现属性,会顺手把整卡的 user-select
+   置 none,连带正文上的光标变成箭头 —— 在卡片自己身上开回 text,字上才是 I 形;纸面是抓手。 */
+.v-inbox .note[draggable="true"] { cursor: grab; user-select: text; }
+.v-inbox .note[draggable="true"] .note-text { cursor: auto; }
+.v-inbox .note.dragging { opacity: 0.45; cursor: grabbing; }
+.v-inbox .note.tag-drop-hover {
+  outline: 1.5px dashed var(--seal);
+  outline-offset: -2px;
+  background: var(--seal-tint);
+}
+
 .v-inbox .note-body { flex: 1; min-width: 0; }
 .v-inbox .note-text {
   margin: 0;

@@ -258,19 +258,13 @@
 }
 
 /* 拖拽打标签(1a/1b):任务卡拖到标签 pill,或标签 pill 拖到任务卡,松手即打上该标签。
-   两向落点都点亮成朱砂,与列体落点同一套语汇(手势即回执)。 */
+   两向落点都点亮成朱砂,与列体落点同一套语汇(手势即回执)。pill 那半(.tag-drop-hover /
+   .tag-dragging)住共享件 filter-bar.css —— 随记也接了同一套(用户面 92 第三半)。 */
 .v-board .tcard.tag-drop-hover {
   outline: 1.5px dashed var(--seal);
   outline-offset: -2px;
   background: var(--seal-tint);
 }
-.v-board .tf-pill.tag-drop-hover {
-  border-color: var(--seal);
-  background: var(--seal-tint);
-  color: var(--seal);
-}
-/* 正被拖动的标签 pill(pill→card):半透明,呼应卡片 .dragging 的手感。 */
-.v-board .tf-pill.tag-dragging { opacity: 0.45; }
 /* The insertion marker showing where a dragged card will land. A real-height,
    solid-filled pill (not a zero-height border box, which WebView2 renders as a
    skewed sliver). The negative top margin keeps net layout shift at zero, so

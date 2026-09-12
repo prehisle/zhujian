@@ -110,6 +110,15 @@
    弱一档表示「这儿现在是空的」,但仍是可点的筛选钮(点了走筛空空态)。选中态照常压过。 */
 .tf-pill.empty { color: var(--ink-faint); border-color: var(--line); }
 .tf-pill.empty:hover { color: var(--ink-soft); border-color: var(--seal-line); }
+/* 拖拽打标签的 pill 两态(看板与随记共用;卡片那半各住 board.css / inbox.css):
+   卡片拖到 pill 上 = 落点点亮成朱砂;pill 自己被拖走时半透明,呼应卡片 .dragging 的手感。
+   带容器选择器是为了压过上面 .empty / .empty:hover —— 零计数的 pill(499 起整族画出)一样是落点。 */
+.topic-filter .tf-pill.tag-drop-hover {
+  border-color: var(--seal);
+  background: var(--seal-tint);
+  color: var(--seal);
+}
+.topic-filter .tf-pill.tag-dragging { opacity: 0.45; }
 /* 子标签 pill:虚线描边 + 一枚淡连接符,一眼读作「父的子项」(横排里以皮肤区分,不缩进)。 */
 .tf-pill.child { border-style: dashed; }
 .tf-pill.child::before {

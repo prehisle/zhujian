@@ -53,7 +53,7 @@ import { dayKey, dayLabel, startOfWeek, when } from "./tasktime";
 import { identitySig, loadIdentity, signatureChip } from "./identity";
 import { wireChecklistInput } from "./checklist-input";
 import "./inbox.css";
-import { el } from "./dom";
+import { el, onDragTarget } from "./dom";
 
 // Mirrors of the Rust contracts (lib.rs) — the fields this view consumes. 想法 = a live
 // idea (未归类 + 已归类 merged); a tag is just metadata it may or may not carry, so one
@@ -221,6 +221,70 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       otherSpaces = all.filter((s) => s.alive && s.id !== currentSpaceId());
     })
     .catch(() => {});
+
+  // 拖拽打标签(用户面 92 第三半),两根轴镜像 board.ts:卡→pill 认 `dragging`、pill→卡认
+  // `draggingTopic`,互斥并存,两边的 dragover/drop 各自先查自己那根、对方拖动时早返回。
+  // ⛔ 随记**没有**卡片重排轴(时间轴的顺序由 created_at 定),`dragging` 在这里只为打标签
+  // 而存在 —— 松在 pill 以外任何地方都不落库、不改序。去重判据读**数据**(卡片自己的
+  // `topics` / 拖起时抄下的 `has`),不读 chip DOM:筛单个标签时那枚 chip 是不渲染的(见 row)。
+  let dragging: { id: string; has: Set<string>; onErr: (e: unknown) => void } | null = null;
+  let draggingTopic: string | null = null;
+  // 落点高亮与看板同规:每次 dragover 先清全场再点亮当前一枚,不靠 dragleave(它在子元素
+  // 间穿梭会闪)。pill 在 filterBar、卡片在 list,两处都扫。
+  function clearTagHovers(): void {
+    for (const host of [list, filterBar])
+      host.querySelectorAll(".tag-drop-hover").forEach((e) => e.classList.remove("tag-drop-hover"));
+  }
+  // 落库走 ⋯ 菜单「标签」选既有标签的同一条命令(file_note_to_topic,已归类 / 未归类都吃);
+  // 已挂则 no-op —— link 唯一键会报错,两向的落点判据也都先挡了一道。失败写在那张卡上
+  // (同 removeTag 的形:卡级就地错误行,不换整版列表)。
+  async function dropTagOnNote(noteId: string, topicId: string, has: Set<string>, onErr: (e: unknown) => void): Promise<void> {
+    if (has.has(topicId)) return;
+    try {
+      await invoke("file_note_to_topic", { id: noteId, topicId, newTitle: null });
+    } catch (e) {
+      onErr(e);
+      return;
+    }
+    void refresh();
+  }
+  // 标签 pill 双向拖拽接线(每次 renderFilterPills 后调,pills 每轮重建)。真标签 pill
+  // (带 data-topic-id;所有/无标签不带)既是拖源(pill→card)也是落点(card→pill)。
+  function wireTagPills(): void {
+    for (const pill of filterBar.querySelectorAll<HTMLElement>(".tf-pill[data-topic-id]")) {
+      const topicId = pill.dataset.topicId!;
+      pill.draggable = true;
+      pill.addEventListener("dragstart", (e) => {
+        draggingTopic = topicId;
+        pill.classList.add("tag-dragging");
+        if (e.dataTransfer) {
+          e.dataTransfer.setData("text/plain", topicId);
+          e.dataTransfer.effectAllowed = "copy";
+        }
+      });
+      pill.addEventListener("dragend", () => {
+        draggingTopic = null;
+        pill.classList.remove("tag-dragging");
+        clearTagHovers();
+      });
+      // 随记卡拖到本 pill = 给那张卡打这个标签(card→pill)。只认 dragging;已挂该标签
+      // 则不作落点(dropTagOnNote 里也再兜一道)。
+      onDragTarget(pill, (e) => {
+        if (!dragging || dragging.has.has(topicId)) return;
+        e.preventDefault();
+        clearTagHovers();
+        pill.classList.add("tag-drop-hover");
+      });
+      pill.addEventListener("drop", (e) => {
+        if (!dragging) return;
+        e.preventDefault();
+        const { id, has, onErr } = dragging;
+        dragging = null;
+        clearTagHovers();
+        void dropTagOnNote(id, topicId, has, onErr);
+      });
+    }
+  }
 
   // A centered big/detail block as a node (so it can sit below the compose bar).
   function centerNode(big: string, detail: string): HTMLElement {
@@ -500,8 +564,9 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     let currentContent = item.content;
     const topics = item.topics ?? [];
     // 筛某个标签时,卡片上那枚同名 chip 是纯冗余(筛出来的卡本就都带它)——从展示里去掉,
-    // 消视觉噪音;其余标签仍显。只在想法态按当前筛选去重(回收站不套用筛选)。灵感侧
-    // 无拖拽打标签,故直接不渲染即可(不像看板要留 DOM 供去重判据)。
+    // 消视觉噪音;其余标签仍显。只在想法态按当前筛选去重(回收站不套用筛选)。直接不渲染
+    // 即可:拖拽打标签的去重判据在这里读的是数据 `topics`(见 mount 级 dragging 那段),
+    // 不像看板要留 chip DOM 供 taskHasTopic 查。
     const sole = mode === "ideas" ? soleTopicFilter(filter) : null;
     const visibleTopics = sole !== null ? topics.filter((t) => t.id !== sole) : topics;
     const tagged = visibleTopics.length > 0;
@@ -1123,6 +1188,55 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         if ((e.target as HTMLElement).closest("a, button, input, textarea, .hk-menu-wrap, .img-strip")) return;
         void openEdit();
       });
+
+      // 拖拽打标签(用户面 92 第三半)。卡片是拖源(card→pill),但**正文照旧可以划选**:
+      // 随记是拿来读的,别为一个手势把「抄一段」这条路堵死(看板卡是标题,那边没这一格)。
+      // ⚠ 字与纸分家只能在按下那一刻做:Blink 只要祖先 draggable 就优先起拖,user-select 压不过
+      // 它(本轮用 CDP 在真 WebView2 上量过:卡片算出 user-select:text,按住字照样起拖)。
+      // ⇒ mousedown 看落点 —— 落在正文 / 留言区 / 任何可交互件上就把 draggable 临时关掉,这一按
+      // 走选字 / 控件自己的路,松开即恢复;落在纸面(内边距、时间行、标签行)才是拖卡。
+      // ⛔ 只认卡片自己的 dragstart(`e.target === note`):拖正文里的图 / 「图N」链接,浏览器
+      // 起的是它自己那种拖,事件落在子元素上再冒上来,不是拖卡。
+      const NOT_A_HANDLE = ".note-text, .cm-host, a, button, input, textarea";
+      note.draggable = true;
+      note.addEventListener("mousedown", (e) => {
+        if (!(e.target as HTMLElement).closest(NOT_A_HANDLE)) return;
+        note.draggable = false;
+        document.addEventListener("mouseup", () => (note.draggable = true), { once: true });
+      });
+      note.addEventListener("dragstart", (e) => {
+        if (e.target !== note) return;
+        dragging = { id: item.id, has: new Set(topics.map((t) => t.id)), onErr: showOpErr };
+        note.classList.add("dragging");
+        if (e.dataTransfer) {
+          e.dataTransfer.setData("text/plain", item.id);
+          e.dataTransfer.effectAllowed = "copy"; // 落下去是「加一枚标签」,不是挪走这条
+        }
+      });
+      note.addEventListener("dragend", () => {
+        dragging = null;
+        note.classList.remove("dragging");
+        clearTagHovers();
+        // 拖走一段选中的字(浏览器自己那种拖)不发 mouseup,只有 dragend 冒上来 —— 在这儿也恢复,
+        // 免得下一次按住纸面那一拍还顶着上一按关掉的 draggable。
+        note.draggable = true;
+      });
+      // 标签 pill 拖到本卡 = 给本卡打这个标签(pill→card)。只认 draggingTopic;已挂该标签
+      // 则不作落点(无高亮、不落库)。
+      onDragTarget(note, (e) => {
+        if (draggingTopic === null || topics.some((t) => t.id === draggingTopic)) return;
+        e.preventDefault();
+        clearTagHovers();
+        note.classList.add("tag-drop-hover");
+      });
+      note.addEventListener("drop", (e) => {
+        if (draggingTopic === null) return;
+        e.preventDefault();
+        const topicId = draggingTopic;
+        draggingTopic = null;
+        clearTagHovers();
+        void dropTagOnNote(item.id, topicId, new Set(topics.map((t) => t.id)), showOpErr);
+      });
     }
 
     showView();
@@ -1323,6 +1437,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
           // :empty 隐整行。标签 pills 随 kind 收到该类型内(见 filter-bar.ts)。
           renderKindPills(kindBar, timeNarrowed, topics, filter, () => void refresh());
           renderFilterPills(filterBar, timeNarrowed, topics, filter, () => void refresh());
+          wireTagPills(); // pills 每轮重建,拖拽接线跟着重挂(同看板)
         }
         const shown = applyFilter(timeNarrowed, filter, (i) => i.content, topics);
         // The compose bar always sits at the top of 想法, empty or not.

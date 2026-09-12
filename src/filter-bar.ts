@@ -219,7 +219,7 @@ export function renderFilterPills(
   // 一个标签是否该出现:有条目 或 正被选中(选中的绝不因 0 计数消失)。
   const visible = (tp: FilterTopic) => (counts.get(tp.id) ?? 0) > 0 || f.topics.includes(tp.id);
   // 造一枚真标签 pill 并入列。child=true 的挂 .child + data-parent(供折叠显隐 + 缩进皮肤)。
-  // 全部真标签 pill 都挂 data-topic-id(看板据此接拖拽打标签;灵感侧不接线故无副作用)。
+  // 全部真标签 pill 都挂 data-topic-id(看板与随记据此接拖拽打标签,各自的 wireTagPills)。
   const pushTopic = (tp: FilterTopic, label: string, child: boolean, parentId?: string): HTMLElement => {
     const p = pill(tp.id, label, counts.get(tp.id) ?? 0, tp.color);
     p.dataset.topicId = tp.id;
