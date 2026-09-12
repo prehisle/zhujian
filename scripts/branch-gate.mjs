@@ -477,6 +477,21 @@ function assertBacklogBudget() {
         `  ⇒ 原文放 docs/backlog-archive.md,队列里留一行指过去。`,
     );
   }
+  // 「门」槽(679 立,backlog 纪律 ⑧):「记账不做」之前每条零缩进活账的头行必须以六种槽之一
+  // 开头,挑活才能只读头行(679 量过:读正文才知道门在谁手里那一趟 70 KB,头行合计 14 KB)。
+  // 同一道闸里多一个正则,⛔ 不是新门禁;阴性刀在假 origin 沙箱 gate-sandbox-doc-gates.mjs 第 ④ 把。
+  const SLOT = /^[0-9A-Za-z][^ .]*\. 〔(可开工|等用户|要|门|顺路|备查)([::  ][^〕]{1,40})?〕 /;
+  const raw = readFileSync(file, "utf8").split("\n");
+  const stop = raw.findIndex((l) => l.startsWith("## ⛔ 记账不做"));
+  const heads = raw.slice(0, stop < 0 ? raw.length : stop).filter((l) => /^[0-9A-Za-z][^ .]*\. /.test(l));
+  const noSlot = heads.filter((l) => !SLOT.test(l));
+  if (noSlot.length) {
+    die(
+      `docs/backlog.md 里有 ${noSlot.length} 条活账头行没开「门」槽(或槽不是六种之一)—— ⛔ 不落地:\n` +
+        noSlot.slice(0, 5).map((l) => `    ${l.slice(0, 60)}…`).join("\n") +
+        `\n  ⇒ 头行写成 NN. 〔可开工 | 等用户:… | 要 … | 门:… | 顺路:… | 备查〕 **标题**(backlog 纪律 ⑧)。`,
+    );
+  }
 }
 
 // ── 参考文档字节闸(测试与工装 85 ③ 立;一张表,加下一份就是加一行)──────────────
@@ -495,6 +510,9 @@ function assertBacklogBudget() {
 //    自动装载的是 `.claude/rules/*.md` 那几份,它们的预算另有账(backlog 测试与工装 86)。
 const DOC_SIZE_BUDGETS = {
   "docs/dev-and-testing.md": 230 * 1024,
+  // handoff 是接手的人每次通读的那份,自定「目标 ≤ 8 KB」却长到 23 KB 无人拦(测试与工装 95,679 堵上):
+  // 债节一轮一行、约束节只留一句 + 指针,叙事各回 progress-log / deploy / skill —— 到顶的处置是再搬,不是抬闸。
+  "docs/handoff.md": 8 * 1024,
 };
 function assertDocSizeBudgets() {
   const bad = [];
