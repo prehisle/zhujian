@@ -3,9 +3,10 @@ import { invoke, inboxShow, clearInbox } from "./support.js";
 
 // 随记 · 「复制随记」(用户面 90,676):顶栏一枚钮,把**当前显示的**随记复制成 Markdown ——
 // 一天一节 `## YYYY-MM-DD`,一条一个 bullet(时刻 + `#标签`),正文原样、每行缩进两格。
-// 判据读剪贴板本身 —— ⚠ 走 Tauri 的剪贴板插件(`plugin:clipboard-manager|read_text`,notebook 窗的
-// capability 早就放行了它,主窗贴图那条路在用);⛔ 别用 `navigator.clipboard.readText()`:webdriver 驱动下
-// 文档没有焦点,它恒抛「Document is not focused」(第一趟就撞了),而 writeText 走的是点击的用户激活、不受此限。
+// 判据拦**写入侧**:劫持 `navigator.clipboard.writeText` 记下写进去的串(同 deeplink.e2e.js「复制链接」那例的形)——
+// ⛔ 别碰真剪贴板:①它会改写跑 e2e 那台的剪贴板(win-clipboard / linux-clipboard 两支正因此住 probes/);
+// ②Linux CI 的 WebKitGTK + xvfb 上 `writeText` 直接拒 ⇒ 钮闪「复制失败」,676 那趟闸分支就红在这(Windows 上
+// 走 Tauri 插件读回来是绿的,但那条路把 LF 变 CRLF、且 `navigator.clipboard.readText` 无焦点恒抛,两处坑都不必再踩)。
 // 显示条件 = 有东西可复制:回收站那页、筛空时都没有这枚钮。
 describe("随记 · 复制随记(Markdown)", () => {
   const TAG = "E2E-复制随记-标签";
@@ -28,11 +29,20 @@ describe("随记 · 复制随记(Markdown)", () => {
     const btn = await $("#inbox-copy-slot .hbtn");
     await btn.waitForExist({ timeout: 5000 });
     expect(await btn.getText()).toBe("复制随记");
-    await browser.execute(() => document.querySelector("#inbox-copy-slot .hbtn").click());
+    await browser.execute(() => {
+      window.__lastClip = null;
+      navigator.clipboard.writeText = (t) => {
+        window.__lastClip = t;
+        return Promise.resolve();
+      };
+      document.querySelector("#inbox-copy-slot .hbtn").click();
+    });
+    await browser.waitUntil(async () => (await browser.execute(() => window.__lastClip)) !== null, {
+      timeout: 5000,
+      timeoutMsg: "点了「复制随记」却没往剪贴板写",
+    });
     await browser.waitUntil(async () => (await btn.getText()) === "已复制", { timeout: 5000, timeoutMsg: "点了没见「已复制」" });
-    // ⚠ Windows 剪贴板一来一回把 LF 变成 CRLF(写的是 \n;读回来每行尾巴多个 \r,肉眼看不出、toBe 却红),
-    // 判据只认行内容,先归一。
-    const md = (await browser.execute(() => window.__TAURI__.core.invoke("plugin:clipboard-manager|read_text"))).replace(/\r\n/g, "\n");
+    const md = await browser.execute(() => window.__lastClip);
     const d = new Date();
     const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
     const lines = md.split("\n");
