@@ -3,6 +3,7 @@ import { defineMessages } from "./entry";
 
 export const inbox = defineMessages({
   "inbox.title": { zh: "随记", en: "Notes" },
+  "inbox.copyIdeas": { zh: "复制随记", en: "Copy notes" },
   "inbox.tabTrash": { zh: "回收站", en: "Trash" },
   "inbox.backToIdeas": { zh: "← 随记", en: "← Notes" },
   "inbox.filterPlaceholder": { zh: "过滤随记…", en: "Filter notes…" },

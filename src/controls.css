@@ -92,6 +92,11 @@
    那个数会掉到读不出)。等宽数字免得计数跳动时按钮宽度抖。 */
 .hbtn .tn { font-variant-numeric: tabular-nums; }
 
+/* 顶栏靠右那组里的复制槽(随记页「复制随记」,676):它是 flex 项,空着也会吃一份 gap ——
+   没东西可复制时槽是空的,别让统计与「回收站」之间多出 14px 的空当。看板那枚 #copy-slot 不在
+   .head-tools 里,由 board.css 自己按容器宽收放,这条管不到它。 */
+.head-tools .copy-slot:empty { display: none; }
+
 /* 视图中央错误卡 —— 四个主视图 main 区居中态的报错框,同一件东西。
    345 之前四份 CSS 各抄一遍(与本文件头 .view header h1 那次同病:339 收标题时它就在
    隔壁,当时没扫到)。九条声明逐字相同,收进来;**max-width 刻意不收**——board 写 480、

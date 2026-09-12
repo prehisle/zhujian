@@ -16,7 +16,7 @@ import {
 import { autoGrow } from "./autogrow";
 import { toastAction } from "./toast";
 import { createComposeController } from "./compose-controller";
-import { copyText } from "./clipboard";
+import { copyButton, copyText } from "./clipboard";
 import { buildItemDeepLink } from "./deeplink";
 import { armLocate } from "./locate";
 import {
@@ -150,11 +150,44 @@ const hm = new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit"
 // ---- timeline grouping (想法 tab) ------------------------------------------
 // dayKey/dayLabel 已提为共享件(tasktime.ts):看板归档视图的时间轴同源复用。
 
+// ---- 一键复制为 Markdown(用户面 90;形照看板 boardMarkdown 抄,676)----------
+// 随记此前**没有任何导出**(能拿出去喂别的工具的只有看板 / 单列的 Markdown 与那个 SQLite 文件)。
+// 一天一节 `## YYYY-MM-DD`(绝对日期 —— 屏上「今天 / 昨天」那种相对字拿出去就腐);一条随记
+// 一个 bullet:首行 = 时刻 + 标签(`#标签`),正文从下一行起**原样**、每行缩进两格(Markdown
+// 列表的续行;正文里自带的 `- [ ]` 清单于是成了子列表,语义正好)。⛔ 不压成一行 —— 随记是正文
+// 不是标题,看板那边压一行是因为一条任务就是一句话。⛔ 只复制**当前显示的**那批(筛过时间 / 类型 /
+// 标签 / 文字之后),与「复制看板」尊重筛选同一条规矩;回收站那页没有这枚钮。⛔ 别做导入、别造第二种
+// 导出机制(648 拍的边界)。
+function isoDay(iso: string): string {
+  const d = new Date(iso);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+function ideaMarkdown(i: IdeaItem): string {
+  const tags = i.topics.map((tp) => `#${tp.title}`).join(" ");
+  const head = `- ${hm.format(new Date(i.created_at))}${tags ? " " + tags : ""}`;
+  const body = i.content
+    .split("\n")
+    .map((l) => (l === "" ? "" : `  ${l}`))
+    .join("\n");
+  return `${head}\n${body}`;
+}
+function ideasMarkdown(items: IdeaItem[]): string {
+  const days: { day: string; notes: string[] }[] = [];
+  for (const i of items) {
+    const day = isoDay(i.created_at);
+    const last = days[days.length - 1];
+    if (last && last.day === day) last.notes.push(ideaMarkdown(i));
+    else days.push({ day, notes: [ideaMarkdown(i)] });
+  }
+  return days.map((d) => [`## ${d.day}`, ...d.notes].join("\n")).join("\n\n");
+}
+
 const SKELETON = `
   <header data-tauri-drag-region>
     <h1>${t("inbox.title")}</h1>
     <span class="head-tools">
       <span class="idea-stats" id="idea-stats"></span>
+      <span class="copy-slot" id="inbox-copy-slot"></span>
       <button class="hbtn" id="inbox-trash-toggle" type="button" title="${t("inbox.tabTrash")}"><span class="lbl" id="inbox-trash-lbl">${t("inbox.tabTrash")}</span><span class="tn" id="n-archived"></span></button>
     </span>
   </header>
@@ -184,6 +217,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
 
   const list = view.querySelector("#list") as HTMLElement;
   const statsEl = view.querySelector("#idea-stats") as HTMLElement;
+  const copySlot = view.querySelector("#inbox-copy-slot") as HTMLElement;
   const filterRow = view.querySelector("#filter-row") as HTMLElement;
   const filterBar = view.querySelector("#idea-topic-filter") as HTMLElement;
   const kindBar = view.querySelector("#idea-kind-filter") as HTMLElement;
@@ -1455,6 +1489,9 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
           wireTagPills(); // pills 每轮重建,拖拽接线跟着重挂(同看板)
         }
         const shown = applyFilter(timeNarrowed, filter, (i) => i.content, topics);
+        // 复制随记:把当前显示的这批复制成 Markdown(尊重四维筛选,同「复制看板」);筛空 / 没有
+        // 随记时不出这枚钮 —— 显示条件 = 有东西可复制。
+        copySlot.replaceChildren(...(shown.length > 0 ? [copyButton(ideasMarkdown(shown), "hbtn", t("inbox.copyIdeas"))] : []));
         // The compose bar always sits at the top of 想法, empty or not.
         const bar = composeBar();
         if (ideas.length === 0) {
@@ -1504,6 +1541,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         }
       } else {
         filterRow.hidden = true; // 回收站不筛(同看板的回收站/归档视图)
+        copySlot.replaceChildren(); // 回收站不复制(同看板的回收站 / 归档视图没有「复制看板」)
         if (archived.length === 0) renderEmpty("archived");
         else {
           list.replaceChildren(trashBar(archived.length), ...archived.map((a) => row(a, "archived")));
