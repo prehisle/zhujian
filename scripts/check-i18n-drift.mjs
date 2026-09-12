@@ -51,8 +51,9 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 /**
  * 三份互不共享代码的产物,各自一份字典、一套壳。**键空间彼此独立**——都可以有
  * `topics.header`,值不必相同(手机与桌面的话术本就不同);必须相同的那几枚走
- * CROSS_END_KEYS。物理上合不成一份的理由与 theme/timing/filter 那族同源(独立工程 /
- * 静态单文件),只是这份是纯数据、由门禁而不是 import 保对齐。
+ * CROSS_END_KEYS。三份各持一份的理由:官网是静态单文件、引不了仓内模块;两端字典**刻意**各一份
+ * (话术本就不同)—— ⚠ 「两个工程物理上合不成一份」那句 673 起不再成立(673 起 TS 纯逻辑可以搬进仓根 `shared/`、两端 import 同一份(只要安卓 dev server 放行仓根;rollup 与 tauri 打包一行不用改),搬不搬见 backlog 代码与结构 8),
+ * 但字典不搬:这份是纯数据、由门禁而不是 import 保对齐。
  *
  * `dict` 说字典从哪儿来:`shards` = locales/ 目录逐分片;`inline` = 壳里那对标记之间
  * (官网无构建步骤)。`ts`/`css` 为 null = 这个工程没有那一面(官网的样式内联在壳里,

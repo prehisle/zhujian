@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // 「更新说明值不值得显」这条判据有**两份独立实现**(桌面 src/update.ts 与安卓
-// android/src/main.ts 是两个互不共享代码的 Vite 工程),drift 才是真风险 —— 故用
+// android/src/main.ts 各持一份;⚠ 673 起 TS 纯逻辑可以搬进仓根 `shared/`、两端 import 同一份(只要安卓 dev server 放行仓根;rollup 与 tauri 打包一行不用改),搬不搬见 backlog 代码与结构 8),drift 才是真风险 —— 故用
 // 同一组用例同时压两份。跑法:node scripts/check-update-notes-predicate.mjs
 //
 // 它测的是**真源码里那两个函数**(esbuild 现场转译后按函数名切出来),不是把逻辑

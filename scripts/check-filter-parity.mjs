@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // 筛选纯逻辑在仓里有**两份近逐字的独立实现**——桌面共享件 src/filter-bar.ts 与安卓
-// android/src/filter.ts(两个互不共享代码的 Vite 工程;后者文件头自述「复制纯逻辑……
-// 严格一致」),前缀分组判据另有**第三份**:标签视图 src/topics.ts::groupByPrefix。
+// android/src/filter.ts(两个 Vite 工程今天各持一份;后者文件头自述「复制纯逻辑……
+// 严格一致」。⚠ 673 起 TS 纯逻辑可以搬进仓根 `shared/`、两端 import 同一份(只要安卓 dev server 放行仓根;rollup 与 tauri 打包一行不用改),搬不搬见 backlog 代码与结构 8),前缀分组判据另有**第三份**:标签视图 src/topics.ts::groupByPrefix。
 // 「严格一致」此前只是注释里的一句承诺,没有门禁对账——drift 才是真风险(照
 // check-update-notes-predicate.mjs 的形立此闸)。跑法:node scripts/check-filter-parity.mjs
 //

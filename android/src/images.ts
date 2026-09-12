@@ -38,8 +38,8 @@ export async function toBase64(blob: Blob): Promise<string> {
 // ⚠ **这是副本,后端仍是权威** —— 而且是**安全的那个方向**:本函数**只在挂图已经失败
 // 之后**才跑,⇒ 名单漂了最坏是「话说得不够准」,⛔ 绝不可能挡下一张后端本来收得下的图。
 // ⛔ **判定顺序照抄 `core/src/images.rs::attach`(空 → 过大 → MIME)** —— 顺序错了会答错原因。
-// ⚠ **桌面孪生 = `src/item-images.ts::whyAttachFailed`**,两端各一份(独立 vite 工程,
-//   物理上合不成一份;同 filter / timing / theme 那族)。改一处**必须改另一处**。
+// ⚠ **桌面孪生 = `src/item-images.ts::whyAttachFailed`**,两端各一份(同 filter / timing 那族;
+//   673 起 TS 纯逻辑可以搬进仓根 `shared/`、两端 import 同一份(只要安卓 dev server 放行仓根;rollup 与 tauri 打包一行不用改),搬不搬见 backlog 代码与结构 8)。今天仍是两份:改一处**必须改另一处**。
 const ATTACH_MAX_MB = 32; // = core 的 MAX_IMAGE_BYTES
 const ATTACH_MIME = ["image/png", "image/jpeg", "image/webp", "image/gif"]; // = core 的 ALLOWED_MIME
 
