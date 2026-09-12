@@ -46,7 +46,7 @@ import {
 import { closeColumnManager, openColumnManager } from "./column-manager";
 import { type Act, SATELLITE_LAYERS, armDismiss, createHotkeyController, registerViewKeys } from "./hotkey-menu";
 import { type ImageMeta, REPASTE_HINT, imageStrip, renderContent, wirePasteToAttach } from "./item-images";
-import { toggleChecklistLine } from "./checklist";
+import { toggleChecklistLine } from "../shared/checklist";
 import {
   closeComments,
   commentBadge,

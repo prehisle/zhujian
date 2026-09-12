@@ -98,9 +98,10 @@ const ANDROID = {
 };
 // groupByPrefix 是纯串处理、不碰文案,故不必给字典(dict 省略 = 不注入 t)。
 const TOPICS_VIEW = { label: "标签视图", entry: "src/topics.ts", consts: [], fns: ["groupByPrefix"] };
-// 正文待办清单的认行 / 翻标记(src/checklist.ts 与 android/src/checklist.ts,又一对逐字
-// 复制的纯逻辑)。⛔ **并进本闸而不另开一道** —— 门禁停止扩张线(383)那条判据:先问
-// 「能不能并进已有某道」。同样是纯串处理,不碰文案,不给字典。
+// 正文待办清单的认行 / 翻标记。⚠ 673 起它**只剩一份**(仓根 `shared/checklist.ts`,两端都
+// import 它)⇒ 这一段对拍的「两端一致」轴已经没有对象,留下来的是**用例本身**:它们是这段
+// 纯逻辑今天唯一的单测,与其另开一道闸不如就地压这一份(门禁停止扩张线 383)。此前是
+// src/ 与 android/src/ 两份逐字复制、在这儿两端同压。同样是纯串处理,不碰文案,不给字典。
 // ⭐ 562 起多三个(快速输入那半):续行 / 起一条 / 最小改写区间。前两个是**用户手势的
 // 语义**、第三个是接线层落笔的算式,三者全是纯串处理,同样两端逐字对应、同样在这道闸里压。
 // ⭐ 600 再多一个:缩进 / 反缩进(桌面 Tab / Shift+Tab)。⚠ **安卓那一端没有接线**
@@ -122,8 +123,7 @@ const CK_FNS = [
   "minimalEditRange",
 ];
 const CK_CONSTS = ["LINE_RE", "MARK", "INDENT"];
-const CK_DESKTOP = { label: "桌面", entry: "src/checklist.ts", consts: CK_CONSTS, fns: CK_FNS };
-const CK_ANDROID = { label: "安卓", entry: "android/src/checklist.ts", consts: CK_CONSTS, fns: CK_FNS };
+const CK_SHARED = { label: "共享", entry: "shared/checklist.ts", consts: CK_CONSTS, fns: CK_FNS };
 
 // ---------------------------------------------------------------------------
 // 最小假 DOM(环境替身,不是逻辑替身):只提供渲染函数摸得到的形状。
@@ -561,11 +561,8 @@ for (const t of GROUP_TARGETS) {
   }
 }
 
-console.log("\n=== 正文待办清单:parseChecklistLine / toggleChecklistLine(两端同压)===");
-const CK_ENDS = [
-  { label: CK_DESKTOP.label, mod: await loadEnd(CK_DESKTOP) },
-  { label: CK_ANDROID.label, mod: await loadEnd(CK_ANDROID) },
-];
+console.log("\n=== 正文待办清单:parseChecklistLine / toggleChecklistLine(shared/ 一份,两端共用)===");
+const CK_ENDS = [{ label: CK_SHARED.label, mod: await loadEnd(CK_SHARED) }];
 for (const end of CK_ENDS) {
   for (const [desc, line, want] of PARSE_CASES) {
     check(`[${end.label}] 认行:${desc}`, serParse(end.mod.parseChecklistLine(line)), want);

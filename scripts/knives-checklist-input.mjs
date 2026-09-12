@@ -14,7 +14,7 @@
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 
-const F = "src/checklist.ts";
+const F = "shared/checklist.ts"; // 673 起两端共用这一份
 const orig = fs.readFileSync(F, "utf8");
 
 const KNIVES = [
@@ -88,9 +88,10 @@ for (const [name, from, to] of KNIVES) {
   try { out = execFileSync("node", ["scripts/check-filter-parity.mjs"], { encoding: "utf8" }); }
   catch (e) { out = String(e.stdout ?? "") + String(e.stderr ?? ""); code = e.status ?? 1; }
   const ran = /\d+ 条全过|\d+\/\d+ 条不符/.test(out);
-  const reds = out.split("\n").filter((l) => l.startsWith("❌ [桌面] "));
+  // 673 起清单逻辑只有 shared/ 一份,闸里的标签是「共享」(此前两端各一份、这里认「桌面」)。
+  const reds = out.split("\n").filter((l) => l.startsWith("❌ [共享] "));
   console.log(`   闸真跑起来了吗:${ran ? "✓ 用例跑完了" : "❌ 没跑到用例(构建/加载就炸了)"} · 退出码 ${code} · 红 ${reds.length} 格`);
-  for (const r of reds.slice(0, 6)) console.log(`     ${r.replace("❌ [桌面] ", "")}`);
+  for (const r of reds.slice(0, 6)) console.log(`     ${r.replace("❌ [共享] ", "")}`);
   if (reds.length > 6) console.log(`     …另 ${reds.length - 6} 格`);
   if (!ran || reds.length === 0) { console.log("   ⚠⚠ 这刀没被逮到"); bad++; }
   fs.writeFileSync(F, orig, "utf8");

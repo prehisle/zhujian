@@ -39,7 +39,7 @@ import {
   type TimelineItem,
 } from "./api";
 import { $, actionBar, confirmBar, contentHtml, dayKey, dayLabel, esc, fmtTimeOfDay, fmtWhen, hideConfirmBar, showBar, showError } from "./ui";
-import { toggleChecklistLine } from "./checklist";
+import { toggleChecklistLine } from "../../shared/checklist";
 import { applyChecklistMarker, wireChecklistNewline } from "./checklist-input";
 import { DONE_COLUMN, boardColumns, isTaskStage, setColumns, stageLabel } from "./columns";
 import { capturePhoto, composeImages, PICK_MAX, pickImages } from "./images";

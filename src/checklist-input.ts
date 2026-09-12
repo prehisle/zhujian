@@ -30,7 +30,7 @@ import {
   minimalEditRange,
   toggleChecklistMarker,
   type ChecklistEdit,
-} from "./checklist";
+} from "../shared/checklist";
 import { isTabKey } from "./keys";
 
 /** 把纯逻辑算出的整份新正文落到框里,只改真正变了的那一段(撤销栈得以保留)。 */

@@ -42,6 +42,9 @@ if (target === repoRoot || repoRoot.startsWith(targetPrefix)) {
 // 公开白名单(目录以 / 结尾按前缀匹配,其余精确匹配)
 const ALLOW = [
   ".github/", "android/", "core/", "e2e/", "mobile/", "ohos/", "scripts/", "server/", "site/",
+  // 673:两端共用的纯逻辑(第一份 = checklist.ts)。桌面 / 安卓 / 鸿蒙三条构建路都 import 它,
+  // 不导出则公开树上三条全红 —— 而闸分支 CI 只有桌面那条会构建前端(测试与工装 99)。
+  "shared/",
   "src/", "src-tauri/", "sync-proto/",
   "docs/sync-protocol.md", "docs/design-rules.md", "docs/why-no-framework.md",
   // 385:三道门禁(timing / radius / fs)会 readFileSync 它——§2.2/§2.4/§2.5 那三张表

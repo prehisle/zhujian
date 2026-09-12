@@ -7,7 +7,7 @@
 
 import { invoke, invokeInSpace, currentSpaceId } from "./space";
 import { t } from "./i18n";
-import { parseChecklistLine } from "./checklist";
+import { parseChecklistLine } from "../shared/checklist";
 import { saveImageDraft, loadImageDraft, newDraftImageId, type DraftImage } from "./compose-draft";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { copyText } from "./clipboard";

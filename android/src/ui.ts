@@ -2,7 +2,7 @@
 // 供卡片操作面板与回收站/归档册/搜索各面共用(单一真相源,别在模块里各抄一份)。
 
 import { t } from "./i18n";
-import { parseChecklistLine } from "./checklist";
+import { parseChecklistLine } from "../../shared/checklist";
 import { CONFIRM_REVERT_MS, TOAST_ERROR_MS, toastSuccessMs } from "./timing";
 
 export const $ = (id: string) => document.getElementById(id)!;

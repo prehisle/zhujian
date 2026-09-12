@@ -63,6 +63,12 @@ export default defineConfig({
     port: 1420,
     strictPort: true,
     host: "0.0.0.0",
+    // 673:两端共用的纯逻辑住仓根 `shared/`,在本工程 root 之外。vite 的 dev server 默认只放行
+    // 工作区根(仓根 package.json 没有 workspaces,它算出来的工作区根就是本目录)⇒ 不放行的话
+    // `tauri android dev` 里页面取 `/@fs/…/shared/checklist.ts` 是 403,而 `vite build` 不受此限
+    // (rollup 按文件系统解析)—— 只 build 绿会以为通了。放行整个仓根,不逐文件列(下一份搬进来时
+    // 这里不用再动)。
+    fs: { allow: [resolve(here, "..")] },
     watch: {
       // 本工程自己的 crate target(根工程的 vite 有同款名单,理由见那边注释)。
       ignored: ["**/src-tauri/target/**"],

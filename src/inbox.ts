@@ -37,7 +37,7 @@ import {
 import { type Act, SATELLITE_LAYERS, armDismiss, createHotkeyController, registerViewKeys } from "./hotkey-menu";
 import { t } from "./i18n";
 import { type ImageMeta, REPASTE_HINT, imageStrip, renderContent, wirePasteToAttach } from "./item-images";
-import { toggleChecklistLine } from "./checklist";
+import { toggleChecklistLine } from "../shared/checklist";
 import {
   closeComments,
   commentBadge,

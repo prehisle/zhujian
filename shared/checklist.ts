@@ -1,9 +1,15 @@
 // 正文里的待办清单 —— 行首 `- [ ] ` / `- [x] ` 画成一枚可点的方框,点一下把那一行的
 // 标记翻面、整条正文写回。本文件只有**纯文本逻辑**(认行 / 翻标记),画和写各端自己接:
-// 桌面在 item-images.ts::renderContent 里画、写走 rename_task(看板)/ edit_note(灵感)。
+// 桌面在 `src/item-images.ts::renderContent` 里画、写走 rename_task(看板)/ edit_note(灵感);
+// 手机在 `android/src/main.ts` 把时间轴卡片渲染成 HTML、写走 edit_note(鸿蒙共用那棵树)。
 //
-// ⚠ 安卓那份是 `android/src/checklist.ts`,**逐字对应的第二份** —— 两棵前端树物理上合
-// 不成一份(同 filter / timing 那族),**没有门禁核它俩相等**,⛔ 改这份必须同轮改那份。
+// ⭐ **这是两棵前端树共用的第一份源码**(仓根 `shared/`,673 起)—— 此前桌面与安卓各放一份
+// 逐字孪生、靠人肉双改 + `check-filter-parity` 对拍;「两个 Vite 工程物理上合不成一份」那句
+// 是立门禁时的判断,673 实测推翻:两端 `import "../shared/checklist"` 即可,只有安卓 vite
+// dev server 要放行仓根(`android/vite.config.ts` 的 `server.fs.allow`),构建三条路
+// (桌面 / 安卓 / 鸿蒙 root=android)一行不用改。⛔ 放进这儿的只许是**零平台依赖的纯逻辑**:
+// 不 import 任一端的 i18n / invoke / DOM 助手(两端字典与 t 各是一份,共享层碰它就把两端又
+// 缝回去了)。⚠ 两份 tsconfig 的 lib 不同(桌面 ESNext、安卓 ES2021):这里只许用两边都有的。
 //
 // ⛔ **刻意只认这一种语法**:裸 `- 文字` 是普通列表、**不**当待办项 —— 否则用户就再也
 // 写不出一个不带勾的列表了(用户 2026-09-01 拍板)。粗体 / 标题 / 代码块一概不做:这是
