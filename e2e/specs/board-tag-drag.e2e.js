@@ -87,4 +87,38 @@ describe("任务看板 · 拖拽打标签(卡 ↔ 标签 pill 双向)", () => {
     expect(await tagTitles()).toEqual([A, B].sort());
     await expect($("#op-err")).not.toBeDisplayed(); // 没走后端 → 没有报错横幅
   });
+
+  it("按在 ⋯ 钮 / 标签 chip 上那一按不拖卡(松开即恢复),按在标题上照拖(用户面 99)", async () => {
+    // 静态事实:卡片 draggable=true(手动序下的拖源)。动态事实:mousedown 落在 ⋯ 钮 / 标签 chip
+    // 上 ⇒ draggable 临时关掉(这一按归控件自己,手抖挪几像素也不会起拖吞掉点击),mouseup 恢复;
+    // 落在标题上 ⇒ 照旧是拖源(看板卡是标题不是正文,划不选是老取舍)。⚠ 这里证的是处理器;
+    // 「子元素 draggable=false 挡不住父卡起拖、关掉之后引擎真不起拖」那格是引擎判定,用 CDP 在真
+    // WebView2 上量(progress-log 671 补 / 672)。
+    const facts = await browser.execute((title) => {
+      const card = [...document.querySelectorAll(".tcard")].find((c) => c.textContent.includes(title));
+      const down = (sel) => card.querySelector(sel).dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
+      const up = () => document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, button: 0 }));
+      const out = { atRest: card.draggable };
+      down(".hk-btn");
+      out.pressedOnMenuBtn = card.draggable;
+      up();
+      out.releasedAfterMenuBtn = card.draggable;
+      down(".chip.topic.set .chip-label");
+      out.pressedOnChip = card.draggable;
+      up();
+      out.releasedAfterChip = card.draggable;
+      down(".ttitle");
+      out.pressedOnTitle = card.draggable;
+      up();
+      return out;
+    }, TASK);
+    expect(facts).toEqual({
+      atRest: true,
+      pressedOnMenuBtn: false,
+      releasedAfterMenuBtn: true,
+      pressedOnChip: false,
+      releasedAfterChip: true,
+      pressedOnTitle: true,
+    });
+  });
 });

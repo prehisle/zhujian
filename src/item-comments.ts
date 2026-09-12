@@ -77,7 +77,7 @@ export function commentBadge(
     className: info.unread ? "cm-badge unread" : "cm-badge",
     textContent: t("comments.badge", { n: info.n }),
     title: info.unread ? t("comments.badgeTitleUnread") : t("comments.badgeTitle"),
-    draggable: false, // 看板卡可拖:点徽章绝不许变成拖卡片
+    draggable: false, // ⚠ 只是标注意图:子元素的 draggable=false 挡不住父卡起拖(671 补量的);「点徽章不变成拖卡」真靠 board.ts 的 CARD_CONTROLS(button)
   });
   b.addEventListener("click", (e) => {
     e.stopPropagation();

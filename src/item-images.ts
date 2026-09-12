@@ -527,7 +527,8 @@ export function renderContent(
  *  §2.3 那套热区扩展技法在它身上用不了(同 backup.ts 那条判据)。
  *  ⛔ 只读视图(回收站 / 归档册)那形也是 button、只是 `disabled` —— 不是换成 span:
  *  两形同一个签名才共用同一份 CSS(含那道热区扩展),否则热区门禁看到的是两个签名。
- *  ⛔ `draggable=false`:看板卡自己是可拖的,按下这枚方框不该变成拖卡。 */
+ *  ⚠ `draggable=false` 只是标注意图:子元素的 draggable=false 挡不住父卡起拖(671 补在真 WebView2
+ *  上量的);「按下这枚方框不变成拖卡」真靠的是 board.ts 卡片 mousedown 看落点(CARD_CONTROLS 含 button)。 */
 function checkbox(checked: boolean, lineIndex: number, onToggle?: (lineIndex: number) => void): HTMLElement {
   // ⚠ 勾没勾这个状态挂在**外层 `.ckline`** 上(一处翻,方框与文字压淡同时跟着走),
   // 方框自己不带 `.on`。

@@ -109,6 +109,13 @@ function readBoardSort(): BoardSort {
 function sortLabel(s: BoardSort): string {
   return s === "newest" ? t("board.sortNewest") : s === "oldest" ? t("board.sortOldest") : t("board.sortManual");
 }
+// 卡上的交互件(⋯ 钮 / 标签 chip 与它的 ✕ / 勾选框 / 留言徽章 / 「图N」链接 / 缩略图条 /
+// 行内确认的钮与勾选)。按下或双击落在它们上面,那一下归它们自己:不是拖卡、不是开编辑。
+// ⚠ 这些件自己身上的 `draggable:false` **不是**保护 —— Blink 找拖源沿祖先往上走,子元素的
+// draggable=false 只让它自己不成拖源、挡不住父卡(671 补在真 WebView2 上量的:按住 ⋯ 拖照样起
+// 卡片拖,拖动数据 = 任务 id)。真正挡住的是下面 card() 里 mousedown 看落点那一段。
+const CARD_CONTROLS = "a, button, input, textarea, label, .chip, .hk-menu-wrap, .img-strip";
+
 /** 一列之内按当前轴排。manual = 原样(后端已按 position 给);时间档按 `created_at`
  *  字符串比 —— RFC3339 同一形状下字典序 == 时序,同刻再按 id(ULID)定序,免得两张
  *  同秒建的卡每次重画都换位置。⚠ 不原地改数组:调用方那份 `items` 还要给别处用。 */
@@ -1040,7 +1047,8 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
   // add_task_topic_by_title when the typed name is new; remove = remove_task_topic).
   // Adds reflect in place (item.topics + a live `have`) and
   // reconcile the whole board with one load() when the picker closes; remove reloads at
-  // once. draggable:false keeps a chip click from starting a card drag.
+  // once. (chip 上的 draggable:false 只是装饰:挡住「按住 chip 起卡片拖」的是 card() 里的
+  // mousedown 落点判,不是这枚属性 —— 见 CARD_CONTROLS。)
   function topicTags(item: TaskItem): { root: HTMLElement; openPicker: () => void } {
     const wrap = el("span", { className: "slot topic-slot" });
     // 选择器 keepOpen 连加:选/建一个即就地更新——落库成功后把标签并进 item.topics 与
@@ -1455,8 +1463,25 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       // (拖标签 pill 到卡片那条方向不走这里,时间序下照常可用。)dueOnly 同理停拖拽——
       // 那档显示序是 sortByDue 算出来的,拖完下一次重画会被按到期日重新排回去,不停会
       // 看着像「拖了没用」。
-      c.draggable = boardSort === "manual" && !dueOnly;
+      // 这张卡此刻能不能当拖源:排序轴之外还有编辑态 —— 编辑框里要能划选字,而 draggable 的
+      // 祖先会让子输入框里选不了字(openEdit 关掉它,load() 换新卡时才回来)。
+      const canDrag = (): boolean => boardSort === "manual" && !dueOnly && !c.querySelector(".edit-form");
+      c.draggable = canDrag();
+      // 按在 ⋯ 钮 / 标签 chip / 勾选框 / 留言徽章上的那一按**不是拖卡**(用户面 99):Blink 只要
+      // 祖先 draggable 就优先起拖,子元素自己的 draggable=false 挡不住 ⇒ 手抖挪几像素再松,起了
+      // 一次拖、点击被吞 —— 「有时点 ⋯ 没反应」那一族。同 671 给随记卡的形:mousedown 看落点,
+      // 落在交互件上就把 draggable 临时关掉,这一按走控件自己的路;mouseup / dragend 恢复成
+      // canDrag() 算出的值(⛔ 别一律恢复 true:时间序 / 到期筛 / 编辑态下本就不可拖)。标题字
+      // 照旧是拖源 —— 看板卡是标题不是正文,「标题划不选」是可拖卡片的老取舍,不在这条里。
+      c.addEventListener("mousedown", (e) => {
+        if (!(e.target as HTMLElement).closest(CARD_CONTROLS)) return;
+        c.draggable = false;
+        document.addEventListener("mouseup", () => (c.draggable = canDrag()), { once: true });
+      });
       c.addEventListener("dragstart", (e) => {
+        // 只认卡片自己的 dragstart:拖正文里的缩略图 / 「图N」链接,浏览器起的是它自己那种拖,
+        // 事件落在子元素上再冒上来,不是拖卡(同随记卡)。
+        if (e.target !== c) return;
         if (busy) {
           e.preventDefault();
           return;
@@ -1475,6 +1500,9 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         board.classList.remove("drag-done");
         clearDropHovers();
         detachDropLine();
+        // 浏览器自己那种拖(缩略图)不发 mouseup,只有 dragend 冒上来 —— 在这儿也恢复,免得
+        // 下一次按住纸面那一拍还顶着上一按关掉的 draggable。
+        c.draggable = canDrag();
       });
 
       // 标签 pill 拖到本卡 = 给本卡打这个标签(pill→card)。只认 draggingTopic;卡片重排
@@ -1501,7 +1529,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       // 输入框上时不劫持,正在改名或确认中也不触发(让那张表单自己的键生效)。
       c.addEventListener("dblclick", (e) => {
         if (c.querySelector(".edit-form") || c.querySelector(".confirm-q")) return;
-        if ((e.target as HTMLElement).closest("a, button, input, textarea, .chip, .hk-menu-wrap, .img-strip")) return;
+        if ((e.target as HTMLElement).closest(CARD_CONTROLS)) return;
         requestEdit(item.id);
       });
 
@@ -1517,7 +1545,8 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
 
     // ---- 编辑 (inline rename) ----
     // A draggable parent blocks text selection inside a child input, so the card
-    // is made non-draggable while editing; load() restores a fresh draggable card.
+    // is made non-draggable while editing (canDrag() 也认这个态,mouseup 恢复时不会把它
+    // 打回 true); load() restores a fresh draggable card.
     function openEdit(): void {
       c.draggable = false;
       const input = el("textarea", { className: "edit-input", rows: 1, value: item.title });

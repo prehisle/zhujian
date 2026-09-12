@@ -189,9 +189,10 @@ export function createHotkeyController(): HotkeyController {
     // it). The single-key shortcuts still fire on plain card hover, so the menu is purely a
     // click-to-open cheat-sheet; close it via outside-click / Esc / picking an item.
     function menu(): HTMLElement {
-      // draggable:false on every interactive piece so that on a draggable host (the
-      // task board) a mousedown on the icon/menu never starts a card drag (matches how
-      // the board's chips opt out). Harmless on a non-draggable host (灵感).
+      // ⚠ draggable:false 在这些件上**不是**保护:Blink 找拖源沿祖先往上走,子元素的 draggable=false
+      // 只让它自己不成拖源、挡不住可拖拽宿主(看板卡)起拖 —— 671 补在真 WebView2 上量的(按住 ⋯
+      // 拖照样起卡片拖)。真挡住它的是宿主自己 mousedown 看落点(board.ts 的 CARD_CONTROLS 含
+      // .hk-menu-wrap / button);这里留着只是标注意图,对不可拖拽宿主(灵感)无关。
       const wrap = el("div", { className: "hk-menu-wrap", draggable: false });
       const iconBtn = el("button", {
         className: "hk-btn",

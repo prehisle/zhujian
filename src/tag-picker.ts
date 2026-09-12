@@ -49,8 +49,9 @@ export function renderTagPicker(container: HTMLElement, opts: TagPickerOpts): vo
     });
   }
 
-  // draggable:false 铺在每个交互件上:落在可拖拽宿主(看板卡片)时,mousedown 不会误
-  // 起卡片拖拽;对不可拖拽宿主(灵感)无害 —— 同 hotkey-menu.ts 的取舍。
+  // ⚠ draggable:false 在这些件上**不是**保护:子元素的 draggable=false 挡不住可拖拽宿主(看板
+  // 卡片)起拖(671 补在真 WebView2 上量的);真挡住「按住选择器起卡片拖」的是宿主自己 mousedown
+  // 看落点(board.ts 的 CARD_CONTROLS 含 input / button)。留着只是标注意图 —— 同 hotkey-menu.ts。
   const search = el("input", { className: "topic-search", draggable: false });
   search.placeholder = t("tagPicker.searchPlaceholder");
   search.spellcheck = false;
