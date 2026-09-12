@@ -923,8 +923,9 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     // ---- 归纳主题 (manual file into an existing/new topic) ----
     // 打标签:输入即筛选的选择器(搜既有 + 无匹配冒「创建」),和看板 openPicker 同一套。
     // Esc / 点选择器以外任意处收起(armDismiss 文档级),不再挂「取消」按钮——⑧-1 修:老实现
-    // 的 Esc 只绑在输入框、离焦即失效,还多一个取消钮。已加的标签从候选隐藏(have),避免重复
-    // 挂(link 唯一键、重复会报错);要加第二个标签就再按一次 L,多标签靠此达成,同看板。
+    // 的 Esc 只绑在输入框、离焦即失效,还多一个取消钮。已加的标签在候选里点亮、再点一次摘掉
+    // (675 起与手机同形;此前是藏起来);灵感这侧一步一收 —— 加或摘之后整卡 refresh、选择器随之
+    // 消失,要改第二个就再按一次 L。
     async function openTopic(): Promise<void> {
       let allTopics: TopicItem[];
       try {
@@ -955,6 +956,19 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         }
         afterFile();
       };
+      // 再点一次已挂的 = 摘掉(与卡上 chip 的 ✕ 同一条命令 remove_note_topic;摘掉最后一个会让
+      // 「已整理」退回「未归类」,两个 stage 都在「想法」tab 里,卡不会跳走)。
+      const unfile = async (topicId: string): Promise<void> => {
+        off();
+        try {
+          await invoke("remove_note_topic", { id: item.id, topicId });
+        } catch (e) {
+          close();
+          showOpErr(e);
+          return;
+        }
+        afterFile();
+      };
       // 选择器 UI(搜索 + 候选 + Enter 复用/新建)走共享件 tag-picker.ts(与看板同源)。
       // 先把 picker 挂进 DOM 再渲染 —— renderTagPicker 末尾会 focus 搜索框,而 focus 对游离
       // 节点是空操作。灵感一步落库:选既有 = file_note_to_topic(topicId),输入新名 =
@@ -964,6 +978,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         allTopics,
         have,
         onPick: (topicId) => void fileInto(topicId, null),
+        onUnpick: (topicId) => void unfile(topicId),
         onCreate: (title) => void fileInto(null, title),
       });
     }

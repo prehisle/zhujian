@@ -55,7 +55,7 @@ export const topics = defineMessages({
   "topics.nameRequired": { zh: "标签名不能为空", en: "Tag name cannot be empty" },
   "tagPicker.searchPlaceholder": { zh: "搜标签,或输入新名…", en: "Search tags, or type a new name…" },
   "tagPicker.create": { zh: "创建「{name}」", en: "Create “{name}”" },
-  "tagPicker.allAdded": { zh: "已加上所有标签", en: "All tags added" },
+  "tagPicker.onTitle": { zh: "{name} · 已挂上,再点一次摘掉", en: "{name} · added, click again to remove" },
   "tagPicker.first": { zh: "输入名字,建第一个标签", en: "Type a name to create your first tag" },
   "tagColor.ochre": { zh: "赭红", en: "Ochre" },
   "tagColor.loess": { zh: "黄土", en: "Loess" },

@@ -116,7 +116,7 @@ describe("灵感 · 打标签(手动,不经 AI)", () => {
     let topics = await invoke("list_topics");
     expect(topics.map((t) => t.title)).toContain("E2E-新主题-X");
 
-    // 第二条:打开选择器,不输入 → 候选列出全部未加标签,点已存在的那个 .choice 归入。
+    // 第二条:打开选择器,不输入 → 候选列出全部标签(已挂的点亮),点已存在的那个 .choice 归入。
     await invoke("capture_note", { content: "E2E-主题-乙" });
     const card2 = await openCard("E2E-主题-乙");
     await inboxAction("E2E-主题-乙", "标签");

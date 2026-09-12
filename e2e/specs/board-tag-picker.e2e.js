@@ -119,7 +119,7 @@ describe("任务看板 · 标签选择器(Esc 收起 + 内联新建)", () => {
     expect(await card.$(".choice.create").isExisting()).toBe(false);
   });
 
-  it("keepOpen:选一个不收起 → 可连续再加,已加的即时从候选消失", async () => {
+  it("keepOpen:选一个不收起 → 可连续再加;已加的点亮,再点一次摘掉、再点挂回", async () => {
     const NEW2 = "E2E-连加第二个标签";
     const setSearch = (name) =>
       browser.execute(
@@ -152,13 +152,50 @@ describe("任务看板 · 标签选择器(Esc 收起 + 内联新建)", () => {
       timeout: 8000,
       timeoutMsg: "EXIST 未挂上",
     });
-    // 选完选择器仍在(没收起),且 EXIST 已从候选隐藏(避免重复挂)。
+    // 选完选择器仍在(没收起)。675 起 EXIST **不再从候选隐藏**,而是点亮(.on,同手机);
+    // 再点一次 = 摘掉(remove_task_topic,就地、不整板重载),再点一次挂回 —— 三步都在同一次
+    // 选择器会话里,选择器始终在场。
     expect(await card.$(".topic-search").isExisting()).toBe(true);
     await setSearch(EXIST);
-    await browser.waitUntil(async () => !(await $(`.tcard*=${TASK}`).$(`.choice=${EXIST}`).isExisting()), {
+    const clickChoice = (name) =>
+      browser.execute(
+        (title, n) => {
+          const c = [...document.querySelectorAll(".tcard")].find((x) => x.textContent.includes(title));
+          [...c.querySelectorAll(".topic-choices .choice")].find((b) => b.textContent === n).click();
+        },
+        TASK,
+        name,
+      );
+    const choiceIsOn = async (name) =>
+      browser.execute(
+        (title, n) => {
+          const c = [...document.querySelectorAll(".tcard")].find((x) => x.textContent.includes(title));
+          const b = [...c.querySelectorAll(".topic-choices .choice")].find((x) => x.textContent === n);
+          return b ? b.classList.contains("on") : null; // null = 候选里根本没有它
+        },
+        TASK,
+        name,
+      );
+    await browser.waitUntil(async () => (await choiceIsOn(EXIST)) === true, {
       timeout: 5000,
-      timeoutMsg: "已加的标签仍留在候选里",
+      timeoutMsg: "已加的标签没在候选里点亮(要么被藏了,要么没 .on)",
     });
+    await clickChoice(EXIST); // 再点一次 → 摘掉
+    await browser.waitUntil(async () => !(await tagTitles()).includes(EXIST), {
+      timeout: 8000,
+      timeoutMsg: "再点一次已挂的标签没摘掉",
+    });
+    await browser.waitUntil(async () => (await choiceIsOn(EXIST)) === false, {
+      timeout: 5000,
+      timeoutMsg: "摘掉后候选没熄灭",
+    });
+    expect(await card.$(".topic-search").isExisting()).toBe(true); // 摘掉也不收起(keepOpen)
+    await clickChoice(EXIST); // 再点一次 → 挂回
+    await browser.waitUntil(async () => (await tagTitles()).includes(EXIST), {
+      timeout: 8000,
+      timeoutMsg: "第三次点没挂回",
+    });
+    await browser.waitUntil(async () => (await choiceIsOn(EXIST)) === true, { timeout: 5000 });
 
     // 同一次选择器会话里再内联新建第二个,也一并挂上 —— 无需重开 ⋯ 菜单。
     await setSearch(NEW2);

@@ -1042,12 +1042,12 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
   }
 
   // A card's tags (M:N). Each current tag is a chip with a ✕ to drop it; the ⋯ menu's
-  // 标签 opens a keepOpen picker of the tags not yet on the card — pick/create adds one
-  // and the picker stays put so you can add several in a row (each write = add_task_topic, or
-  // add_task_topic_by_title when the typed name is new; remove = remove_task_topic).
-  // Adds reflect in place (item.topics + a live `have`) and
-  // reconcile the whole board with one load() when the picker closes; remove reloads at
-  // once. (chip 上的 draggable:false 只是装饰:挡住「按住 chip 起卡片拖」的是 card() 里的
+  // 标签 opens a keepOpen picker of **all** tags with the ones on the card lit — pick/create
+  // adds one, tapping a lit one drops it (675,与手机同形), and the picker stays put so you
+  // can change several in a row (each write = add_task_topic / add_task_topic_by_title when the
+  // typed name is new / remove_task_topic). Picker adds and drops reflect in place (item.topics +
+  // a live `have`) and reconcile the whole board with one load() when the picker closes; the
+  // chip ✕ path reloads at once. (chip 上的 draggable:false 只是装饰:挡住「按住 chip 起卡片拖」的是 card() 里的
   // mousedown 落点判,不是这枚属性 —— 见 CARD_CONTROLS。)
   function topicTags(item: TaskItem): { root: HTMLElement; openPicker: () => void } {
     const wrap = el("span", { className: "slot topic-slot" });
@@ -1106,6 +1106,21 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       }
       load();
     }
+    // 选择器里再点一次已挂的 = 摘掉:同 addTag 的形,就地更新、⛔ 不整板重载(load() 会拆掉
+    // 卡片连带选择器),收起时那发 load() 对齐真相。失败同样横幅就地报错、选择器留场。
+    async function dropTag(topicId: string, have: Set<string>): Promise<boolean> {
+      clearOpError();
+      try {
+        await invoke("remove_task_topic", { id: item.id, topicId });
+      } catch (e) {
+        showOpError(String(e));
+        return false;
+      }
+      const i = item.topics.findIndex((x) => x.id === topicId);
+      if (i >= 0) item.topics.splice(i, 1);
+      have.delete(topicId);
+      return true;
+    }
     function renderChips(): void {
       // ㊺: only the set-tag chips show on the card (display + a ✕ to drop each — a precise
       // per-tag op, kept inline). Adding a tag has no on-card ＋ button anymore; it opens
@@ -1145,14 +1160,19 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         if (changed) void load();
       });
       // 选择器 UI(搜索 + 候选 + Enter 复用/新建)走共享件 tag-picker.ts(与灵感同源),keepOpen
-      // 让选完不收起、可连续加多个:选既有 = add_task_topic,输入新名 = add_task_topic_by_title
-      // (core 单事务建+挂,见 addTag / createTag)。回调落定后由 tag-picker 就地重渲候选(已加的即时隐藏)。
+      // 让点完不收起、可连续改多个:选既有 = add_task_topic,输入新名 = add_task_topic_by_title
+      // (core 单事务建+挂,见 addTag / createTag),再点已挂的 = remove_task_topic(dropTag)。
+      // 回调落定后由 tag-picker 就地重渲候选(点亮态即时翻面)。
       renderTagPicker(wrap, {
         allTopics,
         have,
         keepOpen: true,
         onPick: (topicId) =>
           addTag(topicId, have).then((ok) => {
+            if (ok) changed = true;
+          }),
+        onUnpick: (topicId) =>
+          dropTag(topicId, have).then((ok) => {
             if (ok) changed = true;
           }),
         onCreate: (title) =>

@@ -17,17 +17,20 @@ import { el } from "./dom";
 export type PickerTopic = { id: string; title: string; color: string | null };
 
 export type TagPickerOpts = {
-  /** 库里全部标签(含已加的;本件按 have 把已加的从候选隐藏)。 */
+  /** 库里全部标签(含已加的 —— 全列出来,已加的点亮)。 */
   allTopics: PickerTopic[];
-  /** 已在该条目上的标签 id —— 从候选隐藏,避免重复挂(link 唯一键会报错)。 */
+  /** 已在该条目上的标签 id —— 候选里点亮(`.on`),再点一次 = 摘掉(onUnpick);Enter 精确命中它时无操作。
+   *  675 起与手机端同形(此前是从候选隐藏、要摘去点卡上的 ✕;用户 2026-09-12 拍板三处统一)。 */
   have: Set<string>;
-  /** 选中一个既有标签。 */
+  /** 选中一个既有(未挂的)标签。 */
   onPick: (topicId: string) => void | Promise<void>;
+  /** 再点一次已挂的标签 = 摘掉。 */
+  onUnpick: (topicId: string) => void | Promise<void>;
   /** 输入了库里没有的新名并确认 → 新建并挂上。 */
   onCreate: (title: string) => void | Promise<void>;
-  /** 选/建后不收起选择器,可连续加多个:回调多半是异步落库,等它落定就地重渲候选(search
-   *  文本与焦点原样留存,renderChoices 读同一个活的 `have`——调用方在回调里 `have.add` 后,
-   *  该标签即从候选隐藏)。默认 false = 选一个即由调用方的回调自行收起(灵感一步归入的旧行为)。 */
+  /** 选/建/摘后不收起选择器,可连续改多个:回调多半是异步落库,等它落定就地重渲候选(search
+   *  文本与焦点原样留存,renderChoices 读同一个活的 `have`——调用方在回调里 `have.add` /
+   *  `have.delete` 后,那枚候选的点亮态跟着翻)。默认 false = 点一下即由调用方的回调自行收起(灵感)。 */
   keepOpen?: boolean;
 };
 
@@ -35,11 +38,11 @@ export type TagPickerOpts = {
 // `container` 必须已挂在文档上 —— focus() 对游离节点是空操作(看板的 wrap 就在卡内、
 // 灵感须先 append(picker) 再调本函数)。收起手势(armDismiss)与挂载由调用方自理。
 export function renderTagPicker(container: HTMLElement, opts: TagPickerOpts): void {
-  const { allTopics, have, onPick, onCreate, keepOpen = false } = opts;
+  const { allTopics, have, onPick, onUnpick, onCreate, keepOpen = false } = opts;
 
-  // 选/建的落地:keepOpen 时等回调(异步落库)落定,再就地重渲候选并把焦点还给搜索框——
-  // renderChoices 读活的 `have`(调用方已把新标签 add 进去),于是它从候选消失、search 文本留存,
-  // 可接着加下一个。默认(灵感)不重渲:调用方的回调自己会收起选择器。
+  // 选/建/摘的落地:keepOpen 时等回调(异步落库)落定,再就地重渲候选并把焦点还给搜索框——
+  // renderChoices 读活的 `have`(调用方已 add / delete 过),于是那枚候选的点亮态翻面、search 文本
+  // 留存,可接着改下一个。默认(灵感)不重渲:调用方的回调自己会收起选择器。
   function commit(run: () => void | Promise<void>): void {
     const r = run();
     if (!keepOpen) return;
@@ -58,36 +61,37 @@ export function renderTagPicker(container: HTMLElement, opts: TagPickerOpts): vo
   const choices = el("div", { className: "topic-choices" });
 
   // 一枚候选。`label` 是屏上显示的字(子标签只显后缀),`full` 恒是全名 —— 挂 title 兜底,
-  // 免得「发布」这种后缀离开父上下文后认不出是谁的。
+  // 免得「发布」这种后缀离开父上下文后认不出是谁的。已挂的点亮(.on,同手机 `.p.on` /
+  // 筛选条 `.tf-pill.active` 那套语汇),再点一次走 onUnpick;title 顺带说明这一点。
   function choiceBtn(tp: PickerTopic, label: string, full: string, child: boolean): HTMLElement {
+    const on = have.has(tp.id);
     const b = el("button", {
-      className: child ? "choice child" : "choice",
+      className: `choice${child ? " child" : ""}${on ? " on" : ""}`,
       textContent: label,
-      title: full,
+      title: on ? t("tagPicker.onTitle", { name: full }) : full,
       draggable: false,
-      onclick: () => commit(() => onPick(tp.id)),
+      onclick: () => commit(() => (on ? onUnpick(tp.id) : onPick(tp.id))),
     });
+    b.setAttribute("aria-pressed", on ? "true" : "false");
     return b;
   }
 
   function renderChoices(): void {
     const q = search.value.trim();
     const ql = q.toLowerCase();
-    const avail = allTopics.filter((tp) => !have.has(tp.id));
+    // 已挂的不再从候选滤掉 —— 全列、点亮、再点一次摘掉(见 TagPickerOpts.have)。
     const nodes: Node[] = [];
     if (q) {
       // 搜索态**平铺显全名**:搜出来的很可能只有子没有父,缩进/后缀失去参照物
       // (同 filter-bar 在类型态下不分组的取舍)。
-      for (const tp of avail.filter((tp) => tp.title.toLowerCase().includes(ql))) {
+      for (const tp of allTopics.filter((tp) => tp.title.toLowerCase().includes(ql))) {
         nodes.push(choiceBtn(tp, tp.title, tp.title, false));
       }
     } else {
       // 空搜索态按 `父/子` 分组(499)。⛔ 分组函数从 filter-bar 借,别在这儿另抄一份 ——
       // 前缀分组的复制品今天恰好三份,`check-filter-parity` 逐字压着那三份,第四份出现
-      // 它不会自动发现。⚠ 父已挂在本条目上(被 have 滤掉)时,它的子会自然落进「顶层」
-      // 那半、平铺显全名 —— 那正是想要的,不必另写分支。
-      // 这里**刻意不做折叠**:候选本来就短,且上头就是搜索框。
-      for (const g of groupPills(avail)) {
+      // 它不会自动发现。这里**刻意不做折叠**:候选本来就短,且上头就是搜索框。
+      for (const g of groupPills(allTopics)) {
         nodes.push(choiceBtn(g.parent, g.parent.title, g.parent.title, false));
         for (const k of g.kids) nodes.push(choiceBtn(k.topic, k.label, k.topic.title, true));
       }
@@ -104,13 +108,9 @@ export function renderTagPicker(container: HTMLElement, opts: TagPickerOpts): vo
         }),
       );
     }
+    // 空只剩一种形:库里一个标签都没有、也没在打字 —— 有字就有「创建」,有标签就全列着。
     if (nodes.length === 0) {
-      nodes.push(
-        el("span", {
-          className: "topic-hint",
-          textContent: allTopics.length ? t("tagPicker.allAdded") : t("tagPicker.first"),
-        }),
-      );
+      nodes.push(el("span", { className: "topic-hint", textContent: t("tagPicker.first") }));
     }
     choices.replaceChildren(...nodes);
   }
@@ -124,7 +124,8 @@ export function renderTagPicker(container: HTMLElement, opts: TagPickerOpts): vo
     if (!q) return;
     const match = allTopics.find((tp) => tp.title.toLowerCase() === q.toLowerCase());
     if (match) {
-      if (!have.has(match.id)) commit(() => onPick(match.id)); // 精确命中已有 → 直接加(已在卡上则无操作)
+      // 精确命中已有 → 直接加;已在卡上则无操作 —— Enter 是「加」的手势,摘要点那枚点亮的候选。
+      if (!have.has(match.id)) commit(() => onPick(match.id));
     } else {
       commit(() => onCreate(q)); // 无匹配 → 新建并加
     }

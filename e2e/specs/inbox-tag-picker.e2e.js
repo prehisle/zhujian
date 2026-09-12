@@ -116,4 +116,54 @@ describe("灵感 · 标签选择器(Esc 收起 + 内联新建)", () => {
     await card.$(`.choice=${EXIST}`).waitForExist({ timeout: 5000 });
     expect(await card.$(".choice.create").isExisting()).toBe(false);
   });
+
+  it("已挂的标签在候选里点亮,再点一次 → 摘掉(675,与手机同形;灵感一步一收)", async () => {
+    // 前一例的选择器还开着(只输入没点),用它把 EXIST 点上 —— 灵感一步落库即收起。
+    const card = await $(`.note*=${IDEA}`);
+    await card.$(`.choice=${EXIST}`).waitForExist({ timeout: 5000 });
+    const clickChoice = (name) =>
+      browser.execute(
+        (text, n) => {
+          const c = [...document.querySelectorAll(".note")].find((x) => x.textContent.includes(text));
+          [...c.querySelectorAll(".topic-choices .choice")].find((b) => b.textContent === n).click();
+        },
+        IDEA,
+        name,
+      );
+    await clickChoice(EXIST);
+    await browser.waitUntil(async () => (await ideaTags()).includes(EXIST), { timeout: 8000, timeoutMsg: "EXIST 未挂上" });
+    await browser.waitUntil(async () => !(await $(`.note*=${IDEA}`).$(".topic-search").isExisting()), {
+      timeout: 5000,
+      timeoutMsg: "灵感挂上标签后选择器该随整卡 refresh 消失",
+    });
+    // 重开:EXIST 该点亮(.on);再点一次 → remove_note_topic,标签摘掉、选择器同样收起。
+    await inboxAction(IDEA, "标签");
+    const card2 = await $(`.note*=${IDEA}`);
+    await card2.$(".topic-search").waitForExist({ timeout: 5000 });
+    // ⚠ wdio 的 `.class=文本` 选择器只认单个类名,`.choice.on=…` 会报 invalid selector ⇒ 用 execute 读 classList。
+    await browser.waitUntil(
+      () =>
+        browser.execute(
+          (text, n) => {
+            const c = [...document.querySelectorAll(".note")].find((x) => x.textContent.includes(text));
+            const b = [...c.querySelectorAll(".topic-choices .choice")].find((x) => x.textContent === n);
+            return !!b && b.classList.contains("on");
+          },
+          IDEA,
+          EXIST,
+        ),
+      { timeout: 5000, timeoutMsg: "重开后已挂的标签没在候选里点亮" },
+    );
+    await clickChoice(EXIST);
+    await browser.waitUntil(async () => !(await ideaTags()).includes(EXIST), {
+      timeout: 8000,
+      timeoutMsg: "再点一次已挂的标签没摘掉",
+    });
+    await browser.waitUntil(async () => !(await $(`.note*=${IDEA}`).$(".topic-search").isExisting()), {
+      timeout: 5000,
+      timeoutMsg: "摘掉后选择器该随整卡 refresh 消失",
+    });
+    // 卡上那枚 chip 也没了(真相已由 list_ideas 证,这里只核视图跟上了)。
+    expect(await (await $(`.note*=${IDEA}`)).$(`.tag*=${EXIST}`).isExisting()).toBe(false);
+  });
 });

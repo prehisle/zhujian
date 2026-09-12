@@ -228,6 +228,8 @@
 /* 子标签候选(499):虚线描边 = 「父的子项」,与筛选条的 .tf-pill.child 同一套语汇。
    横排 pill 流里缩进表达不了层级,故靠皮肤;全名挂在 title 上兜底。 */
 .v-board .task-topic .choice.child { border-style: dashed; }
+/* 已挂上的候选点亮(675):同这张卡上优先级选择器的 .cur 与筛选条的 .tf-pill.active。再点一次摘掉。 */
+.v-board .task-topic .choice.on { color: var(--seal); border-color: var(--seal); background: var(--seal-tint); font-weight: 600; }
 .v-board .task-topic .choice.create { border-style: dashed; color: var(--seal); border-color: var(--seal-line); }
 .v-board .task-topic .choice.create:hover { background: var(--seal-tint); border-color: var(--seal); }
 
