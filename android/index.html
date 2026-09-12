@@ -1291,6 +1291,15 @@
         background: var(--seal-tint);
       }
       .panel .movewarn b { color: var(--seal); }
+      /* 编辑历史面(用户面 87):旧版本只读列出,一版一块,新的在前;正文按原样换行(pre-wrap),
+         长词强制断(anywhere)—— 旧版本里可能有整段网址。没有任何按钮:这一面不写。 */
+      .panel .hist { display: flex; flex-direction: column; gap: 8px; }
+      .panel .rev {
+        font-size: var(--fs-13); line-height: 1.5; padding: 6px 8px;
+        border: 1px solid var(--line); border-radius: var(--radius-sm);
+      }
+      .panel .rev time { display: block; font-size: var(--fs-12); color: var(--ink-faint); margin-bottom: 2px; }
+      .panel .rev p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink-soft); }
       .panel .movenote {
         display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
         font-size: var(--fs-12); color: var(--seal); line-height: 1.5;

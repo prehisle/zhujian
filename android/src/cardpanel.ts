@@ -44,18 +44,20 @@ import {
   setTaskPriority,
   unsealTask,
   updateTaskStatus,
+  listNoteHistory,
+  type RevisionItem,
   type SpaceInfo,
   type TaskStatus,
   type TimelineItem,
   type TopicItem,
 } from "./api";
 import { t } from "./i18n";
-import { $, actionBar, confirmBar, esc, hideConfirmBar, showBar, showError } from "./ui";
+import { $, actionBar, confirmBar, esc, fmtWhen, hideConfirmBar, showBar, showError } from "./ui";
 import { DONE_COLUMN, LANDING_COLUMN, isTaskStage, liveTaskColumns, stageLabel } from "./columns";
 import { capturePhoto, PICK_MAX, pickImages, toBase64 } from "./images";
 import { applyChecklistMarker, delegateChecklistNewline } from "./checklist-input";
 
-type Mode = "actions" | "edit" | "tags" | "move";
+type Mode = "actions" | "edit" | "tags" | "move" | "history";
 
 type PanelState = {
   space: string;
@@ -70,6 +72,8 @@ type PanelState = {
   /** listTopics 请求序号(三审 M3):enterTags/refreshTopics 共用,旧快照晚回不许
    *  覆盖新快照。 */
   topicsSeq: number;
+  /** history 面的旧版本(进入时现读;null = 还没读)。只读,⛔ 没有任何写口。 */
+  revisions: RevisionItem[] | null;
 };
 
 type Deps = {
@@ -192,6 +196,8 @@ function renderPanel(card: HTMLElement) {
     panel.innerHTML = renderTags(item);
   } else if (state.mode === "move") {
     panel.innerHTML = renderMove();
+  } else if (state.mode === "history") {
+    panel.innerHTML = renderHistory();
   } else {
     panel.innerHTML = renderActions(item);
   }
@@ -224,6 +230,7 @@ function renderActions(item: TimelineItem): string {
     actBtn("addimg", t("cardpanel.actAddImg")),
     actBtn("photo", t("cardpanel.actPhoto")),
     actBtn("comment", t("cardpanel.actComment")),
+    actBtn("history", t("cardpanel.actHistory")),
   ];
   if (!task) acts.push(actBtn("promote", t("cardpanel.actPromote")));
   if (item.stage === LANDING_COLUMN) acts.push(actBtn("revert", t("cardpanel.actRevert"), { warn: true }));
@@ -268,6 +275,21 @@ function renderMove(): string {
     .join("");
   return `<div class="movewarn">${t("cardpanel.moveWarnPre")}<b>${t("cardpanel.moveWarnBold")}</b>${t("cardpanel.moveWarnPost")}</div>
     <div class="lane"><span class="pillrow">${rows || `<span class="lab">${t("cardpanel.noOtherSpace")}</span>`}</span></div>
+    <div class="acts"><button data-pact="back"${busy ? " disabled" : ""}>${t("cardpanel.back")}</button></div>`;
+}
+
+/** 编辑历史面(用户面 87,677):这条改过的旧版本,新的在前,**只读** —— ⛔ 不给「恢复」
+ *  (不可变性是历史级:想改回去就再改一版,走编辑)。桌面把它挂在编辑框下面;手机的编辑面是
+ *  草稿态、进去就该写字,放那儿一眼看不到,故给它自己一格动作。没改过就说一句,不空着。 */
+function renderHistory(): string {
+  const revs = state?.revisions ?? [];
+  const rows = revs
+    .map(
+      (r) =>
+        `<div class="rev"><time>${esc(t("cardpanel.histEditedAt", { time: fmtWhen(r.archived_at) }))}</time><p>${esc(r.content)}</p></div>`,
+    )
+    .join("");
+  return `<div class="hist">${rows || `<span class="lab">${t("cardpanel.histEmpty")}</span>`}</div>
     <div class="acts"><button data-pact="back"${busy ? " disabled" : ""}>${t("cardpanel.back")}</button></div>`;
 }
 
@@ -464,6 +486,23 @@ async function enterTags(card: HTMLElement) {
     if (state === session && space === getCurrentSpace() && seq === session.topicsSeq) {
       showError(String(err));
     }
+  }
+}
+
+/** 进历史面:现读旧版本再翻 mode(同 enterTags 的形:在途期间面板可自由导航,回来时 session /
+ *  空间 / mode 任一变了就弃,⛔ 不许把 mode 硬翻回去踩掉编辑)。 */
+async function enterHistory(card: HTMLElement) {
+  if (!state) return;
+  const session = state;
+  const space = getCurrentSpace();
+  try {
+    const revisions = await listNoteHistory(space, session.id);
+    if (state !== session || space !== getCurrentSpace() || session.mode !== "actions" || deps.isCaptureSaving()) return;
+    session.mode = "history";
+    session.revisions = revisions;
+    renderPanel(currentCard() ?? card);
+  } catch (err) {
+    if (state === session && space === getCurrentSpace()) showError(String(err));
   }
 }
 
@@ -664,6 +703,7 @@ function onTimelineClick(e: Event) {
     editDraft: null,
     tagDraft: "",
     topicsSeq: 0,
+    revisions: null,
   };
   deps.onDraftClosed(); // 换卡 = 旧草稿域收场(同上)
   renderPanel(card);
@@ -684,6 +724,10 @@ function handleAct(act: string, card: HTMLElement) {
     case "tags":
       clearConfirm();
       void enterTags(card);
+      return;
+    case "history":
+      clearConfirm();
+      void enterHistory(card);
       return;
     case "addimg":
       clearConfirm();
