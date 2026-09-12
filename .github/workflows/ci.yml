@@ -277,6 +277,36 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
+  # ⭐ 674(测试与工装 99 ②):**安卓前端在公开树上 `vite build` 一遍**(约一分钟,只用 node)。
+  #
+  # 670 那次发版红在这儿:651 把 `site-app/` 三份协议页烤进安卓包(`android/vite.config.ts` 的
+  # policyAsset 插件,文件不在就拒建),而公开仓的导出白名单没收它 ⇒ 公开树缺文件。闸分支这趟
+  # 对安卓壳只 `cargo test`(cargo test 不开 custom-protocol,`dist/` 缺席照样编得过 —— 见
+  # preflight.yml 的 `shells` 格),从不碰安卓前端 ⇒ 651 到 669 四轮全绿,`android-nightly`
+  # 早红了一晚没人看见,直到发版那趟 `android-v0.3.40` 红在同一句。
+  # ⇒ 这一格就是「撞到 policyAsset 那层的最短路」:`npm run build` 与 `tauri android build` 的
+  #    beforeBuildCommand **同一条命令**,前端这一层它俩看到的是同一棵树。⛔ 刻意**不**在闸分支
+  #    构建整只 APK(9 分钟,那是夜跑的活)。⚠ 这一格**判不了「安卓包能装能跑」**,只判「公开树上
+  #    前端资源齐不齐、编不编得过」—— 缺文件 / import 指到导出白名单之外的目录(673 起有仓根
+  #    `shared/`)/ TS 编译不过,三种都在这儿红。
+  # ⚠ 与 `gates` / `linux-e2e` 互不依赖,同时开跑;它是分钟级,不拉长最长那根杆。
+  android-frontend:
+    if: github.repository == 'prehisle/zhujian'
+    name: 安卓前端 vite build(公开树)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: android/package-lock.json
+      - run: cd android && npm ci
+      # ⚠ 用 `npm run build` 不用裸 `npx vite build`:前者才是 tauri.conf.json 里 beforeBuildCommand
+      #    那一条,改了那句这里自动跟着。
+      - run: cd android && npm run build
+
   # ⭐ 542(用户点名「每日构建测试、保存通过后的版本」):**全矩阵绿了才构建存档**。
   #
   # 在此之前「每晚的包」是 `nightly.yml` 出的,而那份 workflow 里 build 与 test 是**并列** job
@@ -284,15 +314,16 @@ jobs:
   # 红树的包照样存档 14 天,与全矩阵(19:30Z 这趟)验的还可能不是同一棵树(18:00Z vs 19:30Z)。
   # 542 起 `nightly.yml` 退役,构建挪到这里、挂在两根裁决后面 —— **同一趟、同一个 sha**。
   #
-  # ⛔ `needs` 两格都要列:`gates` 是 reusable preflight(内部有 540 那格 `all-green` 逐格
-  #    `== success` 汇总),`linux-e2e` 是本文件的独立 job —— 只挂 `gates` 就把 e2e 的红放过去了。
+  # ⛔ `needs` 三格都要列:`gates` 是 reusable preflight(内部有 540 那格 `all-green` 逐格
+  #    `== success` 汇总),`linux-e2e` / `android-frontend` 是本文件的独立 job —— 只挂 `gates`
+  #    就把它们的红放过去了(674 加第三格)。
   #    needs 的默认语义 = 上游任一 failure / cancelled / skipped ⇒ 本 job skip ⇒ **没有产物**,
   #    而「没有产物」正是要的答案(别给它加 always() 之类的豁免)。
   # ⚠ 产物名带 sha:下载下来隔了几天也认得出它构建自哪棵树(run 页面上那个 sha 会随页面走丢)。
   # ⚠ 只在 schedule(恒)与手动带 `build_artifacts=true` 时构建;闸分支的 push 不构建 ——
   #    那条要的是裁决,不是包。
   nightly-build:
-    needs: [gates, linux-e2e]
+    needs: [gates, linux-e2e, android-frontend]
     if: >-
       github.repository == 'prehisle/zhujian' &&
       (github.event_name == 'schedule' ||
