@@ -593,6 +593,53 @@
 .v-board .edit-err { color: var(--seal); font-size: var(--fs-12); letter-spacing: 0.02em; }
 .v-board .edit-err:empty { display: none; } /* 无报错时不占 flex gap,编辑框保持紧凑 */
 
+/* 编辑态底栏:报错在左、放大钮恒在右。⛔ 别用 space-between —— `.edit-err:empty` 收起后
+   钮成了唯一的 flex item,那条规则会把它甩回左边;靠 err 的 auto 外边距顶开才与有没有
+   报错无关。 */
+.v-board .edit-bar { display: flex; align-items: center; gap: 8px; justify-content: flex-end; }
+.v-board .edit-bar .edit-err { margin-right: auto; min-width: 0; }
+/* 单字符钮:`.act` 那档的 5px 13px 是给「编辑 / 删除」两字用的,一个箭头占不满;
+   它坐在正文框上头,矮一点才不至于把编辑框整个往下顶。
+   ⚠ 选择器必须写成 `.act.edit-zoom`(0,3,0):`.v-board .act` 那一族定义在本节**之后**,
+   同特异性下它会后来居上,只写 `.v-board .edit-zoom` 这两条根本落不下去(实测 padding
+   仍是 5px 13px)。 */
+.v-board .act.edit-zoom { padding: 1px 8px; line-height: 1.3; }
+
+/* ---- 放大编辑(ze = zoom editor;board.ts openZoom) ----------------------------
+   遮罩复用留言浮层那张 `.cm-overlay`(深压那一路 —— 本面板的全部意义就是让身后整版退场
+   好聚焦,二选一的判据在 check-hardcoded-colors 那条登记里),故这里一个颜色也不新写。
+   面板自己另立一形:留言那张 560/70vh 是**读框**,这张要的是尽量大的**写字面**。 */
+.ze-panel {
+  width: min(880px, calc(100vw - 64px));
+  height: min(78vh, 760px);
+  display: flex;
+  flex-direction: column;
+  padding: 16px;
+  background: var(--raised);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  box-shadow: var(--float-shadow);
+  overflow: hidden;
+}
+/* 放大态的 `.edit-form` 是从卡片上搬来的**同一批节点**,这里只换几何:正文框吃掉全部
+   剩余高度、框内自己滚(标签行 / 底栏 / 配图条各占自己那点,不参与瓜分)。
+   `.ze-scope` 是那层只为 CSS 作用域存在的壳(见 openZoom):它自己就带着 `.v-board` 的
+   flex column + overflow:hidden,这里只补「吃满面板剩余高度」。 */
+.ze-panel .ze-scope { flex: 1; min-height: 0; }
+.ze-panel .edit-form { flex: 1; min-height: 0; }
+.ze-panel .edit-input {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto; /* 定高面板里必须能滚:autogrow 在放大态不写 inline 高度 */
+  font-size: var(--fs-16); /* 专注写长文的面,比窄列里那档大一级 */
+}
+.ze-panel .task-topic,
+.ze-panel .edit-bar,
+.ze-panel .img-editor { flex: none; }
+/* 已经放大了,那枚钮再点也是 no-op(openZoom 自守),别留一个按下去没反应的东西在面上。
+   ⛔ 别改成「缩回」:出口只有保存 / 取消两条,多一条就是多一个中间态。 */
+.ze-panel .edit-zoom { display: none; }
+
 /* ---- action pills ---- */
 .v-board .acts {
   margin-top: 11px;

@@ -685,8 +685,9 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
 
   // ---- 新建任务 compose ------------------------------------------------------
   // The textarea auto-grows to fit its content (titles may span lines now) via the
-  // shared autogrow.ts; CSS caps each box (compose 160 / edit 200). Reset to one
-  // row when cleared.
+  // shared autogrow.ts. ⚠ 只有 compose 这个框还封着顶(160px);编辑态那个 568 起**刻意
+  // 无上限**(长正文一编辑就冒内滚动条,用户点名),别照这句去读 `.edit-input`。
+  // Reset to one row when cleared.
 
   // 新建任务的暂存配图(共享件 pendingImages,同捕获浮窗/灵感 compose):任务回车才建,
   // 图先暂存预览,create_task 拿到 id 再挂上。compose 条常驻不重建,接一次即可。
@@ -1589,6 +1590,13 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       wirePasteToAttach(input, item.id, afterAttach, onImgErr);
       imgEditor.append(strip.root, imgErr);
 
+      // 放大编辑(⤢):长正文在 200px 起的窄列里折成十几行、框一长就顶出视口,只能边打字
+      // 边滚列体。放大 = 把**同一个** `.edit-form` 整块搬进一张浮层面板,不是另起一个编辑器
+      // —— 文档级按键监听 / 落盘钩 / 配图粘贴 / 清单缩进全是原来那些节点上的那些,保存链
+      // 一个字节没改。⛔ **没有「缩回小框」这条出口**:出口只有 Enter 保存 / Esc 取消 /
+      // 点遮罩保存,与就地编辑逐字同义(多一条缩回就是多一个中间态,而编辑态本就是全局单例)。
+      let zoomed = false;
+      let overlay: HTMLElement | null = null;
       let saving = false; // 幂等:点别处/回车/切卡可能并发触发,保存中再触发直接让位
       const save = async () => {
         if (saving) return;
@@ -1615,7 +1623,12 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         }
         void save();
       };
-      input.addEventListener("input", () => autoGrow(input));
+      // ⛔ 放大态下不许写 inline 高度:那里的几何由面板的 flex 撑(正文框吃满剩余高度、
+      // 框内自己滚),而 autogrow 的「长到全文可见」在一张定高面板里没有意义 —— 它写的
+      // `style.height` 会把 flex 算出来的高度整个覆盖掉,框当场缩成内容那么高。
+      input.addEventListener("input", () => {
+        if (!zoomed) autoGrow(input);
+      });
       // Esc 取消 / Enter 提交 监听在文档级,而非输入框上 —— 焦点离开框(点了缩略图 /
       // 卡片空白)时也生效。Shift+Enter 仍在框内换行(shiftKey 让位)。别的输入框(如 compose
       // 新任务)保留自己的键:目标是另一个 input/textarea 时不劫持。load() 会拆掉这些监听。
@@ -1638,6 +1651,13 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       const onDown = (e: MouseEvent): void => {
         const t = e.target as HTMLElement;
         if (c.contains(t)) return;
+        // 放大态:面板 = 卡内、遮罩 = 卡外,与就地编辑同义。⚠ 这一判必须在白名单之前 ——
+        // 遮罩自己带着 `.cm-overlay`(为复用那张深压底),`closest` 会当场把它放行,
+        // 「点面板外即保存」就永远不会发生。面板内的点击照旧由 closest 命中祖先遮罩而放行。
+        if (t.classList.contains("ze-overlay")) {
+          commit();
+          return;
+        }
         if (t.closest(SATELLITE_LAYERS)) return;
         commit();
       };
@@ -1646,6 +1666,12 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       activeEditCleanup = () => {
         document.removeEventListener("keydown", onKey);
         document.removeEventListener("mousedown", onDown);
+        // 放大面板与编辑态同生死:三个落点(load 落盘后重画 / load 重画前 / unmount)都在
+        // 这里收口 —— 它挂在视图根下,切视图那一发确实会连根带走,但保存/取消回到就地
+        // 视图的那两发不会,漏收就是一张永远关不掉的遮罩。
+        overlay?.remove();
+        overlay = null;
+        zoomed = false;
       };
       // 刷新前落盘(P1 #9b):此前 load() 重画只摘监听、半打的标题静默蒸发(远端一有
       // 动静就丢)。未改动/空/保存中 = 无事(false);失败上 op-err 横幅并附草稿,不无声。
@@ -1676,7 +1702,42 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         }),
       );
       // Enter/点别处 保存、Esc 取消、Ctrl+V 配图 都是隐式手势,不再常驻一行说明书。
-      c.replaceChildren(el("div", { className: "edit-form" }, [input, tagView, err, imgEditor]));
+      // 报错与放大钮同占一行:`.edit-err:empty` 本就收起,这一行的高度平时只由那枚小钮决定。
+      // 复用卡上小钮那一档(`.act.ghost`),只在 CSS 里收窄单字符的左右留白 —— 别为它另拍一套。
+      const zoomBtn = btn("⤢", "ghost edit-zoom", () => openZoom());
+      zoomBtn.title = t("board.zoomEdit");
+      zoomBtn.setAttribute("aria-label", t("board.zoomEdit"));
+      // ⛔ 这一行必须在正文框**之前**:它要服务的正是「框长过视口」那一态,而那一态里框底
+      // 在屏幕外 —— 钮挂在框下面等于「最需要它的时候它不在屏上」(实测 154px 窄列、十行
+      // 正文:框高 466、底边 751,窗才 680)。报错行跟着上移是顺带的好处,不必滚到底才看见。
+      const form = el("div", { className: "edit-form" }, [el("div", { className: "edit-bar" }, [err, zoomBtn]), input, tagView, imgEditor]);
+
+      function openZoom(): void {
+        if (zoomed) return;
+        zoomed = true;
+        // 搬 DOM = 节点重新插入 = 失焦且选区归零,先记下光标再还原(不然放大后光标跳回开头)。
+        const at = [input.selectionStart, input.selectionEnd] as const;
+        // ⛔ 遮罩只能挂 body:`.main-col` 是 `position:relative; z-index:1`,**它建立了一个
+        // 堆叠上下文** —— 挂在视图根下的遮罩,z-index 再大也只在 main-col 内部排序,盖不住
+        // z-index:2 的侧栏(实测:面板左边那点 `elementFromPoint` 命中的是 `.sidebar`,
+        // 侧栏既没被压暗、还点得动 ⇒ 点一下就切视图)。留言浮层挂 body 正是同一个道理。
+        // 代价是 `.edit-form` 那一族样式全 scoped 在 `.v-board` 下,故套一层**只为作用域
+        // 存在**的壳把它们接回来 —— 壳的裸样式(flex column / height:100% / overflow:hidden)
+        // 恰好就是面板内容器要的形,不必再覆盖。
+        const scope = el("div", { className: "v-board ze-scope" }, [form]);
+        const panel = el("div", { className: "ze-panel" }, [scope]);
+        panel.setAttribute("role", "dialog");
+        panel.setAttribute("aria-modal", "true");
+        panel.setAttribute("aria-label", t("board.zoomEdit"));
+        overlay = el("div", { className: "cm-overlay ze-overlay" }, [panel]);
+        document.body.append(overlay);
+        input.style.height = ""; // 让位给面板的 flex(见上面 input 监听那条)
+        input.style.overflowY = "";
+        input.focus();
+        input.setSelectionRange(at[0], at[1]);
+      }
+
+      c.replaceChildren(form);
       input.focus();
       input.select();
       autoGrow(input);

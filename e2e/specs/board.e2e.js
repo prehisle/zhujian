@@ -139,6 +139,84 @@ describe("任务看板 · 手工建任务与拖动流转", () => {
     await browser.keys(["Escape"]);
     await $(".edit-input").waitForExist({ timeout: 5000, reverse: true });
   });
+
+  it("放大编辑 → 同一个框搬进浮层面板、遮罩压住整个视口,Esc 取消不落库", async () => {
+    const long = Array.from({ length: 12 }, (_, i) => `看板丁-放大第${i + 1}行`).join("\n");
+    await invoke("create_task", { title: long });
+    await browser.waitUntil(async () => (await statusOf(long)) === "todo", { timeout: 8000 });
+    await goNotebook("board");
+    await (await cardInColumn("todo", "看板丁-放大第1行")).waitForExist({ timeout: 8000 });
+
+    await boardAction("看板丁-放大第1行", "编辑");
+    await $(".tcard .edit-input").waitForDisplayed({ timeout: 5000 });
+    // 前置自证:放大之前框确实**长在卡片里**、且窄。不量这一格的话,下面那些断言在
+    // 「压根没搬过 DOM」时也能恒绿(面板选择器写错 → 断言全落空 → 反而看不出来)。
+    const before = await browser.execute(() => {
+      const ta = document.querySelector(".tcard .edit-input");
+      return { w: ta.getBoundingClientRect().width, inCard: !!ta.closest(".tcard"), zoomBtns: document.querySelectorAll(".edit-zoom").length };
+    });
+    expect(before.inCard).toBe(true);
+    expect(before.zoomBtns).toBe(1);
+
+    await $(".edit-zoom").click();
+    await $(".ze-panel").waitForDisplayed({ timeout: 5000 });
+    const after = await browser.execute(() => {
+      const ta = document.querySelector(".ze-panel .edit-input");
+      const ov = document.querySelector(".ze-overlay");
+      // 侧栏上那一点:遮罩必须是这里最顶上的东西。⭐ 这条是本例的刀口 —— 遮罩挂在视图根
+      // 下时它恒红(`.main-col` 的 z-index:1 建了堆叠上下文,遮罩再大的 z 也盖不住
+      // z-index:2 的侧栏,命中的是 `.sidebar`、侧栏既不变暗还点得动)。
+      const hitOnSidebar = document.elementFromPoint(10, Math.round(innerHeight / 2));
+      return {
+        w: ta ? ta.getBoundingClientRect().width : 0,
+        movedOut: !document.querySelector(".tcard .edit-input"),
+        onlyOneInput: document.querySelectorAll(".edit-input").length,
+        maskOverSidebar: !!hitOnSidebar && hitOnSidebar.classList.contains("ze-overlay"),
+        overlayOutsideStackingCtx: !!ov && ov.parentElement === document.body,
+        tagsAndImagesCameAlong: !!document.querySelector(".ze-panel .task-topic") && !!document.querySelector(".ze-panel .img-editor"),
+      };
+    });
+    expect(after.movedOut).toBe(true); // 搬的是同一个框,不是另起一个编辑器
+    expect(after.onlyOneInput).toBe(1); // ……所以全文档仍然只有一个
+    expect(after.w).toBeGreaterThan(before.w * 2); // 放大的全部意义:写字面真的宽了
+    expect(after.maskOverSidebar).toBe(true);
+    expect(after.overlayOutsideStackingCtx).toBe(true);
+    expect(after.tagsAndImagesCameAlong).toBe(true);
+
+    // Esc = 取消:面板与遮罩一起收走,改动不落库(与就地编辑逐字同义)。
+    await browser.execute(() => {
+      document.querySelector(".ze-panel .edit-input").value = "放大态里改过但应当被丢弃";
+    });
+    await browser.keys(["Escape"]);
+    await $(".ze-panel").waitForExist({ timeout: 5000, reverse: true });
+    expect(await $(".ze-overlay").isExisting()).toBe(false);
+    expect(await statusOf(long)).toBe("todo"); // 原标题还在 = Esc 真丢弃
+    expect(await statusOf("放大态里改过但应当被丢弃")).toBe(null);
+  });
+
+  it("放大编辑 → 面板里 Enter 保存走的是原来那条改名路", async () => {
+    const orig = "看板戊-放大保存前";
+    const renamed = "看板戊-放大保存后\n第二行";
+    await invoke("create_task", { title: orig });
+    await browser.waitUntil(async () => (await statusOf(orig)) === "todo", { timeout: 8000 });
+    await goNotebook("board");
+    await (await cardInColumn("todo", orig)).waitForExist({ timeout: 8000 });
+
+    await boardAction(orig, "编辑");
+    await $(".tcard .edit-input").waitForDisplayed({ timeout: 5000 });
+    await $(".edit-zoom").click();
+    await $(".ze-panel").waitForDisplayed({ timeout: 5000 });
+    await browser.execute((v) => {
+      const input = document.querySelector(".ze-panel .edit-input");
+      input.value = v;
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    }, renamed);
+
+    await browser.waitUntil(async () => (await statusOf(renamed)) === "todo", { timeout: 8000 });
+    expect(await statusOf(orig)).toBe(null); // 同一行改名,不是新建
+    await $(".ze-panel").waitForExist({ timeout: 5000, reverse: true }); // 保存完面板自己收
+    expect(await $(".ze-overlay").isExisting()).toBe(false);
+  });
 });
 
 describe("任务看板 · 拖动排序", () => {
