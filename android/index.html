@@ -849,6 +849,8 @@
         transition: opacity 0.15s;
       }
       #viewer.zoomed .viewer-del { opacity: 0; pointer-events: none; }
+      /* 只读(674:编辑态点缩略图看大图):删只在缩略图 × 上,大图纯看。 */
+      #viewer.readonly .viewer-del { display: none; }
 
       /* 勾框:任务行的「标完成」。触区放大到整块 label,视觉是一枚圆圈,勾上即朱砂。
          ⭐ **记号钉在第一行,盒子照旧整卡高**(UI 一致性 M12):`align-self:stretch` 那句是
@@ -1343,6 +1345,9 @@
         min-height: 3em; max-height: 40vh; field-sizing: content;
         resize: none; outline: none; caret-color: var(--seal);
       }
+      /* 编辑态只读标签行(674):编辑正文时一眼看到这条挂了哪些标签(照桌面编辑态)。
+         纯展示、复用卡上 `.chip` 样式;无标签整行不渲染。改标签仍走操作面的「标签」。 */
+      .panel .edit-tags { display: flex; flex-wrap: wrap; gap: 6px; }
       .panel input[type="date"] {
         border: 1px solid var(--line-strong); border-radius: var(--radius-sm);
         background: var(--paper); color: var(--ink); padding: 3px 6px; font-size: var(--fs-13);

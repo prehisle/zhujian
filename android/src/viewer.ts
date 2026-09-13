@@ -36,8 +36,11 @@ let viewerShown: ViewerItem | null = null; // 屏幕上真显示着的那张(删
 let viewerGroup: ViewerItem[] = [];
 let viewerIdx = 0;
 
-export function openViewer(group: ImageMeta[], idx: number) {
+export function openViewer(group: ImageMeta[], idx: number, readonly = false) {
   viewerGroup = group.map((m) => ({ kind: "stored" as const, id: m.id, seq: m.seq }));
+  // 只读(674:编辑态点缩略图看大图):藏掉查看器自带的「删除」——删只走缩略图角上的 ×,
+  // 免得从大图删走整轴刷新、与编辑态的 editImages 打架(照桌面 lightbox「本就不带删」那形)。
+  $("viewer").classList.toggle("readonly", readonly);
   return showViewerAt(idx);
 }
 
@@ -157,6 +160,7 @@ export function closeViewerNow() {
   hideConfirmBar(); // 关图即弃挂着的删图确认(旧确认不许作用到下一张/下个语境)
   window.clearTimeout(closeTimer); // 返回键/删图这些路子关层时,可能还挂着一枚待关
   setClosing(false); // 必须摘:留着的话下次开图整层还是 opacity:0(图在、看不见)
+  $("viewer").classList.remove("readonly"); // 每次关都摘:下次非只读地开(暂存条那路要能删)
   $("viewer").hidden = true;
   ($("viewer-img") as HTMLImageElement).src = ""; // 释放大图
   resetZoom();

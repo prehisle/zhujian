@@ -58,6 +58,7 @@ import { $, actionBar, confirmBar, esc, fmtWhen, hideConfirmBar, showBar, showEr
 import { DONE_COLUMN, LANDING_COLUMN, isTaskStage, liveTaskColumns, stageLabel } from "./columns";
 import { capturePhoto, PICK_MAX, pickImages, toBase64 } from "./images";
 import { hydrateThumbs } from "./thumbs";
+import { openViewer } from "./viewer";
 import { applyChecklistMarker, delegateChecklistNewline } from "./checklist-input";
 
 type Mode = "actions" | "edit" | "tags" | "move" | "history";
@@ -307,6 +308,17 @@ function renderHistory(): string {
 function renderEdit(): string {
   // 原地编辑表单(674):textarea + 缩略图条 + 钮排,顶在正文的位置(卡上只读三块由
   // `.card.editing` 藏)。图的增删就在这里 —— 与桌面编辑态同形,不再让「加图」独占操作面。
+  const item = state ? deps.getItem(state.id) : undefined;
+  const topics = item?.topics ?? [];
+  // 只读标签行(674,照桌面编辑态):有标签才显,改标签仍走操作面的「标签」子面板。
+  const tagRow = topics.length
+    ? `<div class="edit-tags">${topics
+        .map(
+          (tp) =>
+            `<span class="chip${tp.color ? " tinted" : ""}"${tp.color ? ` style="--tc:${esc(tp.color)}"` : ""}>${esc(tp.title)}</span>`,
+        )
+        .join("")}</div>`
+    : "";
   const imgs = state?.editImages ?? [];
   // 缩略图条复用只读那套(`.thumbs`/`.thumb`,字节走 thumbs.ts)。删钮挂 `data-editdel`
   // (不是 `.imgmanage` 那条显隐了):点它就地删、只重画本卡缩略图,不刷整轴。⛔ 缩略图本体
@@ -329,6 +341,7 @@ function renderEdit(): string {
   // 钮排照「记一笔」那一行(`.compose-row`):加图/拍照/清单靠左小钮、保存靠右(它自带
   // margin-left:auto),取消随后。「＋ 清单」= 桌面 Ctrl+L 在手机的样子,第二项起靠回车续行。
   return `<textarea class="edit">${esc(state?.editDraft ?? "")}</textarea>
+    ${tagRow}
     ${thumbs}
     <div class="compose-row">
       <button data-pact="addimg" class="ghost cimg"${busy ? " disabled" : ""}>${t("cardpanel.actAddImg")}</button>
@@ -681,6 +694,14 @@ function onTimelineClick(e: Event) {
   const editDel = el.closest<HTMLElement>("[data-editdel]");
   if (editDel && state?.mode === "edit") {
     confirmDeleteEditImage(editDel.dataset.editdel!, editDel.dataset.seq ?? "");
+    return;
+  }
+  // 编辑面缩略图本体(非删钮)→ 只读看大图(删走上面的 ×;照桌面 lightbox「不带删」那形)。
+  const editThumb = el.closest<HTMLElement>(".thumb[data-img]");
+  if (editThumb && state?.mode === "edit") {
+    const imgs = state.editImages ?? [];
+    const idx = imgs.findIndex((m) => m.id === editThumb.dataset.img);
+    if (idx >= 0) void openViewer(imgs, idx, true);
     return;
   }
   // 面板控件优先。
