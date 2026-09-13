@@ -39,16 +39,18 @@
 
 - WSS 二进制消息,CBOR 编码。**信封是服务器唯一可读面**,字段最小化;`blob` 一律是域子钥下的密文,服务器不可解析。HLC、水位、op 类型、图字节全在密文内。**线上形态以 `sync-proto/` 的黄金向量为准**(P2-e 代码化):serde externally tagged、变体名 CamelCase(与内层 Msg 同纪律)、字节字段 CBOR bytes;下表小写名是描述性写法。信封层**无独立版本字段**——服务器与客户端同仓同轮部署,变体增删=双端一起升级(密文内层的版本纪律是 `PROTO_VER`,与信封无关)。
 - 客户端 → 服务器:
-  - `register_first {account, device, pubkey, sig}`(首台设备注册,§4;字段名 P2-e 定为 pubkey,避 Rust 关键字)
-  - `auth {account, device, sig}`(对 challenge 签名)
+  - `register_first {account, device, pubkey, sig, caps?}`(首台设备注册,§4;字段名 P2-e 定为 pubkey,避 Rust 关键字;caps 见本节「能力协商」)
+  - `auth {account, device, sig, caps?}`(对 challenge 签名;caps 见本节「能力协商」)
   - `send {n, to, lane, blob}`(n=连接内单调序号,ack/nack 用;to=device_id 或 `"*"`)
   - `pair_open {}` / `pair_join {slot}` / `pair_msg {slot, blob}` / `pair_close {slot}`(配对桥,§6;pair_close=「密钥确认失败主动烧槽」的信封面,双方可发,P2-e 补)
   - `register_device {account, new_device, new_pubkey, sig_by_old}`(老设备为新设备背书注册)
   - `seat_lease {account, new_device, new_pubkey, sig_by_old}`(纪元席位租约:已鉴权 sponsor 为具体目标求一次 quota +1,billing-plan §5;工序 2 补)
+  - `device_admin {account, target, action, sig}`(设备管理:action ∈ remove / grant_admin / revoke_admin 三动作合一条,共用鉴权、锁与签名域;须已鉴权,sig 用本连接验签那把钥签、payload 绑 nonce;授权只有一条式子 `caller_is_admin OR (action == remove AND target == caller)`;形态闸先于验签;判据见 identity-plan §5.3 / §5.5(内部);367 补)
+  - `roster_req {n}`(拉一枚当前名册;不签名——连接已鉴权且无特权效果,名册只含自己账户的 device_id;n=连接内单调请求号,与 `send.n` 各自独立,`roster` 应答回显它;identity-plan §5.4(内部);367 补)
   - `ping {}`
 - 服务器 → 客户端:
   - `challenge {nonce}`(连接即发,32B 随机)
-  - `authed {}` / `err {code, msg}`(连接级错误;致命类随后断开)
+  - `authed {}` / `err {code, msg}`(连接级错误;致命类随后断开。code 全集以 `sync-proto` 的 `err_code` 为准;`err` 无请求号,而仓里存在第三方主动推送的 `err`(`account_throttled`)⇒ 客户端对无编号 `err` 的归属走白名单 `PAIR_FLOW_ERRORS` / `DEVICE_ADMIN_FLOW_ERRORS`,其余一律只进状态面,⛔ 新增的主动推送必须用不在任何表里的 code)
   - `deliver {from, to, blob}`(投递,含清信箱与实时;回显发送方原 `to`,收端重构 AAD 用)
   - `ack {n}`(send 被接受:完成在线转发 + 离线入箱;mail 恒 ack「入箱即接手」)
   - `nack {n, code}`(send 的业务性失败,按 n 关联、不断开:direct 指名离线 `not_online`、收件人不在本账户 registry `unknown_device`;P2-e 补——P2-g 拿它做「direct 对端不可达」信号)
@@ -57,6 +59,11 @@
   - `pair_slot {slot}` / `pair_msg {slot, blob}` / `pair_peer {event}`(event ∈ joined/left/closed)
   - `peer {device, online}`(账户内在线状态,元数据,帮助对端决定何时发 hello;上线者收当前在线快照、其他人收事件)
   - `pong {}`
+  - `account_status_v1 {status_revision, server_now, configured_tier, effective_tier, expires_at, seat_count, seat_quota, fastlane_used, fastlane_quota, restriction_reasons, effective_rate_bps, period_start, period_end, data_plane}`(账户授权状态:粗粒度只读,全派生自服务器亲见的元数据与 wire 字节计数,不含用户内容;**仅对声明 `account_status_v1` 者下发**,未声明的旧客户端进入受限时改收非致命 `err{account_throttled}`;客户端多帧取 `status_revision` 最大者、丢更小的,⛔ 不是「后到覆盖」——ENTER 推送与 admin 推送可乱序到达;判据见 billing-plan §6(内部);工序 4 补)
+  - `roster {request?, revision, devices: [{device, admin}]}`(权威名册,只带 device_id 与管理标记、不带别名——别名是 E2EE 的;三个时机:`authed` 之后**搬信箱之前**推一枚 = 能力信号 / 应答 `roster_req` / 成员集合真变化时重推;客户端两条判据分家:`request` 对上 `roster_req.n` 才**结账**、`revision` 不小于当前才**应用**;revision 只在单条会话内可比;**仅对声明 `device_roster_v1` 者下发**;identity-plan §5.4(内部);367 补)
+  - `device_admin_ok {target, action}`(`device_admin` 的定向成功回执,客户端比对 target+action 才结账;失败走无编号 `err`,归属按 `DEVICE_ADMIN_FLOW_ERRORS`;367 补)
+  - `roster_nack {n, code}`(`roster_req` 的失败面,按 n 关联、不断开;⛔ 不复用 `nack`——那个 n 是 `send` 的序号,两个序列共用一个变体会撞号;367 补)
+- **能力协商 `caps`**(工序 4 立、367 扩):`register_first` / `auth` 可带 `caps: [string]`,缺省不序列化——旧客户端线上字节逐字节不变(黄金向量钉死)、旧服务端按 CBOR 命名 map 忽略未知键;服务端卫生化判定(≤16 项、每项 ≤32 字节、仅 ASCII、未知忽略、重复无所谓,⛔ 不因垃圾项拒整个 auth)。今天两枚:`account_status_v1`(懂 `account_status_v1` 下发)/ `device_roster_v1`(懂 `roster` / `device_admin_ok` / `roster_nack`,三条只发给声明者)。⛔ 能力探测不许靠发新 ClientMsg 试探——老服务器对不认识的信封 `bad_request` **并断开**;客户端认「服务器懂名册那套」的唯一信号 = 本会话收到过 `roster` 推送,没收到就一个新信封都不发(这道闸落在 core 不只 UI)。
 - **lane**:`mail`(收件设备离线则入信箱——op/ctl 控制帧)/ `direct`(仅在线,不入信箱——boot/blob 大流量;指名收件人离线回 `nack{not_online}`,广播 direct 对离线者静默跳过)。
 - 帧大小上限 **1 MiB**(服务器在 WS 消息层拒超=连接错误断开);心跳 30s,静默 90s 判死。
 
@@ -78,7 +85,7 @@
 
 内层消息(CBOR,按域子钥加密):
 
-- op 域:`ops {origin, ops: [{op_id, hlc, entity, entity_id, kind, payload, origin_seq}, …]}`——**单帧单 origin、按 origin_seq 升序**,≤500 条或 256 KiB。词汇表(0020 CHECK,**0028 扩**):`item|topic × create/set_field/tombstone` ∪ `link × link_add/link_remove` ∪ `image × image_add/image_tombstone` ∪ **`space × set_field`**(空间名跨端同步 141:无 create 的单例 LWW 寄存器,entity_id 恒 `'profile'`,详见 space-name-sync-plan;走既有 op 通道故 PROTO_VER 不升,旧端按 §5.3 版本偏斜挂起自愈)。
+- op 域:`ops {origin, ops: [{op_id, hlc, entity, entity_id, kind, payload, origin_seq}, …]}`——**单帧单 origin、按 origin_seq 升序**,≤500 条或 256 KiB。词汇表(0020 CHECK 起逐次扩;权威 = `core/src/epoch.rs` 的 `OPLOG_TABLE_DDL` 与最新那份迁移,新实体接线清单见 architecture):`item|topic × create/set_field/tombstone` ∪ `link × link_add/link_remove` ∪ `image × image_add/image_tombstone` ∪ **`space × set_field`**(空间名跨端同步 141:无 create 的单例 LWW 寄存器,entity_id 恒 `'profile'`,详见 space-name-sync-plan;走既有 op 通道故 PROTO_VER 不升,旧端按 §5.3 版本偏斜挂起自愈)∪ **`device × set_field`**(设备 profile 多实例寄存器,entity_id = 该设备的 device_id;identity-plan §2.1,内部)∪ **`comment × create/tombstone`**(条目留言:有出生事件、要能删,**刻意无 set_field**——留言不可编辑,改错了删掉重写;identity-plan §4.1,内部)∪ **`board_column × create/set_field/tombstone`**(看板列,形近 topic;⛔ 六个种子列不发 create、set_field 白名单只有 title | position;board-columns-plan §3,内部)。后三者与 space 同一纪律:都走既有 op 通道,PROTO_VER 不升,旧端对认不得的 entity 归 `UnsupportedVocab` ⇒ per-origin 挂起自愈(§5.3)。
 - ctl 域:`hello {watermarks: {origin → seq}}`(连接后向在线各端广播,也可入箱)/ `want {origin, from_seq}`(补洞请求;**P2-c 实现为广播**——谁有谁答、没人有则静默等下一轮 hello 兜底,多应答者的重复帧由 op_id 幂等吸收[同 §5.2 已知噪音])。
 - boot 域 / blob 域:见 §6 / 本节末。
 - **线上格式纪律(P2-d 定,评审 P2-d 轮 M1/L1)**:内层消息 CBOR 用 serde externally tagged(变体名作单键 map),变体名/字段名即协议,黄金向量测试焊死。旧端解到**未知顶层变体**只能整帧 `Codec` 拒收(帧里谁的 op 都取不出,挂不上 origin)——水位不推进、hello/want 反复重取,响亮卡住直到升级,不是静默丢失;故 op/ctl 语义的将来扩展**优先走 `RemoteOp.kind`/payload**(0020 词汇表拒之 → 挂起该 origin,§5.3 版本偏斜自愈生效),确需新增顶层变体 = 协议破坏,必须升 `PROTO_VER`;P2-g 传输层必须把 `Codec` 转成用户可见的「对端版本较新,请升级」。**payload 数字纪律**:业务整数(`origin_seq/from_seq/seq/bytes/priority` 等)必须是 CBOR integer 且在 `i64` 范围内,禁 float/NaN——float 到达时读端 `as_i64()` 读不出 → Err 挂起,fail-fast 不静默取整(有测)。
@@ -267,7 +274,7 @@
 
 第一轮起始并非逐笔实现审查,而是把 P2-b…P2-g 整个同步栈当一个系统攻击(跨模块缝隙/规格-实现漂移/端到端攻击场景/数据丢失窗口/E2EE 完备性/测试盲区)。抓到 4 条(H1/H2/M1/L1),修完复核抓 H2 两处口径洞,再修 → 终局 GO。
 
-- **H1 设备密钥先注册后本地才落盘 = 崩溃烧掉 device_id**:配对 joiner 生成 seed/pubkey、经 opener `RegisterDevice` 让服务器持久化 pubkey,但本机私钥要到 `Done/Granted` 后才 `save_config`;此间崩溃 = 服务器有 pubkey、本机无私钥,重试用同库固定 device_id 生成新 pubkey 被 `device_id_taken` 拒,带本地数据的设备卡死。`create_account` 同类窗口(k_acc 也丢)。→ **服务端** `register_first` 对「账户唯一设备恰是本次 (device,pubkey)」幂等放行(不破恰一胜:并发两台异钥不同时命中;同设备异钥仍拒);**客户端**引入 `pending_device_seed/pending_k_acc/pending_account_id` 键(`load_config` 只认 5 正式键、pending 不可见),注册前先落 pending、崩溃重试复用同一份(pubkey 不变 → 服务器幂等吸收)、`save_config` 改为「写正式键 + 清 pending」同事务。测试:registry 单测 + `tofu_first_then_idempotent_retry_and_second_device_rejected` + transport 集成测 `create_account_retry_reuses_pending_and_server_absorbs`(造「服务器已注册、本地只剩 pending」现场→复用→幂等 Authed→落配置→清 pending)。【**112 更新(2026-07-13,multispace-plan §4 v5 拍板)**:pending 键机制整体拆除——材料改 attempt 内存生成、Done 才随 save_config 落库;崩溃=身份已烧,人话指引处置(**124 修订分两类:配对中断=清空间重配;创号孤儿=不清库,运营者吊销+新码后原库原样重试**,见 phone-space-plan §2.1);且配对闸前移为 `Grant → gate → Enroll` 真停点(`PairOutput::GrantPending`/`approve`),gate 拒=老端从不注册。本段保留为 P2 时代史实。】
+- **H1 设备密钥先注册后本地才落盘 = 崩溃烧掉 device_id**:配对 joiner 生成 seed/pubkey、经 opener `RegisterDevice` 让服务器持久化 pubkey,但本机私钥要到 `Done/Granted` 后才 `save_config`;此间崩溃 = 服务器有 pubkey、本机无私钥,重试用同库固定 device_id 生成新 pubkey 被 `device_id_taken` 拒,带本地数据的设备卡死。`create_account` 同类窗口(k_acc 也丢)。→ **服务端** `register_first` 对「账户唯一设备恰是本次 (device,pubkey)」幂等放行(不破恰一胜:并发两台异钥不同时命中;同设备异钥仍拒);**客户端**引入 `pending_device_seed/pending_k_acc/pending_account_id` 键(`load_config` 只认 5 正式键、pending 不可见),注册前先落 pending、崩溃重试复用同一份(pubkey 不变 → 服务器幂等吸收)、`save_config` 改为「写正式键 + 清 pending」同事务。测试:registry 单测 + `tofu_first_then_idempotent_retry_and_second_device_rejected` + transport 集成测(造「服务器已注册、本地只剩 pending」现场→复用→幂等 Authed→落配置→清 pending;⚠ 那支测试随下文 112 拆 pending 键时一起删了,仓里今天没有)。【**112 更新(2026-07-13,multispace-plan §4 v5 拍板)**:pending 键机制整体拆除——材料改 attempt 内存生成、Done 才随 save_config 落库;崩溃=身份已烧,人话指引处置(**124 修订分两类:配对中断=清空间重配;创号孤儿=不清库,运营者吊销+新码后原库原样重试**,见 phone-space-plan §2.1);且配对闸前移为 `Grant → gate → Enroll` 真停点(`PairOutput::GrantPending`/`approve`),gate 拒=老端从不注册。本段保留为 P2 时代史实。】
 - **H2 引导快照只做墓碑窄校验,可注入「有日志背书但终态≠日志语义」的静默分叉**:结构校验(op_id/hlc/双序/tombstone 复活/counter/per-origin/FK/integrity)挡不住「oplog 说 content=A、`items.content`=B」;恶意/坏实现 peer 借此静默分叉、还能续传坏终态给第三端。→ `boot.rs::audit_op_backed_semantics`:对有 op 背书的实体按日志重算 LWW/OR-set/图N 与终态比对,不符整体回滚。**方向调整(codex 二轮接受)**:codex 原建议「回放快照 oplog 进 scratch 库比终态」,实现中发现会**误拒合法快照**——0021 前整数 position set_field op 是历史不改写,现行 `apply_item_set_field` 拒整数 position,账户纪元源(含过渡期 op)做引导源时 scratch 重放会 Err 打断真实引导;改为**直接 SQL 字段级 LWW 比对**(item content/stage/created_at/due_on/priority/archived_at/sealed_at/born_stage + topic title/updated_at + OR-set link + 图N effective seq),**唯独跳过 position**(唯一格式漂移 + 非用户内容,分叉不损数据)。复核二修:① OR-set `alive` 排除父实体已 tombstone 的 link_add(对齐 `apply_link` 的 ParentGone,否则「父已删、link_add 仍在史」的合法快照误拒);② topic `updated_at` 纳入审计(它是同步字段,出生初值 = created_at)。测试:既有全形态导入验证放行 + `import_rejects_semantically_divergent_snapshot`(content/OR-set/图N/topic.updated_at 四连拒)+ `import_accepts_link_with_tombstoned_parent`(item/topic 两条父墓碑合法快照放行)。
 - **M1 图拉流缺 idle/overall timeout,坏 peer 可永久劫持缺图状态**:恶意已配对 peer 对缺图应 `BlobHave`、收端进 `pulling`、对方保持在线却不发块;连接不重连(pong 续命)时该图本会话再不向别的设备请求、无提示。→ `Engine::on_tick`(传输层心跳 30s 驱动):`Pull.stale_ticks` 收块清零,连续 `PULL_STALE_TICKS=2`(≈60s)无进展作废拉流、回 `missing_blobs` 重发 want;`blob_shunned`(255 起扩维 image → set<(device, route)>;清除时机 = 该 (对端, 路由) 的惩罚到期、或 `on_relay_session_up` 重置 relay 维度)避开刚超时的那条腿,让别的设备或别的腿应答。测试 `stale_pull_expires_reshuns_and_rerequests`。
 - **L1 §11 的 HLC 超前墙钟 >24h 提示未实现**:对端系统时间错到未来,LWW 长期偏向它、用户无提示。→ `Event::ClockSkew{ahead_hours}`(engine on_ops 跨 origin 帧、validate 后取帧内最大 wall_ms,超本机墙钟 24h 每会话报一次,不拒帧;墙钟取 `clock::wall_now_ms()` 原始系统时间、非可能被偏斜 observe 抬高的 `Clock.last_wall_ms`)→ transport `SyncStatus.clock_skew` + 一次性 toast(区别于版本偏斜 `skew`)+ 前端提示行。测试 `clock_skew_warns_once_per_session`。
