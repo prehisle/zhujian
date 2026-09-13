@@ -400,20 +400,40 @@ const DOC_SIZE_BUDGETS = {
   // 债节一轮一行、约束节只留一句 + 指针,叙事各回 progress-log / deploy / skill —— 到顶的处置是再搬,不是抬闸。
   "docs/handoff.md": 8 * 1024,
 };
+// ── 自动装载面字节闸(测试与工装 86 立)──────────────────────────────────────
+// `.claude/rules/*.md` 带 `paths:`,碰到匹配文件就整份进上下文(586 两向实测),与 handoff 同属「每次都要读」的那类;
+// 往那儿写的只许是指针 + 最贵的几条坑(CLAUDE.md 末节),叙事各回 docs / progress-log。预算逐份 = 86 立时实测 + 约 10–25% 余量,
+// 新文件落 DEFAULT(4 KB:新写的就该是几条指针);⛔ 到顶的处置是搬叙事回 docs,不是抬数。⚠ 同上一条:只证明文件变小。
+// 阴性刀在假 origin 沙箱 gate-sandbox-rules-budget.mjs(照第六只的形另起;⛔ 不是新门禁:同一道闸多扫一个目录)。
+const RULES_BUDGETS = {
+  ".claude/rules/mobile.md": 7.5 * 1024,
+  ".claude/rules/e2e.md": 4.5 * 1024,
+  ".claude/rules/gates.md": 3.75 * 1024,
+  ".claude/rules/sync-core.md": 2.75 * 1024,
+  ".claude/rules/skills.md": 1.5 * 1024,
+};
+const RULES_BUDGET_DEFAULT = 4 * 1024;
 function assertDocSizeBudgets() {
   const bad = [];
-  for (const rel of Object.keys(DOC_SIZE_BUDGETS)) {
-    const budget = DOC_SIZE_BUDGETS[rel];
+  const check = (rel, budget, tag) => {
     const size = statSync(join(repoRoot, rel)).size;
     if (size > budget) {
-      bad.push(`    ${rel} 已 ${(size / 1024).toFixed(1)} KB,超过预算 ${(budget / 1024).toFixed(0)} KB`);
+      bad.push(`    ${rel} 已 ${(size / 1024).toFixed(1)} KB,超过预算 ${(budget / 1024).toFixed(2)} KB${tag}`);
+    }
+  };
+  for (const rel of Object.keys(DOC_SIZE_BUDGETS)) check(rel, DOC_SIZE_BUDGETS[rel], "");
+  const rulesDir = join(repoRoot, ".claude/rules");
+  if (existsSync(rulesDir)) {
+    for (const name of readdirSync(rulesDir).filter((n) => n.endsWith(".md"))) {
+      const rel = `.claude/rules/${name}`;
+      check(rel, RULES_BUDGETS[rel] ?? RULES_BUDGET_DEFAULT, RULES_BUDGETS[rel] ? "" : "(未登记,走 DEFAULT)");
     }
   }
   if (!bad.length) return;
   die(
-    `参考文档超预算 —— ⛔ 不落地:\n${bad.join("\n")}\n` +
-      `  ⇒ 挑一节按「判例 → 规则 + progress-log 条目号」压掉(590 压 skill、85② 压这份的手法),\n` +
-      `  叙事留在 progress-log 同号条目里。⛔ 别抬这个数。`,
+    `参考文档 / 自动装载面超预算 —— ⛔ 不落地:\n${bad.join("\n")}\n` +
+      `  ⇒ 挑一节按「判例 → 规则 + progress-log 条目号」压掉(590 压 skill、85② 压 dev-and-testing 的手法),\n` +
+      `  叙事留在 progress-log 同号条目里;rules 只留指针 + 最贵的几条坑。⛔ 别抬这个数。`,
   );
 }
 
@@ -428,7 +448,7 @@ const SKILL_BUDGETS = {
   "fake-origin-sandbox": 11 * 1024,
   "mutation-check": 29 * 1024,
   "run-ys-notebook": 23 * 1024,
-  "zhujian-android-verify": 56 * 1024,
+  "zhujian-android-verify": 42 * 1024, // 685 第二批蒸馏后 38.3 KB + 约 10%
   "zhujian-ops": 33 * 1024,
 };
 const SKILL_BUDGET_DEFAULT = 12 * 1024;
