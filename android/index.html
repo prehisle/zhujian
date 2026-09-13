@@ -813,11 +813,11 @@
       }
       .thumb.err { border-color: var(--seal); }
       .thumb.err::before { content: "!"; color: var(--seal); font-weight: 700; }
-      /* 编辑态多图管理:卡片操作面(actions)开着时,缩略图露出删图 ×(两拍确认,main.ts
-         接管删除)。平时隐藏,免误触且不干扰纯查看。 */
-      /* 共形声明住捕获节的「圆形删图钮」一份;这里只管显隐(图管理态才现身)。 */
+      /* 删图 ×:仅当卡片进入**编辑态**时露出(两拍确认,cardpanel.ts 就地删——图的增删
+         都在编辑那张表单里,与桌面编辑态同形;此前挂在操作面 imgmanage,已挪走)。
+         共形声明住捕获节的「圆形删图钮」一份;这里只管显隐。 */
       .thumb-del { display: none; }
-      .card.imgmanage .thumb-del { display: grid; }
+      .card.editing .thumb-del { display: grid; }
 
       /* 大图查看层(143 手势缩放):未放大时单击关;双击 2.5 倍/复位、双指捏合、
          放大后单指拖拽,返回键也能关(history 层)。touch-action:none 把手势从
@@ -1261,12 +1261,22 @@
         font-weight: 600; padding: 8px 18px;
       }
 
+      /* 原地编辑:卡进编辑态时,把卡上只读的三块(正文 / 只读缩略图 / footer)整个藏掉,
+         只留编辑表单(.panel 里的 textarea + 缩略图 + 钮),表单顶到正文的位置——与桌面
+         编辑态「整块 body 换成编辑 UI」同形。⛔ 别用 `.content` 之类逐个点名:body 直属里
+         除了 panel 全是只读展示,`:not(.panel)` 一网打尽,新增只读块自动跟着藏。tick(完成勾)
+         在 article 直属、不在 body 里,编辑态照留。 */
+      .card.editing > .body > :not(.panel) { display: none; }
+
       /* 卡片操作面板(120):点卡展开的行内操作区——动作胶囊行 + 任务的
          状态/截止/优先级 lane;两拍确认的第二拍在底部固定确认条(#confirmbar)。 */
       .panel {
         margin-top: 8px; border-top: 1px dashed var(--line-strong); padding-top: 8px;
         display: flex; flex-direction: column; gap: 8px;
       }
+      /* 编辑态表单顶到正文位置:上面没有只读块了,那条虚线分隔与上边距就多余(它是
+         「操作区接在卡片下方」的分隔,原地编辑没有「下方」)。 */
+      .card.editing .panel { margin-top: 0; border-top: none; padding-top: 0; }
       /* 行距 10 ≥ 上下 halo 之和(5+5):换行时相邻行触区不互叠(codex 二审) */
       .panel .acts { display: flex; flex-wrap: wrap; gap: 10px 6px; }
       .panel .acts button {

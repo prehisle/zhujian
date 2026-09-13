@@ -19,6 +19,7 @@
 //   onYes 复核 session 未变;in-flight 期间整面禁点(防双击重复写)。
 import {
   addItemImage,
+  deleteItemImage,
   archiveNote,
   archiveTask,
   addTaskTopic,
@@ -45,6 +46,7 @@ import {
   unsealTask,
   updateTaskStatus,
   listNoteHistory,
+  type ImageMeta,
   type RevisionItem,
   type SpaceInfo,
   type TaskStatus,
@@ -55,6 +57,7 @@ import { t } from "./i18n";
 import { $, actionBar, confirmBar, esc, fmtWhen, hideConfirmBar, showBar, showError } from "./ui";
 import { DONE_COLUMN, LANDING_COLUMN, isTaskStage, liveTaskColumns, stageLabel } from "./columns";
 import { capturePhoto, PICK_MAX, pickImages, toBase64 } from "./images";
+import { hydrateThumbs } from "./thumbs";
 import { applyChecklistMarker, delegateChecklistNewline } from "./checklist-input";
 
 type Mode = "actions" | "edit" | "tags" | "move" | "history";
@@ -67,6 +70,10 @@ type PanelState = {
   topics: TopicItem[];
   /** 编辑草稿(null=非编辑态)。真相在这,DOM 只是投影。 */
   editDraft: string | null;
+  /** 编辑态里这条的配图(进 edit 面时 = item.images 的拷贝;加/删就地改)。编辑态整轴
+   *  刷新被草稿闸延后 ⇒ 不能靠 refresh 让新图冒出来,这份是编辑期间缩略图条的真相源;
+   *  收场退出编辑时那轮补刷会拿到库里真值。null = 非编辑态。 */
+  editImages: ImageMeta[] | null;
   /** 标签新建输入草稿。 */
   tagDraft: string;
   /** listTopics 请求序号(三审 M3):enterTags/refreshTopics 共用,旧快照晚回不许
@@ -130,7 +137,7 @@ export function forceClose(reason?: string) {
   clearConfirm();
   state = null;
   document.querySelector("#timeline .panel")?.remove();
-  clearImgManage();
+  clearEditing();
   if (hadDraft) showBar(reason ?? t("cardpanel.draftDropped"));
   deps.onDraftClosed();
 }
@@ -162,9 +169,11 @@ function clearConfirm() {
   hideConfirmBar();
 }
 
-/** 摘掉缩略图删图 × 的显隐标记(面板拆除时用;renderPanel 里换卡自会摘旧上新)。 */
-function clearImgManage() {
-  document.querySelector("#timeline .card.imgmanage")?.classList.remove("imgmanage");
+/** 摘掉原地编辑标记(面板拆除/清屏时用;renderPanel 里换卡自会摘旧上新)。 */
+function clearEditing() {
+  document
+    .querySelectorAll<HTMLElement>("#timeline .card.editing")
+    .forEach((c) => c.classList.remove("editing"));
 }
 
 function currentCard(): HTMLElement | null {
@@ -202,12 +211,15 @@ function renderPanel(card: HTMLElement) {
     panel.innerHTML = renderActions(item);
   }
   card.querySelector(".body")!.appendChild(panel);
-  // 编辑态多图管理:仅 actions 面露出缩略图删图 ×(main.ts 接管删除)。同一时刻只一张卡开面,
-  // 先摘所有旧标记再给当前卡上——换卡/进 edit·tags·move 面都会随之收起 ×。
+  // 原地编辑标记(674):同一时刻只一张卡开面,先摘所有旧 `editing` 再给当前卡上——换卡 /
+  // 进 tags·move·history·actions 面都随之退出编辑态(卡上只读三块重新露出)。
   document
-    .querySelectorAll<HTMLElement>("#timeline .card.imgmanage")
-    .forEach((c) => c.classList.remove("imgmanage"));
-  if (state.mode === "actions") card.classList.add("imgmanage");
+    .querySelectorAll<HTMLElement>("#timeline .card.editing")
+    .forEach((c) => c.classList.remove("editing"));
+  if (state.mode === "edit") {
+    card.classList.add("editing");
+    hydrateThumbs(panel); // 编辑面缩略图字节:缓存命中直接填,否则滚到可视区才拉(同只读那套)
+  }
   if (state.mode === "edit" && !busy) {
     const ta = panel.querySelector<HTMLTextAreaElement>("textarea.edit")!;
     ta.focus();
@@ -224,11 +236,10 @@ function renderActions(item: TimelineItem): string {
       `<button data-pact="move-ack" class="p">${t("cardpanel.moveAck")}</button></div>`
     : "";
   const task = isTaskStage(item.stage);
+  // 加图 / 拍照挪进了编辑面(674):图的增删都在编辑那张表单里,操作面不再各摆一枚。
   const acts: string[] = [
     actBtn("edit", t("cardpanel.actEdit")),
     actBtn("tags", t("cardpanel.actTags")),
-    actBtn("addimg", t("cardpanel.actAddImg")),
-    actBtn("photo", t("cardpanel.actPhoto")),
     actBtn("comment", t("cardpanel.actComment")),
     actBtn("history", t("cardpanel.actHistory")),
   ];
@@ -294,13 +305,37 @@ function renderHistory(): string {
 }
 
 function renderEdit(): string {
-  // 562:「＋ 待办」= 桌面那记 Ctrl+L 在这一端的样子(手机没有 Ctrl)。第二项起靠回车续行,
-  // 不用再点它。⛔ 它不是提交动作,故不带 confirm 造型、也不受 busy 禁用之外的别的闸。
+  // 原地编辑表单(674):textarea + 缩略图条 + 钮排,顶在正文的位置(卡上只读三块由
+  // `.card.editing` 藏)。图的增删就在这里 —— 与桌面编辑态同形,不再让「加图」独占操作面。
+  const imgs = state?.editImages ?? [];
+  // 缩略图条复用只读那套(`.thumbs`/`.thumb`,字节走 thumbs.ts)。删钮挂 `data-editdel`
+  // (不是 `.imgmanage` 那条显隐了):点它就地删、只重画本卡缩略图,不刷整轴。⛔ 缩略图本体
+  // 编辑态不接看大图(main 的 click 见 panel 内即让路;要看大图取消编辑回卡片点)——故不写
+  // 「查看」aria,内部「图N」文本即可辨识。
+  const thumbs = imgs.length
+    ? `<div class="thumbs">${imgs
+        .map(
+          (im) =>
+            `<button class="thumb" data-img="${esc(im.id)}" data-seq="${im.seq}"><span class="tag-n">${t(
+              "images.imageN",
+              { n: im.seq },
+            )}</span><span class="thumb-del" data-editdel="${esc(im.id)}" data-seq="${im.seq}" aria-label="${t(
+              "main.deleteImage",
+              { n: im.seq },
+            )}">×</span></button>`,
+        )
+        .join("")}</div>`
+    : "";
+  // 钮排照「记一笔」那一行(`.compose-row`):加图/拍照/清单靠左小钮、保存靠右(它自带
+  // margin-left:auto),取消随后。「＋ 清单」= 桌面 Ctrl+L 在手机的样子,第二项起靠回车续行。
   return `<textarea class="edit">${esc(state?.editDraft ?? "")}</textarea>
-    <div class="acts">
-      <button data-pact="todo"${busy ? " disabled" : ""}>${t("cardpanel.insertTodo")}</button>
-      <button data-pact="save" class="confirm"${busy ? " disabled" : ""}>${t("cardpanel.save")}</button>
-      <button data-pact="cancel"${busy ? " disabled" : ""}>${t("cardpanel.cancel")}</button>
+    ${thumbs}
+    <div class="compose-row">
+      <button data-pact="addimg" class="ghost cimg"${busy ? " disabled" : ""}>${t("cardpanel.actAddImg")}</button>
+      <button data-pact="photo" class="ghost cimg"${busy ? " disabled" : ""}>${t("cardpanel.actPhoto")}</button>
+      <button data-pact="todo" class="ghost cimg"${busy ? " disabled" : ""}>${t("cardpanel.insertTodo")}</button>
+      <button data-pact="save" class="primary"${busy ? " disabled" : ""}>${t("cardpanel.save")}</button>
+      <button data-pact="cancel" class="ghost"${busy ? " disabled" : ""}>${t("cardpanel.cancel")}</button>
     </div>`;
 }
 
@@ -555,8 +590,10 @@ function closeDraft() {
  *  部分失败(带上后端第一条原话,不静默吞)/ 单张失败(就报原话,与 195 的行为一致)。 */
 async function attachImages(itemId: string, files: File[]): Promise<void> {
   if (!state || busy || !files.length) return;
+  const session = state;
   let ok = 0;
   let firstErr = "";
+  const added: ImageMeta[] = [];
   await run(
     async (space) => {
       for (const f of files) {
@@ -568,7 +605,7 @@ async function attachImages(itemId: string, files: File[]): Promise<void> {
           continue;
         }
         try {
-          await addItemImage(space, itemId, f.type, b64);
+          added.push(await addItemImage(space, itemId, f.type, b64));
           ok += 1;
         } catch (err) {
           if (!firstErr) firstErr = String(err);
@@ -576,6 +613,11 @@ async function attachImages(itemId: string, files: File[]): Promise<void> {
       }
     },
     {
+      // 编辑态整轴刷新被草稿闸延后 ⇒ 新图当场现出只能靠就地并进 editImages(run 的 finally
+      // 随之重画编辑面、缩略图冒出来)。session 未变才并——换卡/收面后落到旧 session 无意义。
+      afterSession: () => {
+        if (session.editImages) session.editImages.push(...added);
+      },
       onCommitted: () => {
         const failed = files.length - ok;
         if (!failed) {
@@ -612,12 +654,35 @@ async function addPhoto(itemId: string): Promise<void> {
   await attachImages(itemId, [file]);
 }
 
+/** 编辑面缩略图删图(674):两拍确认,就地删 + 从 editImages 摘掉(run 的 finally 重画编辑面)。
+ *  ⛔ 不走整轴 refresh——编辑态它被草稿闸延后,退出编辑那刻才补;缩略图条的真相在 editImages。 */
+function confirmDeleteEditImage(imgId: string, seq: string): void {
+  if (!state || busy) return;
+  const session = state;
+  confirmBar(t("main.deleteImageQ", { n: seq }), t("main.deleteImageYes"), () => {
+    if (state !== session || busy) return;
+    void run((space) => deleteItemImage(space, imgId), {
+      afterSession: () => {
+        if (session.editImages) session.editImages = session.editImages.filter((m) => m.id !== imgId);
+      },
+      onCommitted: () => showBar(t("main.imageDeleted"), true),
+    });
+  });
+}
+
 // ---- 事件接线 ----------------------------------------------------------------
 
 function onTimelineClick(e: Event) {
   if (deps.isSwitching() || deps.isCaptureSaving()) return;
   if (busy) return; // in-flight:面板一切导航(开合/换卡/控件)整体拒(实现审 M2)
   const el = e.target as HTMLElement;
+  // 编辑面缩略图删钮(在 .panel 内、早于下面 pact 通用分支;它不带 data-pact,免落进 handleAct
+  // ——handleAct 拿不到具体是哪一张)。删钮只在编辑面出现,mode 必是 edit。
+  const editDel = el.closest<HTMLElement>("[data-editdel]");
+  if (editDel && state?.mode === "edit") {
+    confirmDeleteEditImage(editDel.dataset.editdel!, editDel.dataset.seq ?? "");
+    return;
+  }
   // 面板控件优先。
   const pact = el.closest<HTMLElement>("[data-pact]")?.dataset.pact;
   if (pact && state) {
@@ -686,7 +751,7 @@ function onTimelineClick(e: Event) {
     clearConfirm();
     state = null;
     card.querySelector(".panel")?.remove();
-    card.classList.remove("imgmanage");
+    card.classList.remove("editing");
     deps.onDraftClosed(); // 三审 M1:收面即「草稿域收场」,补被延后的刷新
     return;
   }
@@ -701,6 +766,7 @@ function onTimelineClick(e: Event) {
     mode: "actions",
     topics: [],
     editDraft: null,
+    editImages: null,
     tagDraft: "",
     topicsSeq: 0,
     revisions: null,
@@ -719,6 +785,7 @@ function handleAct(act: string, card: HTMLElement) {
       clearConfirm();
       session.mode = "edit";
       session.editDraft = item.content;
+      session.editImages = [...item.images]; // 进编辑态时拷一份现有配图;加/删就地改这一份
       renderPanel(card);
       return;
     case "tags":

@@ -22,7 +22,6 @@ import {
   completeTask,
   deviceIdentity,
   setDeviceAlias,
-  deleteItemImage,
   editNote,
   fileNoteToTopic,
   renameTask,
@@ -38,7 +37,7 @@ import {
   type TaskStatus,
   type TimelineItem,
 } from "./api";
-import { $, actionBar, confirmBar, contentHtml, dayKey, dayLabel, esc, fmtTimeOfDay, fmtWhen, hideConfirmBar, showBar, showError } from "./ui";
+import { $, actionBar, contentHtml, dayKey, dayLabel, esc, fmtTimeOfDay, fmtWhen, hideConfirmBar, showBar, showError } from "./ui";
 import { toggleChecklistLine } from "../../shared/checklist";
 import { applyChecklistMarker, wireChecklistNewline } from "./checklist-input";
 import { DONE_COLUMN, boardColumns, isTaskStage, setColumns, stageLabel } from "./columns";
@@ -349,12 +348,14 @@ function renderCard(it: TimelineItem, hideTopic: string | null, underDayHead = f
     )
     .join("");
   // 配图缩略(117):只渲染占位框,字节滚到可视区才拉(thumbObserver)。
+  // 只读缩略图(点开看大图)。删图钮不在这儿——它挪进了编辑面(674:进编辑态才露删 ×),
+  // 故此处不渲 `.thumb-del`,只读态永远不显删钮。
   const thumbs = it.images.length
     ? `<div class="thumbs">${it.images
         .map(
           (im) =>
             `<button class="thumb" data-img="${esc(im.id)}" data-seq="${im.seq}"
-               aria-label="${t("main.viewImage", { n: im.seq })}"><span class="tag-n">${t("images.imageN", { n: im.seq })}</span><span class="thumb-del" role="button" aria-label="${t("main.deleteImage", { n: im.seq })}">×</span></button>`,
+               aria-label="${t("main.viewImage", { n: im.seq })}"><span class="tag-n">${t("images.imageN", { n: im.seq })}</span></button>`,
         )
         .join("")}</div>`
     : "";
@@ -516,24 +517,6 @@ window.addEventListener("popstate", () => {
   // mode 从不压层:任务面按返回与灵感面同账,直接退 app(146 §2.3)。
 });
 
-// 编辑态多图管理(cardpanel 给 actions 面开着的卡片挂 .imgmanage 露出缩略图 ×):删这张图。
-// 两拍确认,与查看器删图(197)同律(图无回收站、编号退役不复用);删成刷新轴,缩略图随之消失。
-// actions 面无脏草稿,refresh 不被草稿闸延后(edit 面恒脏才有那问题,故删图放 actions 面)。
-function confirmDeleteImage(space: string, id: string, seq: string) {
-  confirmBar(t("main.deleteImageQ", { n: seq }), t("main.deleteImageYes"), () => {
-    if (getCurrentSpace() !== space) return; // 期间切空间:作废
-    void (async () => {
-      try {
-        await deleteItemImage(space, id);
-        await refresh();
-        showBar(t("main.imageDeleted"), true);
-      } catch (err) {
-        showError(String(err));
-      }
-    })();
-  });
-}
-
 /** 开留言层的单一入口(卡上的 💬 徽章与操作面板的「留言」共用):三道闸同 openPane
  *  ——切换编排中屏上还是旧空间的卡、「记下」在飞时刷新被锁、有草稿时层会把它盖住。 */
 function openCommentsFor(itemId: string): void {
@@ -600,6 +583,9 @@ function onChecklistTap(box: HTMLElement): void {
 $("timeline").addEventListener("click", (e) => {
   if (switching) return; // 切换编排中:屏上还是旧空间的卡,不接受任何取图请求
   const target = e.target as HTMLElement;
+  // 编辑面(.panel)内的点击整个归 cardpanel(编辑面缩略图删钮 / 加图 / 保存等)——这里不碰,
+  // 免得编辑态缩略图的删钮被下面「看大图」那条截走(674)。ckbox/留言徽章/只读缩略图都不在 .panel。
+  if (target.closest(".panel")) return;
   const ckBox = target.closest<HTMLElement>(".ckbox[data-ck]");
   if (ckBox) {
     onChecklistTap(ckBox);
@@ -612,11 +598,6 @@ $("timeline").addEventListener("click", (e) => {
   }
   const btn = target.closest<HTMLElement>(".thumb[data-img]");
   if (!btn) return;
-  if (target.closest(".thumb-del")) {
-    // 露出的删图 ×(仅 .imgmanage 卡可见):两拍确认删,不落到看大图。
-    confirmDeleteImage(getCurrentSpace(), btn.dataset.img!, btn.dataset.seq ?? "");
-    return;
-  }
   if (btn.classList.contains("err")) {
     btn.classList.remove("err"); // 暂态读错不判死:点一下重试
     void fillThumb(btn);
