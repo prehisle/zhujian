@@ -44,7 +44,6 @@ use std::sync::Mutex;
 use rusqlite::{Connection, OptionalExtension};
 
 use super::engine::{encoded_op_len, BROADCAST, MAX_OPS_FRAME_BYTES, MAX_OPS_PER_FRAME};
-use super::probe::p305;
 use crate::replay::RemoteOp;
 
 /// 补洞(`Want`)那一档的冷却:1 拍心跳 ≈ 30s。
@@ -503,22 +502,12 @@ impl PeerWork {
                     _ => i64::MIN,
                 };
                 if r.next_seq < served_from {
-                    p305!(
-                        "commit gap served_from={served_from} queued_next={} -> requeue(下修保护)",
-                        r.next_seq
-                    );
                     self.urgent.push_back(r);
                 } else if let Advance::RangeAt { next_seq } = a {
-                    p305!("commit gap served_from={served_from} -> requeue(next={next_seq})");
                     r.next_seq = next_seq;
                     // **未跑完就推到队尾**(六轮 M1):放回队头等于让第一枚大 Want
                     // 整段跑完,别的真实缺口全被饿死。
                     self.urgent.push_back(r);
-                } else {
-                    p305!(
-                        "commit gap served_from={served_from} -> RETIRE(读空);urgent 余 {}",
-                        self.urgent.len()
-                    );
                 }
                 // 剩下那一格 = `RangeDrained` ∧ 没被下修过:出队,义务到此为止。
             }
@@ -1356,29 +1345,7 @@ fn read_gap(conn: &Connection, origin: &str, from_seq: i64) -> Result<Served, St
         Some(_) => Advance::RangeAt { next_seq: run.next_seq },
         None => Advance::RangeDrained,
     };
-    p305!(
-        "read_gap origin={} from={} -> {} seqs={}",
-        &origin[origin.len().saturating_sub(6)..],
-        from_seq,
-        match &advance {
-            Advance::RangeAt { next_seq } => format!("RangeAt(next={next_seq})"),
-            _ => "RangeDrained".to_string(),
-        },
-        probe_seqs(&run.frame)
-    );
     Ok(Served { frame: run.frame, advance })
-}
-
-/// 埋点用:帧里 `origin_seq` 的区间(空帧 = `-`)。见 [`crate::sync::probe`]。
-#[cfg(feature = "probe305")]
-fn probe_seqs(frame: &Option<OpsFrame>) -> String {
-    match frame {
-        None => "-".to_string(),
-        Some(f) => match (f.ops.first(), f.ops.last()) {
-            (Some(a), Some(b)) => format!("{}..{}({})", a.origin_seq, b.origin_seq, f.ops.len()),
-            _ => "empty!".to_string(),
-        },
-    }
 }
 
 /// 对账取数。**快照与水位图都从同一份 `plan` 取**(实现审 H7):描述符自己带一份快照的

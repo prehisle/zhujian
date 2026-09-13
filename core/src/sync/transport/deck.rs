@@ -429,16 +429,8 @@ impl Deck<'_> {
             OpsTurn::Failed(why) => return Err(format!("ops 供流取数失败:{why}")),
             OpsTurn::Frame(frame, ticket) => (frame, ticket),
         };
-        p305!(
-            "offline_send origin={} seqs={}..{}({})",
-            &frame.origin[frame.origin.len().saturating_sub(6)..],
-            frame.ops.first().expect("取数产出的帧恒非空").origin_seq,
-            frame.ops.last().expect("取数产出的帧恒非空").origin_seq,
-            frame.ops.len()
-        );
         let msg = Msg::Ops { origin: frame.origin, ops: frame.ops };
         let FanOut { mut back, delivered } = self.fan_out_broadcast(&msg);
-        p305!("offline_send delivered={delivered} 条腿");
         if delivered == 0 {
             // **一条腿都没投出去:游标一步不许进**(codex 实现审一轮 M)。断网期这条腿自己
             // 就是权威,没有别人在等 Ack —— 照 relay 那套「旁腿失败不回滚」搬过来,那一段
@@ -733,13 +725,6 @@ impl Deck<'_> {
                     let own_max_seq = (frame.origin == self.cfg.device_id).then(|| {
                         frame.ops.last().expect("取数产出的帧恒非空").origin_seq
                     });
-                    p305!(
-                        "relay_send target={target} origin={} seqs={}..{}({}) own_max_seq={own_max_seq:?}",
-                        &frame.origin[frame.origin.len().saturating_sub(6)..],
-                        frame.ops.first().expect("取数产出的帧恒非空").origin_seq,
-                        frame.ops.last().expect("取数产出的帧恒非空").origin_seq,
-                        frame.ops.len()
-                    );
                     let msg = Msg::Ops { origin: frame.origin, ops: frame.ops };
                     self.send_relay_ops(OpsJob { own_max_seq, ticket }, &msg).await?;
                     // **BROADCAST 的 LAN 补投就在这一处**(§6.2 ① 的 (C)):权威腿发完

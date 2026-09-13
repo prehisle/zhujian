@@ -477,6 +477,8 @@ impl DupCache {
         DupCache { seen: HashMap::new() }
     }
 
+    /// 只有测试读它(核占槽数);生产路径不问缓存有多大。
+    #[cfg(test)]
     pub fn len(&self) -> usize {
         self.seen.len()
     }
@@ -682,6 +684,9 @@ impl<'a> Intro<'a> {
 pub struct ResolvedIntro<'e, 'a, 'w> {
     admit: &'e LanAdmit<'a>,
     intro: Intro<'w>,
+    /// 命中条目在准入表里的下标。只有测试读它(核「恰一命中」选中的是哪一条);
+    /// 生产路径只认 [`Self::space_id`]。
+    #[cfg_attr(not(test), allow(dead_code))]
     index: usize,
 }
 
@@ -690,13 +695,10 @@ impl<'e, 'a, 'w> ResolvedIntro<'e, 'a, 'w> {
     pub fn space_id(&self) -> &'a str {
         self.admit.space_id
     }
-    /// 命中条目在准入表里的下标。
+    /// 命中条目在准入表里的下标(见字段说明)。
+    #[cfg(test)]
     pub fn index(&self) -> usize {
         self.index
-    }
-    /// 拨入方 device_id(L-c 建链前查链路集/公钥缓存要用)。
-    pub fn peer(&self) -> &'w str {
-        self.intro.from
     }
 }
 

@@ -3577,7 +3577,7 @@ pub fn run() {
         .manage(HotkeyConflicts(Mutex::new(Vec::new())))
         .manage(PendingOpenSettings(AtomicBool::new(false)))
         .setup(|app| {
-            // 日志出口**恒装**(用户 2026-09-08 拍板):此前只在 debug / `probe305` 台架下装,
+            // 日志出口**恒装**(用户 2026-09-08 拍板):此前只在 debug / 台架 feature 下装,
             // 于是正式版壳里每一处 `log::error!` 都落空 —— 别的机器出问题时用户手上拿不出
             // 任何东西(手机端与服务端都一直有出口,只有桌面没有)。落点 = OS 日志目录,
             // Windows 上是 `%LOCALAPPDATA%\app.zhujian.notebook\logs\`。

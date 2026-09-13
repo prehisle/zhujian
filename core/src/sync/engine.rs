@@ -41,7 +41,6 @@ use std::sync::{Arc, Mutex};
 use ulid::Ulid;
 
 use super::ops_serve::{self, Admit, Admitted, OpsWorks};
-use super::probe::p305;
 use crate::clock::{Clock, Hlc};
 use crate::replay::{self, BytesOutcome, Outcome, RemoteOp};
 
@@ -1697,22 +1696,11 @@ impl Engine {
     /// 而读空那一支的判据与提交同处一把库锁。**这里的立论因此才真成立**。
     pub fn outbound(&mut self, conn: &Connection, out: &mut Vec<Output>) -> Result<(), String> {
         let max = watermark(conn, &self.device_id)?;
-        // 埋点里一律只带 device_id 末 6 位:同一台机上多个空间的日志混在一条 logcat 里,
-        // 这是唯一分得开它们的键(每空间一身份)。
-        #[cfg(feature = "probe305")]
-        let dev = &self.device_id[self.device_id.len().saturating_sub(6)..];
         if max <= self.last_pushed {
-            p305!("outbound me={dev} max={max} last_pushed={} -> 早返回(没新的)", self.last_pushed);
             return Ok(());
         }
         let (from_seq, tick, me) = (self.last_pushed + 1, self.tick, self.device_id.clone());
         let admitted = ops_serve::lock_ops(&self.ops).on_want(BROADCAST, &me, from_seq, tick);
-        p305!(
-            "outbound me={dev} max={max} last_pushed={} from_seq={from_seq} admit={:?} woke={}",
-            self.last_pushed,
-            admitted.admit,
-            admitted.woke
-        );
         match admitted.admit {
             Admit::Ok => {
                 // **登记成了才推进**「已登记到哪」这根内存游标(§6.2 ⑥-1):`Overload` 那一

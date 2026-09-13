@@ -11,7 +11,7 @@
 // 668 起再加一条独立轴:`--channel-cn` 出**国内商店渠道包**(华为应用市场/小米/
 // OPPO/vivo 等,见 android/src/channel.cn.ts)—— 连境内同步服务器、不带应用内自升级
 // (国内商店审核规范禁自升级)、产物落**另一个目录** `android/apk-out-cn/`,绝不会被
-// 境外渠道那条 `gen-android-update-manifest.mjs` 流水线误捡到。⚠ 它与 devtools/probe305
+// 境外渠道那条 `gen-android-update-manifest.mjs` 流水线误捡到。⚠ 它与 devtools
 // 是两根独立的轴,能叠加(`--channel-cn --devtools` = 国内渠道的真机验收包)。
 //
 // 用法:
@@ -33,12 +33,8 @@ import { pickBuildTools, describeBuildToolsPick } from "./lib/build-tools.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const devtools = process.argv.includes("--devtools");
-// **台架专用**(305 真机复验,验完即撤):打开 core 的 ops 供流埋点,经
-// tauri-plugin-log 直达 logcat(`adb logcat | grep P305`)。与 --devtools 同属
-// 「不许发版」那一档。
-const probe305 = process.argv.includes("--probe305");
 // 国内商店渠道包(668;android/src/channel.cn.ts):不带自升级、连境内服务器。
-// ⚠ 与 devtools/probe305 是独立轴,只影响**哪份 channel.ts 被编进去**与**产物落哪儿**,
+// ⚠ 与 devtools 是独立轴,只影响**哪份 channel.ts 被编进去**与**产物落哪儿**,
 // 不影响「干不干净」的判据 —— 这仍是一份完整的发版质量产物,只是给另一条流水线用。
 const channelCn = process.argv.includes("--channel-cn");
 if (channelCn) process.env.ZJ_ANDROID_CHANNEL = "cn";
@@ -72,9 +68,6 @@ console.log(
 const args = ["tauri", "android", "build", "--apk", "--target", "aarch64"];
 const feats = [];
 if (devtools) feats.push("devtools");
-// **台架专用**(305 真机复验,验完即撤):core 的 ops 供流埋点 → logcat。
-// 与 devtools 同一条护栏 —— 见下面 build-profile.json 的 `clean` 判据。
-if (probe305) feats.push("probe305");
 if (feats.length) args.push("--features", feats.join(","));
 execFileSync("npx", args, { cwd: join(root, "android"), stdio: "inherit", shell: true });
 
@@ -108,13 +101,13 @@ if (Number(apkCode) !== versionCode) {
 
 // ── 4. 产物旁写构建来源标记(发版护栏的真相源) ──
 // **凡带任一台架 feature 的包都不许发版**,故 `clean` 是一个总闸而不是逐个 feature
-// 判——发版脚本只要问「干不干净」这一个问题,以后再加台架 feature 也不会漏掉它。
-const tainted = devtools || probe305;
+// 判——发版脚本只要问「干不干净」这一个问题,以后再加台架 feature 也不会漏掉它
+// (305 加过一枚 `probe305` 埋点 feature,验完撤了;这个总闸的形就是那时定的)。
+const tainted = devtools;
 const profile = {
-  profile: tainted ? [devtools && "devtools", probe305 && "probe305"].filter(Boolean).join("+") : "release",
+  profile: tainted ? "devtools" : "release",
   clean: !tainted,
   devtools,
-  probe305,
   // 独立于 clean:哪个渠道编的(见上面 668 那段)。gen-android-update-manifest.mjs
   // 拿它挡「国内渠道包被误传进境外那条自升级流水线」,与 clean 答的不是同一个问题。
   channel: channelCn ? "cn" : "overseas",

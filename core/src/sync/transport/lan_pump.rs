@@ -202,14 +202,6 @@ pub(super) async fn lan_write_pump(
                         continue;
                     }
                     ops_stuck = None;
-                    p305!(
-                        "lan_send peer={} origin={} seqs={}..{}({})",
-                        &peer[peer.len().saturating_sub(6)..],
-                        &frame.origin[frame.origin.len().saturating_sub(6)..],
-                        frame.ops.first().expect("取数产出的帧恒非空").origin_seq,
-                        frame.ops.last().expect("取数产出的帧恒非空").origin_seq,
-                        frame.ops.len()
-                    );
                     let msg = Msg::Ops { origin: frame.origin, ops: frame.ops };
                     match seal_lan_frame(
                         &serve_ctx.k_acc,

@@ -93,10 +93,10 @@ if (!existsSync(profilePath)) {
   process.exit(1);
 }
 const prof = JSON.parse(readFileSync(profilePath, "utf8"));
-// **判据是「干不干净」这一个总闸,不是逐个 feature 点名**(305 加 probe305 时改)。
-// 旧标记没有 `clean` 字段,`!== true` 就落到下面按 devtools 兜底那一句——老产物
-// 不会因为换了判据而被静默放行。
-if (prof.clean !== true || prof.devtools || prof.probe305) {
+// **判据是「干不干净」这一个总闸,不是逐个 feature 点名**(305 加台架 feature 时改;
+// 那枚 feature 后来撤了,总闸不动)。旧标记没有 `clean` 字段,`!== true` 就落到下面按
+// devtools 兜底那一句——老产物不会因为换了判据而被静默放行。
+if (prof.clean !== true || prof.devtools) {
   const feats = prof.profile ?? (prof.devtools ? "devtools" : "未知");
   console.error(`这是带台架 feature 的验收包(${feats}),绝不能发版!`);
   console.error("请用 `node scripts/build-android.mjs`(不带任何台架开关)出干净包。");

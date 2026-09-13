@@ -154,7 +154,6 @@ impl Ctx<'_> {
         ticket: RelayDataTicket,
         own_max_seq: Option<i64>,
     ) -> Result<(), String> {
-        p305!("ACK relay ops own_max_seq={own_max_seq:?} -> bump+commit");
         let job = self.engine.relay_data.take_ops(ticket)?;
         if let Some(max_seq) = own_max_seq {
             let conn = self.db.lock().expect("db mutex poisoned");

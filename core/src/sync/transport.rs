@@ -63,7 +63,6 @@ use crate::sync::lan::{self, Ingress, LanAd};
 use crate::sync::lan_net;
 use crate::sync::ops_serve;
 use crate::sync::pair::{self, AccountGrant, DeviceEnroll, PairOutput};
-use crate::sync::probe::p305;
 
 // ---- 子模块(310 第 ② 笔:本文件曾 15,562 行,按「用得着什么借用面」切开)----------
 //
@@ -4058,27 +4057,17 @@ fn ops_prepare_locked(
     #[cfg(test)]
     works.note_probe();
     let Some(work) = works.work_mut(target) else {
-        p305!("prepare target={target} -> Idle(无 work)");
         return OpsTurn::Idle;
     };
     match work.prepare_next(conn) {
         Err(e) => OpsTurn::Failed(e),
-        Ok(ops_serve::Prepare::Idle) => {
-            p305!("prepare target={target} -> Idle(work empty)");
-            OpsTurn::Idle
-        }
-        Ok(ops_serve::Prepare::Occupied) => {
-            p305!("prepare target={target} -> Occupied(在飞)");
-            OpsTurn::Occupied
-        }
+        Ok(ops_serve::Prepare::Idle) => OpsTurn::Idle,
+        Ok(ops_serve::Prepare::Occupied) => OpsTurn::Occupied,
         Ok(ops_serve::Prepare::Ready(p)) => match p.frame {
             // 空转:没字节可写,但游标得往前走,就在这个临界区里办完——凭据不出门,也就
             // 没有「空转的凭据谁来回滚」这种形。
             None => match work.commit(p.token) {
-                Ok(()) => {
-                    p305!("prepare target={target} -> Spun(空探,0 字节不上线)");
-                    OpsTurn::Spun
-                }
+                Ok(()) => OpsTurn::Spun,
                 Err(e) => OpsTurn::Failed(e),
             },
             Some(frame) => OpsTurn::Frame(

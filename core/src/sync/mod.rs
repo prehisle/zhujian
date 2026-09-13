@@ -11,9 +11,8 @@ pub(crate) mod boot;
 pub(crate) mod crypto;
 pub(crate) mod engine;
 /// L-b 局域网直连的纯逻辑层(lan-direct-plan)。IO 宿主分两处:链路集与投递面在
-/// transport(L-c2c),监听器准入表与握手任务在 [`lan_net`](L-c3a)。拨号器(L-c3b)
-/// 之前仍有少数条目只被测试调用,`dead_code` 整模块豁免暂留。
-#[allow(dead_code)]
+/// transport(L-c2c),监听器准入表与握手任务在 [`lan_net`](L-c3a)。
+/// (曾整模块 `allow(dead_code)`;只被测试读的那几处已各自 `#[cfg(test)]`,豁免撤了。)
 pub(crate) mod lan;
 /// L-c3a 局域网直连的 IO 面:本机接口枚举 + app 级监听器与准入表 + pre-auth 握手任务。
 pub(crate) mod lan_net;
@@ -22,10 +21,6 @@ pub(crate) mod lan_net;
 /// `on_hello` / `on_want` / `outbound` 与出站 Hello 的有界水位都在生产路径上。
 pub(crate) mod ops_serve;
 pub(crate) mod pair;
-/// **台架专用**(305 真机复验,feature `probe305` 默认关;验完即撤)。
-/// 消费方按 `use crate::sync::probe::p305;` 显式引(**不走 `#[macro_use]`**:那条
-/// 的可见域只到本文件里排在它后面的 `mod`,engine/ops_serve 都在它前面)。
-pub(crate) mod probe;
 pub mod supervisor;
 pub mod transport;
 

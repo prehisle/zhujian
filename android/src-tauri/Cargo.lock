@@ -5875,7 +5875,6 @@ dependencies = [
  "tauri-plugin-notification",
  "tauri-plugin-opener",
  "ureq",
- "zhujian-core",
  "zhujian-mobile",
 ]
 
@@ -5891,7 +5890,6 @@ dependencies = [
  "hmac",
  "if-addrs",
  "libc",
- "log",
  "rusqlite",
  "rustls",
  "serde",
