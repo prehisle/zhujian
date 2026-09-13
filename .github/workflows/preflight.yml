@@ -1,45 +1,13 @@
 name: preflight
 
-# ⭐ 385 立:**发版闸**。tag(桌面 `v*` / 安卓 `android-v*`)是自动发给真实用户的边界,
-# 而在此之前这个边界前面没有任何机器门槛——五套 cargo test 与十道发版门禁全靠人在本地
-# 记得跑。实测:十道门禁全跑 **2.7 秒**、共享那三套 cargo test 约 3 分钟。
-# 单人项目可以没有 PR CI;**自动发布边界不可以没有刹车**。
-#
-# 它由两条 release workflow 用 `uses:` 调用(reusable workflow,**两处零抄写**——
-# 复制两份正是这一轮在批评的那类腐烂点)。也可以 `workflow_dispatch` 手动跑一趟,
-# 用来验证「这些门禁与测试在 Linux runner 上跑得起来」——它们原本只在作者的 Windows
-# 本机跑过。⭐ 十道门禁 385 已这样探过两趟(第一趟红在白名单漏了 `docs/ui-guidelines.md`,
-# 加白名单后第二趟全绿);386 的 `shells` 格也这样探过一趟(run 31887693994,首趟即绿,
-# 两壳的数与 Windows 逐个相同 —— ⚠ **那是 386 当时的读数,不是当前态**,别拿它对今天的数)。
-# **改了门禁或本文件之后照旧先探一趟,别拿发版当首测。**
-#
-# ⭐ 386 补上第二格 `shells`:两只壳 crate 的 cargo test(468/OH-d 抽出共享的 `mobile/` 之后
-# 是三格)。它们守的是**壳装配契约**(单实例门 / 设备身份保持 / 坏库版本拒绝 / 主库丢失保护),
-# 此前不在任何 CI 里 —— 385 把它记成可优化项时,五套里恰好漏掉的就是这两套。两格**并行**跑,
-# 故 preflight 的墙钟 = 两格里慢的那个,不是相加。
-#
-# ⛔ **518 起:job 名与注释里一律不写「跑出来多少支」那种数**(backlog 测试与工装 31)——
-# job 名在 job 起来之前就要定,拿不到运行期读数;写死的那个数会静静腐烂,而它正是 Actions
-# 页面上第一眼看见的那行字(同 memory `stale-number-in-docs-and-fixtures`)。⭐ 但**「跑几套」
-# 这类结构数照留**(「三套」「六套」「十道」):它们数的是紧接在下面那几行 `run:`,
-# 改本文件才会变,不会背着人腐烂。
-#
-# ⭐ 448 补上第三格 `windows`(ci-plan 阶段 2)。**在此之前,CI 里从来没有一条 Rust 测试
-# 在 Windows 上跑过** —— 上面两格都钉死 `ubuntu-22.04`,nightly 的 Windows 那格只 build
-# 不 test,而 **Windows 是今天唯一的生产桌面端**。425 那支缺陷正好长在这个洞里:
-# `restore.rs` 落位前那次 fsync 拿的是只读句柄,Unix 上对 `O_RDONLY` 合法、而 Windows 的
-# `FlushFileBuffers` 直接 `ERROR_ACCESS_DENIED` ⇒ **恢复在生产端根本落不了位**,形状是
-# 「core 8 支全红」;`windows-latest` 上一格 `cargo test` 当场就抓得住,实际却是靠人工
-# 复跑一整轮才抓到的,而**设计审与实现审都读不出平台 API 语义差**。
-# ⚠ 它落在 preflight 里 ⇒ **每次发版都会等这一格**(墙钟 +5~10 分钟)。那是有意的:
-# 发版闸正是这个洞最该被堵上的地方。
-# ⚠ 两端 core 的**测试条数本来就不同**(backup 模块有多处 `#[cfg(unix)]` 测试,Linux 恒多
-# 那几支)—— 这里只判过不过,⛔ 别去对数,也别在这儿写下当时的读数(写下就腐烂)。
-#
-# ⛔ 刻意**不**放进来的两样(判据见 progress-log 385/386):
-#   · e2e —— 要 Windows + 真 WebView2 + 先停掉占全局热键的生产实例,塞进来产的是
-#     环境噪声而不是发布判据;
-#   · check-deployed-drift —— 它问的是**线上**,要网络 + ssh,且在发版**前**问没有意义。
+# ⭐ 385 立:发版闸。tag(桌面 `v*` / 安卓 `android-v*`)是自动发给真实用户的边界,自动发布边界不可以没有刹车;
+#   由两条 release workflow 用 `uses:` 调用(reusable,两处零抄写),也可 `workflow_dispatch` 手动探一趟 ——
+#   ⛔ 改了门禁或本文件之后照旧先探一趟,别拿发版当首测。立项与逐格读数:progress-log 385(十道门禁)/ 386(`shells`)/
+#   448(Windows 那格,ci-plan 阶段 2)/ 540(拆片 + `all-green`)。
+# ⛔ 518 起:job 名与注释里一律不写「跑出来多少支」那种数(测试与工装 31)—— job 名在 job 起来之前就要定,写死的数只会腐烂
+#   (memory `stale-number-in-docs-and-fixtures`);「三套」「十道」这类结构数照留,它们数的是紧接着的几行 `run:`。
+# ⛔ 刻意不放进来的两样(判据在 progress-log 385/386):e2e(要 Windows + 真 WebView2 + 先停掉占全局热键的生产实例,塞进来产的是
+#   环境噪声不是发布判据)、check-deployed-drift(问的是线上,要网络 + ssh,发版前问没有意义)。
 
 permissions:
   contents: read
@@ -62,8 +30,7 @@ jobs:
             core
             server
             sync-proto
-      # core / server / sync-proto 三套(两壳那两套在下面的 `shells` 格,386 起;
-      # 542 前这儿写「与 nightly.yml 同口径」—— 那份已退役,构建挪进 ci.yml 全绿之后)。
+      # core / server / sync-proto 三套(两壳那两套 + 共享手机层在下面的 `shells` 格,386 起)。
       - run: cd core && cargo test --quiet
       - run: cd server && cargo test --quiet
       - run: cd sync-proto && cargo test --quiet
@@ -91,15 +58,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # 两壳都是 tauri crate,Linux 上编它要 webkit2gtk 一套(与 release.yml 的 Linux
-      # 那格逐字同一串;缺了会停在 pkg-config 找不到 webkit2gtk-4.1)。
-      # ⚠ 安卓壳这里编的是 **host target(x86_64-linux)**——跑的是纯 Rust 单测与起真
-      # 同步服务的集成测,**不需要 NDK**(NDK 只在真出 aarch64 的 .so 时才要)。
-      # ⭐ 518 补上步级上限(ci-plan §8-9 记的那笔:「谁下次碰 preflight 顺手加一行即可」)。
-      # 450 那天 main 上这一步与 `ci.yml` 的 `linux-e2e`(同样装 apt 的那格)**一起卡在
-      # `apt-get` 上 52 分钟**,而同趟不装 apt 的两格早绿了 ⇒ 是 runner 的 apt 镜像挂住、
-      # 不是我们的树。不设上限的话它会一路吃掉 job 的默认 360 分钟,最后报成一次说不清的红
-      # ——**把一次基础设施事件呈现成一次发版被卡**。15 分钟对正常 apt(实测 ~60 秒)绰绰有余。
+      # 两壳都是 tauri crate,Linux 上编它要 webkit2gtk 一套(与 release.yml 的 Linux 那格逐字同一串)。
+      # ⚠ 安卓壳这里编的是 host target(x86_64-linux),跑纯 Rust 单测与集成测,不需要 NDK。
+      # ⭐ 518 补步级上限(ci-plan §8-9):450 那天这一步与 `ci.yml` 的 `linux-e2e` 一起卡在 runner 的 `apt-get` 上 52 分钟,不设上限它会
+      #    吃掉 job 默认的 360 分钟、把一次基础设施事件呈现成一次发版被卡;15 分钟对正常 apt(~60 秒)绰绰有余。
       - name: Linux 系统依赖(Tauri v2)
         timeout-minutes: 15
         run: |
@@ -115,46 +77,22 @@ jobs:
             android/src-tauri
             mobile
 
-      # ⚠ 刻意**不**跑 `npm run build`:`dist/` 是 gitignore 的,CI 检出里没有,但
-      # `generate_context!` 只有在开了 `custom-protocol` 特性时才去嵌 `frontendDist`
-      # (tauri-macros:`dev: cfg!(not(feature = "custom-protocol"))`),而 cargo test
-      # 不开它 ⇒ 走 devUrl 那支,`dist/` 缺席照样编得过。别顺手补一步前端构建。
+      # ⚠ 刻意不跑 `npm run build`:`generate_context!` 只有开了 `custom-protocol` 才嵌 `frontendDist`,cargo test 不开它 ⇒ 走 devUrl,
+      #    `dist/` 缺席照样编得过。别顺手补一步前端构建。
       - run: cd src-tauri && cargo test --quiet
       - run: cd android/src-tauri && cargo test --quiet
-      # OH-d/D1:两只手机壳共用的那一层(coord + 93 条命令面 + 启动装配)搬来了这里。
-      # ⚠ 它含**起真同步服务的「加入空间」端到端集成测**(随源自 android/src-tauri),
-      # 别与重负载并行。
+      # OH-d/D1:两只手机壳共用的那一层(coord + 命令面 + 启动装配)。⚠ 它含起真同步服务的「加入空间」端到端集成测,别与重负载并行。
       - run: cd mobile && cargo test --quiet
 
-  # 448(ci-plan 阶段 2):**全套在 Windows 上再跑一遍**(OH-d/D1 起是六套)。
-  # 539 把它从一格拆成两格 + `core` 再分三片,理由见下面那条翻案。
-  #
-  # ⛔ **不在这几格跑那十道门禁**:它们是平台无关的 node 脚本(判的是仓里几份表对不对得上),
-  #    在第二个操作系统上跑一遍不产生任何新判据,只是把墙钟拉长。这几格要的是**平台 API 语义**。
-  # ⚠ 安卓壳这里同样编的是 **host target(x86_64-windows)**,跑纯 Rust 单测,**不需要 NDK**。
-  #
-  # ⭐⭐ **539 翻案:原来这里写着「不拆成两格」,现在拆了。**
-  #    原文:「⚠ **不拆成两格**(Linux 那边拆是因为 `shells` 要先 apt 装 webkit2gtk 一套):
-  #    Windows 上 WebView2 是镜像预装的,没有那步 ⇒ 拆开只是多付一次检出 + rust-cache 还原。」
-  #    **那句话没说错,是它比较的两个量在这半年里换了个数量级**,539 当场量到的:
-  #      · 「多付的一次检出 + rust-cache 还原」= **45~65 秒**(三趟实测)
-  #      · 而 `cd core && cargo test` 这**一步** = **19~38 分钟**(同日三趟:20m53s / 20m27s / 37m50s)
-  #    ⇒ 为省 1 分钟的重复 setup,让 20~38 分钟串在一根杆上。**判据不是「拆不拆更干净」,
-  #      是「最长那根杆有多长」。**
-  #
-  # ⭐ 539 同轮查实的三条(⛔ 都是量出来的,别当推断):
-  #    ①**不是编译慢**:CI 日志时间戳,`cd core && cargo test` 开跑 71 秒后就打出
-  #      `running 1060 tests`,而 libtest 自报 `finished in 1154.50s` ⇒ 19 分钟全在**跑测**;
-  #    ②**不是 CPU 并行度**:本机 12 核跑 132.15s、`--test-threads=4`(= runner 核数)跑 2m49s
-  #      ⇒ **少 8 个线程只贵 13 秒**;
-  #    ③**像是磁盘 I/O**:把 `TMP`/`TEMP` 指到本机 5400 转机械盘再跑同一套,15 分钟才到
-  #      **261/1060**,libtest 反复打 `has been running for over 60 seconds`,慢的集中在
-  #      `backup::` / `move_item::` / `replay::`(它们真写真读 SQLite 与备份档)。
-  #      ⚠ **这条是推断不是定论** —— runner 的盘我们量不了,别把它写成结论。
-  #
-  # ⚠ 原注里那句「`core` 含起真同步服务器的双库端到端集成测…故这一格刻意串行跑,别为省墙钟
-  #   并发它们」**依然成立,而分片没有违反它**:分片分的是**job**(各自独立的 runner VM),
-  #   同一台机器上的并发度不升反降。⛔ 别据此把同一格里的几套 `cargo test` 并起来跑。
+  # 448(ci-plan 阶段 2):全套在 Windows 上再跑一遍 —— 此前 CI 里从没有一条 Rust 测试在 Windows 上跑过,而 Windows 是唯一的生产桌面端,
+  #   425 那支缺陷(`FlushFileBuffers` 对只读句柄 `ERROR_ACCESS_DENIED`,恢复在生产端落不了位)正长在这个洞里,设计审与实现审都读不出平台 API 语义差。
+  # ⛔ 不在这几格跑那十道门禁:它们是平台无关的 node 脚本,在第二个操作系统上跑一遍不产生新判据。这几格要的是平台 API 语义。
+  # ⚠ 安卓壳这里编的是 host target(x86_64-windows),跑纯 Rust 单测,不需要 NDK。两端 core 的测试条数本来就不同(backup 有 `#[cfg(unix)]` 测试),
+  #    这里只判过不过,⛔ 别去对数、别写下当时的读数。
+  # ⭐⭐ 540 翻案:原来写着「不拆成两格」,现在拆成 `windows-core`(三片并行)+ `windows-rest`。判据不是「拆不拆更干净」,是「最长那根杆有多长」:
+  #    多付的一次检出 + rust-cache 还原 = 45~65 秒,而 `cd core && cargo test` 一步 = 19~38 分钟(全在跑测、不是编译也不是 CPU 并行度;
+  #    像是磁盘 I/O 但那是推断)—— 读数与三条查实在 progress-log 540。
+  # ⚠ 「core 含起真同步服务器的集成测,刻意串行」依然成立,分片没有违反它:分的是 job(各自独立的 VM),⛔ 别据此把同一格里的几套并起来跑。
   windows-core:
     # core 一家就占了整格的九成墙钟 ⇒ 单独拎出来再分三片,三片并行。
     name: cargo test core(Windows · ${{ matrix.shard.name }})
@@ -162,16 +100,12 @@ jobs:
     strategy:
       fail-fast: false # ⛔ 一片红别掐掉另外两片:三片的红各是独立信息
       matrix:
-        # ⭐ **这三片是一个「完全划分」,不是抽样**。539 当场证过(零重叠 + 计数相加等于全量):
-        #      cd core && cargo test --lib -- --list | grep -c ": test$"                  → 1060
-        #      …| grep ": test$" | grep -c "sync::"                                       →  566
-        #      …| grep ": test$" | grep -c "backup::"                                     →  127
-        #      …| grep ": test$" | grep -v "sync::" | grep -v "backup::" | wc -l          →  367
-        #                                                              566+127+367 = 1060 ✓
-        #    且 `grep "sync::" | grep "backup::"` 一条不中 ⇒ 没有测试会被两片同时跑。
-        # ⛔ **改动这三条过滤串,就要把上面那四行重跑一遍**(数不对上就是有测试没人跑了)。
-        # ⚠ 第三片用 `--skip` 取前两片的补集 ⇒ **新增的模块自动落进第三片**,不会漏跑。
-        #    这是刻意的:漏跑的失灵方式是**安静的绿**,而多跑只是慢一点。
+        # ⭐ 这三片是一个「完全划分」,不是抽样(540 当场证过:零重叠 + 计数相加等于全量)。⛔ 改动这三条过滤串就把下面四行重跑一遍,
+        #    数对不上就是有测试没人跑了:
+        #      cd core && cargo test --lib -- --list | grep -c ": test$"                       → 全量
+        #      …| grep ": test$" | grep -c "sync::"   /   …| grep -c "backup::"   /   …| grep -v "sync::" | grep -v "backup::" | wc -l
+        #      三数相加 == 全量,且 `grep "sync::" | grep "backup::"` 一条不中。
+        # ⚠ 第三片用 `--skip` 取前两片的补集 ⇒ 新增的模块自动落进第三片,不会漏跑(漏跑的失灵方式是安静的绿,多跑只是慢一点)。
         shard:
           - name: sync
             args: "sync::"
@@ -191,12 +125,9 @@ jobs:
           # 三片共用同一份缓存键(同一个 crate、同一套依赖),互不覆盖。
           shared-key: win-core
 
-      # ⛔ **别把 `cargo test` 直接当判据**:分片是靠给 libtest 传过滤串实现的,而
-      #    **过滤串打错一个字 = `0 passed` + 退出码 0 = 这一格绿着,却一只测试都没跑**
-      #    (`lib/test-verdict.mjs` 头注记的第 ② 种 fail-open,那把三态尺已焊死)。
-      #    ⇒ 走 `cargo-verdict.mjs`:`passed === 0` 判 `unknown`(退 2),不是绿。
-      # ⚠ 重定向到文件再判,**别管道接 tail/head**(会吞掉真实退出码,memory
-      #   `test-output-pipe-loses-exit-code`)。
+      # ⛔ 别把 `cargo test` 直接当判据:分片靠给 libtest 传过滤串,过滤串打错一个字 = `0 passed` + 退出码 0 = 这一格绿着却一只测试都没跑
+      #    (`lib/test-verdict.mjs` 头注的第 ② 种 fail-open)⇒ 走 `cargo-verdict.mjs`:`passed === 0` 判 `unknown`(退 2),不是绿。
+      # ⚠ 重定向到文件再判,别管道接 tail/head(会吞掉真实退出码,memory `test-output-pipe-loses-exit-code`)。
       - name: core 分片 ${{ matrix.shard.name }}
         shell: bash
         run: |
@@ -209,8 +140,7 @@ jobs:
             --status="$rc" --label="core · ${{ matrix.shard.name }}(Windows)"
 
   windows-rest:
-    # 除 core 外的五套。合计约 5 分钟(539 实测:server 0.4s / sync-proto 0.05s /
-    # src-tauri 33.6s / android 0.7s / mobile 128.4s,其余是各自的编译)。
+    # 除 core 外的五套,合计约 5 分钟(540 实测,大头是各自的编译)。
     name: cargo test 五套(Windows · core 以外)
     runs-on: windows-latest
     steps:
@@ -228,10 +158,8 @@ jobs:
             android/src-tauri
             mobile
 
-      # ⚠ `server` 含真时间短 TTL 集成测、`mobile` 含起真同步服务的「加入空间」端到端集成测
-      # ⇒ 这一格**刻意串行**,别为省墙钟并发它们(448 立的判据,539 原样保留)。
-      # ⚠ 同 `shells` 那格:刻意**不**跑 `npm run build`,`cargo test` 不开 `custom-protocol`
-      # ⇒ 走 devUrl 那支,`dist/` 缺席照样编得过。
+      # ⚠ `server` 含真时间短 TTL 集成测、`mobile` 含起真同步服务的端到端集成测 ⇒ 这一格刻意串行,别为省墙钟并发它们(448 立,540 原样保留)。
+      # ⚠ 同 `shells` 那格:刻意不跑 `npm run build`(`cargo test` 不开 `custom-protocol` ⇒ 走 devUrl,`dist/` 缺席照样编得过)。
       - name: 五套(串行)
         shell: bash
         run: |
@@ -245,19 +173,10 @@ jobs:
               --status="$rc" --label="$c(Windows)" || exit $?
           done
 
-  # ⭐⭐ 539 立:**调用方唯一该看的那一格**。
-  #
-  # **为什么需要它**(codex 设计审当轮抓的那条 H):调用方写的是 `needs: preflight`,等的是
-  # 这份 reusable workflow 的**全部 job**。红 / 取消都会让调用 job 失败 —— 这半是 fail-closed 的。
-  # **但 `skipped` 不是**:内部 job 若被跳过(今天做不到 —— 下面那条查实),调用 job 仍可能
-  # 报 success,于是**门禁没跑完而产物照发**。那正是这仓最怕的那一形:「门禁失灵的方式是
-  # **安静的绿**」「一道被跳过的门禁和一道通过的门禁,在 job 那一格上长得一模一样」。
-  #
-  # ⚠⚠ **如实记:这个洞今天够不着,我加的是结构性保险不是修活缺陷。** 539 当轮查实 ——
-  #    本文件这几个 job **一个 `if:` 都没有**,两条 release workflow 调 preflight 时也**没带 `if:`**
-  #    ⇒ 今天没有任何一条路径能让它们被 skip。⛔ 别把这段读成「曾经发过一次事故」。
-  #    它防的是**将来有人给某一格加 `if:`** —— 那一刻上面那扇门会**安静地**开,而
-  #    Actions 页面上看不出来。⇒ 把「全绿」从**默认语义**变成**一条显式断言**。
+  # ⭐⭐ 540 立:调用方唯一该看的那一格。调用方 `needs: preflight` 等的是这份 reusable workflow 的全部 job:红 / 取消会让调用 job 失败,
+  #    但内部 job 被 `skipped` 时调用 job 仍可能报 success ⇒ 门禁没跑完而产物照发 —— 「一道被跳过的门禁和一道通过的门禁在 job 那格上长得一样」。
+  # ⚠⚠ 如实记:这个洞今天够不着 —— 本文件的 job 一个 `if:` 都没有,两条 release workflow 调它也不带 `if:`;这是结构性保险不是修活缺陷,
+  #    ⛔ 别读成「曾经发过一次事故」。它防的是将来有人给某一格加 `if:` 时那扇门安静地开 ⇒ 把「全绿」从默认语义变成一条显式断言。
   all-green:
     name: 全绿汇总(⛔ 调用方只认这一格)
     if: always() # ⛔ 必须 always:默认语义下上游一红这格自己就被 skip,那就白设了

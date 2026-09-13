@@ -1,76 +1,35 @@
 name: ci
 
-# ⭐ 448 立(ci-plan 阶段 2):**per-push 快速警报**。
-#
-# 在此之前 **CI 一次 `push` 都不跑** —— 五条 workflow 只在「定时」与「打 tag」两个时刻
-# 存在(447 查出来的),于是「这棵树跑不跑得过」这件事的唯一答案来源是**人在本地记得跑**,
-# 而两台机器之间那条「改了共用面,另一台下一轮必须全量复跑」的规矩(398 规矩 5)已经触发
-# 15 次,其中六轮是**整轮零代码的纯复跑** ≈ 1/10 的轮次在做「另一台机器把同一棵树再跑
-# 一遍」—— 那正是 CI 矩阵的定义。
-#
-# ⛔ **它不是合并闸,是警报**:两人自用、直推 master、没有 PR 流程 ⇒ CI 红 = master 红。
-#    真正 fail-closed 的那道是 `preflight` 被两条 release tag 线用 `needs` 挂着的那次调用,
-#    **本文件一个字都不改它**。
-#
-# ⭐ 450(ci-plan 阶段 3)接上第二格:**Linux 真 GUI e2e**(下面的 `linux-e2e`)。448 立本文件时
-#    这儿写的是「⛔ 跑不了 e2e」,那句话**只对 Windows 那趟成立**(要真 WebView2 + 先停掉占全局
-#    热键的生产实例);Linux 这一端两个前提一个都不在:WebKitWebDriver 是 apt 装的系统包,
-#    托管 runner 上也没有谁占着 Ctrl+Alt+N。
-# ⛔ **Windows/WebView2 那趟仍不在这里** —— 它才是**判发版**的那趟(396 起口径没变),
-#    归 ci-plan 阶段 4「夜跑」。别在这里顺手加:per-push 上再串一趟生产端 e2e,
-#    就把「快速警报」变成慢闸了。
+# ⭐ 448 立(ci-plan 阶段 2):公开仓上的 CI 警报 —— 两平台五套 cargo + 十道门禁(`gates` → preflight.yml)、
+#   450 加 Linux 真 GUI e2e(`linux-e2e`)、674 加安卓前端 vite build、542 加全绿后三平台构建。立项理由(此前 CI 一次 push 都不跑、
+#   规矩 5 那笔复跑债 ≈ 1/10 的轮次)与逐阶段读数在 ci-plan §4 / §9。
+# ⛔ 它不是合并闸,是警报:直推 master、没有 PR 流程 ⇒ CI 红 = master 红。真正 fail-closed 的那道是 `preflight` 被两条 release tag 线
+#    用 `needs` 挂着的那次调用,本文件一个字都不改它。
+# ⛔ Windows/WebView2 那趟 e2e 不在这里 —— 它才是判发版的那趟(396 起口径没变),归 ci-plan 阶段 4;别在这里顺手加,
+#    那会把「快速警报」变成慢闸。
 
 permissions:
   contents: read
 
 on:
   push:
-    # ⚠ **写 `branches: ["**"]`,别写 `tags-ignore`** —— 这里栽过一次,原样记着:
-    #   第一版写的是 `tags-ignore: ["**"]`,推理是「只排除 tag,分支就都开着」。**反了**:
-    #   GitHub 的规则是「**只定义了 tags/tags-ignore(或只定义 branches/branches-ignore),
-    #   工作流就不会为那个没被定义到的 ref 类型跑**」⇒ 那一版对**分支推送根本不触发**。
-    #   字据 = 448 第一次推上公开仓,`ci` 已登记为 active、main 的头也确实换了,
-    #   而 `actions/runs` 里**一趟都没有** —— 不是慢,是压根没建。
-    #   ⭐ `branches: ["**"]` 一条同时给了要的两样:
-    #     ①任何分支都跑 ⇒ **探针分支照样跑得到**(阶段 2 的阴性对照就是推一条临时分支做的,
-    #       不必把半截改动推上 main);⛔ **这一条 535 收窄之后不再成立**(收纳格 51(b)):
-    #       今天只有 `gate/**` 触发 ⇒ 要拿临时分支做阴性对照,**得把它命名成 `gate/<环境名>/<记号>`**
-    #       (或用 `workflow_dispatch` 手动点一趟)。⚠ 上面这段是 448 的原文,**留着是史料**,
-    #       别当现行规则读;②那半仍成立。
-    #     ②tag 是「没被定义到的 ref 类型」⇒ 日常推快照**绝不会**顺手启动 tag 触发的发版线
-    #       (`release.yml` = `v*`,`android-release.yml` = `android-v*`)。
-    #
-    # ⭐⭐ **535 起这里从 `["**"]` 收窄成 `["gate/**"]` —— per-push 那一层关掉了**
-    #   (用户 2026-08-29 点名:「CI 要 30 分钟,想调成半夜触发或按需触发,现在太影响效率」)。
-    #   ⛔ **别照 448 那段原文读成"每推必跑"**,它已经不成立;448 的理由本身没被推翻,
-    #   是**它的性价比被量掉了**,数据在 535 那条,照抄两句在这儿免得有人凭印象改回去:
-    #     · 10 天 114 趟 `ci`,红 10 趟 —— **4 趟是故意注的刀**(450/448 的阴性对照)、
-    #       **5 趟是 Linux e2e 的已知抖动**(backlog 39/44/47/29/30)、**真红 1 趟**;
-    #     · 那唯一一趟真红是 `core` 两支结构锚,**本地 `cd core && cargo test` 三分钟就逮得到**
-    #       ⇒ 这 10 天里 per-push 逮到「只有 CI 能逮、本地逮不到」的东西 **0 次**;
-    #     · 而代价是每一轮 +29 分钟,且**主线移动间隔实测 22-58 分钟 < 闸的 29 分钟**
-    #       ⇒ 三个环境并行时会**饿死**(534 那件 160 行的小工装连走四趟,两趟输在被超车)。
-    #   ⚠ **不是"CI 变少了",是换了触发时机**:①闸分支照旧每推必跑(那是**按需**那一半——
-    #     动了产品面才会有闸分支,见 `branch-gate.mjs` 的 `productDelta()`);②`schedule`
-    #     每天一趟全矩阵兜底;③`workflow_dispatch` 随时手动要一趟。
-    #   ⛔ **探针分支(`ci-probe-*`)从此不自动跑了** —— 448/450 那种阴性对照改用
-    #     `gh workflow run ci.yml --ref <分支>`,一条命令,别为它把 `**` 加回来。
+    # ⛔ 写 `branches:`,别写 `tags-ignore`(448 第一版栽过):GitHub 的规则是「只定义了 tags/tags-ignore(或只定义 branches/branches-ignore),
+    #   工作流就不会为那个没被定义到的 ref 类型跑」—— 那一版对分支推送根本不触发,`ci` 已登记 active、main 的头也换了,而 run 一趟都没建。
+    #   tag 是「没被定义到的 ref 类型」⇒ 日常推快照绝不会顺手启动 tag 触发的发版线(`release.yml` = `v*`,`android-release.yml` = `android-v*`)。
+    # ⭐⭐ 535 起从 `["**"]` 收窄成 `["gate/**"]`,per-push 那一层关掉了(用户 2026-08-29 点名 CI 太影响效率;量出来的判据、诚实边界、
+    #   翻案门全在 ci-plan §9 顶那段与 progress-log 535,⛔ 别凭印象改回去)。⚠ 不是「CI 变少了」,是换了触发时机:闸分支照旧每推必跑
+    #   (`branch-gate.mjs` 的 `gatedDelta()` 决定哪些改动产生闸分支)+ `schedule` 每天一趟全矩阵 + `workflow_dispatch` 手动。
+    # ⛔ 探针分支(`ci-probe-*`)从此不自动跑了:阴性对照改用 `gh workflow run ci.yml --ref <分支>`(或命名成 `gate/<环境名>/<记号>`),
+    #   别为它把 `**` 加回来(收纳格 51(b))。
     branches: ["gate/**"]
 
-  # ⭐ 夜跑那一半(535):每天一趟全矩阵,验的是**那一刻 `main` 的头**。
-  # ⚠ **诚实边界,别读大了**:一天里推了五次,只有最后那棵树被验过。要立刻要一趟就手动 dispatch。
-  # ⚠ 时刻挑 19:30Z 是为了错开:`android-nightly` 18:30Z / `nightly-e2e` 那条注释着的 19:00Z
-  #   (backlog 27,它醒来时不会跟这条撞)。⚠ 542 之前还有一条 `nightly` 18:00Z ——
-  #   它已随 542 退役(三平台构建挪到本文件 `nightly-build` 那格,**全绿才构建**;
-  #   它那格 3 套 cargo 测试早被 `gates` 里的 preflight 盖住)。
-  # ⭐ **红了怎么知道**:靠 GitHub 的**失败邮件**(用户 2026-08-29 确认收得到)。
-  #   ⚠ 这个仓上「失败会发邮件」**还没被证实过** —— 现有夜跑一直是绿的 ⇒ 535 会故意让它红一次
-  #   来验;没验之前别把它当已知(memory `doc-claims-a-test-exists-verify-it` 那一族)。
+  # ⭐ 夜跑那一半(535):每天一趟全矩阵,验的是那一刻 `main` 的头 —— 一天里推了五次只有最后那棵树被验过;要立刻要一趟就手动 dispatch。
+  # ⚠ 19:30Z 是为了错开 `android-nightly` 18:30Z / `nightly-e2e` 那条注释着的 19:00Z;542 之前的 `nightly` 18:00Z 已退役(构建挪到下面 `nightly-build`)。
+  # ⭐ 红了怎么知道:GitHub 的失败邮件(用户 2026-08-29 确认收得到;535 补回查 `schedule` 那条路也真跑红过,ci-plan §9 顶那段)。
   schedule:
     - cron: "30 19 * * *"
 
-  # 手动:探针分支的阴性对照、想立刻要一趟裁决、或夜跑红了要复跑,都走这里。
-  # ⭐ 542:`build_artifacts` 开着才顺带出三平台产物(schedule 恒出);日常手动要裁决用不到它。
+  # 手动:探针分支的阴性对照、想立刻要一趟裁决、或夜跑红了要复跑。542:`build_artifacts` 开着才顺带出三平台产物(schedule 恒出)。
   workflow_dispatch:
     inputs:
       build_artifacts:
@@ -78,85 +37,44 @@ on:
         type: boolean
         default: false
 
-# ⛔ **刻意没有 `concurrency`**(517 补立账、518 拿掉;backlog 测试与工装 41)。
-#
-# 原先这里是 `group: ci-${{ github.ref }}` + `cancel-in-progress: true`,想省的是「连推时
-# 重复跑」。**它省错了东西**:517 收口那趟推上去,把 516 那趟(已跑到 **25m50s**、
-# `linux-e2e` 离完事约 1 分钟)当场掐成 `cancelled`;查近 14 趟,**cancelled 占 4**,
-# 而 515 与 516 连着两趟都没跑完 ⇒ 那阵子最后一趟真正跑到底的 ci 就是那趟**红的**。
-#
-# ⭐ **代价说准,别夸大**:被掐那趟的树是新那趟的**子集** ⇒ **覆盖面一点没丢**
-#   (同「合并树一趟顶两趟」)。丢的是另外两样,而恰好两样都是本文件存在的理由:
-#     ①**墙钟** —— 连着推就永远拿不到裁决,而规矩 5 降级的硬前提正是「Linux 那半由
-#       per-push CI 兑现」;②**观测机会** —— backlog 测试与工装 39 等的就是「下一次红
-#       那句话」,516 刚把分诊话术装上去,接着两趟就都没跑完。
-#
-# ⛔ **另外两条路都查过了,别再挑回来**:
-#   · 「保留开关、补一条『推之前先 `gh run list` 一眼』的纪律」—— 那是要人去补偿一台
-#     正在主动毁证据的机器(memory `guards-must-bind-to-the-automatic-edge`);505 那条
-#     「下一轮开工前看一眼」已经在了,而它看到的恰恰是 `cancelled` —— **既不是绿也不是红**。
-#   · 「只给 `linux-e2e` 开豁免」—— 救不了。`gates` 是 `uses:` 调 `preflight.yml`,job 级
-#     `concurrency` 一挂就把它里头三格全掐,而最长的那格是 **Windows 六套 cargo(≈29 分)**,
-#     与 `linux-e2e` 同一档 ⇒ 豁免一根长杆、掐掉另一根,等于没做。
-#     (⚠ **539 起 `preflight.yml` 里那格已拆成 `windows-core` 三片 + `windows-rest`**,
-#      「六套 cargo ≈29 分」是**当时**的读数、这段推理照旧成立;⛔ 别拿它当今天的墙钟。)
-#   · 「留 group、只把 `cancel-in-progress` 改 false」—— **更糟**:那样新趟变成**排队**而不是
-#     并行(墙钟按趟数累加),且 GitHub 只保留**最新那个 pending**、中间排着的照样被取消。
-#
-# ⚠ **代价是真的**:连推 N 次就有 N 趟并行。公开仓 runner 免费无限,超出并发上限的那些是
-#   **排队**(仍会跑完、仍给裁决),不是取消 ⇒ 这条轴上换到的是「每一次推都有一份裁决」。
-# ⚠ 其余四条 workflow 的 `concurrency` 一个字没动:`nightly*` / `android-nightly` 是定时线
-#   (同一时刻只该有一趟),两条 release 线写死 `cancel-in-progress: false`(发版中途绝不取消)。
+# ⛔ 刻意没有 `concurrency`(517 补立账、518 拿掉;测试与工装 41;全文在 ci-plan §8 第 11 条)。
+#   `cancel-in-progress: true` 掐掉的不是「重复的跑」,是上一轮的裁决(517 收口那趟把 516 跑到 25m50s 的那趟掐成 cancelled,近 14 趟里 cancelled 占 4)。
+#   丢的是墙钟(连着推永远拿不到裁决)与观测机会(等的就是「下一次红那句话」),覆盖面倒是一点没丢(被掐那趟是新趟的子集)。
+# ⛔ 另外两条路都查过了,别再挑回来:「靠人推之前先 `gh run list` 一眼」是要人补偿一台正在毁证据的机器(memory `guards-must-bind-to-the-automatic-edge`);
+#   「只给 `linux-e2e` 开豁免」救不了 —— `gates` 是 `uses:` 调 preflight,job 级 concurrency 一挂就把里头全掐;
+#   「留 group、`cancel-in-progress: false`」更糟,新趟变排队且 GitHub 只保留最新那个 pending。
+# ⚠ 代价是真的:连推 N 次就有 N 趟并行,超出并发上限的排队(仍会跑完、仍给裁决)。其余四条 workflow 的 `concurrency` 一个字没动。
 
 jobs:
-  # ⭐ **这道 `if` 守的是钱,不是洁癖**:同一份文件既在私有工作仓 `zhujian-dev`、也在公开仓
-  # (公开仓那份是 `export-public.mjs` 导出的快照)。§6 拍板 = **per-push CI 跑在公开仓**
-  # (免费无限、含 Windows 与 macOS runner),而私有仓的 Windows runner 是 **10 倍计费** ——
-  # 不守这一句,每推一次就在私有仓白烧一趟五套 cargo。
-  #
-  # ⛔ **这道 `if` 不许挪进 `preflight.yml`**:那个文件是**发版闸**,把「在哪个仓」写成它的
-  #    条件,就等于给它开了一条「条件不成立时安静地跳过」的路 —— 而门禁失灵的方式正是安静的绿。
-  #    这里安全,是因为本文件本来就只负责警报,跳过 = 没有警报,不冒充「已经验过了」。
+  # ⭐ 这道 `if` 守的是钱:同一份文件既在私有工作仓、也在公开仓(导出快照);ci-plan §6 拍板 A = CI 跑在公开仓(免费无限),
+  #    私有仓的 Windows runner 是 10 倍计费,不守这一句每推一次就在私有仓白烧一趟。
+  # ⛔ 这道 `if` 不许挪进 `preflight.yml`:那个文件是发版闸,把「在哪个仓」写成它的条件 = 给它开一条「条件不成立时安静地跳过」的路,
+  #    而门禁失灵的方式正是安静的绿。这里安全,是因为本文件只负责警报,跳过 = 没有警报,不冒充「已经验过了」。
   gates:
     if: github.repository == 'prehisle/zhujian'
     uses: ./.github/workflows/preflight.yml
 
-  # ⭐ 450(ci-plan 阶段 3):**Linux 真 GUI e2e**,跑在托管 runner 上。
-  #
-  # 在此之前 e2e 只在两台开发机上跑,而**共用面改动的主要验收面就是它** —— 规矩 5
-  # (「改了共用面,另一台的下一轮必须复跑」)那笔债因此只能靠人还:已经触发 15 次,
-  # 其中六轮是整轮零代码的纯复跑。这一格把「Linux 那趟」接过来。
-  #
-  # ⛔ **它判不了发版**:WebKitGTK 不是生产渲染引擎(396 起口径没变)。所以它落在本文件
-  #    (警报)而**不是** `preflight.yml`(发版闸)—— 往一道 fail-closed 的发版闸里塞一个
-  #    「判不了发版、却带着三支未分诊抖动(backlog 测试与工装 19/20/23)」的套件,
-  #    换来的只有「抖动挡住发版」,一分发布判据都不多。
-  # ⚠ 它与 `gates` **互不依赖**,同时开跑;`gates` 两三分钟就完,这一格是几十分钟那一档。
+  # ⭐ 450(ci-plan 阶段 3):Linux 真 GUI e2e 跑在托管 runner 上 —— 共用面改动的主要验收面就是它,规矩 5 那笔债的 Linux 半从此由 CI 还。
+  # ⛔ 它判不了发版:WebKitGTK 不是生产渲染引擎(396 起口径没变)⇒ 落在本文件(警报)而不是 `preflight.yml`(发版闸),
+  #    往 fail-closed 的发版闸里塞一个判不了发版、还带抖动的套件,换来的只有「抖动挡住发版」。
+  # ⚠ 与 `gates` 互不依赖,同时开跑;`gates` 两三分钟就完,这一格是几十分钟那一档。
   linux-e2e:
     if: github.repository == 'prehisle/zhujian'
-    # ⛔ **名字里刻意不写 spec 数**(518,backlog 测试与工装 31):job 名在 job 起来**之前**
-    #    就要定 ⇒ 它拿不到运行期读数,写进去的那个数只会静静腐烂,而 job 名恰是 Actions 页面上
-    #    第一眼看见的那行字(同 memory `stale-number-in-docs-and-fixtures`)。真数在
-    #    `e2e-verdict.mjs` 印的读数行与 job summary 里,那两处是跑出来的。
+    # ⛔ 名字里刻意不写 spec 数(518,测试与工装 31):job 名在 job 起来之前就要定,拿不到运行期读数,写进去只会腐烂;
+    #    真数在 `e2e-verdict.mjs` 印的读数行与 job summary 里(memory `stale-number-in-docs-and-fixtures`)。
     name: e2e(Linux / WebKitGTK)
     runs-on: ubuntu-22.04
     # 兜住「挂死」那一形:本机全量 10 分钟,托管 runner 慢几倍(448 实测 core 慢 ≈6.5 倍)。
-    # ⚠ 超时 = 红,而且是**判不出**那一档的红(日志里不会有汇总行)—— 那正是 440 那把尺的三态。
+    # ⚠ 超时 = 红,而且是判不出那一档的红(日志里不会有汇总行)—— 440 那把尺的三态。
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v7
 
-      # 与 preflight 的 `shells` 那格逐字同一串(Tauri v2 在 Linux 上编壳要的那套),
-      # 另加两样只有 e2e 要的:
-      #   · `webkit2gtk-driver` = `/usr/bin/WebKitWebDriver`(wdio.conf.js 里写死的那条路径,
-      #     Linux 端的原生 WebDriver;在 jammy 的 **universe** 里,与 libwebkit2gtk-4.1 同源同版);
-      #   · `xvfb` = 无显示器时的虚拟 X。
-      # ⚠ **步级超时 450 当天就用上了**:落地那趟 main 上,这一步与 `preflight` 的 `shells` 那格
-      # (同样装 apt 的那个)**一起卡在 `apt-get` 上 52 分钟**,而同一趟里**不装 apt 的两格早就绿了**
-      # ⇒ 是 runner 的 apt 镜像挂住,不是我们的树。不设步级上限的话,它会一路吃掉 job 那 90 分钟,
-      # 最后报成「job 超时」——**把一次基础设施事件呈现成一次说不清的红**。15 分钟对一次正常的
-      # apt(实测 ~60 秒)绰绰有余。✅ `preflight.yml` 的 `shells` 那格(同样的暴露面)518 顺手补齐了
-      # —— 那格更要紧:它是**发版闸**,不设上限时吃的是 job 的默认 360 分钟。
+      # 与 preflight 的 `shells` 那格逐字同一串(Tauri v2 在 Linux 上编壳要的那套),另加两样只有 e2e 要的:
+      #   `webkit2gtk-driver` = `/usr/bin/WebKitWebDriver`(wdio.conf.js 写死的那条路径,jammy universe 里与 libwebkit2gtk-4.1 同源同版)、`xvfb`。
+      # ⚠ 步级超时是 450 当天用上的:落地那趟这一步与 preflight 的 `shells` 一起卡在 `apt-get` 上 52 分钟(runner 的 apt 镜像挂住,
+      #    不是我们的树);不设步级上限它会吃掉整个 job 的 90 分钟、报成一次说不清的红。15 分钟对正常 apt(~60 秒)绰绰有余;
+      #    preflight 的 `shells` 那格 518 同样补了(那格是发版闸,默认 360 分钟)。
       - name: 系统依赖(Tauri v2 + WebKitWebDriver + Xvfb)
         timeout-minutes: 15
         run: |
@@ -165,13 +83,9 @@ jobs:
             libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev pkg-config \
             webkit2gtk-driver xvfb
 
-      # ⭐ **394 那一课,这里是它唯一的落点**:整套断言是中文串,而 358 起语言「自动」档在
-      # Linux 上跟的是**进程 locale** —— 英文 locale 的机器上 app 渲染英文、断言一条也对不上
-      # (2026-08-16 在 en_US 容器里实测 **32/36 红**,换 zh_CN 立刻回到 30/6)。
-      # `wdio.conf.js` 给 app 钉死了 `LANG=LC_ALL=zh_CN.UTF-8`,但**钉死的是变量、不是 locale 本身**:
-      # 机器上没生成 zh_CN.utf8 时,那两个变量指向一个不存在的 locale,glibc 静静退回 C ⇒
-      # 现象与「没钉」一模一样。⇒ 这里生成它,并**当场核一句**:核不到就停,别拿三十来支
-      # 看着像真缺陷的假红去浪费下一个人半小时。
+      # ⭐ 394 那一课,这里是它唯一的落点:整套断言是中文串,语言「自动」档在 Linux 跟的是进程 locale;`wdio.conf.js` 钉死了
+      #    `LANG=LC_ALL=zh_CN.UTF-8`,但钉死的是变量不是 locale 本身 —— 机器上没生成 zh_CN.utf8 时 glibc 静静退回 C,
+      #    现象与「没钉」一模一样(en_US 容器里实测 32/36 假红)。⇒ 这里生成它并当场核一句,核不到就停。
       - name: 中文 locale(394:英文 locale 下 32/36 假红)
         run: |
           sudo locale-gen zh_CN.UTF-8
@@ -187,19 +101,14 @@ jobs:
         with:
           workspaces: src-tauri
 
-      # ⚠ **钉版本**:`tauri-driver` 是我们自己的台架件(不解析它的输出),钉住它 = CI 与
-      # 开发机跑的是同一个东西 —— 而这一格存在的理由正是「替开发机跑那趟」。
-      # 2.0.6 = Linux 那台开发机实测在用的版本;哪天开发机升了,这里跟着改一个数字。
-      # ⛔ 别把它跟 §8-2 那条(msedgedriver 必须跟着 runner 的 WebView2 漂)混起来 ——
-      #    那条说的是**我们解析其输出 / 必须与系统组件配对**的工具,方向相反。
-      # ⚠ 每趟花 1-2 分钟从源码编;没给它单独加缓存 —— 这一格总长是几十分钟那一档,
-      #    为它加一层缓存键(还要猜 actions/cache 的大版本)不划算。
+      # ⚠ 钉版本:`tauri-driver` 是我们自己的台架件,钉住它 = CI 与开发机跑的是同一个东西(2.0.6 = Linux 那台开发机实测在用的版本,
+      #    开发机升了这里跟着改)。⛔ 别跟 ci-plan §8-2 那条(msedgedriver 必须跟着 runner 的 WebView2 漂)混起来,方向相反。
+      # ⚠ 每趟从源码编 1-2 分钟,没单独加缓存:这一格总长几十分钟,为它加一层缓存键不划算。
       - name: tauri-driver(wdio.conf.js 认 ~/.cargo/bin/tauri-driver)
         run: cargo install tauri-driver --locked --version 2.0.6
 
-      # ⭐ **前置检查:`wdio.conf.js` 里写死了三条绝对路径**,它们在开发机上天然成立,
-      # 在 runner 上是**假设**(尤其 `~/.cargo/bin` —— 它认的是 `homedir()`,而不是 `CARGO_HOME`)。
-      # 缺了任一条,现象是会话起不来那种看不懂的红。⇒ 当场问一句,答不上来就停。
+      # ⭐ `wdio.conf.js` 写死了三条绝对路径,在开发机上天然成立、在 runner 上是假设(`~/.cargo/bin` 认的是 `homedir()` 不是 `CARGO_HOME`);
+      #    缺了任一条,现象是会话起不来那种看不懂的红 ⇒ 当场问一句,答不上来就停。
       - name: 前置检查(wdio.conf.js 写死的三条路径)
         run: |
           fail=0
@@ -214,15 +123,11 @@ jobs:
           cache: npm
       - run: npm ci
 
-      # ⚠ **fast 形**是 Linux 上唯一跑得了的形(wdio.conf.js 那道响亮拒:release 的资产源在
-      # Linux/WebKitGTK 是 `tauri://localhost`,而配置里写的是 wry 在 Windows/Android 的
-      # workaround URL,硬跑 36 支全红在 goShow)。fast 形要两样:debug 二进制 + vite。
-      #
-      # ⚠ 这一步 `wdio.conf.js` 的 `onPrepare` 自己也会做一遍(增量,秒级)——**故意重复**:
-      # 放在这儿,编译失败就红在「编 debug 壳」这一步、看得见 rustc 原话;埋在 e2e 里则表现为
-      # 「日志里没有汇总行」⇒ 判不出。⛔ 别为「省一步」把它删掉。
-      # ⚠ 刻意**不**跑 `npm run build`:`cargo build` 不开 `custom-protocol` ⇒ 走 devUrl 那支,
-      #    `dist/` 缺席照样编得过(与 preflight 两格同口径)。
+      # ⚠ fast 形是 Linux 上唯一跑得了的形(release 的资产源在 Linux/WebKitGTK 是 `tauri://localhost`,配置里写的是 wry 在
+      #    Windows/Android 的 workaround URL,硬跑全红在 goShow;wdio.conf.js 有响亮拒)。fast 形要两样:debug 二进制 + vite。
+      # ⚠ 这一步 `wdio.conf.js` 的 `onPrepare` 也会做一遍(增量,秒级)—— 故意重复:编译失败要红在这一步、看得见 rustc 原话,
+      #    埋在 e2e 里只会表现为「日志里没有汇总行」⇒ 判不出。⛔ 别为「省一步」删掉。
+      # ⚠ 刻意不跑 `npm run build`:`cargo build` 不开 `custom-protocol` ⇒ 走 devUrl,`dist/` 缺席照样编得过(与 preflight 两格同口径)。
       - name: 编 debug 壳(fast 形要它)
         run: cd src-tauri && cargo build
 
@@ -244,16 +149,12 @@ jobs:
             })();
           ' || { cat "$RUNNER_TEMP/vite.log"; exit 1; }
 
-      # ⭐ **判红不看退出码,走 440 那把三态尺**(`scripts/lib/test-verdict.mjs`,25 格回归网 + 六刀):
-      # **绿必须有正面字据**,读不出是 `unknown`(⛔ 不许退回「那就算它绿吧」)。壳在
-      # `scripts/e2e-verdict.mjs`,它另外把「零重试」落成真判据。
-      # ⚠ `--specFileRetries=0`:配置里常态开着 `specFileRetries:1` 吸收冷启假红,CI 上要的是
-      #    **未经吸收的原始读数**。开关与「日志里有没有重试痕迹」两半**互为背书**,见那个壳的头注。
-      # ⚠ `xvfb-run -a`:⭐ 顺带记一格 450 实测出来的事实 —— **WebKitWebDriver 在 DISPLAY 缺席时
-      #    会自己 `xvfb-run` 一个 `:100` 出来**(字据:app 进程 environ 里 `DISPLAY=:100`,
-      #    Xvfb 的命令行带 `-auth /tmp/xvfb-run.XXXX/Xauthority`)⇒ 不套也跑得起来。仍然显式套:
-      #    这样「CI 跑的那条命令」与 dev-and-testing 里写给人的那条**逐字相同**,而 `xvfb` 这个包
-      #    两条路都要装。
+      # ⭐ 判红不看退出码,走 440 那把三态尺(`scripts/lib/test-verdict.mjs`;壳是 `scripts/e2e-verdict.mjs`):绿必须有正面字据,
+      #    读不出是 `unknown`,⛔ 不许退回「那就算它绿吧」。
+      # ⚠ `--specFileRetries=0`:配置常态开着 `specFileRetries:1` 吸收冷启假红,CI 上要的是未经吸收的原始读数;开关与「日志里有没有
+      #    重试痕迹」两半互为背书(见那个壳的头注)。
+      # ⚠ `xvfb-run -a`:WebKitWebDriver 在 DISPLAY 缺席时会自己起一个 `:100`(450 实测),不套也跑得起来;仍显式套,
+      #    让「CI 跑的那条命令」与 dev-and-testing 里写给人的那条逐字相同。
       - name: e2e(零重试)
         env:
           YS_E2E_FAST: "1"
@@ -277,19 +178,11 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
-  # ⭐ 674(测试与工装 99 ②):**安卓前端在公开树上 `vite build` 一遍**(约一分钟,只用 node)。
-  #
-  # 670 那次发版红在这儿:651 把 `site-app/` 三份协议页烤进安卓包(`android/vite.config.ts` 的
-  # policyAsset 插件,文件不在就拒建),而公开仓的导出白名单没收它 ⇒ 公开树缺文件。闸分支这趟
-  # 对安卓壳只 `cargo test`(cargo test 不开 custom-protocol,`dist/` 缺席照样编得过 —— 见
-  # preflight.yml 的 `shells` 格),从不碰安卓前端 ⇒ 651 到 669 四轮全绿,`android-nightly`
-  # 早红了一晚没人看见,直到发版那趟 `android-v0.3.40` 红在同一句。
-  # ⇒ 这一格就是「撞到 policyAsset 那层的最短路」:`npm run build` 与 `tauri android build` 的
-  #    beforeBuildCommand **同一条命令**,前端这一层它俩看到的是同一棵树。⛔ 刻意**不**在闸分支
-  #    构建整只 APK(9 分钟,那是夜跑的活)。⚠ 这一格**判不了「安卓包能装能跑」**,只判「公开树上
-  #    前端资源齐不齐、编不编得过」—— 缺文件 / import 指到导出白名单之外的目录(673 起有仓根
-  #    `shared/`)/ TS 编译不过,三种都在这儿红。
-  # ⚠ 与 `gates` / `linux-e2e` 互不依赖,同时开跑;它是分钟级,不拉长最长那根杆。
+  # ⭐ 674(测试与工装 99 ②):安卓前端在公开树上 `vite build` 一遍(约一分钟,只用 node)。670 发版红在「公开树缺安卓包烤进去的
+  #    协议页」,而闸分支对安卓壳只 `cargo test`(不开 custom-protocol,`dist/` 缺席照样编得过)从不碰安卓前端 ⇒ 四轮全绿、夜跑早红了没人看。
+  # ⇒ `npm run build` 与 `tauri android build` 的 beforeBuildCommand 是同一条命令,前端这一层看到的是同一棵树。
+  # ⛔ 刻意不在闸分支构建整只 APK(9 分钟,那是夜跑的活)。⚠ 它判不了「安卓包能装能跑」,只判「公开树上前端资源齐不齐、编不编得过」
+  #    (缺文件 / import 指到导出白名单之外 / TS 编不过,三种都在这儿红)。与 `gates` / `linux-e2e` 互不依赖,分钟级。
   android-frontend:
     if: github.repository == 'prehisle/zhujian'
     name: 安卓前端 vite build(公开树)
@@ -307,21 +200,12 @@ jobs:
       #    那一条,改了那句这里自动跟着。
       - run: cd android && npm run build
 
-  # ⭐ 542(用户点名「每日构建测试、保存通过后的版本」):**全矩阵绿了才构建存档**。
-  #
-  # 在此之前「每晚的包」是 `nightly.yml` 出的,而那份 workflow 里 build 与 test 是**并列** job
-  # (没有 `needs`)、test 又只有 3 套 Linux cargo ⇒ 「测试通过后的版本」这个语义**并不存在**:
-  # 红树的包照样存档 14 天,与全矩阵(19:30Z 这趟)验的还可能不是同一棵树(18:00Z vs 19:30Z)。
-  # 542 起 `nightly.yml` 退役,构建挪到这里、挂在两根裁决后面 —— **同一趟、同一个 sha**。
-  #
-  # ⛔ `needs` 三格都要列:`gates` 是 reusable preflight(内部有 540 那格 `all-green` 逐格
-  #    `== success` 汇总),`linux-e2e` / `android-frontend` 是本文件的独立 job —— 只挂 `gates`
-  #    就把它们的红放过去了(674 加第三格)。
-  #    needs 的默认语义 = 上游任一 failure / cancelled / skipped ⇒ 本 job skip ⇒ **没有产物**,
-  #    而「没有产物」正是要的答案(别给它加 always() 之类的豁免)。
-  # ⚠ 产物名带 sha:下载下来隔了几天也认得出它构建自哪棵树(run 页面上那个 sha 会随页面走丢)。
-  # ⚠ 只在 schedule(恒)与手动带 `build_artifacts=true` 时构建;闸分支的 push 不构建 ——
-  #    那条要的是裁决,不是包。
+  # ⭐ 542(用户点名「每日构建测试、保存通过后的版本」):全矩阵绿了才构建存档 —— 同一趟、同一个 sha(此前 `nightly.yml` 的
+  #    build 与 test 并列、红树的包照样存档,542 起它退役,构建挪到这里挂在三根裁决后面)。
+  # ⛔ `needs` 三格都要列:`gates` 是 reusable preflight(内部 540 那格 `all-green` 逐格汇总),`linux-e2e` / `android-frontend`
+  #    是本文件的独立 job,只挂 `gates` 就把它们的红放过去了(674 加第三格)。needs 默认语义 = 上游任一 failure / cancelled / skipped
+  #    ⇒ 本 job skip ⇒ 没有产物,而「没有产物」正是要的答案,⛔ 别给它加 always() 之类的豁免。
+  # ⚠ 产物名带 sha(隔几天也认得出构建自哪棵树);只在 schedule(恒)与手动带 `build_artifacts=true` 时构建,闸分支的 push 要的是裁决不是包。
   nightly-build:
     needs: [gates, linux-e2e, android-frontend]
     if: >-
