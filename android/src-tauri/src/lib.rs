@@ -96,7 +96,17 @@ pub fn run() {
         // 截止提醒(用户面 39①):前端 `reminder.ts` 到点调一条 sendNotification。
         // 安卓 13+ 的 POST_NOTIFICATIONS 由插件自己的清单声明 + 运行期 requestPermission
         // 那条路走,壳里不另写桥。capability 用 notification:default(同桌面壳)。
-        .plugin(tauri_plugin_notification::init());
+        .plugin(tauri_plugin_notification::init())
+        // 剪贴板(696)。⭐ **为什么非要插件不可**:安卓 WebView 里 `navigator.clipboard.writeText`
+        // 是**恒拒**的 —— MuMu/Chrome 110 上量到 `NotAllowedError: Write permission denied.`,
+        // 且**带着真实用户手势**(`navigator.userActivation.isActive === true`,真手指点的)也照拒
+        // ⇒ 不是「缺手势」那种能靠调用时机绕开的事,那条路在 WebView 上根本没有。
+        // ⚠ 这不是 696 新引入的:配对码复制(sync.ts)与设备 ID 复制(devices.ts)一直走的就是
+        // 那条恒拒的路,只是没人量过 —— 意见反馈那枚新钮把它挪到了前台(memory
+        // `unhiding-turns-legal-behavior-into-a-defect`)。三处一并改走本插件。
+        // capability 用 `clipboard-manager:allow-write-text`(⛔ 只给写,不开读 —— 插件自己的
+        // default 是空集,它的说法是"剪贴板天生危险,读写都得显式开")。
+        .plugin(tauri_plugin_clipboard_manager::init());
     // 107 扫码配对:官方扫码插件是移动端专属 crate(桌面 dev 构型里没有它)。
     #[cfg(mobile)]
     let builder = builder.plugin(tauri_plugin_barcode_scanner::init());

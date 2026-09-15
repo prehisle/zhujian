@@ -14,6 +14,7 @@ import { currentZoomPercent, zoomIn, zoomOut, zoomReset, onZoomChange } from "./
 import { currentThemeMode, setThemeMode, type ThemeMode } from "./theme-mode";
 import { currentLangChoice, setLangChoice, t, type LangChoice } from "./i18n";
 import { currentSpaceId } from "./space";
+import { copyButton } from "./clipboard";
 import "./settings.css";
 
 type Hotkeys = { capture: string; notebook: string };
@@ -191,6 +192,10 @@ function buildPane(cat: SettingsCat, pane: HTMLElement): void {
       el("h2", "settings-title settings-sect", t("reminder.title")),
       el("p", "settings-sub", t("reminder.sub")),
       buildReminderRow(),
+
+      el("h2", "settings-title settings-sect", t("settings.feedbackTitle")),
+      el("p", "settings-sub", t("settings.feedbackSub")),
+      buildFeedbackRow(),
     );
     return;
   }
@@ -205,6 +210,33 @@ function buildPane(cat: SettingsCat, pane: HTMLElement): void {
     noteFold(t("backup.sub"), t("backup.footSecrets"), t("backup.footUninstall")),
     buildBackupSection(),
   );
+}
+
+// ---- 意见反馈(国内上架 17)----
+//
+// ⭐ **它的来历是上架硬门槛**:OPPO《包体测试FAQ》原文「所有应用都必须设置显著有效的客服
+// 反馈渠道」,且须在**应用功能界面内**,「而非仅展示在隐私政策链接或用户协议链接内」。
+// 那道门管的是国内安卓商店,桌面这端不在其内 —— 但此前桌面**一个联系方式都没有**,
+// 三端说同一句话才是对的,故一并做(手机那半在 android/index.html 的 #settings-pane)。
+//
+// ⛔ **不做成 mailto 链接**:没配默认邮件客户端的机器上点了什么都不发生 = 界面在说谎;
+// 配了的机器上又会弹一个用户没打算打开的程序。地址原样摆出来 + 一枚复制钮,是不说谎的形。
+// ⚠ 按 623「单行组不写行名」:这一组只有一行,`.settings-title` 那句已经是这一格的名字,
+// 故行里那枚 `.hkset-name` 放的是**地址本身**,不是再说一遍「邮箱」。
+// ⚠ 零新 CSS:`.hkset-name` 左、复制钮吃 `.hkset-row > :not(...)` 那条自动外边距靠右
+// ——⛔ 别往这一行里再加第二个控件,那条规则会把空隙均分给两个(它自己的注释里写着)。
+//
+// ⚠ 地址在两端各有一份出处(这里 + android/index.html 那个 input 的 value),
+// **刻意没做成共享常数** —— 两棵前端树今天本来就不共享代码(仓根 `shared/` 那笔还在 backlog),
+// 为一个邮箱地址开那条路不值。改地址时两处一起改,外加政策页那几处。
+const FEEDBACK_MAIL = "3069848@qq.com";
+
+function buildFeedbackRow(): HTMLDivElement {
+  const line = document.createElement("div");
+  line.className = "hkset-row";
+  // copyButton 自带「已复制 / 复制失败」闪回,⇒ 这一行不需要自己的 .hkset-msg。
+  line.append(el("span", "hkset-name", FEEDBACK_MAIL), copyButton(FEEDBACK_MAIL, "hkset-change"));
+  return line;
 }
 
 // ---- 本机别名(identity-plan §2.4)----

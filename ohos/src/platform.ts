@@ -129,3 +129,23 @@ export function scanQrContent(): Promise<string> {
 export function cancelScan(): Promise<void> {
   return Promise.resolve();
 }
+
+// ---- 剪贴板写入(696)-------------------------------------------------------------
+//
+// ⚠ **这一端仍走 `navigator.clipboard.writeText`,而它在 ArkWeb 上行不行「没量过」。**
+// 安卓那一端已经量实:WebView 里这条路**恒拒**(`NotAllowedError: Write permission denied.`,
+// 带真实用户手势也拒)⇒ 那一端 696 起改走 `tauri-plugin-clipboard-manager`。
+//
+// ⛔ **鸿蒙这一端刻意没跟着改**,两条判据:
+//   ① 那个插件在这一端**没验过能不能编**(同 `tauri-plugin-barcode-scanner` 那族的风险:
+//      依赖 gate 写死 `target_os = android|ios`,而 `cfg(mobile)` 在鸿蒙上为真 ⇒ 编不过);
+//   ② 更要紧的是:**改了就是在一个我今天没有验收手段的端上动既有行为**。保持现状
+//      = 这一端的复制钮行为与 696 之前逐字相同,不多不少。
+// ⇒ 「这一端的复制到底成不成」是一个**未答的问题**,不是一个已经处置好的降级。
+//    真机量一趟(走 skill `zhujian-ohos-verify`)之后再定,账记在 backlog。
+//    ⛔ 别把这段注释读成「这一端没问题」。
+
+/** 把文本写进系统剪贴板。写不成一律**抛**,调用方自己说人话(⛔ 别在这儿吞)。 */
+export function writeClipboard(text: string): Promise<void> {
+  return navigator.clipboard.writeText(text);
+}

@@ -17,6 +17,7 @@
 import { getCurrentSpace, sinvoke } from "./api";
 import { aliasOf, loadIdentity } from "./identity";
 import { t } from "./i18n";
+import { writeClipboard } from "./platform";
 import type { SyncStatus } from "./sync";
 import { $, confirmBar, esc, showBar, showError } from "./ui";
 
@@ -328,7 +329,8 @@ export function initDevices(): void {
     }
     const copy = el.dataset.copy;
     if (copy) {
-      void navigator.clipboard.writeText(copy).then(
+      // 696:改走平台接缝 —— 安卓 WebView 的 `navigator.clipboard` 恒拒(判据在 platform.ts)。
+      void writeClipboard(copy).then(
         () => showBar(t("devices.idCopied"), true),
         () => showError(t("devices.copyFailed")),
       );

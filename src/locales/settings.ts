@@ -37,6 +37,12 @@ export const settings = defineMessages({
   "settings.aliasSub": { zh: "给这台设备起个名字,比如「书房台式机」,别的设备上就能看出每条是哪台记的。", en: "Name this device, e.g. “Study desktop”, so your other devices can tell which one wrote each entry." },
   "settings.aliasUnnamed": { zh: "未命名", en: "Unnamed" },
   "settings.thisDevice": { zh: "本机 · {id}", en: "This device · {id}" },
+  // 意见反馈(国内上架 17)。手机那半的键名叫 `feedback.*`(它在静态壳里自成一节),
+  // 这边跟着通用页那一族叫 `settings.feedback*` —— 两端说同一件事、措辞按各自承载走,
+  // ⛔ 别去 CROSS_END_KEYS 登记(那张表只列真该逐字相同的筛选 pill)。
+  // ⚠ 邮箱地址是 src/settings.ts 里的 FEEDBACK_MAIL,**不是文案**:它不随语言变。
+  "settings.feedbackTitle": { zh: "意见反馈", en: "Feedback" },
+  "settings.feedbackSub": { zh: "用着有问题、有建议,或者想注销同步账户,发邮件到下面这个地址。作者本人看信。", en: "Found a problem, have a suggestion, or want to close your sync account? Email the address below. The author reads it personally." },
   "settings.aliasCleared": { zh: "已清除别名", en: "Alias cleared" },
   "settings.aliasSaved": { zh: "已保存,会同步到其他设备", en: "Saved, will sync to your other devices" },
   "settings.change": { zh: "更改", en: "Change" },

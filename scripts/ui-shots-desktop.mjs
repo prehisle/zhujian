@@ -92,6 +92,8 @@ const PAGES = [
   // ⚠ 只截到**视口那一屏** —— 面板自己是个滚动容器,`captureBeyondViewport` 对内层滚动
   // 容器无效。下半屏(如「常规」的截止提醒往下)一期看不到,知情的边界。
   { id: "settings-general", win: "notebook", view: "inbox", desc: "设置 · 常规", settingsCat: "general" },
+  // ⚠ 与上一格是**同一节的两头**,不是重复:通用页比视口高,一张图装不下(见下面 settingsScroll 那段)。
+  { id: "settings-general-bottom", win: "notebook", view: "inbox", desc: "设置 · 常规(滚到底)", settingsCat: "general", settingsScroll: "bottom" },
   { id: "settings-hotkeys", win: "notebook", view: "inbox", desc: "设置 · 快捷键", settingsCat: "hotkeys" },
   { id: "settings-backup", win: "notebook", view: "inbox", desc: "设置 · 备份与恢复", settingsCat: "backup" },
   { id: "capture", win: "capture", desc: "捕获浮窗" },
@@ -349,6 +351,23 @@ async function shootNotebook(cdp, page, lang, theme, file) {
       `设置切到「${page.settingsCat}」这一节`,
       8000,
     );
+    // ⭐ **696 补的一格**:通用页有 6 节、比视口高,基线此前**只看得到头 4 节** ——
+    // 「截止提醒」的下半与整节「意见反馈」从来没进过任何一张图。⛔ 这不是"截得不全"这种
+    // 小事:意见反馈那节是**国内安卓商店的硬门槛**(桌面这半是三端对齐),而守它的东西
+    // 一张图都没有 = 改坏了没有任何一处会红。⇒ 加 `settingsScroll: "bottom"` 那一格。
+    // ⚠ 滚的是 `.settings-content`(两栏里的右栏),⛔ 不是 `.settings-pane` 也不是窗口:
+    // 面板自己不滚,滚条在右栏上(settings.css 的 `.settings-content`)。
+    // ⚠ 滚完**要等它真停下**再截 —— 直接 shot 会拿到滚动中途那一帧。
+    if (page.settingsScroll === "bottom") {
+      await cdp.evaluate(
+        `(() => { const c = document.querySelector(".settings-content"); c.scrollTop = c.scrollHeight; return true; })()`,
+      );
+      await cdp.waitFor(
+        `(() => { const c = document.querySelector(".settings-content"); return c.scrollTop > 0 && c.scrollTop + c.clientHeight >= c.scrollHeight - 2; })()`,
+        "通用页滚到底",
+        8000,
+      );
+    }
   }
   // 字体没就位时截图会拿到 fallback 字形 ⇒ 一批图的字宽对不上,像素比对当场无意义。
   await cdp.waitFor(`document.fonts.status === "loaded"`, "字体加载完成", 8000);

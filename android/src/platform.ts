@@ -137,3 +137,27 @@ export async function scanQrContent(): Promise<string> {
 export function cancelScan(): Promise<void> {
   return cancel();
 }
+
+// ---- 剪贴板写入(696)-------------------------------------------------------------
+//
+// ⭐ **这一格的判据是量出来的,不是照着别处抄的**:安卓 WebView 里
+// `navigator.clipboard.writeText` **恒拒** —— MuMu / WebView Chrome 110 上逐字量到
+// `NotAllowedError: Write permission denied.`,而且是在**带真实用户手势**的前提下
+// (`Input.dispatchTouchEvent` 真点,handler 里读到 `navigator.userActivation.isActive === true`)。
+// ⇒ 它不是「缺手势」那种换个调用时机就能绕开的事,那条路在 WebView 上根本不存在。
+//
+// ⚠ **这不是 696 引入的缺陷,是 696 照出来的**:配对码复制(`sync.ts`)与设备 ID 复制
+// (`devices.ts`)一直走的就是这条恒拒的路 —— 它们的失败分支只弹一句「复制失败,请长按
+// 选中文字手动复制」,看着像偶发,没人量过。⇒ 三处一并改走这里。
+//
+// ⛔ **为什么是接缝而不是在业务模块里 `try 插件 / catch 回退 navigator`**:那是运行期
+// 静默兜底(设计铁律禁),而且它答的是「今天哪条路通」,答不了「这一端**该走**哪条路」。
+// ⚠ 鸿蒙那一端**继续走 `navigator.clipboard`**(见 `ohos/src/platform.ts` 同名导出):
+// ArkWeb 上它行不行**没量过** —— 那是那一端今天的行为,这一轮**刻意不去改它**
+// (改了就是在一个没有验收手段的端上动既有行为)。要动它得先在真机上量,记在 backlog。
+import { writeText as pluginWriteText } from "@tauri-apps/plugin-clipboard-manager";
+
+/** 把文本写进系统剪贴板。写不成一律**抛**,调用方自己说人话(⛔ 别在这儿吞)。 */
+export function writeClipboard(text: string): Promise<void> {
+  return pluginWriteText(text);
+}

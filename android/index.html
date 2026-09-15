@@ -1926,6 +1926,23 @@
       <p class="fine" data-i18n="backup.footCode" data-needs="saf">备份码保存在这台手机上(明文),卸载或清除数据会一起抹掉;抄在纸上的那份是唯一的。</p>
       <p class="fine" data-i18n="backup.footValid" data-needs="saf">「有效」只有验过才算。文件名和扩展名证明不了任何事。</p>
 
+      <!-- 意见反馈(国内上架 17)。⭐ **它是上架硬门槛,不是锦上添花**:OPPO《包体测试FAQ》
+           原文「所有应用都必须设置显著有效的客服反馈渠道」,且该渠道须在**应用功能界面内**,
+           「而非仅展示在隐私政策链接或用户协议链接内」——⛔ 别因为政策页第九节已经写了邮箱
+           就把这一节摘掉,文档点名那样不算。单机应用同样要;应用宝 / 小米 / OPPO / vivo 通用。
+           ⛔ **刻意不做成 mailto 链接 / 不走 openUrl**:这棵前端树两只手机壳共用,而鸿蒙上
+           `openUrl` 去调 `xdg-open`、真机报 os error 2(651 实撞)⇒ 做成链接在那一端就是
+           「点了没反应」。⇒ 地址原样摆出来 + 一枚复制钮,两端都成立、都不说谎。
+           ⚠ 地址的唯一出处就是下面那个 value —— 复制钮读的也是它(⛔ 别在 TS 里另写一份常数)。 -->
+      <h2 data-i18n="feedback.title">意见反馈</h2>
+      <p class="fine" data-i18n="feedback.sub">用着有问题、有建议,或者想注销同步账户,发邮件到下面这个地址。作者本人看信。</p>
+      <div class="row">
+        <input id="feedback-mail" value="3069848@qq.com" readonly spellcheck="false"
+               autocapitalize="off" autocomplete="off" />
+        <button id="feedback-copy" class="ghost" data-i18n="feedback.copy">复制</button>
+      </div>
+      <p id="feedback-msg" class="fine" hidden></p>
+
       <h2 data-i18n="shell.aboutTitle">关于</h2>
       <div id="about" class="kv"></div>
 

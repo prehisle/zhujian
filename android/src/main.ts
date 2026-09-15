@@ -44,7 +44,7 @@ import { DONE_COLUMN, boardColumns, isTaskStage, setColumns, stageLabel } from "
 import { capturePhoto, composeImages, PICK_MAX, pickImages } from "./images";
 import { INPUT_DEBOUNCE_MS } from "./timing";
 // **平台接缝**(OH-d/D3):只在安卓壳里存在的那三条命令。鸿蒙那端由 vite 换成另一份实现。
-import { HAS_NOTIFICATION, HAS_SAF_BRIDGE, HAS_TEXT_ZOOM, notifyPermissionOk, takeDeepLink, takeSharedText } from "./platform";
+import { HAS_NOTIFICATION, HAS_SAF_BRIDGE, HAS_TEXT_ZOOM, notifyPermissionOk, takeDeepLink, takeSharedText, writeClipboard } from "./platform";
 // **渠道接缝**(651):这份包发给谁 —— 鸿蒙那端同样由 vite 换成国内渠道那份。
 import { checkUpdate, PRIVACY_URL, SYNC_DEFAULT_URL, type MobileUpdate } from "./channel";
 import { initDueReminder, reminderCfg, saveReminderCfg, sendTestNotification } from "./reminder";
@@ -1739,6 +1739,29 @@ $("bottombar").addEventListener("click", (e) => {
 });
 $("settings-toggle").addEventListener("click", () => openPane("settings"));
 $("settings-diag-btn").addEventListener("click", () => openPane("diag"));
+
+// 意见反馈的复制钮(国内上架 17)。⭐ **地址从那个 input 的 value 读**,⛔ 不在这儿再写一份
+// 常数 —— 静态壳里那一处是唯一出处,写两份就是等着它们哪天各说各的。
+// 回执走本节自己的 #feedback-msg(照 #alias-msg 的形:红字挂 .warn-ink,样式住样式层),
+// ⛔ 不走 showBar:这一节在设置面里,回执贴着它比飘一条全局条更好找。
+// ⚠ 复制失败那句刻意告诉用户「长按选中手动复制」—— 地址是 readonly input,选得中,
+// 这条路真的走得通(同 sync.copyFailed / devices.copyFailed 那两句)。
+$("feedback-copy").addEventListener("click", () => {
+  const mail = ($("feedback-mail") as HTMLInputElement).value;
+  const msg = $("feedback-msg");
+  writeClipboard(mail).then(
+    () => {
+      msg.textContent = t("feedback.copied");
+      msg.classList.remove("warn-ink");
+      msg.hidden = false;
+    },
+    () => {
+      msg.textContent = t("feedback.copyFailed");
+      msg.classList.add("warn-ink");
+      msg.hidden = false;
+    },
+  );
+});
 
 // 明暗三档(250):点哪档写哪档,高亮回来按当前档整排重画(单一渲染点,不在点击处
 // 各自 toggle);立刻生效,没有确认也没有回执——手势即回执,整屏换色就是最大的回执。

@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "最小权限面:core + 更新条「下载」跳浏览器(106,opener:default 含默认 URL scope——只给 allow-open-url 会因空 scope 拒所有 URL,㊾ 踩过)",
+  "description": "最小权限面:core + 更新条「下载」跳浏览器(106,opener:default 含默认 URL scope——只给 allow-open-url 会因空 scope 拒所有 URL,㊾ 踩过)+ 剪贴板只写不读(696,插件 default 是空集,读写都得逐条显式开)",
   "windows": ["main"],
-  "permissions": ["core:default", "opener:default", "notification:default"]
+  "permissions": ["core:default", "opener:default", "notification:default", "clipboard-manager:allow-write-text"]
 }

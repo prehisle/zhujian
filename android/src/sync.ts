@@ -9,7 +9,7 @@ import { listen } from "@tauri-apps/api/event";
 // **平台接缝**(OH-d/D3):扫码的实现按端分,由 vite 换成各自那份 `platform.ts`
 // (安卓 = tauri 扫码插件;鸿蒙 658 起 = Scan Kit 系统扫码页,此前 `HAS_SCANNER` 为 false、
 // 两枚按钮整个不渲染 —— 那条摘 UI 的路还留着给将来没有扫码器的端)。判据见 `platform.ts`。
-import { cancelScan, ensureCameraPermission, HAS_SCANNER, scanQrContent } from "./platform";
+import { cancelScan, ensureCameraPermission, HAS_SCANNER, scanQrContent, writeClipboard } from "./platform";
 import {
   getCurrentSpace,
   sinvoke,
@@ -518,7 +518,9 @@ export function initSync(d: Deps): void {
   $("sync-invite-btn").addEventListener("click", () => void doInviteDevice());
   $("sync-pair-copy").addEventListener("click", () => {
     const text = $("sync-pair-copy").dataset.copy ?? "";
-    navigator.clipboard.writeText(text).then(
+    // 696:改走平台接缝 —— 安卓 WebView 的 `navigator.clipboard` 恒拒(判据在 platform.ts)。
+    // ⚠ 这一枚咬得最狠:配对流程的回执逐字写着「已复制,发给电脑端粘贴」,而它从来没复制成过。
+    writeClipboard(text).then(
       () => showBar(t("sync.copied"), true),
       () => showError(t("sync.copyFailed")),
     );
