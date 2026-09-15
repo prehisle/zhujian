@@ -97,13 +97,16 @@ pub fn run() {
         // 安卓 13+ 的 POST_NOTIFICATIONS 由插件自己的清单声明 + 运行期 requestPermission
         // 那条路走,壳里不另写桥。capability 用 notification:default(同桌面壳)。
         .plugin(tauri_plugin_notification::init())
-        // 剪贴板(696)。⭐ **为什么非要插件不可**:安卓 WebView 里 `navigator.clipboard.writeText`
-        // 是**恒拒**的 —— MuMu/Chrome 110 上量到 `NotAllowedError: Write permission denied.`,
-        // 且**带着真实用户手势**(`navigator.userActivation.isActive === true`,真手指点的)也照拒
-        // ⇒ 不是「缺手势」那种能靠调用时机绕开的事,那条路在 WebView 上根本没有。
-        // ⚠ 这不是 696 新引入的:配对码复制(sync.ts)与设备 ID 复制(devices.ts)一直走的就是
-        // 那条恒拒的路,只是没人量过 —— 意见反馈那枚新钮把它挪到了前台(memory
-        // `unhiding-turns-legal-behavior-into-a-defect`)。三处一并改走本插件。
+        // 剪贴板(696 + 696 补)。⭐ **为什么要插件**:`navigator.clipboard.writeText` 在安卓 WebView 上
+        // **随 WebView 版本而定**,两台真机量过、结论相反:
+        //   · WebView **Chrome 110**(MuMu):`NotAllowedError: Write permission denied.` ——
+        //     且**带着真实用户手势**(`userActivation.isActive === true`,真手指点)也照拒 ⇒ 那台上没有这条路;
+        //   · WebView **Chrome 151**(vivo 真机):**成功** —— 真手势 + 文档有焦点时 `ok`,
+        //     且粘回输入框逐字核过。⚠ 没有焦点时它报的是另一句 `Document is not focused.`。
+        // ⇒ **分界点在 110 与 151 之间的哪一版,没量过**;⛔ 别把它写成「WebView 都不行」(696 一度这么写,补条改口)。
+        // ⇒ 插件是**平台正确的那条路**:它在两台上都成,而 Web API 那条只在够新的 WebView 上成。
+        // ⚠ 配对码复制(sync.ts)与设备 ID 复制(devices.ts)历史上走的是 Web API 那条 ⇒ 它们在
+        // **旧 WebView 的机器上一直是坏的**(⛔ 不是"所有人都坏":用户自己那台 Chrome 151 好着)。三处一并改走本插件。
         // capability 用 `clipboard-manager:allow-write-text`(⛔ 只给写,不开读 —— 插件自己的
         // default 是空集,它的说法是"剪贴板天生危险,读写都得显式开")。
         .plugin(tauri_plugin_clipboard_manager::init());

@@ -138,16 +138,25 @@ export function cancelScan(): Promise<void> {
   return cancel();
 }
 
-// ---- 剪贴板写入(696)-------------------------------------------------------------
+// ---- 剪贴板写入(696;判据被 696 补改口过一次,别只读上半)---------------------------
 //
-// ⭐ **这一格的判据是量出来的,不是照着别处抄的**:安卓 WebView 里
-// `navigator.clipboard.writeText` **恒拒** —— MuMu / WebView Chrome 110 上逐字量到
-// `NotAllowedError: Write permission denied.`,而且是在**带真实用户手势**的前提下
-// (`Input.dispatchTouchEvent` 真点,handler 里读到 `navigator.userActivation.isActive === true`)。
-// ⇒ 它不是「缺手势」那种换个调用时机就能绕开的事,那条路在 WebView 上根本不存在。
+// ⭐ **这一格的判据是两台真机量出来的,而它们结论相反** —— `navigator.clipboard.writeText`
+// 在安卓 WebView 上**随 WebView 版本而定**:
+//   · **Chrome 110**(MuMu):逐字 `NotAllowedError: Write permission denied.`,
+//     而且是在**带真实用户手势**下(`Input.dispatchTouchEvent` 真点,handler 里读到
+//     `userActivation.isActive === true`)⇒ 那台上这条路根本不存在,换调用时机也绕不开;
+//   · **Chrome 151**(用户那台 vivo 真机):**成功** —— 真手势 + 文档有焦点时回 `ok`,
+//     且把它粘回输入框逐字核过(⛔ 没只信 API 的 resolve)。
+//     ⚠ 没焦点时报的是另一句 `Document is not focused.` —— **两句错不是一回事**,
+//     正是这个差别拦住了「110 上那条结论直接套到 151」。
+// ⇒ ⛔ **别把它写成「安卓 WebView 都不行」**(696 一度就是这么写的,696 补当天改口);
+//    分界点在 110 与 151 之间的哪一版,**没量过**。
+// ⇒ 那为什么还要插件:它是**平台正确的那条路**,两台上都成;Web API 那条只在够新的 WebView 上成,
+//    而 `minSdk=30` 的机器里旧 WebView 真实存在。
 //
 // ⚠ **这不是 696 引入的缺陷,是 696 照出来的**:配对码复制(`sync.ts`)与设备 ID 复制
-// (`devices.ts`)一直走的就是这条恒拒的路 —— 它们的失败分支只弹一句「复制失败,请长按
+// (`devices.ts`)历史上走的就是 Web API 那条 ⇒ **在旧 WebView 的机器上一直是坏的**
+// (⛔ 不是"所有人都坏" —— 用户自己那台好着)。它们的失败分支只弹一句「复制失败,请长按
 // 选中文字手动复制」,看着像偶发,没人量过。⇒ 三处一并改走这里。
 //
 // ⛔ **为什么是接缝而不是在业务模块里 `try 插件 / catch 回退 navigator`**:那是运行期

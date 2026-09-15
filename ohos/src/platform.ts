@@ -133,8 +133,9 @@ export function cancelScan(): Promise<void> {
 // ---- 剪贴板写入(696)-------------------------------------------------------------
 //
 // ⚠ **这一端仍走 `navigator.clipboard.writeText`,而它在 ArkWeb 上行不行「没量过」。**
-// 安卓那一端已经量实:WebView 里这条路**恒拒**(`NotAllowedError: Write permission denied.`,
-// 带真实用户手势也拒)⇒ 那一端 696 起改走 `tauri-plugin-clipboard-manager`。
+// 安卓那一端量到的是:这条路**随 WebView 版本而定** —— Chrome 110 上拒(`Write permission denied.`,
+// 带真实手势也拒)、Chrome 151 上成 ⇒ 那一端 696 起统一改走 `tauri-plugin-clipboard-manager`。
+// ⛔ **别据此推断 ArkWeb**:它既不是 110 也不是 151,是另一个引擎 —— 那正是本条要量的东西。
 //
 // ⛔ **鸿蒙这一端刻意没跟着改**,两条判据:
 //   ① 那个插件在这一端**没验过能不能编**(同 `tauri-plugin-barcode-scanner` 那族的风险:

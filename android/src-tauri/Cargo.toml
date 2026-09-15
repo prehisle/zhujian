@@ -50,8 +50,8 @@ tauri-plugin-opener = "2"
 # 截止提醒的手机那半(用户面 39①):每天到点一条系统通知。桌面壳同款依赖。
 # ⛔ **鸿蒙壳刻意不带它**(前端那侧由 `HAS_NOTIFICATION=false` 把整节摘掉)。
 tauri-plugin-notification = "2"
-# 剪贴板写入(696):安卓 WebView 的 `navigator.clipboard.writeText` 恒拒(带真实手势也拒),
-# 三处复制钮都得走原生这条路。判据与量法见 src/lib.rs 那句接线上的注释。
+# 剪贴板写入(696):`navigator.clipboard.writeText` 在旧 WebView 上被拒(Chrome 110 实测,带真实手势也拒),
+# 新的上可用(Chrome 151 实测)⇒ 三处复制钮统一走原生这条路,它两边都成。判据与量法见 src/lib.rs 那句接线上的注释。
 # ⛔ **鸿蒙壳刻意不带它** —— 那一端由构建期接缝 `ohos/src/platform.ts` 继续走
 # `navigator.clipboard`(ArkWeb 上行不行**没量过**,但那是它今天的行为,这一轮不去改它)。
 tauri-plugin-clipboard-manager = "2"
