@@ -97,9 +97,22 @@ describe("加密备份(笔①-a):仪式 → 备份 → 产物在列", () => {
 
     // ⛔ backup-plan §3.4.1 第 11 格:v1 **不提供**「复制备份码」按钮 —— 一写剪贴板,
     // 剪贴板就成了新的所有者,而系统剪贴板我们清不干净。这一条要有网,别哪天被"顺手加上"。
-    const labels = await browser.execute(() =>
-      [...document.querySelectorAll(".settings-panel button")].map((b) => b.textContent.trim()),
+    //
+    // ⚠⚠ **696 补2 收窄了扫描面:整个 `.settings-panel` → 备份那一节。⛔ 别读成"网放松了"。**
+    // 原因不是这条网碍事,是它**扫的面比它守的规则宽**:三类的 pane **一次全建好、切分类只切显隐**
+    // (settings.ts 那段承重注释),于是 `.settings-panel button` 会扫到**通用页**里的按钮 ——
+    // 696 在通用页末尾加了「意见反馈」一节(复制一个**写死的公开邮箱**),这条网当场红了。
+    // ⭐ 规格原文管的是**备份码**:「不提供『复制备份码』按钮 —— 一旦写剪贴板,剪贴板就成了新的所有者」,
+    // 它守的是**秘密**,不是「复制」这两个字。⇒ 扫描面对准备份那一节,网对它真正的目标**一格没松**:
+    // 谁哪天往备份这一节加复制钮,照样当场红。
+    // ⚠ 判据别退回「扫 .bkup-body」—— 那更窄,漏掉同一节里 body 之外的按钮。
+    const pane = '.settings-pane[data-cat="backup"]';
+    const labels = await browser.execute(
+      (sel) => [...document.querySelectorAll(sel + " button")].map((b) => b.textContent.trim()),
+      pane,
     );
+    // 自证前置:扫到 0 枚按钮 = 选择器写错了,那时上面那条断言恒真(空数组 some 恒 false)。
+    expect(labels.length).toBeGreaterThan(0);
     expect(labels.some((l) => l.includes("复制"))).toBe(false);
 
     // 显示码的这一刻钥只在进程内:后端还没写配置。
