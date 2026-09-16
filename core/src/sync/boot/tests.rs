@@ -719,6 +719,29 @@ fn import_preserves_nonnull_done_at() {
     assert_eq!(got.as_deref(), Some(done_ts), "引导后 done_at 逐字保留");
 }
 
+/// 0040 的 boot 分支覆盖:非 NULL color 随快照整行到新端、逐字保留,并经引导 strict battery
+/// (color 已进 ITEM_LWW_FIELDS,且与 archived_at/sealed_at/done_at 同列走 create-forced-NULL
+/// 那一臂 —— 它刻意不进 create payload,审计不该去 payload 里找它的初值)。
+///
+/// ⭐ 这只测同时守着 `import_core_tables` 里 items 那句**显式列清单**:它不是 `SELECT *`,
+/// 0040 若漏了 color,新设备引导后颜色全丢 —— **而且不报任何错**。
+#[test]
+fn import_preserves_card_color() {
+    let mut a = peer("color-a");
+    let id = task::create(&mut a.conn, &mut a.clock, "上了色的活", None, None, None).unwrap();
+    // color 有本地 writer(不同于 done_at 工序1 那会儿),直接走命令层即可:它同轮发一条
+    // set_field op,strict battery 要的「行值 == oplog LWW 赢家」自然成立。
+    task::set_color(&mut a.conn, &mut a.clock, &id, Some("#7f8b3a".into())).unwrap();
+
+    let snap = make_snapshot(&a.conn, &a.dir).unwrap();
+    let mut b = peer("color-b");
+    check_fresh_to_account(&b.conn).expect("新端 fresh");
+    import_snapshot(&mut b.conn, &mut b.clock, &snap.path).unwrap().expect_clean_commit();
+    let got: Option<String> =
+        b.conn.query_row("SELECT color FROM items WHERE id = ?1", [&id], |r| r.get(0)).unwrap();
+    assert_eq!(got.as_deref(), Some("#7f8b3a"), "引导后 color 逐字保留");
+}
+
 /// §6.2 全形态导入:老端(归档成就/回收站/图/编辑历史/标签),新端有配对前本地
 /// 数据 + 同名标签——并集、零丢失、时钟推进、标记落盘。严格纪元(epoch-plan
 /// §3.2)起快照不得携带无背书 legacy 行(负例见

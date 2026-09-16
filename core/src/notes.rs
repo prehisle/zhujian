@@ -486,7 +486,13 @@ pub fn set_topic_color(
 
 /// `#RRGGBB`:`#` + 恰 6 位十六进制。命令层唯一入口刻意只认这一种形式(前端调色板给的就是
 /// 6 位 hex),不接受命名色 / rgb() / 带 alpha —— 越窄越好核验、越省得回放端猜。
-fn is_hex_color(s: &str) -> bool {
+///
+/// ⭐ **颜色格式的唯一正式子**(首版自检清单 14:同一条规则的第二份描述就是漂移源)。
+/// 0040 起 `items.color` 的两道闸都引用它:命令层 `task::set_color` 与**回放 shape 层**
+/// `replay::validate_item_field_shape`(同步来的是不可信输入)。⚠ `topics.color` 的回放侧
+/// **今天不验格式**(backlog 休眠账 7,2026-09-07 拍板先不动 —— 给既有字段加入口校验要背
+/// 混版语义的账);item 那半是新字段、零存量、旧端发不出 ⇒ 第一天堵上是免费的。
+pub(crate) fn is_hex_color(s: &str) -> bool {
     let b = s.as_bytes();
     b.len() == 7 && b[0] == b'#' && b[1..].iter().all(|c| c.is_ascii_hexdigit())
 }

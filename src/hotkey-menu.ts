@@ -26,6 +26,11 @@ export type Act = {
   key: string;
   /** 危险操作(删除类),菜单行染成朱砂。 */
   danger?: boolean;
+  /** 不进 ⋯ 菜单,只当单键快捷键用。0040 卡片配色的 1-7 / 0 八枚数字键走这条:它们是
+   *  「悬停即按」的快速通道,全摊进菜单会把 14 行撑到 22 行。⚠ 发现性由菜单里那项
+   *  「颜色」兑现 —— 色板上每个色点标着自己的数字键。⛔ 别拿它藏危险动作:右键菜单与
+   *  单键读的是同一份 actions,藏起来的项**照样按得出来**,只是菜单里看不见。 */
+  hidden?: boolean;
   /** 普通动作:先关菜单,再执行。run / feedback 二选一。 */
   run?: () => void;
   /** 留开动作(如复制):执行后在自己的菜单行里闪一下返回的文案,而非关闭菜单。
@@ -226,7 +231,9 @@ export function createHotkeyController(): HotkeyController {
         menuEl = el(
           "div",
           { className: "hk-menu", draggable: false },
-          getActions().map((a) => {
+          getActions()
+            .filter((a) => !a.hidden)
+            .map((a) => {
             const item = el("button", {
               className: a.danger ? "hk-item danger" : "hk-item",
               draggable: false,

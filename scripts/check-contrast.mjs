@@ -185,6 +185,13 @@ const ALLOW = [
  */
 const RUNTIME_VARS = [
   { name: "--tag-color", where: "src/tag-color.ts / src/filter-bar.ts 按标签自定义色 setProperty" },
+  {
+    name: "--card-color",
+    where:
+      "src/card-color.ts::applyCardColor 按卡片颜色标记 setProperty(0040);色板色点同处注入。" +
+      "⛔ 它是**同步来的自由文本**(别的设备写的),CSS 侧只许经 color-mix() / background-color:" +
+      " 消费 —— 绝不喂 background: 简写(backlog 休眠账 7 触发门②:那个简写吃 url(),实测真发得出网络信标)",
+  },
   { name: "--tc", where: "安卓侧同一件事(android/src/filter.ts 等),chip 上的行内 style" },
   { name: "--nav-h", where: "android/src/main.ts 量出底栏实高后写根元素,供悬浮钮定位" },
   {

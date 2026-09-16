@@ -391,6 +391,10 @@ struct TaskItem {
     done_at: Option<String>,
     /// 出生设备(0033 born_device),显示规则同 [`ProcessedItem::born_device`]。
     born_device: Option<String>,
+    /// 卡片颜色标记(0040),`#RRGGBB` 或 null = 无色。前端据它给整卡染一层极淡底色。
+    /// **临时视觉标记,不是分类**(分类走 topics)——不参与筛选/排序/统计,纯展示层。
+    /// ⛔ 前端只许经 `color-mix()` / `background-color:` 消费(backlog 休眠账 7 触发门②)。
+    color: Option<String>,
     /// Every tag on this card (M:N, `item_topic`), each `{id, title}`. Empty = 无标签.
     /// The board shows them all as chips; the filter bar treats a card as belonging to
     /// each of its tags. Tag order follows the topic's `updated_at` (see repo::task_rows).
@@ -416,6 +420,7 @@ impl From<repo::TaskRow> for TaskItem {
             sealed_at: t.sealed_at,
             done_at: t.done_at,
             born_device: t.born_device,
+            color: t.color,
             topics,
         }
     }
@@ -799,6 +804,15 @@ fn set_task_due(space_id: String, id: String, due_on: Option<String>, spaces: St
 fn set_task_priority(space_id: String, id: String, priority: Option<i64>, spaces: State<'_, Spaces>) -> Result<(), String> {
     spaces.write(&space_id, |mut conn, mut clk| {
         task::set_priority(&mut conn, &mut clk, &id, priority)
+    })
+}
+
+/// Set or clear a board card's color mark (`#RRGGBB`, or null = 无色). 0040。格式
+/// fail-fast(只认 6 位 hex);已归档/不存在的卡也 fail-fast —— see task::set_color。
+#[tauri::command]
+fn set_task_color(space_id: String, id: String, color: Option<String>, spaces: State<'_, Spaces>) -> Result<(), String> {
+    spaces.write(&space_id, |mut conn, mut clk| {
+        task::set_color(&mut conn, &mut clk, &id, color.clone())
     })
 }
 
@@ -4099,6 +4113,7 @@ pub fn run() {
             rename_task,
             set_task_due,
             set_task_priority,
+            set_task_color,
             add_task_topic,
             add_task_topic_by_title,
             remove_task_topic,

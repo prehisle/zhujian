@@ -115,7 +115,16 @@ pub struct RemoteOp {
 ///
 /// ⭐ 另记:B-e 的 `BOARD_COLUMNS_CAP_GEN` 与本常量**不是一回事**(§5.5 (α))——
 /// B-b / B-c / B-d 共用**同一枚** CAP_GEN,⛔ 别因为这里 bump 了就顺手清闩。
-pub(crate) const VALIDATOR_VER: i64 = 8;
+///
+/// v9 = 0040 `item.color` set_field 字段进 shape 白名单(卡片颜色标记,详见迁移 0040 头注)。
+/// **又一次空跳,照 §4.4「改了 shape 规则就 +1」照样 bump**(纪律是「改了规则」不是「有人要救」,
+/// 同 v7):本轮之前任何版本都发不出 color op(没这个字段)⇒ 今天的库里不存在因它被隔离的行。
+/// ⚠ **诚实说明这一跳救的不是隔离行**:color 在 v8 及更早端归 `UnsupportedVocab` = 内存挂起、
+/// 不进 `sync_quarantine` ⇒ 它的自愈走的是「水位不过缺口 + 重连重喂」那条既有路,**不经**
+/// [`crate::sync::engine::Engine::reverify_quarantined`]。bump 仍必要:凡 shape 判定放宽,
+/// 因**别的**原因隔离过的行都可能因新规则重跑而获释,不 bump 就筛不出它们(sync-core-handbook
+/// 「改了判定规则不 bump,升级救不出任何人」)。
+pub(crate) const VALIDATOR_VER: i64 = 9;
 
 /// typed poison 错误分型(epoch-plan §4):`validate_op_shape` 与 `apply_remote_op`
 /// 返回**同一枚举**,分型在源头、不靠错误字符串事后分类。engine 按型分道:
@@ -1362,7 +1371,9 @@ fn item_field_value(field: &str, v: &Value) -> Result<SqlValue, String> {
             Value::String(s) => Ok(SqlValue::Text(s.clone())),
             other => Err(format!("item 字段 {field} 期待字符串,收到:{other}")),
         },
-        "due_on" | "archived_at" | "sealed_at" | "position" => match v {
+        // color(0040):格式 `#RRGGBB` 已由 shape 层 validate_color_value 验过,这里只转类型
+        // ——与 position/due_on 同款分工(shape 验值域、apply 转 SqlValue)。
+        "due_on" | "archived_at" | "sealed_at" | "position" | "color" => match v {
             Value::String(s) => Ok(SqlValue::Text(s.clone())),
             Value::Null => Ok(SqlValue::Null),
             other => Err(format!("item 字段 {field} 期待字符串或 null,收到:{other}")),
@@ -1515,6 +1526,7 @@ fn validate_item_field_shape(field: &str, v: &Value) -> Result<(), OpError> {
         "priority" => validate_priority_value(v).map_err(inv),
         "due_on" => validate_due_on_value(v).map_err(inv),
         "done_at" => validate_done_at_value(v).map_err(inv),
+        "color" => validate_color_value(v).map_err(inv),
         "content" | "archived_at" | "sealed_at" => {
             item_field_value(field, v).map(|_| ()).map_err(inv)
         }
@@ -1721,6 +1733,35 @@ fn validate_comment_created_at(s: &str) -> Result<(), String> {
 #[cfg(test)]
 pub(crate) fn validate_comment_created_at_for_test(s: &str) -> Result<(), String> {
     validate_comment_created_at(s)
+}
+
+/// color 值域(0040 items.color):`#RRGGBB` 或 null(= 无色)。
+///
+/// ⭐ **shape 层就验格式、不只验类型** —— 同步来的是不可信输入,而这个值最终进 CSS
+/// (backlog 休眠账 7 的实测:`background:` 简写吃 `url()`、发得出网络信标)。与命令层
+/// `task::set_color` 引用**同一个** [`crate::notes::is_hex_color`](清单 14:只许有一个
+/// 正式子)。⚠ 与 `topic_field_value` 对 color 只判「字符串或 null」**刻意不同**:那是既有洞
+/// (休眠账 7,2026-09-07 拍板先不动 —— 给**既有**字段加入口校验要背混版的账:旧端已放行的
+/// 脏值、新端拒 = per-origin 持久隔离);`items.color` 是新字段、零存量、旧端压根发不出
+/// ⇒ 第一天堵上零代价。topic 那半仍在账上。
+///
+/// ⭐ **归 InvalidOp 的理由是「结构畸形」,不是照抄**(首版自检清单 15 点名要答这一格):
+/// `#RRGGBB` 是**真闭集** —— 合法版本的唯一写入口是命令层,那儿只认这一种形 ⇒ 别的形只可能
+/// 来自损坏/手搓/实现 bug。epoch-plan §4「值域非法更像损坏」的理由对它成立(同 priority /
+/// due_on / position,不同于已被 §4.0 改判的 stage)。
+///
+/// ⛔ **刻意只验格式,不验「必须是调色板里那几个色」** —— 调色板(前端 `CARD_COLORS`)是
+/// **有意扩展**的(日后可能加色改色)。把成员资格钉进 shape 层 = 把它变成「已知字段的新值域」,
+/// 将来加一个色就让旧端把合法 op 判成 InvalidOp、持久隔离,正是 board-columns §4.0 那个
+/// 最贵的坑。清单 15 的修法方向:值域有意扩展的字段第一天就按等待型设计。
+/// 库里出现调色板外的合法 hex 无害:前端照样渲染得出,颜色本就不进任何逻辑。
+fn validate_color_value(v: &Value) -> Result<(), String> {
+    match v {
+        Value::String(s) if crate::notes::is_hex_color(s) => Ok(()),
+        Value::String(s) => Err(format!("color 期待 #RRGGBB(6 位十六进制),收到:{s:?}")),
+        Value::Null => Ok(()),
+        other => Err(format!("color 期待 #RRGGBB 字符串或 null,收到:{other}")),
+    }
 }
 
 fn validate_done_at_value(v: &Value) -> Result<(), String> {
@@ -2524,6 +2565,90 @@ mod tests {
         );
     }
 
+    /// 0040 `item.color` 的 shape 层闸 + **混版分型**(首版自检清单 15 点名要答的那一格)。
+    ///
+    /// ① **格式**:`#RRGGBB` 或 null 才过,非法归 `InvalidOp`。归定罪型的理由是**结构畸形**
+    ///    而非「照抄既有分型」:合法版本的唯一写入口是命令层 `task::set_color`,那儿只认这
+    ///    一种形 ⇒ 别的形只可能来自损坏 / 手搓 / 实现 bug。⛔ 刻意**不**验「必须是调色板里
+    ///    那几个色」——调色板是有意扩展的,把成员资格钉进 shape 层 = 将来加一个色就让旧端
+    ///    把合法 op 判成 InvalidOp(board-columns §4.0 那个最贵的坑)。
+    ///
+    ///    ⚠ **必须直接断言 `validate_op_shape`**(同 device 那只测的教训):`items.color`
+    ///    表层**刻意没有 CHECK**(格式的正式子在代码层),shape 层是这条路上**唯一**的一把
+    ///    尺——它被拆掉,脏值直接落库。它同时还是快照审计(boot)那条路的入口,而那条路上
+    ///    根本没有 live INSERT。
+    ///
+    /// ② **未知字段仍归 `UnsupportedVocab`** —— 这是「单版直发」成立的**全部前提**:存量
+    ///    旧端收到 color op 走的就是这一臂(等待型 = 内存挂起、水位不动、升级即自愈零丢失),
+    ///    而不是 `InvalidOp`(定罪型 = per-origin 持久隔离 + 后续帧到即丢)。⛔ 这一格若翻
+    ///    成定罪型,0040 的发布策略整个要重来(得建发送端闸)。
+    #[test]
+    fn color_shape_gate_and_unknown_field_stays_waiting_type() {
+        let (mut conn, mut clock) = fresh();
+        let id = repo::add_item(&conn, "要上色的").unwrap();
+        let color_op = |counter: u32, v: Value| {
+            mk(
+                &remote_hlc(FUTURE_MS, counter),
+                "item",
+                &id,
+                "set_field",
+                json!({ "field": "color", "value": v }),
+            )
+        };
+        // 合法:六位 hex(大小写皆可)+ null(清色)。
+        for good in [json!("#cc8b3c"), json!("#CC8B3C"), Value::Null] {
+            let op = color_op(1, good.clone());
+            validate_op_shape(&op).unwrap_or_else(|e| panic!("合法 color 必须过:{good:?} → {e:?}"));
+        }
+        // 非法:一律 InvalidOp(结构畸形),⛔ 不是 UnsupportedVocab。末位那个是 backlog
+        // 休眠账 7 实测过的形 —— 值本身就是 url(),落到吃 url() 的 CSS 属性上会真发请求。
+        for bad in [
+            json!("blue"),
+            json!("#12345"),
+            json!("#1234567"),
+            json!(""),
+            json!("cc8b3c"),
+            json!("#cc8b3g"),
+            json!(3),
+            json!(true),
+            json!({ "hex": "#cc8b3c" }),
+            json!("url(http://127.0.0.1/x.png)"),
+        ] {
+            let op = color_op(2, bad.clone());
+            assert!(
+                matches!(validate_op_shape(&op), Err(OpError::InvalidOp(_))),
+                "非法 color 必须归 InvalidOp:{bad:?}"
+            );
+        }
+        // 脏值一个都没落库(表层无 CHECK ⇒ 上面那道闸就是唯一的尺)。
+        let op = color_op(3, json!("url(http://127.0.0.1/x.png)"));
+        assert!(apply_remote_op(&mut conn, &mut clock, &op).is_err());
+        let stored: Option<String> = conn
+            .query_row("SELECT color FROM items WHERE id = ?1", [&id], |r| r.get(0))
+            .unwrap();
+        assert_eq!(stored, None, "被拒的 op 不许改库");
+        // 合法值照常落库(下界:别让这只测被「什么都拒」背书成绿)。
+        let ok = color_op(4, json!("#cc8b3c"));
+        apply_remote_op(&mut conn, &mut clock, &ok).expect("合法 color 必须落库");
+        let stored: Option<String> = conn
+            .query_row("SELECT color FROM items WHERE id = ?1", [&id], |r| r.get(0))
+            .unwrap();
+        assert_eq!(stored.as_deref(), Some("#cc8b3c"));
+
+        // ② 未知字段仍是等待型 —— 单版直发的前提。
+        let unknown = mk(
+            &remote_hlc(FUTURE_MS, 5),
+            "item",
+            &id,
+            "set_field",
+            json!({ "field": "no_such_field_v99", "value": "x" }),
+        );
+        assert!(
+            matches!(validate_op_shape(&unknown), Err(OpError::UnsupportedVocab(_))),
+            "未知字段必须归 UnsupportedVocab(挂起 + 升级即自愈)——0040 单版直发全靠这一格"
+        );
+    }
+
     /// device 寄存器的坐标 / 词汇 / 值域闸。entity_id 必须是规范 device_id——挡的是
     /// **非规范 id 白得一行**,不是行数(行数无协议上界,见 shape 层该臂的注释)。
     #[test]
@@ -2679,7 +2804,7 @@ mod tests {
     const ITEMS_FP: &str = "SELECT id||'|'||content||'|'||stage||'|'||created_at \
         ||'|'||COALESCE(archived_at,'∅')||'|'||COALESCE(due_on,'∅')||'|'||COALESCE(priority,'∅') \
         ||'|'||COALESCE(position,'∅')||'|'||COALESCE(sealed_at,'∅')||'|'||COALESCE(born_stage,'∅') \
-        ||'|'||COALESCE(done_at,'∅')||'|'||COALESCE(born_device,'∅') \
+        ||'|'||COALESCE(done_at,'∅')||'|'||COALESCE(born_device,'∅')||'|'||COALESCE(color,'∅') \
         FROM items ORDER BY id";
     const TOPICS_FP: &str = "SELECT id||'|'||title||'|'||created_at||'|'||updated_at \
         ||'|'||COALESCE(color,'∅')||'|'||COALESCE(position,'∅')||'|'||quote(kind) \
@@ -2762,6 +2887,9 @@ mod tests {
         task::transition(&mut r, &mut rc, &task_id, "doing", &crate::board::gate::DETACHED).unwrap();
         task::set_due(&mut r, &mut rc, &task_id, None).unwrap();
         task::set_priority(&mut r, &mut rc, &task_id, Some(1)).unwrap();
+        // 0040:这只测声称「覆盖全部 op kind」,color 也得真发一枚 —— 否则 ITEMS_FP 里
+        // 那一格恒 NULL,投影加了也照不出(codex 实现审 L1)。
+        task::set_color(&mut r, &mut rc, &task_id, Some("#4a8f52".into())).unwrap();
         let t2 = notes::create_topic(&mut r, &mut rc, "标签乙").unwrap();
         task::add_topic(&mut r, &mut rc, &task_id, &t2).unwrap();
         task::remove_topic(&mut r, &mut rc, &task_id, &topic).unwrap();

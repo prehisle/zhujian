@@ -184,6 +184,11 @@ pub struct TaskRow {
     /// 筛选轴用(近1天/近7天/7天前,前端按本地日历日分桶,同 due_on 的哲学:后端
     /// 只搬运时刻字符串,从不算「今天」)。
     pub created_at: String,
+    /// 卡片颜色标记(0040 color 轴):`#RRGGBB` = 用户手点的底色,None = 无色(默认)。
+    /// **临时视觉标记,不是分类**(分类走 topics)—— 不参与筛选/排序/统计/归档判定,纯展示。
+    /// ⛔ 前端只许经 `color-mix()` / `background-color:` 消费,绝不喂 `background:` 简写
+    /// (backlog 休眠账 7 触发门②:那个简写吃 `url()`、发得出网络信标)。
+    pub color: Option<String>,
     pub due_on: Option<String>,
     pub priority: Option<i64>,
     /// 成就归档时间(0017 sealed_at 轴):Some = 已入归档册(不在看板上)。活跃看板行与
@@ -1185,7 +1190,7 @@ fn task_rows(
 
     let sql = format!(
         "SELECT i.id, i.content, i.stage, i.due_on, i.priority, i.sealed_at, i.done_at, \
-                i.born_device, i.created_at FROM items i \
+                i.born_device, i.created_at, i.color FROM items i \
          WHERE {where_sql} ORDER BY {order_sql}"
     );
     let mut stmt = conn.prepare(&sql)?;
@@ -1200,11 +1205,13 @@ fn task_rows(
             r.get::<_, Option<String>>(6)?,
             r.get::<_, Option<String>>(7)?,
             r.get::<_, String>(8)?,
+            r.get::<_, Option<String>>(9)?,
         ))
     })?;
     let mut out = Vec::new();
     for row in rows {
-        let (id, content, stage, due_on, priority, sealed_at, done_at, born_device, created_at) = row?;
+        let (id, content, stage, due_on, priority, sealed_at, done_at, born_device, created_at, color) =
+            row?;
         let topics = tags_by_item.remove(&id).unwrap_or_default();
         out.push(TaskRow {
             id,
@@ -1216,6 +1223,7 @@ fn task_rows(
             sealed_at,
             done_at,
             born_device,
+            color,
             topics,
         });
     }
@@ -1376,6 +1384,18 @@ pub(crate) fn set_task_priority(conn: &Connection, id: &str, priority: Option<i6
          WHERE id = ?1 AND stage IN {TASK_STAGES} AND archived_at IS NULL AND sealed_at IS NULL"
     );
     conn.execute(&sql, (id, priority, now_iso()))
+}
+
+/// Set (or clear, None) a board card's color mark (`#RRGGBB`; 0040). Same active-task
+/// guard as set_task_priority —— 上色入口只在看板上,给已归档/已入册的卡上色是 fail-fast
+/// 的编程错误,不是静默 no-op。格式由命令层 `task::set_color` 校验(表层刻意无 CHECK,
+/// 同 topics.color)。Bumps updated_at. Returns rows changed.
+pub(crate) fn set_task_color(conn: &Connection, id: &str, color: Option<&str>) -> rusqlite::Result<usize> {
+    let sql = format!(
+        "UPDATE items SET color = ?2, updated_at = ?3 \
+         WHERE id = ?1 AND stage IN {TASK_STAGES} AND archived_at IS NULL AND sealed_at IS NULL"
+    );
+    conn.execute(&sql, (id, color, now_iso()))
 }
 
 // ---- 回收站: archive / restore / purge (single archived_at axis) -----------------
@@ -1696,10 +1716,10 @@ mod tests {
     }
 
     #[test]
-    fn migration_sets_user_version_39_and_enforces_foreign_keys() {
+    fn migration_sets_user_version_40_and_enforces_foreign_keys() {
         let conn = fresh_db();
         let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0)).unwrap();
-        assert_eq!(version, 39);
+        assert_eq!(version, 40);
         let fk: i64 = conn.pragma_query_value(None, "foreign_keys", |r| r.get(0)).unwrap();
         assert_eq!(fk, 1, "foreign keys must be ON");
     }

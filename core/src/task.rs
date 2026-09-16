@@ -425,6 +425,40 @@ pub fn set_priority(conn: &mut Connection, clock: &mut Clock, id: &str, priority
     Ok(())
 }
 
+/// Set or clear a board card's color mark (`#RRGGBB`, or None = 无色). 0040。
+///
+/// 形与 [`set_priority`] 逐字同款(校验 → 事务 → repo UPDATE 行数守卫 → `item_set` → commit):
+/// 同步字段的四步形状,任何一步 `?` 都整体回滚,不会留下「表改了 op 没发」的分叉。
+///
+/// 格式校验复用 [`crate::notes::is_hex_color`]——**颜色格式的唯一正式子**(首版自检清单 14),
+/// 回放 shape 层 `replay::validate_color_value` 引用的是同一个函数,两道闸不会漂移。
+///
+/// ⛔ **刻意不校「必须是调色板里那几个色」**:调色板是有意扩展的(日后加色改色),把成员资格
+/// 钉进任何一道闸都会让将来新增的色在旧端变成非法值。只验形态,同 replay 侧的签字。
+///
+/// 无幂等早返(重复设同色照发一条 op):与 `set_priority`/`set_topic_color` 同形。颜色是
+/// 装饰、op 极小,为它单开一条「值没变就不发」的捷径反而多一处与 LWW 语义的接缝。
+pub fn set_color(
+    conn: &mut Connection,
+    clock: &mut Clock,
+    id: &str,
+    color: Option<String>,
+) -> Result<(), String> {
+    if let Some(c) = &color {
+        if !crate::notes::is_hex_color(c) {
+            return Err(format!("颜色格式非法(应为 #RRGGBB):{c}"));
+        }
+    }
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    let n = repo::set_task_color(&tx, id, color.as_deref()).map_err(|e| e.to_string())?;
+    if n != 1 {
+        return Err(format!("设置卡片颜色失败:任务不存在或已归档,影响行数 {n}"));
+    }
+    oplog::item_set(&tx, clock, id, &["color"])?;
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 /// Rename an active task (a guarded content edit; the history trigger fires). Title
 /// trimmed/non-empty; an archived/idea/missing item fails fast.
 pub fn rename(conn: &mut Connection, clock: &mut Clock, id: &str, title: &str) -> Result<(), String> {
@@ -945,6 +979,44 @@ mod tests {
         archive(&mut conn, &mut clock, &arch).unwrap();
         assert!(set_due(&mut conn, &mut clock, &arch, Some("2026-06-25")).is_err());
         assert!(set_priority(&mut conn, &mut clock, &arch, Some(1)).is_err());
+    }
+
+    /// 0040 卡片颜色:命令层这道闸只认 `#RRGGBB`,可设可清;非法格式 / 不存在 / 已归档
+    /// 一律 fail-fast,且**被拒的一条 op 都不发**(同 set_due/set_priority 口径)。
+    ///
+    /// ⭐ `url(...)` 那一格不是凑数:backlog 休眠账 7 实测过,`--tag-color` 若被写成
+    /// `url(http://…)` 且落到吃 url() 的 CSS 属性上,收端会**真发出一次网络请求**(信标)。
+    /// 本字段从第一天就在命令层与回放 shape 层各堵一道,这只测钉的是前者。
+    #[test]
+    fn set_color_validates_format_and_fails_fast() {
+        let (mut conn, mut clock) = fresh_db();
+        let id = mk(&conn, "活跃任务");
+        set_color(&mut conn, &mut clock, &id, Some("#cc8b3c".into())).unwrap();
+        set_color(&mut conn, &mut clock, &id, Some("#CC8B3C".into())).unwrap(); // 大小写皆可
+        set_color(&mut conn, &mut clock, &id, None).unwrap(); // 清除
+        let stored: Option<String> = conn
+            .query_row("SELECT color FROM items WHERE id = ?1", [&id], |r| r.get(0))
+            .unwrap();
+        assert_eq!(stored, None, "清除后应回到 NULL(无色),不是空串");
+        // 非法形态:命名色 / 少一位 / 多一位 / 带 alpha / 缺 # / 空串 / 前后空白。
+        for bad in [
+            "blue", "#12345", "#1234567", "#12345678", "cc8b3c", "", " #cc8b3c", "#cc8b3g",
+        ] {
+            assert!(
+                set_color(&mut conn, &mut clock, &id, Some(bad.into())).is_err(),
+                "非法颜色必须拒:{bad:?}"
+            );
+        }
+        // ⭐ 休眠账 7 那一族的形:值本身就是 url()。
+        assert!(set_color(&mut conn, &mut clock, &id, Some("url(http://127.0.0.1/x.png)".into())).is_err());
+        assert!(set_color(&mut conn, &mut clock, "ghost", Some("#cc8b3c".into())).is_err());
+        // 三次成功 = 三条 op(设值二、清空一);被拒的一条都没发。
+        assert_eq!(field_ops(&conn, &id).len(), 3);
+        // 已归档的卡改不动(守卫与 set_due/set_priority 同款)。
+        let arch = mk(&conn, "待归档");
+        transition(&mut conn, &mut clock, &arch, "done", &crate::board::gate::DETACHED).unwrap();
+        archive(&mut conn, &mut clock, &arch).unwrap();
+        assert!(set_color(&mut conn, &mut clock, &arch, Some("#cc8b3c".into())).is_err());
     }
 
     // ⭐ 用户面 63 的第二条写正文的路:看板卡走 `rename_task`,与灵感那条是**两个**

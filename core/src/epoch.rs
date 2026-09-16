@@ -709,16 +709,17 @@ fn synthesize_baseline(tx: &Connection) -> Result<Vec<(String, String, String, V
         }
     }
     // items(含回收站/已归档):create = 现值快照(created_at/born_stage 取史实,
-    // born_stage 可 null);archived_at/sealed_at/done_at 生而 NULL,非 NULL 各补一条 set。
+    // born_stage 可 null);archived_at/sealed_at/done_at/color 生而 NULL,非 NULL 各补一条 set。
     {
         let mut stmt = tx
             .prepare(
                 "SELECT id, content, stage, created_at, born_stage, due_on, priority, \
-                 position, archived_at, sealed_at, done_at, born_device FROM items ORDER BY id",
+                 position, archived_at, sealed_at, done_at, born_device, color \
+                 FROM items ORDER BY id",
             )
             .map_err(|e| e.to_string())?;
         /// 一行 items 的基线取数形(id, content, stage, created_at, born_stage, due_on,
-        /// priority, position, archived_at, sealed_at, done_at, born_device)。
+        /// priority, position, archived_at, sealed_at, done_at, born_device, color)。
         type ItemBaseline = (
             String,
             String,
@@ -727,6 +728,7 @@ fn synthesize_baseline(tx: &Connection) -> Result<Vec<(String, String, String, V
             Option<String>,
             Option<String>,
             Option<i64>,
+            Option<String>,
             Option<String>,
             Option<String>,
             Option<String>,
@@ -748,6 +750,7 @@ fn synthesize_baseline(tx: &Connection) -> Result<Vec<(String, String, String, V
                     r.get(9)?,
                     r.get(10)?,
                     r.get(11)?,
+                    r.get(12)?,
                 ))
             })
             .map_err(|e| e.to_string())?
@@ -766,6 +769,7 @@ fn synthesize_baseline(tx: &Connection) -> Result<Vec<(String, String, String, V
             sealed,
             done,
             born_device,
+            color,
         ) in rows
         {
             ops.push((
@@ -807,9 +811,20 @@ fn synthesize_baseline(tx: &Connection) -> Result<Vec<(String, String, String, V
             if let Some(d) = done {
                 ops.push((
                     "item".into(),
-                    id,
+                    id.clone(),
                     "set_field".into(),
                     json!({"field": "done_at", "value": d}),
+                ));
+            }
+            // color(0040)同上:刻意不进 create payload(卡片生而无色),非 NULL 补一条 set_field。
+            // ⛔ 漏掉这一段 = 压实一次全库颜色清零 —— 压实后的日志就是新的全部史实,基线里没有
+            // 的东西之后谁也重建不出来。
+            if let Some(c) = color {
+                ops.push((
+                    "item".into(),
+                    id,
+                    "set_field".into(),
+                    json!({"field": "color", "value": c}),
                 ));
             }
         }
@@ -1022,6 +1037,7 @@ pub(crate) fn table_fingerprints(tx: &Connection) -> Result<Vec<Vec<String>>, St
              ||'|'||COALESCE(archived_at,'∅')||'|'||COALESCE(due_on,'∅')||'|'||COALESCE(priority,'∅') \
              ||'|'||COALESCE(position,'∅')||'|'||COALESCE(sealed_at,'∅')||'|'||COALESCE(born_stage,'∅') \
              ||'|'||COALESCE(done_at,'∅')||'|'||COALESCE(born_device,'∅') \
+             ||'|'||COALESCE(color,'∅') \
              FROM items ORDER BY id",
         )?,
         text_rows(
@@ -1325,6 +1341,89 @@ mod tests {
         assert!(done_hlc > create_hlc, "done_at 基线 set_field 的 HLC 必须晚于 create");
     }
 
+    /// 0040 的 epoch 分支覆盖:color 非 NULL 时,压实基线必须补发一条 color set_field
+    /// (HLC 晚于 create)且值零丢 —— 没有它,`if let Some(c) = color` 那条分支全程走 NULL、
+    /// 永不被执行,而**压实后的日志就是新的全部史实**,基线里没有的东西之后谁也重建不出来。
+    ///
+    /// ⚠ **这只测守的是「基线补发」,⛔ 不守 `table_fingerprints` 那一格** —— 我原先在这儿写
+    /// 过「它连指纹一起守:丢色时指纹前后不等」,**那句是错的**(codex 实现审 L2 逐条驳回):
+    /// ①压实重建的是 oplog、**不会去改 `items.color`** ⇒ 前后指纹恒等;②删掉基线那条
+    /// color set_field 时,先红的是 strict_battery 的「表值 ≠ 日志赢家」;③只从指纹里删掉
+    /// color,既有测试**全绿**(与变异对照 ④ 的读数一致)。
+    /// ⇒ 指纹那一格由 [`table_fingerprints_sees_item_color`] 单独守。
+    #[test]
+    fn compact_preserves_color_and_emits_baseline_set_field() {
+        let mut p = peer("card-color");
+        let id = task::create(&mut p.conn, &mut p.clock, "上了色的活", None, None, None).unwrap();
+        task::set_color(&mut p.conn, &mut p.clock, &id, Some("#cc8b3c".into())).unwrap();
+        compact(&mut p.conn).expect("带 color 压实必须成功(battery + 表指纹自验收)");
+        let got: Option<String> = p
+            .conn
+            .query_row("SELECT color FROM items WHERE id = ?1", [&id], |r| r.get(0))
+            .unwrap();
+        assert_eq!(got.as_deref(), Some("#cc8b3c"), "压实后 color 不丢");
+        // 基线里该 item 的 color set_field 的 HLC 必须晚于它的 create(不被 LWW 反噬)。
+        let (create_hlc, color_hlc): (Option<String>, Option<String>) = p
+            .conn
+            .query_row(
+                "SELECT MAX(CASE WHEN kind='create' THEN hlc END), \
+                        MAX(CASE WHEN kind='set_field' AND json_extract(payload,'$.field')='color' THEN hlc END) \
+                 FROM oplog WHERE entity='item' AND entity_id = ?1",
+                [&id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        let create_hlc = create_hlc.expect("基线必有 create");
+        let color_hlc = color_hlc.expect("基线必有 color set_field");
+        assert!(color_hlc > create_hlc, "color 基线 set_field 的 HLC 必须晚于 create");
+        // ⛔ create 出生快照里不许出现 color 键:它走 set_field 那条路。进了 payload 就踩
+        // 0033 → 0034 那个坑(旧端 shape 放行额外键、原样存进日志、INSERT 却没这列 ⇒ 值被
+        // 静默丢,水位推进后永不重放,只能再写一条「从日志恢复」的迁移)。
+        let create_payload: String = p
+            .conn
+            .query_row(
+                "SELECT payload FROM oplog WHERE entity='item' AND entity_id = ?1 AND kind='create'",
+                [&id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert!(
+            !create_payload.contains("color"),
+            "create 出生快照不许带 color 键:{create_payload}"
+        );
+    }
+
+    /// 0040 指纹格的定点测(⭐ **codex 实现审 L2 换来的** —— 我当时自曝「这一格今天没有能证伪
+    /// 它的变异,不确定该留该删」,它给的判决是「留,但必须配一条只有它能红的测」)。
+    ///
+    /// **判据(codex 给的正式子)**:`table_fingerprints` 是「压实前后必须逐字相等」的**持久用户
+    /// 数据字段清单** —— 凡**要求逐字保留、且压实不允许主动重写**的列都必须进去。`color` 明确
+    /// 符合(用户手点的值,压实无权改它)⇒ ⛔ 不能删。
+    ///
+    /// ⚠ 它证的**不是**「压实会丢色」(压实根本不碰这一列),而是「这份清单确实把 color 算进去
+    /// 了」—— 将来哪个改动让压实误改了它,自验收才有牙齿。
+    /// ⛔⛔ **这里必须走裸 UPDATE、只动 color 一列** —— 第一版我用了 `task::set_color`,
+    /// 变异对照当场判**假绿**:那条命令会同时摸 `updated_at`,而 `updated_at` **也在指纹里**
+    /// ⇒ 把 color 整个从指纹删掉,断言照样成立。判据那一格根本不由 color 决定
+    /// (首版自检清单:「删掉我要测的那一句,我看的这一格会变吗?」)。
+    /// ⚠ 裸 UPDATE 不发 op、不动时钟 —— 这只测不跑 compact / battery,不需要日志背书。
+    #[test]
+    fn table_fingerprints_sees_item_color() {
+        let mut p = peer("fp-color");
+        let id = task::create(&mut p.conn, &mut p.clock, "换个色", None, None, None).unwrap();
+        let set_color_only = |conn: &rusqlite::Connection, hex: &str| {
+            conn.execute("UPDATE items SET color = ?2 WHERE id = ?1", (&id, hex)).unwrap();
+        };
+        let before = table_fingerprints(&p.conn).expect("取指纹");
+        set_color_only(&p.conn, "#9e5397");
+        let after = table_fingerprints(&p.conn).expect("取指纹");
+        assert_ne!(before, after, "只改 items.color,指纹就必须变 —— 变了才说明它真在清单里");
+        // 下界:非空色之间互换同样要变(别让上面那格被「NULL→非空」这一种跃迁独自背书)。
+        set_color_only(&p.conn, "#4a8f52");
+        let after2 = table_fingerprints(&p.conn).expect("取指纹");
+        assert_ne!(after, after2, "两个非空色之间互换,指纹同样要变");
+    }
+
     /// space profile 随压实走(0028,space-name-sync-plan §4.5):行保留(进表指纹)、
     /// 基线恰一条 space op;**null 清名也合成**(行存在就合成,含 value:null——否则
     /// 压实把清名写丢背书,battery 双向审计当场红)。
@@ -1393,6 +1492,9 @@ mod tests {
         task::add_topic(c, k, &task_id, &t1).unwrap();
         task::remove_topic(c, k, &task_id, &t1).unwrap();
         task::add_topic(c, k, &task_id, &t1).unwrap();
+        // 0040:给这个富夹具一枚非空 color —— 否则跨库行为投影里那一格恒 NULL,
+        // 加了投影也照不出任何差异(codex 实现审 L1)。
+        task::set_color(c, k, &task_id, Some("#3f78a0".into())).unwrap();
         images::attach(c, k, &task_id, &[1, 2, 3, 4], "image/png").unwrap();
         let (img2, _) = images::attach(c, k, &task_id, &[5, 6, 7, 8], "image/png").unwrap();
         images::remove(c, k, &img2).unwrap();
@@ -1425,6 +1527,7 @@ mod tests {
                  ||'|'||COALESCE(priority,'∅')||'|'||COALESCE(position,'∅') \
                  ||'|'||(sealed_at IS NOT NULL)||'|'||COALESCE(born_stage,'∅') \
                  ||'|'||(done_at IS NOT NULL)||'|'||COALESCE(born_device,'∅') \
+                 ||'|'||COALESCE(color,'∅') \
                  FROM items ORDER BY id",
             ),
             rows(

@@ -472,6 +472,70 @@
 .v-board .tcard.sealed { box-shadow: var(--card-shadow), inset 3px 0 0 var(--seal-line); }
 .v-board .tcard.sealed .ttitle::before { content: "✓ "; color: var(--seal); font-weight: 700; }
 
+/* ---- 卡片颜色标记(0040)---- */
+/* 整卡一层极淡底色,用户手点几张关键卡、默认无色。⭐ 这是**稀疏**通道:一列全纸色时扫读
+   费劲,但铺满颜色同样糊成一片 —— 颜色只在少数卡上出现才有信息量。
+   ⛔⛔ `--card-color` 是**同步来的自由文本**(可能是别的设备写进库的),只许经 `color-mix()`
+   或 `background-color:` 消费。⛔ 绝不许把它放进 `background` / `background-image` 的值位
+   —— 那两个吃 `url()`,backlog 休眠账 7 的实测字据里**真发出了网络请求**(信标,泄露「这台
+   在线 + 它的 IP」)。这里它恒在 color-mix 的**参数位**:值若是 url() 则类型不匹配 ⇒ IACVT
+   ⇒ 整条声明失效,发不出任何请求。⚠ 新增消费点前先读那条账。
+   ⚠ 只覆盖 `background-image`、不用 `background` 简写:原规则那道渐变要保住(只是两端各掺
+   一点色),简写会把 background-color 等一并重置。
+   ⚠ 手机端不用这套(`color-mix` 要 Chrome 111,台架 MuMu 是 110,且含 var() 时兜底声明救
+   不了)——安卓/鸿蒙本轮不渲染颜色,见 card-color.ts 头注。 */
+/* ⭐ 18% / 20% 是**真机对眼量出来的,不是估的**(697,WebView2 上逐档截图并排看):
+   亮色 6%(初版拍脑袋那档)蓝与紫几乎看不出、等于没上色;12% 可辨但偏弱;18% 清晰且仍克制;
+   25% 起有塑料感、紫那张开始抢眼,偏离纸墨调性。暗色底本就深(--raised #242019),
+   13% 时蓝紫融进背景,20% 才立得住;28% 与 20% 差别已不明显。
+   ⛔ 再动这两个数先照原法跑一遍(起隔离实例 + 逐档 --clip 截图并排),别凭手感调 ——
+   「门禁全绿 ≠ 长得对」。 */
+.v-board .tcard.tinted {
+  background-image: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--card-color) 18%, var(--raised)),
+    color-mix(in srgb, var(--card-color) 18%, var(--raised-edge))
+  );
+}
+:root[data-theme="dark"] .v-board .tcard.tinted {
+  background-image: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--card-color) 20%, var(--raised)),
+    color-mix(in srgb, var(--card-color) 20%, var(--raised-edge))
+  );
+}
+/* 色板:一排印着**数字键**的色点 + 无色。那个数字不是装饰 —— 1-7/0 八枚 Act 是 hidden 的
+   (不进 ⋯ 菜单),色板是它们唯一的发现入口。 */
+.v-board .card-color-row { display: inline-flex; align-items: center; gap: 5px; }
+/* ⚠ 色点上那个数字**是键名、要读的**,不是 ▸▾× 那类当图标的字形 ⇒ 按 ui-guidelines §2.2
+   第一条必须 ≥12px,⛔ 不许往 check-fs-drift 的 ALLOW 里签字(那张表只放行「要看的」)。
+   ⭐ 那道闸的头注点名的原型正是 topics 那枚色板:17px 圆钮里用 9px 写「无」,342 已抬到 12px
+   —— 这里差点重犯同一个错。⇒ 圆点跟着放到 20px 才盛得下 12px 的数字。 */
+.v-board .color-swatch {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-circle);
+  /* 色点要认得出,故这里是纯色。⚠ 用 `background-color`(只收 <color>,url() 在它上面同样
+     IACVT)而**不是** `background` 简写 —— topics.css 那枚 swatch 用的正是简写,它就是
+     休眠账 7 点名的两处 sink 之一;新写的这处别把那个形状抄过来。 */
+  background-color: var(--card-color);
+  color: var(--paper);
+  font-size: var(--fs-12);
+  line-height: 1;
+  cursor: pointer;
+}
+.v-board .color-swatch.current { outline: 2px solid var(--ink); outline-offset: 1px; }
+.v-board .color-swatch.none {
+  width: auto;
+  height: 20px;
+  padding: 0 7px;
+  border-radius: var(--radius-pill);
+  background-color: transparent;
+  color: var(--ink-soft);
+}
+
 /* 完成时刻(0030):已完成卡标题下一行「完成于 <日>」,弱化不抢标题。
    ⭐ 622:与**同卡标题齐平**(标题本来就是 --ink-soft),此前它比标题还淡一档。
    ⚠ 别指望这能让它「达标」—— 整张 `.tcard.done` 压着 `opacity: .62`,真 DOM 探针量出来
@@ -494,8 +558,13 @@
    空」的卡上会连行一起消失——而它自己一个 CSS 规则都没写错,极难往这儿想。
    `.sig-chip`(署名 0033)与 `.cm-badge`(留言 0035/0038)就是这么丢的:两轮都只管了「挂
    进 meta 行」,没管这条比它们早的收起判据 ⇒ 一张没截止/没优先级/没标签的看板卡,有留言
-   也看不到 💬 N、有署名也不显。e2e「留言 · 两形分野」那组撞出来的,同轮补上。 */
-.v-board .tcard .task-meta:not(:has(.chip:not(.redundant))):not(:has(.due-input)):not(:has(.choice)):not(:has(.link)):not(:has(.topic-hint)):not(:has(.topic-search)):not(:has(.sig-chip)):not(:has(.cm-badge)) {
+   也看不到 💬 N、有署名也不显。e2e「留言 · 两形分野」那组撞出来的,同轮补上。
+   ⚠⚠ **第三例:`.card-color-row`(卡片色板 0040)** —— 同样的形又栽了一次:色板 DOM 建出来了、
+   8 枚色点都在、字号也对,**屏上就是不出现**(真机 CDP 沿 DOM 链往上走才逮到 `task-meta` 是
+   `display:none`)。⭐ 判据必须用 `.card-color-row`(只在色板打开时存在),⛔ **不能用
+   `.color-slot`** —— 那个空 span 是恒挂着的,拿它当判据等于把这条收起规则整个废掉。
+   ⇒ 三例之后的教训:**往 meta 行挂东西时,「挂上去」和「登记进这串白名单」是同一件事的两半**。 */
+.v-board .tcard .task-meta:not(:has(.chip:not(.redundant))):not(:has(.due-input)):not(:has(.choice)):not(:has(.link)):not(:has(.topic-hint)):not(:has(.topic-search)):not(:has(.sig-chip)):not(:has(.cm-badge)):not(:has(.card-color-row)) {
   display: none;
 }
 

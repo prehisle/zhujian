@@ -96,7 +96,11 @@ pub(crate) struct CommentPack {
 /// 未必更新它)。counter 区分「无行」与具体值;position 不迁移不比。
 #[derive(PartialEq, Debug)]
 pub(crate) struct Fingerprint {
-    /// `(content, stage, 那一列的 kind, due_on, priority, created_at, archived_at, sealed_at, done_at)`。
+    /// `(content, stage, 那一列的 kind, due_on, priority, created_at, archived_at, sealed_at,
+    /// done_at, color)`。⭐ `color` 是 0040 加的第十格:它**随包迁移**(卡片是目标空间新生的,
+    /// 颜色是它自己的属性),故按 due_on/priority/done_at 同口径进指纹 —— 导出后又改了色,
+    /// finalize 就该拒绝删源。⛔ 对照:`position` 不迁移故不比;标签色也不迁移(标签按名
+    /// 归并到目标已有的那枚,色是**目标空间**的元数据,见 import 里那段签字)。
     /// ⭐ `kind` 是 0036 起加的第三格(§8.3 那条 M):落点由 `(stage, kind)` **这一对**算出
     /// ⇒ 重验时两格都得没变,否则导出后源列语义被改、二次映射可能与首次不同。
     ///
@@ -105,7 +109,7 @@ pub(crate) struct Fingerprint {
     /// 能把它单独打红(变异对照里是**预期的绿**,归类「另一条的推论」)。留着的理由是
     /// 规格点名要它、且成本是一次已在同快照里的点查:真有一天 kind 能改(或库被外力改过),
     /// 承重的就是它。⛔ 别当漏测去补一只「造不出来的」测。
-    item: (String, String, String, Option<String>, Option<i64>, String, Option<String>, Option<String>, Option<String>),
+    item: (String, String, String, Option<String>, Option<i64>, String, Option<String>, Option<String>, Option<String>, Option<String>),
     /// 排序后的 (source_topic_id, exact_title)——不能只比去重后的名字。
     topics: Vec<(String, String)>,
     /// 排序后的 (id, seq, mime, byte_len, sha256)。
@@ -142,6 +146,11 @@ pub struct MovePackage {
     /// 完成时刻(0030):Some = 该条目带完成时间,目标 create 后补 set_field 落同值保号;
     /// None = 未完成过 / 老卡未知,目标生而 NULL(不补)。
     pub(crate) done_at: Option<String>,
+    /// 颜色标记(0040):Some = 该卡带底色,目标 create 后补 set_field 落同值;None = 无色
+    /// (目标生而 NULL,不补)。⭐ **随包走**——卡片在目标空间是新生的,颜色是它自己的属性
+    /// (同 done_at);⛔ 与标签色**刻意不同**:标签按名归并到目标已有的那枚,色是目标空间
+    /// 自己的元数据(见 import 里那段签字)。
+    pub(crate) color: Option<String>,
     pub(crate) topics: Vec<(String, String)>,
     pub(crate) images: Vec<ImagePack>,
     /// 随迁留言(identity-plan §4.5,用户 2026-08-06 拍板「跟着走」)。
@@ -346,9 +355,10 @@ pub fn move_peak_bytes(conn: &Connection, item_id: &str) -> Result<i64, String> 
 pub fn export(conn: &mut Connection, item_id: &str) -> Result<ExportOutcome, String> {
     let tx = conn.transaction().map_err(|e| e.to_string())?;
 
-    let row: Option<(String, String, String, Option<String>, Option<i64>, Option<String>, Option<String>, Option<String>)> = tx
+    let row: Option<(String, String, String, Option<String>, Option<i64>, Option<String>, Option<String>, Option<String>, Option<String>)> = tx
         .query_row(
-            "SELECT content, stage, created_at, due_on, priority, archived_at, sealed_at, done_at \
+            "SELECT content, stage, created_at, due_on, priority, archived_at, sealed_at, done_at, \
+                    color \
              FROM items WHERE id = ?1",
             [item_id],
             |r| {
@@ -361,12 +371,13 @@ pub fn export(conn: &mut Connection, item_id: &str) -> Result<ExportOutcome, Str
                     r.get(5)?,
                     r.get(6)?,
                     r.get(7)?,
+                    r.get(8)?,
                 ))
             },
         )
         .optional()
         .map_err(|e| e.to_string())?;
-    let (content, stage, created_at, due_on, priority, archived_at, sealed_at, done_at) =
+    let (content, stage, created_at, due_on, priority, archived_at, sealed_at, done_at, color) =
         row.ok_or_else(|| "条目不存在".to_string())?;
     if archived_at.is_some() || sealed_at.is_some() {
         return Err("回收站/成就归档中的条目不能移动(史实轴,先还原)".to_string());
@@ -420,6 +431,7 @@ pub fn export(conn: &mut Connection, item_id: &str) -> Result<ExportOutcome, Str
         due_on,
         priority,
         done_at,
+        color,
         topics,
         images,
         comments,
@@ -481,6 +493,19 @@ pub fn import(conn: &mut Connection, clock: &mut Clock, pkg: &MovePackage) -> Re
             return Err(format!("目标空间完成时刻落值失败(影响 {n} 行)"));
         }
         oplog::item_set(&tx, clock, &new_id, &["done_at"])?;
+    }
+
+    // 颜色随迁(0040):同 done_at —— create 出生快照刻意不带 color(生而无色),故带色的卡在
+    // create 之后补一次 UPDATE + set_field,让目标账户各端回放到同一个色。无色的不补(NULL
+    // 就是正确初值,别发一条 value:null 的空 op)。
+    if let Some(color) = pkg.color.as_deref() {
+        let n = tx
+            .execute("UPDATE items SET color = ?2 WHERE id = ?1", (&new_id, color))
+            .map_err(|e| format!("目标空间颜色落值失败:{e}"))?;
+        if n != 1 {
+            return Err(format!("目标空间颜色落值失败(影响 {n} 行)"));
+        }
+        oplog::item_set(&tx, clock, &new_id, &["color"])?;
     }
 
     // 标签按名归并(§2.5):源名先去重(BTreeSet 顺带给出确定性遍历序);目标同名
@@ -824,7 +849,8 @@ fn image_digests(tx: &Connection, item_id: &str) -> Result<Vec<(String, i64, Str
 fn read_fingerprint(tx: &Connection, item_id: &str) -> Result<Fingerprint, String> {
     let row = tx
         .query_row(
-            "SELECT content, stage, due_on, priority, created_at, archived_at, sealed_at, done_at \
+            "SELECT content, stage, due_on, priority, created_at, archived_at, sealed_at, done_at, \
+                    color \
              FROM items WHERE id = ?1",
             [item_id],
             |r| {
@@ -837,6 +863,7 @@ fn read_fingerprint(tx: &Connection, item_id: &str) -> Result<Fingerprint, Strin
                     r.get::<_, Option<String>>(5)?,
                     r.get::<_, Option<String>>(6)?,
                     r.get::<_, Option<String>>(7)?,
+                    r.get::<_, Option<String>>(8)?,
                 ))
             },
         )
@@ -844,7 +871,7 @@ fn read_fingerprint(tx: &Connection, item_id: &str) -> Result<Fingerprint, Strin
     // 列的 kind 与 stage 同属一对(§8.3 M),走 board 那份唯一判据取,⛔ 别在这句 SQL 里
     // 内联第二份「什么是任务态」。
     let kind = source_kind_of(tx, &row.1)?;
-    let item = (row.0, row.1, kind, row.2, row.3, row.4, row.5, row.6, row.7);
+    let item = (row.0, row.1, kind, row.2, row.3, row.4, row.5, row.6, row.7, row.8);
     let topics = read_topics(tx, item_id)?;
     let images = image_digests(tx, item_id)?;
     let counter = read_counter(tx, item_id)?;
@@ -1178,6 +1205,73 @@ mod tests {
         match finalize_source(&mut src, &mut sc, &pkg).unwrap() {
             FinalizeOutcome::Kept { reason } => assert!(reason.contains("被改动"), "{reason}"),
             _ => panic!("done_at 差异必须拒删"),
+        }
+        assert_eq!(oplog_rows(&src), before, "拒删不发任何 op");
+    }
+
+    /// 0040:颜色随包迁移(形同 done_at —— 出生快照刻意不带 color,故目标 create 之后补一条
+    /// set_field)。⭐ 与**标签色刻意不同**:标签按名归并到目标已有的那枚、色是目标空间自己
+    /// 的元数据(import 里那段签字);而卡片在目标空间是**新生的**,颜色是它自己的属性。
+    #[test]
+    fn move_preserves_color() {
+        let (mut src, mut sc) = fresh_db("color-keep");
+        let (mut dst, mut dc) = fresh_db("color-keep-dst");
+        let id = task::create(&mut src, &mut sc, "上了色的活", None, None, None).unwrap();
+        task::set_color(&mut src, &mut sc, &id, Some("#3f8272".into())).unwrap();
+
+        let pkg = export_ready(&mut src, &id);
+        assert_eq!(pkg.color.as_deref(), Some("#3f8272"), "移动包携颜色");
+
+        let new_id = import(&mut dst, &mut dc, &pkg).unwrap();
+        let dst_color: Option<String> =
+            dst.query_row("SELECT color FROM items WHERE id=?1", [&new_id], |r| r.get(0)).unwrap();
+        assert_eq!(dst_color.as_deref(), Some("#3f8272"), "目标保住同一个色");
+        // 目标补一条 color set_field(出生快照不带 color,靠它让目标账户各端回放到同一个色)。
+        let color_vals: Vec<serde_json::Value> = ops_for(&dst, "item", &new_id)
+            .into_iter()
+            .filter(|o| o.kind == "set_field" && o.payload["field"] == "color")
+            .map(|o| o.payload["value"].clone())
+            .collect();
+        assert_eq!(color_vals, vec![serde_json::json!("#3f8272")], "补一条 color set_field");
+
+        assert!(matches!(finalize_source(&mut src, &mut sc, &pkg).unwrap(), FinalizeOutcome::Deleted));
+    }
+
+    /// 0040 无色的卡:包里 color = None,目标生而 NULL,且**不发**一条 value:null 的空 op
+    /// (下界 —— 别让上面那只测被「反正都补一条」背书成绿)。
+    #[test]
+    fn move_without_color_emits_no_color_op() {
+        let (mut src, mut sc) = fresh_db("color-none");
+        let (mut dst, mut dc) = fresh_db("color-none-dst");
+        let id = task::create(&mut src, &mut sc, "没上色的活", None, None, None).unwrap();
+        let pkg = export_ready(&mut src, &id);
+        assert_eq!(pkg.color, None);
+        let new_id = import(&mut dst, &mut dc, &pkg).unwrap();
+        let dst_color: Option<String> =
+            dst.query_row("SELECT color FROM items WHERE id=?1", [&new_id], |r| r.get(0)).unwrap();
+        assert_eq!(dst_color, None, "无色的卡在目标生而 NULL");
+        assert!(
+            ops_for(&dst, "item", &new_id)
+                .into_iter()
+                .all(|o| !(o.kind == "set_field" && o.payload["field"] == "color")),
+            "无色不许发 color set_field"
+        );
+    }
+
+    /// H1(颜色版):导出后又改了色 → finalize 指纹重验命中差异 → 拒删返回 Kept,源保留、
+    /// 零 op。⭐ 这是「把 color 加进移动指纹」那个决策的守:它若不在指纹里,这里会**静默
+    /// 删掉源**,而目标那份带的是导出时刻的旧色。
+    #[test]
+    fn concurrent_recolor_blocks_finalize() {
+        let (mut src, mut sc) = fresh_db("color-h1");
+        let id = task::create(&mut src, &mut sc, "上了色的活", None, None, None).unwrap();
+        task::set_color(&mut src, &mut sc, &id, Some("#3f8272".into())).unwrap();
+        let pkg = export_ready(&mut src, &id); // 导出捕获松石
+        task::set_color(&mut src, &mut sc, &id, Some("#6b5b95".into())).unwrap(); // 改成藤紫
+        let before = oplog_rows(&src);
+        match finalize_source(&mut src, &mut sc, &pkg).unwrap() {
+            FinalizeOutcome::Kept { reason } => assert!(reason.contains("被改动"), "{reason}"),
+            _ => panic!("color 差异必须拒删"),
         }
         assert_eq!(oplog_rows(&src), before, "拒删不发任何 op");
     }

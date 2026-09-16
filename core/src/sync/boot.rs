@@ -572,10 +572,10 @@ fn import_attached(conn: &mut Connection, clock: &mut Clock) -> Result<ImportRep
         .execute(
             "INSERT INTO items (id, content, stage, created_at, updated_at, archived_at, \
                                 due_on, priority, position, sealed_at, born_stage, done_at, \
-                                born_device) \
+                                born_device, color) \
              SELECT id, content, stage, created_at, updated_at, archived_at, \
                     due_on, priority, position, sealed_at, born_stage, done_at, \
-                    born_device FROM boot.items",
+                    born_device, color FROM boot.items",
             [],
         )
         .map_err(|e| format!("导入 items 失败:{e}"))?;
@@ -1033,7 +1033,7 @@ fn audit_contiguity_and_fk(conn: &Connection) -> Result<(), String> {
 /// 理由「不可变列不参与 LWW」与既有 born_stage 的事实不符,按 born_stage 同款加)。
 const ITEM_LWW_FIELDS: &[&str] = &[
     "content", "stage", "created_at", "due_on", "priority", "archived_at", "sealed_at",
-    "born_stage", "position", "done_at", "born_device",
+    "born_stage", "position", "done_at", "born_device", "color",
 ];
 
 /// 某 op 背书实体的某字段:表列是否 == 日志 LWW winner(winner = create 初值 + 该字段
@@ -1090,9 +1090,12 @@ fn audit_op_backed_semantics(live: &Connection) -> Result<(), String> {
     audit_op_preconditions(live)?;
     // ① item / topic 字段级 LWW:表列必须 == 日志 winner。
     for &field in ITEM_LWW_FIELDS {
-        // archived_at/sealed_at/done_at:apply_item_create 强制 NULL、忽略 payload——create 初值恒
-        // NULL(否则恶意 create 注入同名键即过审,codex 二审);其余字段读 payload 初值。
-        let create_key = if matches!(field, "archived_at" | "sealed_at" | "done_at") { None } else { Some(field) };
+        // archived_at/sealed_at/done_at/color:apply_item_create 强制 NULL、忽略 payload——create
+        // 初值恒 NULL(否则恶意 create 注入同名键即过审,codex 二审);其余字段读 payload 初值。
+        // color(0040)刻意不进 create payload(生而无色;往既有 create payload 加键会让旧端丢值,
+        // 0033→0034 判例),故与上面三个同列:审计不去 payload 找它的初值。
+        let create_key =
+            if matches!(field, "archived_at" | "sealed_at" | "done_at" | "color") { None } else { Some(field) };
         if count_field_mismatches(live, "", "item", "items", field, create_key)? > 0 {
             return Err(format!(
                 "导入后语义审计:有 item 的 {field} 终态与自身日志的 LWW 结果不符(快照与日志矛盾),整体回滚"

@@ -175,8 +175,9 @@ fn read_item_field(conn: &Connection, id: &str, field: &str) -> Result<Value, St
         "content" | "stage" | "done_at" => conn
             .query_row(&sql, [id], |r| r.get::<_, String>(0))
             .map(Value::from),
-        // 可空文本字段(position 自 0021 起是 fractional index 字符串)
-        "due_on" | "archived_at" | "sealed_at" | "position" => conn
+        // 可空文本字段(position 自 0021 起是 fractional index 字符串;color 自 0040 起是
+        // `#RRGGBB` 或 NULL=无色,格式由命令层与回放 shape 层同用 is_hex_color 守)
+        "due_on" | "archived_at" | "sealed_at" | "position" | "color" => conn
             .query_row(&sql, [id], |r| r.get::<_, Option<String>>(0))
             .map(Value::from),
         // 可空整数字段

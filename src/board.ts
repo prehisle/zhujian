@@ -45,6 +45,7 @@ import {
 } from "./board-columns";
 import { closeColumnManager, openColumnManager } from "./column-manager";
 import { type Act, SATELLITE_LAYERS, armDismiss, createHotkeyController, registerViewKeys } from "./hotkey-menu";
+import { CARD_COLORS, applyCardColor, openCardColorPicker } from "./card-color";
 import { type ImageMeta, REPASTE_HINT, imageStrip, renderContent, wirePasteToAttach } from "./item-images";
 import { toggleChecklistLine } from "../shared/checklist";
 import {
@@ -1195,6 +1196,9 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     const modeCls = mode === "board" ? item.status : mode === "trash" ? "archived" : "sealed";
     const titleP = el("p", { className: "ttitle", textContent: item.title });
     const c = el("article", { className: `tcard ${modeCls}${dueCls}` }, [titleP]);
+    // 颜色标记(0040):整卡一层极淡底色。**三种 mode 都染** —— 颜色是这张卡自己的属性,进了
+    // 回收站 / 归档册也该保着;能不能**改**才由 mode 分(见下方 actionsFor 的 board 守卫)。
+    applyCardColor(c, item.color);
     if (item.id === pulseId) {
       // 刚新建的任务落列首:一记朱砂脉冲(theme.css .just-born),用完即清。只在 born-pulse
       // 结束时摘 class——卡片自己的入场动画也会冒泡 animationend(同灵感 row)。
@@ -1300,6 +1304,23 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       // due/priority: pure-display chips on the card; edits open from the ⋯ menu (㊺).
       // 失败走 op-err 横幅(非破坏),renderError 只留给读取失败(ui-audit P0 #6)。
       const meta = metaRow(item, today, load, showOpError);
+      // 颜色(0040):色板就地展开在 due/priority 那一行(同它们的形),平时是空壳、不占位。
+      // ⚠ 只在活跃看板挂 —— core 的 set_task_color 带 archived/sealed 守卫,回收站与归档册
+      // 的卡改不动;**显示条件 = 接收条件**,别摆一条点了必然报错的入口。
+      const colorWrap = el("span", { className: "slot color-slot" });
+      if (mode === "board") meta.root.append(colorWrap);
+      // 失败 = 横幅就地报错、不改本地态(ui-audit P0 #6);成功走 load() 重渲(同其它写路径,
+      // 本地不猜真相)。
+      async function setColor(hex: string | null): Promise<void> {
+        clearOpError();
+        try {
+          await invoke("set_task_color", { id: item.id, color: hex });
+        } catch (e) {
+          showOpError(String(e));
+          return;
+        }
+        await load();
+      }
       // 署名(0033):只在活跃看板显——回收站/归档册是「已处理完」的语境,不铺
       // (2026-08-05 用户拍板的铺开范围)。挂进 due/priority 那一行末尾。
       if (boardView === "board") {
@@ -1427,6 +1448,28 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
           // 留言(§4.7,与灵感同键):N=0 时卡片上没有徽章,这里是写第一条的唯一入口。
           { label: t("board.comments"), key: "Y", run: () => openComments(mountSpace, item.id, () => void load(), item.title) },
         ];
+        // 颜色(0040):菜单里只出一项「颜色 H」开色板;1-7 / 0 八枚数字键是 `hidden` 的快速
+        // 通道(悬停即按)。⛔ 八枚全摊进菜单会把 14 行撑成 22 行 —— 发现性改由色板上印着的
+        // 数字键兑现。⚠ H = Hue:E/C/K/L/S/P/Y/T/F/A/B/M/D 是卡片键、N/R/G 是**视图级**键
+        // (registerViewKeys,与卡片键共享同一个 document),H 是剩下里唯一有语义的。
+        // ⚠ 数字键此前全空(board.ts/notebook.ts 里那两处 `=== "1"` 是 localStorage 的**值**)。
+        if (mode === "board") {
+          list.push({
+            label: t("board.color"),
+            key: "H",
+            run: () => openCardColorPicker(colorWrap, item.color, (hex) => void setColor(hex)),
+          });
+          CARD_COLORS.forEach((cc, i) => {
+            // 再按同一个数字 = 取消(省掉「先想起清除键是哪个」这一步;0 仍恒清)。
+            list.push({
+              label: cc.name,
+              key: String(i + 1),
+              hidden: true,
+              run: () => void setColor(item.color === cc.hex ? null : cc.hex),
+            });
+          });
+          list.push({ label: t("board.colorNone"), key: "0", hidden: true, run: () => void setColor(null) });
+        }
         // 左右邻居按**活着的**列算(同 moveCol:已删的列不是移动目标)。卡自己在一个已删
         // 的列里时 `i < 0` ⇒ 两条都不出 —— 那是对的:它只能被拖走或走别的动作。
         const live = cols.filter((col) => !col.deleted);

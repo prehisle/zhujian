@@ -1,0 +1,66 @@
+-- migration 0040: 卡片颜色标记(items.color)—— backlog 用户面 110
+-- 「给任务卡片快速加/去预置颜色」。
+--
+-- 动机:一列卡片多起来时整列全是纸色,扫读费劲。给 items 加一个**可空同步字段** color,
+-- 前端据此给整卡染一层极淡底色,用户手点几张关键卡,默认无色。
+--
+-- ⭐ **定位是「临时视觉标记」,不是分类**(用户 2026-09-16 拍板):分类已由标签(topics,M:N)
+-- 承担,⛔ 别把这一格做成第二套分类系统。同轮一并拍死的两条:①**不做「卡片颜色跟着标签走」**
+-- —— 一按标签筛选就整屏同色,颜色与筛选是同一维度的两次表达,信息量归零;②**不做按颜色筛选**
+-- ⇒ color 不进任何逻辑(不参与筛选/排序/统计/归档判定),纯展示层。
+--
+-- 走 oplog `item set_field` + 字段级 LWW 回放,跨设备一致;可设、可清(NULL = 无色)。
+-- 语义与 due_on/priority(0006)、topics.color(0026)同款,是同一条已走熟的路。
+--
+-- **刻意不进 create payload**(`oplog::item_create` 的八字段白名单不动):卡片生而无色,
+-- 出生快照带一个恒 NULL 的键没有意义;而**往既有 create payload 加键**会让旧端
+-- ①shape 放行额外键 ②整个 payload 原样进日志 ③它的 INSERT 没这列、值被静默丢
+-- ④水位推进、op 永不重放 ⇒ 逼出一条「从日志恢复」的迁移(0033 born_device → 0034 判例)。
+-- 形上同 archived_at/sealed_at:生而为 NULL、不进快照、只由 set_field 承载。⇒ 两处跟着:
+--   * `boot::ITEM_LWW_FIELDS` 的审计里 color 与 archived_at/sealed_at/done_at 同列
+--     (create 初值恒 NULL、不去 payload 找键,否则恶意 create 注入同名键即过审);
+--   * epoch 压实基线的 create payload 亦不带 color,照 archived_at 的形补一条 set_field。
+-- `replay::apply_item_create` 的 INSERT 是显式列清单、本就不含 color ⇒ 天然落 NULL、
+-- 天然忽略 payload 里任何 color 键,该处无需改动。
+--
+-- 值域:`#RRGGBB`。**表层刻意不加列内 CHECK**(同 0026 color:格式的正式子在代码层,
+-- 表层只当不透明字符串)。两处引用**同一个** `notes::is_hex_color`(清单 14「只许有一个
+-- 正式子」):①命令层 `task::set_color`(本机入口)②回放 shape 层 `validate_item_field_shape`
+-- (同步来的是不可信输入)。
+--
+-- ⚠ **这比 topics.color 严一格,是有意的**:`topic_field_value` 今天对 color 只判「字符串
+-- 或 null」、不验格式(backlog 休眠账 7,用户 2026-09-07 拍板「先记着不做」)。那条账的
+-- 「⛔ 别顺手改」警的是**给既有字段加入口校验**的混版代价(旧端已放行的脏值、新端拒
+-- = InvalidOp 持久隔离)。**本字段没有这个代价**:全新字段、零存量、旧端压根发不出 color op
+-- ⇒ 第一天就把入口堵上是免费的,别让它长成第二个休眠账 7。topic 那半仍在账上,另账。
+--
+-- ⛔ **前端消费面的硬约束(休眠账 7 触发门②:新增一处把同步来的自由文本喂进能吃 `url()` 的
+-- CSS 属性,门就算到)**:`--card-color` **只许**经 `color-mix()` 或 `background-color:` 消费
+-- (该账的实测字据:`background:` 简写吃 `url()`、真发得出网络请求;`color-mix()` / `color:`
+-- 一个请求都没有)。⛔ 绝不许写成 `background: var(--card-color)`。本条与上面的入口校验
+-- 双保险,任一单独成立即挡得住。
+--
+-- 跨版本政策(**单版直发,forward**;2026-07-22 用户拍板的 forward 政策,memory
+-- `single-phase-until-scale`):新增同步字段,旧端收未知 field 归 **UnsupportedVocab**
+-- = 该 origin 内存挂起、水位不动,**升级即自愈、零丢失**(判例 = v35 加留言,首版自检清单 15)。
+-- ⛔ **不是 InvalidOp** ⇒ 不进持久隔离、不需要发送端闸 —— 那是「已知字段的**新值域**」才要的
+-- (board-columns §4.0:协议对「新增字段」预留了优雅降级,对「已知字段的新值域」没有)。
+-- **诚实边界**:挂起期间该 origin 后续**即使旧端认识的 item op 也一起停**到升级为止
+-- (水位是 per-origin、全词汇共享的)—— 不污染任何终态,但会停住那条方向的同步
+-- ⇒ 发布说明须提示两端一起更新(同 0031 / 0035 口径)。
+-- oplog append-only:0040 前的 item op 不含 color,历史不改写。
+--
+-- 存量不回填:新功能零存量,NULL 就是正确初值(无色 = 无值,不是某个默认色)。
+-- ⛔ 同步字段本就不许在迁移里 UPDATE(表有值 op 无 = 引导审计判「表/日志矛盾」+ 跨端分叉)。
+--
+-- ⭐ **negative assurance**(697 codex 对抗审两弹 GO 时索取,全文在 progress-log 697):
+-- **只改调色板**(仍存 `#RRGGBB`、仍是纯视觉标记)时**不必重审** —— schema / 迁移版本 /
+-- oplog 词汇 / replay shape / `VALIDATOR_VER` / 发送端闸 / boot / epoch / 跨空间移动 /
+-- 筛选排序统计归档,一处都不动(任意六位 hex 本就合法)。⛔ **调色板成员不许进 core 校验**,
+-- 那正是「只验格式不验成员」换来的免审额度。⛔ 也不必为每个新色补同步测试:一个非空色 +
+-- 一个 null 就覆盖了协议形态。
+--
+-- 0029 起迁移文件只写事务体:无 BEGIN/COMMIT/PRAGMA user_version(runner 自有事务与版本号,
+-- 事务体内的事务控制会被 SQLite authorizer 拒)。
+
+ALTER TABLE items ADD COLUMN color TEXT;
