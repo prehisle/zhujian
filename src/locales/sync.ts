@@ -32,6 +32,10 @@ export const sync = defineMessages({
   "sync.checkUpdate": { zh: "检查更新", en: "Check for updates" },
   "sync.versionLoading": { zh: "当前 v…", en: "Current v…" },
   "sync.versionCurrent": { zh: "当前 v{v}", en: "Current v{v}" },
+  // 构建身份戳(701)。⚠ 两枚键而不是「主串 + 拼一个后缀」:拼接过的译文在别的语言里
+  // 语序未必还成立,而这两句各自是一句完整的话。
+  "sync.buildStamp": { zh: "构建 {commit} · {at}", en: "Build {commit} · {at}" },
+  "sync.buildDirty": { zh: "构建 {commit} · {at} · 含未提交改动", en: "Build {commit} · {at} · uncommitted changes" },
   "sync.createIntro": { zh: "把本机创建为账户的第一台设备,其他设备之后配对加入。", en: "Make this device the account's first device; other devices join later by pairing." },
   "sync.serverPlaceholder": { zh: "服务器地址(wss://… 或 ws://…)", en: "Server address (wss://… or ws://…)" },
   "sync.createGo": { zh: "创建", en: "Create" },

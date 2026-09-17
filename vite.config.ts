@@ -1,5 +1,6 @@
 import { defineConfig } from "vite";
 import { resolve } from "node:path";
+import { buildStampDefine } from "./scripts/lib/build-stamp.mjs";
 
 // Tauri expects a fixed dev port and a static `dist` build output.
 // Three windows = three HTML entry points: capture (the floating quick-capture
@@ -8,6 +9,9 @@ import { resolve } from "node:path";
 // 主窗的 DOM 上,于是「看起来像全屏」只能靠去动主窗的几何 —— 用户两次否掉了那条路)。
 export default defineConfig({
   clearScreen: false,
+  // 构建身份戳(701):这只产物是从哪棵树出来的。⛔ 三个 vite 工程都要有,漏一个
+  // 那一端就在运行期报 `__ZJ_BUILD__ is not defined`(注入侧顶注写了为什么不留兜底)。
+  define: buildStampDefine(),
   server: {
     port: 1420,
     strictPort: true,

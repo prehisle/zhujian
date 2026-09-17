@@ -1528,6 +1528,9 @@
       .kv { display: grid; grid-template-columns: max-content 1fr; gap: 2px 12px; font-size: var(--fs-13); }
       .kv .k { color: var(--ink-soft); white-space: nowrap; }
       .kv .v { word-break: break-all; }
+      /* 构建身份戳那一格(701)。等宽 —— 这串十六进制是用来念给人听 / 抄下来的,
+         比例字体下 0 与 O、1 与 l 挤在一起认不准。⚠ 只加字体,不碰 .kv .v 的断行。 */
+      .kv .v.mono { font-family: ui-monospace, monospace; user-select: text; }
       .row { display: flex; gap: 8px; margin-bottom: 10px; }
       .row input {
         flex: 1; min-width: 0; padding: 8px 10px;

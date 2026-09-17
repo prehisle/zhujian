@@ -146,6 +146,14 @@
   padding-top: 12px;
   border-top: 1px solid var(--line-strong);
 }
+/* 构建身份戳(701):紧贴版本行下面。等宽 —— 这串十六进制是用来念给人听 / 抄下来的,
+   比例字体下 0 与 O、1 与 l 挤在一起认不准。 */
+.sync-build {
+  margin-top: 6px;
+  font-family: Consolas, "Courier New", monospace;
+  font-size: var(--fs-12);
+  user-select: text;
+}
 .sync-input {
   font: inherit;
   font-size: var(--fs-13);

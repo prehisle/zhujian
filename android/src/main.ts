@@ -39,6 +39,7 @@ import {
 } from "./api";
 import { $, actionBar, contentHtml, dayKey, dayLabel, esc, fmtTimeOfDay, fmtWhen, hideConfirmBar, showBar, showError } from "./ui";
 import { toggleChecklistLine } from "../../shared/checklist";
+import { buildStamp, formatBuiltAt } from "../../shared/build-stamp";
 import { applyChecklistMarker, wireChecklistNewline } from "./checklist-input";
 import { DONE_COLUMN, boardColumns, isTaskStage, setColumns, stageLabel } from "./columns";
 import { capturePhoto, composeImages, PICK_MAX, pickImages } from "./images";
@@ -2180,12 +2181,21 @@ $("run").addEventListener("click", runProbe);
 
 // ---- 关于(250):这台机上装的是哪一版。手机端此前没处看版本号,排查问题第一句总是
 // 「你手机上是几点几」;版本取自 tauri.conf.json,与更新清单 android.json 同源。
+//
+// ⭐ 701 起多一行**构建身份戳**:用户那台 vivo 从此常年跑未发版的测试包,而它与正式包
+// 的 versionName 一模一样 ⇒ 版本号那一行答不出「你手上那只是哪棵树」。为什么要有它、
+// 脏是怎么判的,全在 `scripts/lib/build-stamp.mjs` 顶注。
 async function loadAbout() {
   const box = $("about");
   try {
     const v = await getVersion();
+    const b = buildStamp();
+    // `{stamp}` 是十六进制 + 日期,没有可译的字;只有「含未提交改动」那句要过字典。
+    const stamp = `${b.commit} · ${formatBuiltAt(b.at)}`;
     box.innerHTML =
       `<span class="k">${t("main.aboutVersion")}</span><span class="v">v${esc(v)}</span>` +
+      `<span class="k">${t("main.aboutBuild")}</span><span class="v mono">` +
+      `${esc(b.dirty ? t("main.aboutBuildDirty", { stamp }) : stamp)}</span>` +
       `<span class="k">${t("main.aboutSite")}</span><span class="v">zhujian.app</span>`;
   } catch (e) {
     box.innerHTML = `<span class="v warn-ink">${t("main.aboutFailed", { error: esc(String(e)) })}</span>`;

@@ -3,6 +3,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineConfig, type Plugin } from "vite";
 import { policyAsset } from "../scripts/lib/policy-asset.mjs";
+import { buildStampDefine } from "../scripts/lib/build-stamp.mjs";
 
 // 朱简鸿蒙端的前端构建(OH-d/D3 起是**产品前端**,不再是那一页验收面板)。
 //
@@ -79,6 +80,11 @@ function seam(mod: string, label: string): Plugin {
 
 export default defineConfig({
   clearScreen: false,
+  // 构建身份戳(701)。⚠ 这一端**必须**跟着有:它共用 `android/src` 那棵树,而那棵树
+  // 里的「关于」会读 `__ZJ_BUILD__` —— 漏了就在真机上运行期炸,`vite build` 一声不吭
+  // (与上面两条接缝 fail-closed 同一个理由)。`--c4` 那趟 root 换成验收面板、读不到它,
+  // 但 define 是全局文本替换,多给一份不碍事。
+  define: buildStampDefine(),
   root: c4 ? here : androidRoot,
   // 651:渠道接缝之外还烤一份**境内渠道**的隐私政策页进产物(鸿蒙上没有 xdg-open,
   // 「阅读完整隐私政策」只能在应用内看)。⛔ 别指到 site-app/ —— 那是境外那一版正文。

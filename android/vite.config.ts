@@ -3,6 +3,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineConfig, type Plugin } from "vite";
 import { policyAsset } from "../scripts/lib/policy-asset.mjs";
+import { buildStampDefine } from "../scripts/lib/build-stamp.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -52,6 +53,9 @@ function channelSeamCn(): Plugin {
 // 从局域网访问 dev server(探针工程同款)。
 export default defineConfig({
   clearScreen: false,
+  // 构建身份戳(701),与桌面同一份注入器。⛔ 别以为「手机端反正有更新条」就不需要它:
+  // 用户那台 vivo 从此跑的是没发版的包,versionName 分不出轮次(与桌面同病)。
+  define: buildStampDefine(),
   // 651:把**这条渠道**的隐私政策页烤进产物 —— 境外渠道连境外服务器、政策正文也是
   // 境外那一版;国内渠道包(channelCn)连境内服务器,必须换成 site-cool/ 那份,否则
   // 包里装的是一份对这只包不成立的政策(两份正文关于「数据在哪儿」刻意不同)。

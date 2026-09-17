@@ -103,6 +103,10 @@ export const main = defineMessages({
   "main.probeRunning": { zh: "诊断中…(连接项最长等 10 秒)", en: "Running diagnostics… (the connect step waits up to 10s)" },
   "main.probeFailed": { zh: "诊断命令失败:{error}", en: "The diagnostics command failed: {error}" },
   "main.aboutVersion": { zh: "版本", en: "Version" },
+  // 构建身份戳(701)。⚠ 只有「含未提交改动」那句要过字典:`{stamp}` 是十六进制 + 日期,
+  // 一个可译的字都没有,拼在代码里比多一枚 zh/en 逐字相同的键干净。
+  "main.aboutBuild": { zh: "构建", en: "Build" },
+  "main.aboutBuildDirty": { zh: "{stamp} · 含未提交改动", en: "{stamp} · uncommitted changes" },
   "main.aboutSite": { zh: "官网", en: "Website" },
   "main.aboutFailed": { zh: "读版本失败:{error}", en: "Could not read the version: {error}" },
   "main.updateFound": { zh: "有新版 v{version}", en: "New version v{version}" },
