@@ -505,7 +505,34 @@ function assertNoLongDocLines() {
   );
 }
 
+// ── handoff「手上的债」的形(测试与工装 113 立,698 接上)──────────────────────
+// 8 KB 闸 697 收口时只剩 6 字节余量,而债**一轮一行、只增不减**(销掉才删,那几半的触发门握在
+// 别的机器手里)⇒ 下一个人加一行必撞,还会被迫去压**别人写的**行 = 静默丢判据。
+// ⇒ 把「一句话 + 指针」这条纪律接到 land 上:行长 = 指针化后实测最长 119 + 约 10%;条数 6 = 今天 5 条 + 一格。
+// ⛔ **到顶的处置是把最老的一条指针化 / 归档到 backlog,不是抬这两个数**(同 DOC_SIZE_BUDGETS 那条)。
+// ⛔ 不是新开一根轴(停止扩张线):同一份 handoff 上的一道行级检查,与字节闸同车。
+const DEBT_LINE_MAX = 130;
+const DEBT_ITEM_MAX = 6;
+function assertHandoffDebtShape() {
+  const lines = readFileSync(join(repoRoot, "docs/handoff.md"), "utf8").split("\n");
+  const from = lines.findIndex((l) => l.startsWith("## 手上的债"));
+  if (from < 0) die(`docs/handoff.md 里找不到「## 手上的债」那一节 —— ⛔ 不落地(闸认不出债节就等于没闸)。`);
+  const rest = lines.slice(from + 1);
+  const to = rest.findIndex((l) => l.startsWith("## "));
+  const items = (to < 0 ? rest : rest.slice(0, to)).filter((l) => /^ {2}- /.test(l));
+  const bad = items.filter((l) => l.length > DEBT_LINE_MAX);
+  if (!bad.length && items.length <= DEBT_ITEM_MAX) return;
+  die(
+    `docs/handoff.md「手上的债」超形 —— ⛔ 不落地:\n` +
+      (items.length > DEBT_ITEM_MAX ? `    ${items.length} 条债,上限 ${DEBT_ITEM_MAX}\n` : "") +
+      bad.slice(0, 5).map((l) => `    ${l.length} 字符(上限 ${DEBT_LINE_MAX})—— ${l.slice(4, 44)}…`).join("\n") +
+      `\n  ⇒ 债只写「哪一轮 / 哪个面 / 谁的门」一句 + 指针,几眼住 progress-log 同号条目;\n` +
+      `  条数到顶就把最老的一条归档进 backlog。⛔ 别抬这两个数,也⛔别去压别人写的行。`,
+  );
+}
+
 function runLocalGates() {
+  assertHandoffDebtShape();
   assertClaudeMdBudget();
   assertBacklogBudget();
   assertDocSizeBudgets();
