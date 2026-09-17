@@ -455,10 +455,29 @@ const SKILL_BUDGET_DEFAULT = 12 * 1024;
 function assertSkillBudgets() {
   const dir = join(repoRoot, ".claude/skills");
   if (!existsSync(dir)) return;
+  // ⛔ **只核 git 跟踪的那些**(699):这道闸管的是「**我们自己维护的** skill 别长胖」,
+  // 而 `.claude/skills/` 下还会落**本机装的第三方 skill**(699 撞到 playwright-cli,
+  // 14.6 KB、近 600 行,一装上就把所有落地拦死)。它们不进仓、不归我们蒸馏
+  // (改了就是改坏第三方内容),拿本仓的预算去量它们没有意义。
+  // ⚠ **这不是 memory `baseline-tool-only-sees-tracked-files` 那个坑**:那条说的是
+  // 「落基线时漏掉没 add 的文件 ⇒ 基线不覆盖」;这里相反 —— 没 add 的 skill 本来就
+  // **推不上去、不会出现在任何人的仓里**,闸不管它才是对的。
+  // ⇒ 新写一个 skill 想受这道闸管,`git add` 它(本仓六个都在 git 里)。
+  const tracked = new Set(
+    git(repoRoot, ["ls-files", "--", ".claude/skills/*/SKILL.md"])
+      .split("\n")
+      .map((p) => p.split("/")[2])
+      .filter(Boolean),
+  );
   const bad = [];
+  const skipped = [];
   for (const name of readdirSync(dir)) {
     const file = join(dir, name, "SKILL.md");
     if (!existsSync(file)) continue;
+    if (!tracked.has(name)) {
+      skipped.push(name);
+      continue;
+    }
     const size = statSync(file).size;
     const budget = SKILL_BUDGETS[name] ?? SKILL_BUDGET_DEFAULT;
     if (size > budget) {
@@ -468,6 +487,13 @@ function assertSkillBudgets() {
           (SKILL_BUDGETS[name] ? "" : "(未登记,走 DEFAULT)"),
       );
     }
+  }
+  // ⭐ 跳过了谁必须**说出来** —— 一道被跳过的闸和一道通过的闸,在输出上长得一模一样。
+  if (skipped.length) {
+    console.log(
+      `ℹ skill 体积闸跳过 ${skipped.length} 份未进 git 的(本机装的第三方):${skipped.join(" / ")}` +
+        `\n  想让它受管就 \`git add\` 它,并在 SKILL_BUDGETS 里登记预算。`,
+    );
   }
   if (!bad.length) return;
   die(
