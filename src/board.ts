@@ -117,6 +117,26 @@ function sortLabel(s: BoardSort): string {
 // 卡片拖,拖动数据 = 任务 id)。真正挡住的是下面 card() 里 mousedown 看落点那一段。
 const CARD_CONTROLS = "a, button, input, textarea, label, .chip, .hk-menu-wrap, .img-strip";
 
+/** 溢出不到半行就不算「夹到了」(704)。⭐ 判据不是洁癖:正文尾巴上一个换行符就能多出一个
+ *  空行盒,为它长一枚「展开」= 点开什么也没有;而**没夹住就整张摊开**(settleFolds 当场摘夹子)
+ *  ⇒ 放宽这个数只会让边界上那几张多显半行,⛔ 绝不会把字悄悄裁掉。半行 ≈ 11px(--fs-15 × 1.5 ÷ 2);
+ *  界面字号那四档是整窗缩放、不改 CSS 像素,故这里写 px 是稳的。 */
+const FOLD_SLACK_PX = 11;
+
+/** 夹住之后,有没有**还没勾**的方框落在褶子下面 —— 长卡折叠的豁免判据(704)。
+ *
+ *  ⭐ **量的是夹后几何,不是「这条正文里有没有框」**:豁免的理由只有一个「褶子下面的框点不到」,
+ *  ⇒ 框全在前 8 行的卡(清单在开头、后面拖着一长段记录)**该照折** —— 框照样点得到,而那正是
+ *  最该折的一种卡(704 的截图逮到的:第一版按「有没有框」豁免,一张 20 行的清单卡把整列占满)。
+ *  ⛔ 别改回按行数猜:正文里一行可能渲染成两行(列宽有下限),谁在褶子下面只有落 DOM 后量得出。
+ *  判据取**方框自己的底边**越过夹线(不是整行):框在行首,行尾被切掉不影响它点不点得到。 */
+function hasBoxBelowFold(body: HTMLElement): boolean {
+  const line = body.getBoundingClientRect().bottom;
+  return [...body.querySelectorAll<HTMLElement>(".ckline:not(.on) .ckbox")].some(
+    (b) => b.getBoundingClientRect().bottom > line,
+  );
+}
+
 /** 一列之内按当前轴排。manual = 原样(后端已按 position 给);时间档按 `created_at`
  *  字符串比 —— RFC3339 同一形状下字典序 == 时序,同刻再按 id(ULID)定序,免得两张
  *  同秒建的卡每次重画都换位置。⚠ 不原地改数组:调用方那份 `items` 还要给别处用。 */
@@ -702,6 +722,11 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
   // 跳转定位(搜索/深链接/剪贴板「打开」冷着陆命中的卡):下一次渲染给它**持续常亮**的
   // .just-located(区别于 born 的一次性涟漪),留到下次点击/滚动才消(见 locate.ts)。
   let locateId: string | null = null;
+  // 摊开着的长卡(704)。⭐ **mount 级就是它该活的长度**:load() 的全量重画在同一个 mount
+  // 里,展开过的卡不会自己合上;切视图 / 重启即收回。⛔ 不进库、不进 localStorage、不进
+  // 同步 —— 展开是「读一眼」的手势不是模式(同 boardView 那个 transient peek),存起来就是
+  // 给每张卡各生一份要清理、且跨端语义还得重新定义的状态。
+  const expanded = new Set<string>();
   // 本次保存里补挂失败的标签枚数(「筛着标签建卡」把被筛的几枚全挂上,头一枚随 create_task
   // 原子落库、其余补挂)。afterCreate 每次保存重写它,onSaved / onDeadMount 两个落点读它
   // 拼提示。单值够用:模块级 in-flight 闸保证同时只有一笔保存在飞。
@@ -1214,10 +1239,21 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     if (item.id === locateId) {
       // 跳转定位冷着陆:持续常亮的朱砂高亮(theme.css .just-located),armLocate 挂一次性关闭
       // ——留到下次点击/滚动才淡出,免得「还没看清是哪条就消失了」。用完即清。
+      // 顺带**一律摊开**(704):跳过来是为了看那一条,而命中的词很可能正落在褶子下面。
+      expanded.add(item.id);
       locateId = null;
       c.classList.add("just-located");
       armLocate(c);
     }
+
+    // ---- 长卡折叠(704)------------------------------------------------------------
+    // ⭐ **先一律夹住、落 DOM 后再量**(renderBoard 末尾的 settleFolds):夹子对短卡是空操作
+    // ⇒ 量出来没溢出的当场摘掉,屏上与从前逐字同形、也不长钮(本机 348 条里 338 条如此)。
+    // ⛔ 别反过来「先摊开、量完再夹」:那会让长卡在首帧闪一下全文,而且列滚动位是 renderBoard
+    // 末尾按**夹后**的几何还原的,顺序反了就还错位。两趟都在同一个任务里跑完,中间不绘制。
+    // ⛔ **只折看板态**:回收站 / 归档册是全宽单列的只读册子,一张长卡在那儿不挡任何东西。
+    // ⛔ 方框那条豁免不在这儿判:它要的是**夹后几何**,住 settleFolds(hasBoxBelowFold)。
+    if (mode === "board") titleP.classList.add("clamped");
 
     // ---- 配图 (item images) ----
     // Cached so the 标题 can linkify 「图N」 and the read-only strip renders without refetching
@@ -1793,6 +1829,53 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     return c;
   }
 
+  /** 「展开 / 收起」那枚钮(704):只长在**真被夹住**的卡上。点一下翻 `.clamped` 并记进
+   *  `expanded` —— 记了下一发 load() 重画才不会把它又合上(重画在同一个 mount 里)。 */
+  function foldToggle(id: string, body: HTMLElement): HTMLButtonElement {
+    const b = el("button", { className: "act ghost fold-toggle", type: "button" });
+    const paint = (): void => {
+      const folded = body.classList.contains("clamped");
+      // 箭头与筛选条父子折叠那枚同一套语言(filter-bar.ts 的 ▸/▾);这里是纵向折叠,
+      // 故用 ▾(下面还有)/ ▴(收回去)。字在字典里,箭头不是文案、不进字典。
+      b.textContent = folded ? `${t("board.unfold")} ▾` : `${t("board.fold")} ▴`;
+      b.setAttribute("aria-expanded", String(!folded));
+    };
+    b.addEventListener("click", () => {
+      if (body.classList.toggle("clamped")) expanded.delete(id);
+      else expanded.add(id);
+      paint();
+    });
+    paint();
+    return b;
+  }
+
+  /** 落 DOM 之后把「谁真被夹住了」定下来:没溢出的摘掉夹子(与没有本功能时逐字同形),
+   *  真溢出的补一枚钮;已在 `expanded` 里的摊开、但**钮照留**(否则摊开过的卡就再也收不回)。
+   *
+   *  ⭐ **读写分两趟**:逐张「量一下改一下」会把一列 73 张卡变成 73 次强制重排;先把两个读数
+   *  一次性读完(一次布局),再统一写。⚠ 上限那个数(8 行)住 board.css,这里只问「夹到东西
+   *  没有」「夹到的是不是一枚还没勾的方框」—— 界面字号四档是整窗缩放,行数由 em 保证,JS 不必知道。 */
+  function settleFolds(): void {
+    const bodies = [...board.querySelectorAll<HTMLElement>(".ttitle.clamped")];
+    const read = bodies.map((p) => ({
+      over: p.scrollHeight > p.clientHeight + FOLD_SLACK_PX,
+      boxCut: hasBoxBelowFold(p),
+    }));
+    bodies.forEach((p, i) => {
+      const id = p.closest<HTMLElement>(".tcard")?.dataset.taskId;
+      if (!read[i].over || id === undefined) {
+        p.classList.remove("clamped"); // 夹子什么也没夹到:摘掉,别留一个假状态在 DOM 上
+        return;
+      }
+      // 褶子下面压着还没勾的框 ⇒ 摊开,且**记进 expanded**:勾选是不可变性的唯一例外(0039),
+      // 而勾完最后一个框的那一下(toggleBox 落盘后那发 load())判据会翻面 —— 不记的话这张卡
+      // 会在手指底下自己合上。
+      if (read[i].boxCut) expanded.add(id);
+      if (expanded.has(id)) p.classList.remove("clamped");
+      p.after(foldToggle(id, p));
+    });
+  }
+
   function renderBoard(items: TaskItem[]): void {
     board.className = "board-wrap";
     // 复制看板: copies every non-empty column as Markdown. Built from the currently
@@ -1943,6 +2026,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
 
     const cols_wrap = el("div", { className: "cols" }, sections);
     board.replaceChildren(cols_wrap, zone);
+    settleFolds(); // ⚠ 必须在还原滚动位**之前**:下面那几行还的是**夹后**几何里的位置
     // 还原各列滚动位(记录见 load() 重画定局处;列变短时 scrollTop 由浏览器自钳位)。
     for (const sec of board.querySelectorAll<HTMLElement>(".col")) {
       const colBody = sec.querySelector<HTMLElement>(".col-body");

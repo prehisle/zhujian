@@ -627,6 +627,18 @@
   word-break: break-word;
   white-space: pre-wrap; /* render the newlines a multi-line title may carry */
 }
+/* ---- 长卡折叠(704)------------------------------------------------------------
+   正文超过 8 行就夹住(12em = 8 × 上面那条 line-height 1.5),下面长一枚「展开」。
+   「夹到东西没有」由 JS 量(board.ts settleFolds),CSS 这层只管夹。
+   ⚠ **上限必须走 em、不许写死 px**:界面字号那四档是整窗缩放(settings.ts「字号——整体
+   缩放主窗」),px 在放大档下会把可见行数一路压掉(8 行 → 5 行),em 跟着字号走,哪一档
+   都恰好是 8 行。
+   ⛔ **刻意没有渐隐遮罩**:那要往 check-hardcoded-colors 的放行表里添一行(mask 的通道值
+   `#000` —— 官网那处正是这么签的),而「展开」这枚钮本身已经把「下面还有」说清楚了。
+   ⛔ 钮**不覆写 .act 的 padding**:.act 那份(12px 字 + 上下各 5px + 边框)恰好卡在
+   check-hit-zone 的 24px 自保线上,照 691 那样收窄成 1px 就得去登记表里签一行。 */
+.v-board .ttitle.clamped { max-height: 12em; overflow: hidden; }
+.v-board .tcard .fold-toggle { margin-top: 6px; }
 .v-board .tcard.done .ttitle { color: var(--ink-soft); }
 .v-board .tcard.done .ttitle::before { content: "✓ "; color: var(--seal); font-weight: 700; }
 /* 待确认 title hint: a quiet ⋯ marks work parked awaiting confirmation */

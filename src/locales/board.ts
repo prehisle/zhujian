@@ -62,6 +62,8 @@ export const board = defineMessages({
   "board.partialHandled": { zh: "我已处理,解除", en: "Handled, dismiss" },
   "board.edit": { zh: "编辑", en: "Edit" },
   "board.zoomEdit": { zh: "放大编辑", en: "Expand editor" },
+  "board.unfold": { zh: "展开", en: "Expand" },
+  "board.fold": { zh: "收起", en: "Collapse" },
   "board.copy": { zh: "复制", en: "Copy" },
   "board.copyLink": { zh: "复制链接", en: "Copy link" },
   "board.tags": { zh: "标签", en: "Tags" },
