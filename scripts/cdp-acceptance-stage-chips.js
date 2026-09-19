@@ -40,10 +40,15 @@
   const purge = async (id) => {
     if (!id) return;
     let del = null;
+    // 706 起「删除」收进了操作面的「更多…」子面:点正文开面 → 点「更多…」→ 才拿得到它。
+    // ⛔ 别退回「开面就找 del」——那会静默拿到 null,把探针留在用户库里(同下面那条 639 的坑)。
     for (let i = 0; i < 3 && !del; i++) {
       const c = cardOf(id);
       if (!c) break;
       click(c.querySelector(".content"));
+      const more = await until(() => cardOf(id)?.querySelector('.panel [data-pact="more"]'), 1500);
+      if (!more) continue;
+      click(more);
       del = await until(() => cardOf(id)?.querySelector('.panel [data-pact="del"]'), 1500);
     }
     if (del) {

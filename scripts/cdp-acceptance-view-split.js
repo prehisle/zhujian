@@ -130,16 +130,18 @@
     ok("命中任务跳任务面并闪卡", !!landed);
 
     // ⑦ 卡片编辑草稿拒切面(compose 草稿不挡,②已验它随面走)
+    // ⚠ 706 起编辑那张表单不在卡里了:点「编辑」弹屏底的编辑层(`#edit-sheet.open`),
+    // 「取消」也在那层上(`#edit-cancel`)。草稿闸(hasDirtyDraft)照旧挡切面。
     const c2 = cardOf(idI);
     click(c2.querySelector(".content"));
     const editBtn = await until(() => c2.querySelector('.panel [data-pact="edit"]'));
     click(editBtn);
-    await until(() => c2.querySelector("textarea.edit"));
+    await until(() => document.getElementById("edit-sheet").classList.contains("open"));
     click(modeBtn("ideas"));
     await sleep(150);
     ok("卡片编辑草稿挡切面", activeMode() === "tasks");
-    click(c2.querySelector('.panel [data-pact="cancel"]'));
-    await until(() => !c2.querySelector("textarea.edit"));
+    click(document.getElementById("edit-cancel"));
+    await until(() => !document.getElementById("edit-sheet").classList.contains("open"));
 
     // ⑧ pane 开着点 mode:关面 + 落对应面(高亮跟 mode,无 pane-open 残留)
     click(document.querySelector('#bottombar [data-pane="trash"]'));
@@ -194,9 +196,15 @@
     // 缺失不会静默算过,任何残留都会在搜索里现形,cleaned=false → pass=false)。
     out.cleaned = false;
     try {
-      const cancelBtn = document.querySelector('#timeline .panel [data-pact="cancel"]');
-      if (cancelBtn) {
-        click(cancelBtn); // 开着的编辑/标签草稿会挡删除与切面:先取消
+      // 开着的编辑/标签草稿会挡删除与切面:先取消。706 起正文编辑在屏底那层
+      // (「取消」= `#edit-cancel`),标签草稿仍在面板里(「返回」= `data-pact="back"`)。
+      if (document.getElementById("edit-sheet").classList.contains("open")) {
+        click(document.getElementById("edit-cancel"));
+        await sleep(150);
+      }
+      const backBtn = document.querySelector('#timeline .panel [data-pact="back"]');
+      if (backBtn) {
+        click(backBtn);
         await sleep(150);
       }
       if (cb && !cb.hidden) click(document.getElementById("confirmbar-no"));
@@ -216,6 +224,10 @@
         const c = cardOf(id);
         if (!c) continue;
         click(c.querySelector(".content"));
+        // 706:「删除」收进了「更多…」子面 —— 开面板 → 点更多 → 才拿得到它。
+        const more = await until(() => c.querySelector('.panel [data-pact="more"]'), 1500);
+        if (!more) continue;
+        click(more);
         const del = await until(() => c.querySelector('.panel [data-pact="del"]'), 1500);
         if (!del) continue;
         click(del);

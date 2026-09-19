@@ -55,19 +55,29 @@ const HELPERS = `
     click(document.querySelector('#bottombar [data-pane="trash"]'));
     return (await until(() => trashOpen() === want, 1500)) !== null;
   };
+  const inPanel = (id, act) => {
+    const c = cardOf(id);
+    return (c && c.querySelector('.panel [data-pact="' + act + '"]')) || null;
+  };
+  // 706 起操作面主面只剩四枚,「删除」等低频件在「更多…」子面里 ⇒ 先把面板弄回主面
+  // (判据 = "more" 这枚在不在),主面上没有的再钻一层。⛔ 别写成「恒先点 more」。
+  // ⛔ 这一段住在模板字符串里:注释里一个反引号都不能写,写了整支 .mjs 当场 SyntaxError。
   const openCardAct = async (id, act) => {
-    for (let i = 0; i < 3; i++) {
-      const c = cardOf(id);
-      const hit = c && c.querySelector('.panel [data-pact="' + act + '"]');
+    for (let i = 0; i < 4; i++) {
+      if (!inPanel(id, "more")) {
+        const c = cardOf(id);
+        const body = c && c.querySelector(".content");
+        if (!body) return null;
+        const back = inPanel(id, "back");
+        if (back) click(back); // 停在某张子面上:先回主面
+        else click(body); // 面板没开:点正文开它
+        await until(() => inPanel(id, "more"), 1500);
+        continue;
+      }
+      const hit = inPanel(id, act);
       if (hit) return hit;
-      const body = c && c.querySelector(".content");
-      if (!body) return null;
-      click(body);
-      const got = await until(() => {
-        const cc = cardOf(id);
-        return cc && cc.querySelector('.panel [data-pact="' + act + '"]');
-      }, 1500);
-      if (got) return got;
+      click(inPanel(id, "more"));
+      return await until(() => inPanel(id, act), 1500);
     }
     return null;
   };

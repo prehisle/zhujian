@@ -29,6 +29,27 @@
   const sheetOpen = () => document.body.classList.contains("cm-open");
   const cardOf = (id) => document.querySelector(`#timeline [data-id="${id}"]`);
   const badgeOf = (id) => cardOf(id)?.querySelector(".cm-badge");
+  const inPanel = (id, act) => cardOf(id)?.querySelector(`.panel [data-pact="${act}"]`) ?? null;
+  /** 拿操作面上的「留言」入口。706 起**随记卡**的主面四枚是 编辑/标签/转待办/更多…
+   *  ⇒ 留言在「更多…」里(任务卡它仍在主面)。面板可能本来就开着、也可能停在某张子面上,
+   *  故判据一律是「`more` 这枚在不在」= 现在是主面。 */
+  const commentEntry = async (id) => {
+    for (let i = 0; i < 4; i++) {
+      const hit = inPanel(id, "comment");
+      if (hit) return hit;
+      const more = inPanel(id, "more");
+      if (more) {
+        click(more);
+        return await until(() => inPanel(id, "comment"), 3000);
+      }
+      const back = inPanel(id, "back");
+      const body = cardOf(id)?.querySelector(".content");
+      if (!body) return null;
+      click(back ?? body); // 子面 → 回主面;没开 → 点正文开它
+      await until(() => inPanel(id, "more"), 3000);
+    }
+    return null;
+  };
 
   const spaces = await invoke("list_spaces");
   const space = spaces.find((s) => s.current)?.id;
@@ -50,8 +71,7 @@
 
     // ---- ① N=0 不显徽章;写入口在操作面板 ------------------------------------
     check("零留言时卡上无徽章", !badgeOf(itemId));
-    click(cardOf(itemId).querySelector(".content")); // 开卡片操作面板(节点现查,见下面那条纪律)
-    const entry = await until(() => cardOf(itemId)?.querySelector('.panel [data-pact="comment"]'));
+    const entry = await commentEntry(itemId); // 开面板 →(随记卡)钻「更多…」→ 拿入口
     if (!check("操作面板有「留言」入口", !!entry)) return { pass: false, rows };
     click(entry);
     if (!check("层开了", await until(() => sheetOpen(), 2000))) return { pass: false, rows };
@@ -116,11 +136,7 @@
     //    (本脚本首版就栽在这儿,现象是「entry2 找得到、点了没反应」);
     //  - 面板此刻**可能本来就开着**(cardPanel.restore 跨重画接回),再点一次正文是**收**
     //    面板 —— 先看按钮在不在,别盲点。
-    let entry2 = cardOf(itemId)?.querySelector('.panel [data-pact="comment"]');
-    if (!entry2) {
-      click(cardOf(itemId).querySelector(".content"));
-      entry2 = await until(() => cardOf(itemId)?.querySelector('.panel [data-pact="comment"]'), 3000);
-    }
+    const entry2 = await commentEntry(itemId);
     if (entry2) click(entry2);
     check("再次开层", await until(() => sheetOpen(), 2000), `entry2=${!!entry2}`);
     await invoke("archive_note", { spaceId: space, id: itemId });

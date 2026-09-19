@@ -1,6 +1,20 @@
-// 卡片操作面板(120,codex 设计审+实现审两轮后的形):点时间轴卡片展开行内操作——
-// 灵感卡:编辑 · 标签 · 转待办 · 删除;任务卡:编辑 · 标签 · 状态/截止/优先级 ·
-// 撤回(仅 todo,两拍并提示会清截止/优先级)· 入册(仅 done)· 删除。
+// 卡片操作面板(120,codex 设计审+实现审两轮后的形):点时间轴卡片展开行内操作。
+//
+// ⭐ **706 瘦身**(用户 2026-09-19 当面报「这么多按钮体验太 low」):此前一张任务卡点开
+// 就是 **17 个可点的东西**(七枚动作 + 五枚状态 + 日期框 + 四枚优先级),卡片正文两行、
+// 操作区五行。病根不是「钮多」,是三件事挤在同一张表上:动词与值长得一模一样、没有频次
+// 分层(天天点的「编辑」与一年一次的「历史」等重)、同一件事三条路(滑动 / 勾框 / 五枚状态)
+// 而最难看的那条占了最大面积。⇒ 改成**两行**:
+//   ① 动作行**四枚封顶** —— 任务:编辑 · 标签 · 留言 · 更多…;随记:编辑 · 标签 · 转待办 · 更多…
+//   ② 值 chip 行(仅任务)—— 状态 / 截止 / 优先级 各一枚,**显示当前值**、点开才出候选,
+//      选完自己回到 ①。
+//   低频那几件(历史 · 移动 · 撤回为随记 · 归档 · 删除 · 随记的留言)收进「更多…」子面,
+//   删除排最后、朱砂。数:随记 4 枚 / 任务 7 枚(改前 7 / 17)。
+// ⛔ 别把三条 lane 摊回 actions 面 —— 那正是本轮要治的病。⛔ 也别往动作行里加第五枚:
+//   四枚是**上限**不是巧合(它要在 360px 屏上排一行、且一眼数得完),新入口进「更多…」。
+//
+// ⭐ 编辑不在这儿画了(706 第二笔):正文编辑搬进屏底的**编辑层**(`editsheet.ts`),
+// 本模块仍是它唯一的宿主 —— 草稿、session 判弃、写口 run() 一个字没挪。
 //
 // 契约(codex 120 设计审 H1/M7/M8 + 实现审 H1/M2/M3,勿回退):
 // - **草稿在 state 不在 DOM**(实现审 H1):editDraft/tagDraft 随 input 事件实时入
@@ -17,6 +31,9 @@
 // - **两拍确认**:删除/撤回/入册,第一拍弹底部固定确认条(ui-audit P0 #4:原位换
 //   话术会变宽换行+3s 复原,第二拍可能落到毗邻的单拍控件),第二拍在固定条上执行,
 //   onYes 复核 session 未变;in-flight 期间整面禁点(防双击重复写)。
+// - **外壳投影只有一个同步点**(706):`body.panel-open`(悬浮 ＋ 让位)与编辑层的开合,
+//   一律由 `setState` / `setMode` 末尾那记 `syncShell()` 推出去 —— ⛔ 别在别处零散地
+//   `state = …` 或 `session.mode = …`,漏一处的样子是「＋ 钮赖着不走」或「编辑层关不掉」。
 import {
   addItemImage,
   deleteItemImage,
@@ -57,11 +74,12 @@ import { t } from "./i18n";
 import { $, actionBar, confirmBar, esc, fmtWhen, hideConfirmBar, showBar, showError } from "./ui";
 import { DONE_COLUMN, LANDING_COLUMN, isTaskStage, liveTaskColumns, stageLabel } from "./columns";
 import { capturePhoto, PICK_MAX, pickImages, toBase64 } from "./images";
-import { hydrateThumbs } from "./thumbs";
 import { openViewer } from "./viewer";
-import { applyChecklistMarker, delegateChecklistNewline } from "./checklist-input";
+import { closeEditSheet, openEditSheet, paintEditSheet, type EditHost } from "./editsheet";
 
-type Mode = "actions" | "edit" | "tags" | "move" | "history";
+// actions = 两行主面;more = 低频动作子面;status/due/prio = 值 chip 各自点开的那一排
+// (选完自己回 actions);tags/move/history = 既有三张子面;edit = 屏底编辑层开着。
+type Mode = "actions" | "more" | "edit" | "tags" | "move" | "history" | "status" | "due" | "prio";
 
 type PanelState = {
   space: string;
@@ -101,6 +119,10 @@ type Deps = {
   /** 开留言层(main.ts openCommentsFor,与卡上 💬 徽章同一个入口)。**N=0 时这里是
    *  唯一入口**——徽章 N=0 不显示,没有它第一条留言就无从写起(§4.7 第 1 条)。 */
   openComments: (itemId: string) => void;
+  /** 截止日的相对表达(「今天」/「逾期 3 天」/「8/27」)。706 值 chip 要它 —— 与**卡上那颗
+   *  角标同一支笔**(main.ts 的 dueLabel),⛔ 别在这儿另写一份,更别把 ISO 原串摆上去:
+   *  `2026-08-27` 在 360px 屏上一枚就吃掉半行,而它正是这一轮要治的「系统脸」。 */
+  dueLabel: (due: string) => string;
 };
 
 // 状态 picker 的目标域 = **能落卡的那几列**(B-f 第 1 段起从库里来;已删的列不在内 ——
@@ -124,6 +146,27 @@ let deps: Deps;
 let state: PanelState | null = null;
 let busy = false; // 面板内写操作 in-flight:整面禁点(事件入口统一拒)
 
+/** 面板态的两处**外壳投影**的唯一同步点(706):
+ *  ① `body.panel-open` —— 悬浮 ＋ 让位(它是 fixed 的,压在操作面/编辑层的钮上,用户面报的);
+ *  ② 编辑层 —— 只要面板不在 edit 态,层就该是收着的(换卡 / 进别的子面 / 收面 / 切空间同理)。
+ *  ⛔ 别在别处零散地推这两样:漏一处的样子是「＋ 赖着不走」或「编辑层关不掉」。 */
+function syncShell(): void {
+  document.body.classList.toggle("panel-open", state !== null);
+  if (!state || state.mode !== "edit") closeEditSheet();
+}
+
+/** 换面板态(开 / 收 / 换卡)。⛔ 一切 `state = …` 都走这里。 */
+function setState(next: PanelState | null): void {
+  state = next;
+  syncShell();
+}
+
+/** 换子面。⛔ 一切 `session.mode = …` 都走这里。 */
+function setMode(session: PanelState, mode: Mode): void {
+  session.mode = mode;
+  syncShell();
+}
+
 export function hasDirtyDraft(): boolean {
   if (!state) return false;
   if (state.mode === "edit") return true; // 编辑态恒脏:光标/选区也经不起重画
@@ -136,24 +179,30 @@ export function hasDirtyDraft(): boolean {
 export function forceClose(reason?: string) {
   const hadDraft = hasDirtyDraft();
   clearConfirm();
-  state = null;
+  setState(null); // 编辑层随之收掉(syncShell)
   document.querySelector("#timeline .panel")?.remove();
-  clearEditing();
   if (hadDraft) showBar(reason ?? t("cardpanel.draftDropped"));
   deps.onDraftClosed();
+}
+
+/** 返回键把编辑层弹掉了(main.ts 的 popstate 已收 DOM):这边只收草稿态。
+ *  ⛔ 不在这里再调 closeEditSheet 的 settle 那条路 —— 守门条目已经弹过了。 */
+export function editDismissed(): void {
+  if (state?.mode !== "edit") return;
+  closeDraft();
 }
 
 /** refresh 重建 DOM 后把展开态接回;条目已不在(被删/换空间)= 清态。 */
 export function restore(scope: HTMLElement) {
   if (!state) return;
   if (state.space !== getCurrentSpace() || !deps.getItem(state.id)) {
-    state = null;
+    setState(null);
     clearConfirm(); // 条目已不在:挂着的确认一并作废
     return;
   }
   const card = scope.querySelector<HTMLElement>(`article.card[data-id="${state.id}"]`);
   if (!card) {
-    state = null;
+    setState(null);
     clearConfirm();
     return;
   }
@@ -170,12 +219,6 @@ function clearConfirm() {
   hideConfirmBar();
 }
 
-/** 摘掉原地编辑标记(面板拆除/清屏时用;renderPanel 里换卡自会摘旧上新)。 */
-function clearEditing() {
-  document
-    .querySelectorAll<HTMLElement>("#timeline .card.editing")
-    .forEach((c) => c.classList.remove("editing"));
-}
 
 function currentCard(): HTMLElement | null {
   if (!state) return null;
@@ -193,6 +236,15 @@ function actBtn(act: string, label: string, opts: { warn?: boolean } = {}): stri
   return `<button data-pact="${act}" class="${opts.warn ? "warn" : ""}"${busy ? " disabled" : ""}>${label}</button>`;
 }
 
+/** 值 chip(706):`键 值 ▾` 三段 —— 键是灰的小字,值是这条现在的样子,▾ 说明点得开。
+ *  `set` = 设过值(截止/优先级),往朱砂上靠一档;状态恒有值,故恒 set。 */
+function propBtn(act: "status" | "due" | "prio", key: string, value: string, set: boolean): string {
+  return (
+    `<button data-pact="${act}" class="prop${set ? " set" : ""}"${busy ? " disabled" : ""}>` +
+    `<span class="k">${key}</span><span class="v">${esc(value)}</span><span class="k">▾</span></button>`
+  );
+}
+
 function renderPanel(card: HTMLElement) {
   if (!state) return;
   const item = deps.getItem(state.id);
@@ -200,32 +252,34 @@ function renderPanel(card: HTMLElement) {
   document.querySelector("#timeline .panel")?.remove();
   const panel = document.createElement("div");
   panel.className = "panel";
-  if (state.mode === "edit") {
-    panel.innerHTML = renderEdit();
-  } else if (state.mode === "tags") {
+  if (state.mode === "tags") {
     panel.innerHTML = renderTags(item);
   } else if (state.mode === "move") {
     panel.innerHTML = renderMove();
   } else if (state.mode === "history") {
     panel.innerHTML = renderHistory();
+  } else if (state.mode === "more") {
+    panel.innerHTML = renderMore(item);
+  } else if (state.mode === "status" || state.mode === "due" || state.mode === "prio") {
+    panel.innerHTML = renderValuePicker(item, state.mode);
   } else {
+    // actions,以及 edit —— 编辑态屏上的主角是屏底那层,遮罩底下这张卡照常画两行主面
+    // (卡片正文也照常在,那才是「原地」:不跳页、改的是哪一条一眼看得见)。
     panel.innerHTML = renderActions(item);
   }
   card.querySelector(".body")!.appendChild(panel);
-  // 原地编辑标记(674):同一时刻只一张卡开面,先摘所有旧 `editing` 再给当前卡上——换卡 /
-  // 进 tags·move·history·actions 面都随之退出编辑态(卡上只读三块重新露出)。
-  document
-    .querySelectorAll<HTMLElement>("#timeline .card.editing")
-    .forEach((c) => c.classList.remove("editing"));
-  if (state.mode === "edit") {
-    card.classList.add("editing");
-    hydrateThumbs(panel); // 编辑面缩略图字节:缓存命中直接填,否则滚到可视区才拉(同只读那套)
-  }
-  if (state.mode === "edit" && !busy) {
-    const ta = panel.querySelector<HTMLTextAreaElement>("textarea.edit")!;
-    ta.focus();
-    ta.setSelectionRange(ta.value.length, ta.value.length);
-  }
+  if (state.mode === "edit") paintEditSheet(editView());
+}
+
+/** 递给编辑层的那份投影(真相仍在 state / lastItems)。 */
+function editView() {
+  const item = state ? deps.getItem(state.id) : undefined;
+  return {
+    text: state?.editDraft ?? "",
+    topics: (item?.topics ?? []).map((tp) => ({ title: tp.title, color: tp.color })),
+    images: state?.editImages ?? [],
+    busy,
+  };
 }
 
 function renderActions(item: TimelineItem): string {
@@ -237,37 +291,80 @@ function renderActions(item: TimelineItem): string {
       `<button data-pact="move-ack" class="p">${t("cardpanel.moveAck")}</button></div>`
     : "";
   const task = isTaskStage(item.stage);
-  // 加图 / 拍照挪进了编辑面(674):图的增删都在编辑那张表单里,操作面不再各摆一枚。
+  // 动作行**四枚封顶**(706):前三枚按频次拍——任务卡日常是「改字 / 归类 / 留话」,
+  // 随记卡是「改字 / 归类 / 转成待办」(转待办是产品主干路,⛔ 别把它埋进「更多…」)。
+  // 加图 / 拍照在编辑层里(674 起就不在操作面)。
   const acts: string[] = [
     actBtn("edit", t("cardpanel.actEdit")),
     actBtn("tags", t("cardpanel.actTags")),
-    actBtn("comment", t("cardpanel.actComment")),
-    actBtn("history", t("cardpanel.actHistory")),
+    task ? actBtn("comment", t("cardpanel.actComment")) : actBtn("promote", t("cardpanel.actPromote")),
+    actBtn("more", t("cardpanel.actMore")),
   ];
-  if (!task) acts.push(actBtn("promote", t("cardpanel.actPromote")));
+  // 值 chip 行(仅任务):显示当前值、点开才出候选。⚠ 卡上的角标只在**设了**截止/优先级时
+  // 才有 ⇒ 这三枚恒在,否则「还没设」那一态就没有入口了。
+  const props = task
+    ? `<div class="props">${[
+        propBtn("status", t("cardpanel.laneStatus"), stageLabel(item.stage)!, true),
+        propBtn(
+          "due",
+          t("cardpanel.laneDue"),
+          item.due_on ? deps.dueLabel(item.due_on) : t("cardpanel.dueNone"),
+          item.due_on !== null,
+        ),
+        propBtn(
+          "prio",
+          t("cardpanel.lanePriority"),
+          PRIORITIES.find((p) => p.key === (item.priority ?? null))!.label,
+          item.priority !== null,
+        ),
+      ].join("")}</div>`
+    : "";
+  return `${noteBlock}<div class="acts">${acts.join("")}</div>${props}`;
+}
+
+/** 「更多…」子面(706):低频那几件。次序 = 由轻到重,**删除永远在最后**并与上面隔开
+ *  (它是这一面唯一的朱砂)。⛔ 别把这几枚挪回动作行 —— 一年点一次的东西不该天天占屏。 */
+function renderMore(item: TimelineItem): string {
+  const task = isTaskStage(item.stage);
+  const acts: string[] = [];
+  if (!task) acts.push(actBtn("comment", t("cardpanel.actComment"))); // 随记的留言让位给「转待办」
+  acts.push(actBtn("history", t("cardpanel.actHistory")));
+  // 移动入口:仅 ≥2 空间、且本条无未处理的部分移动登记时出现(§4)。
+  if (!movePartialNote(item.id) && deps.getSpaces().length >= 2) acts.push(actBtn("move", t("cardpanel.actMove")));
   if (item.stage === LANDING_COLUMN) acts.push(actBtn("revert", t("cardpanel.actRevert"), { warn: true }));
   if (item.stage === DONE_COLUMN) acts.push(actBtn("seal", t("cardpanel.actSeal")));
-  // 移动入口:仅 ≥2 空间、且本条无未处理的部分移动登记时出现(§4)。
-  if (!partial && deps.getSpaces().length >= 2) acts.push(actBtn("move", t("cardpanel.actMove")));
   acts.push(actBtn("del", t("cardpanel.actDelete"), { warn: true }));
-  const lanes = task
-    ? `<div class="lane"><span class="lab">${t("cardpanel.laneStatus")}</span><span class="pillrow">${statuses().map((s) =>
-        pill(s.label, `data-status="${s.key}"`, item.stage === s.key, busy || item.stage === s.key),
-      ).join("")}</span></div>
-      <div class="lane"><span class="lab">${t("cardpanel.laneDue")}</span>
-        <input type="date" data-due value="${esc(item.due_on ?? "")}"${busy ? " disabled" : ""} />
-        ${item.due_on ? `<button data-pact="due-clear" class="p"${busy ? " disabled" : ""}>${t("cardpanel.dueClear")}</button>` : ""}
-      </div>
-      <div class="lane"><span class="lab">${t("cardpanel.lanePriority")}</span><span class="pillrow">${PRIORITIES.map((p) =>
-        pill(
-          p.label,
-          `data-prio="${p.key ?? ""}"`,
-          (item.priority ?? null) === p.key,
-          busy || (item.priority ?? null) === p.key,
-        ),
-      ).join("")}</span></div>`
-    : "";
-  return `${noteBlock}<div class="acts">${acts.join("")}</div>${lanes}`;
+  return `<div class="acts">${acts.join("")}</div>
+    <div class="acts"><button data-pact="back"${busy ? " disabled" : ""}>${t("cardpanel.back")}</button></div>`;
+}
+
+/** 值 chip 点开的那一排(706):一次只出一样,选完由写口把 mode 拨回 actions。
+ *  ⚠ 状态那排的目标域仍是**能落卡的那几列**,当前那枚 disabled —— 判据与从前逐字一致。 */
+function renderValuePicker(item: TimelineItem, which: "status" | "due" | "prio"): string {
+  let lane: string;
+  if (which === "status") {
+    lane = `<span class="lab">${t("cardpanel.laneStatus")}</span><span class="pillrow">${statuses()
+      .map((s) => pill(s.label, `data-status="${s.key}"`, item.stage === s.key, busy || item.stage === s.key))
+      .join("")}</span>`;
+  } else if (which === "due") {
+    lane =
+      `<span class="lab">${t("cardpanel.laneDue")}</span>` +
+      `<input type="date" data-due value="${esc(item.due_on ?? "")}"${busy ? " disabled" : ""} />` +
+      (item.due_on
+        ? `<button data-pact="due-clear" class="p"${busy ? " disabled" : ""}>${t("cardpanel.dueClear")}</button>`
+        : "");
+  } else {
+    lane = `<span class="lab">${t("cardpanel.lanePriority")}</span><span class="pillrow">${PRIORITIES.map((p) =>
+      pill(
+        p.label,
+        `data-prio="${p.key ?? ""}"`,
+        (item.priority ?? null) === p.key,
+        busy || (item.priority ?? null) === p.key,
+      ),
+    ).join("")}</span>`;
+  }
+  return `<div class="lane">${lane}</div>
+    <div class="acts"><button data-pact="back"${busy ? " disabled" : ""}>${t("cardpanel.back")}</button></div>`;
 }
 
 /** 移动 picker(§2.7 安卓入口):**永久删历史告知在选择之前**(§4)+ 其他空间按
@@ -303,53 +400,6 @@ function renderHistory(): string {
     .join("");
   return `<div class="hist">${rows || `<span class="lab">${t("cardpanel.histEmpty")}</span>`}</div>
     <div class="acts"><button data-pact="back"${busy ? " disabled" : ""}>${t("cardpanel.back")}</button></div>`;
-}
-
-function renderEdit(): string {
-  // 原地编辑表单(674):textarea + 缩略图条 + 钮排,顶在正文的位置(卡上只读三块由
-  // `.card.editing` 藏)。图的增删就在这里 —— 与桌面编辑态同形,不再让「加图」独占操作面。
-  const item = state ? deps.getItem(state.id) : undefined;
-  const topics = item?.topics ?? [];
-  // 只读标签行(674,照桌面编辑态):有标签才显,改标签仍走操作面的「标签」子面板。
-  const tagRow = topics.length
-    ? `<div class="edit-tags">${topics
-        .map(
-          (tp) =>
-            `<span class="chip${tp.color ? " tinted" : ""}"${tp.color ? ` style="--tc:${esc(tp.color)}"` : ""}>${esc(tp.title)}</span>`,
-        )
-        .join("")}</div>`
-    : "";
-  const imgs = state?.editImages ?? [];
-  // 缩略图条复用只读那套(`.thumbs`/`.thumb`,字节走 thumbs.ts)。删钮挂 `data-editdel`
-  // (不是 `.imgmanage` 那条显隐了):点它就地删、只重画本卡缩略图,不刷整轴。⛔ 缩略图本体
-  // 编辑态不接看大图(main 的 click 见 panel 内即让路;要看大图取消编辑回卡片点)——故不写
-  // 「查看」aria,内部「图N」文本即可辨识。
-  const thumbs = imgs.length
-    ? `<div class="thumbs">${imgs
-        .map(
-          (im) =>
-            `<button class="thumb" data-img="${esc(im.id)}" data-seq="${im.seq}"><span class="tag-n">${t(
-              "images.imageN",
-              { n: im.seq },
-            )}</span><span class="thumb-del" data-editdel="${esc(im.id)}" data-seq="${im.seq}" aria-label="${t(
-              "main.deleteImage",
-              { n: im.seq },
-            )}">×</span></button>`,
-        )
-        .join("")}</div>`
-    : "";
-  // 钮排照「记一笔」那一行(`.compose-row`):加图/拍照/清单靠左小钮、保存靠右(它自带
-  // margin-left:auto),取消随后。「＋ 清单」= 桌面 Ctrl+L 在手机的样子,第二项起靠回车续行。
-  return `<textarea class="edit">${esc(state?.editDraft ?? "")}</textarea>
-    ${tagRow}
-    ${thumbs}
-    <div class="compose-row">
-      <button data-pact="addimg" class="ghost cimg"${busy ? " disabled" : ""}>${t("cardpanel.actAddImg")}</button>
-      <button data-pact="photo" class="ghost cimg"${busy ? " disabled" : ""}>${t("cardpanel.actPhoto")}</button>
-      <button data-pact="todo" class="ghost cimg"${busy ? " disabled" : ""}>${t("cardpanel.insertTodo")}</button>
-      <button data-pact="save" class="primary"${busy ? " disabled" : ""}>${t("cardpanel.save")}</button>
-      <button data-pact="cancel" class="ghost"${busy ? " disabled" : ""}>${t("cardpanel.cancel")}</button>
-    </div>`;
 }
 
 function renderTags(item: TimelineItem): string {
@@ -447,14 +497,14 @@ async function runMove(target: string, targetLabel: string): Promise<void> {
     const here = source === getCurrentSpace();
     switch (result.outcome) {
       case "moved":
-        if (state === session) state = null;
+        if (state === session) setState(null);
         if (here) {
           showBar(t("cardpanel.moved", { name: targetLabel }), true);
           void deps.refresh();
         }
         break;
       case "copied_but_source_kept":
-        if (state === session) session.mode = "actions"; // 回 actions 面显登记提示、藏移动入口
+        if (state === session) setMode(session, "actions"); // 回 actions 面显登记提示、藏移动入口
         if (here) {
           showBar(t("cardpanel.movedKept", { name: targetLabel }), true);
           void deps.refresh();
@@ -462,7 +512,7 @@ async function runMove(target: string, targetLabel: string): Promise<void> {
         break;
       case "copied_but_source_unconfirmed":
         // 源删除状态未知,绝不谎报「保留」(codex 实现审 #2)。
-        if (state === session) session.mode = "actions";
+        if (state === session) setMode(session, "actions");
         if (here) {
           showBar(t("cardpanel.movedUnconfirmed", { name: targetLabel }), true);
           void deps.refresh();
@@ -470,13 +520,13 @@ async function runMove(target: string, targetLabel: string): Promise<void> {
         break;
       case "images_pending":
         if (here && state === session) {
-          session.mode = "actions";
+          setMode(session, "actions");
           showError(t("cardpanel.imagesPending", { n: result.count }));
         }
         break;
       case "dangling_refs":
         if (here && state === session) {
-          session.mode = "actions";
+          setMode(session, "actions");
           showError(t("cardpanel.danglingRefs"));
         }
         break;
@@ -511,22 +561,23 @@ async function enterTags(card: HTMLElement) {
   if (!state) return;
   const session = state;
   const space = getCurrentSpace();
+  const from = session.mode; // ⚠ 判据是「还停在出发那张面上吗」,⛔ 不是「是不是 actions 面」
   const seq = ++session.topicsSeq;
   try {
     const topics = await listTopics(space);
     // 在途期间面板可自由导航(此处不 busy):session 换了/空间换了/更新的请求
-    // 出发了/用户已进编辑态/「记下」开始在飞(实现审 M1:锁定期不许新开草稿态面)
-    // ——一律弃,不许把 mode 硬翻回 tags 踩掉编辑。
+    // 出发了/用户已翻到别的面(含进编辑态)/「记下」开始在飞(实现审 M1:锁定期不许
+    // 新开草稿态面)——一律弃,不许把 mode 硬翻回 tags 踩掉编辑。
     if (
       state !== session ||
       space !== getCurrentSpace() ||
       seq !== session.topicsSeq ||
-      session.mode !== "actions" ||
+      session.mode !== from ||
       deps.isCaptureSaving()
     ) {
       return;
     }
-    session.mode = "tags";
+    setMode(session, "tags");
     session.topics = topics;
     const c = currentCard() ?? card;
     renderPanel(c);
@@ -538,15 +589,19 @@ async function enterTags(card: HTMLElement) {
 }
 
 /** 进历史面:现读旧版本再翻 mode(同 enterTags 的形:在途期间面板可自由导航,回来时 session /
- *  空间 / mode 任一变了就弃,⛔ 不许把 mode 硬翻回去踩掉编辑)。 */
+ *  空间 / mode 任一变了就弃,⛔ 不许把 mode 硬翻回去踩掉编辑)。
+ *  ⚠⚠ **判据是「还停在出发那张面上吗」,⛔ 不是「是不是 actions 面」**:706 起「历史」是从
+ *  「更多…」子面点的(出发时 mode = `more`),写死 `actions` 会把每一次都判弃 —— 屏上的样子是
+ *  「点历史没反应」,而且**一格错误都不报**。note-history 那支资产当场逮到,别再写回去。 */
 async function enterHistory(card: HTMLElement) {
   if (!state) return;
   const session = state;
   const space = getCurrentSpace();
+  const from = session.mode;
   try {
     const revisions = await listNoteHistory(space, session.id);
-    if (state !== session || space !== getCurrentSpace() || session.mode !== "actions" || deps.isCaptureSaving()) return;
-    session.mode = "history";
+    if (state !== session || space !== getCurrentSpace() || session.mode !== from || deps.isCaptureSaving()) return;
+    setMode(session, "history");
     session.revisions = revisions;
     renderPanel(currentCard() ?? card);
   } catch (err) {
@@ -577,19 +632,21 @@ async function saveEdit() {
     {
       afterSession: () => {
         session.editDraft = null;
-        session.mode = "actions";
+        session.editImages = null;
+        setMode(session, "actions"); // 编辑层随之收掉(syncShell)
         deps.onDraftClosed();
       },
     },
   );
 }
 
-/** 编辑/标签草稿收场(取消/同值/返回):回 actions 面,补被延后的刷新。 */
+/** 编辑/标签草稿收场(取消/同值/返回):回 actions 面,收掉编辑层,补被延后的刷新。 */
 function closeDraft() {
   if (!state) return;
   state.editDraft = null;
+  state.editImages = null;
   state.tagDraft = "";
-  state.mode = "actions";
+  setMode(state, "actions"); // 编辑层随之收掉(syncShell)
   const c = currentCard();
   if (c) renderPanel(c);
   deps.onDraftClosed();
@@ -689,21 +746,8 @@ function onTimelineClick(e: Event) {
   if (deps.isSwitching() || deps.isCaptureSaving()) return;
   if (busy) return; // in-flight:面板一切导航(开合/换卡/控件)整体拒(实现审 M2)
   const el = e.target as HTMLElement;
-  // 编辑面缩略图删钮(在 .panel 内、早于下面 pact 通用分支;它不带 data-pact,免落进 handleAct
-  // ——handleAct 拿不到具体是哪一张)。删钮只在编辑面出现,mode 必是 edit。
-  const editDel = el.closest<HTMLElement>("[data-editdel]");
-  if (editDel && state?.mode === "edit") {
-    confirmDeleteEditImage(editDel.dataset.editdel!, editDel.dataset.seq ?? "");
-    return;
-  }
-  // 编辑面缩略图本体(非删钮)→ 只读看大图(删走上面的 ×;照桌面 lightbox「不带删」那形)。
-  const editThumb = el.closest<HTMLElement>(".thumb[data-img]");
-  if (editThumb && state?.mode === "edit") {
-    const imgs = state.editImages ?? [];
-    const idx = imgs.findIndex((m) => m.id === editThumb.dataset.img);
-    if (idx >= 0) void openViewer(imgs, idx, true);
-    return;
-  }
+  // ⚠ 编辑态的缩略图(看大图 / 删)不在这儿:它们住屏底的编辑层,由 editsheet.ts 认,
+  // 回调进本模块的 editHost。这里只剩时间轴上的东西。
   // 面板控件优先。
   const pact = el.closest<HTMLElement>("[data-pact]")?.dataset.pact;
   if (pact && state) {
@@ -744,11 +788,15 @@ function onTimelineClick(e: Event) {
     void runMove(target, label);
     return;
   }
+  // 状态 / 优先级选完自己回主面(706:值 chip 那条路是「点开 → 选 → 收」,
+  // 留在候选排上等人再点一记「返回」是多余的一步)。写失败不回——错误条旁边就该是那一排。
   const statusBtn = el.closest<HTMLElement>("[data-status]");
   if (statusBtn && state) {
     const session = state;
     const to = statusBtn.dataset.status as TaskStatus;
-    void run((space) => updateTaskStatus(space, session.id, to));
+    void run((space) => updateTaskStatus(space, session.id, to), {
+      afterSession: () => setMode(session, "actions"),
+    });
     return;
   }
   const prioBtn = el.closest<HTMLElement>("[data-prio]");
@@ -756,7 +804,9 @@ function onTimelineClick(e: Event) {
     const session = state;
     const raw = prioBtn.dataset.prio!;
     const prio = raw === "" ? null : (Number(raw) as 1 | 2 | 3);
-    void run((space) => setTaskPriority(space, session.id, prio));
+    void run((space) => setTaskPriority(space, session.id, prio), {
+      afterSession: () => setMode(session, "actions"),
+    });
     return;
   }
   // 面板内其余区域(textarea/输入框等)不冒泡成开合。
@@ -777,9 +827,8 @@ function onTimelineClick(e: Event) {
   if (state?.id === id) {
     if (hasDirtyDraft()) return; // 有草稿不许点空白收面(误触丢字)
     clearConfirm();
-    state = null;
+    setState(null);
     card.querySelector(".panel")?.remove();
-    card.classList.remove("editing");
     deps.onDraftClosed(); // 三审 M1:收面即「草稿域收场」,补被延后的刷新
     return;
   }
@@ -788,7 +837,7 @@ function onTimelineClick(e: Event) {
     return;
   }
   clearConfirm();
-  state = {
+  setState({
     space: getCurrentSpace(),
     id,
     mode: "actions",
@@ -798,7 +847,7 @@ function onTimelineClick(e: Event) {
     tagDraft: "",
     topicsSeq: 0,
     revisions: null,
-  };
+  });
   deps.onDraftClosed(); // 换卡 = 旧草稿域收场(同上)
   renderPanel(card);
 }
@@ -811,10 +860,11 @@ function handleAct(act: string, card: HTMLElement) {
   switch (act) {
     case "edit":
       clearConfirm();
-      session.mode = "edit";
       session.editDraft = item.content;
       session.editImages = [...item.images]; // 进编辑态时拷一份现有配图;加/删就地改这一份
-      renderPanel(card);
+      setMode(session, "edit");
+      openEditSheet(editView(), editHost); // 屏底的编辑层接手打字这件事(706)
+      renderPanel(card); // 遮罩底下的卡照常画主面
       return;
     case "tags":
       clearConfirm();
@@ -824,13 +874,13 @@ function handleAct(act: string, card: HTMLElement) {
       clearConfirm();
       void enterHistory(card);
       return;
-    case "addimg":
+    case "more":
+    case "status":
+    case "due":
+    case "prio":
       clearConfirm();
-      void addImages(session.id);
-      return;
-    case "photo":
-      clearConfirm();
-      void addPhoto(session.id);
+      setMode(session, act);
+      renderPanel(card);
       return;
     case "comment":
       // 留言层盖在面板之上;面板留着不收(收层回来还在原处)。写/删由留言层自己走
@@ -840,28 +890,18 @@ function handleAct(act: string, card: HTMLElement) {
       return;
     case "move":
       clearConfirm();
-      session.mode = "move";
+      setMode(session, "move");
       renderPanel(card);
       return;
     case "move-ack":
       // 「我已处理」:清部分移动登记(源条目已由用户自行处置),回 actions 面
       // (移动入口随之复现)。登记键 = 当前空间/id(面板恒开在当前空间)。
       movePartialClear(item.id);
+      setMode(session, "actions");
       renderPanel(card);
       return;
-    case "todo": {
-      // 562:纯编辑器辅助,不打后端、不动 mode —— 改完那一记 execCommand 会派发 input,
-      // `onTimelineInput` 照常把新草稿写回 state,所以这里不必自己同步 editDraft。
-      const ta = card.querySelector<HTMLTextAreaElement>(".panel textarea.edit");
-      if (ta) applyChecklistMarker(ta);
-      return;
-    }
     case "back":
-    case "cancel":
       closeDraft();
-      return;
-    case "save":
-      void saveEdit();
       return;
     case "promote":
       // 146:卡离开灵感面——回执指路,且走 onCommitted(重投影清掉 session 也要响)。
@@ -892,7 +932,9 @@ function handleAct(act: string, card: HTMLElement) {
       return;
     }
     case "due-clear":
-      void run((space) => setTaskDue(space, item.id, null));
+      void run((space) => setTaskDue(space, item.id, null), {
+        afterSession: () => setMode(session, "actions"), // 同状态/优先级:清完就回主面
+      });
       return;
     // 两拍类:第一拍弹底部固定确认条,第二拍在条上执行(onYes 复核 session 未变——
     // 期间换卡/收面/切空间的旧确认一律作废,不许作用到新语境)。
@@ -921,7 +963,7 @@ function handleAct(act: string, card: HTMLElement) {
             });
           },
           afterSession: () => {
-            state = null;
+            setState(null);
           },
         });
       });
@@ -962,7 +1004,7 @@ function handleAct(act: string, card: HTMLElement) {
             });
           },
           afterSession: () => {
-            state = null;
+            setState(null);
           },
         });
       });
@@ -980,26 +1022,73 @@ function onTimelineChange(e: Event) {
   }
   const session = state;
   const v = input.value; // "" = 清
-  void run((space) => setTaskDue(space, session.id, v === "" ? null : v));
+  void run((space) => setTaskDue(space, session.id, v === "" ? null : v), {
+    afterSession: () => setMode(session, "actions"), // 拨完就回主面(同状态/优先级)
+  });
 }
 
-/** 草稿实时入 state(实现审 H1:真相在 state,重画从 state 画回)。 */
+/** 标签新建草稿实时入 state(实现审 H1:真相在 state,重画从 state 画回)。
+ *  ⚠ 正文草稿不在这条路上了 —— 它住编辑层,经 editHost.onInput 回来。 */
 function onTimelineInput(e: Event) {
-  const t = e.target as HTMLElement;
-  if (!state) return;
+  const el = e.target as HTMLElement;
+  if (!state || !el.matches("input.tagnew")) return;
   if (deps.isCaptureSaving()) {
     // 锁定期不受理新草稿(146 实现审 M1):tagDraft 变脏会把「记下」后的 refresh
     // 无限延后、新卡落不了 DOM——DOM 回写成 state,不留「看得见、state 没有」的假草稿。
-    if (t.matches("textarea.edit")) (t as HTMLTextAreaElement).value = state.editDraft ?? "";
-    else if (t.matches("input.tagnew")) (t as HTMLInputElement).value = state.tagDraft;
+    (el as HTMLInputElement).value = state.tagDraft;
     return;
   }
-  if (t.matches("textarea.edit")) {
-    state.editDraft = (t as HTMLTextAreaElement).value;
-  } else if (t.matches("input.tagnew")) {
-    state.tagDraft = (t as HTMLInputElement).value;
-  }
+  state.tagDraft = (el as HTMLInputElement).value;
 }
+
+/** 编辑层的动作入口闸 —— 与 `onTimelineClick` 开头那三行**同一条判据**:写在飞 / 切换编排中 /
+ *  「记下」在飞时,层上的一切动作整体拒(钮已是禁用态,但遮罩与缩略图不是)。
+ *  ⛔ 打字不吃这道闸:草稿实时入 state 是正当的,禁它等于写在飞时把人打的字吞掉。 */
+function editBlocked(): boolean {
+  return busy || deps.isSwitching() || deps.isCaptureSaving();
+}
+
+/** 编辑层回调进来的那一头(层只管 DOM,写库/判弃/确认全在这边)。 */
+const editHost: EditHost = {
+  onInput: (text) => {
+    if (!state || state.mode !== "edit") return;
+    // 锁定期不受理新草稿(理由同 onTimelineInput):把框回写成 state,不留假草稿。
+    if (deps.isCaptureSaving()) {
+      paintEditSheet(editView());
+      return;
+    }
+    state.editDraft = text;
+  },
+  onSave: () => {
+    if (!editBlocked()) void saveEdit();
+  },
+  onCancel: () => {
+    if (!editBlocked()) closeDraft();
+  },
+  onAddImage: () => {
+    if (state && !editBlocked()) void addImages(state.id);
+  },
+  onPhoto: () => {
+    if (state && !editBlocked()) void addPhoto(state.id);
+  },
+  onDeleteImage: (id, seq) => {
+    if (!editBlocked()) confirmDeleteEditImage(id, seq);
+  },
+  onViewImage: (idx) => {
+    const imgs = state?.editImages ?? [];
+    if (idx >= 0 && idx < imgs.length) void openViewer(imgs, idx, true);
+  },
+  // 「改过没有」与 saveEdit 的同值判据**逐字同一条**(任务比 trim 后标题、随记比原字符串):
+  // 两边分岔的话会出现「点遮罩被拦住、点保存却说没改」这种自相矛盾的回执。
+  isDirty: () => {
+    if (!state || state.editDraft === null) return false;
+    const item = deps.getItem(state.id);
+    if (!item) return false;
+    return isTaskStage(item.stage)
+      ? state.editDraft.trim() !== item.content
+      : state.editDraft !== item.content;
+  },
+};
 
 export function initCardPanel(d: Deps) {
   deps = d;
@@ -1007,11 +1096,4 @@ export function initCardPanel(d: Deps) {
   timeline.addEventListener("click", onTimelineClick);
   timeline.addEventListener("change", onTimelineChange);
   timeline.addEventListener("input", onTimelineInput);
-  // 562:回车续待办项(编辑框每次重画都是新节点,只能委托)。
-  delegateChecklistNewline(timeline, "textarea.edit");
-  // 「＋ 待办」按下去那一刻别让编辑框失焦 —— 失了焦 execCommand 就落不到它身上
-  // (同 capture-commands 的手法:动作走 click,拦焦点走 mousedown)。
-  timeline.addEventListener("mousedown", (e) => {
-    if ((e.target as HTMLElement).closest('[data-pact="todo"]')) e.preventDefault();
-  });
 }

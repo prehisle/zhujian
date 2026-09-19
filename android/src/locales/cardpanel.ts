@@ -15,14 +15,20 @@ export const cardpanel = defineMessages({
   "cardpanel.actHistory": { zh: "历史", en: "History" },
   "cardpanel.histEmpty": { zh: "还没有改过", en: "Not edited yet" },
   "cardpanel.histEditedAt": { zh: "于 {time} 改", en: "Edited {time}" },
-  "cardpanel.actAddImg": { zh: "＋ 加图", en: "＋ Image" },
-  "cardpanel.actPhoto": { zh: "＋ 拍照", en: "＋ Photo" },
+  // 706:加图 / 拍照 / 清单三枚随编辑表单搬进了屏底的编辑层,那三处文案在静态壳里
+  // 走 `shell.addImage` / `shell.takePhoto` / `shell.insertTodo`(与「记一笔」同一份)
+  // ⇒ 这边同名的三个键连同重复的中文一起销掉,⛔ 别再抄第二份回来。
   "cardpanel.actComment": { zh: "留言", en: "Comments" },
   "cardpanel.actPromote": { zh: "转待办", en: "Make a task" },
   "cardpanel.actRevert": { zh: "撤回为随记", en: "Send back to Notes" },
   "cardpanel.actSeal": { zh: "归档", en: "Archive" },
   "cardpanel.actMove": { zh: "移动", en: "Move" },
   "cardpanel.actDelete": { zh: "删除", en: "Delete" },
+  // 706:动作行四枚封顶,低频那几件收在这枚后面。省略号是「还有一层」的记号(同顶栏
+  // 「过滤…」「空间…」),⛔ 别改成「更多」两个字——那读起来像一个动作。
+  "cardpanel.actMore": { zh: "更多…", en: "More…" },
+  // 值 chip 上「截止」还没设时的占位。⛔ 别写成空:一枚什么也不说的 chip 点不点得开看不出来。
+  "cardpanel.dueNone": { zh: "未设", en: "Not set" },
   "cardpanel.laneStatus": { zh: "状态", en: "Status" },
   "cardpanel.laneDue": { zh: "截止", en: "Due" },
   "cardpanel.lanePriority": { zh: "优先级", en: "Priority" },
@@ -32,7 +38,6 @@ export const cardpanel = defineMessages({
   "cardpanel.moveWarnPost": { zh: "。", en: "." },
   "cardpanel.noOtherSpace": { zh: "没有其他空间", en: "No other space" },
   "cardpanel.back": { zh: "返回", en: "Back" },
-  "cardpanel.insertTodo": { zh: "＋ 清单", en: "＋ Checklist" },
   "cardpanel.save": { zh: "保存", en: "Save" },
   "cardpanel.cancel": { zh: "取消", en: "Cancel" },
   "cardpanel.noTags": { zh: "还没有标签", en: "No tags yet" },

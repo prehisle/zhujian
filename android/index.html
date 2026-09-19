@@ -263,8 +263,10 @@
       #trash-empty::before { content: none; }
       /* 重置确认/取消已是全宽真高 ≥40px:不继承 halo(上下条互叠会让边界含糊,codex 二审) */
       .space-row .act.reset-confirm::before, .space-row .act.reset-cancel::before { content: none; }
-      .panel .acts button { position: relative; }
-      .panel .acts button::before { content: ""; position: absolute; left: 0; right: 0; top: -5px; bottom: -5px; }
+      .panel .acts button,
+      .panel button.prop { position: relative; }
+      .panel .acts button::before,
+      .panel button.prop::before { content: ""; position: absolute; left: 0; right: 0; top: -5px; bottom: -5px; }
       .panel button.p { position: relative; }
       .panel button.p::before { content: ""; position: absolute; left: 0; right: 0; top: -4px; bottom: -4px; }
       /* 当前空间 chip(工序 8,§9 捕获目标可见):点名开空间面板可切。 */
@@ -353,8 +355,10 @@
          键盘一起 Chromium 会滚文档去露焦点输入框,而层是 fixed 的,滚了只有背后的时间轴在动
          (240 报的「弹键盘背景乱滚」,2026-08-28 换了个形回来,A/B 各 5 次实测)。 */
       html.kb-locked { overflow: hidden; }
-      /* 捕获层遮罩:压住时间轴/底栏,点它=收层。 */
-      #capture-scrim {
+      /* 捕获层遮罩:压住时间轴/底栏,点它=收层。编辑层(706)共用同一身几何与暗度
+         —— 两层不会同时开(编辑只从卡片操作面进,那时捕获层是收着的)。 */
+      #capture-scrim,
+      #edit-scrim {
         position: fixed; inset: 0; z-index: 13;
         background: rgba(0, 0, 0, 0.35);
       }
@@ -374,6 +378,10 @@
       }
       /* 面板接管视图时(回收站/归档/标签/搜索/空间),捕获入口与层一并让出。 */
       body.pane-open #capture-fab { display: none !important; }
+      /* 卡片操作面开着时也让位(706,用户报「＋ 压在保存上」):它是 fixed 且画在时间轴
+         之上,而操作面/编辑层的钮就落在右下那一带。⛔ 别只藏编辑那一态 —— 操作面本身也在
+         它底下,一枚盖住按钮的悬浮钮不分「正在编辑」还是「正要点删除」。 */
+      body.panel-open #capture-fab { display: none !important; }
       .compose textarea {
         display: block; width: 100%;
         border: none; background: none; resize: none; outline: none;
@@ -457,6 +465,26 @@
         background: rgba(0, 0, 0, 0.6); color: #fff;
         font-size: var(--fs-15); line-height: 1; display: grid; place-items: center;
       }
+
+      /* 编辑层(706):改一条已有条目就在这一层里改 —— 与「记一笔」同一座底部层
+         (`.compose` 那身几何 + kbsheet.ts 那套开合),差别只有三处:限高(顶上留一条背景,
+         读得出这是盖着的一层)、正文框吃满剩余高度、钮排右端是「取消 · 保存」。
+         ⭐ **要打字的都在键盘上沿**(706 用户拍板):此前它是长在卡片里的一只 textarea
+         ——「保存」会被悬浮 ＋ 压住,长卡上还得靠文档滚动才露得出来。 */
+      .editsheet { display: flex; flex-direction: column; overflow: hidden; }
+      /* 正文框吃掉剩下的高度(整层的上限由 kbsheet 按可见区夹,键盘一起就跟着矮);其余
+         几块各占自然高、不许被压扁。⛔ 别给正文框留 40vh 那种固定上限——那正是「编辑区
+         比捕获区还小」的由来。 */
+      .editsheet > :not(textarea) { flex: none; }
+      .compose.editsheet textarea { flex: 1 1 auto; min-height: 4em; max-height: none; }
+      /* 编辑层里的缩略图带删钮(只读卡片上不带,见下面 `.thumb-del` 那条)。 */
+      .editsheet .thumb-del { display: grid; }
+      /* 只读标签行(674 起就有,随编辑面一起搬过来):编辑正文时一眼看到这条挂了哪些标签。
+         纯展示、复用卡上 `.chip`;改标签仍走操作面的「标签」。无标签整行不渲染。 */
+      .editsheet .edit-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+      /* 钮排右端成组:「保存」落在与捕获层「记下」一模一样的位置(最右),「取消」贴它左边。 */
+      .editsheet .compose-row .cancel { margin-left: auto; }
+      .editsheet .compose-row .primary { margin-left: 10px; }
 
       /* 留言层(314 第③笔,identity-plan §4.7):几何与捕获层同一套(src/kbsheet.ts)——
          贴键盘上沿、收键盘停屏底。与捕获层的差别只有两处:限高(顶上留一条背景,读得出
@@ -831,11 +859,10 @@
       }
       .thumb.err { border-color: var(--seal); }
       .thumb.err::before { content: "!"; color: var(--seal); font-weight: 700; }
-      /* 删图 ×:仅当卡片进入**编辑态**时露出(两拍确认,cardpanel.ts 就地删——图的增删
-         都在编辑那张表单里,与桌面编辑态同形;此前挂在操作面 imgmanage,已挪走)。
-         共形声明住捕获节的「圆形删图钮」一份;这里只管显隐。 */
+      /* 删图 ×:只在**编辑层**里露出(两拍确认,cardpanel.ts 就地删——图的增删都在编辑
+         那张表单里,与桌面编辑态同形)。时间轴上的只读缩略图从不带删钮。
+         共形声明住捕获节的「圆形删图钮」一份;这里只管显隐(露出那条见 `.editsheet`)。 */
       .thumb-del { display: none; }
-      .card.editing .thumb-del { display: grid; }
 
       /* 大图查看层(143 手势缩放):未放大时单击关;双击 2.5 倍/复位、双指捏合、
          放大后单指拖拽,返回键也能关(history 层)。touch-action:none 把手势从
@@ -1281,22 +1308,14 @@
         font-weight: 600; padding: 8px 18px;
       }
 
-      /* 原地编辑:卡进编辑态时,把卡上只读的三块(正文 / 只读缩略图 / footer)整个藏掉,
-         只留编辑表单(.panel 里的 textarea + 缩略图 + 钮),表单顶到正文的位置——与桌面
-         编辑态「整块 body 换成编辑 UI」同形。⛔ 别用 `.content` 之类逐个点名:body 直属里
-         除了 panel 全是只读展示,`:not(.panel)` 一网打尽,新增只读块自动跟着藏。tick(完成勾)
-         在 article 直属、不在 body 里,编辑态照留。 */
-      .card.editing > .body > :not(.panel) { display: none; }
-
-      /* 卡片操作面板(120):点卡展开的行内操作区——动作胶囊行 + 任务的
-         状态/截止/优先级 lane;两拍确认的第二拍在底部固定确认条(#confirmbar)。 */
+      /* 卡片操作面板(120;706 瘦身):点卡展开的行内操作区——**动作行四枚封顶 + 任务的
+         三枚值 chip**,低频那几件(历史/移动/撤回/归档/删除)收进「更多…」子面,
+         状态/截止/优先级各自点开才出选择行;两拍确认的第二拍在底部固定确认条(#confirmbar)。
+         ⛔ 别把三条 lane 直接摊回来 —— 一次 17 枚正是 706 要治的病。 */
       .panel {
         margin-top: 8px; border-top: 1px dashed var(--line-strong); padding-top: 8px;
         display: flex; flex-direction: column; gap: 8px;
       }
-      /* 编辑态表单顶到正文位置:上面没有只读块了,那条虚线分隔与上边距就多余(它是
-         「操作区接在卡片下方」的分隔,原地编辑没有「下方」)。 */
-      .card.editing .panel { margin-top: 0; border-top: none; padding-top: 0; }
       /* 行距 10 ≥ 上下 halo 之和(5+5):换行时相邻行触区不互叠(codex 二审) */
       .panel .acts { display: flex; flex-wrap: wrap; gap: 10px 6px; }
       .panel .acts button {
@@ -1307,6 +1326,20 @@
       .panel .acts button.warn { border-color: var(--seal-line); color: var(--seal); }
       .panel .acts button.confirm { background: var(--seal); border-color: var(--seal); color: var(--on-seal); }
       .panel button:disabled { opacity: 0.45; }
+      /* 值 chip 行(706):任务的状态 / 截止 / 优先级 各一枚,**显示当前值**、点开才出
+         那一排候选。与动作钮同高同形(照 `.acts button` 的 padding 与 halo,触区 ~46),
+         差别只在「键」是灰的小字、右端一记 ▾ —— 读起来是「这条的属性」不是「一个命令」。 */
+      .panel .props { display: flex; flex-wrap: wrap; gap: 10px 6px; }
+      .panel button.prop {
+        display: inline-flex; align-items: baseline; gap: 5px;
+        border: 1px solid var(--line-strong); border-radius: var(--radius-pill); background: none;
+        color: var(--ink); font-size: var(--fs-13); padding: 8px 14px; font-family: var(--font-sans);
+      }
+      .panel button.prop .k { color: var(--ink-faint); font-size: var(--fs-12); }
+      .panel button.prop .v { color: var(--ink-soft); }
+      /* 有值的那枚往朱砂上靠一档(同卡上角标的分工:设了截止/优先级才是要留意的信息)。 */
+      .panel button.prop.set { border-color: var(--seal-line); }
+      .panel button.prop.set .v { color: var(--seal); font-weight: 600; }
       .panel .lane {
         display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
         font-size: var(--fs-12); color: var(--ink-soft);
@@ -1355,17 +1388,6 @@
         border-color: var(--tc, var(--seal)); color: var(--tc, var(--seal)); font-weight: 600;
       }
       .panel button.p.on.tinted { color: color-mix(in srgb, var(--tc) 55%, var(--ink)); }
-      .panel textarea.edit {
-        display: block; width: 100%; box-sizing: border-box;
-        border: 1px solid var(--seal-line); border-radius: var(--radius-sm);
-        background: var(--paper); color: var(--ink);
-        font: var(--fs-16)/1.6 var(--font-serif); padding: 8px 10px;
-        min-height: 3em; max-height: 40vh; field-sizing: content;
-        resize: none; outline: none; caret-color: var(--seal);
-      }
-      /* 编辑态只读标签行(674):编辑正文时一眼看到这条挂了哪些标签(照桌面编辑态)。
-         纯展示、复用卡上 `.chip` 样式;无标签整行不渲染。改标签仍走操作面的「标签」。 */
-      .panel .edit-tags { display: flex; flex-wrap: wrap; gap: 6px; }
       .panel input[type="date"] {
         border: 1px solid var(--line-strong); border-radius: var(--radius-sm);
         background: var(--paper); color: var(--ink); padding: 3px 6px; font-size: var(--fs-13);
@@ -1842,6 +1864,24 @@
       <div class="cm-compose">
         <textarea id="cm-input" rows="1" placeholder="写句话…" data-i18n-placeholder="shell.commentPh"></textarea>
         <button id="cm-send" class="primary" type="button" data-i18n="shell.commentSend">写下</button>
+      </div>
+    </section>
+
+    <!-- 编辑层(706,用户 2026-09-19 当面拍「编辑时用记一笔那个 UI」):改一条已有条目的
+         正文与配图。与捕获层同一座底部层(kbsheet.ts),草稿的真相在 cardpanel 的 state、
+         本层只是投影(见 editsheet.ts 头注)。⛔ 别把 textarea 搬回卡片里:要打字的一律
+         在键盘上沿——那是这一层存在的全部理由。 -->
+    <div id="edit-scrim" hidden></div>
+    <section id="edit-sheet" class="compose editsheet" aria-label="编辑" data-i18n-aria-label="cardpanel.actEdit">
+      <textarea id="edit-text" class="edit" rows="2"></textarea>
+      <div id="edit-tags" class="edit-tags" hidden></div>
+      <div id="edit-thumbs" class="thumbs" hidden></div>
+      <div class="compose-row">
+        <button id="edit-addimg" class="ghost cimg" type="button" data-i18n="shell.addImage">＋ 加图</button>
+        <button id="edit-photo" class="ghost cimg" type="button" data-i18n="shell.takePhoto">＋ 拍照</button>
+        <button id="edit-todo" class="ghost cimg" type="button" data-i18n="shell.insertTodo">＋ 清单</button>
+        <button id="edit-cancel" class="ghost cancel" type="button" data-i18n="cardpanel.cancel">取消</button>
+        <button id="edit-save" class="primary" type="button" data-i18n="cardpanel.save">保存</button>
       </div>
     </section>
 

@@ -40,16 +40,25 @@
   // ⚠ #timeline 每刷一轮整片重建 ⇒ 一律现查,别缓存节点(316)。
   const cardOf = (id) => document.querySelector('#timeline [data-id="' + id + '"]');
   const panelOf = (id) => cardOf(id)?.querySelector(".panel") ?? null;
-  /** 开卡片面板取某个入口(面板可能本来就开着,点正文是**收**⇒ 先看在不在)。 */
+  const inPanel = (id, pact) => panelOf(id)?.querySelector('[data-pact="' + pact + '"]') ?? null;
+  /** 开卡片面板取某个入口(面板可能本来就开着,点正文是**收**⇒ 先看在不在)。
+   *  706 起主面只剩四枚,「历史」在「更多…」后面 ⇒ 先把面板弄回主面(判据 = `more` 在不在),
+   *  主面上没有的再钻一层。⛔ 别写成「恒先点 more」:主面那四枚在更多面里找不着。 */
   const actOf = async (id, pact) => {
-    for (let i = 0; i < 3; i++) {
-      const hit = panelOf(id)?.querySelector('[data-pact="' + pact + '"]');
+    for (let i = 0; i < 4; i++) {
+      if (!inPanel(id, "more")) {
+        const body = cardOf(id)?.querySelector(".content");
+        if (!body) return null;
+        const back = inPanel(id, "back");
+        if (back) click(back); // 停在某张子面上:先回主面
+        else click(body); // 面板没开:点正文开它
+        await until(() => inPanel(id, "more"), 1500);
+        continue;
+      }
+      const hit = inPanel(id, pact);
       if (hit) return hit;
-      const body = cardOf(id)?.querySelector(".content");
-      if (!body) return null;
-      click(body);
-      const got = await until(() => panelOf(id)?.querySelector('[data-pact="' + pact + '"]'), 1500);
-      if (got) return got;
+      click(inPanel(id, "more"));
+      return await until(() => inPanel(id, pact), 1500);
     }
     return null;
   };

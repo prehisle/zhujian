@@ -67,6 +67,7 @@ import {
   openComments,
   refreshOpenComments,
 } from "./comments";
+import { closeEditSheetNow, initEditSheet, isEditSheetOpen } from "./editsheet";
 import { disconnectThumbObserver, fillThumb, hydrateThumbs } from "./thumbs";
 import { closeViewerNow, initViewer, isViewerOpen, openLocalViewer, openViewer } from "./viewer";
 import {
@@ -573,6 +574,7 @@ let nativeBackPending = false; // native 请求的 history.back() 已发、popst
   // 硬件返回」会被合并吞掉、重开的层却还开着。挂账层没有已压的历史条目,直关销账。
   if (deferredLayers > 0) {
     if (isViewerOpen()) closeViewerNow();
+    else if (isEditSheetOpen()) dismissEditSheet();
     else if (isCommentsOpen()) closeCommentsNow();
     else if (activePane !== null) closePaneNow();
     settleHistory(); // 销挂账(settleHistory 首分支),不发 back
@@ -603,6 +605,11 @@ window.addEventListener("popstate", () => {
     closeViewerNow();
     return;
   }
+  // 编辑层(706)在最上头(留言层开着时它开不出来:遮罩压着卡片操作面)。
+  if (isEditSheetOpen()) {
+    dismissEditSheet();
+    return;
+  }
   // 留言层压在时间轴之上、面板之下(它只从时间轴开):返回键先收它。
   if (isCommentsOpen()) {
     closeCommentsNow();
@@ -612,6 +619,14 @@ window.addEventListener("popstate", () => {
   // 都没开 = 陈旧守门条目(空间切换复位等已把层收掉):静默吞,再按一次才退 app。
   // mode 从不压层:任务面按返回与灵感面同账,直接退 app(146 §2.3)。
 });
+
+/** 返回键收编辑层(706):守门条目已由 popstate 弹掉 ⇒ 只收 DOM(⛔ 不走 editsheet 那条
+ *  会 settleHistory 的路),再让面板把草稿态收场(它随后调的 closeEditSheet 已是 no-op)。
+ *  ⚠ 与「取消」钮同语义:草稿丢弃,不弹二次确认 —— 返回键在这一端就是「算了」。 */
+function dismissEditSheet(): void {
+  closeEditSheetNow();
+  cardPanel.editDismissed();
+}
 
 /** 开留言层的单一入口(卡上的 💬 徽章与操作面板的「留言」共用):三道闸同 openPane
  *  ——切换编排中屏上还是旧空间的卡、「记下」在飞时刷新被锁、有草稿时层会把它盖住。 */
@@ -679,8 +694,9 @@ function onChecklistTap(box: HTMLElement): void {
 $("timeline").addEventListener("click", (e) => {
   if (switching) return; // 切换编排中:屏上还是旧空间的卡,不接受任何取图请求
   const target = e.target as HTMLElement;
-  // 编辑面(.panel)内的点击整个归 cardpanel(编辑面缩略图删钮 / 加图 / 保存等)——这里不碰,
-  // 免得编辑态缩略图的删钮被下面「看大图」那条截走(674)。ckbox/留言徽章/只读缩略图都不在 .panel。
+  // 操作面(.panel)内的点击整个归 cardpanel——这里不碰。ckbox/留言徽章/只读缩略图都不在 .panel。
+  // ⚠ 706 起编辑那张表单不在 .panel 里了(它在屏底的编辑层,自己认自己的缩略图与删钮),
+  // 这一条守的只剩「操作面上的钮别被时间轴的通用分支截走」。
   if (target.closest(".panel")) return;
   // 长卡折叠那枚钮(用户面 116):翻 `.clamped` 并记进 `foldExpanded` —— 记了下一发重画才不会
   // 把它又合上。⛔ 它还得在 cardpanel 那条「各有其主」名单里,否则点一下会连带把操作面板开合。
@@ -2450,7 +2466,12 @@ cardPanel.initCardPanel({
   // 移动入口按空间数决定是否出现;picker 列其他空间(main.ts 的 spacesCache 影子)。
   getSpaces: () => spacesCache,
   openComments: openCommentsFor,
+  // 值 chip 上的截止文字与卡上那颗角标同一支笔(⛔ 别让面板自己算第二份)。
+  dueLabel: (due) => dueLabel(due, localToday()),
 });
+// 编辑层(706):正文编辑那座底部层。宿主是 cardpanel(草稿/写口/判弃都在那边),
+// 这里只给它返回键层账本的两把手(同留言层与大图查看器的形)。
+initEditSheet({ pushLayer, settleHistory });
 // 留言层(314 第③笔):写/删成功即整轴重拉(徽章计数跟着走),开合各压/平一枚返回键守门条目。
 initComments({ refresh, pushLayer, settleHistory });
 // 大图查看器(310 第③笔):返回键层账本仍住 main.ts,经 Deps 注入(留言层同形)。

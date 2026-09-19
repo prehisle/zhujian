@@ -124,6 +124,9 @@
           const c = document.querySelector(`#timeline [data-id="${tempId}"]`);
           if (c) {
             click(c.querySelector(".content"));
+            // 706:「删除」在操作面的「更多…」子面里。
+            const more = await until(() => c.querySelector('.panel [data-pact="more"]'), 1500);
+            if (more) click(more);
             const del = await until(() => c.querySelector('.panel [data-pact="del"]'), 1500);
             if (del) {
               click(del);

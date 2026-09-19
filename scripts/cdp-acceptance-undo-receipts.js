@@ -58,15 +58,26 @@
     return btns.length === 1 && btns[0].className === "bar-act";
   };
   // 开卡片操作面拿某个动作钮(卡节点跨刷新游离:每轮按 id 现查再点)
+  // 706 起操作面主面只剩四枚(编辑 / 标签 / 留言·转待办 / 更多…),低频那几件
+  // (历史 · 移动 · 撤回 · 归档 · 删除)收在「更多…」子面里。⇒ 先把面板弄回**主面**
+  // (判据 = `more` 这枚在不在),主面上没有的再钻一层。⛔ 别写成「恒先点 more」——
+  // 主面那四枚在更多面里找不着。
+  const inPanel = (id, act) => cardOf(id)?.querySelector(`.panel [data-pact="${act}"]`) ?? null;
   const openAct = async (id, act) => {
-    for (let i = 0; i < 3; i++) {
-      const hit = cardOf(id)?.querySelector(`.panel [data-pact="${act}"]`);
+    for (let i = 0; i < 4; i++) {
+      if (!inPanel(id, "more")) {
+        const c = cardOf(id);
+        if (!c) return null;
+        const back = inPanel(id, "back");
+        if (back) click(back); // 停在某张子面上:先回主面
+        else click(c.querySelector(".content")); // 面板没开:点正文开它
+        await until(() => inPanel(id, "more"), 1500);
+        continue;
+      }
+      const hit = inPanel(id, act);
       if (hit) return hit;
-      const c = cardOf(id);
-      if (!c) return null;
-      click(c.querySelector(".content"));
-      const got = await until(() => cardOf(id)?.querySelector(`.panel [data-pact="${act}"]`), 1500);
-      if (got) return got;
+      click(inPanel(id, "more"));
+      return await until(() => inPanel(id, act), 1500);
     }
     return null;
   };

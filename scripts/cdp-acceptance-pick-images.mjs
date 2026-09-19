@@ -550,19 +550,25 @@ const main = async () => {
     step("⑥ 拍照不是多选", c6.mode === "selectSingle" && !("multiple" in c6.attrs), c6.mode);
     await c6.setFiles([]); // 空 = 取消,回到「什么都没加」
 
-    // ---- ⑦ 卡片操作面「加图」:第二个入口同样是多选,且 seq 从 4 接着走(编号不复用) ----
+    // ---- ⑦ 编辑层「加图」:第二个入口同样是多选,且 seq 从 4 接着走(编号不复用) ----
+    // ⚠ 706 起「加图 / 拍照」不在卡片操作面上了:点操作面的「编辑」弹屏底那层,三枚小钮
+    // 在层里(`#edit-addimg` / `#edit-photo`)。⛔ 别回头找 `.panel [data-pact="addimg"]`,
+    // 那枚已经不存在,`.click()` 会当场抛。
     await evalJs(`(() => {
       const c = document.querySelector('#timeline [data-id="' + ${JSON.stringify(itemId)} + '"]');
       if (!c.querySelector(".panel")) c.querySelector(".content").click();  // ⚠ 面板可能本来就开着,再点是收
+      const edit = c.querySelector('.panel [data-pact="edit"]');
+      if (edit) edit.click();
       return "opened";
     })()`);
     const hasBtn = await until(
-      async () => await evalJs(`!!document.querySelector('#timeline [data-id="' + ${JSON.stringify(itemId)} + '"] .panel [data-pact="addimg"]')`),
+      async () =>
+        await evalJs(
+          `document.getElementById("edit-sheet").classList.contains("open") && !document.getElementById("edit-addimg").disabled`,
+        ),
     );
-    if (!step("⑦ 卡片操作面开着且有「加图」", !!hasBtn)) return out;
-    const c7 = await openChooser(
-      `document.querySelector('#timeline [data-id="' + ${JSON.stringify(itemId)} + '"] .panel [data-pact="addimg"]').click()`,
-    );
+    if (!step("⑦ 编辑层开着且有「加图」", !!hasBtn)) return out;
+    const c7 = await openChooser(`document.getElementById("edit-addimg").click()`);
     step("⑦ 卡片面加图也是多选", c7.mode === "selectMultiple" && "multiple" in c7.attrs, c7.mode);
     await c7.setFiles([S["s1.png"], S["s2.png"]]);
     const metas2 = await until(async () => {
@@ -589,10 +595,16 @@ const main = async () => {
     } catch {}
     if (itemId && space) {
       try {
+        // ⚠ 清场命令按 stage 分家(skill「阴性刀怎么下」那条):探针是走捕获层「记下」建的,
+        // 而**落成随记还是待办取决于跑之前停在哪个面** —— 停在任务面时它是 todo,照 note 那对
+        // 命令删必被拒,catch 只报一句「清场失败」,条目就留在用户库里(706 真栽了一次)。
+        // ⇒ 先按任务删,拒了再按随记删。
         await evalJs(
-          `window.__TAURI__.core.invoke("archive_note", { spaceId: ${JSON.stringify(space)}, id: ${JSON.stringify(itemId)} })
-             .then(() => window.__TAURI__.core.invoke("purge_note", { spaceId: ${JSON.stringify(space)}, id: ${JSON.stringify(itemId)} }))
-             .then(() => "purged")`,
+          `(async () => {
+             const inv = (c) => window.__TAURI__.core.invoke(c, { spaceId: ${JSON.stringify(space)}, id: ${JSON.stringify(itemId)} });
+             try { await inv("archive_task"); await inv("purge_task"); return "purged-task"; }
+             catch { await inv("archive_note"); await inv("purge_note"); return "purged-note"; }
+           })()`,
         );
         await evalJs(`location.reload()`).catch(() => {});
       } catch (e) {
