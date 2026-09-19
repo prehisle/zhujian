@@ -698,6 +698,24 @@
         white-space: pre-wrap; word-break: break-word;
       }
       .card.done .content { color: var(--ink-faint); }
+      /* 长卡折叠(用户面 116,承桌面 704):任务面正文超 8 行默认夹住,下面长一枚「展开 / 收起」。
+         ⛔⛔ **上限那个数不在这儿,在 `main.ts::settleFolds` 里按 px 写** —— 桌面那份的
+         `max-height: 12em` 在这一端**没有能用的等价 CSS 单位**(MuMu/Chrome 110 四档实测):
+         · `em` 不跟 textZoom 走(解析用放大**前**的 16px)⇒ 12.8em 从 8.90 行漂到 6.16 行;
+         · `lh` 跟着走,但**基准是 body 不是元素自己** —— `8lh` 恒 192px(= 8 × body 行高),
+           对 `.content` 的 16px 只夹出 7.5 行,对含方框那档(行高 2.2)只夹出 **5.45 行**。
+         ⇒ 唯一对两档行高、四档字号都成立的读数是 `getComputedStyle().lineHeight`(它报的是放大
+         **后**的真值),只有 JS 拿得到。⛔ 别把这一行改回任何 CSS 单位,除非在**最老的那台**上重量一遍。 */
+      .card .content.clamped { overflow: hidden; }
+      /* ⛔ 这枚钮**不挂 `.ghost`**:那一族带一层 `left:0;right:0` 的 44 定高 halo,而它四周
+         全是别的可点的东西(正文里的方框在上、缩略图与 footer 的 chip 在下)—— 往上外扩就吃掉
+         正文最后一行的点击。改成**自己长够 44**(同 635 给 `.row button` 补 min-height 那条判例:
+         光换 halo 的形不够,宿主得自己够高),触区恒在自己盒内。整行可点同「标签行整行即目标」。 */
+      .fold-toggle {
+        display: block; width: 100%; min-height: 44px; margin: 0;
+        border: none; background: none; padding: 0; text-align: left;
+        color: var(--ink-soft); font-size: var(--fs-12); font-family: var(--font-sans);
+      }
       /* 正文里的待办方框(checklist.ts 认行、ui.ts::contentHtml 画):行首 `- [ ] `/`- [x] `。
          形状**刻意是方的** —— 左边那枚「整条任务做完了」的勾(.tick)是圆的,两者一眼分得开:
          圆 = 这条任务,方 = 正文里的一项。尺寸用 em 跟着字号四档走。 */

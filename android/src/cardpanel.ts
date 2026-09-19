@@ -763,7 +763,14 @@ function onTimelineClick(e: Event) {
   if (el.closest(".panel")) return;
   // 勾框、正文里的待办方框、缩略图、留言徽章各有其主(main.ts),不抢——徽章漏在这里的
   // 话,点它会连带把操作面板开合一次(留言层滑上来,底下的面板悄悄换了态)。
-  if (el.closest(".tick") || el.closest(".ckbox") || el.closest(".thumb") || el.closest(".cm-badge")) return;
+  if (
+    el.closest(".tick") ||
+    el.closest(".ckbox") ||
+    el.closest(".thumb") ||
+    el.closest(".cm-badge") ||
+    el.closest(".fold-toggle") // 长卡折叠(用户面 116):整行可点且贴着正文,漏在这里 = 展开的同时开了面板
+  )
+    return;
   const card = el.closest<HTMLElement>("article.card[data-id]");
   if (!card) return;
   const id = card.dataset.id!;

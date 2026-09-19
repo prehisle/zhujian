@@ -99,3 +99,8 @@ tmp-flaky/
 /.fmt-samples/
 # Playwright CLI output (may contain credentials)
 .playwright-cli/
+
+# 本机装的第三方 skill(699 / 705 两次撞到):不是本仓维护的东西,进仓会同时踩
+# skill 字节闸(没有它的 SKILL_BUDGETS 条目 ⇒ 走 DEFAULT 12 KB,它 14.6 KB)和
+# export-public 的「多出排除项」闸 ⇒ 一装上就把所有落地拦死。
+.claude/skills/playwright-cli/

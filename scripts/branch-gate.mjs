@@ -531,6 +531,45 @@ function assertNoLongDocLines() {
   );
 }
 
+// ── 宽屏居中那四个元素:横向 margin 一个字都不能写(604 补2 真栽;architecture「四个元素」)──
+// 居中靠共用规则里的 `margin-left/right:auto`,而各自那几条规则**在它后面** ⇒ 后写的 `margin`
+// 简写或 `margin-left/right` 把 auto 冲掉,平板 / 横屏上不再居中,而**手机竖屏一点看不出来**。
+// 此前这条只有一句警告 + 一支**要宽视口设备才跑得到**的 live 资产(`cdp-acceptance-wide-column.mjs`,
+// backlog 测试与工装 64 记着它在这台上只跑得动不能证伪的那一半)⇒ 没有活着的自动边界,接到 land 上。
+// ⚠ 纵向 margin 照写不误(`.sync` / `#filterbar` 本来就有 margin-top/bottom),只拦会冲掉 auto 的那几种。
+// ⚠ 诚实边界:**纯文本扫描不是 CSS 解析** —— 判据是「某个逗号分段的最后一个简单选择器正是这四个之一」,
+//   拿变量绕开、或把 margin 写进别处再继承的,它看不见。它也不管 `ohos/`(那棵树的 vite root 指到 android/)。
+// ⛔ 不是新开一根轴(停止扩张线):十几行的就地检查,不带 parser / 登记表 / 阴性刀那套。
+const CENTERED_SELECTORS = ["#filterbar", "#timeline", ".sync", ".compose"];
+
+function assertCenteredElsHaveNoInlineMargin() {
+  const rel = "android/index.html";
+  const css = readFileSync(join(repoRoot, rel), "utf8");
+  const bad = [];
+  for (const m of css.matchAll(/([^{}]*)\{([^{}]*)\}/g)) {
+    const sel = m[1].replace(/\/\*[\s\S]*?\*\//g, "").split("\n").slice(-8).join("\n").trim();
+    const body = m[2];
+    if (body.includes("var(--content-max)")) continue; // 共用那条规则自己,它就是 auto 的出处
+    const targets = sel
+      .split(",")
+      .map((s) => s.trim().split(/[\s>+~]+/).pop())
+      .filter(Boolean);
+    if (!targets.some((tgt) => CENTERED_SELECTORS.includes(tgt))) continue;
+    const hit = body
+      .split(";")
+      .map((d) => d.trim())
+      .find((d) => /^margin(-left|-right|-inline(-start|-end)?)?\s*:/.test(d));
+    if (hit) bad.push(`${rel}: ${sel.replace(/\s+/g, " ").slice(0, 70)} { …${hit}… }`);
+  }
+  if (!bad.length) return;
+  die(
+    `宽屏居中那四个元素身上写了会冲掉 \`margin:auto\` 的横向 margin —— ⛔ 不落地:\n` +
+      bad.map((b) => `    ${b}`).join("\n") +
+      `\n  ⇒ 改成 margin-top / margin-bottom(纵向随便写);真要动横向就得同轮改那条共用规则,` +
+      `\n    并在 \`scripts/cdp-acceptance-wide-column.mjs\` 上补一格 —— ⛔ 别把这道闸放宽。`,
+  );
+}
+
 // ── handoff「手上的债」的形(测试与工装 113 立,698 接上)──────────────────────
 // 8 KB 闸 697 收口时只剩 6 字节余量,而债**一轮一行、只增不减**(销掉才删,那几半的触发门握在
 // 别的机器手里)⇒ 下一个人加一行必撞,还会被迫去压**别人写的**行 = 静默丢判据。
@@ -564,6 +603,7 @@ function runLocalGates() {
   assertDocSizeBudgets();
   assertNoLongDocLines();
   assertSkillBudgets();
+  assertCenteredElsHaveNoInlineMargin();
   console.log(`→ 本地十道静态门禁(几秒量级)…`);
   for (const g of LOCAL_GATES) {
     try {

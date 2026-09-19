@@ -20,6 +20,10 @@ export const main = defineMessages({
   // 506:改名后「P0优先」不成话 ⇒ 角标换成与桌面 tasktime.priorityChip 逐字同形。
   "main.priorityChip": { zh: "优先级·{p}", en: "Priority · {p}" },
   "main.doneAt": { zh: "完成于 {when}", en: "Done {when}" },
+  // 长卡折叠那枚钮(用户面 116),与桌面 board.unfold / board.fold 逐字同形;
+  // 箭头(▾ / ▴)是方向记号不是文案,拼在代码里、不进字典(同桌面那条)。
+  "main.unfold": { zh: "展开", en: "Expand" },
+  "main.fold": { zh: "收起", en: "Collapse" },
   "main.completed": { zh: "已完成", en: "Completed" },
   "main.deleteImageQ": { zh: "删除图{n}?删了不可恢复", en: "Delete image {n}? It cannot be recovered" },
   "main.deleteImageYes": { zh: "删除", en: "Delete" },
