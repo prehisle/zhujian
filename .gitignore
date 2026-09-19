@@ -89,6 +89,10 @@ tmp-flaky/
 # ⚠ 只忽略 `out-` 前缀,别整个 `*.png`:哪天探针要钉一张**基准图**当断言,那份该进仓。
 /e2e/probes/out-*.png
 
+# 同族第三个:`android-install-auto.mjs` 装机超时时截的现场图(照它重标 GEOMETRY 坐标)。
+# 706 补:一次 `git add -A` 真把它提进来过 —— 与上面两条同一个形,也是一次性看图用的产物。
+/.install-fail.png
+
 # e2e 期间 app 崩出的 GB 级 core dump(340 实测单轮 4 枚共 22GB;/core.* 锚定仓根,
 # 与 /core/ 目录不同形不误伤)
 /core.*

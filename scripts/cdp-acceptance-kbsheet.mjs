@@ -56,6 +56,13 @@
 //  C. ✅ 拿掉 `open()` 里的 `setLock(true)`(即不锁背景滚动)
 //     ⇒ 红两格:`背景不滚-scrollY 全程不变`(300 一路滚到 557,14 个不同值)与
 //       `开层期间背景滚动锁上着`。其余九格全绿 —— 说明锁那根轴是独立可证伪的。
+//     ⚠⚠ **2026-09-19 复核:这把刀的等价 CSS 形在 vivo/Android 16 上已经红不出来了。**
+//       拿 `html.kb-locked{overflow:auto!important}` 注入(量过 computed overflow 真从 hidden
+//       变成 auto ⇒ 锁的效果确实拆了),本资产全绿 —— 「键盘一起 Chromium 滚文档去露焦点框」
+//       那个现象在那台机器上当前不发生。⇒ `背景不滚-scrollY 全程不变` 在 vivo 上是**空测**。
+//       ⛔ 别因此拆轴(上面 2026-08-28 那趟是真红过的);要重新验它只能走重建形的刀 C 本体。
+//       ❓ 未验的猜想:原生 ime inset 把视口真缩之后焦点框从不出界,浏览器也就没动机去滚。
+//       同一天在编辑层(`cdp-acceptance-editsheet.mjs` 刀 B)复现了同一现象,由头写在那支。
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
