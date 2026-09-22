@@ -35,7 +35,11 @@ export const sync = defineMessages({
   "sync.pairServer": { zh: "服务器", en: "Server" },
   "sync.pairCode": { zh: "配对码", en: "Pairing code" },
   "sync.pairCopyText": { zh: "服务器地址:{server}\n配对码:{code}", en: "Server: {server}\nPairing code: {code}" },
-  "sync.pairNote": { zh: "在电脑上:「空间」→「加入空间」→ 输入配对码,两项都要填。出码和对方初始同步期间,不要切换空间、不要运行「全部同步」,并保持本机亮屏在前台。配对码 10 分钟内有效、只能用一次。", en: "On the computer: Spaces → Join a space → enter the pairing code; both fields are required. While the code is out and the other side is doing its initial sync, do not switch spaces or run Sync all, and keep this phone awake in the foreground. The code is valid for 10 minutes and can be used once." },
+  // ⚠ 这句给的是**电脑端**的路,措辞与桌面可见文案逐字对齐(「同步」= 侧栏那枚钮、
+  // 「用配对码加入」= sync.joinWithCode、「空间…」= shell.spacesEntry、「加入空间」=
+  // notebook.joinSpace)。⛔ 别写成「点左上角的「空间」」—— 那枚徽章**只有一个空间时
+  // 整个藏起**(notebook.ts::refreshSpaceEntry),而那正是收到配对码那台电脑的常态。
+  "sync.pairNote": { zh: "在电脑上点侧栏的「同步」:那台没开过同步,就选「用配对码加入」;已经在用自己账户的,走面板里的「空间…」(或左上角的空间名)→「加入空间」。服务器地址和配对码两项都要填。出码和对方初始同步期间,不要切换空间、不要运行「全部同步」,并保持本机亮屏在前台。配对码 10 分钟内有效、只能用一次。", en: "On the computer, click Sync in the sidebar: if that computer has never set up sync, choose “Join with a pairing code”; if it already has its own account, go to “Spaces…” in the panel (or the space name at the top left) → “Join a space”. Both the server address and the pairing code are required. While the code is out and the other side is doing its initial sync, do not switch spaces or run Sync all, and keep this phone awake in the foreground. The code is valid for 10 minutes and can be used once." },
   "sync.addDevice": { zh: "添加设备", en: "Add device" },
   "sync.bootProgress": { zh: "正在拉取账户数据 {received} / {total}", en: "Fetching account data {received} / {total}" },
   "sync.recoveryMismatch": { zh: "输入与恢复码不符。请对照纸上抄写的内容逐组核对。", en: "That does not match the recovery code. Check it group by group against what you wrote down." },
