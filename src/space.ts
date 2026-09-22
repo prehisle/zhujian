@@ -33,6 +33,8 @@ export type SyncStatus = {
   suspended: number;
   skew: boolean;
   clock_skew: boolean;
+  /** 引导为什么停着(用户面 121;今天只有「没有在线设备」一句)。独占一格、不与 error 互相遮盖。 */
+  boot_hint: string | null;
   /** 服务器权威名册;**`null` = 不知道**(未连上 / attach 那枚推送丢了 / 服务器版本旧)。
    *  ⛔ 消费方**不许**把它折成空数组(identity-plan §5.16.2-7):拿不到就不给操作面,
    *  绝不拿一份可能过期的名单充数。会话结束即回 `null`。 */

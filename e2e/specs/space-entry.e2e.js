@@ -70,4 +70,26 @@ describe("411/D2 空间入口分层(单空间藏徽章,同步面兜底)", () => 
       timeoutMsg: "Esc 应关闭空间菜单",
     });
   });
+
+  it("「加入空间」表单头上一句讲清「另开一个空间 vs 并进当前空间」(用户面 121)", async () => {
+    await goNotebook("inbox");
+    await browser.execute(() => document.getElementById("sync-entry").click());
+    await (await $(".sync-panel")).waitForExist({ timeout: 3000 });
+    await clickByText(".sync-panel button", "空间…");
+    const menu = await $(".space-menu");
+    await menu.waitForExist({ timeout: 3000 });
+    await clickByText(".space-menu button", "加入空间(输入配对码)…");
+    const hint = await $(".space-menu .space-form .space-hint");
+    await hint.waitForExist({ timeout: 3000 });
+    const text = await hint.getText();
+    // 两半都要有:这条路加的是**新空间**;并进主空间走的是同步面板那条「用配对码加入」。
+    expect(text).toContain("作为一个新空间加到这台电脑");
+    expect(text).toContain("用配对码加入");
+    // 收摊:表单里的「取消」在没有在途加入时就是关菜单。
+    await clickByText(".space-menu .space-form button", "取消");
+    await browser.waitUntil(async () => !(await $(".space-menu").isExisting()), {
+      timeout: 3000,
+      timeoutMsg: "「取消」应关闭空间菜单",
+    });
+  });
 });

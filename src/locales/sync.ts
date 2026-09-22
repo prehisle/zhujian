@@ -25,7 +25,17 @@ export const sync = defineMessages({
   "sync.frozenWarn": { zh: "检测到设备历史分叉,已冻结该设备的同步(需人工处理)。", en: "Device history fork detected; sync for that device is frozen (manual action needed)." },
   "sync.addDevice": { zh: "添加设备", en: "Add device" },
   "sync.pairRequesting": { zh: "正在向服务器申请配对码…", en: "Requesting a pairing code from the server…" },
-  "sync.pairInstructions": { zh: "用手机朱简「同步」里的「扫码连接电脑」直接扫;或在新设备上选「用配对码加入」,输入服务器地址和这串码。10 分钟内有效,只能用一次。", en: "On your phone, open Sync in Zhujian and use “Scan to connect” to scan this code; or on the new device choose “Join with a pairing code” and enter the server address and this code. Valid for 10 minutes, single use." },
+  // 出码页三句(用户面 121)。⚠ 指的路按**手机真长相**写:「扫码连接电脑」= 手机 shell.syncScan、
+  // 「空间」= 手机那一页的标题 shell.spacesTitle、「加入空间(扫电脑二维码)」= 手机 shell.joinScan。
+  // 手机已有自己账户那条路此前一个字没提 —— 用户拿着它去「同步」页,那里只有创号一条路。
+  "sync.pairInstructions": { zh: "用手机朱简「同步」里的「扫码连接电脑」直接扫;手机已经在用自己的账户时,改走它的「空间」→「加入空间(扫电脑二维码)」。或在新设备上选「用配对码加入」,输入服务器地址和这串码。10 分钟内有效,只能用一次。", en: "On your phone, open Sync in Zhujian and use “Scan to connect a computer” to scan this code; if the phone already uses an account of its own, go to its Spaces page → “Join a space (scan the computer's QR code)” instead. Or, on the new device, choose “Join with a pairing code” and enter the server address and this code. Valid for 10 minutes, single use." },
+  "sync.pairKeepOn": { zh: "对方加入后要从这台电脑拉取初始快照:期间请让这台电脑开着、别切换空间。", en: "After joining, the other device pulls its initial snapshot from this computer: keep this computer on and stay in this space meanwhile." },
+  "sync.pairDoneNote": { zh: "{detail}。请让这台电脑开着、别切换空间,等对方显示「已连接」再关闭本页。", en: "{detail}. Keep this computer on and stay in this space; close this page once the other device shows “Connected”." },
+  "sync.pairAgain": { zh: "重新出码", en: "Issue a new code" },
+  // 引导进度那一块(用户面 121;与安卓那三句同话)。
+  "sync.bootWaiting": { zh: "正在等另一台设备发来初始快照…", en: "Waiting for another device to send the initial snapshot…" },
+  "sync.snapshotProgress": { zh: "拉取快照 {received} / {total}({pct}%)", en: "Fetching snapshot {received} / {total} ({pct}%)" },
+  "sync.snapshotDone": { zh: "快照 {total} 已收全,校验并导入中…", en: "Snapshot {total} received, verifying and importing…" },
   "sync.advanced": { zh: "高级…", en: "Advanced…" },
   "sync.serverKv": { zh: "服务器 {url}", en: "Server {url}" },
   "sync.changeServer": { zh: "修改服务器", en: "Change server" },
@@ -56,6 +66,9 @@ export const sync = defineMessages({
   "devices.refreshing": { zh: "读取中…", en: "Loading…" },
   "devices.noAdmin": { zh: "本空间还没有设置管理设备:设备管理暂不可用,请联系服务器运营者指定一台。", en: "No admin device has been set for this space yet: device management is unavailable. Ask the server operator to designate one." },
   "devices.oneAdminHint": { zh: "建议再设一台管理设备,万一这台丢了。", en: "Consider setting a second admin device, in case this one is lost." },
+  // 权限差别此前只在**行上**表达(§5.8:没权限的按钮不显示也不显示灰的)—— 于是非管理设备
+  // 看到的是一张什么都点不了的名单,不知道是自己没权限还是功能没做(用户面 121)。
+  "devices.whoCanRemove": { zh: "只有带「管理」徽章的设备能移除别的设备;其余设备只能让自己退出。", en: "Only devices with the “Admin” badge can remove other devices; any other device can only leave on its own." },
   "devices.badgeThis": { zh: "本机", en: "This device" },
   "devices.badgeAdmin": { zh: "管理", en: "Admin" },
   "devices.idExpand": { zh: "点开看完整设备 ID", en: "Show the full device ID" },

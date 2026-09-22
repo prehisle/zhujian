@@ -55,6 +55,8 @@ export type SyncStatus = {
   suspended: number;
   skew: boolean;
   clock_skew: boolean;
+  /** 引导为什么停着(用户面 121;今天只有「没有在线设备」一句)。独占一格、不与 error 互相遮盖。 */
+  boot_hint: string | null;
   /** 服务器权威名册;**`null` = 不知道**(未连上 / attach 那枚推送丢了 / 服务器版本旧)。
    *  ⛔ 消费方不许把它折成空数组(§5.16.2-7):拿不到就不给操作面。会话结束即回 `null`。 */
   roster: RosterEntry[] | null;
@@ -125,6 +127,10 @@ export function renderSync(s: SyncStatus) {
   altCreate.textContent = isMain ? t("sync.altCreateMain") : t("sync.altCreateOther");
   altCreate.classList.toggle("ghost", isMain);
   $("sync-boot").hidden = s.state !== "booting";
+  // 引导为什么停着(用户面 121):core 写在 boot_hint,独占一格 —— 与上面 err 那格可以同屏。
+  const hint = $("sync-boot-hint");
+  hint.hidden = !s.boot_hint;
+  hint.textContent = s.boot_hint ?? "";
   $("sync-online").hidden = !s.configured;
   // 名册的唯一出处是状态面(§5.7-6):每份新快照都喂给设备面,开着就当场重画。
   feedDevices(s);

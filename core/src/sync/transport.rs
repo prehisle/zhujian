@@ -124,6 +124,28 @@ const HANDSHAKE_SECS: u64 = 10;
 /// 引导:发出 Req 后等 Offer / 块间活性超时,超了换一台在线设备重试(§6.2 步骤 1;
 /// 对方也在引导时不应答,靠这只超时轮转)。
 const BOOT_STEP_SECS: u64 = 30;
+/// 引导中**一台同伴都不在线**时,等这么久还没人来就把原因写进状态面 [`SyncStatus::boot_hint`]
+/// (用户面 121)。此前 `try_boot_request` 没同伴时静默保持 booting、一个字不说 —— 老设备
+/// 关机 / 锁屏,新设备挂一整晚只见「初始同步中…」。取一个引导步长:同伴刚好在重连的常态
+/// 不至于闪一句红字,而人站着看的那一档也等得起。⛔ 只管「没人在线」这一格 —— 「在线但
+/// 不应答」仍是 boot deadline 臂的静默轮转(前台仪式的头由 [`JoinBootWatch`] 数,那两条路
+/// 刻意不同)。
+///
+/// ⚠ 计的是「**最后一枚中转帧之后**」的静默,不是「鉴权之后」(codex 121 一轮 M3):服务器
+/// 在 `Authed` 之后先搬离线信箱、**再**推在线快照,积压大 / 链路慢时 Peer 事件可能几十秒后才到
+/// —— 每收一枚 `Deliver` 就把计时往后推,等的是「服务器说完了还没提到任何人」。
+const BOOT_IDLE_SECS: u64 = BOOT_STEP_SECS;
+/// 「没有在线设备可提供初始快照」那句人话的**唯一出处**(first-draft-checklist 第 14 条:
+/// 同一条规则的第二份描述就是漂移源)。三处消费各接自己的尾巴:主路引导 idle
+/// ([`no_boot_peer_hint`],状态面 `error`)、「加入空间」的静默收场
+/// ([`JoinBootWatch::on_silence`],「再重试加入」)、手机「全部同步」的 `no_boot_peer`
+/// 那格(`mobile::coord::observe_catchup`,原样)。
+pub const NO_BOOT_PEER_HEAD: &str = "没有在线设备可提供初始快照:请让另一台已经装好朱简的设备开着并联网";
+/// 主路(常驻会话)引导 idle 到点写进 [`SyncStatus::boot_hint`] 的那句 —— 尾巴说清
+/// 「不用你动手,它一上线本机自己续」。
+pub fn no_boot_peer_hint() -> String {
+    format!("{NO_BOOT_PEER_HEAD},它一上线本机会自动继续")
+}
 /// 引导空间不足的重试间隔(codex P4-d 轮 M1/复核 M):**主动断连 + 固定长等待**。
 /// 断连是必须的——收端只丢块的话,源端会把整份快照(最大 8GiB)白白发完(复核 M);
 /// 断开让服务器对源端的下一块回 Nack,`Sent::BootOut` 路径当场止流并删临时快照。
@@ -210,6 +232,14 @@ pub struct SyncStatus {
     pub peers_online: usize,
     /// 最近一次值得人看的错误(人话;连接恢复即清)。
     pub error: Option<String>,
+    /// 引导为什么停着(用户面 121):今天只有一句 —— [`no_boot_peer_hint`],引导中一台同伴
+    /// 都不在线、等满 [`BOOT_IDLE_SECS`] 后写下,同伴一上线即清,会话结束即清。
+    ///
+    /// ⛔ **刻意不占 [`Self::error`]**(codex 121 一轮 M1):它与要人动手的真错误(磁盘不足那条
+    /// 固定等 5 分钟、引导流中断、导入失败…)**同时成立**且各有各的消亡条件 —— 挤在一格里,
+    /// 写这句会盖掉磁盘不足,同伴上线收回这句时又把它整格清空,那条真错误就在下一枚 Offer 到来
+    /// 之前凭空消失。判据:**能与需人工处理的错误并存、且有独立消亡条件的状态,不占 `error`**。
+    pub boot_hint: Option<String>,
     /// 已冻结的 origin(分叉,§11 手工流程恢复)。L-c2a 起引擎活到 runtime 生命期,
     /// 故这一项**照引擎的当前事实**、不再每次建连清零重攒(清零会把真在场的冻结抹成
     /// 「没事」,直到下一帧到了才复现)。
@@ -4113,6 +4143,10 @@ struct Ctx<'a> {
     boot_peer: Option<String>,
     boot_recv: Option<BootReceiver>,
     boot_deadline: Option<Instant>,
+    /// 引导中没同伴在线的静默计时(用户面 121):到点把 [`no_boot_peer_hint`] 写进状态面。
+    /// 会话起步就在引导时武装、[`Ctx::try_boot_request`] 发出 Req 时解除、没同伴时再武装
+    /// (已武装的不推后);到点只在「仍在引导 ∧ 仍无同伴」时才说话。
+    boot_idle_deadline: Option<Instant>,
     boot_out: Option<BootOut>,
     pair: Option<PairFlow>,
     /// 一笔在飞的设备管理命令(§5.7-3)。与 [`Self::pair`]、名册刷新共用一个互斥域

@@ -181,8 +181,13 @@ export function renderDevices(body: HTMLElement, deps: Deps): void {
   const short = shortIds(roster.map((e) => e.device));
 
   if (!opsOpen) body.appendChild(el("div", "sync-warn", t("devices.noAdmin")));
-  else if (adminCount === 1 && roster.length >= 2) {
-    body.appendChild(el("p", "sync-note", t("devices.oneAdminHint")));
+  else {
+    // 谁能移除谁,一句说清(用户面 121)—— 行上不显示没权限的按钮是对的,但得有一句
+    // 告诉非管理设备「这是权限,不是漏做」。
+    body.appendChild(el("p", "sync-note", t("devices.whoCanRemove")));
+    if (adminCount === 1 && roster.length >= 2) {
+      body.appendChild(el("p", "sync-note", t("devices.oneAdminHint")));
+    }
   }
 
   const list = el("div", "dev-list");

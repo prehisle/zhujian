@@ -184,11 +184,14 @@ function render(): void {
     return a.device < b.device ? -1 : 1;
   });
 
+  // 谁能移除谁,一句说清(用户面 121)—— 行上不显示没权限的按钮是对的,但得告诉非管理
+  // 设备「这是权限,不是漏做」。
   const head = !opsOpen
     ? `<div class="err">${esc(t("devices.noAdmin"))}</div>`
-    : adminCount === 1 && roster.length >= 2
-      ? `<p class="fine">${esc(t("devices.oneAdminHint"))}</p>`
-      : "";
+    : `<p class="fine">${esc(t("devices.whoCanRemove"))}</p>` +
+      (adminCount === 1 && roster.length >= 2
+        ? `<p class="fine">${esc(t("devices.oneAdminHint"))}</p>`
+        : "");
 
   box.innerHTML =
     head +

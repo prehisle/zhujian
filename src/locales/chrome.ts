@@ -22,6 +22,7 @@ export const chrome = defineMessages({
   "notebook.joinedStay": { zh: "已加入空间「{name}」{warn},保存或清空正在编辑的内容后,从空间菜单切换过去", en: "Joined space “{name}”{warn}; save or clear what you are editing, then switch over from the space menu" },
   "notebook.joined": { zh: "已加入空间「{name}」{warn}", en: "Joined space “{name}”{warn}" },
   "notebook.joinSpace": { zh: "加入空间(输入配对码)…", en: "Join a space (enter a pairing code)…" },
+  "notebook.joinHint": { zh: "这会把对方账户里的本子作为一个新空间加到这台电脑,当前空间不受影响。想把这台电脑的主空间并进对方账户(两边内容合并),用侧栏「同步」里的「用配对码加入」。", en: "This adds the other account's notebook to this computer as a new space; the current space is not affected. To merge this computer's main space into that account (contents from both sides combined), use “Join with a pairing code” under Sync in the sidebar." },
   "notebook.joinServerPh": { zh: "服务器地址(wss://…)", en: "Server address (wss://…)" },
   "notebook.joinCodePh": { zh: "配对码(对方设备「添加设备」出示)", en: "Pairing code (shown by “Add device” on the other device)" },
   "notebook.join": { zh: "加入", en: "Join" },

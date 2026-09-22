@@ -7386,6 +7386,91 @@ async fn boot_commit_latch_survives_authenticated_session_teardown() {
     rig_b.task.abort();
 }
 
+/// 用户面 121:引导中**一台同伴都不在线** ⇒ 等满一个引导步长,状态面要说「没有在线设备」;
+/// 源一上线,那句话收回、引导照常完成、`error` 回 `None`。⛔ 这一格是**主路**(配对加入后
+/// 的常驻会话),与「加入空间」那条前台仪式的静默收场是两条路(`JoinBootWatch` 头注)。
+///
+/// 四格各钉一件事:①半个步长**不**说话(同伴常态重连不闪红字);②到点说、说的是那一整句,
+/// 且**写的是 `boot_hint` 不是 `error`**(codex 121 一轮 M1:占了 `error` 会盖掉 / 抹掉磁盘
+/// 不足那类要人动手的真错误);③**有同伴上线就收回,哪怕它供不了快照**(丙自己也在引导 ⇒
+/// 静默不供,引导没完成、`boot_hint` 却已 `None` —— 这一格证的是「收回」是同伴上线触发的,
+/// 不是被引导完成顺带清掉的);④真源上线后引导照常完成、两格都 `None`。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn booting_with_no_peer_online_says_so_and_recovers_when_source_appears() {
+    // 三设备拓扑:免费档 2 席不够,admin 提额(与 light_peer_refuses_to_serve_boot_snapshot 同形)。
+    let (addr, admin, token) = start_server_with_admin().await;
+    let url = format!("ws://{addr}");
+    let (db_a, clock_a, dir_a) = test_db("idle-hint-a");
+    {
+        let mut conn = db_a.lock().unwrap();
+        let mut clk = clock_a.lock().unwrap();
+        notes::capture(&mut conn, &mut clk, "甲的灵感").unwrap();
+    }
+    create_account_as(&db_a, &url, Some(ACCT)).await.unwrap();
+    let resp = admin_post(
+        admin,
+        token,
+        &format!("/admin/entitlement?account={ACCT}&tier=test&seat_quota=8&fastlane_bytes_per_month=1"),
+    )
+    .await;
+    assert!(resp.starts_with("HTTP/1.1 200"), "提额应 200:{resp}");
+    let mut rig_a = spawn_transport(db_a.clone(), clock_a.clone(), dir_a.clone());
+    wait_state(&rig_a.status, "online").await;
+    let (db_b, clock_b, dir_b) = join_via(&rig_a, &url, "idle-hint-b").await;
+    // 两次出码之间等甲那一场真收场:乙的 pair_join 回来时甲可能还没收到 Registered,此刻再
+    // 开槽会被「已有配对在进行中」拒(三设备那几只测都是靠中间那段引导把这一步等过去的)。
+    timeout(Duration::from_secs(10), async {
+        while let Some(ev) = rig_a.events.recv().await {
+            if let SyncEvent::Pair { phase: "done", .. } = ev {
+                return;
+            }
+        }
+        panic!("甲的事件流关了,配对没收场");
+    })
+    .await
+    .expect("10 秒没等到甲的配对 done");
+    let (db_c, clock_c, dir_c) = join_via(&rig_a, &url, "idle-hint-c").await;
+    // 源下线,并让服务器把它的离线处理完 —— 这样乙连上时**一枚 Peer 事件都收不到**,
+    // 走的是「起步武装」那条路(收到「甲在线→离线」则走 try_boot_request 那条,两条都该说话,
+    // 但这只测要钉住前者:它没有别的路会武装计时)。
+    rig_a.task.abort();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let rig_b = spawn_transport(db_b.clone(), clock_b.clone(), dir_b);
+    wait_state(&rig_b.status, "booting").await;
+    // ① 半个步长内不说话。
+    tokio::time::sleep(Duration::from_secs(BOOT_IDLE_SECS / 2)).await;
+    let early = rig_b.status.lock().unwrap().clone();
+    assert_eq!(early.state, "booting");
+    assert_eq!(early.boot_hint, None, "半个步长就报「没人在线」= 同伴常态重连也会闪红字");
+    // ② 到点说,说的是那一整句;`error` 那格一个字不占。
+    let hint = no_boot_peer_hint();
+    wait_until("状态面写下「没有在线设备」", || {
+        rig_b.status.lock().unwrap().boot_hint.as_deref() == Some(hint.as_str())
+    })
+    .await;
+    let said = rig_b.status.lock().unwrap().clone();
+    assert_eq!(said.state, "booting", "说了原因,态仍是 booting(没放弃)");
+    assert_eq!(said.error, None, "这句话住 boot_hint,不许占 error(M1:会盖掉磁盘不足那类真错误)");
+    // ③ 丙上线(同账户、自己也没引导过 ⇒ 收到 Req 静默不供):句子当场收回、引导仍未完成。
+    let rig_c = spawn_transport(db_c.clone(), clock_c.clone(), dir_c);
+    wait_until("有同伴上线后那句「没有在线设备」被收回", || {
+        rig_b.status.lock().unwrap().boot_hint.is_none()
+    })
+    .await;
+    assert_eq!(rig_b.status.lock().unwrap().state, "booting", "丙供不了快照,乙该仍在引导");
+    assert_eq!(count_items(&db_b), 0, "收回那句话时快照还没到 —— 收回是同伴上线触发的");
+    rig_c.task.abort();
+    // ④ 真源上线 → 引导完成 → online,两格都 None。
+    let rig_a2 = spawn_transport(db_a.clone(), clock_a.clone(), dir_a);
+    wait_state(&rig_b.status, "online").await;
+    let done = rig_b.status.lock().unwrap().clone();
+    assert_eq!(done.error, None);
+    assert_eq!(done.boot_hint, None);
+    wait_until("B 拿到数据", || count_items(&db_b) == 1).await;
+    rig_a2.task.abort();
+    rig_b.task.abort();
+}
+
 /// latch 属 Transport 生命周期、不进 Ctx(三轮 M1 的反面锚):对连不上的服务器
 /// 反复退避重连(多个 session 生灭)后,sender 仍在 latch 里、receiver 未被关——
 /// 「第一次断线就关通道、JoinManager 误判失败」的旧模式在此现形。

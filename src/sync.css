@@ -175,6 +175,28 @@
 }
 .sync-input:focus { border-color: var(--seal-line); }
 
+/* 引导进度(用户面 121):与安卓 `.bar` 同形 —— 细条、朱砂淡底、朱砂填充;字走 .sync-dim。 */
+.sync-boot {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.sync-boot-bar {
+  height: 6px;
+  border-radius: var(--radius-pill);
+  background: var(--seal-tint);
+  overflow: hidden;
+}
+.sync-boot-fill {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: var(--seal);
+  transition: width 0.2s;
+}
+.sync-boot-text { font-size: var(--fs-12); }
+.sync-boot-hint:empty { display: none; }
+
 /* 配对码:等宽大字,可选中抄录 */
 .sync-code {
   font-family: Consolas, "Courier New", monospace;

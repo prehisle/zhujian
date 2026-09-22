@@ -29,7 +29,7 @@
 //! 「慢引导不许误报『无引导源』」)。⇒ 静默那条轴**只在毫无引导活动时才走**,
 //! 见到任何证据就归零。
 
-use super::{SyncEvent, BOOT_STEP_SECS};
+use super::{SyncEvent, BOOT_STEP_SECS, NO_BOOT_PEER_HEAD};
 use std::time::Duration;
 
 /// 连着这么多次「换一台再来」都没成 ⇒ 收场。
@@ -110,7 +110,9 @@ impl JoinBootWatch {
     pub fn on_silence(&self) -> String {
         match &self.last_reason {
             Some(r) => format!("初始同步没能完成:{r}"),
-            None => "没有在线设备可提供初始快照:请让另一台已经装好朱简的设备开着并联网,再重试加入".into(),
+            // 主句只有一个出处(`NO_BOOT_PEER_HEAD`);这条路的尾巴是「再重试加入」——
+            // 前台仪式收场了,要人再来一次;主路那句的尾巴则是「它一上线本机会自动继续」。
+            None => format!("{NO_BOOT_PEER_HEAD},再重试加入"),
         }
     }
 }

@@ -148,6 +148,9 @@ describe("367 片⑤ 设备管理面", () => {
     expect(rows[0]).toContain(SID_ME);
     expect(rows[1]).toContain(SID_B);
     expect(rows[2]).toContain(`${SID_C}…`);
+    // 谁能移除谁一句说清(用户面 121):有管理设备的名单上方恒有这句 —— 非管理设备看到的
+    // 名单上一枚按钮都没有,得知道那是权限不是漏做。
+    expect(await (await $(".sync-panel")).getText()).toContain("只有带「管理」徽章的设备能移除别的设备");
     // 收起态**不该**显完整 26 位(那是点开才给的)。
     expect(rows[2]).not.toContain(C);
   });

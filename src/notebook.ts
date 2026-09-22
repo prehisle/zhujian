@@ -568,6 +568,11 @@ function spaceJoinRow(): HTMLElement {
     cancel.textContent = t("notebook.cancel");
     const note = document.createElement("div");
     note.className = "space-err";
+    // 「另开一个空间 vs 并进当前空间」一句说清(用户面 121):这条路加的是**新空间**,当前
+    // 空间不动;想把本机主空间并进对方账户走的是同步面板那条「用配对码加入」。
+    const hint = document.createElement("p");
+    hint.className = "space-hint";
+    hint.textContent = t("notebook.joinHint");
     for (const inp of [server, code]) {
       inp.addEventListener("keydown", (ke) => {
         ke.stopPropagation();
@@ -583,6 +588,7 @@ function spaceJoinRow(): HTMLElement {
       if (joinAttempt) void joinSpaceCancel().catch(() => {});
       else closeSpaceMenu();
     });
+    form.appendChild(hint);
     form.appendChild(server);
     form.appendChild(code);
     form.appendChild(go);

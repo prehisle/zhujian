@@ -1370,9 +1370,13 @@ impl Coord {
             Err(e) => ("failed", Some(e)),
             Ok(rt) => {
                 let st = rt.status.lock().expect("sync status mutex poisoned").clone();
+                // 前台空间引导中却一台同伴都不在线:transport 写下的那句是权威(用户面 121),
+                // 报 no_boot_peer 而不是「正在初始同步」的 connected。
+                let idle = st.boot_hint.clone();
                 match (st.state.as_str(), st.error) {
                     (_, Some(e)) => ("failed", Some(e)),
                     ("online", None) => ("connected", Some("当前空间,实时同步中".into())),
+                    ("booting", None) if idle.is_some() => ("no_boot_peer", idle),
                     ("booting", None) => ("connected", Some("当前空间,正在初始同步".into())),
                     ("connecting", None) => ("timed_out", Some("当前空间正在连接".into())),
                     ("offline", None) => ("timed_out", Some("当前空间掉线,重连中".into())),
@@ -1536,8 +1540,15 @@ async fn observe_catchup(
             _ = tokio::time::sleep_until(soft_deadline) => {
                 let st = rt.status.lock().expect("sync status mutex poisoned").clone();
                 let evidence = boot_evidence || st.peers_online > 0;
+                // transport 自己在引导 idle 满一个步长后会把「没有在线设备」写进 `boot_hint`
+                // (用户面 121;per_space 45s > 那一步长 30s,常态下这里看到的就是它)—— 它是
+                // 权威的「此刻没人在线」,哪怕这一轮里同伴曾短暂在线过(codex 121 一轮 M2:那种
+                // 形此前报 timed_out,不该因这句话变成 failed);句子取它那份,没有就用主句。
+                let idle = st.boot_hint.clone();
                 break match (st.state.as_str(), st.error) {
-                    ("booting", None) if !evidence => ("no_boot_peer", Some("没有在线设备可提供引导快照(需要桌面端在线)".into())),
+                    ("booting", None) if !evidence || idle.is_some() => {
+                        ("no_boot_peer", Some(idle.unwrap_or_else(|| transport::NO_BOOT_PEER_HEAD.into())))
+                    }
                     ("booting", None) => ("timed_out", Some("初始同步未在时限内完成(快照较大或网络较慢)".into())),
                     (_, Some(e)) => ("failed", Some(e)),
                     // 117(codex H2):到过 online 但字节还在途 = 这轮没追完,如实报

@@ -119,7 +119,12 @@ impl Drop for Ctx<'_> {
             "退回 fail-open 不该拆任何链,故也不该产出帧(§5.11);产出了 {} 枚",
             outs.len()
         );
-        self.set_status(|s| s.roster = None);
+        // 「没有在线设备」那句也是会话内有效(用户面 121):断了连,「在不在线」这个判断本身就
+        // 没了依据;重连后仍无人在线会重新计满一个步长再说。
+        self.set_status(|s| {
+            s.roster = None;
+            s.boot_hint = None;
+        });
     }
 }
 
@@ -172,6 +177,7 @@ pub(super) async fn session(
         boot_peer: None,
         boot_recv: None,
         boot_deadline: None,
+        boot_idle_deadline: None,
         boot_out: None,
         pair: None,
         admin: None,
@@ -193,6 +199,9 @@ pub(super) async fn session(
     // bootstrapped_at):槽空 = fresh-to-account 加入者,先拿快照(§6.2)。
     if ctx.engine.booting() {
         ctx.set_status(|s| s.state = "booting".into());
+        // 起步就武装 idle 计时(用户面 121):服务器紧接着推在线快照,有同伴就走
+        // `try_boot_request` 解除;一台都没有时 `Peer` 事件根本不来,没有别的路会去武装它。
+        ctx.boot_idle_deadline = Some(Instant::now() + Duration::from_secs(BOOT_IDLE_SECS));
     } else {
         ctx.relay_session_up(&mut ws).await?;
     }
@@ -385,6 +394,12 @@ pub(super) async fn session(
                 // 等 Offer/块超时:换下一台在线设备重试(对方可能也在引导,§6.2)。
                 ctx.boot_rotate();
                 ctx.try_boot_request(&mut ws).await?;
+                Woke::Handled
+            },
+            // 引导中一台同伴都不在线,等满一个步长:把原因写进状态面(用户面 121)。
+            // 只动状态,不碰库不发帧,故不过身份栅栏。
+            _ = until(ctx.boot_idle_deadline) => {
+                ctx.on_boot_idle();
                 Woke::Handled
             },
             _ = std::future::ready(()), if ctx.boot_out.is_some() => {

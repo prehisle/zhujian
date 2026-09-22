@@ -60,6 +60,9 @@ export const sync = defineMessages({
   "devices.refreshing": { zh: "读取中…", en: "Loading…" },
   "devices.noAdmin": { zh: "本空间还没有设置管理设备:设备管理暂不可用,请联系服务器运营者指定一台。", en: "No admin device has been set for this space yet: device management is unavailable. Ask the server operator to designate one." },
   "devices.oneAdminHint": { zh: "建议再设一台管理设备,万一这台丢了。", en: "Consider setting a second admin device, in case this one is lost." },
+  // 权限差别此前只在行上表达(没权限的按钮不显示)—— 非管理设备看到的是一张什么都点不了
+  // 的名单,不知道是自己没权限还是功能没做(用户面 121;与桌面同句)。
+  "devices.whoCanRemove": { zh: "只有带「管理」徽章的设备能移除别的设备;其余设备只能让自己退出。", en: "Only devices with the “Admin” badge can remove other devices; any other device can only leave on its own." },
   "devices.badgeThis": { zh: "本机", en: "This device" },
   "devices.badgeAdmin": { zh: "管理", en: "Admin" },
   "devices.copyId": { zh: "复制完整 ID", en: "Copy full ID" },

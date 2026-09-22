@@ -27,7 +27,9 @@ export const shell = defineMessages({
   "shell.joinCodePh": { zh: "配对码(对方设备「添加设备」出示)", en: "Pairing code (shown by “Add device” on the other device)" },
   "shell.joinCancel": { zh: "取消加入", en: "Cancel joining" },
   "shell.syncAll": { zh: "全部同步(逐空间追赶一次)", en: "Sync all (one catch-up pass per space)" },
-  "shell.spacesNote": { zh: "每个空间是一本独立的本子,记录落在当前空间。想多端同步,到该空间的「同步」里创建账户;要把别处的账户带到手机,用「加入空间」。", en: "Each space is a separate notebook; new entries land in the current space. To sync across devices, create an account under that space's Sync; to bring an existing account to this phone, use Join a space." },
+  // 「并进当前空间 vs 另开一个空间」要讲清(用户面 121):旧句「要把别处的账户带到手机,用
+  // 「加入空间」」把**全新手机**也往另开空间引 —— 它该走「同步」里的扫码,让主空间并进电脑的账户。
+  "shell.spacesNote": { zh: "每个空间是一本独立的本子,记录落在当前空间。「加入空间」把电脑上的账户作为另一个空间加进来,手机已有的空间不变;手机还没开过同步、想和电脑看同一本,请到「同步」里「扫码连接电脑」。要让某个空间多端同步,到该空间的「同步」里创建账户。", en: "Each space is a separate notebook; new entries land in the current space. “Join a space” adds the computer's account as another space and leaves the phone's existing spaces untouched; if this phone has never set up sync and should see the same notebook as the computer, go to Sync and use “Scan to connect a computer”. To sync a space across devices, create an account under that space's Sync." },
   "shell.syncScan": { zh: "扫码连接电脑", en: "Scan to connect a computer" },
   "shell.syncAltPair": { zh: "手动输入配对码", en: "Enter the pairing code by hand" },
   "shell.syncCodePh": { zh: "配对码(电脑「添加设备」出示)", en: "Pairing code (shown by “Add device” on the computer)" },

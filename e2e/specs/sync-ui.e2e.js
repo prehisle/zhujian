@@ -111,4 +111,70 @@ describe("P2-g 同步 UI(未配置=零打扰)", () => {
     );
     expect(acts).toEqual(["添加设备", "设备名单"]);
   });
+
+  it("初始同步中:状态页画进度条,sync-boot 事件推进它;core 写进 error 的「没有在线设备」照样显出来(用户面 121)", async () => {
+    await goNotebook("inbox");
+    await browser.execute(() => document.getElementById("sync-entry").click());
+    const panel = await $(".sync-panel");
+    await panel.waitForExist({ timeout: 3000 });
+    const feed = (status) =>
+      browser.execute((s) => window.__TAURI__.event.emit("sync-status", { space: "main", status: s }), status);
+    const boot = (received, total) =>
+      browser.execute(
+        (r, t) => window.__TAURI__.event.emit("sync-boot", { space: "main", received: r, total: t }),
+        received,
+        total,
+      );
+    const bootText = () =>
+      browser.execute(() => document.querySelector(".sync-panel .sync-boot-text")?.textContent ?? null);
+    const fillWidth = () =>
+      browser.execute(() => document.querySelector(".sync-panel .sync-boot-fill")?.style.width ?? null);
+    // 进 booting:进度块在,还没收到任何进度事件时说「正在等另一台设备」。
+    await feed({ ...CONFIGURED, state: "booting" });
+    await browser.waitUntil(async () => (await bootText()) !== null, {
+      timeout: 5000,
+      timeoutMsg: "booting 态的状态页应有进度块",
+    });
+    expect(await panel.getText()).toContain("初始同步中");
+    expect(await bootText()).toBe("正在等另一台设备发来初始快照…");
+    // 块帧推进:0.5 / 2.0 MB ⇒ 25%。
+    await boot(524288, 2097152);
+    await browser.waitUntil(async () => (await fillWidth()) === "25%", {
+      timeout: 5000,
+      timeoutMsg: `进度条宽度该到 25%,实得 ${await fillWidth()},文字「${await bootText()}」`,
+    });
+    expect(await bootText()).toBe("拉取快照 0.5 MB / 2.0 MB(25%)");
+    // 收全 ⇒ 满条 + 「校验并导入中」。
+    await boot(2097152, 2097152);
+    await browser.waitUntil(async () => (await fillWidth()) === "100%", {
+      timeout: 5000,
+      timeoutMsg: "收全后进度条该满",
+    });
+    expect(await bootText()).toBe("快照 2.0 MB 已收全,校验并导入中…");
+    // 没同伴在线那句由 core 写进 status.boot_hint(transport 那条 idle 计时;独占一格,不占 error),
+    // 前端画在进度块里。同时喂一条 error:两句要**同屏**,谁也不遮谁(codex 121 一轮 M1 的形)。
+    const hint = "没有在线设备可提供初始快照:请让另一台已经装好朱简的设备开着并联网,它一上线本机会自动继续";
+    await feed({ ...CONFIGURED, state: "booting", boot_hint: hint, error: "初始同步空间不足:请清理存储" });
+    await browser.waitUntil(async () => (await panel.getText()).includes("没有在线设备可提供初始快照"), {
+      timeout: 5000,
+      timeoutMsg: "booting 态带 boot_hint 的状态,那句该显在进度块里",
+    });
+    expect(await panel.getText()).toContain("初始同步空间不足");
+    expect(await browser.execute(() => document.querySelector(".sync-panel .sync-boot-hint")?.textContent ?? null)).toBe(hint);
+    // 引导完成翻到 online:进度块整个撤掉(不留一根满条在「已连接」下面)。
+    await feed({ ...CONFIGURED, state: "online" });
+    await browser.waitUntil(async () => (await bootText()) === null, {
+      timeout: 5000,
+      timeoutMsg: "online 态不该再有进度块",
+    });
+    expect(await panel.getText()).toContain("已连接");
+    // 收摊:Esc 关面板。
+    await browser.execute(() => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    });
+    await browser.waitUntil(async () => !(await $(".sync-overlay").isExisting()), {
+      timeout: 3000,
+      timeoutMsg: "Esc 应关闭同步面板",
+    });
+  });
 });

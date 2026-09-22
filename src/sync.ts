@@ -63,6 +63,10 @@ let pairFailed = false;
 // 那几格不再「关面板即弃」:pairSpace 记下发起它的空间,done / failed 之前关掉再开仍回到出码页。
 let pairDone = false;
 let pairSpace = "";
+// 引导进度(用户面 121):每空间一份,只在该空间 state === "booting" 时画;状态一离开
+// booting 就丢。此前 `sync-boot` 桥出来了却没人听 —— 桌面做加入方时只有一句「初始同步中…」。
+const bootProgress = new Map<string, { received: number; total: number }>();
+const fmtMb = (b: number) => `${(b / 1048576).toFixed(1)} MB`;
 
 function clearPair(): void {
   pairCode = "";
@@ -112,7 +116,7 @@ export function syncSpaceSwitched(): void {
 /** 单空间时的空间入口兜底(411/D2):侧栏徽章藏起来了,菜单由 notebook.ts 注入这里打开。 */
 let openSpaces: (() => void) | null = null;
 
-/** 挂同步 UI。resolve = 四个事件监听都已注册完(调用方此后再拉状态基线,不漏事件)。 */
+/** 挂同步 UI。resolve = 五个事件监听都已注册完(调用方此后再拉状态基线,不漏事件)。 */
 export async function initSync(opts: {
   refresh: () => void;
   openSpaces: () => void;
@@ -126,6 +130,7 @@ export async function initSync(opts: {
   await Promise.all([
     listen<{ space: string; status: SyncStatus }>("sync-status", (e) => {
       statuses.set(e.payload.space, e.payload.status);
+      if (e.payload.status.state !== "booting") bootProgress.delete(e.payload.space);
       renderAlert();
       // 名册变短 → 给**其它在线设备**一条提示(§5.8 末:「移除很安静」这个真问题的解法
       // 是**用透明代替权限**)。会话内差分、零持久状态、零协议增量;放在空间过滤**之前**
@@ -168,12 +173,16 @@ export async function initSync(opts: {
         if (pairFailed || pairDone) clearPair(); // 已收场的配对没什么可留给下次开面板看的
         return;
       }
-      if (phase === "done") {
-        window.setTimeout(() => {
-          if (mode === "pair") closePanel();
-        }, 1800);
-      }
+      // done 不再自动关面板(用户面 121):done = 对方注册完成 ≠ 对方引导完成,它此刻正从
+      // 这台拉初始快照 —— 页面留着,把「这台别关」说出来,人看着对方显示已连接再关。
       if (mode === "pair") renderPanel();
+    }),
+    listen<{ space: string; received: number; total: number }>("sync-boot", (e) => {
+      const { space, received, total } = e.payload;
+      bootProgress.set(space, { received, total });
+      if (space !== currentSpaceId()) return;
+      // 块帧密(每 256 KiB 一枚),只重画进度那一块,不整面板重建。
+      if (overlay && mode === "home") paintBoot();
     }),
   ]);
   // 状态基线不在这里拉:监听就绪后由 notebook.ts 的 refreshSpaceEntry →
@@ -342,6 +351,7 @@ function renderHome(body: HTMLElement): void {
     line.appendChild(el("span", "sync-dim", t("sync.peersOnline", { n: s.peers_online })));
   }
   body.appendChild(line);
+  if (s.state === "booting") body.appendChild(bootBlock());
   if (s.skew) {
     body.appendChild(el("div", "sync-warn", t("sync.skewWarn")));
   }
@@ -359,30 +369,7 @@ function renderHome(body: HTMLElement): void {
     body.appendChild(el("div", "sync-err", s.error));
   }
   const acts = el("div", "sync-actions");
-  acts.appendChild(
-    btn(t("sync.addDevice"), "hbtn", () => {
-      // 716:活着的那场直接再显,不重新开槽(core 会拒「已有配对在进行中」)。
-      if (pairAlive()) {
-        goto("pair");
-        return;
-      }
-      clearPair();
-      pairSpace = currentSpaceId();
-      pairNote = t("sync.pairRequesting");
-      goto("pair");
-      void invoke<string>("sync_pair_start")
-        .then((code) => {
-          pairCode = code;
-          pairNote = t("sync.pairInstructions");
-          if (mode === "pair") renderPanel();
-        })
-        .catch((e: unknown) => {
-          pairFailed = true;
-          pairNote = String(e);
-          if (mode === "pair") renderPanel();
-        });
-    }),
-  );
+  acts.appendChild(btn(t("sync.addDevice"), "hbtn", () => startPair()));
   // 设备名单(identity-plan §5.8):「另有 N 台设备在线」那句话背后的真名单,连同
   // 移除设备与管理设备名单都在里头。入口恒显——权限差别在**行上**表达,不藏入口
   // (藏了就没人知道自己能不能退出账户)。
@@ -392,6 +379,66 @@ function renderHome(body: HTMLElement): void {
   // 修改服务器收进「高级」:运维动作不与日常操作同屏(概念收敛)。
   body.appendChild(advancedEntryRow());
   void appendUpdateFooter(body);
+}
+
+/** 「添加设备」与失败页的「重新出码」共用这一条(用户面 121):向 core 要一枚配对码、进出码页。 */
+function startPair(): void {
+  // 716:活着的那场直接再显,不重新开槽(core 会拒「已有配对在进行中」)。
+  if (pairAlive()) {
+    goto("pair");
+    return;
+  }
+  clearPair();
+  pairSpace = currentSpaceId();
+  pairNote = t("sync.pairRequesting");
+  goto("pair");
+  void invoke<string>("sync_pair_start")
+    .then((code) => {
+      pairCode = code;
+      pairNote = t("sync.pairInstructions");
+      if (mode === "pair") renderPanel();
+    })
+    .catch((e: unknown) => {
+      pairFailed = true;
+      pairNote = String(e);
+      if (mode === "pair") renderPanel();
+    });
+}
+
+/** 引导进度那一块(用户面 121;与安卓 `#sync-boot` 同形):细条 + 一行字 + 一句原因。
+ *  还没收到任何进度事件时说「正在等另一台设备发来初始快照」;引导为什么停着(今天只有
+ *  「没有在线设备」一句)由 core 写在 `status.boot_hint` —— 它独占一格,与 `error` 里要人
+ *  动手的真错误互不遮盖,两者可以同时在屏上。 */
+function bootBlock(): HTMLElement {
+  const box = el("div", "sync-boot");
+  const bar = el("div", "sync-boot-bar");
+  bar.appendChild(el("i", "sync-boot-fill"));
+  box.appendChild(bar);
+  box.appendChild(el("div", "sync-dim sync-boot-text"));
+  box.appendChild(el("div", "sync-warn sync-boot-hint"));
+  paintBoot(box);
+  return box;
+}
+
+function paintBoot(box: HTMLElement | null = overlay?.querySelector<HTMLElement>(".sync-boot") ?? null): void {
+  if (!box) return;
+  const fill = box.querySelector<HTMLElement>(".sync-boot-fill");
+  const text = box.querySelector<HTMLElement>(".sync-boot-text");
+  const hint = box.querySelector<HTMLElement>(".sync-boot-hint");
+  if (!fill || !text || !hint) throw new Error("引导进度块缺子元素(bootBlock 漂移?)");
+  hint.textContent = cur()?.boot_hint ?? "";
+  const p = bootProgress.get(currentSpaceId());
+  if (!p) {
+    fill.style.width = "0%";
+    text.textContent = t("sync.bootWaiting");
+    return;
+  }
+  const pct = p.total > 0 ? Math.floor((p.received / p.total) * 100) : 0;
+  fill.style.width = `${pct}%`;
+  text.textContent =
+    p.received >= p.total
+      ? t("sync.snapshotDone", { total: fmtMb(p.total) })
+      : t("sync.snapshotProgress", { received: fmtMb(p.received), total: fmtMb(p.total), pct });
 }
 
 /** 空间入口的兜底行(411/D2,与安卓 116 同源):单空间时侧栏徽章整个藏起,而新建 /
@@ -506,8 +553,10 @@ function renderJoin(body: HTMLElement): void {
     err.textContent = "";
     void invoke("sync_pair_join", { serverUrl: server.value.trim(), code: code.value.trim() })
       .then(() => {
+        // 回状态页而不是关面板(用户面 121):加入成功 = 引导刚开始,进度条与「没同伴在线」
+        // 那句原因都画在状态页上,关了面板就什么也看不见。
         showToast(t("sync.joinedToast"));
-        closePanel();
+        goto("home");
       })
       .catch((e: unknown) => {
         go.disabled = false;
@@ -520,7 +569,9 @@ function renderJoin(body: HTMLElement): void {
 }
 
 function renderPair(body: HTMLElement): void {
-  if (pairCode) {
+  // 码与二维码只在它还有效时显(用户面 121):done = 码已用掉、failed = 码已作废,
+  // 再挂在页上就是引人去扫一枚死码。
+  if (pairCode && !pairDone && !pairFailed) {
     // 手输路要抄两项(服务器地址+码),都在本页给全——首屏已不再常显服务器。
     const srv = cur()?.server_url;
     if (srv) body.appendChild(el("div", "sync-kv", t("sync.serverKv", { url: srv })));
@@ -540,8 +591,17 @@ function renderPair(body: HTMLElement): void {
       body.appendChild(wrap);
     }
   }
-  body.appendChild(el("p", pairFailed ? "sync-err" : "sync-note", pairNote));
+  if (pairDone) {
+    // 对方注册完成、正从这台拉初始快照:说清「这台别关、等对方显示已连接再关本页」。
+    body.appendChild(el("p", "sync-note", t("sync.pairDoneNote", { detail: pairNote })));
+  } else {
+    body.appendChild(el("p", pairFailed ? "sync-err" : "sync-note", pairNote));
+    // 码在手上的这一页就把「保持在线」说出来 —— 手机做老设备时早有这句,桌面一直没有。
+    if (pairCode && !pairFailed) body.appendChild(el("p", "sync-note", t("sync.pairKeepOn")));
+  }
   const acts = el("div", "sync-actions");
+  // 失败页给一枚「重新出码」(用户面 121):此前只能关面板再点一次「添加设备」。
+  if (pairFailed) acts.appendChild(btn(t("sync.pairAgain"), "hbtn", () => startPair()));
   // 「席位已满:请先移除一台不用的设备」——那句话得点得进能移除设备的地方(§5.8 末)。
   // 判据是后端诊断串的一个片段(Rust 诊断不翻,i18n 边界);它是**匹配字面量不是文案**,
   // 已逐值登记在 scripts/check-i18n-drift.mjs,与 update.ts 剥版本噪音那两条同族。

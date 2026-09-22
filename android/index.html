@@ -1697,7 +1697,7 @@
         <button id="sync-all-btn" style="flex: 1" data-i18n="shell.syncAll">全部同步(逐空间追赶一次)</button>
       </div>
       <div id="sync-all-result" class="fine"></div>
-      <p class="fine" data-i18n="shell.spacesNote">每个空间是一本独立的本子,记录落在当前空间。想多端同步,到该空间的「同步」里创建账户;要把别处的账户带到手机,用「加入空间」。</p>
+      <p class="fine" data-i18n="shell.spacesNote">每个空间是一本独立的本子,记录落在当前空间。「加入空间」把电脑上的账户作为另一个空间加进来,手机已有的空间不变;手机还没开过同步、想和电脑看同一本,请到「同步」里「扫码连接电脑」。要让某个空间多端同步,到该空间的「同步」里创建账户。</p>
     </section>
 
     <section id="sync" class="sync" hidden>
@@ -1735,6 +1735,7 @@
       <div id="sync-boot" hidden>
         <div class="bar"><i id="sync-boot-fill"></i></div>
         <div id="sync-boot-text" class="fine"></div>
+        <div id="sync-boot-hint" class="err" hidden></div>
       </div>
       <div id="sync-online" hidden>
         <div class="row">

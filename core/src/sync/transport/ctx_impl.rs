@@ -95,6 +95,7 @@ impl Ctx<'_> {
         self.set_status(|s| {
             s.state = "online".into();
             s.error = None;
+            s.boot_hint = None; // 引导已过,这句没有存在的前提了(正常路上早已被同伴上线清掉)。
             s.quarantined = poison.0;
             s.poison_breaker = poison.1;
         });
@@ -774,6 +775,8 @@ impl Ctx<'_> {
         to: &str,
         blob: &[u8],
     ) -> Result<(), String> {
+        // 引导中的信箱积压还在往下搬 ⇒ 服务器还没说完,在线快照可能排在后面(见 boot_idle_touch)。
+        self.boot_idle_touch();
         match self.deck(ws).on_wire(Ingress::RelayDeliver, from, to, blob).await? {
             None => Ok(()),
             Some(bm) => self.on_boot_msg(ws, from, bm).await,
@@ -787,8 +790,19 @@ impl Ctx<'_> {
             return Ok(());
         }
         let Some(target) = self.peers.front().cloned() else {
-            return Ok(()); // 没同伴在线:保持 booting,等 Peer 事件。
+            // 没同伴在线:保持 booting,等 Peer 事件 —— 但不再一声不吭(用户面 121):武装
+            // idle 计时,到点把「没有在线设备」写进状态面。已武装的不重置,否则同伴每上下线
+            // 一次都把它往后推。
+            if self.boot_idle_deadline.is_none() {
+                self.boot_idle_deadline =
+                    Some(Instant::now() + Duration::from_secs(BOOT_IDLE_SECS));
+            }
+            return Ok(());
         };
+        // 有人可问了:解除 idle 计时,收回那句「没有在线设备」(它独占 `boot_hint` 一格,
+        // 与 `error` 里要人动手的真错误互不遮盖 —— codex 121 一轮 M1)。
+        self.boot_idle_deadline = None;
+        self.set_status(|s| s.boot_hint = None);
         let blob = crypto::seal_msg(
             &self.cfg.k_acc,
             &FrameAddr {
@@ -803,6 +817,25 @@ impl Ctx<'_> {
         self.boot_peer = Some(target);
         self.boot_deadline = Some(Instant::now() + Duration::from_secs(BOOT_STEP_SECS));
         Ok(())
+    }
+
+    /// idle 计时到点(用户面 121):仍在引导、仍一台同伴都没有 ⇒ 把原因写进 `boot_hint`。
+    /// 计时是一次性的 —— 说过一次就够,`set_status` 快照没变也不会再发事件。
+    pub(super) fn on_boot_idle(&mut self) {
+        self.boot_idle_deadline = None;
+        if self.booting() && self.boot_peer.is_none() && self.peers.is_empty() {
+            let hint = no_boot_peer_hint();
+            self.set_status(|s| s.boot_hint = Some(hint));
+        }
+    }
+
+    /// 引导中每收一枚中转帧就把 idle 计时往后推(codex 121 一轮 M3):服务器 `Authed` 之后
+    /// 先搬离线信箱、再推在线快照,积压大时 Peer 事件排在几千帧之后 —— 计「鉴权起 30 秒」
+    /// 会在源明明在线时误报。只推已武装的,没武装(有同伴在问)就什么都不做。
+    pub(super) fn boot_idle_touch(&mut self) {
+        if self.booting() && self.boot_idle_deadline.is_some() {
+            self.boot_idle_deadline = Some(Instant::now() + Duration::from_secs(BOOT_IDLE_SECS));
+        }
     }
 
     /// 放弃当前引导尝试(超时/对方掉线/坏流),轮转候选,等下一次 try_boot_request。
