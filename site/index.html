@@ -14,6 +14,28 @@
       content="朱简(zhujian)是一个记想法、管待办的工具:随手记一笔进随记,要做的事转成待办,在看板上做完。数据存在你自己的设备上,多设备同步端到端加密。免费使用,开源。"
     />
 
+    <!-- ───────── 分享卡片与 canonical(zhujian.app 版)─────────────────────
+         ⚠ 境内站生成器(`scripts/build-site-cool.mjs`)拿**下面这两行注释**当结构锚,
+         整块换成 zhujian.cool 那一份;⛔ 别在两者之间插别的东西。三处域名承重:
+         canonical 指错 = 告诉搜索引擎境内站是境外站的副本;og:url / og:image 指错 =
+         分享卡片从另一个域名拉图。生成器对这三处 fail-closed。
+         ⚠ og:title / og:description 复用 meta.title / meta.desc 两键(⛔ 别另写一份措辞,
+         那就是第二个家);爬虫拿到的是壳里的中文原文,与 i18n 那条诚实边界同界。
+         ⚠ 图是 webp:主流平台都认,个别老客户端(部分微信版本)可能不出图 —— 现有素材
+         只有 webp,⛔ 别为此另造一份 png 摆在那儿没人核。 -->
+    <link rel="canonical" href="https://zhujian.app/" />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://zhujian.app/" />
+    <meta property="og:title" data-i18n-content="meta.title" content="朱简:记想法、管待办,数据在你自己的设备上" />
+    <meta
+      property="og:description"
+      data-i18n-content="meta.desc"
+      content="朱简(zhujian)是一个记想法、管待办的工具:随手记一笔进随记,要做的事转成待办,在看板上做完。数据存在你自己的设备上,多设备同步端到端加密。免费使用,开源。"
+    />
+    <meta property="og:image" content="https://zhujian.app/shots/desktop-board.webp" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <!-- ───────── /分享卡片 ───────── -->
+
     <style>
       /* ───────────────────────────────────────────────────────────
          设计令牌 —— 与桌面客户端 src/theme.css 同源(纸与朱墨)。
@@ -955,6 +977,9 @@
           <a href="#flow" data-i18n="nav.flow">怎么用</a>
           <a href="#download" data-i18n="nav.download">下载</a>
           <a href="#ethos" data-i18n="nav.ethos">理念</a>
+          <a href="/privacy.html" data-i18n="foot.privacy">隐私政策</a>
+          <a href="/privacy-rights.html" data-i18n="foot.rights">隐私权利</a>
+          <a href="/terms.html" data-i18n="foot.terms">用户协议</a>
           <a href="https://github.com/prehisle/zhujian" data-i18n="nav.source">源码</a>
         </nav>
         <p class="foot-copy" data-i18n="foot.copy">© 2026 朱简 zhujian</p>
@@ -1079,6 +1104,10 @@
 
           /* — 页脚 — */
           "foot.tagline": { zh: "ZHUJIAN · 纸与朱墨", en: "ZHUJIAN · PAPER AND CINNABAR" },
+          /* 协议三页的页脚链接(712;路径两站相同)。⛔ 别在境内站生成器的 NEW_DICT 里再补一份 —— 712 前它们住在那儿,两份会同时进字典。 */
+          "foot.privacy": { zh: "隐私政策", en: "Privacy" },
+          "foot.rights": { zh: "隐私权利", en: "Your rights" },
+          "foot.terms": { zh: "用户协议", en: "Terms" },
           "foot.copy": { zh: "© 2026 朱简 zhujian", en: "© 2026 Zhujian" },
         }; /* ⟦/i18n-dict⟧ */
 

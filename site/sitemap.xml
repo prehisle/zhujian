@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- zhujian.app(境外站)。⛔ 刻意不写 <lastmod> —— 那是个会腐烂的数字,没有任何东西
+     会在发站时替我们往前推它;宁可不给,也别给一个骗人的日期。
+     境内站 zhujian.cool 那一份由 scripts/build-site-cool.mjs 生成。 -->
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>https://zhujian.app/</loc></url>
+  <url><loc>https://zhujian.app/privacy.html</loc></url>
+  <url><loc>https://zhujian.app/privacy-rights.html</loc></url>
+  <url><loc>https://zhujian.app/terms.html</loc></url>
+</urlset>

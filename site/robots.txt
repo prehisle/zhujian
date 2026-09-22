@@ -1,0 +1,9 @@
+# zhujian.app(境外站)。境内站 zhujian.cool 那一份由 scripts/build-site-cool.mjs 生成,
+# ⛔ 别把这一份 scp 过去 —— 里头的 Sitemap 行与 /updates/ 都是这个域名自己的事。
+User-agent: *
+Allow: /
+# 更新分发目录:里头是安装包与清单,给客户端的更新器读,不该进搜索结果。
+# ⚠ robots 只挡爬虫,不挡更新器(它不读 robots)。
+Disallow: /updates/
+
+Sitemap: https://zhujian.app/sitemap.xml

@@ -156,6 +156,22 @@ if (!FAKE) {
     }
   }
 
+  // ── ①c robots.txt 与 sitemap.xml(712)────────────────────────────────────
+  // 与 ① 同一根轴(「线上那份 == 仓里那份」),⛔ 故不另起门禁:这两份是**手写**的,
+  // 发站时靠 §8.1 那行 scp 带上去 —— 漏了不会有任何一处红,只是搜索引擎收不到。
+  // ⚠ 境内站那两份是生成的,由 `deploy-site-cool.mjs` 第 ④ 格自测管(在那支脚本里)。
+  console.log("\n①c 官网 robots.txt 与 sitemap.xml");
+  for (const f of ["robots.txt", "sitemap.xml"]) {
+    try {
+      const local = readFileSync(`site/${f}`);
+      const live = curl(`https://zhujian.app/${f}`, { binary: true });
+      if (Buffer.compare(local, live) === 0) ok(`${f} 与 site/${f} 逐字节相同(${local.length} 字节)`);
+      else bad(`${f} 线上与仓里不同(线上 ${live.length} 字节 / 本地 ${local.length} 字节)`);
+    } catch (e) {
+      bad(`拉不到 ${f}:${e.message.trim()} —— 发站时 §8.1 那行 scp 漏了?`);
+    }
+  }
+
   // ── ② 桌面更新清单 ───────────────────────────────────────────────────────
   console.log("\n② 桌面更新清单 updates/latest.json");
   try {
