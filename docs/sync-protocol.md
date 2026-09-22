@@ -14,7 +14,7 @@
 
 - 服务端:单 Rust 二进制 `zhujian-syncd`(axum/tokio,WSS)——设备鉴权(白名单)+ 账户内密文帧路由 + 内存信箱 + 配对桥 + 引导/图字节直通。服务器对一切用户内容零知识。
 - 客户端(src-tauri 内;**93 P4-a 起 `sync/` 模块随共享 crate `zhujian-core` 迁仓根 `core/src/sync/`,tauri 壳只留命令面+事件桥**):sans-io 同步引擎 + tokio 传输任务 + 最小同步 UI(创建账户/配对/状态/「图N」翻案提示)。
-- E2EE:账户主密钥 + 每域子钥(HKDF)+ XChaCha20-Poly1305;SPAKE2 配对;Ed25519 设备鉴权;**恢复码强制仪式**(E2EE 组成部分,非商业件)。
+- E2EE:账户主密钥 + 每域子钥(HKDF)+ XChaCha20-Poly1305;SPAKE2 配对;Ed25519 设备鉴权。(曾有「恢复码强制仪式」一件,用户面 125 起整个拆掉,见 §2。)
 - 存储层配套:迁移 0024(oplog 加 `origin_seq` 传输轴,§7)。
 - 验收:两台 Windows 真机亚秒互通 + 离线水位互补 + **双实例乱序回放收敛 property test**(sync-plan P2 止损探针)。
 
@@ -29,10 +29,10 @@
 
 ## 2. 密钥体系
 
-- **K_acc(账户主密钥,32B CSPRNG)**:账户创建时首台设备生成。只以两种形态离开本机:配对会话密钥下的密文(§6)、恢复码(人眼)。
+- **K_acc(账户主密钥,32B CSPRNG)**:账户创建时首台设备生成。只以一种形态离开本机:配对会话密钥下的密文(§6)。(加密备份文件里也带它,那是 backup-plan 的事,钥是备份码。)
 - **域子钥**:`HKDF-SHA256(K_acc, info="zhujian/sync/v1/" + domain)`,domain ∈ `op`(op 帧)/`ctl`(水位/追赶控制)/`boot`(引导快照流)/`blob`(图字节流)。域隔离:一个域的密文在另一域解密必败。
 - **AEAD**:XChaCha20-Poly1305,24B 随机 nonce(192-bit 随机无碰撞之虞),**AAD = CBOR 数组 `[ver, account_id, from_device, to, domain]`**(to = 指名 device_id 或广播 `"*"`,由 `deliver` 回显原值供收端重构)——密文绑定协议版本、账户、来源、去向与域;跨账户/跨设备/跨域拼接、改投他人必解密失败。域隔离不再只靠子钥不同,AAD 双保险(评审①-L1)。**AAD 的字节形态即协议**(评审 P2-d 轮 M2):CBOR preferred serialization(definite-length 数组、最短长度前缀),收端重构须**逐字节**相等——「语义等价但字节不同」的编码(indefinite-length 等)一律解密失败;实现以 crypto.rs 的 AAD 黄金向量为对拍基准。
-- **恢复码 = K_acc 的 Crockford base32**(分组显示)。创建账户强制仪式:显示 → 用户抄录 → **输入回验**才放行。用途:P3 加密备份文件的钥匙来源;「所有设备丢失但有备份文件」的重建。忘了=真救不了(零知识的证明,对外文案照 sync-plan §3.2)。
+- ~~**恢复码 = K_acc 的 Crockford base32**(分组显示)。创建账户强制仪式:显示 → 用户抄录 → **输入回验**才放行。用途:P3 加密备份文件的钥匙来源;「所有设备丢失但有备份文件」的重建。~~ **用户面 125 起整个拆掉(2026-09-22)**:这里写的两个用途都被 backup-plan §2 的独立备份码接走(备份文件自带账户密钥、纯本地空间根本没有 K_acc),解析函数在生产路径上零调用;创号仪式、「查看恢复码」页、压实重发码那条挂钩、两端 `sync_recovery_code` 命令一并删除。翻案门只有一条:将来做「服务器存密文副本」再立。K_acc 仍按下一条明文在每台设备的 `sync_meta` 里。
 - **本地存放的诚实边界**:K_acc/设备私钥**明文存本机 `sync_meta`**。本地 SQLite 本就明文存全部笔记——给密钥加壳而不给数据加壳是安全剧场;本机磁盘不在威胁模型内(§11)。passphrase/Argon2id 属 P3 备份导出,P2 不引入。
 
 ## 3. 帧与信封(服务器可见面)
@@ -185,7 +185,7 @@
 - **本地写通知源** = rusqlite `update_hook` 监听 oplog INSERT(写与通知同源于同一连接,零命令改造);出站游标 `last_pushed` 由 **Ack 驱动落 sync_meta**(ack=服务器已接手,非对端已收),中转会话仪式 `Engine::on_relay_session_up(conn, acked)` 内复位到已 ack 位(255:复位收进会话入口,不留单独 setter)——「已发未 ack」重连即重推,重复由 op_id 幂等吸收。
 - **引导编排**:引导中(bootstrapped_at 缺席)op/ctl/blob 帧**整帧丢弃**(半路应用会把库变「非 fresh」永久堵死导入;引导完成后 hello 互补重取,零丢失);Req 发给首个在线同伴,30s 无 Offer/块间超时轮转下一台(自己也在引导时不应答 Req,并发引导靠超时轮转无死锁);import 一次持锁(fresh→commit),成功后装配 Engine + 走会话仪式(§6.2/P2-f 契约的兑现处)。
 - **上限三连**:ops 帧 256 KiB 字节切帧(engine::ops_frames,与 ≤500 条先到为准);pending 池每 origin 加 **64 MiB 字节上限**(条数上限拦不住大 payload,评审 P2-g 轮 M3;超限丢弃+当场 want、水位不动);**正文/标题 200 KB 红线**(`repo::MAX_CONTENT_BYTES`,九个编排入口 fail-fast——单 op 编码 >1 MiB 过不了服务器帧上限,发送端会反复断连卡死出站,评审 P2-g 轮 M4)。
-- 命令面:`sync_status/sync_create_account(space_id, server_url)`(open-signup 155 起无 invite,账户 ULID core 自生成)`/sync_pair_start/sync_pair_join(server_url,code)/sync_set_server/sync_recovery_code`;创号设备写配置时**直接落 bootstrapped_at**(纪元源永不引导;语义重载记 P2-h 遗留)。恢复码强制仪式=展示+警示+**回输核对**(评审 P2-g 轮 M2;Crockford 容错规范化后比对,不符拒绝完成)。
+- 命令面:`sync_status/sync_create_account(space_id, server_url)`(open-signup 155 起无 invite,账户 ULID core 自生成)`/sync_pair_start/sync_pair_join(server_url,code)/sync_set_server`(`sync_recovery_code` 用户面 125 起删除);创号设备写配置时**直接落 bootstrapped_at**(纪元源永不引导;语义重载记 P2-h 遗留)。~~恢复码强制仪式=展示+警示+**回输核对**(评审 P2-g 轮 M2;Crockford 容错规范化后比对,不符拒绝完成)。~~(125 起创号成功即回状态页。)
 
 ## 9. 测试与验收
 

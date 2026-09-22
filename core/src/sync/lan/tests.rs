@@ -161,7 +161,7 @@ fn intro_for_wrong_target_or_wrong_account_is_rejected() {
     let ok_intro_w = wire_roundtrip(&ok_intro_w);
     let ok_intro = Intro::parse(&ok_intro_w).unwrap();
     assert_eq!(resolve_intro(&[other], &ok_intro).err(), Some(LanError::NoMatch));
-    // 换 K_acc(持恢复码的自造设备够不上:它连 MAC 都算不对)。
+    // 换 K_acc(不持 K_acc 的自造设备够不上:它连 MAC 都算不对)。
     let stranger = [9u8; 32];
     let alien = LanAdmit { k_acc: &stranger, ..p.admit() };
     assert_eq!(resolve_intro(&[alien], &ok_intro).err(), Some(LanError::NoMatch));
@@ -331,7 +331,7 @@ fn dialer_rejects_bad_signature_and_wrong_signer() {
 
 #[test]
 fn member_impersonating_another_member_fails_at_the_signature() {
-    // §4 的核心性质:持 K_acc(= 恢复码在手)能封解 lan 域、能算对 MAC,但拿不到
+    // §4 的核心性质:持 K_acc(比如从别台设备的库里抄出来)能封解 lan 域、能算对 MAC,但拿不到
     // DEV_X 的设备私钥 → 冒充 DEV_X 建链必败在验签。这是「链路准入 = 设备身份
     // 证明」相对「仅持 K_acc」的全部差别。
     let real = peers();

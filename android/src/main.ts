@@ -2143,7 +2143,7 @@ $("space-list").addEventListener("click", async (e) => {
     try {
       await invoke("reset_space", { spaceId: id });
       showError(t("main.spaceReset"));
-      resetSyncTransient(); // 重置空间的恢复码/出码页等一次性展示随之作废。
+      resetSyncTransient(); // 重置空间的出码页等一次性展示随之作废。
       await reconcileForeground(); // 前台可能已落回 main(后端广播为准,这里对账兜底)。
       await refreshSpaces();
     } catch (err) {

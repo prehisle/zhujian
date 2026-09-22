@@ -266,11 +266,12 @@ pub struct JoinedSpace {
     pub configured: bool,
 }
 
-/// 创号结果(phone-space-plan §2.1):core 一旦提交,恢复码**必须**交到仪式页;
-/// post-commit 阶段(catalog 重扫/poke)的失败只旁路报告,绝不吞码(codex r1 #5)。
+/// 创号结果(phone-space-plan §2.1):core 一旦提交,「账户已创建」就是事实;post-commit
+/// 阶段(catalog 重扫/poke)的失败只旁路报告,绝不把整条命令变 Err(codex r1 #5)。
+/// 曾经还带一枚 `recovery_code`(K_acc 的人眼形态,前端拿去走强制抄写仪式),连同
+/// 恢复码整个拆掉(progress-log 用户面 125 那轮);结构保留,免得前端为一个字段改形。
 #[derive(serde::Serialize, Clone, Debug)]
 pub struct CreateAccountOutcome {
-    pub recovery_code: String,
     pub post_commit_error: Option<String>,
 }
 
@@ -686,7 +687,7 @@ impl Coord {
             .ok_or_else(|| "空间正在停止,无法创建账户(稍后重试)".to_string())?;
         let mut cancel = rt.subscribe_shutdown();
         let create = transport::create_account(&rt.db, server_url);
-        let outcome: Result<String, String> = tokio::select! {
+        let outcome: Result<(), String> = tokio::select! {
             biased;
             r = create => r,
             _ = cancel.wait_for(|v| *v) => {
@@ -694,17 +695,17 @@ impl Coord {
             }
         };
         drop(rt);
-        let recovery_code = outcome?;
-        // post-commit:恢复码已在手,后续失败只旁路报告——绝不让整条命令变 Err
-        // 把码吞掉(codex r1 #5;强制仪式必须拿到码)。
+        outcome?;
+        // post-commit:账户已落库是事实,后续失败只旁路报告——绝不让整条命令变 Err
+        // 把「已创建」说成「失败」(codex r1 #5)。
         let post_commit_error = self.finish_account_creation(space_id).await;
-        Ok(CreateAccountOutcome { recovery_code, post_commit_error })
+        Ok(CreateAccountOutcome { post_commit_error })
         // _op 在此 drop(最后):收尾全程登记在册,stop 等到这里才放行。
     }
 
     /// 创号 post-commit 收尾:catalog 重扫 + 现任 runtime poke 上线。任何一步失败
-    /// 都累积进返回值(实现审 M2:不许 `let _` 静默吞),由调用方随恢复码一起交给
-    /// UI——单独成方法,坏 catalog 可注入单测。例外:`sup.get` 拿不到现任 = 用户
+    /// 都累积进返回值(实现审 M2:不许 `let _` 静默吞),由调用方交给 UI——单独
+    /// 成方法,坏 catalog 可注入单测。例外:`sup.get` 拿不到现任 = 用户
     /// 已切走空间,新配置由下次激活读取,**不是错误**(poke 的唯一意义是叫醒现任)。
     pub async fn finish_account_creation(&self, space_id: &str) -> Option<String> {
         let mut errs: Vec<String> = Vec::new();
@@ -1930,9 +1931,9 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// post-commit 保码(codex r1 #5):收尾失败=Some(人话)旁路报告——坏 catalog
-    /// (垃圾 ULID 库让严格重扫整体 Err)不许把「账户已创建」变成命令 Err 吞掉
-    /// 恢复码;好 catalog = None。
+    /// post-commit 旁路(codex r1 #5):收尾失败=Some(人话)旁路报告——坏 catalog
+    /// (垃圾 ULID 库让严格重扫整体 Err)不许把「账户已创建」变成命令 Err;
+    /// 好 catalog = None。
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn finish_account_creation_reports_side_errors_without_eating() {
         let (coord, dir) = boot_coord("acct-post", &[], fast()).await;

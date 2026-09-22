@@ -217,7 +217,7 @@ const setup = async () => {
 
   console.log("── 老设备创号(open-signup 无感创号,账户 ULID 客户端自生成)");
   must("创号", invokeIn("sync_create_account", { spaceId: "main", serverUrl: SERVER_URL }));
-  // ⚠ 恢复码就地丢弃:这个账户是一次性的,而把它印在日志里等于把密钥写进仓外文件。
+  // 返回值里没有任何密钥材料(用户面 125 起创号不再交出恢复码),这里也别去库里抄 k_acc 印日志。
 
   console.log("── 种数据(4 条目 / 1 标签 / 1 挂接)");
   const n1 = must("随记1", invokeIn("capture_note", { spaceId: "main", content: "C4③ 随记一:鸿蒙加入空间" }));

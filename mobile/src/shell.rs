@@ -1558,9 +1558,9 @@ pub fn sync_status(space_id: String, coord: State<'_, Coord>) -> Result<transpor
 
 /// 创建同步账户(账户首台,与桌面对称;open-signup 无感创号——账户 ULID 由
 /// core 自生成,无码)。机械在 `coord::create_account`(lifecycle 锁+begin_op+
-/// shutdown 取消);返回结构化结果——core 一旦提交,恢复码必达前端仪式页,
-/// post-commit 失败只在 `post_commit_error` 旁路报告(codex r1 #5,绝不吞码)。
-/// 前端拿到码必须走强制仪式(展示+警示+回输核对)后才许关闭。
+/// shutdown 取消);返回结构化结果——core 一旦提交,「已创建」就是事实,
+/// post-commit 失败只在 `post_commit_error` 旁路报告(codex r1 #5,绝不把它说成失败)。
+/// 不带任何密钥材料(恢复码与强制仪式已整个拆掉,progress-log 用户面 125 那轮)。
 #[tauri::command]
 pub async fn sync_create_account(
     space_id: String,
@@ -1761,14 +1761,6 @@ pub async fn sync_set_server(
     ctl.send(transport::Control::Reconfigured)
         .await
         .map_err(|_| "同步任务未运行".to_string())
-}
-
-/// 查看恢复码(K_acc 的人眼形态;当前空间)。密钥材料不出 core(P4-a 窄公开面)。
-#[tauri::command]
-pub fn sync_recovery_code(space_id: String, coord: State<'_, Coord>) -> Result<String, String> {
-    let rt = coord.sup.get(&space_id)?;
-    let conn = rt.db.lock().expect("db mutex poisoned");
-    transport::recovery_code(&conn)
 }
 
 // ⛔ **`take_shared_text` / `take_deep_link` / `check_update` 不在这里** ——

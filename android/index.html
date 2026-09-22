@@ -154,8 +154,8 @@
       }
       * { box-sizing: border-box; }
       /* hidden 属性只是 UA 样式表里的普通 display:none,任何作者 display(.update 的
-         flex、#scan 的 flex、.code 的 block)都会压过它——必须 !important 钉回,否则
-         「hidden 却在屏上」(107 审查抓出,#sync-recovery 是既有同类患)。 */
+         flex、#scan 的 flex)都会压过它——必须 !important 钉回,否则「hidden 却在屏上」
+         (107 审查抓出;当时的既有同类患是恢复码那块 `.code`,那一屏已整个拆掉)。 */
       [hidden] { display: none !important; }
       /* 250:三档明暗后不再让 UA 自己按系统挑(`light dark` 会绕过用户选的档),
          亮为底、暗随 :root[data-theme="dark"] 覆盖。 */
@@ -1239,15 +1239,6 @@
       .drop-line.in-kids { left: 70px; }
       .bar { height: 6px; border-radius: var(--radius-pill); background: var(--seal-tint); overflow: hidden; margin: 6px 0; }
       .bar > i { display: block; height: 100%; width: 0; background: var(--seal); transition: width 0.2s; }
-      /* 恢复码专用:只在组边界(短横)换行、分成规整几行,别从字中间断成长蛇
-         (需求3)。文本仍是原始带 `-` 的整串,复制/回验口径不变。 */
-      .code {
-        display: block; font: var(--fs-13)/1.7 ui-monospace, monospace;
-        background: var(--paper); border: 1px dashed var(--seal-line);
-        border-radius: var(--radius-sm); padding: 8px 10px; margin: 8px auto 0;
-        max-width: 16em; text-align: center;
-        word-break: normal; overflow-wrap: normal; user-select: all;
-      }
 
       /* 启动闸封锁页(工序 6):严格 catalog 不过时全屏盖住一切,是唯一可见面。 */
       .gate {
@@ -1559,9 +1550,9 @@
       .ftext::placeholder { color: var(--ink-faint); }
 
       /* 诊断面(P4-b 原样收编,打开才跑)。⚠ 下面的 .kv 与 .row 出生在这一节,但早已是
-         **通用面板骨架**:.row 在 body 里 22 处、遍布空间/同步/搜索/回收站/设置/恢复码
-         仪式各面,.kv 也被同步配对/连接信息/关于共用——改 .row input 的内边距 = 改全 app
-         每个面板的表单。定义不挪(挪 = 动层叠位号,.row button 与 .ghost 的特异性互动
+         **通用面板骨架**:.row 遍布 body 里空间/同步/搜索/回收站/设置各面(⛔ 别在这儿
+         数它有几处,数字会腐),.kv 也被同步配对/连接信息/关于共用——改 .row input 的
+         内边距 = 改全 app 每个面板的表单。定义不挪(挪 = 动层叠位号,.row button 与 .ghost 的特异性互动
          就在下方登记着),但判影响面别认这行节名。 */
       .diag { margin-top: 20px; border-top: 1px dashed var(--line-strong); padding-top: 12px; }
       .diag h2 { font-size: var(--fs-13); color: var(--ink-soft); margin: 12px 0 8px; font-weight: 600; }
@@ -1578,7 +1569,7 @@
         background: var(--paper); color: var(--ink); font-size: var(--fs-14);
       }
       /* ⛔ **`min-height` 别拿掉**(635,§2.3):这一族是**面板里的全宽动作钮**(同步 / 空间 /
-         回收站 / 诊断 / 恢复码仪式,`.row` 全 app 22 处),而它的实高由字号定 ——
+         回收站 / 诊断,`.row` 遍布全 app 各面),而它的实高由字号定 ——
          真机四档量到 32.57 / 34 / 36.57 / 39.14,**没有一档到 44**。⭐ 靠 `.ghost` 那层
          halo 补不动:halo 会探出行外,而 `.row` 的行距只有 10px ⇒ 90 / 100 两档上相邻两行
          的触区**真的叠着**(实测边界间隙 0.00)。⇒ 让它自己长够,halo 从此恒在盒内,
@@ -1747,8 +1738,8 @@
       </div>
       <div id="sync-online" hidden>
         <div class="row">
-          <button id="sync-invite-btn" data-i18n="sync.addDevice">添加设备</button>
-          <button id="sync-recovery-btn" data-i18n="shell.viewRecovery">查看恢复码</button>
+          <!-- 用户面 125 起独占一行(此前与「查看恢复码」并排):照本面其它单钮行的形通栏。 -->
+          <button id="sync-invite-btn" style="flex: 1" data-i18n="sync.addDevice">添加设备</button>
         </div>
         <!-- 出码区(phone-space-plan §3):码不含服务器地址,两项都给、都可复制;
              done=注册完成≠对方引导完成,绝不自动关(codex r2 N4)。 -->
@@ -1759,8 +1750,6 @@
           </div>
           <div id="sync-pair-note" class="fine"></div>
         </div>
-        <p id="sync-recovery-note" class="fine" data-i18n="shell.recoveryNote" hidden>恢复码是账户密钥,不是数据备份:恢复还需要至少一台在线的完整副本。抄写在纸上,别截图、别存网盘。</p>
-        <code id="sync-recovery" class="code" hidden></code>
         <!-- 设备名单(identity-plan §5.8):「同伴在线 N」背后的真名单,移除设备与管理
              设备名单都在里头。权限差别在**行上**表达,入口恒显。 -->
         <div class="row" style="margin-top: 8px">
@@ -2130,24 +2119,6 @@
       </div>
       <p class="fine"><span data-i18n="shell.privacyCanonical">最新版本发布在:</span> <span id="policy-canonical"></span></p>
       <iframe id="policy-frame"></iframe>
-    </div>
-
-    <!-- 恢复码强制仪式(phone-space-plan §3,对齐桌面 §2):展示+警示+回输核对,
-         输对才放行;全屏盖住一切导航。恢复码=账户密钥,不是数据备份。 -->
-    <div id="ritual" class="gate" hidden>
-      <h2 data-i18n="shell.ritualTitle">账户恢复码</h2>
-      <p data-i18n="shell.ritualBody">这是账户恢复码。请抄写在纸上,存放在安全的地方。</p>
-      <div id="ritual-code" class="gate-msg" style="font-family: ui-monospace, monospace; user-select: text; max-width: 16em; margin-left: auto; margin-right: auto; text-align: center; word-break: normal; overflow-wrap: normal"></div>
-      <p class="fine" data-i18n="shell.ritualFine">恢复码是账户密钥,不是数据备份:恢复数据还必须有至少一台在线的完整副本。它不存在服务器上,丢了无人能帮你找回。</p>
-      <p id="ritual-post" class="gate-msg" hidden></p>
-      <div class="row" style="margin-top: 12px">
-        <input id="ritual-confirm" placeholder="抄写完成后,在这里重新输入一遍以确认" data-i18n-placeholder="shell.ritualConfirmPh"
-               spellcheck="false" autocapitalize="characters" autocomplete="off" />
-      </div>
-      <p id="ritual-err" class="fine" style="color: var(--seal)"></p>
-      <div class="row">
-        <button id="ritual-done" style="flex: 1" data-i18n="shell.ritualDone">我已抄写,完成</button>
-      </div>
     </div>
 
     <!-- 大图查看层(117):点缩略图全屏看图,点哪都关。 -->

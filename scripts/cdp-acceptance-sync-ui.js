@@ -1,8 +1,8 @@
 // @cdp-run single
 // 133 同步 UI 简化验收 —— 单空间藏空间概念、已配置态收「连接信息」折叠、
-// 「添加设备」改名、恢复码警示随码同现;未配置态(若在)一主两辅互斥折叠。
+// 「添加设备」改名、**已配置态没有任何恢复码痕迹**(用户面 125 拆掉:钮 / 码 / 警示三件都不在 DOM 里);
+// 未配置态(若在)一主两辅互斥折叠。
 //   node scripts/android-cdp.mjs evalfile scripts/cdp-acceptance-sync-ui.js
-// 注:恢复码断言只看警示与码同现/同隐,跑完把两者收回 hidden,不留码在屏上。
 (async () => {
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const $ = (id) => document.getElementById(id);
@@ -45,18 +45,10 @@
     await sleep(100);
     check("连接信息再点收起", $("sync-info").hidden);
 
-    check("恢复码初始隐藏(码与警示都藏)",
-      $("sync-recovery").hidden && $("sync-recovery-note").hidden);
-    $("sync-recovery-btn").click();
-    await sleep(600);
-    const noteText = $("sync-recovery-note").textContent;
-    check("恢复码与「不是数据备份」警示同现",
-      !$("sync-recovery").hidden && !$("sync-recovery-note").hidden &&
-      noteText.includes("不是数据备份"), noteText.slice(0, 60));
-    // 收回,不把码留在屏上
-    $("sync-recovery").hidden = true;
-    $("sync-recovery").textContent = "";
-    $("sync-recovery-note").hidden = true;
+    // 用户面 125:恢复码整个拆掉 —— 钮 / 码块 / 警示三个节点都不该在 DOM 里,面上也不许再出现这个词。
+    check("已配置态无恢复码痕迹(三个节点都不在)",
+      !$("sync-recovery-btn") && !$("sync-recovery") && !$("sync-recovery-note"));
+    check("同步面文字不含「恢复码」", !$("sync-online").textContent.includes("恢复码"));
   }
 
   // 148 起「一主两辅」只对 main 成立:非 main 未配置=创号单路(扫码/手输藏),

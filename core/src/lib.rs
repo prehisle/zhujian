@@ -10,8 +10,8 @@
 //! - `sync` 只公开 `transport` 与 `supervisor`(engine/crypto/pair/boot 是内脏;
 //!   supervisor 是 multispace-plan §2 的 live 会话编排,两壳共用);
 //! - `spaces` 是空间「存在与身份」共享层(multispace-plan 工序 2+3,97 桌面壳上抬);
-//! - 密钥材料(k_acc / device_seed)不出 crate——恢复码走
-//!   `sync::transport::recovery_code`,SyncConfig 保持 crate 内;
+//! - 密钥材料(k_acc / device_seed)不出 crate,SyncConfig 保持 crate 内(曾经有条
+//!   「恢复码」出口把 K_acc 转成人眼形态交给壳层,已整个拆掉);
 //! - ⚠ rustls 加密提供者由 app 壳启动时安装(`install_default`),core 只钉 ring
 //!   特性——不装则首次 wss:// 在 `ClientConfig::builder()` panic(84 真机踩过)。
 

@@ -1389,14 +1389,14 @@ fn live_identities(spaces: &Spaces) -> Result<Vec<spaces::SpaceIdentity>, String
 
 /// 创建同步账户(账户首台;open-signup 无感创号):账户 ULID 由 core 自生成,
 /// 无码无预检(自生成与既有空间撞号=违背 ULID 唯一性假设,账户唯一闸只管外来
-/// 账户 ID)。成功返回恢复码——UI 必须走强制仪式(展示 + 确认已抄写)后才允许
-/// 关闭(§2)。
+/// 账户 ID)。成功即 Ok,不带任何密钥材料 —— 曾经返回「恢复码」(K_acc 的人眼形态)
+/// 并要 UI 走强制抄写仪式,那一整套已拆掉(progress-log 用户面 125 那轮)。
 #[tauri::command]
 async fn sync_create_account(
     space_id: String,
     server_url: String,
     spaces: State<'_, Spaces>,
-) -> Result<String, String> {
+) -> Result<(), String> {
     let rt = spaces.get_writable(&space_id)?;
     if let Some(v) = rt.veto() {
         return Err(v);
@@ -1413,9 +1413,9 @@ async fn sync_create_account(
     if let Some(e) = rt.restart_required() {
         return Err(format!("此空间需要重启朱简完成初始同步装配:{e}"));
     }
-    let code = sync::transport::create_account(&rt.db, &server_url).await?;
+    sync::transport::create_account(&rt.db, &server_url).await?;
     let _ = rt.control.send(sync::transport::Control::Reconfigured).await;
-    Ok(code)
+    Ok(())
 }
 
 /// 发起配对(老设备侧):向服务器开一次性配对槽,返回配对码 `slot-XXXX-XXXX`
@@ -1980,16 +1980,6 @@ async fn sync_set_server(
         .await
         .map_err(|_| "同步任务未运行".to_string())?;
     Ok(())
-}
-
-/// 查看恢复码(设置面板二步确认后展示;K_acc 的人眼形态,丢它=全部设备丢失时
-/// 数据不可恢复,§2 强制仪式的复读入口)。
-#[tauri::command]
-fn sync_recovery_code(space_id: String, spaces: State<'_, Spaces>) -> Result<String, String> {
-    spaces.read(&space_id, |conn| {
-        // 密钥材料不出 core(P4-a 窄公开面):k_acc 的读取与转码都在 core 内完成。
-        sync::transport::recovery_code(&conn)
-    })
 }
 
 // ---- 空间命令面(sync-plan §六;空间的存在与身份见 spaces.rs) ----
@@ -4152,7 +4142,6 @@ pub fn run() {
             join_space,
             join_space_cancel,
             sync_set_server,
-            sync_recovery_code,
             list_spaces,
             create_space,
             reset_space,

@@ -6582,7 +6582,7 @@ fn wss_tls_provider_present() {
 
 /// 提交边界(phone-space-plan §1.2)的词法闸:`save_config` 之后到函数尾不得
 /// 出现 `.await`——提交后再有暂停点,壳层 select! 取消就可能变成「报已取消、
-/// 账户实已落库、恢复码丢失」。为什么按源码钉而不用运行期探针:回环网络上
+/// 账户实已落库」。为什么按源码钉而不用运行期探针:回环网络上
 /// `ws.close()` 单 poll 即完成、永不 Pending,把顺序换错运行期探针照样绿
 /// (阴性对照实测过)——这个窗口在本地 IO 下观测不到。
 #[test]
@@ -6671,8 +6671,7 @@ async fn orphan_register_recovers_via_device_revoke() {
     assert!(resp.contains(&orphan_acct), "device-only 吊销回执带反查出的账户:{resp}");
 
     // ③ 公开入口原库重试成功:同 device_id、新自生成账户,配置读回可验。
-    let code = create_account(&db_b, &url).await.expect("吊销后公开入口原库重试必须成功");
-    assert_eq!(code.chars().filter(|c| *c != '-').count(), 52);
+    create_account(&db_b, &url).await.expect("吊销后公开入口原库重试必须成功");
     {
         let conn = db_b.lock().unwrap();
         let cfg = load_config(&conn).unwrap().expect("已配置");
@@ -6846,7 +6845,7 @@ async fn pending_identity_two_phase_registration_gate_and_compact() {
         crate::epoch::compact(&mut conn).unwrap()
     };
     assert_eq!(report.new_device_id, new_id, "压实消费的就是预注册身份");
-    assert!(report.recovery_code.is_some(), "Configured 压实必须重立恢复码");
+    assert_eq!(report.kind, crate::epoch::CompactKind::Configured, "已配置空间走 Configured 型(K_acc 轮换)");
     {
         let conn = db.lock().unwrap();
         let reloaded = Clock::load(&conn).unwrap();
@@ -7024,7 +7023,7 @@ async fn pair_start_receiver_drop_frees_flow_for_retry() {
 }
 
 /// 提交边界的运行期探针(补充锚,主闸是上面的词法测):内层每逢 Pending 断言
-/// 「配置尚未落库」,顺带验证成功路与恢复码形态。
+/// 「配置尚未落库」,顺带验证成功路。
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn create_account_commit_boundary_no_await_after_save() {
     use std::future::Future;
@@ -7057,10 +7056,9 @@ async fn create_account_commit_boundary_no_await_after_save() {
         }
     }
 
-    let code = Probe { inner: Box::pin(create_account_as(&db, &url, Some(ACCT))), db: &db }
+    Probe { inner: Box::pin(create_account_as(&db, &url, Some(ACCT))), db: &db }
         .await
         .expect("创号成功");
-    assert_eq!(code.chars().filter(|c| *c != '-').count(), 52);
     let conn = db.lock().unwrap();
     assert!(load_config(&conn).unwrap().is_some(), "提交确已发生");
 }
@@ -7072,15 +7070,14 @@ async fn end_to_end_pair_boot_and_realtime_converge() {
     let addr = start_server().await;
     let url = format!("ws://{addr}");
 
-    // A:建库、写离线数据、创建账户(register_first + 恢复码仪式的数据面)。
+    // A:建库、写离线数据、创建账户(register_first)。
     let (db_a, clock_a, dir_a) = test_db("a");
     {
         let mut conn = db_a.lock().unwrap();
         let mut clk = clock_a.lock().unwrap();
         notes::capture(&mut conn, &mut clk, "甲的第一条灵感").unwrap();
     }
-    let recovery = create_account_as(&db_a, &url, Some(ACCT)).await.unwrap();
-    assert_eq!(recovery.chars().filter(|c| *c != '-').count(), 52);
+    create_account_as(&db_a, &url, Some(ACCT)).await.unwrap();
     // 重复创号拒。
     assert!(create_account_as(&db_a, &url, Some(ACCT)).await.is_err());
 
@@ -7144,13 +7141,6 @@ async fn end_to_end_pair_boot_and_realtime_converge() {
     assert_eq!(rig_a.status.lock().unwrap().peers_online, 1);
     assert_eq!(rig_b.status.lock().unwrap().peers_online, 1);
     assert!(rig_a.status.lock().unwrap().frozen.is_empty());
-
-    // 恢复码与 A 库里的 K_acc 互逆(强制仪式的数据面)。
-    {
-        let conn = db_a.lock().unwrap();
-        let k = unhex32(&meta_get(&conn, "k_acc").unwrap().unwrap()).unwrap();
-        assert_eq!(crypto::parse_recovery_code(&recovery), Ok(k));
-    }
 
     rig_a.task.abort();
     rig_b.task.abort();

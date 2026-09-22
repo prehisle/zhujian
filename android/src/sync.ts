@@ -1,6 +1,7 @@
-// 同步面(P4-d):当前空间的输码一屏 + 引导进度 + 状态/恢复码;扫码加入(107)+
-// 「一主两辅」互斥折叠(133)+ 加入空间(space-entry-plan §3)+ 创号恢复码强制仪式
-// (phone-space-plan §2.1/§3)+ 邀请设备出码页(§2.2)。
+// 同步面(P4-d):当前空间的输码一屏 + 引导进度 + 状态;扫码加入(107)+
+// 「一主两辅」互斥折叠(133)+ 加入空间(space-entry-plan §3)+ 创号(phone-space-plan
+// §2.1;曾接一屏「恢复码强制仪式」与「查看恢复码」钮,整个拆掉了 —— 设计用途早被
+// 备份码接走,见 backlog 用户面 125)+ 邀请设备出码页(§2.2)。
 // 310 第③笔:自 main.ts 纯搬迁成模块(initX(Deps) 的形,面内控件与事件桥监听全在
 // initSync 里挂——main.ts 在模块体同一同步 tick 内调用,先于任何事件派发,启动期
 // 事件不丢);空间切换编排与事件代次账本仍住 main.ts,经 Deps 注入。行为零改动。
@@ -157,17 +158,13 @@ function resetSecondary() {
   renderSecondary();
 }
 
-/** 同步面的一次性展示态全体复位:出码页/恢复码/连接信息/辅路折叠与输了一半的码。
- *  切空间必调——旧空间的恢复码挂在新空间的同步页上=把错误密钥当新空间的交付
+/** 同步面的一次性展示态全体复位:出码页/连接信息/辅路折叠与输了一半的码。
+ *  切空间必调——旧空间的配对码挂在新空间的同步页上=把错误材料当新空间的交付
  *  (codex 实现审必修 1);空间重置后同理。调用点在 main.ts(onSpaceChanged / 空间重置)。 */
 export function resetSyncTransient() {
   // 名册是「设备 × 空间」粒度的服务器事实:旧空间那份一个字都不许留到新空间上。
   resetDevices();
   $("sync-pair-out").hidden = true;
-  const recovery = $("sync-recovery");
-  recovery.hidden = true;
-  recovery.textContent = "";
-  $("sync-recovery-note").hidden = true;
   $("sync-info").hidden = true;
   resetSecondary();
 }
@@ -338,33 +335,7 @@ async function doJoinSpace(serverUrl: string, code: string) {
   }
 }
 
-// ---- 创号 + 恢复码强制仪式(phone-space-plan §2.1/§3,与桌面对称) --------------
-
-// Crockford 抄录容错的规范化,与 core parse_recovery_code **严格同口径**(只容忍
-// 空格与 `-`;实现审 L7:前端多容忍 tab/换行会让仪式通过、将来真恢复时被 core
-// 拒)。大写、O→0、I/L→1。只用于仪式回验比对,不做解码。
-function normalizeCode(s: string): string {
-  return s
-    .replace(/[- ]/g, "")
-    .toUpperCase()
-    .replace(/O/g, "0")
-    .replace(/[IL]/g, "1");
-}
-
-let ritualCode = "";
-
-/** 强制仪式:展示+警示+回输核对,输对才放行。post-commit 错误(目录刷新失败等)
- *  随码一起亮出——账户已创建是事实,码必须交付,错误只旁路提示(codex r1 #5)。 */
-function openRitual(code: string, postErr: string | null) {
-  ritualCode = code;
-  $("ritual-code").textContent = code;
-  const post = $("ritual-post");
-  post.hidden = !postErr;
-  post.textContent = postErr ?? "";
-  ($("ritual-confirm") as HTMLInputElement).value = "";
-  $("ritual-err").textContent = "";
-  $("ritual").hidden = false;
-}
+// ---- 创号(phone-space-plan §2.1,与桌面对称) --------------------------------------
 
 async function doCreateAccount() {
   const serverUrl = ($("sync-server") as HTMLInputElement).value.trim();
@@ -374,10 +345,16 @@ async function doCreateAccount() {
   btn.disabled = true;
   btn.textContent = t("sync.creating");
   try {
-    // 刻意不判弃迟到响应:码一旦提交只出这一次机会窗,即使空间已切走也必须
-    // 走完仪式(api.ts 注释同款纪律)。
+    // 刻意不判弃迟到响应:账户一旦提交就是事实,即使空间已切走也要把「已创建」和
+    // post-commit 错误说出来(api.ts 注释同款纪律);后面的刷新与状态重画各自按当前空间走。
     const out = await syncCreateAccount(target, serverUrl);
-    openRitual(out.recovery_code, out.post_commit_error);
+    // post-commit 错误(目录刷新失败等)先亮 —— 账户已创建是事实,错误只旁路提示
+    // (codex r1 #5);两条走同一根提示条,后到的成功句盖住它之前用户已看到过。
+    if (out.post_commit_error) showError(out.post_commit_error);
+    showBar(t("sync.accountCreated"), true);
+    resetSecondary(); // 创号完成,收起辅路。
+    void deps.refreshSpaces();
+    void sinvoke<SyncStatus>("sync_status").then(renderSync).catch(() => {});
   } catch (err) {
     showError(String(err));
   } finally {
@@ -485,34 +462,10 @@ export function initSync(d: Deps): void {
   $("join-cancel").addEventListener("click", () => {
     void invoke("join_space_cancel").catch(() => {});
   });
-  $("sync-recovery-btn").addEventListener("click", async () => {
-    const box = $("sync-recovery");
-    try {
-      box.textContent = await sinvoke<string>("sync_recovery_code");
-      // 警示随码同现(codex 审:「恢复码≠数据备份」必须跟着码走,防误当备份)。
-      $("sync-recovery-note").hidden = false;
-      box.hidden = false;
-    } catch (err) {
-      showError(String(err));
-    }
-  });
   // 连接信息(账户/服务器/同伴)折叠:唯一出处,点开才见。
   $("sync-conninfo-btn").addEventListener("click", () => {
     const info = $("sync-info");
     info.hidden = !info.hidden;
-  });
-  $("ritual-done").addEventListener("click", () => {
-    const typed = ($("ritual-confirm") as HTMLInputElement).value;
-    if (normalizeCode(typed) !== normalizeCode(ritualCode)) {
-      $("ritual-err").textContent = t("sync.recoveryMismatch");
-      return;
-    }
-    ritualCode = "";
-    $("ritual").hidden = true;
-    showBar(t("sync.accountCreated"), true);
-    resetSecondary(); // 创号完成,收起辅路。
-    void deps.refreshSpaces();
-    void sinvoke<SyncStatus>("sync_status").then(renderSync).catch(() => {});
   });
   $("sync-create-btn").addEventListener("click", () => void doCreateAccount());
   $("sync-invite-btn").addEventListener("click", () => void doInviteDevice());

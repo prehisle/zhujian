@@ -1,6 +1,7 @@
 // 同步 UI 最小面(sync-protocol §8;P2-g)。侧栏底部一枚状态点 + 设置面板(创建
-// 账户[恢复码强制仪式]/发起配对[显示配对码]/加入账户[输配对码]/服务器地址)+
-// 非模态提示条。未配置时只有一个安静入口,零打扰;远端 op 落地(sync-changed)
+// 账户/发起配对[显示配对码]/加入账户[输配对码]/服务器地址)+ 非模态提示条。
+// 创号曾接一页「恢复码强制仪式」(抄 52 位再回输核对)与一页「查看恢复码」,连同
+// 压实重发码那条挂钩一起拆掉了 —— 它的设计用途早被备份码接走,见 backlog 用户面 125。未配置时只有一个安静入口,零打扰;远端 op 落地(sync-changed)
 // 去抖后刷当前视图(视图 refresh 已幂等)。
 // 97 多空间(sync-plan §六⑥):事件全部带空间标——状态按 space 留存(切回即见),
 // 非当前空间的 changed 直接丢(切回时视图全量重查),toast 带空间名冒出来,
@@ -35,9 +36,7 @@ type Mode =
   | "home"
   | "create"
   | "join"
-  | "ceremony"
   | "pair"
-  | "recovery"
   | "server"
   | "advanced"
   | "devices";
@@ -57,7 +56,6 @@ const spaceNames = new Map<string, string>();
 let overlay: HTMLDivElement | null = null;
 let mode: Mode = "home";
 // 一次性展示材料(关面板即弃,不留 DOM 外的副本)。
-let ceremonyCode = "";
 let pairCode = "";
 let pairNote = "";
 let pairFailed = false;
@@ -65,7 +63,6 @@ let pairFailed = false;
 // 那几格不再「关面板即弃」:pairSpace 记下发起它的空间,done / failed 之前关掉再开仍回到出码页。
 let pairDone = false;
 let pairSpace = "";
-let shownRecovery = "";
 
 function clearPair(): void {
   pairCode = "";
@@ -78,11 +75,6 @@ function clearPair(): void {
 function pairAlive(): boolean {
   return pairSpace !== "" && pairSpace === currentSpaceId() && !pairFailed && !pairDone;
 }
-// 仪式收尾提示:创号与压实共用同一个 ceremony 页,完成话术不同。
-const CEREMONY_MSG_CREATE = t("sync.ceremonyDoneCreate");
-let ceremonyDoneMsg = CEREMONY_MSG_CREATE;
-// 仪式页随附警告(压实已提交但装配失败时,错误必须跟着恢复码走到仪式页)。
-let ceremonyWarn = "";
 
 function cur(): SyncStatus | null {
   return statuses.get(currentSpaceId()) ?? null;
@@ -222,8 +214,7 @@ function openPanel(): void {
   overlay = document.createElement("div");
   overlay.className = "sync-overlay";
   overlay.addEventListener("mousedown", (e) => {
-    // 恢复码仪式不许点外关闭(抄没抄只能由「我已抄写」确认)。
-    if (e.target === overlay && mode !== "ceremony") closePanel();
+    if (e.target === overlay) closePanel();
   });
   const panel = document.createElement("div");
   panel.className = "sync-panel";
@@ -237,18 +228,14 @@ function closePanel(): void {
   overlay?.remove();
   overlay = null;
   document.removeEventListener("keydown", onPanelKey);
-  ceremonyCode = "";
   // 716:配对还活着(申请中 / 码已到、未 done / failed)就留住 —— 槽在 core 里活到码过期,
   // 此前关面板即清码,再点「添加设备」只得到「已有配对在进行中」,用户对着一句红字干等十分钟。
   if (pairSpace === "" || pairFailed || pairDone) clearPair();
-  shownRecovery = "";
-  ceremonyDoneMsg = CEREMONY_MSG_CREATE;
-  ceremonyWarn = "";
   resetDevicesPage();
 }
 
 function onPanelKey(e: KeyboardEvent): void {
-  if (e.key === "Escape" && mode !== "ceremony") {
+  if (e.key === "Escape") {
     e.stopPropagation();
     closePanel();
   }
@@ -281,14 +268,8 @@ function renderPanel(): void {
     case "join":
       renderJoin(body);
       break;
-    case "ceremony":
-      renderCeremony(body);
-      break;
     case "pair":
       renderPair(body);
-      break;
-    case "recovery":
-      renderRecovery(body);
       break;
     case "server":
       renderServer(body);
@@ -406,7 +387,6 @@ function renderHome(body: HTMLElement): void {
   // 移除设备与管理设备名单都在里头。入口恒显——权限差别在**行上**表达,不藏入口
   // (藏了就没人知道自己能不能退出账户)。
   acts.appendChild(btn(t("devices.entry"), "hbtn", () => gotoDevices()));
-  acts.appendChild(btn(t("sync.viewRecovery"), "hbtn", () => goto("recovery")));
   body.appendChild(acts);
   if (spaceNames.size <= 1) body.appendChild(spacesEntryRow()); // 411/D2 兜底,见该函数
   // 修改服务器收进「高级」:运维动作不与日常操作同屏(概念收敛)。
@@ -492,12 +472,14 @@ function renderCreate(body: HTMLElement): void {
   const go = btn(t("sync.createGo"), "hbtn", () => {
     go.disabled = true;
     err.textContent = "";
-    void invoke<string>("sync_create_account", {
+    void invoke<void>("sync_create_account", {
       serverUrl: server.value.trim(),
     })
-      .then((code) => {
-        ceremonyCode = code;
-        goto("ceremony");
+      .then(() => {
+        // 一步到位回状态页:下一步是「添加设备」,就在那一页上;状态行随 sync-status
+        // 事件从「未启用」翻到「连接中 / 已连接」(事件到了 home 页会自己重画)。
+        showToast(t("sync.accountCreated"));
+        goto("home");
       })
       .catch((e: unknown) => {
         go.disabled = false;
@@ -506,47 +488,6 @@ function renderCreate(body: HTMLElement): void {
   });
   acts.appendChild(go);
   acts.appendChild(btn(t("sync.back"), "hbtn", () => goto("home")));
-  body.appendChild(acts);
-}
-
-// Crockford 抄录容错的规范化,与 core parse_recovery_code **严格同口径**(只容忍
-// 空格与 `-`;实现审 L7:前端多容忍 tab/换行会让仪式通过、将来真恢复时被 core
-// 拒)。大写、O→0、I/L→1。只用于仪式回验比对,不做解码。
-function normalizeCode(s: string): string {
-  return s
-    .replace(/[- ]/g, "")
-    .toUpperCase()
-    .replace(/O/g, "0")
-    .replace(/[IL]/g, "1");
-}
-
-function renderCeremony(body: HTMLElement): void {
-  body.appendChild(el("p", "sync-note", t("sync.ceremonyIntro")));
-  body.appendChild(el("div", "sync-code sync-code--recovery", ceremonyCode));
-  // 压实已提交但装配失败:错误随恢复码一起到仪式页(先抄码,再按指引重启)。
-  if (ceremonyWarn) body.appendChild(el("div", "sync-err", ceremonyWarn));
-  body.appendChild(
-    el(
-      "p",
-      "sync-warn",
-      t("sync.ceremonyWarn"),
-    ),
-  );
-  // 强制仪式(§2):抄写后必须回输核对——「点过确认」不算抄过,输对才放行。
-  const confirm = input(t("sync.ceremonyConfirmPh"));
-  body.appendChild(confirm);
-  const err = formErr(body);
-  const acts = el("div", "sync-actions");
-  acts.appendChild(
-    btn(t("sync.ceremonyConfirm"), "hbtn", () => {
-      if (normalizeCode(confirm.value) !== normalizeCode(ceremonyCode)) {
-        err.textContent = t("sync.ceremonyMismatch");
-        return;
-      }
-      showToast(ceremonyDoneMsg);
-      closePanel();
-    }),
-  );
   body.appendChild(acts);
 }
 
@@ -608,44 +549,6 @@ function renderPair(body: HTMLElement): void {
     acts.appendChild(btn(t("devices.entry"), "hbtn", () => gotoDevices()));
   }
   acts.appendChild(btn(t("sync.close"), "hbtn", () => closePanel()));
-  body.appendChild(acts);
-}
-
-function renderRecovery(body: HTMLElement): void {
-  if (!shownRecovery) {
-    body.appendChild(
-      el("p", "sync-note", t("sync.recoveryIntro")),
-    );
-    const acts = el("div", "sync-actions");
-    acts.appendChild(
-      btn(t("sync.showRecovery"), "hbtn", () => {
-        void invoke<string>("sync_recovery_code")
-          .then((code) => {
-            shownRecovery = code;
-            if (mode === "recovery") renderPanel();
-          })
-          .catch((e: unknown) => showToast(String(e)));
-      }),
-    );
-    acts.appendChild(btn(t("sync.back"), "hbtn", () => goto("home")));
-    body.appendChild(acts);
-    return;
-  }
-  body.appendChild(el("div", "sync-code sync-code--recovery", shownRecovery));
-  body.appendChild(
-    el(
-      "p",
-      "sync-warn",
-      t("sync.recoveryWarn"),
-    ),
-  );
-  const acts = el("div", "sync-actions");
-  acts.appendChild(
-    btn(t("sync.hideRecovery"), "hbtn", () => {
-      shownRecovery = "";
-      goto("home");
-    }),
-  );
   body.appendChild(acts);
 }
 

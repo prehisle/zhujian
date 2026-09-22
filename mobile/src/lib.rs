@@ -140,7 +140,6 @@ macro_rules! shared_handler {
             $crate::join_space,
             $crate::join_space_cancel,
             $crate::sync_set_server,
-            $crate::sync_recovery_code,
             $crate::db_info,
             $crate::net_probe,
             // 加密备份的安卓半(backup-plan §17):⛔ 没有 set_dir / open_dir / 自动那几条

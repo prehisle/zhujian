@@ -18,7 +18,7 @@ The name joins *zhūshā* (朱砂, cinnabar) and *jiǎndú* (简牍, the bamboo 
 jot it down → Notes → make it a task → get it done on the board
 ```
 
-The handful of things worth understanding before you rely on them — the recovery code, the backup code, what removing a device actually does, what direct sync over Wi-Fi costs you, the version gate on custom columns, and how ticking a checkbox behaves offline — are all written down in the [user guide](docs/user-guide.md) (Chinese), with nothing left out.
+The handful of things worth understanding before you rely on them — where the account key lives, the backup code, what removing a device actually does, what direct sync over Wi-Fi costs you, the version gate on custom columns, and how ticking a checkbox behaves offline — are all written down in the [user guide](docs/user-guide.md) (Chinese), with nothing left out.
 
 ## Features
 
@@ -70,7 +70,7 @@ The handful of things worth understanding before you rely on them — the recove
 ### Multi-device sync (optional)
 
 - Sync notes and tasks between desktop and phone. It defaults to the official server, `sync.zhujian.app`, and you can point it at your own instead. Unconfigured, the whole feature stays silent.
-- No email address, no phone number: the first device taps **Create account** and receives a **recovery code**; other devices join with a pairing code and get the full dataset.
+- No email address, no phone number, nothing to write down: the first device taps **Create account** and is done; other devices join with a pairing code and get the full dataset.
 - Content is encrypted on your device before it leaves; the server only ever handles ciphertext and cannot read it.
 - Two devices on the same Wi-Fi sync directly, peer to peer — faster, and it keeps working when the router has no internet.
 - The sync panel holds the current **device list** for the space. Name each device and items will carry a faint note saying which one wrote them.

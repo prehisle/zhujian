@@ -42,7 +42,6 @@ export const sync = defineMessages({
   "sync.pairNote": { zh: "在电脑上点侧栏的「同步」:那台没开过同步,就选「用配对码加入」;已经在用自己账户的,走面板里的「空间…」(或左上角的空间名)→「加入空间」。服务器地址和配对码两项都要填。出码和对方初始同步期间,不要切换空间、不要运行「全部同步」,并保持本机亮屏在前台。配对码 10 分钟内有效、只能用一次。", en: "On the computer, click Sync in the sidebar: if that computer has never set up sync, choose “Join with a pairing code”; if it already has its own account, go to “Spaces…” in the panel (or the space name at the top left) → “Join a space”. Both the server address and the pairing code are required. While the code is out and the other side is doing its initial sync, do not switch spaces or run Sync all, and keep this phone awake in the foreground. The code is valid for 10 minutes and can be used once." },
   "sync.addDevice": { zh: "添加设备", en: "Add device" },
   "sync.bootProgress": { zh: "正在拉取账户数据 {received} / {total}", en: "Fetching account data {received} / {total}" },
-  "sync.recoveryMismatch": { zh: "输入与恢复码不符。请对照纸上抄写的内容逐组核对。", en: "That does not match the recovery code. Check it group by group against what you wrote down." },
   "sync.accountCreated": { zh: "账户已创建,同步已开启", en: "Account created, sync is on" },
   "sync.copied": { zh: "已复制,发给电脑端粘贴", en: "Copied, paste it on the computer" },
   "sync.copyFailed": { zh: "复制失败,请长按选中文字手动复制", en: "Copy failed; long-press to select the text and copy it by hand" },

@@ -175,7 +175,7 @@
 }
 .sync-input:focus { border-color: var(--seal-line); }
 
-/* 恢复码 / 配对码:等宽大字,可选中抄录 */
+/* 配对码:等宽大字,可选中抄录 */
 .sync-code {
   font-family: Consolas, "Courier New", monospace;
   font-size: var(--fs-15);
@@ -190,14 +190,6 @@
   overflow-wrap: anywhere;
   user-select: text;
   cursor: text;
-}
-/* 恢复码专用:只在组边界(短横)换行,别从字中间断——长码分成规整几行、不再是
-   一条长蛇(需求3)。DOM 文本仍是原始带 `-` 的整串,故复制/回验口径不变。 */
-.sync-code--recovery {
-  overflow-wrap: normal;
-  word-break: normal;
-  max-width: 16em;
-  margin-inline: auto;
 }
 
 /* 配对二维码(107):恒白底黑码——扫码要的是对比度,不随暗色主题走 */

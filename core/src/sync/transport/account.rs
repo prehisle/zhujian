@@ -4,8 +4,9 @@ use super::*;
 
 /// 创建账户(§8;open-signup 无感创号):账户 ULID 本函数自生成——服务器准入
 /// 开放,fresh 账户直接 TOFU,用户全程无码。专用短连接 register_first(§4 原子
-/// TOFU 首台),成功即写配置(含纪元标记)并返回恢复码(强制仪式的数据面)。
-/// 之后 poke `Control::Reconfigured` 让传输任务上线。
+/// TOFU 首台),成功即写配置(含纪元标记)。K_acc 只落本机 `sync_meta`,**不以任何
+/// 形态交给壳层**(曾经返回的「恢复码」= K_acc 的人眼形态,连同创号强制仪式一起拆掉,
+/// 见 progress-log 用户面 125 那轮)。之后 poke `Control::Reconfigured` 让传输任务上线。
 ///
 /// 碰撞论证(open-signup §1.4):ULID = 48-bit 时间戳 + 80-bit 随机,与 device/
 /// item 身份同一假设强度;撞上服务器已有账户也只得 not_first,发生在写本地配置
@@ -16,7 +17,7 @@ use super::*;
 pub async fn create_account(
     db: &Arc<Mutex<Connection>>,
     server_url: &str,
-) -> Result<String, String> {
+) -> Result<(), String> {
     create_account_as(db, server_url, None).await
 }
 
@@ -26,7 +27,7 @@ pub(crate) async fn create_account_as(
     db: &Arc<Mutex<Connection>>,
     server_url: &str,
     fixed_account_id: Option<&str>,
-) -> Result<String, String> {
+) -> Result<(), String> {
     let url = ws_endpoint(server_url)?;
     let device_id = {
         let conn = db.lock().expect("db mutex poisoned");
@@ -57,9 +58,6 @@ pub(crate) async fn create_account_as(
     OsRng.fill_bytes(&mut k_acc);
     let (seed, _pub) = pair::gen_device_key();
     let pubkey = pubkey_of(&seed);
-    let code = crypto::recovery_code(&k_acc);
-    // 把解析器焊在生成路径上:编解不再互逆 = 实现漂移,当场响亮(恢复流程 P2-h 用它)。
-    assert_eq!(crypto::parse_recovery_code(&code), Ok(k_acc), "恢复码编解必须互逆");
 
     let mut ws = dial(&url).await?;
     let nonce = expect_challenge(&mut ws).await?;
@@ -101,13 +99,13 @@ pub(crate) async fn create_account_as(
     // 不发(同步 drop 关 TCP;实现审 M1:礼貌 close 可以无界 Pending,不切空间
     // 就永远「创建中」、切空间就把已注册变孤儿)。服务器对突然断开本就有 detach
     // 处理。壳层用 shutdown select! 包住本 future 时,取消要么落在提交前(什么
-    // 都没写),要么根本抢不进提交后——绝不「报已取消、账户实已落库、码丢失」。
+    // 都没写),要么根本抢不进提交后——绝不「报已取消、账户实已落库」。
     drop(ws);
     {
         let mut conn = db.lock().expect("db mutex poisoned");
         save_config(&mut conn, account_id, &k_acc, &seed, server_url, true)?;
     }
-    Ok(code)
+    Ok(())
 }
 
 /// 加入账户(§8 sync_pair_join):专用短连接入配对槽跑 SPAKE2(joiner 侧),拿到

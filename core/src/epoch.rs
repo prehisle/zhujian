@@ -14,7 +14,7 @@
 //!   * `Configured`(已配置空间,runbook §8 主路):消费已注册的 pending 身份
 //!     (两阶段状态机 Prepared→Registered,transport::register_pending_identity),
 //!     轮换 device_id / device_key / **k_acc**(恶意服务器存旧密文重放在新钥下解密
-//!     即失败,§2.5)、last_pushed := 0;恢复码随 k_acc 作废,**必须重走仪式**。
+//!     即失败,§2.5)、last_pushed := 0。
 //!   * `Unconfigured`(legacy 库尚无账户,create_account 认证不过时的无损压实路,
 //!     §3.5):只轮换本地 device_id + 重建 oplog + 落 epoch=2,配置四元组保持全空。
 //!
@@ -38,7 +38,6 @@ use ulid::Ulid;
 use crate::clock::Clock;
 use crate::db;
 use crate::sync::boot;
-use crate::sync::crypto;
 
 /// oplog 表的**单一 DDL 构造源**(§2.6.7 第一层;与**最新那条改 oplog 的迁移**(今为
 /// **0035**)文本**逐字同源,含语句
@@ -117,14 +116,12 @@ pub enum CompactKind {
     Unconfigured,
 }
 
-/// 压实结果(壳层拿它走新恢复码仪式与时钟/传输重载)。
+/// 压实结果(壳层拿它走时钟/传输重载)。Configured 型的新 k_acc 只落库、不出 core
+/// (曾经随报告带出「新恢复码」,那一格连同恢复码整个拆掉,见 progress-log 用户面 125 那轮)。
 #[derive(Debug)]
 pub struct CompactReport {
     pub kind: CompactKind,
     pub new_device_id: String,
-    /// Configured 才有:随新 k_acc 派生的新恢复码——**旧恢复码自此作废,UI 必须
-    /// 强制重走展示 + 回输核对仪式**(§2.5)。
-    pub recovery_code: Option<String>,
     /// 基线 op 条数(m)。
     pub baseline_ops: usize,
 }
@@ -299,11 +296,10 @@ fn compact_inner(conn: &mut Connection, fp: FailPointOpt) -> Result<CompactRepor
     hit(&fp, FailPoint::AfterIdentityUpdate)?;
     tx.execute(DEVICE_ID_FROZEN_DDL, []).map_err(|e| e.to_string())?;
 
-    let mut recovery_code = None;
     let mut new_k_acc_hex = None;
     if configured {
         // K_acc 轮换(§2.5):恶意服务器存过的旧 to:"*" 密文在新钥下解密即失败——
-        // 重放承诺以更强形式恢复;恢复码随之作废,壳层必须强制重走仪式。
+        // 重放承诺以更强形式恢复。
         let mut k_acc = [0u8; 32];
         use chacha20poly1305::aead::rand_core::RngCore;
         chacha20poly1305::aead::OsRng.fill_bytes(&mut k_acc);
@@ -315,9 +311,6 @@ fn compact_inner(conn: &mut Connection, fp: FailPointOpt) -> Result<CompactRepor
         for k in ["pending_device_id", "pending_device_key", "pending_pubkey", "pending_state"] {
             tx.execute("DELETE FROM sync_meta WHERE key = ?1", [k]).map_err(|e| e.to_string())?;
         }
-        let code = crypto::recovery_code(&k_acc);
-        assert_eq!(crypto::parse_recovery_code(&code), Ok(k_acc), "恢复码编解必须互逆");
-        recovery_code = Some(code);
     }
     meta_upsert(&tx, "epoch", "2")?;
     // 新纪元不许带着已满的隔离额度/闭合的 breaker 启动(§2.3 白名单)。
@@ -531,7 +524,6 @@ fn compact_inner(conn: &mut Connection, fp: FailPointOpt) -> Result<CompactRepor
     Ok(CompactReport {
         kind: if configured { CompactKind::Configured } else { CompactKind::Unconfigured },
         new_device_id,
-        recovery_code,
         baseline_ops: m,
     })
 }
@@ -1590,7 +1582,7 @@ mod tests {
 
         let report = compact(&mut p.conn).expect("未配置压实必须成功");
         assert_eq!(report.kind, CompactKind::Unconfigured);
-        assert!(report.recovery_code.is_none(), "未配置压实无恢复码(无 k_acc 可轮换)");
+        assert!(meta_get(&p.conn, "k_acc").unwrap().is_none(), "未配置压实不造 k_acc(配置四元组保持全空)");
         assert_ne!(report.new_device_id, old_device);
         assert!(sync_proto::is_ulid(&report.new_device_id));
         assert_eq!(
@@ -1681,15 +1673,10 @@ mod tests {
         for k in ["pending_device_id", "pending_device_key", "pending_pubkey", "pending_state"] {
             assert!(meta_get(&p.conn, k).unwrap().is_none(), "pending 键必须消费删除:{k}");
         }
-        // K_acc 已轮换,恢复码 = 新 k_acc 的编码(§2.5:旧恢复码自此作废)。
+        // K_acc 已轮换(§2.5),且只落库、不随报告出 core。
         let new_k_acc = meta_get(&p.conn, "k_acc").unwrap().unwrap();
         assert_ne!(new_k_acc, old_k_acc, "k_acc 必须轮换");
-        let code = report.recovery_code.expect("Configured 压实必须给新恢复码");
-        assert_eq!(
-            hex(&crate::sync::crypto::parse_recovery_code(&code).unwrap()),
-            new_k_acc,
-            "恢复码就是新 k_acc 的人眼编码"
-        );
+        assert_eq!(new_k_acc.len(), 64, "新 k_acc 是 32 字节的 hex");
         assert!(epoch_certified(&p.conn).unwrap());
         boot::strict_battery(&p.conn).expect("压实后必过严格电池");
     }

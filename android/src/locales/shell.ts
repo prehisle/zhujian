@@ -33,9 +33,7 @@ export const shell = defineMessages({
   "shell.syncCodePh": { zh: "配对码(电脑「添加设备」出示)", en: "Pairing code (shown by “Add device” on the computer)" },
   "shell.syncManualNote": { zh: "在电脑朱简的「同步」里点「添加设备」,把服务器地址和配对码抄到上面。", en: "In Zhujian on the computer, open Sync and click Add device, then copy the server address and pairing code above." },
   "shell.syncCreateNote": { zh: "把本机创建为账户的第一台设备。创建后请尽快让电脑加入;加入前唯一副本只在本机。", en: "Make this phone the first device of a new account. Have a computer join soon after; until it does, the only copy lives here." },
-  "shell.viewRecovery": { zh: "查看恢复码", en: "Show recovery code" },
   "shell.copyPair": { zh: "复制服务器地址和配对码", en: "Copy server address and pairing code" },
-  "shell.recoveryNote": { zh: "恢复码是账户密钥,不是数据备份:恢复还需要至少一台在线的完整副本。抄写在纸上,别截图、别存网盘。", en: "The recovery code is the account key, not a data backup: recovery also needs at least one complete copy online. Write it on paper: no screenshots, no cloud drives." },
   "shell.connInfo": { zh: "连接信息", en: "Connection info" },
   "shell.bgNote": { zh: "后台不保证实时,回到前台会继续追赶。", en: "Background sync is not guaranteed to be live; it catches up when you come back to the app." },
   "shell.spacesEntry": { zh: "空间…", en: "Spaces…" },
@@ -115,11 +113,6 @@ export const shell = defineMessages({
   // 434:四个封锁页共用这一句。⛔ 它下面那段是 core 原样吐的诊断串(中文 + 英文 SQLite
   // 原文混排、路径可能印两遍),刻意不翻也不美化 —— 它的受众是排查的人,不是用户。
   "shell.gateDetail": { zh: "技术详情(排查时抄给开发者)", en: "Technical details (copy these when reporting a problem)" },
-  "shell.ritualTitle": { zh: "账户恢复码", en: "Account recovery code" },
-  "shell.ritualBody": { zh: "这是账户恢复码。请抄写在纸上,存放在安全的地方。", en: "This is the account recovery code. Write it on paper and keep it somewhere safe." },
-  "shell.ritualFine": { zh: "恢复码是账户密钥,不是数据备份:恢复数据还必须有至少一台在线的完整副本。它不存在服务器上,丢了无人能帮你找回。", en: "The recovery code is the account key, not a data backup: restoring data also requires at least one complete copy online. It is not stored on the server; if you lose it, nobody can get it back for you." },
-  "shell.ritualConfirmPh": { zh: "抄写完成后,在这里重新输入一遍以确认", en: "Once you have written it down, type it again here to confirm" },
-  "shell.ritualDone": { zh: "我已抄写,完成", en: "I wrote it down, done" },
   "shell.viewerAria": { zh: "图片查看", en: "Image viewer" },
   "shell.delete": { zh: "删除", en: "Delete" },
   "shell.scanHint": { zh: "对准电脑「添加设备」出示的二维码", en: "Point at the QR code shown by Add device on the computer" },

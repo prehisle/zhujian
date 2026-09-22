@@ -7,7 +7,7 @@
 - 请**先别公开**(不要开 issue、不要发帖),给我一点时间修好再说。
 - 能写多少写多少:哪个版本、哪个平台(Windows / Android / 鸿蒙 / macOS / Linux)、
   怎么复现。能附上你看到的原始报错最好。
-- ⚠ **别把你的备份码、恢复码、备份文件发过来** —— 那些东西等于你数据的钥匙,
+- ⚠ **别把你的备份码、备份文件发过来** —— 那些东西等于你数据的钥匙,
   我不需要它们也能看问题。
 
 **我能承诺什么**:这是一个人业余做的项目,所以我不承诺小时级的响应,
@@ -32,7 +32,7 @@ Email **3069848@qq.com** with “security” in the subject line.
 - Please **do not open a public issue** first; give me a chance to fix it.
 - Include the version, the platform (Windows / Android / HarmonyOS / macOS / Linux),
   and how to reproduce it. Raw error text helps.
-- ⚠ **Never send your backup code, recovery code, or backup files.** Those are the keys
+- ⚠ **Never send your backup code or backup files.** Those are the keys
   to your data, and I do not need them to look into a problem.
 
 This is a one-person side project: no hourly response promise, no bug bounty, no CVE

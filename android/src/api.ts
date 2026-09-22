@@ -10,7 +10,7 @@
 //   = 弃)。117 审出 sinvoke 的「永不决议」会毒化 single-flight 闸/pending 表
 //   (refresh 在飞闸、取图去重表被悬挂 Promise 堵死),业务路不再用它。
 // - `sinvoke`(自动注入当前空间 + 迟到响应永不决议)只留给**孤立的状态类读**
-//   (sync_status/db_info/恢复码——fire-and-forget 渲染,没有 finally/闸依赖)。
+//   (sync_status/db_info——fire-and-forget 渲染,没有 finally/闸依赖)。
 //
 // currentSpace 影子(后端 foreground 的镜像)也在此:main.ts 切换/对账时写入,
 // 所有读方(包括 main.ts 的判弃逻辑)从这里取。
@@ -471,16 +471,15 @@ export const markItemCommentsSeen = (space: string, itemId: string, seenId: stri
 
 // ---- 同步:创号 / 邀请(phone-space-plan,与桌面对称;写类命令显式 space、正常决议) ----
 
-/** 创号结果:core 一旦提交,恢复码必达(强制仪式的数据面);post-commit 阶段
- *  (目录刷新/上线 poke)的失败只在 post_commit_error 旁路报告,绝不吞码。 */
+/** 创号结果:core 一旦提交,「已创建」就是事实;post-commit 阶段(目录刷新/上线 poke)
+ *  的失败只在 post_commit_error 旁路报告,绝不把整条命令说成失败。不带任何密钥材料
+ *  (曾经的 `recovery_code` 连同强制仪式整个拆掉,backlog 用户面 125)。 */
 export type CreateAccountOutcome = {
-  recovery_code: string;
   post_commit_error: string | null;
 };
 
 /** 创建同步账户(账户首台;open-signup 无感创号——账户 ULID 由 core 自生成,
- *  无码)。成功后调用方必须走强制仪式(展示+警示+回输核对)——即使空间已切走
- *  也要展示:码已提交,只出这一次机会窗。 */
+ *  无码)。即使空间已切走也要把「已创建」与 post_commit_error 说出来:账户已提交是事实。 */
 export const syncCreateAccount = (space: string, serverUrl: string) =>
   invoke<CreateAccountOutcome>("sync_create_account", { spaceId: space, serverUrl });
 

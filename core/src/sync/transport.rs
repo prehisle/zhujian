@@ -559,14 +559,6 @@ pub fn set_server(conn: &Connection, url: &str) -> Result<(), String> {
     meta_put(conn, "server_url", url.trim().trim_end_matches('/'))
 }
 
-/// 恢复码(K_acc 的人眼形态,Crockford base32)——设置面板「查看恢复码」的复读入口。
-/// 密钥本体不出 core(P4-a 窄公开面,android-plan §1 M2):k_acc 在这里取、在这里转码,
-/// app 壳只见转好的码。未加入账户 = 用户可读错误,不是 None 兜底。
-pub fn recovery_code(conn: &Connection) -> Result<String, String> {
-    let cfg = load_config(conn)?.ok_or_else(|| "尚未加入账户".to_string())?;
-    Ok(crypto::recovery_code(&cfg.k_acc))
-}
-
 /// 本库已配置的账户 id(未加入账户 = None)。桌面多空间(sync-plan §六)的跨库身份
 /// 校验读口:空间=账户要求一对一,壳层启动 transport 前查各库 account_id 全局互异。
 /// 只出账户 id;密钥材料仍不出 crate。
