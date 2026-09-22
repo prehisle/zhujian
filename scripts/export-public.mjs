@@ -66,6 +66,10 @@ const ALLOW = [
   "site-app/",
   "index.html", "notebook.html", "lightbox.html", "package.json", "package-lock.json",
   "tsconfig.json", "vite.config.ts", "readme.md", "readme.en.md", "LICENSE",
+  // 713:安全政策。GitHub 只在**仓库根**认它(公开仓那棵树的根就是这儿),不导出 =
+  // 仓库页上那枚「Security policy」永远是空的。⛔ 里头只许写已公开的联系邮箱与
+  // 已公开的诚实边界,别写内部路径、别写未发布的计划。
+  "SECURITY.md",
   ".gitignore", ".gitattributes",
 ];
 // 公开树内容红线:命中即导出失败(个人语境 / 真实局域网网段 / 历史遗留密钥名)。
