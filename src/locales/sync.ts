@@ -11,7 +11,9 @@ export const sync = defineMessages({
   "sync.otherSpace": { zh: "另一空间", en: "Another space" },
   "sync.toastFromSpace": { zh: "「{space}」{msg}", en: "[{space}] {msg}" },
   "sync.entryTitle": { zh: "同步:{state}", en: "Sync: {state}" },
-  "sync.entryTitleOff": { zh: "同步(未启用)", en: "Sync (not set up)" },
+  // 未配置时这枚入口只写着「同步」两个字,悬停才有这一句 —— 所以它得说清**点进去得到什么**,
+  // 不是重复一遍标题。⛔ 别在这儿提价格 / 席位(不预告收费)。
+  "sync.entryTitleOff": { zh: "同步(未启用):让手机和另一台电脑看同一份", en: "Sync (not set up): see the same notes on your phone and another computer" },
   "sync.panelTitle": { zh: "同步", en: "Sync" },
   "sync.homeIntro": { zh: "多设备同步,内容端到端加密,服务器看不到记录内容。", en: "Multi-device sync, end-to-end encrypted; the server cannot read your content." },
   "sync.createAccount": { zh: "创建账户(第一台设备)", en: "Create account (first device)" },

@@ -1,13 +1,15 @@
 /* 设置(232):侧栏底部入口 + 居中面板。视觉沿用 sync 面板的纸墨令牌,保持一致。 */
 
+/* 字号与色档跟着 .sync-entry 走(那两枚是刻意的一对)—— 判据、读数与「为什么停在
+   --ink-soft」全文在 sync.css 该处注,⛔ 别在这儿抄第二份。 */
 .settings-entry {
   display: flex;
   align-items: center;
   gap: 8px;
   font-family: var(--font-serif);
-  font-size: var(--fs-13);
+  font-size: var(--fs-14);
   letter-spacing: 0.03em;
-  color: var(--ink-faint);
+  color: var(--ink-soft);
   background: transparent;
   border: 0;
   border-radius: var(--radius-sm);

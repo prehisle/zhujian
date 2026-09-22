@@ -5,7 +5,8 @@
 .hk-host { position: relative; }
 .hk-host.is-active { z-index: 4; }
 
-/* ⋯ 角标:坐在卡片右上角留白里,只有卡片被悬停 / 选中时才浮现,安静的列表保持安静。 */
+/* ⋯ 角标:坐在卡片右上角留白里,安静的列表保持安静。显形有**三种**,别漏了第三种:
+   悬停 / 选中(下面两条)+ 教学期常驻(`.hk-teach`,再往下那条)。 */
 .hk-menu-wrap { position: absolute; top: 8px; right: 8px; z-index: 3; }
 .hk-btn {
   font: inherit;
@@ -22,6 +23,18 @@
 }
 .hk-host:hover .hk-btn,
 .hk-host.is-active .hk-btn { opacity: 1; }
+/* 第三种显形:教学期常驻。挂在**视图**上(不是卡片),由数据自己决定 —— 判据与开关
+   全在 inbox.ts::refresh 那一行,这里只负责画。⛔ 不是首启旗、没有开关、不记状态:
+   条件一旦不成立,下一发 refresh 它自己就回到悬停(408-411「不造首启旗」,与同文件
+   `statsBlank` 同一条)。⚠ 看板卡片吃的是同一枚 .hk-btn,所以这个类**只挂在随记那个
+   视图元素上** —— 挂到 body 上就会把看板的一起点亮。 */
+.hk-teach .hk-btn {
+  opacity: 1;
+  /* ⚠ 光有 opacity 不够:.hk-btn 那身 --ink-faint 是为「悬停才浮现」配的,压在卡面
+     (--raised)上亮档只有 2.45:1 —— 常驻之后它就成了「看得见但看不见」的代餐。教学态
+     单独抬到 --ink-soft(实测亮 5.48 / 暗 5.84),⛔ 只抬这一态,常态那身淡色一个字不动。 */
+  color: var(--ink-soft);
+}
 .hk-btn:hover {
   color: var(--ink);
   background: color-mix(in srgb, var(--ink) 8%, transparent);

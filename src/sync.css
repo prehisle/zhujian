@@ -2,15 +2,24 @@
    tokens 来自 theme.css;按钮吃 controls.css 的 .hbtn。 */
 
 /* ---- 侧栏入口(未配置时唯一的可见面,安静) ---- */
+/* 字号与色档由 §2.2 那条**数值**底线定,⛔ 不是 §2.1 那句「--ink-faint 只许纯装饰」
+   —— 那句自己标着「是意图不是可执行的判据,别拿它去立案」(343 否掉过按令牌名下禁令
+   的形)。这里压的是侧栏底部,背景取 --raised-edge:13px × --ink-faint 算出来亮档
+   2.21:1 / 暗档 3.18:1,而 <14px 的底线是 5.0 ⇒ 它一直是**真红**,只是 background
+   透明、前后景凑不齐,落在 check-contrast 的盲区里(它自己印的那 865 组之一)。
+   改成 14px × --ink-soft:不小于 14 ⇒ 底线回到 4.5,实测亮 4.93 / 暗 5.29,两档都过。
+   ⚠ 停在 --ink-soft 而不是 --ink:上面那排导航钮就是 --ink-soft,入口比它**小一档**
+   (14 对 15)= 同族里次一档,再重就喧宾夺主。⛔ 这两枚与 .settings-entry 是刻意的
+   一对(见 settings.css 齿轮处注),任何一边改了另一边必须同笔改。 */
 .sync-entry {
   margin-top: auto; /* 沉到侧栏底部 */
   display: flex;
   align-items: center;
   gap: 8px;
   font-family: var(--font-serif);
-  font-size: var(--fs-13);
+  font-size: var(--fs-14);
   letter-spacing: 0.03em;
-  color: var(--ink-faint);
+  color: var(--ink-soft);
   background: transparent;
   border: 0;
   border-radius: var(--radius-sm);

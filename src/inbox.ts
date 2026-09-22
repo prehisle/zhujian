@@ -1456,6 +1456,14 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       counts.ideas = ideas.length;
       counts.archived = archived.length;
       statsBlank = stats.captured_week === 0 && stats.born_inbox === 0;
+      // 「转待办」平时零可见控件(⋯ 悬停才浮现),而看板空态只说「去随记里转」没说怎么点。
+      // ⇒ **还没有人转过**的时候让 ⋯ 常驻,转过第一条就回悬停(样式在 hotkey-menu.css)。
+      // 判据用 converted 而不是「库里有没有任务」:直接建的任务不算进 born_inbox 那个
+      // 分母(repo::idea_stats 只数 born_stage='inbox'),而这里要教的正是「随记能变待办」
+      // 这个动作 —— 一条都没转过的人,哪怕已经自己建了一堆任务,也仍然没见过它。
+      // born_inbox > 0 这一半是**老库的护栏**:0018 之前的条目 born_stage 未知、恒不进
+      // 分母 ⇒ 那种库上 converted 恒为 0,少了这一半 ⋯ 会永久常驻。⛔ 别去掉。
+      view.classList.toggle("hk-teach", stats.born_inbox > 0 && stats.converted === 0);
       updateTabs();
       // 头部一行淡字统计(和标签计数同性质的纯信息)。比例=累计:生而为灵感的条目里
       // 有多少转过待办(含后来归档/进回收站的——经历是史实);分母 0(全是 0018 前的

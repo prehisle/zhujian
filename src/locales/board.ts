@@ -125,7 +125,11 @@ export const board = defineMessages({
   "board.sealedEmptyHint": { zh: "在「已完成」列点「全部归档」,或把完成的任务拖到看板底部。归档的任务可查、不可删。", en: "Click “Archive all” in the Done column, or drag a finished task to the bottom of the board. Archived tasks can be viewed but not deleted." },
   "board.sealedStats": { zh: "本周完成 {week} · 累计 {total}", en: "Done this week {week} · total {total}" },
   "board.empty": { zh: "还没有任务", en: "No tasks yet" },
-  "board.emptyHint": { zh: "点右上角「+ 新建任务」,或在「随记」里把一条转成待办。", en: "Click “+ New task” in the top right, or turn a note into a task from Notes." },
+  // 后半句点名的是真长相:随记卡片右上角那枚 ⋯,菜单里那一项的原话就是「待办」
+  // (inbox.actTask)。⛔ 换了那一项的可见中文,这句要同笔改。
+  // ⚠ ⋯ 外面那对「」不是装饰:空态这行会折行,裸的 ⋯ 掉到行尾读起来像「话没说完」——
+  // 而 CJK 折行规则不许行尾留开引号、不许行首起闭引号 ⇒ 括起来它就折不散了(实测两版图)。
+  "board.emptyHint": { zh: "点右上角「+ 新建任务」;或在「随记」里点开卡片上的「⋯」菜单,选「待办」。", en: "Click “+ New task” in the top right, or open a note’s ⋯ menu in Notes and pick “Make a task”." },
   "board.noMatch": { zh: "没有匹配「{q}」的任务", en: "No tasks matching “{q}”" },
   "board.noMatchHint": { zh: "换个词,或清空过滤框(Esc)。", en: "Try another word, or clear the filter (Esc)." },
   "board.listSeparator": { zh: "、", en: ", " },
