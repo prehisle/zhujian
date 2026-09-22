@@ -5,7 +5,7 @@
 //
 // 刻意不做成常驻通知中心:朱简的回执只需要「我看到了,做完了」,读完即走。
 import "./toast.css";
-import { toastSuccessMs } from "./timing";
+import { TOAST_ERROR_MS, UNDO_WINDOW_MS, toastSuccessMs } from "./timing";
 
 const HOLD_MS = 1000; // 跟随光标那种(复制链接/复制图片):瞥一眼就够
 
@@ -36,4 +36,50 @@ export function flashToast(
  *  「已复制」一样两秒就走,读不完。`ms` 仍可显式覆盖(调用方有特殊节奏时用)。 */
 export function toastAction(text: string, ms = toastSuccessMs(text)): void {
   flashToast(window.innerWidth / 2, window.innerHeight - 28, text, { ms });
+}
+
+/** 错误型回执(§3.1):后端原话要读懂,给满 `TOAST_ERROR_MS`。文案由调用方带「…失败:」
+ *  这类前缀 —— 错误不得只靠颜色区分(§2.1)。 */
+export function toastError(text: string): void {
+  toastAction(text, TOAST_ERROR_MS);
+}
+
+// ---- 操作型回执(716,§3.1 第二形)--------------------------------------------------
+// 回执文案 + 一枚「撤销」钮:单键 D / T / ] [ / A 与数字色键在**悬停即生效**,此前卡片无声
+// 离场,误敲一个字母只能自己去回收站找。全视图**至多一条**:新条来了旧条整个作废(旧钮随
+// 节点移除,无需 token —— 与安卓 `ui.ts::actionBar` 同规);点钮 = 撤销并收,点条身 = 只收,
+// 没人点 `UNDO_WINDOW_MS` 后自收。⛔ 不做通用撤销栈(profit-readiness §2 那句「最小形」)。
+let undoEl: HTMLElement | null = null;
+let undoTimer: ReturnType<typeof setTimeout> | undefined;
+
+export function toastUndo(text: string, undoLabel: string, onUndo: () => void): void {
+  dismissUndo();
+  const box = document.createElement("div");
+  box.className = "undo-toast";
+  box.setAttribute("role", "status");
+  const label = document.createElement("span");
+  label.className = "undo-text";
+  label.textContent = text;
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "undo-btn";
+  btn.textContent = undoLabel;
+  btn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    dismissUndo();
+    onUndo();
+  });
+  box.addEventListener("click", () => dismissUndo());
+  box.append(label, btn);
+  document.body.append(box);
+  undoEl = box;
+  undoTimer = setTimeout(dismissUndo, UNDO_WINDOW_MS);
+}
+
+/** 收掉在场的撤销回执(视图 unmount 时必调:那枚钮指着的是这棵 mount 的条目)。 */
+export function dismissUndo(): void {
+  clearTimeout(undoTimer);
+  undoTimer = undefined;
+  undoEl?.remove();
+  undoEl = null;
 }

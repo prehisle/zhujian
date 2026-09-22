@@ -61,7 +61,23 @@ let ceremonyCode = "";
 let pairCode = "";
 let pairNote = "";
 let pairFailed = false;
+// 716:配对是**活在 core 里**的东西(槽到码过期为止,10 分钟),面板关了它也不消失。所以出码
+// 那几格不再「关面板即弃」:pairSpace 记下发起它的空间,done / failed 之前关掉再开仍回到出码页。
+let pairDone = false;
+let pairSpace = "";
 let shownRecovery = "";
+
+function clearPair(): void {
+  pairCode = "";
+  pairNote = "";
+  pairFailed = false;
+  pairDone = false;
+  pairSpace = "";
+}
+/** 这个空间是否还有一场没收场的配对(码已到、或还在申请中)。 */
+function pairAlive(): boolean {
+  return pairSpace !== "" && pairSpace === currentSpaceId() && !pairFailed && !pairDone;
+}
 // 仪式收尾提示:创号与压实共用同一个 ceremony 页,完成话术不同。
 const CEREMONY_MSG_CREATE = t("sync.ceremonyDoneCreate");
 let ceremonyDoneMsg = CEREMONY_MSG_CREATE;
@@ -149,17 +165,23 @@ export async function initSync(opts: {
       showToast(space === currentSpaceId() ? msg : t("sync.toastFromSpace", { space: nameOf(space), msg }));
     }),
     listen<{ space: string; phase: string; detail: string }>("sync-pair", (e) => {
-      // 配对进度只属于发起它的空间(面板是模态,配对期间空间切不走)。
-      if (mode !== "pair" || e.payload.space !== currentSpaceId()) return;
+      // 配对进度只属于发起它的空间。716 起面板关着也记账:出码页可以关掉再开(码留在模块态),
+      // 所以 done / failed 来时不管面板开没开、人此刻在哪个空间,都要落到这份状态上。
+      if (e.payload.space !== pairSpace) return;
       const { phase, detail } = e.payload;
       pairNote = detail;
       if (phase === "failed") pairFailed = true;
+      if (phase === "done") pairDone = true;
+      if (!overlay) {
+        if (pairFailed || pairDone) clearPair(); // 已收场的配对没什么可留给下次开面板看的
+        return;
+      }
       if (phase === "done") {
         window.setTimeout(() => {
           if (mode === "pair") closePanel();
         }, 1800);
       }
-      if (overlay) renderPanel();
+      if (mode === "pair") renderPanel();
     }),
   ]);
   // 状态基线不在这里拉:监听就绪后由 notebook.ts 的 refreshSpaceEntry →
@@ -195,7 +217,8 @@ function renderAlert(): void {
 
 function openPanel(): void {
   if (overlay) return;
-  mode = "home";
+  // 716:这个空间还有一场活着的配对就直接回到出码页(码还在、还有效)。
+  mode = pairAlive() ? "pair" : "home";
   overlay = document.createElement("div");
   overlay.className = "sync-overlay";
   overlay.addEventListener("mousedown", (e) => {
@@ -215,9 +238,9 @@ function closePanel(): void {
   overlay = null;
   document.removeEventListener("keydown", onPanelKey);
   ceremonyCode = "";
-  pairCode = "";
-  pairNote = "";
-  pairFailed = false;
+  // 716:配对还活着(申请中 / 码已到、未 done / failed)就留住 —— 槽在 core 里活到码过期,
+  // 此前关面板即清码,再点「添加设备」只得到「已有配对在进行中」,用户对着一句红字干等十分钟。
+  if (pairSpace === "" || pairFailed || pairDone) clearPair();
   shownRecovery = "";
   ceremonyDoneMsg = CEREMONY_MSG_CREATE;
   ceremonyWarn = "";
@@ -357,9 +380,14 @@ function renderHome(body: HTMLElement): void {
   const acts = el("div", "sync-actions");
   acts.appendChild(
     btn(t("sync.addDevice"), "hbtn", () => {
-      pairCode = "";
+      // 716:活着的那场直接再显,不重新开槽(core 会拒「已有配对在进行中」)。
+      if (pairAlive()) {
+        goto("pair");
+        return;
+      }
+      clearPair();
+      pairSpace = currentSpaceId();
       pairNote = t("sync.pairRequesting");
-      pairFailed = false;
       goto("pair");
       void invoke<string>("sync_pair_start")
         .then((code) => {

@@ -6,4 +6,6 @@ export const common = defineMessages({
   "common.appName": { zh: "朱简", en: "Zhujian" },
   "common.save": { zh: "保存", en: "Save" },
   "common.loading": { zh: "读取中…", en: "Loading…" },
+  "common.undo": { zh: "撤销", en: "Undo" },
+  "common.undoFailed": { zh: "撤销失败:{err}", en: "Undo failed: {err}" },
 });

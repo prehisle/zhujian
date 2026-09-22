@@ -16,7 +16,7 @@ import {
 import { autoGrow } from "./autogrow";
 import { createComposeController } from "./compose-controller";
 import { copyButton, copyText } from "./clipboard";
-import { toastAction } from "./toast";
+import { dismissUndo, toastAction, toastUndo } from "./toast";
 import { buildItemDeepLink } from "./deeplink";
 import { armLocate } from "./locate";
 import {
@@ -445,7 +445,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     .catch(() => {});
 
   // ---- mutations: call the backend, then reflect the new truth by reloading --
-  async function call(cmd: string, args: Record<string, unknown>): Promise<void> {
+  async function call(cmd: string, args: Record<string, unknown>): Promise<boolean> {
     clearOpError();
     try {
       await invoke(cmd, args);
@@ -454,19 +454,34 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       // 横幅就地报错 + 重载对齐真相,绝不把整个看板换成错误页(ui-audit P0 #6)。
       showOpError(String(err));
       load();
-      return;
+      return false;
     }
     load();
+    return true;
   }
 
-  const archive = (id: string) => call("archive_task", { id });
+  // 716:删除 / 归档 / 移列 / 数字键换色配发「回执 + 撤销」(§3.1 操作型;这几枚单键悬停即
+  // 生效,此前卡片无声离场)。撤销 = 反向命令走同一条 call(失败横幅报错 + 重载);mount 死了
+  // (切了视图 / 空间)按下作废 —— invoke 注入的是当前空间。
+  function undoable(ok: boolean, text: string, undo: () => void): void {
+    if (!ok || unmounted) return;
+    toastUndo(text, t("common.undo"), () => {
+      if (!unmounted) undo();
+    });
+  }
+
+  const archive = async (id: string): Promise<void> => {
+    undoable(await call("archive_task", { id }), t("board.undoDeleted"), () => void restore(id));
+  };
   const revert = (id: string) => call("revert_task_to_inbox", { id });
   const restore = (id: string) => call("restore_task", { id });
   const purgeOne = (id: string) => call("purge_task", { id });
   const purgeAll = () => call("purge_archived_tasks", {});
   // 成就归档(sealed 轴,与回收站分开):归档=干完的活入册,可查、不可删;取消归档回
   // 「已完成」列尾。删除归档条目没有直接入口——先取消归档回看板,再走正常两段式。
-  const sealOne = (id: string) => call("seal_task", { id });
+  const sealOne = async (id: string): Promise<void> => {
+    undoable(await call("seal_task", { id }), t("board.undoSealed"), () => void unseal(id));
+  };
   const sealAllDone = () => call("seal_done_tasks", {});
   const unseal = (id: string) => call("unseal_task", { id });
 
@@ -645,14 +660,15 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
   // at a spot). `baseIds` is the target column's full order BEFORE the move (stale-view
   // check), `orderedIds` its complete order after. The backend validates + writes
   // atomically. `busy` serializes against a second drop landing mid-flight.
+  // 返回是否真落了账(716:移列的撤销回执只在落账后配发;拖放那条路不看返回值)。
   async function reorder(
     id: string,
     from: string,
     to: string,
     baseIds: string[],
     orderedIds: string[],
-  ): Promise<void> {
-    if (busy) return;
+  ): Promise<boolean> {
+    if (busy) return false;
     busy = true;
     clearOpError();
     try {
@@ -664,9 +680,11 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         orderedIds,
       });
       await load();
+      return true;
     } catch (err) {
       showOpError(String(err)); // 拖拽失败横幅报错 + 重载对齐(ui-audit P0 #6)
       await load();
+      return false;
     } finally {
       busy = false;
     }
@@ -683,8 +701,8 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     to: string,
     baseVisible: string[],
     visibleAfter: string[],
-  ): Promise<void> {
-    if (busy) return;
+  ): Promise<boolean> {
+    if (busy) return false;
     busy = true;
     clearOpError();
     try {
@@ -696,9 +714,11 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         visibleAfter,
       });
       await load();
+      return true;
     } catch (err) {
       showOpError(String(err));
       await load();
+      return false;
     } finally {
       busy = false;
     }
@@ -1347,7 +1367,10 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       if (mode === "board") meta.root.append(colorWrap);
       // 失败 = 横幅就地报错、不改本地态(ui-audit P0 #6);成功走 load() 重渲(同其它写路径,
       // 本地不猜真相)。
-      async function setColor(hex: string | null): Promise<void> {
+      // `undo`:数字键那条「悬停即按」的快速通道才配发撤销回执(716)—— 色板上点选是看着
+      // 选的,回执只会是噪音;误敲一个数字才是它要兜的形。
+      async function setColor(hex: string | null, undo = false): Promise<void> {
+        const prev = item.color;
         clearOpError();
         try {
           await invoke("set_task_color", { id: item.id, color: hex });
@@ -1356,6 +1379,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
           return;
         }
         await load();
+        if (undo) undoable(true, t("board.undoColored"), () => void setColor(prev));
       }
       // 署名(0033):只在活跃看板显——回收站/归档册是「已处理完」的语境,不铺
       // (2026-08-05 用户拍板的铺开范围)。挂进 due/priority 那一行末尾。
@@ -1432,19 +1456,30 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         // 移动目标** —— 与拖放同规(core 会拒),故先滤掉它们再找左右邻居。
         const live = cols.filter((c) => !c.deleted);
         const i = live.findIndex((col) => col.id === item.status);
-        const t = i + dir;
-        if (i < 0 || t < 0 || t >= live.length) return;
-        const toStatus = live[t].id;
+        const j = i + dir;
+        if (i < 0 || j < 0 || j >= live.length) return;
+        const toStatus = live[j].id;
+        const fromStatus = item.status;
+        // 716 撤销要回到**原位**(不是源列列尾):先记下源列此刻的序(含本卡),撤销时按这份序
+        // 整列写回 —— 与拖放同一条 reorder 路,源列在这期间被别人动过就由 core 的陈旧检查拒掉。
+        const srcOrder = [...(ownColBody()?.querySelectorAll<HTMLElement>(".tcard") ?? [])].map(
+          (x) => x.dataset.taskId!,
+        );
         const targetBody = board.querySelector(`.col[data-col="${toStatus}"] .col-body`);
         const base = targetBody
           ? [...targetBody.querySelectorAll<HTMLElement>(".tcard")].map((x) => x.dataset.taskId!)
           : [];
         const ordered = [...base, item.id];
         targetBody?.append(c); // 手势即回执:按键即挪到目标列尾(与拖放同规),load() 校正
-        bumpColCount(item.status, -1); // 移列必跨列:源 −1、目标 +1(与拖放同规)
+        bumpColCount(fromStatus, -1); // 移列必跨列:源 −1、目标 +1(与拖放同规)
         bumpColCount(toStatus, 1);
-        if (filtered) reorderVisible(item.id, item.status, toStatus, base, ordered);
-        else reorder(item.id, item.status, toStatus, base, ordered);
+        const persist = filtered ? reorderVisible : reorder;
+        void persist(item.id, fromStatus, toStatus, base, ordered).then((ok) => {
+          undoable(ok, t("board.undoMoved", { col: columnName(live[j]) }), () => {
+            if (busy) return;
+            void persist(item.id, toStatus, fromStatus, srcOrder.filter((x) => x !== item.id), srcOrder);
+          });
+        });
       }
       // 列内置顶 / 置底:同列重排,故 from === to === item.status;`base` 含自己(同列口径,
       // 与 drop 那条一致)。长列里这是「不用拖」的那条路——边缘自动滚动能拖到另一头了,但
@@ -1501,10 +1536,10 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
               label: cc.name,
               key: String(i + 1),
               hidden: true,
-              run: () => void setColor(item.color === cc.hex ? null : cc.hex),
+              run: () => void setColor(item.color === cc.hex ? null : cc.hex, true),
             });
           });
-          list.push({ label: t("board.colorNone"), key: "0", hidden: true, run: () => void setColor(null) });
+          list.push({ label: t("board.colorNone"), key: "0", hidden: true, run: () => void setColor(null, true) });
         }
         // 左右邻居按**活着的**列算(同 moveCol:已删的列不是移动目标)。卡自己在一个已删
         // 的列里时 `i < 0` ⇒ 两条都不出 —— 那是对的:它只能被拖走或走别的动作。
@@ -2233,6 +2268,11 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       // pendingEditId 在场时不短路(codex 二审 M):requestEdit 的那发若被更新的同签名
       // refocus 顶掉,短路会把「开编辑」饿死——编辑请求必须由真正渲染的一发兑现。
       if (refocus === true && sig === lastSig && pendingEditId === null) return;
+      // 716:编辑中不重画 —— 回窗 / 远端落地(refocus)那一发整轮跳过,编辑态收场(保存 / Esc /
+      // 点别处都走 load())时以那时的真相重取重画。⚠ 只跳 refocus 形:用户自己发起的 load
+      // (删了别的卡 / 拖了别的卡)照旧先落盘本编辑再画(下面那段 P1 #9b)。⚠ 放在 lastSig
+      // 之前:跳过的那发没画,指纹不能记成「画过了」。
+      if (refocus === true && activeEditFlush) return;
       lastSig = sig;
 
       // Cards are about to be replaced — drop any stale hover-select / open menu first,
@@ -2494,6 +2534,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       composeCtl.setLiveReload(null); // navigate 恒先 unmount 再 mount:新 mount 会立即接管
       loadSeq++;
       focusId = null;
+      dismissUndo(); // 撤销钮指着这棵 mount 的条目:切视图 / 切空间就收(716)
       disarmConfirm(); // 在场确认的文档级 Esc/mousedown 监听不跨 mount 存活
       // (P1 #9a)开着的编辑器:摘文档级监听,**刻意不 flush**——unmount 可能因切空间
       // 而来,此刻 invoke 已注入新空间 id,绝不能把旧条目的标题写进新空间(112 结算哲学:

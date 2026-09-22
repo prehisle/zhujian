@@ -39,6 +39,8 @@ export const inbox = defineMessages({
   "inbox.actComments": { zh: "留言", en: "Comments" },
   "inbox.actMove": { zh: "移动", en: "Move" },
   "inbox.actDelete": { zh: "删除", en: "Delete" },
+  "inbox.undoDeleted": { zh: "已移入回收站", en: "Moved to Trash" },
+  "inbox.undoPromoted": { zh: "已转为待办", en: "Turned into a task" },
   "inbox.trashNote": { zh: "删掉的随记会一直留在这,直到你彻底删除", en: "Deleted notes stay here until you delete them forever" },
   "inbox.emptyTrash": { zh: "清空回收站", en: "Empty trash" },
   "inbox.purgeAll": { zh: "彻底删除全部 {n} 条", en: "Delete all {n} forever" },

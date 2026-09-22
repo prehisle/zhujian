@@ -14,7 +14,7 @@ import {
   spaceLabel,
 } from "./space";
 import { autoGrow } from "./autogrow";
-import { toastAction } from "./toast";
+import { dismissUndo, toastAction, toastError, toastUndo } from "./toast";
 import { createComposeController } from "./compose-controller";
 import { copyButton, copyText } from "./clipboard";
 import { buildItemDeepLink } from "./deeplink";
@@ -233,6 +233,11 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
   // 单一编辑态(全局只允许一张卡进编辑)。开一张前先关掉上一张:closeActiveEdit 既拆掉编辑态
   // 的文档级按键监听、又把上一张卡 showView 回视图态。Esc/Enter 因此永远只对当前编辑态生效。
   let closeActiveEdit: (() => void) | null = null;
+  // 716:回窗 / 远端落地那类刷新(refresh(true))在编辑中一律延后 —— 此前是「先 commit 再重画」,
+  // 别的设备同步来任何改动都会把正打着字的编辑框存成一版并关掉、光标没了。编辑框关闭
+  // (leaveEdit)那一发再补刷。⚠ 只延后 refocus 形;用户自己发起的刷新(离场 / 挂标签 / 记下)
+  // 照旧先 commit 再画 —— 那是他自己在别处动手,提交是合理的。
+  let refreshDeferred = false;
   // (ui-audit P1 #9a)unmount 专用:只拆监听不 commit——unmount 可能因切空间而来,此刻
   // invoke 已注入新空间 id,绝不能把旧条目的编辑写进新空间;残留监听更不许在新视图上
   // 对旧 id 发 commit(此前 unmount 根本不摘,点新视图任意处就误提交)。
@@ -534,6 +539,19 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
   // A card has left its current tab. Animate it out, then reconcile counts: it
   // moved from `from` to `to` (null = gone for good). Show the empty state when
   // the active tab's last card leaves.
+  /** 撤销回执的反向命令(716):成功即整列 refresh 让卡回来;失败走错误回执(卡已离场,没有
+   *  就地报错的落点)。mount 死了(切了视图 / 空间)按下作废 —— invoke 注入的是当前空间。 */
+  async function undoVia(cmd: string, id: string): Promise<void> {
+    if (unmounted) return;
+    try {
+      await invoke(cmd, { id });
+    } catch (e) {
+      toastError(t("common.undoFailed", { err: String(e) }));
+      return;
+    }
+    void refresh();
+  }
+
   function leaveCard(note: HTMLElement, from: Mode, to: Mode | null): void {
     note.classList.add("removing");
     // A leaving card must not stay the shortcut target (it's about to detach) — the
@@ -851,6 +869,11 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         if (teardownActiveEdit === leaveEdit) teardownActiveEdit = null;
         // 列表整体重渲染时这张卡已离开 DOM,无需(也不该)再 showView——只拆监听即可。
         if (note.isConnected) showView();
+        // 编辑期间压住的那次远端 / 回窗刷新,现在补上(716)。
+        if (refreshDeferred) {
+          refreshDeferred = false;
+          void refresh();
+        }
       }
 
       const err = errLine();
@@ -952,6 +975,8 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         return;
       }
       afterPromote();
+      // 716:刚转的待办撤回 = 无损(截止 / 优先级还没来得及设),配发撤销;看板那侧的 B 仍要确认。
+      toastUndo(t("inbox.undoPromoted"), t("common.undo"), () => void undoVia("revert_task_to_inbox", item.id));
     }
 
     // ---- 归纳主题 (manual file into an existing/new topic) ----
@@ -1026,6 +1051,8 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         return;
       }
       leaveCard(note, "ideas", "archived");
+      // 716:回执 + 撤销(§3.1 操作型)。单键 D 悬停即生效,此前卡片无声消失,只能自己去回收站找。
+      toastUndo(t("inbox.undoDeleted"), t("common.undo"), () => void undoVia("restore_note", item.id));
     }
 
     // ---- 还原 (回收站 → 想法) ----
@@ -1424,6 +1451,12 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       // `=== true`, not truthy: guards against a future caller wiring `refresh` as a
       // bare event handler, where a MouseEvent would otherwise count as a refocus.
       if (refocus === true && sig === lastSig) return;
+      // 716:编辑中不重画 —— 回窗 / 远端落地(refocus)那一发整轮延后,leaveEdit 时补刷。
+      // ⚠ 放在 lastSig 之前:延后的那发没画,指纹不能记成「画过了」。
+      if (refocus === true && closeActiveEdit) {
+        refreshDeferred = true;
+        return;
+      }
       lastSig = sig;
 
       // 记灵感 Enter 后 refresh 会连 compose bar 一起重建,焦点随旧输入框被换掉——
@@ -1625,6 +1658,8 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       // Remember where the user was reading so the next mount can restore it.
       savedScroll = list.scrollTop;
       composeCtl.setLiveReload(null); // navigate 恒先 unmount 再 mount:新 mount 会立即接管
+      refreshDeferred = false; // 压住的刷新随 mount 一起作废(下面 teardown 会经过 leaveEdit)
+      dismissUndo(); // 撤销钮指着这棵 mount 的条目:切视图 / 切空间就收(716)
       // (P1 #9a)编辑态:只拆监听不 commit(理由见 teardownActiveEdit 声明处)。
       if (teardownActiveEdit) teardownActiveEdit();
       disarmConfirm(); // 在场确认的文档级监听不跨 mount 存活(codex M3)

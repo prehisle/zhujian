@@ -59,6 +59,13 @@ const REGISTRY = [
 没有自动复原定时器 —— 桌面是鼠标场景,指针不会像手指那样停在按钮上,不需要「你没接第二拍\
 就当你反悔了」这条兜底",
   },
+  {
+    name: "UNDO_WINDOW_MS",
+    in: ["桌面"],
+    doc: "UNDO_WINDOW",
+    why: "撤销回执(716)的动作窗口。安卓那条 actionBar 借的是它本来就有的 CONFIRM_REVERT_MS(值也是 6s),\
+桌面没有那枚常量(见上一条),故给撤销回执单立一枚 —— ⛔ 别为了对齐把 CONFIRM_REVERT 搬去桌面",
+  },
 ];
 
 /**

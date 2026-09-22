@@ -30,6 +30,10 @@ export const TOAST_SUCCESS_MAX_MS = 6000;
 /** 错误提示:后端原话要读懂才好处置,给满 6s(且一律可点按提前收,见 §3.1)。 */
 export const TOAST_ERROR_MS = 6000;
 
+/** 操作型回执(§3.1)上那枚「撤销」钮的动作窗口(716)—— **桌面独有**:安卓的 actionBar
+ *  借用它本来就有的 CONFIRM_REVERT_MS(同为 6s),桌面没有那枚常量,故单立。没人点则自收。 */
+export const UNDO_WINDOW_MS = 6000;
+
 /** 过滤 / 搜索输入去抖。两端同值。 */
 export const INPUT_DEBOUNCE_MS = 150;
 
