@@ -87,8 +87,9 @@ Said plainly, so you do not find out after installing:
 - No ads, no splash screen, no push notifications, no memberships and no in-app purchases.
 - It does not look at your location, contacts, messages or call log, and it does not read your photo library: picking an image on the phone goes through the system picker, and only the ones you tap are taken.
 - No third-party analytics, no user profiling, no personalised recommendations.
-- Encrypted backups are desktop-only for now, and manual — one click, one backup. Scheduled backups and one-click restore are not built yet.
-- On the desktop, updates are checked for and offered automatically; on the phone, installing the update takes a tap from you.
+- Encrypted backups: the desktop has all three — manual, scheduled, and restore-from-backup. On the phone you can create backups but **cannot restore from them there**; take the file to a computer to restore. The HarmonyOS build has no backup yet.
+- On the desktop, updates are checked for and offered automatically; on the phone, installing the update takes a tap from you. Update packages are signed by the developer and verified before installing.
+- **The Windows installer is not code-signed**: the first install shows a warning that the publisher is unknown — choose “More info → Run anyway”. The macOS and Linux preview builds are unsigned too, so the first launch needs a manual override in the system.
 
 ### Price
 
