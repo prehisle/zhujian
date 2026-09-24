@@ -96,6 +96,8 @@
         --ok: #3d7a4e;
         --font-serif: "Georgia", "SimSun", "Songti SC", "Source Han Serif SC", serif;
         --font-sans: "Microsoft YaHei", "PingFang SC", system-ui, -apple-system, sans-serif;
+        /* 英文档的界面字(C6):只经下面 :root:lang(en) 接进 --font-sans,中文档不动。理由见桌面 src/theme.css。 */
+        --font-sans-en: "Segoe UI", system-ui, -apple-system, "Microsoft YaHei", "PingFang SC", sans-serif;
         /* 圆角阶(341)。四档 = 4px 栅格;后三个是**形状**不是尺寸阶上的档。
            完整理由与三份的对齐关系见桌面 src/theme.css。 */
         --radius-xs: 4px;
@@ -151,6 +153,10 @@
         --on-seal: #1b1813;
         --ok: #6fa47e;
         color-scheme: dark; /* 原生控件(输入框选区/滚动条)跟着走 */
+      }
+      /* 英文档换界面字(C6);<html lang> 由 i18n.ts 单点写。值住 :root 的 --font-sans-en(check-theme-drift 看得见)。 */
+      :root:lang(en) {
+        --font-sans: var(--font-sans-en);
       }
       * { box-sizing: border-box; }
       /* hidden 属性只是 UA 样式表里的普通 display:none,任何作者 display(.update 的

@@ -19,7 +19,8 @@
 //  ③ **每枚控件要填该字典里最长的那一句**(排序有三档、到期有三段、计数取三位数),
 //     否则量到的是「今天这台机器上恰好的文本」。
 //  ④ **两套文本各量一遍**:同一个断点要同时对中英两份字典成立,而英文单词比汉字长
-//     (570 实测中文 1010/930/840/550、英文 1200/1110/1000/580)。今天断点只按中文取,
+//     (570 实测中文 1010/930/840/550、英文 1200/1110/1000/580;C6 英文档换 Segoe UI 后重量,中文逐像素
+//     不变、英文 1150/1070/960/580)。今天断点只按中文取,
 //     英文那半是知情的取舍,账在 backlog 用户面 66。
 //
 // ⚠ 「排了几行」用**顶栏高度**判(实测一行 71–73、两行 116 ⇒ 80 是安全的分界)。
@@ -95,7 +96,10 @@ describe("探针 · 看板顶栏塌缩三档的一行门槛", () => {
           await browser.setWindowSize(w, 700);
           await browser.pause(110);
           const m = await browser.execute(
-            (css, tx) => {
+            (css, tx, lang) => {
+              // C6 起英文档的界面字是另一套栈(theme.css 的 `:root:lang(en)`)⇒ 只换文本不换 lang
+              // 量到的是「英文词排在中文字体栈里」,两头都不是真实形。
+              document.documentElement.lang = lang;
               document.getElementById("probe-tier")?.remove();
               const s = document.createElement("style");
               s.id = "probe-tier";
@@ -126,6 +130,7 @@ describe("探针 · 看板顶栏塌缩三档的一行门槛", () => {
             },
             tier.css,
             TEXT[lang],
+            lang,
           );
           if (m.h <= 80) {
             found = m;
@@ -138,5 +143,6 @@ describe("探针 · 看板顶栏塌缩三档的一行门槛", () => {
     console.log("\n【一行门槛】断点写「这个数 − 1」;⚠ 窗宽那一列含侧栏 172 与内边距,换台机器未必是同一个差值\n" + table.join("\n"));
     await browser.saveScreenshot(`${OUT}/out-hdr-tiers.png`);
     await browser.setWindowSize(1260, 700); // ⛔ 别把扫剩下的窗宽泄漏出去
+    await browser.execute(() => { document.documentElement.lang = "zh"; }); // lang 同理
   });
 });

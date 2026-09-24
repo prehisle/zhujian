@@ -122,6 +122,14 @@ const TOKENS = [
     why: "纸纹噪点是桌面窗口与官网大版面的质感;手机屏小、且那张 SVG 每帧重绘不划算,安卓没铺",
   },
   {
+    name: "--font-sans-en",
+    in: APPS,
+    dark: false,
+    why: "英文档的界面字(C6),两个客户端各经一条 `:root:lang(en)` 接进 --font-sans。⚠ 那条转接\
+本身不在这道闸的解析面里(它只读 :root 与暗色档),只核值 —— 所以值必须住 :root、⛔ 别把字面栈\
+直接写进 :lang 块。官网英文档同病、没铺:官网改动要发两站(发布由用户提),账在 backlog 用户面 127",
+  },
+  {
     name: "--font-brush",
     in: ["官网"],
     dark: false,

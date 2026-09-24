@@ -44,6 +44,11 @@
   /* 字体:想法原文与标题走衬线(书写感),界面文字走黑体(清晰) */
   --font-serif: "Georgia", "SimSun", "Songti SC", "Source Han Serif SC", serif;
   --font-sans: "Microsoft YaHei", "PingFang SC", system-ui, -apple-system, sans-serif;
+  /* 英文档的界面字(C6):西文打头、汉字往后逐字回退。只经下面那条 `:root:lang(en)` 接进
+     --font-sans ⇒ 中文档一个像素不动(361 用户拍板:存量中文用户的数字 / 快捷键不许换脸;
+     而且中文句子里的弯引号换到西文字体会被排窄 —— 同一个病的反面)。
+     ⚠ 栈首必须点名 "Segoe UI":中文 Windows 上 system-ui 解析成雅黑 UI,放它打头等于没改。 */
+  --font-sans-en: "Segoe UI", system-ui, -apple-system, "Microsoft YaHei", "PingFang SC", sans-serif;
 
   /* ---- 圆角阶(341)。此前无令牌:三份里散着 16 种取值(3/4/5/6/7/8/9/10/11/12/13/14px
      全齐),同一层级的东西各写各的。收成 4px 栅格四档 —— 每一处位移都 ≤2px,而档与档
@@ -135,6 +140,12 @@
   --ok: #6fa47e;
   --float-shadow: 0 22px 55px -18px rgba(0, 0, 0, 0.7), 0 2px 8px rgba(0, 0, 0, 0.4);
   --card-shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 16px 34px -22px rgba(0, 0, 0, 0.7);
+}
+
+/* 英文档换界面字(C6)。<html lang> 由 i18n.ts 单点写成生效档,与 data-theme 同一种挂法。
+   ⚠ 只做转接、不在这里写字面值 —— 值住 :root 的 --font-sans-en,那样 check-theme-drift 看得见它。 */
+:root:lang(en) {
+  --font-sans: var(--font-sans-en);
 }
 
 /* ---- 笔触(元素级、两窗一致)。theme.css 本职是令牌,这几条是主题里全局到
