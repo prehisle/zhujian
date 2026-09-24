@@ -15,6 +15,8 @@ export const sync = defineMessages({
   "sync.infoAccount": { zh: "账户", en: "Account" },
   "sync.infoServer": { zh: "服务器", en: "Server" },
   "sync.infoPeers": { zh: "同伴在线", en: "Peers online" },
+  "sync.needServer": { zh: "先填服务器地址", en: "Enter the server address first" },
+  "sync.needCode": { zh: "先填配对码", en: "Enter the pairing code first" },
   "sync.joining": { zh: "加入中…", en: "Joining…" },
   "sync.join": { zh: "加入", en: "Join" },
   "sync.connectedNameHint": { zh: "已连接,正在初始同步…(可在「空间」面板给本空间起个名字)", en: "Connected, initial sync running… (you can name this space in the Spaces panel)" },

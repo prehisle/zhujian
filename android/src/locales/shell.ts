@@ -24,6 +24,7 @@ export const shell = defineMessages({
   "shell.spaceCreate": { zh: "新建", en: "Create" },
   "shell.joinScan": { zh: "加入空间(扫电脑二维码)", en: "Join a space (scan the computer's QR code)" },
   "shell.joinAlt": { zh: "输码加入", en: "Enter a code" },
+  "shell.serverPh": { zh: "服务器地址(wss://…)", en: "Server address (wss://…)" },
   "shell.joinCodePh": { zh: "配对码(对方设备「添加设备」出示)", en: "Pairing code (shown by “Add device” on the other device)" },
   "shell.joinCancel": { zh: "取消加入", en: "Cancel joining" },
   "shell.syncAll": { zh: "全部同步(逐空间追赶一次)", en: "Sync all (one catch-up pass per space)" },

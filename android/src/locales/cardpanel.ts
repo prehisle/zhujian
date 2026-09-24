@@ -45,6 +45,8 @@ export const cardpanel = defineMessages({
   "cardpanel.createAndTag": { zh: "新建并打上", en: "Create and add" },
   "cardpanel.moveKept": { zh: "已复制到「{name}」,原条目已保留:{reason}", en: "Copied to “{name}”, the original was kept: {reason}" },
   "cardpanel.moveUnconfirmedNote": { zh: "已复制到「{name}」,但原条目删除未确认({error});请检查后手动删除,勿再移动", en: "Copied to “{name}”, but deleting the original was not confirmed ({error}); check and delete it by hand, do not move it again" },
+  "cardpanel.moveQ": { zh: "移到「{name}」?编辑历史会永久删除", en: "Move to “{name}”? The edit history will be permanently deleted" },
+  "cardpanel.moveYes": { zh: "确认移动", en: "Move it" },
   "cardpanel.moved": { zh: "已移到「{name}」", en: "Moved to “{name}”" },
   "cardpanel.movedKept": { zh: "已复制到「{name}」,原条目保留", en: "Copied to “{name}”; the original was kept" },
   "cardpanel.movedUnconfirmed": { zh: "已复制到「{name}」,但原条目删除未确认,请核对两边", en: "Copied to “{name}”, but deleting the original was not confirmed; check both sides" },

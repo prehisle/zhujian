@@ -81,6 +81,11 @@ export async function notifyPermissionOk(): Promise<boolean> {
   return (await requestPermission()) === "granted";
 }
 
+/** 只问「现在许不许」,⛔ 不弹授权框(122):设置面每次打开都要照实画那一行,不能每开一次就要一次权限。 */
+export function notifyPermissionGranted(): Promise<boolean> {
+  return isPermissionGranted();
+}
+
 /**
  * 通知栏小图标 = `res/drawable/ic_stat_zhujian.xml`(单色朱字骨架),`iconColor` = 应用图标那枚
  * 朱红(与 `values/ic_launcher_background.xml` 逐字同值),Android 12+ 拿它画小图标那枚圆形徽章

@@ -783,9 +783,15 @@ function onTimelineClick(e: Event) {
   }
   const moveBtn = el.closest<HTMLElement>("[data-move-to]");
   if (moveBtn && state?.mode === "move") {
+    // 两拍(122):移动会**永久**删掉编辑历史(面上那行警示说的),而同面的删除 / 撤回都是两拍 ——
+    // 最重的那件反倒单拍即走,一记误触就回不去了。第二拍复核 session 与子面都没变。
+    const session = state;
     const target = moveBtn.dataset.moveTo!;
     const label = distinctSpaceLabels(deps.getSpaces()).get(target) ?? target;
-    void runMove(target, label);
+    confirmBar(t("cardpanel.moveQ", { name: label }), t("cardpanel.moveYes"), () => {
+      if (state !== session || busy || session.mode !== "move") return;
+      void runMove(target, label);
+    });
     return;
   }
   // 状态 / 优先级选完自己回主面(706:值 chip 那条路是「点开 → 选 → 收」,
@@ -826,10 +832,7 @@ function onTimelineClick(e: Event) {
   const id = card.dataset.id!;
   if (state?.id === id) {
     if (hasDirtyDraft()) return; // 有草稿不许点空白收面(误触丢字)
-    clearConfirm();
-    setState(null);
-    card.querySelector(".panel")?.remove();
-    deps.onDraftClosed(); // 三审 M1:收面即「草稿域收场」,补被延后的刷新
+    collapse(card);
     return;
   }
   if (hasDirtyDraft()) {
@@ -850,6 +853,27 @@ function onTimelineClick(e: Event) {
   });
   deps.onDraftClosed(); // 换卡 = 旧草稿域收场(同上)
   renderPanel(card);
+}
+
+/** 收面(没草稿时):点卡片空白与「卡滚出屏」共用这一条。 */
+function collapse(card: HTMLElement): void {
+  clearConfirm();
+  setState(null);
+  card.querySelector(".panel")?.remove();
+  deps.onDraftClosed(); // 三审 M1:收面即「草稿域收场」,补被延后的刷新
+}
+
+/** 卡整张滚出视口就收面(122):面板开着时悬浮 ＋ 让位(`syncShell`),而面板此前不随滚动收
+ *  ⇒ 滚走之后 ＋ 一直不见,得回去找那张卡再点一下。有草稿 / 写在飞时不收(同点空白那条闸)。
+ *  ⚠ 卡在视口上方收起时,文档变矮那一截由浏览器的滚动锚定补回,屏上内容不跳。
+ *  ⚠ 时间轴被面板接管(`pane-open` 整个 display:none)时卡量出来是全零 —— 那不是「滚走了」,跳过。 */
+function collapseIfScrolledAway(): void {
+  if (!state || busy || hasDirtyDraft()) return;
+  const card = currentCard();
+  if (!card || card.getClientRects().length === 0) return;
+  const r = card.getBoundingClientRect();
+  if (r.bottom > 0 && r.top < window.innerHeight) return;
+  collapse(card);
 }
 
 function handleAct(act: string, card: HTMLElement) {
@@ -1096,4 +1120,17 @@ export function initCardPanel(d: Deps) {
   timeline.addEventListener("click", onTimelineClick);
   timeline.addEventListener("change", onTimelineChange);
   timeline.addEventListener("input", onTimelineInput);
+  let scrollQueued = false;
+  window.addEventListener(
+    "scroll",
+    () => {
+      if (!state || scrollQueued) return;
+      scrollQueued = true;
+      requestAnimationFrame(() => {
+        scrollQueued = false;
+        collapseIfScrolledAway();
+      });
+    },
+    { passive: true },
+  );
 }

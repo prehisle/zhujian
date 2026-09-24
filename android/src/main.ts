@@ -45,7 +45,7 @@ import { DONE_COLUMN, boardColumns, isTaskStage, setColumns, stageLabel } from "
 import { capturePhoto, composeImages, PICK_MAX, pickImages } from "./images";
 import { INPUT_DEBOUNCE_MS } from "./timing";
 // **平台接缝**(OH-d/D3):只在安卓壳里存在的那三条命令。鸿蒙那端由 vite 换成另一份实现。
-import { HAS_NOTIFICATION, HAS_SAF_BRIDGE, HAS_TEXT_ZOOM, notifyPermissionOk, takeDeepLink, takeSharedText, writeClipboard } from "./platform";
+import { HAS_NOTIFICATION, HAS_SAF_BRIDGE, HAS_TEXT_ZOOM, notifyPermissionGranted, notifyPermissionOk, takeDeepLink, takeSharedText, writeClipboard } from "./platform";
 // **渠道接缝**(651):这份包发给谁 —— 鸿蒙那端同样由 vite 换成国内渠道那份。
 import { checkUpdate, PRIVACY_URL, SYNC_DEFAULT_URL, type MobileUpdate } from "./channel";
 import { initDueReminder, reminderCfg, saveReminderCfg, sendTestNotification } from "./reminder";
@@ -56,7 +56,7 @@ import * as panes from "./panes";
 import * as topics from "./topics";
 import { initCardSwipe } from "./swipe";
 import { loadIdentity, signatureFor } from "./identity";
-import { createKbSheet } from "./kbsheet";
+import { createKbSheet, type KbSheet } from "./kbsheet";
 import {
   closeComments,
   closeCommentsNow,
@@ -67,12 +67,13 @@ import {
   openComments,
   refreshOpenComments,
 } from "./comments";
-import { closeEditSheetNow, initEditSheet, isEditSheetOpen } from "./editsheet";
+import { closeEditSheetNow, initEditSheet, isEditSheetDirty, isEditSheetOpen } from "./editsheet";
 import { disconnectThumbObserver, fillThumb, hydrateThumbs } from "./thumbs";
 import { closeViewerNow, initViewer, isViewerOpen, openLocalViewer, openViewer } from "./viewer";
 import {
   dismissScanOverlay,
   initSync,
+  isBooting,
   renderSync,
   resetSyncTransient,
   type Spaced,
@@ -574,7 +575,13 @@ let nativeBackPending = false; // native 请求的 history.back() 已发、popst
   // 硬件返回」会被合并吞掉、重开的层却还开着。挂账层没有已压的历史条目,直关销账。
   if (deferredLayers > 0) {
     if (isViewerOpen()) closeViewerNow();
-    else if (isEditSheetOpen()) dismissEditSheet();
+    else if (isEditSheetOpen()) {
+      if (isEditSheetDirty()) {
+        showBar(t("cardpanel.finishDraftFirst")); // 同点遮罩(122):层留着,挂账也留着
+        return true;
+      }
+      dismissEditSheet();
+    } else if (captureOpen) closeCaptureNow();
     else if (isCommentsOpen()) closeCommentsNow();
     else if (activePane !== null) closePaneNow();
     settleHistory(); // 销挂账(settleHistory 首分支),不发 back
@@ -606,8 +613,19 @@ window.addEventListener("popstate", () => {
     return;
   }
   // 编辑层(706)在最上头(留言层开着时它开不出来:遮罩压着卡片操作面)。
+  // 正文改过 = 与点遮罩同规矩(122):拦一句、层留着 —— 守门条目刚被弹掉,补压一枚回去。
   if (isEditSheetOpen()) {
+    if (isEditSheetDirty()) {
+      pushLayer();
+      showBar(t("cardpanel.finishDraftFirst"));
+      return;
+    }
     dismissEditSheet();
+    return;
+  }
+  // 捕获层(122):盖在时间轴 / 面板之上;草稿在 localStorage,收层不丢字。
+  if (captureOpen) {
+    closeCaptureNow();
     return;
   }
   // 留言层压在时间轴之上、面板之下(它只从时间轴开):返回键先收它。
@@ -622,7 +640,7 @@ window.addEventListener("popstate", () => {
 
 /** 返回键收编辑层(706):守门条目已由 popstate 弹掉 ⇒ 只收 DOM(⛔ 不走 editsheet 那条
  *  会 settleHistory 的路),再让面板把草稿态收场(它随后调的 closeEditSheet 已是 no-op)。
- *  ⚠ 与「取消」钮同语义:草稿丢弃,不弹二次确认 —— 返回键在这一端就是「算了」。 */
+ *  ⚠ 只在正文**没改过**时走到这儿(与「取消」钮同语义);改过了调用方先拦下(122)。 */
 function dismissEditSheet(): void {
   closeEditSheetNow();
   cardPanel.editDismissed();
@@ -772,6 +790,13 @@ let lastRefreshOk = false;
 /** 投影提交(146 ▲M1 统一函数):observer 断开 → 按当前 mode 过滤重建 DOM →
  *  缩略图 hydrate → 面板 restore,四步收在一处;refresh 落 DOM 与 mode 切换共用。
  *  **写 DOM 这一刻读当前 viewMode**,绝不用请求发起时的旧 mode。 */
+/** 这一面一条都没有时的空态。初始同步还在拉(122):「还没有,点 ＋」是在误导 —— 东西在路上,
+ *  不是没有;新装的手机刚配上对,最先看到的就是这一屏。 */
+function emptyModeHtml(none: string, hint: string): string {
+  if (isBooting()) return `<p class="muted empty">${t("main.emptyBooting")}</p>`;
+  return `<p class="muted empty">${none}<br />${hint}</p>`;
+}
+
 function projectTimeline(): void {
   const box = $("timeline");
   disconnectThumbObserver();
@@ -793,7 +818,7 @@ function projectTimeline(): void {
     box.innerHTML = shown.length
       ? renderDayGroups(shown, hideTopic)
       : modeItems.length === 0
-        ? `<p class="muted empty">${t("main.emptyIdeas")}<br />${t("main.emptyIdeasHint")}</p>`
+        ? emptyModeHtml(t("main.emptyIdeas"), t("main.emptyIdeasHint"))
         : filteredEmptyHtml(f);
   } else {
     // 本面专属的两维(状态 / 到期)最后应用,在共享三维之后:空态的话语权也按同序——
@@ -826,7 +851,7 @@ function projectTimeline(): void {
           )
           .join("")
       : modeItems.length === 0
-        ? `<p class="muted empty">${t("main.emptyTasks")}<br />${t("main.emptyTasksHint")}</p>`
+        ? emptyModeHtml(t("main.emptyTasks"), t("main.emptyTasksHint"))
         : shown.length > 0 && taskStageFilter !== null && stageShown.length === 0
           ? `<p class="muted empty">${t("main.noneUnderStage", { stage: stageLabel(taskStageFilter)! })}</p>`
           : stageShown.length > 0 && dueOnly
@@ -1289,8 +1314,21 @@ function refreshSaveDisabled(): void {
   ($("save") as HTMLButtonElement).disabled = switching || captureSaving || picking;
 }
 
-// 捕获层(232)收起入口:由下方捕获块赋值,save() 存成功后调它收层露出新卡。
-let dismissCapture: (() => void) | null = null;
+// 捕获层(232)的开合账。122 起它也压返回键守门条目(此前不压 ⇒ 键盘收掉后的下一记返回
+// 直接退 app,冷启只回填草稿不开层,用户看到的是一条空时间轴)。收层两条路,同编辑层:
+// UI 收(点遮罩 / 存成功)走 `dismissCapture` 顺带平条目;返回键(popstate 已弹)走 `closeCaptureNow`。
+let captureKb: KbSheet | null = null;
+let captureOpen = false; // 由 kbsheet 的 onOpen / onClose 维护,⛔ 别在别处写
+
+function closeCaptureNow(): void {
+  captureKb!.close();
+}
+
+function dismissCapture(): void {
+  if (!captureOpen) return;
+  closeCaptureNow();
+  settleHistory();
+}
 
 async function save() {
   const ta = $("text") as HTMLTextAreaElement;
@@ -1356,7 +1394,7 @@ async function save() {
       // 在飞期间无新输入:现状回执——收键盘让新卡露出来,滚到顶闪一下
       // (ui-audit P1 #7:原 finally 无条件 ta.focus() 让键盘永不收、新卡被挡)。
       ta.blur();
-      dismissCapture?.(); // 收起捕获层(232),露出刚记的新卡
+      dismissCapture(); // 收起捕获层(232),露出刚记的新卡
       await refresh();
       const card = document.querySelector<HTMLElement>(`#timeline [data-id="${newId}"]`);
       if (card) {
@@ -1406,13 +1444,17 @@ $("save").addEventListener("click", save);
     openOnFocus: true, // 任何路径聚焦输入都进入捕获态(顶栏「一步回捕获」/系统分享追加)
     onOpen: () => {
       fab.hidden = true;
+      captureOpen = true;
+      pushLayer(); // 返回键第一本能 = 关掉这层(122)
     },
     onClose: () => {
       // 只收界面;草稿(localStorage)/暂存图(pendingImages)由既有逻辑保留,下次点开还在。
       fab.hidden = false;
+      captureOpen = false;
     },
+    onDismiss: dismissCapture, // 点遮罩 = UI 收层,顺带平掉守门条目
   });
-  dismissCapture = () => kb.close(); // 供 save() 存成功后收层
+  captureKb = kb;
 
   fab.addEventListener("click", () => {
     kb.open();
@@ -1670,6 +1712,7 @@ function openPane(name: string) {
     paintTextSizeSeg();
     paintLangSeg();
     paintRemindRow();
+    paintRemindPermission();
     void loadAlias();
     void loadAbout();
     // 备份一节(§17):⛔ 每次开面都重新问一遍状态 —— 回调不是真相源(进程可能在
@@ -1980,6 +2023,19 @@ function paintRemindRow() {
   const time = $("remind-time") as HTMLInputElement;
   time.value = cfg.time;
   time.disabled = !cfg.on;
+}
+
+/** 开着却被系统拒着(122):提醒默认开、到点才要权限 ⇒ 拒过一次之后设置面此前照样亮着「开」,
+ *  而到点一声不响。⇒ 每次开设置面照实问一遍(⛔ 不弹框),拒着就把那句人话挂出来。
+ *  ⚠ 只挂在开面那一下,不挂进 `paintRemindRow`:拨到「开」那一拍正要弹授权框,这边抢先
+ *  问到的「还没许」会在框上面先闪一行红字。 */
+function paintRemindPermission(): void {
+  if (!HAS_NOTIFICATION || !reminderCfg().on) return;
+  void notifyPermissionGranted().then((ok) => {
+    const denied = t("reminder.permDenied");
+    if (!ok && reminderCfg().on) showRemindMsg(denied, true);
+    else if (ok && $("remind-msg").textContent === denied) showRemindMsg("", false); // 去系统设置开过了
+  });
 }
 
 function showRemindMsg(text: string, bad: boolean) {
@@ -2486,6 +2542,9 @@ initSync({
   refreshSpaces,
   switchSpace,
   hasDirtyDraft: () => cardPanel.hasDirtyDraft(),
+  onBootingChange: () => {
+    if (lastRefreshOk) projectTimeline();
+  },
 });
 initCardSwipe({
   getItem: (id) => lastItems.get(id),
@@ -2597,7 +2656,7 @@ async function init() {
   }
   // 651(渠道接缝):三处服务器地址输入框的默认值来自**渠道**,不再写死在静态壳里
   // (国内渠道连境内那台,境外渠道连 sync.zhujian.app)。⛔ 静态壳里刻意不留 value ——
-  // 这段没跑到就是**空框**,而空框会被创号/加入那两条路当场拒(`if (!serverUrl) return;`)。
+  // 这段没跑到就是**空框**,而空框会被创号/加入那两条路当场拒(`sync.ts::lacksInput`)。
   // 留个旧值在那儿才危险:那是「不报错、只连去另一台服务器」。
   document.querySelectorAll<HTMLInputElement>("input[data-default-server]").forEach((e) => (e.value = SYNC_DEFAULT_URL));
   // 语言(358 第②笔):壳里保留中文原文防首帧闪(163 契约),这里按生效语言统一

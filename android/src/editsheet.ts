@@ -16,6 +16,7 @@
 // ⚠ 关层三条路,**只有 UI 那两条平守门条目**:①「取消」/ 点遮罩 / 宿主收场 → `closeEditSheet()`
 // (收 DOM + settleHistory);②返回键 → main.ts 的 popstate 已经弹掉条目 ⇒ 走
 // `closeEditSheetNow()`(只收 DOM)再让宿主收草稿。两者都幂等,谁先谁后都不会双弹。
+// ⚠ 返回键与点遮罩同规矩(122):正文改过就拦一句、层留着(main.ts 补压守门条目),见 `isEditSheetDirty`。
 import { t } from "./i18n";
 import type { ImageMeta } from "./api";
 import { createKbSheet, type KbSheet } from "./kbsheet";
@@ -39,7 +40,7 @@ export type EditView = {
 export type EditHost = {
   onInput(text: string): void;
   onSave(): void;
-  /** 取消:「取消」钮 / 点遮罩(正文没改过) / 返回键。 */
+  /** 取消:「取消」钮 / 点遮罩或返回键(都只在正文没改过时)。 */
   onCancel(): void;
   onAddImage(): void;
   onPhoto(): void;
@@ -71,6 +72,13 @@ const textEl = (): HTMLTextAreaElement => $("edit-text") as HTMLTextAreaElement;
 
 export function isEditSheetOpen(): boolean {
   return host !== null;
+}
+
+/** 返回键到了这一层时问的那一句(122):与点遮罩同一条规矩 —— 正文改过就拦,没改过就当「取消」。
+ *  ⛔ 别让两个门各有各的规矩:此前遮罩拦、返回键直接丢,一记返回就吞掉刚写的一段。 */
+export function isEditSheetDirty(): boolean {
+  if (!host) throw new Error("编辑层没开却在问脏不脏(返回键账本接线漏了)");
+  return host.isDirty();
 }
 
 /** 收层的 DOM 部分:popstate(返回键)与 UI 关层共用;history 账目由调用方处置。幂等。 */

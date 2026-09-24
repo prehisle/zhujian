@@ -1452,6 +1452,17 @@
         -webkit-overflow-scrolling: touch; scrollbar-width: none;
       }
       .fstages::-webkit-scrollbar, .fkinds::-webkit-scrollbar, .ftopics::-webkit-scrollbar { display: none; }
+      /* 触区(122):筛选钮只有 30px 高、行间 8px。给它们一层**上下各 4px** 的 halo —— 恰好把
+         行间空隙从中线分给上下两行,⛔ 不叠(同操作面 `.panel button.p` 那条「miss=落空 优于 miss=误点」)。
+         横向不扩,理由同那一族。⚠ 三行都是横滚容器(`overflow-x:auto` 会连带把纵向也裁掉),
+         halo 探出盒外就被裁 ⇒ 容器自己上下各让出 4px 的内边距、再用等量负 margin 抵回,版面一像素不动。
+         ⚠ 用 `::after` 不用 `::before`:子标签那枚 `↳` 已经占着 `.fpill.child::before`。
+         ⚠ halo 画在钮的内容之上 ⇒ 父标签上那枚展开箭头(`.fcaret`,点它不筛选、只翻子标签)
+         得自己浮到 halo 上面,否则点箭头会被 halo 截成「点了这枚标签」。
+         ⛔ 过滤框(`.ftext`)是 input,伪元素挂不上,仍是 30px。 */
+      .fstages, .fkinds, .ftopics { padding-block: 4px; margin-block: -4px; }
+      .fpill, .fexpand { position: relative; }
+      .fpill::after, .fexpand::after { content: ""; position: absolute; left: 0; right: 0; top: -4px; bottom: -4px; }
       /* 灵感面 main.ts 清空 #filter-stages → :empty 隐整行(同 .fkinds 的形)。 */
       .fstages:empty { display: none; }
       /* 无 kind 时 filter.ts 清空 #filter-kinds → :empty 隐整行(无类型一条不多)。 */
@@ -1500,6 +1511,7 @@
          右内边距(负 margin 抵消)。实测 28.2×30.8 CSS px 且四边都不外溢父 pill——外溢会
          抢邻座 pill 的点击。桌面那枚 caret 只有 1px padding,照抄到触屏必点不中。 */
       .fcaret {
+        position: relative; z-index: 1; /* 浮在 `.fpill::after` 那层 halo 之上(122) */
         align-self: stretch; display: inline-flex; align-items: center;
         padding: 5px 10px 5px 14px; margin: -5px -10px -5px 0;
         font-size: 11px; color: var(--ink-faint);
@@ -1680,7 +1692,7 @@
       </div>
       <div id="join-form" hidden>
         <div class="row">
-          <input id="join-server" data-default-server spellcheck="false"
+          <input id="join-server" data-default-server placeholder="服务器地址(wss://…)" data-i18n-placeholder="shell.serverPh" spellcheck="false"
                  autocapitalize="off" autocomplete="off" />
         </div>
         <div class="row">
@@ -1714,7 +1726,7 @@
           <button id="sync-alt-create" class="ghost" style="flex: 1" data-i18n="sync.altCreateMain">没有其他设备?创建新账户</button>
         </div>
         <div id="sync-server-row" class="row" hidden>
-          <input id="sync-server" data-default-server spellcheck="false"
+          <input id="sync-server" data-default-server placeholder="服务器地址(wss://…)" data-i18n-placeholder="shell.serverPh" spellcheck="false"
                  autocapitalize="off" autocomplete="off" />
         </div>
         <div id="sync-manual" hidden>
@@ -2007,7 +2019,7 @@
       <div id="db" class="kv"><span class="muted" data-i18n="main.diagLoading">读取中…</span></div>
       <h2 data-i18n="shell.diagNetTitle">网络栈诊断</h2>
       <div class="row">
-        <input id="url" data-default-server spellcheck="false"
+        <input id="url" data-default-server placeholder="服务器地址(wss://…)" data-i18n-placeholder="shell.serverPh" spellcheck="false"
                autocapitalize="off" autocomplete="off" />
         <button id="run" data-i18n="shell.runProbe">跑诊断</button>
       </div>

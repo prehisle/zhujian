@@ -32,6 +32,7 @@ export const main = defineMessages({
   "main.finishDraftFirst": { zh: "先保存或取消正在编辑的内容", en: "Save or cancel what you are editing first" },
   "main.emptyIdeas": { zh: "还没有随记。", en: "No notes yet." },
   "main.emptyIdeasHint": { zh: "点右下角 ＋ 随手记一笔", en: "Tap ＋ at the bottom right to jot one down" },
+  "main.emptyBooting": { zh: "正在从其他设备取回记录…", en: "Fetching your entries from your other devices…" },
   "main.emptyTasks": { zh: "还没有任务。", en: "No tasks yet." },
   "main.emptyTasksHint": { zh: "点右下角 ＋ 记一件待办", en: "Tap ＋ at the bottom right to add one" },
   "main.listSep": { zh: "、", en: ", " },

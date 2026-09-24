@@ -75,6 +75,8 @@ type Deps = {
   switchSpace: (id: string) => Promise<void>;
   /** 卡片编辑草稿在场(cardpanel):加入空间的 Integrated 不许强切丢草稿。 */
   hasDirtyDraft: () => boolean;
+  /** 当前空间进 / 出初始同步(122):时间轴空态要换话术,main 借此重投影一次。 */
+  onBootingChange: () => void;
 };
 
 let deps: Deps;
@@ -89,7 +91,18 @@ const STATE_LABEL: Record<string, string> = {
   offline: t("sync.stateOffline"),
 };
 
+/** 当前空间是不是在初始同步里(最近一份状态快照说的)。 */
+let booting = false;
+
+export function isBooting(): boolean {
+  return booting;
+}
+
 export function renderSync(s: SyncStatus) {
+  if ((s.state === "booting") !== booting) {
+    booting = s.state === "booting";
+    deps.onBootingChange();
+  }
   const dot = $("sync-dot");
   // 断网/出错态类名用 off 不用 error:全局 .error 是左上角 fixed 的错误提示条,
   // 状态点若带 error 类会被它命中、断网时被拽到左上角盖住「朱」(真机 bug)。
@@ -175,10 +188,25 @@ export function resetSyncTransient() {
   resetSecondary();
 }
 
+/** 地址 / 码空着就点了钮(122):此前静默 `return`,钮按下去什么也不发生。说一句,并把光标放进空着的那一格。 */
+function lacksInput(serverUrl: string, serverId: string, code?: string, codeId?: string): boolean {
+  if (!serverUrl) {
+    showError(t("sync.needServer"));
+    $(serverId).focus();
+    return true;
+  }
+  if (code === "" && codeId) {
+    showError(t("sync.needCode"));
+    $(codeId).focus();
+    return true;
+  }
+  return false;
+}
+
 // 手输与扫码共用同一条加入路(107 抽出:后端 sync_pair_join 不区分码怎么来的)。
 // 配对目标 = 点击那刻的当前空间(写类命令,不走 sinvoke,明确处理响应)。
 async function doJoin(serverUrl: string, code: string) {
-  if (!serverUrl || !code) return;
+  if (lacksInput(serverUrl, "sync-server", code, "sync-code")) return;
   const target = getCurrentSpace();
   const btn = $("sync-join-btn") as HTMLButtonElement;
   btn.disabled = true;
@@ -292,7 +320,7 @@ function renderJoinProgress(text: string | null) {
 }
 
 async function doJoinSpace(serverUrl: string, code: string) {
-  if (!serverUrl || !code) return;
+  if (lacksInput(serverUrl, "join-server", code, "join-code")) return;
   if (joinAttempt) {
     showError(t("sync.joinInFlight"));
     return;
@@ -345,7 +373,7 @@ async function doJoinSpace(serverUrl: string, code: string) {
 
 async function doCreateAccount() {
   const serverUrl = ($("sync-server") as HTMLInputElement).value.trim();
-  if (!serverUrl) return;
+  if (lacksInput(serverUrl, "sync-server")) return;
   const target = getCurrentSpace();
   const btn = $("sync-create-btn") as HTMLButtonElement;
   btn.disabled = true;

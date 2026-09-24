@@ -45,6 +45,11 @@ export function notifyPermissionOk(): Promise<boolean> {
   return Promise.resolve(false);
 }
 
+/** 同上:不该被调到(`paintRemindRow` 由 `HAS_NOTIFICATION` 门着)。 */
+export function notifyPermissionGranted(): Promise<boolean> {
+  return Promise.resolve(false);
+}
+
 /** 同上:不该被调到。⛔ **响亮**,别静默返回 —— 静默 = 用户以为发出去了。 */
 export function showNotification(_title: string, _body: string): void {
   throw new Error("这一端没有系统通知(HAS_NOTIFICATION=false 却走到了发送路径)");
