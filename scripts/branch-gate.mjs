@@ -584,6 +584,28 @@ function assertCenteredElsHaveNoInlineMargin() {
   );
 }
 
+// ── `ci.yml` 不许有 `concurrency`(518 拿掉;737 = doc-slimming 格③把那句「⛔ 别加回来」换成机制)──
+// `cancel-in-progress` 掐掉的不是重复的跑,是上一轮的**裁决**;「留 group 改 false」「只给 linux-e2e 开豁免」两条替代路也都落在
+// 这个键上(判据与地面事实全文在 ci-plan §8 第 11 条)⇒ 这个键在本文件里出现就拒,不分 workflow 级 / job 级、不看值。
+// ⚠ 诚实边界:①纯文本扫描不是 YAML 解析 —— 判据 = 非注释行以 `concurrency:`(可带 `- `)开头,引号键 / flow 写法看不见;
+//   ②只扫 ci.yml 这一份:被它 `uses:` 调进来的 `preflight.yml` 不在面内,其余几条 workflow 的 `concurrency` 是各自有意留的;
+//   ③`cancelRuns()` 取消孤儿闸分支那几趟是设计内的,不归这道闸。
+// ⛔ 不是新开一根轴(停止扩张线):一个字面量,不带 parser / 登记表 / 阴性刀那套。
+function assertCiHasNoConcurrency() {
+  const rel = ".github/workflows/ci.yml";
+  const hits = readFileSync(join(repoRoot, rel), "utf8")
+    .split("\n")
+    .map((l, i) => ({ n: i + 1, l }))
+    .filter(({ l }) => /^\s*(-\s+)?concurrency\s*:/.test(l));
+  if (!hits.length) return;
+  die(
+    `${rel} 里出现了 \`concurrency\` —— ⛔ 不落地:\n` +
+      hits.map(({ n, l }) => `    ${rel}:${n}: ${l.trim().slice(0, 70)}`).join("\n") +
+      `\n  它掐掉的是上一轮的裁决(518 拿掉;替代路为什么都不行见 ci-plan §8 第 11 条)。` +
+      `\n  ⇒ 删掉那一段;嫌连推太多是「推法」的问题,⛔ 别把这道闸放宽。`,
+  );
+}
+
 // ── handoff「手上的债」的形(测试与工装 113 立,698 接上)──────────────────────
 // 8 KB 闸 697 收口时只剩 6 字节余量,而债**一轮一行、只增不减**(销掉才删,那几半的触发门握在
 // 别的机器手里)⇒ 下一个人加一行必撞,还会被迫去压**别人写的**行 = 静默丢判据。
@@ -618,6 +640,7 @@ function runLocalGates() {
   assertNoLongDocLines();
   assertSkillBudgets();
   assertCenteredElsHaveNoInlineMargin();
+  assertCiHasNoConcurrency();
   console.log(`→ 本地十道静态门禁(几秒量级)…`);
   for (const g of LOCAL_GATES) {
     try {

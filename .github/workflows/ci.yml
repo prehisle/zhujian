@@ -37,13 +37,10 @@ on:
         type: boolean
         default: false
 
-# ⛔ 刻意没有 `concurrency`(517 补立账、518 拿掉;测试与工装 41;全文在 ci-plan §8 第 11 条)。
-#   `cancel-in-progress: true` 掐掉的不是「重复的跑」,是上一轮的裁决(517 收口那趟把 516 跑到 25m50s 的那趟掐成 cancelled,近 14 趟里 cancelled 占 4)。
-#   丢的是墙钟(连着推永远拿不到裁决)与观测机会(等的就是「下一次红那句话」),覆盖面倒是一点没丢(被掐那趟是新趟的子集)。
-# ⛔ 另外两条路都查过了,别再挑回来:「靠人推之前先 `gh run list` 一眼」是要人补偿一台正在毁证据的机器(memory `guards-must-bind-to-the-automatic-edge`);
-#   「只给 `linux-e2e` 开豁免」救不了 —— `gates` 是 `uses:` 调 preflight,job 级 concurrency 一挂就把里头全掐;
-#   「留 group、`cancel-in-progress: false`」更糟,新趟变排队且 GitHub 只保留最新那个 pending。
-# ⚠ 代价是真的:连推 N 次就有 N 趟并行,超出并发上限的排队(仍会跑完、仍给裁决)。其余四条 workflow 的 `concurrency` 一个字没动。
+# ⛔ 刻意没有 `concurrency`(518 拿掉;它掐掉的是上一轮的裁决,三条被查掉的替代路与代价全文在 ci-plan §8 第 11 条)。
+#   闸:`branch-gate land` 的 `assertCiHasNoConcurrency` —— 本文件非注释行出现 `concurrency:` 就拒落地(workflow 级 / job 级都算)。
+#   闸管不着的那半:被下面 `uses:` 调进来的 `preflight.yml` 不在它扫描面内;判据一句 = 这条 CI 的产出物是「裁决」不是「跑过」,
+#   凡会让某趟不产出裁决的别的配置,同一条理由照样成立。
 
 jobs:
   # ⭐ 这道 `if` 守的是钱:同一份文件既在私有工作仓、也在公开仓(导出快照);ci-plan §6 拍板 A = CI 跑在公开仓(免费无限),
