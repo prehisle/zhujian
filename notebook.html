@@ -310,6 +310,10 @@
       body.is-macos .winctl { display: none; }
       body.is-macos .sidebar { padding-top: 34px; }
       body.is-macos .sb-toggle { top: 30px; }
+      /* mac 折叠态(128):上面那条 padding-top 与 501 的折叠态同特异度、又写在后面,会把折叠态
+         给展开钮让的位盖掉 ⇒ 这里多挂一个类、单给 mac 折叠态。钮 top 30 + 高 22 = 底边 52,留 10 的气
+         (同 501)⇒ 62。宽 68 = 红绿灯那一排(7–61)左右各留 7:52 宽时绿灯正骑在侧栏右边框上。 */
+      body.is-macos.sb-collapsed .sidebar { width: 68px; padding-top: 62px; }
       /* mac 是原生圆角窗:自绘的方形外框线(body::after)套在圆角上会在四角露方角,
          隐掉它交给原生窗口边缘;与同色背景的区分改由原生窗口阴影承担(见 lib.rs set_shadow)。 */
       body.is-macos::after { display: none; }
