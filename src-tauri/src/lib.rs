@@ -3454,6 +3454,61 @@ fn backup_open_dir(app: AppHandle) -> Result<(), String> {
     app.opener().open_path(dir.clone(), None::<&str>).map_err(|e| format!("打不开 {dir}:{e}"))
 }
 
+// ── 设置「关于」页的诊断三块(盈利准备 C10:照抄安卓诊断面)────────────────────
+//
+// 库信息 / 网络自检两条与 `mobile/src/shell.rs` 同名同形(前端两端读同一组字段);
+// 日志文件夹是桌面独有 —— 手机的日志走 logcat,没有「文件夹」可开。
+
+/// 「打开日志文件夹」:setup 里 `tauri_plugin_log` 的 `LogDir` 落点(= `app_log_dir`)。
+/// 同 `backup_open_dir`:目录不在就先建出来,用户点它就是想去看。
+#[tauri::command]
+fn open_log_dir(app: AppHandle) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    let dir = app.path().app_log_dir().map_err(|e| e.to_string())?;
+    let shown = dir.display().to_string();
+    std::fs::create_dir_all(&dir).map_err(|e| format!("打不开 {shown}:{e}"))?;
+    app.opener().open_path(shown.clone(), None::<&str>).map_err(|e| format!("打不开 {shown}:{e}"))
+}
+
+/// 诊断「本机库」:当前空间的建库 + 迁移 + 设备身份。字段与手机端 `DbInfo` 一一对应。
+#[derive(Serialize)]
+struct DbInfo {
+    path: String,
+    sqlite_version: String,
+    journal_mode: String,
+    user_version: i64,
+    device_id: String,
+    items: i64,
+}
+
+#[tauri::command]
+fn db_info(space_id: String, spaces: State<'_, Spaces>) -> Result<DbInfo, String> {
+    let rt = spaces.sup.get(&space_id)?;
+    let conn = rt.db.lock().expect("db mutex poisoned");
+    let q1 = |sql: &str| -> Result<i64, String> { conn.query_row(sql, [], |r| r.get(0)).map_err(|e| e.to_string()) };
+    let journal_mode: String =
+        conn.query_row("PRAGMA journal_mode", [], |r| r.get(0)).map_err(|e| e.to_string())?;
+    Ok(DbInfo {
+        path: rt.path.display().to_string(),
+        sqlite_version: rusqlite::version().to_string(),
+        journal_mode,
+        user_version: q1("PRAGMA user_version")?,
+        device_id: clock::Clock::load(&conn)?.device_id().to_string(),
+        items: q1("SELECT COUNT(*) FROM items")?,
+    })
+}
+
+/// 诊断「网络自检」:真跑同步用的那套密码学与连接路径(core `transport::net_probe`),
+/// 六项不短路、红哪项报哪项。结果同时进日志,用户交来的日志里也看得到。
+#[tauri::command]
+async fn net_probe(url: String) -> Vec<sync::transport::ProbeStep> {
+    let steps = sync::transport::net_probe(&url).await;
+    for s in &steps {
+        log::info!("NET_PROBE {} {} — {}", if s.ok { "OK  " } else { "FAIL" }, s.name, s.detail);
+    }
+    steps
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 /// 启动期 panic 的原生弹窗钩子:桌面壳的开库/身份/租约全在 Tauri `setup` 闭包里
 /// fail-fast panic,窗口尚未建成——默认行为只往 stderr 打一行,双击 exe 的用户什么
@@ -4233,6 +4288,9 @@ pub fn run() {
             backup_run,
             backup_retry_cleanup,
             backup_open_dir,
+            open_log_dir,
+            db_info,
+            net_probe,
             backup_list,
             backup_verify,
             backup_restore,

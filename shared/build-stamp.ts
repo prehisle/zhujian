@@ -2,7 +2,7 @@
 // 「为什么非有它不可 / 为什么不住 build.rs / 脏判据为什么是整棵树」那三段都写在那份顶注里,
 // ⛔ 别在这儿复述。这里只管:怎么读到它、怎么写成人看得懂的一行。
 //
-// 桌面显在同步面板底部那行版本旁(`src/sync.ts::appendUpdateFooter`),
+// 桌面显在设置「关于」那一类的版本行下(`src/about.ts`),
 // 手机显在「关于」里(`android/src/main.ts::loadAbout`,鸿蒙共用那棵树)。
 
 declare global {

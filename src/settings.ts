@@ -9,6 +9,7 @@
 // 外观 / 语言 / 字号 / 别名(444 实测面板整高 2546px,而它之前是 6649px)。
 import { invoke } from "@tauri-apps/api/core";
 import { buildBackupSection, closeBackupSection, noteFold } from "./backup";
+import { buildAboutPane } from "./about";
 import { reminderCfg, saveReminderCfg, reminderPermissionOk, sendTestNotification } from "./reminder";
 import { currentZoomPercent, zoomIn, zoomOut, zoomReset, onZoomChange } from "./zoom";
 import { currentThemeMode, setThemeMode, type ThemeMode } from "./theme-mode";
@@ -20,9 +21,10 @@ import "./settings.css";
 
 type Hotkeys = { capture: string; notebook: string };
 type Which = "capture" | "notebook";
-/** 左栏那三类。⛔ **别加第四类**:判据在 backlog 用户面 27 —— 我们统共 4 个小节,
- *  3 个只有一两行,分细了是另一种难看(参考的那个产品有 8 类是因为它真有那么多东西)。 */
-export type SettingsCat = "general" | "hotkeys" | "backup";
+/** 左栏那几类。445 定「只分 3 类」(backlog 用户面 27:小节太少,分细了是另一种难看);
+ *  第四类「关于」是盈利准备 C7 / C10 加的 —— 版本 / 链接 / 诊断三节是一整块新东西,
+ *  塞进「通用」会把那一页拖到两屏半。⛔ 再加第五类之前先问能不能并进这四类。 */
+export type SettingsCat = "general" | "hotkeys" | "backup" | "about";
 /** lib.rs `device_identity` 的镜像。别名**进同步**(与热键/明暗/字号刻意不同)。 */
 type DeviceIdentity = { this_device: string; devices: { device_id: string; alias: string | null }[] };
 
@@ -90,6 +92,7 @@ const CATS: { cat: SettingsCat; label: string }[] = [
   { cat: "general", label: t("settings.catGeneral") },
   { cat: "hotkeys", label: t("settings.hotkeysTitle") },
   { cat: "backup", label: t("settings.catBackup") },
+  { cat: "about", label: t("settings.catAbout") },
 ];
 
 function renderPanel(panel: HTMLDivElement, initial: SettingsCat): void {
@@ -118,7 +121,7 @@ function renderPanel(panel: HTMLDivElement, initial: SettingsCat): void {
   cols.append(nav, content);
   panel.appendChild(cols);
 
-  // ⛔ **三类的内容一次全建好,切分类只切显隐 —— 别改成「点哪类才建哪类」**。
+  // ⛔ **各类的内容一次全建好,切分类只切显隐 —— 别改成「点哪类才建哪类」**。
   // 判据不是省事,是这几节各自挂着状态:备份那节有仪式态(只在内存里的那把钥)与自动备份
   // 轮询、别名那行有一发 `device_identity` 请求、字号那行往 `onZoomChange` 注册了唯一那个
   // 回调槽。按需重建 = 每次切回来重发请求、丢掉仪式态、把旧 DOM 上的回调悬空
@@ -142,7 +145,7 @@ function renderPanel(panel: HTMLDivElement, initial: SettingsCat): void {
   });
   nav.append(...btns);
 
-  // 高亮与显隐的单一渲染点:按当前分类重画全部三枚,不在点击处各自 toggle(同 paintSeg)。
+  // 高亮与显隐的单一渲染点:按当前分类重画全部几枚,不在点击处各自 toggle(同 paintSeg)。
   function show(cat: SettingsCat): void {
     CATS.forEach(({ cat: c }, i) => {
       btns[i].classList.toggle("on", c === cat);
@@ -203,6 +206,11 @@ function buildPane(cat: SettingsCat, pane: HTMLElement): void {
       el("p", "settings-sub", t("settings.feedbackSub")),
       buildFeedbackRow(),
     );
+    return;
+  }
+
+  if (cat === "about") {
+    buildAboutPane(pane); // 版本 / 链接 / 诊断,整节住 src/about.ts
     return;
   }
 

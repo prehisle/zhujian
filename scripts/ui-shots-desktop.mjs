@@ -88,7 +88,7 @@ const PAGES = [
   { id: "board", win: "notebook", view: "board", desc: "任务看板(四列)" },
   { id: "topics", win: "notebook", view: "topics", desc: "标签" },
   { id: "search", win: "notebook", view: "search", desc: "搜索(带查询词的结果态)", query: "体检" },
-  // 设置面板三节各一张:617 砍的说明句大半住在这里,一节一张才看得见。
+  // 设置面板每一类各一张:617 砍的说明句大半住在这里,一节一张才看得见。
   // ⚠ 只截到**视口那一屏** —— 面板自己是个滚动容器,`captureBeyondViewport` 对内层滚动
   // 容器无效。下半屏(如「常规」的截止提醒往下)一期看不到,知情的边界。
   { id: "settings-general", win: "notebook", view: "inbox", desc: "设置 · 常规", settingsCat: "general" },
@@ -96,6 +96,9 @@ const PAGES = [
   { id: "settings-general-bottom", win: "notebook", view: "inbox", desc: "设置 · 常规(滚到底)", settingsCat: "general", settingsScroll: "bottom" },
   { id: "settings-hotkeys", win: "notebook", view: "inbox", desc: "设置 · 快捷键", settingsCat: "hotkeys" },
   { id: "settings-backup", win: "notebook", view: "inbox", desc: "设置 · 备份与恢复", settingsCat: "backup" },
+  { id: "settings-about", win: "notebook", view: "inbox", desc: "设置 · 关于(版本 / 链接 / 诊断)", settingsCat: "about" },
+  // 同通用页那一对:诊断的下半(网络自检 / 日志文件夹 / 复制诊断信息)在视口外。
+  { id: "settings-about-bottom", win: "notebook", view: "inbox", desc: "设置 · 关于(滚到底)", settingsCat: "about", settingsScroll: "bottom" },
   { id: "capture", win: "capture", desc: "捕获浮窗" },
 ];
 

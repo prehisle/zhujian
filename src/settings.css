@@ -684,3 +684,71 @@
   padding: 1px 7px;
   white-space: nowrap;
 }
+
+/* ---- 关于(盈利准备 C7 + C10,src/about.ts)----
+   行都是现成的 .hkset-row 族;这里只补三样它没有的:等宽串、链接一行、诊断的键值表与自检结果。 */
+/* 构建戳 / 自检项名 / 库路径是拿去念给人听、抄下来对的串:等宽,0 与 O、1 与 l 才认得准
+   (同手机端「关于」那一格)。可选中 —— 复制诊断信息之外,也许只想抄一段。 */
+.about-mono {
+  font-family: Consolas, "Courier New", monospace;
+  user-select: text;
+}
+.about-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 18px;
+}
+/* 形照正文链接 .link-ref(墨色 + 朱色细下划线,悬停转朱)。min-height 自保 §2.3 热区。 */
+.about-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  font-size: var(--fs-13);
+  color: var(--ink);
+  text-decoration: underline;
+  text-decoration-color: var(--seal-line);
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.about-link:hover {
+  color: var(--seal);
+  text-decoration-color: var(--seal);
+}
+.about-block {
+  padding: 10px 0;
+}
+.about-block > .hkset-row { padding-top: 0; }
+.about-kv {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 4px 14px;
+  margin: 8px 0 0;
+  font-size: var(--fs-12);
+  line-height: 1.5;
+}
+.about-kv dt { color: var(--ink-soft); }
+.about-kv dd {
+  margin: 0;
+  color: var(--ink);
+  font-family: Consolas, "Courier New", monospace;
+  word-break: break-all;
+  user-select: text;
+}
+.about-url { width: 210px; }
+.about-probe {
+  font-size: var(--fs-12);
+  line-height: 1.5;
+}
+.about-probe:empty { display: none; }
+.about-step {
+  display: grid;
+  grid-template-columns: 1em max-content 1fr;
+  gap: 8px;
+  padding: 2px 0;
+  user-select: text;
+}
+.about-step.ok .about-mark { color: var(--ok); }
+.about-step.fail .about-mark { color: var(--seal); }
+.about-step > :last-child { color: var(--ink-soft); word-break: break-all; }
+.about-dim { color: var(--ink-soft); }
+.about-err { margin: 0; color: var(--seal); }

@@ -3,7 +3,8 @@ import { defineMessages } from "./entry";
 
 export const settings = defineMessages({
   "settings.title": { zh: "设置", en: "Settings" },
-  // 左栏分类(445)。⭐ **只分 3 类**:我们 4 个小节里有 3 个只有一两行,分细了是另一种难看。
+  // 左栏分类(445)。⭐ 445 定只分 3 类(4 个小节里有 3 个只有一两行,分细了是另一种难看);
+  // 第四类「关于」(settings.catAbout,在本文件末尾)是盈利准备 C7 / C10 加的。
   // 「快捷键」一词两处共用(左栏那枚按钮 + 右栏那一节的标题),刻意同一个键 —— 两处说的
   // 就是同一件事,分成两个键迟早会漂。
   "settings.catGeneral": { zh: "通用", en: "General" },
@@ -84,4 +85,39 @@ export const settings = defineMessages({
   "settings.autostartOn": { zh: "开", en: "On" },
   "settings.autostartOff": { zh: "关", en: "Off" },
   "settings.hotkeyUpdated": { zh: "已更新,立即生效", en: "Updated, effective immediately" },
+  // 「关于」一类(盈利准备 C7 + C10,src/about.ts)。版本那一行此前住同步面板(`sync.checkUpdate` 等),
+  // 搬家时换了键名前缀,措辞一字没动。链接四个词与官网页脚逐字一致(site/index.html 的 foot.* / nav.source)。
+  "settings.catAbout": { zh: "关于", en: "About" },
+  "settings.aboutSub": { zh: "这台电脑上装的是哪一版。有新版时启动会自动提示,也可以在这里手动查。", en: "Which version is installed on this computer. Zhujian tells you about new versions at startup; you can also check here." },
+  "settings.checkUpdate": { zh: "检查更新", en: "Check for updates" },
+  // 构建身份戳(701)。⚠ 两枚键而不是「主串 + 拼一个后缀」:拼接过的译文在别的语言里
+  // 语序未必还成立,而这两句各自是一句完整的话。
+  "settings.buildStamp": { zh: "构建 {commit} · {at}", en: "Build {commit} · {at}" },
+  "settings.buildDirty": { zh: "构建 {commit} · {at} · 含未提交改动", en: "Build {commit} · {at} · uncommitted changes" },
+  "settings.linksTitle": { zh: "链接", en: "Links" },
+  "settings.linksSub": { zh: "都在浏览器里打开。", en: "These open in your browser." },
+  "settings.linkSite": { zh: "官网", en: "Website" },
+  "settings.linkSource": { zh: "源码", en: "Source" },
+  "settings.linkGuide": { zh: "用户指南", en: "User guide" },
+  "settings.linkTerms": { zh: "用户协议", en: "Terms" },
+  "settings.linkPrivacy": { zh: "隐私政策", en: "Privacy" },
+  "settings.linkRights": { zh: "隐私权利", en: "Your rights" },
+  "settings.diagTitle": { zh: "诊断", en: "Diagnostics" },
+  "settings.diagSub": { zh: "出了问题时用。最下面那一行会把这一页的版本、本机库和网络自检结果抄成一段文字,贴进反馈邮件就行。", en: "For when something goes wrong. The last row copies the version, local database and network check on this page as one block of text — paste it into your feedback email." },
+  "settings.diagDb": { zh: "本机库(当前空间)", en: "Local database (current space)" },
+  "settings.diagMigration": { zh: "迁移版本", en: "Schema version" },
+  "settings.diagItems": { zh: "条目数", en: "Entries" },
+  "settings.diagPath": { zh: "路径", en: "Path" },
+  "settings.diagDbFailed": { zh: "读不出本机库:{error}", en: "Couldn't read the local database: {error}" },
+  "settings.probeTitle": { zh: "网络自检", en: "Network check" },
+  "settings.probeDesc": { zh: "逐项跑一遍同步用的加密与连接,看卡在哪一步。", en: "Runs each step of the encryption and connection that sync uses, to see where it gets stuck." },
+  "settings.probeRun": { zh: "开始", en: "Run" },
+  "settings.probeRunning": { zh: "正在检查…", en: "Checking…" },
+  "settings.probeFailed": { zh: "自检没跑成:{error}", en: "The check didn't run: {error}" },
+  "settings.probeNotRun": { zh: "没跑过", en: "Not run" },
+  "settings.logTitle": { zh: "日志文件夹", en: "Log folder" },
+  "settings.logDesc": { zh: "程序的运行记录,最多两份、每份 2 MB。反馈问题时可以把里面的文件一起附上。", en: "The app's running log: at most two files of 2 MB each. Attach them when you report a problem." },
+  "settings.logOpen": { zh: "打开", en: "Open" },
+  "settings.copyDiagTitle": { zh: "诊断信息", en: "Diagnostic info" },
+  "settings.copyDiagDesc": { zh: "版本、构建、本机库和最近一次网络自检,抄成一段文字。", en: "Version, build, local database and the latest network check, as one block of text." },
 });

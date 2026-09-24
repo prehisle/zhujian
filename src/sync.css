@@ -146,7 +146,8 @@
   gap: 8px;
   margin-top: 4px;
 }
-/* 面板底部:版本 + 「检查更新」入口(88),与上方同步动作用细线分隔 */
+/* 面板底部的入口行(空间入口 / 「高级」),与上方同步动作用细线分隔。
+   (类名是 88 时「版本 + 检查更新」那行起的;那行已搬去设置「关于」,名字留着。) */
 .sync-update-row {
   display: flex;
   align-items: center;
@@ -154,14 +155,6 @@
   margin-top: 14px;
   padding-top: 12px;
   border-top: 1px solid var(--line-strong);
-}
-/* 构建身份戳(701):紧贴版本行下面。等宽 —— 这串十六进制是用来念给人听 / 抄下来的,
-   比例字体下 0 与 O、1 与 l 挤在一起认不准。 */
-.sync-build {
-  margin-top: 6px;
-  font-family: Consolas, "Courier New", monospace;
-  font-size: var(--fs-12);
-  user-select: text;
 }
 .sync-input {
   font: inherit;

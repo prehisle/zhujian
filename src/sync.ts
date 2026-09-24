@@ -15,9 +15,6 @@ import {
   rosterDeparted,
 } from "./devices";
 import { listen } from "@tauri-apps/api/event";
-import { getVersion } from "@tauri-apps/api/app";
-import { buildStamp, formatBuiltAt } from "../shared/build-stamp";
-import { checkForUpdateManual } from "./update";
 import { generate } from "lean-qr";
 import { toSvg } from "lean-qr/extras/svg";
 import { TOAST_ERROR_MS } from "./timing";
@@ -340,7 +337,6 @@ function renderHome(body: HTMLElement): void {
     }
     body.appendChild(acts);
     if (spaceNames.size <= 1) body.appendChild(spacesEntryRow()); // 411/D2 兜底,见该函数
-    void appendUpdateFooter(body);
     return;
   }
   const word = STATE_WORD[s.state] ?? s.state;
@@ -378,7 +374,6 @@ function renderHome(body: HTMLElement): void {
   if (spaceNames.size <= 1) body.appendChild(spacesEntryRow()); // 411/D2 兜底,见该函数
   // 修改服务器收进「高级」:运维动作不与日常操作同屏(概念收敛)。
   body.appendChild(advancedEntryRow());
-  void appendUpdateFooter(body);
 }
 
 /** 「添加设备」与失败页的「重新出码」共用这一条(用户面 121):向 core 要一枚配对码、进出码页。 */
@@ -477,29 +472,6 @@ function renderAdvanced(body: HTMLElement): void {
   const acts = el("div", "sync-actions");
   acts.appendChild(btn(t("sync.back"), "hbtn", () => goto("home")));
   body.appendChild(acts);
-}
-
-// 版本 + 「检查更新」入口。更新是 app 级关切、非同步,但同步面板是唯一的设置面(克制:
-// 不为它单开「关于」),故落这里;更新逻辑仍在 update.ts,本处只放一枚入口。版本异步读,
-// 先占位后填,不阻塞面板渲染(row 在首个 await 前已挂上,位置不乱)。
-//
-// ⭐ 701 起版本号下面多一行**构建身份戳**:用户日常那台从此常年跑未发版的测试构建,
-// 而两者报的版本号一模一样 ⇒ 光看版本号答不出「你手上那只是哪棵树」。为什么要有它、
-// 脏是怎么判的,全在 `scripts/lib/build-stamp.mjs` 顶注。⛔ 别把它挪进上面那行 ——
-// 它是给「报 bug 时念给我听」用的,和「我是不是最新版」不是同一件事,挤在一起两边都难读。
-async function appendUpdateFooter(body: HTMLElement): Promise<void> {
-  const row = el("div", "sync-update-row");
-  row.appendChild(btn(t("sync.checkUpdate"), "hbtn", () => void checkForUpdateManual()));
-  const ver = el("span", "sync-dim", t("sync.versionLoading"));
-  row.appendChild(ver);
-  body.appendChild(row);
-  const b = buildStamp();
-  const vars = { commit: b.commit, at: formatBuiltAt(b.at) };
-  // ⚠ 两条静态 t() 而不是 `t(cond ? a : b, …)`:文案门禁按字面量核键,动态调用要另登记
-  // 一张表(DYNAMIC_T)—— 为两枚键开那张表不划算,写直了它自己就查得到。
-  const line = b.dirty ? t("sync.buildDirty", vars) : t("sync.buildStamp", vars);
-  body.appendChild(el("div", "sync-dim sync-build", line));
-  ver.textContent = t("sync.versionCurrent", { v: await getVersion() });
 }
 
 function formErr(body: HTMLElement): HTMLElement {
