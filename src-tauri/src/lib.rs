@@ -2821,6 +2821,59 @@ struct HotkeysDto {
     notebook: String,
 }
 
+// ---- 开机自启(用户面 124 ①)-------------------------------------------------------
+//
+// 用户 2026-09-24 拍板「默认开」。⭐ 真相源是**系统那一格本身**(Windows = HKCU Run 键里
+// 名为 productName 的值;卸载器早就按同一个名字清它,见 installer.nsi),设置里的开关只读它、
+// 写它,不另存一份「开没开」。
+// 「默认」只做一次:没有 `.autostart-default` 这枚标记时替用户打开并落标记 ⇒ 之后他在设置里
+// 关掉,重启不会被翻回来。⚠ 升级上来的老用户也会在第一次启动新版时被打开一次 —— 那正是
+// 「默认开」的意思(他们同样没选过),设置里一拍即关。
+// ⛔ 两种形不碰系统:e2e / 探针(`YS_DB_PATH`,测试实例不许把自己注册成开机启动)与
+// debug 构建(会把 `target/debug` 那只写进开机项)。
+
+/// 开机那一趟的命令行参数:带着它启动 = 不弹捕获条、只进托盘。
+const AUTOSTART_ARG: &str = "--autostart";
+
+fn launched_by_autostart() -> bool {
+    std::env::args().any(|a| a == AUTOSTART_ARG)
+}
+
+fn apply_autostart_default<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
+    use tauri_plugin_autostart::ManagerExt;
+    if e2e_db_path().is_some() || cfg!(debug_assertions) {
+        return Ok(());
+    }
+    let marker = app
+        .path()
+        .app_config_dir()
+        .map_err(|e| format!("resolve app config dir: {e}"))?
+        .join(".autostart-default");
+    if marker.exists() {
+        return Ok(());
+    }
+    app.autolaunch().enable().map_err(|e| format!("开机自启默认打开失败:{e}"))?;
+    std::fs::create_dir_all(marker.parent().expect("config dir has a parent"))
+        .map_err(|e| format!("create config dir: {e}"))?;
+    std::fs::write(&marker, b"").map_err(|e| format!("write {}: {e}", marker.display()))
+}
+
+/// 开机自启此刻开着没有(读系统那一格)。
+#[tauri::command]
+fn get_autostart(app: AppHandle) -> Result<bool, String> {
+    use tauri_plugin_autostart::ManagerExt;
+    app.autolaunch().is_enabled().map_err(|e| e.to_string())
+}
+
+/// 开 / 关开机自启,返回改后系统那一格的读数(不回显入参)。
+#[tauri::command]
+fn set_autostart(app: AppHandle, on: bool) -> Result<bool, String> {
+    use tauri_plugin_autostart::ManagerExt;
+    let al = app.autolaunch();
+    if on { al.enable() } else { al.disable() }.map_err(|e| e.to_string())?;
+    al.is_enabled().map_err(|e| e.to_string())
+}
+
 /// 当前两枚热键的加速键串(设置面板初显)。
 #[tauri::command]
 fn get_hotkeys(app: AppHandle) -> HotkeysDto {
@@ -3529,6 +3582,12 @@ pub fn run() {
         // relaunch。updater 端点/公钥在 tauri.conf.json plugins.updater,注册无需额外配置。
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        // 开机自启(用户面 124 ①,用户 2026-09-24 拍「默认开」):开机那一趟带 `--autostart`,
+        // 启动时据此不弹捕获条(见 setup 末尾)。开关与默认那一步见 `apply_autostart_default`。
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec![AUTOSTART_ARG]),
+        ))
         // 剪贴板读(桌面深链接补路):前端回窗时读一次,合规 zhujian:// 链接才提示打开。
         .plugin(tauri_plugin_clipboard_manager::init())
         // 截止提醒(用户面 39 第一版):notebook 前端每天到点发一条系统通知。调度、
@@ -4056,6 +4115,15 @@ pub fn run() {
             // 主窗安静地待在它身后——「记一笔」仍是启动后第一个能打字的地方,没被抢走。
             // ⚠ 不记「是不是第一次启动」的旗:清空库后再指一次路无害,而多一份要落盘、
             // 要跨设备想清楚语义的状态不值(设计铁律:不加中间态)。
+            // 默认开开机自启(只做一次,见 apply_autostart_default)。失败不挡启动:写进日志,
+            // 设置里那枚开关读的是系统真值,用户看得见它没开。
+            if let Err(e) = apply_autostart_default(app.handle()) {
+                log::error!("{e}");
+            }
+            // 开机那一趟只进托盘:每次开机都弹捕获条 / 主窗是打扰,不是指路。
+            if launched_by_autostart() {
+                return Ok(());
+            }
             if empty_library {
                 open_notebook(app.handle());
             }
@@ -4064,6 +4132,8 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            get_autostart,
+            set_autostart,
             capture_note,
             set_foreground_space,
             get_foreground_space,

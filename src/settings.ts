@@ -175,6 +175,10 @@ function buildPane(cat: SettingsCat, pane: HTMLElement): void {
 
   if (cat === "general") {
     pane.append(
+      el("h2", "settings-title settings-sect", t("settings.autostartTitle")),
+      el("p", "settings-sub", t("settings.autostartSub")),
+      buildAutostartRow(),
+
       el("h2", "settings-title settings-sect", t("settings.appearance")),
       el("p", "settings-sub", t("settings.appearanceSub")),
       buildThemeRow(),
@@ -408,6 +412,45 @@ const THEME_CHOICES: { mode: ThemeMode; label: string }[] = [
   { mode: "light", label: t("settings.themeLight") },
   { mode: "dark", label: t("settings.themeDark") },
 ];
+
+// ---- 开机自启(用户面 124 ①)----
+//
+// 开 / 关两档 seg,与截止提醒同形。⭐ 高亮只跟后端回来的**系统真值**走(get / set 都回读
+// 注册表那一格),⛔ 不在点击处先乐观翻 —— 写失败时屏上必须仍是原来那档,外加一句原话。
+// 默认开那一步在壳里(lib.rs::apply_autostart_default),这里不管默认。
+function buildAutostartRow(): HTMLDivElement {
+  const wrap = document.createElement("div");
+  const line = document.createElement("div");
+  line.className = "hkset-row zoom-row";
+  const seg = document.createElement("div");
+  seg.className = "seg";
+  const onBtn = el("button", "seg-btn", t("settings.autostartOn")) as HTMLButtonElement;
+  const offBtn = el("button", "seg-btn", t("settings.autostartOff")) as HTMLButtonElement;
+  seg.append(onBtn, offBtn);
+  const msg = el("p", "hkset-msg", "");
+  const paint = (on: boolean): void => {
+    onBtn.classList.toggle("on", on);
+    offBtn.classList.toggle("on", !on);
+  };
+  const run = (p: Promise<boolean>): void => {
+    onBtn.disabled = offBtn.disabled = true;
+    void p
+      .then((on) => {
+        paint(on);
+        setMsg(msg, "", "");
+      })
+      .catch((e) => setMsg(msg, String(e), "err"))
+      .finally(() => {
+        onBtn.disabled = offBtn.disabled = false;
+      });
+  };
+  onBtn.addEventListener("click", () => run(invoke<boolean>("set_autostart", { on: true })));
+  offBtn.addEventListener("click", () => run(invoke<boolean>("set_autostart", { on: false })));
+  run(invoke<boolean>("get_autostart"));
+  line.append(seg); // 623:单行组不写行名
+  wrap.append(line, msg);
+  return wrap;
+}
 
 function buildThemeRow(): HTMLDivElement {
   const line = document.createElement("div");

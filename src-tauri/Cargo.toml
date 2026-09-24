@@ -41,6 +41,8 @@ tauri-plugin-clipboard-manager = "2"
 # 截止提醒(用户面 39 第一版):每天到点由 notebook 前端发一条系统通知「逾期 M · 今天 N」。
 # 只注册插件,调度与文案全在前端(通知文案要走 i18n 字典,Rust 侧诊断串拍板不翻)。
 tauri-plugin-notification = "2"
+# 开机自启(用户面 124 ①):Windows 写 HKCU Run、macOS LaunchAgent、Linux XDG autostart。
+tauri-plugin-autostart = "2"
 # app 级单实例门(97 多空间,sync-plan §六②):两个进程同开多库会争抢同一 origin 的
 # op 发射序号,必须先于一切开库/transport/热键把第二实例挡在门外(最先注册;
 # e2e/YS_DB_PATH 刻意不装,见 lib.rs run())。

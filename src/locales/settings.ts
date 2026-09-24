@@ -79,5 +79,9 @@ export const settings = defineMessages({
   "settings.keysIndent": { zh: "待办行缩进 / 退回", en: "Indent / outdent checklist items" },
   "settings.keysPaste": { zh: "贴图(剪贴板里的图片直接成配图)", en: "Paste an image from the clipboard" },
   "settings.keysFoot": { zh: "回收站和归档里的卡片键不一样:选中后按 / 看它自己能按哪些。", en: "Cards in the trash and the archive have their own keys: pick one and press / to see them." },
+  "settings.autostartTitle": { zh: "开机自动启动", en: "Start at login" },
+  "settings.autostartSub": { zh: "开机后朱简悄悄待在托盘里,热键和截止提醒一开机就能用。", en: "Zhujian waits quietly in the tray after you log in, so the shortcuts and due reminders work right away." },
+  "settings.autostartOn": { zh: "开", en: "On" },
+  "settings.autostartOff": { zh: "关", en: "Off" },
   "settings.hotkeyUpdated": { zh: "已更新,立即生效", en: "Updated, effective immediately" },
 });
