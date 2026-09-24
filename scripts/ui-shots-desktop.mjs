@@ -417,6 +417,49 @@ async function shootCapture(cdp, lang, theme, file) {
   await cdp.shot(file);
 }
 
+// ---- 一次只许一趟(backlog 测试与工装 51 (j),714 撞到)-----------------------
+// 上面那三条隔离隔的是「与用户日常那只 app 并存」,⛔ **不是「与自己另一趟并存」**:库(`DB`)、
+// WebView2 profile、窗口档、默认调试口都是单一路径,两趟并行(如「有数据」与 `--empty`)后起那支
+// 当场把先起那支的库与 profile 删掉。⇒ 开跑前抢一把锁,抢不到就响亮退、非 0,**在碰任何共享物之前**。
+// ⭐ 选锁不选「DB 路径带进程标识」:要改成按进程分的不止 DB 一样(profile / 窗口档 / 端口都得跟着分),
+//   而 714 那种并行本来就只是图省事,排队跑的代价只是多等几分钟。
+// ⚠ 锁里记 pid:那只进程已不在(崩了 / 被 Ctrl+C,没走到 exit 钩子)= 陈锁,明说一句再接手;
+//   pid 被别的进程复用 ⇒ 误拒,方向安全,消息里印着 pid 可手工核。
+// ⚠ 714 那趟真正贵的是**调用方的管道把退出码吞了**(`… | tail` 形):这里能做的只是退得响、退码非 0,
+//   ⛔ 调用时别接管道(memory `test-output-pipe-loses-exit-code`)。
+const LOCK = `${DB}.run.lock`;
+function takeRunLock() {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      writeFileSync(LOCK, String(process.pid), { flag: "wx" });
+      process.on("exit", () => rmSync(LOCK, { force: true }));
+      return;
+    } catch (e) {
+      if (e.code !== "EEXIST") throw e;
+    }
+    const holder = Number(readFileSync(LOCK, "utf8").trim());
+    let alive = false;
+    try {
+      process.kill(holder, 0);
+      alive = true;
+    } catch {
+      /* 那只进程已不在 */
+    }
+    if (alive) {
+      console.error(
+        `\n✖ 另一趟 ui-shots-desktop 正在跑(pid ${holder},锁 ${LOCK})。\n` +
+          `  库 / WebView2 profile / 窗口档都是单一路径,两趟并行后起那支会把先起那支踩坏 ⇒ 本趟一个字没动就退。\n` +
+          `  ⇒ 等它跑完再跑这趟(要两态就排队:先常态、再 --empty)。\n`,
+      );
+      process.exit(2);
+    }
+    console.log(`⚠ 锁 ${LOCK} 是陈的(pid ${holder} 已不在 —— 上一趟崩了或被 Ctrl+C)⇒ 接手`);
+    rmSync(LOCK, { force: true });
+  }
+  throw new Error(`锁 ${LOCK} 两次都没抢到 —— 有另一趟正同时起步?⛔ 不猜,重跑一次`);
+}
+takeRunLock();
+
 // ---- 主流程 ------------------------------------------------------------------
 const exeInfo = assertExeIsFresh();
 

@@ -29,6 +29,20 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const target = resolve(join(repoRoot, "..", "zhujian-public"));
 
 const cmd = process.argv[2];
+// 本脚本**一个开关都不认** ⇒ 子命令之后多给的一律响亮拒,⛔ 别静默吃掉(597 撞到,backlog 测试与工装 51)。
+// 597 栽的:`land` 转印 export-public 那句「带 --accept-exclusions 再跑一趟」,人照做,而 land 把开关吃掉、
+// 屏上与不带时逐字相同。⭐ 拒的是「不认识」这一整类(verify / abandon 的笔误同形),⛔ 别改成只认那一个词再转发。
+// 阴性对照 = `.claude/skills/fake-origin-sandbox/gate-sandbox-unknown-flag.mjs`。
+const extraArgs = process.argv.slice(3);
+if (extraArgs.length) {
+  die(
+    `不认识的参数:${extraArgs.join(" ")} —— branch-gate 的子命令一个开关都不收。` +
+      (extraArgs.includes("--accept-exclusions")
+        ? `\n   排除清单基线要落盘:单跑 \`node scripts/export-public.mjs --accept-exclusions\`,` +
+          `\`.export-excluded.json\` 一起提交,再 \`branch-gate ${cmd}\`。`
+        : ""),
+  );
+}
 
 function die(msg) {
   console.error(`\n❌ ${msg}\n`);

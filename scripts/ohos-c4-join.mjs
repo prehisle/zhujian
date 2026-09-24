@@ -22,7 +22,7 @@
 // # 用法
 //
 //   node scripts/ohos-c4-join.mjs            起台架并**挂着**(参数口要一直在)
-//   node scripts/ohos-c4-join.mjs stop       收场:按 pid 停两个子进程 + 撤反向端口
+//   node scripts/ohos-c4-join.mjs stop       收场:按 pid 停两个子进程与跑手本体 + 撤反向端口
 //
 // ⭐ **490 起安卓也用这套台架**(§15a-3「旧 APK 新加入」要的东西与鸿蒙 C4③ 一模一样):
 //   ANDROID_SERIAL=<serial> ZJ_RIG_FORWARD=adb node scripts/ohos-c4-join.mjs
@@ -88,7 +88,9 @@ const listForward = () => (FORWARD === "none" ? noDevice : FORWARD === "adb" ? a
 if (process.argv[2] === "stop") {
   if (!existsSync(pidFile)) die(`没有 ${pidFile} —— 台架没起过?(手工核一遍再说)`);
   const pids = JSON.parse(readFileSync(pidFile, "utf8"));
-  for (const [name, pid] of Object.entries(pids)) {
+  // 跑手本体(`rig`)排最后:先停两个子进程,再停占着参数口 8792 的它自己。
+  const order = Object.entries(pids).sort(([a], [b]) => (a === "rig") - (b === "rig"));
+  for (const [name, pid] of order) {
     const r = spawnSync("taskkill", ["/F", "/T", "/PID", String(pid)], { encoding: "utf8" });
     console.log(`停 ${name}(pid ${pid}):${(r.stdout + r.stderr).trim()}`);
   }
@@ -129,7 +131,9 @@ writeFileSync(join(syncdData, "banlist.txt"), "# C4 台架,一次性\n");
 const openerDb = join(stage, "opener.sqlite3");
 const webview2 = join(stage, "webview2");
 
-const pids = {};
+// ⚠ 跑手本体也要记(719 撞两次):它自己挂着参数口 8792,只记两个子进程的话 `stop` 之后它还在,
+// 下一趟起台架当场 `EADDRINUSE: 8792`。
+const pids = { rig: process.pid };
 const saveP = () => writeFileSync(pidFile, JSON.stringify(pids, null, 2));
 
 console.log(`── 起 zhujian-syncd(${SERVER_URL},data-dir=${syncdData})`);

@@ -161,6 +161,7 @@ jobs:
 
       - name: 核验线上清单
         run: |
-          curl -s --fail "https://zhujian.app/updates/latest.json" > got.json
+          # --retry-all-errors:688 一次 DNS 解析失败(退出码 6)就把已上传完的整趟发版记红;本步只读,重试安全。
+          curl -s --fail --retry 3 --retry-all-errors -o got.json "https://zhujian.app/updates/latest.json"
           node -e "const j=require('./got.json');console.log('线上 latest.json 版本',j.version,'| 平台',Object.keys(j.platforms).join(', '))"
           test "$(node -p "require('./got.json').version")" = "$(node -p "require('./package.json').version")"

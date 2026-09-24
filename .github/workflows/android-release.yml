@@ -172,5 +172,6 @@ jobs:
 
       - name: 核验线上 android.json
         run: |
-          curl -s --fail "https://zhujian.app/updates/android.json" > got.json
+          # --retry-all-errors:688 一次 DNS 解析失败(退出码 6)就把已上传完的整趟发版记红;本步只读,重试安全。
+          curl -s --fail --retry 3 --retry-all-errors -o got.json "https://zhujian.app/updates/android.json"
           node -e "const j=require('./got.json');const v=require('./android/package.json').version;console.log('线上 android.json 版本',j.version,'versionCode',j.versionCode);if(j.version!==v){console.error('::error::线上版本 '+j.version+' 与本版 '+v+' 不符');process.exit(1)}"
