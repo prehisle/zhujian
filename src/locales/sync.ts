@@ -38,6 +38,8 @@ export const sync = defineMessages({
   "sync.snapshotDone": { zh: "快照 {total} 已收全,校验并导入中…", en: "Snapshot {total} received, verifying and importing…" },
   "sync.advanced": { zh: "高级…", en: "Advanced…" },
   "sync.serverKv": { zh: "服务器 {url}", en: "Server {url}" },
+  "sync.accountKv": { zh: "账户号 {id}", en: "Account ID {id}" },
+  "sync.copyAccount": { zh: "复制账户号", en: "Copy account ID" },
   "sync.changeServer": { zh: "修改服务器", en: "Change server" },
   "sync.back": { zh: "返回", en: "Back" },
   "sync.createIntro": { zh: "把本机创建为账户的第一台设备,其他设备之后配对加入。", en: "Make this device the account's first device; other devices join later by pairing." },

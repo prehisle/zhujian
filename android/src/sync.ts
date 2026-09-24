@@ -154,9 +154,11 @@ export function renderSync(s: SyncStatus) {
       [t("sync.infoServer"), s.server_url ?? ""],
       [t("sync.infoPeers"), String(s.peers_online)],
     ];
-    $("sync-info").innerHTML = rows
-      .map(([k, v]) => `<span class="k">${esc(k)}</span><span class="v">${esc(v)}</span>`)
+    // 账户号那一格等宽:要人照着念 / 抄,比例字体下 0 与 O 挤在一起认不准(与设备 ID 同形)。
+    $("sync-info-kv").innerHTML = rows
+      .map(([k, v], i) => `<span class="k">${esc(k)}</span><span class="v${i === 0 ? " mono" : ""}">${esc(v)}</span>`)
       .join("");
+    $("sync-account-copy").dataset.copy = s.account_id ?? "";
   }
 }
 
@@ -501,6 +503,13 @@ export function initSync(d: Deps): void {
   $("sync-conninfo-btn").addEventListener("click", () => {
     const info = $("sync-info");
     info.hidden = !info.hidden;
+  });
+  $("sync-account-copy").addEventListener("click", () => {
+    // 走平台接缝 —— 安卓 WebView 的 `navigator.clipboard` 恒拒(判据在 platform.ts)。
+    writeClipboard($("sync-account-copy").dataset.copy ?? "").then(
+      () => showBar(t("sync.accountCopied"), true),
+      () => showError(t("sync.copyFailed")),
+    );
   });
   $("sync-create-btn").addEventListener("click", () => void doCreateAccount());
   $("sync-invite-btn").addEventListener("click", () => void doInviteDevice());

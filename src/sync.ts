@@ -22,6 +22,7 @@ import { t } from "./i18n";
 import "./sync.css";
 import { elText as el, btn } from "./dom";
 import { errLine, errNode } from "./err";
+import { copyButton } from "./clipboard";
 
 // 同步服务器默认地址——创建账户/加入设备(本文件)+ 加入空间(notebook.ts)三处入口预填。
 export const DEFAULT_SYNC_URL = "wss://sync.zhujian.app";
@@ -467,6 +468,12 @@ function advancedEntryRow(): HTMLElement {
 function renderAdvanced(body: HTMLElement): void {
   const s = cur();
   if (s?.configured) {
+    // 账户号(盈利准备 C4):客服对号 / 人工开通都要用户报出这一串 —— 看得见、抄得走。
+    const account = s.account_id ?? "";
+    body.appendChild(el("div", "sync-kv", t("sync.accountKv", { id: account })));
+    const accActs = el("div", "sync-actions");
+    accActs.appendChild(copyButton(account, "hbtn", t("sync.copyAccount")));
+    body.appendChild(accActs);
     // 服务器地址的唯一常显出处(首屏已收走)。
     body.appendChild(el("div", "sync-kv", t("sync.serverKv", { url: s.server_url ?? "" })));
     const acts = el("div", "sync-actions");

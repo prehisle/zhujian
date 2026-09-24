@@ -1781,7 +1781,13 @@
         <div class="row" style="margin-top: 8px">
           <button id="sync-conninfo-btn" class="ghost" style="flex: 1" data-i18n="shell.connInfo">连接信息</button>
         </div>
-        <div id="sync-info" class="kv" hidden></div>
+        <!-- 账户号可复制(盈利准备 C4):客服对号 / 人工开通都要用户报出这一串。 -->
+        <div id="sync-info" hidden>
+          <div id="sync-info-kv" class="kv"></div>
+          <div class="row">
+            <button id="sync-account-copy" class="ghost" data-i18n="sync.copyAccount">复制账户号</button>
+          </div>
+        </div>
         <p class="fine" data-i18n="shell.bgNote">后台不保证实时,回到前台会继续追赶。</p>
       </div>
       <!-- 单空间时头部空间徽章隐藏,空间面板从这里兜底可达(多空间时徽章即入口)。
