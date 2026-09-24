@@ -174,6 +174,27 @@ if (!FAKE) {
     }
   }
 
+  // ── ①d 更新日志页(profit F2)────────────────────────────────────────────
+  // 同 ①c 一根轴(线上那份 == 仓里那份),另加一问:仓里那份记没记**当前这两个版本**。
+  // 这页每次发版都要手加一块(site/changelog.md 头注),漏加不会有任何别的地方红 ——
+  // 而本脚本正是发版收口那一趟必跑的(流程 4 第 5 步),故绑在这儿,⛔ 别另起门禁。
+  // ⚠ 诚实边界:只核「版本号出现过」,核不了那句话是不是 tag 上那句;境内站那份同 ①c 不守。
+  console.log("\n①d 更新日志页 changelog.html");
+  try {
+    const md = readFileSync("site/changelog.md", "utf8");
+    for (const [label, pkg] of [["电脑版", "package.json"], ["安卓版", "android/package.json"]]) {
+      const want = `**${label} ${json(pkg).version}**`;
+      if (md.includes(want)) ok(`site/changelog.md 记了 ${want}`);
+      else bad(`site/changelog.md 没记 ${want} —— 发版要在最上面加一块,见它的头注`);
+    }
+    const local = readFileSync("site-app/changelog.html");
+    const live = curl("https://zhujian.app/changelog.html", { binary: true });
+    if (Buffer.compare(local, live) === 0) ok(`与 site-app/changelog.html 逐字节相同(${local.length} 字节)`);
+    else bad(`线上与 site-app/changelog.html 不同(线上 ${live.length} 字节 / 本地 ${local.length} 字节)—— 重跑生成器后走流程 5`);
+  } catch (e) {
+    bad(`更新日志这一格没得判:${e.message.trim()}`);
+  }
+
   // ── ② 桌面更新清单 ───────────────────────────────────────────────────────
   console.log("\n② 桌面更新清单 updates/latest.json");
   try {
