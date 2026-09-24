@@ -1,7 +1,7 @@
 // 小件合收的分片(键前缀 = 来源 ts 文件名,全局唯一、跨分片不许撞):
 // api.ts(空间展示名)/ identity.ts(署名)/ images.ts + thumbs.ts(配图)/
 // swipe.ts(滑动改状态回执)/ ui.ts(stage 印文 + 时间格式 + actionBar 配套的
-// 通用「撤销」——操作型回执(§3.1)的钮词只此一份,滑动/勾完成/删除/归档共用)。
+// 通用「撤销」——操作型回执(§3.1)的钮词只此一份,滑动/勾完成/删除/归档共用)/ err.ts(错误文案人话前置)。
 import { defineMessages } from "./entry";
 
 export const misc = defineMessages({
@@ -15,6 +15,15 @@ export const misc = defineMessages({
   "images.tooMany": { zh: "一次最多 {max} 张,这次选了 {n} 张;分几次加吧", en: "At most {max} at a time; you picked {n}. Add them in a few batches." },
   "swipe.changedTo": { zh: "已改为「{stage}」", en: "Moved to “{stage}”" },
   "ui.undo": { zh: "撤销", en: "Undo" },
+  // 错误文案人话前置(err.ts,用户面 126):值与桌面 common.ts 的 err.* 逐字同形,只「下一步」
+  // 那枚按本端叫法 —— 手机的网络自检住设置里的「诊断」面(那一节叫「网络栈诊断」)。
+  "err.raw": { zh: "(原文:{raw})", en: " (details: {raw})" },
+  "err.unknown": { zh: "出错:{raw}", en: "Error: {raw}" },
+  "err.net": { zh: "没连上服务器,或者连接中途断了。", en: "Couldn't reach the server, or the connection dropped." },
+  "err.revoked": { zh: "同步服务器不认这台设备了(可能已被移出账户,或账户被停用)。", en: "The sync server no longer accepts this device (it may have been removed from the account, or the account suspended)." },
+  "err.conflict": { zh: "这次改动和已有的数据对不上,没有存。", en: "This change conflicts with existing data and wasn't saved." },
+  "err.gone": { zh: "要改的那一条已经不在了(可能在另一台设备上删掉或移走了)。", en: "That entry is no longer there (it may have been deleted or moved on another device)." },
+  "err.probeNext": { zh: "网络诊断", en: "Network check" },
   "ui.stageTodo": { zh: "待办", en: "To do" },
   "ui.stageDoing": { zh: "进行中", en: "In progress" },
   "ui.stageConfirming": { zh: "待确认", en: "To confirm" },

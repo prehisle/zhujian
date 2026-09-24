@@ -20,6 +20,7 @@ import { t } from "./i18n";
 import { writeClipboard } from "./platform";
 import type { SyncStatus } from "./sync";
 import { $, confirmBar, esc, showBar, showError } from "./ui";
+import { errHtml } from "./err";
 
 /** `sync_device_admin` 的 action(core `DeviceAction` 的变体名,认不出由 serde 当场拒)。 */
 type DeviceAction = "Remove" | "GrantAdmin" | "RevokeAdmin";
@@ -84,6 +85,7 @@ let open = false;
 let expanded: string | null = null;
 let busy = false;
 let refreshing = false;
+// 存的是 `errHtml` 出来的**已转义** HTML(用户面 126:「连不上」那句后面带一枚「网络诊断」)。
 let pageErr = "";
 
 export function resetDevices(): void {
@@ -147,7 +149,7 @@ function refresh(): void {
         pageErr = "";
       },
       (e: unknown) => {
-        pageErr = String(e);
+        pageErr = errHtml(e);
       },
     )
     .then(() => {
@@ -168,7 +170,7 @@ function render(): void {
     // 的 attach 推送同样可能丢,断言版本旧是不诚实的。
     box.innerHTML =
       `<p class="fine">${esc(refreshing ? t("devices.loading") : t("devices.unavailable"))}</p>` +
-      (pageErr ? `<div class="err">${esc(pageErr)}</div>` : "") +
+      (pageErr ? `<div class="err">${pageErr}</div>` : "") +
       refreshRow();
     return;
   }
@@ -254,7 +256,7 @@ function render(): void {
         );
       })
       .join("") +
-    (pageErr ? `<div class="err">${esc(pageErr)}</div>` : "") +
+    (pageErr ? `<div class="err">${pageErr}</div>` : "") +
     refreshRow();
 }
 
@@ -313,7 +315,7 @@ async function commit(device: string, action: DeviceAction, name: string): Promi
     // 不许改写(命令**可能已经在服务器上执行了**,UI 的义务是以新名册为准而不是重试)。
     // ⚠ 刻意**不**走全局 showError:那条提示条几秒就走,而这几句话是要读完的;它就落在
     // 刚动过手的那张名单下面,留到下一次动作为止。
-    pageErr = String(err);
+    pageErr = errHtml(err);
   } finally {
     busy = false;
     if (open) render();

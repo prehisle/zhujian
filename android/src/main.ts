@@ -38,6 +38,7 @@ import {
   type TimelineItem,
 } from "./api";
 import { $, actionBar, contentHtml, dayKey, dayLabel, esc, fmtTimeOfDay, fmtWhen, hideConfirmBar, showBar, showError } from "./ui";
+import { errDetail, errText, initErr, showErr } from "./err";
 import { toggleChecklistLine } from "../../shared/checklist";
 import { buildStamp, formatBuiltAt } from "../../shared/build-stamp";
 import { applyChecklistMarker, wireChecklistNewline } from "./checklist-input";
@@ -682,7 +683,7 @@ async function flushChecklist(space: string): Promise<void> {
         else await editNote(space, id, send);
       }
     } catch (err) {
-      showError(String(err));
+      showErr(err);
       ckLatest.clear();
     }
     await refresh(); // 后端是真相源:成败都照它重画,⛔ 不猜该回滚到哪一版
@@ -1124,7 +1125,7 @@ async function refreshOnce(): Promise<void> {
     }
     disconnectThumbObserver();
     $("timeline").innerHTML =
-      `<p class="empty warn-ink">${t("main.timelineLoadFailed", { error: esc(String(err)) })}</p>`;
+      `<p class="empty warn-ink">${t("main.timelineLoadFailed", { error: esc(errDetail(err)) })}</p>`;
     lastRefreshOk = false; // 快照失效:mode 切换不投影、定位不误报"已归档"
   }
 }
@@ -1182,7 +1183,7 @@ $("timeline").addEventListener("change", async (e) => {
   try {
     await completeTask(space, id);
   } catch (err) {
-    showError(String(err));
+    showErr(err);
     await refresh();
     return;
   }
@@ -1194,7 +1195,7 @@ $("timeline").addEventListener("change", async (e) => {
       try {
         await updateTaskStatus(space, id, from);
       } catch (err) {
-        showError(String(err));
+        showErr(err);
       }
       await refresh();
     })();
@@ -1227,7 +1228,7 @@ async function pullSharedText() {
       ta.focus();
     }
   } catch (err) {
-    showError(String(err));
+    showErr(err);
   } finally {
     pullingShare = false;
     if (rerunShare) {
@@ -1291,7 +1292,7 @@ async function pullDeepLink(): Promise<void> {
     if (target !== getCurrentSpace()) await switchSpace(target);
     await focusTimelineCard(p.item);
   } catch (e) {
-    showError(String(e));
+    showErr(e);
   } finally {
     pullingDeepLink = false;
   }
@@ -1407,7 +1408,7 @@ async function save() {
       await refresh();
     }
   } catch (err) {
-    showError(String(err));
+    showErr(err);
     // 失败:取走的那份放回。框里有新字就合并(先写的在前),光标置尾接着改。
     const live = ta.value;
     ta.value = live === "" ? savingDraft : `${savingDraft}\n${live}`;
@@ -1551,7 +1552,7 @@ async function refreshSpaces() {
   try {
     spacesCache = await listSpaces();
   } catch (err) {
-    showError(String(err));
+    showErr(err);
     return;
   }
   renderSpaceChip();
@@ -1600,7 +1601,7 @@ async function switchSpace(id: string) {
     localStorage.setItem(LAST_SPACE_KEY, id);
     await onSpaceChanged();
   } catch (err) {
-    showError(String(err));
+    showErr(err);
     await reconcileForeground(); // 失败已回滚(§9):对账回真前台。
   } finally {
     switching = false;
@@ -2080,7 +2081,7 @@ $("remind-test").addEventListener("click", () => {
   btn.disabled = true;
   sendTestNotification()
     .then(() => showRemindMsg(t("reminder.testSent"), false))
-    .catch((e) => showRemindMsg(String(e), true))
+    .catch((e) => showRemindMsg(errText(e), true))
     .finally(() => {
       btn.disabled = false;
     });
@@ -2119,7 +2120,7 @@ async function loadAlias() {
     input.disabled = false;
     save.disabled = false;
   } catch (e) {
-    showAliasMsg(String(e), true);
+    showAliasMsg(errText(e), true);
   }
 }
 
@@ -2152,7 +2153,7 @@ async function saveAlias() {
     showAliasMsg(next === "" ? t("main.aliasCleared") : t("main.aliasSaved"), false);
   } catch (e) {
     input.value = aliasSaved; // 后端拒了(超长等):回显旧值 + 后端原话
-    showAliasMsg(String(e), true);
+    showAliasMsg(errText(e), true);
   } finally {
     save.disabled = false;
   }
@@ -2203,7 +2204,7 @@ $("space-list").addEventListener("click", async (e) => {
       await reconcileForeground(); // 前台可能已落回 main(后端广播为准,这里对账兜底)。
       await refreshSpaces();
     } catch (err) {
-      showError(String(err));
+      showErr(err);
       await refreshSpaces();
     }
     return;
@@ -2231,7 +2232,7 @@ $("space-list").addEventListener("click", async (e) => {
       renamingSpace = false;
       await refreshSpaces();
     } catch (err) {
-      showError(String(err));
+      showErr(err);
     }
   }
 });
@@ -2264,7 +2265,7 @@ $("space-create").addEventListener("click", async () => {
       showBar(t("main.spaceCreatedNoSwitch"), true);
     }
   } catch (err) {
-    showError(String(err));
+    showErr(err);
   } finally {
     btn.disabled = false;
   }
@@ -2309,7 +2310,7 @@ $("sync-all-btn").addEventListener("click", async () => {
     await reconcileForeground();
     await refresh(); // 前台空间在遍历期间可能收到过草稿保存,重拉一次。
   } catch (err) {
-    showError(String(err));
+    showErr(err);
     box.textContent = "";
     await reconcileForeground();
   } finally {
@@ -2341,7 +2342,7 @@ async function loadDb() {
       .map(([k, v]) => `<span class="k">${esc(k)}</span><span class="v">${esc(v)}</span>`)
       .join("");
   } catch (e) {
-    box.innerHTML = `<span class="v warn-ink">${t("main.diagDbFailed", { error: esc(String(e)) })}</span>`;
+    box.innerHTML = `<span class="v warn-ink">${t("main.diagDbFailed", { error: esc(errDetail(e)) })}</span>`;
   }
 }
 
@@ -2363,7 +2364,7 @@ async function runProbe() {
       )
       .join("");
   } catch (e) {
-    box.innerHTML = `<span class="v warn-ink">${t("main.probeFailed", { error: esc(String(e)) })}</span>`;
+    box.innerHTML = `<span class="v warn-ink">${t("main.probeFailed", { error: esc(errDetail(e)) })}</span>`;
   } finally {
     btn.disabled = false;
   }
@@ -2389,7 +2390,7 @@ async function loadAbout() {
       `${esc(b.dirty ? t("main.aboutBuildDirty", { stamp }) : stamp)}</span>` +
       `<span class="k">${t("main.aboutSite")}</span><span class="v">zhujian.app</span>`;
   } catch (e) {
-    box.innerHTML = `<span class="v warn-ink">${t("main.aboutFailed", { error: esc(String(e)) })}</span>`;
+    box.innerHTML = `<span class="v warn-ink">${t("main.aboutFailed", { error: esc(errDetail(e)) })}</span>`;
   }
 }
 
@@ -2443,7 +2444,7 @@ function initUpdateThrottled() {
 }
 $("update-go").addEventListener("click", () => {
   if (!updateFound) return;
-  void openUrl(updateFound.url).catch((err) => showError(String(err)));
+  void openUrl(updateFound.url).catch((err) => showErr(err));
 });
 $("update-later").addEventListener("click", () => {
   $("update").hidden = true;
@@ -2480,7 +2481,7 @@ async function rescanThenRefreshSpaces(retryLeft: number): Promise<void> {
       window.setTimeout(() => void rescanThenRefreshSpaces(retryLeft - 1), 3000);
       return;
     }
-    showError(t("main.spaceRenamedRefreshFailed", { error: String(err) }));
+    showError(t("main.spaceRenamedRefreshFailed", { error: errDetail(err) }));
     return;
   }
   await refreshSpaces();
@@ -2527,6 +2528,8 @@ cardPanel.initCardPanel({
 });
 // 编辑层(706):正文编辑那座底部层。宿主是 cardpanel(草稿/写口/判弃都在那边),
 // 这里只给它返回键层账本的两把手(同留言层与大图查看器的形)。
+// 错误文案后面那枚「网络诊断」(err.ts,用户面 126)开的是设置里的「诊断」面。
+initErr(() => openPane("diag"));
 initEditSheet({ pushLayer, settleHistory });
 // 留言层(314 第③笔):写/删成功即整轴重拉(徽章计数跟着走),开合各压/平一枚返回键守门条目。
 initComments({ refresh, pushLayer, settleHistory });
@@ -2634,7 +2637,7 @@ function privacyGate(): Promise<void> {
     });
     // ⛔ JS 关不掉原生应用 ⇒ 这颗钮唯一的出口是壳里那条命令(mobile/src/shell.rs)。
     $("privacy-decline").addEventListener("click", () => {
-      void invoke("app_exit").catch((err) => showError(String(err)));
+      void invoke("app_exit").catch((err) => showErr(err));
     });
   });
 }

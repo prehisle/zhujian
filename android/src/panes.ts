@@ -18,7 +18,8 @@ import {
   type SearchStatus,
 } from "./api";
 import { t } from "./i18n";
-import { $, confirmBar, contentHtml, esc, fmtWhen, hideConfirmBar, showBar, showError } from "./ui";
+import { $, confirmBar, contentHtml, esc, fmtWhen, hideConfirmBar, showBar } from "./ui";
+import { errDetail, showErr } from "./err";
 import { isTaskStage, setColumns, stageLabel } from "./columns";
 
 type Deps = {
@@ -65,7 +66,7 @@ export async function loadTrash(): Promise<void> {
     renderTrash();
   } catch (err) {
     if (space !== getCurrentSpace() || seq !== trashSeq) return;
-    box.innerHTML = `<p class="empty warn-ink">${t("panes.trashLoadFailed", { error: esc(String(err)) })}</p>`;
+    box.innerHTML = `<p class="empty warn-ink">${t("panes.trashLoadFailed", { error: esc(errDetail(err)) })}</p>`;
   }
 }
 
@@ -110,7 +111,7 @@ async function trashRun(op: (space: string) => Promise<unknown>, doneMsg?: strin
     await op(space);
     if (space === getCurrentSpace() && doneMsg) showBar(doneMsg, true);
   } catch (err) {
-    if (space === getCurrentSpace()) showError(String(err));
+    if (space === getCurrentSpace()) showErr(err);
   } finally {
     trashBusy = false;
     clearConfirm();
@@ -202,7 +203,7 @@ export async function loadSealed(): Promise<void> {
     if (space !== getCurrentSpace() || seq !== sealedSeq) return;
     sealedRows = [];
     sealedOpenId = null;
-    box.innerHTML = `<p class="empty warn-ink">${t("panes.sealedLoadFailed", { error: esc(String(err)) })}</p>`;
+    box.innerHTML = `<p class="empty warn-ink">${t("panes.sealedLoadFailed", { error: esc(errDetail(err)) })}</p>`;
   }
 }
 
@@ -253,7 +254,7 @@ function onSealedClick(e: Event) {
       await unsealTask(space, id);
       if (space === getCurrentSpace()) showBar(t("panes.unsealed"), true);
     } catch (err) {
-      if (space === getCurrentSpace()) showError(String(err));
+      if (space === getCurrentSpace()) showErr(err);
     } finally {
       sealedBusy = false;
       if (space === getCurrentSpace()) {
@@ -305,7 +306,7 @@ async function runSearch() {
       : `<p class="muted empty">${t("panes.searchNoHit", { q: esc(q) })}</p>`;
   } catch (err) {
     if (space !== getCurrentSpace() || seq !== searchSeq) return;
-    box.innerHTML = `<p class="empty warn-ink">${t("panes.searchFailed", { error: esc(String(err)) })}</p>`;
+    box.innerHTML = `<p class="empty warn-ink">${t("panes.searchFailed", { error: esc(errDetail(err)) })}</p>`;
   }
 }
 

@@ -16,6 +16,7 @@
 //     ⛔ 不许重新建一格(三弹 / 四弹 M:只改状态字不清表,泄漏与二次结算一个都没解决)。
 
 import { t } from "./i18n";
+import { errDetail } from "./err";
 
 /**
  * 应答宽限与轮询间隔。⚠ **刻意不进 `timing.ts`**:那份是 ui-guidelines §2.4 那张表的代码
@@ -188,7 +189,7 @@ function transfer(
   try {
     started = JSON.parse(fire(b, id)) as { transferId?: string; error?: string };
   } catch (e) {
-    return Promise.resolve({ ok: false, error: String(e), canRetry: false });
+    return Promise.resolve({ ok: false, error: errDetail(e), canRetry: false });
   }
   if (!started.transferId) {
     return Promise.resolve({ ok: false, error: started.error ?? t("backup.notStarted"), canRetry: false });

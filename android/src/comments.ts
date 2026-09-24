@@ -29,7 +29,8 @@ import {
 import { t } from "./i18n";
 import { authorLabel } from "./identity";
 import { createKbSheet, type KbSheet } from "./kbsheet";
-import { $, confirmBar, esc, fmtWhen, hideConfirmBar, showBar, showError } from "./ui";
+import { $, confirmBar, esc, fmtWhen, hideConfirmBar, showBar } from "./ui";
+import { showErr } from "./err";
 
 type Deps = {
   /** 写/删成功后的整轴重拉(main.ts 的 refresh,single-flight):徽章计数跟着走。 */
@@ -216,7 +217,7 @@ async function loadPage(s: Sheet, next: boolean): Promise<void> {
   } catch (err) {
     if (!live(s)) return;
     // 后端的话原样展示(宿主不存在 / 游标不合形都是有话可说的拒绝),不吞不改写。
-    showError(String(err));
+    showErr(err);
     if (!next) listEl().innerHTML = `<p class="cm-empty warn-ink">${t("comments.loadFailed")}</p>`;
   } finally {
     s.loading = false;
@@ -258,7 +259,7 @@ async function submit(): Promise<void> {
     if (s.space === getCurrentSpace()) void deps.refresh();
   } catch (err) {
     // 四道拒(空正文 / 200 KiB / 宿主不存在 / 500 软闸)原样报后端的话。
-    if (live(s)) showError(String(err));
+    if (live(s)) showErr(err);
   } finally {
     if (sheet === s) setBusy(s, false);
     else s.busy = false;
@@ -291,7 +292,7 @@ async function destroy(s: Sheet, id: string): Promise<void> {
     }
     if (s.space === getCurrentSpace()) void deps.refresh(); // 徽章跟着走
   } catch (err) {
-    if (live(s)) showError(String(err));
+    if (live(s)) showErr(err);
   } finally {
     if (sheet === s) setBusy(s, false);
     else s.busy = false;

@@ -72,6 +72,7 @@ import {
 } from "./api";
 import { t } from "./i18n";
 import { $, actionBar, confirmBar, esc, fmtWhen, hideConfirmBar, showBar, showError } from "./ui";
+import { errText, showErr } from "./err";
 import { DONE_COLUMN, LANDING_COLUMN, isTaskStage, liveTaskColumns, stageLabel } from "./columns";
 import { capturePhoto, PICK_MAX, pickImages, toBase64 } from "./images";
 import { openViewer } from "./viewer";
@@ -447,7 +448,7 @@ async function run(
     await op(space);
     wrote = true;
   } catch (err) {
-    if (space === getCurrentSpace() && state === session) showError(String(err));
+    if (space === getCurrentSpace() && state === session) showErr(err);
   } finally {
     busy = false;
     clearConfirm();
@@ -477,7 +478,7 @@ async function runMove(target: string, targetLabel: string): Promise<void> {
   try {
     result = await moveItemToSpace(source, target, id);
   } catch (err) {
-    if (source === getCurrentSpace() && state === session) showError(String(err));
+    if (source === getCurrentSpace() && state === session) showErr(err);
   } finally {
     busy = false;
     clearConfirm();
@@ -583,7 +584,7 @@ async function enterTags(card: HTMLElement) {
     renderPanel(c);
   } catch (err) {
     if (state === session && space === getCurrentSpace() && seq === session.topicsSeq) {
-      showError(String(err));
+      showErr(err);
     }
   }
 }
@@ -605,7 +606,7 @@ async function enterHistory(card: HTMLElement) {
     session.revisions = revisions;
     renderPanel(currentCard() ?? card);
   } catch (err) {
-    if (state === session && space === getCurrentSpace()) showError(String(err));
+    if (state === session && space === getCurrentSpace()) showErr(err);
   }
 }
 
@@ -678,7 +679,7 @@ async function attachImages(itemId: string, files: File[]): Promise<void> {
           added.push(await addItemImage(space, itemId, f.type, b64));
           ok += 1;
         } catch (err) {
-          if (!firstErr) firstErr = String(err);
+          if (!firstErr) firstErr = errText(err);
         }
       }
     },
@@ -980,7 +981,7 @@ function handleAct(act: string, card: HTMLElement) {
                 try {
                   await (task ? restoreTask(space, cur.id) : restoreNote(space, cur.id));
                 } catch (err) {
-                  showError(String(err));
+                  showErr(err);
                 }
                 await deps.refresh();
               })();
@@ -1021,7 +1022,7 @@ function handleAct(act: string, card: HTMLElement) {
                 try {
                   await unsealTask(space, item.id);
                 } catch (err) {
-                  showError(String(err));
+                  showErr(err);
                 }
                 await deps.refresh();
               })();

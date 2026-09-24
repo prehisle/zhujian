@@ -35,7 +35,8 @@ import {
 import { setColumns, stageLabel } from "./columns";
 import { groupPills } from "./filter";
 import { t } from "./i18n";
-import { $, confirmBar, esc, fmtWhen, showBar, showError } from "./ui";
+import { $, confirmBar, esc, fmtWhen, showBar } from "./ui";
+import { errDetail, showErr } from "./err";
 
 type Deps = {
   /** 顺序变 → 主视图卡片 chip 顺序跟随(chip 按 position 序);改类型无妨顺手重拉。 */
@@ -121,7 +122,7 @@ export async function loadTopics(): Promise<void> {
     render();
   } catch (err) {
     if (space !== getCurrentSpace() || s !== seq) return;
-    box.innerHTML = `<p class="empty warn-ink">${t("topics.loadFailed", { error: esc(String(err)) })}</p>`;
+    box.innerHTML = `<p class="empty warn-ink">${t("topics.loadFailed", { error: esc(errDetail(err)) })}</p>`;
   }
 }
 
@@ -335,7 +336,7 @@ async function saveKind(id: string, clear = false): Promise<void> {
     await setTopicKind(space, id, kind);
     if (space === getCurrentSpace()) showBar(kind ? t("topics.kindSet") : t("topics.kindCleared"), true);
   } catch (err) {
-    if (space === getCurrentSpace()) showError(String(err));
+    if (space === getCurrentSpace()) showErr(err);
   } finally {
     busy = false;
     if (space === getCurrentSpace()) {
@@ -369,7 +370,7 @@ async function saveRename(id: string): Promise<void> {
     await updateTopic(space, id, title);
     if (space === getCurrentSpace()) showBar(t("topics.renamed"), true);
   } catch (err) {
-    if (space === getCurrentSpace()) showError(String(err));
+    if (space === getCurrentSpace()) showErr(err);
   } finally {
     busy = false;
     if (space === getCurrentSpace()) {
@@ -413,7 +414,7 @@ async function doDelete(space: string, id: string): Promise<void> {
     await deleteTopic(space, id);
     if (space === getCurrentSpace()) showBar(t("topics.deleted"), true);
   } catch (err) {
-    if (space === getCurrentSpace()) showError(String(err));
+    if (space === getCurrentSpace()) showErr(err);
   } finally {
     busy = false;
     if (space === getCurrentSpace()) {
@@ -484,7 +485,7 @@ async function doMerge(space: string, sourceId: string, targetId: string): Promi
     await mergeTopics(space, [sourceId], targetId, null);
     if (space === getCurrentSpace()) showBar(t("topics.merged"), true);
   } catch (err) {
-    if (space === getCurrentSpace()) showError(String(err));
+    if (space === getCurrentSpace()) showErr(err);
   } finally {
     busy = false;
     if (space === getCurrentSpace()) {
@@ -509,7 +510,7 @@ async function saveColor(id: string, hex: string | null): Promise<void> {
     await setTopicColor(space, id, hex);
     if (space === getCurrentSpace()) showBar(hex ? t("topics.colorSet") : t("topics.colorCleared"), true);
   } catch (err) {
-    if (space === getCurrentSpace()) showError(String(err));
+    if (space === getCurrentSpace()) showErr(err);
   } finally {
     busy = false;
     if (space === getCurrentSpace()) {
@@ -540,7 +541,7 @@ async function doCreate(): Promise<void> {
     await createTopic(space, title);
     if (space === getCurrentSpace()) showBar(t("topics.created"), true);
   } catch (err) {
-    if (space === getCurrentSpace()) showError(String(err));
+    if (space === getCurrentSpace()) showErr(err);
   } finally {
     busy = false;
     if (space === getCurrentSpace()) {
@@ -861,7 +862,7 @@ async function commitReorder(id: string, prev: string | null, next: string | nul
   try {
     await reorderTopic(space, id, prev, next);
   } catch (err) {
-    if (space === getCurrentSpace()) showError(String(err));
+    if (space === getCurrentSpace()) showErr(err);
   } finally {
     busy = false;
     if (space === getCurrentSpace()) {

@@ -8,7 +8,8 @@
 import { deleteItemImage, getCurrentSpace, type ImageMeta } from "./api";
 import { t } from "./i18n";
 import { fetchImageUrl } from "./thumbs";
-import { $, confirmBar, hideConfirmBar, showBar, showError } from "./ui";
+import { $, confirmBar, hideConfirmBar, showBar } from "./ui";
+import { showErr } from "./err";
 
 type Deps = {
   /** 返回键层账本(143):首开压一枚守门条目。 */
@@ -146,7 +147,7 @@ async function showViewerAt(i: number, dir: -1 | 0 | 1 = 0) {
   } catch (err) {
     if (my !== viewerSeq) return;
     abortSlide();
-    showError(String(err));
+    showErr(err);
   } finally {
     flipping = false;
   }
@@ -468,7 +469,7 @@ export function initViewer(d: Deps): void {
           await deps.refresh();
           showBar(t("viewer.deleted"), true);
         } catch (err) {
-          showError(String(err));
+          showErr(err);
         }
       })();
     });

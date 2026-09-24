@@ -596,6 +596,14 @@
         border-radius: var(--radius-pill); padding: 4px 14px;
       }
       .error .bar-act::before { content: ""; position: absolute; inset: -12px -10px; }
+      /* 错误那句话末尾的「下一步」(用户面 126,err.ts errHtml):嵌在文字流里的一枚文字链,
+         色随所在那行(同步状态 / 设备名单的 .err 是朱字)、下划线标它可点;触区照 .bar-act
+         靠 ::before 外扩(§2.3),不撑开行距。 */
+      .err-next {
+        position: relative; display: inline; padding: 0; border: 0; background: none;
+        font: inherit; color: inherit; text-decoration: underline; text-underline-offset: 2px;
+      }
+      .err-next::before { content: ""; position: absolute; inset: -12px -10px; }
 
       /* 更新条(106):有新版才出现,提示式——「下载」跳系统浏览器,装不装用户定。
          同为 fixed(ui-audit P0 #3):它启动后异步出现,原先把 compose 和整轴顶下去、

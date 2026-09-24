@@ -7,7 +7,8 @@
 
 import { updateTaskStatus, type TaskStatus, type TimelineItem } from "./api";
 import { t } from "./i18n";
-import { actionBar, showError } from "./ui";
+import { actionBar } from "./ui";
+import { showErr } from "./err";
 import { isTaskStage, liveTaskColumns, stageLabel } from "./columns";
 
 // 任务列的线性链(**B-f 第 1 段起从库里来**;此前是四值字面量)。序 = core 按 position
@@ -189,7 +190,7 @@ export function initCardSwipe(deps: Deps): void {
     try {
       await updateTaskStatus(space, id, to);
     } catch (err) {
-      showError(String(err));
+      showErr(err);
       await deps.refresh();
       return;
     }
@@ -203,7 +204,7 @@ export function initCardSwipe(deps: Deps): void {
         try {
           await updateTaskStatus(space, id, from as TaskStatus);
         } catch (err) {
-          showError(String(err));
+          showErr(err);
         }
         await deps.refresh();
         flash(id);

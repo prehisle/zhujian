@@ -139,6 +139,16 @@ export function showBar(msg: string, notice = false) {
  *  移除自然作废,无需 token。⛔ 别再拿 confirmBar 当回执用:它左钮恒印「取消」,与
  *  「已改为…」这类既成事实并排,「取消/撤销」读成一对反义词(用户 2026-08-16 实报)。 */
 export function actionBar(msg: string, actLabel: string, onAct: () => void): void {
+  barWithAct(msg, actLabel, onAct, true, CONFIRM_REVERT_MS);
+}
+
+/** 错误条 + 一枚「下一步」钮(用户面 126,err.ts `showErr`:「连不上」后面挂「网络诊断」)。
+ *  形同 actionBar,只是底色走错误那档、读秒同 showError。 */
+export function errorActionBar(msg: string, actLabel: string, onAct: () => void): void {
+  barWithAct(msg, actLabel, onAct, false, TOAST_ERROR_MS);
+}
+
+function barWithAct(msg: string, actLabel: string, onAct: () => void, notice: boolean, ms: number): void {
   const el = $("error");
   wireBar(el);
   el.textContent = "";
@@ -149,12 +159,13 @@ export function actionBar(msg: string, actLabel: string, onAct: () => void): voi
   act.textContent = actLabel;
   act.onclick = onAct;
   el.append(text, act);
-  el.classList.add("notice", "with-act");
+  el.classList.toggle("notice", notice);
+  el.classList.add("with-act");
   el.hidden = false;
   clearTimeout(errTimer);
   errTimer = window.setTimeout(() => {
     el.hidden = true;
-  }, CONFIRM_REVERT_MS);
+  }, ms);
 }
 
 export const showError = (msg: string) => showBar(msg);

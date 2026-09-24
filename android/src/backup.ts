@@ -17,6 +17,7 @@ import { t } from "./i18n";
 import { HAS_SAF_BRIDGE } from "./platform";
 import * as saf from "./saf";
 import { $ } from "./ui";
+import { errText } from "./err";
 
 type Status = {
   configured: boolean;
@@ -85,7 +86,7 @@ async function refresh(): Promise<void> {
     const st = await invoke<Status>("backup_status");
     render(body, st, outboxProblem);
   } catch (e) {
-    body.replaceChildren(el("p", "fine warn-ink", String(e)));
+    body.replaceChildren(el("p", "fine warn-ink", errText(e)));
   }
 }
 
@@ -152,7 +153,7 @@ function render(body: HTMLElement, st: Status, outboxProblem: string): void {
         .then((code) => renderCeremony(body, code))
         .catch((e) => {
           b.disabled = false;
-          body.appendChild(el("p", "fine warn-ink", String(e)));
+          body.appendChild(el("p", "fine warn-ink", errText(e)));
         });
     }));
     body.appendChild(row);
@@ -204,7 +205,7 @@ function renderCeremony(body: HTMLElement, code: string): void {
       })
       .catch((e) => {
         b.disabled = false;
-        msg.textContent = String(e);
+        msg.textContent = errText(e);
       });
   });
   const cancel = button(t("backup.ceremonyCancel"), true, () => {
@@ -275,7 +276,7 @@ function runBlock(): HTMLElement {
     out.replaceChildren(el("p", "fine", t("backup.running")));
     void invoke<Report>("backup_run")
       .then((r) => runMoves(out, r))
-      .catch((e) => out.replaceChildren(el("p", "fine warn-ink", String(e))))
+      .catch((e) => out.replaceChildren(el("p", "fine warn-ink", errText(e))))
       .finally(() => {
         b.disabled = false;
       });
@@ -472,7 +473,7 @@ async function verifyOne(docId: string, state: HTMLElement): Promise<void> {
     // ⛔ 原样摊开后端那句:「不是这个备份码对应的」与「结构不对」是两回事,
     // 糊成一句会让用户把一份其实没坏的备份删掉。
     state.className = "bkup-item-state warn-ink";
-    state.textContent = String(e);
+    state.textContent = errText(e);
   }
 }
 
@@ -492,7 +493,7 @@ function blockedBlock(reason: string): HTMLElement {
       .catch((e) => {
         b.disabled = false;
         b.textContent = t("backup.retryCleanup");
-        wrap.appendChild(el("p", "fine warn-ink", String(e)));
+        wrap.appendChild(el("p", "fine warn-ink", errText(e)));
       });
   }));
   wrap.append(el("p", "fine warn-ink", t("backup.blockedLead") + reason), row);

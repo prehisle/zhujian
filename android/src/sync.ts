@@ -29,6 +29,7 @@ import {
 } from "./devices";
 import { t } from "./i18n";
 import { $, esc, showBar, showError } from "./ui";
+import { errHtml, showErr } from "./err";
 
 /** 后端 `err_code::SEAT_LIMIT` 那句人话的判别片段(core `transport.rs` 的诊断串,
  *  Rust 诊断不翻)。**匹配字面量,不是显示文案** —— 翻它会破坏判据。 */
@@ -115,7 +116,7 @@ export function renderSync(s: SyncStatus) {
         : s.error || s.state === "offline"
           ? "off"
           : "");
-  const err = s.error ? `<div class="err">${esc(s.error)}</div>` : "";
+  const err = s.error ? `<div class="err">${errHtml(s.error)}</div>` : "";
   const frozen = s.frozen.length
     ? `<div class="err">${t("sync.frozen", { list: esc(s.frozen.join(t("sync.listSep"))) })}</div>`
     : "";
@@ -224,7 +225,7 @@ async function doJoin(serverUrl: string, code: string) {
       true,
     );
   } catch (err) {
-    showError(String(err));
+    showErr(err);
   } finally {
     btn.disabled = false;
     btn.textContent = t("sync.join");
@@ -360,7 +361,7 @@ async function doJoinSpace(serverUrl: string, code: string) {
       showError(out.error);
     }
   } catch (err) {
-    showError(String(err));
+    showErr(err);
   } finally {
     joinAttempt = null;
     renderJoinProgress(null);
@@ -390,7 +391,7 @@ async function doCreateAccount() {
     void deps.refreshSpaces();
     void sinvoke<SyncStatus>("sync_status").then(renderSync).catch(() => {});
   } catch (err) {
-    showError(String(err));
+    showErr(err);
   } finally {
     btn.disabled = false;
     btn.textContent = t("sync.createAccount");
@@ -423,7 +424,7 @@ async function doInviteDevice() {
     $("sync-pair-note").textContent = t("sync.pairNote");
     $("sync-pair-out").hidden = false;
   } catch (err) {
-    showError(String(err));
+    showErr(err);
     // 「席位已满:请先移除一台不用的设备」那句话得点得到能移除设备的地方(§5.8 末)。
     // 桌面在失败页上多给一枚入口按钮;手机这一格是折叠区,直接把它展开——同一件事,
     // 形态随端(端间差异见 devices.ts 头注)。
