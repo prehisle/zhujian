@@ -31,6 +31,7 @@ import {
 import { t } from "./i18n";
 import "./column-manager.css";
 import { el, onDragTarget } from "./dom";
+import { errDetail, errText } from "./err";
 
 let overlay: HTMLDivElement | null = null;
 
@@ -104,7 +105,7 @@ async function render(panel: HTMLElement): Promise<void> {
     if (!overlay || seq !== renderSeq) return; // 同下:关掉了 / 有更晚一趟 ⇒ 不落 DOM
     panel.replaceChildren(
       el("h2", { className: "bcm-title", textContent: t("cols.title") }),
-      el("div", { className: "bcm-err", textContent: t("cols.loadFailed", { msg: String(e) }) }),
+      el("div", { className: "bcm-err", textContent: t("cols.loadFailed", { msg: errDetail(e) }) }),
     );
     return;
   }
@@ -263,7 +264,7 @@ async function render(panel: HTMLElement): Promise<void> {
       try {
         await renameColumn(c.id, next);
       } catch (e) {
-        showErr(String(e));
+        showErr(errText(e));
         return;
       }
       await afterWrite();
@@ -282,7 +283,7 @@ async function render(panel: HTMLElement): Promise<void> {
         await deleteColumn(c.id);
       } catch (e) {
         host.replaceChildren(...prev);
-        showErr(String(e));
+        showErr(errText(e));
         return;
       }
       await afterWrite();
@@ -311,7 +312,7 @@ async function render(panel: HTMLElement): Promise<void> {
       try {
         await createColumn(title);
       } catch (e) {
-        showErr(String(e));
+        showErr(errText(e));
         return;
       }
       input.value = "";
@@ -345,7 +346,7 @@ async function render(panel: HTMLElement): Promise<void> {
     try {
       await reorderColumn(dragId, prevId, nextId);
     } catch (e) {
-      showErr(String(e));
+      showErr(errText(e));
       return;
     }
     await afterWrite();

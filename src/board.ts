@@ -65,6 +65,7 @@ import { t } from "./i18n";
 import { wireChecklistInput } from "./checklist-input";
 import "./board.css";
 import { el, onDragTarget } from "./dom";
+import { errDetail, errText } from "./err";
 
 // 跨视图「跳到这张任务卡」通道(搜索命中任务 → 跳看板并高亮)。模块级——
 // 发起方先 focusTask(id) 再 navigate("board")。看板 load() 里、**seq 守卫之后**(确认是
@@ -453,7 +454,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     } catch (err) {
       // The task may have moved under us (stale view) — surface, don't swallow.
       // 横幅就地报错 + 重载对齐真相,绝不把整个看板换成错误页(ui-audit P0 #6)。
-      showOpError(String(err));
+      showOpError(errText(err));
       load();
       return false;
     }
@@ -683,7 +684,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       await load();
       return true;
     } catch (err) {
-      showOpError(String(err)); // 拖拽失败横幅报错 + 重载对齐(ui-audit P0 #6)
+      showOpError(errText(err)); // 拖拽失败横幅报错 + 重载对齐(ui-audit P0 #6)
       await load();
       return false;
     } finally {
@@ -717,7 +718,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       await load();
       return true;
     } catch (err) {
-      showOpError(String(err));
+      showOpError(errText(err));
       await load();
       return false;
     } finally {
@@ -975,7 +976,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         r = await moveItemToSpace(sourceSpace, target, itemId);
       } catch (e) {
         // 抛错 = 目标什么都没建(目标 commit 后的失败一律走结构化结果),可重试。
-        err.textContent = String(e);
+        err.textContent = errText(e);
         moving = false;
         chipBtns.forEach((b) => (b.disabled = false));
         return;
@@ -1108,7 +1109,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       try {
         await invoke("add_task_topic", { id: item.id, topicId });
       } catch (e) {
-        showOpError(String(e)); // 横幅就地报错,卡片与选择器都保持在场(ui-audit P0 #6)
+        showOpError(errText(e)); // 横幅就地报错,卡片与选择器都保持在场(ui-audit P0 #6)
         return false;
       }
       const tp = allTopics.find((t) => t.id === topicId);
@@ -1129,7 +1130,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       try {
         id = await invoke<string>("add_task_topic_by_title", { id: item.id, title });
       } catch (e) {
-        showOpError(String(e)); // 横幅就地报错,卡片与选择器都保持在场(ui-audit P0 #6)
+        showOpError(errText(e)); // 横幅就地报错,卡片与选择器都保持在场(ui-audit P0 #6)
         return false;
       }
       let tp = allTopics.find((x) => x.id === id);
@@ -1149,7 +1150,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       try {
         await invoke("remove_task_topic", { id: item.id, topicId });
       } catch (e) {
-        showOpError(String(e));
+        showOpError(errText(e));
         return;
       }
       load();
@@ -1161,7 +1162,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       try {
         await invoke("remove_task_topic", { id: item.id, topicId });
       } catch (e) {
-        showOpError(String(e));
+        showOpError(errText(e));
         return false;
       }
       const i = item.topics.findIndex((x) => x.id === topicId);
@@ -1306,7 +1307,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         (e) => {
           ckFlushing = false;
           ckPending = null;
-          showOpError(t("checklist.toggleFailed", { err: String(e) }));
+          showOpError(t("checklist.toggleFailed", { err: errDetail(e) }));
           load();
         },
       );
@@ -1376,7 +1377,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         try {
           await invoke("set_task_color", { id: item.id, color: hex });
         } catch (e) {
-          showOpError(String(e));
+          showOpError(errText(e));
           return;
         }
         await load();
@@ -1695,7 +1696,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       const imgErr = el("p", { className: "img-err", hidden: true });
       const strip = imageStrip(item.id, { editable: true });
       const onImgErr = (e: unknown) => {
-        imgErr.textContent = String(e);
+        imgErr.textContent = errText(e);
         imgErr.hidden = false;
       };
       const afterAttach = () => {
@@ -1721,8 +1722,8 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         } catch (e) {
           // 竞态下编辑器可能已被重画拆走:错误必须落在还看得见的地方(op-err 横幅),
           // 附草稿不无声(codex P1 审 H3)。
-          if (err.isConnected) err.textContent = String(e);
-          else showOpError(t("board.renameFailed", { title: item.title, err: String(e), draft: input.value }));
+          if (err.isConnected) err.textContent = errText(e);
+          else showOpError(t("board.renameFailed", { title: item.title, err: errDetail(e), draft: input.value }));
           saving = false;
           return;
         }
@@ -1797,7 +1798,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
           await invoke("rename_task", { id: item.id, title: v });
           return true;
         } catch (e) {
-          showOpError(t("board.renameFailed", { title: item.title, err: String(e), draft: v }));
+          showOpError(t("board.renameFailed", { title: item.title, err: errDetail(e), draft: v }));
           return false;
         }
       };
@@ -2438,7 +2439,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       if (seq !== loadSeq) return; // 旧请求晚失败:新请求已成功渲染,别用旧错误盖掉(codex 三审 H2)
       lastSig = ""; // error path painted — let the next load re-render even if data matches
       disarmConfirm(); // 换错误页也是整批替换:在场确认的文档级监听一并收走(codex 二审 M)
-      renderError(String(err));
+      renderError(errText(err));
     }
   }
 

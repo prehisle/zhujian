@@ -10,6 +10,7 @@ import { TAG_COLORS } from "./tag-color";
 import { t } from "./i18n";
 import "./topics.css";
 import { el, onDragTarget } from "./dom";
+import { errDetail, errText } from "./err";
 
 // 标签视图。底层数据是 topics/item_topic(命令名、表名沿用 topic),对用户重定位为
 // 「标签」——轻量分类 + 下钻聚合(挂该标签的灵感 + 任务),不再承诺「知识结构」。早期
@@ -328,7 +329,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     function showOpError(e: unknown): void {
       swapActions(
         true,
-        el("span", { className: "te-err", textContent: t("topics.opFailed", { msg: String(e) }) }),
+        el("span", { className: "te-err", textContent: t("topics.opFailed", { msg: errDetail(e) }) }),
         tbtn(t("topics.gotIt"), showActions),
       );
     }
@@ -463,7 +464,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         try {
           await invoke("update_topic", { id: topic.id, title: titleInput.value });
         } catch (e) {
-          err.textContent = String(e);
+          err.textContent = errText(e);
           return;
         }
         await refresh();
@@ -576,7 +577,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       await invoke("reorder_topic", { id: dragId, prevId, nextId });
     } catch (e) {
       // 操作失败走回执,不整页换错误页(拖动没有稳定的行内报错锚点)。
-      toastAction(t("topics.reorderFailed", { msg: String(e) }), 3200);
+      toastAction(t("topics.reorderFailed", { msg: errDetail(e) }), 3200);
       return;
     }
     await refresh();
@@ -745,7 +746,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       confirming = false;
       paintBar();
       // 操作失败走回执(合并栏还在,选择保留,用户可改后重试),不整页换错误页。
-      toastAction(t("topics.mergeFailed", { msg: String(err) }), 3200);
+      toastAction(t("topics.mergeFailed", { msg: errDetail(err) }), 3200);
     }
   }
 
@@ -807,7 +808,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     } catch (err) {
       lastSig = ""; // 错误页已上画:下次 refocus 即使数据没变也要重画回正常列表
       disarmConfirm(); // 换错误页也是整批替换:在场确认的文档级监听一并收走(codex 二审 M)
-      renderError(String(err));
+      renderError(errText(err));
     }
   }
 
@@ -829,7 +830,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     try {
       await invoke("create_topic", { title: ntTitle.value });
     } catch (e) {
-      ntErr.textContent = String(e);
+      ntErr.textContent = errText(e);
       return;
     }
     ntTitle.value = "";

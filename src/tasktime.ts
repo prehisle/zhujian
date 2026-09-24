@@ -4,6 +4,7 @@ import { DONE_COLUMN } from "./board-columns";
 import { currentLang, t } from "./i18n";
 import "./tasktime.css";
 import { el } from "./dom";
+import { errText } from "./err";
 
 // Shared task time-dimension helpers + a reusable due/priority editor, used by
 // both the board and the Today view (one source of truth). `due_on` is a
@@ -214,7 +215,7 @@ export function metaRow(
     try {
       await invoke(cmd, args);
     } catch (e) {
-      onError(String(e));
+      onError(errText(e));
       recover?.();
       return;
     }

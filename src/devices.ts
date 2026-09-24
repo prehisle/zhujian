@@ -16,6 +16,7 @@ import { aliasOf, loadIdentity } from "./identity";
 import { t } from "./i18n";
 import "./devices.css";
 import { elText as el, btn } from "./dom";
+import { errLine } from "./err";
 
 /** `sync_device_admin` 的 action:直接用 core `DeviceAction` 的变体名(DTO 同源是
  *  编译期事实,认不出由 serde 当场拒;§5.7-6)。 */
@@ -166,7 +167,7 @@ export function renderDevices(body: HTMLElement, deps: Deps): void {
     // §5.8 M4:措辞是「尚未确认服务器支持,暂不可用」,**不是**「服务器版本较旧」——
     // 新服务器的 attach 推送同样可能丢,断言版本旧是不诚实的。
     body.appendChild(el("p", "sync-note", refreshing ? t("devices.loading") : t("devices.unavailable")));
-    if (refreshErr) body.appendChild(el("div", "sync-err dev-refresh-err", refreshErr));
+    if (refreshErr) body.appendChild(errLine("sync-err dev-refresh-err", refreshErr));
     body.appendChild(footRow(deps, !refreshing));
     return;
   }
@@ -201,8 +202,8 @@ export function renderDevices(body: HTMLElement, deps: Deps): void {
 
   // 两条错误分类名:动作失败与「拉名册失败」是两件事,合成一个类名会让「动作真的报错了
   // 没有」这条判据被另一条恒亮的错误背书成绿(假绿同族)。
-  if (actErr) body.appendChild(el("div", "sync-err dev-act-err", actErr));
-  if (refreshErr) body.appendChild(el("div", "sync-err dev-refresh-err", refreshErr));
+  if (actErr) body.appendChild(errLine("sync-err dev-act-err", actErr));
+  if (refreshErr) body.appendChild(errLine("sync-err dev-refresh-err", refreshErr));
   body.appendChild(footRow(deps, !refreshing));
 }
 

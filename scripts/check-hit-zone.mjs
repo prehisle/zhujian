@@ -91,6 +91,7 @@ const REGISTRY = [
     why: "标签行整行可点(收缩展开),全宽,衬垫上下 22 + 行内容 ≥17 实际远超 24;行与行毗邻但整行即目标,撑大反而互相蚕食" },
   { selector: ".img-ref", cls: "inline", why: "正文里的「图N」引用,嵌在文字流(WCAG 2.5.8 inline 例外);撑大会顶开行距" },
   { selector: ".link-ref", cls: "inline", why: "正文里的链接引用,同上" },
+  { selector: ".err-next", cls: "inline", why: "错误那句话末尾的「下一步」链接(src/err.ts,C8),嵌在文字流里、形照 .link-ref;撑大会顶开错误行的行距" },
   { selector: ".v-board .dont-ask", cls: "native", why: "「不再询问」label 含原生 checkbox,label 整体即触区、宽度由文字撑、高随行盒;点字即点框" },
   { selector: ".v-board .dont-ask input", cls: "native", why: "原生 checkbox,UA 自绘尺寸;外层 label 已是它的扩展触区" },
 ];

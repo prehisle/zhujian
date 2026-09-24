@@ -10,6 +10,7 @@ import { parseDeepLink, consumePendingDeepLink } from "./deeplink";
 import { t, initLang, applyStaticI18n } from "./i18n";
 import { initSync, seedSpaceStatuses, setSpaceNames, showToast, syncSpaceSwitched, DEFAULT_SYNC_URL } from "./sync";
 import { initSettings, openSettingsPanel } from "./settings";
+import { bootCrashDiag } from "./about";
 import { initZoom } from "./zoom";
 import { initTheme } from "./theme-mode";
 import { initUpdate, checkForUpdateOnFocus } from "./update";
@@ -31,6 +32,7 @@ import {
   spaceLabel,
 } from "./space";
 import type { SpaceInfo } from "./space";
+import { errDetail, errText } from "./err";
 
 // The notebook is one window hosting many views. Only one view is mounted into
 // the shared content root at a time, so each view can own page-scoped DOM ids
@@ -269,7 +271,7 @@ async function openDeepLink(raw: string): Promise<void> {
   try {
     loc = await invokeInSpace<string | null>(target, "locate_item", { itemId: p.item });
   } catch (e) {
-    showToast(t("notebook.openFailed", { error: String(e) }));
+    showToast(t("notebook.openFailed", { error: errDetail(e) }));
     return;
   }
   if (!loc) {
@@ -441,7 +443,7 @@ function spaceActionRow(label: string, placeholder: string, submit: (name: strin
       submit(inp.value).catch((e: unknown) => {
         busy = false;
         inp.disabled = false;
-        err.textContent = String(e);
+        err.textContent = errText(e);
       });
     });
     row.replaceWith(form);
@@ -538,7 +540,7 @@ async function doJoinSpace(
       cancel.textContent = t("notebook.close");
     }
   } catch (e: unknown) {
-    note.textContent = String(e);
+    note.textContent = errText(e);
     go.disabled = false;
   } finally {
     joinAttempt = null;
@@ -641,7 +643,7 @@ function spaceResetRow(configured: boolean): HTMLElement {
         })
         .catch((e: unknown) => {
           busy = false;
-          err.textContent = String(e);
+          err.textContent = errText(e);
         });
     });
     cancel.addEventListener("click", () => closeSpaceMenu());
@@ -746,6 +748,10 @@ void (async () => {
   refreshSpaceEntry();
   // 设置面板(232):全局热键 + 界面字号,与空间/同步无关,挂个入口即可。
   initSettings();
+
+  // 崩溃弹框(C9)的「复制诊断信息」:把设置「关于」那份诊断先递给壳留着。不 await ——
+  // 它不挡任何一条用户路径。
+  void bootCrashDiag();
 
   // 界面字号缩放:恢复上次字号并挂 Ctrl+/-/0 与 Ctrl+滚轮。纯设备本地、不进同步。
   initZoom();

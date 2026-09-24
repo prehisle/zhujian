@@ -16,6 +16,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { t } from "./i18n";
 import { copyButton } from "./clipboard";
+import { errText } from "./err";
 
 type BackupStatus = {
   configured: boolean;
@@ -124,7 +125,7 @@ async function refresh(body: HTMLElement): Promise<void> {
   try {
     render(body, await invoke<BackupStatus>("backup_status"));
   } catch (e) {
-    body.replaceChildren(el("p", "hkset-msg err", String(e)));
+    body.replaceChildren(el("p", "hkset-msg err", errText(e)));
   }
 }
 
@@ -168,7 +169,7 @@ function backupHalf(body: HTMLElement, st: BackupStatus, prefill: Prefill): HTML
         .then((code) => renderCeremony(body, code))
         .catch((e) => {
           go.disabled = false;
-          err.textContent = String(e);
+          err.textContent = errText(e);
         });
     });
     // ⛔ 623 试过摘掉这枚行名(「备份 / 备份」与组标题重复),**看图之后退回来了**:本节
@@ -258,7 +259,7 @@ function renderRestoreForm(form: HTMLElement): RestoreFields {
       .then((r) => renderRestored(out, r))
       // ⛔ 原样摊开后端那句:「这份备份不是这个备份码的」/「还有 N 张图没下载完」/
       // 「来自更新版本」各是一条能照做的路,糊成一句「恢复失败」等于什么都没说。
-      .catch((e) => out.replaceChildren(el("p", "hkset-msg err", String(e))))
+      .catch((e) => out.replaceChildren(el("p", "hkset-msg err", errText(e))))
       .finally(() => {
         go.disabled = false;
       });
@@ -348,8 +349,8 @@ async function loadList(out: HTMLElement, summary: HTMLElement, prefill: Prefill
     list = await invoke<Entry[]>("backup_list");
   } catch (e) {
     // 折叠着也要看得见出了事:汇总位显后端原话(展开区里同一句)。
-    summary.textContent = String(e);
-    out.replaceChildren(el("p", "hkset-msg err", String(e)));
+    summary.textContent = errText(e);
+    out.replaceChildren(el("p", "hkset-msg err", errText(e)));
     return;
   }
   out.replaceChildren();
@@ -401,7 +402,7 @@ function listRow(e: Entry, prefill: Prefill): HTMLElement {
       // 糊成一句会让用户把一份其实没坏的备份删掉。
       .catch((err) => {
         state.className = "bkup-item-state err";
-        state.textContent = String(err);
+        state.textContent = errText(err);
       })
       .finally(() => {
         verify.disabled = false;
@@ -434,7 +435,7 @@ function buildAutoRow(): HTMLElement {
   const wrap = document.createElement("div");
   void invoke<AutoStatus>("backup_auto_status")
     .then((a) => renderAuto(wrap, a))
-    .catch((e) => wrap.replaceChildren(el("p", "hkset-msg err", String(e))));
+    .catch((e) => wrap.replaceChildren(el("p", "hkset-msg err", errText(e))));
   return wrap;
 }
 
@@ -449,7 +450,7 @@ function renderAuto(wrap: HTMLElement, a: AutoStatus): void {
         .then((next) => renderAuto(wrap, next))
         .catch((e) => {
           reset.disabled = false;
-          wrap.appendChild(el("p", "hkset-msg err", String(e)));
+          wrap.appendChild(el("p", "hkset-msg err", errText(e)));
         });
     });
     row.append(el("div", "hkset-name", t("backup.autoName")), el("div", "hkset-desc", ""), reset);
@@ -468,7 +469,7 @@ function renderAuto(wrap: HTMLElement, a: AutoStatus): void {
       .then((next) => renderAuto(wrap, next))
       .catch((e) => {
         toggle.disabled = false;
-        setMsg(msg, String(e), "err");
+        setMsg(msg, errText(e), "err");
       });
   });
   toggle.dataset.on = a.enabled ? "1" : "0";
@@ -585,7 +586,7 @@ function renderCeremony(body: HTMLElement, code: string): void {
       })
       .catch((e) => {
         confirm.disabled = false;
-        err.textContent = String(e);
+        err.textContent = errText(e);
       });
   });
   const cancel = button(t("backup.ceremonyCancel"), () => {
@@ -639,7 +640,7 @@ function retryRow(body: HTMLElement, reason: string): HTMLElement {
       .catch((e) => {
         retry.disabled = false;
         retry.textContent = t("backup.retryCleanup");
-        msg.textContent = String(e);
+        msg.textContent = errText(e);
       });
   });
   row.append(el("div", "hkset-name", t("backup.title")), el("div", "hkset-desc", ""), retry);
@@ -669,14 +670,14 @@ function buildDirRow(st: BackupStatus): HTMLElement {
       // 后端拒了(路径不存在 / 不是目录 / 写不进):回显旧值 + 后端原话。
       .catch((e) => {
         input.value = st.dir;
-        setMsg(msg, String(e), "err");
+        setMsg(msg, errText(e), "err");
       })
       .finally(() => {
         save.disabled = false;
       });
   });
   const open = button(t("backup.openDir"), () => {
-    void invoke("backup_open_dir").catch((e) => setMsg(msg, String(e), "err"));
+    void invoke("backup_open_dir").catch((e) => setMsg(msg, errText(e), "err"));
   });
   input.addEventListener("keydown", (e) => {
     if (e.key === "Enter") {
@@ -708,7 +709,7 @@ function buildRunRow(body: HTMLElement): HTMLElement {
         //(哪个空间留下了明文、哪份产物写完但没验)。
         if (r.blocked) out.appendChild(retryRow(body, r.blocked));
       })
-      .catch((e) => out.replaceChildren(el("p", "hkset-msg err", String(e))))
+      .catch((e) => out.replaceChildren(el("p", "hkset-msg err", errText(e))))
       .finally(() => {
         run.disabled = false;
       });

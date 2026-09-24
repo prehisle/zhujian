@@ -8,6 +8,7 @@ import { applyTagColor } from "./tag-color";
 import { INPUT_DEBOUNCE_MS } from "./timing";
 import "./search.css";
 import { el } from "./dom";
+import { errText } from "./err";
 
 // Mirror of the Rust contract (lib.rs `search_items`): an item whose current text
 // OR any past version matched. Single-entity model — a hit can be an idea (未归类 /
@@ -139,7 +140,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
         }
       } catch (err) {
         if (jumpSeq !== myJump || shown !== q || !view.isConnected) return;
-        renderError(String(err));
+        renderError(errText(err));
       }
     }
   }
@@ -207,7 +208,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       );
     } catch (err) {
       if (shown !== q) return;
-      renderError(String(err));
+      renderError(errText(err));
     }
   }
 

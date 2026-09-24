@@ -21,6 +21,7 @@ import { TOAST_ERROR_MS } from "./timing";
 import { t } from "./i18n";
 import "./sync.css";
 import { elText as el, btn } from "./dom";
+import { errLine, errNode } from "./err";
 
 // 同步服务器默认地址——创建账户/加入设备(本文件)+ 加入空间(notebook.ts)三处入口预填。
 export const DEFAULT_SYNC_URL = "wss://sync.zhujian.app";
@@ -241,6 +242,9 @@ function closePanel(): void {
 }
 
 function onPanelKey(e: KeyboardEvent): void {
+  // 错误后面那枚「网络自检」(err.ts)会把设置面板叠在本面板上面:两只 Esc 监听都挂在
+  // document 上、谁也拦不住谁,不让一步 ⇒ 一次 Esc 两层全关。上面那层先走。
+  if (document.querySelector(".settings-overlay")) return;
   if (e.key === "Escape") {
     e.stopPropagation();
     closePanel();
@@ -319,7 +323,7 @@ function renderHome(body: HTMLElement): void {
   const s = cur();
   if (!s || !s.configured) {
     // 未配置却带 error = 身份被停用(整库复制的同 device 等):先说明,别只给创号入口。
-    if (s?.error) body.appendChild(el("div", "sync-err", s.error));
+    if (s?.error) body.appendChild(errLine("sync-err", s.error));
     body.appendChild(
       el("p", "sync-note", t("sync.homeIntro")),
     );
@@ -362,7 +366,7 @@ function renderHome(body: HTMLElement): void {
     );
   }
   if (s.error) {
-    body.appendChild(el("div", "sync-err", s.error));
+    body.appendChild(errLine("sync-err", s.error));
   }
   const acts = el("div", "sync-actions");
   acts.appendChild(btn(t("sync.addDevice"), "hbtn", () => startPair()));
@@ -502,7 +506,7 @@ function renderCreate(body: HTMLElement): void {
       })
       .catch((e: unknown) => {
         go.disabled = false;
-        err.textContent = String(e);
+        err.replaceChildren(errNode(e));
       });
   });
   acts.appendChild(go);
@@ -532,7 +536,7 @@ function renderJoin(body: HTMLElement): void {
       })
       .catch((e: unknown) => {
         go.disabled = false;
-        err.textContent = String(e);
+        err.replaceChildren(errNode(e));
       });
   });
   acts.appendChild(go);
@@ -567,7 +571,7 @@ function renderPair(body: HTMLElement): void {
     // 对方注册完成、正从这台拉初始快照:说清「这台别关、等对方显示已连接再关本页」。
     body.appendChild(el("p", "sync-note", t("sync.pairDoneNote", { detail: pairNote })));
   } else {
-    body.appendChild(el("p", pairFailed ? "sync-err" : "sync-note", pairNote));
+    body.appendChild(pairFailed ? errLine("sync-err", pairNote, "p") : el("p", "sync-note", pairNote));
     // 码在手上的这一页就把「保持在线」说出来 —— 手机做老设备时早有这句,桌面一直没有。
     if (pairCode && !pairFailed) body.appendChild(el("p", "sync-note", t("sync.pairKeepOn")));
   }
@@ -596,7 +600,7 @@ function renderServer(body: HTMLElement): void {
       void invoke("sync_set_server", { serverUrl: server.value.trim() })
         .then(() => goto("advanced"))
         .catch((e: unknown) => {
-          err.textContent = String(e);
+          err.replaceChildren(errNode(e));
         });
     }),
   );

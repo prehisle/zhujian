@@ -18,6 +18,7 @@ import { currentSpaceId } from "./space";
 import { copyButton } from "./clipboard";
 import { buildKeySheet } from "./keysheet";
 import "./settings.css";
+import { errText } from "./err";
 
 type Hotkeys = { capture: string; notebook: string };
 type Which = "capture" | "notebook";
@@ -291,7 +292,7 @@ function buildAliasRow(): HTMLDivElement {
       input.disabled = false;
       save.disabled = false;
     })
-    .catch((e) => setMsg(msg, String(e), "err"));
+    .catch((e) => setMsg(msg, errText(e), "err"));
 
   async function apply(): Promise<void> {
     if (thisDevice === null) return;
@@ -313,7 +314,7 @@ function buildAliasRow(): HTMLDivElement {
       setMsg(msg, next === "" ? t("settings.aliasCleared") : t("settings.aliasSaved"), "ok");
     } catch (e) {
       input.value = saved; // 后端拒了(超长等):回显旧值 + 后端原话
-      setMsg(msg, String(e), "err");
+      setMsg(msg, errText(e), "err");
     } finally {
       save.disabled = false;
     }
@@ -399,7 +400,7 @@ function buildReminderRow(): HTMLDivElement {
     test.disabled = true;
     sendTestNotification()
       .then(() => setMsg(msg, t("reminder.testSent"), "ok"))
-      .catch((e) => setMsg(msg, String(e), "err"))
+      .catch((e) => setMsg(msg, errText(e), "err"))
       .finally(() => {
         test.disabled = false;
       });
@@ -447,7 +448,7 @@ function buildAutostartRow(): HTMLDivElement {
         paint(on);
         setMsg(msg, "", "");
       })
-      .catch((e) => setMsg(msg, String(e), "err"))
+      .catch((e) => setMsg(msg, errText(e), "err"))
       .finally(() => {
         onBtn.disabled = offBtn.disabled = false;
       });
@@ -619,7 +620,7 @@ async function applyHotkey(which: Which, accel: string, combo: HTMLElement, msg:
   } catch (e) {
     // 后端已回滚到旧键(占用/无效等),回显旧值 + 后端原话。
     combo.textContent = hotkeys[which];
-    setMsg(msg, String(e), "err");
+    setMsg(msg, errText(e), "err");
   }
 }
 

@@ -3519,6 +3519,13 @@ async fn net_probe(url: String) -> Vec<sync::transport::ProbeStep> {
 /// e2e(YS_DB_PATH)刻意不装:测试无人点框,模态框会把用例挂死。
 /// (macOS 注记:rfd 的消息框须主线程调;我们关心的启动 panic 都在主线程,后台线程
 /// panic 弹框是 macOS 移植时再收的边角,当前 Windows 目标不受影响。)
+///
+/// **两档**(盈利准备 C9):`RunEvent::Ready` 之前崩 = 真起不来,仍叫「朱简无法启动」、正文是
+/// panic 原话(启动期那几条本就是写给人看的);之后崩 = 运行中某一步出了事,换「朱简遇到了
+/// 一个问题」、正文只留一句人话 —— 原话、源码位置、线程都进「复制诊断信息」,不摆在用户脸上。
+/// ⛔ 这不是兜底:钩子只管「让人看见 + 拿得走」,该退还是退(panic 照常展开,进程去留与
+/// 以前一样)。诊断信息的头几段是设置「关于」那份(前端 `about.ts::pushCrashDiag` 递来的,
+/// 见 `set_crash_diag`),⛔ 别在这里另拼一份版本 / 构建 / 本机库。
 fn install_panic_dialog_hook() {
     if e2e_db_path().is_some() {
         return;
@@ -3527,27 +3534,79 @@ fn install_panic_dialog_hook() {
     std::panic::set_hook(Box::new(move |info| {
         // 先跑默认钩子:stderr 的 panic 消息 + RUST_BACKTRACE 回溯照旧留着。
         default_hook(info);
-        rfd::MessageDialog::new()
+        let body = panic_body(info);
+        let at = info.location().map(|l| format!("{}:{}", l.file(), l.line()));
+        let thread = std::thread::current().name().map(str::to_string);
+        let started = APP_READY.load(Ordering::SeqCst);
+        // 正式版 stderr 无处可去(windows_subsystem),日志文件是唯一留得下来的地方。
+        log::error!("panic({}):{body} @ {}", if started { "运行中" } else { "启动期" }, at.as_deref().unwrap_or("?"));
+        let (title, text) = crash_dialog_text(started, &body);
+        let copy = "复制诊断信息".to_string();
+        let picked = rfd::MessageDialog::new()
             .set_level(rfd::MessageLevel::Error)
-            .set_title("朱简无法启动")
-            .set_description(panic_dialog_message(info))
-            .set_buttons(rfd::MessageButtons::Ok)
+            .set_title(title)
+            .set_description(text)
+            .set_buttons(rfd::MessageButtons::OkCancelCustom(copy.clone(), "关闭".to_string()))
             .show();
+        if picked == rfd::MessageDialogResult::Custom(copy) {
+            let header = CRASH_DIAG.lock().unwrap_or_else(|p| p.into_inner()).clone();
+            let report = crash_report(&header, started, &body, at.as_deref(), thread.as_deref());
+            // 剪贴板写不进去就只剩日志那一行了 —— 照实记一笔,不再弹第二个框。
+            if let Err(e) = arboard::Clipboard::new().and_then(|mut c| c.set_text(report)) {
+                log::error!("崩溃诊断信息没能写进剪贴板:{e}");
+            }
+        }
     }));
 }
 
-/// 从 panic 载荷 + 位置拼出给用户看的消息(载荷可能是 `&str` 或 `String`)。
-fn panic_dialog_message(info: &std::panic::PanicHookInfo<'_>) -> String {
-    let body = info
-        .payload()
+/// 进程已走过 `RunEvent::Ready`(setup 跑完、事件循环起来了):崩溃弹框分两档的判据。
+static APP_READY: AtomicBool = AtomicBool::new(false);
+/// 设置「关于」那份诊断信息的最新一版(前端递来;还没递 = 空串,见 `crash_report`)。
+static CRASH_DIAG: Mutex<String> = Mutex::new(String::new());
+
+/// 前端把「关于」那份诊断信息递过来留着(开机一次,「关于」页每拿到新结果再一次)。
+#[tauri::command]
+fn set_crash_diag(text: String) {
+    *CRASH_DIAG.lock().unwrap_or_else(|p| p.into_inner()) = text;
+}
+
+/// panic 载荷原话(可能是 `&str` 或 `String`)。
+fn panic_body(info: &std::panic::PanicHookInfo<'_>) -> String {
+    info.payload()
         .downcast_ref::<&str>()
         .map(|s| s.to_string())
         .or_else(|| info.payload().downcast_ref::<String>().cloned())
-        .unwrap_or_else(|| "未知错误".to_string());
-    match info.location() {
-        Some(loc) => format!("{body}\n\n(位置:{}:{})", loc.file(), loc.line()),
-        None => body,
+        .unwrap_or_else(|| "未知错误".to_string())
+}
+
+/// 弹框的标题与正文(两档,见 `install_panic_dialog_hook`)。⛔ 正文里不许出现源码位置。
+fn crash_dialog_text(started: bool, body: &str) -> (&'static str, String) {
+    if started {
+        (
+            "朱简遇到了一个问题",
+            "刚才有一步没有做完。如果窗口随后关掉了,重新打开朱简就好。\n\n\
+             反复出现的话,点「复制诊断信息」,把它贴进反馈邮件。"
+                .to_string(),
+        )
+    } else {
+        ("朱简无法启动", format!("{body}\n\n需要帮忙的话,点「复制诊断信息」,把它贴进反馈邮件。"))
     }
+}
+
+/// 「复制诊断信息」的全文:「关于」那份在前,这次崩溃的原话 / 位置 / 线程在后。
+/// 启动期那档前端还没起来、什么都没递 —— 照实写一句,版本号取编译期的包版本。
+fn crash_report(header: &str, started: bool, body: &str, at: Option<&str>, thread: Option<&str>) -> String {
+    let head = if header.is_empty() {
+        format!("朱简 v{}(界面还没起来,构建身份戳与本机库没拿到)", env!("CARGO_PKG_VERSION"))
+    } else {
+        header.to_string()
+    };
+    format!(
+        "{head}\n\n[崩溃]\n阶段:{}\n{body}\n位置:{}\n线程:{}",
+        if started { "运行中" } else { "启动期" },
+        at.unwrap_or("(没有)"),
+        thread.unwrap_or("(无名)"),
+    )
 }
 
 // Xlib 的多线程开关(Linux 专属,为什么要它见 `run()` 开头那段注释)。gdk/gtk 那条链
@@ -4289,6 +4348,7 @@ pub fn run() {
             backup_retry_cleanup,
             backup_open_dir,
             open_log_dir,
+            set_crash_diag,
             db_info,
             net_probe,
             backup_list,
@@ -4301,6 +4361,10 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|_app_handle, _event| {
+            // 崩溃弹框从这一刻起换「遇到了一个问题」那一档(C9,见 install_panic_dialog_hook)。
+            if let tauri::RunEvent::Ready = _event {
+                APP_READY.store(true, Ordering::SeqCst);
+            }
             // macOS:点 Dock 图标(app 已在跑)= 打开主窗。RunEvent::Reopen 是 macOS 专属
             // (Windows/Linux 无 Dock);不处理时主窗被关(隐藏)后点 Dock 没反应。
             #[cfg(target_os = "macos")]
@@ -4313,6 +4377,26 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// C9 两档:运行中那档的正文不带 panic 原话(更不带源码位置),启动期那档照旧说原话;
+    /// 原话 / 位置 / 线程一律进「复制诊断信息」,且「关于」那份排在前头原样不动。
+    #[test]
+    fn crash_dialog_two_tiers() {
+        let (title, text) = crash_dialog_text(true, "index out of bounds");
+        assert_eq!(title, "朱简遇到了一个问题");
+        assert!(!text.contains("index out of bounds") && !text.contains(".rs"), "运行中那档正文只留人话:{text}");
+        let (title, text) = crash_dialog_text(false, "库版本 v99 比本程序新");
+        assert_eq!(title, "朱简无法启动");
+        assert!(text.starts_with("库版本 v99 比本程序新"), "启动期那档正文是原话:{text}");
+
+        let r = crash_report("朱简 v1.2.3\n构建 abc", true, "boom", Some("src/lib.rs:9"), Some("tokio-runtime-worker"));
+        assert!(r.starts_with("朱简 v1.2.3\n构建 abc\n"), "「关于」那份在前:{r}");
+        for part in ["阶段:运行中", "boom", "位置:src/lib.rs:9", "线程:tokio-runtime-worker"] {
+            assert!(r.contains(part), "缺「{part}」:{r}");
+        }
+        let r = crash_report("", false, "boom", None, None);
+        assert!(r.contains("界面还没起来") && r.contains("阶段:启动期"), "{r}");
+    }
 
     /// space-entry-plan §2 后端不变量:sync_pair_join 只接受 main——直接 invoke
     /// 非 main 必拒(不许只测按钮隐藏);main 照常放行(装机 onboarding 不变)。

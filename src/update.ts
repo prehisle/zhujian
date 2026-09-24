@@ -8,6 +8,7 @@ import { getVersion } from "@tauri-apps/api/app";
 import { t } from "./i18n";
 import "./update.css";
 import { elText as el, btn } from "./dom";
+import { errDetail } from "./err";
 
 let banner: HTMLDivElement | null = null;
 // 当前待处理的 Update:banner 收起时 close() 释放后端 resource。
@@ -89,7 +90,7 @@ async function run(update: Update, msg: HTMLElement, acts: HTMLElement): Promise
     });
     await relaunch();
   } catch (e) {
-    msg.textContent = t("update.failed", { err: String(e) });
+    msg.textContent = t("update.failed", { err: errDetail(e) });
     acts.appendChild(btn(t("update.close"), "hbtn", dismiss));
   }
 }
@@ -120,6 +121,6 @@ export async function checkForUpdateManual(): Promise<void> {
     if (update) showBanner(update);
     else flash(t("update.upToDate", { v: await getVersion() }));
   } catch (e) {
-    flash(t("update.checkFailed", { err: String(e) }));
+    flash(t("update.checkFailed", { err: errDetail(e) }));
   }
 }

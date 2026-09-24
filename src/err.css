@@ -1,0 +1,18 @@
+/* 错误文案后面那枚「下一步」(src/err.ts::errNode)。形照正文链接 .link-ref / 关于页 .about-link:
+   墨色 + 朱色细下划线,悬停转朱 —— 它是去别处的路,不是一个动作按钮。字号随所在那行。 */
+.err-next {
+  display: inline;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--ink);
+  text-decoration: underline;
+  text-decoration-color: var(--seal-line);
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.err-next:hover {
+  color: var(--seal);
+  text-decoration-color: var(--seal);
+}

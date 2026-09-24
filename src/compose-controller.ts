@@ -11,6 +11,7 @@ import { autoGrow } from "./autogrow";
 import { clearTextDraft, loadTextDraft, saveTextDraft } from "./compose-draft";
 import { pendingImages } from "./item-images";
 import { currentSpaceId, invokeInSpace } from "./space";
+import { errText } from "./err";
 
 type PendingImagesCtl = ReturnType<typeof pendingImages>;
 
@@ -171,9 +172,9 @@ export function createComposeController(opts: {
           : currentSpaceId() === w.space
             ? document.querySelector<HTMLElement>(w.liveErrSelector)
             : null;
-        if (liveErr !== null) w.showErr(liveErr, String(e));
+        if (liveErr !== null) w.showErr(liveErr, errText(e));
         else if (currentSpaceId() === w.space) {
-          notice = String(e);
+          notice = errText(e);
           noticeSpace = w.space;
           w.onBridgedError?.();
         }

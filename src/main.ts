@@ -10,6 +10,7 @@ import { initTheme } from "./theme-mode";
 import { t, initLang, applyStaticI18n } from "./i18n";
 import { armAppContextMenu } from "./context-menu";
 import { wireChecklistInput } from "./checklist-input";
+import { errDetail, errText } from "./err";
 
 const input = document.getElementById("capture") as HTMLTextAreaElement;
 const slip = document.querySelector(".slip") as HTMLElement;
@@ -483,7 +484,7 @@ input.addEventListener("keydown", async (e) => {
             : await invoke<string>("capture_note", { content });
       } catch (err) {
         pend.putBack(batch);
-        errLine.textContent = String(err);
+        errLine.textContent = errText(err);
         void fitWindow();
         return;
       }
@@ -506,7 +507,7 @@ input.addEventListener("keydown", async (e) => {
             else await invoke("file_note_to_topic", { id, topicId: null, newTitle: title });
           }
         } catch (err) {
-          tagErr = String(err);
+          tagErr = errDetail(err);
         }
       }
 

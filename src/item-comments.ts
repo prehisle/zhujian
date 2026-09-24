@@ -28,6 +28,7 @@ import { t } from "./i18n";
 import { when } from "./tasktime";
 import "./item-comments.css";
 import { el } from "./dom";
+import { errText } from "./err";
 
 /** core `comments::Comment` 的镜像(壳直接返回 core 类型,故这里是唯一一份 TS 侧抄写)。 */
 export type Comment = { id: string; content: string; created_at: string; born_device: string | null };
@@ -167,7 +168,7 @@ function openPanel(
 
   const showErr = (e: unknown): void => {
     // 后端的话原样展示(200 KiB / 500 软闸 / 宿主不存在都是有话可说的拒绝),不吞不改写。
-    err.textContent = String(e);
+    err.textContent = errText(e);
     err.hidden = false;
   };
   const clearErr = (): void => {

@@ -72,7 +72,13 @@ rustls = { version = "0.23", default-features = false, features = ["ring"] }
 # 启动期 fail-fast panic 的原生弹窗(run() 装 panic 钩子用):否则窗口还没建就静默死,
 # 最常见「库版本比本程序新=装了旧包」只进 stderr、双击 exe 表现为「没反应」。Windows
 # 走 win32 MessageBox 无需事件循环、任意线程可调(官方 dialog 插件底层同款 rfd)。
-rfd = "0.15"
+# `common-controls-v6`(C9):弹框要一枚「复制诊断信息」自定义钮 —— 不开它 Windows 走老
+# MessageBox,自定义钮的字会被静默换成「确定 / 取消」。它要的 comctl32 v6 由 tauri-build
+# 默认嵌进 exe 的 manifest 提供。
+rfd = { version = "0.15", features = ["common-controls-v6"] }
+# 崩溃弹框「复制诊断信息」写剪贴板(C9):panic 钩子里没有 AppHandle(启动期那档甚至还没建
+# app),只能直接用 clipboard-manager 插件底下那一只;锁文件里本就有它,不多一个 crate。
+arboard = "3"
 # (multispace-plan 工序 3:建库[ulid 取名]与真文件身份[原 same-file]随空间逻辑
 #  上抬进 zhujian-core::spaces,壳不再直接依赖 ulid / same-file。)
 

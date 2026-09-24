@@ -55,6 +55,7 @@ import { identitySig, loadIdentity, signatureChip } from "./identity";
 import { wireChecklistInput } from "./checklist-input";
 import "./inbox.css";
 import { el, onDragTarget } from "./dom";
+import { errDetail, errText } from "./err";
 
 // Mirrors of the Rust contracts (lib.rs) — the fields this view consumes. 想法 = a live
 // idea (未归类 + 已归类 merged); a tag is just metadata it may or may not carry, so one
@@ -547,7 +548,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     try {
       await invoke(cmd, { id });
     } catch (e) {
-      toastError(t("common.undoFailed", { err: String(e) }));
+      toastError(t("common.undoFailed", { err: errDetail(e) }));
       return;
     }
     void refresh();
@@ -653,7 +654,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       try {
         await invoke("remove_note_topic", { id: item.id, topicId });
       } catch (e) {
-        showOpErr(e);
+        showOpErr(errText(e));
         return;
       }
       void refresh();
@@ -685,19 +686,22 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
 
     const errLine = () => el("p", { className: "form-err", hidden: true });
     const showErr = (node: HTMLElement, e: unknown) => {
-      node.textContent = String(e);
+      node.textContent = errText(e);
       node.hidden = false;
     };
     // 卡级操作(转待办/删除/还原/彻底删除)失败的就地错误行(ui-audit P0 #6):错误
     // 写在这张卡上,绝不再把整版列表换成错误页(renderError 只留给读取失败)。惰性
     // 建行、复用同一条——连续失败不累积多条相同错误;showView 重渲后自动重建。
     let opErr: HTMLElement | null = null;
-    const showOpErr = (e: unknown): void => {
+    // 收**已成文**的一句(C8):裸错误由调用方过 `errText`,带前缀的(勾选失败:…)过 `errDetail`
+    // 后原样进来 —— 这里再过一遍会把人话叠两层。
+    const showOpErr = (text: string): void => {
       if (opErr === null || !opErr.isConnected) {
         opErr = errLine();
         note.append(opErr);
       }
-      showErr(opErr, e);
+      opErr.textContent = text;
+      opErr.hidden = false;
     };
 
     // 转待办 succeeded: the subject is now a board task (a task stage), so it leaves
@@ -737,7 +741,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         (e) => {
           ckFlushing = false;
           ckPending = null;
-          showOpErr(t("checklist.toggleFailed", { err: String(e) }));
+          showOpErr(t("checklist.toggleFailed", { err: errDetail(e) }));
           void refresh();
         },
       );
@@ -837,7 +841,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         void strip.reload(); // 取回来那一发会经 onMetas 把正文的「图N」一并重画
       };
       const onImgErr = (e: unknown) => {
-        imgErr.textContent = String(e);
+        imgErr.textContent = errText(e);
         imgErr.hidden = false;
       };
       wirePasteToAttach(area, item.id, afterAttach, onImgErr);
@@ -972,7 +976,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         await invoke("promote_note_to_task", { id: item.id, title: currentContent });
       } catch (e) {
         // 直转失败时把错误显示在卡上(而非静默),复用共享错误行(不累积)。
-        showOpErr(e);
+        showOpErr(errText(e));
         return;
       }
       afterPromote();
@@ -991,7 +995,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       try {
         allTopics = await invoke<TopicItem[]>("list_topics");
       } catch (e) {
-        showOpErr(e);
+        showOpErr(errText(e));
         return;
       }
       note.classList.add("editing");
@@ -1011,7 +1015,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
           await invoke("file_note_to_topic", { id: item.id, topicId, newTitle });
         } catch (e) {
           close();
-          showOpErr(e);
+          showOpErr(errText(e));
           return;
         }
         afterFile();
@@ -1024,7 +1028,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
           await invoke("remove_note_topic", { id: item.id, topicId });
         } catch (e) {
           close();
-          showOpErr(e);
+          showOpErr(errText(e));
           return;
         }
         afterFile();
@@ -1048,7 +1052,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       try {
         await invoke("archive_note", { id: item.id });
       } catch (err) {
-        showOpErr(err); // 卡级失败就地报错,不换掉整版列表(ui-audit P0 #6)
+        showOpErr(errText(err)); // 卡级失败就地报错,不换掉整版列表(ui-audit P0 #6)
         return;
       }
       leaveCard(note, "ideas", "archived");
@@ -1061,7 +1065,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       try {
         await invoke("restore_note", { id: item.id });
       } catch (err) {
-        showOpErr(err);
+        showOpErr(errText(err));
         return;
       }
       leaveCard(note, "archived", "ideas");
@@ -1083,7 +1087,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         try {
           await invoke("purge_note", { id: item.id });
         } catch (err) {
-          showOpErr(err);
+          showOpErr(errText(err));
           return;
         }
         leaveCard(note, "archived", null);
@@ -1283,7 +1287,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       });
       note.addEventListener("dragstart", (e) => {
         if (e.target !== note) return;
-        dragging = { id: item.id, has: new Set(topics.map((t) => t.id)), onErr: showOpErr };
+        dragging = { id: item.id, has: new Set(topics.map((t) => t.id)), onErr: (e: unknown) => showOpErr(errText(e)) };
         note.classList.add("dragging");
         if (e.dataTransfer) {
           e.dataTransfer.setData("text/plain", item.id);
@@ -1312,7 +1316,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         const topicId = draggingTopic;
         draggingTopic = null;
         clearTagHovers();
-        void dropTagOnNote(item.id, topicId, new Set(topics.map((t) => t.id)), showOpErr);
+        void dropTagOnNote(item.id, topicId, new Set(topics.map((t) => t.id)), (e: unknown) => showOpErr(errText(e)));
       });
     }
 
@@ -1346,7 +1350,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
           await invoke("purge_archived");
         } catch (e) {
           // 失败就地写在工具条上并退回默认态,不再整版换错误页(ui-audit P0 #6)。
-          err.textContent = String(e);
+          err.textContent = errText(e);
           err.hidden = false;
           showDefault();
           return;
@@ -1626,7 +1630,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       restoreCommentRun = null;
       renderedIds = new Set(); // 列表被错误页换掉了:下一发那批确实是「重新入场」,该播动画
       disarmConfirm(); // 换错误页也是整批替换:在场确认的文档级监听一并收走(codex 二审 M)
-      renderError(String(err));
+      renderError(errText(err));
     }
   }
 
