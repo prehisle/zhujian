@@ -74,6 +74,9 @@
         --font-brush: "Palatino Linotype", "Palatino", "Book Antiqua", "Kaiti SC", "STKaiti", "KaiTi", "楷体", "Songti SC", "SimSun", serif;
         --font-serif: "Georgia", "SimSun", "Songti SC", "Source Han Serif SC", serif;
         --font-sans: "Microsoft YaHei", "PingFang SC", system-ui, -apple-system, sans-serif;
+        /* 英文档的界面字(C6 / 用户面 127):只经下面那条 `:root:lang(en)` 接进 --font-sans,
+           中文档一个像素不动。理由与「栈首必须点名 Segoe UI」见桌面 src/theme.css。 */
+        --font-sans-en: "Segoe UI", system-ui, -apple-system, "Microsoft YaHei", "PingFang SC", sans-serif;
 
         --float-shadow: 0 18px 50px -20px rgba(40, 30, 18, 0.55), 0 2px 6px rgba(40, 30, 18, 0.12);
         --card-shadow: 0 1px 2px rgba(40, 30, 18, 0.06), 0 14px 30px -22px rgba(40, 30, 18, 0.5);
@@ -125,6 +128,13 @@
           --float-shadow: 0 22px 55px -18px rgba(0, 0, 0, 0.7), 0 2px 8px rgba(0, 0, 0, 0.4);
           --card-shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 16px 34px -22px rgba(0, 0, 0, 0.7);
         }
+      }
+
+      /* <html lang> 由下面的 apply() 单点写成生效档。⚠ 只做转接、不写字面值(值住 :root,
+         check-theme-drift 才看得见)。境内站首页是整份照抄本文件,自然带上;协议页只取到下面
+         那行为止的令牌块,也带上了,但它们是 lang="zh",这条在那儿不生效。 */
+      :root:lang(en) {
+        --font-sans: var(--font-sans-en);
       }
 
       * { box-sizing: border-box; }
@@ -687,6 +697,38 @@
       .dl-trial a { color: var(--seal); text-decoration: none; margin-left: 14px; white-space: nowrap; }
       .dl-trial a:hover { text-decoration: underline; }
 
+      /* ── 常见问题(profit-readiness F3)───────────────────────── */
+      /* 原生 <details>:不要脚本、键盘与读屏天然可用。答案按段各成一键(data-i18n 只覆写
+         textContent),故段里不放链接与加粗。 */
+      .faq { padding: clamp(52px, 7vw, 90px) 0; border-top: 1px solid var(--line); }
+      .faq-list { margin-top: 30px; max-width: 64ch; border-bottom: 1px solid var(--line); }
+      .faq-list details { border-top: 1px solid var(--line); }
+      .faq-list summary {
+        list-style: none;
+        cursor: pointer;
+        display: flex;
+        align-items: baseline;
+        gap: 11px;
+        padding: 16px 0;
+        font-family: var(--font-serif);
+        font-size: var(--fs-17);
+        font-weight: 600;
+      }
+      .faq-list summary::-webkit-details-marker { display: none; }
+      .faq-list summary::before {
+        content: "";
+        width: 8px; height: 8px;
+        border-radius: var(--radius-seal);
+        background: var(--seal);
+        transform: translateY(-1px) rotate(45deg);
+        flex: 0 0 auto;
+      }
+      .faq-list summary::after { content: "+"; margin-left: auto; color: var(--ink-faint); font-family: var(--font-sans); font-weight: 400; }
+      .faq-list details[open] summary::after { content: "−"; }
+      .faq-list summary:hover { color: var(--seal); }
+      .faq-list details p { color: var(--ink-soft); font-size: var(--fs-15); margin: 0 0 12px 19px; }
+      .faq-list details p:last-child { margin-bottom: 20px; }
+
       /* ── 理念 + 开源 ───────────────────────────────────────── */
       .ethos { padding: clamp(56px, 7.5vw, 100px) 0; }
       /* 两行第一人称,不再是「宣言 + 三段长文」的两栏版 */
@@ -712,12 +754,13 @@
       .foot-sign .word { font-family: var(--font-brush); }
       .foot-sign .word b { font-size: var(--fs-24); font-weight: 700; letter-spacing: 0.08em; display: block; }
       .foot-sign .word span { font-size: var(--fs-13); color: var(--ink-faint); letter-spacing: 0.12em; }
-      .foot-links { display: flex; gap: 24px; font-size: var(--fs-14); }
+      /* 会换行:英文档在手机宽度下七八个链接排不进一行(F3 量到改前就撑出 390 宽的屏)。 */
+      .foot-links { display: flex; flex-wrap: wrap; gap: 8px 24px; font-size: var(--fs-14); }
       .foot-links a { color: var(--ink-soft); text-decoration: none; }
       .foot-links a:hover { color: var(--ink); }
       .foot-copy { width: 100%; font-size: var(--fs-13); color: var(--ink-faint); margin-top: 8px; }
 
-      a:focus-visible, .btn:focus-visible {
+      a:focus-visible, .btn:focus-visible, summary:focus-visible {
         outline: 2px solid var(--seal);
         outline-offset: 3px;
         border-radius: var(--radius-sm);
@@ -947,6 +990,42 @@
         </div>
       </section>
 
+      <!-- ───────── 常见问题 ───────── -->
+      <!-- ⛔ 上面这条注释是境内站生成器的结构锚(下载区换到这条为止),别改字、别往它前面插东西,
+           否则这一节会被当成下载区一起换掉。每一句都要能在 app 里照着走到(菜单名照
+           两端字典原文);价格一个字不写(161「不预告收费」,境内站在主体拍定前也不许有价格)。
+           ⚠ faq.costA 那句「现在免费使用,包括多设备同步」与 facts.free 同一个口径:开闸收钱那笔
+           (profit-readiness D5)要连它一起改。 -->
+      <section class="faq" id="faq">
+        <div class="wrap">
+          <span class="eyebrow" data-i18n="faq.eyebrow">常见问题</span>
+          <h2 class="section-title" data-i18n="faq.title">遇到了先看这里</h2>
+          <div class="faq-list">
+            <details>
+              <summary data-i18n="faq.syncQ">同步好像不动了?</summary>
+              <p data-i18n="faq.syncA1">先看两头是不是都开着、连着网。手机上的朱简要在前台才会追赶,放到后台不保证实时。新设备刚加入的那一会儿,老设备也要开着,才拉得到全部数据。</p>
+              <p data-i18n="faq.syncA2">都开着还是不动,就跑一遍网络自检:电脑在「设置 → 关于 → 诊断」,手机在「设置 → 诊断」。它会一步步检查,告诉你卡在哪一步。还不行就发邮件给我。电脑上那一页最下面一行能把诊断结果复制成一段文字,贴进邮件就行;手机上截个图也可以。</p>
+            </details>
+            <details>
+              <summary data-i18n="faq.lostQ">手机丢了怎么办?</summary>
+              <p data-i18n="faq.lostA1">你别的设备上还有一份完整的数据,丢的只是这一台手机。在还在手上的设备里打开「同步」的设备名单,把丢的那台移除,它就不能再通过服务器同步了。</p>
+              <p data-i18n="faq.lostA2">有两件事要知道。第一,移除收不回它本机已经有的内容。朱简没有单独的应用锁,这部分只能靠手机自己的锁屏挡着。第二,只有带「管理」标记的设备能移除别的设备。如果丢的正好是唯一一台管理设备,或者你想彻底隔离、把整个账户的密钥换掉,请发邮件给我。</p>
+              <p data-i18n="faq.lostA3">如果丢的是你唯一的一台设备,又没做过备份,数据就找不回来了。谁也帮不了,包括我。</p>
+            </details>
+            <details>
+              <summary data-i18n="faq.moveQ">换了新手机(或新电脑),数据怎么搬过去?</summary>
+              <p data-i18n="faq.moveA1">旧设备还在的话,不用手动搬。在旧设备的「同步」里点「添加设备」,新设备装好朱简后,在「同步」里扫码或者输入配对码加入,全部数据会自动拉过来。拉数据的时候,旧设备要开着,手机的话要亮屏、停在朱简里。</p>
+              <p data-i18n="faq.moveA2">以前没开过同步也一样:先在旧设备的「同步」里创建账户(不要邮箱和手机号),然后照上面的步骤加新设备。</p>
+              <p data-i18n="faq.moveA3">在新设备上确认内容都齐了,再去设备名单里把旧的那台移除。手机上卸载朱简会把数据一起删掉,所以旧手机先别急着卸。</p>
+            </details>
+            <details>
+              <summary data-i18n="faq.costQ">要花钱吗?</summary>
+              <p data-i18n="faq.costA">现在免费使用,包括多设备同步。你的数据存在你自己设备上的一个 SQLite 文件里,代码也开源(MIT)。哪天不想用了,东西都还在你手上。</p>
+            </details>
+          </div>
+        </div>
+      </section>
+
       <!-- ───────── 理念 + 开源 ───────── -->
       <section class="ethos" id="ethos">
         <div class="wrap">
@@ -977,6 +1056,7 @@
           <a href="#flow" data-i18n="nav.flow">怎么用</a>
           <a href="#download" data-i18n="nav.download">下载</a>
           <a href="#ethos" data-i18n="nav.ethos">理念</a>
+          <a href="#faq" data-i18n="nav.faq">常见问题</a>
           <a href="/privacy.html" data-i18n="foot.privacy">隐私政策</a>
           <a href="/privacy-rights.html" data-i18n="foot.rights">隐私权利</a>
           <a href="/terms.html" data-i18n="foot.terms">用户协议</a>
@@ -1023,6 +1103,7 @@
           "nav.ethos": { zh: "理念", en: "Why" },
           "nav.source": { zh: "源码", en: "Source" },
           "nav.download": { zh: "下载", en: "Download" },
+          "nav.faq": { zh: "常见问题", en: "FAQ" },
           "nav.langToggle": { zh: "EN", en: "中文" },
 
           /* — 首屏 — */
@@ -1092,6 +1173,23 @@
           "dl.trialLine": { zh: "macOS(Apple 芯片)与 Linux(x86_64):没签名,首次打开要在系统里手动放行;Linux 上热键与托盘在部分桌面环境可能不全。", en: "macOS (Apple silicon) and Linux (x86_64): unsigned, so allow them by hand on first launch; on Linux the hotkey and tray may be incomplete on some desktops." },
           "dl.macBtn": { zh: "下载 dmg", en: "Download dmg" },
           "dl.foot": { zh: "桌面更新包有开发者签名,装前会核对;Windows 安装包没做系统签名,首次安装会提示「未知发布者」,点「更多信息 → 仍要运行」 · Windows 装好后在系统托盘里,热键唤出 · Android 首次安装要允许「未知来源」,更新也要你点一下装 · 有问题发邮件到 3069848@qq.com", en: "Desktop updates are signed by the developer and checked before installing; the Windows installer is not code-signed, so the first install warns about an “unknown publisher” — choose “More info → Run anyway” · On Windows it lives in the tray; bring it up with the hotkey · On Android, allow “unknown sources” on first install; updates also take a tap to install · Questions? Email 3069848@qq.com" },
+
+          /* — 常见问题(F3)— */
+          "faq.eyebrow": { zh: "常见问题", en: "FAQ" },
+          "faq.title": { zh: "遇到了先看这里", en: "Check here first" },
+          "faq.syncQ": { zh: "同步好像不动了?", en: "Sync seems to have stopped?" },
+          "faq.syncA1": { zh: "先看两头是不是都开着、连着网。手机上的朱简要在前台才会追赶,放到后台不保证实时。新设备刚加入的那一会儿,老设备也要开着,才拉得到全部数据。", en: "First check that both devices are open and online. On a phone, Zhujian catches up only while it is in the foreground; in the background it is not guaranteed to be live. When a new device has just joined, the old one must be open too, or the new one cannot fetch all the data." },
+          "faq.syncA2": { zh: "都开着还是不动,就跑一遍网络自检:电脑在「设置 → 关于 → 诊断」,手机在「设置 → 诊断」。它会一步步检查,告诉你卡在哪一步。还不行就发邮件给我。电脑上那一页最下面一行能把诊断结果复制成一段文字,贴进邮件就行;手机上截个图也可以。", en: "If both are open and it still doesn't move, run the network check: on a computer it is under Settings → About → Diagnostics, on a phone under Settings → Diagnostics. It goes step by step and tells you where it gets stuck. If that doesn't help, email me. On a computer, the last row of that page copies the results as one block of text to paste into the email; on a phone, a screenshot is fine." },
+          "faq.lostQ": { zh: "手机丢了怎么办?", en: "Lost your phone?" },
+          "faq.lostA1": { zh: "你别的设备上还有一份完整的数据,丢的只是这一台手机。在还在手上的设备里打开「同步」的设备名单,把丢的那台移除,它就不能再通过服务器同步了。", en: "Your other devices still hold a full copy of your data; only this phone is gone. On a device you still have, open the device list under Sync and remove the lost one, and it can no longer sync through the server." },
+          "faq.lostA2": { zh: "有两件事要知道。第一,移除收不回它本机已经有的内容。朱简没有单独的应用锁,这部分只能靠手机自己的锁屏挡着。第二,只有带「管理」标记的设备能移除别的设备。如果丢的正好是唯一一台管理设备,或者你想彻底隔离、把整个账户的密钥换掉,请发邮件给我。", en: "Two things to know. First, removing it cannot take back what is already on that phone. Zhujian has no app lock of its own, so that part is protected only by the phone's own screen lock. Second, only devices marked “Admin” can remove other devices. If the lost phone was your only admin device, or you want to cut it off completely and replace the whole account's key, email me." },
+          "faq.lostA3": { zh: "如果丢的是你唯一的一台设备,又没做过备份,数据就找不回来了。谁也帮不了,包括我。", en: "If it was your only device and you had no backup, the data cannot be recovered. Nobody can help with that, including me." },
+          "faq.moveQ": { zh: "换了新手机(或新电脑),数据怎么搬过去?", en: "Got a new phone (or computer)? How do I move my data?" },
+          "faq.moveA1": { zh: "旧设备还在的话,不用手动搬。在旧设备的「同步」里点「添加设备」,新设备装好朱简后,在「同步」里扫码或者输入配对码加入,全部数据会自动拉过来。拉数据的时候,旧设备要开着,手机的话要亮屏、停在朱简里。", en: "If the old device is still around, there is nothing to move by hand. On the old device, open Sync and choose Add device; on the new one, install Zhujian, open Sync, and scan the code or enter the pairing code. All your data comes over by itself. While it does, keep the old device open; if it is a phone, keep the screen on with Zhujian in front." },
+          "faq.moveA2": { zh: "以前没开过同步也一样:先在旧设备的「同步」里创建账户(不要邮箱和手机号),然后照上面的步骤加新设备。", en: "The same works if you never turned on sync: first create an account under Sync on the old device (no email or phone number needed), then add the new device as above." },
+          "faq.moveA3": { zh: "在新设备上确认内容都齐了,再去设备名单里把旧的那台移除。手机上卸载朱简会把数据一起删掉,所以旧手机先别急着卸。", en: "Once everything is on the new device, remove the old one from the device list. Uninstalling Zhujian on a phone deletes its data too, so don't rush to uninstall it from the old phone." },
+          "faq.costQ": { zh: "要花钱吗?", en: "Does it cost anything?" },
+          "faq.costA": { zh: "现在免费使用,包括多设备同步。你的数据存在你自己设备上的一个 SQLite 文件里,代码也开源(MIT)。哪天不想用了,东西都还在你手上。", en: "It is free to use today, multi-device sync included. Your data sits in a SQLite file on your own device, and the code is open source (MIT). If you ever stop using it, everything is still in your hands." },
 
           /* — 理念 — */
           "ethos.eyebrow": { zh: "谁做的", en: "Who made it" },

@@ -40,6 +40,9 @@
         --font-brush: "Palatino Linotype", "Palatino", "Book Antiqua", "Kaiti SC", "STKaiti", "KaiTi", "楷体", "Songti SC", "SimSun", serif;
         --font-serif: "Georgia", "SimSun", "Songti SC", "Source Han Serif SC", serif;
         --font-sans: "Microsoft YaHei", "PingFang SC", system-ui, -apple-system, sans-serif;
+        /* 英文档的界面字(C6 / 用户面 127):只经下面那条 `:root:lang(en)` 接进 --font-sans,
+           中文档一个像素不动。理由与「栈首必须点名 Segoe UI」见桌面 src/theme.css。 */
+        --font-sans-en: "Segoe UI", system-ui, -apple-system, "Microsoft YaHei", "PingFang SC", sans-serif;
 
         --float-shadow: 0 18px 50px -20px rgba(40, 30, 18, 0.55), 0 2px 6px rgba(40, 30, 18, 0.12);
         --card-shadow: 0 1px 2px rgba(40, 30, 18, 0.06), 0 14px 30px -22px rgba(40, 30, 18, 0.5);
@@ -91,6 +94,13 @@
           --float-shadow: 0 22px 55px -18px rgba(0, 0, 0, 0.7), 0 2px 8px rgba(0, 0, 0, 0.4);
           --card-shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 16px 34px -22px rgba(0, 0, 0, 0.7);
         }
+      }
+
+      /* <html lang> 由下面的 apply() 单点写成生效档。⚠ 只做转接、不写字面值(值住 :root,
+         check-theme-drift 才看得见)。境内站首页是整份照抄本文件,自然带上;协议页只取到下面
+         那行为止的令牌块,也带上了,但它们是 lang="zh",这条在那儿不生效。 */
+      :root:lang(en) {
+        --font-sans: var(--font-sans-en);
       }
 
       * { box-sizing: border-box; }
