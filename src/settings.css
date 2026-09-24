@@ -589,7 +589,15 @@
 }
 .bkup-item-state.ok { color: var(--ok); }
 .bkup-item-state.err { color: var(--seal); }
-.bkup-item .hkset-change { flex: none; align-self: center; margin-left: auto; }
+/* 123:行尾从一枚「验证」变成三枚(验证 / 恢复这一份 / 复制路径),包成一组整体靠右 ——
+   各自挂 margin-left:auto 会把空隙均分到三枚之间。窄到放不下时整组折到下一行,不拆开。 */
+.bkup-item-acts {
+  flex: none;
+  display: flex;
+  gap: 6px;
+  align-self: center;
+  margin-left: auto;
+}
 
 /* ---- 本机别名(identity-plan §2.4)---- */
 .alias-ctrls {
@@ -642,4 +650,37 @@
 }
 .remind-time:disabled {
   opacity: 0.5;
+}
+
+/* 应用里的单键速查(123):只读两栏 —— 左键帽、右说明。键帽与热键行的 .hkset-combo 同族
+   (淡底 + 细边 + 小圆角,「这是一枚按键」的读法),但不设 82px 最小宽:这里多是单个字母。
+   分组小标题比 .settings-sect 再低一档,靠字重与留白分组,不画线(456 那条判据)。 */
+.keysheet-head {
+  margin: 14px 0 4px;
+  font-size: var(--fs-13);
+  font-weight: 600;
+  color: var(--ink);
+}
+.keysheet-list {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 5px 14px;
+  align-items: baseline;
+  margin: 0;
+}
+.keysheet-list dt { margin: 0; }
+.keysheet-list dd {
+  margin: 0;
+  font-size: var(--fs-13);
+  color: var(--ink-soft);
+}
+.keysheet-list kbd {
+  font-family: var(--font-sans);
+  font-size: var(--fs-12);
+  color: var(--ink-soft);
+  background: color-mix(in srgb, var(--ink) 6%, transparent);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 1px 7px;
+  white-space: nowrap;
 }

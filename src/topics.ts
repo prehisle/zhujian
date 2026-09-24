@@ -1,3 +1,4 @@
+import { TOPICS_VIEW_KEYS } from "./keymap";
 import { invoke } from "./space";
 import { type BoardColumn, columnName, loadBoardColumns } from "./board-columns";
 import type { View, ViewCtx } from "./notebook";
@@ -863,8 +864,8 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
 
   // 视图级全局单键(键义和列表里只读卡片无冲突):N 新建标签、M 合并标签。
   const teardownViewKeys = registerViewKeys([
-    { key: "N", run: () => setCreating(newform.hidden) },
-    { key: "M", run: () => setMerging(!merging) },
+    { key: TOPICS_VIEW_KEYS.create, run: () => setCreating(newform.hidden) },
+    { key: TOPICS_VIEW_KEYS.merge, run: () => setMerging(!merging) },
   ]);
 
   void refresh();

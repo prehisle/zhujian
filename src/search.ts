@@ -33,21 +33,26 @@ const STATUS_LABEL: Record<SearchHit["status"], string> = {
 
 // Build the matched text as text + <mark> nodes (never innerHTML), so the
 // highlight can never inject markup from user content. Case-insensitive, every
-// occurrence.
+// occurrence of every whitespace-separated word (core searches word by word too);
+// overlapping hits merge into one <mark>.
 function highlighted(text: string, query: string): (Node | string)[] {
-  const out: (Node | string)[] = [];
   const hay = text.toLowerCase();
-  const needle = query.toLowerCase();
-  if (!needle) return [text];
-  let from = 0;
-  for (;;) {
-    const at = hay.indexOf(needle, from);
-    if (at < 0) break;
-    if (at > from) out.push(text.slice(from, at));
-    out.push(el("mark", { textContent: text.slice(at, at + needle.length) }));
-    from = at + needle.length;
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+  const hit = new Array<boolean>(text.length).fill(false);
+  for (const w of words) {
+    for (let at = hay.indexOf(w); at >= 0; at = hay.indexOf(w, at + 1)) {
+      hit.fill(true, at, at + w.length);
+    }
   }
-  if (from < text.length) out.push(text.slice(from));
+  const out: (Node | string)[] = [];
+  let from = 0;
+  while (from < text.length) {
+    let to = from;
+    while (to < text.length && hit[to] === hit[from]) to++;
+    const piece = text.slice(from, to);
+    out.push(hit[from] ? el("mark", { textContent: piece }) : piece);
+    from = to;
+  }
   return out;
 }
 

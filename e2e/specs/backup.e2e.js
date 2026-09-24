@@ -242,6 +242,33 @@ describe("加密备份(笔①-a):仪式 → 备份 → 产物在列", () => {
         [...document.querySelectorAll(".bkup-item-state")].map((n) => n.textContent.trim()),
       )).filter((x) => x === "还没验过").length,
     ).toBe(1);
+
+    // 123:行尾「恢复这一份」把这份的完整路径填进恢复表单(表没开就替你开),光标落在备份码
+    // 那格;⛔ 只填不跑 —— 表单里「开始恢复」之后那句结果区此刻必须还是空的。
+    const realPath = listed.find((e) => e.file_name === realName).path;
+    const filled = await browser.execute((realN) => {
+      const row = [...document.querySelectorAll(".bkup-item")].find(
+        (r) => r.querySelector(".bkup-item-name").textContent.trim() === realN,
+      );
+      [...row.querySelectorAll("button")].find((b) => b.textContent.trim() === "恢复这一份").click();
+      const inputs = [...document.querySelectorAll(".bkup-restore input")];
+      return {
+        n: inputs.length,
+        file: inputs[0]?.value,
+        codeFocused: document.activeElement === inputs[1],
+        out: document.querySelector(".bkup-restore .bkup-out")?.textContent ?? null,
+      };
+    }, realName);
+    expect(filled).toEqual({ n: 2, file: realPath, codeFocused: true, out: "" });
+    // 再按一次别的行也只是换路径,表单不被收起(prefill 不走「开 / 关」那个切换)。
+    const again = await browser.execute((realN) => {
+      const row = [...document.querySelectorAll(".bkup-item")].find(
+        (r) => r.querySelector(".bkup-item-name").textContent.trim() !== realN,
+      );
+      [...row.querySelectorAll("button")].find((b) => b.textContent.trim() === "恢复这一份").click();
+      return document.querySelectorAll(".bkup-restore input").length;
+    }, realName);
+    expect(again).toBe(2);
   });
 
   // ⭐ 恢复(笔②,§16):**e2e 形跑不了恢复,这是设计不是缺陷**。`YS_DB_PATH` 那一形

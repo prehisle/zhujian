@@ -34,6 +34,7 @@ import {
   soleTopicFilter,
   wireFilterInput,
 } from "./filter-bar";
+import { IDEA_CARD_KEYS, IDEA_TRASH_KEYS, IDEA_VIEW_KEYS } from "./keymap";
 import { type Act, SATELLITE_LAYERS, armDismiss, createHotkeyController, registerViewKeys } from "./hotkey-menu";
 import { t } from "./i18n";
 import { type ImageMeta, REPASTE_HINT, imageStrip, renderContent, wirePasteToAttach } from "./item-images";
@@ -1219,30 +1220,30 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     function actionsFor(): Act[] {
       if (mode === "archived") {
         return [
-          { label: t("inbox.actRestore"), key: "R", run: doRestore },
-          { label: t("inbox.actCopy"), key: "C", feedback: copyFeedback },
-          { label: t("inbox.actCopyLink"), key: "K", feedback: copyLinkFeedback },
-          { label: t("inbox.deleteForever"), key: "D", run: openPurge, danger: true },
+          { label: t("inbox.actRestore"), key: IDEA_TRASH_KEYS.restore, run: doRestore },
+          { label: t("inbox.actCopy"), key: IDEA_TRASH_KEYS.copy, feedback: copyFeedback },
+          { label: t("inbox.actCopyLink"), key: IDEA_TRASH_KEYS.copyLink, feedback: copyLinkFeedback },
+          { label: t("inbox.deleteForever"), key: IDEA_TRASH_KEYS.deleteForever, run: openPurge, danger: true },
         ];
       }
       const list: Act[] = [
-        { label: t("inbox.actEdit"), key: "E", run: openEdit },
-        { label: t("inbox.actTask"), key: "T", run: doPromote },
-        { label: t("inbox.actTag"), key: "L", run: openTopic },
+        { label: t("inbox.actEdit"), key: IDEA_CARD_KEYS.edit, run: openEdit },
+        { label: t("inbox.actTask"), key: IDEA_CARD_KEYS.task, run: doPromote },
+        { label: t("inbox.actTag"), key: IDEA_CARD_KEYS.tag, run: openTopic },
         // 留言(§4.7):N=0 时卡片上没有徽章,这里是写第一条的唯一入口。
-        { label: t("inbox.actComments"), key: "Y", run: () => toggleComments() },
-        { label: t("inbox.actCopy"), key: "C", feedback: copyFeedback },
-        { label: t("inbox.actCopyLink"), key: "K", feedback: copyLinkFeedback },
+        { label: t("inbox.actComments"), key: IDEA_CARD_KEYS.comments, run: () => toggleComments() },
+        { label: t("inbox.actCopy"), key: IDEA_CARD_KEYS.copy, feedback: copyFeedback },
+        { label: t("inbox.actCopyLink"), key: IDEA_CARD_KEYS.copyLink, feedback: copyLinkFeedback },
       ];
       // 移动到其他空间(cross-space-move v1):≥2 空间才出现(单空间是纯噪音);
       // 该条目有部分成功登记(目标已建、源还在)时入口整个藏起——绝不提供重跑。
       if (otherSpaces.length > 0 && !movePartialNote(item.id)) {
-        list.push({ label: t("inbox.actMove"), key: "M", run: openMove });
+        list.push({ label: t("inbox.actMove"), key: IDEA_CARD_KEYS.move, run: openMove });
       }
       // 73: 删除=进回收站,不再按 stage 分流(59 的 inbox 硬删 UI 就此退役——tombstone
       // 在同步语义里是全网抹掉、不可复活,不该是删除键的默认归宿)。软删可还原,故与
       // filed 先例一致零确认;真要销毁走回收站的「彻底删除」。
-      list.push({ label: t("inbox.actDelete"), key: "D", run: doArchive, danger: true });
+      list.push({ label: t("inbox.actDelete"), key: IDEA_CARD_KEYS.delete, run: doArchive, danger: true });
       return list;
     }
     // A card mid inline-edit / mid-confirm owns the keyboard (its own Enter/Esc), so
@@ -1647,7 +1648,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
   // 视图级全局单键:N 跳到顶部「记下灵感」输入框(全屏时省得把鼠标移上去)。
   // 输入框只在「想法」tab 才有,没有时静默无操作。
   const teardownViewKeys = registerViewKeys([
-    { key: "N", run: () => view.querySelector<HTMLTextAreaElement>(".compose-input")?.focus() },
+    { key: IDEA_VIEW_KEYS.compose, run: () => view.querySelector<HTMLTextAreaElement>(".compose-input")?.focus() },
   ]);
 
   composeCtl.setLiveReload(() => void refresh()); // 本 mount 即当前活灵感视图(codex 四审 M)

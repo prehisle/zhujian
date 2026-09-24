@@ -60,6 +60,8 @@ export const backup = defineMessages({
   "backup.listEmpty": { zh: "这个目录里还没有备份文件。", en: "No backup files in this folder yet." },
   "backup.listUnverified": { zh: "还没验过", en: "Not verified yet" },
   "backup.listVerify": { zh: "验证", en: "Verify" },
+  "backup.listRestore": { zh: "恢复这一份", en: "Restore this one" },
+  "backup.listCopyPath": { zh: "复制路径", en: "Copy path" },
   "backup.listVerifying": { zh: "正在整个解一遍…", en: "Decrypting the whole file…" },
   // ⛔ 说的是「**现在**打得开」,不许追认「当初那趟备份成功了」(§3.3 那张表的 Verified 那行)。
   "backup.listOk": { zh: "现在打得开:{space} · 原库 {size}", en: "Opens right now: {space} · {size} of library data" },

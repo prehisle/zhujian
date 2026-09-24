@@ -69,6 +69,21 @@ describe("搜索(按内容跨状态查找想法)", () => {
     await expect(await $(".hit-text*=完全无关")).not.toExist();
   });
 
+  it("空格隔开的几个词都得命中,不必相邻;每个词各自高亮", async () => {
+    await seedHit("E2E体检莓的报告下周三出"); // 两个词都在,中间隔着字(紧挨着的两段会并成一枚 mark)
+    await seedHit("E2E体检莓预约"); // 只有一个词
+
+    await goNotebook("search");
+    await typeQuery("E2E体检莓  报告");
+
+    await (await $(".hit")).waitForExist({ timeout: 10000 });
+    await expect(await $$(".hit")).toBeElementsArrayOfSize(1);
+    const marks = await browser.execute(() =>
+      [...document.querySelectorAll(".hit-text mark")].map((m) => m.textContent),
+    );
+    expect(marks).toEqual(["E2E体检莓", "报告"]);
+  });
+
   it("无匹配时给空状态,清空后回到初始提示", async () => {
     await goNotebook("search");
     await typeQuery("E2E绝不存在的词xyz");
@@ -78,7 +93,7 @@ describe("搜索(按内容跨状态查找想法)", () => {
 
     // Clearing the box returns to the idle prompt.
     await $("#clear").click();
-    await expect(await $(".big*=在所有条目里查找")).toExist();
+    await expect(await $(".big*=所有条目里查找")).toExist();
     await expect(await $(".hit")).not.toExist();
   });
 });

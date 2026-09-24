@@ -44,6 +44,7 @@ import {
   loadBoardColumns,
 } from "./board-columns";
 import { closeColumnManager, openColumnManager } from "./column-manager";
+import { BOARD_CARD_KEYS, BOARD_TRASH_KEYS, BOARD_VIEW_KEYS, SEALED_CARD_KEYS } from "./keymap";
 import { type Act, SATELLITE_LAYERS, armDismiss, createHotkeyController, registerViewKeys } from "./hotkey-menu";
 import { CARD_COLORS, applyCardColor, openCardColorPicker } from "./card-color";
 import { type ImageMeta, REPASTE_HINT, imageStrip, renderContent, wirePasteToAttach } from "./item-images";
@@ -916,10 +917,10 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
   //    刻意没搬过来 —— 那是既有的端内差异、不是本轮造的(账在 backlog 用户面)。
   function trashActionsFor(item: TaskItem, acts: HTMLElement): Act[] {
     return [
-      { label: t("board.restore"), key: "U", run: () => restore(item.id) },
+      { label: t("board.restore"), key: BOARD_TRASH_KEYS.restore, run: () => restore(item.id) },
       {
         label: t("board.deleteForever"),
-        key: "D",
+        key: BOARD_TRASH_KEYS.deleteForever,
         danger: true,
         run: () =>
           confirmInline(acts, t("board.deleteForeverQ"), t("board.deleteForever"), () => purgeOne(item.id)),
@@ -1348,7 +1349,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       // 视图键 G(切归档视图)本就与卡片单键错开。
       // ⚠ 无编辑态 / 无行内确认 ⇒ suspended 用默认的恒 false(没有第二个键盘域要让位)。
       const handle = hk.register(c, () => [
-        { label: t("board.unseal"), key: "A", run: () => unseal(item.id) },
+        { label: t("board.unseal"), key: SEALED_CARD_KEYS.unseal, run: () => unseal(item.id) },
       ]);
       c.append(handle.menu());
     } else {
@@ -1510,14 +1511,14 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       // the editors directly via the meta/tag controllers — one source of truth, no chip click.
       function actionsFor(): Act[] {
         const list: Act[] = [
-          { label: t("board.edit"), key: "E", run: () => requestEdit(item.id) },
-          { label: t("board.copy"), key: "C", feedback: copyFeedback },
-          { label: t("board.copyLink"), key: "K", feedback: copyLinkFeedback },
-          { label: t("board.tags"), key: "L", run: tags.openPicker },
-          { label: t("board.due"), key: "S", run: meta.openDue },
-          { label: t("board.priority"), key: "P", run: meta.openPri },
+          { label: t("board.edit"), key: BOARD_CARD_KEYS.edit, run: () => requestEdit(item.id) },
+          { label: t("board.copy"), key: BOARD_CARD_KEYS.copy, feedback: copyFeedback },
+          { label: t("board.copyLink"), key: BOARD_CARD_KEYS.copyLink, feedback: copyLinkFeedback },
+          { label: t("board.tags"), key: BOARD_CARD_KEYS.tags, run: tags.openPicker },
+          { label: t("board.due"), key: BOARD_CARD_KEYS.due, run: meta.openDue },
+          { label: t("board.priority"), key: BOARD_CARD_KEYS.priority, run: meta.openPri },
           // 留言(§4.7,与灵感同键):N=0 时卡片上没有徽章,这里是写第一条的唯一入口。
-          { label: t("board.comments"), key: "Y", run: () => openComments(mountSpace, item.id, () => void load(), item.title) },
+          { label: t("board.comments"), key: BOARD_CARD_KEYS.comments, run: () => openComments(mountSpace, item.id, () => void load(), item.title) },
         ];
         // 颜色(0040):菜单里只出一项「颜色 H」开色板;1-7 / 0 八枚数字键是 `hidden` 的快速
         // 通道(悬停即按)。⛔ 八枚全摊进菜单会把 14 行撑成 22 行 —— 发现性改由色板上印着的
@@ -1527,7 +1528,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         if (mode === "board") {
           list.push({
             label: t("board.color"),
-            key: "H",
+            key: BOARD_CARD_KEYS.color,
             run: () => openCardColorPicker(colorWrap, item.color, (hex) => void setColor(hex)),
           });
           CARD_COLORS.forEach((cc, i) => {
@@ -1550,25 +1551,25 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         // 它写的是 `position`,而那时列里根本不按 position 排,按了屏上不会动(500);
         // dueOnly 同理(sortByDue 接管,同一个「按了屏上不会动」)。
         if (boardSort === "manual" && !dueOnly && i >= 0 && (ownColBody()?.querySelectorAll(".tcard").length ?? 0) > 1) {
-          list.push({ label: t("board.moveToTop"), key: "T", run: () => moveEnd(true) });
-          list.push({ label: t("board.moveToBottom"), key: "F", run: () => moveEnd(false) });
+          list.push({ label: t("board.moveToTop"), key: BOARD_CARD_KEYS.toTop, run: () => moveEnd(true) });
+          list.push({ label: t("board.moveToBottom"), key: BOARD_CARD_KEYS.toBottom, run: () => moveEnd(false) });
         }
         if (i >= 0 && i < live.length - 1)
-          list.push({ label: t("board.moveToCol", { col: columnName(live[i + 1]) }), key: "]", run: () => moveCol(1) });
+          list.push({ label: t("board.moveToCol", { col: columnName(live[i + 1]) }), key: BOARD_CARD_KEYS.nextCol, run: () => moveCol(1) });
         if (i > 0)
-          list.push({ label: t("board.moveToCol", { col: columnName(live[i - 1]) }), key: "[", run: () => moveCol(-1) });
+          list.push({ label: t("board.moveToCol", { col: columnName(live[i - 1]) }), key: BOARD_CARD_KEYS.prevCol, run: () => moveCol(-1) });
         // 归档: only a 已完成 card can enter the 成就册 (viewable, undeletable). Key A
         // (Archive) — the view-level key for the 归档 view is G, deliberately different
         // (card keys and view keys share the document and must not collide).
         if (item.status === DONE_COLUMN)
-          list.push({ label: t("board.seal"), key: "A", run: () => sealOne(item.id) });
+          list.push({ label: t("board.seal"), key: BOARD_CARD_KEYS.seal, run: () => sealOne(item.id) });
         // 撤回为灵感: a 灵感 is just a not-yet-clarified task, so only the least-mature
         // column (待办) may retreat into it. Single-entity: flips the SAME subject's stage
         // back to 灵感 (已归类 if it still carries a tag, else 未归类) — nothing is deleted.
         if (item.status === LANDING_COLUMN)
           list.push({
             label: t("board.revertToIdea"),
-            key: "B",
+            key: BOARD_CARD_KEYS.revert,
             run: () =>
               confirmInline(acts, t("board.revertQ"), t("board.revertYes"), () => revert(item.id)),
           });
@@ -1576,8 +1577,8 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         // confirm with a 不再提示 opt-out (persisted), after which it deletes straight away.
         // 移动到其他空间(cross-space-move v1):≥2 空间才出现。
         if (otherSpaces.length > 0 && !movePartialNote(item.id))
-          list.push({ label: t("board.move"), key: "M", run: () => openMoveSpace(acts, item.id) });
-        list.push({ label: t("board.delete"), key: "D", run: () => requestArchive(acts, item.id), danger: true });
+          list.push({ label: t("board.move"), key: BOARD_CARD_KEYS.move, run: () => openMoveSpace(acts, item.id) });
+        list.push({ label: t("board.delete"), key: BOARD_CARD_KEYS.delete, run: () => requestArchive(acts, item.id), danger: true });
         return list;
       }
       // A card mid inline-rename / mid-confirm owns the keyboard (its own Enter/Esc).
@@ -2501,9 +2502,9 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
   // G 归档切换(卡片单键 A 是「归档这张卡」,视图键须错开)。全屏时鼠标要跑到右上角很远,
   // 键盘直达。
   const teardownViewKeys = registerViewKeys([
-    { key: "N", run: () => { if (boardView === "board") setComposeOpen(true); } },
-    { key: "R", run: toggleTrash },
-    { key: "G", run: toggleSealed },
+    { key: BOARD_VIEW_KEYS.compose, run: () => { if (boardView === "board") setComposeOpen(true); } },
+    { key: BOARD_VIEW_KEYS.trash, run: toggleTrash },
+    { key: BOARD_VIEW_KEYS.sealed, run: toggleSealed },
   ]);
 
   // 65:顶栏那颗「复制看板」被塌缩规则收走时,列头那颗「复制本列」就不再让位(两颗互为替身,

@@ -15,6 +15,7 @@ import { currentThemeMode, setThemeMode, type ThemeMode } from "./theme-mode";
 import { currentLangChoice, setLangChoice, t, type LangChoice } from "./i18n";
 import { currentSpaceId } from "./space";
 import { copyButton } from "./clipboard";
+import { buildKeySheet } from "./keysheet";
 import "./settings.css";
 
 type Hotkeys = { capture: string; notebook: string };
@@ -168,6 +169,7 @@ function buildPane(cat: SettingsCat, pane: HTMLElement): void {
     );
     for (const row of ROWS) pane.appendChild(buildRow(row));
     pane.appendChild(el("p", "settings-foot", IS_MAC ? t("settings.recordHintMac") : t("settings.recordHint")));
+    pane.appendChild(buildKeySheet(IS_MAC)); // 123:应用里的单键速查(只读;键位读 keymap.ts)
     return;
   }
 

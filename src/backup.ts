@@ -15,6 +15,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { t } from "./i18n";
+import { copyButton } from "./clipboard";
 
 type BackupStatus = {
   configured: boolean;
@@ -58,6 +59,9 @@ type Verified = {
   app_version: string;
   plain_bytes: number;
 };
+/** 把一份备份的完整路径填进「从备份恢复」那张表(列表行 → 恢复节)。 */
+type Prefill = (path: string) => void;
+
 /** 一趟恢复的产出(lib.rs::RestoredSpaceDto 镜像)。⭐ **它是「一个未配置的新空间」**,
  *  ⛔ 不是"你的库回来了、原样在原处" —— 话术照 backup-plan §16.11 的六条诚实边界。 */
 type Restored = {
@@ -127,14 +131,15 @@ async function refresh(body: HTMLElement): Promise<void> {
 function render(body: HTMLElement, st: BackupStatus): void {
   ceremonyOpen = false;
   body.replaceChildren();
-  body.appendChild(backupHalf(body, st));
   // ⭐ **恢复恒显,且与上面那半的状态无关**(§16.6):换了机器 / 重装系统之后这台
   // 根本没配过备份 —— 而那正是恢复的主场景。⛔ 别把它塞进 configured 分支里。
-  body.appendChild(buildRestoreSection());
+  // 先建它是为了拿到 prefill:列表行的「恢复这一份」要把路径填进这张表(123)。
+  const restore = buildRestoreSection();
+  body.append(backupHalf(body, st, restore.prefill), restore.wrap);
 }
 
 /** 备份那一半(配置 / 仪式 / 落点 / 立即备份 / 列表 / 自动)。 */
-function backupHalf(body: HTMLElement, st: BackupStatus): HTMLElement {
+function backupHalf(body: HTMLElement, st: BackupStatus, prefill: Prefill): HTMLElement {
   const wrap = document.createElement("div");
 
   // ⛔ 配置坏了 / 上次写盘死在半路:显示原话 + 劝阻「重新设置一次」,**不给任何按钮**
@@ -175,7 +180,7 @@ function backupHalf(body: HTMLElement, st: BackupStatus): HTMLElement {
     return wrap;
   }
 
-  wrap.append(buildDirRow(st), buildRunRow(body), buildListSection(), buildAutoRow());
+  wrap.append(buildDirRow(st), buildRunRow(body), buildListSection(prefill), buildAutoRow());
   return wrap;
 }
 
@@ -190,27 +195,43 @@ function backupHalf(body: HTMLElement, st: BackupStatus): HTMLElement {
  * 3. **失败与「库已经在盘上、只是没装配上」是两回事**(§16.8 幕⑦):后者⛔ 绝不许
  *    显示成「恢复失败」,那会诱导用户再恢复一次、于是多出第二个空间。
  */
-function buildRestoreSection(): HTMLElement {
+function buildRestoreSection(): { wrap: HTMLElement; prefill: Prefill } {
   const wrap = document.createElement("div");
   const row = el("div", "hkset-row", "");
   // ⚠ `bkup-restore` 只是**给 e2e 一个准头**(这一节里有两个 `.bkup-out`),没有样式。
   const form = el("div", "bkup-out bkup-restore", "");
+  let fields: RestoreFields | null = null;
   const toggle = button(t("backup.restoreOpen"), () => {
-    const open = form.childElementCount > 0;
+    const open = fields !== null;
     form.replaceChildren();
+    fields = null;
     toggle.textContent = open ? t("backup.restoreOpen") : t("backup.restoreClose");
-    if (!open) renderRestoreForm(form);
+    if (!open) {
+      fields = renderRestoreForm(form);
+      fields.file.focus();
+    }
   });
+  // 列表行「恢复这一份」(123):表没开就开,路径填进去,光标落到备份码那格 —— 只是替用户
+  // 抄路径,⛔ 不替他按「恢复」(四条前置提示得先让他读到,见本节头注第 2 条)。
+  const prefill: Prefill = (path) => {
+    if (fields === null) toggle.click();
+    if (fields === null) throw new Error("restore form did not open");
+    fields.file.value = path;
+    fields.code.focus();
+    form.scrollIntoView({ block: "nearest" });
+  };
   row.append(
     el("div", "hkset-name", t("backup.restoreName")),
     el("div", "hkset-desc", t("backup.restoreDesc")),
     toggle,
   );
   wrap.append(row, form);
-  return wrap;
+  return { wrap, prefill };
 }
 
-function renderRestoreForm(form: HTMLElement): void {
+type RestoreFields = { file: HTMLInputElement; code: HTMLInputElement };
+
+function renderRestoreForm(form: HTMLElement): RestoreFields {
   const file = document.createElement("input");
   file.type = "text";
   file.className = "alias-input bkup-input";
@@ -257,7 +278,7 @@ function renderRestoreForm(form: HTMLElement): void {
     acts,
     out,
   );
-  file.focus();
+  return { file, code };
 }
 
 function renderRestored(out: HTMLElement, r: Restored): void {
@@ -292,7 +313,7 @@ function renderRestored(out: HTMLElement, r: Restored): void {
  * ⛔ **没有删除按钮**:清理属于笔①-b 的轮转(账里那句「别把它单独做成第三个功能」)。
  * 要删走上面那个「打开所在文件夹」自己删。
  */
-function buildListSection(): HTMLElement {
+function buildListSection(prefill: Prefill): HTMLElement {
   const wrap = document.createElement("div");
   const head = el("div", "hkset-row", "");
   // ⭐ 2026-08-31 用户拍板「整节默认折叠」:头行只剩 名字 + 一行汇总 + 「展开」,
@@ -311,16 +332,16 @@ function buildListSection(): HTMLElement {
 
   const out = el("div", "", "");
   const tools = el("div", "bkup-list-tools", "");
-  const reload = button(t("backup.listReload"), () => void loadList(out, summary));
+  const reload = button(t("backup.listReload"), () => void loadList(out, summary, prefill));
   tools.append(el("p", "settings-sub bkup-list-hint", t("backup.listDesc")), reload);
   zone.append(tools, out);
 
   wrap.append(head, zone);
-  void loadList(out, summary);
+  void loadList(out, summary, prefill);
   return wrap;
 }
 
-async function loadList(out: HTMLElement, summary: HTMLElement): Promise<void> {
+async function loadList(out: HTMLElement, summary: HTMLElement, prefill: Prefill): Promise<void> {
   out.replaceChildren(el("p", "hkset-msg", t("common.loading")));
   let list: Entry[];
   try {
@@ -343,10 +364,10 @@ async function loadList(out: HTMLElement, summary: HTMLElement): Promise<void> {
     newest > 0
       ? t("backup.listSummary", { n: list.length, when: when(newest) })
       : t("backup.listSummaryBare", { n: list.length });
-  for (const e of list) out.appendChild(listRow(e));
+  for (const e of list) out.appendChild(listRow(e, prefill));
 }
 
-function listRow(e: Entry): HTMLElement {
+function listRow(e: Entry, prefill: Prefill): HTMLElement {
   const row = el("div", "bkup-item", "");
   // ⭐ 66 字符的文件名默认藏起(2026-08-31 同一刀):平时一行只显 大小·时刻·状态·验证,
   // 点行任意空白处摊开/收回文件名;hover 的 title 也给全名。⛔ `textContent` 恒在 ——
@@ -387,7 +408,13 @@ function listRow(e: Entry): HTMLElement {
       });
   });
 
-  row.append(name, facts, state, verify);
+  // 123:恢复要的是完整路径,此前只能对着隐藏的文件名手打。⛔ 「恢复这一份」只填表不开跑
+  // (prefill 头注);也不因为没验过就藏它 —— 恢复自己会解一遍,判据与「验证」同一条路。
+  const restore = button(t("backup.listRestore"), () => prefill(e.path));
+  const copy = copyButton(e.path, "hkset-change", t("backup.listCopyPath"));
+  const acts = el("span", "bkup-item-acts", "");
+  acts.append(verify, restore, copy);
+  row.append(name, facts, state, acts);
   return row;
 }
 

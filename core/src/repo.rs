@@ -552,24 +552,36 @@ pub(crate) fn purge_all_trash(conn: &Connection) -> rusqlite::Result<usize> {
 }
 
 /// Full-text-ish search over EVERY item — current text or any superseded version
-/// (history) — across all stages and the 回收站, newest first. A literal
+/// (history) — across all stages and the 回收站, newest first. The query is split on
+/// whitespace and every word must appear (AND) in the same version; each word is a literal
 /// case-insensitive substring match via LIKE (right for CJK; a table scan is plenty at
 /// single-user scale). A promoted idea is one item now, so searching its original text
 /// (kept in history when the title diverged) still finds it. Each hit carries its view
 /// `status` + tag titles so the result can be placed.
 pub fn search_items(conn: &Connection, query: &str) -> rusqlite::Result<Vec<SearchHit>> {
-    let pattern = format!("%{}%", escape_like(query));
+    // 按空白切词,每个词都得命中(AND):「体检 报告」要找得到「体检报告下周三出」。
+    // 同一个版本里凑齐所有词才算 —— 当前正文一份、每个旧版本各一份,不跨版本拼。
+    let patterns: Vec<String> =
+        query.split_whitespace().map(|w| format!("%{}%", escape_like(w))).collect();
+    let all_words = |col: &str| {
+        (1..=patterns.len())
+            .map(|n| format!("{col} LIKE ?{n} ESCAPE '\\'"))
+            .collect::<Vec<_>>()
+            .join(" AND ")
+    };
 
     // matched items: current content matches, OR any revision of it matches.
     let matched: Vec<(String, String, String, String, Option<String>, Option<String>)> = {
-        let mut stmt = conn.prepare(
+        let mut stmt = conn.prepare(&format!(
             "SELECT i.id, i.content, i.created_at, i.stage, i.archived_at, i.sealed_at FROM items i \
-             WHERE i.content LIKE ?1 ESCAPE '\\' \
+             WHERE ({}) \
                 OR EXISTS (SELECT 1 FROM item_revisions r \
-                           WHERE r.item_id = i.id AND r.content LIKE ?1 ESCAPE '\\') \
+                           WHERE r.item_id = i.id AND {}) \
              ORDER BY i.created_at DESC",
-        )?;
-        let rows = stmt.query_map([&pattern], |r| {
+            all_words("i.content"),
+            all_words("r.content"),
+        ))?;
+        let rows = stmt.query_map(rusqlite::params_from_iter(&patterns), |r| {
             Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?))
         })?;
         rows.collect::<rusqlite::Result<_>>()?
@@ -2279,6 +2291,23 @@ mod tests {
         let pct_hits = search_items(&conn, "80%").unwrap();
         assert_eq!(pct_hits.len(), 1);
         assert_eq!(pct_hits[0].id, pct);
+    }
+
+    #[test]
+    fn search_splits_on_whitespace_and_requires_every_word_in_one_version() {
+        let conn = fresh_db();
+        let both = add_item(&conn, "体检报告下周三出").unwrap();
+        let _only_one = add_item(&conn, "体检预约").unwrap();
+        // 两个词分落在当前正文与旧版本里:不跨版本拼凑。
+        let split = add_item(&conn, "报告写完了").unwrap();
+        update_item_content(&conn, &split, "体检改期").unwrap();
+        // 旧版本里凑齐两个词:照样命中。
+        let old = add_item(&conn, "体检报告在抽屉里").unwrap();
+        update_item_content(&conn, &old, "已经无关").unwrap();
+
+        let ids: std::collections::HashSet<String> =
+            search_items(&conn, " 体检\t报告  ").unwrap().into_iter().map(|h| h.id).collect();
+        assert_eq!(ids, [both, old].into_iter().collect());
     }
 
     #[test]
