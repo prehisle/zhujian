@@ -745,7 +745,7 @@
       .seen, .limits { padding: clamp(52px, 7vw, 90px) 0; border-top: 1px solid var(--line); }
       .seen-lead { color: var(--ink-soft); font-size: var(--fs-16); margin: 18px 0 0; max-width: 60ch; }
       .two-cols { margin-top: 30px; display: grid; grid-template-columns: 1fr 1fr; gap: 12px 48px; max-width: 920px; }
-      .two-cols h3 {
+      .two-cols h3, .tinker-grid h3 {
         font-family: var(--font-serif);
         font-size: var(--fs-17);
         font-weight: 600;
@@ -773,6 +773,27 @@
       .seen-note { color: var(--ink-soft); font-size: var(--fs-15); margin: 18px 0 0; max-width: 64ch; }
       .seen-note a { color: var(--seal); text-decoration: none; }
       .seen-note a:hover { text-decoration: underline; }
+
+      .tinker { padding: clamp(52px, 7vw, 90px) 0; border-top: 1px solid var(--line); }
+      .tinker-grid { margin-top: 30px; display: grid; grid-template-columns: 1.15fr 1fr; gap: 28px 48px; }
+      .tinker-grid > div { min-width: 0; }
+      .tinker-grid p { color: var(--ink-soft); font-size: var(--fs-15); margin: 14px 0 0; }
+      .tinker-sub { margin-top: 30px !important; }
+      .code {
+        margin: 12px 0 0;
+        padding: 12px 14px;
+        background: var(--raised);
+        border: 1px solid var(--line);
+        border-radius: var(--radius-sm);
+        font-family: Consolas, "SF Mono", Menlo, monospace;
+        font-size: var(--fs-13);
+        line-height: 1.6;
+        color: var(--ink);
+        overflow-x: auto;
+        white-space: pre;
+      }
+      .marks li a { color: var(--seal); text-decoration: none; }
+      .marks li a:hover { text-decoration: underline; }
 
       /* ── 页脚:朱砂钤印落款 ────────────────────────────────── */
       .foot {
@@ -821,6 +842,7 @@
         .facts dt { padding-bottom: 4px; }
         .facts dd { padding-top: 0; border-top: 0; }
         .two-cols { grid-template-columns: 1fr; gap: 28px; }
+        .tinker-grid { grid-template-columns: 1fr; }
       }
 
       @media (prefers-reduced-motion: reduce) {
@@ -1020,6 +1042,47 @@
         </div>
       </section>
 
+      <!-- ───────── 给爱折腾的人 ───────── -->
+      <section class="tinker" id="tinker">
+        <div class="wrap">
+          <span class="eyebrow" data-i18n="tinker.eyebrow">给爱折腾的人</span>
+          <h2 class="section-title" data-i18n="tinker.title">数据、键盘和源码</h2>
+          <!-- ⛔ 路径 = Tauri `app_data_dir()` + identifier `app.zhujian.notebook`(src-tauri/tauri.conf.json)+ 主库名
+               `notebook.sqlite3`(src-tauri/src/lib.rs 开库那段);查询按 0036 之后的表形写:`items.stage` 指 `board_column.id`,
+               自定义列的 id 是 ULID ⇒ 按 `kind = 'idea'` 过滤,⛔ 别写成 `stage in ('inbox','filed')`。
+               键位抄 readme「功能」节,改键位 / 表结构时这里同改。pre 里是命令与路径,不进字典。 -->
+          <div class="tinker-grid">
+            <div>
+              <h3 data-i18n="tinker.dataTitle">数据就是一个 SQLite 文件</h3>
+              <p data-i18n="tinker.dataP1">电脑上的主空间在这儿,别的空间是同一目录下以一串编号命名的文件:</p>
+              <pre class="code">Windows  %APPDATA%&#92;app.zhujian.notebook&#92;notebook.sqlite3
+macOS    ~/Library/Application Support/app.zhujian.notebook/notebook.sqlite3
+Linux    ~/.local/share/app.zhujian.notebook/notebook.sqlite3</pre>
+              <p data-i18n="tinker.dataP2">随记和待办在同一张 items 表里,靠它落在哪一列来区分。看最近五条随记:</p>
+              <pre class="code">sqlite3 notebook.sqlite3 "select i.created_at, i.content
+  from items i join board_column c on c.id = i.stage
+  where c.kind = 'idea' and i.archived_at is null
+  order by i.created_at desc limit 5;"</pre>
+              <p data-i18n="tinker.dataP3">建议只读着看。直接改它不在应用照顾的范围里,改坏了我也不好帮你救。手机上的库在应用私有目录里,拿不到。</p>
+            </div>
+            <div>
+              <h3 data-i18n="tinker.keysTitle">手不离键盘</h3>
+              <ul class="marks">
+                <li data-i18n="tinker.k1">Ctrl+Alt+N 唤出纸条,Ctrl+Alt+M 打开主窗;两个都能改。Mac 上是 Cmd+Alt。</li>
+                <li data-i18n="tinker.k2">纸条里行首打 /:/task 直接存成任务,/tag 名字 挂上标签,/space 换个空间。</li>
+                <li data-i18n="tinker.k3">卡片右上角 ⋯ 里每项都标着单键:E 编辑、C 复制、L 标签、S 截止、P 优先级、B 撤回、D 删除,] 和 [ 前后挪一列。</li>
+                <li data-i18n="tinker.k4">正文行首写 - [ ] 就是一个能勾的方框。</li>
+              </ul>
+              <h3 class="tinker-sub" data-i18n="tinker.srcTitle">源码与设计</h3>
+              <ul class="marks">
+                <li><a href="https://github.com/prehisle/zhujian" data-i18n="tinker.srcRepo">源码(MIT),Rust + TypeScript + Tauri</a></li>
+                <li><a href="https://github.com/prehisle/zhujian/blob/main/docs/why-no-framework.md" data-i18n="tinker.srcNoFw">为什么前端不用框架</a></li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <!-- ───────── 下载 ───────── -->
       <section class="download" id="download">
         <div class="wrap">
@@ -1145,6 +1208,7 @@
             <p><strong data-i18n="ethos.why1a">数据放在别人的云上。</strong><span data-i18n="ethos.why1b">服务一停、账号一封,或者数据库被人拖走,东西就不是你的了。所以朱简把数据存在你自己的设备上,同步也只传加密过的内容。</span></p>
             <p><strong data-i18n="ethos.why2a">想记的时候打不开。</strong><span data-i18n="ethos.why2b">网页上的看板要开浏览器、要登录,网一慢就卡,功能还越堆越多。可一个念头常常只停几秒。朱简的做法是:按一个热键,弹出一张纸条,写完回车就收起。</span></p>
             <p><strong data-i18n="ethos.why3a">写下的字被改掉。</strong><span data-i18n="ethos.why3b">现在很多工具都在用 AI 帮你润色、总结、归类。可在什么都能让 AI 代写的时候,你自己想出来、没被改过的念头,才更值得留着。朱简不会动你写下的任何一个字。</span></p>
+            <p data-i18n="ethos.p4">顺带说一句:朱简的代码是我和 AI 一起写的。让 AI 帮我写程序,和让它改你写的字,是两回事。</p>
             <!-- 字源那段里两个词是加粗的,故按加粗边界切片;英文版把「原名朱笺」的来龙去脉
                  略去(对英文读者是无从对照的旧名),不是漏译。 -->
             <p>
@@ -1292,6 +1356,22 @@
           "seen.trust": { zh: "有一件事协议管不了:你得相信装到手上的安装包,就是 GitHub 上那份开源代码编出来的。不放心的话,可以自己编译。", en: "One thing the protocol cannot cover: you have to trust that the installer you got was built from the open-source code on GitHub. If you would rather not, you can build it yourself." },
           "seen.protocol": { zh: "同步协议全文(写给开发者看的)", en: "Full sync protocol (for developers, in Chinese)" },
 
+          /* — 给爱折腾的人(路径 / 查询 / 键位的出处见节头注释)— */
+          "tinker.eyebrow": { zh: "给爱折腾的人", en: "For tinkerers" },
+          "tinker.title": { zh: "数据、键盘和源码", en: "Data, keyboard, and source" },
+          "tinker.dataTitle": { zh: "数据就是一个 SQLite 文件", en: "Your data is one SQLite file" },
+          "tinker.dataP1": { zh: "电脑上的主空间在这儿,别的空间是同一目录下以一串编号命名的文件:", en: "On a computer the main space lives here; other spaces are files named by an ID in the same folder:" },
+          "tinker.dataP2": { zh: "随记和待办在同一张 items 表里,靠它落在哪一列来区分。看最近五条随记:", en: "Notes and tasks share one items table; which column a row sits in tells them apart. The five latest notes:" },
+          "tinker.dataP3": { zh: "建议只读着看。直接改它不在应用照顾的范围里,改坏了我也不好帮你救。手机上的库在应用私有目录里,拿不到。", en: "Read it, but I would not edit it. Changes made outside the app are not something it looks after, and if it breaks I may not be able to help you recover. On phones the database sits in the app's private folder and is not reachable." },
+          "tinker.keysTitle": { zh: "手不离键盘", en: "Hands on the keyboard" },
+          "tinker.k1": { zh: "Ctrl+Alt+N 唤出纸条,Ctrl+Alt+M 打开主窗;两个都能改。Mac 上是 Cmd+Alt。", en: "Ctrl+Alt+N brings up the slip, Ctrl+Alt+M opens the main window; both can be changed. On a Mac it is Cmd+Alt." },
+          "tinker.k2": { zh: "纸条里行首打 /:/task 直接存成任务,/tag 名字 挂上标签,/space 换个空间。", en: "In the slip, start a line with /: /task saves it as a task, /tag name adds a tag, /space picks another space." },
+          "tinker.k3": { zh: "卡片右上角 ⋯ 里每项都标着单键:E 编辑、C 复制、L 标签、S 截止、P 优先级、B 撤回、D 删除,] 和 [ 前后挪一列。", en: "Every item in a card's ⋯ menu shows a single key: E edit, C copy, L tags, S due date, P priority, B send back, D delete, ] and [ move a column right or left." },
+          "tinker.k4": { zh: "正文行首写 - [ ] 就是一个能勾的方框。", en: "Start a line with - [ ] and it becomes a box you can tick." },
+          "tinker.srcTitle": { zh: "源码与设计", en: "Source and design" },
+          "tinker.srcRepo": { zh: "源码(MIT),Rust + TypeScript + Tauri", en: "Source code (MIT): Rust, TypeScript, Tauri" },
+          "tinker.srcNoFw": { zh: "为什么前端不用框架", en: "Why the front end uses no framework (in Chinese)" },
+
           /* — 下载 — */
           "dl.eyebrow": { zh: "现在就能用", en: "Ready to use" },
           "dl.title": { zh: "装一个试试", en: "Give it a try" },
@@ -1351,6 +1431,7 @@
           "ethos.why2b": { zh: "网页上的看板要开浏览器、要登录,网一慢就卡,功能还越堆越多。可一个念头常常只停几秒。朱简的做法是:按一个热键,弹出一张纸条,写完回车就收起。", en: "A web board needs a browser and a login, stalls when the network is slow, and keeps growing features. A thought often lasts only a few seconds. Zhujian's answer: press a hotkey, a slip of paper pops up, type, hit Enter, and it tucks itself away." },
           "ethos.why3a": { zh: "写下的字被改掉。", en: "Your words get rewritten. " },
           "ethos.why3b": { zh: "现在很多工具都在用 AI 帮你润色、总结、归类。可在什么都能让 AI 代写的时候,你自己想出来、没被改过的念头,才更值得留着。朱简不会动你写下的任何一个字。", en: "Many tools now use AI to polish, summarize, and sort what you write. When AI can write almost anything for you, the ideas you came up with yourself, untouched, are the ones worth keeping. Zhujian never changes a word you write." },
+          "ethos.p4": { zh: "顺带说一句:朱简的代码是我和 AI 一起写的。让 AI 帮我写程序,和让它改你写的字,是两回事。", en: "One more thing: I wrote Zhujian's code together with AI. Having AI help me write a program is one thing; letting it change your words is another." },
           "ethos.p2a": { zh: "名字取自「", en: "The name joins " },
           "ethos.p2Zhusha": { zh: "朱砂", en: "zhūshā" },
           "ethos.p2b": { zh: "」与「", en: " (cinnabar) with " },
