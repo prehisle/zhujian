@@ -163,6 +163,32 @@ const TOKENS = [
     why: "分段钮未选中态那层极淡的墨底 = --ink 带 4% alpha;来路同 --paper-veil(用户面 82)。\
 桌面那边分段控件走的是另一套(.seg 只在手机端)",
   },
+  // 卡片颜色标记(用户面 110)。四枚是一组、只在安卓那份:桌面走 color-mix()(WebView2 认),
+  // 手机台架 MuMu 是 Chrome 110 不认 ⇒ 拆成「三个整数 + alpha 令牌」;补偿值是对着这个浓度算的。
+  {
+    name: "--card-tint-a",
+    in: ["安卓"],
+    dark: true,
+    why: "卡片颜色那层淡底的 alpha(亮 0.15 / 暗 0.2,MuMu 上逐档量的,理由在 android/index.html 的 .card.tinted)。桌面同一件事是 board.css 里 color-mix 的百分比(18% / 20%,WebView2 上量的),⛔ 别把两端的数「对齐」—— 手机单列整屏宽,同浓度读起来更重,是分别量出来的",
+  },
+  {
+    name: "--ink-soft-on-tint",
+    in: ["安卓"],
+    dark: true,
+    why: "染色卡里就地顶替 --ink-soft 的补偿值:往 --ink 压到七色里最紧那张的对比度 ≥ 无色卡上的原值 (12px 时间戳 / 截止 chip 不因上色跌破 §2.2 小字底线)。对着 --card-tint-a 与七色算的,改哪个都得重算",
+  },
+  {
+    name: "--ink-faint-on-tint",
+    in: ["安卓"],
+    dark: true,
+    why: "同 --ink-soft-on-tint,顶替 --ink-faint(已完成卡的淡字不因上色更淡)",
+  },
+  {
+    name: "--seal-tint-solid",
+    in: ["安卓"],
+    dark: true,
+    why: "--seal-tint 叠在 --raised 上的实色:染色卡里顶替 --seal-tint,朱砂 chip 的底不再透出卡片色 ⇒ 对比度逐位回到无色卡上的值(半透明那层叠在淡底上会把朱砂字压到 3.8)",
+  },
   // 官网那三层「纱」(用户面 84)。⚠ 与安卓的 --paper-veil / --ink-veil **同一个病、同一种修法,
   // 但不是同一个令牌** —— 强度不同:官网顶栏 82%、安卓顶栏/底栏 94%,各是各拍的。
   // ⛔ 别为了「看起来该合并」把某一份的 alpha 改成另一份的:那是改设计不是消漂移;

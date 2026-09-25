@@ -18,7 +18,7 @@ import {
   type SearchStatus,
 } from "./api";
 import { t } from "./i18n";
-import { $, confirmBar, contentHtml, esc, fmtWhen, hideConfirmBar, showBar } from "./ui";
+import { $, cardTint, confirmBar, contentHtml, esc, fmtWhen, hideConfirmBar, showBar } from "./ui";
 import { errDetail, showErr } from "./err";
 import { isTaskStage, setColumns, stageLabel } from "./columns";
 
@@ -94,7 +94,8 @@ function renderTrash() {
               <button data-trash-act="purge" class="warn"${trashBusy ? " disabled" : ""}>${t("panes.purge")}</button>
             </div></div>`
           : "";
-      return `<article class="card" data-trash="${esc(r.id)}"><div class="body">
+      const tint = cardTint(r.color);
+      return `<article class="card${tint.cls}"${tint.attr} data-trash="${esc(r.id)}"><div class="body">
         <p class="content">${contentHtml(r.content, false)}</p>
         <footer><span class="pill">${kind}</span><time>${t("panes.deletedAt", { when: esc(fmtWhen(r.archived_at)) })}</time>${chips}</footer>${panel}
       </div></article>`;
@@ -221,7 +222,8 @@ function renderSealed() {
               <button data-unseal="${esc(r.id)}"${sealedBusy ? " disabled" : ""}>${t("panes.unseal")}</button>
             </div></div>`
           : "";
-      return `<article class="card" data-sealed="${esc(r.id)}"><div class="body">
+      const tint = cardTint(r.color);
+      return `<article class="card${tint.cls}"${tint.attr} data-sealed="${esc(r.id)}"><div class="body">
         <p class="content">${contentHtml(r.title, false)}</p>
         <footer><time>${
           r.done_at

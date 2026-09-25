@@ -10,6 +10,27 @@ export const $ = (id: string) => document.getElementById(id)!;
 export const esc = (s: string) =>
   s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 
+/** 卡片颜色标记(0040 `items.color`,用户面 110)→ 挂到 `<article class="card…">` 上的类与行内变量。
+ *  无色返回两个空串;有色 = ` tinted` + ` style="--card-rgb:R G B"`,整卡一层淡底由 index.html
+ *  的 `.card.tinted` 画(浓度令牌 `--card-tint-a`,理由在那儿)。
+ *
+ *  ⭐ **为什么拆成「三个数 + 一枚 alpha 令牌」而不是像桌面那样整串喂 `--card-color`**:
+ *  ① 桌面那形靠 `color-mix()`,要 Chrome 111,台架 MuMu 是 110,且含 `var()` 时补兜底救不了
+ *     (IACVT,mobile.md 643);② 也**不按七色各烤一枚令牌** —— 两道后端闸刻意只验 `#RRGGBB`
+ *     格式、不验调色板成员(card-color.ts 头注:调色板有意扩展),按色烤令牌 = 手机端再抄一份
+ *     调色板,桌面一加色这边就画不出;这里任何合法 hex 都照画,与桌面同一份数据同一个结果
+ *     (rgba 叠在 `--raised` 上 ≡ `color-mix(in srgb, C a, --raised)`,算术上逐位相同)。
+ *  ③ 顺带把休眠账 7 那条消费面约束做成了**结构上不可能**:写进 CSS 的只有这里解出来的三个
+ *     十进制整数,同步来的自由文本一个字也到不了样式表。
+ *  非 `#RRGGBB` = 两道后端闸都漏了,响亮抛(不静默当无色)。 */
+export function cardTint(color: string | null): { cls: string; attr: string } {
+  if (color === null) return { cls: "", attr: "" };
+  const m = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(color);
+  if (!m) throw new Error(`卡片颜色不是 #RRGGBB:${color}`);
+  const rgb = m.slice(1).map((h) => parseInt(h, 16)).join(" ");
+  return { cls: " tinted", attr: ` style="--card-rgb:${rgb}"` };
+}
+
 /** 正文 → HTML:行首 `- [ ] ` / `- [x] ` 画成一枚方框(checklist.ts 认行),其余照旧逐字
  *  转义。⚠ 逐行处理、`\n` 原样接回去(卡片正文是 white-space:pre-wrap)。
  *

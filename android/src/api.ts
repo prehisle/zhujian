@@ -87,6 +87,8 @@ export type TimelineItem = {
   /** 出生设备(0033 born_device),null = 未知(0033 前的存量行)。经 identity.ts 翻成
    *  署名 chip;只在「不是本机」且「那台起过别名」时显。 */
   born_device: string | null;
+  /** 卡片颜色标记(0040 items.color):`#RRGGBB` 或 null = 无色。经 ui.ts::cardTint 画淡底(用户面 110)。 */
+  color: string | null;
   topics: TopicItem[];
   images: ImageMeta[];
 };
@@ -97,6 +99,8 @@ export type TrashItem = {
   created_at: string;
   archived_at: string;
   stage: ItemStage;
+  /** 卡片颜色标记(0040),同 TimelineItem.color。 */
+  color: string | null;
   topics: TopicItem[];
 };
 /** 一条灵感(回收站行冻结在入站前的 stage)。 */
@@ -118,6 +122,8 @@ export type TaskItem = {
   /** 完成时刻(RFC3339,0030 done_at),null = 未知老卡。归档册按 done_at ?? sealed_at
    *  显示/排序(完成日优先)。只增不清。 */
   done_at: string | null;
+  /** 卡片颜色标记(0040),同 TimelineItem.color;归档册画它。 */
+  color: string | null;
   topics: TopicItem[];
 };
 export type TopicNoteItem = { id: string; content: string; created_at: string };

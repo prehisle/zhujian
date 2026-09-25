@@ -194,6 +194,12 @@ const RUNTIME_VARS = [
       "⛔ 它是**同步来的自由文本**(别的设备写的),CSS 侧只许经 color-mix() / background-color:" +
       " 消费 —— 绝不喂 background: 简写(backlog 休眠账 7 触发门②:那个简写吃 url(),实测真发得出网络信标)",
   },
+  {
+    name: "--card-rgb",
+    where:
+      "android/src/ui.ts::cardTint 从 items.color(#RRGGBB)解出的三个十进制整数,模板里行内 style 挂到" +
+      " `.card.tinted` 上(用户面 110);只在有色时挂,无色卡不挂 class 也不挂变量 ⇒ 没有「兜底退回」这回事",
+  },
   { name: "--tc", where: "安卓侧同一件事(android/src/filter.ts 等),chip 上的行内 style" },
   { name: "--nav-h", where: "android/src/main.ts 量出底栏实高后写根元素,供悬浮钮定位" },
   {

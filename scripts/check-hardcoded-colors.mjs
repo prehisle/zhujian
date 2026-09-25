@@ -113,6 +113,13 @@ const REGISTERED = [
     color: /^rgba\(0, 0, 0, [\d.]+\)$/,
     why: "安卓那份没铺 --card-shadow/--float-shadow(见 check-theme-drift 里那条 why:小屏上投影会糊成一片,卡片改用发丝线描边),剩下的投影与遮罩都是就地写的黑",
   },
+  {
+    file: "android/index.html#style",
+    prop: "background-image",
+    color: "rgb(var(--card-rgb)",
+    why: "不是写死的颜色:卡片颜色标记那层淡底 = 运行期三个整数 `--card-rgb` + 令牌 `--card-tint-a` 拼的颜色函数(用户面 110)。" +
+      "抓取器的 rgb( 正则咬到了它。⛔ 别为了躲闸改成 color-mix() —— Chrome 110 不认、含 var() 时兜底也救不了(mobile.md 643)",
+  },
   { file: "android/index.html#style", prop: "color", color: "#fff", why: OVERLAY_ON_PHOTO + "(安卓看大图那一套:角标 / 关闭钮 / 计数)" },
   { file: "android/index.html#style", prop: /^(border|box-shadow)$/, color: /^rgba\(255, 255, 255, [\d.]+\)$/, why: "同上那批深色蒙版上的描边 —— 底是照片,故用白而不是 --line" },
   {

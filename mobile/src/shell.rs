@@ -593,6 +593,8 @@ pub struct TimelineItem {
     /// `device_identity` 的名册翻成别名显一枚署名 chip;**只在「不是本机」且「那台起过
     /// 别名」时显**,其余一律不显(identity-plan §3.7 + 2026-08-05 用户拍板)。
     born_device: Option<String>,
+    /// 卡片颜色标记(0040 `items.color`,`#RRGGBB` 或 null = 无色):前端画一层淡底(用户面 110)。
+    color: Option<String>,
     topics: Vec<TopicItem>,
     images: Vec<ImageMeta>,
 }
@@ -625,6 +627,7 @@ pub fn list_timeline(space_id: String, coord: State<'_, Coord>) -> Result<Vec<Ti
                     priority: r.priority,
                     done_at: r.done_at,
                     born_device: r.born_device,
+                    color: r.color,
                     topics: r.topics.into_iter().map(TopicItem::from).collect(),
                     images,
                 }
@@ -985,6 +988,8 @@ pub struct TaskItem {
     /// 完成时刻(RFC3339,0030 done_at),null = 未知老卡。归档册按 COALESCE(done_at,
     /// sealed_at) 排序/显示(完成日优先),看板已完成卡走 list_timeline 显示。只增不清。
     done_at: Option<String>,
+    /// 卡片颜色标记(0040),同 TimelineItem.color;归档册那一面画它(用户面 110)。
+    color: Option<String>,
     topics: Vec<TopicItem>,
 }
 
@@ -998,6 +1003,7 @@ impl From<repo::TaskRow> for TaskItem {
             priority: t.priority,
             sealed_at: t.sealed_at,
             done_at: t.done_at,
+            color: t.color,
             topics: t.topics.into_iter().map(TopicItem::from).collect(),
         }
     }
@@ -1402,6 +1408,8 @@ pub struct TrashItem {
     created_at: String,
     archived_at: String,
     stage: String,
+    /// 卡片颜色标记(0040),同 TimelineItem.color —— 进了回收站也画(用户面 110)。
+    color: Option<String>,
     topics: Vec<TopicItem>,
 }
 
@@ -1419,6 +1427,7 @@ pub fn list_trash(space_id: String, coord: State<'_, Coord>) -> Result<Vec<Trash
                 created_at: r.created_at,
                 archived_at: r.archived_at,
                 stage: r.stage,
+                color: r.color,
                 topics: r.topics.into_iter().map(TopicItem::from).collect(),
             })
             .collect())

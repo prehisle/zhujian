@@ -37,7 +37,7 @@ import {
   type TaskStatus,
   type TimelineItem,
 } from "./api";
-import { $, actionBar, contentHtml, dayKey, dayLabel, esc, fmtTimeOfDay, fmtWhen, hideConfirmBar, showBar, showError } from "./ui";
+import { $, actionBar, cardTint, contentHtml, dayKey, dayLabel, esc, fmtTimeOfDay, fmtWhen, hideConfirmBar, showBar, showError } from "./ui";
 import { errDetail, errText, initErr, showErr } from "./err";
 import { toggleChecklistLine } from "../../shared/checklist";
 import { buildStamp, formatBuiltAt } from "../../shared/build-stamp";
@@ -386,7 +386,8 @@ function renderCard(it: TimelineItem, hideTopic: string | null, underDayHead = f
   // 量完再夹」会让长卡首帧闪一下全文。⛔ 方框那条豁免不在这儿判,它要的是**夹后几何**。
   // 只夹任务面(同桌面 704 只折看板态):随记是全宽单列的流水,长卡在那儿不挡别的卡。
   const clamp = viewMode === "tasks" ? " clamped" : "";
-  return `<article class="card${done ? " done" : ""}" data-id="${esc(it.id)}" data-stage="${esc(it.stage)}">${tick}<div class="body">
+  const tint = cardTint(it.color);
+  return `<article class="card${done ? " done" : ""}${tint.cls}"${tint.attr} data-id="${esc(it.id)}" data-stage="${esc(it.stage)}">${tick}<div class="body">
     <p class="content${clamp}">${contentHtml(it.content, true)}</p>${thumbs}
     <footer><time>${esc(underDayHead ? fmtTimeOfDay(it.created_at) : fmtWhen(it.created_at))}</time>${doneAt}${sig}${cmBadge}${meta.join("")}${chips}</footer>
   </div></article>`;

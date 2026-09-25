@@ -157,6 +157,9 @@ pub struct TimelineRow {
     /// 「未知不回填」)。前端把它经设备名册翻成别名,**只在多设备账户里、且不是本机时**
     /// 才显一枚小字 chip(identity-plan §3.7);单设备账户完全不显示。
     pub born_device: Option<String>,
+    /// 卡片颜色标记(0040 `items.color`):`#RRGGBB` 或 None = 无色。供手机端画那层淡底
+    /// (用户面 110);同 TaskRow.color,纯展示、不进任何逻辑。
+    pub color: Option<String>,
     pub topics: Vec<TagRef>,
 }
 
@@ -170,6 +173,8 @@ pub struct TrashRow {
     pub created_at: String,
     pub archived_at: String,
     pub stage: String,
+    /// 卡片颜色标记(0040),同 TimelineRow.color —— 进了回收站也保着(桌面同判:颜色是卡自己的属性)。
+    pub color: Option<String>,
     pub topics: Vec<TagRef>,
 }
 
@@ -439,7 +444,7 @@ pub fn idea_trash(conn: &Connection) -> rusqlite::Result<Vec<OrganizedRow>> {
 pub fn live_timeline(conn: &Connection) -> rusqlite::Result<Vec<TimelineRow>> {
     let mut stmt = conn.prepare(
         "SELECT i.id, i.content, i.created_at, i.stage, i.due_on, i.priority, i.done_at, \
-                i.born_device, t.id, t.title, t.color \
+                i.born_device, i.color, t.id, t.title, t.color \
          FROM items i \
          LEFT JOIN item_topic it ON it.item_id = i.id \
          LEFT JOIN topics t ON t.id = it.topic_id \
@@ -459,6 +464,7 @@ pub fn live_timeline(conn: &Connection) -> rusqlite::Result<Vec<TimelineRow>> {
             r.get::<_, Option<String>>(8)?,
             r.get::<_, Option<String>>(9)?,
             r.get::<_, Option<String>>(10)?,
+            r.get::<_, Option<String>>(11)?,
         ))
     })?;
     let mut out: Vec<TimelineRow> = Vec::new();
@@ -472,6 +478,7 @@ pub fn live_timeline(conn: &Connection) -> rusqlite::Result<Vec<TimelineRow>> {
             priority,
             done_at,
             born_device,
+            color,
             tag_id,
             tag_title,
             tag_color,
@@ -487,6 +494,7 @@ pub fn live_timeline(conn: &Connection) -> rusqlite::Result<Vec<TimelineRow>> {
                 priority,
                 done_at,
                 born_device,
+                color,
                 topics: Vec::new(),
             });
         }
@@ -511,7 +519,7 @@ pub fn live_timeline(conn: &Connection) -> rusqlite::Result<Vec<TimelineRow>> {
 /// (列表/还原/单删/清空共 10 处,漏一处=英文触发器报错重现)。
 pub fn trash_items(conn: &Connection) -> rusqlite::Result<Vec<TrashRow>> {
     let mut stmt = conn.prepare(
-        "SELECT i.id, i.content, i.created_at, i.archived_at, i.stage, t.id, t.title, t.color \
+        "SELECT i.id, i.content, i.created_at, i.archived_at, i.stage, i.color, t.id, t.title, t.color \
          FROM items i \
          LEFT JOIN item_topic it ON it.item_id = i.id \
          LEFT JOIN topics t ON t.id = it.topic_id \
@@ -528,13 +536,14 @@ pub fn trash_items(conn: &Connection) -> rusqlite::Result<Vec<TrashRow>> {
             r.get::<_, Option<String>>(5)?,
             r.get::<_, Option<String>>(6)?,
             r.get::<_, Option<String>>(7)?,
+            r.get::<_, Option<String>>(8)?,
         ))
     })?;
     let mut out: Vec<TrashRow> = Vec::new();
     for row in rows {
-        let (id, content, created_at, archived_at, stage, tag_id, tag_title, tag_color) = row?;
+        let (id, content, created_at, archived_at, stage, color, tag_id, tag_title, tag_color) = row?;
         if out.last().map(|last| last.id != id).unwrap_or(true) {
-            out.push(TrashRow { id, content, created_at, archived_at, stage, topics: Vec::new() });
+            out.push(TrashRow { id, content, created_at, archived_at, stage, color, topics: Vec::new() });
         }
         if let Some(tag_id) = tag_id {
             let title = tag_title.expect("topics.title NOT NULL,与 t.id 来自同一匹配行");
@@ -2112,6 +2121,25 @@ mod tests {
         assert_eq!(row_task.priority, Some(3));
         assert_eq!(row_idea.due_on, None);
         assert_eq!(row_idea.priority, None);
+    }
+
+    #[test]
+    fn live_timeline_and_trash_carry_card_color() {
+        // 用户面 110:手机端画卡片颜色标记,颜色得随时间轴 / 回收站行带出(归档册走 TaskRow,
+        // 早已带着)。有色带 hex、无色 None;进回收站后颜色保着。
+        let conn = fresh_db();
+        let red = insert_task(&conn, "有色", None, None).unwrap();
+        let plain = insert_task(&conn, "无色", None, None).unwrap();
+        let gone = insert_task(&conn, "有色后删", None, None).unwrap();
+        assert_eq!(set_task_color(&conn, &red, Some("#3f78a0")).unwrap(), 1);
+        assert_eq!(set_task_color(&conn, &gone, Some("#9e5397")).unwrap(), 1);
+        assert_eq!(archive_task(&conn, &gone).unwrap(), 1);
+        let rows = live_timeline(&conn).unwrap();
+        let color_of = |id: &str| rows.iter().find(|r| r.id == id).unwrap().color.clone();
+        assert_eq!(color_of(&red).as_deref(), Some("#3f78a0"));
+        assert_eq!(color_of(&plain), None);
+        let trash = trash_items(&conn).unwrap();
+        assert_eq!(trash.iter().find(|r| r.id == gone).unwrap().color.as_deref(), Some("#9e5397"));
     }
 
     #[test]

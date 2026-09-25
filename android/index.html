@@ -92,6 +92,12 @@
            **整个透明**(MuMu 实测 rgba(0,0,0,0),用户当场看见的就是这个)。 */
         --paper-veil: rgba(243, 238, 227, 0.94); /* = --paper 94% */
         --ink-veil: rgba(34, 31, 25, 0.04); /* = --ink 4% */
+        /* 卡片颜色标记(用户面 110):淡底浓度 + 染色卡里三枚文字令牌的补偿值。怎么用、
+           为什么是这几个数见 `.card.tinted`;⚠ 四个数是一组,改浓度就得把后三个重算。 */
+        --card-tint-a: 0.15;
+        --ink-soft-on-tint: #5e5649;
+        --ink-faint-on-tint: #978d7d;
+        --seal-tint-solid: #f3e4d9; /* = --seal-tint 叠在 --raised 上的实色 */
         --on-seal: #fdf6ee; /* 压在朱砂上的字,随明暗翻面(理由见桌面 src/theme.css) */
         --ok: #3d7a4e;
         --font-serif: "Georgia", "SimSun", "Songti SC", "Source Han Serif SC", serif;
@@ -150,6 +156,10 @@
         --seal-line: rgba(223, 106, 79, 0.45);
         --paper-veil: rgba(27, 24, 19, 0.94); /* = --paper 94% */
         --ink-veil: rgba(236, 228, 213, 0.04); /* = --ink 4% */
+        --card-tint-a: 0.2;
+        --ink-soft-on-tint: #bfb5a3;
+        --ink-faint-on-tint: #948c7b;
+        --seal-tint-solid: #3e2a21; /* = --seal-tint 叠在 --raised 上的实色 */
         --on-seal: #1b1813;
         --ok: #6fa47e;
         color-scheme: dark; /* 原生控件(输入框选区/滚动条)跟着走 */
@@ -721,6 +731,35 @@
         padding: 10px 12px;
         /* 竖滑交回原生滚动、横滑归自己(182 任务卡左右滑改状态)。 */
         touch-action: pan-y;
+      }
+      /* 卡片颜色标记(0040,用户面 110):整卡一层淡底,与桌面同一套七色、同一份 `items.color`。
+         `--card-rgb` 是 ui.ts::cardTint 从 `#RRGGBB` 解出来的三个十进制整数(行内 style),
+         `--card-tint-a` 是令牌。叠在 `.card` 的 `--raised` 底色上 ≡ 桌面的
+         `color-mix(in srgb, C a, --raised)`(sRGB 里 alpha 合成就是这条式子,逐位相同)。
+         ⛔ 别改成 `color-mix()`:Chrome 111 起才有,台架 MuMu 是 110,且含 var() 时补兜底救不了
+         (IACVT ⇒ 归 unset、不回退,mobile.md 643);⛔ 也别按七色各烤令牌:理由在 cardTint 头注。
+         ⚠ 走 background-image 的单色渐变而不是 background-color:底色那层要留给 `--raised`,
+         两层才叠得出来。这个值位本来吃 url() —— 但这里进来的只有 cardTint 解出的整数,同步来的
+         自由文本到不了样式表(休眠账 7 那条消费面约束因此结构上满足)。
+         ⭐ 浓度亮 15% / 暗 20% 是 **MuMu(Chrome 110,360 宽单列)上逐档截图并排量出来的**
+         (用户面 110;亮 8/12/15/18/24、暗 12/16/20/24/28 五档):亮 8% 天青 / 青瓷 / 竹青三张
+         几乎都是纸色;12% 分得开但偏弱;15% 一眼分开且仍克制;18% 起堇紫、琥珀两张开始抢眼,
+         24% 有塑料感。比桌面的 18% 低一档是因为**手机单列一张卡就是整屏宽**,同浓度的色块面积大、
+         上下几张连着叠,读起来比看板窄列里重。暗色与桌面同为 20%:16% 天青与青瓷还是糊在一起,
+         24% 已偏重。⛔ 再动先照原法重量(台架与跑法见 progress-log 同号条目),别凭手感调。
+         ⭐ **文字对比度不许因为上了色而掉**:淡底一铺,小字就被压 —— 亮 15% 时 12px 的
+         `--ink-soft`(时间戳 / 署名 / 截止 chip)在堇紫上从 5.48 掉到 4.50、跌破 §2.2 小字底线 5.0,
+         朱砂 chip 从 4.59 掉到 3.80。⇒ 染色卡里就地换三枚令牌:soft / faint 往 --ink 压到「七色里
+         最紧那张 ≥ 无色卡上的原值」(亮 5.50≥5.48 / 2.49≥2.45,暗 5.90≥5.84 / 3.59≥3.51),
+         `--seal-tint` 换成它叠在 --raised 上的实色 ⇒ 朱砂 chip 逐位回到原值。正文 `--ink` 最紧
+         12.5 / 9.5,不用补。⚠ 这三枚补偿值是**对着这七色、这个浓度**算的(WCAG 相对亮度,
+         取最小压比):改浓度或调色板加色都得重算。check-contrast 判不到这一层(半透明 / 渐变底
+         它一律跳过),靠这里的算式守。 */
+      .card.tinted {
+        --ink-soft: var(--ink-soft-on-tint);
+        --ink-faint: var(--ink-faint-on-tint);
+        --seal-tint: var(--seal-tint-solid);
+        background-image: linear-gradient(rgb(var(--card-rgb) / var(--card-tint-a)), rgb(var(--card-rgb) / var(--card-tint-a)));
       }
       /* 182:滑动中的卡浮在 track 之上、跟手平移;track 铺在卡原位下亮出目标态。 */
       .card.swiping { position: relative; z-index: 1; }

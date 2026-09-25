@@ -15,10 +15,11 @@
 // —— `background` 简写吃 `url()`,那条账的实测字据里它**真发出了网络请求**(信标,泄露
 // 「这台在线 + 它的 IP」)。⚠ 新增任何一处消费点之前,回去把那条账读完。
 //
-// ⚠ **手机端本轮不渲染颜色**(数据照常同步、照常存,只是不画):`color-mix()` 要 Chrome 111,
-// 而台架 MuMu 是 110,且**含 `var()` 时「前面补一条兜底声明」救不了** —— 含 var 的值解析期
-// 就合法、盖掉前一条,计算期才失败 = IACVT ⇒ 属性归 `unset`、不回退
-// (`.claude/rules/mobile.md` 643)。要上手机得先把七个色烤成带 alpha 的令牌,另账。
+// ⚠ **手机端不走这套**(用户面 110 起两只手机壳也画颜色,只画不设色):`color-mix()` 要 Chrome 111,
+// 台架 MuMu 是 110,且含 `var()` 时补兜底救不了(IACVT,`.claude/rules/mobile.md` 643)⇒ 手机端把
+// hex 解成三个整数、配一枚 alpha 令牌画同一层淡底,见 `android/src/ui.ts::cardTint` 与
+// `android/index.html` 的 `.card.tinted`(浓度在手机上另量过,与这边的 18% / 20% 不是同一组数)。
+// ⚠ 那边的小字补偿值是**对着这七色**算的 —— 这里加色,那边的补偿要重算(理由在 `.card.tinted`)。
 
 import { t } from "./i18n";
 import { el } from "./dom";
