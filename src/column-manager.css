@@ -58,7 +58,7 @@
   font-size: var(--fs-12);
   line-height: 1.6;
 }
-.bcm-why { color: var(--seal); }
+.bcm-why { color: var(--seal-ink-on-seal-tint); }
 .bcm-tip { color: var(--ink-soft); }
 
 .bcm-list {

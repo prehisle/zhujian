@@ -103,7 +103,7 @@
   transition: color 0.14s, border-color 0.14s, background 0.14s;
 }
 .v-topics .topic-kids-toggle:hover {
-  color: var(--seal);
+  color: var(--seal-ink-on-seal-tint);
   border-color: var(--seal-line);
   background: var(--seal-tint);
 }
@@ -168,7 +168,7 @@
   flex: none;
   font-size: var(--fs-12);
   letter-spacing: 0.06em;
-  color: var(--seal);
+  color: var(--seal-ink-on-seal-tint);
   border: 1px solid var(--seal-line);
   background: var(--seal-tint);
   border-radius: var(--radius-pill);
@@ -269,7 +269,7 @@
   transition: background 0.14s, color 0.14s;
 }
 .v-topics .tbtn:hover { background: color-mix(in srgb, var(--ink) 8%, transparent); color: var(--ink); }
-.v-topics .tbtn.danger:hover { background: var(--seal-tint); color: var(--seal); }
+.v-topics .tbtn.danger:hover { background: var(--seal-tint); color: var(--seal-ink-on-seal-tint); }
 .v-topics .td-q { font-size: var(--fs-12); color: var(--seal-ink); letter-spacing: 0.02em; }
 
 /* ---- 标签颜色:行首色点 + ⋯「颜色」的调色板 ---- */
@@ -399,10 +399,10 @@
   border: 1px solid var(--line-strong);
   background: var(--raised);
 } /* 其余声明 = 共享件徽记 chip 族(controls.css,352) */
-.v-topics .dtask-due.overdue { color: var(--seal); border-color: var(--seal-line); background: var(--seal-tint); }
+.v-topics .dtask-due.overdue { color: var(--seal-ink-on-seal-tint); border-color: var(--seal-line); background: var(--seal-tint); }
 .v-topics .dtask-due.today { color: var(--ink); border-color: var(--ink-faint); }
 /* .p3 = 库里的 priority=3 = 屏上的 **P0(最高)**,只有它上朱砂(同 tasktime.css) */
-.v-topics .dtask-pri.p3 { color: var(--seal); border-color: var(--seal-line); background: var(--seal-tint); }
+.v-topics .dtask-pri.p3 { color: var(--seal-ink-on-seal-tint); border-color: var(--seal-line); background: var(--seal-tint); }
 .v-topics .dtask-copy {
   position: absolute;
   top: 9px;
@@ -503,7 +503,7 @@
 .v-topics .mb-chip.is-keep {
   border-color: var(--seal);
   background: var(--seal-tint);
-  color: var(--seal);
+  color: var(--seal-ink-on-seal-tint);
 }
 .v-topics .mb-chip-label {
   cursor: pointer;
@@ -518,7 +518,7 @@
   font-family: var(--font-sans);
   font-size: var(--fs-12);
   letter-spacing: 0.06em;
-  color: var(--seal);
+  color: var(--seal-ink-on-seal-tint);
 }
 .v-topics .mb-chip-x {
   flex: none;

@@ -53,10 +53,23 @@
      ⭐ 算法同 --ink-soft-on-tint-tcard:沿 sRGB 往 --ink 线性压,取最小的一档使**最不利那层底**
      (两端都是 --raised-edge)≥ 5.0 —— 亮压 4.5% → 压 --raised-edge 5.01 / --paper 5.19 / --raised 5.56;
      暗压 13.1% → 压 --raised-edge 5.00 / --raised 5.52 / --paper 6.03(实例实读,progress-log 同号条目)。
-     ⚠ 只挂在「自己不带底」的那一族上;自带 --seal-tint 淡朱底的 chip / 选中态是另一对色,没换。
+     ⚠ 只挂在「自己不带底」的那一族上;自带 --seal-tint 淡朱底的 chip / 选中态是另一对色,走下面那枚 --seal-ink-on-seal-tint。
      ⚠ 对着 --paper / --raised / --raised-edge 与 --seal 算的:动其中任何一枚都得照原法重算。
      两个客户端这几枚输入同值 ⇒ 这枚同名同值(check-theme-drift 登记 in: APPS)。 */
   --seal-ink: #ac3f2a;
+
+  /* 朱砂字压在**自己那层淡朱底**(--seal-tint,染色卡里是 --seal-tint-solid)上的字色 —— chip /
+     选中态 / 淡朱底提示条那一族(用户面 133)。与 --seal-ink 是两对色:那枚管「自己不带底、压纸面」。
+     ⭐ 亮档:算法同 --seal-ink,沿 sRGB 往 --ink 线性压,取最小的一档(0.1% 步长)使淡朱底叠在三层纸面上
+     **每一层**都 ≥ §2.2 小字 5.0;最不利那层 = 淡朱底叠在卡片 / 面板渐变的底端 --raised-edge(#ead9cb)
+     —— 压 16.3% → 5.01;叠 --paper(#edddd1)5.18、叠 --raised / 实色 --seal-tint-solid(#f3e4d9)5.54
+     (改前 4.15 / 4.29 / 4.58;实例实读,progress-log 同号条目)。
+     ⚠ 暗档**刻意没补**,等于暗档 --seal(改前改后读数同为 3.66–4.44):用户 2026-09-25 看对比图拍板 ——
+     暗档照同法要压 32.4%(→ #e3927a),看上去成了橙粉色,与实心「逾期」chip、卡片朱红条不再是一个红。
+     另一条路(调深暗档淡朱底、字色不动,没量)记在 backlog 用户面 135。
+     ⚠ 对着 --seal / --ink / --seal-tint 与三层纸面令牌算的:动其中任何一枚都得照原法重算。
+     两个客户端这几枚输入同值 ⇒ 同名同值(check-theme-drift 登记 in: APPS)。 */
+  --seal-ink-on-seal-tint: #9b3b28;
 
   /* ---- 悬停/按下的方向(337 定规矩,写在这里因为它是配色的一部分)----
      **hover 一律往「墨」的方向压一档**,不许往写死的 #000 压。
@@ -170,6 +183,7 @@
   --ink-faint-on-tint-tcard: #938b7a;
   --seal-tint-solid: #3e2a21; /* = --seal-tint 叠在 --raised 上的实色 */
   --seal-ink: #e17a61; /* 朱砂小字压纸面(理由与算法见亮色那份):往 --ink 压 13.1%,渐变底端 5.00 */
+  --seal-ink-on-seal-tint: #df6a4f; /* = 暗档 --seal,刻意没补(用户看图拍板;理由与另一条路见亮色那份) */
   --float-shadow: 0 22px 55px -18px rgba(0, 0, 0, 0.7), 0 2px 8px rgba(0, 0, 0, 0.4);
   --card-shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 16px 34px -22px rgba(0, 0, 0, 0.7);
 }

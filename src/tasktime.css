@@ -84,7 +84,7 @@
 .task-meta .chip.due.set::before { content: "📅 "; }
 .task-meta .chip.due.future { color: var(--ink-soft); border-color: var(--line-strong); }
 .task-meta .chip.due.today {
-  color: var(--seal);
+  color: var(--seal-ink-on-seal-tint);
   border-color: var(--seal-line);
   background: var(--seal-tint);
   font-weight: 600;
@@ -100,7 +100,7 @@
    ⚠ 506 起屏上是 P 记号,类名与它反向:.p3 = **P0(最高)** / .p2 = P1 / .p1 = P2。
    类名钉的是库里的 1/2/3(命名铁律:标识符不动),⛔ 别照 `.p1` 猜成「最高」。 */
 .task-meta .chip.pri.set { border-color: var(--line-strong); }
-.task-meta .chip.pri.set.p3 { color: var(--seal); border-color: var(--seal-line); background: var(--seal-tint); font-weight: 600; }
+.task-meta .chip.pri.set.p3 { color: var(--seal-ink-on-seal-tint); border-color: var(--seal-line); background: var(--seal-tint); font-weight: 600; }
 .task-meta .chip.pri.set.p2 { color: var(--ink); }
 .task-meta .chip.pri.set.p1 { color: var(--ink-soft); }
 
@@ -158,5 +158,5 @@
   transition: background 0.12s, color 0.12s, border-color 0.12s;
 }
 .task-meta .choice:hover { color: var(--ink); border-color: var(--seal-line); }
-.task-meta .choice.cur { border-color: var(--seal); color: var(--seal); background: var(--seal-tint); }
+.task-meta .choice.cur { border-color: var(--seal); color: var(--seal-ink-on-seal-tint); background: var(--seal-tint); }
 .task-meta .choice.none { color: var(--ink-faint); border-style: dashed; }

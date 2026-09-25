@@ -53,7 +53,7 @@
 }
 .hbtn:hover { color: var(--ink); border-color: var(--seal-line); background: var(--seal-tint); }
 .hbtn.on,
-.hbtn.active { color: var(--seal); border-color: var(--seal-line); background: var(--seal-tint); }
+.hbtn.active { color: var(--seal-ink-on-seal-tint); border-color: var(--seal-line); background: var(--seal-tint); }
 .hbtn[hidden] { display: none; }
 
 /* 键帽:复用卡片菜单 .hk-key 的视觉,作 header 按钮里的全局单键提示 */
@@ -107,7 +107,7 @@
 .view .center .err-box {
   white-space: pre-wrap;
   word-break: break-word;
-  color: var(--seal);
+  color: var(--seal-ink-on-seal-tint);
   font-size: var(--fs-13);
   text-align: left;
   background: var(--seal-tint);

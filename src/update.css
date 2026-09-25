@@ -51,7 +51,7 @@
 .update-acts:empty { display: none; }
 /* 「更新」是主行动:朱砂描边点出来(与 sync 面板主按钮一致的强调法)。 */
 .hbtn.update-go {
-  color: var(--seal);
+  color: var(--seal-ink-on-seal-tint);
   border-color: var(--seal-line);
   background: var(--seal-tint);
 }

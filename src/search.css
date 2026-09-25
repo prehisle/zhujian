@@ -125,7 +125,7 @@
 }
 .v-search .hit-text mark {
   background: var(--seal-tint);
-  color: var(--seal);
+  color: var(--seal-ink-on-seal-tint);
   border-radius: var(--radius-xs);
   padding: 0 1px;
   font-weight: 600;

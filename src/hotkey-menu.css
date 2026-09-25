@@ -75,7 +75,7 @@
   transition: background 0.12s, color 0.12s;
 }
 .hk-item:hover { background: color-mix(in srgb, var(--ink) 8%, transparent); }
-.hk-item.danger:hover { background: var(--seal-tint); color: var(--seal); }
+.hk-item.danger:hover { background: var(--seal-tint); color: var(--seal-ink-on-seal-tint); }
 .hk-label { white-space: nowrap; }
 .hk-key {
   flex: none;
@@ -92,12 +92,12 @@
   text-align: center;
 }
 .hk-item.danger .hk-key {
-  color: var(--seal);
+  color: var(--seal-ink-on-seal-tint);
   border-color: var(--seal-line);
   background: var(--seal-tint);
 }
 .hk-item:hover .hk-key { color: var(--ink); }
-.hk-item.danger:hover .hk-key { color: var(--seal); }
+.hk-item.danger:hover .hk-key { color: var(--seal-ink-on-seal-tint); }
 
 /* Slide only — do NOT animate from opacity:0: a WebDriver/isDisplayed check during the
    fade treats the menu as not-displayed → "element not interactable" flake. */

@@ -265,7 +265,7 @@
 .cm-send {
   border: 1px solid var(--seal-line);
   background: var(--seal-tint);
-  color: var(--seal);
+  color: var(--seal-ink-on-seal-tint);
   font-family: var(--font-sans);
   font-size: var(--fs-12);
   padding: 6px 12px;

@@ -104,7 +104,7 @@
   margin: 0 1px;
   font-family: var(--font-sans);
   font-size: 0.86em;
-  color: var(--seal);
+  color: var(--seal-ink-on-seal-tint);
   background: var(--seal-tint);
   border: 1px solid var(--seal-line);
   border-radius: var(--radius-xs);

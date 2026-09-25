@@ -99,6 +99,7 @@
         --ink-faint-on-tint: #978d7d;
         --seal-tint-solid: #f3e4d9; /* = --seal-tint 叠在 --raised 上的实色 */
         --seal-ink: #ac3f2a; /* 朱砂小字压纸面的字色(用户面 132;与桌面同名同值,理由与算法见 src/theme.css) */
+        --seal-ink-on-seal-tint: #9b3b28; /* 朱砂字压自己那层淡朱底(chip / 选中态)的字色(用户面 133;与桌面同名同值,理由与算法见 src/theme.css) */
         --on-seal: #fdf6ee; /* 压在朱砂上的字,随明暗翻面(理由见桌面 src/theme.css) */
         --ok: #3d7a4e;
         --font-serif: "Georgia", "SimSun", "Songti SC", "Source Han Serif SC", serif;
@@ -162,6 +163,7 @@
         --ink-faint-on-tint: #948c7b;
         --seal-tint-solid: #3e2a21; /* = --seal-tint 叠在 --raised 上的实色 */
         --seal-ink: #e17a61; /* 同上,暗档 */
+        --seal-ink-on-seal-tint: #df6a4f; /* = 暗档 --seal,刻意没补(用户看图拍板,理由见 src/theme.css) */
         --on-seal: #1b1813;
         --ok: #6fa47e;
         color-scheme: dark; /* 原生控件(输入框选区/滚动条)跟着走 */
@@ -237,7 +239,7 @@
         color: var(--ink-soft); font-size: var(--fs-14); font-family: var(--font-sans);
       }
       .seg button:first-child { border-left: 0; }
-      .seg button.on { color: var(--seal); background: var(--seal-tint); font-weight: 600; }
+      .seg button.on { color: var(--seal-ink-on-seal-tint); background: var(--seal-tint); font-weight: 600; }
       /* 设置面里各节之间留白(.sync h2 本身没有上边距,「关于」会紧贴上一节的说明字)。 */
       #settings-pane h2:not(:first-child) { margin-top: 22px; }
       /* ⛔ **这一族是控件,不许走 `--ink-faint`**(634,ui-consistency-plan M1):顶栏「标签 / 搜索 /
@@ -290,7 +292,7 @@
       /* 当前空间 chip(工序 8,§9 捕获目标可见):点名开空间面板可切。 */
       .space-chip {
         border: 1px solid var(--seal-line); border-radius: var(--radius-pill);
-        background: var(--seal-tint); color: var(--seal);
+        background: var(--seal-tint); color: var(--seal-ink-on-seal-tint);
         padding: 2px 10px; font-size: var(--fs-12); font-weight: 600; font-family: var(--font-sans);
         /* 250:顶栏加了第四枚后横向更紧,徽章从「至多 40vw」改成「有多少给多少、不够
            就缩」——min-width:0 是 flex 里让省略号真能生效的那一半(249)。 */
@@ -324,7 +326,7 @@
         color: var(--ink); font-family: var(--font-sans);
         min-height: 44px; padding: 12px 0; margin: -12px 0;
       }
-      .space-row.current .sname { color: var(--seal); font-weight: 600; }
+      .space-row.current .sname { color: var(--seal-ink-on-seal-tint); font-weight: 600; }
       .space-row .tag { flex: none; font-size: var(--fs-12); color: var(--ink-soft); }
       .space-row .tag.warn { color: var(--seal-ink); }
       .space-row .act {
@@ -342,7 +344,7 @@
       .space-row .act.reset-confirm {
         display: block; width: 100%; margin-top: 10px; min-height: 44px;
         border: 1px solid var(--seal-line); border-radius: var(--radius-md);
-        color: var(--seal); font-size: var(--fs-14); font-weight: 600;
+        color: var(--seal-ink-on-seal-tint); font-size: var(--fs-14); font-weight: 600;
       }
       .space-row .act.reset-cancel {
         display: block; width: 100%; margin-top: 6px; min-height: 44px;
@@ -769,7 +771,7 @@
         position: absolute; left: 0; right: 0; z-index: 0;
         display: flex; align-items: center; padding: 0 18px;
         border-radius: var(--radius-md); border: 1px dashed var(--seal-line);
-        background: var(--seal-tint); color: var(--seal);
+        background: var(--seal-tint); color: var(--seal-ink-on-seal-tint);
         font-family: var(--font-sans); font-size: var(--fs-13); font-weight: 600;
       }
       .swipe-track[data-dir="right"] { justify-content: flex-start; }
@@ -860,7 +862,7 @@
          (用户面 85 ④,节头已经说过了)⇒ 从前那条 `.card.done .pill` 降噪规则没有对象,一并删。 */
       .pill {
         padding: 1px 8px; border-radius: var(--radius-pill);
-        background: var(--seal-tint); color: var(--seal); font-weight: 600;
+        background: var(--seal-tint); color: var(--seal-ink-on-seal-tint); font-weight: 600;
       }
       /* ⚠ 这一对(边框与字色)吃的是每个元素自己的 `--tc`,老引擎(≤110)上 `color-mix` 算不出
          ⇒ 退成 unset:边框走 currentColor、字色继承。刻意不给兜底,理由同 `.panel button.p` 那条。 */
@@ -891,7 +893,7 @@
       .chip.due::before { content: "📅 "; }
       .chip.due.future { color: var(--ink-soft); border-color: var(--line-strong); }
       .chip.due.today {
-        color: var(--seal); border-color: var(--seal-line); background: var(--seal-tint); font-weight: 600;
+        color: var(--seal-ink-on-seal-tint); border-color: var(--seal-line); background: var(--seal-tint); font-weight: 600;
       }
       .chip.due.overdue {
         color: var(--on-seal); background: var(--seal); border-color: var(--seal); font-weight: 600;
@@ -1035,7 +1037,7 @@
         font-size: var(--fs-12); line-height: 1.6; color: var(--ink);
         border: 1px solid var(--line-strong); border-radius: var(--radius-pill); padding: 1px 8px;
       }
-      .dev-badge.admin { color: var(--seal); border-color: var(--seal-line); background: var(--seal-tint); }
+      .dev-badge.admin { color: var(--seal-ink-on-seal-tint); border-color: var(--seal-line); background: var(--seal-tint); }
       /* 唯一定位那一格(§5.8 ⛔):别名可被账户内任一设备改写,只有完整 ID 定得死是哪台。 */
       .dev-id {
         display: block; margin: 8px 0; font-family: ui-monospace, monospace;
@@ -1179,7 +1181,7 @@
         border: 1px solid var(--line-strong); background: none;
       }
       .tk-add { color: var(--ink-soft); } /* 控件,不劈两档(634,同 `.ghost` 那条) */
-      .tk-badge { color: var(--seal); border-color: var(--seal-line); background: var(--seal-tint); font-weight: 600; }
+      .tk-badge { color: var(--seal-ink-on-seal-tint); border-color: var(--seal-line); background: var(--seal-tint); font-weight: 600; }
       /* ⭐ gap 12 是**量出来的判据,不是审美值**(632 补;⛔ 别当富余往回调):这一行里「存」「清」
          是单字钮、横向只有 32.5~39.6 宽,补不到 44(横向撑 halo 会让相邻两枚互叠,理由在下面那条
          halo 规则里)。而**原生触摸有一层吸附** —— 手指落在两枚之间会被吸到更近的那一枚 ⇒ 决定
@@ -1403,7 +1405,7 @@
         border: 1px solid var(--seal-line); border-radius: var(--radius-sm);
         background: var(--seal-tint);
       }
-      .panel .movewarn b { color: var(--seal); }
+      .panel .movewarn b { color: var(--seal-ink-on-seal-tint); }
       /* 编辑历史面(用户面 87):旧版本只读列出,一版一块,新的在前;正文按原样换行(pre-wrap),
          长词强制断(anywhere)—— 旧版本里可能有整段网址。没有任何按钮:这一面不写。 */
       .panel .hist { display: flex; flex-direction: column; gap: 8px; }
@@ -1415,7 +1417,7 @@
       .panel .rev p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink-soft); }
       .panel .movenote {
         display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
-        font-size: var(--fs-12); color: var(--seal); line-height: 1.5;
+        font-size: var(--fs-12); color: var(--seal-ink-on-seal-tint); line-height: 1.5;
         margin-bottom: 8px; padding: 6px 8px;
         border: 1px solid var(--seal-line); border-radius: var(--radius-sm);
         background: var(--seal-tint);
@@ -1540,11 +1542,11 @@
         display: inline-flex; align-items: center; gap: 6px;
       }
       .fpill.active {
-        color: var(--seal); border-color: var(--seal);
+        color: var(--seal-ink-on-seal-tint); border-color: var(--seal);
         background: var(--seal-tint); font-weight: 600;
       }
       .fn { font-size: var(--fs-12); color: var(--ink-faint); font-variant-numeric: tabular-nums; }
-      .fpill.active .fn { color: var(--seal); }
+      .fpill.active .fn { color: var(--seal-ink-on-seal-tint); }
       /* 到期汇总钮(用户面 60-D):有逾期时整枚描成朱砂 —— 与卡片上那颗 .chip.due.overdue
          同一套语汇,让「屏上有一处红」在筛选行与卡片之间对得上(同桌面 #due-soon.late)。
          ⚠ 只描边不填底:填底会和它自己的 .active(点开只看到期)撞成同一个样子。
@@ -1587,7 +1589,7 @@
         display: inline-flex; align-items: center;
       }
       .fexpand[hidden] { display: none; }
-      .fexpand.on { color: var(--seal); border-color: var(--seal); background: var(--seal-tint); }
+      .fexpand.on { color: var(--seal-ink-on-seal-tint); border-color: var(--seal); background: var(--seal-tint); }
       /* 摊开态:**整条主行换行,标签块独占整行**(用户面 71)。
          ⛔ 别退回「只给 .ftopics 加 wrap」那一版:它仍与摊开钮 / 过滤框同处一行,`flex:1`
          分到的只有约六成屏宽 ⇒ 换行发生在那只**已经被缩短的盒子**里,于是第二行起每行右边

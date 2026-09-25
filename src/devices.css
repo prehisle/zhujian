@@ -37,7 +37,7 @@
   padding: 1px 8px;
 }
 .dev-badge--admin {
-  color: var(--seal);
+  color: var(--seal-ink-on-seal-tint);
   border-color: var(--seal-line);
   background: var(--seal-tint);
 }

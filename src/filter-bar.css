@@ -87,13 +87,13 @@
 }
 .tf-pill:hover { color: var(--ink); border-color: var(--seal-line); }
 .tf-pill.active {
-  color: var(--seal);
+  color: var(--seal-ink-on-seal-tint);
   border-color: var(--seal-line);
   background: var(--seal-tint);
   font-weight: 600;
 }
 .tf-n { font-size: var(--fs-12); color: var(--ink-faint); font-variant-numeric: tabular-nums; }
-.tf-pill.active .tf-n { color: var(--seal); }
+.tf-pill.active .tf-n { color: var(--seal-ink-on-seal-tint); }
 /* 有色标签的筛选钮带一颗色点,让整条筛选条读出颜色分布(无色标签无点)。 */
 .tf-dot {
   width: 8px;
@@ -116,7 +116,7 @@
 .topic-filter .tf-pill.tag-drop-hover {
   border-color: var(--seal);
   background: var(--seal-tint);
-  color: var(--seal);
+  color: var(--seal-ink-on-seal-tint);
 }
 .topic-filter .tf-pill.tag-dragging { opacity: 0.45; }
 /* 子标签 pill:虚线描边 + 一枚淡连接符,一眼读作「父的子项」(横排里以皮肤区分,不缩进)。 */

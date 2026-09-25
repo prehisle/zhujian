@@ -196,7 +196,7 @@
 }
 /* 选中态与 `.seg-btn.on` 同一形(朱砂 + 淡朱底),整个面板里"当前是哪一档"只有一种读法。 */
 .settings-cat.on {
-  color: var(--seal);
+  color: var(--seal-ink-on-seal-tint);
   background: var(--seal-tint);
 }
 .settings-content {
@@ -330,7 +330,7 @@
   white-space: nowrap;
 }
 .hkset-combo.recording {
-  color: var(--seal);
+  color: var(--seal-ink-on-seal-tint);
   border-color: var(--seal);
   background: var(--seal-tint);
 }
@@ -430,7 +430,7 @@
 .seg-btn:first-child { border-left: 0; }
 .seg-btn:hover { background: color-mix(in srgb, var(--ink) 10%, transparent); }
 .seg-btn.on {
-  color: var(--seal);
+  color: var(--seal-ink-on-seal-tint);
   background: var(--seal-tint);
 }
 

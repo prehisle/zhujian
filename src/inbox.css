@@ -345,10 +345,10 @@
 .v-inbox .choice:hover { background: color-mix(in srgb, var(--seal) 18%, var(--paper)); }
 /* 已挂上的候选点亮(675):与筛选条 .tf-pill.active / 手机 .p.on 同一套语汇 —— 朱砂字 + 朱砂描边 +
    加粗;底色本来就是 seal-tint,故只多这三样。再点一次摘掉。 */
-.v-inbox .choice.on { color: var(--seal); border-color: var(--seal); font-weight: 600; }
+.v-inbox .choice.on { color: var(--seal-ink-on-seal-tint); border-color: var(--seal); font-weight: 600; }
 /* 子标签候选(499):虚线描边 = 「父的子项」,与筛选条 .tf-pill.child / 看板侧同一套语汇。 */
 .v-inbox .choice.child { border-style: dashed; }
-.v-inbox .choice.create { border-style: dashed; color: var(--seal); border-color: var(--seal-line); }
+.v-inbox .choice.create { border-style: dashed; color: var(--seal-ink-on-seal-tint); border-color: var(--seal-line); }
 .v-inbox .choice.create:hover { background: var(--seal-tint); border-color: var(--seal); }
 .v-inbox .topic-hint { font-size: var(--fs-13); color: var(--ink-soft); }
 
@@ -370,7 +370,7 @@
 .v-inbox .hint { margin: 0; font-size: var(--fs-13); color: var(--ink-soft); }
 .v-inbox .form-err {
   margin: 0;
-  color: var(--seal);
+  color: var(--seal-ink-on-seal-tint);
   font-size: var(--fs-12);
   background: var(--seal-tint);
   border: 1px solid var(--seal-line);
