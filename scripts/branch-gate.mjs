@@ -657,6 +657,34 @@ function assertPreflightHasNoRepoCondition() {
   );
 }
 
+// ── 依赖通告不许进 `ci.yml` / `preflight.yml`(611 起「⛔ 别挪进」;doc-slimming 格③第五条把它换成机制)──
+// 红来自外部数据库(一个字没动的树明早就能红);`ciVerdict()` 按 workflow 名 `ci` 判已知红 ⇒ 进了 `ci.yml` 卡三个环境的落地,
+// 进了 `preflight.yml`(被 `ci.yml` `uses:` 调,也挂在 `ci` 名下)落地、发版两头卡。⇒ 两份的非注释部分提到跑手 / cargo-audit / `audit.yml` / rustsec 就拒;`audit.yml` 自己的
+// 顶层 `name:` 改成 `ci` 也拒(那等于换个办法进了同一个名字)。
+// ⚠ 诚实边界:①纯文本扫描,去注释的法子同上一道;②两条 release workflow 直接加这一步不在面内(挡发版、不挡落地);
+//   ③不带这几个词的同类工具(如 `cargo deny check advisories`)与别的 workflow 改名 `ci` 不在面内,判据仍是 `audit.yml` 头注。
+// ⛔ 不是新开一根轴(停止扩张线):几个字面量,不带 parser / 登记表 / 阴性刀那套。
+function assertAuditStaysOutOfCi() {
+  const hits = [];
+  for (const rel of [".github/workflows/ci.yml", ".github/workflows/preflight.yml"]) {
+    readFileSync(join(repoRoot, rel), "utf8").split("\n").forEach((l, i) => {
+      const code = /^\s*#/.test(l) ? "" : l.replace(/\s#.*$/, "");
+      if (/audit-deps|audit-check|cargo[\s-]*audit|audit\.yml|rustsec/i.test(code)) hits.push(`${rel}:${i + 1}: ${l.trim().slice(0, 70)}`);
+    });
+  }
+  const auditRel = ".github/workflows/audit.yml";
+  readFileSync(join(repoRoot, auditRel), "utf8").split("\n").forEach((l, i) => {
+    if (/^name\s*:\s*["']?ci["']?\s*(#.*)?$/.test(l)) hits.push(`${auditRel}:${i + 1}: ${l.trim()}`);
+  });
+  if (!hits.length) return;
+  die(
+    `依赖通告进了 \`ci\` / 发版闸 —— ⛔ 不落地:\n` +
+      hits.map((h) => `    ${h}`).join("\n") +
+      `\n  它的红来自外部数据库;\`ciVerdict()\` 按名 \`ci\` 判已知红 ⇒ 一条上游通告卡三个环境的落地(判据见 audit.yml 头注)。` +
+      `\n  ⇒ 留在独立的 \`audit.yml\`(名字不叫 \`ci\`),红了只发邮件;⛔ 别把这道闸放宽。`,
+  );
+}
+
 // ── handoff「手上的债」的形(测试与工装 113 立,698 接上)──────────────────────
 // 8 KB 闸 697 收口时只剩 6 字节余量,而债**一轮一行、只增不减**(销掉才删,那几半的触发门握在
 // 别的机器手里)⇒ 下一个人加一行必撞,还会被迫去压**别人写的**行 = 静默丢判据。
@@ -694,6 +722,7 @@ function runLocalGates() {
   assertCiHasNoConcurrency();
   assertLocalGatesMatchPreflight();
   assertPreflightHasNoRepoCondition();
+  assertAuditStaysOutOfCi();
   console.log(`→ 本地十道静态门禁(几秒量级)…`);
   for (const g of LOCAL_GATES) {
     try {
