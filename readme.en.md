@@ -69,7 +69,7 @@ The handful of things worth understanding before you rely on them — where the 
 
 ### Multi-device sync (optional)
 
-- Sync notes and tasks between desktop and phone. It defaults to the official server, `sync.zhujian.app`, and you can point it at your own instead. Unconfigured, the whole feature stays silent.
+- Sync notes and tasks between desktop and phone. It defaults to the official server, `sync.zhujian.app`, and you can point it at your own instead (how to run one: [user guide · self-hosting](docs/user-guide.md#自建同步服务器), in Chinese). Unconfigured, the whole feature stays silent.
 - No email address, no phone number, nothing to write down: the first device taps **Create account** and is done; other devices join with a pairing code and get the full dataset.
 - Content is encrypted on your device before it leaves; the server only ever handles ciphertext and cannot read it.
 - Two devices on the same Wi-Fi sync directly, peer to peer — faster, and it keeps working when the router has no internet.
