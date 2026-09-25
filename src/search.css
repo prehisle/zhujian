@@ -153,7 +153,7 @@
 .v-search .badge.task { color: var(--ink); background: color-mix(in srgb, var(--ink) 5%, transparent); }
 .v-search .badge.archived { color: var(--ink-faint); font-style: italic; }
 /* 归档(成就册):正经存档,不是垃圾——朱砂描边、不斜体 */
-.v-search .badge.sealed { color: var(--seal); border-color: var(--seal-line); }
+.v-search .badge.sealed { color: var(--seal-ink); border-color: var(--seal-line); }
 /* topic (tag) chips */
 .v-search .chip {
   flex: none;

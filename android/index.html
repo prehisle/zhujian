@@ -98,6 +98,7 @@
         --ink-soft-on-tint: #5e5649;
         --ink-faint-on-tint: #978d7d;
         --seal-tint-solid: #f3e4d9; /* = --seal-tint 叠在 --raised 上的实色 */
+        --seal-ink: #ac3f2a; /* 朱砂小字压纸面的字色(用户面 132;与桌面同名同值,理由与算法见 src/theme.css) */
         --on-seal: #fdf6ee; /* 压在朱砂上的字,随明暗翻面(理由见桌面 src/theme.css) */
         --ok: #3d7a4e;
         --font-serif: "Georgia", "SimSun", "Songti SC", "Source Han Serif SC", serif;
@@ -160,6 +161,7 @@
         --ink-soft-on-tint: #bfb5a3;
         --ink-faint-on-tint: #948c7b;
         --seal-tint-solid: #3e2a21; /* = --seal-tint 叠在 --raised 上的实色 */
+        --seal-ink: #e17a61; /* 同上,暗档 */
         --on-seal: #1b1813;
         --ok: #6fa47e;
         color-scheme: dark; /* 原生控件(输入框选区/滚动条)跟着走 */
@@ -324,7 +326,7 @@
       }
       .space-row.current .sname { color: var(--seal); font-weight: 600; }
       .space-row .tag { flex: none; font-size: var(--fs-12); color: var(--ink-soft); }
-      .space-row .tag.warn { color: var(--seal); }
+      .space-row .tag.warn { color: var(--seal-ink); }
       .space-row .act {
         flex: none; border: none; background: none; padding: 2px 6px;
         color: var(--ink-soft); font-size: var(--fs-12); font-family: var(--font-sans);
@@ -426,7 +428,7 @@
          「记下」靠右由它自己的 margin-left:auto 顶开(391 加第二个钮,顶开的活从
          .cimg 挪到 .primary 身上——否则两个 auto 会把中间那个也推到右半边)。 */
       .compose-row .cimg {
-        font-size: var(--fs-13); color: var(--seal);
+        font-size: var(--fs-13); color: var(--seal-ink);
         padding: 6px 4px; font-weight: 600;
       }
       .compose-row .cimg + .cimg { margin-left: 10px; }
@@ -547,9 +549,9 @@
          不知道谁说的就读不懂,故没起别名也显 id 前 6 位、搬迁来的显「作者未知」。
          口径不同只指**文案**;省略号那形与「·」前缀和卡片 .sig-chip 是同一枚记号,
          样式住 .sig-chip 处一份(此前逐字两抄)。 */
-      .cm-del { margin-left: auto; border: none; background: none; color: var(--seal); font-size: var(--fs-12); padding: 8px 2px; }
+      .cm-del { margin-left: auto; border: none; background: none; color: var(--seal-ink); font-size: var(--fs-12); padding: 8px 2px; }
       .cm-empty { padding: 20px 0; text-align: center; }
-      .cm-more { display: block; width: 100%; border: none; background: none; color: var(--seal); font-size: var(--fs-13); padding: 10px 0; }
+      .cm-more { display: block; width: 100%; border: none; background: none; color: var(--seal-ink); font-size: var(--fs-13); padding: 10px 0; }
       .cm-compose {
         display: flex; align-items: flex-end; gap: 8px;
         padding: 10px 14px calc(10px + env(safe-area-inset-bottom));
@@ -1000,7 +1002,7 @@
       .sync { margin-top: 4px; border-top: 1px dashed var(--line-strong); padding: 12px 0 4px; margin-bottom: 10px; }
       .sync h2 { font-size: var(--fs-13); color: var(--ink-soft); margin: 0 0 8px; font-weight: 600; }
       .sync .state { font-size: var(--fs-13); margin-bottom: 8px; }
-      .sync .state .err { color: var(--seal); word-break: break-all; }
+      .sync .state .err { color: var(--seal-ink); word-break: break-all; }
       /* 面板与设置面**全部**说明句都是它 ⇒ 照 336 判例(「那句话是这个区的全部说明,轻到读不出来
          就不是提示了」)走 soft;桌面那半 621 已经这么改过(`.settings-sub` 一族),634 补手机端。 */
       .sync .fine { font-size: var(--fs-12); color: var(--ink-soft); margin: 8px 0 0; }
@@ -1045,7 +1047,7 @@
         font-size: var(--fs-13); line-height: 1.7; color: var(--ink);
       }
       .dev-facts li { margin-bottom: 4px; }
-      .devices .err { color: var(--seal); font-size: var(--fs-13); word-break: break-all; margin: 8px 0; }
+      .devices .err { color: var(--seal-ink); font-size: var(--fs-13); word-break: break-all; margin: 8px 0; }
       .devices .row button.danger { background: var(--seal); color: var(--on-seal); }
 
       /* 标签管理面(190):每行 = 拖手柄 + 名 + 色点 + 计数 + 类型;拖手柄纵向拖排序。 */
@@ -1256,7 +1258,7 @@
       .tk-edit button.ghost, .tn-edit button.ghost, .tc-edit .tc-cancel { background: none; color: var(--ink-soft); border: 1px solid var(--line-strong); }
       /* 删除(user-44 第三刀):warn ghost 形(同 .panel .acts button.warn 的调)——
          第一拍只是开确认,不该长成实底朱砂;实底那枚在底部确认条的第二拍上。 */
-      .tn-edit button.tn-del { background: none; color: var(--seal); border: 1px solid var(--seal-line); }
+      .tn-edit button.tn-del { background: none; color: var(--seal-ink); border: 1px solid var(--seal-line); }
       /* 合并态(user-44 第四刀):提示行 + 简行(整行一击即选,视觉即语义)。
          源行高亮走 outline(负 offset 压在行框内,不挤兄弟行的布局)。 */
       .mhint { display: flex; align-items: center; gap: 8px; color: var(--ink-soft); }
@@ -1371,7 +1373,7 @@
         color: var(--ink-soft); font-size: var(--fs-13); padding: 8px 14px; font-family: var(--font-sans);
         /* 实高 ~36 + ::before 上下 5 = 触区 ~46(P1 #10/codex M4:优先真实尺寸) */
       }
-      .panel .acts button.warn { border-color: var(--seal-line); color: var(--seal); }
+      .panel .acts button.warn { border-color: var(--seal-line); color: var(--seal-ink); }
       .panel .acts button.confirm { background: var(--seal); border-color: var(--seal); color: var(--on-seal); }
       .panel button:disabled { opacity: 0.45; }
       /* 值 chip 行(706):任务的状态 / 截止 / 优先级 各一枚,**显示当前值**、点开才出
@@ -1387,7 +1389,7 @@
       .panel button.prop .v { color: var(--ink-soft); }
       /* 有值的那枚往朱砂上靠一档(同卡上角标的分工:设了截止/优先级才是要留意的信息)。 */
       .panel button.prop.set { border-color: var(--seal-line); }
-      .panel button.prop.set .v { color: var(--seal); font-weight: 600; }
+      .panel button.prop.set .v { color: var(--seal-ink); font-weight: 600; }
       .panel .lane {
         display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
         font-size: var(--fs-12); color: var(--ink-soft);
@@ -1462,7 +1464,7 @@
         font-size: var(--fs-12); padding: 5px 12px; font-family: var(--font-sans);
         min-height: 44px; /* 触区达标(ui-audit P1 #10):主导航给足 44px 实高 */
       }
-      #bottombar button.active { color: var(--seal); font-weight: 600; }
+      #bottombar button.active { color: var(--seal-ink); font-weight: 600; }
       /* ⭐ 底栏四枚里前两枚是**主视图**(data-mode,同一条时间轴按 stage 投影)、后两枚是
          **覆盖面**(data-pane,开了会把 compose / 筛选条 / 时间轴一起收起)—— 两类目的地
          一种语汇,正是 §3.9 那句「附属子视图不是主视图的一个切面、是另一堆内容」。
@@ -1548,7 +1550,7 @@
          ⚠ 只描边不填底:填底会和它自己的 .active(点开只看到期)撞成同一个样子。
          ⚠ `:not(.active)` 不是装饰 —— 三类选择器的特异性本来会压过两类的 .fpill.active,
          把选中态的实心边框退成这条更淡的 --seal-line,选中与否就看不出来了。 */
-      .fpill.fdue.late:not(.active) { color: var(--seal); border-color: var(--seal-line); }
+      .fpill.fdue.late:not(.active) { color: var(--seal-ink); border-color: var(--seal-line); }
       /* 数字用等宽字形:计数每分钟可能变,不等宽的话整行会跟着抖(同 .fn 的理由)。 */
       .fpill.fdue { font-variant-numeric: tabular-nums; }
       .fdot { flex: none; } /* 共形声明住标签管理节的「标签色点」一份 */
@@ -1668,7 +1670,7 @@
       .step.fail .mark { color: var(--seal); }
       .step .name { flex: none; font-weight: 600; min-width: 8.5em; }
       .step .detail { color: var(--ink-soft); word-break: break-all; }
-      .step.fail .detail { color: var(--seal); }
+      .step.fail .detail { color: var(--seal-ink); }
       footer.app { text-align: center; margin-top: 24px; }
 
       /* 错误/警示红字(通用修饰类)。此前同一语义以 style="color:var(--seal)" 内联散布
@@ -1676,7 +1678,7 @@
          (门禁只扫样式表文本),是成体系的静默旁路;TS 里要标红一段字,挂这个类、别再内联。
          选择器写成双类 = 特异性 (0,2,0):要压过 .sync .fine 这类同权重容器规则(同权重
          按文档序后者胜,故本条必须住样式表末尾);单类 (0,1,0) 会输给它们。 */
-      .warn-ink.warn-ink { color: var(--seal); }
+      .warn-ink.warn-ink { color: var(--seal-ink); }
 
       /* 备份一节(backup-plan §17)。⚠ 复用 .row / .fine / .warn-ink 那套面板骨架,
          这里只补三样它们给不出的:①备份码要能一眼抄下来(等宽 + 撑开字距 + 可换行);
@@ -1698,7 +1700,7 @@
       .bkup-item-name { flex: 1 1 100%; min-width: 0; word-break: break-all; color: var(--ink); }
       .bkup-item-meta { flex: none; font-size: var(--fs-12); color: var(--ink-soft); }
       .bkup-item-state { flex: 1 1 auto; min-width: 0; font-size: var(--fs-12); color: var(--ink-soft); }
-      .bkup-item-state.warn-ink { color: var(--seal); }
+      .bkup-item-state.warn-ink { color: var(--seal-ink); }
       .bkup-item button {
         flex: none; min-height: 32px; padding: 4px 12px;
         border: 1px solid var(--line-strong); border-radius: var(--radius-sm);

@@ -127,7 +127,7 @@
   word-break: break-all;
 }
 .link-ref:hover {
-  color: var(--seal);
+  color: var(--seal-ink);
   text-decoration-color: var(--seal);
 }
 
@@ -207,7 +207,7 @@
 .img-err {
   font-family: var(--font-sans);
   font-size: var(--fs-12);
-  color: var(--seal);
+  color: var(--seal-ink);
   margin: 4px 0 0;
 }
 

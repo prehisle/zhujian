@@ -46,6 +46,18 @@
   --ink-faint-on-tint-tcard: #938b7a;
   --seal-tint-solid: #f3e4d9; /* = --seal-tint 叠在 --raised 上的实色(与安卓那枚同名同值同义) */
 
+  /* 朱砂当**小字**用、直接压在纸面上(纸底 --paper / 卡与面板 --raised → --raised-edge 渐变)时的字色
+     (用户面 132)。--seal 本身压这几层底不够 §2.2 小字 5.0:亮档压 --paper 4.93、压渐变底端 --raised-edge
+     4.75;暗档压 --paper 5.32 能过,压 --raised 4.87、渐变底端 4.41。⛔ --seal 不动(按钮 / 强调面 /
+     描边 / 淡朱底都在用),只给「朱砂字压纸面」这一族另配一枚。
+     ⭐ 算法同 --ink-soft-on-tint-tcard:沿 sRGB 往 --ink 线性压,取最小的一档使**最不利那层底**
+     (两端都是 --raised-edge)≥ 5.0 —— 亮压 4.5% → 压 --raised-edge 5.01 / --paper 5.19 / --raised 5.56;
+     暗压 13.1% → 压 --raised-edge 5.00 / --raised 5.52 / --paper 6.03(实例实读,progress-log 同号条目)。
+     ⚠ 只挂在「自己不带底」的那一族上;自带 --seal-tint 淡朱底的 chip / 选中态是另一对色,没换。
+     ⚠ 对着 --paper / --raised / --raised-edge 与 --seal 算的:动其中任何一枚都得照原法重算。
+     两个客户端这几枚输入同值 ⇒ 这枚同名同值(check-theme-drift 登记 in: APPS)。 */
+  --seal-ink: #ac3f2a;
+
   /* ---- 悬停/按下的方向(337 定规矩,写在这里因为它是配色的一部分)----
      **hover 一律往「墨」的方向压一档**,不许往写死的 #000 压。
      理由:「墨」按定义就是纸的对极,亮色档它是深的、暗色档它是浅的(#ece4d5)——
@@ -157,6 +169,7 @@
   --ink-soft-on-tint-tcard: #beb5a3;
   --ink-faint-on-tint-tcard: #938b7a;
   --seal-tint-solid: #3e2a21; /* = --seal-tint 叠在 --raised 上的实色 */
+  --seal-ink: #e17a61; /* 朱砂小字压纸面(理由与算法见亮色那份):往 --ink 压 13.1%,渐变底端 5.00 */
   --float-shadow: 0 22px 55px -18px rgba(0, 0, 0, 0.7), 0 2px 8px rgba(0, 0, 0, 0.4);
   --card-shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 16px 34px -22px rgba(0, 0, 0, 0.7);
 }

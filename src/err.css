@@ -13,6 +13,6 @@
   cursor: pointer;
 }
 .err-next:hover {
-  color: var(--seal);
+  color: var(--seal-ink);
   text-decoration-color: var(--seal);
 }

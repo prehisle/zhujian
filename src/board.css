@@ -84,7 +84,7 @@
 /* 到期汇总(502):有逾期时整枚描成朱砂 —— 与卡片上的 due-overdue 同一套语汇
    (那儿也是朱砂),让「屏上有一处红」这件事在顶栏与卡片之间对得上。
    ⚠ 只描边不填底:填底会和它自己的 .active(点开只看到期)撞成同一个样子。 */
-.v-board #due-soon.late { color: var(--seal); border-color: var(--seal-line); }
+.v-board #due-soon.late { color: var(--seal-ink); border-color: var(--seal-line); }
 
 /* 复制为 Markdown — 每列列头那颗(header 那颗「复制看板」走共享 .hbtn 标准 pill) */
 .v-board .col-copy {
@@ -162,7 +162,7 @@
   cursor: pointer;
 }
 .v-board .compose-close:hover { color: var(--ink); background: color-mix(in srgb, var(--ink) 6%, transparent); }
-.v-board .compose-err { color: var(--seal); font-size: var(--fs-12); letter-spacing: 0.02em; }
+.v-board .compose-err { color: var(--seal-ink); font-size: var(--fs-12); letter-spacing: 0.02em; }
 
 /* filter row(标签 pills + 文本过滤框)样式已抽共享件 filter-bar.css——看板与灵感
    同一套筛选行为与皮肤(单一真相源),此处不再重复。 */
@@ -231,7 +231,7 @@
 .v-board .task-topic .choice.child { border-style: dashed; }
 /* 已挂上的候选点亮(675):同这张卡上优先级选择器的 .cur 与筛选条的 .tf-pill.active。再点一次摘掉。 */
 .v-board .task-topic .choice.on { color: var(--seal); border-color: var(--seal); background: var(--seal-tint); font-weight: 600; }
-.v-board .task-topic .choice.create { border-style: dashed; color: var(--seal); border-color: var(--seal-line); }
+.v-board .task-topic .choice.create { border-style: dashed; color: var(--seal-ink); border-color: var(--seal-line); }
 .v-board .task-topic .choice.create:hover { background: var(--seal-tint); border-color: var(--seal); }
 
 /* ---- the board: columns row + an archive drop strip ---- */
@@ -685,7 +685,7 @@
      列体自己滚动 —— 此前封 200px,长正文一编辑就冒出内滚动条(用户 2026-09-02 点名)。 */
   overflow-y: hidden;
 }
-.v-board .edit-err { color: var(--seal); font-size: var(--fs-12); letter-spacing: 0.02em; }
+.v-board .edit-err { color: var(--seal-ink); font-size: var(--fs-12); letter-spacing: 0.02em; }
 .v-board .edit-err:empty { display: none; } /* 无报错时不占 flex gap,编辑框保持紧凑 */
 
 /* 编辑态底栏:报错在左、放大钮恒在右。⛔ 别用 space-between —— `.edit-err:empty` 收起后
@@ -764,7 +764,7 @@
 .v-board .act.primary:hover { background: color-mix(in srgb, var(--seal) 88%, var(--ink)); }
 .v-board .act.ghost { background: transparent; color: var(--ink-soft); border-color: var(--line-strong); }
 .v-board .act.ghost:hover { color: var(--ink); background: color-mix(in srgb, var(--ink) 6%, transparent); }
-.v-board .confirm-q { font-size: var(--fs-12); color: var(--seal); letter-spacing: 0.02em; }
+.v-board .confirm-q { font-size: var(--fs-12); color: var(--seal-ink); letter-spacing: 0.02em; }
 /* 不再提示 opt-out inside the delete confirm row */
 .v-board .dont-ask {
   display: inline-flex;
@@ -785,7 +785,7 @@
   gap: 10px;
   padding: 8px 30px;
   border-bottom: 1px solid var(--line);
-  color: var(--seal);
+  color: var(--seal-ink);
   font-size: var(--fs-13);
   line-height: 1.5;
 }

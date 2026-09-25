@@ -63,7 +63,7 @@
   min-width: 200px;
 }
 .v-topics .nt-title:focus { border-color: var(--seal); }
-.v-topics .nt-err { color: var(--seal); font-size: var(--fs-12); letter-spacing: 0.02em; }
+.v-topics .nt-err { color: var(--seal-ink); font-size: var(--fs-12); letter-spacing: 0.02em; }
 
 /* ---- scrolling list ---- */
 .v-topics main {
@@ -270,7 +270,7 @@
 }
 .v-topics .tbtn:hover { background: color-mix(in srgb, var(--ink) 8%, transparent); color: var(--ink); }
 .v-topics .tbtn.danger:hover { background: var(--seal-tint); color: var(--seal); }
-.v-topics .td-q { font-size: var(--fs-12); color: var(--seal); letter-spacing: 0.02em; }
+.v-topics .td-q { font-size: var(--fs-12); color: var(--seal-ink); letter-spacing: 0.02em; }
 
 /* ---- 标签颜色:行首色点 + ⋯「颜色」的调色板 ---- */
 .v-topics .topic-dot {
@@ -327,7 +327,7 @@
 }
 .v-topics .te-title:focus { border-color: var(--seal); }
 .v-topics .te-actions { display: flex; align-items: center; gap: 8px; }
-.v-topics .te-err { color: var(--seal); font-size: var(--fs-12); letter-spacing: 0.02em; }
+.v-topics .te-err { color: var(--seal-ink); font-size: var(--fs-12); letter-spacing: 0.02em; }
 
 /* ---- expand/collapse: a tag's notes + tasks shown inline (no drill page) ---- */
 .v-topics .topic-caret {
@@ -478,7 +478,7 @@
   font-size: var(--fs-13);
   color: var(--ink-soft);
 }
-.v-topics .mb-hint b { color: var(--seal); font-weight: 600; }
+.v-topics .mb-hint b { color: var(--seal-ink); font-weight: 600; }
 
 /* selected topics as chips — click a chip to make it the survivor, × to drop it */
 .v-topics .mb-chips {

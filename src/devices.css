@@ -78,7 +78,7 @@
 
 /* 破坏性动作在静息态就带朱砂,悬停按 337 的规矩往 --ink 压(--seal-tint 底由 .hbtn 给)。 */
 .hbtn.dev-danger {
-  color: var(--seal);
+  color: var(--seal-ink);
   border-color: var(--seal-line);
 }
 

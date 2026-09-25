@@ -142,7 +142,7 @@
   text-decoration: underline;
   text-underline-offset: 2px;
 }
-.task-meta .link:hover { color: var(--seal); }
+.task-meta .link:hover { color: var(--seal-ink); }
 
 /* priority picker */
 .task-meta .choice {

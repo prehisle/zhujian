@@ -14,7 +14,7 @@
 }
 .cm-badge:hover {
   border-color: var(--seal-line);
-  color: var(--seal);
+  color: var(--seal-ink);
 }
 /* 未读态(0038):右上角一枚朱砂点,开过留言层即消。字色不动 —— 点才是「有新的」的
    信号,整枚变红会与 hover 态混淆。 */
@@ -190,16 +190,16 @@
   cursor: pointer;
 }
 .cm-del:hover {
-  color: var(--seal);
+  color: var(--seal-ink);
 }
 /* 确认那一拍:问句在左、销毁在右,红字明说「不进回收站」。 */
 .cm-confirm {
   margin-left: auto;
-  color: var(--seal);
+  color: var(--seal-ink);
 }
 .cm-del.danger {
   margin-left: 0;
-  color: var(--seal);
+  color: var(--seal-ink);
   border-color: var(--seal-line);
   border-radius: var(--radius-xs);
 }
@@ -227,14 +227,14 @@
 }
 .cm-more:hover {
   border-color: var(--seal-line);
-  color: var(--seal);
+  color: var(--seal-ink);
 }
 
 .cm-err {
   margin: 0 14px 8px;
   font-family: var(--font-sans);
   font-size: var(--fs-12);
-  color: var(--seal);
+  color: var(--seal-ink);
 }
 
 .cm-compose {

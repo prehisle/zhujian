@@ -368,7 +368,7 @@
   overflow-wrap: anywhere;
 }
 .hkset-msg.ok { color: var(--ink-soft); }
-.hkset-msg.err { color: var(--seal); }
+.hkset-msg.err { color: var(--seal-ink); }
 
 .settings-foot {
   margin: 14px 0 0;
@@ -588,7 +588,7 @@
   overflow-wrap: anywhere;
 }
 .bkup-item-state.ok { color: var(--ok); }
-.bkup-item-state.err { color: var(--seal); }
+.bkup-item-state.err { color: var(--seal-ink); }
 /* 123:行尾从一枚「验证」变成三枚(验证 / 恢复这一份 / 复制路径),包成一组整体靠右 ——
    各自挂 margin-left:auto 会把空隙均分到三枚之间。窄到放不下时整组折到下一行,不拆开。 */
 .bkup-item-acts {
@@ -711,7 +711,7 @@
   cursor: pointer;
 }
 .about-link:hover {
-  color: var(--seal);
+  color: var(--seal-ink);
   text-decoration-color: var(--seal);
 }
 .about-block {
@@ -751,4 +751,4 @@
 .about-step.fail .about-mark { color: var(--seal); }
 .about-step > :last-child { color: var(--ink-soft); word-break: break-all; }
 .about-dim { color: var(--ink-soft); }
-.about-err { margin: 0; color: var(--seal); }
+.about-err { margin: 0; color: var(--seal-ink); }
