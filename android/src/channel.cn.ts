@@ -18,6 +18,9 @@ export const SYNC_DEFAULT_URL = "wss://sync.zhujian.cool";
 /** 首次启动那道隐私政策告知里的链接 —— 备案站上那份(境内版正文)。 */
 export const PRIVACY_URL = "https://zhujian.cool/privacy.html";
 
+/** 官网根(不带尾斜杠),设置「关于」里「官网」「更新日志」两行从它拼 —— 备案站。 */
+export const SITE_URL = "https://zhujian.cool";
+
 // ⚠ 这个类型定义与 `channel.ts` / `ohos/src/channel.ts` 逐字重复,**故意不 import**:
 // 三份文件的导出名靠 seam 的正则提取比对(只认 `export type NAME = …` 这种直接声明,
 // `export type { NAME }` 这种转出写法它读不出来),import 反而会让这条自动核对失灵。

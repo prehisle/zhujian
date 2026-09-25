@@ -113,6 +113,8 @@ export const main = defineMessages({
   "main.aboutBuild": { zh: "构建", en: "Build" },
   "main.aboutBuildDirty": { zh: "{stamp} · 含未提交改动", en: "{stamp} · uncommitted changes" },
   "main.aboutSite": { zh: "官网", en: "Website" },
+  "main.aboutSource": { zh: "源码", en: "Source code" },
+  "main.aboutChangelog": { zh: "更新日志", en: "Changelog" },
   "main.aboutFailed": { zh: "读版本失败:{error}", en: "Could not read the version: {error}" },
   "main.updateFound": { zh: "有新版 v{version}", en: "New version v{version}" },
   "main.spaceRenamedRefreshFailed": { zh: "空间名已更新,但空间列表刷新失败:{error}", en: "The space was renamed, but the space list could not be refreshed: {error}" },

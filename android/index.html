@@ -1635,6 +1635,17 @@
       /* 构建身份戳那一格(701)。等宽 —— 这串十六进制是用来念给人听 / 抄下来的,
          比例字体下 0 与 O、1 与 l 挤在一起认不准。⚠ 只加字体,不碰 .kv .v 的断行。 */
       .kv .v.mono { font-family: ui-monospace, monospace; user-select: text; }
+      /* 设置「关于」(用户 2026-09-25):作者一句走正文字号、soft 色,不进键值格。
+         官网 / 源码 / 更新日志三枚链接:形照桌面 .about-link(墨色 + 朱色细下划线);
+         行盒撑到 44 自保 §2.3 手机触区 —— 三行上下相邻,⛔ 别换成 ::before halo:那样视觉行距
+         不变、中心距仍只有一行高,手指落在两行之间照样会点错。行高撑开后键格要跟着按基线对齐。 */
+      .about-author { margin: 0 0 10px; color: var(--ink-soft); }
+      #about { align-items: baseline; }
+      .kv .v.about-link {
+        display: inline-flex; align-items: center; min-height: 44px; justify-self: start;
+        color: var(--ink); text-decoration: underline; text-decoration-color: var(--seal-line);
+        text-underline-offset: 2px;
+      }
       .row { display: flex; gap: 8px; margin-bottom: 10px; }
       .row input {
         flex: 1; min-width: 0; padding: 8px 10px;
@@ -2074,6 +2085,7 @@
       <p id="feedback-msg" class="fine" hidden></p>
 
       <h2 data-i18n="shell.aboutTitle">关于</h2>
+      <p class="about-author" data-i18n="shell.aboutAuthor">朱简是我一个人做的。好用、不好用,都欢迎在「意见反馈」里告诉我。</p>
       <div id="about" class="kv"></div>
 
       <div class="row" style="margin-top: 14px">

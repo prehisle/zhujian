@@ -40,6 +40,14 @@ export const HAS_SAF_BRIDGE = false;
  */
 export const HAS_NOTIFICATION = false;
 
+/**
+ * ⛔ 这一端交不出网址给系统浏览器:`openUrl` 的编译目标是 linux、去调 `xdg-open`,
+ * 鸿蒙上没有这个程序(651 真机实撞 `os error 2`,见 `.claude/rules/mobile.md` 平台事实②)。
+ * ⇒ 设置「关于」里官网 / 源码 / 更新日志三行只摆地址文字,不做成链接 —— 做成链接在这一端
+ * 就是「点了没反应」。
+ */
+export const HAS_BROWSER = false;
+
 /** 够不着通知权限。⚠ 它不该被调到(`HAS_NOTIFICATION` 已经把整节摘了),真被调到就是接线漏了。 */
 export function notifyPermissionOk(): Promise<boolean> {
   return Promise.resolve(false);

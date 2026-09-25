@@ -40,3 +40,7 @@ export const SYNC_DEFAULT_URL = "wss://sync.zhujian.app";
 
 /** 首次启动那道隐私政策告知里的链接。⚠ 必须是**活的**页面 —— 审核员和用户都会点它。 */
 export const PRIVACY_URL = "https://zhujian.app/privacy.html";
+
+/** 官网根(不带尾斜杠)。设置「关于」里「官网」「更新日志」两行从它拼 ——
+ *  ⛔ 别在业务模块里写死域名:国内渠道那两份是 `zhujian.cool`。 */
+export const SITE_URL = "https://zhujian.app";

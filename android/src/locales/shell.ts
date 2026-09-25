@@ -79,6 +79,8 @@ export const shell = defineMessages({
   "shell.aliasNoteBold": { zh: "同步", en: "syncs" },
   "shell.aliasNotePost": { zh: "给同一账户的其他设备,让他们看到条目是谁记的。留空 = 不起名。", en: " to the other devices on this account, so they can see who noted each item. Empty = unnamed." },
   "shell.aboutTitle": { zh: "关于", en: "About" },
+  // 作者一句(用户 2026-09-25 拍板,两端逐字相同 —— 改措辞要两端一起改)。「意见反馈」是上面那一节的真名(feedback.title)。
+  "shell.aboutAuthor": { zh: "朱简是我一个人做的。好用、不好用,都欢迎在「意见反馈」里告诉我。", en: "I build Zhujian on my own. Whether it works for you or not, tell me through Feedback." },
   "shell.diag": { zh: "诊断", en: "Diagnostics" },
   "shell.diagDbTitle": { zh: "本机库(建库 + 全部迁移)", en: "Local database (creation + all migrations)" },
   "shell.diagNetTitle": { zh: "网络栈诊断", en: "Network stack diagnostics" },

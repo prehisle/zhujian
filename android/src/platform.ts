@@ -68,6 +68,13 @@ export const HAS_SAF_BRIDGE = true;
 export const HAS_NOTIFICATION = true;
 
 /**
+ * 这一端能不能把网址交给系统浏览器(`tauri-plugin-opener` 的 `openUrl`;capability 里
+ * `opener:default` 那条)。true ⇒ 设置「关于」里官网 / 源码 / 更新日志三行是可点的链接;
+ * false ⇒ 同三行只摆地址文字(用户自己抄),⛔ 别渲染成点了没反应的链接。
+ */
+export const HAS_BROWSER = true;
+
+/**
  * 要一次通知权限;拿不到返回 false(调用方负责说人话)。
  *
  * ⚠ **安卓 13+ 的 `POST_NOTIFICATIONS` 是运行期权限**(桌面没有这一格)——插件把

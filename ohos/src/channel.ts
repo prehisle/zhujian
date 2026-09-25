@@ -16,6 +16,9 @@ export const SYNC_DEFAULT_URL = "wss://sync.zhujian.cool";
 /** 首次启动那道隐私政策告知里的链接 —— 备案站上那份(境内版正文)。 */
 export const PRIVACY_URL = "https://zhujian.cool/privacy.html";
 
+/** 官网根(不带尾斜杠),设置「关于」里「官网」「更新日志」两行从它拼 —— 备案站。 */
+export const SITE_URL = "https://zhujian.cool";
+
 /** 与安卓那份同名同形(那边是 `android.json` 里的一条)。 */
 export type MobileUpdate = { version: string; versionCode: number; notes: string; url: string };
 

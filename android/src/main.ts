@@ -46,9 +46,9 @@ import { DONE_COLUMN, boardColumns, isTaskStage, setColumns, stageLabel } from "
 import { capturePhoto, composeImages, PICK_MAX, pickImages } from "./images";
 import { INPUT_DEBOUNCE_MS } from "./timing";
 // **平台接缝**(OH-d/D3):只在安卓壳里存在的那三条命令。鸿蒙那端由 vite 换成另一份实现。
-import { HAS_NOTIFICATION, HAS_SAF_BRIDGE, HAS_TEXT_ZOOM, notifyPermissionGranted, notifyPermissionOk, takeDeepLink, takeSharedText, writeClipboard } from "./platform";
+import { HAS_BROWSER, HAS_NOTIFICATION, HAS_SAF_BRIDGE, HAS_TEXT_ZOOM, notifyPermissionGranted, notifyPermissionOk, takeDeepLink, takeSharedText, writeClipboard } from "./platform";
 // **渠道接缝**(651):这份包发给谁 —— 鸿蒙那端同样由 vite 换成国内渠道那份。
-import { checkUpdate, PRIVACY_URL, SYNC_DEFAULT_URL, type MobileUpdate } from "./channel";
+import { checkUpdate, PRIVACY_URL, SITE_URL, SYNC_DEFAULT_URL, type MobileUpdate } from "./channel";
 import { initDueReminder, reminderCfg, saveReminderCfg, sendTestNotification } from "./reminder";
 import * as backup from "./backup";
 import * as cardPanel from "./cardpanel";
@@ -2378,6 +2378,17 @@ $("run").addEventListener("click", runProbe);
 // ⭐ 701 起多一行**构建身份戳**:用户那台 vivo 从此常年跑未发版的测试包,而它与正式包
 // 的 versionName 一模一样 ⇒ 版本号那一行答不出「你手上那只是哪棵树」。为什么要有它、
 // 脏是怎么判的,全在 `scripts/lib/build-stamp.mjs` 顶注。
+//
+// 官网 / 源码 / 更新日志三行(用户 2026-09-25 拍板,桌面那半同文案):官网与更新日志从渠道接缝的
+// `SITE_URL` 拼(国内渠道是 zhujian.cool,⛔ 别写死);源码仓两个渠道同一个。值格摆的是**地址本身**
+// —— 这一端交不出浏览器(`HAS_BROWSER=false`,鸿蒙)时它就是纯文字,用户照抄也能到。
+// ⛔ 别把构建身份戳链到 GitHub 提交:那串 sha 是私有工作仓的,公开仓是白名单导出快照、sha 不同,链过去 404。
+const SOURCE_URL = "https://github.com/prehisle/zhujian";
+function aboutLinkRow(label: string, url: string): string {
+  const shown = esc(url.replace(/^https:\/\//, ""));
+  const v = HAS_BROWSER ? `<a class="v about-link" href="${esc(url)}">${shown}</a>` : `<span class="v">${shown}</span>`;
+  return `<span class="k">${label}</span>${v}`;
+}
 async function loadAbout() {
   const box = $("about");
   try {
@@ -2389,7 +2400,16 @@ async function loadAbout() {
       `<span class="k">${t("main.aboutVersion")}</span><span class="v">v${esc(v)}</span>` +
       `<span class="k">${t("main.aboutBuild")}</span><span class="v mono">` +
       `${esc(b.dirty ? t("main.aboutBuildDirty", { stamp }) : stamp)}</span>` +
-      `<span class="k">${t("main.aboutSite")}</span><span class="v">zhujian.app</span>`;
+      aboutLinkRow(t("main.aboutSite"), SITE_URL) +
+      aboutLinkRow(t("main.aboutSource"), SOURCE_URL) +
+      aboutLinkRow(t("main.aboutChangelog"), `${SITE_URL}/changelog.html`);
+    // 裸 href 会把 WebView 自己导走 —— 一律交给系统浏览器(同更新条「下载」那条路)。
+    box.querySelectorAll<HTMLAnchorElement>("a.about-link").forEach((a) =>
+      a.addEventListener("click", (e) => {
+        e.preventDefault();
+        void openUrl(a.getAttribute("href")!).catch((err) => showErr(err));
+      }),
+    );
   } catch (e) {
     box.innerHTML = `<span class="v warn-ink">${t("main.aboutFailed", { error: esc(errDetail(e)) })}</span>`;
   }
