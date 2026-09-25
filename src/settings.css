@@ -752,3 +752,13 @@
 .about-step > :last-child { color: var(--ink-soft); word-break: break-all; }
 .about-dim { color: var(--ink-soft); }
 .about-err { margin: 0; color: var(--seal-ink); }
+/* 读库失败那行落在 `.about-kv` 里,`.about-kv dd`(0,1,1)会压过上一条:字色回墨、字体成等宽。
+   错误是一句人话不是读数 ⇒ 回正文字体、按词换行;没有 dt 配对,独占 max-content 那列会整句撑出面板
+   被裁掉 ⇒ 跨满两列(134)。 */
+.about-kv dd.about-err {
+  grid-column: 1 / -1;
+  color: var(--seal-ink);
+  font-family: inherit;
+  word-break: normal;
+  overflow-wrap: anywhere;
+}
