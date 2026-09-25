@@ -14,6 +14,7 @@
 //   GEOMETRY 表(键 = `adb shell wm size` 的 WxH)。只对自己的测试机 + 验收包用。
 import { execFileSync, spawn } from "node:child_process";
 import { createWriteStream } from "node:fs";
+import { fileURLToPath } from "node:url";
 
 const GEOMETRY = {
   // vivo V2352GA(1260×2800):实测三次一致。[x, y] 为物理像素。
@@ -40,6 +41,9 @@ for (let i = 0; i < rest.length; i++) {
 const sh = (args) => execFileSync("adb", device ? ["-s", device, ...args] : args, { encoding: "utf8" });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const PKG = "app.zhujian.notebook";
+// 失败截图落仓根(.gitignore 已收)。⛔ 别写死盘符:从前写死 g:/yj2026/zhujian,换到仓在别处的机器上
+// 超时那步 createWriteStream 抛 ENOENT 直接崩,截图和「超时未确认装成」那句都没了。
+const FAIL_PNG = fileURLToPath(new URL("../.install-fail.png", import.meta.url));
 
 function deviceSerial() {
   if (device) return device;
@@ -146,13 +150,13 @@ function focusIsInstalling() {
 
   // 超时:截图 + 如实报错
   try {
-    const png = createWriteStream("g:/yj2026/zhujian/.install-fail.png");
+    const png = createWriteStream(FAIL_PNG);
     const cap = spawn("adb", (device ? ["-s", device] : []).concat(["exec-out", "screencap", "-p"]));
     cap.stdout.pipe(png);
     await new Promise((r) => cap.on("close", r));
   } catch {}
   console.error(`✘ 超时未确认装成。install 输出:\n${installLog.trim()}`);
-  console.error("已截屏 .install-fail.png——核对弹窗是否变样、坐标是否需重标定。");
+  console.error(`已截屏 ${FAIL_PNG}——核对弹窗是否变样、坐标是否需重标定。`);
   process.exit(1);
 })().catch((e) => {
   console.error("✘ " + e.message);
