@@ -49,6 +49,7 @@ export const sync = defineMessages({
   "sync.accountCreated": { zh: "账户已创建,同步已开启", en: "Account created, sync is on" },
   "sync.copied": { zh: "已复制,发给电脑端粘贴", en: "Copied, paste it on the computer" },
   "sync.copyFailed": { zh: "复制失败,请长按选中文字手动复制", en: "Copy failed; long-press to select the text and copy it by hand" },
+  "sync.bootWaiting": { zh: "正在等另一台设备发来初始快照…", en: "Waiting for another device to send the initial snapshot…" },
   "sync.snapshotDone": { zh: "快照 {total} 已收全,校验并导入中…", en: "Snapshot {total} received, verifying and importing…" },
   "sync.snapshotProgress": { zh: "拉取快照 {received} / {total}({pct}%)", en: "Fetching snapshot {received} / {total} ({pct}%)" },
   "sync.pairDone": { zh: "{detail}。请等电脑端显示初始同步完成后再离开本页。", en: "{detail} Wait until the computer shows initial sync complete before leaving this page." },

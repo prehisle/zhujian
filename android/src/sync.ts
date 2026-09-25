@@ -94,6 +94,8 @@ const STATE_LABEL: Record<string, string> = {
 
 /** 当前空间是不是在初始同步里(最近一份状态快照说的)。 */
 let booting = false;
+/** 这一轮引导收到过进度事件的空间(没收到过 = 进度字该显等待句)。 */
+let bootProgressSpace: string | null = null;
 
 export function isBooting(): boolean {
   return booting;
@@ -141,7 +143,16 @@ export function renderSync(s: SyncStatus) {
   altCreate.textContent = isMain ? t("sync.altCreateMain") : t("sync.altCreateOther");
   altCreate.classList.toggle("ghost", isMain);
   $("sync-boot").hidden = s.state !== "booting";
+  // 还没收到本空间这一轮的进度事件 ⇒ 进度字显等待句、条归零(用户面 131;与桌面 paintBoot 同口径)。
+  // 按空间记:切到另一个也在引导的空间时,上一个空间的进度不许留在块里;离开 booting 即清。
+  if (s.state !== "booting") bootProgressSpace = null;
+  else if (bootProgressSpace !== getCurrentSpace()) {
+    ($("sync-boot-fill") as HTMLElement).style.width = "0%";
+    $("sync-boot-text").textContent = t("sync.bootWaiting");
+  }
   // 引导为什么停着(用户面 121):core 写在 boot_hint,独占一格 —— 与上面 err 那格可以同屏。
+  // 壳里挂 `.fine`(soft 12,本面说明句那档):它是「为什么停着」的说明不是错;⛔ 别换成朱 12 去对齐桌面
+  // `.sync-warn` —— 朱砂压手机纸底只有 4.93:1,过不了 §2.2 小字 5.0(用户面 131)。
   const hint = $("sync-boot-hint");
   hint.hidden = !s.boot_hint;
   hint.textContent = s.boot_hint ?? "";
@@ -537,6 +548,7 @@ export function initSync(d: Deps): void {
   void listen<Spaced<{ received: number; total: number }>>("sync-boot", (e) => {
     if (!deps.acceptSpaced(e.payload)) return;
     const { received, total } = e.payload.payload;
+    bootProgressSpace = e.payload.space;
     const pct = total > 0 ? Math.floor((received / total) * 100) : 0;
     ($("sync-boot-fill") as HTMLElement).style.width = `${pct}%`;
     $("sync-boot-text").textContent =
