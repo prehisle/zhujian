@@ -741,6 +741,39 @@
       .ethos-body p strong { color: var(--ink); font-weight: 600; }
       .ethos-body p:last-child { margin-bottom: 0; }
 
+      /* ── 服务器看得到什么 · 不足与不做:两栏清单 ────────────── */
+      .seen, .limits { padding: clamp(52px, 7vw, 90px) 0; border-top: 1px solid var(--line); }
+      .seen-lead { color: var(--ink-soft); font-size: var(--fs-16); margin: 18px 0 0; max-width: 60ch; }
+      .two-cols { margin-top: 30px; display: grid; grid-template-columns: 1fr 1fr; gap: 12px 48px; max-width: 920px; }
+      .two-cols h3 {
+        font-family: var(--font-serif);
+        font-size: var(--fs-17);
+        font-weight: 600;
+        margin: 0;
+        padding-bottom: 12px;
+        border-bottom: 1px solid var(--line);
+      }
+      .marks { list-style: none; margin: 0; padding: 0; }
+      .marks li {
+        position: relative;
+        color: var(--ink-soft);
+        font-size: var(--fs-15);
+        padding: 11px 0 11px 19px;
+        border-bottom: 1px solid var(--line);
+      }
+      .marks li::before {
+        content: "";
+        position: absolute;
+        left: 0; top: 1.25em;
+        width: 7px; height: 7px;
+        border-radius: var(--radius-seal);
+        background: var(--seal);
+        transform: rotate(45deg);
+      }
+      .seen-note { color: var(--ink-soft); font-size: var(--fs-15); margin: 18px 0 0; max-width: 64ch; }
+      .seen-note a { color: var(--seal); text-decoration: none; }
+      .seen-note a:hover { text-decoration: underline; }
+
       /* ── 页脚:朱砂钤印落款 ────────────────────────────────── */
       .foot {
         border-top: 1px solid var(--line);
@@ -787,6 +820,7 @@
         .facts { grid-template-columns: 1fr; }
         .facts dt { padding-bottom: 4px; }
         .facts dd { padding-top: 0; border-top: 0; }
+        .two-cols { grid-template-columns: 1fr; gap: 28px; }
       }
 
       @media (prefers-reduced-motion: reduce) {
@@ -949,6 +983,43 @@
         </div>
       </section>
 
+      <!-- ───────── 同步服务器看得到什么 ───────── -->
+      <section class="seen" id="server">
+        <div class="wrap">
+          <span class="eyebrow" data-i18n="seen.eyebrow">同步服务器</span>
+          <h2 class="section-title" data-i18n="seen.title">它看得到什么,看不到什么</h2>
+          <!-- ⛔ 每一格照 docs/sync-protocol.md §3(信封 = 服务器唯一可读面)与 §11(威胁模型、
+               落盘清单)写,协议变了这里跟着改。「看不到」那栏只许写在密文里的东西:HLC / op 类型 /
+               图字节 / 设备别名都在内层;⛔ 别写「看不到你什么时候写的」—— 在线时存一下就发一帧,
+               帧的时刻服务器看得到。 -->
+          <p class="seen-lead" data-i18n="seen.lead">开了同步,数据要经服务器转一手。下面照协议原样列出来。</p>
+          <div class="two-cols">
+            <div>
+              <h3 data-i18n="seen.noTitle">看不到</h3>
+              <ul class="marks">
+                <li data-i18n="seen.no1">随记和任务的内容,以及改过的旧版本</li>
+                <li data-i18n="seen.no2">图片</li>
+                <li data-i18n="seen.no3">标签名、看板列名、设备名</li>
+                <li data-i18n="seen.no4">每一次改动是新建、编辑还是删除</li>
+                <li data-i18n="seen.no5">账户密钥</li>
+              </ul>
+            </div>
+            <div>
+              <h3 data-i18n="seen.yesTitle">看得到</h3>
+              <ul class="marks">
+                <li data-i18n="seen.yes1">账户编号和设备编号(随机生成的一串字符)与各设备的公钥</li>
+                <li data-i18n="seen.yes2">哪台设备什么时候在线</li>
+                <li data-i18n="seen.yes3">什么时候发了数据、发了多少。由此能推出你大概什么时候在用</li>
+                <li data-i18n="seen.yes4">连接从哪个 IP 地址来</li>
+              </ul>
+            </div>
+          </div>
+          <p class="seen-note" data-i18n="seen.stored">服务器硬盘上只存这几样:账户和设备的编号与公钥、哪台设备有管理权限、账户的设备额度、封禁名单、不含内容的连接日志。设备离线时,发给它的密文在服务器内存里等它,72 小时没取走就丢掉,服务器重启也会清空;数据本身在你的设备上,回到网上会重新补齐。</p>
+          <p class="seen-note" data-i18n="seen.trust">有一件事协议管不了:你得相信装到手上的安装包,就是 GitHub 上那份开源代码编出来的。不放心的话,可以自己编译。</p>
+          <p class="seen-note"><a href="https://github.com/prehisle/zhujian/blob/main/docs/sync-protocol.md" data-i18n="seen.protocol">同步协议全文(写给开发者看的)</a></p>
+        </div>
+      </section>
+
       <!-- ───────── 下载 ───────── -->
       <section class="download" id="download">
         <div class="wrap">
@@ -1031,12 +1102,49 @@
         </div>
       </section>
 
+      <!-- ───────── 不足与不做 ───────── -->
+      <section class="limits" id="limits">
+        <div class="wrap">
+          <span class="eyebrow" data-i18n="limits.eyebrow">先说不足</span>
+          <h2 class="section-title" data-i18n="limits.title">还做不好的,和不打算做的</h2>
+          <!-- ⛔ 「还做不好」每一条都要是今天真的做不到(backlog 里有账或代码里查得到);修好一条就删一条,
+               别让它变成「此前」的假话。「不打算做」写的是取舍,⛔ 别写「永不」这类极限词(copy-plan §8)。 -->
+          <div class="two-cols">
+            <div>
+              <h3 data-i18n="limits.notYetTitle">现在还做不好</h3>
+              <ul class="marks">
+                <li data-i18n="limits.n1">没有 iPhone 版。</li>
+                <li data-i18n="limits.n2">Windows 安装包没有系统签名,第一次安装会提示「未知发布者」。</li>
+                <li data-i18n="limits.n3">手机上的朱简放到后台,同步不保证实时,回到前台才追上。</li>
+                <li data-i18n="limits.n4">没有应用锁,手机上的内容靠系统锁屏挡着。</li>
+                <li data-i18n="limits.n5">看板的列只能在电脑上新建、改名、删除,手机上只能用。</li>
+                <li data-i18n="limits.n6">鸿蒙版比安卓版更新得慢。</li>
+                <li data-i18n="limits.n7">暗色模式下有几处小标签的字偏淡。</li>
+              </ul>
+            </div>
+            <div>
+              <h3 data-i18n="limits.neverTitle">不打算做</h3>
+              <ul class="marks">
+                <li data-i18n="limits.x1">用 AI 润色、总结、自动归类。你写下什么,留下的就是什么。</li>
+                <li data-i18n="limits.x2">注册要邮箱或手机号。</li>
+                <li data-i18n="limits.x3">在应用里放广告或统计代码。</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <!-- ───────── 理念 + 开源 ───────── -->
       <section class="ethos" id="ethos">
         <div class="wrap">
           <span class="eyebrow" data-i18n="ethos.eyebrow">谁做的</span>
           <div class="ethos-body">
-            <p data-i18n="ethos.p1">我一个人做的。想要一个只记想法和待办、别的都不管的工具,就自己写了。</p>
+            <!-- 为什么做它的三条是用户 2026-09-25 亲口给的三个理由,按原意改写成首页语气;
+                 加粗的短句与正文各成一键(data-i18n 只覆写 textContent)。 -->
+            <p data-i18n="ethos.p1">我一个人做的。做它,是因为下面三件事一直让我不踏实。</p>
+            <p><strong data-i18n="ethos.why1a">数据放在别人的云上。</strong><span data-i18n="ethos.why1b">服务一停、账号一封,或者数据库被人拖走,东西就不是你的了。所以朱简把数据存在你自己的设备上,同步也只传加密过的内容。</span></p>
+            <p><strong data-i18n="ethos.why2a">想记的时候打不开。</strong><span data-i18n="ethos.why2b">网页上的看板要开浏览器、要登录,网一慢就卡,功能还越堆越多。可一个念头常常只停几秒。朱简的做法是:按一个热键,弹出一张纸条,写完回车就收起。</span></p>
+            <p><strong data-i18n="ethos.why3a">写下的字被改掉。</strong><span data-i18n="ethos.why3b">现在很多工具都在用 AI 帮你润色、总结、归类。可在什么都能让 AI 代写的时候,你自己想出来、没被改过的念头,才更值得留着。朱简不会动你写下的任何一个字。</span></p>
             <!-- 字源那段里两个词是加粗的,故按加粗边界切片;英文版把「原名朱笺」的来龙去脉
                  略去(对英文读者是无从对照的旧名),不是漏译。 -->
             <p>
@@ -1165,6 +1273,25 @@
           "facts.freeLabel": { zh: "免费与开源", en: "Free and open source" },
           "facts.free": { zh: "免费使用,含多设备同步。开源(MIT),源码在 GitHub。", en: "Free to use, multi-device sync included. Open source (MIT), code on GitHub." },
 
+          /* — 同步服务器看得到什么(照 sync-protocol §3 / §11)— */
+          "seen.eyebrow": { zh: "同步服务器", en: "The sync server" },
+          "seen.title": { zh: "它看得到什么,看不到什么", en: "What it can see, and what it can't" },
+          "seen.lead": { zh: "开了同步,数据要经服务器转一手。下面照协议原样列出来。", en: "With sync on, your data passes through a server. Here is the list, straight from the protocol." },
+          "seen.noTitle": { zh: "看不到", en: "Cannot see" },
+          "seen.no1": { zh: "随记和任务的内容,以及改过的旧版本", en: "The text of your notes and tasks, and their earlier versions" },
+          "seen.no2": { zh: "图片", en: "Images" },
+          "seen.no3": { zh: "标签名、看板列名、设备名", en: "Tag names, board column names, device names" },
+          "seen.no4": { zh: "每一次改动是新建、编辑还是删除", en: "Whether a change was a create, an edit, or a delete" },
+          "seen.no5": { zh: "账户密钥", en: "Your account key" },
+          "seen.yesTitle": { zh: "看得到", en: "Can see" },
+          "seen.yes1": { zh: "账户编号和设备编号(随机生成的一串字符)与各设备的公钥", en: "Account and device IDs (random strings) and each device's public key" },
+          "seen.yes2": { zh: "哪台设备什么时候在线", en: "Which device is online, and when" },
+          "seen.yes3": { zh: "什么时候发了数据、发了多少。由此能推出你大概什么时候在用", en: "When data was sent and how much. From that it can guess roughly when you use the app" },
+          "seen.yes4": { zh: "连接从哪个 IP 地址来", en: "The IP address a connection comes from" },
+          "seen.stored": { zh: "服务器硬盘上只存这几样:账户和设备的编号与公钥、哪台设备有管理权限、账户的设备额度、封禁名单、不含内容的连接日志。设备离线时,发给它的密文在服务器内存里等它,72 小时没取走就丢掉,服务器重启也会清空;数据本身在你的设备上,回到网上会重新补齐。", en: "On disk the server keeps only these: account and device IDs with their public keys, which devices have admin rights, the account's device quota, the ban list, and connection logs with no content. While a device is offline, encrypted messages for it wait in server memory; they are dropped after 72 hours or when the server restarts. The data itself lives on your devices and catches up once they are back online." },
+          "seen.trust": { zh: "有一件事协议管不了:你得相信装到手上的安装包,就是 GitHub 上那份开源代码编出来的。不放心的话,可以自己编译。", en: "One thing the protocol cannot cover: you have to trust that the installer you got was built from the open-source code on GitHub. If you would rather not, you can build it yourself." },
+          "seen.protocol": { zh: "同步协议全文(写给开发者看的)", en: "Full sync protocol (for developers, in Chinese)" },
+
           /* — 下载 — */
           "dl.eyebrow": { zh: "现在就能用", en: "Ready to use" },
           "dl.title": { zh: "装一个试试", en: "Give it a try" },
@@ -1199,9 +1326,31 @@
           "faq.costQ": { zh: "要花钱吗?", en: "Does it cost anything?" },
           "faq.costA": { zh: "现在免费使用,包括多设备同步。你的数据存在你自己设备上的一个 SQLite 文件里,代码也开源(MIT)。哪天不想用了,东西都还在你手上。", en: "It is free to use today, multi-device sync included. Your data sits in a SQLite file on your own device, and the code is open source (MIT). If you ever stop using it, everything is still in your hands." },
 
+          /* — 不足与不做 — */
+          "limits.eyebrow": { zh: "先说不足", en: "The weak spots first" },
+          "limits.title": { zh: "还做不好的,和不打算做的", en: "What it doesn't do well yet, and what it won't do" },
+          "limits.notYetTitle": { zh: "现在还做不好", en: "Not good at yet" },
+          "limits.n1": { zh: "没有 iPhone 版。", en: "There is no iPhone version." },
+          "limits.n2": { zh: "Windows 安装包没有系统签名,第一次安装会提示「未知发布者」。", en: "The Windows installer is not code-signed, so the first install shows an \"unknown publisher\" warning." },
+          "limits.n3": { zh: "手机上的朱简放到后台,同步不保证实时,回到前台才追上。", en: "On phones, sync is not real-time while Zhujian is in the background; it catches up when you bring it back." },
+          "limits.n4": { zh: "没有应用锁,手机上的内容靠系统锁屏挡着。", en: "There is no app lock; on a phone, your notes are protected by the system lock screen." },
+          "limits.n5": { zh: "看板的列只能在电脑上新建、改名、删除,手机上只能用。", en: "Board columns can only be added, renamed, or deleted on a computer; phones just use them." },
+          "limits.n6": { zh: "鸿蒙版比安卓版更新得慢。", en: "The HarmonyOS version gets updates later than Android." },
+          "limits.n7": { zh: "暗色模式下有几处小标签的字偏淡。", en: "In dark mode a few small labels are a little too faint." },
+          "limits.neverTitle": { zh: "不打算做", en: "Won't do" },
+          "limits.x1": { zh: "用 AI 润色、总结、自动归类。你写下什么,留下的就是什么。", en: "AI polishing, summaries, or auto-filing. What you write is what stays." },
+          "limits.x2": { zh: "注册要邮箱或手机号。", en: "Ask for an email address or phone number to sign up." },
+          "limits.x3": { zh: "在应用里放广告或统计代码。", en: "Put ads or analytics in the app." },
+
           /* — 理念 — */
           "ethos.eyebrow": { zh: "谁做的", en: "Who made it" },
-          "ethos.p1": { zh: "我一个人做的。想要一个只记想法和待办、别的都不管的工具,就自己写了。", en: "I made it on my own. I wanted a tool that keeps notes and tasks and nothing else, so I wrote one." },
+          "ethos.p1": { zh: "我一个人做的。做它,是因为下面三件事一直让我不踏实。", en: "I made it on my own, because three things kept bothering me." },
+          "ethos.why1a": { zh: "数据放在别人的云上。", en: "Your data lives in someone else's cloud. " },
+          "ethos.why1b": { zh: "服务一停、账号一封,或者数据库被人拖走,东西就不是你的了。所以朱简把数据存在你自己的设备上,同步也只传加密过的内容。", en: "If the service shuts down, your account gets banned, or the database leaks, it is no longer yours. So Zhujian keeps your data on your own devices, and sync only carries encrypted content." },
+          "ethos.why2a": { zh: "想记的时候打不开。", en: "You can't open it when you need to jot something down. " },
+          "ethos.why2b": { zh: "网页上的看板要开浏览器、要登录,网一慢就卡,功能还越堆越多。可一个念头常常只停几秒。朱简的做法是:按一个热键,弹出一张纸条,写完回车就收起。", en: "A web board needs a browser and a login, stalls when the network is slow, and keeps growing features. A thought often lasts only a few seconds. Zhujian's answer: press a hotkey, a slip of paper pops up, type, hit Enter, and it tucks itself away." },
+          "ethos.why3a": { zh: "写下的字被改掉。", en: "Your words get rewritten. " },
+          "ethos.why3b": { zh: "现在很多工具都在用 AI 帮你润色、总结、归类。可在什么都能让 AI 代写的时候,你自己想出来、没被改过的念头,才更值得留着。朱简不会动你写下的任何一个字。", en: "Many tools now use AI to polish, summarize, and sort what you write. When AI can write almost anything for you, the ideas you came up with yourself, untouched, are the ones worth keeping. Zhujian never changes a word you write." },
           "ethos.p2a": { zh: "名字取自「", en: "The name joins " },
           "ethos.p2Zhusha": { zh: "朱砂", en: "zhūshā" },
           "ethos.p2b": { zh: "」与「", en: " (cinnabar) with " },
