@@ -491,7 +491,20 @@
    13% 时蓝紫融进背景,20% 才立得住;28% 与 20% 差别已不明显。
    ⛔ 再动这两个数先照原法跑一遍(起隔离实例 + 逐档 --clip 截图并排),别凭手感调 ——
    「门禁全绿 ≠ 长得对」。 */
+/* ⭐ **文字对比度不许因为上了色而掉**(用户面 130,承安卓 747 同一解法):淡底一铺,卡上 12px 的
+   meta 字就被压 —— 亮档堇紫卡上 --ink-soft(截止 / P2 chip)从 5.48/4.93 掉到 4.31/3.92(渐变顶 / 底),
+   朱砂 chip(--seal 压半透明 --seal-tint)从 4.58/4.15 掉到 3.65/3.34;暗档麦秸 soft 5.84/5.29 → 4.32/3.93。
+   ⇒ 染色卡里就地换三枚令牌:soft / faint 换成往 --ink 压过的补偿值(七色 × 顶底两端都 ≥ 无色卡
+   同一端的原值,算法与读数在 theme.css 那三枚令牌的注释里),`--seal-tint` 换成它叠在 --raised 上的
+   实色 ⇒ 朱砂 chip 不再透出卡片色、回到无色卡顶端的值。正文 --ink 最紧 10.88(亮)/ 8.62(暗),不用补。
+   ⚠ 补偿值是**对着下面这两档浓度与 card-color.ts 七色**算的:改浓度或加色要重算。
+   ⭐ 作用域:只挂在 `.tcard.tinted` 上(`.tinted` 只由 applyCardColor 在有色时挂),自定义属性只往
+   这张卡的后代继承 ⇒ 无色卡、卡外的一切(⋯ 菜单挂在 body 上)一个像素不变。check-contrast 判不到
+   这一层(渐变 / 半透明底它一律跳过),靠这里的算式与 progress-log 同号条目的实例读数守。 */
 .v-board .tcard.tinted {
+  --ink-soft: var(--ink-soft-on-tint-tcard);
+  --ink-faint: var(--ink-faint-on-tint-tcard);
+  --seal-tint: var(--seal-tint-solid);
   background-image: linear-gradient(
     180deg,
     color-mix(in srgb, var(--card-color) 18%, var(--raised)),

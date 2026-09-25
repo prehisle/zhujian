@@ -163,8 +163,9 @@ const TOKENS = [
     why: "分段钮未选中态那层极淡的墨底 = --ink 带 4% alpha;来路同 --paper-veil(用户面 82)。\
 桌面那边分段控件走的是另一套(.seg 只在手机端)",
   },
-  // 卡片颜色标记(用户面 110)。四枚是一组、只在安卓那份:桌面走 color-mix()(WebView2 认),
+  // 卡片颜色标记(用户面 110)。安卓四枚是一组:桌面淡底走 color-mix()(WebView2 认),
   // 手机台架 MuMu 是 Chrome 110 不认 ⇒ 拆成「三个整数 + alpha 令牌」;补偿值是对着这个浓度算的。
+  // 用户面 130 起桌面也补了小字:--seal-tint-solid 两端同值共用,soft / faint 两端各一对(见下)。
   {
     name: "--card-tint-a",
     in: ["安卓"],
@@ -185,9 +186,23 @@ const TOKENS = [
   },
   {
     name: "--seal-tint-solid",
-    in: ["安卓"],
+    in: APPS,
     dark: true,
-    why: "--seal-tint 叠在 --raised 上的实色:染色卡里顶替 --seal-tint,朱砂 chip 的底不再透出卡片色 ⇒ 对比度逐位回到无色卡上的值(半透明那层叠在淡底上会把朱砂字压到 3.8)",
+    why: "--seal-tint 叠在 --raised 上的实色:染色卡里顶替 --seal-tint,朱砂 chip 的底不再透出卡片色 ⇒ 对比度回到无色卡上的值(半透明那层叠在淡底上会把朱砂字压到 3.8 / 桌面 3.3)。两个客户端 --seal-tint 与 --raised 同值 ⇒ 这枚也同值(用户面 130 桌面补上,与安卓同名同义)。官网没有卡片颜色",
+  },
+  // 桌面那两枚(用户面 130):同一件事、同一种算法,但**对着桌面的 18% / 20% 浓度与 --raised → --raised-edge
+  // 渐变**算的 ⇒ 值与安卓那两枚不同,故另起名字(同名不同值本闸会红,那是对的)。⛔ 别把两端的值「对齐」。
+  {
+    name: "--ink-soft-on-tint-tcard",
+    in: ["桌面"],
+    dark: true,
+    why: "桌面染色卡(.v-board .tcard.tinted)里就地顶替 --ink-soft 的补偿值:往 --ink 压到七色 × 渐变顶底两端都 ≥ 无色卡同一端的原值(12px 截止 / 优先级 chip 不因上色跌破 §2.2 小字底线)。对着 board.css 的浓度、card-color.ts 七色算的,改哪个都得重算;安卓那枚叫 --ink-soft-on-tint(浓度 15%、单色底,值不同)",
+  },
+  {
+    name: "--ink-faint-on-tint-tcard",
+    in: ["桌面"],
+    dark: true,
+    why: "同 --ink-soft-on-tint-tcard,顶替 --ink-faint(⋯ 钮等淡字不因上色更淡);安卓那枚叫 --ink-faint-on-tint",
   },
   // 官网那三层「纱」(用户面 84)。⚠ 与安卓的 --paper-veil / --ink-veil **同一个病、同一种修法,
   // 但不是同一个令牌** —— 强度不同:官网顶栏 82%、安卓顶栏/底栏 94%,各是各拍的。

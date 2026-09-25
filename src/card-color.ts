@@ -19,7 +19,8 @@
 // 台架 MuMu 是 110,且含 `var()` 时补兜底救不了(IACVT,`.claude/rules/mobile.md` 643)⇒ 手机端把
 // hex 解成三个整数、配一枚 alpha 令牌画同一层淡底,见 `android/src/ui.ts::cardTint` 与
 // `android/index.html` 的 `.card.tinted`(浓度在手机上另量过,与这边的 18% / 20% 不是同一组数)。
-// ⚠ 那边的小字补偿值是**对着这七色**算的 —— 这里加色,那边的补偿要重算(理由在 `.card.tinted`)。
+// ⚠ 两端染色卡里的小字补偿值都是**对着这七色**算的 —— 这里加色,两边都要重算(安卓理由在 `.card.tinted`,
+// 桌面在 `src/theme.css` 的 `--ink-soft-on-tint-tcard` 那段与 board.css 的 `.v-board .tcard.tinted`)。
 
 import { t } from "./i18n";
 import { el } from "./dom";
