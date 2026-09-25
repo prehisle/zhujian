@@ -45,8 +45,10 @@ on:
 jobs:
   # ⭐ 这道 `if` 守的是钱:同一份文件既在私有工作仓、也在公开仓(导出快照);ci-plan §6 拍板 A = CI 跑在公开仓(免费无限),
   #    私有仓的 Windows runner 是 10 倍计费,不守这一句每推一次就在私有仓白烧一趟。
-  # ⛔ 这道 `if` 不许挪进 `preflight.yml`:那个文件是发版闸,把「在哪个仓」写成它的条件 = 给它开一条「条件不成立时安静地跳过」的路,
-  #    而门禁失灵的方式正是安静的绿。这里安全,是因为本文件只负责警报,跳过 = 没有警报,不冒充「已经验过了」。
+  # ⛔ 这道 `if` 不许挪进 `preflight.yml`:发版闸上的仓名条件 = 一条安静跳过的路(门禁失灵的方式正是安静的绿);这里安全,
+  #    是因为本文件只负责警报,跳过 = 没有警报,不冒充「已经验过了」。
+  #    闸:`branch-gate land` 的 `assertPreflightHasNoRepoCondition` —— preflight.yml 非注释部分出现 `github.repository` / `GITHUB_REPOSITORY` 就拒。
+  #    闸管不着的那半:别的安静跳过条件(分支名 / 事件名 / `vars.*`),与两条 release workflow 在调用那格上加的 `if:`。
   gates:
     if: github.repository == 'prehisle/zhujian'
     uses: ./.github/workflows/preflight.yml

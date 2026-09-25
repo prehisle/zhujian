@@ -634,6 +634,29 @@ function assertLocalGatesMatchPreflight() {
   );
 }
 
+// ── `preflight.yml` 不许拿「在哪个仓」当条件(`ci.yml` 那道 `if` 的头注;doc-slimming 格③第四条把「⛔ 不许挪进」换成机制)──
+// 发版闸上的仓名条件 = 一条「条件不成立时安静地跳过」的路;job 级被跳过有 `all-green` 兜(skipped 不算绿),
+// **步级被跳过 job 照样 success**,谁也不兜 ⇒ 本文件非注释部分出现 `github.repository`(含 `_owner` / `github.event.repository`)
+// 或 shell 里的 `GITHUB_REPOSITORY` 就拒,不分 `if:` / `run:`、不看值。
+// ⚠ 诚实边界:①纯文本扫描 —— 去掉整行注释与「空白 + #」起的行尾注释再搜,引号里的 ` #` 之后那半看不见;
+//   ②只扫 preflight.yml:调它的两条 release workflow 给 `preflight` 那格加仓名 `if:` 不在面内(那样跳过的话 `needs` 它的发布格
+//   跟着被跳过,不会安静地发);③别的「安静跳过」条件(分支名、事件名、`vars.*`)不在面内,判据仍是那句头注。
+// ⛔ 不是新开一根轴(停止扩张线):一个字面量,不带 parser / 登记表 / 阴性刀那套。
+function assertPreflightHasNoRepoCondition() {
+  const rel = ".github/workflows/preflight.yml";
+  const hits = readFileSync(join(repoRoot, rel), "utf8")
+    .split("\n")
+    .map((l, i) => ({ n: i + 1, l, code: /^\s*#/.test(l) ? "" : l.replace(/\s#.*$/, "") }))
+    .filter(({ code }) => /github\.(event\.)?repository|GITHUB_REPOSITORY/.test(code));
+  if (!hits.length) return;
+  die(
+    `${rel} 里拿「在哪个仓」当了条件 —— ⛔ 不落地:\n` +
+      hits.map(({ n, l }) => `    ${rel}:${n}: ${l.trim().slice(0, 70)}`).join("\n") +
+      `\n  它是发版闸:条件不成立时那几格安静地跳过,而门禁失灵的方式正是安静的绿(判据见 ci.yml \`gates\` 那格头注)。` +
+      `\n  ⇒ 仓名条件只写在调用方 \`ci.yml\` 那道 \`if\` 上;⛔ 别把这道闸放宽。`,
+  );
+}
+
 // ── handoff「手上的债」的形(测试与工装 113 立,698 接上)──────────────────────
 // 8 KB 闸 697 收口时只剩 6 字节余量,而债**一轮一行、只增不减**(销掉才删,那几半的触发门握在
 // 别的机器手里)⇒ 下一个人加一行必撞,还会被迫去压**别人写的**行 = 静默丢判据。
@@ -670,6 +693,7 @@ function runLocalGates() {
   assertCenteredElsHaveNoInlineMargin();
   assertCiHasNoConcurrency();
   assertLocalGatesMatchPreflight();
+  assertPreflightHasNoRepoCondition();
   console.log(`→ 本地十道静态门禁(几秒量级)…`);
   for (const g of LOCAL_GATES) {
     try {
