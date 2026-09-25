@@ -2,7 +2,9 @@
 // 时间轴筛选(灵感/看板两面,与桌面同源三维:kind→topics→text)真机验收 · 验证。
 // ①-③ 按类型筛选(190/192);④-⑩ 标签多选走「或」+ 父子折叠(229,追齐桌面 219/221);
 // ⑤b 单选标签时卡上同名 chip 不渲染(追齐桌面 218)。
-// ⑪ 标签行摊开/收起 + 过滤框收窄(用户面 36)。
+// ⑪ 标签行摊开/收起 + 过滤框收窄(用户面 36)。⚠ ⑪a 两格与 ⑪c 的前提「本机原生宽度下标签行装得下」
+// 是设备属性:装不下就不出这 3 格、改记进 `skipped` 并印 `nativeTagRow` 读数(backlog 测试与工装 63;
+// 511 限宽之后今天所有台架都装不下,读数与理由在 ⑪ 那段)。
 // 三步流程之中:假设已 evalfile cdp-acceptance-timeline-filter-seed.js 播种
 // 且随后 reload(app 重读 timeline+list_topics_full)。点类型 pill 走 onFilterPick→
 // projectTimeline 同步重投影,无需再 reload。evalfile 跑,pass=true 才算过。只读+点击,
@@ -17,7 +19,7 @@
 //   X/Y 取 `#filter-text` 的 getBoundingClientRect 中心 → `android-cdp.mjs swipe X Y X Y`
 //   → 再 eval 量 `{ cls, w, docFocus }`,期望 `wide` 在类里、w 从 78 涨到 143、docFocus=true。
 (async () => {
-  const out = { pass: false, steps: [] };
+  const out = { pass: false, steps: [], skipped: [] };
   const ok = (name, cond, extra) => {
     out.steps.push({ name, ok: !!cond, ...(extra ? { extra } : {}) });
     return !!cond;
@@ -181,8 +183,23 @@
   // 一枚都不溢出 ⇒ 钮按设计把自己藏了,而照着「肯定装不下」写的断言会四格全红、看着像
   // 功能没做(第一次跑正是如此)。⇒ **两个分支都造出来验**:先验本机原生宽度(装得下 ⇒ 藏),
   // 再把标签行人为收窄造出溢出。收窄也更像用户那台竖屏手机(360-440 CSS px)。
-  ok("⑪a 本机原生宽度下标签行装得下(这是前提,不是功能断言)", !overflows(), { sw: trow.scrollWidth, cw: trow.clientWidth });
-  ok("⑪a 装得下 ⇒ 摊开钮把自己藏起来(点了没变化的钮比没有更糟)", xbtn.hidden);
+  // ⭐ **「本机原生宽度装得下」是设备属性,不是被测行为 ⇒ 装不下就 SKIP 并印读数**(backlog 测试与
+  // 工装 63,757 改)。它在今天的台架上**任何宽度都不可达**:511 把内容收成 `--content-max: 640px`
+  // 的居中列,标签容器封顶约 515,而 6 枚种子标签要 579-629 ⇒ MuMu 横 / 竖 / CDP 撑到 1100 三档
+  // 与 vivo V1986A(360 视口,629 > 207)都装不下,这 3 格(⑪a 两格 + ⑪c)从前恒红、红的不是产品。
+  // 与 kbsheet「自己判设备属于哪一类」同形。⚠ 代价如实记:SKIP 时「装得下 ⇒ 钮藏起来」这一向
+  // 在这台上没人验;下面「装不下 ⇒ 钮现身」那组 17 格一格没动、照判。读数 `out.nativeTagRow` 两条路都印。
+  const nativeFits = !overflows();
+  out.nativeTagRow = { vw: innerWidth, sw: trow.scrollWidth, cw: trow.clientWidth, fits: nativeFits };
+  if (nativeFits) {
+    ok("⑪a 本机原生宽度下标签行装得下(这是前提,不是功能断言)", true, { sw: trow.scrollWidth, cw: trow.clientWidth });
+    ok("⑪a 装得下 ⇒ 摊开钮把自己藏起来(点了没变化的钮比没有更糟)", xbtn.hidden);
+  } else {
+    out.skipped.push(
+      `⑪a 两格 + ⑪c:本机原生宽度下标签行装不下(视口 ${innerWidth},sw ${trow.scrollWidth} > cw ${trow.clientWidth})` +
+        " ⇒ 前提不可达,「装得下 ⇒ 钮藏起来 / 还原宽度后藏回去」这一向本机不验",
+    );
+  }
 
   // ⛔ 收窄之后**刻意不重渲** —— 显隐必须自己重算出来。真机上会变宽窄的是转屏与字号
   // (251 的 textZoom:`.ftext` 是 em),那两件都不触发 renderFilterBar;只在渲染里算的话
@@ -234,7 +251,7 @@
   // 不是「出来过一次就一直在」)。
   trow.style.maxWidth = "";
   await sleep(120); // 同样不重渲:反方向也得自己算回来
-  ok("⑪c 还原宽度后钮又自己藏回去(显隐随宽度双向重算)", xbtn.hidden && !overflows());
+  if (nativeFits) ok("⑪c 还原宽度后钮又自己藏回去(显隐随宽度双向重算)", xbtn.hidden && !overflows());
 
   // 过滤框:9.5em(123.5px)→ 6em,动笔才张到 11em(一直 6em 的话打三个字就看不见自己
   // 打了什么 = 把一个患换成另一个患)。
@@ -260,9 +277,13 @@
   //     挂 `.empty`)⇒ 收窄成 `p.empty`。**必须连正面对照一起判**,否则把那条整个删掉
   //     这一格照样绿。
   //  ⓒ 往下看几屏后想改筛选只能一路滚回顶(604 用户报)⇒ `#filterbar` 改 sticky。
-  // ⚠ 这里直接改 class 而不点钮:⑪c 刚验完「装得下 ⇒ 钮把自己藏起来」,藏着的钮点不了。
-  bar.classList.add("tags-open");
+  // ⭐ 摊开走**真钮**(合成 click 对藏着的钮照样派发),⛔ 别改回「直接 add tags-open 类」:
+  // 那个类一改,标签行的盒就变了 ⇒ ResizeObserver 那一拍 `syncTagsToggle()` 按模块里的 `tagsOpen`
+  // (= false)把类摘回去,60ms 后量到的是收起态 ⇒ ⓐ 恒红(757 在 vivo V1986A 首次整支实跑时撞到:
+  // 直改类 0ms 量 332/332、60ms 量 207/332;604 只单跑过 ⑫、整支从没跑到这一格)。
+  click(xbtn);
   await sleep(60);
+  ok("⑫ 前置:点钮后真停在摊开态(不是被 ResizeObserver 那一拍摘回去的收起态)", bar.classList.contains("tags-open"));
   const fmain = document.querySelector(".fmain");
   const wTopics = trow.getBoundingClientRect().width;
   const wMain = fmain.getBoundingClientRect().width;
@@ -299,7 +320,9 @@
     top: bcs.top,
     headH: Math.round(headH * 10) / 10,
   });
-  bar.classList.remove("tags-open"); // 还原:⑪ 末尾 localStorage 记的是收起态
+  click(xbtn); // 还原:⑪ 末尾 localStorage 记的是收起态,再点一下写回 "0"
+  await sleep(60);
+  ok("⑫ 收场:摊开态收回(类摘掉、偏好回到收起)", !bar.classList.contains("tags-open") && localStorage.getItem("zhujian.filter-tags-open") === "0");
 
   out.pass = out.steps.every((s) => s.ok);
   return JSON.stringify(out);
