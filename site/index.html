@@ -1036,7 +1036,7 @@
               </ul>
             </div>
           </div>
-          <p class="seen-note" data-i18n="seen.stored">服务器硬盘上只存这几样:账户和设备的编号与公钥、哪台设备有管理权限、账户的设备额度、封禁名单、不含内容的连接日志。设备离线时,发给它的密文在服务器内存里等它,72 小时没取走就丢掉,服务器重启也会清空;数据本身在你的设备上,回到网上会重新补齐。</p>
+          <p class="seen-note" data-i18n="seen.stored">服务器硬盘上只存这几样:账户和设备的编号与公钥、哪台设备有管理权限、账户的设备额度、封禁名单、流量计量,以及不含内容的连接日志。设备离线时,发给它的密文在服务器内存里等它,72 小时没取走就丢掉,服务器重启也会清空;数据本身在你的设备上,回到网上会重新补齐。</p>
           <p class="seen-note" data-i18n="seen.trust">有一件事协议管不了:你得相信装到手上的安装包,就是 GitHub 上那份开源代码编出来的。不放心的话,可以自己编译。</p>
           <p class="seen-note"><a href="https://github.com/prehisle/zhujian/blob/main/docs/sync-protocol.md" data-i18n="seen.protocol">同步协议全文(写给开发者看的)</a></p>
         </div>
@@ -1077,6 +1077,7 @@ Linux    ~/.local/share/app.zhujian.notebook/notebook.sqlite3</pre>
               <ul class="marks">
                 <li><a href="https://github.com/prehisle/zhujian" data-i18n="tinker.srcRepo">源码(MIT),Rust + TypeScript + Tauri</a></li>
                 <li><a href="https://github.com/prehisle/zhujian/blob/main/docs/why-no-framework.md" data-i18n="tinker.srcNoFw">为什么前端不用框架</a></li>
+                <li><a href="https://github.com/prehisle/zhujian/blob/main/docs/user-guide.md#%E8%87%AA%E5%BB%BA%E5%90%8C%E6%AD%A5%E6%9C%8D%E5%8A%A1%E5%99%A8" data-i18n="tinker.srcSelfHost">自己搭一台同步服务器</a></li>
               </ul>
             </div>
           </div>
@@ -1352,7 +1353,7 @@ Linux    ~/.local/share/app.zhujian.notebook/notebook.sqlite3</pre>
           "seen.yes2": { zh: "哪台设备什么时候在线", en: "Which device is online, and when" },
           "seen.yes3": { zh: "什么时候发了数据、发了多少。由此能推出你大概什么时候在用", en: "When data was sent and how much. From that it can guess roughly when you use the app" },
           "seen.yes4": { zh: "连接从哪个 IP 地址来", en: "The IP address a connection comes from" },
-          "seen.stored": { zh: "服务器硬盘上只存这几样:账户和设备的编号与公钥、哪台设备有管理权限、账户的设备额度、封禁名单、不含内容的连接日志。设备离线时,发给它的密文在服务器内存里等它,72 小时没取走就丢掉,服务器重启也会清空;数据本身在你的设备上,回到网上会重新补齐。", en: "On disk the server keeps only these: account and device IDs with their public keys, which devices have admin rights, the account's device quota, the ban list, and connection logs with no content. While a device is offline, encrypted messages for it wait in server memory; they are dropped after 72 hours or when the server restarts. The data itself lives on your devices and catches up once they are back online." },
+          "seen.stored": { zh: "服务器硬盘上只存这几样:账户和设备的编号与公钥、哪台设备有管理权限、账户的设备额度、封禁名单、流量计量,以及不含内容的连接日志。设备离线时,发给它的密文在服务器内存里等它,72 小时没取走就丢掉,服务器重启也会清空;数据本身在你的设备上,回到网上会重新补齐。", en: "On disk the server keeps only these: account and device IDs with their public keys, which devices have admin rights, the account's device quota, the ban list, traffic metering, and connection logs with no content. While a device is offline, encrypted messages for it wait in server memory; they are dropped after 72 hours or when the server restarts. The data itself lives on your devices and catches up once they are back online." },
           "seen.trust": { zh: "有一件事协议管不了:你得相信装到手上的安装包,就是 GitHub 上那份开源代码编出来的。不放心的话,可以自己编译。", en: "One thing the protocol cannot cover: you have to trust that the installer you got was built from the open-source code on GitHub. If you would rather not, you can build it yourself." },
           "seen.protocol": { zh: "同步协议全文(写给开发者看的)", en: "Full sync protocol (for developers, in Chinese)" },
 
@@ -1371,6 +1372,7 @@ Linux    ~/.local/share/app.zhujian.notebook/notebook.sqlite3</pre>
           "tinker.srcTitle": { zh: "源码与设计", en: "Source and design" },
           "tinker.srcRepo": { zh: "源码(MIT),Rust + TypeScript + Tauri", en: "Source code (MIT): Rust, TypeScript, Tauri" },
           "tinker.srcNoFw": { zh: "为什么前端不用框架", en: "Why the front end uses no framework (in Chinese)" },
+          "tinker.srcSelfHost": { zh: "自己搭一台同步服务器", en: "Run your own sync server (in Chinese)" },
 
           /* — 下载 — */
           "dl.eyebrow": { zh: "现在就能用", en: "Ready to use" },
