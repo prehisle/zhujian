@@ -693,6 +693,13 @@
   font-family: Consolas, "Courier New", monospace;
   user-select: text;
 }
+/* 作者一句:一句人话,正文字体 + 说明字那档 --ink-soft(同 .settings-sub,见 621 那条)。 */
+.about-author {
+  margin: 12px 0 0;
+  font-size: var(--fs-13);
+  line-height: 1.6;
+  color: var(--ink-soft);
+}
 .about-links {
   display: flex;
   flex-wrap: wrap;

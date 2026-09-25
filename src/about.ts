@@ -1,5 +1,5 @@
-// 设置面板「关于」一类(盈利准备 C7 + C10)。三节:版本(版本号 / 构建身份戳 / 检查更新)、
-// 链接(官网 / 源码 / 用户指南 / 三份协议)、诊断(本机库 / 网络自检 / 日志文件夹 / 复制诊断信息)。
+// 设置面板「关于」一类(盈利准备 C7 + C10)。三节:版本(版本号 / 构建身份戳 / 检查更新 / 作者一句)、
+// 链接(官网 / 源码 / 更新日志 / 用户指南 / 三份协议)、诊断(本机库 / 网络自检 / 日志文件夹 / 复制诊断信息)。
 //
 // ⭐ 版本那一行此前住在同步面板底部 —— 没开同步的人根本不会点开那个面板,于是「你装的是
 // 几点几」这句答不上来。从这里起它只有这一个家(⛔ 别在同步面板再挂一份:两处显示同一件事,
@@ -47,6 +47,8 @@ export function buildAboutPane(pane: HTMLElement): void {
     el("h2", "settings-title settings-sect", t("settings.catAbout")),
     el("p", "settings-sub", t("settings.aboutSub")),
     buildVersionRow(report),
+    // 作者一句:是一句话不是读数 ⇒ 正文字体(⛔ 别套 .about-mono)。手机端那格逐字同句。
+    el("p", "about-author", t("settings.aboutAuthor")),
 
     el("h2", "settings-title settings-sect", t("settings.linksTitle")),
     el("p", "settings-sub", t("settings.linksSub")),
@@ -145,6 +147,8 @@ function buildLinks(): HTMLElement {
   const links: [string, string][] = [
     [t("settings.linkSite"), SITE],
     [t("settings.linkSource"), REPO],
+    // 更新日志与官网同一个来源拼(⛔ 别写死域名:哪天桌面也分渠道,改 SITE 一处就跟着走)。
+    [t("settings.linkChangelog"), `${SITE}/changelog.html`],
     [t("settings.linkGuide"), `${REPO}/blob/main/docs/user-guide.md`],
     [t("settings.linkTerms"), `${SITE}/terms.html`],
     [t("settings.linkPrivacy"), `${SITE}/privacy.html`],

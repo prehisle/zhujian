@@ -86,9 +86,11 @@ export const settings = defineMessages({
   "settings.autostartOff": { zh: "关", en: "Off" },
   "settings.hotkeyUpdated": { zh: "已更新,立即生效", en: "Updated, effective immediately" },
   // 「关于」一类(盈利准备 C7 + C10,src/about.ts)。版本那一行此前住同步面板(`sync.checkUpdate` 等),
-  // 搬家时换了键名前缀,措辞一字没动。链接四个词与官网页脚逐字一致(site/index.html 的 foot.* / nav.source)。
+  // 搬家时换了键名前缀,措辞一字没动。链接的词与官网页脚逐字一致(site/index.html 的 foot.* / nav.source),更新日志的英文除外(见该键)。
   "settings.catAbout": { zh: "关于", en: "About" },
   "settings.aboutSub": { zh: "这台电脑上装的是哪一版。有新版时启动会自动提示,也可以在这里手动查。", en: "Which version is installed on this computer. Zhujian tells you about new versions at startup; you can also check here." },
+  // 作者一句(2026-09-25 用户拍板「更像真人」)。「意见反馈」= settings.feedbackTitle 的真名,那边改名这里跟着改。
+  "settings.aboutAuthor": { zh: "朱简是我一个人做的。好用、不好用,都欢迎在「意见反馈」里告诉我。", en: "I build Zhujian on my own. Whether it works for you or not, tell me through Feedback." },
   "settings.checkUpdate": { zh: "检查更新", en: "Check for updates" },
   // 构建身份戳(701)。⚠ 两枚键而不是「主串 + 拼一个后缀」:拼接过的译文在别的语言里
   // 语序未必还成立,而这两句各自是一句完整的话。
@@ -98,6 +100,8 @@ export const settings = defineMessages({
   "settings.linksSub": { zh: "都在浏览器里打开。", en: "These open in your browser." },
   "settings.linkSite": { zh: "官网", en: "Website" },
   "settings.linkSource": { zh: "源码", en: "Source" },
+  // 更新日志页只有中文;官网页脚写的是 "Changelog (Chinese)",这里照派活原文取 "Changelog"。
+  "settings.linkChangelog": { zh: "更新日志", en: "Changelog" },
   "settings.linkGuide": { zh: "用户指南", en: "User guide" },
   "settings.linkTerms": { zh: "用户协议", en: "Terms" },
   "settings.linkPrivacy": { zh: "隐私政策", en: "Privacy" },
