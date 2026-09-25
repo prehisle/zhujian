@@ -1004,6 +1004,10 @@
       /* 面板与设置面**全部**说明句都是它 ⇒ 照 336 判例(「那句话是这个区的全部说明,轻到读不出来
          就不是提示了」)走 soft;桌面那半 621 已经这么改过(`.settings-sub` 一族),634 补手机端。 */
       .sync .fine { font-size: var(--fs-12); color: var(--ink-soft); margin: 8px 0 0; }
+      /* 引导进度块(用户面 129):块尾让出与本面 `.row` 同拍的 10px —— 块里末一格(`#sync-boot-hint` 或只有
+         进度字那一格)都不带下边距,此前字直接压在下一块「添加设备」钮的上沿(vivo 实量 0px)。挂在块上不挂在
+         hint 上:hint 没亮、只显进度字时是同一条缝。 */
+      #sync-boot { margin-bottom: 10px; }
 
       /* 设备名单(identity-plan §5.8,367 片⑤):一行一台,收起态只给名字与短 id,
          点开才是完整 26 位 + §5.9 那段说明 + 操作。竖屏摆不下一行摊开,而说明恰恰是
@@ -2150,7 +2154,7 @@
         <div id="gate-reset" hidden>
           <h2 data-i18n="shell.gateResetTitle">本机空间数据异常</h2>
           <p><span data-i18n="shell.gateResetPre">本版本不修复受损数据:请到 系统设置 → 应用 → 朱简 → 存储 →</span> <b data-i18n="shell.gateResetBold">清除数据</b><span data-i18n="shell.gateResetPost">,再重新打开并配对。</span></p>
-          <p class="fine" data-i18n="shell.gateResetFine">清除后,本机尚未被其他设备实际接收的记录将永久丢失;服务器不是完整备份。请先在桌面朱简确认数据完整、并保持它在线,再清除。</p>
+          <p class="fine" data-i18n="shell.gateResetFine">清除后,本机尚未被其他设备实际接收的记录将永久丢失;服务器不是完整备份。请先在另一台装有朱简的设备上确认数据完整、并保持它在线,再清除。</p>
           <details>
             <summary class="fine" data-i18n="shell.gateDetail">技术详情(排查时抄给开发者)</summary>
             <p id="gate-msg-reset" class="gate-msg"></p>

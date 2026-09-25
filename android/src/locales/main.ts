@@ -91,7 +91,7 @@ export const main = defineMessages({
   "main.spaceCreatedNoSwitch": { zh: "空间已创建,但还没切换过去。到「空间」列表里点它即可。", en: "Space created, but not switched to yet. Tap it in the Spaces list." },
   "main.outcomeBootCompleted": { zh: "完成初始同步", en: "Initial sync complete" },
   "main.outcomeConnected": { zh: "已连接追赶", en: "Connected and catching up" },
-  "main.outcomeNoBootPeer": { zh: "等不到引导(需桌面在线)", en: "No bootstrap peer (a desktop must be online)" },
+  "main.outcomeNoBootPeer": { zh: "等不到引导(需另一台设备在线)", en: "No bootstrap peer (another device must be online)" },
   "main.outcomeTimedOut": { zh: "超时", en: "Timed out" },
   "main.outcomeFailed": { zh: "失败", en: "Failed" },
   "main.outcomeCancelled": { zh: "被打断", en: "Interrupted" },
