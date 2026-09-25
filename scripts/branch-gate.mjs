@@ -339,7 +339,7 @@ function assertPublicMainBound() {
 // 「改了哪道门禁就跑那道」只是印出来的提醒,失守过两次(512 一道在干净树上红了十一天;544 前一轮改了 android/index.html 没跑 CSS 那几道)
 // ⇒ 十道全跑只要几秒,接到 land 这个自动边界上(385:加新检查前先问已有的接上没)。
 // ⚠ 诚实边界:①只有这十道 —— 「非发版门禁」那族(要 Chrome / 样本冻结的)不在内,512 那支恰属后者,仍靠既有纪律 + 夜跑;
-//   ②清单与 preflight.yml 那十道同口径(以 dev-and-testing「命令、测试计数与门禁速记」为准),两处要同改;③红了拒 land,没有「不等」可言。
+//   ②清单与 preflight.yml 那十道必须是同一组 —— 闸在 `assertLocalGatesMatchPreflight`(下面);③红了拒 land,没有「不等」可言。
 const LOCAL_GATES = [
   "lock-drift", "theme-drift", "contrast", "hardcoded-colors", "timing-drift",
   "radius-drift", "fs-drift", "filter-parity", "hit-zone", "i18n-drift",
@@ -606,6 +606,34 @@ function assertCiHasNoConcurrency() {
   );
 }
 
+// ── `LOCAL_GATES` 与 `preflight.yml` 那十道是同一组(544 起「两处要同改」;739 = doc-slimming 格③把这句换成机制)──
+// 两边各少一道都是安静的:只进 LOCAL_GATES ⇒ 发版闸不跑它;只进 preflight ⇒ land 与导出树那一遍都不跑它、CI 才第一次见到。
+// ⇒ 从 preflight.yml 那一步的 `for g in … ; do` 里取出名字,与 LOCAL_GATES 比**集合**(顺序不管,重名算不等)。
+// ⚠ 诚实边界:①纯文本取词不是 YAML / shell 解析 —— 认的是 preflight.yml 里**唯一一处** `for g in` 到 `; do`,
+//   认不出(改写成 matrix / 拆成十步 / 出现第二处)就拒,⛔ 别放宽成「没找到就跳过」;②只核这两处,
+//   dev-and-testing「命令、测试计数与门禁速记」那份人读清单与 preflight 那一步的 `name:` 措辞不在面内。
+// ⛔ 不是新开一根轴(停止扩张线):清单本身就在本文件里,对面是一个字面量,不带 parser / 登记表 / 阴性刀那套。
+function assertLocalGatesMatchPreflight() {
+  const rel = ".github/workflows/preflight.yml";
+  const txt = readFileSync(join(repoRoot, rel), "utf8");
+  const loops = [...txt.matchAll(/^[ \t]*for g in ([^;]*);\s*do\b/gm)];
+  if (loops.length !== 1) {
+    die(`${rel} 里 \`for g in … ; do\` 出现 ${loops.length} 处(要恰好 1 处)—— ⛔ 不落地(闸认不出十道清单就等于没闸)。`);
+  }
+  const theirs = loops[0][1].replace(/\\\s*\n/g, " ").trim().split(/\s+/).filter(Boolean);
+  const key = (a) => [...a].sort().join(" ");
+  if (key(theirs) === key(LOCAL_GATES)) return;
+  const onlyLocal = LOCAL_GATES.filter((x) => !theirs.includes(x));
+  const onlyCi = theirs.filter((x) => !LOCAL_GATES.includes(x));
+  die(
+    `branch-gate 的 LOCAL_GATES 与 ${rel} 那十道不是同一组 —— ⛔ 不落地:\n` +
+      `    只在 LOCAL_GATES:${onlyLocal.join(" ") || "(无)"}\n` +
+      `    只在 preflight.yml:${onlyCi.join(" ") || "(无)"}\n` +
+      (theirs.length !== new Set(theirs).size ? `    preflight.yml 那一行有重名\n` : "") +
+      `  ⇒ 两处同改(发版闸跑的与 land 本地跑的必须是同一组);⛔ 别把这道闸放宽。`,
+  );
+}
+
 // ── handoff「手上的债」的形(测试与工装 113 立,698 接上)──────────────────────
 // 8 KB 闸 697 收口时只剩 6 字节余量,而债**一轮一行、只增不减**(销掉才删,那几半的触发门握在
 // 别的机器手里)⇒ 下一个人加一行必撞,还会被迫去压**别人写的**行 = 静默丢判据。
@@ -641,6 +669,7 @@ function runLocalGates() {
   assertSkillBudgets();
   assertCenteredElsHaveNoInlineMargin();
   assertCiHasNoConcurrency();
+  assertLocalGatesMatchPreflight();
   console.log(`→ 本地十道静态门禁(几秒量级)…`);
   for (const g of LOCAL_GATES) {
     try {
