@@ -35,7 +35,8 @@ use std::time::Duration;
 #[tokio::main]
 async fn main() {
     let mut listen: SocketAddr = "127.0.0.1:8787".parse().expect("字面量恒合法");
-    let mut data_dir = PathBuf::from("./data");
+    // 默认目录刻意与产品二进制的 ./data 不同:本台架直接调库 serve、不拿 data-dir 锁(backlog 108)。
+    let mut data_dir = PathBuf::from("./slow-data");
     let mut rate: u64 = 24_000;
     let mut fastlane: u64 = 1;
     let mut device_cap: usize = 2;

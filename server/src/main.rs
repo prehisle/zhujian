@@ -2,7 +2,7 @@
 //! 监听 localhost 明文 WS,TLS 由 Caddy 反代终结,P2-i)。
 
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[tokio::main]
 async fn main() {
@@ -87,6 +87,12 @@ async fn main() {
             )),
         }
     }
+    // 单实例锁(backlog 108):同一 data-dir 只许一个进程。registry.json(账务数据)与
+    // meters.json 都是单写者、tmp 写 + rename 落盘 —— 两个进程连 `.tmp` 都会互相踩;而境内
+    // k8s 的 `replicas: 1` 只是纪律(RWO 限节点不限 Pod,694 勘误)。⛔ 须在写任何数据、load
+    // 任何数据之前拿到(下面 serve 里才 load);锁前只有只读的 `--admin-token-file` 与两枚
+    // `--validate-*` 旗标碰 data-dir(codex 审 L1 列过表)。放锁只归内核、只在进程退出时,见 lock_data_dir。
+    lock_data_dir(&data_dir);
     let mut cfg = zhujian_syncd::Config::new(
         data_dir.join("banlist.txt"),
         data_dir.join("registry.json"),
@@ -108,6 +114,60 @@ async fn main() {
         _ => die("--admin-listen 与 --admin-token-file 必须同给(admin 面无 token 不开)"),
     };
     let _ = handle.await;
+}
+
+/// 锁对象:unix 上是 **data-dir 目录本身**(对目录 fd 加 flock)。不另立锁文件的理由
+/// (backlog 108 评审 M1):flock 挂在 inode 上,独立锁文件一旦被删掉或被 tar 解包换掉 inode
+/// (GNU tar 1.34 实测会),活着的持有者攥着旧 inode、新实例在新 inode 上照样锁得到 = 机制
+/// 静默失效 —— 而运维看到「被占用」时顺手 `rm *.lock` 正是 pidfile 的习惯动作。目录的 inode
+/// 不随删文件 / 往里解包而变,且没有文件可删、也不会被备份 tgz 带走。
+/// Windows 锁不了目录(`LockFileEx` 只认文件)⇒ 退回 data-dir 下的空锁文件;那一端只有开发用。
+#[cfg(unix)]
+fn open_lock_target(data_dir: &Path) -> (std::fs::File, PathBuf) {
+    let path = data_dir.to_path_buf();
+    let f = std::fs::File::open(&path)
+        .unwrap_or_else(|e| die(&format!("打开 data-dir {} 失败:{e}", path.display())));
+    (f, path)
+}
+
+#[cfg(not(unix))]
+fn open_lock_target(data_dir: &Path) -> (std::fs::File, PathBuf) {
+    let path = data_dir.join("zhujian-syncd.lock");
+    let f = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&path)
+        .unwrap_or_else(|e| die(&format!("打开 data-dir 锁文件 {} 失败:{e}", path.display())));
+    (f, path)
+}
+
+/// 对 data-dir 抢排他锁(unix = 目录 fd 上 `flock(LOCK_EX|LOCK_NB)`,Windows = 锁文件上
+/// `LockFileEx`)。锁态只在内核里、随 fd 释放 ⇒ 进程怎么死(SIGKILL / OOM)都自动放,没有
+/// 残留锁要清。**拿不到 = fail-fast 退 1**:不重试、不等待、不降级成无锁运行 —— 再来一次是
+/// k8s / systemd 重启策略的事(见 ops/sealos/syncd.yaml 头注)。不锁 registry.json 本身:
+/// 它每次落盘都被 rename 换掉 inode。
+///
+/// 拿到之后 **`mem::forget` 掉 fd**,不交给任何作用域:放锁只能由内核在进程退出时做。
+/// ⚠ 这是**对将来的防御,今天不可达**(codex 审 L2):axum 0.8 的 `serve` 永不完成、停机走
+/// `process::exit`,main 栈帧今天不会被 drop ⇒ 「随栈帧 drop」的旧形在现有路径上与它等价,
+/// 行为测造不出来(要先有可控的 graceful-shutdown 入口)。将来若加了让 main 正常返回的退出路,
+/// 随栈帧 drop 会让锁先于 runtime 拆除被放掉,而未取消的连接任务、刚 abort 还没停到 await 点的
+/// sweeper / checkpointer 仍可能在写 registry.json / meters.json(首版自检判据 7)。
+fn lock_data_dir(data_dir: &Path) {
+    let (file, what) = open_lock_target(data_dir);
+    match file.try_lock() {
+        Ok(()) => std::mem::forget(file),
+        Err(std::fs::TryLockError::WouldBlock) => die(&format!(
+            "data-dir {} 已被另一个 zhujian-syncd 进程占用(排他锁拿不到:{}),拒启。\n  同一 data-dir 只许一个实例:两个进程同写 registry.json 会把账务数据写坏。\n  先查清占着它的那个进程(k8s 下多半是旧 Pod 还没退完,等它退出、由重启策略再拉起即可);本进程不重试、不等待。",
+            data_dir.display(),
+            what.display()
+        )),
+        Err(std::fs::TryLockError::Error(e)) => die(&format!(
+            "给 data-dir 加排他锁失败({}):{e}\n  该文件系统可能不支持 flock(网络卷须先核实跨客户端锁语义);拒启,不在无锁状态下运行。",
+            what.display()
+        )),
+    }
 }
 
 fn die(msg: &str) -> ! {

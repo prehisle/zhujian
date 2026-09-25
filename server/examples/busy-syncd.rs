@@ -23,7 +23,8 @@ use std::path::PathBuf;
 #[tokio::main]
 async fn main() {
     let mut listen: SocketAddr = "127.0.0.1:8787".parse().expect("字面量恒合法");
-    let mut data_dir = PathBuf::from("./data");
+    // 默认目录刻意与产品二进制的 ./data 不同:本台架直接调库 serve、不拿 data-dir 锁(backlog 108)。
+    let mut data_dir = PathBuf::from("./busy-data");
     let mut budget_global: Option<usize> = None;
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
