@@ -127,6 +127,15 @@ jobs:
           echo "更新说明:$notes"
           node scripts/gen-update-manifest-ci.mjs artifacts upload "$notes"
 
+      # 官网下载区「核对安装包」那枚链接指的就是这份(固定文件名、不带版本号 ⇒ bump 与官网都不用跟着改,
+      # 上传器换名时 `mv -f` 盖掉上一版)。标准 `sha256sum` 格式,用户那头 `sha256sum -c` 直接能吃。
+      # ⚠ 诚实边界:它与安装包在同一台服务器上 —— 查得出下载坏了 / 不全,挡不住服务器本身被改;
+      #    后一半靠的是更新签名(上面 latest.json 那几条),docs/user-guide.md「核对下载的安装包」照这个口径写的。
+      - name: 生成 SHA256SUMS-desktop.txt(与安装包同批上传)
+        run: |
+          (cd upload && sha256sum -- $(ls -1 | grep -vxF latest.json) > SHA256SUMS-desktop.txt)
+          cat upload/SHA256SUMS-desktop.txt
+
       # ⚠ 385:这一步**必须在上传之前**。签名是存量用户唯一的接受判据——签错了产物照样
       # 200、清单照样好看,而每个老用户被 updater 静默拒绝、卡在旧版且毫无提示。
       # 更要命的是下一步的上传会**先 rm 掉旧包和 latest.json**:签名坏时若已经传上去,
@@ -165,3 +174,6 @@ jobs:
           curl -s --fail --retry 3 --retry-all-errors -o got.json "https://zhujian.app/updates/latest.json"
           node -e "const j=require('./got.json');console.log('线上 latest.json 版本',j.version,'| 平台',Object.keys(j.platforms).join(', '))"
           test "$(node -p "require('./got.json').version")" = "$(node -p "require('./package.json').version")"
+          # 校验文件:线上那份必须与本地这趟生成的逐字节相同(清单对了而它没换 = 官网贴出去的是上一版的值)。
+          curl -s --fail --retry 3 --retry-all-errors -o got-sums.txt "https://zhujian.app/updates/SHA256SUMS-desktop.txt"
+          cmp got-sums.txt upload/SHA256SUMS-desktop.txt

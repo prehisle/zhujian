@@ -165,6 +165,10 @@ jobs:
           rm -rf upload-android && mkdir upload-android
           cp "$rel/app-universal-release.apk" "upload-android/zhujian_${ver}_aarch64.apk"
           cp "$rel/android.json" upload-android/android.json
+          # 官网「核对安装包」那枚链接指的就是这份(固定名、不带版本号,换名时盖掉上一版);
+          # 同 release.yml 那一步,⚠ 只防下载坏了、不防服务器被改。
+          (cd upload-android && sha256sum "zhujian_${ver}_aarch64.apk" > SHA256SUMS-android.txt)
+          cat upload-android/SHA256SUMS-android.txt
           export ZJ_SSH_KEY="$HOME/.ssh/id_ed25519"
           export ZJ_UPLOAD_HOST="zjci@$(printf '%s' "$VPS_HOST" | tr -d '\r\n')"
           export ZJ_UPLOAD_DIR=/var/www/zhujian-app/updates
@@ -175,3 +179,5 @@ jobs:
           # --retry-all-errors:688 一次 DNS 解析失败(退出码 6)就把已上传完的整趟发版记红;本步只读,重试安全。
           curl -s --fail --retry 3 --retry-all-errors -o got.json "https://zhujian.app/updates/android.json"
           node -e "const j=require('./got.json');const v=require('./android/package.json').version;console.log('线上 android.json 版本',j.version,'versionCode',j.versionCode);if(j.version!==v){console.error('::error::线上版本 '+j.version+' 与本版 '+v+' 不符');process.exit(1)}"
+          curl -s --fail --retry 3 --retry-all-errors -o got-sums.txt "https://zhujian.app/updates/SHA256SUMS-android.txt"
+          cmp got-sums.txt upload-android/SHA256SUMS-android.txt

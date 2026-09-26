@@ -700,6 +700,10 @@
       .dl-log { margin: 14px 0 0; font-size: var(--fs-14); }
       .dl-log a { color: var(--seal); text-decoration: none; }
       .dl-log a:hover { text-decoration: underline; }
+      /* 核对安装包:与尝鲜版那一行同一身小字 + 朱色链接,排在更新日志之下、页脚说明之上。 */
+      .dl-verify { margin: 10px 0 0; font-size: var(--fs-13); color: var(--ink-faint); }
+      .dl-verify a { color: var(--seal); text-decoration: none; margin-left: 10px; white-space: nowrap; }
+      .dl-verify a:hover { text-decoration: underline; }
 
       /* ── 常见问题(profit-readiness F3)───────────────────────── */
       /* 原生 <details>:不要脚本、键盘与读屏天然可用。答案按段各成一键(data-i18n 只覆写
@@ -1126,6 +1130,14 @@ Linux    ~/.local/share/app.zhujian.notebook/notebook.sqlite3</pre>
             <a href="https://zhujian.app/updates/zhujian_0.2.48_amd64.deb">.deb</a>
           </p>
           <p class="dl-log"><a href="/changelog.html" data-i18n="dl.changelog">看看最近更新了什么</a></p>
+          <!-- 两份校验文件是**固定名**(CI 每次发版与包同批换掉),⇒ 这两个 href 刻意不带版本号,
+               bump-version 不用管它们;它们与下载按钮对不对得上,由 check-deployed-drift ①e 核。 -->
+          <p class="dl-verify">
+            <span data-i18n="dl.verifyLead">核对安装包(SHA-256):</span>
+            <a href="https://zhujian.app/updates/SHA256SUMS-desktop.txt" data-i18n="dl.sumsDesktop">电脑版</a>
+            <a href="https://zhujian.app/updates/SHA256SUMS-android.txt" data-i18n="dl.sumsAndroid">安卓版</a>
+            <a href="https://github.com/prehisle/zhujian/blob/main/docs/user-guide.md#%E6%A0%B8%E5%AF%B9%E4%B8%8B%E8%BD%BD%E7%9A%84%E5%AE%89%E8%A3%85%E5%8C%85" data-i18n="dl.verifyHow">怎么核</a>
+          </p>
           <p class="dl-foot" data-i18n="dl.foot">桌面更新包有开发者签名,装前会核对;Windows 安装包没做系统签名,首次安装会提示「未知发布者」,点「更多信息 → 仍要运行」 · Windows 装好后在系统托盘里,热键唤出 · Android 首次安装要允许「未知来源」,更新也要你点一下装 · 有问题发邮件到 3069848@qq.com</p>
         </div>
       </section>
@@ -1389,6 +1401,11 @@ Linux    ~/.local/share/app.zhujian.notebook/notebook.sqlite3</pre>
           "dl.changelog": { zh: "看看最近更新了什么", en: "What's new (changelog, in Chinese)" },
           "dl.trialLine": { zh: "macOS(Apple 芯片)与 Linux(x86_64):没签名,首次打开要在系统里手动放行;Linux 上热键与托盘在部分桌面环境可能不全。", en: "macOS (Apple silicon) and Linux (x86_64): unsigned, so allow them by hand on first launch; on Linux the hotkey and tray may be incomplete on some desktops." },
           "dl.macBtn": { zh: "下载 dmg", en: "Download dmg" },
+          "dl.verifyLead": { zh: "核对安装包(SHA-256):", en: "Check your download (SHA-256):" },
+          "dl.sumsDesktop": { zh: "电脑版", en: "Desktop" },
+          "dl.sumsAndroid": { zh: "安卓版", en: "Android" },
+          /* 用户指南只有中文,同 dl.changelog 把这一点说在链接上。 */
+          "dl.verifyHow": { zh: "怎么核", en: "How (in Chinese)" },
           "dl.foot": { zh: "桌面更新包有开发者签名,装前会核对;Windows 安装包没做系统签名,首次安装会提示「未知发布者」,点「更多信息 → 仍要运行」 · Windows 装好后在系统托盘里,热键唤出 · Android 首次安装要允许「未知来源」,更新也要你点一下装 · 有问题发邮件到 3069848@qq.com", en: "Desktop updates are signed by the developer and checked before installing; the Windows installer is not code-signed, so the first install warns about an “unknown publisher” — choose “More info → Run anyway” · On Windows it lives in the tray; bring it up with the hotkey · On Android, allow “unknown sources” on first install; updates also take a tap to install · Questions? Email 3069848@qq.com" },
 
           /* — 常见问题(F3)— */

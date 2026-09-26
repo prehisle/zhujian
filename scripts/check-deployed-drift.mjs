@@ -156,6 +156,41 @@ if (!FAKE) {
     }
   }
 
+  // ── ①e 下载区「核对安装包」那两份校验文件,记的是不是页上那几个包 ────────────
+  // 两条 release workflow 各在产物旁写一份固定名的 SHA256SUMS-{desktop,android}.txt、与包同批上传。
+  // 页上链接指的是这两个固定名,⇒ 它俩与下载按钮之间**没有任何一处会自动对齐**:
+  // 手动 fallback 发版(deploy §7.3 / §7.4)不写它、或上传中途只换了一半,官网就贴着上一版的值。
+  // 判据:页上每个 `updates/zhujian_…` 包名都在两份之一里有一行。⚠ 诚实边界:只核「有这一行」,
+  // 不重算包的哈希(那要把 150 MB 拉下来;字节对不对由上传器逐个核字节数 + CI 传后 `cmp` 守)。
+  console.log("\n①e 下载区的两份校验文件");
+  if (!liveSite) {
+    bad("官网没拉到(见 ①)——这一格没得判");
+  } else {
+    const listed = new Set();
+    let missing = 0;
+    for (const f of ["SHA256SUMS-desktop.txt", "SHA256SUMS-android.txt"]) {
+      try {
+        const lines = curl(`https://zhujian.app/updates/${f}`).split(/\r?\n/).filter((l) => l.trim());
+        const bogus = lines.filter((l) => !/^[0-9a-f]{64} [ *]zhujian_\S+$/.test(l));
+        if (bogus.length) bad(`${f} 有 ${bogus.length} 行不是「64 位十六进制 + 包名」的形:${bogus[0]}`);
+        for (const l of lines) listed.add(l.slice(66));
+        ok(`${f} 拉到 ${lines.length} 行`);
+      } catch (e) {
+        missing++;
+        bad(`拉不到 ${f}:${e.message.split("\n")[0].trim()} —— 这一版是手动 fallback 发的?(deploy §7.3 / §7.4 要补这一步)`);
+      }
+    }
+    const names = [...new Set(liveSite.toString("utf8").match(/https:\/\/zhujian\.app\/updates\/zhujian_[^"'\s]+/g) ?? [])]
+      .map((u) => u.replace("https://zhujian.app/updates/", ""));
+    // 文件本身没拉到时,逐包那几行只会重复同一件事且说错原因(「别的版本」)⇒ 只在两份都在时逐包判。
+    if (!missing) {
+      for (const n of names.sort()) {
+        if (listed.has(n)) ok(`有校验值  ${n}`);
+        else bad(`${n} 在两份校验文件里都没有 —— 官网「核对安装包」贴出去的是别的版本的值`);
+      }
+    }
+  }
+
   // ── ①c robots.txt 与 sitemap.xml(713)────────────────────────────────────
   // 与 ① 同一根轴(「线上那份 == 仓里那份」),⛔ 故不另起门禁:这两份是**手写**的,
   // 发站时靠 §8.1 那行 scp 带上去 —— 漏了不会有任何一处红,只是搜索引擎收不到。
