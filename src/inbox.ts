@@ -56,6 +56,7 @@ import { wireChecklistInput } from "./checklist-input";
 import "./inbox.css";
 import { el, onDragTarget } from "./dom";
 import { errDetail, errText } from "./err";
+import { ideasMarkdown } from "./export-md";
 
 // Mirrors of the Rust contracts (lib.rs) — the fields this view consumes. 想法 = a live
 // idea (未归类 + 已归类 merged); a tag is just metadata it may or may not carry, so one
@@ -152,37 +153,8 @@ const hm = new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit"
 // ---- timeline grouping (想法 tab) ------------------------------------------
 // dayKey/dayLabel 已提为共享件(tasktime.ts):看板归档视图的时间轴同源复用。
 
-// ---- 一键复制为 Markdown(用户面 90;形照看板 boardMarkdown 抄,676)----------
-// 随记此前**没有任何导出**(能拿出去喂别的工具的只有看板 / 单列的 Markdown 与那个 SQLite 文件)。
-// 一天一节 `## YYYY-MM-DD`(绝对日期 —— 屏上「今天 / 昨天」那种相对字拿出去就腐);一条随记
-// 一个 bullet:首行 = 时刻 + 标签(`#标签`),正文从下一行起**原样**、每行缩进两格(Markdown
-// 列表的续行;正文里自带的 `- [ ]` 清单于是成了子列表,语义正好)。⛔ 不压成一行 —— 随记是正文
-// 不是标题,看板那边压一行是因为一条任务就是一句话。⛔ 只复制**当前显示的**那批(筛过时间 / 类型 /
-// 标签 / 文字之后),与「复制看板」尊重筛选同一条规矩;回收站那页没有这枚钮。⛔ 别做导入、别造第二种
-// 导出机制(648 拍的边界)。
-function isoDay(iso: string): string {
-  const d = new Date(iso);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-}
-function ideaMarkdown(i: IdeaItem): string {
-  const tags = i.topics.map((tp) => `#${tp.title}`).join(" ");
-  const head = `- ${hm.format(new Date(i.created_at))}${tags ? " " + tags : ""}`;
-  const body = i.content
-    .split("\n")
-    .map((l) => (l === "" ? "" : `  ${l}`))
-    .join("\n");
-  return `${head}\n${body}`;
-}
-function ideasMarkdown(items: IdeaItem[]): string {
-  const days: { day: string; notes: string[] }[] = [];
-  for (const i of items) {
-    const day = isoDay(i.created_at);
-    const last = days[days.length - 1];
-    if (last && last.day === day) last.notes.push(ideaMarkdown(i));
-    else days.push({ day, notes: [ideaMarkdown(i)] });
-  }
-  return days.map((d) => [`## ${d.day}`, ...d.notes].join("\n")).join("\n\n");
-}
+// ---- 一键复制为 Markdown(用户面 90,676)----------------------------------
+// 写法与「导出为 Markdown」共用一份,住 export-md.ts(用户面 136);这里只管「复制当前显示的那批」。
 
 const SKELETON = `
   <header data-tauri-drag-region>

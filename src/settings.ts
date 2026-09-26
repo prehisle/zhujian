@@ -10,6 +10,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { buildBackupSection, closeBackupSection, noteFold } from "./backup";
 import { buildAboutPane } from "./about";
+import { exportMarkdown } from "./export-md";
 import { reminderCfg, saveReminderCfg, reminderPermissionOk, sendTestNotification } from "./reminder";
 import { currentZoomPercent, zoomIn, zoomOut, zoomReset, onZoomChange } from "./zoom";
 import { currentThemeMode, setThemeMode, type ThemeMode } from "./theme-mode";
@@ -224,7 +225,44 @@ function buildPane(cat: SettingsCat, pane: HTMLElement): void {
     el("h2", "settings-title settings-sect", t("backup.title")),
     noteFold(t("backup.sub"), t("backup.footSecrets"), t("backup.footUninstall")),
     buildBackupSection(),
+
+    // 导出为 Markdown(用户面 136):「不绑死你」的那一半 —— 备份是给朱简自己恢复用的加密文件,
+    // 这一行给的是离开朱简也读得懂的明文。低频、全量,故住在这一页而不在随记顶栏(顶栏那枚
+    // 「复制随记」管的是随手复制当前那批)。写法在 export-md.ts,落盘在 core::export_md。
+    buildExportRow(),
   );
+}
+
+// 与上面「从备份恢复」同形的一行:名字 + 说明 + 右端一枚钮(⛔ 起初单开一节「标题 + 说明 + 孤零零一枚钮」,
+// 截图里与同页那几行不成一族,改成了这样);结果(路径 / 原话报错)落在行下。
+function buildExportRow(): HTMLElement {
+  const wrap = document.createElement("div");
+  const row = el("div", "hkset-row", "");
+  const msg = el("p", "hkset-msg", "");
+  msg.id = "export-msg"; // 同页还有备份那节的 .hkset-msg,e2e 按 id 认这一句
+  const run = document.createElement("button");
+  run.className = "hkset-change";
+  run.textContent = t("export.run");
+  run.addEventListener("click", () => {
+    run.disabled = true;
+    msg.className = "hkset-msg";
+    msg.textContent = t("export.running");
+    void exportMarkdown()
+      .then((path) => {
+        msg.className = "hkset-msg ok";
+        msg.textContent = t("export.done", { path });
+      })
+      .catch((e) => {
+        msg.className = "hkset-msg err";
+        msg.textContent = errText(e);
+      })
+      .finally(() => {
+        run.disabled = false;
+      });
+  });
+  row.append(el("div", "hkset-name", t("export.title")), el("div", "hkset-desc", t("export.sub")), run);
+  wrap.append(row, msg);
+  return wrap;
 }
 
 // ---- 意见反馈(国内上架 17)----

@@ -1125,6 +1125,22 @@ fn list_item_images(space_id: String, item_id: String, spaces: State<'_, Spaces>
     })
 }
 
+/// 本空间全部配图的元数据(按 item_id 分组),「导出为 Markdown」排图片链接用(用户面 136)。
+/// 一次查询代替逐条 `list_item_images` 的几百次往返。
+#[tauri::command]
+fn list_all_item_images(
+    space_id: String,
+    spaces: State<'_, Spaces>,
+) -> Result<std::collections::HashMap<String, Vec<ImageMeta>>, String> {
+    spaces.read(&space_id, |conn| {
+        let groups = repo::all_item_images(&conn).map_err(|e| e.to_string())?;
+        Ok(groups
+            .into_iter()
+            .map(|(item, rows)| (item, rows.into_iter().map(|r| ImageMeta { id: r.id, seq: r.seq, mime: r.mime }).collect()))
+            .collect())
+    })
+}
+
 /// One image's bytes as a ready-to-render `data:` URL (the frontend sets `img.src` directly),
 /// or an error if the id is unknown (fail-fast — no silent placeholder).
 #[tauri::command]
@@ -3454,6 +3470,71 @@ fn backup_open_dir(app: AppHandle) -> Result<(), String> {
     app.opener().open_path(dir.clone(), None::<&str>).map_err(|e| format!("打不开 {dir}:{e}"))
 }
 
+/// 「导出为 Markdown」的一份文本文件 / 一张配图(前端排好的相对路径,core 再核一遍)。
+#[derive(serde::Deserialize)]
+struct ExportDocDto {
+    rel: String,
+    text: String,
+}
+#[derive(serde::Deserialize)]
+struct ExportImageDto {
+    image_id: String,
+    rel: String,
+}
+
+/// 导出为 Markdown(用户面 136):把前端排好的 `.md` 与配图写进「下载」文件夹里的一个新文件夹,
+/// 写完打开它;返回最终路径。正文怎么排在 `src/export-md.ts`,落盘规矩在 `core::export_md`。
+///
+/// - 配图字节不过前端:每张各取一次库锁现读(⛔ 别改成整趟攥着一把锁 —— 图多时会把同步与
+///   界面一起卡住)。两次取之间图被别处删了 ⇒ 那一张读不到 ⇒ 整趟失败、不留半截(再点一次即可)。
+/// - e2e(`YS_DB_PATH`)下落在按库派生的 `<db>.exports/`、不开文件夹 —— ⛔ 测试不许往用户的
+///   「下载」里写;按库派生而不是库的上级目录(那是系统临时目录,同备份 `<db>.backups` 的理由)。
+/// - 打开文件夹失败不算导出失败(文件已经在了),只记日志;界面上照样摆出路径。
+#[tauri::command]
+async fn export_markdown(
+    app: AppHandle,
+    space_id: String,
+    folder: String,
+    docs: Vec<ExportDocDto>,
+    images: Vec<ExportImageDto>,
+) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        use zhujian_core::export_md::{write_folder, Doc, Image};
+        let e2e = e2e_db_path();
+        let parent = match &e2e {
+            Some(db) => {
+                let mut d = db.clone().into_os_string();
+                d.push(".exports");
+                let d = PathBuf::from(d);
+                std::fs::create_dir_all(&d).map_err(|e| format!("建不出 {}:{e}", d.display()))?;
+                d
+            }
+            None => app.path().download_dir().map_err(|e| format!("找不到「下载」文件夹:{e}"))?,
+        };
+        let docs: Vec<Doc> = docs.into_iter().map(|d| Doc { rel: d.rel, text: d.text }).collect();
+        let images: Vec<Image> = images.into_iter().map(|i| Image { image_id: i.image_id, rel: i.rel }).collect();
+        let spaces = app.state::<Spaces>();
+        let dest = write_folder(&parent, &folder, &docs, &images, |id| {
+            spaces.read(&space_id, |conn| {
+                repo::item_image_data(conn, id)
+                    .map_err(|e| e.to_string())?
+                    .map(|(bytes, _)| bytes)
+                    .ok_or_else(|| format!("图片不存在(可能刚被删掉,再导一次即可):{id}"))
+            })
+        })?;
+        let shown = dest.display().to_string();
+        if e2e.is_none() {
+            use tauri_plugin_opener::OpenerExt;
+            if let Err(e) = app.opener().open_path(shown.clone(), None::<&str>) {
+                eprintln!("WARN 导出完成但打不开文件夹 {shown}:{e}");
+            }
+        }
+        Ok(shown)
+    })
+    .await
+    .map_err(|e| format!("导出任务没跑起来:{e}"))?
+}
+
 // ── 设置「关于」页的诊断三块(盈利准备 C10:照抄安卓诊断面)────────────────────
 //
 // 库信息 / 网络自检两条与 `mobile/src/shell.rs` 同名同形(前端两端读同一组字段);
@@ -4308,6 +4389,7 @@ pub fn run() {
             merge_topics,
             add_item_image,
             list_item_images,
+            list_all_item_images,
             get_item_image,
             get_item_thumb,
             put_item_thumb,
@@ -4348,6 +4430,7 @@ pub fn run() {
             backup_retry_cleanup,
             backup_open_dir,
             open_log_dir,
+            export_markdown,
             set_crash_diag,
             db_info,
             net_probe,

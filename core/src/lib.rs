@@ -41,6 +41,8 @@ pub mod db;
 #[cfg(test)]
 mod entity_registry;
 pub mod epoch;
+/// 「导出为 Markdown」的落盘半(用户面 136):校验相对路径、临时目录写完再改名。正文由桌面前端排。
+pub mod export_md;
 mod frindex;
 pub mod identity;
 pub mod images;

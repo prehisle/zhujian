@@ -1655,6 +1655,25 @@ pub fn live_timeline_images(
     Ok(out)
 }
 
+/// 本空间**全部**配图的元数据,按 item_id 分组、组内按 seq 升序(「导出为 Markdown」用,
+/// 用户面 136)。⛔ 不滤活性 —— 调用方只按自己要导出的那批 item 取,回收站的自然用不上;
+/// 与 `live_timeline_images` 的差别只在这一条(导出要带成就册里的图)。
+pub fn all_item_images(conn: &Connection) -> rusqlite::Result<HashMap<String, Vec<ImageRef>>> {
+    let mut stmt = conn.prepare("SELECT item_id, id, seq, mime FROM item_image ORDER BY item_id, seq")?;
+    let rows = stmt.query_map([], |r| {
+        Ok((
+            r.get::<_, String>(0)?,
+            ImageRef { id: r.get(1)?, seq: r.get(2)?, mime: r.get(3)? },
+        ))
+    })?;
+    let mut out: HashMap<String, Vec<ImageRef>> = HashMap::new();
+    for row in rows {
+        let (item_id, img) = row?;
+        out.entry(item_id).or_default().push(img);
+    }
+    Ok(out)
+}
+
 /// The bytes + MIME of one image (for display), or None if the id is unknown.
 pub fn item_image_data(
     conn: &Connection,

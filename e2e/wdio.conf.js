@@ -145,7 +145,8 @@ export const config = {
     // 也绝不用 `main_db.parent()` —— 那是 /tmp,多个测试库会共享同一个暂存区)。库既然
     // 每趟重来,它们也得一起重来:留着配置的话「首次仪式」那一格下一趟就没得测了。
     // 420:自动备份的设置与**本机产出账**也住这一族(`<db>.backup-auto.json`)。
-    for (const side of [".backup.json", ".backup-auto.json", ".backup-staging", ".backups"]) {
+    // 用户面 136:「导出为 Markdown」在 e2e 下落 `<db>.exports/`(同一族,按库派生)。
+    for (const side of [".backup.json", ".backup-auto.json", ".backup-staging", ".backups", ".exports"]) {
       rmSync(`${testDb}${side}`, { force: true, recursive: true });
     }
     if (fast) {
