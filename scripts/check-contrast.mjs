@@ -122,10 +122,12 @@ const NOT_A_DOC = [
     "site-cool/privacy-rights.html",
     "site-cool/terms.html",
     "site-cool/changelog.html",
+    "site-cool/devlog.html",
     "site-app/privacy.html",
     "site-app/privacy-rights.html",
     "site-app/terms.html",
     "site-app/changelog.html",
+    "site-app/devlog.html",
   ].map((file) => ({
     file,
     why: "同一个 `docPage()` 模板(scripts/build-site-cool.mjs)生成的另一份,内联样式**逐字节相同** \

@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="zh">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>朱简 开发手记</title>
+    <meta name="description" content="朱简(zhujian)开发手记" />
+    <meta name="robots" content="index, follow" />
+    <style>
+      :root {
+        --paper: #f3eee3;
+        --raised: #faf6ec;
+        --raised-edge: #f0eadd;
+        --ink: #221f19;
+        --ink-soft: #6c6354;
+        --ink-faint: #a89e8c;
+        --line: rgba(34, 31, 25, 0.1);
+        --line-strong: rgba(34, 31, 25, 0.16);
+        --seal: #b3402b;
+        --seal-tint: rgba(179, 64, 43, 0.1);
+        --seal-line: rgba(179, 64, 43, 0.38);
+        --on-seal: #fdf6ee; /* 压在朱砂上的字,随明暗翻面(理由见桌面 src/theme.css) */
+
+        /* ── 三层「纱」= 令牌色 + alpha(与上面 --line / --seal-tint 同一种写法)──
+           ⛔ **别改回 `color-mix(… var(--X) …)`**:含 var() 的值解析期就合法、能盖掉前一条,
+           到计算期才失败(IACVT)⇒ 属性归 unset、**不回退到兜底声明**。不认 color-mix 的引擎
+           (Chrome ≤110 / Safari ≤16.1 / 微信 X5 那一族)上这三处会整个透明 —— 顶栏那处是
+           **字叠字**(用户面 84 量:2x 下最大色差 208)。app 那边同一个病见用户面 82。 */
+        --topbar-veil: rgba(243, 238, 227, 0.82); /* = --paper 82% */
+        --band-veil: rgba(250, 246, 236, 0.55); /* = --raised 55% */
+        --seal-select: rgba(179, 64, 43, 0.26); /* = --seal 26%,比 --seal-tint 深一档 */
+        /* 看大图的遮罩底(653)。⛔ **刻意不随明暗档翻面**:遮罩压的是截图不是纸面,亮色档下
+           翻成浅色 = 图与底糊在一起、也不再有「这是一层浮层」的信号。值与桌面客户端那只看大图
+           窗(`src/lightbox.css` 的 `.img-lightbox`)逐字相同。 */
+        --shot-veil: rgba(20, 16, 10, 0.78);
+
+        /* 三层字面:楷体(书写/品牌)· 宋体(书卷/想法原文)· 黑体(界面) */
+        /* 西文排在栈首:font-family 是逐字符回退,故英文走人文衬线、汉字照旧落楷体。
+           不排的话,普通 Windows 的英文标题会落到 KaiTi 的等宽拉丁字形上(字距被撑开)。 */
+        --font-brush: "Palatino Linotype", "Palatino", "Book Antiqua", "Kaiti SC", "STKaiti", "KaiTi", "楷体", "Songti SC", "SimSun", serif;
+        --font-serif: "Georgia", "SimSun", "Songti SC", "Source Han Serif SC", serif;
+        --font-sans: "Microsoft YaHei", "PingFang SC", system-ui, -apple-system, sans-serif;
+        /* 英文档的界面字(C6 / 用户面 127):只经下面那条 `:root:lang(en)` 接进 --font-sans,
+           中文档一个像素不动。理由与「栈首必须点名 Segoe UI」见桌面 src/theme.css。 */
+        --font-sans-en: "Segoe UI", system-ui, -apple-system, "Microsoft YaHei", "PingFang SC", sans-serif;
+
+        --float-shadow: 0 18px 50px -20px rgba(40, 30, 18, 0.55), 0 2px 6px rgba(40, 30, 18, 0.12);
+        --card-shadow: 0 1px 2px rgba(40, 30, 18, 0.06), 0 14px 30px -22px rgba(40, 30, 18, 0.5);
+
+        --grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.78' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+
+        --wrap: 1060px;
+        /* 圆角阶(341)。四档 = 4px 栅格;后三个是**形状**不是尺寸阶上的档。
+           完整理由与三份的对齐关系见桌面 src/theme.css。 */
+        --radius-xs: 4px;
+        --radius-sm: 8px;
+        --radius-md: 12px;
+        --radius-lg: 16px;
+        --radius-pill: 999px;
+        --radius-circle: 50%;
+        --radius-seal: 25%;
+        /* 字号阶(342)。十档 = 一张白名单;最小档 12px 就是 §2.2 第一条(信息性文字
+           最小 12px),阶下无档、小于 12px 的一律进门禁登记表签字。为什么用数值命名
+           而不是 xs/sm/md/lg,见桌面 src/theme.css。 */
+        --fs-12: 12px;
+        --fs-13: 13px;
+        --fs-14: 14px;
+        --fs-15: 15px;
+        --fs-16: 16px;
+        --fs-17: 17px;
+        --fs-18: 18px;
+        --fs-20: 20px;
+        --fs-24: 24px;
+        --fs-30: 30px;
+      }
+
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --paper: #1b1813;
+          --raised: #242019;
+          --raised-edge: #2c2820;
+          --ink: #ece4d5;
+          --ink-soft: #a59a87;
+          --ink-faint: #7d7463;
+          --line: rgba(236, 228, 213, 0.12);
+          --line-strong: rgba(236, 228, 213, 0.2);
+          --seal: #df6a4f;
+          --seal-tint: rgba(223, 106, 79, 0.14);
+          --seal-line: rgba(223, 106, 79, 0.45);
+          --on-seal: #1b1813;
+          --topbar-veil: rgba(27, 24, 19, 0.82); /* = --paper 82% */
+          --band-veil: rgba(36, 32, 25, 0.55); /* = --raised 55% */
+          --seal-select: rgba(223, 106, 79, 0.26); /* = --seal 26% */
+          --float-shadow: 0 22px 55px -18px rgba(0, 0, 0, 0.7), 0 2px 8px rgba(0, 0, 0, 0.4);
+          --card-shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 16px 34px -22px rgba(0, 0, 0, 0.7);
+        }
+      }
+
+      /* <html lang> 由下面的 apply() 单点写成生效档。⚠ 只做转接、不写字面值(值住 :root,
+         check-theme-drift 才看得见)。境内站首页是整份照抄本文件,自然带上;协议页只取到下面
+         那行为止的令牌块,也带上了,但它们是 lang="zh",这条在那儿不生效。 */
+      :root:lang(en) {
+        --font-sans: var(--font-sans-en);
+      }
+
+      * { box-sizing: border-box; }
+
+      body {
+        margin: 0;
+        background: var(--paper);
+        color: var(--ink);
+        font-family: var(--font-sans);
+        line-height: 1.85;
+        -webkit-font-smoothing: antialiased;
+        text-rendering: optimizeLegibility;
+      }
+      body::before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        z-index: 0;
+        background-image: var(--grain);
+        opacity: 0.035;
+        mix-blend-mode: multiply;
+      }
+      @media (prefers-color-scheme: dark) {
+        body::before { mix-blend-mode: screen; opacity: 0.05; }
+      }
+      a { color: var(--seal); }
+      /* ⛔ 这两处别改回 color-mix:令牌块是从 site/index.html 整段取来的,那三层「纱」的
+         理由与实测就写在取来的那段注释里(用户面 84)。⚠ 三份协议页正是 AGC 表单里填的
+         那两个网址 —— 打开它们的浏览器比首页还杂。 */
+      ::selection { background: var(--seal-select); }
+
+      .wrap { width: 100%; max-width: 760px; margin: 0 auto; padding: 0 24px; position: relative; z-index: 1; }
+
+      .topbar {
+        position: sticky; top: 0; z-index: 20;
+        backdrop-filter: saturate(1.1) blur(8px);
+        background: var(--topbar-veil);
+        border-bottom: 1px solid var(--line);
+      }
+      .topbar .wrap { display: flex; align-items: center; gap: 18px; height: 62px; max-width: 1060px; }
+      .brand {
+        display: inline-flex; align-items: center; gap: 11px;
+        font-family: var(--font-brush); font-size: var(--fs-24); font-weight: 700;
+        letter-spacing: 0.06em; text-decoration: none; color: var(--ink);
+      }
+      .brand svg { width: 30px; height: 30px; border-radius: var(--radius-sm); }
+      .brand svg rect { fill: var(--seal); }
+      .brand svg text { fill: var(--raised); font-family: var(--font-brush); font-weight: 700; }
+      .topnav { margin-left: auto; display: flex; align-items: center; gap: 22px; }
+      .topnav a { text-decoration: none; color: var(--ink-soft); font-size: var(--fs-15); }
+      .topnav a:hover { color: var(--ink); }
+      .topnav a[aria-current="page"] { color: var(--seal); }
+
+      main { padding: 46px 0 8px; }
+      h1.doc-title {
+        font-family: var(--font-brush);
+        font-size: var(--fs-30);
+        letter-spacing: 0.04em;
+        margin: 0 0 10px;
+      }
+      .doc-sub { color: var(--ink-faint); font-size: var(--fs-14); margin: 0 0 34px; }
+
+      .prose h2 {
+        font-size: var(--fs-20); /* ⛔ 只许用 §2.2 那十档,见本文件 docPage() 头注 */
+        margin: 44px 0 14px;
+        padding-top: 18px;
+        border-top: 1px solid var(--line);
+        letter-spacing: 0.02em;
+      }
+      .prose h3 { font-size: var(--fs-17); margin: 28px 0 10px; color: var(--ink); }
+      .prose h4 { font-size: var(--fs-15); margin: 22px 0 8px; color: var(--ink-soft); }
+      .prose p { margin: 0 0 14px; font-size: var(--fs-16); }
+      .prose ul { margin: 0 0 16px; padding-left: 1.4em; }
+      .prose li { margin: 0 0 7px; font-size: var(--fs-16); }
+      .prose li > ul { margin: 7px 0 0; }
+      .prose strong { color: var(--ink); font-weight: 700; }
+      .prose code {
+        font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+        font-size: var(--fs-14);
+        background: var(--raised);
+        border: 1px solid var(--line);
+        border-radius: var(--radius-xs);
+        padding: 1px 5px;
+      }
+      .tablewrap { overflow-x: auto; margin: 0 0 18px; }
+      .prose table { border-collapse: collapse; width: 100%; font-size: var(--fs-14); }
+      .prose th, .prose td {
+        border: 1px solid var(--line-strong);
+        padding: 9px 12px;
+        text-align: left;
+        vertical-align: top;
+      }
+      .prose th { background: var(--raised); font-weight: 700; }
+
+      .foot {
+        margin-top: 56px;
+        border-top: 1px solid var(--line);
+        padding: 26px 0 40px;
+        color: var(--ink-faint);
+        font-size: var(--fs-13);
+      }
+      .foot .wrap { max-width: 1060px; display: flex; flex-wrap: wrap; gap: 14px 22px; align-items: center; }
+      .foot a { color: var(--ink-soft); text-decoration: none; }
+      .foot a:hover { color: var(--ink); }
+      .foot .spacer { margin-left: auto; }
+    </style>
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="wrap">
+        <a class="brand" href="/"><svg viewBox="0 0 100 100" aria-hidden="true"><rect x="2" y="2" width="96" height="96" rx="25%" /><text x="50" y="50" text-anchor="middle" dominant-baseline="central" font-size="58">朱</text></svg>朱简</a>
+        <nav class="topnav">
+          <a href="/devlog.html" aria-current="page">开发手记</a>
+          <a href="/changelog.html">更新日志</a>
+          <a href="/#download">下载</a>
+        </nav>
+      </div>
+    </header>
+
+    <main>
+      <div class="wrap">
+        <h1 class="doc-title">朱简 开发手记</h1>
+        <p class="doc-sub">做朱简时栽过的跟头</p>
+        <div class="prose">
+<p>做朱简时栽过的跟头、改过的口,挑几件用人话记下来。</p>
+<h2>「是我们的架构扩展性不够吗?」</h2>
+<p>2026 年 9 月 17 日</p>
+<p>我想给看板卡片加个颜色标记,一眼分出轻重缓急。</p>
+<p>先讨论要做成什么样。AI 的第一个建议是「颜色跟着标签走」,我没同意:我平时会按标签筛选,一筛,满屏都是同一种颜色,等于什么都没说。于是定下来:颜色只是个临时的视觉记号,不参与筛选、排序和统计,分类还是标签的事。</p>
+<p>接着它说了一句让我皱眉的话:旧版本的朱简收到「颜色」这个新字段,会把同步卡住,所以得分两次发版,先发一版只会读、下一版才开始写,中间还得加一道闸。</p>
+<p>就加个颜色,怎么这么麻烦?我问了一句:是我们的架构扩展性不够吗?</p>
+<p>它回头去查,结论是它看错了。代码里确实有一行「不认识的字段就报错」,可那一行在实际运行时永远走不到:前面还有一层,先把不认识的字段拦下来,处理方式是「先放着,等这台设备升级以后自动补上,一条都不丢」。这条路就是当初专门给以后加字段留的。更尴尬的是,「新的同步字段一次发版直接上」这条规矩,是我自己两个月前定的。</p>
+<p>颜色最后一版就发出去了,没有分两次。</p>
+<p>我从这件事里记下两条:</p>
+<ul>
+<li>读到一句报错,不等于程序会走到那句。先问它是被谁调用的、前面还有谁把关。</li>
+<li>觉得不对劲的时候,问一句。那句话不是技术问题,是直觉,而这次直觉是对的。</li>
+</ul>
+<h2>复制按钮从来没复制成过?</h2>
+<p>2026 年 9 月 15 日</p>
+<p>国内的应用商店要求应用里有一个看得见的反馈入口,所以我在设置里加了一行:邮箱地址,旁边一枚「复制」按钮。</p>
+<p>在安卓模拟器上一点,弹出「复制失败」。</p>
+<p>没有顺手把按钮摘掉,先查为什么。系统给的原话是「不允许写剪贴板」。第一次是用测试脚本点的,不像真人,于是换成模拟真手指按一下,照样被拒。</p>
+<p>这就不是一个按钮的事了:同步配对时那枚「复制配对码」走的是同一条路。它成功时说「已复制,发给电脑端粘贴」,失败时只说「复制失败,请长按选中文字手动复制」,看起来像偶尔失灵。照这个结果,它在这类手机上可能从来没复制成过,而没有任何一个地方会报警。</p>
+<p>当天我在记录里写下:「安卓上这条路一律不通。」</p>
+<p>第二天拿我自己的 vivo 手机量了一遍:能复制。模拟器里是旧版的系统浏览器内核,我手机上是新版,只有旧的不行。那句话说过头了。其实我在记录里已经写明「只在旧版上量过」,结论却还是按最宽的那个写了。于是改口。</p>
+<p>修法是改用系统提供的剪贴板接口,新旧两种手机都能用。没有做成「先试这个,不行再偷偷试那个」:那种暗中兜底会让人永远不知道,到底是哪条路在起作用。鸿蒙那一端当时没法在真机上验证,就一个字没动,记下来等真机。</p>
+<p>验证时也没有相信按钮上那句「已复制」:把复制出来的东西粘进另一个输入框,逐字对过。</p>
+<p>记下的两条:</p>
+<ul>
+<li>按钮说「成功」,不等于成功了。要到另一头去看。</li>
+<li>结论别写得比量过的范围宽。</li>
+</ul>
+        </div>
+      </div>
+    </main>
+
+    <footer class="foot">
+      <div class="wrap">
+        <span>© 2026 朱简 zhujian</span>
+        <a href="/">首页</a>
+        <a href="/privacy.html">隐私政策</a>
+        <a href="/privacy-rights.html">隐私权利</a>
+        <a href="/terms.html">用户协议</a>
+        <span class="spacer"></span>
+        
+      </div>
+    </footer>
+  </body>
+</html>
