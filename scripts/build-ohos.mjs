@@ -19,7 +19,7 @@
 // 结束原样还回。⚠ **未签名 HAP 装不进纯血鸿蒙**(`not trusted app source`),那是
 // 平台规矩不是故障。
 //
-// 用法:node scripts/build-ohos.mjs [--skip-frontend] [--skip-cargo] [--c4] [--devtools] [--app]
+// 用法:node scripts/build-ohos.mjs [--skip-frontend] [--skip-cargo] [--c4] [--devtools] [--app] [--x86_64]
 //
 // ⭐ `--app` = 出**上架包 `.app`**(hvigor 的 `assembleApp`),不是平时装机那只 `.hap`。
 // AGC「软件版本 → 版本选取」收的是 `.app`,`.hap` 传上去解析不了。两条硬闸焊在这条路上:
@@ -36,7 +36,7 @@
 // (用户面 117:ArkWeb 上的读数只有这样量得到)。同安卓 devtools 包:只进验收包,**与 `--app` 互斥**。
 
 import { spawnSync } from "node:child_process";
-import { existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync, copyFileSync, cpSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync, copyFileSync, cpSync, statSync, rmSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -57,6 +57,11 @@ const die = (msg) => {
 const wantApp = argv.includes("--app");
 if (wantApp && argv.includes("--c4")) die("--app 与 --c4 互斥:上架包里绝不许带 c4-harness 验收命令面。");
 if (wantApp && argv.includes("--devtools")) die("--app 与 --devtools 互斥:上架包的网页绝不许开远程调试。");
+// `--x86_64` = 给 DevEco 的鸿蒙模拟器出包(模拟器是 x86;商店截图的平板那套就在 MatePad Pro 13 模拟器上拍)。
+// 要 `CARGO_TARGET_X86_64_UNKNOWN_LINUX_OHOS_LINKER` / `CC_x86_64_unknown_linux_ohos` / `CXX_…` / `AR_…`
+// 那一族环境变量(包装器同 aarch64 那族,`x86_64-ohos-clang.bat`)。⛔ 上架包只有 arm64,故与 `--app` 互斥。
+const wantX86 = argv.includes("--x86_64");
+if (wantApp && wantX86) die("--app 与 --x86_64 互斥:上架包只出 arm64(真机);x86_64 只给模拟器。");
 
 // ---- 环境 ------------------------------------------------------------------
 
@@ -117,7 +122,8 @@ if (!argv.includes("--skip-frontend")) {
 
 // ---- 2. Rust .so -----------------------------------------------------------
 
-const TRIPLE = "aarch64-unknown-linux-ohos";
+const TRIPLE = wantX86 ? "x86_64-unknown-linux-ohos" : "aarch64-unknown-linux-ohos";
+const ABI = wantX86 ? "x86_64" : "arm64-v8a";
 const soName = "libzhujian_ohos_lib.so";
 const soPath = join(crateDir, "target", TRIPLE, "release", soName);
 const startedAt = Date.now();
@@ -138,7 +144,7 @@ if (!argv.includes("--skip-cargo")) {
   const extra = [withC4 && "c4-harness", withDevtools && "devtools"].filter(Boolean);
   const features = ["tauri/custom-protocol", ...extra].join(",");
   run(
-    `cargo build(aarch64-ohos, release${extra.map((f) => ` + ${f}`).join("")})`,
+    `cargo build(${TRIPLE}, release${extra.map((f) => ` + ${f}`).join("")})`,
     "cargo",
     ["build", "--lib", "--release", "--target", TRIPLE, "--features", features],
     { cwd: crateDir },
@@ -151,7 +157,12 @@ const soAgeS = Math.round((statSync(soPath).mtimeMs - startedAt) / 1000);
 const freshness = soAgeS >= 0 ? `本次重编(开跑后 ${soAgeS}s 落盘)` : `**沿用旧产物**(比本次开跑早 ${-soAgeS}s)`;
 console.log(`\n   ${soName}:${(statSync(soPath).size / 1048576).toFixed(1)} MB,${freshness}`);
 
-const libsDir = join(hapProject, "entry", "libs", "arm64-v8a");
+const libsDir = join(hapProject, "entry", "libs", ABI);
+// ⛔ 另一种 ABI 的库目录每趟清掉:`entry/libs` 不进版本库、跨趟留着 ⇒ 给模拟器打过一次 x86_64,
+// 下一只上架包就会安静地多带一份旧的 x86_64 `.so`(体积翻倍、内容还是旧的)。一趟只放一种。
+for (const other of ["arm64-v8a", "x86_64"].filter((a) => a !== ABI)) {
+  rmSync(join(hapProject, "entry", "libs", other), { recursive: true, force: true });
+}
 mkdirSync(libsDir, { recursive: true });
 copyFileSync(soPath, join(libsDir, soName));
 console.log(`   → ${join(libsDir, soName)}`);

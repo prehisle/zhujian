@@ -296,7 +296,7 @@ unset 之后顶栏是**字叠字**,同屏最大色差 208/255(2x 设备像素)�
     name: "--content-max",
     in: ["安卓"],
     dark: false,
-    why: "511:宽屏(平板 / 横屏)上内容列的上限宽 640px。四处布局(#filterbar / #timeline /\
+    why: "511:宽屏(平板 / 横屏)上内容列的上限宽(775 起 960px,此前 640)。四处布局(#filterbar / #timeline /\
 .sync / .compose)加 FAB 的右偏移都从它派生 —— 同 --nav-clear / --winctl-dead 那一族的判据:\
 **跨处派生的约束才收成令牌**,不是审美值(间距仍不建阶)。⭐ 它不是断点:窄屏上 max-width \
 压根不生效、auto 边距解出 0,手机竖屏一像素不变(实测 360/412 两档:宽度==可用宽、边距 0px、\

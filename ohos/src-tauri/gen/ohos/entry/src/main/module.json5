@@ -21,6 +21,9 @@
         // 圆角带透明的,只服务启动页。⛔ 别图省事把这两处并回同一枚资源。
         "startWindowIcon": "$media:start_icon",
         "startWindowBackground": "$color:start_window_background",
+        // 775:跟着传感器转、尊重控制中心的「旋转锁定」—— 与安卓对齐(那边 manifest 不锁方向 = 跟系统转)。
+        // 不写时鸿蒙按 `unspecified` 由系统定:平板竖着拿,朱简仍停在横向(在 MatePad Pro 13 模拟器上撞见的)。
+        "orientation": "auto_rotation_restricted",
         "exported": true,
         "skills": [
           {

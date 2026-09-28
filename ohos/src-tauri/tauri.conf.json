@@ -1,6 +1,6 @@
 {
   "productName": "zhujian",
-  "version": "0.3.37",
+  "version": "0.3.38",
   "identifier": "app.zhujian.notebook",
   "build": {
     "frontendDist": "../dist",

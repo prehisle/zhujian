@@ -133,13 +133,16 @@
            ——与桌面 --winctl-dead 同族:跨处派生约束收成令牌(344 的形)。FAB 用的
            是 ResizeObserver 实测的 --nav-h(main.ts),两套的合并待拍板、别顺手改。 */
         --nav-clear: 64px;
-        /* 511:宽屏(平板 / 横屏)上内容列的上限宽。⭐ **它不是断点** —— 窄屏上
+        /* 511:宽屏(平板 / 横屏)上内容列的上限宽。775 从 640 提到 960(用户在 MatePad 模拟器上看:
+           竖放 960 宽时 640 那根列两边空一大片,「还不如直接用手机版本」)⇒ 竖放的平板恰好铺满,
+           横放(1440)仍留一根居中的列、不把一行拉到整屏长。真正的平板适配另立账(用户面 139)。
+           ⭐ **它不是断点** —— 窄屏上
            `max-width` 压根不生效、`margin:auto` 解出 0,手机竖屏一像素不变(这也是
            本轮刻意不写 `@media` 的理由:少一个要维护的断点)。
            ⚠ **只罩「内容」不罩「条」**:顶栏 / 底栏照旧满幅铺(它们是 bar,满幅才对),
            收窄的只有筛选条 / 时间轴 / 各面板 / 捕获层。⛔ 底栏改侧栏那档用户已否(A 档
            范围,backlog 用户面 47),别顺手扩。 */
-        --content-max: 640px;
+        --content-max: 960px;
       }
       /* 暗色令牌。挂在 <html data-theme="dark"> 上而**不是** @media——明暗有三档
          (自动 / 亮 / 暗),生效色由 src/theme.ts 单点算出后写进这个属性,CSS 里不再
@@ -199,6 +202,9 @@
         display: flex; align-items: baseline; justify-content: space-between;
         margin: 0 -14px 10px;
         padding: calc(10px + var(--sat)) 16px 8px;
+        /* 775:条照旧满幅,条里的东西对齐内容列(见 #filterbar 那组规则头上)。% 按 body 内容盒算,
+           而顶栏靠 -14px 外边距铺到了屏边 ⇒ 补回那 28px。窄屏上这个数是负的 ⇒ 落回 16px,手机零变化。 */
+        padding-inline: max(16px, calc((100% + 28px - var(--content-max)) / 2));
         background: var(--paper-veil);
         backdrop-filter: blur(6px);
         border-bottom: 1px solid var(--line);
@@ -694,7 +700,9 @@
       /* 511:宽屏上把「内容」收成一根居中的列。⭐ 四处共用一条规则,别各写各的。
          ⚠ 这里**没有 `@media`**:窄屏上 max-width 不生效 + auto 边距解出 0 ⇒ 手机零变化。
          ⛔ `header` / `#bottombar` 刻意不在这份名单里 —— 它们是满幅的条,收窄反而怪;
-         底栏改侧栏那档用户已否(backlog 用户面 47 的 A 档范围)。 */
+         底栏改侧栏那档用户已否(backlog 用户面 47 的 A 档范围)。
+         775:但条**里的东西**对齐这根列(两条各自的 `padding-inline`)—— 此前平板上「朱简」贴最左、
+         「设置」贴最右、底栏四枚散在整屏宽里,与中间那根列对不上(用户在 MatePad 上看了说丑)。 */
       #filterbar,
       #timeline,
       .sync,
@@ -1463,6 +1471,8 @@
         backdrop-filter: blur(6px);
         border-top: 1px solid var(--line);
         padding: 6px 8px calc(6px + env(safe-area-inset-bottom));
+        /* 775:同顶栏 —— 条满幅,四枚钮只在内容列那么宽里排开(fixed 的 % 按视口算)。 */
+        padding-inline: max(8px, calc((100% - var(--content-max)) / 2));
       }
       #bottombar button {
         border: none; background: none; color: var(--ink-soft);

@@ -9,7 +9,8 @@
 // 设备的密度与方向都是会被人改的环境变量 —— MuMu 被转成竖屏 1440×2560 @ 640dpi 之后原生视口只剩 360,
 // vivo V1986A 原生也是 360 ⇒ 旧写法那一步恒红,而它恰是本资产**唯一能证伪**的那半(见文末)。
 // 设备原生视口宽多少照样量、照样印(`native`),**只当读数不当判据**(同 kbsheet「先判设备属于哪一类」)。
-// 558 用显式宽覆盖量过的对拍参照:1280 → 内容列 640 / 边距 306+306;800 → 640 / 66+66;360 → 332 / 0。
+// 558 用显式宽覆盖量过的对拍参照(那时上限 640):1280 → 内容列 640 / 边距 306+306;800 → 640 / 66+66;360 → 332 / 0。
+// 775 上限提到 960(`COL`)⇒ 宽屏两档换成 1280 / 1440(都宽过 960 + 两侧 14);800 从此跟窄屏一样铺满,不再是宽档。
 //
 // 跑法:先 `node scripts/android-cdp.mjs forward`,再 `node scripts/cdp-acceptance-wide-column.mjs`
 // (打印 `{pass, native, rows, steps}`,退出码 0 = 过)。零写入:只动视口覆盖,不碰库。
@@ -61,17 +62,19 @@ const JS_MEASURE = `(()=>{
 
 const measure = async (label) => ({ label, ...(await s.evaluate(JS_MEASURE)) });
 
-// 窄 / 过渡四档(竖屏两档判 no-op;横屏 740 与阈值 668 只当读数,同改前)与宽屏两档(判收窄)。
-// dpr 照抄 2.25,mobile:true 走移动端布局路径。
+// 内容列上限 = `android/index.html` 的 `--content-max`(775 起 960)。改那个令牌就改这里。
+const COL = 960;
+// 窄 / 过渡四档(竖屏两档判 no-op;横屏 740 与阈值那档只当读数,同改前)与宽屏两档(判收窄)。
+// 阈值档 = 列宽 + body 左右 padding 28 ⇒ 可用宽恰等于列宽。dpr 照抄 2.25,mobile:true 走移动端布局路径。
 const NARROW = [
   ["手机竖屏 360", 360, 800],
   ["手机竖屏 412", 412, 915],
   ["手机横屏 740", 740, 412],
-  ["刚好到阈值 668", 668, 900],
+  [`刚好到阈值 ${COL + 28}`, COL + 28, 900],
 ];
 const WIDE = [
-  ["宽屏 800", 800, 1280],
   ["宽屏 1280", 1280, 800],
+  ["宽屏 1440", 1440, 960],
 ];
 
 const native = await measure("原生(无覆盖)");
@@ -97,7 +100,8 @@ const step = (name, ok, extra) => steps.push({ name, ok: !!ok, ...(extra === und
 //   下面「窄屏 no-op」那半是**证明不了这个功能存在**的 —— 把那条规则整个删掉,窄屏各档
 //   照样「宽度==可用宽 / 边距 0 / FAB 16px」,它会安安静静全绿。⇒ 必须另有一半去钉
 //   **宽屏上真的收窄了**,那才是这条规则唯一能被证伪的地方(阴性对照刀就落在这一格)。
-const narrow = rows.filter((r) => r.vw < 640);
+// 判 no-op 的只有竖屏两档(按名认,⛔ 别按「宽 < 列宽」筛:775 列宽提到 960 后,740 与阈值档也落进来了)。
+const narrow = rows.filter((r) => r.label.startsWith("手机竖屏"));
 for (const r of narrow) {
   step(
     `窄屏 no-op:${r.label}(宽度==可用宽 / 边距 0 / FAB 16px)`,
@@ -112,9 +116,9 @@ step("前置:360 / 412 两个窄档都量到了", narrow.length === 2, { n: narr
 const wide = rows.filter((r) => WIDE.some(([label]) => label === r.label));
 for (const r of wide) {
   step(
-    `宽屏真收窄:${r.label}(内容列 640 < 可用宽、左右边距对称且 >1、FAB 跟着列右缘走)`,
+    `宽屏真收窄:${r.label}(内容列 ${COL} < 可用宽、左右边距对称且 >1、FAB 跟着列右缘走)`,
     r.vw === Number(r.label.split(" ").pop()) &&
-      r.timeline === 640 &&
+      r.timeline === COL &&
       r.timeline < r.avail &&
       parseFloat(r.timelineML) > 1 &&
       Math.abs(parseFloat(r.timelineML) - parseFloat(r.timelineMR)) < 1 &&
@@ -137,6 +141,6 @@ step("清场:override 已清、视口回到原生宽度", restored.vw === native
 const pass = steps.every((x) => x.ok);
 console.log(JSON.stringify({ pass, native: { vw: native.vw, dpr: native.dpr, timeline: native.timeline, ml: native.timelineML }, rows, steps }, null, 1));
 for (const x of steps) console.log(`${x.ok ? "✅" : "❌"} ${x.name}${x.ok ? "" : ` ${JSON.stringify(x.extra)}`}`);
-console.log(`\n设备原生视口 ${native.vw}(dpr ${native.dpr})—— 只是读数;宽屏半已显式覆盖到 800 / 1280。`);
+console.log(`\n设备原生视口 ${native.vw}(dpr ${native.dpr})—— 只是读数;宽屏半已显式覆盖到 ${WIDE.map((w) => w[1]).join(" / ")}。`);
 console.log(pass ? "✅ pass" : "❌ FAIL");
 process.exit(pass ? 0 : 1);
