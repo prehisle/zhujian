@@ -1467,6 +1467,8 @@
         min-height: 44px; /* 触区达标(ui-audit P1 #10):主导航给足 44px 实高 */
       }
       #bottombar button.active { color: var(--seal-ink); font-weight: 600; }
+      /* 键盘起着且焦点在输入框里:让位(`main.ts` 底栏点击那段下面有由头与判据)。 */
+      #bottombar.typing { visibility: hidden; }
       /* ⭐ 底栏四枚里前两枚是**主视图**(data-mode,同一条时间轴按 stage 投影)、后两枚是
          **覆盖面**(data-pane,开了会把 compose / 筛选条 / 时间轴一起收起)—— 两类目的地
          一种语汇,正是 §3.9 那句「附属子视图不是主视图的一个切面、是另一堆内容」。

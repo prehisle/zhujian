@@ -1919,6 +1919,36 @@ $("bottombar").addEventListener("click", (e) => {
   if (btn.dataset.pane) openPane(btn.dataset.pane);
   else if (btn.dataset.mode) onModeButton(btn.dataset.mode as ViewMode);
 });
+// 打字时让底栏让位(用户面 117,鸿蒙真机量出来的):键盘一起视口就真缩(837 → 523),`bottom:0` 的
+// 底栏跟着浮到键盘上沿,压住面板里贴着它的输入框(设置页「本机别名」压掉 9.6px);而输入框
+// 仍算「在视口里」,浏览器不滚 ⇒ 只能让底栏走开。⭐ 两个条件缺一不可:
+//  - 光看焦点不够:返回键第一下只收键盘、焦点留在框里,底栏就会一直没了;
+//  - 光看视口缩不够:分屏 / 窗口拉矮也会缩,那时没人在打字。
+// 基准高 = 这个宽度下见过的最高视口(转屏换宽即换基准);缩掉四分之一以上才算键盘在。
+// 用 visibility 而非 display:底栏实高不变 ⇒ `--nav-h` 不跳、悬浮 ＋ 不跟着掉下来。
+// ⛔ 别改用 `:has(:focus)`:这一端 WebView 跨度大(见 `.trow.has-kids` 那条)。
+{
+  const nav = $("bottombar");
+  let baseW = 0;
+  let baseH = 0;
+  const isTextEntry = (el: EventTarget | null): boolean =>
+    el instanceof HTMLTextAreaElement ||
+    (el instanceof HTMLInputElement && !/^(button|checkbox|radio|range|file|submit|reset|color)$/.test(el.type)) ||
+    (el instanceof HTMLElement && el.isContentEditable);
+  const sync = (focused: EventTarget | null): void => {
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    if (w !== baseW) {
+      baseW = w;
+      baseH = h;
+    } else if (h > baseH) baseH = h;
+    nav.classList.toggle("typing", isTextEntry(focused) && h < baseH * 0.75);
+  };
+  document.addEventListener("focusin", (e) => sync(e.target));
+  document.addEventListener("focusout", (e) => sync(e.relatedTarget));
+  window.addEventListener("resize", () => sync(document.activeElement));
+  sync(document.activeElement);
+}
 $("settings-toggle").addEventListener("click", () => openPane("settings"));
 $("settings-diag-btn").addEventListener("click", () => openPane("diag"));
 
