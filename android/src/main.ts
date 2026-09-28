@@ -1919,16 +1919,20 @@ $("bottombar").addEventListener("click", (e) => {
   if (btn.dataset.pane) openPane(btn.dataset.pane);
   else if (btn.dataset.mode) onModeButton(btn.dataset.mode as ViewMode);
 });
-// 打字时让底栏让位(用户面 117,鸿蒙真机量出来的):键盘一起视口就真缩(837 → 523),`bottom:0` 的
-// 底栏跟着浮到键盘上沿,压住面板里贴着它的输入框(设置页「本机别名」压掉 9.6px);而输入框
-// 仍算「在视口里」,浏览器不滚 ⇒ 只能让底栏走开。⭐ 两个条件缺一不可:
+// 键盘起着(焦点在文字输入里 + 视口真缩了)⇒ 根上挂 `kb-up`,两件事吃它(用户面 117,鸿蒙真机量出来的):
+//  ①底栏让位:键盘一起视口就真缩(837 → 523),`bottom:0` 的底栏跟着浮到键盘上沿,压住面板里贴着
+//    它的输入框(设置页「本机别名」压掉 9.6px);而输入框仍算「在视口里」,浏览器不滚 ⇒ 只能让底栏走开。
+//    用 visibility 而非 display:底栏实高不变 ⇒ `--nav-h` 不跳、悬浮 ＋ 不跟着掉下来。
+//  ②底部层(捕获 / 编辑 / 留言)收掉底边那段 `env(safe-area-inset-bottom)`:手势条此刻压在键盘底下,
+//    ArkWeb 却照样报它的高 ⇒ 「记下」那排钮与键盘之间白空一截。安卓原生侧收键盘 inset 时已把它归零
+//    (`MainActivity.applyImeInsets()`),那边这条是空操作。
+// ⭐ 两个条件缺一不可:
 //  - 光看焦点不够:返回键第一下只收键盘、焦点留在框里,底栏就会一直没了;
 //  - 光看视口缩不够:分屏 / 窗口拉矮也会缩,那时没人在打字。
 // 基准高 = 这个宽度下见过的最高视口(转屏换宽即换基准);缩掉四分之一以上才算键盘在。
-// 用 visibility 而非 display:底栏实高不变 ⇒ `--nav-h` 不跳、悬浮 ＋ 不跟着掉下来。
+// ⛔ 这不是「猜键盘多高」(kbsheet.ts 头上否掉的那套):只问在不在,几何仍全归原生那半。
 // ⛔ 别改用 `:has(:focus)`:这一端 WebView 跨度大(见 `.trow.has-kids` 那条)。
 {
-  const nav = $("bottombar");
   let baseW = 0;
   let baseH = 0;
   const isTextEntry = (el: EventTarget | null): boolean =>
@@ -1942,7 +1946,7 @@ $("bottombar").addEventListener("click", (e) => {
       baseW = w;
       baseH = h;
     } else if (h > baseH) baseH = h;
-    nav.classList.toggle("typing", isTextEntry(focused) && h < baseH * 0.75);
+    document.documentElement.classList.toggle("kb-up", isTextEntry(focused) && h < baseH * 0.75);
   };
   document.addEventListener("focusin", (e) => sync(e.target));
   document.addEventListener("focusout", (e) => sync(e.relatedTarget));

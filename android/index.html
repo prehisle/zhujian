@@ -371,6 +371,8 @@
       /* 开态位置 = 贴视口底。⭐ 这是**唯一**的开态几何(2026-08-28 起):JS 不再设 inline
          transform,键盘的高度由原生 ime inset 从视口那头解决。⛔ 别再往 JS 里加抬升。 */
       .compose.open { transform: translateY(0); }
+      /* 键盘起着:手势条压在键盘底下,底边那段安全区白留(ArkWeb 照报它的高)⇒ 收掉(`kb-up` 见 main.ts)。 */
+      html.kb-up .compose { padding-bottom: 12px; }
       /* 底部层(捕获/留言)开着时锁住背景滚动 —— 由 kbsheet.ts 上下这个类,由头写在那边:
          键盘一起 Chromium 会滚文档去露焦点输入框,而层是 fixed 的,滚了只有背后的时间轴在动
          (240 报的「弹键盘背景乱滚」,2026-08-28 换了个形回来,A/B 各 5 次实测)。 */
@@ -559,6 +561,7 @@
         padding: 10px 14px calc(10px + env(safe-area-inset-bottom));
         border-top: 1px solid var(--line);
       }
+      html.kb-up .cm-compose { padding-bottom: 10px; } /* 同 .compose 那条 */
       .cm-compose textarea {
         flex: 1; min-width: 0;
         border: none; background: none; resize: none; outline: none;
@@ -1467,8 +1470,8 @@
         min-height: 44px; /* 触区达标(ui-audit P1 #10):主导航给足 44px 实高 */
       }
       #bottombar button.active { color: var(--seal-ink); font-weight: 600; }
-      /* 键盘起着且焦点在输入框里:让位(`main.ts` 底栏点击那段下面有由头与判据)。 */
-      #bottombar.typing { visibility: hidden; }
+      /* 键盘起着且焦点在输入框里:让位(`kb-up` 的由头与判据在 `main.ts` 底栏点击那段下面)。 */
+      html.kb-up #bottombar { visibility: hidden; }
       /* ⭐ 底栏四枚里前两枚是**主视图**(data-mode,同一条时间轴按 stage 投影)、后两枚是
          **覆盖面**(data-pane,开了会把 compose / 筛选条 / 时间轴一起收起)—— 两类目的地
          一种语汇,正是 §3.9 那句「附属子视图不是主视图的一个切面、是另一堆内容」。
