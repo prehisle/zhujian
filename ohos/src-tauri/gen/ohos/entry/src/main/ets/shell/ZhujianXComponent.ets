@@ -17,6 +17,11 @@ import { SystemBarsBridge } from "./SystemBars";
 const DOMAIN = 0x0301;
 const TAG = "ZHUJIAN";
 
+/** 页面那只 WebView 的 controller,挂桥时记下;`ZhujianPage.onBackPress` 要拿它问页面(用户面 117)。 */
+export class ShellWeb {
+  static ctrl: web_webview.WebviewController | null = null;
+}
+
 /**
  * 承载 WebView 的那个组件 —— **照抄 `@ohos-rs/ability` 0.4.0-beta.5 的 `DefaultXComponent`**,
  * 只多了一件事:给 WebView 挂**页面 → ArkTS 的桥**(`registerJavaScriptProxy`)。
@@ -126,6 +131,7 @@ export struct ZhujianXComponent {
       return;
     }
     this.bridged = true;
+    ShellWeb.ctrl = ctrl;
     const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
     try {
       ctrl.registerJavaScriptProxy(new ScanBridge(context, ctrl), "__zhujianScan", [], ["start"]);

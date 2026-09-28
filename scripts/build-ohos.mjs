@@ -19,7 +19,7 @@
 // 结束原样还回。⚠ **未签名 HAP 装不进纯血鸿蒙**(`not trusted app source`),那是
 // 平台规矩不是故障。
 //
-// 用法:node scripts/build-ohos.mjs [--skip-frontend] [--skip-cargo] [--c4] [--app]
+// 用法:node scripts/build-ohos.mjs [--skip-frontend] [--skip-cargo] [--c4] [--devtools] [--app]
 //
 // ⭐ `--app` = 出**上架包 `.app`**(hvigor 的 `assembleApp`),不是平时装机那只 `.hap`。
 // AGC「软件版本 → 版本选取」收的是 `.app`,`.hap` 传上去解析不了。两条硬闸焊在这条路上:
@@ -30,6 +30,10 @@
 // 那批里有 `c4_plant`(往数据目录里放半截文件)与明文回报备份码,做成运行期开关
 // 迟早有人忘在生产包里,做成 feature 则「忘了关」在产物里根本不存在(判据同 433
 // 在安卓那边立的编译期故障注入先例)。⛔ 别为了省事把它改成默认开。
+//
+// ⚠ `--devtools` = 带上 `devtools` feature(→ `tauri/devtools` → 依赖的 Web builder 调
+// `setWebDebuggingAccess(true)`),页面可经 `hdc fport` 接 Chrome DevTools 读 DOM / 执行 JS
+// (用户面 117:ArkWeb 上的读数只有这样量得到)。同安卓 devtools 包:只进验收包,**与 `--app` 互斥**。
 
 import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync, copyFileSync, cpSync, statSync } from "node:fs";
@@ -52,6 +56,7 @@ const die = (msg) => {
 // 回报备份码,进了上架包就是把后门交给商店审核)。
 const wantApp = argv.includes("--app");
 if (wantApp && argv.includes("--c4")) die("--app 与 --c4 互斥:上架包里绝不许带 c4-harness 验收命令面。");
+if (wantApp && argv.includes("--devtools")) die("--app 与 --devtools 互斥:上架包的网页绝不许开远程调试。");
 
 // ---- 环境 ------------------------------------------------------------------
 
@@ -121,14 +126,19 @@ const withC4 = argv.includes("--c4");
 if (withC4) {
   console.log(`\n⚠⚠ 本趟带 **c4-harness** 验收命令面 —— 出来的是验收包,不是正式包。`);
 }
+const withDevtools = argv.includes("--devtools");
+if (withDevtools) {
+  console.log(`\n⚠⚠ 本趟带 **devtools**(网页可远程调试)—— 出来的是验收包,不是正式包。`);
+}
 
 if (!argv.includes("--skip-cargo")) {
   // ⚠ `--features tauri/custom-protocol` 不能省:dev/prod 由 `dev = !custom-protocol`
   // 这个 feature 决定,平时靠 tauri CLI 代传;手编不带它,装到设备上的包会去连
   // localhost:1420(白屏,且不报错)。
-  const features = withC4 ? "tauri/custom-protocol,c4-harness" : "tauri/custom-protocol";
+  const extra = [withC4 && "c4-harness", withDevtools && "devtools"].filter(Boolean);
+  const features = ["tauri/custom-protocol", ...extra].join(",");
   run(
-    `cargo build(aarch64-ohos, release${withC4 ? " + c4-harness" : ""})`,
+    `cargo build(aarch64-ohos, release${extra.map((f) => ` + ${f}`).join("")})`,
     "cargo",
     ["build", "--lib", "--release", "--target", TRIPLE, "--features", features],
     { cwd: crateDir },
