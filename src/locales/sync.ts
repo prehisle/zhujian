@@ -30,7 +30,7 @@ export const sync = defineMessages({
   // 手机已有自己账户那条路此前一个字没提 —— 用户拿着它去「同步」页,那里只有创号一条路。
   "sync.pairInstructions": { zh: "用手机朱简「同步」里的「扫码连接电脑」直接扫;手机已经在用自己的账户时,改走它的「空间」→「加入空间(扫电脑二维码)」。或在新设备上选「用配对码加入」,输入服务器地址和这串码。10 分钟内有效,只能用一次。", en: "On your phone, open Sync in Zhujian and use “Scan to connect a computer” to scan this code; if the phone already uses an account of its own, go to its Spaces page → “Join a space (scan the computer's QR code)” instead. Or, on the new device, choose “Join with a pairing code” and enter the server address and this code. Valid for 10 minutes, single use." },
   "sync.pairKeepOn": { zh: "对方加入后要从这台电脑拉取初始快照:期间请让这台电脑开着、别切换空间。", en: "After joining, the other device pulls its initial snapshot from this computer: keep this computer on and stay in this space meanwhile." },
-  "sync.pairDoneNote": { zh: "{detail}。请让这台电脑开着、别切换空间,等对方显示「已连接」再关闭本页。", en: "{detail}. Keep this computer on and stay in this space; close this page once the other device shows “Connected”." },
+  "sync.pairDoneNote": { zh: "新设备已加入账户。它接着要取回全部内容,这台看不到那一头的进度:请让这台电脑开着、别切换空间,等那台的同步状态不再是「初始同步中…」再关闭本页。", en: "The new device has joined the account and is now fetching everything; this computer can't see its progress. Keep this computer on and stay in this space; close this page once the other device's sync status no longer says “Initial sync…”." },
   "sync.pairAgain": { zh: "重新出码", en: "Issue a new code" },
   // 引导进度那一块(用户面 121;与安卓那三句同话)。
   "sync.bootWaiting": { zh: "正在等另一台设备发来初始快照…", en: "Waiting for another device to send the initial snapshot…" },

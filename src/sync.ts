@@ -580,8 +580,10 @@ function renderPair(body: HTMLElement): void {
     }
   }
   if (pairDone) {
-    // 对方注册完成、正从这台拉初始快照:说清「这台别关、等对方显示已连接再关本页」。
-    body.appendChild(el("p", "sync-note", t("sync.pairDoneNote", { detail: pairNote })));
+    // 对方注册完成、正在取初始快照:说清「这台别关、看对方的同步状态离开『初始同步中…』再关本页」。
+    // ⛔ 别拿「已连接」当信号(用户面 138):对方一加入就弹「已连接,正在初始同步…」,那时远没完。
+    // ⛔ 也不拼后端的 detail(没翻译的中文);本机收不到「对方引导完了」这一拍,协议里没有。
+    body.appendChild(el("p", "sync-note", t("sync.pairDoneNote")));
   } else {
     body.appendChild(pairFailed ? errLine("sync-err", pairNote, "p") : el("p", "sync-note", pairNote));
     // 码在手上的这一页就把「保持在线」说出来 —— 手机做老设备时早有这句,桌面一直没有。

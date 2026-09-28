@@ -567,13 +567,15 @@ export function initSync(d: Deps): void {
         : t("sync.snapshotProgress", { received: fmtMb(received), total: fmtMb(total), pct });
   });
   // 邀请方配对进度(phone-space-plan §2.2)。done=注册完成≠对方引导完成(codex r2
-  // N4):不自动关出码页,提示等电脑端初始同步完成。
+  // N4):不自动关出码页,提示去看**对方**的同步状态(用户面 138:本机收不到「引导完了」这一拍
+  // —— 供快照的未必是本机、收方导入完也不回话,协议里没有这个信号;此前那句「正在初始同步」
+  // 读起来像本机在跟进度,对方早完了它还挂着)。⛔ done 不用后端的 detail:那是没翻译的中文。
   void listen<Spaced<{ phase: string; detail: string }>>("sync-pair", (e) => {
     if (!deps.acceptSpaced(e.payload)) return;
     const { phase, detail } = e.payload.payload;
     $("sync-pair-note").textContent =
       phase === "done"
-        ? t("sync.pairDone", { detail })
+        ? t("sync.pairDone")
         : phase === "failed"
           ? t("sync.pairFailed", { detail })
           : detail;

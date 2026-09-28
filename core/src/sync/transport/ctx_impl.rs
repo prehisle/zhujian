@@ -1174,7 +1174,7 @@ impl Ctx<'_> {
                     self.pair = None;
                     let _ = self.events.send(SyncEvent::Pair {
                         phase: "done",
-                        detail: "新设备已加入账户,正在初始同步".into(),
+                        detail: "新设备已加入账户".into(),
                     });
                 }
             }

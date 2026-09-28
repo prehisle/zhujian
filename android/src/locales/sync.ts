@@ -52,7 +52,7 @@ export const sync = defineMessages({
   "sync.bootWaiting": { zh: "正在等另一台设备发来初始快照…", en: "Waiting for another device to send the initial snapshot…" },
   "sync.snapshotDone": { zh: "快照 {total} 已收全,校验并导入中…", en: "Snapshot {total} received, verifying and importing…" },
   "sync.snapshotProgress": { zh: "拉取快照 {received} / {total}({pct}%)", en: "Fetching snapshot {received} / {total} ({pct}%)" },
-  "sync.pairDone": { zh: "{detail}。请等电脑端显示初始同步完成后再离开本页。", en: "{detail} Wait until the computer shows initial sync complete before leaving this page." },
+  "sync.pairDone": { zh: "新设备已加入账户。它接着要取回全部内容,本机看不到那一头的进度:等那台的同步状态不再是「初始同步中…」,就可以离开本页了。", en: "The new device has joined the account and is now fetching everything; this phone can't see its progress. Once its sync status no longer says “Initial sync…”, you can leave this page." },
   "sync.pairFailed": { zh: "配对失败:{detail}(可重新出码)", en: "Pairing failed: {detail} (you can issue a new code)" },
   // 设备管理面(identity-plan §5.8/§5.9;android/src/devices.ts)。⚠ 两端各一份独立字典、
   // 键空间独立;这一族与桌面同名的键**刻意不进** CROSS_END_KEYS —— 端间措辞可以各自随
