@@ -101,7 +101,17 @@ export function isBooting(): boolean {
   return booting;
 }
 
+/** 最近一次画出来的状态是哪个空间、连的哪台(「网络诊断」钮要测它,用户面 137)。
+ *  带空间号:切空间后新状态到之前,别把上一个空间的服务器端给诊断面。 */
+let shownServer: { space: string; url: string | null } | null = null;
+
+/** 当前空间已配置的服务器;没配 / 还没拿到状态 = `null`。 */
+export function configuredServer(): string | null {
+  return shownServer?.space === getCurrentSpace() ? shownServer.url : null;
+}
+
 export function renderSync(s: SyncStatus) {
+  shownServer = { space: getCurrentSpace(), url: s.server_url };
   if ((s.state === "booting") !== booting) {
     booting = s.state === "booting";
     deps.onBootingChange();
@@ -238,7 +248,7 @@ async function doJoin(serverUrl: string, code: string) {
       true,
     );
   } catch (err) {
-    showErr(err);
+    showErr(err, serverUrl);
   } finally {
     btn.disabled = false;
     btn.textContent = t("sync.join");
@@ -374,7 +384,7 @@ async function doJoinSpace(serverUrl: string, code: string) {
       showError(out.error);
     }
   } catch (err) {
-    showErr(err);
+    showErr(err, serverUrl);
   } finally {
     joinAttempt = null;
     renderJoinProgress(null);
@@ -404,7 +414,7 @@ async function doCreateAccount() {
     void deps.refreshSpaces();
     void sinvoke<SyncStatus>("sync_status").then(renderSync).catch(() => {});
   } catch (err) {
-    showErr(err);
+    showErr(err, serverUrl);
   } finally {
     btn.disabled = false;
     btn.textContent = t("sync.createAccount");

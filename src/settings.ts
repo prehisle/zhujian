@@ -55,7 +55,7 @@ export function initSettings(): void {
  * ⭐ **`cat` 不是可有可无的装饰**:445 分类之后,「点此改键」那条路若落在默认的「通用」上,
  * 用户点了「改键」却看不见热键行 —— 那条提示条的全部意义就没了。故那条路显式传 "hotkeys"。
  */
-export async function openSettingsPanel(cat: SettingsCat = "general"): Promise<void> {
+export async function openSettingsPanel(cat: SettingsCat = "general", probeUrl: string | null = null): Promise<void> {
   if (overlay) return;
   hotkeys = await invoke<Hotkeys>("get_hotkeys");
   overlay = document.createElement("div");
@@ -69,7 +69,7 @@ export async function openSettingsPanel(cat: SettingsCat = "general"): Promise<v
   overlay.appendChild(panel);
   document.body.appendChild(overlay);
   document.addEventListener("keydown", onPanelEsc);
-  renderPanel(panel, cat);
+  renderPanel(panel, cat, probeUrl);
 }
 
 function closePanel(): void {
@@ -97,7 +97,8 @@ const CATS: { cat: SettingsCat; label: string }[] = [
   { cat: "about", label: t("settings.catAbout") },
 ];
 
-function renderPanel(panel: HTMLDivElement, initial: SettingsCat): void {
+/** `probeUrl`:从错误条「网络诊断」进来时,自检要测的那台(err.ts `errNode`)。 */
+function renderPanel(panel: HTMLDivElement, initial: SettingsCat, probeUrl: string | null): void {
   panel.innerHTML = "";
   // 标题行 + ✕(2026-08-31 用户点名「只能点面板外关」)。Esc 与点外面照旧;✕ 是显式
   // 关闭意图,⛔ 不套 `!recording` 保护(那两道是防误触,这枚不是误触)—— closePanel
@@ -134,7 +135,7 @@ function renderPanel(panel: HTMLDivElement, initial: SettingsCat): void {
     const pane = document.createElement("section");
     pane.className = "settings-pane";
     pane.dataset.cat = cat;
-    buildPane(cat, pane);
+    buildPane(cat, pane, probeUrl);
     panes.set(cat, pane);
     content.appendChild(pane);
   }
@@ -166,7 +167,7 @@ function renderPanel(panel: HTMLDivElement, initial: SettingsCat): void {
 // ⛔ **多行组照写行名**(快捷键两行、备份那节):那里行名是「这一行是哪一样」的唯一读法。
 // ⇒ 判据是「**这一组有几行**」,不是「读着重不重复」—— 备份那节的组名与首行同为「备份」,
 // 623 摘过一次又照图退回来了(理由记在 backup.ts 那行旁边)。
-function buildPane(cat: SettingsCat, pane: HTMLElement): void {
+function buildPane(cat: SettingsCat, pane: HTMLElement, probeUrl: string | null): void {
   if (cat === "hotkeys") {
     pane.append(
       el("h2", "settings-title settings-sect", t("settings.hotkeysTitle")),
@@ -212,7 +213,7 @@ function buildPane(cat: SettingsCat, pane: HTMLElement): void {
   }
 
   if (cat === "about") {
-    buildAboutPane(pane); // 版本 / 链接 / 诊断,整节住 src/about.ts
+    buildAboutPane(pane, probeUrl); // 版本 / 链接 / 诊断,整节住 src/about.ts
     return;
   }
 

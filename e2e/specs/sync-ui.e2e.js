@@ -80,6 +80,47 @@ describe("P2-g 同步 UI(未配置=零打扰)", () => {
     });
   });
 
+  // 用户面 137:错误条上那枚「网络诊断」开的自检,地址框要是**刚才连不上的那台**(此前恒填默认
+  // 服务器 ⇒ 填错地址也测得六项全绿)。⚠ 必须排在喂 CONFIGURED 那几例之前:创号页只在未配置态有。
+  it("创号连不上 → 点「网络诊断」,自检地址框填的是刚才那个地址(用户面 137)", async () => {
+    await goNotebook("inbox");
+    await browser.execute(() => document.getElementById("sync-entry").click());
+    await $(".sync-panel").waitForExist({ timeout: 3000 });
+    await browser.execute(() => {
+      for (const b of document.querySelectorAll(".sync-panel button")) {
+        if (b.textContent.includes("创建账户")) return b.click();
+      }
+      throw new Error("面板里没有「创建账户」按钮");
+    });
+    await $(".sync-panel .sync-input").waitForExist({ timeout: 3000 });
+    // 本机 1 号口没人听 ⇒ 拨号当场被拒,落「连不上」一类(settings-shell 那例同一个地址)。
+    await browser.execute(() => {
+      const input = document.querySelector(".sync-panel .sync-input");
+      input.value = "ws://127.0.0.1:1";
+      for (const b of document.querySelectorAll(".sync-panel .sync-actions button")) {
+        if (b.textContent.includes("创建")) return b.click();
+      }
+      throw new Error("创建账户页没有提交钮");
+    });
+    const next = await $(".sync-panel .err-next");
+    await next.waitForExist({ timeout: 15000, timeoutMsg: "创号失败那行该挂「网络诊断」钮" });
+    // 前置自证:创号真失败了、没把本机配上(否则下面喂 CONFIGURED 那几例的前提就变了)。
+    expect((await invoke("sync_status")).configured).toBe(false);
+    await browser.execute(() => document.querySelector(".sync-panel .err-next").click());
+    const url = await $(".settings-pane[data-cat='about'] .about-url");
+    await url.waitForExist({ timeout: 5000, timeoutMsg: "「网络诊断」该打开设置的「关于」" });
+    expect(await url.getValue()).toBe("ws://127.0.0.1:1");
+    // 收摊:先关设置(点外面),再 Esc 关同步面板。
+    await browser.execute(() => {
+      document.querySelector(".settings-overlay").dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    });
+    await browser.waitUntil(async () => !(await $(".settings-overlay").isExisting()), { timeout: 3000 });
+    await browser.execute(() => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    });
+    await browser.waitUntil(async () => !(await $(".sync-overlay").isExisting()), { timeout: 3000 });
+  });
+
   it("已配置态首页:添加设备 + 设备名单,没有「查看恢复码」(用户面 125)", async () => {
     await goNotebook("inbox");
     await browser.execute(() => document.getElementById("sync-entry").click());
@@ -176,5 +217,24 @@ describe("P2-g 同步 UI(未配置=零打扰)", () => {
       timeout: 3000,
       timeoutMsg: "Esc 应关闭同步面板",
     });
+  });
+
+  // 用户面 137 的另一半:不是从「刚填的地址」那条路来的(设置里直接开、或状态 / 名单上的错),
+  // 自检测的是**当前空间已配置的那台**,不是默认服务器。
+  it("已配置态:设置「关于」的自检地址框填的是已配置的服务器(用户面 137)", async () => {
+    await goNotebook("inbox");
+    await browser.execute(
+      (s) => window.__TAURI__.event.emit("sync-status", { space: "main", status: s }),
+      CONFIGURED,
+    );
+    await browser.execute(() => document.getElementById("settings-entry").click());
+    await $(".settings-panel").waitForExist({ timeout: 5000 });
+    const url = await $(".settings-pane[data-cat='about'] .about-url");
+    await url.waitForExist({ timeout: 5000 });
+    expect(await url.getValue()).toBe(CONFIGURED.server_url);
+    await browser.execute(() => {
+      document.querySelector(".settings-overlay").dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    });
+    await browser.waitUntil(async () => !(await $(".settings-overlay").isExisting()), { timeout: 3000 });
   });
 });

@@ -15,6 +15,9 @@
 //   - `showErr(e)`   —— 顶部错误提示条的形,同上挂钮。
 // 那枚钮今天只有「连不上」一类有(→ 设置里的「诊断」面,网络栈诊断在那儿);它开哪一面由
 // main 在 `initErr` 里交进来(`openPane` 住 main,本文件引它会绕成环)。
+// ⭐ 诊断要测**刚才连不上的那台**(用户面 137:此前恒测默认服务器,填错地址也六格全绿):
+// 创号 / 加入这类「地址是用户刚填的」路,`showErr` 第二参把那个地址带过去;其余交 `null`,
+// 由 main 取当前空间已配置的服务器。
 import { t } from "./i18n";
 import { errorActionBar, esc, showError } from "./ui";
 
@@ -78,27 +81,30 @@ export function errHtml(e: unknown): string {
     : text;
 }
 
-let openProbe: (() => void) | null = null;
+/** 打开诊断面并测 `url`;`null` = 测当前空间已配置的那台(main 定)。 */
+type OpenProbe = (url: string | null) => void;
+let openProbe: OpenProbe | null = null;
 
-/** 顶部错误提示条:`errText` 那句;「连不上」一类条上多一枚「网络诊断」。 */
-export function showErr(e: unknown): void {
+/** 顶部错误提示条:`errText` 那句;「连不上」一类条上多一枚「网络诊断」。
+ *  `url` = 这次连的是哪台(只有地址是用户刚填的那几条路给;见文件头)。 */
+export function showErr(e: unknown, url: string | null = null): void {
   if (!hasProbe(e)) {
     showError(errText(e));
     return;
   }
   const go = openProbe;
   if (!go) throw new Error("err.ts:initErr 没调过就出了「连不上」的错");
-  errorActionBar(errText(e), t("err.probeNext"), go);
+  errorActionBar(errText(e), t("err.probeNext"), () => go(url));
 }
 
 /** main 启动时调一次:交进「打开诊断面」,并装 `.err-next` 的委托监听(捕获期,免被各面自己
- *  的委托 stopPropagation 截走)。 */
-export function initErr(open: () => void): void {
+ *  的委托 stopPropagation 截走)。`errHtml` 那几处都是已配置空间的状态 / 名册 ⇒ 交 `null`。 */
+export function initErr(open: OpenProbe): void {
   openProbe = open;
   document.addEventListener(
     "click",
     (ev) => {
-      if ((ev.target as Element | null)?.closest?.("[data-err-next]")) open();
+      if ((ev.target as Element | null)?.closest?.("[data-err-next]")) open(null);
     },
     true,
   );

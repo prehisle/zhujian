@@ -83,6 +83,11 @@ function cur(): SyncStatus | null {
   return statuses.get(currentSpaceId()) ?? null;
 }
 
+/** 当前空间已配置的服务器;没配 / 还没拿到状态 = `null`(设置「关于」网络自检那格用,用户面 137)。 */
+export function configuredServer(): string | null {
+  return cur()?.server_url ?? null;
+}
+
 export function setSpaceNames(names: Map<string, string>): void {
   spaceNames.clear();
   for (const [k, v] of names) spaceNames.set(k, v);
@@ -513,7 +518,7 @@ function renderCreate(body: HTMLElement): void {
       })
       .catch((e: unknown) => {
         go.disabled = false;
-        err.replaceChildren(errNode(e));
+        err.replaceChildren(errNode(e, server.value.trim()));
       });
   });
   acts.appendChild(go);
@@ -543,7 +548,7 @@ function renderJoin(body: HTMLElement): void {
       })
       .catch((e: unknown) => {
         go.disabled = false;
-        err.replaceChildren(errNode(e));
+        err.replaceChildren(errNode(e, server.value.trim()));
       });
   });
   acts.appendChild(go);
@@ -607,7 +612,7 @@ function renderServer(body: HTMLElement): void {
       void invoke("sync_set_server", { serverUrl: server.value.trim() })
         .then(() => goto("advanced"))
         .catch((e: unknown) => {
-          err.replaceChildren(errNode(e));
+          err.replaceChildren(errNode(e, server.value.trim()));
         });
     }),
   );

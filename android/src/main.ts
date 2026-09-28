@@ -72,6 +72,7 @@ import { closeEditSheetNow, initEditSheet, isEditSheetDirty, isEditSheetOpen } f
 import { disconnectThumbObserver, fillThumb, hydrateThumbs } from "./thumbs";
 import { closeViewerNow, initViewer, isViewerOpen, openLocalViewer, openViewer } from "./viewer";
 import {
+  configuredServer,
   dismissScanOverlay,
   initSync,
   isBooting,
@@ -2549,8 +2550,16 @@ cardPanel.initCardPanel({
 });
 // 编辑层(706):正文编辑那座底部层。宿主是 cardpanel(草稿/写口/判弃都在那边),
 // 这里只给它返回键层账本的两把手(同留言层与大图查看器的形)。
-// 错误文案后面那枚「网络诊断」(err.ts,用户面 126)开的是设置里的「诊断」面。
-initErr(() => openPane("diag"));
+// 错误文案后面那枚「网络诊断」(err.ts,用户面 126)开的是设置里的「诊断」面,测**刚才连不上
+// 的那台**(用户面 137):出错那条路给了地址就用它,否则用当前空间已配置的;两样都没有才留着
+// 框里原有的(渠道默认或用户手改的)。面加载过一次之后 openPane 不再自动跑 ⇒ 这里补跑。
+initErr((url) => {
+  const target = url ?? configuredServer();
+  if (target) ($("url") as HTMLInputElement).value = target;
+  const loaded = diagLoaded;
+  if (activePane !== "diag") openPane("diag");
+  if (loaded && activePane === "diag") void runProbe();
+});
 initEditSheet({ pushLayer, settleHistory });
 // 留言层(314 第③笔):写/删成功即整轴重拉(徽章计数跟着走),开合各压/平一枚返回键守门条目。
 initComments({ refresh, pushLayer, settleHistory });

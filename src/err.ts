@@ -76,8 +76,10 @@ export function errDetail(e: unknown): string {
   return k ? k.text() + t("err.raw", { raw: s }) : s;
 }
 
-/** `errText` 的 DOM 形:认得出且有下一步的,文字后面挂一枚可点的钮。 */
-export function errNode(e: unknown): HTMLElement {
+/** `errText` 的 DOM 形:认得出且有下一步的,文字后面挂一枚可点的钮。
+ *  `url` = 这次连的是哪台 —— 自检要测**刚才连不上的那台**(用户面 137:此前恒填默认服务器);
+ *  只有地址是用户刚填的那几条路(创号 / 加入 / 改服务器)给,其余由自检那格取当前空间已配置的。 */
+export function errNode(e: unknown, url: string | null = null): HTMLElement {
   const box = document.createElement("span");
   box.append(errText(e));
   if (kindOf(raw(e))?.next === "probe") {
@@ -87,7 +89,7 @@ export function errNode(e: unknown): HTMLElement {
     b.textContent = t("err.probeNext");
     // 动态 import:settings → about → sync → 本文件,静态引会绕成环(settings 本就被 main
     // 静态引着,这里不会多出一个包)。
-    b.addEventListener("click", () => void import("./settings").then((m) => m.openSettingsPanel("about")));
+    b.addEventListener("click", () => void import("./settings").then((m) => m.openSettingsPanel("about", url)));
     box.append(" ", b);
   }
   return box;

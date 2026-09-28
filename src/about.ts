@@ -17,7 +17,7 @@ import { buildStamp, formatBuiltAt } from "../shared/build-stamp";
 import { checkForUpdateManual } from "./update";
 import { copyButton } from "./clipboard";
 import { currentSpaceId } from "./space";
-import { DEFAULT_SYNC_URL } from "./sync";
+import { DEFAULT_SYNC_URL, configuredServer } from "./sync";
 import { t } from "./i18n";
 import { elText as el } from "./dom";
 import { errDetail, errText } from "./err";
@@ -39,7 +39,7 @@ type ProbeStep = { name: string; ok: boolean; detail: string };
 const SITE = "https://zhujian.app";
 const REPO = "https://github.com/prehisle/zhujian";
 
-export function buildAboutPane(pane: HTMLElement): void {
+export function buildAboutPane(pane: HTMLElement, probeUrl: string | null): void {
   // 复制诊断信息时要拼的几段,各自拿到结果后填进来;没拿到的那段照实说「没拿到」。
   const report: Report = { version: "", build: "", db: [], probe: [] };
 
@@ -57,7 +57,7 @@ export function buildAboutPane(pane: HTMLElement): void {
     el("h2", "settings-title settings-sect", t("settings.diagTitle")),
     el("p", "settings-sub", t("settings.diagSub")),
     buildDbBlock(report),
-    buildProbeBlock(report),
+    buildProbeBlock(report, probeUrl),
     buildLogRow(),
     buildCopyRow(report),
   );
@@ -189,11 +189,12 @@ function buildDbBlock(report: Report): HTMLElement {
 
 // ---- 诊断:网络自检 ----
 
-function buildProbeBlock(report: Report): HTMLElement {
+/** 地址框填哪台(用户面 137):错误条带来的那台 > 当前空间已配置的 > 默认。 */
+function buildProbeBlock(report: Report, probeUrl: string | null): HTMLElement {
   const line = el("div", "hkset-row", "");
   const input = el("input", "alias-input about-url", "");
   input.type = "text";
-  input.value = DEFAULT_SYNC_URL;
+  input.value = probeUrl ?? configuredServer() ?? DEFAULT_SYNC_URL;
   input.spellcheck = false;
   const run = el("button", "hkset-change", t("settings.probeRun"));
   const ctrls = el("div", "alias-ctrls", "");
