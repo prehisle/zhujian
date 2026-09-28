@@ -302,12 +302,15 @@ function ohpmInstallOutOfTree() {
 // 找不到就当场红 —— ⛔ 别改成「找不到就跳过」,那样哪天包升级换了形,症状会是
 // 「装上去又停在启动闸」,而构建一声不吭。
 // ⚠ 它**幂等**:每趟构建都跑,已经打过就跳过(`ohpm install` 每趟重新解引用拷贝)。
+// ⚠ **两处都要扫**(769 真栽):hvigor 编的是 `entry/oh_modules/@ohos-rs/ability` 那份。老树里它是
+// 早年留下的目录联接、指回 `.ohpm` ⇒ 只扫 `.ohpm` 也打得着;**新检出的树**(新机器 / worktree)里
+// 上面 `cpSync(dereference)` 拷出的是一份实体目录 ⇒ 只扫 `.ohpm` 就漏掉它,包装上去 localStorage
+// 是 null,构建一声不吭。walk 不跟联接(`isDirectory()` 对联接是 false),老树那只联接不会被重复计。
 function enableDomStorage() {
-  const rel = join(
-    hapProject,
-    "oh_modules",
-    ".ohpm",
-  );
+  const roots = [
+    join(hapProject, "oh_modules", ".ohpm"),
+    join(hapProject, "entry", "oh_modules"),
+  ];
   const hits = [];
   const walk = (dir, depth) => {
     if (depth > 8) return;
@@ -317,8 +320,10 @@ function enableDomStorage() {
       else if (e.name === "DefaultWebview.ets") hits.push(p);
     }
   };
-  if (!existsSync(rel)) die(`没有 ${rel} —— ohpm install 那步没跑?`);
-  walk(rel, 0);
+  for (const rel of roots) {
+    if (!existsSync(rel)) die(`没有 ${rel} —— ohpm install 那步没跑?`);
+    walk(rel, 0);
+  }
   if (hits.length === 0) die("找不到 DefaultWebview.ets —— @ohos-rs/ability 换形了?(见本函数头注)");
   let patched = 0;
   for (const f of hits) {
