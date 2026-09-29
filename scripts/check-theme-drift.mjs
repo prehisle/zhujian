@@ -141,6 +141,20 @@ const TOKENS = [
     why: "官网单页的内容区最大宽度,是布局尺寸不是颜色令牌;app 侧宽度由窗口/屏幕定",
   },
   {
+    name: "--font-display",
+    in: ["官网"],
+    dark: false,
+    why: "官网改版(site-redesign-plan 1a)的标题字体:自托管的霞鹜文楷子集,认不到时退系统楷体。\
+app 两端不装网页字体(界面字走系统黑体),故只官网有",
+  },
+  {
+    name: "--bezel",
+    in: ["官网"],
+    dark: false,
+    why: "官网手机截图外那圈机身色(site-redesign-plan 1b)。⛔ 刻意不随明暗翻面:画的是一台黑色手机,\
+不是纸面。app 里没有「截图里的手机」这种东西",
+  },
+  {
     name: "--ok",
     in: APPS,
     dark: true,

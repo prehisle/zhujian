@@ -148,6 +148,14 @@ const NOT_A_DOC = [
 `check-fs-drift` 与 `check-hardcoded-colors` 的登记表**各抄一份**(实测多出 3 + 8 条同源例外)—— \
 复制登记表是全仓最会腐的那种东西。两者一致由 `branch-gate land` 那道 `build-site-cool.mjs --check` 守着",
   },
+  ...["site-next/index.html", "site-next/docs.html"].map((file) => ({
+    file,
+    privateOnly: true, // 不在导出白名单里,公开快照上没有
+    why: "官网改版的**原型**(778,site-redesign-plan),不上线、不部署,只当「样子」的参照;字体走 CDN、\
+链接是占位。真站的每一格都在 `site/index.html` 上按门禁重写,判的是那一份。\
+⚠ **触发门**:改版走完(执行态表最后一格销号)就把 `site-next/` 整个删掉,这两条跟着删 —— 下面那道\
+「过期条目」探针会点名",
+  })),
   {
     file: "ohos/index.html",
     why: "OH-c/C3 的**验收面**不是产品界面:它把六条复核面各显成一个读数(启动闸 JSON / 路径落点 / \

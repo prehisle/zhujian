@@ -37,6 +37,15 @@
     <!-- ───────── /分享卡片 ───────── -->
 
     <style>
+      /* 标题字体:霞鹜文楷 Medium 的子集(SIL OFL,许可证与字体同目录)。生成与「够不够用」
+         的核对都在 scripts/site-font.mjs;一个文件兼 400–700 两档,免得浏览器自己描粗。 */
+      @font-face {
+        font-family: "Zhujian WenKai";
+        src: url("fonts/zhujian-wenkai.woff2") format("woff2");
+        font-weight: 400 700;
+        font-display: swap;
+      }
+
       /* ───────────────────────────────────────────────────────────
          设计令牌 —— 与桌面客户端 src/theme.css 同源(纸与朱墨)。
          官网是静态单文件,故把令牌就地内联,颜色逐一对齐 app。
@@ -77,6 +86,10 @@
         /* 英文档的界面字(C6 / 用户面 127):只经下面那条 `:root:lang(en)` 接进 --font-sans,
            中文档一个像素不动。理由与「栈首必须点名 Segoe UI」见桌面 src/theme.css。 */
         --font-sans-en: "Segoe UI", system-ui, -apple-system, "Microsoft YaHei", "PingFang SC", sans-serif;
+        /* 官网标题一族(改版 1a):自托管的文楷子集,认不到时退回系统楷体。只此一处用它的地方是官网。 */
+        --font-display: "Zhujian WenKai", "Kaiti SC", "STKaiti", "KaiTi", serif;
+        /* 手机截图外那圈机身。刻意不随明暗翻面:它画的是一台黑色手机,不是纸面。 */
+        --bezel: #1b1813;
 
         --float-shadow: 0 18px 50px -20px rgba(40, 30, 18, 0.55), 0 2px 6px rgba(40, 30, 18, 0.12);
         --card-shadow: 0 1px 2px rgba(40, 30, 18, 0.06), 0 14px 30px -22px rgba(40, 30, 18, 0.5);
@@ -182,7 +195,7 @@
       /* ── 朱砂方印(白文)· 内联 SVG 的样式钩子 ───────────────── */
       .seal-mark { display: block; }
       .seal-mark rect { fill: var(--seal); }
-      .seal-mark text { fill: var(--raised); font-family: var(--font-brush); font-weight: 700; }
+      .seal-mark text { fill: var(--raised); font-family: var(--font-display); font-weight: 700; }
 
       /* ── 顶栏 ──────────────────────────────────────────────── */
       .topbar {
@@ -203,7 +216,7 @@
         display: inline-flex;
         align-items: center;
         gap: 11px;
-        font-family: var(--font-brush);
+        font-family: var(--font-display);
         font-size: var(--fs-24);
         font-weight: 700;
         letter-spacing: 0.06em;
@@ -259,7 +272,7 @@
         transform: rotate(45deg);
       }
       .section-title {
-        font-family: var(--font-serif);
+        font-family: var(--font-display);
         font-weight: 600;
         font-size: clamp(26px, 4.2vw, 38px);
         letter-spacing: 0.01em;
@@ -274,61 +287,60 @@
       }
 
       /* ── HERO ─────────────────────────────────────────────── */
+      /* 改版 1b(site-redesign-plan):居中标题 + 一整张产品合成图。旧版是左文右纸条两栏,
+         诊断「首屏没有产品」就是它 —— 右边一张小纸条配大片空白。纸条挪进了「记下」那一步的演示。 */
       .hero { position: relative; overflow: hidden; }
-      /* 朱丝栏:古笺的红色竖界栏 —— 首屏的记忆点,极淡 */
-      .hero::before {
-        content: "";
-        position: absolute;
-        inset: 0;
-        z-index: 0;
-        pointer-events: none;
-        background-image: repeating-linear-gradient(
-          90deg,
-          transparent 0,
-          transparent 53px,
-          var(--seal) 53px,
-          var(--seal) 54px
-        );
-        opacity: 0.05;
-        -webkit-mask-image: linear-gradient(180deg, transparent, #000 12%, #000 74%, transparent);
-        mask-image: linear-gradient(180deg, transparent, #000 12%, #000 74%, transparent);
-      }
-      .hero .wrap {
-        display: grid;
-        grid-template-columns: 1.05fr 0.95fr;
-        gap: 56px;
+      .hero .wrap { text-align: center; padding-top: clamp(40px, 6vw, 80px); }
+      .hero-copy { max-width: 780px; margin: 0 auto; }
+      /* 新版本小标签:版本号留在 markup 里(bump-version 认 `v<版本>`),字典只装那几个词 */
+      .news-pill {
+        display: inline-flex;
         align-items: center;
-        padding-top: clamp(48px, 6vw, 82px);
-        /* ⭐ 下边距比上边距**刻意小一档**(653,用户报「首屏底下中间是空的」):它与下一节的
-           上边距是**叠加**的,量过 —— 改前 1440 宽下「开源(MIT)…」到「怎么用」之间足足
-           189px 纯空白,而右列那张纸条是垂直居中的、底下另有 253px 空档 ⇒ 右下角连成一片。
-           ⛔ 别把两边改回一样大:上边距顶着顶栏、要的是呼吸,下边距顶着的是另一节自己的
-           上边距。 */
-        padding-bottom: clamp(36px, 4vw, 56px);
+        gap: 8px;
+        padding: 4px 14px 4px 4px;
+        border-radius: var(--radius-pill);
+        background: var(--raised);
+        box-shadow: var(--card-shadow);
+        outline: 1px solid var(--line);
+        outline-offset: -1px;
+        font-size: var(--fs-14);
+        color: var(--ink-soft);
+        text-decoration: none;
+        white-space: nowrap;
       }
-      .hero-copy { position: relative; z-index: 1; }
+      .news-pill:hover { color: var(--ink); }
+      .news-tag {
+        color: var(--seal);
+        background: var(--seal-tint);
+        font-weight: 600;
+        font-size: var(--fs-13);
+        padding: 2px 10px;
+        border-radius: var(--radius-pill);
+      }
       .hero h1 {
-        font-family: var(--font-brush);
+        font-family: var(--font-display);
         font-weight: 700;
-        font-size: clamp(40px, 6.6vw, 68px);
-        line-height: 1.16;
-        letter-spacing: 0.02em;
-        margin: 20px 0 0;
+        font-size: clamp(44px, 7.4vw, 84px);
+        line-height: 1.12;
+        letter-spacing: 0.03em;
+        margin: 26px 0 0;
       }
       .hero h1 .accent { color: var(--seal); }
       .hero-lead {
-        margin: 22px 0 0;
+        margin: 22px auto 0;
+        max-width: 36em;
         font-size: var(--fs-18);
         line-height: 1.75;
         color: var(--ink-soft);
-        max-width: 40ch;
+        text-wrap: balance;
       }
       .cta-row {
-        margin-top: 34px;
+        margin-top: 32px;
         display: flex;
         flex-wrap: wrap;
+        justify-content: center;
         align-items: center;
-        gap: 14px 20px;
+        gap: 12px;
       }
       .btn {
         display: inline-flex;
@@ -340,33 +352,216 @@
         letter-spacing: 0.02em;
         text-decoration: none;
         border-radius: var(--radius-pill);
-        padding: 13px 24px;
+        padding: 13px 26px;
         cursor: pointer;
         transition: transform 0.12s ease, box-shadow 0.15s, background 0.15s;
       }
       .btn-primary {
         background: var(--seal);
         color: var(--on-seal);
-        box-shadow: 0 10px 24px -12px var(--seal), inset 0 1px 0 rgba(255,255,255,0.18);
+        box-shadow: 0 10px 24px -12px var(--seal), inset 0 1px 0 rgba(255,255,255,.18);
       }
       .btn-primary:hover { transform: translateY(-1px); }
       .btn-ghost { color: var(--ink); border: 1px solid var(--line-strong); }
       .btn-ghost:hover { background: var(--raised); }
-      .cta-note { font-size: var(--fs-13); color: var(--ink-faint); letter-spacing: 0.01em; }
+      /* 平台一行:**每项自己不折行、整行按项换行**(777 记下的「菱形挂在两行中间」就是旧版
+         一整串文字在手机上从中间断开)。项间的点是 ::before 的记号,窄了换行时跟着项走。 */
+      .platforms {
+        list-style: none;
+        margin: 20px auto 0;
+        padding: 0;
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: center;
+        gap: 4px 16px;
+        font-size: var(--fs-13);
+        color: var(--ink-faint);
+      }
+      .platforms li { white-space: nowrap; }
+      .platforms li + li::before { content: "·"; margin-right: 16px; color: var(--ink-faint); }
 
-      /* HERO 视觉:复刻客户端的捕获纸条 .slip */
-      .hero-art { position: relative; z-index: 1; }
-      .slip {
+      /* 合成图:电脑看板居中,手机压在右下角。两张都是真截图,不是示意。 */
+      .stage {
         position: relative;
+        max-width: 1240px;
+        margin: clamp(40px, 5vw, 64px) auto 0;
+        padding: 0 28px clamp(40px, 6vw, 80px);
+      }
+      .stage::before {
+        content: "";
+        position: absolute;
+        inset: 6% 4% 0;
+        background: radial-gradient(60% 55% at 50% 45%, var(--seal-tint), transparent 70%);
+        pointer-events: none;
+      }
+      .stage img { display: block; width: 100%; height: auto; }
+      .stage-desktop {
+        position: relative;
+        width: min(100%, 1060px);
+        margin: 0 auto;
+        border-radius: var(--radius-md);
+        overflow: hidden;
+        box-shadow: var(--float-shadow);
+        outline: 1px solid var(--line);
+        outline-offset: -1px;
+      }
+      .stage-phone {
+        position: absolute;
+        right: max(8px, calc(50% - 590px));
+        bottom: 12px;
+        width: clamp(110px, 19%, 230px);
+        border-radius: var(--radius-lg);
+        overflow: hidden;
+        box-shadow: var(--float-shadow);
+        outline: 6px solid var(--bezel);
+      }
+
+      /* ── 三步主线 ──────────────────────────────────────────── */
+      /* 改版 1c:图文左右交替,**每张图只露它要说的那一块**。
+         ⭐ 判据沿用 651 那条式子(⛔ 记式子别记数):界面字在页面上的大小 = 图的显示 CSS 宽 ÷ 1260
+         (app 窗口的 CSS 宽)× 15px。旧版整窗一行一张、952px 宽 ⇒ 字约 11px,还套在卡片里再套一层框;
+         裁图把图放大到 1.75–2 倍再只露一角 ⇒ 列宽约 560px 时字约 12–13px,接近 app 原大。
+         全图照旧点开看(`.shot-zoom`,653),窄屏补读的那一半没丢。 */
+      .flow { padding: clamp(64px, 9vw, 120px) 0 clamp(40px, 6vw, 80px); }
+      .row {
+        display: grid;
+        grid-template-columns: 0.85fr 1.15fr;
+        gap: clamp(32px, 6vw, 88px);
+        align-items: center;
+        margin-top: clamp(48px, 7vw, 96px);
+      }
+      .row.flip { grid-template-columns: 1.15fr 0.85fr; }
+      .row.flip .row-copy { order: 2; }
+      .row-copy { min-width: 0; }
+      .step {
+        display: inline-grid;
+        place-items: center;
+        width: 36px;
+        height: 36px;
+        border-radius: var(--radius-sm);
+        background: var(--seal-tint);
+        color: var(--seal);
+        font-family: var(--font-display);
+        font-weight: 700;
+        font-size: var(--fs-18);
+      }
+      .row h3 {
+        font-family: var(--font-display);
+        font-weight: 700;
+        font-size: var(--fs-30);
+        letter-spacing: 0.04em;
+        margin: 16px 0 0;
+      }
+      .row p { color: var(--ink-soft); font-size: var(--fs-17); margin: 14px 0 0; max-width: 30em; }
+
+      /* 裁图框兼「点开看大图」的按钮(653 那枚入口,⛔ 用 <button> 不是 <div>:键盘、focus 环、读屏)。
+         第一张 img 是被裁的那张,也是浮层里放出来的那张(运行期取按钮里的第一个 img)。 */
+      .shot-zoom {
+        display: block;
+        width: 100%;
+        padding: 0;
+        border: 0;
+        font: inherit;
+        color: inherit;
+        cursor: zoom-in;
+      }
+      .crop {
+        position: relative;
+        aspect-ratio: 4 / 3;
+        overflow: hidden;
+        border-radius: var(--radius-lg);
+        background: var(--raised);
+        box-shadow: var(--card-shadow);
+        outline: 1px solid var(--line);
+        outline-offset: -1px;
+      }
+      .crop img { display: block; height: auto; max-width: none; }
+      .crop > img:first-child { position: absolute; top: 0; left: 0; }
+      /* 随记:左上角那块(侧栏 + 时间轴头几条) */
+      .crop-inbox > img:first-child { width: 175%; }
+      /* 看板:「进行中」「待确认」两列,带小清单的那张卡在正中 */
+      .crop.crop-board { aspect-ratio: 3 / 2; }
+      .crop-board > img:first-child { width: 200%; transform: translate(-35.5%, -24%); }
+      /* 同一份随记在手机上,压在右下角、底边出框 */
+      .crop .crop-phone {
+        position: absolute;
+        right: 5%;
+        bottom: -30%;
+        width: 26%;
+        border-radius: var(--radius-md);
+        box-shadow: var(--float-shadow);
+        outline: 5px solid var(--bezel);
+      }
+
+      /* 第一步的演示:纸条里打字 → 回车 → 新的一条落进随记(运行期在页尾那段独立脚本里)。
+         纸条就是旧版首屏那张 .slip 挪过来的,样子与客户端的捕获纸条同源。整块 aria-hidden,
+         意思由左边那段文字说。 */
+      .demo {
+        position: relative;
+        aspect-ratio: 4 / 3;
+        overflow: hidden;
+        border-radius: var(--radius-lg);
+        background: radial-gradient(80% 70% at 70% 20%, var(--seal-tint), transparent 70%), var(--raised-edge);
+        box-shadow: var(--card-shadow);
+        outline: 1px solid var(--line);
+        outline-offset: -1px;
+        display: grid;
+        place-items: center;
+      }
+      .demo-desk { position: relative; width: 84%; height: 78%; }
+      .demo-list {
+        position: absolute;
+        inset: 36% 0 0 10%;
+        padding: 16px 18px;
+        border-radius: var(--radius-md);
+        background: var(--raised);
+        box-shadow: var(--card-shadow);
+      }
+      .demo-head { display: flex; align-items: center; gap: 8px; font-size: var(--fs-13); color: var(--ink-soft); }
+      .demo-head::before { content: ""; width: 7px; height: 7px; border-radius: var(--radius-circle); background: var(--seal); }
+      .demo-card {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        margin-top: 8px;
+        padding: 9px 12px;
+        border-radius: var(--radius-sm);
+        background: var(--paper);
+        outline: 1px solid var(--line);
+        outline-offset: -1px;
+        font-family: var(--font-display);
+        font-size: var(--fs-15);
+        white-space: nowrap;
+        overflow: hidden;
+      }
+      .demo-card span:first-child { overflow: hidden; text-overflow: ellipsis; }
+      .demo-time { font-family: var(--font-sans); font-size: var(--fs-12); color: var(--ink-soft); flex: none; }
+      /* 新的那条先收成 0 高,「记下」之后展开;朱砂细边标出它是刚落进来的 */
+      .demo-card.new {
+        max-height: 0;
+        margin-top: 0;
+        padding-block: 0;
+        opacity: 0;
+        outline-color: var(--seal-line);
+        transition: max-height 0.45s ease, margin-top 0.45s ease, padding 0.45s ease, opacity 0.45s ease;
+      }
+      .demo.done .demo-card.new { max-height: 60px; margin-top: 10px; padding-block: 9px; opacity: 1; }
+      .slip {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 78%;
         border-radius: var(--radius-lg);
         background: linear-gradient(180deg, var(--raised), var(--raised-edge));
         box-shadow: var(--float-shadow);
         outline: 1px solid var(--line);
         outline-offset: -1px;
         overflow: hidden;
-        padding: 26px 26px 20px 30px;
+        padding: 18px 20px 12px 24px;
         transform: rotate(-1.3deg);
+        transition: transform 0.35s ease, opacity 0.35s ease;
       }
+      .demo.done .slip { opacity: 0; transform: translateY(-14px) rotate(-1.3deg) scale(0.97); }
       .slip::before {
         content: "";
         position: absolute; inset: 0;
@@ -378,21 +573,18 @@
       .slip::after {
         content: "";
         position: absolute;
-        left: 0; top: 18px; bottom: 18px;
+        left: 0; top: 14px; bottom: 14px;
         width: 4px;
         border-radius: 0 var(--radius-xs) var(--radius-xs) 0;
         background: var(--seal);
         opacity: 0.9;
       }
       .slip-text {
-        font-family: var(--font-serif);
+        font-family: var(--font-display);
         font-size: var(--fs-18);
-        line-height: 1.85;
+        line-height: 1.7;
         color: var(--ink);
-        /* 653:纸条是**垂直居中**摆在右列的,而左列有五段内容 ⇒ 它太矮就成了「浮在中间的
-           一小张卡」,右下角空一大片(量过:1440 宽下纸条底沿离首屏底沿 253px)。撑高它
-           不是装饰 —— 捕获纸条本来就是个还能接着写的输入框,留白是它该有的样子。 */
-        min-height: 156px;
+        min-height: 3.4em;
       }
       .slip-text .caret {
         display: inline-block;
@@ -405,15 +597,12 @@
       }
       @keyframes blink { 50% { opacity: 0; } }
       .slip-hint {
-        margin-top: 16px;
-        padding-top: 13px;
-        /* 给右下角那枚钤印让位:它是绝对定位、压在纸条角上,而这一行在英文档下更长
-           (Save / Hide 都比「记下 / 收起」宽),不留位就压到印上去。 */
-        padding-right: 46px;
+        margin-top: 10px;
+        padding-top: 8px;
         border-top: 1px solid var(--line);
         font-size: var(--fs-13);
         letter-spacing: 0.03em;
-        color: var(--ink-faint);
+        color: var(--ink-soft);
         display: flex;
         gap: 16px;
         flex-wrap: wrap;
@@ -425,102 +614,9 @@
         border-radius: var(--radius-xs);
         padding: 1px 6px;
         background: var(--paper);
+        transition: background 0.15s, color 0.15s;
       }
-      /* 悬在纸条上的小印,像刚钤下的落款 */
-      .slip-seal {
-        position: absolute;
-        right: -14px;
-        bottom: -14px;
-        width: 62px; height: 62px;
-        border-radius: var(--radius-md);
-        transform: rotate(6deg);
-        box-shadow: 0 6px 16px -6px rgba(40,30,18,.5);
-      }
-
-      /* ── 三步主线 ──────────────────────────────────────────── */
-      /* 上边距收一档:它与首屏的下边距叠加,理由见 `.hero .wrap` 那段(653)。 */
-      .flow { padding: clamp(40px, 4.5vw, 60px) 0 clamp(52px, 7vw, 90px); }
-      .flow-grid {
-        margin-top: 46px;
-        display: grid;
-        grid-template-columns: 1fr; /* 651 起一行一张卡,理由在下面 .shot-box 那段 */
-        gap: 30px;
-      }
-      .card {
-        position: relative;
-        background: linear-gradient(180deg, var(--raised), var(--raised-edge));
-        border-radius: var(--radius-lg);
-        outline: 1px solid var(--line);
-        outline-offset: -1px;
-        box-shadow: var(--card-shadow);
-        padding: 28px 26px 30px;
-      }
-      .card .step {
-        font-family: var(--font-brush);
-        font-size: var(--fs-15);
-        color: var(--seal);
-        letter-spacing: 0.14em;
-      }
-      .card h3 {
-        font-family: var(--font-serif);
-        font-weight: 600;
-        font-size: var(--fs-20);
-        margin: 12px 0 0;
-      }
-      .card p { color: var(--ink-soft); font-size: var(--fs-15); margin: 12px 0 0; }
-      /* 流程卡里的真图(651,copy-plan 格 2)。
-         ⭐ **三列卡装不下界面截图,这是算出来的不是觉出来的**。判据(⛔ 记这条式子,别记数):
-             图在页面上认不认得出 = 图的显示 CSS 宽 ÷ **1260**(app 窗口的 CSS 宽;源图 1890
-             设备像素 = 1.5 倍密度)⇒ 乘以界面里的 15px 就是读者眼里那些字的实际大小。
-         三列时每卡约 270px ⇒ 0.21 倍 ⇒ 3px,那是一团纹理不是截图。⇒ 改成**一行一张**。
-         ⛔ 别改回三列 —— 那等于把图退化成装饰。
-         ⚠ **653 复量:整行那一档今天是 952px = 0.76 倍 ⇒ 界面文字 11px**,而这段原话写的是
-         「约 1050px / 0.83 倍 / 12px」—— 三个数都偏乐观(卡自己有 26px 内边距,没算进去)。
-         ⇒ 数换成了式子;要现值就现量,别再往这儿写死一个。
-         ⚠ 这条式子**只在宽屏上成立**:窄屏那半(800 → 0.55 倍、手机 390 → 0.22 倍)靠
-         `.shot-zoom` 那层「点开看大图」补,理由焊在它自己那段注释里。 */
-
-      .shot-box {
-        margin-top: 18px;
-        display: grid;
-        place-items: center;
-        overflow: hidden;
-        background: var(--paper);
-        border-radius: var(--radius-md);
-        outline: 1px solid var(--line);
-        outline-offset: -1px;
-      }
-      .shot-box img { display: block; width: 100%; height: auto; }
-      /* ⭐ 每张图外面包一枚按钮 = 点开看大图的入口(653)。⛔ 用 `<button>` 不是 `<div>`:
-         键盘走得到、有 focus 环、读屏念得出 aria-label。宽度约束从 `img` 挪到按钮身上
-         (按钮成了 grid 项,图恒 100% 填满它)。
-         ⭐ **这不是锦上添花,是 651 那条尺寸判据在窄屏上缺的另一半**:量过 —— 视口 800 时
-         那两张全界面图只显示到 692px = app CSS 宽的 0.55 倍(界面里 15px 的字剩 8px),
-         600 时 0.39 倍(6px),手机 390 时 **0.22 倍(3px)** ⇒ 正是 651 判定为「一团纹理」
-         的那一档。⛔ 别把这枚入口去掉,除非那几张图不再是全界面截图。 */
-      .shot-zoom {
-        display: block;
-        width: 100%;
-        padding: 0;
-        border: 0;
-        background: none;
-        font: inherit;
-        color: inherit;
-        cursor: zoom-in;
-        border-radius: var(--radius-md);
-      }
-      /* 纸条那张原生就只有 840px 宽:拉到整行会糊 ⇒ 到原寸为止,居中摆着。 */
-      .shot-box.slip-shot .shot-zoom { width: min(100%, 840px); }
-      /* 手机那张(651):⚠ 它和桌面那张**不能并排** —— 并排后桌面那张只剩约 700px,
-         相对 app 的 1260 CSS 宽是 0.56 倍,界面文字掉回 8px,又回到「一团纹理」那一档。
-         ⇒ 叠在桌面那张下面,自己按 300px 显示(真机 1260 设备像素 ⇒ 4.2 倍密度,
-         认得出是一列随记卡)。它与上面那张是**同一个视图的两端**,故同住第二张卡。 */
-      .shot-pair { display: grid; gap: 16px; justify-items: center; }
-      .shot-pair .shot-zoom.phone {
-        width: min(100%, 300px);
-        box-shadow: var(--card-shadow);
-      }
-      .shot-pair .shot-zoom.phone img { border-radius: var(--radius-md); }
+      .demo.enter .slip-hint kbd.enter { color: var(--on-seal); background: var(--seal); }
 
       /* ── 看大图的浮层(653)────────────────────────────────────────────
          两档:进来先**整屏装得下**(desktop 上 1890 的源图铺到 1440 屏 = app CSS 宽的
@@ -577,9 +673,9 @@
       }
       .shot-view-close:hover { background: var(--raised); }
       body.shot-open { overflow: hidden; }
-      .card .kbd-inline {
+      .row .kbd-inline {
         font-family: var(--font-sans);
-        font-size: var(--fs-12);
+        font-size: var(--fs-14);
         color: var(--seal);
         border: 1px solid var(--seal-line);
         border-radius: var(--radius-xs);
@@ -604,7 +700,7 @@
         column-gap: 32px;
       }
       .facts dt {
-        font-family: var(--font-serif);
+        font-family: var(--font-display);
         font-size: var(--fs-17);
         font-weight: 600;
         display: flex;
@@ -661,7 +757,7 @@
         align-items: center;
         gap: 4px;
       }
-      .dl-card .os { font-family: var(--font-serif); font-size: var(--fs-20); font-weight: 600; }
+      .dl-card .os { font-family: var(--font-display); font-size: var(--fs-20); font-weight: 600; }
       .dl-card .meta { font-size: var(--fs-13); color: var(--ink-faint); margin-bottom: 18px; }
       .dl-card.soon { opacity: 0.72; }
       .dl-card.soon .badge {
@@ -718,7 +814,7 @@
         align-items: baseline;
         gap: 11px;
         padding: 16px 0;
-        font-family: var(--font-serif);
+        font-family: var(--font-display);
         font-size: var(--fs-17);
         font-weight: 600;
       }
@@ -750,7 +846,7 @@
       .seen-lead { color: var(--ink-soft); font-size: var(--fs-16); margin: 18px 0 0; max-width: 60ch; }
       .two-cols { margin-top: 30px; display: grid; grid-template-columns: 1fr 1fr; gap: 12px 48px; max-width: 920px; }
       .two-cols h3, .tinker-grid h3 {
-        font-family: var(--font-serif);
+        font-family: var(--font-display);
         font-size: var(--fs-17);
         font-weight: 600;
         margin: 0;
@@ -813,7 +909,7 @@
       }
       .foot-sign { display: flex; align-items: center; gap: 18px; }
       .foot-sign svg { width: 76px; height: 76px; border-radius: var(--radius-md); box-shadow: 0 6px 16px -8px rgba(40,30,18,.5); }
-      .foot-sign .word { font-family: var(--font-brush); }
+      .foot-sign .word { font-family: var(--font-display); }
       .foot-sign .word b { font-size: var(--fs-24); font-weight: 700; letter-spacing: 0.08em; display: block; }
       .foot-sign .word span { font-size: var(--fs-13); color: var(--ink-faint); letter-spacing: 0.12em; }
       /* 会换行:英文档在手机宽度下七八个链接排不进一行(F3 量到改前就撑出 390 宽的屏)。 */
@@ -837,9 +933,11 @@
            字才好读」这条排版判据拿去填空白),而是**让那根柱子站中间**。
            ⚠ `width:100%` 少不得:grid 的 `justify-items:center` 会把子项收成 `max-content`,
            不写的话 h1 那三行会各自按自己的宽度排、参差不齐。 */
-        .hero .wrap { grid-template-columns: 1fr; gap: 44px; justify-items: center; }
-        .hero-copy { width: 100%; max-width: 460px; }
-        .hero-art { width: 100%; max-width: 440px; }
+        /* 平台一行折成两行时,行首会挂一个孤零零的点 ⇒ 窄屏干脆不要点,只靠间距分开 */
+        .platforms li + li::before { content: none; }
+        /* 三步收成一列:图在字下面,左右交替那一翻只在两栏时有意义 */
+        .row, .row.flip { grid-template-columns: 1fr; }
+        .row.flip .row-copy { order: 0; }
 
         /* 窄屏收成一列:标签在上、正文在下,行间那道线只留给标签那一格 */
         .facts { grid-template-columns: 1fr; }
@@ -866,14 +964,14 @@
       <symbol id="seal-zhu" viewBox="0 0 100 100">
         <rect width="100" height="100" rx="14" style="fill:var(--seal)" />
         <text x="50" y="54" text-anchor="middle" dominant-baseline="central" font-size="64"
-          style="fill:var(--raised);font-family:var(--font-brush);font-weight:700">朱</text>
+          style="fill:var(--raised);font-family:var(--font-display);font-weight:700">朱</text>
       </symbol>
       <symbol id="seal-zhujian" viewBox="0 0 100 100">
         <rect width="100" height="100" rx="14" style="fill:var(--seal)" />
         <text x="50" y="30" text-anchor="middle" dominant-baseline="central" font-size="42"
-          style="fill:var(--raised);font-family:var(--font-brush);font-weight:700">朱</text>
+          style="fill:var(--raised);font-family:var(--font-display);font-weight:700">朱</text>
         <text x="50" y="72" text-anchor="middle" dominant-baseline="central" font-size="42"
-          style="fill:var(--raised);font-family:var(--font-brush);font-weight:700">简</text>
+          style="fill:var(--raised);font-family:var(--font-display);font-weight:700">简</text>
       </symbol>
     </svg>
 
@@ -898,35 +996,38 @@
       <section class="hero">
         <div class="wrap">
           <div class="hero-copy">
-            <span class="eyebrow" data-i18n="hero.eyebrow">Windows · Android · HarmonyOS · 免费使用</span>
+            <!-- 版本号留在 markup 里、不进字典:bump-version 按 `v<版本>` 一起改它(桌面那一侧)。 -->
+            <a class="news-pill" href="/changelog.html"><span class="news-tag" data-i18n="hero.newsTag">新版本</span><span><span data-i18n="hero.newsDesktop">电脑版</span> v0.2.49 · <span data-i18n="hero.newsSee">看看改了什么</span> →</span></a>
             <!-- 主标题的换行与朱砂重音是版式的一部分,故每一段各自成键(data-i18n 只覆写
                  textContent、带子元素会被吞掉)。末段在中文里是句号、在英文里是句点 ——
                  重音在中文落在「想清楚」、在英文落在 later,故 line3 那一格两档承担的
                  词不同,而朱砂色始终跟着 line3 这一格。 -->
-            <h1><span data-i18n="hero.line1">随手记一笔,</span><br /><span data-i18n="hero.line2">再慢慢</span><br /><span class="accent" data-i18n="hero.line3">想清楚</span><span data-i18n="hero.line4">。</span></h1>
-            <p class="hero-lead" data-i18n="hero.lead">
-              朱简是我做的一个记想法、管待办的工具。想到什么,先记进随记;要做的事转成待办,一步步推到完成。数据存在你自己的设备上,不联网也照常用。
-            </p>
+            <h1><span data-i18n="hero.line1">随手记一笔,</span><br /><span data-i18n="hero.line2">再慢慢</span><span class="accent" data-i18n="hero.line3">想清楚</span><span data-i18n="hero.line4">。</span></h1>
+            <p class="hero-lead" data-i18n="hero.lead">记想法、管待办的电脑与手机应用。数据存在你自己的设备上,不联网也照常用。</p>
             <div class="cta-row">
-              <a class="btn btn-primary" href="#download" data-i18n="hero.ctaDownload">
-                下载
-              </a>
-              <a class="btn btn-ghost" href="#flow" data-i18n="hero.ctaSee">看看它长什么样</a>
+              <a class="btn btn-primary" href="#download" data-i18n="hero.ctaDownload">免费下载</a>
+              <a class="btn btn-ghost" href="#flow" data-i18n="hero.ctaSee">看看怎么用</a>
             </div>
-            <p class="cta-note" data-i18n="hero.ctaNote">开源(MIT) · 不用注册</p>
+            <ul class="platforms">
+              <li>Windows</li>
+              <li>Android</li>
+              <li data-i18n="hero.pfHarmony">鸿蒙</li>
+              <li data-i18n="hero.pfTrial">macOS / Linux 尝鲜</li>
+              <li data-i18n="hero.pfOss">开源 MIT</li>
+              <li data-i18n="hero.pfNoSignup">不用注册</li>
+            </ul>
           </div>
-
-          <div class="hero-art">
-            <div class="slip" role="img" aria-label="捕获纸条示意:一行手记正在被写下" data-i18n-aria-label="hero.slipAria">
-              <div class="slip-text">
-                <span data-i18n="hero.slip1">给妈打电话,</span><br /><span data-i18n="hero.slip2">问体检结果</span><span class="caret"></span>
-              </div>
-              <div class="slip-hint">
-                <span><kbd>↵</kbd> <span data-i18n="hero.kbdSave">记下</span></span>
-                <span><kbd>Esc</kbd> <span data-i18n="hero.kbdEsc">收起</span></span>
-              </div>
-              <svg class="seal-mark slip-seal" viewBox="0 0 100 100" aria-hidden="true"><use href="#seal-zhu" /></svg>
-            </div>
+        </div>
+        <!-- 合成图:两张都是真截图(与三步里用的是同一批),⛔ 别换成示意图。手机那张裁掉了
+             系统状态栏与手势条的白边(用户 9-29 报)。 -->
+        <div class="stage">
+          <div class="stage-desktop">
+            <img src="shots/desktop-board.webp" width="1890" height="1050" fetchpriority="high" decoding="async"
+                 alt="任务看板:待办、进行中、待确认、已完成四列,卡片上标着截止日期和标签" data-i18n-alt="flow.card3Alt" />
+          </div>
+          <div class="stage-phone">
+            <img src="shots/phone-inbox.webp" width="630" height="1254" decoding="async"
+                 alt="同一份随记在手机上:一列卡片,其中一条正文里带着可以打勾的小清单" data-i18n-alt="flow.card2AltPhone" />
           </div>
         </div>
       </section>
@@ -937,50 +1038,58 @@
           <span class="eyebrow" data-i18n="flow.eyebrow">怎么用</span>
           <h2 class="section-title" data-i18n="flow.title">从记下到做完,三步</h2>
 
-          <div class="flow-grid">
-            <article class="card">
+          <div class="row">
+            <div class="row-copy">
               <div class="step" data-i18n="flow.step1">一</div>
               <h3 data-i18n="flow.card1Title">记下</h3>
               <p>
                 <span data-i18n="flow.card1a">全局热键</span> <span class="kbd-inline">Ctrl+Alt+N</span> <span data-i18n="flow.card1b">唤出一张纸条,写完回车就存进随记,窗口自己收起。截图可以直接粘贴。</span>
               </p>
-              <div class="shot-box slip-shot">
-                <button class="shot-zoom" type="button" aria-label="点开看大图" data-i18n-aria-label="shot.zoom">
-                  <img src="shots/desktop-capture.webp" width="840" height="192" loading="lazy" decoding="async"
-                       alt="捕获纸条:一行「明早顺路取体检报告」写在纸色的输入框里" data-i18n-alt="flow.card1Alt" />
-                </button>
+            </div>
+            <!-- 演示:纸条里逐字打出「新的那条」的原文 → 回车键亮一下 → 纸条收起、那条落进随记。
+                 要打的字由运行期从 .demo-card.new 里读(跟着语言走),脚本里一个字面量都没有。 -->
+            <div class="demo" aria-hidden="true">
+              <div class="demo-desk">
+                <div class="demo-list">
+                  <div class="demo-head" data-i18n="flow.demoHead">随记 · 今天</div>
+                  <div class="demo-card new"><span data-i18n="flow.demoNew">明早顺路取体检报告</span><span class="demo-time" data-i18n="flow.demoJust">刚刚</span></div>
+                  <div class="demo-card"><span data-i18n="flow.demoItem1">周末把书架第二层整理一遍</span><span class="demo-time">17:00</span></div>
+                  <div class="demo-card"><span data-i18n="flow.demoItem2">给妈打电话,问体检结果</span><span class="demo-time">16:42</span></div>
+                </div>
+                <div class="slip">
+                  <div class="slip-text"><span class="typed"></span><span class="caret"></span></div>
+                  <div class="slip-hint">
+                    <span><kbd class="enter">↵</kbd> <span data-i18n="hero.kbdSave">记下</span></span>
+                    <span><kbd>Esc</kbd> <span data-i18n="hero.kbdEsc">收起</span></span>
+                  </div>
+                </div>
               </div>
-            </article>
-            <article class="card">
+            </div>
+          </div>
+
+          <div class="row flip">
+            <div class="row-copy">
               <div class="step" data-i18n="flow.step2">二</div>
               <h3 data-i18n="flow.card2Title">理一理</h3>
-              <p data-i18n="flow.card2">
-                在随记里给它打标签,或转成待办。每次编辑都保留改动前的版本,旧稿能找回;删了先进回收站,随时还原。
-              </p>
-              <div class="shot-box shot-pair">
-                <button class="shot-zoom" type="button" aria-label="点开看大图" data-i18n-aria-label="shot.zoom">
-                  <img src="shots/desktop-inbox.webp" width="1890" height="1050" loading="lazy" decoding="async"
-                       alt="随记:今天记下的几条排成一条时间轴,各自挂着标签" data-i18n-alt="flow.card2Alt" />
-                </button>
-                <button class="shot-zoom phone" type="button" aria-label="点开看大图" data-i18n-aria-label="shot.zoom">
-                  <img src="shots/phone-inbox.webp" width="630" height="1360" loading="lazy" decoding="async"
-                       alt="同一份随记在手机上:一列卡片,其中一条正文里带着可以打勾的小清单" data-i18n-alt="flow.card2AltPhone" />
-                </button>
-              </div>
-            </article>
-            <article class="card">
+              <p data-i18n="flow.card2">在随记里给它打标签,或转成待办。每次编辑都保留改动前的版本,旧稿能找回;删了先进回收站,随时还原。</p>
+            </div>
+            <button class="shot-zoom crop crop-inbox" type="button" aria-label="点开看大图" data-i18n-aria-label="shot.zoom">
+              <img src="shots/desktop-inbox.webp" width="1890" height="1050" loading="lazy" decoding="async"
+                   alt="随记:今天记下的几条排成一条时间轴,各自挂着标签" data-i18n-alt="flow.card2Alt" />
+              <img class="crop-phone" src="shots/phone-inbox.webp" width="630" height="1254" loading="lazy" decoding="async" alt="" />
+            </button>
+          </div>
+
+          <div class="row">
+            <div class="row-copy">
               <div class="step" data-i18n="flow.step3">三</div>
               <h3 data-i18n="flow.card3Title">做完它</h3>
-              <p data-i18n="flow.card3">
-                待办、进行中、待确认、已完成,拖着走。做完的归档,可查、不可删。
-              </p>
-              <div class="shot-box">
-                <button class="shot-zoom" type="button" aria-label="点开看大图" data-i18n-aria-label="shot.zoom">
-                  <img src="shots/desktop-board.webp" width="1890" height="1050" loading="lazy" decoding="async"
-                       alt="任务看板:待办、进行中、待确认、已完成四列,卡片上标着截止日期和标签" data-i18n-alt="flow.card3Alt" />
-                </button>
-              </div>
-            </article>
+              <p data-i18n="flow.card3">待办、进行中、待确认、已完成,拖着走。做完的归档,可查、不可删。</p>
+            </div>
+            <button class="shot-zoom crop crop-board" type="button" aria-label="点开看大图" data-i18n-aria-label="shot.zoom">
+              <img src="shots/desktop-board.webp" width="1890" height="1050" loading="lazy" decoding="async"
+                   alt="任务看板:待办、进行中、待确认、已完成四列,卡片上标着截止日期和标签" data-i18n-alt="flow.card3Alt" />
+            </button>
           </div>
         </div>
       </section>
@@ -1215,11 +1324,11 @@ Linux    ~/.local/share/app.zhujian.notebook/notebook.sqlite3</pre>
       <!-- ───────── 理念 + 开源 ───────── -->
       <section class="ethos" id="ethos">
         <div class="wrap">
-          <span class="eyebrow" data-i18n="ethos.eyebrow">谁做的</span>
+          <span class="eyebrow" data-i18n="ethos.eyebrow">为什么做它</span>
           <div class="ethos-body">
             <!-- 为什么做它的三条是用户 2026-09-25 亲口给的三个理由,按原意改写成首页语气;
                  加粗的短句与正文各成一键(data-i18n 只覆写 textContent)。 -->
-            <p data-i18n="ethos.p1">我一个人做的。做它,是因为下面三件事一直让我不踏实。</p>
+            <p data-i18n="ethos.p1">做它,是因为下面三件事一直让我不踏实。</p>
             <p><strong data-i18n="ethos.why1a">数据放在别人的云上。</strong><span data-i18n="ethos.why1b">服务一停、账号一封,或者数据库被人拖走,东西就不是你的了。所以朱简把数据存在你自己的设备上,同步也只传加密过的内容。</span></p>
             <p><strong data-i18n="ethos.why2a">想记的时候打不开。</strong><span data-i18n="ethos.why2b">网页上的看板要开浏览器、要登录,网一慢就卡,功能还越堆越多。可一个念头常常只停几秒。朱简的做法是:按一个热键,弹出一张纸条,写完回车就收起。</span></p>
             <p><strong data-i18n="ethos.why3a">写下的字被改掉。</strong><span data-i18n="ethos.why3b">现在很多工具都在用 AI 帮你润色、总结、归类。可在什么都能让 AI 代写的时候,你自己想出来、没被改过的念头,才更值得留着。朱简不会动你写下的任何一个字。</span></p>
@@ -1301,18 +1410,20 @@ Linux    ~/.local/share/app.zhujian.notebook/notebook.sqlite3</pre>
           "nav.langToggle": { zh: "EN", en: "中文" },
 
           /* — 首屏 — */
-          "hero.eyebrow": { zh: "Windows · Android · HarmonyOS · 免费使用", en: "Windows · Android · HarmonyOS · Free to use" },
+          "hero.newsTag": { zh: "新版本", en: "New" },
+          "hero.newsDesktop": { zh: "电脑版", en: "Desktop" },
+          "hero.newsSee": { zh: "看看改了什么", en: "what changed (in Chinese)" },
           "hero.line1": { zh: "随手记一笔,", en: "Jot it down now," },
-          "hero.line2": { zh: "再慢慢", en: "think it through" },
+          "hero.line2": { zh: "再慢慢", en: "think it through " },
           "hero.line3": { zh: "想清楚", en: "later" },
           "hero.line4": { zh: "。", en: "." },
-          "hero.lead": { zh: "朱简是我做的一个记想法、管待办的工具。想到什么,先记进随记;要做的事转成待办,一步步推到完成。数据存在你自己的设备上,不联网也照常用。", en: "Zhujian is a tool I made for notes and tasks. Jot a thought down; when it becomes something to do, turn it into a task and see it through. Your data stays on your own device, and the app works offline." },
-          "hero.ctaDownload": { zh: "下载", en: "Download" },
-          "hero.ctaSee": { zh: "看看它长什么样", en: "See what it looks like" },
-          "hero.ctaNote": { zh: "开源(MIT) · 不用注册", en: "Open source (MIT) · No sign-up" },
-          "hero.slipAria": { zh: "捕获纸条示意:一行手记正在被写下", en: "A capture slip: a line being written down" },
-          "hero.slip1": { zh: "给妈打电话,", en: "Call Mum," },
-          "hero.slip2": { zh: "问体检结果", en: "ask how the check-up went" },
+          "hero.lead": { zh: "记想法、管待办的电脑与手机应用。数据存在你自己的设备上,不联网也照常用。", en: "Notes and tasks, on your computer and your phone. Your data stays on your own devices, and the app works offline." },
+          "hero.ctaDownload": { zh: "免费下载", en: "Download for free" },
+          "hero.ctaSee": { zh: "看看怎么用", en: "See how it works" },
+          "hero.pfHarmony": { zh: "鸿蒙", en: "HarmonyOS" },
+          "hero.pfTrial": { zh: "macOS / Linux 尝鲜", en: "macOS / Linux early builds" },
+          "hero.pfOss": { zh: "开源 MIT", en: "Open source (MIT)" },
+          "hero.pfNoSignup": { zh: "不用注册", en: "No sign-up" },
           "hero.kbdSave": { zh: "记下", en: "Save" },
           "hero.kbdEsc": { zh: "收起", en: "Hide" },
 
@@ -1330,7 +1441,11 @@ Linux    ~/.local/share/app.zhujian.notebook/notebook.sqlite3</pre>
           "flow.card3Title": { zh: "做完它", en: "Get it done" },
           "flow.card3": { zh: "待办、进行中、待确认、已完成,拖着走。做完的归档,可查、不可删。", en: "To do, In progress, To confirm, Done. Drag tasks along; finished ones go to Archive, where you can look them up but not delete them." },
           /* — 三张真图的 alt:写图上真有的东西,别把它当第二条广告位 — */
-          "flow.card1Alt": { zh: "捕获纸条:一行「明早顺路取体检报告」写在纸色的输入框里", en: "The capture slip: one line typed on a paper-toned field, reading 'Pick up the health report tomorrow'" },
+          "flow.demoHead": { zh: "随记 · 今天", en: "Notes · Today" },
+          "flow.demoNew": { zh: "明早顺路取体检报告", en: "Pick up the health report tomorrow" },
+          "flow.demoJust": { zh: "刚刚", en: "just now" },
+          "flow.demoItem1": { zh: "周末把书架第二层整理一遍", en: "Sort out the second shelf this weekend" },
+          "flow.demoItem2": { zh: "给妈打电话,问体检结果", en: "Call Mum, ask how the check-up went" },
           "flow.card2Alt": { zh: "随记:今天记下的几条排成一条时间轴,各自挂着标签", en: "Notes: today's entries laid out as a timeline, each carrying its tags" },
           "flow.card2AltPhone": { zh: "同一份随记在手机上:一列卡片,其中一条正文里带着可以打勾的小清单", en: "The same notes on a phone: a column of cards, one of them holding a tickable checklist in its body" },
           "flow.card3Alt": { zh: "任务看板:待办、进行中、待确认、已完成四列,卡片上标着截止日期和标签", en: "The task board: four columns (To do, In progress, To confirm, Done) with due dates and tags on the cards" },
@@ -1447,8 +1562,8 @@ Linux    ~/.local/share/app.zhujian.notebook/notebook.sqlite3</pre>
           "limits.x3": { zh: "在应用里放广告或统计代码。", en: "Put ads or analytics in the app." },
 
           /* — 理念 — */
-          "ethos.eyebrow": { zh: "谁做的", en: "Who made it" },
-          "ethos.p1": { zh: "我一个人做的。做它,是因为下面三件事一直让我不踏实。", en: "I made it on my own, because three things kept bothering me." },
+          "ethos.eyebrow": { zh: "为什么做它", en: "Why it exists" },
+          "ethos.p1": { zh: "做它,是因为下面三件事一直让我不踏实。", en: "I built it because three things kept bothering me." },
           "ethos.why1a": { zh: "数据放在别人的云上。", en: "Your data lives in someone else's cloud. " },
           "ethos.why1b": { zh: "服务一停、账号一封,或者数据库被人拖走,东西就不是你的了。所以朱简把数据存在你自己的设备上,同步也只传加密过的内容。", en: "If the service shuts down, your account gets banned, or the database leaks, it is no longer yours. So Zhujian keeps your data on your own devices, and sync only carries encrypted content." },
           "ethos.why2a": { zh: "想记的时候打不开。", en: "You can't open it when you need to jot something down. " },
@@ -1517,6 +1632,45 @@ Linux    ~/.local/share/app.zhujian.notebook/notebook.sqlite3</pre>
           localStorage.setItem(KEY, current);
           apply(current);
         });
+      })();
+    </script>
+
+    <!-- ───────── 「记下」那一步的演示(改版 1c)──────────────────────────────────
+         纸条里逐字打出新的那条 → 回车键亮一下 → 纸条收起、那条落进随记,停一会儿再来一遍。
+         ⛔ 这一段里一个中文字面量都不许有(同下面那段的理由):要打的字每一轮现从
+         `.demo-card.new` 里读,换了语言下一轮就跟着换。
+         系统设了「减少动态效果」就直接停在终态;滚到跟前才开始,免得在首屏外空转。 -->
+    <script>
+      (function () {
+        "use strict";
+        var demo = document.querySelector(".demo");
+        var typed = demo.querySelector(".typed");
+        var source = demo.querySelector(".demo-card.new span");
+        if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+          demo.classList.add("done");
+          return;
+        }
+        function run() {
+          var text = Array.from(source.textContent);
+          var i = 0;
+          demo.classList.remove("done", "enter");
+          typed.textContent = "";
+          var tick = setInterval(function () {
+            i++;
+            typed.textContent = text.slice(0, i).join("");
+            if (i < text.length) return;
+            clearInterval(tick);
+            setTimeout(function () { demo.classList.add("enter"); }, 500);
+            setTimeout(function () { demo.classList.add("done"); }, 800);
+            setTimeout(run, 4800);
+          }, 140);
+        }
+        var seen = new IntersectionObserver(function (entries) {
+          if (!entries[0].isIntersecting) return;
+          seen.disconnect();
+          run();
+        });
+        seen.observe(demo);
       })();
     </script>
 

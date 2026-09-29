@@ -43,6 +43,10 @@
         /* 英文档的界面字(C6 / 用户面 127):只经下面那条 `:root:lang(en)` 接进 --font-sans,
            中文档一个像素不动。理由与「栈首必须点名 Segoe UI」见桌面 src/theme.css。 */
         --font-sans-en: "Segoe UI", system-ui, -apple-system, "Microsoft YaHei", "PingFang SC", sans-serif;
+        /* 官网标题一族(改版 1a):自托管的文楷子集,认不到时退回系统楷体。只此一处用它的地方是官网。 */
+        --font-display: "Zhujian WenKai", "Kaiti SC", "STKaiti", "KaiTi", serif;
+        /* 手机截图外那圈机身。刻意不随明暗翻面:它画的是一台黑色手机,不是纸面。 */
+        --bezel: #1b1813;
 
         --float-shadow: 0 18px 50px -20px rgba(40, 30, 18, 0.55), 0 2px 6px rgba(40, 30, 18, 0.12);
         --card-shadow: 0 1px 2px rgba(40, 30, 18, 0.06), 0 14px 30px -22px rgba(40, 30, 18, 0.5);

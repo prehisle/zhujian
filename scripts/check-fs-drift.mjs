@@ -100,7 +100,7 @@ const ALLOW = [
   { file: "notebook.html", selector: ".wc", value: "10px", why: "窗口控件按钮,内容是 <svg> 没有文字 —— 这里的字号对渲染不产生任何影响" },
 
   // ---- ② 不是固定尺寸的形状 ----
-  { file: "site/index.html", selector: ".hero h1", value: "clamp(40px, 6.6vw, 68px)", why: "官网首屏大标题:随视口流动的字号,不是阶上的一档。下界 40px 已高过阶顶,收进阶只会让它在窄屏上过大" },
+  { file: "site/index.html", selector: ".hero h1", value: "clamp(44px, 7.4vw, 84px)", why: "官网首屏大标题:随视口流动的字号,不是阶上的一档。下界 44px 已高过阶顶,收进阶只会让它在窄屏上过大(改版 1b 起居中、两行)" },
   { file: "site/index.html", selector: ".section-title", value: "clamp(26px, 4.2vw, 38px)", why: "同上,章节标题" },
   { file: "src/item-images.css", selector: ".img-ref", value: "0.86em", why: "正文里的图引用记号,**相对宿主**缩一档 —— 宿主可能是 13px 的时间轴行也可能是 14px 的正文,写死任何一档都会在另一种宿主里失配(与 341 那条 `border-radius: inherit` 同型)" },
 ];
