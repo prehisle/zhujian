@@ -284,6 +284,7 @@
         font-size: var(--fs-17);
         max-width: 42ch;
         margin: 14px 0 0;
+        text-wrap: pretty;
       }
 
       /* ── HERO ─────────────────────────────────────────────── */
@@ -746,19 +747,29 @@
            <a class="btn"> 有用。不关的话卡里的机型、版本号连同朱砂按钮都横着一道线。 */
         text-decoration: none;
         width: 260px;
-        background: linear-gradient(180deg, var(--raised), var(--raised-edge));
+        background: var(--raised);
         border-radius: var(--radius-lg);
         outline: 1px solid var(--line);
         outline-offset: -1px;
         box-shadow: var(--card-shadow);
-        padding: 30px 26px;
+        padding: 32px 24px 26px;
         display: flex;
         flex-direction: column;
         align-items: center;
-        gap: 4px;
+        gap: 6px;
+        transition: transform 0.2s ease, box-shadow 0.2s ease;
       }
-      .dl-card .os { font-family: var(--font-display); font-size: var(--fs-20); font-weight: 600; }
-      .dl-card .meta { font-size: var(--fs-13); color: var(--ink-faint); margin-bottom: 18px; }
+      /* 改版 1d:整张卡是一个链接,悬停时整张抬一下,而不是只有按钮在动 */
+      .dl-card:hover { transform: translateY(-2px); box-shadow: var(--float-shadow); }
+      .dl-card .os { font-family: var(--font-display); font-size: var(--fs-20); font-weight: 700; letter-spacing: 0.02em; white-space: nowrap; }
+      .dl-card .meta { font-size: var(--fs-13); color: var(--ink-soft); margin-bottom: 16px; }
+      /* 鸿蒙那张是去商店、不是直接下安装包 ⇒ 按钮退成描边,一眼分得出「这张点了不是下载」。
+         按 href 认,不另加类名:境内站生成器换下载区时自带同一张鸿蒙卡,两站同一条规则都认得。 */
+      .dl-card[href*="appgallery"] .btn-primary {
+        color: var(--ink);
+        background: none;
+        box-shadow: inset 0 0 0 1px var(--line-strong);
+      }
       .dl-card.soon { opacity: 0.72; }
       .dl-card.soon .badge {
         margin-top: 6px;
@@ -908,7 +919,7 @@
         flex-wrap: wrap;
       }
       .foot-sign { display: flex; align-items: center; gap: 18px; }
-      .foot-sign svg { width: 76px; height: 76px; border-radius: var(--radius-md); box-shadow: 0 6px 16px -8px rgba(40,30,18,.5); }
+      .foot-sign svg { width: 56px; height: 56px; border-radius: var(--radius-md); box-shadow: 0 6px 16px -8px rgba(40,30,18,.5); transform: rotate(-4deg); }
       .foot-sign .word { font-family: var(--font-display); }
       .foot-sign .word b { font-size: var(--fs-24); font-weight: 700; letter-spacing: 0.08em; display: block; }
       .foot-sign .word span { font-size: var(--fs-13); color: var(--ink-faint); letter-spacing: 0.12em; }
