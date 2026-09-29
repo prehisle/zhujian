@@ -233,7 +233,7 @@ if (!FAKE) {
   // ── ①f 子页(改版 2b):site-app/<名>.html 与线上逐字节比 ─────────────
   // 页名从 site/pages/ 现算(⛔ 别手写清单:新加一页忘了登记 = 那页发没发没人问)。
   // 这几页是生成器用首页的壳做的 ⇒ 首页一改它们也跟着变,只发首页不发它们就会在这儿红。
-  console.log("\n①f 子页、英文页与文档中心(en/ 下各一份;docs/ 下的文档页与搜索索引)");
+  console.log("\n①f 子页、英文页、文档中心、开发手记与两份 RSS");
   try {
     const subs = readdirSync("site/pages").filter((f) => f.endsWith(".html")).sort();
     if (!subs.length) bad("site/pages/ 一页都没有 —— 这格的匹配面坏了,不是没东西要核");
@@ -241,7 +241,8 @@ if (!FAKE) {
     // 3a 起还有文档中心(docs/ 下,只有中文)与它的搜索索引;页名跟着 user-guide 走,从产物目录现读
     const docs = readdirSync("site-app/docs").filter((f) => f.endsWith(".html") || f === "search.json").sort();
     if (!docs.includes("index.html")) bad("site-app/docs/ 里没有总览页 —— 这格的匹配面坏了,不是没东西要核");
-    const names = [...subs, ...["index.html", ...subs].map((f) => `en/${f}`), ...docs.map((f) => `docs/${f}`)];
+    // 3b 起开发手记也套首页的壳(更新日志那页在 ①d 比),两份 RSS 同样是产物
+    const names = [...subs, ...["index.html", ...subs].map((f) => `en/${f}`), ...docs.map((f) => `docs/${f}`), "devlog.html", "changelog.xml", "devlog.xml"];
     for (const f of names) {
       const local = readFileSync(`site-app/${f}`);
       const live = curl(`https://zhujian.app/${f}`, { binary: true });

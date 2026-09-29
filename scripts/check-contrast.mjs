@@ -121,13 +121,9 @@ const NOT_A_DOC = [
   ...[
     "site-cool/privacy-rights.html",
     "site-cool/terms.html",
-    "site-cool/changelog.html",
-    "site-cool/devlog.html",
     "site-app/privacy.html",
     "site-app/privacy-rights.html",
     "site-app/terms.html",
-    "site-app/changelog.html",
-    "site-app/devlog.html",
   ].map((file) => ({
     file,
     why: "同一个 `docPage()` 模板(scripts/build-site-cool.mjs)生成的另一份,内联样式**逐字节相同** \
@@ -150,12 +146,12 @@ const NOT_A_DOC = [
   },
   // 2c 起 zhujian.app 的首页也是生成的,另加 en/ 下的英文那一份(site-cool/index.html 另有一条,不在这儿重登)。
   ...["site-app", "site-cool"]
-    .flatMap((dir) => ["", "en/"].flatMap((pre) => ["index", "about", "help", "security"].map((n) => `${dir}/${pre}${n}.html`)))
+    .flatMap((dir) => [...["", "en/"].flatMap((pre) => ["index", "about", "help", "security"].map((n) => `${dir}/${pre}${n}.html`)), `${dir}/changelog.html`, `${dir}/devlog.html`])
     .filter((f) => f !== "site-cool/index.html")
     .map((file) => ({
     file,
     privateOnly: file.startsWith("site-cool/"), // site-app/ 在导出白名单里(安卓包烤它),site-cool/ 不在
-    why: "官网生成的页(改版 2b / 2c):生成器拿 `site/index.html` 当壳,换 <main> 与 <head> 里的标题 / 描述 / 分享卡片,英文那份再把字烤进去 \
+    why: "官网生成的页(改版 2b / 2c;3b 起更新日志与开发手记也套这个壳,只有中文):生成器拿 `site/index.html` 当壳,换 <main> 与 <head> 里的标题 / 描述 / 分享卡片,英文那份再把字烤进去 \
 ⇒ `<style>` 与首页**逐字节相同**,配色 / 字号 / 圆角由「官网·单页」那一格判,判第二遍没有新信息。\
 子页自己的正文片段(`site/pages/`)在 i18n 门禁的扫描面里;成品 == 生成器输出由 `branch-gate land` 那道 \
 `build-site-cool.mjs --check` 守着。⚠ 触发门:哪天子页有了自己的样式块,这条就不成立了,要登记进 DOCS",

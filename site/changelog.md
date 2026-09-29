@@ -1,7 +1,9 @@
 # 朱简 更新日志(官网「更新日志」页的真相源)
 
-这份是 `scripts/build-site-cool.mjs` 的输入:它把「正文开始 / 正文结束」之间那段套上协议页同一份
-模板,生成 `site-app/changelog.html`(zhujian.app)与 `site-cool/changelog.html`(zhujian.cool)。
+这份是 `scripts/build-site-cool.mjs` 的输入:它把「正文开始 / 正文结束」之间那段套进官网首页的壳,
+生成 `site-app/changelog.html`(zhujian.app)与 `site-cool/changelog.html`(zhujian.cool),另各出一份
+RSS(`changelog.xml`,改版 3b)。形状是 fail-closed 的:日期只认「2026 年 9 月 26 日」、从新到旧;
+每条只认 `- **电脑版|安卓版 x.y.z**:一句话`;最后一节末尾可以跟一句不带 `-` 的收尾话。
 ⛔ 别去改那两份产物,下次生成就被冲掉。
 
 维护规矩(profit-readiness F2 立):

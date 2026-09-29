@@ -33,6 +33,8 @@ import { execFileSync } from "node:child_process";
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const SITE = join(ROOT, "site", "index.html");
 const GUIDE = join(ROOT, "docs", "user-guide.md");
+// 更新日志与开发手记(改版 3b):页标题与手记每篇的标题也用标题字体
+const LOG_SRCS = [join(ROOT, "site", "changelog.md"), join(ROOT, "site", "devlog.md")];
 const OUT_DIR = join(ROOT, "site", "fonts");
 const WOFF2 = join(OUT_DIR, "zhujian-wenkai.woff2");
 const CHARS = join(OUT_DIR, "zhujian-wenkai.chars.txt");
@@ -49,7 +51,7 @@ export function neededChars() {
     for (const ch of JSON.parse(`"${m[1]}"`)) set.add(ch);
   }
   /* 文档中心(改版 3a)的页标题与小节标题也用标题字体:user-guide 里「#」到「###」那几行 */
-  for (const m of readFileSync(GUIDE, "utf8").matchAll(/^#{1,3}\s+(.*)$/gm)) for (const ch of m[1].trim()) set.add(ch);
+  for (const f of [GUIDE, ...LOG_SRCS]) for (const m of readFileSync(f, "utf8").matchAll(/^#{1,3}\s+(.*)$/gm)) for (const ch of m[1].trim()) set.add(ch);
   for (let c = 0x20; c < 0x7f; c++) set.add(String.fromCharCode(c));
   return [...set].sort();
 }

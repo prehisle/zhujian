@@ -1,7 +1,9 @@
 # 朱简 开发手记(官网「开发手记」页的真相源)
 
-这份是 `scripts/build-site-cool.mjs` 的输入:「正文开始 / 正文结束」之间那段套上协议页同一份模板,
-生成 `site-app/devlog.html`(zhujian.app)与 `site-cool/devlog.html`(zhujian.cool)。
+这份是 `scripts/build-site-cool.mjs` 的输入:「正文开始 / 正文结束」之间那段套进官网首页的壳,
+生成 `site-app/devlog.html`(zhujian.app)与 `site-cool/devlog.html`(zhujian.cool),另各出一份
+RSS(`devlog.xml`,改版 3b)。每篇 = `## 标题` + 下一行日期(「2026 年 9 月 17 日」)+ 正文,从新到旧;
+日期兼作锚点与 RSS 条目的身份,同一天只能有一篇。
 ⛔ 别去改那两份产物,下次生成就被冲掉。
 
 维护规矩(backlog 用户面 136 立):

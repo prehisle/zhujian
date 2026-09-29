@@ -1,0 +1,194 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- scripts/build-site-cool.mjs 从 site/changelog.md 生成,⛔ 别手改。 -->
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
+  <channel>
+    <title>朱简 更新日志</title>
+    <link>https://zhujian.app/changelog.html</link>
+    <description>朱简电脑版与安卓版的每一次更新</description>
+    <language>zh-CN</language>
+    <atom:link href="https://zhujian.app/changelog.xml" rel="self" type="application/rss+xml" />
+    <pubDate>Sat, 26 Sep 2026 00:00:00 +0800</pubDate>
+    <item>
+      <title>2026 年 9 月 26 日:电脑版 0.2.49 · 安卓版 0.3.45</title>
+      <link>https://zhujian.app/changelog.html#2026-09-26</link>
+      <guid isPermaLink="true">https://zhujian.app/changelog.html#2026-09-26</guid>
+      <pubDate>Sat, 26 Sep 2026 00:00:00 +0800</pubDate>
+      <description>&lt;ul&gt;&lt;li&gt;&lt;strong&gt;电脑版 0.2.49&lt;/strong&gt;:设置里能把整个空间导出成 Markdown,连图和留言一起带走;朱砂色小字更清楚了&lt;/li&gt;&lt;li&gt;&lt;strong&gt;安卓版 0.3.45&lt;/strong&gt;:电脑上给卡片标的颜色,手机上也显示了;朱砂色小字更清楚了&lt;/li&gt;&lt;/ul&gt;</description>
+    </item>
+    <item>
+      <title>2026 年 9 月 24 日:电脑版 0.2.48 · 安卓版 0.3.44</title>
+      <link>https://zhujian.app/changelog.html#2026-09-24</link>
+      <guid isPermaLink="true">https://zhujian.app/changelog.html#2026-09-24</guid>
+      <pubDate>Thu, 24 Sep 2026 00:00:00 +0800</pubDate>
+      <description>&lt;ul&gt;&lt;li&gt;&lt;strong&gt;电脑版 0.2.48&lt;/strong&gt;:开机会自动启动(设置「通用」里可关);单键操作可撤销;搜索支持多个词;配对与初次同步看得到进度;设置新增「关于」&lt;/li&gt;&lt;li&gt;&lt;strong&gt;安卓版 0.3.44&lt;/strong&gt;:按返回键不再丢掉正在写的内容;搜索支持多个词;出错提示改成人话&lt;/li&gt;&lt;/ul&gt;</description>
+    </item>
+    <item>
+      <title>2026 年 9 月 20 日:电脑版 0.2.47 · 安卓版 0.3.43</title>
+      <link>https://zhujian.app/changelog.html#2026-09-20</link>
+      <guid isPermaLink="true">https://zhujian.app/changelog.html#2026-09-20</guid>
+      <pubDate>Sun, 20 Sep 2026 00:00:00 +0800</pubDate>
+      <description>&lt;ul&gt;&lt;li&gt;&lt;strong&gt;电脑版 0.2.47&lt;/strong&gt;:看板上过长的卡片默认折起,点一下看全文。&lt;/li&gt;&lt;li&gt;&lt;strong&gt;安卓版 0.3.43&lt;/strong&gt;:长卡默认折起;卡片操作面收成两行,编辑直接在屏底打开。&lt;/li&gt;&lt;/ul&gt;</description>
+    </item>
+    <item>
+      <title>2026 年 9 月 17 日:电脑版 0.2.46 · 安卓版 0.3.42</title>
+      <link>https://zhujian.app/changelog.html#2026-09-17</link>
+      <guid isPermaLink="true">https://zhujian.app/changelog.html#2026-09-17</guid>
+      <pubDate>Thu, 17 Sep 2026 00:00:00 +0800</pubDate>
+      <description>&lt;ul&gt;&lt;li&gt;&lt;strong&gt;电脑版 0.2.46&lt;/strong&gt;:看板卡片可标七色,按数字键直接选;卡片编辑框可放大成大面板;设置里新增意见反馈&lt;/li&gt;&lt;li&gt;&lt;strong&gt;安卓版 0.3.42&lt;/strong&gt;:卡片改成原地编辑,加图、拍照、删图、看大图都在编辑面里;设置里新增意见反馈&lt;/li&gt;&lt;/ul&gt;</description>
+    </item>
+    <item>
+      <title>2026 年 9 月 13 日:电脑版 0.2.45 · 安卓版 0.3.41</title>
+      <link>https://zhujian.app/changelog.html#2026-09-13</link>
+      <guid isPermaLink="true">https://zhujian.app/changelog.html#2026-09-13</guid>
+      <pubDate>Sun, 13 Sep 2026 00:00:00 +0800</pubDate>
+      <description>&lt;ul&gt;&lt;li&gt;&lt;strong&gt;电脑版 0.2.45&lt;/strong&gt;:随记卡可拖到标签上打标签;选标签面板再点即摘;随记页新增「复制随记」;看板卡上点 ⋯ 更灵&lt;/li&gt;&lt;li&gt;&lt;strong&gt;安卓版 0.3.41&lt;/strong&gt;:卡片操作面新增「历史」,可查看这条改过的旧版本&lt;/li&gt;&lt;/ul&gt;</description>
+    </item>
+    <item>
+      <title>2026 年 9 月 12 日:电脑版 0.2.44 · 安卓版 0.3.40</title>
+      <link>https://zhujian.app/changelog.html#2026-09-12</link>
+      <guid isPermaLink="true">https://zhujian.app/changelog.html#2026-09-12</guid>
+      <pubDate>Sat, 12 Sep 2026 00:00:00 +0800</pubDate>
+      <description>&lt;ul&gt;&lt;li&gt;&lt;strong&gt;电脑版 0.2.44&lt;/strong&gt;:看板拖卡不再弹回原位;窗口大小与最大化状态记得住了&lt;/li&gt;&lt;li&gt;&lt;strong&gt;安卓版 0.3.40&lt;/strong&gt;:随记按天分段、标签可摘;首次打开需确认隐私政策&lt;/li&gt;&lt;/ul&gt;</description>
+    </item>
+    <item>
+      <title>2026 年 9 月 8 日:电脑版 0.2.43 · 安卓版 0.3.39</title>
+      <link>https://zhujian.app/changelog.html#2026-09-08</link>
+      <guid isPermaLink="true">https://zhujian.app/changelog.html#2026-09-08</guid>
+      <pubDate>Tue, 08 Sep 2026 00:00:00 +0800</pubDate>
+      <description>&lt;ul&gt;&lt;li&gt;&lt;strong&gt;电脑版 0.2.43&lt;/strong&gt;:标签页顶栏的两枚按钮不再被窗口按钮压住,位置也归整了。&lt;/li&gt;&lt;li&gt;&lt;strong&gt;安卓版 0.3.39&lt;/strong&gt;:太淡的小字看得清了;打开面板不再从半截开始;任务卡的勾选圈对齐到了第一行。&lt;/li&gt;&lt;/ul&gt;</description>
+    </item>
+    <item>
+      <title>2026 年 9 月 7 日:电脑版 0.2.42 · 安卓版 0.3.38</title>
+      <link>https://zhujian.app/changelog.html#2026-09-07</link>
+      <guid isPermaLink="true">https://zhujian.app/changelog.html#2026-09-07</guid>
+      <pubDate>Mon, 07 Sep 2026 00:00:00 +0800</pubDate>
+      <description>&lt;ul&gt;&lt;li&gt;&lt;strong&gt;电脑版 0.2.42&lt;/strong&gt;:看大图独立开窗、随记留言就地展开、清单 Tab 缩进&lt;/li&gt;&lt;li&gt;&lt;strong&gt;安卓版 0.3.38&lt;/strong&gt;:取图取消不再卡住记下;标签管理支持父子层级;清单 Tab 缩进;筛选条常驻&lt;/li&gt;&lt;/ul&gt;</description>
+    </item>
+    <item>
+      <title>2026 年 9 月 5 日:电脑版 0.2.41 · 安卓版 0.3.37</title>
+      <link>https://zhujian.app/changelog.html#2026-09-05</link>
+      <guid isPermaLink="true">https://zhujian.app/changelog.html#2026-09-05</guid>
+      <pubDate>Sat, 05 Sep 2026 00:00:00 +0800</pubDate>
+      <description>&lt;ul&gt;&lt;li&gt;&lt;strong&gt;电脑版 0.2.41&lt;/strong&gt;:窗口窄、看板列多时,「复制看板」和「复制本列」不再一起消失&lt;/li&gt;&lt;li&gt;&lt;strong&gt;安卓版 0.3.37&lt;/strong&gt;:点标签上的条数,摊开看它名下的随记和待办;通知栏图标换成朱印&lt;/li&gt;&lt;/ul&gt;</description>
+    </item>
+    <item>
+      <title>2026 年 9 月 4 日:电脑版 0.2.40 · 安卓版 0.3.36</title>
+      <link>https://zhujian.app/changelog.html#2026-09-04</link>
+      <guid isPermaLink="true">https://zhujian.app/changelog.html#2026-09-04</guid>
+      <pubDate>Fri, 04 Sep 2026 00:00:00 +0800</pubDate>
+      <description>&lt;ul&gt;&lt;li&gt;&lt;strong&gt;电脑版 0.2.40&lt;/strong&gt;:正文能写待办清单了,点方框就能勾;看板窄窗不再把列压扁&lt;/li&gt;&lt;li&gt;&lt;strong&gt;安卓版 0.3.36&lt;/strong&gt;:正文能写待办清单了,点方框就能勾;新增每日截止提醒&lt;/li&gt;&lt;/ul&gt;</description>
+    </item>
+    <item>
+      <title>2026 年 9 月 1 日:电脑版 0.2.39 · 安卓版 0.3.35</title>
+      <link>https://zhujian.app/changelog.html#2026-09-01</link>
+      <guid isPermaLink="true">https://zhujian.app/changelog.html#2026-09-01</guid>
+      <pubDate>Tue, 01 Sep 2026 00:00:00 +0800</pubDate>
+      <description>&lt;ul&gt;&lt;li&gt;&lt;strong&gt;电脑版 0.2.39&lt;/strong&gt;:新增每天到点的截止提醒;留言有未读红点;到期汇总多报一段「3 天内」&lt;/li&gt;&lt;li&gt;&lt;strong&gt;安卓版 0.3.35&lt;/strong&gt;:标签面补齐新建·改色·删除·合并;任务面新增到期汇总;留言有未读红点&lt;/li&gt;&lt;/ul&gt;</description>
+    </item>
+    <item>
+      <title>2026 年 8 月 30 日:电脑版 0.2.38 · 安卓版 0.3.34</title>
+      <link>https://zhujian.app/changelog.html#2026-08-30</link>
+      <guid isPermaLink="true">https://zhujian.app/changelog.html#2026-08-30</guid>
+      <pubDate>Sun, 30 Aug 2026 00:00:00 +0800</pubDate>
+      <description>&lt;ul&gt;&lt;li&gt;&lt;strong&gt;电脑版 0.2.38&lt;/strong&gt;:顶栏多了到期汇总(逾期 · 今天),看板每列可以单独选排序,卡片上点右键就直接出那枚 ⋯ 菜单。&lt;/li&gt;&lt;li&gt;&lt;strong&gt;安卓版 0.3.34&lt;/strong&gt;:记灵感时软键盘不再盖住输入框,手机上也能给标签改名了,加图那几秒有占位图、暂存的图也点得开。&lt;/li&gt;&lt;/ul&gt;</description>
+    </item>
+    <item>
+      <title>2026 年 8 月 26 日:电脑版 0.2.37 · 安卓版 0.3.33</title>
+      <link>https://zhujian.app/changelog.html#2026-08-26</link>
+      <guid isPermaLink="true">https://zhujian.app/changelog.html#2026-08-26</guid>
+      <pubDate>Wed, 26 Aug 2026 00:00:00 +0800</pubDate>
+      <description>&lt;ul&gt;&lt;li&gt;&lt;strong&gt;电脑版 0.2.37&lt;/strong&gt;:看板的列可以自己管了 —— 顶栏「管理列」里新建 / 改名 / 拖顺序 / 删除。若你有多台设备,要等它们都升到这一版并同时在线一次,这个入口才会打开。&lt;/li&gt;&lt;li&gt;&lt;strong&gt;安卓版 0.3.33&lt;/strong&gt;:看板会显示桌面端新建的自定义列;列的新建与管理在桌面端。&lt;/li&gt;&lt;/ul&gt;</description>
+    </item>
+    <item>
+      <title>2026 年 8 月 21 日:电脑版 0.2.36</title>
+      <link>https://zhujian.app/changelog.html#2026-08-21</link>
+      <guid isPermaLink="true">https://zhujian.app/changelog.html#2026-08-21</guid>
+      <pubDate>Fri, 21 Aug 2026 00:00:00 +0800</pubDate>
+      <description>&lt;ul&gt;&lt;li&gt;&lt;strong&gt;电脑版 0.2.36&lt;/strong&gt;:设置面板改成左侧分类 + 右侧内容两栏;备份列表里的文件名不再被挤成竖排。&lt;/li&gt;&lt;/ul&gt;</description>
+    </item>
+    <item>
+      <title>2026 年 8 月 19 日:电脑版 0.2.35 · 安卓版 0.3.32</title>
+      <link>https://zhujian.app/changelog.html#2026-08-19</link>
+      <guid isPermaLink="true">https://zhujian.app/changelog.html#2026-08-19</guid>
+      <pubDate>Wed, 19 Aug 2026 00:00:00 +0800</pubDate>
+      <description>&lt;ul&gt;&lt;li&gt;&lt;strong&gt;电脑版 0.2.35&lt;/strong&gt;:新增「从备份恢复」——用备份码把一份 .zjbak 还原成一个新空间,绝不覆盖任何现有数据;备份设置面另有几处显示修正。&lt;/li&gt;&lt;li&gt;&lt;strong&gt;安卓版 0.3.32&lt;/strong&gt;:手机现在也能备份了:在设置里挑一个文件夹,加密备份直接存进去,还能随时验证;还原请到电脑版。&lt;/li&gt;&lt;/ul&gt;</description>
+    </item>
+    <item>
+      <title>2026 年 8 月 17 日:电脑版 0.2.34 · 安卓版 0.3.31</title>
+      <link>https://zhujian.app/changelog.html#2026-08-17</link>
+      <guid isPermaLink="true">https://zhujian.app/changelog.html#2026-08-17</guid>
+      <pubDate>Mon, 17 Aug 2026 00:00:00 +0800</pubDate>
+      <description>&lt;ul&gt;&lt;li&gt;&lt;strong&gt;电脑版 0.2.34&lt;/strong&gt;:新增加密备份:设置面「备份」可备份全部空间、验证备份文件,也可设为每天自动备份;「灵感」改名「随记」;首次使用的界面更简洁。&lt;/li&gt;&lt;li&gt;&lt;strong&gt;安卓版 0.3.31&lt;/strong&gt;:加图新增「相册多选」和「拍照」;完成、删除、归档都能撤销;「灵感」改叫「随记」&lt;/li&gt;&lt;/ul&gt;</description>
+    </item>
+    <item>
+      <title>2026 年 8 月 15 日:电脑版 0.2.33 · 电脑版 0.2.32 · 安卓版 0.3.30 · 安卓版 0.3.29</title>
+      <link>https://zhujian.app/changelog.html#2026-08-15</link>
+      <guid isPermaLink="true">https://zhujian.app/changelog.html#2026-08-15</guid>
+      <pubDate>Sat, 15 Aug 2026 00:00:00 +0800</pubDate>
+      <description>&lt;ul&gt;&lt;li&gt;&lt;strong&gt;电脑版 0.2.33&lt;/strong&gt;:移除设备现在对局域网直连也生效,同一 wifi 下也会当场断开;修复标签视图里点开的输入框随鼠标移开就消失&lt;/li&gt;&lt;li&gt;&lt;strong&gt;电脑版 0.2.32&lt;/strong&gt;:同步面板新增设备名单,可移除不再使用的设备;修复局域网直连时重置空间失败&lt;/li&gt;&lt;li&gt;&lt;strong&gt;安卓版 0.3.30&lt;/strong&gt;:移除设备现在对局域网直连也生效,同一 wifi 下也会当场断开;修复标签视图里点开的输入框随鼠标移开就消失&lt;/li&gt;&lt;li&gt;&lt;strong&gt;安卓版 0.3.29&lt;/strong&gt;:同步面板新增设备名单,可移除不再使用的设备;修复局域网直连时重置空间失败&lt;/li&gt;&lt;/ul&gt;</description>
+    </item>
+    <item>
+      <title>2026 年 8 月 10 日:电脑版 0.2.31 · 安卓版 0.3.28</title>
+      <link>https://zhujian.app/changelog.html#2026-08-10</link>
+      <guid isPermaLink="true">https://zhujian.app/changelog.html#2026-08-10</guid>
+      <pubDate>Mon, 10 Aug 2026 00:00:00 +0800</pubDate>
+      <description>&lt;ul&gt;&lt;li&gt;&lt;strong&gt;电脑版 0.2.31&lt;/strong&gt;:新增英文界面(设置里可切换语言);暗色模式下几处看不清的文字已修,小按钮的点击区也调大了&lt;/li&gt;&lt;li&gt;&lt;strong&gt;安卓版 0.3.28&lt;/strong&gt;:新增英文界面(设置里可切换语言);暗色模式配色与标签颜色一并打磨&lt;/li&gt;&lt;/ul&gt;</description>
+    </item>
+    <item>
+      <title>2026 年 8 月 8 日:电脑版 0.2.30 · 安卓版 0.3.27</title>
+      <link>https://zhujian.app/changelog.html#2026-08-08</link>
+      <guid isPermaLink="true">https://zhujian.app/changelog.html#2026-08-08</guid>
+      <pubDate>Sat, 08 Aug 2026 00:00:00 +0800</pubDate>
+      <description>&lt;ul&gt;&lt;li&gt;&lt;strong&gt;电脑版 0.2.30&lt;/strong&gt;:修好新内容有时同步不出去;留言里对方改过的设备名现在会立刻更新&lt;/li&gt;&lt;li&gt;&lt;strong&gt;安卓版 0.3.27&lt;/strong&gt;:修好新内容有时同步不出去&lt;/li&gt;&lt;/ul&gt;</description>
+    </item>
+    <item>
+      <title>2026 年 8 月 7 日:电脑版 0.2.29 · 安卓版 0.3.26</title>
+      <link>https://zhujian.app/changelog.html#2026-08-07</link>
+      <guid isPermaLink="true">https://zhujian.app/changelog.html#2026-08-07</guid>
+      <pubDate>Fri, 07 Aug 2026 00:00:00 +0800</pubDate>
+      <description>&lt;ul&gt;&lt;li&gt;&lt;strong&gt;电脑版 0.2.29&lt;/strong&gt;:可以给条目写留言了:想法和任务都能一条条留言,会标出是哪台设备写的,并同步到别的设备。注意:两台设备请一起升级 —— 只升一台的话,在新版上写的留言会让没升级的那台暂时同步不动,升完自动补齐。&lt;/li&gt;&lt;li&gt;&lt;strong&gt;安卓版 0.3.26&lt;/strong&gt;:可以给条目写留言了:想法和任务都能一条条留言,会标出是哪台设备写的,并同步到别的设备。注意:两台设备请一起升级 —— 只升一台的话,在新版上写的留言会让没升级的那台暂时同步不动,升完自动补齐。&lt;/li&gt;&lt;/ul&gt;</description>
+    </item>
+    <item>
+      <title>2026 年 8 月 6 日:电脑版 0.2.28 · 电脑版 0.2.27 · 安卓版 0.3.25 · 安卓版 0.3.24</title>
+      <link>https://zhujian.app/changelog.html#2026-08-06</link>
+      <guid isPermaLink="true">https://zhujian.app/changelog.html#2026-08-06</guid>
+      <pubDate>Thu, 06 Aug 2026 00:00:00 +0800</pubDate>
+      <description>&lt;ul&gt;&lt;li&gt;&lt;strong&gt;电脑版 0.2.28&lt;/strong&gt;:修了一个同步问题:连着记两条内容时,后一条有时不会马上同步到别的设备。&lt;/li&gt;&lt;li&gt;&lt;strong&gt;电脑版 0.2.27&lt;/strong&gt;:可以给每台设备起个名了,别的设备记下的条目会标出是哪台记的。注意:两台设备请一起升级 —— 只升一台的话,在新版上改一次设备名会让没升级的那台暂时同步不动,升完自动补齐。&lt;/li&gt;&lt;li&gt;&lt;strong&gt;安卓版 0.3.25&lt;/strong&gt;:修了一个同步问题:连着记两条内容时,后一条有时不会马上同步到别的设备。&lt;/li&gt;&lt;li&gt;&lt;strong&gt;安卓版 0.3.24&lt;/strong&gt;:可以给每台设备起个名了,别的设备记下的条目会标出是哪台记的。注意:两台设备请一起升级 —— 只升一台的话,在新版上改一次设备名会让没升级的那台暂时同步不动,升完自动补齐。&lt;/li&gt;&lt;/ul&gt;</description>
+    </item>
+    <item>
+      <title>2026 年 8 月 5 日:电脑版 0.2.26 · 安卓版 0.3.23</title>
+      <link>https://zhujian.app/changelog.html#2026-08-05</link>
+      <guid isPermaLink="true">https://zhujian.app/changelog.html#2026-08-05</guid>
+      <pubDate>Wed, 05 Aug 2026 00:00:00 +0800</pubDate>
+      <description>&lt;ul&gt;&lt;li&gt;&lt;strong&gt;电脑版 0.2.26&lt;/strong&gt;:看图更快了:看过一次的图会记住小图,以后翻列表不用再重新解整张原图;这一版还会自动清理数据库里的空占用,占的存储明显变小。&lt;/li&gt;&lt;li&gt;&lt;strong&gt;安卓版 0.3.23&lt;/strong&gt;:看图更快了:看过一次的图会记住小图,以后翻列表不用再重新解整张原图;这一版还会自动清理数据库里的空占用,占的存储明显变小。&lt;/li&gt;&lt;/ul&gt;</description>
+    </item>
+    <item>
+      <title>2026 年 8 月 4 日:安卓版 0.3.22</title>
+      <link>https://zhujian.app/changelog.html#2026-08-04</link>
+      <guid isPermaLink="true">https://zhujian.app/changelog.html#2026-08-04</guid>
+      <pubDate>Tue, 04 Aug 2026 00:00:00 +0800</pubDate>
+      <description>&lt;ul&gt;&lt;li&gt;&lt;strong&gt;安卓版 0.3.22&lt;/strong&gt;:局域网直连:同一个 wifi 下的两台设备自动点对点直传,更快,路由器断了外网也照样同步;仍是端到端加密。&lt;/li&gt;&lt;/ul&gt;</description>
+    </item>
+    <item>
+      <title>2026 年 7 月 29 日:安卓版 0.3.21 · 安卓版 0.3.20 · 安卓版 0.3.19</title>
+      <link>https://zhujian.app/changelog.html#2026-07-29</link>
+      <guid isPermaLink="true">https://zhujian.app/changelog.html#2026-07-29</guid>
+      <pubDate>Wed, 29 Jul 2026 00:00:00 +0800</pubDate>
+      <description>&lt;ul&gt;&lt;li&gt;&lt;strong&gt;安卓版 0.3.21&lt;/strong&gt;:新增「设置」页(顶栏齿轮):明暗三档(自动/亮/暗)、界面字号四档(小/标准/大/特大)、版本信息;诊断入口移入设置页&lt;/li&gt;&lt;li&gt;&lt;strong&gt;安卓版 0.3.20&lt;/strong&gt;:优化:看大图关闭更跟手——点下去立刻开始淡出,不再像是「点了没反应」;双击放大的容错窗口保持不变&lt;/li&gt;&lt;li&gt;&lt;strong&gt;安卓版 0.3.19&lt;/strong&gt;:修复:大图查看器两处缩放患——桌面看大图 Ctrl+滚轮不再误改界面字号;安卓大图放大不再飞到右下角/转屏复位&lt;/li&gt;&lt;/ul&gt;</description>
+    </item>
+    <item>
+      <title>2026 年 7 月 28 日:安卓版 0.3.18</title>
+      <link>https://zhujian.app/changelog.html#2026-07-28</link>
+      <guid isPermaLink="true">https://zhujian.app/changelog.html#2026-07-28</guid>
+      <pubDate>Tue, 28 Jul 2026 00:00:00 +0800</pubDate>
+      <description>&lt;ul&gt;&lt;li&gt;&lt;strong&gt;安卓版 0.3.18&lt;/strong&gt;:顶栏改为常驻,滚动长列表时空间 / 标签 / 搜索 / 同步随时可点;筛选某标签时卡片不再重复显示该标签。&lt;/li&gt;&lt;/ul&gt;</description>
+    </item>
+    <item>
+      <title>2026 年 7 月 25 日:安卓版 0.3.17</title>
+      <link>https://zhujian.app/changelog.html#2026-07-25</link>
+      <guid isPermaLink="true">https://zhujian.app/changelog.html#2026-07-25</guid>
+      <pubDate>Sat, 25 Jul 2026 00:00:00 +0800</pubDate>
+      <description>&lt;ul&gt;&lt;li&gt;&lt;strong&gt;安卓版 0.3.17&lt;/strong&gt;:看大图时左右滑动翻看同一条记录里的多张图,跟着手指走、带过场动画;提示条按字数停留,点一下就收;筛选的标签可以多选了(显示挂了其中任一个的记录),父子标签能折叠收起。&lt;/li&gt;&lt;/ul&gt;</description>
+    </item>
+  </channel>
+</rss>

@@ -3,10 +3,37 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>朱简 开发手记</title>
-    <meta name="description" content="朱简(zhujian)开发手记" />
-    <meta name="robots" content="index, follow" />
+    <!-- 多语言(360,i18n-plan 第③笔):壳里保留中文原文防首帧闪(163 契约),
+         启动时按 data-i18n 族属性覆写;原文与 zh 值逐字相等由 check-i18n-drift 核。
+         字典与运行期在页面末尾的那段内联 script 里(⚠ 注释里别写闭合标签的字面量:
+         按标签切文件的工具会先命中这里,360 当场栽过一次)。 -->
+    <title>开发手记 · 朱简</title>
+    <meta name="description" content="做朱简时栽过的跟头、改过的口,挑几件用人话记下来。" />
+
+    <!-- ───────── 分享卡片与 canonical(生成器写的;这一页只有中文,不挂 hreflang)───────── -->
+    <link rel="canonical" href="https://zhujian.app/devlog.html" />
+    <link rel="alternate" type="application/rss+xml" title="朱简 开发手记" href="/devlog.xml" />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://zhujian.app/devlog.html" />
+    <meta property="og:title" content="开发手记 · 朱简" />
+    <meta property="og:description" content="做朱简时栽过的跟头、改过的口,挑几件用人话记下来。" />
+    <meta property="og:image" content="https://zhujian.app/shots/desktop-board.webp" />
+    <meta name="twitter:card" content="summary_large_image" />
+
     <style>
+      /* 标题字体:霞鹜文楷 Medium 的子集(SIL OFL,许可证与字体同目录)。生成与「够不够用」
+         的核对都在 scripts/site-font.mjs;一个文件兼 400–700 两档,免得浏览器自己描粗。 */
+      @font-face {
+        font-family: "Zhujian WenKai";
+        src: url("/fonts/zhujian-wenkai.woff2") format("woff2");
+        font-weight: 400 700;
+        font-display: swap;
+      }
+
+      /* ───────────────────────────────────────────────────────────
+         设计令牌 —— 与桌面客户端 src/theme.css 同源(纸与朱墨)。
+         官网是静态单文件,故把令牌就地内联,颜色逐一对齐 app。
+         ─────────────────────────────────────────────────────────── */
       :root {
         --paper: #f3eee3;
         --raised: #faf6ec;
@@ -118,16 +145,19 @@
       }
 
       * { box-sizing: border-box; }
+      html { scroll-behavior: smooth; }
 
       body {
         margin: 0;
         background: var(--paper);
         color: var(--ink);
         font-family: var(--font-sans);
-        line-height: 1.85;
+        line-height: 1.65;
         -webkit-font-smoothing: antialiased;
         text-rendering: optimizeLegibility;
+        overflow-x: hidden;
       }
+      /* 全站极淡纸纹 */
       body::before {
         content: "";
         position: fixed;
@@ -141,126 +171,1174 @@
       @media (prefers-color-scheme: dark) {
         body::before { mix-blend-mode: screen; opacity: 0.05; }
       }
-      a { color: var(--seal); }
-      /* ⛔ 这两处别改回 color-mix:令牌块是从 site/index.html 整段取来的,那三层「纱」的
-         理由与实测就写在取来的那段注释里(用户面 84)。⚠ 三份协议页正是 AGC 表单里填的
-         那两个网址 —— 打开它们的浏览器比首页还杂。 */
+
+      input, textarea { caret-color: var(--seal); }
       ::selection { background: var(--seal-select); }
 
-      .wrap { width: 100%; max-width: 760px; margin: 0 auto; padding: 0 24px; position: relative; z-index: 1; }
+      a { color: inherit; }
 
+      .wrap {
+        width: 100%;
+        max-width: var(--wrap);
+        margin: 0 auto;
+        padding: 0 28px;
+        position: relative;
+        z-index: 1;
+      }
+
+      /* ── 朱砂方印(白文)· 内联 SVG 的样式钩子 ───────────────── */
+      .seal-mark { display: block; }
+      .seal-mark rect { fill: var(--seal); }
+      .seal-mark text { fill: var(--raised); font-family: var(--font-display); font-weight: 700; }
+
+      /* ── 顶栏 ──────────────────────────────────────────────── */
       .topbar {
-        position: sticky; top: 0; z-index: 20;
+        position: sticky;
+        top: 0;
+        z-index: 20;
         backdrop-filter: saturate(1.1) blur(8px);
         background: var(--topbar-veil);
         border-bottom: 1px solid var(--line);
       }
-      .topbar .wrap { display: flex; align-items: center; gap: 18px; height: 62px; max-width: 1060px; }
+      .topbar .wrap {
+        display: flex;
+        align-items: center;
+        gap: 18px;
+        height: 62px;
+      }
       .brand {
-        display: inline-flex; align-items: center; gap: 11px;
-        font-family: var(--font-brush); font-size: var(--fs-24); font-weight: 700;
-        letter-spacing: 0.06em; text-decoration: none; color: var(--ink);
+        display: inline-flex;
+        align-items: center;
+        gap: 11px;
+        font-family: var(--font-display);
+        font-size: var(--fs-24);
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        text-decoration: none;
+        color: var(--ink);
       }
-      .brand svg { width: 30px; height: 30px; border-radius: var(--radius-sm); }
-      .brand svg rect { fill: var(--seal); }
-      .brand svg text { fill: var(--raised); font-family: var(--font-brush); font-weight: 700; }
-      .topnav { margin-left: auto; display: flex; align-items: center; gap: 22px; }
-      .topnav a { text-decoration: none; color: var(--ink-soft); font-size: var(--fs-15); }
-      .topnav a:hover { color: var(--ink); }
-      .topnav a[aria-current="page"] { color: var(--seal); }
-      /* 窄屏(2026-09-29 实量):360 宽时三份协议页的「朱简」被挤成竖排、三个四字链接各断两行,
-         而这三份原样烤进手机包,那台 vivo 正是 360 宽。⇒ 词一律不许折断;≤420 收边距与间距(360 恰好一行);
-         比 360 还窄只留印章(实量 341 已放不下;字是视觉隐藏、读屏仍念得到;⛔ 别用 font-size 0 —— 条件块里带字号
-         的规则 check-contrast 会拒)。
-         最后一道:系统字号调大时视口宽度不变、上面两档都不触发 ⇒ 让导航整块换到第二行,
-         ⛔ 别改成横向滚动(试过:末项会被截成「用户」两字,像另一个链接)。 */
-      .brand, .topnav a { white-space: nowrap; }
-      .topbar .wrap { flex-wrap: wrap; height: auto; min-height: 62px; row-gap: 4px; padding-top: 9px; padding-bottom: 9px; }
-      .topnav { flex-wrap: wrap; justify-content: flex-end; row-gap: 4px; }
-      @media (max-width: 420px) {
-        .wrap { padding-left: 16px; padding-right: 16px; }
-        .topbar .wrap { gap: 12px; }
-        .topnav { gap: 14px; }
+      .brand svg { width: 30px; height: 30px; border-radius: var(--radius-sm); box-shadow: 0 1px 2px rgba(40,30,18,.25); }
+      .nav { margin-left: auto; display: flex; align-items: center; gap: 26px; }
+      .nav a {
+        text-decoration: none;
+        color: var(--ink-soft);
+        font-size: var(--fs-15);
+        letter-spacing: 0.02em;
+        transition: color 0.15s;
       }
-      @media (max-width: 359px) {
-        .brand { gap: 0; }
-        .brand-word { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+      .nav a:hover { color: var(--ink); }
+      .nav a { white-space: nowrap; }
+      /* 文档中心只有中文(改版 3a):英文页的顶栏不放这一项(否则 800 宽就挤成两行),页脚那条写明 (Chinese) */
+      :root:lang(en) .nav a[href="/docs/"] { display: none; }
+      .nav a.ghost-btn {
+        color: var(--seal);
+        border: 1px solid var(--seal-line);
+        border-radius: var(--radius-pill);
+        padding: 7px 16px;
+      }
+      .nav a.ghost-btn:hover { background: var(--seal-tint); color: var(--seal); }
+      /* 语言开关(360):窄屏也留着 —— 它是英文访客唯一的出口,不进 .hide-sm。 */
+      .nav a.lang {
+        font-size: var(--fs-13);
+        letter-spacing: 0.1em;
+        border: 1px solid var(--line-strong);
+        border-radius: var(--radius-pill);
+        padding: 4px 11px;
+      }
+      @media (max-width: 720px) {
+        .nav a.hide-sm { display: none; }
+        .nav { gap: 16px; }
       }
 
-      main { padding: 46px 0 8px; }
-      h1.doc-title {
-        font-family: var(--font-brush);
+      /* 另一种语言的提示条(改版 2c)。⚠ `[hidden]` 显式写死:哪天有人给 .lang-hint 加 display,
+         UA 那条特指度最低的 [hidden] 就会被盖掉、提示条常驻。 */
+      .lang-hint {
+        margin: 0;
+        padding: 8px 16px;
+        text-align: center;
+        font-size: var(--fs-13);
+        color: var(--ink-soft);
+        background: var(--raised);
+        border-bottom: 1px solid var(--line);
+      }
+      .lang-hint[hidden] { display: none; }
+      .lang-hint a { color: var(--seal); text-decoration: none; }
+      .lang-hint a:hover { text-decoration: underline; }
+
+      /* ── 通用节标题 ────────────────────────────────────────── */
+      .eyebrow {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        font-size: var(--fs-13);
+        letter-spacing: 0.22em;
+        text-transform: none;
+        color: var(--seal);
+        font-weight: 600;
+      }
+      .eyebrow::before {
+        content: "";
+        width: 9px; height: 9px;
+        border-radius: var(--radius-seal);
+        background: var(--seal);
+        transform: rotate(45deg);
+      }
+      .section-title {
+        font-family: var(--font-display);
+        font-weight: 600;
+        font-size: clamp(26px, 4.2vw, 38px);
+        letter-spacing: 0.01em;
+        margin: 14px 0 0;
+        line-height: 1.25;
+      }
+      .section-lead {
+        color: var(--ink-soft);
+        font-size: var(--fs-17);
+        max-width: 42ch;
+        margin: 14px 0 0;
+        text-wrap: pretty;
+      }
+
+      /* ── HERO ─────────────────────────────────────────────── */
+      /* 改版 1b(site-redesign-plan):居中标题 + 一整张产品合成图。旧版是左文右纸条两栏,
+         诊断「首屏没有产品」就是它 —— 右边一张小纸条配大片空白。纸条挪进了「记下」那一步的演示。 */
+      .hero { position: relative; overflow: hidden; }
+      .hero .wrap { text-align: center; padding-top: clamp(40px, 6vw, 80px); }
+      .hero-copy { max-width: 780px; margin: 0 auto; }
+      /* 新版本小标签:版本号留在 markup 里(bump-version 认 `v<版本>`),字典只装那几个词 */
+      .news-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 4px 14px 4px 4px;
+        border-radius: var(--radius-pill);
+        background: var(--raised);
+        box-shadow: var(--card-shadow);
+        outline: 1px solid var(--line);
+        outline-offset: -1px;
+        font-size: var(--fs-14);
+        color: var(--ink-soft);
+        text-decoration: none;
+        white-space: nowrap;
+      }
+      .news-pill:hover { color: var(--ink); }
+      .news-tag {
+        color: var(--seal);
+        background: var(--seal-tint);
+        font-weight: 600;
+        font-size: var(--fs-13);
+        padding: 2px 10px;
+        border-radius: var(--radius-pill);
+      }
+      .hero h1 {
+        font-family: var(--font-display);
+        font-weight: 700;
+        font-size: clamp(44px, 7.4vw, 84px);
+        line-height: 1.12;
+        letter-spacing: 0.03em;
+        margin: 26px 0 0;
+      }
+      .hero h1 .accent { color: var(--seal); }
+      .hero-lead {
+        margin: 22px auto 0;
+        max-width: 36em;
+        font-size: var(--fs-18);
+        line-height: 1.75;
+        color: var(--ink-soft);
+        text-wrap: balance;
+      }
+      .cta-row {
+        margin-top: 32px;
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: center;
+        align-items: center;
+        gap: 12px;
+      }
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 9px;
+        font-family: var(--font-sans);
+        font-size: var(--fs-16);
+        font-weight: 600;
+        letter-spacing: 0.02em;
+        text-decoration: none;
+        border-radius: var(--radius-pill);
+        padding: 13px 26px;
+        cursor: pointer;
+        transition: transform 0.12s ease, box-shadow 0.15s, background 0.15s;
+      }
+      .btn-primary {
+        background: var(--seal);
+        color: var(--on-seal);
+        box-shadow: 0 10px 24px -12px var(--seal), inset 0 1px 0 rgba(255,255,255,.18);
+      }
+      .btn-primary:hover { transform: translateY(-1px); }
+      .btn-ghost { color: var(--ink); border: 1px solid var(--line-strong); }
+      .btn-ghost:hover { background: var(--raised); }
+      /* 平台一行:**每项自己不折行、整行按项换行**(777 记下的「菱形挂在两行中间」就是旧版
+         一整串文字在手机上从中间断开)。项间的点是 ::before 的记号,窄了换行时跟着项走。 */
+      .platforms {
+        list-style: none;
+        margin: 20px auto 0;
+        padding: 0;
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: center;
+        gap: 4px 16px;
+        font-size: var(--fs-13);
+        color: var(--ink-faint);
+      }
+      .platforms li { white-space: nowrap; }
+      .platforms li + li::before { content: "·"; margin-right: 16px; color: var(--ink-faint); }
+
+      /* 合成图:电脑看板居中,手机压在右下角。两张都是真截图,不是示意。 */
+      .stage {
+        position: relative;
+        max-width: 1240px;
+        margin: clamp(40px, 5vw, 64px) auto 0;
+        padding: 0 28px clamp(40px, 6vw, 80px);
+      }
+      .stage::before {
+        content: "";
+        position: absolute;
+        inset: 6% 4% 0;
+        background: radial-gradient(60% 55% at 50% 45%, var(--seal-tint), transparent 70%);
+        pointer-events: none;
+      }
+      .stage img { display: block; width: 100%; height: auto; }
+      .stage-desktop {
+        position: relative;
+        width: min(100%, 1060px);
+        margin: 0 auto;
+        border-radius: var(--radius-md);
+        overflow: hidden;
+        box-shadow: var(--float-shadow);
+        outline: 1px solid var(--line);
+        outline-offset: -1px;
+      }
+      .stage-phone {
+        position: absolute;
+        right: max(8px, calc(50% - 590px));
+        bottom: 12px;
+        width: clamp(110px, 19%, 230px);
+        border-radius: var(--radius-lg);
+        overflow: hidden;
+        box-shadow: var(--float-shadow);
+        outline: 6px solid var(--bezel);
+      }
+
+      /* ── 三步主线 ──────────────────────────────────────────── */
+      /* 改版 1c:图文左右交替,**每张图只露它要说的那一块**。
+         ⭐ 判据沿用 651 那条式子(⛔ 记式子别记数):界面字在页面上的大小 = 图的显示 CSS 宽 ÷ 1260
+         (app 窗口的 CSS 宽)× 15px。旧版整窗一行一张、952px 宽 ⇒ 字约 11px,还套在卡片里再套一层框;
+         裁图把图放大到 1.75–2 倍再只露一角 ⇒ 列宽约 560px 时字约 12–13px,接近 app 原大。
+         全图照旧点开看(`.shot-zoom`,653),窄屏补读的那一半没丢。 */
+      .flow { padding: clamp(64px, 9vw, 120px) 0 clamp(40px, 6vw, 80px); }
+      .row {
+        display: grid;
+        grid-template-columns: 0.85fr 1.15fr;
+        gap: clamp(32px, 6vw, 88px);
+        align-items: center;
+        margin-top: clamp(48px, 7vw, 96px);
+      }
+      .row.flip { grid-template-columns: 1.15fr 0.85fr; }
+      .row.flip .row-copy { order: 2; }
+      .row-copy { min-width: 0; }
+      .step {
+        display: inline-grid;
+        place-items: center;
+        width: 36px;
+        height: 36px;
+        border-radius: var(--radius-sm);
+        background: var(--seal-tint);
+        color: var(--seal);
+        font-family: var(--font-display);
+        font-weight: 700;
+        font-size: var(--fs-18);
+      }
+      .row h3 {
+        font-family: var(--font-display);
+        font-weight: 700;
         font-size: var(--fs-30);
         letter-spacing: 0.04em;
-        margin: 0 0 10px;
+        margin: 16px 0 0;
       }
-      .doc-sub { color: var(--ink-faint); font-size: var(--fs-14); margin: 0 0 34px; }
+      .row p { color: var(--ink-soft); font-size: var(--fs-17); margin: 14px 0 0; max-width: 30em; }
 
-      .prose h2 {
-        font-size: var(--fs-20); /* ⛔ 只许用 §2.2 那十档,见本文件 docPage() 头注 */
-        margin: 44px 0 14px;
+      /* 裁图框兼「点开看大图」的按钮(653 那枚入口,⛔ 用 <button> 不是 <div>:键盘、focus 环、读屏)。
+         第一张 img 是被裁的那张,也是浮层里放出来的那张(运行期取按钮里的第一个 img)。 */
+      .shot-zoom {
+        display: block;
+        width: 100%;
+        padding: 0;
+        border: 0;
+        font: inherit;
+        color: inherit;
+        cursor: zoom-in;
+      }
+      .crop {
+        position: relative;
+        aspect-ratio: 4 / 3;
+        overflow: hidden;
+        border-radius: var(--radius-lg);
+        background: var(--raised);
+        box-shadow: var(--card-shadow);
+        outline: 1px solid var(--line);
+        outline-offset: -1px;
+      }
+      .crop img { display: block; height: auto; max-width: none; }
+      .crop > img:first-child { position: absolute; top: 0; left: 0; }
+      /* 随记:左上角那块(侧栏 + 时间轴头几条) */
+      .crop-inbox > img:first-child { width: 175%; }
+      /* 看板:「进行中」「待确认」两列,带小清单的那张卡在正中 */
+      .crop.crop-board { aspect-ratio: 3 / 2; }
+      .crop-board > img:first-child { width: 200%; transform: translate(-35.5%, -24%); }
+      /* 同一份随记在手机上,压在右下角、底边出框 */
+      .crop .crop-phone {
+        position: absolute;
+        right: 5%;
+        bottom: -30%;
+        width: 26%;
+        border-radius: var(--radius-md);
+        box-shadow: var(--float-shadow);
+        outline: 5px solid var(--bezel);
+      }
+
+      /* 第一步的演示:纸条里打字 → 回车 → 新的一条落进随记(运行期在页尾那段独立脚本里)。
+         纸条就是旧版首屏那张 .slip 挪过来的,样子与客户端的捕获纸条同源。整块 aria-hidden,
+         意思由左边那段文字说。 */
+      .demo {
+        position: relative;
+        aspect-ratio: 4 / 3;
+        overflow: hidden;
+        border-radius: var(--radius-lg);
+        background: radial-gradient(80% 70% at 70% 20%, var(--seal-tint), transparent 70%), var(--raised-edge);
+        box-shadow: var(--card-shadow);
+        outline: 1px solid var(--line);
+        outline-offset: -1px;
+        display: grid;
+        place-items: center;
+      }
+      .demo-desk { position: relative; width: 84%; height: 78%; }
+      .demo-list {
+        position: absolute;
+        inset: 36% 0 0 10%;
+        padding: 16px 18px;
+        border-radius: var(--radius-md);
+        background: var(--raised);
+        box-shadow: var(--card-shadow);
+      }
+      .demo-head { display: flex; align-items: center; gap: 8px; font-size: var(--fs-13); color: var(--ink-soft); }
+      .demo-head::before { content: ""; width: 7px; height: 7px; border-radius: var(--radius-circle); background: var(--seal); }
+      .demo-card {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        margin-top: 8px;
+        padding: 9px 12px;
+        border-radius: var(--radius-sm);
+        background: var(--paper);
+        outline: 1px solid var(--line);
+        outline-offset: -1px;
+        font-family: var(--font-display);
+        font-size: var(--fs-15);
+        white-space: nowrap;
+        overflow: hidden;
+      }
+      .demo-card span:first-child { overflow: hidden; text-overflow: ellipsis; }
+      .demo-time { font-family: var(--font-sans); font-size: var(--fs-12); color: var(--ink-soft); flex: none; }
+      /* 新的那条先收成 0 高,「记下」之后展开;朱砂细边标出它是刚落进来的 */
+      .demo-card.new {
+        max-height: 0;
+        margin-top: 0;
+        padding-block: 0;
+        opacity: 0;
+        outline-color: var(--seal-line);
+        transition: max-height 0.45s ease, margin-top 0.45s ease, padding 0.45s ease, opacity 0.45s ease;
+      }
+      .demo.done .demo-card.new { max-height: 60px; margin-top: 10px; padding-block: 9px; opacity: 1; }
+      .slip {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 78%;
+        border-radius: var(--radius-lg);
+        background: linear-gradient(180deg, var(--raised), var(--raised-edge));
+        box-shadow: var(--float-shadow);
+        outline: 1px solid var(--line);
+        outline-offset: -1px;
+        overflow: hidden;
+        padding: 18px 20px 12px 24px;
+        transform: rotate(-1.3deg);
+        transition: transform 0.35s ease, opacity 0.35s ease;
+      }
+      .demo.done .slip { opacity: 0; transform: translateY(-14px) rotate(-1.3deg) scale(0.97); }
+      .slip::before {
+        content: "";
+        position: absolute; inset: 0;
+        pointer-events: none;
+        background-image: var(--grain);
+        opacity: 0.05;
+        mix-blend-mode: multiply;
+      }
+      .slip::after {
+        content: "";
+        position: absolute;
+        left: 0; top: 14px; bottom: 14px;
+        width: 4px;
+        border-radius: 0 var(--radius-xs) var(--radius-xs) 0;
+        background: var(--seal);
+        opacity: 0.9;
+      }
+      .slip-text {
+        font-family: var(--font-display);
+        font-size: var(--fs-18);
+        line-height: 1.7;
+        color: var(--ink);
+        min-height: 3.4em;
+      }
+      .slip-text .caret {
+        display: inline-block;
+        width: 2px;
+        height: 1.05em;
+        vertical-align: -0.16em;
+        margin-left: 1px;
+        background: var(--seal);
+        animation: blink 1.1s step-end infinite;
+      }
+      @keyframes blink { 50% { opacity: 0; } }
+      .slip-hint {
+        margin-top: 10px;
+        padding-top: 8px;
+        border-top: 1px solid var(--line);
+        font-size: var(--fs-13);
+        letter-spacing: 0.03em;
+        color: var(--ink-soft);
+        display: flex;
+        gap: 16px;
+        flex-wrap: wrap;
+      }
+      .slip-hint kbd {
+        font-family: var(--font-sans);
+        color: var(--ink-soft);
+        border: 1px solid var(--line);
+        border-radius: var(--radius-xs);
+        padding: 1px 6px;
+        background: var(--paper);
+        transition: background 0.15s, color 0.15s;
+      }
+      .demo.enter .slip-hint kbd.enter { color: var(--on-seal); background: var(--seal); }
+
+      /* ── 看大图的浮层(653)────────────────────────────────────────────
+         两档:进来先**整屏装得下**(desktop 上 1890 的源图铺到 1440 屏 = app CSS 宽的
+         1.14 倍,界面文字反而比 app 里还大);再点图切 1:1 原寸、超出部分交原生滚动
+         —— 手机上这一档才是真读得清的那一档(整屏装下时仍只有 0.3 倍)。
+         ⚠ 视口 meta 没写 `maximum-scale`,故系统的双指缩放照旧能用,这两档是它的补充不是替代。 */
+      .shot-view {
+        position: fixed;
+        inset: 0;
+        z-index: 40;
+        background: var(--shot-veil);
+        overflow: auto;
+        overscroll-behavior: contain;
+        cursor: zoom-out;
+      }
+      /* UA 的 `[hidden]{display:none}` 特指度最低,哪天有人给 `.shot-view` 加一条 display
+         就会把它盖掉、浮层从此常驻挡住整页 ⇒ 显式写死一条同类名的。 */
+      .shot-view[hidden] { display: none; }
+      /* 舞台:min-100% + flex 居中 —— 图小于视口时居中,大于视口时从边缘起可滚(不裁顶/不裁左)。
+         `safe center` 少不得:不安全居中会把左/上侧顶到负方向,正向滚动到不了那一端。 */
+      .shot-stage {
+        box-sizing: border-box;
+        min-width: 100%;
+        min-height: 100%;
+        padding: 28px;
+        display: flex;
+        align-items: safe center;
+        justify-content: safe center;
+      }
+      .shot-view img {
+        display: block;
+        flex: none;
+        max-width: 100%;
+        height: auto;
+        border-radius: var(--radius-sm);
+        box-shadow: var(--float-shadow);
+        cursor: zoom-in;
+      }
+      .shot-view.at-full img { max-width: none; cursor: zoom-out; }
+      .shot-view-close {
+        position: fixed;
+        top: 14px;
+        right: 16px;
+        z-index: 1;
+        width: 44px;
+        height: 44px;
+        border: 1px solid var(--line-strong);
+        border-radius: var(--radius-circle);
+        background: var(--paper);
+        color: var(--ink);
+        font-size: var(--fs-16);
+        line-height: 1;
+        cursor: pointer;
+      }
+      .shot-view-close:hover { background: var(--raised); }
+      body.shot-open { overflow: hidden; }
+      .row .kbd-inline {
+        font-family: var(--font-sans);
+        font-size: var(--fs-14);
+        color: var(--seal);
+        border: 1px solid var(--seal-line);
+        border-radius: var(--radius-xs);
+        padding: 1px 7px;
+        white-space: nowrap;
+      }
+
+      /* ── 事实表 ────────────────────────────────────────────── */
+      .trust {
+        padding: clamp(48px, 6vw, 78px) 0;
+        border-top: 1px solid var(--line);
+        border-bottom: 1px solid var(--line);
+        background: var(--band-veil);
+      }
+      /* 一张 <dl> 就是一张表:整个 dl 是**同一个** grid(不是每行各自成 grid),
+         列宽才会跨行对齐;标签列取 max-content,英文档下最长那条(Free and open
+         source)撑多宽,六行就一起多宽。 */
+      .facts {
+        margin: 40px 0 0;
+        display: grid;
+        grid-template-columns: minmax(6em, max-content) 1fr;
+        column-gap: 32px;
+      }
+      .facts dt {
+        font-family: var(--font-display);
+        font-size: var(--fs-17);
+        font-weight: 600;
+        display: flex;
+        align-items: baseline;
+        gap: 11px;
+        padding: 16px 0;
+        border-top: 1px solid var(--line);
+      }
+      .facts dt::before {
+        content: "";
+        width: 8px; height: 8px;
+        border-radius: var(--radius-seal);
+        background: var(--seal);
+        transform: translateY(-1px) rotate(45deg);
+        flex: 0 0 auto;
+      }
+      .facts dd {
+        margin: 0;
+        color: var(--ink-soft);
+        font-size: var(--fs-15);
+        padding: 16px 0;
+        border-top: 1px solid var(--line);
+      }
+
+      /* ── 小处:大小不一的格子(改版 2b)──────────────────────── */
+      .features { padding: clamp(64px, 9vw, 120px) 0; }
+      .bento {
+        margin-top: 44px;
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 16px;
+      }
+      .tile {
+        background: var(--raised);
+        border-radius: var(--radius-lg);
+        outline: 1px solid var(--line);
+        outline-offset: -1px;
+        box-shadow: var(--card-shadow);
+        padding: 28px;
+        min-width: 0;
+      }
+      .tile h3 { font-family: var(--font-display); font-weight: 700; font-size: var(--fs-20); letter-spacing: 0.03em; margin: 0; }
+      .tile p { color: var(--ink-soft); font-size: var(--fs-15); margin: 10px 0 0; }
+      .tile .ico { display: block; width: 30px; height: 30px; margin-bottom: 18px; fill: none; stroke: var(--seal); stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+      .t-wide { grid-column: span 2; display: grid; grid-template-columns: 1fr 1.1fr; gap: 28px; align-items: center; }
+      /* 一条随记的三版:最新的在上、朱砂细边,旧的两版淡下去(示意,不是截图) */
+      .versions { display: grid; gap: 8px; padding-left: 18px; border-left: 2px solid var(--line); }
+      .ver {
+        position: relative;
+        padding: 10px 14px;
+        border-radius: var(--radius-md);
+        background: var(--paper);
+        outline: 1px solid var(--line);
+        outline-offset: -1px;
+        font-family: var(--font-display);
+        font-size: var(--fs-15);
+        color: var(--ink-soft);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .ver::before { content: ""; position: absolute; left: -25px; top: 50%; width: 10px; height: 10px; margin-top: -5px; border-radius: var(--radius-circle); background: var(--paper); outline: 2px solid var(--line-strong); }
+      .ver b { font-family: var(--font-sans); font-weight: 400; font-size: var(--fs-12); margin-right: 10px; }
+      .ver.now { color: var(--ink); outline-color: var(--seal-line); box-shadow: var(--card-shadow); }
+      .ver.now::before { background: var(--seal); outline: 0; }
+      .ver.now b { color: var(--seal); }
+      .keys { display: flex; flex-wrap: wrap; gap: 10px 16px; font-size: var(--fs-14); color: var(--ink-soft); }
+      .keys > span { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+      .keys kbd {
+        font-family: var(--font-sans);
+        min-width: 30px;
+        text-align: center;
+        padding: 3px 8px;
+        border-radius: var(--radius-xs);
+        background: var(--paper);
+        color: var(--ink);
+        border: 1px solid var(--line-strong);
+        box-shadow: inset 0 -2px 0 var(--line);
+      }
+      .tile code {
+        font-family: Consolas, "SF Mono", Menlo, monospace;
+        font-size: var(--fs-13);
+        color: var(--seal);
+        background: var(--seal-tint);
+        border-radius: var(--radius-xs);
+        padding: 1px 5px;
+      }
+
+      /* ── 承诺:全页唯一一块深色(改版 2b)────────────────────── */
+      /* 深色不随明暗翻面(--band 一族两档都是深的,暗色档再深一级),故前景也走同族令牌,不借 --ink。 */
+      .promise { background: var(--band); color: var(--band-ink); padding: clamp(64px, 9vw, 120px) 0; }
+      .promise .eyebrow { color: var(--band-accent); }
+      .promise .eyebrow::before { background: var(--band-accent); }
+      .promise-grid { margin-top: 44px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 40px; }
+      .promise-grid > div { border-top: 1px solid var(--band-line); padding-top: 22px; }
+      .promise h3 { font-family: var(--font-display); font-weight: 700; font-size: var(--fs-20); margin: 0; }
+      .promise-grid p { color: var(--band-soft); font-size: var(--fs-15); margin: 12px 0 0; }
+      .promise-links { margin: 40px 0 0; display: flex; flex-wrap: wrap; gap: 12px 32px; font-size: var(--fs-15); }
+      .promise-links a { color: var(--band-ink); text-decoration: none; border-bottom: 1px solid var(--band-line); padding-bottom: 2px; }
+      .promise-links a:hover { border-bottom-color: var(--band-accent); }
+
+      /* ── 子页页头(改版 2b:隐私与安全 / 关于 / 帮助)──────────── */
+      .page-head { padding: clamp(48px, 7vw, 88px) 0 clamp(24px, 3vw, 36px); }
+      .page-head .section-lead { max-width: 36em; }
+
+      /* ── 更新日志与开发手记(改版 3b)──────────────────────────────
+         页面由 scripts/build-site-cool.mjs 从 site/changelog.md、site/devlog.md 生成,只用首页这一份样式;
+         手记正文借文档中心的 .docs-prose(同一种长文排版,别另写一份)。 */
+      .log { padding: 8px 0 clamp(52px, 7vw, 90px); }
+      .log-day, .log-tail, .post-index, .post { max-width: 860px; }
+      .log-feed { margin: 18px 0 0; font-size: var(--fs-14); }
+      .log-feed a { color: var(--seal); text-decoration: none; border-bottom: 1px solid var(--seal-line); }
+      .log-feed a:hover { border-bottom-color: var(--seal); }
+      .log-day { display: grid; grid-template-columns: 168px minmax(0, 1fr); gap: 8px 32px; padding: 26px 0; border-top: 1px solid var(--line); scroll-margin-top: 80px; }
+      .log-date { margin: 0; font-size: var(--fs-15); font-weight: 600; color: var(--ink-soft); line-height: 1.8; }
+      .log-items { list-style: none; margin: 0; padding: 0; }
+      .log-items li { font-size: var(--fs-16); line-height: 1.8; margin: 0 0 12px; }
+      .log-items li:last-child { margin-bottom: 0; }
+      .log-tag {
+        display: inline-block;
+        margin-right: 10px;
+        padding: 0 9px;
+        border-radius: var(--radius-pill);
+        font-size: var(--fs-13);
+        font-weight: 600;
+        line-height: 24px;
+        white-space: nowrap;
+        color: var(--seal);
+        background: var(--seal-tint);
+      }
+      .log-tag.android { color: var(--ink-soft); background: var(--raised); border: 1px solid var(--line-strong); line-height: 22px; }
+      .log-tail { margin: 0; padding-top: 26px; border-top: 1px solid var(--line); color: var(--ink-faint); font-size: var(--fs-14); }
+      .post-index { list-style: none; margin: 0 0 12px; padding: 0; border-top: 1px solid var(--line); }
+      .post-index li { display: flex; justify-content: space-between; gap: 16px; padding: 12px 0; border-bottom: 1px solid var(--line); font-size: var(--fs-15); }
+      .post-index a { color: var(--ink); text-decoration: none; }
+      .post-index a:hover { color: var(--seal); }
+      .post-index time { color: var(--ink-faint); font-size: var(--fs-13); white-space: nowrap; }
+      .post { padding: 44px 0 8px; scroll-margin-top: 62px; }
+      .post + .post { border-top: 1px solid var(--line); margin-top: 36px; }
+      .post-date { margin: 0; color: var(--ink-faint); font-size: var(--fs-14); }
+      .post-title { margin: 6px 0 0; font-family: var(--font-display); font-weight: 700; font-size: var(--fs-30); line-height: 1.3; letter-spacing: 0.02em; }
+      .post .docs-prose { margin-top: 18px; }
+      @media (max-width: 640px) {
+        .log-day { grid-template-columns: minmax(0, 1fr); }
+        .post-index li { flex-direction: column; gap: 2px; }
+      }
+
+      /* ── 文档中心(改版 3a):左目录 / 正文 / 右本页目录 ──────────────
+         页面由 scripts/build-site-cool.mjs 从 docs/user-guide.md 按「##」拆出来,只用首页这一份样式。
+         窄屏收成一列:目录折进一个 <details>(页尾那段脚本在窄屏替它合上),本页目录不显示。 */
+      .docs-shell {
+        max-width: 1240px;
+        margin: 0 auto;
+        padding: 0 28px;
+        display: grid;
+        grid-template-columns: 232px minmax(0, 1fr) 188px;
+        gap: 48px;
+        position: relative;
+        z-index: 1;
+      }
+      /* 顶栏与页脚在文档页上放到与三栏同宽(生成器给 body 元素挂 docs-page 类),否则品牌与左目录错开一截 */
+      .docs-page .wrap { max-width: 1240px; }
+      .docs-page .nav a[href="/docs/"] { color: var(--ink); }
+      .docs-side, .docs-toc {
+        position: sticky;
+        top: 62px;
+        align-self: start;
+        max-height: calc(100vh - 62px);
+        overflow: auto;
+        padding: 32px 0;
+      }
+      .docs-search { position: relative; margin-bottom: 18px; }
+      .docs-search input {
+        width: 100%;
+        height: 38px;
+        padding: 0 34px 0 12px;
+        font: inherit;
+        font-size: var(--fs-14);
+        color: var(--ink);
+        background: var(--raised);
+        border: 1px solid var(--line-strong);
+        border-radius: var(--radius-sm);
+      }
+      .docs-search input:focus { outline: 2px solid var(--seal); outline-offset: 1px; }
+      .docs-search input:focus + kbd, .docs-search input:not(:placeholder-shown) + kbd { display: none; }
+      .docs-search kbd {
+        position: absolute;
+        right: 10px;
+        top: 9px;
+        font-family: inherit;
+        font-size: var(--fs-12);
+        line-height: 18px;
+        padding: 0 6px;
+        color: var(--ink-faint);
+        border: 1px solid var(--line-strong);
+        border-radius: var(--radius-xs);
+      }
+      .docs-hits { margin: 0 0 18px; }
+      .docs-hits[hidden], .docs-miss[hidden] { display: none; }
+      .docs-hits a {
+        display: block;
+        padding: 8px 10px;
+        margin: 2px 0;
+        border-radius: var(--radius-sm);
+        text-decoration: none;
+        color: var(--ink);
+        font-size: var(--fs-14);
+      }
+      .docs-hits a:hover, .docs-hits a:focus-visible { background: var(--raised); }
+      .docs-hits small { display: block; color: var(--ink-soft); font-size: var(--fs-13); line-height: 1.5; margin-top: 2px; }
+      .docs-hits mark { background: var(--seal-tint); color: var(--seal); border-radius: var(--radius-xs); }
+      .docs-miss { color: var(--ink-faint); font-size: var(--fs-13); margin: 0 0 18px; padding: 0 10px; }
+      /* 「全部文档」那一行只在窄屏露出(下面 760 那段);字色写在条件块外,对比度门禁才算得到 */
+      .docs-menu > summary { display: none; cursor: pointer; padding: 9px 0; font-size: var(--fs-14); color: var(--ink-soft); }
+      .docs-menu > summary::after { content: "+"; float: right; color: var(--ink-faint); }
+      .docs-group { margin: 18px 0 6px; padding: 0 10px; font-size: var(--fs-12); font-weight: 600; letter-spacing: 0.12em; color: var(--ink-faint); }
+      .docs-group:first-of-type { margin-top: 0; }
+      .docs-menu a {
+        display: block;
+        padding: 5px 10px;
+        margin: 1px 0;
+        border-radius: var(--radius-sm);
+        font-size: var(--fs-14);
+        color: var(--ink-soft);
+        text-decoration: none;
+      }
+      .docs-menu a:hover { color: var(--ink); background: var(--raised); }
+      .docs-menu a[aria-current="page"] { color: var(--seal); background: var(--seal-tint); font-weight: 600; }
+      .docs-main { padding: 36px 0 80px; min-width: 0; }
+      .docs-crumbs { font-size: var(--fs-13); color: var(--ink-faint); margin: 0; }
+      .docs-crumbs a { color: inherit; text-decoration: none; }
+      .docs-crumbs a:hover { color: var(--ink); }
+      .docs-main h1 {
+        margin: 10px 0 0;
+        font-family: var(--font-display);
+        font-weight: 700;
+        font-size: var(--fs-30);
+        letter-spacing: 0.03em;
+        line-height: 1.3;
+      }
+      .docs-prose { max-width: 42em; margin-top: 22px; }
+      .docs-prose h2 {
+        margin: 44px 0 0;
         padding-top: 18px;
         border-top: 1px solid var(--line);
-        letter-spacing: 0.02em;
+        font-family: var(--font-display);
+        font-weight: 700;
+        font-size: var(--fs-24);
+        scroll-margin-top: 80px;
       }
-      .prose h3 { font-size: var(--fs-17); margin: 28px 0 10px; color: var(--ink); }
-      .prose h4 { font-size: var(--fs-15); margin: 22px 0 8px; color: var(--ink-soft); }
-      .prose p { margin: 0 0 14px; font-size: var(--fs-16); }
-      .prose ul { margin: 0 0 16px; padding-left: 1.4em; }
-      .prose li { margin: 0 0 7px; font-size: var(--fs-16); }
-      .prose li > ul { margin: 7px 0 0; }
-      .prose strong { color: var(--ink); font-weight: 700; }
-      .prose code {
-        font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+      .docs-prose p, .docs-prose li { font-size: var(--fs-16); line-height: 1.8; }
+      .docs-prose p { margin: 14px 0 0; }
+      .docs-prose ul { margin: 14px 0 0; padding-left: 1.3em; }
+      .docs-prose li { margin: 8px 0; }
+      .docs-prose li > ul { margin-top: 6px; }
+      .docs-prose li::marker { color: var(--seal); }
+      .docs-prose strong { font-weight: 700; }
+      .docs-prose a { color: var(--seal); text-decoration: none; border-bottom: 1px solid var(--seal-line); }
+      .docs-prose a:hover { border-bottom-color: var(--seal); }
+      .docs-prose code {
+        font-family: Consolas, "SF Mono", Menlo, monospace;
         font-size: var(--fs-14);
         background: var(--raised);
         border: 1px solid var(--line);
         border-radius: var(--radius-xs);
         padding: 1px 5px;
+        overflow-wrap: anywhere;
       }
-      .tablewrap { overflow-x: auto; margin: 0 0 18px; }
-      .prose table { border-collapse: collapse; width: 100%; font-size: var(--fs-14); }
-      .prose th, .prose td {
-        border: 1px solid var(--line-strong);
-        padding: 9px 12px;
-        text-align: left;
-        vertical-align: top;
+      .docs-prose pre { margin: 14px 0 0; }
+      .docs-prose pre code { display: block; padding: 12px 14px; border-radius: var(--radius-sm); font-size: var(--fs-13); line-height: 1.6; overflow-x: auto; white-space: pre; overflow-wrap: normal; }
+      .docs-index { margin-top: 36px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 28px 40px; max-width: 42em; }
+      .docs-index h2 { margin: 0; padding-bottom: 8px; border-bottom: 1px solid var(--line); font-weight: 700; font-size: var(--fs-16); letter-spacing: 0.06em; }
+      .docs-index ul { list-style: none; margin: 10px 0 0; padding: 0; }
+      .docs-index li { margin: 6px 0; font-size: var(--fs-15); }
+      .docs-index a { color: var(--ink-soft); text-decoration: none; }
+      .docs-index a:hover { color: var(--seal); }
+      .docs-pager { margin-top: 56px; display: grid; grid-template-columns: 1fr 1fr; gap: 16px; max-width: 42em; }
+      .docs-pager a {
+        padding: 14px 18px;
+        border-radius: var(--radius-md);
+        border: 1px solid var(--line);
+        background: var(--raised);
+        text-decoration: none;
+        color: var(--ink);
       }
-      .prose th { background: var(--raised); font-weight: 700; }
+      .docs-pager a:hover { border-color: var(--seal-line); }
+      .docs-pager small { display: block; color: var(--ink-faint); font-size: var(--fs-12); }
+      .docs-pager span { font-weight: 600; font-size: var(--fs-16); }
+      .docs-pager .next { grid-column: 2; text-align: right; }
+      .docs-feedback { margin: 28px 0 0; font-size: var(--fs-14); color: var(--ink-faint); max-width: 42em; }
+      .docs-feedback a { color: var(--seal); text-decoration: none; }
+      .docs-feedback a:hover { text-decoration: underline; }
+      .docs-toc p { margin: 0 0 10px; font-size: var(--fs-12); font-weight: 600; letter-spacing: 0.12em; color: var(--ink-faint); }
+      .docs-toc a { display: block; padding: 4px 0 4px 12px; font-size: var(--fs-13); color: var(--ink-soft); text-decoration: none; border-left: 1px solid var(--line); }
+      .docs-toc a:hover { color: var(--ink); border-left-color: var(--ink-faint); }
+      @media (max-width: 1080px) {
+        .docs-shell { grid-template-columns: 216px minmax(0, 1fr); gap: 40px; }
+        .docs-toc { display: none; }
+      }
+      @media (max-width: 760px) {
+        .docs-shell { grid-template-columns: minmax(0, 1fr); padding: 0 20px; gap: 0; }
+        .docs-side { position: static; max-height: none; overflow: visible; padding: 20px 0 0; }
+        .docs-menu { border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 0 10px; }
+        .docs-menu > summary { display: block; }
+        .docs-menu[open] > summary::after { content: "2"; }
+        .docs-search kbd { display: none; }
+        .docs-search input { padding-right: 12px; }
+        .docs-menu[open] > summary { border-bottom: 1px solid var(--line); margin-bottom: 12px; }
+        .docs-menu[open] { padding-bottom: 12px; }
+        .docs-main { padding-top: 24px; }
+        .docs-index { grid-template-columns: minmax(0, 1fr); }
+      }
+      @media (max-width: 420px) {
+        .docs-shell { padding: 0 16px; }
+        .docs-pager { grid-template-columns: minmax(0, 1fr); }
+        .docs-pager .next { grid-column: auto; }
+      }
 
-      .foot {
-        margin-top: 56px;
-        border-top: 1px solid var(--line);
-        padding: 26px 0 40px;
-        color: var(--ink-faint);
-        font-size: var(--fs-13);
+      /* ── 下载 ──────────────────────────────────────────────── */
+      .download { padding: clamp(52px, 7vw, 90px) 0; text-align: center; }
+      .download .eyebrow { justify-content: center; }
+      .download .section-title { margin-inline: auto; }
+      .download .section-lead { margin-inline: auto; text-align: center; }
+      .dl-row {
+        margin-top: 40px;
+        display: flex;
+        justify-content: center;
+        flex-wrap: wrap;
+        gap: 20px;
+        /* 三张主卡(Windows / Android / HarmonyOS)一行放下;窄屏靠 wrap 自己叠。 */
+        max-width: 840px;
+        margin-inline: auto;
       }
-      .foot .wrap { max-width: 1060px; display: flex; flex-wrap: wrap; gap: 14px 22px; align-items: center; }
-      .foot a { color: var(--ink-soft); text-decoration: none; }
-      .foot a:hover { color: var(--ink); }
-      .foot .spacer { margin-left: auto; }
+      .dl-card {
+        /* 主卡整张是 <a>,下划线必须在这里关:装饰是**往下传播**的(不是继承),
+           子元素自己写 text-decoration:none 压不住祖先 —— .btn 那句只对独立的
+           <a class="btn"> 有用。不关的话卡里的机型、版本号连同朱砂按钮都横着一道线。 */
+        text-decoration: none;
+        width: 260px;
+        background: var(--raised);
+        border-radius: var(--radius-lg);
+        outline: 1px solid var(--line);
+        outline-offset: -1px;
+        box-shadow: var(--card-shadow);
+        padding: 32px 24px 26px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 6px;
+        transition: transform 0.2s ease, box-shadow 0.2s ease;
+      }
+      /* 改版 1d:整张卡是一个链接,悬停时整张抬一下,而不是只有按钮在动 */
+      .dl-card:hover { transform: translateY(-2px); box-shadow: var(--float-shadow); }
+      .dl-card .os { font-family: var(--font-display); font-size: var(--fs-20); font-weight: 700; letter-spacing: 0.02em; white-space: nowrap; }
+      .dl-card .meta { font-size: var(--fs-13); color: var(--ink-soft); margin-bottom: 16px; }
+      /* 鸿蒙那张是去商店、不是直接下安装包 ⇒ 按钮退成描边,一眼分得出「这张点了不是下载」。
+         按 href 认,不另加类名:境内站生成器换下载区时自带同一张鸿蒙卡,两站同一条规则都认得。 */
+      .dl-card[href*="appgallery"] .btn-primary {
+        color: var(--ink);
+        background: none;
+        box-shadow: inset 0 0 0 1px var(--line-strong);
+      }
+      .dl-card.soon { opacity: 0.72; }
+      .dl-card.soon .badge {
+        margin-top: 6px;
+        font-size: var(--fs-13);
+        color: var(--ink-soft);
+        border: 1px dashed var(--line-strong);
+        border-radius: var(--radius-pill);
+        padding: 8px 18px;
+      }
+      .dl-foot { margin-top: 30px; font-size: var(--fs-14); color: var(--ink-faint); }
+
+      /* 尝鲜版:mac/Linux 链路已通但未正式发布 —— 一行文字链。
+         此前是两张与正式版并列的卡,半屏面积只装了两句 caveat;降成一行之后
+         「哪两个平台是正式版」在下载区一眼就看得出来。 */
+      .dl-trial {
+        margin: 26px auto 0;
+        max-width: 620px;
+        font-size: var(--fs-13);
+        line-height: 1.9;
+        color: var(--ink-faint);
+      }
+      .dl-trial .trial-tag {
+        font-size: var(--fs-12);
+        letter-spacing: 0.16em;
+        color: var(--seal);
+        border: 1px solid var(--seal-line);
+        border-radius: var(--radius-pill);
+        padding: 2px 11px;
+        margin-right: 10px;
+        white-space: nowrap;
+      }
+      .dl-trial a { color: var(--seal); text-decoration: none; margin-left: 14px; white-space: nowrap; }
+      .dl-trial a:hover { text-decoration: underline; }
+      /* 更新日志入口(profit F2):与尝鲜版那几条链接同一身朱色小字。 */
+      .dl-log { margin: 14px 0 0; font-size: var(--fs-14); }
+      .dl-log a { color: var(--seal); text-decoration: none; }
+      .dl-log a:hover { text-decoration: underline; }
+      /* 核对安装包:与尝鲜版那一行同一身小字 + 朱色链接,排在更新日志之下、页脚说明之上。 */
+      .dl-verify { margin: 10px 0 0; font-size: var(--fs-13); color: var(--ink-faint); }
+      .dl-verify a { color: var(--seal); text-decoration: none; margin-left: 10px; white-space: nowrap; }
+      .dl-verify a:hover { text-decoration: underline; }
+
+      /* ── 常见问题(profit-readiness F3)───────────────────────── */
+      /* 原生 <details>:不要脚本、键盘与读屏天然可用。答案按段各成一键(data-i18n 只覆写
+         textContent),故段里不放链接与加粗。 */
+      .faq { padding: clamp(52px, 7vw, 90px) 0; border-top: 1px solid var(--line); }
+      .faq-list { margin-top: 30px; max-width: 64ch; border-bottom: 1px solid var(--line); }
+      .faq-list details { border-top: 1px solid var(--line); }
+      .faq-list summary {
+        list-style: none;
+        cursor: pointer;
+        display: flex;
+        align-items: baseline;
+        gap: 11px;
+        padding: 16px 0;
+        font-family: var(--font-display);
+        font-size: var(--fs-17);
+        font-weight: 600;
+      }
+      .faq-list summary::-webkit-details-marker { display: none; }
+      .faq-list summary::before {
+        content: "";
+        width: 8px; height: 8px;
+        border-radius: var(--radius-seal);
+        background: var(--seal);
+        transform: translateY(-1px) rotate(45deg);
+        flex: 0 0 auto;
+      }
+      .faq-list summary::after { content: "+"; margin-left: auto; color: var(--ink-faint); font-family: var(--font-sans); font-weight: 400; }
+      .faq-list details[open] summary::after { content: "−"; }
+      .faq-list summary:hover { color: var(--seal); }
+      .faq-list details p { color: var(--ink-soft); font-size: var(--fs-15); margin: 0 0 12px 19px; }
+      .faq-list details p:last-child { margin-bottom: 20px; }
+
+      /* ── 理念 + 开源 ───────────────────────────────────────── */
+      .ethos { padding: clamp(56px, 7.5vw, 100px) 0; }
+      /* 两行第一人称,不再是「宣言 + 三段长文」的两栏版 */
+      .ethos-body { margin-top: 26px; max-width: 52ch; }
+      .ethos-body p { color: var(--ink-soft); font-size: var(--fs-16); margin: 0 0 18px; }
+      .ethos-body p strong { color: var(--ink); font-weight: 600; }
+      .ethos-body p:last-child { margin-bottom: 0; }
+
+      /* ── 服务器看得到什么 · 不足与不做:两栏清单 ────────────── */
+      .seen, .limits { padding: clamp(52px, 7vw, 90px) 0; border-top: 1px solid var(--line); }
+      .seen-lead { color: var(--ink-soft); font-size: var(--fs-16); margin: 18px 0 0; max-width: 60ch; }
+      .two-cols { margin-top: 30px; display: grid; grid-template-columns: 1fr 1fr; gap: 12px 48px; max-width: 920px; }
+      .two-cols h3, .tinker-grid h3 {
+        font-family: var(--font-display);
+        font-size: var(--fs-17);
+        font-weight: 600;
+        margin: 0;
+        padding-bottom: 12px;
+        border-bottom: 1px solid var(--line);
+      }
+      .marks { list-style: none; margin: 0; padding: 0; }
+      .marks li {
+        position: relative;
+        color: var(--ink-soft);
+        font-size: var(--fs-15);
+        padding: 11px 0 11px 19px;
+        border-bottom: 1px solid var(--line);
+      }
+      .marks li::before {
+        content: "";
+        position: absolute;
+        left: 0; top: 1.25em;
+        width: 7px; height: 7px;
+        border-radius: var(--radius-seal);
+        background: var(--seal);
+        transform: rotate(45deg);
+      }
+      .seen-note { color: var(--ink-soft); font-size: var(--fs-15); margin: 18px 0 0; max-width: 64ch; }
+      .seen-note a { color: var(--seal); text-decoration: none; }
+      .seen-note a:hover { text-decoration: underline; }
+
+      .tinker { padding: clamp(52px, 7vw, 90px) 0; border-top: 1px solid var(--line); }
+      .tinker-grid { margin-top: 30px; display: grid; grid-template-columns: 1.15fr 1fr; gap: 28px 48px; }
+      .tinker-grid > div { min-width: 0; }
+      .tinker-grid p { color: var(--ink-soft); font-size: var(--fs-15); margin: 14px 0 0; }
+      .tinker-sub { margin-top: 30px !important; }
+      .code {
+        margin: 12px 0 0;
+        padding: 12px 14px;
+        background: var(--raised);
+        border: 1px solid var(--line);
+        border-radius: var(--radius-sm);
+        font-family: Consolas, "SF Mono", Menlo, monospace;
+        font-size: var(--fs-13);
+        line-height: 1.6;
+        color: var(--ink);
+        overflow-x: auto;
+        white-space: pre;
+      }
+      .marks li a { color: var(--seal); text-decoration: none; }
+      .marks li a:hover { text-decoration: underline; }
+
+      /* ── 页脚:朱砂钤印落款 ────────────────────────────────── */
+      .foot {
+        border-top: 1px solid var(--line);
+        padding: 46px 0 54px;
+      }
+      .foot .wrap {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 32px;
+        flex-wrap: wrap;
+      }
+      .foot-sign { display: flex; align-items: center; gap: 18px; }
+      .foot-sign svg { width: 56px; height: 56px; border-radius: var(--radius-md); box-shadow: 0 6px 16px -8px rgba(40,30,18,.5); transform: rotate(-4deg); }
+      .foot-sign .word { font-family: var(--font-display); }
+      .foot-sign .word b { font-size: var(--fs-24); font-weight: 700; letter-spacing: 0.08em; display: block; }
+      .foot-sign .word span { font-size: var(--fs-13); color: var(--ink-faint); letter-spacing: 0.12em; }
+      /* 四栏(改版 2b)。窄屏两栏,由下面响应式那段收。 */
+      .foot-links { display: grid; grid-template-columns: repeat(4, minmax(0, max-content)); gap: 20px 48px; font-size: var(--fs-14); }
+      .foot-col { display: flex; flex-direction: column; gap: 8px; }
+      .foot-h { margin: 0 0 4px; font-size: var(--fs-13); font-weight: 600; letter-spacing: 0.08em; color: var(--ink); }
+      .foot-links a { color: var(--ink-soft); text-decoration: none; }
+      .foot-links a:hover { color: var(--ink); }
+      .foot-copy { width: 100%; font-size: var(--fs-13); color: var(--ink-faint); margin-top: 8px; }
+
+      a:focus-visible, .btn:focus-visible, summary:focus-visible {
+        outline: 2px solid var(--seal);
+        outline-offset: 3px;
+        border-radius: var(--radius-sm);
+      }
+
+      /* ── 响应式 ────────────────────────────────────────────── */
+      @media (max-width: 860px) {
+        /* 收成一列之后**把两块都居中**(653,用户报「小窗口内容靠左对齐」)。
+           ⭐ 病根是算得出来的:正文块被自己的 `max-width`(hero-lead 40ch ≈ 422px)钉死,
+           而容器随视口长 —— 量过,855 宽下容器 799px、正文只有 422px ⇒ **右边空掉 47%**,
+           整页看着像贴着左边的一根窄柱子。⛔ 修法不是把 `max-width` 放大(那是把「一行多少
+           字才好读」这条排版判据拿去填空白),而是**让那根柱子站中间**。
+           ⚠ `width:100%` 少不得:grid 的 `justify-items:center` 会把子项收成 `max-content`,
+           不写的话 h1 那三行会各自按自己的宽度排、参差不齐。 */
+        .bento { grid-template-columns: 1fr 1fr; }
+        .promise-grid { grid-template-columns: 1fr; gap: 28px; }
+        .foot-links { grid-template-columns: repeat(2, minmax(0, 1fr)); width: 100%; }
+        /* 平台一行折成两行时,行首会挂一个孤零零的点 ⇒ 窄屏干脆不要点,只靠间距分开 */
+        .platforms li + li::before { content: none; }
+        /* 三步收成一列:图在字下面,左右交替那一翻只在两栏时有意义 */
+        .row, .row.flip { grid-template-columns: 1fr; }
+        .row.flip .row-copy { order: 0; }
+
+        /* 窄屏收成一列:标签在上、正文在下,行间那道线只留给标签那一格 */
+        .facts { grid-template-columns: 1fr; }
+        .facts dt { padding-bottom: 4px; }
+        .facts dd { padding-top: 0; border-top: 0; }
+        .two-cols { grid-template-columns: 1fr; gap: 28px; }
+        .tinker-grid { grid-template-columns: 1fr; }
+      }
+
+      @media (max-width: 600px) {
+        .bento { grid-template-columns: 1fr; }
+        .t-wide { grid-column: auto; grid-template-columns: 1fr; }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        html { scroll-behavior: auto; }
+        *, *::before, *::after {
+          animation-duration: 0.01ms !important;
+          transition-duration: 0.01ms !important;
+        }
+        .slip-text .caret { opacity: 1; }
+      }
     </style>
   </head>
-  <body>
+
+  <body class="log-page">
+    <!-- 复用的朱砂方印(白文·单字「朱」)。SVG symbol,多处 <use> -->
+    <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+      <symbol id="seal-zhu" viewBox="0 0 100 100">
+        <rect width="100" height="100" rx="14" style="fill:var(--seal)" />
+        <text x="50" y="54" text-anchor="middle" dominant-baseline="central" font-size="64"
+          style="fill:var(--raised);font-family:var(--font-display);font-weight:700">朱</text>
+      </symbol>
+      <symbol id="seal-zhujian" viewBox="0 0 100 100">
+        <rect width="100" height="100" rx="14" style="fill:var(--seal)" />
+        <text x="50" y="30" text-anchor="middle" dominant-baseline="central" font-size="42"
+          style="fill:var(--raised);font-family:var(--font-display);font-weight:700">朱</text>
+        <text x="50" y="72" text-anchor="middle" dominant-baseline="central" font-size="42"
+          style="fill:var(--raised);font-family:var(--font-display);font-weight:700">简</text>
+      </symbol>
+    </svg>
+
     <header class="topbar">
       <div class="wrap">
-        <a class="brand" href="/"><svg viewBox="0 0 100 100" aria-hidden="true"><rect x="2" y="2" width="96" height="96" rx="25%" /><text x="50" y="50" text-anchor="middle" dominant-baseline="central" font-size="58">朱</text></svg><span class="brand-word">朱简</span></a>
-        <nav class="topnav">
-          <a href="/devlog.html" aria-current="page">开发手记</a>
-          <a href="/changelog.html">更新日志</a>
-          <a href="/#download">下载</a>
+        <a class="brand" href="/" aria-label="朱简 首页" data-i18n-aria-label="nav.brandAria">
+          <svg class="seal-mark" viewBox="0 0 100 100"><use href="#seal-zhu" /></svg>
+          <span data-i18n="nav.brand">朱简</span>
+        </a>
+        <nav class="nav">
+          <a href="/#flow" class="hide-sm" data-i18n="nav.flow">怎么用</a>
+          <a href="/security.html" class="hide-sm" data-i18n="nav.security">隐私</a>
+          <a href="/docs/" class="hide-sm" data-i18n="nav.docs">文档</a>
+          <a href="/help.html" class="hide-sm" data-i18n="nav.help">帮助</a>
+          <a href="/about.html" class="hide-sm" data-i18n="nav.ethos">关于</a>
+          <a href="/#download" class="ghost-btn" data-i18n="nav.download">下载</a>
         </nav>
       </div>
     </header>
+    <!-- 另一种语言的提示(改版 2c):默认藏着,由页尾「语言」那段按条件露出。href 同顶栏开关,由生成器按页写。 -->
 
-    <main>
-      <div class="wrap">
-        <h1 class="doc-title">朱简 开发手记</h1>
-        <p class="doc-sub">做朱简时栽过的跟头</p>
-        <div class="prose">
-<p>做朱简时栽过的跟头、改过的口,挑几件用人话记下来。</p>
-<h2>「是我们的架构扩展性不够吗?」</h2>
-<p>2026 年 9 月 17 日</p>
+    <main id="top">
+      <section class="page-head">
+        <div class="wrap">
+          <span class="eyebrow">关于</span>
+          <h1 class="section-title">开发手记</h1>
+          <p class="section-lead">做朱简时栽过的跟头、改过的口,挑几件用人话记下来。</p>
+          <p class="log-feed"><a href="/devlog.xml">RSS 订阅</a></p>
+        </div>
+      </section>
+      <section class="log">
+        <div class="wrap">
+          <ul class="post-index" aria-label="全部手记">
+            <li><a href="#2026-09-17">「是我们的架构扩展性不够吗?」</a><time datetime="2026-09-17">2026 年 9 月 17 日</time></li>
+            <li><a href="#2026-09-15">复制按钮从来没复制成过?</a><time datetime="2026-09-15">2026 年 9 月 15 日</time></li>
+          </ul>
+          <article class="post" id="2026-09-17">
+            <p class="post-date"><time datetime="2026-09-17">2026 年 9 月 17 日</time></p>
+            <h2 class="post-title">「是我们的架构扩展性不够吗?」</h2>
+            <div class="docs-prose">
 <p>我想给看板卡片加个颜色标记,一眼分出轻重缓急。</p>
 <p>先讨论要做成什么样。AI 的第一个建议是「颜色跟着标签走」,我没同意:我平时会按标签筛选,一筛,满屏都是同一种颜色,等于什么都没说。于是定下来:颜色只是个临时的视觉记号,不参与筛选、排序和统计,分类还是标签的事。</p>
 <p>接着它说了一句让我皱眉的话:旧版本的朱简收到「颜色」这个新字段,会把同步卡住,所以得分两次发版,先发一版只会读、下一版才开始写,中间还得加一道闸。</p>
@@ -272,8 +1350,12 @@
 <li>读到一句报错,不等于程序会走到那句。先问它是被谁调用的、前面还有谁把关。</li>
 <li>觉得不对劲的时候,问一句。那句话不是技术问题,是直觉,而这次直觉是对的。</li>
 </ul>
-<h2>复制按钮从来没复制成过?</h2>
-<p>2026 年 9 月 15 日</p>
+            </div>
+          </article>
+          <article class="post" id="2026-09-15">
+            <p class="post-date"><time datetime="2026-09-15">2026 年 9 月 15 日</time></p>
+            <h2 class="post-title">复制按钮从来没复制成过?</h2>
+            <div class="docs-prose">
 <p>国内的应用商店要求应用里有一个看得见的反馈入口,所以我在设置里加了一行:邮箱地址,旁边一枚「复制」按钮。</p>
 <p>在安卓模拟器上一点,弹出「复制失败」。</p>
 <p>没有顺手把按钮摘掉,先查为什么。系统给的原话是「不允许写剪贴板」。第一次是用测试脚本点的,不像真人,于是换成模拟真手指按一下,照样被拒。</p>
@@ -287,20 +1369,225 @@
 <li>按钮说「成功」,不等于成功了。要到另一头去看。</li>
 <li>结论别写得比量过的范围宽。</li>
 </ul>
+            </div>
+          </article>
         </div>
-      </div>
+      </section>
     </main>
 
+    <!-- ───────── 页脚:钤印落款 ───────── -->
     <footer class="foot">
       <div class="wrap">
-        <span>© 2026 朱简 zhujian</span>
-        <a href="/">首页</a>
-        <a href="/privacy.html">隐私政策</a>
-        <a href="/privacy-rights.html">隐私权利</a>
-        <a href="/terms.html">用户协议</a>
-        <span class="spacer"></span>
-        
+        <div class="foot-sign">
+          <svg class="seal-mark" viewBox="0 0 100 100" aria-hidden="true"><use href="#seal-zhujian" /></svg>
+          <div class="word">
+            <b data-i18n="nav.brand">朱简</b>
+            <span data-i18n="foot.tagline">ZHUJIAN · 纸与朱墨</span>
+          </div>
+        </div>
+        <!-- 四栏。两站同一份(境内站的首页下载区也有 #download),生成器不再换它。 -->
+        <nav class="foot-links">
+          <div class="foot-col">
+            <p class="foot-h" data-i18n="foot.colProduct">产品</p>
+            <a href="/#flow" data-i18n="nav.flow">怎么用</a>
+            <a href="/#download" data-i18n="nav.download">下载</a>
+            <a href="/changelog.html" data-i18n="foot.changelog">更新日志</a>
+            <a href="https://github.com/prehisle/zhujian" data-i18n="nav.source">源码</a>
+          </div>
+          <div class="foot-col">
+            <p class="foot-h" data-i18n="foot.colHelp">帮助</p>
+            <a href="/docs/" data-i18n="foot.docs">用户指南</a>
+            <a href="/help.html#faq" data-i18n="nav.faq">常见问题</a>
+            <a href="/help.html#tinker" data-i18n="foot.tinker">数据、键盘和源码</a>
+          </div>
+          <div class="foot-col">
+            <p class="foot-h" data-i18n="foot.colAbout">关于</p>
+            <a href="/about.html" data-i18n="foot.why">为什么做它</a>
+            <a href="/about.html#limits" data-i18n="foot.limits">还做不好的</a>
+            <a href="/devlog.html" data-i18n="foot.devlog">开发手记</a>
+          </div>
+          <div class="foot-col">
+            <p class="foot-h" data-i18n="foot.colTerms">隐私与条款</p>
+            <a href="/security.html" data-i18n="foot.security">隐私与安全</a>
+            <a href="/privacy.html" data-i18n="foot.privacy">隐私政策</a>
+            <a href="/privacy-rights.html" data-i18n="foot.rights">隐私权利</a>
+            <a href="/terms.html" data-i18n="foot.terms">用户协议</a>
+          </div>
+        </nav>
+        <p class="foot-copy" data-i18n="foot.copy">© 2026 朱简 zhujian</p>
       </div>
     </footer>
+
+    <!-- ───────── 看大图的浮层(653)─────────────────────────────────────────
+         ⛔ 它必须在 `</footer>` 之后:境内站生成器(`scripts/build-site-cool.mjs`)拿
+         「下载区那两条注释」「`<nav class="foot-links">`」「`foot-copy` 那一行」当结构锚,
+         插在它们中间会把那三处切错。 -->
+    <div class="shot-view" id="shot-view" hidden>
+      <button class="shot-view-close" id="shot-close" type="button" aria-label="关闭大图" data-i18n-aria-label="shot.close">✕</button>
+      <div class="shot-stage"><img id="shot-img" alt="" /></div>
+    </div>
+
+
+    <!-- ───────── 语言(改版 2c)────────────────────────────────────────────────
+         这一页是哪种语言,烤在 `<html lang>` 里;顶栏那个开关是一条**普通链接**,指着另一种语言的同一页。
+         这段只做三件事,**不按系统语言自动跳**(搜索引擎与分享出去的链接看到的,永远是网址说的那种语言):
+           ① `?lang=zh|en` 当作一次明确的选择记下来(旧的分享链接 `/?lang=en` 照旧好用);
+           ② 访客明确选过另一种语言(点过开关、或带过 ?lang=)⇒ 换到那一种的同一页;
+           ③ 没选过、而系统语言与这一页不同 ⇒ 顶栏下露出一行「另一种语言也有」的提示,不替他跳。
+         键 `zhujian.lang` 与两个客户端同一个,纯本机、不进同步。⛔ 这段里一个中文字面量都不许有。 -->
+    <script>
+      (function () {
+        "use strict";
+        var KEY = "zhujian.lang";
+        var page = document.documentElement.lang;
+        var toggle = document.getElementById("lang-toggle");
+        if (!toggle) return; /* 只有一种语言的页(文档中心,改版 3a)不带开关:没有另一种可换,也不替他跳走 */
+        var other = toggle.getAttribute("href");
+        var q = new URLSearchParams(location.search).get("lang");
+        if (q === "zh" || q === "en") localStorage.setItem(KEY, q);
+        var chosen = localStorage.getItem(KEY);
+        if ((chosen === "zh" || chosen === "en") && chosen !== page) {
+          location.replace(other + location.hash);
+          return;
+        }
+        toggle.addEventListener("click", function () {
+          localStorage.setItem(KEY, page === "zh" ? "en" : "zh");
+        });
+        var sys = navigator.language.toLowerCase().indexOf("zh") === 0 ? "zh" : "en";
+        if (!chosen && sys !== page) document.getElementById("lang-hint").parentNode.hidden = false;
+      })();
+    </script>
+
+    <!-- ───────── 「记下」那一步的演示(改版 1c)──────────────────────────────────
+         纸条里逐字打出新的那条 → 回车键亮一下 → 纸条收起、那条落进随记,停一会儿再来一遍。
+         ⛔ 这一段里一个中文字面量都不许有(同下面那段的理由):要打的字每一轮现从
+         `.demo-card.new` 里读,换了语言下一轮就跟着换。
+         系统设了「减少动态效果」就直接停在终态;滚到跟前才开始,免得在首屏外空转。 -->
+    <script>
+      (function () {
+        "use strict";
+        var demo = document.querySelector(".demo");
+        if (!demo) return; /* 子页(改版 2b)用的是同一个壳,没有这块演示 */
+        var typed = demo.querySelector(".typed");
+        var source = demo.querySelector(".demo-card.new span");
+        if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+          demo.classList.add("done");
+          return;
+        }
+        function run() {
+          var text = Array.from(source.textContent);
+          var i = 0;
+          demo.classList.remove("done", "enter");
+          typed.textContent = "";
+          var tick = setInterval(function () {
+            i++;
+            typed.textContent = text.slice(0, i).join("");
+            if (i < text.length) return;
+            clearInterval(tick);
+            setTimeout(function () { demo.classList.add("enter"); }, 500);
+            setTimeout(function () { demo.classList.add("done"); }, 800);
+            setTimeout(run, 4800);
+          }, 140);
+        }
+        var seen = new IntersectionObserver(function (entries) {
+          if (!entries[0].isIntersecting) return;
+          seen.disconnect();
+          run();
+        });
+        seen.observe(demo);
+      })();
+    </script>
+
+    <!-- ───────── 看大图的运行期(653)─────────────────────────────────────────
+         ⛔ **单独一段 IIFE,别并进上面那段** —— 官网 i18n 门禁靠 `var M = {` 与
+         `var BIND = {` 两个字面量取块,合进去只会给那只解析器添乱。
+         ⛔ **这一段里一个中文字面量都不许有**:两句话走上面那张字典的 aria-label
+         (`check-i18n-drift` 会把散在脚本里的中文当成写死文案)。
+         ⚠ **诚实边界**:开层时把焦点移到 ✕、Esc 关、关掉还焦,但**没做焦点陷阱** ——
+         一直按 Tab 仍会走到浮层背后的页面里去。桌面客户端那只看大图窗有陷阱
+         (`e2e/specs/zz-verify-focustrap.e2e.js` 钉着),这一页是静态单文件、刻意没抄。 -->
+    <script>
+      (function () {
+        "use strict";
+        var view = document.getElementById("shot-view");
+        var img = document.getElementById("shot-img");
+        var closeBtn = document.getElementById("shot-close");
+        var opener = null; /* 关掉之后把焦点还回原来那枚按钮 */
+
+        /* 切到 1:1 原寸,并把滚动位摆到中心。
+           ⚠ 居中少不得 —— 否则 1890 宽的图在手机上停在最左边,看到的是一条空白页边,
+           而不是刚才点开的那块。 */
+        function toFull() {
+          view.classList.add("at-full");
+          view.scrollLeft = (view.scrollWidth - view.clientWidth) / 2;
+          view.scrollTop = (view.scrollHeight - view.clientHeight) / 2;
+        }
+
+        /* ⭐ **进来该落哪一档是量出来的,不是猜的**:「整屏装得下」那一档若只比刚才页面上
+           那张大一点点,这一层就等于白开。实测视口 390 时页面上 282px、装得下也才 334px
+           = **1.18 倍**,而那是张 1890 设备像素的全界面截图 —— 那一档里界面文字只有 4px,
+           跟没点开一样。⇒ 放大不到 1.25 倍就直接落原寸那一档(手机上 1.50 倍、字 22px)。
+           ⛔ 别改成「按视口宽写死一个断点」:同一个视口下四张图的原生宽各不相同(840 /
+           1890 / 630),写死断点会把手机那张也一并推到原寸去。
+           ⚠ 必须等浮层这张**解码完**再量:即使字节在缓存里,`src` 一换 `naturalWidth`
+           也要下一拍才回来,当场量恒得 0。 */
+        function settle(tappedW) {
+          var fitW = img.getBoundingClientRect().width;
+          if (fitW > 0 && img.naturalWidth > fitW && fitW < tappedW * 1.25) toFull();
+        }
+
+        function open(btn) {
+          var src = btn.querySelector("img");
+          var tappedW = src.getBoundingClientRect().width; /* 页面上那张有多宽,趁没被遮住先量 */
+          opener = btn;
+          /* alt 一并搬过来:字典改的是那张原图的 alt,浮层里这张跟着它走,不另立一份。 */
+          img.onload = function () {
+            settle(tappedW);
+          };
+          img.setAttribute("src", src.getAttribute("src"));
+          img.setAttribute("alt", src.getAttribute("alt"));
+          view.classList.remove("at-full"); /* 每次进来都从「整屏装得下」那一档起 */
+          view.hidden = false;
+          document.body.classList.add("shot-open");
+          view.scrollTop = 0;
+          view.scrollLeft = 0;
+          closeBtn.focus();
+          if (img.complete && img.naturalWidth > 0) settle(tappedW); /* 已解码就不必等那一拍 */
+        }
+
+        function close() {
+          if (view.hidden) return;
+          view.hidden = true;
+          document.body.classList.remove("shot-open");
+          img.onload = null; /* 关得比图解码还快时,别让迟到的那一拍再去 settle 一个关掉的层 */
+          img.removeAttribute("src"); /* ⛔ 别写成 src="":那会当相对 URL 去请求本页 */
+          if (opener) opener.focus();
+          opener = null;
+        }
+
+        var zooms = document.querySelectorAll(".shot-zoom");
+        for (var i = 0; i < zooms.length; i++) {
+          (function (btn) {
+            btn.addEventListener("click", function () {
+              open(btn);
+            });
+          })(zooms[i]);
+        }
+
+        /* 点图 = 在「整屏装下」与「1:1 原寸」之间翻;点图以外(遮罩、✕)= 关。 */
+        view.addEventListener("click", function (ev) {
+          if (ev.target !== img) {
+            close();
+            return;
+          }
+          if (view.classList.contains("at-full")) view.classList.remove("at-full");
+          else toFull();
+        });
+
+        document.addEventListener("keydown", function (ev) {
+          if (ev.key === "Escape") close();
+        });
+      })();
+    </script>
   </body>
 </html>

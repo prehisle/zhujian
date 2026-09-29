@@ -821,6 +821,48 @@
       .page-head { padding: clamp(48px, 7vw, 88px) 0 clamp(24px, 3vw, 36px); }
       .page-head .section-lead { max-width: 36em; }
 
+      /* ── 更新日志与开发手记(改版 3b)──────────────────────────────
+         页面由 scripts/build-site-cool.mjs 从 site/changelog.md、site/devlog.md 生成,只用首页这一份样式;
+         手记正文借文档中心的 .docs-prose(同一种长文排版,别另写一份)。 */
+      .log { padding: 8px 0 clamp(52px, 7vw, 90px); }
+      .log-day, .log-tail, .post-index, .post { max-width: 860px; }
+      .log-feed { margin: 18px 0 0; font-size: var(--fs-14); }
+      .log-feed a { color: var(--seal); text-decoration: none; border-bottom: 1px solid var(--seal-line); }
+      .log-feed a:hover { border-bottom-color: var(--seal); }
+      .log-day { display: grid; grid-template-columns: 168px minmax(0, 1fr); gap: 8px 32px; padding: 26px 0; border-top: 1px solid var(--line); scroll-margin-top: 80px; }
+      .log-date { margin: 0; font-size: var(--fs-15); font-weight: 600; color: var(--ink-soft); line-height: 1.8; }
+      .log-items { list-style: none; margin: 0; padding: 0; }
+      .log-items li { font-size: var(--fs-16); line-height: 1.8; margin: 0 0 12px; }
+      .log-items li:last-child { margin-bottom: 0; }
+      .log-tag {
+        display: inline-block;
+        margin-right: 10px;
+        padding: 0 9px;
+        border-radius: var(--radius-pill);
+        font-size: var(--fs-13);
+        font-weight: 600;
+        line-height: 24px;
+        white-space: nowrap;
+        color: var(--seal);
+        background: var(--seal-tint);
+      }
+      .log-tag.android { color: var(--ink-soft); background: var(--raised); border: 1px solid var(--line-strong); line-height: 22px; }
+      .log-tail { margin: 0; padding-top: 26px; border-top: 1px solid var(--line); color: var(--ink-faint); font-size: var(--fs-14); }
+      .post-index { list-style: none; margin: 0 0 12px; padding: 0; border-top: 1px solid var(--line); }
+      .post-index li { display: flex; justify-content: space-between; gap: 16px; padding: 12px 0; border-bottom: 1px solid var(--line); font-size: var(--fs-15); }
+      .post-index a { color: var(--ink); text-decoration: none; }
+      .post-index a:hover { color: var(--seal); }
+      .post-index time { color: var(--ink-faint); font-size: var(--fs-13); white-space: nowrap; }
+      .post { padding: 44px 0 8px; scroll-margin-top: 62px; }
+      .post + .post { border-top: 1px solid var(--line); margin-top: 36px; }
+      .post-date { margin: 0; color: var(--ink-faint); font-size: var(--fs-14); }
+      .post-title { margin: 6px 0 0; font-family: var(--font-display); font-weight: 700; font-size: var(--fs-30); line-height: 1.3; letter-spacing: 0.02em; }
+      .post .docs-prose { margin-top: 18px; }
+      @media (max-width: 640px) {
+        .log-day { grid-template-columns: minmax(0, 1fr); }
+        .post-index li { flex-direction: column; gap: 2px; }
+      }
+
       /* ── 文档中心(改版 3a):左目录 / 正文 / 右本页目录 ──────────────
          页面由 scripts/build-site-cool.mjs 从 docs/user-guide.md 按「##」拆出来,只用首页这一份样式。
          窄屏收成一列:目录折进一个 <details>(页尾那段脚本在窄屏替它合上),本页目录不显示。 */
