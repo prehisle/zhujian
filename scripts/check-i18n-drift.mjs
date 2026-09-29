@@ -92,6 +92,7 @@ const EN_CJK_REGISTRY = [
   { file: "src/locales/settings.ts", key: "settings.langZh", why: "语言名按惯例显自己那门语言:en 档也显「中文」" },
   { file: "android/src/locales/settings.ts", key: "settings.langZh", why: "同上,安卓孪生" },
   { file: "site/index.html", key: "nav.langToggle", why: "官网的语言开关显**另一门**语言的名字:en 档上写「中文」正是它要去的地方" },
+  { file: "site/index.html", key: "nav.langHint", why: "英文页上那行「另一种语言也有」的提示是说给中文读者听的(改版 2c),与语言开关同一个道理" },
 ];
 
 /**

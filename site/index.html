@@ -41,7 +41,7 @@
          的核对都在 scripts/site-font.mjs;一个文件兼 400–700 两档,免得浏览器自己描粗。 */
       @font-face {
         font-family: "Zhujian WenKai";
-        src: url("fonts/zhujian-wenkai.woff2") format("woff2");
+        src: url("/fonts/zhujian-wenkai.woff2") format("woff2");
         font-weight: 400 700;
         font-display: swap;
       }
@@ -262,6 +262,21 @@
         .nav a.hide-sm { display: none; }
         .nav { gap: 16px; }
       }
+
+      /* 另一种语言的提示条(改版 2c)。⚠ `[hidden]` 显式写死:哪天有人给 .lang-hint 加 display,
+         UA 那条特指度最低的 [hidden] 就会被盖掉、提示条常驻。 */
+      .lang-hint {
+        margin: 0;
+        padding: 8px 16px;
+        text-align: center;
+        font-size: var(--fs-13);
+        color: var(--ink-soft);
+        background: var(--raised);
+        border-bottom: 1px solid var(--line);
+      }
+      .lang-hint[hidden] { display: none; }
+      .lang-hint a { color: var(--seal); text-decoration: none; }
+      .lang-hint a:hover { text-decoration: underline; }
 
       /* ── 通用节标题 ────────────────────────────────────────── */
       .eyebrow {
@@ -1099,10 +1114,12 @@
           <a href="/help.html" class="hide-sm" data-i18n="nav.help">帮助</a>
           <a href="/about.html" class="hide-sm" data-i18n="nav.ethos">关于</a>
           <a href="/#download" class="ghost-btn" data-i18n="nav.download">下载</a>
-          <a href="#top" class="lang" id="lang-toggle" data-i18n="nav.langToggle">EN</a>
+          <a id="lang-toggle" href="/en/" class="lang" data-i18n="nav.langToggle">EN</a>
         </nav>
       </div>
     </header>
+    <!-- 另一种语言的提示(改版 2c):默认藏着,由页尾「语言」那段按条件露出。href 同顶栏开关,由生成器按页写。 -->
+    <p class="lang-hint" hidden><a id="lang-hint" href="/en/" data-i18n="nav.langHint">This page is also in English →</a></p>
 
     <main id="top">
       <!-- ───────── HERO ───────── -->
@@ -1135,11 +1152,11 @@
              系统状态栏与手势条的白边(用户 9-29 报)。 -->
         <div class="stage">
           <div class="stage-desktop">
-            <img src="shots/desktop-board.webp" data-i18n-src="shot.boardSrc" width="1890" height="1050" fetchpriority="high" decoding="async"
+            <img src="/shots/desktop-board.webp" data-i18n-src="shot.boardSrc" width="1890" height="1050" fetchpriority="high" decoding="async"
                  alt="任务看板:待办、进行中、待确认、已完成四列,卡片上标着截止日期和标签" data-i18n-alt="flow.card3Alt" />
           </div>
           <div class="stage-phone">
-            <img src="shots/phone-inbox.webp" data-i18n-src="shot.phoneSrc" width="630" height="1254" decoding="async"
+            <img src="/shots/phone-inbox.webp" data-i18n-src="shot.phoneSrc" width="630" height="1254" decoding="async"
                  alt="同一份随记在手机上:一列卡片,其中一条正文里带着可以打勾的小清单" data-i18n-alt="flow.card2AltPhone" />
           </div>
         </div>
@@ -1187,9 +1204,9 @@
               <p data-i18n="flow.card2">在随记里给它打标签,或转成待办。每次编辑都保留改动前的版本,旧稿能找回;删了先进回收站,随时还原。</p>
             </div>
             <button class="shot-zoom crop crop-inbox" type="button" aria-label="点开看大图" data-i18n-aria-label="shot.zoom">
-              <img src="shots/desktop-inbox.webp" data-i18n-src="shot.inboxSrc" width="1890" height="1050" loading="lazy" decoding="async"
+              <img src="/shots/desktop-inbox.webp" data-i18n-src="shot.inboxSrc" width="1890" height="1050" loading="lazy" decoding="async"
                    alt="随记:今天记下的几条排成一条时间轴,各自挂着标签" data-i18n-alt="flow.card2Alt" />
-              <img class="crop-phone" src="shots/phone-inbox.webp" data-i18n-src="shot.phoneSrc" width="630" height="1254" loading="lazy" decoding="async" alt="" />
+              <img class="crop-phone" src="/shots/phone-inbox.webp" data-i18n-src="shot.phoneSrc" width="630" height="1254" loading="lazy" decoding="async" alt="" />
             </button>
           </div>
 
@@ -1200,7 +1217,7 @@
               <p data-i18n="flow.card3">待办、进行中、待确认、已完成,拖着走。做完的归档,可查、不可删。</p>
             </div>
             <button class="shot-zoom crop crop-board" type="button" aria-label="点开看大图" data-i18n-aria-label="shot.zoom">
-              <img src="shots/desktop-board.webp" data-i18n-src="shot.boardSrc" width="1890" height="1050" loading="lazy" decoding="async"
+              <img src="/shots/desktop-board.webp" data-i18n-src="shot.boardSrc" width="1890" height="1050" loading="lazy" decoding="async"
                    alt="任务看板:待办、进行中、待确认、已完成四列,卡片上标着截止日期和标签" data-i18n-alt="flow.card3Alt" />
             </button>
           </div>
@@ -1405,22 +1422,14 @@
       <div class="shot-stage"><img id="shot-img" alt="" /></div>
     </div>
 
-    <!-- ───────── 多语言(360,i18n-plan 第③笔)─────────────────────────────────
-         官网是**无构建步骤的静态单文件**(scp 部署,deploy §8),故字典与运行期都内联
-         在这里。形状与两个客户端工程的字典分片一字对齐(一键一行、双引号、zh/en 并排),
-         check-i18n-drift 用同一条 ENTRY_LINE 解析下面那一段。
-
-         · 生效语言 = `?lang=` > localStorage["zhujian.lang"](与两个客户端同一个键,纯本机)
-           > 系统语言(zh* → 中文,其余 → 英文);`?lang=en` 也是一条可分享的英文链接。
-         · markup 保留中文原文防首帧闪(163 契约):中文访客首帧即正确,英文访客会闪一下
-           中文 —— 与客户端同一条已接受的诚实边界。SEO 同理:爬虫拿到的是中文那一份。
-         · **注释一律用块注释**:门禁只挖空 `/* */`,行注释里的中文会被当成写死文案。
-           这是有意的 fail-closed —— 挖空 `//` 就等于把 `//` 后面的真文案也一起放行了。 -->
-    <script>
-      (function () {
-        "use strict";
-        /* 一键一行、zh/en 并排;缺一半、形状不对、键存而不用都是门禁红。取块的两枚
-           标记就钉在下面这对花括号自己那一行上 —— 别把它们挪到单独一行。 */
+    <!-- ───────── 字典与绑定表(源数据)─────────────────────────────────────────
+         改版 2c(site-redesign-plan)起**语言由网址定**:`/` 是中文、`/en/` 是英文,两份都由
+         `scripts/build-site-cool.mjs` 把字直接烤进 html(字、图址、`<html lang>`、canonical / hreflang)。
+         ⇒ 这一段只是**源数据**:生成器与 check-i18n-drift 读它,`type="text/plain"` 让浏览器不执行,
+         产物里整段删掉(访客不再下载整本字典)。形状照旧:一键一行、双引号、zh/en 并排,
+         取块的两枚标记钉在那对花括号自己那一行上。
+         ⚠ 注释一律用块注释:门禁只挖空块注释,行注释里的中文会被当成写死文案(有意的 fail-closed)。 -->
+    <script type="text/plain">
         var M = { /* ⟦i18n-dict⟧ */
           /* — 页面元信息 — */
           "meta.title": { zh: "朱简:记想法、管待办,数据在你自己的设备上", en: "Zhujian: notes and tasks, kept on your own device" },
@@ -1437,6 +1446,7 @@
           "nav.download": { zh: "下载", en: "Download" },
           "nav.faq": { zh: "常见问题", en: "FAQ" },
           "nav.langToggle": { zh: "EN", en: "中文" },
+          "nav.langHint": { zh: "This page is also in English →", en: "这一页也有中文版 →" },
 
           /* — 首屏 — */
           "hero.newsTag": { zh: "新版本", en: "New" },
@@ -1536,10 +1546,10 @@
           "page.helpEyebrow": { zh: "帮助", en: "Help" },
           "page.helpTitle": { zh: "帮助", en: "Help" },
           "page.helpLead": { zh: "常见问题,以及给爱折腾的人准备的数据文件、键位和源码。", en: "Common questions, plus the data file, keys and source for people who like to tinker." },
-          /* 截图随语言换(780):英文档用 shots/en/ 那套英文界面的图;值是路径不是文案。运行期换 src 前浏览器可能已开始下中文那张,2c 静态英文页出来后就没这一跳 */
-          "shot.boardSrc": { zh: "shots/desktop-board.webp", en: "shots/en/desktop-board.webp" },
-          "shot.inboxSrc": { zh: "shots/desktop-inbox.webp", en: "shots/en/desktop-inbox.webp" },
-          "shot.phoneSrc": { zh: "shots/phone-inbox.webp", en: "shots/en/phone-inbox.webp" },
+          /* 截图随语言换(780):英文页用 /shots/en/ 那套英文界面的图;值是路径不是文案,生成器烤进 src(2c 起不再运行期换) */
+          "shot.boardSrc": { zh: "/shots/desktop-board.webp", en: "/shots/en/desktop-board.webp" },
+          "shot.inboxSrc": { zh: "/shots/desktop-inbox.webp", en: "/shots/en/desktop-inbox.webp" },
+          "shot.phoneSrc": { zh: "/shots/phone-inbox.webp", en: "/shots/en/phone-inbox.webp" },
           "shot.zoom": { zh: "点开看大图", en: "Open a larger view" },
           "shot.close": { zh: "关闭大图", en: "Close the larger view" },
 
@@ -1686,50 +1696,37 @@
           "foot.copy": { zh: "© 2026 朱简 zhujian", en: "© 2026 Zhujian" },
         }; /* ⟦/i18n-dict⟧ */
 
-        /* 属性绑定表。门禁**从这里读**「本页支持哪几个 data-i18n-*」,不另写一份登记表
-           —— 「登记本身没人核」是 336 ⑩ 刀判过死刑的形状(改坏了照样绿)。 */
+        /* 绑定表:哪几个 data-i18n-* 换哪个属性。门禁与生成器都从这里读,不另写一份。 */
         var BIND = { "data-i18n-title": "title", "data-i18n-aria-label": "aria-label", "data-i18n-content": "content", "data-i18n-alt": "alt", "data-i18n-src": "src" };
+    </script>
+    <!-- ───────── /字典与绑定表 ───────── -->
 
-        var KEY = "zhujian.lang"; /* 与两个客户端同一个键;纯本机、不进同步 */
-
-        function pick() {
-          var q = new URLSearchParams(location.search).get("lang");
-          if (q === "zh" || q === "en") {
-            localStorage.setItem(KEY, q);
-            return q;
-          }
-          var saved = localStorage.getItem(KEY);
-          if (saved === "zh" || saved === "en") return saved;
-          return navigator.language.toLowerCase().indexOf("zh") === 0 ? "zh" : "en";
+    <!-- ───────── 语言(改版 2c)────────────────────────────────────────────────
+         这一页是哪种语言,烤在 `<html lang>` 里;顶栏那个开关是一条**普通链接**,指着另一种语言的同一页。
+         这段只做三件事,**不按系统语言自动跳**(搜索引擎与分享出去的链接看到的,永远是网址说的那种语言):
+           ① `?lang=zh|en` 当作一次明确的选择记下来(旧的分享链接 `/?lang=en` 照旧好用);
+           ② 访客明确选过另一种语言(点过开关、或带过 ?lang=)⇒ 换到那一种的同一页;
+           ③ 没选过、而系统语言与这一页不同 ⇒ 顶栏下露出一行「另一种语言也有」的提示,不替他跳。
+         键 `zhujian.lang` 与两个客户端同一个,纯本机、不进同步。⛔ 这段里一个中文字面量都不许有。 -->
+    <script>
+      (function () {
+        "use strict";
+        var KEY = "zhujian.lang";
+        var page = document.documentElement.lang;
+        var toggle = document.getElementById("lang-toggle");
+        var other = toggle.getAttribute("href");
+        var q = new URLSearchParams(location.search).get("lang");
+        if (q === "zh" || q === "en") localStorage.setItem(KEY, q);
+        var chosen = localStorage.getItem(KEY);
+        if ((chosen === "zh" || chosen === "en") && chosen !== page) {
+          location.replace(other + location.hash);
+          return;
         }
-
-        function apply(lang) {
-          document.documentElement.lang = lang;
-          function t(key) {
-            var entry = M[key];
-            if (!entry) throw new Error("i18n: unknown key " + key); /* 绝不回退兜底 */
-            return entry[lang];
-          }
-          var texts = document.querySelectorAll("[data-i18n]");
-          for (var i = 0; i < texts.length; i++) {
-            /* textContent 覆写会吞掉子元素:data-i18n 只许挂在纯文本元素上(门禁也静态核)。 */
-            if (texts[i].childElementCount > 0) throw new Error("i18n: data-i18n element has children");
-            texts[i].textContent = t(texts[i].getAttribute("data-i18n"));
-          }
-          for (var attr in BIND) {
-            var nodes = document.querySelectorAll("[" + attr + "]");
-            for (var j = 0; j < nodes.length; j++) nodes[j].setAttribute(BIND[attr], t(nodes[j].getAttribute(attr)));
-          }
-        }
-
-        var current = pick();
-        apply(current);
-        document.getElementById("lang-toggle").addEventListener("click", function (ev) {
-          ev.preventDefault(); /* 单文件静态页,换档不必重载:就地重铺一遍即可 */
-          current = current === "zh" ? "en" : "zh";
-          localStorage.setItem(KEY, current);
-          apply(current);
+        toggle.addEventListener("click", function () {
+          localStorage.setItem(KEY, page === "zh" ? "en" : "zh");
         });
+        var sys = navigator.language.toLowerCase().indexOf("zh") === 0 ? "zh" : "en";
+        if (!chosen && sys !== page) document.getElementById("lang-hint").parentNode.hidden = false;
       })();
     </script>
 

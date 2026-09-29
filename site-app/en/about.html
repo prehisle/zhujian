@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="zh">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -7,19 +7,19 @@
          启动时按 data-i18n 族属性覆写;原文与 zh 值逐字相等由 check-i18n-drift 核。
          字典与运行期在页面末尾的那段内联 script 里(⚠ 注释里别写闭合标签的字面量:
          按标签切文件的工具会先命中这里,360 当场栽过一次)。 -->
-    <title data-i18n="page.helpMeta">帮助 · 朱简</title>
-    <meta name="description" data-i18n-content="page.helpDesc" content="朱简的常见问题:同步不动、手机丢了、换设备怎么搬、要不要花钱;以及数据文件在哪、键位与源码。" />
+    <title data-i18n="page.aboutMeta">About · Zhujian</title>
+    <meta name="description" data-i18n-content="page.aboutDesc" content="Why Zhujian exists, what it still can't do well, and what it won't do." />
 
     <!-- ───────── 分享卡片、canonical 与语言版本(生成器写的)───────── -->
-    <link rel="canonical" href="https://zhujian.app/help.html" />
-    <link rel="alternate" hreflang="zh" href="https://zhujian.app/help.html" />
-    <link rel="alternate" hreflang="en" href="https://zhujian.app/en/help.html" />
-    <link rel="alternate" hreflang="x-default" href="https://zhujian.app/help.html" />
+    <link rel="canonical" href="https://zhujian.app/en/about.html" />
+    <link rel="alternate" hreflang="zh" href="https://zhujian.app/about.html" />
+    <link rel="alternate" hreflang="en" href="https://zhujian.app/en/about.html" />
+    <link rel="alternate" hreflang="x-default" href="https://zhujian.app/about.html" />
     <meta property="og:type" content="website" />
-    <meta property="og:url" content="https://zhujian.app/help.html" />
-    <meta property="og:title" data-i18n-content="page.helpMeta" content="帮助 · 朱简" />
-    <meta property="og:description" data-i18n-content="page.helpDesc" content="朱简的常见问题:同步不动、手机丢了、换设备怎么搬、要不要花钱;以及数据文件在哪、键位与源码。" />
-    <meta property="og:image" content="https://zhujian.app/shots/desktop-board.webp" />
+    <meta property="og:url" content="https://zhujian.app/en/about.html" />
+    <meta property="og:title" data-i18n-content="page.aboutMeta" content="About · Zhujian" />
+    <meta property="og:description" data-i18n-content="page.aboutDesc" content="Why Zhujian exists, what it still can't do well, and what it won't do." />
+    <meta property="og:image" content="https://zhujian.app/shots/en/desktop-board.webp" />
     <meta name="twitter:card" content="summary_large_image" />
 
     <style>
@@ -1090,104 +1090,78 @@
 
     <header class="topbar">
       <div class="wrap">
-        <a class="brand" href="/" aria-label="朱简 首页" data-i18n-aria-label="nav.brandAria">
+        <a class="brand" href="/en/" aria-label="Zhujian home" data-i18n-aria-label="nav.brandAria">
           <svg class="seal-mark" viewBox="0 0 100 100"><use href="#seal-zhu" /></svg>
-          <span data-i18n="nav.brand">朱简</span>
+          <span data-i18n="nav.brand">Zhujian</span>
         </a>
         <nav class="nav">
-          <a href="/#flow" class="hide-sm" data-i18n="nav.flow">怎么用</a>
-          <a href="/security.html" class="hide-sm" data-i18n="nav.security">隐私</a>
-          <a href="/help.html" class="hide-sm" data-i18n="nav.help">帮助</a>
-          <a href="/about.html" class="hide-sm" data-i18n="nav.ethos">关于</a>
-          <a href="/#download" class="ghost-btn" data-i18n="nav.download">下载</a>
-          <a id="lang-toggle" href="/en/help.html" class="lang" data-i18n="nav.langToggle">EN</a>
+          <a href="/en/#flow" class="hide-sm" data-i18n="nav.flow">How it works</a>
+          <a href="/en/security.html" class="hide-sm" data-i18n="nav.security">Privacy</a>
+          <a href="/en/help.html" class="hide-sm" data-i18n="nav.help">Help</a>
+          <a href="/en/about.html" class="hide-sm" data-i18n="nav.ethos">About</a>
+          <a href="/en/#download" class="ghost-btn" data-i18n="nav.download">Download</a>
+          <a id="lang-toggle" href="/about.html" class="lang" data-i18n="nav.langToggle">中文</a>
         </nav>
       </div>
     </header>
     <!-- 另一种语言的提示(改版 2c):默认藏着,由页尾「语言」那段按条件露出。href 同顶栏开关,由生成器按页写。 -->
-    <p class="lang-hint" hidden><a id="lang-hint" href="/en/help.html" data-i18n="nav.langHint">This page is also in English →</a></p>
+    <p class="lang-hint" hidden><a id="lang-hint" href="/about.html" data-i18n="nav.langHint">这一页也有中文版 →</a></p>
 
     <main id="top">
       <section class="page-head">
         <div class="wrap">
-          <span class="eyebrow" data-i18n="page.helpEyebrow">帮助</span>
-          <h1 class="section-title" data-i18n="page.helpTitle">帮助</h1>
-          <p class="section-lead" data-i18n="page.helpLead">常见问题,以及给爱折腾的人准备的数据文件、键位和源码。</p>
+          <span class="eyebrow" data-i18n="page.aboutEyebrow">About</span>
+          <h1 class="section-title" data-i18n="page.aboutTitle">About Zhujian</h1>
+          <p class="section-lead" data-i18n="page.aboutLead">Why it exists, what it still can't do well, and what it won't do.</p>
         </div>
       </section>
 
-      <!-- ───────── 常见问题 ───────── -->
-      <!-- 每一句都要能在 app 里照着走到(菜单名照两端字典原文);价格一个字不写(161「不预告收费」)。
-           ⚠ faq.costA 那句「现在免费使用,包括多设备同步」与 facts.free 同一个口径:开闸收钱那笔
-           (profit-readiness D5)要连它一起改。 -->
-      <section class="faq" id="faq">
+      <!-- ───────── 理念 + 开源 ───────── -->
+      <section class="ethos" id="ethos">
         <div class="wrap">
-          <span class="eyebrow" data-i18n="faq.eyebrow">常见问题</span>
-          <h2 class="section-title" data-i18n="faq.title">遇到了先看这里</h2>
-          <div class="faq-list">
-            <details>
-              <summary data-i18n="faq.syncQ">同步好像不动了?</summary>
-              <p data-i18n="faq.syncA1">先看两头是不是都开着、连着网。手机上的朱简要在前台才会追赶,放到后台不保证实时。新设备刚加入的那一会儿,老设备也要开着,才拉得到全部数据。</p>
-              <p data-i18n="faq.syncA2">都开着还是不动,就跑一遍网络自检:电脑在「设置 → 关于 → 诊断」,手机在「设置 → 诊断」。它会一步步检查,告诉你卡在哪一步。还不行就发邮件给我。电脑上那一页最下面一行能把诊断结果复制成一段文字,贴进邮件就行;手机上截个图也可以。</p>
-            </details>
-            <details>
-              <summary data-i18n="faq.lostQ">手机丢了怎么办?</summary>
-              <p data-i18n="faq.lostA1">你别的设备上还有一份完整的数据,丢的只是这一台手机。在还在手上的设备里打开「同步」的设备名单,把丢的那台移除,它就不能再通过服务器同步了。</p>
-              <p data-i18n="faq.lostA2">有两件事要知道。第一,移除收不回它本机已经有的内容。朱简没有单独的应用锁,这部分只能靠手机自己的锁屏挡着。第二,只有带「管理」标记的设备能移除别的设备。如果丢的正好是唯一一台管理设备,或者你想彻底隔离、把整个账户的密钥换掉,请发邮件给我。</p>
-              <p data-i18n="faq.lostA3">如果丢的是你唯一的一台设备,又没做过备份,数据就找不回来了。谁也帮不了,包括我。</p>
-            </details>
-            <details>
-              <summary data-i18n="faq.moveQ">换了新手机(或新电脑),数据怎么搬过去?</summary>
-              <p data-i18n="faq.moveA1">旧设备还在的话,不用手动搬。在旧设备的「同步」里点「添加设备」,新设备装好朱简后,在「同步」里扫码或者输入配对码加入,全部数据会自动拉过来。拉数据的时候,旧设备要开着,手机的话要亮屏、停在朱简里。</p>
-              <p data-i18n="faq.moveA2">以前没开过同步也一样:先在旧设备的「同步」里创建账户(不要邮箱和手机号),然后照上面的步骤加新设备。</p>
-              <p data-i18n="faq.moveA3">在新设备上确认内容都齐了,再去设备名单里把旧的那台移除。手机上卸载朱简会把数据一起删掉,所以旧手机先别急着卸。</p>
-            </details>
-            <details>
-              <summary data-i18n="faq.costQ">要花钱吗?</summary>
-              <p data-i18n="faq.costA">现在免费使用,包括多设备同步。你的数据存在你自己设备上的一个 SQLite 文件里,代码也开源(MIT)。哪天不想用了,东西都还在你手上。</p>
-            </details>
+          <span class="eyebrow" data-i18n="ethos.eyebrow">Why it exists</span>
+          <div class="ethos-body">
+            <!-- 为什么做它的三条是用户 2026-09-25 亲口给的三个理由,按原意改写成首页语气;
+                 加粗的短句与正文各成一键(data-i18n 只覆写 textContent)。 -->
+            <p data-i18n="ethos.p1">I built it because three things kept bothering me.</p>
+            <p><strong data-i18n="ethos.why1a">Your data lives in someone else's cloud. </strong><span data-i18n="ethos.why1b">If the service shuts down, your account gets banned, or the database leaks, it is no longer yours. So Zhujian keeps your data on your own devices, and sync only carries encrypted content.</span></p>
+            <p><strong data-i18n="ethos.why2a">You can't open it when you need to jot something down. </strong><span data-i18n="ethos.why2b">A web board needs a browser and a login, stalls when the network is slow, and keeps growing features. A thought often lasts only a few seconds. Zhujian's answer: press a hotkey, a slip of paper pops up, type, hit Enter, and it tucks itself away.</span></p>
+            <p><strong data-i18n="ethos.why3a">Your words get rewritten. </strong><span data-i18n="ethos.why3b">Many tools now use AI to polish, summarize, and sort what you write. When AI can write almost anything for you, the ideas you came up with yourself, untouched, are the ones worth keeping. Zhujian never changes a word you write.</span></p>
+            <p data-i18n="ethos.p4">One more thing: I wrote Zhujian's code together with AI. Having AI help me write a program is one thing; letting it change your words is another.</p>
+            <!-- 字源那段里两个词是加粗的,故按加粗边界切片;英文版把「原名朱笺」的来龙去脉
+                 略去(对英文读者是无从对照的旧名),不是漏译。 -->
+            <p>
+              <span data-i18n="ethos.p2a">The name joins </span><strong data-i18n="ethos.p2Zhusha">zhūshā</strong><span data-i18n="ethos.p2b"> (cinnabar) with </span><strong data-i18n="ethos.p2Jiandu">jiǎndú</strong><span data-i18n="ethos.p2c"> (bamboo slips): red ink on a short strip.</span>
+            </p>
           </div>
         </div>
       </section>
-
-      <!-- ───────── 给爱折腾的人 ───────── -->
-      <section class="tinker" id="tinker">
+      <!-- ───────── 不足与不做 ───────── -->
+      <section class="limits" id="limits">
         <div class="wrap">
-          <span class="eyebrow" data-i18n="tinker.eyebrow">给爱折腾的人</span>
-          <h2 class="section-title" data-i18n="tinker.title">数据、键盘和源码</h2>
-          <!-- ⛔ 路径 = Tauri `app_data_dir()` + identifier `app.zhujian.notebook`(src-tauri/tauri.conf.json)+ 主库名
-               `notebook.sqlite3`(src-tauri/src/lib.rs 开库那段);查询按 0036 之后的表形写:`items.stage` 指 `board_column.id`,
-               自定义列的 id 是 ULID ⇒ 按 `kind = 'idea'` 过滤,⛔ 别写成 `stage in ('inbox','filed')`。
-               键位抄 readme「功能」节,改键位 / 表结构时这里同改。pre 里是命令与路径,不进字典。 -->
-          <div class="tinker-grid">
+          <span class="eyebrow" data-i18n="limits.eyebrow">The weak spots first</span>
+          <h2 class="section-title" data-i18n="limits.title">What it doesn't do well yet, and what it won't do</h2>
+          <!-- ⛔ 「还做不好」每一条都要是今天真的做不到(backlog 里有账或代码里查得到);修好一条就删一条,
+               别让它变成「此前」的假话。「不打算做」写的是取舍,⛔ 别写「永不」这类极限词(copy-plan §8)。 -->
+          <div class="two-cols">
             <div>
-              <h3 data-i18n="tinker.dataTitle">数据就是一个 SQLite 文件</h3>
-              <p data-i18n="tinker.dataP1">电脑上的主空间在这儿,别的空间是同一目录下以一串编号命名的文件:</p>
-              <pre class="code">Windows  %APPDATA%&#92;app.zhujian.notebook&#92;notebook.sqlite3
-macOS    ~/Library/Application Support/app.zhujian.notebook/notebook.sqlite3
-Linux    ~/.local/share/app.zhujian.notebook/notebook.sqlite3</pre>
-              <p data-i18n="tinker.dataP2">随记和待办在同一张 items 表里,靠它落在哪一列来区分。看最近五条随记:</p>
-              <pre class="code">sqlite3 notebook.sqlite3 "select i.created_at, i.content
-  from items i join board_column c on c.id = i.stage
-  where c.kind = 'idea' and i.archived_at is null
-  order by i.created_at desc limit 5;"</pre>
-              <p data-i18n="tinker.dataP3">建议只读着看。直接改它不在应用照顾的范围里,改坏了我也不好帮你救。手机上的库在应用私有目录里,拿不到。</p>
-              <p data-i18n="tinker.dataP4">不想碰数据库也行:电脑版设置 →「备份与恢复」→「导出为 Markdown」,把整个空间连图带留言导成几份 .md,任何编辑器都能打开。</p>
+              <h3 data-i18n="limits.notYetTitle">Not good at yet</h3>
+              <ul class="marks">
+                <li data-i18n="limits.n1">There is no iPhone version.</li>
+                <li data-i18n="limits.n2">The Windows installer is not code-signed, so the first install shows an "unknown publisher" warning.</li>
+                <li data-i18n="limits.n3">On phones, sync is not real-time while Zhujian is in the background; it catches up when you bring it back.</li>
+                <li data-i18n="limits.n4">There is no app lock; on a phone, your notes are protected by the system lock screen.</li>
+                <li data-i18n="limits.n5">Board columns can only be added, renamed, or deleted on a computer; phones just use them.</li>
+                <li data-i18n="limits.n6">The HarmonyOS version gets updates later than Android.</li>
+                <li data-i18n="limits.n7">In dark mode a few small labels are a little too faint.</li>
+              </ul>
             </div>
             <div>
-              <h3 data-i18n="tinker.keysTitle">手不离键盘</h3>
+              <h3 data-i18n="limits.neverTitle">Won't do</h3>
               <ul class="marks">
-                <li data-i18n="tinker.k1">Ctrl+Alt+N 唤出纸条,Ctrl+Alt+M 打开主窗;两个都能改。Mac 上是 Cmd+Alt。</li>
-                <li data-i18n="tinker.k2">纸条里行首打 /:/task 直接存成任务,/tag 名字 挂上标签,/space 换个空间。</li>
-                <li data-i18n="tinker.k3">卡片右上角 ⋯ 里每项都标着单键:E 编辑、C 复制、L 标签、S 截止、P 优先级、B 撤回、D 删除,] 和 [ 前后挪一列。</li>
-                <li data-i18n="tinker.k4">正文行首写 - [ ] 就是一个能勾的方框。</li>
-              </ul>
-              <h3 class="tinker-sub" data-i18n="tinker.srcTitle">源码与设计</h3>
-              <ul class="marks">
-                <li><a href="https://github.com/prehisle/zhujian" data-i18n="tinker.srcRepo">源码(MIT),Rust + TypeScript + Tauri</a></li>
-                <li><a href="https://github.com/prehisle/zhujian/blob/main/docs/why-no-framework.md" data-i18n="tinker.srcNoFw">为什么前端不用框架</a></li>
-                <li><a href="/devlog.html" data-i18n="tinker.srcDevlog">开发手记:做它时栽过的跟头</a></li>
-                <li><a href="https://github.com/prehisle/zhujian/blob/main/docs/user-guide.md#%E8%87%AA%E5%BB%BA%E5%90%8C%E6%AD%A5%E6%9C%8D%E5%8A%A1%E5%99%A8" data-i18n="tinker.srcSelfHost">自己搭一台同步服务器</a></li>
+                <li data-i18n="limits.x1">AI polishing, summaries, or auto-filing. What you write is what stays.</li>
+                <li data-i18n="limits.x2">Ask for an email address or phone number to sign up.</li>
+                <li data-i18n="limits.x3">Put ads or analytics in the app.</li>
               </ul>
             </div>
           </div>
@@ -1201,39 +1175,39 @@ Linux    ~/.local/share/app.zhujian.notebook/notebook.sqlite3</pre>
         <div class="foot-sign">
           <svg class="seal-mark" viewBox="0 0 100 100" aria-hidden="true"><use href="#seal-zhujian" /></svg>
           <div class="word">
-            <b data-i18n="nav.brand">朱简</b>
-            <span data-i18n="foot.tagline">ZHUJIAN · 纸与朱墨</span>
+            <b data-i18n="nav.brand">Zhujian</b>
+            <span data-i18n="foot.tagline">ZHUJIAN · PAPER AND CINNABAR</span>
           </div>
         </div>
         <!-- 四栏。两站同一份(境内站的首页下载区也有 #download),生成器不再换它。 -->
         <nav class="foot-links">
           <div class="foot-col">
-            <p class="foot-h" data-i18n="foot.colProduct">产品</p>
-            <a href="/#flow" data-i18n="nav.flow">怎么用</a>
-            <a href="/#download" data-i18n="nav.download">下载</a>
-            <a href="/changelog.html" data-i18n="foot.changelog">更新日志</a>
-            <a href="https://github.com/prehisle/zhujian" data-i18n="nav.source">源码</a>
+            <p class="foot-h" data-i18n="foot.colProduct">Product</p>
+            <a href="/en/#flow" data-i18n="nav.flow">How it works</a>
+            <a href="/en/#download" data-i18n="nav.download">Download</a>
+            <a href="/changelog.html" data-i18n="foot.changelog">Changelog (Chinese)</a>
+            <a href="https://github.com/prehisle/zhujian" data-i18n="nav.source">Source</a>
           </div>
           <div class="foot-col">
-            <p class="foot-h" data-i18n="foot.colHelp">帮助</p>
-            <a href="/help.html#faq" data-i18n="nav.faq">常见问题</a>
-            <a href="/help.html#tinker" data-i18n="foot.tinker">数据、键盘和源码</a>
+            <p class="foot-h" data-i18n="foot.colHelp">Help</p>
+            <a href="/en/help.html#faq" data-i18n="nav.faq">FAQ</a>
+            <a href="/en/help.html#tinker" data-i18n="foot.tinker">Data, keys and source</a>
           </div>
           <div class="foot-col">
-            <p class="foot-h" data-i18n="foot.colAbout">关于</p>
-            <a href="/about.html" data-i18n="foot.why">为什么做它</a>
-            <a href="/about.html#limits" data-i18n="foot.limits">还做不好的</a>
-            <a href="/devlog.html" data-i18n="foot.devlog">开发手记</a>
+            <p class="foot-h" data-i18n="foot.colAbout">About</p>
+            <a href="/en/about.html" data-i18n="foot.why">Why it exists</a>
+            <a href="/en/about.html#limits" data-i18n="foot.limits">What it can't do yet</a>
+            <a href="/devlog.html" data-i18n="foot.devlog">Dev notes (Chinese)</a>
           </div>
           <div class="foot-col">
-            <p class="foot-h" data-i18n="foot.colTerms">隐私与条款</p>
-            <a href="/security.html" data-i18n="foot.security">隐私与安全</a>
-            <a href="/privacy.html" data-i18n="foot.privacy">隐私政策</a>
-            <a href="/privacy-rights.html" data-i18n="foot.rights">隐私权利</a>
-            <a href="/terms.html" data-i18n="foot.terms">用户协议</a>
+            <p class="foot-h" data-i18n="foot.colTerms">Privacy &amp; terms</p>
+            <a href="/en/security.html" data-i18n="foot.security">Privacy &amp; security</a>
+            <a href="/privacy.html" data-i18n="foot.privacy">Privacy</a>
+            <a href="/privacy-rights.html" data-i18n="foot.rights">Your rights</a>
+            <a href="/terms.html" data-i18n="foot.terms">Terms</a>
           </div>
         </nav>
-        <p class="foot-copy" data-i18n="foot.copy">© 2026 朱简 zhujian</p>
+        <p class="foot-copy" data-i18n="foot.copy">© 2026 Zhujian</p>
       </div>
     </footer>
 
@@ -1242,7 +1216,7 @@ Linux    ~/.local/share/app.zhujian.notebook/notebook.sqlite3</pre>
          「下载区那两条注释」「`<nav class="foot-links">`」「`foot-copy` 那一行」当结构锚,
          插在它们中间会把那三处切错。 -->
     <div class="shot-view" id="shot-view" hidden>
-      <button class="shot-view-close" id="shot-close" type="button" aria-label="关闭大图" data-i18n-aria-label="shot.close">✕</button>
+      <button class="shot-view-close" id="shot-close" type="button" aria-label="Close the larger view" data-i18n-aria-label="shot.close">✕</button>
       <div class="shot-stage"><img id="shot-img" alt="" /></div>
     </div>
 

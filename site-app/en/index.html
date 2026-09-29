@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="zh">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -7,19 +7,23 @@
          启动时按 data-i18n 族属性覆写;原文与 zh 值逐字相等由 check-i18n-drift 核。
          字典与运行期在页面末尾的那段内联 script 里(⚠ 注释里别写闭合标签的字面量:
          按标签切文件的工具会先命中这里,360 当场栽过一次)。 -->
-    <title data-i18n="page.helpMeta">帮助 · 朱简</title>
-    <meta name="description" data-i18n-content="page.helpDesc" content="朱简的常见问题:同步不动、手机丢了、换设备怎么搬、要不要花钱;以及数据文件在哪、键位与源码。" />
+    <title data-i18n="meta.title">Zhujian: notes and tasks, kept on your own device</title>
+    <meta
+      name="description"
+      data-i18n-content="meta.desc"
+      content="Zhujian is a tool for notes and tasks. Jot things down into Notes, turn what needs doing into tasks and see them through on the board. Your data lives on your own device; multi-device sync is end-to-end encrypted. Free to use, open source."
+    />
 
     <!-- ───────── 分享卡片、canonical 与语言版本(生成器写的)───────── -->
-    <link rel="canonical" href="https://zhujian.app/help.html" />
-    <link rel="alternate" hreflang="zh" href="https://zhujian.app/help.html" />
-    <link rel="alternate" hreflang="en" href="https://zhujian.app/en/help.html" />
-    <link rel="alternate" hreflang="x-default" href="https://zhujian.app/help.html" />
+    <link rel="canonical" href="https://zhujian.app/en/" />
+    <link rel="alternate" hreflang="zh" href="https://zhujian.app/" />
+    <link rel="alternate" hreflang="en" href="https://zhujian.app/en/" />
+    <link rel="alternate" hreflang="x-default" href="https://zhujian.app/" />
     <meta property="og:type" content="website" />
-    <meta property="og:url" content="https://zhujian.app/help.html" />
-    <meta property="og:title" data-i18n-content="page.helpMeta" content="帮助 · 朱简" />
-    <meta property="og:description" data-i18n-content="page.helpDesc" content="朱简的常见问题:同步不动、手机丢了、换设备怎么搬、要不要花钱;以及数据文件在哪、键位与源码。" />
-    <meta property="og:image" content="https://zhujian.app/shots/desktop-board.webp" />
+    <meta property="og:url" content="https://zhujian.app/en/" />
+    <meta property="og:title" data-i18n-content="meta.title" content="Zhujian: notes and tasks, kept on your own device" />
+    <meta property="og:description" data-i18n-content="meta.desc" content="Zhujian is a tool for notes and tasks. Jot things down into Notes, turn what needs doing into tasks and see them through on the board. Your data lives on your own device; multi-device sync is end-to-end encrypted. Free to use, open source." />
+    <meta property="og:image" content="https://zhujian.app/shots/en/desktop-board.webp" />
     <meta name="twitter:card" content="summary_large_image" />
 
     <style>
@@ -1090,109 +1094,271 @@
 
     <header class="topbar">
       <div class="wrap">
-        <a class="brand" href="/" aria-label="朱简 首页" data-i18n-aria-label="nav.brandAria">
+        <a class="brand" href="/en/" aria-label="Zhujian home" data-i18n-aria-label="nav.brandAria">
           <svg class="seal-mark" viewBox="0 0 100 100"><use href="#seal-zhu" /></svg>
-          <span data-i18n="nav.brand">朱简</span>
+          <span data-i18n="nav.brand">Zhujian</span>
         </a>
         <nav class="nav">
-          <a href="/#flow" class="hide-sm" data-i18n="nav.flow">怎么用</a>
-          <a href="/security.html" class="hide-sm" data-i18n="nav.security">隐私</a>
-          <a href="/help.html" class="hide-sm" data-i18n="nav.help">帮助</a>
-          <a href="/about.html" class="hide-sm" data-i18n="nav.ethos">关于</a>
-          <a href="/#download" class="ghost-btn" data-i18n="nav.download">下载</a>
-          <a id="lang-toggle" href="/en/help.html" class="lang" data-i18n="nav.langToggle">EN</a>
+          <a href="/en/#flow" class="hide-sm" data-i18n="nav.flow">How it works</a>
+          <a href="/en/security.html" class="hide-sm" data-i18n="nav.security">Privacy</a>
+          <a href="/en/help.html" class="hide-sm" data-i18n="nav.help">Help</a>
+          <a href="/en/about.html" class="hide-sm" data-i18n="nav.ethos">About</a>
+          <a href="/en/#download" class="ghost-btn" data-i18n="nav.download">Download</a>
+          <a id="lang-toggle" href="/" class="lang" data-i18n="nav.langToggle">中文</a>
         </nav>
       </div>
     </header>
     <!-- 另一种语言的提示(改版 2c):默认藏着,由页尾「语言」那段按条件露出。href 同顶栏开关,由生成器按页写。 -->
-    <p class="lang-hint" hidden><a id="lang-hint" href="/en/help.html" data-i18n="nav.langHint">This page is also in English →</a></p>
+    <p class="lang-hint" hidden><a id="lang-hint" href="/" data-i18n="nav.langHint">这一页也有中文版 →</a></p>
 
     <main id="top">
-      <section class="page-head">
+      <!-- ───────── HERO ───────── -->
+      <section class="hero">
         <div class="wrap">
-          <span class="eyebrow" data-i18n="page.helpEyebrow">帮助</span>
-          <h1 class="section-title" data-i18n="page.helpTitle">帮助</h1>
-          <p class="section-lead" data-i18n="page.helpLead">常见问题,以及给爱折腾的人准备的数据文件、键位和源码。</p>
+          <div class="hero-copy">
+            <!-- 版本号留在 markup 里、不进字典:bump-version 按 `v<版本>` 一起改它(桌面那一侧)。 -->
+            <a class="news-pill" href="/changelog.html"><span class="news-tag" data-i18n="hero.newsTag">New</span><span><span data-i18n="hero.newsDesktop">Desktop</span> v0.2.49 · <span data-i18n="hero.newsSee">what changed (in Chinese)</span> →</span></a>
+            <!-- 主标题的换行与朱砂重音是版式的一部分,故每一段各自成键(data-i18n 只覆写
+                 textContent、带子元素会被吞掉)。末段在中文里是句号、在英文里是句点 ——
+                 重音在中文落在「想清楚」、在英文落在 later,故 line3 那一格两档承担的
+                 词不同,而朱砂色始终跟着 line3 这一格。 -->
+            <h1><span data-i18n="hero.line1">Jot it down now,</span><br /><span data-i18n="hero.line2">think it through </span><span class="accent" data-i18n="hero.line3">later</span><span data-i18n="hero.line4">.</span></h1>
+            <p class="hero-lead" data-i18n="hero.lead">Notes and tasks, on your computer and your phone. Your data stays on your own devices, and the app works offline.</p>
+            <div class="cta-row">
+              <a class="btn btn-primary" href="#download" data-i18n="hero.ctaDownload">Download for free</a>
+              <a class="btn btn-ghost" href="#flow" data-i18n="hero.ctaSee">See how it works</a>
+            </div>
+            <ul class="platforms">
+              <li>Windows</li>
+              <li>Android</li>
+              <li data-i18n="hero.pfHarmony">HarmonyOS</li>
+              <li data-i18n="hero.pfTrial">macOS / Linux early builds</li>
+              <li data-i18n="hero.pfOss">Open source (MIT)</li>
+              <li data-i18n="hero.pfNoSignup">No sign-up</li>
+            </ul>
+          </div>
         </div>
-      </section>
-
-      <!-- ───────── 常见问题 ───────── -->
-      <!-- 每一句都要能在 app 里照着走到(菜单名照两端字典原文);价格一个字不写(161「不预告收费」)。
-           ⚠ faq.costA 那句「现在免费使用,包括多设备同步」与 facts.free 同一个口径:开闸收钱那笔
-           (profit-readiness D5)要连它一起改。 -->
-      <section class="faq" id="faq">
-        <div class="wrap">
-          <span class="eyebrow" data-i18n="faq.eyebrow">常见问题</span>
-          <h2 class="section-title" data-i18n="faq.title">遇到了先看这里</h2>
-          <div class="faq-list">
-            <details>
-              <summary data-i18n="faq.syncQ">同步好像不动了?</summary>
-              <p data-i18n="faq.syncA1">先看两头是不是都开着、连着网。手机上的朱简要在前台才会追赶,放到后台不保证实时。新设备刚加入的那一会儿,老设备也要开着,才拉得到全部数据。</p>
-              <p data-i18n="faq.syncA2">都开着还是不动,就跑一遍网络自检:电脑在「设置 → 关于 → 诊断」,手机在「设置 → 诊断」。它会一步步检查,告诉你卡在哪一步。还不行就发邮件给我。电脑上那一页最下面一行能把诊断结果复制成一段文字,贴进邮件就行;手机上截个图也可以。</p>
-            </details>
-            <details>
-              <summary data-i18n="faq.lostQ">手机丢了怎么办?</summary>
-              <p data-i18n="faq.lostA1">你别的设备上还有一份完整的数据,丢的只是这一台手机。在还在手上的设备里打开「同步」的设备名单,把丢的那台移除,它就不能再通过服务器同步了。</p>
-              <p data-i18n="faq.lostA2">有两件事要知道。第一,移除收不回它本机已经有的内容。朱简没有单独的应用锁,这部分只能靠手机自己的锁屏挡着。第二,只有带「管理」标记的设备能移除别的设备。如果丢的正好是唯一一台管理设备,或者你想彻底隔离、把整个账户的密钥换掉,请发邮件给我。</p>
-              <p data-i18n="faq.lostA3">如果丢的是你唯一的一台设备,又没做过备份,数据就找不回来了。谁也帮不了,包括我。</p>
-            </details>
-            <details>
-              <summary data-i18n="faq.moveQ">换了新手机(或新电脑),数据怎么搬过去?</summary>
-              <p data-i18n="faq.moveA1">旧设备还在的话,不用手动搬。在旧设备的「同步」里点「添加设备」,新设备装好朱简后,在「同步」里扫码或者输入配对码加入,全部数据会自动拉过来。拉数据的时候,旧设备要开着,手机的话要亮屏、停在朱简里。</p>
-              <p data-i18n="faq.moveA2">以前没开过同步也一样:先在旧设备的「同步」里创建账户(不要邮箱和手机号),然后照上面的步骤加新设备。</p>
-              <p data-i18n="faq.moveA3">在新设备上确认内容都齐了,再去设备名单里把旧的那台移除。手机上卸载朱简会把数据一起删掉,所以旧手机先别急着卸。</p>
-            </details>
-            <details>
-              <summary data-i18n="faq.costQ">要花钱吗?</summary>
-              <p data-i18n="faq.costA">现在免费使用,包括多设备同步。你的数据存在你自己设备上的一个 SQLite 文件里,代码也开源(MIT)。哪天不想用了,东西都还在你手上。</p>
-            </details>
+        <!-- 合成图:两张都是真截图(与三步里用的是同一批),⛔ 别换成示意图。手机那张裁掉了
+             系统状态栏与手势条的白边(用户 9-29 报)。 -->
+        <div class="stage">
+          <div class="stage-desktop">
+            <img src="/shots/en/desktop-board.webp" data-i18n-src="shot.boardSrc" width="1890" height="1050" fetchpriority="high" decoding="async"
+                 alt="The task board: four columns (To do, In progress, To confirm, Done) with due dates and tags on the cards" data-i18n-alt="flow.card3Alt" />
+          </div>
+          <div class="stage-phone">
+            <img src="/shots/en/phone-inbox.webp" data-i18n-src="shot.phoneSrc" width="630" height="1254" decoding="async"
+                 alt="The same notes on a phone: a column of cards, one of them holding a tickable checklist in its body" data-i18n-alt="flow.card2AltPhone" />
           </div>
         </div>
       </section>
 
-      <!-- ───────── 给爱折腾的人 ───────── -->
-      <section class="tinker" id="tinker">
+      <!-- ───────── 三步主线 ───────── -->
+      <section class="flow" id="flow">
         <div class="wrap">
-          <span class="eyebrow" data-i18n="tinker.eyebrow">给爱折腾的人</span>
-          <h2 class="section-title" data-i18n="tinker.title">数据、键盘和源码</h2>
-          <!-- ⛔ 路径 = Tauri `app_data_dir()` + identifier `app.zhujian.notebook`(src-tauri/tauri.conf.json)+ 主库名
-               `notebook.sqlite3`(src-tauri/src/lib.rs 开库那段);查询按 0036 之后的表形写:`items.stage` 指 `board_column.id`,
-               自定义列的 id 是 ULID ⇒ 按 `kind = 'idea'` 过滤,⛔ 别写成 `stage in ('inbox','filed')`。
-               键位抄 readme「功能」节,改键位 / 表结构时这里同改。pre 里是命令与路径,不进字典。 -->
-          <div class="tinker-grid">
-            <div>
-              <h3 data-i18n="tinker.dataTitle">数据就是一个 SQLite 文件</h3>
-              <p data-i18n="tinker.dataP1">电脑上的主空间在这儿,别的空间是同一目录下以一串编号命名的文件:</p>
-              <pre class="code">Windows  %APPDATA%&#92;app.zhujian.notebook&#92;notebook.sqlite3
-macOS    ~/Library/Application Support/app.zhujian.notebook/notebook.sqlite3
-Linux    ~/.local/share/app.zhujian.notebook/notebook.sqlite3</pre>
-              <p data-i18n="tinker.dataP2">随记和待办在同一张 items 表里,靠它落在哪一列来区分。看最近五条随记:</p>
-              <pre class="code">sqlite3 notebook.sqlite3 "select i.created_at, i.content
-  from items i join board_column c on c.id = i.stage
-  where c.kind = 'idea' and i.archived_at is null
-  order by i.created_at desc limit 5;"</pre>
-              <p data-i18n="tinker.dataP3">建议只读着看。直接改它不在应用照顾的范围里,改坏了我也不好帮你救。手机上的库在应用私有目录里,拿不到。</p>
-              <p data-i18n="tinker.dataP4">不想碰数据库也行:电脑版设置 →「备份与恢复」→「导出为 Markdown」,把整个空间连图带留言导成几份 .md,任何编辑器都能打开。</p>
+          <span class="eyebrow" data-i18n="flow.eyebrow">How it works</span>
+          <h2 class="section-title" data-i18n="flow.title">From noted to done, in three steps</h2>
+
+          <div class="row">
+            <div class="row-copy">
+              <div class="step" data-i18n="flow.step1">1</div>
+              <h3 data-i18n="flow.card1Title">Note it</h3>
+              <p>
+                <span data-i18n="flow.card1a">The global hotkey</span> <span class="kbd-inline">Ctrl+Alt+N</span> <span data-i18n="flow.card1b">brings up a slip. Press Enter and it's saved to Notes; the window goes away on its own. Screenshots paste straight in.</span>
+              </p>
             </div>
-            <div>
-              <h3 data-i18n="tinker.keysTitle">手不离键盘</h3>
-              <ul class="marks">
-                <li data-i18n="tinker.k1">Ctrl+Alt+N 唤出纸条,Ctrl+Alt+M 打开主窗;两个都能改。Mac 上是 Cmd+Alt。</li>
-                <li data-i18n="tinker.k2">纸条里行首打 /:/task 直接存成任务,/tag 名字 挂上标签,/space 换个空间。</li>
-                <li data-i18n="tinker.k3">卡片右上角 ⋯ 里每项都标着单键:E 编辑、C 复制、L 标签、S 截止、P 优先级、B 撤回、D 删除,] 和 [ 前后挪一列。</li>
-                <li data-i18n="tinker.k4">正文行首写 - [ ] 就是一个能勾的方框。</li>
-              </ul>
-              <h3 class="tinker-sub" data-i18n="tinker.srcTitle">源码与设计</h3>
-              <ul class="marks">
-                <li><a href="https://github.com/prehisle/zhujian" data-i18n="tinker.srcRepo">源码(MIT),Rust + TypeScript + Tauri</a></li>
-                <li><a href="https://github.com/prehisle/zhujian/blob/main/docs/why-no-framework.md" data-i18n="tinker.srcNoFw">为什么前端不用框架</a></li>
-                <li><a href="/devlog.html" data-i18n="tinker.srcDevlog">开发手记:做它时栽过的跟头</a></li>
-                <li><a href="https://github.com/prehisle/zhujian/blob/main/docs/user-guide.md#%E8%87%AA%E5%BB%BA%E5%90%8C%E6%AD%A5%E6%9C%8D%E5%8A%A1%E5%99%A8" data-i18n="tinker.srcSelfHost">自己搭一台同步服务器</a></li>
-              </ul>
+            <!-- 演示:纸条里逐字打出「新的那条」的原文 → 回车键亮一下 → 纸条收起、那条落进随记。
+                 要打的字由运行期从 .demo-card.new 里读(跟着语言走),脚本里一个字面量都没有。 -->
+            <div class="demo" aria-hidden="true">
+              <div class="demo-desk">
+                <div class="demo-list">
+                  <div class="demo-head" data-i18n="flow.demoHead">Notes · Today</div>
+                  <div class="demo-card new"><span data-i18n="flow.demoNew">Pick up the health report tomorrow</span><span class="demo-time" data-i18n="flow.demoJust">just now</span></div>
+                  <div class="demo-card"><span data-i18n="flow.demoItem1">Sort out the second shelf this weekend</span><span class="demo-time">17:00</span></div>
+                  <div class="demo-card"><span data-i18n="flow.demoItem2">Call Mum, ask how the check-up went</span><span class="demo-time">16:42</span></div>
+                </div>
+                <div class="slip">
+                  <div class="slip-text"><span class="typed"></span><span class="caret"></span></div>
+                  <div class="slip-hint">
+                    <span><kbd class="enter">↵</kbd> <span data-i18n="hero.kbdSave">Save</span></span>
+                    <span><kbd>Esc</kbd> <span data-i18n="hero.kbdEsc">Hide</span></span>
+                  </div>
+                </div>
+              </div>
             </div>
+          </div>
+
+          <div class="row flip">
+            <div class="row-copy">
+              <div class="step" data-i18n="flow.step2">2</div>
+              <h3 data-i18n="flow.card2Title">Sort it</h3>
+              <p data-i18n="flow.card2">In Notes, tag it or turn it into a task. Every edit keeps the previous version, so old drafts can be recovered; deleting puts it in Trash first, and you can restore it any time.</p>
+            </div>
+            <button class="shot-zoom crop crop-inbox" type="button" aria-label="Open a larger view" data-i18n-aria-label="shot.zoom">
+              <img src="/shots/en/desktop-inbox.webp" data-i18n-src="shot.inboxSrc" width="1890" height="1050" loading="lazy" decoding="async"
+                   alt="Notes: today's entries laid out as a timeline, each carrying its tags" data-i18n-alt="flow.card2Alt" />
+              <img class="crop-phone" src="/shots/en/phone-inbox.webp" data-i18n-src="shot.phoneSrc" width="630" height="1254" loading="lazy" decoding="async" alt="" />
+            </button>
+          </div>
+
+          <div class="row">
+            <div class="row-copy">
+              <div class="step" data-i18n="flow.step3">3</div>
+              <h3 data-i18n="flow.card3Title">Get it done</h3>
+              <p data-i18n="flow.card3">To do, In progress, To confirm, Done. Drag tasks along; finished ones go to Archive, where you can look them up but not delete them.</p>
+            </div>
+            <button class="shot-zoom crop crop-board" type="button" aria-label="Open a larger view" data-i18n-aria-label="shot.zoom">
+              <img src="/shots/en/desktop-board.webp" data-i18n-src="shot.boardSrc" width="1890" height="1050" loading="lazy" decoding="async"
+                   alt="The task board: four columns (To do, In progress, To confirm, Done) with due dates and tags on the cards" data-i18n-alt="flow.card3Alt" />
+            </button>
           </div>
         </div>
       </section>
+
+      <!-- ───────── 小处 ───────── -->
+      <!-- 改版 2b:大小不一的格子,一格一件事。⛔ 每一格都要能指到产品里真有的东西(与事实表同一条规矩):
+           编辑留历史 / 回收站 / 归档不可删 = design-rules 三条铁律;列只能在电脑上改 = 「还做不好的」那条;
+           /space、单键、导出 Markdown 与帮助页「数据、键盘和源码」那节同源。 -->
+      <section class="features" id="features">
+        <div class="wrap">
+          <span class="eyebrow" data-i18n="feat.eyebrow">Small things</span>
+          <h2 class="section-title" data-i18n="feat.title">Small things you use every day</h2>
+          <div class="bento">
+            <article class="tile t-wide">
+              <div>
+                <h3 data-i18n="feat.histTitle">Every version is kept</h3>
+                <p data-i18n="feat.hist">Each edit keeps the version before it. If you break something or cut too much, the old draft is still there.</p>
+              </div>
+              <div class="versions" aria-hidden="true">
+                <div class="ver now"><b data-i18n="feat.verNow">Now</b><span data-i18n="feat.ver3">Call Mum, ask about the check-up and the next appointment</span></div>
+                <div class="ver"><b data-i18n="feat.verYesterday">Yesterday 21:40</b><span data-i18n="feat.ver2">Call Mum, ask about the check-up</span></div>
+                <div class="ver"><b data-i18n="feat.verOld">Sep 20</b><span data-i18n="feat.ver1">Call Mum</span></div>
+              </div>
+            </article>
+            <article class="tile">
+              <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13" /></svg>
+              <h3 data-i18n="feat.trashTitle">Deleting goes to Trash first</h3>
+              <p data-i18n="feat.trash">Restore any time. Deleting for good only happens inside Trash.</p>
+            </article>
+            <article class="tile">
+              <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="5" rx="1" /><path d="M5 9v10h14V9M10 13h4" /></svg>
+              <h3 data-i18n="feat.archiveTitle">Archive is a record</h3>
+              <p data-i18n="feat.archive">Finished tasks go to Archive, where you can look them up but not delete them. Look back and see what you got done.</p>
+            </article>
+            <article class="tile">
+              <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="5" height="16" rx="1" /><rect x="10" y="4" width="5" height="11" rx="1" /><rect x="17" y="4" width="4" height="7" rx="1" /></svg>
+              <h3 data-i18n="feat.colsTitle">Your own board columns</h3>
+              <p data-i18n="feat.cols">Add, rename or remove them on the desktop. As many columns as your process has steps.</p>
+            </article>
+            <article class="tile">
+              <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /></svg>
+              <h3 data-i18n="feat.spaceTitle">Keep work and life apart</h3>
+              <p><span data-i18n="feat.spaceA">Each space is its own notebook, kept apart. Type</span> <code>/space</code> <span data-i18n="feat.spaceB">in the slip to switch.</span></p>
+            </article>
+            <article class="tile t-wide">
+              <div>
+                <h3 data-i18n="feat.keysTitle">Hands on the keyboard</h3>
+                <p data-i18n="feat.keys">Every action on a card has a single key; ] and [ move it one column forward or back.</p>
+              </div>
+              <div class="keys" aria-hidden="true">
+                <span><kbd>E</kbd><span data-i18n="feat.kEdit">Edit</span></span>
+                <span><kbd>C</kbd><span data-i18n="feat.kCopy">Copy</span></span>
+                <span><kbd>L</kbd><span data-i18n="feat.kTag">Tags</span></span>
+                <span><kbd>S</kbd><span data-i18n="feat.kDue">Due</span></span>
+                <span><kbd>P</kbd><span data-i18n="feat.kPri">Priority</span></span>
+                <span><kbd>D</kbd><span data-i18n="feat.kDel">Delete</span></span>
+                <span><kbd>[</kbd><kbd>]</kbd><span data-i18n="feat.kMove">Move</span></span>
+              </div>
+            </article>
+            <article class="tile">
+              <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4zM7 15V9l3 3 3-3v6M17 9v6m-2-2 2 2 2-2" /></svg>
+              <h3 data-i18n="feat.exportTitle">Take it with you</h3>
+              <p data-i18n="feat.export">On desktop, export a whole space to Markdown in one go, images and comments included; any editor can open it.</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <!-- ───────── 承诺 ───────── -->
+      <!-- 全页唯一一块深色(改版 2b)。三句都是事实表里已有的事实,细节在隐私与安全页;首页上「AI」只在这一处出现。 -->
+      <section class="promise">
+        <div class="wrap">
+          <span class="eyebrow" data-i18n="promise.eyebrow">Yours</span>
+          <h2 class="section-title" data-i18n="promise.title">What you write stays with you</h2>
+          <div class="promise-grid">
+            <div>
+              <h3 data-i18n="promise.dataTitle">Data on your own devices</h3>
+              <p data-i18n="promise.data">It lives in a SQLite database on your own device and works offline. Sync is optional: text and images are encrypted on your device before they leave, so the server only ever handles ciphertext.</p>
+            </div>
+            <div>
+              <h3 data-i18n="promise.statsTitle">No analytics</h3>
+              <p data-i18n="promise.stats">With sync off, the app only contacts zhujian.app to check for updates.</p>
+            </div>
+            <div>
+              <h3 data-i18n="promise.aiTitle">No AI touching your words</h3>
+              <p data-i18n="promise.ai">No polishing, no summaries, no auto-sorting. What you write is what stays.</p>
+            </div>
+          </div>
+          <p class="promise-links">
+            <a href="/en/security.html" data-i18n="promise.linkSecurity">What the sync server can and can't see →</a>
+            <a href="https://github.com/prehisle/zhujian" data-i18n="promise.linkSource">Source on GitHub →</a>
+          </p>
+        </div>
+      </section>
+
+      <!-- ───────── 下载 ───────── -->
+      <section class="download" id="download">
+        <div class="wrap">
+          <span class="eyebrow" data-i18n="dl.eyebrow">Ready to use</span>
+          <h2 class="section-title" data-i18n="dl.title">Give it a try</h2>
+          <p class="section-lead" data-i18n="dl.lead">Windows and Android are the supported builds; once installed they check for new versions and prompt you. The HarmonyOS build is on Huawei AppGallery, which handles its updates. macOS and Linux are early builds.</p>
+
+          <!-- 版本号刻意留在 markup 里、不进字典;字典只装那半句需要翻的机型说明。
+               ⚠ 这一页的版本号有**两种写法**:显示用的 `· v<版本>` 与下载 href 里的包名
+               `zhujian_<版本>_…`。⛔ 别再写「只有一种写法」—— `bump-version.mjs` 629 之前
+               只认前者,628 发版后五个下载按钮全指着上一版的包(线上已清)= 全 404。
+               ⛔ 这段注释里别写真版本号:它会被 bump 的正则一起替换掉。 -->
+          <div class="dl-row">
+            <a class="dl-card" href="https://zhujian.app/updates/zhujian_0.2.49_x64-setup.exe">
+              <div class="os">Windows</div>
+              <div class="meta"><span data-i18n="dl.winMeta">10 / 11 · 64-bit</span> · v0.2.49</div>
+              <span class="btn btn-primary" data-i18n="dl.winBtn">Download .exe</span>
+            </a>
+            <a class="dl-card" href="https://zhujian.app/updates/zhujian_0.3.45_aarch64.apk">
+              <div class="os">Android</div>
+              <div class="meta"><span data-i18n="dl.androidMeta">11+ · 64-bit</span> · v0.3.45</div>
+              <span class="btn btn-primary" data-i18n="dl.apkBtn">Download APK</span>
+            </a>
+            <!-- 鸿蒙:商店链接,⛔ 刻意不印版本号 —— 它自成一条版本线(与安卓解绑),
+                 bump-version.mjs 只认桌面 / 安卓两侧,印了就是没人核的第五处;商店页自己会显版本。
+                 APP ID 是 AGC 分的,商店详情页只在 HarmonyOS 5 及以上设备的应用市场里能装。 -->
+            <a class="dl-card" href="https://appgallery.huawei.com/app/detail?id=C6917614407069105862">
+              <div class="os">HarmonyOS</div>
+              <div class="meta" data-i18n="dl.hmMeta">5 and up · Huawei AppGallery</div>
+              <span class="btn btn-primary" data-i18n="dl.hmBtn">Open AppGallery</span>
+            </a>
+          </div>
+          <!-- ⚠ 三个尝鲜版链接的 href 里照旧带版本号(deploy §8.1 「第四处」的一部分):
+               卡降成一行,链接一个没少,发版全文替换那一步该数到的处数不变。 -->
+          <p class="dl-trial">
+            <span class="trial-tag" data-i18n="dl.trialTag">Early build</span>
+            <span data-i18n="dl.trialLine">macOS (Apple silicon) and Linux (x86_64): unsigned, so allow them by hand on first launch; on Linux the hotkey and tray may be incomplete on some desktops.</span>
+            <a href="https://zhujian.app/updates/zhujian_0.2.49_aarch64.dmg" data-i18n="dl.macBtn">Download dmg</a>
+            <a href="https://zhujian.app/updates/zhujian_0.2.49_amd64.AppImage">AppImage</a>
+            <a href="https://zhujian.app/updates/zhujian_0.2.49_amd64.deb">.deb</a>
+          </p>
+          <p class="dl-log"><a href="/changelog.html" data-i18n="dl.changelog">What's new (changelog, in Chinese)</a></p>
+          <!-- 两份校验文件是**固定名**(CI 每次发版与包同批换掉),⇒ 这两个 href 刻意不带版本号,
+               bump-version 不用管它们;它们与下载按钮对不对得上,由 check-deployed-drift ①e 核。 -->
+          <p class="dl-verify">
+            <span data-i18n="dl.verifyLead">Check your download (SHA-256):</span>
+            <a href="https://zhujian.app/updates/SHA256SUMS-desktop.txt" data-i18n="dl.sumsDesktop">Desktop</a>
+            <a href="https://zhujian.app/updates/SHA256SUMS-android.txt" data-i18n="dl.sumsAndroid">Android</a>
+            <a href="https://github.com/prehisle/zhujian/blob/main/docs/user-guide.md#%E6%A0%B8%E5%AF%B9%E4%B8%8B%E8%BD%BD%E7%9A%84%E5%AE%89%E8%A3%85%E5%8C%85" data-i18n="dl.verifyHow">How (in Chinese)</a>
+          </p>
+          <p class="dl-foot" data-i18n="dl.foot">Desktop updates are signed by the developer and checked before installing; the Windows installer is not code-signed, so the first install warns about an “unknown publisher” — choose “More info → Run anyway” · On Windows it lives in the tray; bring it up with the hotkey · On Android, allow “unknown sources” on first install; updates also take a tap to install · Questions? Email 3069848@qq.com</p>
+        </div>
+      </section>
+      <!-- ───────── /下载 ───────── -->
     </main>
 
     <!-- ───────── 页脚:钤印落款 ───────── -->
@@ -1201,39 +1367,39 @@ Linux    ~/.local/share/app.zhujian.notebook/notebook.sqlite3</pre>
         <div class="foot-sign">
           <svg class="seal-mark" viewBox="0 0 100 100" aria-hidden="true"><use href="#seal-zhujian" /></svg>
           <div class="word">
-            <b data-i18n="nav.brand">朱简</b>
-            <span data-i18n="foot.tagline">ZHUJIAN · 纸与朱墨</span>
+            <b data-i18n="nav.brand">Zhujian</b>
+            <span data-i18n="foot.tagline">ZHUJIAN · PAPER AND CINNABAR</span>
           </div>
         </div>
         <!-- 四栏。两站同一份(境内站的首页下载区也有 #download),生成器不再换它。 -->
         <nav class="foot-links">
           <div class="foot-col">
-            <p class="foot-h" data-i18n="foot.colProduct">产品</p>
-            <a href="/#flow" data-i18n="nav.flow">怎么用</a>
-            <a href="/#download" data-i18n="nav.download">下载</a>
-            <a href="/changelog.html" data-i18n="foot.changelog">更新日志</a>
-            <a href="https://github.com/prehisle/zhujian" data-i18n="nav.source">源码</a>
+            <p class="foot-h" data-i18n="foot.colProduct">Product</p>
+            <a href="/en/#flow" data-i18n="nav.flow">How it works</a>
+            <a href="/en/#download" data-i18n="nav.download">Download</a>
+            <a href="/changelog.html" data-i18n="foot.changelog">Changelog (Chinese)</a>
+            <a href="https://github.com/prehisle/zhujian" data-i18n="nav.source">Source</a>
           </div>
           <div class="foot-col">
-            <p class="foot-h" data-i18n="foot.colHelp">帮助</p>
-            <a href="/help.html#faq" data-i18n="nav.faq">常见问题</a>
-            <a href="/help.html#tinker" data-i18n="foot.tinker">数据、键盘和源码</a>
+            <p class="foot-h" data-i18n="foot.colHelp">Help</p>
+            <a href="/en/help.html#faq" data-i18n="nav.faq">FAQ</a>
+            <a href="/en/help.html#tinker" data-i18n="foot.tinker">Data, keys and source</a>
           </div>
           <div class="foot-col">
-            <p class="foot-h" data-i18n="foot.colAbout">关于</p>
-            <a href="/about.html" data-i18n="foot.why">为什么做它</a>
-            <a href="/about.html#limits" data-i18n="foot.limits">还做不好的</a>
-            <a href="/devlog.html" data-i18n="foot.devlog">开发手记</a>
+            <p class="foot-h" data-i18n="foot.colAbout">About</p>
+            <a href="/en/about.html" data-i18n="foot.why">Why it exists</a>
+            <a href="/en/about.html#limits" data-i18n="foot.limits">What it can't do yet</a>
+            <a href="/devlog.html" data-i18n="foot.devlog">Dev notes (Chinese)</a>
           </div>
           <div class="foot-col">
-            <p class="foot-h" data-i18n="foot.colTerms">隐私与条款</p>
-            <a href="/security.html" data-i18n="foot.security">隐私与安全</a>
-            <a href="/privacy.html" data-i18n="foot.privacy">隐私政策</a>
-            <a href="/privacy-rights.html" data-i18n="foot.rights">隐私权利</a>
-            <a href="/terms.html" data-i18n="foot.terms">用户协议</a>
+            <p class="foot-h" data-i18n="foot.colTerms">Privacy &amp; terms</p>
+            <a href="/en/security.html" data-i18n="foot.security">Privacy &amp; security</a>
+            <a href="/privacy.html" data-i18n="foot.privacy">Privacy</a>
+            <a href="/privacy-rights.html" data-i18n="foot.rights">Your rights</a>
+            <a href="/terms.html" data-i18n="foot.terms">Terms</a>
           </div>
         </nav>
-        <p class="foot-copy" data-i18n="foot.copy">© 2026 朱简 zhujian</p>
+        <p class="foot-copy" data-i18n="foot.copy">© 2026 Zhujian</p>
       </div>
     </footer>
 
@@ -1242,7 +1408,7 @@ Linux    ~/.local/share/app.zhujian.notebook/notebook.sqlite3</pre>
          「下载区那两条注释」「`<nav class="foot-links">`」「`foot-copy` 那一行」当结构锚,
          插在它们中间会把那三处切错。 -->
     <div class="shot-view" id="shot-view" hidden>
-      <button class="shot-view-close" id="shot-close" type="button" aria-label="关闭大图" data-i18n-aria-label="shot.close">✕</button>
+      <button class="shot-view-close" id="shot-close" type="button" aria-label="Close the larger view" data-i18n-aria-label="shot.close">✕</button>
       <div class="shot-stage"><img id="shot-img" alt="" /></div>
     </div>
 

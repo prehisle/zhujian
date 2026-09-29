@@ -365,13 +365,13 @@ const SUITES = {
         note: "官网支持哪几个 data-i18n-* 是从这张表读的;读不动就抛,不退回默认三条" },
       { n: "㉓ 壳内签字处数漂移(印文多一处)", expect: "SHELL_REGISTRY 处数漂移",
         edits: [["site/index.html", ">朱</text>", ">简</text>"]] },
-      // 官网那份的**运行期**(--with-chrome 才跑):静态门禁核不了「那段脚本跑起来会
-      // 把字换成什么」,这两刀打在补这一格的对拍工装上。
-      { n: "㉔ 运行期根本没把字换掉", expect: "屏幕上「", tool: "xcheck",
-        edits: [["site/index.html", 'texts[i].textContent = t(texts[i].getAttribute("data-i18n"));', "texts[i].textContent = texts[i].textContent;"]],
-        note: "zh 那一轮照样全对(markup 本来就是中文)—— 只有 en 那一轮会红,这正是它该守的那一格" },
-      { n: "㉕ 语言判定坏掉(恒中文)", expect: "语言可能压根没切", tool: "xcheck",
-        edits: [["site/index.html", 'return navigator.language.toLowerCase().indexOf("zh") === 0 ? "zh" : "en";', 'return "zh";']] },
+      // 官网生成出来的**英文页**(--with-chrome 才跑;2c 起语言由网址定、字由生成器烤进去):静态门禁核不了
+      // 「英文页在真浏览器里显出来的是什么」,这两刀打在补这一格的对拍工装上。刀直接改产物 = 模拟生成器烤坏了。
+      { n: "㉔ 英文页有一处没烤成英文", expect: "屏幕上「", tool: "xcheck",
+        edits: [["site-app/en/index.html", 'data-i18n="hero.line3">later<', 'data-i18n="hero.line3">想清楚<']],
+        note: "中文页照样全对 —— 只有英文那份会红,这正是它该守的那一格" },
+      { n: "㉕ 英文页的 <html lang> 没换", expect: "<html lang> 是「zh」", tool: "xcheck",
+        edits: [["site-app/en/index.html", '<html lang="en">', '<html lang="zh">']] },
       // 363:复数选择器 {n|单数|复数}。三刀分别打三条新判据 —— 少任何一条,写错的写法
       // 都会**原样印到界面上**(而界面上多一对花括号,看着像数据问题不像文案问题)。
       { n: "㉖ en 只在选词里用了变量、忘了打印数字", expect: "占位符集合不等",
@@ -400,9 +400,9 @@ const SUITES = {
     gate: "scripts/check-deployed-drift.mjs",
     title: "check-deployed-drift(366,线上对账)",
     knives: [
-      { n: "① 官网线上与仓里 site/index.html 不同", expect: "线上与 site/index.html 不同",
-        note: "逐字节而不是只比版本号:360-362 那三笔漂的是整段内容,版本号那一格照样能全绿",
-        edits: [["site/index.html", "<html lang=\"zh\">", "<html lang=\"zh\"> "]] },
+      { n: "① 官网线上与仓里 site-app/index.html 不同", expect: "线上与 site-app/index.html 不同",
+        note: "逐字节而不是只比版本号:360-362 那三笔漂的是整段内容,版本号那一格照样能全绿(2c 起对外那份是生成的)",
+        edits: [["site-app/index.html", "<html lang=\"zh\">", "<html lang=\"zh\"> "]] },
       { n: "② 桌面清单版本对不上", expect: "≠ 仓里",
         edits: [["package.json", '"version": "', '"version": "9.']] },
       { n: "③ 安卓 versionCode 对不上", expect: "≠ 按",

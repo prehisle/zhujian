@@ -103,20 +103,20 @@ if (FAKE) {
   console.log(`线上对账(服务器 ${HOST},地址取自 docs/deploy.md §1)\n`);
 }
 
-// ── ① 官网:线上根页面必须与仓里的 site/index.html 逐字节相同 ───────────────
+// ── ① 官网:线上根页面必须与仓里的 site-app/index.html 逐字节相同(改版 2c 起首页也是生成的,site/index.html 是源)
 // 逐字节而不是「版本号对上就行」:官网不进任何 CI,漂的方式是**整段内容**没上去
 // (360-362 那三笔就是这么躺了一天的),只比版本号一格照样全绿。
 let liveSite = null;
 if (!FAKE) {
   console.log("① 官网 zhujian.app");
   try {
-    const local = readFileSync("site/index.html");
+    const local = readFileSync("site-app/index.html");
     liveSite = curl("https://zhujian.app/", { binary: true });
     if (Buffer.compare(local, liveSite) === 0) {
-      ok(`与 site/index.html 逐字节相同(${local.length} 字节)`);
+      ok(`与 site-app/index.html 逐字节相同(${local.length} 字节)`);
     } else {
       bad(
-        `线上与 site/index.html 不同(线上 ${liveSite.length} 字节 / 本地 ${local.length} 字节)——` +
+        `线上与 site-app/index.html 不同(线上 ${liveSite.length} 字节 / 本地 ${local.length} 字节)——` +
           `官网不进 CI,要跑 zhujian-ops 流程 5 才会动`,
       );
     }
@@ -233,10 +233,12 @@ if (!FAKE) {
   // ── ①f 子页(改版 2b):site-app/<名>.html 与线上逐字节比 ─────────────
   // 页名从 site/pages/ 现算(⛔ 别手写清单:新加一页忘了登记 = 那页发没发没人问)。
   // 这几页是生成器用首页的壳做的 ⇒ 首页一改它们也跟着变,只发首页不发它们就会在这儿红。
-  console.log("\n①f 子页(隐私与安全 / 关于 / 帮助 …)");
+  console.log("\n①f 子页与英文页(隐私与安全 / 关于 / 帮助 …,en/ 下各一份)");
   try {
-    const names = readdirSync("site/pages").filter((f) => f.endsWith(".html")).sort();
-    if (!names.length) bad("site/pages/ 一页都没有 —— 这格的匹配面坏了,不是没东西要核");
+    const subs = readdirSync("site/pages").filter((f) => f.endsWith(".html")).sort();
+    if (!subs.length) bad("site/pages/ 一页都没有 —— 这格的匹配面坏了,不是没东西要核");
+    // 2c 起英文那一份住 en/ 下:首页 + 子页各一份
+    const names = [...subs, ...["index.html", ...subs].map((f) => `en/${f}`)];
     for (const f of names) {
       const local = readFileSync(`site-app/${f}`);
       const live = curl(`https://zhujian.app/${f}`, { binary: true });

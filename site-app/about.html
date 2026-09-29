@@ -10,8 +10,11 @@
     <title data-i18n="page.aboutMeta">关于 · 朱简</title>
     <meta name="description" data-i18n-content="page.aboutDesc" content="朱简为什么做出来,以及它现在还做不好的、和不打算做的。" />
 
-    <!-- ───────── 分享卡片与 canonical(子页 about,生成器写的)───────── -->
+    <!-- ───────── 分享卡片、canonical 与语言版本(生成器写的)───────── -->
     <link rel="canonical" href="https://zhujian.app/about.html" />
+    <link rel="alternate" hreflang="zh" href="https://zhujian.app/about.html" />
+    <link rel="alternate" hreflang="en" href="https://zhujian.app/en/about.html" />
+    <link rel="alternate" hreflang="x-default" href="https://zhujian.app/about.html" />
     <meta property="og:type" content="website" />
     <meta property="og:url" content="https://zhujian.app/about.html" />
     <meta property="og:title" data-i18n-content="page.aboutMeta" content="关于 · 朱简" />
@@ -24,7 +27,7 @@
          的核对都在 scripts/site-font.mjs;一个文件兼 400–700 两档,免得浏览器自己描粗。 */
       @font-face {
         font-family: "Zhujian WenKai";
-        src: url("fonts/zhujian-wenkai.woff2") format("woff2");
+        src: url("/fonts/zhujian-wenkai.woff2") format("woff2");
         font-weight: 400 700;
         font-display: swap;
       }
@@ -245,6 +248,21 @@
         .nav a.hide-sm { display: none; }
         .nav { gap: 16px; }
       }
+
+      /* 另一种语言的提示条(改版 2c)。⚠ `[hidden]` 显式写死:哪天有人给 .lang-hint 加 display,
+         UA 那条特指度最低的 [hidden] 就会被盖掉、提示条常驻。 */
+      .lang-hint {
+        margin: 0;
+        padding: 8px 16px;
+        text-align: center;
+        font-size: var(--fs-13);
+        color: var(--ink-soft);
+        background: var(--raised);
+        border-bottom: 1px solid var(--line);
+      }
+      .lang-hint[hidden] { display: none; }
+      .lang-hint a { color: var(--seal); text-decoration: none; }
+      .lang-hint a:hover { text-decoration: underline; }
 
       /* ── 通用节标题 ────────────────────────────────────────── */
       .eyebrow {
@@ -1082,10 +1100,12 @@
           <a href="/help.html" class="hide-sm" data-i18n="nav.help">帮助</a>
           <a href="/about.html" class="hide-sm" data-i18n="nav.ethos">关于</a>
           <a href="/#download" class="ghost-btn" data-i18n="nav.download">下载</a>
-          <a href="#top" class="lang" id="lang-toggle" data-i18n="nav.langToggle">EN</a>
+          <a id="lang-toggle" href="/en/about.html" class="lang" data-i18n="nav.langToggle">EN</a>
         </nav>
       </div>
     </header>
+    <!-- 另一种语言的提示(改版 2c):默认藏着,由页尾「语言」那段按条件露出。href 同顶栏开关,由生成器按页写。 -->
+    <p class="lang-hint" hidden><a id="lang-hint" href="/en/about.html" data-i18n="nav.langHint">This page is also in English →</a></p>
 
     <main id="top">
       <section class="page-head">
@@ -1200,331 +1220,33 @@
       <div class="shot-stage"><img id="shot-img" alt="" /></div>
     </div>
 
-    <!-- ───────── 多语言(360,i18n-plan 第③笔)─────────────────────────────────
-         官网是**无构建步骤的静态单文件**(scp 部署,deploy §8),故字典与运行期都内联
-         在这里。形状与两个客户端工程的字典分片一字对齐(一键一行、双引号、zh/en 并排),
-         check-i18n-drift 用同一条 ENTRY_LINE 解析下面那一段。
 
-         · 生效语言 = `?lang=` > localStorage["zhujian.lang"](与两个客户端同一个键,纯本机)
-           > 系统语言(zh* → 中文,其余 → 英文);`?lang=en` 也是一条可分享的英文链接。
-         · markup 保留中文原文防首帧闪(163 契约):中文访客首帧即正确,英文访客会闪一下
-           中文 —— 与客户端同一条已接受的诚实边界。SEO 同理:爬虫拿到的是中文那一份。
-         · **注释一律用块注释**:门禁只挖空 `/* */`,行注释里的中文会被当成写死文案。
-           这是有意的 fail-closed —— 挖空 `//` 就等于把 `//` 后面的真文案也一起放行了。 -->
+    <!-- ───────── 语言(改版 2c)────────────────────────────────────────────────
+         这一页是哪种语言,烤在 `<html lang>` 里;顶栏那个开关是一条**普通链接**,指着另一种语言的同一页。
+         这段只做三件事,**不按系统语言自动跳**(搜索引擎与分享出去的链接看到的,永远是网址说的那种语言):
+           ① `?lang=zh|en` 当作一次明确的选择记下来(旧的分享链接 `/?lang=en` 照旧好用);
+           ② 访客明确选过另一种语言(点过开关、或带过 ?lang=)⇒ 换到那一种的同一页;
+           ③ 没选过、而系统语言与这一页不同 ⇒ 顶栏下露出一行「另一种语言也有」的提示,不替他跳。
+         键 `zhujian.lang` 与两个客户端同一个,纯本机、不进同步。⛔ 这段里一个中文字面量都不许有。 -->
     <script>
       (function () {
         "use strict";
-        /* 一键一行、zh/en 并排;缺一半、形状不对、键存而不用都是门禁红。取块的两枚
-           标记就钉在下面这对花括号自己那一行上 —— 别把它们挪到单独一行。 */
-        var M = { /* ⟦i18n-dict⟧ */
-          /* — 页面元信息 — */
-          "meta.title": { zh: "朱简:记想法、管待办,数据在你自己的设备上", en: "Zhujian: notes and tasks, kept on your own device" },
-          "meta.desc": { zh: "朱简(zhujian)是一个记想法、管待办的工具:随手记一笔进随记,要做的事转成待办,在看板上做完。数据存在你自己的设备上,多设备同步端到端加密。免费使用,开源。", en: "Zhujian is a tool for notes and tasks. Jot things down into Notes, turn what needs doing into tasks and see them through on the board. Your data lives on your own device; multi-device sync is end-to-end encrypted. Free to use, open source." },
-
-          /* — 顶栏 / 页脚导航 — */
-          "nav.brand": { zh: "朱简", en: "Zhujian" },
-          "nav.brandAria": { zh: "朱简 首页", en: "Zhujian home" },
-          "nav.flow": { zh: "怎么用", en: "How it works" },
-          "nav.ethos": { zh: "关于", en: "About" },
-          "nav.source": { zh: "源码", en: "Source" },
-          "nav.security": { zh: "隐私", en: "Privacy" },
-          "nav.help": { zh: "帮助", en: "Help" },
-          "nav.download": { zh: "下载", en: "Download" },
-          "nav.faq": { zh: "常见问题", en: "FAQ" },
-          "nav.langToggle": { zh: "EN", en: "中文" },
-
-          /* — 首屏 — */
-          "hero.newsTag": { zh: "新版本", en: "New" },
-          "hero.newsDesktop": { zh: "电脑版", en: "Desktop" },
-          "hero.newsSee": { zh: "看看改了什么", en: "what changed (in Chinese)" },
-          "hero.line1": { zh: "随手记一笔,", en: "Jot it down now," },
-          "hero.line2": { zh: "再慢慢", en: "think it through " },
-          "hero.line3": { zh: "想清楚", en: "later" },
-          "hero.line4": { zh: "。", en: "." },
-          "hero.lead": { zh: "记想法、管待办的电脑与手机应用。数据存在你自己的设备上,不联网也照常用。", en: "Notes and tasks, on your computer and your phone. Your data stays on your own devices, and the app works offline." },
-          "hero.ctaDownload": { zh: "免费下载", en: "Download for free" },
-          "hero.ctaSee": { zh: "看看怎么用", en: "See how it works" },
-          "hero.pfHarmony": { zh: "鸿蒙", en: "HarmonyOS" },
-          "hero.pfTrial": { zh: "macOS / Linux 尝鲜", en: "macOS / Linux early builds" },
-          "hero.pfOss": { zh: "开源 MIT", en: "Open source (MIT)" },
-          "hero.pfNoSignup": { zh: "不用注册", en: "No sign-up" },
-          "hero.kbdSave": { zh: "记下", en: "Save" },
-          "hero.kbdEsc": { zh: "收起", en: "Hide" },
-
-          /* — 三步主线 — */
-          "flow.eyebrow": { zh: "怎么用", en: "How it works" },
-          "flow.title": { zh: "从记下到做完,三步", en: "From noted to done, in three steps" },
-          "flow.step1": { zh: "一", en: "1" },
-          "flow.card1Title": { zh: "记下", en: "Note it" },
-          "flow.card1a": { zh: "全局热键", en: "The global hotkey" },
-          "flow.card1b": { zh: "唤出一张纸条,写完回车就存进随记,窗口自己收起。截图可以直接粘贴。", en: "brings up a slip. Press Enter and it's saved to Notes; the window goes away on its own. Screenshots paste straight in." },
-          "flow.step2": { zh: "二", en: "2" },
-          "flow.card2Title": { zh: "理一理", en: "Sort it" },
-          "flow.card2": { zh: "在随记里给它打标签,或转成待办。每次编辑都保留改动前的版本,旧稿能找回;删了先进回收站,随时还原。", en: "In Notes, tag it or turn it into a task. Every edit keeps the previous version, so old drafts can be recovered; deleting puts it in Trash first, and you can restore it any time." },
-          "flow.step3": { zh: "三", en: "3" },
-          "flow.card3Title": { zh: "做完它", en: "Get it done" },
-          "flow.card3": { zh: "待办、进行中、待确认、已完成,拖着走。做完的归档,可查、不可删。", en: "To do, In progress, To confirm, Done. Drag tasks along; finished ones go to Archive, where you can look them up but not delete them." },
-          /* — 三张真图的 alt:写图上真有的东西,别把它当第二条广告位 — */
-          "flow.demoHead": { zh: "随记 · 今天", en: "Notes · Today" },
-          "flow.demoNew": { zh: "明早顺路取体检报告", en: "Pick up the health report tomorrow" },
-          "flow.demoJust": { zh: "刚刚", en: "just now" },
-          "flow.demoItem1": { zh: "周末把书架第二层整理一遍", en: "Sort out the second shelf this weekend" },
-          "flow.demoItem2": { zh: "给妈打电话,问体检结果", en: "Call Mum, ask how the check-up went" },
-          "flow.card2Alt": { zh: "随记:今天记下的几条排成一条时间轴,各自挂着标签", en: "Notes: today's entries laid out as a timeline, each carrying its tags" },
-          "flow.card2AltPhone": { zh: "同一份随记在手机上:一列卡片,其中一条正文里带着可以打勾的小清单", en: "The same notes on a phone: a column of cards, one of them holding a tickable checklist in its body" },
-          "flow.card3Alt": { zh: "任务看板:待办、进行中、待确认、已完成四列,卡片上标着截止日期和标签", en: "The task board: four columns (To do, In progress, To confirm, Done) with due dates and tags on the cards" },
-          /* — 看大图(653):两枚都只挂 aria-label,屏上不多一个字 — */
-          /* — 改版 2b:首页「小处」与「承诺」 — */
-          "feat.eyebrow": { zh: "小处", en: "Small things" },
-          "feat.title": { zh: "不起眼,但每天都用得上", en: "Small things you use every day" },
-          "feat.histTitle": { zh: "改过的每一版都留着", en: "Every version is kept" },
-          "feat.hist": { zh: "每次编辑都保留改动前的版本。改坏了、删多了,旧稿都能找回来。", en: "Each edit keeps the version before it. If you break something or cut too much, the old draft is still there." },
-          "feat.verNow": { zh: "现在", en: "Now" },
-          "feat.verYesterday": { zh: "昨天 21:40", en: "Yesterday 21:40" },
-          "feat.verOld": { zh: "9月20日", en: "Sep 20" },
-          "feat.ver3": { zh: "给妈打电话,问体检结果和下次复查时间", en: "Call Mum, ask about the check-up and the next appointment" },
-          "feat.ver2": { zh: "给妈打电话,问体检结果", en: "Call Mum, ask about the check-up" },
-          "feat.ver1": { zh: "给妈打电话", en: "Call Mum" },
-          "feat.trashTitle": { zh: "删了先进回收站", en: "Deleting goes to Trash first" },
-          "feat.trash": { zh: "随时还原。真正删掉,只能在回收站里做。", en: "Restore any time. Deleting for good only happens inside Trash." },
-          "feat.archiveTitle": { zh: "归档是存档", en: "Archive is a record" },
-          "feat.archive": { zh: "做完的事归档之后可以查,不能删。回头看,知道自己做过什么。", en: "Finished tasks go to Archive, where you can look them up but not delete them. Look back and see what you got done." },
-          "feat.colsTitle": { zh: "看板的列自己定", en: "Your own board columns" },
-          "feat.cols": { zh: "在电脑上新建、改名、删掉。你的流程是几步,它就是几列。", en: "Add, rename or remove them on the desktop. As many columns as your process has steps." },
-          "feat.spaceTitle": { zh: "工作和生活分开放", en: "Keep work and life apart" },
-          "feat.spaceA": { zh: "一个空间一本本子,互不相混。纸条里打", en: "Each space is its own notebook, kept apart. Type" },
-          "feat.spaceB": { zh: "就换过去。", en: "in the slip to switch." },
-          "feat.keysTitle": { zh: "手不离键盘", en: "Hands on the keyboard" },
-          "feat.keys": { zh: "卡片上的每个动作都有一个单键,] 和 [ 把卡片往前、往后挪一列。", en: "Every action on a card has a single key; ] and [ move it one column forward or back." },
-          "feat.kEdit": { zh: "编辑", en: "Edit" },
-          "feat.kCopy": { zh: "复制", en: "Copy" },
-          "feat.kTag": { zh: "标签", en: "Tags" },
-          "feat.kDue": { zh: "截止", en: "Due" },
-          "feat.kPri": { zh: "优先级", en: "Priority" },
-          "feat.kDel": { zh: "删除", en: "Delete" },
-          "feat.kMove": { zh: "挪列", en: "Move" },
-          "feat.exportTitle": { zh: "随时带走", en: "Take it with you" },
-          "feat.export": { zh: "电脑版一键把整个空间导成 Markdown,连图带留言,任何编辑器都能打开。", en: "On desktop, export a whole space to Markdown in one go, images and comments included; any editor can open it." },
-          "promise.eyebrow": { zh: "你的东西", en: "Yours" },
-          "promise.title": { zh: "你写下的,留在你手上", en: "What you write stays with you" },
-          "promise.dataTitle": { zh: "数据在你的设备上", en: "Data on your own devices" },
-          "promise.data": { zh: "存在你自己设备上的 SQLite 数据库里,不联网也照常用。同步是可选的:文字和图片在你的设备上加密后才发出,服务器只经手密文。", en: "It lives in a SQLite database on your own device and works offline. Sync is optional: text and images are encrypted on your device before they leave, so the server only ever handles ciphertext." },
-          "promise.statsTitle": { zh: "没有统计代码", en: "No analytics" },
-          "promise.stats": { zh: "不开同步时,应用只会连 zhujian.app 查有没有新版本。", en: "With sync off, the app only contacts zhujian.app to check for updates." },
-          "promise.aiTitle": { zh: "不用 AI 改你的字", en: "No AI touching your words" },
-          "promise.ai": { zh: "不润色、不总结、不替你归类。你写下什么,留下的就是什么。", en: "No polishing, no summaries, no auto-sorting. What you write is what stays." },
-          "promise.linkSecurity": { zh: "同步服务器看得到什么、看不到什么 →", en: "What the sync server can and can't see →" },
-          "promise.linkSource": { zh: "源码在 GitHub →", en: "Source on GitHub →" },
-          /* — 改版 2b:三个子页的页头与 <title> / 描述(页面在 site/pages/,字典只这一份) — */
-          "page.securityMeta": { zh: "隐私与安全 · 朱简", en: "Privacy & security · Zhujian" },
-          "page.securityDesc": { zh: "朱简的数据存在你自己的设备上;开了同步,服务器只经手密文。这一页列出几件先说清的事,和服务器看得到什么、看不到什么。", en: "Zhujian keeps your data on your own devices; with sync on, the server only handles ciphertext. This page lists the facts up front and what the server can and can't see." },
-          "page.securityEyebrow": { zh: "隐私与安全", en: "Privacy & security" },
-          "page.securityTitle": { zh: "你的数据在哪,谁看得到", en: "Where your data lives, and who can see it" },
-          "page.securityLead": { zh: "朱简把数据存在你自己的设备上。下面是几件先说清的事,和开了同步之后服务器看得到什么。", en: "Zhujian keeps your data on your own devices. Here are the facts up front, and what the sync server can see once you turn sync on." },
-          "page.aboutMeta": { zh: "关于 · 朱简", en: "About · Zhujian" },
-          "page.aboutDesc": { zh: "朱简为什么做出来,以及它现在还做不好的、和不打算做的。", en: "Why Zhujian exists, what it still can't do well, and what it won't do." },
-          "page.aboutEyebrow": { zh: "关于", en: "About" },
-          "page.aboutTitle": { zh: "关于朱简", en: "About Zhujian" },
-          "page.aboutLead": { zh: "为什么做它,以及它现在还做不好的、和不打算做的。", en: "Why it exists, what it still can't do well, and what it won't do." },
-          "page.helpMeta": { zh: "帮助 · 朱简", en: "Help · Zhujian" },
-          "page.helpDesc": { zh: "朱简的常见问题:同步不动、手机丢了、换设备怎么搬、要不要花钱;以及数据文件在哪、键位与源码。", en: "Zhujian FAQ: sync stuck, lost phone, moving to a new device, cost; plus where the data file lives, the keys and the source." },
-          "page.helpEyebrow": { zh: "帮助", en: "Help" },
-          "page.helpTitle": { zh: "帮助", en: "Help" },
-          "page.helpLead": { zh: "常见问题,以及给爱折腾的人准备的数据文件、键位和源码。", en: "Common questions, plus the data file, keys and source for people who like to tinker." },
-          /* 截图随语言换(780):英文档用 shots/en/ 那套英文界面的图;值是路径不是文案。运行期换 src 前浏览器可能已开始下中文那张,2c 静态英文页出来后就没这一跳 */
-          "shot.boardSrc": { zh: "shots/desktop-board.webp", en: "shots/en/desktop-board.webp" },
-          "shot.inboxSrc": { zh: "shots/desktop-inbox.webp", en: "shots/en/desktop-inbox.webp" },
-          "shot.phoneSrc": { zh: "shots/phone-inbox.webp", en: "shots/en/phone-inbox.webp" },
-          "shot.zoom": { zh: "点开看大图", en: "Open a larger view" },
-          "shot.close": { zh: "关闭大图", en: "Close the larger view" },
-
-          /* — 事实表:一行一件事,每行两键(标签 + 一句) — */
-          "trust.eyebrow": { zh: "几件事先说清", en: "A few things up front" },
-          "facts.dataLabel": { zh: "数据在哪", en: "Where your data is" },
-          "facts.data": { zh: "在你自己设备上的 SQLite 数据库里。不联网也照常用;开了同步的设备,回到网上再互补。", en: "In a SQLite database on your own device. Everything works offline; synced devices catch up when they reconnect." },
-          "facts.accountLabel": { zh: "账号", en: "Account" },
-          "facts.account": { zh: "不用注册。要多设备同步时,点「创建账户」就行,不要邮箱和手机号,也不用抄任何码。账户密钥只在你自己的设备上,服务器没有。", en: "No sign-up. For multi-device sync, tap Create account; no email or phone number, nothing to write down. The account key lives only on your own devices; the server never has it." },
-          "facts.syncLabel": { zh: "同步", en: "Sync" },
-          "facts.sync": { zh: "可选,端到端加密。文字和图片在你的设备上加密后才发出;服务器经手的只有密文,读不到内容;它不做备份,找回数据靠你自己的设备。同一个 Wi-Fi 下的两台设备直接互传,不经服务器;同网的人看不到内容,但能看出它们在同步。", en: "Optional, end-to-end encrypted. Notes and images are encrypted on your device before they leave; the server only ever handles ciphertext and cannot read it. It is not a backup; recovery relies on your own devices. Two devices on the same Wi-Fi sync directly, without the server; others on that network cannot read the content, though they can tell the two are syncing." },
-          "facts.trackLabel": { zh: "统计", en: "Analytics" },
-          "facts.track": { zh: "没有统计代码。不开同步时,应用只会连 zhujian.app 查有没有新版本。", en: "No analytics. With sync off, the only place the app talks to is zhujian.app, to check for new versions." },
-          "facts.aiLabel": { zh: "AI", en: "AI" },
-          "facts.ai": { zh: "没有。不替你归类,不改你写的字;早期做过,已经删掉。", en: "None. It does not file or rewrite anything for you; the early version had some, and that code was removed." },
-          "facts.freeLabel": { zh: "免费与开源", en: "Free and open source" },
-          "facts.free": { zh: "免费使用,含多设备同步。开源(MIT),源码在 GitHub。", en: "Free to use, multi-device sync included. Open source (MIT), code on GitHub." },
-
-          /* — 同步服务器看得到什么(照 sync-protocol §3 / §11)— */
-          "seen.eyebrow": { zh: "同步服务器", en: "The sync server" },
-          "seen.title": { zh: "它看得到什么,看不到什么", en: "What it can see, and what it can't" },
-          "seen.lead": { zh: "开了同步,数据要经服务器转一手。下面照协议原样列出来。", en: "With sync on, your data passes through a server. Here is the list, straight from the protocol." },
-          "seen.noTitle": { zh: "看不到", en: "Cannot see" },
-          "seen.no1": { zh: "随记和任务的内容,以及改过的旧版本", en: "The text of your notes and tasks, and their earlier versions" },
-          "seen.no2": { zh: "图片", en: "Images" },
-          "seen.no3": { zh: "标签名、看板列名、设备名", en: "Tag names, board column names, device names" },
-          "seen.no4": { zh: "每一次改动是新建、编辑还是删除", en: "Whether a change was a create, an edit, or a delete" },
-          "seen.no5": { zh: "账户密钥", en: "Your account key" },
-          "seen.yesTitle": { zh: "看得到", en: "Can see" },
-          "seen.yes1": { zh: "账户编号和设备编号(随机生成的一串字符)与各设备的公钥", en: "Account and device IDs (random strings) and each device's public key" },
-          "seen.yes2": { zh: "哪台设备什么时候在线", en: "Which device is online, and when" },
-          "seen.yes3": { zh: "什么时候发了数据、发了多少。由此能推出你大概什么时候在用", en: "When data was sent and how much. From that it can guess roughly when you use the app" },
-          "seen.yes4": { zh: "连接从哪个 IP 地址来", en: "The IP address a connection comes from" },
-          "seen.stored": { zh: "服务器硬盘上只存这几样:账户和设备的编号与公钥、哪台设备有管理权限、账户的设备额度、封禁名单、流量计量,以及不含内容的连接日志。设备离线时,发给它的密文在服务器内存里等它,72 小时没取走就丢掉,服务器重启也会清空;数据本身在你的设备上,回到网上会重新补齐。", en: "On disk the server keeps only these: account and device IDs with their public keys, which devices have admin rights, the account's device quota, the ban list, traffic metering, and connection logs with no content. While a device is offline, encrypted messages for it wait in server memory; they are dropped after 72 hours or when the server restarts. The data itself lives on your devices and catches up once they are back online." },
-          "seen.trust": { zh: "有一件事协议管不了:你得相信装到手上的安装包,就是 GitHub 上那份开源代码编出来的。不放心的话,可以自己编译。", en: "One thing the protocol cannot cover: you have to trust that the installer you got was built from the open-source code on GitHub. If you would rather not, you can build it yourself." },
-          "seen.protocol": { zh: "同步协议全文(写给开发者看的)", en: "Full sync protocol (for developers, in Chinese)" },
-
-          /* — 给爱折腾的人(路径 / 查询 / 键位的出处见节头注释)— */
-          "tinker.eyebrow": { zh: "给爱折腾的人", en: "For tinkerers" },
-          "tinker.title": { zh: "数据、键盘和源码", en: "Data, keyboard, and source" },
-          "tinker.dataTitle": { zh: "数据就是一个 SQLite 文件", en: "Your data is one SQLite file" },
-          "tinker.dataP1": { zh: "电脑上的主空间在这儿,别的空间是同一目录下以一串编号命名的文件:", en: "On a computer the main space lives here; other spaces are files named by an ID in the same folder:" },
-          "tinker.dataP2": { zh: "随记和待办在同一张 items 表里,靠它落在哪一列来区分。看最近五条随记:", en: "Notes and tasks share one items table; which column a row sits in tells them apart. The five latest notes:" },
-          "tinker.dataP3": { zh: "建议只读着看。直接改它不在应用照顾的范围里,改坏了我也不好帮你救。手机上的库在应用私有目录里,拿不到。", en: "Read it, but I would not edit it. Changes made outside the app are not something it looks after, and if it breaks I may not be able to help you recover. On phones the database sits in the app's private folder and is not reachable." },
-          "tinker.dataP4": { zh: "不想碰数据库也行:电脑版设置 →「备份与恢复」→「导出为 Markdown」,把整个空间连图带留言导成几份 .md,任何编辑器都能打开。", en: "Or skip the database: on a computer, Settings → Backup & restore → Export as Markdown writes the whole space, images and comments included, as plain .md files any editor can open." },
-          "tinker.keysTitle": { zh: "手不离键盘", en: "Hands on the keyboard" },
-          "tinker.k1": { zh: "Ctrl+Alt+N 唤出纸条,Ctrl+Alt+M 打开主窗;两个都能改。Mac 上是 Cmd+Alt。", en: "Ctrl+Alt+N brings up the slip, Ctrl+Alt+M opens the main window; both can be changed. On a Mac it is Cmd+Alt." },
-          "tinker.k2": { zh: "纸条里行首打 /:/task 直接存成任务,/tag 名字 挂上标签,/space 换个空间。", en: "In the slip, start a line with /: /task saves it as a task, /tag name adds a tag, /space picks another space." },
-          "tinker.k3": { zh: "卡片右上角 ⋯ 里每项都标着单键:E 编辑、C 复制、L 标签、S 截止、P 优先级、B 撤回、D 删除,] 和 [ 前后挪一列。", en: "Every item in a card's ⋯ menu shows a single key: E edit, C copy, L tags, S due date, P priority, B send back, D delete, ] and [ move a column right or left." },
-          "tinker.k4": { zh: "正文行首写 - [ ] 就是一个能勾的方框。", en: "Start a line with - [ ] and it becomes a box you can tick." },
-          "tinker.srcTitle": { zh: "源码与设计", en: "Source and design" },
-          "tinker.srcRepo": { zh: "源码(MIT),Rust + TypeScript + Tauri", en: "Source code (MIT): Rust, TypeScript, Tauri" },
-          "tinker.srcNoFw": { zh: "为什么前端不用框架", en: "Why the front end uses no framework (in Chinese)" },
-          "tinker.srcDevlog": { zh: "开发手记:做它时栽过的跟头", en: "Dev notes: mistakes made along the way (in Chinese)" },
-          "tinker.srcSelfHost": { zh: "自己搭一台同步服务器", en: "Run your own sync server (in Chinese)" },
-
-          /* — 下载 — */
-          "dl.eyebrow": { zh: "现在就能用", en: "Ready to use" },
-          "dl.title": { zh: "装一个试试", en: "Give it a try" },
-          "dl.lead": { zh: "Windows 和 Android 是正式版,装好后会自动检查新版本并提示你;鸿蒙版在华为应用市场,更新由商店管。macOS 与 Linux 是尝鲜版。", en: "Windows and Android are the supported builds; once installed they check for new versions and prompt you. The HarmonyOS build is on Huawei AppGallery, which handles its updates. macOS and Linux are early builds." },
-          "dl.winMeta": { zh: "10 / 11 · 64 位", en: "10 / 11 · 64-bit" },
-          "dl.winBtn": { zh: "下载安装包", en: "Download .exe" },
-          "dl.androidMeta": { zh: "11+ · 64 位", en: "11+ · 64-bit" },
-          "dl.apkBtn": { zh: "下载 APK", en: "Download APK" },
-          "dl.hmMeta": { zh: "5 及以上 · 华为应用市场", en: "5 and up · Huawei AppGallery" },
-          "dl.hmBtn": { zh: "去应用市场", en: "Open AppGallery" },
-          "dl.trialTag": { zh: "尝鲜版", en: "Early build" },
-          /* 更新日志页只有中文(同三份协议页),英文档把这一点说在链接上。 */
-          "dl.changelog": { zh: "看看最近更新了什么", en: "What's new (changelog, in Chinese)" },
-          "dl.trialLine": { zh: "macOS(Apple 芯片)与 Linux(x86_64):没签名,首次打开要在系统里手动放行;Linux 上热键与托盘在部分桌面环境可能不全。", en: "macOS (Apple silicon) and Linux (x86_64): unsigned, so allow them by hand on first launch; on Linux the hotkey and tray may be incomplete on some desktops." },
-          "dl.macBtn": { zh: "下载 dmg", en: "Download dmg" },
-          "dl.verifyLead": { zh: "核对安装包(SHA-256):", en: "Check your download (SHA-256):" },
-          "dl.sumsDesktop": { zh: "电脑版", en: "Desktop" },
-          "dl.sumsAndroid": { zh: "安卓版", en: "Android" },
-          /* 用户指南只有中文,同 dl.changelog 把这一点说在链接上。 */
-          "dl.verifyHow": { zh: "怎么核", en: "How (in Chinese)" },
-          "dl.foot": { zh: "桌面更新包有开发者签名,装前会核对;Windows 安装包没做系统签名,首次安装会提示「未知发布者」,点「更多信息 → 仍要运行」 · Windows 装好后在系统托盘里,热键唤出 · Android 首次安装要允许「未知来源」,更新也要你点一下装 · 有问题发邮件到 3069848@qq.com", en: "Desktop updates are signed by the developer and checked before installing; the Windows installer is not code-signed, so the first install warns about an “unknown publisher” — choose “More info → Run anyway” · On Windows it lives in the tray; bring it up with the hotkey · On Android, allow “unknown sources” on first install; updates also take a tap to install · Questions? Email 3069848@qq.com" },
-
-          /* — 常见问题(F3)— */
-          "faq.eyebrow": { zh: "常见问题", en: "FAQ" },
-          "faq.title": { zh: "遇到了先看这里", en: "Check here first" },
-          "faq.syncQ": { zh: "同步好像不动了?", en: "Sync seems to have stopped?" },
-          "faq.syncA1": { zh: "先看两头是不是都开着、连着网。手机上的朱简要在前台才会追赶,放到后台不保证实时。新设备刚加入的那一会儿,老设备也要开着,才拉得到全部数据。", en: "First check that both devices are open and online. On a phone, Zhujian catches up only while it is in the foreground; in the background it is not guaranteed to be live. When a new device has just joined, the old one must be open too, or the new one cannot fetch all the data." },
-          "faq.syncA2": { zh: "都开着还是不动,就跑一遍网络自检:电脑在「设置 → 关于 → 诊断」,手机在「设置 → 诊断」。它会一步步检查,告诉你卡在哪一步。还不行就发邮件给我。电脑上那一页最下面一行能把诊断结果复制成一段文字,贴进邮件就行;手机上截个图也可以。", en: "If both are open and it still doesn't move, run the network check: on a computer it is under Settings → About → Diagnostics, on a phone under Settings → Diagnostics. It goes step by step and tells you where it gets stuck. If that doesn't help, email me. On a computer, the last row of that page copies the results as one block of text to paste into the email; on a phone, a screenshot is fine." },
-          "faq.lostQ": { zh: "手机丢了怎么办?", en: "Lost your phone?" },
-          "faq.lostA1": { zh: "你别的设备上还有一份完整的数据,丢的只是这一台手机。在还在手上的设备里打开「同步」的设备名单,把丢的那台移除,它就不能再通过服务器同步了。", en: "Your other devices still hold a full copy of your data; only this phone is gone. On a device you still have, open the device list under Sync and remove the lost one, and it can no longer sync through the server." },
-          "faq.lostA2": { zh: "有两件事要知道。第一,移除收不回它本机已经有的内容。朱简没有单独的应用锁,这部分只能靠手机自己的锁屏挡着。第二,只有带「管理」标记的设备能移除别的设备。如果丢的正好是唯一一台管理设备,或者你想彻底隔离、把整个账户的密钥换掉,请发邮件给我。", en: "Two things to know. First, removing it cannot take back what is already on that phone. Zhujian has no app lock of its own, so that part is protected only by the phone's own screen lock. Second, only devices marked “Admin” can remove other devices. If the lost phone was your only admin device, or you want to cut it off completely and replace the whole account's key, email me." },
-          "faq.lostA3": { zh: "如果丢的是你唯一的一台设备,又没做过备份,数据就找不回来了。谁也帮不了,包括我。", en: "If it was your only device and you had no backup, the data cannot be recovered. Nobody can help with that, including me." },
-          "faq.moveQ": { zh: "换了新手机(或新电脑),数据怎么搬过去?", en: "Got a new phone (or computer)? How do I move my data?" },
-          "faq.moveA1": { zh: "旧设备还在的话,不用手动搬。在旧设备的「同步」里点「添加设备」,新设备装好朱简后,在「同步」里扫码或者输入配对码加入,全部数据会自动拉过来。拉数据的时候,旧设备要开着,手机的话要亮屏、停在朱简里。", en: "If the old device is still around, there is nothing to move by hand. On the old device, open Sync and choose Add device; on the new one, install Zhujian, open Sync, and scan the code or enter the pairing code. All your data comes over by itself. While it does, keep the old device open; if it is a phone, keep the screen on with Zhujian in front." },
-          "faq.moveA2": { zh: "以前没开过同步也一样:先在旧设备的「同步」里创建账户(不要邮箱和手机号),然后照上面的步骤加新设备。", en: "The same works if you never turned on sync: first create an account under Sync on the old device (no email or phone number needed), then add the new device as above." },
-          "faq.moveA3": { zh: "在新设备上确认内容都齐了,再去设备名单里把旧的那台移除。手机上卸载朱简会把数据一起删掉,所以旧手机先别急着卸。", en: "Once everything is on the new device, remove the old one from the device list. Uninstalling Zhujian on a phone deletes its data too, so don't rush to uninstall it from the old phone." },
-          "faq.costQ": { zh: "要花钱吗?", en: "Does it cost anything?" },
-          "faq.costA": { zh: "现在免费使用,包括多设备同步。你的数据存在你自己设备上的一个 SQLite 文件里,代码也开源(MIT)。哪天不想用了,东西都还在你手上。", en: "It is free to use today, multi-device sync included. Your data sits in a SQLite file on your own device, and the code is open source (MIT). If you ever stop using it, everything is still in your hands." },
-
-          /* — 不足与不做 — */
-          "limits.eyebrow": { zh: "先说不足", en: "The weak spots first" },
-          "limits.title": { zh: "还做不好的,和不打算做的", en: "What it doesn't do well yet, and what it won't do" },
-          "limits.notYetTitle": { zh: "现在还做不好", en: "Not good at yet" },
-          "limits.n1": { zh: "没有 iPhone 版。", en: "There is no iPhone version." },
-          "limits.n2": { zh: "Windows 安装包没有系统签名,第一次安装会提示「未知发布者」。", en: "The Windows installer is not code-signed, so the first install shows an \"unknown publisher\" warning." },
-          "limits.n3": { zh: "手机上的朱简放到后台,同步不保证实时,回到前台才追上。", en: "On phones, sync is not real-time while Zhujian is in the background; it catches up when you bring it back." },
-          "limits.n4": { zh: "没有应用锁,手机上的内容靠系统锁屏挡着。", en: "There is no app lock; on a phone, your notes are protected by the system lock screen." },
-          "limits.n5": { zh: "看板的列只能在电脑上新建、改名、删除,手机上只能用。", en: "Board columns can only be added, renamed, or deleted on a computer; phones just use them." },
-          "limits.n6": { zh: "鸿蒙版比安卓版更新得慢。", en: "The HarmonyOS version gets updates later than Android." },
-          "limits.n7": { zh: "暗色模式下有几处小标签的字偏淡。", en: "In dark mode a few small labels are a little too faint." },
-          "limits.neverTitle": { zh: "不打算做", en: "Won't do" },
-          "limits.x1": { zh: "用 AI 润色、总结、自动归类。你写下什么,留下的就是什么。", en: "AI polishing, summaries, or auto-filing. What you write is what stays." },
-          "limits.x2": { zh: "注册要邮箱或手机号。", en: "Ask for an email address or phone number to sign up." },
-          "limits.x3": { zh: "在应用里放广告或统计代码。", en: "Put ads or analytics in the app." },
-
-          /* — 理念 — */
-          "ethos.eyebrow": { zh: "为什么做它", en: "Why it exists" },
-          "ethos.p1": { zh: "做它,是因为下面三件事一直让我不踏实。", en: "I built it because three things kept bothering me." },
-          "ethos.why1a": { zh: "数据放在别人的云上。", en: "Your data lives in someone else's cloud. " },
-          "ethos.why1b": { zh: "服务一停、账号一封,或者数据库被人拖走,东西就不是你的了。所以朱简把数据存在你自己的设备上,同步也只传加密过的内容。", en: "If the service shuts down, your account gets banned, or the database leaks, it is no longer yours. So Zhujian keeps your data on your own devices, and sync only carries encrypted content." },
-          "ethos.why2a": { zh: "想记的时候打不开。", en: "You can't open it when you need to jot something down. " },
-          "ethos.why2b": { zh: "网页上的看板要开浏览器、要登录,网一慢就卡,功能还越堆越多。可一个念头常常只停几秒。朱简的做法是:按一个热键,弹出一张纸条,写完回车就收起。", en: "A web board needs a browser and a login, stalls when the network is slow, and keeps growing features. A thought often lasts only a few seconds. Zhujian's answer: press a hotkey, a slip of paper pops up, type, hit Enter, and it tucks itself away." },
-          "ethos.why3a": { zh: "写下的字被改掉。", en: "Your words get rewritten. " },
-          "ethos.why3b": { zh: "现在很多工具都在用 AI 帮你润色、总结、归类。可在什么都能让 AI 代写的时候,你自己想出来、没被改过的念头,才更值得留着。朱简不会动你写下的任何一个字。", en: "Many tools now use AI to polish, summarize, and sort what you write. When AI can write almost anything for you, the ideas you came up with yourself, untouched, are the ones worth keeping. Zhujian never changes a word you write." },
-          "ethos.p4": { zh: "顺带说一句:朱简的代码是我和 AI 一起写的。让 AI 帮我写程序,和让它改你写的字,是两回事。", en: "One more thing: I wrote Zhujian's code together with AI. Having AI help me write a program is one thing; letting it change your words is another." },
-          "ethos.p2a": { zh: "名字取自「", en: "The name joins " },
-          "ethos.p2Zhusha": { zh: "朱砂", en: "zhūshā" },
-          "ethos.p2b": { zh: "」与「", en: " (cinnabar) with " },
-          "ethos.p2Jiandu": { zh: "简牍", en: "jiǎndú" },
-          "ethos.p2c": { zh: "」:朱砂的朱,竹简的简。原名「朱笺」,后来改叫朱简,更好认。", en: " (bamboo slips): red ink on a short strip." },
-
-          /* — 页脚 — */
-          "foot.tagline": { zh: "ZHUJIAN · 纸与朱墨", en: "ZHUJIAN · PAPER AND CINNABAR" },
-          /* 协议三页的页脚链接(712;路径两站相同)。⛔ 别在境内站生成器的 NEW_DICT 里再补一份 —— 712 前它们住在那儿,两份会同时进字典。 */
-          "foot.privacy": { zh: "隐私政策", en: "Privacy" },
-          "foot.rights": { zh: "隐私权利", en: "Your rights" },
-          "foot.terms": { zh: "用户协议", en: "Terms" },
-          "foot.changelog": { zh: "更新日志", en: "Changelog (Chinese)" },
-          "foot.devlog": { zh: "开发手记", en: "Dev notes (Chinese)" },
-          "foot.colProduct": { zh: "产品", en: "Product" },
-          "foot.colHelp": { zh: "帮助", en: "Help" },
-          "foot.colAbout": { zh: "关于", en: "About" },
-          "foot.colTerms": { zh: "隐私与条款", en: "Privacy & terms" },
-          "foot.tinker": { zh: "数据、键盘和源码", en: "Data, keys and source" },
-          "foot.why": { zh: "为什么做它", en: "Why it exists" },
-          "foot.limits": { zh: "还做不好的", en: "What it can't do yet" },
-          "foot.security": { zh: "隐私与安全", en: "Privacy & security" },
-          "foot.copy": { zh: "© 2026 朱简 zhujian", en: "© 2026 Zhujian" },
-        }; /* ⟦/i18n-dict⟧ */
-
-        /* 属性绑定表。门禁**从这里读**「本页支持哪几个 data-i18n-*」,不另写一份登记表
-           —— 「登记本身没人核」是 336 ⑩ 刀判过死刑的形状(改坏了照样绿)。 */
-        var BIND = { "data-i18n-title": "title", "data-i18n-aria-label": "aria-label", "data-i18n-content": "content", "data-i18n-alt": "alt", "data-i18n-src": "src" };
-
-        var KEY = "zhujian.lang"; /* 与两个客户端同一个键;纯本机、不进同步 */
-
-        function pick() {
-          var q = new URLSearchParams(location.search).get("lang");
-          if (q === "zh" || q === "en") {
-            localStorage.setItem(KEY, q);
-            return q;
-          }
-          var saved = localStorage.getItem(KEY);
-          if (saved === "zh" || saved === "en") return saved;
-          return navigator.language.toLowerCase().indexOf("zh") === 0 ? "zh" : "en";
+        var KEY = "zhujian.lang";
+        var page = document.documentElement.lang;
+        var toggle = document.getElementById("lang-toggle");
+        var other = toggle.getAttribute("href");
+        var q = new URLSearchParams(location.search).get("lang");
+        if (q === "zh" || q === "en") localStorage.setItem(KEY, q);
+        var chosen = localStorage.getItem(KEY);
+        if ((chosen === "zh" || chosen === "en") && chosen !== page) {
+          location.replace(other + location.hash);
+          return;
         }
-
-        function apply(lang) {
-          document.documentElement.lang = lang;
-          function t(key) {
-            var entry = M[key];
-            if (!entry) throw new Error("i18n: unknown key " + key); /* 绝不回退兜底 */
-            return entry[lang];
-          }
-          var texts = document.querySelectorAll("[data-i18n]");
-          for (var i = 0; i < texts.length; i++) {
-            /* textContent 覆写会吞掉子元素:data-i18n 只许挂在纯文本元素上(门禁也静态核)。 */
-            if (texts[i].childElementCount > 0) throw new Error("i18n: data-i18n element has children");
-            texts[i].textContent = t(texts[i].getAttribute("data-i18n"));
-          }
-          for (var attr in BIND) {
-            var nodes = document.querySelectorAll("[" + attr + "]");
-            for (var j = 0; j < nodes.length; j++) nodes[j].setAttribute(BIND[attr], t(nodes[j].getAttribute(attr)));
-          }
-        }
-
-        var current = pick();
-        apply(current);
-        document.getElementById("lang-toggle").addEventListener("click", function (ev) {
-          ev.preventDefault(); /* 单文件静态页,换档不必重载:就地重铺一遍即可 */
-          current = current === "zh" ? "en" : "zh";
-          localStorage.setItem(KEY, current);
-          apply(current);
+        toggle.addEventListener("click", function () {
+          localStorage.setItem(KEY, page === "zh" ? "en" : "zh");
         });
+        var sys = navigator.language.toLowerCase().indexOf("zh") === 0 ? "zh" : "en";
+        if (!chosen && sys !== page) document.getElementById("lang-hint").parentNode.hidden = false;
       })();
     </script>
 

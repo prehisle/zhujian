@@ -148,10 +148,14 @@ const NOT_A_DOC = [
 `check-fs-drift` 与 `check-hardcoded-colors` 的登记表**各抄一份**(实测多出 3 + 8 条同源例外)—— \
 复制登记表是全仓最会腐的那种东西。两者一致由 `branch-gate land` 那道 `build-site-cool.mjs --check` 守着",
   },
-  ...["site-app", "site-cool"].flatMap((dir) => ["about", "help", "security"].map((n) => `${dir}/${n}.html`)).map((file) => ({
+  // 2c 起 zhujian.app 的首页也是生成的,另加 en/ 下的英文那一份(site-cool/index.html 另有一条,不在这儿重登)。
+  ...["site-app", "site-cool"]
+    .flatMap((dir) => ["", "en/"].flatMap((pre) => ["index", "about", "help", "security"].map((n) => `${dir}/${pre}${n}.html`)))
+    .filter((f) => f !== "site-cool/index.html")
+    .map((file) => ({
     file,
     privateOnly: file.startsWith("site-cool/"), // site-app/ 在导出白名单里(安卓包烤它),site-cool/ 不在
-    why: "官网子页(改版 2b):生成器拿 `site/index.html` 当壳、只换 <main> 与 <head> 里的标题 / 描述 / 分享卡片 \
+    why: "官网生成的页(改版 2b / 2c):生成器拿 `site/index.html` 当壳,换 <main> 与 <head> 里的标题 / 描述 / 分享卡片,英文那份再把字烤进去 \
 ⇒ `<style>` 与首页**逐字节相同**,配色 / 字号 / 圆角由「官网·单页」那一格判,判第二遍没有新信息。\
 子页自己的正文片段(`site/pages/`)在 i18n 门禁的扫描面里;成品 == 生成器输出由 `branch-gate land` 那道 \
 `build-site-cool.mjs --check` 守着。⚠ 触发门:哪天子页有了自己的样式块,这条就不成立了,要登记进 DOCS",
