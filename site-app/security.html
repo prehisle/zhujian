@@ -7,34 +7,17 @@
          启动时按 data-i18n 族属性覆写;原文与 zh 值逐字相等由 check-i18n-drift 核。
          字典与运行期在页面末尾的那段内联 script 里(⚠ 注释里别写闭合标签的字面量:
          按标签切文件的工具会先命中这里,360 当场栽过一次)。 -->
-    <title data-i18n="meta.title">朱简:记想法、管待办,数据在你自己的设备上</title>
-    <meta
-      name="description"
-      data-i18n-content="meta.desc"
-      content="朱简(zhujian)是一个记想法、管待办的工具:随手记一笔进随记,要做的事转成待办,在看板上做完。数据存在你自己的设备上,多设备同步端到端加密。免费使用,开源。"
-    />
+    <title data-i18n="page.securityMeta">隐私与安全 · 朱简</title>
+    <meta name="description" data-i18n-content="page.securityDesc" content="朱简的数据存在你自己的设备上;开了同步,服务器只经手密文。这一页列出几件先说清的事,和服务器看得到什么、看不到什么。" />
 
-    <!-- ───────── 分享卡片与 canonical(zhujian.app 版)─────────────────────
-         ⚠ 境内站生成器(`scripts/build-site-cool.mjs`)拿**下面这两行注释**当结构锚,
-         整块换成 zhujian.cool 那一份;⛔ 别在两者之间插别的东西。三处域名承重:
-         canonical 指错 = 告诉搜索引擎境内站是境外站的副本;og:url / og:image 指错 =
-         分享卡片从另一个域名拉图。生成器对这三处 fail-closed。
-         ⚠ og:title / og:description 复用 meta.title / meta.desc 两键(⛔ 别另写一份措辞,
-         那就是第二个家);爬虫拿到的是壳里的中文原文,与 i18n 那条诚实边界同界。
-         ⚠ 图是 webp:主流平台都认,个别老客户端(部分微信版本)可能不出图 —— 现有素材
-         只有 webp,⛔ 别为此另造一份 png 摆在那儿没人核。 -->
-    <link rel="canonical" href="https://zhujian.app/" />
+    <!-- ───────── 分享卡片与 canonical(子页 security,生成器写的)───────── -->
+    <link rel="canonical" href="https://zhujian.app/security.html" />
     <meta property="og:type" content="website" />
-    <meta property="og:url" content="https://zhujian.app/" />
-    <meta property="og:title" data-i18n-content="meta.title" content="朱简:记想法、管待办,数据在你自己的设备上" />
-    <meta
-      property="og:description"
-      data-i18n-content="meta.desc"
-      content="朱简(zhujian)是一个记想法、管待办的工具:随手记一笔进随记,要做的事转成待办,在看板上做完。数据存在你自己的设备上,多设备同步端到端加密。免费使用,开源。"
-    />
+    <meta property="og:url" content="https://zhujian.app/security.html" />
+    <meta property="og:title" data-i18n-content="page.securityMeta" content="隐私与安全 · 朱简" />
+    <meta property="og:description" data-i18n-content="page.securityDesc" content="朱简的数据存在你自己的设备上;开了同步,服务器只经手密文。这一页列出几件先说清的事,和服务器看得到什么、看不到什么。" />
     <meta property="og:image" content="https://zhujian.app/shots/desktop-board.webp" />
     <meta name="twitter:card" content="summary_large_image" />
-    <!-- ───────── /分享卡片 ───────── -->
 
     <style>
       /* 标题字体:霞鹜文楷 Medium 的子集(SIL OFL,许可证与字体同目录)。生成与「够不够用」
@@ -1105,253 +1088,74 @@
     </header>
 
     <main id="top">
-      <!-- ───────── HERO ───────── -->
-      <section class="hero">
+      <section class="page-head">
         <div class="wrap">
-          <div class="hero-copy">
-            <!-- 版本号留在 markup 里、不进字典:bump-version 按 `v<版本>` 一起改它(桌面那一侧)。 -->
-            <a class="news-pill" href="/changelog.html"><span class="news-tag" data-i18n="hero.newsTag">新版本</span><span><span data-i18n="hero.newsDesktop">电脑版</span> v0.2.49 · <span data-i18n="hero.newsSee">看看改了什么</span> →</span></a>
-            <!-- 主标题的换行与朱砂重音是版式的一部分,故每一段各自成键(data-i18n 只覆写
-                 textContent、带子元素会被吞掉)。末段在中文里是句号、在英文里是句点 ——
-                 重音在中文落在「想清楚」、在英文落在 later,故 line3 那一格两档承担的
-                 词不同,而朱砂色始终跟着 line3 这一格。 -->
-            <h1><span data-i18n="hero.line1">随手记一笔,</span><br /><span data-i18n="hero.line2">再慢慢</span><span class="accent" data-i18n="hero.line3">想清楚</span><span data-i18n="hero.line4">。</span></h1>
-            <p class="hero-lead" data-i18n="hero.lead">记想法、管待办的电脑与手机应用。数据存在你自己的设备上,不联网也照常用。</p>
-            <div class="cta-row">
-              <a class="btn btn-primary" href="#download" data-i18n="hero.ctaDownload">免费下载</a>
-              <a class="btn btn-ghost" href="#flow" data-i18n="hero.ctaSee">看看怎么用</a>
-            </div>
-            <ul class="platforms">
-              <li>Windows</li>
-              <li>Android</li>
-              <li data-i18n="hero.pfHarmony">鸿蒙</li>
-              <li data-i18n="hero.pfTrial">macOS / Linux 尝鲜</li>
-              <li data-i18n="hero.pfOss">开源 MIT</li>
-              <li data-i18n="hero.pfNoSignup">不用注册</li>
-            </ul>
-          </div>
-        </div>
-        <!-- 合成图:两张都是真截图(与三步里用的是同一批),⛔ 别换成示意图。手机那张裁掉了
-             系统状态栏与手势条的白边(用户 9-29 报)。 -->
-        <div class="stage">
-          <div class="stage-desktop">
-            <img src="shots/desktop-board.webp" width="1890" height="1050" fetchpriority="high" decoding="async"
-                 alt="任务看板:待办、进行中、待确认、已完成四列,卡片上标着截止日期和标签" data-i18n-alt="flow.card3Alt" />
-          </div>
-          <div class="stage-phone">
-            <img src="shots/phone-inbox.webp" width="630" height="1254" decoding="async"
-                 alt="同一份随记在手机上:一列卡片,其中一条正文里带着可以打勾的小清单" data-i18n-alt="flow.card2AltPhone" />
-          </div>
+          <span class="eyebrow" data-i18n="page.securityEyebrow">隐私与安全</span>
+          <h1 class="section-title" data-i18n="page.securityTitle">你的数据在哪,谁看得到</h1>
+          <p class="section-lead" data-i18n="page.securityLead">朱简把数据存在你自己的设备上。下面是几件先说清的事,和开了同步之后服务器看得到什么。</p>
         </div>
       </section>
 
-      <!-- ───────── 三步主线 ───────── -->
-      <section class="flow" id="flow">
+      <!-- ───────── 事实表 ───────── -->
+      <section class="trust" id="facts">
         <div class="wrap">
-          <span class="eyebrow" data-i18n="flow.eyebrow">怎么用</span>
-          <h2 class="section-title" data-i18n="flow.title">从记下到做完,三步</h2>
-
-          <div class="row">
-            <div class="row-copy">
-              <div class="step" data-i18n="flow.step1">一</div>
-              <h3 data-i18n="flow.card1Title">记下</h3>
-              <p>
-                <span data-i18n="flow.card1a">全局热键</span> <span class="kbd-inline">Ctrl+Alt+N</span> <span data-i18n="flow.card1b">唤出一张纸条,写完回车就存进随记,窗口自己收起。截图可以直接粘贴。</span>
-              </p>
-            </div>
-            <!-- 演示:纸条里逐字打出「新的那条」的原文 → 回车键亮一下 → 纸条收起、那条落进随记。
-                 要打的字由运行期从 .demo-card.new 里读(跟着语言走),脚本里一个字面量都没有。 -->
-            <div class="demo" aria-hidden="true">
-              <div class="demo-desk">
-                <div class="demo-list">
-                  <div class="demo-head" data-i18n="flow.demoHead">随记 · 今天</div>
-                  <div class="demo-card new"><span data-i18n="flow.demoNew">明早顺路取体检报告</span><span class="demo-time" data-i18n="flow.demoJust">刚刚</span></div>
-                  <div class="demo-card"><span data-i18n="flow.demoItem1">周末把书架第二层整理一遍</span><span class="demo-time">17:00</span></div>
-                  <div class="demo-card"><span data-i18n="flow.demoItem2">给妈打电话,问体检结果</span><span class="demo-time">16:42</span></div>
-                </div>
-                <div class="slip">
-                  <div class="slip-text"><span class="typed"></span><span class="caret"></span></div>
-                  <div class="slip-hint">
-                    <span><kbd class="enter">↵</kbd> <span data-i18n="hero.kbdSave">记下</span></span>
-                    <span><kbd>Esc</kbd> <span data-i18n="hero.kbdEsc">收起</span></span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div class="row flip">
-            <div class="row-copy">
-              <div class="step" data-i18n="flow.step2">二</div>
-              <h3 data-i18n="flow.card2Title">理一理</h3>
-              <p data-i18n="flow.card2">在随记里给它打标签,或转成待办。每次编辑都保留改动前的版本,旧稿能找回;删了先进回收站,随时还原。</p>
-            </div>
-            <button class="shot-zoom crop crop-inbox" type="button" aria-label="点开看大图" data-i18n-aria-label="shot.zoom">
-              <img src="shots/desktop-inbox.webp" width="1890" height="1050" loading="lazy" decoding="async"
-                   alt="随记:今天记下的几条排成一条时间轴,各自挂着标签" data-i18n-alt="flow.card2Alt" />
-              <img class="crop-phone" src="shots/phone-inbox.webp" width="630" height="1254" loading="lazy" decoding="async" alt="" />
-            </button>
-          </div>
-
-          <div class="row">
-            <div class="row-copy">
-              <div class="step" data-i18n="flow.step3">三</div>
-              <h3 data-i18n="flow.card3Title">做完它</h3>
-              <p data-i18n="flow.card3">待办、进行中、待确认、已完成,拖着走。做完的归档,可查、不可删。</p>
-            </div>
-            <button class="shot-zoom crop crop-board" type="button" aria-label="点开看大图" data-i18n-aria-label="shot.zoom">
-              <img src="shots/desktop-board.webp" width="1890" height="1050" loading="lazy" decoding="async"
-                   alt="任务看板:待办、进行中、待确认、已完成四列,卡片上标着截止日期和标签" data-i18n-alt="flow.card3Alt" />
-            </button>
-          </div>
+          <span class="eyebrow" data-i18n="trust.eyebrow">几件事先说清</span>
+          <!-- 一行一件事,六行不再多。⛔ 每一行都要能指到仓里的一处地面(哪个字段、
+               哪条代码路径),指不到的话就不许写在这儿 —— 这一节是「自述的事实」,
+               不是卖点(点名对比与极限词见 copy-plan §8)。 -->
+          <dl class="facts">
+            <dt data-i18n="facts.dataLabel">数据在哪</dt>
+            <dd data-i18n="facts.data">在你自己设备上的 SQLite 数据库里。不联网也照常用;开了同步的设备,回到网上再互补。</dd>
+            <dt data-i18n="facts.accountLabel">账号</dt>
+            <dd data-i18n="facts.account">不用注册。要多设备同步时,点「创建账户」就行,不要邮箱和手机号,也不用抄任何码。账户密钥只在你自己的设备上,服务器没有。</dd>
+            <dt data-i18n="facts.syncLabel">同步</dt>
+            <dd data-i18n="facts.sync">可选,端到端加密。文字和图片在你的设备上加密后才发出;服务器经手的只有密文,读不到内容;它不做备份,找回数据靠你自己的设备。同一个 Wi-Fi 下的两台设备直接互传,不经服务器;同网的人看不到内容,但能看出它们在同步。</dd>
+            <dt data-i18n="facts.trackLabel">统计</dt>
+            <dd data-i18n="facts.track">没有统计代码。不开同步时,应用只会连 zhujian.app 查有没有新版本。</dd>
+            <dt data-i18n="facts.aiLabel">AI</dt>
+            <dd data-i18n="facts.ai">没有。不替你归类,不改你写的字;早期做过,已经删掉。</dd>
+            <dt data-i18n="facts.freeLabel">免费与开源</dt>
+            <dd data-i18n="facts.free">免费使用,含多设备同步。开源(MIT),源码在 GitHub。</dd>
+          </dl>
         </div>
       </section>
 
-      <!-- ───────── 小处 ───────── -->
-      <!-- 改版 2b:大小不一的格子,一格一件事。⛔ 每一格都要能指到产品里真有的东西(与事实表同一条规矩):
-           编辑留历史 / 回收站 / 归档不可删 = design-rules 三条铁律;列只能在电脑上改 = 「还做不好的」那条;
-           /space、单键、导出 Markdown 与帮助页「数据、键盘和源码」那节同源。 -->
-      <section class="features" id="features">
+      <!-- ───────── 同步服务器看得到什么 ───────── -->
+      <section class="seen" id="server">
         <div class="wrap">
-          <span class="eyebrow" data-i18n="feat.eyebrow">小处</span>
-          <h2 class="section-title" data-i18n="feat.title">不起眼,但每天都用得上</h2>
-          <div class="bento">
-            <article class="tile t-wide">
-              <div>
-                <h3 data-i18n="feat.histTitle">改过的每一版都留着</h3>
-                <p data-i18n="feat.hist">每次编辑都保留改动前的版本。改坏了、删多了,旧稿都能找回来。</p>
-              </div>
-              <div class="versions" aria-hidden="true">
-                <div class="ver now"><b data-i18n="feat.verNow">现在</b><span data-i18n="feat.ver3">给妈打电话,问体检结果和下次复查时间</span></div>
-                <div class="ver"><b data-i18n="feat.verYesterday">昨天 21:40</b><span data-i18n="feat.ver2">给妈打电话,问体检结果</span></div>
-                <div class="ver"><b data-i18n="feat.verOld">9月20日</b><span data-i18n="feat.ver1">给妈打电话</span></div>
-              </div>
-            </article>
-            <article class="tile">
-              <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13" /></svg>
-              <h3 data-i18n="feat.trashTitle">删了先进回收站</h3>
-              <p data-i18n="feat.trash">随时还原。真正删掉,只能在回收站里做。</p>
-            </article>
-            <article class="tile">
-              <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="5" rx="1" /><path d="M5 9v10h14V9M10 13h4" /></svg>
-              <h3 data-i18n="feat.archiveTitle">归档是存档</h3>
-              <p data-i18n="feat.archive">做完的事归档之后可以查,不能删。回头看,知道自己做过什么。</p>
-            </article>
-            <article class="tile">
-              <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="5" height="16" rx="1" /><rect x="10" y="4" width="5" height="11" rx="1" /><rect x="17" y="4" width="4" height="7" rx="1" /></svg>
-              <h3 data-i18n="feat.colsTitle">看板的列自己定</h3>
-              <p data-i18n="feat.cols">在电脑上新建、改名、删掉。你的流程是几步,它就是几列。</p>
-            </article>
-            <article class="tile">
-              <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /></svg>
-              <h3 data-i18n="feat.spaceTitle">工作和生活分开放</h3>
-              <p><span data-i18n="feat.spaceA">一个空间一本本子,互不相混。纸条里打</span> <code>/space</code> <span data-i18n="feat.spaceB">就换过去。</span></p>
-            </article>
-            <article class="tile t-wide">
-              <div>
-                <h3 data-i18n="feat.keysTitle">手不离键盘</h3>
-                <p data-i18n="feat.keys">卡片上的每个动作都有一个单键,] 和 [ 把卡片往前、往后挪一列。</p>
-              </div>
-              <div class="keys" aria-hidden="true">
-                <span><kbd>E</kbd><span data-i18n="feat.kEdit">编辑</span></span>
-                <span><kbd>C</kbd><span data-i18n="feat.kCopy">复制</span></span>
-                <span><kbd>L</kbd><span data-i18n="feat.kTag">标签</span></span>
-                <span><kbd>S</kbd><span data-i18n="feat.kDue">截止</span></span>
-                <span><kbd>P</kbd><span data-i18n="feat.kPri">优先级</span></span>
-                <span><kbd>D</kbd><span data-i18n="feat.kDel">删除</span></span>
-                <span><kbd>[</kbd><kbd>]</kbd><span data-i18n="feat.kMove">挪列</span></span>
-              </div>
-            </article>
-            <article class="tile">
-              <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4zM7 15V9l3 3 3-3v6M17 9v6m-2-2 2 2 2-2" /></svg>
-              <h3 data-i18n="feat.exportTitle">随时带走</h3>
-              <p data-i18n="feat.export">电脑版一键把整个空间导成 Markdown,连图带留言,任何编辑器都能打开。</p>
-            </article>
-          </div>
-        </div>
-      </section>
-
-      <!-- ───────── 承诺 ───────── -->
-      <!-- 全页唯一一块深色(改版 2b)。三句都是事实表里已有的事实,细节在隐私与安全页;首页上「AI」只在这一处出现。 -->
-      <section class="promise">
-        <div class="wrap">
-          <span class="eyebrow" data-i18n="promise.eyebrow">你的东西</span>
-          <h2 class="section-title" data-i18n="promise.title">你写下的,留在你手上</h2>
-          <div class="promise-grid">
+          <span class="eyebrow" data-i18n="seen.eyebrow">同步服务器</span>
+          <h2 class="section-title" data-i18n="seen.title">它看得到什么,看不到什么</h2>
+          <!-- ⛔ 每一格照 docs/sync-protocol.md §3(信封 = 服务器唯一可读面)与 §11(威胁模型、
+               落盘清单)写,协议变了这里跟着改。「看不到」那栏只许写在密文里的东西:HLC / op 类型 /
+               图字节 / 设备别名都在内层;⛔ 别写「看不到你什么时候写的」—— 在线时存一下就发一帧,
+               帧的时刻服务器看得到。 -->
+          <p class="seen-lead" data-i18n="seen.lead">开了同步,数据要经服务器转一手。下面照协议原样列出来。</p>
+          <div class="two-cols">
             <div>
-              <h3 data-i18n="promise.dataTitle">数据在你的设备上</h3>
-              <p data-i18n="promise.data">存在你自己设备上的 SQLite 数据库里,不联网也照常用。同步是可选的:文字和图片在你的设备上加密后才发出,服务器只经手密文。</p>
+              <h3 data-i18n="seen.noTitle">看不到</h3>
+              <ul class="marks">
+                <li data-i18n="seen.no1">随记和任务的内容,以及改过的旧版本</li>
+                <li data-i18n="seen.no2">图片</li>
+                <li data-i18n="seen.no3">标签名、看板列名、设备名</li>
+                <li data-i18n="seen.no4">每一次改动是新建、编辑还是删除</li>
+                <li data-i18n="seen.no5">账户密钥</li>
+              </ul>
             </div>
             <div>
-              <h3 data-i18n="promise.statsTitle">没有统计代码</h3>
-              <p data-i18n="promise.stats">不开同步时,应用只会连 zhujian.app 查有没有新版本。</p>
-            </div>
-            <div>
-              <h3 data-i18n="promise.aiTitle">不用 AI 改你的字</h3>
-              <p data-i18n="promise.ai">不润色、不总结、不替你归类。你写下什么,留下的就是什么。</p>
+              <h3 data-i18n="seen.yesTitle">看得到</h3>
+              <ul class="marks">
+                <li data-i18n="seen.yes1">账户编号和设备编号(随机生成的一串字符)与各设备的公钥</li>
+                <li data-i18n="seen.yes2">哪台设备什么时候在线</li>
+                <li data-i18n="seen.yes3">什么时候发了数据、发了多少。由此能推出你大概什么时候在用</li>
+                <li data-i18n="seen.yes4">连接从哪个 IP 地址来</li>
+              </ul>
             </div>
           </div>
-          <p class="promise-links">
-            <a href="/security.html" data-i18n="promise.linkSecurity">同步服务器看得到什么、看不到什么 →</a>
-            <a href="https://github.com/prehisle/zhujian" data-i18n="promise.linkSource">源码在 GitHub →</a>
-          </p>
+          <p class="seen-note" data-i18n="seen.stored">服务器硬盘上只存这几样:账户和设备的编号与公钥、哪台设备有管理权限、账户的设备额度、封禁名单、流量计量,以及不含内容的连接日志。设备离线时,发给它的密文在服务器内存里等它,72 小时没取走就丢掉,服务器重启也会清空;数据本身在你的设备上,回到网上会重新补齐。</p>
+          <p class="seen-note" data-i18n="seen.trust">有一件事协议管不了:你得相信装到手上的安装包,就是 GitHub 上那份开源代码编出来的。不放心的话,可以自己编译。</p>
+          <p class="seen-note"><a href="https://github.com/prehisle/zhujian/blob/main/docs/sync-protocol.md" data-i18n="seen.protocol">同步协议全文(写给开发者看的)</a></p>
         </div>
       </section>
-
-      <!-- ───────── 下载 ───────── -->
-      <section class="download" id="download">
-        <div class="wrap">
-          <span class="eyebrow" data-i18n="dl.eyebrow">现在就能用</span>
-          <h2 class="section-title" data-i18n="dl.title">装一个试试</h2>
-          <p class="section-lead" data-i18n="dl.lead">Windows 和 Android 是正式版,装好后会自动检查新版本并提示你;鸿蒙版在华为应用市场,更新由商店管。macOS 与 Linux 是尝鲜版。</p>
-
-          <!-- 版本号刻意留在 markup 里、不进字典;字典只装那半句需要翻的机型说明。
-               ⚠ 这一页的版本号有**两种写法**:显示用的 `· v<版本>` 与下载 href 里的包名
-               `zhujian_<版本>_…`。⛔ 别再写「只有一种写法」—— `bump-version.mjs` 629 之前
-               只认前者,628 发版后五个下载按钮全指着上一版的包(线上已清)= 全 404。
-               ⛔ 这段注释里别写真版本号:它会被 bump 的正则一起替换掉。 -->
-          <div class="dl-row">
-            <a class="dl-card" href="https://zhujian.app/updates/zhujian_0.2.49_x64-setup.exe">
-              <div class="os">Windows</div>
-              <div class="meta"><span data-i18n="dl.winMeta">10 / 11 · 64 位</span> · v0.2.49</div>
-              <span class="btn btn-primary" data-i18n="dl.winBtn">下载安装包</span>
-            </a>
-            <a class="dl-card" href="https://zhujian.app/updates/zhujian_0.3.45_aarch64.apk">
-              <div class="os">Android</div>
-              <div class="meta"><span data-i18n="dl.androidMeta">11+ · 64 位</span> · v0.3.45</div>
-              <span class="btn btn-primary" data-i18n="dl.apkBtn">下载 APK</span>
-            </a>
-            <!-- 鸿蒙:商店链接,⛔ 刻意不印版本号 —— 它自成一条版本线(与安卓解绑),
-                 bump-version.mjs 只认桌面 / 安卓两侧,印了就是没人核的第五处;商店页自己会显版本。
-                 APP ID 是 AGC 分的,商店详情页只在 HarmonyOS 5 及以上设备的应用市场里能装。 -->
-            <a class="dl-card" href="https://appgallery.huawei.com/app/detail?id=C6917614407069105862">
-              <div class="os">HarmonyOS</div>
-              <div class="meta" data-i18n="dl.hmMeta">5 及以上 · 华为应用市场</div>
-              <span class="btn btn-primary" data-i18n="dl.hmBtn">去应用市场</span>
-            </a>
-          </div>
-          <!-- ⚠ 三个尝鲜版链接的 href 里照旧带版本号(deploy §8.1 「第四处」的一部分):
-               卡降成一行,链接一个没少,发版全文替换那一步该数到的处数不变。 -->
-          <p class="dl-trial">
-            <span class="trial-tag" data-i18n="dl.trialTag">尝鲜版</span>
-            <span data-i18n="dl.trialLine">macOS(Apple 芯片)与 Linux(x86_64):没签名,首次打开要在系统里手动放行;Linux 上热键与托盘在部分桌面环境可能不全。</span>
-            <a href="https://zhujian.app/updates/zhujian_0.2.49_aarch64.dmg" data-i18n="dl.macBtn">下载 dmg</a>
-            <a href="https://zhujian.app/updates/zhujian_0.2.49_amd64.AppImage">AppImage</a>
-            <a href="https://zhujian.app/updates/zhujian_0.2.49_amd64.deb">.deb</a>
-          </p>
-          <p class="dl-log"><a href="/changelog.html" data-i18n="dl.changelog">看看最近更新了什么</a></p>
-          <!-- 两份校验文件是**固定名**(CI 每次发版与包同批换掉),⇒ 这两个 href 刻意不带版本号,
-               bump-version 不用管它们;它们与下载按钮对不对得上,由 check-deployed-drift ①e 核。 -->
-          <p class="dl-verify">
-            <span data-i18n="dl.verifyLead">核对安装包(SHA-256):</span>
-            <a href="https://zhujian.app/updates/SHA256SUMS-desktop.txt" data-i18n="dl.sumsDesktop">电脑版</a>
-            <a href="https://zhujian.app/updates/SHA256SUMS-android.txt" data-i18n="dl.sumsAndroid">安卓版</a>
-            <a href="https://github.com/prehisle/zhujian/blob/main/docs/user-guide.md#%E6%A0%B8%E5%AF%B9%E4%B8%8B%E8%BD%BD%E7%9A%84%E5%AE%89%E8%A3%85%E5%8C%85" data-i18n="dl.verifyHow">怎么核</a>
-          </p>
-          <p class="dl-foot" data-i18n="dl.foot">桌面更新包有开发者签名,装前会核对;Windows 安装包没做系统签名,首次安装会提示「未知发布者」,点「更多信息 → 仍要运行」 · Windows 装好后在系统托盘里,热键唤出 · Android 首次安装要允许「未知来源」,更新也要你点一下装 · 有问题发邮件到 3069848@qq.com</p>
-        </div>
-      </section>
-      <!-- ───────── /下载 ───────── -->
     </main>
 
     <!-- ───────── 页脚:钤印落款 ───────── -->

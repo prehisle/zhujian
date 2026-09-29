@@ -4,6 +4,9 @@
      境内站 zhujian.cool 那一份由 scripts/build-site-cool.mjs 生成。 -->
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url><loc>https://zhujian.app/</loc></url>
+  <url><loc>https://zhujian.app/about.html</loc></url>
+  <url><loc>https://zhujian.app/help.html</loc></url>
+  <url><loc>https://zhujian.app/security.html</loc></url>
   <url><loc>https://zhujian.app/privacy.html</loc></url>
   <url><loc>https://zhujian.app/privacy-rights.html</loc></url>
   <url><loc>https://zhujian.app/terms.html</loc></url>

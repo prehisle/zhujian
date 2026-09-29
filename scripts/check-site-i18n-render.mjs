@@ -24,13 +24,18 @@
 // ⚠ 非发版门禁,是 check-i18n-drift 官网那一份的回归网(照 check-contrast-xcheck 的定位)。
 
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const SITE = "site/index.html";
+// 改版 2b 起官网有子页:成品是生成器用首页的壳做的(site-app/<名>.html),运行期与字典同一份,
+// 但 <main> 里挂的绑定各不相同 ⇒ 每一页各跑一遍同一套判据。页名从 site/pages/ 现算。
+const PAGES = [
+  "site/index.html",
+  ...readdirSync(resolve(root, "site/pages")).filter((f) => f.endsWith(".html")).sort().map((f) => `site-app/${f}`),
+];
 const NL = "\n";
 
 function findChrome() {
@@ -56,9 +61,12 @@ function findChrome() {
   return hit;
 }
 
+const CHROME = findChrome();
+
+function runPage(SITE) {
+const raw = readFileSync(resolve(root, SITE), "utf8");
 // ---- Node 侧:独立解析字典与绑定(与页面里那份 var M 同源同文件,但由这里自己读) ----
 
-const raw = readFileSync(resolve(root, SITE), "utf8");
 
 const ENTRY_LINE =
   /^\s*"([A-Za-z0-9.]+)"\s*:\s*\{\s*zh\s*:\s*"((?:[^"\\\n]|\\.)*)"\s*,\s*en\s*:\s*"((?:[^"\\\n]|\\.)*)"\s*\}\s*,\s*$/;
@@ -105,7 +113,6 @@ const expectSites = staticSites();
 
 // ---- 跑 ------------------------------------------------------------------------------
 
-const CHROME = findChrome();
 const work = mkdtempSync(join(tmpdir(), "zj-site-i18n-"));
 let bad = 0;
 const seen = {}; // lang -> Map(key#attr -> 读回来的字)
@@ -196,8 +203,15 @@ try {
 }
 
 if (bad === 0) {
-  console.log(`官网双语渲染对拍通过:${dict.size} 键 / ${expectSites.length} 处绑定,zh 与 en 两档逐条与字典相同,页面零报错。`);
+  console.log(`${SITE}:${dict.size} 键 / ${expectSites.length} 处绑定,zh 与 en 两档逐条与字典相同,页面零报错。`);
 } else if (bad > 0) {
-  console.error(`官网双语渲染对拍不过:${bad} 处对不上。`);
+  console.error(`${SITE}:${bad} 处对不上。`);
 }
-process.exit(bad === 0 ? 0 : 1);
+return bad === 0;
+}
+
+let allOk = true;
+for (const page of PAGES) if (!runPage(page)) allOk = false;
+if (allOk) console.log(`官网双语渲染对拍通过:${PAGES.length} 页。`);
+else console.error("官网双语渲染对拍不过(见上)。");
+process.exit(allOk ? 0 : 1);

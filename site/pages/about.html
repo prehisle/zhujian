@@ -1,0 +1,66 @@
+<!-- 子页「about」的正文片段(改版 2b)。生成器把它塞进 site/index.html 的壳(<main> 之内),
+     出 site/about.html 与 site-cool/about.html 两份。⛔ 别直接改那两份产物。
+     这里的中文与首页同一套规矩:只许写在挂了 data-i18n 的元素里,字典住 site/index.html。 -->
+<!-- 这两行由生成器挪进 <head>:换掉首页的 <title> 与描述(分享卡片的标题 / 描述也跟着用这两枚键)。 -->
+<title data-i18n="page.aboutMeta">关于 · 朱简</title>
+<meta name="description" data-i18n-content="page.aboutDesc" content="朱简为什么做出来,以及它现在还做不好的、和不打算做的。" />
+
+      <section class="page-head">
+        <div class="wrap">
+          <span class="eyebrow" data-i18n="page.aboutEyebrow">关于</span>
+          <h1 class="section-title" data-i18n="page.aboutTitle">关于朱简</h1>
+          <p class="section-lead" data-i18n="page.aboutLead">为什么做它,以及它现在还做不好的、和不打算做的。</p>
+        </div>
+      </section>
+
+      <!-- ───────── 理念 + 开源 ───────── -->
+      <section class="ethos" id="ethos">
+        <div class="wrap">
+          <span class="eyebrow" data-i18n="ethos.eyebrow">为什么做它</span>
+          <div class="ethos-body">
+            <!-- 为什么做它的三条是用户 2026-09-25 亲口给的三个理由,按原意改写成首页语气;
+                 加粗的短句与正文各成一键(data-i18n 只覆写 textContent)。 -->
+            <p data-i18n="ethos.p1">做它,是因为下面三件事一直让我不踏实。</p>
+            <p><strong data-i18n="ethos.why1a">数据放在别人的云上。</strong><span data-i18n="ethos.why1b">服务一停、账号一封,或者数据库被人拖走,东西就不是你的了。所以朱简把数据存在你自己的设备上,同步也只传加密过的内容。</span></p>
+            <p><strong data-i18n="ethos.why2a">想记的时候打不开。</strong><span data-i18n="ethos.why2b">网页上的看板要开浏览器、要登录,网一慢就卡,功能还越堆越多。可一个念头常常只停几秒。朱简的做法是:按一个热键,弹出一张纸条,写完回车就收起。</span></p>
+            <p><strong data-i18n="ethos.why3a">写下的字被改掉。</strong><span data-i18n="ethos.why3b">现在很多工具都在用 AI 帮你润色、总结、归类。可在什么都能让 AI 代写的时候,你自己想出来、没被改过的念头,才更值得留着。朱简不会动你写下的任何一个字。</span></p>
+            <p data-i18n="ethos.p4">顺带说一句:朱简的代码是我和 AI 一起写的。让 AI 帮我写程序,和让它改你写的字,是两回事。</p>
+            <!-- 字源那段里两个词是加粗的,故按加粗边界切片;英文版把「原名朱笺」的来龙去脉
+                 略去(对英文读者是无从对照的旧名),不是漏译。 -->
+            <p>
+              <span data-i18n="ethos.p2a">名字取自「</span><strong data-i18n="ethos.p2Zhusha">朱砂</strong><span data-i18n="ethos.p2b">」与「</span><strong data-i18n="ethos.p2Jiandu">简牍</strong><span data-i18n="ethos.p2c">」:朱砂的朱,竹简的简。原名「朱笺」,后来改叫朱简,更好认。</span>
+            </p>
+          </div>
+        </div>
+      </section>
+      <!-- ───────── 不足与不做 ───────── -->
+      <section class="limits" id="limits">
+        <div class="wrap">
+          <span class="eyebrow" data-i18n="limits.eyebrow">先说不足</span>
+          <h2 class="section-title" data-i18n="limits.title">还做不好的,和不打算做的</h2>
+          <!-- ⛔ 「还做不好」每一条都要是今天真的做不到(backlog 里有账或代码里查得到);修好一条就删一条,
+               别让它变成「此前」的假话。「不打算做」写的是取舍,⛔ 别写「永不」这类极限词(copy-plan §8)。 -->
+          <div class="two-cols">
+            <div>
+              <h3 data-i18n="limits.notYetTitle">现在还做不好</h3>
+              <ul class="marks">
+                <li data-i18n="limits.n1">没有 iPhone 版。</li>
+                <li data-i18n="limits.n2">Windows 安装包没有系统签名,第一次安装会提示「未知发布者」。</li>
+                <li data-i18n="limits.n3">手机上的朱简放到后台,同步不保证实时,回到前台才追上。</li>
+                <li data-i18n="limits.n4">没有应用锁,手机上的内容靠系统锁屏挡着。</li>
+                <li data-i18n="limits.n5">看板的列只能在电脑上新建、改名、删除,手机上只能用。</li>
+                <li data-i18n="limits.n6">鸿蒙版比安卓版更新得慢。</li>
+                <li data-i18n="limits.n7">暗色模式下有几处小标签的字偏淡。</li>
+              </ul>
+            </div>
+            <div>
+              <h3 data-i18n="limits.neverTitle">不打算做</h3>
+              <ul class="marks">
+                <li data-i18n="limits.x1">用 AI 润色、总结、自动归类。你写下什么,留下的就是什么。</li>
+                <li data-i18n="limits.x2">注册要邮箱或手机号。</li>
+                <li data-i18n="limits.x3">在应用里放广告或统计代码。</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </section>

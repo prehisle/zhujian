@@ -148,6 +148,19 @@ const NOT_A_DOC = [
 `check-fs-drift` 与 `check-hardcoded-colors` 的登记表**各抄一份**(实测多出 3 + 8 条同源例外)—— \
 复制登记表是全仓最会腐的那种东西。两者一致由 `branch-gate land` 那道 `build-site-cool.mjs --check` 守着",
   },
+  ...["site-app", "site-cool"].flatMap((dir) => ["about", "help", "security"].map((n) => `${dir}/${n}.html`)).map((file) => ({
+    file,
+    privateOnly: file.startsWith("site-cool/"), // site-app/ 在导出白名单里(安卓包烤它),site-cool/ 不在
+    why: "官网子页(改版 2b):生成器拿 `site/index.html` 当壳、只换 <main> 与 <head> 里的标题 / 描述 / 分享卡片 \
+⇒ `<style>` 与首页**逐字节相同**,配色 / 字号 / 圆角由「官网·单页」那一格判,判第二遍没有新信息。\
+子页自己的正文片段(`site/pages/`)在 i18n 门禁的扫描面里;成品 == 生成器输出由 `branch-gate land` 那道 \
+`build-site-cool.mjs --check` 守着。⚠ 触发门:哪天子页有了自己的样式块,这条就不成立了,要登记进 DOCS",
+  })),
+  ...["about", "help", "security"].map((n) => ({
+    file: `site/pages/${n}.html`,
+    why: "官网子页的**正文片段**(改版 2b),不是一份完整的 html:没有 <head>、没有 <style>,一个颜色声明都没有 \
+—— 配色全来自首页那份样式。它的中文由 i18n 门禁扫(官网工程的壳清单从 site/pages/ 现算)",
+  })),
   ...["site-next/index.html", "site-next/docs.html"].map((file) => ({
     file,
     privateOnly: true, // 不在导出白名单里,公开快照上没有

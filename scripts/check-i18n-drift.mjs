@@ -62,7 +62,11 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const PROJECTS = [
   { label: "桌面", dict: { kind: "shards", dir: "src/locales" }, ts: "src", css: "src", shells: ["notebook.html", "index.html"] },
   { label: "安卓", dict: { kind: "shards", dir: "android/src/locales" }, ts: "android/src", css: null, shells: ["android/index.html"] },
-  { label: "官网", dict: { kind: "inline", file: "site/index.html" }, ts: null, css: null, shells: ["site/index.html"] },
+  // 改版 2b(778)起官网有子页:`site/pages/*.html` 是子页正文片段(连同它自己的 <title> / 描述那两行),
+  // 生成器把它塞进 site/index.html 的壳出成品。⇒ 片段与首页**同一个工程、同一份字典**,判据一条不变;
+  // 扫的是手写的片段,不是生成出来的成品(成品 == 生成器输出由 build-site-cool --check 守)。
+  // 片段清单从目录现算(⛔ 别手写:新加一页忘了登记 = 那页的中文一个字都没被看过)。
+  { label: "官网", dict: { kind: "inline", file: "site/index.html" }, ts: null, css: null, shells: ["site/index.html", ...walkDir("site/pages", [".html"])] },
 ];
 
 // ---- 登记表 -------------------------------------------------------------------------
@@ -558,6 +562,8 @@ function scanProject(proj, errs, regHits, dynFound) {
     const { entries, mask } = parseInlineDict(rel, errs);
     for (const [key, entry] of entries) dict.set(key, { ...entry, file: rel });
     shellOpts.set(rel, { bindings: parseBindings(rel), mask });
+    // 同工程的其余壳(官网子页片段)没有自己的运行期,用的是首页那段 BIND —— 认同一张绑定表。
+    for (const other of proj.shells) if (other !== rel) shellOpts.set(other, { bindings: shellOpts.get(rel).bindings });
     parts = "壳内联一份";
   }
   // 复数选择器 `{n|单数|复数}`(363):它也是 n 的一处用法,故占位符集合要把它算进来 ——

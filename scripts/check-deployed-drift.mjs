@@ -31,7 +31,7 @@
 // 靠它伪造一次绿。
 
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { devNull } from "node:os";
 
 // 只给阴性对照用:一段假的 /admin/version 回体。见顶注最后一段。
@@ -228,6 +228,23 @@ if (!FAKE) {
     else bad(`线上与 site-app/changelog.html 不同(线上 ${live.length} 字节 / 本地 ${local.length} 字节)—— 重跑生成器后走流程 5`);
   } catch (e) {
     bad(`更新日志这一格没得判:${e.message.trim()}`);
+  }
+
+  // ── ①f 子页(改版 2b):site-app/<名>.html 与线上逐字节比 ─────────────
+  // 页名从 site/pages/ 现算(⛔ 别手写清单:新加一页忘了登记 = 那页发没发没人问)。
+  // 这几页是生成器用首页的壳做的 ⇒ 首页一改它们也跟着变,只发首页不发它们就会在这儿红。
+  console.log("\n①f 子页(隐私与安全 / 关于 / 帮助 …)");
+  try {
+    const names = readdirSync("site/pages").filter((f) => f.endsWith(".html")).sort();
+    if (!names.length) bad("site/pages/ 一页都没有 —— 这格的匹配面坏了,不是没东西要核");
+    for (const f of names) {
+      const local = readFileSync(`site-app/${f}`);
+      const live = curl(`https://zhujian.app/${f}`, { binary: true });
+      if (Buffer.compare(local, live) === 0) ok(`${f} 与 site-app/${f} 逐字节相同(${local.length} 字节)`);
+      else bad(`线上 ${f} 与 site-app/${f} 不同(线上 ${live.length} 字节 / 本地 ${local.length} 字节)—— 重跑生成器后走流程 5`);
+    }
+  } catch (e) {
+    bad(`子页这一格没得判:${e.message.trim()}`);
   }
 
   // ── ② 桌面更新清单 ───────────────────────────────────────────────────────

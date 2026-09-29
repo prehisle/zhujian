@@ -1,0 +1,75 @@
+<!-- 子页「security」的正文片段(改版 2b)。生成器把它塞进 site/index.html 的壳(<main> 之内),
+     出 site/security.html 与 site-cool/security.html 两份。⛔ 别直接改那两份产物。
+     这里的中文与首页同一套规矩:只许写在挂了 data-i18n 的元素里,字典住 site/index.html。 -->
+<!-- 这两行由生成器挪进 <head>:换掉首页的 <title> 与描述(分享卡片的标题 / 描述也跟着用这两枚键)。 -->
+<title data-i18n="page.securityMeta">隐私与安全 · 朱简</title>
+<meta name="description" data-i18n-content="page.securityDesc" content="朱简的数据存在你自己的设备上;开了同步,服务器只经手密文。这一页列出几件先说清的事,和服务器看得到什么、看不到什么。" />
+
+      <section class="page-head">
+        <div class="wrap">
+          <span class="eyebrow" data-i18n="page.securityEyebrow">隐私与安全</span>
+          <h1 class="section-title" data-i18n="page.securityTitle">你的数据在哪,谁看得到</h1>
+          <p class="section-lead" data-i18n="page.securityLead">朱简把数据存在你自己的设备上。下面是几件先说清的事,和开了同步之后服务器看得到什么。</p>
+        </div>
+      </section>
+
+      <!-- ───────── 事实表 ───────── -->
+      <section class="trust" id="facts">
+        <div class="wrap">
+          <span class="eyebrow" data-i18n="trust.eyebrow">几件事先说清</span>
+          <!-- 一行一件事,六行不再多。⛔ 每一行都要能指到仓里的一处地面(哪个字段、
+               哪条代码路径),指不到的话就不许写在这儿 —— 这一节是「自述的事实」,
+               不是卖点(点名对比与极限词见 copy-plan §8)。 -->
+          <dl class="facts">
+            <dt data-i18n="facts.dataLabel">数据在哪</dt>
+            <dd data-i18n="facts.data">在你自己设备上的 SQLite 数据库里。不联网也照常用;开了同步的设备,回到网上再互补。</dd>
+            <dt data-i18n="facts.accountLabel">账号</dt>
+            <dd data-i18n="facts.account">不用注册。要多设备同步时,点「创建账户」就行,不要邮箱和手机号,也不用抄任何码。账户密钥只在你自己的设备上,服务器没有。</dd>
+            <dt data-i18n="facts.syncLabel">同步</dt>
+            <dd data-i18n="facts.sync">可选,端到端加密。文字和图片在你的设备上加密后才发出;服务器经手的只有密文,读不到内容;它不做备份,找回数据靠你自己的设备。同一个 Wi-Fi 下的两台设备直接互传,不经服务器;同网的人看不到内容,但能看出它们在同步。</dd>
+            <dt data-i18n="facts.trackLabel">统计</dt>
+            <dd data-i18n="facts.track">没有统计代码。不开同步时,应用只会连 zhujian.app 查有没有新版本。</dd>
+            <dt data-i18n="facts.aiLabel">AI</dt>
+            <dd data-i18n="facts.ai">没有。不替你归类,不改你写的字;早期做过,已经删掉。</dd>
+            <dt data-i18n="facts.freeLabel">免费与开源</dt>
+            <dd data-i18n="facts.free">免费使用,含多设备同步。开源(MIT),源码在 GitHub。</dd>
+          </dl>
+        </div>
+      </section>
+
+      <!-- ───────── 同步服务器看得到什么 ───────── -->
+      <section class="seen" id="server">
+        <div class="wrap">
+          <span class="eyebrow" data-i18n="seen.eyebrow">同步服务器</span>
+          <h2 class="section-title" data-i18n="seen.title">它看得到什么,看不到什么</h2>
+          <!-- ⛔ 每一格照 docs/sync-protocol.md §3(信封 = 服务器唯一可读面)与 §11(威胁模型、
+               落盘清单)写,协议变了这里跟着改。「看不到」那栏只许写在密文里的东西:HLC / op 类型 /
+               图字节 / 设备别名都在内层;⛔ 别写「看不到你什么时候写的」—— 在线时存一下就发一帧,
+               帧的时刻服务器看得到。 -->
+          <p class="seen-lead" data-i18n="seen.lead">开了同步,数据要经服务器转一手。下面照协议原样列出来。</p>
+          <div class="two-cols">
+            <div>
+              <h3 data-i18n="seen.noTitle">看不到</h3>
+              <ul class="marks">
+                <li data-i18n="seen.no1">随记和任务的内容,以及改过的旧版本</li>
+                <li data-i18n="seen.no2">图片</li>
+                <li data-i18n="seen.no3">标签名、看板列名、设备名</li>
+                <li data-i18n="seen.no4">每一次改动是新建、编辑还是删除</li>
+                <li data-i18n="seen.no5">账户密钥</li>
+              </ul>
+            </div>
+            <div>
+              <h3 data-i18n="seen.yesTitle">看得到</h3>
+              <ul class="marks">
+                <li data-i18n="seen.yes1">账户编号和设备编号(随机生成的一串字符)与各设备的公钥</li>
+                <li data-i18n="seen.yes2">哪台设备什么时候在线</li>
+                <li data-i18n="seen.yes3">什么时候发了数据、发了多少。由此能推出你大概什么时候在用</li>
+                <li data-i18n="seen.yes4">连接从哪个 IP 地址来</li>
+              </ul>
+            </div>
+          </div>
+          <p class="seen-note" data-i18n="seen.stored">服务器硬盘上只存这几样:账户和设备的编号与公钥、哪台设备有管理权限、账户的设备额度、封禁名单、流量计量,以及不含内容的连接日志。设备离线时,发给它的密文在服务器内存里等它,72 小时没取走就丢掉,服务器重启也会清空;数据本身在你的设备上,回到网上会重新补齐。</p>
+          <p class="seen-note" data-i18n="seen.trust">有一件事协议管不了:你得相信装到手上的安装包,就是 GitHub 上那份开源代码编出来的。不放心的话,可以自己编译。</p>
+          <p class="seen-note"><a href="https://github.com/prehisle/zhujian/blob/main/docs/sync-protocol.md" data-i18n="seen.protocol">同步协议全文(写给开发者看的)</a></p>
+        </div>
+      </section>
