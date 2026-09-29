@@ -229,6 +229,9 @@
         transition: color 0.15s;
       }
       .nav a:hover { color: var(--ink); }
+      .nav a { white-space: nowrap; }
+      /* 文档中心只有中文(改版 3a):英文页的顶栏不放这一项(否则 800 宽就挤成两行),页脚那条写明 (Chinese) */
+      :root:lang(en) .nav a[href="/docs/"] { display: none; }
       .nav a.ghost-btn {
         color: var(--seal);
         border: 1px solid var(--seal-line);
@@ -818,6 +821,177 @@
       .page-head { padding: clamp(48px, 7vw, 88px) 0 clamp(24px, 3vw, 36px); }
       .page-head .section-lead { max-width: 36em; }
 
+      /* ── 文档中心(改版 3a):左目录 / 正文 / 右本页目录 ──────────────
+         页面由 scripts/build-site-cool.mjs 从 docs/user-guide.md 按「##」拆出来,只用首页这一份样式。
+         窄屏收成一列:目录折进一个 <details>(页尾那段脚本在窄屏替它合上),本页目录不显示。 */
+      .docs-shell {
+        max-width: 1240px;
+        margin: 0 auto;
+        padding: 0 28px;
+        display: grid;
+        grid-template-columns: 232px minmax(0, 1fr) 188px;
+        gap: 48px;
+        position: relative;
+        z-index: 1;
+      }
+      /* 顶栏与页脚在文档页上放到与三栏同宽(生成器给 body 元素挂 docs-page 类),否则品牌与左目录错开一截 */
+      .docs-page .wrap { max-width: 1240px; }
+      .docs-page .nav a[href="/docs/"] { color: var(--ink); }
+      .docs-side, .docs-toc {
+        position: sticky;
+        top: 62px;
+        align-self: start;
+        max-height: calc(100vh - 62px);
+        overflow: auto;
+        padding: 32px 0;
+      }
+      .docs-search { position: relative; margin-bottom: 18px; }
+      .docs-search input {
+        width: 100%;
+        height: 38px;
+        padding: 0 34px 0 12px;
+        font: inherit;
+        font-size: var(--fs-14);
+        color: var(--ink);
+        background: var(--raised);
+        border: 1px solid var(--line-strong);
+        border-radius: var(--radius-sm);
+      }
+      .docs-search input:focus { outline: 2px solid var(--seal); outline-offset: 1px; }
+      .docs-search input:focus + kbd, .docs-search input:not(:placeholder-shown) + kbd { display: none; }
+      .docs-search kbd {
+        position: absolute;
+        right: 10px;
+        top: 9px;
+        font-family: inherit;
+        font-size: var(--fs-12);
+        line-height: 18px;
+        padding: 0 6px;
+        color: var(--ink-faint);
+        border: 1px solid var(--line-strong);
+        border-radius: var(--radius-xs);
+      }
+      .docs-hits { margin: 0 0 18px; }
+      .docs-hits[hidden], .docs-miss[hidden] { display: none; }
+      .docs-hits a {
+        display: block;
+        padding: 8px 10px;
+        margin: 2px 0;
+        border-radius: var(--radius-sm);
+        text-decoration: none;
+        color: var(--ink);
+        font-size: var(--fs-14);
+      }
+      .docs-hits a:hover, .docs-hits a:focus-visible { background: var(--raised); }
+      .docs-hits small { display: block; color: var(--ink-soft); font-size: var(--fs-13); line-height: 1.5; margin-top: 2px; }
+      .docs-hits mark { background: var(--seal-tint); color: var(--seal); border-radius: var(--radius-xs); }
+      .docs-miss { color: var(--ink-faint); font-size: var(--fs-13); margin: 0 0 18px; padding: 0 10px; }
+      /* 「全部文档」那一行只在窄屏露出(下面 760 那段);字色写在条件块外,对比度门禁才算得到 */
+      .docs-menu > summary { display: none; cursor: pointer; padding: 9px 0; font-size: var(--fs-14); color: var(--ink-soft); }
+      .docs-menu > summary::after { content: "+"; float: right; color: var(--ink-faint); }
+      .docs-group { margin: 18px 0 6px; padding: 0 10px; font-size: var(--fs-12); font-weight: 600; letter-spacing: 0.12em; color: var(--ink-faint); }
+      .docs-group:first-of-type { margin-top: 0; }
+      .docs-menu a {
+        display: block;
+        padding: 5px 10px;
+        margin: 1px 0;
+        border-radius: var(--radius-sm);
+        font-size: var(--fs-14);
+        color: var(--ink-soft);
+        text-decoration: none;
+      }
+      .docs-menu a:hover { color: var(--ink); background: var(--raised); }
+      .docs-menu a[aria-current="page"] { color: var(--seal); background: var(--seal-tint); font-weight: 600; }
+      .docs-main { padding: 36px 0 80px; min-width: 0; }
+      .docs-crumbs { font-size: var(--fs-13); color: var(--ink-faint); margin: 0; }
+      .docs-crumbs a { color: inherit; text-decoration: none; }
+      .docs-crumbs a:hover { color: var(--ink); }
+      .docs-main h1 {
+        margin: 10px 0 0;
+        font-family: var(--font-display);
+        font-weight: 700;
+        font-size: var(--fs-30);
+        letter-spacing: 0.03em;
+        line-height: 1.3;
+      }
+      .docs-prose { max-width: 42em; margin-top: 22px; }
+      .docs-prose h2 {
+        margin: 44px 0 0;
+        padding-top: 18px;
+        border-top: 1px solid var(--line);
+        font-family: var(--font-display);
+        font-weight: 700;
+        font-size: var(--fs-24);
+        scroll-margin-top: 80px;
+      }
+      .docs-prose p, .docs-prose li { font-size: var(--fs-16); line-height: 1.8; }
+      .docs-prose p { margin: 14px 0 0; }
+      .docs-prose ul { margin: 14px 0 0; padding-left: 1.3em; }
+      .docs-prose li { margin: 8px 0; }
+      .docs-prose li > ul { margin-top: 6px; }
+      .docs-prose li::marker { color: var(--seal); }
+      .docs-prose strong { font-weight: 700; }
+      .docs-prose a { color: var(--seal); text-decoration: none; border-bottom: 1px solid var(--seal-line); }
+      .docs-prose a:hover { border-bottom-color: var(--seal); }
+      .docs-prose code {
+        font-family: Consolas, "SF Mono", Menlo, monospace;
+        font-size: var(--fs-14);
+        background: var(--raised);
+        border: 1px solid var(--line);
+        border-radius: var(--radius-xs);
+        padding: 1px 5px;
+        overflow-wrap: anywhere;
+      }
+      .docs-prose pre { margin: 14px 0 0; }
+      .docs-prose pre code { display: block; padding: 12px 14px; border-radius: var(--radius-sm); font-size: var(--fs-13); line-height: 1.6; overflow-x: auto; white-space: pre; overflow-wrap: normal; }
+      .docs-index { margin-top: 36px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 28px 40px; max-width: 42em; }
+      .docs-index h2 { margin: 0; padding-bottom: 8px; border-bottom: 1px solid var(--line); font-weight: 700; font-size: var(--fs-16); letter-spacing: 0.06em; }
+      .docs-index ul { list-style: none; margin: 10px 0 0; padding: 0; }
+      .docs-index li { margin: 6px 0; font-size: var(--fs-15); }
+      .docs-index a { color: var(--ink-soft); text-decoration: none; }
+      .docs-index a:hover { color: var(--seal); }
+      .docs-pager { margin-top: 56px; display: grid; grid-template-columns: 1fr 1fr; gap: 16px; max-width: 42em; }
+      .docs-pager a {
+        padding: 14px 18px;
+        border-radius: var(--radius-md);
+        border: 1px solid var(--line);
+        background: var(--raised);
+        text-decoration: none;
+        color: var(--ink);
+      }
+      .docs-pager a:hover { border-color: var(--seal-line); }
+      .docs-pager small { display: block; color: var(--ink-faint); font-size: var(--fs-12); }
+      .docs-pager span { font-weight: 600; font-size: var(--fs-16); }
+      .docs-pager .next { grid-column: 2; text-align: right; }
+      .docs-feedback { margin: 28px 0 0; font-size: var(--fs-14); color: var(--ink-faint); max-width: 42em; }
+      .docs-feedback a { color: var(--seal); text-decoration: none; }
+      .docs-feedback a:hover { text-decoration: underline; }
+      .docs-toc p { margin: 0 0 10px; font-size: var(--fs-12); font-weight: 600; letter-spacing: 0.12em; color: var(--ink-faint); }
+      .docs-toc a { display: block; padding: 4px 0 4px 12px; font-size: var(--fs-13); color: var(--ink-soft); text-decoration: none; border-left: 1px solid var(--line); }
+      .docs-toc a:hover { color: var(--ink); border-left-color: var(--ink-faint); }
+      @media (max-width: 1080px) {
+        .docs-shell { grid-template-columns: 216px minmax(0, 1fr); gap: 40px; }
+        .docs-toc { display: none; }
+      }
+      @media (max-width: 760px) {
+        .docs-shell { grid-template-columns: minmax(0, 1fr); padding: 0 20px; gap: 0; }
+        .docs-side { position: static; max-height: none; overflow: visible; padding: 20px 0 0; }
+        .docs-menu { border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 0 10px; }
+        .docs-menu > summary { display: block; }
+        .docs-menu[open] > summary::after { content: "2"; }
+        .docs-search kbd { display: none; }
+        .docs-search input { padding-right: 12px; }
+        .docs-menu[open] > summary { border-bottom: 1px solid var(--line); margin-bottom: 12px; }
+        .docs-menu[open] { padding-bottom: 12px; }
+        .docs-main { padding-top: 24px; }
+        .docs-index { grid-template-columns: minmax(0, 1fr); }
+      }
+      @media (max-width: 420px) {
+        .docs-shell { padding: 0 16px; }
+        .docs-pager { grid-template-columns: minmax(0, 1fr); }
+        .docs-pager .next { grid-column: auto; }
+      }
+
       /* ── 下载 ──────────────────────────────────────────────── */
       .download { padding: clamp(52px, 7vw, 90px) 0; text-align: center; }
       .download .eyebrow { justify-content: center; }
@@ -1097,6 +1271,7 @@
         <nav class="nav">
           <a href="/en/#flow" class="hide-sm" data-i18n="nav.flow">How it works</a>
           <a href="/en/security.html" class="hide-sm" data-i18n="nav.security">Privacy</a>
+          <a href="/docs/" class="hide-sm" data-i18n="nav.docs">Guide (Chinese)</a>
           <a href="/en/help.html" class="hide-sm" data-i18n="nav.help">Help</a>
           <a href="/en/about.html" class="hide-sm" data-i18n="nav.ethos">About</a>
           <a href="/en/#download" class="ghost-btn" data-i18n="nav.download">Download</a>
@@ -1199,6 +1374,7 @@
           </div>
           <div class="foot-col">
             <p class="foot-h" data-i18n="foot.colHelp">Help</p>
+            <a href="/docs/" data-i18n="foot.docs">User guide (Chinese)</a>
             <a href="/en/help.html#faq" data-i18n="nav.faq">FAQ</a>
             <a href="/en/help.html#tinker" data-i18n="foot.tinker">Data, keys and source</a>
           </div>
@@ -1243,6 +1419,7 @@
         var KEY = "zhujian.lang";
         var page = document.documentElement.lang;
         var toggle = document.getElementById("lang-toggle");
+        if (!toggle) return; /* 只有一种语言的页(文档中心,改版 3a)不带开关:没有另一种可换,也不替他跳走 */
         var other = toggle.getAttribute("href");
         var q = new URLSearchParams(location.search).get("lang");
         if (q === "zh" || q === "en") localStorage.setItem(KEY, q);

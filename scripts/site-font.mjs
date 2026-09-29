@@ -5,7 +5,8 @@
  * 为什么要子集:文楷全量 25 MB,按页面用字裁完一百来 KB(量法见 progress-log 778)。
  * 为什么自托管:境内站(zhujian.cool)不许依赖境外字体服务(site-redesign-plan 结论页)。
  *
- * 收哪些字 = 官网字典(`site/index.html` 里 ⟦i18n-dict⟧ 之间)**全部** zh / en 值 + 可打印 ASCII。
+ * 收哪些字 = 官网字典(`site/index.html` 里 ⟦i18n-dict⟧ 之间)**全部** zh / en 值 + 文档中心的标题
+ *   (`docs/user-guide.md` 里「#」到「###」那几行,改版 3a)+ 可打印 ASCII。
  *   ⭐ 刻意收全字典,不只收标题用到的那几键:哪一段换成标题字体都不用回来重裁;
  *      收窄只省几十 KB,换来的是「某个字没进子集 ⇒ 那一个字掉回系统楷体」这种不报错的丑。
  *   ⇒ 改了字典就可能要重裁;漏没漏由下面的 `missingChars()` 核,`build-site-cool.mjs`
@@ -31,6 +32,7 @@ import { execFileSync } from "node:child_process";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const SITE = join(ROOT, "site", "index.html");
+const GUIDE = join(ROOT, "docs", "user-guide.md");
 const OUT_DIR = join(ROOT, "site", "fonts");
 const WOFF2 = join(OUT_DIR, "zhujian-wenkai.woff2");
 const CHARS = join(OUT_DIR, "zhujian-wenkai.chars.txt");
@@ -46,6 +48,8 @@ export function neededChars() {
   for (const m of dict.matchAll(/\b(?:zh|en): "((?:[^"\\]|\\.)*)"/g)) {
     for (const ch of JSON.parse(`"${m[1]}"`)) set.add(ch);
   }
+  /* 文档中心(改版 3a)的页标题与小节标题也用标题字体:user-guide 里「#」到「###」那几行 */
+  for (const m of readFileSync(GUIDE, "utf8").matchAll(/^#{1,3}\s+(.*)$/gm)) for (const ch of m[1].trim()) set.add(ch);
   for (let c = 0x20; c < 0x7f; c++) set.add(String.fromCharCode(c));
   return [...set].sort();
 }

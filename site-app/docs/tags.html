@@ -7,18 +7,15 @@
          启动时按 data-i18n 族属性覆写;原文与 zh 值逐字相等由 check-i18n-drift 核。
          字典与运行期在页面末尾的那段内联 script 里(⚠ 注释里别写闭合标签的字面量:
          按标签切文件的工具会先命中这里,360 当场栽过一次)。 -->
-    <title data-i18n="page.aboutMeta">关于 · 朱简</title>
-    <meta name="description" data-i18n-content="page.aboutDesc" content="朱简为什么做出来,以及它现在还做不好的、和不打算做的。" />
+    <title>标签 · 朱简用户指南</title>
+    <meta name="description" content="一条内容可以挂多个标签。合并标签会把碎标签并进存续的那个、重写归属,不丢内容。 想分层就用斜杠命名,比如建一个 工作/汇报:只要同名的 工作 标签也存在,它就在列表里缩进显示。" />
 
-    <!-- ───────── 分享卡片、canonical 与语言版本(生成器写的)───────── -->
-    <link rel="canonical" href="https://zhujian.app/about.html" />
-    <link rel="alternate" hreflang="zh" href="https://zhujian.app/about.html" />
-    <link rel="alternate" hreflang="en" href="https://zhujian.app/en/about.html" />
-    <link rel="alternate" hreflang="x-default" href="https://zhujian.app/about.html" />
-    <meta property="og:type" content="website" />
-    <meta property="og:url" content="https://zhujian.app/about.html" />
-    <meta property="og:title" data-i18n-content="page.aboutMeta" content="关于 · 朱简" />
-    <meta property="og:description" data-i18n-content="page.aboutDesc" content="朱简为什么做出来,以及它现在还做不好的、和不打算做的。" />
+    <!-- ───────── 分享卡片与 canonical(生成器写的;文档中心只有中文,不挂 hreflang)───────── -->
+    <link rel="canonical" href="https://zhujian.app/docs/tags.html" />
+    <meta property="og:type" content="article" />
+    <meta property="og:url" content="https://zhujian.app/docs/tags.html" />
+    <meta property="og:title" content="标签 · 朱简用户指南" />
+    <meta property="og:description" content="一条内容可以挂多个标签。合并标签会把碎标签并进存续的那个、重写归属,不丢内容。 想分层就用斜杠命名,比如建一个 工作/汇报:只要同名的 工作 标签也存在,它就在列表里缩进显示。" />
     <meta property="og:image" content="https://zhujian.app/shots/desktop-board.webp" />
     <meta name="twitter:card" content="summary_large_image" />
 
@@ -1245,7 +1242,7 @@
     </style>
   </head>
 
-  <body>
+  <body class="docs-page">
     <!-- 复用的朱砂方印(白文·单字「朱」)。SVG symbol,多处 <use> -->
     <svg width="0" height="0" style="position:absolute" aria-hidden="true">
       <symbol id="seal-zhu" viewBox="0 0 100 100">
@@ -1275,73 +1272,66 @@
           <a href="/help.html" class="hide-sm" data-i18n="nav.help">帮助</a>
           <a href="/about.html" class="hide-sm" data-i18n="nav.ethos">关于</a>
           <a href="/#download" class="ghost-btn" data-i18n="nav.download">下载</a>
-          <a id="lang-toggle" href="/en/about.html" class="lang" data-i18n="nav.langToggle">EN</a>
         </nav>
       </div>
     </header>
     <!-- 另一种语言的提示(改版 2c):默认藏着,由页尾「语言」那段按条件露出。href 同顶栏开关,由生成器按页写。 -->
-    <p class="lang-hint" hidden><a id="lang-hint" href="/en/about.html" data-i18n="nav.langHint">This page is also in English →</a></p>
 
-    <main id="top">
-      <section class="page-head">
-        <div class="wrap">
-          <span class="eyebrow" data-i18n="page.aboutEyebrow">关于</span>
-          <h1 class="section-title" data-i18n="page.aboutTitle">关于朱简</h1>
-          <p class="section-lead" data-i18n="page.aboutLead">为什么做它,以及它现在还做不好的、和不打算做的。</p>
+    <main id="top" class="docs-shell">
+      <aside class="docs-side">
+        <div class="docs-search" role="search">
+          <input id="docs-q" type="search" placeholder="搜索文档" aria-label="搜索文档" autocomplete="off" />
+          <kbd aria-hidden="true">/</kbd>
         </div>
-      </section>
-
-      <!-- ───────── 理念 + 开源 ───────── -->
-      <section class="ethos" id="ethos">
-        <div class="wrap">
-          <span class="eyebrow" data-i18n="ethos.eyebrow">为什么做它</span>
-          <div class="ethos-body">
-            <!-- 为什么做它的三条是用户 2026-09-25 亲口给的三个理由,按原意改写成首页语气;
-                 加粗的短句与正文各成一键(data-i18n 只覆写 textContent)。 -->
-            <p data-i18n="ethos.p1">做它,是因为下面三件事一直让我不踏实。</p>
-            <p><strong data-i18n="ethos.why1a">数据放在别人的云上。</strong><span data-i18n="ethos.why1b">服务一停、账号一封,或者数据库被人拖走,东西就不是你的了。所以朱简把数据存在你自己的设备上,同步也只传加密过的内容。</span></p>
-            <p><strong data-i18n="ethos.why2a">想记的时候打不开。</strong><span data-i18n="ethos.why2b">网页上的看板要开浏览器、要登录,网一慢就卡,功能还越堆越多。可一个念头常常只停几秒。朱简的做法是:按一个热键,弹出一张纸条,写完回车就收起。</span></p>
-            <p><strong data-i18n="ethos.why3a">写下的字被改掉。</strong><span data-i18n="ethos.why3b">现在很多工具都在用 AI 帮你润色、总结、归类。可在什么都能让 AI 代写的时候,你自己想出来、没被改过的念头,才更值得留着。朱简不会动你写下的任何一个字。</span></p>
-            <p data-i18n="ethos.p4">顺带说一句:朱简的代码是我和 AI 一起写的。让 AI 帮我写程序,和让它改你写的字,是两回事。</p>
-            <!-- 字源那段里两个词是加粗的,故按加粗边界切片;英文版把「原名朱笺」的来龙去脉
-                 略去(对英文读者是无从对照的旧名),不是漏译。 -->
-            <p>
-              <span data-i18n="ethos.p2a">名字取自「</span><strong data-i18n="ethos.p2Zhusha">朱砂</strong><span data-i18n="ethos.p2b">」与「</span><strong data-i18n="ethos.p2Jiandu">简牍</strong><span data-i18n="ethos.p2c">」:朱砂的朱,竹简的简。原名「朱笺」,后来改叫朱简,更好认。</span>
-            </p>
-          </div>
+        <div class="docs-hits" id="docs-hits" hidden></div>
+        <p class="docs-miss" id="docs-miss" hidden>没有找到。换个说法试试,或者<a href="mailto:3069848@qq.com">发邮件问我</a>。</p>
+        <details class="docs-menu" open>
+          <summary>全部文档</summary>
+          <nav aria-label="文档目录">
+            <p class="docs-group">开始</p>
+            <a href="/docs/">总览</a>
+            <a href="/docs/data.html">数据在哪</a>
+            <p class="docs-group">记与理</p>
+            <a href="/docs/history.html">编辑历史</a>
+            <a href="/docs/trash.html">删除、回收站与归档</a>
+            <a href="/docs/images.html">配图与「图N」编号</a>
+            <a href="/docs/text.html">正文里能写什么</a>
+            <a href="/docs/board.html">任务看板与自定义列</a>
+            <a href="/docs/tags.html" aria-current="page">标签</a>
+            <a href="/docs/spaces.html">空间与「移动到其他空间」</a>
+            <p class="docs-group">同步</p>
+            <a href="/docs/sync.html">多设备同步</a>
+            <a href="/docs/lan.html">同一个 Wi-Fi 下的直连</a>
+            <a href="/docs/devices.html">设备名单与移除设备</a>
+            <p class="docs-group">备份与安装</p>
+            <a href="/docs/backup.html">加密备份与备份码</a>
+            <a href="/docs/update.html">更新与卸载</a>
+            <a href="/docs/verify.html">核对下载的安装包</a>
+            <p class="docs-group">进阶</p>
+            <a href="/docs/self-host.html">自建同步服务器</a>
+            <p class="docs-group">帮助</p>
+            <a href="/help.html#faq">常见问题</a>
+            <a href="/help.html#tinker">数据、键盘和源码</a>
+            <a href="/docs/contact.html">出了问题找谁</a>
+          </nav>
+        </details>
+      </aside>
+      <article class="docs-main">
+        <p class="docs-crumbs"><a href="/docs/">文档</a> / 记与理</p>
+        <h1>标签</h1>
+        <div class="docs-prose">
+<ul>
+<li>一条内容可以挂多个标签。合并标签会把碎标签并进存续的那个、重写归属,不丢内容。</li>
+<li>想分层就用斜杠命名,比如建一个 <code>工作/汇报</code>:只要同名的 <code>工作</code> 标签也存在,它就在列表里缩进显示。</li>
+<li>⚠ <strong>层级只是看着有</strong>:筛选、计数、合并都还把它当独立标签。筛「工作」<strong>不会</strong>自动包含「工作/汇报」;一条内容两边都想算,就两个标签都打上。</li>
+</ul>
         </div>
-      </section>
-      <!-- ───────── 不足与不做 ───────── -->
-      <section class="limits" id="limits">
-        <div class="wrap">
-          <span class="eyebrow" data-i18n="limits.eyebrow">先说不足</span>
-          <h2 class="section-title" data-i18n="limits.title">还做不好的,和不打算做的</h2>
-          <!-- ⛔ 「还做不好」每一条都要是今天真的做不到(backlog 里有账或代码里查得到);修好一条就删一条,
-               别让它变成「此前」的假话。「不打算做」写的是取舍,⛔ 别写「永不」这类极限词(copy-plan §8)。 -->
-          <div class="two-cols">
-            <div>
-              <h3 data-i18n="limits.notYetTitle">现在还做不好</h3>
-              <ul class="marks">
-                <li data-i18n="limits.n1">没有 iPhone 版。</li>
-                <li data-i18n="limits.n2">Windows 安装包没有系统签名,第一次安装会提示「未知发布者」。</li>
-                <li data-i18n="limits.n3">手机上的朱简放到后台,同步不保证实时,回到前台才追上。</li>
-                <li data-i18n="limits.n4">没有应用锁,手机上的内容靠系统锁屏挡着。</li>
-                <li data-i18n="limits.n5">看板的列只能在电脑上新建、改名、删除,手机上只能用。</li>
-                <li data-i18n="limits.n6">鸿蒙版比安卓版更新得慢。</li>
-                <li data-i18n="limits.n7">暗色模式下有几处小标签的字偏淡。</li>
-              </ul>
-            </div>
-            <div>
-              <h3 data-i18n="limits.neverTitle">不打算做</h3>
-              <ul class="marks">
-                <li data-i18n="limits.x1">用 AI 润色、总结、自动归类。你写下什么,留下的就是什么。</li>
-                <li data-i18n="limits.x2">注册要邮箱或手机号。</li>
-                <li data-i18n="limits.x3">在应用里放广告或统计代码。</li>
-              </ul>
-            </div>
-          </div>
-        </div>
-      </section>
+        <nav class="docs-pager" aria-label="上一页与下一页">
+          <a class="prev" href="/docs/board.html"><small>上一页</small><span>任务看板与自定义列</span></a>
+          <a class="next" href="/docs/spaces.html"><small>下一页</small><span>空间与「移动到其他空间」</span></a>
+        </nav>
+        <p class="docs-feedback">这一页没讲清楚?<a href="mailto:3069848@qq.com">发邮件告诉我</a>,或者<a href="https://github.com/prehisle/zhujian/blob/main/docs/user-guide.md">在 GitHub 上看它的源文件</a>。</p>
+      </article>
     </main>
 
     <!-- ───────── 页脚:钤印落款 ───────── -->
@@ -1555,6 +1545,111 @@
 
         document.addEventListener("keydown", function (ev) {
           if (ev.key === "Escape") close();
+        });
+      })();
+    </script>
+    <!-- ───────── 文档中心:目录与搜索(改版 3a;生成器写的)───────────────────────
+         索引是生成器从 docs/user-guide.md 烤出来的 /docs/search.json,第一次在搜索框里打字才去取;
+         逐字匹配(中文不分词也搜得准),标题里命中的排前面。窄屏把目录合上,宽屏展开。
+         ⛔ 这段里一个中文字面量都不许有:要显示的字都在页面上。 -->
+    <script>
+      (function () {
+        "use strict";
+        var menu = document.querySelector(".docs-menu");
+        var narrow = window.matchMedia("(max-width: 760px)");
+        var fit = function () { menu.open = !narrow.matches; };
+        fit();
+        narrow.addEventListener("change", fit);
+
+        var q = document.getElementById("docs-q");
+        var hits = document.getElementById("docs-hits");
+        var miss = document.getElementById("docs-miss");
+        var data = null;
+        var asked = false;
+
+        function mark(parent, text, terms) {
+          var low = text.toLowerCase();
+          var i = 0;
+          for (;;) {
+            var at = -1;
+            var len = 0;
+            terms.forEach(function (t) {
+              var j = low.indexOf(t, i);
+              if (j >= 0 && (at < 0 || j < at)) { at = j; len = t.length; }
+            });
+            if (at < 0) break;
+            parent.appendChild(document.createTextNode(text.slice(i, at)));
+            var m = document.createElement("mark");
+            m.textContent = text.slice(at, at + len);
+            parent.appendChild(m);
+            i = at + len;
+          }
+          parent.appendChild(document.createTextNode(text.slice(i)));
+        }
+
+        function snippet(text, term) {
+          var at = Math.max(0, text.toLowerCase().indexOf(term));
+          var from = Math.max(0, at - 24);
+          return (from ? "\u2026" : "") + text.slice(from, from + 80) + (from + 80 < text.length ? "\u2026" : "");
+        }
+
+        function run() {
+          var terms = q.value.toLowerCase().split(/\s+/).filter(Boolean);
+          hits.textContent = "";
+          if (!terms.length) {
+            hits.hidden = true;
+            miss.hidden = true;
+            menu.hidden = false;
+            return;
+          }
+          if (!data) {
+            if (!asked) {
+              asked = true;
+              fetch("/docs/search.json").then(function (r) { return r.json(); }).then(function (d) { data = d; run(); });
+            }
+            return;
+          }
+          var found = [];
+          data.forEach(function (e, n) {
+            var head = (e.t + " " + e.h).toLowerCase();
+            var all = head + " " + e.x.toLowerCase();
+            var score = 0;
+            for (var k = 0; k < terms.length; k++) {
+              if (all.indexOf(terms[k]) < 0) return;
+              if (head.indexOf(terms[k]) >= 0) score += 1;
+            }
+            found.push({ e: e, score: score, n: n });
+          });
+          found.sort(function (a, b) { return b.score - a.score || a.n - b.n; });
+          found.slice(0, 12).forEach(function (f) {
+            var a = document.createElement("a");
+            a.href = f.e.u;
+            mark(a, f.e.h ? f.e.t + " \u203a " + f.e.h : f.e.t, terms);
+            var small = document.createElement("small");
+            mark(small, snippet(f.e.x, terms[0]), terms);
+            a.appendChild(small);
+            hits.appendChild(a);
+          });
+          hits.hidden = !found.length;
+          miss.hidden = !!found.length;
+          menu.hidden = true;
+        }
+
+        q.addEventListener("input", run);
+        q.addEventListener("keydown", function (ev) {
+          if (ev.key === "Enter" && hits.firstChild) location.href = hits.firstChild.href;
+          if (ev.key === "Escape") {
+            q.value = "";
+            run();
+            q.blur();
+          }
+        });
+        document.addEventListener("keydown", function (ev) {
+          if (ev.key !== "/" || ev.ctrlKey || ev.metaKey || ev.altKey) return;
+          var t = ev.target;
+          if (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName)) return;
+          ev.preventDefault();
+          q.focus();
         });
       })();
     </script>

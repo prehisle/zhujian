@@ -160,6 +160,18 @@ const NOT_A_DOC = [
 子页自己的正文片段(`site/pages/`)在 i18n 门禁的扫描面里;成品 == 生成器输出由 `branch-gate land` 那道 \
 `build-site-cool.mjs --check` 守着。⚠ 触发门:哪天子页有了自己的样式块,这条就不成立了,要登记进 DOCS",
   })),
+  // 文档中心(改版 3a):docs/user-guide.md 按「##」拆出来的页,页名跟着 user-guide 走,故从落点目录现算
+  // (⛔ 别手抄清单:user-guide 加一节就多一页)。公开快照上没有 site-cool/,那一半跳过。
+  ...["site-app", "site-cool"]
+    .filter((dir) => existsSync(R(`${dir}/docs`)))
+    .flatMap((dir) => readdirSync(R(`${dir}/docs`)).filter((f) => f.endsWith(".html")).map((f) => `${dir}/docs/${f}`))
+    .map((file) => ({
+      file,
+      privateOnly: file.startsWith("site-cool/"),
+      why: "文档中心的页(改版 3a):生成器拿 `site/index.html` 当壳,换 <head> 的标题 / 描述 / 分享卡片与 <main>,\
+<style> 与首页**逐字节相同** ⇒ 文档中心那段样式(`.docs-*`)由「官网·单页」那一格判,判第二遍没有新信息。\
+正文来自 docs/user-guide.md(不经字典,只有中文);成品 == 生成器输出由 `branch-gate land` 那道 `build-site-cool.mjs --check` 守着",
+    })),
   ...["about", "help", "security"].map((n) => ({
     file: `site/pages/${n}.html`,
     why: "官网子页的**正文片段**(改版 2b),不是一份完整的 html:没有 <head>、没有 <style>,一个颜色声明都没有 \
