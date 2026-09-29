@@ -154,6 +154,24 @@
       .topnav a { text-decoration: none; color: var(--ink-soft); font-size: var(--fs-15); }
       .topnav a:hover { color: var(--ink); }
       .topnav a[aria-current="page"] { color: var(--seal); }
+      /* 窄屏(2026-09-29 实量):360 宽时三份协议页的「朱简」被挤成竖排、三个四字链接各断两行,
+         而这三份原样烤进手机包,那台 vivo 正是 360 宽。⇒ 词一律不许折断;≤420 收边距与间距(360 恰好一行);
+         比 360 还窄只留印章(实量 341 已放不下;字是视觉隐藏、读屏仍念得到;⛔ 别用 font-size 0 —— 条件块里带字号
+         的规则 check-contrast 会拒)。
+         最后一道:系统字号调大时视口宽度不变、上面两档都不触发 ⇒ 让导航整块换到第二行,
+         ⛔ 别改成横向滚动(试过:末项会被截成「用户」两字,像另一个链接)。 */
+      .brand, .topnav a { white-space: nowrap; }
+      .topbar .wrap { flex-wrap: wrap; height: auto; min-height: 62px; row-gap: 4px; padding-top: 9px; padding-bottom: 9px; }
+      .topnav { flex-wrap: wrap; justify-content: flex-end; row-gap: 4px; }
+      @media (max-width: 420px) {
+        .wrap { padding-left: 16px; padding-right: 16px; }
+        .topbar .wrap { gap: 12px; }
+        .topnav { gap: 14px; }
+      }
+      @media (max-width: 359px) {
+        .brand { gap: 0; }
+        .brand-word { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+      }
 
       main { padding: 46px 0 8px; }
       h1.doc-title {
@@ -212,7 +230,7 @@
   <body>
     <header class="topbar">
       <div class="wrap">
-        <a class="brand" href="/"><svg viewBox="0 0 100 100" aria-hidden="true"><rect x="2" y="2" width="96" height="96" rx="25%" /><text x="50" y="50" text-anchor="middle" dominant-baseline="central" font-size="58">朱</text></svg>朱简</a>
+        <a class="brand" href="/"><svg viewBox="0 0 100 100" aria-hidden="true"><rect x="2" y="2" width="96" height="96" rx="25%" /><text x="50" y="50" text-anchor="middle" dominant-baseline="central" font-size="58">朱</text></svg><span class="brand-word">朱简</span></a>
         <nav class="topnav">
           <a href="/privacy.html" aria-current="page">隐私政策</a>
           <a href="/privacy-rights.html">隐私权利</a>
