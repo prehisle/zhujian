@@ -1357,6 +1357,10 @@ Linux    ~/.local/share/app.zhujian.notebook/notebook.sqlite3</pre>
           "page.helpEyebrow": { zh: "帮助", en: "Help" },
           "page.helpTitle": { zh: "帮助", en: "Help" },
           "page.helpLead": { zh: "常见问题,以及给爱折腾的人准备的数据文件、键位和源码。", en: "Common questions, plus the data file, keys and source for people who like to tinker." },
+          /* 截图随语言换(780):英文档用 shots/en/ 那套英文界面的图;值是路径不是文案。运行期换 src 前浏览器可能已开始下中文那张,2c 静态英文页出来后就没这一跳 */
+          "shot.boardSrc": { zh: "shots/desktop-board.webp", en: "shots/en/desktop-board.webp" },
+          "shot.inboxSrc": { zh: "shots/desktop-inbox.webp", en: "shots/en/desktop-inbox.webp" },
+          "shot.phoneSrc": { zh: "shots/phone-inbox.webp", en: "shots/en/phone-inbox.webp" },
           "shot.zoom": { zh: "点开看大图", en: "Open a larger view" },
           "shot.close": { zh: "关闭大图", en: "Close the larger view" },
 
@@ -1505,7 +1509,7 @@ Linux    ~/.local/share/app.zhujian.notebook/notebook.sqlite3</pre>
 
         /* 属性绑定表。门禁**从这里读**「本页支持哪几个 data-i18n-*」,不另写一份登记表
            —— 「登记本身没人核」是 336 ⑩ 刀判过死刑的形状(改坏了照样绿)。 */
-        var BIND = { "data-i18n-title": "title", "data-i18n-aria-label": "aria-label", "data-i18n-content": "content", "data-i18n-alt": "alt" };
+        var BIND = { "data-i18n-title": "title", "data-i18n-aria-label": "aria-label", "data-i18n-content": "content", "data-i18n-alt": "alt", "data-i18n-src": "src" };
 
         var KEY = "zhujian.lang"; /* 与两个客户端同一个键;纯本机、不进同步 */
 

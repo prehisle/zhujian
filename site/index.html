@@ -1135,11 +1135,11 @@
              系统状态栏与手势条的白边(用户 9-29 报)。 -->
         <div class="stage">
           <div class="stage-desktop">
-            <img src="shots/desktop-board.webp" width="1890" height="1050" fetchpriority="high" decoding="async"
+            <img src="shots/desktop-board.webp" data-i18n-src="shot.boardSrc" width="1890" height="1050" fetchpriority="high" decoding="async"
                  alt="任务看板:待办、进行中、待确认、已完成四列,卡片上标着截止日期和标签" data-i18n-alt="flow.card3Alt" />
           </div>
           <div class="stage-phone">
-            <img src="shots/phone-inbox.webp" width="630" height="1254" decoding="async"
+            <img src="shots/phone-inbox.webp" data-i18n-src="shot.phoneSrc" width="630" height="1254" decoding="async"
                  alt="同一份随记在手机上:一列卡片,其中一条正文里带着可以打勾的小清单" data-i18n-alt="flow.card2AltPhone" />
           </div>
         </div>
@@ -1187,9 +1187,9 @@
               <p data-i18n="flow.card2">在随记里给它打标签,或转成待办。每次编辑都保留改动前的版本,旧稿能找回;删了先进回收站,随时还原。</p>
             </div>
             <button class="shot-zoom crop crop-inbox" type="button" aria-label="点开看大图" data-i18n-aria-label="shot.zoom">
-              <img src="shots/desktop-inbox.webp" width="1890" height="1050" loading="lazy" decoding="async"
+              <img src="shots/desktop-inbox.webp" data-i18n-src="shot.inboxSrc" width="1890" height="1050" loading="lazy" decoding="async"
                    alt="随记:今天记下的几条排成一条时间轴,各自挂着标签" data-i18n-alt="flow.card2Alt" />
-              <img class="crop-phone" src="shots/phone-inbox.webp" width="630" height="1254" loading="lazy" decoding="async" alt="" />
+              <img class="crop-phone" src="shots/phone-inbox.webp" data-i18n-src="shot.phoneSrc" width="630" height="1254" loading="lazy" decoding="async" alt="" />
             </button>
           </div>
 
@@ -1200,7 +1200,7 @@
               <p data-i18n="flow.card3">待办、进行中、待确认、已完成,拖着走。做完的归档,可查、不可删。</p>
             </div>
             <button class="shot-zoom crop crop-board" type="button" aria-label="点开看大图" data-i18n-aria-label="shot.zoom">
-              <img src="shots/desktop-board.webp" width="1890" height="1050" loading="lazy" decoding="async"
+              <img src="shots/desktop-board.webp" data-i18n-src="shot.boardSrc" width="1890" height="1050" loading="lazy" decoding="async"
                    alt="任务看板:待办、进行中、待确认、已完成四列,卡片上标着截止日期和标签" data-i18n-alt="flow.card3Alt" />
             </button>
           </div>
@@ -1536,6 +1536,10 @@
           "page.helpEyebrow": { zh: "帮助", en: "Help" },
           "page.helpTitle": { zh: "帮助", en: "Help" },
           "page.helpLead": { zh: "常见问题,以及给爱折腾的人准备的数据文件、键位和源码。", en: "Common questions, plus the data file, keys and source for people who like to tinker." },
+          /* 截图随语言换(780):英文档用 shots/en/ 那套英文界面的图;值是路径不是文案。运行期换 src 前浏览器可能已开始下中文那张,2c 静态英文页出来后就没这一跳 */
+          "shot.boardSrc": { zh: "shots/desktop-board.webp", en: "shots/en/desktop-board.webp" },
+          "shot.inboxSrc": { zh: "shots/desktop-inbox.webp", en: "shots/en/desktop-inbox.webp" },
+          "shot.phoneSrc": { zh: "shots/phone-inbox.webp", en: "shots/en/phone-inbox.webp" },
           "shot.zoom": { zh: "点开看大图", en: "Open a larger view" },
           "shot.close": { zh: "关闭大图", en: "Close the larger view" },
 
@@ -1684,7 +1688,7 @@
 
         /* 属性绑定表。门禁**从这里读**「本页支持哪几个 data-i18n-*」,不另写一份登记表
            —— 「登记本身没人核」是 336 ⑩ 刀判过死刑的形状(改坏了照样绿)。 */
-        var BIND = { "data-i18n-title": "title", "data-i18n-aria-label": "aria-label", "data-i18n-content": "content", "data-i18n-alt": "alt" };
+        var BIND = { "data-i18n-title": "title", "data-i18n-aria-label": "aria-label", "data-i18n-content": "content", "data-i18n-alt": "alt", "data-i18n-src": "src" };
 
         var KEY = "zhujian.lang"; /* 与两个客户端同一个键;纯本机、不进同步 */
 

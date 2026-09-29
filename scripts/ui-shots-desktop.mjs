@@ -70,6 +70,13 @@ const only = flag("--only", null);
 // --empty:不播种,截的是**空库**那一态(用户面 85:「按数据显形」的那几处只有在空库上才看得见
 // 它们真没了)。⚠ 它与常态那批不同目录、不可比,判读是「空库上那几处不在、有数据那批逐位不变」。
 const empty = argv.includes("--empty");
+// --seed-lang en:演示数据换成英文那一份(官网英文档的配图用,778 起的改版要它)。默认 zh,
+// 基线照旧是中文那批 —— ⚠ 两份种子**形状逐条对齐**(四个标签、逾期 / 今天 / 将来三种截止、
+// 一张带勾选清单的卡),换的只是字,⇒ 英文那批图照得出「英文正文换行」的形,中文那批不受影响。
+const SEED_LANG = flag("--seed-lang", "zh");
+const SCALE = Number(flag("--scale", "1"));
+if (!(SCALE > 0 && SCALE <= 4)) throw new Error(`--scale 要在 (0, 4] 之间:${SCALE}`);
+if (!["zh", "en"].includes(SEED_LANG)) throw new Error(`--seed-lang 只认 zh / en:${SEED_LANG}`);
 // 默认 9224 而不是 desktop-cdp.mjs 那个 9223:两支同时跑时不抢口。
 const PORT = Number(flag("--port", "9224"));
 if (!Number.isInteger(PORT) || PORT <= 0 || PORT > 65535) throw new Error(`--port 不是合法端口:${PORT}`);
@@ -87,7 +94,7 @@ const PAGES = [
   { id: "inbox", win: "notebook", view: "inbox", desc: "随记(未归类 + 已整理)" },
   { id: "board", win: "notebook", view: "board", desc: "任务看板(四列)" },
   { id: "topics", win: "notebook", view: "topics", desc: "标签" },
-  { id: "search", win: "notebook", view: "search", desc: "搜索(带查询词的结果态)", query: "体检" },
+  { id: "search", win: "notebook", view: "search", desc: "搜索(带查询词的结果态)", query: SEED_LANG === "en" ? "check-up" : "体检" },
   // 设置面板每一类各一张:617 砍的说明句大半住在这里,一节一张才看得见。
   // ⚠ 只截到**视口那一屏** —— 面板自己是个滚动容器,`captureBeyondViewport` 对内层滚动
   // 容器无效。下半屏(如「常规」的截止提醒往下)一期看不到,知情的边界。
@@ -227,7 +234,14 @@ class Cdp {
   }
   async shot(outPath) {
     await this.send("Page.enable");
-    const s = await this.send("Page.captureScreenshot", { format: "png" });
+    // --scale N:按 N 倍重新栅格化再截(官网配图要 1.5 倍,裁图再放大 2 倍也不糊);默认 1 = 窗口原样。
+    const params = { format: "png" };
+    if (SCALE !== 1) {
+      const m = await this.send("Page.getLayoutMetrics");
+      const v = m.cssVisualViewport;
+      params.clip = { x: 0, y: 0, width: v.clientWidth, height: v.clientHeight, scale: SCALE };
+    }
+    const s = await this.send("Page.captureScreenshot", params);
     if (!s || !s.data) throw new Error("截图无数据(窗口未绘制?)");
     writeFileSync(outPath, Buffer.from(s.data, "base64"));
   }
@@ -242,7 +256,44 @@ const isCapture = (u) => /\/(index\.html)?(\?.*)?$/.test(u);
 // 三条硬要求:①一眼看得出是演示数据(万一图外送也无害,74② 那条「别把自家想法往外传」);
 // ②每个视图都有得看(空态另有其形,二期单列);③截止日期按「今天」现算 ⇒「逾期 / 今天 /
 // 将来」三种形长期稳定,而不是养成一屏全逾期。
+// 两份种子逐条同形(见 --seed-lang 那段)。任务一行 = [标题, 列, 截止(距今天几天 / null), 优先级, 标签下标]。
+const SEED_DATA = {
+  zh: {
+    topics: [["家里", "#c0563f"], ["工作", "#3f7a99"], ["读书", "#7f8b3a"], ["身体", "#a8577e"]],
+    inbox: ["给妈打电话,问体检结果", "阳台那盆绿萝该换土了", "想写一篇关于纸质笔记本的短文"],
+    filed: [["周末把书架第二层整理一遍", 0], ["《长安的荔枝》读完了,想记几句", 2], ["体检报告下周三出,记得去取", 3]],
+    tasks: [
+      ["把书房的旧电脑重装一遍", "todo", -2, 1, 0],
+      ["交季度报表", "todo", 0, null, 1],
+      ["订下个月回老家的票", "todo", 9, null, 0],
+      ["读完《长安的荔枝》最后两章", "todo", null, null, 2],
+      ["出差要带的东西\n- [x] 身份证\n- [x] 充电器\n- [ ] 会议材料打印\n- [ ] 常用药", "doing", 3, null, 1],
+      ["把阳台的花搬到向阳的一侧", "doing", null, null, 0],
+      ["等体检中心回电确认时间", "confirming", null, null, 3],
+      ["换掉厨房那只坏了的灯泡", "done", null, null, 0],
+      ["给同事回邮件", "done", null, null, 1],
+    ],
+  },
+  en: {
+    topics: [["Home", "#c0563f"], ["Work", "#3f7a99"], ["Reading", "#7f8b3a"], ["Health", "#a8577e"]],
+    inbox: ["Call Mum, ask how the check-up went", "The pothos on the balcony needs repotting", "Write a short piece about paper notebooks"],
+    filed: [["Tidy the second bookshelf this weekend", 0], ["Finished The Remains of the Day, want to jot a few lines", 2], ["Check-up results are out next Wednesday, pick them up", 3]],
+    tasks: [
+      ["Reinstall the old computer in the study", "todo", -2, 1, 0],
+      ["Send the quarterly report", "todo", 0, null, 1],
+      ["Book train tickets home for next month", "todo", 9, null, 0],
+      ["Finish the last two chapters of The Remains of the Day", "todo", null, null, 2],
+      ["Packing for the work trip\n- [x] ID card\n- [x] Charger\n- [ ] Print the meeting notes\n- [ ] Everyday meds", "doing", 3, null, 1],
+      ["Move the balcony plants to the sunny side", "doing", null, null, 0],
+      ["Wait for the clinic to call back with a time", "confirming", null, null, 3],
+      ["Replace the broken kitchen bulb", "done", null, null, 0],
+      ["Reply to a colleague's email", "done", null, null, 1],
+    ],
+  },
+};
+
 const SEED = `(async () => {
+  const D = ${JSON.stringify(SEED_DATA[SEED_LANG])};
   const inv = (c, a) => window.__TAURI__.core.invoke(c, Object.assign({ spaceId: "main" }, a));
   const day = (n) => {
     const d = new Date();
@@ -250,49 +301,27 @@ const SEED = `(async () => {
     return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
   };
 
-  const topics = {};
-  const palette = { "家里": "#c0563f", "工作": "#3f7a99", "读书": "#7f8b3a", "身体": "#a8577e" };
-  for (const title of ["家里", "工作", "读书", "身体"]) {
+  const topicIds = [];
+  for (const [title, color] of D.topics) {
     const id = await inv("create_topic", { title });
-    topics[title] = id;
-    await inv("set_topic_color", { id, color: palette[title] });
+    topicIds.push(id);
+    await inv("set_topic_color", { id, color });
   }
 
   // 随记:三条未归类 + 三条已整理(整理过的挂标签,列表里两段都有得看)
-  for (const c of [
-    "给妈打电话,问体检结果",
-    "阳台那盆绿萝该换土了",
-    "想写一篇关于纸质笔记本的短文",
-  ]) await inv("capture_note", { content: c });
-  const filed = [
-    ["周末把书架第二层整理一遍", "家里"],
-    ["《长安的荔枝》读完了,想记几句", "读书"],
-    ["体检报告下周三出,记得去取", "身体"],
-  ];
-  for (const [c, topic] of filed) {
+  for (const c of D.inbox) await inv("capture_note", { content: c });
+  for (const [c, t] of D.filed) {
     const id = await inv("capture_note", { content: c });
-    await inv("file_note_to_topic", { id, topicId: topics[topic] });
+    await inv("file_note_to_topic", { id, topicId: topicIds[t] });
   }
 
   // 任务:四列都有;三条截止各占一种形(逾期 / 今天 / 将来);一条带勾选清单
-  const mk = async (title, col, due, prio, topic) => {
-    const id = await inv("create_task", { title, dueOn: due, priority: prio, topicId: topic ? topics[topic] : null });
+  for (const [title, col, due, prio, t] of D.tasks) {
+    // 带清单的那张先按首行建、再改名成整段(与原种子同序:清单行不走 create_task)
+    const id = await inv("create_task", { title: title.split("\\n")[0], dueOn: due === null ? null : day(due), priority: prio, topicId: topicIds[t] });
     if (col !== "todo") await inv("update_task_status", { id, to: col });
-    return id;
-  };
-  await mk("把书房的旧电脑重装一遍", "todo", day(-2), 1, "家里");
-  await mk("交季度报表", "todo", day(0), null, "工作");
-  await mk("订下个月回老家的票", "todo", day(9), null, "家里");
-  await mk("读完《长安的荔枝》最后两章", "todo", null, null, "读书");
-  const pack = await mk("出差要带的东西", "doing", day(3), null, "工作");
-  await inv("rename_task", {
-    id: pack,
-    title: "出差要带的东西\\n- [x] 身份证\\n- [x] 充电器\\n- [ ] 会议材料打印\\n- [ ] 常用药",
-  });
-  await mk("把阳台的花搬到向阳的一侧", "doing", null, null, "家里");
-  await mk("等体检中心回电确认时间", "confirming", null, null, "身体");
-  await mk("换掉厨房那只坏了的灯泡", "done", null, null, "家里");
-  await mk("给同事回邮件", "done", null, null, "工作");
+    if (title.includes("\\n")) await inv("rename_task", { id, title });
+  }
 
   return {
     ideas: (await inv("list_inbox")).length + (await inv("list_processed")).length,
