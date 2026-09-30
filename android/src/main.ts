@@ -2233,9 +2233,11 @@ $("space-list").addEventListener("click", async (e) => {
   if (el.dataset.resetOk) {
     const id = el.dataset.resetOk;
     resettingSpace = null;
+    // 仅本机的本子没有账户可「重新加入」(与确认条的话术分流同一判据)。
+    const wasSynced = spacesCache.find((s) => s.id === id)?.configured;
     try {
       await invoke("reset_space", { spaceId: id });
-      showError(t("main.spaceReset"));
+      showError(wasSynced ? t("main.spaceReset") : t("main.spaceResetLocalOnly"));
       resetSyncTransient(); // 重置空间的出码页等一次性展示随之作废。
       await reconcileForeground(); // 前台可能已落回 main(后端广播为准,这里对账兜底)。
       await refreshSpaces();
