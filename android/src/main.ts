@@ -532,34 +532,55 @@ function syncBoardCols(): void {
 // ⚠ **假定 items 已按 created_at 倒序**(后端保证,与平铺那版吃的是同一个序)⇒ 顺着扫、
 //   `dayKey` 一变就起新段:不重排、不建索引,卡与卡之间的先后逐条与从前相同。
 // ⛔ 别改成「先 group 再 sort」——那会引进一个本来不存在的排序真相源。
-// 宽屏分栏 = **轮流分栏**:组内第 i 张进第 i % n 栏,栏里紧挨着往下排 ⇒ 最新的仍在左上、没有「长卡旁边空一块」;
-// 点开一张只推它自己那栏(789 那版按行对齐,同一排另一张跟着留白)。⛔ 别改成「放进当前最矮的一栏」:
-// 那要先量高,而缩略图晚到、折叠、操作面展开都会改高 ⇒ 卡会在栏间跳来跳去;轮流分只看序号,恒定。
+// 宽屏分栏分两种日子(tablet-plan 格 1 / 1b):
+//  - **大日子**(条数 ≥ 栏数):节头横跨整排,组内**轮流分栏** —— 第 i 张进第 i % n 栏,栏里紧挨着往下排 ⇒ 最新的仍在
+//    左上、没有「长卡旁边空一块」;点开一张只推它自己那栏(789 那版按行对齐,同一排另一张跟着留白)。
+//  - **小日子**(条数 < 栏数)**连成一段**,整块(节头 + 它那几张卡)落进这一段里**条数最少**的那栏(一样少就靠左)。
+//    1b 的由头:格 1 只有前一种,而真库里一两条的日子占多数(用户库 23 个日子里 15 个只有一条)—— 一条的日子
+//    只能进第一栏,横放右半屏整片空着;截图台的数据全是「今天」一个日子,照不出来。
+// ⛔ 别改成「放进当前最矮的一栏」:那要先量高,而缩略图晚到、折叠、操作面展开都会改高 ⇒ 卡会在栏间跳来跳去;
+//   这里只看序号与条数,同一批数据恒排成同一个样子(节头按半张卡记,只为别让一串单条的日子全挤进同一栏)。
+// 1 栏(手机竖放)时画出来的标记与分栏之前逐字相同;大日子的标记与 1b 之前逐字相同。
 function renderDayGroups(items: TimelineItem[], hideTopic: string | null): string {
   const n = (noteCols = measureNoteCols());
-  const out: string[] = [];
-  let cards: string[] = [];
-  const close = () => {
-    if (n === 1) out.push(cards.join(""));
-    else {
-      const cols: string[][] = Array.from({ length: n }, () => []);
-      cards.forEach((c, i) => cols[i % n].push(c));
-      out.push(`<div class="tl-cols">${cols.map((c) => `<div class="tl-col">${c.join("")}</div>`).join("")}</div>`);
-    }
-    out.push("</section>");
-    cards = [];
-  };
+  const days: { head: string; cards: string[] }[] = [];
   let key: string | null = null;
   for (const it of items) {
     const k = dayKey(it.created_at);
     if (k !== key) {
-      if (key !== null) close();
-      out.push(`<section class="tl-group"><h3 class="tl-sec">${esc(dayLabel(it.created_at))}</h3>`);
+      days.push({ head: `<h3 class="tl-sec">${esc(dayLabel(it.created_at))}</h3>`, cards: [] });
       key = k;
     }
-    cards.push(renderCard(it, hideTopic, true));
+    days[days.length - 1].cards.push(renderCard(it, hideTopic, true));
   }
-  if (key !== null) close();
+  const section = (d: { head: string; cards: string[] }, body: string) => `<section class="tl-group">${d.head}${body}</section>`;
+  const cols = (c: string[][], cls: string) => `<div class="${cls}">${c.map((x) => `<div class="tl-col">${x.join("")}</div>`).join("")}</div>`;
+  if (n === 1) return days.map((d) => section(d, d.cards.join(""))).join("");
+  const out: string[] = [];
+  let run: typeof days = [];
+  const flush = () => {
+    if (!run.length) return;
+    const c: string[][] = Array.from({ length: n }, () => []);
+    const load: number[] = Array(n).fill(0);
+    for (const d of run) {
+      const i = load.indexOf(Math.min(...load));
+      c[i].push(section(d, d.cards.join("")));
+      load[i] += d.cards.length + 0.5;
+    }
+    out.push(cols(c, "tl-cols tl-flow"));
+    run = [];
+  };
+  for (const d of days) {
+    if (d.cards.length < n) {
+      run.push(d);
+      continue;
+    }
+    flush();
+    const c: string[][] = Array.from({ length: n }, () => []);
+    d.cards.forEach((x, i) => c[i % n].push(x));
+    out.push(section(d, cols(c, "tl-cols")));
+  }
+  flush();
   return out.join("");
 }
 

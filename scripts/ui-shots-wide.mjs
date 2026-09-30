@@ -24,6 +24,9 @@
 //  ⑤ 设置面底部「关于」里有构建身份戳:工作树有未提交改动时那一行多一句「含未提交改动」、折成两行 ⇒ 设置面高 +20。
 //     ⇒ 改前 / 改后两趟要在**同一种脏净状态**下跑(改前在干净树上跑的,改后就提交之后再跑),否则 phone-*-settings
 //     两张会报「不同」而与本轮改动无关(tablet-plan 格 2 实撞:改前干净、改后带着改动,差的正是这一行)。
+//  ⑥ 别让一趟跨过本地午夜:种子在前一天种、截图在后一天拍 ⇒ 卡上的时刻变成「9月30日 23:59」、截止 chip 变成「昨天 /
+//     逾期 N 天」,手机竖放的任务面会多折一行(tablet-plan 1b 当轮实撞:6 张「不同」全是这个,同一天重拍改前就全部相同)。
+//     ⇒ `--compare` 报差时先看两份 manifest 的 `at` 是不是隔着午夜。
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";

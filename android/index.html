@@ -754,6 +754,10 @@
          gap 12 = main.ts 的 NOTE_COL_GAP;栏内 8 = 手机上卡与卡之间那个 8(`.tl-group` 的 gap)。 */
       .tl-cols { display: flex; gap: 12px; align-items: flex-start; }
       .tl-col { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+      /* 1b:一两条的小日子连成一段(`.tl-flow`,main.ts::renderDayGroups),每栏里是「节头 + 它那几张卡」整块往下排,
+         节与节之间照单栏时的距离(栏的 gap 8 + 节头上内距 8)。每栏第一节是那栏的第一个孩子,被上面 `:first-child`
+         那条把节头上内距归零了 —— 段在时间轴最前面时就该这样;段跟在一个大日子后面时补回 8,与节和节之间一样宽。 */
+      .timeline > .tl-flow:not(:first-child) > .tl-col > .tl-group:first-child .tl-sec { padding-top: 8px; }
       /* 时间轴 / 标签面的空态提示块(`<p class="muted empty">`;main.ts 两处 + topics.ts 一处)。
          ⛔ **选择器必须钉住 `p`,别退回裸 `.empty`** —— 604 真机逮到:筛选条给**计数为 0 的
          标签 pill** 也挂 `.empty`(499 的「族里的空位」,`<button class="fpill empty child">`),

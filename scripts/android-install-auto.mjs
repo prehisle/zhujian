@@ -1,31 +1,25 @@
-// 朱笺安卓自动装机 —— 免每次截图估坐标。adb install -r 会卡在 vivo 拦截页;本脚本延时后按
-// 「设备分辨率标定过的固定坐标」点掉,再轮询 versionName/lastUpdateTime 确认装成;装不上则
-// 自动截图 + 如实报错(绝不盲点完就宣布成功)。两种拦截页各自处置(181 补齐):
-//   · 升级(versionCode 更高)= 「外部来源」风险页 → 勾选框 + 继续安装;
-//   · 反装(versionCode 相同,如给 0.3.14 再侧载 0.3.14 调试/干净包)= 「已安装相同版本」
-//     拦截页(PackageInterceptActivity)→ 重新安装。
+// 朱笺安卓自动装机 —— adb install -r 会卡在 vivo 拦截页;本脚本**按控件认**(uiautomator dump 读拦截页的
+// 控件 id / 文字 / 勾没勾 / bounds)一步步点掉,再轮询 versionName/lastUpdateTime 确认装成;装不上则
+// 自动截图 + 如实报错(绝不盲点完就宣布成功)。拦截页有两种,谁出来点谁:
+//   · 「外部来源」风险页 → 勾「已了解应用的风险检测结果」(`…:id/deleted_file_state_cb`)→ 继续安装;
+//   · 同 versionCode 反装时部分 ROM 先弹「已安装相同版本」(PackageInterceptActivity)→ 重新安装。
 //
 // 用法:
 //   node scripts/android-install-auto.mjs <apk路径> [--device <serial>] [--expect <版本>]
-// 前置:adb 在 PATH;设备已 USB 调试授权;APK 与已装同签名、versionCode ≥ 已装。
+// 前置:adb 在 PATH;设备已 USB 调试授权、**亮屏且已解锁**;APK 与已装同签名、versionCode ≥ 已装。
 //
-// ⚠ 坐标是「设备分辨率 + 厂商系统版本」绑定的:换机/系统大更新可能漂移。新设备第一次
-//   跑若超时,会把当前屏截到 .install-fail.png——照它量出勾选框/继续安装坐标,加进下面
-//   GEOMETRY 表(键 = `adb shell wm size` 的 WxH)。只对自己的测试机 + 验收包用。
+// ⭐ 793 起不再按「分辨率标定的固定坐标」点(那张 GEOMETRY 表撤了)。那一趟 V2352GA 上两处都变了:
+//   ①风险页先「安全守护正在深度检测…」五六秒,勾选框与按钮这时还没画出来 —— 旧版等 2 秒就点,落空;
+//   ②有一次页底多一行「继续安装第三方应用需身份验证…」,整页上移约 140px,表里的坐标全落在空白处。
+//   拦截页是原生页,dump 给得出真 bounds(⚠ 与朱简自己那页相反:WebView 子树在这台上 bounds 全零)⇒ 每拍现读现点,
+//   页面怎么排都跟得上;认不出就不点,等到超时截图报错。⛔ 别再把坐标写回来当兜底(两套机制 = 两种失灵)。
+// ⚠ dump 用固定文件名、**每次先删再写** —— dump 失败时设备上会留着上一次的旧文件(V1986A 上撞过),读到旧 xml
+//   就是对着过去的屏幕点。⚠ 从 Git Bash 手敲同样的 `adb shell uiautomator dump /sdcard/…` 要带 MSYS_NO_PATHCONV=1,
+//   否则路径被改成 `/Files/Git/sdcard/…`、`cat` 读到的正是旧文件(793 手工那趟实撞);本脚本走 execFileSync,不经 MSYS。
+// ⚠ 要身份验证(锁屏密码 / 指纹)的那一步只有机主能过:点完「继续安装」若转去了验证页,本脚本不碰,超时后截图报错。
 import { execFileSync, spawn } from "node:child_process";
 import { createWriteStream } from "node:fs";
 import { fileURLToPath } from "node:url";
-
-const GEOMETRY = {
-  // vivo V2352GA(1260×2800):实测三次一致。[x, y] 为物理像素。
-  // checkbox/cont = 升级时「外部来源」风险页的勾选框 + 继续安装;
-  // reinstall = 同 versionCode 反装时「已安装相同版本」拦截页的「重新安装」(181 标定)。
-  "1260x2800": { checkbox: [658, 2440], cont: [630, 2622], reinstall: [631, 2363] },
-  // vivo V1986A / Android 12(1080×2408):uiautomator dump 标定(2026-08-28)。
-  // 坐标取自控件 bounds 中心(deleted_file_state_cb / android:id/button1 内层可点 LinearLayout)。
-  // reinstall:"none" —— 这台同版本反装**不弹**「已安装相同版本」拦截页,直接进同一张风险页(与 V2352GA 不同 ROM 行为)。
-  "1080x2408": { checkbox: [540, 2090], cont: [540, 2237], reinstall: "none" },
-};
 
 const [, , apk, ...rest] = process.argv;
 if (!apk) {
@@ -41,9 +35,13 @@ for (let i = 0; i < rest.length; i++) {
 const sh = (args) => execFileSync("adb", device ? ["-s", device, ...args] : args, { encoding: "utf8" });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const PKG = "app.zhujian.notebook";
+const INSTALLER = "com.android.packageinstaller";
+const DUMP = "/sdcard/zj-install-ui.xml";
 // 失败截图落仓根(.gitignore 已收)。⛔ 别写死盘符:从前写死 g:/yj2026/zhujian,换到仓在别处的机器上
 // 超时那步 createWriteStream 抛 ENOENT 直接崩,截图和「超时未确认装成」那句都没了。
 const FAIL_PNG = fileURLToPath(new URL("../.install-fail.png", import.meta.url));
+// 深度检测五六秒 + 装机本身 + 每拍一次 dump(约 1–2 秒)。
+const DEADLINE_MS = 60000;
 
 function deviceSerial() {
   if (device) return device;
@@ -60,35 +58,39 @@ function installedUpdateTime() {
   const out = sh(["shell", "dumpsys", "package", PKG]);
   return out.match(/lastUpdateTime=(.+)/)?.[1]?.trim() ?? null;
 }
-function focusLine() {
-  const out = sh(["shell", "dumpsys", "window"]);
-  return (out.match(/mCurrentFocus=[^\n]*/g) || []).join(" | ");
+function topActivity() {
+  const out = sh(["shell", "dumpsys", "activity", "activities"]);
+  return out.match(/topResumedActivity=[^\n]*/)?.[0]?.trim() ?? "(问不出)";
 }
-function focusHasInstaller() {
-  return /packageinstaller/i.test(focusLine());
+/** 当前屏上的控件(只要拦截页那个包的)。dump 不成就回空表 —— 这一拍不点,下一拍再问。 */
+function installerNodes() {
+  let xml;
+  try {
+    sh(["shell", "rm", "-f", DUMP]);
+    sh(["shell", "uiautomator", "dump", DUMP]);
+    xml = sh(["shell", "cat", DUMP]);
+  } catch {
+    return [];
+  }
+  return [...xml.matchAll(/<node [^>]*>/g)]
+    .map(([n]) => {
+      const a = (k) => n.match(new RegExp(` ${k}="([^"]*)"`))?.[1] ?? "";
+      const b = a("bounds").match(/\[(\d+),(\d+)\]\[(\d+),(\d+)\]/);
+      const c = b ? [Math.round((+b[1] + +b[3]) / 2), Math.round((+b[2] + +b[4]) / 2)] : null;
+      return { pkg: a("package"), id: a("resource-id"), text: a("text"), checked: a("checked") === "true", c };
+    })
+    .filter((n) => n.pkg === INSTALLER && n.c && (n.c[0] > 0 || n.c[1] > 0));
 }
-// 已进真正安装页(NewInstallInstalling 等):焦点仍含 packageinstaller,但装已在跑,
-// 视同拦截页已点掉,别再继续点(否则会点到别处)。同版本反装的两个框都是
-// PackageInterceptActivity、焦点区分不了,故不按焦点判框型,只用它判「已进安装」。
-function focusIsInstalling() {
-  return /Installing/i.test(focusLine());
-}
+const tap = ([x, y]) => sh(["shell", "input", "tap", String(x), String(y)]);
 
 (async () => {
   device = deviceSerial();
-  const geo = sh(["shell", "wm", "size"]).match(/Override size:\s*(\d+x\d+)|Physical size:\s*(\d+x\d+)/);
-  const dim = (geo?.[1] || geo?.[2] || "").trim();
-  const coords = GEOMETRY[dim];
-  if (!coords) throw new Error(`未标定分辨率 ${dim}——先手动装一次量坐标,加进 GEOMETRY 表`);
-
   const beforeV = installedVersion();
   const beforeT = installedUpdateTime();
-  // 同 versionName 反装 → vivo 弹「已安装相同版本」拦截页(重新安装),而非升级的「外部来源」
-  // 风险页。用这个确定性判据选分支,别赌焦点时机(焦点切到拦截页有竞态,误判会点到取消)。
-  const sameVersion = !!(beforeV && expect && beforeV === expect);
-  console.log(`设备 ${device} / ${dim} / 现装 ${beforeV ?? "(无)"} → 安装 ${apk}${sameVersion ? "(同版本反装)" : ""}`);
+  console.log(`设备 ${device} / 现装 ${beforeV ?? "(无)"} → 安装 ${apk}`);
+  sh(["shell", "input", "keyevent", "KEYCODE_WAKEUP"]);
 
-  // 后台起 install(会阻塞在弹窗);不 await
+  // 后台起 install(会阻塞在拦截页);不 await
   const proc = spawn("adb", (device ? ["-s", device] : []).concat(["install", "-r", apk]), {
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -96,56 +98,31 @@ function focusIsInstalling() {
   proc.stdout.on("data", (d) => (installLog += d));
   proc.stderr.on("data", (d) => (installLog += d));
 
-  // 等拦截页出现(最多 15s)
-  let dialog = false;
-  for (let i = 0; i < 30 && !dialog; i++) {
-    await sleep(500);
-    if (focusHasInstaller()) dialog = true;
-  }
-  if (dialog) {
-    sh(["shell", "input", "keyevent", "KEYCODE_WAKEUP"]);
-    // vivo 拦截页 focus 先到、内容后渲染:点太早会落空(勾选框没勾上→继续安装灰着不动)。
-    // 先等渲染,再按对话框类型点:每轮先判焦点是「已安装相同版本」还是「外部来源」,
-    // 分别点「重新安装」或「勾选框+继续安装」,直到 focus 离开 installer 或进安装页(=真点掉)。
-    await sleep(2000);
-    // 同版本反装(181 实测):先弹「已安装相同版本」(重新安装),点掉后再弹「外部来源」风险页;
-    // 两者都是 PackageInterceptActivity、焦点区分不了,故按已知顺序处理——先(仅反装)点一次
-    // 「重新安装」,再进「勾选框 + 继续安装」重试循环。升级场景没有第一步,直接进循环。
-    if (sameVersion) {
-      if (coords.reinstall === undefined)
-        throw new Error(`分辨率 ${dim} 未标定 reinstall 坐标——同版本反装请先手动量「重新安装」位置补进 GEOMETRY 表(若该机型反装不弹此拦截页,标 "none")`);
-      if (coords.reinstall !== "none") {
-        sh(["shell", "input", "tap", String(coords.reinstall[0]), String(coords.reinstall[1])]); // 已安装相同版本 → 重新安装
-        await sleep(2500);
-      }
-    }
-    let dismissed = false;
-    for (let a = 0; a < 6 && !dismissed; a++) {
-      if (focusIsInstalling() || !focusHasInstaller()) { dismissed = true; break; } // 已进安装页/离开安装器
-      sh(["shell", "input", "tap", String(coords.checkbox[0]), String(coords.checkbox[1])]); // 风险确认勾选框
-      await sleep(700);
-      sh(["shell", "input", "tap", String(coords.cont[0]), String(coords.cont[1])]); // 继续安装
-      await sleep(1500);
-      if (focusIsInstalling() || !focusHasInstaller()) dismissed = true;
-    }
-    console.log(
-      dismissed
-        ? `已自动点掉安装拦截页${sameVersion ? "(重新安装 → 勾选框+继续安装)" : "(勾选框+继续安装)"}`
-        : "⚠ 多次尝试后拦截页仍在——坐标可能漂移/对话框变样",
-    );
-  } else {
-    console.log("未见拦截页(可能已直接安装或系统允许静默)——继续等结果");
-  }
-
-  // 轮询装成(versionName 或 lastUpdateTime 变化;有 --expect 则须等于它)
-  for (let i = 0; i < 40; i++) {
-    await sleep(1000);
+  // 每拍:先问装成没有(versionName 或 lastUpdateTime 变了;有 --expect 则须等于它),没成就读一次拦截页、点下一步。
+  // 一拍只点一下,点完回头再读 —— 勾选框勾没勾、按钮亮没亮都以下一次 dump 为准,不信「刚才点过了」。
+  const steps = [];
+  const t0 = Date.now();
+  while (Date.now() - t0 < DEADLINE_MS) {
     const v = installedVersion(), t = installedUpdateTime();
-    const changed = v !== beforeV || (t && t !== beforeT);
-    if (changed && (!expect || v === expect)) {
-      console.log(`✔ 安装成功:${v}(lastUpdateTime ${t})`);
+    if ((v !== beforeV || (t && t !== beforeT)) && (!expect || v === expect)) {
+      console.log(`✔ 安装成功:${v}(lastUpdateTime ${t});拦截页上点过:${steps.join(" → ") || "(没弹拦截页)"}`);
       process.exit(0);
     }
+    const nodes = installerNodes();
+    const reinstall = nodes.find((n) => n.text === "重新安装");
+    const box = nodes.find((n) => /:id\/deleted_file_state_cb$/.test(n.id));
+    const go = nodes.find((n) => n.text === "继续安装" || n.id === "android:id/button1");
+    if (reinstall) {
+      tap(reinstall.c);
+      steps.push("重新安装");
+    } else if (box && !box.checked) {
+      tap(box.c);
+      steps.push("勾选");
+    } else if (box && go) {
+      tap(go.c);
+      steps.push("继续安装");
+    }
+    await sleep(1000);
   }
 
   // 超时:截图 + 如实报错
@@ -155,8 +132,10 @@ function focusIsInstalling() {
     cap.stdout.pipe(png);
     await new Promise((r) => cap.on("close", r));
   } catch {}
-  console.error(`✘ 超时未确认装成。install 输出:\n${installLog.trim()}`);
-  console.error(`已截屏 ${FAIL_PNG}——核对弹窗是否变样、坐标是否需重标定。`);
+  console.error(`✘ ${DEADLINE_MS / 1000}s 内没确认装成。拦截页上点过:${steps.join(" → ") || "(一下没点 —— dump 没认出勾选框 / 按钮)"}`);
+  console.error(`  最上面的 activity:${topActivity()}`);
+  console.error(`  install 输出:${installLog.trim() || "(无)"}`);
+  console.error(`  已截屏 ${FAIL_PNG} —— 若是身份验证 / 锁屏页,那一步只有机主能过;若拦截页换了控件,照 dump 改本脚本认的 id / 文字。`);
   process.exit(1);
 })().catch((e) => {
   console.error("✘ " + e.message);
