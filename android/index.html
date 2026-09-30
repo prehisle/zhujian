@@ -154,6 +154,9 @@
         /* 「现在是不是宽屏」给 JS 的读数(tablet-plan:断点只写在 CSS 一处,JS 要知道就读 CSS 算出来的结果)。
            窄 0 / 宽 1,由下面「宽屏」那段 `@media` 翻;main.ts::isWide 读它。⛔ 别在 JS 里再写一遍 720。 */
         --wide: 0;
+        /* 「现在是不是高屏」(宽屏且高 ≥ 600:三座底部层浮在屏中),同上一面旗子,由「宽屏」那段里套的那层翻;
+           main.ts::isTall 读它、打 `body.tallscreen`(键盘让出去的那截不算,见那边)。⛔ 别在 JS 里写 600。 */
+        --tall: 0;
       }
       /* 暗色令牌。挂在 <html data-theme="dark"> 上而**不是** @media——明暗有三档
          (自动 / 亮 / 暗),生效色由 src/theme.ts 单点算出后写进这个属性,CSS 里不再
@@ -1533,9 +1536,8 @@
       /* ⭐ 宽屏(docs/tablet-plan.md;用户 2026-09-30 拍了那四格):视口宽 ≥ 720 = 放得下两张手机宽的卡
          (2 × 340 + 间距 12 + 两边 14)。进来的:平板横竖(含 800 宽竖放)、手机横放、平板对半分屏;
          手机竖放(≤ 430)一像素不变。⛔ 只认窗口宽高,别按设备类型判 —— 分屏、折叠屏、转屏都该跟着窗口走。
-         宽屏排法的家 = 本段 + 紧跟着的「导航并进顶栏」「看板」两段(挂在 JS 打的 `body.widescreen` / `body.board` 上,为什么不进
-         `@media` 见那两段头注;断点仍只在本段这一处);下面 789 那段(宽 ≥ 900 且高 ≥ 600)是过渡态,只剩 tablet-plan 格 4
-         的浮窗那几条,搬空就删。
+         宽屏排法的家 = 本段 + 紧跟着的「导航并进顶栏」「看板」「浮窗」三段(挂在 JS 打的 `body.widescreen` / `body.board` /
+         `body.tallscreen` 上,为什么不进 `@media` 见那三段头注;断点仍只在本段这一处)。
          ⚠ 720 与 main.ts 随记分栏的 NOTE_COL_MIN / NOTE_COL_GAP 是同一组数推出来的,改一处就得改另一处。 */
       @media (min-width: 720px) {
         /* 一根框(tablet-plan 格 1):所有面共用 1400 的框,顶栏 / 筛选条 / 悬浮 ＋ 吃的都是这个变量 ⇒ 切面时
@@ -1546,6 +1548,17 @@
            一行字、一个输入框拉到 1400 都读不动。⚠ 框没变窄 —— 顶栏照旧对齐 1400,窄的只是这一面的内文;
            回收站 / 归档 / 搜索的卡片列表多栏是 tablet-plan 格 5 的事。 */
         .sync { max-width: 720px; }
+        /* 高屏 = 宽屏且高 ≥ 600(tablet-plan「尺寸怎么分」;用户拍 ④A):三座底部层浮在屏中,只管这一件。
+           手机横放(高 360–412)进不来 —— 浮在中间放不下键盘,仍从屏底升起;800 宽竖放平板(800×1280)进得来。
+           这里只翻旗子,浮窗本身在下面「浮窗」那段、挂在 main.ts 打的 `body.tallscreen` 上(理由在那段头注)。 */
+        @media (min-height: 600px) {
+          :root { --tall: 1; }
+          /* 浮窗里打字的地方给足高度(手机上捕获框两行起步是为了少挡屏,平板上没这个顾虑)。⚠ 这两条留在这层条件里、
+             不挂 `body.tallscreen`:键盘一起视口缩到 600 以下时浮窗照旧(见「浮窗」那段),可这两条就得退回手机那档 ——
+             编辑层被 kbsheet 按可见区夹着高,正文框撑着 12em 不缩,「保存」那排会被挤出层外。 */
+          body.tallscreen .compose textarea { min-height: 6em; }
+          body.tallscreen .compose.editsheet textarea { min-height: 12em; }
+        }
       }
 
       /* 导航并进顶栏(tablet-plan 格 3;用户拍 ①A「底栏那几枚并进顶栏中间,屏底只剩 ＋」)。宽屏上 main.ts 把 `#bottombar`
@@ -1637,36 +1650,31 @@
       body.board #filter-stages > :not(.fdue) { display: none; }
       body.board #filter-kinds { order: -1; flex: 0 0 100%; }
 
-      /* 平板(用户面 139,789;用户 9-30 在四张示意图里拍的:任务面并排成列 / 三座底部层改屏中浮窗 / 底栏不动)。
-         ⚠ **过渡态**:宽屏排法的家是上面那段,这一段的判据(宽 ≥ 900 且高 ≥ 600)是 789 的旧判据,
-         只剩 tablet-plan 格 4(浮窗)的那几条,搬走就删(格 2 的看板、格 3 的底栏已搬走)。
-         高 ≥ 600 把手机横放(高 360–430)挡在外面;MatePad Pro 13 竖放 960×1440、横放 1440×960 都进来。 */
-      @media (min-width: 900px) and (min-height: 600px) {
-        /* 记一笔 / 编辑 / 留言:从屏底升起改成屏中浮窗。上下 0 + margin-block:auto + fit-content = 竖向居中,
-           键盘一起视口就缩(原生 ime inset)⇒ 浮窗自己往上让,不用 JS。收起态不能再靠 translateY(110%)
-           滑出屏外(浮窗在屏中),改成淡出 + pointer-events:none;⛔ 别用 visibility:hidden ——
-           捕获层「一步回捕获」靠在收起态 focus 输入框开层,visibility 隐掉的元素 focus 不上。
-           留言层不在 511 那组共用规则里,居中自己补 margin-inline(`.compose` 的横向居中来自那条共用规则,
-           ⛔ 这里别给它写横向 margin,705 的闸拦着)。 */
-        .compose,
-        .cmsheet {
-          top: 0; bottom: 0; height: fit-content; margin-block: auto;
-          max-width: 640px;
-          border: 1px solid var(--line); border-radius: var(--radius-lg);
-          box-shadow: 0 12px 40px rgba(0, 0, 0, 0.22);
-          transform: translateY(16px); opacity: 0; pointer-events: none;
-          transition: transform 0.22s ease, opacity 0.22s ease;
-        }
-        .cmsheet { margin-inline: auto; }
-        /* 浮窗不贴屏底 ⇒ 底边那段手势条安全区不用再让(两层各自的底边距本来都加着它)。 */
-        .compose,
-        .cm-compose { padding-bottom: 12px; }
-        .compose.open,
-        .cmsheet.open { transform: none; opacity: 1; pointer-events: auto; }
-        /* 浮窗里打字的地方给足高度:手机上捕获框两行起步是为了少挡屏,平板上没这个顾虑。 */
-        .compose textarea { min-height: 6em; }
-        .compose.editsheet textarea { min-height: 12em; }
+      /* 浮窗 = 高屏(tablet-plan 格 4;789 立的形,用户 9-30 拍 ④A):记一笔 / 编辑 / 留言三座从屏底升起改成屏中浮窗。
+         判据是「宽屏且高 ≥ 600」,在上面「宽屏」那段里套的那层翻 `--tall`;**挂在 main.ts 打的 `body.tallscreen` 上、
+         不进 `@media`**,因为这里要的是**窗口**高、不是此刻的视口高:键盘一起视口就真缩(原生 ime inset;手机横放实量
+         360 → 147,平板横放没量过、按常见键盘高估约剩四五百),写成 `@media` 的话一打字浮窗就跳成满幅底栏、收键盘又跳回来。main.ts 在「打着字、
+         视口比这个宽度下见过的最高那次矮」时沿用上一次的判断,其余时候照 `--tall` 翻(见那边 `tallscreen` 那段)。
+         上下 0 + margin-block:auto + fit-content = 竖向居中 ⇒ 键盘起着时浮窗在它上面那截里居中,不用 JS。
+         收起态不能再靠 translateY(110%) 滑出屏外(浮窗在屏中),改成淡出 + pointer-events:none;⛔ 别用
+         visibility:hidden —— 捕获层「一步回捕获」靠在收起态 focus 输入框开层,visibility 隐掉的元素 focus 不上。
+         留言层不在 511 那组共用规则里,居中自己补 margin-inline(`.compose` 的横向居中来自那条共用规则,
+         ⛔ 这里别给它写横向 margin,705 的闸拦着)。打字处给足高度那两条住在上面那层条件里(理由在那儿)。 */
+      body.tallscreen .compose,
+      body.tallscreen .cmsheet {
+        top: 0; bottom: 0; height: fit-content; margin-block: auto;
+        max-width: 640px;
+        border: 1px solid var(--line); border-radius: var(--radius-lg);
+        box-shadow: 0 12px 40px rgba(0, 0, 0, 0.22);
+        transform: translateY(16px); opacity: 0; pointer-events: none;
+        transition: transform 0.22s ease, opacity 0.22s ease;
       }
+      body.tallscreen .cmsheet { margin-inline: auto; }
+      /* 浮窗不贴屏底 ⇒ 底边那段手势条安全区不用再让(两层各自的底边距本来都加着它)。 */
+      body.tallscreen .compose,
+      body.tallscreen .cm-compose { padding-bottom: 12px; }
+      body.tallscreen .compose.open,
+      body.tallscreen .cmsheet.open { transform: none; opacity: 1; pointer-events: auto; }
 
       /* 时间轴筛选条(filter.ts 渲染):类型行在上、标签行+文本框在下,两行横向可滑。
          本面无条目时整条 hidden(main.ts)。

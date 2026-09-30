@@ -504,6 +504,9 @@ function measureNoteCols(): number {
  *  ⛔ 别在这儿再写一遍 720(tablet-plan:断点只写在 CSS 一处)。getComputedStyle 答的是此刻的布局 ⇒
  *  转屏、分屏拖宽窄之后再问,拿到的就是新答案。 */
 const isWide = (): boolean => getComputedStyle(document.documentElement).getPropertyValue("--wide").trim() === "1";
+/** 「此刻的视口是不是高屏」(宽屏且高 ≥ 600)—— 同 isWide,读 `--tall`。⛔ 别在这儿写 600。
+ *  ⚠ 答的是**此刻的视口**:键盘起着时它会说「不是」;要窗口高的那个答案看 `body.tallscreen`(下面键盘那段打)。 */
+const isTall = (): boolean => getComputedStyle(document.documentElement).getPropertyValue("--tall").trim() === "1";
 
 // 宽屏看板每排几列(tablet-plan 格 2;用户拍 ③「放不下全部列就均匀折成几排」)。每列不窄于 BOARD_COL_MIN
 // (≈ 手机屏宽:卡片与操作面都是按手机宽做的),放得下几列就几列;放不下全部时**均匀**折 —— 先算要几排、再把列
@@ -2042,6 +2045,10 @@ $("bottombar").addEventListener("click", (e) => {
 // 基准高 = 这个宽度下见过的最高视口(转屏换宽即换基准);缩掉四分之一以上才算键盘在。
 // ⛔ 这不是「猜键盘多高」(kbsheet.ts 头上否掉的那套):只问在不在,几何仍全归原生那半。
 // ⛔ 别改用 `:has(:focus)`:这一端 WebView 跨度大(见 `.trow.has-kids` 那条)。
+// 同一份基准高还管第三件:高屏 `body.tallscreen`(tablet-plan 格 4;index.html「浮窗」那段挂在它上面)。它要的是**窗口**高:
+// 打着字、视口比基准矮(= 让给了键盘)时沿用上一次的判断,其余时候照 CSS 的 `--tall` 翻 —— 否则平板横放一打字,
+// 视口缩到 600 以下,浮窗就跳成满幅底栏、收键盘再跳回来。这里「矮」不打七五折:让出去多少都不该翻。
+// 只在 resize 上问、不在焦点进出时问:那一刻键盘还没起 / 还没落完,视口是半截的,问了就是一次「浮窗 → 底栏 → 浮窗」的闪。
 {
   let baseW = 0;
   let baseH = 0;
@@ -2058,10 +2065,18 @@ $("bottombar").addEventListener("click", (e) => {
     } else if (h > baseH) baseH = h;
     document.documentElement.classList.toggle("kb-up", isTextEntry(focused) && h < baseH * 0.75);
   };
+  const tall = (): void => {
+    if (isTextEntry(document.activeElement) && window.innerHeight < baseH) return;
+    document.body.classList.toggle("tallscreen", isTall());
+  };
   document.addEventListener("focusin", (e) => sync(e.target));
   document.addEventListener("focusout", (e) => sync(e.relatedTarget));
-  window.addEventListener("resize", () => sync(document.activeElement));
+  window.addEventListener("resize", () => {
+    sync(document.activeElement);
+    tall();
+  });
   sync(document.activeElement);
+  tall();
 }
 $("settings-toggle").addEventListener("click", () => openPane("settings"));
 $("settings-diag-btn").addEventListener("click", () => openPane("diag"));

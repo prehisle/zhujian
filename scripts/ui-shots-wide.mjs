@@ -88,17 +88,28 @@ const SIZES = [
   ["phone-412x915", 412, 915],
 ];
 const LIST_TASK = SHOWCASE.zh.tasks.find(([title]) => title.includes("\n"))[0].split("\n")[0];
+// 点开那张带清单的任务(看板列里的操作面、编辑层、留言层都从它进;展示库给它上了两句留言)
+const OPEN_LIST_TASK = `document.querySelector('#bottombar [data-mode="tasks"]').click();
+    const c = [...document.querySelectorAll("#timeline .card")].find((e) => e.innerText.includes(${JSON.stringify(LIST_TASK)}));
+    c.querySelector(".body").dispatchEvent(new MouseEvent("click", { bubbles: true }));`;
+// 从操作面点一枚动作钮(操作面画出来之前等一等)
+const PANEL_ACT = (act) => `(async () => {
+    ${OPEN_LIST_TASK}
+    for (let i = 0; i < 50 && !document.querySelector('#timeline .panel [data-pact="${act}"]'); i++) await new Promise((r) => setTimeout(r, 100));
+    document.querySelector('#timeline .panel [data-pact="${act}"]').click();
+  })()`;
 const FACES = {
   ideas: null,
   tasks: `document.querySelector('#bottombar [data-mode="tasks"]').click()`,
-  // 点开那张带清单的任务:操作面在列里放不放得下,是 tablet-plan 格 2 的判据
+  // 操作面在列里放不放得下,是 tablet-plan 格 2 的判据
   "tasks-panel": `(() => {
-    document.querySelector('#bottombar [data-mode="tasks"]').click();
-    const c = [...document.querySelectorAll("#timeline .card")].find((e) => e.innerText.includes(${JSON.stringify(LIST_TASK)}));
-    c.querySelector(".body").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    ${OPEN_LIST_TASK}
   })()`,
   settings: `document.getElementById("settings-toggle").click()`,
+  // 三座底部层(tablet-plan 格 4:高屏上浮在屏中,矮屏 / 手机上从屏底升起)
   compose: `document.getElementById("capture-fab").click()`,
+  edit: PANEL_ACT("edit"),
+  comments: PANEL_ACT("comment"),
 };
 const READY = {
   ideas: `document.body.dataset.view === "ideas"`,
@@ -106,10 +117,63 @@ const READY = {
   "tasks-panel": `!!document.querySelector("#timeline .panel")`,
   settings: `!document.getElementById("settings-pane").hidden`,
   compose: `document.getElementById("compose-card").classList.contains("open")`,
+  edit: `document.getElementById("edit-sheet").classList.contains("open")`,
+  comments: `document.getElementById("comments-sheet").classList.contains("open") && document.querySelectorAll("#comments-sheet .cm-item").length > 0`,
 };
+// 六个覆盖面(tablet-plan 格 5)。⚠ 排在所有别的图**之后**:回收站那面要先往回收站里放几条(PANE_PREP),放了之后
+// 导航多一枚「回收站」、随记少几张 —— 排在后面,前面那几十张的几何就不受它影响,与没有这六面的旧 manifest 照样逐张可比。
+// 底栏钮(回收站 / 归档)按 pane_counts 显形,与卡片落 DOM 不是同一刻 ⇒ 等它出来再点。
+const PANE_BTN = (pane) => `(async () => {
+    const b = () => document.querySelector('#bottombar [data-pane="${pane}"]');
+    for (let i = 0; i < 50 && b().hidden; i++) await new Promise((r) => setTimeout(r, 100));
+    b().click();
+  })()`;
+const SEARCH_Q = "体检"; // 展示库里随记两条、任务一条命中(786 商店图那一幕同一个词)
+const PANE_FACES = {
+  trash: PANE_BTN("trash"),
+  // 点开一张:回收站的操作面长在卡里(不是 cardpanel),列里放不放得下
+  "trash-panel": `(async () => {
+    await ${PANE_BTN("trash")};
+    for (let i = 0; i < 50 && !document.querySelector("#trash-list .card"); i++) await new Promise((r) => setTimeout(r, 100));
+    document.querySelector("#trash-list .card .body").click();
+  })()`,
+  sealed: PANE_BTN("sealed"),
+  search: `(() => {
+    document.getElementById("search-toggle").click();
+    document.getElementById("search-input").value = ${JSON.stringify(SEARCH_Q)};
+    document.getElementById("search-btn").click();
+  })()`,
+  topics: `document.getElementById("topics-toggle").click()`,
+  sync: `document.getElementById("sync-toggle").click()`,
+  spaces: `document.getElementById("space-chip").click()`, // 截图台建了第二个空间 ⇒ 徽章在、它就是入口
+};
+const PANE_READY = {
+  trash: `!document.getElementById("trash-pane").hidden && document.querySelectorAll("#trash-list .card").length >= 4`,
+  "trash-panel": `!!document.querySelector("#trash-list .panel")`,
+  sealed: `!document.getElementById("sealed-pane").hidden && document.querySelectorAll("#sealed-list .card").length >= 3`,
+  search: `document.querySelectorAll("#search-results .card").length >= 3`,
+  topics: `!document.getElementById("topics-pane").hidden && document.querySelectorAll("#topics-list .trow").length > 0`,
+  sync: `!document.getElementById("sync").hidden`,
+  spaces: `!document.getElementById("spaces").hidden && document.querySelectorAll("#space-list .space-row").length >= 2`,
+};
+Object.assign(FACES, PANE_FACES);
+Object.assign(READY, PANE_READY);
+// 回收站里放的:三条随记 + 一张已完成的任务(灵感 / 任务两种 pill 都有;四张 ⇒ 三栏时是 2 + 1 + 1)
+const TRASH_NOTES = ["给阳台装一个晾衣杆", "周六上午带孩子去图书馆还书", "下周三前把房租转给房东"];
+const TRASH_TASK = "换掉厨房那只坏了的灯泡";
+const PANE_PREP = (spaceId) => `(async () => {
+  const inv = window.__TAURI__.core.invoke, sp = ${JSON.stringify(spaceId)};
+  const ideas = await inv("list_ideas", { spaceId: sp });
+  for (const c of ${JSON.stringify(TRASH_NOTES)}) await inv("archive_note", { spaceId: sp, id: ideas.find((i) => i.content === c).id });
+  const tl = await inv("list_timeline", { spaceId: sp });
+  await inv("archive_task", { spaceId: sp, id: tl.find((i) => i.content === ${JSON.stringify(TRASH_TASK)}).id });
+  return true;
+})()`;
 const SHOTS = [];
-for (const [sname, w, h] of SIZES) for (const f of Object.keys(FACES)) SHOTS.push({ name: `${sname}-${f}`, w, h, face: f, theme: "light" });
+const BASE_FACES = Object.keys(FACES).filter((f) => !(f in PANE_FACES));
+for (const [sname, w, h] of SIZES) for (const f of BASE_FACES) SHOTS.push({ name: `${sname}-${f}`, w, h, face: f, theme: "light" });
 for (const f of ["ideas", "tasks"]) SHOTS.push({ name: `land-1440x960-${f}-dark`, w: 1440, h: 960, face: f, theme: "dark" });
+for (const [sname, w, h] of SIZES) for (const f of Object.keys(PANE_FACES)) SHOTS.push({ name: `${sname}-${f}`, w, h, face: f, theme: "light", pane: true });
 
 // 瀑布流与对齐网格的差别只有长短不一的卡才照得出(展示库那几条差不多长)⇒ 在展示库之后再写这几条。
 // ⛔ 别把它们加进 lib/showcase.mjs:那份还喂官网配图与商店图,改了那两套要整批重拍。
@@ -124,6 +188,7 @@ const EXTRA_NOTES = [
 
 // 每张图旁边记下的几何读数(改前改后逐字段比)。gaps = 同一叠卡里相邻两张的竖向间距(瀑布流不留洞的判据);
 // panelActRows = 点开的操作面里动作钮排成了几行(看板列够不够宽的判据)。
+// compose = 三座底部层里开着的那座(记一笔 / 编辑 / 留言;格 4 前只有记一笔一面,键名没改 ⇒ 新旧 manifest 照样逐字可比)。
 const GEO = `(() => {
   // ⚠ 别拿 offsetParent 判可见:底栏 / ＋ / 记一笔都是 fixed,它们的 offsetParent 恒为 null
   const R = (el) => { if (!el) return null; const b = el.getBoundingClientRect(); if (!b.width && !b.height) return null;
@@ -141,11 +206,16 @@ const GEO = `(() => {
   return {
     view: document.body.dataset.view,
     h1: R(q("body > header h1")), headActs: R(q(".head-acts")), nav: R(q("#bottombar")),
-    fbar: R(q("#filterbar")), tl: R(q("#timeline")), fab: R(q("#capture-fab")), compose: R(q("#compose-card.open")),
+    fbar: R(q("#filterbar")), tl: R(q("#timeline")), fab: R(q("#capture-fab")), compose: R(q("#compose-card.open, #edit-sheet.open, #comments-sheet.open")),
     panes: [...document.querySelectorAll("section.sync")].filter((s) => !s.hidden && s.offsetParent).map((s) => s.id + ":" + JSON.stringify(R(s))),
     groups: document.querySelectorAll("#timeline > .tl-group").length,
     cols: cols.length, cards: document.querySelectorAll("#timeline .card").length, gaps,
     panelActRows: new Set(acts.map((b) => Math.round(b.getBoundingClientRect().top))).size,
+    paneList: (() => {
+      const list = [...document.querySelectorAll("section.sync")].find((x) => !x.hidden && x.offsetParent)?.querySelector(".timeline");
+      if (!list) return undefined;
+      return { box: R(list), cols: list.querySelectorAll(":scope > .tl-cols > .tl-col").length, cards: list.querySelectorAll(".card").length };
+    })(),
   };
 })()`;
 
@@ -237,7 +307,12 @@ try {
   })()`);
 
   mkdirSync(outDir, { recursive: true });
+  let panePrepped = false;
   for (const shot of SHOTS.filter((x) => pick(x.name))) {
+    if (shot.pane && !panePrepped) {
+      await ev(PANE_PREP(spaceId));
+      panePrepped = true;
+    }
     await s.send("Emulation.setDeviceMetricsOverride", { width: shot.w, height: shot.h, deviceScaleFactor: 1, mobile: true });
     await ev(`setTimeout(() => location.reload(), 0), true`);
     await sleep(600);

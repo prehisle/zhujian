@@ -340,6 +340,14 @@ FAB 恰 16px,跑手 scripts/cdp-acceptance-wide-column.mjs)。⛔ 只在安卓�
 改名时两头一起红。桌面不按视口宽换排法(504 起是容器查询),官网没有 JS 要问这件事",
   },
   {
+    name: "--tall",
+    in: ["安卓"],
+    dark: false,
+    why: "「此刻的视口是不是高屏」(宽屏且高 ≥ 600,tablet-plan 格 4:三座底部层浮在屏中)给 JS 的读数,同 --wide 一面旗子,\
+由「宽屏」那段 @media 里套的那层翻,main.ts::isTall 读它、打 body.tallscreen(键盘起着时沿用上一次的判断)。\
+桌面与官网没有底部层",
+  },
+  {
     name: "--sunken",
     in: ["安卓"],
     dark: true,
