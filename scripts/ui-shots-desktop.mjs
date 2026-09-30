@@ -7,7 +7,7 @@
 //
 // 怎么跑(Windows;⛔ 别在 Linux 上跑 —— 见下面的响亮拒):
 //   node scripts/ui-shots-desktop.mjs .zjshots/619/desktop
-//   node scripts/ui-shots-desktop.mjs .zjshots/619/desktop --only zh-dark-board   # 调试单张
+//   node scripts/ui-shots-desktop.mjs .zjshots/619/desktop --only zh-dark-board   # 调试单张(逗号隔开可挑几张)
 //   node scripts/ui-shots-desktop.mjs .zjshots/661/desktop-empty --empty         # 空库 / 空看板那一态(不播种)
 //
 // 它自己起一只**隔离的** app,与用户日常跑的那只并存,三条隔离各有出处:
@@ -21,8 +21,8 @@
 //
 // ⚠ **这批图不是像素级可比的**:截止日期按「今天」现算(要的是「一条逾期 / 一条今天 / 一条将来」
 //   这三种**形**长期稳定),⇒ 日期文字每天都变。判读靠人眼与并排看,别拿它做 pixel diff。
-// ⚠ 演示数据恒中文,en 那半只换 UI 外壳 ⇒ 它照得出 618 那种「英文键把一行推宽」的形,
-//   照不出「英文正文换行」的形。知情的边界,一期不补。
+// ⚠ 演示数据默认中文,en 那半只换 UI 外壳 ⇒ 默认那批照不出「英文正文换行」的形;
+//   要它就加 `--seed-lang en`(780 起;数据在 `lib/showcase.mjs`,官网配图走 `site-shots.mjs`)。
 //
 // ⛔ **产物早于改动这条坑焊在下面的 assertExeIsFresh 里**(memory `verify-artifact-predates-fix`):
 //   exe 比任何前端源文件旧就当场拒,免得截出一批「看着正常的旧界面」还以为验过了。
@@ -36,6 +36,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, wri
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { seedScript } from "./lib/showcase.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "..");
@@ -54,7 +55,7 @@ const argv = process.argv.slice(2);
 const outDir = argv.find((a) => !a.startsWith("--"));
 if (!outDir) {
   console.error(
-    "用法: node scripts/ui-shots-desktop.mjs <产物目录> [--only <子串>] [--port N]\n" +
+    "用法: node scripts/ui-shots-desktop.mjs <产物目录> [--only <子串[,子串…]>] [--seed-lang zh|en] [--scale N] [--port N]\n" +
       "  例: node scripts/ui-shots-desktop.mjs .zjshots/619/desktop",
   );
   process.exit(1);
@@ -252,83 +253,9 @@ const isNotebook = (u) => u.includes("notebook");
 // —— 与 desktop-cdp.mjs 的 `--page capture` 同一条判据(235 实踩)。
 const isCapture = (u) => /\/(index\.html)?(\?.*)?$/.test(u);
 
-// ---- 种子库(演示数据;⛔ 恒是这一份,别拿真实笔记本截基线)--------------------
-// 三条硬要求:①一眼看得出是演示数据(万一图外送也无害,74② 那条「别把自家想法往外传」);
-// ②每个视图都有得看(空态另有其形,二期单列);③截止日期按「今天」现算 ⇒「逾期 / 今天 /
-// 将来」三种形长期稳定,而不是养成一屏全逾期。
-// 两份种子逐条同形(见 --seed-lang 那段)。任务一行 = [标题, 列, 截止(距今天几天 / null), 优先级, 标签下标]。
-const SEED_DATA = {
-  zh: {
-    topics: [["家里", "#c0563f"], ["工作", "#3f7a99"], ["读书", "#7f8b3a"], ["身体", "#a8577e"]],
-    inbox: ["给妈打电话,问体检结果", "阳台那盆绿萝该换土了", "想写一篇关于纸质笔记本的短文"],
-    filed: [["周末把书架第二层整理一遍", 0], ["《长安的荔枝》读完了,想记几句", 2], ["体检报告下周三出,记得去取", 3]],
-    tasks: [
-      ["把书房的旧电脑重装一遍", "todo", -2, 1, 0],
-      ["交季度报表", "todo", 0, null, 1],
-      ["订下个月回老家的票", "todo", 9, null, 0],
-      ["读完《长安的荔枝》最后两章", "todo", null, null, 2],
-      ["出差要带的东西\n- [x] 身份证\n- [x] 充电器\n- [ ] 会议材料打印\n- [ ] 常用药", "doing", 3, null, 1],
-      ["把阳台的花搬到向阳的一侧", "doing", null, null, 0],
-      ["等体检中心回电确认时间", "confirming", null, null, 3],
-      ["换掉厨房那只坏了的灯泡", "done", null, null, 0],
-      ["给同事回邮件", "done", null, null, 1],
-    ],
-  },
-  en: {
-    topics: [["Home", "#c0563f"], ["Work", "#3f7a99"], ["Reading", "#7f8b3a"], ["Health", "#a8577e"]],
-    inbox: ["Call Mum, ask how the check-up went", "The pothos on the balcony needs repotting", "Write a short piece about paper notebooks"],
-    filed: [["Tidy the second bookshelf this weekend", 0], ["Finished The Remains of the Day, want to jot a few lines", 2], ["Check-up results are out next Wednesday, pick them up", 3]],
-    tasks: [
-      ["Reinstall the old computer in the study", "todo", -2, 1, 0],
-      ["Send the quarterly report", "todo", 0, null, 1],
-      ["Book train tickets home for next month", "todo", 9, null, 0],
-      ["Finish the last two chapters of The Remains of the Day", "todo", null, null, 2],
-      ["Packing for the work trip\n- [x] ID card\n- [x] Charger\n- [ ] Print the meeting notes\n- [ ] Everyday meds", "doing", 3, null, 1],
-      ["Move the balcony plants to the sunny side", "doing", null, null, 0],
-      ["Wait for the clinic to call back with a time", "confirming", null, null, 3],
-      ["Replace the broken kitchen bulb", "done", null, null, 0],
-      ["Reply to a colleague's email", "done", null, null, 1],
-    ],
-  },
-};
-
-const SEED = `(async () => {
-  const D = ${JSON.stringify(SEED_DATA[SEED_LANG])};
-  const inv = (c, a) => window.__TAURI__.core.invoke(c, Object.assign({ spaceId: "main" }, a));
-  const day = (n) => {
-    const d = new Date();
-    d.setDate(d.getDate() + n);
-    return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
-  };
-
-  const topicIds = [];
-  for (const [title, color] of D.topics) {
-    const id = await inv("create_topic", { title });
-    topicIds.push(id);
-    await inv("set_topic_color", { id, color });
-  }
-
-  // 随记:三条未归类 + 三条已整理(整理过的挂标签,列表里两段都有得看)
-  for (const c of D.inbox) await inv("capture_note", { content: c });
-  for (const [c, t] of D.filed) {
-    const id = await inv("capture_note", { content: c });
-    await inv("file_note_to_topic", { id, topicId: topicIds[t] });
-  }
-
-  // 任务:四列都有;三条截止各占一种形(逾期 / 今天 / 将来);一条带勾选清单
-  for (const [title, col, due, prio, t] of D.tasks) {
-    // 带清单的那张先按首行建、再改名成整段(与原种子同序:清单行不走 create_task)
-    const id = await inv("create_task", { title: title.split("\\n")[0], dueOn: due === null ? null : day(due), priority: prio, topicId: topicIds[t] });
-    if (col !== "todo") await inv("update_task_status", { id, to: col });
-    if (title.includes("\\n")) await inv("rename_task", { id, title });
-  }
-
-  return {
-    ideas: (await inv("list_inbox")).length + (await inv("list_processed")).length,
-    tasks: (await inv("list_tasks")).length,
-    topics: (await inv("list_topics")).length,
-  };
-})()`;
+// ---- 种子库(演示数据;⛔ 恒是展示库那一份,别拿真实笔记本截基线)----------------
+// 数据与三条硬要求搬进了 `lib/showcase.mjs`(官网改版第 4 格:官网配图、手机配图共用同一份)。
+const SEED = seedScript(SEED_LANG, { spaceId: "main", captureCmd: "capture_note" });
 
 // ---- 一张图 ------------------------------------------------------------------
 // 切档一律走「写 localStorage → reload」,⛔ 不点侧栏按钮:点击那条路要与 notebook 自己的
@@ -559,7 +486,7 @@ try {
     console.log("空库(--empty):不播种,搜索页也不输入查询词");
   } else {
     const seeded = await nb.evaluate(SEED);
-    console.log(`种子库:随记 ${seeded.ideas} 条 · 任务 ${seeded.tasks} 条 · 标签 ${seeded.topics} 个`);
+    console.log(`种子库:随记 ${seeded.notes} 条 · 任务 ${seeded.tasks} 条 · 标签 ${seeded.topics} 个`);
   }
 
   const cap = new Cdp(isCapture);
@@ -567,7 +494,7 @@ try {
     for (const theme of THEMES) {
       for (const page of PAGES) {
         const name = `${lang}-${theme}-${page.id}`;
-        if (only && !name.includes(only)) continue;
+        if (only && !only.split(",").some((o) => name.includes(o))) continue;
         const file = join(OUT, `${name}.png`);
         process.stdout.write(`  ${name} … `);
         if (page.win === "capture") await shootCapture(cap, lang, theme, file);
@@ -598,8 +525,8 @@ if (only) {
       gitHead: head,
       exe: { path: EXE, mtime: new Date(exeInfo.exeMs).toISOString(), sha1: exeInfo.sha1 },
       window: { width: NB_W, height: NB_H },
-      seed: empty ? "empty(--empty:没播种)" : "demo",
-      note: "截止日期按截图当天现算 ⇒ 日期文字每天不同,别拿它做 pixel diff;演示数据恒中文,en 那半只换 UI 外壳",
+      seed: empty ? "empty(--empty:没播种)" : `showcase-${SEED_LANG}`,
+      note: "截止日期按截图当天现算 ⇒ 日期文字每天不同,别拿它做 pixel diff;演示数据语言见 seed,另一种语言那半只换 UI 外壳",
       shots,
     },
     null,

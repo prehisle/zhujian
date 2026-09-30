@@ -501,6 +501,8 @@
       /* 看板:「进行中」「待确认」两列,带小清单的那张卡在正中 */
       .crop.crop-board { aspect-ratio: 3 / 2; }
       .crop-board > img:first-child { width: 200%; transform: translate(-35.5%, -24%); }
+      /* 英文界面的看板顶栏折成两行,列头往下错约 6% 图高 ⇒ 多上移这一截(量法:列头在 1050 高的图里 zh 约 285、en 约 348) */
+      html[lang="en"] .crop-board > img:first-child { transform: translate(-35.5%, -30%); }
       /* 同一份随记在手机上,压在右下角、底边出框 */
       .crop .crop-phone {
         position: absolute;
@@ -1363,7 +1365,7 @@
                  alt="The task board: four columns (To do, In progress, To confirm, Done) with due dates and tags on the cards" data-i18n-alt="flow.card3Alt" />
           </div>
           <div class="stage-phone">
-            <img src="/shots/en/phone-inbox.webp" data-i18n-src="shot.phoneSrc" width="630" height="1254" decoding="async"
+            <img src="/shots/en/phone-inbox.webp" data-i18n-src="shot.phoneSrc" width="630" height="1260" decoding="async"
                  alt="The same notes on a phone: a column of cards, one of them holding a tickable checklist in its body" data-i18n-alt="flow.card2AltPhone" />
           </div>
         </div>
@@ -1390,7 +1392,7 @@
                 <div class="demo-list">
                   <div class="demo-head" data-i18n="flow.demoHead">Notes · Today</div>
                   <div class="demo-card new"><span data-i18n="flow.demoNew">Pick up the health report tomorrow</span><span class="demo-time" data-i18n="flow.demoJust">just now</span></div>
-                  <div class="demo-card"><span data-i18n="flow.demoItem1">Sort out the second shelf this weekend</span><span class="demo-time">17:00</span></div>
+                  <div class="demo-card"><span data-i18n="flow.demoItem1">Tidy the second bookshelf this weekend</span><span class="demo-time">17:00</span></div>
                   <div class="demo-card"><span data-i18n="flow.demoItem2">Call Mum, ask how the check-up went</span><span class="demo-time">16:42</span></div>
                 </div>
                 <div class="slip">
@@ -1413,7 +1415,7 @@
             <button class="shot-zoom crop crop-inbox" type="button" aria-label="Open a larger view" data-i18n-aria-label="shot.zoom">
               <img src="/shots/en/desktop-inbox.webp" data-i18n-src="shot.inboxSrc" width="1890" height="1050" loading="lazy" decoding="async"
                    alt="Notes: today's entries laid out as a timeline, each carrying its tags" data-i18n-alt="flow.card2Alt" />
-              <img class="crop-phone" src="/shots/en/phone-inbox.webp" data-i18n-src="shot.phoneSrc" width="630" height="1254" loading="lazy" decoding="async" alt="" />
+              <img class="crop-phone" src="/shots/en/phone-inbox.webp" data-i18n-src="shot.phoneSrc" width="630" height="1260" loading="lazy" decoding="async" alt="" />
             </button>
           </div>
 

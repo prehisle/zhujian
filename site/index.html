@@ -511,6 +511,8 @@
       /* 看板:「进行中」「待确认」两列,带小清单的那张卡在正中 */
       .crop.crop-board { aspect-ratio: 3 / 2; }
       .crop-board > img:first-child { width: 200%; transform: translate(-35.5%, -24%); }
+      /* 英文界面的看板顶栏折成两行,列头往下错约 6% 图高 ⇒ 多上移这一截(量法:列头在 1050 高的图里 zh 约 285、en 约 348) */
+      html[lang="en"] .crop-board > img:first-child { transform: translate(-35.5%, -30%); }
       /* 同一份随记在手机上,压在右下角、底边出框 */
       .crop .crop-phone {
         position: absolute;
@@ -1373,7 +1375,7 @@
                  alt="任务看板:待办、进行中、待确认、已完成四列,卡片上标着截止日期和标签" data-i18n-alt="flow.card3Alt" />
           </div>
           <div class="stage-phone">
-            <img src="/shots/phone-inbox.webp" data-i18n-src="shot.phoneSrc" width="630" height="1254" decoding="async"
+            <img src="/shots/phone-inbox.webp" data-i18n-src="shot.phoneSrc" width="630" height="1260" decoding="async"
                  alt="同一份随记在手机上:一列卡片,其中一条正文里带着可以打勾的小清单" data-i18n-alt="flow.card2AltPhone" />
           </div>
         </div>
@@ -1423,7 +1425,7 @@
             <button class="shot-zoom crop crop-inbox" type="button" aria-label="点开看大图" data-i18n-aria-label="shot.zoom">
               <img src="/shots/desktop-inbox.webp" data-i18n-src="shot.inboxSrc" width="1890" height="1050" loading="lazy" decoding="async"
                    alt="随记:今天记下的几条排成一条时间轴,各自挂着标签" data-i18n-alt="flow.card2Alt" />
-              <img class="crop-phone" src="/shots/phone-inbox.webp" data-i18n-src="shot.phoneSrc" width="630" height="1254" loading="lazy" decoding="async" alt="" />
+              <img class="crop-phone" src="/shots/phone-inbox.webp" data-i18n-src="shot.phoneSrc" width="630" height="1260" loading="lazy" decoding="async" alt="" />
             </button>
           </div>
 
@@ -1702,7 +1704,7 @@
           "flow.demoHead": { zh: "随记 · 今天", en: "Notes · Today" },
           "flow.demoNew": { zh: "明早顺路取体检报告", en: "Pick up the health report tomorrow" },
           "flow.demoJust": { zh: "刚刚", en: "just now" },
-          "flow.demoItem1": { zh: "周末把书架第二层整理一遍", en: "Sort out the second shelf this weekend" },
+          "flow.demoItem1": { zh: "周末把书架第二层整理一遍", en: "Tidy the second bookshelf this weekend" },
           "flow.demoItem2": { zh: "给妈打电话,问体检结果", en: "Call Mum, ask how the check-up went" },
           "flow.card2Alt": { zh: "随记:今天记下的几条排成一条时间轴,各自挂着标签", en: "Notes: today's entries laid out as a timeline, each carrying its tags" },
           "flow.card2AltPhone": { zh: "同一份随记在手机上:一列卡片,其中一条正文里带着可以打勾的小清单", en: "The same notes on a phone: a column of cards, one of them holding a tickable checklist in its body" },
