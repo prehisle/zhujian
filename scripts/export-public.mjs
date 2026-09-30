@@ -56,6 +56,9 @@ const ALLOW = [
   // 不导出的话公开仓 readme 当场多一条死链(copy-plan §6-2)。它是产品说明,
   // 内容与官网 / 商店稿同源,无内部流程、无服务器信息。
   "docs/user-guide.md",
+  // 同步/加密核心的接手规范(backlog 代码与结构 62):用户拍「直接放」。它是 sync-protocol 的
+  // 「为什么 / 在哪儿」地图,内部文档只点名不链(标「内部文档」),唯一一条链指向 sync-protocol。
+  "docs/sync-core-handbook.md",
   // 670:境外那三份协议页产物(`site-app/`)。651 起安卓包把它们**烤进产物**
   // (`android/vite.config.ts` 的 policyAsset 插件,fail-fast:文件不在就拒建),而 CI 在
   // **公开仓**那棵树上构建 —— 不导出,`android-v0.3.40` 那趟就红在 `site-app/privacy.html` 不在
