@@ -253,6 +253,12 @@ const RUNTIME_VARS = [
       "兜底 0px 时节头会吸到筛选条底下 —— 同 --head-h 那条,运行期没跑就是这个样子",
   },
   {
+    name: "--board-cols",
+    where:
+      "android/src/main.ts::syncBoardCols 按时间轴的宽算出宽屏看板每排几列(tablet-plan 格 2),写在 #timeline 上;" +
+      "只在宽屏的任务面被网格吃。不写兜底:没算过的那一刻(空态那句话没画列)网格退成一列,那句话本来就横跨整排",
+  },
+  {
     name: "--ck-indent",
     where:
       "正文待办清单的嵌套缩进层数(桌面 src/item-images.ts::renderContent 的 setProperty /" +

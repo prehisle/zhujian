@@ -92,6 +92,12 @@
            **整个透明**(MuMu 实测 rgba(0,0,0,0),用户当场看见的就是这个)。 */
         --paper-veil: rgba(243, 238, 227, 0.94); /* = --paper 94% */
         --ink-veil: rgba(34, 31, 25, 0.04); /* = --ink 4% */
+        /* 比纸面低一层的底(tablet-plan 格 2:宽屏看板每列那层淡底)。亮档 = --paper 叠 4% --ink 的实色
+           (与 --seal-tint-solid 同一种算法,四舍五入;790 候选图里用户看的就是这一层)。
+           ⛔ 必须是**不透明实色**:列头吸顶时拿它当底,得盖住从底下滚过的卡 —— 半透明的 --ink-veil 盖不住。
+           暗档刻意不照「叠 4% 墨」算(那会与卡片 --raised 几乎同色、卡浮不起来),往黑里沉同样的明度差,
+           见暗档那一行。 */
+        --sunken: #ebe6db;
         /* 卡片颜色标记(用户面 110):淡底浓度 + 染色卡里三枚文字令牌的补偿值。怎么用、
            为什么是这几个数见 `.card.tinted`;⚠ 四个数是一组,改浓度就得把后三个重算。 */
         --card-tint-a: 0.15;
@@ -144,6 +150,9 @@
            收窄的只有筛选条 / 时间轴 / 各面板 / 捕获层。⛔ 底栏改侧栏那档用户已否(A 档
            范围,backlog 用户面 47),别顺手扩。 */
         --content-max: 960px;
+        /* 「现在是不是宽屏」给 JS 的读数(tablet-plan:断点只写在 CSS 一处,JS 要知道就读 CSS 算出来的结果)。
+           窄 0 / 宽 1,由下面「宽屏」那段 `@media` 翻;main.ts::isWide 读它。⛔ 别在 JS 里再写一遍 720。 */
+        --wide: 0;
       }
       /* 暗色令牌。挂在 <html data-theme="dark"> 上而**不是** @media——明暗有三档
          (自动 / 亮 / 暗),生效色由 src/theme.ts 单点算出后写进这个属性,CSS 里不再
@@ -162,6 +171,9 @@
         --seal-line: rgba(223, 106, 79, 0.45);
         --paper-veil: rgba(27, 24, 19, 0.94); /* = --paper 94% */
         --ink-veil: rgba(236, 228, 213, 0.04); /* = --ink 4% */
+        /* 往黑里沉:与纸面的明度差(CIE L*:纸 8.4 → 5.5,差 2.9)与亮档那一层(94.2 → 91.4,差 2.8)相当;
+           卡片 --raised 比它高约 7(亮档 5.5),浮得起来。列头 --ink-soft 压它 6.74:1。 */
+        --sunken: #14120e;
         --card-tint-a: 0.2;
         --ink-soft-on-tint: #bfb5a3;
         --ink-faint-on-tint: #948c7b;
@@ -1514,33 +1526,82 @@
       /* ⭐ 宽屏(docs/tablet-plan.md;用户 2026-09-30 拍了那四格):视口宽 ≥ 720 = 放得下两张手机宽的卡
          (2 × 340 + 间距 12 + 两边 14)。进来的:平板横竖(含 800 宽竖放)、手机横放、平板对半分屏;
          手机竖放(≤ 430)一像素不变。⛔ 只认窗口宽高,别按设备类型判 —— 分屏、折叠屏、转屏都该跟着窗口走。
-         本段是宽屏排法**唯一的家**;下面 789 那段(宽 ≥ 900 且高 ≥ 600)是过渡态,tablet-plan 格 2–4 各把自己
-         那几条搬进来,搬空就删。⚠ 720 与 main.ts 随记分栏的 NOTE_COL_MIN / NOTE_COL_GAP 是同一组数推出来的,
-         改一处就得改另一处。 */
+         宽屏排法的家 = 本段 + 紧跟着的「看板」那段(挂在 `body.board` 上,为什么不进 `@media` 见那段头注;断点仍只在
+         本段这一处);下面 789 那段(宽 ≥ 900 且高 ≥ 600)是过渡态,tablet-plan 格 3–4 各把自己那几条搬进来,搬空就删。
+         ⚠ 720 与 main.ts 随记分栏的 NOTE_COL_MIN / NOTE_COL_GAP 是同一组数推出来的,改一处就得改另一处。 */
       @media (min-width: 720px) {
         /* 一根框(tablet-plan 格 1):所有面共用 1400 的框,顶栏 / 筛选条 / 悬浮 ＋ 吃的都是这个变量 ⇒ 切面时
            顶栏不再横跳(此前只有任务面放到 1400、其余 960,横放上「朱简」在两面之间差 220px)。
            1440 横放两边各留 20;更窄的屏上框就是整屏。 */
-        :root { --content-max: 1400px; }
+        :root { --content-max: 1400px; --wide: 1; }
         /* 各面(设置 / 同步 / 空间 / 标签 / 搜索 / 回收站 / 归档,都是 `.sync`)在框里收成 720 阅读宽、居中:
            一行字、一个输入框拉到 1400 都读不动。⚠ 框没变窄 —— 顶栏照旧对齐 1400,窄的只是这一面的内文;
            回收站 / 归档 / 搜索的卡片列表多栏是 tablet-plan 格 5 的事。 */
         .sync { max-width: 720px; }
       }
 
+      /* 看板 = 宽屏 ∧ 任务面(tablet-plan 格 2;用户拍 ③「放不下全部列就均匀折成几排」)。宽屏排法的一部分,但**挂在
+         `body.board` 上、不进上面那段 `@media`**:这个类由 main.ts::projectTimeline 投影时挂(读的就是上面那面 `--wide`
+         旗子,断点仍只在那一处),与「画哪几列」同一刻翻 —— 宽屏上全部列都画、空列一枚「空」、列头带计数、状态维不算;
+         窄屏照旧空节不画。挂在类上还有两个好处:①转屏遇上卡片草稿不重画时(main.ts 那只 ResizeObserver),版式与
+         画出来的内容仍是同一套,不会出现「网格里排着窄屏那份节」;②check-contrast 不收 `@media` 里带颜色 / 字号的规则
+         (它按扁平层叠算,条件块会算错),挂在类上它才判得到列头与「空」这两组字。
+         每排几列由 main.ts::syncBoardCols 按时间轴的宽算好写进 --board-cols —— 每列 ≥ 300(≈ 手机屏宽:卡片里的东西
+         都是按手机宽做的),放不下全部列时**均匀**折(四列 = 2 + 2,不是 3 + 1)。1400 的框一排四列(每列 341)、1280
+         四列(304)、竖放 960 / 800 与手机横放 2 + 2。同一排的列等高(grid 默认 stretch)⇒ 列头在本列滚完之前都吸着顶。
+         空态那句话(还没有任务 / 筛空了)不是一列,横跨整排。 */
+      body.board #timeline {
+        display: grid; grid-template-columns: repeat(var(--board-cols), minmax(0, 1fr)); gap: 12px;
+      }
+      body.board #timeline > p { grid-column: 1 / -1; }
+      /* 每列一层淡底(--sunken,不透明实色 —— 列头吸顶时拿它当底)。左右 8 = 卡与列边的呼吸;上 4 = 让列头那块底
+         离开列的圆角(贴着上沿的话,圆角切掉的两个角会被列头的方底补回来,露出两粒小尖)。 */
+      body.board #timeline > .tl-group {
+        background: var(--sunken); border-radius: var(--radius-lg); padding: 4px 8px 8px;
+      }
+      /* 列头 = 状态名 + 计数。字抬到 14:在看板上它是这一列的标题,不再是手机上那行 12px 的节头;也是对比度的
+         要求 —— --ink-soft 压 --sunken 亮档 4.75,够 14px 的 4.5、不够 14px 以下的 5.0(ui-guidelines §2.2)。
+         字色照基础那条写一遍,是为了让 check-contrast 在这个签名上判得到这一对。
+         每一列都是「第一节」,上内边距一样(⚠ 选择器带 #timeline 是为了压过基础那条 `:first-child`,它是 (0,4,0))。 */
+      body.board #timeline .tl-sec {
+        display: flex; align-items: center; gap: 8px;
+        padding: 6px 4px 4px; background: var(--sunken); color: var(--ink-soft); font-size: var(--fs-14);
+      }
+      /* 计数:与桌面 board.css 的 `.col-count` 同形(底换成 --ink-veil —— 桌面那句 color-mix 老引擎不认,mobile.md 643)。
+         数的是列里**画出来的**卡(筛选之后),同桌面口径。 */
+      .tl-count {
+        font-size: var(--fs-12); font-weight: 400; letter-spacing: 0; font-variant-numeric: tabular-nums;
+        color: var(--ink-faint); background: var(--ink-veil); border-radius: var(--radius-pill);
+        min-width: 19px; height: 19px; padding: 0 6px; display: grid; place-items: center;
+      }
+      /* 空列:一枚淡虚框「空」(列常驻 —— 把一列的卡挪光,别的列不跟着变宽)。字走 --ink-soft 不走 faint
+         (634:空态那句话就是这一格的全部说明),14px 的理由同列头;底写成列底同色,理由同列头那句字色。 */
+      .tl-empty {
+        margin: 0; padding: 16px 0; text-align: center;
+        border: 1px dashed var(--line-strong); border-radius: var(--radius-md);
+        background: var(--sunken); color: var(--ink-soft); font-size: var(--fs-14);
+      }
+      /* 列里点开卡片:操作面收掉左缩进,四枚动作钮在 304 宽的列里才一排放得下(1280 横放那档:缩着只剩 216、要 252)。
+         46 = 勾框的 48 − 它自己的 -12 外边距 + 卡片的 gap 10(`.tick` / `.card` 两条规则),改那两处就得改这里。
+         收回来之后操作面盖住勾框下面那截空白触区 —— 圈在第一行,不受影响;点操作面的空隙落在操作面上,不会误勾。 */
+      body.board #timeline .panel { margin-left: -46px; }
+      /* 横滑改状态那条目标印(182)相对 .tl-group 定位、左右各 0:列有 8 的内边距,跟着收进来,别比卡宽出两截。 */
+      body.board #timeline .swipe-track { left: 8px; right: 8px; }
+      /* 看板上收掉「状态」那排(列头就是状态)。⚠ 只收状态钮本身 —— 到期汇总钮住在同一排(#filter-stages 最前那枚),
+         整排藏掉它就一起没了 ⇒ 状态排与主行(.fmain)都拆成透明盒(display:contents),钮直接排进筛选条这一行:
+         到期钮打头,标签 / 摊开钮 / 过滤框跟上。摊开态照旧 —— 标签块 order:1 独占下一行、摊开钮 margin-left:auto
+         留在第一行右端;类型行(有才画)order:-1 提到最上、独占一行。列间距 10 = .fmain 自己的 gap。 */
+      body.board #filterbar { flex-flow: row wrap; align-items: center; column-gap: 10px; }
+      body.board #filter-stages,
+      body.board #filterbar .fmain { display: contents; }
+      body.board #filter-stages > :not(.fdue) { display: none; }
+      body.board #filter-kinds { order: -1; flex: 0 0 100%; }
+
       /* 平板(用户面 139,789;用户 9-30 在四张示意图里拍的:任务面并排成列 / 三座底部层改屏中浮窗 / 底栏不动)。
          ⚠ **过渡态**:宽屏排法的家是上面那段,这一段的判据(宽 ≥ 900 且高 ≥ 600)是 789 的旧判据,
-         tablet-plan 格 2(看板)/ 格 3(导航)/ 格 4(浮窗)各把自己那几条搬走,搬空就删。
-         高 ≥ 600 把手机横放(高 360–430)挡在外面;MatePad Pro 13 竖放 960×1440、横放 1440×960 都进来。
-         `data-view` 由 main.ts::projectTimeline 投影时写到 body 上(随记 ideas / 任务 tasks)。 */
+         tablet-plan 格 3(导航)/ 格 4(浮窗)各把自己那几条搬走,搬空就删(格 2 的看板已搬走)。
+         高 ≥ 600 把手机横放(高 360–430)挡在外面;MatePad Pro 13 竖放 960×1440、横放 1440×960 都进来。 */
       @media (min-width: 900px) and (min-height: 600px) {
-        /* 任务面 = 看板:按列的节并排,等高(align stretch)⇒ 每列的节头在最长那列滚完前都吸着顶。
-           框是上面那段给的 1400:960 分四列每列只剩 228,点开卡片那块操作面会挤成一钮一行;
-           1400 分四列 ≈ 手机单列的宽。竖放(960)时这个上限摸不到,照旧铺满。 */
-        body[data-view="tasks"] #timeline { flex-direction: row; align-items: stretch; gap: 12px; }
-        body[data-view="tasks"] #timeline > .tl-group { flex: 1 1 0; min-width: 0; }
-        /* 并排之后每列都是「第一节」:手机上只有真·第一节去掉顶部留白,这里四列一样高才对得齐。 */
-        body[data-view="tasks"] .timeline .tl-sec { padding-top: 0; }
         /* 记一笔 / 编辑 / 留言:从屏底升起改成屏中浮窗。上下 0 + margin-block:auto + fit-content = 竖向居中,
            键盘一起视口就缩(原生 ime inset)⇒ 浮窗自己往上让,不用 JS。收起态不能再靠 translateY(110%)
            滑出屏外(浮窗在屏中),改成淡出 + pointer-events:none;⛔ 别用 visibility:hidden ——

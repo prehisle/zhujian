@@ -44,6 +44,8 @@ export const main = defineMessages({
   "main.stageAxis": { zh: "状态", en: "Stage" },
   "main.stageAll": { zh: "全部", en: "All" },
   "main.noneUnderStage": { zh: "「{stage}」下没有任务。", en: "No tasks under “{stage}”." },
+  // 宽屏看板上空着的那一列(tablet-plan 格 2):列常驻,里面一枚淡虚框。
+  "main.boardEmpty": { zh: "空", en: "Empty" },
   // 到期汇总钮那一句(用户面 60-D):与桌面 board.dueSoonToday / board.dueSoonLate **逐字
   // 同形** —— 两端与每日提醒说的是同一件事,措辞不该因端而异(键名照本文件的 main.* 前缀,
   // 两份字典键空间独立)。筛空那句则随本文件既有空态的句读(带句号)。

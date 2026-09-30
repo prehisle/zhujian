@@ -21,6 +21,9 @@
 //  ③ 每张都从重载起(随记面、没有开着的层)。⛔ 别对**当前面**再点一次底栏 —— 那是「一步回捕获」,会开记一笔
 //     (本工装的草稿就栽在这:一整批图上都盖着记一笔)。
 //  ④ 数据的日期全是「今天」(造不出别的日子)⇒ 随记只有一个天分组;截止日期按今天现算,文字每天变,几何不变。
+//  ⑤ 设置面底部「关于」里有构建身份戳:工作树有未提交改动时那一行多一句「含未提交改动」、折成两行 ⇒ 设置面高 +20。
+//     ⇒ 改前 / 改后两趟要在**同一种脏净状态**下跑(改前在干净树上跑的,改后就提交之后再跑),否则 phone-*-settings
+//     两张会报「不同」而与本轮改动无关(tablet-plan 格 2 实撞:改前干净、改后带着改动,差的正是这一行)。
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";

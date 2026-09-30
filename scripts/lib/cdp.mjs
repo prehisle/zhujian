@@ -13,6 +13,9 @@
 //   (那条走 `node scripts/android-cdp.mjs forward` —— 找 socket 那段焊着 490 那条
 //   「别拿第一条 webview_devtools socket 当答案」的判例,别在这儿抄第二份)。
 // · 每条命令有超时,超时**响亮抛**,⛔ 不返回 undefined 让调用方去猜(设计铁律:绝不回退兜底)。
+// · ⚠ 要在每次页面加载时注入东西(`Page.addScriptToEvaluateOnNewDocument`,阴性对照的 CSS 刀常用),**先发一条
+//   `Page.enable`** —— WebView2 上不先 enable,它照样回一个 identifier、却什么都不注入(tablet-plan 格 2 实撞:
+//   四把刀全绿,像是资产太松)。本层不替你发:开不开 Page 域是调用方的事。
 // · node ≥ 22:全局 `WebSocket` 与 `fetch`。
 
 /** 问 `/json` 要一条 page target。挑不出来就响亮说,⛔ 别退回「那就用第一条吧」。 */

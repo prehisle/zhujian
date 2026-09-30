@@ -500,6 +500,31 @@ function measureNoteCols(): number {
   return Math.max(1, Math.min(NOTE_COLS_MAX, Math.floor((w + NOTE_COL_GAP) / (NOTE_COL_MIN + NOTE_COL_GAP))));
 }
 
+/** 「现在是不是宽屏」—— 读 CSS 算出来的结果(index.html `:root` 的 `--wide`,由「宽屏」那段 `@media` 翻)。
+ *  ⛔ 别在这儿再写一遍 720(tablet-plan:断点只写在 CSS 一处)。getComputedStyle 答的是此刻的布局 ⇒
+ *  转屏、分屏拖宽窄之后再问,拿到的就是新答案。 */
+const isWide = (): boolean => getComputedStyle(document.documentElement).getPropertyValue("--wide").trim() === "1";
+
+// 宽屏看板每排几列(tablet-plan 格 2;用户拍 ③「放不下全部列就均匀折成几排」)。每列不窄于 BOARD_COL_MIN
+// (≈ 手机屏宽:卡片与操作面都是按手机宽做的),放得下几列就几列;放不下全部时**均匀**折 —— 先算要几排、再把列
+// 平分进去(四列两排 = 2 + 2,不是 3 + 1;五列 = 3 + 2)。结果写进 `--board-cols`,网格本身在 index.html。
+// ⚠ BOARD_COL_GAP 与看板网格的 gap 12 是同一个数,改一处就得改另一处。
+const BOARD_COL_MIN = 300;
+const BOARD_COL_GAP = 12;
+/** 屏上现在是不是看板(= 任务面 ∧ 宽屏)= body 上那枚 `board` 类(index.html「看板」那段全挂在它上面)。
+ *  只由 projectTimeline 投影时写;时间轴的 ResizeObserver 拿它比「宽窄翻了没有」。 */
+const boardShown = (): boolean => document.body.classList.contains("board");
+function syncBoardCols(): void {
+  const box = $("timeline");
+  const w = box.clientWidth;
+  const n = box.querySelectorAll(":scope > .tl-group").length;
+  // 面板开着时时间轴 0 宽、空态那句话没画列:都沿用上一次(关面那一下 ResizeObserver 会再算)
+  if (w === 0 || n === 0) return;
+  const fit = Math.max(1, Math.floor((w + BOARD_COL_GAP) / (BOARD_COL_MIN + BOARD_COL_GAP)));
+  const rows = Math.ceil(n / fit);
+  box.style.setProperty("--board-cols", String(Math.ceil(n / rows)));
+}
+
 // 随记时间轴:同一天的卡归到一个日期节头下(用户面 86)。
 // ⚠ **假定 items 已按 created_at 倒序**(后端保证,与平铺那版吃的是同一个序)⇒ 顺着扫、
 //   `dayKey` 一变就起新段:不重排、不建索引,卡与卡之间的先后逐条与从前相同。
@@ -833,9 +858,12 @@ function emptyModeHtml(none: string, hint: string): string {
 
 function projectTimeline(): void {
   const box = $("timeline");
-  // 平板那段 `@media`(index.html)按面分排法(任务面并排成列;随记面的分栏在 renderDayGroups,不靠它)。
+  // index.html 按面分排法(随记面的分栏在 renderDayGroups,不靠它)。
   // ⭐ 只在这里写 —— 投影是「屏上现在是哪一面」唯一落地的地方。
   document.body.dataset.view = viewMode;
+  // 看板 = 任务面 ∧ 宽屏(tablet-plan 格 2);index.html「看板」那段全挂在这枚类上,理由同上、也只在这里写。
+  const board = viewMode === "tasks" && isWide();
+  document.body.classList.toggle("board", board);
   disconnectThumbObserver();
   const items = [...lastItems.values()];
   const modeItems = items.filter((i) => modeOfStage(i.stage) === viewMode);
@@ -858,11 +886,16 @@ function projectTimeline(): void {
         ? emptyModeHtml(t("main.emptyIdeas"), t("main.emptyIdeasHint"))
         : filteredEmptyHtml(f);
   } else {
+    // 宽屏上任务面是看板(tablet-plan 格 2):**全部列都画**(空列一枚「空」,把一列的卡挪光、别的列不跟着变宽)、
+    // 列头带计数;「状态」那排收掉(列头就是状态,index.html)⇒ 状态维在看板上当「全部」—— 否则分屏拖窄时选过的
+    // 状态,拖宽后成了一条看不见的筛选,看板只剩一列有卡。⚠ 只是**不应用**,不清:拖回窄屏,那排重新露出来时
+    // 选中的那枚照旧亮着、照旧生效。窄屏(手机竖放)一个字不变:空节不画、状态那排在、节头不带计数。
+    const stageF = board ? null : taskStageFilter;
     // 本面专属的两维(状态 / 到期)最后应用,在共享三维之后:空态的话语权也按同序——
     // 词/标签/类型筛空的提示优先(shown 已空),三维有结果、被状态维筛空才说「该状态下
     // 没有任务」,两者都有结果、只被到期维筛空才说「到期的任务不在当前筛选里」。
     const today = localToday();
-    const stageShown = taskStageFilter === null ? shown : shown.filter((t) => t.stage === taskStageFilter);
+    const stageShown = stageF === null ? shown : shown.filter((t) => t.stage === stageF);
     const dueShown = dueOnly
       ? stageShown.filter((t) => {
           const st = dueAttentionState(t, today);
@@ -878,22 +911,26 @@ function projectTimeline(): void {
       if (!dueOnly) return rows;
       return rows.sort((a, b) => ((a.due_on ?? "") < (b.due_on ?? "") ? -1 : (a.due_on ?? "") > (b.due_on ?? "") ? 1 : 0));
     };
+    // ⚠ 任务卡必须是 `.tl-group` 的**直接子元素**:横滑改状态靠 `card.parentElement` 认它那一节(swipe.ts),
+    // 列头与「空」都和卡并排挂在节里,别往中间再套一层盒。列名走 esc():改过名的列是同步来的自由文本。
+    const section = (s: { stage: string; label: string }): string => {
+      const rows = inSection(s.stage);
+      const count = board ? `<span class="tl-count">${rows.length}</span>` : "";
+      const cards =
+        board && rows.length === 0 ? `<p class="tl-empty">${t("main.boardEmpty")}</p>` : rows.map((it) => renderCard(it, hideTopic)).join("");
+      return `<section class="tl-group"><h3 class="tl-sec">${esc(s.label)}${count}</h3>${cards}</section>`;
+    };
     box.innerHTML = dueShown.length
-      ? taskSections().filter((s) => dueShown.some((t) => t.stage === s.stage))
-          .map(
-            (s) =>
-              `<section class="tl-group"><h3 class="tl-sec">${s.label}</h3>${inSection(s.stage)
-                .map((t) => renderCard(t, hideTopic))
-                .join("")}</section>`,
-          )
-          .join("")
+      ? (board ? taskSections() : taskSections().filter((s) => dueShown.some((t) => t.stage === s.stage))).map(section).join("")
       : modeItems.length === 0
         ? emptyModeHtml(t("main.emptyTasks"), t("main.emptyTasksHint"))
-        : shown.length > 0 && taskStageFilter !== null && stageShown.length === 0
-          ? `<p class="muted empty">${t("main.noneUnderStage", { stage: stageLabel(taskStageFilter)! })}</p>`
+        : shown.length > 0 && stageF !== null && stageShown.length === 0
+          ? `<p class="muted empty">${t("main.noneUnderStage", { stage: stageLabel(stageF)! })}</p>`
           : stageShown.length > 0 && dueOnly
             ? `<p class="muted empty">${t("main.noneDue")}</p>`
             : filteredEmptyHtml(f);
+    // 每排几列要在量折叠(settleFolds)**之前**定下来:列宽决定正文折几行。
+    if (board) syncBoardCols();
   }
   hydrateThumbs(box);
   settleFolds(box); // ⚠ 必须在 restore **之前**:编辑态那张卡的正文被盖着,量出来两个高都是 0
@@ -942,6 +979,14 @@ new ResizeObserver(() => {
   if (viewMode !== "ideas" || !lastRefreshOk || measureNoteCols() === noteCols) return;
   if (cardPanel.hasDirtyDraft()) return;
   projectTimeline();
+}).observe($("timeline"));
+// 看板同理(tablet-plan 格 2):宽窄翻了 = 排法换了(画不画空列与计数、状态维算不算)⇒ 重投影;没翻 = 只是每排
+// 几列可能变了,改 `--board-cols` 就够,不重画。⛔ 有卡片草稿时不重投影(同上);每排几列照改 —— 它只动排法,拆不掉草稿;
+// 下一次投影照当时的宽窄画。不自激:重投影与改列数只改高,宽窄与每排几列只看宽。
+new ResizeObserver(() => {
+  if (viewMode !== "tasks" || !lastRefreshOk) return;
+  if (isWide() !== boardShown() && !cardPanel.hasDirtyDraft()) projectTimeline();
+  else if (boardShown()) syncBoardCols();
 }).observe($("timeline"));
 
 // ---- 标签行摊开 / 收起(用户面 36)---------------------------------------------
