@@ -137,7 +137,8 @@
         /* 悬浮层给底栏让出的高度(眼估余量;底栏实高约 57px+安全区)。此前 body 底
            padding / 更新条 / 确认条三处各写死一份 64px、上次底栏改高就人工追改过一轮
            ——与桌面 --winctl-dead 同族:跨处派生约束收成令牌(344 的形)。FAB 用的
-           是 ResizeObserver 实测的 --nav-h(main.ts),两套的合并待拍板、别顺手改。 */
+           是 ResizeObserver 实测的 --nav-h(main.ts),两套的合并待拍板、别顺手改。
+           宽屏上底栏搬进了顶栏、屏底没有栏 ⇒ 这两枚在 `body.widescreen` 上改写(「导航并进顶栏」那段)。 */
         --nav-clear: 64px;
         /* 511:宽屏(平板 / 横屏)上内容列的上限宽。775 从 640 提到 960(用户在 MatePad 模拟器上看:
            竖放 960 宽时 640 那根列两边空一大片,「还不如直接用手机版本」)。tablet-plan 格 1 起宽屏(≥ 720)
@@ -287,9 +288,11 @@
          的边界间隙 **0.00**,那正是「叠了」的签名:重叠区归后画的那枚,边界成了一条缝)。
          ⇒ 同轮给 `.row button` 补了 `min-height:44px`(见那条规则),四档实高恒 44、
          halo 恒在自己盒内、相邻间隙恒 **9.72** —— 换形前那八九个像素的互叠也一起没了。
-         ⛔ 横向仍不扩,理由同标签面那族(单字钮互叠比触区偏小更坏,§2.3)。 */
-      .ghost, .space-row .act, .update .go { position: relative; }
-      .ghost::before, .update .go::before, .space-row .act::before {
+         ⛔ 横向仍不扩,理由同标签面那族(单字钮互叠比触区偏小更坏,§2.3)。
+         宽屏上搬进顶栏的导航钮(tablet-plan 格 3)也归这一族:在屏底时它靠 `min-height: 44px` 自己长够,
+         搬进顶栏就不能再长 —— 顶栏跟着长高,手机横放那 360 的高就又少一截。 */
+      .ghost, .space-row .act, .update .go, body.widescreen #bottombar button { position: relative; }
+      .ghost::before, .update .go::before, .space-row .act::before, body.widescreen #bottombar button::before {
         content: ""; position: absolute; left: 0; right: 0;
         top: 50%; height: 44px; transform: translateY(-50%);
       }
@@ -1484,7 +1487,8 @@
       }
 
       /* 底部固定工具行(120,codex L11:低频入口须始终可达,不埋在长列表末尾)。
-         z 低于大图查看层(15)/封锁页(20);body.scanning 挖空规则天然盖住它。 */
+         z 低于大图查看层(15)/封锁页(20);body.scanning 挖空规则天然盖住它。
+         宽屏上这同一枚元素被搬进顶栏(tablet-plan 格 3,main.ts 搬、「导航并进顶栏」那段排),下面这几条只管它在屏底时。 */
       #bottombar {
         position: fixed; left: 0; right: 0; bottom: 0; z-index: 5;
         display: flex; justify-content: space-around; align-items: center;
@@ -1501,8 +1505,9 @@
         min-height: 44px; /* 触区达标(ui-audit P1 #10):主导航给足 44px 实高 */
       }
       #bottombar button.active { color: var(--seal-ink); font-weight: 600; }
-      /* 键盘起着且焦点在输入框里:让位(`kb-up` 的由头与判据在 `main.ts` 底栏点击那段下面)。 */
-      html.kb-up #bottombar { visibility: hidden; }
+      /* 键盘起着且焦点在输入框里:让位(`kb-up` 的由头与判据在 `main.ts` 底栏点击那段下面)。
+         只让屏底那一形:搬进顶栏以后它压不着任何输入框,藏了反倒是顶栏中间在打字时凭空空掉一块。 */
+      html.kb-up body:not(.widescreen) #bottombar { visibility: hidden; }
       /* ⭐ 底栏四枚里前两枚是**主视图**(data-mode,同一条时间轴按 stage 投影)、后两枚是
          **覆盖面**(data-pane,开了会把 compose / 筛选条 / 时间轴一起收起)—— 两类目的地
          一种语汇,正是 §3.9 那句「附属子视图不是主视图的一个切面、是另一堆内容」。
@@ -1511,7 +1516,9 @@
          层」),且底栏是拇指区、而回收站是「找回误删」的入口;⛔ 也别靠**压淡**后两枚来分:
          §2.1 里 faint 那一档只给纯装饰,能点的东西不许劈两档(634 判例)。⇒ 只加一条分隔。
          ⚠ 它随后两枚一起显隐(`main.ts::renderBottomBar`):两面都空时底栏只有两枚,
-         那时留一条孤零零的竖线比没有更糟。 */
+         那时留一条孤零零的竖线比没有更糟。
+         ⚠ 宽屏上整条导航(连同它俩、连同这条分隔)一起搬进顶栏(tablet-plan ①A,用户 9-30 拍)—— 搬的是整组,
+         不是把它俩单独挪走,上面那条「别挪走它俩」不受影响;手机竖放它们仍在屏底拇指区。 */
       #bottombar .navsep {
         flex: none; width: 1px; height: 20px; background: var(--line-strong);
       }
@@ -1526,8 +1533,9 @@
       /* ⭐ 宽屏(docs/tablet-plan.md;用户 2026-09-30 拍了那四格):视口宽 ≥ 720 = 放得下两张手机宽的卡
          (2 × 340 + 间距 12 + 两边 14)。进来的:平板横竖(含 800 宽竖放)、手机横放、平板对半分屏;
          手机竖放(≤ 430)一像素不变。⛔ 只认窗口宽高,别按设备类型判 —— 分屏、折叠屏、转屏都该跟着窗口走。
-         宽屏排法的家 = 本段 + 紧跟着的「看板」那段(挂在 `body.board` 上,为什么不进 `@media` 见那段头注;断点仍只在
-         本段这一处);下面 789 那段(宽 ≥ 900 且高 ≥ 600)是过渡态,tablet-plan 格 3–4 各把自己那几条搬进来,搬空就删。
+         宽屏排法的家 = 本段 + 紧跟着的「导航并进顶栏」「看板」两段(挂在 JS 打的 `body.widescreen` / `body.board` 上,为什么不进
+         `@media` 见那两段头注;断点仍只在本段这一处);下面 789 那段(宽 ≥ 900 且高 ≥ 600)是过渡态,只剩 tablet-plan 格 4
+         的浮窗那几条,搬空就删。
          ⚠ 720 与 main.ts 随记分栏的 NOTE_COL_MIN / NOTE_COL_GAP 是同一组数推出来的,改一处就得改另一处。 */
       @media (min-width: 720px) {
         /* 一根框(tablet-plan 格 1):所有面共用 1400 的框,顶栏 / 筛选条 / 悬浮 ＋ 吃的都是这个变量 ⇒ 切面时
@@ -1539,6 +1547,38 @@
            回收站 / 归档 / 搜索的卡片列表多栏是 tablet-plan 格 5 的事。 */
         .sync { max-width: 720px; }
       }
+
+      /* 导航并进顶栏(tablet-plan 格 3;用户拍 ①A「底栏那几枚并进顶栏中间,屏底只剩 ＋」)。宽屏上 main.ts 把 `#bottombar`
+         **这同一枚元素**搬进顶栏(「朱简」与右边四枚之间),窄屏搬回原位 —— 同一套监听、同一个高亮,不另画一份;搬的同时在
+         body 上挂 `widescreen`(读的是上面那面 `--wide` 旗子,断点仍只在那一处),下面全挂在它上面。⛔ 别缩成 `wide`:
+         过滤框「动笔才张开」早就挂着一枚 `.wide`(`.ftext.wide`)—— 两个不相干的语义共用一个裸类名,正是 `p.empty` 那条头注里的病根。
+         ⛔ 别改成「fixed 叠在顶栏上居中」:720 宽、英文、回收站有东西(导航五枚)时中间那组压到右边四枚上(790 候选实拍);
+         ⛔ 也别反过来「HTML 里就放进顶栏、手机上再 fixed 到屏底」:顶栏带 backdrop-filter,里头 fixed 的子元素相对顶栏定位。
+         挂在类上、不进 `@media`:两条字号(导航 15、右边四枚 14 —— 平板上不再是手机尺寸的字)进 `@media` 会被
+         check-contrast 拒,理由同「看板」那段的 ②。
+         顶栏排成三栏网格 `1fr auto 1fr`:两边放得下时导航正好在屏幕正中;哪边放不下,那一栏按自己的内容撑开、导航往另一边让,
+         三块永远不叠(「朱简」那栏 min-width:0,空间徽章照手机上那条规则缩成省略号)。
+         导航钮不再 `min-height: 44px` —— 顶栏会跟着长高,手机横放那 360 的高又少一截;触区归 `.ghost::before` 那一族 halo。
+         ⚠ 两组钮都得 `nowrap`:网格按「最小内容宽」给边栏兜底,而「● 同步」在圆点后、中文在任意两字之间都能折 ⇒ 英文 720 宽
+         回收站有东西时右边那栏被挤到最小,Sync 折到第二行、顶栏撑到 65(格 3 当轮实撞;窄屏的 flex 顶栏里它 `flex:none`,不折)。 */
+      body.widescreen > header { display: grid; grid-template-columns: 1fr auto 1fr; column-gap: 24px; }
+      body.widescreen .head-acts { justify-self: end; white-space: nowrap; }
+      body.widescreen .head-acts .ghost { font-size: var(--fs-14); }
+      body.widescreen #bottombar {
+        position: static; justify-content: center; gap: 4px; white-space: nowrap;
+        padding: 0; background: none; backdrop-filter: none; border-top: 0;
+      }
+      body.widescreen #bottombar button { min-height: 0; padding: 4px 12px; font-size: var(--fs-15); }
+      /* 当前那一面底下一道朱砂短线:在顶栏里它与右边四枚同是一排词,光靠字色分不出「这是在哪一面」与「点了开个面板」。 */
+      body.widescreen #bottombar button.active::after {
+        content: ""; position: absolute; left: 12px; right: 12px; bottom: 0;
+        height: 2px; border-radius: var(--radius-pill); background: var(--seal);
+      }
+      body.widescreen #bottombar .navsep { height: 16px; margin: 0 8px; }
+      /* 屏底没有栏了:悬浮 ＋、更新条、确认条、页面底边一律只离屏底 16(+ 手势条那段安全区)。改写的是那两枚令牌本身
+         (`:root` 里那两条的头注),吃它们的五处一个字不用动。根上仍挂着 main.ts 量的那份 `--nav-h`(导航此刻在顶栏里的高),
+         body 这一层盖住它 —— 自定义属性就近继承。 */
+      body.widescreen { --nav-h: env(safe-area-inset-bottom, 0px); --nav-clear: 16px; }
 
       /* 看板 = 宽屏 ∧ 任务面(tablet-plan 格 2;用户拍 ③「放不下全部列就均匀折成几排」)。宽屏排法的一部分,但**挂在
          `body.board` 上、不进上面那段 `@media`**:这个类由 main.ts::projectTimeline 投影时挂(读的就是上面那面 `--wide`
@@ -1599,7 +1639,7 @@
 
       /* 平板(用户面 139,789;用户 9-30 在四张示意图里拍的:任务面并排成列 / 三座底部层改屏中浮窗 / 底栏不动)。
          ⚠ **过渡态**:宽屏排法的家是上面那段,这一段的判据(宽 ≥ 900 且高 ≥ 600)是 789 的旧判据,
-         tablet-plan 格 3(导航)/ 格 4(浮窗)各把自己那几条搬走,搬空就删(格 2 的看板已搬走)。
+         只剩 tablet-plan 格 4(浮窗)的那几条,搬走就删(格 2 的看板、格 3 的底栏已搬走)。
          高 ≥ 600 把手机横放(高 360–430)挡在外面;MatePad Pro 13 竖放 960×1440、横放 1440×960 都进来。 */
       @media (min-width: 900px) and (min-height: 600px) {
         /* 记一笔 / 编辑 / 留言:从屏底升起改成屏中浮窗。上下 0 + margin-block:auto + fit-content = 竖向居中,
@@ -1626,8 +1666,6 @@
         /* 浮窗里打字的地方给足高度:手机上捕获框两行起步是为了少挡屏,平板上没这个顾虑。 */
         .compose textarea { min-height: 6em; }
         .compose.editsheet textarea { min-height: 12em; }
-        /* 底栏钮在满幅条里别散开:居中成组(导航本身不动,用户面 47 否过改侧栏)。 */
-        #bottombar { justify-content: center; gap: 40px; }
       }
 
       /* 时间轴筛选条(filter.ts 渲染):类型行在上、标签行+文本框在下,两行横向可滑。

@@ -1556,7 +1556,8 @@ $("save").addEventListener("click", save);
   // 562:「＋ 待办」尤其不能失焦——失了焦 execCommand 就落不到输入框身上。
   $("compose-todo").addEventListener("mousedown", (e) => e.preventDefault());
 
-  // FAB 竖直位置吃底栏实高(含安全区);底栏极少变,稳妥观察。
+  // FAB 竖直位置吃底栏实高(含安全区);底栏极少变,稳妥观察。宽屏上底栏搬进了顶栏,这里量到的是它在顶栏里的高,
+  // 没人吃 —— `body.widescreen` 那一层把 `--nav-h` 改写成「屏底只有安全区」盖在上面(index.html「导航并进顶栏」)。
   function setNavH(): void {
     root.style.setProperty("--nav-h", `${nav.offsetHeight}px`);
   }
@@ -2006,6 +2007,28 @@ $("bottombar").addEventListener("click", (e) => {
   if (btn.dataset.pane) openPane(btn.dataset.pane);
   else if (btn.dataset.mode) onModeButton(btn.dataset.mode as ViewMode);
 });
+// 宽屏上导航并进顶栏(tablet-plan 格 3;用户拍 ①A):**把底栏这同一枚元素搬进顶栏**(「朱简」与右边四枚之间),窄屏搬回原位。
+// 同一枚 ⇒ 上面那只点击委托、renderBottomBar 的高亮与显形、各台架按 `#bottombar [data-mode=…]` 找钮,一处都不用跟着改。
+// 搬的同时在 body 上挂 `widescreen`,index.html「导航并进顶栏」那段全挂在它上面(为什么不进 `@media`、为什么不叫 `wide`,见那段头注)。
+// ⚠ 什么时候再问一次宽窄:挂在 window 的 resize 上 —— 面板开着也触发。⛔ 别照抄看板那只盯时间轴的 ResizeObserver:
+//   面板开着时时间轴 0 宽、转屏根本不触发,而导航在设置面里转屏也得跟着搬;`body.board` 也只在投影时打、只管任务面。
+{
+  const nav = $("bottombar");
+  const head = document.querySelector("body > header")!;
+  const acts = head.querySelector(".head-acts")!;
+  // 搬回来的锚:不靠「它原来挨着谁」。标签串写 ASCII —— 注释节点不上屏,但 check-i18n-drift 分不出,中文串会被当成写死的可见文案
+  const home = document.createComment("bottombar-home");
+  nav.before(home);
+  const place = (): void => {
+    const wide = isWide();
+    if (wide === document.body.classList.contains("widescreen")) return;
+    document.body.classList.toggle("widescreen", wide);
+    if (wide) head.insertBefore(nav, acts);
+    else home.after(nav);
+  };
+  window.addEventListener("resize", place);
+  place();
+}
 // 键盘起着(焦点在文字输入里 + 视口真缩了)⇒ 根上挂 `kb-up`,两件事吃它(用户面 117,鸿蒙真机量出来的):
 //  ①底栏让位:键盘一起视口就真缩(837 → 523),`bottom:0` 的底栏跟着浮到键盘上沿,压住面板里贴着
 //    它的输入框(设置页「本机别名」压掉 9.6px);而输入框仍算「在视口里」,浏览器不滚 ⇒ 只能让底栏走开。
