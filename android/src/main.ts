@@ -484,23 +484,54 @@ function resettleFolds(): void {
   bodies.forEach((p, i) => (p.style.maxHeight = `${caps[i]}px`));
 }
 
+// 随记在宽屏上分栏(docs/tablet-plan.md 格 1;用户 2026-09-30 拍「瀑布流 · 横三竖二」)。
+// 栏数按**时间轴自己的宽**算:每栏不窄于 NOTE_COL_MIN、最多 NOTE_COLS_MAX 栏 ⇒ 1400 的框三栏、
+// 960 / 800 两栏、手机竖放(≤ 430)恒 1 栏 —— 1 栏时画出来的标记与分栏之前逐字相同。
+// ⚠ 与 CSS 是同一组数:`.tl-cols` 的 gap = NOTE_COL_GAP;宽屏断点 720 = 2 × NOTE_COL_MIN + NOTE_COL_GAP + 两边 14。
+//   改一处就得改另一处(index.html「宽屏」那段头注写着同一句)。
+const NOTE_COL_MIN = 340;
+const NOTE_COL_GAP = 12;
+const NOTE_COLS_MAX = 3;
+let noteCols = 1;
+function measureNoteCols(): number {
+  const w = $("timeline").clientWidth;
+  // 面板开着时时间轴 display:none,量出来是 0 ⇒ 沿用上一次(关面那一下 ResizeObserver 会再量)
+  if (w === 0) return noteCols;
+  return Math.max(1, Math.min(NOTE_COLS_MAX, Math.floor((w + NOTE_COL_GAP) / (NOTE_COL_MIN + NOTE_COL_GAP))));
+}
+
 // 随记时间轴:同一天的卡归到一个日期节头下(用户面 86)。
 // ⚠ **假定 items 已按 created_at 倒序**(后端保证,与平铺那版吃的是同一个序)⇒ 顺着扫、
 //   `dayKey` 一变就起新段:不重排、不建索引,卡与卡之间的先后逐条与从前相同。
 // ⛔ 别改成「先 group 再 sort」——那会引进一个本来不存在的排序真相源。
+// 宽屏分栏 = **轮流分栏**:组内第 i 张进第 i % n 栏,栏里紧挨着往下排 ⇒ 最新的仍在左上、没有「长卡旁边空一块」;
+// 点开一张只推它自己那栏(789 那版按行对齐,同一排另一张跟着留白)。⛔ 别改成「放进当前最矮的一栏」:
+// 那要先量高,而缩略图晚到、折叠、操作面展开都会改高 ⇒ 卡会在栏间跳来跳去;轮流分只看序号,恒定。
 function renderDayGroups(items: TimelineItem[], hideTopic: string | null): string {
+  const n = (noteCols = measureNoteCols());
   const out: string[] = [];
+  let cards: string[] = [];
+  const close = () => {
+    if (n === 1) out.push(cards.join(""));
+    else {
+      const cols: string[][] = Array.from({ length: n }, () => []);
+      cards.forEach((c, i) => cols[i % n].push(c));
+      out.push(`<div class="tl-cols">${cols.map((c) => `<div class="tl-col">${c.join("")}</div>`).join("")}</div>`);
+    }
+    out.push("</section>");
+    cards = [];
+  };
   let key: string | null = null;
   for (const it of items) {
     const k = dayKey(it.created_at);
     if (k !== key) {
-      if (key !== null) out.push("</section>");
+      if (key !== null) close();
       out.push(`<section class="tl-group"><h3 class="tl-sec">${esc(dayLabel(it.created_at))}</h3>`);
       key = k;
     }
-    out.push(renderCard(it, hideTopic, true));
+    cards.push(renderCard(it, hideTopic, true));
   }
-  if (key !== null) out.push("</section>");
+  if (key !== null) close();
   return out.join("");
 }
 
@@ -802,8 +833,8 @@ function emptyModeHtml(none: string, hint: string): string {
 
 function projectTimeline(): void {
   const box = $("timeline");
-  // 平板那段 `@media`(index.html)按面分排法:任务面并排成列、随记面两栏。⭐ 只在这里写 —— 投影是
-  // 「屏上现在是哪一面」唯一落地的地方。
+  // 平板那段 `@media`(index.html)按面分排法(任务面并排成列;随记面的分栏在 renderDayGroups,不靠它)。
+  // ⭐ 只在这里写 —— 投影是「屏上现在是哪一面」唯一落地的地方。
   document.body.dataset.view = viewMode;
   disconnectThumbObserver();
   const items = [...lastItems.values()];
@@ -904,6 +935,14 @@ function renderFilterBar(modeItems: TimelineItem[]): void {
   new ResizeObserver(syncBarHeight).observe(bar);
   syncBarHeight();
 }
+// 随记栏数跟着时间轴的宽走(tablet-plan 格 1):转屏、分屏拖宽窄、关掉面板(时间轴从 0 宽回来)都会改它。
+// 栏数真变了才重投影;⛔ 有卡片草稿时不动(同 onFilterPick 的闸:重投影会拆掉草稿)—— 下一次投影照当时的宽重算,
+// 自然排对。不自激:重投影只改高,栏数只看宽。
+new ResizeObserver(() => {
+  if (viewMode !== "ideas" || !lastRefreshOk || measureNoteCols() === noteCols) return;
+  if (cardPanel.hasDirtyDraft()) return;
+  projectTimeline();
+}).observe($("timeline"));
 
 // ---- 标签行摊开 / 收起(用户面 36)---------------------------------------------
 // 标签行平时是**单行横滑**,窄屏上常常一枚真标签都露不出来(屏上只剩「所有 / 无标签」),

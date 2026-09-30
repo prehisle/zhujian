@@ -134,12 +134,12 @@
            是 ResizeObserver 实测的 --nav-h(main.ts),两套的合并待拍板、别顺手改。 */
         --nav-clear: 64px;
         /* 511:宽屏(平板 / 横屏)上内容列的上限宽。775 从 640 提到 960(用户在 MatePad 模拟器上看:
-           竖放 960 宽时 640 那根列两边空一大片,「还不如直接用手机版本」)⇒ 竖放的平板恰好铺满,
-           横放(1440)仍留一根居中的列、不把一行拉到整屏长。平板专门的排法(789,用户面 139)在
-           `body.pane-open` 下面那段 `@media` 里,任务面横放时在那儿把本令牌放到 1400。
+           竖放 960 宽时 640 那根列两边空一大片,「还不如直接用手机版本」)。tablet-plan 格 1 起宽屏(≥ 720)
+           一律放到 1400(`body.pane-open` 下面那段「宽屏」`@media`),所有面共用这一根框、各面内文另收 720;
+           这里的 960 只剩 720 以下那一小截(没有哪台手机竖放宽到 960,摸不到)。
            ⭐ **它不是断点** —— 窄屏上
            `max-width` 压根不生效、`margin:auto` 解出 0,手机竖屏一像素不变(这也是
-           511 那轮刻意不写 `@media` 的理由:少一个要维护的断点;平板那段是后来唯一的一个)。
+           511 那轮刻意不写 `@media` 的理由:少一个要维护的断点;宽屏那段是后来唯一的家,789 那段过渡中)。
            ⚠ **只罩「内容」不罩「条」**:顶栏 / 底栏照旧满幅铺(它们是 bar,满幅才对),
            收窄的只有筛选条 / 时间轴 / 各面板 / 捕获层。⛔ 底栏改侧栏那档用户已否(A 档
            范围,backlog 用户面 47),别顺手扩。 */
@@ -730,6 +730,12 @@
         color: var(--ink-soft); font-family: var(--font-sans); letter-spacing: 0.04em;
       }
       .timeline .tl-group:first-child .tl-sec { padding-top: 0; }
+      /* 随记在宽屏上分栏(tablet-plan 格 1,用户拍「瀑布流 · 横三竖二」):轮流分栏,第 i 张进第 i % n 栏,
+         卡在栏里紧挨着往下排 ⇒ 没有「长卡旁边空一大块」(789 那版按行对齐的毛病);点开一张只推它自己那栏。
+         `.tl-cols` 只在 main.ts 算出放得下两栏时才画(renderDayGroups)⇒ 手机竖放上它根本不存在,这两条不必进 @media。
+         gap 12 = main.ts 的 NOTE_COL_GAP;栏内 8 = 手机上卡与卡之间那个 8(`.tl-group` 的 gap)。 */
+      .tl-cols { display: flex; gap: 12px; align-items: flex-start; }
+      .tl-col { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
       /* 时间轴 / 标签面的空态提示块(`<p class="muted empty">`;main.ts 两处 + topics.ts 一处)。
          ⛔ **选择器必须钉住 `p`,别退回裸 `.empty`** —— 604 真机逮到:筛选条给**计数为 0 的
          标签 pill** 也挂 `.empty`(499 的「族里的空位」,`<button class="fpill empty child">`),
@@ -1505,27 +1511,36 @@
       body.pane-open #filterbar,
       body.pane-open #timeline { display: none; }
 
-      /* ⭐ 平板(用户面 139;用户 9-30 在四张示意图里拍的:任务面并排成列 / 随记两栏 / 三座底部层改屏中浮窗 /
-         底栏不动)。本树**唯一的断点**,⛔ 别在别处另写 `@media`:平板上的差别全收在这一段。
-         判据两条都要:宽 ≥ 900 把手机竖放(≤ 430)与多数手机横放挡在外面,高 ≥ 600 把剩下那几台大屏手机
-         横放(高 360–430)也挡掉 ⇒ **手机一像素不变**;MatePad Pro 13 竖放 960×1440、横放 1440×960 都进来。
+      /* ⭐ 宽屏(docs/tablet-plan.md;用户 2026-09-30 拍了那四格):视口宽 ≥ 720 = 放得下两张手机宽的卡
+         (2 × 340 + 间距 12 + 两边 14)。进来的:平板横竖(含 800 宽竖放)、手机横放、平板对半分屏;
+         手机竖放(≤ 430)一像素不变。⛔ 只认窗口宽高,别按设备类型判 —— 分屏、折叠屏、转屏都该跟着窗口走。
+         本段是宽屏排法**唯一的家**;下面 789 那段(宽 ≥ 900 且高 ≥ 600)是过渡态,tablet-plan 格 2–4 各把自己
+         那几条搬进来,搬空就删。⚠ 720 与 main.ts 随记分栏的 NOTE_COL_MIN / NOTE_COL_GAP 是同一组数推出来的,
+         改一处就得改另一处。 */
+      @media (min-width: 720px) {
+        /* 一根框(tablet-plan 格 1):所有面共用 1400 的框,顶栏 / 筛选条 / 悬浮 ＋ 吃的都是这个变量 ⇒ 切面时
+           顶栏不再横跳(此前只有任务面放到 1400、其余 960,横放上「朱简」在两面之间差 220px)。
+           1440 横放两边各留 20;更窄的屏上框就是整屏。 */
+        :root { --content-max: 1400px; }
+        /* 各面(设置 / 同步 / 空间 / 标签 / 搜索 / 回收站 / 归档,都是 `.sync`)在框里收成 720 阅读宽、居中:
+           一行字、一个输入框拉到 1400 都读不动。⚠ 框没变窄 —— 顶栏照旧对齐 1400,窄的只是这一面的内文;
+           回收站 / 归档 / 搜索的卡片列表多栏是 tablet-plan 格 5 的事。 */
+        .sync { max-width: 720px; }
+      }
+
+      /* 平板(用户面 139,789;用户 9-30 在四张示意图里拍的:任务面并排成列 / 三座底部层改屏中浮窗 / 底栏不动)。
+         ⚠ **过渡态**:宽屏排法的家是上面那段,这一段的判据(宽 ≥ 900 且高 ≥ 600)是 789 的旧判据,
+         tablet-plan 格 2(看板)/ 格 3(导航)/ 格 4(浮窗)各把自己那几条搬走,搬空就删。
+         高 ≥ 600 把手机横放(高 360–430)挡在外面;MatePad Pro 13 竖放 960×1440、横放 1440×960 都进来。
          `data-view` 由 main.ts::projectTimeline 投影时写到 body 上(随记 ideas / 任务 tasks)。 */
       @media (min-width: 900px) and (min-height: 600px) {
         /* 任务面 = 看板:按列的节并排,等高(align stretch)⇒ 每列的节头在最长那列滚完前都吸着顶。
-           横放时这一面把内容列放宽到 1400 —— 960 分四列每列只剩 228,点开卡片那块操作面会挤成
-           一钮一行;1400 分四列 ≈ 手机单列的宽。⛔ 面板开着时不放宽(设置 / 同步那几面仍是 960 一根列),
-           顶栏 / 筛选条 / 底栏 / FAB 吃的是同一个变量,跟着一起对齐。竖放(960)时这个上限摸不到,照旧铺满。 */
-        body[data-view="tasks"]:not(.pane-open) { --content-max: 1400px; }
+           框是上面那段给的 1400:960 分四列每列只剩 228,点开卡片那块操作面会挤成一钮一行;
+           1400 分四列 ≈ 手机单列的宽。竖放(960)时这个上限摸不到,照旧铺满。 */
         body[data-view="tasks"] #timeline { flex-direction: row; align-items: stretch; gap: 12px; }
         body[data-view="tasks"] #timeline > .tl-group { flex: 1 1 0; min-width: 0; }
         /* 并排之后每列都是「第一节」:手机上只有真·第一节去掉顶部留白,这里四列一样高才对得齐。 */
         body[data-view="tasks"] .timeline .tl-sec { padding-top: 0; }
-        /* 随记面 = 两栏:按天分组不变,组内卡片两张一排(横向读仍是时间倒序);节头占满一行。
-           ⚠ 卡片在卡里展开操作面时,同一排另一张跟着留白 —— 拍板时说过,知情接受。 */
-        body[data-view="ideas"] #timeline .tl-group {
-          display: grid; grid-template-columns: 1fr 1fr; align-items: start;
-        }
-        body[data-view="ideas"] #timeline .tl-group > .tl-sec { grid-column: 1 / -1; }
         /* 记一笔 / 编辑 / 留言:从屏底升起改成屏中浮窗。上下 0 + margin-block:auto + fit-content = 竖向居中,
            键盘一起视口就缩(原生 ime inset)⇒ 浮窗自己往上让,不用 JS。收起态不能再靠 translateY(110%)
            滑出屏外(浮窗在屏中),改成淡出 + pointer-events:none;⛔ 别用 visibility:hidden ——

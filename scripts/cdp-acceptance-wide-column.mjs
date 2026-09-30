@@ -10,7 +10,8 @@
 // vivo V1986A 原生也是 360 ⇒ 旧写法那一步恒红,而它恰是本资产**唯一能证伪**的那半(见文末)。
 // 设备原生视口宽多少照样量、照样印(`native`),**只当读数不当判据**(同 kbsheet「先判设备属于哪一类」)。
 // 558 用显式宽覆盖量过的对拍参照(那时上限 640):1280 → 内容列 640 / 边距 306+306;800 → 640 / 66+66;360 → 332 / 0。
-// 775 上限提到 960(`COL`)⇒ 宽屏两档换成 1280 / 1440(都宽过 960 + 两侧 14);800 从此跟窄屏一样铺满,不再是宽档。
+// 775 上限提到 960;tablet-plan 格 1 起宽屏(≥ 720)一律 1400(`COL`),所有面共用 ⇒ 宽屏两档换成 1440 / 1600
+// (都宽过 1400 + 两侧 14);1280 从此跟 800 一样铺满,不再是宽档。
 //
 // 跑法:先 `node scripts/android-cdp.mjs forward`,再 `node scripts/cdp-acceptance-wide-column.mjs`
 // (打印 `{pass, native, rows, steps}`,退出码 0 = 过)。零写入:只动视口覆盖,不碰库。
@@ -62,8 +63,8 @@ const JS_MEASURE = `(()=>{
 
 const measure = async (label) => ({ label, ...(await s.evaluate(JS_MEASURE)) });
 
-// 内容列上限 = `android/index.html` 的 `--content-max`(775 起 960)。改那个令牌就改这里。
-const COL = 960;
+// 内容列上限 = `android/index.html` 里宽屏那段给 `--content-max` 的值(tablet-plan 格 1 起 1400)。改那个值就改这里。
+const COL = 1400;
 // 窄 / 过渡四档(竖屏两档判 no-op;横屏 740 与阈值那档只当读数,同改前)与宽屏两档(判收窄)。
 // 阈值档 = 列宽 + body 左右 padding 28 ⇒ 可用宽恰等于列宽。dpr 照抄 2.25,mobile:true 走移动端布局路径。
 const NARROW = [
@@ -73,16 +74,16 @@ const NARROW = [
   [`刚好到阈值 ${COL + 28}`, COL + 28, 900],
 ];
 const WIDE = [
-  ["宽屏 1280", 1280, 800],
   ["宽屏 1440", 1440, 960],
+  ["宽屏 1600", 1600, 1000],
 ];
 
-// 前置:在**随记面**上量。789 起任务面在平板上(宽 ≥ 900 且高 ≥ 600)把内容列放宽到 1400(看板四列),
-// 下面按 `COL` 判的宽屏两档在那一面上必红 —— 那是面选错了,不是 511 那条规则坏了。
-const view = await s.evaluate(`document.body.dataset.view ?? null`);
-if (view !== "ideas") {
+// 前置:别开着面板量(面板开着时时间轴与筛选条是 display:none,量出来是 0)。随记 / 任务两面都行 ——
+// tablet-plan 格 1 起两面共用同一根框(此前任务面单独放宽到 1400,这里曾要求只在随记面上跑)。
+const paneOpen = await s.evaluate(`document.body.classList.contains("pane-open")`);
+if (paneOpen) {
   s.close();
-  console.log(JSON.stringify({ error: `要在随记面上跑(现在 body[data-view]=${view}):点底栏「随记」再来` }));
+  console.log(JSON.stringify({ error: "开着面板(设置 / 同步 / 回收站……):关掉再来" }));
   process.exit(2);
 }
 
@@ -137,11 +138,11 @@ for (const r of wide) {
 }
 
 // 604 补2:**筛选条居中**单独判一格,落在最宽那档上。
-const w1280 = rows.find((r) => r.label === "宽屏 1280");
+const widest = rows.find((r) => r.label === WIDE[WIDE.length - 1][0]);
 step(
   "宽屏筛选条居中(margin:auto 没被后面的规则覆盖)",
-  !!w1280 && parseFloat(w1280.filterbarML) > 1 && Math.abs(parseFloat(w1280.filterbarML) - parseFloat(w1280.filterbarMR)) < 1,
-  w1280 && { filterbar: w1280.filterbar, ml: w1280.filterbarML, mr: w1280.filterbarMR, forced: w1280.filterbarForced },
+  !!widest && parseFloat(widest.filterbarML) > 1 && Math.abs(parseFloat(widest.filterbarML) - parseFloat(widest.filterbarMR)) < 1,
+  widest && { filterbar: widest.filterbar, ml: widest.filterbarML, mr: widest.filterbarMR, forced: widest.filterbarForced },
 );
 
 // 覆盖真清干净了:回到的是开跑前量到的原生宽度(别把设备留在 1280 的假视口上)。
