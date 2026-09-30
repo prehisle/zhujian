@@ -6,7 +6,8 @@
  * 为什么自托管:境内站(zhujian.cool)不许依赖境外字体服务(site-redesign-plan 结论页)。
  *
  * 收哪些字 = 官网字典(`site/index.html` 里 ⟦i18n-dict⟧ 之间)**全部** zh / en 值 + 文档中心的标题
- *   (`docs/user-guide.md` 里「#」到「###」那几行,改版 3a)+ 可打印 ASCII。
+ *   (`docs/user-guide.md` 里「#」到「###」那几行,改版 3a)+ 可打印 ASCII
+ *   + 鸿蒙商店竖版图的标题(`store-assets/harmonyos/make-portrait.mjs` 的 `title:`,改版 4c;说明那行用系统黑体,不收)。
  *   ⭐ 刻意收全字典,不只收标题用到的那几键:哪一段换成标题字体都不用回来重裁;
  *      收窄只省几十 KB,换来的是「某个字没进子集 ⇒ 那一个字掉回系统楷体」这种不报错的丑。
  *   ⇒ 改了字典就可能要重裁;漏没漏由下面的 `missingChars()` 核,`build-site-cool.mjs`
@@ -35,6 +36,7 @@ const SITE = join(ROOT, "site", "index.html");
 const GUIDE = join(ROOT, "docs", "user-guide.md");
 // 更新日志与开发手记(改版 3b):页标题与手记每篇的标题也用标题字体
 const LOG_SRCS = [join(ROOT, "site", "changelog.md"), join(ROOT, "site", "devlog.md")];
+const STORE = join(ROOT, "store-assets", "harmonyos", "make-portrait.mjs");
 const OUT_DIR = join(ROOT, "site", "fonts");
 const WOFF2 = join(OUT_DIR, "zhujian-wenkai.woff2");
 const CHARS = join(OUT_DIR, "zhujian-wenkai.chars.txt");
@@ -52,6 +54,11 @@ export function neededChars() {
   }
   /* 文档中心(改版 3a)的页标题与小节标题也用标题字体:user-guide 里「#」到「###」那几行 */
   for (const f of [GUIDE, ...LOG_SRCS]) for (const m of readFileSync(f, "utf8").matchAll(/^#{1,3}\s+(.*)$/gm)) for (const ch of m[1].trim()) set.add(ch);
+  /* 鸿蒙商店竖版图的标题(改版 4c:商店图与官网同一套标题字体);只收 `title:`,说明那行是系统黑体 */
+  const store = readFileSync(STORE, "utf8");
+  const titles = [...store.matchAll(/\btitle: "([^"]*)"/g)];
+  if (!titles.length) throw new Error("site-font: make-portrait.mjs 里一个 title 都没认出来 —— PANELS 的写法变了?");
+  for (const m of titles) for (const ch of m[1]) set.add(ch);
   for (let c = 0x20; c < 0x7f; c++) set.add(String.fromCharCode(c));
   return [...set].sort();
 }

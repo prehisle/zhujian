@@ -16,6 +16,8 @@
 //   filed    [正文, 标签下标] 已整理随记,写在 inbox 之后
 //   featured 最后写的那条带清单的随记 ⇒ 时间轴与「未归类」里都排在最上(手机配图的第一张卡)
 //   tasks    [标题, 列, 截止(距今天几天 / null), 优先级, 标签下标];带清单的那张标题里含换行
+//   story    只给商店图用的几样(官网配图不写它们):featured 的第一版(再改成 featured ⇒ 留一条历史)、
+//            挂在带清单那张任务上的两句留言、三条做完归档了的任务(归档册里有得看)。只有中文:商店图只出中文。
 export const SHOWCASE = {
   zh: {
     space: "生活",
@@ -23,6 +25,12 @@ export const SHOWCASE = {
     inbox: ["给妈打电话,问体检结果", "阳台那盆绿萝该换土了", "想写一篇关于纸质笔记本的短文"],
     filed: [["周末把书架第二层整理一遍", 0], ["《长安的荔枝》读完了,想记几句", 2], ["体检报告下周三出,记得去取", 3]],
     featured: "周末露营要带的\n- [x] 帐篷\n- [x] 睡袋\n- [ ] 头灯\n- [ ] 驱蚊液",
+    story: {
+      // ⛔ 两版差的必须是**正文**(加了一行),不是勾选 —— 纯勾选变更不留历史(0039)
+      featuredFirst: "周末露营要带的\n- [x] 帐篷\n- [x] 睡袋\n- [ ] 头灯",
+      comments: ["会议在周四上午,材料周三晚上打印就来得及", "常用药记得带那盒胃药"],
+      sealed: ["交这个月的物业费", "修好自行车的刹车", "换季衣物收纳"],
+    },
     tasks: [
       ["把书房的旧电脑重装一遍", "todo", -2, 1, 0],
       ["交季度报表", "todo", 0, null, 1],
@@ -60,9 +68,10 @@ export const SHOWCASE = {
  * 入参形同名同形(都带 spaceId),差别只在写随记那条:桌面 `capture_note`、手机 `capture_idea`。
  * ⛔ 写入顺序就是时间轴顺序,别为了「好读」重排。
  */
-export function seedScript(lang, { spaceId, captureCmd }) {
+export function seedScript(lang, { spaceId, captureCmd, story = false }) {
   const D = SHOWCASE[lang];
   if (!D) throw new Error(`展示库只有 zh / en:${lang}`);
+  if (story && !D.story) throw new Error(`展示库的 story 只有中文那份:${lang}`);
   return `(async () => {
   const D = ${JSON.stringify(D)};
   const inv = (c, a) => window.__TAURI__.core.invoke(c, Object.assign({ spaceId: ${JSON.stringify(spaceId)} }, a));
@@ -85,17 +94,35 @@ export function seedScript(lang, { spaceId, captureCmd }) {
     const id = await inv(${JSON.stringify(captureCmd)}, { content: c });
     await inv("file_note_to_topic", { id, topicId: topicIds[t], newTitle: null });
   }
-  await inv(${JSON.stringify(captureCmd)}, { content: D.featured });
+  const story = ${JSON.stringify(story)};
+  const featuredId = await inv(${JSON.stringify(captureCmd)}, { content: story ? D.story.featuredFirst : D.featured });
+  if (story) await inv("edit_note", { id: featuredId, content: D.featured });
+
+  // 商店那几条归档的先建先收:它们是「以前做完的」,不该排在看板上那几张前面
+  if (story) {
+    for (const title of D.story.sealed) {
+      const id = await inv("create_task", { title, dueOn: null, priority: null, topicId: null });
+      await inv("update_task_status", { id, to: "done" });
+      await inv("seal_task", { id });
+    }
+  }
 
   // 任务:四列都有;三条截止各占一种形(逾期 / 今天 / 将来);一条带勾选清单
+  const taskIds = [];
   for (const [title, col, due, prio, t] of D.tasks) {
     // 带清单的那张先按首行建、再改名成整段(清单行不走 create_task)
     const id = await inv("create_task", { title: title.split("\\n")[0], dueOn: due === null ? null : day(due), priority: prio, topicId: topicIds[t] });
     if (col !== "todo") await inv("update_task_status", { id, to: col });
     if (title.includes("\\n")) await inv("rename_task", { id, title });
+    taskIds.push(id);
   }
+  // 留言挂在带清单的那张任务上
+  const listTask = taskIds[D.tasks.findIndex(([title]) => title.includes("\\n"))];
+  if (story) for (const content of D.story.comments) await inv("add_item_comment", { itemId: listTask, content });
 
   return {
+    featuredId,
+    listTask,
     topics: topicIds.length,
     notes: D.inbox.length + D.filed.length + 1,
     tasks: D.tasks.length,
