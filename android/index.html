@@ -135,10 +135,11 @@
         --nav-clear: 64px;
         /* 511:宽屏(平板 / 横屏)上内容列的上限宽。775 从 640 提到 960(用户在 MatePad 模拟器上看:
            竖放 960 宽时 640 那根列两边空一大片,「还不如直接用手机版本」)⇒ 竖放的平板恰好铺满,
-           横放(1440)仍留一根居中的列、不把一行拉到整屏长。真正的平板适配另立账(用户面 139)。
+           横放(1440)仍留一根居中的列、不把一行拉到整屏长。平板专门的排法(789,用户面 139)在
+           `body.pane-open` 下面那段 `@media` 里,任务面横放时在那儿把本令牌放到 1400。
            ⭐ **它不是断点** —— 窄屏上
            `max-width` 压根不生效、`margin:auto` 解出 0,手机竖屏一像素不变(这也是
-           本轮刻意不写 `@media` 的理由:少一个要维护的断点)。
+           511 那轮刻意不写 `@media` 的理由:少一个要维护的断点;平板那段是后来唯一的一个)。
            ⚠ **只罩「内容」不罩「条」**:顶栏 / 底栏照旧满幅铺(它们是 bar,满幅才对),
            收窄的只有筛选条 / 时间轴 / 各面板 / 捕获层。⛔ 底栏改侧栏那档用户已否(A 档
            范围,backlog 用户面 47),别顺手扩。 */
@@ -197,7 +198,9 @@
          (同底栏 #bottombar 的固定思路,顶底对称)。安全区内移到 header 自己吃、
          负 margin 拉到左右满幅铺不透明底(否则卡片会从透明处透上来),z 低于所有
          全屏遮罩(#viewer 15/#scan 10/.gate 20)与错误条(18)。 */
-      header {
+      /* ⚠ 只认 body 直属那一个:留言层的标题行也是 `<header class="cm-head">`,裸 `header` 会把这里的
+         负外边距 / 吸顶 / 纱底全套到它身上 —— 标题被拽出层外 14px、在手机上贴着屏幕左缘(789 在平板浮窗上才看出来)。 */
+      body > header {
         position: sticky; top: 0; z-index: 5;
         display: flex; align-items: baseline; justify-content: space-between;
         margin: 0 -14px 10px;
@@ -1501,6 +1504,55 @@
       body.pane-open .compose,
       body.pane-open #filterbar,
       body.pane-open #timeline { display: none; }
+
+      /* ⭐ 平板(用户面 139;用户 9-30 在四张示意图里拍的:任务面并排成列 / 随记两栏 / 三座底部层改屏中浮窗 /
+         底栏不动)。本树**唯一的断点**,⛔ 别在别处另写 `@media`:平板上的差别全收在这一段。
+         判据两条都要:宽 ≥ 900 把手机竖放(≤ 430)与多数手机横放挡在外面,高 ≥ 600 把剩下那几台大屏手机
+         横放(高 360–430)也挡掉 ⇒ **手机一像素不变**;MatePad Pro 13 竖放 960×1440、横放 1440×960 都进来。
+         `data-view` 由 main.ts::projectTimeline 投影时写到 body 上(随记 ideas / 任务 tasks)。 */
+      @media (min-width: 900px) and (min-height: 600px) {
+        /* 任务面 = 看板:按列的节并排,等高(align stretch)⇒ 每列的节头在最长那列滚完前都吸着顶。
+           横放时这一面把内容列放宽到 1400 —— 960 分四列每列只剩 228,点开卡片那块操作面会挤成
+           一钮一行;1400 分四列 ≈ 手机单列的宽。⛔ 面板开着时不放宽(设置 / 同步那几面仍是 960 一根列),
+           顶栏 / 筛选条 / 底栏 / FAB 吃的是同一个变量,跟着一起对齐。竖放(960)时这个上限摸不到,照旧铺满。 */
+        body[data-view="tasks"]:not(.pane-open) { --content-max: 1400px; }
+        body[data-view="tasks"] #timeline { flex-direction: row; align-items: stretch; gap: 12px; }
+        body[data-view="tasks"] #timeline > .tl-group { flex: 1 1 0; min-width: 0; }
+        /* 并排之后每列都是「第一节」:手机上只有真·第一节去掉顶部留白,这里四列一样高才对得齐。 */
+        body[data-view="tasks"] .timeline .tl-sec { padding-top: 0; }
+        /* 随记面 = 两栏:按天分组不变,组内卡片两张一排(横向读仍是时间倒序);节头占满一行。
+           ⚠ 卡片在卡里展开操作面时,同一排另一张跟着留白 —— 拍板时说过,知情接受。 */
+        body[data-view="ideas"] #timeline .tl-group {
+          display: grid; grid-template-columns: 1fr 1fr; align-items: start;
+        }
+        body[data-view="ideas"] #timeline .tl-group > .tl-sec { grid-column: 1 / -1; }
+        /* 记一笔 / 编辑 / 留言:从屏底升起改成屏中浮窗。上下 0 + margin-block:auto + fit-content = 竖向居中,
+           键盘一起视口就缩(原生 ime inset)⇒ 浮窗自己往上让,不用 JS。收起态不能再靠 translateY(110%)
+           滑出屏外(浮窗在屏中),改成淡出 + pointer-events:none;⛔ 别用 visibility:hidden ——
+           捕获层「一步回捕获」靠在收起态 focus 输入框开层,visibility 隐掉的元素 focus 不上。
+           留言层不在 511 那组共用规则里,居中自己补 margin-inline(`.compose` 的横向居中来自那条共用规则,
+           ⛔ 这里别给它写横向 margin,705 的闸拦着)。 */
+        .compose,
+        .cmsheet {
+          top: 0; bottom: 0; height: fit-content; margin-block: auto;
+          max-width: 640px;
+          border: 1px solid var(--line); border-radius: var(--radius-lg);
+          box-shadow: 0 12px 40px rgba(0, 0, 0, 0.22);
+          transform: translateY(16px); opacity: 0; pointer-events: none;
+          transition: transform 0.22s ease, opacity 0.22s ease;
+        }
+        .cmsheet { margin-inline: auto; }
+        /* 浮窗不贴屏底 ⇒ 底边那段手势条安全区不用再让(两层各自的底边距本来都加着它)。 */
+        .compose,
+        .cm-compose { padding-bottom: 12px; }
+        .compose.open,
+        .cmsheet.open { transform: none; opacity: 1; pointer-events: auto; }
+        /* 浮窗里打字的地方给足高度:手机上捕获框两行起步是为了少挡屏,平板上没这个顾虑。 */
+        .compose textarea { min-height: 6em; }
+        .compose.editsheet textarea { min-height: 12em; }
+        /* 底栏钮在满幅条里别散开:居中成组(导航本身不动,用户面 47 否过改侧栏)。 */
+        #bottombar { justify-content: center; gap: 40px; }
+      }
 
       /* 时间轴筛选条(filter.ts 渲染):类型行在上、标签行+文本框在下,两行横向可滑。
          本面无条目时整条 hidden(main.ts)。

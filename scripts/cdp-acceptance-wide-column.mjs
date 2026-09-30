@@ -77,6 +77,15 @@ const WIDE = [
   ["宽屏 1440", 1440, 960],
 ];
 
+// 前置:在**随记面**上量。789 起任务面在平板上(宽 ≥ 900 且高 ≥ 600)把内容列放宽到 1400(看板四列),
+// 下面按 `COL` 判的宽屏两档在那一面上必红 —— 那是面选错了,不是 511 那条规则坏了。
+const view = await s.evaluate(`document.body.dataset.view ?? null`);
+if (view !== "ideas") {
+  s.close();
+  console.log(JSON.stringify({ error: `要在随记面上跑(现在 body[data-view]=${view}):点底栏「随记」再来` }));
+  process.exit(2);
+}
+
 const native = await measure("原生(无覆盖)");
 const rows = [];
 let restored;

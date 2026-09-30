@@ -802,6 +802,9 @@ function emptyModeHtml(none: string, hint: string): string {
 
 function projectTimeline(): void {
   const box = $("timeline");
+  // 平板那段 `@media`(index.html)按面分排法:任务面并排成列、随记面两栏。⭐ 只在这里写 —— 投影是
+  // 「屏上现在是哪一面」唯一落地的地方。
+  document.body.dataset.view = viewMode;
   disconnectThumbObserver();
   const items = [...lastItems.values()];
   const modeItems = items.filter((i) => modeOfStage(i.stage) === viewMode);
