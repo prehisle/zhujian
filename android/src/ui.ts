@@ -117,6 +117,29 @@ export function fmtWhen(iso: string): string {
     : t("ui.whenOtherYear", { ...md, y: d.getFullYear() });
 }
 
+// ---- 卡片分栏(宽屏;tablet-plan 格 1 / 5)--------------------------------------------
+// 随记时间轴(main.ts::renderDayGroups)与回收站 / 归档 / 搜索三个面的卡片列表(panes.ts)共用这一组数:每栏不窄于
+// NOTE_COL_MIN、最多 NOTE_COLS_MAX 栏 ⇒ 1400 的框三栏、960 / 800 两栏、手机竖放(≤ 430)恒 1 栏。
+// ⚠ 与 CSS 是同一组数:`.tl-cols` 的 gap = NOTE_COL_GAP;宽屏断点 720 = 2 × NOTE_COL_MIN + NOTE_COL_GAP + 两边 14。
+//   改一处就得改另一处(index.html「宽屏」那段头注写着同一句)。NOTE_COLS_MAX = 3 是用户拍的「横三」—— 1400 的框
+//   按 340 算放得下四栏,封顶三栏。
+const NOTE_COL_MIN = 340;
+const NOTE_COL_GAP = 12;
+const NOTE_COLS_MAX = 3;
+/** 这么宽的列表放得下几栏。 */
+export function colsFor(width: number): number {
+  return Math.max(1, Math.min(NOTE_COLS_MAX, Math.floor((width + NOTE_COL_GAP) / (NOTE_COL_MIN + NOTE_COL_GAP))));
+}
+/** 一串卡片**轮流分栏**(第 i 张进第 i % n 栏,栏里紧挨着往下排)的标记;1 栏时原样拼接 —— 与分栏之前逐字相同。
+ *  ⛔ 别改成「放进当前最矮的一栏」:那要先量高,而缩略图晚到、折叠、操作面展开都会改高 ⇒ 卡会在栏间跳来跳去;
+ *  轮流分只看序号,恒定。 */
+export function splitCols(cards: string[], n: number): string {
+  if (n === 1) return cards.join("");
+  const cols: string[][] = Array.from({ length: n }, () => []);
+  cards.forEach((c, i) => cols[i % n].push(c));
+  return `<div class="tl-cols">${cols.map((c) => `<div class="tl-col">${c.join("")}</div>`).join("")}</div>`;
+}
+
 // ---- 错误/提示条:后端原话,响亮但会自己退场(notice = 非错误的提示) ----------
 // 退场时长按「读得完」定,不再一律 6s(221:全部 24 个调用点共用 6s,「已移到「X」」
 // 这种六个字的回执也要顶在时间轴上方杵满六秒)。错误=后端原话、要读懂才好处置,

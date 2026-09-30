@@ -751,7 +751,8 @@
       /* 随记在宽屏上分栏(tablet-plan 格 1,用户拍「瀑布流 · 横三竖二」):轮流分栏,第 i 张进第 i % n 栏,
          卡在栏里紧挨着往下排 ⇒ 没有「长卡旁边空一大块」(789 那版按行对齐的毛病);点开一张只推它自己那栏。
          `.tl-cols` 只在 main.ts 算出放得下两栏时才画(renderDayGroups)⇒ 手机竖放上它根本不存在,这两条不必进 @media。
-         gap 12 = main.ts 的 NOTE_COL_GAP;栏内 8 = 手机上卡与卡之间那个 8(`.tl-group` 的 gap)。 */
+         gap 12 = ui.ts 的 NOTE_COL_GAP;栏内 8 = 手机上卡与卡之间那个 8(`.tl-group` 的 gap)。
+         回收站 / 归档 / 搜索三个面的卡片列表(tablet-plan 格 5)也是这两枚类,轮流分栏由 ui.ts::splitCols 拼。 */
       .tl-cols { display: flex; gap: 12px; align-items: flex-start; }
       .tl-col { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
       /* 1b:一两条的小日子连成一段(`.tl-flow`,main.ts::renderDayGroups),每栏里是「节头 + 它那几张卡」整块往下排,
@@ -1542,7 +1543,7 @@
          手机竖放(≤ 430)一像素不变。⛔ 只认窗口宽高,别按设备类型判 —— 分屏、折叠屏、转屏都该跟着窗口走。
          宽屏排法的家 = 本段 + 紧跟着的「导航并进顶栏」「看板」「浮窗」三段(挂在 JS 打的 `body.widescreen` / `body.board` /
          `body.tallscreen` 上,为什么不进 `@media` 见那三段头注;断点仍只在本段这一处)。
-         ⚠ 720 与 main.ts 随记分栏的 NOTE_COL_MIN / NOTE_COL_GAP 是同一组数推出来的,改一处就得改另一处。 */
+         ⚠ 720 与 ui.ts 分栏的 NOTE_COL_MIN / NOTE_COL_GAP 是同一组数推出来的,改一处就得改另一处。 */
       @media (min-width: 720px) {
         /* 一根框(tablet-plan 格 1):所有面共用 1400 的框,顶栏 / 筛选条 / 悬浮 ＋ 吃的都是这个变量 ⇒ 切面时
            顶栏不再横跳(此前只有任务面放到 1400、其余 960,横放上「朱简」在两面之间差 220px)。
@@ -1552,6 +1553,10 @@
            一行字、一个输入框拉到 1400 都读不动。⚠ 框没变窄 —— 顶栏照旧对齐 1400,窄的只是这一面的内文;
            回收站 / 归档 / 搜索的卡片列表多栏是 tablet-plan 格 5 的事。 */
         .sync { max-width: 720px; }
+        /* 回收站 / 归档 / 搜索是卡片列表,不是表单(tablet-plan 格 5):用整根框、列表跟随记同一套分栏(panes.ts)。
+           面头那一行里只有搜索框会被拉长 ⇒ 它收回 720、靠左。 */
+        #trash-pane, #sealed-pane, #search-pane { max-width: var(--content-max); }
+        #search-pane > .row { max-width: 720px; }
         /* 高屏 = 宽屏且高 ≥ 600(tablet-plan「尺寸怎么分」;用户拍 ④A):三座底部层浮在屏中,只管这一件。
            手机横放(高 360–412)进不来 —— 浮在中间放不下键盘,仍从屏底升起;800 宽竖放平板(800×1280)进得来。
            这里只翻旗子,浮窗本身在下面「浮窗」那段、挂在 main.ts 打的 `body.tallscreen` 上(理由在那段头注)。 */
@@ -1869,6 +1874,13 @@
         border: 1px solid var(--line-strong);
       }
       .row button:disabled { opacity: 0.5; }
+      /* 面板里「独占一行的动作钮」(同步 / 空间 / 回收站 / 设置里那些):手机上占满这一行。此前是 13 处 inline `style="flex: 1"`,
+         tablet-plan 格 5 收成这枚类 —— 手机上逐字等价,宽屏上才好在一处改(下一条)。 */
+      .row > .grow { flex: 1; }
+      /* 宽屏上面板收在 720 的阅读宽里(「宽屏」那段),独占一行的钮再拉满就是一条 720 的红 / 灰长条 ⇒ 按字的长短、靠左
+         (tablet-plan 格 5「标签 / 同步 / 空间面在 720 阅读宽里排好」)。挂在 JS 打的 `body.widescreen` 上,理由同「导航并进顶栏」那段。
+         ⚠ 首启告知与隐私政策页那两枚不在面板里(`.gate`),不归这条。 */
+      body.widescreen .sync .row > .grow { flex: 0 1 auto; }
       .step { display: flex; gap: 8px; padding: 6px 0; border-top: 1px dashed var(--line); font-size: var(--fs-13); }
       .step:first-child { border-top: none; }
       .step .mark { flex: none; font-weight: 700; }
@@ -1952,7 +1964,7 @@
       <!-- 加入空间(space-entry-plan §2/§3):独立入口直达——扫码/输码加入一个已在
            别处存在的账户;隐式空槽在后台 staging,成功才出现为空间。 -->
       <div class="row">
-        <button id="join-scan-btn" style="flex: 1" data-i18n="shell.joinScan">加入空间(扫电脑二维码)</button>
+        <button id="join-scan-btn" class="grow" data-i18n="shell.joinScan">加入空间(扫电脑二维码)</button>
         <button id="join-alt-btn" class="ghost" data-i18n="shell.joinAlt">输码加入</button>
       </div>
       <div id="join-form" hidden>
@@ -1968,10 +1980,10 @@
       </div>
       <div id="join-progress" class="fine" hidden></div>
       <div class="row" id="join-cancel-row" hidden>
-        <button id="join-cancel" class="ghost" style="flex: 1" data-i18n="shell.joinCancel">取消加入</button>
+        <button id="join-cancel" class="ghost grow" data-i18n="shell.joinCancel">取消加入</button>
       </div>
       <div class="row">
-        <button id="sync-all-btn" style="flex: 1" data-i18n="shell.syncAll">全部同步(逐空间追赶一次)</button>
+        <button id="sync-all-btn" class="grow" data-i18n="shell.syncAll">全部同步(逐空间追赶一次)</button>
       </div>
       <div id="sync-all-result" class="fine"></div>
       <p class="fine" data-i18n="shell.spacesNote">每个空间是一本独立的本子,记录落在当前空间。「加入空间」把电脑上的账户作为另一个空间加进来,手机已有的空间不变;手机还没开过同步、想和电脑看同一本,请到「同步」里「扫码连接电脑」。要让某个空间多端同步,到该空间的「同步」里创建账户。</p>
@@ -1984,11 +1996,11 @@
            点开才见——服务器地址行两条辅路共用,收着时不暴露概念。 -->
       <div id="sync-join" hidden>
         <div class="row">
-          <button id="sync-scan-btn" style="flex: 1" data-i18n="shell.syncScan">扫码连接电脑</button>
+          <button id="sync-scan-btn" class="grow" data-i18n="shell.syncScan">扫码连接电脑</button>
         </div>
         <div class="row">
-          <button id="sync-alt-pair" class="ghost" style="flex: 1" data-i18n="shell.syncAltPair">手动输入配对码</button>
-          <button id="sync-alt-create" class="ghost" style="flex: 1" data-i18n="sync.altCreateMain">没有其他设备?创建新账户</button>
+          <button id="sync-alt-pair" class="ghost grow" data-i18n="shell.syncAltPair">手动输入配对码</button>
+          <button id="sync-alt-create" class="ghost grow" data-i18n="sync.altCreateMain">没有其他设备?创建新账户</button>
         </div>
         <div id="sync-server-row" class="row" hidden>
           <input id="sync-server" data-default-server placeholder="服务器地址(wss://…)" data-i18n-placeholder="shell.serverPh" spellcheck="false"
@@ -2004,7 +2016,7 @@
         </div>
         <div id="sync-create" hidden>
           <div class="row">
-            <button id="sync-create-btn" style="flex: 1" data-i18n="sync.createAccount">创建新账户</button>
+            <button id="sync-create-btn" class="grow" data-i18n="sync.createAccount">创建新账户</button>
           </div>
           <p class="fine" data-i18n="shell.syncCreateNote">把本机创建为账户的第一台设备。创建后请尽快让电脑加入;加入前唯一副本只在本机。</p>
         </div>
@@ -2017,7 +2029,7 @@
       <div id="sync-online" hidden>
         <div class="row">
           <!-- 用户面 125 起独占一行(此前与「查看恢复码」并排):照本面其它单钮行的形通栏。 -->
-          <button id="sync-invite-btn" style="flex: 1" data-i18n="sync.addDevice">添加设备</button>
+          <button id="sync-invite-btn" class="grow" data-i18n="sync.addDevice">添加设备</button>
         </div>
         <!-- 出码区(phone-space-plan §3):码不含服务器地址,两项都给、都可复制;
              done=注册完成≠对方引导完成,绝不自动关(codex r2 N4)。 -->
@@ -2031,12 +2043,12 @@
         <!-- 设备名单(identity-plan §5.8):「同伴在线 N」背后的真名单,移除设备与管理
              设备名单都在里头。权限差别在**行上**表达,入口恒显。 -->
         <div class="row" style="margin-top: 8px">
-          <button id="sync-devices-btn" class="ghost" style="flex: 1" data-i18n="devices.entry">设备名单</button>
+          <button id="sync-devices-btn" class="ghost grow" data-i18n="devices.entry">设备名单</button>
         </div>
         <div id="sync-devices" class="devices" hidden></div>
         <!-- 连接信息(账户/服务器)收进折叠:唯一出处保留,首屏不摆概念。 -->
         <div class="row" style="margin-top: 8px">
-          <button id="sync-conninfo-btn" class="ghost" style="flex: 1" data-i18n="shell.connInfo">连接信息</button>
+          <button id="sync-conninfo-btn" class="ghost grow" data-i18n="shell.connInfo">连接信息</button>
         </div>
         <!-- 账户号可复制(盈利准备 C4):客服对号 / 人工开通都要用户报出这一串。 -->
         <div id="sync-info" hidden>
@@ -2050,7 +2062,7 @@
       <!-- 单空间时头部空间徽章隐藏,空间面板从这里兜底可达(多空间时徽章即入口)。
            诊断 143 自底栏挪来此处,250 再挪进设置面——同步面只管同步。 -->
       <div class="row" style="margin-top: 14px">
-        <button id="sync-spaces-btn" class="ghost" style="flex: 1" data-i18n="shell.spacesEntry" hidden>空间…</button>
+        <button id="sync-spaces-btn" class="ghost grow" data-i18n="shell.spacesEntry" hidden>空间…</button>
       </div>
     </section>
 
@@ -2075,7 +2087,7 @@
            次级(`board.ts` 的 ghost / `inbox.ts` 的 `.no`),手机端 634 才跟上。
            ⚠ 两拍确认一直都有(`panes.ts::confirmBar`),这一改动的是**权重**不是保险。 -->
       <div class="row">
-        <button id="trash-empty" class="ghost" style="flex: 1" data-i18n="shell.emptyTrash">清空回收站</button>
+        <button id="trash-empty" class="ghost grow" data-i18n="shell.emptyTrash">清空回收站</button>
       </div>
       <div id="trash-list" class="timeline"></div>
       <p class="fine" data-i18n="shell.trashNote">删除的记录先到这里;恢复回到原来的位置;彻底删除后无法找回。</p>
@@ -2282,7 +2294,7 @@
       <div id="about" class="kv"></div>
 
       <div class="row" style="margin-top: 14px">
-        <button id="settings-diag-btn" class="ghost" style="flex: 1" data-i18n="shell.diag">诊断</button>
+        <button id="settings-diag-btn" class="ghost grow" data-i18n="shell.diag">诊断</button>
       </div>
     </section>
 

@@ -37,7 +37,7 @@ import {
   type TaskStatus,
   type TimelineItem,
 } from "./api";
-import { $, actionBar, cardTint, contentHtml, dayKey, dayLabel, esc, fmtTimeOfDay, fmtWhen, hideConfirmBar, showBar, showError } from "./ui";
+import { $, actionBar, cardTint, colsFor, contentHtml, dayKey, dayLabel, esc, fmtTimeOfDay, fmtWhen, hideConfirmBar, showBar, showError, splitCols } from "./ui";
 import { errDetail, errText, initErr, showErr } from "./err";
 import { toggleChecklistLine } from "../../shared/checklist";
 import { buildStamp, formatBuiltAt } from "../../shared/build-stamp";
@@ -485,19 +485,14 @@ function resettleFolds(): void {
 }
 
 // 随记在宽屏上分栏(docs/tablet-plan.md 格 1;用户 2026-09-30 拍「瀑布流 · 横三竖二」)。
-// 栏数按**时间轴自己的宽**算:每栏不窄于 NOTE_COL_MIN、最多 NOTE_COLS_MAX 栏 ⇒ 1400 的框三栏、
-// 960 / 800 两栏、手机竖放(≤ 430)恒 1 栏 —— 1 栏时画出来的标记与分栏之前逐字相同。
-// ⚠ 与 CSS 是同一组数:`.tl-cols` 的 gap = NOTE_COL_GAP;宽屏断点 720 = 2 × NOTE_COL_MIN + NOTE_COL_GAP + 两边 14。
-//   改一处就得改另一处(index.html「宽屏」那段头注写着同一句)。
-const NOTE_COL_MIN = 340;
-const NOTE_COL_GAP = 12;
-const NOTE_COLS_MAX = 3;
+// 栏数按**时间轴自己的宽**算,那组数(每栏下限 / 栏间距 / 最多几栏)住在 ui.ts::colsFor,回收站 / 归档 / 搜索三个面也吃它
+// (tablet-plan 格 5)—— 1 栏时画出来的标记与分栏之前逐字相同。
 let noteCols = 1;
 function measureNoteCols(): number {
   const w = $("timeline").clientWidth;
   // 面板开着时时间轴 display:none,量出来是 0 ⇒ 沿用上一次(关面那一下 ResizeObserver 会再量)
   if (w === 0) return noteCols;
-  return Math.max(1, Math.min(NOTE_COLS_MAX, Math.floor((w + NOTE_COL_GAP) / (NOTE_COL_MIN + NOTE_COL_GAP))));
+  return colsFor(w);
 }
 
 /** 「现在是不是宽屏」—— 读 CSS 算出来的结果(index.html `:root` 的 `--wide`,由「宽屏」那段 `@media` 翻)。
@@ -554,7 +549,7 @@ function renderDayGroups(items: TimelineItem[], hideTopic: string | null): strin
     days[days.length - 1].cards.push(renderCard(it, hideTopic, true));
   }
   const section = (d: { head: string; cards: string[] }, body: string) => `<section class="tl-group">${d.head}${body}</section>`;
-  const cols = (c: string[][], cls: string) => `<div class="${cls}">${c.map((x) => `<div class="tl-col">${x.join("")}</div>`).join("")}</div>`;
+  const flow = (c: string[][]) => `<div class="tl-cols tl-flow">${c.map((x) => `<div class="tl-col">${x.join("")}</div>`).join("")}</div>`;
   if (n === 1) return days.map((d) => section(d, d.cards.join(""))).join("");
   const out: string[] = [];
   let run: typeof days = [];
@@ -567,7 +562,7 @@ function renderDayGroups(items: TimelineItem[], hideTopic: string | null): strin
       c[i].push(section(d, d.cards.join("")));
       load[i] += d.cards.length + 0.5;
     }
-    out.push(cols(c, "tl-cols tl-flow"));
+    out.push(flow(c));
     run = [];
   };
   for (const d of days) {
@@ -576,9 +571,7 @@ function renderDayGroups(items: TimelineItem[], hideTopic: string | null): strin
       continue;
     }
     flush();
-    const c: string[][] = Array.from({ length: n }, () => []);
-    d.cards.forEach((x, i) => c[i % n].push(x));
-    out.push(section(d, cols(c, "tl-cols")));
+    out.push(section(d, splitCols(d.cards, n)));
   }
   flush();
   return out.join("");
@@ -949,7 +942,7 @@ function projectTimeline(): void {
       : modeItems.length === 0
         ? emptyModeHtml(t("main.emptyTasks"), t("main.emptyTasksHint"))
         : shown.length > 0 && stageF !== null && stageShown.length === 0
-          ? `<p class="muted empty">${t("main.noneUnderStage", { stage: stageLabel(stageF)! })}</p>`
+          ? `<p class="muted empty">${t("main.noneUnderStage", { stage: esc(stageLabel(stageF)!) })}</p>`
           : stageShown.length > 0 && dueOnly
             ? `<p class="muted empty">${t("main.noneDue")}</p>`
             : filteredEmptyHtml(f);

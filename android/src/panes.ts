@@ -18,7 +18,7 @@ import {
   type SearchStatus,
 } from "./api";
 import { t } from "./i18n";
-import { $, cardTint, confirmBar, contentHtml, esc, fmtWhen, hideConfirmBar, showBar } from "./ui";
+import { $, cardTint, colsFor, confirmBar, contentHtml, esc, fmtWhen, hideConfirmBar, showBar, splitCols } from "./ui";
 import { errDetail, showErr } from "./err";
 import { isTaskStage, setColumns, stageLabel } from "./columns";
 
@@ -32,6 +32,24 @@ type Deps = {
 };
 
 let deps: Deps;
+
+// 宽屏上三个面的卡片列表分栏(tablet-plan 格 5;与随记同一套:ui.ts 的 colsFor / splitCols,轮流分)。栏数按**列表自己的宽**
+// 算;面收着时列表 0 宽 ⇒ 沿用上一次。每只列表挂一只 ResizeObserver,栏数真变了才重画(转屏、分屏拖宽窄 —— 盯的是列表
+// 自己,面开着时也触发);只重画**已经画着卡**的列表(加载中 / 空态 / 出错那句话不是卡,不碰)。
+const listCols = new WeakMap<HTMLElement, number>();
+function colsOf(box: HTMLElement): number {
+  const w = box.clientWidth;
+  if (w === 0) return listCols.get(box) ?? 1;
+  const n = colsFor(w);
+  listCols.set(box, n);
+  return n;
+}
+function watchCols(box: HTMLElement, rerender: () => void): void {
+  new ResizeObserver(() => {
+    if (box.clientWidth === 0 || !box.querySelector(".card")) return;
+    if (colsFor(box.clientWidth) !== listCols.get(box)) rerender();
+  }).observe(box);
+}
 
 /** 收起底部确认条(重载/切空间时:旧确认不许挂在新列表上)。 */
 function clearConfirm() {
@@ -77,9 +95,10 @@ function renderTrash() {
     box.innerHTML = `<p class="muted empty">${t("panes.trashEmpty")}</p>`;
     return;
   }
-  box.innerHTML = trashRows
+  const cards = trashRows
     .map((r) => {
-      const kind = stageLabel(r.stage) ?? t("panes.kindIdea");
+      // 列名是同步来的自由文本(桌面能改成任意字)⇒ 进 HTML 前转义(backlog 用户面 144)
+      const kind = esc(stageLabel(r.stage) ?? t("panes.kindIdea"));
       const chips = r.topics
         .map(
           (t) =>
@@ -99,8 +118,8 @@ function renderTrash() {
         <p class="content">${contentHtml(r.content, false)}</p>
         <footer><span class="pill">${kind}</span><time>${t("panes.deletedAt", { when: esc(fmtWhen(r.archived_at)) })}</time>${chips}</footer>${panel}
       </div></article>`;
-    })
-    .join("");
+    });
+  box.innerHTML = splitCols(cards, colsOf(box));
 }
 
 async function trashRun(op: (space: string) => Promise<unknown>, doneMsg?: string) {
@@ -214,7 +233,7 @@ function renderSealed() {
     box.innerHTML = `<p class="muted empty">${t("panes.sealedEmpty")}</p>`;
     return;
   }
-  box.innerHTML = sealedRows
+  const cards = sealedRows
     .map((r) => {
       const panel =
         r.id === sealedOpenId
@@ -231,8 +250,8 @@ function renderSealed() {
             : t("panes.sealedAt", { when: esc(fmtWhen(r.sealed_at!)) })
         }</time></footer>${panel}
       </div></article>`;
-    })
-    .join("");
+    });
+  box.innerHTML = splitCols(cards, colsOf(box));
 }
 
 function onSealedClick(e: Event) {
@@ -278,6 +297,22 @@ const SEARCH_STATUS_LABEL: Record<SearchStatus, string> = {
 };
 
 let searchSeq = 0;
+/** 最近一次搜到的命中(转屏重画用;加载中 / 空词 / 出错时不留)。 */
+let searchHits: import("./api").SearchHitItem[] = [];
+
+function renderHits() {
+  $("search-results").innerHTML = splitCols(
+    searchHits.map(
+      (h) => `<article class="card" data-hit="${esc(h.id)}" data-hit-status="${esc(h.status)}"><div class="body">
+              <p class="content">${contentHtml(h.content, false)}</p>
+              <footer><span class="pill">${SEARCH_STATUS_LABEL[h.status] ?? esc(h.status)}</span>
+                <time>${esc(fmtWhen(h.created_at))}</time>
+                ${h.topics.map((t) => `<span class="chip">${esc(t)}</span>`).join("")}</footer>
+            </div></article>`,
+    ),
+    colsOf($("search-results")),
+  );
+}
 
 async function runSearch() {
   // 序号先行(实现审 L7):空查询也要作废在途的旧查询——否则「清空再点搜」后,
@@ -286,6 +321,7 @@ async function runSearch() {
   const seq = ++searchSeq;
   const q = ($("search-input") as HTMLInputElement).value.trim();
   const box = $("search-results");
+  searchHits = [];
   if (!q) {
     box.innerHTML = `<p class="muted empty">${t("panes.searchPrompt")}</p>`;
     return;
@@ -294,18 +330,9 @@ async function runSearch() {
   try {
     const hits = await searchNotes(space, q);
     if (space !== getCurrentSpace() || seq !== searchSeq) return;
-    box.innerHTML = hits.length
-      ? hits
-          .map(
-            (h) => `<article class="card" data-hit="${esc(h.id)}" data-hit-status="${esc(h.status)}"><div class="body">
-              <p class="content">${contentHtml(h.content, false)}</p>
-              <footer><span class="pill">${SEARCH_STATUS_LABEL[h.status] ?? esc(h.status)}</span>
-                <time>${esc(fmtWhen(h.created_at))}</time>
-                ${h.topics.map((t) => `<span class="chip">${esc(t)}</span>`).join("")}</footer>
-            </div></article>`,
-          )
-          .join("")
-      : `<p class="muted empty">${t("panes.searchNoHit", { q: esc(q) })}</p>`;
+    searchHits = hits;
+    if (hits.length) renderHits();
+    else box.innerHTML = `<p class="muted empty">${t("panes.searchNoHit", { q: esc(q) })}</p>`;
   } catch (err) {
     if (space !== getCurrentSpace() || seq !== searchSeq) return;
     box.innerHTML = `<p class="empty warn-ink">${t("panes.searchFailed", { error: esc(errDetail(err)) })}</p>`;
@@ -344,6 +371,7 @@ export function resetPanesForSpaceChange() {
   sealedRows = [];
   sealedOpenId = null;
   clearConfirm();
+  searchHits = [];
   $("trash-list").innerHTML = "";
   $("sealed-list").innerHTML = "";
   $("search-results").innerHTML = "";
@@ -356,6 +384,9 @@ export function initPanes(d: Deps) {
   $("sealed-pane").addEventListener("click", onSealedClick);
   $("search-results").addEventListener("click", onSearchClick);
   $("search-btn").addEventListener("click", () => void runSearch());
+  watchCols($("trash-list"), renderTrash);
+  watchCols($("sealed-list"), renderSealed);
+  watchCols($("search-results"), renderHits);
   $("search-input").addEventListener("keydown", (e) => {
     if ((e as KeyboardEvent).isComposing) return; // IME 组合期的 Enter 是上屏,不是搜索
     if ((e as KeyboardEvent).key === "Enter") void runSearch();

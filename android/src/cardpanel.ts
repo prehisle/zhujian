@@ -345,7 +345,8 @@ function renderValuePicker(item: TimelineItem, which: "status" | "due" | "prio")
   let lane: string;
   if (which === "status") {
     lane = `<span class="lab">${t("cardpanel.laneStatus")}</span><span class="pillrow">${statuses()
-      .map((s) => pill(s.label, `data-status="${s.key}"`, item.stage === s.key, busy || item.stage === s.key))
+      // 列名是同步来的自由文本 ⇒ 进 HTML 前转义(backlog 用户面 144;id 同理)
+      .map((s) => pill(esc(s.label), `data-status="${esc(s.key)}"`, item.stage === s.key, busy || item.stage === s.key))
       .join("")}</span>`;
   } else if (which === "due") {
     lane =
