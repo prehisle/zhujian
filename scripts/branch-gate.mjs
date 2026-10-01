@@ -694,6 +694,44 @@ function assertAuditStaysOutOfCi() {
   );
 }
 
+// ── mac 那份 `app.windows` 与基础配置同值(doc-slimming 格③第六条:`.claude/rules/desktop-config.md`「⛔ 一起改」换成机制)──
+// 平台配置按 RFC 7396 合并、数组整个替换(735 实查 tauri-utils)⇒ `tauri.macos.conf.json` 抄了全份两个窗,两份的差本意只有 notebook 窗那三个键(667)。
+// 720 改 base 默认宽没跟过去,mac 首启一直是旧宽(733 在 mac-home 真机撞见、735 修)—— 开发机编不了 mac,漂了没有一处会红。
+// ⇒ 按 label 逐窗比,去掉豁免的三个键后逐键相等(键序无关);多一个窗 / 少一个窗同样拒。
+// ⚠ 诚实边界:①只比 `app.windows`,mac 那份将来加的别的键不在面内;②豁免那三个键的值不核(mac 专属的形,667);
+//   ③只管 macos 这一份(仓里今天只有它一份平台配置);④同值 ≠ mac 上长得对,那半仍只有 mac-home 真机答得了(733 的手法)。
+// ⛔ 不是新开门禁(停止扩张线):`JSON.parse` + 一张三个键的豁免表。
+const MAC_ONLY_WINDOW_KEYS = { notebook: ["decorations", "titleBarStyle", "hiddenTitle"] };
+function assertMacWindowsMatchBase() {
+  const canon = (v) => Array.isArray(v) ? `[${v.map(canon).join(",")}]`
+    : v && typeof v === "object" ? `{${Object.keys(v).sort().map((k) => `${JSON.stringify(k)}:${canon(v[k])}`).join(",")}}`
+    : JSON.stringify(v);
+  const windows = (rel) => {
+    const m = new Map();
+    for (const w of JSON.parse(readFileSync(join(repoRoot, rel), "utf8")).app?.windows ?? []) {
+      const c = { ...w };
+      for (const k of MAC_ONLY_WINDOW_KEYS[w.label] ?? []) delete c[k];
+      m.set(w.label, c);
+    }
+    return m;
+  };
+  const base = windows("src-tauri/tauri.conf.json");
+  const mac = windows("src-tauri/tauri.macos.conf.json");
+  const bad = [];
+  for (const label of new Set([...base.keys(), ...mac.keys()])) {
+    const a = base.get(label), b = mac.get(label);
+    if (!a || !b) { bad.push(`    窗 ${label}:只在${a ? "基础" : " mac "}那份里有`); continue; }
+    const keys = [...new Set([...Object.keys(a), ...Object.keys(b)])].filter((k) => canon(a[k]) !== canon(b[k]));
+    if (keys.length) bad.push(`    窗 ${label}:${keys.map((k) => `${k} 基础=${canon(a[k])} / mac=${canon(b[k])}`).join(";")}`);
+  }
+  if (!bad.length) return;
+  die(
+    `src-tauri/tauri.macos.conf.json 的 app.windows 与基础配置对不上 —— ⛔ 不落地:\n${bad.join("\n")}\n` +
+      `  平台配置里数组整个替换 ⇒ mac 那份抄了全份;两份只许差 notebook 窗的 ${MAC_ONLY_WINDOW_KEYS.notebook.join(" / ")}(667)。\n` +
+      `  ⇒ 把改动原样抄到另一份的同一处(720 改默认宽没抄,mac 首启一直是旧宽,733 才在真机上撞见)。`,
+  );
+}
+
 // ── handoff「手上的债」的形(测试与工装 113 立,698 接上)──────────────────────
 // 8 KB 闸 697 收口时只剩 6 字节余量,而债**一轮一行、只增不减**(销掉才删,那几半的触发门握在
 // 别的机器手里)⇒ 下一个人加一行必撞,还会被迫去压**别人写的**行 = 静默丢判据。
@@ -735,6 +773,7 @@ function runLocalGates() {
   assertLocalGatesMatchPreflight();
   assertPreflightHasNoRepoCondition();
   assertAuditStaysOutOfCi();
+  assertMacWindowsMatchBase();
   console.log(`→ 本地十道静态门禁(几秒量级)…`);
   for (const g of LOCAL_GATES) {
     try {
