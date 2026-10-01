@@ -7,7 +7,7 @@
 //   node scripts/branch-gate.mjs verify    把当前这棵树推到公开仓的一条闸分支,CI 就跑起来
 //   node scripts/branch-gate.mjs land      落地(私有 master + 公开 main);先本地跑十道静态门禁,⛔ 已知红拒、未出结论不等
 //   node scripts/branch-gate.mjs status    问那棵树的 CI 结论
-//   node scripts/branch-gate.mjs abandon   放弃这一趟,公开仓本地 main 退回 origin/main;私有仓不动
+//   node scripts/branch-gate.mjs abandon   放弃这一趟,公开仓本地 main 退回 origin/main、本环境的闸分支全清(含 amend 前那条);私有仓不动
 //   node scripts/branch-gate.mjs sweep     清掉**本环境**留下的孤儿闸分支
 //
 // 承重的两格,⛔ 一个字别动:
@@ -123,7 +123,7 @@ function exportDelta() {
 // ⚠ 老形 `gate/<sha>`(529 前推的)一律不碰:认不出是谁的。
 // cancelRuns:`sweep` 与 `abandon` 共用(收纳格 51(a);此前 abandon 光删分支、run 照烧,522)。
 // ⚠ `head_sha` 过滤器要完整 40 位 —— 短 sha 会**安静地返回空表**(534 实测对拍),⛔ 别在这儿截短,调用处一律传 `ls-remote` 读回的完整 sha。
-// 返回取消掉几趟;问不到 / 取消不了答 null(不致命,调用方照旧往下走)。
+// 返回取消掉几趟;问不到 / 取消不了答 null(不致命,但 sweep 见 null 就不删那条分支)。
 function cancelRuns(sha, tag) {
   try {
     const raw = execFileSync(
@@ -137,6 +137,8 @@ function cancelRuns(sha, tag) {
       execFileSync("gh", ["run", "cancel", id, "-R", PUBLIC_REPO], { stdio: "ignore" });
       console.log(`   · ${tag}  取消了还在跑的 run ${id}`);
     }
+    // 答空也印一行:747 那趟删了分支、run 却照跑,而屏上分不出是「抛了」还是「答空」(收纳格 51 (l))。
+    if (!ids.length) console.log(`   · ${tag}  没有还在跑的 run`);
     return ids.length;
   } catch {
     console.log(`   · ${tag}  ⚠ 问不到/取消不了它的 run(不致命,继续)`);
@@ -144,7 +146,8 @@ function cancelRuns(sha, tag) {
   }
 }
 
-function sweep({ quiet = false } = {}) {
+// includeCurrent:`abandon` 用 —— 放弃这一趟 = 本环境前缀下一条都不该再跑,连当前这条(收纳格 51 (l))。
+function sweep({ quiet = false, includeCurrent = false } = {}) {
   let branches;
   try {
     branches = listGateBranches();
@@ -152,7 +155,8 @@ function sweep({ quiet = false } = {}) {
     console.log(`  ⚠ 问不到公开仓的闸分支,这次没清:${String(e.stderr || e.message).trim().slice(0, 150)}`);
     return;
   }
-  const mine = branches.filter((b) => b.env === env && b.ref !== gateBranch);
+  const mine = branches.filter((b) => b.env === env && (includeCurrent || b.ref !== gateBranch));
+  const what = includeCurrent ? "闸分支(连当前这条)" : "孤儿闸分支";
   // ⚠ 剩下的分两种,**别混成一句**:认得出是别的环境的 / 老形认不出是谁的。
   //    两种都不碰,但**理由不一样** —— 说成「别的环境的」会让人以为对端正在验一笔,
   //    而它可能就是自己上一轮留下的老形分支(529 自己第一次跑就撞见这一格)。
@@ -163,14 +167,19 @@ function sweep({ quiet = false } = {}) {
     if (legacy.length) console.log(`   (另有 ${legacy.length} 条**老形 \`gate/<sha>\`**、认不出是谁推的:${legacy.map((b) => b.ref).join(" / ")} —— ⛔ 不碰,手动处置)`);
   };
   if (!mine.length) {
-    if (!quiet) console.log(`✅ 没有 ${env} 的孤儿闸分支要清。`);
+    if (!quiet) console.log(`✅ 没有 ${env} 的${what}要清。`);
     note();
     return;
   }
-  console.log(`\n→ 清掉 ${mine.length} 条 ${env} 的孤儿闸分支(⛔ 只碰自己这个前缀下的):`);
+  console.log(`\n→ 清掉 ${mine.length} 条 ${env} 的${what}(⛔ 只碰自己这个前缀下的):`);
   for (const b of mine) {
     // ① 先取消还在跑的那趟 —— 贵的是这个(runner 分钟数),不是分支本身。
-    cancelRuns(b.sha, b.ref);
+    // ⭐ 取消不成就**留着分支**:那趟 run 只能按这条分支的 sha 找回来,删了它就烧到底、再没有哪次 sweep 够得着
+    //    (747 实撞:旧那条被下一趟 verify 的 sweep 删了、run 照跑到被手动取消;收纳格 51 (l))。留下的下一趟 sweep 再试。
+    if (cancelRuns(b.sha, b.ref) === null) {
+      console.log(`   · ${b.ref}  ⚠ 留着没删(删了就再找不回那趟 run);下一趟 sweep 会再试`);
+      continue;
+    }
     // ② 再删分支。
     try {
       gitProxy(target, ["push", "origin", "--delete", b.ref]);
@@ -711,7 +720,10 @@ function assertHandoffDebtShape() {
   );
 }
 
+// verify 推闸分支之前与 land 各叫一次;`gate` 是同一个进程,第二次空转(树在两次之间不会变:die 即退出)。
+let ranLocalGates = false;
 function runLocalGates() {
+  if (ranLocalGates) return;
   assertHandoffDebtShape();
   assertClaudeMdBudget();
   assertBacklogBudget();
@@ -738,6 +750,7 @@ function runLocalGates() {
     }
   }
   console.log(`  ✅ 十道全绿。`);
+  ranLocalGates = true;
 }
 
 // ── 生成物与源是否还一致(576 之后立)──────────────────────────────────────────
@@ -745,7 +758,9 @@ function runLocalGates() {
 // 备案后按 deploy §8.1a 撤了);`build-site-cool.mjs --check` 现成却没有任何自动边界跑它 ⇒ 接到这儿(385;⛔ 不是新开门禁)。
 // ⚠ 诚实边界:①只能在本机跑 —— `site-cool/` 与那支脚本都在 `.export-excluded.json` 里,CI 永远看不见;
 //   ②只核「产物 == 拿今天的源重新生成」,不核源本身;③不是十道静态门禁之一,preflight.yml 不必跟着改。
+let ranGeneratedChecks = false;
 function runGeneratedArtifactChecks() {
+  if (ranGeneratedChecks) return;
   try {
     execFileSync(process.execPath, ["scripts/build-site-cool.mjs", "--check"], {
       cwd: repoRoot, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
@@ -758,6 +773,7 @@ function runGeneratedArtifactChecks() {
     );
   }
   console.log(`  ✅ 生成物(site-cool)与源一致。`);
+  ranGeneratedChecks = true;
 }
 
 // ── 导出树上再跑一遍那十道(测试与工装 69 立;577 实撞)────────────────────
@@ -793,6 +809,9 @@ function ensureExportTreeNodeModules() {
 }
 function runGatesOnExportedTree(what) {
   if (ranExportGates) return;
+  // 红了那句「本机工作树上它是绿的」靠这一行成立(调用处先跑过就空转)。792 实撞:verify 此前不跑工作树那趟,
+  // i18n 在两棵树上一样红,这句却把人引向导出白名单(收纳格 51 (n))。
+  runLocalGates();
   ranExportGates = true;
   ensureExportTreeNodeModules();
   console.log(`→ **导出树**上再跑一遍那十道(${what})…`);
@@ -806,7 +825,7 @@ function runGatesOnExportedTree(what) {
       die(
         `门禁 check-${g} 在**导出树**上红了 —— ⛔ 什么都没推(69;577 那趟 CI 红的就是这一格):\n\n` +
           `${out.slice(-1500)}\n\n` +
-          `  ⚠ **本机工作树上它是绿的** ⇒ 差别来自「这棵树上有哪些文件」:\n` +
+          `  ⚠ **本机工作树上它是绿的**(同一趟刚跑过)⇒ 差别来自「这棵树上有哪些文件」:\n` +
           `     公开快照是白名单导出的,\`.export-excluded.json\` 里那些文件在那边**根本不存在**。\n` +
           `  ⇒ 要么把那份文件加进导出白名单(\`export-public.mjs\` 的 ALLOW),\n` +
           `     要么在闸的登记表里把它标成「只在工作仓里有」(见 scripts/lib/css-docs.mjs 的 privateOnly)。`,
@@ -855,6 +874,11 @@ function verify() {
     return;
   }
   console.log(`本轮动了要走闸的面 ${pd.length} 处(${pd.slice(0, 4).join(" / ")}${pd.length > 4 ? " …" : ""})⇒ 走闸。\n`);
+
+  // ⭐ land 的两族本地检查提前到「推闸分支」之前(收纳格 51 (l)):746 / 747 都是 verify 已推、land 才撞 skill 字节闸 →
+  //    amend 后旧那趟成孤儿。本机几秒答得出的红,⛔ 别留到推完再说。排在导出之前:红了连公开仓那份 clone 都不碰。
+  runLocalGates();
+  runGeneratedArtifactChecks();
 
   // ⛔⛔ 这一问必须排在 sync 之前(521 补二):放在后面,东西已被 sync 提交掉,它恒答「没有」——
   //    一句与事实相反的收尾话正是最该修的那类,下一个人会照它办事。
@@ -1053,21 +1077,10 @@ function abandon() {
   console.log(`→ 公开仓本地 main 退回 origin/main …`);
   gitProxy(target, ["fetch", "origin", "main"]);
   git(target, ["reset", "--hard", "origin/main"]);
-  // ⛔ 顺序与 sweep 同:先 cancel,后删分支(529;「对分支已删的那趟 `gh run cancel` 灵不灵」没验过,排到不需要问的位置)。
-  try {
-    const mine = listGateBranches().find((b) => b.ref === gateBranch);
-    if (mine) cancelRuns(mine.sha, gateBranch);
-    else console.log(`   · ${gateBranch} 不在公开仓上(没推成 / 已删过)⇒ 没有 run 要取消。`);
-  } catch (e) {
-    console.log(`   ⚠ 问不到公开仓的闸分支,这趟没取消 run —— 手动:gh run list -R ${PUBLIC_REPO}` +
-      `(${String(e.stderr || e.message).trim().slice(0, 120)})`);
-  }
-  try {
-    gitProxy(target, ["push", "origin", "--delete", gateBranch]);
-    console.log(`→ 闸分支 ${gateBranch} 已删。`);
-  } catch {
-    console.log(`  ⚠ 闸分支 ${gateBranch} 没删掉(可能本来就不在)。`);
-  }
+  // ⭐ 清本环境**全部**闸分支、连当前这条,⛔ 别改回「按当前 sha 现算一条」(收纳格 51 (l)):常见来路是 `gate` 撞闸 → amend → abandon,
+  //    这时当前 sha 已变,还在烧的是 amend 前推的那条 —— 现算的名字恰好够不着它(746 / 747 各撞一次)。本环境前缀下的
+  //    只可能是这份 clone 推的,放弃这一趟 = 一条都不该再跑。先取消后删、取消不成留着,都在 sweep 里。
+  sweep({ includeCurrent: true });
   console.log(`\n✅ 已放弃这一趟。⛔ 私有仓一个字没动 —— 你的提交都还在。`);
 }
 
@@ -1088,8 +1101,8 @@ if (!table[cmd]) {
   console.error("  verify   把这棵树推到公开仓闸分支,CI 跑起来(末尾自动 sweep 一次)");
   console.error("  land     落地(公开 main + 私有 master);先本地跑十道静态门禁(红拒),不等 CI 结论,⛔ 已知红拒");
   console.error("  status   问 CI 结论(green / running / red / unknown;红了要修)");
-  console.error("  abandon  放弃这一趟,公开仓本地退回;私有仓不动");
-  console.error("  sweep    清掉**本环境**留下的孤儿闸分支(先取消它的 run,再删分支)");
+  console.error("  abandon  放弃这一趟,公开仓本地退回、本环境的闸分支全清(先取消它们的 run);私有仓不动");
+  console.error("  sweep    清掉**本环境**留下的孤儿闸分支(先取消它的 run,取消成了才删分支)");
   process.exit(1);
 }
 table[cmd]();
