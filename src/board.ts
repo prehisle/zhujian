@@ -1716,11 +1716,18 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       let zoomed = false;
       let overlay: HTMLElement | null = null;
       let saving = false; // 幂等:点别处/回车/切卡可能并发触发,保存中再触发直接让位
+      // 已落盘的标题:改名成功、删图那步却失败时,重试不能再改一遍同样的名(no-op rename 也会留一条重复版本)。
+      let savedTitle = item.title;
+      const titleChanged = (): boolean => input.value.trim() !== "" && input.value !== savedTitle;
       const save = async () => {
         if (saving) return;
         saving = true;
         try {
-          await invoke("rename_task", { id: item.id, title: input.value });
+          if (titleChanged()) {
+            await invoke("rename_task", { id: item.id, title: input.value });
+            savedTitle = input.value;
+          }
+          await strip.commitDeletes(); // 148:编辑态里标了删的图,随保存这一步才真删
         } catch (e) {
           // 竞态下编辑器可能已被重画拆走:错误必须落在还看得见的地方(op-err 横幅),
           // 附草稿不无声(codex P1 审 H3)。
@@ -1732,10 +1739,10 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         activeEditFlush = null; // 已落盘:随后的 load() 不得再 flush 同一改动(会造重复版本)
         load(); // 重渲会拆掉本编辑态的文档级监听(activeEditCleanup)
       };
-      // 提交编辑:空标题(后端拒空)或没改动都当「取消」——直接重渲回视图、不打后端(no-op
-      // rename 也会 UPDATE 触发历史归档、留一条重复版本,所以未改动必须短路)。真有改动才 save。
+      // 提交编辑:空标题(后端拒空)或没改动、且没有标了删的图,都当「取消」——直接重渲回视图、
+      // 不打后端(no-op rename 也会 UPDATE 触发历史归档、留一条重复版本,所以未改动必须短路)。
       const commit = (): void => {
-        if (input.value.trim() === "" || input.value === item.title) {
+        if (!titleChanged() && strip.pendingDeletes() === 0) {
           void load();
           return;
         }
@@ -1793,16 +1800,25 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       };
       // 刷新前落盘(P1 #9b):此前 load() 重画只摘监听、半打的标题静默蒸发(远端一有
       // 动静就丢)。未改动/空/保存中 = 无事(false);失败上 op-err 横幅并附草稿,不无声。
+      // 148:标了删的图也算「已改动」,同一刻落 —— 否则远端一刷新,标记就悄悄没了。
       activeEditFlush = async () => {
         const v = input.value;
-        if (saving || v.trim() === "" || v === item.title) return false;
-        try {
-          await invoke("rename_task", { id: item.id, title: v });
-          return true;
-        } catch (e) {
-          showOpError(t("board.renameFailed", { title: item.title, err: errDetail(e), draft: v }));
-          return false;
+        if (saving || (!titleChanged() && strip.pendingDeletes() === 0)) return false;
+        if (titleChanged()) {
+          try {
+            await invoke("rename_task", { id: item.id, title: v });
+            savedTitle = v;
+          } catch (e) {
+            showOpError(t("board.renameFailed", { title: item.title, err: errDetail(e), draft: v }));
+            return false;
+          }
         }
+        try {
+          await strip.commitDeletes();
+        } catch (e) {
+          showOpError(t("itemImages.deleteFailed", { err: errDetail(e) }));
+        }
+        return true;
       };
 
       // 编辑态显示该任务的标签(纯展示):编辑标题时能一眼看到挂了哪些标签。增删标签仍走

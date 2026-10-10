@@ -403,19 +403,30 @@ export async function openLightboxBlob(blob: Blob, alt = t("itemImages.preview")
   await openOverlay({ kind: "data", src, alt });
 }
 
-/** A thumbnail strip for an item's images. `editable` adds a × to delete each one (used in a
- *  card's edit mode); read-only strips just open the lightbox on click. Returns the root plus
- *  a `reload` so the editor can refresh it after an attach/delete. `onChange` fires after a
- *  delete so the host can re-linkify its 正文 (a 图N whose image just left becomes plain text). */
+/** A thumbnail strip for an item's images. `editable` adds a × to each one (used in a card's
+ *  edit mode); read-only strips just open the lightbox on click. Returns the root plus a
+ *  `reload` so the editor can refresh it after an attach. `onChange` fires after deletes land
+ *  so the host can re-linkify its 正文 (a 图N whose image just left becomes plain text).
+ *
+ *  ⭐ 用户面 148:编辑态的 × **只做标记**(图变淡、再点一下撤销),删除随编辑的「保存」
+ *  一起落(宿主调 `commitDeletes`);Esc 取消 = 编辑器整个丢掉,标记跟着没了,图一张不少。
+ *  此前一点 × 就当场硬删、不随取消回滚 —— 而删图不进回收站、不进编辑历史,手滑就找不回。 */
 export function imageStrip(
   itemId: string,
   opts: { editable: boolean; onChange?: () => void; onMetas?: (metas: ImageMeta[]) => void },
-): { root: HTMLElement; reload: () => Promise<void> } {
+): {
+  root: HTMLElement;
+  reload: () => Promise<void>;
+  pendingDeletes: () => number;
+  commitDeletes: () => Promise<void>;
+} {
   // 初始即 .empty(隐藏):reload 前默认无图,免得配图工具条在 load 完成前闪一下再收起。
   // ⭐ 但**上次见过这条的图就不必再空一帧**——下面的乐观首帧会当场把它画出来。
   const root = el("div", { className: "img-strip empty" });
   // 当前已画的那批(乐观首帧画的,或对账后画的)。null = 还没画过任何一批。
   let shown: ImageMeta[] | null = null;
+  // 标了「保存时删」的图 id(只在 editable 下有)。重画时照着它把标记画回去。
+  const marked = new Set<string>();
 
   // `all` = 本条同批列出的整组图:点开任一张后 ←/→ 能在组内翻页(224)。
   function thumb(m: ImageMeta, all: ImageMeta[]): HTMLElement {
@@ -434,20 +445,19 @@ export function imageStrip(
     });
     wrap.append(img, el("span", { className: "img-badge", textContent: t("itemImages.badge", { n: m.seq }) }));
     if (opts.editable) {
-      const del = el("button", { className: "img-del", textContent: "×", title: t("itemImages.deleteImage") });
-      del.addEventListener("click", async (e) => {
+      const del = el("button", { className: "img-del" });
+      const paintMark = (): void => {
+        const on = marked.has(m.id);
+        wrap.classList.toggle("del-marked", on);
+        del.textContent = on ? "↺" : "×";
+        del.title = on ? t("itemImages.undoDelete") : t("itemImages.deleteImage");
+      };
+      paintMark();
+      del.addEventListener("click", (e) => {
         e.stopPropagation();
-        try {
-          await invoke("delete_item_image", { imageId: m.id });
-        } catch {
-          return; // leave the thumb in place if the delete failed
-        }
-        thumbCache.delete(m.id); // 内存卫生:小图缓存清项
-        // ⚠ 606:「刚看过那张全尺寸」的缓存搬到遮罩窗去了(lightbox.ts),本窗清不动它。
-        // 不补一条「忘掉这张」的跨窗事件:图 id 永不复用 ⇒ 陈旧条目**不可能**被错服务,
-        // 上界也没变(至多 1 张全尺寸),代价只是那一张要等下次看图才被顶掉。
-        await reload();
-        opts.onChange?.();
+        if (marked.has(m.id)) marked.delete(m.id);
+        else marked.add(m.id);
+        paintMark();
       });
       wrap.append(del);
     }
@@ -456,6 +466,7 @@ export function imageStrip(
 
   function paint(metas: ImageMeta[]): void {
     shown = metas;
+    for (const id of [...marked]) if (!metas.some((m) => m.id === id)) marked.delete(id); // 别处已删的不再挂着
     root.classList.toggle("empty", metas.length === 0);
     root.replaceChildren(...metas.map((m) => thumb(m, metas)));
   }
@@ -484,8 +495,26 @@ export function imageStrip(
     opts.onMetas?.(known);
   }
 
+  /** 把标了的图逐张删掉(编辑「保存」那一步调)。删掉一张摘一张标记 ⇒ 中途失败后重试只删剩下的;
+   *  失败照原样抛给宿主(留在编辑态、报原话)。删完重取一次,`onChange` 让宿主重画正文的「图N」。 */
+  async function commitDeletes(): Promise<void> {
+    try {
+      for (const id of [...marked]) {
+        await invoke("delete_item_image", { imageId: id });
+        marked.delete(id);
+        thumbCache.delete(id); // 内存卫生:小图缓存清项
+        // ⚠ 606:「刚看过那张全尺寸」的缓存搬到遮罩窗去了(lightbox.ts),本窗清不动它。
+        // 不补一条「忘掉这张」的跨窗事件:图 id 永不复用 ⇒ 陈旧条目**不可能**被错服务,
+        // 上界也没变(至多 1 张全尺寸),代价只是那一张要等下次看图才被顶掉。
+      }
+    } finally {
+      await reload(); // 失败也重取:已删掉的那几张别再画着
+      opts.onChange?.();
+    }
+  }
+
   void reload();
-  return { root, reload };
+  return { root, reload, pendingDeletes: () => marked.size, commitDeletes };
 }
 
 // Trailing punctuation that commonly hugs a URL in prose but isn't part of it, so

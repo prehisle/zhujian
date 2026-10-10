@@ -94,6 +94,9 @@ type PanelState = {
    *  刷新被草稿闸延后 ⇒ 不能靠 refresh 让新图冒出来,这份是编辑期间缩略图条的真相源;
    *  收场退出编辑时那轮补刷会拿到库里真值。null = 非编辑态。 */
   editImages: ImageMeta[] | null;
+  /** 编辑态里标了「保存时删」的图 id(用户面 148:点 × 只做标记,保存才真删,取消 = 一张不少)。
+   *  null = 非编辑态。 */
+  editDeletes: Set<string> | null;
   /** 标签新建输入草稿。 */
   tagDraft: string;
   /** listTopics 请求序号(三审 M3):enterTags/refreshTopics 共用,旧快照晚回不许
@@ -279,6 +282,7 @@ function editView() {
     text: state?.editDraft ?? "",
     topics: (item?.topics ?? []).map((tp) => ({ title: tp.title, color: tp.color })),
     images: state?.editImages ?? [],
+    marked: [...(state?.editDeletes ?? [])],
     busy,
   };
 }
@@ -624,17 +628,29 @@ async function saveEdit() {
   }
   const task = isTaskStage(item.stage);
   // 同值不写(codex L10):任务比 trim 后标题、灵感比原字符串——未改直接收起,
-  // 不产生一条内容相同的历史版本和同步 op。
-  if (task ? trimmed === item.content : draft === item.content) {
+  // 不产生一条内容相同的历史版本和同步 op。⚠ 判据与 editHost.isDirty 逐字同一条。
+  const textSame = task ? trimmed === item.content : draft === item.content;
+  const dels = session.editDeletes ?? new Set<string>();
+  if (textSame && dels.size === 0) {
     closeDraft();
     return;
   }
   await run(
-    (space) => (task ? renameTask(space, session.id, draft) : editNote(space, session.id, draft)),
+    async (space) => {
+      // 148:先删标了的图、再写正文。删到一半失败时,已删的当场从标记与图条里摘掉 ⇒ 重试只删
+      // 剩下的,正文也只写一遍(反过来排,正文写成功、删图失败后重试会再写一条同样的历史版本)。
+      for (const id of [...dels]) {
+        await deleteItemImage(space, id);
+        dels.delete(id);
+        if (session.editImages) session.editImages = session.editImages.filter((m) => m.id !== id);
+      }
+      if (!textSame) await (task ? renameTask(space, session.id, draft) : editNote(space, session.id, draft));
+    },
     {
       afterSession: () => {
         session.editDraft = null;
         session.editImages = null;
+        session.editDeletes = null;
         setMode(session, "actions"); // 编辑层随之收掉(syncShell)
         deps.onDraftClosed();
       },
@@ -647,6 +663,7 @@ function closeDraft() {
   if (!state) return;
   state.editDraft = null;
   state.editImages = null;
+  state.editDeletes = null; // 取消 = 标记一并丢掉,图一张没删
   state.tagDraft = "";
   setMode(state, "actions"); // 编辑层随之收掉(syncShell)
   const c = currentCard();
@@ -726,20 +743,13 @@ async function addPhoto(itemId: string): Promise<void> {
   await attachImages(itemId, [file]);
 }
 
-/** 编辑面缩略图删图(674):两拍确认,就地删 + 从 editImages 摘掉(run 的 finally 重画编辑面)。
- *  ⛔ 不走整轴 refresh——编辑态它被草稿闸延后,退出编辑那刻才补;缩略图条的真相在 editImages。 */
-function confirmDeleteEditImage(imgId: string, seq: string): void {
-  if (!state || busy) return;
-  const session = state;
-  confirmBar(t("main.deleteImageQ", { n: seq }), t("main.deleteImageYes"), () => {
-    if (state !== session || busy) return;
-    void run((space) => deleteItemImage(space, imgId), {
-      afterSession: () => {
-        if (session.editImages) session.editImages = session.editImages.filter((m) => m.id !== imgId);
-      },
-      onCommitted: () => showBar(t("main.imageDeleted"), true),
-    });
-  });
+/** 编辑面缩略图上的 ×(用户面 148):只切换「保存时删」的标记,不碰库 —— 真删在 saveEdit。
+ *  此前是两拍确认后当场硬删(「删了不可恢复」),而删图不进回收站、不进编辑历史。 */
+function toggleDeleteEditImage(imgId: string): void {
+  if (!state?.editDeletes || busy) return;
+  if (state.editDeletes.has(imgId)) state.editDeletes.delete(imgId);
+  else state.editDeletes.add(imgId);
+  paintEditSheet(editView());
 }
 
 // ---- 事件接线 ----------------------------------------------------------------
@@ -849,6 +859,7 @@ function onTimelineClick(e: Event) {
     topics: [],
     editDraft: null,
     editImages: null,
+    editDeletes: null,
     tagDraft: "",
     topicsSeq: 0,
     revisions: null,
@@ -888,6 +899,7 @@ function handleAct(act: string, card: HTMLElement) {
       clearConfirm();
       session.editDraft = item.content;
       session.editImages = [...item.images]; // 进编辑态时拷一份现有配图;加/删就地改这一份
+      session.editDeletes = new Set();
       setMode(session, "edit");
       openEditSheet(editView(), editHost); // 屏底的编辑层接手打字这件事(706)
       renderPanel(card); // 遮罩底下的卡照常画主面
@@ -1097,8 +1109,8 @@ const editHost: EditHost = {
   onPhoto: () => {
     if (state && !editBlocked()) void addPhoto(state.id);
   },
-  onDeleteImage: (id, seq) => {
-    if (!editBlocked()) confirmDeleteEditImage(id, seq);
+  onDeleteImage: (id) => {
+    if (!editBlocked()) toggleDeleteEditImage(id);
   },
   onViewImage: (idx) => {
     const imgs = state?.editImages ?? [];
@@ -1110,6 +1122,7 @@ const editHost: EditHost = {
     if (!state || state.editDraft === null) return false;
     const item = deps.getItem(state.id);
     if (!item) return false;
+    if ((state.editDeletes?.size ?? 0) > 0) return true; // 标了删的图也是改动(148)
     return isTaskStage(item.stage)
       ? state.editDraft.trim() !== item.content
       : state.editDraft !== item.content;

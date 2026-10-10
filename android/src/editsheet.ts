@@ -32,6 +32,8 @@ export type EditView = {
   topics: { title: string; color: string | null }[];
   /** 编辑期间这条的配图(增删就地改宿主那份)。 */
   images: ImageMeta[];
+  /** 标了「保存时删」的图 id(148):画成淡图 + ↺,再点一下撤销。 */
+  marked: string[];
   /** 宿主有写在飞:整层禁点。 */
   busy: boolean;
 };
@@ -44,7 +46,8 @@ export type EditHost = {
   onCancel(): void;
   onAddImage(): void;
   onPhoto(): void;
-  onDeleteImage(id: string, seq: string): void;
+  /** 点图上那枚 ×:切换「保存时删」的标记(148),本层不碰库。 */
+  onDeleteImage(id: string): void;
   /** 点缩略图本体 = 只读看大图(删走图上那枚 ×)。 */
   onViewImage(index: number): void;
   /** 正文相对库里那份改过没有:点遮罩时用来分「直接收层」还是「拦一句」。 */
@@ -136,21 +139,20 @@ export function paintEditSheet(v: EditView): void {
   // ⚠ 图没变就一个节点都不动:每次重画都重建的话,已经填好字节的小图会闪一下(而 busy
   // 期间的重画一趟不少)。
   const thumbs = $("edit-thumbs");
-  const sig = v.images.map((im) => `${im.id}:${im.seq}`).join(",");
+  const sig = v.images.map((im) => `${im.id}:${im.seq}:${v.marked.includes(im.id) ? "x" : ""}`).join(",");
   thumbs.hidden = v.images.length === 0;
   if (sig !== thumbSig) {
     thumbSig = sig;
     thumbs.innerHTML = v.images
-      .map(
-        (im) =>
-          `<button class="thumb" data-img="${esc(im.id)}" data-seq="${im.seq}"><span class="tag-n">${t(
-            "images.imageN",
-            { n: im.seq },
-          )}</span><span class="thumb-del" data-editdel="${esc(im.id)}" data-seq="${im.seq}" aria-label="${t(
-            "main.deleteImage",
-            { n: im.seq },
-          )}">×</span></button>`,
-      )
+      .map((im) => {
+        const on = v.marked.includes(im.id);
+        return `<button class="thumb${on ? " marked" : ""}" data-img="${esc(im.id)}" data-seq="${im.seq}"><span class="tag-n">${t(
+          "images.imageN",
+          { n: im.seq },
+        )}</span><span class="thumb-del" data-editdel="${esc(im.id)}" aria-label="${
+          on ? t("main.undoDeleteImage", { n: im.seq }) : t("main.deleteImage", { n: im.seq })
+        }">${on ? "↺" : "×"}</span></button>`;
+      })
       .join("");
     hydrateThumbs(thumbs); // 缓存命中直接填,否则滚到可视区才拉(同只读那套)
   }
@@ -195,7 +197,7 @@ export function initEditSheet(d: Deps): void {
     const el = e.target as HTMLElement;
     const del = el.closest<HTMLElement>("[data-editdel]");
     if (del) {
-      host.onDeleteImage(del.dataset.editdel!, del.dataset.seq ?? "");
+      host.onDeleteImage(del.dataset.editdel!);
       return;
     }
     const thumb = el.closest<HTMLElement>(".thumb[data-img]");

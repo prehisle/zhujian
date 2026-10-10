@@ -959,10 +959,13 @@
       }
       .thumb.err { border-color: var(--seal); }
       .thumb.err::before { content: "!"; color: var(--seal); font-weight: 700; }
-      /* 删图 ×:只在**编辑层**里露出(两拍确认,cardpanel.ts 就地删——图的增删都在编辑
+      /* 删图 ×:只在**编辑层**里露出(148 起点了只做标记、保存才删,cardpanel.ts——图的增删都在编辑
          那张表单里,与桌面编辑态同形)。时间轴上的只读缩略图从不带删钮。
          共形声明住捕获节的「圆形删图钮」一份;这里只管显隐(露出那条见 `.editsheet`)。 */
       .thumb-del { display: none; }
+      /* 编辑层里标了「保存时删」的那张(用户面 148):图变淡、边框换虚线;× 换成 ↺ 撤销。 */
+      .thumb.marked { border-style: dashed; }
+      .thumb.marked img { opacity: 0.35; }
 
       /* 大图查看层(143 手势缩放):未放大时单击关;双击 2.5 倍/复位、双指捏合、
          放大后单指拖拽,返回键也能关(history 层)。touch-action:none 把手势从

@@ -97,6 +97,14 @@
   color: var(--on-seal);
 }
 
+/* 编辑态里标了「保存时删」的那张(用户面 148):图变淡、边框换虚线;右上角那枚换成 ↺ 撤销。 */
+.img-thumb.del-marked {
+  border-style: dashed;
+}
+.img-thumb.del-marked .img-thumb-img {
+  opacity: 0.35;
+}
+
 /* 正文里「图N」引用 —— 朱砂底纹的就地小 chip,点开看大图。 */
 .img-ref {
   display: inline;

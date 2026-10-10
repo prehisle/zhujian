@@ -855,25 +855,30 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
 
       const err = errLine();
       let saving = false; // 幂等:点别处/回车/切卡可能并发触发,保存中再触发直接让位
+      // 正文要不要写:空内容(后端拒空)或没改动(edit_note 对 no-op 会 fail-fast)都不写。
+      const textChanged = (): boolean => area.value.trim() !== "" && area.value !== currentContent;
       const save = async () => {
         if (saving) return;
         saving = true;
         try {
-          await invoke("edit_note", { id: item.id, content: area.value });
+          if (textChanged()) {
+            await invoke("edit_note", { id: item.id, content: area.value });
+            currentContent = area.value; // 先记下:删图那步失败后重试,正文不再写第二遍(no-op 会 fail-fast)
+            paintContent(); // ⛔ 别写成 textP.textContent —— 那会把方框与「图N」链接一起抹成纯文本
+          }
+          await strip.commitDeletes(); // 148:编辑态里标了删的图,随保存这一步才真删
         } catch (e) {
           showErr(err, e);
           saving = false;
           return;
         }
-        currentContent = area.value;
-        paintContent(); // ⛔ 别写成 textP.textContent —— 那会把方框与「图N」链接一起抹成纯文本
         leaveEdit();
       };
 
-      // 提交编辑:空内容(后端拒空)或没改动(edit_note 对 no-op 会 fail-fast)都当「取消」——
-      // 直接回视图、不打后端;真有改动才 save。Enter、点别处、切到别的卡都走这一条路。
+      // 提交编辑:正文没要写、也没有标了删的图 ⇒ 当「取消」,直接回视图、不打后端。
+      // Enter、点别处、切到别的卡都走这一条路;Esc 走 leaveEdit,标记随编辑器一起丢掉。
       const commit = (): void => {
-        if (area.value.trim() === "" || area.value === currentContent) {
+        if (!textChanged() && strip.pendingDeletes() === 0) {
           leaveEdit();
           return;
         }
