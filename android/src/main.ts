@@ -1027,7 +1027,8 @@ function syncTagsToggle(): void {
   // 一行装得下就整枚藏起(一枚点了没变化的钮比没有更糟)。⚠ 量的是**收起态**装不装得下:
   // 摊开着的时候 scrollWidth 恒等于 clientWidth,直接问会恒答「装得下」⇒ 钮把自己藏了,
   // 再也收不回来。故 `!tagsOpen &&` 那半是短路,不是顺手写的。
-  btn.hidden = !tagsOpen && topics.scrollWidth <= topics.clientWidth + 1;
+  // 标签行整行没发(一枚真标签都没有,filter.ts renderTopicPills)⇒ 摊开态也藏,别留一枚摊不出东西的 ▴。
+  btn.hidden = topics.childElementCount === 0 || (!tagsOpen && topics.scrollWidth <= topics.clientWidth + 1);
 }
 $("filter-expand").addEventListener("click", () => {
   tagsOpen = !tagsOpen;

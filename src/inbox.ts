@@ -1238,7 +1238,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     if (mode === "ideas") {
       note.addEventListener("dblclick", (e) => {
         if (note.classList.contains("editing") || note.classList.contains("confirming")) return;
-        if ((e.target as HTMLElement).closest("a, button, input, textarea, .hk-menu-wrap, .img-strip")) return;
+        if ((e.target as HTMLElement).closest("a, button, input, textarea, .hk-menu-wrap, .img-thumb")) return;
         void openEdit();
       });
 

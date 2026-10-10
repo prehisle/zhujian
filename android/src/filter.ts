@@ -290,5 +290,11 @@ export function renderTopicPills(
       }
     }
   }
+  // 一枚真标签都画不出、也没在筛 ⇒ 只剩「所有 / 无标签」,两枚都等于全集 ⇒ 整行不发(用户 10-10;
+  // 与桌面 filter-bar.ts 同一条,check-filter-parity 两端同压)。在筛「无标签」时留着。
+  if (f.topics.length === 0 && !nodes.some((n) => n.dataset.topicId)) {
+    bar.replaceChildren();
+    return;
+  }
   bar.replaceChildren(...nodes);
 }

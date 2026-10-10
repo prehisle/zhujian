@@ -112,12 +112,14 @@ function readBoardSort(): BoardSort {
 function sortLabel(s: BoardSort): string {
   return s === "newest" ? t("board.sortNewest") : s === "oldest" ? t("board.sortOldest") : t("board.sortManual");
 }
-// 卡上的交互件(⋯ 钮 / 标签 chip 与它的 ✕ / 勾选框 / 留言徽章 / 「图N」链接 / 缩略图条 /
+// 卡上的交互件(⋯ 钮 / 标签 chip 与它的 ✕ / 勾选框 / 留言徽章 / 「图N」链接 / 缩略图 /
 // 行内确认的钮与勾选)。按下或双击落在它们上面,那一下归它们自己:不是拖卡、不是开编辑。
+// ⚠ 认的是**缩略图本身**(`.img-thumb`),不是整条缩略图条:条是撑满卡宽的一行,图右边那截
+// 空白就是纸面,此前写 `.img-strip` 把它也算成控件 ⇒ 有图的卡按在图旁空白处拖不动(用户 10-10 报)。
 // ⚠ 这些件自己身上的 `draggable:false` **不是**保护 —— Blink 找拖源沿祖先往上走,子元素的
 // draggable=false 只让它自己不成拖源、挡不住父卡(671 补在真 WebView2 上量的:按住 ⋯ 拖照样起
 // 卡片拖,拖动数据 = 任务 id)。真正挡住的是下面 card() 里 mousedown 看落点那一段。
-const CARD_CONTROLS = "a, button, input, textarea, label, .chip, .hk-menu-wrap, .img-strip";
+const CARD_CONTROLS = "a, button, input, textarea, label, .chip, .hk-menu-wrap, .img-thumb";
 
 /** 溢出不到半行就不算「夹到了」(704)。⭐ 判据不是洁癖:正文尾巴上一个换行符就能多出一个
  *  空行盒,为它长一枚「展开」= 点开什么也没有;而**没夹住就整张摊开**(settleFolds 当场摘夹子)

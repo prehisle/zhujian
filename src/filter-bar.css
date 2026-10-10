@@ -10,6 +10,14 @@
   border-bottom: 1px solid var(--line);
 }
 .filter-row[hidden] { display: none; }
+/* 标签行整行没发(一枚标签都筛不出,renderFilterPills 清空)且类型轴也空时:过滤框并到时间轴那一行
+   右端,别为它单留一行(10-10,用户报「最初无标签时别显示标签选择区域」——只清空 pill 的话,
+   那一行照旧被过滤框撑着,屏上省不下任何东西)。 */
+.filter-row:has(.topic-filter:empty):has(.kind-filter:empty) {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+}
 /* 类型轴行(kind pills):在标签 pills 之上;无 kind 时 renderKindPills 清空 → :empty 隐整行。 */
 .kind-filter {
   display: flex;
