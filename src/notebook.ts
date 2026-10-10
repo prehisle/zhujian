@@ -125,6 +125,25 @@ async function syncMaxGlyph(): Promise<void> {
   maxBtn.title = max ? t("notebook.restoreDown") : t("notebook.maximize");
 }
 maxBtn?.addEventListener("click", () => void win.toggleMaximize());
+
+// 输入法候选框开着时按标题栏,那一按只用来收掉候选框,⛔ 不起窗口拖动(用户面 146):
+// 最大化的窗口这时会被还原成小窗。用户 10-10 在真微软拼音上录到的序列 —— 那一按是**单击**
+// (detail=1,不是被算成双击),compositionend 比 mousedown 早 1–3ms(Chromium 按下即收组字),
+// 拖拽区脚本照常发 start_dragging,进了系统的移动循环就还原;英文状态同一按不还原。
+// ⇒ 窗口级捕获阶段先看:紧跟在组字结束后的那一按落在拖拽区上,就不让 Tauri 那只文档级监听
+// 收到它(不 preventDefault:输入框照常失焦)。再按一次照常能拖、双击照常最大化。
+let compositionEndAt = -Infinity;
+document.addEventListener("compositionend", () => (compositionEndAt = performance.now()), true);
+window.addEventListener(
+  "mousedown",
+  (e) => {
+    if (performance.now() - compositionEndAt > 50) return;
+    // 与拖拽区脚本同口径:我们的拖拽区全是光标记,只认直接按在带标记的那个元素上(按在顶栏里的钮上不归这儿)。
+    if (!(e.target as HTMLElement).hasAttribute?.("data-tauri-drag-region")) return;
+    e.stopImmediatePropagation();
+  },
+  true,
+);
 win.onResized(() => void syncMaxGlyph());
 void syncMaxGlyph();
 
