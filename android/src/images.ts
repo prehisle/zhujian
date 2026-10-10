@@ -56,16 +56,26 @@ export function whyAttachFailed(file: File): string {
 /** 一批挂完的结果:几张没挂上 + **那句话**(说得准就是具体原因,说不准是 `""`)。 */
 export type AttachOutcome = { failed: number; why: string };
 
-// 上传前降采样(194 可优化项①):相册原图动辄几 MB,全量入 E2EE 库并下行到所有设备=同步
-// 体积负担。两道闸——**主闸** 长边 > UPLOAD_MAX_EDGE 按比例缩;**副闸(B)** 尺寸达标但字节
-// 偏大的**照片**(JPEG 源)也重编码,补「小尺寸大体积」漏网。副闸只认 JPEG:透明 PNG 与文字
-// 截图(截图多为 PNG)天然豁免,不被 JPEG 化丢透明/糊字。任一闸命中就 canvas 重绘 → JPEG
-// q0.85;都不命中 / 解码不了(HEIC 等)/ 缩后反更大均放行原图(后端 MIME 闸仍是权威,该拒
-// 的照拒)。pickImage 是安卓唯一的用户字节入口,在这里做即两加图入口全覆盖。
-const UPLOAD_MAX_EDGE = 2560;
+// 存图前压缩(用户面 147 起**默认关**,设置面「压缩大图」打开才压;纯设备本地,同明暗 / 字号)。
+// 桌面孪生 = `src/item-images.ts` 同名函数,规则与「为什么默认关」的全文在那边;这里只记要点:
+// 147 之前默认开、按**长边** > 2560 等比缩 ⇒ 长截图被缩成窄条、字糊到看不清,且原图当场就没了。
+// 开着时两道闸——**主闸** 短边 > UPLOAD_MAX_SHORT 按比例缩(⛔ 别改回量长边);**副闸** 尺寸达标
+// 但字节偏大的照片(JPEG 源)也重编码。任一闸命中就 canvas 重绘 → JPEG q0.85;都不命中 / 解码
+// 不了(HEIC 等)/ 缩后反更大均放行原图(后端 MIME 闸仍是权威,该拒的照拒)。pickImage 是安卓
+// 唯一的用户字节入口,在这里做即两加图入口全覆盖。
+const COMPRESS_KEY = "zhujian.compress-images";
+export function compressImagesOn(): boolean {
+  return localStorage.getItem(COMPRESS_KEY) === "on";
+}
+export function setCompressImages(on: boolean): void {
+  if (on) localStorage.setItem(COMPRESS_KEY, "on");
+  else localStorage.removeItem(COMPRESS_KEY);
+}
+
+const UPLOAD_MAX_SHORT = 1920; // 4000×3000 的照片 → 2560×1920,与 147 之前那版对照片的结果一样
 const UPLOAD_HEAVY_BYTES = 1_500_000; // ~1.5MB:尺寸内但比这肥的 JPEG 照片也压
 async function downsampleForUpload(file: File): Promise<File> {
-  if (!file.type.startsWith("image/")) return file;
+  if (!compressImagesOn() || !file.type.startsWith("image/")) return file;
   const url = URL.createObjectURL(file);
   try {
     const img = new Image();
@@ -74,11 +84,11 @@ async function downsampleForUpload(file: File): Promise<File> {
       img.onerror = () => rej(new Error("decode"));
       img.src = url;
     });
-    const maxDim = Math.max(img.naturalWidth, img.naturalHeight);
-    const overDim = maxDim > UPLOAD_MAX_EDGE; // 主闸
+    const shortDim = Math.min(img.naturalWidth, img.naturalHeight);
+    const overDim = shortDim > UPLOAD_MAX_SHORT; // 主闸
     const heavyPhoto = file.type === "image/jpeg" && file.size > UPLOAD_HEAVY_BYTES; // 副闸
     if (!overDim && !heavyPhoto) return file; // 尺寸达标且非肥照片:原样(截图/透明 PNG 天然豁免)
-    const scale = Math.min(1, UPLOAD_MAX_EDGE / maxDim); // 只缩不放大;副闸场景 scale=1 仅重编码
+    const scale = Math.min(1, UPLOAD_MAX_SHORT / shortDim); // 只缩不放大;副闸场景 scale=1 仅重编码
     const w = Math.round(img.naturalWidth * scale);
     const h = Math.round(img.naturalHeight * scale);
     const c = document.createElement("canvas");
@@ -147,8 +157,8 @@ function openPicker(configure: (el: HTMLInputElement) => void): Promise<File[]> 
   });
 }
 
-/** 一次多选的张数上界(391,用户拍板 9)。这些字节缩完每张仍有 300-500KB,且整份进
- *  E2EE 库、下行到**所有**设备——上界守的是同步体积,不是本地磁盘。超了整批不收
+/** 一次多选的张数上界(391,用户拍板 9)。这些字节整份进 E2EE 库、下行到**所有**设备
+ *  (147 起默认按原图存,一张相机原图就是几 MB)——上界守的是同步体积,不是本地磁盘。超了整批不收
  *  (响亮拒,不静默截断掉前 9 张:用户以为全加上了才是真的坏)。 */
 export const PICK_MAX = 9;
 
@@ -183,7 +193,7 @@ export async function pickImages(
 /** 当场拍一张(HTML `capture` → wry 起系统相机)。resolve 已降采样的那张;取消/没拍成
  *  resolve null。⚠ 首次会弹系统相机权限框(manifest 声明了 CAMERA,wry 那侧据此先要
  *  权限再开相机),用户拒了等同取消——不另弹说明,系统框本身已经说清楚了。
- *  相机原图动辄 4000×3000,必过降采样主闸;EXIF 方向由 Chromium 的
+ *  相机原图动辄 4000×3000,「压缩大图」开着时必过降采样主闸;EXIF 方向由 Chromium 的
  *  `image-orientation: from-image` 默认值在解码时校正,竖拍不会躺倒。 */
 export async function capturePhoto(onPicked?: () => void): Promise<File | null> {
   const files = await openPicker((el) => {
@@ -192,7 +202,7 @@ export async function capturePhoto(onPicked?: () => void): Promise<File | null> 
   });
   const f = files[0];
   if (!f) return null;
-  onPicked?.(); // 同 pickImages:降采样之前先报信,调用方摆占位(相机原图那一趟最久)
+  onPicked?.(); // 同 pickImages:降采样之前先报信,调用方摆占位(开着压缩时相机原图那一趟最久)
   return await downsampleForUpload(f);
 }
 

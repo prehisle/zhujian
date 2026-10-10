@@ -135,7 +135,8 @@ async function seed() {
   const files = [
     ["s1.png", makePng(40, 40, [204, 51, 51])],
     ["s2.png", makePng(120, 120, [51, 102, 204])],
-    // 长边 2600 > UPLOAD_MAX_EDGE(2560)⇒ 必过降采样主闸;噪声保证重编码后真的更小。
+    // 长边 2600:147 之前默认按长边 > 2560 必压;147 起默认不压 ⇒ 必须原样入库。噪声保证
+    // 旧版重编码后真的更小(否则旧版也放行原图,④ 在旧代码上同样是绿的,验不出东西)。
     ["s3.png", makePng(2600, 1000, [0, 0, 0], true)],
   ];
   for (let i = 1; i <= PICK_MAX + 1; i++) files.push([`m${i}.png`, makePng(8, 8, [i * 20, 90, 90])]);
@@ -443,7 +444,7 @@ const main = async () => {
       return out;
     step("③ seq 连续 1..3(不断号=一张都没漏写)", metas.map((m) => m.seq).join(",") === "1,2,3", metas.map((m) => m.seq).join(","));
 
-    // ---- ④ 降采样主闸:2600 长边那张入库后 ≤2560 且已转 JPEG ----
+    // ---- ④ 默认不压(用户面 147):2600×1000 那张入库后尺寸不变、仍是 PNG ----
     const big = metas[2];
     const dims = await evalJs(`(async () => {
       const url = await window.__TAURI__.core.invoke("get_item_image", { spaceId: ${JSON.stringify(space)}, imageId: ${JSON.stringify(big.id)} });
@@ -451,8 +452,8 @@ const main = async () => {
       await new Promise((res, rej) => { im.onload = res; im.onerror = rej; im.src = url; });
       return im.naturalWidth + "x" + im.naturalHeight;   // ⚠ 只回尺寸:那个 dataURL 有几 MB,整份序列化会把工具输出撑爆
     })()`);
-    step("④ 超边长图入库前被缩到 ≤2560", Number(dims.split("x")[0]) <= 2560, dims);
-    step("④ 且重编码成 JPEG", big.mime === "image/jpeg", big.mime);
+    step("④ 大图默认原样入库(尺寸不变)", dims === "2600x1000", dims);
+    step("④ 且没被转成 JPEG", big.mime === "image/png", big.mime);
 
     // ---- ⑤ 超上界:选 10 张 ⇒ 一张都不收(不是静默截断掉前 9 张) ----
     const c5 = await openChooser(`document.getElementById("compose-addimg").click()`);

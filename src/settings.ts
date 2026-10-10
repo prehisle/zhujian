@@ -17,6 +17,7 @@ import { currentThemeMode, setThemeMode, type ThemeMode } from "./theme-mode";
 import { currentLangChoice, setLangChoice, t, type LangChoice } from "./i18n";
 import { currentSpaceId } from "./space";
 import { copyButton } from "./clipboard";
+import { compressImagesOn, setCompressImages } from "./item-images";
 import { buildKeySheet } from "./keysheet";
 import "./settings.css";
 import { errText } from "./err";
@@ -196,6 +197,10 @@ function buildPane(cat: SettingsCat, pane: HTMLElement, probeUrl: string | null)
       el("h2", "settings-title settings-sect", t("settings.textSize")),
       el("p", "settings-sub", t("settings.textSizeSub")),
       buildZoomRow(),
+
+      el("h2", "settings-title settings-sect", t("settings.compressTitle")),
+      el("p", "settings-sub", t("settings.compressSub")),
+      buildCompressRow(),
 
       el("h2", "settings-title settings-sect", t("settings.aliasTitle")),
       el("p", "settings-sub", t("settings.aliasSub")),
@@ -453,6 +458,34 @@ function buildReminderRow(): HTMLDivElement {
   const wrap = document.createElement("div");
   wrap.append(line, msg);
   return wrap as HTMLDivElement;
+}
+
+// ---- 压缩大图(用户面 147)----
+// 开 / 关两档,默认关(= 按原图存)。纯设备本地;规则与「为什么默认关」在 item-images.ts。
+function buildCompressRow(): HTMLDivElement {
+  const line = document.createElement("div");
+  line.className = "hkset-row zoom-row";
+  const seg = document.createElement("div");
+  seg.className = "seg";
+  const onBtn = el("button", "seg-btn", t("settings.compressOn")) as HTMLButtonElement;
+  const offBtn = el("button", "seg-btn", t("settings.compressOff")) as HTMLButtonElement;
+  seg.append(onBtn, offBtn);
+  const paint = (): void => {
+    const on = compressImagesOn();
+    onBtn.classList.toggle("on", on);
+    offBtn.classList.toggle("on", !on);
+  };
+  paint();
+  onBtn.addEventListener("click", () => {
+    setCompressImages(true);
+    paint();
+  });
+  offBtn.addEventListener("click", () => {
+    setCompressImages(false);
+    paint();
+  });
+  line.append(seg); // 623:单行组不写行名
+  return line;
 }
 
 const THEME_CHOICES: { mode: ThemeMode; label: string }[] = [

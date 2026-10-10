@@ -10,6 +10,10 @@ import { defineMessages } from "./entry";
 export const settings = defineMessages({
   "settings.langTitle": { zh: "语言", en: "Language" },
   "settings.langSub": { zh: "界面语言。「自动」跟随系统;改档后本页会重新载入。只影响这台设备,不同步到别的设备。", en: "Interface language. Auto follows the system; the page reloads after switching. This device only; it does not sync." },
+  "settings.compressTitle": { zh: "压缩大图", en: "Compress large images" },
+  "settings.compressSub": { zh: "默认关:按原图保存,截图里的字清清楚楚。打开后,加图前会把大照片缩小并转成 JPEG,省同步流量和空间,但画质有损、原图找不回来;长截图不会被压成窄条。已存的图不受影响。只影响这台设备。", en: "Off by default: images are saved as-is, so text in screenshots stays sharp. When on, large photos are shrunk and re-saved as JPEG when added—less sync traffic and storage, but lossy, and the original can’t be recovered; long screenshots are never squeezed into a thin strip. Images already saved aren’t affected. This device only." },
+  "settings.compressOn": { zh: "开", en: "On" },
+  "settings.compressOff": { zh: "关", en: "Off" },
   "settings.langAuto": { zh: "自动", en: "Auto" },
   "settings.langZh": { zh: "中文", en: "中文" },
   "settings.langEn": { zh: "English", en: "English" },

@@ -234,3 +234,99 @@ describe("新建入口配图 · 挂图失败时那句话说得准不准", () => 
     if (hit) await invoke("delete_note", { id: hit.id });
   });
 });
+
+// 用户面 147:**存图默认不压;「压缩大图」开着时只按短边缩**。
+// 病:147 之前默认按**长边** > 2560 等比缩并转 JPEG ⇒ 长截图(长边是它的高)被缩成窄条、字糊。
+// ⭐ 样本是**逐像素噪声** PNG:旧版只在「重编码后更小」时才换掉原图,纯色 PNG 重编码反而更大、
+// 会被按设计放行 ⇒ 那样第一例在旧代码上也是绿的(同 cdp-acceptance-pick-images 那条坑)。
+// 阴性对照:把 downsampleForUpload 换回 147 之前那版,第一例红在 mime(落成 image/jpeg、512×2560)。
+async function pasteNoise(w, h) {
+  await browser.execute(
+    async (W, H) => {
+      const c = document.createElement("canvas");
+      c.width = W;
+      c.height = H;
+      const ctx = c.getContext("2d");
+      const im = ctx.createImageData(W, H);
+      let s = 0x2545f491;
+      for (let i = 0; i < im.data.length; i += 4) {
+        s ^= s << 13;
+        s ^= s >>> 17;
+        s ^= s << 5;
+        im.data[i] = s & 0xff;
+        im.data[i + 1] = (s >>> 8) & 0xff;
+        im.data[i + 2] = (s >>> 16) & 0xff;
+        im.data[i + 3] = 255;
+      }
+      ctx.putImageData(im, 0, 0);
+      const blob = await new Promise((res) => c.toBlob(res, "image/png"));
+      const dt = new DataTransfer();
+      dt.items.add(new File([blob], "shot.png", { type: "image/png" }));
+      const ev = new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true });
+      document.querySelector(".v-inbox .compose-input").dispatchEvent(ev);
+    },
+    w,
+    h,
+  );
+}
+
+/** 贴一张噪声图记一条,回那张图入库后的 mime 与像素尺寸。 */
+async function saveNoiseNote(content, w, h) {
+  const input = await $(".v-inbox .compose-input");
+  await input.click();
+  await pasteNoise(w, h);
+  await $(".v-inbox .compose .img-pending .img-thumb").waitForExist({ timeout: 10000 });
+  await input.setValue(content);
+  await browser.keys("Enter");
+  let noteId;
+  await browser.waitUntil(
+    async () => {
+      const hit = (await invoke("list_ideas")).find((n) => n.content === content);
+      if (hit) noteId = hit.id;
+      return !!hit;
+    },
+    { timeout: 8000, timeoutMsg: `${content}:回车后未入库` },
+  );
+  const [img] = await waitItemImages(noteId, 1, content);
+  // ⚠ 只回尺寸:那个 data URL 有几 MB,整份过 WebDriver 太重。
+  const dims = await browser.execute(async (id) => {
+    const url = await window.__TAURI__.core.invoke("get_item_image", { imageId: id, spaceId: "main" });
+    const im = new Image();
+    await new Promise((res, rej) => {
+      im.onload = res;
+      im.onerror = rej;
+      im.src = url;
+    });
+    return [im.naturalWidth, im.naturalHeight];
+  }, img.id);
+  return { mime: img.mime, w: dims[0], h: dims[1] };
+}
+
+describe("存图压缩 · 默认原图,开着时只按短边缩(用户面 147)", () => {
+  before(async () => {
+    await goNotebook("inbox");
+    await clearInbox();
+    await browser.execute(() => localStorage.removeItem("zhujian.compress-images"));
+  });
+  after(async () => {
+    await browser.execute(() => localStorage.removeItem("zhujian.compress-images"));
+    await clearInbox();
+  });
+
+  it("默认关:长截图原样入库(仍是 PNG、一个像素没少)", async () => {
+    const got = await saveNoiseNote("E2E-压缩-默认关", 600, 3000);
+    expect(got).toEqual({ mime: "image/png", w: 600, h: 3000 });
+  });
+
+  it("开着:长截图短边不超线,照样原样入库", async () => {
+    await browser.execute(() => localStorage.setItem("zhujian.compress-images", "on"));
+    const got = await saveNoiseNote("E2E-压缩-开-长图", 600, 3000);
+    expect(got).toEqual({ mime: "image/png", w: 600, h: 3000 });
+  });
+
+  it("开着:短边超 1920 的大图缩到短边 1920 并转 JPEG", async () => {
+    await browser.execute(() => localStorage.setItem("zhujian.compress-images", "on"));
+    const got = await saveNoiseNote("E2E-压缩-开-大图", 2000, 1940);
+    expect(got).toEqual({ mime: "image/jpeg", w: 1979, h: 1920 });
+  });
+});

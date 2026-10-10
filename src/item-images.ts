@@ -179,14 +179,28 @@ async function toBase64(blob: Blob): Promise<string> {
   return btoa(bin);
 }
 
-// 上传前降采样(194 可优化项①):两道闸——**主闸** 长边 > UPLOAD_MAX_EDGE 按比例缩;
-// **副闸(B)** 尺寸达标但字节偏大的**照片**(JPEG 源)也重编码,补「小尺寸大体积」漏网。
-// 副闸只认 JPEG:透明 PNG 与文字截图(截图多为 PNG)天然豁免,不被 JPEG 化丢透明/糊字。
+// 存图前压缩(用户面 147 起**默认关**,设置里「压缩大图」打开才压;纯设备本地,同明暗 / 字号)。
+// 默认关的理由:有损压缩丢掉的东西**事后补不回来**(原图在压的那一刻就没了),而 147 之前
+// 默认开着的那版按**长边** > 2560 等比缩 —— 长截图的长边是它的高,1920×15000 被缩成
+// 328×2560 再转 JPEG,字糊到看不清。代价是同步库变大;单张仍受后端 32 MB 上限,超了响亮拒。
+//
+// 开着时两道闸——**主闸** 短边 > UPLOAD_MAX_SHORT 按比例缩(⛔ 别改回量长边:长截图的宽才是
+// 它的分辨率,量长边正是 147 那个病);**副闸** 尺寸达标但字节偏大的照片(JPEG 源)也重编码。
 // 任一闸命中就 canvas 重绘 → JPEG q0.85;都不命中 / 解码不了(HEIC 等)/ 缩后反更大均放行
-// 原图(后端 MIME 闸仍是权威)。免相册/剪贴板原图整份进 E2EE 库并下行到所有设备。
-const UPLOAD_MAX_EDGE = 2560;
+// 原图(后端 MIME 闸仍是权威)。⚠ 透明 PNG 过主闸会失透明(JPEG 没有 alpha)。
+const COMPRESS_KEY = "zhujian.compress-images";
+export function compressImagesOn(): boolean {
+  return localStorage.getItem(COMPRESS_KEY) === "on";
+}
+export function setCompressImages(on: boolean): void {
+  if (on) localStorage.setItem(COMPRESS_KEY, "on");
+  else localStorage.removeItem(COMPRESS_KEY);
+}
+
+const UPLOAD_MAX_SHORT = 1920; // 4000×3000 的照片 → 2560×1920,与 147 之前那版对照片的结果一样
 const UPLOAD_HEAVY_BYTES = 1_500_000; // ~1.5MB:尺寸内但比这肥的 JPEG 照片也压
 function downsampleForUpload(blob: Blob): Promise<Blob> {
+  if (!compressImagesOn()) return Promise.resolve(blob);
   return new Promise((resolve) => {
     const url = URL.createObjectURL(blob);
     const done = (out: Blob): void => {
@@ -195,11 +209,11 @@ function downsampleForUpload(blob: Blob): Promise<Blob> {
     };
     const img = new Image();
     img.onload = (): void => {
-      const maxDim = Math.max(img.naturalWidth, img.naturalHeight);
-      const overDim = maxDim > UPLOAD_MAX_EDGE; // 主闸
+      const shortDim = Math.min(img.naturalWidth, img.naturalHeight);
+      const overDim = shortDim > UPLOAD_MAX_SHORT; // 主闸
       const heavyPhoto = blob.type === "image/jpeg" && blob.size > UPLOAD_HEAVY_BYTES; // 副闸
       if (!overDim && !heavyPhoto) return done(blob); // 尺寸达标且非肥照片:原样(不动透明)
-      const scale = Math.min(1, UPLOAD_MAX_EDGE / maxDim); // 只缩不放大;副闸场景 scale=1 仅重编码
+      const scale = Math.min(1, UPLOAD_MAX_SHORT / shortDim); // 只缩不放大;副闸场景 scale=1 仅重编码
       const w = Math.round(img.naturalWidth * scale);
       const h = Math.round(img.naturalHeight * scale);
       const c = document.createElement("canvas");
@@ -219,7 +233,7 @@ function downsampleForUpload(blob: Blob): Promise<Blob> {
  *  Resolves to the new image's metadata. Throws on a bad type / empty blob (the backend's
  *  CHECK is the authority — fail-fast, no silent default). */
 export async function attachBlob(itemId: string, blob: Blob, space?: string): Promise<ImageMeta> {
-  const use = await downsampleForUpload(blob); // 大图先降采样,截图/小图原样
+  const use = await downsampleForUpload(blob); // 默认原样;「压缩大图」开着才可能缩 / 转 JPEG
   const dataB64 = await toBase64(use);
   // 显式空间 = 必落账链(创建后挂图):响应恒到达,不走「跨空间迟到即永不决议」的
   // 统一包装——那会把 in-flight 闸卡死(codex P1 二审 H1)。

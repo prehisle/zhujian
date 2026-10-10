@@ -2229,6 +2229,15 @@
       </div>
       <p class="fine" data-i18n="settings.langSub">界面语言。「自动」跟随系统;改档后本页会重新载入。只影响这台设备,不同步到别的设备。</p>
 
+      <!-- 压缩大图(用户面 147):默认关 = 按原图存;与外观 / 字号 / 语言同族的设备偏好,不进同步。
+           规则在 images.ts::downsampleForUpload。 -->
+      <h2 data-i18n="settings.compressTitle">压缩大图</h2>
+      <div id="compress-seg" class="seg">
+        <button data-compress="on" data-i18n="settings.compressOn">开</button>
+        <button data-compress="off" data-i18n="settings.compressOff">关</button>
+      </div>
+      <p class="fine" data-i18n="settings.compressSub">默认关:按原图保存,截图里的字清清楚楚。打开后,加图前会把大照片缩小并转成 JPEG,省同步流量和空间,但画质有损、原图找不回来;长截图不会被压成窄条。已存的图不受影响。只影响这台设备。</p>
+
       <!-- 截止提醒(用户面 39①,桌面那半是 553)。⛔ 四个元素上那枚 data-needs="notification"
            同 textzoom 那族:没有通知插件的端(鸿蒙)由 main.ts 按构建期常数 HAS_NOTIFICATION
            把**这五个一起**摘掉 —— 留着就是「开关点了会亮、到点一声不响」= 界面在说谎。

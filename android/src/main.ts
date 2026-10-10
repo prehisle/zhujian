@@ -43,7 +43,7 @@ import { toggleChecklistLine } from "../../shared/checklist";
 import { buildStamp, formatBuiltAt } from "../../shared/build-stamp";
 import { applyChecklistMarker, wireChecklistNewline } from "./checklist-input";
 import { DONE_COLUMN, boardColumns, isTaskStage, setColumns, stageLabel } from "./columns";
-import { capturePhoto, composeImages, PICK_MAX, pickImages } from "./images";
+import { capturePhoto, composeImages, compressImagesOn, PICK_MAX, pickImages, setCompressImages } from "./images";
 import { INPUT_DEBOUNCE_MS } from "./timing";
 // **平台接缝**(OH-d/D3):只在安卓壳里存在的那三条命令。鸿蒙那端由 vite 换成另一份实现。
 import { HAS_BROWSER, HAS_NOTIFICATION, HAS_SAF_BRIDGE, HAS_TEXT_ZOOM, notifyPermissionGranted, notifyPermissionOk, takeDeepLink, takeSharedText, writeClipboard } from "./platform";
@@ -1820,6 +1820,7 @@ function openPane(name: string) {
     paintThemeSeg();
     paintTextSizeSeg();
     paintLangSeg();
+    paintCompressSeg();
     paintRemindRow();
     paintRemindPermission();
     void loadAlias();
@@ -2167,6 +2168,21 @@ function paintLangSeg() {
   $("lang-seg")
     .querySelectorAll<HTMLButtonElement>("[data-lang]")
     .forEach((b) => b.classList.toggle("on", b.dataset.lang === now));
+}
+
+// 压缩大图(用户面 147):开 / 关两档,默认关;同上两排的形,规则在 images.ts。
+$("compress-seg").addEventListener("click", (e) => {
+  const c = (e.target as HTMLElement).closest<HTMLButtonElement>("[data-compress]")?.dataset.compress;
+  if (!c) return;
+  setCompressImages(c === "on");
+  paintCompressSeg();
+});
+
+function paintCompressSeg() {
+  const on = compressImagesOn();
+  $("compress-seg")
+    .querySelectorAll<HTMLButtonElement>("[data-compress]")
+    .forEach((b) => b.classList.toggle("on", (b.dataset.compress === "on") === on));
 }
 
 // ---- 截止提醒(用户面 39①;调度与水位在 reminder.ts,那儿的文件头写着范围与两处端间差异)----
