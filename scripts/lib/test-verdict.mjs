@@ -47,7 +47,9 @@ export function wdioVerdict(out, status) {
   if (status === null) red.push('跑手没有正常退出(被杀 / 超时)');
   else if (status !== 0) red.push(`退出码 ${status}`);
   if (/\bFAILED in\b/.test(text)) red.push('输出里有「FAILED in」');
-  if (/[✖✗×]\s+\S/.test(text)) red.push('输出里有「✖」用例标记');
+  // ⚠ 记号只认**行首**(wdio 的 `[wry … #0-1]` 前缀 + 缩进之后):用例标题里本身就会有
+  //    「×」(803 的「点 × → 图变淡」),不锚行首 ⇒ 一趟全绿被判红(夜跑因此连红两晚)。
+  if (/^(?:\[[^\]\n]*\])?[ \t]*[✖✗×][ \t]+\S/m.test(text)) red.push('输出里有「✖」用例标记');
   if (counts.failed > 0) red.push(`汇总说 ${counts.failed} 个 spec 红`);
   if (red.length) return { state: 'red', why: red.join(' · '), counts };
 

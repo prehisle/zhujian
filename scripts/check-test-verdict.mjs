@@ -100,6 +100,13 @@ const CASES = [
     'red',
   ],
   [
+    'wdio:✓ 打头的用例标题里带「×」、汇总全过 ⇒ 绿,不是红(夜跑 38182632506 原文)',
+    wdioVerdict,
+    '[wry 0.55.1 linux #0-21]    ✓ 点 × → 图变淡、库里还在;Esc 取消 → 图一张不少\nSpec Files:\t 51 passed, 51 total (100% completed) in 00:37:38\n',
+    0,
+    'green',
+  ],
+  [
     'wdio:汇总说全过,但有「FAILED in」⇒ 红',
     wdioVerdict,
     '[0-0] FAILED in undefined - file:///e2e/specs/x.e2e.js\nSpec Files:\t 39 passed, 39 total (100% completed) in 00:10:00\n',
