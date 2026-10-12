@@ -345,16 +345,22 @@ export function renderKindPills(
     };
     return b;
   };
-  const label = document.createElement("span");
-  label.className = "tf-axis";
-  label.textContent = t("filter.kindAxis");
-  const pills: (HTMLElement | Text)[] = [label, pill("all", t("filter.allKinds"))];
+  // 0 计数的类型不画,除非它正被选中(选择永不从脚下消失);一枚都画不出 ⇒ 整行不发,
+  // 只剩一枚「全部类型」什么也筛不出(与标签行 10-10 那条同形;用户面 150 续)。
+  const kindPills: HTMLElement[] = [];
   for (const k of kinds) {
     const ids = idsOfKind(allTopics, k);
     const n = items.filter((t) => t.topics.some((tp) => ids.has(tp.id))).length;
-    pills.push(pill(k, k, n));
+    if (n > 0 || f.kind === k) kindPills.push(pill(k, k, n));
   }
-  bar.replaceChildren(...pills);
+  if (kindPills.length === 0) {
+    bar.replaceChildren();
+    return;
+  }
+  const label = document.createElement("span");
+  label.className = "tf-axis";
+  label.textContent = t("filter.kindAxis");
+  bar.replaceChildren(label, pill("all", t("filter.allKinds")), ...kindPills);
 }
 
 // 文本过滤框接线(mount 时调一次):输入即筛,走视图的单一渲染路径;Esc 清词(已空

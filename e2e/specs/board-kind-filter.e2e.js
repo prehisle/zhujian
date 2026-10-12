@@ -34,6 +34,13 @@ describe("任务看板 · 按标签类型筛选", () => {
       [...document.querySelectorAll("#topic-filter .tf-pill")].find((p) => p.textContent.includes(l)).click();
     }, label);
   const shows = (name) => $(`.tcard*=${name}`).isExisting();
+  // 同页切视图(不重载):先切到随记再切回,视图重挂、重取数据,筛选模块态留着。
+  const switchView = async (view) => {
+    for (const v of ["inbox", view]) {
+      await browser.execute((sel) => document.querySelector(sel).click(), `.sidebar nav button[data-view="${v}"]`);
+      await $(`.v-${v}`).waitForExist({ timeout: 5000 });
+    }
+  };
 
   before(async () => {
     idP1 = await invoke("create_topic", { title: P1 });
@@ -136,27 +143,46 @@ describe("任务看板 · 按标签类型筛选", () => {
   // 那句上,而 `selectedTopicLabels` 只认标签维、这一维给的是空数组 ⇒ 屏上是「「」下没有任务」。
   // ⚠ 判据两格缺一不可:①新那句真的在(正面);②书名号里**不是空的**(反面)——只断 ① 的话,
   // 一个把两句都印出来的坏实现照样绿。
-  // ⚠ 计数 0 的类型 pill 照样在轴上:pill 由 allTopics 派生,计数才由 items 算(用户就是这么撞上的)。
-  it("选一个一个任务都没有的类型 → 空态说「「…」类型下没有任务」,不是空书名号", async () => {
+  // 10-12:0 计数的类型不上轴(除非正被选中,同标签行)⇒ 先断空类型不在;再挂一条任务、选上、
+  // 清掉那条、切走再切回(重取数据,筛选是模块态不丢)⇒ 选中的类型留着(计 0)、空态照旧。
+  // ⛔ 别用 goNotebook 重挂:那是整页重载,模块态清零。
+  it("0 计数类型不上轴;选着的类型清空后留着,空态说「「…」类型下没有任务」", async () => {
     const KIND_EMPTY = "E2E-类-器物";
+    const TASK_D = "E2E-类任务-修器物";
     const idThing = await invoke("create_topic", { title: "E2E-类-器物甲" });
     await invoke("set_topic_kind", { id: idThing, kind: KIND_EMPTY });
-    await goNotebook("board"); // 重挂才重取 allTopics(类型轴由它派生)
+    await switchView("board"); // 重挂才重取 allTopics(类型轴由它派生)
+    await browser.waitUntil(async () => (await kindPills()).some((k) => k.includes("人名")), {
+      timeout: 8000,
+      timeoutMsg: "重挂后类型轴没回来",
+    });
+    expect((await kindPills()).some((k) => k.includes(KIND_EMPTY))).toBe(false);
+
+    const idD = await invoke("create_task", { title: TASK_D, topicId: idThing });
+    await switchView("board");
     await browser.waitUntil(async () => (await kindPills()).some((k) => k.includes(KIND_EMPTY)), {
       timeout: 8000,
-      timeoutMsg: `新类型没进类型轴,轴上是:${JSON.stringify(await kindPills().catch(() => "(取不到)"))}`,
+      timeoutMsg: `挂上一条之后类型没上轴,轴上是:${JSON.stringify(await kindPills().catch(() => "(取不到)"))}`,
+    });
+    await clickKind(KIND_EMPTY);
+    await browser.waitUntil(async () => (await shows(TASK_D)) && !(await shows(TASK_A)), {
+      timeout: 8000,
+      timeoutMsg: "选类型没圈出那一条",
     });
 
-    await clickKind(KIND_EMPTY);
+    await invoke("archive_task", { id: idD });
+    await invoke("purge_task", { id: idD });
+    await switchView("board");
     const big = $(".center .big");
     await big.waitForExist({ timeout: 8000 });
     await browser.waitUntil(async () => (await big.getText()).includes("类型下没有任务"), {
       timeout: 8000,
-      timeoutMsg: `选空类型后未出现类型空态,屏上是:${await big.getText().catch(() => "(取不到)")}`,
+      timeoutMsg: `选着的类型清空后未出现类型空态,屏上是:${await big.getText().catch(() => "(取不到)")}`,
     });
     const text = await big.getText();
     expect(text).toContain(`「${KIND_EMPTY}」类型下没有任务`);
     expect(text).not.toContain("「」");
+    expect((await kindPills()).some((k) => k.includes(KIND_EMPTY))).toBe(true); // 选中的不从脚下消失
 
     // 自清(同上,这支没有 after):先归还类型轴再删标签,别把筛选态与这枚标签泄漏出去。
     await clickKind("全部类型");

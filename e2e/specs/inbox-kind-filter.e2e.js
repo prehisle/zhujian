@@ -9,13 +9,14 @@ describe("灵感 · 按标签类型筛选", () => {
   const P1 = "E2EIK-张三";
   const P2 = "E2EIK-李四";
   const PROJ = "E2EIK-项目甲"; // 无 kind
-  // 652:一枚**没有任何想法挂着**的标签 + 它自己的类型 —— 类型 pill 的计数由 items 算,
-  // 而 pill 本身由 allTopics 派生 ⇒ 计数 0 的类型照样出现在轴上、点得着(用户就是这么撞上的)。
+  // 652:一枚**没有任何想法挂着**的标签 + 它自己的类型。⚠ 10-12 起 0 计数的类型不上轴(除非正被选中,
+  // 同标签行)⇒ 空态只剩一条路走得到:先选着它、再把它下面那条清掉(最后一例)。
   const THING = "E2EIK-器物甲";
   const KIND_EMPTY = "E2EIK-器物";
   const IDEA_A = "E2EIK-想到张三";
   const IDEA_B = "E2EIK-想到李四";
   const IDEA_C = "E2EIK-想到项目";
+  const IDEA_D = "E2EIK-想到器物";
   let idP1, idP2, idProj, idThing, idA, idB, idC;
 
   const kindPills = () =>
@@ -37,6 +38,13 @@ describe("灵感 · 按标签类型筛选", () => {
       [...document.querySelectorAll("#idea-topic-filter .tf-pill")].find((p) => p.textContent.includes(l)).click();
     }, label);
   const shows = (name) => $(`.note*=${name}`).isExisting();
+  // 同页切视图(不重载):先切到看板再切回,视图重挂、重取数据,筛选模块态留着。
+  const switchView = async (view) => {
+    for (const v of ["board", view]) {
+      await browser.execute((sel) => document.querySelector(sel).click(), `.sidebar nav button[data-view="${v}"]`);
+      await $(`.v-${v}`).waitForExist({ timeout: 5000 });
+    }
+  };
 
   before(async () => {
     await goNotebook("inbox");
@@ -119,16 +127,37 @@ describe("灵感 · 按标签类型筛选", () => {
   // `selectedTopicLabels` 只认标签维、这一维给的是空数组 ⇒ 屏上是「「」下没有随记」。
   // ⚠ 判据两格缺一不可:①新那句真的在(正面);②书名号里**不是空的**(反面)——只断 ①
   // 的话,一个把两句都印出来的坏实现照样绿。
-  it("选一个一条随记都没有的类型 → 空态说「「…」类型下没有随记」,不是空书名号", async () => {
+  // 10-12:0 计数类型不上轴 ⇒ 先断它不在;再挂一条、选上、清掉那条、切走再切回(重取数据,筛选是模块态不丢)
+  // ⇒ 选中的类型留在轴上(计 0)、空态照旧。⛔ 别用 goNotebook 重挂:那是整页重载,模块态清零。
+  it("0 计数类型不上轴;选着的类型清空后留着,空态说「「…」类型下没有随记」", async () => {
+    expect((await kindPills()).some((k) => k.includes(KIND_EMPTY))).toBe(false);
+
+    const idD = await invoke("capture_note", { content: IDEA_D });
+    await invoke("file_note_to_topic", { id: idD, topicId: idThing, newTitle: null });
+    await switchView("inbox");
+    await browser.waitUntil(async () => (await kindPills()).some((k) => k.includes(KIND_EMPTY)), {
+      timeout: 8000,
+      timeoutMsg: `挂上一条之后类型没上轴,轴上是:${JSON.stringify(await kindPills().catch(() => "(取不到)"))}`,
+    });
     await clickKind(KIND_EMPTY);
+    await browser.waitUntil(async () => (await shows(IDEA_D)) && !(await shows(IDEA_A)), {
+      timeout: 8000,
+      timeoutMsg: "选类型没圈出那一条",
+    });
+
+    await invoke("archive_note", { id: idD });
+    await invoke("purge_note", { id: idD });
+    await switchView("inbox");
     const big = $(".v-inbox .center .big");
     await big.waitForExist({ timeout: 8000 });
     await browser.waitUntil(async () => (await big.getText()).includes("类型下没有随记"), {
       timeout: 8000,
-      timeoutMsg: `选空类型后未出现类型空态,屏上是:${await big.getText().catch(() => "(取不到)")}`,
+      timeoutMsg: `选着的类型清空后未出现类型空态,屏上是:${await big.getText().catch(() => "(取不到)")}`,
     });
     const text = await big.getText();
     expect(text).toContain(`「${KIND_EMPTY}」类型下没有随记`);
     expect(text).not.toContain("「」");
+    const pills = await kindPills();
+    expect(pills.some((k) => k.includes(KIND_EMPTY))).toBe(true); // 选中的不从脚下消失
   });
 });

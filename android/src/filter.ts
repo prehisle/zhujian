@@ -168,18 +168,26 @@ export function renderKindPills(
     bar.replaceChildren();
     return;
   }
-  const nodes: (HTMLElement | Text)[] = [];
-  const axis = document.createElement("span");
-  axis.className = "faxis";
-  axis.textContent = t("filter.kindAxis");
-  nodes.push(axis);
-  nodes.push(pill(t("filter.allKinds"), f.kind === "all", () => onPick({ kind: "all", topics: [] })));
+  // 0 计数的类型不画,除非它正被选中(选择永不从脚下消失);一枚都画不出 ⇒ 整行不发,
+  // 只剩一枚「全部类型」什么也筛不出(与标签行 10-10 那条同形;用户面 150 续)。
+  const kindPills: HTMLElement[] = [];
   for (const k of kinds) {
     const ids = idsOfKind(all, k);
     const n = items.filter((t) => t.topics.some((tp) => ids.has(tp.id))).length;
-    nodes.push(pill(k, f.kind === k, () => onPick({ kind: k, topics: [] }), n));
+    if (n > 0 || f.kind === k) kindPills.push(pill(k, f.kind === k, () => onPick({ kind: k, topics: [] }), n));
   }
-  bar.replaceChildren(...nodes);
+  if (kindPills.length === 0) {
+    bar.replaceChildren();
+    return;
+  }
+  const axis = document.createElement("span");
+  axis.className = "faxis";
+  axis.textContent = t("filter.kindAxis");
+  bar.replaceChildren(
+    axis,
+    pill(t("filter.allKinds"), f.kind === "all", () => onPick({ kind: "all", topics: [] })),
+    ...kindPills,
+  );
 }
 
 // 标签轴 pill 行:所有 / 无标签 / 每个当前出现的标签,**多选并集**。计数从 items 派生
