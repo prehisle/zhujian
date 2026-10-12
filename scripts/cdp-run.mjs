@@ -16,6 +16,7 @@
 //   node scripts/cdp-run.mjs --all                       # 全跑,产出「哪几支今天还跑得动」
 //   node scripts/cdp-run.mjs --selftest                  # 判读逻辑的阴性对照,不碰设备
 // 选项:--lang zh|en|none(默认 zh) --port 9222 --timeout 60000 --no-reload --json <路径>
+//      --ohos:鸿蒙(前台检查改走 `hdc shell aa dump -l`;9222 那条转发照 skill `zhujian-ohos-verify` 自己建)
 //
 // # ⛔ 知情边界(别把它读大了)
 // · **它不是门禁,不进 CI,不建登记表**(80 写死;停止扩张线不触)。跑不跑由人决定。
@@ -42,7 +43,7 @@ const PREFIX = "cdp-acceptance-";
 // 同名参数出现两次时 `indexOf` 会指到第一处,静默认错。
 const TAKES_VALUE = new Set(["lang", "port", "timeout", "json"]);
 const argv = process.argv.slice(2);
-const opt = { all: false, selftest: false, lang: "zh", port: 9222, timeout: 60000, reload: true, json: null };
+const opt = { all: false, selftest: false, ohos: false, lang: "zh", port: 9222, timeout: 60000, reload: true, json: null };
 const names = [];
 for (let i = 0; i < argv.length; i++) {
   const a = argv[i];
@@ -56,7 +57,7 @@ for (let i = 0; i < argv.length; i++) {
     if (v === undefined) throw new Error(`--${key} 后面缺一个值`);
     opt[key] = key === "port" || key === "timeout" ? Number(v) : v;
   } else if (key === "no-reload") opt.reload = false;
-  else if (key === "all" || key === "selftest") opt[key] = true;
+  else if (key === "all" || key === "selftest" || key === "ohos") opt[key] = true;
   else throw new Error(`不认识的开关 --${key}`);
 }
 
@@ -65,7 +66,7 @@ const USAGE =
   "  node scripts/cdp-run.mjs <资产名>...      # 例:pane-entries stage-chips\n" +
   "  node scripts/cdp-run.mjs --all            # 全跑并汇总「哪几支今天还跑得动」\n" +
   "  node scripts/cdp-run.mjs --selftest       # 判读逻辑的阴性对照(不碰设备)\n" +
-  "选项: --lang zh|en|none  --port 9222  --timeout 60000  --no-reload  --json <路径>";
+  "选项: --lang zh|en|none  --port 9222  --timeout 60000  --no-reload  --json <路径>  --ohos";
 
 // ── 花名册:⛔ 不在本文件里手抄(587/1b:skill 里那份列了 27 支、盘里有 39 支,8 支静默不在册)。
 //    唯一真相源 = `ls scripts/cdp-acceptance-*`,每支怎么驱动写在**它自己的文件头**那行 `@cdp-run`。
@@ -100,10 +101,33 @@ function discover() {
 
 // ── 设备前置 ──────────────────────────────────────────────────────────────────
 const adb = (args) => execFileSync("adb", args, { encoding: "utf8" });
+// hdc 路径与 `ohos-drive.mjs` 同一个环境变量、同一个默认值;远端命令不带路径,不用 MSYS_NO_PATHCONV。
+const hdc = (args) => execFileSync(process.env.OHOS_HDC ?? "G:\\ohos-sdk\\toolchains\\hdc.exe", args, { encoding: "utf8" });
+
+/** 鸿蒙 `aa dump -l` 的输出里,朱简那一块的 `app state`。按 `Mission ID #` 切块,只认本包那一块;
+ *  ⛔ 别全文搜 `FOREGROUND` —— 别的 app 那一块里也有这个词(811 实读:应用市场 BACKGROUND、朱简 FOREGROUND 同屏)。
+ *  返回 null = 任务栈里压根没有朱简。 */
+function ohosAppState(dump) {
+  for (const block of dump.split(/^\s*Mission ID #/m).slice(1)) {
+    if (!block.includes(`bundle name [${PKG}]`)) continue;
+    const m = block.match(/app state #(\w+)/);
+    if (!m) throw new Error(`朱简那一块里没有 app state 行,aa dump 的格式变了:\n${block}`);
+    return m[1];
+  }
+  return null;
+}
 
 /** ⛔ app 不在前台 = CDP 整个不答,而报出来的是一行 `TypeError: fetch failed`,跟「在后台」
  *  毫无字面关系(629 实撞)。手机端 runtime 只在前台跑 ⇒ 开跑前先问一句「前台是谁」。 */
 function assertForeground() {
+  if (opt.ohos) {
+    const state = ohosAppState(hdc(["shell", "aa dump -l"]));
+    if (state === "FOREGROUND") return `${PKG} app state #FOREGROUND(hdc aa dump -l)`;
+    throw new Error(
+      `朱简不在前台,CDP 不会答。aa dump -l 里朱简那一块:${state ?? "没有(任务栈里没它)"}\n` +
+        `  ⇒ hdc shell aa start -a EntryAbility -b ${PKG}`,
+    );
+  }
   const focus = adb(["shell", "dumpsys window | grep -E 'mCurrentFocus|mFocusedApp'"]);
   if (focus.includes(PKG)) return focus.trim();
   throw new Error(
@@ -157,6 +181,10 @@ async function reloadAndWait(lang) {
   const s0 = await connect();
   await s0.evaluate(jsReload(token, lang));
   s0.close();
+  await waitReady((r) => r.epoch === null);
+}
+
+async function waitReady(extra = () => true) {
   const t0 = Date.now();
   let last = null;
   while (Date.now() - t0 < 30000) {
@@ -165,13 +193,34 @@ async function reloadAndWait(lang) {
       const s = await connect();
       last = await s.evaluate(JS_READY);
       s.close();
-      if (last?.ready && last.epoch === null) return;
+      if (last?.ready && extra(last)) return;
     } catch {
       // 重载途中 /json 会短暂没有 page target —— 这一段的重试是**在等一件确定会发生的事**,
       // 不是回退兜底:超时仍会响亮抛。
     }
   }
   throw new Error(`重载后 30s 没就绪(最后一次读到 ${JSON.stringify(last)})`);
+}
+
+/** 跑完那次普查。资产自己会 `location.reload()` 的(`db-migrate`)普查会撞在重载上 —— 807 撞的是
+ *  「Execution context was destroyed」,811 撞的是新页面 `__TAURI__` 还没注入,⛔ 别按错误文案认。
+ *  判据 = 跑资产前钉在 `window` 上的记号:普查出错就等页面就绪,**记号没了**才是资产重载过、换新会话
+ *  再普查;记号还在 = 同一张页面上的真错,照抛。 */
+async function censusAfterAsset(s, token, rec) {
+  try {
+    return await settledCensus(s);
+  } catch (e) {
+    await waitReady();
+    const s2 = await connect();
+    try {
+      const same = await s2.evaluate(`window.__cdpRunAsset === ${JSON.stringify(token)}`);
+      if (same) throw e;
+      rec.reloadedByAsset = true;
+      return await settledCensus(s2);
+    } finally {
+      s2.close();
+    }
+  }
 }
 
 async function runOne(asset) {
@@ -188,6 +237,8 @@ async function runOne(asset) {
   try {
     const before = await settledCensus(s);
     rec.census = { before };
+    const token = `cdp-run-asset-${Date.now()}`;
+    await s.evaluate(`window.__cdpRunAsset = ${JSON.stringify(token)}`);
     const src = readFileSync(asset.path, "utf8");
     const t0 = Date.now();
     let raw;
@@ -200,7 +251,7 @@ async function runOne(asset) {
       rec.ms = Date.now() - t0;
       rec.state = NOT_RUN;
       rec.reason = `资产跑飞了(整支没有返回值):${e.message}`;
-      rec.census.after = await settledCensus(s).catch((err) => ({ error: err.message }));
+      rec.census.after = await censusAfterAsset(s, token, rec).catch((err) => ({ error: err.message }));
       rec.residue = censusDiff(before, rec.census.after);
       return rec;
     }
@@ -213,7 +264,7 @@ async function runOne(asset) {
     rec.passed = v.passed;
     rec.failedNames = v.failed.map((f) => f?.name ?? "(无名)");
     rec.skipped = v.skipped;
-    rec.census.after = await settledCensus(s);
+    rec.census.after = await censusAfterAsset(s, token, rec);
     rec.residue = censusDiff(before, rec.census.after);
     return rec;
   } finally {
@@ -280,7 +331,25 @@ function selftest() {
     if (!okk) bad++;
     console.log(`${okk ? "✅" : "❌"} 残留 ${want} 项 ← ${label}${okk ? "" : `(实得 ${got})`}`);
   }
-  console.log(bad === 0 ? `\n判读逻辑 ${FIXTURES.length + cases.length} 刀全过。` : `\n❌ ${bad} 刀没过。`);
+  // 鸿蒙前台判读那半的刀(块形抄自 811 在 Mate 60 Pro 上的 `aa dump -l` 实读,删了无关行)
+  const block = (bundle, state) =>
+    `    Mission ID #5  mission name #[#${bundle}:entry:EntryAbility]  lockedState #0\n` +
+    `      AbilityRecord ID #3\n        bundle name [${bundle}]\n        state #${state}  start time [1]\n        app state #${state}\n`;
+  const head = "User ID #100\n  current mission lists:{\n";
+  const ohosCases = [
+    ["朱简在前台", head + block("com.huawei.hmsapp.appgallery", "BACKGROUND") + block(PKG, "FOREGROUND"), "FOREGROUND"],
+    // ⭐ 真刀:全文搜 FOREGROUND 会把这条判成在前台
+    ["⛔ 阴性对照:别人在前台、朱简在后台", head + block("com.huawei.hmos.camera", "FOREGROUND") + block(PKG, "BACKGROUND"), "BACKGROUND"],
+    ["任务栈里没有朱简", head + block("com.huawei.hmos.camera", "FOREGROUND"), null],
+  ];
+  for (const [label, dump, want] of ohosCases) {
+    const got = ohosAppState(dump);
+    const okk = got === want;
+    if (!okk) bad++;
+    console.log(`${okk ? "✅" : "❌"} 鸿蒙前台 ${String(want).padEnd(10)} ← ${label}${okk ? "" : `(实得 ${got})`}`);
+  }
+  const total = FIXTURES.length + cases.length + ohosCases.length;
+  console.log(bad === 0 ? `\n判读逻辑 ${total} 刀全过。` : `\n❌ ${bad} 刀没过。`);
   return bad === 0 ? 0 : 1;
 }
 
@@ -293,6 +362,7 @@ function summarize(records) {
     const ms = r.ms ? ` ${(r.ms / 1000).toFixed(1)}s` : "";
     console.log(`${icon[r.state]} ${r.state.padEnd(7)} ${r.name.padEnd(24)}${grade}${ms}`);
     if (r.reason) console.log(`            ${r.reason}`);
+    if (r.reloadedByAsset) console.log("            (资产自己重载了页面;跑完那次普查是在新页面上做的)");
     if (r.residue?.length) {
       console.log(`   ⚠⚠ 用户库有残留:${r.residue.map((d) => `${d.key} ${d.before}→${d.after}`).join(",")}`);
     }

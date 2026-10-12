@@ -119,12 +119,23 @@ const nextSeq = () => {
 //
 // ⚠ 子进程 stdout **直接绑文件描述符**,不经 node 的事件循环 —— 否则一边 spawnSync
 // 阻塞、一边等管道数据 = 自锁(memory `self-service-probe-sync-exec-deadlock`)。
+// ⚠ `hilog` 一挂上会先把缓冲区里**更早的行**整段吐出来再跟流(769:修好之后两次重启仍「报」同一条错,
+// 时间戳是修之前那次的,差点把修好判成没修好)⇒ 挂捕获前先读一次**设备**时钟(⛔ 别用电脑时钟,两边不对齐),
+// 报告只认时间戳不早于它的行。⛔ 不走 `hilog -r` 清缓冲 —— 那会动设备上别家的日志。
+const deviceNow = () => {
+  const t = sh("date '+%m-%d %H:%M:%S'", { quiet: true }).trim();
+  if (!/^\d\d-\d\d \d\d:\d\d:\d\d$/.test(t)) die(`读不出设备时钟:${JSON.stringify(t)}`);
+  return t;
+};
+
 const startCapture = (stem) => {
   const file = join(outDir, `${stem}.log`);
+  const since = deviceNow();
   const fd = openSync(file, "w");
   const child = spawn(hdcPath, ["shell", "hilog"], { env: hdcEnv, stdio: ["ignore", fd, fd] });
   return {
     file,
+    since,
     stop: () => {
       try {
         child.kill();
@@ -143,8 +154,11 @@ const sleep = (ms) => {
   Atomics.wait(sab, 0, 0, ms);
 };
 
-const report = (file) => {
-  const all = readFileSync(file, "utf8").split("\n");
+// hilog 行首 `MM-DD HH:MM:SS.mmm`,与 `since` 同形 ⇒ 字典序就是时间序(⚠ 跨年那一秒除外,不值得管)。
+const report = ({ file, since }) => {
+  const raw = readFileSync(file, "utf8").split("\n");
+  const all = raw.filter((l) => l.slice(0, 14) >= since);
+  const stale = raw.filter((l) => /^\d\d-\d\d /.test(l)).length - all.length;
   // 壳那半:Rust 的 `log::info!` 走 ZHUJIAN 域名。
   const shell = all
     .filter((l) => /\/ZHUJIAN:/.test(l))
@@ -162,7 +176,7 @@ const report = (file) => {
   if (!web.length) console.log("   (空 —— 这一轮前端没打 console;⛔ 这不等于前端没出错,只等于它没说话)");
   for (const l of web) console.log(`   ${l}`);
 
-  console.log(`\n   全文:${file}`);
+  console.log(`\n   全文:${file}(早于本次动作 ${since} 的缓冲区旧行 ${stale} 行没进上面两栏,全文里还在)`);
   return { shell, web };
 };
 
@@ -185,7 +199,7 @@ const act = ({ stem, cmd, settle = 2500 }) => {
   if (cmd) sh(cmd, { quiet: true });
   sleep(settle);
   cap.stop();
-  const r = report(cap.file);
+  const r = report(cap);
   shot(stem);
   return r;
 };
@@ -261,7 +275,7 @@ switch (step) {
     sh(`aa start -a ${ABILITY} -b ${BUNDLE}`, { quiet: true });
     sleep(9000);
     cap.stop();
-    report(cap.file);
+    report(cap);
     shot(stem);
     break;
   }

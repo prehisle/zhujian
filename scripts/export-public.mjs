@@ -122,6 +122,8 @@ const DENY = [
   // ⛔ 别因为「反正网站上有」就把它们放行。
   "scripts/build-site-cool.mjs",
   "scripts/deploy-site-cool.mjs",
+  // 811:境外站那支。地址从 `docs/deploy.md` 读(那份不在 ALLOW 里 ⇒ 公开了也没法用),还写着站根与备份路径。
+  "scripts/deploy-site-app.mjs",
 ];
 
 const tracked = execFileSync("git", ["ls-files", "-z"], { cwd: repoRoot })

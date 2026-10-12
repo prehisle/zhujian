@@ -42,7 +42,7 @@ jobs:
       # 只有 check-filter-parity 要 esbuild;其余九道只用 node 内置 + scripts/lib。
       - run: npm ci
 
-      - name: 十道发版门禁(清单以 CLAUDE.md「怎么跑」为准)
+      - name: 十道发版门禁(清单与 branch-gate.mjs 的 LOCAL_GATES 同一组,land 核)
         run: |
           set -euo pipefail
           for g in lock-drift theme-drift contrast hardcoded-colors timing-drift \

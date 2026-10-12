@@ -473,6 +473,24 @@ const main = async () => {
     }, 30000);
     if (!step("⑧ 前置:暂存条 2 张就绪", ready8 === 2, `实得 ${ready8}`)) return out;
     if (!step("⑧ 前置:捕获层开着(③ 的「记下」把它收了)", await ensureComposeOpen())) return out;
+    // ⚠ 真机软键盘(804 vivo 两趟各红一次):键盘起着视口只剩 515、缩略图在视口外;键盘正在收时
+    // 自证读到的坐标、轻点落下时已经挪了。⇒ 先收键盘,再等「视口高 + 缩略图位置」连读两拍一样。
+    // MuMu 没有软键盘,这一步在那儿是空转。
+    await evalJs(`(() => { document.activeElement?.blur(); return "blurred"; })()`);
+    const geo = `JSON.stringify((() => {
+      const t = document.querySelector("#compose-thumbs .cthumb");
+      const r = t ? t.getBoundingClientRect() : null;
+      return [window.innerHeight, r && Math.round(r.top), r && Math.round(r.left)];
+    })())`;
+    let prevGeo = await evalJs(geo);
+    const steady = await until(async () => {
+      await new Promise((r) => setTimeout(r, 300));
+      const now = await evalJs(geo);
+      const same = now === prevGeo;
+      prevGeo = now;
+      return same ? now : null;
+    }, 6000);
+    if (!step("⑧ 前置:键盘已收、缩略图位置连读两拍不动", !!steady, String(steady ?? prevGeo))) return out;
     // ⚠ 打点之前先证「这一点命中的就是它」——照 skill「触区类验收」§1:元素被推出视口时
     // elementFromPoint 返回 null,那时候的轻点是打空,而打空与「功能没做」在屏幕上同形。
     const onScreen = JSON.parse(await evalJs(`(() => {
@@ -593,6 +611,8 @@ const main = async () => {
       // 中途出错时,那次 openPicker 的 Promise 永远不会 settle,它造的隐藏 input 就留在
       // DOM 里(不影响下一轮,但别给下一个人留垃圾)。
       await evalJs(`document.querySelectorAll('body > input[type=file]').forEach(el => el.remove()); "cleaned"`);
+      // 中途 `return out` 时暂存条里还躺着种子图,而暂存条就是用户「记一笔」的草稿(804 当场手摘了两张)。
+      await evalJs(`(() => { document.querySelectorAll("#compose-thumbs .cthumb-del").forEach((b) => b.click()); return "draft cleared"; })()`);
     } catch {}
     if (itemId && space) {
       try {

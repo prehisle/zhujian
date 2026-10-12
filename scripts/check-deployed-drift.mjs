@@ -194,18 +194,20 @@ if (!FAKE) {
   // ── ①c robots.txt 与 sitemap.xml(713)────────────────────────────────────
   // 与 ① 同一根轴(「线上那份 == 仓里那份」),⛔ 故不另起门禁:这两份是**手写**的,
   // 发站时靠 §8.1 那行 scp 带上去 —— 漏了不会有任何一处红,只是搜索引擎收不到。
-  // ⚠ **诚实边界:这一格只守境外站。** 境内站那两份是生成的,`deploy-site-cool.mjs`
-  //    第 ④ 格只在**发站那一刻**探一次 ⇒ 境内站漂了**没有任何常态判据会红**
-  //    (backlog 测试与工装 有账)。⛔ 别把那一格读成「有人一直守着」。
-  console.log("\n①c 官网 robots.txt 与 sitemap.xml");
-  for (const f of ["robots.txt", "sitemap.xml"]) {
-    try {
-      const local = readFileSync(`site/${f}`);
-      const live = curl(`https://zhujian.app/${f}`, { binary: true });
-      if (Buffer.compare(local, live) === 0) ok(`${f} 与 site/${f} 逐字节相同(${local.length} 字节)`);
-      else bad(`${f} 线上与仓里不同(线上 ${live.length} 字节 / 本地 ${local.length} 字节)`);
-    } catch (e) {
-      bad(`拉不到 ${f}:${e.message.trim()} —— 发站时 §8.1 那行 scp 漏了?`);
+  // 811 起两站都守:境内站那两份是生成器出的 `site-cool/` 里那份,`deploy-site-cool.mjs` 第 ④ 格
+  // 只在发站那一刻探一次,此前发完漂了没有任何一处会红(backlog 测试与工装 51 (i))。
+  // ⚠ 拿工作树比:生成器跑过而没发,这一格就红 —— 那正是「仓里有、线上没有」。
+  console.log("\n①c 两站 robots.txt 与 sitemap.xml");
+  for (const [site, dir] of [["zhujian.app", "site"], ["zhujian.cool", "site-cool"]]) {
+    for (const f of ["robots.txt", "sitemap.xml"]) {
+      try {
+        const local = readFileSync(`${dir}/${f}`);
+        const live = curl(`https://${site}/${f}`, { binary: true });
+        if (Buffer.compare(local, live) === 0) ok(`${site}/${f} 与 ${dir}/${f} 逐字节相同(${local.length} 字节)`);
+        else bad(`${site}/${f} 线上与仓里不同(线上 ${live.length} 字节 / 本地 ${local.length} 字节)`);
+      } catch (e) {
+        bad(`拉不到 ${site}/${f}:${e.message.trim()} —— 发站时漏了?`);
+      }
     }
   }
 
@@ -213,7 +215,7 @@ if (!FAKE) {
   // 同 ①c 一根轴(线上那份 == 仓里那份),另加一问:仓里那份记没记**当前这两个版本**。
   // 这页每次发版都要手加一块(site/changelog.md 头注),漏加不会有任何别的地方红 ——
   // 而本脚本正是发版收口那一趟必跑的(流程 4 第 5 步),故绑在这儿,⛔ 别另起门禁。
-  // ⚠ 诚实边界:只核「版本号出现过」,核不了那句话是不是 tag 上那句;境内站那份同 ①c 不守。
+  // ⚠ 诚实边界:只核「版本号出现过」,核不了那句话是不是 tag 上那句;境内站的 changelog.html 不守(①c 811 起只多守了它的 robots / sitemap)。
   console.log("\n①d 更新日志页 changelog.html");
   try {
     const md = readFileSync("site/changelog.md", "utf8");
