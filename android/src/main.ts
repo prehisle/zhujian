@@ -1029,6 +1029,11 @@ function syncTagsToggle(): void {
   // 再也收不回来。故 `!tagsOpen &&` 那半是短路,不是顺手写的。
   // 标签行整行没发(一枚真标签都没有,filter.ts renderTopicPills)⇒ 摊开态也藏,别留一枚摊不出东西的 ▴。
   btn.hidden = topics.childElementCount === 0 || (!tagsOpen && topics.scrollWidth <= topics.clientWidth + 1);
+  // 标签行空了而类型轴还在 ⇒ 过滤框并进类型那一行右端,别独占一行(用户面 150;CSS 见 `.kinds-inline`)。
+  $("filterbar").classList.toggle(
+    "kinds-inline",
+    topics.childElementCount === 0 && $("filter-kinds").childElementCount > 0,
+  );
 }
 $("filter-expand").addEventListener("click", () => {
   tagsOpen = !tagsOpen;

@@ -1742,6 +1742,12 @@
       .fkinds:empty { display: none; }
       .fmain { display: flex; align-items: center; gap: 10px; }
       .ftopics { flex: 1; min-width: 0; }
+      /* 标签行空、类型轴在(main.ts syncTagsToggle 打 `.kinds-inline`):过滤框并进类型那一行右端,
+         不再独占一行(用户面 150)。状态排照旧独占上一行;看板有自己那套排法(上面 body.board 那组),不套这条。 */
+      body:not(.board) #filterbar.kinds-inline { flex-flow: row wrap; align-items: center; column-gap: 10px; }
+      body:not(.board) #filterbar.kinds-inline .fstages { flex: 0 0 100%; }
+      body:not(.board) #filterbar.kinds-inline .fkinds { flex: 1; min-width: 0; }
+      body:not(.board) #filterbar.kinds-inline .ftopics { display: none; }
       .faxis {
         flex: none; font-size: var(--fs-12); letter-spacing: 0.04em;
         color: var(--ink-faint);
