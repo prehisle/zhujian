@@ -43,7 +43,7 @@ export const shell = defineMessages({
   "shell.searchPh": { zh: "搜索…", en: "Search…" },
   "shell.searchGo": { zh: "搜", en: "Go" },
   "shell.emptyTrash": { zh: "清空回收站", en: "Empty Trash" },
-  "shell.trashNote": { zh: "删除的记录先到这里;恢复回到原来的位置;彻底删除后无法找回。", en: "Deleted items land here first; restoring puts them back where they were; deleting forever cannot be undone." },
+  "shell.trashNote": { zh: "删除的记录和配图先到这里;恢复回到原来的位置(配图回到原编号);彻底删除后无法找回。", en: "Deleted items and images land here first; restoring puts them back where they were (images keep their number); deleting forever cannot be undone." },
   "shell.sealedNote": { zh: "归档的任务在这里,可查、不可删。", en: "Archived tasks live here. You can look them up, not delete them." },
   // ⚠ 末句(点条数)刻意排在「都会同步」之后:那一条是**只读**的,不产生任何 op,
   //   混进前面那串会让人以为「看一眼」也会同步出去。

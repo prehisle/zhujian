@@ -64,7 +64,7 @@ use rusqlite::Connection;
 /// 当前 schema 版本 = 迁移链末位。spaces 的只读 exact-match 检查(multispace-plan §10)
 /// 与 staging 建库都以它为锚;加新迁移时此常量跟着 MIGRATIONS 一起动
 /// (migration_sets_user_version 测试与下方一致性测试双守)。
-pub const SCHEMA_VERSION: i64 = 40;
+pub const SCHEMA_VERSION: i64 = 41;
 
 /// 安卓前滚迁移下限(codex 设计审 H1):手机端只对 `user_version >= 28` 的既有
 /// 正式库做原地前滚(现网手机全部诞生于 v28 干净装)。1-27 的老迁移不自带崩溃窗
@@ -143,6 +143,10 @@ const MIGRATIONS: &[(i64, ForeignKeys, &str)] = &[
     // 归 UnsupportedVocab(挂起、升级即自愈)⇒ 单版直发、零额外机制,⛔ 不是「已知字段的新
     // 值域」那条贵路(不需要发送端闸)。只加一个 NULL 列,不整表重建、不回填。
     (40, ForeignKeys::Enforced, include_str!("../migrations/0040_item_color.sql")),
+    // 配图进回收站(backlog 用户面 149,image-trash-plan):item_image 加可空同步字段 removed_at
+    // + oplog 词汇加 `image × set_field`。新 kind 在旧端归 UnsupportedVocab(挂起、升级即自愈)
+    // ⇒ 单版直发。只重建 oplog(无表 FK 引用它)⇒ 仍是 `Enforced`。
+    (41, ForeignKeys::Enforced, include_str!("../migrations/0041_item_image_removed_at.sql")),
 ];
 
 /// Open the database at `path`, enforce foreign keys, and apply migrations.

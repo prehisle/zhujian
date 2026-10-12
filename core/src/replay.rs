@@ -124,7 +124,12 @@ pub struct RemoteOp {
 /// [`crate::sync::engine::Engine::reverify_quarantined`]。bump 仍必要:凡 shape 判定放宽,
 /// 因**别的**原因隔离过的行都可能因新规则重跑而获释,不 bump 就筛不出它们(sync-core-handbook
 /// 「改了判定规则不 bump,升级救不出任何人」)。
-pub(crate) const VALIDATOR_VER: i64 = 9;
+///
+/// v10 = 0041 `image × set_field`(配图软删标记 removed_at,image-trash-plan §3.2)进 shape:
+/// 恰两键 + 字段白名单只有 removed_at + 值 RFC3339 ∪ null。**又一次空跳**(同 v7 / v9):
+/// v9 及更早端对这枚 kind 落兜底臂 = `UnsupportedVocab` 挂起、不进隔离,今天的库里不存在因它
+/// 被隔离的行;bump 照 §4.4「改了 shape 规则就 +1」。
+pub(crate) const VALIDATOR_VER: i64 = 10;
 
 /// typed poison 错误分型(epoch-plan §4):`validate_op_shape` 与 `apply_remote_op`
 /// 返回**同一枚举**,分型在源头、不靠错误字符串事后分类。engine 按型分道:
@@ -247,6 +252,7 @@ pub fn apply_remote_op(
         ("link", _) => apply_link(&tx, op)?,
         ("image", "image_add") => apply_image_add(&tx, clock, op, &hlc)?,
         ("image", "image_tombstone") => apply_image_tombstone(&tx, op)?,
+        ("image", "set_field") => apply_image_set_field(&tx, op)?,
         ("space", "set_field") => apply_space_set_field(&tx, op)?,
         ("device", "set_field") => apply_device_set_field(&tx, op)?,
         ("comment", "create") => apply_comment_create(&tx, op)?,
@@ -918,6 +924,16 @@ fn apply_image_add(
             op.entity_id
         )));
     }
+    // 0041 因果序(与 boot `audit_op_preconditions` 的 set-before-add 同一把尺,codex 实现审一弹
+    // H1):日志里已有这张图的 set_field 且 HLC 早于本 add = 因果倒置 —— 合法发射端见过 add 才
+    // 删得了图,造不出这种序。唯一能让 set_field 先落账的是 legacy 分支(本机有行、无 add),
+    // 之后再来一条同 id 的 add 只能是坏实现 / 恶意,live 不拒的话 boot 会拒同一份日志。
+    if set_field_older_than_add(tx, &op.entity_id).map_err(local)? {
+        return Err(inv(format!(
+            "image {} 的 set_field 早于它的 image_add(因果倒置),拒收",
+            op.entity_id
+        )));
+    }
     if has_tombstone(tx, "item", &item_id).map_err(local)? {
         return Ok(Outcome::ParentGone); // 父行已死,counter 行也已随 CASCADE 消失。
     }
@@ -968,6 +984,124 @@ fn apply_image_tombstone(tx: &Connection, op: &RemoteOp) -> Result<Outcome, OpEr
     }
     tx.execute("DELETE FROM item_image WHERE id = ?1", [&op.entity_id])
         .map_err(|e| db_err(&format!("回放 image_tombstone 失败({})", op.entity_id), e))?;
+    Ok(Outcome::Applied)
+}
+
+/// 配图 `removed_at` 的日志 LWW 赢家 —— **唯一正式子**(image-trash-plan §3.3;清单 14):
+/// 参赛者 = 该图的 `image_add`(初值恒 NULL:removed_at 刻意不进 add payload)∪ 该图全部
+/// `set_field(field = removed_at)`,HLC 最大者的值。无 set_field ⇒ 赢家 = NULL;没有 add 的
+/// legacy 图(0020 前、随快照到达)参赛者只有 set_field,一条都没有 = 子查询无行 = NULL。
+/// 返回一个**标量子查询**的 SQL 片段:`prefix` = `""`(本库)/ `"boot."`
+/// (只读挂载的快照);`id_expr` = 图 id 的 SQL 表达式(`?1` / `t.id`)。消费者:建行
+/// ([`apply_image_bytes`])、boot 语义审计(`boot::audit_image_removed`);回放判「本 op 是不是
+/// 赢家」用同一份参赛者集合的 HLC 那一列([`image_removed_winner_hlc_expr`],codex 实现审一弹
+/// M1:原先走通用 `is_latest_field_write`,参赛者少了 add,与这里是两把尺)。
+pub(crate) fn image_removed_winner_expr(prefix: &str, id_expr: &str) -> String {
+    image_removed_winner_col(prefix, id_expr, "value")
+}
+
+/// 同 [`image_removed_winner_expr`] 的参赛者集合,取赢家的 HLC(同库 HLC 唯一,不会并列)。
+fn image_removed_winner_hlc_expr(id_expr: &str) -> String {
+    image_removed_winner_col("", id_expr, "hlc")
+}
+
+fn image_removed_winner_col(prefix: &str, id_expr: &str, col: &str) -> String {
+    format!(
+        "(SELECT {col} FROM ( \
+            SELECT hlc, NULL AS value FROM {prefix}oplog \
+              WHERE entity = 'image' AND entity_id = {id_expr} AND kind = 'image_add' \
+            UNION ALL \
+            SELECT hlc, json_extract(payload, '$.value') AS value FROM {prefix}oplog \
+              WHERE entity = 'image' AND entity_id = {id_expr} AND kind = 'set_field' \
+                AND json_extract(payload, '$.field') = 'removed_at') \
+          ORDER BY hlc DESC LIMIT 1)"
+    )
+}
+
+/// 这张图的日志里有没有「set_field 的 HLC 不晚于它的 image_add」(因果倒置)。与 boot
+/// `audit_op_preconditions` 的 set-before-add 计数同一个谓词;回放在 add 与 set_field **两种
+/// 到达序**下都查(被判的那条已先记账),boot 收不下的日志 live 也不收(codex 实现审一弹 H1)。
+fn set_field_older_than_add(tx: &Connection, image_id: &str) -> Result<bool, String> {
+    tx.query_row(
+        "SELECT EXISTS (SELECT 1 FROM oplog s JOIN oplog a \
+             ON a.entity = 'image' AND a.entity_id = s.entity_id AND a.kind = 'image_add' \
+           WHERE s.entity = 'image' AND s.entity_id = ?1 AND s.kind = 'set_field' AND a.hlc >= s.hlc)",
+        [image_id],
+        |r| r.get(0),
+    )
+    .map_err(|e| e.to_string())
+}
+
+/// image set_field(0041 软删标记):LWW 寄存器。判定顺序钉死(image-trash-plan §3.4 六序;
+/// shape 已在入口过,op 已先记账):
+/// 1. 图有 `image_tombstone` → `SuppressedByTombstone`(**先于**「有没有 add」:墓碑先到、add
+///    未到是合法乱序,⛔ 不许挂起);
+/// 2. 宿主:日志里这张图的 `image_add` 说了算;没有 add 而**本机有行** = 0020 前的 legacy 无背书图
+///    (随引导快照到达,永远不会有 add),取行上的宿主;两样都没有 → `DependencyMissing`(add 在
+///    路上;payload 刻意不带 item_id);
+/// 3. 宿主有 item tombstone → `ParentGone`(与父墓碑后晚到的 image_add 同语义);
+/// 4. 行未建(字节没到)→ `Applied` 只记账,建行那一刻由 [`image_removed_winner_expr`] 写入;
+/// 5. 行在、本 op 是赢家 → UPDATE;6. 行在、不是赢家 → `LwwStale`。
+///
+/// ⚠ 第 2 序的 legacy 分支是实现时补的(规格 v3 写的是「无 add 一律挂起」):legacy 图在本机
+/// 软删会发 set_field 却永远没有 add,照规格原样,引导过它快照的同伴会在这条 op 上**永久**挂起
+/// 该 origin。与 item set_field「有行就收」(`audit_op_preconditions` 的孤儿判据)同口径。
+///
+/// ⓪ 在一切之前:add 已在日志而本条的 HLC 不晚于它 = 因果倒置,`InvalidOp`(合法发射端造不出;
+/// boot 的 set-before-add 计数拒同一份日志,⛔ 别挪到第 1 序之后 —— 那样「墓碑在、序倒置」的
+/// 日志 live 收、boot 拒,codex 实现审一弹 H1 的同一个不对称)。add 还没到时查不了,由
+/// `apply_image_add` 在 add 落账时反过来查。
+fn apply_image_set_field(tx: &Connection, op: &RemoteOp) -> Result<Outcome, OpError> {
+    if set_field_older_than_add(tx, &op.entity_id).map_err(local)? {
+        return Err(OpError::InvalidOp(format!(
+            "image {} 的 set_field 不晚于它的 image_add(因果倒置),拒收",
+            op.entity_id
+        )));
+    }
+    if has_tombstone(tx, "image", &op.entity_id).map_err(local)? {
+        return Ok(Outcome::SuppressedByTombstone);
+    }
+    let add_item: Option<String> = tx
+        .query_row(
+            "SELECT json_extract(payload, '$.item_id') FROM oplog \
+             WHERE entity = 'image' AND entity_id = ?1 AND kind = 'image_add' LIMIT 1",
+            [&op.entity_id],
+            |r| r.get::<_, Option<String>>(0),
+        )
+        .optional()
+        .map_err(local)?
+        .flatten();
+    let host = match add_item {
+        Some(h) => Some(h),
+        None => crate::repo::item_image_owner(tx, &op.entity_id).map_err(local)?,
+    };
+    let Some(item_id) = host else {
+        return Err(OpError::DependencyMissing(format!(
+            "回放依赖未到:image {} 的 set_field 先于 image_add(引擎挂起重试,§5.3)",
+            op.entity_id
+        )));
+    };
+    if has_tombstone(tx, "item", &item_id).map_err(local)? {
+        return Ok(Outcome::ParentGone);
+    }
+    if !row_exists(tx, "item_image", &op.entity_id).map_err(local)? {
+        return Ok(Outcome::Applied);
+    }
+    // 赢家判定走 §3.3 那份唯一正式子的 HLC 列(与建行 / boot 审计同一组参赛者)。
+    let winner: Option<String> = tx
+        .query_row(&format!("SELECT {}", image_removed_winner_hlc_expr("?1")), [&op.entity_id], |r| r.get(0))
+        .map_err(local)?;
+    if winner.as_deref() != Some(op.hlc.as_str()) {
+        return Ok(Outcome::LwwStale);
+    }
+    // shape 已验:value 只可能是 null 或 RFC3339 字符串。
+    let value: Option<&str> = field_value(&op.payload).map_err(OpError::InvalidOp)?.as_str();
+    let n = tx
+        .execute("UPDATE item_image SET removed_at = ?1 WHERE id = ?2", (value, &op.entity_id))
+        .map_err(|e| db_err(&format!("回放 image set_field removed_at 失败({})", op.entity_id), e))?;
+    if n != 1 {
+        return Err(local(format!("回放 image set_field 影响 {n} 行({})", op.entity_id)));
+    }
     Ok(Outcome::Applied)
 }
 
@@ -1041,9 +1175,16 @@ pub fn apply_image_bytes(
         .map_err(|e| e.to_string())?
         .and_then(|(map, _)| map.get(image_id).map(|(eff, _)| *eff))
         .ok_or_else(|| format!("「图N」分配表里没有 {image_id}(必是 bug:其 add 已在日志)"))?;
+    // 0041:软删标记取**建行时刻**日志的 LWW 赢家,与 seq 取建行时刻 effective_seqs 同形,
+    // 一条 INSERT 写完(image-trash-plan §3.4 第 4 序)。
+    let removed_at: Option<String> = tx
+        .query_row(&format!("SELECT {}", image_removed_winner_expr("", "?1")), [image_id], |r| {
+            r.get(0)
+        })
+        .map_err(|e| e.to_string())?;
     tx.execute("INSERT INTO sync_replay_active (flag) VALUES (1)", [])
         .map_err(|e| e.to_string())?;
-    let n = crate::repo::insert_item_image(&tx, image_id, &item_id, seq, data, &mime)
+    let n = crate::repo::insert_item_image(&tx, image_id, &item_id, seq, data, &mime, removed_at.as_deref())
         .map_err(|e| format!("旁路建图行失败({image_id},图{seq}):{e}"))?;
     if n != 1 {
         return Err(format!("旁路建图行失败({image_id}):影响 {n} 行"));
@@ -1331,6 +1472,7 @@ fn has_tombstone(conn: &Connection, entity: &str, entity_id: &str) -> Result<boo
 
 /// 字段级 LWW:当前 op(已入账)是不是该字段的最后一笔写。参赛者 = create(快照写下
 /// 字段初值)+ 该字段的全部 set_field;HLC 全局唯一,「最新」= 自己是唯一 MAX。
+/// ⚠ image(0041)**不走这里**:它的参赛者集合在 [`image_removed_winner_expr`] 那一份正式子里。
 fn is_latest_field_write(
     conn: &Connection,
     entity: &str,
@@ -1764,6 +1906,30 @@ fn validate_color_value(v: &Value) -> Result<(), String> {
     }
 }
 
+/// image set_field 的形态校验(shape 层,boot+live 共用;0041)。字段白名单只有 `removed_at`;
+/// 分型口径同 item:**词汇表外的字段名 = UnsupportedVocab**(将来版本可能加,旧端挂起等升级),
+/// 已知字段值域非法 = InvalidOp。
+fn validate_image_field_shape(field: &str, v: &Value) -> Result<(), OpError> {
+    match field {
+        "removed_at" => validate_removed_at_value(v).map_err(OpError::InvalidOp),
+        other => Err(OpError::UnsupportedVocab(format!("image set_field 不认识的字段:{other}"))),
+    }
+}
+
+/// `removed_at` 值域:合法 RFC3339 字符串(已删,值 = 删除时刻)或 null(在用)。全新字段、
+/// 零存量、旧端发不出 ⇒ 第一天就严是免费的(0040 color 同理)。
+fn validate_removed_at_value(v: &Value) -> Result<(), String> {
+    match v {
+        Value::Null => Ok(()),
+        Value::String(s) => {
+            time::OffsetDateTime::parse(s, &time::format_description::well_known::Rfc3339)
+                .map(|_| ())
+                .map_err(|e| format!("removed_at 非合法 RFC3339 时间戳({s:?}):{e}"))
+        }
+        other => Err(format!("removed_at 期待 RFC3339 字符串或 null:{other}")),
+    }
+}
+
 fn validate_done_at_value(v: &Value) -> Result<(), String> {
     match v {
         Value::String(s) => {
@@ -2062,6 +2228,17 @@ pub(crate) fn validate_op_shape(op: &RemoteOp) -> Result<(), OpError> {
         }
         ("image", "image_tombstone") => {
             str_field(p, "item_id").map_err(inv)?;
+        }
+        ("image", "set_field") => {
+            // 0041 软删标记(image-trash-plan §3.2):payload **恰两键** `{field, value}` —— 全新
+            // kind、零存量,第一天就严(照 comment 的恰 N 键形;image 既有两臂不验键集)。
+            if !p.as_object().is_some_and(|o| {
+                o.len() == 2 && o.contains_key("field") && o.contains_key("value")
+            }) {
+                return Err(inv(format!("image set_field 的 payload 必须恰为 {{field, value}},收到:{p}")));
+            }
+            let field = str_field(p, "field").map_err(inv)?;
+            validate_image_field_shape(&field, field_value(p).map_err(inv)?)?;
         }
         ("space", "set_field") => {
             // 单例寄存器:entity_id 恒为字面量 'profile'(space-name-sync-plan §3.1)。
@@ -3660,6 +3837,208 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM item_image WHERE id = ?1", [img2], |r| r.get(0))
             .unwrap();
         assert_eq!(rows, 0);
+    }
+
+    // ---- 0041 配图软删标记(image × set_field,image-trash-plan §3.2–§3.4) ----
+
+    fn removed_at_of(conn: &Connection, img: &str) -> Option<String> {
+        conn.query_row("SELECT removed_at FROM item_image WHERE id = ?1", [img], |r| r.get(0))
+            .unwrap()
+    }
+
+    fn img_set(hlc: &str, img: &str, value: Value) -> RemoteOp {
+        mk(hlc, "image", img, "set_field", json!({"field": "removed_at", "value": value}))
+    }
+
+    #[test]
+    fn image_set_field_shape_exact_keys_known_field_rfc3339() {
+        // shape 只判形态(§3.2):恰两键、字段白名单只有 removed_at、值 RFC3339 ∪ null。
+        // 直接量 validate_op_shape —— 别经 apply,免得被后面的依赖前置代答(清单 13)。
+        let ok_ts = img_set("h", "01IMG", json!("2026-10-12T08:00:00Z"));
+        assert!(validate_op_shape(&ok_ts).is_ok());
+        let ok_null = img_set("h", "01IMG", Value::Null);
+        assert!(validate_op_shape(&ok_null).is_ok(), "null = 还原,合法");
+        let extra = mk("h", "image", "01IMG", "set_field",
+            json!({"field": "removed_at", "value": null, "item_id": "x"}));
+        assert!(matches!(validate_op_shape(&extra), Err(OpError::InvalidOp(_))), "多一键 = 畸形");
+        let missing = mk("h", "image", "01IMG", "set_field", json!({"field": "removed_at"}));
+        assert!(matches!(validate_op_shape(&missing), Err(OpError::InvalidOp(_))), "少 value 键 = 畸形");
+        let future = mk("h", "image", "01IMG", "set_field", json!({"field": "caption", "value": "x"}));
+        assert!(
+            matches!(validate_op_shape(&future), Err(OpError::UnsupportedVocab(_))),
+            "将来的字段 = 版本偏斜,挂起等升级,不许打进隔离"
+        );
+        for bad in [json!("2026-10-12"), json!("昨天"), json!(1), json!(true)] {
+            let op = img_set("h", "01IMG", bad.clone());
+            assert!(matches!(validate_op_shape(&op), Err(OpError::InvalidOp(_))), "值域非法:{bad}");
+        }
+    }
+
+    /// 本机建一个宿主 + 一枚远端 image_add(行不建,72 契约),返回 (宿主, 图, 字节)。
+    fn remote_image_pending(l: &mut Connection, lc: &mut Clock, img: &str, wall: u64) -> (String, Vec<u8>) {
+        let item = notes::capture(l, lc, "软删宿主").unwrap();
+        let data = vec![3u8, 1, 4, 1, 5];
+        let sha: String = {
+            use sha2::{Digest, Sha256};
+            Sha256::digest(&data).iter().map(|b| format!("{b:02x}")).collect()
+        };
+        let add = mk(&remote_hlc(wall, 0), "image", img, "image_add",
+            json!({"item_id": item, "seq": 1, "mime": "image/png", "bytes": data.len(), "sha256": sha}));
+        assert_eq!(apply_remote_op(l, lc, &add).unwrap(), Outcome::Applied);
+        (item, data)
+    }
+
+    #[test]
+    fn image_set_field_before_bytes_only_logs_then_row_born_with_winner() {
+        // §3.4 第 4 序:set_field 先于字节到 = 只记账;字节到齐建行时 removed_at 取日志赢家,
+        // 一条 INSERT 写定。两条 set 乱序到:赢家按 HLC,不按到达序。
+        let (mut l, mut lc) = fresh();
+        let img = "01IMGSETBEFOREBYTES00000X";
+        let (_, data) = remote_image_pending(&mut l, &mut lc, img, FUTURE_MS);
+        let late = img_set(&remote_hlc(FUTURE_MS, 5), img, json!("2026-10-12T09:00:00Z"));
+        let early = img_set(&remote_hlc(FUTURE_MS, 3), img, Value::Null);
+        assert_eq!(apply_remote_op(&mut l, &mut lc, &late).unwrap(), Outcome::Applied, "行未建 = 只记账");
+        assert_eq!(apply_remote_op(&mut l, &mut lc, &early).unwrap(), Outcome::Applied);
+        assert_eq!(apply_image_bytes(&mut l, img, &data).unwrap(), BytesOutcome::Applied { seq: 1 });
+        assert_eq!(removed_at_of(&l, img).as_deref(), Some("2026-10-12T09:00:00Z"), "建行取 HLC 赢家");
+        assert_eq!(flag_rows(&l), 0, "豁免标志绝不泄漏");
+    }
+
+    #[test]
+    fn image_set_field_lww_on_existing_row() {
+        // §3.4 第 5 / 6 序:行在时赢家 UPDATE,输家 LwwStale 只记账。
+        let (mut l, mut lc) = fresh();
+        let img = "01IMGSETLWW0000000000000X";
+        let (_, data) = remote_image_pending(&mut l, &mut lc, img, FUTURE_MS);
+        apply_image_bytes(&mut l, img, &data).unwrap();
+        assert_eq!(removed_at_of(&l, img), None);
+        let del = img_set(&remote_hlc(FUTURE_MS, 4), img, json!("2026-10-12T10:00:00Z"));
+        assert_eq!(apply_remote_op(&mut l, &mut lc, &del).unwrap(), Outcome::Applied);
+        assert_eq!(removed_at_of(&l, img).as_deref(), Some("2026-10-12T10:00:00Z"));
+        let stale = img_set(&remote_hlc(FUTURE_MS, 2), img, Value::Null);
+        assert_eq!(apply_remote_op(&mut l, &mut lc, &stale).unwrap(), Outcome::LwwStale);
+        assert_eq!(removed_at_of(&l, img).as_deref(), Some("2026-10-12T10:00:00Z"), "输家不改行");
+        let restore = img_set(&remote_hlc(FUTURE_MS, 6), img, Value::Null);
+        assert_eq!(apply_remote_op(&mut l, &mut lc, &restore).unwrap(), Outcome::Applied);
+        assert_eq!(removed_at_of(&l, img), None, "还原 = 赢家 null");
+    }
+
+    #[test]
+    fn image_set_field_dependency_order_tombstone_parent_missing() {
+        // §3.4 第 1–3 序,每格只由那一句决定(清单 13)。
+        let (mut l, mut lc) = fresh();
+        // ① 墓碑先到、add 未到:Suppressed(先于「有没有 add」判,⛔ 不许挂起)。
+        let ts_img = "01IMGSETTSFIRST000000000X";
+        let ts = mk(&remote_hlc(FUTURE_MS, 1), "image", ts_img, "image_tombstone",
+            json!({"item_id": "01HOSTUNKNOWN00000000000X"}));
+        assert_eq!(apply_remote_op(&mut l, &mut lc, &ts).unwrap(), Outcome::Applied);
+        let s1 = img_set(&remote_hlc(FUTURE_MS, 2), ts_img, json!("2026-10-12T08:00:00Z"));
+        assert_eq!(apply_remote_op(&mut l, &mut lc, &s1).unwrap(), Outcome::SuppressedByTombstone);
+        // ② 无 add、无行、无墓碑:DependencyMissing 且不记账。
+        let n0 = oplog_rows(&l);
+        let s2 = img_set(&remote_hlc(FUTURE_MS, 3), "01IMGSETNOADD00000000000X", Value::Null);
+        assert!(matches!(apply_remote_op(&mut l, &mut lc, &s2), Err(OpError::DependencyMissing(_))));
+        assert_eq!(oplog_rows(&l), n0, "挂起不记账");
+        // ③ add 在、宿主已墓碑:ParentGone。
+        let pg_img = "01IMGSETPARENTGONE00000X1";
+        let (host, _) = remote_image_pending(&mut l, &mut lc, pg_img, FUTURE_MS + 10);
+        let item_ts = mk(&remote_hlc(FUTURE_MS + 10, 1), "item", &host, "tombstone", json!({}));
+        assert_eq!(apply_remote_op(&mut l, &mut lc, &item_ts).unwrap(), Outcome::Applied);
+        let s3 = img_set(&remote_hlc(FUTURE_MS + 10, 2), pg_img, json!("2026-10-12T08:00:00Z"));
+        assert_eq!(apply_remote_op(&mut l, &mut lc, &s3).unwrap(), Outcome::ParentGone);
+    }
+
+    #[test]
+    fn image_set_field_on_legacy_row_without_add_takes_host_from_row() {
+        // 第 2 序的 legacy 分支:0020 前的无背书图(行在、日志无 add)被对端软删 —— 宿主取行上的,
+        // 照常 LWW 落行;⛔ 不许挂起(那张图永远不会有 add,挂起 = 该 origin 永久停住)。
+        let (mut l, mut lc) = fresh();
+        let item = notes::capture(&mut l, &mut lc, "老图宿主").unwrap();
+        let img = "01IMGLEGACY0000000000000X";
+        repo::next_image_seq(&l, &item).unwrap();
+        repo::insert_item_image(&l, img, &item, 1, &[1u8, 2], "image/png", None).unwrap();
+        let s = img_set(&remote_hlc(FUTURE_MS, 1), img, json!("2026-10-12T08:00:00Z"));
+        assert_eq!(apply_remote_op(&mut l, &mut lc, &s).unwrap(), Outcome::Applied);
+        assert_eq!(removed_at_of(&l, img).as_deref(), Some("2026-10-12T08:00:00Z"));
+    }
+
+    #[test]
+    fn image_set_field_older_than_its_add_is_refused_in_both_arrival_orders() {
+        // 因果倒置(set_field 的 HLC 不晚于同图的 image_add)合法发射端造不出;boot 的
+        // set-before-add 计数拒这种日志 ⇒ live 两种到达序都得拒(codex 实现审一弹 H1)。
+        // ① set 先落账(legacy 分支:本机有行、无 add)→ 再来同 id、HLC 更晚的 add:add 拒。
+        let (mut l, mut lc) = fresh();
+        let item = notes::capture(&mut l, &mut lc, "老图宿主").unwrap();
+        let img = "01IMGINVERTA000000000000X";
+        repo::next_image_seq(&l, &item).unwrap();
+        repo::insert_item_image(&l, img, &item, 1, &[1u8, 2], "image/png", None).unwrap();
+        let set = img_set(&remote_hlc(FUTURE_MS, 1), img, json!("2026-10-12T08:00:00Z"));
+        assert_eq!(apply_remote_op(&mut l, &mut lc, &set).unwrap(), Outcome::Applied);
+        let add = mk(&remote_hlc(FUTURE_MS, 2), "image", img, "image_add",
+            json!({"item_id": item, "seq": 1, "mime": "image/png", "bytes": 2, "sha256": TEST_SHA}));
+        assert!(matches!(apply_remote_op(&mut l, &mut lc, &add), Err(OpError::InvalidOp(_))), "add 晚于已落账的 set = 拒");
+        // ② add 先到 → 再来 HLC 更早的 set(即使图已有墓碑,也先判序):set 拒。
+        let img2 = "01IMGINVERTB000000000000X";
+        let (_, _) = remote_image_pending(&mut l, &mut lc, img2, FUTURE_MS + 100);
+        let ts = mk(&remote_hlc(FUTURE_MS + 100, 5), "image", img2, "image_tombstone", json!({"item_id": add_host(&l, img2)}));
+        assert_eq!(apply_remote_op(&mut l, &mut lc, &ts).unwrap(), Outcome::Applied);
+        let early = img_set(&remote_hlc(FUTURE_MS + 50, 0), img2, Value::Null);
+        assert!(matches!(apply_remote_op(&mut l, &mut lc, &early), Err(OpError::InvalidOp(_))), "早于 add 的 set = 拒(墓碑不豁免)");
+    }
+
+    fn add_host(conn: &Connection, img: &str) -> String {
+        conn.query_row(
+            "SELECT json_extract(payload, '$.item_id') FROM oplog WHERE entity = 'image' AND entity_id = ?1 AND kind = 'image_add'",
+            [img],
+            |r| r.get(0),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn mirror_image_remove_restore_purge_converge_both_ends() {
+        // 双库端到端:A 贴图、B 收齐;A 删(进回收站)、B 并发还原 → 互喂后按 HLC 收敛;
+        // 再 A 彻底删除 → 墓碑 sticky,B 的行随之消失、晚到的还原压不回来。
+        let (mut a, mut ac) = fresh();
+        let item = notes::capture(&mut a, &mut ac, "两端回收站").unwrap();
+        let (img, _) = images::attach(&mut a, &mut ac, &item, &[7u8, 7, 7], "image/png").unwrap();
+        let (mut b, mut bc) = fresh();
+        feed_all(&mut b, &mut bc, &all_ops(&a));
+        let data: Vec<u8> = a
+            .query_row("SELECT data FROM item_image WHERE id = ?1", [&img], |r| r.get(0))
+            .unwrap();
+        apply_image_bytes(&mut b, &img, &data).unwrap();
+        let seen: std::collections::HashSet<String> = all_ops(&b).into_iter().map(|o| o.op_id).collect();
+        let fresh_ops = |c: &Connection, seen: &std::collections::HashSet<String>| -> Vec<RemoteOp> {
+            all_ops(c).into_iter().filter(|o| !seen.contains(&o.op_id)).collect()
+        };
+        images::remove(&mut a, &mut ac, &img).unwrap();
+        images::remove(&mut b, &mut bc, &img).unwrap();
+        images::restore(&mut b, &mut bc, &img).unwrap(); // B 的还原 HLC 更大(B 后写)
+        let a_new = fresh_ops(&a, &seen);
+        let b_new = fresh_ops(&b, &seen);
+        feed_all(&mut a, &mut ac, &b_new);
+        feed_all(&mut b, &mut bc, &a_new);
+        assert_eq!(removed_at_of(&a, &img), removed_at_of(&b, &img), "两端收敛到同一个赢家");
+        // A 彻底删除要求图在回收站里:先删(按收敛后的状态),再销毁。
+        if removed_at_of(&a, &img).is_none() {
+            images::remove(&mut a, &mut ac, &img).unwrap();
+        }
+        let seen2: std::collections::HashSet<String> = all_ops(&b).into_iter().map(|o| o.op_id).collect();
+        images::purge(&mut a, &mut ac, &img).unwrap();
+        images::restore(&mut b, &mut bc, &img).unwrap_or(()); // B 并发:还原(若此刻已在用则跳过)
+        let a_new = fresh_ops(&a, &seen2);
+        let b_new = fresh_ops(&b, &seen2);
+        feed_all(&mut b, &mut bc, &a_new);
+        feed_all(&mut a, &mut ac, &b_new);
+        for (c, who) in [(&a, "A"), (&b, "B")] {
+            let rows: i64 = c
+                .query_row("SELECT COUNT(*) FROM item_image WHERE id = ?1", [&img], |r| r.get(0))
+                .unwrap();
+            assert_eq!(rows, 0, "{who}:墓碑 sticky,并发还原压不回来");
+        }
+        let next = images::attach(&mut a, &mut ac, &item, &[1u8], "image/png").unwrap().1;
+        assert_eq!(next, 2, "编号不复用");
     }
 
     #[test]

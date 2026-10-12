@@ -10,7 +10,8 @@
 //!   * link(item_topic,entity_id = "item_id:topic_id"):`link_add` / `link_remove`
 //!     (OR-set:remove 的 payload 带 `observed` = 发射时本地日志里该 link 的全部
 //!     add op_id——「remove 只删它见过的 add」的弹药,合并判定在 replay.rs);
-//!   * image:`image_add`(元数据,字节走旁路)/ `image_tombstone`。
+//!   * image:`image_add`(元数据,字节走旁路)/ `set_field`(只有 `removed_at` 一个字段 =
+//!     软删标记,0041,image-trash-plan §3.2)/ `image_tombstone`(销毁)。
 //!
 //! 发射的原则是**读行发声**:助手在写入之后读回当前行值来充填 payload,而不是让调用方
 //! 转述——写入过程中算出来的值(落列的 fractional 排序键、批量 sealed_at 的统一时间戳)
@@ -478,7 +479,24 @@ pub fn image_add(conn: &Connection, clock: &mut Clock, image_id: &str) -> Result
     append(conn, clock, "image", image_id, "image_add", payload)
 }
 
-/// 配图删除(行已不在,item_id 由调用方删前读好传入)。
+/// 配图软删 / 还原(0041,image-trash-plan §3.2):一条 `set_field`,payload 恰两键
+/// `{"field":"removed_at","value": <行上 removed_at,RFC3339 或 null>}`,值从行上读回(写后调用)。
+pub fn image_set_removed(conn: &Connection, clock: &mut Clock, image_id: &str) -> Result<(), String> {
+    let value: Option<String> = conn
+        .query_row("SELECT removed_at FROM item_image WHERE id = ?1", [image_id], |r| r.get(0))
+        .map_err(|e| format!("读取配图 removed_at 失败({image_id}):{e}"))?;
+    append(
+        conn,
+        clock,
+        "image",
+        image_id,
+        "set_field",
+        json!({ "field": "removed_at", "value": value }),
+    )
+}
+
+/// 配图销毁(行已不在,item_id 由调用方删前读好传入)。0041 起只有回收站里的「彻底删除 /
+/// 清空」发它(image-trash-plan §4.1);条目销毁靠宿主墓碑级联,不逐张发。
 pub fn image_tombstone(
     conn: &Connection,
     clock: &mut Clock,
@@ -646,12 +664,21 @@ mod tests {
 
         let img = "01IMGIMGIMGIMGIMGIMGIMG000";
         repo::next_image_seq(&conn, &item).unwrap();
-        repo::insert_item_image(&conn, img, &item, 1, &[1u8, 2, 3], "image/png").unwrap();
+        repo::insert_item_image(&conn, img, &item, 1, &[1u8, 2, 3], "image/png", None).unwrap();
         image_add(&conn, &mut clock, img).unwrap();
-        repo::delete_item_image(&conn, img).unwrap();
+        // 0041:删 = 进回收站(set_field removed_at),销毁(墓碑)只对已删的图。
+        repo::mark_image_removed(&conn, img, "2026-10-12T08:00:00Z").unwrap();
+        image_set_removed(&conn, &mut clock, img).unwrap();
+        assert_eq!(repo::delete_item_image(&conn, img).unwrap(), 1);
         image_tombstone(&conn, &mut clock, img, &item).unwrap();
         let iops = ops_for(&conn, "image", img);
-        assert_eq!(iops.len(), 2);
+        assert_eq!(iops.len(), 3);
+        assert_eq!(iops[1].kind, "set_field");
+        assert_eq!(
+            iops[1].payload,
+            json!({"field": "removed_at", "value": "2026-10-12T08:00:00Z"}),
+            "软删 op 恰两键、值从行上读回"
+        );
         assert_eq!(iops[0].payload["seq"], json!(1));
         assert_eq!(iops[0].payload["mime"], "image/png");
         assert_eq!(iops[0].payload["bytes"], json!(3));
@@ -660,7 +687,8 @@ mod tests {
             json!("039058c6f2c0cb492c533b0a4d14ef77cc0f78abccced5287d84a1a2011cfb81"),
             "image_add 带字节 sha256(旁路完整性锚,0024)"
         );
-        assert_eq!(iops[1].payload["item_id"], json!(item));
+        assert_eq!(iops[2].kind, "image_tombstone");
+        assert_eq!(iops[2].payload["item_id"], json!(item));
     }
 
     // ---- origin_seq:第三轴(0024) ---------------------------------------------------

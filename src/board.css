@@ -585,6 +585,8 @@
 /* ---- trash view: a single scrolling list + an empty/clear bar ---- */
 .v-board main.trash { display: block; overflow-y: auto; padding: 16px 24px 22px; }
 .v-board main.trash .trash-list { max-width: 560px; margin: 0 auto; }
+/* 「已删配图」一节(用户面 149,trash-images.ts)跟条目列表同一栏宽、同居中,别铺满整屏。 */
+.v-board main.trash .trash-imgs { max-width: 560px; margin-left: auto; margin-right: auto; }
 /* 纸面滚动条住 controls.css(全应用一份,348 统一;新增可滚容器去那边登记)。 */
 
 /* ---- 归档(成就册)view: reuses the trash list layout + a day timeline ---- */

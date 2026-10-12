@@ -1603,6 +1603,10 @@ pub(crate) fn next_image_seq(conn: &Connection, item_id: &str) -> rusqlite::Resu
 /// Insert one image row (bytes + MIME) at an already-allocated 编号. A bad MIME / empty blob
 /// hits a CHECK and errors (fail-fast); a missing item_id fails the FK. Call inside the
 /// caller's transaction, after `next_image_seq`. Returns rows inserted (1).
+///
+/// `removed_at`(0041 软删标记)在**同一条 INSERT** 里写定,不留「先插 NULL 再改」的窗口:
+/// 本机 attach 恒 None;旁路建行取建行时刻的日志 LWW 赢家;跨空间移动带源行原值
+/// (image-trash-plan §3.4 / §6 第 9 格)。
 pub(crate) fn insert_item_image(
     conn: &Connection,
     id: &str,
@@ -1610,19 +1614,22 @@ pub(crate) fn insert_item_image(
     seq: i64,
     data: &[u8],
     mime: &str,
+    removed_at: Option<&str>,
 ) -> rusqlite::Result<usize> {
     conn.execute(
-        "INSERT INTO item_image (id, item_id, seq, data, mime, created_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-        rusqlite::params![id, item_id, seq, data, mime, now_iso()],
+        "INSERT INTO item_image (id, item_id, seq, data, mime, created_at, removed_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        rusqlite::params![id, item_id, seq, data, mime, now_iso(), removed_at],
     )
 }
 
-/// Every image attached to `item_id`, by 编号 ascending — id + seq + MIME only (no bytes).
-/// Deleted 编号 leave gaps (图1、图3), never renumbered.
+/// Every **in-use** image attached to `item_id`, by 编号 ascending — id + seq + MIME only (no
+/// bytes). Deleted 编号 leave gaps (图1、图3), never renumbered. 0041 起已删(`removed_at` 非空、
+/// 在回收站里)的图不列 —— 图条与正文「见图N」都按洞处理(image-trash-plan §5.1)。
 pub fn list_item_images(conn: &Connection, item_id: &str) -> rusqlite::Result<Vec<ImageRef>> {
-    let mut stmt =
-        conn.prepare("SELECT id, seq, mime FROM item_image WHERE item_id = ?1 ORDER BY seq")?;
+    let mut stmt = conn.prepare(
+        "SELECT id, seq, mime FROM item_image WHERE item_id = ?1 AND removed_at IS NULL ORDER BY seq",
+    )?;
     let rows = stmt.query_map([item_id], |r| {
         Ok(ImageRef { id: r.get(0)?, seq: r.get(1)?, mime: r.get(2)? })
     })?;
@@ -1638,7 +1645,7 @@ pub fn live_timeline_images(
     let mut stmt = conn.prepare(
         "SELECT im.item_id, im.id, im.seq, im.mime \
          FROM item_image im JOIN items i ON i.id = im.item_id \
-         WHERE i.archived_at IS NULL AND i.sealed_at IS NULL \
+         WHERE i.archived_at IS NULL AND i.sealed_at IS NULL AND im.removed_at IS NULL \
          ORDER BY im.item_id, im.seq",
     )?;
     let rows = stmt.query_map([], |r| {
@@ -1657,9 +1664,12 @@ pub fn live_timeline_images(
 
 /// 本空间**全部**配图的元数据,按 item_id 分组、组内按 seq 升序(「导出为 Markdown」用,
 /// 用户面 136)。⛔ 不滤活性 —— 调用方只按自己要导出的那批 item 取,回收站的自然用不上;
-/// 与 `live_timeline_images` 的差别只在这一条(导出要带成就册里的图)。
+/// 与 `live_timeline_images` 的差别只在这一条(导出要带成就册里的图)。已删的图(0041
+/// `removed_at`)不导出 —— 它们在回收站里,不是条目的内容(image-trash-plan §5.1)。
 pub fn all_item_images(conn: &Connection) -> rusqlite::Result<HashMap<String, Vec<ImageRef>>> {
-    let mut stmt = conn.prepare("SELECT item_id, id, seq, mime FROM item_image ORDER BY item_id, seq")?;
+    let mut stmt = conn.prepare(
+        "SELECT item_id, id, seq, mime FROM item_image WHERE removed_at IS NULL ORDER BY item_id, seq",
+    )?;
     let rows = stmt.query_map([], |r| {
         Ok((
             r.get::<_, String>(0)?,
@@ -1687,10 +1697,158 @@ pub fn item_image_data(
     .optional()
 }
 
-/// Hard-delete one image by id (换图 = 删旧加新). The counter is left untouched, so the freed
-/// 编号 is never handed out again. Returns rows deleted (0 if the id was already gone).
+/// Hard-delete one image by id. The counter is left untouched, so the freed 编号 is never
+/// handed out again. Returns rows deleted (0 if the id was already gone **or not in the trash**).
+///
+/// 0041 起这是「销毁」:**只删已删(`removed_at` 非空)的图** —— 判据写在这条 DELETE 本身里,
+/// 「销毁只在回收站里发生」落在存储原语上,不只靠调用方先查(image-trash-plan §4.1)。
+/// ⛔ 生产调用方只许 `images` 的两处销毁(回收站「彻底删除」一张 / 「清空」);删图(进回收站)
+/// 走 [`mark_image_removed`]。
 pub(crate) fn delete_item_image(conn: &Connection, image_id: &str) -> rusqlite::Result<usize> {
-    conn.execute("DELETE FROM item_image WHERE id = ?1", [image_id])
+    conn.execute("DELETE FROM item_image WHERE id = ?1 AND removed_at IS NOT NULL", [image_id])
+}
+
+/// 软删一张图(进回收站,0041):盖上删除时刻。只改在用的图(已删的再删影响 0 行)。
+pub(crate) fn mark_image_removed(conn: &Connection, image_id: &str, at: &str) -> rusqlite::Result<usize> {
+    conn.execute(
+        "UPDATE item_image SET removed_at = ?2 WHERE id = ?1 AND removed_at IS NULL",
+        rusqlite::params![image_id, at],
+    )
+}
+
+/// 从回收站还原一张图(0041):清掉删除标记。只改已删的图(在用的影响 0 行)。
+pub(crate) fn unmark_image_removed(conn: &Connection, image_id: &str) -> rusqlite::Result<usize> {
+    conn.execute(
+        "UPDATE item_image SET removed_at = NULL WHERE id = ?1 AND removed_at IS NOT NULL",
+        [image_id],
+    )
+}
+
+/// 一张图的编排前置事实(0041):宿主 id、自己已删没有、宿主在不在用(没进回收站、没进成就册)。
+pub(crate) struct ImageState {
+    pub item_id: String,
+    pub removed: bool,
+    pub owner_live: bool,
+}
+
+/// 图不存在(从未有过 / 已销毁 / 字节还没到、行未建)= None。
+pub(crate) fn image_state(conn: &Connection, image_id: &str) -> rusqlite::Result<Option<ImageState>> {
+    conn.query_row(
+        "SELECT im.item_id, im.removed_at IS NOT NULL, \
+                i.archived_at IS NULL AND i.sealed_at IS NULL \
+         FROM item_image im JOIN items i ON i.id = im.item_id WHERE im.id = ?1",
+        [image_id],
+        |r| Ok(ImageState { item_id: r.get(0)?, removed: r.get(1)?, owner_live: r.get(2)? }),
+    )
+    .optional()
+}
+
+/// 回收站按宿主 stage 分的范围(0041):桌面两页(灵感 / 任务)各取各的,手机一屏全取。
+/// 两壳命令直接收它(线上形 `"ideas"` / `"tasks"` / `"all"`),认不出的值 = 反序列化失败。
+#[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TrashScope {
+    Ideas,
+    Tasks,
+    All,
+}
+
+impl TrashScope {
+    /// 宿主 stage 的 SQL 谓词(`i` = items 别名)。灵感 / 任务的分界只引用
+    /// `board::IDEA_COLUMN_IDS` 那一个正式子(清单 14)。
+    fn stage_predicate(self) -> String {
+        match self {
+            TrashScope::Ideas => format!("i.stage IN {IDEA_STAGES}"),
+            TrashScope::Tasks => format!("i.stage NOT IN {IDEA_STAGES}"),
+            TrashScope::All => "1".to_string(),
+        }
+    }
+}
+
+/// 回收站里的一张已删配图。两壳命令直接返回它(契约同源,同 `comments::Comment`)。
+#[derive(serde::Serialize, Debug)]
+pub struct RemovedImage {
+    pub id: String,
+    pub seq: i64,
+    pub mime: String,
+    pub removed_at: String,
+}
+
+/// 回收站里按宿主归组的已删配图(image-trash-plan §5.3)。
+#[derive(serde::Serialize, Debug)]
+pub struct RemovedImageGroup {
+    pub item_id: String,
+    pub stage: String,
+    pub content: String,
+    pub images: Vec<RemovedImage>,
+}
+
+/// 「已删配图 ∧ 宿主在用 ∧ 宿主 stage 落在范围里」的公共谓词 —— 列表、计数、清空**同一份**:
+/// 列出来的就是清得掉的,清得掉的都列了出来(规格 §9 第 3 / 4 条)。
+fn removed_in_scope_where(scope: TrashScope) -> String {
+    format!(
+        "im.removed_at IS NOT NULL AND i.archived_at IS NULL AND i.sealed_at IS NULL AND {}",
+        scope.stage_predicate()
+    )
+}
+
+/// 回收站里的已删配图,按宿主归组:组按组内最新删除时刻倒序(同刻按宿主 id 倒序),组内按编号。
+/// 只列宿主在用的 —— 宿主在回收站 / 成就册里时,它的已删图等宿主回来再出现(规格 §5.3)。
+pub fn removed_image_groups(
+    conn: &Connection,
+    scope: TrashScope,
+) -> rusqlite::Result<Vec<RemovedImageGroup>> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT i.id, i.stage, i.content, im.id, im.seq, im.mime, im.removed_at \
+         FROM item_image im JOIN items i ON i.id = im.item_id \
+         WHERE {} ORDER BY i.id, im.seq",
+        removed_in_scope_where(scope)
+    ))?;
+    let rows = stmt.query_map([], |r| {
+        Ok((
+            r.get::<_, String>(0)?,
+            r.get::<_, String>(1)?,
+            r.get::<_, String>(2)?,
+            RemovedImage { id: r.get(3)?, seq: r.get(4)?, mime: r.get(5)?, removed_at: r.get(6)? },
+        ))
+    })?;
+    let mut groups: Vec<RemovedImageGroup> = Vec::new();
+    for row in rows {
+        let (item_id, stage, content, img) = row?;
+        match groups.last_mut() {
+            Some(g) if g.item_id == item_id => g.images.push(img),
+            _ => groups.push(RemovedImageGroup { item_id, stage, content, images: vec![img] }),
+        }
+    }
+    let latest = |g: &RemovedImageGroup| g.images.iter().map(|im| im.removed_at.clone()).max();
+    groups.sort_by(|a, b| latest(b).cmp(&latest(a)).then_with(|| b.item_id.cmp(&a.item_id)));
+    Ok(groups)
+}
+
+/// 「清空」要销毁的已删配图 (image_id, item_id),范围谓词与 [`removed_image_groups`] 同一份。
+pub(crate) fn removed_image_ids(
+    conn: &Connection,
+    scope: TrashScope,
+) -> rusqlite::Result<Vec<(String, String)>> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT im.id, im.item_id FROM item_image im JOIN items i ON i.id = im.item_id \
+         WHERE {} ORDER BY im.id",
+        removed_in_scope_where(scope)
+    ))?;
+    let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
+    rows.collect()
+}
+
+/// 回收站里已删配图的张数(手机「回收站」钮显形用,规格 §6 第 12 格)。
+pub fn removed_image_count(conn: &Connection, scope: TrashScope) -> rusqlite::Result<i64> {
+    conn.query_row(
+        &format!(
+            "SELECT COUNT(*) FROM item_image im JOIN items i ON i.id = im.item_id WHERE {}",
+            removed_in_scope_where(scope)
+        ),
+        [],
+        |r| r.get(0),
+    )
 }
 
 /// Which item an image belongs to, or None if the id is unknown. Read before deleting —
@@ -1756,10 +1914,10 @@ mod tests {
     }
 
     #[test]
-    fn migration_sets_user_version_40_and_enforces_foreign_keys() {
+    fn migration_sets_user_version_41_and_enforces_foreign_keys() {
         let conn = fresh_db();
         let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0)).unwrap();
-        assert_eq!(version, 40);
+        assert_eq!(version, 41);
         let fk: i64 = conn.pragma_query_value(None, "foreign_keys", |r| r.get(0)).unwrap();
         assert_eq!(fk, 1, "foreign keys must be ON");
     }
@@ -3049,9 +3207,10 @@ mod tests {
         let (i3, s3) = crate::images::attach(&mut conn, &mut clock, &item, PNG, "image/png").unwrap();
         assert_eq!((s1, s2, s3), (1, 2, 3), "编号 starts at 1 and climbs");
 
-        // Delete the TOP image, then add again: the 编号 must NOT fall back to 3 — otherwise a
-        // 正文「见图3」 reference would silently re-point at a new picture.
-        assert_eq!(delete_item_image(&conn, &i3).unwrap(), 1);
+        // Destroy the TOP image (0041: 进回收站再彻底删除), then add again: the 编号 must NOT fall
+        // back to 3 — otherwise a 正文「见图3」 reference would silently re-point at a new picture.
+        crate::images::remove(&mut conn, &mut clock, &i3).unwrap();
+        crate::images::purge(&mut conn, &mut clock, &i3).unwrap();
         let (_i4, s4) = crate::images::attach(&mut conn, &mut clock, &item, PNG, "image/png").unwrap();
         assert_eq!(s4, 4, "deleting the trailing image must not let its 编号 be reused");
 
@@ -3068,9 +3227,13 @@ mod tests {
         crate::images::attach(&mut conn, &mut clock, &item, PNG, "image/png").unwrap();
         let (i2, _) = crate::images::attach(&mut conn, &mut clock, &item, PNG, "image/png").unwrap();
         crate::images::attach(&mut conn, &mut clock, &item, PNG, "image/png").unwrap();
-        assert_eq!(delete_item_image(&conn, &i2).unwrap(), 1);
+        // 0041:删 = 进回收站(行还在、图条不列)→ 洞已出现;彻底删除后洞照旧。
+        crate::images::remove(&mut conn, &mut clock, &i2).unwrap();
         let seqs: Vec<i64> = list_item_images(&conn, &item).unwrap().iter().map(|r| r.seq).collect();
         assert_eq!(seqs, vec![1, 3], "删图留洞、不重排:图2 走了,图1/图3 不动");
+        crate::images::purge(&mut conn, &mut clock, &i2).unwrap();
+        let seqs: Vec<i64> = list_item_images(&conn, &item).unwrap().iter().map(|r| r.seq).collect();
+        assert_eq!(seqs, vec![1, 3], "彻底删除后同样不重排");
     }
 
     #[test]

@@ -204,9 +204,12 @@ mod tests {
             c.query_row("SELECT COUNT(*) FROM item_image_thumb", [], |r| r.get(0)).unwrap()
         };
         assert_eq!(count(&conn), 1);
-        // ① 删图(images::remove 的正道)→ 缩略图随之走。
+        // ① 删图 = 进回收站(0041):行还在,缩略图也留着(回收站要显示它)。
         crate::images::remove(&mut conn, &mut clk, &image).unwrap();
-        assert_eq!(count(&conn), 0, "删图必须级联带走缩略图");
+        assert_eq!(count(&conn), 1, "软删不碰缩略图");
+        // ①′ 回收站里彻底删除(images::purge 的正道)→ 缩略图随行走。
+        crate::images::purge(&mut conn, &mut clk, &image).unwrap();
+        assert_eq!(count(&conn), 0, "销毁图必须级联带走缩略图");
         // ② 删条目(items → item_image → item_image_thumb 两级级联)。
         let (image2, _) =
             crate::images::attach(&mut conn, &mut clk, &item, &jpeg(64), "image/jpeg").unwrap();

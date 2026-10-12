@@ -588,8 +588,8 @@ fn import_attached(conn: &mut Connection, clock: &mut Clock) -> Result<ImportRep
         .map_err(|e| format!("导入 item_topic 失败:{e}"))?;
     let images = tx
         .execute(
-            "INSERT INTO item_image (id, item_id, seq, data, mime, created_at) \
-             SELECT id, item_id, seq, data, mime, created_at FROM boot.item_image",
+            "INSERT INTO item_image (id, item_id, seq, data, mime, created_at, removed_at) \
+             SELECT id, item_id, seq, data, mime, created_at, removed_at FROM boot.item_image",
             [],
         )
         .map_err(|e| format!("导入 item_image 失败:{e}"))?;
@@ -1149,12 +1149,38 @@ fn audit_op_backed_semantics(live: &Connection) -> Result<(), String> {
     audit_image_seqs(live)?;
     // ⑤ image 行关联 + tombstone 一致 + 字节 hash(codex 二审)。
     audit_image_integrity(live)?;
+    // ⑤′ 配图软删标记:每张有行的图 removed_at == 日志赢家(0041,image-trash-plan §6 第 8 格)。
+    audit_image_removed(live, "", "本库")?;
     // ⑥ space profile 单例寄存器双向不变量(space-name-sync-plan §4.4,0028)。
     audit_space_profile_semantics(live, "", "本库")?;
     // ⑦ device profile 多实例寄存器双向不变量(identity-plan §2.1,0033)。
     audit_device_profile_semantics(live, "", "本库")?;
     // ⑧ 条目留言的三向不变量(identity-plan §4.3 第 6 条,0035)。
     audit_comment_semantics(live, "", "本库")?;
+    Ok(())
+}
+
+/// 配图软删标记的语义审计(0041,image-trash-plan §6 第 8 格):**每张有行的图**(含 legacy 无
+/// 背书图)的 `removed_at` 必须 IS 日志 LWW 赢家。赢家只有一份正式子
+/// [`crate::replay::image_removed_winner_expr`]:无 set_field 时赢家 = NULL ⇒ 行上非 NULL 而日志
+/// 无 set_field 也拒(快照凭空带来一张「已删」的图 = 表 / 日志矛盾)。
+/// `prefix` 同 [`audit_device_profile_semantics`]:`""` = 本库,`"boot."` = 只读挂载的快照。
+pub(crate) fn audit_image_removed(conn: &Connection, prefix: &str, who: &str) -> Result<(), String> {
+    let bad: i64 = conn
+        .query_row(
+            &format!(
+                "SELECT COUNT(*) FROM {prefix}item_image t WHERE NOT (t.removed_at IS {})",
+                crate::replay::image_removed_winner_expr(prefix, "t.id")
+            ),
+            [],
+            |r| r.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    if bad > 0 {
+        return Err(format!(
+            "{who}语义审计:{bad} 张图的 removed_at 与自身日志的 LWW 结果不符(表与日志矛盾),整体回滚"
+        ));
+    }
     Ok(())
 }
 
@@ -1544,6 +1570,40 @@ fn audit_op_preconditions(live: &Connection) -> Result<(), String> {
     if orphan_img > 0 {
         return Err(format!(
             "导入后语义审计:{orphan_img} 条 image_add 的宿主无行且无更早 tombstone(孤儿,live 挂起),整体回滚"
+        ));
+    }
+    // 0041 image set_field(软删标记)的依赖前置,与 live `replay::apply_image_set_field` 第 1/2 序
+    // 同口径:有 image_tombstone 就收(Suppressed,不看 HLC 先后);否则要么有 add、要么有行
+    // (0020 前的 legacy 无背书图)—— 三样都没有 = live 永久 DependencyMissing,拒。
+    let orphan_img_set: i64 = live
+        .query_row(
+            "SELECT COUNT(*) FROM oplog o WHERE o.entity='image' AND o.kind='set_field' \
+             AND NOT EXISTS (SELECT 1 FROM item_image r WHERE r.id = o.entity_id) \
+             AND NOT EXISTS (SELECT 1 FROM oplog x WHERE x.entity='image' AND x.entity_id = o.entity_id \
+                              AND x.kind IN ('image_add','image_tombstone'))",
+            [],
+            |r| r.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    if orphan_img_set > 0 {
+        return Err(format!(
+            "导入后语义审计:{orphan_img_set} 条 image set_field 的图无行、无 image_add、无 image_tombstone(孤儿,live 挂起),整体回滚"
+        ));
+    }
+    // 因果序:有 add 时它的 HLC 必须早于 set_field(set-before-add = live 挂起,同 item 的
+    // set-before-create)。
+    let bad_img_set_order: i64 = live
+        .query_row(
+            "SELECT COUNT(*) FROM oplog o WHERE o.entity='image' AND o.kind='set_field' \
+             AND EXISTS (SELECT 1 FROM oplog a WHERE a.entity='image' AND a.entity_id = o.entity_id \
+                          AND a.kind='image_add' AND a.hlc >= o.hlc)",
+            [],
+            |r| r.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    if bad_img_set_order > 0 {
+        return Err(format!(
+            "导入后语义审计:{bad_img_set_order} 条 image set_field 的 image_add 晚于它(set-before-add,live 挂起),整体回滚"
         ));
     }
     // board_column 的依赖前置(board-columns-plan §7.2 那张表的「boot 依赖前置」一行):

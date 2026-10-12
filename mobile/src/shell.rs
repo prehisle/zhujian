@@ -1049,7 +1049,9 @@ pub fn pane_counts(space_id: String, coord: State<'_, Coord>) -> Result<PaneCoun
     coord.with_read(&space_id, |conn| {
         let q = |sql: &str| conn.query_row(sql, [], |r| r.get(0)).map_err(|e| e.to_string());
         Ok(PaneCounts {
-            trash: q("SELECT COUNT(*) FROM items WHERE archived_at IS NOT NULL")?,
+            // 0041:回收站里只有已删配图时钮也得显形(否则那几张图没有入口)。
+            trash: q("SELECT COUNT(*) FROM items WHERE archived_at IS NOT NULL")?
+                + repo::removed_image_count(conn, repo::TrashScope::All).map_err(|e| e.to_string())?,
             sealed: q("SELECT COUNT(*) FROM items WHERE sealed_at IS NOT NULL")?,
         })
     })
@@ -1482,10 +1484,34 @@ pub fn list_item_images(space_id: String, item_id: String, coord: State<'_, Coor
     })
 }
 
-/// 删一张配图(编号退役不重排;不存在响亮错)。
+/// 删一张配图 = 进回收站(0041 起软删,命令名照旧;编号照占、可还原回原号;不存在 /
+/// 已在回收站 = 响亮错)。
 #[tauri::command]
 pub async fn delete_item_image(space_id: String, image_id: String, coord: State<'_, Coord>) -> Result<(), String> {
     coord.write(&space_id, |conn, clock| images::remove(conn, clock, &image_id)).await
+}
+
+/// 从回收站还原一张图,回到原编号(0041,与桌面壳逐字对称)。
+#[tauri::command]
+pub async fn restore_item_image(space_id: String, image_id: String, coord: State<'_, Coord>) -> Result<(), String> {
+    coord.write(&space_id, |conn, clock| images::restore(conn, clock, &image_id)).await
+}
+
+/// 回收站里「彻底删除」一张图(0041):删行 + 发墓碑;只收已删的图。
+#[tauri::command]
+pub async fn purge_item_image(space_id: String, image_id: String, coord: State<'_, Coord>) -> Result<(), String> {
+    coord.write(&space_id, |conn, clock| images::purge(conn, clock, &image_id)).await
+}
+
+/// 回收站里按宿主归组的已删配图(0041;手机一屏回收站传 `"all"`)。DTO 直接用 core 的
+/// `repo::RemovedImageGroup`(两壳契约同源)。
+#[tauri::command]
+pub fn list_removed_images(
+    space_id: String,
+    scope: repo::TrashScope,
+    coord: State<'_, Coord>,
+) -> Result<Vec<repo::RemovedImageGroup>, String> {
+    coord.with_read(&space_id, |conn| repo::removed_image_groups(conn, scope).map_err(|e| e.to_string()))
 }
 
 // ---- 条目留言(identity-plan §4;第②笔命令面,与桌面壳逐字对称)----------------

@@ -615,6 +615,9 @@ pub fn purge(conn: &mut Connection, clock: &mut Clock, id: &str) -> Result<(), S
 pub fn purge_all_archived(conn: &mut Connection, clock: &mut Clock) -> Result<usize, String> {
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     // 先点名再清空:tombstone 要逐条发,批量 DELETE 只报数不报 id。
+    // 灵感那一页的已删配图(宿主在用、stage 属灵感)一并销毁(0041,image-trash-plan §4)。
+    // 与下面的回收站条目互不相交(那批宿主不在用),返回值仍只数条目。
+    crate::images::purge_removed_in(&tx, clock, repo::TrashScope::Ideas)?;
     let ids: Vec<String> =
         repo::idea_trash(&tx).map_err(|e| e.to_string())?.into_iter().map(|r| r.id).collect();
     let removed = repo::purge_archived_ideas(&tx).map_err(|e| e.to_string())?;
@@ -637,6 +640,8 @@ pub fn purge_all_archived(conn: &mut Connection, clock: &mut Clock) -> Result<us
 /// 空间还可能清到两个库,codex 120 设计审 H2)。返回删除条数。
 pub fn purge_all_trash(conn: &mut Connection, clock: &mut Clock) -> Result<usize, String> {
     let tx = conn.transaction().map_err(|e| e.to_string())?;
+    // 统一回收站的已删配图(宿主在用,全 stage)一并销毁(0041);返回值仍只数条目。
+    crate::images::purge_removed_in(&tx, clock, repo::TrashScope::All)?;
     let ids: Vec<String> =
         repo::trash_items(&tx).map_err(|e| e.to_string())?.into_iter().map(|r| r.id).collect();
     let removed = repo::purge_all_trash(&tx).map_err(|e| e.to_string())?;

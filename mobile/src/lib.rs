@@ -120,6 +120,9 @@ macro_rules! shared_handler {
             $crate::add_item_image,
             $crate::list_item_images,
             $crate::delete_item_image,
+            $crate::restore_item_image,
+            $crate::purge_item_image,
+            $crate::list_removed_images,
             // 314 第②笔:条目留言命令面(UI 在第③笔,契约与桌面同源)
             $crate::add_item_comment,
             $crate::delete_item_comment,

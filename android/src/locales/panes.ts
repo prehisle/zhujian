@@ -9,6 +9,13 @@ export const panes = defineMessages({
   "panes.purge": { zh: "彻底删除", en: "Delete forever" },
   "panes.trashLoadFailed": { zh: "回收站读取失败:{error}", en: "Could not load Trash: {error}" },
   "panes.trashEmpty": { zh: "回收站是空的。", en: "Trash is empty." },
+  // 回收站里的「已删配图」一节(用户面 149)。
+  "panes.imagesTitle": { zh: "已删配图", en: "Deleted images" },
+  "panes.imageRow": { zh: "图{n} · 删于 {when}", en: "Image {n} · deleted {when}" },
+  "panes.imageNoText": { zh: "(没有文字)", en: "(no text)" },
+  "panes.purgeImageQ": { zh: "彻底删除这张图?无法找回", en: "Delete this image forever? It cannot be recovered" },
+  "panes.emptyTrashMixedQ": { zh: "清空回收站?{n} 条和 {m} 张配图将彻底删除、无法找回", en: "Empty Trash? Everything here will be deleted forever (items: {n}, images: {m})" },
+  "panes.restoredImage": { zh: "已还原到原编号", en: "Restored to its original number" },
   "panes.emptyTrashQ": { zh: "清空回收站?{n} 条将彻底删除、无法找回", en: "Empty Trash? {n} {n|item|items} will be deleted forever" },
   "panes.emptyTrashYes": { zh: "清空", en: "Empty" },
   "panes.trashEmptied": { zh: "回收站已清空", en: "Trash emptied" },

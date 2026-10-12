@@ -1,0 +1,47 @@
+/* 回收站里的「已删配图」一节(用户面 149)。灵感 / 任务两页回收站共用;缩略图沿用
+   item-images.css 的 .img-thumb / .img-badge,长得与卡片上的图条同一套。 */
+.trash-imgs {
+  margin-top: 18px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+.trash-imgs-title {
+  margin: 0 0 10px;
+  font-size: var(--fs-12);
+  font-weight: 600;
+  color: var(--ink-faint);
+  letter-spacing: 0.02em;
+}
+.trash-imgs-group {
+  margin-bottom: 12px;
+}
+.trash-imgs-owner {
+  margin-bottom: 6px;
+  font-size: var(--fs-13);
+  color: var(--ink-soft);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.trash-imgs-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+}
+.trash-imgs-label {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--fs-12);
+  color: var(--ink-soft);
+}
+.trash-imgs-side {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.trash-imgs-q {
+  font-size: var(--fs-12);
+  color: var(--seal-ink);
+}

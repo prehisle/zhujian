@@ -45,6 +45,7 @@ import {
 } from "./board-columns";
 import { closeColumnManager, openColumnManager } from "./column-manager";
 import { BOARD_CARD_KEYS, BOARD_TRASH_KEYS, BOARD_VIEW_KEYS, SEALED_CARD_KEYS } from "./keymap";
+import { type RemovedGroup, listRemovedImages, removedImageCount, removedImagesSection } from "./trash-images";
 import { type Act, SATELLITE_LAYERS, armDismiss, createHotkeyController, registerViewKeys } from "./hotkey-menu";
 import { CARD_COLORS, applyCardColor, openCardColorPicker } from "./card-color";
 import { type ImageMeta, REPASTE_HINT, imageStrip, renderContent, wirePasteToAttach } from "./item-images";
@@ -2090,8 +2091,8 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     }
   }
 
-  function renderTrash(items: TaskItem[]): void {
-    if (items.length === 0) {
+  function renderTrash(items: TaskItem[], removed: RemovedGroup[]): void {
+    if (items.length === 0 && removed.length === 0) {
       renderCentered(
         el("div", { className: "big", textContent: t("board.trashEmpty") }),
         el("div", { textContent: t("board.trashEmptyHint") }),
@@ -2100,13 +2101,42 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     }
     board.className = "trash";
     const bar = el("div", { className: "trash-bar" }, [
-      el("span", { className: "grow", textContent: t("board.trashCount", { n: items.length }) }),
+      // 只剩已删配图时不写「0 条已删除的任务」(那一节自带标题)。
+      el("span", { className: "grow", textContent: items.length === 0 ? "" : t("board.trashCount", { n: items.length }) }),
     ]);
+    // 清空连这一页的已删配图一起销毁(用户面 149):确认句把张数说出来。
+    const imgs = removedImageCount(removed);
+    const purgeQ =
+      imgs === 0
+        ? t("board.purgeAllQ", { n: items.length })
+        : items.length === 0
+          ? t("board.purgeAllImagesQ", { m: imgs })
+          : t("board.purgeAllMixedQ", { n: items.length, m: imgs });
     const clear = btn(t("board.emptyTrash"), "ghost", () =>
-      confirmInline(bar, t("board.purgeAllQ", { n: items.length }), t("board.purgeAllYes"), purgeAll));
+      confirmInline(bar, purgeQ, t("board.purgeAllYes"), purgeAll));
     bar.append(clear);
     const list = el("div", { className: "trash-list" }, items.map((t) => card(t, "trash")));
-    board.replaceChildren(bar, list);
+    if (removed.length === 0) board.replaceChildren(bar, list);
+    else board.replaceChildren(bar, list, trashImagesSection(removed));
+  }
+
+  // 回收站里的「已删配图」一节(用户面 149):行动作走本视图的单键控制器,键与回收站卡片
+  // 同概念同键(还原 U / 彻底删除 D);确认态交本 mount 的 confirmOff 统一收;写失败走横幅。
+  function trashImagesSection(groups: RemovedGroup[]): HTMLElement {
+    return removedImagesSection(groups, {
+      hk,
+      keys: { restore: BOARD_TRASH_KEYS.restore, deleteForever: BOARD_TRASH_KEYS.deleteForever },
+      claimConfirm: (off) => {
+        if (off === null) confirmOff = null;
+        else {
+          disarmConfirm();
+          confirmOff = off;
+        }
+      },
+      onChanged: () => void load(),
+      onError: (msg) => showOpError(msg),
+      buttons: { yes: "act primary", no: "act ghost" },
+    });
   }
 
   // 归档册:干完的活按**完成日**分组成时间轴(0030 决定 A:完成时刻优先,老卡无 done_at
@@ -2230,7 +2260,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     today = localToday();
     const seq = ++loadSeq;
     try {
-      const [active, archived, sealed, topics, allCols, , cmCounts] = await Promise.all([
+      const [active, archived, sealed, topics, allCols, , cmCounts, removed] = await Promise.all([
         invoke<TaskItem[]>("list_tasks"),
         invoke<TaskItem[]>("list_archived_tasks"),
         invoke<TaskItem[]>("list_sealed_tasks"),
@@ -2244,6 +2274,8 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         loadIdentity(mountSpace),
         // 留言计数(0035 徽章):同样并发;列表另走分页(§4.14.2 第 4 条)。
         loadCommentCounts(mountSpace),
+        // 回收站里的已删配图(用户面 149):宿主 stage 属任务的那些归这一页。
+        listRemovedImages("tasks"),
       ]);
       if (seq !== loadSeq) return; // 有更晚的 load 已在途:旧响应不落 DOM(否则盖新画/拆脉冲)
       // focus 只由**确认最新**的这一发消费(codex 三审 H1):放在 seq 守卫之后取走——陈旧的
@@ -2273,6 +2305,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         today,
         active,
         archived,
+        removed,
         sealed,
         topics,
         // 列进指纹:别台设备给列改了名 / 调了顺序 / 删了一列,任务数据一个字节没变、
@@ -2337,7 +2370,8 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       copySlot.replaceChildren();
 
       // The toggles always reflect the live counts.
-      trashN.textContent = String(archived.length);
+      // 顶栏计数 = 条目 + 已删配图(只剩几张图时钮上不能写 0)。
+      trashN.textContent = String(archived.length + removedImageCount(removed));
       trashToggle.classList.toggle("active", boardView === "trash");
       trashToggle.firstChild!.textContent = boardView === "trash" ? t("board.backToBoard") : t("board.trashLbl");
       sealN.textContent = String(sealed.length);
@@ -2362,7 +2396,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       if (boardView === "trash") {
         filterRow.hidden = true;
         if (focus !== null && archived.some((t) => t.id === focus)) locateId = focus;
-        renderTrash(archived);
+        renderTrash(archived, removed);
         if (focus !== null) board.querySelector(".just-located")?.scrollIntoView({ block: "center" });
         return;
       }

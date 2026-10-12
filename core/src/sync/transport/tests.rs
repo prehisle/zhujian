@@ -2513,7 +2513,9 @@ async fn serving_denies_when_the_row_vanishes_midway() {
     {
         let mut conn = r.db.lock().unwrap();
         let mut clk = r.clock.lock().unwrap();
+        // 0041:软删不让行消失 ⇒ 「行中途没了」得真销毁。
         images::remove(&mut conn, &mut clk, &img).unwrap();
+        images::purge(&mut conn, &mut clk, &img).unwrap();
     }
     release.notify_one();
 

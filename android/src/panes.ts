@@ -6,17 +6,23 @@
 import {
   getCurrentSpace,
   listBoardColumns,
+  listRemovedImages,
   listSealedTasks,
   listTrash,
   purgeAllTrash,
+  purgeItemImage,
   purgeNote,
   purgeTask,
+  restoreItemImage,
   restoreNote,
   restoreTask,
   searchNotes,
   unsealTask,
+  type RemovedGroup,
   type SearchStatus,
 } from "./api";
+import { hydrateThumbs } from "./thumbs";
+import { openViewer } from "./viewer";
 import { t } from "./i18n";
 import { $, cardTint, colsFor, confirmBar, contentHtml, esc, fmtWhen, hideConfirmBar, showBar, splitCols } from "./ui";
 import { errDetail, showErr } from "./err";
@@ -61,6 +67,11 @@ function clearConfirm() {
 let trashSeq = 0;
 let trashBusy = false;
 let trashRows: import("./api").TrashItem[] = [];
+/** 回收站里的已删配图(用户面 149),按宿主归组;与 trashRows 同批取。 */
+let trashImgs: RemovedGroup[] = [];
+const imgCount = (): number => trashImgs.reduce((n, g) => n + g.images.length, 0);
+/** 已删配图那一行的「开合键」:与条目卡共用 trashOpenId(至多一个开着),加前缀免得撞 id。 */
+const imgKey = (id: string): string => `img:${id}`;
 /** 展开着操作面板的那张卡(同 `sealedOpenId`,至多一张);null = 一张都没开。
  *  51 起回收站跟上 508 的形 —— 只读视图的离场动作不常驻,点卡片才出。 */
 let trashOpenId: string | null = null;
@@ -74,12 +85,15 @@ export async function loadTrash(): Promise<void> {
     // 列与行同批取:回收站每行要印「这是灵感还是哪一列的任务」,而列名来自库
     // (B-f 第 1 段)。⛔ 别指望主时间轴那轮已经登记过 —— 首轮 refresh 失败时它是空的,
     // 那会让每一行都退化成「灵感」而**不报错**。
-    const [rows, cols] = await Promise.all([listTrash(space), listBoardColumns(space)]);
+    const [rows, cols, imgs] = await Promise.all([listTrash(space), listBoardColumns(space), listRemovedImages(space)]);
     if (space !== getCurrentSpace() || seq !== trashSeq) return;
     setColumns(cols);
     trashRows = rows;
+    trashImgs = imgs;
     // 重载后那张卡可能已经不在(自己刚还原/彻底删了、对端动过):展开态跟着作废(同 sealed)。
-    if (trashOpenId !== null && !rows.some((r) => r.id === trashOpenId)) trashOpenId = null;
+    const alive = (k: string): boolean =>
+      rows.some((r) => r.id === k) || imgs.some((g) => g.images.some((im) => imgKey(im.id) === k));
+    if (trashOpenId !== null && !alive(trashOpenId)) trashOpenId = null;
     clearConfirm();
     renderTrash();
   } catch (err) {
@@ -90,8 +104,8 @@ export async function loadTrash(): Promise<void> {
 
 function renderTrash() {
   const box = $("trash-list");
-  ($("trash-empty") as HTMLButtonElement).disabled = trashBusy || trashRows.length === 0;
-  if (!trashRows.length) {
+  ($("trash-empty") as HTMLButtonElement).disabled = trashBusy || (trashRows.length === 0 && imgCount() === 0);
+  if (!trashRows.length && !trashImgs.length) {
     box.innerHTML = `<p class="muted empty">${t("panes.trashEmpty")}</p>`;
     return;
   }
@@ -119,7 +133,80 @@ function renderTrash() {
         <footer><span class="pill">${kind}</span><time>${t("panes.deletedAt", { when: esc(fmtWhen(r.archived_at)) })}</time>${chips}</footer>${panel}
       </div></article>`;
     });
-  box.innerHTML = splitCols(cards, colsOf(box));
+  box.innerHTML = (cards.length ? splitCols(cards, colsOf(box)) : "") + trashImagesHtml();
+  hydrateThumbs(box);
+}
+
+/** 宿主正文首行(组头);空正文给一句占位。 */
+function ownerLine(content: string): string {
+  const first = content.split("\n").find((l) => l.trim() !== "")?.trim() ?? "";
+  return first === "" ? t("panes.imageNoText") : first;
+}
+
+/** 「已删配图」一节(用户面 149):按宿主归组,每张一行(缩略图 + 「图N · 删于 …」)。
+ *  点缩略图看大图(只读查看器:那枚「删除」藏掉 —— 它已经在回收站里了);点行别处 = 开合
+ *  操作面板(还原 / 彻底删除),与条目卡同一套「离场动作不常驻」。 */
+function trashImagesHtml(): string {
+  if (!trashImgs.length) return "";
+  const groups = trashImgs
+    .map((g) => {
+      const rows = g.images
+        .map((im) => {
+          const open = trashOpenId === imgKey(im.id);
+          const panel = open
+            ? `<div class="panel"><div class="acts">
+                <button data-trash-img-act="restore"${trashBusy ? " disabled" : ""}>${t("panes.restore")}</button>
+                <button data-trash-img-act="purge" class="warn"${trashBusy ? " disabled" : ""}>${t("panes.purge")}</button>
+              </div></div>`
+            : "";
+          return `<article class="card trash-img" data-trash-img="${esc(im.id)}"><div class="body">
+            <div class="trash-img-row">
+              <button class="thumb" data-img="${esc(im.id)}" data-seq="${im.seq}"
+                aria-label="${t("main.viewImage", { n: im.seq })}"><span class="tag-n">${t("images.imageN", { n: im.seq })}</span></button>
+              <span class="trash-img-label">${t("panes.imageRow", { n: im.seq, when: esc(fmtWhen(im.removed_at)) })}</span>
+            </div>${panel}
+          </div></article>`;
+        })
+        .join("");
+      return `<div class="trash-img-group"><p class="trash-img-owner">${esc(ownerLine(g.content))}</p>${rows}</div>`;
+    })
+    .join("");
+  return `<section class="trash-imgs"><h3 class="trash-imgs-title">${t("panes.imagesTitle")}</h3>${groups}</section>`;
+}
+
+/** 已删配图那几行的点击(从 onTrashClick 分出来):缩略图 = 看大图;动作钮 = 还原 / 彻底删除;
+ *  行别处 = 开合面板。返回 true = 这一下归它管。 */
+function onTrashImageClick(el: HTMLElement): boolean {
+  const rowEl = el.closest<HTMLElement>("[data-trash-img]");
+  if (!rowEl) return false;
+  const id = rowEl.dataset.trashImg!;
+  const group = trashImgs.find((g) => g.images.some((im) => im.id === id));
+  if (!group) return true;
+  const thumb = el.closest<HTMLElement>(".thumb[data-img]");
+  if (thumb) {
+    const metas = group.images.map((im) => ({ id: im.id, seq: im.seq, mime: im.mime }));
+    void openViewer(metas, metas.findIndex((m) => m.id === id), true);
+    return true;
+  }
+  if (trashBusy) return true;
+  const act = el.closest<HTMLElement>("[data-trash-img-act]")?.dataset.trashImgAct;
+  if (!act) {
+    clearConfirm();
+    trashOpenId = trashOpenId === imgKey(id) ? null : imgKey(id);
+    renderTrash();
+    return true;
+  }
+  if (act === "restore") {
+    void trashRun((space) => restoreItemImage(space, id), t("panes.restoredImage"));
+  } else if (act === "purge") {
+    confirmBar(t("panes.purgeImageQ"), t("panes.purge"), () => {
+      // 确认期间列表可能已被远端刷新重载:那张图不在了就弃(绝不误删)。
+      const still = trashImgs.some((g) => g.images.some((im) => im.id === id));
+      if (!still || trashBusy) return;
+      void trashRun((space) => purgeItemImage(space, id));
+    });
+  }
+  return true;
 }
 
 async function trashRun(op: (space: string) => Promise<unknown>, doneMsg?: string) {
@@ -145,9 +232,12 @@ async function trashRun(op: (space: string) => Promise<unknown>, doneMsg?: strin
 function onTrashClick(e: Event) {
   const el = e.target as HTMLElement;
   if (el.id === "trash-empty") {
-    if (!trashRows.length || trashBusy) return;
-    confirmBar(t("panes.emptyTrashQ", { n: trashRows.length }), t("panes.emptyTrashYes"), () => {
-      if (trashBusy || !trashRows.length) return; // 期间已重载成空/在写:弃
+    const m = imgCount();
+    if ((!trashRows.length && !m) || trashBusy) return;
+    // 清空连已删配图一起销毁(core 同一事务,用户面 149):确认句把张数说出来。
+    const q = m === 0 ? t("panes.emptyTrashQ", { n: trashRows.length }) : t("panes.emptyTrashMixedQ", { n: trashRows.length, m });
+    confirmBar(q, t("panes.emptyTrashYes"), () => {
+      if (trashBusy || (!trashRows.length && !imgCount())) return; // 期间已重载成空/在写:弃
       void trashRun(
         async (space) => {
           const n = await purgeAllTrash(space);
@@ -158,6 +248,7 @@ function onTrashClick(e: Event) {
     });
     return;
   }
+  if (onTrashImageClick(el)) return;
   const act = el.closest<HTMLElement>("[data-trash-act]")?.dataset.trashAct;
   if (!act) {
     // 点卡片本身 = 开合它的操作面板(至多一张开着,同归档册 / 同时间轴)。写在途整面禁点,

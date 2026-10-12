@@ -57,6 +57,7 @@ import "./inbox.css";
 import { el, onDragTarget } from "./dom";
 import { errDetail, errText } from "./err";
 import { ideasMarkdown } from "./export-md";
+import { type RemovedGroup, listRemovedImages, removedImageCount, removedImagesSection } from "./trash-images";
 
 // Mirrors of the Rust contracts (lib.rs) — the fields this view consumes. 想法 = a live
 // idea (未归类 + 已归类 merged); a tag is just metadata it may or may not carry, so one
@@ -1308,8 +1309,34 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     return note;
   }
 
+  // 回收站里的「已删配图」一节(用户面 149):行动作走本视图的单键控制器,键与条目行同概念
+  // 同键(还原 R / 彻底删除 D);确认态交本 mount 的 confirmOff 统一收。
+  function trashImagesSection(groups: RemovedGroup[]): HTMLElement {
+    const err = el("p", { className: "form-err", hidden: true });
+    const section = removedImagesSection(groups, {
+      hk,
+      keys: { restore: IDEA_TRASH_KEYS.restore, deleteForever: IDEA_TRASH_KEYS.deleteForever },
+      claimConfirm: (off) => {
+        if (off === null) confirmOff = null;
+        else {
+          disarmConfirm();
+          confirmOff = off;
+        }
+      },
+      onChanged: () => void refresh(),
+      onError: (msg) => {
+        err.textContent = msg;
+        err.hidden = false;
+      },
+      buttons: { yes: "do", no: "no" },
+    });
+    section.append(err);
+    return section;
+  }
+
   // The 回收站 toolbar: a quiet note + 清空回收站 (inline two-step confirm).
-  function trashBar(n: number): HTMLElement {
+  // `imgs` = 这一页的已删配图张数(用户面 149):清空连它们一起销毁,确认钮把数说出来。
+  function trashBar(n: number, imgs: number): HTMLElement {
     const actions = el("div", { className: "trash-actions" });
     const err = el("p", { className: "form-err", hidden: true });
     // 确认态响应 Esc/点别处收起(ui-audit P1 #12);teardown 走 mount 级 confirmOff
@@ -1345,7 +1372,16 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       // 原「清空回收站」的落点被「取消」接住——手抖/双击的第二击落在取消上,而不是
       // 一击不可恢复的「彻底删除全部」。
       actions.replaceChildren(
-        el("button", { className: "do", textContent: t("inbox.purgeAll", { n }), onclick: doPurge }),
+        el("button", {
+          className: "do",
+          textContent:
+            imgs === 0
+              ? t("inbox.purgeAll", { n })
+              : n === 0
+                ? t("inbox.purgeAllImages", { m: imgs })
+                : t("inbox.purgeAllMixed", { n, m: imgs }),
+          onclick: doPurge,
+        }),
         el("button", { className: "no", textContent: t("inbox.cancel"), onclick: showDefault }),
       );
     }
@@ -1367,7 +1403,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     if (unmounted) return; // 死 mount 不再发起任何刷新(codex M1:防抢食模块级 pendingFocus)
     const seq = ++refreshSeq;
     try {
-      const [ideas, archived, stats, topics, , cmCounts] = await Promise.all([
+      const [ideas, archived, stats, topics, , cmCounts, removed] = await Promise.all([
         invoke<IdeaItem[]>("list_ideas"),
         invoke<IdeaItem[]>("list_archived"),
         // 本地周一 00:00 换成 UTC RFC3339 给后端(后端从不算本地时间,同 due_on 的哲学)。
@@ -1379,6 +1415,8 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         // 留言计数(0035 徽章):同样并发。它是**聚合计数**这一个真相源,列表另走
         // 分页(§4.14.2 第 4 条)——别为了对齐把留言正文整批拉过来。
         loadCommentCounts(mountSpace),
+        // 回收站里的已删配图(用户面 149):宿主 stage 属灵感的那些归这一页。
+        listRemovedImages("ideas"),
       ]);
       if (seq !== refreshSeq) return; // 有更晚的 refresh 已在途:旧响应不落 DOM(乱序覆盖/计数错位)
 
@@ -1423,6 +1461,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         todayKey,
         ideas,
         archived,
+        removed,
         stats,
         topics,
         cmCounts,
@@ -1469,7 +1508,8 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       disarmConfirm(); // 卡片将被整批替换:在场确认的文档级监听一并收走(codex M3)
       if (closeActiveEdit) closeActiveEdit();
       counts.ideas = ideas.length;
-      counts.archived = archived.length;
+      // 顶栏计数报回收站里「有几样东西」:条目 + 已删配图(只剩几张图时钮上不能写 0)。
+      counts.archived = archived.length + removedImageCount(removed);
       statsBlank = stats.captured_week === 0 && stats.born_inbox === 0;
       // 「转待办」平时零可见控件(⋯ 悬停才浮现),而看板空态只说「去随记里转」没说怎么点。
       // ⇒ **还没有人转过**的时候让 ⋯ 常驻,转过第一条就回悬停(样式在 hotkey-menu.css)。
@@ -1565,9 +1605,14 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       } else {
         filterRow.hidden = true; // 回收站不筛(同看板的回收站/归档视图)
         copySlot.replaceChildren(); // 回收站不复制(同看板的回收站 / 归档视图没有「复制看板」)
-        if (archived.length === 0) renderEmpty("archived");
+        if (archived.length === 0 && removed.length === 0) renderEmpty("archived");
         else {
-          list.replaceChildren(trashBar(archived.length), ...archived.map((a) => row(a, "archived")));
+          const imgs = removed.length === 0 ? [] : [trashImagesSection(removed)];
+          list.replaceChildren(
+            trashBar(archived.length, removedImageCount(removed)),
+            ...archived.map((a) => row(a, "archived")),
+            ...imgs,
+          );
           painted = archived.map((a) => a.id);
         }
       }

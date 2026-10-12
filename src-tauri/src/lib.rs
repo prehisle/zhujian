@@ -1207,13 +1207,41 @@ fn put_item_thumb(
     thumbs::put(&conn, &image_id, &bytes)
 }
 
-/// Delete one image (换图 / 移除配图). Its 编号 is retired, never reused. A missing id is an
-/// error, not a silent no-op. See repo::delete_item_image.
+/// Delete one image = move it to the 回收站 (换图 / 移除配图;0041 起是软删,命令名照旧 ——
+/// 命名铁律). Its 编号 stays taken; restore brings it back to the same number. A missing id /
+/// an image already in the trash is an error, not a silent no-op. See images::remove.
 #[tauri::command]
 fn delete_item_image(space_id: String, image_id: String, spaces: State<'_, Spaces>) -> Result<(), String> {
     spaces.write(&space_id, |mut conn, mut clk| {
         images::remove(&mut conn, &mut clk, &image_id)
     })
+}
+
+/// 从回收站还原一张图,回到原编号(0041)。See images::restore.
+#[tauri::command]
+fn restore_item_image(space_id: String, image_id: String, spaces: State<'_, Spaces>) -> Result<(), String> {
+    spaces.write(&space_id, |mut conn, mut clk| {
+        images::restore(&mut conn, &mut clk, &image_id)
+    })
+}
+
+/// 回收站里「彻底删除」一张图(0041):删行 + 发墓碑;只收已删的图。See images::purge.
+#[tauri::command]
+fn purge_item_image(space_id: String, image_id: String, spaces: State<'_, Spaces>) -> Result<(), String> {
+    spaces.write(&space_id, |mut conn, mut clk| {
+        images::purge(&mut conn, &mut clk, &image_id)
+    })
+}
+
+/// 回收站里按宿主归组的已删配图(0041):灵感回收站传 `"ideas"`、任务回收站传 `"tasks"`。
+/// DTO 直接用 core 的 `repo::RemovedImageGroup`(两壳契约同源)。
+#[tauri::command]
+fn list_removed_images(
+    space_id: String,
+    scope: repo::TrashScope,
+    spaces: State<'_, Spaces>,
+) -> Result<Vec<repo::RemovedImageGroup>, String> {
+    spaces.read(&space_id, |conn| repo::removed_image_groups(&conn, scope).map_err(|e| e.to_string()))
 }
 
 // ---- 条目留言(identity-plan §4;第②笔命令面)-------------------------------
@@ -4394,6 +4422,9 @@ pub fn run() {
             get_item_thumb,
             put_item_thumb,
             delete_item_image,
+            restore_item_image,
+            purge_item_image,
+            list_removed_images,
             add_item_comment,
             delete_item_comment,
             list_item_comments,

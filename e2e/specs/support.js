@@ -322,6 +322,9 @@ async function cornerMenuAction(cardSel, key, content, label) {
 }
 export const inboxAction = (content, label) => cornerMenuAction(".note", null, content, label);
 export const boardAction = (content, label) => cornerMenuAction(".tcard", null, content, label);
+// 回收站「已删配图」那一节(用户面 149):按宿主正文认组,点组里**第一行**的 ⋯ ——
+// 调用方让那一组只有一张已删图,行就是唯一的。
+export const trashImageAction = (owner, label) => cornerMenuAction(".trash-imgs-group", null, owner, label);
 
 // Whether the card carrying `content` offers `label` in its ⋯ menu, WITHOUT acting. Opens
 // the menu, reads the labels, closes it again (so it doesn't linger for the next step).

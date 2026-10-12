@@ -80,7 +80,14 @@ pub(crate) struct ImagePack {
     pub(crate) mime: String,
     pub(crate) bytes: Vec<u8>,
     pub(crate) sha256: String,
+    /// 0041 软删标记:已删的图**随迁、保持已删**(image-trash-plan §6 第 9 格;移动是转移不是
+    /// 删除,§4.1「移动例外」)。目标端插行带原值,并紧接 image_add 补发 set_field。
+    pub(crate) removed_at: Option<String>,
 }
+
+/// 一张图的规范摘要 (id, seq, mime, byte_len, sha256, removed_at) —— export 指纹与 finalize
+/// 重验共用(0041 起带 removed_at:导出后在源端被删 / 还原也算源变了)。
+type ImageDigest = (String, i64, String, i64, String, Option<String>);
 
 /// 一条随迁留言(identity-plan §4.5)。**不带 `born_device`** —— 目标空间落 NULL
 /// (作者未知):空间=账户=独立库、device_id 每空间一份,源作者的身份在目标名册里
@@ -112,8 +119,8 @@ pub(crate) struct Fingerprint {
     item: (String, String, String, Option<String>, Option<i64>, String, Option<String>, Option<String>, Option<String>, Option<String>),
     /// 排序后的 (source_topic_id, exact_title)——不能只比去重后的名字。
     topics: Vec<(String, String)>,
-    /// 排序后的 (id, seq, mime, byte_len, sha256)。
-    images: Vec<(String, i64, String, i64, String)>,
+    /// 排序后的 [`ImageDigest`]。
+    images: Vec<ImageDigest>,
     counter: Option<i64>,
     /// 排序后的 (id, created_at, content_byte_len, sha256(content))(0035)。
     ///
@@ -550,8 +557,16 @@ pub fn import(conn: &mut Connection, clock: &mut Clock, pkg: &MovePackage) -> Re
     let mut new_image_ids = Vec::with_capacity(images.len());
     for img in &images {
         let new_img = fresh_id(&tx, "item_image", "image")?;
-        let n = repo::insert_item_image(&tx, &new_img, &new_id, img.seq, &img.bytes, &img.mime)
-            .map_err(|e| format!("目标空间图片落行失败(图{}):{e}", img.seq))?;
+        let n = repo::insert_item_image(
+            &tx,
+            &new_img,
+            &new_id,
+            img.seq,
+            &img.bytes,
+            &img.mime,
+            img.removed_at.as_deref(),
+        )
+        .map_err(|e| format!("目标空间图片落行失败(图{}):{e}", img.seq))?;
         if n != 1 {
             return Err(format!("目标空间图片落行失败(图{},影响 {n} 行)", img.seq));
         }
@@ -564,8 +579,13 @@ pub fn import(conn: &mut Connection, clock: &mut Clock, pkg: &MovePackage) -> Re
         )
         .map_err(|e| format!("目标空间「图N」水位落行失败:{e}"))?;
     }
-    for new_img in &new_image_ids {
+    // 已删的图(0041)紧接自己的 image_add 补一条 set_field removed_at(值从行上读回 = 源原值
+    // 逐字):目标端日志的 LWW 赢家与行一致,且 add 的 HLC 严格小于它(§3.4 第 2 序的前置)。
+    for (new_img, img) in new_image_ids.iter().zip(&images) {
         oplog::image_add(&tx, clock, new_img)?;
+        if img.removed_at.is_some() {
+            oplog::image_set_removed(&tx, clock, new_img)?;
+        }
     }
 
     // 留言随迁(identity-plan §4.5):新 ULID、`created_at` 保留原时刻(史实)、
@@ -740,7 +760,9 @@ pub fn finalize_source(
 
 fn read_images(tx: &Connection, item_id: &str) -> Result<Vec<ImagePack>, String> {
     let mut stmt = tx
-        .prepare("SELECT id, seq, mime, data FROM item_image WHERE item_id = ?1 ORDER BY seq")
+        .prepare(
+            "SELECT id, seq, mime, data, removed_at FROM item_image WHERE item_id = ?1 ORDER BY seq",
+        )
         .map_err(|e| e.to_string())?;
     let rows = stmt
         .query_map([item_id], |r| {
@@ -749,14 +771,15 @@ fn read_images(tx: &Connection, item_id: &str) -> Result<Vec<ImagePack>, String>
                 r.get::<_, i64>(1)?,
                 r.get::<_, String>(2)?,
                 r.get::<_, Vec<u8>>(3)?,
+                r.get::<_, Option<String>>(4)?,
             ))
         })
         .map_err(|e| e.to_string())?;
     let mut out = Vec::new();
     for row in rows {
-        let (id, seq, mime, bytes) = row.map_err(|e| e.to_string())?;
+        let (id, seq, mime, bytes, removed_at) = row.map_err(|e| e.to_string())?;
         let sha256: String = Sha256::digest(&bytes).iter().map(|b| format!("{b:02x}")).collect();
-        out.push(ImagePack { id, seq, mime, bytes, sha256 });
+        out.push(ImagePack { id, seq, mime, bytes, sha256, removed_at });
     }
     Ok(out)
 }
@@ -827,9 +850,11 @@ fn comment_digests(tx: &Connection, item_id: &str) -> Result<Vec<(String, String
 /// ⚠️ 这里原先还写着一句「改完 `≤128 MiB` 就从包体预算变成峰值预算」—— **那句话是错的**
 /// (codex 实现审二弹 H1):包体本身已经整个在 `MovePackage` 里,逐行 hash 省掉的只是
 /// 「再来一整组的副本」。峰值的诚实口径见 [`move_peak_bytes`]。
-fn image_digests(tx: &Connection, item_id: &str) -> Result<Vec<(String, i64, String, i64, String)>, String> {
+fn image_digests(tx: &Connection, item_id: &str) -> Result<Vec<ImageDigest>, String> {
     let mut stmt = tx
-        .prepare("SELECT id, seq, mime, data FROM item_image WHERE item_id = ?1 ORDER BY seq")
+        .prepare(
+            "SELECT id, seq, mime, data, removed_at FROM item_image WHERE item_id = ?1 ORDER BY seq",
+        )
         .map_err(|e| e.to_string())?;
     let mut rows = stmt.query([item_id]).map_err(|e| e.to_string())?;
     let mut out = vec![];
@@ -838,8 +863,9 @@ fn image_digests(tx: &Connection, item_id: &str) -> Result<Vec<(String, i64, Str
         let seq: i64 = row.get(1).map_err(|e| e.to_string())?;
         let mime: String = row.get(2).map_err(|e| e.to_string())?;
         let data: Vec<u8> = row.get(3).map_err(|e| e.to_string())?;
+        let removed_at: Option<String> = row.get(4).map_err(|e| e.to_string())?;
         let sha: String = Sha256::digest(&data).iter().map(|b| format!("{b:02x}")).collect();
-        out.push((id, seq, mime, data.len() as i64, sha));
+        out.push((id, seq, mime, data.len() as i64, sha, removed_at));
         // data 在此 drop —— 循环里同时活着的至多一张图。
     }
     Ok(out)
@@ -951,7 +977,8 @@ mod tests {
         let (_i1, s1) = images::attach(&mut src, &mut sc, &id, &[1, 1], "image/png").unwrap();
         let (i2, _s2) = images::attach(&mut src, &mut sc, &id, &[2, 2], "image/png").unwrap();
         let (_i3, s3) = images::attach(&mut src, &mut sc, &id, &[3, 3], "image/jpeg").unwrap();
-        images::remove(&mut src, &mut sc, &i2).unwrap(); // 图2 退役留洞
+        images::remove(&mut src, &mut sc, &i2).unwrap(); // 图2 退役留洞(0041:进回收站再销毁)
+        images::purge(&mut src, &mut sc, &i2).unwrap();
         assert_eq!((s1, s3), (1, 3));
 
         let pkg = export_ready(&mut src, &id);
@@ -1074,14 +1101,64 @@ mod tests {
     #[test]
     fn dangling_image_ref_blocks_export() {
         let (mut src, mut sc) = fresh_db("dangle");
-        let id = notes::capture(&mut src, &mut sc, "见图2(它已被删)").unwrap();
+        let id = notes::capture(&mut src, &mut sc, "见图2(它已被彻底删除)").unwrap();
         let (_i1, _) = images::attach(&mut src, &mut sc, &id, &[1], "image/png").unwrap();
         let (i2, _) = images::attach(&mut src, &mut sc, &id, &[2], "image/png").unwrap();
         images::remove(&mut src, &mut sc, &i2).unwrap();
+        images::purge(&mut src, &mut sc, &i2).unwrap(); // 0041:进回收站的不算悬空,销毁了才算
         match export(&mut src, &id).unwrap() {
             ExportOutcome::DanglingRefs { seqs } => assert_eq!(seqs, vec![2]),
             _ => panic!("应被悬空引用预检挡下"),
         }
+    }
+
+    /// 0041(image-trash-plan §6 第 9 格):回收站里的图**随迁、保持已删** —— 目标行带原
+    /// removed_at,日志里 add 在前、set_field 紧随(值逐字);正文引用它的编号不算悬空(行在);
+    /// 目标端照样能还原到原编号。
+    #[test]
+    fn trashed_image_moves_along_and_stays_in_the_trash() {
+        let (mut src, mut sc) = fresh_db("trash-src");
+        let (mut dst, mut dc) = fresh_db("trash-dst");
+        let id = notes::capture(&mut src, &mut sc, "见图2(它在回收站里)").unwrap();
+        images::attach(&mut src, &mut sc, &id, &[1], "image/png").unwrap();
+        let (i2, _) = images::attach(&mut src, &mut sc, &id, &[2], "image/png").unwrap();
+        images::remove(&mut src, &mut sc, &i2).unwrap();
+        let at: String = src
+            .query_row("SELECT removed_at FROM item_image WHERE id = ?1", [&i2], |r| r.get(0))
+            .unwrap();
+        let pkg = export_ready(&mut src, &id); // 不被悬空预检挡:图2 的行还在
+        assert_eq!(pkg.images.len(), 2);
+        let new_id = import(&mut dst, &mut dc, &pkg).unwrap();
+        let (new_img, got): (String, Option<String>) = dst
+            .query_row(
+                "SELECT id, removed_at FROM item_image WHERE item_id = ?1 AND seq = 2",
+                [&new_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(got.as_deref(), Some(at.as_str()), "目标仍在回收站,删除时刻原样");
+        let kinds: Vec<String> = crate::oplog::ops_for(&dst, "image", &new_img).into_iter().map(|o| o.kind).collect();
+        assert_eq!(kinds, vec!["image_add", "set_field"]);
+        assert_eq!(repo::list_item_images(&dst, &new_id).unwrap().iter().map(|r| r.seq).collect::<Vec<_>>(), vec![1]);
+        crate::sync::boot::strict_battery(&dst).expect("目标端日志与行一致");
+        images::restore(&mut dst, &mut dc, &new_img).unwrap();
+        assert_eq!(repo::list_item_images(&dst, &new_id).unwrap().iter().map(|r| r.seq).collect::<Vec<_>>(), vec![1, 2]);
+        assert!(matches!(finalize_source(&mut src, &mut sc, &pkg).unwrap(), FinalizeOutcome::Deleted));
+    }
+
+    /// 0041:导出之后源端把一张图删进回收站(行、字节、编号都没变,只有 removed_at 变了)
+    /// = 源被并发改动 ⇒ finalize 拒删(Kept)。指纹里少了 removed_at,这一格会照删源、
+    /// 目标却带着「在用」的旧状态 —— 静默覆盖。
+    #[test]
+    fn finalize_keeps_the_source_when_an_image_was_trashed_after_export() {
+        let (mut src, mut sc) = fresh_db("trash-race-src");
+        let (mut dst, mut dc) = fresh_db("trash-race-dst");
+        let id = notes::capture(&mut src, &mut sc, "导出后删图").unwrap();
+        let (img, _) = images::attach(&mut src, &mut sc, &id, &[1], "image/png").unwrap();
+        let pkg = export_ready(&mut src, &id);
+        import(&mut dst, &mut dc, &pkg).unwrap();
+        images::remove(&mut src, &mut sc, &img).unwrap();
+        assert!(matches!(finalize_source(&mut src, &mut sc, &pkg).unwrap(), FinalizeOutcome::Kept { .. }));
     }
 
     /// 预检①三例(二轮 H1):活图未物化拒导出;字节到齐(建行)后可移;目标 commit
@@ -1303,6 +1380,7 @@ mod tests {
         for _ in 0..5 {
             let (img, _) = images::attach(&mut src, &mut sc, &id, &[1], "image/png").unwrap();
             images::remove(&mut src, &mut sc, &img).unwrap();
+            images::purge(&mut src, &mut sc, &img).unwrap(); // 0041:销毁才算「图全没了」
         }
         let counter: i64 = src
             .query_row("SELECT last_seq FROM item_image_counter WHERE item_id=?1", [&id], |r| r.get(0))
@@ -1888,19 +1966,19 @@ tx.execute(\"DELETE FROM sync_replay_active\", []) \
     }
 
     /// eager 参考实现:整批读进 `Vec` 再 map(**故意**用被生产侧禁掉的写法)。
-    fn eager_image_digests(conn: &Connection, item_id: &str) -> Vec<(String, i64, String, i64, String)> {
+    fn eager_image_digests(conn: &Connection, item_id: &str) -> Vec<ImageDigest> {
         let mut stmt = conn
-            .prepare("SELECT id, seq, mime, data FROM item_image WHERE item_id = ?1 ORDER BY seq")
+            .prepare("SELECT id, seq, mime, data, removed_at FROM item_image WHERE item_id = ?1 ORDER BY seq")
             .unwrap();
-        let rows: Vec<(String, i64, String, Vec<u8>)> = stmt
-            .query_map([item_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))
+        let rows: Vec<(String, i64, String, Vec<u8>, Option<String>)> = stmt
+            .query_map([item_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))
             .unwrap()
             .collect::<rusqlite::Result<_>>()
             .unwrap();
         rows.into_iter()
-            .map(|(id, seq, mime, data)| {
+            .map(|(id, seq, mime, data, removed_at)| {
                 let sha = Sha256::digest(&data).iter().map(|b| format!("{b:02x}")).collect();
-                (id, seq, mime, data.len() as i64, sha)
+                (id, seq, mime, data.len() as i64, sha, removed_at)
             })
             .collect()
     }

@@ -422,9 +422,22 @@ export const setTopicKind = (space: string, id: string, kind: string | null) =>
 export const addItemImage = (space: string, itemId: string, mime: string, dataB64: string) =>
   invoke<ImageMeta>("add_item_image", { spaceId: space, itemId, mime, dataB64 });
 
-/** 删一张图(编号退役不重排)。 */
+/** 删一张图 = 进回收站(用户面 149;编号照占,可还原回原号)。 */
 export const deleteItemImage = (space: string, imageId: string) =>
   invoke<void>("delete_item_image", { spaceId: space, imageId });
+
+/** 回收站里的已删配图,按宿主归组(core `repo::RemovedImageGroup`,两壳契约同源)。 */
+export type RemovedImage = { id: string; seq: number; mime: string; removed_at: string };
+export type RemovedGroup = { item_id: string; stage: string; content: string; images: RemovedImage[] };
+/** 手机一屏回收站取全部(`"all"`);桌面两页才分灵感 / 任务。 */
+export const listRemovedImages = (space: string) =>
+  invoke<RemovedGroup[]>("list_removed_images", { spaceId: space, scope: "all" });
+/** 从回收站还原一张图,回到原编号。 */
+export const restoreItemImage = (space: string, imageId: string) =>
+  invoke<void>("restore_item_image", { spaceId: space, imageId });
+/** 回收站里彻底删除一张图(只收已删的图)。 */
+export const purgeItemImage = (space: string, imageId: string) =>
+  invoke<void>("purge_item_image", { spaceId: space, imageId });
 
 // ---- 条目留言(identity-plan §4,0035;命令面 315 已备好,这里是第③笔的调用层) -----
 //

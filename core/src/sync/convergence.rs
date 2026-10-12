@@ -19,7 +19,7 @@
 //! 墙钟与随机位,是环境噪声——断言的是「任意交错下都收敛」,与具体 LWW 胜者无关。
 //! 反例种子固化进 SEEDS 数组当回归(§9)。
 
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -490,7 +490,9 @@ const LIVE_TASK_COLUMNS: &str =
 const EDITABLE_COLUMNS: &str =
     "SELECT id FROM board_column WHERE system = 0 AND tombstoned_at IS NULL ORDER BY id";
 const TOPICS: &str = "SELECT id FROM topics ORDER BY id";
-const IMAGES: &str = "SELECT id FROM item_image ORDER BY id";
+/// 0041:在用的图(软删的对象池)/ 已删的图(还原与彻底删除的对象池)。
+const LIVE_IMAGES: &str = "SELECT id FROM item_image WHERE removed_at IS NULL ORDER BY id";
+const REMOVED_IMAGES: &str = "SELECT id FROM item_image WHERE removed_at IS NOT NULL ORDER BY id";
 /// 0035:全部现存留言(随机命令流的删除面)。
 const COMMENTS: &str = "SELECT id FROM item_comment ORDER BY id";
 
@@ -501,6 +503,30 @@ const COMMENTS: &str = "SELECT id FROM item_comment ORDER BY id";
 /// 「轻端零 want」同款)。所以数一下真跑成了几次,并在测试末尾断言两支都 > 0。
 static COMMENT_ADDS: AtomicUsize = AtomicUsize::new(0);
 static COMMENT_REMOVES: AtomicUsize = AtomicUsize::new(0);
+
+/// 0041 配图回收站三支的**覆盖计数**(理由同留言那两只)。三条命令都没有幂等 no-op 路径
+/// (成功即恰发一枚 op;已删再删 / 未删就还原一律 `Err` = 合法跳过),按 `Ok` 计数是诚实的。
+/// 分开断言:软删(值 = 时刻)/ 还原(值 = null)/ 销毁(墓碑)在存储层、指纹层(quote())、
+/// 压实基线三处都不同形。
+static IMAGE_REMOVES: AtomicUsize = AtomicUsize::new(0);
+static IMAGE_RESTORES: AtomicUsize = AtomicUsize::new(0);
+static IMAGE_PURGES: AtomicUsize = AtomicUsize::new(0);
+
+/// 累计「同一张图的 removed_at 被**两台以上不同机器**写过」的张数 = 软删标记的字段级 LWW
+/// 真撞过写。缺了它,三端各删各的图时全部指纹照样相等,而「验到了 LWW 收敛」是假的
+/// (形同 [`DEVICE_LWW_COLLISIONS`])。
+static IMAGE_LWW_COLLISIONS: AtomicUsize = AtomicUsize::new(0);
+
+fn image_lww_collisions(conn: &Connection) -> i64 {
+    conn.query_row(
+        "SELECT COUNT(*) FROM (SELECT entity_id FROM oplog \
+          WHERE entity = 'image' AND kind = 'set_field' \
+          GROUP BY entity_id HAVING COUNT(DISTINCT origin) > 1)",
+        [],
+        |r| r.get(0),
+    )
+    .expect("count image lww collisions")
+}
 
 /// 0033 设备名册的**命名对象池** = 本库见过的全部设备(oplog 的 origin 集合,
 /// `origin` 是 `substr(hlc, 24)` 的虚拟生成列 = 完整 26 位 device_id)。
@@ -593,8 +619,9 @@ const LIVE_ANY: &str = "SELECT id FROM items WHERE archived_at IS NULL AND seale
 fn random_command(conn: &mut Connection, clock: &mut Clock, rng: &mut Rng, step: usize) -> bool {
     // ⚠ 改这个上限会**重排全部种子的命令序列**(328 从 27 加到 28 时如此)。这只 property
     // test 靠广度不靠特定路径,故可接受;但「种子 1 当年抓到活锁」那条战绩指的是旧序列,
-    // 别拿它当今天还在复现的回归锚。
-    let roll = rng.below(29);
+    // 别拿它当今天还在复现的回归锚。0041 从 29 加到 36:配图回收站三支 + 贴图各多分几格
+    // (原先每种子不到一次,还原一次都轮不上,见 IMAGE_RESTORES 头注)。
+    let roll = rng.below(36);
     let done: Result<(), String> = match roll {
         0..=3 => notes::capture(conn, clock, &format!("灵感 {step}-{}", rng.below(1000))).map(|_| ()),
         4 => match rng.pick(&ids(conn, LIVE_IDEAS)).cloned() {
@@ -722,7 +749,7 @@ fn random_command(conn: &mut Connection, clock: &mut Clock, rng: &mut Rng, step:
                 }
             }
         }
-        20 => match rng.pick(&ids(conn, LIVE_ANY)).cloned() {
+        20 | 29 | 32 => match rng.pick(&ids(conn, LIVE_ANY)).cloned() {
             Some(id) => {
                 let n = 2 + rng.below(5);
                 let bytes: Vec<u8> = (0..n).map(|_| rng.next() as u8).collect();
@@ -730,10 +757,34 @@ fn random_command(conn: &mut Connection, clock: &mut Clock, rng: &mut Rng, step:
             }
             None => Ok(()),
         },
-        21 => match rng.pick(&ids(conn, IMAGES)).cloned() {
-            Some(id) => images::remove(conn, clock, &id),
-            None => Ok(()),
-        },
+        // 0041 配图回收站:软删(进回收站)/ 还原 / 彻底删除(墓碑,只收已删的图)。宿主进了
+        // 回收站或成就册时三条都 `Err` = 合法跳过(冻结不可编辑)。回收站空着时只能软删 ——
+        // 否则三分之二的签抽到空池白跑。软删 / 还原有一半签**对准池里 id 最小的那张**:三端
+        // 各点各的图时,同一张图的标记永远只有一个写者,LWW 撞写那一格验不到
+        // (IMAGE_LWW_COLLISIONS 守的就是这个,同 EDITABLE_COLUMNS 的判例)。
+        21 | 30 | 31 | 33 | 34 | 35 => {
+            let removed = ids(conn, REMOVED_IMAGES);
+            let aim = |rng: &mut Rng, pool: &[String]| -> Option<String> {
+                if rng.below(2) == 0 { pool.first().cloned() } else { rng.pick(pool).cloned() }
+            };
+            match (rng.below(3), removed.is_empty()) {
+                (0, _) | (_, true) => match aim(rng, &ids(conn, LIVE_IMAGES)) {
+                    Some(id) => images::remove(conn, clock, &id)
+                        .inspect(|_| _ = IMAGE_REMOVES.fetch_add(1, Ordering::Relaxed)),
+                    None => Ok(()),
+                },
+                (1, false) => match aim(rng, &removed) {
+                    Some(id) => images::restore(conn, clock, &id)
+                        .inspect(|_| _ = IMAGE_RESTORES.fetch_add(1, Ordering::Relaxed)),
+                    None => Ok(()),
+                },
+                _ => match rng.pick(&removed).cloned() {
+                    Some(id) => images::purge(conn, clock, &id)
+                        .inspect(|_| _ = IMAGE_PURGES.fetch_add(1, Ordering::Relaxed)),
+                    None => Ok(()),
+                },
+            }
+        }
         // 标签手动排序(0031 position set_field):把一枚标签拖到另一枚之前(prev=None,
         // next=目标)。目标未定序(transient)→ reorder_topic 内部 fail-fast、合法跳过。
         22 => {
@@ -866,7 +917,7 @@ const FINGERPRINTS: &[(&str, &str)] = &[
     ),
     (
         "item_image(含字节)",
-        "SELECT id||'|'||item_id||'|'||seq||'|'||mime||'|'||hex(data) FROM item_image ORDER BY id",
+        "SELECT id||'|'||item_id||'|'||seq||'|'||mime||'|'||hex(data)||'|'||quote(removed_at) FROM item_image ORDER BY id",
     ),
     ("item_image_counter", "SELECT item_id||'|'||last_seq FROM item_image_counter ORDER BY item_id"),
     // quote():合法名字「∅」不与 NULL 同指纹(codex L;随机名池撞不上,防御一致性)。
@@ -911,6 +962,58 @@ fn assert_per_origin_contiguous(conn: &Connection, seed: u64) {
 /// 一个种子跑一整场:随机事件流 → settle → 全量断言。返回轻端收到的**远端**
 /// image_add op 总数(覆盖计数,codex P4-d 轮 M3:单种子可能为 0,聚合断言在
 /// 测试里做,防「随机流零覆盖仍通过」)。
+/// 0041 配图回收站的**并发爆发轮**:收敛之后全员离线,三端对准**同一张图**各写各的,再上线、
+/// 再收敛、再断言。
+///
+/// 为什么不靠随机流:图的字节要 want / have / pull 好几跳才到别的端,而随机流里离线切换频繁 ——
+/// 实测 20 个种子、47 次软删 / 12 次还原,**没有一次**落在别人贴的图上(三端几乎只碰得到自己
+/// 那几张)⇒ 软删标记的 LWW 撞写、「彻底删除 vs 并发还原」的墓碑 sticky 一次都验不到,而全部
+/// 指纹断言照样相等。这里在收敛后(三端都有这张图的行)把并发造出来:
+///   端 0:在用就删、已删就还原;端 1:在用就先删再还原(同一端两笔,HLC 递增);
+///   端 2:在用就先删再彻底删除、已删就直接彻底删除(墓碑)。
+/// 每一笔的 `Err` 都是合法跳过(轻端没有行;宿主被冻结),与随机流同一口径。
+fn image_trash_burst(sim: &mut Sim) {
+    const TARGET: &str = "SELECT im.id FROM item_image im JOIN items i ON i.id = im.item_id \
+         WHERE i.archived_at IS NULL AND i.sealed_at IS NULL ORDER BY im.id LIMIT 1";
+    let Some(target) = ids(&sim.peers[0].conn, TARGET).into_iter().next() else { return };
+    for i in 0..sim.peers.len() {
+        sim.set_offline(i);
+    }
+    let removed = |c: &Connection| -> Option<bool> {
+        c.query_row("SELECT removed_at IS NOT NULL FROM item_image WHERE id = ?1", [&target], |r| r.get(0))
+            .optional()
+            .expect("read removed_at")
+    };
+    let count = |r: Result<(), String>, bag: &AtomicUsize| {
+        if r.is_ok() {
+            bag.fetch_add(1, Ordering::Relaxed);
+        }
+    };
+    for (i, p) in sim.peers.iter_mut().enumerate() {
+        let (c, k) = (&mut p.conn, &mut p.clock);
+        let Some(is_removed) = removed(c) else { continue };
+        match (i % 3, is_removed) {
+            (0, false) => count(images::remove(c, k, &target), &IMAGE_REMOVES),
+            (0, true) => count(images::restore(c, k, &target), &IMAGE_RESTORES),
+            (1, false) => {
+                count(images::remove(c, k, &target), &IMAGE_REMOVES);
+                count(images::restore(c, k, &target), &IMAGE_RESTORES);
+            }
+            (1, true) => count(images::restore(c, k, &target), &IMAGE_RESTORES),
+            (_, false) => {
+                count(images::remove(c, k, &target), &IMAGE_REMOVES);
+                count(images::purge(c, k, &target), &IMAGE_PURGES);
+            }
+            (_, true) => count(images::purge(c, k, &target), &IMAGE_PURGES),
+        }
+    }
+    for i in 0..sim.peers.len() {
+        sim.set_online(i);
+    }
+    sim.settle();
+    sim.assert_converged();
+}
+
 fn run(seed: u64, policies: &[BlobPolicy]) -> usize {
     let mut sim = Sim::new(seed, policies);
     // 起步全员在线(各自 hello 一轮,水位皆空无补给)。
@@ -974,6 +1077,11 @@ fn run(seed: u64, policies: &[BlobPolicy]) -> usize {
         .fetch_add(column_lww_collisions(&sim.peers[0].conn) as usize, Ordering::Relaxed);
     CARDS_IN_CUSTOM_COLUMNS
         .fetch_add(cards_in_custom_columns(&sim.peers[0].conn) as usize, Ordering::Relaxed);
+    // 0041:收敛后再来一轮「三端离线、对准同一张图各写各的」,再要求收敛一次(见函数头注)。
+    image_trash_burst(&mut sim);
+    // 0041:同上,「同一张图的软删标记被多机写过」。
+    IMAGE_LWW_COLLISIONS
+        .fetch_add(image_lww_collisions(&sim.peers[0].conn) as usize, Ordering::Relaxed);
     sim.peers
         .iter()
         .filter(|p| p.policy == BlobPolicy::MetadataOnly)
@@ -1020,6 +1128,14 @@ fn three_peers_converge_under_partitions_reorder_and_loss() {
         COLUMN_LWW_COLLISIONS.load(Ordering::Relaxed) > 0,
         "没有任何一列被两台以上机器改过 —— board_column 的字段级 LWW 一次都没被验到\
          (每列只有一个写者时根本没有赢家可选),而全部指纹断言都不会因此变红",
+    );
+    // 0041 配图回收站三支 + 软删标记的 LWW 撞写(理由见各自头注)。
+    assert!(IMAGE_REMOVES.load(Ordering::Relaxed) > 0, "随机流里一张图都没删进回收站");
+    assert!(IMAGE_RESTORES.load(Ordering::Relaxed) > 0, "随机流里一张图都没从回收站还原");
+    assert!(IMAGE_PURGES.load(Ordering::Relaxed) > 0, "随机流里一张图都没彻底删除");
+    assert!(
+        IMAGE_LWW_COLLISIONS.load(Ordering::Relaxed) > 0,
+        "没有任何一张图的软删标记被两台以上机器写过 —— removed_at 的字段级 LWW 一次都没被验到",
     );
     assert!(
         CARDS_IN_CUSTOM_COLUMNS.load(Ordering::Relaxed) > 0,

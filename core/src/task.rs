@@ -594,6 +594,9 @@ pub fn purge(conn: &mut Connection, clock: &mut Clock, id: &str) -> Result<(), S
 pub fn purge_all(conn: &mut Connection, clock: &mut Clock) -> Result<usize, String> {
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     // 先点名再清空(tombstone 逐条发,批量 DELETE 只报数)。
+    // 任务那一页的已删配图(宿主在用、stage 属任务)一并销毁(0041,image-trash-plan §4);
+    // 返回值仍只数条目。
+    crate::images::purge_removed_in(&tx, clock, repo::TrashScope::Tasks)?;
     let ids: Vec<String> =
         repo::archived_tasks(&tx).map_err(|e| e.to_string())?.into_iter().map(|t| t.id).collect();
     let removed = repo::purge_archived_tasks(&tx).map_err(|e| e.to_string())?;

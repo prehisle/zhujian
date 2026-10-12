@@ -744,7 +744,8 @@ async function addPhoto(itemId: string): Promise<void> {
 }
 
 /** 编辑面缩略图上的 ×(用户面 148):只切换「保存时删」的标记,不碰库 —— 真删在 saveEdit。
- *  此前是两拍确认后当场硬删(「删了不可恢复」),而删图不进回收站、不进编辑历史。 */
+ *  此前是两拍确认后当场硬删(「删了不可恢复」),而删图那时不进回收站、不进编辑历史。
+ *  149 起保存时那一删 = 进回收站(可还原回原编号),编辑历史仍不记图。 */
 function toggleDeleteEditImage(imgId: string): void {
   if (!state?.editDeletes || busy) return;
   if (state.editDeletes.has(imgId)) state.editDeletes.delete(imgId);

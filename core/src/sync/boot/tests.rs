@@ -1552,6 +1552,7 @@ fn import_counter_above_log_watermark_is_legal_below_is_not() {
     // 反向:再挂一图(得号 6)后删除——日志派生高水位 6,把 counter 压回 1 = 伪造,必拒。
     let (img2, _) = images::attach(&mut a.conn, &mut a.clock, &task, &[3, 4], "image/png").unwrap();
     images::remove(&mut a.conn, &mut a.clock, &img2).unwrap();
+    images::purge(&mut a.conn, &mut a.clock, &img2).unwrap(); // 0041:销毁才没有行
     a.conn.execute_batch("INSERT INTO sync_replay_active (flag) VALUES (1);").unwrap();
     a.conn
         .execute("UPDATE item_image_counter SET last_seq = 1 WHERE item_id = ?1", [&task])
@@ -2587,4 +2588,106 @@ fn local_item_op(p: &mut Peer, entity_id: &str, kind: &str, payload: serde_json:
         origin_seq: seq,
     };
     crate::replay::apply_remote_op(&mut p.conn, &mut p.clock, &op).expect("落 item op");
+}
+
+// ---- 0041 配图软删标记(image-trash-plan §6 第 8 格) ----------------------------------
+
+/// 阳性:回收站里的图随快照到达,removed_at 原样;新端照样能还原它。
+#[test]
+fn import_carries_a_trashed_image_and_it_restores_on_the_new_peer() {
+    let mut a = peer("trash-a");
+    let task = task::create(&mut a.conn, &mut a.clock, "任务", None, None, None).unwrap();
+    let (img, _) = images::attach(&mut a.conn, &mut a.clock, &task, &[1, 2], "image/png").unwrap();
+    images::remove(&mut a.conn, &mut a.clock, &img).unwrap();
+    let at: String = a
+        .conn
+        .query_row("SELECT removed_at FROM item_image WHERE id = ?1", [&img], |r| r.get(0))
+        .unwrap();
+    let snap = make_snapshot(&a.conn, &a.dir).unwrap();
+    let mut b = peer("trash-b");
+    import_snapshot(&mut b.conn, &mut b.clock, &snap.path).expect("合法快照");
+    let got: Option<String> = b
+        .conn
+        .query_row("SELECT removed_at FROM item_image WHERE id = ?1", [&img], |r| r.get(0))
+        .unwrap();
+    assert_eq!(got.as_deref(), Some(at.as_str()));
+    images::restore(&mut b.conn, &mut b.clock, &img).unwrap();
+}
+
+/// 阴性:快照里一张图的行被改成「已删」,日志却没有那条 set_field = 表 / 日志矛盾,整体回滚。
+/// (行上 removed_at 改了就只剩 `audit_image_removed` 能拒 —— 字节、编号、宿主都对。)
+#[test]
+fn import_rejects_a_removed_flag_the_log_never_wrote() {
+    let mut a = peer("forge-a");
+    let task = task::create(&mut a.conn, &mut a.clock, "任务", None, None, None).unwrap();
+    let (img, _) = images::attach(&mut a.conn, &mut a.clock, &task, &[1, 2], "image/png").unwrap();
+    a.conn
+        .execute("UPDATE item_image SET removed_at = '2026-10-12T08:00:00Z' WHERE id = ?1", [&img])
+        .unwrap();
+    let snap = raw_snapshot(&a.conn, &a.dir);
+    let mut b = peer("forge-b");
+    let err = import_snapshot(&mut b.conn, &mut b.clock, &snap.path).unwrap_err();
+    assert!(err.contains("removed_at"), "{err}");
+}
+
+/// 阴性:日志里一条 image set_field 的图无行、无 add、无墓碑 = live 永久 DependencyMissing,拒。
+#[test]
+fn import_rejects_an_orphan_image_set_field() {
+    let mut a = peer("orphanset-a");
+    notes::capture(&mut a.conn, &mut a.clock, "让快照非空").unwrap();
+    inject_raw_op(
+        &a.conn,
+        &mut a.clock,
+        "image",
+        "01IMGORPHANSET00000000000X",
+        "set_field",
+        r#"{"field":"removed_at","value":"2026-10-12T08:00:00Z"}"#,
+    );
+    let snap = raw_snapshot(&a.conn, &a.dir);
+    let mut b = peer("orphanset-b");
+    let err = import_snapshot(&mut b.conn, &mut b.clock, &snap.path).unwrap_err();
+    assert!(err.contains("image set_field") && err.contains("孤儿"), "{err}");
+}
+
+/// 阴性:image set_field 的 HLC 早于它那张图的 image_add(set-before-add)= live 逐条应用时
+/// 永久挂起,拒。行上 removed_at 与日志赢家(add 更晚 ⇒ NULL)一致、字节与 sha 都对 ——
+/// 只有因果序那一句拒得掉它。
+#[test]
+fn import_rejects_an_image_set_field_older_than_its_add() {
+    let mut a = peer("setbeforeadd-a");
+    let task = task::create(&mut a.conn, &mut a.clock, "任务", None, None, None).unwrap();
+    let img = ulid::Ulid::new().to_string();
+    let data = vec![4u8, 5, 6];
+    let sha: String = {
+        use sha2::{Digest, Sha256};
+        Sha256::digest(&data).iter().map(|b| format!("{b:02x}")).collect()
+    };
+    inject_raw_op(&a.conn, &mut a.clock, "image", &img, "set_field", r#"{"field":"removed_at","value":null}"#);
+    inject_raw_op(
+        &a.conn,
+        &mut a.clock,
+        "image",
+        &img,
+        "image_add",
+        &format!(r#"{{"item_id":"{task}","seq":1,"mime":"image/png","bytes":3,"sha256":"{sha}"}}"#),
+    );
+    a.conn.execute("INSERT INTO sync_replay_active (flag) VALUES (1)", []).unwrap();
+    a.conn
+        .execute(
+            "INSERT INTO item_image (id, item_id, seq, data, mime, created_at) VALUES (?1,?2,1,?3,'image/png','t0')",
+            rusqlite::params![img, task, data],
+        )
+        .unwrap();
+    a.conn
+        .execute(
+            "INSERT INTO item_image_counter (item_id, last_seq) VALUES (?1, 1) \
+             ON CONFLICT(item_id) DO UPDATE SET last_seq = max(last_seq, 1)",
+            [&task],
+        )
+        .unwrap();
+    a.conn.execute("DELETE FROM sync_replay_active", []).unwrap();
+    let snap = raw_snapshot(&a.conn, &a.dir);
+    let mut b = peer("setbeforeadd-b");
+    let err = import_snapshot(&mut b.conn, &mut b.clock, &snap.path).unwrap_err();
+    assert!(err.contains("set-before-add"), "{err}");
 }

@@ -19,7 +19,8 @@
 //!     §3.5):只轮换本地 device_id + 重建 oplog + 落 epoch=2,配置四元组保持全空。
 //!
 //! **基线合成 = 状态 → op**(§2.3):现值快照 create(+archived_at/sealed_at 各补一条
-//! set)/ link_add / image_add(sha256 对现存字节现算);墓碑不带入(隔离不变量下无
+//! set)/ link_add / image_add(sha256 对现存字节现算;已删的图 0041 起紧接补一条
+//! removed_at set);墓碑不带入(隔离不变量下无
 //! 旧 op 可复活);`born_stage: null` 是协议正式词汇(pre-0018「未知不回填」史实);
 //! item_image_counter / item_revisions **原样保留**(§1 第 2/3 条:洞由 counter 表
 //! 承载、编辑历史各端本地生长)。取号不复用 `oplog::append`(它固定查写 oplog 本表)
@@ -44,7 +45,8 @@ use crate::sync::boot;
 /// 内注释**——sqlite_schema 保存的是语句原文,任何漂移都会被下方「规范化 sqlite_schema
 /// 比对」在压实现场拒绝,不是靠人眼对齐。首跑就抓到过:常量少了迁移里的两段行内注释,
 /// 比对当场红——这正是比对该有的灵敏度,修法是把常量对齐迁移原文,不是放松比对)。
-/// ⚠ **0037 起「最新那条」是 `0037_board_column_vocab.sql`**,而它已经照本模块的做法改成了
+/// ⚠ **0041 起「最新那条」是 `0041_item_image_removed_at.sql`**(image × set_field 进词汇),
+/// 重建手法照抄 0037。0037 那句原注:「最新那条」是 `0037_board_column_vocab.sql`,而它已经照本模块的做法改成了
 /// 「先 DROP、再用最终名建」——`ALTER TABLE … RENAME` 会重解析整个 schema,而 0036 起
 /// `board_column` 上有一只引用 `oplog` 的触发器(见下方 `compact_inner` 里那段长注)。
 const OPLOG_TABLE_DDL: &str = "CREATE TABLE {name} (
@@ -62,7 +64,8 @@ const OPLOG_TABLE_DDL: &str = "CREATE TABLE {name} (
     CHECK (
         (entity IN ('item', 'topic') AND kind IN ('create', 'set_field', 'tombstone'))
         OR (entity = 'link' AND kind IN ('link_add', 'link_remove'))
-        OR (entity = 'image' AND kind IN ('image_add', 'image_tombstone'))
+        -- 配图:set_field 只承载 removed_at(软删标记,image-trash-plan §3.2);销毁仍是 image_tombstone。
+        OR (entity = 'image' AND kind IN ('image_add', 'image_tombstone', 'set_field'))
         -- 空间 profile 单例寄存器(space-name-sync-plan §3):无 create、无 tombstone。
         OR (entity = 'space' AND kind = 'set_field')
         -- 设备 profile 多实例寄存器(identity-plan §2.1):同样无 create、无 tombstone,
@@ -842,21 +845,30 @@ fn synthesize_baseline(tx: &Connection) -> Result<Vec<(String, String, String, V
     }
     // images:每张现存图一条 image_add,sha256 对字节现算(0024 前老图无 op 级 sha,
     // 字节在锚点本地,权威;死图的 add 不合成——字节已删,sha 无从重算,§1 第 3 条)。
+    // 0041:已删(在回收站)的图在 add **紧接着**补一条 set_field removed_at,值 = 行上原字符串
+    // 逐字(照 item 的 archived_at 那段):基线按 ops 序逐条取号,add 的 HLC 严格小于它 ⇒
+    // 压实后「行 == 日志赢家」的审计与回放「set_field 须有更早的 add」的前置都成立
+    // (image-trash-plan §6 第 7 格)。
     {
         let mut stmt = tx
-            .prepare("SELECT id, item_id, seq, mime, data FROM item_image ORDER BY item_id, seq")
+            .prepare(
+                "SELECT id, item_id, seq, mime, data, removed_at FROM item_image ORDER BY item_id, seq",
+            )
             .map_err(|e| e.to_string())?;
-        let rows: Vec<(String, String, i64, String, Vec<u8>)> = stmt
-            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))
+        type Row = (String, String, i64, String, Vec<u8>, Option<String>);
+        let rows: Vec<Row> = stmt
+            .query_map([], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?))
+            })
             .map_err(|e| e.to_string())?
             .collect::<rusqlite::Result<_>>()
             .map_err(|e| e.to_string())?;
-        for (id, item_id, seq, mime, data) in rows {
+        for (id, item_id, seq, mime, data, removed_at) in rows {
             use sha2::{Digest, Sha256};
             let sha: String = Sha256::digest(&data).iter().map(|b| format!("{b:02x}")).collect();
             ops.push((
                 "image".into(),
-                id,
+                id.clone(),
                 "image_add".into(),
                 json!({
                     "item_id": item_id,
@@ -866,6 +878,14 @@ fn synthesize_baseline(tx: &Connection) -> Result<Vec<(String, String, String, V
                     "sha256": sha,
                 }),
             ));
+            if let Some(r) = removed_at {
+                ops.push((
+                    "image".into(),
+                    id,
+                    "set_field".into(),
+                    json!({"field": "removed_at", "value": r}),
+                ));
+            }
         }
     }
     // comments(identity-plan §4.3 第 5 条):每条现存留言一条 create,payload **恰四键**。
@@ -1060,9 +1080,12 @@ pub(crate) fn table_fingerprints(tx: &Connection) -> Result<Vec<Vec<String>>, St
              FROM item_comment ORDER BY id",
         )?,
     ];
-    // item_image:元数据 + 字节 sha256(BLOB 不进字符串拼接)。
+    // item_image:元数据 + 字节 sha256(BLOB 不进字符串拼接)+ 0041 软删标记(quote:NULL 与
+    // 字面串 'NULL' 可分)。
     let mut stmt = tx
-        .prepare("SELECT id, item_id, seq, mime, created_at, data FROM item_image ORDER BY id")
+        .prepare(
+            "SELECT id, item_id, seq, mime, created_at, data, quote(removed_at) FROM item_image ORDER BY id",
+        )
         .map_err(|e| e.to_string())?;
     let mut rows = stmt.query([]).map_err(|e| e.to_string())?;
     let mut imgs = vec![];
@@ -1073,9 +1096,10 @@ pub(crate) fn table_fingerprints(tx: &Connection) -> Result<Vec<Vec<String>>, St
         let mime: String = row.get(3).map_err(|e| e.to_string())?;
         let created: String = row.get(4).map_err(|e| e.to_string())?;
         let data: Vec<u8> = row.get(5).map_err(|e| e.to_string())?;
+        let removed: String = row.get(6).map_err(|e| e.to_string())?;
         use sha2::{Digest, Sha256};
         let sha: String = Sha256::digest(&data).iter().map(|b| format!("{b:02x}")).collect();
-        imgs.push(format!("{id}|{item}|{seq}|{mime}|{created}|{sha}"));
+        imgs.push(format!("{id}|{item}|{seq}|{mime}|{created}|{sha}|{removed}"));
     }
     out.push(imgs);
     Ok(out)
@@ -1469,8 +1493,9 @@ mod tests {
     }
 
     /// 五脏俱全的现代库(全部行有 op 背书):编辑历史 / 多标签(删过重加 = OR-set
-    /// 历史)/ 回收站 / 成就归档 / 彻底删除(墓碑在日志、行已无)/ 配图两张删最高
-    /// 编号(counter 洞,§1 第 3 条)。返回 (灵感, 任务, 标签一, 标签二)。
+    /// 历史)/ 回收站 / 成就归档 / 彻底删除(墓碑在日志、行已无)/ 配图三张:图2 在回收站里
+    /// (0041 软删,基线要补 removed_at set_field)、最高编号图3 彻底删除(counter 洞,§1 第 3 条)。
+    /// 返回 (灵感, 任务, 标签一, 标签二)。
     fn build_rich(p: &mut P) -> (String, String, String, String) {
         let (c, k) = (&mut p.conn, &mut p.clock);
         let idea = notes::capture(c, k, "灵感甲").unwrap();
@@ -1490,6 +1515,9 @@ mod tests {
         images::attach(c, k, &task_id, &[1, 2, 3, 4], "image/png").unwrap();
         let (img2, _) = images::attach(c, k, &task_id, &[5, 6, 7, 8], "image/png").unwrap();
         images::remove(c, k, &img2).unwrap();
+        let (img3, _) = images::attach(c, k, &task_id, &[9, 10], "image/png").unwrap();
+        images::remove(c, k, &img3).unwrap();
+        images::purge(c, k, &img3).unwrap();
         let dead = notes::capture(c, k, "回收站里的").unwrap();
         notes::archive(c, k, &dead).unwrap();
         let sealed = task::create(c, k, "已入册", None, None, None).unwrap();
@@ -1529,7 +1557,7 @@ mod tests {
             ),
             rows("SELECT item_id||'|'||topic_id FROM item_topic ORDER BY item_id, topic_id"),
             rows(
-                "SELECT item_id||'|'||seq||'|'||mime||'|'||lower(hex(data)) \
+                "SELECT item_id||'|'||seq||'|'||mime||'|'||lower(hex(data))||'|'||quote(removed_at) \
                  FROM item_image ORDER BY item_id, seq",
             ),
             rows("SELECT item_id||'|'||last_seq FROM item_image_counter ORDER BY item_id"),
@@ -1609,6 +1637,34 @@ mod tests {
         assert_eq!(max_seq, n, "origin_seq 连续 1..m");
         // 用户数据零变;编辑历史原样;隔离与 breaker 已清。
         assert_eq!(projection(&p.conn), before);
+        // 0041:回收站里那张图(build_rich 的图2)在新账本里恰两条 op —— image_add 在前、
+        // set_field removed_at 紧随(值 = 行上原字符串逐字),在用的图只有 add 一条。
+        let (gone, at): (String, String) = p
+            .conn
+            .query_row("SELECT id, removed_at FROM item_image WHERE removed_at IS NOT NULL", [], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })
+            .unwrap();
+        let ops: Vec<(String, String, String)> = {
+            let mut stmt = p
+                .conn
+                .prepare("SELECT kind, hlc, payload FROM oplog WHERE entity = 'image' AND entity_id = ?1 ORDER BY hlc")
+                .unwrap();
+            let it = stmt.query_map([&gone], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).unwrap();
+            it.collect::<rusqlite::Result<_>>().unwrap()
+        };
+        assert_eq!(ops.iter().map(|o| o.0.as_str()).collect::<Vec<_>>(), vec!["image_add", "set_field"]);
+        let set: Value = serde_json::from_str(&ops[1].2).unwrap();
+        assert_eq!(set, json!({"field": "removed_at", "value": at}), "值逐字");
+        let live_sets: i64 = p
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM oplog WHERE entity = 'image' AND kind = 'set_field' AND entity_id != ?1",
+                [&gone],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(live_sets, 0, "在用的图不补 set_field");
         let revisions_after: Vec<String> = {
             let mut stmt = p
                 .conn
@@ -1805,9 +1861,14 @@ mod tests {
             task::transition(c, k, &task_id, "doing", &crate::board::gate::DETACHED).unwrap();
             task::set_due(c, k, &task_id, Some("2026-08-01")).unwrap();
             task::set_priority(c, k, &task_id, Some(3)).unwrap();
-            // 删过最高编号图(图2):新图必须续高水位(图3),洞不复用、两库同号。
+            // 销毁过最高编号图(图3):新图必须续高水位(图4),洞不复用、两库同号。
             let (_, seq) = images::attach(c, k, &task_id, &[9, 9, 9], "image/png").unwrap();
-            assert_eq!(seq, 3, "counter 洞不复用:删过图2,新图必是图3");
+            assert_eq!(seq, 4, "counter 洞不复用:销毁过图3,新图必是图4");
+            // 回收站里的图2(0041)压实后照样能还原、能销毁:基线那条 set_field 背书着它。
+            let gone: String = c
+                .query_row("SELECT id FROM item_image WHERE item_id = ?1 AND seq = 2", [&task_id], |r| r.get(0))
+                .unwrap();
+            images::restore(c, k, &gone).unwrap();
             // born_stage null 遗产行流转:promote 之后 born 仍 null(不造假史实)。
             notes::promote_to_task(c, k, LEGACY, "遗产转任务").unwrap();
             // 归档/取消归档。

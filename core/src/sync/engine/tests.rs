@@ -1028,7 +1028,9 @@ fn blob_sidechannel_pulls_bytes_and_builds_the_row() {
     assert!(b_eng.missing_blobs.is_empty());
 
     // deny 路:行删掉后再被 pull,应答 deny(回显 transfer);拉方回 missing 清单。
+    // 0041:软删的图行还在、照样供字节(要能还原)⇒ 走到 deny 得真销毁。
     images::remove(&mut a_conn, &mut a_clock, &img).unwrap();
+    images::purge(&mut a_conn, &mut a_clock, &img).unwrap();
     let denies = a_eng
         .on_relay_msg(
             &mut a_conn,
@@ -2724,7 +2726,10 @@ fn read_blob_chunk_walks_the_boundaries_and_notices_a_vanished_row() {
     assert_eq!(got, bytes, "逐块拼回来必须与原图逐位相等");
     assert!(read_blob_chunk(&conn, &serve, 3).is_err(), "越界取块 = 本机 bug,响亮报");
 
+    // 0041:软删不让行消失(已删的图照样供字节);销毁才会。
     images::remove(&mut conn, &mut clock, &img).unwrap();
+    assert!(read_blob_chunk(&conn, &serve, 0).unwrap().is_some(), "软删的图照样供字节");
+    images::purge(&mut conn, &mut clock, &img).unwrap();
     assert!(
         read_blob_chunk(&conn, &serve, 0).unwrap().is_none(),
         "行没了必须 None(调用方据此回 deny,不让收端干等 stale)"

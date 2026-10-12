@@ -149,7 +149,7 @@ type ThumbData = { url: string; thumb: boolean };
  *  命中派生表就只过来几 KB,连解码整张全尺寸位图那一步都省了(§2:一屏十张卡原本要读
  *  7.8 MB、解码 10 张全尺寸位图)。未命中才走老路 —— 取全尺寸、canvas 缩、**异步回存**
  *  (不阻塞渲染);回存失败无害,下次再算,故 catch 掉不打扰用户。 */
-function getThumb(imageId: string): Promise<string> {
+export function getThumb(imageId: string): Promise<string> {
   const hit = thumbCache.get(imageId);
   if (hit !== undefined) return Promise.resolve(hit);
   return invoke<ThumbData>("get_item_thumb", { imageId }).then(async (r) => {
@@ -410,7 +410,9 @@ export async function openLightboxBlob(blob: Blob, alt = t("itemImages.preview")
  *
  *  ⭐ 用户面 148:编辑态的 × **只做标记**(图变淡、再点一下撤销),删除随编辑的「保存」
  *  一起落(宿主调 `commitDeletes`);Esc 取消 = 编辑器整个丢掉,标记跟着没了,图一张不少。
- *  此前一点 × 就当场硬删、不随取消回滚 —— 而删图不进回收站、不进编辑历史,手滑就找不回。 */
+ *  此前一点 × 就当场硬删、不随取消回滚 —— 而删图那时不进回收站、不进编辑历史,手滑就找不回。
+ *  ⭐ 用户面 149 起保存时那一删 = **进回收站**(可还原到原编号,回收站「已删配图」那一节,
+ *  `trash-images.ts`),不再是硬删;编辑历史仍不记图(0016 的正交性不动)。 */
 export function imageStrip(
   itemId: string,
   opts: { editable: boolean; onChange?: () => void; onMetas?: (metas: ImageMeta[]) => void },

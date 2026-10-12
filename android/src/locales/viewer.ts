@@ -4,9 +4,9 @@ import { defineMessages } from "./entry";
 
 export const viewer = defineMessages({
   "viewer.badgeOfN": { zh: "图{n} · {i}/{total}", en: "Image {n} · {i}/{total}" },
-  "viewer.deleteQ": { zh: "删除这张图?删了不可恢复", en: "Delete this image? It cannot be recovered" },
+  "viewer.deleteQ": { zh: "删除这张图?会进回收站,可还原", en: "Delete this image? It goes to the trash and can be restored" },
   "viewer.deleteYes": { zh: "删除", en: "Delete" },
-  "viewer.deleted": { zh: "已删除该图", en: "Image deleted" },
+  "viewer.deleted": { zh: "已移到回收站", en: "Moved to the trash" },
   "viewer.pending": { zh: "还没记下", en: "Not saved yet" },
   "viewer.pendingOfN": { zh: "还没记下 · {i}/{total}", en: "Not saved yet · {i}/{total}" },
   "viewer.removeQ": { zh: "把这张图从暂存里移除?它还没记下", en: "Remove this image from the draft? It hasn't been saved yet" },
