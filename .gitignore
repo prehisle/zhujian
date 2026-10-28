@@ -1,5 +1,5 @@
 # 依赖 / 构建产物 / Tauri 自动生成 —— 按目录名通配,任意深度都命中(607 起)。
-# ⛔ 别改回逐工程列的形:七个独立 crate(刻意不建 workspace,Cargo.lock 各自提交)每加一只
+# ⛔ 别改回逐工程列的形:多个独立 crate(刻意不建 workspace,Cargo.lock 各自提交)每加一只
 # 就要多列一行,漏一行 `git add -A` 就开始吞 target/(2026-08-23 真栽过:1.6 GB 松散对象、一次 add 卡满 2 分钟)。
 # 已核:通配不覆盖任何已跟踪路径(`git ls-files -i -c --exclude-standard` 为空)。
 node_modules/
