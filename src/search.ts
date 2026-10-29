@@ -2,6 +2,7 @@ import { invoke } from "./space";
 import { focusBoardView, focusTask } from "./board";
 import { t } from "./i18n";
 import { focusInboxItem } from "./inbox";
+import { focusDoc } from "./docs";
 import type { View, ViewCtx } from "./notebook";
 import { when } from "./tasktime";
 import { applyTagColor } from "./tag-color";
@@ -17,7 +18,7 @@ type SearchHit = {
   id: string;
   content: string;
   created_at: string;
-  status: "inbox" | "processed" | "archived" | "task" | "sealed";
+  status: "inbox" | "processed" | "doc" | "archived" | "task" | "sealed";
   topics: { title: string; color: string | null }[];
 };
 
@@ -27,6 +28,7 @@ type SearchHit = {
 const STATUS_LABEL: Record<SearchHit["status"], string> = {
   inbox: t("search.statusIdeas"),
   processed: t("search.statusIdeas"),
+  doc: t("search.statusDoc"), // 长文(0042;归属由 core 判,这里只认词)
   archived: t("search.statusTrash"),
   task: t("search.statusTask"),
   sealed: t("search.statusSealed"), // 成就归档(sealed 轴)——已入册的干完的活,不在看板上
@@ -118,11 +120,14 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
     } else if (hit.status === "inbox" || hit.status === "processed") {
       focusInboxItem(hit.id, "ideas");
       ctx.navigate("inbox");
+    } else if (hit.status === "doc") {
+      focusDoc(hit.id);
+      ctx.navigate("docs");
     } else if (hit.status === "sealed") {
       focusTask(hit.id);
       focusBoardView("sealed");
       ctx.navigate("board");
-    } else {
+    } else if (hit.status === "archived") {
       // archived 命中不带 stage:用现成读命令就地判归属。读失败=真读失败,走错误页
       // (可重搜),不猜着跳(fail-fast,无静默兜底)。await 期间改搜/离开视图 = 本次
       // 跳转作废,旧回包不许盖过更新的动作(codex P1 审 M2)。
@@ -142,6 +147,11 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
         if (jumpSeq !== myJump || shown !== q || !view.isConnected) return;
         renderError(errText(err));
       }
+    } else {
+      // 认不得的去向 = core 的分类词汇多了一种而这里没接(0042 之前「长文」就会落进上面那支
+      // 被当成回收站)。⛔ 别再写成兜底的 else。
+      const never: never = hit.status;
+      throw new Error(`search: unknown status ${String(never)}`);
     }
   }
 

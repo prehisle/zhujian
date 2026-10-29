@@ -150,6 +150,7 @@
    这一族里只剩 `sealed`(归档)一处,而那枚的**字**本来就与别的不同 ⇒ 颜色不再重复一个词。 */
 .v-search .badge.inbox,
 .v-search .badge.processed { color: var(--ink-soft); }
+.v-search .badge.doc { color: var(--ink); } /* 长文(0042) */
 .v-search .badge.task { color: var(--ink); background: color-mix(in srgb, var(--ink) 5%, transparent); }
 .v-search .badge.archived { color: var(--ink-faint); font-style: italic; }
 /* 归档(成就册):正经存档,不是垃圾——朱砂描边、不斜体 */

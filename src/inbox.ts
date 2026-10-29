@@ -73,6 +73,9 @@ type IdeaItem = {
   /** 出生设备(0033 born_device),null = 未知(0033 前的存量行)。经 identity.ts 翻成
    *  署名 chip;只在「不是本机」且「那台起过别名」时显,回收站 tab 不显。 */
   born_device: string | null;
+  /** 长文标记(0042):活跃随记恒 null;回收站里的长文带着它,只拿来画一枚「长文」小标(归属以
+   *  core 为准,⛔ 别据它另判)。 */
+  doc_at: string | null;
   topics: IdeaTag[];
 };
 // list_topics 载真值:`kind`(自由文本类型,0031)或 null = 无类型 —— 类型轴 pill 行
@@ -142,6 +145,7 @@ type CardItem = {
   created_at: string;
   /** 出生设备(0033),可缺——回收站行也走这个形,只是不渲染署名。 */
   born_device?: string | null;
+  doc_at?: string | null;
   topics?: IdeaTag[];
 };
 
@@ -516,10 +520,10 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
   // the active tab's last card leaves.
   /** 撤销回执的反向命令(716):成功即整列 refresh 让卡回来;失败走错误回执(卡已离场,没有
    *  就地报错的落点)。mount 死了(切了视图 / 空间)按下作废 —— invoke 注入的是当前空间。 */
-  async function undoVia(cmd: string, id: string): Promise<void> {
+  async function undoVia(cmd: string, id: string, extra: Record<string, unknown> = {}): Promise<void> {
     if (unmounted) return;
     try {
-      await invoke(cmd, { id });
+      await invoke(cmd, { id, ...extra });
     } catch (e) {
       toastError(t("common.undoFailed", { err: errDetail(e) }));
       return;
@@ -602,6 +606,8 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     // 想法 sits in a per-day timeline → time-of-day only; 回收站 is flat → full stamp.
     const stamp = mode === "ideas" ? hm.format(new Date(item.created_at)) : when(item.created_at);
     const timeT = el("time", { className: "note-time", textContent: stamp });
+    // 回收站里的长文:还原后回的是长文视图,不是这里 —— 一枚小标说清它是哪一种。
+    if (mode === "archived" && item.doc_at) timeT.append(el("span", { className: "doc-badge", textContent: t("inbox.docBadge") }));
     // 署名(0033):只在「想法」tab 显——回收站是「已处理完」的语境,署名价值低噪音高
     // (2026-08-05 用户拍板的铺开范围)。挂进时间戳那一行,与它同一档存在感。
     if (mode === "ideas") {
@@ -944,6 +950,19 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       toastUndo(t("inbox.undoPromoted"), t("common.undo"), () => void undoVia("revert_task_to_inbox", item.id));
     }
 
+    // ---- 展开成长文(longform-plan §1:只翻 doc_at,零副本、不进编辑历史)----
+    // 与「转待办」并列的第二个出口:卡片离开随记、去「长文」视图;配撤销(收回 = 同一格翻回来)。
+    async function doExpand(): Promise<void> {
+      try {
+        await invoke("set_doc", { id: item.id, on: true });
+      } catch (e) {
+        showOpErr(errText(e));
+        return;
+      }
+      leaveCard(note, "ideas", null);
+      toastUndo(t("inbox.undoExpanded"), t("common.undo"), () => void undoVia("set_doc", item.id, { on: false }));
+    }
+
     // ---- 归纳主题 (manual file into an existing/new topic) ----
     // 打标签:输入即筛选的选择器(搜既有 + 无匹配冒「创建」),和看板 openPicker 同一套。
     // Esc / 点选择器以外任意处收起(armDismiss 文档级),不再挂「取消」按钮——⑧-1 修:老实现
@@ -1204,6 +1223,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       if (otherSpaces.length > 0 && !movePartialNote(item.id)) {
         list.push({ label: t("inbox.actMove"), key: IDEA_CARD_KEYS.move, run: openMove });
       }
+      list.push({ label: t("inbox.actExpand"), key: IDEA_CARD_KEYS.expand, run: doExpand });
       // 73: 删除=进回收站,不再按 stage 分流(59 的 inbox 硬删 UI 就此退役——tombstone
       // 在同步语义里是全网抹掉、不可复活,不该是删除键的默认归宿)。软删可还原,故与
       // filed 先例一致零确认;真要销毁走回收站的「彻底删除」。

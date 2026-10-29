@@ -9,6 +9,7 @@ export const shell = defineMessages({
   "shell.spacesEntry": { zh: "空间…", en: "Spaces…" },
   "shell.personalSpace": { zh: "个人空间", en: "Personal space" },
   "shell.navIdeas": { zh: "随记", en: "Notes" },
+  "shell.navDocs": { zh: "长文", en: "Long-form" },
   "shell.navTasks": { zh: "任务", en: "Tasks" },
   "shell.navTags": { zh: "标签", en: "Tags" },
   "shell.navSearch": { zh: "搜索", en: "Search" },

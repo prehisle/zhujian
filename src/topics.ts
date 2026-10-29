@@ -10,6 +10,7 @@ import { TAG_COLORS } from "./tag-color";
 import { t } from "./i18n";
 import "./topics.css";
 import { el, onDragTarget } from "./dom";
+import { docTitle } from "./docs";
 import { errDetail, errText } from "./err";
 
 // 标签视图。底层数据是 topics/item_topic(命令名、表名沿用 topic),对用户重定位为
@@ -27,6 +28,8 @@ type TopicTree = {
   /** 标签类型自由文本(0031)或 null=无类型 —— 可标「人名」等,供日后按类型筛选。 */
   kind: string | null;
   notes: TopicNote[];
+  /** 挂这枚标签的长文(0042;与 notes 互斥 —— 随记 / 长文 / 任务三类计数,归属由 core 判)。 */
+  docs: TopicNote[];
 };
 
 // 任务的列名(下钻态只读展示用)。**B-f 第 1 段起从库里来** —— 列可改名 / 增删,这里
@@ -223,7 +226,11 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     if (topic.kind) kindBadge.classList.add("on");
     const countEl = el("span", {
       className: "topic-count",
-      textContent: t("topics.counts", { ideas: topic.notes.length, tasks: tasks.length }),
+      // 没有长文的标签照旧只报两类(多一个恒为 0 的数是噪音)
+      textContent:
+        topic.docs.length > 0
+          ? t("topics.countsDocs", { ideas: topic.notes.length, docs: topic.docs.length, tasks: tasks.length })
+          : t("topics.counts", { ideas: topic.notes.length, tasks: tasks.length }),
     });
     const keepBadge = el("span", { className: "keep-badge", textContent: t("topics.keep") });
 
@@ -534,6 +541,25 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       el("h2", { className: "drill-h", textContent: t("topics.ideasCount", { n: topic.notes.length }) }),
       el("div", { className: "drill-notes" }, noteCards),
     ]);
+    // 长文:只列题目(正文可能有几万字,下钻是扫一眼的地方);没有就整节不出
+    const docsSec =
+      topic.docs.length > 0
+        ? [
+            el("section", { className: "drill-sec" }, [
+              el("h2", { className: "drill-h", textContent: t("topics.docsCount", { n: topic.docs.length }) }),
+              el(
+                "div",
+                { className: "drill-notes" },
+                topic.docs.map((n) =>
+                  el("article", { className: "tnote" }, [
+                    el("p", { className: "tnote-text", textContent: docTitle(n.content) || t("docs.untitled") }),
+                    el("time", { className: "tnote-time", textContent: when(n.created_at) }),
+                  ]),
+                ),
+              ),
+            ]),
+          ]
+        : [];
     const taskCards = tasks.length
       ? tasks.map((t) => taskRow(t, today))
       : [el("div", { className: "drill-empty", textContent: t("topics.noTasks") })];
@@ -541,7 +567,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       el("h2", { className: "drill-h", textContent: t("topics.tasksCount", { n: tasks.length }) }),
       el("div", { className: "drill-tasks" }, taskCards),
     ]);
-    return el("div", { className: "topic-body" }, [notesSec, tasksSec]);
+    return el("div", { className: "topic-body" }, [notesSec, ...docsSec, tasksSec]);
   }
 
   // Clear any drop indicator across all live rows (called on dragover re-hint / drop / end).

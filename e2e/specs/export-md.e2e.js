@@ -19,6 +19,8 @@ const NOTE = "E2E-导出-甲:第一行\n第二行";
 const TODO = "E2E-导出-待办";
 const DONE = "E2E-导出-已完成";
 const SEALED = "E2E-导出-已归档";
+// 长文(longform 第 3 格):不进随记.md,一篇一个文件住「长文/」
+const DOC = "# E2E-导出-长文\n\n正文一段。";
 
 let outDir = null;
 
@@ -44,6 +46,9 @@ describe("设置 · 导出为 Markdown", () => {
     const s = await invoke("create_task", { title: SEALED });
     await invoke("update_task_status", { id: s, to: "done" });
     await invoke("seal_task", { id: s });
+    const docId = await invoke("capture_doc", { content: DOC });
+    await invoke("file_note_to_topic", { id: docId, topicId: tagId, newTitle: null });
+    await invoke("add_item_image", { itemId: docId, mime: "image/png", dataB64: PNG });
   });
 
   after(() => {
@@ -101,5 +106,20 @@ describe("设置 · 导出为 Markdown", () => {
     expect(sealedAt).toBeGreaterThan(0);
     expect(md.indexOf(`- [x] ${SEALED}`)).toBeGreaterThan(sealedAt);
     expect(md.indexOf(`${DONE} ·`)).toBeLessThan(sealedAt);
+  });
+
+  it("长文:一篇一个文件住「长文/」,正文原样、图链接回到导出根、末尾注明写于何时与标签;随记.md 里没有它", async () => {
+    const dir = join(outDir, "长文");
+    const name = readdirSync(dir).find((n) => readFileSync(join(dir, n), "utf8").startsWith(DOC));
+    expect(name).toMatch(/^\d{4}-\d{2}-\d{2}-\d{4}-[0-9A-Z]{6}\.md$/);
+    const lines = readFileSync(join(dir, name), "utf8").split("\n");
+    expect(lines.slice(0, 3)).toEqual(DOC.split("\n"));
+    const img = /^!\[图1\]\(\.\.\/(图\/[^)]+-图1\.png)\)$/;
+    expect(lines[3]).toBe("");
+    expect(lines[4]).toMatch(img);
+    expect(readFileSync(join(outDir, ...lines[4].match(img)[1].split("/")))).toEqual(Buffer.from(PNG, "base64"));
+    expect(lines.slice(5, 7)).toEqual(["", "---"]);
+    expect(lines[7]).toMatch(new RegExp(`^写于 \\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2} · #${TAG}$`));
+    expect(readFileSync(join(outDir, "随记.md"), "utf8")).not.toContain("E2E-导出-长文");
   });
 });

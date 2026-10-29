@@ -322,6 +322,8 @@ async function cornerMenuAction(cardSel, key, content, label) {
 }
 export const inboxAction = (content, label) => cornerMenuAction(".note", null, content, label);
 export const boardAction = (content, label) => cornerMenuAction(".tcard", null, content, label);
+// 长文阅读页(longform 第 3 格):整页是一张注册过 ⋯ 的「卡」
+export const docAction = (content, label) => cornerMenuAction(".doc-page", null, content, label);
 // 回收站「已删配图」那一节(用户面 149):按宿主正文认组,点组里**第一行**的 ⋯ ——
 // 调用方让那一组只有一张已删图,行就是唯一的。
 export const trashImageAction = (owner, label) => cornerMenuAction(".trash-imgs-group", null, owner, label);

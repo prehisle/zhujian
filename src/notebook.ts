@@ -5,6 +5,7 @@ import { listen } from "@tauri-apps/api/event";
 import { mount as mountInbox, inboxHasStashedDraft, focusInboxItem } from "./inbox";
 import { mount as mountBoard, boardHasStashedDraft, focusTask, focusBoardView } from "./board";
 import { mount as mountTopics } from "./topics";
+import { mount as mountDocs, focusDoc } from "./docs";
 import { mount as mountSearch } from "./search";
 import { parseDeepLink, consumePendingDeepLink } from "./deeplink";
 import { t, initLang, applyStaticI18n } from "./i18n";
@@ -37,7 +38,7 @@ import { errDetail, errText } from "./err";
 // The notebook is one window hosting many views. Only one view is mounted into
 // the shared content root at a time, so each view can own page-scoped DOM ids
 // (e.g. #list) without colliding with its siblings.
-export type ViewName = "inbox" | "board" | "topics" | "search";
+export type ViewName = "inbox" | "docs" | "board" | "topics" | "search";
 
 export interface View {
   unmount(): void;
@@ -56,6 +57,7 @@ export type MountFn = (root: HTMLElement, ctx: ViewCtx) => View;
 // inbox (灵感) is the default landing view; all four are reached from the sidebar.
 const registry: Record<ViewName, MountFn> = {
   inbox: mountInbox,
+  docs: mountDocs,
   board: mountBoard,
   topics: mountTopics,
   search: mountSearch,
@@ -256,6 +258,10 @@ function routeToItem(item: string, loc: string): void {
     case "trash-idea":
       focusInboxItem(item, "archived");
       navigate("inbox");
+      break;
+    case "doc":
+      focusDoc(item);
+      navigate("docs");
       break;
     default:
       navigate(currentName); // 不认识的定位词:至少把主窗落到当前视图(不该发生)

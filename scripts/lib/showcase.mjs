@@ -18,6 +18,8 @@
 //   tasks    [标题, 列, 截止(距今天几天 / null), 优先级, 标签下标];带清单的那张标题里含换行
 //   story    只给商店图用的几样(官网配图不写它们):featured 的第一版(再改成 featured ⇒ 留一条历史)、
 //            挂在带清单那张任务上的两句留言、三条做完归档了的任务(归档册里有得看)。只有中文:商店图只出中文。
+//   docs     [第一版, 最终版 | null, 标签下标] 长文(longform 第 3 格):只在 `docs: true` 时写(桌面截图基线),
+//            官网 / 手机配图不写它们 —— 手机那棵还没有长文面。有最终版的那篇改过一次 ⇒ 历史与比对有得看。
 export const SHOWCASE = {
   zh: {
     space: "生活",
@@ -42,6 +44,14 @@ export const SHOWCASE = {
       ["换掉厨房那只坏了的灯泡", "done", null, null, 0],
       ["给同事回邮件", "done", null, null, 1],
     ],
+    docs: [
+      [
+        "# 关于纸质笔记本\n\n为什么我还是会回到纸上。\n\n## 好在哪儿\n\n- 不会有消息来打断\n- 翻开就是上次停下的地方\n\n> 笔记本是一个地方,不是一条信息流。",
+        "# 关于纸质笔记本\n\n为什么我还是会回到纸上,哪怕每台设备上都装着记事的软件。\n\n## 好在哪儿\n\n- 写的时候不会有消息来打断\n- 翻开就是上次停下的地方\n- **划掉的字**也是记录的一部分\n\n## 还想试试\n\n- [x] 一本 A5 点阵本\n- [ ] 一支不洇墨的钢笔\n\n> 笔记本是一个地方,不是一条信息流。\n\n相关:https://example.com/paper",
+        2,
+      ],
+      ["# 出门清单(长版)\n\n两周出差要带的,按包分好。", null, 0],
+    ],
   },
   en: {
     space: "Life",
@@ -60,6 +70,14 @@ export const SHOWCASE = {
       ["Replace the broken kitchen bulb", "done", null, null, 0],
       ["Reply to a colleague's email", "done", null, null, 1],
     ],
+    docs: [
+      [
+        "# Notes on paper notebooks\n\nWhy I keep coming back to paper.\n\n## What works\n\n- Nothing pings me\n- The page remembers where I left off\n\n> A notebook is a place, not a feed.",
+        "# Notes on paper notebooks\n\nWhy I keep coming back to paper, even with an app on every device.\n\n## What works\n\n- Nothing pings me while I write\n- The page remembers where I left off\n- **Crossing things out** is part of the record\n\n## Still to try\n\n- [x] A dotted A5 notebook\n- [ ] A fountain pen that doesn't smudge\n\n> A notebook is a place, not a feed.\n\nMore on this: https://example.com/paper",
+        2,
+      ],
+      ["# Packing list, long version\n\nEverything for the two-week trip, sorted by bag.", null, 0],
+    ],
   },
 };
 
@@ -68,7 +86,7 @@ export const SHOWCASE = {
  * 入参形同名同形(都带 spaceId),差别只在写随记那条:桌面 `capture_note`、手机 `capture_idea`。
  * ⛔ 写入顺序就是时间轴顺序,别为了「好读」重排。
  */
-export function seedScript(lang, { spaceId, captureCmd, story = false }) {
+export function seedScript(lang, { spaceId, captureCmd, story = false, docs = false }) {
   const D = SHOWCASE[lang];
   if (!D) throw new Error(`展示库只有 zh / en:${lang}`);
   if (story && !D.story) throw new Error(`展示库的 story 只有中文那份:${lang}`);
@@ -93,6 +111,13 @@ export function seedScript(lang, { spaceId, captureCmd, story = false }) {
   for (const [c, t] of D.filed) {
     const id = await inv(${JSON.stringify(captureCmd)}, { content: c });
     await inv("file_note_to_topic", { id, topicId: topicIds[t], newTitle: null });
+  }
+  if (${JSON.stringify(docs)}) {
+    for (const [first, last, t] of D.docs) {
+      const id = await inv("capture_doc", { content: first });
+      if (last !== null) await inv("edit_note", { id, content: last });
+      await inv("file_note_to_topic", { id, topicId: topicIds[t], newTitle: null });
+    }
   }
   const story = ${JSON.stringify(story)};
   const featuredId = await inv(${JSON.stringify(captureCmd)}, { content: story ? D.story.featuredFirst : D.featured });

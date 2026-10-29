@@ -1,0 +1,412 @@
+/* 长文视图(longform-plan 第 3 格)— 全部选择器挂在 .v-docs 下,不渗进壳与别的视图。
+   列表卡与随记卡同一套纸面语汇(raised 渐变 + card-shadow);阅读页是一栏居中的正文,
+   Markdown 的块样式只在 .doc-body / .doc-preview 里生效(共用渲染器只给固定的几个 class)。 */
+.v-docs {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  position: relative;
+}
+.v-docs header,
+.v-docs main { position: relative; z-index: 1; }
+/* 顶栏同随记(右侧留出浮动窗控的死区) */
+.v-docs header {
+  flex: none;
+  padding: 20px calc(var(--winctl-dead) + 30px) 12px 30px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  border-bottom: 1px solid var(--line);
+}
+.v-docs main {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px 30px 28px;
+}
+
+/* ---- 列表 ---- */
+.v-docs .doc-list { display: flex; flex-direction: column; gap: 10px; max-width: 860px; }
+.v-docs .doc-card {
+  position: relative; /* ⋯ 菜单的锚 */
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: 14px 40px 13px 18px;
+  background: linear-gradient(180deg, var(--raised), var(--raised-edge));
+  box-shadow: var(--card-shadow);
+  cursor: pointer;
+  animation: rise 0.3s ease both;
+  transition: border-color 0.16s;
+}
+.v-docs .doc-card:hover { border-color: var(--line-strong); }
+.v-docs .doc-card.is-active { border-color: var(--seal-line); z-index: 4; }
+.v-docs .doc-card-title {
+  margin: 0;
+  font-family: var(--font-serif);
+  font-size: var(--fs-17);
+  font-weight: 600;
+  line-height: 1.45;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.v-docs .doc-card-title.untitled { color: var(--ink-soft); font-weight: 400; }
+.v-docs .doc-card-ex {
+  margin: 5px 0 0;
+  font-family: var(--font-serif);
+  font-size: var(--fs-14);
+  line-height: 1.6;
+  color: var(--ink-soft);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+}
+.v-docs .doc-card-ex:empty { display: none; }
+.v-docs .doc-card-time {
+  display: block;
+  margin-top: 7px;
+  font-size: var(--fs-12);
+  letter-spacing: 0.03em;
+  color: var(--ink-soft);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- 标签 chip(只读;增删走 ⋯ 菜单 L,同随记编辑态) ---- */
+.v-docs .tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 9px; }
+.v-docs .tags:empty { display: none; }
+.v-docs .tag {
+  font-size: var(--fs-12);
+  letter-spacing: 0.02em;
+  padding: 2px 9px;
+  border-radius: var(--radius-pill);
+  color: var(--ink-soft);
+  background: var(--seal-tint);
+  border: 1px solid var(--seal-line);
+}
+.v-docs .tag.tinted {
+  border-color: color-mix(in srgb, var(--tag-color) 55%, var(--line-strong));
+  background: color-mix(in srgb, var(--tag-color) 12%, var(--paper));
+}
+.v-docs .tag.tinted::before { content: "●"; color: var(--tag-color); margin-right: 3px; }
+
+/* ---- 阅读页 / 编辑器 / 历史页共用的那一行工具条 ---- */
+.v-docs .doc-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  margin-bottom: 16px;
+}
+.v-docs .doc-bar.narrow { max-width: 860px; }
+.v-docs .doc-bar-gap { flex: 1; }
+.v-docs .segs {
+  display: inline-flex;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-pill);
+  overflow: hidden;
+}
+.v-docs .seg {
+  font: inherit;
+  font-size: var(--fs-13);
+  min-height: 28px;
+  padding: 4px 14px;
+  background: transparent;
+  border: 0;
+  color: var(--ink-soft);
+  cursor: pointer;
+}
+.v-docs .seg.on { color: var(--seal-ink-on-seal-tint); background: var(--seal-tint); }
+.v-docs .doc-status { font-size: var(--fs-12); color: var(--ink-faint); }
+.v-docs .doc-status.bad { color: var(--seal-ink); }
+
+/* ---- 阅读页 ---- */
+.v-docs .doc-page {
+  position: relative;
+  max-width: 860px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: 26px 48px 22px 34px;
+  background: linear-gradient(180deg, var(--raised), var(--raised-edge));
+  box-shadow: var(--card-shadow);
+}
+.v-docs .doc-page.is-active { border-color: var(--line-strong); }
+.v-docs .doc-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 14px;
+  font-size: var(--fs-12);
+  letter-spacing: 0.03em;
+  color: var(--ink-soft);
+  font-variant-numeric: tabular-nums;
+}
+.v-docs .doc-draft {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  margin: -6px 0 16px;
+  padding: 8px 12px;
+  font-size: var(--fs-13);
+  color: var(--seal-ink-on-seal-tint);
+  background: var(--seal-tint);
+  border: 1px solid var(--seal-line);
+  border-radius: var(--radius-sm);
+}
+.v-docs .doc-draft span { flex: 1; }
+.v-docs .doc-note { margin: 0 0 12px; font-size: var(--fs-12); color: var(--ink-soft); }
+.v-docs .doc-note[hidden] { display: none; }
+
+/* ---- Markdown 正文(阅读页与编辑器的预览同一套) ---- */
+.v-docs .md {
+  font-family: var(--font-serif);
+  font-size: var(--fs-16);
+  line-height: 1.75;
+  color: var(--ink);
+  word-break: break-word;
+}
+/* 段落里的换行是原样留在文本节点里的(共用渲染器头注),靠 pre-wrap 显出来 */
+.v-docs .md p,
+.v-docs .md li,
+.v-docs .md h1,
+.v-docs .md h2,
+.v-docs .md h3 { white-space: pre-wrap; }
+.v-docs .md.md-plain { white-space: pre-wrap; font-size: var(--fs-15); }
+.v-docs .md > :first-child { margin-top: 0; }
+.v-docs .md > :last-child { margin-bottom: 0; }
+.v-docs .md p { margin: 0 0 0.9em; }
+.v-docs .md h1,
+.v-docs .md h2,
+.v-docs .md h3 { line-height: 1.4; margin: 1.3em 0 0.55em; }
+.v-docs .md h1 { font-size: var(--fs-24); }
+.v-docs .md h2 { font-size: var(--fs-20); }
+.v-docs .md h3 { font-size: var(--fs-17); }
+.v-docs .md ul,
+.v-docs .md ol { margin: 0 0 0.9em; padding-left: 1.6em; }
+.v-docs .md li > p { margin: 0; }
+.v-docs .md li.md-task { list-style: none; position: relative; }
+.v-docs .md li.md-task > .ckbox { position: absolute; left: -1.5em; top: 0.38em; }
+/* 勾过的项:方框实心 + 文字压淡(同随记正文的 .ckline.on;⛔ 不划删除线,理由见 item-images.css) */
+.v-docs .md li.md-task.on > .ckbox { background: var(--seal); border-color: var(--seal); color: var(--on-seal); }
+.v-docs .md li.md-task.on > .ckbox::after { content: "✓"; }
+.v-docs .md li.md-task.on > p { color: var(--ink-soft); }
+.v-docs .md blockquote {
+  margin: 0 0 0.9em;
+  padding: 2px 0 2px 14px;
+  border-left: 3px solid var(--line-strong);
+  color: var(--ink-soft);
+}
+.v-docs .md blockquote > :last-child,
+.v-docs .md li > :last-child { margin-bottom: 0; }
+.v-docs .md hr { border: 0; border-top: 1px solid var(--line-strong); margin: 1.4em 0; }
+.v-docs .md code.md-code {
+  font-family: Consolas, "Courier New", monospace;
+  font-size: var(--fs-14);
+  padding: 1px 5px;
+  border-radius: var(--radius-xs);
+  background: color-mix(in srgb, var(--ink) 7%, transparent);
+}
+.v-docs .md pre {
+  position: relative;
+  margin: 0 0 0.9em;
+  padding: 12px 14px;
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--ink) 6%, transparent);
+  overflow-x: auto;
+}
+.v-docs .md pre code {
+  font-family: Consolas, "Courier New", monospace;
+  font-size: var(--fs-13);
+  line-height: 1.6;
+  white-space: pre;
+}
+.v-docs .md .md-lang {
+  display: block;
+  margin-bottom: 4px;
+  font-family: var(--font-sans);
+  font-size: var(--fs-12);
+  color: var(--ink-faint);
+}
+.v-docs .md .md-link {
+  color: var(--seal-ink);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-color: var(--seal-line);
+  cursor: pointer;
+}
+.v-docs .md .md-link:hover { text-decoration-color: var(--seal); }
+.v-docs .md .md-link-off { color: var(--ink-soft); }
+
+/* ---- 编辑器 ---- */
+.v-docs .doc-edit-page { max-width: 860px; display: flex; flex-direction: column; gap: 10px; }
+.v-docs .doc-editor { display: grid; grid-template-columns: 1fr; gap: 16px; }
+.v-docs .doc-area {
+  width: 100%;
+  min-height: calc(100vh - 230px);
+  font: inherit;
+  font-family: var(--font-serif);
+  font-size: var(--fs-15);
+  line-height: 1.7;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  padding: 16px 18px;
+  outline: none;
+  resize: none;
+  white-space: pre-wrap;
+  transition: border-color 0.14s;
+}
+.v-docs .doc-area:focus { border-color: var(--seal-line); }
+.v-docs .doc-preview {
+  display: none;
+  min-height: calc(100vh - 230px);
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius-md);
+  padding: 16px 20px;
+}
+.v-docs .doc-editor.show-preview .doc-area { display: none; }
+.v-docs .doc-editor.show-preview .doc-preview { display: block; }
+/* 宽屏并排:左写右看,「编辑 / 预览」那组切换就用不着了 */
+@media (min-width: 1180px) {
+  .v-docs .doc-edit-page { max-width: none; }
+  .v-docs .doc-editor { grid-template-columns: 1fr 1fr; }
+  .v-docs .doc-editor .doc-preview,
+  .v-docs .doc-editor.show-preview .doc-area { display: block; }
+  .v-docs .doc-bar .segs { display: none; }
+}
+.v-docs .form-err {
+  margin: 0;
+  color: var(--seal-ink-on-seal-tint);
+  font-size: var(--fs-12);
+  background: var(--seal-tint);
+  border: 1px solid var(--seal-line);
+  border-radius: var(--radius-sm);
+  padding: 7px 10px;
+  white-space: pre-wrap;
+}
+.v-docs .form-err[hidden] { display: none; }
+
+/* 按钮:同随记的 .do / .no */
+.v-docs .do,
+.v-docs .no {
+  font: inherit;
+  font-size: var(--fs-12);
+  letter-spacing: 0.04em;
+  border-radius: var(--radius-pill);
+  padding: 6px 15px;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: background 0.14s, color 0.14s, border-color 0.14s;
+}
+.v-docs .do { background: var(--seal); border-color: var(--seal); color: var(--on-seal); font-weight: 600; }
+.v-docs .do:hover { background: color-mix(in srgb, var(--seal) 88%, var(--ink)); }
+.v-docs .no { background: transparent; color: var(--ink-soft); border-color: var(--line-strong); }
+.v-docs .no:hover { color: var(--ink); background: color-mix(in srgb, var(--ink) 6%, transparent); }
+
+/* ---- 历史与比对 ---- */
+.v-docs .hv-title {
+  font-size: var(--fs-13);
+  color: var(--ink-soft);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 420px;
+}
+.v-docs .hv { display: grid; grid-template-columns: 1fr; gap: 18px; }
+@media (min-width: 1100px) {
+  .v-docs .hv { grid-template-columns: 300px 1fr; align-items: start; }
+}
+.v-docs .hv-side { display: flex; flex-direction: column; gap: 6px; }
+.v-docs .hv-list { display: flex; flex-direction: column; gap: 2px; }
+.v-docs .hv-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 32px;
+  padding: 2px 4px 2px 10px;
+  border-radius: var(--radius-sm);
+}
+.v-docs .hv-row:hover { background: color-mix(in srgb, var(--ink) 4%, transparent); }
+.v-docs .hv-when { font-size: var(--fs-13); color: var(--ink); font-variant-numeric: tabular-nums; }
+.v-docs .hv-chars { flex: 1; font-size: var(--fs-12); color: var(--ink-faint); }
+.v-docs .hv-picks { display: inline-flex; gap: 4px; }
+.v-docs .hv-pick {
+  font: inherit;
+  font-size: var(--fs-12);
+  min-width: 28px;
+  min-height: 24px;
+  padding: 2px 7px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--ink-faint);
+  cursor: pointer;
+}
+.v-docs .hv-pick:hover { color: var(--ink); }
+.v-docs .hv-pick.on { color: var(--seal-ink-on-seal-tint); border-color: var(--seal-line); background: var(--seal-tint); font-weight: 600; }
+.v-docs .hist-more {
+  align-self: flex-start;
+  font: inherit;
+  font-size: var(--fs-12);
+  color: var(--ink-soft);
+  background: transparent;
+  border: 0;
+  padding: 4px 10px;
+  min-height: 28px;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-color: var(--line-strong);
+}
+.v-docs .hist-more[hidden] { display: none; }
+.v-docs .hv-diff { min-width: 0; }
+.v-docs .hv-head { margin-bottom: 8px; font-size: var(--fs-13); color: var(--ink-soft); font-variant-numeric: tabular-nums; }
+/* 差异块:正文原样(不渲染 Markdown),换行由 pre-wrap 显出来;相等的连续行合成一块(2b),
+   ⛔ 别把「一个元素」当「一个物理行」加行为。删的标红(朱砂)、加的标绿,行内命中再加深一档。 */
+.v-docs .diff {
+  font-family: var(--font-serif);
+  font-size: var(--fs-14);
+  line-height: 1.7;
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--raised);
+  padding: 10px 0;
+  overflow-x: auto;
+}
+.v-docs .diff > div { white-space: pre-wrap; word-break: break-word; padding: 0 16px; }
+.v-docs .diff-eq { color: var(--ink-soft); }
+.v-docs .diff-del { background: color-mix(in srgb, var(--seal) 10%, transparent); }
+.v-docs .diff-ins { background: color-mix(in srgb, var(--ok) 13%, transparent); }
+.v-docs .diff-del .diff-hl { background: color-mix(in srgb, var(--seal) 26%, transparent); text-decoration: line-through; text-decoration-color: var(--seal-line); }
+.v-docs .diff-ins .diff-hl { background: color-mix(in srgb, var(--ok) 30%, transparent); }
+.v-docs .diff.diff-raw { padding: 12px 0; }
+.v-docs .diff-raw-old,
+.v-docs .diff-raw-new { margin-bottom: 12px; }
+.v-docs .hv-rawlbl {
+  font-family: var(--font-sans);
+  font-size: var(--fs-12);
+  color: var(--ink-faint);
+  margin-bottom: 4px;
+}
+
+/* ---- 空态 / 错误 ---- */
+.v-docs .center {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  text-align: center;
+  color: var(--ink-soft);
+  animation: rise 0.4s ease both;
+}
+.v-docs .center .big { font-family: var(--font-serif); font-size: var(--fs-17); color: var(--ink); }
+.v-docs .center > div:not(.big):not(.err-box) { max-width: 360px; font-size: var(--fs-13); line-height: 1.7; }
+.v-docs .center .err-box { max-width: 460px; }

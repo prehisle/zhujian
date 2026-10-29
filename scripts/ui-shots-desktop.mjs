@@ -93,6 +93,11 @@ const LANGS = ["zh", "en"];
 const THEMES = ["light", "dark"];
 const PAGES = [
   { id: "inbox", win: "notebook", view: "inbox", desc: "随记(未归类 + 已整理)" },
+  { id: "docs", win: "notebook", view: "docs", desc: "长文列表" },
+  // 长文的三种页(longform 第 3 格):点开第一篇 → 阅读页;再点「编辑」/「历史」那两枚钮
+  { id: "doc-read", win: "notebook", view: "docs", desc: "长文 · 阅读页", docSub: "read" },
+  { id: "doc-edit", win: "notebook", view: "docs", desc: "长文 · 编辑(宽屏并排预览)", docSub: "edit" },
+  { id: "doc-history", win: "notebook", view: "docs", desc: "长文 · 历史比对", docSub: "history" },
   { id: "board", win: "notebook", view: "board", desc: "任务看板(四列)" },
   { id: "topics", win: "notebook", view: "topics", desc: "标签" },
   { id: "search", win: "notebook", view: "search", desc: "搜索(带查询词的结果态)", query: SEED_LANG === "en" ? "check-up" : "体检" },
@@ -255,7 +260,7 @@ const isCapture = (u) => /\/(index\.html)?(\?.*)?$/.test(u);
 
 // ---- 种子库(演示数据;⛔ 恒是展示库那一份,别拿真实笔记本截基线)----------------
 // 数据与三条硬要求搬进了 `lib/showcase.mjs`(官网改版第 4 格:官网配图、手机配图共用同一份)。
-const SEED = seedScript(SEED_LANG, { spaceId: "main", captureCmd: "capture_note" });
+const SEED = seedScript(SEED_LANG, { spaceId: "main", captureCmd: "capture_note", docs: true });
 
 // ---- 一张图 ------------------------------------------------------------------
 // 切档一律走「写 localStorage → reload」,⛔ 不点侧栏按钮:点击那条路要与 notebook 自己的
@@ -297,6 +302,21 @@ async function shootNotebook(cdp, page, lang, theme, file) {
     // 空态而它一路绿(第一版真这么写过,图印出来才发现;memory
     // `test-parameters-are-part-of-the-predicate`)。输入是防抖的,轮询等它到。
     await cdp.waitFor(`document.querySelectorAll("#list .hit").length > 0`, "搜索出命中卡", 8000);
+  }
+  if (page.docSub && !empty) {
+    // 按 class 认,⛔ 不认可见文字。卡片排序是「成为长文的时刻」倒序 ⇒ 第一张 = 种子里最后写的那篇,
+    // 种子把有两版的那篇写在前面 ⇒ 这里点**最后一张**才是带历史的那篇。
+    await cdp.waitFor(`document.querySelectorAll(".v-docs .doc-card").length > 1`, "长文列表出卡", 8000);
+    await cdp.evaluate(`(() => { const cs = document.querySelectorAll(".v-docs .doc-card"); cs[cs.length - 1].click(); return true; })()`);
+    await cdp.waitFor(`!!document.querySelector(".v-docs .doc-page .md")`, "长文阅读页画出正文", 8000);
+    // 工具条三枚钮的次序:← 长文 / 编辑 / 历史
+    if (page.docSub === "edit") {
+      await cdp.evaluate(`(() => { document.querySelectorAll(".v-docs .doc-bar .hbtn")[1].click(); return true; })()`);
+      await cdp.waitFor(`!!document.querySelector(".v-docs .doc-area") && !!document.querySelector(".v-docs .doc-preview .md")`, "编辑器与并排预览", 8000);
+    } else if (page.docSub === "history") {
+      await cdp.evaluate(`(() => { document.querySelectorAll(".v-docs .doc-bar .hbtn")[2].click(); return true; })()`);
+      await cdp.waitFor(`!!document.querySelector(".v-docs .hv-out .diff")`, "历史页算出差异", 8000);
+    }
   }
   if (page.settingsCat) {
     // 分类按 `data-cat` 认人,⛔ 不认可见文字 —— 文字随语言变(settings.ts:135 的原话)。

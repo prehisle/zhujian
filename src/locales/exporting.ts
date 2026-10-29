@@ -13,6 +13,8 @@ export const exporting = defineMessages({
   "export.notesFile": { zh: "随记.md", en: "Notes.md" },
   "export.boardFile": { zh: "看板.md", en: "Board.md" },
   "export.imgDir": { zh: "图", en: "images" },
+  "export.docDir": { zh: "长文", en: "Long-form" },
+  "export.docMeta": { zh: "写于 {at}", en: "Written {at}" },
   "export.imgName": { zh: "{stamp}-{tail}-图{n}", en: "{stamp}-{tail}-img{n}" },
   "export.imgAlt": { zh: "图{n}", en: "Image {n}" },
   "export.notesHead": { zh: "随记", en: "Notes" },

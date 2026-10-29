@@ -13,6 +13,8 @@ import { CARD_COLORS } from "./card-color";
 import {
   BOARD_CARD_KEYS,
   BOARD_VIEW_KEYS,
+  DOC_CARD_KEYS,
+  DOC_VIEW_KEYS,
   IDEA_CARD_KEYS,
   IDEA_VIEW_KEYS,
   TOPICS_VIEW_KEYS,
@@ -35,7 +37,20 @@ export function buildKeySheet(isMac: boolean): HTMLElement {
     copy: t("inbox.actCopy"),
     copyLink: t("inbox.actCopyLink"),
     move: t("settings.keysMoveSpace"),
+    expand: t("inbox.actExpand"),
     delete: t("inbox.actDelete"),
+  });
+
+  const docCard = rowsOf(DOC_CARD_KEYS, {
+    open: t("docs.actOpen"),
+    edit: t("docs.actEdit"),
+    history: t("docs.actHistory"),
+    tag: t("docs.actTag"),
+    comments: t("docs.actComments"),
+    collapse: t("docs.actCollapse"),
+    copy: t("docs.actCopy"),
+    copyLink: t("docs.actCopyLink"),
+    delete: t("docs.actDelete"),
   });
 
   const boardCard = rowsOf(BOARD_CARD_KEYS, {
@@ -69,6 +84,7 @@ export function buildKeySheet(isMac: boolean): HTMLElement {
       create: t("settings.keysTopicCreate"),
       merge: t("settings.keysTopicMerge"),
     }),
+    ...rowsOf(DOC_VIEW_KEYS, { compose: t("settings.keysDocCompose") }),
   ];
 
   const pick: Row[] = [
@@ -99,6 +115,7 @@ export function buildKeySheet(isMac: boolean): HTMLElement {
     [t("settings.keysGroupPick"), pick],
     [t("settings.keysGroupIdea"), ideaCard],
     [t("settings.keysGroupBoard"), boardCard],
+    [t("settings.keysGroupDoc"), docCard],
     [t("settings.keysGroupView"), views],
     [t("settings.keysGroupEdit"), editing],
   ] as const) {

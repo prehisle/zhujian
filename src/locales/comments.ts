@@ -24,6 +24,7 @@ export const comments = defineMessages({
   "search.statusTrash": { zh: "回收站", en: "Trash" },
   "search.statusTask": { zh: "任务", en: "Tasks" },
   "search.statusSealed": { zh: "归档", en: "Archive" },
+  "search.statusDoc": { zh: "长文", en: "Long-form" },
   "search.failed": { zh: "搜索失败", en: "Search failed" },
   "search.idleTitle": { zh: "在当前空间的所有条目里查找", en: "Search everything in this space" },
   "search.idleHint": { zh: "随记、任务、归档、回收站和改过的旧版本都一起搜。", en: "Notes, tasks, the archive, the trash and past versions are all searched." },

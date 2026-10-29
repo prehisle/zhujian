@@ -11,6 +11,7 @@
 //
 // 导出的范围与形状(用户 2026-09-26 拍「都按推荐」):当前空间;随记 + 看板全部列 + 归档(成就);
 // 回收站与编辑历史不出;配图写进子目录、用相对路径链接;留言按时间正序、引用块。
+// 长文(0042)一篇一个文件,住「长文」子目录(见 exportMarkdown 里那一段)。
 // 落盘(临时目录写完再改名、路径校验、图片字节不过前端)在 core::export_md 与 lib.rs::export_markdown。
 import { t } from "./i18n";
 import { currentSpaceId, invokeInSpace, listSpaces, spaceLabel } from "./space";
@@ -125,8 +126,10 @@ type ExportImage = { image_id: string; rel: string };
  */
 export async function exportMarkdown(): Promise<string> {
   const space = currentSpaceId();
-  const [ideas, tasks, sealed, cols, images, counts, spaces] = await Promise.all([
+  const [ideas, docs, tasks, sealed, cols, images, counts, spaces] = await Promise.all([
     invokeInSpace<MdIdea[]>(space, "list_ideas"),
+    // 长文(0042):随记列表不含它们,⛔ 漏了这一发长文的正文、配图、留言就静默从导出里消失
+    invokeInSpace<MdIdea[]>(space, "list_docs"),
     invokeInSpace<TaskItem[]>(space, "list_tasks"),
     invokeInSpace<TaskItem[]>(space, "list_sealed_tasks"),
     invokeInSpace<BoardColumn[]>(space, "list_board_columns"),
@@ -140,9 +143,9 @@ export async function exportMarkdown(): Promise<string> {
 
   const imgDir = t("export.imgDir");
   const files: ExportImage[] = [];
-  const extras = new Map<string, string[]>();
-  const all: { id: string; created_at: string }[] = [...ideas, ...tasks, ...sealed];
-  for (const it of all) {
+  /** 一个条目挂在正文后面的图片与留言行。`pad` = 每行前缀(随记 / 任务是列表续行缩两格,长文
+   *  顶格);`up` = 图片链接从那份文件回到导出根的前缀(长文住子目录,要 `../`)。 */
+  async function extrasOf(it: { id: string; created_at: string }, pad: string, up: string): Promise<string[]> {
     const lines: string[] = [];
     const stamp = stampOf(new Date(it.created_at));
     for (const m of images[it.id] ?? []) {
@@ -150,16 +153,32 @@ export async function exportMarkdown(): Promise<string> {
       if (!ext) throw new Error(`image ${m.id} has unexpected mime ${m.mime}`);
       const rel = `${imgDir}/${t("export.imgName", { stamp, tail: it.id.slice(-6), n: m.seq })}.${ext}`;
       files.push({ image_id: m.id, rel });
-      lines.push(`  ![${t("export.imgAlt", { n: m.seq })}](${rel})`);
+      lines.push(`${pad}![${t("export.imgAlt", { n: m.seq })}](${up}${rel})`);
     }
     if ((counts[it.id]?.n ?? 0) > 0) {
       for (const c of await allComments(space, it.id)) {
         const [cFirst, ...cRest] = c.content.split("\n");
-        lines.push("", `  > ${t("export.comment", { at: dayTime(c.created_at) })}${cFirst}`, ...cRest.map((l) => `  > ${l}`));
+        lines.push("", `${pad}> ${t("export.comment", { at: dayTime(c.created_at) })}${cFirst}`, ...cRest.map((l) => `${pad}> ${l}`));
       }
     }
     // 附加块与正文之间空一行:否则图片行会被当成正文最后一段的续行(正文以清单结尾时尤甚)。
-    if (lines.length > 0) extras.set(it.id, lines[0] === "" ? lines : ["", ...lines]);
+    return lines.length === 0 || lines[0] === "" ? lines : ["", ...lines];
+  }
+  const extras = new Map<string, string[]>();
+  const all: { id: string; created_at: string }[] = [...ideas, ...tasks, ...sealed];
+  for (const it of all) {
+    const lines = await extrasOf(it, "  ", "");
+    if (lines.length > 0) extras.set(it.id, lines);
+  }
+  // 长文一篇一个文件、原样写出(它本来就是 Markdown;塞进随记那份的列表续行里,它自己的标题
+  // 就全乱了)。文件名 = 写下的时刻 + id 尾巴,⛔ 不拿题目当文件名(要逐字清洗、还会撞名)。
+  // 末尾一行注明写于何时、挂了哪些标签 —— 这两样不在正文里,不写就丢了。
+  const docFiles: { rel: string; text: string }[] = [];
+  for (const d of docs) {
+    const tags = tagText(d.topics);
+    const foot = t("export.docMeta", { at: dayTime(d.created_at) }) + (tags ? ` · ${tags}` : "");
+    const text = [d.content.trimEnd(), ...(await extrasOf(d, "", "../")), "", "---", foot].join("\n");
+    docFiles.push({ rel: `${t("export.docDir")}/${stampOf(new Date(d.created_at))}-${d.id.slice(-6)}.md`, text: text + "\n" });
   }
 
   const at = dayTime(new Date().toISOString());
@@ -183,6 +202,7 @@ export async function exportMarkdown(): Promise<string> {
     docs: [
       { rel: t("export.notesFile"), text: notesMd.trimEnd() + "\n" },
       { rel: t("export.boardFile"), text: boardMd.trimEnd() + "\n" },
+      ...docFiles,
     ],
     images: files,
   });

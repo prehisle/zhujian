@@ -18,6 +18,7 @@ export const IDEA_CARD_KEYS = {
   copy: "C",
   copyLink: "K",
   move: "M",
+  expand: "W",
   delete: "D",
 } as const;
 
@@ -50,7 +51,22 @@ export const BOARD_TRASH_KEYS = { restore: "U", deleteForever: "D" } as const;
 /** 归档册里的卡片(与看板卡「归档」同键 A,一进一出)。 */
 export const SEALED_CARD_KEYS = { unseal: "A" } as const;
 
+/** 长文(列表卡与阅读页共用一张表;列表卡上没有历史 / 留言两项)。「收回随记」与随记卡的
+ *  「展开成长文」同键 W,一进一出(同看板卡「归档」与归档册「取出」同键 A)。 */
+export const DOC_CARD_KEYS = {
+  open: "O",
+  edit: "E",
+  history: "H",
+  tag: "L",
+  comments: "Y",
+  collapse: "W",
+  copy: "C",
+  copyLink: "K",
+  delete: "D",
+} as const;
+
 /** 视图级单键(不用选中卡片)。 */
 export const IDEA_VIEW_KEYS = { compose: "N" } as const;
 export const BOARD_VIEW_KEYS = { compose: "N", trash: "R", sealed: "G" } as const;
 export const TOPICS_VIEW_KEYS = { create: "N", merge: "M" } as const;
+export const DOC_VIEW_KEYS = { compose: "N" } as const;

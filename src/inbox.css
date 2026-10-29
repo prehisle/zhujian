@@ -310,9 +310,12 @@
 .v-inbox .no { background: transparent; color: var(--ink-soft); border-color: var(--line-strong); }
 .v-inbox .no:hover { color: var(--ink); background: color-mix(in srgb, var(--ink) 6%, transparent); }
 
-/* topic picker — 输入即筛选的标签选择器(L 键;Esc/点外收起,无取消钮),同看板 openPicker */
-.v-inbox .topic-picker { display: flex; flex-direction: column; gap: 9px; margin-top: 4px; }
-.v-inbox .topic-search {
+/* topic picker — 输入即筛选的标签选择器(L 键;Esc/点外收起,无取消钮),同看板 openPicker。
+   长文视图(.v-docs)的 ⋯「标签」用的是同一个共享件,样式也同这一份(组选择器,别抄第二份)。 */
+.v-inbox .topic-picker,
+.v-docs .topic-picker { display: flex; flex-direction: column; gap: 9px; margin-top: 4px; }
+.v-inbox .topic-search,
+.v-docs .topic-search {
   font: inherit;
   font-family: var(--font-serif);
   font-size: var(--fs-14);
@@ -325,9 +328,12 @@
   outline: none;
   transition: border-color 0.14s;
 }
-.v-inbox .topic-search:focus { border-color: var(--seal-line); }
-.v-inbox .topic-choices { display: flex; flex-wrap: wrap; gap: 7px; align-items: center; }
-.v-inbox .choice {
+.v-inbox .topic-search:focus,
+.v-docs .topic-search:focus { border-color: var(--seal-line); }
+.v-inbox .topic-choices,
+.v-docs .topic-choices { display: flex; flex-wrap: wrap; gap: 7px; align-items: center; }
+.v-inbox .choice,
+.v-docs .choice {
   font: inherit;
   font-size: var(--fs-13);
   background: var(--seal-tint);
@@ -342,15 +348,21 @@
   white-space: nowrap;
   transition: background 0.14s;
 }
-.v-inbox .choice:hover { background: color-mix(in srgb, var(--seal) 18%, var(--paper)); }
+.v-inbox .choice:hover,
+.v-docs .choice:hover { background: color-mix(in srgb, var(--seal) 18%, var(--paper)); }
 /* 已挂上的候选点亮(675):与筛选条 .tf-pill.active / 手机 .p.on 同一套语汇 —— 朱砂字 + 朱砂描边 +
    加粗;底色本来就是 seal-tint,故只多这三样。再点一次摘掉。 */
-.v-inbox .choice.on { color: var(--seal-ink-on-seal-tint); border-color: var(--seal); font-weight: 600; }
+.v-inbox .choice.on,
+.v-docs .choice.on { color: var(--seal-ink-on-seal-tint); border-color: var(--seal); font-weight: 600; }
 /* 子标签候选(499):虚线描边 = 「父的子项」,与筛选条 .tf-pill.child / 看板侧同一套语汇。 */
-.v-inbox .choice.child { border-style: dashed; }
-.v-inbox .choice.create { border-style: dashed; color: var(--seal-ink-on-seal-tint); border-color: var(--seal-line); }
-.v-inbox .choice.create:hover { background: var(--seal-tint); border-color: var(--seal); }
-.v-inbox .topic-hint { font-size: var(--fs-13); color: var(--ink-soft); }
+.v-inbox .choice.child,
+.v-docs .choice.child { border-style: dashed; }
+.v-inbox .choice.create,
+.v-docs .choice.create { border-style: dashed; color: var(--seal-ink-on-seal-tint); border-color: var(--seal-line); }
+.v-inbox .choice.create:hover,
+.v-docs .choice.create:hover { background: var(--seal-tint); border-color: var(--seal); }
+.v-inbox .topic-hint,
+.v-docs .topic-hint { font-size: var(--fs-13); color: var(--ink-soft); }
 
 /* .chips/.chip/.form-actions 现由跨空间「移动到…」表单(inbox.ts openMove)复用,仍在用;
    老打标签表单专有的 .new-topic 已随 174 标签选择器对齐删除。 */
@@ -471,3 +483,14 @@
 .v-inbox .center > div:not(.big):not(.err-box) { max-width: 330px; font-size: var(--fs-13); line-height: 1.7; }
 .v-inbox .center .err-box { max-width: 460px; } /* 其余九条声明 = 共享件 .view .center .err-box(controls.css,345)。460 vs board 480 判「有意」:340/330 与 480/460 两对同向、自初始提交 da8d68f(㊶)成对存在,判据全文见 board.css 同位注释。 */
 /* @keyframes rise 住 controls.css(全文档一份)—— keyframes 是文档级全局名,四份同名副本只有最后加载的那份生效。 */
+
+/* 回收站里的长文那枚小标(longform 第 3 格):还原后它回的是「长文」视图,不是随记 */
+.v-inbox .doc-badge {
+  margin-left: 8px;
+  font-size: var(--fs-12);
+  letter-spacing: 0.02em;
+  padding: 1px 7px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-pill);
+  color: var(--ink-soft);
+}
