@@ -50,6 +50,7 @@ export function buildKeySheet(isMac: boolean): HTMLElement {
     collapse: t("docs.actCollapse"),
     copy: t("docs.actCopy"),
     copyLink: t("docs.actCopyLink"),
+    move: t("settings.keysMoveSpace"),
     delete: t("docs.actDelete"),
   });
 

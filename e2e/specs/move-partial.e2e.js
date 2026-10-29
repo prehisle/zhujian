@@ -1,5 +1,5 @@
 import { $, expect, browser } from "@wdio/globals";
-import { invoke, goNotebook, clearInbox } from "./support.js";
+import { invoke, goNotebook, clearInbox, cornerMenuHas } from "./support.js";
 
 // 跨空间移动 · 部分成功登记(cross-space-move §4 / codex 实现审二轮)。
 // e2e 恒单空间(YS_DB_PATH 禁扫禁建),真实的移动路径不可达——本 spec 锁的是
@@ -62,5 +62,38 @@ describe("跨空间移动 · 部分成功登记的持久化", () => {
 
     const stored = await browser.execute((k) => localStorage.getItem(k) ?? "{}", KEY);
     expect(Object.keys(JSON.parse(stored))).toHaveLength(0);
+  });
+
+  // 长文(backlog 152,819 留下的桌面缺口):同一份登记,列表卡与阅读页都显提示;登记在场时
+  // ⋯ 菜单不给「移动」(单空间本来也不给 —— 这里只钉「提示在、解除后走」,入口隐藏靠同一份
+  // movePartialNote 判据,多空间那条走真机验收)。
+  it("长文:登记在场时列表卡与阅读页都显提示,阅读页解除后两处都不再出现", async () => {
+    const id = await invoke("capture_note", { content: "# E2E-移动登记-长文\n\n正文" });
+    await invoke("set_doc", { id, on: true });
+    await markPartial(id, "已复制到目标空间,但原条目删除未执行:E2E长文原话");
+    try {
+      await goNotebook("docs");
+      const cardNotice = await $(".v-docs .doc-card .move-partial");
+      await cardNotice.waitForDisplayed({ timeout: 10000 });
+      await browser.waitUntil(async () => (await cardNotice.getText()).includes("E2E长文原话"), {
+        timeout: 10000,
+        timeoutMsg: "列表卡的登记提示已显示,但迟迟没渲染出注入的原话",
+      });
+
+      await browser.execute(() => document.querySelector(".v-docs .doc-card .doc-card-title").click());
+      const pageNotice = await $(".v-docs .doc-page .move-partial");
+      await pageNotice.waitForDisplayed({ timeout: 10000 });
+      expect(await pageNotice.getText()).toContain("E2E长文原话");
+      expect(await cornerMenuHas(".v-docs .doc-page", "正文", "移动")).toBe(false);
+
+      await (await pageNotice.$("button*=解除")).click();
+      await pageNotice.waitForExist({ reverse: true, timeout: 10000 });
+      await goNotebook("docs");
+      await (await $(".v-docs .doc-card")).waitForExist({ timeout: 10000 });
+      expect(await (await $(".v-docs .move-partial")).isExisting()).toBe(false);
+    } finally {
+      await invoke("archive_note", { id });
+      await invoke("purge_note", { id });
+    }
   });
 });

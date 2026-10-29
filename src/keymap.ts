@@ -62,6 +62,7 @@ export const DOC_CARD_KEYS = {
   collapse: "W",
   copy: "C",
   copyLink: "K",
+  move: "M",
   delete: "D",
 } as const;
 

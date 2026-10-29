@@ -144,7 +144,8 @@
   color: var(--ink-soft);
   font-variant-numeric: tabular-nums;
 }
-.v-docs .doc-draft {
+.v-docs .doc-draft,
+.v-docs .move-partial {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -157,7 +158,37 @@
   border: 1px solid var(--seal-line);
   border-radius: var(--radius-sm);
 }
-.v-docs .doc-draft span { flex: 1; }
+.v-docs .doc-draft span,
+.v-docs .move-partial span { flex: 1; white-space: pre-wrap; }
+.v-docs .doc-card .move-partial { margin: 10px 0 0; }
+
+/* 移动到其他空间的选择器(同随记 inbox.css 那套 .chips / .chip) */
+.v-docs .doc-move {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  margin-top: 12px;
+  padding: 12px 14px;
+  background: var(--paper);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+}
+.v-docs .doc-move .form-label { font-size: var(--fs-12); letter-spacing: 0.05em; color: var(--ink-soft); }
+.v-docs .doc-move .chips { display: flex; flex-wrap: wrap; gap: 7px; }
+.v-docs .doc-move .chip {
+  font: inherit;
+  font-size: var(--fs-13);
+  background: var(--seal-tint);
+  color: var(--ink);
+  border: 1px solid var(--seal-line);
+  border-radius: var(--radius-pill);
+  padding: 5px 13px;
+  cursor: pointer;
+  transition: background 0.14s;
+}
+.v-docs .doc-move .chip:hover { background: color-mix(in srgb, var(--seal) 18%, var(--paper)); }
+.v-docs .doc-move .chip:disabled { opacity: 0.55; cursor: default; }
+.v-docs .doc-move .form-actions { display: flex; justify-content: flex-end; }
 .v-docs .doc-note { margin: 0 0 12px; font-size: var(--fs-12); color: var(--ink-soft); }
 .v-docs .doc-note[hidden] { display: none; }
 

@@ -13,9 +13,22 @@
 // createElement + 文本节点,安全落点只在那两处);本文件只拿它们返回的节点直接挂,⛔ 不序列化
 // 再拼、不另起链接提取器。其余面(随记 / 任务 / 搜索 / 历史比对)照旧不渲染 Markdown(§3)。
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { currentSpaceId, invokeInSpace } from "./space";
+import {
+  type MoveResult,
+  type SpaceInfo,
+  currentSpaceId,
+  distinctSpaceLabels,
+  invokeInSpace,
+  listSpaces,
+  moveItemToSpace,
+  moveOutcomeText,
+  movePartialClear,
+  movePartialMark,
+  movePartialNote,
+  spaceLabel,
+} from "./space";
 import { autoGrow } from "./autogrow";
-import { dismissUndo, toastError, toastUndo } from "./toast";
+import { dismissUndo, toastAction, toastError, toastUndo } from "./toast";
 import { copyText } from "./clipboard";
 import { buildItemDeepLink } from "./deeplink";
 import { armLocate } from "./locate";
@@ -167,6 +180,14 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
 
   const docById = (id: string): DocItem | undefined => docs.find((d) => d.id === id);
 
+  // 可移入的其他空间(同 inbox.ts):挂载时取一次 —— 空间集变了必经切换 / 新建,视图随之重挂。
+  let otherSpaces: SpaceInfo[] = [];
+  void listSpaces()
+    .then((all) => {
+      otherSpaces = all.filter((s) => s.alive && s.id !== mountSpace);
+    })
+    .catch(() => {});
+
   function centerNode(big: string, detail: string): HTMLElement {
     return el("div", { className: "center" }, [el("div", { className: "big", textContent: big }), el("div", { textContent: detail })]);
   }
@@ -213,6 +234,102 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     locateId = args.id as string;
     void refresh();
   }
+  // ---- 移动到其他空间(cross-space-move v1,同随记那套)----------------------------------
+  // 选择器先亮「历史随移动永久删除」(告知在提交之前);只有 moved 离场;两个部分成功态(目标已建、
+  // 源还在 / 未知)**先落登记**再重画 —— 提示常驻卡面与阅读页、「移动」入口随之藏起,⛔ 绝不提供
+  // 重跑(会造出第二份);两条预检拒可改再试。话术只用 space.ts::moveOutcomeText 那一份。
+  function moveActs(host: HTMLElement, d: DocItem): Act[] {
+    if (otherSpaces.length === 0 || movePartialNote(d.id, mountSpace) !== null) return [];
+    return [{ label: t("docs.actMove"), key: DOC_CARD_KEYS.move, run: () => openMove(host, d) }];
+  }
+  function openMove(host: HTMLElement, d: DocItem): void {
+    pickerOff?.();
+    const labels = distinctSpaceLabels(otherSpaces);
+    const err = el("p", { className: "form-err", hidden: true });
+    let moving = false;
+    const chipBtns = otherSpaces.map((s) =>
+      el("button", { className: "chip", type: "button", textContent: labels.get(s.id) ?? spaceLabel(s), onclick: () => void doMove(s.id) }),
+    );
+    const form = el("div", { className: "inline-form doc-move" }, [
+      el("label", { className: "form-label", textContent: t("docs.moveLabel") }),
+      el("div", { className: "chips" }, chipBtns),
+      err,
+      el("div", { className: "form-actions" }, [el("button", { className: "no", type: "button", textContent: t("docs.cancel"), onclick: () => pickerOff?.() })]),
+    ]);
+    const close = (): void => {
+      form.remove();
+      pickerOff = null;
+    };
+    const off = armDismiss(form, close);
+    pickerOff = () => {
+      off();
+      close();
+    };
+    host.append(form);
+    const setBusy = (b: boolean): void => chipBtns.forEach((btn) => (btn.disabled = b));
+    const fail = (msg: string): void => {
+      err.textContent = msg;
+      err.hidden = false;
+      moving = false;
+      setBusy(false);
+    };
+
+    async function doMove(target: string): Promise<void> {
+      if (moving) return;
+      moving = true;
+      setBusy(true);
+      let r: MoveResult;
+      try {
+        r = await moveItemToSpace(mountSpace, target, d.id);
+      } catch (e) {
+        // 抛错 = 目标什么都没建(目标 commit 之后的失败一律走结构化结果),可重试。
+        fail(errText(e));
+        return;
+      }
+      const text = moveOutcomeText(r, labels.get(target) ?? target);
+      switch (r.outcome) {
+        case "moved":
+          toastAction(text);
+          if (form.isConnected) pickerOff?.();
+          if (page.kind === "doc" && page.id === d.id) page = { kind: "list" };
+          void refresh();
+          return;
+        case "copied_but_source_kept":
+        case "copied_but_source_unconfirmed":
+          // 登记独立于 DOM:期间关了选择器 / 换了页 / 切了空间都冲不掉,重画时由它显提示
+          movePartialMark(mountSpace, d.id, text);
+          if (form.isConnected) pickerOff?.();
+          void refresh();
+          return;
+        case "images_pending":
+        case "dangling_refs":
+          fail(text);
+          return;
+        default: {
+          const exhaustive: never = r;
+          return exhaustive;
+        }
+      }
+    }
+  }
+  /** 部分成功登记在场时的常驻提示(卡面与阅读页同一份);处理完(手动删掉一边)点解除。 */
+  function movePartialBar(d: DocItem): HTMLElement | null {
+    const msg = movePartialNote(d.id, mountSpace);
+    if (msg === null) return null;
+    return el("div", { className: "move-partial" }, [
+      el("span", { textContent: msg }),
+      el("button", {
+        className: "no",
+        type: "button",
+        textContent: t("docs.movePartialDone"),
+        onclick: () => {
+          movePartialClear(d.id, mountSpace);
+          void refresh();
+        },
+      }),
+    ]);
+  }
+
   const copyFeedback = (d: DocItem) => async (): Promise<string> => {
     try {
       await copyText(d.content);
@@ -298,11 +415,13 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       err.hidden = false;
     };
     const open = (): void => go({ kind: "doc", id: d.id });
+    const partialBar = movePartialBar(d);
     const body = el("div", { className: "doc-card-body" }, [
       el("h2", { className: title === "" ? "doc-card-title untitled" : "doc-card-title", textContent: title === "" ? t("docs.untitled") : title }),
       el("p", { className: "doc-card-ex", textContent: excerpt(d.content, title) }),
       el("time", { className: "doc-card-time", textContent: when(d.created_at) }),
       tagChips(d),
+      ...(partialBar ? [partialBar] : []),
       err,
     ]);
     const handle = hk.register(
@@ -314,14 +433,15 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         { label: t("docs.actCollapse"), key: DOC_CARD_KEYS.collapse, run: () => void doCollapse(d) },
         { label: t("docs.actCopy"), key: DOC_CARD_KEYS.copy, feedback: copyFeedback(d) },
         { label: t("docs.actCopyLink"), key: DOC_CARD_KEYS.copyLink, feedback: copyLinkFeedback(d) },
+        ...moveActs(body, d),
         { label: t("docs.actDelete"), key: DOC_CARD_KEYS.delete, run: () => void doDelete(d), danger: true },
       ],
-      () => body.querySelector(".topic-picker") !== null,
+      () => body.querySelector(".topic-picker, .doc-move") !== null,
     );
     art.append(body, handle.menu());
     // 点卡片 = 打开(⋯ 菜单 / 选择器里的点击不算)
     art.addEventListener("click", (e) => {
-      if ((e.target as HTMLElement).closest("button, input, .hk-menu-wrap, .topic-picker")) return;
+      if ((e.target as HTMLElement).closest("button, input, .hk-menu-wrap, .topic-picker, .doc-move")) return;
       if (window.getSelection()?.toString()) return; // 在划选字,不是要打开
       open();
     });
@@ -470,10 +590,12 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       { label: t("docs.actCollapse"), key: DOC_CARD_KEYS.collapse, run: () => void doCollapse(d) },
       { label: t("docs.actCopy"), key: DOC_CARD_KEYS.copy, feedback: copyFeedback(d) },
       { label: t("docs.actCopyLink"), key: DOC_CARD_KEYS.copyLink, feedback: copyLinkFeedback(d) },
+      ...moveActs(tagHost, d),
       { label: t("docs.actDelete"), key: DOC_CARD_KEYS.delete, run: () => void doDelete(d), danger: true },
     ];
-    const handle = hk.register(art, actions, () => art.classList.contains("commenting") || tagHost.querySelector(".topic-picker") !== null);
-    art.append(...(draftBar ? [draftBar] : []), bodyHost, tagHost, strip.root, meta, err, cmHost, handle.menu());
+    const handle = hk.register(art, actions, () => art.classList.contains("commenting") || tagHost.querySelector(".topic-picker, .doc-move") !== null);
+    const partialBar = movePartialBar(d);
+    art.append(...(partialBar ? [partialBar] : []), ...(draftBar ? [draftBar] : []), bodyHost, tagHost, strip.root, meta, err, cmHost, handle.menu());
     art.addEventListener("dblclick", (e) => {
       if ((e.target as HTMLElement).closest("a, button, input, textarea, .hk-menu-wrap, .img-thumb, .cm-host")) return;
       openEditor(d, null);
@@ -949,7 +1071,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     if (e.key !== "Escape" || e.isComposing || e.defaultPrevented || leaveEditor !== null || page.kind !== "doc") return;
     const tgt = e.target as HTMLElement | null;
     if (tgt && (tgt.tagName === "INPUT" || tgt.tagName === "TEXTAREA")) return;
-    if (document.querySelector(".hk-menu, .topic-picker") !== null || inlineCommentState(mountSpace) !== null) return;
+    if (document.querySelector(".hk-menu, .topic-picker, .doc-move") !== null || inlineCommentState(mountSpace) !== null) return;
     if (historyOpen) go({ kind: "doc", id: page.id });
     else go({ kind: "list" });
   };
