@@ -108,6 +108,11 @@
         --seal-ink-on-seal-tint: #9b3b28; /* 朱砂字压自己那层淡朱底(chip / 选中态)的字色(用户面 133;与桌面同名同值,理由与算法见 src/theme.css) */
         --on-seal: #fdf6ee; /* 压在朱砂上的字,随明暗翻面(理由见桌面 src/theme.css) */
         --ok: #3d7a4e;
+        /* 长文历史比对的删 / 增底色(longform-plan 第 4 格):= --seal / --ok 带 alpha(同 --seal-tint 那种写法)。
+           桌面同一件事是 docs.css 里的 color-mix(WebView2 认);⛔ 别改回 color-mix —— 理由同 --paper-veil。 */
+        --seal-tint-strong: rgba(179, 64, 43, 0.26);
+        --ok-tint: rgba(61, 122, 78, 0.13);
+        --ok-tint-strong: rgba(61, 122, 78, 0.3);
         --font-serif: "Georgia", "SimSun", "Songti SC", "Source Han Serif SC", serif;
         --font-sans: "Microsoft YaHei", "PingFang SC", system-ui, -apple-system, sans-serif;
         /* 英文档的界面字(C6):只经下面 :root:lang(en) 接进 --font-sans,中文档不动。理由见桌面 src/theme.css。 */
@@ -186,6 +191,9 @@
         --seal-ink-on-seal-tint: #df6a4f; /* = 暗档 --seal,刻意没补(用户看图拍板,理由见 src/theme.css) */
         --on-seal: #1b1813;
         --ok: #6fa47e;
+        --seal-tint-strong: rgba(223, 106, 79, 0.26);
+        --ok-tint: rgba(111, 164, 126, 0.13);
+        --ok-tint-strong: rgba(111, 164, 126, 0.3);
         color-scheme: dark; /* 原生控件(输入框选区/滚动条)跟着走 */
       }
       /* 英文档换界面字(C6);<html lang> 由 i18n.ts 单点写。值住 :root 的 --font-sans-en(check-theme-drift 看得见)。 */
@@ -1516,6 +1524,101 @@
         background: var(--paper); color: var(--ink); font-size: var(--fs-13);
       }
 
+      /* ---- 长文面(longform-plan 第 4 格;桌面那份是 src/docs.css)----
+         外壳借现成的几族:页头 / 草稿提示是 `.row`(实心主钮 + 描边 ghost,自己长够 44)、
+         编辑 / 预览是设置面那枚 `.seg`、底下动作排与标签那排是卡片操作面的 `.panel`。
+         这里只补它们给不出的:列表卡的题目与摘要、Markdown 正文、编辑框、比对。 */
+      .doc-list { display: flex; flex-direction: column; gap: 10px; }
+      .doc-card .doc-title { margin: 0 0 4px; font-size: var(--fs-16); font-family: var(--font-serif); font-weight: 600; color: var(--ink); overflow-wrap: anywhere; }
+      .doc-card .doc-title.untitled { color: var(--ink-soft); font-weight: 400; }
+      .doc-card .doc-ex {
+        margin: 0; font-size: var(--fs-13); color: var(--ink-soft); line-height: 1.6;
+        display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+      }
+      .doc-tags { display: inline-flex; flex-wrap: wrap; gap: 5px; }
+      .doc-bar { align-items: center; }
+      .doc-bar .doc-gap { flex: 1; }
+      .doc-bar .doc-status, .hv-title { font-size: var(--fs-12); color: var(--ink-soft); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .doc-bar .doc-status.bad { color: var(--seal-ink); }
+      .doc-draft { flex-wrap: wrap; align-items: center; font-size: var(--fs-13); color: var(--ink-soft); }
+      .doc-draft span { flex: 1 1 100%; }
+      .doc-page { background: var(--raised); border: 1px solid var(--line); border-radius: var(--radius-md); padding: 14px 16px; }
+      .doc-page .doc-tags { margin-top: 10px; }
+      .doc-meta { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: var(--fs-12); color: var(--ink-soft); }
+      .doc-note { margin: 0 0 10px; font-size: var(--fs-12); color: var(--ink-soft); }
+      .doc-err { margin: 0 0 10px; font-size: var(--fs-13); }
+      .doc-seg { margin-bottom: 10px; }
+      .doc-area {
+        display: block; width: 100%; box-sizing: border-box; min-height: 60vh; resize: vertical;
+        padding: 12px 14px; border: 1px solid var(--line-strong); border-radius: var(--radius-md);
+        background: var(--raised); color: var(--ink);
+        font-family: var(--font-serif); font-size: var(--fs-16); line-height: 1.75;
+      }
+      .doc-preview { background: var(--raised); border: 1px solid var(--line); border-radius: var(--radius-md); padding: 14px 16px; min-height: 30vh; }
+      /* Markdown 正文(阅读页与预览同一套)。段落里的换行原样留在文本节点里(共用渲染器头注),靠 pre-wrap 显出来。 */
+      .md { font-family: var(--font-serif); font-size: var(--fs-16); line-height: 1.75; color: var(--ink); overflow-wrap: anywhere; }
+      .md p, .md li, .md h1, .md h2, .md h3 { white-space: pre-wrap; }
+      .md.md-plain { white-space: pre-wrap; font-size: var(--fs-15); }
+      .md > :first-child { margin-top: 0; }
+      .md > :last-child { margin-bottom: 0; }
+      .md p { margin: 0 0 0.9em; }
+      .md h1, .md h2, .md h3 { line-height: 1.4; margin: 1.2em 0 0.5em; }
+      .md h1 { font-size: var(--fs-24); }
+      .md h2 { font-size: var(--fs-20); }
+      .md h3 { font-size: var(--fs-17); }
+      .md ul, .md ol { margin: 0 0 0.9em; padding-left: 1.6em; }
+      .md li > p { margin: 0; }
+      .md li.md-task { list-style: none; position: relative; }
+      .md li.md-task > .ckbox { position: absolute; left: -1.5em; top: 0.3em; margin-top: 0; }
+      /* 勾过的项:方框实心 + 文字压淡(同随记正文的 .ckline.on;⛔ 不划删除线) */
+      .md li.md-task.on > .ckbox { background: var(--seal); border-color: var(--seal); color: var(--on-seal); }
+      .md li.md-task.on > .ckbox::after { content: "✓"; }
+      .md li.md-task.on > p { color: var(--ink-faint); }
+      .md blockquote { margin: 0 0 0.9em; padding: 2px 0 2px 12px; border-left: 3px solid var(--line-strong); color: var(--ink-soft); }
+      .md blockquote > :last-child, .md li > :last-child { margin-bottom: 0; }
+      .md hr { border: 0; border-top: 1px solid var(--line-strong); margin: 1.4em 0; }
+      .md code.md-code { font-family: monospace; font-size: var(--fs-14); padding: 1px 4px; border-radius: var(--radius-xs); background: var(--sunken); }
+      .md pre { margin: 0 0 0.9em; padding: 10px 12px; border-radius: var(--radius-sm); background: var(--sunken); overflow-x: auto; }
+      .md pre code { font-family: monospace; font-size: var(--fs-13); line-height: 1.6; white-space: pre; }
+      .md .md-lang { display: block; margin-bottom: 4px; font-family: var(--font-sans); font-size: var(--fs-12); color: var(--ink-soft); }
+      .md .md-link { color: var(--seal-ink); text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--seal-line); }
+      .md .md-link-off { color: var(--ink-soft); }
+      /* 正文里「图N」引用 —— 朱砂底纹的就地小 chip,点开看大图(同桌面 item-images.css 的 .img-ref)。 */
+      .md .img-ref {
+        display: inline; padding: 0 5px; margin: 0 1px; font: inherit; font-family: var(--font-sans); font-size: 0.86em;
+        color: var(--seal-ink-on-seal-tint); background: var(--seal-tint); border: 1px solid var(--seal-line);
+        border-radius: var(--radius-xs); white-space: nowrap;
+      }
+      /* 历史与比对:版本目录(每版「旧 / 新」两枚选钮)在上、差异在下。目录限高自己滚,差异别被它挤出屏。 */
+      .hv-side { margin-bottom: 10px; }
+      .hv-list { max-height: 40vh; overflow-y: auto; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--raised); }
+      .hv-row { display: flex; align-items: center; gap: 6px; padding: 0 6px 0 12px; border-top: 1px solid var(--line); font-size: var(--fs-13); }
+      .hv-row:first-child { border-top: 0; }
+      .hv-row .hv-when { flex: 1; min-width: 0; color: var(--ink); font-variant-numeric: tabular-nums; }
+      .hv-row .hv-chars { color: var(--ink-soft); font-size: var(--fs-12); }
+      .hv-pick {
+        min-width: 44px; min-height: 44px; border: 0; background: none; border-radius: var(--radius-sm);
+        color: var(--ink-soft); font-size: var(--fs-13); font-family: var(--font-sans);
+      }
+      .hv-pick.on { color: var(--seal-ink-on-seal-tint); background: var(--seal-tint); font-weight: 600; }
+      .hv-more { display: block; margin: 6px auto 0; min-height: 44px; border: 0; background: none; color: var(--ink-soft); font-size: var(--fs-13); font-family: var(--font-sans); }
+      .hv-head { margin: 0 0 8px; font-size: var(--fs-13); color: var(--ink-soft); font-variant-numeric: tabular-nums; }
+      /* 差异块:原文(不渲染 Markdown),相等的连续行合成一块(2b),⛔ 别把「一个元素」当「一个物理行」加行为。
+         删的标朱砂、加的标绿,行内命中再加深一档。 */
+      .diff {
+        font-family: var(--font-serif); font-size: var(--fs-14); line-height: 1.7; color: var(--ink);
+        border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--raised); padding: 8px 0; overflow-x: auto;
+      }
+      .diff > div { white-space: pre-wrap; overflow-wrap: anywhere; padding: 0 12px; }
+      .diff-eq { color: var(--ink-soft); }
+      .diff-del { background: var(--seal-tint); }
+      .diff-ins { background: var(--ok-tint); }
+      .diff-del .diff-hl { background: var(--seal-tint-strong); text-decoration: line-through; text-decoration-color: var(--seal-line); }
+      .diff-ins .diff-hl { background: var(--ok-tint-strong); }
+      .diff.diff-raw { padding: 10px 0; }
+      .diff-raw-old, .diff-raw-new { margin-bottom: 10px; }
+      .hv-rawlbl { padding: 0 12px; font-family: var(--font-sans); font-size: var(--fs-12); color: var(--ink-soft); margin-bottom: 4px; }
+
       /* 底部固定工具行(120,codex L11:低频入口须始终可达,不埋在长列表末尾)。
          z 低于大图查看层(15)/封锁页(20);body.scanning 挖空规则天然盖住它。
          宽屏上这同一枚元素被搬进顶栏(tablet-plan 格 3,main.ts 搬、「导航并进顶栏」那段排),下面这几条只管它在屏底时。 */
@@ -2105,6 +2208,16 @@
       <div id="search-results" class="timeline"></div>
     </section>
 
+    <!-- 长文面(longform-plan 第 4 格,android/src/docs.ts):列表 → 阅读 → 编辑 / 历史比对,四种页都画在
+         #docs-body 里;正文与差异只经 shared/ 那两份共用渲染器建 DOM(createElement + 文本节点)。 -->
+    <section id="docs-pane" class="sync" hidden>
+      <h2 data-i18n="shell.navDocs">长文</h2>
+      <div class="row">
+        <button id="docs-new" class="ghost grow" data-i18n="docs.new">新建长文</button>
+      </div>
+      <div id="docs-body"></div>
+    </section>
+
     <!-- 回收站面(120):灵感+任务合并一屏(统一 list_trash 单快照);恢复回原处,
          彻底删/清空都是两拍确认。 -->
     <section id="trash-pane" class="sync" hidden>
@@ -2360,6 +2473,9 @@
     <nav id="bottombar">
       <button data-mode="ideas" class="active" data-i18n="shell.navIdeas">随记</button>
       <button data-mode="tasks" data-i18n="shell.navTasks">任务</button>
+      <!-- 长文(longform-plan 第 4 格):主内容,站在分隔线左边;有长文才显形(同回收站 / 归档那条
+           408-A1,用户 2026-10-29 拍),显隐由 renderBottomBar 管。 -->
+      <button data-pane="docs" data-i18n="shell.navDocs" hidden>长文</button>
       <!-- 主视图 ↔ 覆盖面的分隔(635,ui-consistency-plan M6):理由与「别挪走它俩」的
            两条否决写在 #bottombar .navsep 那条 CSS 头上。显隐由 renderBottomBar 管。 -->
       <span id="nav-sep" class="navsep" aria-hidden="true" hidden></span>

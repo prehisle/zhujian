@@ -54,6 +54,7 @@ export const topics = defineMessages({
   "topics.bodyIdeas": { zh: "随记 {n}", en: "Notes {n}" },
   "topics.bodyTasks": { zh: "任务 {n}", en: "Tasks {n}" },
   "topics.bodyNoIdeas": { zh: "还没有随记打这个标签", en: "No notes with this tag yet" },
+  "topics.bodyDocs": { zh: "长文 {n}", en: "Long-form {n}" },
   "topics.bodyNoTasks": { zh: "还没有任务打这个标签", en: "No tasks with this tag yet" },
   // 父子层级(user-44 第六刀):父行右侧那枚箭头的读屏名。屏上只有 ▾/▸ 一个字符,
   // 说清「几个」全靠这一句 —— 可见中文与桌面标签视图那两句同(那边是 title 悬停)。

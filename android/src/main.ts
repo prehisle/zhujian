@@ -55,6 +55,7 @@ import * as cardPanel from "./cardpanel";
 import * as filter from "./filter";
 import * as panes from "./panes";
 import * as topics from "./topics";
+import { closeDocs, docsBack, focusDoc, initDocs, openDocs, reloadDocs, resetDocsForSpaceChange } from "./docs";
 import { initCardSwipe } from "./swipe";
 import { loadIdentity, signatureFor } from "./identity";
 import { createKbSheet, type KbSheet } from "./kbsheet";
@@ -229,18 +230,15 @@ $("compose-photo").addEventListener("click", async () => {
   }
 });
 
-/** 灵感那两列是**系统固定**的(不变量 2:不可改名 / 不可删 / 永不新增)⇒ 这两个字面量
- *  安全。⛔ 任务那边**没有**这样的常量表,别照着这里再抄一张。 */
-const IDEA_STAGES = new Set(["inbox", "filed"]);
-
-// stage → 主视图归属。未知值响亮抛(铁律:不写兜底)。
-// ⭐ **B-f 第 1 段起任务那半靠列的 kind 判**,不再是一张六值映射表(不变量 3:灵感态 vs
-// 任务态由 `board_column.kind` 说了算)。两边都答不上 = 库里出了一个谁都不认识的 stage
-// (FK 保证它不可达)。
-function modeOfStage(stage: string): ViewMode {
-  if (isTaskStage(stage)) return "tasks";
-  if (IDEA_STAGES.has(stage)) return "ideas";
-  throw new Error(`未知 stage:${stage}`);
+// 条目 → 它住哪一面。⭐ 0042 起按 core 给的**主归属** `kind` 判(longform-plan §1:随记 / 长文 /
+// 任务的优先级只在 core 定义一处,带着 doc_at 的任务行归任务),⛔ 别再凭 stage 推「非任务就是
+// 随记」—— 那样长文会混进随记面。长文不在时间轴上画,住「长文」面(docs.ts)。
+// 未知值响亮抛(铁律:不写兜底)。
+function homeOf(it: TimelineItem): ViewMode | "docs" {
+  if (it.kind === "task") return "tasks";
+  if (it.kind === "idea") return "ideas";
+  if (it.kind === "doc") return "docs";
+  throw new Error(`未知主归属:${String(it.kind)}`);
 }
 
 // 任务面的分组 = **当前空间真实的那几列**(B-f 第 1 段起从库里来;此前是四值字面量)。
@@ -659,6 +657,7 @@ let nativeBackPending = false; // native 请求的 history.back() 已发、popst
       dismissEditSheet();
     } else if (captureOpen) closeCaptureNow();
     else if (isCommentsOpen()) closeCommentsNow();
+    else if (activePane === "docs" && docsBack()) return true; // 面里回上一页:面还开着,挂账照留
     else if (activePane !== null) closePaneNow();
     settleHistory(); // 销挂账(settleHistory 首分支),不发 back
     return true;
@@ -707,6 +706,11 @@ window.addEventListener("popstate", () => {
   // 留言层压在时间轴之上、面板之下(它只从时间轴开):返回键先收它。
   if (isCommentsOpen()) {
     closeCommentsNow();
+    return;
+  }
+  // 长文面不在列表页:返回键 = 回上一页(编辑器先落一版)。面还开着 ⇒ 守门条目刚被弹掉,补压一枚。
+  if (activePane === "docs" && docsBack()) {
+    pushLayer();
     return;
   }
   if (activePane !== null) closePaneNow();
@@ -883,7 +887,7 @@ function projectTimeline(): void {
   document.body.classList.toggle("board", board);
   disconnectThumbObserver();
   const items = [...lastItems.values()];
-  const modeItems = items.filter((i) => modeOfStage(i.stage) === viewMode);
+  const modeItems = items.filter((i) => homeOf(i) === viewMode);
   const f = filters[viewMode];
   // 死标签/死类型回落(纯状态,先于渲染 pills 与应用过滤,同桌面共享件次序)。
   filter.reconcileTopicFilter(f, allFilterTopics);
@@ -1222,7 +1226,8 @@ async function refreshOnce(): Promise<void> {
     if (taskStageFilter !== null && !boardColumns().some((c) => c.id === taskStageFilter)) taskStageFilter = null;
     lastItems = new Map(items.map((i) => [i.id, i])); // 全量真值,只在成功读取后更新
     allFilterTopics = ftopics.map((t) => ({ id: t.id, title: t.title, color: t.color, kind: t.kind }));
-    paneHas = { trash: counts.trash > 0, sealed: counts.sealed > 0 };
+    // 长文钮的显形真值 = 同一份时间轴快照里有没有主归属是长文的条目(不另起一条计数查询)。
+    paneHas = { trash: counts.trash > 0, sealed: counts.sealed > 0, docs: items.some((i) => i.kind === "doc") };
     renderBottomBar();
     lastRefreshOk = true;
     projectTimeline();
@@ -1269,10 +1274,10 @@ function blankTimelineForSpaceChange(): void {
   disconnectThumbObserver();
   lastItems = new Map();
   // 列同 lastItems 一起作废:每个空间是自己一套列(B-f 第 1 段)。⭐ **清空比留着旧的安全** ——
-  // 留着 = 万一有一帧漏网,卡会**安静地**顶着旧空间的列名画出来;清空 = `modeOfStage` 两条臂
-  // 都答不上,当场响亮抛。⇒ 错的方向落在 fail-fast 这一侧。
+  // 留着 = 万一有一帧漏网,卡会**安静地**顶着旧空间的列名画出来;清空 = 列登记处(`stageLabel` / `isTaskStage`)
+  // 一律答不上,任务面一节都分不出来。⇒ 错的方向落在「画不出」而不是「画错」这一侧。
   setColumns([]);
-  paneHas = { trash: false, sealed: false }; // 旧空间的 pane 钮不许挂到新空间数据到达前
+  paneHas = { trash: false, sealed: false, docs: false }; // 旧空间的 pane 钮不许挂到新空间数据到达前
   renderBottomBar();
   lastRefreshOk = false; // 快照失效(146 ▲▲M2):新空间读到之前,mode 切换不许投影旧数据
   $("timeline").innerHTML = `<p class="muted empty">${t("main.loading")}</p>`;
@@ -1729,6 +1734,7 @@ const PANE_EL: Record<string, string> = {
   spaces: "spaces",
   sync: "sync",
   search: "search-pane",
+  docs: "docs-pane",
   trash: "trash-pane",
   sealed: "sealed-pane",
   topics: "topics-pane",
@@ -1740,7 +1746,7 @@ let activePane: string | null = null;
 /** 底栏「回收站/归档册」按数据显形(408-A1):两面空则不渲染那枚钮——第一天的底栏
  *  只有「随记/任务」,第一次删除/归档时回执指路、钮随之出现,清空后再隐。真值每轮
  *  refresh 随 pane_counts 更新;初值 false = 未证实有数据就不显(空库首帧不闪)。 */
-let paneHas = { trash: false, sealed: false };
+let paneHas = { trash: false, sealed: false, docs: false };
 
 /** 底栏高亮的单一渲染点(146 ▲M3):pane 开着高亮 pane 钮,否则高亮当前 mode 钮
  *  ——popstate/closePaneNow 关面后必须回到 mode 高亮,不能清光。显形也收在这里:
@@ -1753,6 +1759,9 @@ function renderBottomBar() {
       b.hidden = !paneHas[pane] && activePane !== pane;
       if (!b.hidden) anyPane = true;
     }
+    // 长文(第 4 格,用户 2026-10-29 拍「有长文才出现」):同一条按数据显形,但它是**主内容**,
+    // 站在分隔线左边、不算覆盖面(分隔线只看回收站 / 归档)。
+    if (pane === "docs") b.hidden = !paneHas.docs && activePane !== "docs";
     b.classList.toggle(
       "active",
       activePane !== null ? b.dataset.pane === activePane : b.dataset.mode === viewMode,
@@ -1777,6 +1786,7 @@ function closePaneNow() {
   // 备份码仪式还开着就让后端把那把**只在内存里**的钥丢掉(盘上此刻什么都没写过 ⇒
   // 下次是干净的首次使用)。⛔ 反过来「先落盘再让用户抄」会留下一把没人抄过的钥。
   if (activePane === "settings") backup.closeBackup();
+  if (activePane === "docs") closeDocs(); // 编辑器开着就落一版(不等;没写进去草稿还在)
   activePane = null;
   hideConfirmBar(); // 关面 = 放弃面内挂着的两拍确认(ui-audit P0 #4)
   for (const id of Object.values(PANE_EL)) $(id).hidden = true;
@@ -1806,6 +1816,7 @@ function openPane(name: string) {
   // 位置,记了就把时间轴那个数冲掉(关面还原到面板的偏移量 = 更怪的一跳)。
   if (!wasOpen) timelineScrollY = window.scrollY;
   if (activePane === "settings") backup.closeBackup(); // 面换面同理(toggle 那条走 closePaneNow)
+  if (activePane === "docs") closeDocs(); // 面换面同理
   activePane = name;
   hideConfirmBar(); // 面换面:上一面挂着的确认作废
   for (const [key, id] of Object.entries(PANE_EL)) $(id).hidden = key !== name;
@@ -1819,6 +1830,7 @@ function openPane(name: string) {
   }
   else if (name === "trash") void panes.loadTrash();
   else if (name === "sealed") void panes.loadSealed();
+  else if (name === "docs") openDocs();
   else if (name === "topics") void topics.loadTopics();
   else if (name === "search") panes.focusSearch();
   else if (name === "settings") {
@@ -1887,6 +1899,7 @@ function resetPanesForSpaceChange() {
   $("probe").innerHTML = `<span class="muted">${t("main.probeIdle")}</span>`;
   panes.resetPanesForSpaceChange();
   topics.resetTopicsForSpaceChange();
+  resetDocsForSpaceChange();
   // 筛选是 A 空间的标签 id/词,绝不带进 B 空间(allFilterTopics 随下轮刷新重取)。
   filters.ideas = { kind: "all", topics: [], text: "" };
   filters.tasks = { kind: "all", topics: [], text: "" };
@@ -1901,6 +1914,7 @@ function resetPanesForSpaceChange() {
 function refreshActivePane() {
   if (activePane === "trash") void panes.loadTrash();
   else if (activePane === "sealed") void panes.loadSealed();
+  else if (activePane === "docs") reloadDocs();
   // 标签面:拖动/类型编辑进行中不被动重载(免把正在操作的行从脚下拆掉),空闲才重读。
   else if (activePane === "topics" && !topics.topicsInteracting()) void topics.loadTopics();
   cardPanel.onRemoteChanged(); // tags 面的标签集标脏重读
@@ -1945,7 +1959,13 @@ async function focusTimelineCard(id: string) {
     showError(t("main.itemGone"));
     return;
   }
-  const target = modeOfStage(item.stage);
+  const target = homeOf(item);
+  if (target === "docs") {
+    // 长文不在时间轴上:开长文面、直接落到那一篇(面里找不到会自己明说)。
+    focusDoc(id);
+    openPane("docs");
+    return;
+  }
   if (target === "tasks") {
     // 定位目标被本面专属的两维藏着:各自清自己(标签/文本维的既有行为不动,单轮单件事)。
     // ⚠ 两维合用一次重投影 —— 各投一次会让屏幕连跳两帧。
@@ -2742,6 +2762,11 @@ cardPanel.initCardPanel({
   // 移动入口按空间数决定是否出现;picker 列其他空间(main.ts 的 spacesCache 影子)。
   getSpaces: () => spacesCache,
   openComments: openCommentsFor,
+  // 「展开成长文」回执上那枚「打开」:开长文面直接落到那一篇。
+  openDoc: (id) => {
+    focusDoc(id);
+    openPane("docs");
+  },
   // 值 chip 上的截止文字与卡上那颗角标同一支笔(⛔ 别让面板自己算第二份)。
   dueLabel: (due) => dueLabel(due, localToday()),
 });
@@ -2760,6 +2785,8 @@ initErr((url) => {
 initEditSheet({ pushLayer, settleHistory });
 // 留言层(314 第③笔):写/删成功即整轴重拉(徽章计数跟着走),开合各压/平一枚返回键守门条目。
 initComments({ refresh, pushLayer, settleHistory });
+// 长文面(longform-plan 第 4 格):留言走同一个入口;写成功后整轴重拉(底栏「长文」钮跟着显形)。
+initDocs({ openComments: openCommentsFor, refreshTimeline: refresh });
 // 大图查看器(310 第③笔):返回键层账本仍住 main.ts,经 Deps 注入(留言层同形)。
 initViewer({ pushLayer, settleHistory, refresh });
 // 同步面(310 第③笔):接线即挂全部监听(面内控件 + sync-status/sync-boot/sync-pair/

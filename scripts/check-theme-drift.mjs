@@ -185,6 +185,25 @@ app 两端不装网页字体(界面字走系统黑体),故只官网有",
 桌面/官网不在系统栏底下画东西,也没有这层贴边的半透明条",
   },
   {
+    name: "--seal-tint-strong",
+    in: ["安卓"],
+    dark: true,
+    why: "长文历史比对里删掉那几个字的底(= --seal 带 26% alpha)。桌面同一件事是 docs.css 的 color-mix(WebView2 认),\
+手机最老那台 Chrome 110 不认 color-mix,来路同 --paper-veil(longform-plan 第 4 格)",
+  },
+  {
+    name: "--ok-tint",
+    in: ["安卓"],
+    dark: true,
+    why: "长文历史比对里新增那一块的底(= --ok 带 13% alpha);来路同 --seal-tint-strong",
+  },
+  {
+    name: "--ok-tint-strong",
+    in: ["安卓"],
+    dark: true,
+    why: "长文历史比对里新增那几个字的底(= --ok 带 30% alpha);来路同 --seal-tint-strong",
+  },
+  {
     name: "--ink-veil",
     in: ["安卓"],
     dark: true,

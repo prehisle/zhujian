@@ -57,6 +57,7 @@ import {
   restoreNote,
   restoreTask,
   revertTaskToInbox,
+  setDoc,
   sealTask,
   setTaskDue,
   setTaskPriority,
@@ -129,6 +130,8 @@ type Deps = {
   /** 开留言层(main.ts openCommentsFor,与卡上 💬 徽章同一个入口)。**N=0 时这里是
    *  唯一入口**——徽章 N=0 不显示,没有它第一条留言就无从写起(§4.7 第 1 条)。 */
   openComments: (itemId: string) => void;
+  /** 开长文面并落到这一篇(「展开成长文」回执上那枚「打开」)。 */
+  openDoc: (itemId: string) => void;
   /** 截止日的相对表达(「今天」/「逾期 3 天」/「8/27」)。706 值 chip 要它 —— 与**卡上那颗
    *  角标同一支笔**(main.ts 的 dueLabel),⛔ 别在这儿另写一份,更别把 ISO 原串摆上去:
    *  `2026-08-27` 在 360px 屏上一枚就吃掉半行,而它正是这一轮要治的「系统脸」。 */
@@ -339,6 +342,8 @@ function renderMore(item: TimelineItem): string {
   const task = isTaskStage(item.stage);
   const acts: string[] = [];
   if (!task) acts.push(actBtn("comment", t("cardpanel.actComment"))); // 随记的留言让位给「转待办」
+  // 展开成长文(0042):只给随记(时间轴上的随记就是主归属为随记的条目,长文不在时间轴上画)。
+  if (item.kind === "idea") acts.push(actBtn("expand", t("cardpanel.actExpand")));
   acts.push(actBtn("history", t("cardpanel.actHistory")));
   // 移动入口:仅 ≥2 空间、且本条无未处理的部分移动登记时出现(§4)。
   if (!movePartialNote(item.id) && deps.getSpaces().length >= 2) acts.push(actBtn("move", t("cardpanel.actMove")));
@@ -1016,6 +1021,12 @@ function handleAct(act: string, card: HTMLElement) {
       return;
     case "back":
       closeDraft();
+      return;
+    case "expand":
+      // 卡离开随记面、住进「长文」面:回执指路 + 一枚「打开」(底栏那枚钮此刻才显形,408-A1 那形)。
+      void run((space) => setDoc(space, item.id, true), {
+        onCommitted: () => actionBar(t("cardpanel.expanded"), t("cardpanel.expandedOpen"), () => deps.openDoc(item.id)),
+      });
       return;
     case "promote":
       // 146:卡离开灵感面——回执指路,且走 onCommitted(重投影清掉 session 也要响)。

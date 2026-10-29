@@ -69,7 +69,7 @@ export type IdeaStage = "inbox" | "filed";
 /** items.stage(时间轴行原样透传;值域 = board_column 的 id)。 */
 export type ItemStage = string;
 /** 搜索命中的视图词汇(repo::view_status)。 */
-export type SearchStatus = "inbox" | "processed" | "task" | "archived" | "sealed";
+export type SearchStatus = "inbox" | "processed" | "doc" | "task" | "archived" | "sealed";
 export type TaskPriority = 1 | 2 | 3;
 
 export type TopicItem = { id: string; title: string; color: string | null };
@@ -79,6 +79,9 @@ export type TimelineItem = {
   content: string;
   created_at: string;
   stage: ItemStage;
+  /** 主归属(0042,core 的单一定义;时间轴只有活条目 ⇒ 三值之一)。⭐ 分桶一律按它,
+   *  ⛔ 别再凭 stage 推「非任务就是随记」(longform-plan §1)。 */
+  kind: "idea" | "doc" | "task";
   /** 任务行的当前真值(卡片面板直读,不另拼 list_tasks);灵感行恒 null。 */
   due_on: string | null;
   priority: TaskPriority | null;
@@ -101,6 +104,8 @@ export type TrashItem = {
   stage: ItemStage;
   /** 卡片颜色标记(0040),同 TimelineItem.color。 */
   color: string | null;
+  /** 长文标记(0042):回收站保留长文属性,只拿它画「长文」小标(还原后它回的是长文)。 */
+  doc_at: string | null;
   topics: TopicItem[];
 };
 /** 一条灵感(回收站行冻结在入站前的 stage)。 */
@@ -109,6 +114,8 @@ export type IdeaItem = {
   content: string;
   created_at: string;
   stage: IdeaStage;
+  /** 长文标记(0042):`listDocs` 恒非空,活跃随记恒 null。 */
+  doc_at: string | null;
   topics: TopicItem[];
 };
 /** 一张看板卡(title=content、status=stage 的桌面前端契约)。 */
@@ -135,7 +142,10 @@ export type TopicTreeItem = {
   position: string | null;
   /** 标签类型自由文本(0031)或 null=无类型。 */
   kind: string | null;
+  /** 挂这枚标签的活跃随记(0042 起不含长文)。 */
   notes: TopicNoteItem[];
+  /** 挂这枚标签的长文(0042;随记 / 长文 / 任务三类互斥)。 */
+  docs: TopicNoteItem[];
 };
 export type SearchHitItem = {
   id: string;
@@ -163,6 +173,9 @@ export const listBoardColumns = (space: string) =>
   invoke<BoardColumn[]>("list_board_columns", { spaceId: space });
 
 export const listIdeas = (space: string) => invoke<IdeaItem[]>("list_ideas", { spaceId: space });
+
+/** 长文列表(0042):主归属 = 长文的全部活条目,最近成为长文的在前。 */
+export const listDocs = (space: string) => invoke<IdeaItem[]>("list_docs", { spaceId: space });
 
 /** 设备身份面(0033,identity-plan §2.3):本机是哪台 + 见过哪些设备(含别名)。
  *  ⚠ 名册口径是「见过的设备」,不是「当前在册的设备」。 */
@@ -245,6 +258,14 @@ export const putItemThumb = (space: string, imageId: string, dataB64: string) =>
 
 export const captureIdea = (space: string, content: string) =>
   invoke<string>("capture_idea", { spaceId: space, content });
+
+/** 新建一篇长文(同一事务 create 随记 + set doc_at),返回新 id。 */
+export const captureDoc = (space: string, content: string) =>
+  invoke<string>("capture_doc", { spaceId: space, content });
+
+/** 展开成长文(`on = true`)/ 收回随记(`on = false`):只翻 doc_at,不进编辑历史。 */
+export const setDoc = (space: string, id: string, on: boolean) =>
+  invoke<void>("set_doc", { spaceId: space, id, on });
 
 export const captureTodo = (space: string, content: string) =>
   invoke<string>("capture_todo", { spaceId: space, content });

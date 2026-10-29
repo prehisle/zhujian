@@ -4,6 +4,7 @@ import { defineMessages } from "./entry";
 export const panes = defineMessages({
   "panes.loading": { zh: "读取中…", en: "Loading…" },
   "panes.kindIdea": { zh: "随记", en: "Note" },
+  "panes.kindDoc": { zh: "长文", en: "Long-form" },
   "panes.deletedAt": { zh: "删于 {when}", en: "Deleted {when}" },
   "panes.restore": { zh: "恢复", en: "Restore" },
   "panes.purge": { zh: "彻底删除", en: "Delete forever" },
@@ -20,6 +21,7 @@ export const panes = defineMessages({
   "panes.emptyTrashYes": { zh: "清空", en: "Empty" },
   "panes.trashEmptied": { zh: "回收站已清空", en: "Trash emptied" },
   "panes.restoredTask": { zh: "已恢复,在底栏「任务」里", en: "Restored, find it under Tasks" },
+  "panes.restoredDoc": { zh: "已恢复,在底栏「长文」里", en: "Restored, find it under Long-form" },
   "panes.restoredIdea": { zh: "已恢复,在底栏「随记」里", en: "Restored, find it under Notes" },
   "panes.purgeOneQ": { zh: "彻底删除这条?无法找回", en: "Delete this forever? It cannot be recovered" },
   "panes.doneAt": { zh: "完成于 {when}", en: "Done {when}" },
@@ -30,6 +32,7 @@ export const panes = defineMessages({
   "panes.sealedLoadFailed": { zh: "归档读取失败:{error}", en: "Could not load Archive: {error}" },
   "panes.hitInbox": { zh: "随记", en: "Note" },
   "panes.hitProcessed": { zh: "随记", en: "Note" },
+  "panes.hitDoc": { zh: "长文", en: "Long-form" },
   "panes.hitTask": { zh: "任务", en: "Task" },
   "panes.hitArchived": { zh: "回收站", en: "Trash" },
   "panes.hitSealed": { zh: "归档", en: "Archive" },

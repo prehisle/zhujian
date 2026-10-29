@@ -112,7 +112,8 @@ function renderTrash() {
   const cards = trashRows
     .map((r) => {
       // 列名是同步来的自由文本(桌面能改成任意字)⇒ 进 HTML 前转义(backlog 用户面 144)
-      const kind = esc(stageLabel(r.stage) ?? t("panes.kindIdea"));
+      // 长文(0042)回收站里保留长文属性:还原后它回的是长文那一面,小标照实说。
+      const kind = esc(r.doc_at !== null && !isTaskStage(r.stage) ? t("panes.kindDoc") : (stageLabel(r.stage) ?? t("panes.kindIdea")));
       const chips = r.topics
         .map(
           (t) =>
@@ -271,7 +272,7 @@ function onTrashClick(e: Event) {
     // 146:恢复=回主视图,按该行冻结 stage 指路(任务回任务面、灵感回灵感面)。
     void trashRun(
       (space) => (task ? restoreTask(space, row.id) : restoreNote(space, row.id)),
-      task ? t("panes.restoredTask") : t("panes.restoredIdea"),
+      task ? t("panes.restoredTask") : row.doc_at !== null ? t("panes.restoredDoc") : t("panes.restoredIdea"),
     );
     return;
   }
@@ -382,6 +383,7 @@ function onSealedClick(e: Event) {
 const SEARCH_STATUS_LABEL: Record<SearchStatus, string> = {
   inbox: t("panes.hitInbox"),
   processed: t("panes.hitProcessed"),
+  doc: t("panes.hitDoc"),
   task: t("panes.hitTask"),
   archived: t("panes.hitArchived"),
   sealed: t("panes.hitSealed"),
@@ -438,7 +440,7 @@ function onSearchClick(e: Event) {
   const status = card.dataset.hitStatus as SearchStatus;
   if (status === "archived") deps.showPane("trash");
   else if (status === "sealed") deps.showPane("sealed");
-  else deps.focusCard(card.dataset.hit!);
+  else deps.focusCard(card.dataset.hit!); // 随记 / 长文 / 任务:落到哪一面由 main.ts 按主归属(kind)定
 }
 
 /** 开搜索面(main.ts::openPane 调):聚焦输入框,顺带把空态那句话画上(UI 一致性 M8)。

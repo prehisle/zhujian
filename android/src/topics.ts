@@ -33,6 +33,7 @@ import {
   type TopicTreeItem,
 } from "./api";
 import { setColumns, stageLabel } from "./columns";
+import { docTitle } from "./docs";
 import { groupPills } from "./filter";
 import { t } from "./i18n";
 import { $, confirmBar, esc, fmtWhen, showBar } from "./ui";
@@ -90,7 +91,7 @@ export async function loadTopics(): Promise<void> {
   const box = $("topics-list");
   if (!rows.length) box.innerHTML = `<p class="muted empty">${t("topics.loading")}</p>`;
   try {
-    // 合计口径(想法 notes + 任务交叉):只显想法数会让「只挂在任务上」的标签显 0 条、误导。
+    // 合计口径(随记 notes + 长文 docs + 任务交叉,三类互斥,0042):只显想法数会让「只挂在任务上」的标签显 0 条、误导。
     // 列与行同批取(user-44 第五刀):展开面每条任务要印「它在哪一列」,而列名来自库
     // (B-f 第 1 段)。⛔ 别指望主时间轴那轮已经登记过 —— 首轮 refresh 失败时 columns 是空的,
     // 那会让 stageLabel 对每条任务都答 undefined(判例逐字同 panes.ts 的回收站那批)。
@@ -103,7 +104,7 @@ export async function loadTopics(): Promise<void> {
     setColumns(cols);
     const c = new Map<string, number>();
     const byTopic = new Map<string, TaskItem[]>();
-    for (const t of tree) c.set(t.id, t.notes.length);
+    for (const t of tree) c.set(t.id, t.notes.length + t.docs.length);
     for (const task of tasks) {
       // M:N —— 一条任务挂几枚标签就在几枚下面各列一次(同桌面 tasksByTopic 的形)。
       for (const tp of task.topics) {
@@ -300,6 +301,15 @@ function bodyHtml(tp: TopicTreeItem): string {
       </article>`,
     )
     .join("");
+  // 长文只列题目(第一行非空字,同长文面列表),⛔ 不进 Markdown 渲染器(§3:只有长文阅读 / 预览渲染)。
+  const docs = tp.docs
+    .map(
+      (n) => `<article class="tb-item">
+        <p class="tb-text">${esc(docTitle(n.content) || t("docs.untitled"))}</p>
+        <time class="tb-when">${esc(fmtWhen(n.created_at))}</time>
+      </article>`,
+    )
+    .join("");
   const tasks = (tasksByTopic.get(tp.id) ?? [])
     .map((task) => {
       // 列名查不到 = 这张卡待在一个不是任务列的 stage 上(FK + is_live_task_column 保证不可达)。
@@ -317,6 +327,7 @@ function bodyHtml(tp: TopicTreeItem): string {
     `<section class="tb-sec"><h3 class="tb-h">${label}</h3>${inner || `<p class="tb-empty">${empty}</p>`}</section>`;
   return `<div class="tbody" data-body="${esc(tp.id)}">
     ${sec(t("topics.bodyIdeas", { n: tp.notes.length }), notes, t("topics.bodyNoIdeas"))}
+    ${tp.docs.length > 0 ? sec(t("topics.bodyDocs", { n: tp.docs.length }), docs, "") : ""}
     ${sec(t("topics.bodyTasks", { n: tasksByTopic.get(tp.id)?.length ?? 0 }), tasks, t("topics.bodyNoTasks"))}
   </div>`;
 }

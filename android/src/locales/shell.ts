@@ -13,6 +13,7 @@ export const shell = defineMessages({
   "shell.navTasks": { zh: "任务", en: "Tasks" },
   "shell.navTags": { zh: "标签", en: "Tags" },
   "shell.navSearch": { zh: "搜索", en: "Search" },
+  "shell.navDocs": { zh: "长文", en: "Long-form" },
   "shell.navTrash": { zh: "回收站", en: "Trash" },
   "shell.navSealed": { zh: "归档", en: "Archive" },
   "shell.sync": { zh: "同步", en: "Sync" },

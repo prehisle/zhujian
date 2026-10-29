@@ -5,6 +5,7 @@ import { backup } from "./backup";
 import { cardpanel } from "./cardpanel";
 import { checklist } from "./checklist";
 import { comments } from "./comments";
+import { docs } from "./docs";
 import { filter } from "./filter";
 import { images } from "./images";
 import { main } from "./main";
@@ -17,7 +18,7 @@ import { sync } from "./sync";
 import { topics } from "./topics";
 import { viewer } from "./viewer";
 
-const parts = [backup, cardpanel, checklist, comments, filter, images, main, misc, panes, reminder, settings, shell, sync, topics, viewer];
+const parts = [backup, cardpanel, checklist, comments, docs, filter, images, main, misc, panes, reminder, settings, shell, sync, topics, viewer];
 {
   const seen = new Set<string>();
   for (const part of parts) {
@@ -33,6 +34,7 @@ export const messages = {
   ...cardpanel,
   ...checklist,
   ...comments,
+  ...docs,
   ...filter,
   ...images,
   ...main,
