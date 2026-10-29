@@ -382,7 +382,8 @@
 .v-inbox .form-err[hidden] { display: none; }
 
 /* edit history disclosure */
-.v-inbox .hist-toggle {
+.v-inbox .hist-toggle,
+.v-inbox .hist-more {
   font: inherit;
   font-size: var(--fs-12);
   color: var(--ink-soft);
@@ -394,7 +395,10 @@
   text-underline-offset: 3px;
   text-decoration-color: var(--line-strong);
 }
-.v-inbox .hist-toggle:hover { color: var(--ink); }
+.v-inbox .hist-toggle:hover,
+.v-inbox .hist-more:hover { color: var(--ink); }
+.v-inbox .hist-more { align-self: flex-start; }
+.v-inbox .hist-more[hidden] { display: none; }
 .v-inbox .hist-panel {
   display: flex;
   flex-direction: column;
@@ -404,8 +408,32 @@
   border-left: 2px solid var(--line);
 }
 .v-inbox .hist-panel[hidden] { display: none; }
+.v-inbox .hist-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+/* 一版 = 一行可点的「时间 · 字数」,点开才取那一版正文(1b:目录不带正文) */
+.v-inbox .hist-entry {
+  font: inherit;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-height: 28px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  text-align: left;
+}
+.v-inbox .hist-entry:hover .hist-time,
+.v-inbox .hist-item.open .hist-time { color: var(--ink); }
+.v-inbox .hist-chars {
+  font-size: var(--fs-12);
+  color: var(--ink-soft);
+}
 .v-inbox .hist-text {
-  margin: 0;
+  margin: 0 0 6px;
   font-family: var(--font-serif);
   font-size: var(--fs-14);
   color: var(--ink-soft);

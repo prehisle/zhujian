@@ -51,7 +51,7 @@ use tokio::sync::mpsc::UnboundedReceiver;
 use zhujian_core::spaces;
 use zhujian_core::sync::supervisor::SpaceSupervisor;
 use zhujian_core::sync::transport::{self, SyncEvent};
-use zhujian_core::{clock, comments, db, identity, images, notes, repo, task, thumbs};
+use zhujian_core::{clock, comments, db, history, identity, images, notes, repo, task, thumbs};
 
 /// 启动闸(工序 6;本轮升级为**类型化三种 status、四种封锁 kind**,codex 设计审
 /// H3/H4 + 实现审 H1):
@@ -869,23 +869,29 @@ pub async fn edit_note(
     coord.write(&space_id, |conn, clock| notes::edit(conn, clock, &id, &content)).await
 }
 
-/// 一个被替换掉的旧版本。
-#[derive(serde::Serialize)]
-pub struct RevisionItem {
-    content: String,
-    archived_at: String,
+/// 编辑历史目录的一页(longform-plan §4):只有元数据,⛔ 不带正文;`before` = 上一页最后一条的
+/// `revision_id`,null = 第一页。DTO 直接用 core 的类型(两壳契约同源)。
+#[tauri::command]
+pub fn list_revisions(
+    space_id: String,
+    id: String,
+    before: Option<i64>,
+    coord: State<'_, Coord>,
+) -> Result<history::RevisionCatalog, String> {
+    coord.with_read(&space_id, |conn| history::catalog(conn, &id, before))
 }
 
-/// 条目的编辑历史(最新在前;当前文本在条目自身上)。
+/// 取两版全文,按给的顺序返回 `{a, b}`。⚠ 手动同步中每条读命令另开只读连接 ⇒ 「当前 + 上一版」
+/// 的同快照只靠 core 那一条语句,壳里 ⛔ 别拆成两次读。
 #[tauri::command]
-pub fn list_note_history(space_id: String, id: String, coord: State<'_, Coord>) -> Result<Vec<RevisionItem>, String> {
-    coord.with_read(&space_id, |conn| {
-        let rows = repo::item_revisions(conn, &id).map_err(|e| e.to_string())?;
-        Ok(rows
-            .into_iter()
-            .map(|r| RevisionItem { content: r.content, archived_at: r.archived_at })
-            .collect())
-    })
+pub fn revision_texts(
+    space_id: String,
+    id: String,
+    a: history::Pick,
+    b: history::Pick,
+    coord: State<'_, Coord>,
+) -> Result<history::VersionPair, String> {
+    coord.with_read(&space_id, |conn| history::texts(conn, &id, a, b))
 }
 
 /// 灵感删除 = 软删进回收站(73 规则:销毁只在回收站里发生)。

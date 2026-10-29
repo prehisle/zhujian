@@ -14,7 +14,7 @@ mod dock_menu;
 
 use spaces::Spaces;
 use zhujian_core::sync::supervisor::{ActivateSpec, ActiveRuntime as SpaceRuntime, SpaceSupervisor};
-use zhujian_core::{clock, comments, db, identity, images, notes, repo, sync, task, thumbs};
+use zhujian_core::{clock, comments, db, history, identity, images, notes, repo, sync, task, thumbs};
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -874,27 +874,30 @@ fn edit_note(space_id: String, id: String, content: String, spaces: State<'_, Sp
     })
 }
 
-/// One superseded version of a note, for the history view.
-#[derive(Serialize)]
-struct RevisionItem {
-    content: String,
-    archived_at: String,
+/// 编辑历史目录的一页(longform-plan §4):只有 `{revision_id, archived_at, chars}`,⛔ 不带正文。
+/// `before` = 上一页最后一条的 `revision_id`,null = 第一页。DTO 直接用 core 的类型(契约同源,
+/// 同留言那四个命令)。
+#[tauri::command]
+fn list_revisions(
+    space_id: String,
+    id: String,
+    before: Option<i64>,
+    spaces: State<'_, Spaces>,
+) -> Result<history::RevisionCatalog, String> {
+    spaces.read(&space_id, |conn| history::catalog(&conn, &id, before))
 }
 
-/// A note's edit history (its superseded versions, newest first). The current
-/// text lives on the note itself; this is the trail behind it.
+/// 取两版全文(`"current"` / `"latest"` / `{"rev": n}`),按给的顺序返回 `{a, b}`。版本不在、
+/// 不属于这一条、条目已彻底删除 = 报错,⛔ 不换成别的版本。
 #[tauri::command]
-fn list_note_history(space_id: String, id: String, spaces: State<'_, Spaces>) -> Result<Vec<RevisionItem>, String> {
-    spaces.read(&space_id, |conn| {
-        let rows = repo::item_revisions(&conn, &id).map_err(|e| e.to_string())?;
-        Ok(rows
-            .into_iter()
-            .map(|r| RevisionItem {
-                content: r.content,
-                archived_at: r.archived_at,
-            })
-            .collect())
-    })
+fn revision_texts(
+    space_id: String,
+    id: String,
+    a: history::Pick,
+    b: history::Pick,
+    spaces: State<'_, Spaces>,
+) -> Result<history::VersionPair, String> {
+    spaces.read(&space_id, |conn| history::texts(&conn, &id, a, b))
 }
 
 /// 长文列表(0042,longform-plan §1):主归属 = 长文的全部活条目,最近成为长文的在前。
@@ -4437,7 +4440,8 @@ pub fn run() {
             add_task_topic_by_title,
             remove_task_topic,
             edit_note,
-            list_note_history,
+            list_revisions,
+            revision_texts,
             promote_note_to_task,
             revert_task_to_inbox,
             list_topics,

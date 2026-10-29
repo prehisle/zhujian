@@ -221,7 +221,9 @@ pub struct TaskRow {
 }
 
 /// A superseded version of an item's text, with when it stopped being current.
-pub struct RevisionRow {
+/// (测试断言用;产品读路的形在 `crate::history`。)
+#[cfg(test)]
+pub(crate) struct RevisionRow {
     pub content: String,
     pub archived_at: String,
 }
@@ -832,7 +834,10 @@ pub(crate) fn rename_task(conn: &Connection, id: &str, content: &str) -> rusqlit
 
 /// An item's superseded versions, newest-archived first (its edit history). Ordered by
 /// the monotonic revision_id so same-millisecond edits still sort correctly.
-pub fn item_revisions(conn: &Connection, id: &str) -> rusqlite::Result<Vec<RevisionRow>> {
+/// ⛔ 只给测试断言用:它一次取全部正文。产品读路走 `crate::history`(目录分页 + 取两版,
+/// longform-plan §4)。
+#[cfg(test)]
+pub(crate) fn item_revisions(conn: &Connection, id: &str) -> rusqlite::Result<Vec<RevisionRow>> {
     let mut stmt = conn.prepare(
         "SELECT content, archived_at FROM item_revisions WHERE item_id = ?1 ORDER BY revision_id DESC",
     )?;

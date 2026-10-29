@@ -54,9 +54,42 @@ describe("收件箱 · 编辑想法(保留历史)", () => {
     // Backend: current content is the new text; the original is kept as history.
     const inbox = await invoke("list_inbox");
     expect(inbox.find((n) => n.id === id).content).toBe("E2E-编辑-改后");
-    const revs = await invoke("list_note_history", { id });
-    expect(revs).toHaveLength(1);
-    expect(revs[0].content).toBe("E2E-编辑-原文");
+    // 目录只有元数据 ⇒ 先拿 revision_id 再取那一版正文断言(⛔ 别退化成只数目录条数)
+    const cat = await invoke("list_revisions", { id, before: null });
+    expect(cat.entries).toHaveLength(1);
+    expect(cat.total).toBe(1);
+    const pair = await invoke("revision_texts", { id, a: { rev: cat.entries[0].revision_id }, b: "current" });
+    expect(pair.a.content).toBe("E2E-编辑-原文");
+    expect(pair.b.content).toBe("E2E-编辑-改后");
+  });
+
+  // longform 1b:编辑态的历史面板只列「时间 · 字数」,点开一版才取它的正文(目录不带正文)。
+  it("编辑态历史面板:目录不带正文,点开一版才显示那一版", async () => {
+    const id = await invoke("capture_note", { content: "E2E-历史-v0" });
+    await invoke("edit_note", { id, content: "E2E-历史-v1" });
+    await invoke("edit_note", { id, content: "E2E-历史-v2" });
+
+    const card = await openCard("E2E-历史-v2"); // 编辑态换的是卡里的子节点,卡本身还是这一枚
+    await inboxAction("E2E-历史-v2", "编辑");
+    const toggle = await card.$(".hist-toggle");
+    await toggle.waitForExist({ timeout: 5000 });
+    await expect(toggle).toHaveText("历史 2 版");
+    await toggle.click();
+
+    const entries = await card.$$(".hist-entry");
+    expect(entries).toHaveLength(2);
+    await expect(entries[0].$(".hist-chars")).toHaveText("9 字"); // "E2E-历史-v1" 9 个码点
+    expect(await card.$$(".hist-text")).toHaveLength(0); // 没点开 ⇒ 一份正文都不在 DOM 里
+
+    await entries[1].click(); // 新的在前 ⇒ 第二条是 v0
+    const text = await card.$(".hist-item.open .hist-text");
+    await expect(text).toHaveText("E2E-历史-v0");
+    await entries[0].click(); // 换一版:前一版收起,同一时刻只展开一版
+    await expect(card.$(".hist-item.open .hist-text")).toHaveText("E2E-历史-v1");
+    expect(await card.$$(".hist-text")).toHaveLength(1);
+
+    await browser.keys("Escape");
+    await card.$(".edit-area").waitForExist({ timeout: 5000, reverse: true });
   });
 });
 

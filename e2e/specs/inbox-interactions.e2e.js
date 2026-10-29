@@ -48,9 +48,12 @@ describe("灵感 · 双击卡片 = 编辑", () => {
 
     const inbox = await invoke("list_inbox");
     expect(inbox.find((n) => n.id === id).content).toBe("E2E-双击-改后");
-    const revs = await invoke("list_note_history", { id });
-    expect(revs).toHaveLength(1);
-    expect(revs[0].content).toBe("E2E-双击-原文");
+    // 目录只有元数据 ⇒ 先拿 revision_id 再取那一版正文断言(⛔ 别退化成只数目录条数)
+    const cat = await invoke("list_revisions", { id, before: null });
+    expect(cat.entries).toHaveLength(1);
+    const pair = await invoke("revision_texts", { id, a: { rev: cat.entries[0].revision_id }, b: "current" });
+    expect(pair.a.content).toBe("E2E-双击-原文");
+    expect(pair.b.content).toBe("E2E-双击-改后");
   });
 });
 

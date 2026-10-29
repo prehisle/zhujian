@@ -62,9 +62,10 @@ import {
   setTaskPriority,
   unsealTask,
   updateTaskStatus,
-  listNoteHistory,
+  listRevisions,
+  revisionTexts,
   type ImageMeta,
-  type RevisionItem,
+  type RevisionCatalog,
   type SpaceInfo,
   type TaskStatus,
   type TimelineItem,
@@ -102,8 +103,13 @@ type PanelState = {
   /** listTopics 请求序号(三审 M3):enterTags/refreshTopics 共用,旧快照晚回不许
    *  覆盖新快照。 */
   topicsSeq: number;
-  /** history 面的旧版本(进入时现读;null = 还没读)。只读,⛔ 没有任何写口。 */
-  revisions: RevisionItem[] | null;
+  /** history 面的目录(进入时现读第一页、「更早的版本」往后接;null = 还没读)。只有元数据,
+   *  ⛔ 不带正文(longform-plan §4:旧的全量取法 200 版 × 200 KiB 一次过 IPC)。只读,⛔ 没有任何写口。 */
+  revisions: RevisionCatalog | null;
+  /** 展开着的那一版:同一时刻至多一版,`text` null = 正在取。全文缓存就是这一份。 */
+  revOpen: { id: number; text: string | null } | null;
+  /** 历史面读请求的代次(进历史面与取正文共用;翻页另按目录身份判弃):旧回包晚到 ⛔ 不许覆盖新状态。 */
+  revSeq: number;
 };
 
 type Deps = {
@@ -397,15 +403,22 @@ function renderMove(): string {
  *  (不可变性是历史级:想改回去就再改一版,走编辑)。桌面把它挂在编辑框下面;手机的编辑面是
  *  草稿态、进去就该写字,放那儿一眼看不到,故给它自己一格动作。没改过就说一句,不空着。 */
 function renderHistory(): string {
-  const revs = state?.revisions ?? [];
-  const rows = revs
-    .map(
-      (r) =>
-        `<div class="rev"><time>${esc(t("cardpanel.histEditedAt", { time: fmtWhen(r.archived_at) }))}</time><p>${esc(r.content)}</p></div>`,
-    )
+  const cat = state?.revisions;
+  const open = state?.revOpen ?? null;
+  // 一版 = 一枚「时间 · 字数」的头,点开才取那一版正文(1b:目录不带正文)。头只是「看」,
+  // ⛔ 这一面没有修改 / 恢复的动作。
+  const rows = (cat?.entries ?? [])
+    .map((r) => {
+      const isOpen = open?.id === r.revision_id;
+      const body = isOpen ? `<p>${open.text === null ? "…" : esc(open.text)}</p>` : "";
+      return `<div class="rev${isOpen ? " open" : ""}"><button class="revh" data-rev="${r.revision_id}"><time>${esc(
+        t("cardpanel.histEditedAt", { time: fmtWhen(r.archived_at) }),
+      )}</time><span class="n">${esc(t("cardpanel.histChars", { n: r.chars }))}</span></button>${body}</div>`;
+    })
     .join("");
+  const more = cat?.has_more ? `<button data-pact="histmore">${t("cardpanel.histMore")}</button>` : "";
   return `<div class="hist">${rows || `<span class="lab">${t("cardpanel.histEmpty")}</span>`}</div>
-    <div class="acts"><button data-pact="back"${busy ? " disabled" : ""}>${t("cardpanel.back")}</button></div>`;
+    <div class="acts">${more}<button data-pact="back"${busy ? " disabled" : ""}>${t("cardpanel.back")}</button></div>`;
 }
 
 function renderTags(item: TimelineItem): string {
@@ -604,14 +617,65 @@ async function enterHistory(card: HTMLElement) {
   const session = state;
   const space = getCurrentSpace();
   const from = session.mode;
+  const seq = ++session.revSeq;
   try {
-    const revisions = await listNoteHistory(space, session.id);
-    if (state !== session || space !== getCurrentSpace() || session.mode !== from || deps.isCaptureSaving()) return;
+    const revisions = await listRevisions(space, session.id, null);
+    if (state !== session || space !== getCurrentSpace() || session.mode !== from || seq !== session.revSeq || deps.isCaptureSaving()) return;
     setMode(session, "history");
     session.revisions = revisions;
+    session.revOpen = null;
     renderPanel(currentCard() ?? card);
   } catch (err) {
     if (state === session && space === getCurrentSpace()) showErr(err);
+  }
+}
+
+/** 历史面里的读请求共用的收尾判据:还停在出发时那个 session / 空间 / 历史面、且没有更新的请求。 */
+function histStill(session: PanelState, space: string, seq: number): boolean {
+  return state === session && space === getCurrentSpace() && session.mode === "history" && seq === session.revSeq;
+}
+
+/** 「更早的版本」:接下一页目录(游标 = 已有的最后一条)。判弃看「目录还是出发时那一份吗」,
+ *  ⛔ 不吃 revSeq —— 在途期间点开 / 收起某一版不该把这一页丢掉。 */
+async function moreHistory(card: HTMLElement) {
+  if (!state?.revisions) return;
+  const session = state;
+  const cat = state.revisions;
+  const space = getCurrentSpace();
+  const still = () => state === session && space === getCurrentSpace() && session.mode === "history" && session.revisions === cat;
+  try {
+    const page = await listRevisions(space, session.id, cat.entries[cat.entries.length - 1].revision_id);
+    if (!still()) return;
+    session.revisions = { entries: [...cat.entries, ...page.entries], total: page.total, has_more: page.has_more };
+    renderPanel(currentCard() ?? card);
+  } catch (err) {
+    if (still()) showErr(err);
+  }
+}
+
+/** 点一版的头:展开(取那一版正文)/ 再点收起。同一时刻至多展开一版。 */
+async function toggleRevision(revId: number, card: HTMLElement) {
+  if (!state || state.mode !== "history") return;
+  const session = state;
+  const space = getCurrentSpace();
+  const seq = ++session.revSeq;
+  if (session.revOpen?.id === revId) {
+    session.revOpen = null;
+    renderPanel(card);
+    return;
+  }
+  session.revOpen = { id: revId, text: null };
+  renderPanel(card);
+  try {
+    const pair = await revisionTexts(space, session.id, { rev: revId }, "current");
+    if (!histStill(session, space, seq)) return;
+    session.revOpen = { id: revId, text: pair.a.content };
+    renderPanel(currentCard() ?? card);
+  } catch (err) {
+    if (!histStill(session, space, seq)) return;
+    session.revOpen = null;
+    renderPanel(currentCard() ?? card);
+    showErr(err);
   }
 }
 
@@ -769,6 +833,12 @@ function onTimelineClick(e: Event) {
     handleAct(pact, card);
     return;
   }
+  const revBtn = el.closest<HTMLElement>("[data-rev]");
+  if (revBtn && state?.mode === "history") {
+    const card = currentCard();
+    if (card) void toggleRevision(Number(revBtn.dataset.rev), card);
+    return;
+  }
   const topicBtn = el.closest<HTMLElement>("[data-topic]");
   if (topicBtn && state?.mode === "tags") {
     const session = state;
@@ -864,6 +934,8 @@ function onTimelineClick(e: Event) {
     tagDraft: "",
     topicsSeq: 0,
     revisions: null,
+    revOpen: null,
+    revSeq: 0,
   });
   deps.onDraftClosed(); // 换卡 = 旧草稿域收场(同上)
   renderPanel(card);
@@ -912,6 +984,9 @@ function handleAct(act: string, card: HTMLElement) {
     case "history":
       clearConfirm();
       void enterHistory(card);
+      return;
+    case "histmore":
+      void moreHistory(card);
       return;
     case "more":
     case "status":

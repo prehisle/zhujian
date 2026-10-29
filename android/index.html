@@ -1463,15 +1463,23 @@
         background: var(--seal-tint);
       }
       .panel .movewarn b { color: var(--seal-ink-on-seal-tint); }
-      /* 编辑历史面(用户面 87):旧版本只读列出,一版一块,新的在前;正文按原样换行(pre-wrap),
-         长词强制断(anywhere)—— 旧版本里可能有整段网址。没有任何按钮:这一面不写。 */
+      /* 编辑历史面(用户面 87;longform 1b 起目录不带正文):一版一块,新的在前;块头「时间 · 字数」
+         整条可点(44px 触屏底线),点开才取那一版正文。正文按原样换行(pre-wrap),长词强制断
+         (anywhere)—— 旧版本里可能有整段网址。只读:块头只是「看」,没有修改 / 恢复。 */
       .panel .hist { display: flex; flex-direction: column; gap: 8px; }
       .panel .rev {
-        font-size: var(--fs-13); line-height: 1.5; padding: 6px 8px;
+        font-size: var(--fs-13); line-height: 1.5;
         border: 1px solid var(--line); border-radius: var(--radius-sm);
       }
-      .panel .rev time { display: block; font-size: var(--fs-12); color: var(--ink-faint); margin-bottom: 2px; }
-      .panel .rev p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink-soft); }
+      .panel .rev .revh {
+        display: flex; align-items: center; justify-content: space-between; gap: 8px;
+        width: 100%; min-height: 44px; padding: 0 8px;
+        font: inherit; text-align: left; color: inherit; background: none; border: 0;
+      }
+      .panel .rev time { font-size: var(--fs-12); color: var(--ink-faint); }
+      .panel .rev.open time { color: var(--ink-soft); }
+      .panel .rev .n { font-size: var(--fs-12); color: var(--ink-faint); }
+      .panel .rev p { margin: 0; padding: 0 8px 6px; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink-soft); }
       .panel .movenote {
         display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
         font-size: var(--fs-12); color: var(--seal-ink-on-seal-tint); line-height: 1.5;

@@ -55,6 +55,7 @@ import { identitySig, loadIdentity, signatureChip } from "./identity";
 import { wireChecklistInput } from "./checklist-input";
 import "./inbox.css";
 import { el, onDragTarget } from "./dom";
+import { mountHistory } from "./history-panel";
 import { errDetail, errText } from "./err";
 import { ideasMarkdown } from "./export-md";
 import { type RemovedGroup, listRemovedImages, removedImageCount, removedImagesSection } from "./trash-images";
@@ -74,7 +75,6 @@ type IdeaItem = {
   born_device: string | null;
   topics: IdeaTag[];
 };
-type RevisionItem = { content: string; archived_at: string };
 // list_topics 载真值:`kind`(自由文本类型,0031)或 null = 无类型 —— 类型轴 pill 行
 // (renderKindPills)据它分组;per-item chip 的 kind 恒 null(类型真相只在 allTopics)。
 type TopicItem = { id: string; title: string; color: string | null; kind: string | null };
@@ -919,28 +919,10 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       autoGrow(area); // size to the text only now that it's connected (a detached node measures 0)
       area.focus();
 
-      // History loads lazily; only show the disclosure if there are past versions.
+      // History loads lazily (catalog only — no text until a version is opened); only shows the
+      // disclosure if there are past versions.
       try {
-        const revs = await invoke<RevisionItem[]>("list_note_history", { id: item.id });
-        if (revs.length === 0) return;
-        const panel = el(
-          "div",
-          { className: "hist-panel", hidden: true },
-          revs.map((r) =>
-            el("div", { className: "hist-item" }, [
-              el("p", { className: "hist-text", textContent: r.content }),
-              el("time", { className: "hist-time", textContent: t("inbox.editedAt", { time: when(r.archived_at) }) }),
-            ]),
-          ),
-        );
-        const toggle = el("button", {
-          className: "hist-toggle",
-          textContent: t("inbox.historyToggle", { n: revs.length }),
-          onclick: () => {
-            panel.hidden = !panel.hidden;
-          },
-        });
-        hist.replaceChildren(toggle, panel);
+        await mountHistory(hist, item.id);
       } catch {
         // History is a nicety; if it fails to load, editing still works.
       }

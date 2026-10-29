@@ -43,6 +43,8 @@ mod entity_registry;
 pub mod epoch;
 /// 「导出为 Markdown」的落盘半(用户面 136):校验相对路径、临时目录写完再改名。正文由桌面前端排。
 pub mod export_md;
+/// 编辑历史的取数口(longform-plan §4):目录分页 + 取两版,都不整批返回正文。
+pub mod history;
 mod frindex;
 pub mod identity;
 pub mod images;

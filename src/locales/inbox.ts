@@ -23,6 +23,8 @@ export const inbox = defineMessages({
   "inbox.movePartialDone": { zh: "我已处理,解除", en: "Handled, dismiss" },
   "inbox.editedAt": { zh: "于 {time} 改", en: "Edited {time}" },
   "inbox.historyToggle": { zh: "历史 {n} 版", en: "History · {n} {n|version|versions}" },
+  "inbox.histChars": { zh: "{n} 字", en: "{n} {n|char|chars}" },
+  "inbox.historyMore": { zh: "更早的版本", en: "Earlier versions" },
   "inbox.cancel": { zh: "取消", en: "Cancel" },
   "inbox.deleteForever": { zh: "彻底删除", en: "Delete forever" },
   "inbox.moveLabel": { zh: "移动到…(编辑历史将随移动永久删除)", en: "Move to… (edit history is permanently deleted on move)" },

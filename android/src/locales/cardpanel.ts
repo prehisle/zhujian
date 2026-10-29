@@ -15,6 +15,8 @@ export const cardpanel = defineMessages({
   "cardpanel.actHistory": { zh: "历史", en: "History" },
   "cardpanel.histEmpty": { zh: "还没有改过", en: "Not edited yet" },
   "cardpanel.histEditedAt": { zh: "于 {time} 改", en: "Edited {time}" },
+  "cardpanel.histChars": { zh: "{n} 字", en: "{n} {n|char|chars}" },
+  "cardpanel.histMore": { zh: "更早的版本", en: "Earlier versions" },
   // 706:加图 / 拍照 / 清单三枚随编辑表单搬进了屏底的编辑层,那三处文案在静态壳里
   // 走 `shell.addImage` / `shell.takePhoto` / `shell.insertTodo`(与「记一笔」同一份)
   // ⇒ 这边同名的三个键连同重复的中文一起销掉,⛔ 别再抄第二份回来。

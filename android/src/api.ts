@@ -144,7 +144,12 @@ export type SearchHitItem = {
   status: SearchStatus;
   topics: string[];
 };
-export type RevisionItem = { content: string; archived_at: string };
+/** 编辑历史目录的一版(longform-plan §4):只有元数据,⛔ 不带正文 —— 点开才经 revisionTexts 取。 */
+export type RevisionMeta = { revision_id: number; archived_at: string; chars: number };
+export type RevisionCatalog = { entries: RevisionMeta[]; total: number; has_more: boolean };
+/** 版本选择:当前正文 / 最新一版历史(= 上一版,与 current 同快照解析)/ 指定的一版。 */
+export type VersionPick = "current" | "latest" | { rev: number };
+export type VersionText = { revision_id: number | null; archived_at: string | null; content: string };
 export type IdeaStats = { captured_week: number; born_inbox: number; converted: number };
 
 // ---- 读(显式 space;调用方自行判弃迟到响应) ------------------------------------
@@ -184,8 +189,13 @@ export const ideaStats = (space: string, weekStart: string) =>
 export const searchNotes = (space: string, query: string) =>
   invoke<SearchHitItem[]>("search_notes", { spaceId: space, query });
 
-export const listNoteHistory = (space: string, id: string) =>
-  invoke<RevisionItem[]>("list_note_history", { spaceId: space, id });
+/** 历史目录一页(新的在前);`before` = 上一页最后一条的 revision_id,null = 第一页。 */
+export const listRevisions = (space: string, id: string, before: number | null) =>
+  invoke<RevisionCatalog>("list_revisions", { spaceId: space, id, before });
+
+/** 取两版全文,按给的顺序返回;版本不在 / 不属于这一条 / 条目已彻底删除 = 报错。 */
+export const revisionTexts = (space: string, id: string, a: VersionPick, b: VersionPick) =>
+  invoke<{ a: VersionText; b: VersionText }>("revision_texts", { spaceId: space, id, a, b });
 
 export const listTasks = (space: string) => invoke<TaskItem[]>("list_tasks", { spaceId: space });
 

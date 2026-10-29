@@ -1,18 +1,22 @@
 // @cdp-run single timeout=60000
 // 用户面 87(677):**手机上能看编辑历史了** —— 卡片操作面多一枚「历史」,只读列出这条改过的旧版本
-// (新的在前),⛔ 没有「恢复」(不可变性是历史级)。此前 `list_note_history` 手机层早就暴露、api.ts 的
+// (新的在前),⛔ 没有「恢复」(不可变性是历史级)。当初手机层的历史命令早就暴露、api.ts 的
 // 包装也早在,只是没有任何界面用它 —— 搜索明说「改过的旧版本也一起搜」,搜出来点进去看到的却是今天这版。
+// longform 1b(816 起):历史改走「目录分页 + 取两版」两条命令 —— 目录只有「时间 · 字数」,点开一版才取正文。
 //
 // 跑法:node scripts/android-cdp.mjs forward && node scripts/cdp-run.mjs note-history
 //
 // # 判据
 //  ① 随记卡的操作面上有「历史」入口(data-pact="history")
 //  ② 没改过的随记:历史面是一句「还没有改过」,没有版本块、没有任何按钮(除「返回」)
-//  ③ 改两次之后(edit_note 走 IPC):历史面恰两块,**新的在前**、正文逐字对上(历史里存的是被替换掉的
-//     那一版:改成 v2 时存 v1、改成 v3 时存 v2 ⇒ 列表 = [v2, v1])
-//  ④ 每块都有时间字;整个 .hist 里**零个 button**(只读:改回去要走编辑)
+//  ③ 改两次之后(edit_note 走 IPC):历史面恰两块,**新的在前**(历史里存的是被替换掉的那一版:改成 v2
+//     时存 v1、改成 v3 时存 v2 ⇒ 列表 = [v2, v1]);**没点开时 DOM 里一份正文都没有**(目录不带正文);
+//     点开一块才显示那一版、逐字对上;再点另一块 = 前一块收起,同一时刻只展开一版
+//  ④ 每块都有时间字与字数;**没有修改 / 恢复的动作** —— 历史面里的按钮只许是版本块头(data-rev,
+//     只是「看」)与「更早的版本」(只有超过一页才出现)(只读:改回去要走编辑)
 //  ⑤ 「返回」回到操作面(edit 入口又在)
 //  ⑥ 任务卡同样有「历史」入口(item_revisions 是 items 表级的,随记与任务同一张表)
+//  ⑦ 翻页:51 版时第一页 50 块 +「更早的版本」,点了接上第 51 块、不重不漏,翻到底按钮消失
 //
 // # 这支守不到的那半
 //  合成 click 证的是「处理器接对了」,证不了「手指点得到」—— 动作胶囊的触区由 hit-zone 门禁与 p1-touch 守。
@@ -102,8 +106,12 @@
     const v2 = v1 + " v2", v3 = v1 + " v3";
     await inv("edit_note", { id: note, content: v2 });
     await inv("edit_note", { id: note, content: v3 });
-    const revs = await inv("list_note_history", { id: note });
-    if (!ok("后端:两版旧内容,新的在前(前置)", revs.length === 2 && revs[0].content === v2 && revs[1].content === v1, revs.map((r) => r.content))) return out;
+    const cat = await inv("list_revisions", { id: note, before: null });
+    const ids = cat.entries.map((r) => r.revision_id);
+    const t0 = ids.length === 2 ? await inv("revision_texts", { id: note, a: { rev: ids[0] }, b: { rev: ids[1] } }) : null;
+    if (!ok("后端:两版旧内容,新的在前、目录不带正文(前置)",
+      cat.total === 2 && t0?.a.content === v2 && t0?.b.content === v1 && cat.entries.every((r) => !("content" in r)),
+      { cat, t0 })) return out;
 
     // ---- ③ / ④ 历史面恰两块、顺序与正文逐字对上、有时间字、零按钮 ----
     // 面板还开着(actions 面)⇒ 直接点「历史」;enterHistory 会自己重试。
@@ -111,14 +119,40 @@
     if (!ok("③ 改过之后历史面开得出来", !!hist)) return out;
     const blocks = [...hist.querySelectorAll(".rev")];
     ok("③ 恰两块", blocks.length === 2, blocks.length);
-    ok("③ 新的在前、正文逐字对上(v2 → v1)",
-      blocks[0]?.querySelector("p")?.textContent === v2 && blocks[1]?.querySelector("p")?.textContent === v1,
-      blocks.map((b) => b.querySelector("p")?.textContent));
-    ok("④ 每块都有时间字", blocks.every((b) => (b.querySelector("time")?.textContent ?? "").trim().length > 0),
-      blocks.map((b) => b.querySelector("time")?.textContent));
-    ok("④ 整个历史面零个 button(只读,没有「恢复」)", hist.querySelectorAll("button").length === 0);
+    ok("③ 没点开时 DOM 里一份正文都没有", hist.querySelectorAll(".rev p").length === 0 && !hist.textContent.includes(v1));
+    ok("③ 块头按 revision_id 新的在前", blocks.map((b) => Number(b.querySelector("[data-rev]")?.dataset.rev)).join() === ids.join(),
+      blocks.map((b) => b.querySelector("[data-rev]")?.dataset.rev));
+    ok("④ 每块都有时间字与字数", blocks.every((b) =>
+      (b.querySelector("time")?.textContent ?? "").trim().length > 0 && /\d/.test(b.querySelector(".n")?.textContent ?? "")),
+      blocks.map((b) => b.textContent));
+    const revBtns = [...hist.querySelectorAll("button")];
+    ok("④ 没有修改 / 恢复动作:历史区的按钮只有版本块头", revBtns.length === 2 && revBtns.every((b) => b.matches("[data-rev]") && !b.dataset.pact),
+      revBtns.map((b) => b.outerHTML.slice(0, 80)));
+    ok("④ 一页之内没有「更早的版本」", !panelOf(note)?.querySelector('[data-pact="histmore"]'));
+    // 点开第二块(v1)→ 只它展开、逐字对上;再点第一块(v2)→ 换成 v2、仍只一块展开
+    const openText = () => [...(panelOf(note)?.querySelectorAll(".rev.open p") ?? [])].map((p) => p.textContent);
+    click(panelOf(note).querySelector(`[data-rev="${ids[1]}"]`));
+    ok("③ 点开一块才显示那一版(v1)", (await until(() => openText().join() === v1)) !== null, openText());
+    click(panelOf(note).querySelector(`[data-rev="${ids[0]}"]`));
+    ok("③ 换一块 = 前一块收起,只展开 v2", (await until(() => openText().join() === v2)) !== null, openText());
     click(await actOf(note, "back"));
     ok("⑤ 「返回」回到操作面", (await until(() => panelOf(note)?.querySelector('[data-pact="edit"]'), 3000)) !== null);
+
+    // ---- ⑦ 翻页:再改 49 次 ⇒ 51 版,一页 50 ⇒ 第一页 50 块 +「更早的版本」,点了接上第 51 块 ----
+    for (let k = 4; k <= 52; k++) await inv("edit_note", { id: note, content: v1 + " v" + k });
+    const paged = await enterHistory(note);
+    if (!ok("⑦ 51 版时历史面开得出来", !!paged)) return out;
+    ok("⑦ 第一页恰 50 块", paged.querySelectorAll(".rev").length === 50, paged.querySelectorAll(".rev").length);
+    const moreBtn = panelOf(note)?.querySelector('[data-pact="histmore"]');
+    if (!ok("⑦ 有「更早的版本」", !!moreBtn)) return out;
+    click(moreBtn);
+    ok("⑦ 点了接上最早那一块、不重不漏(51 个不同 id)",
+      (await until(() => {
+        const ids2 = [...(panelOf(note)?.querySelectorAll("[data-rev]") ?? [])].map((b) => b.dataset.rev);
+        return ids2.length === 51 && new Set(ids2).size === 51 ? ids2 : null;
+      })) !== null);
+    ok("⑦ 翻到底后「更早的版本」消失", !panelOf(note)?.querySelector('[data-pact="histmore"]'));
+    click(await actOf(note, "back"));
 
     // ---- ⑥ 任务卡也有入口(同一张表)----
     const tasksTab = document.querySelector('#bottombar [data-mode="tasks"]');

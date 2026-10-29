@@ -82,7 +82,7 @@ describe("正文待办清单", () => {
     // 「有没有顺手记一版历史」是两件事,后者只有这一句在看。
     // ⚠ 反向那半(真编辑照常留历史)由 `inbox-interactions.e2e.js` 那例钉着,不在这里重复。
     const idea = (await invoke("list_ideas")).find((i) => i.content.startsWith("E2ECK-清单"));
-    expect(await invoke("list_note_history", { id: idea.id })).toHaveLength(0);
+    expect(await invoke("list_revisions", { id: idea.id, before: null })).toEqual({ entries: [], total: 0, has_more: false });
   });
 
   it("看板卡:走的是另一条写回命令(rename_task),照样落库", async () => {

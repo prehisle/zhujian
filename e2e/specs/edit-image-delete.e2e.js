@@ -90,7 +90,8 @@ describe("编辑态删图 · 随记(保存才删,取消一张不少)", () => {
       timeoutMsg: `保存后应只剩图1、图3,实得 ${(await seqs(id)).join(",")}`,
     });
     await area.waitForExist({ timeout: 5000, reverse: true });
-    expect(await invoke("list_note_history", { id })).toHaveLength(0); // 正文没改 ⇒ 不该多一条历史版本
+    // 正文没改 ⇒ 不该多一条历史版本(目录为空)
+    expect(await invoke("list_revisions", { id, before: null })).toEqual({ entries: [], total: 0, has_more: false });
   });
 });
 
