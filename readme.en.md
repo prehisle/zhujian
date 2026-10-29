@@ -50,6 +50,14 @@ The handful of things worth understanding before you rely on them — where the 
 - Finished tasks go to the **Archive**, grouped into a timeline by the day the work was done. They can be read but not deleted (to delete, un-archive back to the board first — one extra step, on purpose). Archiving is not deleting; the two have separate doors.
 - On the desktop, hovering a card pops a ⋯ cheat sheet with one key per action: Edit `E` / Copy `C` / Tags `L` / Due `S` / Priority `P` / Send back `B` / Delete `D` / `]` next column / `[` previous column. Double-click = edit. Note cards use the same scheme.
 
+### Long-form
+
+- When a note grows long, **Expand to long-form** moves it into its own Long-form view; you can also start one there. Like making a task, it is the same item in a different place, not a copy.
+- Long-form is written in Markdown: headings, bold, lists, quotes, code blocks and links are understood. Markdown applies only here; in notes and tasks the checkbox is still the only Markdown that works.
+- While you write, a draft is kept on the device; a version is made when you press **Save**.
+- **Every version is kept, and you can compare them**: pick any two and see what was removed in red and added in green, down to the character.
+- With several devices there are three limits to know (the later save wins, each device keeps its own history, and devices on an older version must be updated first) — see [user guide · 长文](docs/user-guide.md#长文) (in Chinese).
+
 ### Tags
 
 - Lightweight classification; one item can carry several tags.
@@ -60,7 +68,7 @@ The handful of things worth understanding before you rely on them — where the 
 
 ### Search
 
-- Find anything by content across Notes, Tasks, Trash and the Archive, **including versions you have since edited away**, with matches highlighted.
+- Find anything by content across Notes, Long-form, Tasks, Trash and the Archive, **including versions you have since edited away**, with matches highlighted.
 
 ### Spaces
 
