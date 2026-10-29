@@ -704,17 +704,17 @@ fn synthesize_baseline(tx: &Connection) -> Result<Vec<(String, String, String, V
         }
     }
     // items(含回收站/已归档):create = 现值快照(created_at/born_stage 取史实,
-    // born_stage 可 null);archived_at/sealed_at/done_at/color 生而 NULL,非 NULL 各补一条 set。
+    // born_stage 可 null);archived_at/sealed_at/done_at/color/doc_at 生而 NULL,非 NULL 各补一条 set。
     {
         let mut stmt = tx
             .prepare(
                 "SELECT id, content, stage, created_at, born_stage, due_on, priority, \
-                 position, archived_at, sealed_at, done_at, born_device, color \
+                 position, archived_at, sealed_at, done_at, born_device, color, doc_at \
                  FROM items ORDER BY id",
             )
             .map_err(|e| e.to_string())?;
         /// 一行 items 的基线取数形(id, content, stage, created_at, born_stage, due_on,
-        /// priority, position, archived_at, sealed_at, done_at, born_device, color)。
+        /// priority, position, archived_at, sealed_at, done_at, born_device, color, doc_at)。
         type ItemBaseline = (
             String,
             String,
@@ -723,6 +723,7 @@ fn synthesize_baseline(tx: &Connection) -> Result<Vec<(String, String, String, V
             Option<String>,
             Option<String>,
             Option<i64>,
+            Option<String>,
             Option<String>,
             Option<String>,
             Option<String>,
@@ -746,6 +747,7 @@ fn synthesize_baseline(tx: &Connection) -> Result<Vec<(String, String, String, V
                     r.get(10)?,
                     r.get(11)?,
                     r.get(12)?,
+                    r.get(13)?,
                 ))
             })
             .map_err(|e| e.to_string())?
@@ -765,6 +767,7 @@ fn synthesize_baseline(tx: &Connection) -> Result<Vec<(String, String, String, V
             done,
             born_device,
             color,
+            doc_at,
         ) in rows
         {
             ops.push((
@@ -817,9 +820,19 @@ fn synthesize_baseline(tx: &Connection) -> Result<Vec<(String, String, String, V
             if let Some(c) = color {
                 ops.push((
                     "item".into(),
-                    id,
+                    id.clone(),
                     "set_field".into(),
                     json!({"field": "color", "value": c}),
+                ));
+            }
+            // doc_at(0042)同上:刻意不进 create payload,非 NULL 补一条 set_field。⛔ 漏掉 =
+            // 压实一次全部长文退回随记(longform-plan §1 字段保全契约表的 epoch 一行)。
+            if let Some(d) = doc_at {
+                ops.push((
+                    "item".into(),
+                    id,
+                    "set_field".into(),
+                    json!({"field": "doc_at", "value": d}),
                 ));
             }
         }
@@ -1049,7 +1062,7 @@ pub(crate) fn table_fingerprints(tx: &Connection) -> Result<Vec<Vec<String>>, St
              ||'|'||COALESCE(archived_at,'∅')||'|'||COALESCE(due_on,'∅')||'|'||COALESCE(priority,'∅') \
              ||'|'||COALESCE(position,'∅')||'|'||COALESCE(sealed_at,'∅')||'|'||COALESCE(born_stage,'∅') \
              ||'|'||COALESCE(done_at,'∅')||'|'||COALESCE(born_device,'∅') \
-             ||'|'||COALESCE(color,'∅') \
+             ||'|'||COALESCE(color,'∅')||'|'||COALESCE(doc_at,'∅') \
              FROM items ORDER BY id",
         )?,
         text_rows(
@@ -1438,6 +1451,68 @@ mod tests {
         set_color_only(&p.conn, "#4a8f52");
         let after2 = table_fingerprints(&p.conn).expect("取指纹");
         assert_ne!(after, after2, "两个非空色之间互换,指纹同样要变");
+    }
+
+    /// 0042 的 epoch 分支(longform-plan §1 字段保全契约表的 epoch 一行):doc_at 非 NULL 时
+    /// 压实基线必须补发一条 doc_at set_field(HLC 晚于 create)且值零丢;create 出生快照里
+    /// 不许出现 doc_at 键。⛔ 漏掉 = 压实一次全部长文退回随记。含「任务行带着潜伏 doc_at」那一形
+    /// (codex 实现审重点③点名:不能只验普通长文)。
+    #[test]
+    fn compact_preserves_doc_at_including_latent_on_task_row() {
+        let mut p = peer("doc-at");
+        let doc = notes::capture_doc(&mut p.conn, &mut p.clock, "# 一篇长文").unwrap();
+        let latent = task::create(&mut p.conn, &mut p.clock, "带潜伏标记的任务", None, None, None).unwrap();
+        // 单机造不出「任务行带 doc_at」(命令前置拒),这里用裸 UPDATE + 发 op 模拟并发收敛后的终态。
+        p.conn
+            .execute("UPDATE items SET doc_at = '2026-10-28T10:00:00.000Z' WHERE id = ?1", [&latent])
+            .unwrap();
+        crate::oplog::item_set(&p.conn, &mut p.clock, &latent, &["doc_at"]).unwrap();
+        let before: Vec<(String, Option<String>)> = {
+            let mut s = p.conn.prepare("SELECT id, doc_at FROM items ORDER BY id").unwrap();
+            let rows = s.query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+            rows.collect::<rusqlite::Result<_>>().unwrap()
+        };
+        compact(&mut p.conn).expect("带 doc_at 压实必须成功(battery + 表指纹自验收)");
+        let after: Vec<(String, Option<String>)> = {
+            let mut s = p.conn.prepare("SELECT id, doc_at FROM items ORDER BY id").unwrap();
+            let rows = s.query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+            rows.collect::<rusqlite::Result<_>>().unwrap()
+        };
+        assert_eq!(before, after, "压实后 doc_at 逐字不丢");
+        for id in [&doc, &latent] {
+            let (create_hlc, set_hlc, create_payload): (String, Option<String>, String) = p
+                .conn
+                .query_row(
+                    "SELECT MAX(CASE WHEN kind='create' THEN hlc END), \
+                            MAX(CASE WHEN kind='set_field' AND json_extract(payload,'$.field')='doc_at' THEN hlc END), \
+                            MAX(CASE WHEN kind='create' THEN payload END) \
+                     FROM oplog WHERE entity='item' AND entity_id = ?1",
+                    [id],
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                )
+                .unwrap();
+            let set_hlc = set_hlc.expect("基线必有 doc_at set_field");
+            assert!(set_hlc > create_hlc, "doc_at 基线 set_field 的 HLC 必须晚于 create");
+            assert!(!create_payload.contains("doc_at"), "create 出生快照不许带 doc_at 键:{create_payload}");
+        }
+    }
+
+    /// 0042 指纹格的定点测(同 color 那只的判据与教训):只用裸 UPDATE 动 doc_at 一列(命令会
+    /// 同时摸 updated_at,而 updated_at 也在指纹里 ⇒ 用命令就测不出 doc_at 是否在清单里)。
+    #[test]
+    fn table_fingerprints_sees_item_doc_at() {
+        let mut p = peer("fp-doc-at");
+        let id = notes::capture(&mut p.conn, &mut p.clock, "要展开的").unwrap();
+        let set_only = |conn: &rusqlite::Connection, v: &str| {
+            conn.execute("UPDATE items SET doc_at = ?2 WHERE id = ?1", (&id, v)).unwrap();
+        };
+        let before = table_fingerprints(&p.conn).expect("取指纹");
+        set_only(&p.conn, "2026-10-28T10:00:00.000Z");
+        let after = table_fingerprints(&p.conn).expect("取指纹");
+        assert_ne!(before, after, "只改 items.doc_at,指纹就必须变");
+        set_only(&p.conn, "2026-10-29T10:00:00.000Z");
+        let after2 = table_fingerprints(&p.conn).expect("取指纹");
+        assert_ne!(after, after2, "两个非空值之间互换,指纹同样要变");
     }
 
     /// space profile 随压实走(0028,space-name-sync-plan §4.5):行保留(进表指纹)、

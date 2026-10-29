@@ -70,6 +70,9 @@ macro_rules! shared_handler {
             $crate::complete_task,
             // 119 全功能底座:灵感
             $crate::list_ideas,
+            $crate::list_docs,
+            $crate::capture_doc,
+            $crate::set_doc,
             $crate::list_archived,
             $crate::idea_stats,
             $crate::search_notes,

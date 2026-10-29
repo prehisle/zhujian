@@ -129,7 +129,11 @@ pub struct RemoteOp {
 /// 恰两键 + 字段白名单只有 removed_at + 值 RFC3339 ∪ null。**又一次空跳**(同 v7 / v9):
 /// v9 及更早端对这枚 kind 落兜底臂 = `UnsupportedVocab` 挂起、不进隔离,今天的库里不存在因它
 /// 被隔离的行;bump 照 §4.4「改了 shape 规则就 +1」。
-pub(crate) const VALIDATOR_VER: i64 = 10;
+///
+/// v11 = 0042 `item.doc_at` set_field 字段进 shape 白名单(长文标记,值 RFC3339 ∪ null;详见迁移
+/// 0042 头注)。**又一次空跳**(同 v9):v10 及更早端对这个字段落兜底臂 = `UnsupportedVocab`
+/// 挂起、不进隔离;bump 照 §4.4「改了 shape 规则就 +1」。
+pub(crate) const VALIDATOR_VER: i64 = 11;
 
 /// typed poison 错误分型(epoch-plan §4):`validate_op_shape` 与 `apply_remote_op`
 /// 返回**同一枚举**,分型在源头、不靠错误字符串事后分类。engine 按型分道:
@@ -1514,8 +1518,8 @@ fn item_field_value(field: &str, v: &Value) -> Result<SqlValue, String> {
             other => Err(format!("item 字段 {field} 期待字符串,收到:{other}")),
         },
         // color(0040):格式 `#RRGGBB` 已由 shape 层 validate_color_value 验过,这里只转类型
-        // ——与 position/due_on 同款分工(shape 验值域、apply 转 SqlValue)。
-        "due_on" | "archived_at" | "sealed_at" | "position" | "color" => match v {
+        // ——与 position/due_on 同款分工(shape 验值域、apply 转 SqlValue)。doc_at(0042)同理。
+        "due_on" | "archived_at" | "sealed_at" | "position" | "color" | "doc_at" => match v {
             Value::String(s) => Ok(SqlValue::Text(s.clone())),
             Value::Null => Ok(SqlValue::Null),
             other => Err(format!("item 字段 {field} 期待字符串或 null,收到:{other}")),
@@ -1669,6 +1673,7 @@ fn validate_item_field_shape(field: &str, v: &Value) -> Result<(), OpError> {
         "due_on" => validate_due_on_value(v).map_err(inv),
         "done_at" => validate_done_at_value(v).map_err(inv),
         "color" => validate_color_value(v).map_err(inv),
+        "doc_at" => validate_doc_at_value(v).map_err(inv),
         "content" | "archived_at" | "sealed_at" => {
             item_field_value(field, v).map(|_| ()).map_err(inv)
         }
@@ -1927,6 +1932,21 @@ fn validate_removed_at_value(v: &Value) -> Result<(), String> {
                 .map_err(|e| format!("removed_at 非合法 RFC3339 时间戳({s:?}):{e}"))
         }
         other => Err(format!("removed_at 期待 RFC3339 字符串或 null:{other}")),
+    }
+}
+
+/// `doc_at` 值域(0042):合法 RFC3339(成为长文的时刻)或 null(普通随记)。全新字段、零存量、
+/// 旧端发不出 ⇒ 第一天就严是免费的(同 0040 color / 0041 removed_at)。归 InvalidOp 的理由是
+/// 结构畸形:合法版本的唯一写入口是命令层 `notes::set_doc`,那儿只写 now 或 NULL。
+fn validate_doc_at_value(v: &Value) -> Result<(), String> {
+    match v {
+        Value::Null => Ok(()),
+        Value::String(s) => {
+            time::OffsetDateTime::parse(s, &time::format_description::well_known::Rfc3339)
+                .map(|_| ())
+                .map_err(|e| format!("doc_at 非合法 RFC3339 时间戳({s:?}):{e}"))
+        }
+        other => Err(format!("doc_at 期待 RFC3339 字符串或 null:{other}")),
     }
 }
 
@@ -2826,6 +2846,140 @@ mod tests {
         );
     }
 
+    /// 0042 `item.doc_at` 的 shape 闸:RFC3339 或 null 才过,别的一律 InvalidOp(结构畸形:
+    /// 唯一写入口 `notes::set_doc` / `capture_doc` 只写 now 或 NULL)。`now_iso()` 的真实产出
+    /// 必须被接受(format → parse 往返,防自相拒收)。表层无 CHECK ⇒ 这道闸是唯一的尺,
+    /// 脏值不许落库;合法值照常落库(下界,别让「什么都拒」背书成绿)。
+    #[test]
+    fn doc_at_shape_gate_accepts_rfc3339_or_null_only() {
+        let (mut conn, mut clock) = fresh();
+        let id = repo::add_item(&conn, "要展开的").unwrap();
+        let doc_op = |counter: u32, v: Value| {
+            mk(&remote_hlc(FUTURE_MS, counter), "item", &id, "set_field", json!({ "field": "doc_at", "value": v }))
+        };
+        for good in [json!(crate::repo::now_iso()), json!("2026-10-28T10:00:00.000Z"), Value::Null] {
+            validate_op_shape(&doc_op(1, good.clone()))
+                .unwrap_or_else(|e| panic!("合法 doc_at 必须过:{good:?} → {e:?}"));
+        }
+        for bad in [json!(""), json!("garbage"), json!("2026-99-99"), json!(3), json!(true), json!({ "at": "x" })] {
+            assert!(
+                matches!(validate_op_shape(&doc_op(2, bad.clone())), Err(OpError::InvalidOp(_))),
+                "非法 doc_at 必须归 InvalidOp:{bad:?}"
+            );
+        }
+        assert!(apply_remote_op(&mut conn, &mut clock, &doc_op(3, json!("garbage"))).is_err());
+        let stored: Option<String> =
+            conn.query_row("SELECT doc_at FROM items WHERE id = ?1", [&id], |r| r.get(0)).unwrap();
+        assert_eq!(stored, None, "被拒的 op 不许改库");
+        let ts = "2026-10-28T10:00:00.000Z";
+        apply_remote_op(&mut conn, &mut clock, &doc_op(4, json!(ts))).expect("合法 doc_at 必须落库");
+        let stored: Option<String> =
+            conn.query_row("SELECT doc_at FROM items WHERE id = ?1", [&id], |r| r.get(0)).unwrap();
+        assert_eq!(stored.as_deref(), Some(ts));
+    }
+
+    /// 0042:`doc_at` 永不进 create 载荷(旧端 create 不查多余键、建行用显式列清单 ⇒ 多出的键
+    /// 被静默丢、水位推进、永不重放)。新建长文 = create(随记)+ 一枚 set_field doc_at。
+    #[test]
+    fn capture_doc_never_puts_doc_at_into_create_payload() {
+        let (mut r, mut rc) = fresh();
+        let id = notes::capture_doc(&mut r, &mut rc, "# 一篇长文").unwrap();
+        let ops: Vec<RemoteOp> = all_ops(&r).into_iter().filter(|o| o.entity_id == id).collect();
+        let create = ops.iter().find(|o| o.kind == "create").expect("有一枚 create");
+        assert!(create.payload.get("doc_at").is_none(), "create 载荷不许带 doc_at:{}", create.payload);
+        let sets: Vec<&RemoteOp> =
+            ops.iter().filter(|o| o.kind == "set_field" && o.payload["field"] == "doc_at").collect();
+        assert_eq!(sets.len(), 1, "恰一枚 doc_at set_field");
+        assert!(sets[0].hlc > create.hlc, "set 的 HLC 晚于 create,不被 LWW 反噬");
+        assert!(sets[0].payload["value"].is_string(), "值是成为长文的时刻");
+    }
+
+    /// 0042 并发终态(longform-plan §1,codex 设计审 H1):A 展开成长文、B 同时转待办 —— 两枚
+    /// op 不同字段、各自 LWW 都赢 ⇒ 两端(两种到达顺序)收敛成**同一个**「任务行带着非空
+    /// doc_at」,主归属是任务(不在长文、不在随记)。回放不清 doc_at、不补发修复 op。之后撤回
+    /// 随记(只改 stage 与任务属性,不碰 doc_at)⇒ 它确定性地重新出现在长文里。
+    #[test]
+    fn concurrent_expand_and_promote_converge_to_task_then_revert_reveals_doc() {
+        let (mut base, mut bc) = fresh();
+        let id = notes::capture(&mut base, &mut bc, "一条随记").unwrap();
+        let ops0 = all_ops(&base);
+        let (mut a, mut ac) = fresh();
+        let (mut b, mut bcl) = fresh();
+        feed_all(&mut a, &mut ac, &ops0);
+        feed_all(&mut b, &mut bcl, &ops0);
+        notes::set_doc(&mut a, &mut ac, &id, true).unwrap();
+        notes::promote_to_task(&mut b, &mut bcl, &id, "一条随记").unwrap();
+        let (a_ops, b_ops) = (all_ops(&a), all_ops(&b));
+        feed_all(&mut a, &mut ac, &b_ops); // A:先自己的展开,再收 B 的转待办
+        feed_all(&mut b, &mut bcl, &a_ops); // B:先自己的转待办,再收 A 的展开
+        assert_eq!(fingerprint(&a, ITEMS_FP), fingerprint(&b, ITEMS_FP), "两种到达顺序收敛到同一终态");
+        // 两端的日志都恰为「合并前两份的并集」—— 谁都没为这个并发态补发修复 op(codex 实现审
+        // 一弹 L:只数一端条数锁不住另一个到达方向,也排除不了「不改终态的额外 op」)。
+        let ids = |ops: &[RemoteOp]| ops.iter().map(|o| o.op_id.clone()).collect::<std::collections::BTreeSet<_>>();
+        let union: std::collections::BTreeSet<String> = ids(&a_ops).union(&ids(&b_ops)).cloned().collect();
+        assert_eq!(ids(&all_ops(&a)), union, "A 的日志 = 并集");
+        assert_eq!(ids(&all_ops(&b)), union, "B 的日志 = 并集");
+        for (name, c) in [("A", &a), ("B", &b)] {
+            let (stage, doc_at): (String, Option<String>) = c
+                .query_row("SELECT stage, doc_at FROM items WHERE id = ?1", [&id], |r| Ok((r.get(0)?, r.get(1)?)))
+                .unwrap();
+            assert_eq!(stage, "todo", "{name}:stage 收敛为待办");
+            assert!(doc_at.is_some(), "{name}:doc_at 保留(回放不清)");
+            assert_eq!(repo::item_kind(c, &id).unwrap().as_deref(), Some("task"), "{name}:任务优先");
+            assert!(repo::doc_items(c).unwrap().is_empty(), "{name}:不在长文");
+            assert!(repo::live_ideas(c).unwrap().is_empty(), "{name}:不在随记");
+            assert!(repo::list_tasks(c).unwrap().iter().any(|t| t.id == id), "{name}:在看板");
+        }
+        notes::revert_task_to_inbox(&mut a, &mut ac, &id).unwrap();
+        assert_eq!(repo::item_kind(&a, &id).unwrap().as_deref(), Some("doc"), "撤回后重新是长文");
+        assert_eq!(repo::doc_items(&a).unwrap().iter().map(|r| r.id.as_str()).collect::<Vec<_>>(), vec![id.as_str()]);
+        feed_all(&mut b, &mut bcl, &all_ops(&a));
+        assert_eq!(fingerprint(&a, ITEMS_FP), fingerprint(&b, ITEMS_FP), "撤回同步过去仍收敛");
+    }
+
+    /// 0042 标签成员资格不靠「有标签必为 filed」(codex 实现审二弹 M):长文 D 只挂 T;A 删 D
+    /// 的最后一个标签 T(发 stage=inbox),B 同时给 D 挂 U(它眼里已是 filed,不发 stage)。两种
+    /// 到达顺序都收敛成「stage=inbox、doc_at 非空、挂着 U」—— D 仍是长文,且必须出现在 U 的
+    /// 长文桶里;收回随记后同一条进 U 的随记桶。
+    #[test]
+    fn tagged_doc_with_inbox_stage_still_listed_under_its_tag() {
+        let (mut base, mut bc) = fresh();
+        let t = notes::create_topic(&mut base, &mut bc, "T").unwrap();
+        let u = notes::create_topic(&mut base, &mut bc, "U").unwrap();
+        let d = notes::capture(&mut base, &mut bc, "一篇长文").unwrap();
+        notes::file_to_topic(&mut base, &mut bc, &d, Some(t.as_str()), None).unwrap();
+        notes::set_doc(&mut base, &mut bc, &d, true).unwrap();
+        let ops0 = all_ops(&base);
+        let (mut a, mut ac) = fresh();
+        let (mut b, mut bcl) = fresh();
+        feed_all(&mut a, &mut ac, &ops0);
+        feed_all(&mut b, &mut bcl, &ops0);
+        notes::remove_topic(&mut a, &mut ac, &d, &t).unwrap();
+        notes::file_to_topic(&mut b, &mut bcl, &d, Some(u.as_str()), None).unwrap();
+        let (a_ops, b_ops) = (all_ops(&a), all_ops(&b));
+        feed_all(&mut a, &mut ac, &b_ops);
+        feed_all(&mut b, &mut bcl, &a_ops);
+        assert_eq!(fingerprint(&a, ITEMS_FP), fingerprint(&b, ITEMS_FP), "两种到达顺序收敛");
+        assert_eq!(fingerprint(&a, LINKS_FP), fingerprint(&b, LINKS_FP), "链接收敛");
+        let bucket = |c: &Connection, topic: &str| -> (Vec<String>, Vec<String>) {
+            let tree = repo::all_topics_with_notes(c).unwrap();
+            let tt = tree.iter().find(|x| x.id == topic).unwrap();
+            (tt.notes.iter().map(|r| r.id.clone()).collect(), tt.docs.iter().map(|r| r.id.clone()).collect())
+        };
+        for (name, c) in [("A", &a), ("B", &b)] {
+            let stage: String = c.query_row("SELECT stage FROM items WHERE id = ?1", [&d], |r| r.get(0)).unwrap();
+            assert_eq!(stage, "inbox", "{name}:前提 —— stage 收敛成 inbox");
+            assert_eq!(repo::item_kind(c, &d).unwrap().as_deref(), Some("doc"), "{name}:仍是长文");
+            assert_eq!(bucket(c, &u), (vec![], vec![d.clone()]), "{name}:U 的长文桶里有 D");
+            assert!(
+                repo::topics_with_notes(c).unwrap().iter().any(|x| x.id == u),
+                "{name}:只读浏览态也不许把 U 滤掉"
+            );
+        }
+        notes::set_doc(&mut a, &mut ac, &d, false).unwrap();
+        assert_eq!(bucket(&a, &u), (vec![d.clone()], vec![]), "收回随记后进 U 的随记桶");
+    }
+
     /// device 寄存器的坐标 / 词汇 / 值域闸。entity_id 必须是规范 device_id——挡的是
     /// **非规范 id 白得一行**,不是行数(行数无协议上界,见 shape 层该臂的注释)。
     #[test]
@@ -2982,6 +3136,7 @@ mod tests {
         ||'|'||COALESCE(archived_at,'∅')||'|'||COALESCE(due_on,'∅')||'|'||COALESCE(priority,'∅') \
         ||'|'||COALESCE(position,'∅')||'|'||COALESCE(sealed_at,'∅')||'|'||COALESCE(born_stage,'∅') \
         ||'|'||COALESCE(done_at,'∅')||'|'||COALESCE(born_device,'∅')||'|'||COALESCE(color,'∅') \
+        ||'|'||COALESCE(doc_at,'∅') \
         FROM items ORDER BY id";
     const TOPICS_FP: &str = "SELECT id||'|'||title||'|'||created_at||'|'||updated_at \
         ||'|'||COALESCE(color,'∅')||'|'||COALESCE(position,'∅')||'|'||quote(kind) \
@@ -3081,6 +3236,11 @@ mod tests {
         task::purge(&mut r, &mut rc, &trashed).unwrap();
         let gone = notes::capture(&mut r, &mut rc, "随手记随手扔").unwrap();
         notes::delete_inbox(&mut r, &mut rc, &gone).unwrap();
+        // 0042:doc_at 也得真发 —— 新建一篇、再把一条随记展开又收回(两种值都过一遍)。
+        notes::capture_doc(&mut r, &mut rc, "远端长文").unwrap();
+        let folded = notes::capture(&mut r, &mut rc, "展开又收回").unwrap();
+        notes::set_doc(&mut r, &mut rc, &folded, true).unwrap();
+        notes::set_doc(&mut r, &mut rc, &folded, false).unwrap();
 
         let (mut l, mut lc) = fresh();
         feed_all(&mut l, &mut lc, &all_ops(&r));

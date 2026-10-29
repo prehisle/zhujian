@@ -583,6 +583,9 @@ pub struct TimelineItem {
     content: String,
     created_at: String,
     stage: String,
+    /// 主归属(0042,core `repo::item_kind_sql` 的产出;时间轴只有活条目 ⇒ `task` / `doc` / `idea`)。
+    /// ⭐ 前端按它分桶,⛔ 别再凭 stage 推「非任务就是随记」(longform-plan §1)。
+    kind: String,
     /// 120 起随行带出(卡片操作面板显示当前真值,禁另拼 list_tasks——两次 SELECT
     /// 非同一快照;灵感行恒 null)。
     due_on: Option<String>,
@@ -623,6 +626,7 @@ pub fn list_timeline(space_id: String, coord: State<'_, Coord>) -> Result<Vec<Ti
                     content: r.content,
                     created_at: r.created_at,
                     stage: r.stage,
+                    kind: r.kind,
                     due_on: r.due_on,
                     priority: r.priority,
                     done_at: r.done_at,
@@ -741,6 +745,8 @@ pub struct IdeaItem {
     content: String,
     created_at: String,
     stage: String,
+    /// 长文标记(0042):长文列表恒有值、活跃随记恒 null、回收站行原样带出(只画小标用)。
+    doc_at: Option<String>,
     topics: Vec<TopicItem>,
 }
 
@@ -751,6 +757,7 @@ impl From<repo::OrganizedRow> for IdeaItem {
             content: n.content,
             created_at: n.created_at,
             stage: n.stage,
+            doc_at: n.doc_at,
             topics: n.topics.into_iter().map(TopicItem::from).collect(),
         }
     }
@@ -763,6 +770,27 @@ pub fn list_ideas(space_id: String, coord: State<'_, Coord>) -> Result<Vec<IdeaI
         let rows = repo::live_ideas(conn).map_err(|e| e.to_string())?;
         Ok(rows.into_iter().map(IdeaItem::from).collect())
     })
+}
+
+/// 长文列表(0042,longform-plan §1):主归属 = 长文的全部活条目,最近成为长文的在前。
+#[tauri::command]
+pub fn list_docs(space_id: String, coord: State<'_, Coord>) -> Result<Vec<IdeaItem>, String> {
+    coord.with_read(&space_id, |conn| {
+        let rows = repo::doc_items(conn).map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(IdeaItem::from).collect())
+    })
+}
+
+/// 新建一篇长文(0042):同一事务 create(随记)+ set_field doc_at。返回新 id。
+#[tauri::command]
+pub async fn capture_doc(space_id: String, content: String, coord: State<'_, Coord>) -> Result<String, String> {
+    coord.write(&space_id, |conn, clock| notes::capture_doc(conn, clock, &content)).await
+}
+
+/// 展开成长文(`on = true`)/ 收回随记(`on = false`):只翻 doc_at,不进编辑历史(0042)。
+#[tauri::command]
+pub async fn set_doc(space_id: String, id: String, on: bool, coord: State<'_, Coord>) -> Result<(), String> {
+    coord.write(&space_id, |conn, clock| notes::set_doc(conn, clock, &id, on)).await
 }
 
 /// 灵感回收站(archived_at 轴,最新在前)。
@@ -1275,7 +1303,10 @@ pub struct TopicTreeItem {
     position: Option<String>,
     /// 标签类型自由文本(0031)或 null=无类型——标签管理面据它显徽标/设类型。
     kind: Option<String>,
+    /// 挂这枚标签的活跃随记(0042 起不含长文)。
     notes: Vec<TopicNoteItem>,
+    /// 挂这枚标签的长文(0042;标签下随记 / 长文 / 任务三类互斥计数的第二类)。
+    docs: Vec<TopicNoteItem>,
 }
 
 /// 标签名下的一条灵感(只读展示)。
@@ -1287,17 +1318,19 @@ pub struct TopicNoteItem {
 }
 
 fn topic_tree_item(t: repo::TopicTree) -> TopicTreeItem {
+    let items = |v: Vec<repo::ItemRow>| -> Vec<TopicNoteItem> {
+        v.into_iter()
+            .map(|n| TopicNoteItem { id: n.id, content: n.content, created_at: n.created_at })
+            .collect()
+    };
     TopicTreeItem {
         id: t.id,
         title: t.title,
         color: t.color,
         position: t.position,
         kind: t.kind,
-        notes: t
-            .notes
-            .into_iter()
-            .map(|n| TopicNoteItem { id: n.id, content: n.content, created_at: n.created_at })
-            .collect(),
+        notes: items(t.notes),
+        docs: items(t.docs),
     }
 }
 
@@ -1412,6 +1445,8 @@ pub struct TrashItem {
     stage: String,
     /// 卡片颜色标记(0040),同 TimelineItem.color —— 进了回收站也画(用户面 110)。
     color: Option<String>,
+    /// 长文标记(0042):回收站保留长文属性,前端只拿它画「长文」小标。
+    doc_at: Option<String>,
     topics: Vec<TopicItem>,
 }
 
@@ -1430,6 +1465,7 @@ pub fn list_trash(space_id: String, coord: State<'_, Coord>) -> Result<Vec<Trash
                 archived_at: r.archived_at,
                 stage: r.stage,
                 color: r.color,
+                doc_at: r.doc_at,
                 topics: r.topics.into_iter().map(TopicItem::from).collect(),
             })
             .collect())

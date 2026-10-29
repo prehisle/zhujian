@@ -116,7 +116,21 @@ pub(crate) struct Fingerprint {
     /// 能把它单独打红(变异对照里是**预期的绿**,归类「另一条的推论」)。留着的理由是
     /// 规格点名要它、且成本是一次已在同快照里的点查:真有一天 kind 能改(或库被外力改过),
     /// 承重的就是它。⛔ 别当漏测去补一只「造不出来的」测。
-    item: (String, String, String, Option<String>, Option<i64>, String, Option<String>, Option<String>, Option<String>, Option<String>),
+    /// ⭐ 第十一格 `doc_at`(0042,longform-plan §1 字段保全契约表):同 color 随包迁移、同口径
+    /// 进指纹 —— 导出后源条目被展开 / 收回,finalize 就该拒绝删源。
+    item: (
+        String,
+        String,
+        String,
+        Option<String>,
+        Option<i64>,
+        String,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    ),
     /// 排序后的 (source_topic_id, exact_title)——不能只比去重后的名字。
     topics: Vec<(String, String)>,
     /// 排序后的 [`ImageDigest`]。
@@ -158,6 +172,9 @@ pub struct MovePackage {
     /// (同 done_at);⛔ 与标签色**刻意不同**:标签按名归并到目标已有的那枚,色是目标空间
     /// 自己的元数据(见 import 里那段签字)。
     pub(crate) color: Option<String>,
+    /// 长文标记(0042):Some = 是长文(或任务行带着潜伏的 doc_at),目标 create 后补 set_field
+    /// 落同值;None = 普通条目(目标生而 NULL,不补)。随包走,理由同 color。
+    pub(crate) doc_at: Option<String>,
     pub(crate) topics: Vec<(String, String)>,
     pub(crate) images: Vec<ImagePack>,
     /// 随迁留言(identity-plan §4.5,用户 2026-08-06 拍板「跟着走」)。
@@ -362,10 +379,22 @@ pub fn move_peak_bytes(conn: &Connection, item_id: &str) -> Result<i64, String> 
 pub fn export(conn: &mut Connection, item_id: &str) -> Result<ExportOutcome, String> {
     let tx = conn.transaction().map_err(|e| e.to_string())?;
 
-    let row: Option<(String, String, String, Option<String>, Option<i64>, Option<String>, Option<String>, Option<String>, Option<String>)> = tx
+    type ExportRow = (
+        String,
+        String,
+        String,
+        Option<String>,
+        Option<i64>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    );
+    let row: Option<ExportRow> = tx
         .query_row(
             "SELECT content, stage, created_at, due_on, priority, archived_at, sealed_at, done_at, \
-                    color \
+                    color, doc_at \
              FROM items WHERE id = ?1",
             [item_id],
             |r| {
@@ -379,12 +408,13 @@ pub fn export(conn: &mut Connection, item_id: &str) -> Result<ExportOutcome, Str
                     r.get(6)?,
                     r.get(7)?,
                     r.get(8)?,
+                    r.get(9)?,
                 ))
             },
         )
         .optional()
         .map_err(|e| e.to_string())?;
-    let (content, stage, created_at, due_on, priority, archived_at, sealed_at, done_at, color) =
+    let (content, stage, created_at, due_on, priority, archived_at, sealed_at, done_at, color, doc_at) =
         row.ok_or_else(|| "条目不存在".to_string())?;
     if archived_at.is_some() || sealed_at.is_some() {
         return Err("回收站/成就归档中的条目不能移动(史实轴,先还原)".to_string());
@@ -439,6 +469,7 @@ pub fn export(conn: &mut Connection, item_id: &str) -> Result<ExportOutcome, Str
         priority,
         done_at,
         color,
+        doc_at,
         topics,
         images,
         comments,
@@ -513,6 +544,19 @@ pub fn import(conn: &mut Connection, clock: &mut Clock, pkg: &MovePackage) -> Re
             return Err(format!("目标空间颜色落值失败(影响 {n} 行)"));
         }
         oplog::item_set(&tx, clock, &new_id, &["color"])?;
+    }
+
+    // 长文标记随迁(0042):同 color —— create 出生快照刻意不带 doc_at,有值才补 UPDATE +
+    // set_field;普通条目不补。目标落点由源 stage 算(inbox / filed / todo),doc_at 原样跟走,
+    // 归属由读侧判(任务列优先),⛔ 这里不按落点改写它。
+    if let Some(doc_at) = pkg.doc_at.as_deref() {
+        let n = tx
+            .execute("UPDATE items SET doc_at = ?2 WHERE id = ?1", (&new_id, doc_at))
+            .map_err(|e| format!("目标空间长文标记落值失败:{e}"))?;
+        if n != 1 {
+            return Err(format!("目标空间长文标记落值失败(影响 {n} 行)"));
+        }
+        oplog::item_set(&tx, clock, &new_id, &["doc_at"])?;
     }
 
     // 标签按名归并(§2.5):源名先去重(BTreeSet 顺带给出确定性遍历序);目标同名
@@ -876,7 +920,7 @@ fn read_fingerprint(tx: &Connection, item_id: &str) -> Result<Fingerprint, Strin
     let row = tx
         .query_row(
             "SELECT content, stage, due_on, priority, created_at, archived_at, sealed_at, done_at, \
-                    color \
+                    color, doc_at \
              FROM items WHERE id = ?1",
             [item_id],
             |r| {
@@ -890,6 +934,7 @@ fn read_fingerprint(tx: &Connection, item_id: &str) -> Result<Fingerprint, Strin
                     r.get::<_, Option<String>>(6)?,
                     r.get::<_, Option<String>>(7)?,
                     r.get::<_, Option<String>>(8)?,
+                    r.get::<_, Option<String>>(9)?,
                 ))
             },
         )
@@ -897,7 +942,7 @@ fn read_fingerprint(tx: &Connection, item_id: &str) -> Result<Fingerprint, Strin
     // 列的 kind 与 stage 同属一对(§8.3 M),走 board 那份唯一判据取,⛔ 别在这句 SQL 里
     // 内联第二份「什么是任务态」。
     let kind = source_kind_of(tx, &row.1)?;
-    let item = (row.0, row.1, kind, row.2, row.3, row.4, row.5, row.6, row.7, row.8);
+    let item = (row.0, row.1, kind, row.2, row.3, row.4, row.5, row.6, row.7, row.8, row.9);
     let topics = read_topics(tx, item_id)?;
     let images = image_digests(tx, item_id)?;
     let counter = read_counter(tx, item_id)?;
@@ -1312,6 +1357,92 @@ mod tests {
         assert_eq!(color_vals, vec![serde_json::json!("#3f8272")], "补一条 color set_field");
 
         assert!(matches!(finalize_source(&mut src, &mut sc, &pkg).unwrap(), FinalizeOutcome::Deleted));
+    }
+
+    /// 0042 长文随包迁移(longform-plan §1 字段保全契约表的 move 一行):包携 doc_at,目标落点
+    /// 照源 stage 算(长文仍在 inbox / filed),create 后补一条 doc_at set_field、值不变;目标里
+    /// 它仍是长文。普通随记不补 doc_at op(下界)。
+    #[test]
+    fn move_preserves_doc_at_and_plain_idea_emits_none() {
+        let (mut src, mut sc) = fresh_db("doc-keep");
+        let (mut dst, mut dc) = fresh_db("doc-keep-dst");
+        let doc = notes::capture_doc(&mut src, &mut sc, "# 搬家的长文").unwrap();
+        let doc_at: Option<String> =
+            src.query_row("SELECT doc_at FROM items WHERE id=?1", [&doc], |r| r.get(0)).unwrap();
+        let pkg = export_ready(&mut src, &doc);
+        assert_eq!(pkg.doc_at, doc_at, "移动包携 doc_at");
+        let new_id = import(&mut dst, &mut dc, &pkg).unwrap();
+        assert_eq!(repo::item_kind(&dst, &new_id).unwrap().as_deref(), Some("doc"), "目标里仍是长文");
+        let vals: Vec<serde_json::Value> = ops_for(&dst, "item", &new_id)
+            .into_iter()
+            .filter(|o| o.kind == "set_field" && o.payload["field"] == "doc_at")
+            .map(|o| o.payload["value"].clone())
+            .collect();
+        assert_eq!(vals, vec![serde_json::json!(doc_at.unwrap())], "补一条 doc_at set_field、值不变");
+        assert!(matches!(finalize_source(&mut src, &mut sc, &pkg).unwrap(), FinalizeOutcome::Deleted));
+
+        // 任务行带着潜伏 doc_at(两端并发「展开 × 转待办」收敛后的形;单机命令造不出,裸
+        // UPDATE + 同轮发 op 模拟)—— 原值随包走、目标仍是任务、补发同值 op;再回放到第三库
+        // 归属与字段一致(codex 实现审一弹 L:move 缺这一形的样本)。
+        let latent = task::create(&mut src, &mut sc, "带潜伏标记的任务", None, None, None).unwrap();
+        let ts = "2026-10-28T10:00:00.000Z";
+        src.execute("UPDATE items SET doc_at = ?2 WHERE id = ?1", (&latent, ts)).unwrap();
+        crate::oplog::item_set(&src, &mut sc, &latent, &["doc_at"]).unwrap();
+        let pkg = export_ready(&mut src, &latent);
+        assert_eq!(pkg.doc_at.as_deref(), Some(ts), "移动包携潜伏 doc_at");
+        let new_id = import(&mut dst, &mut dc, &pkg).unwrap();
+        let (stage, doc_at): (String, Option<String>) = dst
+            .query_row("SELECT stage, doc_at FROM items WHERE id=?1", [&new_id], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap();
+        assert_eq!((stage.as_str(), doc_at.as_deref()), ("todo", Some(ts)), "目标是任务、原值不变");
+        assert_eq!(repo::item_kind(&dst, &new_id).unwrap().as_deref(), Some("task"));
+        let (mut third, mut tc) = fresh_db("doc-keep-third");
+        // ops_for 不带 origin_seq;replay 层不验连续性,只需库内 (origin, origin_seq) 唯一。
+        for (n, op) in crate::oplog::ops_for(&dst, "item", &new_id).into_iter().enumerate() {
+            let remote = crate::replay::RemoteOp {
+                op_id: op.op_id,
+                hlc: op.hlc,
+                entity: "item".into(),
+                entity_id: new_id.clone(),
+                kind: op.kind,
+                payload: op.payload,
+                origin_seq: n as i64 + 1,
+            };
+            crate::replay::apply_remote_op(&mut third, &mut tc, &remote).unwrap();
+        }
+        let third_doc_at: Option<String> =
+            third.query_row("SELECT doc_at FROM items WHERE id=?1", [&new_id], |r| r.get(0)).unwrap();
+        assert_eq!(third_doc_at.as_deref(), Some(ts), "第三库回放得到同一个值");
+        assert_eq!(repo::item_kind(&third, &new_id).unwrap().as_deref(), Some("task"), "第三库同一归属");
+
+        let plain = notes::capture(&mut src, &mut sc, "普通随记").unwrap();
+        let pkg = export_ready(&mut src, &plain);
+        assert_eq!(pkg.doc_at, None);
+        let new_id = import(&mut dst, &mut dc, &pkg).unwrap();
+        assert!(
+            ops_for(&dst, "item", &new_id).iter().all(|o| o.payload["field"] != "doc_at"),
+            "普通随记不发 doc_at op"
+        );
+    }
+
+    /// 0042:导出之后源条目被展开 / 收回 —— doc_at 进了指纹,finalize 必须拒删源(codex 设计审
+    /// 一弹 H2 点名的最易漏处)。
+    #[test]
+    fn finalize_refuses_when_doc_at_changed_after_export() {
+        for expand in [true, false] {
+            let (mut src, mut sc) = fresh_db(&format!("fin-doc-{expand}"));
+            let id = notes::capture(&mut src, &mut sc, "源条目").unwrap();
+            if !expand {
+                notes::set_doc(&mut src, &mut sc, &id, true).unwrap();
+            }
+            let pkg = export_ready(&mut src, &id);
+            notes::set_doc(&mut src, &mut sc, &id, expand).unwrap();
+            assert!(
+                matches!(finalize_source(&mut src, &mut sc, &pkg).unwrap(), FinalizeOutcome::Kept { .. }),
+                "导出后{}了,finalize 必须拒删源",
+                if expand { "展开" } else { "收回" }
+            );
+        }
     }
 
     /// 0040 无色的卡:包里 color = None,目标生而 NULL,且**不发**一条 value:null 的空 op

@@ -3865,3 +3865,134 @@ fn every_outbound_hello_carries_the_capability() {
         );
     }
 }
+
+// ---- 混版台架:真实旧端(v41)收到 doc_at 的挂起与升级追平(0042,codex 实现审一弹 M)----
+//
+// 三个阶段、两份代码树、一个持久接收库(longform-plan §1「⑤旧端挂起与升级追平 —— 用真实旧规则
+// 验,⛔ 别拿新版 validator 模拟旧端」)。本文件是**新端**那两段(emit / resume);旧端那段
+// (receive)原文存在同目录 `mixed_doc_at_receive_v41.rs.txt`,贴进旧树本文件末尾跑(只用旧版就有
+// 的接口)。阴性对照:把旧树 `validate_item_field_shape` 改成认 doc_at,receive 段必须红(实跑红成
+// `OriginQuarantined`)。⚠ 证的是「真实旧规则 + 持久库升级 + 引擎补给闭环」,不是真实网络端到端
+// (传输层鉴权、投递、重连都没走)。跑法(PowerShell,`ZJ_MIX_DIR` 指一个
+// 空目录;旧树 = `git worktree add --detach <旧树> <0042 之前的提交>`,再把 receive 驱动贴进去):
+//
+//   $env:ZJ_MIX_DIR='…'; $env:ZJ_MIX_PHASE='emit';    cargo test --manifest-path <新树>\core\Cargo.toml --lib mixed_doc_at_driver -- --ignored
+//   $env:ZJ_MIX_PHASE='receive'; cargo test --manifest-path <旧树>\core\Cargo.toml --lib mixed_doc_at_driver -- --ignored
+//   $env:ZJ_MIX_PHASE='resume';  cargo test --manifest-path <新树>\core\Cargo.toml --lib mixed_doc_at_driver -- --ignored
+//
+// 刻意 `#[ignore]`:单进程里造不出「旧二进制」,常规 `cargo test` 跑它没有意义。
+
+fn mix_dir() -> std::path::PathBuf {
+    std::path::PathBuf::from(std::env::var("ZJ_MIX_DIR").expect("混版台架要 ZJ_MIX_DIR"))
+}
+
+fn mix_state(dir: &std::path::Path) -> HashMap<String, String> {
+    std::fs::read_to_string(dir.join("state.txt"))
+        .expect("先跑 emit")
+        .lines()
+        .filter_map(|l| l.split_once('='))
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect()
+}
+
+#[test]
+#[ignore]
+fn mixed_doc_at_driver() {
+    let dir = mix_dir();
+    match std::env::var("ZJ_MIX_PHASE").expect("ZJ_MIX_PHASE = emit | resume").as_str() {
+        "emit" => mixed_emit(&dir),
+        "resume" => mixed_resume(&dir),
+        other => panic!("新端只跑 emit / resume,收到 {other}(receive 在旧树里跑)"),
+    }
+}
+
+/// emit(新端):发送设备 S 依次 —— 记一条随记 X、新建长文 D(create + doc_at set)、再改 X 的正文;
+/// 另一台设备 O 记一条。⇒ S 的日志里 doc_at 那枚之后**还有一枚旧端认得的 op**(X 的改动),
+/// 旧端必须连它一起停住(挂起是 per-origin、全词汇的)。
+fn mixed_emit(dir: &std::path::Path) {
+    // 只清台架自己建的目录(带记号文件);非空又没记号 = 指错了地方,拒绝而不是递归删
+    // (codex 实现审一弹复核 L)。
+    const MARK: &str = ".zj-mixed-doc-at";
+    let non_empty = std::fs::read_dir(dir).map(|mut d| d.next().is_some()).unwrap_or(false);
+    if non_empty {
+        assert!(dir.join(MARK).exists(), "ZJ_MIX_DIR 非空且不是台架目录,拒绝清理:{}", dir.display());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    std::fs::create_dir_all(dir).unwrap();
+    std::fs::write(dir.join(MARK), "").unwrap();
+    let mut s = db::open(&dir.join("sender.sqlite3")).unwrap();
+    let mut sc = Clock::load(&s).unwrap();
+    let x = notes::capture(&mut s, &mut sc, "先记下的随记").unwrap();
+    let doc = notes::capture_doc(&mut s, &mut sc, "# 一篇长文").unwrap();
+    notes::edit(&mut s, &mut sc, &x, "先记下的随记(之后改过)").unwrap();
+    let mut o = db::open(&dir.join("other.sqlite3")).unwrap();
+    let mut oc = Clock::load(&o).unwrap();
+    let y = notes::capture(&mut o, &mut oc, "另一台设备记的").unwrap();
+    let state = format!(
+        "sender={}\nother={}\nx={x}\ndoc={doc}\ny={y}\nx_original=先记下的随记\nx_edited=先记下的随记(之后改过)\n",
+        sc.device_id(),
+        oc.device_id()
+    );
+    std::fs::write(dir.join("state.txt"), state).unwrap();
+}
+
+/// resume(新端,同一个接收库):用新版 `db::open` 打开旧端留下的 v41 库(迁到 v42)、重建引擎,
+/// 走**真实补给路**(S 的 Hello → 接收端回 Want → S 供帧)追平 —— ⛔ 不手动再喂全量。
+fn mixed_resume(dir: &std::path::Path) {
+    let st = mix_state(dir);
+    assert!(dir.join("receive.ok").exists(), "旧端那段没跑或没过");
+    let (sender, receiver_path) = (&st["sender"], dir.join("receiver.sqlite3"));
+    let mut r = db::open(&receiver_path).unwrap();
+    let uv: i64 = r.pragma_query_value(None, "user_version", |x| x.get(0)).unwrap();
+    assert_eq!(uv, crate::db::SCHEMA_VERSION, "接收库已迁到新版");
+    let mut rc = Clock::load(&r).unwrap();
+    let mut r_eng = Engine::new_solo(&r, BlobPolicy::Full).unwrap();
+    let mut s = db::open(&dir.join("sender.sqlite3")).unwrap();
+    let mut sc = Clock::load(&s).unwrap();
+    let mut s_eng = Engine::new_solo(&s, BlobPolicy::Full).unwrap();
+    let before = watermark(&r, sender).unwrap();
+    let s_max = watermark(&s, sender).unwrap();
+    assert!(before < s_max, "前提:旧端确实停在缺口前({before} < {s_max})");
+
+    let hello = s_eng
+        .make_hello(&s, BROADCAST, Route::Relay)
+        .unwrap()
+        .into_iter()
+        .find_map(|o| match o {
+            Output::Send { msg: msg @ Msg::Hello { .. }, .. } => Some(msg),
+            _ => None,
+        })
+        .expect("make_hello 必产一枚 Hello");
+    let want = r_eng
+        .on_relay_msg(&mut r, &mut rc, sender, hello)
+        .unwrap()
+        .into_iter()
+        .find_map(|o| match o {
+            Output::Send { msg: msg @ Msg::Want { .. }, .. } => Some(msg),
+            _ => None,
+        })
+        .expect("接收端落后,必须回一枚 Want");
+    let Msg::Want { origin, from_seq } = &want else { unreachable!() };
+    assert_eq!((origin.as_str(), *from_seq), (sender.as_str(), before + 1), "缺口从 doc_at 那枚起补");
+    s_eng.on_relay_msg(&mut s, &mut sc, rc.device_id(), want).unwrap();
+    let mut fed = 0usize;
+    for f in s_eng.drain_ops_for_test(&s).unwrap() {
+        if let Output::Send { msg, .. } = f {
+            r_eng.on_relay_msg(&mut r, &mut rc, sender, msg).unwrap();
+            fed += 1;
+        }
+    }
+    assert!(fed > 0, "一枚帧都没供出来:那这一段什么也没证");
+    assert_eq!(watermark(&r, sender).unwrap(), s_max, "追平 S 的水位");
+    assert!(!r_eng.is_suspended(sender), "不再挂起");
+    assert!(quarantine_row(&r, sender).is_none(), "全程没进隔离");
+    let doc_at = |c: &Connection| -> Option<String> {
+        c.query_row("SELECT doc_at FROM items WHERE id = ?1", [&st["doc"]], |x| x.get(0)).unwrap()
+    };
+    assert!(doc_at(&s).is_some());
+    assert_eq!(doc_at(&r), doc_at(&s), "doc_at 补到了");
+    assert_eq!(crate::repo::item_kind(&r, &st["doc"]).unwrap().as_deref(), Some("doc"));
+    let x_now: String = r.query_row("SELECT content FROM items WHERE id = ?1", [&st["x"]], |x| x.get(0)).unwrap();
+    assert_eq!(x_now, st["x_edited"], "缺口之后那枚旧端认得的改动也补到了");
+    assert!(crate::repo::item_revisions(&r, &st["x"]).unwrap().len() == 1, "补到的改动照常长一版历史");
+}

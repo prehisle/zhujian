@@ -888,7 +888,7 @@ const FINGERPRINTS: &[(&str, &str)] = &[
         "SELECT id||'|'||content||'|'||stage||'|'||created_at \
          ||'|'||COALESCE(archived_at,'∅')||'|'||COALESCE(due_on,'∅')||'|'||COALESCE(priority,'∅') \
          ||'|'||COALESCE(position,'∅')||'|'||COALESCE(sealed_at,'∅')||'|'||COALESCE(born_stage,'∅') \
-         ||'|'||COALESCE(done_at,'∅')||'|'||COALESCE(born_device,'∅') \
+         ||'|'||COALESCE(done_at,'∅')||'|'||COALESCE(born_device,'∅')||'|'||COALESCE(doc_at,'∅') \
          FROM items ORDER BY id",
     ),
     (

@@ -124,6 +124,10 @@ pub struct OrganizedRow {
     /// 「未知不回填」)。前端把它经设备名册翻成别名,**只在多设备账户里、且不是本机时**
     /// 才显一枚小字 chip(identity-plan §3.7);单设备账户完全不显示。
     pub born_device: Option<String>,
+    /// 长文标记(0042 `items.doc_at`,成为长文的时刻)。活跃随记恒 None;长文列表恒 Some;
+    /// 回收站里的行原样带出(删进回收站**保留长文属性**,还原后照它重新归属 —— 前端只拿它
+    /// 画一枚「长文」小标,⛔ 别拿它自己再判一遍归属,归属以 [`item_kind_sql`] 为准)。
+    pub doc_at: Option<String>,
     /// This idea's tags (each id + title + optional color), for chip display + tint.
     pub topics: Vec<TagRef>,
 }
@@ -146,6 +150,10 @@ pub struct TimelineRow {
     pub created_at: String,
     /// 六个 stage 之一,原样透传——时间轴的 stage 标识与「可勾/已勾」判定都由它派生。
     pub stage: String,
+    /// 主归属(0042 起,[`item_kind_sql`] 的产出;时间轴只有活条目 ⇒ 恒 `task` / `doc` / `idea`)。
+    /// ⭐ 前端按它分桶(随记 / 长文 / 任务),⛔ 别再凭 stage 推「非任务就是随记」;列坐标分组、
+    /// 撤回 / 封存条件这类**任务内部**的判断照旧看 stage。
+    pub kind: String,
     /// 120 起随行带出(安卓卡片操作面板要显示当前真值——面板另拼一次 list_tasks
     /// 是两次 SELECT 非同一快照;灵感行恒 NULL)。
     pub due_on: Option<String>,
@@ -175,6 +183,8 @@ pub struct TrashRow {
     pub stage: String,
     /// 卡片颜色标记(0040),同 TimelineRow.color —— 进了回收站也保着(桌面同判:颜色是卡自己的属性)。
     pub color: Option<String>,
+    /// 长文标记(0042),同 OrganizedRow.doc_at:回收站保留长文属性,前端只拿它画小标。
+    pub doc_at: Option<String>,
     pub topics: Vec<TagRef>,
 }
 
@@ -240,13 +250,18 @@ pub struct TopicTree {
     pub position: Option<String>,
     /// 标签类型自由文本(0031;None = 无类型)。标签视图可设/清,供日后按类型筛选。
     pub kind: Option<String>,
+    /// 挂这枚标签的活跃随记(主归属 `idea`,0042 起不含长文)。
     pub notes: Vec<ItemRow>,
+    /// 挂这枚标签的长文(主归属 `doc`,0042)。标签下「当前内容组成」= 随记 / 长文 / 任务三类
+    /// 互斥计数(longform-plan §1),计数与下钻集合一致;任务那类前端从看板数据取(既有形)。
+    pub docs: Vec<ItemRow>,
 }
 
 /// One search hit: an item whose current text OR any superseded version matched,
 /// carrying enough to place it — its view (`status`) and tag titles. `status` maps the
-/// underlying stage/archived axis onto the frontend's vocabulary: `inbox` / `processed`
-/// (= filed) / `task` (any board stage) / `archived` (回收站, either kind).
+/// item's 主归属([`item_kind_sql`])onto the frontend's vocabulary: `inbox` / `processed`
+/// (= filed) / `doc`(长文,0042)/ `task` (any board stage) / `archived` (回收站, either
+/// kind) / `sealed`。
 pub struct SearchHit {
     pub id: String,
     pub content: String,
@@ -267,20 +282,39 @@ pub struct SearchTopic {
     pub color: Option<String>,
 }
 
-/// Map an item's (stage, archived?, sealed?) onto the frontend search vocabulary.
-/// `sealed`(成就归档)先于 stage 读出 —— 已归档的任务不在看板上,不能报成 "task"。
-/// 两轴互斥(0017 触发器守),顺序只是形式。
-fn view_status(stage: &str, archived: bool, sealed: bool) -> &'static str {
-    if sealed {
-        "sealed"
-    } else if archived {
-        "archived"
-    } else {
-        match stage {
-            "inbox" => "inbox",
-            "filed" => "processed",
-            _ => "task",
-        }
+/// 条目**主归属**的唯一正式定义(longform-plan §1,codex 设计审 M):SQL 表达式,对别名 `a`
+/// 的行求出 `'sealed' | 'archived' | 'task' | 'doc' | 'idea'` 之一。判定顺序 = sealed →
+/// archived → 任务列 → doc_at → 随记:
+/// - `sealed` 先于一切(成就归档是史实,⛔ 非空 doc_at 不许把它拉进长文);
+/// - `archived` 次之(回收站保留长文属性,还原只清 archived_at、按当时 stage / doc_at 重归属);
+/// - **任务列优先于 doc_at** —— stage / doc_at 各自独立 LWW,A 展开、B 同时转待办会收敛成
+///   「任务行带着非空 doc_at」,它就是任务(⛔ 回放不清 doc_at、不加触发器拒,见迁移 0042)。
+///
+/// 活跃随记列表、长文列表、搜索状态、时间轴分类、标签分桶一律引用它;⛔ 别在别处(含两个
+/// 前端)按 stage / doc_at 另写一份这套顺序。任务看板 / 回收站 / 成就册三族既有谓词与它
+/// 相容(各自那一类的成员资格本就不看 doc_at),不改。
+pub fn item_kind_sql(a: &str) -> String {
+    format!(
+        "(CASE WHEN {a}.sealed_at IS NOT NULL THEN 'sealed' \
+               WHEN {a}.archived_at IS NOT NULL THEN 'archived' \
+               WHEN {a}.stage IN {TASK_STAGES} THEN 'task' \
+               WHEN {a}.doc_at IS NOT NULL THEN 'doc' \
+               ELSE 'idea' END)"
+    )
+}
+
+/// Map an item's 主归属([`item_kind_sql`] 的产出)+ stage onto the frontend search
+/// vocabulary. 只有 `idea` 一类还按 stage 再分未归类 / 已归类。归属值来自本模块那句 CASE,
+/// 认不得 = 那句 CASE 与这里漂了,是 bug,fail-fast。
+fn view_status(kind: &str, stage: &str) -> &'static str {
+    match kind {
+        "sealed" => "sealed",
+        "archived" => "archived",
+        "task" => "task",
+        "doc" => "doc",
+        "idea" if stage == "inbox" => "inbox",
+        "idea" => "processed",
+        other => panic!("item_kind_sql 产出了认不得的归属(必是 bug):{other}"),
     }
 }
 
@@ -318,10 +352,11 @@ pub(crate) fn add_item(conn: &Connection, content: &str) -> rusqlite::Result<Str
 
 /// All items still in the Inbox (未归类灵感), oldest first.
 pub fn inbox_items(conn: &Connection) -> rusqlite::Result<Vec<ItemRow>> {
-    let mut stmt = conn.prepare(
-        "SELECT id, content, created_at FROM items \
-         WHERE stage = 'inbox' AND archived_at IS NULL ORDER BY created_at",
-    )?;
+    let mut stmt = conn.prepare(&format!(
+        "SELECT i.id, i.content, i.created_at FROM items i \
+         WHERE i.stage = 'inbox' AND {} = 'idea' ORDER BY i.created_at",
+        item_kind_sql("i")
+    ))?;
     let rows = stmt.query_map([], |r| {
         Ok(ItemRow { id: r.get(0)?, content: r.get(1)?, created_at: r.get(2)? })
     })?;
@@ -357,7 +392,7 @@ fn organized_rows(
     }
 
     let sql = format!(
-        "SELECT i.id, i.content, i.created_at, i.stage, i.born_device FROM items i \
+        "SELECT i.id, i.content, i.created_at, i.stage, i.born_device, i.doc_at FROM items i \
          WHERE {where_sql} ORDER BY {order_sql}"
     );
     let mut stmt = conn.prepare(&sql)?;
@@ -368,31 +403,38 @@ fn organized_rows(
             r.get::<_, String>(2)?,
             r.get::<_, String>(3)?,
             r.get::<_, Option<String>>(4)?,
+            r.get::<_, Option<String>>(5)?,
         ))
     })?;
     let mut out = Vec::new();
     for row in rows {
-        let (id, content, created_at, stage, born_device) = row?;
+        let (id, content, created_at, stage, born_device, doc_at) = row?;
         let topics = topics_by_item.remove(&id).unwrap_or_default();
-        out.push(OrganizedRow { id, content, created_at, stage, born_device, topics });
+        out.push(OrganizedRow { id, content, created_at, stage, born_device, doc_at, topics });
     }
     Ok(out)
 }
 
-/// Organized ideas for the 已整理 tab (stage 'filed', not archived), newest first.
+/// Organized ideas for the 已整理 tab (stage 'filed', 主归属是随记), newest first.
 pub fn filed_items(conn: &Connection) -> rusqlite::Result<Vec<OrganizedRow>> {
-    organized_rows(conn, "i.stage = 'filed' AND i.archived_at IS NULL", "i.created_at DESC")
+    organized_rows(
+        conn,
+        &format!("i.stage = 'filed' AND {} = 'idea'", item_kind_sql("i")),
+        "i.created_at DESC",
+    )
 }
 
-/// Every live idea — 未归类 + 已归类 together (idea-stage, not archived), newest first,
+/// Every live idea — 未归类 + 已归类 together (主归属是随记,长文不在内), newest first,
 /// each with its tag titles. Backs the merged 灵感 list: tags are just metadata, so the
 /// view no longer splits inbox vs filed. An untagged idea carries an empty `topics`.
 pub fn live_ideas(conn: &Connection) -> rusqlite::Result<Vec<OrganizedRow>> {
-    organized_rows(
-        conn,
-        &format!("i.stage IN {IDEA_STAGES} AND i.archived_at IS NULL"),
-        "i.created_at DESC",
-    )
+    organized_rows(conn, &format!("{} = 'idea'", item_kind_sql("i")), "i.created_at DESC")
+}
+
+/// 全部长文(主归属 = `doc`,longform-plan §1),最近成为长文的在前。stage 仍在 inbox / filed
+/// (标签照旧挂),归属判定见 [`item_kind_sql`]。
+pub fn doc_items(conn: &Connection) -> rusqlite::Result<Vec<OrganizedRow>> {
+    organized_rows(conn, &format!("{} = 'doc'", item_kind_sql("i")), "i.doc_at DESC, i.id DESC")
 }
 
 /// 灵感流转统计的原料(全是派生数,只算不存;见 0018)。
@@ -442,15 +484,16 @@ pub fn idea_trash(conn: &Connection) -> rusqlite::Result<Vec<OrganizedRow>> {
 /// created_at)。标签顺序与 organized_rows 同轴(0031 起手动序 t.position,未定序回落
 /// t.updated_at;末键 t.id 把同刻/同键的 chip 顺序也钉死)。
 pub fn live_timeline(conn: &Connection) -> rusqlite::Result<Vec<TimelineRow>> {
-    let mut stmt = conn.prepare(
+    let mut stmt = conn.prepare(&format!(
         "SELECT i.id, i.content, i.created_at, i.stage, i.due_on, i.priority, i.done_at, \
-                i.born_device, i.color, t.id, t.title, t.color \
+                i.born_device, i.color, t.id, t.title, t.color, {} \
          FROM items i \
          LEFT JOIN item_topic it ON it.item_id = i.id \
          LEFT JOIN topics t ON t.id = it.topic_id \
          WHERE i.archived_at IS NULL AND i.sealed_at IS NULL \
          ORDER BY i.created_at DESC, i.id DESC, t.position IS NULL, t.position, t.updated_at, t.id",
-    )?;
+        item_kind_sql("i")
+    ))?;
     let rows = stmt.query_map([], |r| {
         Ok((
             r.get::<_, String>(0)?,
@@ -465,6 +508,7 @@ pub fn live_timeline(conn: &Connection) -> rusqlite::Result<Vec<TimelineRow>> {
             r.get::<_, Option<String>>(9)?,
             r.get::<_, Option<String>>(10)?,
             r.get::<_, Option<String>>(11)?,
+            r.get::<_, String>(12)?,
         ))
     })?;
     let mut out: Vec<TimelineRow> = Vec::new();
@@ -482,6 +526,7 @@ pub fn live_timeline(conn: &Connection) -> rusqlite::Result<Vec<TimelineRow>> {
             tag_id,
             tag_title,
             tag_color,
+            kind,
         ) = row?;
         // 同一条目的标签行必然相邻(前两个排序键完全相同),条目 id 一换就开新行。
         if out.last().map(|last| last.id != id).unwrap_or(true) {
@@ -490,6 +535,7 @@ pub fn live_timeline(conn: &Connection) -> rusqlite::Result<Vec<TimelineRow>> {
                 content,
                 created_at,
                 stage,
+                kind,
                 due_on,
                 priority,
                 done_at,
@@ -519,7 +565,8 @@ pub fn live_timeline(conn: &Connection) -> rusqlite::Result<Vec<TimelineRow>> {
 /// (列表/还原/单删/清空共 10 处,漏一处=英文触发器报错重现)。
 pub fn trash_items(conn: &Connection) -> rusqlite::Result<Vec<TrashRow>> {
     let mut stmt = conn.prepare(
-        "SELECT i.id, i.content, i.created_at, i.archived_at, i.stage, i.color, t.id, t.title, t.color \
+        "SELECT i.id, i.content, i.created_at, i.archived_at, i.stage, i.color, t.id, t.title, t.color, \
+                i.doc_at \
          FROM items i \
          LEFT JOIN item_topic it ON it.item_id = i.id \
          LEFT JOIN topics t ON t.id = it.topic_id \
@@ -537,13 +584,23 @@ pub fn trash_items(conn: &Connection) -> rusqlite::Result<Vec<TrashRow>> {
             r.get::<_, Option<String>>(6)?,
             r.get::<_, Option<String>>(7)?,
             r.get::<_, Option<String>>(8)?,
+            r.get::<_, Option<String>>(9)?,
         ))
     })?;
     let mut out: Vec<TrashRow> = Vec::new();
     for row in rows {
-        let (id, content, created_at, archived_at, stage, color, tag_id, tag_title, tag_color) = row?;
+        let (id, content, created_at, archived_at, stage, color, tag_id, tag_title, tag_color, doc_at) = row?;
         if out.last().map(|last| last.id != id).unwrap_or(true) {
-            out.push(TrashRow { id, content, created_at, archived_at, stage, color, topics: Vec::new() });
+            out.push(TrashRow {
+                id,
+                content,
+                created_at,
+                archived_at,
+                stage,
+                color,
+                doc_at,
+                topics: Vec::new(),
+            });
         }
         if let Some(tag_id) = tag_id {
             let title = tag_title.expect("topics.title NOT NULL,与 t.id 来自同一匹配行");
@@ -580,18 +637,20 @@ pub fn search_items(conn: &Connection, query: &str) -> rusqlite::Result<Vec<Sear
     };
 
     // matched items: current content matches, OR any revision of it matches.
-    let matched: Vec<(String, String, String, String, Option<String>, Option<String>)> = {
+    // 第五列 = 主归属(item_kind_sql,0042 起 search 的 status 由它出,⛔ 不再按 stage 自己判)。
+    let matched: Vec<(String, String, String, String, String)> = {
         let mut stmt = conn.prepare(&format!(
-            "SELECT i.id, i.content, i.created_at, i.stage, i.archived_at, i.sealed_at FROM items i \
+            "SELECT i.id, i.content, i.created_at, i.stage, {} FROM items i \
              WHERE ({}) \
                 OR EXISTS (SELECT 1 FROM item_revisions r \
                            WHERE r.item_id = i.id AND {}) \
              ORDER BY i.created_at DESC",
+            item_kind_sql("i"),
             all_words("i.content"),
             all_words("r.content"),
         ))?;
         let rows = stmt.query_map(rusqlite::params_from_iter(&patterns), |r| {
-            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?))
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
         })?;
         rows.collect::<rusqlite::Result<_>>()?
     };
@@ -623,9 +682,8 @@ pub fn search_items(conn: &Connection, query: &str) -> rusqlite::Result<Vec<Sear
 
     Ok(matched
         .into_iter()
-        .map(|(id, content, created_at, stage, archived_at, sealed_at)| {
-            let status =
-                view_status(&stage, archived_at.is_some(), sealed_at.is_some()).to_string();
+        .map(|(id, content, created_at, stage, kind)| {
+            let status = view_status(&kind, &stage).to_string();
             let topics = topics_by_item.remove(&id).unwrap_or_default();
             SearchHit { id, content, created_at, status, topics }
         })
@@ -643,6 +701,24 @@ pub fn item_state(conn: &Connection, id: &str) -> rusqlite::Result<Option<(Strin
         |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?.is_some())),
     )
     .optional()
+}
+
+/// 一行的主归属([`item_kind_sql`]),None = 不存在。展开 / 收回 / 转待办的命令前置都问它。
+pub fn item_kind(conn: &Connection, id: &str) -> rusqlite::Result<Option<String>> {
+    conn.query_row(
+        &format!("SELECT {} FROM items i WHERE i.id = ?1", item_kind_sql("i")),
+        [id],
+        |r| r.get(0),
+    )
+    .optional()
+}
+
+/// 翻长文标记(0042):`on` = 写成现在时刻,否则清成 NULL。调用方先按 [`item_kind`] 验过前置
+/// (展开只准活跃随记、收回只准长文),这里只负责落值;返回影响行数供编排层核对。
+pub(crate) fn set_item_doc_at(conn: &Connection, id: &str, on: bool) -> rusqlite::Result<usize> {
+    let now = now_iso();
+    let doc_at = on.then_some(now.as_str());
+    conn.execute("UPDATE items SET doc_at = ?2, updated_at = ?3 WHERE id = ?1", (id, doc_at, &now))
 }
 
 /// An item's current stage (ignores the archived axis), or None if missing. Used by
@@ -1019,7 +1095,8 @@ pub fn all_topics(conn: &Connection) -> rusqlite::Result<Vec<TopicRow>> {
 /// Filed ideas grouped under each topic (newest-first within a topic). `include_empty`
 /// keeps tag-less topics (management view, in **manual order** — 0031 position, 未定序回落
 /// updated_at) vs drops them and orders by latest idea (read-only browse). Task-stage
-/// items never appear — only organized ideas (stage 'filed', not archived).
+/// items never appear — only 挂着该标签的活跃随记 / 长文(按主归属分 notes / docs 两桶;0042 起
+/// 不再要求 stage='filed',见下方查询头注).
 type TopicMeta = (String, String, Option<String>, Option<String>, Option<String>);
 fn topic_trees(conn: &Connection, include_empty: bool) -> rusqlite::Result<Vec<TopicTree>> {
     let mut meta: Vec<TopicMeta> = Vec::new();
@@ -1047,23 +1124,33 @@ fn topic_trees(conn: &Connection, include_empty: bool) -> rusqlite::Result<Vec<T
         }
     }
 
+    // 随记与长文按主归属(item_kind_sql)分两桶 —— 0042 前这里只认 stage='filed',长文
+    // 会被算成随记(codex 设计审二轮 M2)。⛔ **成员资格只看「挂着这枚标签(JOIN)+ 主归属」,
+    // 不再要求 stage='filed'**:「有标签必为 filed」在并发下不成立 —— A 删最后一个标签(发
+    // stage=inbox)、B 同时加另一个标签(它眼里已是 filed,不发 stage),链接按 OR-set 合并
+    // 后就是「stage=inbox 却挂着标签」的合法终态,旧条件会让它从标签下漏掉(codex 实现审二弹 M)。
     let mut notes_by_topic: std::collections::HashMap<String, Vec<ItemRow>> =
         std::collections::HashMap::new();
+    let mut docs_by_topic: std::collections::HashMap<String, Vec<ItemRow>> =
+        std::collections::HashMap::new();
     {
-        let mut stmt = conn.prepare(
-            "SELECT it.topic_id, i.id, i.content, i.created_at \
+        let mut stmt = conn.prepare(&format!(
+            "SELECT it.topic_id, i.id, i.content, i.created_at, {kind} \
              FROM item_topic it JOIN items i ON i.id = it.item_id \
-             WHERE i.stage = 'filed' AND i.archived_at IS NULL ORDER BY i.created_at DESC",
-        )?;
+             WHERE {kind} IN ('idea', 'doc') ORDER BY i.created_at DESC",
+            kind = item_kind_sql("i")
+        ))?;
         let rows = stmt.query_map([], |r| {
             Ok((
                 r.get::<_, String>(0)?,
                 ItemRow { id: r.get(1)?, content: r.get(2)?, created_at: r.get(3)? },
+                r.get::<_, String>(4)?,
             ))
         })?;
         for row in rows {
-            let (topic_id, note) = row?;
-            notes_by_topic.entry(topic_id).or_default().push(note);
+            let (topic_id, item, kind) = row?;
+            let bucket = if kind == "doc" { &mut docs_by_topic } else { &mut notes_by_topic };
+            bucket.entry(topic_id).or_default().push(item);
         }
     }
 
@@ -1073,31 +1160,40 @@ fn topic_trees(conn: &Connection, include_empty: bool) -> rusqlite::Result<Vec<T
             .into_iter()
             .map(|(id, title, color, position, kind)| {
                 let notes = notes_by_topic.remove(&id).unwrap_or_default();
-                TopicTree { id, title, color, position, kind, notes }
+                let docs = docs_by_topic.remove(&id).unwrap_or_default();
+                TopicTree { id, title, color, position, kind, notes, docs }
             })
             .collect())
     } else {
-        // keep only non-empty topics; order by each topic's newest idea (notes[0]).
+        // keep only non-empty topics (随记或长文至少一条); order by each topic's newest
+        // item —— notes / docs 各自已按 created_at DESC 排,取两者首项较新的那个。
+        let newest = |t: &TopicTree| -> String {
+            let n = t.notes.first().map(|r| r.created_at.as_str()).unwrap_or("");
+            let d = t.docs.first().map(|r| r.created_at.as_str()).unwrap_or("");
+            n.max(d).to_string()
+        };
         let mut out: Vec<TopicTree> = meta
             .into_iter()
             .filter_map(|(id, title, color, position, kind)| {
-                notes_by_topic
-                    .remove(&id)
-                    .map(|notes| TopicTree { id, title, color, position, kind, notes })
+                let notes = notes_by_topic.remove(&id).unwrap_or_default();
+                let docs = docs_by_topic.remove(&id).unwrap_or_default();
+                (!notes.is_empty() || !docs.is_empty())
+                    .then(|| TopicTree { id, title, color, position, kind, notes, docs })
             })
             .collect();
-        out.sort_by(|a, b| b.notes[0].created_at.cmp(&a.notes[0].created_at));
+        out.sort_by_key(|t| std::cmp::Reverse(newest(t)));
         Ok(out)
     }
 }
 
-/// Every topic that holds at least one filed idea, each carrying those ideas (newest
-/// first), for the read-only 按主题浏览. Empty topics are omitted; ordered by newest idea.
+/// Every topic that holds at least one 活跃随记或长文, each carrying them (newest first,
+/// 分 notes / docs 两桶), for the read-only 按主题浏览. Empty topics are omitted; ordered by
+/// newest item.
 pub fn topics_with_notes(conn: &Connection) -> rusqlite::Result<Vec<TopicTree>> {
     topic_trees(conn, false)
 }
 
-/// Every topic — including empty ones — each with its filed ideas, for the manual
+/// Every topic — including empty ones — each with its 活跃随记 / 长文, for the manual
 /// 标签管理 view. Ordered most-recently-changed first.
 pub fn all_topics_with_notes(conn: &Connection) -> rusqlite::Result<Vec<TopicTree>> {
     topic_trees(conn, true)
@@ -1914,10 +2010,10 @@ mod tests {
     }
 
     #[test]
-    fn migration_sets_user_version_41_and_enforces_foreign_keys() {
+    fn migration_sets_user_version_42_and_enforces_foreign_keys() {
         let conn = fresh_db();
         let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0)).unwrap();
-        assert_eq!(version, 41);
+        assert_eq!(version, 42);
         let fk: i64 = conn.pragma_query_value(None, "foreign_keys", |r| r.get(0)).unwrap();
         assert_eq!(fk, 1, "foreign keys must be ON");
     }

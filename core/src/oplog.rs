@@ -177,8 +177,9 @@ fn read_item_field(conn: &Connection, id: &str, field: &str) -> Result<Value, St
             .query_row(&sql, [id], |r| r.get::<_, String>(0))
             .map(Value::from),
         // 可空文本字段(position 自 0021 起是 fractional index 字符串;color 自 0040 起是
-        // `#RRGGBB` 或 NULL=无色,格式由命令层与回放 shape 层同用 is_hex_color 守)
-        "due_on" | "archived_at" | "sealed_at" | "position" | "color" => conn
+        // `#RRGGBB` 或 NULL=无色,格式由命令层与回放 shape 层同用 is_hex_color 守;doc_at 自
+        // 0042 起是成为长文的时刻 RFC3339 或 NULL=普通随记)
+        "due_on" | "archived_at" | "sealed_at" | "position" | "color" | "doc_at" => conn
             .query_row(&sql, [id], |r| r.get::<_, Option<String>>(0))
             .map(Value::from),
         // 可空整数字段

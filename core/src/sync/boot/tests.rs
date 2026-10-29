@@ -742,6 +742,53 @@ fn import_preserves_card_color() {
     assert_eq!(got.as_deref(), Some("#7f8b3a"), "引导后 color 逐字保留");
 }
 
+/// 0042 的 boot 分支(longform-plan §1 字段保全契约表的 boot 一行):长文与「任务行带潜伏
+/// doc_at」都随快照整行到新端、逐字保留,并经 strict battery(doc_at 在 ITEM_LWW_FIELDS、走
+/// create-forced-NULL 那一臂)。⭐ 同时守 items 那句显式列清单 —— 漏了 doc_at,新设备引导后
+/// 长文全退回随记且不报错。
+#[test]
+fn import_preserves_doc_at() {
+    let mut a = peer("doc-a");
+    let doc = notes::capture_doc(&mut a.conn, &mut a.clock, "# 一篇长文").unwrap();
+    let latent = task::create(&mut a.conn, &mut a.clock, "带潜伏标记的任务", None, None, None).unwrap();
+    // 单机造不出这一形(命令前置拒),裸 UPDATE + 同轮发 op 模拟并发收敛后的终态。
+    a.conn.execute("UPDATE items SET doc_at = '2026-10-28T10:00:00.000Z' WHERE id = ?1", [&latent]).unwrap();
+    crate::oplog::item_set(&a.conn, &mut a.clock, &latent, &["doc_at"]).unwrap();
+    let want: Vec<(String, Option<String>)> = {
+        let mut s = a.conn.prepare("SELECT id, doc_at FROM items ORDER BY id").unwrap();
+        let rows = s.query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+        rows.collect::<rusqlite::Result<_>>().unwrap()
+    };
+    assert!(want.iter().any(|(id, d)| *id == doc && d.is_some()));
+
+    let snap = make_snapshot(&a.conn, &a.dir).unwrap();
+    let mut b = peer("doc-b");
+    check_fresh_to_account(&b.conn).expect("新端 fresh");
+    import_snapshot(&mut b.conn, &mut b.clock, &snap.path).unwrap().expect_clean_commit();
+    let got: Vec<(String, Option<String>)> = {
+        let mut s = b.conn.prepare("SELECT id, doc_at FROM items ORDER BY id").unwrap();
+        let rows = s.query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
+        rows.collect::<rusqlite::Result<_>>().unwrap()
+    };
+    assert_eq!(got, want, "引导后 doc_at 逐字保留(含任务行上的潜伏标记)");
+    assert_eq!(crate::repo::item_kind(&b.conn, &doc).unwrap().as_deref(), Some("doc"));
+    assert_eq!(crate::repo::item_kind(&b.conn, &latent).unwrap().as_deref(), Some("task"));
+}
+
+/// 0042 审计的阴性面:表里是长文、日志里没有那枚 doc_at op(= 快照与日志矛盾)⇒ 拒当引导源。
+/// 守的是 `ITEM_LWW_FIELDS` 里那一格 —— 删了它,这种库会被静默当成合法快照发出去,新端与
+/// 老端对这条的归属从此分叉(codex 设计审一弹 H2:「表有长文标记、日志没有」可能逃过一致性审计)。
+/// 实测拦在**源端** `make_snapshot` 的严格自审(与导入侧同一份 `ITEM_LWW_FIELDS` 审计),比导入
+/// 更早一步;断言点名 doc_at,证明是这一格而不是别的字段红的。
+#[test]
+fn snapshot_rejects_doc_at_without_log_backing() {
+    let mut a = peer("doc-unbacked-a");
+    let id = notes::capture(&mut a.conn, &mut a.clock, "表里偷偷变长文").unwrap();
+    a.conn.execute("UPDATE items SET doc_at = '2026-10-28T10:00:00.000Z' WHERE id = ?1", [&id]).unwrap();
+    let err = make_snapshot(&a.conn, &a.dir).map(|_| ()).expect_err("矛盾的库不能当引导源");
+    assert!(err.contains("doc_at"), "拒收理由点名 doc_at:{err}");
+}
+
 /// §6.2 全形态导入:老端(归档成就/回收站/图/编辑历史/标签),新端有配对前本地
 /// 数据 + 同名标签——并集、零丢失、时钟推进、标记落盘。严格纪元(epoch-plan
 /// §3.2)起快照不得携带无背书 legacy 行(负例见
@@ -1759,7 +1806,7 @@ const FINGERPRINTS: &[(&str, &str)] = &[
         "SELECT id||'|'||content||'|'||stage||'|'||created_at \
          ||'|'||COALESCE(archived_at,'∅')||'|'||COALESCE(due_on,'∅')||'|'||COALESCE(priority,'∅') \
          ||'|'||COALESCE(position,'∅')||'|'||COALESCE(sealed_at,'∅')||'|'||COALESCE(born_stage,'∅') \
-         ||'|'||COALESCE(done_at,'∅')||'|'||COALESCE(born_device,'∅') \
+         ||'|'||COALESCE(done_at,'∅')||'|'||COALESCE(born_device,'∅')||'|'||COALESCE(doc_at,'∅') \
          FROM items ORDER BY id",
     ),
     (

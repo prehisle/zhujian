@@ -152,6 +152,9 @@ struct ProcessedItem {
     /// 一律不显(identity-plan §3.7 + 2026-08-05 用户拍板:未命名设备不显 id 片段)。
     /// 回收站视图拿到同一份数据但不渲染它(署名在「已处理完」的语境里价值低噪音高)。
     born_device: Option<String>,
+    /// 长文标记(0042):长文列表恒有值,活跃随记恒 null,回收站行原样带出(只拿它画「长文」
+    /// 小标;归属以 core 的 `item_kind_sql` 为准,⛔ 前端别据它另判一份)。
+    doc_at: Option<String>,
     /// Each tag as `{id, title, color}` — the 灵感 card renders them as chips, tinted by
     /// `color` (null = 无色) just like the board.
     topics: Vec<TopicItem>,
@@ -166,6 +169,7 @@ impl From<repo::OrganizedRow> for ProcessedItem {
             created_at: n.created_at,
             stage: n.stage,
             born_device: n.born_device,
+            doc_at: n.doc_at,
             topics: n.topics.into_iter().map(TopicItem::from).collect(),
         }
     }
@@ -205,29 +209,36 @@ struct IdeaStatsItem {
 
 /// 深链接定位:一条 item 现在住在哪个视图/子视图,供前端 navigate + 高亮。返回值
 /// 与搜索 jump 的路由词汇一致——"task"(看板)/ "sealed"(归档册)/ "trash-task"
-/// (看板回收站)/ "inbox"(灵感)/ "trash-idea"(灵感回收站);None = 该 id 在本
-/// 空间不存在(链接来自本机没有的空间,或已彻底删除)。
+/// (看板回收站)/ "inbox"(灵感)/ "doc"(长文,0042)/ "trash-idea"(灵感回收站);
+/// None = 该 id 在本空间不存在(链接来自本机没有的空间,或已彻底删除)。
+///
+/// 0042 起活条目的去向取 core 的主归属(`repo::item_kind`,longform-plan §1:⛔ 别在壳里
+/// 按 stage 另判一份 —— 此前那句「inbox/filed 就是灵感」会把长文送回随记)。只有回收站里
+/// 分「灵感 / 任务」两个页签这一步还看冻结的 stage(那是回收站页签的口径,不是主归属)。
 #[tauri::command]
 fn locate_item(space_id: String, item_id: String, spaces: State<'_, Spaces>) -> Result<Option<String>, String> {
     spaces.read(&space_id, |conn| {
-        let axes = repo::item_axes(&conn, &item_id).map_err(|e| e.to_string())?;
-        Ok(axes.map(|(stage, archived, sealed)| {
-            let is_idea = stage == "inbox" || stage == "filed";
-            if sealed {
-                "sealed"
-            } else if archived {
-                if is_idea {
+        let Some(kind) = repo::item_kind(&conn, &item_id).map_err(|e| e.to_string())? else {
+            return Ok(None);
+        };
+        let route = match kind.as_str() {
+            "sealed" => "sealed",
+            "archived" => {
+                let stage = repo::item_stage(&conn, &item_id)
+                    .map_err(|e| e.to_string())?
+                    .ok_or_else(|| "条目不存在".to_string())?;
+                if stage == "inbox" || stage == "filed" {
                     "trash-idea"
                 } else {
                     "trash-task"
                 }
-            } else if is_idea {
-                "inbox"
-            } else {
-                "task"
             }
-            .to_string()
-        }))
+            "task" => "task",
+            "doc" => "doc",
+            "idea" => "inbox",
+            other => return Err(format!("认不得的主归属(必是 bug):{other}")),
+        };
+        Ok(Some(route.to_string()))
     })
 }
 
@@ -255,7 +266,10 @@ struct TopicTreeItem {
     position: Option<String>,
     /// 标签类型自由文本(0031)或 null = 无类型 —— 供日后按类型筛选。
     kind: Option<String>,
+    /// 挂这枚标签的活跃随记(0042 起不含长文)。
     notes: Vec<InboxItem>,
+    /// 挂这枚标签的长文(0042;标签下随记 / 长文 / 任务三类互斥计数的第二类)。
+    docs: Vec<InboxItem>,
 }
 
 /// Hard-delete one Inbox note. Only notes still in the Inbox can be removed —
@@ -883,6 +897,27 @@ fn list_note_history(space_id: String, id: String, spaces: State<'_, Spaces>) ->
     })
 }
 
+/// 长文列表(0042,longform-plan §1):主归属 = 长文的全部活条目,最近成为长文的在前。
+#[tauri::command]
+fn list_docs(space_id: String, spaces: State<'_, Spaces>) -> Result<Vec<ProcessedItem>, String> {
+    spaces.read(&space_id, |conn| {
+        let rows = repo::doc_items(&conn).map_err(|e| e.to_string())?;
+        Ok(rows.into_iter().map(ProcessedItem::from).collect())
+    })
+}
+
+/// 新建一篇长文(0042):同一事务 create(随记)+ set_field doc_at。返回新 id。
+#[tauri::command]
+fn capture_doc(space_id: String, content: String, spaces: State<'_, Spaces>) -> Result<String, String> {
+    spaces.write(&space_id, |mut conn, mut clk| notes::capture_doc(&mut conn, &mut clk, &content))
+}
+
+/// 展开成长文(`on = true`)/ 收回随记(`on = false`):只翻 doc_at,不进编辑历史(0042)。
+#[tauri::command]
+fn set_doc(space_id: String, id: String, on: bool, spaces: State<'_, Spaces>) -> Result<(), String> {
+    spaces.write(&space_id, |mut conn, mut clk| notes::set_doc(&mut conn, &mut clk, &id, on))
+}
+
 /// Manually turn a note into a user todo (no AI). The note moves inbox→processed
 /// and gains a 'todo' task linked for provenance — see notes.rs.
 #[tauri::command]
@@ -970,6 +1005,11 @@ fn remove_note_topic(space_id: String, id: String, topic_id: String, spaces: Sta
 fn list_topics_full(space_id: String, spaces: State<'_, Spaces>) -> Result<Vec<TopicTreeItem>, String> {
     spaces.read(&space_id, |conn| {
         let rows = repo::all_topics_with_notes(&conn).map_err(|e| e.to_string())?;
+        let items = |v: Vec<repo::ItemRow>| -> Vec<InboxItem> {
+            v.into_iter()
+                .map(|n| InboxItem { id: n.id, content: n.content, created_at: n.created_at })
+                .collect()
+        };
         Ok(rows
             .into_iter()
             .map(|t| TopicTreeItem {
@@ -978,15 +1018,8 @@ fn list_topics_full(space_id: String, spaces: State<'_, Spaces>) -> Result<Vec<T
                 color: t.color,
                 position: t.position,
                 kind: t.kind,
-                notes: t
-                    .notes
-                    .into_iter()
-                    .map(|n| InboxItem {
-                        id: n.id,
-                        content: n.content,
-                        created_at: n.created_at,
-                    })
-                    .collect(),
+                notes: items(t.notes),
+                docs: items(t.docs),
             })
             .collect())
     })
@@ -4364,6 +4397,9 @@ pub fn run() {
             list_inbox,
             list_processed,
             list_ideas,
+            list_docs,
+            capture_doc,
+            set_doc,
             idea_stats,
             locate_item,
             list_archived,

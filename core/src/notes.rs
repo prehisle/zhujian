@@ -26,6 +26,48 @@ pub fn capture(conn: &mut Connection, clock: &mut Clock, content: &str) -> Resul
     Ok(id)
 }
 
+/// 新建一篇长文(longform-plan §1):同一事务里 create(随记)+ `set_field doc_at`。⛔ doc_at
+/// 永不进 create 载荷 —— 旧端 create 不查多余键、建行用显式列清单,多出的键会被静默丢掉、
+/// 水位推进、永不重放(迁移 0042 头注)。正文可以为空(先起一篇空白长文再写)。
+pub fn capture_doc(conn: &mut Connection, clock: &mut Clock, content: &str) -> Result<String, String> {
+    repo::ensure_content_fits(content)?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    let id = repo::add_item(&tx, content).map_err(|e| e.to_string())?;
+    oplog::item_create(&tx, clock, &id)?;
+    let n = repo::set_item_doc_at(&tx, &id, true).map_err(|e| e.to_string())?;
+    if n != 1 {
+        return Err(format!("新建长文失败(影响 {n} 行),已回滚"));
+    }
+    oplog::item_set(&tx, clock, &id, &["doc_at"])?;
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(id)
+}
+
+/// 展开成长文(`on = true`)/ 收回随记(`on = false`):只翻 `doc_at` 这一格 —— 零副本、不动
+/// stage / 正文、**不进编辑历史**(归档触发器只看 content)。命令前置(longform-plan §1):
+/// 展开只准**活跃随记**(主归属 `idea`),收回只准**长文**(主归属 `doc`);别的一律 fail-fast。
+/// ⛔ 这两条只是命令前置,不是回放约束 —— 回放按字段独立 LWW,读侧任务优先(见
+/// `repo::item_kind_sql`)。
+pub fn set_doc(conn: &mut Connection, clock: &mut Clock, id: &str, on: bool) -> Result<(), String> {
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    let kind = repo::item_kind(&tx, id)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "条目不存在".to_string())?;
+    match (on, kind.as_str()) {
+        (true, "idea") | (false, "doc") => {}
+        (true, "doc") => return Err("这条已经是长文".to_string()),
+        (true, _) => return Err("只有随记可以展开成长文(待办 / 回收站 / 归档里的条目不行)".to_string()),
+        (false, _) => return Err("只有长文可以收回随记".to_string()),
+    }
+    let n = repo::set_item_doc_at(&tx, id, on).map_err(|e| e.to_string())?;
+    if n != 1 {
+        return Err(format!("翻长文标记失败(影响 {n} 行),已回滚"));
+    }
+    oplog::item_set(&tx, clock, id, &["doc_at"])?;
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 /// Edit an item's text. The prior version is archived by the database itself (the 0014
 /// auto-archive trigger), so history is append-only and unbypassable on every stage.
 /// Editable while live (any non-archived stage — the user owns their words); a 回收站
@@ -129,6 +171,11 @@ pub fn promote_to_task(
     }
     if stage != "inbox" && stage != "filed" {
         return Err("只有灵感(未归类/已归类)可以转为待办".to_string());
+    }
+    // 长文不能直接转待办(longform-plan §1):要先收回随记。⛔ 这只是**本机命令前置**,不是
+    // 回放的跨字段约束 —— 两端并发「展开 × 转待办」照样收敛成任务行带 doc_at(读侧任务优先)。
+    if repo::item_kind(&tx, id).map_err(|e| e.to_string())?.as_deref() == Some("doc") {
+        return Err("长文不能直接转为待办,请先收回随记".to_string());
     }
 
     // Apply the wording as an edit ONLY if it changed — no copy, history keeps the
@@ -693,6 +740,114 @@ mod tests {
                 (o.kind, field)
             })
             .collect()
+    }
+
+    /// 0042 展开 / 收回的命令前置与发射:只翻 doc_at、恰一枚 doc_at op、不长编辑历史、
+    /// stage 不动;展开只准活跃随记,收回只准长文;长文不能直接转待办。
+    #[test]
+    fn set_doc_flips_only_doc_at_and_guards_preconditions() {
+        let (mut conn, mut clock) = fresh_db();
+        let id = capture(&mut conn, &mut clock, "一条随记").unwrap();
+        set_doc(&mut conn, &mut clock, &id, true).unwrap();
+        assert_eq!(repo::item_kind(&conn, &id).unwrap().as_deref(), Some("doc"));
+        assert_eq!(stage(&conn, &id), "inbox", "stage 不动");
+        assert!(repo::item_revisions(&conn, &id).unwrap().is_empty(), "展开不进编辑历史");
+        assert_eq!(
+            op_shapes(&conn, &id),
+            vec![("create".into(), "-".into()), ("set_field".into(), "doc_at".into())],
+            "恰一枚 doc_at op"
+        );
+        assert!(set_doc(&mut conn, &mut clock, &id, true).is_err(), "已是长文再展开 = 拒");
+        assert!(
+            promote_to_task(&mut conn, &mut clock, &id, "一条随记").unwrap_err().contains("长文"),
+            "长文不能直接转待办"
+        );
+        set_doc(&mut conn, &mut clock, &id, false).unwrap();
+        assert_eq!(repo::item_kind(&conn, &id).unwrap().as_deref(), Some("idea"));
+        assert!(repo::item_revisions(&conn, &id).unwrap().is_empty(), "收回也不进编辑历史");
+        assert!(set_doc(&mut conn, &mut clock, &id, false).is_err(), "随记再收回 = 拒");
+
+        let task_id = crate::task::create(&mut conn, &mut clock, "任务", None, None, None).unwrap();
+        assert!(set_doc(&mut conn, &mut clock, &task_id, true).is_err(), "任务不能展开");
+        let trashed = capture(&mut conn, &mut clock, "进回收站的").unwrap();
+        archive(&mut conn, &mut clock, &trashed).unwrap();
+        assert!(set_doc(&mut conn, &mut clock, &trashed, true).is_err(), "回收站里的不能展开");
+        assert!(set_doc(&mut conn, &mut clock, "ghost", true).is_err(), "不存在 = 拒");
+    }
+
+    /// 0042 主归属在各个读面上一致(longform-plan §1 验收判据:同一快照各归属集合两两不交、
+    /// 并起来覆盖全部活条目;搜索给的归属与列表成员资格一致;回收站保留长文属性、还原回长文;
+    /// 标签分随记 / 长文两桶)。
+    #[test]
+    fn doc_kind_is_consistent_across_lists_search_trash_and_tags() {
+        let (mut conn, mut clock) = fresh_db();
+        let idea = capture(&mut conn, &mut clock, "普通随记 关键词").unwrap();
+        let doc = capture_doc(&mut conn, &mut clock, "# 长文 关键词").unwrap();
+        let tagged_doc = capture(&mut conn, &mut clock, "挂标签的长文 关键词").unwrap();
+        let topic = create_topic(&mut conn, &mut clock, "标签甲").unwrap();
+        file_to_topic(&mut conn, &mut clock, &tagged_doc, Some(topic.as_str()), None).unwrap();
+        set_doc(&mut conn, &mut clock, &tagged_doc, true).unwrap();
+        let tagged_idea = capture(&mut conn, &mut clock, "挂标签的随记 关键词").unwrap();
+        file_to_topic(&mut conn, &mut clock, &tagged_idea, Some(topic.as_str()), None).unwrap();
+        let task_id = crate::task::create(&mut conn, &mut clock, "任务 关键词", None, None, None).unwrap();
+
+        let ids = |rows: Vec<repo::OrganizedRow>| -> Vec<String> {
+            let mut v: Vec<String> = rows.into_iter().map(|r| r.id).collect();
+            v.sort();
+            v
+        };
+        let sorted = |mut v: Vec<String>| {
+            v.sort();
+            v
+        };
+        let ideas = ids(repo::live_ideas(&conn).unwrap());
+        let docs = ids(repo::doc_items(&conn).unwrap());
+        assert_eq!(ideas, sorted(vec![idea.clone(), tagged_idea.clone()]), "随记不含长文");
+        assert_eq!(docs, sorted(vec![doc.clone(), tagged_doc.clone()]), "长文列表");
+        assert!(repo::inbox_items(&conn).unwrap().iter().all(|r| r.id != doc), "未归类不含长文");
+        assert!(ids(repo::filed_items(&conn).unwrap()).iter().all(|id| *id != tagged_doc), "已归类不含长文");
+        // 时间轴:三类互斥、覆盖全部活条目。
+        let timeline = repo::live_timeline(&conn).unwrap();
+        assert_eq!(timeline.len(), 5);
+        for row in &timeline {
+            let want = if row.id == task_id {
+                "task"
+            } else if docs.contains(&row.id) {
+                "doc"
+            } else {
+                "idea"
+            };
+            assert_eq!(row.kind, want, "时间轴归属:{}", row.content);
+        }
+        // 搜索状态与列表成员资格一致。
+        for hit in repo::search_items(&conn, "关键词").unwrap() {
+            let want = if hit.id == task_id {
+                "task"
+            } else if docs.contains(&hit.id) {
+                "doc"
+            } else if hit.id == idea {
+                "inbox"
+            } else {
+                "processed"
+            };
+            assert_eq!(hit.status, want, "搜索归属:{}", hit.content);
+        }
+        // 标签分桶:随记与长文各一。
+        let tree = repo::all_topics_with_notes(&conn).unwrap();
+        let t = tree.iter().find(|t| t.id == topic).unwrap();
+        assert_eq!(t.notes.iter().map(|r| r.id.clone()).collect::<Vec<_>>(), vec![tagged_idea.clone()]);
+        assert_eq!(t.docs.iter().map(|r| r.id.clone()).collect::<Vec<_>>(), vec![tagged_doc.clone()]);
+        // 回收站保留长文属性,还原回长文。
+        archive(&mut conn, &mut clock, &doc).unwrap();
+        assert!(ids(repo::doc_items(&conn).unwrap()).iter().all(|id| *id != doc), "删了就不在长文");
+        let trash = repo::trash_items(&conn).unwrap();
+        assert!(trash.iter().any(|r| r.id == doc && r.doc_at.is_some()), "回收站行带着 doc_at");
+        assert!(
+            repo::search_items(&conn, "关键词").unwrap().iter().any(|h| h.id == doc && h.status == "archived"),
+            "回收站优先于长文"
+        );
+        restore(&mut conn, &mut clock, &doc).unwrap();
+        assert_eq!(repo::item_kind(&conn, &doc).unwrap().as_deref(), Some("doc"), "还原回长文");
     }
 
     #[test]

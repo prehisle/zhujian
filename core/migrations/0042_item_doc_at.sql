@@ -1,0 +1,40 @@
+-- migration 0042: 长文标记(items.doc_at)—— backlog 用户面 152,规格 docs/longform-plan.md §1
+--
+-- 动机:随记写长了可以「展开成长文」,挪进单独的「长文」视图(与「转成待办」并列的第二个出口)。
+-- 长文仍是 items 里的一行,stage 留在随记那两档(inbox / filed),另加一个**可空同步字段**
+-- doc_at = 成为长文的时刻(RFC3339);NULL = 普通随记。展开 / 收回只翻这一格,零副本、
+-- 不进编辑历史。
+--
+-- ⛔ **为什么不是新 stage / 新 board_column.kind**:kind 的 CHECK 只认 idea / task,加第三种要
+-- 重建 board_column + 改耦合触发器;更要命的是旧端对**新字面量** stage 判 InvalidOp = 整台
+-- 发送设备持久隔离,只能上版本门(用户 2026-10-28 拍「不设版本门」)。新字段走的是 0040 color
+-- 那条已走熟的单版直发路。
+--
+-- **刻意不进 create payload**(`oplog::item_create` 的八字段白名单不动):旧端 create 的形状校验
+-- 不查多余键、建行用显式列清单 ⇒ 多出的键会过审、进日志、值被静默丢、水位推进、永不重放
+-- (0033 born_device → 0034 判例)。新建长文 = 同一事务 create(随记)+ set_field doc_at。
+-- 形上同 archived_at / sealed_at / color:生而为 NULL、不进快照、只由 set_field 承载 ⇒ 跟着改的:
+--   * `boot::ITEM_LWW_FIELDS` 审计与 boot 表列复制(create 初值恒 NULL,不去 payload 找键);
+--   * epoch 压实基线 create 不带 doc_at,非 NULL 补一条 set_field;
+--   * 跨空间 move_item 随包带 doc_at、目标 create 后补 set、并进源删除指纹。
+-- `replay::apply_item_create` 的 INSERT 是显式列清单、本就不含 doc_at ⇒ 天然落 NULL。
+--
+-- 并发终态(longform-plan §1,codex 设计审 H):stage / doc_at / archived_at 各自独立 LWW,
+-- **允许任务行带着非空 doc_at**(A 展开、B 同时转待办就会收敛成这样)。归属在读侧判
+-- (`repo::item_kind_sql`:sealed → archived → 任务列 → doc_at → 随记);⛔ 回放不清 doc_at、
+-- ⛔ 不加触发器拒 —— 前者造额外写入改变赢家,后者按到达顺序拒合法并发。
+--
+-- 值域:RFC3339 或 null。表层不加列内 CHECK(格式的正式子在代码层,同 0040 / 0041):命令层
+-- 只写 now,回放 shape 层 `validate_doc_at_value` 验同步来的不可信输入。
+--
+-- 跨版本政策(**单版直发,forward**;memory `single-phase-until-scale`):新增同步字段,旧端收
+-- 未知 field 归 **UnsupportedVocab** = 该 origin 内存挂起、水位不动,升级即自愈、零丢失。
+-- **诚实边界**:挂起的是该空间里这台设备从第一枚认不得的 op 起的**全部**后续 op(不限长文);
+-- 旧端没有「请升级」提示,只在同步状态里落一行「部分同步暂挂」⇒ 发布说明须提示两端一起更新。
+-- oplog append-only:0042 前的 item op 不含 doc_at,历史不改写。
+--
+-- 存量不回填:新功能零存量,NULL 就是正确初值。⛔ 同步字段本就不许在迁移里 UPDATE。
+--
+-- 0029 起迁移文件只写事务体:无 BEGIN/COMMIT/PRAGMA user_version。
+
+ALTER TABLE items ADD COLUMN doc_at TEXT;

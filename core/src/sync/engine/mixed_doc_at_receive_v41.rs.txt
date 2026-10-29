@@ -1,0 +1,74 @@
+// ---- 混版台架 receive 段(贴进旧树 core/src/sync/engine/tests.rs 末尾跑;说明见新树同文件 mixed_doc_at_driver 头注) ----
+#[test]
+#[ignore]
+fn mixed_doc_at_driver() {
+    assert_eq!(std::env::var("ZJ_MIX_PHASE").unwrap(), "receive", "旧树只跑 receive");
+    let dir = std::path::PathBuf::from(std::env::var("ZJ_MIX_DIR").unwrap());
+    let st: HashMap<String, String> = std::fs::read_to_string(dir.join("state.txt"))
+        .unwrap()
+        .lines()
+        .filter_map(|l| l.split_once('='))
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect();
+    let ops_of = |db: &str, origin: &str| -> Vec<RemoteOp> {
+        let c = Connection::open_with_flags(dir.join(db), rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap();
+        let mut stmt = c
+            .prepare(
+                "SELECT op_id, hlc, entity, entity_id, kind, payload, origin_seq FROM oplog \
+                 WHERE origin = ?1 ORDER BY origin_seq",
+            )
+            .unwrap();
+        let rows = stmt
+            .query_map([origin], |r| {
+                Ok(RemoteOp {
+                    op_id: r.get(0)?,
+                    hlc: r.get(1)?,
+                    entity: r.get(2)?,
+                    entity_id: r.get(3)?,
+                    kind: r.get(4)?,
+                    payload: serde_json::from_str(&r.get::<_, String>(5)?).unwrap(),
+                    origin_seq: r.get(6)?,
+                })
+            })
+            .unwrap();
+        rows.collect::<rusqlite::Result<_>>().unwrap()
+    };
+    let (sender, other) = (&st["sender"], &st["other"]);
+    let s_ops = ops_of("sender.sqlite3", sender);
+    let doc_set_seq = s_ops
+        .iter()
+        .find(|o| o.kind == "set_field" && o.payload["field"] == "doc_at")
+        .expect("emit 必发一枚 doc_at set_field")
+        .origin_seq;
+    assert!(s_ops.iter().any(|o| o.origin_seq > doc_set_seq), "前提:doc_at 之后还有 op");
+
+    let r_path = dir.join("receiver.sqlite3");
+    let _ = std::fs::remove_file(&r_path);
+    let mut r = db::open(&r_path).unwrap();
+    let uv: i64 = r.pragma_query_value(None, "user_version", |x| x.get(0)).unwrap();
+    assert_eq!(uv, 41, "这一段必须是真实的旧版(v41)");
+    let mut rc = Clock::load(&r).unwrap();
+    let mut eng = Engine::new_solo(&r, BlobPolicy::Full).unwrap();
+
+    let outs = eng.on_relay_msg(&mut r, &mut rc, sender, Msg::Ops { origin: sender.clone(), ops: s_ops }).unwrap();
+    assert!(
+        outs.iter().any(|o| matches!(o, Output::Event(Event::OriginSuspended { .. }))),
+        "旧端对 doc_at 归挂起:{outs:?}"
+    );
+    assert!(eng.is_suspended(sender));
+    assert!(quarantine_row(&r, sender).is_none(), "旧端绝不隔离");
+    assert_eq!(watermark(&r, sender).unwrap(), doc_set_seq - 1, "水位停在 doc_at 那枚之前");
+    let content = |r: &Connection, id: &str| -> Option<String> {
+        r.query_row("SELECT content FROM items WHERE id = ?1", [id], |x| x.get(0)).optional().unwrap()
+    };
+    assert_eq!(content(&r, &st["doc"]).as_deref(), Some("# 一篇长文"), "长文的 create 已应用,当随记显示");
+    assert_eq!(content(&r, &st["x"]).as_deref(), Some(st["x_original"].as_str()), "缺口之后旧端认得的改动也停住");
+
+    let o_ops = ops_of("other.sqlite3", other);
+    let o_max = o_ops.iter().map(|o| o.origin_seq).max().unwrap();
+    eng.on_relay_msg(&mut r, &mut rc, other, Msg::Ops { origin: other.clone(), ops: o_ops }).unwrap();
+    assert_eq!(watermark(&r, other).unwrap(), o_max, "别的设备照常前进");
+    assert!(content(&r, &st["y"]).is_some());
+    drop(r);
+    std::fs::write(dir.join("receive.ok"), "ok").unwrap();
+}
