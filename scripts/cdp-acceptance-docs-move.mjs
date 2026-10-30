@@ -5,8 +5,8 @@
 //   真移动(真后端,不拦截):单空间时「更多…」里没有「移动」→ 建一个测试空间、重载后出现 → 选择器先亮
 //     「历史版本会永久删除」→ 点目标出两拍确认 → 确认后回列表、回执「已移到「…」」、**没有**多报「已不在长文里」、
 //     源空间 list_docs 里没了 → 切到目标空间,那篇**还是长文**(list_docs 里有、正文逐字相同)→ 切回。
-//   结果分道(页内假造回包):部分成功两态与预检拒在真后端上造不出来 ⇒ 在 `window.ipc.postMessage`(安卓的 IPC 走
-//     postMessage,不走 fetch)截下 `move_item_to_space`,按要的 outcome 直接回调。⭐ 先自证拦截真生效了:假造 moved
+//   结果分道(页内假造回包):部分成功两态与预检拒在真后端上造不出来 ⇒ 截下 `move_item_to_space`、按要的 outcome
+//     直接回包:安卓的 IPC 走 `window.ipc.postMessage`、鸿蒙走全局 fetch,两条都包。⭐ 先自证拦截真生效了:假造 moved
 //     之后那篇在真库里**还在**(823 栽过:拦截静默无效时读到的是真结果)。
 //     kept / unconfirmed → 先落登记(localStorage `zhujian.move-partial` 有 `<空间>/<id>`)、回主行显常驻提示、「更多…」
 //     里没有「移动」;「我已处理」→ 提示消失、入口回来。images_pending / dangling_refs → 报错条、停在选择器、可再点。
@@ -80,20 +80,31 @@ async function openMore() {
   await clickText("更多…");
   await waitFor(`[...document.querySelectorAll("#docs-body .doc-acts button")].some((b) => b.textContent.trim() === "删除")`, "「更多…」那排");
 }
-/** 截下下一发 move_item_to_space,回 `fake`(安卓 IPC = window.ipc.postMessage(JSON 串))。 */
+/** 截下下一发 move_item_to_space,回 `fake`。安卓 IPC = window.ipc.postMessage(JSON 串);鸿蒙 IPC 在调用那一刻取
+ *  全局 fetch(`ipc://localhost/<cmd>`,822 实测)⇒ 两条都包,哪条真走了由 `__moveHits` 与「真库里还在」自证。 */
 const armFake = (fake) =>
   ev(`(() => {
     if (!window.__moveReal) window.__moveReal = window.ipc;
+    if (!window.__moveRealFetch) window.__moveRealFetch = window.fetch;
     window.__moveHits = 0;
     const real = window.__moveReal;
-    window.ipc = { postMessage(d) {
+    const realFetch = window.__moveRealFetch;
+    if (real) window.ipc = { postMessage(d) {
       const m = JSON.parse(d);
       if (m.cmd === "move_item_to_space") { window.__moveHits++; setTimeout(() => window.__TAURI_INTERNALS__.runCallback(m.callback, ${JSON.stringify(fake)}), 200); return; }
       real.postMessage(d);
     } };
-    return window.ipc !== real;
+    window.fetch = async function (u, init) {
+      if (/^(?:https?:\\/\\/ipc\\.localhost|ipc:\\/\\/localhost)\\/move_item_to_space$/.test(String(u))) {
+        window.__moveHits++;
+        await new Promise((r) => setTimeout(r, 200));
+        return new Response(${JSON.stringify(JSON.stringify(fake))}, { status: 200, headers: { "Content-Type": "application/json", "Tauri-Response": "ok" } });
+      }
+      return realFetch.call(window, u, init);
+    };
+    return window.fetch !== realFetch;
   })()`);
-const disarm = () => ev(`window.__moveReal && (window.ipc = window.__moveReal), true`);
+const disarm = () => ev(`(window.__moveReal && (window.ipc = window.__moveReal), window.__moveRealFetch && (window.fetch = window.__moveRealFetch)), true`);
 
 let tid = null;
 let sp = null;
@@ -211,7 +222,7 @@ try {
     await waitFor(`[...document.querySelectorAll("#docs-body .movewarn ~ .lane button")].some((b) => b.textContent.trim() === ${JSON.stringify(SPACE_NAME)} && !b.disabled)`, `${fake.outcome} 后停在选择器、目标可再点`);
   }
   await disarm();
-  ok((await ev(`window.ipc === window.__moveReal`)) === true, "④ 拦截已撤");
+  ok((await ev(`window.ipc === window.__moveReal && window.fetch === window.__moveRealFetch`)) === true, "④ 拦截已撤");
 
   // ⑤ 真移动
   await pick();
