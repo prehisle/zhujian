@@ -55,7 +55,7 @@ import * as cardPanel from "./cardpanel";
 import * as filter from "./filter";
 import * as panes from "./panes";
 import * as topics from "./topics";
-import { closeDocs, docsBack, focusDoc, initDocs, openDocs, reloadDocs, resetDocsForSpaceChange } from "./docs";
+import { closeDocs, docsBack, focusDoc, initDocs, openDocs, reloadDocs, resetDocsForSpaceChange, startDocFrom } from "./docs";
 import { initCardSwipe } from "./swipe";
 import { loadIdentity, signatureFor } from "./identity";
 import { createKbSheet, type KbSheet } from "./kbsheet";
@@ -1538,6 +1538,25 @@ async function save() {
   }
 }
 $("save").addEventListener("click", save);
+
+// 「长文」(831,backlog 152 ③):把框里的字与暂存图带进一篇新长文。⛔ 取图在飞时不受理:屏上
+// 摆着骨架时 takeBatch 只带走有字节的那几张(同「记下」那条 picking 闸的理由)。卡片草稿挡开面,
+// 先问过再收层 —— 否则层收了、面没开,用户落回时间轴。字交给长文那边落成草稿之后才清这边。
+$("compose-doc").addEventListener("click", () => {
+  if (captureSaving || switching || picking) return;
+  if (cardPanel.hasDirtyDraft()) {
+    showError(t("main.finishDraftFirst"));
+    return;
+  }
+  const ta = $("text") as HTMLTextAreaElement;
+  ta.blur();
+  dismissCapture();
+  openPane("docs");
+  if (activePane !== "docs") throw new Error("长文:开面没成(闸已在上面问过,不该到这儿)"); // 框里的字还在
+  startDocFrom(ta.value, compImgs.takeBatch());
+  ta.value = "";
+  localStorage.removeItem(COMPOSE_DRAFT_KEY); // 图的那份由 takeBatch 清
+});
 
 // ---- 悬浮 ＋ 钮 + 底部捕获层(232 优化)--------------------------------------
 // 平时零占屏:时间轴干净,只有右下角一颗悬浮 ＋。点 ＋(或任何路径聚焦到输入,如顶栏

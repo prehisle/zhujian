@@ -52,6 +52,7 @@ export const shell = defineMessages({
   "shell.addImage": { zh: "＋ 加图", en: "＋ Image" },
   "shell.takePhoto": { zh: "＋ 拍照", en: "＋ Photo" },
   "shell.insertTodo": { zh: "＋ 清单", en: "＋ Checklist" },
+  "shell.composeDoc": { zh: "长文", en: "Long-form" },
   "shell.saveIt": { zh: "记下", en: "Note it" },
   "shell.captureAria": { zh: "记一笔", en: "Note something" },
   "shell.commentsTitle": { zh: "留言", en: "Comments" },

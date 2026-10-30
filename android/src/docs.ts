@@ -184,7 +184,7 @@ export function initDocs(d: Deps): void {
   deps = d;
   $("docs-new").addEventListener("click", () => {
     if (page.kind !== "list" || busy) return;
-    openEditor(null, loadDraft(space, null)?.text ?? null);
+    openEditor(null, loadDraft(space, null)?.text ?? null, []);
   });
 }
 
@@ -194,6 +194,24 @@ export function openDocs(): void {
   page = { kind: "list" };
   readerMode = "main";
   void load();
+}
+
+/** 从「记一笔」起一篇新长文(main.ts 开面之后调;backlog 152 ③:一篇长文都没有时底栏没有
+ *  「长文」钮,第一篇从这儿进)。框里的字接在没写完的新篇草稿后面(⛔ 不覆盖它),先落成一代
+ *  草稿再交给编辑器 —— 调用方随即清掉「记一笔」那份,杀进程时字在这边。暂存图进新篇那条纯内存
+ *  暂存条(第一次保存才挂上,同新篇自己加的图)。 */
+export function startDocFrom(text: string, files: File[]): void {
+  loadSeq++; // 开面那趟读列表作废:读失败会整页换成报错,把编辑器冲掉
+  const prior = loadDraft(space, null)?.text ?? "";
+  const seed = prior !== "" && text !== "" ? `${prior}\n\n${text}` : prior + text;
+  if (text !== "") {
+    try {
+      saveDraft(space, null, seed);
+    } catch {
+      /* 存不进去:字仍在编辑器里,停笔那一发会再试并明说(同编辑器自己的草稿) */
+    }
+  }
+  openEditor(null, seed === "" ? null : seed, files);
 }
 
 /** 跨面打开某一篇:先记下,开面后读到列表时落地(找不到就明说)。 */
@@ -427,7 +445,7 @@ function renderDoc(d: IdeaItem): void {
     draft !== null && draft.text !== d.content
       ? el("div", "row doc-draft", [
           el("span", "", [t("docs.draftFound", { time: fmtWhen(draft.at) })]),
-          btn(t("docs.draftResume"), () => openEditor(d, draft.text)),
+          btn(t("docs.draftResume"), () => openEditor(d, draft.text, [])),
           btn(t("docs.draftDiscard"), () => {
             clearDraft(sp, d.id, null);
             render();
@@ -450,7 +468,7 @@ function renderDoc(d: IdeaItem): void {
   root().replaceChildren(
     bar(
       [btn(t("docs.back"), () => go({ kind: "list" }), "ghost")],
-      [btn(t("docs.actEdit"), () => openEditor(d, null), "ghost"), btn(t("docs.actHistory"), () => go({ kind: "hist", id: d.id }), "ghost")],
+      [btn(t("docs.actEdit"), () => openEditor(d, null, []), "ghost"), btn(t("docs.actHistory"), () => go({ kind: "hist", id: d.id }), "ghost")],
     ),
     art,
     readerActions(d),
@@ -720,8 +738,9 @@ async function renderTags(panel: HTMLElement, d: IdeaItem): Promise<void> {
 
 // ---- 编辑器(§2)-------------------------------------------------------------------
 
-/** `d = null` = 新建。`seed` = 从草稿接着改时的起始文字(否则用正文)。 */
-function openEditor(d: IdeaItem | null, seed: string | null): void {
+/** `d = null` = 新建。`seed` = 从草稿接着改时的起始文字(否则用正文)。`carried` = 从「记一笔」
+ *  带过来的暂存图(只有新篇会有)。 */
+function openEditor(d: IdeaItem | null, seed: string | null, carried: File[]): void {
   hideConfirmBar();
   const sp = space;
   const id = d?.id ?? null;
@@ -747,6 +766,7 @@ function openEditor(d: IdeaItem | null, seed: string | null): void {
   thumbs.hidden = true;
   const pendingHost = el("div", "cthumbs");
   const pending = id === null ? composeImages(pendingHost, (items, idx) => void openLocalViewer(items, idx), false) : null;
+  for (const f of carried) pending!.add(f);
   /** 取图在飞(系统选择器开着 + 回来那几秒的降采样 + 已存篇的逐张挂上):两枚钮不受理、
    *  离开编辑器先拦一句 —— 走了的话挂上的图回不到这一页,暂存的图跟着编辑器一起丢。 */
   let picking = false;
