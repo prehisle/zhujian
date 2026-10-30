@@ -52,7 +52,7 @@ import {
   type TopicItem,
 } from "./api";
 import { renderMarkdown } from "../../shared/markdown-dom";
-import { imgRefText, scanImgRefs } from "../../shared/markdown";
+import { gutterCols, imgRefText, scanImgRefs } from "../../shared/markdown";
 import { renderDiff } from "../../shared/diff-dom";
 import { toggleChecklistLine } from "../../shared/checklist";
 import { HAS_BROWSER, writeClipboard } from "./platform";
@@ -818,6 +818,7 @@ function openEditor(d: IdeaItem | null, seed: string | null, carried: File[]): v
     if (marked.has(imgId)) marked.delete(imgId);
     else marked.add(imgId);
     painters.get(imgId)?.();
+    for (const b of pins.querySelectorAll<HTMLElement>(".ref-thumb")) b.classList.toggle("marked", marked.has(b.dataset.img!));
   }
   function paintThumbs(): void {
     painters.clear();
@@ -878,8 +879,8 @@ function openEditor(d: IdeaItem | null, seed: string | null, carried: File[]): v
     });
   }
 
-  // 写字框里的「图N」:能对上一张图的垫一层底色(对不上 = 引用断了,照普通字),单独成段的再在右侧
-  // 窄边配一枚缩略图(同桌面 paintHl)。纯文本框给不了几个字单独上色 ⇒ 背后垫一层同字体同排版的
+  // 写字框里的「图N」:能对上一张图的垫一层底色(对不上 = 引用断了,照普通字),并在它那一行的右侧
+  // 窄边配一枚缩略图(同桌面 paintHl;837 起句中的也配:窄边 = 正文里写到的图,上面那条 = 还没写进正文的)。纯文本框给不了几个字单独上色 ⇒ 背后垫一层同字体同排版的
   // 影子层,只画底色与缩略图,字仍是写字框自己的;写字框背景透明,纸色由外框给。手机上框随内容长高、
   // 不在框里滚 ⇒ 影子层只跟尺寸,不跟滚动。排版参数逐项从写字框的计算样式抄,⛔ 唯独字号与行高不抄、由 CSS 里
   // 与写字框同一条声明给(834):textZoom(系统字号 / 界面字号)把计算后字号推大、getComputedStyle 照实报放大后的值,
@@ -891,6 +892,7 @@ function openEditor(d: IdeaItem | null, seed: string | null, carried: File[]): v
   // 窄边里没有字,盖在写字框上不挡输入。
   const pins = el("div", "doc-pins");
   const edBox = el("div", "doc-ed", [hl, area, pins]);
+  const PIN_H = 40; // 窄边缩略图高 36 + 上下留缝(index.html .doc-pins .ref-thumb)
   const HL_COPY = ["fontFamily", "fontWeight", "fontStyle", "letterSpacing", "wordSpacing", "tabSize", "textIndent",
     "paddingTop", "paddingRight", "paddingBottom", "paddingLeft", "whiteSpace", "overflowWrap", "wordBreak"] as const;
   function syncHl(): void {
@@ -916,39 +918,33 @@ function openEditor(d: IdeaItem | null, seed: string | null, carried: File[]): v
     const v = area.value;
     const bySeq = new Map(imgs.map((m) => [m.seq, m]));
     const nodes: (string | HTMLElement)[] = [];
-    // 同一段里第几枚缩略图:往左排开(上下相邻两行的图N 隔不开一枚缩略图的高),窄边按最多那段放宽
-    const perPara = new Map<number, number>();
+    const refs = scanImgRefs(v).filter((r) => bySeq.has(r.n));
+    // 缩略图比一行高:隔不足这么多行的两枚往左排开(行高随界面字号变,照写字框实际行高算)
+    const cols = gutterCols(refs, Math.ceil(PIN_H / parseFloat(getComputedStyle(area).lineHeight)));
     const inGutter = new Set<number>(); // 窄边配了缩略图的那几张:条里不再重复摆
     const pinEls: HTMLElement[] = [];
     let last = 0;
-    for (const r of scanImgRefs(v)) {
-      const m = bySeq.get(r.n);
-      if (m === undefined) continue;
+    refs.forEach((r, i) => {
+      const m = bySeq.get(r.n)!;
       nodes.push(v.slice(last, r.a));
-      const mark = el("mark", "ref", [v.slice(r.a, r.b)]);
-      if (r.alone) {
-        const para = v.lastIndexOf("\n\n", r.a);
-        const k = perPara.get(para) ?? 0;
-        perPara.set(para, k + 1);
-        const th = el("span", "ref-thumb");
-        th.style.setProperty("--k", String(k));
-        mark.append(th);
-        const pin = el("button", "ref-thumb");
-        pin.dataset.img = m.id;
-        pin.dataset.seq = String(m.seq);
-        pin.setAttribute("aria-label", t("main.viewImage", { n: m.seq }));
-        pin.addEventListener("click", () => void openViewer(imgs, imgs.indexOf(m), true));
-        pinEls.push(pin);
-        inGutter.add(m.seq);
-      }
-      nodes.push(mark);
+      const th = el("span", "ref-thumb");
+      th.style.setProperty("--k", String(cols[i]));
+      nodes.push(el("mark", "ref", [v.slice(r.a, r.b), th]));
+      const pin = el("button", "ref-thumb");
+      pin.dataset.img = m.id;
+      pin.dataset.seq = String(m.seq);
+      pin.classList.toggle("marked", marked.has(m.id));
+      pin.setAttribute("aria-label", t("main.viewImage", { n: m.seq }));
+      pin.addEventListener("click", () => void openViewer(imgs, imgs.indexOf(m), true));
+      pinEls.push(pin);
+      inGutter.add(m.seq);
       last = r.b;
-    }
+    });
     // 一处都没标 ⇒ 影子层整个清空,⛔ 别留一份全文去排版(200 KiB 一篇逐键重排约 30 ms,桌面实测)
     if (nodes.length > 0) nodes.push(`${v.slice(last)}\n`); // 末尾那个空行也要占高(与写字框一致)
-    const gut = String(Math.max(0, ...perPara.values()));
+    const gut = String(refs.length === 0 ? 0 : Math.max(...cols) + 1);
     const changed = edBox.style.getPropertyValue("--thumbs") !== gut;
-    edBox.classList.toggle("has-thumbs", perPara.size > 0);
+    edBox.classList.toggle("has-thumbs", refs.length > 0);
     edBox.style.setProperty("--thumbs", gut);
     hl.replaceChildren(...nodes);
     pins.replaceChildren(...pinEls);

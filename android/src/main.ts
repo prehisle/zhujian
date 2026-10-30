@@ -2128,8 +2128,13 @@ $("bottombar").addEventListener("click", (e) => {
     if (isTextEntry(document.activeElement) && window.innerHeight < baseH) return;
     document.body.classList.toggle("tallscreen", isTall());
   };
-  document.addEventListener("focusin", (e) => sync(e.target));
-  document.addEventListener("focusout", (e) => sync(e.relatedTarget));
+  // 焦点挪进另一个文字输入(键盘不落)⇒ 当场照它判。⛔ 焦点离开文字输入(focusout,或 focusin 到钮上)别当场摘,
+  // 等键盘真落下来那次 resize 再摘(837,vivo 真点逐事件量过)。
+  // 点击的落点是在焦点换走**之后**才判的,而这时键盘还起着、视口还是矮的 ⇒ 当场摘 = 底栏当场在键盘上沿现身、
+  // 正好盖住刚点的那一处,点击落到底栏的钮上(长文窄边贴着键盘的那枚缩略图一点,点成了「长文」= 收面)。
+  document.addEventListener("focusin", (e) => {
+    if (isTextEntry(e.target)) sync(e.target);
+  });
   window.addEventListener("resize", () => {
     sync(document.activeElement);
     tall();

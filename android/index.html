@@ -1566,7 +1566,7 @@
       /* 「图N」的底色照预览里那枚芯片(.md .img-ref)的底、边、圆角,但框正好贴着这几个字、边画在里侧:
          ⛔ 别往外撑(负 margin 那版压住了紧挨着的字 —— 芯片占位推得开邻字,写字框里的字推不开),也别占宽(影子层要与写字框逐字同位) */
       .doc-hl .ref { color: transparent; background: var(--seal-tint); box-shadow: inset 0 0 0 1px var(--seal-line); border-radius: var(--radius-xs); }
-      /* 单独成段的「图N」:右侧窄边一枚缩略图(top 不写 = 停在那一行);有这种段才留窄边 */
+      /* 正文里每处能对上图的「图N」:右侧窄边一枚缩略图(top 不写 = 停在那一行,--k = 第几列,docs.ts gutterCols);有这种引用才留窄边 */
       .doc-hl .ref-thumb { position: absolute; right: calc(8px + var(--k) * 50px); width: 44px; height: 36px; margin-top: 4px; visibility: hidden; }
       /* 看得见、点得开的那枚住写字框上面这一层(docs.ts placePins 照影子层里的隐形占位摆) */
       .doc-pins { position: absolute; pointer-events: none; }
@@ -1575,6 +1575,9 @@
         overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--paper);
       }
       .doc-pins .ref-thumb img { display: block; width: 100%; height: 100%; object-fit: cover; }
+      /* 标了「保存时删」的那张(预览大图角上 / 条里的 × 切的同一份标记):窄边这枚同条里的 .thumb.marked */
+      .doc-pins .ref-thumb.marked { border-style: dashed; }
+      .doc-pins .ref-thumb.marked img { opacity: 0.35; }
       .doc-ed.has-thumbs .doc-area { padding-right: calc(16px + var(--thumbs) * 50px); }
       .doc-preview { background: var(--raised); border: 1px solid var(--line); border-radius: var(--radius-md); padding: 14px 16px; min-height: 30vh; }
       /* 编辑器的配图(152):两枚钮挤进「编辑 / 预览」那一排,缩略图条紧跟其下、正文框之上(矮屏上

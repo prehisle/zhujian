@@ -481,7 +481,7 @@ export async function openLightboxBlob(blob: Blob, alt = t("itemImages.preview")
  *  `trash-images.ts`),不再是硬删;编辑历史仍不记图(0016 的正交性不动)。 */
 export function imageStrip(
   itemId: string,
-  opts: { editable: boolean; onChange?: () => void; onMetas?: (metas: ImageMeta[]) => void },
+  opts: { editable: boolean; onChange?: () => void; onMetas?: (metas: ImageMeta[]) => void; onMark?: (imageId: string) => void },
 ): {
   root: HTMLElement;
   reload: () => Promise<void>;
@@ -540,6 +540,7 @@ export function imageStrip(
     if (marked.has(id)) marked.delete(id);
     else marked.add(id);
     painters.get(id)?.();
+    opts.onMark?.(id);
   }
 
   function paint(metas: ImageMeta[]): void {

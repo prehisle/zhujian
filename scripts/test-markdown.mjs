@@ -24,7 +24,7 @@ const r = await build({
   format: "esm",
 });
 const M = await import("data:text/javascript," + encodeURIComponent(r.outputFiles[0].text));
-const { parseMarkdown, validateHttpUrl, renderMarkdown, toggleChecklistLine, scanImgRefs, MD_MAX_NODES, MD_MAX_DEPTH, MD_MAX_BYTES } = M;
+const { parseMarkdown, validateHttpUrl, renderMarkdown, toggleChecklistLine, scanImgRefs, gutterCols, MD_MAX_NODES, MD_MAX_DEPTH, MD_MAX_BYTES } = M;
 
 // ---------------------------------------------------------------------------
 // 语法树 → 紧凑字符串(只为断言好读)
@@ -465,14 +465,21 @@ for (const [name, gen, check] of FAMILIES) {
     assert.ok(per[per.length - 1] < 2000, `${name} 200KiB 花了 ${per[per.length - 1].toFixed(0)} ms`);
   });
 }
-test("写字框标注:scanImgRefs 的位置、alone 判定、代码里不认", () => {
+test("写字框标注:scanImgRefs 的位置、行号、代码里不认", () => {
   const src = "# 题\n见图1。\n\n图2\n图3\n\n2. 可以的\n图4\n\n文字\n图5\n\n```\n图6\n```\n`图7` 与 图8\n图1234567\n\n> 图9";
-  const got = scanImgRefs(src).map((r) => `${src.slice(r.a, r.b)}${r.alone ? "!" : ""}`);
-  assert.deepEqual(got, ["图1", "图2!", "图3!", "图4!", "图5", "图8", "图9"]);
-  // 与渲染器对拍:标了 alone 的,渲染器确实画成了原位图(反过来不要求 —— 引用里的那种这里刻意不算)
-  const r = render("图1\n\n2. 可以的\n图1\n\n文字\n图1");
-  assert.equal(scanImgRefs("图1\n\n2. 可以的\n图1\n\n文字\n图1").filter((x) => x.alone).length, 2);
-  assert.equal(r.html.split("md-figs").length - 1, 2);
+  const got = scanImgRefs(src).map((r) => `${src.slice(r.a, r.b)}@${r.line}`);
+  assert.deepEqual(got, ["图1@1", "图2@3", "图3@4", "图4@7", "图5@10", "图8@15", "图9@18"]);
+});
+test("写字框窄边:gutterCols 隔不足 reach 行才排开,够远就回最右列", () => {
+  const cols = (src, reach) => gutterCols(scanImgRefs(src), reach);
+  // 同一行两枚并排;相邻行错开;隔够 reach 行回第 0 列
+  assert.deepEqual(cols("图1 图2\n图3\n\n图4", 2), [0, 1, 2, 0]);
+  assert.deepEqual(cols("图1\n图2\n图3\n图4", 2), [0, 1, 0, 1]);
+  assert.deepEqual(cols("图1\n图2\n图3\n图4", 3), [0, 1, 2, 0]);
+  // 用户那篇:句中的图1 与单独一行的图2 隔一空行,都在最右列
+  assert.deepEqual(cols("# hello\n1. 好\n2. 可以的\n1图1好的\n\n图2", 2), [0, 0]);
+  // 一整段不空行、每行都有图:最多两列,不随段长一直往左排
+  assert.equal(Math.max(...cols(Array.from({ length: 40 }, (_, i) => `第${i}行 图${i + 1}`).join("\n"), 2)), 1);
 });
 test("顶层块的起始行:与 blocks 一一对应,行号口径同 split(\"\n\")", () => {
   const src = "\n# 题\n段一\n段一续\n\n- a\n- b\n\n> 引\n> 用\n```\nx\n\n```\n---\n图1\n";

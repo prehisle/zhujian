@@ -10,8 +10,10 @@
 //   新篇(832 起没有暂存条):一个字没写就加图 ⇒ 当场建篇挂上、正文是两段「图N」→ 返回 = 回阅读页;
 //     写了两段字、光标放在中间加图 ⇒ 那一段插在两段之间(前后各空一行)→ 写字加图后**直接关面** ⇒ 字与图都落下。
 //   取图在飞时按返回 = 拦一句、留在编辑器;放行后照常。
-//   写字框里的「图N」(833):对得上的垫底色、单独成段的配缩略图(字节真到了)、影子层与写字框内框重合;图删了那段不再垫。
-//   缩略图条只摆当下没画出来的(835):写字时藏窄边配了图的、预览时藏原位画成图的;删图 = 预览里大图角上的 ×(与条里同一份标记)。
+//   写字框里的「图N」(833):对得上的垫底色、每处都在那一行右侧配缩略图(837 起句中的也配;字节真到了)、影子层与写字框内框重合;
+//     挨得近的几枚往左排开、互不相叠(837);图删了那段不再垫。
+//   缩略图条只摆当下没画出来的(835):写字时藏窄边配了图的(= 正文里写到的,837)、预览时藏原位画成图的;
+//     删图 = 预览里大图角上的 ×(与条里同一份标记),标了的那张窄边那枚也变淡(837)。
 //
 // 取图不经系统选择器:页内把 `HTMLInputElement.prototype.click` 换掉,遇到 file input 就塞几张页内现画
 // 的 PNG 并发 change(同用户选完回来)。⚠ 诚实边界:系统相册 / 相机那半、取消那条路、降采样的手感
@@ -187,9 +189,9 @@ try {
 
   // ④ 预览:单独成段的三段「图N」原位画成图(字节真到了),句中的「图1」仍是芯片
   ok((await areaText()).endsWith("图1\n\n图2\n\n图3\n\n"), "③ 拍的那张也插了「图3」", await areaText());
-  // ③b 写字框里的标注(833):四处「图N」都垫了底色(句中那处也算),三段单独成段的各配一枚缩略图、字节真到了;
+  // ③b 写字框里的标注(833):四处「图N」都垫了底色、各配一枚缩略图(837 起句中那处也配)、字节真到了;
   //     垫底色的那一格与写字框里那几个字落在同一处(影子层与写字框同宽同排版)
-  await waitFor(`[...document.querySelectorAll("#docs-body .doc-pins .ref-thumb img")].filter((i) => i.complete && i.naturalWidth > 0).length === 3`, "写字框里三枚缩略图");
+  await waitFor(`[...document.querySelectorAll("#docs-body .doc-pins .ref-thumb img")].filter((i) => i.complete && i.naturalWidth > 0).length === 4`, "写字框里四枚缩略图");
   const hl = await ev(`(() => {
     const a = document.querySelector("#docs-body textarea.doc-area"), h = document.querySelector("#docs-body .doc-hl");
     const ra = a.getBoundingClientRect(), rh = h.getBoundingClientRect();
@@ -197,7 +199,7 @@ try {
       dx: Math.round(rh.left - ra.left - a.clientLeft), w: [Math.round(rh.width), a.clientWidth], hh: [Math.round(rh.height), a.clientHeight],
       gutter: getComputedStyle(a).paddingRight, copied: getComputedStyle(h).paddingRight };
   })()`);
-  ok(hl.marks.join() === "图1,图1,图2,图3" && hl.thumbs === 3, "③b 四处「图N」垫了底色、三段单独成段的配缩略图", hl);
+  ok(hl.marks.join() === "图1,图1,图2,图3" && hl.thumbs === 4, "③b 四处「图N」垫了底色、各配一枚缩略图(句中的也配)", hl);
   ok(hl.dx === 0 && hl.w[0] === hl.w[1] && hl.hh[0] === hl.hh[1] && hl.gutter === hl.copied, "③b 影子层与写字框内框重合、窄边一致", hl);
   // ③c 每处底色落在那几个字所在的那一行(834:系统字号 / 界面字号不是 100% 时,影子层抄来的放大后字号被 textZoom
   //     再放大一遍,底色整片往下错、越往后错得越多)。这几段都短、不折行 ⇒ 第几行 = 前面有几个换行。
@@ -222,17 +224,30 @@ try {
     function hitOf(p) { const b = p.getBoundingClientRect(); const e = document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2); return p.contains(e) || (e ? e.tagName + "." + e.className + "#" + e.id : null); }
     return { same: pins.length === spots.length && pins.every((p, i) => r(p).join() === r(spots[i]).join()), hit, at: pins.map(r) };
   })()`);
-  ok(pin.same && pin.hit.length === 3 && pin.hit.every((h) => h === true), "③e 窄边三枚缩略图与占位同位、点中心命中的就是它", pin);
+  ok(pin.same && pin.hit.length === 4 && pin.hit.every((h) => h === true), "③e 窄边四枚缩略图与占位同位、点中心命中的就是它", pin);
   await ev(`(async () => { const p = document.querySelector("#docs-body .doc-pins .ref-thumb"); p.scrollIntoView({ block: "center" }); await new Promise((r) => setTimeout(r, 400)); const b = p.getBoundingClientRect(); document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2).click(); return 1; })()`);
   await waitFor(`!document.getElementById("viewer").hidden`, "点窄边缩略图开看图");
   await ev(`document.getElementById("viewer").click(), 1`);
   await waitFor(`document.getElementById("viewer").hidden`, "看图关上");
-  // ③d 写字时条里只摆窄边没配图的(835):三张都单独成段 ⇒ 条里一张不摆;把「图3」那段删了 ⇒ 图3 回到条里,放回来又藏
-  ok((await stripVis()).length === 0, "③d 三张都在窄边配了图 ⇒ 条里一张不摆", await stripVis());
+  // ③d 写字时条里只摆正文里还没写到的(835;837 起句中写到的也算写到):三张都写到了 ⇒ 条里一张不摆;
+  //     把「图3」那段删了 ⇒ 图3 回到条里;把单独那段「图1」删了、句中那处留着 ⇒ 图1 仍不进条(它在句中那行的窄边上)
+  const setArea = (v) => ev(`(() => { const a = document.querySelector("#docs-body textarea.doc-area"); a.value = ${JSON.stringify(v)}; a.dispatchEvent(new Event("input")); return 1; })()`);
+  ok((await stripVis()).length === 0, "③d 三张都写进了正文 ⇒ 条里一张不摆", await stripVis());
   const full = await areaText();
-  await ev(`(() => { const a = document.querySelector("#docs-body textarea.doc-area"); a.value = ${JSON.stringify(full.replace("图3\n\n", ""))}; a.dispatchEvent(new Event("input")); return 1; })()`);
+  await setArea(full.replace("图3\n\n", ""));
   ok((await stripVis()).join() === "3", "③d 「图3」那段删了 ⇒ 图3 回到条里", await stripVis());
-  await ev(`(() => { const a = document.querySelector("#docs-body textarea.doc-area"); a.value = ${JSON.stringify(full)}; a.dispatchEvent(new Event("input")); return 1; })()`);
+  await setArea(full.replace("\n图1\n", "\n"));
+  const solo = await ev(`[...document.querySelectorAll("#docs-body .doc-pins .ref-thumb")].map((p) => p.dataset.seq).join()`);
+  ok((await stripVis()).length === 0 && solo === "1,2,3", "③d 只剩句中的「图1」⇒ 图1 在那一行窄边上、不进条", { strip: await stripVis(), solo });
+  // ③f 挨得近的几处往左排开、互不相叠(837):同一行两处、紧挨着的下一行一处
+  await setArea("图1 图2\n图3\n");
+  const cols = await ev(`(() => {
+    const r = [...document.querySelectorAll("#docs-body .doc-pins .ref-thumb")].map((p) => p.getBoundingClientRect());
+    const cross = (a, b) => a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+    return { n: r.length, overlap: r.some((a, i) => r.some((b, j) => j > i && cross(a, b))), lefts: r.map((x) => Math.round(x.left)) };
+  })()`);
+  ok(cols.n === 3 && !cols.overlap && new Set(cols.lefts).size === 3, "③f 挨得近的三枚排成三列、互不相叠", cols);
+  await setArea(full);
   ok((await stripVis()).length === 0, "③d 放回来又藏", await stripVis());
   await clickText("预览");
   await waitFor(`!document.querySelector("#docs-body .doc-preview").hidden`, "预览");
@@ -251,6 +266,7 @@ try {
   ok(await ev(`${figDel(2)}.parentElement.classList.contains("marked")`), "⑤ 点 × = 图2 标成待删");
   ok(await ev(`${figDel(2)}.textContent === "↺"`), "⑤ × 换成 ↺");
   ok(await ev(thumbMarked2), "⑤ 条里那张同一份标记");
+  ok(await ev(`document.querySelector('#docs-body .doc-pins .ref-thumb[data-img="${seq2.id}"]').classList.contains("marked")`), "⑤ 写字框窄边那枚也变淡(837)");
   ok((await imgsOf(id)).length === 3, "⑤ 标了之后库里仍 3 张(保存才删)");
   await ev(`${figDel(2)}.click()`);
   ok(!(await ev(`${figDel(2)}.parentElement.classList.contains("marked")`)) && !(await ev(thumbMarked2)), "⑤ 再点 ↺ = 撤销标记");

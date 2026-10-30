@@ -313,7 +313,8 @@
 /* 底色照预览里那枚芯片(.img-ref)的底、边、圆角,但框正好贴着这几个字、边画在里侧:⛔ 别往外撑(负 margin 那版压住了紧挨着的字 ——
    芯片占位推得开邻字,写字框里的字推不开),也别占宽(影子层要与写字框逐字同位) */
 .v-docs .doc-hl .ref { color: transparent; background: var(--seal-tint); box-shadow: inset 0 0 0 1px var(--seal-line); border-radius: var(--radius-xs); }
-/* 单独成段的「图N」:右侧窄边一枚缩略图(top 不写 = 停在那一行);有这种段才留窄边 */
+/* 正文里每处能对上图的「图N」:右侧窄边一枚缩略图(top 不写 = 停在那一行,--k = 第几列,docs.ts gutterCols);有这种引用才留窄边。
+   它压在写字框背后,点开大图靠写字框按落点认(docs.ts gutterHit) */
 .v-docs .doc-hl .ref-thumb {
   position: absolute;
   right: calc(12px + var(--k) * 62px);
@@ -325,6 +326,8 @@
   border-radius: var(--radius-sm);
   background: var(--raised);
 }
+/* 标了「保存时删」的那张:窄边这枚同条里的 .img-thumb.del-marked 变淡 */
+.v-docs .doc-hl .ref-thumb.del-marked { border-style: dashed; opacity: 0.35; }
 .v-docs .doc-ed.has-thumbs .doc-area { padding-right: calc(22px + var(--thumbs) * 62px); }
 .v-docs .doc-area {
   position: relative;
