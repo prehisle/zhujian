@@ -10,6 +10,7 @@
 //   新篇(832 起没有暂存条):一个字没写就加图 ⇒ 当场建篇挂上、正文是两段「图N」→ 返回 = 回阅读页;
 //     写了两段字、光标放在中间加图 ⇒ 那一段插在两段之间(前后各空一行)→ 写字加图后**直接关面** ⇒ 字与图都落下。
 //   取图在飞时按返回 = 拦一句、留在编辑器;放行后照常。
+//   写字框里的「图N」(833):对得上的垫底色、单独成段的配缩略图(字节真到了)、影子层与写字框内框重合;图删了那段不再垫。
 //
 // 取图不经系统选择器:页内把 `HTMLInputElement.prototype.click` 换掉,遇到 file input 就塞几张页内现画
 // 的 PNG 并发 change(同用户选完回来)。⚠ 诚实边界:系统相册 / 相机那半、取消那条路、降采样的手感
@@ -179,6 +180,19 @@ try {
 
   // ④ 预览:单独成段的三段「图N」原位画成图(字节真到了),句中的「图1」仍是芯片
   ok((await areaText()).endsWith("图1\n\n图2\n\n图3\n\n"), "③ 拍的那张也插了「图3」", await areaText());
+  // ③b 写字框里的标注(833):四处「图N」都垫了底色(句中那处也算),三段单独成段的各配一枚缩略图、字节真到了;
+  //     垫底色的那一格与写字框里那几个字落在同一处(影子层与写字框同宽同排版)
+  await waitFor(`[...document.querySelectorAll("#docs-body .doc-hl .ref-thumb img")].filter((i) => i.complete && i.naturalWidth > 0).length === 3`, "写字框里三枚缩略图");
+  const hl = await ev(`(() => {
+    const a = document.querySelector("#docs-body textarea.doc-area"), h = document.querySelector("#docs-body .doc-hl");
+    const ra = a.getBoundingClientRect(), rh = h.getBoundingClientRect();
+    return { marks: [...h.querySelectorAll(".ref")].map((m) => m.firstChild.textContent), thumbs: h.querySelectorAll(".ref-thumb").length,
+      dx: Math.round(rh.left - ra.left - a.clientLeft), w: [Math.round(rh.width), a.clientWidth], hh: [Math.round(rh.height), a.clientHeight],
+      gutter: getComputedStyle(a).paddingRight, copied: getComputedStyle(h).paddingRight };
+  })()`);
+  ok(hl.marks.join() === "图1,图1,图2,图3" && hl.thumbs === 3, "③b 四处「图N」垫了底色、三段单独成段的配缩略图", hl);
+  ok(hl.dx === 0 && hl.w[0] === hl.w[1] && hl.hh[0] === hl.hh[1] && hl.gutter === hl.copied, "③b 影子层与写字框内框重合、窄边一致", hl);
+  await shot("doc-edit-hl");
   await clickText("预览");
   await waitFor(`!document.querySelector("#docs-body .doc-preview").hidden`, "预览");
   const chip = await ev(`(() => { const b = document.querySelector("#docs-body .doc-preview .img-ref"); return b ? b.textContent : null; })()`);
@@ -215,6 +229,8 @@ try {
   // ⑦ 再标一张、关面(不是保存)⇒ 一张不删
   await clickText("编辑");
   await waitFor(`document.querySelectorAll("#docs-body .doc-imgs .thumbs .thumb").length === 2`, "编辑器里 2 张");
+  const broken = await ev(`[...document.querySelectorAll("#docs-body .doc-hl .ref")].map((m) => m.firstChild.textContent).join()`);
+  ok(broken === "图1,图1,图3", "⑦ 图2 删掉之后它那段不再垫底色(引用断了一眼看得出)", broken);
   const seq1 = after.find((m) => m.seq === 1);
   await ev(`document.querySelector('#docs-body .doc-imgs .thumb[data-img="${seq1.id}"] .thumb-del').click()`);
   await ev(`document.querySelector('#bottombar [data-pane="docs"]').click()`); // 再点同一入口 = 收面

@@ -52,12 +52,12 @@ import {
   type TopicItem,
 } from "./api";
 import { renderMarkdown } from "../../shared/markdown-dom";
-import { imgRefText } from "../../shared/markdown";
+import { imgRefText, scanImgRefs } from "../../shared/markdown";
 import { renderDiff } from "../../shared/diff-dom";
 import { toggleChecklistLine } from "../../shared/checklist";
 import { HAS_BROWSER, writeClipboard } from "./platform";
 import { commentBadgeHtml, loadCommentCounts } from "./comments";
-import { figureSrc, hydrateThumbs } from "./thumbs";
+import { figureSrc, fillThumb, hydrateThumbs } from "./thumbs";
 import { openViewer } from "./viewer";
 import { capturePhoto, PICK_MAX, pickImages, toBase64 } from "./images";
 import { t } from "./i18n";
@@ -837,8 +837,66 @@ function openEditor(d: IdeaItem | null, seed: string | null, carried: File[]): v
     );
     thumbs.hidden = imgs.length === 0;
     hydrateThumbs(thumbs);
+    paintHl();
   }
-  area.addEventListener("input", () => fitArea(area));
+
+  // 写字框里的「图N」:能对上一张图的垫一层底色(对不上 = 引用断了,照普通字),单独成段的再在右侧
+  // 窄边配一枚缩略图(同桌面 paintHl)。纯文本框给不了几个字单独上色 ⇒ 背后垫一层同字体同排版的
+  // 影子层,只画底色与缩略图,字仍是写字框自己的;写字框背景透明,纸色由外框给。手机上框随内容长高、
+  // 不在框里滚 ⇒ 影子层只跟尺寸,不跟滚动。排版参数逐项从写字框的计算样式抄(⛔ 别在 CSS 里另写一份)。
+  const hl = el("div", "doc-hl");
+  hl.setAttribute("aria-hidden", "true");
+  const edBox = el("div", "doc-ed", [hl, area]);
+  const HL_COPY = ["fontFamily", "fontSize", "fontWeight", "fontStyle", "lineHeight", "letterSpacing", "wordSpacing", "tabSize", "textIndent",
+    "paddingTop", "paddingRight", "paddingBottom", "paddingLeft", "whiteSpace", "overflowWrap", "wordBreak"] as const;
+  function syncHl(): void {
+    const cs = getComputedStyle(area);
+    for (const k of HL_COPY) hl.style[k] = cs[k];
+    Object.assign(hl.style, { top: `${area.clientTop}px`, left: `${area.clientLeft}px`, width: `${area.clientWidth}px`, height: `${area.clientHeight}px` });
+  }
+  function paintHl(): void {
+    const v = area.value;
+    const bySeq = new Map(imgs.map((m) => [m.seq, m]));
+    const nodes: (string | HTMLElement)[] = [];
+    // 同一段里第几枚缩略图:往左排开(上下相邻两行的图N 隔不开一枚缩略图的高),窄边按最多那段放宽
+    const perPara = new Map<number, number>();
+    let last = 0;
+    for (const r of scanImgRefs(v)) {
+      const m = bySeq.get(r.n);
+      if (m === undefined) continue;
+      nodes.push(v.slice(last, r.a));
+      const mark = el("mark", "ref", [v.slice(r.a, r.b)]);
+      if (r.alone) {
+        const para = v.lastIndexOf("\n\n", r.a);
+        const k = perPara.get(para) ?? 0;
+        perPara.set(para, k + 1);
+        const th = el("span", "ref-thumb");
+        th.dataset.img = m.id;
+        th.dataset.seq = String(m.seq);
+        th.style.setProperty("--k", String(k));
+        mark.append(th);
+      }
+      nodes.push(mark);
+      last = r.b;
+    }
+    // 一处都没标 ⇒ 影子层整个清空,⛔ 别留一份全文去排版(200 KiB 一篇逐键重排约 30 ms,桌面实测)
+    if (nodes.length > 0) nodes.push(`${v.slice(last)}\n`); // 末尾那个空行也要占高(与写字框一致)
+    const gut = String(Math.max(0, ...perPara.values()));
+    const changed = edBox.style.getPropertyValue("--thumbs") !== gut;
+    edBox.classList.toggle("has-thumbs", perPara.size > 0);
+    edBox.style.setProperty("--thumbs", gut);
+    hl.replaceChildren(...nodes);
+    // ⚠ 挂上之后再填:fillThumb 见节点不在页上就当「已被重画替掉」放弃(缓存命中那条同步走到那句,先填 = 一张都不出)
+    for (const th of hl.querySelectorAll<HTMLElement>(".ref-thumb")) void fillThumb(th);
+    if (changed) fitArea(area); // 窄边宽度变了,框里的字重新折行,高度要重量
+    syncHl();
+  }
+  area.addEventListener("input", () => {
+    fitArea(area);
+    paintHl();
+  });
+  const hlResize = new ResizeObserver(() => syncHl()); // 转屏 / 字号变了:框宽变,影子层跟上
+  hlResize.observe(area);
   if (id !== null) {
     void listItemImages(sp, id).then(
       (m) => {
@@ -1018,6 +1076,7 @@ function openEditor(d: IdeaItem | null, seed: string | null, carried: File[]): v
   }
   function teardown(): void {
     if (draftDue !== null) clearTimeout(draftDue);
+    hlResize.disconnect();
     editor = null;
   }
   editor = {
@@ -1069,7 +1128,7 @@ function openEditor(d: IdeaItem | null, seed: string | null, carried: File[]): v
     modeEdit.classList.add("on");
     modePrev.classList.remove("on");
     preview.hidden = true;
-    area.hidden = false;
+    edBox.hidden = false;
     area.focus();
   }, "on");
   const modePrev = btn(t("docs.modePreview"), () => {
@@ -1078,7 +1137,7 @@ function openEditor(d: IdeaItem | null, seed: string | null, carried: File[]): v
     // 预览只在切过去那一刻画一次(200 KiB 一篇解析要几十毫秒,⛔ 别逐键同步算);只读,方框禁用
     preview.replaceChildren(renderBody(sp, id ?? newId, area.value, imgs, null).el);
     preview.hidden = false;
-    area.hidden = true;
+    edBox.hidden = true;
   }, "");
   root().replaceChildren(
     bar(
@@ -1094,12 +1153,13 @@ function openEditor(d: IdeaItem | null, seed: string | null, carried: File[]): v
     ]),
     el("div", "doc-imgs", [thumbs]),
     err,
-    area,
+    edBox,
     preview,
   );
   area.focus();
   area.setSelectionRange(area.value.length, area.value.length);
   fitArea(area);
+  paintHl();
   if (carried.length) {
     // 从「记一笔」带过来的图:当场建篇挂上,引用接在正文末尾(挂完之前同「取图在飞」,离开先拦)
     picking = true;

@@ -264,6 +264,14 @@ const RUNTIME_VARS = [
       "正文待办清单的嵌套缩进层数(桌面 src/item-images.ts::renderContent 的 setProperty /" +
       " 安卓 android/src/ui.ts::contentHtml 的行内 style);兜底 0 = 不缩进,那正是绝大多数行",
   },
+  {
+    name: "--k",
+    where: "长文写字框标注层里一枚缩略图在本段排第几(桌面 src/docs.ts / 安卓 android/src/docs.ts 的 paintHl setProperty);只进 right 的 calc",
+  },
+  {
+    name: "--thumbs",
+    where: "长文写字框里最多那段有几枚缩略图(同上 paintHl 写在 .doc-ed 上);只在 .has-thumbs 下进 padding-right 的 calc,没写之前那条规则不生效",
+  },
 ];
 
 // ---- 解析 ---------------------------------------------------------------------------

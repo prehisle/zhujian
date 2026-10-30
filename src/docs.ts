@@ -34,10 +34,10 @@ import { armLocate } from "./locate";
 import { DOC_CARD_KEYS, DOC_VIEW_KEYS } from "./keymap";
 import { type Act, armDismiss, createHotkeyController, registerViewKeys } from "./hotkey-menu";
 import { t } from "./i18n";
-import { type ImageMeta, attachBlob, figureSrc, imageStrip, openLightbox, pasteImage } from "./item-images";
+import { type ImageMeta, attachBlob, figureSrc, getThumb, imageStrip, openLightbox, pasteImage } from "./item-images";
 import { toggleChecklistLine } from "../shared/checklist";
 import { type MdRendered, renderMarkdown } from "../shared/markdown-dom";
-import { imgRefText } from "../shared/markdown";
+import { imgRefText, scanImgRefs } from "../shared/markdown";
 import { renderDiff } from "../shared/diff-dom";
 import { closeComments, commentBadge, commentCountFor, inlineCommentState, loadCommentCounts, openInlineComments } from "./item-comments";
 import type { View, ViewCtx } from "./notebook";
@@ -694,7 +694,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     const imgRow = el("div", { className: "img-editor" }, [imgErr]);
     function mountStrip(target: string): ReturnType<typeof imageStrip> {
       if (strip === null) {
-        strip = imageStrip(target, { editable: true, onMetas: (m) => ((imgs = m), paintPreview()) });
+        strip = imageStrip(target, { editable: true, onMetas: (m) => ((imgs = m), paintPreview(), paintHl()) });
         imgRow.prepend(strip.root);
       }
       return strip;
@@ -808,8 +808,63 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       const span = src[k + 1] - src[k];
       preview.scrollTop = span > 0 ? dst[k] + ((y - src[k]) / span) * (dst[k + 1] - dst[k]) : dst[k];
     }
+    // 写字框里的「图N」:能对上一张图的垫一层底色(对不上 = 引用断了,照普通字),单独成段的再在右侧
+    // 窄边配一枚缩略图。纯文本框给不了几个字单独上色 ⇒ 背后垫一层同字体同排版的影子层,只画底色与
+    // 缩略图,字仍是写字框自己的(光标 / 输入法 / 撤销一概不碰);写字框背景透明,纸色由外框给。
+    // 排版参数逐项从写字框的计算样式抄(⛔ 别在 CSS 里另写一份:差一个字距,底色就和字错开)。
+    const hl = el("div", { className: "doc-hl" });
+    hl.setAttribute("aria-hidden", "true");
+    const edBox = el("div", { className: "doc-ed" }, [hl, area]);
+    const HL_COPY = ["fontFamily", "fontSize", "fontWeight", "fontStyle", "lineHeight", "letterSpacing", "wordSpacing", "tabSize", "textIndent",
+      "paddingTop", "paddingRight", "paddingBottom", "paddingLeft", "whiteSpace", "overflowWrap", "wordBreak"] as const;
+    function syncHl(): void {
+      const cs = getComputedStyle(area);
+      for (const k of HL_COPY) hl.style[k] = cs[k];
+      Object.assign(hl.style, { top: `${area.clientTop}px`, left: `${area.clientLeft}px`, width: `${area.clientWidth}px`, height: `${area.clientHeight}px` });
+      hl.scrollTop = area.scrollTop;
+    }
+    function paintHl(): void {
+      const v = area.value;
+      const bySeq = new Map(imgs.map((m) => [m.seq, m]));
+      const nodes: (string | HTMLElement)[] = [];
+      // 同一段里第几枚缩略图:往左排开(上下相邻两行的图N 隔不开一枚缩略图的高),窄边按最多那段放宽
+      const perPara = new Map<number, number>();
+      let last = 0;
+      for (const r of scanImgRefs(v)) {
+        const m = bySeq.get(r.n);
+        if (m === undefined) continue;
+        nodes.push(v.slice(last, r.a));
+        const mark = el("mark", { className: "ref", textContent: v.slice(r.a, r.b) });
+        if (r.alone) {
+          const para = v.lastIndexOf("\n\n", r.a);
+          const k = perPara.get(para) ?? 0;
+          perPara.set(para, k + 1);
+          const img = el("img", { className: "ref-thumb", alt: "" });
+          img.style.setProperty("--k", String(k));
+          getThumb(m.id).then(
+            (u) => {
+              img.src = u;
+            },
+            () => img.classList.add("broken"),
+          );
+          mark.append(img);
+        }
+        nodes.push(mark);
+        last = r.b;
+      }
+      // 一处都没标 ⇒ 影子层整个清空,⛔ 别留一份全文去排版(200 KiB 一篇逐键重排约 30 ms,桌面实测)
+      if (nodes.length > 0) nodes.push(`${v.slice(last)}\n`); // 末尾那个空行也要占高(与写字框一致)
+      edBox.classList.toggle("has-thumbs", perPara.size > 0);
+      edBox.style.setProperty("--thumbs", String(Math.max(0, ...perPara.values())));
+      hl.replaceChildren(...nodes);
+      syncHl();
+    }
+    const hlResize = new ResizeObserver(() => syncHl());
+    hlResize.observe(area);
+
     let syncDue = false;
     area.addEventListener("scroll", () => {
+      hl.scrollTop = area.scrollTop;
       if (syncDue) return;
       syncDue = true;
       requestAnimationFrame(() => {
@@ -849,6 +904,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       if (draftDue !== null) clearTimeout(draftDue);
       draftDue = setTimeout(writeDraft, DRAFT_IDLE_MS);
       schedulePreview();
+      paintHl();
     });
 
     // 落一版。新篇第一次:capture_doc(同一事务 create + set doc_at)拿到 id。`force` = 新篇正文
@@ -916,6 +972,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     function teardown(): void {
       if (draftDue !== null) clearTimeout(draftDue);
       if (previewDue !== null) clearTimeout(previewDue);
+      hlResize.disconnect();
       document.removeEventListener("keydown", onKey);
       leaveEditor = null;
       flushEditor = null;
@@ -956,7 +1013,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
 
     const modeEdit = el("button", { className: "seg on", type: "button", textContent: t("docs.modeEdit") });
     const modePrev = el("button", { className: "seg", type: "button", textContent: t("docs.modePreview") });
-    const edWrap = el("div", { className: "doc-editor" }, [area, preview]);
+    const edWrap = el("div", { className: "doc-editor" }, [edBox, preview]);
     modeEdit.onclick = () => {
       edWrap.classList.remove("show-preview");
       modeEdit.classList.add("on");
@@ -982,6 +1039,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     if (previewVisible()) paintPreview();
     area.focus();
     area.setSelectionRange(area.value.length, area.value.length);
+    paintHl();
   }
 
   // ---- 历史与比对(§4)--------------------------------------------------------------

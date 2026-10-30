@@ -1548,12 +1548,25 @@
       .doc-note { margin: 0 0 10px; font-size: var(--fs-12); color: var(--ink-soft); }
       .doc-err { margin: 0 0 10px; font-size: var(--fs-13); }
       .doc-seg { margin-bottom: 10px; }
+      /* 写字框 + 背后那层「图N」标注(docs.ts paintHl):纸色给外框,写字框透明、叠在标注层上面 */
+      .doc-ed { position: relative; background: var(--raised); border-radius: var(--radius-md); }
+      .doc-ed[hidden] { display: none; }
       .doc-area {
+        position: relative;
         display: block; width: 100%; box-sizing: border-box; min-height: 60vh; resize: none; overflow-y: hidden; /* 随内容长高(docs.ts fitArea),整页一层滚动 */
         padding: 12px 14px; border: 1px solid var(--line-strong); border-radius: var(--radius-md);
-        background: var(--raised); color: var(--ink);
+        background: transparent; color: var(--ink);
         font-family: var(--font-serif); font-size: var(--fs-16); line-height: 1.75;
       }
+      .doc-hl { position: absolute; box-sizing: border-box; overflow: hidden; pointer-events: none; color: transparent; }
+      .doc-hl .ref { color: transparent; background: var(--seal-tint); border-radius: var(--radius-xs); box-shadow: 0 0 0 2px var(--seal-tint), 0 0 0 3px var(--seal-line); }
+      /* 单独成段的「图N」:右侧窄边一枚缩略图(top 不写 = 停在那一行);有这种段才留窄边 */
+      .doc-hl .ref-thumb {
+        position: absolute; right: calc(8px + var(--k) * 50px); width: 44px; height: 36px; margin-top: 4px;
+        overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--paper);
+      }
+      .doc-hl .ref-thumb img { display: block; width: 100%; height: 100%; object-fit: cover; }
+      .doc-ed.has-thumbs .doc-area { padding-right: calc(16px + var(--thumbs) * 50px); }
       .doc-preview { background: var(--raised); border: 1px solid var(--line); border-radius: var(--radius-md); padding: 14px 16px; min-height: 30vh; }
       /* 编辑器的配图(152):两枚钮挤进「编辑 / 预览」那一排,缩略图条紧跟其下、正文框之上(矮屏上
          框底下那块在底栏后面)。已存的图同编辑层(× 标删、保存才生效),新篇的暂存图同「记一笔」。 */

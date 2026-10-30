@@ -47,6 +47,76 @@ export const MD_MAX_DOM = 16_384;
 export function imgRefText(n: number): string {
   return `图${n}`;
 }
+/** 正文里一处「图N」引用在原文中的位置 `[a, b)`(写字框里给它垫底色、配缩略图用)。 */
+export type ImgRefSpan = { a: number; b: number; n: number; alone: boolean };
+
+const BLOCK_START = /^ {0,3}(#{1,3}(\s|$)|[-*+]\s|\d{1,9}[.)]\s|>|`{3,}|~{3,})/;
+const REF_ONLY = /^\s*图\d{1,6}(\s+图\d{1,6})*\s*$/;
+
+/** 原文里每一处「图N」。词法同解析器:「图」+ 1–6 位数字(连着第 7 位数字就整串不算);
+ *  围栏代码块里、行内代码里的不算。`alone` = 它所在的段(相邻的非空、非块起始行)每一行都只有
+ *  「图N」—— 渲染器原位画图的就是这种段。
+ *  ⚠ 这是**近似**,只给写字框做标注、⛔ 不当渲染判据:引用 / 列表里的「图N」段渲染器也画图,这里
+ *  不算 alone(只垫底色不配缩略图);嵌在引用 / 列表里的围栏这里不跳过。 */
+export function scanImgRefs(text: string): ImgRefSpan[] {
+  const out: ImgRefSpan[] = [];
+  const lines = text.split("\n");
+  let fence: { ch: string; len: number } | null = null;
+  let off = 0;
+  // 先逐行判「围栏里 / 空行 / 块起始 / 只有图N」,再按段算 alone
+  const kind: ("code" | "blank" | "block" | "ref" | "text")[] = [];
+  for (const ln of lines) {
+    const t = ln.replace(/^ +/, "");
+    if (fence !== null) {
+      const m = /^(`{3,}|~{3,})\s*$/.exec(t);
+      if (m && m[1][0] === fence.ch && m[1].length >= fence.len) fence = null;
+      kind.push("code");
+      continue;
+    }
+    const f = /^(`{3,}|~{3,})/.exec(t);
+    if (f && ln.length - t.length <= 3 && !(f[1][0] === "`" && t.slice(f[1].length).includes("`"))) {
+      fence = { ch: f[1][0], len: f[1].length };
+      kind.push("code");
+      continue;
+    }
+    if (t.trim() === "") kind.push("blank");
+    else if (BLOCK_START.test(ln)) kind.push("block");
+    else kind.push(REF_ONLY.test(ln) ? "ref" : "text");
+  }
+  const alone: boolean[] = lines.map(() => false);
+  for (let i = 0; i < lines.length; ) {
+    if (kind[i] !== "ref" && kind[i] !== "text") {
+      i++;
+      continue;
+    }
+    let j = i;
+    while (j < lines.length && (kind[j] === "ref" || kind[j] === "text")) j++;
+    const all = kind.slice(i, j).every((k) => k === "ref");
+    for (let k = i; k < j; k++) alone[k] = all;
+    i = j;
+  }
+  lines.forEach((ln, i) => {
+    if (kind[i] !== "code") {
+      // 行内代码:等长的反引号串两两配对,配上的区间里不认
+      const skip: [number, number][] = [];
+      const ticks = [...ln.matchAll(/`+/g)];
+      for (let p = 0; p < ticks.length; p++) {
+        const q = ticks.findIndex((x, k) => k > p && x[0].length === ticks[p][0].length);
+        if (q < 0) continue;
+        skip.push([ticks[p].index!, ticks[q].index! + ticks[q][0].length]);
+        p = q;
+      }
+      for (const m of ln.matchAll(/图(\d+)/g)) {
+        const at = m.index!;
+        if (m[1].length > 6 || skip.some(([x, y]) => at >= x && at < y)) continue;
+        out.push({ a: off + at, b: off + at + m[0].length, n: Number(m[1]), alone: alone[i] });
+      }
+    }
+    off += ln.length + 1;
+  });
+  return out;
+}
+
 /** 链接地址的长度上限(码元)。比它长的一律不当链接 —— 也是在给每次校验的复制量封顶。 */
 export const URL_MAX_LEN = 4_096;
 

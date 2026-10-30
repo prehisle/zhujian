@@ -297,7 +297,31 @@
 .v-docs main:has(> .doc-edit-page) { display: flex; flex-direction: column; overflow: hidden; }
 .v-docs .doc-edit-page { flex: 1; min-height: 0; max-width: 860px; display: flex; flex-direction: column; gap: 10px; }
 .v-docs .doc-editor { flex: 1; min-height: 0; display: grid; grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr); gap: 16px; }
+/* 写字框 + 背后那层「图N」标注(docs.ts paintHl):纸色给外框,写字框透明、叠在标注层上面 */
+.v-docs .doc-ed { position: relative; min-height: 0; height: 100%; background: var(--paper); border-radius: var(--radius-md); }
+.v-docs .doc-hl {
+  position: absolute;
+  box-sizing: border-box;
+  overflow: hidden;
+  pointer-events: none;
+  color: transparent;
+}
+.v-docs .doc-hl .ref { color: transparent; background: var(--seal-tint); border-radius: var(--radius-xs); box-shadow: 0 0 0 2px var(--seal-tint), 0 0 0 3px var(--seal-line); }
+/* 单独成段的「图N」:右侧窄边一枚缩略图(top 不写 = 停在那一行);有这种段才留窄边 */
+.v-docs .doc-hl .ref-thumb {
+  position: absolute;
+  right: calc(12px + var(--k) * 62px);
+  width: 56px;
+  height: 42px;
+  margin-top: 3px;
+  object-fit: cover;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--raised);
+}
+.v-docs .doc-ed.has-thumbs .doc-area { padding-right: calc(22px + var(--thumbs) * 62px); }
 .v-docs .doc-area {
+  position: relative;
   width: 100%;
   height: 100%;
   overflow-y: auto;
@@ -306,7 +330,7 @@
   font-size: var(--fs-15);
   line-height: 1.7;
   color: var(--ink);
-  background: var(--paper);
+  background: transparent;
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-md);
   padding: 16px 18px;
@@ -324,14 +348,14 @@
   border-radius: var(--radius-md);
   padding: 16px 20px;
 }
-.v-docs .doc-editor.show-preview .doc-area { display: none; }
+.v-docs .doc-editor.show-preview .doc-ed { display: none; }
 .v-docs .doc-editor.show-preview .doc-preview { display: block; }
 /* 宽屏并排:左写右看,「编辑 / 预览」那组切换就用不着了 */
 @media (min-width: 1180px) {
   .v-docs .doc-edit-page { max-width: none; }
   .v-docs .doc-editor { grid-template-columns: 1fr 1fr; }
   .v-docs .doc-editor .doc-preview,
-  .v-docs .doc-editor.show-preview .doc-area { display: block; }
+  .v-docs .doc-editor.show-preview .doc-ed { display: block; }
   .v-docs .doc-bar .segs { display: none; }
 }
 .v-docs .form-err {

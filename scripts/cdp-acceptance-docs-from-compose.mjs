@@ -172,9 +172,10 @@ try {
   await ev(`document.getElementById("compose-addimg").click()`);
   await waitFor(`document.querySelectorAll("#compose-thumbs .cthumb:not(.pending)").length === 2`, "「记一笔」暂存条 2 张");
   await disarmPicker();
-  await ev(`document.getElementById("compose-doc").click()`);
-  // 草稿要在点下去的同一拍就在 —— 停笔 1 秒那一发还没到点(先读它,再等别的)
-  const draftNow = await docDraft();
+  // 草稿要在点下去的同一拍就在 —— 停笔 1 秒那一发还没到点。⚠ 在**同一个任务里**点完就读(833):
+  // 带图过来会当场建篇,建成那一刻清掉新篇草稿(字已经在库里了);分两发读就成了和建篇赛跑,
+  // MuMu 上建篇先到、读到 null(vivo 上读先到,所以 831 / 832 都绿过)。
+  const draftNow = await ev(`(() => { document.getElementById("compose-doc").click(); const r = localStorage.getItem(${JSON.stringify(docDraftKey())}); return r === null ? null : JSON.parse(r).text; })()`);
   ok(draftNow === TEXT, "② ⭐ 点下去那一刻长文草稿就落了(不等停笔)", draftNow);
   await waitFor(`!!document.querySelector("#docs-body textarea.doc-area")`, "编辑器");
   ok(await paneOpen(), "② 长文面开着");
