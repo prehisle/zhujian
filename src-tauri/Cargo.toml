@@ -32,7 +32,10 @@ tauri-plugin-opener = "2"
 tauri-plugin-window-state = "2"
 # 客户端自动更新(88):启动静默查 zhujian.app/updates/latest.json、提示式下载装 NSIS
 # 安装包(更新签名钥验签,与同步的设备鉴权钥无关);process 供装后 relaunch。
-tauri-plugin-updater = "2"
+# ⛔ 关掉默认的 `zip` 特性(backlog 测试与工装 118):它只服 v1 兼容的 `.nsis.zip` / `.AppImage.tar.gz`
+# 更新包,而 `createUpdaterArtifacts: true` 出的、`gen-update-manifest.mjs` 发的是裸 `-setup.exe`
+# ⇒ 那条解压路径走不到,却把 zip 4.x 的三条 RustSec 通告带进了 lock。改回 v1 兼容包就得开回来。
+tauri-plugin-updater = { version = "2", default-features = false, features = ["rustls-tls"] }
 tauri-plugin-process = "2"
 # 读系统剪贴板(桌面):notebook 回窗时若剪贴板是自家 zhujian:// 深链接,弹「点此打开」
 # 提示条(非承诺式,用户点了才跳)。走插件的 Rust 侧读、避开 webview navigator.clipboard
