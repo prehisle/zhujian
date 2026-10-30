@@ -348,10 +348,13 @@ export type ComposeImages = {
 
 /** `openPreview` = 点缩略图看大图(桌面 `src/item-images.ts` 的暂存图从 53 起就能点开,
  *  安卓这一格一直空着 —— 用户面 36 报的正是它)。刻意由调用方注入而不在这里 import
- *  viewer:取图这一层不该知道查看器长什么样,注入也免了一条模块环。不传 = 不可点。 */
+ *  viewer:取图这一层不该知道查看器长什么样,注入也免了一条模块环。不传 = 不可点。
+ *  `persist` = 要不要落进那份 IndexedDB 草稿:**库里只有一份、属于「记一笔」**;长文新篇的
+ *  暂存(docs.ts)传 false = 纯内存(同桌面长文编辑器的 pendingImages),⛔ 别让两处写同一份。 */
 export function composeImages(
   container: HTMLElement,
-  openPreview?: (items: ComposePreview[], idx: number) => void,
+  openPreview: ((items: ComposePreview[], idx: number) => void) | undefined,
+  persistDraft: boolean,
 ): ComposeImages {
   /** 一格暂存位。`held === null` = **占位骨架**:字节还在降采样,节点已经在屏上转着。
    *  节点在这一格出生时就造好、此后**只填不重建** —— 整条 replaceChildren 会把已在跑的
@@ -381,6 +384,7 @@ export function composeImages(
   // ⛔ 占位不入快照:它还没有字节,进去就是个空洞。
   let persistChain: Promise<void> = Promise.resolve();
   function persist(): void {
+    if (!persistDraft) return;
     const snapshot = ready().map((s) => ({ id: s.held!.id, blob: s.held!.file as Blob }));
     persistChain = persistChain.then(() => syncDraft(snapshot)).catch(() => {});
   }
@@ -522,6 +526,7 @@ export function composeImages(
       return { failed, why: [...new Set(whys.filter((w) => w !== ""))].join("") };
     },
     async restore() {
+      if (!persistDraft) throw new Error("composeImages:没开持久化的暂存条不该回填");
       if (slots.length) return; // 启动后用户已抢先贴图/正在取图:不覆盖
       let items: DraftItem[];
       try {

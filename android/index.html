@@ -1555,6 +1555,13 @@
         font-family: var(--font-serif); font-size: var(--fs-16); line-height: 1.75;
       }
       .doc-preview { background: var(--raised); border: 1px solid var(--line); border-radius: var(--radius-md); padding: 14px 16px; min-height: 30vh; }
+      /* 编辑器的配图(152):两枚钮挤进「编辑 / 预览」那一排,缩略图条紧跟其下、正文框之上(矮屏上
+         框底下那块在底栏后面)。已存的图同编辑层(× 标删、保存才生效),新篇的暂存图同「记一笔」。 */
+      .doc-tools { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; }
+      .doc-tools .doc-seg { flex: 1; margin-bottom: 0; }
+      .doc-tools .row { margin-bottom: 0; }
+      .doc-imgs .thumbs, .doc-imgs .cthumbs { margin: 0 0 10px; }
+      .doc-imgs .thumb-del { display: grid; }
       /* Markdown 正文(阅读页与预览同一套)。段落里的换行原样留在文本节点里(共用渲染器头注),靠 pre-wrap 显出来。 */
       .md { font-family: var(--font-serif); font-size: var(--fs-16); line-height: 1.75; color: var(--ink); overflow-wrap: anywhere; }
       .md p, .md li, .md h1, .md h2, .md h3 { white-space: pre-wrap; }

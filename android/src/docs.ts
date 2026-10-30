@@ -18,12 +18,15 @@
 // 再拼、不另起链接提取器。其余面(时间轴 / 回收站 / 搜索 / 标签)照旧不渲染 Markdown(§3)。
 // 本文件自己的外壳用 createElement 建;正文一个字都不进 innerHTML。
 //
-// 本期没有的(记在 progress-log 同号条目):编辑器里加 / 删配图(阅读页照常显示已有的图)、
-// 复制链接(手机随记也没有)。跨空间移动在阅读页「更多…」里,照卡片操作面那套(§2.7)。
+// 编辑器里的配图(152 补):已存过的篇同卡片编辑层(加图当场挂上、× 只做「保存时删」的标记),
+// 新篇先暂存、第一次保存拿到 id 再挂(同桌面)。本期没有的:复制链接(手机随记也没有)。
+// 跨空间移动在阅读页「更多…」里,照卡片操作面那套(§2.7)。
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
+  addItemImage,
   archiveNote,
   captureDoc,
+  deleteItemImage,
   editNote,
   fileNoteToTopic,
   getCurrentSpace,
@@ -53,7 +56,8 @@ import { toggleChecklistLine } from "../../shared/checklist";
 import { HAS_BROWSER, writeClipboard } from "./platform";
 import { commentBadgeHtml, loadCommentCounts } from "./comments";
 import { hydrateThumbs } from "./thumbs";
-import { openViewer } from "./viewer";
+import { openLocalViewer, openViewer } from "./viewer";
+import { capturePhoto, composeImages, PICK_MAX, pickImages, toBase64 } from "./images";
 import { t } from "./i18n";
 import { $, actionBar, confirmBar, fmtWhen, hideConfirmBar, showBar } from "./ui";
 import { errDetail, showErr } from "./err";
@@ -725,6 +729,111 @@ function openEditor(d: IdeaItem | null, seed: string | null): void {
   const err = el("p", "doc-err warn-ink");
   err.hidden = true;
 
+  // 配图:已存过的篇加图当场挂上(同卡片编辑层 attachImages),× 只切换「保存时删」的标记
+  // (148 同律,保存时那一删 = 进回收站);新篇没有 id,先暂存在纯内存的暂存条里(⛔ 不进
+  // 「记一笔」那份 IndexedDB 草稿),第一次保存 capture_doc 拿到 id 再挂(同桌面)。
+  let imgs: ImageMeta[] = [];
+  const marked = new Set<string>();
+  const thumbs = el("div", "thumbs");
+  thumbs.hidden = true;
+  const pendingHost = el("div", "cthumbs");
+  const pending = id === null ? composeImages(pendingHost, (items, idx) => void openLocalViewer(items, idx), false) : null;
+  /** 取图在飞(系统选择器开着 + 回来那几秒的降采样 + 已存篇的逐张挂上):两枚钮不受理、
+   *  离开编辑器先拦一句 —— 走了的话挂上的图回不到这一页,暂存的图跟着编辑器一起丢。 */
+  let picking = false;
+  function paintThumbs(): void {
+    thumbs.replaceChildren(
+      ...imgs.map((im) => {
+        const del = el("span", "thumb-del");
+        const b = el("button", "thumb", [el("span", "tag-n", [t("images.imageN", { n: im.seq })]), del]);
+        const paintMark = (): void => {
+          const on = marked.has(im.id);
+          b.classList.toggle("marked", on);
+          del.textContent = on ? "↺" : "×";
+          del.setAttribute("aria-label", on ? t("main.undoDeleteImage", { n: im.seq }) : t("main.deleteImage", { n: im.seq }));
+        };
+        paintMark();
+        b.dataset.img = im.id;
+        b.dataset.seq = String(im.seq);
+        b.setAttribute("aria-label", t("main.viewImage", { n: im.seq }));
+        // 只切标记、就地改类名(⛔ 不整条重建:已填好字节的小图会闪一下)
+        del.addEventListener("click", (e) => {
+          e.stopPropagation();
+          if (saving) return;
+          if (marked.has(im.id)) marked.delete(im.id);
+          else marked.add(im.id);
+          paintMark();
+        });
+        b.addEventListener("click", () => void openViewer(imgs, imgs.indexOf(im), true));
+        return b;
+      }),
+    );
+    thumbs.hidden = imgs.length === 0;
+    hydrateThumbs(thumbs);
+  }
+  if (id !== null) {
+    void listItemImages(sp, id).then(
+      (m) => {
+        if (!thumbs.isConnected) return;
+        imgs = m;
+        paintThumbs();
+      },
+      (e) => {
+        if (!thumbs.isConnected) return;
+        err.textContent = t("docs.imagesLoadFailed", { error: errDetail(e) });
+        err.hidden = false;
+      },
+    );
+  }
+  /** 已存过的篇:逐张挂上、逐张 try 不中断(一张被拒不连累同批,回执三分同卡片编辑层)。
+   *  编辑器若已被关掉照样挂完 —— 用户选了的图该挂上;回执走屏底条,哪一页都看得见。 */
+  async function attachNow(target: string, files: File[]): Promise<void> {
+    let ok = 0;
+    let firstErr = "";
+    for (const f of files) {
+      try {
+        imgs = [...imgs, await addItemImage(sp, target, f.type, await toBase64(f))];
+        ok += 1;
+      } catch (e) {
+        if (!firstErr) firstErr = errDetail(e);
+      }
+    }
+    if (thumbs.isConnected) paintThumbs();
+    const failed = files.length - ok;
+    if (!failed) showBar(ok === 1 ? t("cardpanel.imageAdded") : t("cardpanel.imagesAdded", { n: ok }), true);
+    else if (!ok && files.length === 1) showBar(firstErr);
+    else showBar(`${t("cardpanel.imagesPartial", { ok, failed })} ${firstErr}`);
+  }
+  async function pick(photo: boolean): Promise<void> {
+    if (picking || saving) return;
+    picking = true;
+    try {
+      if (pending !== null) {
+        // 新篇:逐张进暂存条,降采样之前先摆占位(同「记一笔」)
+        if (photo) {
+          const f = await capturePhoto(() => pending.reserve(1));
+          if (f) pending.add(f);
+        } else {
+          const res = await pickImages((f) => pending.add(f), (n) => pending.reserve(n));
+          if (res.kind === "tooMany") showBar(t("images.tooMany", { max: PICK_MAX, n: res.count }));
+        }
+        return;
+      }
+      const batch: File[] = [];
+      if (photo) {
+        const f = await capturePhoto();
+        if (f) batch.push(f);
+      } else {
+        const res = await pickImages((f) => batch.push(f));
+        if (res.kind === "tooMany") showBar(t("images.tooMany", { max: PICK_MAX, n: res.count }));
+      }
+      if (batch.length) await attachNow(id!, batch);
+    } finally {
+      pending?.dropReserved(); // 与 reserve 配对:没被填上的骨架一律收掉(取消 / 中途抛)
+      picking = false;
+    }
+  }
+
   // 停笔 1 秒存草稿
   let draftDue: ReturnType<typeof setTimeout> | null = null;
   let lastGen: number | null = null;
@@ -757,8 +866,9 @@ function openEditor(d: IdeaItem | null, seed: string | null): void {
     if (gen !== null || seed !== null) clearDraft(sp, target, gen);
   }
 
-  // 落一版。新篇第一次:capture_doc(同一事务 create + set doc_at)拿到 id。
-  // "same" = 没有要写的,"failed" = 没写进去(草稿留着)。
+  // 落一版。新篇第一次:capture_doc(同一事务 create + set doc_at)拿到 id,再挂暂存图;标了删的
+  // 图最后删(同桌面:正文写成功、删图失败后重试,`saved` 已跟上,正文不会再写一遍)。
+  // "same" = 没有要写的(正文没变、没有标删 / 暂存的图),"failed" = 没写进去(草稿留着)。
   let saving = false;
   async function commit(): Promise<"wrote" | "same" | "failed"> {
     if (saving) return "failed";
@@ -777,27 +887,42 @@ function openEditor(d: IdeaItem | null, seed: string | null): void {
       }
     }
     const gen = lastGen;
-    if (text === saved) {
+    const toAttach = pending !== null && pending.count() > 0;
+    if (text === saved && marked.size === 0 && !toAttach) {
       settle(curId, gen);
       return "same";
     }
     if (curId === null && text.trim() === "") {
+      if (toAttach) {
+        // 图不能独立成篇(同「记一笔」):响亮拦住、留在编辑器,⛔ 别让暂存的图静默丢掉
+        err.textContent = t("docs.textBeforeImages");
+        err.hidden = false;
+        return "failed";
+      }
       settle(null, gen);
       return "same"; // 新篇一个字没写就走 = 不建
     }
     saving = true;
     try {
-      if (curId === null) {
-        newId = await captureDoc(sp, text);
+      let target = curId;
+      if (target === null) {
+        target = newId = await captureDoc(sp, text);
         saved = text;
         settle(null, gen);
-      } else {
-        await editNote(sp, curId, text);
+      } else if (text !== saved) {
+        await editNote(sp, target, text);
         saved = text;
-        settle(curId, gen);
+        settle(target, gen);
+      }
+      if (toAttach) await attachPending(target, pending.takeBatch());
+      for (const imgId of [...marked]) {
+        await deleteItemImage(sp, imgId);
+        marked.delete(imgId); // 删到一半失败:已删的当场摘掉,重试只删剩下的
+        imgs = imgs.filter((m) => m.id !== imgId);
       }
     } catch (e) {
       saving = false;
+      if (thumbs.isConnected) paintThumbs();
       err.textContent = t("docs.saveFailed", { error: errDetail(e) });
       err.hidden = false;
       return "failed";
@@ -806,12 +931,21 @@ function openEditor(d: IdeaItem | null, seed: string | null): void {
     void deps.refreshTimeline();
     return "wrote";
   }
+  /** 暂存图挂到刚建好的那篇:失败按张计,篇已建、图可在编辑器里重新加(同「记一笔」那句)。 */
+  async function attachPending(target: string, batch: File[]): Promise<void> {
+    const out = await pending!.attachBatch(sp, target, batch);
+    if (out.failed > 0) showBar(t("main.imagesNotAttached", { n: out.failed, hint: out.why || t("docs.retryHint") }));
+  }
   function teardown(): void {
     if (draftDue !== null) clearTimeout(draftDue);
     editor = null;
   }
   editor = {
     leave: (then) => {
+      if (picking) {
+        showBar(t("docs.imagesBusy"));
+        return;
+      }
       void commit().then((r) => {
         if (r === "failed" || editor === null) return;
         teardown();
@@ -822,10 +956,13 @@ function openEditor(d: IdeaItem | null, seed: string | null): void {
       // 关面:不等、不碰 DOM;没写进去的那份草稿还在,下次打开会问
       // ⚠ 先把这一刻的字落成一代草稿(停笔还不到 1 秒的那几个字也在):换空间引起的关面,
       // 后端会拒这一发写(只认前台空间),那时草稿是唯一的副本。
+      // 配图:新篇建成就挂上暂存图(没建成 = 随编辑器丢掉,它们只在内存里);标了删的图
+      // ⛔ 一张不删(同桌面 unmount 那一发:删图命令认的是前台空间)。
       teardown();
       const text = area.value;
       const curId = id ?? newId;
       if (text === saved || (curId === null && text.trim() === "")) return;
+      const batch = curId === null && pending !== null ? pending.takeBatch() : [];
       let gen = lastGen;
       try {
         gen = saveDraft(sp, curId, text);
@@ -834,8 +971,10 @@ function openEditor(d: IdeaItem | null, seed: string | null): void {
       }
       void (async () => {
         try {
-          if (curId === null) await captureDoc(sp, text);
-          else await editNote(sp, curId, text);
+          if (curId === null) {
+            const created = await captureDoc(sp, text);
+            if (batch.length) await attachPending(created, batch);
+          } else await editNote(sp, curId, text);
           clearDraft(sp, curId, gen);
           void deps.refreshTimeline();
         } catch (e) {
@@ -860,7 +999,7 @@ function openEditor(d: IdeaItem | null, seed: string | null): void {
     modePrev.classList.add("on");
     modeEdit.classList.remove("on");
     // 预览只在切过去那一刻画一次(200 KiB 一篇解析要几十毫秒,⛔ 别逐键同步算);只读,方框禁用
-    preview.replaceChildren(renderBody(area.value, [], null));
+    preview.replaceChildren(renderBody(area.value, imgs, null));
     preview.hidden = false;
     area.hidden = true;
   }, "");
@@ -869,7 +1008,14 @@ function openEditor(d: IdeaItem | null, seed: string | null): void {
       [btn(id === null ? t("docs.back") : t("docs.backToDoc"), () => editor?.leave(done), "ghost")],
       [status, btn(t("docs.save"), () => editor?.leave(done))],
     ),
-    el("div", "seg doc-seg", [modeEdit, modePrev]),
+    // 加图两枚钮与「编辑 / 预览」同一排、缩略图紧跟在下面 —— ⛔ 别挪到正文框底下:框有 60vh,
+    // 矮屏(360×640)上那一排正好压在底栏下面,新篇加的图还没有回执,点了像没反应
+    // ⚠ `.row` 只包那两枚钮:它的 `button` 规则是实心主钮,包住分段钮会把没选中的那段刷成实心红
+    el("div", "doc-tools", [
+      el("div", "seg doc-seg", [modeEdit, modePrev]),
+      el("div", "row", [btn(t("shell.addImage"), () => void pick(false), "ghost"), btn(t("shell.takePhoto"), () => void pick(true), "ghost")]),
+    ]),
+    el("div", "doc-imgs", [thumbs, pendingHost]),
     err,
     area,
     preview,

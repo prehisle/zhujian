@@ -181,7 +181,7 @@ $("text").addEventListener("input", () => {
 // 那刻落到当前空间。取图/转码走共享件 images.ts,与卡片操作面「加图」同一套。
 // 点缩略图看大图(用户面 36):暂存图还没入库、没有「图N」的号,故走查看器的 local 那一路
 // ——字节(objectURL)由暂存条持有,查看器只读不 revoke;那边「删除」= 回调 remove 摘掉这张。
-const compImgs = composeImages($("compose-thumbs"), (items, idx) => void openLocalViewer(items, idx));
+const compImgs = composeImages($("compose-thumbs"), (items, idx) => void openLocalViewer(items, idx), true);
 function holdComposeImage(file: File): void {
   compImgs.add(file);
   if (captureSaving) captureLiveTouched = true; // 罕见:选图期间「记下」在飞=新输入
