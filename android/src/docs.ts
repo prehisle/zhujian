@@ -356,16 +356,18 @@ function bar(left: HTMLElement[], right: HTMLElement[]): HTMLElement {
 /** 正文 → DOM(共用渲染器)。配图映射每篇建一次;勾方框走 edit_note 落一版(同随记,⛔ 不猜行)。
  *  链接:安卓把校验过的地址直接交 opener;鸿蒙交不出浏览器(`HAS_BROWSER = false`)⇒ `openLink: null`,
  *  只显示文字与地址(共用渲染器那形)。`docId = null` = 还没建成的新篇(不会有图);`shown` = 原位
- *  画成图的那几张的编号(阅读页的缩略图条不再重复摆它们)。 */
+ *  画成图的那几张的编号(阅读页与编辑器的缩略图条不再重复摆它们);`figs` = 逐个 `.md-fig` 是哪一张
+ *  (渲染器按文档序逐个取 src,与 `querySelectorAll(".md-fig")` 同序)。 */
 function renderBody(
   sp: string,
   docId: string | null,
   content: string,
   imgs: ImageMeta[],
   onToggle: ((line: number) => void) | null,
-): { el: HTMLElement; shown: Set<number> } {
+): { el: HTMLElement; shown: Set<number>; figs: ImageMeta[] } {
   const bySeq = new Map(imgs.map((m) => [m.seq, m]));
   const shown = new Set<number>();
+  const figs: ImageMeta[] = [];
   const r = renderMarkdown(content, {
     openLink: HAS_BROWSER ? (url) => void openUrl(url).catch((err) => showErr(err)) : null,
     image: (n) => {
@@ -376,6 +378,7 @@ function renderBody(
         open: () => void openViewer(imgs, imgs.indexOf(m), true),
         src: () => {
           shown.add(n);
+          figs.push(m);
           return figureSrc(sp, docId, m.id);
         },
       };
@@ -387,7 +390,7 @@ function renderBody(
   });
   const wrap = el("div", "doc-body", [r.root]);
   if (r.degraded !== null) wrap.prepend(el("p", "doc-note", [t("docs.degraded")]));
-  return { el: wrap, shown };
+  return { el: wrap, shown, figs };
 }
 
 /** 阅读页的缩略图条只摆正文里没原位画出来的图(画了的再摆一遍就重复了;没引用到的图仍在这儿)。 */
@@ -808,7 +811,16 @@ function openEditor(d: IdeaItem | null, seed: string | null, carried: File[]): v
   /** 取图在飞(系统选择器开着 + 回来那几秒的降采样 + 逐张挂上):两枚钮不受理、离开编辑器先拦
    *  一句 —— 走了的话插进去的「图N」赶不上那一版。 */
   let picking = false;
+  // 已画的那几枚的「把标记画回去」:预览里大图角上那枚 × 切的是同一份标记,条里那枚(这时藏着)也跟着变
+  const painters = new Map<string, () => void>();
+  let previewShown = new Set<number>(); // 上一次预览原位画成图的那几张
+  function toggleMark(imgId: string): void {
+    if (marked.has(imgId)) marked.delete(imgId);
+    else marked.add(imgId);
+    painters.get(imgId)?.();
+  }
   function paintThumbs(): void {
+    painters.clear();
     thumbs.replaceChildren(
       ...imgs.map((im) => {
         const del = el("span", "thumb-del");
@@ -820,6 +832,7 @@ function openEditor(d: IdeaItem | null, seed: string | null, carried: File[]): v
           del.setAttribute("aria-label", on ? t("main.undoDeleteImage", { n: im.seq }) : t("main.deleteImage", { n: im.seq }));
         };
         paintMark();
+        painters.set(im.id, paintMark);
         b.dataset.img = im.id;
         b.dataset.seq = String(im.seq);
         b.setAttribute("aria-label", t("main.viewImage", { n: im.seq }));
@@ -827,9 +840,7 @@ function openEditor(d: IdeaItem | null, seed: string | null, carried: File[]): v
         del.addEventListener("click", (e) => {
           e.stopPropagation();
           if (saving) return;
-          if (marked.has(im.id)) marked.delete(im.id);
-          else marked.add(im.id);
-          paintMark();
+          toggleMark(im.id);
         });
         b.addEventListener("click", () => void openViewer(imgs, imgs.indexOf(im), true));
         return b;
@@ -838,6 +849,33 @@ function openEditor(d: IdeaItem | null, seed: string | null, carried: File[]): v
     thumbs.hidden = imgs.length === 0;
     hydrateThumbs(thumbs);
     paintHl();
+  }
+
+  /** 预览里原位画出来的图各配一枚 ×(条里已把它们藏掉,删图就在这儿;与条里那枚同一份标记,保存时一起删)。
+   *  图本身是按钮,× 不能嵌进去 ⇒ 套一层 `.md-fig-box` 并排挂。 */
+  function figDels(body: HTMLElement, figs: ImageMeta[]): void {
+    const els = body.querySelectorAll<HTMLElement>(".md-fig");
+    if (els.length !== figs.length) throw new Error(`原位图 ${els.length} 枚、取过图的 ${figs.length} 张,对不上`);
+    els.forEach((fig, i) => {
+      const m = figs[i];
+      const box = el("span", "md-fig-box");
+      const del = el("button", "thumb-del");
+      const paint = (): void => {
+        const on = marked.has(m.id);
+        box.classList.toggle("marked", on);
+        del.textContent = on ? "↺" : "×";
+        del.setAttribute("aria-label", on ? t("main.undoDeleteImage", { n: m.seq }) : t("main.deleteImage", { n: m.seq }));
+      };
+      paint();
+      del.addEventListener("click", (e) => {
+        e.stopPropagation();
+        if (saving) return;
+        toggleMark(m.id);
+        paint();
+      });
+      fig.replaceWith(box);
+      box.append(fig, del);
+    });
   }
 
   // 写字框里的「图N」:能对上一张图的垫一层底色(对不上 = 引用断了,照普通字),单独成段的再在右侧
@@ -862,6 +900,7 @@ function openEditor(d: IdeaItem | null, seed: string | null, carried: File[]): v
     const nodes: (string | HTMLElement)[] = [];
     // 同一段里第几枚缩略图:往左排开(上下相邻两行的图N 隔不开一枚缩略图的高),窄边按最多那段放宽
     const perPara = new Map<number, number>();
+    const inGutter = new Set<number>(); // 窄边配了缩略图的那几张:条里不再重复摆
     let last = 0;
     for (const r of scanImgRefs(v)) {
       const m = bySeq.get(r.n);
@@ -877,6 +916,7 @@ function openEditor(d: IdeaItem | null, seed: string | null, carried: File[]): v
         th.dataset.seq = String(m.seq);
         th.style.setProperty("--k", String(k));
         mark.append(th);
+        inGutter.add(m.seq);
       }
       nodes.push(mark);
       last = r.b;
@@ -888,6 +928,7 @@ function openEditor(d: IdeaItem | null, seed: string | null, carried: File[]): v
     edBox.classList.toggle("has-thumbs", perPara.size > 0);
     edBox.style.setProperty("--thumbs", gut);
     hl.replaceChildren(...nodes);
+    hideShown(thumbs, edBox.hidden ? previewShown : inGutter); // 预览开着时条被重画(图单到货)也照预览那份藏
     // ⚠ 挂上之后再填:fillThumb 见节点不在页上就当「已被重画替掉」放弃(缓存命中那条同步走到那句,先填 = 一张都不出)
     for (const th of hl.querySelectorAll<HTMLElement>(".ref-thumb")) void fillThumb(th);
     if (changed) fitArea(area); // 窄边宽度变了,框里的字重新折行,高度要重量
@@ -1131,13 +1172,19 @@ function openEditor(d: IdeaItem | null, seed: string | null, carried: File[]): v
     modePrev.classList.remove("on");
     preview.hidden = true;
     edBox.hidden = false;
+    paintHl(); // 条里改回「只藏窄边配了图的那几张」
     area.focus();
   }, "on");
   const modePrev = btn(t("docs.modePreview"), () => {
     modePrev.classList.add("on");
     modeEdit.classList.remove("on");
-    // 预览只在切过去那一刻画一次(200 KiB 一篇解析要几十毫秒,⛔ 别逐键同步算);只读,方框禁用
-    preview.replaceChildren(renderBody(sp, id ?? newId, area.value, imgs, null).el);
+    // 预览只在切过去那一刻画一次(200 KiB 一篇解析要几十毫秒,⛔ 别逐键同步算);只读,方框禁用。
+    // 条里只留预览里没画成图的;画成图的删图钮挂在大图角上
+    const b = renderBody(sp, id ?? newId, area.value, imgs, null);
+    previewShown = b.shown;
+    hideShown(thumbs, b.shown);
+    figDels(b.el, b.figs);
+    preview.replaceChildren(b.el);
     preview.hidden = false;
     edBox.hidden = true;
   }, "");

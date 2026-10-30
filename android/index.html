@@ -1578,6 +1578,13 @@
       .doc-tools .row { margin-bottom: 0; }
       .doc-imgs .thumbs, .doc-imgs .cthumbs { margin: 0 0 10px; }
       .doc-imgs .thumb-del { display: grid; }
+      /* 编辑器的缩略图条只摆当下没画出来的图(写字时 = 窄边没配图的,预览时 = 没原位画成图的;docs.ts hideShown) */
+      .doc-imgs .thumbs .thumb[hidden], .doc-imgs .thumbs.all-inline { display: none; }
+      /* 预览里原位图右上角那枚 ×(docs.ts figDels;条里把它们藏掉了,删图就在这儿)。标了删 = 同条里那张:变淡、虚线 */
+      .md .md-fig-box { position: relative; display: block; max-width: 100%; }
+      .md .md-fig-box .thumb-del { display: grid; }
+      .md .md-fig-box.marked .md-fig { border-style: dashed; }
+      .md .md-fig-box.marked .md-fig img { opacity: 0.35; }
       /* Markdown 正文(阅读页与预览同一套)。段落里的换行原样留在文本节点里(共用渲染器头注),靠 pre-wrap 显出来。 */
       .md { font-family: var(--font-serif); font-size: var(--fs-16); line-height: 1.75; color: var(--ink); overflow-wrap: anywhere; }
       .md p, .md li, .md h1, .md h2, .md h3 { white-space: pre-wrap; }

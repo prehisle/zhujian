@@ -468,16 +468,18 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
   }
 
   /** 正文 → DOM(共用渲染器)。配图映射每篇建一次;勾方框走 edit_note 落一版(同随记,⛔ 不猜行)。
-   *  `docId = null` = 还没建成的新篇(不会有图)。`shown` = 原位画成图的那几张的编号(阅读页的
-   *  缩略图条不再重复摆它们);`anchors` 交给编辑器对齐左右滚动。 */
+   *  `docId = null` = 还没建成的新篇(不会有图)。`shown` = 原位画成图的那几张的编号(阅读页与编辑器的
+   *  缩略图条不再重复摆它们);`figs` = 逐个 `.md-fig` 是哪一张(渲染器按文档序逐个取 src,与
+   *  `querySelectorAll(".md-fig")` 同序);`anchors` 交给编辑器对齐左右滚动。 */
   function renderBody(
     docId: string | null,
     content: string,
     imgs: ImageMeta[],
     onToggle: ((line: number) => void) | null,
-  ): { el: HTMLElement; shown: Set<number>; anchors: MdRendered["anchors"] } {
+  ): { el: HTMLElement; shown: Set<number>; figs: ImageMeta[]; anchors: MdRendered["anchors"] } {
     const bySeq = new Map(imgs.map((m) => [m.seq, m]));
     const shown = new Set<number>();
+    const figs: ImageMeta[] = [];
     const r = renderMarkdown(content, {
       openLink: (url) => void openUrl(url).catch(() => {}),
       image: (n) => {
@@ -488,6 +490,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
           open: () => void openLightbox(imgs, imgs.indexOf(m)),
           src: () => {
             shown.add(n);
+            figs.push(m);
             return figureSrc(docId, m.id);
           },
         };
@@ -499,7 +502,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     });
     const wrap = el("div", { className: "doc-body" }, [r.root]);
     if (r.degraded !== null) wrap.prepend(el("p", { className: "doc-note", textContent: t("docs.degraded") }));
-    return { el: wrap, shown, anchors: r.anchors };
+    return { el: wrap, shown, figs, anchors: r.anchors };
   }
 
   /** 阅读页的缩略图条只摆正文里没原位画出来的图(画了的再摆一遍就重复了;没引用到的图仍在这儿)。 */
@@ -511,6 +514,32 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       if (!inline) left++;
     }
     strip.classList.toggle("all-inline", left === 0);
+  }
+
+  /** 编辑器右栏:原位画出来的图各配一枚 ×(缩略图条已把它们藏掉,删图就在这儿;标记与条里那枚是同一份,
+   *  保存时一起删)。图本身是按钮,× 不能嵌进去 ⇒ 套一层 `.md-fig-box` 并排挂。 */
+  function figDels(body: HTMLElement, figs: ImageMeta[], strip: ReturnType<typeof imageStrip>): void {
+    const els = body.querySelectorAll<HTMLElement>(".md-fig");
+    if (els.length !== figs.length) throw new Error(`原位图 ${els.length} 枚、取过图的 ${figs.length} 张,对不上`);
+    els.forEach((fig, i) => {
+      const m = figs[i];
+      const box = el("span", { className: "md-fig-box" });
+      const del = el("button", { className: "img-del", type: "button" });
+      const paint = (): void => {
+        const on = strip.isMarked(m.id);
+        box.classList.toggle("del-marked", on);
+        del.textContent = on ? "↺" : "×";
+        del.title = on ? t("itemImages.undoDelete") : t("itemImages.deleteImage");
+      };
+      paint();
+      del.addEventListener("click", (e) => {
+        e.stopPropagation();
+        strip.toggleMark(m.id);
+        paint();
+      });
+      fig.replaceWith(box);
+      box.append(fig, del);
+    });
   }
 
   function renderDoc(d: DocItem): void {
@@ -751,6 +780,11 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     function paintPreview(): void {
       previewDue = null;
       const b = renderBody(id ?? newId, area.value, imgs, null);
+      // 右栏看得见时,条里只留右栏没画成图的;看不见(窄窗的「编辑」那半)条里照旧全摆
+      if (strip !== null) {
+        hideShown(strip.root, previewVisible() ? b.shown : new Set());
+        figDels(b.el, b.figs, strip);
+      }
       preview.replaceChildren(b.el);
       anchors = b.anchors;
       syncPreview();
@@ -875,7 +909,10 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     // 预览只在看得见时画,且停笔 300ms 后才画(200 KiB 一篇解析要几十毫秒,⛔ 别逐键同步算)
     const previewVisible = (): boolean => edWrap.classList.contains("show-preview") || window.matchMedia("(min-width: 1180px)").matches;
     function schedulePreview(): void {
-      if (!previewVisible()) return;
+      if (!previewVisible()) {
+        if (strip !== null) hideShown(strip.root, new Set()); // 窗口拖窄、右栏收起:藏着的那几张放回条里
+        return;
+      }
       if (previewDue !== null) clearTimeout(previewDue);
       previewDue = setTimeout(paintPreview, 300);
     }
@@ -1016,6 +1053,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     const edWrap = el("div", { className: "doc-editor" }, [edBox, preview]);
     modeEdit.onclick = () => {
       edWrap.classList.remove("show-preview");
+      if (strip !== null && !previewVisible()) hideShown(strip.root, new Set());
       modeEdit.classList.add("on");
       modePrev.classList.remove("on");
       area.focus();

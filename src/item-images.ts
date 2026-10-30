@@ -487,6 +487,8 @@ export function imageStrip(
   reload: () => Promise<void>;
   pendingDeletes: () => number;
   commitDeletes: () => Promise<void>;
+  isMarked: (imageId: string) => boolean;
+  toggleMark: (imageId: string) => void;
 } {
   // 初始即 .empty(隐藏):reload 前默认无图,免得配图工具条在 load 完成前闪一下再收起。
   // ⭐ 但**上次见过这条的图就不必再空一帧**——下面的乐观首帧会当场把它画出来。
@@ -495,6 +497,8 @@ export function imageStrip(
   let shown: ImageMeta[] | null = null;
   // 标了「保存时删」的图 id(只在 editable 下有)。重画时照着它把标记画回去。
   const marked = new Set<string>();
+  // 已画的那几枚的「把标记画回去」(长文编辑器在别处切标记时,这一枚也跟着变;⛔ 不整条重画,小图会闪)
+  const painters = new Map<string, () => void>();
 
   // `all` = 本条同批列出的整组图:点开任一张后 ←/→ 能在组内翻页(224)。
   function thumb(m: ImageMeta, all: ImageMeta[]): HTMLElement {
@@ -522,19 +526,25 @@ export function imageStrip(
         del.title = on ? t("itemImages.undoDelete") : t("itemImages.deleteImage");
       };
       paintMark();
+      painters.set(m.id, paintMark);
       del.addEventListener("click", (e) => {
         e.stopPropagation();
-        if (marked.has(m.id)) marked.delete(m.id);
-        else marked.add(m.id);
-        paintMark();
+        toggleMark(m.id);
       });
       wrap.append(del);
     }
     return wrap;
   }
 
+  function toggleMark(id: string): void {
+    if (marked.has(id)) marked.delete(id);
+    else marked.add(id);
+    painters.get(id)?.();
+  }
+
   function paint(metas: ImageMeta[]): void {
     shown = metas;
+    painters.clear();
     for (const id of [...marked]) if (!metas.some((m) => m.id === id)) marked.delete(id); // 别处已删的不再挂着
     root.classList.toggle("empty", metas.length === 0);
     root.replaceChildren(...metas.map((m) => thumb(m, metas)));
@@ -583,7 +593,7 @@ export function imageStrip(
   }
 
   void reload();
-  return { root, reload, pendingDeletes: () => marked.size, commitDeletes };
+  return { root, reload, pendingDeletes: () => marked.size, commitDeletes, isMarked: (id) => marked.has(id), toggleMark };
 }
 
 // Trailing punctuation that commonly hugs a URL in prose but isn't part of it, so

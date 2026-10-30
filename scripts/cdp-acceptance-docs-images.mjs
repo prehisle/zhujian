@@ -11,6 +11,7 @@
 //     写了两段字、光标放在中间加图 ⇒ 那一段插在两段之间(前后各空一行)→ 写字加图后**直接关面** ⇒ 字与图都落下。
 //   取图在飞时按返回 = 拦一句、留在编辑器;放行后照常。
 //   写字框里的「图N」(833):对得上的垫底色、单独成段的配缩略图(字节真到了)、影子层与写字框内框重合;图删了那段不再垫。
+//   缩略图条只摆当下没画出来的(835):写字时藏窄边配了图的、预览时藏原位画成图的;删图 = 预览里大图角上的 ×(与条里同一份标记)。
 //
 // 取图不经系统选择器:页内把 `HTMLInputElement.prototype.click` 换掉,遇到 file input 就塞几张页内现画
 // 的 PNG 并发 change(同用户选完回来)。⚠ 诚实边界:系统相册 / 相机那半、取消那条路、降采样的手感
@@ -118,6 +119,9 @@ async function openReader(id) {
   await waitFor(`!!document.querySelector("#docs-body .doc-acts")`, "阅读页");
 }
 const imgsOf = (id) => inv("list_item_images", { spaceId: sp, itemId: id });
+const stripVis = () => ev(`[...document.querySelectorAll("#docs-body .doc-imgs .thumbs .thumb")].filter((b) => getComputedStyle(b).display !== "none").map((b) => Number(b.dataset.seq))`);
+/** 预览里「图N」那张大图角上的 ×(835:缩略图条把原位画了的藏掉,删图挪到这儿) */
+const figDel = (n) => `[...document.querySelectorAll("#docs-body .doc-preview .md-fig-box")].find((b) => b.querySelector(".md-fig").getAttribute("aria-label") === "图${n}").querySelector(".thumb-del")`;
 
 let sp = null;
 const seeded = [];
@@ -207,25 +211,34 @@ try {
   })()`);
   ok(rows.want.join() === rows.got.join() && rows.font[0] === rows.font[1] && rows.lh[0] === rows.lh[1], `③c 底色落在那几个字那一行、字号行高与写字框一致(字号 ${ZOOM ?? "不动"})`, rows);
   await shot("doc-edit-hl");
+  // ③d 写字时条里只摆窄边没配图的(835):三张都单独成段 ⇒ 条里一张不摆;把「图3」那段删了 ⇒ 图3 回到条里,放回来又藏
+  ok((await stripVis()).length === 0, "③d 三张都在窄边配了图 ⇒ 条里一张不摆", await stripVis());
+  const full = await areaText();
+  await ev(`(() => { const a = document.querySelector("#docs-body textarea.doc-area"); a.value = ${JSON.stringify(full.replace("图3\n\n", ""))}; a.dispatchEvent(new Event("input")); return 1; })()`);
+  ok((await stripVis()).join() === "3", "③d 「图3」那段删了 ⇒ 图3 回到条里", await stripVis());
+  await ev(`(() => { const a = document.querySelector("#docs-body textarea.doc-area"); a.value = ${JSON.stringify(full)}; a.dispatchEvent(new Event("input")); return 1; })()`);
+  ok((await stripVis()).length === 0, "③d 放回来又藏", await stripVis());
   await clickText("预览");
   await waitFor(`!document.querySelector("#docs-body .doc-preview").hidden`, "预览");
   const chip = await ev(`(() => { const b = document.querySelector("#docs-body .doc-preview .img-ref"); return b ? b.textContent : null; })()`);
   ok(chip !== null, "④ 句中的「图1」仍是芯片", chip);
   await waitFor(`[...document.querySelectorAll("#docs-body .doc-preview .md-fig img")].filter((i) => i.complete && i.naturalWidth > 0).length === 3`, "预览里三张图原位显示");
   ok((await ev(`document.querySelectorAll("#docs-body .doc-preview .md-fig img").length`)) === 3, "④ 三段「图N」原位画成图");
+  ok((await stripVis()).length === 0 && (await ev(`document.querySelectorAll("#docs-body .doc-preview .md-fig-box .thumb-del").length`)) === 3,
+    "④ 条里不重复摆、三张大图角上各一枚 ×", await stripVis());
   await shot("doc-edit-preview");
-  await clickText("编辑");
 
-  // ⑤ × 只做标记:库里还在;再点撤销;再标
+  // ⑤ 大图角上的 × 只做标记:库里还在;条里那张(藏着)同一份标记;再点撤销;再标
   const seq2 = metas.find((m) => m.seq === 2);
-  const del2 = `#docs-body .doc-imgs .thumb[data-img="${seq2.id}"] .thumb-del`;
-  await ev(`document.querySelector('${del2}').click()`);
-  ok(await ev(`document.querySelector('#docs-body .doc-imgs .thumb[data-img="${seq2.id}"]').classList.contains("marked")`), "⑤ 点 × = 图2 标成待删");
-  ok(await ev(`document.querySelector('${del2}').textContent === "↺"`), "⑤ × 换成 ↺");
+  const thumbMarked2 = `document.querySelector('#docs-body .doc-imgs .thumb[data-img="${seq2.id}"]').classList.contains("marked")`;
+  await ev(`${figDel(2)}.click()`);
+  ok(await ev(`${figDel(2)}.parentElement.classList.contains("marked")`), "⑤ 点 × = 图2 标成待删");
+  ok(await ev(`${figDel(2)}.textContent === "↺"`), "⑤ × 换成 ↺");
+  ok(await ev(thumbMarked2), "⑤ 条里那张同一份标记");
   ok((await imgsOf(id)).length === 3, "⑤ 标了之后库里仍 3 张(保存才删)");
-  await ev(`document.querySelector('${del2}').click()`);
-  ok(!(await ev(`document.querySelector('#docs-body .doc-imgs .thumb[data-img="${seq2.id}"]').classList.contains("marked")`)), "⑤ 再点 ↺ = 撤销标记");
-  await ev(`document.querySelector('${del2}').click()`);
+  await ev(`${figDel(2)}.click()`);
+  ok(!(await ev(`${figDel(2)}.parentElement.classList.contains("marked")`)) && !(await ev(thumbMarked2)), "⑤ 再点 ↺ = 撤销标记");
+  await ev(`${figDel(2)}.click()`);
   await shot("doc-edit-marked");
 
   // ⑥ 保存:图2 没了、阅读页缩略图 2 张、它在回收站里
@@ -245,8 +258,9 @@ try {
   await waitFor(`document.querySelectorAll("#docs-body .doc-imgs .thumbs .thumb").length === 2`, "编辑器里 2 张");
   const broken = await ev(`[...document.querySelectorAll("#docs-body .doc-hl .ref")].map((m) => m.firstChild.textContent).join()`);
   ok(broken === "图1,图1,图3", "⑦ 图2 删掉之后它那段不再垫底色(引用断了一眼看得出)", broken);
-  const seq1 = after.find((m) => m.seq === 1);
-  await ev(`document.querySelector('#docs-body .doc-imgs .thumb[data-img="${seq1.id}"] .thumb-del').click()`);
+  await clickText("预览");
+  await waitFor(`document.querySelectorAll("#docs-body .doc-preview .md-fig-box").length === 2`, "预览里两张大图");
+  await ev(`${figDel(1)}.click()`);
   await ev(`document.querySelector('#bottombar [data-pane="docs"]').click()`); // 再点同一入口 = 收面
   await waitFor(`!document.body.classList.contains("pane-open")`, "收面");
   await sleep(600);
