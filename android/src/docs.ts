@@ -19,7 +19,7 @@
 // 本文件自己的外壳用 createElement 建;正文一个字都不进 innerHTML。
 //
 // 本期没有的(记在 progress-log 同号条目):编辑器里加 / 删配图(阅读页照常显示已有的图)、
-// 复制链接、跨空间移动。
+// 复制链接(手机随记也没有)。跨空间移动在阅读页「更多…」里,照卡片操作面那套(§2.7)。
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   archiveNote,
@@ -27,10 +27,15 @@ import {
   editNote,
   fileNoteToTopic,
   getCurrentSpace,
+  distinctSpaceLabels,
   listDocs,
   listItemImages,
   listRevisions,
   listTopics,
+  moveItemToSpace,
+  movePartialClear,
+  movePartialMark,
+  movePartialNote,
   removeNoteTopic,
   restoreNote,
   revisionTexts,
@@ -39,6 +44,7 @@ import {
   type ImageMeta,
   type RevisionCatalog,
   type RevisionMeta,
+  type SpaceInfo,
   type TopicItem,
 } from "./api";
 import { renderMarkdown } from "../../shared/markdown-dom";
@@ -57,6 +63,8 @@ type Deps = {
   openComments: (itemId: string) => void;
   /** 写成功后的整轴重拉(底栏「长文」钮的显形真值随它走)。 */
   refreshTimeline: () => Promise<void>;
+  /** 当前空间列表(main.ts spacesCache 影子):「移动」按数量显形、选择器列它。 */
+  getSpaces: () => SpaceInfo[];
 };
 let deps: Deps;
 
@@ -66,8 +74,8 @@ let space = "";
 let page: Page = { kind: "list" };
 let docs: IdeaItem[] = [];
 let loadSeq = 0;
-/** 阅读页的底栏动作在哪一档:主行 / 「更多…」/ 标签。 */
-let readerMode: "main" | "more" | "tags" = "main";
+/** 阅读页的底栏动作在哪一档:主行 / 「更多…」/ 标签 / 移动选择器。 */
+let readerMode: "main" | "more" | "tags" | "move" = "main";
 let busy = false;
 /** 跨面「打开这一篇」(搜索命中 / 深链 / 展开后的回执):开面后第一次读到列表时落地。 */
 let pendingFocus: string | null = null;
@@ -199,7 +207,7 @@ export function docsBack(): boolean {
   }
   if (page.kind === "hist") go({ kind: "doc", id: page.id });
   else if (page.kind === "doc" && readerMode !== "main") {
-    readerMode = "main";
+    readerMode = readerMode === "move" ? "more" : "main";
     render();
   } else go({ kind: "list" });
   return true;
@@ -452,6 +460,24 @@ function readerActions(d: IdeaItem): HTMLElement {
     void renderTags(panel, d);
     return panel;
   }
+  if (readerMode === "move") {
+    renderMove(panel, d);
+    return panel;
+  }
+  // 部分移动登记在场(目标已建、这边还在 / 未知):常驻提示 + 「我已处理」,「移动」入口随之藏起
+  // (⛔ 不给重跑,会造出第二份;同卡片操作面 renderActions)。登记键 = 开面那刻的空间。
+  const partial = movePartialNote(d.id, sp);
+  if (partial !== null) {
+    panel.append(
+      el("div", "movenote", [
+        el("span", "", [partial]),
+        btn(t("cardpanel.moveAck"), () => {
+          movePartialClear(d.id, sp);
+          render();
+        }, "p"),
+      ]),
+    );
+  }
   const acts = el("div", "acts");
   if (readerMode === "main") {
     acts.append(
@@ -479,6 +505,15 @@ function readerActions(d: IdeaItem): HTMLElement {
           (err) => showBar(t("docs.copyFailed", { error: errDetail(err) })),
         ),
       ),
+      // 仅 ≥2 空间、且没有未处理的部分移动登记时出现(同卡片「更多…」)
+      ...(partial === null && deps.getSpaces().length >= 2
+        ? [
+            btn(t("docs.actMove"), () => {
+              readerMode = "move";
+              render();
+            }),
+          ]
+        : []),
       btn(
         t("docs.actDelete"),
         () =>
@@ -500,6 +535,93 @@ function readerActions(d: IdeaItem): HTMLElement {
 }
 
 /** 面里的业务写:in-flight 整面禁点;成功后整轴重拉(底栏「长文」钮的显形跟着变)再重读本面。 */
+// 跨空间移动(cross-space-move §2.7,照卡片操作面 cardpanel.ts renderMove / runMove):永久删历史的
+// 告知在选择之前;点目标再两拍确认。只有 moved 离场;两个部分成功态**先落登记**(独立于这一面
+// 还在不在)再回主行显提示;两条预检拒在原处报、可再点。
+function renderMove(panel: HTMLElement, d: IdeaItem): void {
+  const labels = distinctSpaceLabels(deps.getSpaces());
+  const rows = deps
+    .getSpaces()
+    .filter((s) => s.id !== space)
+    .map((s) => {
+      const label = labels.get(s.id) ?? s.id;
+      return btn(label, () =>
+        confirmBar(t("docs.moveQ", { name: label }), t("cardpanel.moveYes"), () => {
+          if (busy || page.kind !== "doc" || page.id !== d.id || readerMode !== "move") return;
+          void runMove(d.id, s.id, label);
+        }),
+      "p");
+    });
+  const warn = el("div", "movewarn", [t("docs.moveWarnPre"), el("b", "", [t("docs.moveWarnBold")]), t("docs.moveWarnPost")]);
+  const lane = el("div", "lane", [
+    el("span", "pillrow", rows.length > 0 ? rows : [el("span", "lab", [t("cardpanel.noOtherSpace")])]),
+  ]);
+  panel.append(
+    warn,
+    lane,
+    el("div", "acts", [
+      btn(t("cardpanel.back"), () => {
+        hideConfirmBar();
+        readerMode = "more";
+        render();
+      }),
+    ]),
+  );
+}
+
+async function runMove(id: string, target: string, label: string): Promise<void> {
+  if (busy) return;
+  const sp = space;
+  busy = true;
+  render();
+  let r: Awaited<ReturnType<typeof moveItemToSpace>> | null = null;
+  try {
+    r = await moveItemToSpace(sp, target, id);
+  } catch (err) {
+    // 抛错 = 目标什么都没建(目标落库之后的失败一律走结构化结果),可再点
+    if (sp === getCurrentSpace()) showErr(err);
+  } finally {
+    busy = false;
+  }
+  // 登记先行:目标已建的事实,切走 / 关面 / 重画都不能丢
+  if (r?.outcome === "copied_but_source_kept") movePartialMark(sp, id, t("cardpanel.moveKept", { name: label, reason: r.reason }));
+  else if (r?.outcome === "copied_but_source_unconfirmed")
+    movePartialMark(sp, id, t("cardpanel.moveUnconfirmedNote", { name: label, error: r.error }));
+  if (sp !== getCurrentSpace()) return;
+  const here = page.kind === "doc" && page.id === id;
+  switch (r?.outcome) {
+    case undefined:
+      break;
+    case "moved":
+      if (here) page = { kind: "list" }; // 先离场,免得重读时多报一句「已不在长文里」
+      showBar(t("cardpanel.moved", { name: label }), true);
+      void deps.refreshTimeline();
+      break;
+    case "copied_but_source_kept":
+      if (here) readerMode = "main";
+      showBar(t("cardpanel.movedKept", { name: label }), true);
+      void deps.refreshTimeline();
+      break;
+    case "copied_but_source_unconfirmed":
+      // 源删除状态未知,绝不谎报「保留」
+      if (here) readerMode = "main";
+      showBar(t("cardpanel.movedUnconfirmed", { name: label }), true);
+      void deps.refreshTimeline();
+      break;
+    case "images_pending":
+      showBar(t("cardpanel.imagesPending", { n: r.count }));
+      break;
+    case "dangling_refs":
+      showBar(t("cardpanel.danglingRefs"));
+      break;
+    default: {
+      const exhaustive: never = r;
+      return exhaustive;
+    }
+  }
+  void load();
+}
+
 async function write(op: () => Promise<unknown>, onDone: () => void): Promise<void> {
   if (busy) return;
   const sp = space;

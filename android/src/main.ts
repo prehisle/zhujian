@@ -2786,7 +2786,7 @@ initEditSheet({ pushLayer, settleHistory });
 // 留言层(314 第③笔):写/删成功即整轴重拉(徽章计数跟着走),开合各压/平一枚返回键守门条目。
 initComments({ refresh, pushLayer, settleHistory });
 // 长文面(longform-plan 第 4 格):留言走同一个入口;写成功后整轴重拉(底栏「长文」钮跟着显形)。
-initDocs({ openComments: openCommentsFor, refreshTimeline: refresh });
+initDocs({ openComments: openCommentsFor, refreshTimeline: refresh, getSpaces: () => spacesCache });
 // 大图查看器(310 第③笔):返回键层账本仍住 main.ts,经 Deps 注入(留言层同形)。
 initViewer({ pushLayer, settleHistory, refresh });
 // 同步面(310 第③笔):接线即挂全部监听(面内控件 + sync-status/sync-boot/sync-pair/
