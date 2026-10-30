@@ -1553,7 +1553,10 @@
       .doc-ed[hidden] { display: none; }
       .doc-area {
         position: relative;
-        display: block; width: 100%; box-sizing: border-box; min-height: 60vh; resize: none; overflow-y: hidden; /* 随内容长高(docs.ts fitArea),整页一层滚动 */
+        display: block; width: 100%; box-sizing: border-box; min-height: 100vh; resize: none; overflow-y: hidden; /* 随内容长高(docs.ts fitArea),整页一层滚动 */
+        /* ⛔ min-height 别降回 100vh 以下(836,vivo 真机逐事件量过):键盘弹起 / 已聚焦再点一下时,WebView 若判「整个框塞得进
+           可视区」就把整个框推进来 —— 60vh 那版框 480 高、可视 516 ⇒ 页面上推 245px,第一行落到吸顶顶栏底下(它不认
+           `scroll-padding-top`,实测照推)。框不矮于视口 ⇒ 塞不进 ⇒ 它只管光标露出来,光标本就看得见就一动不动。 */
         padding: 12px 14px; border: 1px solid var(--line-strong); border-radius: var(--radius-md);
         background: transparent; color: var(--ink); font-family: var(--font-serif);
       }
@@ -1564,11 +1567,14 @@
          ⛔ 别往外撑(负 margin 那版压住了紧挨着的字 —— 芯片占位推得开邻字,写字框里的字推不开),也别占宽(影子层要与写字框逐字同位) */
       .doc-hl .ref { color: transparent; background: var(--seal-tint); box-shadow: inset 0 0 0 1px var(--seal-line); border-radius: var(--radius-xs); }
       /* 单独成段的「图N」:右侧窄边一枚缩略图(top 不写 = 停在那一行);有这种段才留窄边 */
-      .doc-hl .ref-thumb {
-        position: absolute; right: calc(8px + var(--k) * 50px); width: 44px; height: 36px; margin-top: 4px;
+      .doc-hl .ref-thumb { position: absolute; right: calc(8px + var(--k) * 50px); width: 44px; height: 36px; margin-top: 4px; visibility: hidden; }
+      /* 看得见、点得开的那枚住写字框上面这一层(docs.ts placePins 照影子层里的隐形占位摆) */
+      .doc-pins { position: absolute; pointer-events: none; }
+      .doc-pins .ref-thumb {
+        position: absolute; width: 44px; height: 36px; padding: 0; pointer-events: auto;
         overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--paper);
       }
-      .doc-hl .ref-thumb img { display: block; width: 100%; height: 100%; object-fit: cover; }
+      .doc-pins .ref-thumb img { display: block; width: 100%; height: 100%; object-fit: cover; }
       .doc-ed.has-thumbs .doc-area { padding-right: calc(16px + var(--thumbs) * 50px); }
       .doc-preview { background: var(--raised); border: 1px solid var(--line); border-radius: var(--radius-md); padding: 14px 16px; min-height: 30vh; }
       /* 编辑器的配图(152):两枚钮挤进「编辑 / 预览」那一排,缩略图条紧跟其下、正文框之上(矮屏上

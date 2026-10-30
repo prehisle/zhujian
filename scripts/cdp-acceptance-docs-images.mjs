@@ -189,11 +189,11 @@ try {
   ok((await areaText()).endsWith("图1\n\n图2\n\n图3\n\n"), "③ 拍的那张也插了「图3」", await areaText());
   // ③b 写字框里的标注(833):四处「图N」都垫了底色(句中那处也算),三段单独成段的各配一枚缩略图、字节真到了;
   //     垫底色的那一格与写字框里那几个字落在同一处(影子层与写字框同宽同排版)
-  await waitFor(`[...document.querySelectorAll("#docs-body .doc-hl .ref-thumb img")].filter((i) => i.complete && i.naturalWidth > 0).length === 3`, "写字框里三枚缩略图");
+  await waitFor(`[...document.querySelectorAll("#docs-body .doc-pins .ref-thumb img")].filter((i) => i.complete && i.naturalWidth > 0).length === 3`, "写字框里三枚缩略图");
   const hl = await ev(`(() => {
     const a = document.querySelector("#docs-body textarea.doc-area"), h = document.querySelector("#docs-body .doc-hl");
     const ra = a.getBoundingClientRect(), rh = h.getBoundingClientRect();
-    return { marks: [...h.querySelectorAll(".ref")].map((m) => m.firstChild.textContent), thumbs: h.querySelectorAll(".ref-thumb").length,
+    return { marks: [...h.querySelectorAll(".ref")].map((m) => m.firstChild.textContent), thumbs: document.querySelectorAll("#docs-body .doc-pins .ref-thumb").length,
       dx: Math.round(rh.left - ra.left - a.clientLeft), w: [Math.round(rh.width), a.clientWidth], hh: [Math.round(rh.height), a.clientHeight],
       gutter: getComputedStyle(a).paddingRight, copied: getComputedStyle(h).paddingRight };
   })()`);
@@ -211,6 +211,22 @@ try {
   })()`);
   ok(rows.want.join() === rows.got.join() && rows.font[0] === rows.font[1] && rows.lh[0] === rows.lh[1], `③c 底色落在那几个字那一行、字号行高与写字框一致(字号 ${ZOOM ?? "不动"})`, rows);
   await shot("doc-edit-hl");
+  // ③e 窄边缩略图点得开(836):看得见的那枚在写字框上面一层、与影子层里的隐形占位同位,点它中心命中的就是它;点了开看图
+  // ⚠ 真机上前面那步让写字框拿了焦点、键盘起着 ⇒ 下面几枚可能在键盘后面(elementFromPoint 出视口给 null):逐枚先滚进视口、等两拍读数稳了再测
+  const pin = await ev(`(async () => {
+    const still = async (e) => { for (let y = null; ; ) { await new Promise((r) => requestAnimationFrame(r)); const t = e.getBoundingClientRect().top; if (t === y) return; y = t; } };
+    const spots = [...document.querySelectorAll("#docs-body .doc-hl .ref-thumb")], pins = [...document.querySelectorAll("#docs-body .doc-pins .ref-thumb")];
+    const r = (e) => { const b = e.getBoundingClientRect(); return [b.left, b.top, b.width, b.height].map((x) => Math.round(x * 10) / 10); };
+    const hit = [];
+    for (const p of pins) { p.scrollIntoView({ block: "center" }); await still(p); hit.push(hitOf(p)); }
+    function hitOf(p) { const b = p.getBoundingClientRect(); const e = document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2); return p.contains(e) || (e ? e.tagName + "." + e.className + "#" + e.id : null); }
+    return { same: pins.length === spots.length && pins.every((p, i) => r(p).join() === r(spots[i]).join()), hit, at: pins.map(r) };
+  })()`);
+  ok(pin.same && pin.hit.length === 3 && pin.hit.every((h) => h === true), "③e 窄边三枚缩略图与占位同位、点中心命中的就是它", pin);
+  await ev(`(async () => { const p = document.querySelector("#docs-body .doc-pins .ref-thumb"); p.scrollIntoView({ block: "center" }); await new Promise((r) => setTimeout(r, 400)); const b = p.getBoundingClientRect(); document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2).click(); return 1; })()`);
+  await waitFor(`!document.getElementById("viewer").hidden`, "点窄边缩略图开看图");
+  await ev(`document.getElementById("viewer").click(), 1`);
+  await waitFor(`document.getElementById("viewer").hidden`, "看图关上");
   // ③d 写字时条里只摆窄边没配图的(835):三张都单独成段 ⇒ 条里一张不摆;把「图3」那段删了 ⇒ 图3 回到条里,放回来又藏
   ok((await stripVis()).length === 0, "③d 三张都在窄边配了图 ⇒ 条里一张不摆", await stripVis());
   const full = await areaText();

@@ -886,13 +886,31 @@ function openEditor(d: IdeaItem | null, seed: string | null, carried: File[]): v
   // 抄进行内样式再被 textZoom 放大一遍 ⇒ 115% 档影子层 21.16px 对写字框 18.4px,底色一行比一行往下错。
   const hl = el("div", "doc-hl");
   hl.setAttribute("aria-hidden", "true");
-  const edBox = el("div", "doc-ed", [hl, area]);
+  // 窄边的缩略图要点得开(看大图),而影子层压在写字框**背后**、点不到 ⇒ 影子层里只留同尺寸的隐形占位
+  // (它替缩略图在那一行站位),看得见、点得着的那枚住写字框**上面**这一层,位置照占位量(placePins)。
+  // 窄边里没有字,盖在写字框上不挡输入。
+  const pins = el("div", "doc-pins");
+  const edBox = el("div", "doc-ed", [hl, area, pins]);
   const HL_COPY = ["fontFamily", "fontWeight", "fontStyle", "letterSpacing", "wordSpacing", "tabSize", "textIndent",
     "paddingTop", "paddingRight", "paddingBottom", "paddingLeft", "whiteSpace", "overflowWrap", "wordBreak"] as const;
   function syncHl(): void {
     const cs = getComputedStyle(area);
     for (const k of HL_COPY) hl.style[k] = cs[k];
-    Object.assign(hl.style, { top: `${area.clientTop}px`, left: `${area.clientLeft}px`, width: `${area.clientWidth}px`, height: `${area.clientHeight}px` });
+    const box = { top: `${area.clientTop}px`, left: `${area.clientLeft}px`, width: `${area.clientWidth}px`, height: `${area.clientHeight}px` };
+    Object.assign(hl.style, box);
+    Object.assign(pins.style, box);
+    placePins();
+  }
+  /** 上层那几枚缩略图挪到各自占位的位置(占位与它同尺寸;两层同一个框,取相对影子层的实际坐标 ——
+   *  ⛔ 别用 offsetTop:它取整,行高 32.2px 那档差出 1px)。 */
+  function placePins(): void {
+    const o = hl.getBoundingClientRect();
+    const spots = hl.querySelectorAll<HTMLElement>(".ref-thumb");
+    pins.querySelectorAll<HTMLElement>(".ref-thumb").forEach((b, i) => {
+      const r = spots[i].getBoundingClientRect();
+      b.style.top = `${r.top - o.top}px`;
+      b.style.left = `${r.left - o.left}px`;
+    });
   }
   function paintHl(): void {
     const v = area.value;
@@ -901,6 +919,7 @@ function openEditor(d: IdeaItem | null, seed: string | null, carried: File[]): v
     // 同一段里第几枚缩略图:往左排开(上下相邻两行的图N 隔不开一枚缩略图的高),窄边按最多那段放宽
     const perPara = new Map<number, number>();
     const inGutter = new Set<number>(); // 窄边配了缩略图的那几张:条里不再重复摆
+    const pinEls: HTMLElement[] = [];
     let last = 0;
     for (const r of scanImgRefs(v)) {
       const m = bySeq.get(r.n);
@@ -912,10 +931,14 @@ function openEditor(d: IdeaItem | null, seed: string | null, carried: File[]): v
         const k = perPara.get(para) ?? 0;
         perPara.set(para, k + 1);
         const th = el("span", "ref-thumb");
-        th.dataset.img = m.id;
-        th.dataset.seq = String(m.seq);
         th.style.setProperty("--k", String(k));
         mark.append(th);
+        const pin = el("button", "ref-thumb");
+        pin.dataset.img = m.id;
+        pin.dataset.seq = String(m.seq);
+        pin.setAttribute("aria-label", t("main.viewImage", { n: m.seq }));
+        pin.addEventListener("click", () => void openViewer(imgs, imgs.indexOf(m), true));
+        pinEls.push(pin);
         inGutter.add(m.seq);
       }
       nodes.push(mark);
@@ -928,9 +951,10 @@ function openEditor(d: IdeaItem | null, seed: string | null, carried: File[]): v
     edBox.classList.toggle("has-thumbs", perPara.size > 0);
     edBox.style.setProperty("--thumbs", gut);
     hl.replaceChildren(...nodes);
+    pins.replaceChildren(...pinEls);
     hideShown(thumbs, edBox.hidden ? previewShown : inGutter); // 预览开着时条被重画(图单到货)也照预览那份藏
     // ⚠ 挂上之后再填:fillThumb 见节点不在页上就当「已被重画替掉」放弃(缓存命中那条同步走到那句,先填 = 一张都不出)
-    for (const th of hl.querySelectorAll<HTMLElement>(".ref-thumb")) void fillThumb(th);
+    for (const th of pinEls) void fillThumb(th);
     if (changed) fitArea(area); // 窄边宽度变了,框里的字重新折行,高度要重量
     syncHl();
   }
