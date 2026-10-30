@@ -46,6 +46,8 @@
 //   node scripts/android-cdp.mjs forward
 //   node scripts/cdp-acceptance-pick-images.mjs      # 打印 {pass, steps};pass=true 才算过
 // 多台设备同连时 `export ANDROID_SERIAL=<serial>`(与 android-cdp.mjs 同一个出口)。
+// ⚠ 它会**覆盖「记一笔」草稿正文、开跑就摘掉暂存图**(那就是用户的草稿)⇒ 在用户真机上跑前先读一眼
+//   `#text` 与 `#compose-thumbs .cthumb`,有东西先存下来(830);`cdp-run` 那格「库零残留」看不见草稿。
 //
 // 阴性对照(改完记得还回去):把 android/src/images.ts 里 `el.multiple = true` 删掉 ⇒ 第 1 步
 // 当场红在 `mode=selectSingle`;把 `accept` 改成 `image/png` ⇒ 第 6 步红(wry 认 capture 的
