@@ -27,6 +27,76 @@ export function fetchImageUrl(space: string, id: string): Promise<string | null>
   return p.then((url) => (getCurrentSpace() === space ? url : null));
 }
 
+// ---- 长文正文里原位显示的图(「图N」单独成段)---------------------------------------
+// 同上头那条内存纪律:全尺寸 data URL 取回后**当场**降到显示用的大小(宽 ≤ FIG_MAX_W)、重编码成
+// object URL,原串立刻丢掉;本来就窄而且不肥的图原样转 Blob。缓的是**一篇**的图:换了篇整盘
+// revoke ⇒ 上界 = 当前这篇的图数。在途的也记着(停笔重画 / 来回切预览别并发取同一张全尺寸)。
+// 空间切走了 ⇒ reject(渲染器把那格标坏),⛔ 不进表。
+const FIG_MAX_W = 1280;
+const FIG_FAT = 2_000_000; // data URL 超过这么长(≈1.5 MB 字节)就算窄也重编码
+let figDoc: string | null = null;
+const figUrl = new Map<string, string>();
+const figWait = new Map<string, Promise<string>>();
+
+function figFrom(dataUrl: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = (): void => {
+      if (img.naturalWidth <= FIG_MAX_W && dataUrl.length <= FIG_FAT) {
+        void fetch(dataUrl)
+          .then((r) => r.blob())
+          .then((b) => resolve(URL.createObjectURL(b)), reject);
+        return;
+      }
+      const w = Math.min(FIG_MAX_W, img.naturalWidth);
+      const h = Math.round((img.naturalHeight * w) / img.naturalWidth);
+      const c = document.createElement("canvas");
+      c.width = w;
+      c.height = h;
+      const ctx = c.getContext("2d");
+      if (!ctx) return reject(new Error("canvas 2d unavailable"));
+      ctx.drawImage(img, 0, 0, w, h);
+      img.src = ""; // 全尺寸位图尽早放手
+      c.toBlob((b) => (b ? resolve(URL.createObjectURL(b)) : reject(new Error("encode failed"))), "image/webp", 0.9);
+    };
+    img.onerror = (): void => reject(new Error("decode failed"));
+    img.src = dataUrl;
+  });
+}
+
+/** 长文 `docId` 里那张图原位显示用的地址:已到手就同步交回,否则交一个 Promise。 */
+export function figureSrc(space: string, docId: string, imageId: string): string | Promise<string> {
+  const doc = `${space}/${docId}`;
+  if (figDoc !== doc) {
+    for (const u of figUrl.values()) URL.revokeObjectURL(u);
+    figUrl.clear();
+    figWait.clear();
+    figDoc = doc;
+  }
+  const hit = figUrl.get(imageId);
+  if (hit !== undefined) return hit;
+  const going = figWait.get(imageId);
+  if (going !== undefined) return going;
+  const p = fetchImageUrl(space, imageId)
+    .then((url) => {
+      if (url === null) throw new Error("space changed");
+      return figFrom(url);
+    })
+    .then((u) => {
+      if (figDoc !== doc) {
+        URL.revokeObjectURL(u); // 取回来时已经换篇了:这张不进新篇的表
+        return u;
+      }
+      figUrl.set(imageId, u);
+      return u;
+    })
+    .finally(() => {
+      if (figDoc === doc) figWait.delete(imageId);
+    });
+  figWait.set(imageId, p);
+  return p;
+}
+
 // 缩略图取数(0032 派生表,image-perf-plan §3):命中就只过来几 KB、连全尺寸位图都不用解;
 // 未命中才回退全尺寸,由下面 fillThumb 缩完异步回存。与 imgPending 分开一只 in-flight 去重
 // (两条路的载荷差着两个数量级,合用一只会让看大图去等缩略图、或反过来)。

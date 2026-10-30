@@ -43,6 +43,10 @@ export const MD_MAX_BYTES = 204_800;
 export const MD_MAX_DEPTH = 16;
 export const MD_MAX_NODES = 8_192;
 export const MD_MAX_DOM = 16_384;
+/** 正文里引用第 n 张配图的写法(语法,与界面语言无关 —— 英文界面插进去的也是这个)。 */
+export function imgRefText(n: number): string {
+  return `图${n}`;
+}
 /** 链接地址的长度上限(码元)。比它长的一律不当链接 —— 也是在给每次校验的复制量封顶。 */
 export const URL_MAX_LEN = 4_096;
 
@@ -73,8 +77,10 @@ export type MdBlock =
 /** 资源计数器:扫过的字符、配对 / 栈操作、累计复制长度。只给测试与排查用,不影响结果。 */
 export type MdStats = { scanned: number; pairOps: number; copied: number };
 export type MdFail = "bytes" | "depth" | "nodes";
+/** `starts[k]` = 顶层第 k 块起于正文 `split("\n")` 的第几行(与 `blocks` 一一对应;编辑器对齐
+ *  左右滚动用,只是整数,⛔ 不进 DOM)。 */
 export type MdResult =
-  | { ok: true; blocks: MdBlock[]; nodes: number; stats: MdStats }
+  | { ok: true; blocks: MdBlock[]; starts: number[]; nodes: number; stats: MdStats }
   | { ok: false; reason: MdFail; stats: MdStats };
 
 // ---------------------------------------------------------------------------
@@ -154,8 +160,9 @@ export function parseMarkdown(text: string): MdResult {
   const cx: Ctx = { lines, stats, nodes: 0 };
   const all: Ln[] = lines.map((_, i) => ({ i, off: 0 }));
   try {
-    const blocks = parseBlocks(cx, all, 1);
-    return { ok: true, blocks, nodes: cx.nodes, stats };
+    const starts: number[] = [];
+    const blocks = parseBlocks(cx, all, 1, starts);
+    return { ok: true, blocks, starts, nodes: cx.nodes, stats };
   } catch (e) {
     if (e instanceof Over) return { ok: false, reason: e.reason, stats };
     throw e;
@@ -297,12 +304,16 @@ function classify(cx: Ctx, s: string, pos: number): Start | null {
   return null;
 }
 
-function parseBlocks(cx: Ctx, ls: Ln[], depth: number): MdBlock[] {
+/** `starts` 只有顶层那一趟传:每长出一块就记下它起于哪一行(每一圈至多长一块)。 */
+function parseBlocks(cx: Ctx, ls: Ln[], depth: number, starts?: number[]): MdBlock[] {
   const out: MdBlock[] = [];
   const lines = cx.lines;
   let k = 0;
+  let from = 0;
   while (k < ls.length) {
+    if (starts !== undefined && starts.length < out.length) starts.push(from);
     const ln = ls[k];
+    from = ln.i;
     const s = lines[ln.i];
     const pos = firstNonWs(cx, s, ln.off);
     if (pos === s.length) {
@@ -372,6 +383,7 @@ function parseBlocks(cx: Ctx, ls: Ln[], depth: number): MdBlock[] {
         break;
     }
   }
+  if (starts !== undefined && starts.length < out.length) starts.push(from);
   return out;
 }
 

@@ -36,6 +36,7 @@ export const docs = defineMessages({
   "docs.draftDiscard": { zh: "丢掉", en: "Discard" },
   "docs.draftSaved": { zh: "草稿已存在本机", en: "Draft kept on this device" },
   "docs.draftFailed": { zh: "草稿没存上:{err}", en: "Draft not kept: {err}" },
+  "docs.imageNoDoc": { zh: "这篇还没建成,图没挂上;先保存一次再贴", en: "This doc isn't created yet, so the image wasn't attached. Save once, then paste again." },
   "docs.modeEdit": { zh: "编辑", en: "Write" },
   "docs.modePreview": { zh: "预览", en: "Preview" },
   "docs.save": { zh: "保存", en: "Save" },

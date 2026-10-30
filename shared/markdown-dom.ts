@@ -16,6 +16,10 @@
 //     `validateHttpUrl`(点击出口也调同一个校验器),交给各端的 `openLink`;
 //   - 图N → 有界整数,交给各端的 `image(n)` 查当前条目的配图;有就画成本文件建的芯片按钮
 //     (文案是各端字典给的,点了调各端的回调),查不到就按原文「图N」;
+//     **一段里只有图N(中间只隔空白 / 换行)** ⇒ 那几张画成原位的图(`button.md-fig` 包一个
+//     `img`):`img.src` 只取各端 `src()` 交回的串(各端从自己的取图命令拿的 blob: / data:
+//     地址,⛔ 不来自正文),`alt` / `title` / `aria-label` 是各端字典给的文案;段里有一个图N
+//     查不到,整段照普通段落画(芯片 + 原文);
 //   - 勾选状态与行号 → 布尔 / 行号,交给各端的 `checkbox` 换回文案与翻面回调,方框本身由本文件建;
 //   - 有序列表起始号 → 校验过的整数,写 `start` 属性(数值,不是字符串拼接)。
 // 各端交进来的文案只进 `textContent` / `title` / `aria-label`(⛔ 它们不来自正文)。
@@ -26,24 +30,27 @@
 //
 // 段落里的换行是原样留在文本节点里的,要显示成换行得由各端给 `.md p` 等配 `white-space: pre-wrap`。
 
-import { MD_MAX_DOM, parseMarkdown, validateHttpUrl, type MdBlock, type MdFail, type MdInline, type MdItem } from "./markdown";
+import { MD_MAX_DOM, imgRefText, parseMarkdown, validateHttpUrl, type MdBlock, type MdFail, type MdInline, type MdItem } from "./markdown";
 
 export type MdHooks = {
   /** 用系统浏览器打开(拿到的一定是校验过的 http/https)。`null` = 这个平台打不开外部浏览器
    *  (鸿蒙):链接只显示文字与地址,⛔ 不拿可导航的 `href` 兜底。 */
   openLink: ((url: string) => void) | null;
-  /** 当前条目有没有第 n 张图:有就回芯片上的字与点了做什么,没有回 `null`(按原文「图N」)。 */
-  image: (n: number) => { label: string; open: () => void } | null;
+  /** 当前条目有没有第 n 张图:有就回芯片上的字、点了做什么、原位显示时的图址(⛔ 只许是各端
+   *  自己取来的 blob: / data: 地址;手上已有就同步交回,免得重画时图先塌成零高再撑开),
+   *  没有回 `null`(按原文「图N」)。 */
+  image: (n: number) => { label: string; open: () => void; src: () => string | Promise<string> } | null;
   /** 勾选项那枚方框的文案(悬停 / 读屏)与翻面动作;`toggle = null` = 只读视图,方框禁用。
    *  `line` 原样交给 `toggleChecklistLine`。 */
   checkbox: (checked: boolean, line: number) => { label: string; toggle: (() => void) | null };
 };
 
-export type MdRendered = { root: HTMLElement; degraded: MdFail | "dom" | null };
+/** `anchors` = 顶层每一块画成的元素 + 它起于正文第几行(编辑器对齐左右滚动用;降级时为空)。 */
+export type MdRendered = { root: HTMLElement; degraded: MdFail | "dom" | null; anchors: { line: number; el: HTMLElement }[] };
 
 type Tag =
   | "div" | "p" | "h1" | "h2" | "h3" | "strong" | "em" | "code" | "pre" | "ul" | "ol" | "li" | "blockquote" | "hr" | "a" | "span"
-  | "button";
+  | "button" | "img";
 
 class DomOver {}
 
@@ -74,14 +81,19 @@ function plain(text: string): HTMLElement {
 /** 把一篇长文画出来。`degraded` 非空 = 超了某道预算、画的是原文。 */
 export function renderMarkdown(text: string, hooks: MdHooks): MdRendered {
   const r = parseMarkdown(text);
-  if (!r.ok) return { root: plain(text), degraded: r.reason };
+  if (!r.ok) return { root: plain(text), degraded: r.reason, anchors: [] };
   const cx: Cx = { n: 0, hooks };
   try {
     const root = mk(cx, "div", "md");
-    for (const b of r.blocks) root.append(block(cx, b));
-    return { root, degraded: null };
+    const anchors: { line: number; el: HTMLElement }[] = [];
+    r.blocks.forEach((b, k) => {
+      const e = block(cx, b);
+      anchors.push({ line: r.starts[k], el: e });
+      root.append(e);
+    });
+    return { root, degraded: null, anchors };
   } catch (e) {
-    if (e instanceof DomOver) return { root: plain(text), degraded: "dom" };
+    if (e instanceof DomOver) return { root: plain(text), degraded: "dom", anchors: [] };
     throw e;
   }
 }
@@ -94,6 +106,8 @@ function block(cx: Cx, b: MdBlock): HTMLElement {
       return h;
     }
     case "para": {
+      const figs = figures(cx, b.c);
+      if (figs !== null) return figs;
       const p = mk(cx, "p");
       inlines(cx, p, b.c);
       return p;
@@ -129,6 +143,46 @@ function block(cx: Cx, b: MdBlock): HTMLElement {
     default:
       throw new Error(`markdown: 未知块节点 ${(b as { t: unknown }).t}`);
   }
+}
+
+type MdImage = NonNullable<ReturnType<MdHooks["image"]>>;
+
+/** 一段里只有图N(中间只隔空白)且张张查得到 ⇒ 原位画成图;否则 `null`(照普通段落画)。 */
+function figures(cx: Cx, xs: MdInline[]): HTMLElement | null {
+  const imgs: MdImage[] = [];
+  for (const x of xs) {
+    if (x.t === "text" && x.s.trim() === "") continue;
+    if (x.t !== "img") return null;
+    const img = cx.hooks.image(x.n);
+    if (img === null) return null;
+    imgs.push(img);
+  }
+  if (imgs.length === 0) return null;
+  const wrap = mk(cx, "div", "md-figs");
+  for (const img of imgs) {
+    const fig = mk(cx, "button", "md-fig") as HTMLButtonElement;
+    fig.type = "button";
+    fig.title = img.label;
+    fig.setAttribute("aria-label", img.label);
+    fig.addEventListener("click", (e) => {
+      e.stopPropagation();
+      img.open();
+    });
+    const pic = mk(cx, "img") as HTMLImageElement;
+    pic.alt = img.label;
+    const src = img.src();
+    if (typeof src === "string") pic.src = src;
+    else
+      src.then(
+        (u) => {
+          pic.src = u;
+        },
+        () => fig.classList.add("broken"),
+      );
+    fig.append(pic);
+    wrap.append(fig);
+  }
+  return wrap;
 }
 
 function item(cx: Cx, it: MdItem): HTMLElement {
@@ -183,7 +237,7 @@ function inline(cx: Cx, x: MdInline): Node {
       return link(cx, x);
     case "img": {
       const img = cx.hooks.image(x.n);
-      if (img === null) return txt(cx, `图${x.n}`);
+      if (img === null) return txt(cx, imgRefText(x.n));
       const chip = mk(cx, "button", "img-ref") as HTMLButtonElement;
       chip.type = "button";
       chip.append(txt(cx, img.label));

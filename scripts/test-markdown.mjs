@@ -243,7 +243,7 @@ function render(text, hooks = {}) {
   // 钩子只交「字符串 + 回调」,⛔ 不碰 document —— 节点全由渲染器建(才都在预算与去向表里)
   const h = {
     openLink: (u) => opened.push(u),
-    image: (n) => (n === 1 ? { label: `图${n}`, open: () => opened.push(`img:${n}`) } : null),
+    image: (n) => (n === 1 ? { label: `图${n}`, open: () => opened.push(`img:${n}`), src: () => `blob:app/${n}` } : null),
     checkbox: (checked, line) => ({ label: checked ? "取消勾选" : "勾上", toggle: () => opened.push(`tick:${line}`) }),
     ...hooks,
   };
@@ -251,8 +251,8 @@ function render(text, hooks = {}) {
   delete globalThis.document;
   return { ...out, log, opened, html: html(out.root) };
 }
-const ALLOWED_TAGS = new Set(["div", "p", "h1", "h2", "h3", "strong", "em", "code", "pre", "ul", "ol", "li", "blockquote", "hr", "a", "span", "button"]);
-const ALLOWED_PROPS = new Set(["className", "tabIndex", "start", "type", "title", "disabled"]);
+const ALLOWED_TAGS = new Set(["div", "p", "h1", "h2", "h3", "strong", "em", "code", "pre", "ul", "ol", "li", "blockquote", "hr", "a", "span", "button", "img"]);
+const ALLOWED_PROPS = new Set(["className", "tabIndex", "start", "type", "title", "disabled", "alt", "src"]);
 const ALLOWED_ATTRS = new Set(["role", "aria-label"]);
 
 const EVIL = [
@@ -261,7 +261,7 @@ const EVIL = [
   "[x](mailto:a@x?body=https://e.com)", "[x](https://a.com\" onclick=\"alert(1))", "[x](<https://a.com>)",
   "```\" onmouseover=\"alert(1)\n</pre><script>1</script>", "``` <img src=x onerror=1>\nx\n```",
   "# <b onclick=1>标题</b>", "- [ ] <svg onload=alert(1)>", "> `</code><script>`", "图1<img>", "**<i>**",
-  "https://a.com/<script>", "[a](https://a.com/x'onerror='1)",
+  "https://a.com/<script>", "[a](https://a.com/x'onerror='1)", "图1", "图1\n<img src=x onerror=1>", "图1 [x](javascript:1)",
 ].join("\n\n");
 
 test("恶意输入:所有字段只进固定标签 / 文本节点 / 闭包", () => {
@@ -318,6 +318,52 @@ test("图N 与方框:渲染器自己建,钩子只给文案与动作;查不到的
   const ro = render("- [ ] 只读", { checkbox: () => ({ label: "未勾", toggle: null }) });
   assert.ok(ro.log.props.includes("disabled"));
   assert.equal(ro.log.listeners.length, 0);
+});
+test("单独成段的图N 原位画成图;src 只取钩子交回的串,段里夹了别的就照段落画", () => {
+  const r = render("图1\n\n图1\n图1\n\n见图1\n\n图1 图2\n\n图1 x\n\n> 图1");
+  assert.equal(
+    r.html,
+    "<div .md>" +
+      "<div .md-figs><button .md-fig aria-label=图1><img></img></button></div>" +
+      "<div .md-figs><button .md-fig aria-label=图1><img></img></button><button .md-fig aria-label=图1><img></img></button></div>" +
+      "<p>见<button .img-ref>图1</button></p>" +
+      "<p><button .img-ref>图1</button> 图2</p>" +
+      "<p><button .img-ref>图1</button> x</p>" +
+      "<blockquote><div .md-figs><button .md-fig aria-label=图1><img></img></button></div></blockquote>" +
+      "</div>",
+  );
+  const imgs = [];
+  const walk = (n) => { if (n.nodeType === 1) { if (n.tag === "img") imgs.push(n); n.kids.forEach(walk); } };
+  walk(r.root);
+  assert.equal(imgs.length, 4);
+  for (const i of imgs) {
+    assert.equal(i.src, "blob:app/1");
+    assert.equal(i.alt, "图1");
+  }
+  // 点图 = 钩子的 open,且不往外冒(卡片 / 面板上还有别的点击主)
+  const figs = [];
+  const walkF = (n) => { if (n.nodeType === 1) { if (n.className === "md-fig") figs.push(n); n.kids.forEach(walkF); } };
+  walkF(r.root);
+  const e = { stopped: 0, stopPropagation() { this.stopped++; } };
+  figs[0].on.click[0](e);
+  assert.equal(e.stopped, 1);
+  assert.deepEqual(r.opened, ["img:1"]);
+});
+test("原位图的图址晚到:Promise 落了才写 src,拒了只标坏、不写", async () => {
+  let ok;
+  const late = render("图1", { image: () => ({ label: "图1", open() {}, src: () => new Promise((r) => (ok = r)) }) });
+  const pic = late.root.kids[0].kids[0].kids[0];
+  assert.equal(pic.tag, "img");
+  assert.equal(pic.src, undefined);
+  ok("blob:app/late");
+  await Promise.resolve();
+  assert.equal(pic.src, "blob:app/late");
+  const bad = render("图1", { image: () => ({ label: "图1", open() {}, src: () => Promise.reject(new Error("x")) }) });
+  const fig = bad.root.kids[0].kids[0];
+  fig.classList = { add: (c) => (fig.className += ` ${c}`) };
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(fig.className, "md-fig broken");
+  assert.equal(fig.kids[0].src, undefined);
 });
 test("校验器对自己的输出闭合:规范化后变长的地址也点得开(codex 2a 一弹 M)", () => {
   for (const u of ["https://a.com", "HTTP://A.COM/x?y=1#z", "https://例子.中国/路径", "https://a.com/" + "中".repeat(400), "https://a.com/a b"]) {
@@ -419,6 +465,20 @@ for (const [name, gen, check] of FAMILIES) {
     assert.ok(per[per.length - 1] < 2000, `${name} 200KiB 花了 ${per[per.length - 1].toFixed(0)} ms`);
   });
 }
+test("顶层块的起始行:与 blocks 一一对应,行号口径同 split(\"\n\")", () => {
+  const src = "\n# 题\n段一\n段一续\n\n- a\n- b\n\n> 引\n> 用\n```\nx\n\n```\n---\n图1\n";
+  const r = parseMarkdown(src);
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.starts, [1, 2, 5, 8, 10, 14, 15]);
+  assert.equal(r.starts.length, r.blocks.length);
+  const d = render(src);
+  assert.deepEqual(d.anchors.map((a) => a.line), r.starts);
+  assert.deepEqual(d.anchors.map((a) => a.el), d.root.kids);
+  for (const [, gen] of FAMILIES) {
+    const q = parseMarkdown(gen(4096));
+    if (q.ok) assert.equal(q.starts.length, q.blocks.length);
+  }
+});
 test("资源族里至少有几族在 200 KiB 时没触发节点预算(否则提前降级会掩盖平方扫描)", () => {
   let fine = 0;
   for (const [, gen] of FAMILIES) if (parseMarkdown(gen(200 * KIB)).ok) fine++;

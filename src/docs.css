@@ -210,6 +210,25 @@
 .v-docs .md > :first-child { margin-top: 0; }
 .v-docs .md > :last-child { margin-bottom: 0; }
 .v-docs .md p { margin: 0 0 0.9em; }
+/* 单独成段的「图N」原位显示(共用渲染器的 .md-figs > button.md-fig > img);点开看原图 */
+.v-docs .md .md-figs { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; margin: 0 0 1em; }
+.v-docs .md .md-fig {
+  display: block;
+  max-width: 100%;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--paper);
+  cursor: zoom-in;
+  overflow: hidden;
+}
+.v-docs .md .md-fig:hover { border-color: var(--line-strong); }
+/* 高也封顶:竖长图 / 长截图按原尺寸会一张占满一屏,把上下文挤没;原图点开看 */
+.v-docs .md .md-fig img { display: block; max-width: 100%; max-height: 70vh; width: auto; height: auto; }
+.v-docs .md .md-fig.broken { min-width: 120px; min-height: 60px; }
+/* 阅读页缩略图条只摆正文里没原位显示的图(docs.ts hideShown) */
+.v-docs .img-strip .img-thumb[hidden],
+.v-docs .img-strip.all-inline { display: none; }
 .v-docs .md h1,
 .v-docs .md h2,
 .v-docs .md h3 { line-height: 1.4; margin: 1.3em 0 0.55em; }
@@ -272,12 +291,16 @@
 .v-docs .md .md-link:hover { text-decoration-color: var(--seal); }
 .v-docs .md .md-link-off { color: var(--ink-soft); }
 
-/* ---- 编辑器 ---- */
-.v-docs .doc-edit-page { max-width: 860px; display: flex; flex-direction: column; gap: 10px; }
-.v-docs .doc-editor { display: grid; grid-template-columns: 1fr; gap: 16px; }
+/* ---- 编辑器 ----
+   撑满视图高、写字框与预览**各在自己的栏里滚**,整页不滚(⛔ 别回到 min-height + 整页滚:那样框里
+   一层、页面一层,两层滚动条,写到第三屏预览还停在开头)。缩略图条钉在底下。 */
+.v-docs main:has(> .doc-edit-page) { display: flex; flex-direction: column; overflow: hidden; }
+.v-docs .doc-edit-page { flex: 1; min-height: 0; max-width: 860px; display: flex; flex-direction: column; gap: 10px; }
+.v-docs .doc-editor { flex: 1; min-height: 0; display: grid; grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr); gap: 16px; }
 .v-docs .doc-area {
   width: 100%;
-  min-height: calc(100vh - 230px);
+  height: 100%;
+  overflow-y: auto;
   font: inherit;
   font-family: var(--font-serif);
   font-size: var(--fs-15);
@@ -295,7 +318,8 @@
 .v-docs .doc-area:focus { border-color: var(--seal-line); }
 .v-docs .doc-preview {
   display: none;
-  min-height: calc(100vh - 230px);
+  min-height: 0;
+  overflow-y: auto;
   border: 1px dashed var(--line-strong);
   border-radius: var(--radius-md);
   padding: 16px 20px;

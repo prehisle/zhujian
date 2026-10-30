@@ -95,6 +95,20 @@ const KNIVES = [
     red: ["恶意输入:所有字段只进固定标签 / 文本节点 / 闭包"],
   },
   {
+    name: "原位图:段里夹了字也算图段",
+    file: DOM,
+    from: '    if (x.t === "text" && x.s.trim() === "") continue;\n',
+    to: '    if (x.t === "text") continue;\n',
+    red: ["单独成段的图N 原位画成图;src 只取钩子交回的串,段里夹了别的就照段落画"],
+  },
+  {
+    name: "原位图:src 拿文案顶替钩子交回的图址",
+    file: DOM,
+    from: '    if (typeof src === "string") pic.src = src;\n',
+    to: '    if (typeof src === "string") pic.src = img.label;\n',
+    red: ["单独成段的图N 原位画成图;src 只取钩子交回的串,段里夹了别的就照段落画"],
+  },
+  {
     name: "渲染器拿 innerHTML 画文字",
     file: DOM,
     from: '    case "text":\n      return txt(cx, x.s);\n',

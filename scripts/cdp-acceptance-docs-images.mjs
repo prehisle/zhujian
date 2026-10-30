@@ -2,15 +2,14 @@
 //
 // 判据都读 DOM / 命令回包:
 //   已存过的篇:「编辑 / 预览」那排有「＋ 加图 / ＋ 拍照」→ 加两张**当场挂上**(保存之前 list_item_images 就有)、
-//     钮与新长出来的缩略图都在底栏上沿之上(矮屏几何格:第一版把它们放在 60vh 正文框底下,360×640 上整排压在底栏后)、
-//     拍照那发的 input 带 capture → 预览里「图1」画成芯片(编辑器把配图映射交给了渲染器)→ × 只做标记
-//     (库里还在、再点一下撤销)→ 保存后标了的那张没了、阅读页缩略图少一张、它进了回收站(可还原)→
-//     再标一张、**关面**(不是保存)⇒ 那张一张不删(同桌面 unmount:删图认的是前台空间)。
-//   新篇:加图进暂存条、库里还没有这一篇 → 一个字没写就返回 = 拦住并明说、留在编辑器 → 写字保存 ⇒
-//     新篇带着那几张图 → 再新建一篇、加图写字后**直接关面** ⇒ 也带着图落下。
+//     并在光标处各插一段「图N」(832)、正文框随内容长高不在框里滚;钮与新长出来的缩略图都在底栏上沿之上
+//     (矮屏几何格:第一版把它们放在 60vh 正文框底下,360×640 上整排压在底栏后)、拍照那发的 input 带 capture →
+//     预览里单独成段的「图N」**原位画成图**(字节真到了:naturalWidth > 0)、句中的「图1」仍是芯片 → × 只做标记
+//     (库里还在、再点一下撤销)→ 保存后标了的那张没了、它进了回收站(可还原)、阅读页原位显示余下两张而缩略图条
+//     把它们藏掉 → 再标一张、**关面**(不是保存)⇒ 那张一张不删(同桌面 unmount:删图认的是前台空间)。
+//   新篇(832 起没有暂存条):一个字没写就加图 ⇒ 当场建篇挂上、正文是两段「图N」→ 返回 = 回阅读页;
+//     写了两段字、光标放在中间加图 ⇒ 那一段插在两段之间(前后各空一行)→ 写字加图后**直接关面** ⇒ 字与图都落下。
 //   取图在飞时按返回 = 拦一句、留在编辑器;放行后照常。
-//   ⭐ 长文的暂存图**不进「记一笔」那份 IndexedDB 草稿**:重载后「记一笔」暂存条是空的(阴性对照:把
-//     docs.ts 里 composeImages 的第三参改成 true ⇒ ⑩ 红)。
 //
 // 取图不经系统选择器:页内把 `HTMLInputElement.prototype.click` 换掉,遇到 file input 就塞几张页内现画
 // 的 PNG 并发 change(同用户选完回来)。⚠ 诚实边界:系统相册 / 相机那半、取消那条路、降采样的手感
@@ -66,7 +65,8 @@ const inEditor = () => ev(`!!document.querySelector("#docs-body textarea.doc-are
 const typeArea = (text) =>
   ev(`(() => { const a = document.querySelector("#docs-body textarea.doc-area"); a.value = ${JSON.stringify(text)}; a.dispatchEvent(new Event("input", { bubbles: true })); return true; })()`);
 const thumbCount = () => ev(`document.querySelectorAll("#docs-body .doc-imgs .thumbs .thumb").length`);
-const pendingCount = () => ev(`document.querySelectorAll("#docs-body .doc-imgs .cthumb:not(.pending)").length`);
+const areaText = () => ev(`document.querySelector("#docs-body textarea.doc-area").value`);
+const caretTo = (k) => ev(`(() => { const a = document.querySelector("#docs-body textarea.doc-area"); a.setSelectionRange(${k}, ${k}); return true; })()`);
 const shot = async (name) => {
   if (!SHOTS) return;
   const { data } = await s.send("Page.captureScreenshot", { format: "png" });
@@ -146,11 +146,15 @@ try {
   })()`);
   ok(fills.preview !== fills.save, "① 没选中的「预览」不是实心主钮的底色", fills);
 
-  // ② 加两张 = 当场挂上(保存之前库里就有)
+  // ② 加两张 = 当场挂上(保存之前库里就有),光标处(末尾)各插一段「图N」
+  await caretTo(BODY.length);
   await armPicker(2);
   await clickText("＋ 加图");
   await waitFor(`document.querySelectorAll("#docs-body .doc-imgs .thumbs .thumb").length === 2`, "两张缩略图");
   ok((await imgsOf(id)).length === 2, "② 加图当场挂上:保存前 list_item_images 已有 2 张");
+  ok((await areaText()) === `${BODY}\n图1\n\n图2\n\n`, "② 光标处插了两段「图1」「图2」(各自成段)", await areaText());
+  const fit = await ev(`(() => { const a = document.querySelector("#docs-body textarea.doc-area"); return { sh: a.scrollHeight, ch: a.clientHeight, ov: getComputedStyle(a).overflowY }; })()`);
+  ok(fit.sh <= fit.ch + 1 && fit.ov === "hidden", "② 正文框随内容长高、框里不滚", fit);
   ok(/已加 2 张图/.test((await bar()) ?? ""), "② 回执「已加 2 张图」", await bar());
   ok(await inEditor(), "② 仍在编辑器");
   // 矮屏几何:钮与刚长出来的缩略图都得在底栏上沿之上(不滚动就看得见)
@@ -173,11 +177,14 @@ try {
   ok(metas.length === 3, "③ 库里 3 张");
   await hideBar();
 
-  // ④ 预览里「图1」是芯片(编辑器把配图映射交给了渲染器)
+  // ④ 预览:单独成段的三段「图N」原位画成图(字节真到了),句中的「图1」仍是芯片
+  ok((await areaText()).endsWith("图1\n\n图2\n\n图3\n\n"), "③ 拍的那张也插了「图3」", await areaText());
   await clickText("预览");
   await waitFor(`!document.querySelector("#docs-body .doc-preview").hidden`, "预览");
   const chip = await ev(`(() => { const b = document.querySelector("#docs-body .doc-preview .img-ref"); return b ? b.textContent : null; })()`);
-  ok(chip !== null, "④ 预览里「图1」画成芯片", chip);
+  ok(chip !== null, "④ 句中的「图1」仍是芯片", chip);
+  await waitFor(`[...document.querySelectorAll("#docs-body .doc-preview .md-fig img")].filter((i) => i.complete && i.naturalWidth > 0).length === 3`, "预览里三张图原位显示");
+  ok((await ev(`document.querySelectorAll("#docs-body .doc-preview .md-fig img").length`)) === 3, "④ 三段「图N」原位画成图");
   await shot("doc-edit-preview");
   await clickText("编辑");
 
@@ -198,7 +205,10 @@ try {
   await waitFor(`!!document.querySelector("#docs-body .doc-acts")`, "回到阅读页");
   const after = await imgsOf(id);
   ok(after.length === 2 && !after.some((m) => m.id === seq2.id), "⑥ 保存后图2 删了、余 2 张", after.map((m) => m.seq));
-  await waitFor(`document.querySelectorAll("#docs-body .doc-page .thumbs .thumb").length === 2`, "阅读页缩略图 2 张");
+  await waitFor(`[...document.querySelectorAll("#docs-body .doc-page .md-fig img")].filter((i) => i.complete && i.naturalWidth > 0).length === 2`, "阅读页原位显示 2 张");
+  const strip = await ev(`(() => { const t = [...document.querySelectorAll("#docs-body .doc-page .thumbs .thumb")]; return { n: t.length, shown: t.filter((b) => getComputedStyle(b).display !== "none").length }; })()`);
+  ok(strip.n === 2 && strip.shown === 0, "⑥ 阅读页缩略图条把原位显示了的两张藏掉", strip);
+  ok((await ev(`document.querySelector("#docs-body .doc-page .md").textContent.includes("图2")`)), "⑥ 删掉的图2 那段按原文留着");
   const removed = await inv("list_removed_images", { spaceId: sp, scope: "all" });
   ok(removed.some((g) => g.item_id === id && g.images.some((m) => m.id === seq2.id)), "⑥ 图2 进了回收站(可还原)");
 
@@ -212,58 +222,52 @@ try {
   await sleep(600);
   ok((await imgsOf(id)).length === 2, "⑦ 标了删却关面 ⇒ 一张不删(同桌面 unmount)");
 
-  // ⑧ 新篇:加图进暂存条、库里还没有这一篇;空文本返回 = 拦住
+  // ⑧ 新篇:一个字没写就加图 ⇒ 当场建篇挂上,正文是两段「图N」;返回 = 回阅读页、原位显示
+  const newDocs = async () => (await inv("list_docs", { spaceId: sp })).filter((d) => !docsBefore.includes(d.id) && !seeded.includes(d.id));
   await ev(`document.querySelector('#bottombar [data-pane="docs"]').click()`);
   await waitFor(`!document.getElementById("docs-new").hidden`, "列表页");
   await ev(`document.getElementById("docs-new").click()`);
   await waitFor(`!!document.querySelector("#docs-body textarea.doc-area")`, "新篇编辑器");
   await armPicker(2);
   await clickText("＋ 加图");
-  await waitFor(`document.querySelectorAll("#docs-body .doc-imgs .cthumb:not(.pending)").length === 2`, "暂存两张");
-  ok((await thumbCount()) === 0 && (await pendingCount()) === 2, "⑧ 新篇的图进暂存条(没有图N)");
-  const docsNow = (await inv("list_docs", { spaceId: sp })).map((d) => d.id);
-  ok(docsNow.length === docsBefore.length + 1, "⑧ 加图不建篇(库里仍只多种的那一篇)");
+  await waitFor(`document.querySelectorAll("#docs-body .doc-imgs .thumbs .thumb").length === 2`, "两张缩略图(已挂上)");
+  const fresh = await newDocs();
+  for (const d of fresh) seeded.push(d.id);
+  ok(fresh.length === 1 && (await imgsOf(fresh[0].id)).length === 2, "⑧ 一个字没写就加图 ⇒ 当场建篇、挂上 2 张", fresh.length);
+  ok((await areaText()) === "图1\n\n图2\n\n", "⑧ 正文是两段「图N」", await areaText());
+  await shot("doc-new-images");
   await back();
-  await sleep(300);
-  ok(await inEditor(), "⑧ 一个字没写就返回 ⇒ 留在编辑器");
-  const errTxt = await ev(`(() => { const e = document.querySelector("#docs-body .doc-err"); return e && !e.hidden ? e.textContent : null; })()`);
-  ok(/先写点字/.test(errTxt ?? ""), "⑧ 明说「先写点字」", errTxt);
-  await shot("doc-new-pending");
-
-  // ⑨ 写字保存 ⇒ 新篇带着两张图
-  await typeArea(`# ${MARK}·新篇\n\n带两张图。`);
-  await clickText("保存");
   await waitFor(`!!document.querySelector("#docs-body .doc-acts")`, "新篇阅读页");
-  const fresh = (await inv("list_docs", { spaceId: sp })).find((d) => !docsBefore.includes(d.id) && d.id !== id);
-  if (fresh) seeded.push(fresh.id);
-  ok(fresh && (await imgsOf(fresh.id)).length === 2, "⑨ 新篇保存后带着 2 张图");
-  await waitFor(`document.querySelectorAll("#docs-body .doc-page .thumbs .thumb").length === 2`, "新篇阅读页缩略图 2 张");
+  await waitFor(`[...document.querySelectorAll("#docs-body .doc-page .md-fig img")].filter((i) => i.complete && i.naturalWidth > 0).length === 2`, "新篇阅读页原位显示 2 张");
+  ok(fresh.length === 1 && (await inv("list_docs", { spaceId: sp })).find((d) => d.id === fresh[0].id).content === "图1\n\n图2\n\n", "⑧ 返回 = 那一版带着两段引用落下");
 
-  // ⑩ 暂存图没进「记一笔」的 IndexedDB 草稿:新建一篇加一张、不保存就重载 ⇒ 「记一笔」暂存条空
+  // ⑨ 新篇写了两段字,光标放在中间加图 ⇒ 那一段插在两段之间(前后各空一行)
   await back();
   await waitFor(`!document.getElementById("docs-new").hidden`, "列表页");
   await ev(`document.getElementById("docs-new").click()`);
   await waitFor(`!!document.querySelector("#docs-body textarea.doc-area")`, "新篇编辑器");
+  const TWO = `# ${MARK}·中间\n第二行`;
+  await typeArea(TWO);
+  await caretTo(TWO.indexOf("\n第二行"));
   await armPicker(1);
   await clickText("＋ 加图");
-  await waitFor(`document.querySelectorAll("#docs-body .doc-imgs .cthumb:not(.pending)").length === 1`, "暂存一张");
-  await sleep(500); // 给持久化链一个落盘的机会(若接错了,它会写进去)
-  await disarmPicker();
-  await reload();
-  await sleep(1500); // compImgs.restore() 是启动时异步回填
-  const composeLeft = await ev(`document.querySelectorAll("#compose-thumbs .cthumb").length`);
-  ok(composeLeft === 0, "⑩ 长文暂存图不进「记一笔」的暂存草稿(重载后那条是空的)", composeLeft);
-  ok((await inv("list_docs", { spaceId: sp })).length === docsBefore.length + 2, "⑩ 没写字就重载 = 不建");
-
-  // ⑪ 新篇加图写字、直接关面 ⇒ 带着图落下
-  await ev(`document.querySelector('#bottombar [data-pane="docs"]').click()`);
+  await waitFor(`document.querySelectorAll("#docs-body .doc-imgs .thumbs .thumb").length === 1`, "一张缩略图");
+  ok((await areaText()) === `# ${MARK}·中间\n\n图1\n\n第二行`, "⑨ 插在光标处、前后各空一行", await areaText());
+  for (const d of await newDocs()) seeded.push(d.id);
+  await back();
+  await waitFor(`!!document.querySelector("#docs-body .doc-acts")`, "回阅读页");
+  await back();
   await waitFor(`!document.getElementById("docs-new").hidden`, "列表页");
+
+  // ⑪ 新篇写字加图、直接关面 ⇒ 字与图都落下
   await ev(`document.getElementById("docs-new").click()`);
   await waitFor(`!!document.querySelector("#docs-body textarea.doc-area")`, "新篇编辑器");
+  await typeArea(`# ${MARK}·关面\n\n关面也带图。`);
+  await caretTo(0);
   await armPicker(1);
   await clickText("＋ 加图");
-  await waitFor(`document.querySelectorAll("#docs-body .doc-imgs .cthumb:not(.pending)").length === 1`, "暂存一张");
-  await typeArea(`# ${MARK}·关面\n\n关面也带图。`);
+  await waitFor(`document.querySelectorAll("#docs-body .doc-imgs .thumbs .thumb").length === 1`, "一张缩略图");
+  for (const d of await newDocs()) seeded.push(d.id);
   await ev(`document.querySelector('#bottombar [data-pane="docs"]').click()`);
   await waitFor(`!document.body.classList.contains("pane-open")`, "收面");
   let closed = null;
@@ -274,6 +278,7 @@ try {
   if (closed) seeded.push(closed.id);
   await sleep(600);
   ok(closed && (await imgsOf(closed.id)).length === 1, "⑪ 新篇关面即落、带着 1 张图");
+  ok(closed && closed.content === `图1\n\n# ${MARK}·关面\n\n关面也带图。`, "⑪ 关面落下的那一版带着引用", closed?.content);
 
   // ⑫ 取图在飞时按返回 = 拦一句、留在编辑器;放行后照常挂上
   await openReader(id);
@@ -300,7 +305,7 @@ try {
     /* 页面可能在重载 */
   }
   try {
-    for (const did of seeded) {
+    for (const did of new Set(seeded)) {
       await inv("archive_note", { spaceId: sp, id: did });
       await inv("purge_note", { spaceId: sp, id: did });
     }

@@ -167,6 +167,72 @@ export function getThumb(imageId: string): Promise<string> {
   });
 }
 
+// ---- 长文正文里原位显示的图(「图N」单独成段)---------------------------------------
+// 缓的是**一篇长文**的图:换了篇就整盘 revoke 掉 ⇒ 上界 = 当前这篇的图数,不随浏览过的篇增长。
+// 预览停笔 300ms 就整块重画一次,图址得**同步**交回(缓存命中),否则每画一次图都先塌成零高、
+// 再撑开,下面的字跟着跳。缓的是 object URL(字节在 Blob 里,不是一条 JS 长串);在途的取图
+// 也记着,免得连画几次就并发取同一张全尺寸。宽过 FIG_MAX_W 的缩到这个宽(正文栏再宽也就
+// 一千来像素 × 缩放),小的原样用 —— 显示用,原图仍是点开看的那张。
+const FIG_MAX_W = 1600;
+let figDoc: string | null = null;
+const figUrl = new Map<string, string>();
+const figWait = new Map<string, Promise<string>>();
+
+function figFrom(dataUrl: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = (): void => {
+      if (img.naturalWidth <= FIG_MAX_W) {
+        void fetch(dataUrl)
+          .then((r) => r.blob())
+          .then((b) => resolve(URL.createObjectURL(b)), reject);
+        return;
+      }
+      const w = FIG_MAX_W;
+      const h = Math.round((img.naturalHeight * w) / img.naturalWidth);
+      const c = document.createElement("canvas");
+      c.width = w;
+      c.height = h;
+      const ctx = c.getContext("2d");
+      if (!ctx) return reject(new Error("canvas 2d 上下文不可用"));
+      ctx.drawImage(img, 0, 0, w, h);
+      c.toBlob((b) => (b ? resolve(URL.createObjectURL(b)) : reject(new Error("图片编码失败"))), "image/webp", 0.9);
+    };
+    img.onerror = (): void => reject(new Error("图片解码失败"));
+    img.src = dataUrl;
+  });
+}
+
+/** 长文 `docId` 里那张图原位显示用的地址:已到手就同步交回,否则交一个 Promise。 */
+export function figureSrc(docId: string, imageId: string): string | Promise<string> {
+  if (figDoc !== docId) {
+    for (const u of figUrl.values()) URL.revokeObjectURL(u);
+    figUrl.clear();
+    figWait.clear();
+    figDoc = docId;
+  }
+  const hit = figUrl.get(imageId);
+  if (hit !== undefined) return hit;
+  const going = figWait.get(imageId);
+  if (going !== undefined) return going;
+  // 显式带空间:响应恒到达(统一包装会把跨空间迟到的变成永不决议,那就永远钉在 figWait 里)
+  const p = invokeInSpace<string>(currentSpaceId(), "get_item_image", { imageId })
+    .then(figFrom)
+    .then((u) => {
+      if (figDoc !== docId) {
+        URL.revokeObjectURL(u); // 取回来时已经换篇了:这张不进新篇的表
+        return u;
+      }
+      figUrl.set(imageId, u);
+      return u;
+    })
+    .finally(() => {
+      if (figDoc === docId) figWait.delete(imageId);
+    });
+  figWait.set(imageId, p);
+  return p;
+}
+
 // Blob -> base64 (no data: prefix) for the IPC hop. Chunked so a large image never
 // blows the argument limit of String.fromCharCode(...spread).
 async function toBase64(blob: Blob): Promise<string> {
@@ -322,7 +388,7 @@ async function imageFromShellClipboard(): Promise<Blob | null> {
  *
  *  ⚠ 诚实边界:图与文字**同时**在剪贴板上时,两条路会给出不同结果 —— 标准路认图(①),
  *  WebKitGTK 那条只看得见文字、按②放行贴字。这是平台差异,不在本轮射程内。 */
-function pasteImage(e: ClipboardEvent, onBlob: (b: Blob) => void, onError: (err: unknown) => void): void {
+export function pasteImage(e: ClipboardEvent, onBlob: (b: Blob) => void, onError: (err: unknown) => void): void {
   const direct = imageFromPaste(e);
   if (direct) {
     e.preventDefault();
@@ -433,6 +499,7 @@ export function imageStrip(
   // `all` = 本条同批列出的整组图:点开任一张后 ←/→ 能在组内翻页(224)。
   function thumb(m: ImageMeta, all: ImageMeta[]): HTMLElement {
     const wrap = el("div", { className: "img-thumb" });
+    wrap.dataset.seq = String(m.seq); // 长文阅读页按编号藏起正文里已原位显示的那几张
     const img = el("img", { className: "img-thumb-img", alt: t("itemImages.badge", { n: m.seq }), title: t("itemImages.badge", { n: m.seq }) });
     getThumb(m.id)
       .then((url) => {

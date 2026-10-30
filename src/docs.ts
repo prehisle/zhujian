@@ -27,7 +27,6 @@ import {
   movePartialNote,
   spaceLabel,
 } from "./space";
-import { autoGrow } from "./autogrow";
 import { dismissUndo, toastAction, toastError, toastUndo } from "./toast";
 import { copyText } from "./clipboard";
 import { buildItemDeepLink } from "./deeplink";
@@ -35,9 +34,10 @@ import { armLocate } from "./locate";
 import { DOC_CARD_KEYS, DOC_VIEW_KEYS } from "./keymap";
 import { type Act, armDismiss, createHotkeyController, registerViewKeys } from "./hotkey-menu";
 import { t } from "./i18n";
-import { type ImageMeta, REPASTE_HINT, imageStrip, openLightbox, pendingImages, wirePasteToAttach } from "./item-images";
+import { type ImageMeta, attachBlob, figureSrc, imageStrip, openLightbox, pasteImage } from "./item-images";
 import { toggleChecklistLine } from "../shared/checklist";
-import { renderMarkdown } from "../shared/markdown-dom";
+import { type MdRendered, renderMarkdown } from "../shared/markdown-dom";
+import { imgRefText } from "../shared/markdown";
 import { renderDiff } from "../shared/diff-dom";
 import { closeComments, commentBadge, commentCountFor, inlineCommentState, loadCommentCounts, openInlineComments } from "./item-comments";
 import type { View, ViewCtx } from "./notebook";
@@ -467,15 +467,30 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     return el("button", { className: "hbtn", type: "button", textContent: label, onclick: run });
   }
 
-  /** 正文 → DOM(共用渲染器)。配图映射每篇建一次;勾方框走 edit_note 落一版(同随记,⛔ 不猜行)。 */
-  function renderBody(content: string, imgs: ImageMeta[], onToggle: ((line: number) => void) | null): HTMLElement {
+  /** 正文 → DOM(共用渲染器)。配图映射每篇建一次;勾方框走 edit_note 落一版(同随记,⛔ 不猜行)。
+   *  `docId = null` = 还没建成的新篇(不会有图)。`shown` = 原位画成图的那几张的编号(阅读页的
+   *  缩略图条不再重复摆它们);`anchors` 交给编辑器对齐左右滚动。 */
+  function renderBody(
+    docId: string | null,
+    content: string,
+    imgs: ImageMeta[],
+    onToggle: ((line: number) => void) | null,
+  ): { el: HTMLElement; shown: Set<number>; anchors: MdRendered["anchors"] } {
     const bySeq = new Map(imgs.map((m) => [m.seq, m]));
+    const shown = new Set<number>();
     const r = renderMarkdown(content, {
       openLink: (url) => void openUrl(url).catch(() => {}),
       image: (n) => {
         const m = bySeq.get(n);
-        if (m === undefined) return null;
-        return { label: t("itemImages.badge", { n }), open: () => void openLightbox(imgs, imgs.indexOf(m)) };
+        if (m === undefined || docId === null) return null;
+        return {
+          label: t("itemImages.badge", { n }),
+          open: () => void openLightbox(imgs, imgs.indexOf(m)),
+          src: () => {
+            shown.add(n);
+            return figureSrc(docId, m.id);
+          },
+        };
       },
       checkbox: (checked, line) => ({
         label: onToggle === null ? (checked ? t("checklist.checked") : t("checklist.unchecked")) : checked ? t("checklist.uncheck") : t("checklist.check"),
@@ -484,7 +499,18 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     });
     const wrap = el("div", { className: "doc-body" }, [r.root]);
     if (r.degraded !== null) wrap.prepend(el("p", { className: "doc-note", textContent: t("docs.degraded") }));
-    return wrap;
+    return { el: wrap, shown, anchors: r.anchors };
+  }
+
+  /** 阅读页的缩略图条只摆正文里没原位画出来的图(画了的再摆一遍就重复了;没引用到的图仍在这儿)。 */
+  function hideShown(strip: HTMLElement, shown: Set<number>): void {
+    let left = 0;
+    for (const th of strip.querySelectorAll<HTMLElement>(".img-thumb")) {
+      const inline = shown.has(Number(th.dataset.seq));
+      th.hidden = inline;
+      if (!inline) left++;
+    }
+    strip.classList.toggle("all-inline", left === 0);
   }
 
   function renderDoc(d: DocItem): void {
@@ -530,17 +556,24 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       ckPending = next;
       flush();
     };
+    let shown = new Set<number>();
+    let strip: ReturnType<typeof imageStrip> | null = null;
     const paint = (): void => {
-      bodyHost.replaceChildren(renderBody(content, imgs, toggle));
+      const b = renderBody(d.id, content, imgs, toggle);
+      bodyHost.replaceChildren(b.el);
+      shown = b.shown;
+      if (strip !== null) hideShown(strip.root, shown);
     };
     paint();
-    const strip = imageStrip(d.id, {
+    // ⚠ 乐观首帧在 imageStrip() 返回之前就同步调了 onMetas ⇒ 那一回 strip 还是 null,返回后补一次
+    strip = imageStrip(d.id, {
       editable: false,
       onMetas: (m) => {
         imgs = m;
         paint();
       },
     });
+    hideShown(strip.root, shown);
 
     const draft = loadDraft(mountSpace, d.id);
     const draftBar =
@@ -651,19 +684,139 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       imgErr.hidden = false;
     };
 
-    // 配图:已存过的篇直接挂;新篇还没有 id,先暂存、第一次保存拿到 id 再挂(同「记下」那几处)。
-    // ⚠ `previewDue` 必须先于 imageStrip 声明:它的乐观首帧会**同步**调 onMetas → paintPreview。
+    // 配图:贴一张 = 当场挂上,并在粘贴那刻的光标处插一段「图N」(预览 / 阅读页原位显示)。新篇还
+    // 没有 id ⇒ 第一张图进来那一刻先把它建出来(正文可以是空的),之后与已存过的篇同一条路。
+    // ⚠ `previewDue` / `anchors` 必须先于 mountStrip 声明:乐观首帧会**同步**调 onMetas → paintPreview。
     let imgs: ImageMeta[] = [];
     let previewDue: ReturnType<typeof setTimeout> | null = null;
-    const strip = id !== null ? imageStrip(id, { editable: true, onMetas: (m) => ((imgs = m), paintPreview()) }) : null;
-    const pending = id === null ? pendingImages() : null;
-    if (strip && id !== null) wirePasteToAttach(area, id, () => void strip.reload(), showImgErr);
-    if (pending) pending.wire(area);
+    let anchors: MdRendered["anchors"] = [];
+    let strip: ReturnType<typeof imageStrip> | null = null;
+    const imgRow = el("div", { className: "img-editor" }, [imgErr]);
+    function mountStrip(target: string): ReturnType<typeof imageStrip> {
+      if (strip === null) {
+        strip = imageStrip(target, { editable: true, onMetas: (m) => ((imgs = m), paintPreview()) });
+        imgRow.prepend(strip.root);
+      }
+      return strip;
+    }
+
+    // 逐张排队:编号按粘贴的先后、新篇只建一次;离开 / Ctrl+S 先等这条队走完,插进去的「图N」
+    // 才赶得上那一版。
+    let attaching: Promise<void> = Promise.resolve();
+    area.addEventListener("paste", (e) => {
+      pasteImage(
+        e,
+        (blob) => {
+          const at = { value: area.value, start: area.selectionStart, end: area.selectionEnd };
+          imgErr.hidden = true;
+          attaching = attaching.then(async () => {
+            try {
+              const target = await ensureDoc();
+              const meta = await attachBlob(target, blob, mountSpace);
+              await mountStrip(target).reload();
+              insertRef(meta.seq, at);
+            } catch (e) {
+              showImgErr(e);
+            }
+          });
+        },
+        showImgErr,
+      );
+    });
+    /** 新篇:第一张图进来时先建出来(正文可以是空的)。 */
+    async function ensureDoc(): Promise<string> {
+      const cur = id ?? newId;
+      if (cur !== null) return cur;
+      await commit(false, true);
+      const made = id ?? newId;
+      if (made === null) throw new Error(t("docs.imageNoDoc"));
+      return made;
+    }
+    /** 在 `at`(粘贴那刻的选区;等图期间又改过字就用当前光标)插一段「图N」:前后各空一行,自成
+     *  一段才原位显示。走 execCommand ⇒ 进撤销栈(Ctrl+Z 撤得掉),并照常触发 input(草稿 / 预览)。
+     *  ⚠「图N」是正文语法(`imgRefText`,与界面语言无关),不是界面文案。 */
+    function insertRef(seq: number, at: { value: string; start: number; end: number }): void {
+      if (!area.isConnected) return; // 编辑器已经关了:图挂上了(在缩略图条里),只是没插引用
+      const v = area.value;
+      const [a, b] = v === at.value ? [at.start, at.end] : [area.selectionStart, area.selectionEnd];
+      const before = v.slice(0, a);
+      const after = v.slice(b);
+      const pre = before === "" || before.endsWith("\n\n") ? "" : before.endsWith("\n") ? "\n" : "\n\n";
+      const post = after.startsWith("\n\n") ? "" : after.startsWith("\n") ? "\n" : "\n\n";
+      area.focus();
+      area.setSelectionRange(a, b);
+      if (!document.execCommand("insertText", false, `${pre}${imgRefText(seq)}${post}`)) throw new Error("insertText 不可用");
+    }
 
     function paintPreview(): void {
       previewDue = null;
-      preview.replaceChildren(renderBody(area.value, imgs, null));
+      const b = renderBody(id ?? newId, area.value, imgs, null);
+      preview.replaceChildren(b.el);
+      anchors = b.anchors;
+      syncPreview();
     }
+
+    // 宽屏左右并排:右边跟着左边滚,按块对齐 —— 左边某块起始行的高度 ↔ 右边那块元素的高度,块与块之间
+    // 线性插值(两头钉在 0 与各自的最底)。⛔ 别退回按总高比例:一张图在右边几百像素、在左边只占一行,
+    // 比例一算就整段错开。左边行高靠一只同宽同字体的影子 div 量(折行与 textarea 一致),正文或宽度变了才重量。
+    let tops: { value: string; width: number; ys: number[] } | null = null;
+    function lineTops(lines: number[]): number[] {
+      if (tops !== null && tops.value === area.value && tops.width === area.clientWidth && tops.ys.length === lines.length) return tops.ys;
+      const cs = getComputedStyle(area);
+      const m = document.createElement("div");
+      for (const k of ["fontFamily", "fontSize", "fontWeight", "lineHeight", "letterSpacing", "tabSize", "paddingTop", "paddingLeft", "paddingRight", "whiteSpace", "overflowWrap", "wordBreak"] as const)
+        m.style[k] = cs[k];
+      Object.assign(m.style, { position: "absolute", visibility: "hidden", left: "-99999px", top: "0", boxSizing: "border-box", width: `${area.clientWidth}px`, border: "0" });
+      const src = area.value.split("\n");
+      const marks: HTMLElement[] = [];
+      let from = 0;
+      for (const ln of lines) {
+        m.append(src.slice(from, ln).map((x) => `${x}\n`).join(""));
+        const mark = document.createElement("span");
+        marks.push(mark);
+        m.append(mark);
+        from = ln;
+      }
+      document.body.append(m);
+      const ys = marks.map((x) => x.offsetTop);
+      m.remove();
+      tops = { value: area.value, width: area.clientWidth, ys };
+      return ys;
+    }
+    function syncPreview(): void {
+      if (!window.matchMedia("(min-width: 1180px)").matches) return;
+      const srcMax = area.scrollHeight - area.clientHeight;
+      const dstMax = preview.scrollHeight - preview.clientHeight;
+      if (srcMax <= 0 || dstMax <= 0) return;
+      const ys = lineTops(anchors.map((x) => x.line));
+      const base = preview.getBoundingClientRect().top - preview.scrollTop;
+      const src = [0];
+      const dst = [0];
+      anchors.forEach((x, k) => {
+        const sy = Math.min(srcMax, ys[k]);
+        const dy = Math.min(dstMax, x.el.getBoundingClientRect().top - base);
+        if (sy > src[src.length - 1] && dy >= dst[dst.length - 1]) {
+          src.push(sy);
+          dst.push(dy);
+        }
+      });
+      src.push(srcMax);
+      dst.push(dstMax);
+      const y = area.scrollTop;
+      let k = 0;
+      while (k < src.length - 2 && y >= src[k + 1]) k++;
+      const span = src[k + 1] - src[k];
+      preview.scrollTop = span > 0 ? dst[k] + ((y - src[k]) / span) * (dst[k + 1] - dst[k]) : dst[k];
+    }
+    let syncDue = false;
+    area.addEventListener("scroll", () => {
+      if (syncDue) return;
+      syncDue = true;
+      requestAnimationFrame(() => {
+        syncDue = false;
+        syncPreview();
+      });
+    });
     // 预览只在看得见时画,且停笔 300ms 后才画(200 KiB 一篇解析要几十毫秒,⛔ 别逐键同步算)
     const previewVisible = (): boolean => edWrap.classList.contains("show-preview") || window.matchMedia("(min-width: 1180px)").matches;
     function schedulePreview(): void {
@@ -683,7 +836,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         return;
       }
       try {
-        lastGen = saveDraft(mountSpace, id, area.value);
+        lastGen = saveDraft(mountSpace, id ?? newId, area.value);
         status.textContent = t("docs.draftSaved");
         status.classList.remove("bad");
       } catch (e) {
@@ -698,13 +851,14 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       schedulePreview();
     });
 
-    // 落一版。新篇第一次:capture_doc(同一事务 create + set doc_at)拿到 id,再挂暂存图。
-    // "same" = 没有要写的(正文没变、没有待删 / 暂存的图),"failed" = 错误已写在编辑器里。
+    // 落一版。新篇第一次:capture_doc(同一事务 create + set doc_at)拿到 id。`force` = 新篇正文
+    // 还空着也建(第一张图进来那一刻,图得有篇可挂)。
+    // "same" = 没有要写的(正文没变、没有待删的图),"failed" = 错误已写在编辑器里。
     // `final` = unmount 那一发:只落正文,⛔ 不删图(删图的命令认的是「当前空间」,切空间引起的
     // unmount 那一刻它已经指着别的空间;标了删的图随编辑器一起丢掉,同随记的 Esc)。
     let saving = false;
     let newId: string | null = null;
-    async function commit(final = false): Promise<"wrote" | "same" | "failed"> {
+    async function commit(final = false, force = false): Promise<"wrote" | "same" | "failed"> {
       if (saving) return "failed";
       const text = area.value;
       const curId = id ?? newId;
@@ -715,15 +869,11 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         writeDraftSafe(text);
       }
       const gen = lastGen;
-      const imgsToDelete = !final && strip !== null && strip.pendingDeletes() > 0;
-      const imgsToAttach = pending !== null && pending.count() > 0;
-      if (text === saved && !imgsToDelete && !imgsToAttach) {
+      const st = strip;
+      const imgsToDelete = !final && st !== null && st.pendingDeletes() > 0;
+      if (curId === null ? !force && text.trim() === "" : text === saved && !imgsToDelete) {
         settle(curId, gen);
-        return "same";
-      }
-      if (curId === null && text.trim() === "") {
-        settle(null, gen);
-        return "same"; // 新篇一个字没写就走 = 不建(暂存的图随编辑器丢掉)
+        return "same"; // 新篇一个字没写(也没贴图)就走 = 不建
       }
       saving = true;
       err.hidden = true;
@@ -739,11 +889,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
           saved = text;
           settle(target, gen);
         }
-        if (imgsToAttach && pending !== null) {
-          const out = await pending.attachBatch(target, pending.takeBatch(), mountSpace);
-          if (out.failed > 0) toastError(t("inbox.savedImagesFailed", { n: out.failed }) + (out.why || REPASTE_HINT));
-        }
-        if (imgsToDelete && strip !== null) await strip.commitDeletes();
+        if (imgsToDelete && st !== null) await st.commitDeletes();
       } catch (e) {
         err.textContent = errText(e);
         err.hidden = false;
@@ -775,7 +921,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       flushEditor = null;
     }
     const leave = (then: () => void): void => {
-      void commit().then((r) => {
+      void attaching.then(() => commit()).then((r) => {
         if (r === "failed" || unmounted) return;
         teardown();
         then();
@@ -797,7 +943,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       if (e.isComposing) return;
       if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "s") {
         e.preventDefault();
-        void commit().then((r) => {
+        void attaching.then(() => commit()).then((r) => {
           if (r === "wrote" && !unmounted) status.textContent = t("docs.savedVersion");
         });
       } else if (e.key === "Escape") {
@@ -824,8 +970,8 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       paintPreview();
     };
     const saveBtn = el("button", { className: "do", type: "button", textContent: t("docs.save"), onclick: () => leave(done) });
-    const imgRow = el("div", { className: "img-editor" }, [...(strip ? [strip.root] : []), ...(pending ? [pending.root] : []), imgErr]);
 
+    if (id !== null) mountStrip(id); // 已存过的篇:缩略图条(乐观首帧会同步画一次预览,故放在全部声明之后)
     main.replaceChildren(
       bar(
         [backBtn(id === null ? t("docs.back") : t("docs.backToDoc"), () => leave(done)), el("span", { className: "segs" }, [modeEdit, modePrev])],
@@ -836,7 +982,6 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     if (previewVisible()) paintPreview();
     area.focus();
     area.setSelectionRange(area.value.length, area.value.length);
-    autoGrow(area);
   }
 
   // ---- 历史与比对(§4)--------------------------------------------------------------

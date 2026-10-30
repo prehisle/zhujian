@@ -4,11 +4,11 @@
 // 判据都读 DOM / localStorage / 命令回包:
 //   ① 版面:「＋ 加图 / ＋ 拍照 / ＋ 清单 / 长文 / 记下」在中文 115% 档(用户那台)排成一行;中英 × 100 / 115 / 130
 //     各档没有一枚钮的字折行(装不下整枚换行是既有约定,`.compose-row` 那条 CSS 头注)。读数逐档印出来。
-//   ② 带过去:框里的字 + 两张暂存图 → 点「长文」⇒ 长文面开着、停在编辑器、正文 = 框里的字、暂存条 2 张;
-//     「记一笔」那边字清了、暂存条空了、文字草稿键没了;⭐ **点下去那一刻长文草稿就落了**(不等停笔 1 秒 ——
-//     「记一笔」那份已清,这时杀进程字只在这儿)。
-//   ③ 返回 ⇒ 建成一篇、带着那两张图;再返回 ⇒ 面关了、底栏「长文」钮显形;重载后「记一笔」暂存条仍空
-//     (IndexedDB 那份跟着 takeBatch 清了)。
+//   ② 带过去:框里的字 + 两张暂存图 → 点「长文」⇒ 长文面开着、停在编辑器;⭐ **点下去那一刻长文草稿就落了**
+//     (不等停笔 1 秒 ——「记一笔」那份已清,这时杀进程字只在这儿);「记一笔」那边字清了、暂存条空了、文字草稿键
+//     没了;带过来的图**开编辑器即建篇挂上**(832 起没有长文暂存条),正文 = 框里的字 + 末尾两段「图1」「图2」。
+//   ③ 返回 ⇒ 落到这一篇的阅读页(832 起返回键同「保存」钮)、正文原样(连引用)、带着那两张图;一路返回 ⇒ 面关了、底栏「长文」钮显形;重载后「记一笔」
+//     暂存条仍空(IndexedDB 那份跟着 takeBatch 清了)。
 //   ④ 有一份没写完的新篇草稿时:框里的字**接在它后面**(空一行),⛔ 不覆盖。
 //   ⑤ 框里没字、没有草稿 ⇒ 空编辑器;一个字没写就返回 = 不建。
 //   ⑥ 「记一笔」取图在飞时点「长文」不受理(面不开、框里的字还在);放行后照常。
@@ -56,10 +56,18 @@ async function waitFor(expr, what, ms = 10000) {
 }
 const inv = (cmd, args) => ev(`window.__TAURI__.core.invoke(${JSON.stringify(cmd)}, ${JSON.stringify(args)})`);
 const back = () => ev(`window.__zhujianHandleBack()`);
+/** 一路返回到面关上(新篇建成后返回先落到它的阅读页、再回列表、再关面;没建成的直接回列表)。 */
+async function backToClosed() {
+  for (let i = 0; i < 4 && (await paneOpen()); i++) {
+    await back();
+    await sleep(500);
+  }
+  await waitFor(`!document.body.classList.contains("pane-open")`, "面关了");
+}
 const paneOpen = () => ev(`document.body.classList.contains("pane-open") && !document.getElementById("docs-pane").hidden`);
 const inEditor = () => ev(`!!document.querySelector("#docs-body textarea.doc-area")`);
 const editorText = () => ev(`document.querySelector("#docs-body textarea.doc-area")?.value ?? null`);
-const pendingCount = () => ev(`document.querySelectorAll("#docs-body .doc-imgs .cthumb:not(.pending)").length`);
+const thumbCount = () => ev(`document.querySelectorAll("#docs-body .doc-imgs .thumbs .thumb").length`);
 const composeThumbs = () => ev(`document.querySelectorAll("#compose-thumbs .cthumb").length`);
 const composeText = () => ev(`document.getElementById("text").value`);
 const docDraftKey = () => `zhujian.doc-draft:${sp}:new`;
@@ -170,26 +178,26 @@ try {
   ok(draftNow === TEXT, "② ⭐ 点下去那一刻长文草稿就落了(不等停笔)", draftNow);
   await waitFor(`!!document.querySelector("#docs-body textarea.doc-area")`, "编辑器");
   ok(await paneOpen(), "② 长文面开着");
-  ok((await editorText()) === TEXT, "② 正文 = 框里的字", await editorText());
-  await waitFor(`document.querySelectorAll("#docs-body .doc-imgs .cthumb:not(.pending)").length === 2`, "长文暂存条 2 张");
-  ok((await pendingCount()) === 2, "② 两张图进了长文暂存条");
+  const WITH_REFS = `${TEXT}\n\n图1\n\n图2\n\n`;
+  await waitFor(`document.querySelectorAll("#docs-body .doc-imgs .thumbs .thumb").length === 2`, "长文缩略图 2 张(已挂上)");
+  ok((await thumbCount()) === 2, "② 两张图开编辑器即挂上");
+  ok((await editorText()) === WITH_REFS, "② 正文 = 框里的字 + 末尾两段「图N」", await editorText());
   ok((await composeText()) === "" && (await composeThumbs()) === 0, "② 「记一笔」那边字清了、暂存条空了", { text: await composeText(), thumbs: await composeThumbs() });
   ok((await ev(`localStorage.getItem("zhujian.compose-draft")`)) === null, "② 「记一笔」文字草稿键没了");
-  ok((await markedDocs()).length === 0, "② 这时库里还没有这一篇(第一次保存才建)");
+  ok((await markedDocs()).length === 1, "② 带图过来 = 开编辑器即建篇");
 
   // ③ 返回 = 建成;再返回 = 关面
   await back();
   await waitFor(`!document.querySelector("#docs-body textarea.doc-area")`, "离开编辑器");
-  await sleep(500);
+  await waitFor(`!!document.querySelector("#docs-body .doc-acts")`, "返回落到这一篇的阅读页");
   let made = await markedDocs();
-  ok(made.length === 1 && made[0].content === TEXT, "③ 返回 ⇒ 建成一篇,正文原样", made.map((d) => d.content));
+  ok(made.length === 1 && made[0].content === WITH_REFS, "③ 返回 ⇒ 那一篇正文原样(连引用)", made.map((d) => d.content));
   if (made.length === 1) {
     const imgs = await inv("list_item_images", { spaceId: sp, itemId: made[0].id });
     ok(imgs.length === 2, "③ 带着那两张图", imgs.length);
   }
   ok((await docDraft()) === null, "③ 建成后新篇草稿清了");
-  await back();
-  await waitFor(`!document.body.classList.contains("pane-open")`, "面关了");
+  await backToClosed();
   await waitFor(`!document.querySelector('#bottombar [data-pane="docs"]').hidden`, "底栏「长文」钮显形");
   await reload();
   ok((await composeThumbs()) === 0, "③ 重载后「记一笔」暂存条仍空(IndexedDB 那份清了)");
@@ -205,8 +213,7 @@ try {
   ok((await docDraft()) === `${PRIOR}\n\n后半`, "④ 草稿也是接好的那份");
   await back();
   await waitFor(`!document.querySelector("#docs-body textarea.doc-area")`, "离开编辑器");
-  await back();
-  await waitFor(`!document.body.classList.contains("pane-open")`, "面关了");
+  await backToClosed();
 
   // ⑤ 空起:空编辑器,不写就走 = 不建
   const before = (await inv("list_docs", { spaceId: sp })).length;
@@ -218,8 +225,7 @@ try {
   await waitFor(`!document.querySelector("#docs-body textarea.doc-area")`, "离开编辑器");
   await sleep(500);
   ok((await inv("list_docs", { spaceId: sp })).length === before, "⑤ 一个字没写就返回 = 不建");
-  await back();
-  await waitFor(`!document.body.classList.contains("pane-open")`, "面关了");
+  await backToClosed();
 
   // ⑥ 取图在飞时不受理
   await openCapture();
@@ -236,11 +242,11 @@ try {
   await disarmPicker();
   await ev(`document.getElementById("compose-doc").click()`);
   await waitFor(`!!document.querySelector("#docs-body textarea.doc-area")`, "编辑器");
-  ok((await pendingCount()) === 1, "⑥ 放行后照常带过去");
+  await waitFor(`document.querySelectorAll("#docs-body .doc-imgs .thumbs .thumb").length === 1`, "放行后带过去 1 张");
+  ok((await thumbCount()) === 1, "⑥ 放行后照常带过去");
   await back();
   await waitFor(`!document.querySelector("#docs-body textarea.doc-area")`, "离开编辑器");
-  await back();
-  await waitFor(`!document.body.classList.contains("pane-open")`, "面关了");
+  await backToClosed();
 } catch (e) {
   ok(false, `中断:${e.message}`);
 } finally {
