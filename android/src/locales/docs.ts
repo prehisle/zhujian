@@ -17,6 +17,8 @@ export const docs = defineMessages({
   "docs.actComments": { zh: "留言", en: "Comments" },
   "docs.actCollapse": { zh: "收回随记", en: "Back to notes" },
   "docs.actCopy": { zh: "复制全文", en: "Copy text" },
+  "docs.actCopyLink": { zh: "复制链接", en: "Copy link" },
+  "docs.linkCopied": { zh: "已复制链接", en: "Link copied" },
   "docs.actDelete": { zh: "删除", en: "Delete" },
   "docs.actMove": { zh: "移动", en: "Move" },
   "docs.moveWarnPre": { zh: "移到别的空间 = 那边新生一篇、这边删除;", en: "Moving to another space creates a new note there and deletes this one; " },

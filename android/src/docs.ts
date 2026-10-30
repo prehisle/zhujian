@@ -31,6 +31,7 @@ import {
   fileNoteToTopic,
   getCurrentSpace,
   distinctSpaceLabels,
+  itemDeepLink,
   listDocs,
   listItemImages,
   listRevisions,
@@ -508,6 +509,14 @@ function readerActions(d: IdeaItem): HTMLElement {
           () => showBar(t("docs.copied"), true),
           (err) => showBar(t("docs.copyFailed", { error: errDetail(err) })),
         ),
+      ),
+      btn(t("docs.actCopyLink"), () =>
+        itemDeepLink(sp, d.id)
+          .then(writeClipboard)
+          .then(
+            () => showBar(t("docs.linkCopied"), true),
+            (err) => showBar(t("docs.copyFailed", { error: errDetail(err) })),
+          ),
       ),
       // 仅 ≥2 空间、且没有未处理的部分移动登记时出现(同卡片「更多…」)
       ...(partial === null && deps.getSpaces().length >= 2

@@ -45,6 +45,7 @@ import {
   editNote,
   fileNoteToTopic,
   getCurrentSpace,
+  itemDeepLink,
   listTopics,
   moveItemToSpace,
   movePartialClear,
@@ -74,7 +75,8 @@ import {
 } from "./api";
 import { t } from "./i18n";
 import { $, actionBar, confirmBar, esc, fmtWhen, hideConfirmBar, showBar, showError } from "./ui";
-import { errText, showErr } from "./err";
+import { errDetail, errText, showErr } from "./err";
+import { writeClipboard } from "./platform";
 import { DONE_COLUMN, LANDING_COLUMN, isTaskStage, liveTaskColumns, stageLabel } from "./columns";
 import { capturePhoto, PICK_MAX, pickImages, toBase64 } from "./images";
 import { openViewer } from "./viewer";
@@ -344,6 +346,7 @@ function renderMore(item: TimelineItem): string {
   if (!task) acts.push(actBtn("comment", t("cardpanel.actComment"))); // 随记的留言让位给「转待办」
   // 展开成长文(0042):只给随记(时间轴上的随记就是主归属为随记的条目,长文不在时间轴上画)。
   if (item.kind === "idea") acts.push(actBtn("expand", t("cardpanel.actExpand")));
+  acts.push(actBtn("copylink", t("cardpanel.actCopyLink"))); // 152:同桌面卡片的「复制链接」
   acts.push(actBtn("history", t("cardpanel.actHistory")));
   // 移动入口:仅 ≥2 空间、且本条无未处理的部分移动登记时出现(§4)。
   if (!movePartialNote(item.id) && deps.getSpaces().length >= 2) acts.push(actBtn("move", t("cardpanel.actMove")));
@@ -1021,6 +1024,15 @@ function handleAct(act: string, card: HTMLElement) {
       return;
     case "back":
       closeDraft();
+      return;
+    case "copylink":
+      // 不是业务写、不走 run():面板原样留着,只出一条回执。
+      void itemDeepLink(getCurrentSpace(), item.id)
+        .then(writeClipboard)
+        .then(
+          () => showBar(t("cardpanel.linkCopied"), true),
+          (err) => showBar(t("cardpanel.copyLinkFailed", { error: errDetail(err) })),
+        );
       return;
     case "expand":
       // 卡离开随记面、住进「长文」面:回执指路 + 一枚「打开」(底栏那枚钮此刻才显形,408-A1 那形)。

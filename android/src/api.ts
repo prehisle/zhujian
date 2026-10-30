@@ -44,6 +44,16 @@ export function spaceLabel(s: { id: string; name: string | null }): string {
 /** 全部空间(主库恒第一)。命令不带 space。 */
 export const listSpaces = () => invoke<SpaceInfo[]>("list_spaces");
 
+/** 给一条条目生成「复制链接」用的深链接(152;与桌面 `src/deeplink.ts::buildItemDeepLink`
+ *  同形,消费在 main.ts 的 pullDeepLink)。空间已配同步 → `acc=` 账户号(发到别的设备也能开);
+ *  否则 `space=` 空间 id(只本机可解,不假装能开)。账户号取 sync_status —— 手机的
+ *  SpaceInfo 不带它。 */
+export async function itemDeepLink(space: string, itemId: string): Promise<string> {
+  const s = await invoke<{ account_id: string | null }>("sync_status", { spaceId: space });
+  const key = s.account_id ? `acc=${encodeURIComponent(s.account_id)}` : `space=${encodeURIComponent(space)}`;
+  return `zhujian://open?${key}&item=${encodeURIComponent(itemId)}`;
+}
+
 /** 状态类读的统一入口:注入当前 spaceId;响应回来时空间已切换 = 迟到响应,连同
  *  错误一起丢弃(永不决议)。⚠ 业务读写不走它(见文件头纪律),别扩大使用面。 */
 export function sinvoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {

@@ -1370,18 +1370,17 @@ window.addEventListener("zhujian-deeplink", () => void pullDeepLink());
 // SpaceInfo 不暴露 account_id)→ 若非当前空间先切过去(异步、会停机)→ focusTimelineCard
 // 定位高亮。与分享不同,深链接是一次性跳转、不做追加合并,简单 single-flight 去重即可。
 // 回收站/归档册的条目 focusTimelineCard 会如实报「已不在」(v1 只覆盖灵感/任务两面)。
+// ⛔ 别改回 `new URL(raw).host === "open"`(152 在 MuMu 上量到):非特殊 scheme 的 host 老 WebView 解析不出来 ——
+// Chrome 110 给 `host: ""`、`pathname: "//open"` ⇒ 每条链接都被静默丢掉,新 WebView(vivo 151)上才对。
+// 认前缀不认引擎:链接是我们自己生成的那个形(桌面 deeplink.ts / 本端 api.ts::itemDeepLink)。
 type ParsedDeepLink = { acc: string | null; space: string | null; item: string };
+const DEEP_LINK_PREFIX = "zhujian://open?";
 function parseDeepLink(raw: string): ParsedDeepLink | null {
-  let u: URL;
-  try {
-    u = new URL(raw);
-  } catch {
-    return null;
-  }
-  if (u.protocol !== "zhujian:" || u.host !== "open") return null;
-  const item = u.searchParams.get("item");
+  if (!raw.startsWith(DEEP_LINK_PREFIX)) return null;
+  const q = new URLSearchParams(raw.slice(DEEP_LINK_PREFIX.length));
+  const item = q.get("item");
   if (!item) return null;
-  return { acc: u.searchParams.get("acc"), space: u.searchParams.get("space"), item };
+  return { acc: q.get("acc"), space: q.get("space"), item };
 }
 
 let pullingDeepLink = false;
