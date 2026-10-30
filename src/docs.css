@@ -306,8 +306,9 @@
   pointer-events: none;
   color: transparent;
 }
-/* 底色照预览里那枚芯片(.img-ref)的底、边、圆角;左右撑出的边距靠负 margin 抵掉,⛔ 别让它占宽(影子层要与写字框逐字同位) */
-.v-docs .doc-hl .ref { color: transparent; background: var(--seal-tint); border: 1px solid var(--seal-line); border-radius: var(--radius-xs); padding: 0 3px; margin: 0 -4px; }
+/* 底色照预览里那枚芯片(.img-ref)的底、边、圆角,但框正好贴着这几个字、边画在里侧:⛔ 别往外撑(负 margin 那版压住了紧挨着的字 ——
+   芯片占位推得开邻字,写字框里的字推不开),也别占宽(影子层要与写字框逐字同位) */
+.v-docs .doc-hl .ref { color: transparent; background: var(--seal-tint); box-shadow: inset 0 0 0 1px var(--seal-line); border-radius: var(--radius-xs); }
 /* 单独成段的「图N」:右侧窄边一枚缩略图(top 不写 = 停在那一行);有这种段才留窄边 */
 .v-docs .doc-hl .ref-thumb {
   position: absolute;

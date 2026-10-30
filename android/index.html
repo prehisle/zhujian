@@ -1560,9 +1560,9 @@
       /* 字号与行高两层同一条声明(⛔ 别改成 JS 从写字框抄:textZoom 会把抄来的放大后字号再放大一遍,docs.ts syncHl 头注) */
       .doc-area, .doc-hl { font-size: var(--fs-16); line-height: 1.75; }
       .doc-hl { position: absolute; box-sizing: border-box; overflow: hidden; pointer-events: none; color: transparent; }
-      /* 「图N」的底色照预览里那枚芯片(.md .img-ref)的底、边、圆角;左右各撑出 3px 的边距靠负 margin 抵掉,
-         ⛔ 别让它占宽 —— 影子层的字要与写字框逐字同位,多占一像素后面的底色就全错开 */
-      .doc-hl .ref { color: transparent; background: var(--seal-tint); border: 1px solid var(--seal-line); border-radius: var(--radius-xs); padding: 0 3px; margin: 0 -4px; }
+      /* 「图N」的底色照预览里那枚芯片(.md .img-ref)的底、边、圆角,但框正好贴着这几个字、边画在里侧:
+         ⛔ 别往外撑(负 margin 那版压住了紧挨着的字 —— 芯片占位推得开邻字,写字框里的字推不开),也别占宽(影子层要与写字框逐字同位) */
+      .doc-hl .ref { color: transparent; background: var(--seal-tint); box-shadow: inset 0 0 0 1px var(--seal-line); border-radius: var(--radius-xs); }
       /* 单独成段的「图N」:右侧窄边一枚缩略图(top 不写 = 停在那一行);有这种段才留窄边 */
       .doc-hl .ref-thumb {
         position: absolute; right: calc(8px + var(--k) * 50px); width: 44px; height: 36px; margin-top: 4px;
