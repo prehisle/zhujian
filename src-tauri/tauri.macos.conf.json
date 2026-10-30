@@ -4,6 +4,7 @@
     "windows": [
       {
         "label": "capture",
+        "create": false,
         "title": "朱简 · 捕获",
         "width": 560,
         "height": 140,
@@ -18,6 +19,7 @@
       },
       {
         "label": "notebook",
+        "create": false,
         "title": "朱简",
         "url": "notebook.html",
         "width": 1280,
@@ -30,6 +32,22 @@
         "titleBarStyle": "Overlay",
         "hiddenTitle": true,
         "shadow": false,
+        "dragDropEnabled": false,
+        "visible": false
+      },
+      {
+        "label": "lightbox",
+        "create": false,
+        "title": "朱简 · 看图",
+        "url": "lightbox.html",
+        "width": 800,
+        "height": 600,
+        "resizable": false,
+        "decorations": false,
+        "transparent": true,
+        "shadow": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
         "dragDropEnabled": false,
         "visible": false
       }

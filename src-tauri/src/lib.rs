@@ -3889,12 +3889,8 @@ pub fn run() {
                 })
                 .build(),
         )
-        // 这两枚 state 必须在 builder 链上(`.setup` 之前)manage,不能放进 setup 闭包:
-        // 捕获窗 webview 在**窗口创建期**就同步 invoke `hotkey_conflicts`(backtrace:
-        // Webview::on_message→prepare_webview→with_webview→tauri::app::setup,早于 .setup
-        // 闭包体运行),放 setup 里 manage 必被这记同步 invoke 抢先 → `state() called before
-        // manage()` panic 崩启动(get_foreground_space 因 main.ts 里排在 `await listen` 之后
-        // 才 dispatch、赶上了 setup 的 manage,才没中招——同类竞速只是它侥幸)。空值起手,
+        // 这两枚 state 早年被捕获窗创建期那记 `hotkey_conflicts` 抢先过,才挪到 builder 链上;
+        // 827 起窗在 setup 末段才建(见那里),这个位置已不再是必需,留着无害。空值起手,
         // 真实冲突名单在 setup 注册热键后回填(见下 `*state().lock() = failed`)。
         .manage(HotkeyConflicts(Mutex::new(Vec::new())))
         .manage(PendingOpenSettings(AtomicBool::new(false)))
@@ -4092,8 +4088,7 @@ pub fn run() {
             // 前台空间(工序 8,§9):启动恒 main;notebook 前端恢复上次空间时会
             // 立即 set_foreground_space 对齐。
             app.manage(ForegroundSpace(Mutex::new(spaces::MAIN_SPACE.to_string())));
-            // 注:HotkeyConflicts / PendingOpenSettings 已在 builder 链上提前 manage(见那里
-            // 长注释——捕获窗创建期就同步 invoke,setup 里 manage 太晚)。此处不再 manage。
+            // 注:HotkeyConflicts / PendingOpenSettings 在 builder 链上 manage(见那里)。此处不再 manage。
 
             // 深链接(4b OS 桥):暂存位 + scheme 注册 + on_open_url 接线。
             app.manage(PendingDeepLink(Mutex::new(None)));
@@ -4176,6 +4171,23 @@ pub fn run() {
                 .lock()
                 .expect("hotkey conflicts") = failed;
 
+            // 三只窗都在这儿按配置建(827,backlog 代码与结构 65):`tauri.conf.json` 里各标 `create: false`,Tauri 就不在
+            // `setup` 之前替我们建。⛔ 别改回让 Tauri 自建 —— 那样窗是在 `setup` **之前**建出来的、
+            // 页面立刻开始加载,而 WebView2 建下一只窗时会抽消息循环,前一只窗启动就发的 invoke
+            // 于是赶在上面那些 `.manage()` 之前到达:`state::<T>()` 当场 panic 在主线程 ⇒ 整个 app
+            // 退出(冷 profile = 装完第一次打开,三窗形 3/3 崩,606 / 827);`State<T>` 参数那一路
+            // 不崩,但被拒(811 的 `list_inbox`),首屏一样是坏的。建在这儿,命令要的 state 都已
+            // manage 好;⚠ 此后才 manage 的(今天只有 `TrayHotkeyItems`)命令里一律 `try_state`。
+            // 有人往配置里加了没标 `create: false` 的窗 ⇒ 当场拒启,不让竞态悄悄回来。
+            for win in &app.config().app.windows {
+                assert!(
+                    !win.create,
+                    "tauri.conf.json 的窗口 `{}` 必须标 \"create\": false(由 setup 末段建,见 progress-log 827)",
+                    win.label
+                );
+                tauri::WebviewWindowBuilder::from_config(app.handle(), win)?.build()?;
+            }
+
             // 合成器探测(Linux,见 `wm_composited`):setup 跑在主线程、且窗口都已建好
             // (GDK 必然初始化过),是唯一能安全问 GDK 的地方——命令跑在异步运行时线程上,
             // 在那儿碰 GDK 就是 394 那次 abort。量到的结论存进静态,前端用命令来取。
@@ -4211,7 +4223,7 @@ pub fn run() {
             // 窗口装饰分平台**在配置里分**:`tauri.conf.json` 的 notebook 是无边框(Windows/Linux
             // 用前端自绘按钮),`tauri.macos.conf.json` 整份覆盖 windows 数组、给 mac 开 decorations
             // + titleBarStyle Overlay(系统原生红绿灯)。⛔ 别改回 212 那手「config 开边框、非 mac
-            // 运行时 set_decorations(false)」(667):窗口几何的恢复发生在 setup 之前、那时窗还带着
+            // 运行时 set_decorations(false)」(667):窗口几何的恢复发生在建窗那一刻、那时窗还带着
             // 系统边框,恢复的是「内容区 W×H」,setup 里再关边框,边框那圈就变成内容区 ⇒ 每次重启
             // 窗口长大一圈(150% DPI 下 22×56 像素,隔离实例三次重启 1100×750 → 1122×806 → 1144×862)。
             // mac 原生窗口阴影:config 的 shadow:false 是为 Windows/Linux 无边框态保留,
@@ -4260,40 +4272,16 @@ pub fn run() {
             // 看大图那只遮罩窗(606):无边框、透明、置顶、铺满显示器,**常驻隐藏**,
             // 由前端 `lightbox.ts` 收到开图事件才摆位 + show,关图 hide。
             //
-            // ⛔⛔ **刻意不写进 `tauri.conf.json` 的 windows 里,必须在这儿建** —— 606 实测的坑:
-            // 配置里声明的窗口由 `build()` 创建、页面**立刻**开始加载,而 `setup` 是在那之后跑的
-            // ⇒ 前端启动那几记 invoke 会**赶在 `.manage()` 之前**到达。多这第三个壳会把 `build()`
-            // 拉长,于是 `notebook.ts` 启动就发的 `backup_auto_status` 稳定地抢在
-            // `app.manage(BackupCoordinator)` 前面,`state::<T>()` 当场 **panic 在主线程 ⇒ 整个
-            // app 退出**。现场极具误导性:e2e 45 支全红、报的却是 tauri-driver 的
-            // 「目标计算机积极拒绝」,一眼看去像驱动坏了。判别读数(冷 WebView2 profile,各 3 趟):
-            // 三窗形必崩 / 把这只窗从 config 摘掉的两窗形 0/3。
-            // ⇒ **那条竞态本来就在**(任何早发的命令都能踩),第三个窗只是把它从「偶尔」变成
-            // 「必然」;它本身没治,已记 backlog。⛔ 别把这只窗挪回 config,除非那条先治完。
-            // 建在这儿就没问题:此刻全部 state 都 manage 好了,而遮罩窗自己启动时**一条业务命令
-            // 都不发**(只 `listen` / `emit`,那是 core 插件,恒在)。
+            // 606 时它是在这儿用代码建的(那时配置里的窗由 Tauri 在 setup 之前建,第三只壳把启动
+            // 竞态从「偶尔」变「必然」);827 起三只窗统一由上面按配置建,它回到了配置里。
             //
             // ⛔ 关它必须是「藏」不是「毁」:Alt+F4 真把它销毁掉的话,之后每次看大图都开不出来,
             // 而且一声不响(前端只是 emit 一条没人收的事件)。同 notebook 的 prevent_close 手法。
             // ⚠ 它的几何**不进窗口状态**(denylist 里有它):那是「铺满哪块显示器」的派生量,
             // 由开图那个窗每次现算送来,存下来只会在换屏 / 换分辨率之后摆错。
-            let lightbox = tauri::WebviewWindowBuilder::new(
-                app,
-                "lightbox",
-                tauri::WebviewUrl::App("lightbox.html".into()),
-            )
-            .title("朱简 · 看图")
-            .inner_size(800.0, 600.0)
-            .resizable(false)
-            .decorations(false)
-            .transparent(true)
-            .shadow(false)
-            .always_on_top(true)
-            .skip_taskbar(true)
-            .disable_drag_drop_handler()
-            .visible(false)
-            .build()
-            .expect("build lightbox window");
+            let lightbox = app
+                .get_webview_window("lightbox")
+                .expect("lightbox window must exist");
             let lightbox_for_close = lightbox.clone();
             lightbox.on_window_event(move |event| {
                 if let tauri::WindowEvent::CloseRequested { api, .. } = event {
