@@ -306,7 +306,8 @@
   pointer-events: none;
   color: transparent;
 }
-.v-docs .doc-hl .ref { color: transparent; background: var(--seal-tint); border-radius: var(--radius-xs); box-shadow: 0 0 0 2px var(--seal-tint), 0 0 0 3px var(--seal-line); }
+/* 底色照预览里那枚芯片(.img-ref)的底、边、圆角;左右撑出的边距靠负 margin 抵掉,⛔ 别让它占宽(影子层要与写字框逐字同位) */
+.v-docs .doc-hl .ref { color: transparent; background: var(--seal-tint); border: 1px solid var(--seal-line); border-radius: var(--radius-xs); padding: 0 3px; margin: 0 -4px; }
 /* 单独成段的「图N」:右侧窄边一枚缩略图(top 不写 = 停在那一行);有这种段才留窄边 */
 .v-docs .doc-hl .ref-thumb {
   position: absolute;

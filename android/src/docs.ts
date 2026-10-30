@@ -843,11 +843,13 @@ function openEditor(d: IdeaItem | null, seed: string | null, carried: File[]): v
   // 写字框里的「图N」:能对上一张图的垫一层底色(对不上 = 引用断了,照普通字),单独成段的再在右侧
   // 窄边配一枚缩略图(同桌面 paintHl)。纯文本框给不了几个字单独上色 ⇒ 背后垫一层同字体同排版的
   // 影子层,只画底色与缩略图,字仍是写字框自己的;写字框背景透明,纸色由外框给。手机上框随内容长高、
-  // 不在框里滚 ⇒ 影子层只跟尺寸,不跟滚动。排版参数逐项从写字框的计算样式抄(⛔ 别在 CSS 里另写一份)。
+  // 不在框里滚 ⇒ 影子层只跟尺寸,不跟滚动。排版参数逐项从写字框的计算样式抄,⛔ 唯独字号与行高不抄、由 CSS 里
+  // 与写字框同一条声明给(834):textZoom(系统字号 / 界面字号)把计算后字号推大、getComputedStyle 照实报放大后的值,
+  // 抄进行内样式再被 textZoom 放大一遍 ⇒ 115% 档影子层 21.16px 对写字框 18.4px,底色一行比一行往下错。
   const hl = el("div", "doc-hl");
   hl.setAttribute("aria-hidden", "true");
   const edBox = el("div", "doc-ed", [hl, area]);
-  const HL_COPY = ["fontFamily", "fontSize", "fontWeight", "fontStyle", "lineHeight", "letterSpacing", "wordSpacing", "tabSize", "textIndent",
+  const HL_COPY = ["fontFamily", "fontWeight", "fontStyle", "letterSpacing", "wordSpacing", "tabSize", "textIndent",
     "paddingTop", "paddingRight", "paddingBottom", "paddingLeft", "whiteSpace", "overflowWrap", "wordBreak"] as const;
   function syncHl(): void {
     const cs = getComputedStyle(area);

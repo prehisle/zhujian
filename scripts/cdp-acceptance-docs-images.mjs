@@ -20,7 +20,8 @@
 //    当前空间配过账户就拒跑(`--allow-synced` 放行 —— 墓碑会同步到同账户的其它设备)。
 //
 // 跑法(MuMu / 真机的 devtools 包;先 `node scripts/android-cdp.mjs forward`):
-//   CDP_PORT=9222 node scripts/cdp-acceptance-docs-images.mjs [--shots <目录>]
+//   CDP_PORT=9222 node scripts/cdp-acceptance-docs-images.mjs [--shots <目录>] [--zoom 115]
+//   ⭐ `--zoom` 至少跑一趟非 100 的档:MuMu 系统字号是 100%,不拨就照不出 834 那种「影子层被放大两遍」。
 // 退出码 0 = 全过。
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -31,6 +32,7 @@ const arg = (k) => (argv.includes(k) ? argv[argv.indexOf(k) + 1] : null);
 const PORT = Number(process.env.CDP_PORT || 9222);
 const SHOTS = arg("--shots");
 const ALLOW_SYNCED = argv.includes("--allow-synced");
+const ZOOM = arg("--zoom"); // 界面字号临时拨到这一档(走桥,不写盘;收尾拨回存着的那档)
 const MARK = "配图验收";
 if (SHOTS) mkdirSync(SHOTS, { recursive: true });
 
@@ -131,6 +133,7 @@ try {
   const id = await inv("capture_doc", { spaceId: sp, content: BODY });
   seeded.push(id);
   await reload();
+  if (ZOOM !== null) await ev(`window.__zhujianTextSize.set(${Number(ZOOM)}), true`); // 收尾那次重载按存着的档拨回
 
   // ① 已存过的篇:编辑器下方有两枚钮、还没有缩略图
   await openReader(id);
@@ -192,6 +195,17 @@ try {
   })()`);
   ok(hl.marks.join() === "图1,图1,图2,图3" && hl.thumbs === 3, "③b 四处「图N」垫了底色、三段单独成段的配缩略图", hl);
   ok(hl.dx === 0 && hl.w[0] === hl.w[1] && hl.hh[0] === hl.hh[1] && hl.gutter === hl.copied, "③b 影子层与写字框内框重合、窄边一致", hl);
+  // ③c 每处底色落在那几个字所在的那一行(834:系统字号 / 界面字号不是 100% 时,影子层抄来的放大后字号被 textZoom
+  //     再放大一遍,底色整片往下错、越往后错得越多)。这几段都短、不折行 ⇒ 第几行 = 前面有几个换行。
+  const rows = await ev(`(() => {
+    const a = document.querySelector("#docs-body textarea.doc-area"), h = document.querySelector("#docs-body .doc-hl");
+    const ca = getComputedStyle(a), ch = getComputedStyle(h), lh = parseFloat(ca.lineHeight), top = h.getBoundingClientRect().top + parseFloat(ca.paddingTop);
+    const v = a.value, want = [];
+    for (const m of v.matchAll(/图\\d+/g)) want.push(v.slice(0, m.index).split("\\n").length - 1);
+    const got = [...h.querySelectorAll(".ref")].map((m) => { const r = m.getClientRects()[0]; return Math.floor((r.top + r.height / 2 - top) / lh); });
+    return { want, got, font: [ca.fontSize, ch.fontSize], lh: [ca.lineHeight, ch.lineHeight] };
+  })()`);
+  ok(rows.want.join() === rows.got.join() && rows.font[0] === rows.font[1] && rows.lh[0] === rows.lh[1], `③c 底色落在那几个字那一行、字号行高与写字框一致(字号 ${ZOOM ?? "不动"})`, rows);
   await shot("doc-edit-hl");
   await clickText("预览");
   await waitFor(`!document.querySelector("#docs-body .doc-preview").hidden`, "预览");
