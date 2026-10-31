@@ -37,7 +37,8 @@ import {
 import { IDEA_CARD_KEYS, IDEA_TRASH_KEYS, IDEA_VIEW_KEYS } from "./keymap";
 import { type Act, SATELLITE_LAYERS, armDismiss, createHotkeyController, registerViewKeys } from "./hotkey-menu";
 import { t } from "./i18n";
-import { type ImageMeta, REPASTE_HINT, imageStrip, renderContent, wirePasteToAttach } from "./item-images";
+import { type ImageMeta, REPASTE_HINT, imageStrip, listImages, renderContent, wirePasteToAttach } from "./item-images";
+import { withMissingRefs } from "../shared/markdown";
 import { toggleChecklistLine } from "../shared/checklist";
 import {
   closeComments,
@@ -960,6 +961,15 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
         showOpErr(errText(e));
         return;
       }
+      // 154 G3(用户拍两端统一):正文里还没提到的图,「图N」各成一段接在文末并落一版 —— 长文里图写到哪画到哪,
+      // 不补就只躺在正文下面的条里。撤销只翻回 doc_at,补上的「图N」留着(随记里它也是芯片)。补失败不拦展开,明说。
+      let refsErr: unknown = null;
+      try {
+        const next = withMissingRefs(currentContent, (await listImages(item.id)).map((m) => m.seq));
+        if (next !== null) await invoke("edit_note", { id: item.id, content: next });
+      } catch (e) {
+        refsErr = e;
+      }
       leaveCard(note, "ideas", null);
       // 卡片走了、人还在随记:回执里给一枚「打开」直接去那一篇(153 走查 D-M15:原先只能点侧栏「长文」,
       // 而那儿停在上一次看的那篇)
@@ -970,6 +980,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
           ctx.navigate("docs");
         },
       });
+      if (refsErr !== null) toastError(t("inbox.expandRefsFailed", { err: errDetail(refsErr) }));
     }
 
     // ---- 归纳主题 (manual file into an existing/new topic) ----

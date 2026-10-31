@@ -52,7 +52,7 @@ import {
   type TopicItem,
 } from "./api";
 import { renderMarkdown } from "../../shared/markdown-dom";
-import { imgRefText, scanImgRefs } from "../../shared/markdown";
+import { refInsertion, scanImgRefs } from "../../shared/markdown";
 import { renderDiff } from "../../shared/diff-dom";
 import { toggleChecklistLine } from "../../shared/checklist";
 import { HAS_BROWSER, writeClipboard } from "./platform";
@@ -398,6 +398,7 @@ function renderBody(
   docId: string | null,
   content: string,
   imgs: ImageMeta[],
+  imgsKnown: boolean,
   onToggle: ((line: number) => void) | null,
 ): { el: HTMLElement; shown: Set<number>; figs: ImageMeta[]; anchors: { line: number; el: HTMLElement }[] } {
   const bySeq = new Map(imgs.map((m) => [m.seq, m]));
@@ -418,6 +419,8 @@ function renderBody(
         },
       };
     },
+    // 对不上任何一张现存图的「图N」= 图删了(或从没有过):灰的带删除线,正文不改(154 G4,同桌面);图列表读到之前不划
+    gone: (n) => (imgsKnown ? t("docs.imgGone", { n }) : null),
     checkbox: (checked, line) => ({
       label: onToggle === null ? (checked ? t("checklist.checked") : t("checklist.unchecked")) : checked ? t("checklist.uncheck") : t("checklist.check"),
       toggle: onToggle === null ? null : () => onToggle(line),
@@ -455,6 +458,7 @@ function renderDoc(d: IdeaItem): void {
   const sp = space;
   let content = d.content;
   let imgs: ImageMeta[] = [];
+  let imgsKnown = false;
   const bodyHost = el("div", "");
   // 勾方框:单飞 + 尾随(同 main.ts flushChecklist —— 每发都是整篇,乱序落地会互相覆盖)
   let ckFlushing = false;
@@ -512,7 +516,7 @@ function renderDoc(d: IdeaItem): void {
   }
   let anchors: { line: number; el: HTMLElement }[] = [];
   const paint = (): void => {
-    const b = renderBody(sp, d.id, content, imgs, toggle);
+    const b = renderBody(sp, d.id, content, imgs, imgsKnown, toggle);
     bodyHost.replaceChildren(b.el);
     hideShown(thumbs, b.shown);
     anchors = b.anchors;
@@ -533,6 +537,7 @@ function renderDoc(d: IdeaItem): void {
     (m) => {
       if (sp !== getCurrentSpace() || !thumbs.isConnected) return;
       imgs = m;
+      imgsKnown = true;
       paint();
       thumbs.replaceChildren(
         ...m.map((im) => {
@@ -878,7 +883,21 @@ function openEditor(d: IdeaItem | null, seed: string | null, carried: File[], at
   // 阅读页原位显示);新篇还没有 id ⇒ 第一张图进来那一刻先把它建出来(正文可以是空的,同桌面)。
   // × 只切换「保存时删」的标记(148 同律,保存时那一删 = 进回收站)。
   let imgs: ImageMeta[] = [];
+  let imgsKnown = id === null; // 新篇没有图;已存过的篇读到列表之前「图N」不划线
   const marked = new Set<string>();
+  // 标了删的图正文里提到几处(154 G4,同桌面:点 × 标记时提示、不弹框)
+  const delNote = el("p", "doc-note doc-del-note");
+  delNote.hidden = true;
+  function paintDelNote(): void {
+    const refs = scanImgRefs(area.value);
+    const parts = imgs
+      .filter((m) => marked.has(m.id))
+      .map((m) => ({ n: m.seq, k: refs.filter((r) => r.n === m.seq).length }))
+      .filter((x) => x.k > 0)
+      .map((x) => t("docs.delRefsOne", x));
+    delNote.hidden = parts.length === 0;
+    delNote.textContent = parts.length === 0 ? "" : t("docs.delRefs", { list: parts.join(t("docs.listSep")) });
+  }
   const thumbs = el("div", "thumbs");
   thumbs.hidden = true;
   /** 取图在飞(系统选择器开着 + 回来那几秒的降采样 + 逐张挂上):两枚钮不受理、离开编辑器先拦
@@ -890,6 +909,7 @@ function openEditor(d: IdeaItem | null, seed: string | null, carried: File[], at
     if (marked.has(imgId)) marked.delete(imgId);
     else marked.add(imgId);
     painters.get(imgId)?.();
+    paintDelNote();
   }
   function paintThumbs(): void {
     painters.clear();
@@ -1032,6 +1052,7 @@ function openEditor(d: IdeaItem | null, seed: string | null, carried: File[], at
   area.addEventListener("input", () => {
     fitArea(area);
     paintHl();
+    paintDelNote();
     revealSoon(120);
   });
   // 转屏 / 字号变了:框宽变,影子层跟上;宽度一变高度也得重量(框随内容长高、只在打字时量 ⇒ 横屏转竖屏折行变多,
@@ -1053,6 +1074,7 @@ function openEditor(d: IdeaItem | null, seed: string | null, carried: File[], at
       (m) => {
         if (!thumbs.isConnected) return;
         imgs = m;
+        imgsKnown = true;
         paintThumbs();
       },
       (e) => {
@@ -1086,18 +1108,14 @@ function openEditor(d: IdeaItem | null, seed: string | null, carried: File[], at
   }
   type Sel = { value: string; start: number; end: number };
   const selNow = (): Sel => ({ value: area.value, start: area.selectionStart, end: area.selectionEnd });
-  /** 在 `at`(加图那刻的选区;等图期间又改过字、或同批前一张已经插过,就用当前光标)插一段「图N」:
-   *  前后各空一行,自成一段才原位显示。⛔ 不 focus(手机上一 focus 就弹键盘);照常发 input(草稿 /
-   *  长高跟着走)。⚠「图N」是正文语法(`imgRefText`,与界面语言无关),不是界面文案。 */
+  /** 在 `at`(加图那刻的光标;等图期间又改过字、或同批前一张已经插过,就用当前光标)所在那一段的**段尾另起一段**
+   *  插「图N」(154 G3,`refInsertion`,同桌面;句中不拆、选中的字不替换),光标停在它后面 ⇒ 同批下一张接着往下排。
+   *  ⛔ 不 focus(手机上一 focus 就弹键盘);照常发 input(草稿 / 长高跟着走)。 */
   function insertRef(seq: number, at: Sel): void {
     if (!area.isConnected) return;
-    const v = area.value;
-    const [a, b] = v === at.value ? [at.start, at.end] : [area.selectionStart, area.selectionEnd];
-    const before = v.slice(0, a);
-    const after = v.slice(b);
-    const pre = before === "" || before.endsWith("\n\n") ? "" : before.endsWith("\n") ? "\n" : "\n\n";
-    const post = after.startsWith("\n\n") ? "" : after.startsWith("\n") ? "\n" : "\n\n";
-    area.setRangeText(`${pre}${imgRefText(seq)}${post}`, a, b, "end");
+    const r = refInsertion(area.value, area.value === at.value ? at.end : area.selectionEnd, seq);
+    area.setRangeText(r.text, r.at, r.at, "end");
+    area.setSelectionRange(r.caret, r.caret);
     area.dispatchEvent(new Event("input", { bubbles: true }));
   }
   /** 新篇:第一张图进来时先建出来(正文可以是空的)。 */
@@ -1294,7 +1312,7 @@ function openEditor(d: IdeaItem | null, seed: string | null, carried: File[], at
     modeEdit.classList.remove("on");
     // 预览只在切过去那一刻画一次(200 KiB 一篇解析要几十毫秒,⛔ 别逐键同步算);只读,方框禁用。
     // 画成图的删图钮也挂在大图角上(与条里那枚同一份标记)
-    const b = renderBody(sp, id ?? newId, area.value, imgs, null);
+    const b = renderBody(sp, id ?? newId, area.value, imgs, imgsKnown, null);
     figDels(b.el, b.figs);
     preview.replaceChildren(b.el);
     preview.hidden = false;
@@ -1319,7 +1337,7 @@ function openEditor(d: IdeaItem | null, seed: string | null, carried: File[], at
     edBox,
     preview,
     // 缩略图条在正文下面(154 G1:同阅读页;编辑器这条张张都在,× 标删)
-    el("div", "doc-imgs", [thumbs]),
+    el("div", "doc-imgs", [thumbs, delNote]),
   );
   fitArea(area);
   paintHl();

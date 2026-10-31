@@ -43,6 +43,7 @@ export const inbox = defineMessages({
   "inbox.actExpand": { zh: "展开成长文", en: "Expand to long-form" },
   "inbox.undoExpanded": { zh: "已展开成长文", en: "Expanded to long-form" },
   "inbox.openExpanded": { zh: "打开", en: "Open" },
+  "inbox.expandRefsFailed": { zh: "已展开成长文,但没能把图的「图N」补进正文:{err}", en: "Expanded to long-form, but couldn’t add the image mentions to the text: {err}" },
   "inbox.docBadge": { zh: "长文", en: "Long-form" },
   "inbox.actDelete": { zh: "删除", en: "Delete" },
   "inbox.undoDeleted": { zh: "已移入回收站", en: "Moved to Trash" },

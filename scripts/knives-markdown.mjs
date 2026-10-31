@@ -136,6 +136,34 @@ const KNIVES = [
     to: "if (false) throw new DomOver();",
     red: ["DOM 预算:语法树没超而 DOM 超了也整篇降级"],
   },
+  {
+    name: "加图退回插在光标处(句中拆开)",
+    file: MD,
+    from: "  if (blank(L) && !(L > 0 && open[L - 1])) at = caret;\n",
+    to: "  if (true) at = caret;\n",
+    red: ["加图插在段尾另起一段(154 G3):句中不拆、空行上就地、围栏里接到收口之后、连加往下排"],
+  },
+  {
+    name: "加图:围栏里遇空行就停(插进代码块里)",
+    file: MD,
+    from: "    while (j + 1 < lines.length && (open[j] || !blank(j + 1))) j++;\n",
+    to: "    while (j + 1 < lines.length && !blank(j + 1)) j++;\n",
+    red: ["加图插在段尾另起一段(154 G3):句中不拆、空行上就地、围栏里接到收口之后、连加往下排"],
+  },
+  {
+    name: "展开补图N:提到过的也再补一遍",
+    file: MD,
+    from: "  const miss = [...new Set(seqs)].filter((n) => !have.has(n)).sort((a, b) => a - b);\n",
+    to: "  const miss = [...new Set(seqs)].sort((a, b) => a - b);\n",
+    red: ["展开成长文补图N(154 G3):没提到的按编号各成一段接在文末;都提到了回 null"],
+  },
+  {
+    name: "已删的图:不问 gone、照原文",
+    file: DOM,
+    from: "        const why = cx.hooks.gone(x.n);\n",
+    to: "        const why = null;\n",
+    red: ["已删的图(154 G4):查不到图且 gone 给了文案 ⇒ 灰的带删除线,字仍是原文;不给 ⇒ 照原文"],
+  },
 ];
 
 const orig = { [MD]: fs.readFileSync(MD, "utf8"), [DOM]: fs.readFileSync(DOM, "utf8") };

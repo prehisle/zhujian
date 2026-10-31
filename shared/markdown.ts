@@ -55,17 +55,13 @@ export type ImgRefSpan = { a: number; b: number; n: number; line: number };
 export function scanImgRefs(text: string): ImgRefSpan[] {
   const out: ImgRefSpan[] = [];
   const lines = text.split("\n");
-  let fence: { ch: string; len: number } | null = null;
+  let fence: Fence = null;
   let off = 0;
   lines.forEach((ln, i) => {
-    const t = ln.replace(/^ +/, "");
-    if (fence !== null) {
-      const m = /^(`{3,}|~{3,})\s*$/.exec(t);
-      if (m && m[1][0] === fence.ch && m[1].length >= fence.len) fence = null;
-    } else {
-      const f = /^(`{3,}|~{3,})/.exec(t);
-      if (f && ln.length - t.length <= 3 && !(f[1][0] === "`" && t.slice(f[1].length).includes("`"))) fence = { ch: f[1][0], len: f[1].length };
-      else {
+    if (fence !== null) fence = fenceNext(fence, ln);
+    else {
+      fence = fenceNext(null, ln);
+      if (fence === null) {
         // 行内代码:等长的反引号串两两配对,配上的区间里不认
         const skip: [number, number][] = [];
         const ticks = [...ln.matchAll(/`+/g)];
@@ -85,6 +81,62 @@ export function scanImgRefs(text: string): ImgRefSpan[] {
     off += ln.length + 1;
   });
   return out;
+}
+
+type Fence = { ch: string; len: number } | null;
+/** 顶层围栏代码块的逐行状态机(写字框那几样纯文本判断用,口径同 scanImgRefs):读完 `ln` 之后围栏开着没有。 */
+function fenceNext(fence: Fence, ln: string): Fence {
+  const t = ln.replace(/^ +/, "");
+  if (fence !== null) {
+    const m = /^(`{3,}|~{3,})\s*$/.exec(t);
+    return m && m[1][0] === fence.ch && m[1].length >= fence.len ? null : fence;
+  }
+  const f = /^(`{3,}|~{3,})/.exec(t);
+  return f && ln.length - t.length <= 3 && !(f[1][0] === "`" && t.slice(f[1].length).includes("`")) ? { ch: f[1][0], len: f[1].length } : null;
+}
+
+/** 加一张图时「图N」插在哪(154 G3,用户拍;翻 832 的「插在光标处」):**光标所在那一段的段尾另起一段**,句中不再被拆开。
+ *  段 = 连着的非空行;光标在围栏代码块里 ⇒ 接在围栏收口那行之后(没收口 = 文末);光标停在段与段之间的空行上 ⇒ 就插在那儿。
+ *  前后补够空行让它自成一段(原位画成图)。回 `at` = 插入点、`text` = 插进去的整串、`caret` = 插完光标放哪(紧跟「图N」之后
+ *  ⇒ 连加几张就一张接一张往下排)。 */
+export function refInsertion(value: string, caret: number, n: number): { at: number; text: string; caret: number } {
+  const lines = value.split("\n");
+  const starts: number[] = [];
+  const open: boolean[] = []; // 读完第 i 行之后围栏开着没有
+  let fence: Fence = null;
+  let off = 0;
+  for (const ln of lines) {
+    starts.push(off);
+    off += ln.length + 1;
+    fence = fenceNext(fence, ln);
+    open.push(fence !== null);
+  }
+  let L = 0;
+  while (L + 1 < lines.length && starts[L + 1] <= caret) L++;
+  const blank = (i: number): boolean => lines[i].trim() === "";
+  let at: number;
+  if (blank(L) && !(L > 0 && open[L - 1])) at = caret;
+  else {
+    let j = L;
+    while (j + 1 < lines.length && (open[j] || !blank(j + 1))) j++;
+    at = starts[j] + lines[j].length;
+  }
+  const before = value.slice(0, at);
+  const after = value.slice(at);
+  const pre = before === "" || before.endsWith("\n\n") ? "" : before.endsWith("\n") ? "\n" : "\n\n";
+  const post = after.startsWith("\n\n") ? "" : after.startsWith("\n") ? "\n" : "\n\n";
+  const ref = imgRefText(n);
+  return { at, text: `${pre}${ref}${post}`, caret: at + pre.length + ref.length };
+}
+
+/** 随记带着图「展开成长文」(154 G3,用户拍两端统一):正文里还没提到的那几张按编号各成一段追加在文末;都提到了回 `null`(不写)。 */
+export function withMissingRefs(content: string, seqs: number[]): string | null {
+  const have = new Set(scanImgRefs(content).map((r) => r.n));
+  const miss = [...new Set(seqs)].filter((n) => !have.has(n)).sort((a, b) => a - b);
+  if (miss.length === 0) return null;
+  const refs = miss.map(imgRefText).join("\n\n");
+  if (content.trim() === "") return refs;
+  return `${content}${content.endsWith("\n\n") ? "" : content.endsWith("\n") ? "\n" : "\n\n"}${refs}`;
 }
 
 /** 写字框窄边上那一列缩略图(154 G2:一列、挂在框外,同一张图只配一枚 —— 配在第一次提到它的地方,同渲染器

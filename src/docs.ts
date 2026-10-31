@@ -37,7 +37,7 @@ import { t } from "./i18n";
 import { type ImageMeta, attachBlob, figureSrc, getThumb, imageStrip, openLightbox, pasteImage } from "./item-images";
 import { toggleChecklistLine } from "../shared/checklist";
 import { type MdRendered, renderMarkdown } from "../shared/markdown-dom";
-import { firstRefs, gutterStack, imgRefText, scanImgRefs } from "../shared/markdown";
+import { firstRefs, gutterStack, refInsertion, scanImgRefs } from "../shared/markdown";
 import { renderDiff } from "../shared/diff-dom";
 import { closeComments, commentBadge, commentCountFor, inlineCommentState, loadCommentCounts, openInlineComments } from "./item-comments";
 import type { View, ViewCtx } from "./notebook";
@@ -497,6 +497,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     docId: string | null,
     content: string,
     imgs: ImageMeta[],
+    imgsKnown: boolean,
     onToggle: ((line: number) => void) | null,
   ): { el: HTMLElement; shown: Set<number>; figs: ImageMeta[]; anchors: MdRendered["anchors"] } {
     const bySeq = new Map(imgs.map((m) => [m.seq, m]));
@@ -517,6 +518,8 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
           },
         };
       },
+      // 对不上任何一张现存图的「图N」= 图删了(或从没有过):灰的带删除线,正文不改(154 G4,用户拍「对不上就算」)
+      gone: (n) => (imgsKnown ? t("docs.imgGone", { n }) : null),
       checkbox: (checked, line) => ({
         label: onToggle === null ? (checked ? t("checklist.checked") : t("checklist.unchecked")) : checked ? t("checklist.uncheck") : t("checklist.check"),
         toggle: onToggle === null ? null : () => onToggle(line),
@@ -576,6 +579,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     };
     let content = d.content;
     let imgs: ImageMeta[] = [];
+    let imgsKnown = false; // 图列表读到之前「图N」⛔ 不划线(否则每次打开都先划一遍,154 G4)
     const bodyHost = el("div", {});
     // 勾方框:单飞 + 尾随(同 inbox.ts flushChecklist —— 每发都是整篇,乱序落地会互相覆盖)
     let ckFlushing = false;
@@ -648,7 +652,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       return memo !== undefined && memo >= lo && memo < hi ? memo : lo;
     };
     const paint = (): void => {
-      const b = renderBody(d.id, content, imgs, toggle);
+      const b = renderBody(d.id, content, imgs, imgsKnown, toggle);
       bodyHost.replaceChildren(b.el);
       shown = b.shown;
       anchors = b.anchors;
@@ -661,6 +665,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       editable: false,
       onMetas: (m) => {
         imgs = m;
+        imgsKnown = true;
         paint();
       },
     });
@@ -781,42 +786,46 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     // 没有 id ⇒ 第一张图进来那一刻先把它建出来(正文可以是空的),之后与已存过的篇同一条路。
     // ⚠ `previewDue` / `anchors` 必须先于 mountStrip 声明:乐观首帧会**同步**调 onMetas → paintPreview。
     let imgs: ImageMeta[] = [];
+    let imgsKnown = id === null; // 图列表读到了没有(新篇没有图;没读到之前「图N」⛔ 不划线,154 G4)
     let previewDue: ReturnType<typeof setTimeout> | null = null;
     let anchors: MdRendered["anchors"] = [];
     let strip: ReturnType<typeof imageStrip> | null = null;
-    const imgRow = el("div", { className: "img-editor" }, [imgErr]);
+    const delNote = el("p", { className: "doc-note doc-del-note", hidden: true });
+    const imgRow = el("div", { className: "img-editor" }, [imgErr, delNote]);
     function mountStrip(target: string): ReturnType<typeof imageStrip> {
       if (strip === null) {
-        strip = imageStrip(target, { editable: true, onMetas: (m) => ((imgs = m), paintPreview(), paintHl()), onMark: () => paintGutterMarks() });
+        strip = imageStrip(target, { editable: true, onMetas: (m) => ((imgs = m), (imgsKnown = true), paintPreview(), paintHl(), paintDelNote()), onMark: () => paintGutterMarks() });
         imgRow.prepend(strip.root);
       }
       return strip;
     }
 
-    // 逐张排队:编号按粘贴的先后、新篇只建一次;离开 / Ctrl+S 先等这条队走完,插进去的「图N」
-    // 才赶得上那一版。
+    // 逐张排队:编号按进来的先后、新篇只建一次;离开 / Ctrl+S 先等这条队走完,插进去的「图N」
+    // 才赶得上那一版。三条路进同一条队:粘贴、「＋加图」钮、把图片文件拖进写字框(154 G5)。
     let attaching: Promise<void> = Promise.resolve();
-    area.addEventListener("paste", (e) => {
-      pasteImage(
-        e,
-        (blob) => {
-          const at = { value: area.value, start: area.selectionStart, end: area.selectionEnd };
-          imgErr.hidden = true;
-          attaching = attaching.then(async () => {
-            try {
-              const target = await ensureDoc();
-              const meta = await attachBlob(target, blob, mountSpace);
-              await mountStrip(target).reload();
-              insertRef(meta.seq, at);
-              revealCaret("nearest"); // 连贴几张:插到哪就看到哪(153 走查 D-M05:execCommand 插完写字框不跟)
-            } catch (e) {
-              showImgErr(e);
-            }
-          });
-        },
-        showImgErr,
-      );
-    });
+    function addBlobs(blobs: Blob[]): void {
+      const at = { value: area.value, end: area.selectionEnd };
+      imgErr.hidden = true;
+      for (const blob of blobs)
+        attaching = attaching.then(async () => {
+          try {
+            const target = await ensureDoc();
+            const meta = await attachBlob(target, blob, mountSpace);
+            await mountStrip(target).reload();
+            insertRef(meta.seq, at);
+            revealCaret("nearest"); // 连加几张:插到哪就看到哪(153 走查 D-M05:execCommand 插完写字框不跟)
+          } catch (e) {
+            showImgErr(e);
+          }
+        });
+    }
+    /** 拖进来 / 选进来的一批文件:图片排进队,别的(文档、压缩包…)明说没收,⛔ 不默默丢掉。 */
+    function takeFiles(files: File[]): void {
+      const pics = files.filter((f) => f.type.startsWith("image/"));
+      if (pics.length > 0) addBlobs(pics);
+      if (pics.length < files.length) showImgErr(new Error(t("docs.dropNotImage", { n: files.length - pics.length })));
+    }
+    area.addEventListener("paste", (e) => pasteImage(e, (blob) => addBlobs([blob]), showImgErr));
     /** 新篇:第一张图进来时先建出来(正文可以是空的)。 */
     async function ensureDoc(): Promise<string> {
       const cur = id ?? newId;
@@ -826,25 +835,21 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       if (made === null) throw new Error(t("docs.imageNoDoc"));
       return made;
     }
-    /** 在 `at`(粘贴那刻的选区;等图期间又改过字就用当前光标)插一段「图N」:前后各空一行,自成
-     *  一段才原位显示。走 execCommand ⇒ 进撤销栈(Ctrl+Z 撤得掉),并照常触发 input(草稿 / 预览)。
-     *  ⚠「图N」是正文语法(`imgRefText`,与界面语言无关),不是界面文案。 */
-    function insertRef(seq: number, at: { value: string; start: number; end: number }): void {
+    /** 在 `at`(图进来那刻的光标;等图期间又改过字、或同批前一张已经插过,就用当前光标)所在那一段的**段尾另起一段**
+     *  插「图N」(154 G3,`refInsertion`;句中不拆、选中的字不替换),光标停在它后面。走 execCommand ⇒ 进撤销栈
+     *  (Ctrl+Z 撤得掉),并照常触发 input(草稿 / 预览)。 */
+    function insertRef(seq: number, at: { value: string; end: number }): void {
       if (!area.isConnected) return; // 编辑器已经关了:图挂上了(在缩略图条里),只是没插引用
-      const v = area.value;
-      const [a, b] = v === at.value ? [at.start, at.end] : [area.selectionStart, area.selectionEnd];
-      const before = v.slice(0, a);
-      const after = v.slice(b);
-      const pre = before === "" || before.endsWith("\n\n") ? "" : before.endsWith("\n") ? "\n" : "\n\n";
-      const post = after.startsWith("\n\n") ? "" : after.startsWith("\n") ? "\n" : "\n\n";
+      const r = refInsertion(area.value, area.value === at.value ? at.end : area.selectionEnd, seq);
       area.focus();
-      area.setSelectionRange(a, b);
-      if (!document.execCommand("insertText", false, `${pre}${imgRefText(seq)}${post}`)) throw new Error("insertText 不可用");
+      area.setSelectionRange(r.at, r.at);
+      if (!document.execCommand("insertText", false, r.text)) throw new Error("insertText 不可用");
+      area.setSelectionRange(r.caret, r.caret);
     }
 
     function paintPreview(): void {
       previewDue = null;
-      const b = renderBody(id ?? newId, area.value, imgs, null);
+      const b = renderBody(id ?? newId, area.value, imgs, imgsKnown, null);
       if (strip !== null) figDels(b.el, b.figs, strip);
       preview.replaceChildren(b.el);
       anchors = b.anchors;
@@ -980,6 +985,19 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     /** 标记一变(条里 / 大图角上的 ×),窄边那枚跟着变淡。 */
     function paintGutterMarks(): void {
       for (const th of gutIn.querySelectorAll<HTMLElement>(".ref-thumb")) th.classList.toggle("del-marked", strip?.isMarked(th.dataset.img!) ?? false);
+      paintDelNote();
+    }
+    /** 标了删的图正文里提到几处(154 G4,用户拍「点 × 标记时提示、不弹框」):保存删掉后这几处变灰带删除线,正文一个字不改。
+     *  标记或正文一变就重算;一张都没提到 ⇒ 不出。 */
+    function paintDelNote(): void {
+      const refs = scanImgRefs(area.value);
+      const parts = imgs
+        .filter((m) => strip?.isMarked(m.id))
+        .map((m) => ({ n: m.seq, k: refs.filter((r) => r.n === m.seq).length }))
+        .filter((x) => x.k > 0)
+        .map((x) => t("docs.delRefsOne", x));
+      delNote.hidden = parts.length === 0;
+      delNote.textContent = parts.length === 0 ? "" : t("docs.delRefs", { list: parts.join(t("docs.listSep")) });
     }
     /** 光标那一行在写字框滚动内容里的上沿(textarea 量不到光标 ⇒ 同字体同宽的影子 div 只排光标前那截,同 lineTops)。 */
     function caretY(): { y: number; h: number } {
@@ -1070,6 +1088,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       draftDue = setTimeout(writeDraft, DRAFT_IDLE_MS);
       schedulePreview();
       paintHl();
+      paintDelNote();
     });
 
     // 落一版。新篇第一次:capture_doc(同一事务 create + set doc_at)拿到 id。`force` = 新篇正文
@@ -1197,11 +1216,43 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       paintPreview();
     };
     const saveBtn = el("button", { className: "do", type: "button", textContent: t("docs.save"), onclick: () => leave(done) });
+    // 「＋加图」(154 G5:桌面此前只能贴):系统选文件框,插在哪同粘贴(光标所在段的段尾)。
+    // ⚠ 按下不抢写字框的焦点 —— 选区留在原处,选完回来插到那一段后面
+    const filePick = el("input", { type: "file", accept: "image/png,image/jpeg,image/webp,image/gif", multiple: true, hidden: true }) as HTMLInputElement;
+    filePick.addEventListener("change", () => {
+      const files = [...(filePick.files ?? [])];
+      filePick.value = ""; // 同一张再选一次也要触发
+      area.focus();
+      takeFiles(files);
+    });
+    const addImgBtn = el("button", { className: "hbtn", type: "button", onclick: () => filePick.click() }, [
+      el("span", { className: "lbl", textContent: t("docs.addImage") }),
+    ]);
+    addImgBtn.addEventListener("mousedown", (e) => e.preventDefault());
+    // 拖文件进写字框(此前拖进来无反应无提示)。窗口关了 Tauri 的原生拖放(dragDropEnabled: false,看板拖卡要 HTML5 那套),
+    // 文件照常以 DataTransfer.files 到页面。只接带文件的拖动 —— 写字框里拖字照旧。落点 = 当前光标所在段(同粘贴),不按松手的位置。
+    const hasFiles = (e: DragEvent): boolean => e.dataTransfer?.types.includes("Files") ?? false;
+    edBox.addEventListener("dragover", (e) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      e.dataTransfer!.dropEffect = "copy";
+      edBox.classList.add("drop-on");
+    });
+    edBox.addEventListener("dragleave", (e) => {
+      if (!edBox.contains(e.relatedTarget as Node | null)) edBox.classList.remove("drop-on");
+    });
+    edBox.addEventListener("drop", (e) => {
+      edBox.classList.remove("drop-on");
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      area.focus();
+      takeFiles([...e.dataTransfer!.files]);
+    });
 
     if (id !== null) mountStrip(id); // 已存过的篇:缩略图条(乐观首帧会同步画一次预览,故放在全部声明之后)
     main.replaceChildren(
       bar(
-        [backBtn(id === null ? t("docs.back") : t("docs.backToDoc"), () => leave(done)), el("span", { className: "segs" }, [modeEdit, modePrev])],
+        [backBtn(id === null ? t("docs.back") : t("docs.backToDoc"), () => leave(done)), el("span", { className: "segs" }, [modeEdit, modePrev]), addImgBtn, filePick],
         [status, saveBtn],
       ),
       el("div", { className: "doc-edit-page" }, [edWrap, imgRow, err]),

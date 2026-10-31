@@ -24,7 +24,7 @@ const r = await build({
   format: "esm",
 });
 const M = await import("data:text/javascript," + encodeURIComponent(r.outputFiles[0].text));
-const { parseMarkdown, validateHttpUrl, renderMarkdown, toggleChecklistLine, scanImgRefs, firstRefs, gutterStack, MD_MAX_NODES, MD_MAX_DEPTH, MD_MAX_BYTES } = M;
+const { parseMarkdown, validateHttpUrl, renderMarkdown, toggleChecklistLine, scanImgRefs, firstRefs, gutterStack, refInsertion, withMissingRefs, MD_MAX_NODES, MD_MAX_DEPTH, MD_MAX_BYTES } = M;
 
 // ---------------------------------------------------------------------------
 // 语法树 → 紧凑字符串(只为断言好读)
@@ -245,6 +245,7 @@ function render(text, hooks = {}) {
     openLink: (u) => opened.push(u),
     image: (n) => (n === 1 ? { label: `图${n}`, open: () => opened.push(`img:${n}`), src: () => `blob:app/${n}` } : null),
     checkbox: (checked, line) => ({ label: checked ? "取消勾选" : "勾上", toggle: () => opened.push(`tick:${line}`) }),
+    gone: () => null,
     ...hooks,
   };
   const out = renderMarkdown(text, h);
@@ -510,3 +511,39 @@ test("资源族里至少有几族在 200 KiB 时没触发节点预算(否则提�
   for (const [, gen] of FAMILIES) if (parseMarkdown(gen(200 * KIB)).ok) fine++;
   assert.ok(fine >= 8, `只有 ${fine} 族没降级`);
 });
+
+test("已删的图(154 G4):查不到图且 gone 给了文案 ⇒ 灰的带删除线,字仍是原文;不给 ⇒ 照原文", () => {
+  const r = render("见图1 与图2,图3\n\n图2", { gone: (n) => (n === 2 ? "这张图已不在" : null) });
+  assert.equal(
+    r.html,
+    '<div .md><div .md-blk><p>见<button .img-ref>图1</button> 与<span .img-gone>图2</span>,图3</p><div .md-figs><button .md-fig aria-label=图1><img></img><span .md-fig-n>图1</span></button></div></div>' +
+      "<p><span .img-gone>图2</span></p></div>",
+  );
+  assert.ok(r.log.props.includes("title"));
+});
+test("加图插在段尾另起一段(154 G3):句中不拆、空行上就地、围栏里接到收口之后、连加往下排", () => {
+  const ins = (v, c, n) => {
+    const r = refInsertion(v, c, n);
+    return { v: v.slice(0, r.at) + r.text + v.slice(r.at), c: r.caret };
+  };
+  // 光标在句中 ⇒ 段尾另起一段,光标停在「图N」后
+  let x = ins("一行字\n第二行\n\n下一段", 2, 1);
+  assert.equal(x.v, "一行字\n第二行\n\n图1\n\n下一段");
+  assert.equal(x.v.slice(0, x.c), "一行字\n第二行\n\n图1");
+  // 接着再加一张 ⇒ 排在图1 之后
+  x = ins(x.v, x.c, 2);
+  assert.equal(x.v, "一行字\n第二行\n\n图1\n\n图2\n\n下一段");
+  assert.equal(ins("abc", 1, 3).v, "abc\n\n图3\n\n"); // 文末
+  assert.equal(ins("", 0, 1).v, "图1\n\n"); // 空篇
+  assert.equal(ins("a\n\n\n\nb", 3, 1).v, "a\n\n图1\n\nb"); // 段与段之间的空行上 ⇒ 就地
+  assert.equal(ins("```\nx\n\ny\n```\nz\n\nw", 3, 1).v, "```\nx\n\ny\n```\nz\n\n图1\n\nw"); // 围栏里(含空行)⇒ 收口之后
+  assert.equal(ins("```\nx\n\ny", 4, 1).v, "```\nx\n\ny\n\n图1\n\n"); // 没收口 ⇒ 文末
+});
+test("展开成长文补图N(154 G3):没提到的按编号各成一段接在文末;都提到了回 null", () => {
+  assert.equal(withMissingRefs("随手一句", [2, 1]), "随手一句\n\n图1\n\n图2");
+  assert.equal(withMissingRefs("见图2\n", [1, 2]), "见图2\n\n图1");
+  assert.equal(withMissingRefs("图1 图2", [1, 2]), null);
+  assert.equal(withMissingRefs("", [1]), "图1");
+  assert.equal(withMissingRefs("`图1`", [1]), "`图1`\n\n图1"); // 代码里的不算提到
+});
+

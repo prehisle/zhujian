@@ -65,6 +65,7 @@ export const cardpanel = defineMessages({
   "cardpanel.actCopyLink": { zh: "复制链接", en: "Copy link" },
   "cardpanel.linkCopied": { zh: "已复制链接", en: "Link copied" },
   "cardpanel.copyLinkFailed": { zh: "复制失败:{error}", en: "Copy failed: {error}" },
+  "cardpanel.expandRefsFailed": { zh: "已展开成长文,但没能把图的「图N」补进正文:{error}", en: "Now long-form, but couldn’t add the image mentions to the text: {error}" },
   "cardpanel.expanded": { zh: "已展开成长文,在底栏「长文」里", en: "Now long-form, find it under Long-form" },
   "cardpanel.expandedOpen": { zh: "打开", en: "Open" },
   "cardpanel.promoted": { zh: "已转为待办,在底栏「任务」里", en: "Now a task, find it under Tasks" },

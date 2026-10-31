@@ -200,6 +200,10 @@
 .v-docs .doc-move .form-actions { display: flex; justify-content: flex-end; }
 .v-docs .doc-note { margin: 0 0 12px; font-size: var(--fs-12); color: var(--ink-soft); }
 .v-docs .doc-note[hidden] { display: none; }
+/* 标了删的图正文里提到几处(154 G4):挨着缩略图条那一行 */
+.v-docs .doc-del-note { margin: 6px 0 0; }
+/* 指向已不在的图的「图N」(154 G4):灰、划掉,悬停说明;正文不改 */
+.v-docs .md .img-gone { color: var(--ink-soft); text-decoration: line-through; }
 
 /* ---- Markdown 正文(阅读页与编辑器的预览同一套) ---- */
 .v-docs .md {
@@ -324,6 +328,8 @@
 .v-docs .doc-editor { flex: 1; min-height: 0; display: grid; grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr); gap: 16px; }
 /* 写字框 + 背后那层「图N」标注(docs.ts paintHl):纸色给外框,写字框透明、叠在标注层上面 */
 .v-docs .doc-ed { position: relative; min-height: 0; height: 100%; background: var(--paper); border-radius: var(--radius-md); }
+/* 拖着图片文件经过写字框(154 G5):描一圈虚线,松手就收 */
+.v-docs .doc-ed.drop-on { outline: 2px dashed var(--seal-line); outline-offset: -2px; }
 .v-docs .doc-hl {
   position: absolute;
   box-sizing: border-box;

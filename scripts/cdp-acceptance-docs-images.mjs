@@ -8,7 +8,7 @@
 //     (库里还在、再点一下撤销)→ 保存后标了的那张没了、它进了回收站(可还原)、阅读页原位显示余下两张而缩略图条
 //     把它们藏掉 → 再标一张、**关面**(不是保存)⇒ 那张一张不删(同桌面 unmount:删图认的是前台空间)。
 //   新篇(832 起没有暂存条):一个字没写就加图 ⇒ 当场建篇挂上、正文是两段「图N」→ 返回 = 回阅读页;
-//     写了两段字、光标放在中间加图 ⇒ 那一段插在两段之间(前后各空一行)→ 写字加图后**直接关面** ⇒ 字与图都落下。
+//     写了两段字、光标放在第一段句中加图 ⇒ 插在那一段段尾另起一段(154 G3)→ 写字加图后**直接关面** ⇒ 字与图都落下。
 //   取图在飞时按返回 = 拦一句、留在编辑器;放行后照常。
 //   写字框里的「图N」(833):对得上的垫底色、影子层与写字框内框重合;图删了那段不再垫。
 //     手机上**没有窄边**(154 G2):写字框不让位、右内边距不随图变;图在正文下面那条里看。
@@ -250,9 +250,12 @@ try {
   ok(await ev(`${figDel(2)}.parentElement.classList.contains("marked")`), "⑤ 点 × = 图2 标成待删");
   ok(await ev(`${figDel(2)}.textContent === "↺"`), "⑤ × 换成 ↺");
   ok(await ev(thumbMarked2), "⑤ 条里那张同一份标记");
+  const note2 = await ev(`(() => { const n = document.querySelector("#docs-body .doc-imgs .doc-del-note"); return n && !n.hidden ? n.textContent : null; })()`);
+  ok(note2 !== null && note2.includes("图2 正文里提到 1 处"), "⑤ 标删提示正文里提到几处(154 G4)", note2);
   ok((await imgsOf(id)).length === 3, "⑤ 标了之后库里仍 3 张(保存才删)");
   await ev(`${figDel(2)}.click()`);
   ok(!(await ev(`${figDel(2)}.parentElement.classList.contains("marked")`)) && !(await ev(thumbMarked2)), "⑤ 再点 ↺ = 撤销标记");
+  ok(await ev(`document.querySelector("#docs-body .doc-imgs .doc-del-note").hidden`), "⑤ 撤销标记 ⇒ 提示收起");
   await ev(`${figDel(2)}.click()`);
   await shot("doc-edit-marked");
 
@@ -265,6 +268,8 @@ try {
   const strip = await ev(`(() => { const t = [...document.querySelectorAll("#docs-body .doc-page .thumbs .thumb")]; return { n: t.length, shown: t.filter((b) => getComputedStyle(b).display !== "none").length }; })()`);
   ok(strip.n === 2 && strip.shown === 0, "⑥ 阅读页缩略图条把原位显示了的两张藏掉", strip);
   ok((await ev(`document.querySelector("#docs-body .doc-page .md").textContent.includes("图2")`)), "⑥ 删掉的图2 那段按原文留着");
+  const gone = await ev(`[...document.querySelectorAll("#docs-body .doc-page .md .img-gone")].map((e) => ({ t: e.textContent, deco: getComputedStyle(e).textDecorationLine }))`);
+  ok(gone.length === 1 && gone[0].t === "图2" && gone[0].deco.includes("line-through"), "⑥ 删掉的图2 灰的带删除线(154 G4)", gone);
   const removed = await inv("list_removed_images", { spaceId: sp, scope: "all" });
   ok(removed.some((g) => g.item_id === id && g.images.some((m) => m.id === seq2.id)), "⑥ 图2 进了回收站(可还原)");
 
@@ -300,18 +305,18 @@ try {
   await waitFor(`[...document.querySelectorAll("#docs-body .doc-page .md-fig img")].filter((i) => i.complete && i.naturalWidth > 0).length === 2`, "新篇阅读页原位显示 2 张");
   ok(fresh.length === 1 && (await inv("list_docs", { spaceId: sp })).find((d) => d.id === fresh[0].id).content === "图1\n\n图2\n\n", "⑧ 返回 = 那一版带着两段引用落下");
 
-  // ⑨ 新篇写了两段字,光标放在中间加图 ⇒ 那一段插在两段之间(前后各空一行)
+  // ⑨ 新篇写了两段字,光标放在第一段句中加图 ⇒ 插在那一段的段尾另起一段(154 G3:句中不拆)
   await back();
   await waitFor(`!document.getElementById("docs-new").hidden`, "列表页");
   await ev(`document.getElementById("docs-new").click()`);
   await waitFor(`!!document.querySelector("#docs-body textarea.doc-area")`, "新篇编辑器");
-  const TWO = `# ${MARK}·中间\n第二行`;
+  const TWO = `# ${MARK}·中间\n\n第一段里的一句话。\n\n第二段`;
   await typeArea(TWO);
-  await caretTo(TWO.indexOf("\n第二行"));
+  await caretTo(TWO.indexOf("一句话"));
   await armPicker(1);
   await clickText("＋ 加图");
   await waitFor(`document.querySelectorAll("#docs-body .doc-imgs .thumbs .thumb").length === 1`, "一张缩略图");
-  ok((await areaText()) === `# ${MARK}·中间\n\n图1\n\n第二行`, "⑨ 插在光标处、前后各空一行", await areaText());
+  ok((await areaText()) === `# ${MARK}·中间\n\n第一段里的一句话。\n\n图1\n\n第二段`, "⑨ 插在光标所在段的段尾、句子没被拆开", await areaText());
   for (const d of await newDocs()) seeded.push(d.id);
   await back();
   await waitFor(`!!document.querySelector("#docs-body .doc-acts")`, "回阅读页");
@@ -337,7 +342,7 @@ try {
   if (closed) seeded.push(closed.id);
   await sleep(600);
   ok(closed && (await imgsOf(closed.id)).length === 1, "⑪ 新篇关面即落、带着 1 张图");
-  ok(closed && closed.content === `图1\n\n# ${MARK}·关面\n\n关面也带图。`, "⑪ 关面落下的那一版带着引用", closed?.content);
+  ok(closed && closed.content === `# ${MARK}·关面\n\n图1\n\n关面也带图。`, "⑪ 关面落下的那一版带着引用(光标在标题行 ⇒ 插在标题那段之后,154 G3)", closed?.content);
 
   // ⑫ 取图在飞时按返回 = 拦一句、留在编辑器;放行后照常挂上
   await openReader(id);

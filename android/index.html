@@ -1578,6 +1578,8 @@
       .doc-tools .row { margin-bottom: 0; }
       .doc-imgs .thumbs, .doc-imgs .cthumbs { margin: 10px 0 0; }
       .doc-imgs .thumb-del { display: grid; }
+      /* 标了删的图正文里提到几处(154 G4):条下面那一行 */
+      .doc-imgs .doc-del-note { margin: 8px 0 0; }
       /* 预览里原位图右上角那枚 ×(docs.ts figDels;与条里那枚同一份标记)。标了删 = 同条里那张:变淡、虚线 */
       .md .md-fig-box { position: relative; display: block; max-width: 100%; }
       .md .md-fig-box .thumb-del { display: grid; }
@@ -1635,6 +1637,8 @@
         color: var(--seal-ink-on-seal-tint); background: var(--seal-tint); border: 1px solid var(--seal-line);
         border-radius: var(--radius-xs); white-space: nowrap;
       }
+      /* 指向已不在的图的「图N」(154 G4,同桌面):灰、划掉;正文不改 */
+      .md .img-gone { color: var(--ink-soft); text-decoration: line-through; }
       /* 历史与比对:版本目录(每版「旧 / 新」两枚选钮)在上、差异在下。目录限高自己滚,差异别被它挤出屏。 */
       .hv-side { margin-bottom: 10px; }
       .hv-list { max-height: 40vh; overflow-y: auto; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--raised); }

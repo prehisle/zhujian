@@ -80,6 +80,7 @@ import { writeClipboard } from "./platform";
 import { DONE_COLUMN, LANDING_COLUMN, isTaskStage, liveTaskColumns, stageLabel } from "./columns";
 import { capturePhoto, PICK_MAX, pickImages, toBase64 } from "./images";
 import { openViewer } from "./viewer";
+import { withMissingRefs } from "../../shared/markdown";
 import { closeEditSheet, openEditSheet, paintEditSheet, type EditHost } from "./editsheet";
 
 // actions = 两行主面;more = 低频动作子面;status/due/prio = 值 chip 各自点开的那一排
@@ -1034,12 +1035,29 @@ function handleAct(act: string, card: HTMLElement) {
           (err) => showBar(t("cardpanel.copyLinkFailed", { error: errDetail(err) })),
         );
       return;
-    case "expand":
+    case "expand": {
       // 卡离开随记面、住进「长文」面:回执指路 + 一枚「打开」(底栏那枚钮此刻才显形,408-A1 那形)。
-      void run((space) => setDoc(space, item.id, true), {
-        onCommitted: () => actionBar(t("cardpanel.expanded"), t("cardpanel.expandedOpen"), () => deps.openDoc(item.id)),
-      });
+      // 154 G3(用户拍两端统一,同桌面):正文里还没提到的图,「图N」各成一段接在文末并落一版;撤销只翻回 doc_at。
+      // 补失败不拦展开(那时已经翻过去了,⛔ 别让 run 当整笔失败、轴不重拉),回执换成明说。
+      let refsErr: unknown = null;
+      void run(
+        async (space) => {
+          await setDoc(space, item.id, true);
+          const next = withMissingRefs(item.content, item.images.map((m) => m.seq));
+          if (next !== null)
+            await editNote(space, item.id, next).catch((e: unknown) => {
+              refsErr = e;
+            });
+        },
+        {
+          onCommitted: () =>
+            refsErr !== null
+              ? showBar(t("cardpanel.expandRefsFailed", { error: errDetail(refsErr) }))
+              : actionBar(t("cardpanel.expanded"), t("cardpanel.expandedOpen"), () => deps.openDoc(item.id)),
+        },
+      );
       return;
+    }
     case "promote":
       // 146:卡离开灵感面——回执指路,且走 onCommitted(重投影清掉 session 也要响)。
       void run((space) => promoteNoteToTask(space, item.id, item.content), {

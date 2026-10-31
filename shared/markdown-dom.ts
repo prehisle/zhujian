@@ -15,7 +15,8 @@
 //   - 链接目标 → **只活在点击闭包里**,⛔ 不写 `href` / `src` / `title`;点下去再过一遍
 //     `validateHttpUrl`(点击出口也调同一个校验器),交给各端的 `openLink`;
 //   - 图N → 有界整数,交给各端的 `image(n)` 查当前条目的配图;有就画成本文件建的芯片按钮
-//     (文案是各端字典给的,点了调各端的回调),查不到就按原文「图N」;
+//     (文案是各端字典给的,点了调各端的回调),查不到就问各端的 `gone(n)`:给了文案 ⇒ `span.img-gone`
+//     (字仍是原文「图N」,灰 + 删除线由各端 CSS 管,文案只进 `title`;154 G4),不给 ⇒ 按原文「图N」;
 //   - **写到哪画到哪**(154 G1,用户拍):每张查得到的图**只画一次**,画在正文里第一次提到它的地方 ——
 //     一段里只有图N(中间只隔空白 / 换行)且张张头一回出现 ⇒ 整段换成原位的图;句中提到的(标题、列表项、
 //     引用里的段落同理)⇒ 字照常画(图N 是芯片),那几张画在这一块的正下方;再提到只是芯片。
@@ -42,6 +43,9 @@ export type MdHooks = {
    *  自己取来的 blob: / data: 地址;手上已有就同步交回,免得重画时图先塌成零高再撑开),
    *  没有回 `null`(按原文「图N」)。 */
   image: (n: number) => { label: string; open: () => void; src: () => string | Promise<string> } | null;
+  /** 查不到图的「图N」:这张图已经不在了(删了 / 从没有过)就回悬停文案 ⇒ 画成灰的带删除线;回 `null` = 按原文
+   *  (图还没读到时 ⛔ 别回文案,否则每次打开都先划一遍线)。154 G4,用户拍「对不上现存图就算」。 */
+  gone: (n: number) => string | null;
   /** 勾选项那枚方框的文案(悬停 / 读屏)与翻面动作;`toggle = null` = 只读视图,方框禁用。
    *  `line` 原样交给 `toggleChecklistLine`。 */
   checkbox: (checked: boolean, line: number) => { label: string; toggle: (() => void) | null };
@@ -271,7 +275,14 @@ function inline(cx: Cx, x: MdInline): Node {
       return link(cx, x);
     case "img": {
       const img = cx.hooks.image(x.n);
-      if (img === null) return txt(cx, imgRefText(x.n));
+      if (img === null) {
+        const why = cx.hooks.gone(x.n);
+        if (why === null) return txt(cx, imgRefText(x.n));
+        const s = mk(cx, "span", "img-gone");
+        s.title = why;
+        s.append(txt(cx, imgRefText(x.n)));
+        return s;
+      }
       const chip = mk(cx, "button", "img-ref") as HTMLButtonElement;
       chip.type = "button";
       chip.append(txt(cx, img.label));
