@@ -24,7 +24,7 @@ const r = await build({
   format: "esm",
 });
 const M = await import("data:text/javascript," + encodeURIComponent(r.outputFiles[0].text));
-const { parseMarkdown, validateHttpUrl, renderMarkdown, toggleChecklistLine, scanImgRefs, gutterCols, MD_MAX_NODES, MD_MAX_DEPTH, MD_MAX_BYTES } = M;
+const { parseMarkdown, validateHttpUrl, renderMarkdown, toggleChecklistLine, scanImgRefs, firstRefs, gutterStack, MD_MAX_NODES, MD_MAX_DEPTH, MD_MAX_BYTES } = M;
 
 // ---------------------------------------------------------------------------
 // 语法树 → 紧凑字符串(只为断言好读)
@@ -302,7 +302,8 @@ test("图N 与方框:渲染器自己建,钩子只给文案与动作;查不到的
   const r = render("见图1 与图2\n\n- [x] 做完");
   assert.equal(
     r.html,
-    '<div .md><p>见<button .img-ref>图1</button> 与图2</p><ul><li .md-task.on><button .ckbox aria-label=取消勾选></button><p>做完</p></li></ul></div>',
+    '<div .md><div .md-blk><p>见<button .img-ref>图1</button> 与图2</p><div .md-figs><button .md-fig aria-label=图1><img></img><span .md-fig-n>图1</span></button></div></div>' +
+      '<ul><li .md-task.on><button .ckbox aria-label=取消勾选></button><p>做完</p></li></ul></div>',
   );
   const buttons = [];
   const walk = (n) => { if (n.nodeType === 1) { if (n.tag === "button") buttons.push(n); n.kids.forEach(walk); } };
@@ -313,37 +314,50 @@ test("图N 与方框:渲染器自己建,钩子只给文案与动作;查不到的
     b.on.click[0](e);
     assert.equal(e.stopped, 1);
   }
-  assert.deepEqual(r.opened, ["img:1", "tick:2"]);
+  assert.deepEqual(r.opened, ["img:1", "img:1", "tick:2"]); // 芯片与它下面那张图都开图1
   // 只读视图:方框禁用、不挂监听
   const ro = render("- [ ] 只读", { checkbox: () => ({ label: "未勾", toggle: null }) });
   assert.ok(ro.log.props.includes("disabled"));
   assert.equal(ro.log.listeners.length, 0);
 });
-test("单独成段的图N 原位画成图;src 只取钩子交回的串,段里夹了别的就照段落画", () => {
-  const r = render("图1\n\n图1\n图1\n\n见图1\n\n图1 图2\n\n图1 x\n\n> 图1");
+test("写到哪画到哪:每张图只画一次,画在第一次提到它的地方;句中的画在那一块下面;src 只取钩子交回的串", () => {
+  const FIG = (n) => `<button .md-fig aria-label=图${n}><img></img><span .md-fig-n>图${n}</span></button>`;
+  const CHIP = (n) => `<button .img-ref>图${n}</button>`;
+  const three = { image: (n) => (n <= 3 ? { label: `图${n}`, open() {}, src: () => `blob:app/${n}` } : null) };
+  // 单独成段 ⇒ 整段换成图;同一段里写两遍也只画一张;再提到只是芯片
+  const r = render("图1 图1\n\n图1\n图1\n\n见图1\n\n图1 x\n\n> 图1");
   assert.equal(
     r.html,
+    `<div .md><div .md-figs>${FIG(1)}</div><p>${CHIP(1)}\n${CHIP(1)}</p><p>见${CHIP(1)}</p><p>${CHIP(1)} x</p><blockquote><p>${CHIP(1)}</p></blockquote></div>`,
+  );
+  // 句中第一次提到 ⇒ 字照常、图画在那一块正下方(标题 / 列表项 / 粗体里的同理);查不到的照原文、不画
+  const m = render("见图1 与图4\n\n# 题图2\n\n- 项 **图3** 与图1\n\n图2 图3", three);
+  assert.equal(
+    m.html,
     "<div .md>" +
-      "<div .md-figs><button .md-fig aria-label=图1><img></img></button></div>" +
-      "<div .md-figs><button .md-fig aria-label=图1><img></img></button><button .md-fig aria-label=图1><img></img></button></div>" +
-      "<p>见<button .img-ref>图1</button></p>" +
-      "<p><button .img-ref>图1</button> 图2</p>" +
-      "<p><button .img-ref>图1</button> x</p>" +
-      "<blockquote><div .md-figs><button .md-fig aria-label=图1><img></img></button></div></blockquote>" +
+      `<div .md-blk><p>见${CHIP(1)} 与图4</p><div .md-figs>${FIG(1)}</div></div>` +
+      `<div .md-blk><h1>题${CHIP(2)}</h1><div .md-figs>${FIG(2)}</div></div>` +
+      `<ul><li><div .md-blk><p>项 <strong>${CHIP(3)}</strong> 与${CHIP(1)}</p><div .md-figs>${FIG(3)}</div></div></li></ul>` +
+      `<p>${CHIP(2)} ${CHIP(3)}</p>` +
       "</div>",
+  );
+  // 段里夹了字(哪怕图是头一回出现)就不是图段:字照画、图在下面
+  assert.equal(render("图2 x", three).html, `<div .md><div .md-blk><p>${CHIP(2)} x</p><div .md-figs>${FIG(2)}</div></div></div>`);
+  // 单独成段里有一张已经画过:那一段照字画,没画过的那张画在它下面
+  const part = render("见图1\n\n图1 图2", three);
+  assert.equal(
+    part.html,
+    `<div .md><div .md-blk><p>见${CHIP(1)}</p><div .md-figs>${FIG(1)}</div></div><div .md-blk><p>${CHIP(1)} ${CHIP(2)}</p><div .md-figs>${FIG(2)}</div></div></div>`,
   );
   const imgs = [];
   const walk = (n) => { if (n.nodeType === 1) { if (n.tag === "img") imgs.push(n); n.kids.forEach(walk); } };
-  walk(r.root);
-  assert.equal(imgs.length, 4);
-  for (const i of imgs) {
-    assert.equal(i.src, "blob:app/1");
-    assert.equal(i.alt, "图1");
-  }
+  walk(m.root);
+  assert.deepEqual(imgs.map((i) => [i.src, i.alt]), [["blob:app/1", "图1"], ["blob:app/2", "图2"], ["blob:app/3", "图3"]]);
   // 点图 = 钩子的 open,且不往外冒(卡片 / 面板上还有别的点击主)
   const figs = [];
   const walkF = (n) => { if (n.nodeType === 1) { if (n.className === "md-fig") figs.push(n); n.kids.forEach(walkF); } };
   walkF(r.root);
+  assert.equal(figs.length, 1);
   const e = { stopped: 0, stopPropagation() { this.stopped++; } };
   figs[0].on.click[0](e);
   assert.equal(e.stopped, 1);
@@ -470,17 +484,12 @@ test("写字框标注:scanImgRefs 的位置、行号、代码里不认", () => {
   const got = scanImgRefs(src).map((r) => `${src.slice(r.a, r.b)}@${r.line}`);
   assert.deepEqual(got, ["图1@1", "图2@3", "图3@4", "图4@7", "图5@10", "图8@15", "图9@18"]);
 });
-test("写字框窄边:gutterCols 隔不足 reach 行才排开,够远就回最右列", () => {
-  const cols = (src, reach) => gutterCols(scanImgRefs(src), reach);
-  // 同一行两枚并排(先写到的在左 = 列号大,153 走查 A-M22);相邻行错开;隔够 reach 行回第 0 列
-  assert.deepEqual(cols("图1 图2\n图3\n\n图4", 2), [1, 0, 2, 0]);
-  assert.deepEqual(cols("图1\n图2 图3 图4", 3), [0, 3, 2, 1]);
-  assert.deepEqual(cols("图1\n图2\n图3\n图4", 2), [0, 1, 0, 1]);
-  assert.deepEqual(cols("图1\n图2\n图3\n图4", 3), [0, 1, 2, 0]);
-  // 用户那篇:句中的图1 与单独一行的图2 隔一空行,都在最右列
-  assert.deepEqual(cols("# hello\n1. 好\n2. 可以的\n1图1好的\n\n图2", 2), [0, 0]);
-  // 一整段不空行、每行都有图:最多两列,不随段长一直往左排
-  assert.equal(Math.max(...cols(Array.from({ length: 40 }, (_, i) => `第${i}行 图${i + 1}`).join("\n"), 2)), 1);
+test("写字框窄边:每张图只配一枚(第一次提到处),一列里挨太近往下错开", () => {
+  const src = "图1 图2\n图1\n\n```\n图3\n```\n图3 图2";
+  const refs = scanImgRefs(src);
+  assert.deepEqual(firstRefs(refs).map((i) => `图${refs[i].n}@${refs[i].line}`), ["图1@0", "图2@0", "图3@6"]);
+  assert.deepEqual(gutterStack([0, 0, 10, 200, 210], 50), [0, 50, 100, 200, 250]);
+  assert.deepEqual(gutterStack([], 50), []);
 });
 test("顶层块的起始行:与 blocks 一一对应,行号口径同 split(\"\n\")", () => {
   const src = "\n# 题\n段一\n段一续\n\n- a\n- b\n\n> 引\n> 用\n```\nx\n\n```\n---\n图1\n";

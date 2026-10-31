@@ -52,12 +52,12 @@ import {
   type TopicItem,
 } from "./api";
 import { renderMarkdown } from "../../shared/markdown-dom";
-import { gutterCols, imgRefText, scanImgRefs } from "../../shared/markdown";
+import { imgRefText, scanImgRefs } from "../../shared/markdown";
 import { renderDiff } from "../../shared/diff-dom";
 import { toggleChecklistLine } from "../../shared/checklist";
 import { HAS_BROWSER, writeClipboard } from "./platform";
 import { commentBadgeHtml, loadCommentCounts } from "./comments";
-import { figureSrc, fillThumb, hydrateThumbs } from "./thumbs";
+import { figureSrc, hydrateThumbs } from "./thumbs";
 import { openViewer } from "./viewer";
 import { capturePhoto, PICK_MAX, pickImages, toBase64 } from "./images";
 import { t } from "./i18n";
@@ -884,14 +884,12 @@ function openEditor(d: IdeaItem | null, seed: string | null, carried: File[], at
   /** 取图在飞(系统选择器开着 + 回来那几秒的降采样 + 逐张挂上):两枚钮不受理、离开编辑器先拦
    *  一句 —— 走了的话插进去的「图N」赶不上那一版。 */
   let picking = false;
-  // 已画的那几枚的「把标记画回去」:预览里大图角上那枚 × 切的是同一份标记,条里那枚(这时藏着)也跟着变
+  // 条里那几枚的「把标记画回去」:预览里大图角上那枚 × 切的是同一份标记,条里那枚也跟着变
   const painters = new Map<string, () => void>();
-  let previewShown = new Set<number>(); // 上一次预览原位画成图的那几张
   function toggleMark(imgId: string): void {
     if (marked.has(imgId)) marked.delete(imgId);
     else marked.add(imgId);
     painters.get(imgId)?.();
-    for (const b of pins.querySelectorAll<HTMLElement>(".ref-thumb")) b.classList.toggle("marked", marked.has(b.dataset.img!));
   }
   function paintThumbs(): void {
     painters.clear();
@@ -925,7 +923,7 @@ function openEditor(d: IdeaItem | null, seed: string | null, carried: File[], at
     paintHl();
   }
 
-  /** 预览里原位画出来的图各配一枚 ×(条里已把它们藏掉,删图就在这儿;与条里那枚同一份标记,保存时一起删)。
+  /** 预览里原位画出来的图各配一枚 ×(与条里那枚同一份标记,保存时一起删)。
    *  图本身是按钮,× 不能嵌进去 ⇒ 套一层 `.md-fig-box` 并排挂。 */
   function figDels(body: HTMLElement, figs: ImageMeta[]): void {
     const els = body.querySelectorAll<HTMLElement>(".md-fig");
@@ -952,47 +950,32 @@ function openEditor(d: IdeaItem | null, seed: string | null, carried: File[], at
     });
   }
 
-  // 写字框里的「图N」:能对上一张图的垫一层底色(对不上 = 引用断了,照普通字),并在它那一行的右侧
-  // 窄边配一枚缩略图(同桌面 paintHl;837 起句中的也配:窄边 = 正文里写到的图,上面那条 = 还没写进正文的)。纯文本框给不了几个字单独上色 ⇒ 背后垫一层同字体同排版的
-  // 影子层,只画底色与缩略图,字仍是写字框自己的;写字框背景透明,纸色由外框给。手机上框随内容长高、
-  // 不在框里滚 ⇒ 影子层只跟尺寸,不跟滚动。排版参数逐项从写字框的计算样式抄,⛔ 唯独字号与行高不抄、由 CSS 里
-  // 与写字框同一条声明给(834):textZoom(系统字号 / 界面字号)把计算后字号推大、getComputedStyle 照实报放大后的值,
-  // 抄进行内样式再被 textZoom 放大一遍 ⇒ 115% 档影子层 21.16px 对写字框 18.4px,底色一行比一行往下错。
+  // 写字框里的「图N」:能对上一张图的垫一层底色(对不上 = 引用断了,照普通字)。纯文本框给不了几个字单独上色 ⇒ 背后垫一层
+  // 同字体同排版的影子层,只画底色,字仍是写字框自己的;写字框背景透明,纸色由外框给。手机上框随内容长高、不在框里滚 ⇒
+  // 影子层只跟尺寸,不跟滚动。排版参数逐项从写字框的计算样式抄,⛔ 唯独字号与行高不抄、由 CSS 里与写字框同一条声明给(834):
+  // textZoom(系统字号 / 界面字号)把计算后字号推大、getComputedStyle 照实报放大后的值,抄进行内样式再被 textZoom 放大一遍
+  // ⇒ 115% 档影子层 21.16px 对写字框 18.4px,底色一行比一行往下错。
+  // ⛔ 手机上没有窄边(154 G2,用户拍「手机不让位、正文满宽」):837 那版在框右侧按列数让出位置摆缩略图,4 列时正文只剩 ~90px;
+  // 写字时图在下面那条里看(带编号),排出来的样子切「预览」看。
   const hl = el("div", "doc-hl");
   hl.setAttribute("aria-hidden", "true");
-  // 窄边的缩略图要点得开(看大图),而影子层压在写字框**背后**、点不到 ⇒ 影子层里只留同尺寸的隐形占位
-  // (它替缩略图在那一行站位),看得见、点得着的那枚住写字框**上面**这一层,位置照占位量(placePins)。
-  // 窄边里没有字,盖在写字框上不挡输入。
-  const pins = el("div", "doc-pins");
-  const edBox = el("div", "doc-ed", [hl, area, pins]);
-  const PIN_H = 40; // 窄边缩略图高 36 + 上下留缝(index.html .doc-pins .ref-thumb)
+  const edBox = el("div", "doc-ed", [hl, area]);
   const HL_COPY = ["fontFamily", "fontWeight", "fontStyle", "letterSpacing", "wordSpacing", "tabSize", "textIndent",
     "paddingTop", "paddingRight", "paddingBottom", "paddingLeft", "whiteSpace", "overflowWrap", "wordBreak"] as const;
+  // 影子层 / 光标探针的宽 = 写字框内框(含内边距)。⛔ 别用 clientWidth:它取整,小数宽度下某一行会在影子层里多折一行,
+  // 从那行起底色与探针整体低一行(155,桌面实测;这里同一套排法)。打开那一刻 RO 还没回调,先拿 clientWidth 顶一拍。
+  let areaW = area.clientWidth;
   function syncHl(): void {
     const cs = getComputedStyle(area);
     for (const k of HL_COPY) hl.style[k] = cs[k];
-    const box = { top: `${area.clientTop}px`, left: `${area.clientLeft}px`, width: `${area.clientWidth}px`, height: `${area.clientHeight}px` };
-    Object.assign(hl.style, box);
-    Object.assign(pins.style, box);
-    placePins();
-  }
-  /** 上层那几枚缩略图挪到各自占位的位置(占位与它同尺寸;两层同一个框,取相对影子层的实际坐标 ——
-   *  ⛔ 别用 offsetTop:它取整,行高 32.2px 那档差出 1px)。 */
-  function placePins(): void {
-    const o = hl.getBoundingClientRect();
-    const spots = hl.querySelectorAll<HTMLElement>(".ref-thumb");
-    pins.querySelectorAll<HTMLElement>(".ref-thumb").forEach((b, i) => {
-      const r = spots[i].getBoundingClientRect();
-      b.style.top = `${r.top - o.top}px`;
-      b.style.left = `${r.left - o.left}px`;
-    });
+    Object.assign(hl.style, { top: `${area.clientTop}px`, left: `${area.clientLeft}px`, width: `${areaW}px`, height: `${area.clientHeight}px` });
   }
   /** 光标那一行此刻在视口里的上沿(写字框是 textarea,量不到光标 ⇒ 照影子层的排版另起一层探针,只排光标前那截)。 */
   function caretBox(): { top: number; h: number } {
     const cs = getComputedStyle(area);
     const probe = el("div", "doc-hl");
     for (const k of HL_COPY) probe.style[k] = cs[k];
-    Object.assign(probe.style, { top: `${area.clientTop}px`, left: `${area.clientLeft}px`, width: `${area.clientWidth}px`, height: "auto", visibility: "hidden" });
+    Object.assign(probe.style, { top: `${area.clientTop}px`, left: `${area.clientLeft}px`, width: `${areaW}px`, height: "auto", visibility: "hidden" });
     const mark = el("span", "", ["​"]);
     probe.append(area.value.slice(0, area.selectionStart), mark);
     edBox.append(probe);
@@ -1033,42 +1016,17 @@ function openEditor(d: IdeaItem | null, seed: string | null, carried: File[], at
 
   function paintHl(): void {
     const v = area.value;
-    const bySeq = new Map(imgs.map((m) => [m.seq, m]));
+    const seqs = new Set(imgs.map((m) => m.seq));
     const nodes: (string | HTMLElement)[] = [];
-    const refs = scanImgRefs(v).filter((r) => bySeq.has(r.n));
-    // 缩略图比一行高:隔不足这么多行的两枚往左排开(行高随界面字号变,照写字框实际行高算)
-    const cols = gutterCols(refs, Math.ceil(PIN_H / parseFloat(getComputedStyle(area).lineHeight)));
-    const inGutter = new Set<number>(); // 窄边配了缩略图的那几张:条里不再重复摆
-    const pinEls: HTMLElement[] = [];
     let last = 0;
-    refs.forEach((r, i) => {
-      const m = bySeq.get(r.n)!;
-      nodes.push(v.slice(last, r.a));
-      const th = el("span", "ref-thumb");
-      th.style.setProperty("--k", String(cols[i]));
-      nodes.push(el("mark", "ref", [v.slice(r.a, r.b), th]));
-      const pin = el("button", "ref-thumb");
-      pin.dataset.img = m.id;
-      pin.dataset.seq = String(m.seq);
-      pin.classList.toggle("marked", marked.has(m.id));
-      pin.setAttribute("aria-label", t("main.viewImage", { n: m.seq }));
-      pin.addEventListener("click", () => void openViewer(imgs, imgs.indexOf(m), true));
-      pinEls.push(pin);
-      inGutter.add(m.seq);
+    for (const r of scanImgRefs(v)) {
+      if (!seqs.has(r.n)) continue;
+      nodes.push(v.slice(last, r.a), el("mark", "ref", [v.slice(r.a, r.b)]));
       last = r.b;
-    });
+    }
     // 一处都没标 ⇒ 影子层整个清空,⛔ 别留一份全文去排版(200 KiB 一篇逐键重排约 30 ms,桌面实测)
     if (nodes.length > 0) nodes.push(`${v.slice(last)}\n`); // 末尾那个空行也要占高(与写字框一致)
-    const gut = String(refs.length === 0 ? 0 : Math.max(...cols) + 1);
-    const changed = edBox.style.getPropertyValue("--thumbs") !== gut;
-    edBox.classList.toggle("has-thumbs", refs.length > 0);
-    edBox.style.setProperty("--thumbs", gut);
     hl.replaceChildren(...nodes);
-    pins.replaceChildren(...pinEls);
-    hideShown(thumbs, edBox.hidden ? previewShown : inGutter); // 预览开着时条被重画(图单到货)也照预览那份藏
-    // ⚠ 挂上之后再填:fillThumb 见节点不在页上就当「已被重画替掉」放弃(缓存命中那条同步走到那句,先填 = 一张都不出)
-    for (const th of pinEls) void fillThumb(th);
-    if (changed) fitArea(area); // 窄边宽度变了,框里的字重新折行,高度要重量
     syncHl();
   }
   area.addEventListener("input", () => {
@@ -1079,7 +1037,9 @@ function openEditor(d: IdeaItem | null, seed: string | null, carried: File[], at
   // 转屏 / 字号变了:框宽变,影子层跟上;宽度一变高度也得重量(框随内容长高、只在打字时量 ⇒ 横屏转竖屏折行变多,
   // 文末几行被框底裁掉、光标落在框外 —— 153 走查 A-M03 的真根,154 真机转屏时看见的)。只认宽度:量高度本身也会触发这里。
   let fitW = -1;
-  const hlResize = new ResizeObserver(() => {
+  const hlResize = new ResizeObserver((es) => {
+    const cs = getComputedStyle(area);
+    areaW = es[es.length - 1].contentRect.width + parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight);
     if (area.clientWidth !== fitW) {
       fitW = area.clientWidth;
       fitArea(area);
@@ -1326,7 +1286,6 @@ function openEditor(d: IdeaItem | null, seed: string | null, carried: File[], at
     modePrev.classList.remove("on");
     preview.hidden = true;
     edBox.hidden = false;
-    paintHl(); // 条里改回「只藏窄边配了图的那几张」
     area.focus({ preventScroll: true });
     revealSoon(0);
   }, "on");
@@ -1334,10 +1293,8 @@ function openEditor(d: IdeaItem | null, seed: string | null, carried: File[], at
     modePrev.classList.add("on");
     modeEdit.classList.remove("on");
     // 预览只在切过去那一刻画一次(200 KiB 一篇解析要几十毫秒,⛔ 别逐键同步算);只读,方框禁用。
-    // 条里只留预览里没画成图的;画成图的删图钮挂在大图角上
+    // 画成图的删图钮也挂在大图角上(与条里那枚同一份标记)
     const b = renderBody(sp, id ?? newId, area.value, imgs, null);
-    previewShown = b.shown;
-    hideShown(thumbs, b.shown);
     figDels(b.el, b.figs);
     preview.replaceChildren(b.el);
     preview.hidden = false;
@@ -1350,18 +1307,19 @@ function openEditor(d: IdeaItem | null, seed: string | null, carried: File[], at
         [btn(id === null ? t("docs.back") : t("docs.backToDoc"), () => editor?.leave(done), "ghost")],
         [status, btn(t("docs.save"), () => editor?.leave(done))],
       ),
-      // 加图两枚钮与「编辑 / 预览」同一排、缩略图紧跟在下面 —— ⛔ 别挪到正文框底下:框有 60vh,
-      // 矮屏(360×640)上那一排正好压在底栏下面,新篇加的图还没有回执,点了像没反应
+      // 加图两枚钮与「编辑 / 预览」同一排、吸在页头里 —— ⛔ 别挪到正文框底下:框不矮于视口,
+      // 矮屏(360×640)上那一排正好压在底栏下面,点了像没反应(加完有屏底回执)
       // ⚠ `.row` 只包那两枚钮:它的 `button` 规则是实心主钮,包住分段钮会把没选中的那段刷成实心红
       el("div", "doc-tools", [
         el("div", "seg doc-seg", [modeEdit, modePrev]),
         el("div", "row", [btn(t("shell.addImage"), () => void pick(false), "ghost"), btn(t("shell.takePhoto"), () => void pick(true), "ghost")]),
       ]),
     ]),
-    el("div", "doc-imgs", [thumbs]),
     err,
     edBox,
     preview,
+    // 缩略图条在正文下面(154 G1:同阅读页;编辑器这条张张都在,× 标删)
+    el("div", "doc-imgs", [thumbs]),
   );
   fitArea(area);
   paintHl();

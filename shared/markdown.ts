@@ -87,26 +87,27 @@ export function scanImgRefs(text: string): ImgRefSpan[] {
   return out;
 }
 
-/** 写字框右侧窄边上,每处「图N」的缩略图排第几列(0 = 最靠右;顺序同 `refs`)。缩略图停在它那一行、
- *  比一行高 ⇒ 相隔不足 `reach` 行的两枚在同一列会叠住,排开到下一列;隔得够远的回到最右列。
- *  按原文行数算:一行原文折成几行只会更远,所以只会多让、不会叠。 */
-export function gutterCols(refs: ImgRefSpan[], reach: number): number[] {
-  const lastLine: number[] = []; // 每一列最后一枚停在哪一行
-  const cols = refs.map((r) => {
-    let c = lastLine.findIndex((l) => r.line - l >= reach);
-    if (c < 0) c = lastLine.length;
-    lastLine[c] = r.line;
-    return c;
+/** 写字框窄边上那一列缩略图(154 G2:一列、挂在框外,同一张图只配一枚 —— 配在第一次提到它的地方,同渲染器
+ *  「只画一次」):`refs` 里每张图第一次出现的那几处的下标(顺序同 `refs`)。 */
+export function firstRefs(refs: ImgRefSpan[]): number[] {
+  const seen = new Set<number>();
+  const out: number[] = [];
+  refs.forEach((r, i) => {
+    if (seen.has(r.n)) return;
+    seen.add(r.n);
+    out.push(i);
   });
-  // 同一行的几枚:占的列不变,左右顺序跟字走(先写到的在左)—— 0 列在最右,按先来先占会排成「2、1」(153 走查 A-M22)
-  for (let i = 0; i < refs.length; ) {
-    let j = i;
-    while (j < refs.length && refs[j].line === refs[i].line) j++;
-    const taken = cols.slice(i, j).sort((a, b) => b - a);
-    for (let k = i; k < j; k++) cols[k] = taken[k - i];
-    i = j;
-  }
-  return cols;
+  return out;
+}
+
+/** 一列里每枚缩略图的上沿:想停在它那一行的 `ys[i]`(从上往下排好的),与上一枚隔不足 `h` 就往下错开(像页边批注)。 */
+export function gutterStack(ys: number[], h: number): number[] {
+  let floor = -Infinity;
+  return ys.map((y) => {
+    const top = Math.max(y, floor);
+    floor = top + h;
+    return top;
+  });
 }
 
 /** 链接地址的长度上限(码元)。比它长的一律不当链接 —— 也是在给每次校验的复制量封顶。 */

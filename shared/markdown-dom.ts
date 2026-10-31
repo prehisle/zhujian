@@ -16,10 +16,12 @@
 //     `validateHttpUrl`(点击出口也调同一个校验器),交给各端的 `openLink`;
 //   - 图N → 有界整数,交给各端的 `image(n)` 查当前条目的配图;有就画成本文件建的芯片按钮
 //     (文案是各端字典给的,点了调各端的回调),查不到就按原文「图N」;
-//     **一段里只有图N(中间只隔空白 / 换行)** ⇒ 那几张画成原位的图(`button.md-fig` 包一个
-//     `img`):`img.src` 只取各端 `src()` 交回的串(各端从自己的取图命令拿的 blob: / data:
-//     地址,⛔ 不来自正文),`alt` / `title` / `aria-label` 是各端字典给的文案;段里有一个图N
-//     查不到,整段照普通段落画(芯片 + 原文);
+//   - **写到哪画到哪**(154 G1,用户拍):每张查得到的图**只画一次**,画在正文里第一次提到它的地方 ——
+//     一段里只有图N(中间只隔空白 / 换行)且张张头一回出现 ⇒ 整段换成原位的图;句中提到的(标题、列表项、
+//     引用里的段落同理)⇒ 字照常画(图N 是芯片),那几张画在这一块的正下方;再提到只是芯片。
+//     原位的图 = `button.md-fig` 包一个 `img` + 一枚编号角标 `span.md-fig-n`:`img.src` 只取各端 `src()`
+//     交回的串(各端从自己的取图命令拿的 blob: / data: 地址,⛔ 不来自正文),`alt` / `title` /
+//     `aria-label` / 角标的字是各端字典给的文案;
 //   - 勾选状态与行号 → 布尔 / 行号,交给各端的 `checkbox` 换回文案与翻面回调,方框本身由本文件建;
 //   - 有序列表起始号 → 校验过的整数,写 `start` 属性(数值,不是字符串拼接)。
 // 各端交进来的文案只进 `textContent` / `title` / `aria-label`(⛔ 它们不来自正文)。
@@ -54,7 +56,7 @@ type Tag =
 
 class DomOver {}
 
-type Cx = { n: number; hooks: MdHooks };
+type Cx = { n: number; hooks: MdHooks; drawn: Set<number> }; // drawn = 已原位画过的图号(每张只画一次)
 
 function count(cx: Cx): void {
   if (cx.n >= MD_MAX_DOM) throw new DomOver();
@@ -82,7 +84,7 @@ function plain(text: string): HTMLElement {
 export function renderMarkdown(text: string, hooks: MdHooks): MdRendered {
   const r = parseMarkdown(text);
   if (!r.ok) return { root: plain(text), degraded: r.reason, anchors: [] };
-  const cx: Cx = { n: 0, hooks };
+  const cx: Cx = { n: 0, hooks, drawn: new Set() };
   try {
     const root = mk(cx, "div", "md");
     const anchors: { line: number; el: HTMLElement }[] = [];
@@ -103,14 +105,14 @@ function block(cx: Cx, b: MdBlock): HTMLElement {
     case "heading": {
       const h = mk(cx, b.level === 1 ? "h1" : b.level === 2 ? "h2" : "h3");
       inlines(cx, h, b.c);
-      return h;
+      return withFigs(cx, h, b.c);
     }
     case "para": {
       const figs = figures(cx, b.c);
       if (figs !== null) return figs;
       const p = mk(cx, "p");
       inlines(cx, p, b.c);
-      return p;
+      return withFigs(cx, p, b.c);
     }
     case "list": {
       const l = mk(cx, b.ordered ? "ol" : "ul");
@@ -147,19 +149,49 @@ function block(cx: Cx, b: MdBlock): HTMLElement {
 
 type MdImage = NonNullable<ReturnType<MdHooks["image"]>>;
 
-/** 一段里只有图N(中间只隔空白)且张张查得到 ⇒ 原位画成图;否则 `null`(照普通段落画)。 */
+/** 一段里只有图N(中间只隔空白)、张张查得到且都还没画过 ⇒ 整段原位画成图;否则 `null`(照普通段落画)。 */
 function figures(cx: Cx, xs: MdInline[]): HTMLElement | null {
+  const ns: number[] = [];
   const imgs: MdImage[] = [];
   for (const x of xs) {
     if (x.t === "text" && x.s.trim() === "") continue;
-    if (x.t !== "img") return null;
+    if (x.t !== "img" || cx.drawn.has(x.n)) return null;
     const img = cx.hooks.image(x.n);
     if (img === null) return null;
+    if (ns.includes(x.n)) continue; // 「图1 图1」:同一段里也只画一次
+    ns.push(x.n);
     imgs.push(img);
   }
   if (imgs.length === 0) return null;
+  return figBox(cx, ns, imgs);
+}
+
+/** 句中提到的图:这一块里头一回出现、查得到的那几张画在它正下方(`div.md-blk` 包住这一块与图);没有就原样交回。 */
+function withFigs(cx: Cx, e: HTMLElement, xs: MdInline[]): HTMLElement {
+  const ns: number[] = [];
+  const imgs: MdImage[] = [];
+  const walk = (ys: MdInline[]): void => {
+    for (const y of ys) {
+      if (y.t === "strong" || y.t === "em") walk(y.c);
+      else if (y.t === "img" && !cx.drawn.has(y.n) && !ns.includes(y.n)) {
+        const img = cx.hooks.image(y.n);
+        if (img === null) continue;
+        ns.push(y.n);
+        imgs.push(img);
+      }
+    }
+  };
+  walk(xs);
+  if (imgs.length === 0) return e;
+  const wrap = mk(cx, "div", "md-blk");
+  wrap.append(e, figBox(cx, ns, imgs));
+  return wrap;
+}
+
+function figBox(cx: Cx, ns: number[], imgs: MdImage[]): HTMLElement {
   const wrap = mk(cx, "div", "md-figs");
-  for (const img of imgs) {
+  imgs.forEach((img, i) => {
+    cx.drawn.add(ns[i]);
     const fig = mk(cx, "button", "md-fig") as HTMLButtonElement;
     fig.type = "button";
     fig.title = img.label;
@@ -179,9 +211,11 @@ function figures(cx: Cx, xs: MdInline[]): HTMLElement | null {
         },
         () => fig.classList.add("broken"),
       );
-    fig.append(pic);
+    const tag = mk(cx, "span", "md-fig-n");
+    tag.append(txt(cx, img.label));
+    fig.append(pic, tag);
     wrap.append(fig);
-  }
+  });
   return wrap;
 }
 

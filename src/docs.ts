@@ -37,7 +37,7 @@ import { t } from "./i18n";
 import { type ImageMeta, attachBlob, figureSrc, getThumb, imageStrip, openLightbox, pasteImage } from "./item-images";
 import { toggleChecklistLine } from "../shared/checklist";
 import { type MdRendered, renderMarkdown } from "../shared/markdown-dom";
-import { gutterCols, imgRefText, scanImgRefs } from "../shared/markdown";
+import { firstRefs, gutterStack, imgRefText, scanImgRefs } from "../shared/markdown";
 import { renderDiff } from "../shared/diff-dom";
 import { closeComments, commentBadge, commentCountFor, inlineCommentState, loadCommentCounts, openInlineComments } from "./item-comments";
 import type { View, ViewCtx } from "./notebook";
@@ -527,7 +527,8 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     return { el: wrap, shown, figs, anchors: r.anchors };
   }
 
-  /** 阅读页的缩略图条只摆正文里没原位画出来的图(画了的再摆一遍就重复了;没引用到的图仍在这儿)。 */
+  /** 阅读页的缩略图条只摆正文里没原位画出来的图(画了的再摆一遍就重复了;没引用到的图仍在这儿)。
+   *  ⛔ 编辑器的条不藏:那条是管图的地方(× 删 / ↺ 撤回),张张都在(154 G1,用户嫌「条里缺原位那张」怪)。 */
   function hideShown(strip: HTMLElement, shown: Set<number>): void {
     let left = 0;
     for (const th of strip.querySelectorAll<HTMLElement>(".img-thumb")) {
@@ -538,7 +539,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     strip.classList.toggle("all-inline", left === 0);
   }
 
-  /** 编辑器右栏:原位画出来的图各配一枚 ×(缩略图条已把它们藏掉,删图就在这儿;标记与条里那枚是同一份,
+  /** 编辑器右栏:原位画出来的图各配一枚 ×(标记与条里那枚是同一份,
    *  保存时一起删)。图本身是按钮,× 不能嵌进去 ⇒ 套一层 `.md-fig-box` 并排挂。 */
   function figDels(body: HTMLElement, figs: ImageMeta[], strip: ReturnType<typeof imageStrip>): void {
     const els = body.querySelectorAll<HTMLElement>(".md-fig");
@@ -782,8 +783,6 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     let imgs: ImageMeta[] = [];
     let previewDue: ReturnType<typeof setTimeout> | null = null;
     let anchors: MdRendered["anchors"] = [];
-    let previewShown = new Set<number>(); // 右栏上一次画成大图的那几张
-    let inGutter = new Set<number>(); // 写字框窄边上有缩略图的那几张(正文里写到了的)
     let strip: ReturnType<typeof imageStrip> | null = null;
     const imgRow = el("div", { className: "img-editor" }, [imgErr]);
     function mountStrip(target: string): ReturnType<typeof imageStrip> {
@@ -846,8 +845,6 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     function paintPreview(): void {
       previewDue = null;
       const b = renderBody(id ?? newId, area.value, imgs, null);
-      previewShown = b.shown;
-      syncStrip();
       if (strip !== null) figDels(b.el, b.figs, strip);
       preview.replaceChildren(b.el);
       anchors = b.anchors;
@@ -857,14 +854,18 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     // 宽屏左右并排:右边跟着左边滚,按块对齐 —— 左边某块起始行的高度 ↔ 右边那块元素的高度,块与块之间
     // 线性插值(两头钉在 0 与各自的最底)。⛔ 别退回按总高比例:一张图在右边几百像素、在左边只占一行,
     // 比例一算就整段错开。左边行高靠一只同宽同字体的影子 div 量(折行与 textarea 一致),正文或宽度变了才重量。
+    // 影子层 / 探针排版用的宽 = 写字框的内框(含左右内边距、不含滚动条)。⛔ 别用 clientWidth:它取整,150% 缩放下内框是
+    // 283.33px 这种小数,差的那零点几像素刚好让某一行在影子层里多折一行 ⇒ 底色、窄边、光标探针从那行起整体低一行(155;
+    // 实测 116 个宽度里 7 个错一行,换成 ResizeObserver 给的 contentRect 后 231 个宽度一个不错)。打开那一刻 RO 还没回调,先拿 clientWidth 顶一拍。
+    let areaW = area.clientWidth;
     let tops: { value: string; width: number; ys: number[] } | null = null;
     function lineTops(lines: number[]): number[] {
-      if (tops !== null && tops.value === area.value && tops.width === area.clientWidth && tops.ys.length === lines.length) return tops.ys;
+      if (tops !== null && tops.value === area.value && tops.width === areaW && tops.ys.length === lines.length) return tops.ys;
       const cs = getComputedStyle(area);
       const m = document.createElement("div");
       for (const k of ["fontFamily", "fontSize", "fontWeight", "lineHeight", "letterSpacing", "tabSize", "paddingTop", "paddingLeft", "paddingRight", "whiteSpace", "overflowWrap", "wordBreak"] as const)
         m.style[k] = cs[k];
-      Object.assign(m.style, { position: "absolute", visibility: "hidden", left: "-99999px", top: "0", boxSizing: "border-box", width: `${area.clientWidth}px`, border: "0" });
+      Object.assign(m.style, { position: "absolute", visibility: "hidden", left: "-99999px", top: "0", boxSizing: "border-box", width: `${areaW}px`, border: "0" });
       const src = area.value.split("\n");
       const marks: HTMLElement[] = [];
       let from = 0;
@@ -878,7 +879,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       document.body.append(m);
       const ys = marks.map((x) => x.offsetTop);
       m.remove();
-      tops = { value: area.value, width: area.clientWidth, ys };
+      tops = { value: area.value, width: areaW, ys };
       return ys;
     }
     function syncPreview(): void {
@@ -906,87 +907,86 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       const span = src[k + 1] - src[k];
       preview.scrollTop = span > 0 ? dst[k] + ((y - src[k]) / span) * (dst[k + 1] - dst[k]) : dst[k];
     }
-    // 写字框里的「图N」:能对上一张图的垫一层底色(对不上 = 引用断了,照普通字),并在它那一行的右侧
-    // 窄边配一枚缩略图(837 起句中的也配:窄边 = 正文里写到的图,条里 = 还没写进正文的)。纯文本框给不了几个字单独上色 ⇒ 背后垫一层同字体同排版的影子层,只画底色与
-    // 缩略图,字仍是写字框自己的(光标 / 输入法 / 撤销一概不碰);写字框背景透明,纸色由外框给。
+    // 写字框里的「图N」:能对上一张图的垫一层底色(对不上 = 引用断了,照普通字)。纯文本框给不了几个字单独上色 ⇒ 背后垫一层
+    // 同字体同排版的影子层,只画底色,字仍是写字框自己的(光标 / 输入法 / 撤销一概不碰);写字框背景透明,纸色由外框给。
     // 排版参数逐项从写字框的计算样式抄(⛔ 别在 CSS 里另写一份:差一个字距,底色就和字错开)。
+    // 窄边(154 G2):写字框**外面**右侧一列,每张图一枚缩略图(带「图N」角标),停在第一次提到它的那一行,挨得太近就往下错开;
+    // ⛔ 别挪回框里 —— 那版按列数给写字框加右内边距,连没提到图的段落也一起让位,四列时正文只剩一条缝(153 走查 G2)。
     const hl = el("div", { className: "doc-hl" });
     hl.setAttribute("aria-hidden", "true");
-    const edBox = el("div", { className: "doc-ed" }, [hl, area]);
-    const THUMB_H = 48; // 窄边缩略图高 42 + 边框 + 上下留缝(docs.css .doc-hl .ref-thumb)
+    const gutIn = el("div", { className: "doc-gut-in" });
+    const gut = el("div", { className: "doc-gut" }, [gutIn]);
+    const edBox = el("div", { className: "doc-ed" }, [hl, area, gut]);
+    const THUMB_H = 50; // 窄边一枚的高 44 + 上下留缝(docs.css .doc-gut .ref-thumb)
     const HL_COPY = ["fontFamily", "fontSize", "fontWeight", "fontStyle", "lineHeight", "letterSpacing", "wordSpacing", "tabSize", "textIndent",
       "paddingTop", "paddingRight", "paddingBottom", "paddingLeft", "whiteSpace", "overflowWrap", "wordBreak"] as const;
     function syncHl(): void {
       const cs = getComputedStyle(area);
       for (const k of HL_COPY) hl.style[k] = cs[k];
-      Object.assign(hl.style, { top: `${area.clientTop}px`, left: `${area.clientLeft}px`, width: `${area.clientWidth}px`, height: `${area.clientHeight}px` });
+      Object.assign(hl.style, { top: `${area.clientTop}px`, left: `${area.clientLeft}px`, width: `${areaW}px`, height: `${area.clientHeight}px` });
+      Object.assign(gut.style, { top: `${area.clientTop}px`, height: `${area.clientHeight}px` });
       hl.scrollTop = area.scrollTop;
+      placeGutter();
+    }
+    /** 窄边那几枚各停到影子层里它那处「图N」所在的那一行(折行随宽度变 ⇒ 尺寸一变就重摆)。 */
+    function placeGutter(): void {
+      const marks = hl.querySelectorAll<HTMLElement>("mark.ref.first");
+      const pins = gutIn.querySelectorAll<HTMLElement>(".ref-thumb");
+      if (marks.length !== pins.length) throw new Error(`窄边 ${pins.length} 枚、影子层首提 ${marks.length} 处,对不上`);
+      const o = hl.getBoundingClientRect().top - hl.scrollTop;
+      const tops = gutterStack([...marks].map((m) => m.getBoundingClientRect().top - o), THUMB_H);
+      pins.forEach((p, i) => (p.style.top = `${tops[i]}px`));
+      gutIn.style.transform = `translateY(${-area.scrollTop}px)`;
     }
     function paintHl(): void {
       const v = area.value;
       const bySeq = new Map(imgs.map((m) => [m.seq, m]));
       const nodes: (string | HTMLElement)[] = [];
       const refs = scanImgRefs(v).filter((r) => bySeq.has(r.n));
-      // 缩略图比一行高:隔不足这么多行的两枚往左排开(行高随界面字号变,照写字框实际行高算)
-      const cols = gutterCols(refs, Math.ceil(THUMB_H / parseFloat(getComputedStyle(area).lineHeight)));
-      inGutter = new Set(refs.map((r) => r.n));
+      const first = new Set(firstRefs(refs));
+      const pins: HTMLElement[] = [];
       let last = 0;
       refs.forEach((r, i) => {
-        const m = bySeq.get(r.n)!;
         nodes.push(v.slice(last, r.a));
-        const img = el("img", { className: "ref-thumb", alt: "" });
-        img.dataset.img = m.id;
-        img.classList.toggle("del-marked", strip?.isMarked(m.id) ?? false);
-        img.style.setProperty("--k", String(cols[i]));
+        const mark = el("mark", { className: first.has(i) ? "ref first" : "ref", textContent: v.slice(r.a, r.b) });
+        nodes.push(mark);
+        last = r.b;
+        if (!first.has(i)) return;
+        const m = bySeq.get(r.n)!;
+        const img = el("img", { alt: "" });
+        const pin = el("button", { className: "ref-thumb", type: "button", title: t("itemImages.badge", { n: m.seq }), tabIndex: -1 }, [
+          img,
+          el("span", { className: "n", textContent: t("itemImages.badge", { n: m.seq }) }),
+        ]);
+        pin.dataset.img = m.id;
+        pin.classList.toggle("del-marked", strip?.isMarked(m.id) ?? false);
+        pin.addEventListener("mousedown", (e) => e.preventDefault()); // 不抢写字框的焦点
+        pin.addEventListener("click", () => void openLightbox(imgs, imgs.indexOf(m)));
         getThumb(m.id).then(
           (u) => {
             img.src = u;
           },
-          () => img.classList.add("broken"),
+          () => pin.classList.add("broken"),
         );
-        nodes.push(el("mark", { className: "ref", textContent: v.slice(r.a, r.b) }, [img]));
-        last = r.b;
+        pins.push(pin);
       });
       // 一处都没标 ⇒ 影子层整个清空,⛔ 别留一份全文去排版(200 KiB 一篇逐键重排约 30 ms,桌面实测)
       if (nodes.length > 0) nodes.push(`${v.slice(last)}\n`); // 末尾那个空行也要占高(与写字框一致)
-      edBox.classList.toggle("has-thumbs", refs.length > 0);
-      edBox.style.setProperty("--thumbs", String(refs.length === 0 ? 0 : Math.max(...cols) + 1));
+      edBox.classList.toggle("has-thumbs", pins.length > 0);
       hl.replaceChildren(...nodes);
+      gutIn.replaceChildren(...pins);
       syncHl();
-      syncStrip();
-    }
-    /** 窄边那几枚压在写字框背后、点不到 ⇒ 在写字框上按落点认:落在哪枚上就开那张大图(窄边里没有字,不抢光标)。 */
-    function gutterHit(e: MouseEvent): HTMLElement | null {
-      for (const th of hl.querySelectorAll<HTMLElement>(".ref-thumb")) {
-        const r = th.getBoundingClientRect();
-        if (e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom) return th;
-      }
-      return null;
-    }
-    area.addEventListener("mousedown", (e) => {
-      const th = gutterHit(e);
-      if (th === null) return;
-      e.preventDefault();
-      void openLightbox(imgs, imgs.findIndex((m) => m.id === th.dataset.img));
-    });
-    area.addEventListener("mousemove", (e) => {
-      area.style.cursor = gutterHit(e) === null ? "" : "pointer";
-    });
-    /** 条里摆哪几张:右栏看得见时 = 右栏没画成大图的(大图角上有 ×,条里不重复);看不见时 = 正文里还没写到的
-     *  (写到的都在窄边上)。 */
-    function syncStrip(): void {
-      if (strip !== null) hideShown(strip.root, previewVisible() ? previewShown : inGutter);
     }
     /** 标记一变(条里 / 大图角上的 ×),窄边那枚跟着变淡。 */
     function paintGutterMarks(): void {
-      for (const th of hl.querySelectorAll<HTMLElement>(".ref-thumb")) th.classList.toggle("del-marked", strip?.isMarked(th.dataset.img!) ?? false);
+      for (const th of gutIn.querySelectorAll<HTMLElement>(".ref-thumb")) th.classList.toggle("del-marked", strip?.isMarked(th.dataset.img!) ?? false);
     }
     /** 光标那一行在写字框滚动内容里的上沿(textarea 量不到光标 ⇒ 同字体同宽的影子 div 只排光标前那截,同 lineTops)。 */
     function caretY(): { y: number; h: number } {
       const cs = getComputedStyle(area);
       const m = document.createElement("div");
       for (const k of HL_COPY) m.style[k] = cs[k];
-      Object.assign(m.style, { position: "absolute", visibility: "hidden", left: "-99999px", top: "0", boxSizing: "border-box", width: `${area.clientWidth}px`, border: "0" });
+      Object.assign(m.style, { position: "absolute", visibility: "hidden", left: "-99999px", top: "0", boxSizing: "border-box", width: `${areaW}px`, border: "0" });
       const mark = document.createElement("span");
       mark.textContent = "\u200b";
       m.append(area.value.slice(0, area.selectionStart), mark);
@@ -1008,7 +1008,9 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       if (y < area.scrollTop + pad) area.scrollTop = y - pad;
       else if (y + h > area.scrollTop + area.clientHeight - pad) area.scrollTop = y + h - area.clientHeight + pad;
     }
-    const hlResize = new ResizeObserver(() => {
+    const hlResize = new ResizeObserver((es) => {
+      const cs = getComputedStyle(area);
+      areaW = es[es.length - 1].contentRect.width + parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight);
       syncHl();
       if (document.activeElement === area) revealCaret("nearest"); // 窗口拖小 / 右栏冒出来:框变了,光标别掉出去
     });
@@ -1021,6 +1023,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     let syncDue = false;
     area.addEventListener("scroll", () => {
       hl.scrollTop = area.scrollTop;
+      gutIn.style.transform = `translateY(${-area.scrollTop}px)`;
       if (syncDue) return;
       syncDue = true;
       requestAnimationFrame(() => {
@@ -1031,14 +1034,13 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     // 预览只在看得见时画,且停笔 300ms 后才画(200 KiB 一篇解析要几十毫秒,⛔ 别逐键同步算)
     const wide = window.matchMedia("(min-width: 1180px)");
     const previewVisible = (): boolean => edWrap.classList.contains("show-preview") || wide.matches;
-    // 窗口拖宽 / 拖窄跨过并排那条线:右栏冒出来时它还停在上一次画的那版(看不见时不画),条里该摆哪几张也换了口径 ⇒ 当场重来
-    const onWide = (): void => (previewVisible() ? paintPreview() : syncStrip());
+    // 窗口拖宽跨过并排那条线:右栏冒出来时它还停在上一次画的那版(看不见时不画)⇒ 当场重画
+    const onWide = (): void => {
+      if (previewVisible()) paintPreview();
+    };
     wide.addEventListener("change", onWide);
     function schedulePreview(): void {
-      if (!previewVisible()) {
-        syncStrip(); // 窗口拖窄、右栏收起:条里改摆正文里还没写到的
-        return;
-      }
+      if (!previewVisible()) return;
       if (previewDue !== null) clearTimeout(previewDue);
       previewDue = setTimeout(paintPreview, 300);
     }
@@ -1184,7 +1186,6 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     const edWrap = el("div", { className: "doc-editor" }, [edBox, preview]);
     modeEdit.onclick = () => {
       edWrap.classList.remove("show-preview");
-      syncStrip();
       modeEdit.classList.add("on");
       modePrev.classList.remove("on");
       area.focus();

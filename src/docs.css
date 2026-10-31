@@ -219,7 +219,15 @@
 .v-docs .md > :first-child { margin-top: 0; }
 .v-docs .md > :last-child { margin-bottom: 0; }
 .v-docs .md p { margin: 0 0 0.9em; }
-/* 单独成段的「图N」原位显示(共用渲染器的 .md-figs > button.md-fig > img);点开看原图 */
+/* 原位的图(共用渲染器的 .md-figs > button.md-fig > img + 角标 .md-fig-n;154 G1:每张画在第一次提到它的地方,
+   句中提到的画在那一块下面 = .md-blk 包住那一块与图);点开看原图 */
+.v-docs .md .md-blk { margin: 0 0 1em; }
+.v-docs .md .md-blk > p,
+.v-docs .md .md-blk > h1,
+.v-docs .md .md-blk > h2,
+.v-docs .md .md-blk > h3 { margin-bottom: 0.5em; }
+.v-docs .md .md-blk > :last-child,
+.v-docs .md li > .md-blk:last-child { margin-bottom: 0; }
 .v-docs .md .md-figs { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; margin: 0 0 1em; }
 .v-docs .md .md-fig {
   display: block;
@@ -230,13 +238,16 @@
   background: var(--paper);
   cursor: zoom-in;
   overflow: hidden;
+  position: relative;
 }
 .v-docs .md .md-fig:hover { border-color: var(--line-strong); }
 /* 高也封顶:竖长图 / 长截图按原尺寸会一张占满一屏,把上下文挤没;原图点开看 */
 .v-docs .md .md-fig img { display: block; max-width: 100%; max-height: 70vh; width: auto; height: auto; }
 .v-docs .md .md-fig.broken { min-width: 120px; min-height: 60px; }
-/* 编辑器右栏:原位图右上角那枚 ×(docs.ts figDels;缩略图条把它们藏掉了,删图就在这儿)。标了删 = 同条里那张:变淡、虚线 */
+/* 编辑器右栏:原位图右上角那枚 ×(docs.ts figDels;与条里那枚同一份标记)。标了删 = 同条里那张:变淡、虚线 */
 .v-docs .md .md-fig-box { position: relative; display: block; max-width: 100%; }
+/* 带 × 的图给个最小框:48px 的小图上「图N」角标(左下)与 ×(右上)会叠住 */
+.v-docs .md .md-fig-box .md-fig { min-width: 72px; min-height: 72px; }
 .v-docs .md .md-fig-box.del-marked .md-fig { border-style: dashed; }
 .v-docs .md .md-fig-box.del-marked .md-fig img { opacity: 0.35; }
 /* 阅读页缩略图条只摆正文里没原位显示的图(docs.ts hideShown) */
@@ -256,7 +267,8 @@
 /* 勾过的项:方框实心 + 文字压淡(同随记正文的 .ckline.on;⛔ 不划删除线,理由见 item-images.css) */
 .v-docs .md li.md-task.on > .ckbox { background: var(--seal); border-color: var(--seal); color: var(--on-seal); }
 .v-docs .md li.md-task.on > .ckbox::after { content: "✓"; }
-.v-docs .md li.md-task.on > p { color: var(--ink-soft); }
+.v-docs .md li.md-task.on > p,
+.v-docs .md li.md-task.on > .md-blk > p { color: var(--ink-soft); }
 .v-docs .md blockquote {
   margin: 0 0 0.9em;
   padding: 2px 0 2px 14px;
@@ -322,22 +334,43 @@
 /* 底色照预览里那枚芯片(.img-ref)的底、边、圆角,但框正好贴着这几个字、边画在里侧:⛔ 别往外撑(负 margin 那版压住了紧挨着的字 ——
    芯片占位推得开邻字,写字框里的字推不开),也别占宽(影子层要与写字框逐字同位) */
 .v-docs .doc-hl .ref { color: transparent; background: var(--seal-tint); box-shadow: inset 0 0 0 1px var(--seal-line); border-radius: var(--radius-xs); }
-/* 正文里每处能对上图的「图N」:右侧窄边一枚缩略图(top 不写 = 停在那一行,--k = 第几列,docs.ts gutterCols);有这种引用才留窄边。
-   它压在写字框背后,点开大图靠写字框按落点认(docs.ts gutterHit) */
-.v-docs .doc-hl .ref-thumb {
+/* 窄边(docs.ts placeGutter,154 G2):写字框**外面**右侧一列,有能对上图的「图N」才留;每张图一枚、带「图N」角标,
+   停在第一次提到它的那一行(top 由 JS 给),跟着写字框滚。⛔ 别挪回框里加右内边距 —— 那版连没图的段落也让位 */
+.v-docs .doc-ed.has-thumbs { margin-right: 72px; }
+.v-docs .doc-gut { position: absolute; left: calc(100% + 8px); width: 64px; overflow: hidden; display: none; }
+.v-docs .doc-ed.has-thumbs .doc-gut { display: block; }
+.v-docs .doc-gut-in { position: relative; }
+.v-docs .doc-gut .ref-thumb {
   position: absolute;
-  right: calc(12px + var(--k) * 62px);
-  width: 56px;
-  height: 42px;
-  margin-top: 3px;
-  object-fit: cover;
+  left: 0;
+  width: 60px;
+  height: 44px;
+  padding: 0;
+  overflow: hidden;
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
   background: var(--raised);
+  cursor: zoom-in;
+}
+.v-docs .doc-gut .ref-thumb:hover { border-color: var(--line-strong); }
+.v-docs .doc-gut .ref-thumb img { display: block; width: 100%; height: 100%; object-fit: cover; }
+/* 角标在左下:右上角是 × 的位置(编辑器预览的大图 / 条里那枚),小图上两枚挤一起就叠住 */
+.v-docs .doc-gut .ref-thumb .n,
+.v-docs .md .md-fig .md-fig-n {
+  position: absolute;
+  left: 3px;
+  bottom: 3px;
+  padding: 0 4px;
+  font-size: var(--fs-12);
+  line-height: 1.5;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xs);
 }
 /* 标了「保存时删」的那张:窄边这枚同条里的 .img-thumb.del-marked 变淡 */
-.v-docs .doc-hl .ref-thumb.del-marked { border-style: dashed; opacity: 0.35; }
-.v-docs .doc-ed.has-thumbs .doc-area { padding-right: calc(22px + var(--thumbs) * 62px); }
+.v-docs .doc-gut .ref-thumb.del-marked { border-style: dashed; }
+.v-docs .doc-gut .ref-thumb.del-marked img { opacity: 0.35; }
 .v-docs .doc-area {
   position: relative;
   width: 100%;
