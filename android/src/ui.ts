@@ -109,10 +109,14 @@ export function dayLabel(iso: string): string {
 export function fmtWhen(iso: string): string {
   const d = new Date(iso);
   const now = new Date();
-  const hm = fmtTimeOfDay(iso);
-  if (d.toDateString() === now.toDateString()) return hm;
-  const md = { m: d.getMonth() + 1, d: d.getDate(), hm };
-  return d.getFullYear() === now.getFullYear()
+  if (d.toDateString() === now.toDateString()) return fmtTimeOfDay(iso);
+  return fmtWhenDated(iso);
+}
+/** 同 fmtWhen,但当天也带日期(长文阅读页的「写于」,154 G8:同桌面,「写于 23:38」读不出是哪天写的)。 */
+export function fmtWhenDated(iso: string): string {
+  const d = new Date(iso);
+  const md = { m: d.getMonth() + 1, d: d.getDate(), hm: fmtTimeOfDay(iso) };
+  return d.getFullYear() === new Date().getFullYear()
     ? t("ui.whenThisYear", md)
     : t("ui.whenOtherYear", { ...md, y: d.getFullYear() });
 }

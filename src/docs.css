@@ -170,6 +170,8 @@
 .v-docs .doc-draft span,
 .v-docs .move-partial span { flex: 1; white-space: pre-wrap; }
 .v-docs .doc-card .move-partial { margin: 10px 0 0; }
+/* 编辑器离开前问的那一句(154 G6 / G7):挂在写字框上方,不往工具条底下钻 */
+.v-docs .doc-ask { margin: 0 0 10px; }
 
 /* 移动到其他空间的选择器(同随记 inbox.css 那套 .chips / .chip) */
 .v-docs .doc-move {

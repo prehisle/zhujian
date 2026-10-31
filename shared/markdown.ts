@@ -139,6 +139,33 @@ export function withMissingRefs(content: string, seqs: number[]): string | null 
   return `${content}${content.endsWith("\n\n") ? "" : content.endsWith("\n") ? "\n" : "\n\n"}${refs}`;
 }
 
+/** 长文写字框里回车续列表(154 G8,用户拍;随记只续 `- [ ] `、且桌面是 Shift+Enter,这里是裸回车):光标所在行是列表项
+ *  (`- ` `* ` `+ ` `1. ` `1) `,可带 `[ ]` / `[x]`)且光标在记号之后 ⇒ 断开处另起一项,同缩进同记号(有序的号 +1,
+ *  方框一律续成没勾的);空项上再回车 ⇒ 连缩进带记号抹掉、退出列表(同 checklist.ts 的空项那一记)。
+ *  别的情况(不是列表项 / 选中了一段 / 光标在记号里 / 在围栏代码块里 / 是分隔线)回 `null` = 放行默认换行。 */
+export function continueListOnNewline(value: string, selStart: number, selEnd: number): { value: string; selStart: number; selEnd: number } | null {
+  if (selStart !== selEnd) return null;
+  const ls = value.lastIndexOf("\n", selStart - 1) + 1;
+  let le = value.indexOf("\n", selStart);
+  if (le < 0) le = value.length;
+  let fence: Fence = null;
+  for (const ln of value.slice(0, ls).split("\n").slice(0, -1)) fence = fenceNext(fence, ln);
+  if (fence !== null) return null;
+  const line = value.slice(ls, le);
+  if (/^ {0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$/.test(line)) return null; // 分隔线 `- - -` / `* * *`
+  const m = /^([ \t]*)(?:([-*+])|(\d{1,9})([.)]))([ \t]+)(\[[ xX]\](?:[ \t]+|$))?/.exec(line);
+  if (m === null) return null;
+  if (line.slice(m[0].length).trim() === "") {
+    if (selStart < ls + m[0].trimEnd().length) return null;
+    return { value: value.slice(0, ls) + value.slice(le), selStart: ls, selEnd: ls };
+  }
+  if (selStart < ls + m[0].length) return null;
+  const mark = m[2] ?? `${Number(m[3]) + 1}${m[4]}`;
+  const ins = `\n${m[1]}${mark}${m[5]}${m[6] !== undefined ? "[ ] " : ""}`;
+  const at = selStart + ins.length;
+  return { value: value.slice(0, selStart) + ins + value.slice(selStart), selStart: at, selEnd: at };
+}
+
 /** 写字框窄边上那一列缩略图(154 G2:一列、挂在框外,同一张图只配一枚 —— 配在第一次提到它的地方,同渲染器
  *  「只画一次」):`refs` 里每张图第一次出现的那几处的下标(顺序同 `refs`)。 */
 export function firstRefs(refs: ImgRefSpan[]): number[] {

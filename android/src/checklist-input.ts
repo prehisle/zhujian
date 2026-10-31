@@ -22,7 +22,7 @@ import {
 } from "../../shared/checklist";
 
 /** 把纯逻辑算出的整份新正文落到框里,只改真正变了的那一段(撤销栈得以保留)。 */
-function applyEdit(ta: HTMLTextAreaElement, edit: ChecklistEdit): void {
+export function applyEdit(ta: HTMLTextAreaElement, edit: ChecklistEdit): void {
   const { from, to, text } = minimalEditRange(ta.value, edit.value);
   ta.setSelectionRange(from, to);
   if (text === "") document.execCommand("delete");

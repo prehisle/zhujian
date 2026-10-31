@@ -24,7 +24,7 @@ const r = await build({
   format: "esm",
 });
 const M = await import("data:text/javascript," + encodeURIComponent(r.outputFiles[0].text));
-const { parseMarkdown, validateHttpUrl, renderMarkdown, toggleChecklistLine, scanImgRefs, firstRefs, gutterStack, refInsertion, withMissingRefs, MD_MAX_NODES, MD_MAX_DEPTH, MD_MAX_BYTES } = M;
+const { parseMarkdown, validateHttpUrl, renderMarkdown, toggleChecklistLine, scanImgRefs, firstRefs, gutterStack, refInsertion, withMissingRefs, continueListOnNewline, MD_MAX_NODES, MD_MAX_DEPTH, MD_MAX_BYTES } = M;
 
 // ---------------------------------------------------------------------------
 // 语法树 → 紧凑字符串(只为断言好读)
@@ -547,3 +547,24 @@ test("展开成长文补图N(154 G3):没提到的按编号各成一段接在文�
   assert.equal(withMissingRefs("`图1`", [1]), "`图1`\n\n图1"); // 代码里的不算提到
 });
 
+test("长文回车续列表(154 G8):同缩进同记号、有序号 +1、方框续成没勾的;空项退出;记号里 / 围栏里 / 分隔线 / 选区放行", () => {
+  const enter = (v, c, c2 = c) => {
+    const r = continueListOnNewline(v, c, c2);
+    return r === null ? null : r.value.slice(0, r.selStart) + "|" + r.value.slice(r.selStart);
+  };
+  assert.equal(enter("- 苹果", 4), "- 苹果\n- |");
+  assert.equal(enter("  * 苹果\n后面", 6), "  * 苹果\n  * |\n后面");
+  assert.equal(enter("9. 九", 4), "9. 九\n10. |");
+  assert.equal(enter("1) 一", 4), "1) 一\n2) |");
+  assert.equal(enter("- [x] 做完了", 9), "- [x] 做完了\n- [ ] |");
+  assert.equal(enter("- 苹果香蕉", 4), "- 苹果\n- |香蕉"); // 句中断开,后半截跟进新的一项
+  assert.equal(enter("a\n- ", 4), "a\n|"); // 空项 ⇒ 退出列表
+  assert.equal(enter("  - [ ] ", 8), "|");
+  assert.equal(enter("- 苹果", 1), null); // 光标在记号里
+  assert.equal(enter("- 苹果", 2, 4), null); // 选了一段
+  assert.equal(enter("普通一行", 4), null);
+  assert.equal(enter("-不是列表", 5), null);
+  assert.equal(enter("- - -", 5), null); // 分隔线
+  assert.equal(enter("```\n- 代码里", 9), null); // 围栏里
+  assert.equal(enter("```\nx\n```\n- 围栏外", 15), "```\nx\n```\n- 围栏外\n- |");
+});

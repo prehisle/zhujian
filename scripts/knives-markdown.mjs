@@ -164,6 +164,20 @@ const KNIVES = [
     to: "        const why = null;\n",
     red: ["已删的图(154 G4):查不到图且 gone 给了文案 ⇒ 灰的带删除线,字仍是原文;不给 ⇒ 照原文"],
   },
+  {
+    name: "续列表:围栏里也续",
+    file: MD,
+    from: "  if (fence !== null) return null;\n  const line = value.slice(ls, le);\n",
+    to: "  const line = value.slice(ls, le);\n",
+    red: ["长文回车续列表(154 G8):同缩进同记号、有序号 +1、方框续成没勾的;空项退出;记号里 / 围栏里 / 分隔线 / 选区放行"],
+  },
+  {
+    name: "续列表:勾过的方框照抄成勾过的",
+    file: MD,
+    from: '${m[6] !== undefined ? "[ ] " : ""}',
+    to: '${m[6] ?? ""}',
+    red: ["长文回车续列表(154 G8):同缩进同记号、有序号 +1、方框续成没勾的;空项退出;记号里 / 围栏里 / 分隔线 / 选区放行"],
+  },
 ];
 
 const orig = { [MD]: fs.readFileSync(MD, "utf8"), [DOM]: fs.readFileSync(DOM, "utf8") };

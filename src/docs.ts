@@ -37,14 +37,14 @@ import { t } from "./i18n";
 import { type ImageMeta, attachBlob, figureSrc, getThumb, imageStrip, openLightbox, pasteImage } from "./item-images";
 import { toggleChecklistLine } from "../shared/checklist";
 import { type MdRendered, renderMarkdown } from "../shared/markdown-dom";
-import { firstRefs, gutterStack, refInsertion, scanImgRefs } from "../shared/markdown";
+import { continueListOnNewline, firstRefs, gutterStack, refInsertion, scanImgRefs } from "../shared/markdown";
 import { renderDiff } from "../shared/diff-dom";
 import { closeComments, commentBadge, commentCountFor, inlineCommentState, loadCommentCounts, openInlineComments } from "./item-comments";
 import type { View, ViewCtx } from "./notebook";
 import { applyTagColor } from "./tag-color";
 import { renderTagPicker } from "./tag-picker";
 import { when } from "./tasktime";
-import { wireChecklistInput } from "./checklist-input";
+import { applyEdit, wireChecklistInput } from "./checklist-input";
 import { el } from "./dom";
 import { errDetail, errText } from "./err";
 import "./docs.css";
@@ -231,8 +231,11 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     }
     if (page.kind === "doc" && page.id === d.id) page = { kind: "list" };
     void refresh();
-    // 长文删掉进的是随记那边的回收站(回收站按冻结的 stage 分两页,长文的 stage 是随记那两档)
-    toastUndo(t("docs.undoDeleted"), t("common.undo"), () => void undoVia("restore_note", { id: d.id }));
+    undoDeleteToast(d.id);
+  }
+  // 长文删掉进的是随记那边的回收站(回收站按冻结的 stage 分两页,长文的 stage 是随记那两档)
+  function undoDeleteToast(id: string): void {
+    toastUndo(t("docs.undoDeleted"), t("common.undo"), () => void undoVia("restore_note", { id }));
   }
   async function doCollapse(d: DocItem): Promise<void> {
     try {
@@ -773,6 +776,15 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     const area = el("textarea", { className: "doc-area", value: seed ?? base, spellcheck: false }) as HTMLTextAreaElement;
     area.placeholder = t("docs.placeholder");
     wireChecklistInput(area);
+    // 列表项上回车续一项(154 G8;长文里裸回车本来就是换行,不是提交):纯逻辑在 shared/markdown.ts,落笔同快速输入走 execCommand(撤销栈留着)
+    area.addEventListener("keydown", (e) => {
+      if (e.isComposing || e.defaultPrevented) return;
+      if (e.key !== "Enter" || e.shiftKey || e.ctrlKey || e.altKey || e.metaKey) return;
+      const edit = continueListOnNewline(area.value, area.selectionStart, area.selectionEnd);
+      if (edit === null) return;
+      e.preventDefault();
+      applyEdit(area, edit);
+    });
     const preview = el("div", { className: "doc-preview" });
     const status = el("span", { className: "doc-status" });
     const err = el("p", { className: "form-err", hidden: true });
@@ -1164,15 +1176,73 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       leaveEditor = null;
       flushEditor = null;
     }
-    const leave = (then: () => void): void => {
-      void attaching.then(() => commit()).then((r) => {
-        if (r === "failed" || unmounted) return;
-        teardown();
+    // 离开前先问的那一句(154 G6 / G7):挂在编辑页顶上,不弹框;Esc / 「接着写」收起、留在编辑器。
+    const askHost = el("div", {});
+    const closeAsk = (): void => askHost.replaceChildren();
+    function ask(msg: string, choices: { label: string; run: () => void; main?: boolean }[]): void {
+      const stay = el("button", { className: "no", type: "button", textContent: t("docs.askStay"), onclick: () => (closeAsk(), area.focus()) });
+      const btns = choices.map((c) => el("button", { className: c.main ? "do" : "no", type: "button", textContent: c.label, onclick: () => (closeAsk(), c.run()) }));
+      askHost.replaceChildren(el("div", { className: "doc-draft doc-ask" }, [el("span", { textContent: msg }), ...btns, stay]));
+      btns[0].focus();
+    }
+    /** 离开编辑器。`saving` = 点的是【保存】(标了删的图就是要删,不再问);返回钮 / Esc 离开也落一版,但标了删的图先问(154 G7)。
+     *  正文空着、只剩图 ⇒ 先问这篇留不留(154 G6:新篇贴图再 Ctrl+Z,图不随文字撤掉,会留下一篇只有图的「(无标题)」)。 */
+    const leave = (then: () => void, saving = false): void => {
+      void attaching.then(() => {
+        if (unmounted || !area.isConnected) return;
+        closeAsk();
         const target = id ?? newId;
+        if (target !== null && area.value.trim() === "" && imgs.length > 0) {
+          ask(t("docs.askImagesOnly", { n: imgs.length }), [
+            { label: t("docs.askTrash"), run: () => void trashIt(target), main: true },
+            { label: t("docs.askKeep"), run: () => leaveMarked(then, saving) },
+          ]);
+          return;
+        }
+        leaveMarked(then, saving);
+      });
+    };
+    const leaveMarked = (then: () => void, saving: boolean): void => {
+      const st = strip;
+      const n = st?.pendingDeletes() ?? 0;
+      if (saving || st === null || n === 0) return finish(then);
+      ask(t("docs.askDelImgs", { n }), [
+        { label: t("docs.askDelYes", { n }), run: () => finish(then), main: true },
+        {
+          label: t("docs.askDelNo"),
+          run: () => {
+            for (const m of imgs) if (st.isMarked(m.id)) st.toggleMark(m.id);
+            finish(then);
+          },
+        },
+      ]);
+    };
+    const finish = (then: () => void): void => {
+      void commit().then((r) => {
+        if (r === "failed" || unmounted) return;
+        const target = id ?? newId;
+        if (r === "same" && target === null) toastAction(t("docs.emptyNotSaved")); // 新篇一个字没写就走 = 不建,说一声(154 G8)
+        teardown();
         readerAt = target === null ? null : { id: target, caret: area.selectionStart }; // 回到阅读页:光标那一块摆到顶
         then();
       });
     };
+    /** 只剩图的空篇:进回收站(连图一起;回收站里还原得回来),不落空正文那一版。 */
+    async function trashIt(target: string): Promise<void> {
+      try {
+        await invokeInSpace(mountSpace, "archive_note", { id: target });
+      } catch (e) {
+        err.textContent = errText(e);
+        err.hidden = false;
+        return;
+      }
+      if (unmounted) return;
+      teardown();
+      clearDraft(mountSpace, target, null);
+      lastSig = "";
+      go({ kind: "list" });
+      undoDeleteToast(target);
+    }
     const done = (): void => {
       const target = id ?? newId;
       lastSig = "";
@@ -1195,6 +1265,11 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       } else if (e.key === "Escape") {
         if ((e.target as HTMLElement | null)?.closest?.(".hk-menu, .img-lightbox")) return;
         e.preventDefault();
+        if (askHost.childElementCount > 0) {
+          closeAsk(); // 问句开着:Esc = 不走了,接着写
+          area.focus();
+          return;
+        }
         leave(done);
       }
     };
@@ -1215,7 +1290,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       modeEdit.classList.remove("on");
       paintPreview();
     };
-    const saveBtn = el("button", { className: "do", type: "button", textContent: t("docs.save"), onclick: () => leave(done) });
+    const saveBtn = el("button", { className: "do", type: "button", textContent: t("docs.save"), onclick: () => leave(done, true) });
     // 「＋加图」(154 G5:桌面此前只能贴):系统选文件框,插在哪同粘贴(光标所在段的段尾)。
     // ⚠ 按下不抢写字框的焦点 —— 选区留在原处,选完回来插到那一段后面
     const filePick = el("input", { type: "file", accept: "image/png,image/jpeg,image/webp,image/gif", multiple: true, hidden: true }) as HTMLInputElement;
@@ -1255,7 +1330,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         [backBtn(id === null ? t("docs.back") : t("docs.backToDoc"), () => leave(done)), el("span", { className: "segs" }, [modeEdit, modePrev]), addImgBtn, filePick],
         [status, saveBtn],
       ),
-      el("div", { className: "doc-edit-page" }, [edWrap, imgRow, err]),
+      el("div", { className: "doc-edit-page" }, [askHost, edWrap, imgRow, err]),
     );
     if (previewVisible()) paintPreview();
     area.focus();

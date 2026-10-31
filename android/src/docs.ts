@@ -52,7 +52,7 @@ import {
   type TopicItem,
 } from "./api";
 import { renderMarkdown } from "../../shared/markdown-dom";
-import { refInsertion, scanImgRefs } from "../../shared/markdown";
+import { continueListOnNewline, refInsertion, scanImgRefs } from "../../shared/markdown";
 import { renderDiff } from "../../shared/diff-dom";
 import { toggleChecklistLine } from "../../shared/checklist";
 import { HAS_BROWSER, writeClipboard } from "./platform";
@@ -61,7 +61,8 @@ import { figureSrc, hydrateThumbs } from "./thumbs";
 import { openViewer } from "./viewer";
 import { capturePhoto, PICK_MAX, pickImages, toBase64 } from "./images";
 import { t } from "./i18n";
-import { $, actionBar, confirmBar, fmtWhen, hideConfirmBar, showBar } from "./ui";
+import { $, actionBar, confirmBar, fmtWhen, fmtWhenDated, hideConfirmBar, showBar } from "./ui";
+import { applyEdit } from "./checklist-input";
 import { errDetail, showErr } from "./err";
 
 type Deps = {
@@ -572,7 +573,7 @@ function renderDoc(d: IdeaItem): void {
       : null;
   if (draft !== null && draft.text === d.content) clearDraft(sp, d.id, draft.gen); // 已经存进去了的草稿,静默收掉
 
-  const meta = el("div", "doc-meta", [el("time", "", [t("docs.writtenAt", { time: fmtWhen(d.created_at) })])]);
+  const meta = el("div", "doc-meta", [el("time", "", [t("docs.writtenAt", { time: fmtWhenDated(d.created_at) })])]);
   // 留言徽章:comments.ts 出的是转义过的固定形 HTML(数字 + 固定文案),不含正文
   const badge = commentBadgeHtml(sp, d.id);
   if (badge !== "") {
@@ -873,6 +874,15 @@ function openEditor(d: IdeaItem | null, seed: string | null, carried: File[], at
   area.value = seed ?? saved;
   area.placeholder = t("docs.placeholder");
   area.spellcheck = false;
+  // 列表项上回车续一项(154 G8,同桌面;随记那边只续 `- [ ] `):纯逻辑在 shared/markdown.ts,落笔走 execCommand(输入法的撤销栈留着)
+  area.addEventListener("keydown", (e) => {
+    if (e.isComposing || e.defaultPrevented) return;
+    if (e.key !== "Enter" || e.shiftKey || e.ctrlKey || e.altKey || e.metaKey) return;
+    const edit = continueListOnNewline(area.value, area.selectionStart, area.selectionEnd);
+    if (edit === null) return;
+    e.preventDefault();
+    applyEdit(area, edit);
+  });
   const preview = el("div", "doc-preview");
   preview.hidden = true;
   const status = el("span", "doc-status");
@@ -1252,21 +1262,83 @@ function openEditor(d: IdeaItem | null, seed: string | null, carried: File[], at
     const target = id ?? newId;
     if (target !== null) caretMemo.set(`${sp}/${target}`, area.selectionStart);
   }
+  // 离开前先问的那一句(154 G6 / G7,同桌面):挂在吸顶页头里(写到中段也看得见),不弹框;返回键 / 「接着写」收起、留在编辑器。
+  const askHost = el("div", "");
+  const closeAsk = (): void => askHost.replaceChildren();
+  function ask(msg: string, choices: { label: string; run: () => void }[]): void {
+    const btns = choices.map((c, i) => btn(c.label, () => (closeAsk(), c.run()), i === 0 ? "" : "ghost"));
+    askHost.replaceChildren(el("div", "row doc-draft doc-ask", [el("span", "", [msg]), ...btns, btn(t("docs.askStay"), closeAsk, "ghost")]));
+    askHost.scrollIntoView({ block: "nearest" });
+  }
+  /** 离开编辑器。`explicit` = 点的是【保存】(标了删的图就是要删,不再问);返回钮 / 返回键离开也落一版,但标了删的图先问(154 G7)。
+   *  正文空着、只剩图 ⇒ 先问这篇留不留(154 G6:图不随文字撤掉,撤空了会留下一篇只有图的「(无标题)」)。 */
+  function leave(then: () => void, explicit: boolean): void {
+    if (picking) {
+      showBar(t("docs.imagesBusy"));
+      return;
+    }
+    if (saving) return;
+    closeAsk();
+    const target = id ?? newId;
+    if (target !== null && area.value.trim() === "" && imgs.length > 0) {
+      ask(t("docs.askImagesOnly", { n: imgs.length }), [
+        { label: t("docs.askTrash"), run: () => void trashIt(target) },
+        { label: t("docs.askKeep"), run: () => leaveMarked(then, explicit) },
+      ]);
+      return;
+    }
+    leaveMarked(then, explicit);
+  }
+  function leaveMarked(then: () => void, explicit: boolean): void {
+    const n = marked.size;
+    if (explicit || n === 0) return finish(then);
+    ask(t("docs.askDelImgs", { n }), [
+      { label: t("docs.askDelYes", { n }), run: () => finish(then) },
+      {
+        label: t("docs.askDelNo"),
+        run: () => {
+          for (const imgId of [...marked]) toggleMark(imgId);
+          finish(then);
+        },
+      },
+    ]);
+  }
+  function finish(then: () => void): void {
+    void commit().then((r) => {
+      if (r === "failed" || editor === null) return;
+      const target = id ?? newId;
+      if (r === "same" && target === null) showBar(t("docs.emptyNotSaved"), true); // 新篇一个字没写就走 = 不建,说一声(154 G8)
+      teardown();
+      readerAt = target === null ? null : { key: `${sp}/${target}`, caret: area.selectionStart }; // 回到阅读页:光标那一块摆到顶
+      then();
+    });
+  }
+  /** 只剩图的空篇:进回收站(连图一起;回收站里还原得回来),不落空正文那一版。 */
+  async function trashIt(target: string): Promise<void> {
+    if (saving) return;
+    saving = true;
+    try {
+      await archiveNote(sp, target);
+    } catch (e) {
+      saving = false;
+      err.textContent = errDetail(e);
+      err.hidden = false;
+      return;
+    }
+    saving = false;
+    if (editor === null) return;
+    teardown();
+    clearDraft(sp, target, null);
+    void deps.refreshTimeline();
+    go({ kind: "list" });
+    actionBar(t("docs.deleted"), t("docs.undo"), () => void undo(() => restoreNote(sp, target)));
+  }
   editor = {
-    back: () => editor?.leave(done),
-    leave: (then) => {
-      if (picking) {
-        showBar(t("docs.imagesBusy"));
-        return;
-      }
-      void commit().then((r) => {
-        if (r === "failed" || editor === null) return;
-        teardown();
-        const target = id ?? newId;
-        readerAt = target === null ? null : { key: `${sp}/${target}`, caret: area.selectionStart }; // 回到阅读页:光标那一块摆到顶
-        then();
-      });
+    back: () => {
+      if (askHost.childElementCount > 0) closeAsk(); // 问句开着:返回 = 不走了,接着写
+      else leave(done, false);
     },
+    leave: (then) => leave(then, false),
     flush: () => {
       // 关面:不等、不碰 DOM;没写进去的那份草稿还在,下次打开会问
       // ⚠ 先把这一刻的字落成一代草稿(停笔还不到 1 秒的那几个字也在):换空间引起的关面,
@@ -1322,8 +1394,8 @@ function openEditor(d: IdeaItem | null, seed: string | null, carried: File[], at
     // 页头两排吸在顶栏底下(153 走查 A-M06:长文写到中段,保存 / 预览 / 加图都滚出屏外);键盘起着时不吸(index.html .doc-head)
     el("div", "doc-head", [
       bar(
-        [btn(id === null ? t("docs.back") : t("docs.backToDoc"), () => editor?.leave(done), "ghost")],
-        [status, btn(t("docs.save"), () => editor?.leave(done))],
+        [btn(id === null ? t("docs.back") : t("docs.backToDoc"), () => leave(done, false), "ghost")],
+        [status, btn(t("docs.save"), () => leave(done, true))],
       ),
       // 加图两枚钮与「编辑 / 预览」同一排、吸在页头里 —— ⛔ 别挪到正文框底下:框不矮于视口,
       // 矮屏(360×640)上那一排正好压在底栏下面,点了像没反应(加完有屏底回执)
@@ -1332,6 +1404,7 @@ function openEditor(d: IdeaItem | null, seed: string | null, carried: File[], at
         el("div", "seg doc-seg", [modeEdit, modePrev]),
         el("div", "row", [btn(t("shell.addImage"), () => void pick(false), "ghost"), btn(t("shell.takePhoto"), () => void pick(true), "ghost")]),
       ]),
+      askHost,
     ]),
     err,
     edBox,
