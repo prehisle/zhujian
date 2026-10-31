@@ -1536,6 +1536,10 @@
         display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
       }
       .doc-tags { display: inline-flex; flex-wrap: wrap; gap: 5px; }
+      /* 页头(阅读页「← 长文 / 编辑 / 历史」、编辑器「← / 保存」+「编辑 预览 加图 拍照」)吸在顶栏底下:长文读到 / 写到中段也够得着
+         (153 走查 A-M06)。键盘起着时不吸:横屏顶栏到键盘只剩 60px,再吸两排就看不见在写的字(docs.ts visibleBand 照这条判)。 */
+      .doc-head { position: sticky; top: var(--head-h, 0px); z-index: 3; background: var(--paper); }
+      html.kb-up .doc-head { position: static; }
       .doc-bar { align-items: center; }
       .doc-bar .doc-gap { flex: 1; }
       .doc-bar .doc-status, .hv-title { font-size: var(--fs-12); color: var(--ink-soft); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1608,7 +1612,8 @@
       .md .md-fig.broken { min-width: 120px; min-height: 60px; }
       /* 阅读页缩略图条只摆正文里没原位显示的图(docs.ts hideShown) */
       .doc-page .thumbs .thumb[hidden], .doc-page .thumbs.all-inline { display: none; }
-      .md h1, .md h2, .md h3 { line-height: 1.4; margin: 1.2em 0 0.5em; }
+      /* 颜色与字重写死:长文正文在设置面那棵树里,`.sync h2`(灰、600)会漏进来 ⇒ 二级标题比正文还淡(153 走查 A-M10) */
+      .md h1, .md h2, .md h3 { line-height: 1.4; margin: 1.2em 0 0.5em; color: var(--ink); font-weight: 700; }
       .md h1 { font-size: var(--fs-24); }
       .md h2 { font-size: var(--fs-20); }
       .md h3 { font-size: var(--fs-17); }

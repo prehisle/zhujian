@@ -52,7 +52,8 @@ export function toastError(text: string): void {
 let undoEl: HTMLElement | null = null;
 let undoTimer: ReturnType<typeof setTimeout> | undefined;
 
-export function toastUndo(text: string, undoLabel: string, onUndo: () => void): void {
+/** `extra` = 撤销旁边再挂一枚去处钮(「展开成长文」后的「打开」,同安卓 cardpanel 那条回执;153 走查 D-M15)。 */
+export function toastUndo(text: string, undoLabel: string, onUndo: () => void, extra?: { label: string; run: () => void }): void {
   dismissUndo();
   const box = document.createElement("div");
   box.className = "undo-toast";
@@ -71,6 +72,18 @@ export function toastUndo(text: string, undoLabel: string, onUndo: () => void): 
   });
   box.addEventListener("click", () => dismissUndo());
   box.append(label, btn);
+  if (extra) {
+    const go = document.createElement("button");
+    go.type = "button";
+    go.className = "undo-btn undo-go";
+    go.textContent = extra.label;
+    go.addEventListener("click", (e) => {
+      e.stopPropagation();
+      dismissUndo();
+      extra.run();
+    });
+    box.append(go);
+  }
   document.body.append(box);
   undoEl = box;
   undoTimer = setTimeout(dismissUndo, UNDO_WINDOW_MS);

@@ -85,7 +85,9 @@ async function reload() {
 }
 /** 换掉 file input 的 click:塞 `n` 张页内现画的 PNG、发 change。`hold` = 先不交,等 `__pickGo()`。
  *  每次被调都记下那个 input 的 capture / multiple(拍照那发该带 capture)。 */
-const armPicker = (n, hold = false) =>
+// `wide`:这一批第一张画成 1600×400(153 走查 A-M01:宽过 thumbs.ts 的 FIG_MAX_W 走 canvas 那条路,
+// 曾被自己置空 src 发的 error 抢先判坏 ⇒ 手机照片在预览 / 阅读页张张破图;48×48 的小图照不出来)。
+const armPicker = (n, hold = false, wide = false) =>
   ev(`(() => {
     if (!window.__realClick) window.__realClick = HTMLInputElement.prototype.click;
     window.__pickLog = window.__pickLog || [];
@@ -97,10 +99,11 @@ const armPicker = (n, hold = false) =>
         const dt = new DataTransfer();
         for (let i = 0; i < ${n}; i++) {
           const c = document.createElement("canvas");
-          c.width = 48; c.height = 48;
+          const big = ${wide} && i === 0;
+          c.width = big ? 1600 : 48; c.height = big ? 400 : 48;
           const g = c.getContext("2d");
           g.fillStyle = "hsl(" + (i * 97) % 360 + ",60%,50%)";
-          g.fillRect(0, 0, 48, 48);
+          g.fillRect(0, 0, c.width, c.height);
           const blob = await new Promise((r) => c.toBlob(r, "image/png"));
           dt.items.add(new File([blob], "pick" + i + ".png", { type: "image/png" }));
         }
@@ -158,7 +161,7 @@ try {
 
   // ② 加两张 = 当场挂上(保存之前库里就有),光标处(末尾)各插一段「图N」
   await caretTo(BODY.length);
-  await armPicker(2);
+  await armPicker(2, false, true);
   await clickText("＋ 加图");
   await waitFor(`document.querySelectorAll("#docs-body .doc-imgs .thumbs .thumb").length === 2`, "两张缩略图");
   ok((await imgsOf(id)).length === 2, "② 加图当场挂上:保存前 list_item_images 已有 2 张");
@@ -304,7 +307,7 @@ try {
   await waitFor(`!document.getElementById("docs-new").hidden`, "列表页");
   await ev(`document.getElementById("docs-new").click()`);
   await waitFor(`!!document.querySelector("#docs-body textarea.doc-area")`, "新篇编辑器");
-  await armPicker(2);
+  await armPicker(2, false, true);
   await clickText("＋ 加图");
   await waitFor(`document.querySelectorAll("#docs-body .doc-imgs .thumbs .thumb").length === 2`, "两张缩略图(已挂上)");
   const fresh = await newDocs();

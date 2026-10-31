@@ -9,7 +9,8 @@ export const docs = defineMessages({
   "docs.empty": { zh: "还没有长文。在随记卡片的「更多…」里把一条随记「展开成长文」,或点上面新建一篇。", en: "No long-form notes yet. Pick “Expand to long-form” under a note’s “More…”, or start a new one above." },
   "docs.untitled": { zh: "(无标题)", en: "(Untitled)" },
   "docs.back": { zh: "← 长文", en: "← Long-form" },
-  "docs.backToDoc": { zh: "← 正文", en: "← Text" },
+  // 同桌面;「← 正文」看着像名词不像「回去」(153 走查 A-M16)
+  "docs.backToDoc": { zh: "← 回到正文", en: "← Back to text" },
   "docs.actEdit": { zh: "编辑", en: "Edit" },
   "docs.actHistory": { zh: "历史", en: "History" },
   "docs.actMore": { zh: "更多…", en: "More…" },

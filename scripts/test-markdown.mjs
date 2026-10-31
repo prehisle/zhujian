@@ -472,8 +472,9 @@ test("写字框标注:scanImgRefs 的位置、行号、代码里不认", () => {
 });
 test("写字框窄边:gutterCols 隔不足 reach 行才排开,够远就回最右列", () => {
   const cols = (src, reach) => gutterCols(scanImgRefs(src), reach);
-  // 同一行两枚并排;相邻行错开;隔够 reach 行回第 0 列
-  assert.deepEqual(cols("图1 图2\n图3\n\n图4", 2), [0, 1, 2, 0]);
+  // 同一行两枚并排(先写到的在左 = 列号大,153 走查 A-M22);相邻行错开;隔够 reach 行回第 0 列
+  assert.deepEqual(cols("图1 图2\n图3\n\n图4", 2), [1, 0, 2, 0]);
+  assert.deepEqual(cols("图1\n图2 图3 图4", 3), [0, 3, 2, 1]);
   assert.deepEqual(cols("图1\n图2\n图3\n图4", 2), [0, 1, 0, 1]);
   assert.deepEqual(cols("图1\n图2\n图3\n图4", 3), [0, 1, 2, 0]);
   // 用户那篇:句中的图1 与单独一行的图2 隔一空行,都在最右列

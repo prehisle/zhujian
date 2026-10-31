@@ -109,6 +109,11 @@ for (const b of navButtons) {
 
 document.getElementById("win-min")?.addEventListener("click", () => void win.minimize());
 document.getElementById("win-close")?.addEventListener("click", () => void win.hide());
+// 三枚窗口钮按下不拿焦点:系统原生标题栏不抢网页里的键盘焦点,自绘的照样不该抢 —— 原先点完最大化 / 还原,
+// 焦点停在钮上,接着打的字全部落空(153 走查 D-NEW-1)。只拦按下那一下的默认动作,click 照常发;Tab 仍走得到它们。
+for (const id of ["win-min", "win-max", "win-close"]) {
+  document.getElementById(id)?.addEventListener("mousedown", (e) => e.preventDefault());
+}
 
 // Maximize / restore. The glyph follows the real window state (the button, a
 // double-click on the header drag-region, or an OS maximize all funnel through

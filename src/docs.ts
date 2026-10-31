@@ -65,6 +65,25 @@ type Page = { kind: "list" } | { kind: "doc"; id: string } | { kind: "new" };
 let page: Page = { kind: "list" };
 // 列表页的滚动位置(同 inbox.ts savedScroll):切走再回来落回原处。
 let savedScroll = 0;
+// 写到哪 / 读到哪不丢(153 走查 D-M16:存完回阅读页再点编辑,光标与画面跳到全文末尾):离开编辑器那一刻的光标按篇记着
+// (`${space}/${id}`,只在内存,同手机 docs.ts)。
+const caretMemo = new Map<string, number>();
+/** 原文第 `line` 行(`split("\n")` 口径)起于第几个码元。 */
+function lineStart(v: string, line: number): number {
+  let at = 0;
+  for (let i = 0; i < line; i++) {
+    const nl = v.indexOf("\n", at);
+    if (nl < 0) return v.length;
+    at = nl + 1;
+  }
+  return at;
+}
+/** 第 `off` 个码元在原文第几行。 */
+function lineOf(v: string, off: number): number {
+  let n = 0;
+  for (let i = v.indexOf("\n"); i >= 0 && i < off; i = v.indexOf("\n", i + 1)) n++;
+  return n;
+}
 // 跨视图「打开这一篇」(搜索命中 / 深链 / 标签):带发起那刻的空间,落地前切了空间就作废。
 let pendingFocus: { id: string; space: string } | null = null;
 export function focusDoc(id: string): void {
@@ -177,6 +196,9 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
   let shownDocId: string | null = null;
   // 历史页开着时不因回窗刷新重画(那会把选好的两版冲掉);离开它走 go()。
   let historyOpen = false;
+  // 刚从编辑器回阅读页:光标所在那一块摆到工具条底下(renderDoc 交出摆法,refresh 定完滚动位置后调)
+  let readerAt: { id: string; caret: number } | null = null;
+  let pinReader: (() => void) | null = null;
 
   const docById = (id: string): DocItem | undefined => docs.find((d) => d.id === id);
 
@@ -587,11 +609,50 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     };
     let shown = new Set<number>();
     let strip: ReturnType<typeof imageStrip> | null = null;
+    let anchors: MdRendered["anchors"] = [];
+    // 刚从编辑器回来:光标所在那一块摆到工具条底下。图是陆续到的(上面的图撑开会把它往下推)、图单到了还整篇重画一遍 ⇒
+    // 头两秒里每画一次 / 每到一张图就再摆一次;滚轮 / 按键 / 点一下就松手,不跟用户抢。
+    let pinTo = readerAt !== null && readerAt.id === d.id ? lineOf(content, readerAt.caret) : null;
+    readerAt = null;
+    const pinUntil = performance.now() + 2000;
+    const pin = (): void => {
+      if (pinTo === null || performance.now() > pinUntil || !bodyHost.isConnected) return;
+      let a = anchors[0];
+      for (const x of anchors) if (x.line <= pinTo) a = x;
+      if (a === undefined) return;
+      const barEl = main.querySelector<HTMLElement>(".doc-bar");
+      const under = barEl !== null ? barEl.getBoundingClientRect().bottom : main.getBoundingClientRect().top;
+      main.scrollTop += a.el.getBoundingClientRect().top - under - 8;
+    };
+    pinReader = pin;
+    if (pinTo !== null) {
+      const letGo = (): void => {
+        pinTo = null;
+      };
+      for (const ev of ["wheel", "mousedown", "keydown"] as const) main.addEventListener(ev, letGo, { once: true, passive: true });
+      bodyHost.addEventListener("load", pin, true); // 图到货(load 不冒泡,捕获)
+    }
+    /** 从阅读页进编辑器时光标落在哪:点的那一块(双击)或工具条底下第一块(正读着的那一段)的行首;
+     *  上次在这篇里离开编辑器时的光标正落在这一块里,就回到它。 */
+    const startCaret = (from?: EventTarget | null): number => {
+      const key = `${mountSpace}/${d.id}`;
+      const barEl = main.querySelector<HTMLElement>(".doc-bar");
+      const band = barEl !== null ? barEl.getBoundingClientRect().bottom : 0;
+      let i = from instanceof Node ? anchors.findIndex((x) => x.el.contains(from)) : -1;
+      if (i < 0) i = anchors.findIndex((x) => x.el.getBoundingClientRect().bottom > band);
+      if (i < 0) return caretMemo.get(key) ?? 0;
+      const lo = i === 0 ? 0 : lineStart(content, anchors[i].line);
+      const hi = i + 1 < anchors.length ? lineStart(content, anchors[i + 1].line) : content.length + 1;
+      const memo = caretMemo.get(key);
+      return memo !== undefined && memo >= lo && memo < hi ? memo : lo;
+    };
     const paint = (): void => {
       const b = renderBody(d.id, content, imgs, toggle);
       bodyHost.replaceChildren(b.el);
       shown = b.shown;
+      anchors = b.anchors;
       if (strip !== null) hideShown(strip.root, shown);
+      pin();
     };
     paint();
     // ⚠ 乐观首帧在 imageStrip() 返回之前就同步调了 onMetas ⇒ 那一回 strip 还是 null,返回后补一次
@@ -645,7 +706,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     const tagHost = el("div", { className: "doc-tags" }, [tagChips(d)]);
 
     const actions = (): Act[] => [
-      { label: t("docs.actEdit"), key: DOC_CARD_KEYS.edit, run: () => openEditor(d, null) },
+      { label: t("docs.actEdit"), key: DOC_CARD_KEYS.edit, run: () => openEditor(d, null, startCaret()) },
       { label: t("docs.actHistory"), key: DOC_CARD_KEYS.history, run: () => openHistory(d) },
       { label: t("docs.actTag"), key: DOC_CARD_KEYS.tag, run: () => void openTags(tagHost, d, showErr) },
       { label: t("docs.actComments"), key: DOC_CARD_KEYS.comments, run: () => toggleComments() },
@@ -660,14 +721,14 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     art.append(...(partialBar ? [partialBar] : []), ...(draftBar ? [draftBar] : []), bodyHost, tagHost, strip.root, meta, err, cmHost, handle.menu());
     art.addEventListener("dblclick", (e) => {
       if ((e.target as HTMLElement).closest("a, button, input, textarea, .hk-menu-wrap, .img-thumb, .cm-host")) return;
-      openEditor(d, null);
+      openEditor(d, null, startCaret(e.target));
     });
 
     main.replaceChildren(
       bar(
         [backBtn(t("docs.back"), () => go({ kind: "list" }))],
         [
-          el("button", { className: "hbtn", type: "button", onclick: () => openEditor(d, null) }, [
+          el("button", { className: "hbtn", type: "button", onclick: () => openEditor(d, null, startCaret()) }, [
             el("span", { className: "lbl", textContent: t("docs.actEdit") }),
             el("kbd", { className: "k", textContent: DOC_CARD_KEYS.edit }),
           ]),
@@ -692,9 +753,11 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     if (d) openEditor(d, null);
   }
 
-  /** `d = null` = 新建。`seed` = 从草稿接着改时的起始文字(否则用正文)。 */
-  function openEditor(d: DocItem | null, seed: string | null): void {
+  /** `d = null` = 新建。`seed` = 从草稿接着改时的起始文字(否则用正文)。`at` = 光标放哪(阅读页给的是正读着 / 双击的那一块;
+   *  不给 = 末尾:新篇、从草稿接着写)。 */
+  function openEditor(d: DocItem | null, seed: string | null, at?: number): void {
     hk.reset();
+    pinReader = null;
     pickerOff?.();
     closeComments();
     page = d === null ? { kind: "new" } : { kind: "doc", id: d.id };
@@ -746,6 +809,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
               const meta = await attachBlob(target, blob, mountSpace);
               await mountStrip(target).reload();
               insertRef(meta.seq, at);
+              revealCaret("nearest"); // 连贴几张:插到哪就看到哪(153 走查 D-M05:execCommand 插完写字框不跟)
             } catch (e) {
               showImgErr(e);
             }
@@ -917,8 +981,42 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     function paintGutterMarks(): void {
       for (const th of hl.querySelectorAll<HTMLElement>(".ref-thumb")) th.classList.toggle("del-marked", strip?.isMarked(th.dataset.img!) ?? false);
     }
-    const hlResize = new ResizeObserver(() => syncHl());
+    /** 光标那一行在写字框滚动内容里的上沿(textarea 量不到光标 ⇒ 同字体同宽的影子 div 只排光标前那截,同 lineTops)。 */
+    function caretY(): { y: number; h: number } {
+      const cs = getComputedStyle(area);
+      const m = document.createElement("div");
+      for (const k of HL_COPY) m.style[k] = cs[k];
+      Object.assign(m.style, { position: "absolute", visibility: "hidden", left: "-99999px", top: "0", boxSizing: "border-box", width: `${area.clientWidth}px`, border: "0" });
+      const mark = document.createElement("span");
+      mark.textContent = "\u200b";
+      m.append(area.value.slice(0, area.selectionStart), mark);
+      document.body.append(m);
+      const y = mark.offsetTop;
+      m.remove();
+      return { y, h: parseFloat(cs.lineHeight) };
+    }
+    /** 把光标那一行摆进写字框看得见的那一截(153 走查 D-M05 / M06 / M07:连贴几张图、PageDown、窗口拖小之后光标在框外)。
+     *  `top` = 刚打开时摆到靠上(光标就在开头那一屏就不滚);否则只在出界时挪最少的一步。 */
+    function revealCaret(mode: "top" | "nearest"): void {
+      if (!area.isConnected || area.clientHeight === 0) return;
+      const { y, h } = caretY();
+      const pad = Math.round(h / 2);
+      if (mode === "top") {
+        area.scrollTop = y + h < area.clientHeight * 0.6 ? 0 : y - h;
+        return;
+      }
+      if (y < area.scrollTop + pad) area.scrollTop = y - pad;
+      else if (y + h > area.scrollTop + area.clientHeight - pad) area.scrollTop = y + h - area.clientHeight + pad;
+    }
+    const hlResize = new ResizeObserver(() => {
+      syncHl();
+      if (document.activeElement === area) revealCaret("nearest"); // 窗口拖小 / 右栏冒出来:框变了,光标别掉出去
+    });
     hlResize.observe(area);
+    // PageUp / PageDown:Chromium 翻完页光标常落在框外(D-M06 量到上沿以上 25px),等它翻完再摆
+    area.addEventListener("keydown", (e) => {
+      if (e.key === "PageDown" || e.key === "PageUp") setTimeout(() => revealCaret("nearest"), 0);
+    });
 
     let syncDue = false;
     area.addEventListener("scroll", () => {
@@ -1035,6 +1133,8 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     }
 
     function teardown(): void {
+      const target = id ?? newId;
+      if (target !== null) caretMemo.set(`${mountSpace}/${target}`, area.selectionStart);
       if (draftDue !== null) clearTimeout(draftDue);
       if (previewDue !== null) clearTimeout(previewDue);
       hlResize.disconnect();
@@ -1047,6 +1147,8 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       void attaching.then(() => commit()).then((r) => {
         if (r === "failed" || unmounted) return;
         teardown();
+        const target = id ?? newId;
+        readerAt = target === null ? null : { id: target, caret: area.selectionStart }; // 回到阅读页:光标那一块摆到顶
         then();
       });
     };
@@ -1105,8 +1207,11 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     );
     if (previewVisible()) paintPreview();
     area.focus();
-    area.setSelectionRange(area.value.length, area.value.length);
+    const caret = Math.min(at ?? area.value.length, area.value.length);
+    area.setSelectionRange(caret, caret);
     paintHl();
+    revealCaret("top");
+    syncPreview();
   }
 
   // ---- 历史与比对(§4)--------------------------------------------------------------
@@ -1302,6 +1407,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         renderDoc(d);
         shownDocId = d.id;
         main.scrollTop = keep;
+        pinReader?.();
         return;
       }
       // 这篇已不在长文里(别处收回 / 转了任务 / 删了):回列表并明说

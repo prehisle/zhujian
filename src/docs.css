@@ -99,7 +99,16 @@
   flex-wrap: wrap;
   align-items: center;
   gap: 8px 10px;
-  margin-bottom: 16px;
+  margin-bottom: 8px; /* + 下内边距 8 = 原来的 16 */
+  /* 吸在滚动区顶上:阅读页读到文末也够得着「← 长文 / 编辑 / 历史」(153 走查 D-M20)。编辑器那页 main 不滚、这条不起作用。
+     负上边距 + 等量内边距 = 吸住时上方那截 main 内边距也由它的底色盖住,滚过去的字不从缝里露出来。 */
+  position: sticky;
+  top: -20px; /* = main 的上内边距 */
+  z-index: 2;
+  margin-top: -20px;
+  padding-top: 20px;
+  padding-bottom: 8px;
+  background: var(--paper);
 }
 .v-docs .doc-bar.narrow { max-width: 860px; }
 .v-docs .doc-bar-gap { flex: 1; }

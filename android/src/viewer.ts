@@ -163,7 +163,7 @@ export function closeViewerNow() {
   setClosing(false); // 必须摘:留着的话下次开图整层还是 opacity:0(图在、看不见)
   $("viewer").classList.remove("readonly"); // 每次关都摘:下次非只读地开(暂存条那路要能删)
   $("viewer").hidden = true;
-  ($("viewer-img") as HTMLImageElement).src = ""; // 释放大图
+  $("viewer-img").removeAttribute("src"); // 释放大图。⛔ 别写 `src = ""`:同样放手,却多发一次 error(153 走查 A-M20;thumbs.ts figFrom 栽在同一处)
   resetZoom();
 }
 

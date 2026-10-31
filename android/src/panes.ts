@@ -138,9 +138,10 @@ function renderTrash() {
   hydrateThumbs(box);
 }
 
-/** 宿主正文首行(组头);空正文给一句占位。 */
+/** 宿主正文首行(组头);空正文给一句占位。行首的 Markdown 标题记号摘掉(长文首行多是「# 题目」,
+ *  同列表卡 docTitle;组头里拿不到 kind,随记首行真以「# 」起也一并摘 —— 只是个标签;153 走查 A-M12)。 */
 function ownerLine(content: string): string {
-  const first = content.split("\n").find((l) => l.trim() !== "")?.trim() ?? "";
+  const first = content.split("\n").find((l) => l.trim() !== "")?.replace(/^\s*#{1,6}\s+/, "").trim() ?? "";
   return first === "" ? t("panes.imageNoText") : first;
 }
 

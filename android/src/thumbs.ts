@@ -56,7 +56,9 @@ function figFrom(dataUrl: string): Promise<string> {
       const ctx = c.getContext("2d");
       if (!ctx) return reject(new Error("canvas 2d unavailable"));
       ctx.drawImage(img, 0, 0, w, h);
-      img.src = ""; // 全尺寸位图尽早放手
+      // 全尺寸位图尽早放手。⛔ 别写 `src = ""`:那会发一次 error,原先抢在 toBlob 之前把这张判坏 ⇒ 宽过
+      // FIG_MAX_W(手机照片张张如此)或肥过 FIG_FAT 的图在预览 / 阅读页全是破图(153 走查 A-M01)。摘属性一样放手、不发 error(MuMu 页内量过)。
+      img.removeAttribute("src");
       c.toBlob((b) => (b ? resolve(URL.createObjectURL(b)) : reject(new Error("encode failed"))), "image/webp", 0.9);
     };
     img.onerror = (): void => reject(new Error("decode failed"));

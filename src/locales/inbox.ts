@@ -42,6 +42,7 @@ export const inbox = defineMessages({
   "inbox.actMove": { zh: "移动", en: "Move" },
   "inbox.actExpand": { zh: "展开成长文", en: "Expand to long-form" },
   "inbox.undoExpanded": { zh: "已展开成长文", en: "Expanded to long-form" },
+  "inbox.openExpanded": { zh: "打开", en: "Open" },
   "inbox.docBadge": { zh: "长文", en: "Long-form" },
   "inbox.actDelete": { zh: "删除", en: "Delete" },
   "inbox.undoDeleted": { zh: "已移入回收站", en: "Moved to Trash" },

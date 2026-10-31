@@ -88,6 +88,10 @@ let pendingFocus: string | null = null;
 /** 编辑器开着时:离开它的那条路(保存再走)、返回键(存完回这一篇 —— 新篇建成了就回它的阅读页,
  *  同「保存」钮;⛔ 别按 `page.id` 判:新篇建成后它仍是 null)与关面那一发(不等、不碰 DOM)。 */
 let editor: { leave: (then: () => void) => void; back: () => void; flush: () => void } | null = null;
+/** 写到哪 / 读到哪不丢(153 走查 A-M06、D-M16:再进编辑器光标跳到全文末尾、页面滚到底):离开编辑器那一刻的光标按篇记着
+ *  (`${space}/${id}`,只在内存:换篇、来回切几次都在,重启不留);`readerAt` = 刚从编辑器回阅读页,把光标所在那一块摆到顶。 */
+const caretMemo = new Map<string, number>();
+let readerAt: { key: string; caret: number } | null = null;
 
 const root = (): HTMLElement => $("docs-body");
 
@@ -106,6 +110,37 @@ function btn(label: string, onClick: () => void, cls = ""): HTMLButtonElement {
   b.disabled = busy;
   b.addEventListener("click", onClick);
   return b;
+}
+
+/** 原文第 `line` 行(`split("\n")` 口径)起于第几个码元。 */
+function lineStart(v: string, line: number): number {
+  let at = 0;
+  for (let i = 0; i < line; i++) {
+    const nl = v.indexOf("\n", at);
+    if (nl < 0) return v.length;
+    at = nl + 1;
+  }
+  return at;
+}
+/** 第 `off` 个码元在原文第几行。 */
+function lineOf(v: string, off: number): number {
+  let n = 0;
+  for (let i = v.indexOf("\n"); i >= 0 && i < off; i = v.indexOf("\n", i + 1)) n++;
+  return n;
+}
+/** 页面上「看得见」的那一截(视口坐标):上沿 = 吸顶顶栏,以及吸在它下面的页头那排(`.doc-head`,键盘起着时不吸);
+ *  下沿 = 视口底(键盘起着时原生侧已把视口缩到键盘上沿),底栏现身时再让开它。 */
+function visibleBand(): { top: number; bottom: number } {
+  let top = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--head-h")) || 0;
+  const head = root().querySelector<HTMLElement>(".doc-head");
+  if (head !== null && getComputedStyle(head).position === "sticky") {
+    const r = head.getBoundingClientRect();
+    if (r.top <= top + 1) top = Math.max(top, r.bottom);
+  }
+  let bottom = window.innerHeight;
+  const nav = document.getElementById("bottombar");
+  if (nav !== null && getComputedStyle(nav).visibility !== "hidden" && nav.offsetHeight > 0) bottom = Math.min(bottom, nav.getBoundingClientRect().top);
+  return { top, bottom };
 }
 
 /** 列表与标签展开面用的题目:第一行非空字,去掉开头的 `#`(同桌面 docTitle)。 */
@@ -357,14 +392,14 @@ function bar(left: HTMLElement[], right: HTMLElement[]): HTMLElement {
  *  链接:安卓把校验过的地址直接交 opener;鸿蒙交不出浏览器(`HAS_BROWSER = false`)⇒ `openLink: null`,
  *  只显示文字与地址(共用渲染器那形)。`docId = null` = 还没建成的新篇(不会有图);`shown` = 原位
  *  画成图的那几张的编号(阅读页与编辑器的缩略图条不再重复摆它们);`figs` = 逐个 `.md-fig` 是哪一张
- *  (渲染器按文档序逐个取 src,与 `querySelectorAll(".md-fig")` 同序)。 */
+ *  (渲染器按文档序逐个取 src,与 `querySelectorAll(".md-fig")` 同序);`anchors` = 顶层每一块起于第几行(读到哪 / 写到哪对位用)。 */
 function renderBody(
   sp: string,
   docId: string | null,
   content: string,
   imgs: ImageMeta[],
   onToggle: ((line: number) => void) | null,
-): { el: HTMLElement; shown: Set<number>; figs: ImageMeta[] } {
+): { el: HTMLElement; shown: Set<number>; figs: ImageMeta[]; anchors: { line: number; el: HTMLElement }[] } {
   const bySeq = new Map(imgs.map((m) => [m.seq, m]));
   const shown = new Set<number>();
   const figs: ImageMeta[] = [];
@@ -390,7 +425,7 @@ function renderBody(
   });
   const wrap = el("div", "doc-body", [r.root]);
   if (r.degraded !== null) wrap.prepend(el("p", "doc-note", [t("docs.degraded")]));
-  return { el: wrap, shown, figs };
+  return { el: wrap, shown, figs, anchors: r.anchors };
 }
 
 /** 阅读页的缩略图条只摆正文里没原位画出来的图(画了的再摆一遍就重复了;没引用到的图仍在这儿)。 */
@@ -454,10 +489,44 @@ function renderDoc(d: IdeaItem): void {
   // 配图:读这一篇的图元数据(列表那发不带),缩略图滚到可视区才拉字节(同时间轴)。
   const thumbs = el("div", "thumbs");
   thumbs.hidden = true;
+  // 刚从编辑器回来:光标所在那一块摆到页头底下。图是陆续到的(上面的图撑开会把它往下推)、图单到了还整篇重画一遍 ⇒
+  // 头两秒里每画一次 / 每到一张图就再摆一次;手一碰屏(或滚轮)就松手,不跟用户抢。
+  const key = `${sp}/${d.id}`;
+  let pinTo = readerAt !== null && readerAt.key === key ? lineOf(content, readerAt.caret) : null;
+  readerAt = null;
+  const pinUntil = performance.now() + 2000;
+  function pin(): void {
+    if (pinTo === null || performance.now() > pinUntil || !bodyHost.isConnected) return;
+    let a = anchors[0];
+    for (const x of anchors) if (x.line <= pinTo) a = x;
+    if (a === undefined) return;
+    window.scrollBy(0, a.el.getBoundingClientRect().top - visibleBand().top - 8);
+  }
+  if (pinTo !== null) {
+    const letGo = (): void => {
+      pinTo = null;
+    };
+    window.addEventListener("touchstart", letGo, { once: true, passive: true });
+    window.addEventListener("wheel", letGo, { once: true, passive: true });
+    bodyHost.addEventListener("load", () => pin(), true); // 图到货(load 不冒泡,捕获)
+  }
+  let anchors: { line: number; el: HTMLElement }[] = [];
   const paint = (): void => {
     const b = renderBody(sp, d.id, content, imgs, toggle);
     bodyHost.replaceChildren(b.el);
     hideShown(thumbs, b.shown);
+    anchors = b.anchors;
+    pin();
+  };
+  /** 从阅读页进编辑器时光标落在哪:页头底下第一块(正读着的那一段)的行首;上次在这篇里离开编辑器时的光标正落在这一块里,就回到它。 */
+  const startCaret = (): number => {
+    const band = visibleBand().top;
+    const i = anchors.findIndex((x) => x.el.getBoundingClientRect().bottom > band);
+    if (i < 0) return caretMemo.get(key) ?? 0;
+    const from = i === 0 ? 0 : lineStart(content, anchors[i].line);
+    const to = i + 1 < anchors.length ? lineStart(content, anchors[i + 1].line) : content.length + 1;
+    const memo = caretMemo.get(key);
+    return memo !== undefined && memo >= from && memo < to ? memo : from;
   };
   paint();
   void listItemImages(sp, d.id).then(
@@ -510,13 +579,16 @@ function renderDoc(d: IdeaItem): void {
 
   const art = el("article", "doc-page", [draftBar, bodyHost, thumbs, tagChips(d), meta]);
   root().replaceChildren(
-    bar(
-      [btn(t("docs.back"), () => go({ kind: "list" }), "ghost")],
-      [btn(t("docs.actEdit"), () => openEditor(d, null, []), "ghost"), btn(t("docs.actHistory"), () => go({ kind: "hist", id: d.id }), "ghost")],
-    ),
+    el("div", "doc-head", [
+      bar(
+        [btn(t("docs.back"), () => go({ kind: "list" }), "ghost")],
+        [btn(t("docs.actEdit"), () => openEditor(d, null, [], startCaret()), "ghost"), btn(t("docs.actHistory"), () => go({ kind: "hist", id: d.id }), "ghost")],
+      ),
+    ]),
     art,
     readerActions(d),
   );
+  pin();
 }
 
 /** 阅读页底下那排动作(同卡片操作面的形:主行四枚封顶,低频的收进「更多…」)。 */
@@ -783,8 +855,9 @@ async function renderTags(panel: HTMLElement, d: IdeaItem): Promise<void> {
 // ---- 编辑器(§2)-------------------------------------------------------------------
 
 /** `d = null` = 新建。`seed` = 从草稿接着改时的起始文字(否则用正文)。`carried` = 从「记一笔」
- *  带过来的暂存图(只有新篇会有;编辑器一开就把这篇建出来、挂上,引用接在正文末尾)。 */
-function openEditor(d: IdeaItem | null, seed: string | null, carried: File[]): void {
+ *  带过来的暂存图(只有新篇会有;编辑器一开就把这篇建出来、挂上,引用接在正文末尾)。`at` = 光标放哪
+ *  (阅读页那枚「编辑」给的是正读着的那一段;不给 = 末尾:新篇、从草稿接着写)。 */
+function openEditor(d: IdeaItem | null, seed: string | null, carried: File[], at?: number): void {
   hideConfirmBar();
   const sp = space;
   const id = d?.id ?? null;
@@ -914,6 +987,50 @@ function openEditor(d: IdeaItem | null, seed: string | null, carried: File[]): v
       b.style.left = `${r.left - o.left}px`;
     });
   }
+  /** 光标那一行此刻在视口里的上沿(写字框是 textarea,量不到光标 ⇒ 照影子层的排版另起一层探针,只排光标前那截)。 */
+  function caretBox(): { top: number; h: number } {
+    const cs = getComputedStyle(area);
+    const probe = el("div", "doc-hl");
+    for (const k of HL_COPY) probe.style[k] = cs[k];
+    Object.assign(probe.style, { top: `${area.clientTop}px`, left: `${area.clientLeft}px`, width: `${area.clientWidth}px`, height: "auto", visibility: "hidden" });
+    const mark = el("span", "", ["​"]);
+    probe.append(area.value.slice(0, area.selectionStart), mark);
+    edBox.append(probe);
+    const top = mark.getBoundingClientRect().top;
+    probe.remove();
+    return { top, h: parseFloat(cs.lineHeight) };
+  }
+  /** 把光标那一行摆进看得见的那一截(153 走查 A-M02 / M03 / M04 / M05:横屏转长文那行压在顶栏下、转屏后找不到写到哪、
+   *  贴键盘那行压进键盘、带图转长文光标在键盘后)。WebView 自己只管「光标在视口里」,不知道顶上那截被吸顶顶栏盖着,
+   *  贴键盘那行也只差几像素就算露出来了 ⇒ 这里按真正露出来的那一截再摆一次。`top` = 摆到顶(刚打开时),否则只在出界时挪最少的一步。 */
+  function revealCaret(mode: "top" | "nearest"): void {
+    if (!area.isConnected || edBox.hidden) return;
+    const band = visibleBand();
+    const { top, h } = caretBox();
+    const pad = 8;
+    if (mode === "top") {
+      // 光标就在开头那一屏:回页顶(工具排也露着),别为了「摆到顶」把它们推走
+      if (top + window.scrollY + h < window.innerHeight * 0.5) window.scrollTo(0, 0);
+      else window.scrollBy(0, top - band.top - pad);
+      return;
+    }
+    if (top < band.top + pad) window.scrollBy(0, top - band.top - pad);
+    else if (top + h > band.bottom - pad) window.scrollBy(0, Math.min(top + h - (band.bottom - pad), top - band.top - pad));
+  }
+  let revealDue: ReturnType<typeof setTimeout> | null = null;
+  const revealSoon = (ms: number): void => {
+    if (revealDue !== null) clearTimeout(revealDue);
+    revealDue = setTimeout(() => {
+      revealDue = null;
+      revealCaret("nearest");
+    }, ms);
+  };
+  // 转屏 / 键盘起落 / 分屏拖动:视口变了就再摆一次(等这一拍排完);打字停一下摆一次(横屏顶栏下那行 WebView 认为看得见、不滚);
+  // 点进某一行之后摆一次(贴键盘那行)。⛔ 只在编辑态:预览开着时没有光标可摆。
+  const onResize = (): void => revealSoon(60);
+  window.addEventListener("resize", onResize);
+  area.addEventListener("click", () => revealSoon(0));
+
   function paintHl(): void {
     const v = area.value;
     const bySeq = new Map(imgs.map((m) => [m.seq, m]));
@@ -957,8 +1074,19 @@ function openEditor(d: IdeaItem | null, seed: string | null, carried: File[]): v
   area.addEventListener("input", () => {
     fitArea(area);
     paintHl();
+    revealSoon(120);
   });
-  const hlResize = new ResizeObserver(() => syncHl()); // 转屏 / 字号变了:框宽变,影子层跟上
+  // 转屏 / 字号变了:框宽变,影子层跟上;宽度一变高度也得重量(框随内容长高、只在打字时量 ⇒ 横屏转竖屏折行变多,
+  // 文末几行被框底裁掉、光标落在框外 —— 153 走查 A-M03 的真根,154 真机转屏时看见的)。只认宽度:量高度本身也会触发这里。
+  let fitW = -1;
+  const hlResize = new ResizeObserver(() => {
+    if (area.clientWidth !== fitW) {
+      fitW = area.clientWidth;
+      fitArea(area);
+      revealSoon(60);
+    }
+    syncHl();
+  });
   hlResize.observe(area);
   if (id !== null) {
     void listItemImages(sp, id).then(
@@ -1139,8 +1267,12 @@ function openEditor(d: IdeaItem | null, seed: string | null, carried: File[]): v
   }
   function teardown(): void {
     if (draftDue !== null) clearTimeout(draftDue);
+    if (revealDue !== null) clearTimeout(revealDue);
+    window.removeEventListener("resize", onResize);
     hlResize.disconnect();
     editor = null;
+    const target = id ?? newId;
+    if (target !== null) caretMemo.set(`${sp}/${target}`, area.selectionStart);
   }
   editor = {
     back: () => editor?.leave(done),
@@ -1152,6 +1284,8 @@ function openEditor(d: IdeaItem | null, seed: string | null, carried: File[]): v
       void commit().then((r) => {
         if (r === "failed" || editor === null) return;
         teardown();
+        const target = id ?? newId;
+        readerAt = target === null ? null : { key: `${sp}/${target}`, caret: area.selectionStart }; // 回到阅读页:光标那一块摆到顶
         then();
       });
     },
@@ -1193,7 +1327,8 @@ function openEditor(d: IdeaItem | null, seed: string | null, carried: File[]): v
     preview.hidden = true;
     edBox.hidden = false;
     paintHl(); // 条里改回「只藏窄边配了图的那几张」
-    area.focus();
+    area.focus({ preventScroll: true });
+    revealSoon(0);
   }, "on");
   const modePrev = btn(t("docs.modePreview"), () => {
     modePrev.classList.add("on");
@@ -1209,26 +1344,31 @@ function openEditor(d: IdeaItem | null, seed: string | null, carried: File[]): v
     edBox.hidden = true;
   }, "");
   root().replaceChildren(
-    bar(
-      [btn(id === null ? t("docs.back") : t("docs.backToDoc"), () => editor?.leave(done), "ghost")],
-      [status, btn(t("docs.save"), () => editor?.leave(done))],
-    ),
-    // 加图两枚钮与「编辑 / 预览」同一排、缩略图紧跟在下面 —— ⛔ 别挪到正文框底下:框有 60vh,
-    // 矮屏(360×640)上那一排正好压在底栏下面,新篇加的图还没有回执,点了像没反应
-    // ⚠ `.row` 只包那两枚钮:它的 `button` 规则是实心主钮,包住分段钮会把没选中的那段刷成实心红
-    el("div", "doc-tools", [
-      el("div", "seg doc-seg", [modeEdit, modePrev]),
-      el("div", "row", [btn(t("shell.addImage"), () => void pick(false), "ghost"), btn(t("shell.takePhoto"), () => void pick(true), "ghost")]),
+    // 页头两排吸在顶栏底下(153 走查 A-M06:长文写到中段,保存 / 预览 / 加图都滚出屏外);键盘起着时不吸(index.html .doc-head)
+    el("div", "doc-head", [
+      bar(
+        [btn(id === null ? t("docs.back") : t("docs.backToDoc"), () => editor?.leave(done), "ghost")],
+        [status, btn(t("docs.save"), () => editor?.leave(done))],
+      ),
+      // 加图两枚钮与「编辑 / 预览」同一排、缩略图紧跟在下面 —— ⛔ 别挪到正文框底下:框有 60vh,
+      // 矮屏(360×640)上那一排正好压在底栏下面,新篇加的图还没有回执,点了像没反应
+      // ⚠ `.row` 只包那两枚钮:它的 `button` 规则是实心主钮,包住分段钮会把没选中的那段刷成实心红
+      el("div", "doc-tools", [
+        el("div", "seg doc-seg", [modeEdit, modePrev]),
+        el("div", "row", [btn(t("shell.addImage"), () => void pick(false), "ghost"), btn(t("shell.takePhoto"), () => void pick(true), "ghost")]),
+      ]),
     ]),
     el("div", "doc-imgs", [thumbs]),
     err,
     edBox,
     preview,
   );
-  area.focus();
-  area.setSelectionRange(area.value.length, area.value.length);
   fitArea(area);
   paintHl();
+  const caret = Math.min(at ?? area.value.length, area.value.length);
+  area.setSelectionRange(caret, caret);
+  area.focus({ preventScroll: true }); // 滚到哪由下一句定(WebView 自己滚只管「在视口里」,不管顶栏)
+  revealCaret("top");
   if (carried.length) {
     // 从「记一笔」带过来的图:当场建篇挂上,引用接在正文末尾(挂完之前同「取图在飞」,离开先拦)
     picking = true;

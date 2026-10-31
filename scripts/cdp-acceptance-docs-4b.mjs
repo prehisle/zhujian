@@ -40,7 +40,7 @@ const ONLY = (arg("--only") ?? "sec,links,hist,edge,budget,stale,res").split(","
 const VERSIONS = Number(arg("--versions", 200));
 const R = PHONE ? "#docs-body" : ".v-docs";
 const LOADING = "读取中…";
-const BACK = PHONE ? "← 正文" : "← 回到正文";
+const BACK = "← 回到正文"; // 两端同一句(153 走查 A-M16 起)
 const TAG = "4b验收";
 
 // ---- CDP(带事件分发;scripts/lib/cdp.mjs 那份只有一问一答)----------------------------------

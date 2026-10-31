@@ -48,6 +48,7 @@ import {
   refreshOpenComments,
 } from "./item-comments";
 import type { View, ViewCtx } from "./notebook";
+import { focusDoc } from "./docs";
 import { applyTagColor } from "./tag-color";
 import { renderTagPicker } from "./tag-picker";
 import { dayKey, dayLabel, startOfWeek, when } from "./tasktime";
@@ -181,7 +182,7 @@ const SKELETON = `
   <main id="list"></main>
 `;
 
-export function mount(root: HTMLElement, _ctx: ViewCtx): View {
+export function mount(root: HTMLElement, ctx: ViewCtx): View {
   // 本 mount 归属的空间(codex P1 审 H1):切空间时 notebook 先翻 current 再 unmount,
   // unmount 时现取会把 A 空间的草稿标成 B 的——在这里捕获。空间对不上的存底整体丢弃。
   const mountSpace = currentSpaceId();
@@ -960,7 +961,15 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         return;
       }
       leaveCard(note, "ideas", null);
-      toastUndo(t("inbox.undoExpanded"), t("common.undo"), () => void undoVia("set_doc", item.id, { on: false }));
+      // 卡片走了、人还在随记:回执里给一枚「打开」直接去那一篇(153 走查 D-M15:原先只能点侧栏「长文」,
+      // 而那儿停在上一次看的那篇)
+      toastUndo(t("inbox.undoExpanded"), t("common.undo"), () => void undoVia("set_doc", item.id, { on: false }), {
+        label: t("inbox.openExpanded"),
+        run: () => {
+          focusDoc(item.id);
+          ctx.navigate("docs");
+        },
+      });
     }
 
     // ---- 归纳主题 (manual file into an existing/new topic) ----

@@ -92,12 +92,21 @@ export function scanImgRefs(text: string): ImgRefSpan[] {
  *  按原文行数算:一行原文折成几行只会更远,所以只会多让、不会叠。 */
 export function gutterCols(refs: ImgRefSpan[], reach: number): number[] {
   const lastLine: number[] = []; // 每一列最后一枚停在哪一行
-  return refs.map((r) => {
+  const cols = refs.map((r) => {
     let c = lastLine.findIndex((l) => r.line - l >= reach);
     if (c < 0) c = lastLine.length;
     lastLine[c] = r.line;
     return c;
   });
+  // 同一行的几枚:占的列不变,左右顺序跟字走(先写到的在左)—— 0 列在最右,按先来先占会排成「2、1」(153 走查 A-M22)
+  for (let i = 0; i < refs.length; ) {
+    let j = i;
+    while (j < refs.length && refs[j].line === refs[i].line) j++;
+    const taken = cols.slice(i, j).sort((a, b) => b - a);
+    for (let k = i; k < j; k++) cols[k] = taken[k - i];
+    i = j;
+  }
+  return cols;
 }
 
 /** 链接地址的长度上限(码元)。比它长的一律不当链接 —— 也是在给每次校验的复制量封顶。 */
