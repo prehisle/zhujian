@@ -1,8 +1,8 @@
 import { TOPICS_VIEW_KEYS } from "./keymap";
 import { invoke } from "./space";
-import { type BoardColumn, columnName, loadBoardColumns } from "./board-columns";
+import { type BoardColumn, DONE_COLUMN, columnName, loadBoardColumns } from "./board-columns";
 import type { View, ViewCtx } from "./notebook";
-import { type TaskItem, PRIORITY_LABEL, dueLabel, dueState, localToday, when } from "./tasktime";
+import { type TaskItem, PRIORITY_LABEL, dueDateLabel, dueLabel, dueState, localToday, when } from "./tasktime";
 import { copyButton } from "./clipboard";
 import { toastAction } from "./toast";
 import { armDismiss, registerViewKeys } from "./hotkey-menu";
@@ -512,8 +512,11 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     if (cn === undefined) throw new Error(`task ${task.id} sits in unknown column ${task.status}`);
     const meta: Node[] = [el("span", { className: "dtask-col", textContent: cn })];
     if (task.due_on) {
-      const st = dueState(task.due_on, today);
-      meta.push(el("span", { className: `dtask-due ${st}`, textContent: dueLabel(task.due_on, today) }));
+      // 158 G3 / Q4:已完成的不说「逾期 / 今天」,只写截止那天(同看板卡那枚灰章)。
+      const done = task.status === DONE_COLUMN;
+      const st = done ? "done" : dueState(task.due_on, today);
+      const label = done ? dueDateLabel(task.due_on, today) : dueLabel(task.due_on, today);
+      meta.push(el("span", { className: `dtask-due ${st}`, textContent: label }));
     }
     if (task.priority) {
       meta.push(el("span", { className: `dtask-pri p${task.priority}`, textContent: t("topics.priority", { label: PRIORITY_LABEL[task.priority] }) }));

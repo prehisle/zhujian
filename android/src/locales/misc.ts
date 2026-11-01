@@ -1,6 +1,6 @@
 // 小件合收的分片(键前缀 = 来源 ts 文件名,全局唯一、跨分片不许撞):
 // api.ts(空间展示名)/ identity.ts(署名)/ images.ts + thumbs.ts(配图)/
-// swipe.ts(滑动改状态回执)/ ui.ts(stage 印文 + 时间格式 + actionBar 配套的
+// swipe.ts(滑动改状态回执)/ carddrag.ts(长按拖卡)/ ui.ts(stage 印文 + 时间格式 + actionBar 配套的
 // 通用「撤销」——操作型回执(§3.1)的钮词只此一份,滑动/勾完成/删除/归档共用)/ err.ts(错误文案人话前置)。
 import { defineMessages } from "./entry";
 
@@ -14,6 +14,9 @@ export const misc = defineMessages({
   "images.imageN": { zh: "图{n}", en: "Image {n}" },
   "images.tooMany": { zh: "一次最多 {max} 张,这次选了 {n} 张;分几次加吧", en: "At most {max} at a time; you picked {n}. Add them in a few batches." },
   "swipe.changedTo": { zh: "已改为「{stage}」", en: "Moved to “{stage}”" },
+  // carddrag.ts(竖屏长按拖卡,158 G3 / Q7)
+  "carddrag.reordered": { zh: "已挪到这里", en: "Moved here" },
+  "carddrag.dueSorted": { zh: "只看到期时按截止日排,不能拖;先点掉那枚到期钮", en: "Sorted by due date while showing due tasks only, so cards can't be dragged. Turn that filter off first" },
   "ui.undo": { zh: "撤销", en: "Undo" },
   "ui.confirmExpired": { zh: "没确认,已作罢", en: "Not confirmed — nothing was done" },
   // 错误文案人话前置(err.ts,用户面 126):值与桌面 common.ts 的 err.* 逐字同形,只「下一步」
@@ -33,7 +36,7 @@ export const misc = defineMessages({
   "ui.whenOtherYear": { zh: "{y}年{m}月{d}日 {hm}", en: "{m}/{d}/{y} {hm}" },
   // 随记时间轴的日期节头(dayLabel)。值与桌面 tasktime.today / yesterday /
   // dayBeforeYesterday / monthDay / yearMonthDay **逐字同形**,键名按本端 ui.* 前缀
-  // (两份字典键空间独立)。⛔ 别拿 main.dueToday / main.dueYesterday 顶——那两枚是
+  // (两份字典键空间独立)。⛔ 别拿 main.dueToday 顶——那枚是
   // 截止角标的字,同形不同物,哪天截止改说「今日到期」这儿会跟着坏(一物一名)。
   "ui.dayToday": { zh: "今天", en: "Today" },
   "ui.dayYesterday": { zh: "昨天", en: "Yesterday" },

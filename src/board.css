@@ -66,7 +66,23 @@
 @container (max-width: 1009px) and (min-width: 840px) {
   .v-board header .hbtn .k { display: none; }
 }
+/* 158 G2 / A11(WD-11):② 那档此前把「复制看板」整枚 display:none(指南说有、窗 1260 上就没了)。
+   现在它只缩成 ⧉ 记号(全名在 title),腾出的宽由「顺序」那枚出:它在这一档也只留 ↕
+   (`#board-sort` 带 id,压过 ③ 那档 `.active .lbl` 的回显 —— 非手动档靠朱砂底色与 title 说)。
+   净宽只减不增(⧉ 约 40,顺序全名 75–100 → ↕ 约 35),三档断点不必重量。
+   ⚠ ⇒ 顶栏那颗只在最窄那截(下面 599 那条)才被收走,`data-hdrcopy` 那条「列头复制不让位」的
+   替身规则只在那一截触发。 */
+.v-board header .copy-slot .hbtn .lbl-short { display: none; }
 @container (max-width: 929px) {
+  .v-board header .copy-slot .hbtn .lbl { display: none; }
+  .v-board header .copy-slot .hbtn .lbl-short { display: inline; }
+  .v-board header #board-sort .lbl { display: none; }
+  .v-board header #board-sort .lbl-short { display: inline; }
+}
+/* ……但字母态的最窄那截仍装不下它:实测(158,Windows/WebView2,计数个位数)带 ⧉ 时字母态要内容宽
+   ≈570,而 900 宽的最小窗只给 530;按 550 的最坏情况再加 ⧉ 那 48 ⇒ 断点取 599。这一截里它照旧让位,
+   列头那颗「复制」由 `data-hdrcopy` 那条替身规则顶上(65)。⛔ 别把它挪到 929 —— 那正是 WD-11。 */
+@container (max-width: 599px) {
   .v-board header .copy-slot { display: none; }
 }
 @container (max-width: 839px) {
@@ -78,6 +94,24 @@
   .v-board header .hbtn:not(.active) .lbl-short { display: inline; }
 }
 .v-board header .hbtn .lbl-short { display: none; font-variant-numeric: tabular-nums; }
+/* 158 G3 / Q13(WD-29):字母态里到期 / 归档 / 回收站三枚此前只剩「6」「3 G」「0 R」。各留一枚线稿图标
+   (board.ts 的 ICON_*,全名在 title),平时藏着;字母态里图标顶替键帽 G / R 当记号(键照旧能按,
+   设置「快捷键」页写着)—— 腾出的宽刚好装下图标,三档断点不必重量(⚠ 改完在 900 宽最小窗上肉眼核过一行)。 */
+.v-board header .hbtn .ico { display: none; }
+.v-board header .hbtn .ico svg {
+  width: 1em;
+  height: 1em;
+  vertical-align: -0.14em;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+@container (max-width: 839px) {
+  .v-board header .hbtn:not(.active) .ico { display: inline; margin-right: 3px; }
+  .v-board header .hbtn:not(.active):has(.ico) .k { display: none; }
+}
 /* 计数徽记 .tn 走共享件(controls.css)—— 626 之前这儿是两条只管 #trash-toggle 的私货,
    隔壁 #seal-toggle 的那个数根本没吃到(等宽也没有)。 */
 
@@ -328,6 +362,9 @@
    横滚条 —— 再大一档(220)就会在**最大化**的窗口上开始横滚,那是拿一个坏形换另一个。
    ⚠ 拖拽期的横向自动滚早就写好了(board.ts 的 `autoScrollTick` 里那半 `.cols`),只是此前
    `.cols` 永远不滚 ⇒ 那段代码从来没生效过;本轮起它才真的在用。 */
+/* ⚠ 158 W2 走查 WD-12(窗 1260 · 5 列,最右那列被切 24px)**刻意没靠降这个下限去治**:试过 190,
+   900 最小窗下「已完成」列名又被裁成「已…」(board-seal.e2e.js 504 那格当场红)—— 那是拿 504 换 WD-12。
+   装不下就横滚是这条规矩的本义,5 列在 1260 上恰好差 24px 是它的正常形。 */
 .v-board .col {
   flex: 1 1 0;
   min-width: 200px;
@@ -693,6 +730,8 @@
    报错无关。 */
 .v-board .edit-bar { display: flex; align-items: center; gap: 8px; justify-content: flex-end; }
 .v-board .edit-bar .edit-err { margin-right: auto; min-width: 0; }
+/* 158 G1 / A1:改过后按一次 Esc 的那句提醒(同随记 .v-inbox .discard-hint 一档)。 */
+.v-board .discard-hint { margin: 4px 0 0; font-size: var(--fs-12); color: var(--seal-ink); }
 /* 单字符钮:`.act` 那档的 5px 13px 是给「编辑 / 删除」两字用的,一个箭头占不满;
    它坐在正文框上头,矮一点才不至于把编辑框整个往下顶。
    ⚠ 选择器必须写成 `.act.edit-zoom`(0,3,0):`.v-board .act` 那一族定义在本节**之后**,
@@ -734,6 +773,8 @@
 /* 已经放大了,那枚钮再点也是 no-op(openZoom 自守),别留一个按下去没反应的东西在面上。
    ⛔ 别改成「缩回」:出口只有保存 / 取消两条,多一条就是多一个中间态。 */
 .ze-panel .edit-zoom { display: none; }
+/* 158 G3 / Q12(WD-15):面板底下那行「Ctrl+Enter 保存 · Esc 不要了」。 */
+.ze-panel .ze-hint { flex: none; margin: 8px 0 0; font-size: var(--fs-12); color: var(--ink-soft); }
 
 /* ---- action pills ---- */
 .v-board .acts {

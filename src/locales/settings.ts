@@ -38,6 +38,12 @@ export const settings = defineMessages({
   "settings.compressSub": { zh: "默认关:按原图保存,截图里的字清清楚楚。打开后,存图前会把大照片缩小并转成 JPEG,省同步流量和空间,但画质有损、原图找不回来;长截图不会被压成窄条。已存的图不受影响。只影响这台设备。", en: "Off by default: images are saved as-is, so text in screenshots stays sharp. When on, large photos are shrunk and re-saved as JPEG first—less sync traffic and storage, but lossy, and the original can’t be recovered; long screenshots are never squeezed into a thin strip. Images already saved aren’t affected. This device only." },
   "settings.compressOn": { zh: "开", en: "On" },
   "settings.compressOff": { zh: "关", en: "Off" },
+  // 158 G3 / Q6(WD-18):看板删除确认里勾过「不再提示」后,在这里改回来。
+  "settings.deleteConfirmTitle": { zh: "删任务前确认", en: "Confirm before deleting a task" },
+  "settings.deleteConfirmSub": { zh: "开着时,在看板上删一张任务卡会先问一句(删了也只是进回收站)。在那句确认里勾过「不再提示」,这里就是关;想再被问,点「开」。只影响这台设备。", en: "When on, deleting a task card on the board asks first (deleted tasks go to the Trash either way). Ticking “Don’t ask again” in that question turns this off; click On to be asked again. This device only." },
+  "settings.deleteConfirmOn": { zh: "开", en: "On" },
+  "settings.deleteConfirmOff": { zh: "关", en: "Off" },
+  "settings.deleteConfirmSaveFailed": { zh: "没存上(这台设备的本地存储写不进去),下次照旧", en: "Couldn’t save (this device’s local storage refused the write); nothing changed" },
   "settings.aliasTitle": { zh: "本机别名", en: "Device alias" },
   "settings.aliasSub": { zh: "给这台设备起个名字,比如「书房台式机」,别的设备上就能看出每条是哪台记的。", en: "Name this device, e.g. “Study desktop”, so your other devices can tell which one wrote each entry." },
   "settings.aliasUnnamed": { zh: "未命名", en: "Unnamed" },

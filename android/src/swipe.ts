@@ -7,8 +7,9 @@
 
 import { updateTaskStatus, type TaskStatus, type TimelineItem } from "./api";
 import { t } from "./i18n";
-import { actionBar } from "./ui";
 import { showErr } from "./err";
+import { moveReceipt, spotOf } from "./taskmove";
+import { isDragging } from "./carddrag";
 import { isTaskStage, liveTaskColumns, stageLabel } from "./columns";
 
 // 任务列的线性链(**B-f 第 1 段起从库里来**;此前是四值字面量)。序 = core 按 position
@@ -89,6 +90,7 @@ export function initCardSwipe(deps: Deps): void {
     // 是「click 没来」的残留,清掉,免 400ms 兜底窗口误吞下一次点击。
     justSwiped = false;
     if (active) return; // 一次只跟一指
+    if (isDragging()) return; // 长按拖已经拿起了这张卡(carddrag.ts)
     if (deps.isSwitching() || deps.hasDirtyDraft()) return;
     const el = e.target as HTMLElement;
     // 勾框/正文里的待办方框/缩略图/展开面板各有其主,不抢。
@@ -117,6 +119,11 @@ export function initCardSwipe(deps: Deps): void {
 
   timeline.addEventListener("pointermove", (e) => {
     if (!active || e.pointerId !== active.pointerId) return;
+    if (isDragging()) {
+      // 方向没定之前长按到点、卡被拿起来了:这一指归长按拖,滑动放手(158 G3 / Q7)。
+      if (active.dir === 0) active = null;
+      return;
+    }
     const dx = e.clientX - active.startX;
     const dy = e.clientY - active.startY;
     if (active.dir === 0) {
@@ -176,17 +183,18 @@ export function initCardSwipe(deps: Deps): void {
       active.to !== null &&
       dx > 0 === active.dir > 0 && // 收尾方向须与锁定方向一致(半路折返不算)
       Math.abs(dx) >= Math.min(COMMIT_MIN, active.width * COMMIT_RATIO);
-    const { id, from, to } = active;
+    const { id, to } = active;
     reset(true);
-    if (commit && to) void commitSwipe(id, from, to);
+    if (commit && to) void commitSwipe(id, to);
   }
 
   timeline.addEventListener("pointerup", (e) => end(e, false));
   timeline.addEventListener("pointercancel", (e) => end(e, true));
 
-  async function commitSwipe(id: string, from: string, to: TaskStatus): Promise<void> {
+  async function commitSwipe(id: string, to: TaskStatus): Promise<void> {
     if (deps.isSwitching()) return;
     const space = deps.getCurrentSpace();
+    const spot = spotOf(id); // 撤销要放回的原位置(158 G3 / Q7:此前撤销落列尾)
     try {
       await updateTaskStatus(space, id, to);
     } catch (err) {
@@ -195,28 +203,10 @@ export function initCardSwipe(deps: Deps): void {
       return;
     }
     await deps.refresh();
-    flash(id);
+    if (deps.getCurrentSpace() !== space) return;
     // 回执 + 撤销:滑动是低门槛手势,给一记 6s 可撤销窗口替代两拍确认(误滑可召回)。
     // 走操作型回执而非 confirmBar——动作已成事实,确认条的「取消」在这儿是反义歧义。
-    actionBar(t("swipe.changedTo", { stage: stageLabel(to)! }), t("ui.undo"), () => {
-      if (deps.isSwitching() || deps.getCurrentSpace() !== space) return; // 换空间的旧撤销作废
-      void (async () => {
-        try {
-          await updateTaskStatus(space, id, from as TaskStatus);
-        } catch (err) {
-          showErr(err);
-        }
-        await deps.refresh();
-        flash(id);
-      })();
-    });
-  }
-
-  /** 移动后给卡一记朱砂脉冲(不强行滚动,免拽走视口);条目已不在则静默。 */
-  function flash(id: string): void {
-    const card = document.querySelector<HTMLElement>(`#timeline [data-id="${id}"]`);
-    if (!card) return;
-    card.classList.add("flash");
-    window.setTimeout(() => card.classList.remove("flash"), 1200);
+    // 在屏上就闪一下(不强行滚动,免拽走视口);滑到屏外的那一节就带「去看看」(158 G3 / Q1)。
+    moveReceipt(space, id, t("swipe.changedTo", { stage: stageLabel(to)! }), spot);
   }
 }

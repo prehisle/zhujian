@@ -187,6 +187,9 @@ describe("任务看板 · 手工建任务与拖动流转", () => {
     await browser.execute(() => {
       document.querySelector(".ze-panel .edit-input").value = "放大态里改过但应当被丢弃";
     });
+    // 158 G1 / A1:改过了 ⇒ 第一下 Esc 只提醒(提示在面板里看得见),第二下才丢。
+    await browser.keys(["Escape"]);
+    expect(await browser.execute(() => !!document.querySelector(".ze-panel") && document.querySelector(".ze-panel .discard-hint")?.hidden === false)).toBe(true);
     await browser.keys(["Escape"]);
     await $(".ze-panel").waitForExist({ timeout: 5000, reverse: true });
     expect(await $(".ze-overlay").isExisting()).toBe(false);
@@ -460,7 +463,8 @@ describe("任务看板 · 列内排序轴", () => {
   const pickSort = async (label) => {
     // 循环钮:最多点三下必然轮到目标档(三档一圈)。
     for (let i = 0; i < 3; i += 1) {
-      const cur = await $("#board-sort-lbl").getText();
+      // ⚠ 读 textContent 不读 getText:158 起窗 1260(顶栏 ② 档)这枚只显 ↕,全名藏着 ⇒ getText 恒空。
+      const cur = await browser.execute(() => document.querySelector("#board-sort-lbl").textContent);
       if (cur === label) return;
       await browser.execute(() => document.querySelector("#board-sort").click());
       await browser.pause(120);
@@ -1105,9 +1109,19 @@ describe("任务看板 · 顶栏恒一行,逐档只让该让的", () => {
         overflow: h.scrollWidth - h.clientWidth,
         trashText: document.querySelector("#trash-toggle").innerText.replace(/\s+/g, " ").trim(),
         kbdShown: kbd ? getComputedStyle(kbd).display !== "none" : "absent",
+        // 158 G3 / Q13(WD-29):字母态里回收站 / 归档 / 到期三枚各留一枚线稿图标(量宽,不只看 display)。
+        icoW: ["#trash-toggle", "#seal-toggle", "#due-soon"].map((id) =>
+          Math.round(document.querySelector(`${id} .ico`)?.getBoundingClientRect().width ?? -1),
+        ),
         // ⛔ 「复制看板」在不在**别用 querySelector 判**:塌缩走的是 display:none,节点还在
         //    DOM 里 ⇒ 那么写恒 true(第一版就是这么白得一格的)。
         copyShown: getComputedStyle(document.querySelector("#copy-slot")).display !== "none",
+        // 158 G2 / A11:窄档里「复制看板」只剩 ⧉ 记号 —— 量的是那枚钮自己看不看得见、全名藏没藏。
+        copyBtnW: Math.round(document.querySelector("#copy-slot .hbtn")?.getBoundingClientRect().width ?? 0),
+        copyLong: (() => {
+          const l = document.querySelector("#copy-slot .hbtn .lbl");
+          return l ? getComputedStyle(l).display !== "none" : "absent";
+        })(),
       };
     });
 
@@ -1127,7 +1141,7 @@ describe("任务看板 · 顶栏恒一行,逐档只让该让的", () => {
     }
   });
 
-  it("②档(窗 1260):名字还在,键帽与「复制看板」让位", async () => {
+  it("②档(窗 1260):名字还在,键帽让位,「复制看板」缩成记号", async () => {
     await browser.setWindowSize(1260, 700);
     await browser.pause(250);
     const h = await readHeader();
@@ -1135,15 +1149,22 @@ describe("任务看板 · 顶栏恒一行,逐档只让该让的", () => {
     expect(h.content).toBeLessThanOrEqual(929);
     expect(h.trashText).toContain("回收站");
     expect(h.kbdShown).toBe(false);
-    expect(h.copyShown).toBe(false);
+    expect(h.icoW).toEqual([0, 0, 0]); // 名字还在时图标藏着(display:none ⇒ 宽 0)
+    // 158 G2 / A11(WD-11):此前这里断言「复制看板」整枚不见 —— 正是走查报的毛病(指南说有、屏上没有)。
+    expect(h.copyShown).toBe(true);
+    expect(h.copyBtnW).toBeGreaterThan(0);
+    expect(h.copyLong).toBe(false);
   });
 
-  it("③档(窗 1000,字母态):名字让位,键帽反而回来", async () => {
+  it("③档(窗 1000,字母态):名字让位,图标顶替键帽当记号(158 G3 / Q13)", async () => {
     await browser.setWindowSize(1000, 700);
     await browser.pause(250);
     const h = await readHeader();
     expect(h.content).toBeLessThan(840); // ⇒ 字母态
     expect(h.trashText).not.toContain("回收站");
-    expect(h.kbdShown).toBe(true);
+    // 此前这一档键帽 G / R 回来当记号,屏上读作「3 G」「0 R」(WD-29)⇒ 现在是图标,键帽让位。
+    expect(h.kbdShown).toBe(false);
+    for (const w of h.icoW) expect(w).toBeGreaterThan(0);
+    expect(h.copyBtnW).toBeGreaterThan(0); // 字母态里「复制看板」也还在(⧉)
   });
 });

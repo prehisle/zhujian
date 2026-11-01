@@ -560,7 +560,8 @@ pub fn archive(conn: &mut Connection, clock: &mut Clock, id: &str) -> Result<(),
     Ok(())
 }
 
-/// Restore an archived task from the 回收站 to its ORIGINAL column, at that column's end.
+/// Restore an archived task from the 回收站 to its ORIGINAL column, at its original place
+/// (old key reused unless taken meanwhile — `repo::reinstate_key`, 158 G4-A4).
 /// Reads the frozen stage first; a card not in the 回收站 (or vanished) fails fast.
 pub fn restore(conn: &mut Connection, clock: &mut Clock, id: &str) -> Result<(), String> {
     let tx = conn.transaction().map_err(|e| e.to_string())?;
@@ -571,7 +572,9 @@ pub fn restore(conn: &mut Connection, clock: &mut Clock, id: &str) -> Result<(),
     if n != 1 {
         return Err(format!("还原失败:这条任务不在回收站,影响行数 {n}"));
     }
-    // restore 一并把卡落到原列末尾(旧 position 可能已被占),两个字段都变了。
+    // restore 一并给卡重取原列里的键(旧键没被占就沿用、被占了紧跟占位卡,repo::reinstate_key)。
+    // 沿用时 position 值没变也照发(codex 判:这是本次还原选定的落位键,应以新 HLC 参与 LWW、
+    // 照旧盖掉更早的并发拖动;否则「压不压得过迟到的旧拖动」会取决于旧键碰巧有没有被占)。
     oplog::item_set(&tx, clock, id, &["archived_at", "position"])?;
     tx.commit().map_err(|e| e.to_string())?;
     Ok(())
@@ -645,7 +648,7 @@ pub fn seal_all(conn: &mut Connection, clock: &mut Clock) -> Result<usize, Strin
     Ok(sealed)
 }
 
-/// 取消归档:任务离开成就册,回到看板「已完成」列的末尾。不在归档里的 fail fast。
+/// 取消归档:任务离开成就册,回到看板「已完成」列的原位(旧键被占才紧跟占位卡)。不在归档里的 fail fast。
 pub fn unseal(conn: &mut Connection, clock: &mut Clock, id: &str) -> Result<(), String> {
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     let n = repo::unseal_task(&tx, id).map_err(|e| e.to_string())?;
@@ -892,6 +895,20 @@ mod tests {
         restore(&mut conn, &mut clock, &doing).unwrap();
         assert_eq!(ids(&conn, "todo"), vec![todo]);
         assert_eq!(ids(&conn, "doing"), vec![doing]);
+    }
+
+    /// 158 G4-A4:删中间那张再撤销(= restore)回原位,并照发 position op(值 = 沿用的旧键,
+    /// 对端按 LWW 落同一个值 —— 回放侧拿到的是具体键,不是「回原位」的意图)。
+    #[test]
+    fn undo_delete_returns_card_to_its_original_place_and_emits_its_key() {
+        let (mut conn, mut clock) = fresh_db();
+        let (a, b, c) = three_todos(&conn);
+        let before = repo::active_task_position(&conn, &b).unwrap().unwrap();
+        archive(&mut conn, &mut clock, &b).unwrap();
+        restore(&mut conn, &mut clock, &b).unwrap();
+        assert_eq!(ids(&conn, "todo"), vec![a, b.clone(), c], "not the column end");
+        let last_pos = field_ops(&conn, &b).into_iter().filter(|(f, _)| f == "position").last().unwrap();
+        assert_eq!(last_pos.1, serde_json::Value::String(before));
     }
 
     #[test]

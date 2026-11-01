@@ -135,7 +135,7 @@ describe("716 · 撤销回执(看板)", () => {
     const mid = before[midIdx];
     const title = (await invoke("list_tasks")).find((x) => x.id === mid).title;
 
-    await boardAction(title, "移到「进行中」");
+    await boardAction(title, ["移到", "进行中"]); // 158 G3 / Q2:⋯「移到 ▸」子菜单
     await $(".col.doing").$(`.tcard*=${title}`).waitForExist({ timeout: 10000 });
     await browser.waitUntil(async () => (await taskStatus(mid)) === "doing", { timeout: 8000, timeoutMsg: "移列后应在 doing" });
 

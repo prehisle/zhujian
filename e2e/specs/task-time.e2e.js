@@ -424,9 +424,11 @@ describe("任务时间维度 · 窄列里行内编辑器不折行也不撑破卡
       };
     });
     expect(m.dueHidden).toBe(false); // 本 describe 造的那条今天到期 ⇒ 这枚钮必在
-    expect(m.due.length).toBe(1); // 全名隐了,只剩记号
-    expect(m.due[0]).toMatch(/^\d+$/); // 记号是个纯数字(三段合一的总数)
-    expect(Number(m.due[0])).toBeGreaterThanOrEqual(1);
+    // 158 G3 / Q13(WD-29):字母态里多一枚线稿图标(.ico,无文字)在总数前面 ⇒ 可见的是 ["", 总数]。
+    expect(m.due.length).toBe(2); // 全名隐了,只剩图标 + 记号
+    expect(m.due[0]).toBe(""); // 图标(svg,不带字)
+    expect(m.due[1]).toMatch(/^\d+$/); // 记号是个纯数字(三段合一的总数)
+    expect(Number(m.due[1])).toBeGreaterThanOrEqual(1);
     expect(m.sort).toEqual(["↕"]);
     // 改前两枚都是 27px(纯 padding + 边框);记号上身后至少得比它宽。
     expect(m.dueW).toBeGreaterThan(30);

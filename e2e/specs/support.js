@@ -308,9 +308,14 @@ async function cornerMenuAction(cardSel, key, content, label) {
     try {
       const menu = await $(".hk-menu");
       await menu.waitForExist({ timeout: 2000 });
-      const item = await menu.$(`span.hk-label=${label}`);
-      await item.waitForExist({ timeout: 2000 });
-      await item.click();
+      // 158 G3 / Q2:`label` 可以是一条路径(["移到", "进行中"])—— 前几段是带 ▸ 的子菜单行,点了菜单
+      // 原地换成子项,同一枚 .hk-menu 里接着点下一段。
+      const path = Array.isArray(label) ? label : [label];
+      for (const seg of path) {
+        const item = await menu.$(`span.hk-label=${seg}`);
+        await item.waitForExist({ timeout: 2000 });
+        await item.click();
+      }
       void key;
       return;
     } catch (e) {

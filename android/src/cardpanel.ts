@@ -78,6 +78,7 @@ import { $, actionBar, confirmBar, esc, fmtWhen, hideConfirmBar, showBar, showEr
 import { errDetail, errText, showErr } from "./err";
 import { writeClipboard } from "./platform";
 import { DONE_COLUMN, LANDING_COLUMN, isTaskStage, liveTaskColumns, stageLabel } from "./columns";
+import { moveReceipt, spotOf } from "./taskmove";
 import { capturePhoto, PICK_MAX, pickImages, toBase64 } from "./images";
 import { openViewer } from "./viewer";
 import { withMissingRefs } from "../../shared/markdown";
@@ -142,7 +143,7 @@ type Deps = {
   /** 截止日的相对表达(「今天」/「逾期 3 天」/「8/27」)。706 值 chip 要它 —— 与**卡上那颗
    *  角标同一支笔**(main.ts 的 dueLabel),⛔ 别在这儿另写一份,更别把 ISO 原串摆上去:
    *  `2026-08-27` 在 360px 屏上一枚就吃掉半行,而它正是这一轮要治的「系统脸」。 */
-  dueLabel: (due: string) => string;
+  dueLabel: (due: string, done: boolean) => string;
 };
 
 // 状态 picker 的目标域 = **能落卡的那几列**(B-f 第 1 段起从库里来;已删的列不在内 ——
@@ -350,7 +351,7 @@ function renderActions(item: TimelineItem): string {
         propBtn(
           "due",
           t("cardpanel.laneDue"),
-          item.due_on ? deps.dueLabel(item.due_on) : t("cardpanel.dueNone"),
+          item.due_on ? deps.dueLabel(item.due_on, item.stage === DONE_COLUMN) : t("cardpanel.dueNone"),
           item.due_on !== null,
         ),
         propBtn(
@@ -372,6 +373,7 @@ function renderMore(item: TimelineItem): string {
   if (!task) acts.push(actBtn("comment", t("cardpanel.actComment"))); // 随记的留言让位给「转待办」
   // 展开成长文(0042):只给随记(时间轴上的随记就是主归属为随记的条目,长文不在时间轴上画)。
   if (item.kind === "idea") acts.push(actBtn("expand", t("cardpanel.actExpand")));
+  acts.push(actBtn("copy", t("cardpanel.actCopy"))); // 158 G3 / Q11:复制这张卡的文字
   acts.push(actBtn("copylink", t("cardpanel.actCopyLink"))); // 152:同桌面卡片的「复制链接」
   acts.push(actBtn("history", t("cardpanel.actHistory")));
   // 移动入口:仅 ≥2 空间、且本条无未处理的部分移动登记时出现(§4)。
@@ -392,6 +394,9 @@ function renderValuePicker(item: TimelineItem, which: "status" | "due" | "prio")
       // 列名是同步来的自由文本 ⇒ 进 HTML 前转义(backlog 用户面 144;id 同理)
       .map((s) => pill(esc(s.label), `data-status="${esc(s.key)}"`, item.stage === s.key, busy || item.stage === s.key))
       .join("")}</span>`;
+    // 158 G3 / Q5(WM-16 / X-06):手机只做列的读侧(建 / 改名 / 排 / 删在桌面)—— 这一排底下说一句,别让人到处找管理入口。
+    return `<div class="lane">${lane}</div><p class="colhint">${t("cardpanel.colsOnDesktop")}</p>
+    <div class="acts"><button data-pact="back"${busy ? " disabled" : ""}>${t("cardpanel.back")}</button></div>`;
   } else if (which === "due") {
     lane =
       `<span class="lab">${t("cardpanel.laneDue")}</span>` +
@@ -935,12 +940,24 @@ function onTimelineClick(e: Event) {
   }
   // 状态 / 优先级选完自己回主面(706:值 chip 那条路是「点开 → 选 → 收」,
   // 留在候选排上等人再点一记「返回」是多余的一步)。写失败不回——错误条旁边就该是那一排。
+  // 158 G1(W2 走查 A3 / WM-01):换列与横屏拖拽同一套 —— 回执「已改为「X」」+「撤销」(回到出发那列),
+  // 那张卡的操作面收起(卡已离开这一节,面板跟着它停在新位置上只会让人找不着北)。
   const statusBtn = el.closest<HTMLElement>("[data-status]");
   if (statusBtn && state) {
     const session = state;
+    const id = session.id;
     const to = statusBtn.dataset.status as TaskStatus;
-    void run((space) => updateTaskStatus(space, session.id, to), {
-      afterSession: () => setMode(session, "actions"),
+    if (!deps.getItem(id)) return;
+    // 158 G3:撤销放回原列**原位置**(Q7,此前落列尾);卡落到屏外时回执带「去看看」(Q1)—— 都在 taskmove.ts。
+    const spot = spotOf(id);
+    void run((space) => updateTaskStatus(space, id, to), {
+      onCommitted: () => {
+        const space = getCurrentSpace();
+        void deps.refresh().then(() => {
+          if (getCurrentSpace() === space) moveReceipt(space, id, t("swipe.changedTo", { stage: stageLabel(to)! }), spot);
+        });
+      },
+      afterSession: () => setState(null),
     });
     return;
   }
@@ -995,6 +1012,27 @@ function onTimelineClick(e: Event) {
   });
   deps.onDraftClosed(); // 换卡 = 旧草稿域收场(同上)
   renderPanel(card);
+  revealPanel();
+}
+
+/** 158 G2(W2 走查 A9 / WM-06):点开靠屏下方的卡,操作面展开在屏外 / 底栏底下,页面不跟着滚 ⇒
+ *  开面与换子面之后,面板下沿压在底栏(没有底栏就是视口底)之下就把文档往上滚那么多,
+ *  但不把面板顶滚过顶栏(面板比可视区还高时宁可露顶)。只在用户点出来的那一下滚;刷新重画不滚。 */
+function revealPanel(): void {
+  const p = document.querySelector<HTMLElement>("#timeline .panel");
+  if (!p) return;
+  const nav = document.getElementById("bottombar");
+  const navR = nav && nav.getClientRects().length > 0 ? nav.getBoundingClientRect() : null;
+  // 宽屏上底栏搬进了顶栏(tablet-plan 格 3):那时它不在屏底,只认视口底。
+  const floor = navR && navR.top > window.innerHeight / 2 ? navR.top : window.innerHeight;
+  const head = document.querySelector("header")?.getBoundingClientRect().bottom ?? 0;
+  const r = p.getBoundingClientRect();
+  const GAP = 8;
+  const need = r.bottom + GAP - floor;
+  if (need <= 0) return;
+  const room = r.top - head - GAP;
+  const by = Math.min(need, Math.max(0, room));
+  if (by > 0) window.scrollBy(0, by);
 }
 
 /** 收面(没草稿时):点卡片空白与「卡滚出屏」共用这一条。 */
@@ -1051,6 +1089,7 @@ function handleAct(act: string, card: HTMLElement) {
       clearConfirm();
       setMode(session, act);
       renderPanel(card);
+      revealPanel(); // 子面比主面高(「更多…」三排):展开后同样要在屏内(A9)
       return;
     case "comment":
       // 留言层盖在面板之上;面板留着不收(收层回来还在原处)。写/删由留言层自己走
@@ -1202,16 +1241,36 @@ function handleAct(act: string, card: HTMLElement) {
         () => {
           if (state !== session || busy) return;
           // 146:卡离开任务面——回执指路,走 onCommitted(理由同 promote)。
+          // 158 G2(W2 走查 A7 / WM-26):回执带「撤销」= 转回待办并把撤回时清掉的截止 / 优先级原样设回
+          // (取值冻结在第二拍那一刻;不设回就不是完整的撤销,§3.1 那条「撤销 ≠ 完整恢复不配发」)。
+          const cur = deps.getItem(item.id);
+          if (!cur) return;
+          const { content, due_on: due, priority: prio } = cur;
           void run((space) => revertTaskToInbox(space, item.id), {
-            onCommitted: () => showBar(t("cardpanel.reverted"), true),
+            onCommitted: () => {
+              const space = getCurrentSpace();
+              actionBar(t("cardpanel.reverted"), t("ui.undo"), () => {
+                if (deps.isSwitching() || getCurrentSpace() !== space) return; // 换空间的旧撤销作废
+                void (async () => {
+                  try {
+                    await promoteNoteToTask(space, item.id, content);
+                    if (due !== null) await setTaskDue(space, item.id, due);
+                    if (prio !== null) await setTaskPriority(space, item.id, prio);
+                  } catch (err) {
+                    showErr(err);
+                  }
+                  await deps.refresh();
+                })();
+              });
+            },
           });
         },
       );
       return;
     }
     case "seal":
-      confirmBar(t("cardpanel.sealQ"), t("cardpanel.sealYes"), () => {
-        if (state !== session || busy) return;
+      // 158 G3 / Q3(X-03 / WM-28):单张归档一点即归 + 6 s 撤销(同桌面;此前要先确认)。「全部归档」那枚才问一次。
+      {
         void run((space) => sealTask(space, item.id), {
           // 操作型回执(§3.1):归档可取消(unseal 回 done),撤销=一点回来,
           // 不用去归档册再走一遍「取消归档」。space 取法同 del。
@@ -1233,7 +1292,14 @@ function handleAct(act: string, card: HTMLElement) {
             setState(null);
           },
         });
-      });
+      }
+      return;
+    case "copy":
+      // 158 G3 / Q11(WM-29):复制这张卡的文字(同桌面卡片的「复制」);不是业务写,面板原样留着。
+      void writeClipboard(item.content).then(
+        () => showBar(t("cardpanel.textCopied"), true),
+        (err) => showBar(t("cardpanel.copyLinkFailed", { error: errDetail(err) })),
+      );
       return;
   }
 }

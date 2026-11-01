@@ -186,7 +186,7 @@ describe("配图 · 重画不闪(504)", () => {
   it("移到另一列:图条插进 DOM 那一刻就已经带着两张图", async () => {
     await browser.pause(400); // 让首屏那发 IPC 落定(metaCache 填上)
     await armObserver();
-    await boardAction(TITLE, "移到「进行中」");
+    await boardAction(TITLE, ["移到", "进行中"]); // 158 G3 / Q2:⋯「移到 ▸」子菜单
     await browser.pause(600);
     const seen = await readObserver();
     expect(seen.length).toBeGreaterThan(0); // 真的重画了(否则这条什么也没测)

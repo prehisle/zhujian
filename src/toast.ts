@@ -54,6 +54,16 @@ let undoTimer: ReturnType<typeof setTimeout> | undefined;
 
 /** `extra` = 撤销旁边再挂一枚去处钮(「展开成长文」后的「打开」,同安卓 cardpanel 那条回执;153 走查 D-M15)。 */
 export function toastUndo(text: string, undoLabel: string, onUndo: () => void, extra?: { label: string; run: () => void }): void {
+  actionToast(text, extra ? [{ label: undoLabel, run: onUndo }, { ...extra, go: true }] : [{ label: undoLabel, run: onUndo }]);
+}
+
+/** 只带一枚去处钮的回执(158 G2 / A7:撤回为随记 —— 撤销 ≠ 完整恢复的动作不配撤销,只指路)。
+ *  与 toastUndo 同一条「至多一条」的槽位、同一个 `UNDO_WINDOW_MS`。 */
+export function toastGo(text: string, label: string, run: () => void): void {
+  actionToast(text, [{ label, run, go: true }]);
+}
+
+function actionToast(text: string, buttons: { label: string; run: () => void; go?: boolean }[]): void {
   dismissUndo();
   const box = document.createElement("div");
   box.className = "undo-toast";
@@ -61,28 +71,19 @@ export function toastUndo(text: string, undoLabel: string, onUndo: () => void, e
   const label = document.createElement("span");
   label.className = "undo-text";
   label.textContent = text;
-  const btn = document.createElement("button");
-  btn.type = "button";
-  btn.className = "undo-btn";
-  btn.textContent = undoLabel;
-  btn.addEventListener("click", (e) => {
-    e.stopPropagation();
-    dismissUndo();
-    onUndo();
-  });
   box.addEventListener("click", () => dismissUndo());
-  box.append(label, btn);
-  if (extra) {
-    const go = document.createElement("button");
-    go.type = "button";
-    go.className = "undo-btn undo-go";
-    go.textContent = extra.label;
-    go.addEventListener("click", (e) => {
+  box.append(label);
+  for (const b of buttons) {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = b.go ? "undo-btn undo-go" : "undo-btn";
+    btn.textContent = b.label;
+    btn.addEventListener("click", (e) => {
       e.stopPropagation();
       dismissUndo();
-      extra.run();
+      b.run();
     });
-    box.append(go);
+    box.append(btn);
   }
   document.body.append(box);
   undoEl = box;

@@ -118,10 +118,9 @@ export function when(iso: string): string {
 
 export type DueState = "none" | "overdue" | "today" | "future";
 
-/** 「逾期 M · 今天 N」/「今天到期 N」—— **每日提醒通知**那一句,同时是屏上汇总钮那句
- *  的**前缀**(整句见 `dueSummaryFullLabel`)。通知把人引回看板,那枚钮就是落点 ⇒ 两处
- *  说到「逾期/今天」时必须念同一个数、同一个说法;钮多出来的「快到期」那一段刻意不进通知。
- *  调用方保证 late+now > 0(两者皆零时通知今天不说话)。 */
+/** 「逾期 M · 今天 N」/「今天到期 N」—— 屏上汇总钮那句的**前缀**(整句见 `dueSummaryFullLabel`)。
+ *  158 G3 / Q10 起每日提醒通知也念整句(带「3 天内」),与钮逐字一致;响不响仍只看 late+now。
+ *  调用方保证 late+now > 0。 */
 export function dueSummaryLabel(late: number, now: number): string {
   return late > 0 ? t("board.dueSoonLate", { late, now }) : t("board.dueSoonToday", { now });
 }
@@ -160,10 +159,9 @@ export function isDueSoon(item: Pick<TaskItem, "due_on" | "status">, today: stri
 }
 
 /** 汇总钮的整句 —— 在 `dueSummaryLabel` 之上再挂一段「{days} 天内 {n}」。
- *  ⛔ **与每日提醒刻意不同口径**(用户 2026-09-01 拍板):通知今天的克制感来自「只在真出
- *  事时才说话」,把提前预警塞进去会让它几乎天天说话 ⇒ 预警只进屏上这两枚钮(看板顶栏 +
- *  手机任务面),`reminder.ts` 那条路仍走 `dueSummaryLabel` 一个字不变。两句话的前缀逐字
- *  相同,屏上这枚只是多说了一段,不是另一把尺。调用方保证 late+now+soon > 0。 */
+ *  每日提醒通知 158 G3 / Q10 起也念这一整句(此前少「3 天内」那段,点进看板数对不上)。
+ *  ⛔ 但**响不响**仍只看逾期 + 今天(用户 2026-09-01 拍板「只在真出事时才说话」):只有快到期的
+ *  那天通知不响,见 `reminder.ts`。调用方保证 late+now+soon > 0。 */
 export function dueSummaryFullLabel(late: number, now: number, soon: number): string {
   if (late + now === 0) return t("board.dueSoonNextOnly", { n: soon, days: DUE_SOON_DAYS });
   const head = dueSummaryLabel(late, now);
@@ -183,11 +181,19 @@ export function dueLabel(due: string, today: string): string {
   const diff = dayDiff(due, today);
   if (diff === 0) return t("tasktime.today");
   if (diff === 1) return t("tasktime.tomorrow");
-  if (diff === -1) return t("tasktime.yesterday");
+  // 158 G3 / Q13(WD-34):逾期一天此前说「昨天」,别处都是「逾期 N 天」—— 统一成「逾期 1 天」。
   if (diff < 0) return t("tasktime.overdueDays", { n: -diff });
   if (diff <= 7) return t("tasktime.inDays", { n: diff });
   const [, m, d] = due.split("-").map(Number);
   return `${m}/${d}`;
+}
+
+/** 已完成卡上那枚灰章:只写截止那天(「截止 10/12」),不说离今天多远 —— 「逾期 / 今天」是给没做完的看的。
+ *  跨年才带年份(同 dayLabel 的规矩)。 */
+export function dueDateLabel(due: string, today: string): string {
+  const [y, m, d] = due.split("-").map(Number);
+  const day = y === Number(today.slice(0, 4)) ? t("tasktime.monthDay", { m, d }) : t("tasktime.yearMonthDay", { y, m, d });
+  return t("tasktime.dueOn", { day });
 }
 
 /** The reusable due/priority meta controller for a board card. ㊺: the chips are now
@@ -228,18 +234,40 @@ export function metaRow(
       dueWrap.replaceChildren();
       return;
     }
-    const st = dueState(item.due_on, today);
-    dueWrap.replaceChildren(
-      el("span", { className: `chip due set ${st}`, textContent: dueLabel(item.due_on, today), title: item.due_on }),
-    );
+    // 158 G3 / Q4(WD-10):已完成的卡不再说「逾期 / 今天」,只留一枚灰色的截止日期 —— 与顶栏汇总、
+    // 卡片朱砂、每日提醒「完成的不算」同一口径(dueAttentionState)。日期照写(这条哪天到期是事实)。
+    const done = item.status === DONE_COLUMN;
+    const st = done ? "done" : dueState(item.due_on, today);
+    // 158 G2 / A17(WD-27):章本身点得开选择器(此前只能走 ⋯ → 截止 / `/` S,点章没反应)。
+    // ⚠ 宿主卡的 CARD_CONTROLS 认 `.chip`,按在章上不起拖、双击不进编辑。
+    const chip = el("span", {
+      className: `chip due set ${st} clickable`,
+      textContent: done ? dueDateLabel(item.due_on, today) : dueLabel(item.due_on, today),
+      title: t("tasktime.dueChipTitle", { day: item.due_on }),
+    });
+    chip.setAttribute("role", "button");
+    chip.addEventListener("click", (e) => {
+      e.stopPropagation();
+      openDue();
+    });
+    dueWrap.replaceChildren(chip);
   }
   function openDue(): void {
-    // Esc / 点别处 收起(和 ⋯ 菜单同一套手势),不再有「取消」按钮。选值前先 off() 摘监听,
-    // 成功 refresh 会重渲整卡、失败 renderDue 收起——两条路都不会留下没监听的半开态。
+    // Esc 收起不存、点别处 / 回车存(158 G2 / A2,WD-02:此前 `change` 一来就存并收框 ——
+    // 日期框逐段输入时**每凑成一个合法日期**都发 change,想打「10」月敲到「1」就存成 1 月,
+    // 框一收后面那个「0」还落到悬停卡的数字键上换了色)。现在键盘逐段改只改框里的值,
+    // 离开(回车 / 点别处)时一次性存;只有日历弹出层里点选(不经页面 keydown)才当场存。
+    // 选值前先 off() 摘监听,成功 refresh 会重渲整卡、失败 renderDue 收起 —— 不留没监听的半开态。
     let off = () => {};
-    off = armDismiss(dueWrap, renderDue);
+    let done = false;
     const apply = (dueOn: string | null): void => {
+      if (done) return;
+      done = true;
       off();
+      if (dueOn === (item.due_on ?? null)) {
+        renderDue(); // 没改:收起,不打后端
+        return;
+      }
       void call("set_task_due", { id: item.id, dueOn }, renderDue);
     };
     const input = el("input", {
@@ -248,7 +276,36 @@ export function metaRow(
       value: item.due_on ?? "",
       draggable: false,
     });
-    input.addEventListener("change", () => apply(input.value || null));
+    /** 离开时把框里的值落盘。逐段没填完(`badInput`)= 什么也不存,照原样收起 —— 不猜。 */
+    const commit = (): void => {
+      if (input.validity.badInput) {
+        done = true;
+        off();
+        renderDue();
+        return;
+      }
+      apply(input.value || null);
+    };
+    off = armDismiss(dueWrap, commit, { escape: () => {
+      done = true;
+      renderDue();
+    } });
+    // 键盘改段那几下发的 change 不算「选定」:按键那一拍之内到的 change 一律只记在框里。
+    let typing = false;
+    input.addEventListener("keydown", (e) => {
+      if (e.isComposing) return;
+      if (e.key === "Enter") {
+        e.preventDefault();
+        commit();
+        return;
+      }
+      typing = true;
+      setTimeout(() => (typing = false), 0);
+    });
+    input.addEventListener("change", () => {
+      if (typing) return;
+      commit();
+    });
     const kids: Node[] = [input];
     if (item.due_on) {
       kids.push(el("button", {
@@ -260,6 +317,8 @@ export function metaRow(
     }
     dueWrap.replaceChildren(...kids);
     input.focus();
+    // 列尾那张卡的「清除」被列可视区切掉半截(158 G2 / A11,WD-20):开出来就滚进视野。
+    dueWrap.scrollIntoView({ block: "nearest" });
   }
 
   // ---- priority ----

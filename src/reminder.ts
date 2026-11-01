@@ -10,6 +10,12 @@
 //   {overdue, today};多空间逐空间数(桌面所有 alive 空间都装配着),多空间时正文按空间分行。
 // - **至多一天一条**:取到数先记账(zhujian.due-remind.last = 本地日)再发,发失败宁可缺
 //   一条也不隔 30 秒再叨一遍;到点无事(计数全零)也记账、今天不说话。
+// - **响不响**只看逾期 + 今天(用户 2026-09-01 拍板:只在真出事时才说话);**说什么** 158 G3 / Q10 起
+//   与看板顶栏汇总钮逐字同一句(`dueSummaryFullLabel`,带「3 天内 K」)—— 此前通知比看板少那一段,
+//   点进去看到的数对不上(W2 走查 WD-35 / WM-09;手机 android/src/reminder.ts 同一改法)。
+// - ⚠ **桌面点通知不跳转**:通知走 tauri-plugin-notification 的桌面实现(notify-rust),它不回传
+//   点击 ⇒ 前端收不到「通知被点了」。要做得在 src-tauri 自己发 WinRT toast(带 launch 参数 /
+//   on_activated)再转成主窗事件,本轮范围外(只做 src/)。手机点通知进看板只看到期,见安卓那份。
 //
 // e2e 缝(与 wdio.conf.js before 钩子配套):自动首查延后 10 秒 + 每支 spec 预置
 // 「今天已处理」水位 ⇒ 别的 spec 里它安静;本功能的 spec 用 DOM 事件 zhujian:due-remind-check
@@ -22,7 +28,7 @@ import {
   sendNotification,
 } from "@tauri-apps/plugin-notification";
 import { invokeInSpace, listSpaces, spaceLabel } from "./space";
-import { dueAttentionState, dueSummaryLabel, localToday, type TaskItem } from "./tasktime";
+import { dueAttentionState, dueSummaryFullLabel, isDueSoon, localToday, type TaskItem } from "./tasktime";
 import { t } from "./i18n";
 
 const CFG_KEY = "zhujian.due-remind"; // {on:boolean, time:"HH:MM"}
@@ -74,13 +80,15 @@ async function digestBody(): Promise<string | null> {
     const tasks = await invokeInSpace<TaskItem[]>(s.id, "list_tasks");
     let late = 0;
     let now = 0;
+    let soon = 0;
     for (const it of tasks) {
       const st = dueAttentionState(it, today);
       if (st === "overdue") late++;
       else if (st === "today") now++;
+      else if (isDueSoon(it, today)) soon++;
     }
-    if (late + now === 0) continue;
-    const sum = dueSummaryLabel(late, now);
+    if (late + now === 0) continue; // 只有「快到期」的不响(响不响的口径没变,见头注)
+    const sum = dueSummaryFullLabel(late, now, soon);
     lines.push(spaces.length > 1 ? t("reminder.spaceLine", { name: spaceLabel(s), sum }) : sum);
   }
   return lines.length > 0 ? lines.join("\n") : null;

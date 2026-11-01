@@ -76,7 +76,11 @@ async function expectedBody() {
   const today = ymd(0);
   const late = tasks.filter((t) => t.due_on && t.due_on < today).length;
   const now = tasks.filter((t) => t.due_on === today).length;
-  return late > 0 ? `逾期 ${late} · 今天 ${now}` : `今天到期 ${now}`;
+  // 158 G3 / Q10:正文与看板汇总钮逐字同一句,带「3 天内 K」那段(K = 0 时不说)。
+  const soonEnd = ymd(3);
+  const soon = tasks.filter((t) => t.due_on && t.due_on > today && t.due_on <= soonEnd).length;
+  const head = late > 0 ? `逾期 ${late} · 今天 ${now}` : `今天到期 ${now}`;
+  return soon > 0 ? `${head} · 3 天内 ${soon}` : head;
 }
 
 describe("截止提醒 · 判定与水位(39)", () => {
@@ -182,11 +186,11 @@ describe("截止提醒 · 判定与水位(39)", () => {
     }
   });
 
-  // 60-A 的取舍那一格:快到期**只进屏上那枚汇总钮,不进通知**。通知今天的克制感来自
-  // 「只在真出事时才说话」,提前预警会让它几乎天天说话 ⇒ 用户 2026-09-01 拍板不破例。
+  // 60-A 的取舍那一格:**只有**快到期时通知不响(通知的克制感来自「只在真出事时才说话」,
+  // 用户 2026-09-01 拍板)。158 G3 / Q10 起,真响的那天正文会带上「3 天内 K」(见 expectedBody)。
   // ⭐ **两半一起验才算数**:只断言「通知没说话」证不出取舍成立(数据没到位也会绿),
   // 所以同一批数据先证看板那枚钮**真的亮着并说了那句话**,再证通知仍是 body=null。
-  it("只有快到期时:看板那枚钮说话,而每日提醒仍不说话(刻意不同口径)", async () => {
+  it("只有快到期时:看板那枚钮说话,而每日提醒仍不响", async () => {
     const dued = (await invoke("list_tasks")).filter((t) => t.due_on !== null);
     const probe = await invoke("create_task", { title: "提醒己-后天才到期" });
     try {

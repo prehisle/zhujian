@@ -167,12 +167,14 @@ function hideBar(): void {
   el.hidden = true;
 }
 
-/** 读秒到点的退场(157 G1②):先进余温态 —— 钮变灰、整条变淡,条**还在原位**接住迟到的那一下点
+/** 读秒到点的退场(157 G1②):先进余温态 —— 整条变淡,条**还在原位**接住迟到的那一下点
  *  (点条身 = hideBar,立刻收;那一下不会落到底下的「同步」上),`BAR_RETIRE_MS` 后才真收。
- *  ⛔ 别把余温态的钮移走或藏掉:条会变矮,瞄着钮落下的那一指正好穿过去。 */
+ *  ⛔ 别把余温态的钮移走或藏掉:条会变矮,瞄着钮落下的那一指正好穿过去。
+ *  ⭐ 158 G1(W2 走查 A5):余温里点「撤销」**照旧生效**。此前钮在这段被置灰,点得中却什么都没发生、
+ *  也不说 —— 余温的本意是「接住迟到的那一下」,对撤销条来说接住就该照办(撤销是把事还原,迟一秒照办
+ *  没有坏处);确认条那边相反,迟到的「确认」作废并明说「没确认,已作罢」(删掉东西不该靠迟到的一指)。 */
 function retireBar(el: HTMLElement): void {
   el.classList.add("retiring");
-  el.querySelectorAll("button").forEach((b) => (b.disabled = true));
   errTimer = window.setTimeout(hideBar, BAR_RETIRE_MS);
 }
 
@@ -253,12 +255,15 @@ export const showError = (msg: string) => showBar(msg);
 let cbTimer: number | undefined;
 let cbToken = 0;
 
-export function confirmBar(question: string, yesLabel: string, onYes: () => void): void {
+/** `noLabel`:左钮的字,不给就是「取消」。158 G1(W2 走查 WM-24):编辑层点「取消」问「丢掉这次的修改?」,
+ *  条上左钮再印一个「取消」,读不出是「取消丢掉」还是「取消编辑」⇒ 那种问句给左钮换一个不歧义的词。 */
+export function confirmBar(question: string, yesLabel: string, onYes: () => void, noLabel?: string): void {
   const token = ++cbToken;
   const bar = $("confirmbar");
   $("confirmbar-q").textContent = question;
   const yes = $("confirmbar-yes") as HTMLButtonElement;
   const no = $("confirmbar-no") as HTMLButtonElement;
+  no.textContent = noLabel ?? t("shell.cancel");
   no.onclick = () => hideConfirmBar();
   no.disabled = false;
   yes.disabled = false;

@@ -749,7 +749,7 @@ fn seal_done_tasks(space_id: String, spaces: State<'_, Spaces>) -> Result<usize,
     })
 }
 
-/// 取消归档:任务离开成就册,回到看板「已完成」列的末尾。归档不可删——想删除须先取消
+/// 取消归档:任务离开成就册,回到看板「已完成」列的原位。归档不可删——想删除须先取消
 /// 归档回看板,再走正常两段式删除(删除主权仍在,只是多一步防冲动)。
 #[tauri::command]
 fn unseal_task(space_id: String, id: String, spaces: State<'_, Spaces>) -> Result<(), String> {

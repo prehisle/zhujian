@@ -12,6 +12,8 @@ import { buildBackupSection, closeBackupSection, noteFold } from "./backup";
 import { buildAboutPane } from "./about";
 import { exportMarkdown } from "./export-md";
 import { reminderCfg, saveReminderCfg, reminderPermissionOk, sendTestNotification } from "./reminder";
+import { setTaskDeleteConfirm, taskDeleteConfirmOn } from "./delete-confirm";
+import { DUE_SOON_DAYS } from "./tasktime";
 import { currentZoomPercent, zoomIn, zoomOut, zoomReset, onZoomChange } from "./zoom";
 import { currentThemeMode, setThemeMode, type ThemeMode } from "./theme-mode";
 import { currentLangChoice, setLangChoice, t, type LangChoice } from "./i18n";
@@ -202,12 +204,16 @@ function buildPane(cat: SettingsCat, pane: HTMLElement, probeUrl: string | null)
       el("p", "settings-sub", t("settings.compressSub")),
       buildCompressRow(),
 
+      el("h2", "settings-title settings-sect", t("settings.deleteConfirmTitle")),
+      el("p", "settings-sub", t("settings.deleteConfirmSub")),
+      buildDeleteConfirmRow(),
+
       el("h2", "settings-title settings-sect", t("settings.aliasTitle")),
       el("p", "settings-sub", t("settings.aliasSub")),
       buildAliasRow(),
 
       el("h2", "settings-title settings-sect", t("reminder.title")),
-      el("p", "settings-sub", t("reminder.sub")),
+      el("p", "settings-sub", t("reminder.sub", { days: DUE_SOON_DAYS })),
       buildReminderRow(),
 
       el("h2", "settings-title settings-sect", t("settings.feedbackTitle")),
@@ -486,6 +492,38 @@ function buildCompressRow(): HTMLDivElement {
   });
   line.append(seg); // 623:单行组不写行名
   return line;
+}
+
+// 「删任务前确认」(158 G3 / Q6,WD-18):看板删除确认里那枚「不再提示」勾过之后,在这里改回来。
+// 同压缩大图那一形(开 / 关两档 seg,单行组不写行名);偏好本身住 delete-confirm.ts。写失败照实说。
+function buildDeleteConfirmRow(): HTMLDivElement {
+  const wrap = document.createElement("div");
+  const line = document.createElement("div");
+  line.className = "hkset-row zoom-row";
+  const seg = document.createElement("div");
+  seg.className = "seg";
+  const onBtn = el("button", "seg-btn", t("settings.deleteConfirmOn")) as HTMLButtonElement;
+  const offBtn = el("button", "seg-btn", t("settings.deleteConfirmOff")) as HTMLButtonElement;
+  onBtn.id = "delete-confirm-on"; // e2e 探针按它认钮
+  offBtn.id = "delete-confirm-off";
+  seg.append(onBtn, offBtn);
+  const msg = el("p", "hkset-msg", "");
+  const paint = (): void => {
+    const on = taskDeleteConfirmOn();
+    onBtn.classList.toggle("on", on);
+    offBtn.classList.toggle("on", !on);
+  };
+  paint();
+  const pick = (on: boolean): void => {
+    const ok = setTaskDeleteConfirm(on);
+    setMsg(msg, ok ? "" : t("settings.deleteConfirmSaveFailed"), ok ? "" : "err");
+    paint();
+  };
+  onBtn.addEventListener("click", () => pick(true));
+  offBtn.addEventListener("click", () => pick(false));
+  line.append(seg); // 623:单行组不写行名
+  wrap.append(line, msg);
+  return wrap;
 }
 
 const THEME_CHOICES: { mode: ThemeMode; label: string }[] = [

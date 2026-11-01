@@ -202,9 +202,14 @@ export function initEditSheet(d: Deps): void {
       h.onCancel();
       return;
     }
-    confirmBar(t("cardpanel.discardQ"), t("cardpanel.discardYes"), () => {
-      if (host === h) h.onCancel();
-    });
+    confirmBar(
+      t("cardpanel.discardQ"),
+      t("cardpanel.discardYes"),
+      () => {
+        if (host === h) h.onCancel();
+      },
+      t("cardpanel.discardNo"), // 158 G2(WM-24):问「丢掉?」时左钮再叫「取消」读不出取消的是哪件
+    );
   });
   $("edit-addimg").addEventListener("click", () => host?.onAddImage());
   $("edit-photo").addEventListener("click", () => host?.onPhoto());

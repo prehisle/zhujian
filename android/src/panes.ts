@@ -18,13 +18,14 @@ import {
   restoreTask,
   searchNotes,
   unsealTask,
+  sealTask,
   type RemovedGroup,
   type SearchStatus,
 } from "./api";
 import { hydrateThumbs } from "./thumbs";
 import { openViewer } from "./viewer";
 import { t } from "./i18n";
-import { $, cardTint, colsFor, confirmBar, contentHtml, esc, fmtWhen, hideConfirmBar, showBar, splitCols } from "./ui";
+import { $, actionBar, cardTint, colsFor, confirmBar, contentHtml, esc, fmtWhen, fmtWhenDated, hideConfirmBar, showBar, splitCols } from "./ui";
 import { errDetail, showErr } from "./err";
 import { isTaskStage, setColumns, stageLabel } from "./columns";
 
@@ -338,9 +339,10 @@ function renderSealed() {
       return `<article class="card${tint.cls}"${tint.attr} data-sealed="${esc(r.id)}"><div class="body">
         <p class="content">${contentHtml(r.title, false)}</p>
         <footer><time>${
+          // 158 G3 / Q13(WM-17):归档页的卡恒写日期 —— 今天完成的此前只写「完成于 13:xx」,翻到这页看不出是哪天。
           r.done_at
-            ? t("panes.doneAt", { when: esc(fmtWhen(r.done_at)) })
-            : t("panes.sealedAt", { when: esc(fmtWhen(r.sealed_at!)) })
+            ? t("panes.doneAt", { when: esc(fmtWhenDated(r.done_at)) })
+            : t("panes.sealedAt", { when: esc(fmtWhenDated(r.sealed_at!)) })
         }</time></footer>${panel}
       </div></article>`;
     });
@@ -366,7 +368,27 @@ function onSealedClick(e: Event) {
   void (async () => {
     try {
       await unsealTask(space, id);
-      if (space === getCurrentSpace()) showBar(t("panes.unsealed"), true);
+      // 158 G2(W2 走查 A6 / A20,WM-20):回执带「撤销」= 再归档回去(同归档回执那枚的反向),
+      // 读秒随之是操作型回执的 6 s(此前按字数 3 s,与别的回执长短不一)。
+      // 158 G3 / Q3:另挂「去看看」= 回任务面落到那张卡(收归档页、滚过去、闪一下)。
+      if (space === getCurrentSpace())
+        actionBar(
+          t("panes.unsealed"),
+          t("ui.undo"),
+          () => {
+            if (space !== getCurrentSpace()) return; // 换空间的旧撤销作废
+            void (async () => {
+              try {
+                await sealTask(space, id);
+              } catch (err) {
+                showErr(err);
+              }
+              await loadSealed();
+              void deps.refreshTimeline();
+            })();
+          },
+          { label: t("cardpanel.goSee"), on: () => deps.focusCard(id) },
+        );
     } catch (err) {
       if (space === getCurrentSpace()) showErr(err);
     } finally {

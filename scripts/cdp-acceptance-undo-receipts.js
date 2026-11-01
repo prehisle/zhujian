@@ -55,7 +55,8 @@
     if (err.hidden) return false;
     if (!err.classList.contains("notice") || !err.classList.contains("with-act")) return false;
     const btns = err.querySelectorAll("button");
-    return btns.length === 1 && btns[0].className === "bar-act";
+    // 第一枚是撤销;158 G3 / Q1 起卡挪到屏外时另挂一枚「去看看」(同形 bar-act)
+    return (btns.length === 1 || btns.length === 2) && [...btns].every((b) => b.className === "bar-act");
   };
   // 开卡片操作面拿某个动作钮(卡节点跨刷新游离:每轮按 id 现查再点)
   // 706 起操作面主面只剩四枚(编辑 / 标签 / 留言·转待办 / 更多…),低频那几件
@@ -135,12 +136,11 @@
     ok("B 捞回仍是 done(按删除那刻分流)", isDone(id));
     ok("B 点撤销即收条", await until(() => err.hidden, 1500));
 
-    // ---- C:归档(二拍,done 卡才有入册钮)→ 回执带撤销 → 点撤销回看板 ----
+    // ---- C:归档(158 G3 / Q3 起一点即归,done 卡才有入册钮)→ 回执带撤销 → 点撤销回看板 ----
     const seal = await openAct(id, "seal");
     if (!ok("C 操作面有入册钮(done 卡)", !!seal)) return JSON.stringify(out);
     click(seal);
-    if (!ok("C 第一拍弹确认条", await until(() => !cb.hidden, 1500))) return JSON.stringify(out);
-    click(document.getElementById("confirmbar-yes"));
+    ok("C 不弹确认条(一点即归)", cb.hidden);
     ok("C 归档提交:卡离轴", (await until(() => !cardOf(id), 3000)) !== null);
     if (!ok("C 回执 actionBar 形", await until(barShape, 2000))) return JSON.stringify(out);
     click(err.querySelector(".bar-act"));

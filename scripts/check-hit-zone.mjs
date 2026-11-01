@@ -85,6 +85,7 @@ const REGISTRY = [
   { selector: ".v-topics .color-swatch", cls: "accepted", why: "标签色板格 17×17 成栅格密排,扩展会互相抢点击,放大格子或拉开间距都动观感 —— 用户 2026-08-09 拍板不动观感、登记接受(点错再点一次的低频操作)" },
   { selector: ".v-topics .mb-chip-label", cls: "accepted", why: "合并条 chip 文字段(可点=设存续):自带 overflow:hidden 做 ellipsis,::before 被自己裁掉、扩展是死的(357 真机实测);摘 overflow 会破长名截断,权衡后接受 —— 点击面 = 文字全宽、高 ≈17" },
   { selector: "#cap-space", cls: "accepted", why: "捕获窗空间徽章:自带 overflow:hidden 截断长空间名,同上一条、本技法用不了;行盒 18、点击面 = 徽章全宽,权衡后接受" },
+  { selector: ".task-meta .chip.due.clickable", cls: "accepted", why: "看板卡上的截止章(158 G2 / A17 起点得开选择器):行盒 22 差 2px;::before 已被「📅 」那枚记号占着、用不了扩展技法,抬 min-height 会让整行 meta 长高 2px。它是第三条入口(⋯ →「截止」/ 悬停按 S 都在),点歪了落在卡身上什么也不发生,权衡后接受" },
   // ---- spacing / inline / native:结构性豁免 ----------------------------------------
   { selector: ".v-board .color-swatch", cls: "spacing", why: "卡片色板色点(0040):20×20、`.card-color-row` 的 gap 5px ⇒ 相邻**中心距 25px ≥ 24**,WCAG 2.5.8 spacing 例外成立(以各自中心画的 24px 圆互不相交)。⭐ 与隔壁 `.v-topics .color-swatch` 那枚**刻意不同档**:那枚 17×17 + gap 5 = 中心距 22,跨不过线只能走 accepted;这枚本轮为「数字键要读的、字号必须 ≥12px」把圆点从 18 抬到 20,正好跨过。⛔ 再把它改小或把 gap 收窄就要重算这条,别只改数不改登记" },
   { selector: ".v-topics .topic-head", cls: "spacing",

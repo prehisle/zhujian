@@ -2,6 +2,7 @@ import "./hotkey-menu.css";
 import { t } from "./i18n";
 import { NATIVE_MENU_KEEP } from "./context-menu";
 import { el } from "./dom";
+import { toastAction } from "./toast";
 
 // 悬停即选中 + ⋯ 速查菜单 + 单键直达 —— 抽自 inbox 的原型,做成视图无关的公共件,
 // 让「同一个键 = 同一个概念」跨视图(灵感 / 任务看板 / …)一致,肌肉记忆才能迁移。
@@ -33,8 +34,12 @@ export type Act = {
   hidden?: boolean;
   /** 普通动作:先关菜单,再执行。run / feedback 二选一。 */
   run?: () => void;
+  /** 子菜单(158 G3 / Q2:看板「移到 ▸」列出所有列)。点这一行 = 菜单原地换成子项(顶上一行「‹ 返回」),
+   *  ⛔ 不另开一层浮层(同一时刻至多一枚菜单的规矩不破)。子项与它自己都不进单键派发:`key` 给空串
+   *  (菜单行右侧那格画「▸」/ 留空);要单键直达的另立 `hidden` 项(看板的 `]` `[`)。 */
+  sub?: () => Act[];
   /** 留开动作(如复制):执行后在自己的菜单行里闪一下返回的文案,而非关闭菜单。
-   *  从键盘触发(菜单没开)时静默执行。返回值即要闪的文案,失败也自行兜底成文案。 */
+   *  从键盘触发(菜单没开)时改用底部回执说同一句(158)。返回值即要闪的文案,失败也自行兜底成文案。 */
   feedback?: () => Promise<string>;
 };
 
@@ -71,7 +76,9 @@ export function createHotkeyController(): HotkeyController {
   // 执行一个动作。feedback 型:跑完把返回文案交给 flash(菜单开着才闪)。run 型:直接跑。
   function runAct(act: Act, flash: ((text: string) => void) | null): void {
     if (act.feedback) {
-      void act.feedback().then((text) => flash?.(text));
+      // 键盘路径(菜单没开)此前静默执行 —— `/` C 复制了却屏上什么也没变(158 G2 / A17,WD-21)。
+      // 没有菜单行可闪,就用底部那条回执说同一句。
+      void act.feedback().then((text) => (flash ? flash(text) : toastAction(text)));
     } else {
       act.run?.();
     }
@@ -119,7 +126,7 @@ export function createHotkeyController(): HotkeyController {
     if (!act) return;
     e.preventDefault();
     openMenuCloser?.(); // acting from the keyboard shuts any open menu first
-    runAct(act, null); // menu is closed → feedback runs silently (e.g. copy still happens)
+    runAct(act, null); // menu is closed → feedback text goes to the bottom toast instead (158)
   }
   document.addEventListener("keydown", onKey);
 
@@ -224,50 +231,13 @@ export function createHotkeyController(): HotkeyController {
           closeMenu();
         }
       }
-      function openMenu(at?: { x: number; y: number }): void {
-        clearTimeout(closeTimer);
-        if (menuEl) return;
-        openMenuCloser?.(); // at most one menu open across the view
-        menuEl = el(
-          "div",
-          { className: "hk-menu", draggable: false },
-          getActions()
-            .filter((a) => !a.hidden)
-            .map((a) => {
-            const item = el("button", {
-              className: a.danger ? "hk-item danger" : "hk-item",
-              draggable: false,
-            });
-            item.dataset.key = a.key;
-            const label = el("span", { className: "hk-label", textContent: a.label });
-            item.append(label, el("kbd", { className: "hk-key", textContent: a.key }));
-            item.addEventListener("click", (e) => {
-              e.stopPropagation();
-              if (a.feedback) {
-                // keep the menu up to flash the result in this row
-                runAct(a, (text) => {
-                  label.textContent = text;
-                  clearTimeout(closeTimer);
-                  closeTimer = setTimeout(() => closeMenu(), 900);
-                });
-              } else {
-                closeMenu();
-                a.run?.();
-              }
-            });
-            return item;
-          }),
-        );
-        // Portal to <body>, NOT into wrap: a menu nested in the card is trapped inside the
-        // card's stacking context and clipped by the column body's overflow:auto — WebView2
-        // then mis-hit-tests its rows (a sibling card's chip "receives" the click). At body
-        // root with position:fixed + z-index it sits above everything and hit-tests cleanly.
-        document.body.appendChild(menuEl);
-        // Position in the viewport from the icon's rect, then CLAMP so the whole menu (every
-        // row, incl. the last) stays on-screen — the icon may sit low in a full, scrolling
-        // column, so a naive drop-down would push the bottom rows off-screen (→ not
-        // interactable). Prefer below the icon; if it won't fit, go above; else pin to the
-        // bottom margin, never above the top margin.
+      // Position in the viewport from the icon's rect, then CLAMP so the whole menu (every
+      // row, incl. the last) stays on-screen — the icon may sit low in a full, scrolling
+      // column, so a naive drop-down would push the bottom rows off-screen (→ not
+      // interactable). Prefer below the icon; if it won't fit, go above; else pin to the
+      // bottom margin, never above the top margin. 进出子菜单(高度变了)时再调一次。
+      function place(at?: { x: number; y: number }): void {
+        if (!menuEl) return;
         const M = 6;
         const vw = window.innerWidth;
         const vh = window.innerHeight;
@@ -290,6 +260,63 @@ export function createHotkeyController(): HotkeyController {
         // icon sits low in / below the fold of a full scrolling column.
         top = Math.max(M, Math.min(top, vh - M - mh));
         menuEl.style.top = `${top}px`;
+      }
+      function openMenu(at?: { x: number; y: number }): void {
+        clearTimeout(closeTimer);
+        if (menuEl) return;
+        openMenuCloser?.(); // at most one menu open across the view
+        // 一行菜单项。`sub` 那种点了不收菜单,原地换成子项(Q2);子项里的普通项照常「先关再跑」。
+        const rowFor = (a: Act): HTMLElement => {
+          const item = el("button", {
+            className: a.danger ? "hk-item danger" : a.sub ? "hk-item hk-has-sub" : "hk-item",
+            draggable: false,
+          });
+          item.dataset.key = a.key;
+          const label = el("span", { className: "hk-label", textContent: a.label });
+          item.append(label);
+          if (a.sub) item.append(el("span", { className: "hk-key hk-sub", textContent: "▸" }));
+          else if (a.key !== "") item.append(el("kbd", { className: "hk-key", textContent: a.key }));
+          item.addEventListener("click", (e) => {
+            e.stopPropagation();
+            if (a.sub) {
+              drill(a);
+            } else if (a.feedback) {
+              // keep the menu up to flash the result in this row
+              runAct(a, (text) => {
+                label.textContent = text;
+                clearTimeout(closeTimer);
+                closeTimer = setTimeout(() => closeMenu(), 900);
+              });
+            } else {
+              closeMenu();
+              a.run?.();
+            }
+          });
+          return item;
+        };
+        const rowsFor = (acts: Act[]): HTMLElement[] => acts.filter((a) => !a.hidden).map(rowFor);
+        menuEl = el("div", { className: "hk-menu", draggable: false }, rowsFor(getActions()));
+        // Portal to <body>, NOT into wrap: a menu nested in the card is trapped inside the
+        // card's stacking context and clipped by the column body's overflow:auto — WebView2
+        // then mis-hit-tests its rows (a sibling card's chip "receives" the click). At body
+        // root with position:fixed + z-index it sits above everything and hit-tests cleanly.
+        document.body.appendChild(menuEl);
+        place(at);
+        // 进子菜单:同一枚浮层换内容,高度变了就按同一套规矩重新钳位。顶上「‹ 返回」回到主菜单。
+        function drill(parent: Act): void {
+          if (!menuEl || !parent.sub) return;
+          const back = el("button", { className: "hk-item hk-back", draggable: false }, [
+            el("span", { className: "hk-label", textContent: `‹ ${parent.label}` }),
+          ]);
+          back.addEventListener("click", (e) => {
+            e.stopPropagation();
+            menuEl?.replaceChildren(...rowsFor(getActions()));
+            place(at);
+          });
+          menuEl.replaceChildren(back, ...rowsFor(parent.sub()));
+          place(at);
+          menuEl.querySelector<HTMLButtonElement>(".hk-item:not(.hk-back)")?.focus({ preventScroll: true });
+        }
         menuOpenFlag = true;
         setActive();
         openMenuCloser = closeMenu;
@@ -346,7 +373,8 @@ export type ViewKey = { key: string; run: () => void };
 // `root` = 选择器容器(点它内部不算离开);`close` = 收起(通常重渲回展示态)。返回 teardown:
 // 选中某项走 mutate+重渲的路径必须先手动调它,否则 document 监听泄漏。放行 ⋯ 菜单浮层
 // (portal 到 body)与看大图遮罩——那是卫星 UI,不该误触发收起。
-export function armDismiss(root: HTMLElement, close: () => void): () => void {
+// `opts.escape`:Esc 走另一条路(158 G2 / A2 截止框:点别处 = 存、Esc = 不存);不给则 Esc 与点别处同为 `close`。
+export function armDismiss(root: HTMLElement, close: () => void, opts: { escape?: () => void } = {}): () => void {
   function teardown(): void {
     document.removeEventListener("keydown", onKey, true);
     document.removeEventListener("mousedown", onDown, true);
@@ -355,7 +383,7 @@ export function armDismiss(root: HTMLElement, close: () => void): () => void {
     if (e.key !== "Escape") return;
     e.preventDefault();
     teardown();
-    close();
+    (opts.escape ?? close)();
   }
   function onDown(e: MouseEvent): void {
     const t = e.target as HTMLElement;

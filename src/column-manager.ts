@@ -30,7 +30,7 @@ import {
 } from "./board-columns";
 import { t } from "./i18n";
 import "./column-manager.css";
-import { el, onDragTarget } from "./dom";
+import { el, focusables, onDragTarget, trapTab } from "./dom";
 import { errDetail, errText } from "./err";
 
 let overlay: HTMLDivElement | null = null;
@@ -49,11 +49,16 @@ export function openColumnManager(opts: { onChanged: () => void }): void {
   overlay.addEventListener("mousedown", (e) => {
     if (e.target === overlay) closeColumnManager();
   });
+  // 158 G2 / A12(WD-14 / N-9):模态面板三件套(ui-guidelines §3.5)—— role=dialog、打开即聚焦首个控件、
+  // Tab 圈在面板里(此前焦点留在背后的「管理列」钮,连按 Tab 跑到看板卡上的标签 ✕)。
   const panel = el("div", { className: "bcm-panel" });
+  panel.setAttribute("role", "dialog");
+  panel.setAttribute("aria-modal", "true");
+  panel.setAttribute("aria-label", t("cols.title"));
   overlay.append(panel);
   document.body.append(overlay);
   document.addEventListener("keydown", onPanelEsc);
-  void render(panel);
+  void render(panel, "first");
 }
 
 /**
@@ -73,6 +78,9 @@ export function closeColumnManager(): void {
 }
 
 function onPanelEsc(e: KeyboardEvent): void {
+  // Tab 圈闭挂在 document 上而不是面板上:焦点掉到 body(行内改名 Esc 收掉之后)时也接得住。
+  const panel = overlay?.querySelector<HTMLElement>(".bcm-panel");
+  if (panel) trapTab(panel, e);
   if (e.key !== "Escape") return;
   // 行内改名在场时这一句到不了:它的 keydown 挂在 input 上(冒泡的起点),那儿先
   // `stopPropagation()` 收掉自己那一层,document 上的这只根本收不到。
@@ -81,6 +89,9 @@ function onPanelEsc(e: KeyboardEvent): void {
 }
 
 // ---- 渲染 ------------------------------------------------------------------------------
+
+/** 删列确认出现后多久才接执行钮(§3.2 第 2 条「300ms 防连击」那一支)。 */
+const CONFIRM_ARM_MS = 300;
 
 /** 拖动中的那一列 id(与 topics 的 `draggingTopicId` 同形)。 */
 let draggingId: string | null = null;
@@ -92,7 +103,11 @@ let draggingId: string | null = null;
  */
 let renderSeq = 0;
 
-async function render(panel: HTMLElement): Promise<void> {
+/** 重画后焦点落哪儿:`first` = 首个控件(刚打开);`new` = 新建框(连着建几列,此前回车建完焦点掉到 body,
+ *  接着打的字哪儿都没进,WD-14);`keep` = 焦点还在面板里就不动、掉出去了才收回首个控件。 */
+type Refocus = "first" | "new" | "keep";
+
+async function render(panel: HTMLElement, refocus: Refocus = "keep"): Promise<void> {
   const seq = ++renderSeq;
   let cols: BoardColumn[];
   let gate: ColumnGate;
@@ -113,7 +128,18 @@ async function render(panel: HTMLElement): Promise<void> {
   if (seq !== renderSeq) return; // 有更晚的一趟在途:旧响应⛔ 不落 DOM
   const rows = boardColumns(cols);
 
-  const head = el("h2", { className: "bcm-title", textContent: t("cols.title") });
+  const closeBtn = el("button", {
+    className: "bcm-close",
+    type: "button",
+    textContent: "✕",
+    title: t("cols.close"),
+  });
+  closeBtn.setAttribute("aria-label", t("cols.close"));
+  closeBtn.addEventListener("click", () => closeColumnManager());
+  const head = el("div", { className: "bcm-head" }, [
+    el("h2", { className: "bcm-title", textContent: t("cols.title") }),
+    closeBtn,
+  ]);
   const hint = el("p", { className: "bcm-hint", textContent: t("cols.hint") });
   const list = el("div", { className: "bcm-list" });
   const err = el("div", { className: "bcm-err", hidden: true });
@@ -143,16 +169,19 @@ async function render(panel: HTMLElement): Promise<void> {
   }
 
   /** 一笔写落地之后:清错、看板重画、本面板按新真相重建。 */
-  async function afterWrite(): Promise<void> {
+  async function afterWrite(refocusAfter: Refocus = "keep"): Promise<void> {
     clearErr();
     onChanged?.();
-    if (overlay) await render(panel);
+    if (overlay) await render(panel, refocusAfter);
   }
 
   for (const c of rows) list.append(row(c));
   if (gate.can_manage) body.push(creator());
 
   panel.replaceChildren(...body);
+  const newInput = panel.querySelector<HTMLInputElement>(".bcm-new .bcm-col-input");
+  if (refocus === "new" && newInput) newInput.focus();
+  else if (refocus === "first" || !panel.contains(document.activeElement)) focusables(panel)[0]?.focus();
 
   // ---- 一行 ----------------------------------------------------------------------------
   function row(c: BoardColumn): HTMLElement {
@@ -215,9 +244,21 @@ async function render(panel: HTMLElement): Promise<void> {
     // 语义的落点与完成列,plan §2.3a),给一枚永远灰着的钮只会让人反复去点它问为什么。
     // 「非空」那一格不同:它是**用户此刻就能解掉**的条件 ⇒ 钮留着、灰着、说清还剩几条。
     if (c.deletable) {
-      const del = cbtn(t("cols.delete"), () => confirmDelete(acts, c), true);
-      if (c.live_items > 0) {
-        del.disabled = true;
+      // 158 G2 / A12(WD-22):有卡的列删不了,原因此前只在悬停提示里(点了没反应、悬停还变红)。
+      // 现在钮照样淡着(aria-disabled,⛔ 不用 disabled —— 那样点了连原因都说不出),点一下在这一行
+      // 下面写明还剩几条、得先移走。
+      const blocked = c.live_items > 0;
+      const del = cbtn(t("cols.delete"), () => {
+        if (!blocked) {
+          confirmDelete(acts, c);
+          return;
+        }
+        if (sec.querySelector(".bcm-col-note")) return;
+        sec.append(el("div", { className: "bcm-col-note", textContent: t("cols.deleteBlocked", { n: c.live_items }) }));
+      }, !blocked);
+      if (blocked) {
+        del.setAttribute("aria-disabled", "true");
+        del.classList.add("blocked");
         del.title = t("cols.deleteBlocked", { n: c.live_items });
       }
       acts.append(del);
@@ -274,9 +315,22 @@ async function render(panel: HTMLElement): Promise<void> {
   // ---- 删除(行内两段式:结构性动作,且删了没有撤销入口) ---------------------------------
   function confirmDelete(host: HTMLElement, c: BoardColumn): void {
     const prev = [...host.childNodes];
-    const yes = cbtn(t("cols.deleteYes"), () => void go(), true);
-    const no = cbtn(t("cols.cancel"), () => host.replaceChildren(...prev));
-    host.replaceChildren(el("span", { className: "bcm-col-q", textContent: t("cols.deleteQ") }), yes, no);
+    // 158 G2 / A18(WD-23):顺序与高亮跟看板卡的删除确认一致 —— 「取消」在前、红实心「删除」在后,
+    // 焦点落在「删除」上(回车即删、Esc 关面板)。此前执行钮在前且只描边,与别处正相反。
+    // ⚠ 这样排执行钮正落在触发钮(原「删除」)的位置上 ⇒ 走 ui-guidelines §3.2 第 2 条的另一支:
+    // 出现后 300ms 内不接(防双击连删),不置 disabled —— 置了会先闪一下灰、焦点也落不上去。
+    const armedAt = performance.now();
+    const yes = cbtn(t("cols.deleteYes"), () => {
+      if (performance.now() - armedAt < CONFIRM_ARM_MS) return;
+      void go();
+    }, true);
+    yes.classList.add("solid");
+    const no = cbtn(t("cols.cancel"), () => {
+      host.replaceChildren(...prev);
+      (prev.find((n) => n instanceof HTMLButtonElement && n.classList.contains("danger")) as HTMLElement | undefined)?.focus();
+    });
+    host.replaceChildren(el("span", { className: "bcm-col-q", textContent: t("cols.deleteQ") }), no, yes);
+    yes.focus();
 
     async function go(): Promise<void> {
       try {
@@ -316,7 +370,7 @@ async function render(panel: HTMLElement): Promise<void> {
         return;
       }
       input.value = "";
-      await afterWrite();
+      await afterWrite("new");
     }
     return el("div", { className: "bcm-new" }, [input, add]);
   }

@@ -35,8 +35,8 @@
 //  ⑦ 07:29 < 07:30 不响;到点才响。
 //  ⑧ 到点无事:`body=null`(不说话)但水位照记 —— 「今天已经算过了」与「今天说过话了」
 //     是两件事,搞混会让空日子每 30 秒判一次。
-//  ⑨ **只剩快到期时,通知一个字都不说**(559 那条取舍的安卓那半:那段「3 天内 K」只进
-//     屏上那枚钮)。⭐ 前置**自证数据局面**:同一刻 `list_tasks` 里今天/逾期恰好 0 条、
+//  ⑨ **只剩快到期时,通知一个字都不说**(559 那条取舍的安卓那半;158 G3 / Q10 起有逾期 / 今天时
+//     正文带上「3 天内 K」与汇总钮同一句,但「只有 3 天内」那天照旧不响)。⭐ 前置**自证数据局面**:同一刻 `list_tasks` 里今天/逾期恰好 0 条、
 //     而 3 天内 ≥1 条 —— 否则「没说话」可能只是因为库里什么都没有。
 //     ⚠ 屏上那枚钮在这个局面下**真的会说话**那半,归 `cdp-acceptance-due-summary.js` 的
 //     ⑪ 格(它有 reload,看得到投影);两支合起来才是完整的一对。
@@ -94,15 +94,19 @@
     const tasks = await inv("list_tasks");
     let late = 0;
     let now = 0;
+    let soon = 0;
     for (const t of tasks) {
       if (t.status === "done" || !t.due_on) continue;
       if (t.due_on < today) late++;
       else if (t.due_on === today) now++;
+      else if (t.due_on <= dayShift(3)) soon++;
     }
-    const forms =
+    // 158 G3 / Q10 起正文是汇总钮的整句:有「3 天内」就接在后面(响不响仍只看逾期 + 今天,见 ⑨)。
+    const head =
       late > 0
         ? [`逾期 ${late} · 今天 ${now}`, `${late} overdue · ${now} today`]
         : [`今天到期 ${now}`, `${now} due today`];
+    const forms = soon === 0 ? head : [`${head[0]} · 3 天内 ${soon}`, `${head[1]} · ${soon} within 3d`];
     return { late, now, forms };
   };
 
@@ -290,7 +294,7 @@
     localStorage.removeItem(LAST);
     const got9 = await fireUntil("07:30", 6);
     ok("⑨ 判定跑了", got9 && log().length === 6, { log: log().length });
-    ok("⑨ 通知仍 body = null(559 那段「3 天内 K」刻意不进通知)", log()[5] && log()[5].body === null, {
+    ok("⑨ 只剩快到期时通知仍 body = null(响不响只看逾期 + 今天)", log()[5] && log()[5].body === null, {
       body: log()[5] ? log()[5].body : "(没有第 6 条)",
     });
     void soonId;

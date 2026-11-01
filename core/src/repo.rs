@@ -1483,6 +1483,52 @@ fn end_key(conn: &Connection, stage: &str, excluding: &str) -> rusqlite::Result<
         .unwrap_or_else(|e| panic!("列内排序键损坏(stage={stage}):{e}")))
 }
 
+/// 卡从回收站还原 / 从成就册取消归档、重回 `stage` 列时的排序键(158 G4-A4:回原位)。
+///
+/// * 行上那枚旧键在该列**活跃卡**里没人占 ⇒ **原样沿用**。本机路径上它就是删除 / 归档那一刻
+///   的键(本机 guard 不改离场行的键),卡回到离开前的相对位置(按 `(position, id)` 读序,旧邻居
+///   还在的话就夹回它们中间)。但回放按字段比 HLC、胜出后 UPDATE 只按 id 定位,不管行是否离场
+///   ⇒ 沿用的是「还原时行上那枚键」,不保证是离开前的位置。
+/// * 行上那枚键过不了 `frindex::validate`(回放落值只受表 CHECK 的 base62 形态约束,弱于
+///   validate;离场行的键又不参与任何排序,今天不会有人发现它)⇒ 退回列尾,发一枚合规新键。
+///   ⛔ 不 panic:那会把一次撤销删除变成崩溃,而旧实现(恒列尾)根本不读这枚键。
+/// * 旧键已被某张活跃卡占了(它离开期间,确定性的 `key_between` 往同一空隙又落了一张卡)⇒
+///   取「旧键」与「列内严格大于旧键的第一枚键」之间的新键:紧跟在占位卡之后,仍在原位附近,
+///   且本机不造同键(0022:同键只许是多写者合并的结局,单机代码不造)。
+/// * 行上没有键(position 为 NULL,回放允许)⇒ 退回列尾,与旧行为同。
+///
+/// 为什么不记「原邻居 id」再夹回去:邻居不在行上、也不在同步日志里,要记就得加字段 + 发
+/// op;而旧键本身就编码了「在原邻居之间」,邻居没动时沿用旧键与夹邻居是同一个结果。
+/// 回放侧无新语义:编排层照旧发 `position` 的 set op,对端按 LWW 落值(值是具体键,
+/// 不是「回原位」的意图),两端并发落同键仍是 0022 的合法结局。
+/// 列里**活卡**的键不合规照旧当场 panic(`end_key` / `key_between` 的 fail-fast)。
+fn reinstate_key(conn: &Connection, stage: &str, id: &str) -> rusqlite::Result<String> {
+    let old: Option<String> = conn
+        .query_row("SELECT position FROM items WHERE id = ?1", [id], |r| r.get(0))
+        .optional()?
+        .flatten();
+    let Some(old) = old.filter(|k| frindex::validate(k).is_ok()) else {
+        return end_key(conn, stage, id);
+    };
+    let taken: bool = conn.query_row(
+        "SELECT EXISTS (SELECT 1 FROM items \
+           WHERE stage = ?1 AND archived_at IS NULL AND sealed_at IS NULL AND id <> ?2 AND position = ?3)",
+        (stage, id, &old),
+        |r| r.get(0),
+    )?;
+    if !taken {
+        return Ok(old);
+    }
+    let next: Option<String> = conn.query_row(
+        "SELECT MIN(position) FROM items \
+         WHERE stage = ?1 AND archived_at IS NULL AND sealed_at IS NULL AND id <> ?2 AND position > ?3",
+        (stage, id, &old),
+        |r| r.get(0),
+    )?;
+    Ok(frindex::key_between(Some(&old), next.as_deref())
+        .unwrap_or_else(|e| panic!("列内排序键损坏(stage={stage}):{e}")))
+}
+
 /// 列首前插的下一枚排序键(新建任务 / 转待办都落列首)。
 pub(crate) fn front_key(conn: &Connection, stage: &str, excluding: &str) -> rusqlite::Result<String> {
     let first = first_active_position(conn, stage, excluding)?;
@@ -1601,12 +1647,13 @@ pub(crate) fn archive_task(conn: &Connection, id: &str) -> rusqlite::Result<usiz
 }
 
 /// Restore an archived board card to its ORIGINAL column (`stage`, read by the caller),
-/// landing it at that column's END — its stale pre-archive key could collide with an
-/// active card's, so it is re-assigned a fresh end key. The `stage = ?3 / archived_at
-/// IS NOT NULL` guard makes a stale call a 0-row no-op. Returns rows changed.
+/// back at its ORIGINAL place (158 G4-A4): its pre-archive key is reused unless an active
+/// card took it meanwhile, in which case it lands right after that card (`reinstate_key`).
+/// The `stage = ?3 / archived_at IS NOT NULL` guard makes a stale call a 0-row no-op.
+/// Returns rows changed.
 pub(crate) fn restore_task(conn: &Connection, id: &str, stage: &str) -> rusqlite::Result<usize> {
     let now = now_iso();
-    let key = end_key(conn, stage, id)?;
+    let key = reinstate_key(conn, stage, id)?;
     conn.execute(
         "UPDATE items SET archived_at = NULL, updated_at = ?2, position = ?4 \
          WHERE id = ?1 AND stage = ?3 AND archived_at IS NOT NULL AND sealed_at IS NULL",
@@ -1635,7 +1682,7 @@ pub(crate) fn purge_archived_tasks(conn: &Connection) -> rusqlite::Result<usize>
 //
 // 与回收站(archived_at)平行且互斥的第二根轴:归档=「干完了、留着看」的史实,可查、
 // 不可删(0017 触发器:冻结 + 禁删)。只有活跃的 done 任务可归档;取消归档翻回看板
-// 「已完成」列(镜像 restore_task 的 position 重排)。内部命名用 seal(封存)避开已被
+// 「已完成」列(镜像 restore_task 的 position 取键:回原位,旧键被占才紧跟占位卡)。内部命名用 seal(封存)避开已被
 // 回收站占用的 archive_*;用户可见中文才叫「归档」。
 
 /// 归档一条「已完成」任务(盖 sealed_at)。position 冻结原值(已退出 partial unique
@@ -1664,10 +1711,11 @@ pub(crate) fn seal_all_done(conn: &Connection) -> rusqlite::Result<usize> {
     )
 }
 
-/// 取消归档:sealed_at 置回 NULL,任务回到看板「已完成」列的末尾(冻结的旧排序键
-/// 可能已被活跃卡占用,重发一枚列尾键,同 restore_task)。guard 使 未归档/不存在 为 0 行。
+/// 取消归档:sealed_at 置回 NULL,任务回到看板「已完成」列的**原位**(158 G4-A4:冻结的
+/// 旧排序键没被活跃卡占就沿用,被占了紧跟占位卡之后,同 restore_task 的 `reinstate_key`)。
+/// guard 使 未归档/不存在 为 0 行。
 pub(crate) fn unseal_task(conn: &Connection, id: &str) -> rusqlite::Result<usize> {
-    let key = end_key(conn, DONE, id)?;
+    let key = reinstate_key(conn, DONE, id)?;
     conn.execute(
         "UPDATE items SET sealed_at = NULL, updated_at = ?2, position = ?3 \
          WHERE id = ?1 AND sealed_at IS NOT NULL",
@@ -3152,6 +3200,100 @@ mod tests {
         assert_eq!(pos(&a), "a1", "unsealed card lands at the column end");
         assert_eq!(list_tasks(&conn).unwrap().len(), 2, "back on the board");
         assert!(sealed_tasks(&conn).unwrap().is_empty());
+    }
+
+    /// 158 G4-A4:删了再撤销(回收站还原)回原位 —— 旧键没人占就沿用;被占了紧跟占位卡
+    /// (同键的并列卡全排在它前面),且本机不造同键。
+    #[test]
+    fn restore_task_returns_to_original_place_or_right_after_the_taker() {
+        let conn = fresh_db();
+        let pos = |id: &str| -> String {
+            conn.query_row("SELECT position FROM items WHERE id=?1", [id], |r| r.get(0)).unwrap()
+        };
+        let t: Vec<String> =
+            (0..4).map(|i| insert_task(&conn, &format!("卡{i}"), None, None).unwrap()).collect();
+        assert_eq!(pos(&t[1]), "a1");
+
+        // ① 旧键空着:原样沿用,回到第 2 张(不是列尾)。
+        archive_task(&conn, &t[1]).unwrap();
+        assert_eq!(restore_task(&conn, &t[1], "todo").unwrap(), 1);
+        assert_eq!(pos(&t[1]), "a1", "unoccupied old key is reused");
+        assert_eq!(column_task_ids(&conn, "todo").unwrap(), t, "back in its original slot");
+
+        // ② 旧键被两张活卡占了(多写者合并的合法同键):紧跟它们之后、仍在 t2 之前,键唯一。
+        archive_task(&conn, &t[1]).unwrap();
+        let x = insert_task(&conn, "占位甲", None, None).unwrap();
+        let y = insert_task(&conn, "占位乙", None, None).unwrap();
+        set_task_position(&conn, &x, "todo", "a1").unwrap();
+        set_task_position(&conn, &y, "todo", "a1").unwrap();
+        let (x, y) = if x < y { (x, y) } else { (y, x) }; // 同键按 id 打平
+        assert_eq!(restore_task(&conn, &t[1], "todo").unwrap(), 1);
+        let k = pos(&t[1]);
+        assert!(k.as_str() > "a1" && k.as_str() < "a2", "lands between the takers and the next card: {k}");
+        assert_eq!(
+            column_task_ids(&conn, "todo").unwrap(),
+            vec![t[0].clone(), x, y, t[1].clone(), t[2].clone(), t[3].clone()]
+        );
+        // 只数活卡:回收站 / 成就册里同键的行不算占位(它们不在列里)。
+        archive_task(&conn, &t[3]).unwrap();
+        let z = insert_task(&conn, "后来的", None, None).unwrap();
+        assert_eq!(pos(&z), "a3", "the trashed card's key went back into play");
+        archive_task(&conn, &z).unwrap();
+        assert_eq!(restore_task(&conn, &t[3], "todo").unwrap(), 1);
+        assert_eq!(pos(&t[3]), "a3", "a trashed card holding the same key does not count as taken");
+    }
+
+    /// 158 G4-A4:离场行上的键是 NULL 或过不了 frindex::validate(回放只受表 CHECK 约束)⇒
+    /// 还原退回列尾、发一枚合规新键,不 panic(旧实现恒列尾、根本不读这枚键)。
+    #[test]
+    fn restore_falls_back_to_column_end_when_the_stored_key_is_unusable() {
+        let conn = fresh_db();
+        let pos = |id: &str| -> String {
+            conn.query_row("SELECT position FROM items WHERE id=?1", [id], |r| r.get(0)).unwrap()
+        };
+        let t: Vec<String> =
+            (0..3).map(|i| insert_task(&conn, &format!("卡{i}"), None, None).unwrap()).collect();
+        archive_task(&conn, &t[0]).unwrap();
+        // 过得了表 CHECK(base62 形态)、过不了 validate(尾随 '0')。
+        conn.execute("UPDATE items SET position = 'a00' WHERE id = ?1", [&t[0]]).unwrap();
+        assert!(frindex::validate("a00").is_err());
+        assert_eq!(restore_task(&conn, &t[0], "todo").unwrap(), 1);
+        assert_eq!(pos(&t[0]), "a3", "unusable key -> fresh end key");
+        assert_eq!(column_task_ids(&conn, "todo").unwrap(), vec![t[1].clone(), t[2].clone(), t[0].clone()]);
+    }
+
+    /// 158 G4-A4:取消归档同理 —— 回「已完成」列原位;旧键被占则紧跟占位卡,不落列尾。
+    #[test]
+    fn unseal_returns_to_original_place_or_right_after_the_taker() {
+        let conn = fresh_db();
+        let pos = |id: &str| -> String {
+            conn.query_row("SELECT position FROM items WHERE id=?1", [id], |r| r.get(0)).unwrap()
+        };
+        let d: Vec<String> = (0..3)
+            .map(|i| {
+                let id = insert_task(&conn, &format!("完成{i}"), None, None).unwrap();
+                set_task_stage(&conn, &id, "todo", "done").unwrap();
+                id
+            })
+            .collect();
+        assert_eq!(pos(&d[1]), "a1");
+
+        seal_task(&conn, &d[1]).unwrap();
+        assert_eq!(unseal_task(&conn, &d[1]).unwrap(), 1);
+        assert_eq!(pos(&d[1]), "a1", "unoccupied frozen key is reused");
+        assert_eq!(column_task_ids(&conn, "done").unwrap(), d, "back in its original slot");
+
+        seal_task(&conn, &d[1]).unwrap();
+        let x = insert_task(&conn, "占位", None, None).unwrap();
+        set_task_stage(&conn, &x, "todo", "done").unwrap();
+        set_task_position(&conn, &x, "done", "a1").unwrap();
+        assert_eq!(unseal_task(&conn, &d[1]).unwrap(), 1);
+        let k = pos(&d[1]);
+        assert!(k.as_str() > "a1" && k.as_str() < "a2", "right after the taker, before the next card: {k}");
+        assert_eq!(
+            column_task_ids(&conn, "done").unwrap(),
+            vec![d[0].clone(), x, d[1].clone(), d[2].clone()]
+        );
     }
 
     #[test]

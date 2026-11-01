@@ -46,7 +46,8 @@ const HELPERS = `
   const pillOf = (id) => {
     const c = cardOf(id);
     const h = c && c.closest(".tl-group") && c.closest(".tl-group").querySelector(".tl-sec");
-    return h ? h.textContent : null;
+    // 节头的列名 = 第一个文本节点(158 G3 / Q9 起竖屏节头后面还挂着计数 .tl-count / 全部归档 .tl-act)
+    return h ? (h.firstChild?.textContent ?? null) : null;
   };
   const trashRow = (id) => document.querySelector('[data-trash="' + id + '"]');
   const trashOpen = () => !document.getElementById("trash-pane").hidden;
@@ -148,7 +149,8 @@ const jsVerify = (id, fromLabel) => `(async () => {
   ok("回执是 notice + with-act 形", err.classList.contains("notice") && err.classList.contains("with-act"));
   ok("文案点名新状态", !!toLabel && err.textContent.includes(toLabel));
   const btns = err.querySelectorAll("button");
-  ok("恰一枚动作钮(.bar-act,无取消钮)", btns.length === 1 && btns[0].className === "bar-act");
+  // 158 G3 / Q1 起卡滑到屏外那一节时另挂「去看看」(同形 .bar-act);取消钮仍不许有。
+  ok("动作钮全是 .bar-act(撤销,至多再加一枚去看看;无取消钮)", (btns.length === 1 || btns.length === 2) && [...btns].every((b) => b.className === "bar-act"));
   ok("confirmbar 没被挪用(全程 hidden)", cb.hidden);
   click(err.querySelector(".bar-act"));
   ok("撤销后回到原状态", (await until(() => pillOf(id) === fromLabel, 3000)) !== null);

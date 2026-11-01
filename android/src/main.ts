@@ -31,19 +31,21 @@ import {
   listTasks,
   listTopicsFull,
   paneCounts,
+  sealDoneTasks,
   spaceLabel,
+  unsealTask,
   updateTaskStatus,
   type SpaceInfo,
   type TaskItem,
-  type TaskStatus,
   type TimelineItem,
 } from "./api";
-import { $, actionBar, cardTint, colsFor, contentHtml, dayKey, dayLabel, esc, fmtTimeOfDay, fmtWhen, hideConfirmBar, showBar, showError, splitCols } from "./ui";
+import { $, actionBar, cardTint, confirmBar, colsFor, contentHtml, dayKey, dayLabel, esc, fmtTimeOfDay, fmtWhen, hideConfirmBar, showBar, showError, splitCols } from "./ui";
 import { errDetail, errText, initErr, showErr } from "./err";
 import { toggleChecklistLine } from "../../shared/checklist";
 import { buildStamp, formatBuiltAt } from "../../shared/build-stamp";
 import { applyChecklistMarker, wireChecklistNewline } from "./checklist-input";
-import { DONE_COLUMN, boardColumns, isTaskStage, setColumns, stageLabel } from "./columns";
+import { DONE_COLUMN, LANDING_COLUMN, boardColumns, isTaskStage, setColumns, stageLabel } from "./columns";
+import { initTaskMove, moveReceipt, spotOf } from "./taskmove";
 import { capturePhoto, composeImages, compressImagesOn, PICK_MAX, pickImages, setCompressImages } from "./images";
 import { INPUT_DEBOUNCE_MS } from "./timing";
 // **平台接缝**(OH-d/D3):只在安卓壳里存在的那三条命令。鸿蒙那端由 vite 换成另一份实现。
@@ -58,6 +60,7 @@ import * as panes from "./panes";
 import * as topics from "./topics";
 import { closeDocs, docsBack, focusDoc, initDocs, openDocs, reloadDocs, resetDocsForSpaceChange, startDocFrom } from "./docs";
 import { initCardSwipe } from "./swipe";
+import { initCardDrag, isDragging } from "./carddrag";
 import { loadIdentity, signatureFor } from "./identity";
 import { createKbSheet, type KbSheet } from "./kbsheet";
 import {
@@ -281,13 +284,15 @@ function dayDiff(due: string, today: string): number {
   const [by, bm, bd] = today.split("-").map(Number);
   return Math.round((Date.UTC(ay, am - 1, ad) - Date.UTC(by, bm - 1, bd)) / 86_400_000);
 }
-/** 与桌面 dueLabel 逐字同形的相对表达;7 天外退化成 `M/D`(不翻译,数字两端通用)。 */
-function dueLabel(due: string, today: string): string {
+/** 与桌面 dueLabel 逐字同形的相对表达;7 天外退化成 `M/D`(不翻译,数字两端通用)。
+ *  `done`(158 G3 / Q4):已完成的卡不说「逾期 / 今天 / N 天后」,只留截止那天的 `M/D`(灰,CSS 那条)。 */
+function dueLabel(due: string, today: string, done = false): string {
   const [, am, ad] = due.split("-").map(Number);
+  if (done) return `${am}/${ad}`;
   const diff = dayDiff(due, today);
   if (diff === 0) return t("main.dueToday");
   if (diff === 1) return t("main.dueTomorrow");
-  if (diff === -1) return t("main.dueYesterday");
+  // 158 G3 / Q13(WD-34):逾期一天也说「逾期 1 天」—— 此前说「昨天」,与别处「逾期 N 天」不是一个口径。
   if (diff < 0) return t("main.dueOverdueDays", { n: -diff });
   if (diff <= 7) return t("main.dueInDays", { n: diff });
   return `${am}/${ad}`;
@@ -340,7 +345,7 @@ function renderCard(it: TimelineItem, hideTopic: string | null, underDayHead = f
   const done = it.stage === DONE_COLUMN;
   const tick = isTask
     ? `<label class="tick"><input type="checkbox" data-id="${esc(it.id)}"
-         ${done ? "checked disabled" : ""} /><span class="box"></span></label>`
+         ${done ? "checked" : ""} /><span class="box"></span></label>`
     : "";
   // ⛔ 卡上不再盖状态印(用户面 85 ④ / ui-consistency M10):任务面**恒按状态分段**
   // (projectTimeline 里每段头上就是 `stageLabel` 那一行),每张卡再印一遍等于把节头说第二遍;
@@ -370,8 +375,9 @@ function renderCard(it: TimelineItem, hideTopic: string | null, underDayHead = f
   const meta: string[] = [];
   if (it.due_on) {
     const today = localToday();
-    const st = dueState(it.due_on, today);
-    meta.push(`<span class="chip due ${st}" title="${esc(it.due_on)}">${dueLabel(it.due_on, today)}</span>`);
+    // 已完成的卡(158 G3 / Q4):不带今天 / 逾期那档色,字也只留日期 —— 做完了的事不该还挂着「逾期」吓人。
+    const st = done ? "past" : dueState(it.due_on, today);
+    meta.push(`<span class="chip due ${st}" title="${esc(it.due_on)}">${dueLabel(it.due_on, today, done)}</span>`);
   }
   if (it.priority) meta.push(`<span class="chip">${t("main.priorityChip", { p: PRIORITY_LABEL[it.priority] })}</span>`);
   // 完成时刻(0030):已完成卡显示「完成于 <时刻>」;done_at 为 null(本功能前完成的老卡)则不显示。
@@ -585,6 +591,8 @@ function renderDayGroups(items: TimelineItem[], hideTopic: string | null): strin
 let lastItems = new Map<string, TimelineItem>();
 /** 任务的看板手动序(id → 名次),同 lastItems 一起在成功读取后更新(157 G4 / P3)。 */
 let taskOrder = new Map<string, number>();
+/** 同一份看板手动序的全量列表(id + 列;含被筛掉的)—— 挪卡撤销回原位(taskmove.ts)与长按拖的落点都按它算。 */
+let boardOrder: { id: string; stage: string }[] = [];
 
 // ---- 返回键层账本(143):安卓返回键的第一本能是「关掉当前层」,此前直接退 app。
 // WryActivity 内建「WebView 有历史先 goBack」,故开层(面板/大图)pushState 压一枚
@@ -677,8 +685,49 @@ let nativeBackPending = false; // native 请求的 history.back() 已发、popst
     return true;
   }
   // 无层可关:卡片操作面还展开着就先收它(157 G1①;它不压守门条目,理由在 cardpanel.backOut)。
-  return cardPanel.backOut();
+  if (cardPanel.backOut()) return true;
+  // 158 G3 / Q8(WM-12):任务面上筛着东西 ⇒ 这一下先清筛选,再按才离开 app(此前筛着「读书」+ 过滤词
+  // 按返回直接退到桌面,拉起来还筛着)。同操作面那条:不压守门条目,只在「无层可关」这一支问。
+  return clearTaskFiltersByBack();
 };
+
+/** 返回键清任务面筛选(Q8):清了返回 true(本次返回已消费)。有卡片草稿时不动(重投影会拆草稿),放它走老路。 */
+function clearTaskFiltersByBack(): boolean {
+  if (activePane !== null || viewMode !== "tasks" || !lastRefreshOk) return false;
+  if (!filter.filterActive(filters.tasks) && taskStageFilter === null && !dueOnly) return false;
+  if (cardPanel.hasDirtyDraft()) return false;
+  filters.tasks = { kind: "all", topics: [], text: "" };
+  taskStageFilter = null;
+  dueOnly = false;
+  const ft = $("filter-text") as HTMLInputElement;
+  ft.value = "";
+  ft.blur();
+  projectTimeline();
+  showBar(t("main.filtersClearedByBack"), true);
+  return true;
+}
+
+// 点截止提醒通知(158 G3 / Q10,WM-09):进任务面、只看到期(= 汇总钮按下那一态:逾期 + 今天 + 3 天内,
+// 按截止升序,逾期最久的在最前 —— 与通知那句话数的是同一批)。其余筛选清掉,别让通知报的数在屏上少几张。
+// 开着面板就收面;开着编辑 / 留言 / 大图 / 记一笔这些层、或有卡片草稿时不动(那是正在做的事,别被一条通知拽走)。
+window.addEventListener("zhujian-notif-tap", () => {
+  if (switching || captureSaving || !lastRefreshOk) return;
+  if (cardPanel.hasDirtyDraft() || isViewerOpen() || isEditSheetOpen() || captureOpen || isCommentsOpen()) return;
+  navSeq++; // 作废在途的定位(同主动导航)
+  if (activePane !== null) {
+    closePaneNow();
+    settleHistory();
+  }
+  filters.tasks = { kind: "all", topics: [], text: "" };
+  taskStageFilter = null;
+  dueOnly = true;
+  if (viewMode !== "tasks") applyMode("tasks");
+  else {
+    ($("filter-text") as HTMLInputElement).value = "";
+    projectTimeline();
+  }
+  window.scrollTo({ top: 0 });
+});
 
 window.addEventListener("popstate", () => {
   nativeBackPending = false; // native 发的 back 已归账
@@ -924,9 +973,9 @@ function projectTimeline(): void {
         : filteredEmptyHtml(f);
   } else {
     // 宽屏上任务面是看板(tablet-plan 格 2):**全部列都画**(空列一枚「空」,把一列的卡挪光、别的列不跟着变宽)、
-    // 列头带计数;「状态」那排收掉(列头就是状态,index.html)⇒ 状态维在看板上当「全部」—— 否则分屏拖窄时选过的
+    // 列头带计数(158 G3 起竖屏节头也带);「状态」那排收掉(列头就是状态,index.html)⇒ 状态维在看板上当「全部」—— 否则分屏拖窄时选过的
     // 状态,拖宽后成了一条看不见的筛选,看板只剩一列有卡。⚠ 只是**不应用**,不清:拖回窄屏,那排重新露出来时
-    // 选中的那枚照旧亮着、照旧生效。窄屏(手机竖放)一个字不变:空节不画、状态那排在、节头不带计数。
+    // 选中的那枚照旧亮着、照旧生效。窄屏(手机竖放):空节不画、状态那排在。
     const stageF = board ? null : taskStageFilter;
     // 本面专属的两维(状态 / 到期)最后应用,在共享三维之后:空态的话语权也按同序——
     // 词/标签/类型筛空的提示优先(shown 已空),三维有结果、被状态维筛空才说「该状态下
@@ -954,12 +1003,22 @@ function projectTimeline(): void {
     };
     // ⚠ 任务卡必须是 `.tl-group` 的**直接子元素**:横滑改状态靠 `card.parentElement` 认它那一节(swipe.ts),
     // 列头与「空」都和卡并排挂在节里,别往中间再套一层盒。列名走 esc():改过名的列是同步来的自由文本。
+    // 158 G3 / Q9(WM-13):竖屏的节头也带计数(此前只有横屏列头有,四节串成一条长列表时数不出哪节有几张)。
+    // 数的是这一节**画出来的**卡(筛选之后),同横屏列头口径。
+    // Q3:「已完成」那一节头上挂「全部归档」(问一次、回执带撤销;同桌面列头那枚)。n 按这一列**全部**的卡说
+    // (seal_done_tasks 归的是全部,含被筛掉的)。
+    const doneAll = modeItems.filter((i) => i.stage === DONE_COLUMN).length;
     const section = (s: { stage: string; label: string }): string => {
       const rows = inSection(s.stage);
-      const count = board ? `<span class="tl-count">${rows.length}</span>` : "";
+      const count =
+        `<span class="tl-count">${rows.length}</span>` +
+        (s.stage === DONE_COLUMN && doneAll > 0
+          ? `<button type="button" class="tl-act" data-seal-all="${doneAll}">${t("main.sealAll")}</button>`
+          : "");
       const cards =
         board && rows.length === 0 ? `<p class="tl-empty">${t("main.boardEmpty")}</p>` : rows.map((it) => renderCard(it, hideTopic)).join("");
-      return `<section class="tl-group"><h3 class="tl-sec">${esc(s.label)}${count}</h3>${cards}</section>`;
+      // data-col:长按拖认落点在哪一列(carddrag.ts)。
+      return `<section class="tl-group" data-col="${esc(s.stage)}"><h3 class="tl-sec">${esc(s.label)}${count}</h3>${cards}</section>`;
     };
     box.innerHTML = dueShown.length
       ? (board ? taskSections() : taskSections().filter((s) => dueShown.some((t) => t.stage === s.stage))).map(section).join("")
@@ -1074,17 +1133,46 @@ $("filter-expand").addEventListener("click", () => {
 // 也就是这个功能在竖屏上整个消失。⇒ 再接一只 ResizeObserver 盯标签行自己的盒。
 // 不会自激:藏钮只会让它更宽(装得下的仍装得下)、显钮只会让它更窄(装不下的仍装不下),
 // 两个方向都单调,量一次就稳。
-new ResizeObserver(() => syncTagsToggle()).observe($("filter-topics"));
+new ResizeObserver(() => {
+  syncTagsToggle();
+  // 158 G2(W2 走查 A13 / WM-08):过滤框一张开,标签行被挤窄,选中的那枚被裁成半截或整个滚出视野
+  // ⇒ 标签行盒子一变就把选中那枚滚回视野(只在它确实出界时滚;用户自己横划不改盒宽,不受打扰)。
+  if (!tagsOpen) revealActiveTopic();
+}).observe($("filter-topics"));
 // 过滤框歇着 6em、动笔才张到 11em(用户面 36:那个框此前吃掉窄屏三分之一宽,而这一行
 // 真正要给的是标签)。⛔ 张开走**类**不走 `.ftext:focus`,理由印在 index.html 那条 CSS 上头。
 {
-  const ft = $("filter-text");
+  const ft = $("filter-text") as HTMLInputElement;
   ft.addEventListener("focusin", () => ft.classList.add("wide"));
   ft.addEventListener("focusout", () => ft.classList.remove("wide"));
+  // 158 G2(W2 走查 A19 / WM-25):打完字按返回收了键盘,框仍握着焦点、×(type=search 自带的清除钮,
+  // 只在框有焦点时画)还在;这时点 × ⇒ 字清了、键盘又弹起来盖半屏。键盘收着时点 × = 只想清掉 ⇒
+  // 按下那一刻拦住默认动作,自己清(照常走 input 那条去抖投影),再放掉焦点(框缩回歇着的宽度)。
+  // × 的位置:框右端、宽约一个框高的那一块(Chromium 把清除钮画在右内边距里;没有别的 API 认得出它)。
+  // 键盘起着(`kb-up`)时不管:正在打字,点 × 清了接着打,键盘本来就在。
+  ft.addEventListener("pointerdown", (e) => {
+    if (document.activeElement !== ft || ft.value === "") return;
+    if (document.documentElement.classList.contains("kb-up")) return;
+    const r = ft.getBoundingClientRect();
+    if (e.clientX < r.right - r.height) return;
+    e.preventDefault();
+    ft.value = "";
+    ft.dispatchEvent(new Event("input", { bubbles: true }));
+    ft.blur();
+  });
 }
 
+// 158 G2(W2 走查 A10 / WM-07):截止日期框、提醒时间框点框身只选中一段(没有键盘、没有选择器),
+// 只有右端小图标能改 ⇒ 点框身任一处都弹系统选择器(安卓的时间选择器里自带「键盘输入」那一档)。
+document.addEventListener("click", (e) => {
+  const el = e.target;
+  if (!(el instanceof HTMLInputElement) || el.disabled || el.readOnly) return;
+  if (el.type !== "date" && el.type !== "time") return;
+  el.showPicker();
+});
+
 /** 任务面的状态 chips 行:全部 + 四态(固定成员,含 0 计数——行的成员不随数据增减,
- *  布局稳定),与标签/类型 pills 同皮(.fpill)、同全量计数口径(192:不随文本收缩)。
+ *  布局稳定),与标签/类型 pills 同皮(.fpill)。计数随标签 / 类型筛选收缩、不随文本收缩(158 Q9 / 192)。
  *  灵感面清空该行(CSS :empty 隐)。 */
 function renderStagePills(bar: HTMLElement, modeItems: TimelineItem[]): void {
   if (viewMode !== "tasks") {
@@ -1110,8 +1198,13 @@ function renderStagePills(bar: HTMLElement, modeItems: TimelineItem[]): void {
   axis.className = "faxis";
   axis.textContent = t("main.stageAxis");
   const nodes: HTMLElement[] = [axis, mk(t("main.stageAll"), null, null)];
+  // 158 G3 / Q9(WM-14):计数跟着标签 / 类型筛选走(选了「读书」只剩一张卡,此前这一排照旧报全量)。
+  // ⚠ 文本维仍不收缩计数(192 那条口径:打字过程中一排数字跟着跳没有信息量);状态维与到期维是这一排
+  // 自己 / 并排那枚的事,不叠进来。
+  const f = filters[viewMode];
+  const scoped = filter.applyFilter(modeItems, { ...f, text: "" }, (i) => i.content, allFilterTopics);
   for (const s of taskSections()) {
-    nodes.push(mk(s.label, s.stage, modeItems.filter((i) => i.stage === s.stage).length));
+    nodes.push(mk(s.label, s.stage, scoped.filter((i) => i.stage === s.stage).length));
   }
   const due = dueSummaryPill(modeItems);
   if (due) nodes.unshift(due); // 最前,理由见 dueSummaryPill 的注释
@@ -1246,7 +1339,8 @@ function settleFilterAfterSave(mode: ViewMode, tagged: number): void {
 }
 
 async function refreshOnce(): Promise<void> {
-  if (cardPanel.hasDirtyDraft()) {
+  // 长按拖着一张卡时也延后(158 G3 / Q7):重画会把手里那张卡换掉;放下时由 onDone 补上。
+  if (cardPanel.hasDirtyDraft() || isDragging()) {
     refreshDeferred = true;
     return;
   }
@@ -1270,7 +1364,7 @@ async function refreshOnce(): Promise<void> {
       listTasks(space),
     ]);
     if (space !== getCurrentSpace()) return;
-    if (cardPanel.hasDirtyDraft()) {
+    if (cardPanel.hasDirtyDraft() || isDragging()) {
       refreshDeferred = true;
       return;
     }
@@ -1282,6 +1376,7 @@ async function refreshOnce(): Promise<void> {
     if (taskStageFilter !== null && !boardColumns().some((c) => c.id === taskStageFilter)) taskStageFilter = null;
     lastItems = new Map(items.map((i) => [i.id, i])); // 全量真值,只在成功读取后更新
     taskOrder = new Map(tasksInOrder.map((x, i) => [x.id, i]));
+    boardOrder = tasksInOrder.map((x) => ({ id: x.id, stage: x.status }));
     allFilterTopics = ftopics.map((t) => ({ id: t.id, title: t.title, color: t.color, kind: t.kind }));
     // 长文钮的显形真值 = 同一份时间轴快照里有没有主归属是长文的条目(不另起一条计数查询)。
     paneHas = { trash: counts.trash > 0, sealed: counts.sealed > 0, docs: items.some((i) => i.kind === "doc") };
@@ -1330,6 +1425,7 @@ function blankTimelineForSpaceChange(): void {
   resetPanesForSpaceChange(); // 统一复位:关全部面 + 清陈旧内容 + 诊断缓存作废
   disconnectThumbObserver();
   lastItems = new Map();
+  boardOrder = []; // 同 lastItems:旧空间的序别留给新空间的挪卡算落点
   // 列同 lastItems 一起作废:每个空间是自己一套列(B-f 第 1 段)。⭐ **清空比留着旧的安全** ——
   // 留着 = 万一有一帧漏网,卡会**安静地**顶着旧空间的列名画出来;清空 = 列登记处(`stageLabel` / `isTaskStage`)
   // 一律答不上,任务面一节都分不出来。⇒ 错的方向落在「画不出」而不是「画错」这一侧。
@@ -1341,37 +1437,83 @@ function blankTimelineForSpaceChange(): void {
 }
 
 // 勾「标完成」:写命令,带点击时看到的空间;成败都刷新,不吞错、不做静默幂等。
+// 158 G3 / Q2(WM-04 / X-10):已完成卡上的勾也点得动 —— 取消勾 = 点回「待办」(同桌面),此前它是 disabled、点了没反应。
+// 两个方向都给回执 + 撤销(撤销放回原列原位置,taskmove.ts);卡挪出视野时回执带「去看看」(Q1)。
 $("timeline").addEventListener("change", async (e) => {
   const input = e.target as HTMLInputElement;
   const id = input.dataset.id;
-  if (!id || input.disabled) return;
+  if (!id || input.disabled || input.type !== "checkbox") return;
   if (switching) {
-    input.checked = false; // 切换编排中:屏上还是旧空间的卡,勾选不受理、当场回弹
+    input.checked = !input.checked; // 切换编排中:屏上还是旧空间的卡,勾选不受理、当场回弹
     return;
   }
   const space = getCurrentSpace();
-  // 勾框与 lastItems 是同一次投影(勾框在屏 ⇒ 快照必有此行);done 卡勾框 disabled,
-  // 故 from 必是前三态——撤销要回的就是它,不是固定回 todo。
-  const from = lastItems.get(id)!.stage as TaskStatus;
+  // 勾框与 lastItems 是同一次投影(勾框在屏 ⇒ 快照必有此行)。
+  const reopen = lastItems.get(id)!.stage === DONE_COLUMN;
+  const spot = spotOf(id);
   input.disabled = true;
   try {
-    await completeTask(space, id);
+    if (reopen) await updateTaskStatus(space, id, LANDING_COLUMN);
+    else await completeTask(space, id);
   } catch (err) {
     showErr(err);
     await refresh();
     return;
   }
   await refresh();
+  if (space !== getCurrentSpace()) return;
   // 操作型回执(§3.1「已完成 · 撤销」):误勾一点召回,不用进操作面翻状态。
-  actionBar(t("main.completed"), t("ui.undo"), () => {
-    if (switching || getCurrentSpace() !== space) return; // 换空间的旧撤销作废
+  moveReceipt(space, id, reopen ? t("swipe.changedTo", { stage: stageLabel(LANDING_COLUMN)! }) : t("main.completed"), spot);
+});
+
+// 「全部归档」(158 G3 / Q3,WM-28):「已完成」节头那枚。问一次(归档后可查、不可删,这件事要在动手前说),
+// 回执带「撤销」(逐条取消归档 —— 同桌面 sealAllDone)与「去看看」(开归档页)。单张归档不问(cardpanel)。
+$("timeline").addEventListener("click", (e) => {
+  const btn = (e.target as HTMLElement).closest<HTMLButtonElement>("[data-seal-all]");
+  if (!btn) return;
+  if (switching) return;
+  if (cardPanel.hasDirtyDraft()) {
+    showError(t("main.finishDraftFirst"));
+    return;
+  }
+  const space = getCurrentSpace();
+  const ids = [...lastItems.values()].filter((i) => i.stage === DONE_COLUMN).map((i) => i.id);
+  if (ids.length === 0) return;
+  confirmBar(t("main.sealAllQ", { n: ids.length }), t("main.sealAllYes"), () => {
+    if (switching || space !== getCurrentSpace()) return;
     void (async () => {
+      // 撤销要逐条取消归档的那一批按**库里此刻**的「已完成」列取(屏上那份快照可能比库旧一拍 —— 刚撤销的单张归档
+      // 回来了而轴还没重画,撤销就会漏掉它);回执的数用命令自己报的条数。
+      let sealed: string[];
+      let n: number;
       try {
-        await updateTaskStatus(space, id, from);
+        sealed = (await listTasks(space)).filter((x) => x.status === DONE_COLUMN).map((x) => x.id);
+        n = await sealDoneTasks(space);
       } catch (err) {
         showErr(err);
+        await refresh();
+        return;
       }
       await refresh();
+      if (space !== getCurrentSpace()) return;
+      actionBar(
+        t("main.sealedAll", { n }),
+        t("ui.undo"),
+        () => {
+          if (switching || space !== getCurrentSpace()) return; // 换空间的旧撤销作废
+          void (async () => {
+            for (const id of sealed) {
+              try {
+                await unsealTask(space, id);
+              } catch (err) {
+                showErr(err); // 逐条撤:撤不回的那条照实报(多半是别处已动过它),其余照撤
+              }
+            }
+            await refresh();
+          })();
+        },
+        { label: t("cardpanel.goSee"), on: () => activePane !== "sealed" && openPane("sealed") },
+      );
     })();
   });
 });
@@ -1509,7 +1651,8 @@ async function save() {
   if (captureSaving || picking) return; // picking:钮此刻是 disabled 的,这条兜非点击的路子
   if (!ta.value.trim()) {
     // 图不能独立成条(条目正文非空):只贴图没写字时给可辨识提示,不静默无反应。
-    if (compImgs.count() > 0) showError(t("main.textBeforeImages"));
+    // 158 G2(W2 走查 A16 / WM-18):一个字没写就点「记下」也说一声(此前层不收、什么都不说)。
+    showError(compImgs.count() > 0 ? t("main.textBeforeImages") : t("main.nothingToSave"));
     return;
   }
   if (cardPanel.hasDirtyDraft()) {
@@ -1572,9 +1715,15 @@ async function save() {
       await refresh();
       const card = document.querySelector<HTMLElement>(`#timeline [data-id="${newId}"]`);
       if (card) {
-        window.scrollTo({ top: 0 });
-        card.classList.add("flash");
-        window.setTimeout(() => card.classList.remove("flash"), 1200);
+        // 158 G2(W2 走查 A16 / WM-19):滚到中段新建,保存后被拉回顶部、读到哪儿全丢 ⇒ 不再强拉。
+        // 新卡就在屏上 = 闪一下;不在屏上 = 回执带「去看看」,点了才过去(同 157 P3 转待办那枚)。
+        const r = card.getBoundingClientRect();
+        if (r.bottom > 0 && r.top < window.innerHeight) {
+          card.classList.add("flash");
+          window.setTimeout(() => card.classList.remove("flash"), 1200);
+        } else {
+          actionBar(t("main.saved"), t("cardpanel.goSee"), () => void focusTimelineCard(newId));
+        }
       }
     } else {
       // 用户正在续打(或分享追加了):不 blur、不抢焦点、不滚动,只刷新列表。
@@ -2300,21 +2449,25 @@ function paintCompressSeg() {
 // `dueDigest`)。尺留在本文件是刻意的 —— 它必须与任务面那枚汇总钮(558)逐字同源,
 // 而 `dueAttentionState` / `dueSummaryLabel` 都在这儿。
 
-/** 喂通知的那句话;null = 今天没有任何到期/逾期。⛔ **用 `dueSummaryLabel` 不是
- *  `dueSummaryFullLabel`** —— 559 那段「3 天内 K」刻意不进通知(用户 2026-09-01 拍板:
- *  通知的克制感来自「只在真出事时才说话」),桌面那半也是这么分的。 */
+/** 喂通知的那句话;null = 今天没有逾期 / 今天到期(⇒ 不响)。说的那句 158 G3 / Q10 起是汇总钮的整句
+ *  `dueSummaryFullLabel`(带「3 天内 K」,用户 2026-11-01 取 ★);响不响的判据没变,理由见 reminder.ts 文件头。 */
 function dueDigest(tasks: TaskItem[], today: string): string | null {
   let late = 0;
   let now = 0;
+  let soon = 0;
   for (const it of tasks) {
     // ⚠ `list_tasks` 那条前端契约里这一列叫 `status`,时间轴那条叫 `stage`(同一列两个名字,
     // ㉞ 起的既有契约)⇒ 这里显式换个名再喂尺,⛔ 别去改 `dueAttentionState` 的入参形
     // (它同时喂着卡片那颗 due chip,而那条路拿到的是 `stage`)。
-    const st = dueAttentionState({ stage: it.status, due_on: it.due_on }, today);
+    const row = { stage: it.status, due_on: it.due_on };
+    const st = dueAttentionState(row, today);
     if (st === "overdue") late++;
     else if (st === "today") now++;
+    else if (isDueSoon(row, today)) soon++;
   }
-  return late + now === 0 ? null : dueSummaryLabel(late, now);
+  // 158 G3 / Q10(WM-09):通知那句与任务面汇总钮逐字同一句(补上「3 天内 K」)—— 点通知进去看到的正是那一批。
+  // ⚠ 响不响仍只看逾期 + 今天(「只在真出事时才说话」那条不变):只有 3 天内的日子照旧不响。
+  return late + now === 0 ? null : dueSummaryFullLabel(late, now, soon);
 }
 
 function paintRemindRow() {
@@ -2853,7 +3006,7 @@ cardPanel.initCardPanel({
   },
   focusCard: (id) => void focusTimelineCard(id),
   // 值 chip 上的截止文字与卡上那颗角标同一支笔(⛔ 别让面板自己算第二份)。
-  dueLabel: (due) => dueLabel(due, localToday()),
+  dueLabel: (due, done) => dueLabel(due, localToday(), done),
 });
 // 编辑层(706):正文编辑那座底部层。宿主是 cardpanel(草稿/写口/判弃都在那边),
 // 这里只给它返回键层账本的两把手(同留言层与大图查看器的形)。
@@ -2894,6 +3047,29 @@ initCardSwipe({
   isSwitching: () => switching,
   hasDirtyDraft: () => cardPanel.hasDirtyDraft(),
   refresh,
+});
+initCardDrag({
+  getItem: (id) => lastItems.get(id),
+  getCurrentSpace,
+  isSwitching: () => switching,
+  hasDirtyDraft: () => cardPanel.hasDirtyDraft(),
+  isBoard: boardShown,
+  dueSorted: () => dueOnly,
+  order: () => boardOrder,
+  refresh,
+  onDone: () => {
+    if (refreshDeferred && !cardPanel.hasDirtyDraft()) {
+      refreshDeferred = false;
+      void refresh();
+    }
+  },
+});
+initTaskMove({
+  order: () => boardOrder,
+  refresh,
+  focusCard: (id) => void focusTimelineCard(id),
+  isSwitching: () => switching,
+  getCurrentSpace,
 });
 panes.initPanes({ refreshTimeline: refresh, focusCard: focusTimelineCard, showPane: openPane });
 topics.initTopicsPane({ refreshTimeline: refresh, isSwitching: () => switching });

@@ -30,6 +30,24 @@
   padding: 18px 20px 20px;
 }
 
+/* 158 G2 / A12:标题行右端一枚关闭钮(此前面板上没有任何「关」的东西,只能 Esc / 点遮罩)。 */
+.bcm-head { display: flex; align-items: center; gap: 8px; }
+.bcm-head .bcm-title { flex: 1; min-width: 0; }
+.bcm-close {
+  flex: none;
+  min-width: 28px;
+  min-height: 28px;
+  display: grid;
+  place-items: center;
+  font: inherit;
+  font-size: var(--fs-13);
+  color: var(--ink-soft);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+}
+.bcm-close:hover { color: var(--ink); border-color: var(--line-strong); }
 .bcm-title {
   margin: 0;
   font-family: var(--font-serif);
@@ -175,6 +193,13 @@
 }
 .bcm-btn:hover { color: var(--ink); border-color: var(--seal-line); background: var(--seal-tint); }
 .bcm-btn.danger:hover { color: var(--seal); }
+/* 158 G2 / A18:删列确认的执行钮与看板卡删除确认同一形 —— 红实心。 */
+.bcm-btn.danger.solid { color: var(--on-seal); background: var(--seal); border-color: var(--seal); font-weight: 600; }
+.bcm-btn.danger.solid:hover { color: var(--on-seal); background: color-mix(in srgb, var(--seal) 88%, var(--ink)); }
+/* 158 G2 / A12(WD-22):有卡删不了的那枚「删除」—— 淡着、悬停不变色(此前悬停变红,像是能删);
+   点它在行下写明原因(.bcm-col-note)。 */
+.bcm-btn.blocked,
+.bcm-btn.blocked:hover,
 .bcm-btn:disabled {
   color: var(--ink-faint);
   border-color: var(--line);
@@ -190,3 +215,10 @@
   color: var(--seal-ink);
 }
 .bcm-err[hidden] { display: none; }
+.bcm-col-note {
+  padding: 0 2px 8px 34px;
+  font-family: var(--font-sans);
+  font-size: var(--fs-12);
+  line-height: 1.6;
+  color: var(--ink-soft);
+}

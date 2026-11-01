@@ -280,8 +280,9 @@ const SUITES = {
       { n: "⑦ @media 块里出现字号",
         expect: "块里有带颜色或字号的规则",
         note: "扁平抓取器会把条件块里的声明当成无条件生效的 —— 两个方向都可能算错",
-        edits: [["src/board.css", "  .v-board header .copy-slot { display: none; }",
-                 "  .v-board header .copy-slot { display: none; font-size: var(--fs-12); }"]] },
+        // 158 起那条「复制看板整枚藏起」改成缩记号,刀口挪到同一个 @container 块里的另一行(换的是锚,不是刀)。
+        edits: [["src/board.css", "  .v-board header .copy-slot .hbtn .lbl { display: none; }",
+                 "  .v-board header .copy-slot .hbtn .lbl { display: none; font-size: var(--fs-12); }"]] },
       { n: "⑧ 字号写在**另一条只写字号的规则**里(跨规则取数)",
         expect: [".v-topics .zzprobe", "字号 13px"],
         note: "只写 font-size 的规则若没进层叠,这个签名就是「字号不知道」→ 退回 4.5 → 4.79 平安过关",

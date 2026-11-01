@@ -762,6 +762,16 @@
         color: var(--ink-soft); font-family: var(--font-sans); letter-spacing: 0.04em;
       }
       .timeline .tl-group:first-child .tl-sec { padding-top: 0; }
+      /* 158 G3 / Q9:竖屏任务节头也带计数(`.tl-count`),Q3:「已完成」节头右端挂「全部归档」(`.tl-act`)⇒ 节头排成一行。
+         随记的日期节头只有一段字,flex 对它是空操作。 */
+      .timeline .tl-sec { display: flex; align-items: center; gap: 6px; }
+      /* 「全部归档」:节头里的文字钮(朱砂小字 = 能点),靠右。触区向上 / 左右撑开(节头上方是筛选条,z 更高、盖得住);
+         向下只撑 4 —— 再多就压到第一张卡的右上角(节头下沿与卡只隔 4px)。 */
+      .tl-act {
+        margin-left: auto; position: relative; padding: 0 2px; border: 0; background: none;
+        font: inherit; font-weight: 400; letter-spacing: 0; color: var(--seal-ink);
+      }
+      .tl-act::before { content: ""; position: absolute; left: -10px; right: -10px; top: -12px; bottom: -4px; }
       /* 随记在宽屏上分栏(tablet-plan 格 1,用户拍「瀑布流 · 横三竖二」):轮流分栏,第 i 张进第 i % n 栏,
          卡在栏里紧挨着往下排 ⇒ 没有「长卡旁边空一大块」(789 那版按行对齐的毛病);点开一张只推它自己那栏。
          `.tl-cols` 只在 main.ts 算出放得下两栏时才画(renderDayGroups)⇒ 手机竖放上它根本不存在,这两条不必进 @media。
@@ -898,6 +908,14 @@
         100% { box-shadow: 0 0 0 10px transparent; border-color: var(--line); }
       }
       .card .body { flex: 1; min-width: 0; }
+      /* 竖屏长按拖卡(158 G3 / Q7,carddrag.ts):长按是「拿起」不是「选字」⇒ 竖屏任务面的卡不让选字、不弹系统菜单
+         (要文字走卡片「更多… → 复制」)。拿起来的那张浮在上面、稍放大带影;落点是一条朱砂横线(fixed,JS 摆位置)。 */
+      body[data-view="tasks"]:not(.board) #timeline .card { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+      .card.lifted { position: relative; z-index: 2; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22); border-color: var(--seal-line); }
+      .drag-line {
+        position: fixed; height: 3px; z-index: 6; pointer-events: none;
+        background: var(--seal); border-radius: var(--radius-pill);
+      }
       /* 时间戳走 soft 不走 faint(634):A2 用户拍板的「乙」= **同屏别处拿不到的信息升一档**,
          日期时间正是那一类;纯计数(`.fn` / `.tcount`)照旧留 faint,别一起改。 */
       .card footer {
@@ -1482,6 +1500,8 @@
         font-size: var(--fs-12); color: var(--ink-soft);
       }
       .panel .lane .lab { flex: none; }
+      /* 「列」那一排底下的灰字(158 G3 / Q5):手机只做列的读侧,管理在电脑上。是这一格的全部说明 ⇒ soft 不用 faint(634)。 */
+      .panel .colhint { margin: 0; font-size: var(--fs-12); color: var(--ink-soft); }
       .panel .pillrow { display: inline-flex; gap: 5px; flex-wrap: wrap; }
       /* 跨空间移动:选择前的永久删历史告知 + 部分成功常驻提示。 */
       .panel .movewarn {
@@ -2307,11 +2327,13 @@
            审计 #23 的【违例】原句点的就是这里(通栏朱红、常驻在列表最上方)。桌面同一个动作早就是
            次级(`board.ts` 的 ghost / `inbox.ts` 的 `.no`),手机端 634 才跟上。
            ⚠ 两拍确认一直都有(`panes.ts::confirmBar`),这一改动的是**权重**不是保险。 -->
-      <div class="row">
-        <button id="trash-empty" class="ghost grow" data-i18n="shell.emptyTrash">清空回收站</button>
-      </div>
       <div id="trash-list" class="timeline"></div>
       <p class="fine" data-i18n="shell.trashNote">删除的随记、任务和配图先到这里;还原回到原来的位置(配图回到原编号);彻底删除后无法找回。</p>
+      <!-- 158 G2(W2 走查 A19 / WM-21):整面最重的那一下不再全宽常驻在列表最上面、紧挨第一张卡
+           (§3.8「重破坏:不常驻列表行」)⇒ 挪到面底说明之后、不通栏 —— 翻完要清的人才走到这里。 -->
+      <div class="row trash-foot">
+        <button id="trash-empty" class="ghost" data-i18n="shell.emptyTrash">清空回收站</button>
+      </div>
     </section>
 
     <!-- 归档册面(120):已完成入册的任务(史实,可查);取消入册回看板已完成。 -->

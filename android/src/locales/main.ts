@@ -15,7 +15,6 @@ export const main = defineMessages({
   // 键名各按本文件既有的 main.* 前缀,不是同一份字典)。
   "main.dueToday": { zh: "今天", en: "Today" },
   "main.dueTomorrow": { zh: "明天", en: "Tomorrow" },
-  "main.dueYesterday": { zh: "昨天", en: "Yesterday" },
   "main.dueOverdueDays": { zh: "逾期 {n} 天", en: "{n} {n|day|days} overdue" },
   "main.dueInDays": { zh: "{n} 天后", en: "In {n} {n|day|days}" },
   // 506:改名后「P0优先」不成话 ⇒ 角标换成与桌面 tasktime.priorityChip 逐字同形。
@@ -45,7 +44,13 @@ export const main = defineMessages({
   "main.nounIdeas": { zh: "随记", en: "notes" },
   "main.nounTasks": { zh: "任务", en: "tasks" },
   "main.noMatch": { zh: "没有匹配的{noun}。", en: "No {noun} match." },
-  "main.stageAxis": { zh: "状态", en: "Stage" },
+  // 158 G3 / Q5:手机也叫「列」(同桌面看板的叫法;键名不动)
+  "main.stageAxis": { zh: "列", en: "Column" },
+  "main.sealAll": { zh: "全部归档", en: "Archive all" },
+  "main.sealAllQ": { zh: "把「已完成」里的 {n} 条都归档?归档后可查、不可删", en: "Archive all {n} in Done? Archived tasks can be viewed but not deleted" },
+  "main.sealAllYes": { zh: "全部归档", en: "Archive all" },
+  "main.sealedAll": { zh: "已归档 {n} 条", en: "Archived {n}" },
+  "main.filtersClearedByBack": { zh: "已清掉筛选,再按一次返回离开", en: "Filters cleared. Press back again to leave" },
   "main.stageAll": { zh: "全部", en: "All" },
   "main.noneUnderStage": { zh: "「{stage}」下没有任务。", en: "No tasks under “{stage}”." },
   // 宽屏看板上空着的那一列(tablet-plan 格 2):列常驻,里面一枚淡虚框。
@@ -64,6 +69,8 @@ export const main = defineMessages({
   "main.spaceSwitchedDraftDropped": { zh: "空间已切换,未保存的编辑已丢弃", en: "Space switched, unsaved changes were discarded" },
   "main.loading": { zh: "正在载入…", en: "Loading…" },
   "main.spaceNotOnDevice": { zh: "这条所在的空间不在这台设备上", en: "The space this item belongs to is not on this device" },
+  "main.nothingToSave": { zh: "还没写字,写点什么再记下", en: "Nothing to save yet, type something first" },
+  "main.saved": { zh: "已记下", en: "Saved" },
   "main.textBeforeImages": { zh: "先写点文字,图片作为配文一起记下", en: "Write something first, images are saved along with the text" },
   // 538:句尾那半拆成 {hint} —— 说得准就填具体原因(images.fail*),说不准才填 images.retryHint。
   "main.imagesNotAttached": { zh: "有 {n} 张配图没挂上{hint}", en: "{n} {n|image|images} could not be attached{hint}" },

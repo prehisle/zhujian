@@ -16,9 +16,11 @@ import {
 import { autoGrow } from "./autogrow";
 import { createComposeController } from "./compose-controller";
 import { copyButton, copyText } from "./clipboard";
-import { dismissUndo, toastAction, toastUndo } from "./toast";
+import { dismissUndo, flashToast, toastAction, toastGo, toastUndo } from "./toast";
+import { setTaskDeleteConfirm, taskDeleteConfirmOn } from "./delete-confirm";
 import { buildItemDeepLink } from "./deeplink";
 import { armLocate } from "./locate";
+import { focusInboxItem } from "./inbox";
 import {
   type FilterState,
   type TimeBucket,
@@ -156,9 +158,14 @@ const btn = (label: string, kind: string, onclick: () => void) =>
 // One task → one bullet. A card in the 完成 column is a checked item, every other
 // column unchecked (a Markdown task list has only those two marks — the column a card
 // sits under is the状态). A multi-line title is collapsed to one line so it stays one bullet.
+// 158 G2 / A14(W2 复核新撞 1):多行正文不再压成一行 —— 卡里的清单被压成「- [ ] 搬家打包 - [x] 书 - [ ] 衣服」、
+// 空行也丢了。首行做这条任务的那一项,其余各行原样缩两格挂在它下面(Markdown 列表项的续行 / 子清单),
+// 空行保留为空行(不带缩进,免得行尾挂空格)。
 function mdLine(item: TaskItem, status: string): string {
   const box = status === DONE_COLUMN ? "[x]" : "[ ]";
-  return `- ${box} ${item.title.replace(/\s*\n\s*/g, " ").trim()}`;
+  const lines = item.title.trim().split(/\r?\n/);
+  const rest = lines.slice(1).map((l) => (l.trim() === "" ? "" : `  ${l.trimEnd()}`));
+  return [`- ${box} ${lines[0].trim()}`, ...rest].join("\n");
 }
 function columnMarkdown(name: string, status: string, items: TaskItem[]): string {
   return [`## ${name}`, ...items.map((t) => mdLine(t, status))].join("\n");
@@ -172,6 +179,16 @@ function boardMarkdown(cols: BoardColumn[], items: TaskItem[]): string {
     .join("\n\n");
 }
 
+// 顶栏窄到「字母态」(board.css 那条 839 的 container query)时,到期 / 归档 / 回收站三枚此前只剩
+// 「6」「3 G」「0 R」(158 G3 / Q13,WD-29)。字母态里给它们各留一枚小图标(全名照旧在 title 里),
+// 平时藏着。线稿走 currentColor,明暗两档跟着字色走;⛔ 别换成 emoji(WebView2 会画成彩色)。
+const ICON_DUE =
+  '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6.2"/><path d="M8 4.6V8l2.4 1.6"/></svg>';
+const ICON_SEAL =
+  '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.8" y="2.5" width="12.4" height="3.5" rx="0.8"/><path d="M3 6v7.2h10V6M6.3 8.6h3.4"/></svg>';
+const ICON_TRASH =
+  '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 4.2h11M6.2 4.2V2.6h3.6v1.6M3.8 4.2l.8 9.2h6.8l.8-9.2"/></svg>';
+
 const SKELETON = `
   <header data-tauri-drag-region>
     <h1>${t("board.title")}</h1>
@@ -179,11 +196,11 @@ const SKELETON = `
     <button class="hbtn" id="add-task" type="button" title="${t("board.newTask")}">+ <span class="lbl">${t("board.newTask")}</span> <kbd class="k">N</kbd></button>
     <span class="copy-slot" id="copy-slot"></span>
     <span class="head-tools">
-      <button class="hbtn due-soon" id="due-soon" title="${t("board.dueSoonTitle", { days: DUE_SOON_DAYS })}" hidden><span class="lbl" id="due-soon-lbl"></span><span class="lbl-short" id="due-soon-n"></span></button>
+      <button class="hbtn due-soon" id="due-soon" title="${t("board.dueSoonTitle", { days: DUE_SOON_DAYS })}" hidden><span class="lbl" id="due-soon-lbl"></span><span class="ico">${ICON_DUE}</span><span class="lbl-short" id="due-soon-n"></span></button>
       <button class="hbtn" id="board-sort" title="${t("board.sortTitle")}"><span class="lbl" id="board-sort-lbl">${t("board.sortManual")}</span><span class="lbl-short">↕</span></button>
       <button class="hbtn" id="manage-cols" title="${t("board.manageColsTitle")}">≡ <span class="lbl">${t("board.manageCols")}</span></button>
-      <button class="hbtn" id="seal-toggle" title="${t("board.sealTitle")}"><span class="lbl">${t("board.sealLbl")}</span><span class="tn" id="seal-n">0</span> <kbd class="k">G</kbd></button>
-      <button class="hbtn" id="trash-toggle" title="${t("board.trashTitle")}"><span class="lbl">${t("board.trashLbl")}</span><span class="tn" id="trash-n">0</span> <kbd class="k">R</kbd></button>
+      <button class="hbtn" id="seal-toggle" title="${t("board.sealTitle")}"><span class="lbl">${t("board.sealLbl")}</span><span class="ico">${ICON_SEAL}</span><span class="tn" id="seal-n">0</span> <kbd class="k">G</kbd></button>
+      <button class="hbtn" id="trash-toggle" title="${t("board.trashTitle")}"><span class="lbl">${t("board.trashLbl")}</span><span class="ico">${ICON_TRASH}</span><span class="tn" id="trash-n">0</span> <kbd class="k">R</kbd></button>
     </span>
   </header>
   <div class="compose" id="compose" hidden>
@@ -212,26 +229,7 @@ const SKELETON = `
 // 类型,0031)或 null = 无类型 —— 类型轴 pill 行(renderKindPills)据它分组。
 type TopicOpt = { id: string; title: string; color: string | null; kind: string | null };
 
-// 删除确认偏好 (a UI-only preference, kept in localStorage — not product data, so
-// it never participates in any DB invariant). Missing/unreadable → the safe default
-// is "show the confirm". Writing is fail-soft: if it can't persist we don't pretend
-// it did, and the confirm simply keeps appearing next time (the honest fallback).
-const ARCHIVE_CONFIRM_KEY = "ysNotebook.taskArchiveConfirmDismissed";
-function archiveConfirmDismissed(): boolean {
-  try {
-    return localStorage.getItem(ARCHIVE_CONFIRM_KEY) === "1";
-  } catch {
-    return false;
-  }
-}
-function rememberArchiveConfirmDismissed(): boolean {
-  try {
-    localStorage.setItem(ARCHIVE_CONFIRM_KEY, "1");
-    return true;
-  } catch {
-    return false;
-  }
-}
+// 删除确认偏好(「删任务前确认」)158 G3 / Q6 起挪到 delete-confirm.ts —— 设置 → 通用里那枚开关读写同一个键。
 
 // Three views in one column: the kanban, the 回收站 (soft-deleted tasks), and the
 // 归档 (成就归档 — sealed done tasks, viewable, not deletable).
@@ -283,7 +281,7 @@ function partialSaveMsg(imgFailed: number, why: string, tagFailed: number): stri
   return parts.join(";");
 }
 
-export function mount(root: HTMLElement, _ctx: ViewCtx): View {
+export function mount(root: HTMLElement, ctx: ViewCtx): View {
   // 本 mount 归属的空间:切空间时 notebook 先翻 current 再 unmount,unmount 时现取会
   // 把 A 空间的草稿标成 B 的——必须在这里捕获(codex P1 审 H1)。
   const mountSpace = currentSpaceId();
@@ -292,6 +290,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
   root.replaceChildren(view);
 
   const board = view.querySelector("#board") as HTMLElement;
+  const boardTitle = view.querySelector("header h1") as HTMLElement;
   const copySlot = view.querySelector("#copy-slot") as HTMLElement;
   const filterRow = view.querySelector("#filter-row") as HTMLElement;
   const filterBar = view.querySelector("#topic-filter") as HTMLElement;
@@ -411,6 +410,8 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
   // visible reorder back into the full column server-side) instead of the unfiltered
   // strong-contract reorder_task. Set per load().
   let filtered = false;
+  // 「已完成」列此刻的**全部**卡(不随筛选收窄)—— 全部归档的问句计数与撤销名单(158 G2 / A6)。每次 load 重写。
+  let doneIds: string[] = [];
 
   // Serialize drag mutations: ignore a new drag/drop while one is still in flight
   // (a rapid second drop could otherwise build its order from a pre-refresh DOM and
@@ -449,27 +450,138 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
   // 716:删除 / 归档 / 移列 / 数字键换色配发「回执 + 撤销」(§3.1 操作型;这几枚单键悬停即
   // 生效,此前卡片无声离场)。撤销 = 反向命令走同一条 call(失败横幅报错 + 重载);mount 死了
   // (切了视图 / 空间)按下作废 —— invoke 注入的是当前空间。
-  function undoable(ok: boolean, text: string, undo: () => void): void {
+  // `extra` = 撤销旁边的第二枚钮(Q1 的「去看看」/ 撤回为随记的「去看看」)。
+  function undoable(ok: boolean, text: string, undo: () => void, extra?: { label: string; run: () => void }): void {
     if (!ok || unmounted) return;
-    toastUndo(text, t("common.undo"), () => {
-      if (!unmounted) undo();
-    });
+    toastUndo(
+      text,
+      t("common.undo"),
+      () => {
+        if (!unmounted) undo();
+      },
+      extra && {
+        label: extra.label,
+        run: () => {
+          if (!unmounted) extra.run();
+        },
+      },
+    );
   }
 
-  const archive = async (id: string): Promise<void> => {
-    undoable(await call("archive_task", { id }), t("board.undoDeleted"), () => void restore(id));
+  // ---- Q1「去看看」(158 G3,WD-16)--------------------------------------------------------
+  // 挪完 / 新建完,卡的落点不变(挪到列尾、新卡排列首),但落点可能在列的可视区外 —— 长列里按 `]`
+  // 挪过去的卡落在第 38 张、列滚到底时新建的卡排在最上面,屏上「什么也没发生」。⇒ 落点在视野外时
+  // 回执多挂一枚「去看看」:点了把卡滚进视野中央、闪一下。在视野里就不挂(看得见的不必指路)。
+  /** 这张卡此刻在不在它那一列(与整排列)的可视区里。找不到(被筛掉 / 已离场)= 不算「在视野外」。 */
+  function cardOffscreen(id: string): boolean {
+    const c = board.querySelector<HTMLElement>(`[data-task-id="${id}"]`);
+    const body = c?.closest<HTMLElement>(".col-body");
+    const wrap = board.querySelector<HTMLElement>(".cols");
+    if (!c || !body || !wrap) return false;
+    const r = c.getBoundingClientRect();
+    const b = body.getBoundingClientRect();
+    const w = wrap.getBoundingClientRect();
+    return r.bottom <= b.top + 4 || r.top >= b.bottom - 4 || r.right <= w.left + 4 || r.left >= w.right - 4;
+  }
+  /** 把卡滚进视野中央并闪一下(复用新建那记朱砂涟漪 .just-born)。 */
+  function flashCard(id: string): void {
+    const c = board.querySelector<HTMLElement>(`[data-task-id="${id}"]`);
+    if (!c) return;
+    c.scrollIntoView({ block: "center", inline: "nearest" });
+    c.classList.remove("just-born");
+    void c.offsetWidth; // 摘了再挂:让同一张卡上的动画重新起跑
+    c.classList.add("just-born");
+    const onEnd = (e: AnimationEvent): void => {
+      if (e.animationName !== "born-pulse") return;
+      c.classList.remove("just-born");
+      c.removeEventListener("animationend", onEnd);
+    };
+    c.addEventListener("animationend", onEnd);
+  }
+  /** 落点在视野外才给的「去看看」钮;在视野里给 undefined。 */
+  function goSeeIfHidden(id: string): { label: string; run: () => void } | undefined {
+    return cardOffscreen(id) ? { label: t("inbox.goSee"), run: () => flashCard(id) } : undefined;
+  }
+
+  // `noAskNote`:这一下是勾着「不再提示」删的 ⇒ 回执说清以后不问了、在哪改回(158 G3 / Q6,WD-18)。
+  const archive = async (id: string, noAskNote = false): Promise<void> => {
+    undoable(await call("archive_task", { id }), noAskNote ? t("board.undoDeletedNoAsk") : t("board.undoDeleted"), () => void restore(id));
   };
-  const revert = (id: string) => call("revert_task_to_inbox", { id });
+  // 158 G2 / A7(WD-06 / 36):撤回为随记此前一声不吭。回执带「去看看」(随记页定位那条)。
+  // 158 G3 / A7 对齐手机(74fe6f65):再配「撤销」= 转回待办,并把撤回时清掉的截止 / 优先级原样设回 ——
+  // 取值冻结在点「撤回」那一刻;设不回就不是完整的撤销(§3.1「撤销 ≠ 完整恢复不配发」)。
+  const revert = async (item: TaskItem): Promise<void> => {
+    const { id, title, due_on: due, priority: prio } = item;
+    if (!(await call("revert_task_to_inbox", { id })) || unmounted) return;
+    undoable(
+      true,
+      t("board.reverted"),
+      () => {
+        void (async () => {
+          clearOpError();
+          try {
+            await invoke("promote_note_to_task", { id, title });
+            if (due !== null) await invoke("set_task_due", { id, dueOn: due });
+            if (prio !== null) await invoke("set_task_priority", { id, priority: prio });
+          } catch (e) {
+            showOpError(errText(e)); // 多半是别处已动过它(删了 / 又改了):照实报,不猜
+          }
+          void load();
+        })();
+      },
+      {
+        label: t("inbox.goSee"),
+        run: () => {
+          focusInboxItem(id, "ideas");
+          ctx.navigate("inbox");
+        },
+      },
+    );
+  };
   const restore = (id: string) => call("restore_task", { id });
   const purgeOne = (id: string) => call("purge_task", { id });
   const purgeAll = () => call("purge_archived_tasks", {});
   // 成就归档(sealed 轴,与回收站分开):归档=干完的活入册,可查、不可删;取消归档回
   // 「已完成」列尾。删除归档条目没有直接入口——先取消归档回看板,再走正常两段式。
   const sealOne = async (id: string): Promise<void> => {
-    undoable(await call("seal_task", { id }), t("board.undoSealed"), () => void unseal(id));
+    // 撤销走裸 call:撤销本身不再配一条「已取消归档」回执(否则撤完又冒一条带撤销的,来回套娃)。
+    undoable(await call("seal_task", { id }), t("board.undoSealed"), () => void call("unseal_task", { id }));
   };
-  const sealAllDone = () => call("seal_done_tasks", {});
-  const unseal = (id: string) => call("unseal_task", { id });
+  // 158 G2 / A6(WD-07 / 08):全部归档与取消归档此前都不说话。全部归档的撤销 = 把这一批逐条取消
+  // 归档(`ids` = 点下那刻看板上「已完成」列**全部**的卡,含被筛掉的 —— seal_done_tasks 归的就是全部)。
+  const sealAllDone = async (ids: string[]): Promise<void> => {
+    undoable(await call("seal_done_tasks", {}), t("board.undoSealedAll", { n: ids.length }), () => {
+      void (async () => {
+        for (const id of ids) {
+          try {
+            await invoke("unseal_task", { id });
+          } catch (e) {
+            showOpError(errText(e)); // 逐条撤:撤不回的那条照实报(多半是别处已动过它),其余照撤
+          }
+        }
+        void load();
+      })();
+    });
+  };
+  const unseal = async (id: string): Promise<void> => {
+    const done = cols.find((c) => c.id === DONE_COLUMN);
+    if (!done) throw new Error("看板缺「已完成」列"); // 完成列不可删(deletable=false),缺了是真 bug
+    // 158 G3 / Q3:回执再带「去看看」—— 取消归档发生在归档页,卡回了看板「已完成」列,人还在归档页。
+    // 点了 = 切回看板并定位那张卡(复用跨视图跳转那条 focusId 通道:清筛选、滚到中央、常亮)。
+    undoable(
+      await call("unseal_task", { id }),
+      t("board.undoUnsealed", { col: columnName(done) }),
+      () => void call("seal_task", { id }),
+      {
+        label: t("inbox.goSee"),
+        run: () => {
+          focusId = id;
+          boardView = "board";
+          void load();
+        },
+      },
+    );
+  };
 
   function clearDropHovers(): void {
     board.querySelectorAll(".drop-hover").forEach((e) => e.classList.remove("drop-hover"));
@@ -752,7 +864,8 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       const title = submitted.trim();
       if (!title) {
         // 只粘了图没写标题:标题是任务的必填项(后端拒空),别把这次回车静默吞掉。
-        if (composeCtl.imgs.count() > 0) composeErr.textContent = t("board.titleBeforeImages");
+        // 158 G2 / A16(WD-30):空着提交也说一声,别静默吞掉。
+        composeErr.textContent = composeCtl.imgs.count() > 0 ? t("board.titleBeforeImages") : t("board.titleEmpty");
         return null;
       }
       // 筛着标签建卡 → 被筛的那几枚**全挂上**(用户 2026-08-31 拍板「相关的标签都打上才
@@ -827,7 +940,11 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       }
       composeErr.textContent = partialSaveMsg(failed, why, tagFailed);
       pulseId = id; // 下一次渲染给这张新卡一记朱砂脉冲
-      load(); // the new 'todo' appears at the front of the 待办 column
+      // the new 'todo' appears at the front of the 待办 column. 158 G3 / Q1(WD-16b):列滚到底时建的卡
+      // 排在列首 = 视野外,列也不回顶(落点不变,不抢用户的滚动位)⇒ 只在这时说一声并给「去看看」。
+      void load().then(() => {
+        if (!unmounted && cardOffscreen(id)) toastGo(t("board.created"), t("inbox.goSee"), () => flashCard(id));
+      });
       composeInput.focus(); // stay open for rapid entry
     },
   });
@@ -874,6 +991,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
   composeClose.addEventListener("click", () => setComposeOpen(false));
   composeInput.addEventListener("input", () => {
     autoGrow(composeInput);
+    if (composeErr.textContent === t("board.titleEmpty")) composeErr.textContent = ""; // 开始写了,那句空提交提示收掉
     composeCtl.persistText(composeInput.value, mountSpace); // 断电恢复:输入即写
   });
   composeInput.addEventListener("keydown", (e) => {
@@ -1035,13 +1153,21 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         },
       }),
     );
+    revealConfirm(acts);
+  }
+
+  /** 确认刚出现:滚进视野、焦点落在执行钮上(158 G2 / A11 + A18,WD-37 / 新撞 2:列可视区底下那张卡的
+   *  红钮要先滚列才点得到;长卡的确认焦点还停在 body / 顶栏钮上)。回车 = 执行,Esc = 取消(armDismiss)。 */
+  function revealConfirm(host: HTMLElement): void {
+    host.scrollIntoView({ block: "nearest" });
+    host.querySelector<HTMLButtonElement>(".act.primary")?.focus({ preventScroll: true });
   }
 
   // 删除 a board card: straight to 回收站 if the user opted out of the confirm, else
   // an inline confirm explaining it's recoverable + a 不再提示 checkbox.
   function requestArchive(acts: HTMLElement, id: string): void {
-    if (archiveConfirmDismissed()) {
-      archive(id);
+    if (!taskDeleteConfirmOn()) {
+      void archive(id);
       return;
     }
     const dontAsk = el("input", { type: "checkbox" });
@@ -1066,13 +1192,14 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         textContent: t("board.delete"),
         // Persist the opt-out before deleting; if the write fails we don't pretend it
         // stuck — the confirm just shows again next time. Either way the delete runs.
+        // 写不进去(本地存储拒写)就不说「以后不问了」—— 下次照旧问,那才是真话。
         onclick: () => {
           disarmConfirm();
-          if (dontAsk.checked) rememberArchiveConfirmDismissed();
-          archive(id);
+          void archive(id, dontAsk.checked && setTaskDeleteConfirm(false));
         },
       }),
     );
+    revealConfirm(acts);
   }
 
   // A card's tags (M:N). Each current tag is a chip with a ✕ to drop it; the ⋯ menu's
@@ -1138,7 +1265,10 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         showOpError(errText(e));
         return;
       }
-      load();
+      await load();
+      // 158 G2 / A17(WD-24):chip 上的 ✕ 一点就摘,配回执 + 撤销(挂回同一枚)。
+      const title = item.topics.find((x) => x.id === topicId)?.title ?? "";
+      undoable(true, t("board.undoUntagged", { tag: title }), () => void call("add_task_topic", { id: item.id, topicId }));
     }
     // 选择器里再点一次已挂的 = 摘掉:同 addTag 的形,就地更新、⛔ 不整板重载(load() 会拆掉
     // 卡片连带选择器),收起时那发 load() 对齐真相。失败同样横幅就地报错、选择器留场。
@@ -1338,6 +1468,13 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         { label: t("board.unseal"), key: SEALED_CARD_KEYS.unseal, run: () => unseal(item.id) },
       ]);
       c.append(handle.menu());
+      // 158 G3 / Q13(WD-33):每张卡写日期(此前只有 ✓ + 标题;分组标题在长列表里早滚出去了)。
+      // 完成日优先;0030 之前完成的老卡没有完成日,写入档那天并照实说是「归档于」。
+      const at = item.done_at ?? item.sealed_at;
+      if (at !== null) {
+        const day = dayLabel(at);
+        c.append(el("div", { className: "done-at", textContent: item.done_at ? t("board.doneAt", { day }) : t("board.sealedAt", { day }) }));
+      }
     } else {
       // 完成时刻(0030):已完成卡显示「完成于 <日>」。done_at 可能为 null(本功能上线前
       // 完成的老卡)——那就不显示。dayLabel 与归档册同口径(今天/昨天/M月D日)。
@@ -1437,15 +1574,11 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       // order (excludes this card — cross-column) is the base; the card appends to the
       // end of the target column. Routes through the same reorder paths as a drop, so a
       // topic filter is honoured (visible-merge server-side).
-      function moveCol(dir: number): void {
-        if (busy) return;
-        // ⚠ 序就是 `cols` 的序(core 已按 position 排好)。已删的列虽然画在看板上,却**不是
-        // 移动目标** —— 与拖放同规(core 会拒),故先滤掉它们再找左右邻居。
-        const live = cols.filter((c) => !c.deleted);
-        const i = live.findIndex((col) => col.id === item.status);
-        const j = i + dir;
-        if (i < 0 || j < 0 || j >= live.length) return;
-        const toStatus = live[j].id;
+      // 158 G3 / Q2:从「左右邻居」推广成「任意一列」—— ⋯「移到 ▸」子菜单列出所有活着的列(本列除外),
+      // `]` `[` 仍是去左右邻居的快速键(调用方算好邻居再交进来)。目标必须是活着的列(已删的列 core 会拒)。
+      function moveTo(target: BoardColumn): void {
+        if (busy || target.deleted || target.id === item.status) return;
+        const toStatus = target.id;
         const fromStatus = item.status;
         // 716 撤销要回到**原位**(不是源列列尾):先记下源列此刻的序(含本卡),撤销时按这份序
         // 整列写回 —— 与拖放同一条 reorder 路,源列在这期间被别人动过就由 core 的陈旧检查拒掉。
@@ -1462,10 +1595,15 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         bumpColCount(toStatus, 1);
         const persist = filtered ? reorderVisible : reorder;
         void persist(item.id, fromStatus, toStatus, base, ordered).then((ok) => {
-          undoable(ok, t("board.undoMoved", { col: columnName(live[j]) }), () => {
-            if (busy) return;
-            void persist(item.id, toStatus, fromStatus, srcOrder.filter((x) => x !== item.id), srcOrder);
-          });
+          undoable(
+            ok,
+            t("board.undoMoved", { col: columnName(target) }),
+            () => {
+              if (busy) return;
+              void persist(item.id, toStatus, fromStatus, srcOrder.filter((x) => x !== item.id), srcOrder);
+            },
+            goSeeIfHidden(item.id), // Q1(WD-16a):挪进长列落列尾 = 多半在视野外
+          );
         });
       }
       // 列内置顶 / 置底:同列重排,故 from === to === item.status;`base` 含自己(同列口径,
@@ -1485,7 +1623,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         const others = base.filter((x) => x !== item.id);
         const ordered = toTop ? [item.id, ...others] : [...others, item.id];
         if (ordered.join(" ") === base.join(" ")) return; // 已在那一头:不落账、不动 DOM
-        // 手势即回执(同 moveCol / drop):按键即挪,真相由随后的 load() 校正。挪完把卡滚
+        // 手势即回执(同 moveTo / drop):按键即挪,真相由随后的 load() 校正。挪完把卡滚
         // 进视野——否则长列里按完键,卡跑到了看不见的另一头,屏上「什么也没发生」。
         if (toTop) colBody.prepend(c);
         else colBody.append(c);
@@ -1528,7 +1666,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
           });
           list.push({ label: t("board.colorNone"), key: "0", hidden: true, run: () => void setColor(null, true) });
         }
-        // 左右邻居按**活着的**列算(同 moveCol:已删的列不是移动目标)。卡自己在一个已删
+        // 左右邻居按**活着的**列算(同 moveTo:已删的列不是移动目标)。卡自己在一个已删
         // 的列里时 `i < 0` ⇒ 两条都不出 —— 那是对的:它只能被拖走或走别的动作。
         const live = cols.filter((col) => !col.deleted);
         const i = live.findIndex((col) => col.id === item.status);
@@ -1540,10 +1678,23 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
           list.push({ label: t("board.moveToTop"), key: BOARD_CARD_KEYS.toTop, run: () => moveEnd(true) });
           list.push({ label: t("board.moveToBottom"), key: BOARD_CARD_KEYS.toBottom, run: () => moveEnd(false) });
         }
+        // 158 G3 / Q2(WD-17):菜单此前只能挪到相邻一列 ⇒ 改成「移到 ▸」子菜单,列出所有活着的列(本列除外)。
+        // `]` `[` 仍是去右 / 左邻居的单键(hidden:不占菜单行,设置「快捷键」页与指南照旧写着)。
+        // 已完成的卡另给一条直达「打回「待办」」(此前打回只写「移到待确认」,要连挪几次)。
         if (i >= 0 && i < live.length - 1)
-          list.push({ label: t("board.moveToCol", { col: columnName(live[i + 1]) }), key: BOARD_CARD_KEYS.nextCol, run: () => moveCol(1) });
+          list.push({ label: t("board.moveToCol", { col: columnName(live[i + 1]) }), key: BOARD_CARD_KEYS.nextCol, hidden: true, run: () => moveTo(live[i + 1]) });
         if (i > 0)
-          list.push({ label: t("board.moveToCol", { col: columnName(live[i - 1]) }), key: BOARD_CARD_KEYS.prevCol, run: () => moveCol(-1) });
+          list.push({ label: t("board.moveToCol", { col: columnName(live[i - 1]) }), key: BOARD_CARD_KEYS.prevCol, hidden: true, run: () => moveTo(live[i - 1]) });
+        const targets = live.filter((col) => col.id !== item.status);
+        if (targets.length > 0)
+          list.push({
+            label: t("board.moveToMenu"),
+            key: "",
+            sub: () => targets.map((col) => ({ label: columnName(col), key: "", run: () => moveTo(col) })),
+          });
+        const landing = live.find((col) => col.id === LANDING_COLUMN);
+        if (item.status === DONE_COLUMN && landing)
+          list.push({ label: t("board.backToCol", { col: columnName(landing) }), key: "", run: () => moveTo(landing) });
         // 归档: only a 已完成 card can enter the 成就册 (viewable, undeletable). Key A
         // (Archive) — the view-level key for the 归档 view is G, deliberately different
         // (card keys and view keys share the document and must not collide).
@@ -1556,8 +1707,14 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
           list.push({
             label: t("board.revertToIdea"),
             key: BOARD_CARD_KEYS.revert,
+            // 有截止 / 优先级时确认句说清会清掉它们(同手机 cardpanel.revertQMeta)。
             run: () =>
-              confirmInline(acts, t("board.revertQ"), t("board.revertYes"), () => revert(item.id)),
+              confirmInline(
+                acts,
+                item.due_on !== null || item.priority !== null ? t("board.revertQMeta") : t("board.revertQ"),
+                t("board.revertYes"),
+                () => void revert(item),
+              ),
           });
         // 删除 → soft-archive into 回收站 (reversible). The FIRST time it shows an inline
         // confirm with a 不再提示 opt-out (persisted), after which it deletes straight away.
@@ -1596,10 +1753,29 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       // canDrag() 算出的值(⛔ 别一律恢复 true:时间序 / 到期筛 / 编辑态下本就不可拖)。标题字
       // 照旧是拖源 —— 看板卡是标题不是正文,「标题划不选」是可拖卡片的老取舍,不在这条里。
       c.addEventListener("mousedown", (e) => {
-        if (!(e.target as HTMLElement).closest(CARD_CONTROLS)) return;
+        if (!(e.target as HTMLElement).closest(CARD_CONTROLS)) {
+          noDragHint(e);
+          return;
+        }
         c.draggable = false;
         document.addEventListener("mouseup", () => (c.draggable = canDrag()), { once: true });
       });
+      // 158 G3 / Q13(WD-28):按时间排序 / 只看到期时卡拖不动,按住一拖只会变成选字 —— 排序钮的 title
+      // 说过,可没人去悬停它。⇒ 按住纸面挪出 6px 就在指针边上说一句,一按至多一次。编辑态不算(那是选字)。
+      function noDragHint(down: MouseEvent): void {
+        if (down.button !== 0 || canDrag() || c.querySelector(".edit-form")) return;
+        const onMove = (e: MouseEvent): void => {
+          if (Math.hypot(e.clientX - down.clientX, e.clientY - down.clientY) < 6) return;
+          stop();
+          flashToast(e.clientX, e.clientY - 12, dueOnly ? t("board.noDragDue") : t("board.noDragSorted"), { ms: 2600 });
+        };
+        const stop = (): void => {
+          document.removeEventListener("mousemove", onMove);
+          document.removeEventListener("mouseup", stop);
+        };
+        document.addEventListener("mousemove", onMove);
+        document.addEventListener("mouseup", stop);
+      }
       c.addEventListener("dragstart", (e) => {
         // 只认卡片自己的 dragstart:拖正文里的缩略图 / 「图N」链接,浏览器起的是它自己那种拖,
         // 事件落在子元素上再冒上来,不是拖卡(同随记卡)。
@@ -1736,7 +1912,16 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       // `style.height` 会把 flex 算出来的高度整个覆盖掉,框当场缩成内容那么高。
       input.addEventListener("input", () => {
         if (!zoomed) autoGrow(input);
+        disarmDiscard();
       });
+      // 158 G1 / A1:Esc 是唯一丢弃的路 ⇒ 改过了先提示、再按一次才丢(同随记 157 P1 那条,
+      // 文案共用 inbox.discardHint)。提示挂在 .edit-form 里,放大态随表单一起进面板。
+      const discardHint = el("p", { className: "discard-hint", hidden: true, textContent: t("inbox.discardHint") });
+      let discardArmed = false;
+      function disarmDiscard(): void {
+        discardArmed = false;
+        discardHint.hidden = true;
+      }
       // Esc 取消 / Enter 提交 监听在文档级,而非输入框上 —— 焦点离开框(点了缩略图 /
       // 卡片空白)时也生效。Shift+Enter 仍在框内换行(shiftKey 让位)。别的输入框(如 compose
       // 新任务)保留自己的键:目标是另一个 input/textarea 时不劫持。load() 会拆掉这些监听。
@@ -1750,6 +1935,13 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
           commit();
         } else if (e.key === "Escape") {
           e.preventDefault();
+          // 158 G1 / A1(照随记 157 P1):改过了(正文或标了删的图)先说一句,再按一次才丢。
+          const dirty = input.value !== savedTitle || strip.pendingDeletes() > 0;
+          if (dirty && !discardArmed) {
+            discardArmed = true;
+            discardHint.hidden = false;
+            return;
+          }
           activeEditFlush = null; // Esc = 明确丢弃:load() 的落盘钩不得把它救回来
           void load();
         }
@@ -1828,7 +2020,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       // ⛔ 这一行必须在正文框**之前**:它要服务的正是「框长过视口」那一态,而那一态里框底
       // 在屏幕外 —— 钮挂在框下面等于「最需要它的时候它不在屏上」(实测 154px 窄列、十行
       // 正文:框高 466、底边 751,窗才 680)。报错行跟着上移是顺带的好处,不必滚到底才看见。
-      const form = el("div", { className: "edit-form" }, [el("div", { className: "edit-bar" }, [err, zoomBtn]), input, tagView, imgEditor]);
+      const form = el("div", { className: "edit-form" }, [el("div", { className: "edit-bar" }, [err, zoomBtn]), input, discardHint, tagView, imgEditor]);
 
       function openZoom(): void {
         if (zoomed) return;
@@ -1843,7 +2035,9 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         // 存在**的壳把它们接回来 —— 壳的裸样式(flex column / height:100% / overflow:hidden)
         // 恰好就是面板内容器要的形,不必再覆盖。
         const scope = el("div", { className: "v-board ze-scope" }, [form]);
-        const panel = el("div", { className: "ze-panel" }, [scope]);
+        // 158 G3 / Q12(WD-15):放大框里没有保存 / 取消钮,怎么存怎么退全靠猜 ⇒ 底下一行小字说清。
+        // ⛔ 不加钮(用户拍的是小字那档):出口仍只有保存 / 不要两条。
+        const panel = el("div", { className: "ze-panel" }, [scope, el("p", { className: "ze-hint", textContent: t("board.zoomHint") })]);
         panel.setAttribute("role", "dialog");
         panel.setAttribute("aria-modal", "true");
         panel.setAttribute("aria-label", t("board.zoomEdit"));
@@ -1866,6 +2060,35 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     c.append(imageStrip(item.id, { editable: false, onMetas }).root);
 
     return c;
+  }
+
+  /** 顶栏「复制看板」(158 G2 / A11,WD-11):窄窗下此前整枚 display:none(指南说有、屏上没有)。
+   *  现在两份标签常驻、由 board.css 那条 container query 二选一:窄了只剩一枚 ⧉ 记号,全名在 title。
+   *  点完两份标签一起闪「已复制」(同 copyButton 的形,它只认一份 textContent,故这里自己接)。 */
+  function copyBoardButton(md: string): HTMLButtonElement {
+    const long = el("span", { className: "lbl", textContent: t("board.copyBoard") });
+    const short = el("span", { className: "lbl-short", textContent: "⧉" });
+    const b = el("button", { className: "hbtn", type: "button", title: t("board.copyBoard") }, [long, short]);
+    b.setAttribute("aria-label", t("board.copyBoard"));
+    let revert: ReturnType<typeof setTimeout> | undefined;
+    b.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      let said: string;
+      try {
+        await copyText(md);
+        said = t("clipboard.copied");
+      } catch {
+        said = t("clipboard.copyFail");
+      }
+      long.textContent = said;
+      short.textContent = said === t("clipboard.copied") ? "✓" : "✕";
+      clearTimeout(revert);
+      revert = setTimeout(() => {
+        long.textContent = t("board.copyBoard");
+        short.textContent = "⧉";
+      }, 1200);
+    });
+    return b;
   }
 
   /** 「展开 / 收起」那枚钮(704):只长在**真被夹住**的卡上。点一下翻 `.clamped` 并记进
@@ -1919,7 +2142,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     board.className = "board-wrap";
     // 复制看板: copies every non-empty column as Markdown. Built from the currently
     // shown tasks, so it respects the active filters (标签 and/or 文本).
-    copySlot.replaceChildren(copyButton(boardMarkdown(cols, items), "hbtn", t("board.copyBoard")));
+    copySlot.replaceChildren(copyBoardButton(boardMarkdown(cols, items)));
     const sections = cols.map((col) => {
       const status = col.id;
       const name = columnName(col);
@@ -1948,7 +2171,9 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
           // ⭐ 只需在进确认时加 —— 取消 / 点别处 / 确认三条退出路径都走 load() 全量
           // 重画,列头连同这枚 class 一起重建,不必手动摘。
           head.classList.add("confirming");
-          confirmInline(slot, t("board.sealAllQ", { n: inCol.length }), t("board.seal"), sealAllDone);
+          // n 按「已完成」列的**全部**卡说(seal_done_tasks 归的是全部,筛选下列头只画出一部分)。
+          const ids = [...doneIds];
+          confirmInline(slot, t("board.sealAllQ", { n: ids.length }), t("board.seal"), () => void sealAllDone(ids));
         });
         sealBtn.title = t("board.sealAll"); // 窄列显短标签时,悬停仍说得出全称
         sealBtn.append(
@@ -2022,6 +2247,14 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         // 一直留在旧位,dragend 摘掉半透明后会「先弹回原位、重载后再跳到目标」。base
         // 已按移动前的 DOM 取好,这里挪的只是元素;真相由随后的 load() 校正(失败同样
         // 由它复原)。ULID 仅字母数字,选择器安全。
+        // 158 G1 / A3(WD-04):跨列拖放与菜单 / `]` `[` 移列同一套回执 + 撤销(此前拖着挪一声不吭,
+        // 拖进「已完成」也是)。撤销回**原位**:先记下源列此刻的序(含本卡),同 moveTo。
+        const srcOrder =
+          d.from === status
+            ? []
+            : [...(board.querySelector(`.col[data-col="${d.from}"] .col-body`)?.querySelectorAll<HTMLElement>(".tcard") ?? [])].map(
+                (x) => x.dataset.taskId!,
+              );
         const dropped = board.querySelector<HTMLElement>(`[data-task-id="${d.id}"]`);
         if (dropped) body.insertBefore(dropped, after);
         // 跨列才改列计数:源列 −1、目标列 +1(同列内重排成员数不变,故按 from≠target 判)。
@@ -2029,8 +2262,19 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
           bumpColCount(d.from, -1);
           bumpColCount(status, 1);
         }
-        if (filtered) reorderVisible(d.id, d.from, status, base, ordered);
-        else reorder(d.id, d.from, status, base, ordered);
+        const persist = filtered ? reorderVisible : reorder;
+        void persist(d.id, d.from, status, base, ordered).then((ok) => {
+          if (d.from === status) return; // 列内重排不是「挪到哪儿去了」,不说话
+          undoable(
+            ok,
+            t("board.undoMoved", { col: name }),
+            () => {
+              if (busy) return;
+              void persist(d.id, status, d.from, srcOrder.filter((x) => x !== d.id), srcOrder);
+            },
+            goSeeIfHidden(d.id), // Q1:拖着自动滚到列另一头松手,落点也可能已滚出视野
+          );
+        });
       });
       return sec;
     });
@@ -2125,7 +2369,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
   // 归档册:干完的活按**完成日**分组成时间轴(0030 决定 A:完成时刻优先,老卡无 done_at
   // 时回落归档日 sealed_at;同灵感 ㊳ 的按天分组,共享 dayKey/dayLabel)。批量归档不再把
   // 一周的活压成归档那天——答得准「什么时候干完」。只读 + 每卡一个「取消归档」;无删除入口。
-  function renderSealed(items: TaskItem[]): void {
+  function renderSealed(items: TaskItem[], doneOnBoard: TaskItem[]): void {
     if (items.length === 0) {
       renderCentered(
         el("div", { className: "big", textContent: t("board.sealedEmpty") }),
@@ -2140,10 +2384,16 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     // 头部一行统计(纯派生、只算不存):本周**完成**几条 + 累计成就。计数口径 = 完成日
     // (回落归档日),与下面按完成日分组同轴,故称「本周完成」而非「本周归档」——上周完成、
     // 本周才入册的不会误算进本周(决定 A 的措辞收口)。
+    // ⭐ 158 G2 / A6(WD-09)查清的:错的是这一行,不是卡 —— 它此前只数**归档册里**的,取消归档一条
+    // 卡回到「已完成」列、仍是本周做完的,数字却减了。「完成」与「归档没归档」是两根轴 ⇒ 看板「已完成」
+    // 列里那些也算进来(done_at 为 null 的老卡只进累计、不进本周)。归档 / 取消归档从此不动这两个数。
     const monday = startOfWeek();
-    const week = items.filter((t) => new Date(groupTs(t)) >= monday).length;
+    const week =
+      items.filter((t) => new Date(groupTs(t)) >= monday).length +
+      doneOnBoard.filter((t) => t.done_at !== null && new Date(t.done_at) >= monday).length;
+    const total = items.length + doneOnBoard.length;
     const bar = el("div", { className: "trash-bar" }, [
-      el("span", { className: "grow", textContent: t("board.sealedStats", { week, total: items.length }) }),
+      el("span", { className: "grow", textContent: t("board.sealedStats", { week, total }) }),
     ]);
     const list = el("div", { className: "trash-list" });
     let lastDay = "";
@@ -2359,6 +2609,13 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
 
       // The toggles always reflect the live counts.
       // 顶栏计数 = 条目 + 已删配图(只剩几张图时钮上不能写 0)。
+      // 158 G3 / Q13(WD-33):页头随视图改名(此前归档页 / 回收站页都还写着「任务看板」,看不出在哪);
+      // 进了归档 / 回收站,那枚开关变成「← 看板」返回钮 —— 它旁边的数字是归档 / 回收站的条数,
+      // 挂在「看板」两个字后面读成「看板上有几张」,这时藏起来(页里那一行自己会说几条)。
+      boardTitle.textContent =
+        boardView === "sealed" ? t("board.sealedTitle") : boardView === "trash" ? t("board.trashTitle") : t("board.title");
+      trashN.hidden = boardView === "trash";
+      sealN.hidden = boardView === "sealed";
       trashN.textContent = String(archived.length + removedImageCount(removed));
       trashToggle.classList.toggle("active", boardView === "trash");
       trashToggle.firstChild!.textContent = boardView === "trash" ? t("board.backToBoard") : t("board.trashLbl");
@@ -2391,7 +2648,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       if (boardView === "sealed") {
         filterRow.hidden = true;
         if (focus !== null && sealed.some((t) => t.id === focus)) locateId = focus;
-        renderSealed(sealed);
+        renderSealed(sealed, active.filter((t) => t.status === DONE_COLUMN));
         if (focus !== null) board.querySelector(".just-located")?.scrollIntoView({ block: "center" });
         return;
       }
@@ -2401,6 +2658,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       // 真出现「卡的 stage 不在任何画出来的列里」= 那一列凭空消失了,那时宁可少画一张卡也
       // 不让列头计数与看板打架 —— 但那是**损坏**,不是常态。
       const visible = active.filter((t) => cols.some((c) => c.id === t.status));
+      doneIds = visible.filter((t) => t.status === DONE_COLUMN).map((t) => t.id);
       // 空看板不摆「管理列」「顺序」(用户面 85 ②,渐进式披露):visible 为空时下面画的是
       // 居中空态、一根列都没有(renderEmpty),这两枚钮没有对象;有卡时逐位不变。⚠ 「新建任务」
       // 不在此列 —— 空态那句提示指的就是它。⛔ 按数据藏,不按视图藏,不造开关(408-411)。

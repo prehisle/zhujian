@@ -147,7 +147,8 @@
     await until(() => cardOf(id)?.classList.contains("done"), 3000);
     const seal = await openAct(id, "seal");
     if (!ok("操作面有入册钮", !!seal)) return JSON.stringify(out);
-    if (!ok("归档二拍成立", await twoTap(seal))) return JSON.stringify(out);
+    click(seal); // 158 G3 / Q3 起单张归档一点即归(+ 6 s 撤销),不再二拍
+    ok("归档一点即归、不弹确认条", cb.hidden);
     await until(() => !cardOf(id), 3000);
     ok("归档后 sealed 钮显形", (await until(() => !btnOf("sealed").hidden, 3000)) !== null);
     // 开归档册,取消归档探针(把归档册清回初态;存量归档不动)

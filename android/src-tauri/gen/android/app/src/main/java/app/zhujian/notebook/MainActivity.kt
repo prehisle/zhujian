@@ -19,6 +19,8 @@ class MainActivity : TauriActivity() {
     // 界面字号(251):基准取 WebView 创建时的初始 textZoom——它已含系统「字体大小」
     // 的放大,我们的百分比乘在上面、不覆盖用户的系统级选择。
     webView.addJavascriptInterface(TextSize(webView.settings.textZoom), "__zhujianTextSize")
+    // 长按拖卡拿起那一下的短震(158 G3 / Q7,carddrag.ts)。
+    webView.addJavascriptInterface(Haptic(), "__zhujianHaptic")
     applyWindowInsets()
   }
 
@@ -93,6 +95,15 @@ class MainActivity : TauriActivity() {
     fun set(percent: Int) {
       if (percent < 50 || percent > 200) return
       runOnUiThread { webView?.settings?.textZoom = base * percent / 100 }
+    }
+  }
+
+  // 长按拖卡的触感(158 G3 / Q7)。`performHapticFeedback` 不要 VIBRATE 权限、跟随系统「触感反馈」开关
+  // (用户关了就不震 —— 那是他的选择,不是失灵)。桥面仅此一个无参入口。
+  inner class Haptic {
+    @android.webkit.JavascriptInterface
+    fun longPress() {
+      runOnUiThread { (webView ?: findWebView(window.decorView))?.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS) }
     }
   }
 

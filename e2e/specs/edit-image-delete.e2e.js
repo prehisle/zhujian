@@ -158,6 +158,7 @@ describe("编辑态删图 · 看板任务", () => {
     await $(".tcard .edit-input").waitForDisplayed({ timeout: 5000 });
     await (await delBtn(await $(".edit-form"), 1, 2)).click();
     expect(await seqs(id)).toEqual([1, 2]);
+    await browser.keys(["Escape"]); // 158 G1 / A1:标了删的图也算改过 ⇒ 第一下只提醒
     await browser.keys(["Escape"]);
     await $(".tcard .edit-input").waitForExist({ timeout: 5000, reverse: true });
     expect(await seqs(id)).toEqual([1, 2]);

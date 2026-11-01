@@ -31,7 +31,7 @@
 //    ⭐ 加新的端专属 `invoke` 时,把它加到这个文件里,**别直接写在业务模块里**。
 import { invoke } from "@tauri-apps/api/core";
 import { cancel, checkPermissions, Format, requestPermissions, scan } from "@tauri-apps/plugin-barcode-scanner";
-import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
+import { isPermissionGranted, onAction, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
 
 // ---- 两条原生窄桥「这一端有没有」(471,用户面 33)-----------------------------------
 //
@@ -106,7 +106,24 @@ export function notifyPermissionGranted(): Promise<boolean> {
  * ⛔ 别看见「配置里更该住这个」就搬回去。
  */
 export function showNotification(title: string, body: string): void {
+  wireNotificationTap();
   sendNotification({ title, body, icon: "ic_stat_zhujian", iconColor: "#B3402B" });
+}
+
+/**
+ * 点通知(158 G3 / Q10):插件把那一下点击经 `onNewIntent` 报成 `actionPerformed` ⇒ 这里转成一枚
+ * window 事件 `zhujian-notif-tap`,main.ts 接住了去看板筛到期(这一端只发截止提醒这一种通知)。
+ * ⭐ **走 DOM 事件、不另开导出**:鸿蒙那份 `platform.ts` 没有通知这条路,也就永远不发这枚事件 ——
+ *   多一个导出就得两份一起加,而那一端加的只会是一个空函数。
+ * ⚠ 懒挂在第一次发通知时(不在模块求值期):启动早段的首个 invoke 可能被丢(main.ts 启动闸那段),
+ *   而通知只在 app 开着时发 ⇒ 发之前挂上就接得住它的点击。冷启动(进程被杀后点旧通知)接不到,
+ *   那时 app 按平常那样开在原页。
+ */
+let tapWired = false;
+function wireNotificationTap(): void {
+  if (tapWired) return;
+  tapWired = true;
+  void onAction(() => window.dispatchEvent(new Event("zhujian-notif-tap")));
 }
 
 /** 系统分享(ACTION_SEND)攒下的文本,取一条走一条;没有了返回 null。 */

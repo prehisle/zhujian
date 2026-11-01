@@ -27,6 +27,7 @@
 
 import {
   continueChecklistOnNewline,
+  parseChecklistLine,
   indentChecklistLines,
   minimalEditRange,
   toggleChecklistMarker,
@@ -41,6 +42,23 @@ export function applyEdit(ta: HTMLTextAreaElement, edit: ChecklistEdit): void {
   if (text === "") document.execCommand("delete");
   else document.execCommand("insertText", false, text);
   ta.setSelectionRange(edit.selStart, edit.selEnd);
+}
+
+/** 清单**中间**的空项上回车退出(158 G2 / A17,W2 走查 WD-25):纯逻辑那半把空项抹成一行空行、光标落在
+ *  空行上 —— 在清单末尾那正是「接着写正文」的位置,夹在两项之间却只是清单里多出来的一道缝。⇒ 只在
+ *  **下一行仍是待办项**时改成连这一行带它的换行一起拿掉、光标回到上一行末尾(撤掉刚续出来的那一项)。
+ *  ⚠ 只改桌面接线这半;`shared/checklist.ts` 的纯逻辑与手机那半没动(手机没有这条走查读数)。 */
+const NL = "\n";
+function collapseMidListExit(value: string, caret: number, edit: ChecklistEdit): ChecklistEdit {
+  const lines = value.split(NL);
+  const before = value.slice(0, caret).split(NL);
+  const at = before.length - 1; // 光标所在行号
+  const ls = caret - before[at].length; // 那一行行首
+  const isExit = edit.value === [...lines.slice(0, at), "", ...lines.slice(at + 1)].join(NL); // 退出 = 这一行被抹空
+  if (!isExit || at === 0 || at === lines.length - 1) return edit;
+  if (parseChecklistLine(lines[at - 1]) === null || parseChecklistLine(lines[at + 1]) === null) return edit;
+  const out = [...lines.slice(0, at), ...lines.slice(at + 1)].join(NL);
+  return { value: out, selStart: ls - 1, selEnd: ls - 1 };
 }
 
 /** 这一记裸回车会不会被拿去续待办项(157 G4 / P6)—— 给挂在 `wireChecklistInput` **之前**的提交监听
@@ -70,7 +88,7 @@ export function wireChecklistInput(ta: HTMLTextAreaElement): void {
       const edit = continueChecklistOnNewline(ta.value, ta.selectionStart, ta.selectionEnd);
       if (edit === null) return; // 不是待办项 / 选中了一段 / 光标还在标记里:放行默认换行
       e.preventDefault();
-      applyEdit(ta, edit);
+      applyEdit(ta, collapseMidListExit(ta.value, ta.selectionStart, edit));
       return;
     }
     if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && (e.key === "l" || e.key === "L")) {

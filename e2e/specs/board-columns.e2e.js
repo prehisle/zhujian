@@ -188,11 +188,16 @@ describe("看板列管理 · 新建 / 改名 / 排序 / 删", () => {
     const del = await browser.execute((cid) => {
       const row = document.querySelector(`.bcm-col[data-col="${cid}"]`);
       const b = [...row.querySelectorAll(".bcm-btn")].find((x) => x.textContent.trim() === "删除");
-      return { exists: !!b, disabled: b ? b.disabled : null, title: b ? b.title : null };
+      // 158 G2 / A12:不再是 disabled(那样点了连原因都说不出),是 aria-disabled + 点了在面板里写原因。
+      const blocked = b ? b.getAttribute("aria-disabled") === "true" && b.classList.contains("blocked") : null;
+      b?.click();
+      return { exists: !!b, blocked, title: b ? b.title : null, note: row.querySelector(".bcm-col-note")?.textContent ?? null, confirming: !!row.querySelector(".bcm-col-q") };
     }, target.id);
     expect(del.exists).toBe(true);
-    expect(del.disabled).toBe(true);
+    expect(del.blocked).toBe(true);
     expect(del.title).toContain("1");
+    expect(del.note).toContain("1");
+    expect(del.confirming).toBe(false); // 点了不进确认
 
     // 后端那道才是真的:直接调命令也必须被拒(⛔ UI 灰按钮不是闸)。
     const refused = await tryInvoke("delete_board_column", { id: target.id });
@@ -204,6 +209,7 @@ describe("看板列管理 · 新建 / 改名 / 排序 / 删", () => {
     await goNotebook("board");
     await openManager();
     await rowButton(target.id, "删除");
+    await browser.pause(350); // 158:执行钮落在原「删除」位上,出现后 300ms 内不接(§3.2 防连击)
     await rowButton(target.id, "删除"); // 行内两段式确认
     await browser.waitUntil(async () => (await colById(target.id)).deleted === true, { timeout: 8000 });
 

@@ -82,7 +82,11 @@
 
 /* due states: overdue & today wear 朱砂; future is calm ink */
 .task-meta .chip.due.set::before { content: "📅 "; }
+/* 158 G2 / A17:章点得开截止选择器(卡本身是 grab 手型,章上要说「这是个钮」)。 */
+.task-meta .chip.due.clickable { cursor: pointer; }
 .task-meta .chip.due.future { color: var(--ink-soft); border-color: var(--line-strong); }
+/* 158 G3 / Q4:已完成卡的截止只留一枚灰章(不吓人,只记事实)。 */
+.task-meta .chip.due.done { color: var(--ink-soft); border-color: var(--line); font-weight: 400; }
 .task-meta .chip.due.today {
   color: var(--seal-ink-on-seal-tint);
   border-color: var(--seal-line);

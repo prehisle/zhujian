@@ -43,3 +43,31 @@ export function onDragTarget(target: HTMLElement, handler: (e: DragEvent) => voi
   target.addEventListener("dragenter", handler);
   target.addEventListener("dragover", handler);
 }
+
+// ---- 模态面板的 Tab 圈闭(ui-guidelines §3.5;158 起「管理列」面板第一个用)----
+// ⭐ 共享件:§3.5 那条「修就一起修,别只给新面板单独发明一套」—— 下一个要圈闭的面板(留言浮层 /
+// 放大编辑)直接挂这一只:`panel.addEventListener("keydown", (e) => trapTab(panel, e))`。
+
+/** 面板里此刻能拿焦点的控件(按 DOM 序;禁用的、没渲染的不算)。 */
+export function focusables(panel: HTMLElement): HTMLElement[] {
+  return [...panel.querySelectorAll<HTMLElement>("button, input, textarea, select, [tabindex]:not([tabindex='-1'])")].filter(
+    (n) => !(n as HTMLButtonElement).disabled && n.offsetParent !== null,
+  );
+}
+
+/** Tab / Shift+Tab 到头就绕回另一头,焦点不出面板。 */
+export function trapTab(panel: HTMLElement, e: KeyboardEvent): void {
+  if (e.key !== "Tab" || e.ctrlKey || e.altKey || e.metaKey) return;
+  const list = focusables(panel);
+  if (list.length === 0) return;
+  const first = list[0];
+  const last = list[list.length - 1];
+  const at = document.activeElement;
+  if (e.shiftKey && (at === first || !panel.contains(at))) {
+    e.preventDefault();
+    last.focus();
+  } else if (!e.shiftKey && (at === last || !panel.contains(at))) {
+    e.preventDefault();
+    first.focus();
+  }
+}

@@ -1282,7 +1282,7 @@ pub async fn seal_done_tasks(space_id: String, coord: State<'_, Coord>) -> Resul
     coord.write(&space_id, |conn, clock| task::seal_all(conn, clock)).await
 }
 
-/// 取消归档:回看板「已完成」列末尾(想删须先取消归档再走两段式)。
+/// 取消归档:回看板「已完成」列原位(想删须先取消归档再走两段式)。
 #[tauri::command]
 pub async fn unseal_task(space_id: String, id: String, coord: State<'_, Coord>) -> Result<(), String> {
     coord.write(&space_id, |conn, clock| task::unseal(conn, clock, &id)).await

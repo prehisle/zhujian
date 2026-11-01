@@ -10,7 +10,8 @@ export const board = defineMessages({
   "board.trashLbl": { zh: "回收站 ", en: "Trash " },
   "board.backToBoard": { zh: "← 看板 ", en: "← Board " },
   "board.composePlaceholder": { zh: "新任务标题…", en: "New task title…" },
-  "board.composeAdd": { zh: "添加", en: "Add" },
+  // 158 G2 / A16:提交型两端都叫「记下」(ui-guidelines §4.2;随记那枚早就是)。
+  "board.composeAdd": { zh: "记下", en: "Note it" },
   "board.composeDone": { zh: "完成", en: "Done" },
   "board.filterPlaceholder": { zh: "过滤任务…", en: "Filter tasks…" },
   "board.gotIt": { zh: "知道了", en: "Got it" },
@@ -22,7 +23,8 @@ export const board = defineMessages({
   "board.manageCols": { zh: "管理列", en: "Columns" },
   "board.manageColsTitle": { zh: "管理看板的列(新建 / 改名 / 排序 / 删除)", en: "Manage board columns (new / rename / reorder / delete)" },
   "cols.title": { zh: "管理列", en: "Board columns" },
-  "cols.hint": { zh: "任务列可以新建、改名、拖动排序;「待办」与「已完成」挂着产品语义,只能改名不能删。列会同步到你的其它设备。", en: "Task columns can be added, renamed and dragged into order. “To do” and “Done” carry product meaning; they can be renamed but not deleted. Columns sync to your other devices." },
+  // 158 G3 / Q13(WD-32):「挂着产品语义」看不懂 ⇒ 说它俩各管什么。
+  "cols.hint": { zh: "任务列可以新建、改名、拖动排序。「待办」是新任务落下的那一列,「已完成」是做完的任务去的那一列(进了它才能归档),所以这两列只能改名、不能删。列会同步到你的其它设备。", en: "Task columns can be added, renamed and dragged into order. New tasks land in “To do”, and finished tasks go to “Done” (only from there can they be archived), so these two can be renamed but not deleted. Columns sync to your other devices." },
   "cols.count": { zh: "{n} 条", en: "{n} {n|card|cards}" },
   "cols.deleted": { zh: "已删除", en: "Deleted" },
   "cols.rename": { zh: "重命名", en: "Rename" },
@@ -32,6 +34,7 @@ export const board = defineMessages({
   "cols.deleteBlocked": { zh: "先把这一列的 {n} 个条目移走", en: "Move this column’s {n} {n|card|cards} out first" },
   "cols.save": { zh: "保存", en: "Save" },
   "cols.cancel": { zh: "取消", en: "Cancel" },
+  "cols.close": { zh: "关闭", en: "Close" },
   "cols.add": { zh: "新建", en: "Add" },
   "cols.newPlaceholder": { zh: "新列的名字…", en: "New column name…" },
   "cols.emptyName": { zh: "列名不能为空", en: "A column needs a name" },
@@ -43,6 +46,7 @@ export const board = defineMessages({
   "cols.shutUnknown": { zh: "现在不能改列", en: "Columns can’t be changed right now" },
   "board.partialImg": { zh: "任务已建,但 {n} 张图未能附加", en: "Task created, but {n} {n|image|images} could not be attached" },
   "board.partialTag": { zh: "任务已建,但 {n} 枚标签未能挂上", en: "Task created, but {n} {n|tag|tags} could not be attached" },
+  "board.titleEmpty": { zh: "先写个任务标题", en: "Write a task title first" },
   "board.titleBeforeImages": { zh: "先写个任务标题,配图会随任务一起保存", en: "Write a task title first, the images will be saved with it" },
   "board.restore": { zh: "还原", en: "Restore" },
   "board.deleteForever": { zh: "彻底删除", en: "Delete forever" },
@@ -55,9 +59,16 @@ export const board = defineMessages({
   "board.dontAskAgain": { zh: "不再提示", en: "Don't ask again" },
   "board.delete": { zh: "删除", en: "Delete" },
   "board.undoDeleted": { zh: "已移入回收站", en: "Moved to Trash" },
+  // 158 G3 / Q6(WD-18):勾着「不再提示」删的那一下,说清以后不问了、在哪改回。
+  "board.undoDeletedNoAsk": { zh: "已移入回收站。以后删任务不再问,要改回:设置 → 通用 →「删任务前确认」", en: "Moved to Trash. You won’t be asked again; to change that: Settings → General → “Confirm before deleting a task”" },
+  // 158 G3 / Q1(WD-16):新建的卡落在视野外(列滚到底时建的,排在列首)才说这一句,配「去看看」。
+  "board.created": { zh: "已记下", en: "Added" },
   "board.undoMoved": { zh: "已移到「{col}」", en: "Moved to “{col}”" },
   "board.undoSealed": { zh: "已归档", en: "Archived" },
+  "board.undoSealedAll": { zh: "已归档 {n} 条", en: "Archived {n}" },
+  "board.undoUnsealed": { zh: "已取消归档,回到「{col}」", en: "Unarchived, back in “{col}”" },
   "board.undoColored": { zh: "已换色", en: "Color changed" },
+  "board.undoUntagged": { zh: "已去掉标签「{tag}」", en: "Removed tag “{tag}”" },
   "board.removeTag": { zh: "去掉这个标签", en: "Remove this tag" },
   "board.doneAt": { zh: "完成于 {day}", en: "Done · {day}" },
   "board.copied": { zh: "已复制", en: "Copied" },
@@ -66,6 +77,8 @@ export const board = defineMessages({
   "board.partialHandled": { zh: "我已处理,解除", en: "Handled, dismiss" },
   "board.edit": { zh: "编辑", en: "Edit" },
   "board.zoomEdit": { zh: "放大编辑", en: "Expand editor" },
+  // 158 G3 / Q12(WD-15):放大框底下那行小字。
+  "board.zoomHint": { zh: "Ctrl+Enter 保存 · Esc 不要了", en: "Ctrl+Enter to save · Esc to discard" },
   "board.unfold": { zh: "展开", en: "Expand" },
   "board.fold": { zh: "收起", en: "Collapse" },
   "board.copy": { zh: "复制", en: "Copy" },
@@ -86,10 +99,13 @@ export const board = defineMessages({
   "cardColor.mallow": { zh: "木槿", en: "Mallow" },
   "board.comments": { zh: "留言", en: "Comments" },
   "board.moveToCol": { zh: "移到「{col}」", en: "Move to “{col}”" },
+  // 158 G3 / Q2(WD-17):⋯ 菜单里那一行(右边一枚 ▸,点开列出所有列);已完成卡上的直达「打回」。
+  "board.moveToMenu": { zh: "移到", en: "Move to" },
+  "board.backToCol": { zh: "打回「{col}」", en: "Back to “{col}”" },
   "board.dueSoonToday": { zh: "今天到期 {now}", en: "{now} due today" },
   "board.dueSoonLate": { zh: "逾期 {late} · 今天 {now}", en: "{late} overdue · {now} today" },
-  // 「快到期」那一段(用户面 60-A)。⚠ 上面两句还喂着每日提醒通知,这两句**不**喂 ——
-  // 预警只进屏上那枚钮,理由见 tasktime.dueSummaryFullLabel 的注释。{days} 由
+  // 「快到期」那一段(用户面 60-A)。158 G3 / Q10 起每日提醒通知也带这一段(与钮逐字一致;
+  // 响不响仍只看逾期 + 今天,见 tasktime.dueSummaryFullLabel)。{days} 由
   // DUE_SOON_DAYS 注入,⛔ 别在这儿写死天数。
   "board.dueSoonNext": { zh: "{days} 天内 {n}", en: "{n} within {days}d" },
   "board.dueSoonNextOnly": { zh: "{days} 天内到期 {n}", en: "{n} due within {days}d" },
@@ -101,6 +117,9 @@ export const board = defineMessages({
   "board.sortOldest": { zh: "顺序:最早在前", en: "Order: oldest first" },
   "board.sortTitle": { zh: "点击切换列内顺序(手动 / 最新在前 / 最早在前)", en: "Click to change order within columns (manual / newest first / oldest first)" },
   "board.sortTitleLocked": { zh: "按创建时间排序中,拖不了。切回「手动」就能拖。", en: "Sorted by creation time, so dragging is off. Switch back to Manual to drag." },
+  // 158 G3 / Q13(WD-28):排序 / 只看到期时按住卡一拖,在指针边上说一句。
+  "board.noDragSorted": { zh: "按创建时间排序时不能拖 —— 把「顺序」切回「手动」就能拖", en: "Can’t drag while sorted by creation time — switch Order back to Manual" },
+  "board.noDragDue": { zh: "只看到期时不能拖 —— 再点一次顶栏的到期钮就能拖", en: "Can’t drag while showing due tasks only — click the due button in the header again" },
   "board.sortTitleLockedDue": { zh: "只看到期时按紧急度排,拖不了。再点一次「到期」就能拖。", en: "Showing due tasks only, sorted by urgency, so dragging is off. Click Due again to drag." },
   "board.moveToTop": { zh: "移到列首", en: "Move to top" },
   "board.moveToBottom": { zh: "移到列尾", en: "Move to bottom" },
@@ -108,6 +127,8 @@ export const board = defineMessages({
   "board.revertToIdea": { zh: "撤回为随记", en: "Send back to Notes" },
   "board.revertQ": { zh: "撤回为随记?", en: "Send back to Notes?" },
   "board.revertYes": { zh: "撤回", en: "Send back" },
+  "board.revertQMeta": { zh: "撤回为随记?将清除截止和优先级", en: "Send back to Notes? Due date and priority will be cleared" },
+  "board.reverted": { zh: "已撤回为随记", en: "Sent back to Notes" },
   "board.move": { zh: "移动", en: "Move" },
   "board.renameFailed": { zh: "「{title}」的标题改动未能保存:{err}(草稿:{draft})", en: "Could not save the title change for “{title}”: {err} (draft: {draft})" },
   "board.copyBoard": { zh: "复制看板", en: "Copy board" },
@@ -129,6 +150,9 @@ export const board = defineMessages({
   "board.purgeAllYes": { zh: "全部删除", en: "Delete all" },
   "board.sealedEmpty": { zh: "还没有归档的成就", en: "No archived achievements yet" },
   "board.sealedEmptyHint": { zh: "在「已完成」列点「全部归档」,或把完成的任务拖到看板底部。归档的任务可查、不可删。", en: "Click “Archive all” in the Done column, or drag a finished task to the bottom of the board. Archived tasks can be viewed but not deleted." },
+  // 158 G3 / Q13(WD-33):归档页的页头与卡上日期(老卡没有完成日时写入档那天)。
+  "board.sealedTitle": { zh: "归档", en: "Archive" },
+  "board.sealedAt": { zh: "归档于 {day}", en: "Archived · {day}" },
   "board.sealedStats": { zh: "本周完成 {week} · 累计 {total}", en: "Done this week {week} · total {total}" },
   "board.empty": { zh: "还没有任务", en: "No tasks yet" },
   // 后半句点名的是真长相:随记卡片右上角那枚 ⋯,菜单里那一项的原话就是「待办」
@@ -158,8 +182,11 @@ export const board = defineMessages({
   "tasktime.tomorrow": { zh: "明天", en: "Tomorrow" },
   "tasktime.monthDay": { zh: "{m}月{d}日", en: "{m}/{d}" },
   "tasktime.yearMonthDay": { zh: "{y}年{m}月{d}日", en: "{m}/{d}/{y}" },
+  // 158 G3 / Q4:已完成卡上那枚灰章(不说逾期,只写那天)。
+  "tasktime.dueOn": { zh: "截止 {day}", en: "Due {day}" },
   "tasktime.overdueDays": { zh: "逾期 {n} 天", en: "{n} {n|day|days} overdue" },
   "tasktime.inDays": { zh: "{n} 天后", en: "In {n} {n|day|days}" },
   "tasktime.priorityChip": { zh: "优先级·{p}", en: "Priority · {p}" },
   "tasktime.clear": { zh: "清除", en: "Clear" },
+  "tasktime.dueChipTitle": { zh: "截止 {day} · 点一下改", en: "Due {day} · click to change" },
 });

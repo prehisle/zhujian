@@ -27,7 +27,7 @@ export const panes = defineMessages({
   "panes.doneAt": { zh: "完成于 {when}", en: "Done {when}" },
   "panes.sealedAt": { zh: "归档于 {when}", en: "Archived {when}" },
   "panes.unseal": { zh: "取消归档(回到「已完成」)", en: "Unarchive (back to Done)" },
-  "panes.unsealed": { zh: "已取消归档,在「任务」的「已完成」里", en: "Unarchived. Find it under Tasks › Done" },
+  "panes.unsealed": { zh: "已取消归档,回到「已完成」", en: "Unarchived, back in Done" },
   "panes.sealedEmpty": { zh: "还没有归档的任务。", en: "No archived tasks yet." },
   "panes.sealedLoadFailed": { zh: "归档读取失败:{error}", en: "Could not load Archive: {error}" },
   "panes.hitInbox": { zh: "随记", en: "Note" },

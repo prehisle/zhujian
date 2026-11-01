@@ -31,7 +31,9 @@ export const cardpanel = defineMessages({
   "cardpanel.actMore": { zh: "更多…", en: "More…" },
   // 值 chip 上「截止」还没设时的占位。⛔ 别写成空:一枚什么也不说的 chip 点不点得开看不出来。
   "cardpanel.dueNone": { zh: "未设", en: "Not set" },
-  "cardpanel.laneStatus": { zh: "状态", en: "Status" },
+  // 158 G3 / Q5:手机也叫「列」(同桌面看板);键名不动(命名铁律)。
+  "cardpanel.laneStatus": { zh: "列", en: "Column" },
+  "cardpanel.colsOnDesktop": { zh: "列在电脑上管理", en: "Manage columns on your computer" },
   "cardpanel.laneDue": { zh: "截止", en: "Due" },
   "cardpanel.lanePriority": { zh: "优先级", en: "Priority" },
   "cardpanel.dueClear": { zh: "清除", en: "Clear" },
@@ -65,8 +67,11 @@ export const cardpanel = defineMessages({
   "cardpanel.editedMark": { zh: "改过", en: "edited" },
   "cardpanel.discardQ": { zh: "丢掉这次的修改?", en: "Discard your changes?" },
   "cardpanel.discardYes": { zh: "丢掉", en: "Discard" },
+  "cardpanel.discardNo": { zh: "接着改", en: "Keep editing" },
   "cardpanel.finishDraftFirst": { zh: "先保存或取消正在编辑的内容", en: "Save or cancel what you are editing first" },
   "cardpanel.actExpand": { zh: "展开成长文", en: "Expand to long-form" },
+  "cardpanel.actCopy": { zh: "复制", en: "Copy" },
+  "cardpanel.textCopied": { zh: "已复制这张卡的文字", en: "Card text copied" },
   "cardpanel.actCopyLink": { zh: "复制链接", en: "Copy link" },
   "cardpanel.linkCopied": { zh: "已复制链接", en: "Link copied" },
   "cardpanel.copyLinkFailed": { zh: "复制失败:{error}", en: "Copy failed: {error}" },
@@ -83,7 +88,5 @@ export const cardpanel = defineMessages({
   "cardpanel.revertQ": { zh: "撤回为随记?", en: "Send back to Notes?" },
   "cardpanel.revertYes": { zh: "撤回", en: "Send back" },
   "cardpanel.reverted": { zh: "已撤回为随记,在底栏「随记」里", en: "Sent back to Notes, find it under Notes" },
-  "cardpanel.sealQ": { zh: "归档?归档后可查、不可删", en: "Archive it? Archived tasks can be viewed but not deleted" },
-  "cardpanel.sealYes": { zh: "归档", en: "Archive" },
   "cardpanel.sealed": { zh: "已归档", en: "Archived" },
 });
