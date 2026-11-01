@@ -166,4 +166,29 @@ describe("灵感 · 标签选择器(Esc 收起 + 内联新建)", () => {
     // 卡上那枚 chip 也没了(真相已由 list_ideas 证,这里只核视图跟上了)。
     expect(await (await $(`.note*=${IDEA}`)).$(`.tag*=${EXIST}`).isExisting()).toBe(false);
   });
+
+  it("只搜出唯一一枚既有标签(非精确同名)→ 回车选它、不新建(157 G2③)", async () => {
+    const PART = "灵感已存在"; // EXIST 的一段:只命中它一枚
+    const staleShort = (await invoke("list_topics")).find((t) => t.title === PART);
+    if (staleShort) await invoke("delete_topic", { id: staleShort.id });
+    await inboxAction(IDEA, "标签");
+    const card = await $(`.note*=${IDEA}`);
+    await card.$(".topic-search").waitForExist({ timeout: 5000 });
+    await browser.execute(
+      (text, q) => {
+        const c = [...document.querySelectorAll(".note")].find((x) => x.textContent.includes(text));
+        const inp = c.querySelector(".topic-search");
+        inp.value = q;
+        inp.dispatchEvent(new Event("input", { bubbles: true }));
+        inp.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+      },
+      IDEA,
+      PART,
+    );
+    await browser.waitUntil(async () => (await ideaTags()).includes(EXIST), {
+      timeout: 8000,
+      timeoutMsg: "回车没选中唯一匹配的既有标签",
+    });
+    expect((await invoke("list_topics")).some((t) => t.title === PART)).toBe(false);
+  });
 });

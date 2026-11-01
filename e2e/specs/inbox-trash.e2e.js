@@ -1,4 +1,4 @@
-import { $, expect } from "@wdio/globals";
+import { $, expect, browser } from "@wdio/globals";
 import { invoke, inboxShow, seedProcessedTaskless, inboxAction } from "./support.js";
 
 // ㉜ UNRUN: card actions (删除/还原/彻底删除) now open via the ⋯ corner menu (inboxAction);
@@ -56,6 +56,25 @@ describe("灵感 · 回收站(软删 → 还原 / 彻底删除 / 清空)", () =>
     expect((await invoke("list_archived")).some((n) => n.id === id)).toBe(false);
     expect((await invoke("list_processed")).some((n) => n.id === id)).toBe(false);
     expect((await invoke("list_inbox")).some((n) => n.id === id)).toBe(false);
+  });
+
+  it("进回收站:页标题叫「回收站」、返回钮不挂件数、卡上 ⋯ 常驻(157 G3)", async () => {
+    await seedProcessedTaskless("E2E-回收-乙");
+    await inboxShow("ideas");
+    await $(".note*=E2E-回收-乙").waitForExist({ timeout: 10000 });
+    await inboxAction("E2E-回收-乙", "删除");
+    await inboxShow("archived");
+    const card = await $(".note*=E2E-回收-乙");
+    await card.waitForExist({ timeout: 10000 });
+    expect(await $(".v-inbox header h1").getText()).toBe("回收站");
+    expect(await $("#n-archived").getText()).toBe("");
+    expect(await $("#inbox-trash-lbl").getText()).toBe("← 随记");
+    // 没悬停、没选中也看得见(判视觉本体:computed opacity,不判 class)
+    const op = await browser.execute((el) => getComputedStyle(el.querySelector(".hk-btn")).opacity, card);
+    expect(Number(op)).toBe(1);
+    await inboxShow("ideas");
+    expect(await $(".v-inbox header h1").getText()).toBe("随记");
+    expect(await $("#n-archived").getText()).not.toBe("");
   });
 
   it("孤儿(已整理但标签被删光)删除 → 软删进回收站,不再报「不在收件箱」", async () => {

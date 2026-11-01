@@ -207,6 +207,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
   const trashToggle = view.querySelector("#inbox-trash-toggle") as HTMLButtonElement;
   const trashLbl = view.querySelector("#inbox-trash-lbl") as HTMLElement;
   const trashN = view.querySelector("#n-archived") as HTMLElement;
+  const titleEl = view.querySelector("header h1") as HTMLElement;
 
   // 悬停选中 + ⋯ 速查菜单 + 单键派发,统一走共享控制器(单一真相源跨视图一致)。
   const hk = createHotkeyController();
@@ -450,7 +451,16 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
         void save();
       }
     });
-    const addBtn = el("button", { className: "compose-add", textContent: t("inbox.composeAdd"), onclick: () => void save() });
+    // 点钮记下后焦点回输入框(157 G2②,W1 走查 WD-07):此前焦点留在钮上、随 refresh 重建 bar 掉到 body,
+    // 接着打字全落空(回车那条路不掉 —— refresh 只把焦点还给「本来就握着它」的输入框,见 hadComposeFocus)。
+    const addBtn = el("button", {
+      className: "compose-add",
+      textContent: t("inbox.composeAdd"),
+      onclick: () => {
+        input.focus();
+        void save();
+      },
+    });
     // 暂存图条换行独占一行(.compose 本就 flex-wrap);root 是常驻节点,从上一个 bar 搬过来。
     return el("div", { className: "compose" }, [input, addBtn, composeCtl.imgs.root, err]);
   }
@@ -501,9 +511,14 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
   // 不按视图藏:有数那一刻它自己出现,不需要任何开关(408-411 拍的「不造首启旗」)。
   let statsBlank = true;
   function updateTabs(): void {
-    trashN.textContent = String(counts.archived);
-    trashToggle.classList.toggle("active", active === "archived");
-    trashLbl.textContent = active === "archived" ? t("inbox.backToIdeas") : t("inbox.tabTrash");
+    const inTrash = active === "archived";
+    // 回收站里那枚钮是「← 随记」:后面再挂回收站件数读成「随记 9 条」,故进去时不报数;页标题跟着叫「回收站」
+    // (157 G3,W1 走查 WD-12 / WD-13)。`.in-trash` 让卡上的 ⋯ 常驻 —— 还原 / 彻底删除只在那里面。
+    trashN.textContent = inTrash ? "" : String(counts.archived);
+    trashToggle.classList.toggle("active", inTrash);
+    trashLbl.textContent = inTrash ? t("inbox.backToIdeas") : t("inbox.tabTrash");
+    titleEl.textContent = inTrash ? t("inbox.tabTrash") : t("inbox.title");
+    view.classList.toggle("in-trash", inTrash);
     // 「本周捕获 N · 转待办 X%」说的是想法那半:回收站态收起(同看板进回收站时收起
     // 新建 / 管理列 / 排序 / 到期汇总);没数可报时也收起(statsBlank)。
     statsEl.hidden = active !== "ideas" || statsBlank;
@@ -875,7 +890,13 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
             currentContent = area.value; // 先记下:删图那步失败后重试,正文不再写第二遍(no-op 会 fail-fast)
             paintContent(); // ⛔ 别写成 textP.textContent —— 那会把方框与「图N」链接一起抹成纯文本
           }
+          const nDel = strip.pendingDeletes();
           await strip.commitDeletes(); // 148:编辑态里标了删的图,随保存这一步才真删
+          // 删了图要说话、回收站计数当场跳(157 G3,W1 走查 WD-06):此前无声,计数要等下次删随记才一起跳
+          if (nDel > 0) {
+            toastAction(t("inbox.imagesTrashed", { n: nDel }));
+            refreshDeferred = true; // leaveEdit 末尾那发补刷重算 counts(含回收站里的已删配图)
+          }
         } catch (e) {
           showErr(err, e);
           saving = false;
@@ -900,6 +921,9 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
         if (e.isComposing) return; // IME 组合期的 Enter/Esc 属于输入法,不是提交/取消(ui-audit P0 #1)
         const t = e.target;
         if ((t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement) && t !== area) return;
+        // 焦点在一枚钮上(删图的 × / ↺、历史里的版本头…)时回车归那枚钮(157 G2①,W1 走查 WD-03):
+        // 此前点 × 后焦点停在「↺ 撤销」上,回车却走了保存退出 —— 图真删了。Esc 照旧取消。
+        if (e.key === "Enter" && t instanceof HTMLButtonElement) return;
         if (e.key === "Enter" && !e.shiftKey) {
           e.preventDefault();
           commit();

@@ -71,6 +71,50 @@ describe("编辑态删图 · 随记(保存才删,取消一张不少)", () => {
     expect(await seqs(id)).toEqual([1, 2]);
   });
 
+  it("点 × 后焦点在 ↺ 上按回车 → 回车归那枚钮(撤掉标记),不保存退出(157 G2①)", async () => {
+    const id = await invoke("capture_note", { content: "E2E-删图-焦点回车" });
+    await addPng(id);
+    await goNotebook("inbox");
+    const card = await $(".note*=E2E-删图-焦点回车");
+    await card.waitForExist({ timeout: 10000 });
+    await inboxAction("E2E-删图-焦点回车", "编辑");
+    const area = await card.$(".edit-area");
+    await area.waitForExist({ timeout: 5000 });
+
+    const del = await delBtn(card, 1, 1);
+    await del.click();
+    expect(await del.getText()).toBe("↺");
+    // 真点在 WebView2 上会把焦点给钮;这里显式再给一次,判据不赖鼠标落点
+    await browser.execute((el) => el.focus(), del);
+    await browser.keys(["Enter"]);
+    await browser.waitUntil(async () => (await del.getText()) === "×", {
+      timeout: 5000,
+      timeoutMsg: "回车没落到焦点所在的 ↺ 上",
+    });
+    expect(await area.isExisting()).toBe(true); // 编辑态还开着
+    expect(await seqs(id)).toEqual([1]);
+    await browser.keys(["Escape"]);
+    await area.waitForExist({ timeout: 5000, reverse: true });
+  });
+
+  it("编辑态删图保存 → 回收站计数当场跳(157 G3)", async () => {
+    const id = await invoke("capture_note", { content: "E2E-删图-计数" });
+    await addPng(id);
+    await goNotebook("inbox");
+    const card = await $(".note*=E2E-删图-计数");
+    await card.waitForExist({ timeout: 10000 });
+    const n0 = Number(await $("#n-archived").getText());
+    await inboxAction("E2E-删图-计数", "编辑");
+    const area = await card.$(".edit-area");
+    await area.waitForExist({ timeout: 5000 });
+    await (await delBtn(card, 1, 1)).click();
+    await enterOn(area);
+    await browser.waitUntil(async () => Number(await $("#n-archived").getText()) === n0 + 1, {
+      timeout: 8000,
+      timeoutMsg: `回收站计数没跳:前 ${n0},现 ${await $("#n-archived").getText()}`,
+    });
+  });
+
   it("点 × → Enter 保存 → 那张删了、编号留洞;正文没改也照删", async () => {
     const id = await invoke("capture_note", { content: "E2E-删图-保存" });
     await addPng(id);

@@ -3,7 +3,7 @@
 
 import { t } from "./i18n";
 import { parseChecklistLine } from "../../shared/checklist";
-import { CONFIRM_REVERT_MS, TOAST_ERROR_MS, toastSuccessMs } from "./timing";
+import { BAR_RETIRE_MS, CONFIRM_REVERT_MS, TOAST_ERROR_MS, toastSuccessMs } from "./timing";
 
 export const $ = (id: string) => document.getElementById(id)!;
 
@@ -158,7 +158,18 @@ let errWired = false;
 
 function hideBar(): void {
   clearTimeout(errTimer);
-  $("error").hidden = true;
+  const el = $("error");
+  el.classList.remove("retiring");
+  el.hidden = true;
+}
+
+/** 读秒到点的退场(157 G1②):先进余温态 —— 钮变灰、整条变淡,条**还在原位**接住迟到的那一下点
+ *  (点条身 = hideBar,立刻收;那一下不会落到底下的「同步」上),`BAR_RETIRE_MS` 后才真收。
+ *  ⛔ 别把余温态的钮移走或藏掉:条会变矮,瞄着钮落下的那一指正好穿过去。 */
+function retireBar(el: HTMLElement): void {
+  el.classList.add("retiring");
+  el.querySelectorAll("button").forEach((b) => (b.disabled = true));
+  errTimer = window.setTimeout(hideBar, BAR_RETIRE_MS);
 }
 
 /** 懒接线(模块加载期不碰 DOM):点条身即收,不等读秒走完。 */
@@ -173,12 +184,10 @@ export function showBar(msg: string, notice = false) {
   wireBar(el);
   el.textContent = msg;
   el.classList.toggle("notice", notice);
-  el.classList.remove("with-act");
+  el.classList.remove("with-act", "retiring");
   el.hidden = false;
   clearTimeout(errTimer);
-  errTimer = window.setTimeout(() => {
-    el.hidden = true;
-  }, notice ? toastSuccessMs(msg) : TOAST_ERROR_MS);
+  errTimer = window.setTimeout(() => retireBar(el), notice ? toastSuccessMs(msg) : TOAST_ERROR_MS);
 }
 
 /** 操作型回执(§3.1):回执文案 + 一枚动作钮(如滑动改状态的「撤销」),notice 形。
@@ -209,11 +218,10 @@ function barWithAct(msg: string, actLabel: string, onAct: () => void, notice: bo
   el.append(text, act);
   el.classList.toggle("notice", notice);
   el.classList.add("with-act");
+  el.classList.remove("retiring");
   el.hidden = false;
   clearTimeout(errTimer);
-  errTimer = window.setTimeout(() => {
-    el.hidden = true;
-  }, ms);
+  errTimer = window.setTimeout(() => retireBar(el), ms);
 }
 
 export const showError = (msg: string) => showBar(msg);
@@ -231,22 +239,36 @@ export function confirmBar(question: string, yesLabel: string, onYes: () => void
   const bar = $("confirmbar");
   $("confirmbar-q").textContent = question;
   const yes = $("confirmbar-yes") as HTMLButtonElement;
-  ($("confirmbar-no") as HTMLButtonElement).onclick = () => hideConfirmBar();
+  const no = $("confirmbar-no") as HTMLButtonElement;
+  no.onclick = () => hideConfirmBar();
+  no.disabled = false;
+  yes.disabled = false;
   yes.textContent = yesLabel;
   yes.onclick = () => {
     if (token !== cbToken) return; // 已被新确认/收起替代:旧回调作废
     hideConfirmBar();
     onYes();
   };
+  bar.classList.remove("retiring");
   bar.hidden = false;
   clearTimeout(cbTimer);
   cbTimer = window.setTimeout(() => {
-    if (token === cbToken) hideConfirmBar();
-  }, CONFIRM_REVERT_MS); // 没接第二拍自动收;放宽到 6s 的来龙去脉见 timing.ts 那一格
+    if (token !== cbToken) return;
+    // 没接第二拍:先交代一句、钮变灰(条高不变,迟到的那一指落在条上不落到底下),余温过了才收(157 G1②)。
+    // 放宽到 6s 的来龙去脉见 timing.ts 那一格。
+    cbToken++; // 旧「确认」从此作废(钮已灰,这是第二道)
+    bar.classList.add("retiring");
+    $("confirmbar-q").textContent = t("ui.confirmExpired");
+    no.disabled = true;
+    yes.disabled = true;
+    cbTimer = window.setTimeout(hideConfirmBar, BAR_RETIRE_MS);
+  }, CONFIRM_REVERT_MS);
 }
 
 export function hideConfirmBar(): void {
   cbToken++;
   clearTimeout(cbTimer);
-  $("confirmbar").hidden = true;
+  const bar = $("confirmbar");
+  bar.classList.remove("retiring");
+  bar.hidden = true;
 }

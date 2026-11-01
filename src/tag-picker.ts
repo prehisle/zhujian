@@ -122,9 +122,13 @@ export function renderTagPicker(container: HTMLElement, opts: TagPickerOpts): vo
     e.preventDefault();
     const q = search.value.trim();
     if (!q) return;
-    const match = allTopics.find((tp) => tp.title.toLowerCase() === q.toLowerCase());
+    const ql = q.toLowerCase();
+    // 没有精确同名、但只搜出**唯一一枚**既有标签 ⇒ 回车 = 选它(157 G2③,W1 走查 WD-09):此前搜「特别」
+    // 回车新建了「特别」,屏上唯一那枚「特别长的…」反倒没选中。真要新建同前缀的短名,点「创建「…」」那枚。
+    const hits = allTopics.filter((tp) => tp.title.toLowerCase().includes(ql));
+    const match = allTopics.find((tp) => tp.title.toLowerCase() === ql) ?? (hits.length === 1 ? hits[0] : undefined);
     if (match) {
-      // 精确命中已有 → 直接加;已在卡上则无操作 —— Enter 是「加」的手势,摘要点那枚点亮的候选。
+      // 命中已有 → 直接加;已在卡上则无操作 —— Enter 是「加」的手势,摘要点那枚点亮的候选。
       if (!have.has(match.id)) commit(() => onPick(match.id));
     } else {
       commit(() => onCreate(q)); // 无匹配 → 新建并加

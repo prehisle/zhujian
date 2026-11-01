@@ -15,6 +15,7 @@ export const misc = defineMessages({
   "images.tooMany": { zh: "一次最多 {max} 张,这次选了 {n} 张;分几次加吧", en: "At most {max} at a time; you picked {n}. Add them in a few batches." },
   "swipe.changedTo": { zh: "已改为「{stage}」", en: "Moved to “{stage}”" },
   "ui.undo": { zh: "撤销", en: "Undo" },
+  "ui.confirmExpired": { zh: "没确认,已作罢", en: "Not confirmed — nothing was done" },
   // 错误文案人话前置(err.ts,用户面 126):值与桌面 common.ts 的 err.* 逐字同形,只「下一步」
   // 那枚按本端叫法 —— 手机的网络自检住设置里的「诊断」面(那一节叫「网络栈诊断」)。
   "err.raw": { zh: "(原文:{raw})", en: " (details: {raw})" },

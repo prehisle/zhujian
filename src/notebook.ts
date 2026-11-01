@@ -34,6 +34,7 @@ import {
 } from "./space";
 import type { SpaceInfo } from "./space";
 import { errDetail, errText } from "./err";
+import { toastAction } from "./toast";
 
 // The notebook is one window hosting many views. Only one view is mounted into
 // the shared content root at a time, so each view can own page-scoped DOM ids
@@ -221,6 +222,11 @@ function refreshSpaceEntry(): void {
 // 名字表全量重查——刻意**不分当前/非当前空间**(借道 sync-changed 会被「非当前
 // 空间直接丢弃」的既有语义漏掉,codex 一轮 H5)。
 void listen("space-name-changed", () => refreshSpaceEntry());
+// 捕获浮窗记下了一条(157 G3):当前视图就地重查(同回窗那条路),并说一句 —— 浮窗那边记完即收,交代归这里。
+void listen<{ kind: "task" | "idea" }>("captured", (e) => {
+  current?.onFocus?.();
+  toastAction(e.payload.kind === "task" ? t("notebook.capturedTask") : t("notebook.capturedIdea"));
+});
 
 function switchSpace(id: string): void {
   if (id === currentSpaceId()) return;

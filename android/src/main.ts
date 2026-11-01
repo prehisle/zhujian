@@ -668,7 +668,8 @@ let nativeBackPending = false; // native 请求的 history.back() 已发、popst
     history.back();
     return true;
   }
-  return false;
+  // 无层可关:卡片操作面还展开着就先收它(157 G1①;它不压守门条目,理由在 cardpanel.backOut)。
+  return cardPanel.backOut();
 };
 
 window.addEventListener("popstate", () => {

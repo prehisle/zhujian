@@ -208,6 +208,27 @@ export function editDismissed(): void {
   closeDraft();
 }
 
+/** 返回键收一层(157 G1①,W1 走查 WM-02):此前操作面 / 卡内标签选择器开着时按返回直接退出 app。
+ *  子面(更多… / 标签 / 状态 / 历史 / 移动…)→ 回两行主面;主面 → 收面。返回 true = 这一下被吃掉了。
+ *  ⚠ 操作面**不压守门条目**(同扫码层):它不是盖在别处之上的层,而是时间轴里的一段行内展开,
+ *  收面的路有五六条(点空白 / 滚走 / 换卡 / 切空间 / 刷新清态)—— 每条都去平账,漏一处就把
+ *  账本打穿。故只在 main.ts 的原生返回入口「无层可关」那一支问它。编辑层自有守门条目,轮不到这里。 */
+export function backOut(): boolean {
+  if (!state) return false;
+  if (busy) return true; // 写在飞:面板一切导航都拒(同 onTimelineClick),但也别让这一下退出 app
+  if (state.mode === "edit") return true; // 编辑层开着却走到这儿 = 账本异常;宁吞不退
+  const card = currentCard();
+  if (!card) {
+    setState(null);
+    clearConfirm();
+    return false;
+  }
+  clearConfirm();
+  if (state.mode === "actions") collapse(card);
+  else closeDraft(); // 同子面上那枚「返回」
+  return true;
+}
+
 /** refresh 重建 DOM 后把展开态接回;条目已不在(被删/换空间)= 清态。 */
 export function restore(scope: HTMLElement) {
   if (!state) return;

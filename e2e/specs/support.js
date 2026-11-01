@@ -209,8 +209,12 @@ export async function inboxShow(mode) {
   const btn = await $("#inbox-trash-toggle");
   await btn.waitForExist({ timeout: 10000 });
   // 先等首帧画完:`.active` 与计数由 `updateTabs` 同一发写出,而 markup 里计数的初值是
-  // **空的** ⇒ 非空 = 已经画过一发。读早了会把「还停在回收站」误判成「在想法」。
-  await browser.waitUntil(async () => (await (await $("#n-archived")).getText()) !== "", {
+  // **空的**、也没有 `.active` ⇒ 计数非空或已点亮 = 已经画过一发(157 起回收站那半不报数,
+  // 只剩 `.active` 可认)。读早了会把「还停在回收站」误判成「在想法」。
+  const painted = async () =>
+    (await (await $("#n-archived")).getText()) !== "" ||
+    (await btn.getAttribute("class")).split(/\s+/).includes("active");
+  await browser.waitUntil(painted, {
     timeout: 10000,
     timeoutMsg: "随记顶栏「回收站」计数一直是空的 = 首帧没画出来",
   });

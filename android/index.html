@@ -1424,6 +1424,10 @@
         border: none; border-radius: var(--radius-pill); background: var(--seal); color: var(--on-seal);
         font-weight: 600; padding: 8px 18px;
       }
+      /* 余温态(157 G1②,ui.ts `retireBar` / confirmBar 到点那一支):读秒到点先变淡、钮变灰,
+         条**还在原位、高度不变**,接住迟到的那一下点(不让它落到底下的看图层遮罩 / 顶栏「同步」上),
+         `BAR_RETIRE_MS` 后才真收。⛔ 别在这一态藏钮:条变矮,瞄着钮落下的那一指正好穿过去。 */
+      .error.retiring, #confirmbar.retiring { opacity: 0.6; }
 
       /* 卡片操作面板(120;706 瘦身):点卡展开的行内操作区——**动作行四枚封顶 + 任务的
          三枚值 chip**,低频那几件(历史/移动/撤回/归档/删除)收进「更多…」子面,

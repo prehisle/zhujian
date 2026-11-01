@@ -1,6 +1,6 @@
 import { invoke, mirrorSpace, spaceLabel, listSpaces, dotClass, MAIN_SPACE } from "./space";
 import { invoke as rawInvoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { emitTo, listen } from "@tauri-apps/api/event";
 import { LogicalSize } from "@tauri-apps/api/dpi";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { REPASTE_HINT, openLightboxBlob, pendingImages } from "./item-images";
@@ -532,6 +532,9 @@ input.addEventListener("keydown", async (e) => {
         void fitWindow();
         return; // 留窗让提示被看到;正文已清,不会重复
       }
+      // 告诉主窗「刚记下一条」(157 G3,W1 走查 WD-10):主窗就地重查、出新卡并给一句回执 ——
+      // 此前它要等下次回窗(focus)才刷,浮窗这边又一收了之,记没记下没人交代。浮窗自己仍是一记即收(capture-first)。
+      void emitTo("notebook", "captured", { kind: mode === "task" ? "task" : "idea" });
       if (pend.count() > 0) {
         // 保存等待期间又粘了图:它们属于下一条,不许被 dismiss 的 clear 连坐(codex
         // 四审 H)——留窗接着写,正文已清、图在预览区。

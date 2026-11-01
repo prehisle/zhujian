@@ -1,6 +1,6 @@
 import { $, $$, expect } from "@wdio/globals";
 import { browser } from "@wdio/globals";
-import { invoke, goNotebook, clearInbox, shownText } from "./support.js";
+import { invoke, goNotebook, clearInbox, shownText, inboxCompose, typeText } from "./support.js";
 
 // ㊳ 两个交互需求的 e2e 覆盖(㊷ 已补 viewkeys,这里补剩下两个):
 //   ③ 双击卡片 = 编辑(和单键 E 同一入口,回收站卡冻结不响应);
@@ -112,5 +112,52 @@ describe("灵感 · 按天时间轴分组", () => {
     expect(groupText).toContain("E2E-时间轴-乙");
     const notes = await $(".timeline .tl-group").$$(".note");
     expect(notes.length).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe("灵感 · 点「记下」钮后焦点回输入框(157 G2②)", () => {
+  before(async () => {
+    await goNotebook("inbox");
+    await clearInbox();
+  });
+
+  it("点钮记下一条 → 新卡出现后焦点仍在记下框,接着打的字落进框里", async () => {
+    // 真点那颗钮(inboxCompose):焦点先落到钮上,refresh 重建整条 bar —— 修前焦点就此掉到 body
+    await inboxCompose("E2E-点钮记下-焦点");
+    await $(".note*=E2E-点钮记下-焦点").waitForExist({ timeout: 10000 });
+    await browser.waitUntil(
+      () => browser.execute(() => document.activeElement?.classList.contains("compose-input") === true),
+      {
+        timeout: 5000,
+        timeoutMsg: "记下后焦点没回到记下框",
+      },
+    );
+    await typeText("ab");
+    expect(await browser.execute(() => document.querySelector(".v-inbox .compose-input").value)).toBe("ab");
+    // 收尾清框(连断电存底一起,input 事件写的那份):别把「ab」漏给后面的 spec
+    await browser.execute(() => {
+      const inp = document.querySelector(".v-inbox .compose-input");
+      inp.value = "";
+      inp.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  });
+});
+
+describe("灵感 · 捕获窗记下后主窗就地刷新(157 G3)", () => {
+  it("收到 captured 事件 → 不等回窗,新卡就出现", async () => {
+    await goNotebook("inbox");
+    // 直调命令建条目不会让已挂载的视图重查(同 openCard 那条)—— 正是捕获窗那条路的样子
+    await invoke("capture_note", { content: "E2E-捕获窗-事件" });
+    await browser.pause(300);
+    expect(await $(".note*=E2E-捕获窗-事件").isExisting()).toBe(false); // 自证:不发事件它不出来
+    // 捕获窗 main.ts 那一发 emitTo("notebook", "captured") 的同形
+    await browser.execute(() =>
+      window.__TAURI_INTERNALS__.invoke("plugin:event|emit_to", {
+        target: { kind: "AnyLabel", label: "notebook" },
+        event: "captured",
+        payload: { kind: "idea" },
+      }),
+    );
+    await $(".note*=E2E-捕获窗-事件").waitForExist({ timeout: 5000 });
   });
 });

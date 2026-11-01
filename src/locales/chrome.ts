@@ -3,6 +3,8 @@ import { defineMessages } from "./entry";
 
 export const chrome = defineMessages({
   "notebook.maximize": { zh: "最大化", en: "Maximize" },
+  "notebook.capturedIdea": { zh: "捕获窗记下了一条随记", en: "Capture window saved a note" },
+  "notebook.capturedTask": { zh: "捕获窗记下了一条待办", en: "Capture window saved a to-do" },
   "notebook.restoreDown": { zh: "向下还原", en: "Restore down" },
   "notebook.expandSidebar": { zh: "展开侧栏 (Ctrl+B)", en: "Expand sidebar (Ctrl+B)" },
   "notebook.collapseSidebar": { zh: "折叠侧栏 (Ctrl+B)", en: "Collapse sidebar (Ctrl+B)" },

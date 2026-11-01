@@ -60,6 +60,12 @@ const REGISTRY = [
 就当你反悔了」这条兜底",
   },
   {
+    name: "BAR_RETIRE_MS",
+    in: ["安卓"],
+    doc: "BAR_RETIRE",
+    why: "提示条 / 确认条自动退场前的余温(157):手指可能已经在落下的路上,条在原位多留一会儿接住那一下、并交代一句「已作罢」。桌面是鼠标场景,没有这回事",
+  },
+  {
     name: "UNDO_WINDOW_MS",
     in: ["桌面"],
     doc: "UNDO_WINDOW",

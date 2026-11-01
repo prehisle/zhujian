@@ -22,12 +22,16 @@
   transition: opacity 0.14s, background 0.14s, color 0.14s, border-color 0.14s;
 }
 .hk-host:hover .hk-btn,
-.hk-host.is-active .hk-btn { opacity: 1; }
+.hk-host.is-active .hk-btn,
+.hk-btn:focus-visible { opacity: 1; } /* Tab 到它也得看得见(157 G3,W1 走查 WD-13) */
 /* 第三种显形:教学期常驻。挂在**视图**上(不是卡片),由数据自己决定 —— 判据与开关
    全在 inbox.ts::refresh 那一行,这里只负责画。⛔ 不是首启旗、没有开关、不记状态:
    条件一旦不成立,下一发 refresh 它自己就回到悬停(408-411「不造首启旗」,与同文件
    `statsBlank` 同一条)。⚠ 看板卡片吃的是同一枚 .hk-btn,所以这个类**只挂在随记那个
    视图元素上** —— 挂到 body 上就会把看板的一起点亮。 */
+/* 第四种:随记的回收站(`.in-trash`,inbox.ts::updateTabs)—— 还原 / 彻底删除只在 ⋯ 里,悬停才浮现等于藏起来
+   (157 G3,W1 走查 WD-13)。色同教学态那条的账。 */
+.v-inbox.in-trash .hk-btn,
 .hk-teach .hk-btn {
   opacity: 1;
   /* ⚠ 光有 opacity 不够:.hk-btn 那身 --ink-faint 是为「悬停才浮现」配的,压在卡面
