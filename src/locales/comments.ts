@@ -11,7 +11,8 @@ export const comments = defineMessages({
   "comments.loadMore": { zh: "加载更多", en: "Load more" },
   "comments.inputPlaceholder": { zh: "写句话…", en: "Say something…" },
   "comments.send": { zh: "记下", en: "Send" },
-  "comments.delete": { zh: "删除", en: "Delete" },
+  // 157 G4 / P4:留言不进回收站,钮上就叫「销毁」(键名照旧,命名铁律)。
+  "comments.delete": { zh: "销毁", en: "Destroy" },
   "comments.deleteTitle": { zh: "销毁这条留言", en: "Delete this comment forever" },
   "comments.confirmDestroy": { zh: "销毁?不进回收站", en: "Delete forever? It skips the trash" },
   "comments.destroy": { zh: "销毁", en: "Delete forever" },

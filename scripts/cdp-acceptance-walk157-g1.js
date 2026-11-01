@@ -67,7 +67,15 @@
     ok("…操作面收起", await until(() => !panel()));
     ok("返回键③无层可关 ⇒ 放行退 app", back() === false);
 
-    // ② 确认条到点先余温
+    // ② 确认条到点先余温。157 G4 / P2 起删**随记**一点即删(不再弹确认条)⇒ 先把种子转成待办,
+    //    删任务仍是两拍,拿它来验确认条。
+    click(card().querySelector(".body"));
+    await until(() => !!pact("promote"));
+    click(pact("promote"));
+    ok("种子转成了待办", await until(() => !card(), 5000));
+    click(document.querySelector('#bottombar [data-mode="tasks"]'));
+    ok("切到任务面看得见它", await until(() => !!card(), 5000));
+    $err.hidden = true;
     click(card().querySelector(".body"));
     await until(() => !!pact("more"));
     click(pact("more"));
@@ -106,10 +114,13 @@
   } catch (e) {
     ok("没抛异常", false, String(e));
   } finally {
+    // ② 起停在任务面:收工回随记面(留给下一支资产的起点)
+    document.querySelector('#bottombar [data-mode="ideas"]')?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     if (seedId !== null) {
       try {
-        await inv("archive_note", { id: seedId });
-        await inv("purge_note", { id: seedId });
+        // ② 起种子已是任务(157 G4 / P2)
+        await inv("archive_task", { id: seedId });
+        await inv("purge_task", { id: seedId });
       } catch (e) {
         ok("清场", false, String(e));
       }

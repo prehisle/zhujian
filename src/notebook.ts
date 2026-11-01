@@ -45,6 +45,8 @@ export interface View {
   unmount(): void;
   /** Called when the notebook window regains focus (data may have changed). */
   onFocus?(): void;
+  /** 已在这一视图时又点了侧栏同一枚(157 G4 / P8):返回 true = 视图自己处理了(回顶等),不重挂。 */
+  reselect?(): boolean;
 }
 
 export interface ViewCtx {
@@ -105,7 +107,11 @@ function navigate(name: ViewName): void {
 }
 
 for (const b of navButtons) {
-  b.addEventListener("click", () => navigate(b.dataset.view as ViewName));
+  b.addEventListener("click", () => {
+    const name = b.dataset.view as ViewName;
+    if (name === currentName && current?.reselect?.()) return;
+    navigate(name);
+  });
 }
 
 document.getElementById("win-min")?.addEventListener("click", () => void win.minimize());

@@ -25,6 +25,7 @@ import {
   applyFilter,
   applyTimeFilter,
   autoTagTopicIds,
+  filterActive,
   reconcileKindFilter,
   reconcileTopicFilter,
   renderFilterPills,
@@ -32,13 +33,13 @@ import {
   renderTimePills,
   otherLayersNote,
   selectedTopicLabels,
-  soleTopicFilter,
   wireFilterInput,
 } from "./filter-bar";
 import { IDEA_CARD_KEYS, IDEA_TRASH_KEYS, IDEA_VIEW_KEYS } from "./keymap";
 import { type Act, SATELLITE_LAYERS, armDismiss, createHotkeyController, registerViewKeys } from "./hotkey-menu";
 import { t } from "./i18n";
-import { type ImageMeta, REPASTE_HINT, imageStrip, listImages, renderContent, wirePasteToAttach } from "./item-images";
+import { FOLD_SLACK_PX, hasBoxBelowFold } from "./fold";
+import { type ImageMeta, REPASTE_HINT, attachBlob, imageStrip, listImages, renderContent, wirePasteToAttach } from "./item-images";
 import { withMissingRefs } from "../shared/markdown";
 import { toggleChecklistLine } from "../shared/checklist";
 import {
@@ -51,6 +52,7 @@ import {
 } from "./item-comments";
 import type { View, ViewCtx } from "./notebook";
 import { focusDoc } from "./docs";
+import { focusTask } from "./board";
 import { applyTagColor } from "./tag-color";
 import { renderTagPicker } from "./tag-picker";
 import { dayKey, dayLabel, startOfWeek, when } from "./tasktime";
@@ -340,6 +342,9 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
   // .note.fresh)。⚠ 每发 refresh 末尾整个换掉:切 tab / 换筛选后列上是另一批卡,那时
   // 全体重播才是对的(那是真的入场)。
   let renderedIds = new Set<string>();
+  // 清掉筛选回原阅读位置(157 G4 / P11):上一发是不是筛着的 + 进筛选前读到的滚动位。只活一个 mount。
+  let wasFiltered = false;
+  let unfilteredScroll = 0;
   // in-flight 闸(ui-audit P0 #2)在模块级(共享编排件):refresh 会重建 bar 并把草稿
   // 回灌进新框,新 bar 的 Enter 也必须被同一把闸挡住;闸跨 mount 才挡得住「保存中切走
   // 再回来」(codex P1 审 H2)。
@@ -447,6 +452,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
     });
     input.addEventListener("keydown", (e) => {
       if (e.isComposing) return; // IME 组合期的 Enter 是上屏,不是保存(ui-audit P0 #1)
+      if (e.defaultPrevented) return; // 待办项上的回车已被拿去续下一项(157 G4 / P6,wireChecklistInput)
       if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
         void save();
@@ -585,6 +591,46 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
   //              删除=软删进回收站(73 起未归类也不例外,可还原故零确认);销毁只在
   //              回收站的「彻底删除」里发生。
   //   archived — 还原/彻底删除;冻结,不可编辑/转待办/归纳。
+  // ---- 长卡折叠(157 G4 / P13,照看板 704 那套;判据件住 fold.ts)----
+  // 摊开过的卡记在这里,下一发 refresh 重画时不再合上(同一个 mount 内)。
+  const expanded = new Set<string>();
+  // 正文 → 它那枚钮:showView 整块重排卡身时(编辑 / 确认收起后)要把钮放回正文后面,否则夹着却没钮。
+  const foldBtns = new WeakMap<HTMLElement, HTMLButtonElement>();
+  function foldToggle(id: string, body: HTMLElement): HTMLButtonElement {
+    const b = el("button", { className: "act ghost fold-toggle", type: "button" });
+    const paint = (): void => {
+      const folded = body.classList.contains("clamped");
+      b.textContent = folded ? `${t("board.unfold")} ▾` : `${t("board.fold")} ▴`;
+      b.setAttribute("aria-expanded", String(!folded));
+    };
+    b.addEventListener("click", (e) => {
+      e.stopPropagation(); // 别让卡片的单击 / 双击编辑接到这一下
+      if (body.classList.toggle("clamped")) expanded.delete(id);
+      else expanded.add(id);
+      paint();
+    });
+    b.addEventListener("dblclick", (e) => e.stopPropagation());
+    paint();
+    return b;
+  }
+  /** 读写分两趟(同看板):先一次性量完「夹到东西没有」「褶子下有没有没勾的框」,再统一改。 */
+  function settleFolds(): void {
+    const bodies = [...list.querySelectorAll<HTMLElement>(".note-text.clamped")];
+    const read = bodies.map((p) => ({ over: p.scrollHeight > p.clientHeight + FOLD_SLACK_PX, boxCut: hasBoxBelowFold(p) }));
+    bodies.forEach((p, i) => {
+      const id = p.closest<HTMLElement>(".note")?.dataset.noteId;
+      if (!read[i].over || id === undefined) {
+        p.classList.remove("clamped");
+        return;
+      }
+      if (read[i].boxCut) expanded.add(id); // 勾完最后一个框那发重画别在手指底下合上(同看板)
+      if (expanded.has(id)) p.classList.remove("clamped");
+      const b = foldToggle(id, p);
+      foldBtns.set(p, b);
+      p.after(b);
+    });
+  }
+
   function row(item: CardItem, mode: Mode): HTMLElement {
     const note = el("article", { className: mode === "archived" ? "note archived" : "note" });
     // 入场动画只给「上一发还不在列上」的卡(601 补;CSS 那半在 .note.fresh 上写着为什么)。
@@ -616,11 +662,13 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
     // 消视觉噪音;其余标签仍显。只在想法态按当前筛选去重(回收站不套用筛选)。直接不渲染
     // 即可:拖拽打标签的去重判据在这里读的是数据 `topics`(见 mount 级 dragging 那段),
     // 不像看板要留 chip DOM 供 taskHasTopic 查。
-    const sole = mode === "ideas" ? soleTopicFilter(filter) : null;
-    const visibleTopics = sole !== null ? topics.filter((t) => t.id !== sole) : topics;
+    // ⛔ 157 G4 / P10 起不再藏那枚(用户读成「标签被摘了」,W1 走查 WD-18);上面那段 218 的理由作废。
+    const visibleTopics = topics;
     const tagged = visibleTopics.length > 0;
 
-    const textP = el("p", { className: "note-text", textContent: currentContent });
+    // 157 G4 / P13:随记页长卡也折(同看板 704 八行);先一律夹、落 DOM 后 settleFolds 量了再定。
+    const textP = el("p", { className: mode === "ideas" ? "note-text clamped" : "note-text", textContent: currentContent });
+    note.dataset.noteId = item.id;
     // 想法 sits in a per-day timeline → time-of-day only; 回收站 is flat → full stamp.
     const stamp = mode === "ideas" ? hm.format(new Date(item.created_at)) : when(item.created_at);
     const timeT = el("time", { className: "note-time", textContent: stamp });
@@ -785,7 +833,8 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
     function showView(): void {
       note.classList.remove("editing", "confirming");
       const strip = imageStrip(item.id, { editable: false, onMetas });
-      const kids: Node[] = [textP, timeT, ...(tagsEl ? [tagsEl] : []), strip.root];
+      const fb = foldBtns.get(textP);
+      const kids: Node[] = [textP, ...(fb ? [fb] : []), timeT, ...(tagsEl ? [tagsEl] : []), strip.root];
       // 部分成功登记(cross-space-move):目标已建、源还在——提示常驻卡面、随重渲
       // /重启存续(localStorage),「移动」入口同时被 actionsFor 藏起;处理完(手动
       // 删掉一边)后点解除恢复。
@@ -828,8 +877,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       wireChecklistInput(area); // Shift+Enter 续待办项 / Ctrl+L 起一条 / Tab 缩进(562,600)
       const hist = el("div", { className: "history" });
 
-      // 配图编辑器:粘贴截图(Ctrl+V)→ 挂为下一张「图N」;每张缩略图可删(编号不复用)。
-      // ＋图 选文件入口已删——配图统一靠粘贴(Ctrl+V)。
+      // 配图编辑器:粘贴截图(Ctrl+V)或「＋加图」选文件 → 挂为下一张「图N」;每张缩略图可删(编号不复用)。
       const imgEditor = el("div", { className: "img-editor" });
       const imgErr = el("p", { className: "img-err", hidden: true });
       const strip = imageStrip(item.id, { editable: true, onMetas });
@@ -842,7 +890,18 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
         imgErr.hidden = false;
       };
       wirePasteToAttach(area, item.id, afterAttach, onImgErr);
-      imgEditor.append(strip.root, imgErr);
+      // 「＋加图」(157 G4 / P7,长文 154 G5 同款):屏上此前看不出能加图(只能粘贴)。按下不抢写字框焦点;
+      // 逐张挂,一张被拒(格式 / 超大)不连累同批其余的,错误照粘贴那条路就地报。
+      const filePick = el("input", { type: "file", accept: "image/png,image/jpeg,image/webp,image/gif", multiple: true, hidden: true }) as HTMLInputElement;
+      filePick.addEventListener("change", () => {
+        const files = [...(filePick.files ?? [])];
+        filePick.value = ""; // 同一张再选一次也要触发
+        area.focus();
+        for (const f of files) void attachBlob(item.id, f).then(afterAttach).catch(onImgErr);
+      });
+      const addImgBtn = el("button", { className: "act ghost add-img", type: "button", textContent: t("inbox.addImage"), onclick: () => filePick.click() });
+      addImgBtn.addEventListener("mousedown", (e) => e.preventDefault());
+      imgEditor.append(strip.root, addImgBtn, filePick, imgErr);
 
       // 编辑态显示该灵感的标签(纯展示、复用读态 .tags 样式):编辑原文时一眼看到挂了哪些标签。
       // 打/去标签仍走 ⋯ 菜单的 标签(L)(和看板一致);无标签则整行收起(nodes 为空)。
@@ -857,7 +916,15 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       );
       // 编辑态:输入框 + 标签 + 配图条 + 历史。Enter/点别处 保存、Esc 取消、Ctrl+V 配图 都是隐式
       // 手势,不再常驻一行说明书(用户拍板:学一次就够,常驻提示是纯噪音)。
-      body.replaceChildren(area, tagView, imgEditor, hist);
+      // 157 G4 / P1:改过之后按 Esc 先说一句,再按一次才丢(Enter / 点别处照旧保存)。
+      const discardHint = el("p", { className: "discard-hint", hidden: true, textContent: t("inbox.discardHint") });
+      let discardArmed = false;
+      const disarmDiscard = (): void => {
+        discardArmed = false;
+        discardHint.hidden = true;
+      };
+      area.addEventListener("input", disarmDiscard);
+      body.replaceChildren(area, discardHint, tagView, imgEditor, hist);
 
       // 离开编辑态的唯一出口:拆掉文档级按键/点击监听、清掉单一编辑态登记、回视图。save 成功后也走它。
       // `closed` 幂等锁:点别处保存(异步)与随后的重渲/切卡可能重复调用,只执行一次。
@@ -925,12 +992,20 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
         // 焦点在一枚钮上(删图的 × / ↺、历史里的版本头…)时回车归那枚钮(157 G2①,W1 走查 WD-03):
         // 此前点 × 后焦点停在「↺ 撤销」上,回车却走了保存退出 —— 图真删了。Esc 照旧取消。
         if (e.key === "Enter" && t instanceof HTMLButtonElement) return;
+        if (e.defaultPrevented) return; // 待办项上的回车已被拿去续下一项(157 G4 / P6)
         if (e.key === "Enter" && !e.shiftKey) {
           e.preventDefault();
           commit();
         } else if (e.key === "Escape") {
           e.preventDefault();
-          leaveEdit();
+          // 157 G4 / P1:Esc 是唯一丢弃的路 ⇒ 改过了(正文或标了删的图)先说一句,再按一次才丢。
+          const dirty = area.value !== currentContent || strip.pendingDeletes() > 0;
+          if (!dirty || discardArmed) {
+            leaveEdit();
+            return;
+          }
+          discardArmed = true;
+          discardHint.hidden = false;
         }
       };
       // 点这张卡以外的任何地方 = 默认保存(需求:点别处即提交)。落点在本卡内(文本框 /
@@ -974,7 +1049,14 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       }
       afterPromote();
       // 716:刚转的待办撤回 = 无损(截止 / 优先级还没来得及设),配发撤销;看板那侧的 B 仍要确认。
-      toastUndo(t("inbox.undoPromoted"), t("common.undo"), () => void undoVia("revert_task_to_inbox", item.id));
+      // 157 G4 / P3:回执再带一枚「去看看」(同展开成长文那枚「打开」):转完不知道去哪看(W1 WD-28)。
+      toastUndo(t("inbox.undoPromoted"), t("common.undo"), () => void undoVia("revert_task_to_inbox", item.id), {
+        label: t("inbox.goSee"),
+        run: () => {
+          focusTask(item.id);
+          ctx.navigate("board");
+        },
+      });
     }
 
     // ---- 展开成长文(longform-plan §1:只翻 doc_at,零副本、不进编辑历史)----
@@ -1012,8 +1094,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
     // 打标签:输入即筛选的选择器(搜既有 + 无匹配冒「创建」),和看板 openPicker 同一套。
     // Esc / 点选择器以外任意处收起(armDismiss 文档级),不再挂「取消」按钮——⑧-1 修:老实现
     // 的 Esc 只绑在输入框、离焦即失效,还多一个取消钮。已加的标签在候选里点亮、再点一次摘掉
-    // (675 起与手机同形;此前是藏起来);灵感这侧一步一收 —— 加或摘之后整卡 refresh、选择器随之
-    // 消失,要改第二个就再按一次 L。
+    // (675 起与手机同形;此前是藏起来);157 起点完不收、可连着改(同看板 keepOpen),收起时才 refresh。
     async function openTopic(): Promise<void> {
       let allTopics: TopicItem[];
       try {
@@ -1026,36 +1107,42 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       const have = new Set(topics.map((t) => t.id));
 
       const picker = el("div", { className: "topic-picker" });
-      // 收起:摘掉选择器 + 去 editing(不重建 body,原文卡面保持在场)。成功挂标签走 afterFile
-      // (refresh 整卡重建,picker 随之消失);失败则收起并把错误显示在卡上。
+      // 157 G4 / P10:点完不收、可连着挂 / 摘几枚(同看板 keepOpen;手机本就如此)。每一下落库后只就地翻
+      // 候选的点亮态,⛔ 不整页重拉(refresh 会整卡重建,选择器跟着没了);收起(Esc / 点别处)时真改过
+      // 才补一发 refresh 把卡面与筛选计数对齐。失败就地报错、选择器留场。
+      let changed = false;
       const close = (): void => {
         picker.remove();
         note.classList.remove("editing");
+        if (changed) afterFile();
       };
-      const off = armDismiss(picker, close);
+      armDismiss(picker, close);
       const fileInto = async (topicId: string | null, newTitle: string | null): Promise<void> => {
-        off();
+        let id: string;
         try {
-          await invoke("file_note_to_topic", { id: item.id, topicId, newTitle });
+          id = await invoke<string>("file_note_to_topic", { id: item.id, topicId, newTitle });
         } catch (e) {
-          close();
           showOpErr(errText(e));
           return;
         }
-        afterFile();
+        if (!allTopics.some((x) => x.id === id)) {
+          // 新建的那枚:本地补一行让候选里认得它(title 同 core 口径 trim);收起时那发 refresh 对齐真相。
+          allTopics.push({ id, title: (newTitle ?? "").trim(), color: null, kind: null });
+        }
+        have.add(id);
+        changed = true;
       };
       // 再点一次已挂的 = 摘掉(与卡上 chip 的 ✕ 同一条命令 remove_note_topic;摘掉最后一个会让
       // 「已整理」退回「未归类」,两个 stage 都在「想法」tab 里,卡不会跳走)。
       const unfile = async (topicId: string): Promise<void> => {
-        off();
         try {
           await invoke("remove_note_topic", { id: item.id, topicId });
         } catch (e) {
-          close();
           showOpErr(errText(e));
           return;
         }
-        afterFile();
+        have.delete(topicId);
+        changed = true;
       };
       // 选择器 UI(搜索 + 候选 + Enter 复用/新建)走共享件 tag-picker.ts(与看板同源)。
       // 先把 picker 挂进 DOM 再渲染 —— renderTagPicker 末尾会 focus 搜索框,而 focus 对游离
@@ -1065,9 +1152,10 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       renderTagPicker(picker, {
         allTopics,
         have,
-        onPick: (topicId) => void fileInto(topicId, null),
-        onUnpick: (topicId) => void unfile(topicId),
-        onCreate: (title) => void fileInto(null, title),
+        keepOpen: true,
+        onPick: (topicId) => fileInto(topicId, null),
+        onUnpick: (topicId) => unfile(topicId),
+        onCreate: (title) => fileInto(null, title),
       });
     }
 
@@ -1586,6 +1674,9 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
         // 是独立第四维,在类型轴之下、标签轴之上圈定,类型/标签 pill 与 applyFilter
         // 都吃已按时间收窄的集合(同 board.ts 的先后关系)。
         filterRow.hidden = ideas.length === 0;
+        // 157 G4 / P11:从「没筛」进「筛着」那一刻记下读到哪儿,筛选全清掉时滚回去(此前回到顶部,WD-21)。
+        const nowFiltered = filterActive(filter) || timeFilter !== "all";
+        if (nowFiltered && !wasFiltered) unfilteredScroll = list.scrollTop;
         const timeNarrowed = applyTimeFilter(ideas, timeFilter, (i) => i.created_at);
         if (ideas.length > 0) {
           renderTimePills(timeBar, ideas, (i) => i.created_at, timeFilter, (b) => {
@@ -1652,8 +1743,11 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
             group!.append(row(i, "ideas"));
           }
           list.replaceChildren(bar, tl);
+          settleFolds(); // ⚠ 在下面还原滚动位之前:还的是夹后几何里的位置
+          if (wasFiltered && !nowFiltered) list.scrollTop = unfilteredScroll;
           painted = shown.map((i) => i.id);
         }
+        wasFiltered = nowFiltered;
       } else {
         filterRow.hidden = true; // 回收站不筛(同看板的回收站/归档视图)
         copySlot.replaceChildren(); // 回收站不复制(同看板的回收站 / 归档视图没有「复制看板」)
@@ -1733,6 +1827,12 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
   void refresh();
 
   return {
+    // 157 G4 / P8:已在随记页再点侧栏「随记」= 回顶;在回收站里 = 回随记(同「← 随记」那枚钮)。
+    reselect() {
+      if (active === "archived") switchTo("ideas");
+      else list.scrollTo({ top: 0, behavior: "smooth" });
+      return true;
+    },
     unmount() {
       // Remember where the user was reading so the next mount can restore it.
       savedScroll = list.scrollTop;

@@ -107,14 +107,19 @@
 
     // ---- ③ 两拍销毁(底部固定确认条) ----------------------------------------
     const cb = $("confirmbar");
-    click($("cm-list").querySelector(".cm-del"));
+    // 157 G4 / P4:「销毁」收在 ⋯ 后面,不常驻。
+    const delBtn = $("cm-list").querySelector(".cm-del");
+    check("「销毁」平时藏着", getComputedStyle(delBtn).display === "none");
+    click($("cm-list").querySelector(".cm-opt"));
+    check("点 ⋯ 露出「销毁」", getComputedStyle(delBtn).display !== "none" && delBtn.textContent === "销毁");
+    click(delBtn);
     check("第一拍弹底部确认条", await until(() => !cb.hidden, 2000));
     check("话术明写不进回收站", $("confirmbar-q").textContent.includes("不进回收站"));
     check("第一拍没删", $("cm-list").querySelectorAll(".cm-item").length === 1);
     click($("confirmbar-no"));
     await until(() => cb.hidden, 1500);
     check("取消后留言还在", $("cm-list").querySelectorAll(".cm-item").length === 1);
-    click($("cm-list").querySelector(".cm-del"));
+    click($("cm-list").querySelector(".cm-del")); // 那一条还挂着 .opts,钮仍露着
     await until(() => !cb.hidden, 2000);
     click($("confirmbar-yes"));
     check("第二拍真销毁(行消失)", await until(() => $("cm-list").querySelectorAll(".cm-item").length === 0, 5000));

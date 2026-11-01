@@ -108,7 +108,7 @@ describe("待办清单 · 快速输入", () => {
 
     // 收尾那个换行删掉再提交(留着它库里就多一行空白,与本例要验的事无关)。
     await browser.keys("Backspace");
-    await browser.keys("Enter");
+    await browser.keys(["Control", "Enter"]); // 157 G4 / P6:光标停在待办项上,裸回车会续下一项 ⇒ 提交走 Ctrl+Enter
     await browser.waitUntil(async () => (await invoke("list_ideas")).some((i) => i.content.includes("E2ECKI-one")), {
       timeout: 8000,
       timeoutMsg: "Enter 记下之后库里没出现这条",
@@ -204,6 +204,28 @@ describe("待办清单 · 快速输入", () => {
     await browser.keys("Escape"); // 收编辑态,别把草稿留给后面的例子
   });
 
+  it("157 G4 / P6:待办项那一行上裸回车也续下一项、不记下;空项再回车退出;Ctrl+Enter 记下", async () => {
+    await goNotebook("inbox");
+    const input = await $(".v-inbox .compose-input");
+    await input.waitForDisplayed({ timeout: 8000 });
+    await input.click();
+    await clearField();
+
+    await typeText("E2ECKI-p6");
+    await browser.keys(["Control", "l"]);
+    await expectValue(input, "- [ ] E2ECKI-p6");
+    await browser.keys("Enter");
+    // ⭐ 承重:裸回车没被「Enter = 记下」抢走。
+    await expectValue(input, "- [ ] E2ECKI-p6\n- [ ] ");
+    await typeText("b");
+    await browser.keys(["Control", "Enter"]);
+    await browser.waitUntil(async () => (await invoke("list_ideas")).some((i) => i.content.includes("E2ECKI-p6")), {
+      timeout: 8000,
+      timeoutMsg: "Ctrl+Enter 没记下",
+    });
+    expect(await ideaBody("E2ECKI-p6")).toBe("- [ ] E2ECKI-p6\n- [ ] b");
+  });
+
   it("看板卡 inline rename:Ctrl+L 把标题变成待办项,走的是另一条写回命令", async () => {
     taskId = await invoke("create_task", { title: "E2ECKI-task" });
     await goNotebook("board");
@@ -218,7 +240,8 @@ describe("待办清单 · 快速输入", () => {
     await browser.keys(["Control", "l"]);
     await expectValue(input, "- [ ] E2ECKI-task");
 
-    await browser.keys("Enter"); // rename_task
+    // 157 G4 / P6:待办项那一行上裸回车 = 续下一项 ⇒ 提交走 Ctrl+Enter。
+    await browser.keys(["Control", "Enter"]); // rename_task
     await browser.waitUntil(
       async () => (await invoke("list_tasks")).some((t) => t.title === "- [ ] E2ECKI-task"),
       { timeout: 8000, timeoutMsg: "看板 inline rename 之后库里标题没变" },

@@ -20,7 +20,7 @@
 import { t } from "./i18n";
 import type { ImageMeta } from "./api";
 import { createKbSheet, type KbSheet } from "./kbsheet";
-import { $, esc, showBar } from "./ui";
+import { $, confirmBar, esc } from "./ui";
 import { hydrateThumbs } from "./thumbs";
 import { applyChecklistMarker, delegateChecklistNewline } from "./checklist-input";
 
@@ -82,6 +82,12 @@ export function isEditSheetOpen(): boolean {
 export function isEditSheetDirty(): boolean {
   if (!host) throw new Error("编辑层没开却在问脏不脏(返回键账本接线漏了)");
   return host.isDirty();
+}
+
+/** 离开改过的编辑层 = 保存(157 G4 / P1,两端同规矩:返回 / 点遮罩都存,只有「取消」才丢)。
+ *  存成了由宿主照常收层;存不成(空正文、写失败)层留着、错误条说原因。 */
+export function saveEditSheet(): void {
+  host?.onSave();
 }
 
 /** 收层的 DOM 部分:popstate(返回键)与 UI 关层共用;history 账目由调用方处置。幂等。 */
@@ -169,11 +175,11 @@ export function initEditSheet(d: Deps): void {
     scrim: $("edit-scrim"),
     input: textEl(),
     reserveTop: RESERVE_TOP,
-    // 点遮罩:正文一个字没改 = 当「取消」收层;改过了就拦一句——一记误触不该吞掉刚写的一段。
+    // 点遮罩:正文一个字没改 = 当「取消」收层;改过了 = 保存(157 G4 / P1:离开就存,只有「取消」才丢)。
     // ⛔ 别改成「点遮罩直接丢弃」:这一层与捕获层不同,它没有 localStorage 那份草稿兜底。
     onDismiss: () => {
       if (!host) return;
-      if (host.isDirty()) showBar(t("cardpanel.finishDraftFirst"));
+      if (host.isDirty()) host.onSave();
       else host.onCancel();
     },
   });
@@ -188,7 +194,18 @@ export function initEditSheet(d: Deps): void {
     if ((e.target as HTMLElement).closest("button")) e.preventDefault();
   });
   $("edit-save").addEventListener("click", () => host?.onSave());
-  $("edit-cancel").addEventListener("click", () => host?.onCancel());
+  // 「取消」是唯一丢弃的路(157 G4 / P1):改过了先问一句,一记误点不该吞掉刚写的一段。
+  $("edit-cancel").addEventListener("click", () => {
+    const h = host;
+    if (!h) return;
+    if (!h.isDirty()) {
+      h.onCancel();
+      return;
+    }
+    confirmBar(t("cardpanel.discardQ"), t("cardpanel.discardYes"), () => {
+      if (host === h) h.onCancel();
+    });
+  });
   $("edit-addimg").addEventListener("click", () => host?.onAddImage());
   $("edit-photo").addEventListener("click", () => host?.onPhoto());
   $("edit-todo").addEventListener("click", () => applyChecklistMarker(ta));

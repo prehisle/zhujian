@@ -33,7 +33,6 @@ import {
   renderTimePills,
   otherLayersNote,
   selectedTopicLabels,
-  soleTopicFilter,
   wireFilterInput,
 } from "./filter-bar";
 import {
@@ -64,6 +63,7 @@ import { renderTagPicker } from "./tag-picker";
 import { type TaskItem, DUE_SOON_DAYS, dayKey, dayLabel, dueAttentionState, dueSummaryFullLabel, isDueSoon, localToday, metaRow, startOfWeek } from "./tasktime";
 import { identitySig, loadIdentity, signatureChip } from "./identity";
 import { t } from "./i18n";
+import { FOLD_SLACK_PX, hasBoxBelowFold } from "./fold";
 import { wireChecklistInput } from "./checklist-input";
 import "./board.css";
 import { el, onDragTarget } from "./dom";
@@ -122,26 +122,6 @@ function sortLabel(s: BoardSort): string {
 // draggable=false 只让它自己不成拖源、挡不住父卡(671 补在真 WebView2 上量的:按住 ⋯ 拖照样起
 // 卡片拖,拖动数据 = 任务 id)。真正挡住的是下面 card() 里 mousedown 看落点那一段。
 const CARD_CONTROLS = "a, button, input, textarea, label, .chip, .hk-menu-wrap, .img-thumb";
-
-/** 溢出不到半行就不算「夹到了」(704)。⭐ 判据不是洁癖:正文尾巴上一个换行符就能多出一个
- *  空行盒,为它长一枚「展开」= 点开什么也没有;而**没夹住就整张摊开**(settleFolds 当场摘夹子)
- *  ⇒ 放宽这个数只会让边界上那几张多显半行,⛔ 绝不会把字悄悄裁掉。半行 ≈ 11px(--fs-15 × 1.5 ÷ 2);
- *  界面字号那四档是整窗缩放、不改 CSS 像素,故这里写 px 是稳的。 */
-const FOLD_SLACK_PX = 11;
-
-/** 夹住之后,有没有**还没勾**的方框落在褶子下面 —— 长卡折叠的豁免判据(704)。
- *
- *  ⭐ **量的是夹后几何,不是「这条正文里有没有框」**:豁免的理由只有一个「褶子下面的框点不到」,
- *  ⇒ 框全在前 8 行的卡(清单在开头、后面拖着一长段记录)**该照折** —— 框照样点得到,而那正是
- *  最该折的一种卡(704 的截图逮到的:第一版按「有没有框」豁免,一张 20 行的清单卡把整列占满)。
- *  ⛔ 别改回按行数猜:正文里一行可能渲染成两行(列宽有下限),谁在褶子下面只有落 DOM 后量得出。
- *  判据取**方框自己的底边**越过夹线(不是整行):框在行首,行尾被切掉不影响它点不点得到。 */
-function hasBoxBelowFold(body: HTMLElement): boolean {
-  const line = body.getBoundingClientRect().bottom;
-  return [...body.querySelectorAll<HTMLElement>(".ckline:not(.on) .ckbox")].some(
-    (b) => b.getBoundingClientRect().bottom > line,
-  );
-}
 
 /** 一列之内按当前轴排。manual = 原样(后端已按 position 给);时间档按 `created_at`
  *  字符串比 —— RFC3339 同一形状下字典序 == 时序,同刻再按 id(ULID)定序,免得两张
@@ -898,6 +878,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
   });
   composeInput.addEventListener("keydown", (e) => {
     if (e.isComposing) return; // IME 组合期的 Enter 是上屏,不是提交(ui-audit P0 #1)
+    if (e.defaultPrevented) return; // 待办项上的回车已被拿去续下一项(157 G4 / P6,wireChecklistInput)
     // Enter submits; Shift+Enter inserts a newline (let the default through).
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -1183,7 +1164,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         // 筛某个标签时,卡片上那枚同名 chip 是纯冗余(筛出来的卡本就都带它)——标 redundant
         // 交给 CSS 藏起来,消掉视觉噪音。**仍留在 DOM 里**:拖拽打标签的去重判据 taskHasTopic
         // 读这枚 chip,真删掉会误判「未挂」→ 拖回该 pill 重复 add_task_topic 报错(旁路不变量)。
-        if (soleTopicFilter(filter) === tp.id) chip.classList.add("redundant");
+        // ⛔ 157 G4 / P10 起不再标 redundant(用户读成「标签被摘了」,W1 走查 WD-18);上面那段 218 的理由作废。
         chip.dataset.topicId = tp.id; // 拖拽打标签的去重判据(taskHasTopic 读它;ULID 选择器安全)
         applyTagColor(chip, tp.color); // 有色标签的 chip 着色(左色条 + 极淡底),便于一眼定位
         chip.append(
@@ -1763,6 +1744,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         if (e.isComposing) return; // IME 组合期的 Enter/Esc 属于输入法,不是提交/取消(ui-audit P0 #1)
         const t = e.target;
         if ((t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement) && t !== input) return;
+        if (e.defaultPrevented) return; // 待办项上的回车已被拿去续下一项(157 G4 / P6)
         if (e.key === "Enter" && !e.shiftKey) {
           e.preventDefault();
           commit();

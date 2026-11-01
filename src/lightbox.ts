@@ -164,6 +164,14 @@ function mountLightbox(
     if (isTabKey(e)) trapTab(e);
   };
   overlay.addEventListener("click", close);
+  // 关闭钮(157 G4 / P9):屏上得有一枚看得见的出口 —— 此前只有「点空白 / Esc」,而且单击图也关,
+  // 想看清细节的那一下常常把图关了。钉在右上角,浮在遮罩之上;click 不冒泡(遮罩自己的 click 也是关,两次无害但别重入)。
+  const closeBtn = el("button", { className: "img-lightbox-close", type: "button", textContent: "✕", title: t("itemImages.close") });
+  closeBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    void close();
+  });
+  overlay.append(closeBtn);
   document.addEventListener("keydown", onKey);
   document.body.append(overlay);
   overlay.focus({ preventScroll: true }); // 开图即把焦点移进遮罩,Tab 从此在内部转圈
@@ -175,13 +183,12 @@ function mountLightbox(
  *  滚动——开图默认「整图」先看全貌(超高长截图也不例外;默认铺宽会让人误以为图到视口底为止),
  *  双击切「铺宽」滚看细节。交互(方案 A):无 Ctrl 滚轮=能竖滚就原生滚、否则(整图放得下)缩放;`Ctrl+滚轮`
  *  永远缩放(rect 锚点);双击切「整图↔铺宽」(且此后 resize 不再自动改取向);溢出时拖着滚(手
- *  型),整图放得下时单击关闭(延迟一个双击判定窗口,免与双击抢)。`init()` 在自然尺寸 + 最终窗口
+ *  型);157 起单击图不关(只有点图外空白 / ✕ / Esc 才关)。`init()` 在自然尺寸 + 最终窗口
  *  尺寸都定后挑取向并布局一次(mode 未被用户双击改过时,resize 会自动重挑取向,兜住 capture 先小
  *  窗 init 再放大的时序)。`cleanup()` 摘 EVERY 监听(含 window resize)——调用方必须在关闭时调,
  *  否则 resize 监听常驻拽住 img 的全尺寸位图不放,破「不缓存全尺寸图」内存纪律(codex 三审 H3)。 */
 function makeImageViewer(
   img: HTMLImageElement,
-  requestClose: () => void,
 ): { init: () => void; cleanup: () => void; signal: AbortSignal } {
   const ac = new AbortController();
   const { signal } = ac;
@@ -193,26 +200,11 @@ function makeImageViewer(
   img.style.width = "0px";
   img.style.height = "0px";
   const PAD = 32; // 与 .img-lightbox-stage padding 一致
-  const DRAG_THRESHOLD = 4; // px:超过才算拖动(否则算单击)
-  // ms:单击关闭的延迟。旧值 500 是照「系统双击判定」定的,白等半秒(用户报「点了图关不掉、卡」);
-  // 但把它一味砍短是拿**双击容错**换的——安卓真机实测:延迟砍到 200ms 后,两次按下间隔 226ms
-  // 的双击第一击就把图关了,第二击落在空处(想放大却关了图)。系统标准的双击窗口是 300ms
-  // (Android)/500ms(Windows),所以这里回到 300 老实覆盖它。
-  // **速度感另有出路**:点下去立刻给遮罩挂 `.closing` 开始淡出(setClosing),延迟这段就不再是
-  // 一段静止的白等——用户读成「卡」的是「点了没反应」,不是「没立刻消失」。第二击一按下就
-  // clearTimeout + 摘 class,淡出被平滑拉回,双击照常放大。
-  const CLICK_DELAY = 300;
   let mode: "fit" | "fill" = "fit"; // fill = 铺满宽度、竖向可滚
   let zoom = 1; // 在 mode 基准尺寸上再乘的缩放(Ctrl+滚轮)
   let userToggled = false; // 用户双击切过取向后,resize 不再自动改 mode
-  let dragged = false;
-  let closeTimer: number | null = null;
 
   const scroller = (): HTMLElement | null => img.closest<HTMLElement>(".img-lightbox");
-  // 关闭中的淡出开关(246):只淡内容、黑底留着(缩窗要在暗遮罩下发生);撤销时摘掉即平滑拉回。
-  const setClosing = (on: boolean): void => {
-    scroller()?.classList.toggle("closing", on);
-  };
   const nw = (): number => img.naturalWidth || 1;
   const nh = (): number => img.naturalHeight || 1;
   const viewport = (): { w: number; h: number } => {
@@ -244,7 +236,7 @@ function makeImageViewer(
     const scale = baseScale() * zoom;
     img.style.width = `${Math.round(nw() * scale)}px`;
     img.style.height = `${Math.round(nh() * scale)}px`;
-    img.style.cursor = canPan() ? "grab" : "zoom-out";
+    img.style.cursor = canPan() ? "grab" : "default"; // 157 起单击不关,别再画「点了缩回去」的放大镜
   };
   // 取向:默认恒「整图」——超高长截图也先看全貌(默认铺宽会让人以为图就到那儿为止);
   // 想看清双击切「铺宽」或 Ctrl+滚轮放大,一步就到(2026-07-18 用户拍板,反转 139 的自动挑)。
@@ -325,11 +317,6 @@ function makeImageViewer(
     "dblclick",
     (e) => {
       e.stopPropagation();
-      if (closeTimer !== null) {
-        clearTimeout(closeTimer);
-        closeTimer = null;
-        setClosing(false); // 双击撤销待关:淡到一半的内容平滑回来
-      }
       mode = mode === "fit" ? "fill" : "fit";
       userToggled = true; // 手动切过 → resize 不再自动改取向
       zoom = 1;
@@ -345,22 +332,14 @@ function makeImageViewer(
   // 拖动=拽着滚(手型平移):只在有溢出时接管;主指针左键、过阈值才算拖动。
   let sx = 0;
   let sy = 0;
-  let moved = 0;
   let panning = false;
   let activePointer: number | null = null;
   img.addEventListener(
     "pointerdown",
     (e) => {
       if (e.button !== 0 || !e.isPrimary) return;
-      if (closeTimer !== null) {
-        clearTimeout(closeTimer); // 第二次按下 → 取消上一击的待关(双击不误关,H1 兜底)
-        closeTimer = null;
-        setClosing(false); // 连带把淡出拉回来(246)
-      }
-      if (!canPan()) return; // 整图放得下:让单击走 click→关闭
+      if (!canPan()) return; // 整图放得下:没东西可拽
       panning = true;
-      dragged = false;
-      moved = 0;
       activePointer = e.pointerId;
       sx = e.clientX;
       sy = e.clientY;
@@ -378,10 +357,8 @@ function makeImageViewer(
         s.scrollLeft -= e.clientX - sx;
         s.scrollTop -= e.clientY - sy;
       }
-      moved += Math.abs(e.clientX - sx) + Math.abs(e.clientY - sy);
       sx = e.clientX;
       sy = e.clientY;
-      if (moved > DRAG_THRESHOLD) dragged = true;
     },
     { signal },
   );
@@ -389,7 +366,7 @@ function makeImageViewer(
     if (!panning || e.pointerId !== activePointer) return;
     panning = false;
     activePointer = null;
-    img.style.cursor = canPan() ? "grab" : "zoom-out";
+    img.style.cursor = canPan() ? "grab" : "default"; // 157 起单击不关,别再画「点了缩回去」的放大镜
     try {
       img.releasePointerCapture(e.pointerId);
     } catch {
@@ -401,27 +378,15 @@ function makeImageViewer(
     "pointercancel",
     (e) => {
       endPan(e);
-      dragged = false; // 取消后无 click 收尾:主动复位,免下次单击被误当拖动吞掉(M4)
-      moved = 0;
     },
     { signal },
   );
   img.addEventListener(
     "click",
     (e) => {
-      e.stopPropagation(); // 图上的单击永不直接冒泡到遮罩关(交给下面的延迟判定)
-      if (dragged) {
-        dragged = false;
-        return;
-      }
-      if (canPan()) return; // 长图/放大态:单击不关
-      if (e.detail !== 1) return; // 只有真正的单击(非双击的第二下)才安排关闭
-      if (closeTimer !== null) return;
-      setClosing(true); // 立刻开始淡出 = 立刻有回执(246);延迟这段不再是静止的白等
-      closeTimer = window.setTimeout(() => {
-        closeTimer = null;
-        requestClose();
-      }, CLICK_DELAY); // 延迟关,给双击(dblclick 会 clearTimeout)取消的机会(H1)
+      e.stopPropagation(); // 图上的单击永不冒泡到遮罩关
+      // 157 G4 / P9(用户拍):**单击图不关** —— 只有点图外的空白、右上角 ✕ 或 Esc 才关。此前没放大时
+      // 单击就关(延迟 CLICK_DELAY 让位双击),走查里「想看清细节的那一下」常把图关了(W1 WD-08)。
     },
     { signal },
   );
@@ -441,7 +406,6 @@ function makeImageViewer(
     init,
     signal,
     cleanup: (): void => {
-      if (closeTimer !== null) clearTimeout(closeTimer);
       ac.abort();
     },
   };
@@ -532,7 +496,7 @@ function renderSaved(spaceId: string, images: ImageMeta[], index: number, mon: M
   const loading = el("div", { className: "img-lightbox-loading", textContent: t("itemImages.loading") });
   const stage = el("div", { className: "img-lightbox-stage" }, [loading, img]);
   let closed = false;
-  const viewer = makeImageViewer(img, () => close());
+  const viewer = makeImageViewer(img);
   const { overlay, close } = mountLightbox(
     stage,
     async () => {
@@ -619,7 +583,7 @@ function renderData(src: string, alt: string, mon: MonitorRect | null): void {
   const loading = el("div", { className: "img-lightbox-loading", textContent: t("itemImages.loading") });
   const stage = el("div", { className: "img-lightbox-stage" }, [loading, img]);
   let closed = false;
-  const viewer = makeImageViewer(img, () => close());
+  const viewer = makeImageViewer(img);
   const { overlay, close } = mountLightbox(stage, async () => {
     closed = true;
     viewer.cleanup();

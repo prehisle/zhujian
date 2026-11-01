@@ -96,6 +96,17 @@ describe("灵感 · 标签选择器(Esc 收起 + 内联新建)", () => {
     });
     const topics = await invoke("list_topics");
     expect(topics.some((t) => t.title === NEW)).toBe(true);
+    // 157 G4 / P10:选择器点完不收;Esc 收起后卡面才 refresh 出那枚胶囊。
+    expect(await card.$(".topic-search").isExisting()).toBe(true);
+    await browser.execute(() => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })));
+    await browser.waitUntil(async () => !(await $(`.note*=${IDEA}`).$(".topic-search").isExisting()), {
+      timeout: 5000,
+      timeoutMsg: "Esc 没收起选择器",
+    });
+    await browser.waitUntil(async () => await (await $(`.note*=${IDEA}`)).$(`.tag*=${NEW}`).isExisting(), {
+      timeout: 5000,
+      timeoutMsg: "收起后卡面没 refresh 出新挂的标签",
+    });
   });
 
   it("输入已存在标签的精确名 → 只给复用、不给「创建」(防近似重复)", async () => {
@@ -117,8 +128,8 @@ describe("灵感 · 标签选择器(Esc 收起 + 内联新建)", () => {
     expect(await card.$(".choice.create").isExisting()).toBe(false);
   });
 
-  it("已挂的标签在候选里点亮,再点一次 → 摘掉(675,与手机同形;灵感一步一收)", async () => {
-    // 前一例的选择器还开着(只输入没点),用它把 EXIST 点上 —— 灵感一步落库即收起。
+  it("点完不收可连点:挂上 → 候选点亮 → 再点摘掉 → 选择器一直开着;Esc 收起后卡面对齐(157 G4 / P10)", async () => {
+    // 前一例的选择器还开着(只输入没点),用它把 EXIST 点上。
     const card = await $(`.note*=${IDEA}`);
     await card.$(`.choice=${EXIST}`).waitForExist({ timeout: 5000 });
     const clickChoice = (name) =>
@@ -130,38 +141,32 @@ describe("灵感 · 标签选择器(Esc 收起 + 内联新建)", () => {
         IDEA,
         name,
       );
+    // ⚠ wdio 的 `.class=文本` 选择器只认单个类名,`.choice.on=…` 会报 invalid selector ⇒ 用 execute 读 classList。
+    const isOn = (n) =>
+      browser.execute(
+        (text, name) => {
+          const c = [...document.querySelectorAll(".note")].find((x) => x.textContent.includes(text));
+          const b = c && [...c.querySelectorAll(".topic-choices .choice")].find((x) => x.textContent === name);
+          return !!b && b.classList.contains("on");
+        },
+        IDEA,
+        n,
+      );
     await clickChoice(EXIST);
     await browser.waitUntil(async () => (await ideaTags()).includes(EXIST), { timeout: 8000, timeoutMsg: "EXIST 未挂上" });
-    await browser.waitUntil(async () => !(await $(`.note*=${IDEA}`).$(".topic-search").isExisting()), {
-      timeout: 5000,
-      timeoutMsg: "灵感挂上标签后选择器该随整卡 refresh 消失",
-    });
-    // 重开:EXIST 该点亮(.on);再点一次 → remove_note_topic,标签摘掉、选择器同样收起。
-    await inboxAction(IDEA, "标签");
-    const card2 = await $(`.note*=${IDEA}`);
-    await card2.$(".topic-search").waitForExist({ timeout: 5000 });
-    // ⚠ wdio 的 `.class=文本` 选择器只认单个类名,`.choice.on=…` 会报 invalid selector ⇒ 用 execute 读 classList。
-    await browser.waitUntil(
-      () =>
-        browser.execute(
-          (text, n) => {
-            const c = [...document.querySelectorAll(".note")].find((x) => x.textContent.includes(text));
-            const b = [...c.querySelectorAll(".topic-choices .choice")].find((x) => x.textContent === n);
-            return !!b && b.classList.contains("on");
-          },
-          IDEA,
-          EXIST,
-        ),
-      { timeout: 5000, timeoutMsg: "重开后已挂的标签没在候选里点亮" },
-    );
+    await browser.waitUntil(() => isOn(EXIST), { timeout: 5000, timeoutMsg: "挂上后候选没就地点亮" });
+    expect(await $(`.note*=${IDEA}`).$(".topic-search").isExisting()).toBe(true);
     await clickChoice(EXIST);
     await browser.waitUntil(async () => !(await ideaTags()).includes(EXIST), {
       timeout: 8000,
       timeoutMsg: "再点一次已挂的标签没摘掉",
     });
+    await browser.waitUntil(async () => !(await isOn(EXIST)), { timeout: 5000, timeoutMsg: "摘掉后候选没熄灭" });
+    expect(await $(`.note*=${IDEA}`).$(".topic-search").isExisting()).toBe(true);
+    await browser.execute(() => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })));
     await browser.waitUntil(async () => !(await $(`.note*=${IDEA}`).$(".topic-search").isExisting()), {
       timeout: 5000,
-      timeoutMsg: "摘掉后选择器该随整卡 refresh 消失",
+      timeoutMsg: "Esc 没收起选择器",
     });
     // 卡上那枚 chip 也没了(真相已由 list_ideas 证,这里只核视图跟上了)。
     expect(await (await $(`.note*=${IDEA}`)).$(`.tag*=${EXIST}`).isExisting()).toBe(false);

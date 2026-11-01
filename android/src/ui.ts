@@ -199,8 +199,8 @@ export function showBar(msg: string, notice = false) {
  *  自动收(动作窗口长度与此前借 confirmBar 的形一致)。新条来了整条重建、旧钮随节点
  *  移除自然作废,无需 token。⛔ 别再拿 confirmBar 当回执用:它左钮恒印「取消」,与
  *  「已改为…」这类既成事实并排,「取消/撤销」读成一对反义词(用户 2026-08-16 实报)。 */
-export function actionBar(msg: string, actLabel: string, onAct: () => void): void {
-  barWithAct(msg, actLabel, onAct, true, CONFIRM_REVERT_MS);
+export function actionBar(msg: string, actLabel: string, onAct: () => void, more?: { label: string; on: () => void }): void {
+  barWithAct(msg, actLabel, onAct, true, CONFIRM_REVERT_MS, more);
 }
 
 /** 错误条 + 一枚「下一步」钮(用户面 126,err.ts `showErr`:「连不上」后面挂「网络诊断」)。
@@ -209,7 +209,14 @@ export function errorActionBar(msg: string, actLabel: string, onAct: () => void)
   barWithAct(msg, actLabel, onAct, false, TOAST_ERROR_MS);
 }
 
-function barWithAct(msg: string, actLabel: string, onAct: () => void, notice: boolean, ms: number): void {
+function barWithAct(
+  msg: string,
+  actLabel: string,
+  onAct: () => void,
+  notice: boolean,
+  ms: number,
+  more?: { label: string; on: () => void },
+): void {
   const el = $("error");
   wireBar(el);
   el.textContent = "";
@@ -220,6 +227,14 @@ function barWithAct(msg: string, actLabel: string, onAct: () => void, notice: bo
   act.textContent = actLabel;
   act.onclick = onAct;
   el.append(text, act);
+  // 第二枚(157 G4 / P3:「撤销」旁边的「去看看」):同形同收法,点了也冒泡到条身收条。
+  if (more) {
+    const b = document.createElement("button");
+    b.className = "bar-act";
+    b.textContent = more.label;
+    b.onclick = more.on;
+    el.append(b);
+  }
   el.classList.toggle("notice", notice);
   el.classList.add("with-act");
   el.classList.remove("retiring");

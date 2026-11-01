@@ -9,7 +9,7 @@ import { createCaptureCommands } from "./capture-commands";
 import { initTheme } from "./theme-mode";
 import { t, initLang, applyStaticI18n } from "./i18n";
 import { armAppContextMenu } from "./context-menu";
-import { wireChecklistInput } from "./checklist-input";
+import { enterContinuesChecklist, wireChecklistInput } from "./checklist-input";
 import { errDetail, errText } from "./err";
 
 const input = document.getElementById("capture") as HTMLTextAreaElement;
@@ -444,6 +444,8 @@ input.addEventListener("keydown", async (e) => {
     await appWindow.hide();
     return;
   }
+  // 待办项上的裸回车归后面那条 wireChecklistInput 续下一项(157 G4 / P6);本条挂在它之前,只能先问。
+  if (enterContinuesChecklist(input, e)) return;
   if (e.key === "Enter" && !e.shiftKey) {
     e.preventDefault();
     if (capSaving) return;

@@ -208,8 +208,9 @@
   margin-top: 8px;
 }
 /* 编辑态没图、也没报错时,配图工具条整块收起——免得空 strip 在紧凑编辑框里留白。
-   粘贴一张图 → strip 掉 .empty → 本块自然显出(见 imageStrip.reload)。 */
-.img-editor:not(:has(.img-strip:not(.empty))):not(:has(.img-err:not([hidden]))) {
+   粘贴一张图 → strip 掉 .empty → 本块自然显出(见 imageStrip.reload)。
+   157 G4 / P7 起随记编辑态在这块里放了「＋加图」钮 ⇒ 带钮的那块恒显(看板编辑态没有钮,照旧收)。 */
+.img-editor:not(:has(.img-strip:not(.empty))):not(:has(.img-err:not([hidden]))):not(:has(.add-img)) {
   display: none;
 }
 .img-err {

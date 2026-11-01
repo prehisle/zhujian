@@ -28,6 +28,7 @@ import {
   listBoardColumns,
   listSpaces,
   listTimeline,
+  listTasks,
   listTopicsFull,
   paneCounts,
   spaceLabel,
@@ -69,7 +70,7 @@ import {
   openComments,
   refreshOpenComments,
 } from "./comments";
-import { closeEditSheetNow, initEditSheet, isEditSheetDirty, isEditSheetOpen } from "./editsheet";
+import { closeEditSheetNow, initEditSheet, isEditSheetDirty, isEditSheetOpen, saveEditSheet } from "./editsheet";
 import { disconnectThumbObserver, fillThumb, hydrateThumbs } from "./thumbs";
 import { closeViewerNow, initViewer, isViewerOpen, openLocalViewer, openViewer } from "./viewer";
 import {
@@ -134,6 +135,8 @@ let spaceMenuFor: string | null = null; // 空间行「⋯」展开态(ui-audit 
 
 type ViewMode = "ideas" | "tasks";
 let viewMode: ViewMode = "ideas";
+/** 每一面「上一发是不是筛着的 + 进筛选前读到的滚动位」(157 G4 / P11)。 */
+const filterScroll: Record<ViewMode, { was: boolean; y: number }> = { ideas: { was: false, y: 0 }, tasks: { was: false, y: 0 } };
 // 时间轴筛选(灵感/看板两面各持一份,同桌面 board/inbox 各自记忆自己的筛选):
 // 切面保留、切空间清零。allFilterTopics 是带 kind 的全量标签(list_topics_full),
 // 每轮刷新重取——类型轴的真相只在它上(per-item chip 不带 kind)。
@@ -383,8 +386,9 @@ function renderCard(it: TimelineItem, hideTopic: string | null, underDayHead = f
   // ⭐ **先一律夹住、落 DOM 后再量**(projectTimeline 末尾的 settleFolds):夹子对短卡是空
   // 操作 ⇒ 量出来没夹到东西的当场摘掉,屏上与从前逐字同形、也不长钮。⛔ 反过来「先摊开、
   // 量完再夹」会让长卡首帧闪一下全文。⛔ 方框那条豁免不在这儿判,它要的是**夹后几何**。
-  // 只夹任务面(同桌面 704 只折看板态):随记是全宽单列的流水,长卡在那儿不挡别的卡。
-  const clamp = viewMode === "tasks" ? " clamped" : "";
+  // 157 G4 / P13 起随记面也折(同八行):走查量到一张长随记就占半屏,滚过它得划两三下(WM-20 / WD-34)。
+  // 此前「只夹任务面」的理由(随记是单列流水、长卡不挡别的卡)被用户推翻。
+  const clamp = " clamped";
   const tint = cardTint(it.color);
   return `<article class="card${done ? " done" : ""}${tint.cls}"${tint.attr} data-id="${esc(it.id)}" data-stage="${esc(it.stage)}">${tick}<div class="body">
     <p class="content${clamp}">${contentHtml(it.content, true)}</p>${thumbs}
@@ -577,6 +581,8 @@ function renderDayGroups(items: TimelineItem[], hideTopic: string | null): strin
 
 // 时间轴最新一次渲染的条目快照(卡片操作面板的真值来源;refreshOnce 每轮重建)。
 let lastItems = new Map<string, TimelineItem>();
+/** 任务的看板手动序(id → 名次),同 lastItems 一起在成功读取后更新(157 G4 / P3)。 */
+let taskOrder = new Map<string, number>();
 
 // ---- 返回键层账本(143):安卓返回键的第一本能是「关掉当前层」,此前直接退 app。
 // WryActivity 内建「WebView 有历史先 goBack」,故开层(面板/大图)pushState 压一枚
@@ -651,7 +657,7 @@ let nativeBackPending = false; // native 请求的 history.back() 已发、popst
     if (isViewerOpen()) closeViewerNow();
     else if (isEditSheetOpen()) {
       if (isEditSheetDirty()) {
-        showBar(t("cardpanel.finishDraftFirst")); // 同点遮罩(122):层留着,挂账也留着
+        saveEditSheet(); // 157 G4 / P1:离开 = 保存;存成了宿主照常收层销账,存不成层与挂账都留着
         return true;
       }
       dismissEditSheet();
@@ -689,11 +695,12 @@ window.addEventListener("popstate", () => {
     return;
   }
   // 编辑层(706)在最上头(留言层开着时它开不出来:遮罩压着卡片操作面)。
-  // 正文改过 = 与点遮罩同规矩(122):拦一句、层留着 —— 守门条目刚被弹掉,补压一枚回去。
+  // 正文改过 = 与点遮罩同规矩:157 G4 / P1 起离开就保存 —— 守门条目刚被弹掉,先补压一枚回去
+  // (存成了宿主 closeEditSheet 照常平掉它;存不成层留着、守门条目也还在)。
   if (isEditSheetOpen()) {
     if (isEditSheetDirty()) {
       pushLayer();
-      showBar(t("cardpanel.finishDraftFirst"));
+      saveEditSheet();
       return;
     }
     dismissEditSheet();
@@ -890,12 +897,18 @@ function projectTimeline(): void {
   const items = [...lastItems.values()];
   const modeItems = items.filter((i) => homeOf(i) === viewMode);
   const f = filters[viewMode];
+  // 157 G4 / P11:从「没筛」进「筛着」那一刻记下读到哪儿,筛选全清掉时滚回去(此前留在筛选时的位置)。
+  const fs = filterScroll[viewMode];
+  const nowFiltered = filter.filterActive(f) || (viewMode === "tasks" && (taskStageFilter !== null || dueOnly));
+  if (nowFiltered && !fs.was) fs.y = window.scrollY;
   // 死标签/死类型回落(纯状态,先于渲染 pills 与应用过滤,同桌面共享件次序)。
   filter.reconcileTopicFilter(f, allFilterTopics);
   filter.reconcileKindFilter(f, allFilterTopics);
   renderFilterBar(modeItems);
   const shown = filter.applyFilter(modeItems, f, (i) => i.content, allFilterTopics);
-  const hideTopic = filter.soleTopicFilter(f); // 单选一枚标签时,卡上同名 chip 不渲染(218 同法)
+  // 157 G4 / P10:筛着标签时卡上那枚胶囊照常显示 —— 218 起把它藏掉,用户读成「标签被摘了」(W1 走查 WM-32 / WD-18)。
+  // ⛔ `soleTopicFilter` 留着(两端纯逻辑被 check-filter-parity 同压),只是不再拿它藏胶囊。
+  const hideTopic: string | null = null;
   if (viewMode === "ideas") {
     // 按天分组(用户面 86):这一端是主力端,而随记正是天天往里扔东西的那一面 —— 平铺一条
     // 列表时「这一周记了什么」只能一张张读卡角的时刻。⭐ 不是新设计:桌面 `src/inbox.ts` 早
@@ -930,7 +943,11 @@ function projectTimeline(): void {
     // `YYYY-MM-DD` 上的裸串比较就是日历日比较(同 dueState 里那句 `due < today` 的既有形)。
     const inSection = (stage: string): TimelineItem[] => {
       const rows = dueShown.filter((t) => t.stage === stage);
-      if (!dueOnly) return rows;
+      if (!dueOnly) {
+        // 看板手动序(157 G4 / P3);不在那份里的(两次读之间刚落的)排最后、彼此保持时间轴原序。
+        const at = (t: TimelineItem): number => taskOrder.get(t.id) ?? Number.MAX_SAFE_INTEGER;
+        return rows.map((t, i) => ({ t, i })).sort((a, b) => at(a.t) - at(b.t) || a.i - b.i).map((x) => x.t);
+      }
       return rows.sort((a, b) => ((a.due_on ?? "") < (b.due_on ?? "") ? -1 : (a.due_on ?? "") > (b.due_on ?? "") ? 1 : 0));
     };
     // ⚠ 任务卡必须是 `.tl-group` 的**直接子元素**:横滑改状态靠 `card.parentElement` 认它那一节(swipe.ts),
@@ -957,6 +974,8 @@ function projectTimeline(): void {
   hydrateThumbs(box);
   settleFolds(box); // ⚠ 必须在 restore **之前**:编辑态那张卡的正文被盖着,量出来两个高都是 0
   cardPanel.restore(box); // 展开态跨重画恢复(条目已不在=清态)
+  if (fs.was && !nowFiltered) window.scrollTo(0, fs.y);
+  fs.was = nowFiltered;
 }
 
 /** 筛选条:本面有条目才显示(空面无可筛)。类型行 + 标签行由 filter.ts 渲染,文本框
@@ -1237,13 +1256,16 @@ async function refreshOnce(): Promise<void> {
     // 署名少显一轮也绝不让整屏内容陪葬。
     // 留言计数(0035 徽章)与设备名册同批并发:它是**聚合计数**这一个真相源,列表另走
     // 分页(§4.14.2 第 4 条)——别为了对齐把留言正文整批拉过来。同样内部吞错(装饰)。
-    const [items, ftopics, counts, cols] = await Promise.all([
+    const [items, ftopics, counts, cols, , , tasksInOrder] = await Promise.all([
       listTimeline(space),
       listTopicsFull(space),
       paneCounts(space), // 底栏两枚 pane 钮的显形真值(408-A1);失败同走整轮错误页
       listBoardColumns(space), // 看板列(B-f 第 1 段):没有它连「这行是不是任务」都答不了 ⇒ 失败同走整轮错误页
       loadIdentity(space),
       loadCommentCounts(space),
+      // 157 G4 / P3:任务面每一节的卡序 = 看板的手动序(同桌面看板默认那一档)⇒ 刚转成的待办落在「待办」最上,
+      // 与桌面同一处。时间轴本身是按创建时间倒序的,转待办的老随记会沉到那一节最底下(W1 走查 WM-17)。
+      listTasks(space),
     ]);
     if (space !== getCurrentSpace()) return;
     if (cardPanel.hasDirtyDraft()) {
@@ -1257,6 +1279,7 @@ async function refreshOnce(): Promise<void> {
     // 该筛选就成了一条永远筛空的死路 ⇒ 清掉。⛔ 别改成在渲染处回落显 id。
     if (taskStageFilter !== null && !boardColumns().some((c) => c.id === taskStageFilter)) taskStageFilter = null;
     lastItems = new Map(items.map((i) => [i.id, i])); // 全量真值,只在成功读取后更新
+    taskOrder = new Map(tasksInOrder.map((x, i) => [x.id, i]));
     allFilterTopics = ftopics.map((t) => ({ id: t.id, title: t.title, color: t.color, kind: t.kind }));
     // 长文钮的显形真值 = 同一份时间轴快照里有没有主归属是长文的条目(不另起一条计数查询)。
     paneHas = { trash: counts.trash > 0, sealed: counts.sealed > 0, docs: items.some((i) => i.kind === "doc") };
@@ -1931,7 +1954,11 @@ function onModeButton(target: ViewMode) {
   const hadPane = activePane !== null;
   if (hadPane) openPane(activePane!); // toggle 关面(无草稿必然关成)
   if (target === viewMode) {
-    if (!hadPane) ($("text") as HTMLTextAreaElement).focus();
+    // 157 G4 / P8:已在这一面再点一下 = 回顶(长列表读到底下,此前只有点「朱简」两字才回得去)。
+    // 已经在顶上才落到老行为(拉起记一笔)。面板刚关的那一下不算(用户是要回这一面,不是要回顶)。
+    if (hadPane) return;
+    if (document.scrollingElement!.scrollTop > 0) window.scrollTo({ top: 0, behavior: "smooth" });
+    else ($("text") as HTMLTextAreaElement).focus();
     return;
   }
   applyMode(target);
@@ -2822,6 +2849,7 @@ cardPanel.initCardPanel({
     focusDoc(id);
     openPane("docs");
   },
+  focusCard: (id) => void focusTimelineCard(id),
   // 值 chip 上的截止文字与卡上那颗角标同一支笔(⛔ 别让面板自己算第二份)。
   dueLabel: (due) => dueLabel(due, localToday()),
 });

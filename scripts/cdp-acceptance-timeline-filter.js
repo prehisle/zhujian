@@ -1,7 +1,7 @@
 // @cdp-run phase  —— 三步:-seed → reload → 本体 → -cleanup
 // 时间轴筛选(灵感/看板两面,与桌面同源三维:kind→topics→text)真机验收 · 验证。
 // ①-③ 按类型筛选(190/192);④-⑩ 标签多选走「或」+ 父子折叠(229,追齐桌面 219/221);
-// ⑤b 单选标签时卡上同名 chip 不渲染(追齐桌面 218)。
+// ⑤b 筛着标签时卡上那枚 chip 照常显示(157 G4 / P10 起;此前追齐桌面 218 是藏掉)。
 // ⑪ 标签行摊开/收起 + 过滤框收窄(用户面 36)。⚠ ⑪a 两格与 ⑪c 的前提「本机原生宽度下标签行装得下」
 // 是设备属性:装不下就不出这 3 格、改记进 `skipped` 并印 `nativeTagRow` 读数(backlog 测试与工装 63;
 // 511 限宽之后今天所有台架都装不下,读数与理由在 ⑪ 那段)。
@@ -103,20 +103,19 @@
   click(findAll());
   ok("点「所有」:清空选集、恢复全量", findAll()?.classList.contains("active") && shows("FFV-想到项目"));
 
-  // ⑤b 追齐桌面 218:恰好单选一枚标签时,卡上那枚同名 chip 不渲染(筛出来的卡本就都带它,
-  //    纯冗余);多选 OR 下每枚 chip 是「凭哪个标签入选」的有效信息,全部保留。种子里
-  //    FFV-想到张三 挂两标签(张三+项目甲)、FFV-想到李四 只挂李四。
+  // ⑤b 157 G4 / P10 起反过来:筛着标签时卡上那枚胶囊**照常显示**(218 起藏掉它,用户读成「被摘了」)。
+  //    单选、多选都一样。种子里 FFV-想到张三 挂两标签(张三+项目甲)、FFV-想到李四 只挂李四。
   const cardChips = (marker) => {
     const card = [...document.querySelectorAll("#timeline [data-id]")].find((c) =>
       c.querySelector(".content")?.textContent.includes(marker));
     return card ? [...card.querySelectorAll(".chip")].map((c) => c.textContent) : null;
   };
   click(findTopic("FFV-李四"));
-  ok("单选李四:只挂李四的卡 chip 整枚消失", cardChips("FFV-想到李四")?.length === 0);
+  ok("单选李四:那枚李四 chip 照常在", cardChips("FFV-想到李四")?.some((t) => t.includes("FFV-李四")));
   click(findAll());
   click(findTopic("FFV-张三"));
   const zc = cardChips("FFV-想到张三");
-  ok("单选张三:同名 chip 藏、其余留(只剩项目甲)", !!zc && zc.length === 1 && zc[0].includes("FFV-项目甲"), zc);
+  ok("单选张三:两枚 chip 都在", !!zc && zc.some((t) => t.includes("FFV-张三")) && zc.some((t) => t.includes("FFV-项目甲")), zc);
   click(findTopic("FFV-李四")); // 追加李四 → 变多选
   const zc2 = cardChips("FFV-想到张三");
   ok(

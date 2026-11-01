@@ -88,6 +88,14 @@
     );
     if (!ok("建临时条目入时间轴", !!card)) throw new Error("abort");
     id = card.dataset.id;
+    // 157 G4 / P2 起删**随记**一点即删(不再两拍)⇒ 先转成待办,删任务仍两拍,这支验的是那条确认条。
+    const promote = await openCardAct(id, "promote");
+    if (!ok("转成待办", !!promote)) throw new Error("abort");
+    click(promote);
+    await until(() => !cardOf(id), 3000);
+    click(document.querySelector('#bottombar [data-mode="tasks"]'));
+    if (!ok("切到任务面看得见它", !!(await until(() => cardOf(id), 3000)))) throw new Error("abort");
+    document.getElementById("error").hidden = true;
 
     // ② 开卡片面板,拿「删除」按钮
     const del = await openCardAct(id, "del");
@@ -158,7 +166,8 @@
         residueSeen = !!trashRow(id);
         await setTrash(false);
       }
-      // ⑦ 收面回时间轴,不留验收现场
+      // ⑦ 收面回时间轴,不留验收现场(随记面是下一支的起点)
+      click(document.querySelector('#bottombar [data-mode="ideas"]'));
       ok("收面回时间轴", !document.body.classList.contains("pane-open"));
     } catch (e) {
       out.cleanupError = String(e);

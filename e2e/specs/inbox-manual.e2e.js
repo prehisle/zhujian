@@ -137,6 +137,12 @@ describe("灵感 · 打标签(手动,不经 AI)", () => {
     await browser.execute((el) => {
       el.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
     }, search);
+    // 157 G4 / P10:选择器点完不收、可连着挂;Esc 收起后卡面才 refresh 出 chip。先等落库再收。
+    await browser.waitUntil(async () => (await invoke("list_topics")).some((t) => t.title === "E2E-新主题-X"), {
+      timeout: 8000,
+      timeoutMsg: "回车新建的标签没落库",
+    });
+    await browser.execute(() => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })));
 
     // 标签只是元数据:打标签后想法留在「想法」列表(不再离开),只是长出一个 chip。
     const taggedA = await $(".note*=E2E-主题-甲");
@@ -157,6 +163,8 @@ describe("灵感 · 打标签(手动,不经 AI)", () => {
     const choice = await card2.$(".choice*=E2E-新主题-X");
     await choice.waitForExist({ timeout: 5000 });
     await choice.click();
+    await browser.waitUntil(async () => (await invoke("list_inbox")).length === 0, { timeout: 8000, timeoutMsg: "点选没归入" });
+    await browser.execute(() => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })));
 
     // It too stays in the list with the chip; both have left the inbox (未归类) stage.
     const taggedB = await $(".note*=E2E-主题-乙");

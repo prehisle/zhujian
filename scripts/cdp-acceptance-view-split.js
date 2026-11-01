@@ -115,7 +115,8 @@
     await until(() => !cardOf(idI));
     ok("转待办后离开灵感面", !cardOf(idI));
     const err = document.getElementById("error");
-    ok("离场回执指路「任务」", !err.hidden && err.textContent.includes("任务"));
+    // 157 G4 / P3 起回执不再写「在底栏『任务』里」,改挂一枚「去看看」(点了切到任务面落到那张卡)。
+    ok("离场回执指路(「去看看」)", !err.hidden && [...err.querySelectorAll(".bar-act")].some((b) => b.textContent === "去看看"));
 
     // ⑥ 搜索命中任务 → 关面 + 跳任务面 + 定位闪卡
     click(document.getElementById("search-toggle"));

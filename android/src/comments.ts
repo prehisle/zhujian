@@ -188,7 +188,7 @@ function renderRow(space: string, c: Comment): string {
     <p class="cm-text">${esc(c.content)}</p>
     <footer class="cm-meta"><time>${esc(fmtWhen(c.created_at))}</time>${
       who ? `<span class="cm-author">${esc(who)}</span>` : ""
-    }<button class="cm-del" data-cm-del="${esc(c.id)}">${t("comments.delete")}</button></footer>
+    }<button class="cm-opt" data-cm-opt aria-label="${t("comments.moreAria")}">⋯</button><button class="cm-del" data-cm-del="${esc(c.id)}">${t("comments.destroy")}</button></footer>
   </article>`;
 }
 
@@ -272,6 +272,13 @@ async function submit(): Promise<void> {
 function onListClick(e: Event): void {
   const s = sheet;
   if (!s || s.busy) return;
+  // 157 G4 / P4:「销毁」不常驻每条(红字一排排摆着,而它是永久的)—— 先点 ⋯ 才在那一条上露出来。
+  const opt = (e.target as HTMLElement).closest<HTMLElement>("[data-cm-opt]");
+  if (opt) {
+    for (const row of listEl().querySelectorAll(".cm-item.opts")) row.classList.remove("opts");
+    opt.closest(".cm-item")?.classList.add("opts");
+    return;
+  }
   const id = (e.target as HTMLElement).closest<HTMLElement>("[data-cm-del]")?.dataset.cmDel;
   if (!id) return;
   inputEl().blur();

@@ -113,11 +113,17 @@ function fetchThumbData(space: string, id: string): Promise<ThumbData | null> {
   return p.then((d) => (getCurrentSpace() === space ? d : null));
 }
 
-/** 降采样:**一律过 canvas 重编码成 ≤144×144 的 cover 方裁**(codex 二审:原图
- *  哪怕像素尺寸小也可能字节巨大[多帧/元数据],直接放原 URL 进缓存 = 缓存无界;
- *  只钉短边则超宽长图 thumb 仍巨大——两边都钉死)。小图不放大,但照样重编码。
- *  解码失败响亮抛给调用方标错框。 */
-const THUMB_PX = 144;
+/** 降采样:**一律过 canvas 重编码**、保持原比例、长边 ≤192(157 G4 / P12 起不再方裁,core
+ *  `thumbs::THUMB_SPEC` 同轮换成 `192fit-jpeg80`;codex 二审那条照旧:原图哪怕像素尺寸小也可能
+ *  字节巨大[多帧/元数据],直接放原 URL 进缓存 = 缓存无界 ⇒ 长边钉死、短边随比例更小)。
+ *  小图不放大,但照样重编码。解码失败响亮抛给调用方标错框。 */
+const THUMB_PX = 192;
+/** 缩略框按图的比例定宽:高恒 72,宽 = 72 × 宽高比,夹在 36..160(同桌面 `item-images.ts::fitThumbBox`)。 */
+export function fitThumbBox(box: HTMLElement, img: HTMLImageElement): void {
+  if (!img.naturalWidth || !img.naturalHeight) return;
+  const w = Math.round(Math.min(160, Math.max(36, (72 * img.naturalWidth) / img.naturalHeight)));
+  box.style.width = `${w}px`;
+}
 async function shrinkToThumb(url: string): Promise<string> {
   const img = new Image();
   await new Promise<void>((res, rej) => {
@@ -125,22 +131,11 @@ async function shrinkToThumb(url: string): Promise<string> {
     img.onerror = () => rej(new Error("图片解码失败"));
     img.src = url;
   });
-  const crop = Math.min(img.naturalWidth, img.naturalHeight); // 原图中央方形
-  const side = Math.min(THUMB_PX, crop);
+  const k = Math.min(1, THUMB_PX / Math.max(img.naturalWidth, img.naturalHeight));
   const c = document.createElement("canvas");
-  c.width = side;
-  c.height = side;
-  c.getContext("2d")!.drawImage(
-    img,
-    (img.naturalWidth - crop) / 2,
-    (img.naturalHeight - crop) / 2,
-    crop,
-    crop,
-    0,
-    0,
-    side,
-    side,
-  );
+  c.width = Math.max(1, Math.round(img.naturalWidth * k));
+  c.height = Math.max(1, Math.round(img.naturalHeight * k));
+  c.getContext("2d")!.drawImage(img, 0, 0, c.width, c.height);
   return c.toDataURL("image/jpeg", 0.8);
 }
 
@@ -179,7 +174,7 @@ export async function fillThumb(btn: HTMLElement) {
           const data = await fetchThumbData(space, id);
           if (!data) return null; // 空间已切走:时间轴整个重画了,别再动旧节点
           if (data.thumb) {
-            thumbCache.set(key, data.url); // 派生表命中:已是 ≤144² 小图,不必再解不必再缩
+            thumbCache.set(key, data.url); // 派生表命中:已是 ≤192 长边的小图,不必再解不必再缩
             return data.url;
           }
           const s = await shrinkToThumb(data.url);
@@ -199,6 +194,7 @@ export async function fillThumb(btn: HTMLElement) {
   if (!btn.isConnected) return; // 期间时间轴重建了:小图已入缓存,新节点直取
   if (!btn.querySelector("img")) {
     const img = document.createElement("img");
+    img.addEventListener("load", () => fitThumbBox(btn, img));
     img.src = small;
     img.alt = t("images.imageN", { n: btn.dataset.seq ?? "" });
     btn.prepend(img);

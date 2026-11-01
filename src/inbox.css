@@ -191,6 +191,9 @@
   white-space: pre-wrap;
   word-break: break-word;
 }
+/* 157 G4 / P13:长随记夹在 8 行(12.8em = 8 × 上面那条 line-height 1.6;走 em 的理由同 board.css 那条)。 */
+.v-inbox .note-text.clamped { max-height: 12.8em; overflow: hidden; }
+.v-inbox .note .fold-toggle { margin-top: 6px; }
 .v-inbox .note-time {
   display: block;
   margin-top: 7px;
@@ -494,3 +497,7 @@
   border-radius: var(--radius-pill);
   color: var(--ink-soft);
 }
+/* 编辑态「＋加图」(157 G4 / P7):缩略图条下面一枚次级钮。 */
+.v-inbox .img-editor .add-img { margin-top: 6px; }
+/* 编辑态按了一次 Esc 而正文改过(157 G4 / P1):再按一次才丢。 */
+.v-inbox .discard-hint { margin: 4px 0 0; font-size: var(--fs-12); color: var(--seal-ink); }

@@ -589,6 +589,9 @@
          口径不同只指**文案**;省略号那形与「·」前缀和卡片 .sig-chip 是同一枚记号,
          样式住 .sig-chip 处一份(此前逐字两抄)。 */
       .cm-del { margin-left: auto; border: none; background: none; color: var(--seal-ink); font-size: var(--fs-12); padding: 8px 2px; }
+      /* 157 G4 / P4:「销毁」收在每条的 ⋯ 后面,点了 ⋯ 那一条才露出来(行上挂 `.opts`)。 */
+      .cm-opt { margin-left: auto; border: none; background: none; color: var(--ink-soft); font-size: var(--fs-15); padding: 6px 8px; line-height: 1; }
+      .cm-item:not(.opts) .cm-del, .cm-item.opts .cm-opt { display: none; }
       .cm-empty { padding: 20px 0; text-align: center; }
       .cm-more { display: block; width: 100%; border: none; background: none; color: var(--seal-ink); font-size: var(--fs-13); padding: 10px 0; }
       .cm-compose {

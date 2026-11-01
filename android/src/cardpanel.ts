@@ -135,6 +135,8 @@ type Deps = {
   openComments: (itemId: string) => void;
   /** 开长文面并落到这一篇(「展开成长文」回执上那枚「打开」)。 */
   openDoc: (itemId: string) => void;
+  /** 定位到某张卡(必要时切面、清掉藏着它的筛选)—— main.ts 的 focusTimelineCard。 */
+  focusCard: (itemId: string) => void;
   /** 截止日的相对表达(「今天」/「逾期 3 天」/「8/27」)。706 值 chip 要它 —— 与**卡上那颗
    *  角标同一支笔**(main.ts 的 dueLabel),⛔ 别在这儿另写一份,更别把 ISO 原串摆上去:
    *  `2026-08-27` 在 360px 屏上一枚就吃掉半行,而它正是这一轮要治的「系统脸」。 */
@@ -1094,8 +1096,27 @@ function handleAct(act: string, card: HTMLElement) {
     }
     case "promote":
       // 146:卡离开灵感面——回执指路,且走 onCommitted(重投影清掉 session 也要响)。
+      // 157 G4 / P3:回执带「撤销」(= 退回随记,同桌面)与「去看看」(切到任务面落到那张卡)。
       void run((space) => promoteNoteToTask(space, item.id, item.content), {
-        onCommitted: () => showBar(t("cardpanel.promoted"), true),
+        onCommitted: () => {
+          const space = getCurrentSpace();
+          actionBar(
+            t("cardpanel.promotedShort"),
+            t("ui.undo"),
+            () => {
+              if (deps.isSwitching() || getCurrentSpace() !== space) return; // 换空间的旧撤销作废
+              void (async () => {
+                try {
+                  await revertTaskToInbox(space, item.id);
+                } catch (err) {
+                  showErr(err);
+                }
+                await deps.refresh();
+              })();
+            },
+            { label: t("cardpanel.goSee"), on: () => deps.focusCard(item.id) },
+          );
+        },
       });
       return;
     case "tagnew": {
@@ -1128,8 +1149,9 @@ function handleAct(act: string, card: HTMLElement) {
       return;
     // 两拍类:第一拍弹底部固定确认条,第二拍在条上执行(onYes 复核 session 未变——
     // 期间换卡/收面/切空间的旧确认一律作废,不许作用到新语境)。
-    case "del":
-      confirmBar(t("cardpanel.deleteQ"), t("cardpanel.deleteYes"), () => {
+    case "del": {
+      // 157 G4 / P2:随记一点即删 + 6 s 撤销(进回收站找得回,同桌面与 user-guide);任务仍两拍(同桌面看板)。
+      const doDelete = () => {
         if (state !== session || busy) return;
         // 确认期间远端可能已翻 stage(灵感→任务):按现行条目分流,不用第一拍的快照。
         const cur = deps.getItem(session.id);
@@ -1156,8 +1178,11 @@ function handleAct(act: string, card: HTMLElement) {
             setState(null);
           },
         });
-      });
+      };
+      if (isTaskStage(item.stage)) confirmBar(t("cardpanel.deleteQ"), t("cardpanel.deleteYes"), doDelete);
+      else doDelete();
       return;
+    }
     case "revert": {
       const hasMeta = item.due_on !== null || item.priority !== null;
       confirmBar(

@@ -20,10 +20,12 @@ use crate::repo::now_iso;
 /// 当前缩略图规格的指纹。**唯一真相源**,只在 core 内部流转:[`put`] 写它、[`get`] 比它。
 /// 壳与前端都碰不到这个 token(299 codex 实现审:让前端往返搬运它是伪契约,见 [`put`])。
 ///
-/// 含义 = 「原图中央方裁 → 长边至多 144px → JPEG q0.8」,与两端 `shrinkToThumb` 的
+/// 含义 = 「保持原比例(不裁)→ 长边至多 192px → JPEG q0.8」,与两端 `shrinkToThumb` 的
 /// `THUMB_PX` / 质量参数一一对应。**改那两个参数必须同轮改这里**,否则存量缓存会
 /// 冒充新规格(改了这里则存量行全体未命中、看一次自动刷新,是安全方向)。
-pub const THUMB_SPEC: &str = "144sq-jpeg80";
+/// 157 G4 / P12 从 `144sq-jpeg80`(中央方裁)换成这一版:缩略图按原比例显示(限高),方裁的小图
+/// 认不出长图宽图。用的正是上面第 ④ 条那个旋钮,零迁移。
+pub const THUMB_SPEC: &str = "192fit-jpeg80";
 
 /// 缩略图字节上界(与 0032 的 CHECK 同值,`thumb_size_cap_matches_schema` 对拍钉死)。
 ///

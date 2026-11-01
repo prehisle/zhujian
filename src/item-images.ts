@@ -112,27 +112,35 @@ function sameMetas(a: ImageMeta[] | null, b: ImageMeta[]): boolean {
 // 小图落库,重启后也不用再「读整图 + 解码整图 + 缩 + 再编码」一遍。这一层留着,是因为它
 // 缓的是 ≤144² 的小图 —— **仍然随图库线性增长,只是系数小了两个数量级**(几 KB vs 几百 KB),
 // 上面那条「按 id 缓全尺寸会膨胀到不可接受」的理由不再适用。别把它读成「有界」。
-const thumbCache = new Map<string, string>(); // imageId → 降采样 ≤144² data URL
+const thumbCache = new Map<string, string>(); // imageId → 降采样(长边 ≤192)data URL
 
 
 // 降采样(安卓 117 手法):一律过 canvas 重编码成 ≤144² 的 cover 方裁——原图哪怕像素尺寸小
 // 也可能字节巨大(多帧/元数据),直接缓原 data URL = 缓存无界;只钉短边则超宽长图 thumb 仍
 // 巨大,故两边都钉死。小图不放大、照样重编码;透明 PNG 经 JPEG 扁平化会失透明(与安卓一致,
 // lightbox 看的仍是原图)。解码失败响亮 reject,调用方标 .broken。
-const THUMB_PX = 144;
+// 157 G4 / P12 起**不再方裁**:保持原比例、长边至多 192(core `thumbs::THUMB_SPEC` 同轮换成 `192fit-jpeg80`),
+// 卡上按比例显示(`fitThumbBox`)。上面那段「两边都钉死」照旧成立:长边钉 192,短边随比例更小。
+const THUMB_PX = 192;
+/** 缩略框按图的比例定宽(157 G4 / P12):高恒 72,宽 = 72 × 宽高比,夹在 36..160 之间 ——
+ *  超出这个区间的极端长图 / 宽图照旧 cover 裁一截,但一眼仍读得出「长」还是「宽」。⚠ 安卓
+ *  `thumbs.ts::fitThumbBox` 同一组数(两端不共享代码)。 */
+export function fitThumbBox(box: HTMLElement, img: HTMLImageElement): void {
+  if (!img.naturalWidth || !img.naturalHeight) return;
+  const w = Math.round(Math.min(160, Math.max(36, (72 * img.naturalWidth) / img.naturalHeight)));
+  box.style.width = `${w}px`;
+}
 function shrinkToThumb(url: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const img = new Image();
     img.onload = (): void => {
-      const crop = Math.min(img.naturalWidth, img.naturalHeight); // 原图中央方形
-      const side = Math.min(THUMB_PX, crop);
+      const k = Math.min(1, THUMB_PX / Math.max(img.naturalWidth, img.naturalHeight));
       const c = document.createElement("canvas");
-      c.width = side;
-      c.height = side;
+      c.width = Math.max(1, Math.round(img.naturalWidth * k));
+      c.height = Math.max(1, Math.round(img.naturalHeight * k));
       const ctx = c.getContext("2d");
       if (!ctx) return reject(new Error("canvas 2d 上下文不可用"));
-      // 中央方裁 → 缩到 side×side(cover;source rect 居中,dest 铺满)。
-      ctx.drawImage(img, (img.naturalWidth - crop) / 2, (img.naturalHeight - crop) / 2, crop, crop, 0, 0, side, side);
+      ctx.drawImage(img, 0, 0, c.width, c.height);
       resolve(c.toDataURL("image/jpeg", 0.8));
     };
     img.onerror = (): void => reject(new Error("图片解码失败"));
@@ -154,7 +162,7 @@ export function getThumb(imageId: string): Promise<string> {
   if (hit !== undefined) return Promise.resolve(hit);
   return invoke<ThumbData>("get_item_thumb", { imageId }).then(async (r) => {
     if (r.thumb) {
-      thumbCache.set(imageId, r.url); // 已是 ≤144² 小图,直接进内存层
+      thumbCache.set(imageId, r.url); // 已是 ≤192 长边的小图,直接进内存层
       return r.url;
     }
     const small = await shrinkToThumb(r.url);
@@ -505,6 +513,7 @@ export function imageStrip(
     const wrap = el("div", { className: "img-thumb" });
     wrap.dataset.seq = String(m.seq); // 长文阅读页按编号藏起正文里已原位显示的那几张
     const img = el("img", { className: "img-thumb-img", alt: t("itemImages.badge", { n: m.seq }), title: t("itemImages.badge", { n: m.seq }) });
+    img.addEventListener("load", () => fitThumbBox(wrap, img));
     getThumb(m.id)
       .then((url) => {
         img.src = url; // 缓存命中=同帧微任务落 src,重渲不再逐张闪现(且落的是小图,不解全尺寸位图)

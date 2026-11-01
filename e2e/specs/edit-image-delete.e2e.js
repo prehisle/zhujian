@@ -46,6 +46,10 @@ describe("编辑态删图 · 随记(保存才删,取消一张不少)", () => {
     expect(await card.$$(".img-editor .img-thumb.del-marked")).toHaveLength(1);
     expect(await seqs(id)).toEqual([1, 2]); // 标记不碰库
 
+    // 157 G4 / P1:改过(标了删的图也算)按 Esc 先说一句、编辑态还开着;再按一次才丢。
+    await browser.keys(["Escape"]);
+    await card.$(".discard-hint").waitForDisplayed({ timeout: 3000 });
+    expect(await card.$(".edit-area").isExisting()).toBe(true);
     await browser.keys(["Escape"]);
     await card.$(".edit-area").waitForExist({ timeout: 5000, reverse: true });
     expect(await seqs(id)).toEqual([1, 2]);

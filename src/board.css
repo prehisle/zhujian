@@ -170,8 +170,6 @@
 /* ---- per-card topic chip (reuses .task-meta chip styling) ---- */
 .v-board .task-topic { margin-top: 7px; }
 .v-board .task-meta .chip.topic.set::before { content: "🏷 "; }
-/* 筛某标签时,卡片上重复的同名 chip 藏起来(节点仍在 DOM 供 taskHasTopic 去重判据用)。 */
-.v-board .task-meta .chip.topic.set.redundant { display: none; }
 .v-board .task-meta .chip.topic.set {
   color: var(--ink);
   border-color: var(--line-strong);

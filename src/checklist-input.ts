@@ -2,9 +2,10 @@
 // 「哪一记按键触发」与「怎么落笔」。
 //
 // **三记手势**(五个正文输入口全都接同一份,⛔ 别在某个入口另接一套):
-// - **Shift+Enter**:当前行是待办项时续行、带出同缩进的 `- [ ] `;空项上再按一次退出清单。
-//   ⚠ 挑 Shift+Enter 不是随意的 —— 五个入口的裸 Enter **都是「提交」**(捕获浮窗、两个
-//   compose、灵感卡编辑态、看板卡 inline rename),Shift+Enter 才是那一记「换行」。
+// - **Enter / Shift+Enter**:当前行是待办项时续行、带出同缩进的 `- [ ] `;空项上再按一次退出清单。
+//   157 G4 / P6(用户拍)起**裸回车也续** —— 此前只认 Shift+Enter(五个入口的裸 Enter 都是「提交」),
+//   清单写到第二项就被整条记下,而手机与长文都是回车续。现在:待办项那一行上回车 = 续,
+//   别的行回车照旧提交,Ctrl+Enter 恒提交。提交点让位的接法见 `enterContinuesChecklist`。
 // - **Ctrl+L**:把光标那一行(或选中的几行)变成待办项,再按一次摘掉。⚠ 键位是核过的:
 //   桌面已占的是 Ctrl+V 粘图 / Ctrl+C 复制图 / Ctrl+B 侧栏 / Ctrl+±/0 缩放 / 两枚可改的
 //   全局热键(Ctrl+Alt+N、Ctrl+Alt+M),L 空着;卡片与视图的单键(L = 标签)带修饰键时
@@ -42,6 +43,13 @@ export function applyEdit(ta: HTMLTextAreaElement, edit: ChecklistEdit): void {
   ta.setSelectionRange(edit.selStart, edit.selEnd);
 }
 
+/** 这一记裸回车会不会被拿去续待办项(157 G4 / P6)—— 给挂在 `wireChecklistInput` **之前**的提交监听
+ *  先问一句(捕获浮窗);挂在之后的看 `e.defaultPrevented` 就够。 */
+export function enterContinuesChecklist(ta: HTMLTextAreaElement, e: KeyboardEvent): boolean {
+  if (e.key !== "Enter" || e.shiftKey || e.ctrlKey || e.altKey || e.metaKey) return false;
+  return continueChecklistOnNewline(ta.value, ta.selectionStart, ta.selectionEnd) !== null;
+}
+
 /** 给一个正文输入框接上快速输入。五个入口各调一次;监听挂在元素自己身上,故先于
  *  inbox / board 编辑态那两处**文档级** Enter 监听跑到(它们看见 shiftKey 本就让位)。 */
 export function wireChecklistInput(ta: HTMLTextAreaElement): void {
@@ -55,7 +63,10 @@ export function wireChecklistInput(ta: HTMLTextAreaElement): void {
       applyEdit(ta, edit);
       return;
     }
-    if (e.key === "Enter" && e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey) {
+    // 157 G4 / P6 起裸回车也续(手机与长文本来就是):光标在待办项那一行上时,回车 = 下一项,
+    // 空项上再按一次退出清单;别的行裸回车照旧归提交点。提交点见 `defaultPrevented` 就让位
+    // (捕获浮窗那条监听挂在本条之前,走 `enterContinuesChecklist` 先问)。Ctrl+Enter 恒提交。
+    if (e.key === "Enter" && !e.ctrlKey && !e.altKey && !e.metaKey) {
       const edit = continueChecklistOnNewline(ta.value, ta.selectionStart, ta.selectionEnd);
       if (edit === null) return; // 不是待办项 / 选中了一段 / 光标还在标记里:放行默认换行
       e.preventDefault();

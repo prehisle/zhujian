@@ -137,4 +137,32 @@ describe("配图 · 大图遮罩内翻同条目的多图(224)", () => {
     });
     await back();
   });
+
+  it("157 G4 / P9:有关闭钮;单击图不关,点 ✕ 才关", async () => {
+    await clearInbox();
+    const id = await invoke("capture_note", { content: "E2E-看图关闭钮" });
+    await addPng(id, 10);
+
+    await goNotebook("inbox");
+    const card = await $(".note*=E2E-看图关闭钮");
+    await card.waitForExist({ timeout: 10000 });
+    const thumb = await card.$(".img-thumb-img");
+    await thumb.waitForExist({ timeout: 10000 });
+    await thumb.click();
+
+    const back = await toLightbox();
+    await (await $(".img-lightbox")).waitForExist({ timeout: 10000 });
+    await waitShown(10);
+    await expect(await $(".img-lightbox-close")).toExist();
+    // 单击图:此前延迟 300ms 关,这里等过 800ms 仍开着(且不在淡出)。
+    await browser.execute(() => document.querySelector("img.img-lightbox-img").dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 })));
+    await browser.pause(800);
+    expect(await browser.execute(() => !!document.querySelector(".img-lightbox") && !document.querySelector(".img-lightbox.closing"))).toBe(true);
+    await (await $(".img-lightbox-close")).click();
+    await browser.waitUntil(async () => !(await $(".img-lightbox").isExisting()), {
+      timeout: 10000,
+      timeoutMsg: "点 ✕ 没关掉大图",
+    });
+    await back();
+  });
 });

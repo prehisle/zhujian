@@ -1,4 +1,4 @@
-// @cdp-run single timeout=90000
+// @cdp-run phase timeout=90000
 // 157 G3(W1 走查手机那半:WM-07 / 13 / 14 / 15 / 10 / 08 / 12 / 22 / 24 / 26 / 27 / 09)的页内可断言部分。两趟:
 //   第一趟(phase 空)直调命令播种(一条随记带一张图 + 一条清单带空行 + 一枚超长无色标签),回 `{needReload:true}`;
 //   驱动者 `eval 'location.reload()'` 后再跑第二趟才验,末尾 purge 种子、删标签(回收站零残留)。

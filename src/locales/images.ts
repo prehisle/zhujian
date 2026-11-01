@@ -14,6 +14,7 @@ export const images = defineMessages({
   "itemImages.badge": { zh: "图{n}", en: "Image {n}" },
   "itemImages.loading": { zh: "图片载入中…", en: "Loading image…" },
   "itemImages.loadFail": { zh: "图片加载失败", en: "Image failed to load" },
+  "itemImages.close": { zh: "关闭(Esc)", en: "Close (Esc)" },
   "itemImages.prev": { zh: "上一张(←)", en: "Previous (←)" },
   "itemImages.next": { zh: "下一张(→)", en: "Next (→)" },
   "itemImages.counter": { zh: "图{n} · {i}/{total}", en: "Image {n} · {i}/{total}" },

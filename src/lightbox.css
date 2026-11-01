@@ -55,6 +55,7 @@
 }
 .img-lightbox.closing .img-lightbox-stage,
 .img-lightbox.closing .img-lightbox-nav,
+.img-lightbox.closing .img-lightbox-close,
 .img-lightbox.closing .img-lightbox-count {
   opacity: 0;
   transition: opacity 0.3s ease;
@@ -101,6 +102,30 @@
 }
 .img-lightbox-nav:hover,
 .img-lightbox-nav:focus-visible {
+  opacity: 1;
+  background: rgba(20, 16, 10, 0.72);
+}
+/* 关闭钮(157 G4 / P9):右上角,与左右翻页钮同一套皮(半透明墨底 + 白字,悬停实一档)。 */
+.img-lightbox-close {
+  position: fixed;
+  top: 12px;
+  right: 12px;
+  z-index: 9100;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: rgba(20, 16, 10, 0.5);
+  color: #fff;
+  font-size: var(--fs-20);
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.7;
+  transition: opacity 0.12s ease, background 0.12s ease;
+}
+.img-lightbox-close:hover,
+.img-lightbox-close:focus-visible {
   opacity: 1;
   background: rgba(20, 16, 10, 0.72);
 }
