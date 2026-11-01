@@ -30,6 +30,7 @@ import {
   renderFilterPills,
   renderKindPills,
   renderTimePills,
+  otherLayersNote,
   selectedTopicLabels,
   soleTopicFilter,
   wireFilterInput,
@@ -1618,14 +1619,19 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
           // `android/src/main.ts::filteredEmptyHtml`。
           const qRaw = filter.text.trim();
           const label = selectedTopicLabels(filter, topics).join("、");
+          // 157 G3(WD-19):标题之外还开着的维,补在提示前面点名。
+          const hint = (said: "text" | "topics" | "kind", h: string): string => {
+            const note = otherLayersNote(filter, topics, timeFilter, said);
+            return note ? `${note}${h}` : h;
+          };
           list.replaceChildren(
             bar,
             qRaw !== ""
-              ? centerNode(t("inbox.filterNoMatch", { q: qRaw }), t("inbox.filterNoMatchHint"))
+              ? centerNode(t("inbox.filterNoMatch", { q: qRaw }), hint("text", t("inbox.filterNoMatchHint")))
               : filter.topics.length > 0
-                ? centerNode(t("inbox.filterEmptyTag", { tag: label }), t("inbox.filterEmptyTagHint"))
+                ? centerNode(t("inbox.filterEmptyTag", { tag: label }), hint("topics", t("inbox.filterEmptyTagHint")))
                 : filter.kind !== "all"
-                  ? centerNode(t("inbox.filterEmptyKind", { kind: filter.kind }), t("inbox.filterEmptyKindHint"))
+                  ? centerNode(t("inbox.filterEmptyKind", { kind: filter.kind }), hint("kind", t("inbox.filterEmptyKindHint")))
                   : centerNode(t("inbox.filterEmptyTime"), t("inbox.filterEmptyTimeHint")),
           );
         } else {

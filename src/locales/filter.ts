@@ -23,8 +23,15 @@ export const filter = defineMessages({
   "filter.expandKids": { zh: "展开 {n} 个子标签", en: "Show {n} child {n|tag|tags}" },
   // 时间轴(461):按创建时间三档互斥分区 + 「所有」重置(复用 filter.all)。仅桌面接线,
   // 未进 CROSS_END_KEYS——安卓这条轴还没做,补齐时再登记。
+  // 157 G3(WD-19):筛空空态补的那一句(filter-bar.ts::otherLayersNote)。
+  "filter.alsoActive": { zh: "还同时筛着:{layers}。", en: "Also filtering by {layers}. " },
+  "filter.layerTags": { zh: "标签「{labels}」", en: "tag “{labels}”" },
+  "filter.layerKind": { zh: "类型「{kind}」", en: "kind “{kind}”" },
+  "filter.layerTime": { zh: "时间「{time}」", en: "time “{time}”" },
+  "filter.layerSep": { zh: "、", en: ", " },
   "filter.timeAxis": { zh: "时间", en: "Time" },
-  "filter.time1d": { zh: "近1天", en: "Last 1 day" },
-  "filter.time7d": { zh: "近7天", en: "Last 7 days" },
-  "filter.timeOld": { zh: "7天前", en: "7+ days ago" },
+  // 157 G3(WD-11):三档是互斥分段,名字也得读成分段 —— 「近1天 / 近7天」读着像后者包含前者。
+  "filter.time1d": { zh: "今天", en: "Today" },
+  "filter.time7d": { zh: "昨天至6天前", en: "Yesterday–6 days ago" },
+  "filter.timeOld": { zh: "更早", en: "Older" },
 });

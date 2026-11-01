@@ -140,7 +140,11 @@ function pill(label: string, active: boolean, onClick: () => void, count?: numbe
     d.style.setProperty("--tc", color);
     b.append(d);
   }
-  b.append(document.createTextNode(label));
+  // 名字单独一格(157 G3 / WM-13):摊开态里超长标签按行宽省略,计数那格照旧露在右端。
+  const l = document.createElement("span");
+  l.className = "flabel";
+  l.textContent = label;
+  b.append(l);
   if (count !== undefined) {
     const n = document.createElement("span");
     n.className = "fn";

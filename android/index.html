@@ -740,6 +740,8 @@
         margin-left: auto;
         margin-right: auto;
       }
+      /* 157 G3(WM-24):最后一张卡能滚到悬浮 ＋ 上方(＋ 高 56 + 离底 16),别永远被它压着一角。 */
+      #timeline { padding-bottom: calc(56px + 16px); }
       /* position:relative = swipe-track(182 卡下亮出目标印)的定位基;不改流内布局。 */
       .timeline .tl-group { display: flex; flex-direction: column; gap: 8px; position: relative; }
       /* 节头**吸顶**(用户面 85 ④ / ui-consistency M10 的前置,639 补钉的):任务卡上的状态印摘掉之后,
@@ -750,7 +752,8 @@
          进 gap 里(padding 4 + margin -4,流内位置一点不变),免得吸住时卡的上边贴着字。
          随记面的日期节头(656)同一条规则 ⇒ 「今天」也跟着吸顶,那是顺带的、不是另一笔。 */
       .timeline .tl-sec {
-        position: sticky; top: calc(var(--head-h, 0px) + var(--fbar-h, 0px)); z-index: 3;
+        /* −1px:与筛选条压一线(它 z 更高、盖得住),亚像素取整再也漏不出缝(157 G3 / WM-22)。 */
+        position: sticky; top: calc(var(--head-h, 0px) + var(--fbar-h, 0px) - 1px); z-index: 3;
         margin: 0 0 -4px; padding: 8px 2px 4px; background: var(--paper); /* 横向 2px 从 margin 换成 padding:纸底铺满整行,字的位置不变 */
         font-size: var(--fs-12); font-weight: 600;
         color: var(--ink-soft); font-family: var(--font-sans); letter-spacing: 0.04em;
@@ -908,6 +911,8 @@
         overflow: hidden; text-overflow: ellipsis; max-width: 10em; min-width: 0;
       }
       .sig-chip { color: var(--ink-soft); }
+      /* 157 G3(WM-07):超长标签在卡脚一行省略,不再自己折成两行 —— 折行让卡忽高忽低,挂 / 摘时操作面整体跳。 */
+      .card footer .chip { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; min-width: 0; }
       .sig-chip::before, .cm-author::before { content: "·"; margin-right: 4px; opacity: 0.6; }
       /* 只剩回收站 / 搜索结果两处在用(panes.ts):时间轴上的任务卡不再盖状态印
          (用户面 85 ④,节头已经说过了)⇒ 从前那条 `.card.done .pill` 降噪规则没有对象,一并删。 */
@@ -936,6 +941,10 @@
          这正是它在别处的样子(`.fdot` 无色时整枚不渲染)。
          ⚠ 点用**原始色**、字仍走 348 那条往墨压 55% 的调:颜色是冗余次通道,读的是字。 */
       .chip.tinted::before { content: "●"; color: var(--tc); margin-right: 3px; }
+      /* 157 G3(WM-26):没颜色的标签画一枚**空心**圈占住那个位置 —— 同一张卡上有点没点的并排,读着像漏画了。
+         ⚠ 这不是给它设默认色(上面那条 ⛔ 仍成立):空心 = 「这枚标签没有颜色」,点的位置对齐而已。
+         筛选行同一形(`.fpill` 那条)。`.topic` 只挂在标签胶囊上,截止 / 优先级角标不吃。 */
+      .chip.topic:not(.tinted)::before { content: "○"; color: var(--ink-faint); margin-right: 3px; }
 
       /* 截止角标(追平桌面 tasktime.css 的 .chip.due.* 同名同值,两端不共享代码):
          今天/逾期用朱砂强调,未来是平静的墨色。done 卡降噪成描边淡字——
@@ -1008,14 +1017,18 @@
       #viewer .cap { color: #fff; opacity: 0.85; font-size: var(--fs-13); transition: opacity 0.15s; }
       #viewer.zoomed .cap { opacity: 0; }
       /* 删图按钮:右上角,低调描边;放大态淡出并禁点(与角标同,防平移误触)。 */
-      .viewer-del {
-        position: absolute; top: calc(12px + var(--sat)); right: 16px;
+      /* 157 G3(WM-10):底色压到几乎不透 —— 0.45 那版叠在顶栏「同步 / 设置」上,字从钮里透出来。
+         关闭钮左上、删除右上,两枚分处两角(删除是两拍,但别让「关」和「删」挨着)。 */
+      .viewer-del, .viewer-close {
+        position: absolute; top: calc(12px + var(--sat));
         border: 1px solid rgba(255, 255, 255, 0.5); border-radius: var(--radius-pill);
-        background: rgba(0, 0, 0, 0.45); color: #fff;
+        background: rgba(0, 0, 0, 0.92); color: #fff;
         padding: 8px 18px; font-size: var(--fs-14); font-family: var(--font-sans);
         transition: opacity 0.15s;
       }
-      #viewer.zoomed .viewer-del { opacity: 0; pointer-events: none; }
+      .viewer-del { right: 16px; }
+      .viewer-close { left: 16px; min-width: 44px; min-height: 40px; padding: 8px 14px; }
+      #viewer.zoomed .viewer-del, #viewer.zoomed .viewer-close { opacity: 0; pointer-events: none; }
       /* 只读(674:编辑态点缩略图看大图):删只在缩略图 × 上,大图纯看。 */
       #viewer.readonly .viewer-del { display: none; }
 
@@ -1928,6 +1941,9 @@
         color: var(--seal-ink-on-seal-tint); border-color: var(--seal);
         background: var(--seal-tint); font-weight: 600;
       }
+      /* 157 G3(WM-13):摊开态的行宽有限,超长标签名省略、计数照旧露着(此前整枚被行尾硬裁,连边框带计数一起没了)。 */
+      .fpill { max-width: 100%; }
+      .flabel { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
       .fn { font-size: var(--fs-12); color: var(--ink-faint); font-variant-numeric: tabular-nums; }
       .fpill.active .fn { color: var(--seal-ink-on-seal-tint); }
       /* 到期汇总钮(用户面 60-D):有逾期时整枚描成朱砂 —— 与卡片上那颗 .chip.due.overdue
@@ -1939,6 +1955,8 @@
       /* 数字用等宽字形:计数每分钟可能变,不等宽的话整行会跟着抖(同 .fn 的理由)。 */
       .fpill.fdue { font-variant-numeric: tabular-nums; }
       .fdot { flex: none; } /* 共形声明住标签管理节的「标签色点」一份 */
+      /* 无色标签的空心圈(157 G3 / WM-26,同卡上 `.chip.topic` 那条)。子标签的 ::before 已是 ↳,不叠。 */
+      .fpill[data-topic-id]:not(.child):not(:has(.fdot))::before { content: "○"; color: var(--ink-faint); font-size: var(--fs-12); }
       /* 父子标签在筛选条折叠(同桌面 filter-bar.css)。收起态子 pill 直接不占位。 */
       .fpill.hidden { display: none; }
       /* 计数为 0 的 pill(499:一族里的空位,整族有内容就连它一起画出来,层级才看得见)——
@@ -2285,7 +2303,7 @@
         <button id="trash-empty" class="ghost grow" data-i18n="shell.emptyTrash">清空回收站</button>
       </div>
       <div id="trash-list" class="timeline"></div>
-      <p class="fine" data-i18n="shell.trashNote">删除的记录和配图先到这里;恢复回到原来的位置(配图回到原编号);彻底删除后无法找回。</p>
+      <p class="fine" data-i18n="shell.trashNote">删除的随记、任务和配图先到这里;还原回到原来的位置(配图回到原编号);彻底删除后无法找回。</p>
     </section>
 
     <!-- 归档册面(120):已完成入册的任务(史实,可查);取消入册回看板已完成。 -->
@@ -2346,7 +2364,7 @@
       <button id="cm-more" class="cm-more" type="button" data-i18n="shell.loadMore" hidden>加载更多</button>
       <div class="cm-compose">
         <textarea id="cm-input" rows="1" placeholder="写句话…" data-i18n-placeholder="shell.commentPh"></textarea>
-        <button id="cm-send" class="primary" type="button" data-i18n="shell.commentSend">写下</button>
+        <button id="cm-send" class="primary" type="button" data-i18n="shell.commentSend">记下</button>
       </div>
     </section>
 
@@ -2635,6 +2653,8 @@
       <!-- 删图(196):看大图时删这张。永久销毁(图无回收站、编号退役不复用),两拍确认;
            放大态淡出防误触(同角标)。只从主时间轴开图,不作用于归档册史实。 -->
       <button id="viewer-del" class="viewer-del" type="button" data-i18n="shell.delete">删除</button>
+      <!-- 关闭钮(157 G3 / P9):点图之外也能关,但屏上得有一枚看得见的出口(留言层有 ✕,这层此前没有)。 -->
+      <button id="viewer-close" class="viewer-close" type="button" aria-label="关闭" data-i18n-aria-label="shell.close">✕</button>
     </div>
 
     <!-- 扫码层(107):真正的相机画面由插件画在 WebView 底下,这里只是取景框与取消。 -->

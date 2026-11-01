@@ -406,8 +406,8 @@ export function wireFilterInput(
 // check-filter-parity 的逐字一致门禁(先落桌面;安卓补齐同款后,把 timeBucketOf/
 // applyTimeFilter/renderTimePills 登记进那道闸的 DESKTOP.fns)。
 //
-// 三档互斥分区,不是「近N天」层层嵌套的累计窗口:近1天=今天,近7天=第2~7天(不含
-// 今天),7天前=第8天起。三档相加=全量,故 "all" 是纯粹的重置态,不必再算并集。
+// 三档互斥分区,不是「近N天」层层嵌套的累计窗口:今天 / 昨天至6天前(第2~7天)/
+// 更早(第8天起;157 起改了显示名,键名 1d/7d/old 不动)。三档相加=全量,故 "all" 是纯粹的重置态,不必再算并集。
 // 按本地日历日算,同 due_on 的哲学——后端只搬运 created_at 时刻字符串,「今天」
 // 从不由后端决定。
 export type TimeBucket = "all" | "1d" | "7d" | "old";
@@ -430,6 +430,25 @@ export function timeBucketOf(createdAt: string): Exclude<TimeBucket, "all"> {
 
 export function applyTimeFilter<T>(items: T[], bucket: TimeBucket, createdAtOf: (item: T) => string): T[] {
   return bucket === "all" ? items : items.filter((it) => timeBucketOf(createdAtOf(it)) === bucket);
+}
+
+/** 筛空时的补一句(157 G3 / WD-19):空态标题只说最具体的那一维(词 → 标签 → 类型 → 时间),
+ *  其余还开着的维在这里点名 —— 此前三维叠着筛空,屏上只说「没有匹配「咖啡」」,清了词还是空,
+ *  才发现时间与标签也选着。`said` = 标题已经说了哪一维(比它更具体的维此时必然没开)。
+ *  返回 "" = 没有别的维在筛。 */
+export function otherLayersNote(
+  f: FilterState,
+  all: FilterTopic[],
+  time: TimeBucket,
+  said: "text" | "topics" | "kind",
+): string {
+  const parts: string[] = [];
+  if (said === "text" && f.topics.length > 0) {
+    parts.push(t("filter.layerTags", { labels: selectedTopicLabels(f, all).join(t("filter.layerSep")) }));
+  }
+  if (said !== "kind" && f.kind !== "all") parts.push(t("filter.layerKind", { kind: f.kind }));
+  if (time !== "all") parts.push(t("filter.layerTime", { time: time === "1d" ? t("filter.time1d") : time === "7d" ? t("filter.time7d") : t("filter.timeOld") }));
+  return parts.length ? t("filter.alsoActive", { layers: parts.join(t("filter.layerSep")) }) : "";
 }
 
 /** 时间轴 pill 行:全部 + 三档互斥分区。计数口径同类型轴 pill——挂哪一档的条目数

@@ -479,7 +479,11 @@ const CLICK_CASES = [
 // ---------------------------------------------------------------------------
 function pillLabel(b) {
   let s = "";
-  for (const c of b.children) if (c && c.nodeType === 3) s += c.text;
+  // 安卓 157 起把名字包进 `.flabel`(超长标签要省略号、计数得留在屏上),仍按名字读。
+  for (const c of b.children) {
+    if (c && c.nodeType === 3) s += c.text;
+    else if (c instanceof El && c.cls.has("flabel")) s += c._text;
+  }
   return s;
 }
 function normPill(b) {

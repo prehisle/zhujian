@@ -150,6 +150,28 @@ describe("灵感 · 标签筛选与文本过滤", () => {
     await browser.waitUntil(async () => await exists(A), { timeout: 8000 });
   });
 
+  it("标签+词叠着筛空 → 空态提示点名还开着的标签那层(157 G3 / WD-19)", async () => {
+    await pickPill("所有");
+    await pickPill(T1);
+    await setFilter("绝无此词xyzq");
+    await waitScene(
+      async () => (await $(".v-inbox .center .big").getText()).includes("没有匹配"),
+      "等「没有匹配」空态",
+    );
+    const hint = await browser.execute(
+      () => document.querySelector(".v-inbox .center .big")?.nextElementSibling?.textContent ?? "",
+    );
+    expect(hint).toContain(`还同时筛着:标签「${T1}」`);
+    // 只剩词这一层时不说「还同时筛着」。
+    await pickPill("所有");
+    await waitScene(
+      async () => !(await browser.execute(() => document.querySelector(".v-inbox .center")?.textContent ?? "")).includes("还同时筛着"),
+      "清掉标签后提示不再点名标签",
+    );
+    await setFilter("");
+    await browser.waitUntil(async () => await exists(A), { timeout: 8000 });
+  });
+
   it("筛着标签记灵感 → 新灵感自动挂该标签、留在视野里", async () => {
     const NEW = "E2EF-新茶到了";
     await pickPill(T1);

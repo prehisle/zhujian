@@ -10,7 +10,7 @@ export const comments = defineMessages({
   "comments.closeTitle": { zh: "关闭(Esc)", en: "Close (Esc)" },
   "comments.loadMore": { zh: "加载更多", en: "Load more" },
   "comments.inputPlaceholder": { zh: "写句话…", en: "Say something…" },
-  "comments.send": { zh: "写下", en: "Send" },
+  "comments.send": { zh: "记下", en: "Send" },
   "comments.delete": { zh: "删除", en: "Delete" },
   "comments.deleteTitle": { zh: "销毁这条留言", en: "Delete this comment forever" },
   "comments.confirmDestroy": { zh: "销毁?不进回收站", en: "Delete forever? It skips the trash" },

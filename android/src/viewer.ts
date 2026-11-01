@@ -5,10 +5,10 @@
 // 快速连点几张图,迟到的旧响应不许盖掉最新点击;关闭也推代次,在途响应作废不复弹。
 // 310 第③笔:自 main.ts 纯搬迁成模块(initX(Deps) 的形,事件在 initViewer 里挂;
 // 返回键层账本仍住 main.ts,经 Deps 注入——comments.ts 同形),行为零改动。
-import { deleteItemImage, getCurrentSpace, type ImageMeta } from "./api";
+import { deleteItemImage, getCurrentSpace, restoreItemImage, type ImageMeta } from "./api";
 import { t } from "./i18n";
 import { fetchImageUrl } from "./thumbs";
-import { $, confirmBar, hideConfirmBar, showBar } from "./ui";
+import { $, actionBar, confirmBar, hideConfirmBar, showBar } from "./ui";
 import { showErr } from "./err";
 
 type Deps = {
@@ -441,6 +441,12 @@ export function initViewer(d: Deps): void {
   // 确认条 z(17)在查看器(15)之上能盖住。stopPropagation 挡掉查看器自身的单击关/双击缩放。
   // onYes 复核「还在看这张、空间没换」(期间换图/关闭/切空间一律作废);删成关查看器 +
   // settleHistory(平掉开图压的历史层)+ 刷新轴(缩略图随之消失)。
+  $("viewer-close").addEventListener("click", (e) => {
+    e.stopPropagation(); // 别再走一遍层自己的「单击关」那条延时路
+    if (!viewerShown) return;
+    closeViewerNow();
+    deps.settleHistory();
+  });
   $("viewer-del").addEventListener("click", (e) => {
     e.stopPropagation();
     const shown = viewerShown;
@@ -467,7 +473,18 @@ export function initViewer(d: Deps): void {
           closeViewerNow();
           deps.settleHistory();
           await deps.refresh();
-          showBar(t("viewer.deleted"), true);
+          // 157 G3(WM-08):进回收站的东西回执带撤销(同删随记);撤销 = 回收站里那枚「还原」,图回原编号。
+          actionBar(t("viewer.deleted"), t("ui.undo"), () => {
+            if (getCurrentSpace() !== space) return; // 换空间的旧撤销作废
+            void (async () => {
+              try {
+                await restoreItemImage(space, id);
+              } catch (err) {
+                showErr(err);
+              }
+              await deps.refresh();
+            })();
+          });
         } catch (err) {
           showErr(err);
         }

@@ -192,6 +192,11 @@ export function initEditSheet(d: Deps): void {
   $("edit-addimg").addEventListener("click", () => host?.onAddImage());
   $("edit-photo").addEventListener("click", () => host?.onPhoto());
   $("edit-todo").addEventListener("click", () => applyChecklistMarker(ta));
+  // 157 G3(WM-12):键盘已经按返回收下去了,再点图上的 × / ↺,正文框还握着焦点 ⇒ 键盘又弹回来、半屏被盖。
+  // 收着键盘去碰缩略图 = 此刻不打算写字:按下那一刻就把焦点从正文框放掉。键盘起着时不动(照旧打字不断)。
+  $("edit-thumbs").addEventListener("pointerdown", () => {
+    if (document.activeElement === ta && !document.documentElement.classList.contains("kb-up")) ta.blur();
+  });
   $("edit-thumbs").addEventListener("click", (e) => {
     if (!host) return;
     const el = e.target as HTMLElement;

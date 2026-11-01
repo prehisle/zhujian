@@ -347,7 +347,7 @@ function renderCard(it: TimelineItem, hideTopic: string | null, underDayHead = f
     .filter((t) => t.id !== hideTopic)
     .map(
       (t) =>
-        `<span class="chip${t.color ? " tinted" : ""}"${t.color ? ` style="--tc:${esc(t.color)}"` : ""}>${esc(t.title)}</span>`,
+        `<span class="chip topic${t.color ? " tinted" : ""}"${t.color ? ` style="--tc:${esc(t.color)}"` : ""}>${esc(t.title)}</span>`,
     )
     .join("");
   // 配图缩略(117):只渲染占位框,字节滚到可视区才拉(thumbObserver)。
@@ -980,7 +980,9 @@ function renderFilterBar(modeItems: TimelineItem[]): void {
 {
   const head = document.querySelector("header")!;
   const syncHeadHeight = (): void =>
-    document.documentElement.style.setProperty("--head-h", `${head.offsetHeight}px`);
+    // ⚠ 量小数高(getBoundingClientRect),别用 offsetHeight:后者取整,82.2 记成 82 ⇒ 吸顶的节头与筛选条之间
+    // 漏一条零点几 px 的缝,卡片从缝里露出一线(157 G3 / WM-22 真机截图量到)。
+    document.documentElement.style.setProperty("--head-h", `${head.getBoundingClientRect().height}px`);
   new ResizeObserver(syncHeadHeight).observe(head);
   syncHeadHeight();
 }
@@ -990,7 +992,7 @@ function renderFilterBar(modeItems: TimelineItem[]): void {
 {
   const bar = $("filterbar");
   const syncBarHeight = (): void =>
-    document.documentElement.style.setProperty("--fbar-h", `${bar.offsetHeight}px`);
+    document.documentElement.style.setProperty("--fbar-h", `${bar.getBoundingClientRect().height}px`); // 小数,理由同 --head-h
   new ResizeObserver(syncBarHeight).observe(bar);
   syncBarHeight();
 }
@@ -1152,23 +1154,52 @@ function onFilterPick(patch: Partial<filter.FilterState>): void {
     showError(t("main.finishDraftFirst"));
     return;
   }
+  // 157 G3(WM-14):摊开态下点了一枚标签 = 找到了,收回单行把屏还给结果(摊开时那块占三四成屏)。
+  // 只收这一回、不改存着的偏好(下次进 app 仍按他上次自己按的那样摊着)。选中那枚滚进单行的视野里。
+  const collapse = tagsOpen && patch.topics !== undefined;
+  if (collapse) tagsOpen = false;
   Object.assign(filters[viewMode], patch);
   projectTimeline();
+  if (collapse) revealActiveTopic();
+}
+
+function revealActiveTopic(): void {
+  const row = $("filter-topics");
+  const pill = row.querySelector<HTMLElement>(".fpill.active");
+  if (!pill) return;
+  const r = row.getBoundingClientRect();
+  const p = pill.getBoundingClientRect();
+  if (p.left < r.left || p.right > r.right) row.scrollLeft += p.left - r.left - 8;
 }
 
 /** 筛空(本面有条目、被当前筛选滤没了)的空态文案:词优先,再标签,再类型——别让
  *  用户以为记录全没了。标签多选时把选中的名字全列出来(「A、B」下没有记录)。 */
 function filteredEmptyHtml(f: filter.FilterState): string {
   const q = f.text.trim();
-  if (q) return `<p class="muted empty">${t("main.noMatchText", { q: esc(q) })}</p>`;
+  // 157 G3(WD-29):名词跟着面走(随记 / 任务),与桌面同一个词;此前一律叫「记录」。
+  const noun = viewMode === "tasks" ? t("main.nounTasks") : t("main.nounIdeas");
   const labels = filter.selectedTopicLabels(f, allFilterTopics);
-  if (labels.length === 1 && labels[0] === t("filter.none"))
-    return `<p class="muted empty">${t("main.noUntagged")}</p>`;
-  if (labels.length) {
-    return `<p class="muted empty">${t("main.noneUnderTags", { labels: esc(labels.join(t("main.listSep"))) })}</p>`;
+  if (q) {
+    // 157 G3(WM-15):词叠在标签 / 类型上筛空时把那一层也说出来,别让人以为只是词不对。
+    const scope =
+      labels.length === 1 && labels[0] === t("filter.none")
+        ? t("main.scopeUntagged")
+        : labels.length
+          ? t("main.scopeTags", { labels: esc(labels.join(t("main.listSep"))) })
+          : f.kind !== "all"
+            ? t("main.scopeKind", { kind: esc(f.kind) })
+            : null;
+    return `<p class="muted empty">${
+      scope ? t("main.noMatchTextIn", { scope, q: esc(q), noun }) : t("main.noMatchText", { q: esc(q), noun })
+    }</p>`;
   }
-  if (f.kind !== "all") return `<p class="muted empty">${t("main.noneUnderKind", { kind: esc(f.kind) })}</p>`;
-  return `<p class="muted empty">${t("main.noMatch")}</p>`;
+  if (labels.length === 1 && labels[0] === t("filter.none"))
+    return `<p class="muted empty">${t("main.noUntagged", { noun })}</p>`;
+  if (labels.length) {
+    return `<p class="muted empty">${t("main.noneUnderTags", { labels: esc(labels.join(t("main.listSep"))), noun })}</p>`;
+  }
+  if (f.kind !== "all") return `<p class="muted empty">${t("main.noneUnderKind", { kind: esc(f.kind), noun })}</p>`;
+  return `<p class="muted empty">${t("main.noMatch", { noun })}</p>`;
 }
 
 /** 新记录落某面之后的筛选收尾(避免刚记的被停留的筛选藏起)。判的是一件事:**这条新记录

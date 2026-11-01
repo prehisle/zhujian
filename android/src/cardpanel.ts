@@ -483,11 +483,14 @@ function renderTags(item: TimelineItem): string {
  *  回调会被吞);`afterSession` = 仅 session 未变时执行(收面板/清草稿等局部动作)。 */
 async function run(
   op: (space: string) => Promise<unknown>,
-  opts: { onCommitted?: () => void; afterSession?: () => void } = {},
+  opts: { onCommitted?: () => void; afterSession?: () => void; anchorPanel?: boolean } = {},
 ): Promise<void> {
   if (busy || !state) return;
   const session = state;
   const space = getCurrentSpace();
+  // 157 G3(WM-07):挂 / 摘标签会让卡脚的胶囊行多一行或少一行,面板跟着整体上下跳,连点就点错。
+  // 写前记下面板顶在屏上的位置,轴重投影完把文档滚回去抵掉这段位移 —— 手指底下那排钮不动。
+  const top0 = opts.anchorPanel ? panelTop() : null;
   busy = true;
   const c = currentCard();
   if (c) renderPanel(c); // 立即画出禁用态(输入值从 state 画回,不丢草稿)
@@ -504,11 +507,21 @@ async function run(
       opts.onCommitted?.(); // 写已提交:回执不随面板 session 陪葬
       if (state === session) opts.afterSession?.();
       if (state === null) document.querySelector("#timeline .panel")?.remove();
-      void deps.refresh(); // 写已提交:轴必须重拉,不随面板 session 陪葬
+      // 写已提交:轴必须重拉,不随面板 session 陪葬
+      void deps.refresh().then(() => {
+        const top1 = top0 === null || state !== session ? null : panelTop();
+        if (top0 !== null && top1 !== null && top1 !== top0) window.scrollBy(0, top1 - top0);
+      });
     }
     const card = currentCard();
     if (card) renderPanel(card);
   }
+}
+
+/** 面板顶在视口里的 y;没有面板 = null(anchorPanel 那条就什么都不做)。 */
+function panelTop(): number | null {
+  const p = document.querySelector<HTMLElement>("#timeline .panel");
+  return p ? p.getBoundingClientRect().top : null;
 }
 
 /** 跨空间移动的专用收口(§2.7 安卓入口;不复用 run()——结果是 MoveResult 五分道、
@@ -890,7 +903,7 @@ function onTimelineClick(e: Event) {
           await fileNoteToTopic(space, item.id, topicId, null);
         }
       },
-      { afterSession: () => void refreshTopics(session, getCurrentSpace()) },
+      { afterSession: () => void refreshTopics(session, getCurrentSpace()), anchorPanel: true },
     );
     return;
   }
@@ -1103,6 +1116,7 @@ function handleAct(act: string, card: HTMLElement) {
             deps.onDraftClosed();
             void refreshTopics(session, getCurrentSpace());
           },
+          anchorPanel: true,
         },
       );
       return;

@@ -31,6 +31,7 @@ import {
   renderFilterPills,
   renderKindPills,
   renderTimePills,
+  otherLayersNote,
   selectedTopicLabels,
   soleTopicFilter,
   wireFilterInput,
@@ -2195,10 +2196,15 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
   function renderFilteredEmpty(): void {
     // 文本过滤(可能叠着标签)筛空:提示词本身,别让用户以为看板空了。
     const q = filter.text.trim();
+    // 157 G3(WD-19):标题之外还开着的维,补在提示前面点名(同随记页)。
+    const hint = (said: "text" | "topics" | "kind", h: string): string => {
+      const note = otherLayersNote(filter, allTopics, timeFilter, said);
+      return note ? `${note}${h}` : h;
+    };
     if (q !== "") {
       renderCentered(
         el("div", { className: "big", textContent: t("board.noMatch", { q }) }),
-        el("div", { textContent: t("board.noMatchHint") }),
+        el("div", { textContent: hint("text", t("board.noMatchHint")) }),
       );
       return;
     }
@@ -2223,14 +2229,14 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       const label = selectedTopicLabels(filter, allTopics).join(t("board.listSeparator"));
       renderCentered(
         el("div", { className: "big", textContent: t("board.noTasksUnder", { label }) }),
-        el("div", { textContent: t("board.noTasksUnderHint") }),
+        el("div", { textContent: hint("topics", t("board.noTasksUnderHint")) }),
       );
       return;
     }
     if (filter.kind !== "all") {
       renderCentered(
         el("div", { className: "big", textContent: t("board.noTasksInKind", { kind: filter.kind }) }),
-        el("div", { textContent: t("board.noTasksInKindHint") }),
+        el("div", { textContent: hint("kind", t("board.noTasksInKindHint")) }),
       );
       return;
     }

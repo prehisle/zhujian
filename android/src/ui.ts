@@ -40,7 +40,8 @@ export function cardTint(color: string | null): { cls: string; attr: string } {
 export function contentHtml(content: string, clickable: boolean): string {
   const out: string[] = [];
   let prevWasBox = false;
-  content.split("\n").forEach((line, i) => {
+  const lines = content.split("\n");
+  lines.forEach((line, i) => {
     const box = parseChecklistLine(line);
     if (box === null) {
       // 正文是 white-space:pre-wrap,换行原样交回去 —— 但**待办项那行是 flex 块、自带
@@ -50,6 +51,9 @@ export function contentHtml(content: string, clickable: boolean): string {
       prevWasBox = false;
       return;
     }
+    // 157 G3(WM-27):紧挨在待办项前面的空行是那段文字的末行 —— pre-wrap 的末尾换行不成行、单独一个
+    // 空串更是零高 ⇒ 两组清单之间特意空出的那一行在卡上看不见。补一枚零宽空格让它成行。
+    if (i > 0 && !prevWasBox && lines[i - 1] === "") out.push("\u200b");
     const act = box.checked ? t("checklist.uncheck") : t("checklist.check");
     const state = box.checked ? t("checklist.checked") : t("checklist.unchecked");
     const label = clickable ? act : state;

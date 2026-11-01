@@ -28,7 +28,7 @@ export const docs = defineMessages({
   "docs.moveQ": { zh: "移到「{name}」?历史版本会永久删除", en: "Move to “{name}”? Earlier versions will be permanently deleted" },
   "docs.copied": { zh: "已复制", en: "Copied" },
   "docs.copyFailed": { zh: "复制失败:{error}", en: "Copy failed: {error}" },
-  "docs.deleteQ": { zh: "删除这篇长文?可在回收站恢复", en: "Delete this long-form note? You can restore it from Trash" },
+  "docs.deleteQ": { zh: "删除这篇长文?可在回收站还原", en: "Delete this long-form note? You can restore it from Trash" },
   "docs.deleteYes": { zh: "删除", en: "Delete" },
   "docs.deleted": { zh: "已移入回收站", en: "Moved to Trash" },
   "docs.collapsed": { zh: "已收回随记", en: "Moved back to notes" },

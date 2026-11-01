@@ -70,7 +70,7 @@ export const cardpanel = defineMessages({
   "cardpanel.expandedOpen": { zh: "打开", en: "Open" },
   "cardpanel.promoted": { zh: "已转为待办,在底栏「任务」里", en: "Now a task, find it under Tasks" },
   "cardpanel.tagNameRequired": { zh: "标签名不能为空", en: "Tag name cannot be empty" },
-  "cardpanel.deleteQ": { zh: "删除?将移入回收站(可恢复)", en: "Delete? It moves to Trash and can be restored" },
+  "cardpanel.deleteQ": { zh: "删除?将移入回收站(可还原)", en: "Delete? It moves to Trash and can be restored" },
   "cardpanel.deleteYes": { zh: "删除", en: "Delete" },
   "cardpanel.deleted": { zh: "已移入回收站", en: "Moved to Trash" },
   "cardpanel.revertQMeta": { zh: "撤回为随记?将清除截止和优先级", en: "Send back to Notes? Due date and priority will be cleared" },
