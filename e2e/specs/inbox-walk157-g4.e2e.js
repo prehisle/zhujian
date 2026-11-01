@@ -138,5 +138,19 @@ describe("157 G4 · 随记页的折叠 / 回顶 / 筛选时胶囊", () => {
     await entry.click();
     await c.$(".hist-host .diff").waitForExist({ timeout: 5000 });
     expect(await browser.execute(() => !!document.querySelector(".hist-host .diff .diff-del") && !!document.querySelector(".hist-host .diff .diff-ins"))).toBe(true);
+
+    // codex 851 M1:在界面上第一次改完,不用别的刷新,「改过」就该出来。
+    await inboxAction("E2EW4-没改", "编辑");
+    await $(".v-inbox .edit-area").waitForExist({ timeout: 5000 });
+    await browser.execute(() => {
+      const a = document.querySelector(".v-inbox .edit-area");
+      a.value = "E2EW4-没改 现在改了";
+      a.dispatchEvent(new Event("input", { bubbles: true }));
+      a.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    });
+    await browser.waitUntil(async () => await (await card("E2EW4-没改 现在改了")).$(".edited-mark").isExisting(), {
+      timeout: 8000,
+      timeoutMsg: "界面上改完卡上没标「改过」",
+    });
   });
 });

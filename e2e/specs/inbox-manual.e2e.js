@@ -48,8 +48,9 @@ describe("收件箱 · 编辑想法(保留历史)", () => {
       el.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
     }, area);
 
-    // The view restores with the new text in place.
-    await expect(card.$(".note-text")).toHaveText(expect.stringContaining("E2E-编辑-改后"));
+    // The view restores with the new text in place. 851 起保存后整列补刷一发(「改过」要库里的派生值)
+    // ⇒ 卡是新节点,按新文字重找。
+    await $(".note*=E2E-编辑-改后").waitForExist({ timeout: 8000 });
 
     // Backend: current content is the new text; the original is kept as history.
     const inbox = await invoke("list_inbox");
@@ -81,11 +82,11 @@ describe("收件箱 · 编辑想法(保留历史)", () => {
     await expect(entries[0].$(".hist-chars")).toHaveText("9 字"); // "E2E-历史-v1" 9 个码点
     expect(await card.$$(".hist-text")).toHaveLength(0); // 没点开 ⇒ 一份正文都不在 DOM 里
 
+    // 157 G4 / P5 起点开一版 = 「这一版 → 现在」的比对:删掉的那行(.diff-del)就是那一版的字。
     await entries[1].click(); // 新的在前 ⇒ 第二条是 v0
-    const text = await card.$(".hist-item.open .hist-text");
-    await expect(text).toHaveText("E2E-历史-v0");
+    await expect(card.$(".hist-item.open .hist-text .diff-del")).toHaveText("E2E-历史-v0");
     await entries[0].click(); // 换一版:前一版收起,同一时刻只展开一版
-    await expect(card.$(".hist-item.open .hist-text")).toHaveText("E2E-历史-v1");
+    await expect(card.$(".hist-item.open .hist-text .diff-del")).toHaveText("E2E-历史-v1");
     expect(await card.$$(".hist-text")).toHaveLength(1);
 
     await browser.keys("Escape");

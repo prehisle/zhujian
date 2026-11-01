@@ -44,7 +44,8 @@ describe("灵感 · 双击卡片 = 编辑", () => {
       el.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
     }, area);
 
-    await expect(card.$(".note-text")).toHaveText(expect.stringContaining("E2E-双击-改后"));
+    // 851 起保存后整列补刷一发(「改过」标记要库里的派生值)⇒ 卡是新节点,按新文字重找。
+    await $(".note*=E2E-双击-改后").waitForExist({ timeout: 8000 });
 
     const inbox = await invoke("list_inbox");
     expect(inbox.find((n) => n.id === id).content).toBe("E2E-双击-改后");

@@ -694,17 +694,34 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
     const cmHost = el("div", { className: "cm-host" });
     // 读态的「历史」落点(157 G4 / P5,⋯ 菜单【历史】开合):空着时 CSS `:empty` 收起。
     const histHost = el("div", { className: "hist-host" });
+    // 开合态与请求代次分开记(codex 851 M2):目录回来之前宿主是空的,拿 childElementCount 当开关会让
+    // 连按两次 H 起两发请求、收起后晚到的那发又把它摊开。⇒ 先挂在游离节点上,回来**挂载前**核代次 /
+    // 还开着 / 卡还在 / 没进编辑态,任一不符就丢。
+    let histOpen = false;
+    let histSeq = 0;
     async function toggleHistory(): Promise<void> {
-      if (histHost.childElementCount > 0) {
+      const mine = ++histSeq;
+      if (histOpen) {
+        histOpen = false;
         histHost.replaceChildren();
         return;
       }
+      histOpen = true;
+      const staged = el("div");
       try {
-        await mountHistory(histHost, item.id);
+        await mountHistory(staged, item.id);
       } catch (e) {
+        if (mine !== histSeq) return;
+        histOpen = false;
         showOpErr(errText(e));
         return;
       }
+      if (mine !== histSeq || !histOpen) return;
+      if (!histHost.isConnected || note.classList.contains("editing")) {
+        histOpen = false; // 加载途中进了编辑态 / 卡被换掉:这一发作废,开关复位(codex 851 复核 L),下一次 H 照常是「开」
+        return;
+      }
+      histHost.replaceChildren(...staged.childNodes);
       histHost.querySelector<HTMLButtonElement>(".hist-toggle")?.click(); // 从菜单进来 = 要看,直接摊开
     }
 
@@ -976,6 +993,9 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
             await invoke("edit_note", { id: item.id, content: area.value });
             currentContent = area.value; // 先记下:删图那步失败后重试,正文不再写第二遍(no-op 会 fail-fast)
             paintContent(); // ⛔ 别写成 textP.textContent —— 那会把方框与「图N」链接一起抹成纯文本
+            // 「改过」标记与菜单里的「历史」读的是库里派生的 revised(codex 851 M1):首次改完要重拉一发才出来;
+            // ⛔ 别在前端直接置 true —— 纯勾选(0039)不留版,该不该标只有库说了算。leaveEdit 末尾补刷。
+            refreshDeferred = true;
           }
           const nDel = strip.pendingDeletes();
           await strip.commitDeletes(); // 148:编辑态里标了删的图,随保存这一步才真删
