@@ -93,6 +93,10 @@ export const WALK = {
     ],
     // 做完并收进成就归档的(以前做完的,先建先收)
     sealed: ["演示:去年做完的一件事", "演示:上个月做完的一件事", "演示:上周做完的一件事"],
+    // W2 加:把「待办」撑满的一批(列满 / 海量;建得早,排在上面那几张的后头)
+    bulkTodo: Array.from({ length: 30 }, (_, i) => "演示:批量任务 " + String(i + 1).padStart(2, "0")),
+    // W2 加:一列空着的自定义列(只在桌面建 —— 列管理只有桌面有;测试机不同步,看不到它)
+    customColumns: ["演示:等材料"],
   },
 };
 
@@ -187,6 +191,10 @@ export function walkSeedScript(lang, { spaceId, captureCmd }) {
     await inv("update_task_status", { id, to: "done" });
     await inv("seal_task", { id });
   }
+  for (const title of D.bulkTodo) await inv("create_task", { title, dueOn: null, priority: null, topicId: null });
+  if (${JSON.stringify(captureCmd)} === "capture_note") {
+    for (const title of D.customColumns) await inv("create_board_column", { title });
+  }
   for (const [title, col, due, prio, ts] of D.tasks) {
     // 带清单的先按首行建、再改名成整段(清单行不走 create_task)
     const id = await inv("create_task", { title: title.split("\\n")[0], dueOn: due === null ? null : day(due), priority: prio, topicId: ts.length ? topicIds[ts[0]] : null });
@@ -203,7 +211,7 @@ export function walkSeedScript(lang, { spaceId, captureCmd }) {
       topics: topicIds.length,
       notes: D.filed.length + D.inbox.length + D.edited.length + D.imaged.length + D.commented.length,
       trashed: D.trashed.length,
-      tasks: D.tasks.length + D.promoted.length,
+      tasks: D.tasks.length + D.promoted.length + D.bulkTodo.length,
       sealed: D.sealed.length,
     },
     ids,
