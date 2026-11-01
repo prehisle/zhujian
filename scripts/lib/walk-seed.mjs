@@ -97,8 +97,59 @@ export const WALK = {
     bulkTodo: Array.from({ length: 30 }, (_, i) => "演示:批量任务 " + String(i + 1).padStart(2, "0")),
     // W2 加:一列空着的自定义列(只在桌面建 —— 列管理只有桌面有;测试机不同步,看不到它)
     customColumns: ["演示:等材料"],
+    // W3 加:标签量(斜杠层级、英文、没人用的、一串编号的)。[名字, 颜色 / null]
+    topicsW3: [
+      ["工作/汇报", "#3f7a99"], ["工作/周会", null], ["Work", null], ["没人用的标签", "#6b8e5a"],
+      ...Array.from({ length: 12 }, (_, i) => ["演示标签 " + String(i + 1).padStart(2, "0"), i % 3 ? null : "#8a5b6f"]),
+    ],
+    // W3 加:搜索的量。九句轮着写 90 条,第 i 条往前挪 i 天(桌面);每五条挂一个「工作」
+    searchPhrases: [
+      "报销了一张发票", "咖啡豆又快喝完了", "会议纪要:下周再议", "Invoice for the printer", "孩子的作业要签字",
+      "发票抬头写错了要重开", "跑步五公里", "超市小票留着对账", "读书笔记:第三章",
+    ],
+    searchBulk: 90,
+    // W3 加:关键词只在旧版本里(搜索也搜旧版本)
+    editedW3: [["演示:旧版本里写着暗号「青柠」", ["演示:新版本里已经没有那个词了"]]],
+    // W3 加:回收站里多几种形 —— 一张任务、一条带图带标签的、一篇长文、一条很长的
+    trashedTask: ["演示:删掉的任务(在看板回收站)"],
+    trashedImaged: [["演示:带两张图和一个标签的一条(已删)", [[600, 600, "#4f7f7f"], [600, 600, "#b07d2b"]], [0]]],
+    trashedDoc: ["# 演示:删掉的一篇长文\n\n第一段。\n\n第二段。"],
+    trashedLong: [LONG_PARA],
+    // W3 加:第二个空间(只在桌面播 —— 手机一次只开一个空间,第二个空间由记录员在界面上建)
+    space2: {
+      name: "演示:家庭",
+      topics: [["家里", "#c0563f"], ["孩子", "#a8577e"]],
+      notes: [["演示(家庭):周六大扫除", [0]], ["演示(家庭):给孩子报游泳课", [1]], ["演示(家庭):买一盏新台灯", []]],
+      tasks: ["演示(家庭):交物业费", "演示(家庭):约家长会时间"],
+    },
   },
 };
+
+/** 第二个空间的播种脚本(W3;只在桌面用:桌面所有空间都开着,能直接写别的空间)。返回 { spaceId }。 */
+export function walkSpace2Script(lang) {
+  const S = WALK[lang]?.space2;
+  if (!S) throw new Error(`走查种子没有 ${lang} 的 space2`);
+  return `(async () => {
+  const S = ${JSON.stringify(S)};
+  const info = await window.__TAURI__.core.invoke("create_space", { name: S.name });
+  const inv = (c, a) => window.__TAURI__.core.invoke(c, Object.assign({ spaceId: info.id }, a));
+  // capture_note / create_task 只认前台空间(壳侧复核)⇒ 先把前台切过去,播完切回 main
+  await inv("set_foreground_space", {});
+  const tids = [];
+  for (const [title, color] of S.topics) {
+    const id = await inv("create_topic", { title });
+    tids.push(id);
+    if (color) await inv("set_topic_color", { id, color });
+  }
+  for (const [c, ts] of S.notes) {
+    const id = await inv("capture_note", { content: c });
+    for (const t of ts) await inv("file_note_to_topic", { id, topicId: tids[t], newTitle: null });
+  }
+  for (const title of S.tasks) await inv("create_task", { title, dueOn: null, priority: null, topicId: null });
+  await window.__TAURI__.core.invoke("set_foreground_space", { spaceId: "main" });
+  return { spaceId: info.id };
+})()`;
+}
 
 /**
  * 页内播种脚本(async IIFE 源码,交给 CDP `Runtime.evaluate`)。
@@ -144,6 +195,17 @@ export function walkSeedScript(lang, { spaceId, captureCmd }) {
     topicIds.push(id);
     if (color) await inv("set_topic_color", { id, color });
   }
+  // W3:多出来的标签(编号接在上面那批后头,别的段不引用它们)
+  for (const [title, color] of D.topicsW3) {
+    const id = await inv("create_topic", { title });
+    if (color) await inv("set_topic_color", { id, color });
+  }
+  // W3:搜索的量,写得最早(时间轴最底下);每五条挂「工作」(下标 1)
+  for (let i = D.searchBulk - 1; i >= 0; i--) {
+    const id = await cap("演示:流水 " + String(i + 1).padStart(2, "0") + " " + D.searchPhrases[i % D.searchPhrases.length]);
+    if (i % 5 === 0) await inv("file_note_to_topic", { id, topicId: topicIds[1], newTitle: null });
+    backdate.push([id, i + 13]);
+  }
 
   // 已整理的写得最早(挪得最远),先写
   for (const [c, ts, days] of D.filed) {
@@ -180,6 +242,26 @@ export function walkSeedScript(lang, { spaceId, captureCmd }) {
     const id = await cap(c);
     await inv("archive_note", { id });
   }
+  // W3:关键词只在旧版本里;回收站多几种形
+  for (const [first, later] of D.editedW3) {
+    const id = await cap(first);
+    for (const c of later) await inv("edit_note", { id, content: c });
+    ids.edited.push(id);
+  }
+  for (const [c, shapes, ts] of D.trashedImaged) {
+    const id = await cap(c);
+    for (let i = 0; i < shapes.length; i++) {
+      const [w, h, color] = shapes[i];
+      await inv("add_item_image", { itemId: id, mime: "image/png", dataB64: await png(w, h, color, String(i + 1)) });
+    }
+    for (const t of ts) await inv("file_note_to_topic", { id, topicId: topicIds[t], newTitle: null });
+    await inv("archive_note", { id });
+  }
+  for (const c of D.trashedDoc) await inv("archive_note", { id: await inv("capture_doc", { content: c }) });
+  for (const c of D.trashedLong) await inv("archive_note", { id: await cap(c) });
+  for (const title of D.trashedTask) {
+    await inv("archive_task", { id: await inv("create_task", { title, dueOn: null, priority: null, topicId: null }) });
+  }
   ids.promoted = [];
   for (const [c, title] of D.promoted) {
     const id = await cap(c);
@@ -208,9 +290,10 @@ export function walkSeedScript(lang, { spaceId, captureCmd }) {
 
   return {
     counts: {
-      topics: topicIds.length,
-      notes: D.filed.length + D.inbox.length + D.edited.length + D.imaged.length + D.commented.length,
-      trashed: D.trashed.length,
+      topics: topicIds.length + D.topicsW3.length,
+      notes: D.filed.length + D.inbox.length + D.edited.length + D.imaged.length + D.commented.length + D.searchBulk + D.editedW3.length,
+      trashed: D.trashed.length + D.trashedImaged.length + D.trashedDoc.length + D.trashedLong.length,
+      trashedTasks: D.trashedTask.length,
       tasks: D.tasks.length + D.promoted.length + D.bulkTodo.length,
       sealed: D.sealed.length,
     },
