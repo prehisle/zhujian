@@ -412,6 +412,9 @@ struct TaskItem {
     /// **临时视觉标记,不是分类**(分类走 topics)——不参与筛选/排序/统计,纯展示层。
     /// ⛔ 前端只许经 `color-mix()` / `background-color:` 消费(backlog 休眠账 7 触发门②)。
     color: Option<String>,
+    /// 改过没有(158 G4-A8,core `repo::revised_sql`,同 [`ProcessedItem::revised`]):看板卡 /
+    /// 归档册卡上标一枚「改过」、⋯ 菜单出「历史」。
+    revised: bool,
     /// Every tag on this card (M:N, `item_topic`), each `{id, title}`. Empty = 无标签.
     /// The board shows them all as chips; the filter bar treats a card as belonging to
     /// each of its tags. Tag order follows the topic's `updated_at` (see repo::task_rows).
@@ -438,6 +441,7 @@ impl From<repo::TaskRow> for TaskItem {
             done_at: t.done_at,
             born_device: t.born_device,
             color: t.color,
+            revised: t.revised,
             topics,
         }
     }

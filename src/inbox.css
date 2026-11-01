@@ -396,9 +396,9 @@
 }
 .v-inbox .form-err[hidden] { display: none; }
 
-/* edit history disclosure */
+/* edit history disclosure(158 G4-A8 起看板卡的历史读框 `.hd-panel` 也用这一套,选择器并列一份) */
 .v-inbox .hist-toggle,
-.v-inbox .hist-more {
+.v-inbox .hist-more, .hd-panel .hist-more {
   font: inherit;
   font-size: var(--fs-12);
   color: var(--ink-soft);
@@ -411,10 +411,10 @@
   text-decoration-color: var(--line-strong);
 }
 .v-inbox .hist-toggle:hover,
-.v-inbox .hist-more:hover { color: var(--ink); }
-.v-inbox .hist-more { align-self: flex-start; }
-.v-inbox .hist-more[hidden] { display: none; }
-.v-inbox .hist-panel {
+.v-inbox .hist-more:hover, .hd-panel .hist-more:hover { color: var(--ink); }
+.v-inbox .hist-more, .hd-panel .hist-more { align-self: flex-start; }
+.v-inbox .hist-more[hidden], .hd-panel .hist-more[hidden] { display: none; }
+.v-inbox .hist-panel, .hd-panel .hist-panel {
   display: flex;
   flex-direction: column;
   gap: 7px;
@@ -422,14 +422,14 @@
   padding-left: 11px;
   border-left: 2px solid var(--line);
 }
-.v-inbox .hist-panel[hidden] { display: none; }
-.v-inbox .hist-list {
+.v-inbox .hist-panel[hidden], .hd-panel .hist-panel[hidden] { display: none; }
+.v-inbox .hist-list, .hd-panel .hist-list {
   display: flex;
   flex-direction: column;
   gap: 2px;
 }
 /* 一版 = 一行可点的「时间 · 字数」,点开才取那一版正文(1b:目录不带正文) */
-.v-inbox .hist-entry {
+.v-inbox .hist-entry, .hd-panel .hist-entry {
   font: inherit;
   display: flex;
   align-items: baseline;
@@ -441,13 +441,13 @@
   cursor: pointer;
   text-align: left;
 }
-.v-inbox .hist-entry:hover .hist-time,
-.v-inbox .hist-item.open .hist-time { color: var(--ink); }
-.v-inbox .hist-chars {
+.v-inbox .hist-entry:hover .hist-time, .hd-panel .hist-entry:hover .hist-time,
+.v-inbox .hist-item.open .hist-time, .hd-panel .hist-item.open .hist-time { color: var(--ink); }
+.v-inbox .hist-chars, .hd-panel .hist-chars {
   font-size: var(--fs-12);
   color: var(--ink-soft);
 }
-.v-inbox .hist-text {
+.v-inbox .hist-text, .hd-panel .hist-text {
   margin: 0 0 6px;
   font-family: var(--font-serif);
   font-size: var(--fs-14);
@@ -455,7 +455,7 @@
   white-space: pre-wrap;
   word-break: break-word;
 }
-.v-inbox .hist-time {
+.v-inbox .hist-time, .hd-panel .hist-time {
   font-size: var(--fs-12);
   color: var(--ink-soft);
   letter-spacing: 0.03em;
@@ -505,4 +505,4 @@
 .v-inbox .edited-mark { margin-left: 8px; font-size: var(--fs-12); color: var(--ink-soft); }
 .v-inbox .hist-host:empty { display: none; }
 .v-inbox .hist-host { margin-top: 8px; }
-.v-inbox .hist-vs { margin: 4px 0; font-family: var(--font-sans); font-size: var(--fs-12); color: var(--ink-soft); }
+.v-inbox .hist-vs, .hd-panel .hist-vs { margin: 4px 0; font-family: var(--font-sans); font-size: var(--fs-12); color: var(--ink-soft); }

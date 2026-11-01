@@ -3,7 +3,7 @@
 // 目录只取元数据(时间 + 字数),点开一版才取那一版的全文 —— ⛔ 别退回「一次取全部正文」
 // (旧的 list_note_history:200 版 × 200 KiB 过 IPC 再全建 DOM)。同一时刻至多展开一版,
 // 全文缓存就是那一份。只读:⛔ 没有「恢复到这一版」(longform-plan §4 末)。
-import { el } from "./dom";
+import { el, trapTab } from "./dom";
 import { errText } from "./err";
 import { t } from "./i18n";
 import { invoke } from "./space";
@@ -17,8 +17,9 @@ type VersionText = { revision_id: number | null; archived_at: string | null; con
 type VersionPair = { a: VersionText; b: VersionText };
 
 /** 往 `host` 里挂「历史 N 版」开关与面板;没有历史就什么也不挂。目录读失败照抛,由调用方决定
- *  怎么降级(编辑态里历史是附带的,读不到不该挡编辑)。 */
-export async function mountHistory(host: HTMLElement, itemId: string): Promise<void> {
+ *  怎么降级(编辑态里历史是附带的,读不到不该挡编辑)。`expanded` = 不要开关、目录直接摊开
+ *  (看板卡的历史读框:框本身就是「要看」,再套一层能收起的开关是多一步)。 */
+export async function mountHistory(host: HTMLElement, itemId: string, opts: { expanded?: boolean } = {}): Promise<void> {
   const first = await invoke<RevisionCatalog>("list_revisions", { id: itemId, before: null });
   if (first.total === 0) return;
 
@@ -85,6 +86,11 @@ export async function mountHistory(host: HTMLElement, itemId: string): Promise<v
   };
   addPage(first);
 
+  if (opts.expanded) {
+    panel.hidden = false;
+    host.replaceChildren(panel);
+    return;
+  }
   const toggle = el("button", {
     className: "hist-toggle",
     textContent: t("inbox.historyToggle", { n: first.total }),
@@ -93,4 +99,81 @@ export async function mountHistory(host: HTMLElement, itemId: string): Promise<v
     },
   });
   host.replaceChildren(toggle, panel);
+}
+
+// ---- 看板卡的历史读框(158 G4-A8)-------------------------------------------------------
+// 随记的历史就地摊在卡里(全宽单列);看板是 200px 起的窄列、还会随同步 / 回窗整列重画,
+// 摊在卡里放不下比对、也留不住 —— 同留言浮层那条「按容器形状分形」(item-comments PanelMode)。
+// ⇒ portal 到 body 的读框:遮罩复用留言那张深压 `.cm-overlay`(阅读型),内容就是上面这份
+// mountHistory(目录 + 点开一版画「这一版 → 现在」的比对),⛔ 不另写第二份历史 UI。
+// 只读:⛔ 没有任何写口。全视图至多一枚;宿主视图卸载(切视图 / 切空间)时必须 closeHistoryDialog。
+
+let dialog: { close: () => void } | null = null;
+
+/** 打开 `itemId` 的历史读框。`hostText` = 这张卡现在的正文,印在框顶上(读框盖住了卡本身)。
+ *  `returnFocus` = 关框时焦点回哪儿,**关的那一刻现找**:从 ⋯ 菜单 / 单键进来时 activeElement 多半已是
+ *  body(菜单先拆了),框开着时宿主还可能整列重画 —— 开框那一刻记下的节点靠不住(codex A8 L1)。 */
+export function openHistoryDialog(itemId: string, hostText: string, returnFocus: () => HTMLElement | null): void {
+  closeHistoryDialog();
+  const closeBtn = el("button", { className: "hd-close", type: "button", textContent: "✕", title: t("inbox.histClose") });
+  closeBtn.setAttribute("aria-label", t("inbox.histClose"));
+  const body = el("div", { className: "hd-body" }, [el("p", { className: "hist-vs", textContent: "…" })]);
+  const panel = el("div", { className: "hd-panel" }, [
+    el("div", { className: "hd-head" }, [el("h2", { className: "hd-title", textContent: t("inbox.actHistory") }), closeBtn]),
+    el("p", { className: "hd-host", textContent: hostText }),
+    body,
+  ]);
+  panel.setAttribute("role", "dialog");
+  panel.setAttribute("aria-modal", "true");
+  panel.setAttribute("aria-label", t("inbox.actHistory"));
+  const overlay = el("div", { className: "cm-overlay hd-overlay" }, [panel]);
+  const me = { close };
+  dialog = me;
+
+  function close(): void {
+    if (dialog !== me) return; // 已被后来者顶掉:别去拆别人的框
+    dialog = null;
+    overlay.remove();
+    document.removeEventListener("keydown", onKey, true);
+    returnFocus()?.focus();
+  }
+  // 捕获阶段挂在 document 上:Esc 关框、Tab 圈在框里;其余不带修饰键的单键**一律截住** ——
+  // 焦点在框里的按钮上时,看板卡的单键(hotkey-menu 的 onKey)与视图键照样收得到,不截的话
+  // 读着历史按一下 D 就把身后那张卡删了。只 stopPropagation、不 preventDefault:按钮上的
+  // Enter / 空格照旧是点击。
+  function onKey(e: KeyboardEvent): void {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      close();
+      return;
+    }
+    trapTab(panel, e);
+    if (!e.ctrlKey && !e.metaKey && !e.altKey) e.stopPropagation();
+  }
+  overlay.addEventListener("mousedown", (e) => {
+    if (e.target === overlay) close();
+  });
+  closeBtn.addEventListener("click", () => close());
+  document.addEventListener("keydown", onKey, true);
+  document.body.append(overlay);
+  closeBtn.focus();
+
+  const staged = el("div");
+  mountHistory(staged, itemId, { expanded: true }).then(
+    () => {
+      if (dialog !== me) return;
+      // 目录为空 = 卡上的「改过」是上一次重画时的旧真相(别处刚把它彻底删了之类):照实说,⛔ 不留白。
+      if (staged.childElementCount === 0) body.replaceChildren(el("p", { className: "hist-vs", textContent: t("inbox.histNone") }));
+      else body.replaceChildren(...staged.childNodes);
+    },
+    (e) => {
+      if (dialog === me) body.replaceChildren(el("p", { className: "hd-err", textContent: errText(e) }));
+    },
+  );
+}
+
+/** 关掉开着的历史读框(没开 = 什么也不做)。 */
+export function closeHistoryDialog(): void {
+  dialog?.close();
 }

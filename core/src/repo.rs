@@ -222,6 +222,9 @@ pub struct TaskRow {
     /// 「未知不回填」)。前端把它经设备名册翻成别名,**只在多设备账户里、且不是本机时**
     /// 才显一枚小字 chip(identity-plan §3.7);单设备账户完全不显示。
     pub born_device: Option<String>,
+    /// 改过没有(158 G4-A8),同 [`OrganizedRow::revised`](同一枚 [`revised_sql`]):看板卡 /
+    /// 回收站 / 归档册三条读路都带,卡上标「改过」、⋯ 菜单出「历史」。纯读派生、不进任何写路径。
+    pub revised: bool,
     pub topics: Vec<TagRef>,
 }
 
@@ -1329,8 +1332,9 @@ fn task_rows(
 
     let sql = format!(
         "SELECT i.id, i.content, i.stage, i.due_on, i.priority, i.sealed_at, i.done_at, \
-                i.born_device, i.created_at, i.color FROM items i \
-         WHERE {where_sql} ORDER BY {order_sql}"
+                i.born_device, i.created_at, i.color, {} FROM items i \
+         WHERE {where_sql} ORDER BY {order_sql}",
+        revised_sql("i")
     );
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map([], |r| {
@@ -1345,11 +1349,12 @@ fn task_rows(
             r.get::<_, Option<String>>(7)?,
             r.get::<_, String>(8)?,
             r.get::<_, Option<String>>(9)?,
+            r.get::<_, bool>(10)?,
         ))
     })?;
     let mut out = Vec::new();
     for row in rows {
-        let (id, content, stage, due_on, priority, sealed_at, done_at, born_device, created_at, color) =
+        let (id, content, stage, due_on, priority, sealed_at, done_at, born_device, created_at, color, revised) =
             row?;
         let topics = tags_by_item.remove(&id).unwrap_or_default();
         out.push(TaskRow {
@@ -1363,6 +1368,7 @@ fn task_rows(
             done_at,
             born_device,
             color,
+            revised,
             topics,
         });
     }
@@ -2488,6 +2494,45 @@ mod tests {
         assert!(!idea_rev(&fresh));
         assert!(idea_rev(&edited));
         assert!(!idea_rev(&ticked));
+    }
+
+    #[test]
+    fn revised_flag_follows_item_revisions_on_board_trash_and_sealed() {
+        // 158 G4-A8:看板卡(list_tasks)、任务回收站(archived_tasks)、归档册(sealed_tasks)三条
+        // 读路都带「改过」,口径同随记(revised_sql):有旧版才算;只勾了方框(0039 不留版)不算。
+        // 每格各用一张自己的卡,各自独立可判(不靠累计量)。
+        let mut conn = fresh_db();
+        let fresh = insert_task(&conn, "没动过", None, None).unwrap();
+        let edited = insert_task(&conn, "原标题", None, None).unwrap();
+        let ticked = insert_task(&conn, "- [ ] 甲", None, None).unwrap();
+        assert_eq!(rename_task(&conn, &edited, "改过的标题").unwrap(), 1);
+        let tx = conn.transaction().unwrap();
+        assert_eq!(rename_task(&tx, &ticked, "- [x] 甲").unwrap(), 1);
+        tx.commit().unwrap();
+        let rev = |rows: &[TaskRow], id: &str| rows.iter().find(|r| r.id == id).unwrap().revised;
+        let board = list_tasks(&conn).unwrap();
+        assert!(!rev(&board, &fresh));
+        assert!(rev(&board, &edited));
+        assert!(!rev(&board, &ticked), "纯勾选不留版 ⇒ 不算改过");
+
+        // 归档册:改过的那张做完 → 归档,标记跟着;没改过的同样归档,仍不标。
+        let fresh2 = insert_task(&conn, "也没动过", None, None).unwrap();
+        for id in [&edited, &fresh2] {
+            assert_eq!(set_task_stage(&conn, id, "todo", "done").unwrap(), 1);
+            assert_eq!(seal_task(&conn, id).unwrap(), 1);
+        }
+        let sealed = sealed_tasks(&conn).unwrap();
+        assert!(rev(&sealed, &edited));
+        assert!(!rev(&sealed, &fresh2));
+
+        // 回收站:改过的删进去仍标,没改过的(只勾过)不标。
+        assert_eq!(archive_task(&conn, &ticked).unwrap(), 1);
+        let trashed = insert_task(&conn, "要删的", None, None).unwrap();
+        assert_eq!(rename_task(&conn, &trashed, "改了再删").unwrap(), 1);
+        assert_eq!(archive_task(&conn, &trashed).unwrap(), 1);
+        let trash = archived_tasks(&conn).unwrap();
+        assert!(!rev(&trash, &ticked));
+        assert!(rev(&trash, &trashed));
     }
 
     #[test]

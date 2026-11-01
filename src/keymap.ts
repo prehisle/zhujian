@@ -36,6 +36,8 @@ export const BOARD_CARD_KEYS = {
   priority: "P",
   comments: "Y",
   color: "H",
+  /** 历史(158 G4-A8;只在改过的卡上出)。随记 / 长文的历史是 H,可看板的 H 早给了颜色 ⇒ V(Version)。 */
+  history: "V",
   toTop: "T",
   toBottom: "F",
   nextCol: "]",
@@ -50,7 +52,7 @@ export const BOARD_CARD_KEYS = {
 export const BOARD_TRASH_KEYS = { restore: "U", deleteForever: "D" } as const;
 
 /** 归档册里的卡片(与看板卡「归档」同键 A,一进一出)。 */
-export const SEALED_CARD_KEYS = { unseal: "A" } as const;
+export const SEALED_CARD_KEYS = { unseal: "A", history: "V" } as const;
 
 /** 长文(列表卡与阅读页共用一张表;列表卡上没有历史 / 留言两项)。「收回随记」与随记卡的
  *  「展开成长文」同键 W,一进一出(同看板卡「归档」与归档册「取出」同键 A)。 */

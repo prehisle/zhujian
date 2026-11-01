@@ -59,6 +59,9 @@ export const inbox = defineMessages({
   "inbox.discardHint": { zh: "改过了 —— 再按一次 Esc 丢掉这次的修改;回车或点别处保存。", en: "You have changes — press Esc again to discard them; Enter or click elsewhere to save." },
   "inbox.actHistory": { zh: "历史", en: "History" },
   "inbox.editedMark": { zh: "改过", en: "edited" },
+  // 158 G4-A8:看板卡的历史读框(history-panel openHistoryDialog)。
+  "inbox.histClose": { zh: "关闭", en: "Close" },
+  "inbox.histNone": { zh: "这一条现在没有旧版本可看。", en: "There are no earlier versions of this one now." },
   "inbox.histVsNow": { zh: "这一版 → 现在:删掉的标红,加上的标绿", en: "This version → now: removed in red, added in green" },
   "inbox.addImage": { zh: "＋加图", en: "+ Image" },
   "inbox.filterNoMatchHint": { zh: "换个词,或清空过滤框(Esc)。", en: "Try another word, or clear the filter (Esc)." },

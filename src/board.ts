@@ -46,6 +46,7 @@ import {
   loadBoardColumns,
 } from "./board-columns";
 import { closeColumnManager, openColumnManager } from "./column-manager";
+import { closeHistoryDialog, openHistoryDialog } from "./history-panel";
 import { BOARD_CARD_KEYS, BOARD_TRASH_KEYS, BOARD_VIEW_KEYS, SEALED_CARD_KEYS } from "./keymap";
 import { type RemovedGroup, listRemovedImages, removedImageCount, removedImagesSection } from "./trash-images";
 import { type Act, SATELLITE_LAYERS, armDismiss, createHotkeyController, registerViewKeys } from "./hotkey-menu";
@@ -1349,6 +1350,14 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
     return { root: wrap, openPicker };
   }
 
+  /** 看板 / 归档册卡的「历史」读框(158 G4-A8)。关框时焦点回这张卡的 ⋯ 钮 —— 按 id 现找:框开着时
+   *  看板可能已整列重画,旧卡节点早脱离了文档(codex A8 L1)。卡没了就不抢焦点。 */
+  function openHistory(item: TaskItem): void {
+    openHistoryDialog(item.id, item.title, () =>
+      [...root.querySelectorAll<HTMLElement>(".tcard")].find((x) => x.dataset.histFor === item.id)?.querySelector<HTMLElement>(".hk-btn") ?? null,
+    );
+  }
+
   function card(item: TaskItem, mode: "board" | "trash" | "sealed"): HTMLElement {
     // Highlight a due card at a glance: overdue/today wear a 朱砂 accent. 完成的卡不算
     // (dueAttentionState)——done 列本已靠 .done 的淡出信号说「这条不用管了」,逾期强调
@@ -1358,6 +1367,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
     const modeCls = mode === "board" ? item.status : mode === "trash" ? "archived" : "sealed";
     const titleP = el("p", { className: "ttitle", textContent: item.title });
     const c = el("article", { className: `tcard ${modeCls}${dueCls}` }, [titleP]);
+    c.dataset.histFor = item.id; // 历史读框关掉时按它找回这张卡(openHistory);⛔ 别复用 taskId —— 那个只挂看板态,拖放按它读列序
     // 颜色标记(0040):整卡一层极淡底色。**三种 mode 都染** —— 颜色是这张卡自己的属性,进了
     // 回收站 / 归档册也该保着;能不能**改**才由 mode 分(见下方 actionsFor 的 board 守卫)。
     applyCardColor(c, item.color);
@@ -1464,16 +1474,23 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       // 再走正常两段式)。键位 A 与看板卡的「归档」同键,是同一根轴上的一进一出;
       // 视图键 G(切归档视图)本就与卡片单键错开。
       // ⚠ 无编辑态 / 无行内确认 ⇒ suspended 用默认的恒 false(没有第二个键盘域要让位)。
+      // 158 G4-A8:「历史」是只读的查看,不是动作 —— 不破「只留离场动作」那条(它说的是写);
+      // 改过的才出(同随记:没有旧版时点了什么也看不到)。
       const handle = hk.register(c, () => [
         { label: t("board.unseal"), key: SEALED_CARD_KEYS.unseal, run: () => unseal(item.id) },
+        ...(item.revised ? [{ label: t("inbox.actHistory"), key: SEALED_CARD_KEYS.history, run: () => openHistory(item) }] : []),
       ]);
       c.append(handle.menu());
       // 158 G3 / Q13(WD-33):每张卡写日期(此前只有 ✓ + 标题;分组标题在长列表里早滚出去了)。
       // 完成日优先;0030 之前完成的老卡没有完成日,写入档那天并照实说是「归档于」。
+      // 158 G4-A8:改过的在日期后面标一句(同随记卡时间后那枚)。
       const at = item.done_at ?? item.sealed_at;
+      const mark = item.revised ? [el("span", { className: "edited-mark", textContent: t("inbox.editedMark") })] : [];
       if (at !== null) {
         const day = dayLabel(at);
-        c.append(el("div", { className: "done-at", textContent: item.done_at ? t("board.doneAt", { day }) : t("board.sealedAt", { day }) }));
+        c.append(el("div", { className: "done-at" }, [item.done_at ? t("board.doneAt", { day }) : t("board.sealedAt", { day }), ...mark]));
+      } else if (mark.length > 0) {
+        c.append(el("div", { className: "done-at" }, mark));
       }
     } else {
       // 完成时刻(0030):已完成卡显示「完成于 <日>」。done_at 可能为 null(本功能上线前
@@ -1489,6 +1506,9 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       // 的卡改不动;**显示条件 = 接收条件**,别摆一条点了必然报错的入口。
       const colorWrap = el("span", { className: "slot color-slot" });
       if (mode === "board") meta.root.append(colorWrap);
+      // 158 G4-A8:改过的卡在这一行标一句「改过」(同随记卡;此前桌面看板卡看不出改没改过,手机早有)。
+      // ⚠ 挂进 meta 行 = 同时登记进 board.css 那串收起白名单(`.edited-mark`),否则别的格都空的卡上看不见。
+      if (item.revised) meta.root.append(el("span", { className: "edited-mark", textContent: t("inbox.editedMark") }));
       // 失败 = 横幅就地报错、不改本地态(ui-audit P0 #6);成功走 load() 重渲(同其它写路径,
       // 本地不猜真相)。
       // `undo`:数字键那条「悬停即按」的快速通道才配发撤销回执(716)—— 色板上点选是看着
@@ -1644,6 +1664,10 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
           // 留言(§4.7,与灵感同键):N=0 时卡片上没有徽章,这里是写第一条的唯一入口。
           { label: t("board.comments"), key: BOARD_CARD_KEYS.comments, run: () => openComments(mountSpace, item.id, () => void load(), item.title) },
         ];
+        // 158 G4-A8:历史(只读读框,复用随记那份目录 + 长文那套比对)。改过的才有,同随记。
+        // 「改过」读的是库里派生的 revised(改完 save 走 load() 重拉就出来),⛔ 别在前端猜。
+        if (item.revised)
+          list.push({ label: t("inbox.actHistory"), key: BOARD_CARD_KEYS.history, run: () => openHistory(item) });
         // 颜色(0040):菜单里只出一项「颜色 H」开色板;1-7 / 0 八枚数字键是 `hidden` 的快速
         // 通道(悬停即按)。⛔ 八枚全摊进菜单会把 14 行撑成 22 行 —— 发现性改由色板上印着的
         // 数字键兑现。⚠ H = Hue:E/C/K/L/S/P/Y/T/F/A/B/M/D 是卡片键、N/R/G 是**视图级**键
@@ -2846,6 +2870,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       activeEditFlush = null;
       closeComments(); // 浮层 portal 在 body 上,不随视图根节点走:切视图/切空间必须自己收
       closeColumnManager(); // 同上:列管理面也 portal 在 body 上,且它的 onChanged 指着这一棵 mount 的 load()
+      closeHistoryDialog(); // 同上(158 G4-A8):历史读框取数走「当前空间」,切了空间还开着就会拿旧 id 去问新空间
       teardownViewKeys();
       hdrRO.disconnect(); // 65:观察的是本 mount 的 header,不许活过这棵 mount
       hk.destroy(); // tear down the document keydown + any lingering menu listeners

@@ -64,6 +64,7 @@ export function buildKeySheet(isMac: boolean): HTMLElement {
     priority: t("board.priority"),
     comments: t("board.comments"),
     color: t("board.color"),
+    history: t("inbox.actHistory"),
     toTop: t("board.moveToTop"),
     toBottom: t("board.moveToBottom"),
     nextCol: t("settings.keysNextCol"),

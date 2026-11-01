@@ -612,10 +612,75 @@
    8 枚色点都在、字号也对,**屏上就是不出现**(真机 CDP 沿 DOM 链往上走才逮到 `task-meta` 是
    `display:none`)。⭐ 判据必须用 `.card-color-row`(只在色板打开时存在),⛔ **不能用
    `.color-slot`** —— 那个空 span 是恒挂着的,拿它当判据等于把这条收起规则整个废掉。
-   ⇒ 三例之后的教训:**往 meta 行挂东西时,「挂上去」和「登记进这串白名单」是同一件事的两半**。 */
-.v-board .tcard .task-meta:not(:has(.chip:not(.redundant))):not(:has(.due-input)):not(:has(.choice)):not(:has(.link)):not(:has(.topic-hint)):not(:has(.topic-search)):not(:has(.sig-chip)):not(:has(.cm-badge)):not(:has(.card-color-row)) {
+   ⇒ 三例之后的教训:**往 meta 行挂东西时,「挂上去」和「登记进这串白名单」是同一件事的两半**。
+   158 G4-A8 的 `.edited-mark`(「改过」)照此同轮登记。 */
+.v-board .tcard .task-meta:not(:has(.chip:not(.redundant))):not(:has(.due-input)):not(:has(.choice)):not(:has(.link)):not(:has(.topic-hint)):not(:has(.topic-search)):not(:has(.sig-chip)):not(:has(.cm-badge)):not(:has(.card-color-row)):not(:has(.edited-mark)) {
   display: none;
 }
+
+/* 158 G4-A8:看板卡 / 归档册卡上的「改过」小字(同随记卡那枚,同署名那一档存在感)。 */
+.v-board .edited-mark { font-size: var(--fs-12); color: var(--ink-soft); }
+.v-board .done-at .edited-mark { margin-left: 8px; }
+
+/* ---- 历史读框(hd = history dialog;history-panel.ts openHistoryDialog,158 G4-A8)----------
+   遮罩复用留言那张 `.cm-overlay`(阅读型 = 深压,判据见 item-comments.css 遮罩处),一个颜色也不新写;
+   面板宽度取留言读框那档再宽一点 —— 里面要摆「这一版 → 现在」的比对块。目录与比对的样式
+   是 inbox.css / docs.css 里并列的那份 `.hd-panel`,⛔ 别在这儿另抄一份。 */
+.hd-panel {
+  width: min(680px, calc(100vw - 48px));
+  max-height: min(78vh, 760px);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px 20px 20px;
+  background: var(--raised);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  box-shadow: var(--float-shadow);
+}
+.hd-head { display: flex; align-items: center; gap: 8px; }
+.hd-title {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-family: var(--font-serif);
+  font-size: var(--fs-16);
+  letter-spacing: 0.04em;
+  color: var(--ink);
+}
+.hd-close {
+  flex: none;
+  min-width: 28px;
+  min-height: 28px;
+  display: grid;
+  place-items: center;
+  font: inherit;
+  font-size: var(--fs-13);
+  color: var(--ink-soft);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+}
+.hd-close:hover { color: var(--ink); border-color: var(--line-strong); }
+/* 卡现在的正文:读框盖住了卡本身,印在顶上好对照;长的只露三行。 */
+.hd-host {
+  margin: 0;
+  font-family: var(--font-serif);
+  font-size: var(--fs-14);
+  color: var(--ink-soft);
+  white-space: pre-wrap;
+  word-break: break-word;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+/* 读框里目录不是嵌在卡里的「附注」,不要左边那条引线。⚠ 写成 `.hd-body .hist-panel` 再加一层(0,3,0):
+   inbox.css 里并列的 `.hd-panel .hist-panel` 同特异性、且那张表加载在本表之后,只写两层会被它盖回去(实测)。 */
+.hd-panel .hd-body .hist-panel { margin-top: 0; padding-left: 0; border-left: 0; }
+.hd-err { margin: 0; font-size: var(--fs-13); color: var(--seal-ink); }
 
 /* ---- trash view: a single scrolling list + an empty/clear bar ---- */
 .v-board main.trash { display: block; overflow-y: auto; padding: 16px 24px 22px; }
