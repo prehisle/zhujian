@@ -31,6 +31,7 @@ export function buildKeySheet(isMac: boolean): HTMLElement {
 
   const ideaCard = rowsOf(IDEA_CARD_KEYS, {
     edit: t("inbox.actEdit"),
+    history: t("inbox.actHistory"),
     task: t("settings.keysToTask"),
     tag: t("inbox.actTag"),
     comments: t("inbox.actComments"),

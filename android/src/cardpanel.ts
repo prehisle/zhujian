@@ -82,6 +82,7 @@ import { capturePhoto, PICK_MAX, pickImages, toBase64 } from "./images";
 import { openViewer } from "./viewer";
 import { withMissingRefs } from "../../shared/markdown";
 import { closeEditSheet, openEditSheet, paintEditSheet, type EditHost } from "./editsheet";
+import { renderDiff } from "../../shared/diff-dom";
 
 // actions = 两行主面;more = 低频动作子面;status/due/prio = 值 chip 各自点开的那一排
 // (选完自己回 actions);tags/move/history = 既有三张子面;edit = 屏底编辑层开着。
@@ -111,7 +112,8 @@ type PanelState = {
    *  ⛔ 不带正文(longform-plan §4:旧的全量取法 200 版 × 200 KiB 一次过 IPC)。只读,⛔ 没有任何写口。 */
   revisions: RevisionCatalog | null;
   /** 展开着的那一版:同一时刻至多一版,`text` null = 正在取。全文缓存就是这一份。 */
-  revOpen: { id: number; text: string | null } | null;
+  /** 展开着的那一版:`text` = 那一版、`now` = 现在(157 G4 / P5 起画「这一版 → 现在」的比对)。 */
+  revOpen: { id: number; text: string | null; now?: string } | null;
   /** 历史面读请求的代次(进历史面与取正文共用;翻页另按目录身份判弃):旧回包晚到 ⛔ 不许覆盖新状态。 */
   revSeq: number;
 };
@@ -442,7 +444,16 @@ function renderHistory(): string {
   const rows = (cat?.entries ?? [])
     .map((r) => {
       const isOpen = open?.id === r.revision_id;
-      const body = isOpen ? `<p>${open.text === null ? "…" : esc(open.text)}</p>` : "";
+      // 157 G4 / P5:复用长文的比对(shared/diff-dom),这一版 → 现在;此前只摊旧版全文,改了哪儿得自己对。
+      // renderDiff 用 DOM 造节点(文字走 textContent),取 outerHTML 拼进面板是安全的。
+      const body = !isOpen
+        ? ""
+        : open.text === null || open.now === undefined
+          ? `<p>…</p>`
+          : `<p class="rev-vs">${t("cardpanel.histVsNow")}</p>${(() => {
+              const d = renderDiff(open.text, open.now);
+              return (d.degraded !== null ? `<p class="rev-vs">${t("cardpanel.histDegraded")}</p>` : "") + d.root.outerHTML;
+            })()}`;
       return `<div class="rev${isOpen ? " open" : ""}"><button class="revh" data-rev="${r.revision_id}"><time>${esc(
         t("cardpanel.histEditedAt", { time: fmtWhen(r.archived_at) }),
       )}</time><span class="n">${esc(t("cardpanel.histChars", { n: r.chars }))}</span></button>${body}</div>`;
@@ -714,7 +725,7 @@ async function toggleRevision(revId: number, card: HTMLElement) {
   try {
     const pair = await revisionTexts(space, session.id, { rev: revId }, "current");
     if (!histStill(session, space, seq)) return;
-    session.revOpen = { id: revId, text: pair.a.content };
+    session.revOpen = { id: revId, text: pair.a.content, now: pair.b.content };
     renderPanel(currentCard() ?? card);
   } catch (err) {
     if (!histStill(session, space, seq)) return;

@@ -9,6 +9,7 @@ import { t } from "./i18n";
 import { invoke } from "./space";
 import { when } from "./tasktime";
 import { toastError } from "./toast";
+import { renderDiff } from "../shared/diff-dom";
 
 type RevisionMeta = { revision_id: number; archived_at: string; chars: number };
 type RevisionCatalog = { entries: RevisionMeta[]; total: number; has_more: boolean };
@@ -48,11 +49,19 @@ export async function mountHistory(host: HTMLElement, itemId: string): Promise<v
         if (wasOpen) return;
         open = row;
         row.classList.add("open");
-        const text = el("p", { className: "hist-text" });
+        const text = el("div", { className: "hist-text" });
         row.append(text);
         try {
           const pair = await invoke<VersionPair>("revision_texts", { id: itemId, a: { rev: r.revision_id }, b: "current" });
-          if (mine === seq) text.textContent = pair.a.content;
+          if (mine !== seq) return;
+          // 157 G4 / P5:复用长文的比对 —— 这一版 → 现在,删掉的标红、加上的标绿(此前只摊旧版全文,
+          // 改了哪儿得自己对)。算不出逐行差异时 renderDiff 自己退回两份原文,这里补一句说明。
+          const d = renderDiff(pair.a.content, pair.b.content);
+          text.replaceChildren(
+            el("p", { className: "hist-vs", textContent: t("inbox.histVsNow") }),
+            ...(d.degraded !== null ? [el("p", { className: "hist-vs", textContent: t("docs.histDegraded") })] : []),
+            d.root,
+          );
         } catch (e) {
           if (mine === seq) text.textContent = errText(e);
         }

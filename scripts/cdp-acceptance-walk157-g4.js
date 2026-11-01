@@ -67,6 +67,8 @@
     ids.edit = await inv("capture_idea", { content: "W157G4-编辑" });
     ids.del = await inv("capture_idea", { content: "W157G4-删" });
     ids.promo = await inv("capture_idea", { content: "W157G4-转" });
+    ids.rev = await inv("capture_idea", { content: "W157G4-改前" });
+    await inv("edit_note", { id: ids.rev, content: "W157G4-改后" });
     localStorage.setItem(PHASE_KEY, JSON.stringify(ids));
     return JSON.stringify({ needReload: true });
   }
@@ -75,6 +77,24 @@
   try {
     if (!ok("前置:种子在时间轴上", !!(await until(() => card("W157G4-转") && card("W157G4-长"), 8000)))) return JSON.stringify(out);
     $("error").hidden = true;
+
+    // P5
+    ok("P5 改过的卡标「改过」", !!card("W157G4-改后")?.querySelector("footer .edited-mark"));
+    ok("P5 没改过的不标", !card("W157G4-删")?.querySelector("footer .edited-mark"));
+    card("W157G4-改后").scrollIntoView({ block: "center" });
+    click(card("W157G4-改后").querySelector(".body"));
+    await until(() => pact("W157G4-改后", "more"));
+    click(pact("W157G4-改后", "more"));
+    await until(() => pact("W157G4-改后", "history"));
+    click(pact("W157G4-改后", "history"));
+    const revh = await until(() => card("W157G4-改后")?.querySelector(".panel .revh"), 4000);
+    if (revh) click(revh);
+    const diff = await until(() => card("W157G4-改后")?.querySelector(".panel .rev .diff"), 4000);
+    ok("P5 历史展开一版是比对(删红加绿)", !!diff && !!diff.querySelector(".diff-del") && !!diff.querySelector(".diff-ins"));
+    window.__zhujianHandleBack();
+    await sleep(150);
+    window.__zhujianHandleBack();
+    await until(() => !card("W157G4-改后")?.querySelector(".panel"), 2000);
 
     // P13
     const lc = card("W157G4-长");
@@ -198,7 +218,7 @@
   } catch (e) {
     ok("没抛异常", false, String(e));
   } finally {
-    for (const k of ["long", "img", "tagged", "cm", "edit", "del"]) {
+    for (const k of ["long", "img", "tagged", "cm", "edit", "del", "rev"]) {
       try {
         await inv("archive_note", { id: ids[k] });
       } catch {}

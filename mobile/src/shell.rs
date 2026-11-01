@@ -598,6 +598,8 @@ pub struct TimelineItem {
     born_device: Option<String>,
     /// 卡片颜色标记(0040 `items.color`,`#RRGGBB` 或 null = 无色):前端画一层淡底(用户面 110)。
     color: Option<String>,
+    /// 改过没有(157 G4 / P5,core `repo::revised_sql`):卡上标一枚「改过」。
+    revised: bool,
     topics: Vec<TopicItem>,
     images: Vec<ImageMeta>,
 }
@@ -632,6 +634,7 @@ pub fn list_timeline(space_id: String, coord: State<'_, Coord>) -> Result<Vec<Ti
                     done_at: r.done_at,
                     born_device: r.born_device,
                     color: r.color,
+                    revised: r.revised,
                     topics: r.topics.into_iter().map(TopicItem::from).collect(),
                     images,
                 }

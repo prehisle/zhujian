@@ -128,6 +128,9 @@ pub struct OrganizedRow {
     /// 回收站里的行原样带出(删进回收站**保留长文属性**,还原后照它重新归属 —— 前端只拿它
     /// 画一枚「长文」小标,⛔ 别拿它自己再判一遍归属,归属以 [`item_kind_sql`] 为准)。
     pub doc_at: Option<String>,
+    /// 改过没有(157 G4 / P5):`item_revisions` 里有没有这条的旧版。卡上据它标一枚「改过」,
+    /// 菜单里的「历史」也据它显隐。纯读派生、不进任何写路径;勾选方框不留版(0039)⇒ 只勾过的不算改过。
+    pub revised: bool,
     /// This idea's tags (each id + title + optional color), for chip display + tint.
     pub topics: Vec<TagRef>,
 }
@@ -168,6 +171,8 @@ pub struct TimelineRow {
     /// 卡片颜色标记(0040 `items.color`):`#RRGGBB` 或 None = 无色。供手机端画那层淡底
     /// (用户面 110);同 TaskRow.color,纯展示、不进任何逻辑。
     pub color: Option<String>,
+    /// 改过没有(157 G4 / P5),同 [`OrganizedRow::revised`]。
+    pub revised: bool,
     pub topics: Vec<TagRef>,
 }
 
@@ -284,6 +289,12 @@ pub struct SearchTopic {
     pub color: Option<String>,
 }
 
+/// 「这条改过没有」的 SQL 片段(157 G4 / P5):`item_revisions` 里有它的旧版就是 1。走
+/// `idx_item_revisions_item_id` 的前缀,一条一次索引探测。`a` 是 items 的别名(本模块内的字面量,不是用户输入)。
+pub fn revised_sql(a: &str) -> String {
+    format!("EXISTS (SELECT 1 FROM item_revisions r WHERE r.item_id = {a}.id)")
+}
+
 /// 条目**主归属**的唯一正式定义(longform-plan §1,codex 设计审 M):SQL 表达式,对别名 `a`
 /// 的行求出 `'sealed' | 'archived' | 'task' | 'doc' | 'idea'` 之一。判定顺序 = sealed →
 /// archived → 任务列 → doc_at → 随记:
@@ -394,8 +405,9 @@ fn organized_rows(
     }
 
     let sql = format!(
-        "SELECT i.id, i.content, i.created_at, i.stage, i.born_device, i.doc_at FROM items i \
-         WHERE {where_sql} ORDER BY {order_sql}"
+        "SELECT i.id, i.content, i.created_at, i.stage, i.born_device, i.doc_at, {} FROM items i \
+         WHERE {where_sql} ORDER BY {order_sql}",
+        revised_sql("i")
     );
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map([], |r| {
@@ -406,13 +418,14 @@ fn organized_rows(
             r.get::<_, String>(3)?,
             r.get::<_, Option<String>>(4)?,
             r.get::<_, Option<String>>(5)?,
+            r.get::<_, bool>(6)?,
         ))
     })?;
     let mut out = Vec::new();
     for row in rows {
-        let (id, content, created_at, stage, born_device, doc_at) = row?;
+        let (id, content, created_at, stage, born_device, doc_at, revised) = row?;
         let topics = topics_by_item.remove(&id).unwrap_or_default();
-        out.push(OrganizedRow { id, content, created_at, stage, born_device, doc_at, topics });
+        out.push(OrganizedRow { id, content, created_at, stage, born_device, doc_at, revised, topics });
     }
     Ok(out)
 }
@@ -488,13 +501,14 @@ pub fn idea_trash(conn: &Connection) -> rusqlite::Result<Vec<OrganizedRow>> {
 pub fn live_timeline(conn: &Connection) -> rusqlite::Result<Vec<TimelineRow>> {
     let mut stmt = conn.prepare(&format!(
         "SELECT i.id, i.content, i.created_at, i.stage, i.due_on, i.priority, i.done_at, \
-                i.born_device, i.color, t.id, t.title, t.color, {} \
+                i.born_device, i.color, t.id, t.title, t.color, {}, {} \
          FROM items i \
          LEFT JOIN item_topic it ON it.item_id = i.id \
          LEFT JOIN topics t ON t.id = it.topic_id \
          WHERE i.archived_at IS NULL AND i.sealed_at IS NULL \
          ORDER BY i.created_at DESC, i.id DESC, t.position IS NULL, t.position, t.updated_at, t.id",
-        item_kind_sql("i")
+        item_kind_sql("i"),
+        revised_sql("i")
     ))?;
     let rows = stmt.query_map([], |r| {
         Ok((
@@ -511,6 +525,7 @@ pub fn live_timeline(conn: &Connection) -> rusqlite::Result<Vec<TimelineRow>> {
             r.get::<_, Option<String>>(10)?,
             r.get::<_, Option<String>>(11)?,
             r.get::<_, String>(12)?,
+            r.get::<_, bool>(13)?,
         ))
     })?;
     let mut out: Vec<TimelineRow> = Vec::new();
@@ -529,6 +544,7 @@ pub fn live_timeline(conn: &Connection) -> rusqlite::Result<Vec<TimelineRow>> {
             tag_title,
             tag_color,
             kind,
+            revised,
         ) = row?;
         // 同一条目的标签行必然相邻(前两个排序键完全相同),条目 id 一换就开新行。
         if out.last().map(|last| last.id != id).unwrap_or(true) {
@@ -543,6 +559,7 @@ pub fn live_timeline(conn: &Connection) -> rusqlite::Result<Vec<TimelineRow>> {
                 done_at,
                 born_device,
                 color,
+                revised,
                 topics: Vec::new(),
             });
         }
@@ -2399,6 +2416,30 @@ mod tests {
         assert_eq!(row_task.priority, Some(3));
         assert_eq!(row_idea.due_on, None);
         assert_eq!(row_idea.priority, None);
+    }
+
+    #[test]
+    fn revised_flag_follows_item_revisions_in_timeline_and_ideas() {
+        // 157 G4 / P5:「改过」= item_revisions 里有旧版。新记的 false;改过正文 true;
+        // 只勾了方框(0039 不留版)仍 false —— 卡上不该因为勾了一下就标「改过」。两条读路都带。
+        let mut conn = fresh_db();
+        let fresh = add_item(&conn, "没动过").unwrap();
+        let edited = add_item(&conn, "原文").unwrap();
+        let ticked = add_item(&conn, "- [ ] 甲").unwrap();
+        assert_eq!(update_item_content(&conn, &edited, "改过的字").unwrap(), 1);
+        let tx = conn.transaction().unwrap();
+        assert_eq!(update_item_content(&tx, &ticked, "- [x] 甲").unwrap(), 1);
+        tx.commit().unwrap();
+        let tl = live_timeline(&conn).unwrap();
+        let tl_rev = |id: &str| tl.iter().find(|r| r.id == id).unwrap().revised;
+        assert!(!tl_rev(&fresh));
+        assert!(tl_rev(&edited));
+        assert!(!tl_rev(&ticked), "纯勾选不留版 ⇒ 不算改过");
+        let ideas = live_ideas(&conn).unwrap();
+        let idea_rev = |id: &str| ideas.iter().find(|r| r.id == id).unwrap().revised;
+        assert!(!idea_rev(&fresh));
+        assert!(idea_rev(&edited));
+        assert!(!idea_rev(&ticked));
     }
 
     #[test]

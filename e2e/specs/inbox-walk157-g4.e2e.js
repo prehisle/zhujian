@@ -122,4 +122,21 @@ describe("157 G4 · 随记页的折叠 / 回顶 / 筛选时胶囊", () => {
     }
     await goNotebook("inbox");
   });
+
+  it("P5:改过的卡标「改过」、⋯ 菜单有「历史」,点开一版是「这一版 → 现在」的比对;没改过的两样都没有", async () => {
+    const id = await invoke("capture_note", { content: "E2EW4-改前" });
+    await invoke("edit_note", { id, content: "E2EW4-改后" });
+    await invoke("capture_note", { content: "E2EW4-没改" });
+    await goNotebook("inbox");
+    const c = await card("E2EW4-改后");
+    await c.waitForExist({ timeout: 8000 });
+    expect(await c.$(".edited-mark").isExisting()).toBe(true);
+    expect(await (await card("E2EW4-没改")).$(".edited-mark").isExisting()).toBe(false);
+    await inboxAction("E2EW4-改后", "历史");
+    const entry = await c.$(".hist-host .hist-entry");
+    await entry.waitForExist({ timeout: 5000 });
+    await entry.click();
+    await c.$(".hist-host .diff").waitForExist({ timeout: 5000 });
+    expect(await browser.execute(() => !!document.querySelector(".hist-host .diff .diff-del") && !!document.querySelector(".hist-host .diff .diff-ins"))).toBe(true);
+  });
 });

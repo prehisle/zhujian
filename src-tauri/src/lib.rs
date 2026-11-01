@@ -155,6 +155,8 @@ struct ProcessedItem {
     /// 长文标记(0042):长文列表恒有值,活跃随记恒 null,回收站行原样带出(只拿它画「长文」
     /// 小标;归属以 core 的 `item_kind_sql` 为准,⛔ 前端别据它另判一份)。
     doc_at: Option<String>,
+    /// 改过没有(157 G4 / P5,core `repo::revised_sql`):随记卡上标一枚「改过」、⋯ 菜单出「历史」。
+    revised: bool,
     /// Each tag as `{id, title, color}` — the 灵感 card renders them as chips, tinted by
     /// `color` (null = 无色) just like the board.
     topics: Vec<TopicItem>,
@@ -170,6 +172,7 @@ impl From<repo::OrganizedRow> for ProcessedItem {
             stage: n.stage,
             born_device: n.born_device,
             doc_at: n.doc_at,
+            revised: n.revised,
             topics: n.topics.into_iter().map(TopicItem::from).collect(),
         }
     }

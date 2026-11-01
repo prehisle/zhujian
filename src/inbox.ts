@@ -151,6 +151,8 @@ type CardItem = {
   /** 出生设备(0033),可缺——回收站行也走这个形,只是不渲染署名。 */
   born_device?: string | null;
   doc_at?: string | null;
+  /** 改过没有(157 G4 / P5,core `repo::revised_sql`):卡上标「改过」、⋯ 菜单出「历史」。回收站行不带。 */
+  revised?: boolean;
   topics?: IdeaTag[];
 };
 
@@ -684,10 +686,27 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       // 点它 = 就地展开/收起,不再弹整版浮层(判据见 item-comments 的 PanelMode)。
       const badge = commentBadge(mountSpace, item.id, () => void refresh(), () => toggleComments());
       if (badge) timeT.append(badge);
+      // 157 G4 / P5:改过的卡在时间后面标一句(此前卡面看不出改没改过,历史也只在编辑态里)。
+      if (item.revised) timeT.append(el("span", { className: "edited-mark", textContent: t("inbox.editedMark") }));
     }
     const body = el("div", { className: "note-body" });
     // 留言就地展开的落点:空着时 CSS `:empty` 整个收起,不占位、不留 margin。
     const cmHost = el("div", { className: "cm-host" });
+    // 读态的「历史」落点(157 G4 / P5,⋯ 菜单【历史】开合):空着时 CSS `:empty` 收起。
+    const histHost = el("div", { className: "hist-host" });
+    async function toggleHistory(): Promise<void> {
+      if (histHost.childElementCount > 0) {
+        histHost.replaceChildren();
+        return;
+      }
+      try {
+        await mountHistory(histHost, item.id);
+      } catch (e) {
+        showOpErr(errText(e));
+        return;
+      }
+      histHost.querySelector<HTMLButtonElement>(".hist-toggle")?.click(); // 从菜单进来 = 要看,直接摊开
+    }
 
     // Tag chips — a 想法 may carry tags (just metadata); show them whenever present.
     // Single-entity model: a task is the same subject at a board stage, so it lives on the
@@ -834,7 +853,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       note.classList.remove("editing", "confirming");
       const strip = imageStrip(item.id, { editable: false, onMetas });
       const fb = foldBtns.get(textP);
-      const kids: Node[] = [textP, ...(fb ? [fb] : []), timeT, ...(tagsEl ? [tagsEl] : []), strip.root];
+      const kids: Node[] = [textP, ...(fb ? [fb] : []), timeT, ...(tagsEl ? [tagsEl] : []), strip.root, histHost];
       // 部分成功登记(cross-space-move):目标已建、源还在——提示常驻卡面、随重渲
       // /重启存续(localStorage),「移动」入口同时被 actionsFor 藏起;处理完(手动
       // 删掉一边)后点解除恢复。
@@ -1344,6 +1363,8 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       }
       const list: Act[] = [
         { label: t("inbox.actEdit"), key: IDEA_CARD_KEYS.edit, run: openEdit },
+        // 157 G4 / P5:改过的才有(没有旧版时这一项点了什么也看不到)。
+        ...(item.revised ? [{ label: t("inbox.actHistory"), key: IDEA_CARD_KEYS.history, run: () => void toggleHistory() }] : []),
         { label: t("inbox.actTask"), key: IDEA_CARD_KEYS.task, run: doPromote },
         { label: t("inbox.actTag"), key: IDEA_CARD_KEYS.tag, run: openTopic },
         // 留言(§4.7):N=0 时卡片上没有徽章,这里是写第一条的唯一入口。

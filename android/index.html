@@ -1508,6 +1508,11 @@
       .panel .rev.open time { color: var(--ink-soft); }
       .panel .rev .n { font-size: var(--fs-12); color: var(--ink-faint); }
       .panel .rev p { margin: 0; padding: 0 8px 6px; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink-soft); }
+      /* 157 G4 / P5:展开一版 = 「这一版 → 现在」的比对(.diff 那套住长文节,这里只给说明那行与外边距)。 */
+      .panel .rev p.rev-vs { font-size: var(--fs-12); color: var(--ink-faint); padding-bottom: 4px; }
+      .panel .rev .diff { margin: 0 8px 6px; }
+      /* 卡上「改过」小字(157 G4 / P5),与时间同一档存在感。 */
+      .card footer .edited-mark { color: var(--ink-soft); }
       .panel .movenote {
         display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
         font-size: var(--fs-12); color: var(--seal-ink-on-seal-tint); line-height: 1.5;

@@ -501,3 +501,8 @@
 .v-inbox .img-editor .add-img { margin-top: 6px; }
 /* 编辑态按了一次 Esc 而正文改过(157 G4 / P1):再按一次才丢。 */
 .v-inbox .discard-hint { margin: 4px 0 0; font-size: var(--fs-12); color: var(--seal-ink); }
+/* 157 G4 / P5:卡上「改过」小字(同署名那一档存在感)、读态历史的落点、比对上头那句说明。 */
+.v-inbox .edited-mark { margin-left: 8px; font-size: var(--fs-12); color: var(--ink-soft); }
+.v-inbox .hist-host:empty { display: none; }
+.v-inbox .hist-host { margin-top: 8px; }
+.v-inbox .hist-vs { margin: 4px 0; font-family: var(--font-sans); font-size: var(--fs-12); color: var(--ink-soft); }

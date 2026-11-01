@@ -102,6 +102,8 @@ export type TimelineItem = {
   born_device: string | null;
   /** 卡片颜色标记(0040 items.color):`#RRGGBB` 或 null = 无色。经 ui.ts::cardTint 画淡底(用户面 110)。 */
   color: string | null;
+  /** 改过没有(157 G4 / P5,core `repo::revised_sql`):卡上标「改过」。 */
+  revised: boolean;
   topics: TopicItem[];
   images: ImageMeta[];
 };

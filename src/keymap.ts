@@ -12,6 +12,7 @@
 /** 随记卡片(想法 tab)。 */
 export const IDEA_CARD_KEYS = {
   edit: "E",
+  history: "H",
   task: "T",
   tag: "L",
   comments: "Y",

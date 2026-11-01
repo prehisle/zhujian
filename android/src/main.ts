@@ -392,7 +392,9 @@ function renderCard(it: TimelineItem, hideTopic: string | null, underDayHead = f
   const tint = cardTint(it.color);
   return `<article class="card${done ? " done" : ""}${tint.cls}"${tint.attr} data-id="${esc(it.id)}" data-stage="${esc(it.stage)}">${tick}<div class="body">
     <p class="content${clamp}">${contentHtml(it.content, true)}</p>${thumbs}
-    <footer><time>${esc(underDayHead ? fmtTimeOfDay(it.created_at) : fmtWhen(it.created_at))}</time>${doneAt}${sig}${cmBadge}${meta.join("")}${chips}</footer>
+    <footer><time>${esc(underDayHead ? fmtTimeOfDay(it.created_at) : fmtWhen(it.created_at))}</time>${
+      it.revised ? `<span class="edited-mark">${t("cardpanel.editedMark")}</span>` : "" /* 157 G4 / P5 */
+    }${doneAt}${sig}${cmBadge}${meta.join("")}${chips}</footer>
   </div></article>`;
 }
 

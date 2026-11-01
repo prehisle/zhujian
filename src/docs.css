@@ -505,8 +505,9 @@
 .v-docs .hv-diff { min-width: 0; }
 .v-docs .hv-head { margin-bottom: 8px; font-size: var(--fs-13); color: var(--ink-soft); font-variant-numeric: tabular-nums; }
 /* 差异块:正文原样(不渲染 Markdown),换行由 pre-wrap 显出来;相等的连续行合成一块(2b),
-   ⛔ 别把「一个元素」当「一个物理行」加行为。删的标红(朱砂)、加的标绿,行内命中再加深一档。 */
-.v-docs .diff {
+   ⛔ 别把「一个元素」当「一个物理行」加行为。删的标红(朱砂)、加的标绿,行内命中再加深一档。
+   157 G4 / P5 起随记的「历史」也用这一套(history-panel.ts),选择器并列一份 `.v-inbox`。 */
+.v-docs .diff, .v-inbox .diff {
   font-family: var(--font-serif);
   font-size: var(--fs-14);
   line-height: 1.7;
@@ -517,15 +518,15 @@
   padding: 10px 0;
   overflow-x: auto;
 }
-.v-docs .diff > div { white-space: pre-wrap; word-break: break-word; padding: 0 16px; }
-.v-docs .diff-eq { color: var(--ink-soft); }
-.v-docs .diff-del { background: color-mix(in srgb, var(--seal) 10%, transparent); }
-.v-docs .diff-ins { background: color-mix(in srgb, var(--ok) 13%, transparent); }
-.v-docs .diff-del .diff-hl { background: color-mix(in srgb, var(--seal) 26%, transparent); text-decoration: line-through; text-decoration-color: var(--seal-line); }
-.v-docs .diff-ins .diff-hl { background: color-mix(in srgb, var(--ok) 30%, transparent); }
-.v-docs .diff.diff-raw { padding: 12px 0; }
-.v-docs .diff-raw-old,
-.v-docs .diff-raw-new { margin-bottom: 12px; }
+.v-docs .diff > div, .v-inbox .diff > div { white-space: pre-wrap; word-break: break-word; padding: 0 16px; }
+.v-docs .diff-eq, .v-inbox .diff-eq { color: var(--ink-soft); }
+.v-docs .diff-del, .v-inbox .diff-del { background: color-mix(in srgb, var(--seal) 10%, transparent); }
+.v-docs .diff-ins, .v-inbox .diff-ins { background: color-mix(in srgb, var(--ok) 13%, transparent); }
+.v-docs .diff-del .diff-hl, .v-inbox .diff-del .diff-hl { background: color-mix(in srgb, var(--seal) 26%, transparent); text-decoration: line-through; text-decoration-color: var(--seal-line); }
+.v-docs .diff-ins .diff-hl, .v-inbox .diff-ins .diff-hl { background: color-mix(in srgb, var(--ok) 30%, transparent); }
+.v-docs .diff.diff-raw, .v-inbox .diff.diff-raw { padding: 12px 0; }
+.v-docs .diff-raw-old, .v-inbox .diff-raw-old,
+.v-docs .diff-raw-new, .v-inbox .diff-raw-new { margin-bottom: 12px; }
 .v-docs .hv-rawlbl {
   font-family: var(--font-sans);
   font-size: var(--fs-12);
