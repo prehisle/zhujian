@@ -10,6 +10,9 @@
 //       ⛔ 为什么不用 release:release 首启会把自己写进 HKCU 开机启动(debug 不写)。
 //       ⚠ 它照常注册 `zhujian://` 深链(e2e 才不注册)⇒ launch.ps1 起之前 `reg export`、起之后 `reg import` 还回去;
 //       全局热键与用户日常那只撞,注册不上(记成边界)。
+//   node scripts/walk-seed.mjs --desktop-fresh <目录> [--build]
+//       W4 起(首次上手 / 设置与连接):同 --desktop-spaces 那只走查构建、同样先清 `app.zhujian.walk` 两处数据,
+//       但**不起、不播种** —— 只写 launch.ps1,第一次跑它就是一只空库首启的实例(深链照样起前导出、起后还回)。
 //   node scripts/walk-seed.mjs --android [--lang zh]
 //       往已连上 CDP 的手机(先 `node scripts/android-cdp.mjs forward`)当前空间播种。
 //       ⚠ 手机挪不了时间(devtools 包不是 debuggable,run-as 拒)⇒ 手机上时间轴全是今天,走查记成边界。
@@ -56,7 +59,7 @@ function seedFile(captureCmd) {
   return f;
 }
 
-async function desktop(dir, spaces) {
+async function desktop(dir, spaces, fresh = false) {
   if (process.platform !== "win32") throw new Error("--desktop 只在 Windows 上跑");
   const abs = resolve(dir);
   // .ps1 恒 ASCII-only(memory powershell-utf8-readfile-trap):路径里有中文就当场拒
@@ -106,6 +109,10 @@ async function desktop(dir, spaces) {
   const kill = (pid) => spawnSync("taskkill", ["/PID", pid, "/F"], { encoding: "utf8" });
 
   if (spaces) assertDeeplinkNotWalk("起之前");
+  if (fresh) {
+    console.log(`✅ 清好了一只空库(没播种、没起)。首启:powershell -NoProfile -ExecutionPolicy Bypass -File ${launch}(调试口 ${PORT})`);
+    return;
+  }
   const pid = ps().stdout.trim();
   if (!/^\d+$/.test(pid)) throw new Error(`起实例没拿到 pid:${pid}`);
   try {
@@ -178,8 +185,9 @@ function buildWalkExe() {
 
 if (argv[0] === "--desktop" && argv[1]) await desktop(argv[1], false);
 else if (argv[0] === "--desktop-spaces" && argv[1]) await desktop(argv[1], true);
+else if (argv[0] === "--desktop-fresh" && argv[1]) await desktop(argv[1], true, true);
 else if (argv[0] === "--android") android();
 else {
-  console.error("用法: node scripts/walk-seed.mjs --desktop <目录> | --desktop-spaces <目录> [--build] | --android  [--lang zh]");
+  console.error("用法: node scripts/walk-seed.mjs --desktop <目录> | --desktop-spaces <目录> [--build] | --desktop-fresh <目录> [--build] | --android  [--lang zh]");
   process.exit(2);
 }

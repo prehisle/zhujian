@@ -1,6 +1,8 @@
 import { $, browser, expect } from "@wdio/globals";
 import { invoke, goNotebook, typeText } from "./support.js";
 
+const IS_LINUX = process.platform === "linux";
+
 // 154 G6–G8(桌面长文编辑器离开那一刻与两件小事):
 //   G6 正文空着、只挂着图 ⇒ 离开前问留不留,「删掉这篇」进回收站(撤得回);
 //   G7 Esc / 返回钮离开也落一版,标了删的图先问「删不删这 N 张」(点【保存】不问);问句开着时 Esc = 接着写;
@@ -89,9 +91,15 @@ describe("长文编辑器离开前问的两句 + 续列表(154 G6–G8)", () => 
     await browser.waitUntil(async () => (await areaValue()) === "图1\n\n", { timeout: 8000, timeoutMsg: "加图之后写字框里一直没有「图1」" });
     const [doc] = await invoke("list_docs");
     expect(doc).toBeTruthy();
-    // 撤掉那行字(图不跟着撤)
-    await browser.keys(["Control", "z"]);
-    await browser.waitUntil(async () => (await areaValue()).trim() === "", { timeout: 3000, timeoutMsg: "Ctrl+Z 没撤掉「图1」那行" });
+    // 撤掉那行字(图不跟着撤)。⚠ WebKitGTK 那一端整个应用没有撤销(backlog 用户面 67)⇒ Linux 上改成
+    // 全选删掉那行字 —— 要的只是「正文空了、图还挂着」这个状态,⛔ 别为它在 Linux 上跳过整例(858:至少 11-04 起夜跑连红)。
+    if (IS_LINUX) {
+      await browser.keys(["Control", "a"]);
+      await browser.keys("Backspace");
+    } else {
+      await browser.keys(["Control", "z"]);
+    }
+    await browser.waitUntil(async () => (await areaValue()).trim() === "", { timeout: 3000, timeoutMsg: "没撤掉 / 删掉「图1」那行" });
 
     await browser.keys("Escape");
     await browser.waitUntil(async () => (await askText()) !== null, { timeout: 5000, timeoutMsg: "只剩图的空篇离开时一直没问" });

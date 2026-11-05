@@ -1,5 +1,5 @@
 import { browser, $, expect } from "@wdio/globals";
-import { invoke, goNotebook, boardAction, boardMenuHas } from "./support.js";
+import { invoke, goNotebook, boardAction, boardMenuHas, shownText } from "./support.js";
 
 // 158 G4-A8(W2 两端对比 X-05):桌面看板卡的「改过」标记 + 历史。手机任务卡早就有(它走
 // list_timeline 的 revised),桌面看板读 list_tasks / list_sealed_tasks —— core TaskRow 此前不带
@@ -70,7 +70,8 @@ describe("158 G4-A8 · 看板卡「改过」+ 历史(桌面)", () => {
     await boardAction(`${P}改后`, "历史");
     const entry = await $(".hd-panel .hist-entry");
     await entry.waitForExist({ timeout: 5000 });
-    expect(await $(".hd-panel .hd-host").getText()).toContain(`${P}改后`);
+    // ⚠ 走 shownText 不走 getText():WebKitWebDriver 上 getText 对这只框恒回 ""(Linux CI 至少 11-04 起夜跑连红,858 修)
+    expect(await shownText($(".hd-panel .hd-host"))).toContain(`${P}改后`);
     await entry.click();
     await $(".hd-panel .diff").waitForExist({ timeout: 5000 });
     expect(
