@@ -112,7 +112,8 @@ describe("长文编辑器离开前问的两句 + 续列表(154 G6–G8)", () => 
     await browser.waitUntil(async () => (await askText()) !== null, { timeout: 5000, timeoutMsg: "第二次 Esc 一直没问" });
     await clickAsk("删掉这篇(进回收站)");
     await browser.waitUntil(async () => (await invoke("list_docs")).length === 0, { timeout: 8000, timeoutMsg: "删掉这篇之后它一直还在长文里" });
-    expect(await inEditor()).toBe(false);
+    // 等 DOM 别拿库当代理(工装纪律):库里先没了、编辑器后收 —— WebKitGTK 上这一拍常落在两者之间(859 Linux CI 实红)
+    await browser.waitUntil(async () => !(await inEditor()), { timeout: 5000, timeoutMsg: "删掉这篇之后编辑器一直没收" });
     await $(".undo-toast .undo-btn").waitForExist({ timeout: 5000 });
     await browser.execute(() => document.querySelector(".undo-toast .undo-btn").click());
     await browser.waitUntil(async () => (await invoke("list_docs")).some((d) => d.id === doc.id), { timeout: 8000, timeoutMsg: "撤销之后这篇一直没回来" });
