@@ -26,9 +26,15 @@ export const comments = defineMessages({
   "search.statusTask": { zh: "任务", en: "Tasks" },
   "search.statusSealed": { zh: "归档", en: "Archive" },
   "search.statusDoc": { zh: "长文", en: "Long-form" },
+  // W3 159 / Q12(WD-31):回收站里的命中说清原来是什么。
+  "search.statusTrashKind": { zh: "回收站 · {kind}", en: "Trash · {kind}" },
+  // W3 159 / A4(WD-02):只在改过的旧版本里命中 —— 结果卡上一枚、落点卡上一句。
+  "search.oldVersionHit": { zh: "命中改过的旧版本", en: "Matched an earlier version" },
+  "search.landedOld": { zh: "搜到的词在这条改过之前的版本里 —— ⋯ 菜单的「历史」里看得到。", en: "The words you searched for are in an earlier version of this one — see “History” in the ⋯ menu." },
+  "search.landedOldTrash": { zh: "搜到的词在这条改过之前的版本里 —— 还原后在 ⋯ 菜单的「历史」里看得到。", en: "The words you searched for are in an earlier version of this one — restore it, then see “History” in the ⋯ menu." },
   "search.failed": { zh: "搜索失败", en: "Search failed" },
   "search.idleTitle": { zh: "在当前空间的所有条目里查找", en: "Search everything in this space" },
-  "search.idleHint": { zh: "随记、任务、归档、回收站和改过的旧版本都一起搜。", en: "Notes, tasks, the archive, the trash and past versions are all searched." },
+  "search.idleHint": { zh: "随记、长文、任务、归档、回收站和改过的旧版本都一起搜。", en: "Notes, long-form, tasks, the archive, the trash and past versions are all searched." },
   "search.noMatch": { zh: "没有匹配的条目", en: "No matches" },
   "search.noMatchDetail": { zh: "当前空间里没有内容匹配「{q}」。", en: "Nothing in this space matches “{q}”." },
   "search.matchCount": { zh: "{n} 条匹配", en: "{n} {n|match|matches}" },

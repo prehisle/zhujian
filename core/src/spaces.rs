@@ -777,6 +777,38 @@ pub fn set_space_name(conn: &mut Connection, clock: &mut Clock, name: &str) -> R
     tx.commit().map_err(|e| e.to_string())
 }
 
+/// 空间名撞名闸(W3 A11 / WD-08:下拉里两个「演示:家庭」分不出)。**新建空间与改当前空间名
+/// 两条本地写路径**在落库之前调它;`others` 由壳给出本机已知的全部空间 `(id, 显示名)` ——
+/// 空间名住在各自的库里,core 看不见别的空间,⇒ 判据住这里、名单由壳收(桌面 = 活 runtime
+/// 逐个读库,手机 = catalog 描述符)。`self_id` = 改名时的自己(改成只差大小写 / 首尾空白的
+/// 原名放行);新建传 None。撞了报「已有同名空间「{那个空间的原写法}」」。
+///
+/// 口径:两边都 trim 后比,**大小写不敏感只折 ASCII**(`eq_ignore_ascii_case`)—— 与标签的
+/// `COLLATE NOCASE`(`repo::topic_title_clash`)同一条边界:中文无大小写,「É / é」仍算两个名字。
+/// 名字缺省(None,主库未命名 —— 前端显「默认空间」)不参与比较:缺省的人话归前端定,
+/// 后端不知道它长什么样(§六⑦「后端绝不主动写名」的另一面)。
+///
+/// ⚠ 只拦本机写路径。同步进来的改名(别的设备把这个账户空间改成了与本机另一空间同名)、
+/// 加入 / 恢复一个本来就同名的空间都不拦 —— 那是已发生的事实,不是本机这次写。
+pub fn ensure_space_name_free<'a>(
+    name: &str,
+    self_id: Option<&str>,
+    others: impl IntoIterator<Item = (&'a str, Option<&'a str>)>,
+) -> Result<(), String> {
+    let name = name.trim();
+    for (id, existing) in others {
+        if Some(id) == self_id {
+            continue;
+        }
+        if let Some(existing) = existing {
+            if existing.trim().eq_ignore_ascii_case(name) {
+                return Err(format!("已有同名空间「{existing}」"));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// 存量名补发自愈步(space-name-sync-plan §5,codex 一轮 H4/二轮 H1):v27 的
 /// `sync_meta['space_name']` 已退役,遗留值在此**原样**补记进 op 流(逐字迁移合法
 /// 用户值,不截断不合成缺省——「后端绝不主动写」的边界)。**开库常驻**:每次打开
@@ -1780,6 +1812,30 @@ mod tests {
         crate::sync::boot::strict_battery(&conn).unwrap();
         drop(conn);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// W3 A11 / WD-08:空间撞名闸。trim 后、ASCII 大小写不敏感比;报错点名那个空间的原写法;
+    /// 改名排除自己(改成只差大小写的原名放行);缺省名(None)不参与。每格独立可判。
+    #[test]
+    fn ensure_space_name_free_rejects_trimmed_case_only_duplicates() {
+        let others = [("main", None), ("A", Some("演示:家庭")), ("B", Some("Work"))];
+        let check = |name: &str, self_id: Option<&str>| {
+            ensure_space_name_free(name, self_id, others.iter().map(|(i, n)| (*i, *n)))
+        };
+        // 新建:原样同名、首尾空白、只差大小写都拒,点名原写法。
+        assert_eq!(check("演示:家庭", None).unwrap_err(), "已有同名空间「演示:家庭」");
+        assert_eq!(check("  演示:家庭 ", None).unwrap_err(), "已有同名空间「演示:家庭」");
+        assert_eq!(check("WORK", None).unwrap_err(), "已有同名空间「Work」");
+        // 不同名放行;缺省名的主库不参与(前端显的「默认空间」后端不知道)。
+        assert!(check("演示:公司", None).is_ok());
+        assert!(check("默认空间", None).is_ok());
+        // 改名:自己不算 —— 改成只差大小写的原名放行;撞别人照拒。
+        assert!(check("work", Some("B")).is_ok());
+        assert!(check("演示:家庭", Some("A")).is_ok());
+        assert_eq!(check("work", Some("A")).unwrap_err(), "已有同名空间「Work」");
+        // 边界:只折 ASCII(与标签的 COLLATE NOCASE 同一条)。
+        let accented = [("C", Some("É"))];
+        assert!(ensure_space_name_free("é", None, accented.iter().map(|(i, n)| (*i, *n))).is_ok());
     }
 
     #[test]

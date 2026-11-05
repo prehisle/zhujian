@@ -12,7 +12,9 @@
 //     故判据必须是 `elementFromPoint` 五点真打,⛔ 不是「读 CSS 里写没写 halo」。
 //  ③ 点名字进改名态:input 回填**原名**、焦点落在 input 上、Save/Cancel 两枚在、别的行不受影响。
 //  ④ 改名落库 + DOM 跟上 + **卡片 chip 跟着变**(那是 refreshTimeline 那一步的唯一字据)。
-//  ⑤ 四条拒/退:**重名**被拒 · **空名**被拒(两条都由 core 说话,前端不预校验)· 取消不改 · Esc 不改。
+//  ⑤ 四条拒/退:**重名**被拒(core 说话)· **空名**被拒 · 取消不改 · Esc 不改。
+//     ⚠ 159(W3 走查 A13)起被拒时**留在改名态、刚打的字留在框里、红字在框下**(此前行一收就退回原名,
+//     话挂在顶部提示条上带「出错:」);空名改由前端说「标签名不能为空」(core 那句说的是内部名词「主题标题」)。
 //  ⑥ 「一个字没改」不发写 —— 直接退编辑态,也不弹「已改名」那句假消息。
 //  ⑦ Enter = 存(键盘那条路与点钮那条路是两条分支)。
 //
@@ -176,22 +178,29 @@
     ok("没改就存 → 库里原样", (await titleOf(a)) === A0);
 
     // ---- ⑤a 重名被拒(core 说话,前端不预校验) ----
+    const errEl = document.getElementById("error");
+    errEl.hidden = true;
     rowOf(A0).click();
     await until(() => !!input(), 2000);
     input().value = B0;
+    input().dispatchEvent(new Event("input", { bubbles: true }));
     list().querySelector("[data-rename-save]").click();
-    ok("重名 → 库里没被改掉", await until(async () => (await titleOf(a)) === A0, 3000), await titleOf(a));
-    const errEl = document.getElementById("error");
-    ok("重名 → 屏上有话说(core 的原文)", !errEl.hidden && /已存在|exists/.test(errEl.textContent), errEl.textContent.trim().slice(0, 40));
+    const tnErr = () => list().querySelector(".tn-err");
+    ok("重名 → 框下红字说话(core 的原文,不带「出错:」)", await until(() => /已存在|exists/.test(tnErr()?.textContent ?? ""), 3000) && !tnErr().textContent.includes("出错"),
+      tnErr()?.textContent);
+    ok("重名 → 库里没被改掉", (await titleOf(a)) === A0, await titleOf(a));
+    ok("重名 → 留在改名态、刚打的字还在(没退回原名)", input()?.value === B0, input()?.value);
+    ok("重名 → 顶部不另弹错误条", errEl.hidden);
 
-    // ---- ⑤b 空名被拒 ----
-    await until(() => !!rowOf(A0), 3000);
-    rowOf(A0).click();
-    await until(() => !!input(), 2000);
+    // ---- ⑤b 空名被拒(就在同一个改名态里接着改)----
     input().value = "   ";
+    input().dispatchEvent(new Event("input", { bubbles: true }));
+    ok("一动笔上一回的红字就收", !tnErr());
     list().querySelector("[data-rename-save]").click();
-    ok("空名 → 库里没被改掉", await until(async () => (await titleOf(a)) === A0, 3000), await titleOf(a));
-    ok("空名 → 屏上有话说", !document.getElementById("error").hidden);
+    ok("空名 → 框下说「标签名不能为空」", await until(() => tnErr()?.textContent === "标签名不能为空", 2000), tnErr()?.textContent);
+    ok("空名 → 库里没被改掉", (await titleOf(a)) === A0, await titleOf(a));
+    list().querySelector("[data-rename-cancel]").click();
+    ok("取消 → 红字一起收", await until(() => !input() && !tnErr(), 2000));
 
     // ---- ⑤c 取消不改 ----
     await until(() => !!rowOf(A0), 3000);

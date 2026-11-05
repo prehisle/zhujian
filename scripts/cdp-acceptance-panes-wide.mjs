@@ -7,6 +7,8 @@
 //  ③ 回收站点开一张:操作面长在那张卡里、在它那栏里放得下;
 //  ④ 各面板里的「独占一行的钮」(`.row > .grow`):宽屏上按字的长短、不再拉成 720 的一条;手机上照旧占满一行;
 //     搜索那一行宽屏上不超过 720;回收站 / 归档 / 搜索之外的面照旧收在 720。
+//  ⚠ 159(W3 走查 Q1)起回收站分「随记」「任务」两段,**每段各自分栏**(`.trash-sec > .tl-cols`)⇒ ①② 的回收站那格按段判:
+//     每段栏数 = n、各栏卡数 = 该段轮流分的结果;种子三条随记一张任务 ⇒ 随记段 3 张、任务段 1 张。
 //
 // 跑法(⛔ 只对截图台那只**隔离**实例跑 —— 会写库:往回收站放三条随记一张任务,`finally` 里恢复;开跑先问 identifier):
 //   node scripts/ui-shots-wide.mjs .zjshots/<轮次>/keep --only phone-360x800-ideas --keep
@@ -83,7 +85,7 @@ const PANES = {
     list: "trash-list",
     open: `(async () => { const b = () => document.querySelector('#bottombar [data-pane="trash"]');
       for (let i = 0; i < 50 && b().hidden; i++) await new Promise((r) => setTimeout(r, 100)); b().click(); })()`,
-    ready: `document.querySelectorAll("#trash-list .card").length >= 4`,
+    ready: `document.querySelectorAll("#trash-list [data-trash]").length >= 4`,
   },
   sealed: { list: "sealed-list", open: `document.querySelector('#bottombar [data-pane="sealed"]').click()`, ready: `document.querySelectorAll("#sealed-list .card").length >= 3` },
   search: {
@@ -94,11 +96,17 @@ const PANES = {
 };
 const LIST = (id) => `(() => { const box = document.getElementById(${JSON.stringify(id)}); const pane = box.closest("section.sync");
   const R = (el) => { const b = el.getBoundingClientRect(); return { l: Math.round(b.left), r: Math.round(b.right), w: Math.round(b.width) }; };
-  const cols = [...box.querySelectorAll(":scope > .tl-cols > .tl-col")];
-  return { W: innerWidth, pane: R(pane), box: R(box), n: cols.length, perCol: cols.map((c) => c.querySelectorAll(".card").length),
-    total: box.querySelectorAll(".card").length, anyCols: !!box.querySelector(".tl-cols"),
-    // 屏上真排成了几栏:卡片左缘有几个不同的横坐标(判到视觉本体,别只数 .tl-col —— 刀 3 把它们摊平了 DOM 照旧在)
-    xs: new Set([...box.querySelectorAll(".card")].map((c) => Math.round(c.getBoundingClientRect().left))).size }; })()`;
+  // 回收站 159 起分两段、每段各自分栏 ⇒ 按段量(其余两面整只列表就是一段);只数条目卡(段里另有「已删配图」那几行)。
+  const trash = ${JSON.stringify(id)} === "trash-list";
+  const sel = trash ? "[data-trash]" : ".card";
+  const groups = (trash ? [...box.querySelectorAll(":scope > .trash-sec")] : [box]).map((g) => {
+    const cols = [...g.querySelectorAll(":scope > .tl-cols > .tl-col")];
+    return { n: cols.length, perCol: cols.map((c) => c.querySelectorAll(sel).length), total: g.querySelectorAll(sel).length,
+      // 屏上真排成了几栏:卡片左缘有几个不同的横坐标(判到视觉本体,别只数 .tl-col —— 刀 3 把它们摊平了 DOM 照旧在)
+      xs: new Set([...g.querySelectorAll(sel)].map((c) => Math.round(c.getBoundingClientRect().left))).size };
+  });
+  return { W: innerWidth, pane: R(pane), box: R(box), groups, total: box.querySelectorAll(sel).length, anyCols: !!box.querySelector(".tl-cols"),
+    xs: new Set([...box.querySelectorAll(sel)].map((c) => Math.round(c.getBoundingClientRect().left))).size }; })()`;
 const rr = (total, n) => Array.from({ length: n }, (_, i) => Math.ceil((total - i) / n));
 
 let knifeId = null;
@@ -141,7 +149,8 @@ try {
       const tag = `${w}×${h} ${name}`;
       if (w >= 720) {
         ok(r.pane.w === Math.min(1400, w - 28), `${tag} 面板用整根框(${Math.min(1400, w - 28)})`, r.pane);
-        ok(r.n === n && r.xs === Math.min(n, r.total) && JSON.stringify(r.perCol) === JSON.stringify(rr(r.total, n)), `${tag} 分成 ${n} 栏、轮流分`, { n: r.n, xs: r.xs, perCol: r.perCol, total: r.total });
+        ok(r.groups.length > 0 && r.groups.every((g) => g.n === n && g.xs === Math.min(n, g.total) && JSON.stringify(g.perCol) === JSON.stringify(rr(g.total, n))),
+          `${tag} 分成 ${n} 栏、轮流分${name === "trash" ? "(每段各自)" : ""}`, r.groups);
       } else {
         ok(!r.anyCols && r.xs === 1 && r.pane.w === w - 28, `${tag} 手机竖放:没有分栏、面板满宽`, { anyCols: r.anyCols, xs: r.xs, pane: r.pane });
       }
@@ -158,7 +167,10 @@ try {
     await size(w, h);
     const r = await ev(LIST("trash-list"));
     const n = colsFor(r.box.w);
-    ok((n === 1 ? !r.anyCols : r.n === n) && r.xs === n && r.total === 4, `开着回收站转到 ${w}×${h}:${n} 栏、四张都在`, { n: r.n, xs: r.xs, perCol: r.perCol, total: r.total });
+    // 随记段 3 张、任务段 1 张(159 起分两段):随记段屏上 min(n,3) 栏,任务段恒 1 栏;总数四张。
+    const ideas = r.groups[0];
+    ok((n === 1 ? !r.anyCols : r.groups.every((g) => g.n === n)) && ideas?.xs === Math.min(n, 3) && r.total === 4,
+      `开着回收站转到 ${w}×${h}:${n} 栏、四张都在`, { n, groups: r.groups, total: r.total });
   }
 
   // ---- ③ 回收站点开一张 ---------------------------------------------------------------------------------

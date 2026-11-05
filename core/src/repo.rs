@@ -131,6 +131,11 @@ pub struct OrganizedRow {
     /// 改过没有(157 G4 / P5):`item_revisions` 里有没有这条的旧版。卡上据它标一枚「改过」,
     /// 菜单里的「历史」也据它显隐。纯读派生、不进任何写路径;勾选方框不留版(0039)⇒ 只勾过的不算改过。
     pub revised: bool,
+    /// 进回收站的时刻(`items.archived_at` 原样,W3 159 / WD-37:回收站卡写「删于 …」)。
+    /// 纯读:[`idea_trash`] 的行恒 Some(同一句 SELECT 的 WHERE 要求非空);活跃随记 / 长文恒 None
+    /// ([`item_kind_sql`] 先判 sealed、再判 archived ⇒ 回收站行落不进 idea / doc)。⛔ 前端别拿它判归属
+    /// (那是 [`item_kind_sql`] 的事),只拿来写时间。
+    pub archived_at: Option<String>,
     /// This idea's tags (each id + title + optional color), for chip display + tint.
     pub topics: Vec<TagRef>,
 }
@@ -225,6 +230,11 @@ pub struct TaskRow {
     /// 改过没有(158 G4-A8),同 [`OrganizedRow::revised`](同一枚 [`revised_sql`]):看板卡 /
     /// 回收站 / 归档册三条读路都带,卡上标「改过」、⋯ 菜单出「历史」。纯读派生、不进任何写路径。
     pub revised: bool,
+    /// 进回收站的时刻(W3 159 / WD-37,同 [`OrganizedRow::archived_at`]):[`archived_tasks`] 的行
+    /// 恒 Some(同一句 SELECT 的 WHERE 要求非空);[`list_tasks`] 恒 None(WHERE 要求为空)。
+    /// ⚠ [`sealed_tasks`] 原样带出、**可能 Some**:两端并发「归档 × 删除」经 LWW 合并会留下双轴行
+    /// (回放豁免 / boot 导入 / 纪元压实都保留两列,codex 01a1ac80 L1 列过表),它归归档册。纯读。
+    pub archived_at: Option<String>,
     pub topics: Vec<TagRef>,
 }
 
@@ -278,6 +288,16 @@ pub struct SearchHit {
     pub created_at: String,
     pub status: String,
     pub topics: Vec<SearchTopic>,
+    /// true = 当前正文**没有**凑齐所有词,命中只来自某个旧版本(`item_revisions`)(W3 A4 /
+    /// WD-02:结果卡上那段字里没有那个词,前端要能说「命中的是改过的旧版本」)。与匹配本身
+    /// **同一句 SQL、同一组 LIKE 模式与 ESCAPE** 算出(见 [`search_items`]),⛔ 别在 Rust 里
+    /// 另写一份大小写比对 —— 两份口径一漂,就会出现「标了旧版本、正文里其实有」。
+    pub history_only: bool,
+    /// 只在 `status == "archived"`(回收站)时有值:还原后会回到哪一类 ——
+    /// `"task"` / `"doc"`(长文)/ `"idea"`(随记)(W3 Q12 / WD-31:结果卡只写「回收站」,看不出
+    /// 原来是什么)。由 [`restored_kind_sql`] 推,与 [`item_kind_sql`] 共用同一段判定顺序;
+    /// 其余 status 一律 None(含 sealed —— 双轴行归归档册,不在回收站)。
+    pub trash_kind: Option<String>,
 }
 
 /// 搜索结果上的一枚标签:名字 + 颜色。
@@ -313,9 +333,27 @@ pub fn item_kind_sql(a: &str) -> String {
     format!(
         "(CASE WHEN {a}.sealed_at IS NOT NULL THEN 'sealed' \
                WHEN {a}.archived_at IS NOT NULL THEN 'archived' \
-               WHEN {a}.stage IN {TASK_STAGES} THEN 'task' \
-               WHEN {a}.doc_at IS NOT NULL THEN 'doc' \
-               ELSE 'idea' END)"
+               {} END)",
+        live_kind_arms(a)
+    )
+}
+
+/// 一行若**不在回收站**会归哪一类:`'task' | 'doc' | 'idea'`(W3 Q12:回收站里的命中要说清
+/// 原来是任务 / 长文 / 随记)。还原只清 archived_at、按当时 stage / doc_at 重归属
+/// ([`item_kind_sql`] 头注第二条),所以这就是「还原后去哪」。只对回收站行有意义 ——
+/// sealed 行别拿它问(那是归档册的事)。
+pub fn restored_kind_sql(a: &str) -> String {
+    format!("(CASE {} END)", live_kind_arms(a))
+}
+
+/// [`item_kind_sql`] 与 [`restored_kind_sql`] 共用的后三档(任务列 → doc_at → 随记)。
+/// ⭐ 只许有这一份(首版自检清单 14):两句 CASE 各抄一遍顺序,迟早漂成「搜索说是长文、
+/// 还原出来是任务」。
+fn live_kind_arms(a: &str) -> String {
+    format!(
+        "WHEN {a}.stage IN {TASK_STAGES} THEN 'task' \
+         WHEN {a}.doc_at IS NOT NULL THEN 'doc' \
+         ELSE 'idea'"
     )
 }
 
@@ -331,6 +369,18 @@ fn view_status(kind: &str, stage: &str) -> &'static str {
         "idea" if stage == "inbox" => "inbox",
         "idea" => "processed",
         other => panic!("item_kind_sql 产出了认不得的归属(必是 bug):{other}"),
+    }
+}
+
+/// 搜索命中的 `trash_kind`:只在回收站(`view_status` 给出 `archived`)时有值,值取
+/// [`restored_kind_sql`] 的产出。认不得 = 那句 CASE 与这里漂了,同 `view_status` fail-fast。
+fn trash_kind(status: &str, restored: &str) -> Option<String> {
+    if status != "archived" {
+        return None;
+    }
+    match restored {
+        "task" | "doc" | "idea" => Some(restored.to_string()),
+        other => panic!("restored_kind_sql 产出了认不得的归属(必是 bug):{other}"),
     }
 }
 
@@ -408,7 +458,7 @@ fn organized_rows(
     }
 
     let sql = format!(
-        "SELECT i.id, i.content, i.created_at, i.stage, i.born_device, i.doc_at, {} FROM items i \
+        "SELECT i.id, i.content, i.created_at, i.stage, i.born_device, i.doc_at, {}, i.archived_at FROM items i \
          WHERE {where_sql} ORDER BY {order_sql}",
         revised_sql("i")
     );
@@ -422,13 +472,14 @@ fn organized_rows(
             r.get::<_, Option<String>>(4)?,
             r.get::<_, Option<String>>(5)?,
             r.get::<_, bool>(6)?,
+            r.get::<_, Option<String>>(7)?,
         ))
     })?;
     let mut out = Vec::new();
     for row in rows {
-        let (id, content, created_at, stage, born_device, doc_at, revised) = row?;
+        let (id, content, created_at, stage, born_device, doc_at, revised, archived_at) = row?;
         let topics = topics_by_item.remove(&id).unwrap_or_default();
-        out.push(OrganizedRow { id, content, created_at, stage, born_device, doc_at, revised, topics });
+        out.push(OrganizedRow { id, content, created_at, stage, born_device, doc_at, revised, archived_at, topics });
     }
     Ok(out)
 }
@@ -660,19 +711,24 @@ pub fn search_items(conn: &Connection, query: &str) -> rusqlite::Result<Vec<Sear
 
     // matched items: current content matches, OR any revision of it matches.
     // 第五列 = 主归属(item_kind_sql,0042 起 search 的 status 由它出,⛔ 不再按 stage 自己判)。
-    let matched: Vec<(String, String, String, String, String)> = {
+    // 第六列 = 还原后归属(restored_kind_sql,只在回收站行上被采用,见 trash_kind)。
+    // 第七列 = history_only:**就是 WHERE 第一个析取项取反**,同一组 ?N、同一 ESCAPE —— 行能
+    // 进结果而当前正文没凑齐,那它只能是靠某个旧版本凑齐的(W3 A4)。⛔ 别在 Rust 里重比一遍。
+    // `content` 两表都是 NOT NULL,LIKE 不会出 NULL,NOT(…) 恒为 0/1。
+    let matched: Vec<(String, String, String, String, String, String, bool)> = {
+        let current_hit = all_words("i.content");
         let mut stmt = conn.prepare(&format!(
-            "SELECT i.id, i.content, i.created_at, i.stage, {} FROM items i \
-             WHERE ({}) \
+            "SELECT i.id, i.content, i.created_at, i.stage, {}, {}, NOT ({current_hit}) FROM items i \
+             WHERE ({current_hit}) \
                 OR EXISTS (SELECT 1 FROM item_revisions r \
                            WHERE r.item_id = i.id AND {}) \
              ORDER BY i.created_at DESC",
             item_kind_sql("i"),
-            all_words("i.content"),
+            restored_kind_sql("i"),
             all_words("r.content"),
         ))?;
         let rows = stmt.query_map(rusqlite::params_from_iter(&patterns), |r| {
-            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?, r.get(6)?))
         })?;
         rows.collect::<rusqlite::Result<_>>()?
     };
@@ -704,10 +760,11 @@ pub fn search_items(conn: &Connection, query: &str) -> rusqlite::Result<Vec<Sear
 
     Ok(matched
         .into_iter()
-        .map(|(id, content, created_at, stage, kind)| {
+        .map(|(id, content, created_at, stage, kind, restored, history_only)| {
             let status = view_status(&kind, &stage).to_string();
+            let trash_kind = trash_kind(&status, &restored);
             let topics = topics_by_item.remove(&id).unwrap_or_default();
-            SearchHit { id, content, created_at, status, topics }
+            SearchHit { id, content, created_at, status, topics, history_only, trash_kind }
         })
         .collect())
 }
@@ -954,12 +1011,53 @@ pub fn topic_exists(conn: &Connection, id: &str) -> rusqlite::Result<bool> {
         .map(|o| o.is_some())
 }
 
-/// The id of an existing topic whose (trimmed) title equals `title`, if any. Tag names are
-/// unique — callers use this to reject a duplicate (create/rename) or reuse it (tag-apply)
-/// instead of minting a second topic with the same name.
-pub fn topic_id_by_title(conn: &Connection, title: &str) -> rusqlite::Result<Option<String>> {
-    conn.query_row("SELECT id FROM topics WHERE title = ?1", [title.trim()], |r| r.get(0))
-        .optional()
+/// 标签名的「同名」口径(W3 A11 / WD-13):**大小写不敏感** —— 「Work」在时,「work」算同名。
+/// 本地写路径分两族,共用这一个口径、这一个挑选顺序:
+/// - **拒**:手工新建 / 改名 / 合并时改名(`notes::create_topic` / `rename_topic` /
+///   `merge_topics`)问 [`topic_title_clash`],撞了报「标签「{已有那枚的原写法}」已存在」;
+/// - **复用**:按名「有就挂、没有才建」的路(`notes::file_to_topic` 新标题支 /
+///   `task::add_topic_by_title` / `move_item` 跨空间补建)问 [`topic_id_for_reuse`] —— 只拒不复用
+///   的话,这三条就成了造出「Work / work」并存的后门。
+///
+/// ⚠ 边界:`COLLATE NOCASE` 只折 **ASCII** 字母(SQLite 内建,不带 ICU)—— 「É / é」「Ａ / ａ」
+/// 仍算两个名字。中文没有大小写,对本产品够用;前端选择器的 `toLowerCase()` 是 Unicode 折叠,
+/// 比这里宽,两者在一切非 ASCII 的有大小写文字(拉丁扩展、希腊、西里尔、全角……)上都有出入。
+/// ⚠ 同步回放进来的同名**不拦**(那是别的设备已经发生的事实,不是本机写路径;并存的交给
+/// 「合并标签」),表上也**刻意没有** title UNIQUE(远端并发 create 会挂起,cross-space-move-plan §2.5)。
+/// ⇒ 存量里可以同时有好几枚只差大小写的;挑哪一枚要确定:**原样同名优先,其次最小 id**。
+/// 对 `move_item` 这是它既有「同名取最小 ULID」(§2.5)的超集,有原样同名时行为不变;另两条
+/// 复用路原先走的查法没有 ORDER BY,遇原样重名是任取一枚,现在同样确定成最小 id。
+///
+/// 返回撞上的那枚的**原标题**(报错要点名撞的是谁)。`except` = 改名时的自己:改成只差大小写
+/// 的自己(Work → WORK)放行。⚠ 两边都按**原值**比、不做空白规范化:本地新建 / 改名 / 合并改名
+/// / 归类 / 按名挂的入口都先 trim 了 `title`,但 `move_item` 传的是源标签原标题、回放进来的
+/// title 只验是字符串(`replay::topic_field_value`),表里可以有带首尾空白的,它们与去掉空白的
+/// 写法算两个名字。
+pub fn topic_title_clash(
+    conn: &Connection,
+    title: &str,
+    except: Option<&str>,
+) -> rusqlite::Result<Option<String>> {
+    conn.query_row(
+        "SELECT title FROM topics \
+         WHERE title = ?1 COLLATE NOCASE AND (?2 IS NULL OR id <> ?2) \
+         ORDER BY (title = ?1) DESC, id LIMIT 1",
+        (title, except),
+        |r| r.get(0),
+    )
+    .optional()
+}
+
+/// 按名复用的那一枚(口径与挑选顺序见 [`topic_title_clash`]):原样同名优先,其次只差大小写,
+/// 同档取最小 id。None = 一枚都没有,调用方才新建。按原值比,空白边界同上。
+pub fn topic_id_for_reuse(conn: &Connection, title: &str) -> rusqlite::Result<Option<String>> {
+    conn.query_row(
+        "SELECT id FROM topics WHERE title = ?1 COLLATE NOCASE \
+         ORDER BY (title = ?1) DESC, id LIMIT 1",
+        [title],
+        |r| r.get(0),
+    )
+    .optional()
 }
 
 /// Tag an item with a topic. Plain INSERT — a duplicate pair is a real error (the
@@ -1332,7 +1430,7 @@ fn task_rows(
 
     let sql = format!(
         "SELECT i.id, i.content, i.stage, i.due_on, i.priority, i.sealed_at, i.done_at, \
-                i.born_device, i.created_at, i.color, {} FROM items i \
+                i.born_device, i.created_at, i.color, {}, i.archived_at FROM items i \
          WHERE {where_sql} ORDER BY {order_sql}",
         revised_sql("i")
     );
@@ -1350,11 +1448,12 @@ fn task_rows(
             r.get::<_, String>(8)?,
             r.get::<_, Option<String>>(9)?,
             r.get::<_, bool>(10)?,
+            r.get::<_, Option<String>>(11)?,
         ))
     })?;
     let mut out = Vec::new();
     for row in rows {
-        let (id, content, stage, due_on, priority, sealed_at, done_at, born_device, created_at, color, revised) =
+        let (id, content, stage, due_on, priority, sealed_at, done_at, born_device, created_at, color, revised, archived_at) =
             row?;
         let topics = tags_by_item.remove(&id).unwrap_or_default();
         out.push(TaskRow {
@@ -1369,6 +1468,7 @@ fn task_rows(
             born_device,
             color,
             revised,
+            archived_at,
             topics,
         });
     }
@@ -2554,6 +2654,53 @@ mod tests {
         assert_eq!(trash.iter().find(|r| r.id == gone).unwrap().color.as_deref(), Some("#9e5397"));
     }
 
+    /// W3 159 / WD-37:桌面两个回收站的卡写「删于 …」⇒ `idea_trash` / `archived_tasks` 的行带出
+    /// 进回收站的时刻(= 库里 `archived_at` 原值,不是 `created_at`);活跃随记 / 长文 / 看板的行
+    /// 恒 None。归档册这里只钉**本地单轴**那一格(None);双轴行在归档册上带 Some,那一格由
+    /// `dual_axis_row_lives_in_sealed_book_only_and_trash_still_purges` 钉。每格各用一条自己的条目,各自独立可判。
+    #[test]
+    fn trash_rows_carry_archived_at_and_live_rows_do_not() {
+        let conn = fresh_db();
+        let idea_live = add_item(&conn, "活着的随记").unwrap();
+        let doc_live = add_item(&conn, "# 活着的长文").unwrap();
+        assert_eq!(set_item_doc_at(&conn, &doc_live, true).unwrap(), 1);
+        let idea_gone = add_item(&conn, "删掉的随记").unwrap();
+        let doc_gone = add_item(&conn, "# 删掉的长文").unwrap();
+        assert_eq!(set_item_doc_at(&conn, &doc_gone, true).unwrap(), 1);
+        let task_live = insert_task(&conn, "活着的任务", None, None).unwrap();
+        let task_gone = insert_task(&conn, "删掉的任务", None, None).unwrap();
+        let task_sealed = insert_task(&conn, "归档的任务", None, None).unwrap();
+        assert_eq!(set_task_stage(&conn, &task_sealed, "todo", "done").unwrap(), 1);
+        assert_eq!(seal_task(&conn, &task_sealed).unwrap(), 1);
+        // 删除晚于创建:隔一拍再删,让「拿 created_at 冒充」与真值必然不同。
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        for id in [&idea_gone, &doc_gone] {
+            assert_eq!(archive_idea(&conn, id).unwrap(), 1);
+        }
+        assert_eq!(archive_task(&conn, &task_gone).unwrap(), 1);
+        let db = |id: &str| -> (String, String) {
+            conn.query_row("SELECT archived_at, created_at FROM items WHERE id = ?1", [id], |r| Ok((r.get(0)?, r.get(1)?)))
+                .unwrap()
+        };
+
+        let trash = idea_trash(&conn).unwrap();
+        for id in [&idea_gone, &doc_gone] {
+            let (archived, created) = db(id);
+            assert_ne!(archived, created, "台架:删除时刻得与创建时刻不同,下一句才判得出");
+            assert_eq!(trash.iter().find(|r| &r.id == id).unwrap().archived_at.as_deref(), Some(archived.as_str()));
+        }
+        let ttrash = archived_tasks(&conn).unwrap();
+        let (archived, created) = db(&task_gone);
+        assert_ne!(archived, created);
+        assert_eq!(ttrash.iter().find(|r| r.id == task_gone).unwrap().archived_at.as_deref(), Some(archived.as_str()));
+
+        // 活着的三条读路恒 None;归档册这一条是本地单轴(先 done 再归档),也是 None(双轴那格见 dual_axis_row_lives_in_sealed_book_only_and_trash_still_purges)。
+        assert_eq!(live_ideas(&conn).unwrap().iter().find(|r| r.id == idea_live).unwrap().archived_at, None);
+        assert_eq!(doc_items(&conn).unwrap().iter().find(|r| r.id == doc_live).unwrap().archived_at, None);
+        assert_eq!(list_tasks(&conn).unwrap().iter().find(|r| r.id == task_live).unwrap().archived_at, None);
+        assert_eq!(sealed_tasks(&conn).unwrap().iter().find(|r| r.id == task_sealed).unwrap().archived_at, None);
+    }
+
     #[test]
     fn trash_items_merges_ideas_and_tasks_by_archived_at() {
         // 120 统一回收站:灵感+任务一屏、按删除时间(不是创建时间)新→旧;冻结
@@ -2602,6 +2749,12 @@ mod tests {
         conn.execute("DELETE FROM sync_replay_active", []).unwrap();
         // 单一归属:归档册在、回收站(统一/任务侧)不在。
         assert!(sealed_tasks(&conn).unwrap().iter().any(|r| r.id == task));
+        // W3 159 / WD-37(codex 01a1ac80 L1):归档册原样带出 archived_at —— 双轴行上它是 Some,
+        // 「归档册恒 None」不成立(回放 / boot 导入 / 纪元压实都能保留双轴)。
+        assert_eq!(
+            sealed_tasks(&conn).unwrap().iter().find(|r| r.id == task).unwrap().archived_at.as_deref(),
+            Some("2026-07-30T00:00:00Z"),
+        );
         assert!(!trash_items(&conn).unwrap().iter().any(|r| r.id == task));
         assert!(!archived_tasks(&conn).unwrap().iter().any(|r| r.id == task));
         // 回收站家族的写原语全部 0 行绕开它(不再撞触发器):
@@ -2748,6 +2901,131 @@ mod tests {
         let ids: std::collections::HashSet<String> =
             search_items(&conn, " 体检\t报告  ").unwrap().into_iter().map(|h| h.id).collect();
         assert_eq!(ids, [both, old].into_iter().collect());
+    }
+
+    /// W3 A4:`history_only` = 当前正文没凑齐、只靠某个旧版本凑齐。每个样本各自独立可判
+    /// (首版自检 11):一枚 id 一格断言,谁漂了红在谁身上。
+    #[test]
+    fn search_history_only_flags_hits_that_only_an_old_version_carries() {
+        let conn = fresh_db();
+        // ① 只有旧版本有:true。
+        let old_only = add_item(&conn, "体检报告在抽屉里").unwrap();
+        update_item_content(&conn, &old_only, "已经无关").unwrap();
+        // ② 只有当前有(从没改过):false。
+        let current_only = add_item(&conn, "体检报告下周三出").unwrap();
+        // ③ 当前与旧版本都有:false(当前已经看得见那个词,不该说「命中旧版本」)。
+        let both = add_item(&conn, "体检报告初稿").unwrap();
+        update_item_content(&conn, &both, "体检报告定稿").unwrap();
+        // ④ 当前只有一个词、旧版本两个词都有:true —— 判的是「当前凑齐所有词」,不是「当前有任一词」。
+        let partial_now = add_item(&conn, "体检报告寄丢了").unwrap();
+        update_item_content(&conn, &partial_now, "体检改天再约").unwrap();
+        // ⑤ 两个词分散在两个旧版本里、当前一个都没有:根本不是命中(不跨版本拼)。
+        let scattered = add_item(&conn, "体检").unwrap();
+        update_item_content(&conn, &scattered, "报告").unwrap();
+        update_item_content(&conn, &scattered, "都无关了").unwrap();
+
+        let hits = search_items(&conn, "体检 报告").unwrap();
+        let flag = |id: &str| hits.iter().find(|h| h.id == id).map(|h| h.history_only);
+        assert_eq!(flag(&old_only), Some(true), "只在旧版本凑齐");
+        assert_eq!(flag(&current_only), Some(false), "当前凑齐");
+        assert_eq!(flag(&both), Some(false), "当前与旧版本都凑齐 = 不算只在旧版本");
+        assert_eq!(flag(&partial_now), Some(true), "当前只差一个词也算没凑齐");
+        assert_eq!(flag(&scattered), None, "跨版本拼不出命中");
+        assert_eq!(hits.len(), 4);
+    }
+
+    /// `history_only` 与匹配**同一口径**:LIKE 的 ASCII 大小写不敏感、`_` / `%` 按字面(ESCAPE)。
+    /// 在 Rust 里另写一份比对(`contains`)或漏了 ESCAPE 的那一列,会把这两条当前就命中的
+    /// 标成「只在旧版本」。两条都改过一次,让「有旧版本」这件事不替它们作答。
+    #[test]
+    fn search_history_only_uses_the_same_like_rules_as_the_match() {
+        let conn = fresh_db();
+        let cased = add_item(&conn, "buy oat milk").unwrap();
+        update_item_content(&conn, &cased, "Buy Oat MILK today").unwrap();
+        let literal = add_item(&conn, "x").unwrap();
+        update_item_content(&conn, &literal, "a_b 与 80% 都在").unwrap();
+
+        let hits = search_items(&conn, "oat milk").unwrap();
+        assert_eq!(hits.len(), 1);
+        assert!(!hits[0].history_only, "当前正文大小写不同照样算当前命中");
+        let hits = search_items(&conn, "a_b 80%").unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].id, literal);
+        assert!(!hits[0].history_only, "_ 与 % 按字面,当前命中");
+    }
+
+    /// W3 Q12:回收站里的命中带 `trash_kind` = 还原后回到哪一类;其余 status 一律 None。
+    /// 「任务行带着 doc_at」那格钉的是判定顺序与 item_kind_sql 同一份(任务列优先于 doc_at)。
+    #[test]
+    fn search_trash_kind_names_what_a_trashed_hit_was() {
+        let conn = fresh_db();
+        let trashed_task = insert_task(&conn, "关键词 删掉的任务", None, None).unwrap();
+        archive_task(&conn, &trashed_task).unwrap();
+        let trashed_doc_task = insert_task(&conn, "关键词 带长文标记的任务", None, None).unwrap();
+        set_item_doc_at(&conn, &trashed_doc_task, true).unwrap();
+        archive_task(&conn, &trashed_doc_task).unwrap();
+        let trashed_doc = add_item(&conn, "关键词 删掉的长文").unwrap();
+        set_item_doc_at(&conn, &trashed_doc, true).unwrap();
+        archive_idea(&conn, &trashed_doc).unwrap();
+        let trashed_idea = add_item(&conn, "关键词 删掉的随记").unwrap();
+        archive_idea(&conn, &trashed_idea).unwrap();
+        // 不在回收站的:随记 / 已归类 / 长文 / 任务 / 归档册,一律 None。
+        let live_idea = add_item(&conn, "关键词 活随记").unwrap();
+        let filed = add_item(&conn, "关键词 已归类").unwrap();
+        file_inbox_item(&conn, &filed).unwrap();
+        let live_doc = add_item(&conn, "关键词 活长文").unwrap();
+        set_item_doc_at(&conn, &live_doc, true).unwrap();
+        let live_task = insert_task(&conn, "关键词 活任务", None, None).unwrap();
+        let sealed = insert_task(&conn, "关键词 归档的任务", None, None).unwrap();
+        set_task_stage(&conn, &sealed, "todo", "done").unwrap();
+        assert_eq!(seal_task(&conn, &sealed).unwrap(), 1);
+
+        let hits = search_items(&conn, "关键词").unwrap();
+        let get = |id: &str| {
+            let h = hits.iter().find(|h| h.id == id).expect("每条都该命中");
+            (h.status.as_str(), h.trash_kind.as_deref())
+        };
+        assert_eq!(get(&trashed_task), ("archived", Some("task")));
+        assert_eq!(get(&trashed_doc_task), ("archived", Some("task")), "任务列优先于 doc_at");
+        assert_eq!(get(&trashed_doc), ("archived", Some("doc")));
+        assert_eq!(get(&trashed_idea), ("archived", Some("idea")));
+        assert_eq!(get(&live_idea), ("inbox", None));
+        assert_eq!(get(&filed), ("processed", None));
+        assert_eq!(get(&live_doc), ("doc", None));
+        assert_eq!(get(&live_task), ("task", None));
+        assert_eq!(get(&sealed), ("sealed", None));
+        assert_eq!(hits.len(), 9);
+    }
+
+    /// W3 A11:标签「同名」大小写不敏感 —— 拒(clash)与复用(reuse)同一口径、同一挑选顺序
+    /// (原样同名优先,其次最小 id)。
+    #[test]
+    fn topic_title_lookups_are_ascii_case_insensitive_and_prefer_exact() {
+        let conn = fresh_db();
+        let insert = |id: &str, title: &str| {
+            conn.execute(
+                "INSERT INTO topics (id, title, created_at, updated_at) VALUES (?1, ?2, 't', 't')",
+                (id, title),
+            )
+            .unwrap();
+        };
+        // 绕过命令层造存量并存(同步来的合法产物):大写那枚 id 更大。
+        insert("01B", "Work");
+        insert("01A", "work");
+        insert("01C", "WORK");
+        insert("01D", "É");
+        // 原样同名优先(哪怕它 id 不是最小):
+        assert_eq!(topic_id_for_reuse(&conn, "Work").unwrap().as_deref(), Some("01B"));
+        assert_eq!(topic_title_clash(&conn, "Work", None).unwrap().as_deref(), Some("Work"));
+        // 没有原样同名 ⇒ 只差大小写里取最小 id:
+        assert_eq!(topic_id_for_reuse(&conn, "wOrK").unwrap().as_deref(), Some("01A"));
+        assert_eq!(topic_title_clash(&conn, "wOrK", None).unwrap().as_deref(), Some("work"));
+        // except 只排除自己:01A 改名成「WORK」撞的是别的那两枚(原样同名的 01C 优先)。
+        assert_eq!(topic_title_clash(&conn, "WORK", Some("01A")).unwrap().as_deref(), Some("WORK"));
+        // 边界:NOCASE 只折 ASCII —— 「é」不撞「É」(写在 topic_title_clash 头注里的那条)。
+        assert_eq!(topic_id_for_reuse(&conn, "é").unwrap(), None);
+        assert_eq!(topic_title_clash(&conn, "é", None).unwrap(), None);
+        assert_eq!(topic_id_for_reuse(&conn, "Play").unwrap(), None);
     }
 
     #[test]

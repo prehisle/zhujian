@@ -159,9 +159,21 @@
     // ---- A19:清空回收站挪到面底 ----
     click(document.querySelector('#bottombar [data-pane="trash"]'));
     await until(() => !$("trash-pane").hidden, 3000);
-    const te = $("trash-empty");
-    ok("A19 清空回收站在列表与说明之后", !!($("trash-list").compareDocumentPosition(te) & Node.DOCUMENT_POSITION_FOLLOWING) && !!($("trash-pane").querySelector("p.fine").compareDocumentPosition(te) & Node.DOCUMENT_POSITION_FOLLOWING));
-    ok("A19 清空回收站不通栏", te.getBoundingClientRect().width < $("trash-pane").getBoundingClientRect().width * 0.7, { w: te.getBoundingClientRect().width, pane: $("trash-pane").getBoundingClientRect().width });
+    // 159(W3 Q1)起回收站分「随记」「任务」两段、各自末尾一枚「清空…」(此前一枚 `#trash-empty` 在面底)。
+    // 这里仍只断 158 那条「不常驻列表最上面、不通栏」;两段与全宽确认归 cdp-acceptance-walk159-m1.js。
+    // ⚠ 别等 `p.empty`:「读取中…」那行也是 `p.muted.empty`,等它 = 列表还没到就判「回收站是空的」(159 复跑撞到)。
+    await until(() => $("trash-list").querySelector(".trash-sec") || $("trash-list").textContent.includes("回收站是空的"), 4000);
+    const tes = [...$("trash-list").querySelectorAll("[data-trash-empty]")];
+    if (tes.length === 0) {
+      out.skipped = [...(out.skipped ?? []), "A19 清空钮:回收站是空的,两段都没有「清空…」"];
+    } else {
+      for (const te of tes) {
+        const sec = te.closest(".trash-sec");
+        const first = sec.querySelector("[data-trash], [data-trash-img]");
+        ok(`A19 「${te.textContent}」在那一段的内容之后`, !!first && !!(first.compareDocumentPosition(te) & Node.DOCUMENT_POSITION_FOLLOWING));
+        ok(`A19 「${te.textContent}」不通栏`, te.getBoundingClientRect().width < $("trash-pane").getBoundingClientRect().width * 0.7, { w: te.getBoundingClientRect().width, pane: $("trash-pane").getBoundingClientRect().width });
+      }
+    }
     click(document.querySelector('#bottombar [data-mode="tasks"]'));
     await until(() => !document.body.classList.contains("pane-open") && card(`${M}-换列`), 4000);
 

@@ -63,7 +63,9 @@
   min-width: 200px;
 }
 .v-topics .nt-title:focus { border-color: var(--seal); }
-.v-topics .nt-err { color: var(--seal-ink); font-size: var(--fs-12); letter-spacing: 0.02em; }
+/* 红字独占一行、落在框下(W3 159 / A11,WD-33):此前它排在两枚钮后面,读着像在说钮。空着时整行收起。 */
+.v-topics .nt-err { flex: 1 0 100%; color: var(--seal-ink); font-size: var(--fs-12); letter-spacing: 0.02em; }
+.v-topics .nt-err:empty { display: none; }
 
 /* ---- scrolling list ---- */
 .v-topics main {
@@ -124,10 +126,15 @@
 .v-topics .topic-kids .topic-head:hover::before { background: var(--seal); }
 
 /* clickable row — caret + title + counts; clicking expands/collapses the tag inline */
+/* `flex-wrap`(W3 159 / A22,WD-22):窄窗 / 大字号档下这一行排不开时,让计数与动作整枚落到下一行,
+   别把标题压到一个字宽、两个字的「工作」竖成两行(ui-guidelines §3.6 510 那条:让整枚换行,别让字在里面折)。
+   `position: relative` 给「建完 / 改完闪一下」那圈 `.just-born::after` 当锚(子行头本来就有)。 */
 .v-topics .topic-head {
+  position: relative;
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
-  gap: 10px;
+  gap: 0 10px; /* 行间不另留缝:窄了换下去的多半是悬停才显的动作钮,那一行平时是空的,别再叠一道 gap */
   padding: 11px 10px 11px 4px;
   cursor: pointer;
   border-radius: var(--radius-md);
@@ -273,8 +280,11 @@
 .v-topics .td-q { font-size: var(--fs-12); color: var(--seal-ink); letter-spacing: 0.02em; }
 
 /* ---- 标签颜色:行首色点 + ⋯「颜色」的调色板 ---- */
+/* 无色标签也占着这一格(只是不画)(W3 159 / A22,WD-27):此前 `display:none`,无色那几行的名字往左缩一格、
+   与有色行对不齐。 */
 .v-topics .topic-dot {
-  display: none;
+  display: inline-block;
+  visibility: hidden;
   align-self: center;
   width: 9px;
   height: 9px;
@@ -282,7 +292,7 @@
   background: var(--tag-color);
   flex: 0 0 auto;
 }
-.v-topics .topic-dot.on { display: inline-block; }
+.v-topics .topic-dot.on { visibility: visible; }
 .v-topics .color-row { display: inline-flex; align-items: center; gap: 5px; }
 .v-topics .color-swatch {
   box-sizing: border-box;
@@ -328,6 +338,15 @@
 .v-topics .te-title:focus { border-color: var(--seal); }
 .v-topics .te-actions { display: flex; align-items: center; gap: 8px; }
 .v-topics .te-err { color: var(--seal-ink); font-size: var(--fs-12); letter-spacing: 0.02em; }
+.v-topics .te-err:empty { display: none; } /* 红字在框下(A11);空着不占那一格 gap */
+/* 「类型」框下那行说明(W3 159 / Q12,WD-35):只在类型框打开时出现,缩进对齐到名字那一列。 */
+.v-topics .tk-hint {
+  margin: -4px 0 8px 46px;
+  max-width: 560px;
+  font-size: var(--fs-12);
+  line-height: 1.6;
+  color: var(--ink-soft);
+}
 
 /* ---- expand/collapse: a tag's notes + tasks shown inline (no drill page) ---- */
 .v-topics .topic-caret {
@@ -441,6 +460,23 @@
   white-space: pre-wrap;
   word-break: break-word;
 }
+/* W3 159 / A16(WD-21):展开里的长条先夹在八行(8 × 行高 1.6),fold.ts::settlePreviewFolds 量了再定。 */
+.v-topics .tnote-text.clamped,
+.v-topics .dtask-title.clamped { max-height: 12.8em; overflow: hidden; }
+.v-topics .topic-body .fold-toggle {
+  display: block;
+  margin-top: 6px;
+  min-height: 24px;
+  font: var(--fs-12)/1.4 var(--font-sans);
+  letter-spacing: 0.04em;
+  color: var(--ink-soft);
+  background: transparent;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-pill);
+  padding: 3px 12px;
+  cursor: pointer;
+}
+.v-topics .topic-body .fold-toggle:hover { color: var(--ink); background: color-mix(in srgb, var(--ink) 6%, transparent); }
 .v-topics .tnote-time {
   display: block;
   margin-top: 6px;
@@ -479,6 +515,20 @@
   color: var(--ink-soft);
 }
 .v-topics .mb-hint b { color: var(--seal-ink); font-weight: 600; }
+.v-topics .mb-hint[hidden] { display: none; }
+/* 合并确认(W3 159 / A9 + Q3,WD-10 / WD-15):占提示行那一格(整行),一句后果 + 「并入」「取消」。
+   原「合并」钮在确认期间置灰 —— 执行钮从此不落在它的原位上。 */
+.v-topics .mb-confirm {
+  flex-basis: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+}
+.v-topics .mb-confirm[hidden] { display: none; }
+/* 问句不撑满:「并入」「取消」紧跟在句尾(靠左),离底下那枚靠右的「合并」远远的 —— 撑满的话「并入」会正好
+   落在「合并」头顶,只隔一行缝(真双击实测过那一形)。 */
+.v-topics .mb-q { flex: 0 1 auto; min-width: 0; font-size: var(--fs-13); color: var(--seal-ink); line-height: 1.5; }
 
 /* selected topics as chips — click a chip to make it the survivor, × to drop it */
 .v-topics .mb-chips {

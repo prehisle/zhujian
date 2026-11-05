@@ -4,14 +4,17 @@
 //
 // 跑法:CDP_TIMEOUT_MS=90000 node scripts/android-cdp.mjs evalfile scripts/cdp-acceptance-topic-merge.js
 // 自带播种(甲=源 挂 2、乙=目标 挂 1[与甲重叠一条]、丙=旁观 0 挂载)与清场(finally 删净)。
+// ⚠ 159(W3 走查 Q5)起两击的顺序与桌面一致:**先点要留下的(目标乙),再点要并进来的(源甲)**;
+//    此前先点的是源。本资产随之改了点的先后与高亮类名(`.msrc` → `.mkeep`),判据本身(集合并语义、
+//    每条退路)一条没动。
 //
 // # 判据(⛔ 别只验「能并」——集合并语义与两击的每条退路才是会烂的地方)
 //  ① 面头「合并」钮在(≥2 枚才显)。
-//  ② 进合并态:提示行(选源文案)+ 取消钮在;列表 = 简行(**无手柄/色钮/类型钮的结构字据**
+//  ② 进合并态:提示行(「先点要留下的标签」)+ 取消钮在;列表 = 简行(**无手柄/色钮/类型钮的结构字据**
 //     —— 视觉即语义,能点的就是整行);「+ 新建标签」与「合并」钮自己都藏了。
 //  ③ 简行触区:整行高 ≥44、五点真打(elementFromPoint)。
-//  ④ 第一击选源:.msrc 高亮上行、提示变(带源名)。
-//  ⑤ 点自己 = 撤源(高亮消、提示回选源文案)。
+//  ④ 第一击选要留下的:.mkeep 高亮上行、提示变(带留下那枚的名)。
+//  ⑤ 点自己 = 撤销第一击(高亮消、提示回第一步文案)。
 //  ⑥ 第二击:合并态**收**(零残留,同删除第一拍纪律)+ 底部确认条弹出、话术带两名与 n、
 //     第二拍钮是「并入」。
 //  ⑦ 取消 → 库里两枚原样。
@@ -102,7 +105,7 @@
     //    进态后就该有几枚简行(`render()` 里两条路走的是同一个 `rows`),外加自己播的三枚都在。
     const rowsBefore = list().querySelectorAll(".trow[data-topic]").length;
     mergeBtn().click();
-    ok("② 进态:提示行在(选源文案)", await until(() => !!list().querySelector(".mhint"), 2000), hintTxt());
+    ok("② 进态:提示行在(「先点要留下的标签」)", await until(() => hintTxt() === "先点要留下的标签", 2000), hintTxt());
     ok("② 取消钮在", !!list().querySelector("[data-merge-cancel]"));
     ok("② 列表 = 简行(无手柄/色钮/类型钮的结构字据)",
       list().querySelectorAll(".mrow").length === rowsBefore &&
@@ -126,34 +129,34 @@
     ok("③ 五点全落在简行上", hits.every((e) => e && e.closest?.(".mrow")),
       hits.map((e) => (e ? e.className || e.tagName : "null")).join(","));
 
-    // ---- ④ 第一击选源 ----
-    mrowOf(a).click();
+    // ---- ④ 第一击选要留下的(乙)----
+    mrowOf(b).click();
     // ⛔ 只判 class 是恒绿形(样式规则整条删掉它照绿,刀1 第一趟就是这么漏的)——
     // 「高亮」的本体是 outline,连 computed 一起判。
     const srcLit = () => {
-      const row = mrowOf(a);
-      if (!row || !row.classList.contains("msrc")) return false;
+      const row = mrowOf(b);
+      if (!row || !row.classList.contains("mkeep")) return false;
       const cs = getComputedStyle(row);
       // ⚠ 阈值 1.5 不是 2:这台 WebView 把声明的 2px 算成 computed 1.77778px(缩放舍入,
       // 干净树实测),⛔ 别拿 CSS 声明值当 computed 值写阈值;与刀1 的 none/0px 仍分得开。
       return cs.outlineStyle !== "none" && parseFloat(cs.outlineWidth) >= 1.5;
     };
-    ok("④ 源行高亮(.msrc 且 outline 真画出来)", await until(srcLit, 2000),
-      (() => { const cs = mrowOf(a) && getComputedStyle(mrowOf(a)); return cs && `${cs.outlineStyle}/${cs.outlineWidth}`; })());
-    ok("④ 提示变(带源名)", new RegExp(A0).test(hintTxt()), hintTxt());
+    ok("④ 留下那枚高亮(.mkeep 且 outline 真画出来)", await until(srcLit, 2000),
+      (() => { const cs = mrowOf(b) && getComputedStyle(mrowOf(b)); return cs && `${cs.outlineStyle}/${cs.outlineWidth}`; })());
+    ok("④ 提示变(带留下那枚的名)", hintTxt() === `把谁并进「${B0}」?点要并进来的标签`, hintTxt());
 
-    // ---- ⑤ 点自己 = 撤源 ----
-    mrowOf(a).click();
-    ok("⑤ 撤源:高亮消", await until(() => !list().querySelector(".msrc"), 2000));
-    ok("⑤ 提示回选源文案", !new RegExp(A0).test(hintTxt()), hintTxt());
-
-    // ---- ⑥ 第二击 → 收态 + 确认条 ----
-    mrowOf(a).click();
-    await until(() => mrowOf(a)?.classList.contains("msrc") === true, 2000);
+    // ---- ⑤ 点自己 = 撤销第一击 ----
     mrowOf(b).click();
+    ok("⑤ 撤销:高亮消", await until(() => !list().querySelector(".mkeep"), 2000));
+    ok("⑤ 提示回第一步文案", hintTxt() === "先点要留下的标签", hintTxt());
+
+    // ---- ⑥ 第二击 → 收态 + 确认条(先乙后甲 = 甲并入乙)----
+    mrowOf(b).click();
+    await until(() => mrowOf(b)?.classList.contains("mkeep") === true, 2000);
+    mrowOf(a).click();
     ok("⑥ 合并态收(零残留)", await until(() => !list().querySelector(".mhint") && !list().querySelector(".mrow"), 2000));
     ok("⑥ 确认条弹出", await until(() => !bar().hidden, 2000));
-    ok("⑥ 话术带两名与 n=2", new RegExp(A0).test(barQ()) && new RegExp(B0).test(barQ()) && /2 项|2 item/.test(barQ()), barQ());
+    ok("⑥ 话术方向:后点的(甲)并入先点的(乙),n=2", barQ().startsWith(`把「${A0}」并入「${B0}」?`) && /2 项|2 item/.test(barQ()), barQ());
     ok("⑥ 第二拍钮是「并入」", /并入|Merge/.test(document.getElementById("confirmbar-yes").textContent));
 
     // ---- ⑦ 取消 → 库里原样 ----
@@ -165,9 +168,9 @@
     err().hidden = true; // 清提示条,防串味
     mergeBtn().click();
     await until(() => !!list().querySelector(".mhint"), 2000);
-    mrowOf(a).click();
-    await until(() => mrowOf(a)?.classList.contains("msrc") === true, 2000);
     mrowOf(b).click();
+    await until(() => mrowOf(b)?.classList.contains("mkeep") === true, 2000);
+    mrowOf(a).click();
     await until(() => !bar().hidden, 2000);
     document.getElementById("confirmbar-yes").click();
     ok("⑧ 源没了", await until(async () => !(await topicIn(a)), 4000));
@@ -208,9 +211,9 @@
     // ---- ⑭ 0 挂载的源:简版话术 + 真并 ----
     mergeBtn().click();
     await until(() => !!list().querySelector(".mhint"), 2000);
-    mrowOf(c).click();
-    await until(() => mrowOf(c)?.classList.contains("msrc") === true, 2000);
     mrowOf(b).click();
+    await until(() => mrowOf(b)?.classList.contains("mkeep") === true, 2000);
+    mrowOf(c).click();
     await until(() => !bar().hidden, 2000);
     ok("⑭ 0 挂载 → 简版话术(不带 项/item)",
       new RegExp(C0).test(barQ()) && new RegExp(B0).test(barQ()) && !/项|item/.test(barQ()), barQ());

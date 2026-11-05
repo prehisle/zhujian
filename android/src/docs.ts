@@ -72,6 +72,8 @@ type Deps = {
   refreshTimeline: () => Promise<void>;
   /** 当前空间列表(main.ts spacesCache 影子):「移动」按数量显形、选择器列它。 */
   getSpaces: () => SpaceInfo[];
+  /** 挪到别的空间之后回执上那枚「去看看」(159 / W3 Q4;main.ts goSeeInSpace)。 */
+  goSeeMoved: (spaceId: string, itemId: string) => void;
 };
 let deps: Deps;
 
@@ -157,8 +159,9 @@ export function docTitle(content: string): string {
   return "";
 }
 /** 列表卡上题目下面那两行:摘掉行首的 Markdown 记号与行内 ** __ ` —— 只是给眼睛扫的字,
- *  ⛔ 不是渲染(列表卡不进 Markdown 渲染器)。同桌面 excerpt。 */
-function excerpt(content: string, title: string): string {
+ *  ⛔ 不是渲染(列表卡不进 Markdown 渲染器)。同桌面 excerpt。
+ *  159(W3 A16):回收站 / 搜索结果里的长文卡也照这张列表卡的形画(题目 + 两行摘要),不露 `#`。 */
+export function excerpt(content: string, title: string): string {
   const head = content.slice(0, 600);
   const at = title === "" ? 0 : head.indexOf(title);
   const rest = at < 0 ? head : head.slice(at + title.length);
@@ -255,6 +258,11 @@ export function startDocFrom(text: string, files: File[]): void {
 /** 跨面打开某一篇:先记下,开面后读到列表时落地(找不到就明说)。 */
 export function focusDoc(id: string): void {
   pendingFocus = id;
+}
+
+/** 还停在这一篇的阅读页主行上(159 / W3 A3:从搜索结果落到这一篇,这时按返回回搜索结果,不是回长文列表)。 */
+export function docsAtLanding(id: string): boolean {
+  return page.kind === "doc" && page.id === id && readerMode === "main";
 }
 
 /** 返回键(面开着时):不在列表页就回上一页并返回 true;在列表页返回 false(由 main.ts 关面)。 */
@@ -699,13 +707,15 @@ function renderMove(panel: HTMLElement, d: IdeaItem): void {
     .map((s) => {
       const label = labels.get(s.id) ?? s.id;
       return btn(label, () =>
-        confirmBar(t("docs.moveQ", { name: label }), t("cardpanel.moveYes"), () => {
+        confirmBar(t("cardpanel.moveQ", { name: label }), t("cardpanel.moveYes"), () => {
           if (busy || page.kind !== "doc" || page.id !== d.id || readerMode !== "move") return;
           void runMove(d.id, s.id, label);
         }),
       "p");
     });
-  const warn = el("div", "movewarn", [t("docs.moveWarnPre"), el("b", "", [t("docs.moveWarnBold")]), t("docs.moveWarnPost")]);
+  // 159 / W3 Q4(WM-34):三处(随记卡 / 任务卡 / 长文)的移动界面同一套话 —— 都说「编辑历史」(此前这里说「历史版本」)、
+  // 都说「这边不留」(此前「这边删除」读着像进了回收站)。键就用卡片操作面那一份,⛔ 别再在这儿另起一套。
+  const warn = el("div", "movewarn", [t("cardpanel.moveWarnPre"), el("b", "", [t("cardpanel.moveWarnBold")]), t("cardpanel.moveWarnPost")]);
   const lane = el("div", "lane", [
     el("span", "pillrow", rows.length > 0 ? rows : [el("span", "lab", [t("cardpanel.noOtherSpace")])]),
   ]);
@@ -745,11 +755,14 @@ async function runMove(id: string, target: string, label: string): Promise<void>
   switch (r?.outcome) {
     case undefined:
       break;
-    case "moved":
+    case "moved": {
       if (here) page = { kind: "list" }; // 先离场,免得重读时多报一句「已不在长文里」
-      showBar(t("cardpanel.moved", { name: label }), true);
+      // Q4:同卡片那条 —— 带「去看看」,不配撤销。
+      const newId = r.new_id;
+      actionBar(t("cardpanel.moved", { name: label }), t("cardpanel.goSee"), () => deps.goSeeMoved(target, newId));
       void deps.refreshTimeline();
       break;
+    }
     case "copied_but_source_kept":
       if (here) readerMode = "main";
       showBar(t("cardpanel.movedKept", { name: label }), true);

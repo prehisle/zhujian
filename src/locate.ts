@@ -10,6 +10,31 @@
 let target: HTMLElement | null = null;
 let listening = false;
 
+// ---- 落点卡上的一句旁注(W3 159 / A4,WD-02)--------------------------------------------------
+// 搜索里「只在改过的旧版本里命中」的那条,点进去落点卡只有粉框,卡上的字里根本没有那个词 —— 读者以为跳错了。
+// 发起跳转的一方(search.ts)先登记「哪一条 + 说什么」,落点视图画那张卡时 `takeLocateNote` 取走、自己挂上
+// `locateNoteEl`。只活一次:取走即清,换一次跳转(哪怕不带旁注)就覆盖。⚠ 旁注**不随高亮淡出**:那句是要读完
+// 的话,滚一下就没了等于没说;它随卡片下一次重画自然消失(只活一次挂载里的那张 DOM)。
+let pendingNote: { id: string; text: string } | null = null;
+/** 登记下一次落点要说的话;`text === null` = 这次不说(清掉旧的,免得串到下一次跳转)。 */
+export function setLocateNote(id: string, text: string | null): void {
+  pendingNote = text === null ? null : { id, text };
+}
+/** 落点视图画那张卡时取:是这一条就交出那句话并清掉,否则 null。 */
+export function takeLocateNote(id: string): string | null {
+  if (pendingNote === null || pendingNote.id !== id) return null;
+  const text = pendingNote.text;
+  pendingNote = null;
+  return text;
+}
+/** 旁注那一行(样式在 theme.css `.locate-note`,与 `.just-located` 同住)。 */
+export function locateNoteEl(text: string): HTMLElement {
+  const p = document.createElement("p");
+  p.className = "locate-note";
+  p.textContent = text;
+  return p;
+}
+
 function detach(): void {
   if (!listening) return;
   window.removeEventListener("pointerdown", dismiss, true);

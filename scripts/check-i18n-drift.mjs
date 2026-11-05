@@ -122,6 +122,7 @@ const CROSS_END_KEYS = [
   { key: "filter.kindAxis", why: "类型轴标题,parity 闸 KINDROW_CASES 的行首" },
   { key: "filter.topicAxis", why: "标签轴标题(桌面 623 / 安卓 635);两端同一条轴的名字" },
   { key: "filter.allKinds", why: "「全部类型」pill,同上" },
+  { key: "filter.count", why: "「筛出 N 条」(159 / W3 Q8),两端筛着时同一句话" },
 ];
 
 /*

@@ -13,5 +13,7 @@ export const filter = defineMessages({
   // 635(ui-consistency-plan M7):标签轴此前是三条轴里唯一没有轴名的一条(桌面 623 已补,
   // 手机端当时没跟)。⇒ 桌面那条「安卓补上再登记」的注释同轮兑现,已进 CROSS_END_KEYS。
   "filter.topicAxis": { zh: "标签", en: "Tags" },
+  // 159 / W3 Q8(WM-26):筛着时筛选条底下写条数(值与桌面 src/locales/filter.ts 同键逐字相同)。
+  "filter.count": { zh: "筛出 {n} 条", en: "{n} {n|match|matches}" },
   "filter.allKinds": { zh: "全部类型", en: "All kinds" },
 });

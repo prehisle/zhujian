@@ -39,6 +39,9 @@ export type TaskItem = {
   color: string | null;
   /** 改过没有(158 G4-A8,core `repo::revised_sql`):卡上标「改过」、⋯ 菜单出「历史」。 */
   revised: boolean;
+  /** 进回收站的时刻(W3 159 / WD-37,core `TaskRow::archived_at`):list_archived_tasks 的行恒非 null,活跃看板恒 null
+   *  (归档册上并发合并的双轴行也可能非 null,只回收站那一面读它)。看板回收站卡据它写「删于 …」。 */
+  archived_at: string | null;
   /** Every tag on this task (M:N, item_topic). Empty = 无标签. The board shows them
    *  all as chips; the filter bar treats a task as belonging to each of its tags. */
   topics: TaskTag[];

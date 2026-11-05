@@ -177,8 +177,11 @@ describe("158 · 看板 W2 走查修的那批(桌面)", () => {
     await goNotebook("board");
     await $("#seal-toggle").click();
     await $(".sealed-view").$(`.tcard*=${D1}`).waitForExist({ timeout: 8000 });
-    const stats = () => browser.execute(() => document.querySelector(".sealed-view .trash-bar .grow")?.textContent);
+    // 只钉那两个数:W3 159 / A21 起后面另挂半句「(含看板「已完成」列里还没归档的 N 张)」,取消归档让 N 加一是对的
+    const stats = () =>
+      browser.execute(() => document.querySelector(".sealed-view .trash-bar .grow")?.textContent.match(/^本周完成 \d+ · 累计 \d+/)?.[0] ?? null);
     const before = await stats();
+    expect(before).toMatch(/^本周完成 \d+ · 累计 \d+$/); // 读不到就别拿 null === null 判过
     await boardAction(D1, "取消归档");
     await waitToast("已取消归档,回到「已完成」");
     expect(await toastButtons()).toEqual(["撤销", "去看看"]); // 158 G3 / Q3 起带「去看看」

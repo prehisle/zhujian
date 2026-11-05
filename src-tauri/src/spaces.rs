@@ -14,7 +14,7 @@ use zhujian_core::sync::supervisor::{ActiveRuntime, SpaceSupervisor};
 /// 逻辑与类型的共享层再导出:97 时这些都定义在本文件,上抬后消费方(lib.rs)
 /// 的名字不变。
 pub use zhujian_core::spaces::{
-    create_space, discover, heal_legacy_space_name, identity_vetoes, read_descriptor,
+    create_space, discover, ensure_space_name_free, heal_legacy_space_name, identity_vetoes, read_descriptor,
     read_identity, reset_main_files, reset_space_files, resume_main_reset, set_space_name,
     space_name, sweep_stale_creating, sweep_stale_joining, JoiningSlot, SpaceIdentity, Veto,
     WriterLease, MAIN_SPACE,

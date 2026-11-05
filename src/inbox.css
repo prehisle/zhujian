@@ -182,6 +182,9 @@
 }
 
 .v-inbox .note-body { flex: 1; min-width: 0; }
+/* 移空间面板(move-space.ts,W3 159 / Q4)整块长在卡身**下面**一行:卡是横排 flex,面板自己 `flex: 1 1 100%`,
+   不折行的话会把正文挤成一个字一行的窄条(真实例截图逮到的)。 */
+.v-inbox .note:has(> .move-panel) { flex-wrap: wrap; }
 .v-inbox .note-text {
   margin: 0;
   font-family: var(--font-serif);
@@ -214,7 +217,6 @@
   border-bottom: 1px dashed var(--line-strong);
 }
 .v-inbox .trash-note { font-size: var(--fs-12); color: var(--ink-faint); letter-spacing: 0.02em; }
-.v-inbox .trash-actions { display: flex; gap: 8px; align-items: center; }
 .v-inbox .note.archived { opacity: 0.82; }
 .v-inbox .note.archived .note-text { color: var(--ink-soft); }
 
@@ -367,21 +369,8 @@
 .v-inbox .topic-hint,
 .v-docs .topic-hint { font-size: var(--fs-13); color: var(--ink-soft); }
 
-/* .chips/.chip/.form-actions 现由跨空间「移动到…」表单(inbox.ts openMove)复用,仍在用;
+/* .chips/.chip 曾给跨空间「移动到…」表单用;W3 159 / Q4 起移动面板三处共用 move-space.css,这两条随之删掉。
    老打标签表单专有的 .new-topic 已随 174 标签选择器对齐删除。 */
-.v-inbox .chips { display: flex; flex-wrap: wrap; gap: 7px; }
-.v-inbox .chip {
-  font: inherit;
-  font-size: var(--fs-13);
-  background: var(--seal-tint);
-  color: var(--ink);
-  border: 1px solid var(--seal-line);
-  border-radius: var(--radius-pill);
-  padding: 5px 13px;
-  cursor: pointer;
-  transition: background 0.14s;
-}
-.v-inbox .chip:hover { background: color-mix(in srgb, var(--seal) 18%, var(--paper)); }
 .v-inbox .hint { margin: 0; font-size: var(--fs-13); color: var(--ink-soft); }
 .v-inbox .form-err {
   margin: 0;
@@ -465,6 +454,8 @@
    (348 拍板归一:此前这里以 (0,2,1) 重抄一整套并把 padding 压成 5×14,同一文件里
    同一枚钮两种尺寸、颜色声明逐字双份——改一处漏一处的雷,整块删掉即同款)。 */
 .v-inbox .confirm { flex: none; display: flex; align-items: center; gap: 8px; }
+/* 彻底删除的那句后果(W3 159 / A7:写明无法恢复、连带几张配图),同看板卡的 .confirm-q。 */
+.v-inbox .confirm-q { font-size: var(--fs-12); color: var(--seal-ink-on-seal-tint); letter-spacing: 0.02em; }
 
 /* ---- centered empty / error states ---- */
 .v-inbox .center {

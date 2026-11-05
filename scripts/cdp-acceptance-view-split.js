@@ -126,9 +126,10 @@
     if (!ok("搜索命中该任务", !!hit)) throw new Error("abort");
     click(hit.querySelector(".content"));
     const landed = await until(
-      () => !paneOpen() && activeMode() === "tasks" && cardOf(idI)?.classList.contains("flash"),
+      // 159 / W3 A14 起搜索落点是冷着陆:挂常亮一会儿再褪的定位框 `.located`(不再是 1.2 s 的 `.flash`)
+      () => !paneOpen() && activeMode() === "tasks" && cardOf(idI)?.classList.contains("located"),
     );
-    ok("命中任务跳任务面并闪卡", !!landed);
+    ok("命中任务跳任务面并挂定位框", !!landed);
 
     // ⑦ 卡片编辑草稿拒切面(compose 草稿不挡,②已验它随面走)
     // ⚠ 706 起编辑那张表单不在卡里了:点「编辑」弹屏底的编辑层(`#edit-sheet.open`),

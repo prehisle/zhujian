@@ -12,6 +12,8 @@ export const filter = defineMessages({
   // 623(用户面 74 / F):标签轴此前是三条轴里唯一没有轴名的一条,pill 左缘比另两行短一个
   // 轴名的宽度。⚠ 635 起**两端都有了**(手机端 M7),已按那条注释说的进 CROSS_END_KEYS
   // 恰等登记 ⇒ 改这枚的值就得两端一起改,否则 check-i18n-drift 当场红。
+  // W3 159 / Q8(WD-20):筛着时过滤框旁写条数(同搜索页「N 条匹配」)。
+  "filter.count": { zh: "筛出 {n} 条", en: "{n} {n|match|matches}" },
   "filter.topicAxis": { zh: "标签", en: "Tags" },
   "filter.allKinds": { zh: "全部类型", en: "All kinds" },
   "filter.pillTitle": { zh: "单击只筛此标签 · 按住 Ctrl 多选", en: "Click to filter by this tag only · Ctrl-click to multi-select" },

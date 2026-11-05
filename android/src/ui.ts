@@ -148,6 +148,71 @@ export function splitCols(cards: string[], n: number): string {
   return `<div class="tl-cols">${cols.map((c) => `<div class="tl-col">${c.join("")}</div>`).join("")}</div>`;
 }
 
+// ---- 定位落点的标记(159 / W3 A14,WM-07 / X-07)--------------------------------------
+// 从搜索结果跳过去,落点那张卡此前只有 1.2 s 的 `.flash` 脉冲 —— 平滑滚动还没停它就过完了,卡落在一串长得一样的卡中间
+// 认不出来。⇒ 冷着陆换成**常亮一会儿再褪**的框(同桌面 `.just-located`:朱砂描边 + 淡朱底),几秒后自己淡掉。
+// ⚠ 桌面那枚等「下一次点击 / 滚轮」才褪;手机上手指一碰屏就是 pointerdown(划一下也算),那样刚落地一划就没了 ⇒ 这边按时褪。
+// ⛔ 「你自己刚建的那张」(新建 / 挪卡回执的「去看看」)照旧用 `.flash`:那是你知道在哪儿的,不是冷着陆。
+/** 落点框常亮多久(含平滑滚动那一段)。元素级节奏,不进 §2.4 表(同 `.flash` 的 1200)。 */
+const LOCATED_HOLD_MS = 3200;
+/** 淡出那段 —— 与 index.html `.card.located` 的 transition 同长。 */
+const LOCATED_FADE_MS = 600;
+let locatedEl: HTMLElement | null = null;
+let locatedTimer: number | undefined;
+/** 给落点卡挂上定位框,到点淡出摘掉。新的一枚顶掉旧的(绝不同时留两枚)。 */
+export function markLocated(el: HTMLElement): void {
+  clearTimeout(locatedTimer);
+  if (locatedEl && locatedEl !== el) locatedEl.classList.remove("located", "locate-fading");
+  locatedEl = el;
+  el.classList.remove("locate-fading");
+  el.classList.add("located");
+  locatedTimer = window.setTimeout(() => {
+    el.classList.add("locate-fading");
+    locatedTimer = window.setTimeout(() => {
+      el.classList.remove("located", "locate-fading");
+      if (locatedEl === el) locatedEl = null;
+    }, LOCATED_FADE_MS);
+  }, LOCATED_HOLD_MS);
+}
+
+/** 把 `root` 里出现的词包成 `<mark class="hit">`(159 / W3 Q8:搜索与过滤命中标红)。⚠ 渲染**之后**走文本节点改,
+ *  不碰正文渲染那条路(清单方框、「图N」都在,只是里面的字被包一层);⛔ 不用 innerHTML(用户正文不进 HTML 解析)。
+ *  不分大小写、每个词的每一处;同一段文字里几个词挨着 / 重叠的并成一枚(同桌面 search.ts::highlighted)。空词表 = 什么也不做。 */
+export function markHits(root: HTMLElement, words: string[]): void {
+  const ws = words.map((w) => w.toLowerCase()).filter((w) => w !== "");
+  if (!ws.length) return;
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const nodes: Text[] = [];
+  for (let n = walker.nextNode(); n !== null; n = walker.nextNode()) nodes.push(n as Text);
+  for (const node of nodes) {
+    const s = node.data;
+    const hay = s.toLowerCase();
+    const hit = new Array<boolean>(s.length).fill(false);
+    let any = false;
+    for (const w of ws) {
+      for (let at = hay.indexOf(w); at >= 0; at = hay.indexOf(w, at + 1)) {
+        hit.fill(true, at, at + w.length);
+        any = true;
+      }
+    }
+    if (!any) continue;
+    const frag = document.createDocumentFragment();
+    for (let from = 0; from < s.length; ) {
+      let to = from;
+      while (to < s.length && hit[to] === hit[from]) to++;
+      const piece = s.slice(from, to);
+      if (hit[from]) {
+        const m = document.createElement("mark");
+        m.className = "hit";
+        m.textContent = piece;
+        frag.append(m);
+      } else frag.append(piece);
+      from = to;
+    }
+    node.replaceWith(frag);
+  }
+}
+
 // ---- 错误/提示条:后端原话,响亮但会自己退场(notice = 非错误的提示) ----------
 // 退场时长按「读得完」定,不再一律 6s(221:全部 24 个调用点共用 6s,「已移到「X」」
 // 这种六个字的回执也要顶在时间轴上方杵满六秒)。错误=后端原话、要读懂才好处置,
@@ -255,11 +320,18 @@ export const showError = (msg: string) => showBar(msg);
 let cbTimer: number | undefined;
 let cbToken = 0;
 
+/** 重破坏那一档(§3.8「确认钮全宽」/ §3.2 第 6 条权重升格;159 / W3 A19:清空回收站此前与删一枚标签同形同大)。
+ *  `from` = 点出这条确认的那枚钮 —— 全宽的执行钮横贯整条,**会落到它的原落点上**(§3.2 第 2 条),量了躲开。 */
+export type HeavyConfirm = { from: HTMLElement };
+
 /** `noLabel`:左钮的字,不给就是「取消」。158 G1(W2 走查 WM-24):编辑层点「取消」问「丢掉这次的修改?」,
- *  条上左钮再印一个「取消」,读不出是「取消丢掉」还是「取消编辑」⇒ 那种问句给左钮换一个不歧义的词。 */
-export function confirmBar(question: string, yesLabel: string, onYes: () => void, noLabel?: string): void {
+ *  条上左钮再印一个「取消」,读不出是「取消丢掉」还是「取消编辑」⇒ 那种问句给左钮换一个不歧义的词。
+ *  `heavy`:见 `HeavyConfirm`。版式换成三行(问句 / 全宽执行钮 / 全宽取消,同空间重置那形「确认钮全宽独行、取消拉开在下」)。 */
+export function confirmBar(question: string, yesLabel: string, onYes: () => void, noLabel?: string, heavy?: HeavyConfirm): void {
   const token = ++cbToken;
   const bar = $("confirmbar");
+  bar.classList.toggle("heavy", heavy !== undefined);
+  bar.style.transform = "";
   $("confirmbar-q").textContent = question;
   const yes = $("confirmbar-yes") as HTMLButtonElement;
   const no = $("confirmbar-no") as HTMLButtonElement;
@@ -275,6 +347,7 @@ export function confirmBar(question: string, yesLabel: string, onYes: () => void
   };
   bar.classList.remove("retiring");
   bar.hidden = false;
+  if (heavy) dodgeTrigger(bar, yes, heavy.from);
   clearTimeout(cbTimer);
   cbTimer = window.setTimeout(() => {
     if (token !== cbToken) return;
@@ -293,6 +366,18 @@ export function hideConfirmBar(): void {
   cbToken++;
   clearTimeout(cbTimer);
   const bar = $("confirmbar");
-  bar.classList.remove("retiring");
+  bar.classList.remove("retiring", "heavy");
+  bar.style.transform = "";
   bar.hidden = true;
+}
+
+/** 全宽执行钮横贯整条 ⇒ 点出确认的那枚钮若正好在条的高度上(翻到面底时「清空…」就在屏底、正是条出现的地方),
+ *  手快的第二下会直接落在执行钮上(§3.2 第 2 条,桌面那半是 A9)。量两者的屏幕位置:纵向有交叠就把整条往上抬,
+ *  抬到执行钮的下沿离触发钮上沿还有 8px —— 原落点上于是只剩「取消」或条的留白。
+ *  ⚠ 抬的是**条**,不是滚页面:第二下落在屏幕的同一点,滚页面只挪得动触发钮、挪不动条。 */
+function dodgeTrigger(bar: HTMLElement, yes: HTMLElement, from: HTMLElement): void {
+  const f = from.getBoundingClientRect();
+  const y = yes.getBoundingClientRect();
+  if (f.height === 0 || y.top >= f.bottom || y.bottom <= f.top) return;
+  bar.style.transform = `translateY(${-Math.ceil(y.bottom - f.top + 8)}px)`;
 }

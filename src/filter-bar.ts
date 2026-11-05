@@ -402,6 +402,46 @@ export function wireFilterInput(
   });
 }
 
+// ---- 筛着时说「筛出 N 条」、过滤词标红(W3 159 / Q8,WD-20)----------------------------------
+// 此前随记页 / 看板筛着「工作」+ 过滤「发票」只剩 4 张卡,页上没有条数、卡上那个词也不标红;搜索页两样都有。
+// 两个视图同一套:条数挂在过滤框旁边那枚 `.filter-count`(两个 SKELETON 各一枚),标红走 `markFilterHits`。
+
+/** 条数那一枚:`n === null` = 没在筛(收起);筛着就写「筛出 N 条」。筛空(0)交给视图的空态那句,这里收起。 */
+export function paintFilterCount(slot: HTMLElement, n: number | null): void {
+  slot.hidden = n === null || n === 0;
+  slot.textContent = n === null ? "" : t("filter.count", { n });
+}
+
+/** 把 `root` 里出现的过滤词(同 applyFilter:整串、trim、不分大小写)包成 `<mark class="filter-hit">`。
+ *  ⚠ 渲染**之后**走文本节点改,不碰正文渲染那条路(「图N」芯片、链接、清单方框都在,只是里面的字被包一层);
+ *  ⛔ 不用 innerHTML。空词 = 什么也不做。 */
+export function markFilterHits(root: HTMLElement, text: string): void {
+  const q = text.trim().toLowerCase();
+  if (q === "") return;
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const nodes: Text[] = [];
+  for (let n = walker.nextNode(); n !== null; n = walker.nextNode()) nodes.push(n as Text);
+  for (const node of nodes) {
+    const s = node.data;
+    const hay = s.toLowerCase();
+    let at = hay.indexOf(q);
+    if (at < 0) continue;
+    const frag = document.createDocumentFragment();
+    let from = 0;
+    while (at >= 0) {
+      if (at > from) frag.append(s.slice(from, at));
+      const m = document.createElement("mark");
+      m.className = "filter-hit";
+      m.textContent = s.slice(at, at + q.length);
+      frag.append(m);
+      from = at + q.length;
+      at = hay.indexOf(q, from);
+    }
+    if (from < s.length) frag.append(s.slice(from));
+    node.replaceWith(frag);
+  }
+}
+
 // ---- 时间轴(461)——独立于 kind/topics/text 三维,一个正交的第四轴。⚠ 不进
 // check-filter-parity 的逐字一致门禁(先落桌面;安卓补齐同款后,把 timeBucketOf/
 // applyTimeFilter/renderTimePills 登记进那道闸的 DESKTOP.fns)。

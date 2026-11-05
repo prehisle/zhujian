@@ -246,6 +246,17 @@ textarea {
 .just-located.locate-fading::after {
   opacity: 0;
 }
+/* 落点卡上的一句旁注(W3 159 / A4,locate.ts::locateNoteEl):搜到的是改过之前的版本,去「历史」里看。
+   随卡片一起重画才消失,不随高亮淡出(那是要读完的一句话)。 */
+.locate-note {
+  margin: 8px 0 0;
+  padding: 5px 10px;
+  font: var(--fs-12)/1.5 var(--font-sans);
+  color: var(--seal-ink-on-seal-tint);
+  background: var(--seal-tint);
+  border: 1px dashed var(--seal-line);
+  border-radius: var(--radius-sm);
+}
 
 @media (prefers-reduced-motion: reduce) {
   /* 系统开了「减少动态效果」就把入场/离场/过渡压到近零。0.01ms 而非 0:

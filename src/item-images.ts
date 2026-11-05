@@ -617,13 +617,21 @@ const URL_TAIL = /[)\].,;:!?，。、;:!?…）】》」』]+$/;
  *     (回收站 / 归档册),照样显出勾没勾但不给点。
  *   - **行内**:每一行(待办项则是标记后面那一截)再走 `appendInline` 那一遍扫描。
  *
+ *  `inline` 换掉行内那一遍(W3 159 / A16):搜索结果要的是「命中词标红」,不是链接 / 图N —— 整张
+ *  结果卡本身就是去处,里面再长可点的链接会抢走那一下。方框那一层照旧,⛔ 别为它另写一份认行。
+ *
  *  Returns a fragment the caller drops into the content node. */
 export function renderContent(
   text: string,
   images: ImageMeta[],
   onToggle?: (lineIndex: number) => void,
+  inline?: (text: string) => (Node | string)[],
 ): DocumentFragment {
   const frag = document.createDocumentFragment();
+  const appendLine = (into: DocumentFragment, s: string): void => {
+    if (inline) into.append(...inline(s));
+    else appendInline(into, s, images);
+  };
   const lines = text.split("\n");
   let prevWasBox = false;
   lines.forEach((line, i) => {
@@ -632,7 +640,7 @@ export function renderContent(
       // 正文是 white-space:pre-wrap,换行原样交回去 —— 但**待办项那行是 flex 块、自带
       // 换行**,紧跟它再补一个 `\n` 就会空出一行。故只在「上一行也是普通文本」时补。
       if (i > 0 && !prevWasBox) frag.append("\n");
-      appendInline(frag, line, images);
+      appendLine(frag, line);
       prevWasBox = false;
       return;
     }
@@ -644,7 +652,7 @@ export function renderContent(
     if (box.indent !== "") row.style.setProperty("--ck-indent", String(box.indent.length));
     const rest = el("span", { className: "cktext" });
     const inner = document.createDocumentFragment();
-    appendInline(inner, box.rest, images);
+    appendLine(inner, box.rest);
     rest.append(inner);
     row.append(checkbox(box.checked, i, onToggle), rest);
     frag.append(row);

@@ -96,13 +96,12 @@ describe("任务看板 · 回收站(软删除)", () => {
   // 先走了同一条路)。三格,与 board-seal 那例同形但各锚各的:
   //   ①卡上除 ⋯ 外一个按钮都没有(⛔ 判据是「存在的 button 有几个」,不是「看不见」——
   //     `.hk-btn` 是 `opacity:0` 而非 `display:none`);
-  //   ②菜单里**恰两项**且顺序/危险态钉死:还原(U)+ 彻底删除(D,`danger`)——
+  //   ②菜单里**恰两项**且顺序/危险态钉死:还原(R)+ 彻底删除(D,`danger`)——
   //     ⭐ 顺带把「回收站里没有编辑/标签这些经营性动作」这条从注释变成断言;
   //   ③右键开出**同一枚**菜单。
-  // ⚠ **`还原` 的键刻意不是 `R`**:看板的**视图级**单键 `R` 是回收站开关,两者都挂在
-  //    document 上会同时触发(一个键干两件事)。灵感回收站那侧没这约束、它用的就是 `R`
-  //    —— 这枚不一致是**被迫的、已签字的**,⛔ 别当漂移去「修」。
-  it("51:回收站卡无常驻按钮;⋯ 菜单恰两项(U 还原 / D 彻底删除);右键同门", async () => {
+  // ⚠ W3 159 / Q12 起 `还原` 与随记回收站同为 `R`(此前被迫取 `U`):看板的**视图级**单键 `R`
+  //    是回收站开关,悬停在卡上时卡片键先接、视图键让位(walk159 那支 spec 钉着两半)。
+  it("51:回收站卡无常驻按钮;⋯ 菜单恰两项(R 还原 / D 彻底删除);右键同门", async () => {
     const C = "回收丙-只读视图";
     await seedDoneTask(C);
     await trashByBackend(C);
@@ -135,7 +134,7 @@ describe("任务看板 · 回收站(软删除)", () => {
 
     expect(r.buttons).toEqual(["⋯"]); // ①常驻按钮一个都没有
     expect(r.viaIcon).toEqual([
-      { label: "还原", key: "U", danger: false },
+      { label: "还原", key: "R", danger: false },
       { label: "彻底删除", key: "D", danger: true },
     ]); // ②恰两项、键与危险态都钉死
     expect(r.afterClose).toEqual([]);
@@ -156,10 +155,10 @@ describe("任务看板 · 回收站(软删除)", () => {
     await openTrash();
     await expect($(".trash-list").$(`.tcard*=${B}`)).toExist();
 
-    // 清空回收站 is two-step (in the trash bar): reveal, then confirm.
+    // 清空回收站 is two-step: the bar's button reveals the full-width confirm (trash-purge, W3 159), then confirm.
     const clearBtn = await $("button*=清空回收站");
     await clearBtn.click();
-    const confirm = await $("button*=全部删除");
+    const confirm = await $("button.purge-yes");
     await confirm.waitForClickable({ timeout: 5000 });
     await confirm.click();
 

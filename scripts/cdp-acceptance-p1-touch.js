@@ -21,8 +21,9 @@
   const halo = (el) => getComputedStyle(el, "::before").content !== "none";
 
   // ① 底栏按钮实高 ≥44
-  const navBtns = [...document.querySelectorAll("#bottombar button")];
-  ok("底栏按钮 ≥44px", navBtns.length > 0 && navBtns.every((b) => b.offsetHeight >= 44));
+  // 只量显形的那几枚:「长文」没有长文时 `hidden`(offsetHeight 0),算进来空库上恒红(159 复跑撞到,是台架不是产品)。
+  const navBtns = [...document.querySelectorAll("#bottombar button")].filter((b) => !b.hidden);
+  ok("底栏按钮 ≥44px", navBtns.length > 0 && navBtns.every((b) => b.offsetHeight >= 44), { h: navBtns.map((b) => b.offsetHeight) });
 
   // ② .tick 宽 48。146:任务行只在任务面——先切任务面再查(启动恒落灵感面,
   //    不切则永走「跳过」的空测),测完切回灵感面。

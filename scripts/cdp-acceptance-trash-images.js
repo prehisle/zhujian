@@ -56,9 +56,11 @@
     const group = r.closest(".trash-img-group");
     check("组头是宿主正文首行", group?.querySelector(".trash-img-owner")?.textContent.includes(marker));
     check("行文案带图2", r.querySelector(".trash-img-label")?.textContent.includes("2"));
+    // 先滚到眼前再等字节:缩略图滚进可视区才拉(hydrateThumbs)。回收站里存量多时那一行在屏外,
+    // 不滚就恒等不到(159 在走查种子上复跑撞到;空库上它恰好在首屏,所以此前一直是绿的)。
+    r.scrollIntoView({ block: "center" });
     const thumbFilled = await waitFor(() => r.querySelector(".thumb img")?.getAttribute("src"));
     check("缩略图按 id 取得到", !!thumbFilled);
-    r.scrollIntoView({ block: "center" });
     await sleep(400);
     const lb = r.querySelector(".trash-img-label").getBoundingClientRect();
     const hit = document.elementFromPoint(lb.left + lb.width / 2, lb.top + lb.height / 2);

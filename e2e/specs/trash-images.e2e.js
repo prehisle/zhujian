@@ -77,10 +77,10 @@ describe("回收站 · 已删配图(还原回原号 / 彻底删除 / 清空)", (
     const n = (await removedIds("tasks")).length;
     expect(n).toBeGreaterThanOrEqual(1);
     await (await $("button*=清空回收站")).click();
-    const q = await $(".confirm-q");
-    await q.waitForExist({ timeout: 5000 });
+    const q = await $(".purge-q");
+    await q.waitForDisplayed({ timeout: 5000 });
     expect(await q.getText()).toContain(`${n} 张配图`);
-    await (await $("button*=全部删除")).click();
+    await (await $("button.purge-yes")).click();
     await group.waitForExist({ reverse: true, timeout: 10000 });
     expect(await removedIds("tasks")).toEqual([]);
     expect(await seqs(id)).toEqual([]);

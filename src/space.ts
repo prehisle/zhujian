@@ -126,11 +126,22 @@ export type MoveResult =
 /** outcome → 用户话术。此前五分支话术在 board / inbox 两视图逐字复制(228「别再
  *  各写各的」的形),改一句要记得改两处——收进 MoveResult 类型的家,视图只留各自的
  *  DOM 反应。default 是穷尽性守卫:新增变体时这里编译期变红,别让两份 switch 静默
- *  落空(board 那份还会把 moving=true 留在场,入口永久卡死)。 */
-export function moveOutcomeText(r: MoveResult, targetLabel: string): string {
+ *  落空(board 那份还会把 moving=true 留在场,入口永久卡死)。W3 159 起三处的面板也收成一份(move-space.ts),
+ *  这里仍是唯一话术源;两条预检拒的那句是**成文的**,⛔ 别再交给 errText(「已删除」会被认成「那一条不在了」,A2)。
+ *
+ *  `col` = 任务才给(W3 159 / A12):目标空间落点列的名字 + 原来那一列(已在落点列 = null)。列不随迁 ——
+ *  任务一律落对方落点列的最上面(core `move_item::target_stage_for`),回执说清落在哪、原来在哪。 */
+export function moveOutcomeText(
+  r: MoveResult,
+  targetLabel: string,
+  col: { landing: string; from: string | null } | null = null,
+): string {
   switch (r.outcome) {
     case "moved":
-      return t("space.moved", { name: targetLabel });
+      if (col === null) return t("space.moved", { name: targetLabel });
+      return col.from === null
+        ? t("space.movedTask", { name: targetLabel, col: col.landing })
+        : t("space.movedTaskFrom", { name: targetLabel, col: col.landing, from: col.from });
     case "copied_but_source_kept":
       return t("space.copiedSourceKept", { reason: r.reason });
     case "copied_but_source_unconfirmed":

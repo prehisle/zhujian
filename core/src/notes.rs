@@ -281,8 +281,9 @@ pub fn file_to_topic(
             t.to_string()
         }
         // Tag names are unique: if one already exists with this name, reuse it (tagging is
-        // idempotent) instead of minting a duplicate; otherwise create it.
-        Target::New(title) => match repo::topic_id_by_title(&tx, title).map_err(|e| e.to_string())? {
+        // idempotent) instead of minting a duplicate; otherwise create it. 「同名」大小写不敏感
+        // (W3 A11):「Work」在时打「work」挂的是「Work」,⛔ 不另建 —— 口径见 repo::topic_title_clash。
+        Target::New(title) => match repo::topic_id_for_reuse(&tx, title).map_err(|e| e.to_string())? {
             Some(existing) => existing,
             None => {
                 let minted = repo::insert_topic(&tx, title).map_err(|e| e.to_string())?;
@@ -340,7 +341,8 @@ pub fn remove_topic(conn: &mut Connection, clock: &mut Clock, id: &str, topic_id
 
 // ---- Topics (tag CRUD — 标签视图的新建/重命名/删除) ---------------------------------
 
-/// Create a topic (tag) by hand. Fails fast on an empty title or a same-name duplicate.
+/// Create a topic (tag) by hand. Fails fast on an empty title or a same-name duplicate
+/// (大小写不敏感,W3 A11;报错点名**已有那枚的原写法**,口径见 [`repo::topic_title_clash`]).
 /// Returns its id.
 pub fn create_topic(conn: &mut Connection, clock: &mut Clock, title: &str) -> Result<String, String> {
     let title = title.trim();
@@ -349,8 +351,8 @@ pub fn create_topic(conn: &mut Connection, clock: &mut Clock, title: &str) -> Re
     }
     repo::ensure_content_fits(title)?;
     let tx = conn.transaction().map_err(|e| e.to_string())?;
-    if repo::topic_id_by_title(&tx, title).map_err(|e| e.to_string())?.is_some() {
-        return Err(format!("标签「{title}」已存在"));
+    if let Some(existing) = repo::topic_title_clash(&tx, title, None).map_err(|e| e.to_string())? {
+        return Err(format!("标签「{existing}」已存在"));
     }
     let id = repo::insert_topic(&tx, title).map_err(|e| e.to_string())?;
     oplog::topic_create(&tx, clock, &id)?;
@@ -483,8 +485,8 @@ pub fn set_topic_kind(
     Ok(())
 }
 
-/// Edit a topic's title. Fails fast on an empty title, a collision with another topic,
-/// or a missing id (affected rows != 1).
+/// Edit a topic's title. Fails fast on an empty title, a collision with another topic
+/// (大小写不敏感,W3 A11), or a missing id (affected rows != 1).
 pub fn rename_topic(conn: &mut Connection, clock: &mut Clock, id: &str, title: &str) -> Result<(), String> {
     let title = title.trim();
     if title.is_empty() {
@@ -492,11 +494,10 @@ pub fn rename_topic(conn: &mut Connection, clock: &mut Clock, id: &str, title: &
     }
     repo::ensure_content_fits(title)?;
     let tx = conn.transaction().map_err(|e| e.to_string())?;
-    // Reject a rename that collides with another topic (a same-id no-op rename is fine).
-    if let Some(other) = repo::topic_id_by_title(&tx, title).map_err(|e| e.to_string())? {
-        if other != id {
-            return Err(format!("标签「{title}」已存在"));
-        }
+    // Reject a rename that collides with ANOTHER topic. 自己不算:同名 no-op 与「只改大小写」
+    // (Work → WORK)都放行。报错点名撞上那枚的原写法。
+    if let Some(existing) = repo::topic_title_clash(&tx, title, Some(id)).map_err(|e| e.to_string())? {
+        return Err(format!("标签「{existing}」已存在"));
     }
     let n = repo::update_topic(&tx, id, title).map_err(|e| e.to_string())?;
     if n != 1 {
@@ -622,11 +623,12 @@ pub fn merge_topics(
         oplog::topic_tombstone(&tx, clock, source)?;
     }
     // Sources are gone now, so any remaining same-name topic is an unrelated collision.
+    // 合并时顺手改名也是一道「改名」写路径,与 rename_topic 同口径(大小写不敏感,存续那枚自己不算)。
     if let Some(title) = new_title {
-        if let Some(other) = repo::topic_id_by_title(&tx, title).map_err(|e| e.to_string())? {
-            if other != target_id {
-                return Err(format!("标签「{title}」已存在,已回滚"));
-            }
+        if let Some(existing) =
+            repo::topic_title_clash(&tx, title, Some(target_id)).map_err(|e| e.to_string())?
+        {
+            return Err(format!("标签「{existing}」已存在,已回滚"));
         }
     }
     let touched = match new_title {
@@ -1249,6 +1251,76 @@ mod tests {
         // create(+0031 position set_field 落末键)+ rename(title/updated_at 两条)+ tombstone。
         let kinds: Vec<String> = ops_for(&conn, "topic", &id).into_iter().map(|o| o.kind).collect();
         assert_eq!(kinds, vec!["create", "set_field", "set_field", "set_field", "tombstone"]);
+    }
+
+    /// W3 A11 / WD-13:「Work」在时新建「work」要拒,报错点名已有那枚的**原写法**;被拒的
+    /// 连一条 op 都不留。样本「work」只差大小写 —— 原样比对那版放得过它,所以红只能红在口径上。
+    #[test]
+    fn create_topic_rejects_a_case_only_duplicate_naming_the_existing_one() {
+        let (mut conn, mut clock) = fresh_db();
+        let work = create_topic(&mut conn, &mut clock, "Work").unwrap();
+        let ops_before: i64 = conn.query_row("SELECT COUNT(*) FROM oplog", [], |r| r.get(0)).unwrap();
+        assert_eq!(create_topic(&mut conn, &mut clock, "work").unwrap_err(), "标签「Work」已存在");
+        assert_eq!(create_topic(&mut conn, &mut clock, "  WORK ").unwrap_err(), "标签「Work」已存在");
+        assert_eq!(repo::all_topics(&conn).unwrap().len(), 1);
+        let ops_after: i64 = conn.query_row("SELECT COUNT(*) FROM oplog", [], |r| r.get(0)).unwrap();
+        assert_eq!(ops_after, ops_before, "被拒的新建不发 op");
+        // 不同名照建;中文无大小写,不受影响。
+        create_topic(&mut conn, &mut clock, "Workout").unwrap();
+        create_topic(&mut conn, &mut clock, "工作").unwrap();
+        assert!(repo::topic_exists(&conn, &work).unwrap());
+    }
+
+    /// 改名:成「只差大小写的别人」要拒(点名那枚原写法);成「只差大小写的自己」放行并真改成新写法。
+    #[test]
+    fn rename_topic_rejects_case_only_clash_with_another_but_allows_recasing_itself() {
+        let (mut conn, mut clock) = fresh_db();
+        let work = create_topic(&mut conn, &mut clock, "Work").unwrap();
+        let home = create_topic(&mut conn, &mut clock, "家里").unwrap();
+        assert_eq!(rename_topic(&mut conn, &mut clock, &home, "work").unwrap_err(), "标签「Work」已存在");
+        let title = |c: &rusqlite::Connection, id: &str| -> String {
+            c.query_row("SELECT title FROM topics WHERE id=?1", [id], |r| r.get(0)).unwrap()
+        };
+        assert_eq!(title(&conn, &home), "家里", "被拒的改名不落");
+        rename_topic(&mut conn, &mut clock, &work, "WORK").unwrap();
+        assert_eq!(title(&conn, &work), "WORK", "只改自己的大小写放行");
+    }
+
+    /// 合并时顺手改名也是改名写路径:撞上**存续那枚与源以外**只差大小写的,整笔回滚;
+    /// 改成源的另一种大小写(源此刻已删)或存续那枚自己的另一种大小写,都放行。
+    #[test]
+    fn merge_topics_rename_rejects_case_only_clash_and_rolls_back() {
+        let (mut conn, mut clock) = fresh_db();
+        let target = create_topic(&mut conn, &mut clock, "Team").unwrap();
+        let src = create_topic(&mut conn, &mut clock, "Crew").unwrap();
+        let _other = create_topic(&mut conn, &mut clock, "Job").unwrap();
+        let title = |c: &rusqlite::Connection, id: &str| -> String {
+            c.query_row("SELECT title FROM topics WHERE id=?1", [id], |r| r.get(0)).unwrap()
+        };
+        let err = merge_topics(&mut conn, &mut clock, &[src.clone()], &target, Some("JOB")).unwrap_err();
+        assert_eq!(err, "标签「Job」已存在,已回滚");
+        assert!(repo::topic_exists(&conn, &src).unwrap(), "整笔回滚,源还在");
+        assert_eq!(title(&conn, &target), "Team");
+        // 改成源的另一种写法:源在判撞名之前已删,撞不上它。
+        merge_topics(&mut conn, &mut clock, &[src], &target, Some("CREW")).unwrap();
+        assert_eq!(title(&conn, &target), "CREW");
+        // 改成存续那枚自己的另一种写法:自己不算。
+        let src2 = create_topic(&mut conn, &mut clock, "Squad").unwrap();
+        merge_topics(&mut conn, &mut clock, &[src2], &target, Some("crew")).unwrap();
+        assert_eq!(title(&conn, &target), "crew");
+    }
+
+    /// 按名挂(归类顺手建)是复用路:「Work」在时打「work」挂的是「Work」,⛔ 不另建一枚 ——
+    /// 否则新建 / 改名拦住了,这条路照样造出并存。
+    #[test]
+    fn file_to_topic_new_title_reuses_a_case_only_match() {
+        let (mut conn, mut clock) = fresh_db();
+        let work = create_topic(&mut conn, &mut clock, "Work").unwrap();
+        let idea = capture(&mut conn, &mut clock, "要挂标签的").unwrap();
+        let got = file_to_topic(&mut conn, &mut clock, &idea, None, Some("work")).unwrap();
+        assert_eq!(got, work);
+        assert_eq!(repo::all_topics(&conn).unwrap().len(), 1, "没有另建「work」");
+        assert!(ops_for(&conn, "topic", &got).iter().filter(|o| o.kind == "create").count() == 1);
     }
 
     #[test]

@@ -399,6 +399,11 @@ export function armDismiss(root: HTMLElement, close: () => void, opts: { escape?
 
 export function registerViewKeys(keys: ViewKey[]): () => void {
   function onKey(e: KeyboardEvent): void {
+    // 卡片单键先接(W3 159 / Q12):悬停 / 选中的卡把这个键派发掉了(`createHotkeyController` 的 onKey 会
+    // preventDefault),视图键就让位 —— 看板回收站里悬停卡按 R = 还原这张,而不是同时把回收站收起。
+    // ⚠ 依赖注册顺序:各视图都先 `createHotkeyController()`(mount 开头)、后 `registerViewKeys`(mount 末尾),
+    // 同一 document 的同相监听按注册序触发 ⇒ 卡片那只先跑。⛔ 别把视图键挪到卡片控制器之前注册。
+    if (e.defaultPrevented) return;
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     const t = e.target as HTMLElement | null;
     if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;

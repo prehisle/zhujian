@@ -90,6 +90,20 @@ export const main = defineMessages({
   "main.finishDraftBeforeSwitch": { zh: "先保存或取消正在编辑的内容,再切换空间", en: "Save or cancel what you are editing before switching spaces" },
   "main.composeIdeaPh": { zh: "随手记一笔…", en: "Jot something down…" },
   "main.composeTaskPh": { zh: "记一件待办…", en: "Note a task…" },
+  // 159 / W3 Q6(WM-17):有多个空间时灰字写上会记进哪个空间(只有一个空间时照旧;随记那句同桌面 inbox.composePlaceholderSpace)。
+  "main.composeIdeaPhSpace": { zh: "随手记一笔,记进「{space}」…", en: "Jot something down — goes into “{space}”…" },
+  "main.composeTaskPhSpace": { zh: "记一件待办,记进「{space}」…", en: "Note a task — goes into “{space}”…" },
+  // 159 / W3 Q6:切空间、改空间名做完都说一声(同桌面 notebook.switchedTo / notebook.spaceRenamed)。
+  "main.switchedTo": { zh: "已切到「{name}」", en: "Switched to “{name}”" },
+  "main.spaceRenamed": { zh: "空间已改名为「{name}」", en: "Space renamed to “{name}”" },
+  // 159 / W3 Q8(WM-26):筛选条底下那行里「选了哪几枚标签」(多枚 = 挂任一枚都算,同桌面 filter.unionHint 的意思)。
+  "main.filterSumTags": { zh: "标签「{labels}」", en: "tag “{labels}”" },
+  "main.filterSumTagsAny": { zh: "标签「{labels}」挂任一个都算", en: "any of the tags “{labels}”" },
+  // 159 / W3 A4(WM-06):只在改过的旧版本里命中 —— 落点上说一句去哪儿看那一版(桌面 search.landedOld* 的手机形)。
+  "main.landedOld": { zh: "搜到的词在这条改过之前的版本里 —— 点开卡片,「更多…」里的「历史」看得到。", en: "The words you searched for are in an earlier version of this one — tap the card, then “History” under “More…”." },
+  "main.landedOldDoc": { zh: "搜到的词在这篇改过之前的版本里 —— 上面的「历史」里看得到。", en: "The words you searched for are in an earlier version of this note — see “History” above." },
+  "main.landedOldTrash": { zh: "搜到的词在这条改过之前的版本里 —— 还原后点开卡片,「更多…」里的「历史」看得到。", en: "The words you searched for are in an earlier version of this one — restore it, then see “History” under “More…”." },
+  "main.landedOldSealed": { zh: "搜到的词在这条改过之前的版本里 —— 取消归档后点开卡片,「更多…」里的「历史」看得到。", en: "The words you searched for are in an earlier version of this one — unarchive it, then see “History” under “More…”." },
   "main.diagLoading": { zh: "读取中…", en: "Loading…" },
   "main.probeIdle": { zh: "未运行", en: "Not run" },
   "main.timelineRetry": { zh: "时间轴读取失败,稍后再试", en: "Could not load the timeline, try again shortly" },

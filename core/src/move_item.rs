@@ -560,7 +560,10 @@ pub fn import(conn: &mut Connection, clock: &mut Clock, pkg: &MovePackage) -> Re
     }
 
     // 标签按名归并(§2.5):源名先去重(BTreeSet 顺带给出确定性遍历序);目标同名
-    // 取最小 ULID;缺则新建(不带源颜色——颜色是目标空间自己的元数据)。
+    // (W3 A11 起**大小写不敏感**,与本地新建 / 改名 / 按名挂同一口径 ——
+    // `repo::topic_id_for_reuse`:原样同名优先,其次只差大小写,同档取最小 ULID)直接挂;
+    // 缺则新建(不带源颜色——颜色是目标空间自己的元数据)。只拒不复用的话,源挂「work」、
+    // 目标有「Work」就会在目标里造出并存的一对。
     // ⚠ 借用而不是 clone(codex 实现审二弹二轮 H1 的第 4 条):标题单条可到 200 KiB、
     // 单条目挂多少个标签没有硬闸,`BTreeMap<String, ()>`(旧写法) 会在包体之外再攒**整整一份**
     // 标题字符串,而那一相位的峰值可能比 export 算指纹那一幕还高。
@@ -568,16 +571,12 @@ pub fn import(conn: &mut Connection, clock: &mut Clock, pkg: &MovePackage) -> Re
     for (_, title) in &pkg.topics {
         unique_titles.insert(title.as_str());
     }
+    // 按 id 去重挂链:源上只差大小写的两枚(「Work」「work」,存量 / 同步来的并存)在目标里
+    // 归到**同一枚** —— 第二次再 INSERT item_topic 是主键冲突、整笔移动失败。BTreeSet 字节序
+    // 让大写那枚先到:目标一枚都没有时,新建的是「Work」,「work」随后复用它。
+    let mut linked: HashSet<String> = HashSet::new();
     for title in &unique_titles {
-        let existing: Option<String> = tx
-            .query_row(
-                "SELECT id FROM topics WHERE title = ?1 ORDER BY id LIMIT 1",
-                [title],
-                |r| r.get(0),
-            )
-            .optional()
-            .map_err(|e| e.to_string())?;
-        let topic_id = match existing {
+        let topic_id = match repo::topic_id_for_reuse(&tx, title).map_err(|e| e.to_string())? {
             Some(id) => id,
             None => {
                 let minted = repo::insert_topic(&tx, title).map_err(|e| e.to_string())?;
@@ -586,6 +585,9 @@ pub fn import(conn: &mut Connection, clock: &mut Clock, pkg: &MovePackage) -> Re
                 minted
             }
         };
+        if !linked.insert(topic_id.clone()) {
+            continue;
+        }
         repo::link_item_topic(&tx, &new_id, &topic_id).map_err(|e| e.to_string())?;
         oplog::link_add(&tx, clock, &new_id, &topic_id)?;
     }
@@ -1560,6 +1562,45 @@ mod tests {
         assert!(ops_for(&dst, "topic", t_small).is_empty(), "复用不发 topic_create");
         let total: i64 = dst.query_row("SELECT COUNT(*) FROM topics", [], |r| r.get(0)).unwrap();
         assert_eq!(total, 2, "不新建第三个同名");
+    }
+
+    /// W3 A11:按名归并与本地新建 / 改名同一口径(大小写不敏感)。源上挂着只差大小写的两枚
+    /// (「Work」与「work」,存量 / 同步来的并存),目标里:①已有「WORK」⇒ 两枚都归到它、
+    /// 只挂一次、不新建;②一枚都没有 ⇒ 只新建一枚(字节序在前的「Work」),另一枚复用它,
+    /// 同样只挂一次 —— 第二次 INSERT item_topic 是主键冲突,会让整笔移动失败。
+    #[test]
+    fn tag_merge_is_case_insensitive_and_links_each_target_topic_once() {
+        let (mut src, mut sc) = fresh_db("case-src");
+        let id = notes::capture(&mut src, &mut sc, "带两种写法的标签").unwrap();
+        let upper = notes::file_to_topic(&mut src, &mut sc, &id, None, Some("Work")).unwrap();
+        // 源里那枚小写的只能绕过命令层造(命令层今天已拦 / 复用)。
+        let lower = repo::insert_topic(&src, "work").unwrap();
+        repo::link_item_topic(&src, &id, &lower).unwrap();
+        assert_ne!(upper, lower);
+        let linked_of = |c: &Connection, item: &str| -> Vec<String> {
+            let mut stmt = c.prepare("SELECT topic_id FROM item_topic WHERE item_id=?1").unwrap();
+            let it = stmt.query_map([item], |r| r.get(0)).unwrap();
+            it.collect::<rusqlite::Result<_>>().unwrap()
+        };
+        let titles = |c: &Connection| -> Vec<String> {
+            let mut stmt = c.prepare("SELECT title FROM topics ORDER BY title").unwrap();
+            let it = stmt.query_map([], |r| r.get(0)).unwrap();
+            it.collect::<rusqlite::Result<_>>().unwrap()
+        };
+
+        // ① 目标已有「WORK」。
+        let (mut dst, mut dc) = fresh_db("case-dst-has");
+        let existing = notes::create_topic(&mut dst, &mut dc, "WORK").unwrap();
+        let pkg = export_ready(&mut src, &id);
+        let new_id = import(&mut dst, &mut dc, &pkg).unwrap();
+        assert_eq!(linked_of(&dst, &new_id), vec![existing.clone()], "两种写法都归到已有那枚,只挂一次");
+        assert_eq!(titles(&dst), vec!["WORK".to_string()], "不新建");
+
+        // ② 目标一枚都没有。
+        let (mut dst2, mut dc2) = fresh_db("case-dst-none");
+        let new_id2 = import(&mut dst2, &mut dc2, &pkg).unwrap();
+        assert_eq!(titles(&dst2), vec!["Work".to_string()], "只新建一枚,字节序在前的那种写法");
+        assert_eq!(linked_of(&dst2, &new_id2).len(), 1, "只挂一次");
     }
 
     /// 三轮测试单:目标账户的**另一台设备**全量回放移动产生的 op(按 origin_seq 序)

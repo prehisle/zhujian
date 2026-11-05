@@ -52,6 +52,9 @@ export interface View {
 export interface ViewCtx {
   /** Switch the content area to another view. */
   navigate(name: ViewName): void;
+  /** 切到 `space`(不同就切,并说一声「已切到…」)再定位那一条 —— 跨空间移动回执上的「去看看」
+   *  (W3 159 / Q4)。与深链接同一条落点路(locate_item → 各视图的 focus 通道)。 */
+  openItem(space: string, itemId: string): void;
 }
 
 export type MountFn = (root: HTMLElement, ctx: ViewCtx) => View;
@@ -86,7 +89,7 @@ let current: View | null = null;
 // 展开集合对新空间自然失配,失配的表现只是「筛不到/全收起」,点一下即回,v1 接受)。
 let currentName: ViewName = "inbox";
 
-const ctx: ViewCtx = { navigate };
+const ctx: ViewCtx = { navigate, openItem: (space, item) => void openItemInSpace(space, item) };
 
 // Remember the mounted view across real restarts. Hide-not-destroy already keeps
 // the view alive within one run; this key only matters after 托盘退出 → relaunch.
@@ -191,6 +194,31 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
+// Ctrl+F(mac 上 Cmd+F)= 打开搜索、光标进搜索框(W3 159 / Q9,WD-19:此前 Ctrl+F / Ctrl+K 都没反应)。
+// ⚠ 一律 preventDefault:WebView2 的 Ctrl+F 原本会唤起它自己的页内查找条,那不是朱简的搜索。
+// ⛔ 正在改东西的框里不跳:视图 unmount 只拆监听不 commit(各视图 teardownActiveEdit 那条),跳走 = 正在改的
+// 字丢了。放行的只有三种不会丢字的框:记一笔(`.compose-input`,草稿跨挂载存着)、过滤框(type=search)、
+// 搜索框自己。键照样吞掉,免得冒出查找条。
+function ctrlFMayLeave(a: Element | null): boolean {
+  if (!(a instanceof HTMLElement)) return true;
+  if (a.isContentEditable) return false;
+  if (a instanceof HTMLTextAreaElement) return a.classList.contains("compose-input");
+  if (a instanceof HTMLInputElement) return a.type === "search" || a.id === "q";
+  return true;
+}
+document.addEventListener("keydown", (e) => {
+  if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey || (e.key !== "f" && e.key !== "F")) return;
+  e.preventDefault();
+  if (!ctrlFMayLeave(document.activeElement)) return;
+  if (currentName === "search") {
+    const q = document.querySelector<HTMLInputElement>(".v-search #q");
+    q?.focus();
+    q?.select();
+    return;
+  }
+  navigate("search"); // 搜索视图挂载即聚焦搜索框(search.ts)
+});
+
 win.onFocusChanged(({ payload: focused }) => {
   if (focused) {
     current?.onFocus?.();
@@ -252,21 +280,25 @@ void listen<string>("space-foreground", (e) => switchSpace(e.payload));
 // 若不在当前空间先切过去(复用 switchSpace 的三步、但不先 navigate 当前视图,带着 focus
 // 一次落到条目所在视图)→ 后端 locate_item 定位视图 → 复用搜索 jump 的 focus 通道高亮。
 // 条目所属空间不在本机 / 条目已删 = 一句 toast 说清,不静默、不猜跳(fail-fast)。
+// ⚠ 看板三支是**先 navigate、后 focusTask**(W3 159 真实例复走逮到的):navigate 先 unmount 旧视图,而看板的
+// unmount 会把模块级 focusId 清掉(「离开看板时取消没落地的定位」,codex 四审 H)—— 人本来就在看板上时
+// (跨空间移动回执的「去看看」、在看板上点深链接)先登记的 focus 当场被清,落过去不高亮。新看板的 load()
+// 在 await 之后才取走 focusId,同步登记赶得上。子视图(归档 / 回收站)那一格在**挂载时**读,仍须先于 navigate。
 function routeToItem(item: string, loc: string): void {
   switch (loc) {
     case "task":
-      focusTask(item);
       navigate("board");
+      focusTask(item);
       break;
     case "sealed":
-      focusTask(item);
       focusBoardView("sealed");
       navigate("board");
+      focusTask(item);
       break;
     case "trash-task":
-      focusTask(item);
       focusBoardView("trash");
       navigate("board");
+      focusTask(item);
       break;
     case "inbox":
       focusInboxItem(item, "ideas");
@@ -302,16 +334,21 @@ async function openDeepLink(raw: string): Promise<void> {
     showToast(t("notebook.spaceNotOnDevice"));
     return;
   }
-  // 切到目标空间(若不同):不走 switchSpace 的「先 navigate 当前视图」——那会白挂一次,
-  // 我们要带着 focus 一次落到条目所在视图。
+  await landOnItem(target, p.item, null);
+}
+
+/** 切到 `target`(若不同)再按 locate_item 落到那一条。不走 switchSpace 的「先 navigate 当前视图」——
+ *  那会白挂一次,我们要带着 focus 一次落到条目所在视图。`label` 给了 = 切了空间就说一声(Q6)。 */
+async function landOnItem(target: string, item: string, label: string | null): Promise<void> {
   if (target !== currentSpaceId()) {
     setCurrentSpace(target);
     refreshSpaceEntry();
     syncSpaceSwitched();
+    if (label !== null) toastAction(t("notebook.switchedTo", { name: label }));
   }
   let loc: string | null;
   try {
-    loc = await invokeInSpace<string | null>(target, "locate_item", { itemId: p.item });
+    loc = await invokeInSpace<string | null>(target, "locate_item", { itemId: item });
   } catch (e) {
     showToast(t("notebook.openFailed", { error: errDetail(e) }));
     return;
@@ -320,7 +357,17 @@ async function openDeepLink(raw: string): Promise<void> {
     showToast(t("notebook.itemNotFound"));
     return;
   }
-  routeToItem(p.item, loc);
+  routeToItem(item, loc);
+}
+
+/** 跨空间移动回执上的「去看看」(ViewCtx.openItem):目标空间此刻不在 / 已停 = 明说,不猜。 */
+async function openItemInSpace(space: string, item: string): Promise<void> {
+  const info = (await listSpaces()).find((s) => s.alive && s.id === space);
+  if (!info) {
+    showToast(t("notebook.spaceNotOnDevice"));
+    return;
+  }
+  await landOnItem(space, item, spaceLabel(info));
 }
 
 // OS 桥(4b):点击的 zhujian:// 链接由 deep-link 插件 on_open_url 暂存到壳,并发一个空
@@ -457,9 +504,24 @@ function onSpaceMenuKey(e: KeyboardEvent): void {
   }
 }
 
+/** 新建 / 改名空间失败的那句红字(W3 159 / A11,WD-08)。撞名是**认得出的错**,core 那句「已有同名空间「X」」
+ *  本身就是人话 ⇒ 原样给、不挂「出错:」(§4.3:「出错:」只给认不出的);其余照 errText。⛔ 只认 core 那一种
+ *  句形(spaces.rs::ensure_space_name_free),别放宽成「含『同名』」。同标签页那条(topics.ts::nameErrText)。 */
+function spaceNameErrText(e: unknown): string {
+  const s = String(e);
+  return /^已有同名空间「.+」$/.test(s) ? s : errText(e);
+}
+
 /** 菜单动作行:点击后原地换成「输入名字 + 回车提交」的小表单(新建/改名共用)。
- *  提交中置忙防连按(后端另有生命周期互斥兜底,这里只是不给用户造出第二次点击)。 */
-function spaceActionRow(label: string, placeholder: string, submit: (name: string) => Promise<void>): HTMLElement {
+ *  提交中置忙防连按(后端另有生命周期互斥兜底,这里只是不给用户造出第二次点击)。
+ *  `initial` 给了 = 框里预填它并全选(改名:W3 159 / Q12,WD-39,同标签改名);原样回车 = 不改、只收菜单。
+ *  失败时字留在框里、红字在框下、焦点还回框里(A11)。 */
+function spaceActionRow(
+  label: string,
+  placeholder: string,
+  submit: (name: string) => Promise<void>,
+  initial = "",
+): HTMLElement {
   const row = document.createElement("button");
   row.className = "space-row action";
   row.textContent = label;
@@ -469,6 +531,7 @@ function spaceActionRow(label: string, placeholder: string, submit: (name: strin
     const inp = document.createElement("input");
     inp.placeholder = placeholder;
     inp.spellcheck = false;
+    inp.value = initial;
     const err = document.createElement("div");
     err.className = "space-err";
     form.appendChild(inp);
@@ -479,17 +542,23 @@ function spaceActionRow(label: string, placeholder: string, submit: (name: strin
       if (ke.isComposing) return; // IME 组合期的 Enter/Esc 属于输入法(ui-audit P0 #1)
       if (ke.key === "Escape") closeSpaceMenu();
       if (ke.key !== "Enter" || busy) return;
+      if (initial !== "" && inp.value.trim() === initial.trim()) {
+        closeSpaceMenu(); // 没改:不发命令(免得把显示名「默认空间」当真名写进去)
+        return;
+      }
       busy = true;
       inp.disabled = true;
       err.textContent = "";
       submit(inp.value).catch((e: unknown) => {
         busy = false;
         inp.disabled = false;
-        err.textContent = errText(e);
+        err.textContent = spaceNameErrText(e);
+        inp.focus();
       });
     });
     row.replaceWith(form);
     inp.focus();
+    inp.select();
   });
   return row;
 }
@@ -732,7 +801,10 @@ async function openSpaceMenu(anchor: HTMLElement = spaceEntry): Promise<void> {
       }
       row.addEventListener("click", () => {
         closeSpaceMenu();
-        switchSpace(s.id); // 点当前空间 = 只关菜单(switchSpace 对同 id 是 no-op)
+        if (s.id === currentSpaceId()) return; // 点当前空间 = 只关菜单
+        switchSpace(s.id);
+        // Q6(WD-17):切过去说一声(此前只有侧栏顶那一行字变了,整页再没别处写着在哪个空间)。
+        toastAction(t("notebook.switchedTo", { name: spaceLabel(s) }));
       });
     }
     menu.appendChild(row);
@@ -748,12 +820,19 @@ async function openSpaceMenu(anchor: HTMLElement = spaceEntry): Promise<void> {
     }),
   );
   menu.appendChild(spaceJoinRow());
+  const curInfo = all.find((s) => s.id === currentSpaceId());
   menu.appendChild(
-    spaceActionRow(t("notebook.renameSpace"), t("notebook.renameSpacePh"), async (name) => {
-      await renameSpace(currentSpaceId(), name);
-      closeSpaceMenu();
-      refreshSpaceEntry();
-    }),
+    spaceActionRow(
+      t("notebook.renameSpace"),
+      t("notebook.renameSpacePh"),
+      async (name) => {
+        await renameSpace(currentSpaceId(), name);
+        closeSpaceMenu();
+        refreshSpaceEntry();
+        toastAction(t("notebook.spaceRenamed", { name: name.trim() })); // Q6(WD-17):改完说一声
+      },
+      curInfo ? spaceLabel(curInfo) : "",
+    ),
   );
   menu.appendChild(
     spaceResetRow(all.find((s) => s.id === currentSpaceId())?.status.configured ?? false),

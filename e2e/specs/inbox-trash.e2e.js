@@ -8,9 +8,8 @@ import { invoke, inboxShow, seedProcessedTaskless, inboxAction } from "./support
 // (`inboxShow`,idea-stats 那只也要它),这里只改叫法。
 
 describe("灵感 · 回收站(软删 → 还原 / 彻底删除 / 清空)", () => {
-  // The 想法/回收站 tab now persists across view switches (inbox.ts `active` is module
-  // scope) and all specs share one app process — leaving this describe on 回收站 would
-  // hide later specs' 想法-list assertions. Reset to 想法 on the way out.
+  // W3 159 / A6 起每次进随记页都从时间轴起步(侧栏主导航回主视图),但同一个 mount 里留在回收站
+  // 照样会挡住后面 spec 的想法列表断言 —— 收场时切回想法,照旧。
   after(async () => {
     await inboxShow("ideas");
   });
@@ -113,8 +112,9 @@ describe("灵感 · 回收站(软删 → 还原 / 彻底删除 / 清空)", () =>
     const purge = await $("button*=清空回收站");
     await purge.waitForExist({ timeout: 10000 });
     await purge.click();
-    // Confirms with "彻底删除全部 N 条".
-    await (await $("button*=彻底删除全部")).click();
+    // Confirms in the full-width panel under the bar (trash-purge, W3 159):「彻底删除全部」.
+    await (await $("button.purge-yes")).click();
+    await browser.waitUntil(async () => (await invoke("list_archived")).length === 0, { timeout: 8000 });
 
     expect(await invoke("list_archived")).toHaveLength(0);
   });

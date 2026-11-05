@@ -6,10 +6,12 @@
 import {
   getCurrentSpace,
   listBoardColumns,
+  listItemImages,
   listRemovedImages,
   listSealedTasks,
   listTrash,
-  purgeAllTrash,
+  purgeArchived,
+  purgeArchivedTasks,
   purgeItemImage,
   purgeNote,
   purgeTask,
@@ -19,23 +21,44 @@ import {
   searchNotes,
   unsealTask,
   sealTask,
+  type ImageMeta,
   type RemovedGroup,
+  type SearchHitItem,
   type SearchStatus,
 } from "./api";
-import { hydrateThumbs } from "./thumbs";
+import { fillThumb, hydrateThumbs } from "./thumbs";
+import { onFoldClick, resettleFolds, settleFolds } from "./fold";
+import { docTitle, excerpt } from "./docs";
 import { openViewer } from "./viewer";
 import { t } from "./i18n";
-import { $, actionBar, cardTint, colsFor, confirmBar, contentHtml, esc, fmtWhen, fmtWhenDated, hideConfirmBar, showBar, splitCols } from "./ui";
+import {
+  $,
+  actionBar,
+  cardTint,
+  colsFor,
+  confirmBar,
+  contentHtml,
+  esc,
+  fmtWhen,
+  fmtWhenDated,
+  hideConfirmBar,
+  markHits,
+  markLocated,
+  showBar,
+  showError,
+  splitCols,
+} from "./ui";
+import { INPUT_DEBOUNCE_MS } from "./timing";
 import { errDetail, showErr } from "./err";
-import { isTaskStage, setColumns, stageLabel } from "./columns";
+import { isTaskStage, setColumns } from "./columns";
 
 type Deps = {
   refreshTimeline: () => Promise<void>;
-  /** 搜索命中活跃条目 → 关面 + 回主视图定位并闪一下那张卡(在 main.ts 实现,
-   *  146 起按条目 stage 先切到灵感/任务面再定位)。 */
+  /** 回到主视图定位并闪一下那张卡(归档册「取消归档」回执的「去看看」;main.ts 实现)。 */
   focusCard: (id: string) => void;
-  /** 搜索命中分流(ui-audit P1 #8):回收站/归档册的命中切到对应面(main.ts openPane)。 */
-  showPane: (name: "trash" | "sealed") => void;
+  /** 点了一条搜索结果(main.ts 实现):按归属分流到时间轴 / 长文 / 回收站 / 归档册并定位那一条(ui-audit P1 #8、
+   *  159 A14),且压住「按一次返回回到搜索结果」那一层(159 A3,WM-02)。 */
+  jumpFromSearch: (hit: SearchHitItem) => void;
 };
 
 let deps: Deps;
@@ -64,13 +87,33 @@ function clearConfirm() {
 }
 
 // ---- 回收站 -------------------------------------------------------------------
+//
+// ⭐ 159(W3 走查 Q1,用户拍 ①;WM-01 / X-01):一页里分「随记」「任务」两段,各数各的、各自清空 —— 与指南
+// 「回收站按视图分开」、与桌面两个回收站一致。此前是一张混排列表 + 一枚「清空回收站」,一下连任务一起彻底删了,
+// 确认条只写「N 条和 M 张配图」、不提里面有任务。
+//  · 段归属 = 条目冻结的 stage 是不是任务列(`isTaskStage`,与还原落到哪一面同一份判据);长文归「随记」那段
+//    (同桌面随记页的回收站:随记、长文和它们删掉的配图)。
+//  · 已删配图跟着**宿主现在的 stage** 走(宿主在用;core `TrashScope` 的谓词,`images.rs` 那条
+//    `each_clear_only_touches_its_own_page` 钉着):随记那段的清空 = `purge_archived`(连随记 / 长文宿主的已删图),
+//    任务那段 = `purge_archived_tasks`(连任务宿主的已删图)—— 两条都是 core 现成的单事务,手机从此不再调
+//    `purge_all_trash`(那条留在命令面,不删)。
+//  · ⛔ 这是**一页两段**不是两个 tab(§3.9:别给某一页单独造 tab 条);段头吸顶,用的是时间轴节头那一套。
+
+type TrashSec = "ideas" | "tasks";
+const SECS: TrashSec[] = ["ideas", "tasks"];
+const secOfStage = (stage: string): TrashSec => (isTaskStage(stage) ? "tasks" : "ideas");
 
 let trashSeq = 0;
 let trashBusy = false;
 let trashRows: import("./api").TrashItem[] = [];
 /** 回收站里的已删配图(用户面 149),按宿主归组;与 trashRows 同批取。 */
 let trashImgs: RemovedGroup[] = [];
-const imgCount = (): number => trashImgs.reduce((n, g) => n + g.images.length, 0);
+/** 回收站里每条**自己的**配图(159 / W3 A15,WM-10):宿主进回收站时它的图不算删,跟着冻结,还原后原样都在 ——
+ *  此前回收站里那条一张图都不显示、也不写有几张。按条目 id 取(`list_item_images`,与时间轴卡同一份元数据)。 */
+let trashRowImgs = new Map<string, ImageMeta[]>();
+const imgCount = (sec: TrashSec): number =>
+  trashImgs.filter((g) => secOfStage(g.stage) === sec).reduce((n, g) => n + g.images.length, 0);
+const rowsOf = (sec: TrashSec) => trashRows.filter((r) => secOfStage(r.stage) === sec);
 /** 已删配图那一行的「开合键」:与条目卡共用 trashOpenId(至多一个开着),加前缀免得撞 id。 */
 const imgKey = (id: string): string => `img:${id}`;
 /** 展开着操作面板的那张卡(同 `sealedOpenId`,至多一张);null = 一张都没开。
@@ -81,62 +124,117 @@ export async function loadTrash(): Promise<void> {
   const space = getCurrentSpace();
   const seq = ++trashSeq;
   const box = $("trash-list");
-  box.innerHTML = `<p class="muted empty">${t("panes.loading")}</p>`;
+  // 159 / W3 A17(WM-12):只有列表还没画过时才换「读取中…」。还原 / 彻底删除 / 远端刷新之后的重载照旧画着旧卡,
+  // 新的到了原地换 —— 此前每次都先换成一行字,页面一矮,滚动位被钳回顶,连续整理要每次从头划。
+  if (!box.querySelector(".card, p.empty")) box.innerHTML = `<p class="muted empty">${t("panes.loading")}</p>`;
   try {
     // 列与行同批取:回收站每行要印「这是灵感还是哪一列的任务」,而列名来自库
     // (B-f 第 1 段)。⛔ 别指望主时间轴那轮已经登记过 —— 首轮 refresh 失败时它是空的,
-    // 那会让每一行都退化成「灵感」而**不报错**。
+    // 那会让每一行都退化成「灵感」而**不报错**(159 起还会把任务分进「随记」那段)。
     const [rows, cols, imgs] = await Promise.all([listTrash(space), listBoardColumns(space), listRemovedImages(space)]);
+    // 每条自己的配图:逐条取(回收站通常几条到几十条;并发发出)。
+    const own = await Promise.all(rows.map((r) => listItemImages(space, r.id)));
     if (space !== getCurrentSpace() || seq !== trashSeq) return;
     setColumns(cols);
     trashRows = rows;
     trashImgs = imgs;
+    trashRowImgs = new Map(rows.map((r, i) => [r.id, own[i]]));
     // 重载后那张卡可能已经不在(自己刚还原/彻底删了、对端动过):展开态跟着作废(同 sealed)。
     const alive = (k: string): boolean =>
       rows.some((r) => r.id === k) || imgs.some((g) => g.images.some((im) => imgKey(im.id) === k));
     if (trashOpenId !== null && !alive(trashOpenId)) trashOpenId = null;
     clearConfirm();
     renderTrash();
+    // A14:从搜索点进来的那一条 —— 画好之后滚过去、挂定位框(只活这一趟)。
+    const want = trashLocate;
+    trashLocate = null;
+    if (want !== null) applyLocate(box, `[data-trash="${want.id}"]`, want);
   } catch (err) {
     if (space !== getCurrentSpace() || seq !== trashSeq) return;
+    trashLocate = null;
     box.innerHTML = `<p class="empty warn-ink">${t("panes.trashLoadFailed", { error: esc(errDetail(err)) })}</p>`;
   }
 }
 
+/** 长文卡的正文(159 / W3 A16,WM-11):照长文列表卡那形 —— 题目 + 两行摘要,不露 `#`(Markdown 只在长文阅读页渲染)。 */
+function docBodyHtml(content: string): string {
+  const title = docTitle(content);
+  return (
+    `<h3 class="doc-title${title === "" ? " untitled" : ""}">${esc(title === "" ? t("docs.untitled") : title)}</h3>` +
+    `<p class="doc-ex">${esc(excerpt(content, title))}</p>`
+  );
+}
+
+/** 一条回收站卡。 */
+function trashCardHtml(r: import("./api").TrashItem): string {
+  // 列名是同步来的自由文本(桌面能改成任意字)⇒ 进 HTML 前转义(backlog 用户面 144)
+  // 长文(0042)回收站里保留长文属性:还原后它回的是长文那一面,小标照实说。
+  const isDoc = r.doc_at !== null && !isTaskStage(r.stage);
+  // 159 / W3 Q12(WM-29):小章说的是「这是哪一类东西」—— 任务就叫「任务」(此前印的是它删前那一列的列名「待办」,
+  // 同一张在搜索里却叫「任务」)。列名照旧只在看板的列头上。
+  const kind = isDoc ? t("panes.kindDoc") : isTaskStage(r.stage) ? t("panes.kindTask") : t("panes.kindIdea");
+  const chips = r.topics
+    .map(
+      (t) =>
+        `<span class="chip${t.color ? " tinted" : ""}"${t.color ? ` style="--tc:${esc(t.color)}"` : ""}>${esc(t.title)}</span>`,
+    )
+    .join("");
+  // 51:两枚离场动作不常驻 —— 点卡片才出面板,再点收起(同 sealed / 同时间轴)。
+  const panel =
+    r.id === trashOpenId
+      ? `<div class="panel"><div class="acts">
+          <button data-trash-act="restore"${trashBusy ? " disabled" : ""}>${t("panes.restore")}</button>
+          <button data-trash-act="purge" class="warn"${trashBusy ? " disabled" : ""}>${t("panes.purge")}</button>
+        </div></div>`
+      : "";
+  // 配图(A15):与时间轴卡同一形的只读缩略图(字节滚到可视区才拉,hydrateThumbs);点开看大图(只读)。
+  const imgs = trashRowImgs.get(r.id) ?? [];
+  const thumbs = imgs.length
+    ? `<div class="thumbs">${imgs
+        .map(
+          (im) =>
+            `<button class="thumb" data-img="${esc(im.id)}" data-seq="${im.seq}"
+               aria-label="${t("main.viewImage", { n: im.seq })}"><span class="tag-n">${t("images.imageN", { n: im.seq })}</span></button>`,
+        )
+        .join("")}</div>`
+    : "";
+  // 正文(A16):随记照时间轴卡,先一律夹住、落 DOM 后由 settleFolds 量(超过八行才折、长一枚「展开」);
+  // 长文照长文列表卡。
+  const body = isDoc ? docBodyHtml(r.content) : `<p class="content clamped">${contentHtml(r.content, false)}</p>`;
+  const tint = cardTint(r.color);
+  return `<article class="card${isDoc ? " doc-card" : ""}${tint.cls}"${tint.attr} data-trash="${esc(r.id)}"><div class="body">
+    ${body}${thumbs}
+    <footer><span class="pill">${esc(kind)}</span><time>${t("panes.deletedAt", { when: esc(fmtWhen(r.archived_at)) })}</time>${chips}</footer>${panel}
+  </div></article>`;
+}
+
 function renderTrash() {
   const box = $("trash-list");
-  ($("trash-empty") as HTMLButtonElement).disabled = trashBusy || (trashRows.length === 0 && imgCount() === 0);
   if (!trashRows.length && !trashImgs.length) {
     box.innerHTML = `<p class="muted empty">${t("panes.trashEmpty")}</p>`;
     return;
   }
-  const cards = trashRows
-    .map((r) => {
-      // 列名是同步来的自由文本(桌面能改成任意字)⇒ 进 HTML 前转义(backlog 用户面 144)
-      // 长文(0042)回收站里保留长文属性:还原后它回的是长文那一面,小标照实说。
-      const kind = esc(r.doc_at !== null && !isTaskStage(r.stage) ? t("panes.kindDoc") : (stageLabel(r.stage) ?? t("panes.kindIdea")));
-      const chips = r.topics
-        .map(
-          (t) =>
-            `<span class="chip${t.color ? " tinted" : ""}"${t.color ? ` style="--tc:${esc(t.color)}"` : ""}>${esc(t.title)}</span>`,
-        )
-        .join("");
-      // 51:两枚离场动作不常驻 —— 点卡片才出面板,再点收起(同 sealed / 同时间轴)。
-      const panel =
-        r.id === trashOpenId
-          ? `<div class="panel"><div class="acts">
-              <button data-trash-act="restore"${trashBusy ? " disabled" : ""}>${t("panes.restore")}</button>
-              <button data-trash-act="purge" class="warn"${trashBusy ? " disabled" : ""}>${t("panes.purge")}</button>
-            </div></div>`
-          : "";
-      const tint = cardTint(r.color);
-      return `<article class="card${tint.cls}"${tint.attr} data-trash="${esc(r.id)}"><div class="body">
-        <p class="content">${contentHtml(r.content, false)}</p>
-        <footer><span class="pill">${kind}</span><time>${t("panes.deletedAt", { when: esc(fmtWhen(r.archived_at)) })}</time>${chips}</footer>${panel}
-      </div></article>`;
-    });
-  box.innerHTML = (cards.length ? splitCols(cards, colsOf(box)) : "") + trashImagesHtml();
+  // A17:重画保滚动位 —— 夹子、缩略图落定之后还原(要还的是夹后几何,§3.6「全量重画必须保留滚动位」)。
+  const y = window.scrollY;
+  box.innerHTML = SECS.map((sec) => {
+    const rows = rowsOf(sec);
+    const m = imgCount(sec);
+    const cards = rows.map(trashCardHtml);
+    const head = `<h3 class="tl-sec">${sec === "ideas" ? t("panes.secIdeas") : t("panes.secTasks")}<span class="tl-count">${rows.length}</span></h3>`;
+    const inner =
+      rows.length === 0 && m === 0
+        ? `<p class="tl-empty">${sec === "ideas" ? t("panes.secIdeasEmpty") : t("panes.secTasksEmpty")}</p>`
+        : (cards.length ? splitCols(cards, colsOf(box)) : "") +
+          trashImagesHtml(sec) +
+          // 158 G2:清空不常驻列表最上面、不通栏(§3.8)⇒ 每段末尾一枚次级钮;确认走全宽重破坏那一档(A19)。
+          `<div class="row trash-foot"><button id="trash-empty-${sec}" class="ghost" data-trash-empty="${sec}"${
+            trashBusy ? " disabled" : ""
+          }>${sec === "ideas" ? t("panes.emptyIdeas") : t("panes.emptyTasks")}</button></div>`;
+    return `<section class="tl-group trash-sec" data-sec="${sec}">${head}${inner}</section>`;
+  }).join("");
   hydrateThumbs(box);
+  settleFolds(box);
+  if (window.scrollY !== y) window.scrollTo(0, y);
 }
 
 /** 宿主正文首行(组头);空正文给一句占位。行首的 Markdown 标题记号摘掉(长文首行多是「# 题目」,
@@ -148,10 +246,11 @@ function ownerLine(content: string): string {
 
 /** 「已删配图」一节(用户面 149):按宿主归组,每张一行(缩略图 + 「图N · 删于 …」)。
  *  点缩略图看大图(只读查看器:那枚「删除」藏掉 —— 它已经在回收站里了);点行别处 = 开合
- *  操作面板(还原 / 彻底删除),与条目卡同一套「离场动作不常驻」。 */
-function trashImagesHtml(): string {
-  if (!trashImgs.length) return "";
-  const groups = trashImgs
+ *  操作面板(还原 / 彻底删除),与条目卡同一套「离场动作不常驻」。159 起按宿主 stage 分进两段各画各的。 */
+function trashImagesHtml(sec: TrashSec): string {
+  const mine = trashImgs.filter((g) => secOfStage(g.stage) === sec);
+  if (!mine.length) return "";
+  const groups = mine
     .map((g) => {
       const rows = g.images
         .map((im) => {
@@ -174,7 +273,7 @@ function trashImagesHtml(): string {
       return `<div class="trash-img-group"><p class="trash-img-owner">${esc(ownerLine(g.content))}</p>${rows}</div>`;
     })
     .join("");
-  return `<section class="trash-imgs"><h3 class="trash-imgs-title">${t("panes.imagesTitle")}</h3>${groups}</section>`;
+  return `<div class="trash-imgs"><h4 class="trash-imgs-title">${t("panes.imagesTitle")}</h4>${groups}</div>`;
 }
 
 /** 已删配图那几行的点击(从 onTrashClick 分出来):缩略图 = 看大图;动作钮 = 还原 / 彻底删除;
@@ -206,20 +305,21 @@ function onTrashImageClick(el: HTMLElement): boolean {
       // 确认期间列表可能已被远端刷新重载:那张图不在了就弃(绝不误删)。
       const still = trashImgs.some((g) => g.images.some((im) => im.id === id));
       if (!still || trashBusy) return;
-      void trashRun((space) => purgeItemImage(space, id));
+      // A7(WM-04):彻底删除做完要说话(此前还原、清空都有回执,唯独它一声不吭)。
+      void trashRun((space) => purgeItemImage(space, id), t("panes.purgedImage"));
     });
   }
   return true;
 }
 
-async function trashRun(op: (space: string) => Promise<unknown>, doneMsg?: string) {
+async function trashRun(op: (space: string) => Promise<unknown>, doneMsg: string) {
   if (trashBusy) return;
   const space = getCurrentSpace();
   trashBusy = true;
   renderTrash();
   try {
     await op(space);
-    if (space === getCurrentSpace() && doneMsg) showBar(doneMsg, true);
+    if (space === getCurrentSpace()) showBar(doneMsg, true);
   } catch (err) {
     if (space === getCurrentSpace()) showErr(err);
   } finally {
@@ -232,26 +332,55 @@ async function trashRun(op: (space: string) => Promise<unknown>, doneMsg?: strin
   }
 }
 
+/** 一段的「清空」(Q1 / A19):确认句说清清的是哪一段、几条、几张配图;执行钮全宽(重破坏那一档)。 */
+function askEmpty(sec: TrashSec, from: HTMLElement): void {
+  const n = rowsOf(sec).length;
+  const m = imgCount(sec);
+  if ((!n && !m) || trashBusy) return;
+  // 「几条」与「几张配图」各自为 0 时不说(「0 条和 2 张配图」是句空话)。
+  const items = sec === "ideas" ? t("panes.whatNotes", { n }) : t("panes.whatTasks", { n });
+  const images = t("panes.whatImages", { m });
+  const what = m === 0 ? items : n === 0 ? images : t("panes.whatBoth", { items, images });
+  const q = sec === "ideas" ? t("panes.emptyIdeasQ", { what }) : t("panes.emptyTasksQ", { what });
+  confirmBar(
+    q,
+    t("panes.emptyTrashYes"),
+    () => {
+      if (trashBusy || (!rowsOf(sec).length && !imgCount(sec))) return; // 期间已重载成空/在写:弃
+      void trashRun(
+        (space) => (sec === "ideas" ? purgeArchived(space) : purgeArchivedTasks(space)),
+        sec === "ideas" ? t("panes.ideasEmptied") : t("panes.tasksEmptied"),
+      );
+    },
+    undefined,
+    { from },
+  );
+}
+
 function onTrashClick(e: Event) {
   const el = e.target as HTMLElement;
-  if (el.id === "trash-empty") {
-    const m = imgCount();
-    if ((!trashRows.length && !m) || trashBusy) return;
-    // 清空连已删配图一起销毁(core 同一事务,用户面 149):确认句把张数说出来。
-    const q = m === 0 ? t("panes.emptyTrashQ", { n: trashRows.length }) : t("panes.emptyTrashMixedQ", { n: trashRows.length, m });
-    confirmBar(q, t("panes.emptyTrashYes"), () => {
-      if (trashBusy || (!trashRows.length && !imgCount())) return; // 期间已重载成空/在写:弃
-      void trashRun(
-        async (space) => {
-          const n = await purgeAllTrash(space);
-          return n;
-        },
-        t("panes.trashEmptied"),
-      );
-    });
+  const emptyBtn = el.closest<HTMLElement>("[data-trash-empty]");
+  if (emptyBtn) {
+    askEmpty(emptyBtn.dataset.trashEmpty as TrashSec, emptyBtn);
     return;
   }
   if (onTrashImageClick(el)) return;
+  // 长卡的「展开 / 收起」(A16):只翻折叠,别冒到下面「点卡 = 开合操作面」那一支。
+  if (onFoldClick(el)) return;
+  // 条目自己的缩略图(A15):看大图(只读),不开合操作面。
+  const thumb = el.closest<HTMLElement>(".thumb[data-img]");
+  const thumbCard = thumb?.closest<HTMLElement>("[data-trash]");
+  if (thumb && thumbCard) {
+    if (thumb.classList.contains("err")) {
+      thumb.classList.remove("err"); // 暂态读错不判死:点一下重试(同时间轴)
+      void fillThumb(thumb);
+      return;
+    }
+    const metas = trashRowImgs.get(thumbCard.dataset.trash!) ?? [];
+    const idx = metas.findIndex((m) => m.id === thumb.dataset.img);
+    if (idx >= 0) void openViewer(metas, idx, true);
+    return;
+  }
   const act = el.closest<HTMLElement>("[data-trash-act]")?.dataset.trashAct;
   if (!act) {
     // 点卡片本身 = 开合它的操作面板(至多一张开着,同归档册 / 同时间轴)。写在途整面禁点,
@@ -279,12 +408,16 @@ function onTrashClick(e: Event) {
     return;
   }
   if (act === "purge") {
-    confirmBar(t("panes.purgeOneQ"), t("panes.purge"), () => {
+    // 159(主控补,对齐桌面 trash.purgeOne*Q):确认写「无法恢复」,带图时说清连带删掉几张(这一条自己的配图)。
+    const m = trashRowImgs.get(row.id)?.length ?? 0;
+    const q = m > 0 ? t("panes.purgeOneImagesQ", { m }) : t("panes.purgeOneQ");
+    confirmBar(q, t("panes.purge"), () => {
       // 确认期间列表可能已被远端刷新重载:按 id 重取现行,行没了就弃(绝不误删别行)。
       const fresh = trashRows.find((r) => r.id === row.id);
       if (!fresh || trashBusy) return;
       const freshTask = isTaskStage(fresh.stage);
-      void trashRun((space) => (freshTask ? purgeTask(space, fresh.id) : purgeNote(space, fresh.id)));
+      // A7(WM-04):彻底删除做完要说话。
+      void trashRun((space) => (freshTask ? purgeTask(space, fresh.id) : purgeNote(space, fresh.id)), t("panes.purged"));
     });
   }
 }
@@ -313,8 +446,12 @@ export async function loadSealed(): Promise<void> {
     // (按 id 匹配),但它会让「其实没有卡开着」的状态无声地存活到下一轮。
     if (sealedOpenId !== null && !rows.some((r) => r.id === sealedOpenId)) sealedOpenId = null;
     renderSealed();
+    const want = sealedLocate; // A14:同回收站那条
+    sealedLocate = null;
+    if (want !== null) applyLocate(box, `[data-sealed="${want.id}"]`, want);
   } catch (err) {
     if (space !== getCurrentSpace() || seq !== sealedSeq) return;
+    sealedLocate = null;
     sealedRows = [];
     sealedOpenId = null;
     box.innerHTML = `<p class="empty warn-ink">${t("panes.sealedLoadFailed", { error: esc(errDetail(err)) })}</p>`;
@@ -412,32 +549,84 @@ const SEARCH_STATUS_LABEL: Record<SearchStatus, string> = {
   sealed: t("panes.hitSealed"),
 };
 
+// 回收站里的命中写「回收站 · 任务 / 随记 / 长文」(159 / W3 Q12,WM-29:此前只写「回收站」,看不出原来是什么)。
+// 用词与另几枚章同一份(「随记」「任务」「长文」),⛔ 别另起一套。
+const TRASH_KIND_LABEL: Record<NonNullable<SearchHitItem["trash_kind"]>, string> = {
+  idea: t("panes.hitInbox"),
+  task: t("panes.hitTask"),
+  doc: t("panes.hitDoc"),
+};
+function hitLabel(h: SearchHitItem): string {
+  if (h.status !== "archived") return SEARCH_STATUS_LABEL[h.status] ?? h.status;
+  // core 对回收站行恒给 trash_kind(213e3c7a);缺 = 契约断了,响亮抛(同桌面 search.ts::badgeLabel,不猜)。
+  if (h.trash_kind === null) throw new Error(`search: archived hit ${h.id} without trash_kind`);
+  return t("panes.hitTrashKind", { kind: TRASH_KIND_LABEL[h.trash_kind] });
+}
+
 let searchSeq = 0;
 /** 最近一次搜到的命中(转屏重画用;加载中 / 空词 / 出错时不留)。 */
-let searchHits: import("./api").SearchHitItem[] = [];
+let searchHits: SearchHitItem[] = [];
+/** 屏上这批**结果卡**是哪个词搜出来的(trim 后);标红按它。"" = 屏上不是结果(提示 / 搜索中 / 没找到 / 出错)。 */
+let shownQuery = "";
+/** 屏上那一屏(结果 / 没找到 / 提示)是替哪个词画的:输入框里的词与它不同 = 「改了词」(Q8 / WM-24)。
+ *  null = 屏上那一屏已经作废(改过词、清掉了旧结果,还没换上新的)—— 这时哪怕改回原来那个词也得重搜:
+ *  「改一个字又删掉」的那一下,旧结果已经清了、在途那一趟也作废了,不重搜就停在「搜索中…」。 */
+let askedQuery: string | null = "";
+/** 打字停一下再搜(159 / W3 Q8:和桌面一样打完自动出;§2.4 `INPUT_DEBOUNCE`)。 */
+let searchTimer: number | undefined;
+
+const searchInput = (): HTMLInputElement => $("search-input") as HTMLInputElement;
+const searchWords = (q: string): string[] => q.split(/\s+/).filter((w) => w !== "");
 
 function renderHits() {
-  $("search-results").innerHTML = splitCols(
-    searchHits.map(
-      (h) => `<article class="card" data-hit="${esc(h.id)}" data-hit-status="${esc(h.status)}"><div class="body">
-              <p class="content">${contentHtml(h.content, false)}</p>
-              <footer><span class="pill">${SEARCH_STATUS_LABEL[h.status] ?? esc(h.status)}</span>
+  const box = $("search-results");
+  // Q8(WM-15):写「N 条匹配」;A4(WM-06):「改过的旧版本也一起搜」那句有结果时也在(此前只在空态露脸)。
+  const head = `<p class="hit-head"><b>${t("panes.searchCount", { n: searchHits.length })}</b> · ${t("panes.searchPrompt")}</p>`;
+  box.innerHTML =
+    head +
+    splitCols(
+      searchHits.map((h) => {
+        // 159 / W3 A16(WM-11):长条目照时间轴卡夹到八行(settleFolds 量)、长文照长文列表卡画(不露 `#`)。
+        // 回收站里的长文看 `trash_kind`(core 判的归属,前端不另判)。
+        const isDoc = h.status === "doc" || h.trash_kind === "doc";
+        const body = isDoc ? docBodyHtml(h.content) : `<p class="content clamped">${contentHtml(h.content, false)}</p>`;
+        // A4(WM-06):只在改过的旧版本里命中 —— 卡上画的是现在的正文,里面没有那个词、不标红,得说一声。
+        const old = h.history_only ? `<span class="chip old-hit">${t("panes.oldVersionHit")}</span>` : "";
+        return `<article class="card${isDoc ? " doc-card" : ""}" data-hit="${esc(h.id)}" data-hit-status="${esc(h.status)}"><div class="body">
+              ${body}
+              <footer><span class="pill">${esc(hitLabel(h))}</span>${old}
                 <time>${esc(fmtWhen(h.created_at))}</time>
-                ${h.topics.map((t) => `<span class="chip">${esc(t)}</span>`).join("")}</footer>
-            </div></article>`,
-    ),
-    colsOf($("search-results")),
-  );
+                ${h.topics.map((tp) => `<span class="chip">${esc(tp)}</span>`).join("")}</footer>
+            </div></article>`;
+      }),
+      colsOf(box),
+    );
+  // Q8(WM-15):命中词标红 —— 只标正文(题目 / 摘要 / 正文),不标卡脚的章与标签。⚠ 排在量折叠之前(标红改字重)。
+  const words = searchWords(shownQuery);
+  for (const el of box.querySelectorAll<HTMLElement>(".card .content, .card .doc-title, .card .doc-ex")) markHits(el, words);
+  settleFolds(box);
+}
+
+/** 作废在途的查询并把结果区换成「词变了」之后该有的样子(Q8 / WM-24:一改词就先清掉旧结果,别让旧结果挂在新词下面)。 */
+function dropShownHits(q: string, pending: boolean): void {
+  searchSeq++;
+  searchHits = [];
+  shownQuery = "";
+  askedQuery = null;
+  $("search-results").innerHTML = `<p class="muted empty">${pending && q !== "" ? t("panes.searching") : t("panes.searchPrompt")}</p>`;
 }
 
 async function runSearch() {
+  window.clearTimeout(searchTimer);
   // 序号先行(实现审 L7):空查询也要作废在途的旧查询——否则「清空再点搜」后,
   // 旧查询的迟到结果会把空态盖回旧列表。
   const space = getCurrentSpace();
   const seq = ++searchSeq;
-  const q = ($("search-input") as HTMLInputElement).value.trim();
+  const q = searchInput().value.trim();
   const box = $("search-results");
+  askedQuery = q;
   searchHits = [];
+  shownQuery = "";
   if (!q) {
     box.innerHTML = `<p class="muted empty">${t("panes.searchPrompt")}</p>`;
     return;
@@ -447,34 +636,94 @@ async function runSearch() {
     const hits = await searchNotes(space, q);
     if (space !== getCurrentSpace() || seq !== searchSeq) return;
     searchHits = hits;
-    if (hits.length) renderHits();
-    else box.innerHTML = `<p class="muted empty">${t("panes.searchNoHit", { q: esc(q) })}</p>`;
+    if (hits.length) {
+      shownQuery = q;
+      renderHits();
+    } else box.innerHTML = `<p class="muted empty">${t("panes.searchNoHit", { q: esc(q) })}</p>`;
   } catch (err) {
     if (space !== getCurrentSpace() || seq !== searchSeq) return;
+    searchHits = [];
+    shownQuery = "";
     box.innerHTML = `<p class="empty warn-ink">${t("panes.searchFailed", { error: esc(errDetail(err)) })}</p>`;
   }
 }
 
-/** 搜到了要到得了(ui-audit P1 #8):活跃条目回时间轴定位闪卡(focusCard 自带
- *  「已不在时间轴」响亮提示),回收站/归档册命中切对应面现读。 */
-function onSearchClick(e: Event) {
-  const card = (e.target as HTMLElement).closest<HTMLElement>("[data-hit]");
-  if (!card) return;
-  const status = card.dataset.hitStatus as SearchStatus;
-  if (status === "archived") deps.showPane("trash");
-  else if (status === "sealed") deps.showPane("sealed");
-  else deps.focusCard(card.dataset.hit!); // 随记 / 长文 / 任务:落到哪一面由 main.ts 按主归属(kind)定
+/** 打字停一下再搜(Q8)。⛔ 中文输入法组字期间(`isComposing`)不触发:那时框里是拼音字母,搜了也是白搜一趟 IPC;
+ *  上屏那一刻(`compositionend`)再排。词没变(比如只多打了个空格)不重搜。 */
+function scheduleSearch(): void {
+  window.clearTimeout(searchTimer);
+  if (searchInput().value.trim() === askedQuery) return;
+  searchTimer = window.setTimeout(() => void runSearch(), INPUT_DEBOUNCE_MS);
 }
 
-/** 开搜索面(main.ts::openPane 调):聚焦输入框,顺带把空态那句话画上(UI 一致性 M8)。
- *  此前这一面开出来是「标题 + 输入框 + 四分之三屏的空白」,而**搜的范围**(回收站 / 归档 /
- *  改过的旧版本)一个字都没说 —— 那句话 `runSearch` 里早就有,却只在「搜了个空词」时才露脸,
- *  第一次开面反而看不到。桌面那边(`src/search.ts`)进搜索视图就画 idle 态,这是把两端拉齐。
- *  ⚠ 只在真空时画:关面再开时上一轮的结果与输入框里的词都还留着(既有行为),别拿空态盖掉。 */
+function onSearchInput(e: Event): void {
+  const q = searchInput().value.trim();
+  const composing = (e as InputEvent).isComposing === true;
+  if (q !== askedQuery) dropShownHits(q, !composing);
+  if (q === "") {
+    // 删空了:当场回提示(不等去抖),在途的作废。
+    window.clearTimeout(searchTimer);
+    askedQuery = "";
+    return;
+  }
+  if (composing) {
+    window.clearTimeout(searchTimer);
+    return;
+  }
+  scheduleSearch();
+}
+
+/** 搜到了要到得了(ui-audit P1 #8):活跃条目回时间轴 / 长文定位,回收站 / 归档册命中切到对应面并定位到那一条(A14)。
+ *  都经 main.ts 的 `jumpFromSearch`:它负责「按一次返回回到这里」那一层(A3)。 */
+function onSearchClick(e: Event) {
+  if (onFoldClick(e.target as HTMLElement)) return; // 长卡的「展开 / 收起」只翻折叠,不跳走(A16)
+  const card = (e.target as HTMLElement).closest<HTMLElement>("[data-hit]");
+  if (!card) return;
+  const hit = searchHits.find((h) => h.id === card.dataset.hit);
+  if (!hit) return;
+  window.clearTimeout(searchTimer); // 正要排的那一趟重搜作废:人已经点进去了
+  deps.jumpFromSearch(hit);
+}
+
+/** 开搜索面(main.ts::openPane 调):空着时把空态那句话画上(UI 一致性 M8)。
+ *  ⚠ 只在真空时画:关面再开时上一轮的结果与输入框里的词都还留着(既有行为),别拿空态盖掉。
+ *  ⭐ 159 / W3 A17(WM-12):**有结果时不把焦点塞回框里** —— 从结果点进去再回来、或顶栏再开一次,是接着看结果的;
+ *  此前一律 focus ⇒ 键盘弹起盖半屏、页面被滚回顶。要换词点一下框就是。 */
 export function focusSearch() {
   const box = $("search-results");
   if (box.innerHTML === "") box.innerHTML = `<p class="muted empty">${t("panes.searchPrompt")}</p>`;
-  ($("search-input") as HTMLInputElement).focus();
+  // 上次的结果卡留着(不重画),它们的夹线是当时那一档字号按 px 算死的 ⇒ 开面时按现在这一档重量一遍(同时间轴关面那条,fold.ts)。
+  resettleFolds("#search-results");
+  if (!box.querySelector(".card")) searchInput().focus();
+}
+
+// ---- 跳到回收站 / 归档册里那一条(159 / W3 A14,WM-07 / X-07)-------------------------------
+// 此前点回收站里的命中只到回收站顶部,那条在屏外。⇒ 开面那趟读完、画好之后滚到那张卡、挂定位框;
+// 回收站 159 起分「随记」「任务」两段,那张卡本来就画在它那一段里,滚到它就是到了对应段。
+type Locate = { id: string; note: string | null };
+let trashLocate: Locate | null = null;
+let sealedLocate: Locate | null = null;
+
+/** 下一次那一面画好时落到这一条(main.ts 开面**之前**调)。`note` = 落点卡上要说的一句(只在旧版本命中,A4)。 */
+export function locateInPane(pane: "trash" | "sealed", id: string, note: string | null): void {
+  if (pane === "trash") trashLocate = { id, note };
+  else sealedLocate = { id, note };
+}
+
+function applyLocate(box: HTMLElement, sel: string, want: Locate): void {
+  const card = box.querySelector<HTMLElement>(sel);
+  if (!card) {
+    showError(t("panes.locateGone")); // 期间被还原 / 彻底删 / 取消归档了:响亮说,不静默停在顶上
+    return;
+  }
+  if (want.note !== null) {
+    const p = document.createElement("p");
+    p.className = "locate-note";
+    p.textContent = want.note;
+    card.querySelector(".body")?.append(p);
+  }
+  card.scrollIntoView({ block: "center", behavior: "smooth" });
+  markLocated(card);
 }
 
 /** 切空间后清空各面的陈旧内容(面会随 pane 关闭,重开时现读)。 */
@@ -483,11 +732,18 @@ export function resetPanesForSpaceChange() {
   sealedSeq++;
   searchSeq++;
   trashRows = [];
+  trashImgs = [];
+  trashRowImgs = new Map();
   trashOpenId = null;
   sealedRows = [];
   sealedOpenId = null;
   clearConfirm();
   searchHits = [];
+  shownQuery = "";
+  askedQuery = "";
+  window.clearTimeout(searchTimer);
+  trashLocate = null;
+  sealedLocate = null;
   $("trash-list").innerHTML = "";
   $("sealed-list").innerHTML = "";
   $("search-results").innerHTML = "";
@@ -500,11 +756,14 @@ export function initPanes(d: Deps) {
   $("sealed-pane").addEventListener("click", onSealedClick);
   $("search-results").addEventListener("click", onSearchClick);
   $("search-btn").addEventListener("click", () => void runSearch());
+  $("search-input").addEventListener("input", onSearchInput);
+  // 组字上屏那一刻补排一趟(组字期间的 input 不排,见 scheduleSearch)。
+  $("search-input").addEventListener("compositionend", scheduleSearch);
   watchCols($("trash-list"), renderTrash);
   watchCols($("sealed-list"), renderSealed);
   watchCols($("search-results"), renderHits);
   $("search-input").addEventListener("keydown", (e) => {
     if ((e as KeyboardEvent).isComposing) return; // IME 组合期的 Enter 是上屏,不是搜索
-    if ((e as KeyboardEvent).key === "Enter") void runSearch();
+    if ((e as KeyboardEvent).key === "Enter") void runSearch(); // 不等去抖:回车就是「现在搜」
   });
 }

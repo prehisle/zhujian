@@ -514,7 +514,8 @@ pub fn add_topic_by_title(
     if repo::active_task_stage(&tx, id).map_err(|e| e.to_string())?.is_none() {
         return Err("打标签失败:任务不存在或已归档".to_string());
     }
-    let topic_id = match repo::topic_id_by_title(&tx, title).map_err(|e| e.to_string())? {
+    // 同名(大小写不敏感,W3 A11)复用,口径与挑选顺序见 repo::topic_title_clash。
+    let topic_id = match repo::topic_id_for_reuse(&tx, title).map_err(|e| e.to_string())? {
         Some(existing) => existing,
         None => {
             let minted = repo::insert_topic(&tx, title).map_err(|e| e.to_string())?;
@@ -1104,13 +1105,25 @@ mod tests {
         assert!(add_topic_by_title(&mut conn, &mut clock, &id, "  ").is_err());
         assert!(add_topic_by_title(&mut conn, &mut clock, "ghost", "孤儿标签").is_err());
         assert!(
-            repo::topic_id_by_title(&conn, "孤儿标签").unwrap().is_none(),
+            repo::topic_id_for_reuse(&conn, "孤儿标签").unwrap().is_none(),
             "目标守卫在建标签之前:不留没人要的空标签"
         );
         let arch = mk(&conn, "已删的");
         archive(&mut conn, &mut clock, &arch).unwrap();
         assert!(add_topic_by_title(&mut conn, &mut clock, &arch, "别挂我").is_err());
-        assert!(repo::topic_id_by_title(&conn, "别挂我").unwrap().is_none());
+        assert!(repo::topic_id_for_reuse(&conn, "别挂我").unwrap().is_none());
+    }
+
+    /// W3 A11:按名挂是复用路,「Work」在时打「work」挂「Work」,⛔ 不另建(否则这条成了
+    /// 造出 Work / work 并存的后门)。
+    #[test]
+    fn add_topic_by_title_reuses_a_case_only_match() {
+        let (mut conn, mut clock) = fresh_db();
+        let id = mk(&conn, "任务");
+        let work = crate::notes::create_topic(&mut conn, &mut clock, "Work").unwrap();
+        assert_eq!(add_topic_by_title(&mut conn, &mut clock, &id, "work").unwrap(), work);
+        let n: i64 = conn.query_row("SELECT COUNT(*) FROM topics", [], |r| r.get(0)).unwrap();
+        assert_eq!(n, 1, "没有另建「work」");
     }
 
     #[test]

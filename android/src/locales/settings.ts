@@ -8,6 +8,9 @@
 import { defineMessages } from "./entry";
 
 export const settings = defineMessages({
+  // 159 / W3 Q7(WM-16 / X-08):设置里那一行「空间…」(开的是同步页那同一页)。
+  "settings.spacesTitle": { zh: "空间", en: "Spaces" },
+  "settings.spacesSub": { zh: "每个空间是一本独立的本子。新建、切换、改名都在这里。", en: "Each space is a separate notebook. Create, switch and rename them here." },
   "settings.langTitle": { zh: "语言", en: "Language" },
   "settings.langSub": { zh: "界面语言。「自动」跟随系统;改档后本页会重新载入。只影响这台设备,不同步到别的设备。", en: "Interface language. Auto follows the system; the page reloads after switching. This device only; it does not sync." },
   "settings.compressTitle": { zh: "压缩大图", en: "Compress large images" },

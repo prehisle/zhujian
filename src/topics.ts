@@ -12,6 +12,8 @@ import "./topics.css";
 import { el, onDragTarget } from "./dom";
 import { docTitle } from "./docs";
 import { errDetail, errText } from "./err";
+import { renderContent } from "./item-images";
+import { settlePreviewFolds } from "./fold";
 
 // 标签视图。底层数据是 topics/item_topic(命令名、表名沿用 topic),对用户重定位为
 // 「标签」——轻量分类 + 下钻聚合(挂该标签的灵感 + 任务),不再承诺「知识结构」。早期
@@ -108,6 +110,11 @@ const SKELETON = `
   <main id="list"></main>
   <footer id="mergebar" class="mergebar" hidden>
     <span id="mb-hint" class="mb-hint"></span>
+    <div id="mb-confirm" class="mb-confirm" hidden>
+      <span id="mb-q" class="mb-q"></span>
+      <button id="mb-yes" class="mb-btn go" type="button">${t("topics.mergeYes")}</button>
+      <button id="mb-no" class="mb-btn" type="button">${t("topics.cancel")}</button>
+    </div>
     <div id="mb-chips" class="mb-chips"></div>
     <input id="mb-rename" class="mb-rename" type="text" placeholder="${t("topics.mergeRenamePlaceholder")}" hidden />
     <button id="mb-merge" class="mb-btn go" type="button" disabled>${t("topics.merge")}</button>
@@ -134,6 +141,10 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
   const mbRename = view.querySelector("#mb-rename") as HTMLInputElement;
   const mbMerge = view.querySelector("#mb-merge") as HTMLButtonElement;
   const mbCancel = view.querySelector("#mb-cancel") as HTMLButtonElement;
+  const mbConfirm = view.querySelector("#mb-confirm") as HTMLElement;
+  const mbQ = view.querySelector("#mb-q") as HTMLElement;
+  const mbYes = view.querySelector("#mb-yes") as HTMLButtonElement;
+  const mbNo = view.querySelector("#mb-no") as HTMLButtonElement;
 
   // ---- loaded data (refreshed together) ------------------------------------
   let trees: TopicTree[] = []; // every tag (incl. empties), notes attached
@@ -320,7 +331,8 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       actions.classList.toggle("open", open);
       actions.replaceChildren(...nodes);
     };
-    const showActions = () =>
+    const showActions = () => {
+      kindHint.remove(); // 类型框下那行说明只跟着类型框走(W3 159 / Q12)
       swapActions(
         false,
         tbtn(t("topics.color"), openColor),
@@ -328,6 +340,9 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         tbtn(t("topics.rename"), openEdit),
         tbtn(t("topics.delete"), confirmDelete, true),
       );
+    };
+    // 「类型」是干什么的,此前两端都没说(WD-35)⇒ 类型框打开时,这一行下面多一行小字。
+    const kindHint = el("p", { className: "tk-hint", textContent: t("topics.kindHint") });
 
     // 类型:一个自由文本输入(默认填当前类型),就地替换动作区。写入走 set_topic_kind
     // (空 = 清类型)。类型是元数据,供日后按类型筛选(如「人名」)。
@@ -349,6 +364,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         return;
       }
       await refresh();
+      revealRow(topic.id, false);
     }
     function openKind(): void {
       const input = el("input", {
@@ -372,13 +388,15 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         tbtn(t("topics.clear"), () => void saveKind(null)),
         tbtn(t("topics.cancel"), showActions),
       );
+      head.after(kindHint);
       input.focus();
       input.select();
     }
 
     // 颜色:调色板行(一排色块 + 无色),就地替换动作区(同「删除?」的 in-place swap)。
-    // 点色块即写入并刷新——手选热标签,默认无色。
+    // 点色块即写入并刷新——手选热标签,默认无色。W3 159 / A8:写完说一声、列表留在这一行(WD-07 / 新撞)。
     async function setColor(hex: string | null): Promise<void> {
+      disarmConfirm();
       try {
         await invoke("set_topic_color", { id: topic.id, color: hex });
       } catch (e) {
@@ -386,6 +404,8 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         return;
       }
       await refresh();
+      revealRow(topic.id);
+      toastAction(hex === null ? t("topics.colorCleared", { name: topic.title }) : t("topics.colorSet", { name: topic.title }));
     }
     function openColor(): void {
       const swatch = (hex: string | null): HTMLElement => {
@@ -402,11 +422,14 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         });
         return b;
       };
-      swapActions(
-        true,
-        el("div", { className: "color-row" }, [...TAG_COLORS.map((c) => swatch(c.hex)), swatch(null)]),
-        tbtn(t("topics.done"), showActions),
-      );
+      // 「完成」钮拿掉了(W3 159 / Q12,WD-34):点色点当场就写、面板就收,那枚钮从来用不上。
+      // 不选就走:Esc / 点别处收起(同删除确认那套 armDismiss,teardown 走 mount 级 confirmOff)。
+      disarmConfirm();
+      confirmOff = armDismiss(actions, () => {
+        confirmOff = null;
+        showActions();
+      });
+      swapActions(true, el("div", { className: "color-row" }, [...TAG_COLORS.map((c) => swatch(c.hex)), swatch(null)]));
     }
 
     function confirmDelete(): void {
@@ -418,17 +441,24 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         showActions();
       });
       confirmOff = off;
+      // W3 159 / Q3(WD-14):照手机的字说清后果 —— 有内容的说「N 项只摘掉这枚标签,内容不动」。
+      // A9(WD-10):**执行钮在左、取消在右**。动作区靠右对齐,原「删除」那一格的落点被「取消」接住
+      // (两枚都是两个字、同宽)—— 手快双击的第二下落在取消上,不再直接删掉(此前确认钮正落在原位)。
+      const n = itemsOn([topic.id]);
       swapActions(
         true,
-        el("span", { className: "td-q", textContent: t("topics.deleteConfirm") }),
-        tbtn(t("topics.cancel"), () => {
-          disarmConfirm();
-          showActions();
+        el("span", {
+          className: "td-q",
+          textContent: n > 0 ? t("topics.deleteQ", { name: topic.title, n }) : t("topics.deleteQEmpty", { name: topic.title }),
         }),
         tbtn(t("topics.delete"), () => {
           disarmConfirm();
           void doDelete();
         }, true),
+        tbtn(t("topics.cancel"), () => {
+          disarmConfirm();
+          showActions();
+        }),
       );
     }
     async function doDelete(): Promise<void> {
@@ -439,6 +469,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         return;
       }
       await refresh();
+      toastAction(t("topics.deletedToast", { name: topic.title })); // Q3:做完说一声(不配撤销,确认里已说清)
     }
     showActions();
     head.append(actions);
@@ -449,8 +480,10 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       caret.textContent = open ? "▾" : "▸";
       sec.classList.toggle("open", open);
       const existing = sec.querySelector(".topic-body");
-      if (open && !existing) sec.append(buildBody(topic, tasks));
-      else if (!open && existing) existing.remove();
+      if (open && !existing) {
+        sec.append(buildBody(topic, tasks));
+        if (sec.isConnected) settleBodyFolds(sec); // 点开那一下当场量;重画那条路由 renderList 末尾统一量(那时还没进文档)
+      } else if (!open && existing) existing.remove();
     }
 
     head.addEventListener("click", () => {
@@ -464,33 +497,45 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     });
 
     // ---- inline rename — replaces the row while open ----
+    // W3 159:改完说一声、列表留在这一行(A8,WD-07 / 新撞);Esc 收得掉(A8,WD-05 —— 新建行与类型框
+    // 早就能);撞名时字留在框里、红字就在框下,不带「出错:」(A11 / Q12,WD-33)。
     function openEdit(): void {
       const titleInput = el("input", { className: "te-title", value: topic.title }) as HTMLInputElement;
       const err = el("span", { className: "te-err" });
+      const cancel = (): void => {
+        void refresh().then(() => revealRow(topic.id, false));
+      };
       const save = async () => {
+        const before = topic.title;
         try {
           await invoke("update_topic", { id: topic.id, title: titleInput.value });
         } catch (e) {
-          err.textContent = errText(e);
+          err.textContent = topicErr(e);
           return;
         }
         await refresh();
+        revealRow(topic.id);
+        const after = titles.get(topic.id);
+        if (after !== undefined && after !== before) toastAction(t("topics.renamed", { name: after }));
       };
       titleInput.addEventListener("keydown", (e) => {
         if (e.isComposing) return; // IME 组合期的 Enter 是上屏,不是保存(ui-audit P0 #1)
         if (e.key === "Enter") {
           e.preventDefault();
           void save();
+        } else if (e.key === "Escape") {
+          e.preventDefault();
+          cancel();
         }
       });
       sec.replaceChildren(
         el("div", { className: "topic-edit" }, [
           el("span", { className: "te-label", textContent: t("topics.renameTitle") }),
           titleInput,
+          err,
           el("div", { className: "te-actions" }, [
-            el("button", { className: "mb-btn", textContent: t("topics.cancel"), onclick: () => void refresh() }),
+            el("button", { className: "mb-btn", textContent: t("topics.cancel"), onclick: cancel }),
             el("button", { className: "mb-btn go", textContent: t("topics.save"), onclick: () => void save() }),
-            err,
           ]),
         ]),
       );
@@ -522,7 +567,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       meta.push(el("span", { className: `dtask-pri p${task.priority}`, textContent: t("topics.priority", { label: PRIORITY_LABEL[task.priority] }) }));
     }
     const card = el("article", { className: "dtask" }, [
-      el("p", { className: "dtask-title", textContent: task.title }),
+      el("p", { className: "dtask-title clamped" }, [renderContent(task.title, [])]),
       el("div", { className: "dtask-meta" }, meta),
     ]);
     card.append(copyButton(task.title, "dtask-copy"));
@@ -532,10 +577,12 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
   // The inline body shown when a tag row is expanded: its filed ideas + tagged tasks.
   function buildBody(topic: TopicTree, tasks: TaskItem[]): HTMLElement {
     const today = localToday();
+    // W3 159 / A16(WD-21):正文照「只读预览」画 —— 清单行画成方框(同随记的认行,不给点),长的先夹在
+    // 八行,落 DOM 后 settleBodyFolds 量了再定(此前 `- [ ]` 原样露着、一条能占满一屏)。
     const noteCards = topic.notes.length
       ? topic.notes.map((n) =>
           el("article", { className: "tnote" }, [
-            el("p", { className: "tnote-text", textContent: n.content }),
+            el("p", { className: "tnote-text clamped" }, [renderContent(n.content, [])]),
             el("time", { className: "tnote-time", textContent: when(n.created_at) }),
           ]),
         )
@@ -642,6 +689,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     }
     list.replaceChildren(...built);
     paint();
+    settleBodyFolds(list);
   }
 
   // Show the right surface for the current mode/state. (No drill page anymore — tags
@@ -732,11 +780,34 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     }
     if (!showRename) renameFor = null;
 
-    mbMerge.disabled = !(n >= 2 && survivor);
-    mbMerge.textContent = confirming ? t("topics.mergeConfirm", { n }) : t("topics.merge");
+    // W3 159 / A9 + Q3(WD-10 / WD-15):确认不再是「合并」钮原地改字(那样确认钮正落在原位,手快双击
+    // 就并了),而是**提示行那一格换成一句后果 + 「并入」「取消」**;原「合并」钮在确认期间置灰 ——
+    // 双击的第二下落在一枚灰钮上,什么也不发生。后果照手机的字:几项转挂到谁、哪几枚会消失。
+    mbMerge.disabled = !(n >= 2 && survivor) || confirming;
+    mbHint.hidden = confirming;
+    mbConfirm.hidden = !confirming;
+    if (confirming && survivor) mbQ.textContent = mergeQuestion(survivor);
+  }
+
+  /** 几枚标签的名字,各自加引号连起来(「Work」、「work」)。 */
+  function quoteNames(ids: string[]): string {
+    return ids.map((id) => t("topics.nameQuoted", { name: titles.get(id) ?? "" })).join(t("topics.nameSep"));
+  }
+
+  /** 合并确认那一句(Q3,对齐手机 `topics.mergeQ`):被并掉的几枚、转挂几项、合并后叫什么。 */
+  function mergeQuestion(target: string): string {
+    const sources = [...selected].filter((id) => id !== target);
+    const names = quoteNames(sources);
+    const keep = titles.get(target) ?? "";
+    const renamed = mbRename.value.trim();
+    const finalName = renamed !== "" ? renamed : keep;
+    const n = itemsOn(sources);
+    const q = n > 0 ? t("topics.mergeQ", { sources: names, target: keep, final: finalName, n }) : t("topics.mergeQEmpty", { sources: names, target: keep });
+    return finalName !== keep ? q + t("topics.mergeQRename", { name: finalName }) : q;
   }
 
   function setMerging(on: boolean): void {
+    disarmConfirm(); // 合并确认的 Esc / 点别处监听不跨模式存活
     merging = on;
     selected.clear();
     survivor = null;
@@ -755,15 +826,29 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     render();
   }
 
+  function askMerge(): void {
+    if (selected.size < 2 || !survivor || confirming) return;
+    confirming = true;
+    paintBar();
+    // 确认态的 Esc / 点别处 = 退回挑选(同删除确认那套 armDismiss;teardown 走 mount 级 confirmOff)。
+    disarmConfirm();
+    confirmOff = armDismiss(mbConfirm, () => {
+      confirmOff = null;
+      backFromConfirm();
+    });
+  }
+  function backFromConfirm(): void {
+    disarmConfirm();
+    confirming = false;
+    paintBar();
+  }
+
   async function doMerge(): Promise<void> {
-    if (selected.size < 2 || !survivor) return;
-    if (!confirming) {
-      confirming = true;
-      paintBar();
-      return;
-    }
+    if (selected.size < 2 || !survivor || !confirming) return;
+    disarmConfirm();
     const target = survivor;
     const sources = [...selected].filter((id) => id !== target);
+    const srcNames = quoteNames(sources);
     const renamed = mbRename.value.trim();
     // Send a rename only when it actually differs from the survivor's current title.
     const newTitle = renamed && renamed !== (titles.get(target) ?? "") ? renamed : null;
@@ -771,6 +856,9 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       await invoke("merge_topics", { sourceIds: sources, targetId: target, newTitle });
       setMerging(false);
       await refresh();
+      revealRow(target);
+      // Q3:做完说一声(不配撤销 —— 确认里已说清后果,同手机)。
+      toastAction(t("topics.mergedToast", { sources: srcNames, target: titles.get(target) ?? "" }));
     } catch (err) {
       confirming = false;
       paintBar();
@@ -788,6 +876,60 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     const f = confirmOff;
     confirmOff = null;
     if (f) f();
+  }
+
+  /** 这几枚标签名下一共挂着几项(随记 + 长文 + 任务,去重 —— 一条挂着其中两枚的只算一项)。
+   *  删除 / 合并确认里那个数(W3 159 / Q3,口径同标签行上的计数:回收站 / 归档册里的不算)。 */
+  function itemsOn(ids: string[]): number {
+    const seen = new Set<string>();
+    for (const id of ids) {
+      const tr = trees.find((x) => x.id === id);
+      for (const n of tr?.notes ?? []) seen.add(n.id);
+      for (const d of tr?.docs ?? []) seen.add(d.id);
+      for (const k of tasksByTopic.get(id) ?? []) seen.add(k.id);
+    }
+    return seen.size;
+  }
+
+  /** 新建 / 改名失败的那句红字(W3 159 / A11 + Q12,WD-33)。撞名是**认得出的错**,core 那句
+   *  「标签「X」已存在」本身就是人话 ⇒ 原样给、不挂「出错:」(§4.3:「出错:」只给认不出的);不引导合并
+   *  (用户拍的)。其余照 errText(认不出的照旧带「出错:」)。⛔ 只认 core 那一种句形(notes.rs 的
+   *  create_topic / rename_topic),别放宽成「含『已存在』」。 */
+  function topicErr(e: unknown): string {
+    const s = String(e);
+    return /^标签「.+」已存在$/.test(s) ? s : errText(e);
+  }
+
+  /** 把这一行留在眼前(W3 159 / A8,WD-07 + 新撞):新建的排在列表末尾、屏幕外;改名 / 改色后整表
+   *  重画。⇒ 重画后滚到它(已在视野里就不动)并闪一下(`flash`;取消改名那条路只滚不闪)。
+   *  它若收在一个折起来的子标签组里,先把那一组摊开 —— 否则滚过去也看不见。 */
+  function revealRow(id: string, flash = true): void {
+    let sec = sections.get(id);
+    const kids = sec?.parentElement;
+    if (sec && kids?.classList.contains("topic-kids") && kids.classList.contains("collapsed")) {
+      const parentId = (kids.previousElementSibling as HTMLElement | null)?.dataset.topicId;
+      if (parentId !== undefined) collapsedKids.delete(parentId);
+      render();
+      sec = sections.get(id);
+    }
+    const head = sec?.querySelector<HTMLElement>(".topic-head");
+    if (!head) return;
+    // 已在视野里就不动(改名 / 改色:列表别跳);不在就滚到中间 —— 别贴着底边停,回执浮条就压在那儿。
+    const r = head.getBoundingClientRect();
+    const l = list.getBoundingClientRect();
+    if (r.top < l.top || r.bottom > l.bottom) head.scrollIntoView({ block: "center" });
+    if (!flash) return;
+    head.classList.remove("just-born");
+    void head.offsetWidth; // 摘了再挂:同一行连着改两次也要重新闪
+    head.classList.add("just-born");
+    head.addEventListener("animationend", (e) => {
+      if (e.animationName === "born-pulse") head.classList.remove("just-born");
+    });
+  }
+
+  /** 展开态里那几条正文:没夹到东西的摘夹子,真夹到的补「展开」(fold.ts 只读预览那一形)。 */
+  function settleBodyFolds(within: ParentNode): void {
+    settlePreviewFolds(within, ".tnote-text, .dtask-title", { fold: t("board.fold"), unfold: t("board.unfold") });
   }
   async function refresh(refocus = false): Promise<void> {
     try {
@@ -827,12 +969,17 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
 
       titles = new Map(trees.map((x) => [x.id, x.title]));
       disarmConfirm(); // 全量重画:在场确认的文档级监听一并收走(codex M3)
+      // 整表重画别把人带回顶(W3 159 新撞:改名 / 改色后 scrollTop 归 0,刚改的那行跑到屏外)。
+      // 记下画之前读到哪儿、画完还回去(列表变短时 scrollTop 自己会钳)。
+      const keep = list.scrollTop;
       render();
       // First render after a (re)mount: drop back to where the user was reading.
       // scrollTop clamps itself if the list is now shorter.
       if (restorePending) {
         restorePending = false;
         list.scrollTop = savedScroll;
+      } else {
+        list.scrollTop = keep;
       }
     } catch (err) {
       lastSig = ""; // 错误页已上画:下次 refocus 即使数据没变也要重画回正常列表
@@ -851,20 +998,25 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       ntTitle.focus();
     }
   }
+  // W3 159 / A8(WD-07):建完说一声,并把新的那一行滚进眼前、闪一下(它排在列表末尾,此前在屏外);
+  // 撞名时字留在框里、红字在框下、不带「出错:」(A11 / Q12,WD-33)。
   async function doCreate(): Promise<void> {
     if (!ntTitle.value.trim()) {
       ntErr.textContent = t("topics.nameRequired");
       return;
     }
+    let id: string;
     try {
-      await invoke("create_topic", { title: ntTitle.value });
+      id = await invoke<string>("create_topic", { title: ntTitle.value });
     } catch (e) {
-      ntErr.textContent = errText(e);
+      ntErr.textContent = topicErr(e);
       return;
     }
     ntTitle.value = "";
     setCreating(false);
     await refresh();
+    revealRow(id);
+    toastAction(t("topics.created", { name: titles.get(id) ?? "" }));
   }
 
   // ---- wiring --------------------------------------------------------------
@@ -883,13 +1035,12 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
 
   mergeToggle.addEventListener("click", () => setMerging(!merging));
   mbCancel.addEventListener("click", () => setMerging(false));
-  mbMerge.addEventListener("click", () => void doMerge());
+  mbMerge.addEventListener("click", askMerge);
+  mbYes.addEventListener("click", () => void doMerge());
+  mbNo.addEventListener("click", backFromConfirm);
   mbRename.addEventListener("input", () => {
     // Typing into the rename box shouldn't keep a stale confirm armed.
-    if (confirming) {
-      confirming = false;
-      paintBar();
-    }
+    if (confirming) backFromConfirm();
   });
 
   // 视图级全局单键(键义和列表里只读卡片无冲突):N 新建标签、M 合并标签。

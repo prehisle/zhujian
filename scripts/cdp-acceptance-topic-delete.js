@@ -121,7 +121,9 @@
     delBtn().click();
     await until(() => !bar().hidden, 2000);
     ok("⑥ 超时前条开着", !bar().hidden);
-    await sleep(6800); // CONFIRM_REVERT_MS = 6s(timing.ts),留 0.8s 余量
+    // CONFIRM_REVERT_MS 6s + BAR_RETIRE_MS 1.2s(157 G1② 起读秒到点先进余温态、再收;此前这里只等 6.8s,
+    // 157 之后恒红在「条自动收」上 —— 159 复跑时顺手改),留 0.6s 余量。
+    await sleep(7800);
     ok("⑥ 超时 → 条自动收", bar().hidden);
     ok("⑥ 超时 → 库里原样", await topicIn(a));
 

@@ -140,7 +140,10 @@
           await until(() => paneOpen(), 1000);
           const row = await until(() => document.querySelector(`[data-trash="${tempId}"]`), 1500);
           if (row) {
-            click(row.querySelector('[data-trash-act="purge"]'));
+            // 51 起回收站卡的「还原 / 彻底删除」不常驻:点卡片才出操作面(此前这里直接找钮,找不到 ⇒ 抛进 cleanupError、临时卡留在回收站)
+            click(row.querySelector(".body") ?? row);
+            const purge = await until(() => document.querySelector(`[data-trash="${tempId}"] [data-trash-act="purge"]`), 1500);
+            click(purge);
             const cb = document.getElementById("confirmbar");
             await until(() => !cb.hidden, 1500);
             click(document.getElementById("confirmbar-yes"));

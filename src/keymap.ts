@@ -6,8 +6,10 @@
 // 没配,tsc 当场红。
 //
 // ⚠ 卡片键与视图键共享同一个 document 的 keydown(hotkey-menu 的 onKey 与 registerViewKeys),
-// 同一视图里两者不许撞 —— 看板卡的「归档」是 A、切归档视图是 G,回收站卡的「还原」是 U 而
-// 不是 R(R 是看板的回收站开关),都是为此错开的;改键前先看同视图的另一张表。
+// 同一视图里两者原则上不撞 —— 看板卡的「归档」是 A、切归档视图是 G,是为此错开的;改键前先看同视图的
+// 另一张表。**唯一一处刻意撞的**:看板回收站卡的「还原」与看板视图键「回收站开关」同为 R(W3 159 / Q12,
+// WD-36:两个回收站都认 R 还原)。撞了不两义靠的是**卡片键先接**:悬停 / 选中一张卡时卡片键 preventDefault,
+// `registerViewKeys` 见到已被接住的键就让位;指针不在卡上时 R 照旧是开关。
 
 /** 随记卡片(想法 tab)。 */
 export const IDEA_CARD_KEYS = {
@@ -48,8 +50,8 @@ export const BOARD_CARD_KEYS = {
   delete: "D",
 } as const;
 
-/** 看板回收站里的卡片(U 而非 R:R 是看板的视图键「回收站开关」)。 */
-export const BOARD_TRASH_KEYS = { restore: "U", deleteForever: "D" } as const;
+/** 看板回收站里的卡片。还原与随记回收站同为 R(159 起;此前是 U)—— 与视图键 R 的让位见文件头。 */
+export const BOARD_TRASH_KEYS = { restore: "R", deleteForever: "D" } as const;
 
 /** 归档册里的卡片(与看板卡「归档」同键 A,一进一出)。 */
 export const SEALED_CARD_KEYS = { unseal: "A", history: "V" } as const;

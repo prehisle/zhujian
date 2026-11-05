@@ -123,6 +123,23 @@
   white-space: pre-wrap;
   word-break: break-word;
 }
+/* W3 159 / A16(WD-30):很长的命中先夹在八行(8 × 行高 1.62),落 DOM 后量了没夹到东西就摘掉
+   (fold.ts::settlePreviewFolds);em 不写 px,理由同随记页那条(界面字号四档是整窗缩放)。 */
+.v-search .hit-text.clamped { max-height: 12.96em; overflow: hidden; }
+.v-search .fold-toggle {
+  display: block;
+  margin-top: 6px;
+  min-height: 24px;
+  font: var(--fs-12)/1.4 var(--font-sans);
+  letter-spacing: 0.04em;
+  color: var(--ink-soft);
+  background: transparent;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-pill);
+  padding: 3px 12px;
+  cursor: pointer;
+}
+.v-search .fold-toggle:hover { color: var(--ink); background: color-mix(in srgb, var(--ink) 6%, transparent); }
 .v-search .hit-text mark {
   background: var(--seal-tint);
   color: var(--seal-ink-on-seal-tint);
@@ -153,6 +170,8 @@
 .v-search .badge.doc { color: var(--ink); } /* 长文(0042) */
 .v-search .badge.task { color: var(--ink); background: color-mix(in srgb, var(--ink) 5%, transparent); }
 .v-search .badge.archived { color: var(--ink-faint); font-style: italic; }
+/* 只在改过的旧版本里命中(W3 159 / A4):虚线描边的一枚旁注,弱于「在哪」那枚章 —— 它说的是「为什么这条也在」。 */
+.v-search .badge.old-hit { color: var(--ink-soft); border-style: dashed; }
 /* 归档(成就册):正经存档,不是垃圾——朱砂描边、不斜体 */
 .v-search .badge.sealed { color: var(--seal-ink); border-color: var(--seal-line); }
 /* topic (tag) chips */

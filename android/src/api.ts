@@ -165,6 +165,12 @@ export type SearchHitItem = {
   created_at: string;
   status: SearchStatus;
   topics: string[];
+  /** true = 当前正文里没凑齐所有词、只在改过的旧版本里凑齐(W3 A4,core `repo::SearchHit`;壳 `mobile/src/shell.rs`
+   *  213e3c7a 起恒带)。卡上画的是现在的正文 ⇒ 里面没有那个词、不标红,得另说一声(panes.ts renderHits)。 */
+  history_only: boolean;
+  /** 只在回收站命中(`status === "archived"`)上有值:还原后回哪一类(core `repo::trash_kind`,W3 Q12);其余 null。
+   *  213e3c7a 起命令面恒带 ⇒ 回收站命中缺它 = 契约断了,渲染处响亮抛(不猜)。 */
+  trash_kind: "task" | "doc" | "idea" | null;
 };
 /** 编辑历史目录的一版(longform-plan §4):只有元数据,⛔ 不带正文 —— 点开才经 revisionTexts 取。 */
 export type RevisionMeta = { revision_id: number; archived_at: string; chars: number };
@@ -232,10 +238,6 @@ export const listArchivedTasks = (space: string) =>
 
 export const listSealedTasks = (space: string) =>
   invoke<TaskItem[]>("list_sealed_tasks", { spaceId: space });
-
-/** 底栏「回收站/归档册」显形用的两个计数(408-A1);只为显隐,不是列表口径。 */
-export const paneCounts = (space: string) =>
-  invoke<{ trash: number; sealed: number }>("pane_counts", { spaceId: space });
 
 export const listTopics = (space: string) => invoke<TopicItem[]>("list_topics", { spaceId: space });
 
@@ -402,10 +404,6 @@ export const purgeTask = (space: string, id: string) =>
 /** 清空任务回收站,返回删除条数。 */
 export const purgeArchivedTasks = (space: string) =>
   invoke<number>("purge_archived_tasks", { spaceId: space });
-
-/** 一次清空统一回收站(灵感+任务,core 单事务;别用两条分域清空拼)。 */
-export const purgeAllTrash = (space: string) =>
-  invoke<number>("purge_all_trash", { spaceId: space });
 
 /** 已完成任务入成就册(可查不可删)。 */
 export const sealTask = (space: string, id: string) =>

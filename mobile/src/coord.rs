@@ -350,6 +350,19 @@ impl Coord {
         Ok(())
     }
 
+    /// 空间撞名闸(W3 A11,判据 = `spaces::ensure_space_name_free`)的手机名单:**先重扫
+    /// catalog 再比**。缓存会落后于库 —— 前台空间收到别的设备的改名,要等前端接到
+    /// space-name-changed 调 `rescan_spaces`;「全部同步」会逐个激活非前台空间收进它们的改名,
+    /// 而那条路上的临时观察器不刷 catalog(codex 一轮 M1)。拿旧名单判本机这次写 = 新名漏放、
+    /// 旧名错拒。调用方(壳的 create_space / rename_space)须持 `lifecycle`,查到写之间不让
+    /// 另一次建 / 改插进来;重扫失败响亮上抛(fail-closed,不拿旧快照将就)。
+    /// ⚠ 只管「本机这次写的那一刻」:查过之后同步才进来的同名,照已拍板的边界不拦。
+    pub fn ensure_space_name_free(&self, name: &str, self_id: Option<&str>) -> Result<(), String> {
+        self.refresh_catalog()?;
+        let all = self.all_descriptors();
+        spaces::ensure_space_name_free(name, self_id, all.iter().map(|d| (d.id.as_str(), d.name.as_deref())))
+    }
+
     // ---- 前台状态 ----
 
     pub fn foreground(&self) -> (String, Phase) {
@@ -1754,6 +1767,45 @@ mod tests {
             .write(spaces::MAIN_SPACE, |c, k| notes::capture(c, k, "回滚后照写"))
             .await
             .unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// W3 A11 / codex 一轮 M1:撞名闸**先重扫 catalog 再比**。造「库里已改名、catalog 还是旧名」
+    /// (= 别的设备的改名已落进那个空间的库、前端还没 rescan):拿旧名单判,旧名错拒、新名漏放。
+    /// 两次改名各自独立可判 —— 每一格都只有「这次调用里重扫过」才过得去。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn space_name_gate_rescans_catalog_before_judging() {
+        let (coord, dir) = boot_coord("name-gate", &["Old"], fast()).await;
+        let other = coord.all_descriptors()[1].clone();
+        let rename_on_disk = |name: &str| {
+            let mut conn = Connection::open(&other.path).unwrap();
+            let mut clk = Clock::load(&conn).unwrap();
+            spaces::set_space_name(&mut conn, &mut clk, name).unwrap();
+        };
+        rename_on_disk("New");
+        assert_eq!(coord.all_descriptors()[1].name.as_deref(), Some("Old"), "前置:catalog 还是旧名");
+        assert!(coord.ensure_space_name_free("old", None).is_ok(), "旧名已经让出来了,不许错拒");
+        rename_on_disk("Newer");
+        assert_eq!(coord.all_descriptors()[1].name.as_deref(), Some("New"), "前置:catalog 又落后了");
+        assert_eq!(coord.ensure_space_name_free("newer", None).unwrap_err(), "已有同名空间「Newer」");
+        // 改名排除自己:改成自己当前名的另一种大小写放行;主库(None 名)改成它照拒。
+        assert!(coord.ensure_space_name_free("NEWER", Some(&other.id)).is_ok());
+        assert!(coord.ensure_space_name_free("NEWER", Some(spaces::MAIN_SPACE)).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 重扫失败 ⇒ 撞名闸响亮 Err,⛔ 不退回旧快照将就(codex 二轮 L1 点名的缺口:`let _ =
+    /// self.refresh_catalog();` 在正常库上照样过上面那只)。目录里放一枚 ULID 名、内容不是
+    /// SQLite 的「空间库」让 `SpaceCatalog::load` 失败;判的名字与谁都不撞,Ok 只可能来自旧快照。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn space_name_gate_fails_closed_when_rescan_fails() {
+        let (coord, dir) = boot_coord("name-gate-fail", &["家庭"], fast()).await;
+        let bogus = dir.join("01JZZZZZZZZZZZZZZZZZZZZZZZ.sqlite3"); // 合规 ULID 形态,discover 认它
+        std::fs::write(&bogus, b"this is not a sqlite database").unwrap();
+        let err = coord.ensure_space_name_free("与谁都不撞", None).unwrap_err();
+        assert!(!err.contains("已有同名空间"), "该是重扫失败,不是撞名:{err}");
+        std::fs::remove_file(&bogus).unwrap();
+        assert!(coord.ensure_space_name_free("与谁都不撞", None).is_ok(), "坏库挪走后照常放行");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

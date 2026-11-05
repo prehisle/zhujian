@@ -157,6 +157,9 @@ struct ProcessedItem {
     doc_at: Option<String>,
     /// 改过没有(157 G4 / P5,core `repo::revised_sql`):随记卡上标一枚「改过」、⋯ 菜单出「历史」。
     revised: bool,
+    /// 进回收站的时刻(W3 159 / WD-37,core `OrganizedRow::archived_at`):回收站卡写「删于 …」。
+    /// `list_archived` 的行恒有值,活跃随记 / 长文恒 null。
+    archived_at: Option<String>,
     /// Each tag as `{id, title, color}` — the 灵感 card renders them as chips, tinted by
     /// `color` (null = 无色) just like the board.
     topics: Vec<TopicItem>,
@@ -173,6 +176,7 @@ impl From<repo::OrganizedRow> for ProcessedItem {
             born_device: n.born_device,
             doc_at: n.doc_at,
             revised: n.revised,
+            archived_at: n.archived_at,
             topics: n.topics.into_iter().map(TopicItem::from).collect(),
         }
     }
@@ -324,6 +328,11 @@ struct SearchHitItem {
     created_at: String,
     status: String,
     topics: Vec<SearchTopicItem>,
+    /// true = 只在改过的旧版本里命中、当前正文里没有(W3 A4);口径见 `repo::SearchHit`。
+    history_only: bool,
+    /// 只在 `status == "archived"` 时有值:`"task"` / `"doc"` / `"idea"`(还原后回到哪类,
+    /// W3 Q12);其余 null。
+    trash_kind: Option<String>,
 }
 
 /// 命中上的一枚标签。⭐ 624 起带 `color`(用户面 74 / C):搜索结果的 chip 要画那颗认标签
@@ -359,6 +368,8 @@ fn search_notes(space_id: String, query: String, spaces: State<'_, Spaces>) -> R
                     .into_iter()
                     .map(|t| SearchTopicItem { title: t.title, color: t.color })
                     .collect(),
+                history_only: h.history_only,
+                trash_kind: h.trash_kind,
             })
             .collect())
     })
@@ -415,6 +426,10 @@ struct TaskItem {
     /// 改过没有(158 G4-A8,core `repo::revised_sql`,同 [`ProcessedItem::revised`]):看板卡 /
     /// 归档册卡上标一枚「改过」、⋯ 菜单出「历史」。
     revised: bool,
+    /// 进回收站的时刻(W3 159 / WD-37,core `TaskRow::archived_at`):看板回收站卡写「删于 …」。
+    /// `list_archived_tasks` 的行恒有值,活跃看板恒 null;归档册原样带出(并发合并的双轴行上非 null,
+    /// 前端那边不读它)。
+    archived_at: Option<String>,
     /// Every tag on this card (M:N, `item_topic`), each `{id, title}`. Empty = 无标签.
     /// The board shows them all as chips; the filter bar treats a card as belonging to
     /// each of its tags. Tag order follows the topic's `updated_at` (see repo::task_rows).
@@ -442,6 +457,7 @@ impl From<repo::TaskRow> for TaskItem {
             born_device: t.born_device,
             color: t.color,
             revised: t.revised,
+            archived_at: t.archived_at,
             topics,
         }
     }
@@ -1464,6 +1480,22 @@ fn account_taken_by_other(others: &[Arc<SpaceRuntime>], account_id: &str) -> Res
 
 /// 现读全部已装载空间的身份(§六④ 运行时校验的输入;逐空间短暂拿锁即放,
 /// 不同空间的锁互不嵌套)。
+/// 本机全部活空间的 `(id, 显示名)` —— 空间撞名闸(`spaces::ensure_space_name_free`,W3 A11)
+/// 的名单。逐个**短持**各自的库锁读名、读完即放,⛔ 绝不同时持两个空间的锁(与
+/// `live_identities` 同形);所以改名时要在拿目标空间写锁**之前**调它。hard-veto 的死空间
+/// 没装载、读不到名,不在名单里(它本来也切不进去、改不了名)。
+fn live_space_names(spaces: &Spaces) -> Result<Vec<(String, Option<String>)>, String> {
+    let mut out = Vec::new();
+    for rt in spaces.all() {
+        let name = {
+            let conn = rt.db.lock().expect("db mutex poisoned");
+            spaces::space_name(&conn)?
+        };
+        out.push((rt.id.clone(), name));
+    }
+    Ok(out)
+}
+
 fn live_identities(spaces: &Spaces) -> Result<Vec<spaces::SpaceIdentity>, String> {
     let mut out = Vec::new();
     for rt in spaces.all() {
@@ -2139,6 +2171,15 @@ async fn create_space(
     // 生命周期互斥:建库 → 装配 → 插表整段原子(创号/配对同锁,建空间期间账户闸的
     // 世界观也稳定)。空间数不设上限(spaces::DESKTOP_MAX_LIVE),不再有创建限额闸。
     let _life = spaces.lifecycle.lock().await;
+    // 撞名闸(W3 A11):在 lifecycle 内查到插表为止 —— 与 rename_space(同持 lifecycle)、
+    // 与另一次建空间都互斥,查后写之间插不进另一次**本地**新建 / 改名(同步进来的改名不走这把锁,
+    // 照已拍板的边界不拦)。
+    let names = live_space_names(&spaces)?;
+    spaces::ensure_space_name_free(
+        &trimmed,
+        None,
+        names.iter().map(|(id, n)| (id.as_str(), n.as_deref())),
+    )?;
     // 建库走共享层(multispace-plan §3):`.creating-<ULID>` staging → 全部迁移 +
     // 独立 device_id + 显示名 → rename 归位——一次成功返回的 create_space 真的是
     // 完整库,半成品绝不伪装成正式空间(残留暂存由启动 sweep 清)。
@@ -2196,14 +2237,28 @@ async fn create_space(
 /// 主库也可改——「用户真改名才落行」正是 §六⑦ 的另一半)。本地改名不经 transport,
 /// 命令成功后自行广播 space-name-changed 两窗(§4.7 三入口之三——捕获窗徽章
 /// 否则收不到,codex 二轮 H2)。
+///
+/// ⚠ W3 A11 起是 **async 命令、持 lifecycle**(与 `create_space` 同一把,也与手机壳的
+/// rename_space 同形):撞名闸「查名单 → 落名」必须与新建空间「查名单 → 建库 → 插表」共用
+/// 一道互斥,否则 create(X) 查过、还没插表时 rename(A→X) 也查过,两边都成(codex 一轮 M2)。
+/// 代价:配对 / 加入正持着 lifecycle 时,改名排队等它收场(手机一向如此)。
 #[tauri::command]
-fn rename_space(
+async fn rename_space(
     space_id: String,
     name: String,
     app: AppHandle,
     spaces: State<'_, Spaces>,
 ) -> Result<(), String> {
+    let _life = spaces.lifecycle.lock().await;
     let rt = spaces.get(&space_id)?;
+    // 撞名闸(W3 A11):名单要在拿本空间写锁**之前**收(收名单逐个短持各空间的库锁,
+    // ⛔ 不与本空间的锁嵌套;锁序 = lifecycle → db → clock,与 create_space 同)。
+    let names = live_space_names(&spaces)?;
+    spaces::ensure_space_name_free(
+        &name,
+        Some(&space_id),
+        names.iter().map(|(id, n)| (id.as_str(), n.as_deref())),
+    )?;
     {
         let (mut conn, mut clk) = rt.write_locks();
     // ReopenRequired 复核在锁内(space-entry-plan §3.2,codex 二轮 M2:旗与导入共
@@ -4526,6 +4581,51 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// W3 A11 空间撞名闸的**接线**(结构锚)。本轮选择:判据由 core 行为测守
+    /// (`ensure_space_name_free_rejects_trimmed_case_only_duplicates`),命令本体的接线由这只锚守
+    /// —— 不为它把整段命令编排搬出壳(codex 二轮认可的取舍)。钉的是:新建与改名都在拿
+    /// lifecycle 之后收名单、过闸(参数对、错误经 `?` 上抛),再落库,中途不提前放锁(codex 一轮
+    /// M2:两条共用 lifecycle 才没有查后写窗口;二轮点名的绕法 = 丢 `?` / 传错 self_id /
+    /// `drop(_life)`)。比对前剔注释、去掉全部空白。
+    #[test]
+    fn space_name_gate_is_wired_before_the_write_under_lifecycle() {
+        let src = include_str!("lib.rs");
+        let prod = &src[..src.find("#[cfg(test)]\nmod tests {").expect("测试段起点")];
+        let names_arg = "names.iter().map(|(id,n)|(id.as_str(),n.as_deref())),)?;";
+        for (sig, gate, write) in [
+            (
+                "async fn create_space(",
+                format!("spaces::ensure_space_name_free(&trimmed,None,{names_arg}"),
+                "spaces::create_space(",
+            ),
+            (
+                "async fn rename_space(",
+                format!("spaces::ensure_space_name_free(&name,Some(&space_id),{names_arg}"),
+                "rt.write_locks()",
+            ),
+        ] {
+            let rest = &prod[prod.find(sig).unwrap_or_else(|| panic!("找不到 {sig}"))..];
+            let body: String = rest[..rest.find("\n}\n").expect("函数尾")]
+                .lines()
+                .map(|l| l.split("//").next().expect("split 至少一段"))
+                .collect::<String>()
+                .split_whitespace()
+                .collect();
+            let at = |tok: &str| body.find(tok).unwrap_or_else(|| panic!("{sig} 里找不到 {tok}"));
+            let (life, names, gate, w) = (
+                at("let_life=spaces.lifecycle.lock().await;"),
+                at("letnames=live_space_names(&spaces)?;"),
+                at(&gate),
+                at(write),
+            );
+            assert!(
+                life < names && names < gate && gate < w,
+                "{sig}:lifecycle({life}) → 名单({names}) → 撞名闸({gate}) → 落库({w})顺序不对"
+            );
+            assert!(!body.contains("drop(_life)"), "{sig}:lifecycle 不许在落库前放掉");
+        }
+    }
 
     /// C9 两档:运行中那档的正文不带 panic 原话(更不带源码位置),启动期那档照旧说原话;
     /// 原话 / 位置 / 线程一律进「复制诊断信息」,且「关于」那份排在前头原样不动。

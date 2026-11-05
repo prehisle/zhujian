@@ -173,33 +173,7 @@
 /* 编辑器离开前问的那一句(154 G6 / G7):挂在写字框上方,不往工具条底下钻 */
 .v-docs .doc-ask { margin: 0 0 10px; }
 
-/* 移动到其他空间的选择器(同随记 inbox.css 那套 .chips / .chip) */
-.v-docs .doc-move {
-  display: flex;
-  flex-direction: column;
-  gap: 9px;
-  margin-top: 12px;
-  padding: 12px 14px;
-  background: var(--paper);
-  border: 1px solid var(--line-strong);
-  border-radius: var(--radius-sm);
-}
-.v-docs .doc-move .form-label { font-size: var(--fs-12); letter-spacing: 0.05em; color: var(--ink-soft); }
-.v-docs .doc-move .chips { display: flex; flex-wrap: wrap; gap: 7px; }
-.v-docs .doc-move .chip {
-  font: inherit;
-  font-size: var(--fs-13);
-  background: var(--seal-tint);
-  color: var(--ink);
-  border: 1px solid var(--seal-line);
-  border-radius: var(--radius-pill);
-  padding: 5px 13px;
-  cursor: pointer;
-  transition: background 0.14s;
-}
-.v-docs .doc-move .chip:hover { background: color-mix(in srgb, var(--seal) 18%, var(--paper)); }
-.v-docs .doc-move .chip:disabled { opacity: 0.55; cursor: default; }
-.v-docs .doc-move .form-actions { display: flex; justify-content: flex-end; }
+/* 移动到其他空间:W3 159 / Q4 起三处共用 move-space.css(此前这里另有一套 .doc-move 选择器皮肤)。 */
 .v-docs .doc-note { margin: 0 0 12px; font-size: var(--fs-12); color: var(--ink-soft); }
 .v-docs .doc-note[hidden] { display: none; }
 /* 标了删的图正文里提到几处(154 G4):挨着缩略图条那一行 */

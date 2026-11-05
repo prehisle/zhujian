@@ -17,8 +17,10 @@
 //  新建:
 //  ⑨ 面头钮在;⑩ 点开列表顶出输入行(placeholder / 焦点);
 //  ⑪ Enter 落库 + 提示条 + 列表跟上;⑫ 「建」钮那条路也通;
-//  ⑬ 重名被拒(core 说话,前端不预校验);⑭ **空名不发写**:编辑态留着、不弹错(那不是校验,
+//  ⑬ 重名被拒(core 说话,前端不预校验);⑭ **空名不发写**:编辑态留着、顶部不弹错(那不是校验,
 //     是别发一趟必拒的写 —— 与「一个字没改」同一格纪律);⑮ 取消 / Esc 收起;
+//  ⚠ 159(W3 走查 A13)起这两条拒都**说在框下**(红字,同桌面):重名 = core 原文、不带「出错:」、打的字留在框里、
+//     行不收;空名 = 「标签名不能为空」(此前空名一声不吭)。顶部提示条两条都不弹。
 //  ⑯ 新建行不是标签行(无 data-topic / 无拖手柄)—— 拖排序的邻居判定排除它的结构性字据。
 //
 // # 这支守不到的那半(⛔ 别读成「全验过了」)
@@ -184,7 +186,9 @@
     createRow().querySelector("[data-create-save]").click();
     await sleep(400);
     ok("空名 → 编辑态留着(没收起)", !!createRow());
-    ok("空名 → 不弹错(没发写,不是 core 拒的)", err().hidden === true);
+    ok("空名 → 顶部不弹错(没发写,不是 core 拒的)", err().hidden === true);
+    ok("空名 → 框下说「标签名不能为空」", createRow()?.querySelector(".tn-err")?.textContent === "标签名不能为空",
+      createRow()?.querySelector(".tn-err")?.textContent);
     ok("空名 → 焦点回输入框", document.activeElement === ci());
 
     // ---- ⑪ Enter 落库 ----
@@ -216,9 +220,13 @@
     nb.click();
     await until(() => !!createRow(), 2000);
     ci().value = C0;
+    ci().dispatchEvent(new Event("input", { bubbles: true }));
     createRow().querySelector("[data-create-save]").click();
-    ok("重名 → 屏上有话说(core 原文)", await until(() => !err().hidden && /已存在|exists/.test(err().textContent), 3000),
-      err().textContent.trim().slice(0, 40));
+    const tnErr = () => createRow()?.querySelector(".tn-err");
+    ok("重名 → 框下红字说话(core 原文,不带「出错:」)", await until(() => /已存在|exists/.test(tnErr()?.textContent ?? ""), 3000) && !tnErr().textContent.includes("出错"),
+      tnErr()?.textContent);
+    ok("重名 → 行没收、打的字还在", !!createRow() && ci()?.value === C0, ci()?.value);
+    ok("重名 → 顶部不另弹错误条", err().hidden === true);
     ok("重名 → 库里只有一枚", (await inv("list_topics_full")).filter((x) => x.title === C0).length === 1);
 
     // ---- ⑮ 取消 / Esc 收起 ----

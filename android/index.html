@@ -314,8 +314,9 @@
          ⚠ 634 那轮只降了权重,它自己的实高(四档字号下 32.57–39.14,真机量的)一直没到 44;
          **635 补上的是 `.row button` 那条 `min-height: 44px`** —— 让它**自己长够**,同
          `.tname` / `.tn-input` / `#bottombar button` 那一形,而不是靠外扩去够;
-         ⛔ 别在这儿再单写一条 `#trash-empty { min-height }`:那是把一族的规矩抄成个例。 */
-      #trash-empty::before { content: none; }
+         ⛔ 别在这儿再单写一条 `#trash-empty { min-height }`:那是把一族的规矩抄成个例。
+         159 起回收站分两段、每段末尾一枚「清空…」(panes.ts 画),这条跟着从 `#trash-empty` 换到 `.trash-foot`。 */
+      .trash-foot .ghost::before { content: none; }
       /* 重置确认/取消已是全宽真高 ≥40px:不继承 halo(上下条互叠会让边界含糊,codex 二审) */
       .space-row .act.reset-confirm::before, .space-row .act.reset-cancel::before { content: none; }
       .panel .acts button,
@@ -350,6 +351,13 @@
         margin-bottom: 6px; background: var(--raised);
       }
       .space-row.current { border-color: var(--seal-line); background: var(--seal-tint); }
+      /* 空间建不成 / 改名没成时框下那一行红字(159 / W3 A11):字留在框里,不弹顶部错误条、不带「出错:」。
+         改名那行是 flex 一行 ⇒ 有错时折行,红字独占下一行。 */
+      .space-row.has-err { flex-wrap: wrap; }
+      .space-row .space-err { flex: 1 1 100%; color: var(--seal-ink-on-seal-tint); }
+      .space-err { margin: 6px 0 0; font-size: var(--fs-13); color: var(--seal-ink); overflow-wrap: anywhere; }
+      #space-new-err { margin-bottom: 10px; } /* 与下面那排「加入空间」钮拉开,别贴着 */
+      .space-err[hidden] { display: none; }
       /* ⚠ **触区(635)**:它是整行的主按钮(点名字 = 切到那个空间),而行是 `align-items:center`
          ⇒ 它**不跟着行长**,四档实测只有 14.86–21.43。⛔ 这里不能用 `::before` halo —— 它自己有
          `overflow:hidden`(省略号要它)会把伪元素裁掉,那正是 514 的判例。⇒ 与标签面的 `.tname`
@@ -632,9 +640,12 @@
          首启隐私告知 21、政策全文 22,而这几页上恰恰会有原生调用失败(651 实撞:鸿蒙上
          「不同意」与「阅读完整隐私政策」都失败了,报错却被弹窗盖住 ⇒ 现场看到的是
          「点了没反应」,我花了半小时才排除掉「点击没送到」这条)。⛔ 别再把它压回遮罩下面。 */
+      /* ⭐ 159(W3 走查 A18 新撞):条落在**顶栏下沿之下**,不再盖在顶栏上 —— 盖着的那几秒里点顶栏的空间名 / 搜索,
+         点的那一下被条吃掉(§3.1 要条「点按即收」,所以穿透这条路不走:点条身仍是收条)。`--head-h` 是 JS 量的
+         顶栏真高(含 `--sat`);`max()` 兜住它还没量到的首帧(那时退回旧位置:状态栏下 8px)。 */
       .error {
         position: fixed; left: 14px; right: 14px; z-index: 23;
-        top: calc(8px + var(--sat));
+        top: max(calc(8px + var(--sat)), calc(var(--head-h, 0px) + 8px));
         background: var(--seal); color: var(--on-seal);
         border-radius: var(--radius-md); padding: 8px 12px;
         /* 14px 而不是 13px(343):notice 那一档是墨绿底(--ok),压 --on-seal 只有 4.79,
@@ -907,6 +918,33 @@
         0% { box-shadow: 0 0 0 0 var(--seal-tint); border-color: var(--seal); }
         100% { box-shadow: 0 0 0 10px transparent; border-color: var(--line); }
       }
+      /* 冷着陆的定位框(159 / W3 A14,ui.ts markLocated):从搜索结果 / 挪空间后的「去看看」落过来的那张,常亮一会儿再褪
+         —— 同桌面 `.just-located` 那一形(朱砂描边 + 柔光 + 淡朱底)。上面那记 `.flash` 留给「你自己刚建的、知道在哪儿的」。
+         淡朱底走 inset 阴影(画在底色之上、字之下):有色卡的底是 `--card-rgb` 那层,改 background 会把它盖掉。
+         ⛔ 不用 `color-mix()`(Chrome 110 那台算不出、兜底也救不了,643)—— 三个色全是现成的带 alpha 令牌。
+         褪的那段 0.6s 与 ui.ts 的 LOCATED_FADE_MS 同长;两态阴影个数相同,才逐层插值、不是一下跳没。 */
+      .card.located {
+        border-color: var(--seal);
+        box-shadow: 0 0 0 2px var(--seal-line), 0 0 12px 2px var(--seal-tint), inset 0 0 0 999px var(--seal-tint);
+        transition: border-color 0.6s ease, box-shadow 0.6s ease;
+      }
+      .card.located.locate-fading {
+        border-color: var(--line);
+        box-shadow: 0 0 0 0 transparent, 0 0 0 0 transparent, inset 0 0 0 0 transparent;
+      }
+      /* 落点卡上的一句旁注(159 / W3 A4):搜到的是改过之前的版本,去哪儿看那一版(同桌面 `.locate-note`)。
+         随卡片下一次重画自然消失,不随定位框淡出(那是要读完的一句话)。 */
+      .locate-note {
+        margin: 8px 0 0; padding: 5px 10px;
+        font-size: var(--fs-12); line-height: 1.5;
+        color: var(--seal-ink-on-seal-tint); background: var(--seal-tint);
+        border: 1px dashed var(--seal-line); border-radius: var(--radius-sm);
+      }
+      /* 搜索命中 / 过滤词在正文里标红(159 / W3 Q8,ui.ts markHits):同桌面搜索页那一套朱砂淡底。 */
+      mark.hit {
+        background: var(--seal-tint); color: var(--seal-ink-on-seal-tint);
+        border-radius: var(--radius-xs); padding: 0 1px; font-weight: 600;
+      }
       .card .body { flex: 1; min-width: 0; }
       /* 竖屏长按拖卡(158 G3 / Q7,carddrag.ts):长按是「拿起」不是「选字」⇒ 竖屏任务面的卡不让选字、不弹系统菜单
          (要文字走卡片「更多… → 复制」)。拿起来的那张浮在上面、稍放大带影;落点是一条朱砂横线(fixed,JS 摆位置)。 */
@@ -941,6 +979,11 @@
         padding: 1px 8px; border-radius: var(--radius-pill);
         background: var(--seal-tint); color: var(--seal-ink-on-seal-tint); font-weight: 600;
       }
+      /* 搜索结果卡上「命中改过的旧版本」那一枚(159 / W3 A4):虚线框 —— 它不是标签,是一句交代。 */
+      .card footer .old-hit { border-style: dashed; }
+      /* 搜索结果头上那一行「N 条匹配 · 搜的范围」(159 / W3 Q8 / A4)。 */
+      .hit-head { margin: 0 0 10px; font-size: var(--fs-13); color: var(--ink-soft); }
+      .hit-head b { color: var(--ink); font-weight: 600; }
       /* ⚠ 这一对(边框与字色)吃的是每个元素自己的 `--tc`,老引擎(≤110)上 `color-mix` 算不出
          ⇒ 退成 unset:边框走 currentColor、字色继承。刻意不给兜底,理由同 `.panel button.p` 那条。 */
       .chip {
@@ -1210,8 +1253,10 @@
          行盒只有 18.86 ⇒ 实得 **42.86 < 44**,而钉着它的那格断言就那么红着,没人知道多久了。
          ⇒ 与同行三个兄弟(`.tcolor` / `.tcount` / `.tn-input`)同形写死 `min-height: 44px`;
          负 margin 让外边距盒仍是 20 = 兄弟们的高度,**行高一点不变**。 */
+      /* 159(W3 走查 Q12,WM-22):超长的名字在这一行**折行显示全名**(此前一行省略,只有点进改名框才看得全)。
+         ⚠ `overflow: hidden` 留着:它不再是给省略号用的,但上面那条「halo 会被裁掉」的判例照旧成立,别改回 ::before。 */
       .tname { flex: 1; min-width: 0; font-size: var(--fs-14); color: var(--ink);
-        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        overflow: hidden; white-space: normal; overflow-wrap: anywhere;
         min-height: 44px;
         background: none; border: 0; padding: 12px 0; margin: -12px 0; font-family: inherit; text-align: left;
         text-decoration: underline dotted var(--line-strong); text-underline-offset: 3px; }
@@ -1268,6 +1313,14 @@
         flex: 1; min-width: 0; margin: 0; font-size: var(--fs-13); color: var(--ink);
         overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
       }
+      /* 159(W3 A16,WM-11):随记 / 任务那行走卡片的渲染件(`contentHtml`),待办项画成方框 —— 但这里是**一行省略**的摘要,
+         方框随文字排在行内(卡片上那形是一项一行的 flex 块,在 nowrap 的一行里会被挤乱)。只读、点不动,不要触区外扩。
+         每一项前空 0.6em,含紧跟在首行文字后面的第一项。⚠ 别写成 `.ckline + .ckline` / `:not(:first-child)`:前面那句
+         是裸文本节点、不算元素,首项照样是 first-child ⇒ 方框贴着上一句的末字(159 真机截图看到的)。正文以清单开头时
+         行首多出这一点空,摘要行里看不出来,不另分支。 */
+      .tb-text .ckline { display: inline; padding-left: 0; margin-left: 0.6em; }
+      .tb-text .ckbox { display: inline-block; vertical-align: -0.15em; width: 1em; height: 1em; margin: 0 0.25em 0 0; }
+      .tb-text .ckbox::before { content: none; }
       /* 时刻:与卡片 footer 里的 <time> **同档**(634 起两处都是 soft —— A2「乙」把日期时间判为
          「同屏别处拿不到的信息」)。⚠ 这条注释钉的是**两处同档**这件事,改一处就得改另一处。 */
       .tb-when { flex: none; font-size: var(--fs-12); color: var(--ink-soft); }
@@ -1368,8 +1421,22 @@
         background: none; color: var(--ink-soft); border: 1px solid var(--line-strong); }
       /* 「这一行里那个**只读**的标签名」——合并态与类型编辑态共用(632 补起两处)。
          ⛔ 别为其中一处单开一个类:它俩要的是同一件事(占满余量、长名字省略号)。 */
-      .mname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-      .mrow.msrc { outline: 2px solid var(--seal); outline-offset: -2px; border-radius: var(--radius-sm); }
+      /* 159(WM-22):同 `.tname`,长名字折行显示全名。 */
+      .mname { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+      /* 合并态第一击选中的、**要留下的**那枚(159 / Q5 起先点的是留下的,同桌面)。 */
+      .mrow.mkeep { outline: 2px solid var(--seal); outline-offset: -2px; border-radius: var(--radius-sm); }
+      /* 改色态留着名字(159 / WM-31):独占调色板上头一行,色块照旧在它下面排。 */
+      .tc-edit .tc-name { flex: 0 0 100%; font-size: var(--fs-14); color: var(--ink); }
+      /* 新建 / 改名失败:框下一行红字说原因,字留在框里(159 / A13,同桌面)。在 `.tn-edit` 的 wrap 里独占一行;
+         负的上外边距把它拉近输入框(gap 12 是给钮的中心距用的,判据在 `.tk-edit` 头上,别为它改 gap)。 */
+      .tn-err { flex: 1 1 100%; margin-top: -6px; font-size: var(--fs-13); color: var(--seal-ink); overflow-wrap: anywhere; }
+      /* 类型框下面那行说明(159 / WM-30):住在这一行里、折到第二行独占(行的下边线画在它下面,读得出是这一行的)。
+         row-gap 8 > 「存」「清」那层 44 定高 halo 往下探出的 ~5px,点说明那几个字落不到钮上。 */
+      .trow.tk-row { flex-wrap: wrap; row-gap: 8px; }
+      .tk-hint { flex: 0 0 100%; margin: 0; font-size: var(--fs-12); color: var(--ink-soft); line-height: 1.5; }
+      /* 新建的标签滚到眼前时闪一下(159 / WM-32):借时间轴新卡那记朱砂脉冲(`card-flash`),同一个节奏同一个样子。
+         ⛔ 别另写一份变底色的 keyframes:对比度门禁读不了条件块里的颜色(它会红),而且两处「闪一下」该长一个样。 */
+      .trow.flash { position: relative; z-index: 1; animation: card-flash 1.2s ease-out; }
       /* 子标签组(user-44 第六刀):`父/子` 前缀分组后,子行收在父行下方这一组里。
          缩进 + 左导轨与展开面 .tbody 逐条同形 —— 这一端「这是上面那行的从属内容」
          只有一种读法(.tbody 头上那条注释里写的正是这句)。⛔ 别给它 position:relative:
@@ -1458,6 +1525,14 @@
         border: none; border-radius: var(--radius-pill); background: var(--seal); color: var(--on-seal);
         font-weight: 600; padding: 8px 18px;
       }
+      /* 重破坏那一档(159 / W3 A19,ui.ts `confirmBar(…, heavy)`;§3.8「确认钮全宽」、§3.2 第 6 条权重升格):
+         三行 —— 问句独占一行、执行钮全宽独行、取消全宽拉开在下(同空间重置那形 `.reset-confirm`)。
+         此前「清空回收站」与删一枚标签同形同大(WM-14)。⚠ 执行钮全宽就会横过点出它的那枚钮的落点,
+         躲法在 ui.ts `dodgeTrigger`(量了把整条往上抬);⛔ 别改成「看情况把执行钮和取消上下对调」—— 两枚之间只隔 8px,
+         44 高的触发钮可以同时压着两枚,对调哪边都躲不干净。 */
+      #confirmbar.heavy { flex-direction: column; align-items: stretch; gap: 8px; }
+      #confirmbar.heavy .cb-yes { order: 1; width: 100%; }
+      #confirmbar.heavy .cb-no { order: 2; width: 100%; margin-top: 4px; }
       /* 余温态(157 G1②,ui.ts `retireBar` / confirmBar 到点那一支):读秒到点先变淡、钮变灰,
          条**还在原位、高度不变**,接住迟到的那一下点(不让它落到底下的看图层遮罩 / 顶栏「同步」上),
          `BAR_RETIRE_MS` 后才真收。⛔ 别在这一态藏钮:条变矮,瞄着钮落下的那一指正好穿过去。 */
@@ -1733,6 +1808,10 @@
         min-height: 44px; /* 触区达标(ui-audit P1 #10):主导航给足 44px 实高 */
       }
       #bottombar button.active { color: var(--seal-ink); font-weight: 600; }
+      /* 159(W3 走查 A23 新撞):导航钮上的字长按会被选中、弹系统的「复制 / 全选 / 分享」菜单
+         (那不是可读的内容,是钮)。顶栏那一排同理。⚠ 两条都要写:老 WebView 只认带前缀的那条;
+         `-webkit-touch-callout` 管长按菜单。 */
+      #bottombar, body > header { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
       /* 键盘起着且焦点在输入框里:让位(`kb-up` 的由头与判据在 `main.ts` 底栏点击那段下面)。
          只让屏底那一形:搬进顶栏以后它压不着任何输入框,藏了反倒是顶栏中间在打字时凭空空掉一块。 */
       html.kb-up body:not(.widescreen) #bottombar { visibility: hidden; }
@@ -1743,8 +1822,7 @@
          表一 · 丙):⛔ **别挪走它俩** —— 408-A1 已经试过并否掉(「挪位置 = 只能新增『更多』
          层」),且底栏是拇指区、而回收站是「找回误删」的入口;⛔ 也别靠**压淡**后两枚来分:
          §2.1 里 faint 那一档只给纯装饰,能点的东西不许劈两档(634 判例)。⇒ 只加一条分隔。
-         ⚠ 它随后两枚一起显隐(`main.ts::renderBottomBar`):两面都空时底栏只有两枚,
-         那时留一条孤零零的竖线比没有更糟。
+         ⚠ 159 起后两枚常在(W3 走查 Q2:清空后那一格当场没了、想进空回收站无路)⇒ 这条分隔也常在。
          ⚠ 宽屏上整条导航(连同它俩、连同这条分隔)一起搬进顶栏(tablet-plan ①A,用户 9-30 拍)—— 搬的是整组,
          不是把它俩单独挪走,上面那条「别挪走它俩」不受影响;手机竖放它们仍在屏底拇指区。 */
       #bottombar .navsep {
@@ -1947,6 +2025,10 @@
       /* 无 kind 时 filter.ts 清空 #filter-kinds → :empty 隐整行(无类型一条不多)。 */
       .fkinds:empty { display: none; }
       .fmain { display: flex; align-items: center; gap: 10px; }
+      /* 筛着时那一行「筛出 N 条 · 标签「…」」(159 / W3 Q8;main.ts paintFilterSum)。三种排法(竖屏一列 /
+         `.kinds-inline` / 看板的横排折行)里都独占一行。 */
+      .fsum { flex: 0 0 100%; margin: 0; font-size: var(--fs-12); color: var(--ink-soft); overflow-wrap: anywhere; }
+      .fsum[hidden] { display: none; }
       .ftopics { flex: 1; min-width: 0; }
       /* 标签行空、类型轴在(main.ts syncTagsToggle 打 `.kinds-inline`):过滤框并进类型那一行右端,
          不再独占一行(用户面 150)。状态排照旧独占上一行;看板有自己那套排法(上面 body.board 那组),不套这条。 */
@@ -2034,6 +2116,9 @@
         flex-wrap: wrap; overflow: hidden auto; row-gap: 8px; max-height: 40vh;
       }
       #filterbar.tags-open .fexpand { margin-left: auto; }
+      /* 自动摊开那一形(159 / W3 A23,main.ts `tagsAutoOpen`):标签少、收起态挤不下而单独一行放得下 ⇒ 标签独占第一行、
+         过滤框落第二行(读的顺序同收起态:先标签、后过滤框);没有 ▾(摊开了也还是这一行)。 */
+      #filterbar.tags-fit .ftopics { order: -1; }
       /* 用户面 36:9.5em 缩到 6em —— 它此前吃掉 360dp 屏的三分之一,而这一行真正要给的是
          标签。⭐ 张开态挂 `.wide`(main.ts 的 focusin/focusout):一直 6em 的话打三个字就
          看不见自己打了什么,那是把一个患换成另一个患;歇着时它只是个提示,不影响读。
@@ -2192,6 +2277,8 @@
         <input id="space-new-name" placeholder="新空间的名字(比如「家庭」)" data-i18n-placeholder="shell.newSpacePh" autocapitalize="off" autocomplete="off" />
         <button id="space-create" data-i18n="shell.spaceCreate">新建</button>
       </div>
+      <!-- 建不成(重名 / 空名)时框下这一行红字,字留在框里(159 / W3 A11);main.ts paintSpaceNewErr。 -->
+      <p id="space-new-err" class="space-err" role="alert" hidden></p>
       <!-- 加入空间(space-entry-plan §2/§3):独立入口直达——扫码/输码加入一个已在
            别处存在的账户;隐式空槽在后台 staging,成功才出现为空间。 -->
       <div class="row">
@@ -2318,8 +2405,9 @@
       <div id="docs-body"></div>
     </section>
 
-    <!-- 回收站面(120):灵感+任务合并一屏(统一 list_trash 单快照);恢复回原处,
-         彻底删/清空都是两拍确认。 -->
+    <!-- 回收站面(120):一屏、一个快照(list_trash);159 起列表里分「随记」「任务」两段(W3 走查 Q1),
+         各数各的、各自清空(两段与段末的「清空…」钮都由 panes.ts::renderTrash 画);恢复回原处,
+         彻底删/清空都是两拍确认,清空走全宽那一档。 -->
     <section id="trash-pane" class="sync" hidden>
       <h2 data-i18n="shell.navTrash">回收站</h2>
       <!-- ⛔ **这枚必须是次级(`ghost`),别改回主钮**(634):§2.1「危险色只出现在破坏性确认的
@@ -2328,12 +2416,9 @@
            次级(`board.ts` 的 ghost / `inbox.ts` 的 `.no`),手机端 634 才跟上。
            ⚠ 两拍确认一直都有(`panes.ts::confirmBar`),这一改动的是**权重**不是保险。 -->
       <div id="trash-list" class="timeline"></div>
-      <p class="fine" data-i18n="shell.trashNote">删除的随记、任务和配图先到这里;还原回到原来的位置(配图回到原编号);彻底删除后无法找回。</p>
       <!-- 158 G2(W2 走查 A19 / WM-21):整面最重的那一下不再全宽常驻在列表最上面、紧挨第一张卡
-           (§3.8「重破坏:不常驻列表行」)⇒ 挪到面底说明之后、不通栏 —— 翻完要清的人才走到这里。 -->
-      <div class="row trash-foot">
-        <button id="trash-empty" class="ghost" data-i18n="shell.emptyTrash">清空回收站</button>
-      </div>
+           (§3.8「重破坏:不常驻列表行」)⇒ 每段末尾一枚、不通栏 —— 翻完那一段要清的人才走到这里。 -->
+      <p class="fine" data-i18n="shell.trashNote">删掉的随记(含长文)、任务和配图先到这里,随记与任务分两段、各清各的;还原回到原来的位置(配图回到原编号);彻底删除后无法找回。</p>
     </section>
 
     <!-- 归档册面(120):已完成入册的任务(史实,可查);取消入册回看板已完成。 -->
@@ -2353,7 +2438,7 @@
         <button id="topics-new" data-i18n="topics.newBtn">+ 新建标签</button>
       </div>
       <div id="topics-list"></div>
-      <p class="fine" data-i18n="shell.topicsNote">拖 ⠿ 调顺序。改名、颜色和类型会同步到别的设备;点条数看标签下有什么。</p>
+      <p class="fine" data-i18n="shell.topicsNote">点名字改名、删除、设类型,点色点改颜色,点条数看标签下有什么;拖 ⠿ 调顺序。这些都会同步到别的设备。</p>
     </section>
 
     <!-- 146:seg 两态删除——输入落点=当前主视图(灵感面记灵感/任务面记待办),
@@ -2435,6 +2520,8 @@
         <input id="filter-text" class="ftext" type="search" placeholder="过滤…" data-i18n-placeholder="shell.filterPh"
                autocapitalize="off" autocomplete="off" spellcheck="false" />
       </div>
+      <!-- 筛着时那一行「筛出 N 条 · 标签「…」」(159 / W3 Q8;main.ts paintFilterSum)。 -->
+      <p id="filter-sum" class="fsum" hidden></p>
     </section>
 
     <main id="timeline" class="timeline"></main>
@@ -2442,6 +2529,14 @@
     <!-- 设置面(250):这台设备自己的偏好 + 低频工程入口。明暗刻意**不进同步**——它是
          环境属性不是账户属性(手机夜里要暗、桌面白天要亮),跟着同步反而添乱。 -->
     <section id="settings-pane" class="sync" hidden>
+      <!-- 159 / W3 Q7(WM-16 / X-08):空间入口也挂一份在设置里(开的是同一页,同步页那枚「空间…」照留)。
+           只有一个空间时顶栏不显示空间名,此前要找空间只能猜到「同步」下面去。 -->
+      <h2 data-i18n="settings.spacesTitle">空间</h2>
+      <div class="row">
+        <button id="settings-spaces-btn" class="ghost grow" data-i18n="shell.spacesEntry">空间…</button>
+      </div>
+      <p class="fine" data-i18n="settings.spacesSub">每个空间是一本独立的本子。新建、切换、改名都在这里。</p>
+
       <h2 data-i18n="shell.appearance">外观</h2>
       <div id="theme-seg" class="seg">
         <button data-theme-mode="auto" data-i18n="shell.themeAuto">自动</button>
@@ -2578,12 +2673,12 @@
     <nav id="bottombar">
       <button data-mode="ideas" class="active" data-i18n="shell.navIdeas">随记</button>
       <button data-mode="tasks" data-i18n="shell.navTasks">任务</button>
-      <!-- 长文(longform-plan 第 4 格):主内容,站在分隔线左边;有长文才显形(同回收站 / 归档那条
-           408-A1,用户 2026-10-29 拍),显隐由 renderBottomBar 管。 -->
+      <!-- 长文(longform-plan 第 4 格):主内容,站在分隔线左边;有长文才显形(用户 2026-10-29 拍),
+           显隐由 renderBottomBar 管。回收站 / 归档 159 起常在(W3 走查 Q2),不再按数据显形。 -->
       <button data-pane="docs" data-i18n="shell.navDocs" hidden>长文</button>
       <!-- 主视图 ↔ 覆盖面的分隔(635,ui-consistency-plan M6):理由与「别挪走它俩」的
-           两条否决写在 #bottombar .navsep 那条 CSS 头上。显隐由 renderBottomBar 管。 -->
-      <span id="nav-sep" class="navsep" aria-hidden="true" hidden></span>
+           两条否决写在 #bottombar .navsep 那条 CSS 头上。它右边那两格常在,它也常在。 -->
+      <span id="nav-sep" class="navsep" aria-hidden="true"></span>
       <button data-pane="trash" data-i18n="shell.navTrash">回收站</button>
       <button data-pane="sealed" data-i18n="shell.navSealed">归档</button>
     </nav>

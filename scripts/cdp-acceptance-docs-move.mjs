@@ -3,7 +3,8 @@
 //
 // 分两半,判据都读 DOM / localStorage / 命令回包:
 //   真移动(真后端,不拦截):单空间时「更多…」里没有「移动」→ 建一个测试空间、重载后出现 → 选择器先亮
-//     「历史版本会永久删除」→ 点目标出两拍确认 → 确认后回列表、回执「已移到「…」」、**没有**多报「已不在长文里」、
+//     「编辑历史会永久删除」(159 / W3 Q4 起三处同一套话,此前长文这里说「历史版本」)→ 点目标出两拍确认 → 确认后回列表、
+//     回执「已移到「…」」带「去看看」(159 Q4)、**没有**多报「已不在长文里」、
 //     源空间 list_docs 里没了 → 切到目标空间,那篇**还是长文**(list_docs 里有、正文逐字相同)→ 切回。
 //   结果分道(页内假造回包):部分成功两态与预检拒在真后端上造不出来 ⇒ 截下 `move_item_to_space`、按要的 outcome
 //     直接回包:安卓的 IPC 走 `window.ipc.postMessage`、鸿蒙走全局 fetch,两条都包。⭐ 先自证拦截真生效了:假造 moved
@@ -58,6 +59,9 @@ const clickText = (text) =>
   ev(`(() => { const b = [...document.querySelectorAll("#docs-body button")].find((x) => x.textContent.trim() === ${JSON.stringify(text)}); if (!b || b.disabled) return false; b.click(); return true; })()`);
 const hasBtn = (text) => ev(`[...document.querySelectorAll("#docs-body button")].some((x) => x.textContent.trim() === ${JSON.stringify(text)})`);
 const bar = () => ev(`(() => { const e = document.getElementById("error"); return e.hidden ? null : e.textContent; })()`);
+/** 带动作钮的回执(159 Q4 起「已移到」那条带「去看看」):回 `话 | 钮,钮`;不带钮的照旧只回话。 */
+const barActs = () =>
+  ev(`(() => { const e = document.getElementById("error"); if (e.hidden) return null; const acts = [...e.querySelectorAll(".bar-act")].map((b) => b.textContent); return acts.length ? e.querySelector("span").textContent + " | " + acts.join(",") : e.textContent; })()`);
 const hideBar = () => ev(`document.getElementById("error").hidden = true`);
 const shot = async (name) => {
   if (!SHOTS) return;
@@ -146,7 +150,7 @@ try {
   await clickText("移动");
   await waitFor(`!!document.querySelector("#docs-body .movewarn")`, "选择器");
   const warn = await ev(`document.querySelector("#docs-body .movewarn").textContent`);
-  ok(/历史版本会随移动永久删除/.test(warn), "③ 选择器先说历史版本随移动永久删除", warn);
+  ok(/编辑历史会随移动永久删除/.test(warn) && /这边不留/.test(warn), "③ 选择器先说编辑历史随移动永久删除、这边不留(159 Q4:与随记卡同一套话)", warn);
   ok(await hasBtn(SPACE_NAME), "③ 目标列出测试空间");
   await shot("move-picker");
   await ev(`window.__zhujianHandleBack()`);
@@ -160,7 +164,7 @@ try {
     ok(await clickText(SPACE_NAME), "点目标");
     await waitFor(`!document.getElementById("confirmbar").hidden`, "两拍确认条");
     const q = await ev(`document.getElementById("confirmbar-q").textContent + " / " + document.getElementById("confirmbar-yes").textContent`);
-    ok(q === `移到「${SPACE_NAME}」?历史版本会永久删除 / 确认移动`, "两拍确认条的问句与钮", q);
+    ok(q === `移到「${SPACE_NAME}」?编辑历史会永久删除 / 确认移动`, "两拍确认条的问句与钮", q);
     await ev(`document.getElementById("confirmbar-yes").click()`);
   };
 
@@ -168,8 +172,8 @@ try {
   ok(await armFake({ outcome: "moved", new_id: "x", source_already_gone: false }), "④ 装上拦截");
   await pick();
   await waitFor(`!document.querySelector("#docs-body .doc-acts")`, "回列表");
-  const b1 = await bar();
-  ok(b1 === `已移到「${SPACE_NAME}」`, "④a moved → 回执、回列表", b1);
+  const b1 = await barActs();
+  ok(b1 === `已移到「${SPACE_NAME}」 | 去看看`, "④a moved → 回执(带「去看看」)、回列表", b1);
   ok((await ev(`window.__moveHits`)) === 1, "④a 拦截真截下了那一发");
   const still = (await inv("list_docs", { spaceId: sp })).some((d) => d.id === id);
   ok(still, "④a 自证:真库里那篇还在(回执来自假回包)");
@@ -227,8 +231,8 @@ try {
   // ⑤ 真移动
   await pick();
   await waitFor(`!document.querySelector("#docs-body .doc-acts")`, "回列表", 20000);
-  const b5 = await bar();
-  ok(b5 === `已移到「${SPACE_NAME}」`, "⑤ 真移动 → 回执、回列表", b5);
+  const b5 = await barActs();
+  ok(b5 === `已移到「${SPACE_NAME}」 | 去看看`, "⑤ 真移动 → 回执(带「去看看」)、回列表", b5);
   await shot("moved-list");
   ok(!(await inv("list_docs", { spaceId: sp })).some((d) => d.id === id), "⑤ 源空间 list_docs 里没了");
   ok(!(await ev(`!!document.querySelector('#docs-body [data-doc="${id}"]')`)), "⑤ 列表里没了");

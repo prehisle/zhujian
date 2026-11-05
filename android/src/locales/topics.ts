@@ -9,8 +9,12 @@ export const topics = defineMessages({
   "topics.kindSave": { zh: "存", en: "Save" },
   "topics.kindClear": { zh: "清", en: "Clear" },
   "topics.kindAdd": { zh: "+ 类型", en: "+ Kind" },
+  // 159(W3 Q12,WM-30):类型框下一行小字说它是干什么的。
+  "topics.kindHint": { zh: "类型是给标签归一类(比如「人名」),随记页和看板的筛选条上就能按类型筛;不填就是没有类型。", en: "A kind groups tags (e.g. Person); the filter bars on Notes and the board can then filter by kind. Leave it empty for none." },
   "topics.dragHint": { zh: "拖动排序", en: "Drag to reorder" },
-  "topics.count": { zh: "{n} 项", en: "{n} {n|item|items}" },
+  // 行上的计数(159 / W3 Q12,WM-27 / X-11):照桌面分开写,可见中文与桌面那两句同(键空间各自独立)。
+  "topics.counts": { zh: "{ideas} 条随记 · {tasks} 个任务", en: "{ideas} {ideas|note|notes} · {tasks} {tasks|task|tasks}" },
+  "topics.countsDocs": { zh: "{ideas} 条随记 · {docs} 篇长文 · {tasks} 个任务", en: "{ideas} {ideas|note|notes} · {docs} long-form · {tasks} {tasks|task|tasks}" },
   "topics.kindSet": { zh: "已设类型", en: "Kind set" },
   "topics.kindCleared": { zh: "已清类型", en: "Kind cleared" },
   // 改名(514):点名字进编辑态。⛔ 键空间与桌面独立(两份字典),别去和 src/locales 对齐。
@@ -19,6 +23,8 @@ export const topics = defineMessages({
   "topics.renameSave": { zh: "存", en: "Save" },
   "topics.renameCancel": { zh: "取消", en: "Cancel" },
   "topics.renamed": { zh: "已改名", en: "Renamed" },
+  // 159(W3 A13):新建 / 改名空着点「建」「存」,框下红字说一声(同桌面那句)。
+  "topics.nameRequired": { zh: "标签名不能为空", en: "Tag name cannot be empty" },
   // 颜色(user-44 第二刀):点行内色点开调色板,点色块即写。
   "topics.colorHint": { zh: "改颜色", en: "Change color" },
   "topics.colorNone": { zh: "无", en: "None" },
@@ -32,11 +38,11 @@ export const topics = defineMessages({
   "topics.deleteQEmpty": { zh: "删除标签「{name}」?", en: "Delete tag “{name}”?" },
   "topics.deleteYes": { zh: "删除", en: "Delete" },
   "topics.deleted": { zh: "已删除标签", en: "Tag deleted" },
-  // 合并(user-44 第四刀):一对一两击(第一击源、第二击目标)→ 底部两拍确认条。
-  // 话术方向要钉死:先点的被并掉、后点的留下。
+  // 合并(user-44 第四刀):一对一两击 → 底部两拍确认条。159(W3 Q5)起方向与桌面一致、钉死:
+  // **先点的留下、后点的并进来**(此前手机先点的是被并掉的,与桌面正好相反)。
   "topics.mergeBtn": { zh: "合并", en: "Merge" },
-  "topics.mergePickSource": { zh: "点要被并掉的标签", en: "Tap the tag to fold away" },
-  "topics.mergePickTarget": { zh: "把「{name}」并入谁?点目标标签", en: "Fold “{name}” into which tag? Tap the target" },
+  "topics.mergePickKeep": { zh: "先点要留下的标签", en: "First tap the tag to keep" },
+  "topics.mergePickInto": { zh: "把谁并进「{name}」?点要并进来的标签", en: "Fold which tag into “{name}”? Tap it" },
   "topics.mergeCancel": { zh: "取消", en: "Cancel" },
   "topics.mergeQ": { zh: "把「{source}」并入「{target}」?{n} 项转挂「{target}」,「{source}」删除", en: "Fold “{source}” into “{target}”? {n} {n|item|items} will re-tag to “{target}”; “{source}” is deleted." },
   "topics.mergeQEmpty": { zh: "把「{source}」并入「{target}」?「{source}」删除", en: "Fold “{source}” into “{target}”? “{source}” is deleted." },

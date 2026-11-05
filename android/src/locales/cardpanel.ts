@@ -37,7 +37,8 @@ export const cardpanel = defineMessages({
   "cardpanel.laneDue": { zh: "截止", en: "Due" },
   "cardpanel.lanePriority": { zh: "优先级", en: "Priority" },
   "cardpanel.dueClear": { zh: "清除", en: "Clear" },
-  "cardpanel.moveWarnPre": { zh: "移到别的空间 = 那边新生一条、这边删除;", en: "Moving to another space creates a new item there and deletes this one; " },
+  // 159 / W3 Q4(WM-19 / WM-34):「这边删除」读着像进了回收站 ⇒「这边不留」;随记卡 / 任务卡 / 长文三处共用这一套(同桌面 space.moveWarn*)。
+  "cardpanel.moveWarnPre": { zh: "移到别的空间 = 那边新生一条、这边不留;", en: "Moving to another space creates a new one there and keeps nothing here; " },
   "cardpanel.moveWarnBold": { zh: "编辑历史会随移动永久删除,不迁入目标空间", en: "the edit history is permanently deleted and does not come along" },
   "cardpanel.moveWarnPost": { zh: "。", en: "." },
   "cardpanel.noOtherSpace": { zh: "没有其他空间", en: "No other space" },

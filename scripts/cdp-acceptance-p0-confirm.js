@@ -132,7 +132,8 @@
     if (!ok("点卡片出面板、有「彻底删除」", !!purge)) throw new Error("abort");
     click(purge);
     await until(() => !cb.hidden, 1000);
-    ok("彻底删除第一拍弹条且话术带「无法找回」", !cb.hidden && document.getElementById("confirmbar-q").textContent.includes("无法找回"));
+    // 159(对齐桌面):「无法找回」→「无法恢复」
+    ok("彻底删除第一拍弹条且话术带「无法恢复」", !cb.hidden && document.getElementById("confirmbar-q").textContent.includes("无法恢复"));
     click(document.getElementById("confirmbar-yes"));
     const purged = await until(() => !trashRow(id));
     ok("确认后回收站行消失(真销毁)", !!purged);

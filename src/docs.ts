@@ -14,23 +14,18 @@
 // 再拼、不另起链接提取器。其余面(随记 / 任务 / 搜索 / 历史比对)照旧不渲染 Markdown(§3)。
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
-  type MoveResult,
   type SpaceInfo,
   currentSpaceId,
-  distinctSpaceLabels,
   invokeInSpace,
   listSpaces,
-  moveItemToSpace,
-  moveOutcomeText,
   movePartialClear,
-  movePartialMark,
   movePartialNote,
-  spaceLabel,
 } from "./space";
+import { movePanel } from "./move-space";
 import { dismissUndo, toastAction, toastError, toastUndo } from "./toast";
 import { copyText } from "./clipboard";
 import { buildItemDeepLink } from "./deeplink";
-import { armLocate } from "./locate";
+import { armLocate, locateNoteEl, takeLocateNote } from "./locate";
 import { DOC_CARD_KEYS, DOC_VIEW_KEYS } from "./keymap";
 import { type Act, armDismiss, createHotkeyController, registerViewKeys } from "./hotkey-menu";
 import { t } from "./i18n";
@@ -163,7 +158,18 @@ function excerpt(content: string, title: string): string {
     .trim();
 }
 
-export function mount(root: HTMLElement, _ctx: ViewCtx): View {
+/** 长文在「只读预览」里的样子(W3 159 / A16:回收站、搜索结果此前把原文整段摊开,首行露着「# 」)。
+ *  逐行摘掉行首的标题 `#` / 引用 `>` / 代码围栏 / 分隔线,与行内的 ** __ `;**保留行结构与 `- [ ]` 那几行**
+ *  —— 后者交给 `renderContent` 画成方框(与随记同一份认行)。⛔ 不是渲染:预览不进 Markdown 渲染器
+ *  (同上面 `excerpt` 的取舍,只是不把行并成一句)。只给长文用:随记里的 `#` 是正文原字(指南「Markdown 只在长文里生效」)。 */
+export function docPreviewText(content: string): string {
+  return content
+    .split("\n")
+    .map((l) => l.replace(/^\s*(#{1,6}\s+|>\s?|`{3,}.*$|-{3,}\s*$)/, "").replace(/\*\*|__|`/g, ""))
+    .join("\n");
+}
+
+export function mount(root: HTMLElement, ctx: ViewCtx): View {
   const mountSpace = currentSpaceId();
   const view = el("div", { className: "v-docs view" });
   const newBtn = el("button", { className: "hbtn", type: "button", title: t("docs.new") }, [
@@ -192,6 +198,8 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
   let restoreComment: { itemId: string; draft: string; marked: string | null; focused: boolean } | null = null;
   // 下一次渲染列表时给哪张卡常亮(撤销收回 / 删除之后)。
   let locateId: string | null = null;
+  // 跳转落到阅读页的那一篇(搜索 / 深链接):画它时取走落点旁注(W3 159 / A4,locate.ts)。只活一次。
+  let landedId: string | null = null;
   // 上一发画的是哪一篇的阅读页(判「原地重画」还是「换了一篇」)
   let shownDocId: string | null = null;
   // 历史页开着时不因回窗刷新重画(那会把选好的两版冲掉);离开它走 go()。
@@ -260,82 +268,48 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     void refresh();
   }
   // ---- 移动到其他空间(cross-space-move v1,同随记那套)----------------------------------
-  // 选择器先亮「历史随移动永久删除」(告知在提交之前);只有 moved 离场;两个部分成功态(目标已建、
-  // 源还在 / 未知)**先落登记**再重画 —— 提示常驻卡面与阅读页、「移动」入口随之藏起,⛔ 绝不提供
+  // 面板先说后果(编辑历史随移动永久删除,告知在提交之前)、选了空间再确认一拍;只有 moved 离场;两个部分成功态
+  // (目标已建、源还在 / 未知)**先落登记**再重画 —— 提示常驻卡面与阅读页、「移动」入口随之藏起,⛔ 绝不提供
   // 重跑(会造出第二份);两条预检拒可改再试。话术只用 space.ts::moveOutcomeText 那一份。
   function moveActs(host: HTMLElement, d: DocItem): Act[] {
     if (otherSpaces.length === 0 || movePartialNote(d.id, mountSpace) !== null) return [];
     return [{ label: t("docs.actMove"), key: DOC_CARD_KEYS.move, run: () => openMove(host, d) }];
   }
+  // W3 159 / Q4 起面板是三处共用的 move-space.ts(此前这边说「历史版本」,另两处说「编辑历史」;样子也各不同)。
+  // `.doc-move` 额外类名留着:点卡打开 / 阅读页 Esc / 单键挂起那三处判据都认它。
   function openMove(host: HTMLElement, d: DocItem): void {
     pickerOff?.();
-    const labels = distinctSpaceLabels(otherSpaces);
-    const err = el("p", { className: "form-err", hidden: true });
-    let moving = false;
-    const chipBtns = otherSpaces.map((s) =>
-      el("button", { className: "chip", type: "button", textContent: labels.get(s.id) ?? spaceLabel(s), onclick: () => void doMove(s.id) }),
-    );
-    const form = el("div", { className: "inline-form doc-move" }, [
-      el("label", { className: "form-label", textContent: t("docs.moveLabel") }),
-      el("div", { className: "chips" }, chipBtns),
-      err,
-      el("div", { className: "form-actions" }, [el("button", { className: "no", type: "button", textContent: t("docs.cancel"), onclick: () => pickerOff?.() })]),
-    ]);
-    const close = (): void => {
-      form.remove();
-      pickerOff = null;
-    };
-    const off = armDismiss(form, close);
-    pickerOff = () => {
-      off();
-      close();
-    };
-    host.append(form);
-    const setBusy = (b: boolean): void => chipBtns.forEach((btn) => (btn.disabled = b));
-    const fail = (msg: string): void => {
-      err.textContent = msg;
-      err.hidden = false;
-      moving = false;
-      setBusy(false);
-    };
-
-    async function doMove(target: string): Promise<void> {
-      if (moving) return;
-      moving = true;
-      setBusy(true);
-      let r: MoveResult;
-      try {
-        r = await moveItemToSpace(mountSpace, target, d.id);
-      } catch (e) {
-        // 抛错 = 目标什么都没建(目标 commit 之后的失败一律走结构化结果),可重试。
-        fail(errText(e));
-        return;
-      }
-      const text = moveOutcomeText(r, labels.get(target) ?? target);
-      switch (r.outcome) {
-        case "moved":
-          toastAction(text);
-          if (form.isConnected) pickerOff?.();
-          if (page.kind === "doc" && page.id === d.id) page = { kind: "list" };
-          void refresh();
-          return;
-        case "copied_but_source_kept":
-        case "copied_but_source_unconfirmed":
-          // 登记独立于 DOM:期间关了选择器 / 换了页 / 切了空间都冲不掉,重画时由它显提示
-          movePartialMark(mountSpace, d.id, text);
-          if (form.isConnected) pickerOff?.();
-          void refresh();
-          return;
-        case "images_pending":
-        case "dangling_refs":
-          fail(text);
-          return;
-        default: {
-          const exhaustive: never = r;
-          return exhaustive;
-        }
-      }
-    }
+    const { panel, reveal } = movePanel({
+      itemId: d.id,
+      sourceSpace: mountSpace,
+      targets: otherSpaces,
+      fromColumn: null,
+      onClose: () => panel.remove(),
+      onMoved: () => {
+        panel.remove();
+        if (page.kind === "doc" && page.id === d.id) page = { kind: "list" };
+        void refresh();
+      },
+      // 登记独立于 DOM(共享件里先落):期间换了页 / 切了空间都冲不掉,重画时由它显提示。
+      onPartial: () => {
+        panel.remove();
+        void refresh();
+      },
+      goSee: (space, id) => ctx.openItem(space, id),
+      // pickerOff 的约定 = 拆监听并把那一块收掉(重画 / 开别的选择器前调)。
+      claimConfirm: (off) => {
+        pickerOff = off
+          ? () => {
+              off();
+              panel.remove();
+              pickerOff = null;
+            }
+          : null;
+      },
+      extraClass: "doc-move",
+    });
+    host.append(panel);
+    reveal();
   }
   /** 部分成功登记在场时的常驻提示(卡面与阅读页同一份);处理完(手动删掉一边)点解除。 */
   function movePartialBar(d: DocItem): HTMLElement | null {
@@ -727,7 +701,20 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     ];
     const handle = hk.register(art, actions, () => art.classList.contains("commenting") || tagHost.querySelector(".topic-picker, .doc-move") !== null);
     const partialBar = movePartialBar(d);
-    art.append(...(partialBar ? [partialBar] : []), ...(draftBar ? [draftBar] : []), bodyHost, tagHost, strip.root, meta, err, cmHost, handle.menu());
+    const landedNote = landedId === d.id ? takeLocateNote(d.id) : null;
+    landedId = null;
+    art.append(
+      ...(partialBar ? [partialBar] : []),
+      ...(draftBar ? [draftBar] : []),
+      ...(landedNote !== null ? [locateNoteEl(landedNote)] : []),
+      bodyHost,
+      tagHost,
+      strip.root,
+      meta,
+      err,
+      cmHost,
+      handle.menu(),
+    );
     art.addEventListener("dblclick", (e) => {
       if ((e.target as HTMLElement).closest("a, button, input, textarea, .hk-menu-wrap, .img-thumb, .cm-host")) return;
       openEditor(d, null, startCaret(e.target));
@@ -1509,8 +1496,10 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     pendingFocus = null;
     if (focus && focus.space !== mountSpace) focus = null;
     if (focus) {
-      if (docById(focus.id)) page = { kind: "doc", id: focus.id };
-      else {
+      if (docById(focus.id)) {
+        page = { kind: "doc", id: focus.id };
+        landedId = focus.id;
+      } else {
         page = { kind: "list" };
         toastError(t("docs.notFound"));
       }

@@ -1,0 +1,70 @@
+/* 「清空回收站」的确认(trash-purge.ts):随记 / 看板两个回收站共用这一份,长成一个样(W3 159 / A19)。
+   触发钮是低权重的描边小药丸(§3.8:常驻的破坏性入口走次级样式,朱砂只给执行钮);确认区在工具条下面
+   另起一块,执行钮全宽(§3.2 第 6 条 / §3.8「重破坏」)。宽度跟着宿主那一栏走:随记页是整列,看板回收站
+   是居中 560 那一栏(board.css 里给 `.purge-panel` 补了同一栏宽)。 */
+.purge-open {
+  flex: none;
+  min-height: 28px;
+  font: var(--fs-12)/1.4 var(--font-sans);
+  letter-spacing: 0.04em;
+  padding: 5px 15px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--line-strong);
+  background: transparent;
+  color: var(--ink-soft);
+  cursor: pointer;
+  transition: background 0.14s, color 0.14s, border-color 0.14s, opacity 0.14s;
+}
+.purge-open:hover:not(:disabled) { color: var(--ink); background: color-mix(in srgb, var(--ink) 6%, transparent); }
+.purge-open:disabled { opacity: 0.45; cursor: default; }
+
+.purge-panel {
+  margin: 0 0 14px;
+  padding: 12px 14px 14px;
+  border: 1px solid var(--seal-line);
+  border-radius: var(--radius-md);
+  background: var(--seal-tint);
+}
+.purge-panel[hidden] { display: none; }
+.purge-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+.purge-q {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  font-size: var(--fs-13);
+  line-height: 1.55;
+  color: var(--ink);
+}
+.purge-no {
+  flex: none;
+  min-height: 28px;
+  font: var(--fs-12)/1.4 var(--font-sans);
+  letter-spacing: 0.04em;
+  padding: 5px 15px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--line-strong);
+  background: var(--paper);
+  color: var(--ink-soft);
+  cursor: pointer;
+}
+.purge-no:hover { color: var(--ink); border-color: var(--ink-faint); }
+/* 执行钮:全宽、与「取消」隔开一整行(§3.2 第 6 条「与取消拉开距离」)。 */
+.purge-yes {
+  display: block;
+  width: 100%;
+  min-height: 36px;
+  margin-top: 14px;
+  font: 600 var(--fs-13)/1.4 var(--font-sans);
+  letter-spacing: 0.04em;
+  padding: 8px 15px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--seal);
+  background: var(--seal);
+  color: var(--on-seal);
+  cursor: pointer;
+}
+.purge-yes:hover { background: color-mix(in srgb, var(--seal) 88%, var(--ink)); }

@@ -91,9 +91,12 @@ export function renderTagPicker(container: HTMLElement, opts: TagPickerOpts): vo
       // 空搜索态按 `父/子` 分组(499)。⛔ 分组函数从 filter-bar 借,别在这儿另抄一份 ——
       // 前缀分组的复制品今天恰好三份,`check-filter-parity` 逐字压着那三份,第四份出现
       // 它不会自动发现。这里**刻意不做折叠**:候选本来就短,且上头就是搜索框。
+      // W3 159 / Q10(WD-32):子标签**写全名**「工作/汇报」—— 挂上去之后卡上那枚章写的就是全名,
+      // 选的时候只写「汇报」两个字,对不上(手机的选择器一直写全名)。分组排在父后面、`.child` 的虚线照旧,
+      // 只是字不再截成后缀;标签页与筛选条照旧缩进短名(那两处是浏览,不是挂)。
       for (const g of groupPills(allTopics)) {
         nodes.push(choiceBtn(g.parent, g.parent.title, g.parent.title, false));
-        for (const k of g.kids) nodes.push(choiceBtn(k.topic, k.label, k.topic.title, true));
+        for (const k of g.kids) nodes.push(choiceBtn(k.topic, k.topic.title, k.topic.title, true));
       }
     }
     // 精确同名(忽略大小写)已存在就不给「创建」—— 避免造重复;它要么在上面可选、要么已在卡上。

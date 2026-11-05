@@ -50,11 +50,8 @@ export const board = defineMessages({
   "board.titleBeforeImages": { zh: "先写个任务标题,配图会随任务一起保存", en: "Write a task title first, the images will be saved with it" },
   "board.restore": { zh: "还原", en: "Restore" },
   "board.deleteForever": { zh: "彻底删除", en: "Delete forever" },
-  "board.deleteForeverQ": { zh: "彻底删除?不可恢复", en: "Delete forever? This cannot be undone" },
   "board.unseal": { zh: "取消归档", en: "Unarchive" },
   "board.cancel": { zh: "取消", en: "Cancel" },
-  "board.gotItRefresh": { zh: "知道了(刷新)", en: "Got it (refresh)" },
-  "board.moveTo": { zh: "移动到…(编辑历史将随移动永久删除)", en: "Move to… (edit history is permanently deleted when moving)" },
   "board.archiveQ": { zh: "移入回收站?可在回收站还原", en: "Move to Trash? You can restore it from there" },
   "board.dontAskAgain": { zh: "不再提示", en: "Don't ask again" },
   "board.delete": { zh: "删除", en: "Delete" },
@@ -141,19 +138,17 @@ export const board = defineMessages({
   "board.sealAllQ": { zh: "归档 {n} 条?", en: "Archive {n}?" },
   "board.archiveZoneHint": { zh: "把「已完成」的任务拖到这里归档", en: "Drag a Done task here to archive it" },
   "board.trashEmpty": { zh: "回收站是空的", en: "Trash is empty" },
-  "board.trashEmptyHint": { zh: "删除的任务和配图会落到这里,可还原或彻底删除。做完的任务请用「归档」。", en: "Deleted tasks and images land here. Restore them or delete them forever. Finished tasks belong in Archive." },
+  // W3 159 / A20(WD-24):此前写「删除的任务和配图」,读着像随记的图也在这儿 —— 看板回收站只装任务(与任务里删掉的图)。
+  "board.trashEmptyHint": { zh: "删掉的任务会落到这里,可还原或彻底删除;任务里删掉的配图也在这儿。做完的任务请用「归档」。", en: "Deleted tasks land here, along with images removed from tasks. Restore them or delete them forever. Finished tasks belong in Archive." },
   "board.trashCount": { zh: "{n} 条已删除的任务", en: "{n} deleted {n|task|tasks}" },
-  "board.emptyTrash": { zh: "清空回收站", en: "Empty Trash" },
-  "board.purgeAllQ": { zh: "彻底删除全部 {n} 条?", en: "Delete all {n} forever?" },
-  "board.purgeAllMixedQ": { zh: "彻底删除全部 {n} 条和 {m} 张配图?", en: "Delete all forever (tasks: {n}, images: {m})?" },
-  "board.purgeAllImagesQ": { zh: "彻底删除全部 {m} 张配图?", en: "Delete all forever (images: {m})?" },
-  "board.purgeAllYes": { zh: "全部删除", en: "Delete all" },
   "board.sealedEmpty": { zh: "还没有归档的成就", en: "No archived achievements yet" },
   "board.sealedEmptyHint": { zh: "在「已完成」列点「全部归档」,或把完成的任务拖到看板底部。归档的任务可查、不可删。", en: "Click “Archive all” in the Done column, or drag a finished task to the bottom of the board. Archived tasks can be viewed but not deleted." },
   // 158 G3 / Q13(WD-33):归档页的页头与卡上日期(老卡没有完成日时写入档那天)。
   "board.sealedTitle": { zh: "归档", en: "Archive" },
   "board.sealedAt": { zh: "归档于 {day}", en: "Archived · {day}" },
   "board.sealedStats": { zh: "本周完成 {week} · 累计 {total}", en: "Done this week {week} · total {total}" },
+  // W3 159 / A21(WD-26):上面两个数含「已完成」列里还没归档的卡(158 G2 / A6 定的口径),下面只列册子里的 —— 交代一句。
+  "board.sealedStatsOnBoard": { zh: "(含看板「{col}」列里还没归档的 {n} 张)", en: " (including {n} {n|card|cards} still in the “{col}” column, not archived yet)" },
   "board.empty": { zh: "还没有任务", en: "No tasks yet" },
   // 后半句点名的是真长相:随记卡片右上角那枚 ⋯,菜单里那一项的原话就是「待办」
   // (inbox.actTask)。⛔ 换了那一项的可见中文,这句要同笔改。

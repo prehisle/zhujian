@@ -1,24 +1,20 @@
 import {
-  type MoveResult,
   type SpaceInfo,
   currentSpaceId,
-  distinctSpaceLabels,
   invoke,
   invokeInSpace,
   listSpaces,
-  moveItemToSpace,
-  moveOutcomeText,
   movePartialClear,
-  movePartialMark,
   movePartialNote,
   spaceLabel,
 } from "./space";
+import { movePanel } from "./move-space";
 import { autoGrow } from "./autogrow";
-import { dismissUndo, toastAction, toastError, toastUndo } from "./toast";
+import { dismissUndo, toastAction, toastError, toastGo, toastUndo } from "./toast";
 import { createComposeController } from "./compose-controller";
 import { copyButton, copyText } from "./clipboard";
 import { buildItemDeepLink } from "./deeplink";
-import { armLocate } from "./locate";
+import { armLocate, locateNoteEl, takeLocateNote } from "./locate";
 import {
   type FilterState,
   type TimeBucket,
@@ -26,6 +22,8 @@ import {
   applyTimeFilter,
   autoTagTopicIds,
   filterActive,
+  markFilterHits,
+  paintFilterCount,
   reconcileKindFilter,
   reconcileTopicFilter,
   renderFilterPills,
@@ -51,7 +49,8 @@ import {
   refreshOpenComments,
 } from "./item-comments";
 import type { View, ViewCtx } from "./notebook";
-import { focusDoc } from "./docs";
+import { docPreviewText, focusDoc } from "./docs";
+import { trashPurgeControl } from "./trash-purge";
 import { focusTask } from "./board";
 import { applyTagColor } from "./tag-color";
 import { renderTagPicker } from "./tag-picker";
@@ -81,6 +80,8 @@ type IdeaItem = {
   /** 长文标记(0042):活跃随记恒 null;回收站里的长文带着它,只拿来画一枚「长文」小标(归属以
    *  core 为准,⛔ 别据它另判)。 */
   doc_at: string | null;
+  /** 进回收站的时刻(W3 159 / WD-37,core `OrganizedRow::archived_at`):回收站行恒有值,活跃随记恒 null。 */
+  archived_at: string | null;
   topics: IdeaTag[];
 };
 // list_topics 载真值:`kind`(自由文本类型,0031)或 null = 无类型 —— 类型轴 pill 行
@@ -98,10 +99,11 @@ type IdeaStats = { captured_week: number; born_inbox: number; converted: number 
 type Mode = "ideas" | "archived";
 type Tab = Mode;
 
-// Which tab (想法 / 回收站) is showing. Module scope so it survives a view switch:
-// navigate() unmounts+remounts on every switch, and a mount-scope default would snap
-// back to 想法 each time you leave and return. (Same rationale as topics.ts `expanded`
-// and board.ts `topicFilter`.) Only one inbox view is mounted at a time.
+// Which tab (想法 / 回收站) is showing. Module scope only so `focusInboxItem` / search can
+// land a fresh mount straight in the trash —— ⚠ W3 159 / A6(WD-04)起**每次 mount 都从时间轴起步**:
+// 在回收站里点侧栏「任务」再点侧栏「随记」,此前落回回收站(空了就是一页「回收站是空的」);侧栏是主导航,
+// 回主视图(同看板:回收站 / 归档是 mount 级的「临时一瞥」,新 mount 落在看板)。跳转那条路照旧
+// 由 refresh 里的 focus 把它改成 archived。Only one inbox view is mounted at a time.
 let active: Tab = "ideas";
 // 跨视图「跳到这条灵感」通道(ui-audit P1 #8:搜索命中灵感/回收站 → 定位那张卡)。
 // search.ts 先 focusInboxItem(id, tab) 再 navigate("inbox");refresh 在 seq 守卫之后
@@ -135,14 +137,32 @@ export function inboxHasStashedDraft(): boolean {
 // 回收站/归档不筛)。文本只匹配当前正文——连历史的找回忆是全局「搜索」视图的事。
 // 三维正交筛选 kind→topic→text(行为在共享件,与看板同源):类型轴(kind)是钻取器,
 // 选一个类型先圈定「挂了该类型任一标签的想法」,再把标签 pill 收到该类型内。
-const filter: FilterState = { kind: "all", topics: [], text: "" };
 // 时间轴(461):与 filter 同款模块态存活理由,独立第四维——见 board.ts 同名变量的注释。
-let timeFilter: TimeBucket = "all";
-// Scroll offset of the list, captured on unmount and restored on the next mount so a
+// Scroll offset of the **timeline**, captured on unmount and restored on the next mount so a
 // view switch returns you to where you were reading (not snapped back to the top).
-// Belongs to the tab in `active` above — since that tab is preserved too, the offset
-// always lands on the same list it was taken from.
-let savedScroll = 0;
+// W3 159 / A6(WD-04):只记时间轴的 —— 此前回收站与时间轴共用这一格(回收站里滚到 270、点「← 随记」,
+// 时间轴也停在 270)。进回收站时把时间轴读到哪儿记下,回来还原;回收站自己每次从顶上看。
+//
+// ⭐ W3 159 / Q6(WD-18):上面这几样**按空间各记一份**。此前是全模块一份:切到别的空间,那边的标签集里没有
+// 「工作」⇒ reconcileTopicFilter 把选集清空;滚动位也被那边的覆盖 ⇒ 切回来筛选回到「所有」、滚动位回到顶。
+// 现在 mount 时按本 mount 的空间取出那一份、unmount 时写回(「清掉筛选回原处」那两格也在里面,否则切回来
+// 再清筛选会回到切走前没筛时的位置之外)。只活在内存里(同此前模块态:重启从头来,不进 localStorage)。
+type SpaceMemo = {
+  filter: FilterState;
+  time: TimeBucket;
+  scroll: number;
+  wasFiltered: boolean;
+  unfilteredScroll: number;
+};
+const memos = new Map<string, SpaceMemo>();
+function memoFor(space: string): SpaceMemo {
+  let m = memos.get(space);
+  if (m === undefined) {
+    m = { filter: { kind: "all", topics: [], text: "" }, time: "all", scroll: 0, wasFiltered: false, unfilteredScroll: 0 };
+    memos.set(space, m);
+  }
+  return m;
+}
 
 type CardItem = {
   id: string;
@@ -151,10 +171,18 @@ type CardItem = {
   /** 出生设备(0033),可缺——回收站行也走这个形,只是不渲染署名。 */
   born_device?: string | null;
   doc_at?: string | null;
+  /** 进回收站的时刻(回收站行带,卡上写「删于 …」)。 */
+  archived_at?: string | null;
   /** 改过没有(157 G4 / P5,core `repo::revised_sql`):卡上标「改过」、⋯ 菜单出「历史」。回收站行不带。 */
   revised?: boolean;
   topics?: IdeaTag[];
 };
+
+/** 回收站行的删除时刻(core 对 `list_archived` 的行恒给;缺 = 契约断了)。 */
+function trashedAt(item: CardItem): string {
+  if (!item.archived_at) throw new Error(`inbox: trash row ${item.id} without archived_at`);
+  return item.archived_at;
+}
 
 // ---- small DOM helper ------------------------------------------------------
 // In the 想法 timeline the day is already the group heading, so each card only needs
@@ -182,6 +210,7 @@ const SKELETON = `
     <div class="time-filter" id="idea-time-filter"></div>
     <div class="filter-main">
       <div class="topic-filter" id="idea-topic-filter"></div>
+      <span class="filter-count" id="idea-filter-count" hidden></span>
       <input class="filter-text" id="idea-filter" type="search" placeholder="${t("inbox.filterPlaceholder")}" autocomplete="off" spellcheck="false" />
     </div>
   </div>
@@ -192,11 +221,18 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
   // 本 mount 归属的空间(codex P1 审 H1):切空间时 notebook 先翻 current 再 unmount,
   // unmount 时现取会把 A 空间的草稿标成 B 的——在这里捕获。空间对不上的存底整体丢弃。
   const mountSpace = currentSpaceId();
+  // Q6:这个空间自己的那份筛选 / 读到哪儿(见 SpaceMemo)。filter 是同一个对象(筛选条直接改它);
+  // 其余几格在 unmount 时写回。
+  const memo = memoFor(mountSpace);
+  const filter = memo.filter;
+  let timeFilter = memo.time;
+  let savedScroll = memo.scroll;
   composeCtl.discardForeignDraft(mountSpace);
   // 断电恢复:首个 mount 回填暂存图(此时空间对不上的已被上面 discard 清掉,restore 读到
   // 空存;重开正常场景 = 恢复上次空间,存里的图属本空间,回填即可)。仅一次,后续 mount
   // 图已常驻。
   composeCtl.restoreImagesOnce();
+  active = "ideas"; // A6:侧栏主导航回主视图(见 `active` 声明处);要落回收站的跳转由 refresh 里的 focus 改
   const view = el("div", { className: "v-inbox view" });
   view.innerHTML = SKELETON;
   root.replaceChildren(view);
@@ -209,6 +245,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
   const kindBar = view.querySelector("#idea-kind-filter") as HTMLElement;
   const timeBar = view.querySelector("#idea-time-filter") as HTMLElement;
   const filterInput = view.querySelector("#idea-filter") as HTMLInputElement;
+  const filterCount = view.querySelector("#idea-filter-count") as HTMLElement;
   const trashToggle = view.querySelector("#inbox-trash-toggle") as HTMLButtonElement;
   const trashLbl = view.querySelector("#inbox-trash-lbl") as HTMLElement;
   const trashN = view.querySelector("#n-archived") as HTMLElement;
@@ -242,9 +279,17 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
   // 空间菜单(切换/新建)→ 当前视图重挂,重挂即重取,不会陈旧。空列表 = 单空间,
   // 「移动」动作整个不出现(≥2 空间才有入口,§4)。
   let otherSpaces: SpaceInfo[] = [];
+  // 「随手记一笔」的灰字(Q6,WD-17):有多个空间时写上会记进哪个空间;只有一个空间时照旧(同侧栏徽章的判据)。
+  let composePh = t("inbox.composePlaceholder");
   void listSpaces()
     .then((all) => {
-      otherSpaces = all.filter((s) => s.alive && s.id !== currentSpaceId());
+      otherSpaces = all.filter((s) => s.alive && s.id !== mountSpace);
+      const me = all.find((s) => s.id === mountSpace);
+      if (all.length > 1 && me) {
+        composePh = t("inbox.composePlaceholderSpace", { space: spaceLabel(me) });
+        const live = view.querySelector<HTMLTextAreaElement>(".compose-input");
+        if (live) live.placeholder = composePh;
+      }
     })
     .catch(() => {});
 
@@ -345,8 +390,13 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
   // 全体重播才是对的(那是真的入场)。
   let renderedIds = new Set<string>();
   // 清掉筛选回原阅读位置(157 G4 / P11):上一发是不是筛着的 + 进筛选前读到的滚动位。只活一个 mount。
-  let wasFiltered = false;
-  let unfilteredScroll = 0;
+  let wasFiltered = memo.wasFiltered;
+  let unfilteredScroll = memo.unfilteredScroll;
+  // W3 159 / A5(WD-03):上一发画的是哪一组筛选。筛选**变了**(加一维 / 换一个标签 / 改过滤词)而仍筛着 ⇒ 回到筛出来
+  // 那一串的最新那条(顶上);此前停在原来的 scrollTop,深处点「工作」落在那一串的尾巴。⚠ 与「清掉筛选回到原来读到的
+  // 地方」不冲突:那是清,这是加 / 换。起点取挂载时的那一组,免得首发被当成「变了」(首发归 restorePending)。
+  const filterKeyOf = (): string => JSON.stringify([filter.kind, filter.topics, filter.text.trim().toLowerCase(), timeFilter]);
+  let lastFilterKey = filterKeyOf();
   // in-flight 闸(ui-audit P0 #2)在模块级(共享编排件):refresh 会重建 bar 并把草稿
   // 回灌进新框,新 bar 的 Enter 也必须被同一把闸挡住;闸跨 mount 才挡得住「保存中切走
   // 再回来」(codex P1 审 H2)。
@@ -355,7 +405,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
   // Reuses `capture_note` — the same path as the Ctrl+Alt+N floating window.
   function composeBar(): HTMLElement {
     const input = el("textarea", { className: "compose-input", rows: 1 }) as HTMLTextAreaElement;
-    input.placeholder = t("inbox.composePlaceholder");
+    input.placeholder = composePh;
     wireChecklistInput(input); // Shift+Enter 续待办项 / Ctrl+L 起一条 / Tab 缩进(562,600)
     if (composeCtl.draftText() !== "" && composeCtl.draftSpace() === mountSpace) {
       input.value = composeCtl.takeDraftText(); // 上个 mount/别的 tab 留下的草稿:同空间才灌回(P1 #9d)
@@ -504,9 +554,9 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
   // 那会拿新 seq 通过守卫、在脱离 DOM 的旧列表上渲染、抢食模块级 pendingFocus。
   let unmounted = false;
 
-  // Restore the saved scroll offset once, after the first mount render. Only true until
-  // that render lands, so tab switches (which also rebuild the list) don't wrongly
-  // reapply a stale offset — they start at the top.
+  // Restore a scroll offset once, after the next render: the first mount render (timeline →
+  // savedScroll), and each deliberate tab switch (W3 159 / A6:回时间轴 = 还它自己读到的位置,进回收站 =
+  // 从顶上看 —— 两边不再共用同一个 scrollTop)。跳转定位那条路把它清掉(定位赢)。
   let restorePending = true;
 
   // 顶栏那枚「回收站」开关(用户面 74 / E,626):与任务页的 `#trash-toggle` 同一形 ——
@@ -651,12 +701,16 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       };
       note.addEventListener("animationend", onEnd);
     }
+    // 落点旁注(W3 159 / A4):搜到的是改过之前的版本 —— 这张卡画在这一发里的每一态(showView 重排)都带着它。
+    let landedNote: HTMLElement | null = null;
     if (item.id === locateId) {
       // 跳转定位冷着陆:持续常亮的朱砂高亮(theme.css .just-located),armLocate 挂一次性关闭
       // ——留到下次点击/滚动才淡出,免得「还没看清是哪条就消失了」。用完即清。
       locateId = null;
       note.classList.add("just-located");
       armLocate(note);
+      const said = takeLocateNote(item.id);
+      if (said !== null) landedNote = locateNoteEl(said);
     }
     let currentContent = item.content;
     const topics = item.topics ?? [];
@@ -669,10 +723,16 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
     const tagged = visibleTopics.length > 0;
 
     // 157 G4 / P13:随记页长卡也折(同看板 704 八行);先一律夹、落 DOM 后 settleFolds 量了再定。
-    const textP = el("p", { className: mode === "ideas" ? "note-text clamped" : "note-text", textContent: currentContent });
+    // W3 159 / A16(WD-21 / WD-30):回收站里也折 —— 此前只折时间轴,回收站里一条长的整段摊开占满一屏。
+    const textP = el("p", { className: "note-text clamped", textContent: currentContent });
     note.dataset.noteId = item.id;
     // 想法 sits in a per-day timeline → time-of-day only; 回收站 is flat → full stamp.
-    const stamp = mode === "ideas" ? hm.format(new Date(item.created_at)) : when(item.created_at);
+    // W3 159 / WD-37:回收站卡写的是**删除**时刻「删于 …」(此前写创建时刻,看不出是写的还是删的;手机早写「删于」)。
+    // 回收站行恒带 archived_at(core 契约),缺 = 契约断了,响亮抛,不拿创建时刻冒充。
+    const stamp =
+      mode === "ideas"
+        ? hm.format(new Date(item.created_at))
+        : t("trash.deletedAt", { when: when(trashedAt(item)) });
     const timeT = el("time", { className: "note-time", textContent: stamp });
     // 回收站里的长文:还原后回的是长文视图,不是这里 —— 一枚小标说清它是哪一种。
     if (mode === "archived" && item.doc_at) timeT.append(el("span", { className: "doc-badge", textContent: t("inbox.docBadge") }));
@@ -799,7 +859,11 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
     // attach/delete. A 图N with no matching image stays plain text (renderContent's rule).
     let imgs: ImageMeta[] = [];
     function paintContent(): void {
-      textP.replaceChildren(renderContent(currentContent, imgs, mode === "ideas" ? toggleBox : undefined));
+      // 回收站里的长文照「只读预览」画:摘掉行首的「#」那些记号(W3 159 / A16,WD-21;同长文列表卡的取舍,
+      // 不进 Markdown 渲染器)。随记的正文原样 —— 指南「Markdown 只在长文里生效」。
+      const shown = mode === "archived" && item.doc_at ? docPreviewText(currentContent) : currentContent;
+      textP.replaceChildren(renderContent(shown, imgs, mode === "ideas" ? toggleBox : undefined));
+      if (mode === "ideas") markFilterHits(textP, filter.text); // Q8(WD-20):过滤词标红,同搜索页
     }
     // 正文里的待办方框(checklist.ts):点一下翻那一行的标记、整条正文写回(灵感走
     // edit_note)。乐观呈现——点完立刻画,不等 IPC;写失败照后端重画(refresh),⛔ 不猜
@@ -870,7 +934,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       note.classList.remove("editing", "confirming");
       const strip = imageStrip(item.id, { editable: false, onMetas });
       const fb = foldBtns.get(textP);
-      const kids: Node[] = [textP, ...(fb ? [fb] : []), timeT, ...(tagsEl ? [tagsEl] : []), strip.root, histHost];
+      const kids: Node[] = [textP, ...(fb ? [fb] : []), timeT, ...(landedNote ? [landedNote] : []), ...(tagsEl ? [tagsEl] : []), strip.root, histHost];
       // 部分成功登记(cross-space-move):目标已建、源还在——提示常驻卡面、随重渲
       // /重启存续(localStorage),「移动」入口同时被 actionsFor 藏起;处理完(手动
       // 删掉一边)后点解除恢复。
@@ -1212,6 +1276,8 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
     }
 
     // ---- 还原 (回收站 → 想法) ----
+    // W3 159 / A7(WD-06 / WD-11):做完说一声、说去了哪 —— 长文回「长文」页、随记回时间轴,回执带「去看看」
+    // (此前卡默默消失,长文还原后去了别的页,回收站里看不出去向)。
     async function doRestore(): Promise<void> {
       try {
         await invoke("restore_note", { id: item.id });
@@ -1219,7 +1285,21 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
         showOpErr(errText(err));
         return;
       }
-      leaveCard(note, "archived", "ideas");
+      leaveCard(note, "archived", item.doc_at ? null : "ideas");
+      if (item.doc_at) {
+        toastGo(t("trash.restoredDoc"), t("inbox.goSee"), () => {
+          if (unmounted) return;
+          focusDoc(item.id);
+          ctx.navigate("docs");
+        });
+      } else {
+        toastGo(t("trash.restoredNote"), t("inbox.goSee"), () => {
+          if (unmounted) return;
+          focusInboxItem(item.id, "ideas");
+          if (active === "ideas") void refresh();
+          else switchTo("ideas");
+        });
+      }
     }
 
     // ---- 彻底删除 (回收站: permanent, inline two-step confirm) ----
@@ -1242,10 +1322,14 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
           return;
         }
         leaveCard(note, "archived", null);
+        toastAction(t("trash.purged")); // A7:做完说一声(不可逆,没有撤销可配)
       };
+      // A7(WD-11):确认里写明无法恢复、连带删掉几张配图(同一页「已删配图」的彻底删除早就这么写)。
+      const q = imgs.length > 0 ? t("trash.purgeOneImagesQ", { m: imgs.length }) : t("trash.purgeOneQ");
       note.replaceChildren(
         body,
         el("div", { className: "confirm" }, [
+          el("span", { className: "confirm-q", textContent: q }),
           el("button", {
             className: "no",
             textContent: t("inbox.cancel"),
@@ -1259,96 +1343,29 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       );
     }
 
-    // ---- 移动到其他空间 (cross-space-move v1) ----
-    // 内联选择器:标题里先亮「编辑历史将随移动永久删除」(告知必须在提交之前,§4),
-    // 点空间名即移(重名空间带尾注辨识)。结果分道:只有 moved 离场;两个部分成功态
-    // (kept / unconfirmed)**永久撤走提交按钮**、只留说明与「知道了(刷新)」——绝不
-    // 提供重跑整个移动(会制造第二份);两预检拒可改再试。in-flight 闸挡双击并发。
+    // ---- 移动到其他空间 (cross-space-move v1;W3 159 / Q4 起三处共用 move-space.ts) ----
+    // 面板先说后果、选了空间再确认一拍;结果分道(只有 moved 离场;部分成功先落登记、只留原话与「知道了」,
+    // ⛔ 绝不提供重跑;两条预检拒原样说清、可改再试)都在共享件里,这里只留本视图的 DOM 反应。
     function openMove(): void {
+      disarmConfirm();
       note.classList.add("confirming"); // 单键挂起(suspended 判据含 confirming)
-      const err = errLine();
-      const labels = distinctSpaceLabels(otherSpaces);
-      let moving = false;
-      const chipBtns = otherSpaces.map((s) =>
-        el("button", {
-          className: "chip",
-          textContent: labels.get(s.id) ?? spaceLabel(s),
-          onclick: () => void doMove(s.id),
-        }),
-      );
-      const chips = el("div", { className: "chips" }, chipBtns);
-      const actionsRow = el("div", { className: "form-actions" }, [
-        el("button", { className: "no", textContent: t("inbox.cancel"), onclick: showView }),
-      ]);
-      const form = el("div", { className: "inline-form" }, [
-        el("label", { className: "form-label", textContent: t("inbox.moveLabel") }),
-        chips,
-        err,
-        actionsRow,
-      ]);
-      note.replaceChildren(body, form);
-
-      const setBusy = (b: boolean) => chipBtns.forEach((btn) => (btn.disabled = b));
-      // 部分成功的终点:目标已建,提交按钮永久移除;「知道了(刷新)」重拉列表,让
-      // 源卡显出触发拒删的最新状态(S1)与常驻登记提示。
-      const stopForPartial = (msg: string) => {
-        showErr(err, msg);
-        chips.remove();
-        actionsRow.replaceChildren(
-          el("button", { className: "no", textContent: t("inbox.moveGotIt"), onclick: () => void refresh() }),
-        );
-      };
-
-      async function doMove(target: string): Promise<void> {
-        if (moving) return;
-        moving = true;
-        setBusy(true);
-        const sourceSpace = currentSpaceId(); // 发起那一刻的源空间(登记键)
-        let r: MoveResult;
-        try {
-          r = await moveItemToSpace(sourceSpace, target, item.id);
-        } catch (e) {
-          // 抛错 = 目标什么都没建(目标 commit 之后的失败一律走结构化结果),可重试。
-          showErr(err, e);
-          moving = false;
-          setBusy(false);
-          return;
-        }
-        // 话术=space.ts::moveOutcomeText 一份(此前与看板逐字两抄),这里只留 DOM 反应。
-        const text = moveOutcomeText(r, labels.get(target) ?? target);
-        switch (r.outcome) {
-          case "moved":
-            // 回执(228):与看板同一句话、同一个通道(共享件 toast.ts),别再各说各的。
-            toastAction(text);
-            // 迟到(期间取消/重渲/切空间)= 卡片已脱离 DOM:列表由现任渲染负责,
-            // 只在还在源空间时补一次刷新,把已被移走的卡从陈列里收掉。
-            if (note.isConnected) leaveCard(note, "ideas", null);
-            else if (currentSpaceId() === sourceSpace) void refresh();
-            return;
-          case "copied_but_source_kept":
-          case "copied_but_source_unconfirmed":
-            settlePartial(text);
-            return;
-          case "images_pending":
-          case "dangling_refs":
-            showErr(err, text);
-            moving = false;
-            setBusy(false);
-            return;
-          default: {
-            const exhaustive: never = r;
-            return exhaustive;
-          }
-        }
-        // 部分成功:**先落登记**(独立于 DOM,取消/重渲/切空间/重启都冲不掉,
-        // 该条目的「移动」入口随之隐藏),再更新眼前的表单;表单已脱离 DOM 就
-        // 触发重渲,让登记提示以卡面常驻形态冒出来。
-        function settlePartial(msg: string): void {
-          movePartialMark(sourceSpace, item.id, msg);
-          if (form.isConnected) stopForPartial(msg);
-          else if (currentSpaceId() === sourceSpace) void refresh();
-        }
-      }
+      const { panel, reveal } = movePanel({
+        itemId: item.id,
+        sourceSpace: mountSpace,
+        targets: otherSpaces,
+        fromColumn: null,
+        onClose: showView,
+        // 迟到(期间重渲 / 切空间)= 卡片已脱离 DOM:列表由现任渲染负责,只在 mount 还活着时补一次刷新。
+        onMoved: () => {
+          if (note.isConnected) leaveCard(note, "ideas", null);
+          else void refresh();
+        },
+        onPartial: () => void refresh(),
+        goSee: (space, id) => ctx.openItem(space, id),
+        claimConfirm: (off) => (confirmOff = off),
+      });
+      note.replaceChildren(body, panel);
+      reveal();
     }
 
     // ---- ⋯ corner menu + single-key shortcuts (the manual triage hub) --------
@@ -1510,63 +1527,42 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
     return section;
   }
 
-  // The 回收站 toolbar: a quiet note + 清空回收站 (inline two-step confirm).
-  // `imgs` = 这一页的已删配图张数(用户面 149):清空连它们一起销毁,确认钮把数说出来。
-  function trashBar(n: number, imgs: number): HTMLElement {
-    const actions = el("div", { className: "trash-actions" });
+  // The 回收站 toolbar: a quiet note + 清空回收站. W3 159 / A9 + A19(WD-10 / WD-23):清空的确认走两个
+  // 回收站共用的 trash-purge(原钮置灰、工具条下另起一块、执行钮全宽)—— 此前这里原钮就地换成红实心
+  // 「彻底删除全部…」,左半截正盖在原钮上,双击的第二下能直接清空。
+  // 返回工具条 + 那块确认区(紧跟其后,平时不占位)。张数按下那一刻现读(还原 / 彻底删一条只让卡离场,
+  // 不整页重画):条目 = 顶栏计数里减去已删配图那几张(配图一动就整页 refresh,那个数画的时候就是准的)。
+  function trashBar(imgs: number): HTMLElement[] {
     const err = el("p", { className: "form-err", hidden: true });
-    // 确认态响应 Esc/点别处收起(ui-audit P1 #12);teardown 走 mount 级 confirmOff
-    // 单值(codex M3:trashBar 每次 refresh 重建,闭包局部的 off 会随旧 bar 泄漏)。
-    const showDefault = () => {
-      disarmConfirm();
-      actions.replaceChildren(
-        el("button", { className: "no", textContent: t("inbox.emptyTrash"), onclick: showConfirm }),
-      );
-    };
-    function showConfirm(): void {
-      const doPurge = async () => {
-        disarmConfirm();
-        try {
-          await invoke("purge_archived");
-        } catch (e) {
-          // 失败就地写在工具条上并退回默认态,不再整版换错误页(ui-audit P0 #6)。
-          err.textContent = errText(e);
-          err.hidden = false;
-          showDefault();
-          return;
+    const { button, panel } = trashPurgeControl({
+      count: () => ({ items: counts.archived - imgs, images: imgs }),
+      claimConfirm: (off) => {
+        if (off === null) confirmOff = null;
+        else {
+          disarmConfirm();
+          confirmOff = off;
         }
-        void refresh();
-      };
-      err.hidden = true;
-      disarmConfirm();
-      const off = armDismiss(actions, () => {
-        confirmOff = null; // armDismiss 已自拆:只归零
-        showDefault();
-      });
-      confirmOff = off;
-      // 执行钮在左、取消在右(ui-audit P0 #4):.trash-actions 靠右对齐,确认态出现后
-      // 原「清空回收站」的落点被「取消」接住——手抖/双击的第二击落在取消上,而不是
-      // 一击不可恢复的「彻底删除全部」。
-      actions.replaceChildren(
-        el("button", {
-          className: "do",
-          textContent:
-            imgs === 0
-              ? t("inbox.purgeAll", { n })
-              : n === 0
-                ? t("inbox.purgeAllImages", { m: imgs })
-                : t("inbox.purgeAllMixed", { n, m: imgs }),
-          onclick: doPurge,
-        }),
-        el("button", { className: "no", textContent: t("inbox.cancel"), onclick: showDefault }),
-      );
-    }
-    showDefault();
-    return el("div", { className: "trash-bar" }, [
-      el("span", { className: "trash-note", textContent: t("inbox.trashNote") }),
-      err,
-      actions,
-    ]);
+      },
+      onYes: () => {
+        err.hidden = true;
+        void (async () => {
+          try {
+            await invoke("purge_archived");
+          } catch (e) {
+            // 失败就地写在工具条上,不再整版换错误页(ui-audit P0 #6)。
+            err.textContent = errText(e);
+            err.hidden = false;
+            return;
+          }
+          toastAction(t("trash.emptied")); // A7:做完说一声
+          void refresh();
+        })();
+      },
+    });
+    return [
+      el("div", { className: "trash-bar" }, [el("span", { className: "trash-note", textContent: t("inbox.trashNote") }), err, button]),
+      panel,
+    ];
   }
 
   // Fetch both lists (small, single-user), sync the tab counts, render active.
@@ -1718,6 +1714,9 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
         // 157 G4 / P11:从「没筛」进「筛着」那一刻记下读到哪儿,筛选全清掉时滚回去(此前回到顶部,WD-21)。
         const nowFiltered = filterActive(filter) || timeFilter !== "all";
         if (nowFiltered && !wasFiltered) unfilteredScroll = list.scrollTop;
+        const filterKey = filterKeyOf();
+        const filterChanged = filterKey !== lastFilterKey;
+        lastFilterKey = filterKey;
         const timeNarrowed = applyTimeFilter(ideas, timeFilter, (i) => i.created_at);
         if (ideas.length > 0) {
           renderTimePills(timeBar, ideas, (i) => i.created_at, timeFilter, (b) => {
@@ -1731,6 +1730,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
           wireTagPills(); // pills 每轮重建,拖拽接线跟着重挂(同看板)
         }
         const shown = applyFilter(timeNarrowed, filter, (i) => i.content, topics);
+        paintFilterCount(filterCount, nowFiltered ? shown.length : null); // Q8(WD-20):筛着写「筛出 N 条」
         // 复制随记:把当前显示的这批复制成 Markdown(尊重四维筛选,同「复制看板」);筛空 / 没有
         // 随记时不出这枚钮 —— 显示条件 = 有东西可复制。
         copySlot.replaceChildren(...(shown.length > 0 ? [copyButton(ideasMarkdown(shown), "hbtn", t("inbox.copyIdeas"))] : []));
@@ -1786,20 +1786,23 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
           list.replaceChildren(bar, tl);
           settleFolds(); // ⚠ 在下面还原滚动位之前:还的是夹后几何里的位置
           if (wasFiltered && !nowFiltered) list.scrollTop = unfilteredScroll;
+          else if (nowFiltered && filterChanged) list.scrollTop = 0; // A5:筛出来那一串从最新那条看起
           painted = shown.map((i) => i.id);
         }
         wasFiltered = nowFiltered;
       } else {
         filterRow.hidden = true; // 回收站不筛(同看板的回收站/归档视图)
+        paintFilterCount(filterCount, null);
         copySlot.replaceChildren(); // 回收站不复制(同看板的回收站 / 归档视图没有「复制看板」)
         if (archived.length === 0 && removed.length === 0) renderEmpty("archived");
         else {
           const imgs = removed.length === 0 ? [] : [trashImagesSection(removed)];
           list.replaceChildren(
-            trashBar(archived.length, removedImageCount(removed)),
+            ...trashBar(removedImageCount(removed)),
             ...archived.map((a) => row(a, "archived")),
             ...imgs,
           );
+          settleFolds(); // 回收站里也折(W3 159 / A16);⚠ 在下面还原滚动位之前,同时间轴那一发
           painted = archived.map((a) => a.id);
         }
       }
@@ -1829,7 +1832,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       // they switched away. scrollTop clamps itself if the list is now shorter.
       if (restorePending) {
         restorePending = false;
-        list.scrollTop = savedScroll;
+        list.scrollTop = active === "ideas" ? savedScroll : 0;
       }
     } catch (err) {
       if (seq !== refreshSeq) return; // 旧请求晚失败:新请求已成功渲染,别用旧错误盖掉(codex 三审 H2)
@@ -1845,11 +1848,10 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
 
   function switchTo(mode: Tab): void {
     if (active === mode) return;
+    // A6(WD-04):离开时间轴前记下读到哪儿(首发还没画完就切走的,沿用 mount 时那份);回收站从顶上看。
+    if (active === "ideas" && !restorePending) savedScroll = list.scrollTop;
     active = mode;
-    // A deliberate tab switch starts at the top — don't reapply the other tab's offset
-    // if the first mount render hasn't happened yet.
-    restorePending = false;
-    savedScroll = 0;
+    restorePending = true;
     void refresh();
   }
 
@@ -1875,8 +1877,14 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       return true;
     },
     unmount() {
-      // Remember where the user was reading so the next mount can restore it.
-      savedScroll = list.scrollTop;
+      // Remember where the user was reading so the next mount can restore it —— 只记时间轴的(A6:
+      // 在回收站里离开,时间轴的那份在进回收站时已经记下了)。
+      if (active === "ideas" && !restorePending) savedScroll = list.scrollTop;
+      // Q6:这个空间的那份写回(filter 是同一对象,已经在里面)。
+      memo.time = timeFilter;
+      memo.scroll = savedScroll;
+      memo.wasFiltered = wasFiltered;
+      memo.unfilteredScroll = unfilteredScroll;
       composeCtl.setLiveReload(null); // navigate 恒先 unmount 再 mount:新 mount 会立即接管
       refreshDeferred = false; // 压住的刷新随 mount 一起作废(下面 teardown 会经过 leaveEdit)
       dismissUndo(); // 撤销钮指着这棵 mount 的条目:切视图 / 切空间就收(716)

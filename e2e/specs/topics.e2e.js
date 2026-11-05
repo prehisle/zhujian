@@ -370,9 +370,9 @@ describe("标签合并(手动把碎标签并成一个)", () => {
     await (await $(`.topic*=${KEEP}`)).$(".topic-head").click();
     await (await $(`.topic*=${GONE}`)).$(".topic-head").click();
 
-    // The merge button arms on the first click, commits on the second.
+    // 「合并」开出确认行(W3 159:后果一句 +「并入」;原钮置灰,双击不再直接并),「并入」才落库。
     await clickJs("#mb-merge");
-    await clickJs("#mb-merge");
+    await clickJs("#mb-yes");
 
     // The flat list no longer shows notes inline, so verify the merge via the backend:
     // the survivor now holds both notes; the merged-in tag is gone.
@@ -423,7 +423,7 @@ describe("标签合并(手动把碎标签并成一个)", () => {
       RENAMED,
     );
     await clickJs("#mb-merge");
-    await clickJs("#mb-merge");
+    await clickJs("#mb-yes");
 
     // The survivor kept its identity but wears the new title and holds both notes; the
     // other source and the survivor's old title are gone.

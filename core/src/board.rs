@@ -726,7 +726,7 @@ pub(crate) fn audit_tombstone_apply_empty(conn: &Connection) -> Result<(), Strin
 // 远端事实要放行)才只住在这儿。逐条见各函数头注与 [`undeletable_reason`]。
 //
 // ⚠ **刻意不拒重名**:两台设备离线各建一个「本周」是完全合法的,拒不掉也不该拒
-// (topic 那边拒重名是因为 `topic_id_by_title` 真有按名查找的消费者;列只按 id 认人)。
+// (topic 那边拒重名是因为 `repo::topic_id_for_reuse` 真有按名查找的消费者;列只按 id 认人)。
 //
 // ⭐ **四条一律先过发送端闸**([`gate::ensure_can_emit`],plan §5;B-e 第 1 段起):
 // 它们发的是 `board_column/*` op —— 旧端的词汇表 CHECK 认不得 ⇒ `UnsupportedVocab` ⇒

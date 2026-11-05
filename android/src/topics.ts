@@ -9,7 +9,9 @@
 // + **删除(user-44 第三刀)**:改名态里第三枚「删除」→ 底部全局两拍确认条(cardpanel 同律,
 //   不新造确认形)。core 语义 = 只删标签投影,item_topic 链随 FK 级联消失、条目本身不动。
 // + **合并(user-44 第四刀,一对一两击式 —— 用户在两候选里拍的,⛔ 别照桌面的批量合并态重做)**:
-//   面头「合并」→ 列表换简行,第一击选源(被并掉的)、第二击选目标 → 底部两拍确认条。
+//   面头「合并」→ 列表换简行,第一击选**要留下的**、第二击选**要并进来的** → 底部两拍确认条。
+//   ⚠ 159(W3 走查 Q5,用户拍 ①;WM-21 / X-02)起顺序与桌面一致(桌面先勾的是存续那枚);此前手机先点的是被并掉的,
+//   两端正好相反。
 //   一次只并一枚(多枚源 = 重复几次);⛔ 刻意不带「顺带改名」(合完点名字改就是,能力已有)。
 //   core 语义 = 源的链转挂目标(集合并,目标已有的不重复)、源 tombstone,单事务。
 // 全部走 core 已审的 oplog topic 命令,跨端 LWW(与桌面互通,189 已验)。
@@ -36,7 +38,7 @@ import { setColumns, stageLabel } from "./columns";
 import { docTitle } from "./docs";
 import { groupPills } from "./filter";
 import { t } from "./i18n";
-import { $, confirmBar, esc, fmtWhen, showBar } from "./ui";
+import { $, confirmBar, contentHtml, esc, fmtWhen, showBar } from "./ui";
 import { errDetail, showErr } from "./err";
 
 type Deps = {
@@ -67,8 +69,13 @@ let kindEditId: string | null = null; // 正在编辑类型的行(渲染成 inpu
 let renameId: string | null = null; // 正在改名的行(整行换成改名形,514)
 let colorEditId: string | null = null; // 正在挑颜色的行(整行换成调色板,user-44 第二刀)
 let creating = false; // 「新建标签」输入行开着(渲在列表顶,user-44 第二刀)
+// 新建 / 改名输入框里正打着的字,和它下面那行红字(159 / W3 A13,WM-05 / WM-23 / X-13)。
+// ⭐ 写失败(重名)时**行不收、字留着**、红字在框下说原因(同桌面);此前一报错行就收了,刚打的字没了、
+// 改名退回原名,重名那句还挂在顶部提示条上带「出错:」。整面每次 render 都重建 innerHTML ⇒ 字得存在这里、画的时候放回去。
+let nameDraft = "";
+let nameErr: string | null = null;
 let merging = false; // 合并态开着(列表换简行,user-44 第四刀)
-let mergeSourceId: string | null = null; // 第一击选中的源(null = 还在选源阶段)
+let mergeKeepId: string | null = null; // 第一击选中的、要留下的那枚(null = 还在第一击;159 / Q5 起与桌面同序)
 let dragging = false; // 拖排序进行中
 
 // 调色板:与桌面 src/tag-color.ts 的 TAG_COLORS **同一组八色、同一顺序**,加色/改色两边一起动
@@ -120,6 +127,15 @@ export async function loadTopics(): Promise<void> {
     // 展开着的那枚标签可能已经不在了(自己刚删的、合并掉的、对端动过)⇒ 展开态跟着作废
     // (判例同 panes.ts 的 trashOpenId)。⛔ 别留着 —— 它下一拍会去 tasksByTopic 里查一个死 id。
     if (expandedId !== null && !tree.some((r) => r.id === expandedId)) expandedId = null;
+    // 159:改名失败后行不再收(A13)⇒ 编辑态可能比从前活得久,它指着的那枚若已不在(对端删了 / 合并了),
+    // 编辑态一并作废 —— ⛔ 留着的话那行画不出来、`topicsInteracting()` 却恒真,后台刷新从此被挡在门外。
+    const gone = (id: string | null): boolean => id !== null && !tree.some((r) => r.id === id);
+    if (gone(renameId)) {
+      renameId = null;
+      nameErr = null;
+    }
+    if (gone(colorEditId)) colorEditId = null;
+    if (gone(kindEditId)) kindEditId = null;
     render();
   } catch (err) {
     if (space !== getCurrentSpace() || s !== seq) return;
@@ -137,18 +153,18 @@ function render(): void {
   // 合并态:列表换成简行(整行一击即选,手柄/色钮/类型全让位 —— 视觉即语义,
   // 免得钮还长着钮样、点下去却是选行)。提示行随阶段变:选源 → 选目标(带源名)。
   if (merging) {
-    const src = mergeSourceId === null ? null : rows.find((r) => r.id === mergeSourceId);
-    const hint = src
-      ? t("topics.mergePickTarget", { name: src.title })
-      : t("topics.mergePickSource");
+    const keep = mergeKeepId === null ? null : rows.find((r) => r.id === mergeKeepId);
+    const hint = keep
+      ? t("topics.mergePickInto", { name: keep.title })
+      : t("topics.mergePickKeep");
     box.innerHTML =
       `<article class="trow mhint"><span class="mhint-txt">${esc(hint)}</span>
         <button data-merge-cancel="1" class="ghost">${t("topics.mergeCancel")}</button></article>` +
       rows
         .map(
-          (tp) => `<article class="trow mrow${tp.id === mergeSourceId ? " msrc" : ""}${busy ? " off" : ""}" data-topic="${esc(tp.id)}">
+          (tp) => `<article class="trow mrow${tp.id === mergeKeepId ? " mkeep" : ""}${busy ? " off" : ""}" data-topic="${esc(tp.id)}">
         <span class="mname">${esc(tp.title)}</span>
-        <span class="tcount">${t("topics.count", { n: counts.get(tp.id) ?? 0 })}</span>
+        <span class="tcount">${countsText(tp)}</span>
       </article>`,
         )
         .join("");
@@ -163,8 +179,8 @@ function render(): void {
   const createRow = creating
     ? `<article class="trow${busy ? " off" : ""}" data-create-row="1">
         <span class="tn-edit">
-          <input class="tn-input" placeholder="${t("topics.newPh")}"
-                 autocapitalize="off" autocomplete="off" />
+          <input class="tn-input" value="${esc(nameDraft)}" placeholder="${t("topics.newPh")}"
+                 autocapitalize="off" autocomplete="off" />${errLine()}
           <button data-create-save="1">${t("topics.newSave")}</button>
           <button data-create-cancel="1" class="ghost">${t("topics.newCancel")}</button>
         </span>
@@ -188,6 +204,20 @@ function render(): void {
       .join("");
 }
 
+/** 新建 / 改名框下面那行红字(A13);没有就空串。`role="alert"` 让读屏器念出来。 */
+function errLine(): string {
+  return nameErr === null ? "" : `<span class="tn-err" role="alert">${esc(nameErr)}</span>`;
+}
+
+/** 行上的计数(159 / W3 Q12,WM-27 / X-11):照桌面分开写「19 条随记 · 4 个任务」(有长文才多一段)。
+ *  此前写合计「23 项」,和随记页标签条的 19、看板的 4 对不上,读不出那 23 是怎么来的。 */
+function countsText(tp: TopicTreeItem): string {
+  const tasks = tasksByTopic.get(tp.id)?.length ?? 0;
+  return tp.docs.length > 0
+    ? t("topics.countsDocs", { ideas: tp.notes.length, docs: tp.docs.length, tasks })
+    : t("topics.counts", { ideas: tp.notes.length, tasks });
+}
+
 // 一个标签行(+ 它的展开面)。`label` 是**列表里显示的名字** —— 子行只显后缀;⛔ 别处一律
 // 仍用全名 tp.title(改名输入框、删除 / 合并话术、拖排序的 id 都不感知层级)。
 // `kidCount > 0` 的父行在名字右侧多一枚折叠箭头。
@@ -207,8 +237,8 @@ function rowHtml(tp: TopicTreeItem, label: string, kidCount: number): string {
       : `<button class="tk-add" data-kind-edit="${esc(tp.id)}">${t("topics.kindAdd")}</button>`;
     return `<article class="trow${busy ? " off" : ""}" data-topic="${esc(tp.id)}">
           <span class="tn-edit">
-            <input class="tn-input" value="${esc(tp.title)}" placeholder="${t("topics.renamePh")}"
-                   autocapitalize="off" autocomplete="off" />
+            <input class="tn-input" value="${esc(nameDraft)}" placeholder="${t("topics.renamePh")}"
+                   autocapitalize="off" autocomplete="off" />${errLine()}
             <button data-rename-save="${esc(tp.id)}">${t("topics.renameSave")}</button>
             <button data-rename-cancel="1" class="ghost">${t("topics.renameCancel")}</button>
             <button data-del="${esc(tp.id)}" class="tn-del">${t("topics.deleteBtn")}</button>
@@ -218,6 +248,8 @@ function rowHtml(tp: TopicTreeItem, label: string, kidCount: number): string {
   }
   // 颜色编辑态:整行换成调色板(8 色 + 无色 + 取消),点色块即写(saveColor)。
   // current 标在当前色上;「无色」块在没挂色时标 current。
+  // ⭐ 159(W3 走查 Q12,WM-31):调色板上头**留着标签名**(独占一行,同类型编辑态留名那条判例)——此前整行换成色板,
+  // 名字不见了,看不出在给哪一枚改色(§2.3「名字是本该留下的那一样」)。
   if (tp.id === colorEditId) {
     const cur = tp.color ?? null;
     const swatches = PALETTE.map(
@@ -227,6 +259,7 @@ function rowHtml(tp: TopicTreeItem, label: string, kidCount: number): string {
     ).join("");
     return `<article class="trow${busy ? " off" : ""}" data-topic="${esc(tp.id)}">
           <span class="tc-edit">
+            <span class="mname tc-name">${esc(label)}</span>
             ${swatches}
             <button class="tc-swatch none${cur === null ? " current" : ""}" data-swatch="">${t("topics.colorNone")}</button>
             <button class="tc-cancel" data-color-cancel="1">${t("topics.colorCancel")}</button>
@@ -243,7 +276,8 @@ function rowHtml(tp: TopicTreeItem, label: string, kidCount: number): string {
   // ⚠ 让位腾出的约 100px 正是 `.tk-edit` 把 gap 抬到 12 的前提(判据在 index.html 那条注释里):
   // 不让位就抬 gap,溢出从 9 变 21、整页开始横向滚(632 补 实测,当场退回)。
   if (tp.id === kindEditId) {
-    return `<article class="trow${busy ? " off" : ""}" data-topic="${esc(tp.id)}">
+    // 159(W3 走查 Q12,WD-35 / WM-30):框下一行小字说「类型」是干什么的 —— 此前两端都没说,页尾却提到它。
+    return `<article class="trow tk-row${busy ? " off" : ""}" data-topic="${esc(tp.id)}">
           <span class="mname">${esc(label)}</span>
           <span class="tk-edit">
             <input class="tk-input" value="${esc(tp.kind ?? "")}" placeholder="${t("topics.kindPh")}"
@@ -251,9 +285,9 @@ function rowHtml(tp: TopicTreeItem, label: string, kidCount: number): string {
             <button data-kind-save="${esc(tp.id)}">${t("topics.kindSave")}</button>
             <button data-kind-clear="${esc(tp.id)}" class="ghost">${t("topics.kindClear")}</button>
           </span>
+          <p class="tk-hint">${t("topics.kindHint")}</p>
         </article>${bodyHtml(tp)}`;
   }
-  const n = counts.get(tp.id) ?? 0;
   // 类型徽记只在有类型时渲(是数据);没有类型的行不再常驻「+ 类型」—— 入口挪进改名态(见上)。
   const kindZone = tp.kind ? `<button class="tk-badge" data-kind-edit="${esc(tp.id)}">${esc(tp.kind)}</button>` : "";
   // 折叠箭头:**紧贴名字末尾**(同筛选条 —— 那边的 .fcaret 也是挂在父 pill 尾上)。
@@ -278,7 +312,7 @@ function rowHtml(tp: TopicTreeItem, label: string, kidCount: number): string {
           tp.color ? `<i class="tdot" style="--tc:${esc(tp.color)}"></i>` : `<i class="tdot none"></i>`
         }</button>
         <button class="tcount" data-expand="${esc(tp.id)}" aria-expanded="${tp.id === expandedId}"
-                title="${t("topics.expandHint")}">${t("topics.count", { n })}</button>
+                title="${t("topics.expandHint")}">${countsText(tp)}</button>
         ${kindZone}
       </article>${bodyHtml(tp)}`;
 }
@@ -293,10 +327,12 @@ function rowHtml(tp: TopicTreeItem, label: string, kidCount: number): string {
 // 这里顺手抄。列名走 columns.ts 的 stageLabel —— 那是既有的共享读侧,不新增复制品。
 function bodyHtml(tp: TopicTreeItem): string {
   if (tp.id !== expandedId) return "";
+  // 随记那行(159 / W3 A16,WM-11):正文走卡片同一个渲染件(`contentHtml` 只读形)—— 待办项画成方框,
+  // 不露「- [ ]」「- [x]」;整条仍是一行省略(`.tb-text` 不换行),长条目不会整段摊开。
   const notes = tp.notes
     .map(
       (n) => `<article class="tb-item">
-        <p class="tb-text">${esc(n.content)}</p>
+        <p class="tb-text">${contentHtml(n.content, false)}</p>
         <time class="tb-when">${esc(fmtWhen(n.created_at))}</time>
       </article>`,
     )
@@ -317,8 +353,9 @@ function bodyHtml(tp: TopicTreeItem): string {
       // ⚠ 抛在 render 里:loadTopics 那条路被它的 catch 接住显「标签读取失败」,是响亮的。
       const col = stageLabel(task.status);
       if (col === undefined) throw new Error(`task ${task.id} sits in unknown column ${task.status}`);
+      // 任务的正文同样可能带清单(卡片上画成方框)⇒ 同随记那行走 `contentHtml`,不露「- [ ]」(159 / A16)。
       return `<article class="tb-item">
-        <p class="tb-text">${esc(task.title)}</p>
+        <p class="tb-text">${contentHtml(task.title, false)}</p>
         <span class="tb-col">${esc(col)}</span>
       </article>`;
     })
@@ -359,37 +396,61 @@ async function saveKind(id: string, clear = false): Promise<void> {
 
 // ---- 改名(514;点名字进,Enter/存 落库,Esc/取消 退出) ----------------------
 //
-// ⛔ **不做前端预校验**(fail-fast 铁律):空名 / 重名 / 超长 / 不存在,core 的 `rename_topic`
-// 四种各有自己的话(「主题标题不能为空」/「标签「X」已存在」/…),原样端给用户比这边
-// 猜一遍准 —— 前端只拦一格「一个字没改」,那不是校验,是**别发一趟没意义的写**。
+// ⛔ **不做前端预校验**(fail-fast 铁律):重名 / 超长 / 不存在,core 的 `rename_topic`
+// 各有自己的话(「标签「X」已存在」/…),原样端给用户比这边猜一遍准。前端只拦两格:
+// 「一个字没改」(那不是校验,是**别发一趟没意义的写**)与「空着」(159 / A13:core 那句是「主题标题不能为空」,
+// 说的是内部名词;桌面这一格同样前端拦、说「标签名不能为空」)。
+// ⭐ 失败时**留在改名态、字留着、红字在框下**(A13,同桌面);core 的原话不加「出错:」前缀(Q12,WM-33)。
 async function saveRename(id: string): Promise<void> {
   if (busy) return;
   const inp = $("topics-list").querySelector<HTMLInputElement>(".tn-input");
-  const title = (inp?.value ?? "").trim();
+  if (inp) nameDraft = inp.value;
+  const title = nameDraft.trim();
   const before = rows.find((r) => r.id === id)?.title ?? "";
   if (title === before) {
     // 没改:直接退出编辑态,不发写(也不弹「已改名」那句假消息)。
     renameId = null;
+    nameErr = null;
     render();
+    return;
+  }
+  if (title === "") {
+    nameErr = t("topics.nameRequired");
+    render();
+    focusNameInput();
     return;
   }
   const space = getCurrentSpace();
   busy = true;
-  renameId = null; // 收编辑态(render 置灰;失败在 finally 重载恢复真相,同 saveKind)
-  render();
+  nameErr = null;
+  render(); // 行照旧是改名形,只是置灰(`.off`)
+  let ok = false;
   try {
     await updateTopic(space, id, title);
-    if (space === getCurrentSpace()) showBar(t("topics.renamed"), true);
+    ok = true;
+    if (space === getCurrentSpace()) {
+      renameId = null;
+      showBar(t("topics.renamed"), true);
+    }
   } catch (err) {
-    if (space === getCurrentSpace()) showErr(err);
+    if (space === getCurrentSpace()) nameErr = errDetail(err);
   } finally {
     busy = false;
     if (space === getCurrentSpace()) {
       await loadTopics();
+      if (!ok && renameId === id) focusNameInput();
       // 名字进了卡片 chip,主视图要跟着重画(同 saveKind/commitReorder)。
       void deps.refreshTimeline();
     }
   }
+}
+
+/** 把焦点还给新建 / 改名那只框,光标落在字尾(A13:失败后接着改)。 */
+function focusNameInput(): void {
+  const inp = $("topics-list").querySelector<HTMLInputElement>(".tn-input");
+  if (!inp) return;
+  inp.focus();
+  inp.setSelectionRange(inp.value.length, inp.value.length);
 }
 
 // ---- 删除(user-44 第三刀;改名态里的「删除」→ 底部两拍确认条) ---------------
@@ -439,51 +500,52 @@ async function doDelete(space: string, id: string): Promise<void> {
 // ---- 合并(user-44 第四刀;一对一两击:第一击源、第二击目标 → 两拍确认) ------
 //
 // 第二击后**先收合并态再弹确认条**(同删除第一拍的纪律):取消 / 6s 超时后列表已是
-// 常态,零残留。方向 = 先点的被并掉、后点的留下;点错方向的代价只是「留下的名字不对」,
-// 改名能力已有、挂载零丢失 —— 这也是敢做两击不做勾选批量的底气。
+// 常态,零残留。方向 = **先点的留下、后点的并进来**(159 / Q5 起与桌面同序:桌面先勾的是存续那枚);
+// 点错方向的代价只是「留下的名字不对」,改名能力已有、挂载零丢失 —— 这也是敢做两击不做勾选批量的底气。
 
 function startMerge(): void {
   if (busy || deps.isSwitching()) return;
   merging = true;
-  mergeSourceId = null;
+  mergeKeepId = null;
   renameId = null; // 五个编辑态互斥:同一时刻只开一处
   kindEditId = null;
   colorEditId = null;
   creating = false;
+  nameErr = null;
   render();
 }
 
 function exitMerge(): void {
   merging = false;
-  mergeSourceId = null;
+  mergeKeepId = null;
 }
 
 function pickMerge(id: string): void {
   if (busy || deps.isSwitching()) return;
-  if (mergeSourceId === null) {
-    mergeSourceId = id; // 第一击:选源
+  if (mergeKeepId === null) {
+    mergeKeepId = id; // 第一击:要留下的那枚
     render();
     return;
   }
-  if (id === mergeSourceId) {
-    mergeSourceId = null; // 点自己 = 撤源,回到选源阶段
+  if (id === mergeKeepId) {
+    mergeKeepId = null; // 点自己 = 撤销第一击,回到选「留下」那一步
     render();
     return;
   }
-  const src = rows.find((r) => r.id === mergeSourceId);
-  const tgt = rows.find((r) => r.id === id);
-  if (!src || !tgt) return;
+  const keep = rows.find((r) => r.id === mergeKeepId);
+  const src = rows.find((r) => r.id === id); // 第二击:并进来、随后删掉的那枚
+  if (!src || !keep) return;
   const n = counts.get(src.id) ?? 0;
   const space = getCurrentSpace();
-  const sourceId = src.id;
+  const keepId = keep.id;
   exitMerge();
   render();
   confirmBar(
     n > 0
-      ? t("topics.mergeQ", { source: src.title, target: tgt.title, n })
-      : t("topics.mergeQEmpty", { source: src.title, target: tgt.title }),
+      ? t("topics.mergeQ", { source: src.title, target: keep.title, n })
+      : t("topics.mergeQEmpty", { source: src.title, target: keep.title }),
     t("topics.mergeYes"),
-    () => void doMerge(space, sourceId, id),
+    () => void doMerge(space, id, keepId),
   );
 }
 
@@ -534,38 +596,67 @@ async function saveColor(id: string, hex: string | null): Promise<void> {
 // ---- 新建标签(user-44 第二刀;面头钮开输入行,Enter/「建」落库) --------------
 //
 // ⛔ 不做前端预校验(同 saveRename 那条纪律):重名/超长交给 core 的 create_topic 原样说。
-// 只拦空名 —— 那不是校验,是别发一趟必拒的写(空名 core 必拒);拦法 = 留在原地把焦点
-// 还给输入框,不弹错(输入框还空着,用户自己看得懂)。
+// 只拦空名 —— 那不是校验,是别发一趟必拒的写(空名 core 必拒)。
+// ⭐ 159(W3 A13,WM-05 / WM-23 / X-13):空名也要说一声(框下红字「标签名不能为空」,同桌面)—— 此前拦法是
+// 「留在原地、不弹错」,点了什么都不发生;重名失败时行不收、字留着、红字说原因(此前行一收,打的字就没了)。
 async function doCreate(): Promise<void> {
   if (busy) return;
   const inp = $("topics-list").querySelector<HTMLInputElement>(".tn-input");
-  const title = (inp?.value ?? "").trim();
+  if (inp) nameDraft = inp.value;
+  const title = nameDraft.trim();
   if (!title) {
-    inp?.focus();
+    nameErr = t("topics.nameRequired");
+    render();
+    focusNameInput();
     return;
   }
   const space = getCurrentSpace();
   busy = true;
-  creating = false; // 收编辑态(失败时输入丢了要重输 —— 与改名失败同一代价,一致性优先)
-  render();
+  nameErr = null;
+  render(); // 行照旧是新建形,只是置灰(`.off`)
+  let newId: string | null = null;
   try {
-    await createTopic(space, title);
-    if (space === getCurrentSpace()) showBar(t("topics.created"), true);
+    newId = await createTopic(space, title);
+    if (space === getCurrentSpace()) {
+      creating = false;
+      nameDraft = "";
+      showBar(t("topics.created"), true);
+    }
   } catch (err) {
-    if (space === getCurrentSpace()) showErr(err);
+    if (space === getCurrentSpace()) nameErr = errDetail(err);
   } finally {
     busy = false;
     if (space === getCurrentSpace()) {
       await loadTopics();
+      if (newId !== null) revealRow(newId);
+      else if (creating) focusNameInput();
       // 新标签要进筛选条的全量 pills(计 0 也显)——那份数据只在 refreshTimeline 里重拉。
       void deps.refreshTimeline();
     }
   }
 }
 
+/** 新建的那枚滚到眼前并闪一下(159 / W3 Q12,WM-32):它按顺序排在列表最末、常在一屏之外,
+ *  此前建完只有一句「已建标签」、眼前看不到它。落在一个收起的子标签组里就先把那组展开。 */
+function revealRow(id: string): void {
+  const box = $("topics-list");
+  const parent = groupPills(rows).find((g) => g.kids.some((k) => k.topic.id === id))?.parent.id;
+  if (parent !== undefined && collapsedKids.has(parent)) {
+    collapsedKids.delete(parent);
+    render();
+  }
+  const row = box.querySelector<HTMLElement>(`.trow[data-topic="${CSS.escape(id)}"]`);
+  if (!row) return;
+  row.scrollIntoView({ block: "center", behavior: "smooth" });
+  row.classList.add("flash");
+  row.addEventListener("animationend", () => row.classList.remove("flash"), { once: true });
+}
+
 function startCreate(): void {
   if (busy || deps.isSwitching()) return;
   creating = true;
+  nameDraft = "";
+  nameErr = null;
   renameId = null;
   kindEditId = null;
   colorEditId = null; // 五个编辑态互斥(合并态中本钮已藏,这行是防御)
@@ -626,6 +717,8 @@ function onClick(e: Event): void {
   if (renameFor) {
     if (busy || deps.isSwitching()) return;
     renameId = renameFor;
+    nameDraft = rows.find((r) => r.id === renameFor)?.title ?? ""; // 框里是全名(见 rowHtml 改名态那条)
+    nameErr = null;
     kindEditId = null; // 四个编辑态互斥:同一时刻只开一处
     colorEditId = null;
     creating = false;
@@ -642,6 +735,7 @@ function onClick(e: Event): void {
   }
   if (el.closest("[data-rename-cancel]")) {
     renameId = null;
+    nameErr = null;
     render();
     return;
   }
@@ -678,6 +772,7 @@ function onClick(e: Event): void {
   }
   if (el.closest("[data-create-cancel]")) {
     creating = false;
+    nameErr = null;
     render();
     return;
   }
@@ -715,6 +810,7 @@ function onKeydown(e: Event): void {
   if (creating) {
     if (ke.key === "Escape") {
       creating = false;
+      nameErr = null;
       render();
     } else if (ke.key === "Enter") {
       void doCreate();
@@ -724,6 +820,7 @@ function onKeydown(e: Event): void {
   if (renameId !== null) {
     if (ke.key === "Escape") {
       renameId = null;
+      nameErr = null;
       render();
     } else if (ke.key === "Enter") {
       void saveRename(renameId);
@@ -896,7 +993,9 @@ export function resetTopicsForSpaceChange(): void {
   colorEditId = null;
   creating = false;
   merging = false;
-  mergeSourceId = null;
+  mergeKeepId = null;
+  nameDraft = "";
+  nameErr = null;
   dragging = false;
   $("topics-list").innerHTML = "";
   $("topics-merge").hidden = true; // 下次 loadTopics→render 按新空间的 rows 重定
@@ -908,6 +1007,16 @@ export function initTopicsPane(d: Deps): void {
   const box = $("topics-list");
   box.addEventListener("click", onClick);
   box.addEventListener("keydown", onKeydown);
+  // 新建 / 改名框里的字随打随记(A13:失败后重画时放回去);一动笔,上一回那行红字就收(它说的是上一个名字)。
+  box.addEventListener("input", (e) => {
+    const inp = (e.target as HTMLElement).closest<HTMLInputElement>(".tn-input");
+    if (!inp) return;
+    nameDraft = inp.value;
+    if (nameErr !== null) {
+      nameErr = null;
+      box.querySelector(".tn-err")?.remove();
+    }
+  });
   $("topics-new").addEventListener("click", startCreate);
   $("topics-merge").addEventListener("click", startMerge);
   initDrag(box);

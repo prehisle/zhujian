@@ -3,8 +3,9 @@
 //
 // ⭐ 键位不在这里写:单键全部读 keymap.ts(视图派发读的也是那一份)。每张表是
 // `Record<keyof 那张键表, 文案>`,键表多一个动作而这里没配文案 = tsc 红。
-// 回收站 / 归档里的卡片刻意不摊:那几枚键只在那两处视图里有效、且各视图不同(还原是 R / U),
-// 摊在一张表上反而读不明白 —— 表尾一句「选中后按 / 看它自己的键」指过去。
+// 回收站里的卡 W3 159 / Q12 起两个回收站同键(R 还原 / D 彻底删除,此前看板那边还原是 U),于是摊一组;
+// 随记回收站多出来的复制 C / 复制链接 K 与卡片上同键,不另列。归档册里的卡仍不摊(只一两枚,且只在那儿有效)——
+// 表尾一句「选中后按 / 看它自己的键」指过去。
 // 编辑时那几枚(Enter / Shift+Enter / Ctrl+L / Tab / Ctrl+V / 双击)不是动作表里的动作,
 // 各自住在监听里(checklist-input / item-images / 两个视图的编辑态),这里是唯一一处列举;
 // 改那些监听时回来对一眼。
@@ -12,6 +13,7 @@ import { t } from "./i18n";
 import { CARD_COLORS } from "./card-color";
 import {
   BOARD_CARD_KEYS,
+  BOARD_TRASH_KEYS,
   BOARD_VIEW_KEYS,
   DOC_CARD_KEYS,
   DOC_VIEW_KEYS,
@@ -76,6 +78,11 @@ export function buildKeySheet(isMac: boolean): HTMLElement {
   });
   boardCard.push([`1–${CARD_COLORS.length} / 0`, t("settings.keysColorDigits")]);
 
+  const trash = rowsOf(BOARD_TRASH_KEYS, {
+    restore: t("inbox.actRestore"),
+    deleteForever: t("inbox.deleteForever"),
+  });
+
   const views: Row[] = [
     ...rowsOf(IDEA_VIEW_KEYS, { compose: t("settings.keysIdeaCompose") }),
     ...rowsOf(BOARD_VIEW_KEYS, {
@@ -88,6 +95,8 @@ export function buildKeySheet(isMac: boolean): HTMLElement {
       merge: t("settings.keysTopicMerge"),
     }),
     ...rowsOf(DOC_VIEW_KEYS, { compose: t("settings.keysDocCompose") }),
+    // W3 159 / Q9(WD-19):全局的那一枚(notebook.ts 的文档级监听,不在 keymap 的单键表里)。
+    [`${mod}F`, t("settings.keysSearch")],
   ];
 
   const pick: Row[] = [
@@ -119,6 +128,7 @@ export function buildKeySheet(isMac: boolean): HTMLElement {
     [t("settings.keysGroupIdea"), ideaCard],
     [t("settings.keysGroupBoard"), boardCard],
     [t("settings.keysGroupDoc"), docCard],
+    [t("settings.keysGroupTrash"), trash],
     [t("settings.keysGroupView"), views],
     [t("settings.keysGroupEdit"), editing],
   ] as const) {

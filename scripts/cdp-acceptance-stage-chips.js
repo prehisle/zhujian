@@ -145,8 +145,9 @@
     if (ok("搜到被状态维藏着的甲", !!hit)) {
       click(hit.querySelector(".content"));
       ok(
-        "定位自清状态维:甲现身并闪卡",
-        await until(() => !document.body.classList.contains("pane-open") && cardOf(t1)?.classList.contains("flash"), 4000),
+        "定位自清状态维:甲现身并挂定位框",
+        // 159 / W3 A14 起搜索落点挂 `.located`(冷着陆的定位框),不再是 `.flash`
+        await until(() => !document.body.classList.contains("pane-open") && cardOf(t1)?.classList.contains("located"), 4000),
       );
       ok("chips 回「全部」", chip("all").classList.contains("active"));
     }

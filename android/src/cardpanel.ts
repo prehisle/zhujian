@@ -140,6 +140,8 @@ type Deps = {
   openDoc: (itemId: string) => void;
   /** 定位到某张卡(必要时切面、清掉藏着它的筛选)—— main.ts 的 focusTimelineCard。 */
   focusCard: (itemId: string) => void;
+  /** 挪到别的空间之后回执上那枚「去看看」(159 / W3 Q4):切到那个空间、落到新生的那一条(main.ts goSeeInSpace)。 */
+  goSeeMoved: (spaceId: string, itemId: string) => void;
   /** 截止日的相对表达(「今天」/「逾期 3 天」/「8/27」)。706 值 chip 要它 —— 与**卡上那颗
    *  角标同一支笔**(main.ts 的 dueLabel),⛔ 别在这儿另写一份,更别把 ISO 原串摆上去:
    *  `2026-08-27` 在 360px 屏上一枚就吃掉半行,而它正是这一轮要治的「系统脸」。 */
@@ -579,7 +581,10 @@ async function runMove(target: string, targetLabel: string): Promise<void> {
       case "moved":
         if (state === session) setState(null);
         if (here) {
-          showBar(t("cardpanel.moved", { name: targetLabel }), true);
+          // 159 / W3 Q4(WM-18):回执走同一条提示条通道、带「去看看」(切到那个空间、落到新生的那一条);
+          // 不配「撤销」—— 挪回来是在那边又新生一条、历史已经没了,撤销 ≠ 完整恢复(§3.1)。
+          const newId = result.new_id;
+          actionBar(t("cardpanel.moved", { name: targetLabel }), t("cardpanel.goSee"), () => deps.goSeeMoved(target, newId));
           void deps.refresh();
         }
         break;

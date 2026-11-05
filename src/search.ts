@@ -1,8 +1,8 @@
-import { invoke } from "./space";
+import { currentSpaceId, invoke } from "./space";
 import { focusBoardView, focusTask } from "./board";
 import { t } from "./i18n";
 import { focusInboxItem } from "./inbox";
-import { focusDoc } from "./docs";
+import { docPreviewText, focusDoc } from "./docs";
 import type { View, ViewCtx } from "./notebook";
 import { when } from "./tasktime";
 import { applyTagColor } from "./tag-color";
@@ -10,6 +10,9 @@ import { INPUT_DEBOUNCE_MS } from "./timing";
 import "./search.css";
 import { el } from "./dom";
 import { errText } from "./err";
+import { renderContent } from "./item-images";
+import { settlePreviewFolds } from "./fold";
+import { setLocateNote } from "./locate";
 
 // Mirror of the Rust contract (lib.rs `search_items`): an item whose current text
 // OR any past version matched. Single-entity model — a hit can be an idea (未归类 /
@@ -20,6 +23,10 @@ type SearchHit = {
   created_at: string;
   status: "inbox" | "processed" | "doc" | "archived" | "task" | "sealed";
   topics: { title: string; color: string | null }[];
+  /** true = 当前正文里没凑齐所有词、只在改过的旧版本里凑齐(W3 A4,core `repo::SearchHit`)。 */
+  history_only: boolean;
+  /** 只在 `status === "archived"` 时有值:还原后回到哪一类(W3 Q12,core `repo::SearchHit`)。 */
+  trash_kind: "task" | "doc" | "idea" | null;
 };
 
 // ---- small DOM helper (same shape as inbox.ts / topics.ts) -----------------
@@ -33,6 +40,20 @@ const STATUS_LABEL: Record<SearchHit["status"], string> = {
   task: t("search.statusTask"),
   sealed: t("search.statusSealed"), // 成就归档(sealed 轴)——已入册的干完的活,不在看板上
 };
+
+// 回收站命中写成「回收站 · 任务 / 随记 / 长文」(W3 159 / Q12,WD-31:此前只写「回收站」,看不出原来是什么)。
+// 用词与另几枚章同一份(「任务」「随记」「长文」),⛔ 别另起一套。
+const TRASH_KIND_LABEL: Record<NonNullable<SearchHit["trash_kind"]>, string> = {
+  idea: t("search.statusIdeas"),
+  task: t("search.statusTask"),
+  doc: t("search.statusDoc"),
+};
+function badgeLabel(hit: SearchHit): string {
+  if (hit.status !== "archived") return STATUS_LABEL[hit.status];
+  // core 对回收站行恒给 trash_kind;缺 = 契约断了,响亮抛(fail-fast),不猜。
+  if (hit.trash_kind === null) throw new Error(`search: archived hit ${hit.id} without trash_kind`);
+  return t("search.statusTrashKind", { kind: TRASH_KIND_LABEL[hit.trash_kind] });
+}
 
 // Build the matched text as text + <mark> nodes (never innerHTML), so the
 // highlight can never inject markup from user content. Case-insensitive, every
@@ -78,6 +99,9 @@ const SKELETON = `
 // empty. (Same rationale as topics.ts `expanded`, board.ts `topicFilter`, inbox.ts
 // `active`.) Only one search view is mounted at a time.
 let lastQuery = "";
+// 上次离开时结果列表滚到哪儿(W3 159 / A17,WD-28):从结果点进时间轴、再点侧栏「搜索」回来,词和结果一直在,
+// 滚动位置却回到了顶。只认同一空间 + 同一个词(换了空间 / 词,那是另一份结果)。
+let lastScroll: { space: string; q: string; top: number } | null = null;
 
 export function mount(root: HTMLElement, ctx: ViewCtx): View {
   const view = el("div", { className: "v-search view" });
@@ -87,6 +111,12 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
   const list = view.querySelector("#list") as HTMLElement;
   const input = view.querySelector("#q") as HTMLInputElement;
   const clearBtn = view.querySelector("#clear") as HTMLButtonElement;
+  const mountSpace = currentSpaceId();
+  // ✕ 只给鼠标(W3 159 / Q12,WD-29):此前 Tab 先落在它上面,接着一下回车就把词清了。键盘清词走 Esc。
+  clearBtn.tabIndex = -1;
+  // 首发结果画完时滚回上次的位置(只一次);之后改词 / 回窗重跑,位置归用户自己。
+  let restoreTop: { q: string; top: number } | null =
+    lastScroll !== null && lastScroll.space === mountSpace && lastScroll.q === lastQuery ? lastScroll : null;
 
   function renderCenter(big: string, detail: string): void {
     list.replaceChildren(
@@ -108,12 +138,15 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
 
   // 搜到了要到得了(ui-audit P1 #8):按 status 分流到条目现在住的地方——任务→看板
   // 高亮(focusTask 通道)、灵感→灵感视图定位、归档→看板归档册、回收站→
-  // 按 stage 分家判归属(灵感回收站 / 看板回收站,一条 archived_at 轴两端列表)。
-  // jumpSeq:连点两个命中时只有最后一次点击落地(codex 二审 M——同查询下先回的旧
-  // 回包不许抢跳)。
-  let jumpSeq = 0;
-  async function jump(hit: SearchHit): Promise<void> {
-    const myJump = ++jumpSeq;
+  // 按 trash_kind 分家(灵感回收站 / 看板回收站,一条 archived_at 轴两端列表)。
+  // (此前回收站那支要 await 一次读命令,故有一枚 jumpSeq 防连点乱序;159 起整支同步了,它随之退役。)
+  function jump(hit: SearchHit): void {
+    // A4(WD-02):只在旧版本里命中的,落点卡上写一句「搜到的是改过之前的版本,去「历史」里看」—— 此前点进去
+    // 只有粉框,卡上的字里根本没有那个词。回收站里的卡菜单里没有「历史」,改说还原后再看。
+    setLocateNote(
+      hit.id,
+      hit.history_only ? (hit.status === "archived" ? t("search.landedOldTrash") : t("search.landedOld")) : null,
+    );
     if (hit.status === "task") {
       focusTask(hit.id);
       ctx.navigate("board");
@@ -128,24 +161,17 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       focusBoardView("sealed");
       ctx.navigate("board");
     } else if (hit.status === "archived") {
-      // archived 命中不带 stage:用现成读命令就地判归属。读失败=真读失败,走错误页
-      // (可重搜),不猜着跳(fail-fast,无静默兜底)。await 期间改搜/离开视图 = 本次
-      // 跳转作废,旧回包不许盖过更新的动作(codex P1 审 M2)。
-      const q = shown;
-      try {
-        const ideasTrash = await invoke<{ id: string }[]>("list_archived");
-        if (jumpSeq !== myJump || shown !== q || !view.isConnected) return;
-        if (ideasTrash.some((i) => i.id === hit.id)) {
-          focusInboxItem(hit.id, "archived");
-          ctx.navigate("inbox");
-        } else {
-          focusTask(hit.id);
-          focusBoardView("trash");
-          ctx.navigate("board");
-        }
-      } catch (err) {
-        if (jumpSeq !== myJump || shown !== q || !view.isConnected) return;
-        renderError(errText(err));
+      // 159 起命中自己带 `trash_kind`(core 判的「还原后回到哪一类」,同 badgeLabel 那枚章):任务 → 看板回收站,
+      // 随记 / 长文 → 随记回收站(长文删了进的是随记那边)。此前要现读一次 list_archived 再判。
+      if (hit.trash_kind === "task") {
+        focusTask(hit.id);
+        focusBoardView("trash");
+        ctx.navigate("board");
+      } else if (hit.trash_kind === "idea" || hit.trash_kind === "doc") {
+        focusInboxItem(hit.id, "archived");
+        ctx.navigate("inbox");
+      } else {
+        throw new Error(`search: archived hit ${hit.id} without trash_kind`);
       }
     } else {
       // 认不得的去向 = core 的分类词汇多了一种而这里没接(0042 之前「长文」就会落进上面那支
@@ -156,12 +182,17 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
   }
 
   // One result card: the matched thought (highlighted) + a meta row of provenance.
-  function card(hit: SearchHit, query: string): HTMLElement {
+  // W3 159 / A16(WD-21 / WD-30):正文照「只读预览」画 —— 清单行画成方框(与随记同一份认行,
+  // 不给点)、长文摘掉行首记号(别露「#」)、长的先一律夹在八行(落 DOM 后 settlePreviewFolds 量了再定)。
+  // `isDoc` 由 run() 判:活长文看 status,回收站里的长文看 `trash_kind`(core 判的归属,前端不另判)。
+  function card(hit: SearchHit, query: string, isDoc: boolean): HTMLElement {
     const meta = el("div", { className: "hit-meta" }, [
       el("span", {
         className: `badge ${hit.status}`,
-        textContent: STATUS_LABEL[hit.status],
+        textContent: badgeLabel(hit),
       }),
+      // A4(WD-02):只在改过的旧版本里命中 —— 卡上画的是现在的正文,里面没有那个词、不标红,得说一声。
+      ...(hit.history_only ? [el("span", { className: "badge old-hit", textContent: t("search.oldVersionHit") })] : []),
       ...hit.topics.map((tp) => {
         // 624(用户面 74 / C):有色标签在这里也画那颗点 —— 卡片(`.tag.tinted`)与筛选条
         // (`.tf-dot`)本来就画,而搜索恰恰是最需要「一眼认出是哪个标签」的地方。着色走
@@ -178,15 +209,24 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
     ]);
     meta.append(el("time", { className: "hit-time", textContent: when(hit.created_at) }));
 
-    const node = el("article", { className: "hit", tabIndex: 0 }, [
-      el("p", { className: "hit-text" }, highlighted(hit.content, query)),
-      meta,
-    ]);
-    node.addEventListener("click", () => void jump(hit));
+    const text = el("p", { className: "hit-text clamped" });
+    text.append(
+      renderContent(isDoc ? docPreviewText(hit.content) : hit.content, [], undefined, (s) => highlighted(s, query)),
+    );
+    const node = el("article", { className: "hit", tabIndex: 0 }, [text, meta]);
+    node.addEventListener("click", () => jump(hit));
     node.addEventListener("keydown", (e) => {
       if (e.key === "Enter" || e.key === " ") {
         e.preventDefault();
-        void jump(hit);
+        jump(hit);
+      } else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        // ↑ ↓ 在结果之间走;第一条上再按 ↑ 回搜索框(Q12,WD-29 的另一半)。
+        e.preventDefault();
+        const hits = [...list.querySelectorAll<HTMLElement>(".hit")];
+        const i = hits.indexOf(node);
+        const next = e.key === "ArrowDown" ? hits[i + 1] : hits[i - 1];
+        if (next) next.focus();
+        else if (e.key === "ArrowUp") input.focus();
       }
     });
     return node;
@@ -208,14 +248,18 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
     try {
       const hits = await invoke<SearchHit[]>("search_notes", { query: q });
       if (shown !== q) return; // a newer query already superseded this one
+      const top = restoreTop;
+      restoreTop = null; // 只还首发那一次
       if (hits.length === 0) {
         renderCenter(t("search.noMatch"), t("search.noMatchDetail", { q }));
         return;
       }
       list.replaceChildren(
         el("p", { className: "count", textContent: t("search.matchCount", { n: hits.length }) }),
-        ...hits.map((h) => card(h, q)),
+        ...hits.map((h) => card(h, q, h.status === "doc" || h.trash_kind === "doc")),
       );
+      settlePreviewFolds(list, ".hit-text", { fold: t("board.fold"), unfold: t("board.unfold") });
+      if (top !== null && top.q === q) list.scrollTop = top.top; // ⚠ 在折叠定局之后:还的是夹后几何里的位置
     } catch (err) {
       if (shown !== q) return;
       renderError(errText(err));
@@ -233,6 +277,15 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
   input.addEventListener("input", onInput);
   input.addEventListener("keydown", (e) => {
     if (e.isComposing) return; // IME 组合期的 Enter 是上屏,不是立即搜索(ui-audit P0 #1)
+    if (e.key === "ArrowDown") {
+      // ↓ 进第一条结果(Q12,WD-29:此前 ↓ 不动、Tab 先落 ✕)。没有结果时什么也不做。
+      const first = list.querySelector<HTMLElement>(".hit");
+      if (first) {
+        e.preventDefault();
+        first.focus();
+      }
+      return;
+    }
     if (e.key === "Enter") {
       window.clearTimeout(timer);
       void run(input.value);
@@ -267,6 +320,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
 
   return {
     unmount() {
+      lastScroll = shown ? { space: mountSpace, q: shown, top: list.scrollTop } : null;
       root.replaceChildren();
     },
     onFocus() {

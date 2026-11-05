@@ -277,6 +277,8 @@ pub async fn create_space(name: String, coord: State<'_, Coord>) -> Result<Strin
     // 生命周期互斥(§4):建空间与配对/改名串行——catalog 变更与账户闸的世界观
     // 之间不留并发窗口。
     let _life = coord.lifecycle.lock().await;
+    // 撞名闸(W3 A11):lifecycle 内、建库之前;名单先重扫再取,见 Coord::ensure_space_name_free。
+    coord.ensure_space_name_free(&trimmed, None)?;
     let (id, _path) = spaces::create_space(&coord.data_dir, &trimmed)?;
     // 严格 catalog 重扫(刚建的库也走一遍全量验):失败 = 建出的库有问题或目录
     // 被并发动过,响亮上抛(库文件留着,下次启动整体裁决)。
@@ -296,6 +298,9 @@ pub async fn rename_space(
     coord: State<'_, Coord>,
 ) -> Result<(), String> {
     let _life = coord.lifecycle.lock().await;
+    // 撞名闸(W3 A11):与 create_space 同一道(lifecycle 内、落名之前、名单先重扫);
+    // 改成自己的原名(只差大小写)放行。
+    coord.ensure_space_name_free(&name, Some(&space_id))?;
     let rt = coord.control_runtime(&space_id)?;
     // H1(工序 9 二审):控制命令持 rt(RW 连接)动库,登记为长命令让并发切换的
     // stop 等它收场后再放行下一次激活(与 pair_join 同纪律;此命令无 await,窗口极小,
@@ -834,6 +839,11 @@ pub struct SearchHitItem {
     created_at: String,
     status: String,
     topics: Vec<String>,
+    /// true = 只在改过的旧版本里命中、当前正文里没有(W3 A4);口径见 `repo::SearchHit`。
+    history_only: bool,
+    /// 只在 `status == "archived"` 时有值:`"task"` / `"doc"` / `"idea"`(还原后回到哪类,
+    /// W3 Q12);其余 null。
+    trash_kind: Option<String>,
 }
 
 /// 全局搜索(连历史、覆盖灵感/任务/回收站/归档册)。空词响亮拒,不倒全库。
@@ -856,6 +866,8 @@ pub fn search_notes(space_id: String, query: String, coord: State<'_, Coord>) ->
                 // 要画那颗色点),安卓那半没跟着做 ⇒ 这里就地把颜色丢掉,别顺手改安卓的
                 // 契约。哪天安卓也画点,连它的前端一起改。
                 topics: h.topics.into_iter().map(|t| t.title).collect(),
+                history_only: h.history_only,
+                trash_kind: h.trash_kind,
             })
             .collect())
     })
@@ -2297,6 +2309,43 @@ mod tests {
     use rusqlite::Connection;
     use std::path::PathBuf;
     use zhujian_core::clock;
+
+    /// W3 A11 空间撞名闸的**接线**(结构锚)。本轮选择:判据与「先重扫 catalog」由行为测守
+    /// (core `ensure_space_name_free_rejects_trimmed_case_only_duplicates`、
+    /// `coord::tests::space_name_gate_rescans_catalog_before_judging` / `…_fails_closed_…`),
+    /// 命令本体的接线由这只锚守 —— 不为它把 rename 的 begin_op / drop(rt) / emit 编排搬出壳
+    /// (codex 二轮认可的取舍)。钉的是:两条命令都在拿 lifecycle 之后过闸(参数对、错误经 `?`
+    /// 上抛),再落库,中途不提前放锁(二轮点名的绕法 = 丢 `?` / 传错 self_id / `drop(_life)`)。
+    /// 比对前剔注释、去掉全部空白。
+    #[test]
+    fn space_name_gate_is_wired_before_the_write_under_lifecycle() {
+        let src = include_str!("shell.rs");
+        let prod = &src[..src.find("#[cfg(test)]\nmod tests {").expect("测试段起点")];
+        for (sig, gate, write) in [
+            (
+                "pub async fn create_space(",
+                "coord.ensure_space_name_free(&trimmed,None)?;",
+                "spaces::create_space(",
+            ),
+            (
+                "pub async fn rename_space(",
+                "coord.ensure_space_name_free(&name,Some(&space_id))?;",
+                "spaces::set_space_name(",
+            ),
+        ] {
+            let rest = &prod[prod.find(sig).unwrap_or_else(|| panic!("找不到 {sig}"))..];
+            let body: String = rest[..rest.find("\n}\n").expect("函数尾")]
+                .lines()
+                .map(|l| l.split("//").next().expect("split 至少一段"))
+                .collect::<String>()
+                .split_whitespace()
+                .collect();
+            let at = |tok: &str| body.find(tok).unwrap_or_else(|| panic!("{sig} 里找不到 {tok}"));
+            let (life, gate, w) = (at("let_life=coord.lifecycle.lock().await;"), at(gate), at(write));
+            assert!(life < gate && gate < w, "{sig}:lifecycle({life}) → 撞名闸({gate}) → 落库({w})顺序不对");
+            assert!(!body.contains("drop(_life)"), "{sig}:lifecycle 不许在落库前放掉");
+        }
+    }
 
     /// space-entry-plan §2 后端不变量:sync_pair_join 只接受 main——直接 invoke
     /// 非 main 必拒(不许只测按钮隐藏);main 照常放行(装机 onboarding 不变)。

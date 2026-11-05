@@ -1,0 +1,109 @@
+/* 「移到别的空间」面板(move-space.ts):随记 / 看板 / 长文三处共用这一份,长成一个样(W3 159 / Q4,WD-38)。
+   后果那句住一块朱砂淡底的框里(照手机 .movewarn 的「先红框说后果」);目标空间是一排描边药丸,选中的那枚
+   点亮;问句与「确认移动」在**下面另一行**,执行钮不落在刚点的目标钮上(§3.2 第 2 条)。看板卡里宿主是
+   `.acts`(flex 行),故面板自己占满一行。 */
+.move-panel {
+  flex: 1 1 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  margin-top: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  background: var(--paper);
+  font-family: var(--font-sans);
+  cursor: default;
+}
+.move-warn,
+.move-col,
+.move-q,
+.move-err {
+  margin: 0;
+  font-size: var(--fs-13);
+  line-height: 1.55;
+  white-space: normal;
+}
+.move-warn {
+  color: var(--ink);
+  background: var(--seal-tint);
+  border: 1px solid var(--seal-line);
+  border-radius: var(--radius-sm);
+  padding: 7px 10px;
+}
+.move-warn b { color: var(--seal-ink-on-seal-tint); font-weight: 600; }
+.move-col { color: var(--ink-soft); }
+.move-targets {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+}
+.move-to { font-size: var(--fs-12); letter-spacing: 0.04em; color: var(--ink-soft); margin-right: 2px; }
+.move-target {
+  min-height: 28px;
+  font: var(--fs-13)/1.4 var(--font-sans);
+  padding: 4px 13px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--line-strong);
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+  transition: background 0.14s, border-color 0.14s;
+}
+.move-target:hover:not(:disabled) { border-color: var(--seal-line); background: color-mix(in srgb, var(--ink) 6%, transparent); }
+.move-target[aria-pressed="true"] {
+  border-color: var(--seal-line);
+  background: var(--seal-tint);
+  color: var(--seal-ink-on-seal-tint);
+  font-weight: 600;
+}
+.move-target:disabled { opacity: 0.55; cursor: default; }
+.move-q { color: var(--ink); font-weight: 600; }
+.move-q[hidden],
+.move-err[hidden],
+.move-yes[hidden] { display: none; }
+.move-err {
+  color: var(--seal-ink-on-seal-tint);
+  background: var(--seal-tint);
+  border: 1px solid var(--seal-line);
+  border-radius: var(--radius-sm);
+  padding: 7px 10px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+/* 「确认移动」在左、「取消」在右(§3.2 第 2 条「执行放左、取消放右」);没选目标前只有「取消」,
+   它一直在右端原位,确认钮出现时不挤动它。 */
+.move-actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+}
+.move-yes,
+.move-no {
+  min-height: 28px;
+  font: var(--fs-12)/1.4 var(--font-sans);
+  letter-spacing: 0.04em;
+  padding: 5px 15px;
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+}
+.move-yes {
+  border: 1px solid var(--seal);
+  background: var(--seal);
+  color: var(--on-seal);
+  font-weight: 600;
+}
+.move-yes:hover:not(:disabled) { background: color-mix(in srgb, var(--seal) 88%, var(--ink)); }
+.move-no {
+  border: 1px solid var(--line-strong);
+  background: transparent;
+  color: var(--ink-soft);
+}
+.move-no:hover:not(:disabled) { color: var(--ink); background: color-mix(in srgb, var(--ink) 6%, transparent); }
+.move-yes:disabled,
+.move-no:disabled { opacity: 0.55; cursor: default; }
+.move-target:focus-visible,
+.move-yes:focus-visible,
+.move-no:focus-visible { outline: 2px solid var(--seal); outline-offset: 1px; }

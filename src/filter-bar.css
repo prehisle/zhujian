@@ -76,6 +76,27 @@
   width: 13em;
 }
 .filter-text:focus { outline: none; border-color: var(--seal-line); }
+/* 筛着时过滤框旁那句「筛出 N 条」(W3 159 / Q8,filter-bar.ts::paintFilterCount):同搜索页 `.count` 的字档。 */
+/* 贴着过滤框那一行对齐(标签 pill 折成两行时,居中会让它掉到框下面去 —— 真实例截图看出来的)。 */
+.filter-count {
+  flex: none;
+  align-self: flex-start;
+  padding-top: 7px;
+  font-size: var(--fs-12);
+  letter-spacing: 0.04em;
+  color: var(--ink-soft);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.filter-count[hidden] { display: none; }
+/* 卡上被过滤词命中的字(markFilterHits):与搜索页命中同一套朱砂淡底。 */
+mark.filter-hit {
+  background: var(--seal-tint);
+  color: var(--seal-ink-on-seal-tint);
+  border-radius: var(--radius-xs);
+  padding: 0 1px;
+  font-weight: 600;
+}
 .filter-text::placeholder { color: var(--ink-faint); }
 .tf-pill {
   font: inherit;
