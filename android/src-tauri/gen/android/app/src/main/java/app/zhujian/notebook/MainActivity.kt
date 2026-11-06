@@ -9,6 +9,11 @@ import java.io.File
 class MainActivity : TauriActivity() {
   private var webView: WebView? = null
 
+  private companion object {
+    /** 冷启首帧底色记在哪儿(161 / W4 A35;键 "theme" = auto | light | dark,与页面 localStorage 里那份同值、由页面递过来)。 */
+    const val LAUNCH_PREFS = "zj_launch"
+  }
+
   override fun onWebViewCreate(webView: WebView) {
     this.webView = webView
     webView.addJavascriptInterface(SystemBars(), "__zhujianSystemBars")
@@ -21,6 +26,9 @@ class MainActivity : TauriActivity() {
     webView.addJavascriptInterface(TextSize(webView.settings.textZoom), "__zhujianTextSize")
     // 长按拖卡拿起那一下的短震(158 G3 / Q7,carddrag.ts)。
     webView.addJavascriptInterface(Haptic(), "__zhujianHaptic")
+    // 冷启首帧底色(161 / W4 A35,见 LaunchTheme 那段):页面画出第一帧之前 WebView 自己是一块白,这里换成纸面色。
+    webView.addJavascriptInterface(LaunchTheme(), "__zhujianLaunchTheme")
+    webView.setBackgroundColor(paperColor())
     applyWindowInsets()
   }
 
@@ -83,6 +91,45 @@ class MainActivity : TauriActivity() {
      *  ⛔ 别改成「返回 CSS px」—— 换算要的那个比值只有页面里才知道(textZoom / 缩放都影响)。 */
     @android.webkit.JavascriptInterface
     fun topInset(): Int = statusBarTopPx
+  }
+
+  // 冷启首帧的底色(161 / W4 A35,WM-18)。选了「暗」,冷启先闪约 0.6 秒整屏纯白(「亮」档也是先白再米色)——
+  // 那段白是**原生的**:系统起始窗口(Android 12+ 的 splash)用主题的 windowBackground,接着 WebView 在页面画出第一帧前
+  // 自己是一块白;页面里那段首帧定色脚本(index.html 头里)要等到页面开始画才轮得到,够不着这一段。
+  // ⇒ 三处一起换成纸面色:①主题 windowBackground = 纸面色(res/values* 里亮暗两份,跟着「本应用」的明暗走);
+  //   ②这台 Activity 的窗口底与 WebView 底,按上次选的档现算(下面 paperColor);
+  //   ③API 31+ 把选的档交给系统存着(`UiModeManager.setApplicationNightMode`)—— 起始窗口在我们的进程起来之前就画了,
+  //     只有系统替这个应用记着的明暗它才认(自动 = MODE_NIGHT_AUTO = 跟系统)。API 30 没有这一格:起始窗口跟系统,
+  //     手动锁了与系统相反的那档时先见一眼另一档的纸面色(不再是白),之后照常。
+  // 档位由页面在每次定色时递过来(theme.ts::paint);桥面只此一个字符串入口,出格的值直接不理。
+  // ⚠ 明暗本身仍归页面(`<html data-theme>`,CSS 生效),这里只管「页面画出来之前那一段是什么色」。
+  inner class LaunchTheme {
+    @android.webkit.JavascriptInterface
+    fun remember(mode: String) {
+      if (mode != "auto" && mode != "light" && mode != "dark") return
+      val prefs = getSharedPreferences(LAUNCH_PREFS, MODE_PRIVATE)
+      if (prefs.getString("theme", null) == mode) return // 每次启动都会递一遍;没变就什么都不做(免得白触发一次配置变更)
+      prefs.edit().putString("theme", mode).apply()
+      if (android.os.Build.VERSION.SDK_INT >= 31) {
+        val night = when (mode) {
+          "dark" -> android.app.UiModeManager.MODE_NIGHT_YES
+          "light" -> android.app.UiModeManager.MODE_NIGHT_NO
+          else -> android.app.UiModeManager.MODE_NIGHT_AUTO
+        }
+        getSystemService(android.app.UiModeManager::class.java).setApplicationNightMode(night)
+      }
+    }
+  }
+
+  /** 按上次选的档算纸面色(与 index.html 的 `--paper` 亮暗两档同值,色值住 res/values/colors.xml)。没选过 = 跟系统。 */
+  private fun paperColor(): Int {
+    val dark = when (getSharedPreferences(LAUNCH_PREFS, MODE_PRIVATE).getString("theme", "auto")) {
+      "dark" -> true
+      "light" -> false
+      else -> (resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK) ==
+        android.content.res.Configuration.UI_MODE_NIGHT_YES
+    }
+    return getColor(if (dark) R.color.zj_paper_dark else R.color.zj_paper_light)
   }
 
   // 界面字号(251)的原生半截。wry 0.55.1 的安卓 zoom() 是空实现(返回 Ok 什么都不做),
@@ -164,6 +211,8 @@ class MainActivity : TauriActivity() {
 
   override fun onCreate(savedInstanceState: Bundle?) {
     enableEdgeToEdge()
+    // 窗口底先刷成纸面色(161 / W4 A35,见 LaunchTheme 那段):WebView 盖上来之前露出来的就是它。
+    window.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(paperColor()))
     // 故障注入的旋钮:只在**编译期开了 ZJ_FAULT** 的验收包里有效,且只从启动 Intent 读一次
     // (⛔ 桥面不新增入口)。发版包里 [SafFault] 的每个 hook 第一行就短路。
     SafFault.configure(intent)

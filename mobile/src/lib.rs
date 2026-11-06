@@ -143,6 +143,7 @@ macro_rules! shared_handler {
             $crate::sync_pair_start,
             $crate::sync_device_admin,
             $crate::sync_roster_refresh,
+            $crate::sync_reconnect_now,
             $crate::sync_pair_join,
             $crate::join_space,
             $crate::join_space_cancel,

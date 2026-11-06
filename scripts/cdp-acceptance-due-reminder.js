@@ -187,7 +187,8 @@
       seg: !!$("remind-seg"),
       time: !!$("remind-time"),
       test: !!$("remind-test"),
-      sub: [...document.querySelectorAll('#settings-pane p[data-i18n="reminder.sub"]')].length,
+      // 161 / W4 Q9 起说明那一段由 main.ts::paintRemindRow 现填(里面有「{days} 天内」那个数),不再是静态 data-i18n ⇒ 认 id、且开面后有字。
+      sub: $("remind-sub") && $("remind-sub").textContent.length > 0 ? 1 : 0,
     };
     ok("① 设置面「截止提醒」五件都在", parts.h2 === 1 && parts.seg && parts.time && parts.test && parts.sub === 1, parts);
     ok(

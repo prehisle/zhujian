@@ -13,10 +13,11 @@
 // 3. ⛔ **没有恢复入口**:手机上出得了备份、还原要拿到桌面上(§17.2 的边界,必须进 UI)。
 import { invoke } from "@tauri-apps/api/core";
 
+import { listSpaces, spaceLabel, type SpaceInfo } from "./api";
 import { t } from "./i18n";
 import { HAS_SAF_BRIDGE } from "./platform";
 import * as saf from "./saf";
-import { $ } from "./ui";
+import { $, showBar } from "./ui";
 import { errText } from "./err";
 
 type Status = {
@@ -57,10 +58,22 @@ let ceremonyOpen = false;
 /** 「其他文件」那条恒显的路展开了没有(§17.9 末)。 */
 let listAll = false;
 
-/** 打开设置面时调。⛔ 每次都**重新问一遍**状态 —— 回调不是真相源(§17.5)。 */
+/**
+ * 这次开着 app 时验过的结论(161 / W4 A31,WM-23):点「全部列出」再切回、或点「刷新」,列表整个重画 ——
+ * 此前刚验过「现在打得开」的那份当场又变回「还没验过」。⇒ 按「哪个文件 + 它现在的大小与时刻」记住结论,
+ * 重画时照旧贴回去。⭐ 只记在内存里(进程没了就没了):「有效」只有验过才算(§3.3),跨进程留着的
+ * 结论就成了「当初验过」—— 文件可能早被换掉了。大小或时刻一变就不认(同名文件被覆盖过)。
+ * ⛔ 「不确定」那一种不记:那句本来就是叫人再验一次。
+ */
+const verdicts = new Map<string, { text: string; warn: boolean }>();
+const verdictKey = (it: saf.SafItem): string => `${it.docId}|${it.bytes}|${it.ms}`;
+
+/** 打开设置面时调。⛔ 每次都**重新问一遍**状态 —— 回调不是真相源(§17.5)。
+ *  161 / W4(Q11 WM-29 后半 / A11):设置面回到上次读到的位置 ⇒ 已经画过的那一份先留着、新的到了原地换,
+ *  ⛔ 别先换成一行「读取中…」:那一下整节变矮,还原滚动位时被钳到文档底,落点就偏了。 */
 export function loadBackup(): void {
   const body = $("backup-body");
-  body.replaceChildren(el("p", "fine", t("backup.loading")));
+  if (body.childElementCount === 0) body.replaceChildren(el("p", "fine", t("backup.loading")));
   void refresh();
 }
 
@@ -92,6 +105,9 @@ async function refresh(): Promise<void> {
 
 function render(body: HTMLElement, st: Status, outboxProblem: string): void {
   ceremonyOpen = false;
+  // 上一次画好的那几行备份先留着,新名单到了原地换(161 / W4,WM-29 后半 / A11):此前每次开设置面,名单都先塌成一行
+  // 「读取中…」再长回来 —— 正好在「回到上次读到的位置」那一下之后,内容整块挪一两百像素(V1986A 量过 213px)。
+  const keepRows = [...(body.querySelector("#backup-list .bkup-out")?.childNodes ?? [])];
   body.replaceChildren();
 
   if (!saf.hasBridge()) {
@@ -168,7 +184,7 @@ function render(body: HTMLElement, st: Status, outboxProblem: string): void {
   const tree = saf.currentTree();
   body.appendChild(dirBlock(tree));
   if (!tree.configured || !tree.writable) return;
-  body.append(runBlock(), listBlock());
+  body.append(runBlock(), listBlock(keepRows));
 }
 
 // ---- 仪式 -------------------------------------------------------------------------
@@ -201,7 +217,8 @@ function renderCeremony(body: HTMLElement, code: string): void {
     void invoke("backup_confirm_setup", { code: input.value })
       .then(() => {
         ceremonyOpen = false;
-        void refresh().then(() => $("backup-body").appendChild(el("p", "fine", t("backup.ceremonyDone"))));
+        // 161 / W4 A32(WM-24):核对通过这一下要看得见 —— 此前那句排在主钮和一段长说明下面,像什么都没发生。
+        void refresh().then(() => showBar(t("backup.ceremonyDone"), true));
       })
       .catch((e) => {
         b.disabled = false;
@@ -214,15 +231,58 @@ function renderCeremony(body: HTMLElement, code: string): void {
   });
   acts.append(confirm, cancel);
 
+  const codeBox = codeView(code);
   body.append(
     el("p", "fine", t("backup.ceremonyIntro")),
-    el("div", "bkup-code", code),
+    codeBox,
     el("p", "fine warn-ink", t("backup.ceremonyWarn")),
     row,
     acts,
     msg,
   );
+  fitCode(codeBox);
   input.focus();
+}
+
+/**
+ * 备份码那一框(161 / W4 A18 + Q11 WM-35)。两件事:
+ * ①**一组 4 位不许拆在两行**(此前 `word-break: break-all` 按字折,「P / H5C」照着抄就成了两组)。
+ *   横杠后面那个位置**不总是**断行机会:UAX#14 LB25 不许在「-」与数字之间断,而组以数字打头很常见 ⇒
+ *   每个横杠后面补一枚零宽空格(U+200B)当断点,组内一个都没有 ⇒ 只会在组与组之间折。
+ * ②**长按「全选」只选中这串码**(此前选中整页 946 个字):只读 textarea —— 系统菜单的「全选」在框里只选框内。
+ *   ⛔ 不加「复制」钮:剪贴板一写就成了码的新主人、这一端清不干净,上面那条否决照旧;想存进密码管理器的人自己选了复制。
+ *   复制时把那几枚零宽空格剥掉(`copy` 事件里改写剪贴板)—— 不剥的话粘出来的码里夹着看不见的字。
+ * ⛔ 码本身的形一个字不动:显示的仍是 core 给的「XXXX-XXXX-…」,零宽空格只活在这一框里。
+ */
+function codeView(code: string): HTMLTextAreaElement {
+  const box = document.createElement("textarea");
+  box.className = "bkup-code";
+  box.readOnly = true;
+  box.spellcheck = false;
+  box.rows = 1;
+  box.value = code.split("-").join(`-${ZWSP}`);
+  box.addEventListener("copy", (e) => {
+    if (!e.clipboardData) return; // 拿不到剪贴板数据 ⇒ 交给系统照常复制(不吞这一下)
+    e.clipboardData.setData("text/plain", box.value.slice(box.selectionStart, box.selectionEnd).replaceAll(ZWSP, ""));
+    e.preventDefault();
+  });
+  return box;
+}
+
+/** 零宽空格:码框里组与组之间的断点(见 `codeView`)。 */
+const ZWSP = String.fromCharCode(0x200b);
+
+/** 只读框没有「按内容长高」这回事(`field-sizing` 最老那台 WebView 不认)⇒ 量一次撑到正好;宽变了(转屏 / 字号)再量。 */
+function fitCode(box: HTMLTextAreaElement): void {
+  let lastW = -1;
+  const fit = (): void => {
+    if (box.clientWidth === lastW) return;
+    lastW = box.clientWidth;
+    box.style.height = "auto";
+    box.style.height = `${box.scrollHeight + box.offsetHeight - box.clientHeight}px`;
+  };
+  fit();
+  new ResizeObserver(fit).observe(box);
 }
 
 // ---- 落点 -------------------------------------------------------------------------
@@ -287,6 +347,13 @@ function runBlock(): HTMLElement {
 
 /** ⭐ 把这一趟摊开:做成几份、每份有没有真到用户的文件夹、失败各为什么。 */
 async function runMoves(out: HTMLElement, r: Report): Promise<void> {
+  // 161 / W4 A15(WM-09):做好的那几份按**空间的名字**说(主空间 =「默认空间」),⛔ 不再把长文件名在这儿念一遍 ——
+  // 它就在下面「文件夹里的备份」那一行。名单取不到就照实写空间编号(⛔ 不为了一行字挡住后面搬进文件夹那一步)。
+  const spaces = await listSpaces().catch(() => null);
+  const spaceName = (id: string): string => {
+    if (spaces === null) return id;
+    return spaceLabel(spaces.find((x) => x.id === id) ?? { id, name: null });
+  };
   out.replaceChildren();
   out.appendChild(
     el(
@@ -309,7 +376,7 @@ async function runMoves(out: HTMLElement, r: Report): Promise<void> {
 
   // 第二步:逐份搬进用户的文件夹。⛔ 与「做好了」分开说。
   for (const m of r.made) {
-    const line = el("div", "bkup-file", `${m.file_name} · ${size(m.bytes)}`);
+    const line = el("div", "bkup-file", `${spaceName(m.space_id)} · ${size(m.bytes)}`);
     const state = el("div", "bkup-file", t("backup.moving"));
     out.append(line, state);
     await moveOne(state, m.file_name);
@@ -321,7 +388,7 @@ async function moveOne(state: HTMLElement, name: string): Promise<void> {
   const done = await saf.putFile(name);
   if (done.ok) {
     state.className = "bkup-file";
-    state.textContent = t("backup.movedOk", { name: done.displayName ?? name });
+    state.textContent = t("backup.movedOk");
     return;
   }
   if ("unknown" in done) {
@@ -354,22 +421,33 @@ async function moveOne(state: HTMLElement, name: string): Promise<void> {
  * 「还有 N 个其他文件」是**恒显**的(codex 二弹 M 的反例:被 provider 改过名的那份,
  * 在产出账消失之后既不在扩展名那一支、也不在账那一支)。
  */
-function listBlock(): HTMLElement {
+/** `keep` = 上一次画好的那几行(见 render 头上),新名单到之前先摆着;没有就照旧先说「读取中…」。 */
+function listBlock(keep: Node[]): HTMLElement {
   const wrap = document.createElement("div");
   wrap.id = "backup-list";
   const head = el("div", "row", "");
   head.appendChild(button(t("backup.listReload"), true, () => void reloadList()));
-  wrap.append(el("h3", "bkup-h", t("backup.listName")), head, el("div", "bkup-out", ""));
-  void reloadList(wrap);
+  const out = el("div", "bkup-out", "");
+  out.append(...keep);
+  wrap.append(el("h3", "bkup-h", t("backup.listName")), head, out);
+  void reloadList(wrap, keep.length > 0);
   return wrap;
 }
 
-async function reloadList(scope?: HTMLElement): Promise<void> {
+/** `quiet` = 屏上已经摆着上一次的名单,别先塌成「读取中…」(只给 render 那一路;点「刷新」/「全部列出」照旧先说一声)。 */
+async function reloadList(scope?: HTMLElement, quiet = false): Promise<void> {
   const wrap = scope ?? document.getElementById("backup-list");
   const out = wrap?.querySelector(".bkup-out");
   if (!out) return;
-  out.replaceChildren(el("p", "fine", t("backup.loading")));
-  const list = await saf.listTree(listAll);
+  if (!quiet) out.replaceChildren(el("p", "fine", t("backup.loading")));
+  let list: saf.SafList;
+  let spaces: SpaceInfo[];
+  try {
+    [list, spaces] = await Promise.all([saf.listTree(listAll), listSpaces()]);
+  } catch (e) {
+    out.replaceChildren(el("p", "fine warn-ink", errText(e)));
+    return;
+  }
   out.replaceChildren();
   if (list.error) {
     out.appendChild(el("p", "fine warn-ink", list.error));
@@ -385,7 +463,7 @@ async function reloadList(scope?: HTMLElement): Promise<void> {
         : el("p", "fine", t("backup.listEmpty")),
     );
   }
-  for (const it of list.items) out.appendChild(listRow(it));
+  for (const it of list.items) out.appendChild(listRow(it, spaces));
   // ⛔ 别静默截断(那会读成「你只有这些备份」)。⚠ **两种截断要分开说**:
   // ①候选超过 200 ⇒ 「只显示最近 200 个」(那句话现在有排序保证了);
   // ②**这个文件夹太大、这次只看了前 N 个条目** ⇒ 那时连「最近」都不敢担保。
@@ -420,27 +498,57 @@ async function reloadList(scope?: HTMLElement): Promise<void> {
     listAll = !listAll;
     void reloadList();
   });
-  out.appendChild(others);
+  // 161 / W4 A32(WM-24):文件夹里**一个别的文件都没有**(而且这次是整个看完的)⇒ 「全部列出」列出来的就是上面这几行,
+  // 那句「还有 0 个其他文件…点这里全部列出」只是噪音。⚠ 恒显那条义务(上面头注)防的是「被改过名的备份藏在其他文件里」
+  // —— 其他文件是 0 个时没有地方可藏,义务不受影响;只看了一部分(scanTruncated)或数饱和了的照旧显。
+  const nothingElse = !listAll && !list.scanTruncated && !list.otherSaturated && list.otherCount === 0;
+  if (!nothingElse) out.appendChild(others);
 }
 
-function listRow(it: saf.SafItem): HTMLElement {
+/**
+ * 一份备份一行(161 / W4 A15,WM-09):先说**哪个空间、几点备的**(本地时间),文件名退到下面一行小字 ——
+ * 文件名里的时刻是 UTC(core `file_name_for` 刻意的:进程里取本地偏移会失败,而一个可能错 8 小时的本地时间更坏),
+ * 凌晨备的连日期都早一天,当主标题读就像日期错了。⛔ 文件名一个字不动(列表与轮转按名认),这里只**读**它。
+ * 认不出的名字(被 provider 改过名,或不是 core 起的)⇒ 照旧整名当标题、旁边写文件改动时刻,不编一个空间出来。
+ */
+function listRow(it: saf.SafItem, spaces: SpaceInfo[]): HTMLElement {
   const row = el("div", "bkup-item", "");
-  row.append(
-    el("span", "bkup-item-name", it.name),
-    el("span", "bkup-item-meta", `${size(it.bytes)}${it.ms ? " · " + when(it.ms) : ""}`),
-  );
-  // ⭐ 默认就是这句「还没验过」,不是空白也不是「有效」。
+  const label = nameLabel(it.name, spaces);
+  if (label !== null) {
+    row.append(el("span", "bkup-item-name", label), el("span", "bkup-item-file", it.name), el("span", "bkup-item-meta", size(it.bytes)));
+  } else {
+    row.append(el("span", "bkup-item-name", it.name), el("span", "bkup-item-meta", `${size(it.bytes)}${it.ms ? " · " + when(it.ms) : ""}`));
+  }
+  // ⭐ 默认就是这句「还没验过」,不是空白也不是「有效」。这次开着 app 时验过的,贴回当时的结论(A31)。
   const state = el("span", "bkup-item-state", t("backup.listUnverified"));
+  const seen = verdicts.get(verdictKey(it));
+  if (seen) {
+    state.textContent = seen.text;
+    state.classList.toggle("warn-ink", seen.warn);
+  }
   const verify = button(t("backup.listVerify"), true, (b) => {
     b.disabled = true;
     state.className = "bkup-item-state";
     state.textContent = t("backup.listVerifying");
-    void verifyOne(it.docId, state).finally(() => {
+    void verifyOne(it, state).finally(() => {
       b.disabled = false;
     });
   });
   row.append(state, verify);
   return row;
+}
+
+/** core 起的名字:`zhujian-<空间编号前 8>-<UTC 年月日T时分秒Z>-<26 位 ULID>.zjbak`(`core/src/backup/engine.rs::file_name_for`)。 */
+const CORE_NAME = /^zhujian-([^-]+)-(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z-[0-9A-Z]{26}\.zjbak$/;
+
+/** 「默认空间 · 2026-11-06 05:02」(本地时间);空间认不出(不在这台上 / 前 8 位撞了不止一个)就只说时刻。认不出名字 = null。 */
+function nameLabel(name: string, spaces: SpaceInfo[]): string | null {
+  const m = CORE_NAME.exec(name);
+  if (!m) return null;
+  const [, short, y, mo, d, h, mi, s] = m;
+  const at = when(Date.UTC(Number(y), Number(mo) - 1, Number(d), Number(h), Number(mi), Number(s)));
+  const hits = spaces.filter((x) => x.id.slice(0, 8) === short);
+  return hits.length === 1 ? `${spaceLabel(hits[0])} · ${at}` : at;
 }
 
 /**
@@ -449,31 +557,37 @@ function listRow(it: saf.SafItem): HTMLElement {
  * ⚠ 「无论成败都删掉那份回拷」由 **Rust 那条命令**在 `finally` 位置做 —— 它与消费者同一处,
  * 于是桥上不必再开第六个入口(也就没有「删任意 outbox 文件」这个能力面)。
  */
-async function verifyOne(docId: string, state: HTMLElement): Promise<void> {
-  const got = await saf.fetchFile(docId);
+async function verifyOne(it: saf.SafItem, state: HTMLElement): Promise<void> {
+  const settle = (text: string, warn: boolean): void => {
+    state.className = warn ? "bkup-item-state warn-ink" : "bkup-item-state";
+    state.textContent = text;
+    verdicts.set(verdictKey(it), { text, warn });
+  };
+  const got = await saf.fetchFile(it.docId);
   if (!got.ok) {
-    state.className = "bkup-item-state warn-ink";
     // ⛔ 验证的 unknown **不能复用搬运那句**(实现审弹 2 L-1):那句让人「去文件夹里看看
     // 有没有它」—— 可这条路上文件本来就在文件夹里,不确定的是**这次验证做完没有**。
-    state.textContent = "unknown" in got ? t("backup.verifyUnknown") : got.error;
+    if ("unknown" in got) {
+      verdicts.delete(verdictKey(it)); // 「不确定」不记(见 verdicts 头注),之前记过的那句也作废
+      state.className = "bkup-item-state warn-ink";
+      state.textContent = t("backup.verifyUnknown");
+      return;
+    }
+    settle(got.error, true);
     return;
   }
   try {
     const v = await invoke<Verified>("backup_verify", { name: got.localName });
-    state.className = "bkup-item-state";
     // 说的是「**现在**打得开」——⛔ 不许追认「当初那趟备份成功了」。
-    state.textContent = t("backup.listOk", {
-      space: v.space_name ?? v.space_id,
-      size: size(v.plain_bytes),
-    });
+    // 161 / W4 A15(WM-09):空间按屏上别处的叫法说(主空间 =「默认空间」),⛔ 不再露内部编号「main」。
+    settle(t("backup.listOk", { space: spaceLabel({ id: v.space_id, name: v.space_name }), size: size(v.plain_bytes) }), false);
     // ⛔ 「验完就删」这条义务没兑现的话要说出来 —— 它不是失败(验证结论照旧成立),
     // 但静默就等于假装做到了(实现审一弹 M-4)。
     if (v.cleanup_error) state.parentElement?.appendChild(el("div", "bkup-file warn-ink", v.cleanup_error));
   } catch (e) {
     // ⛔ 原样摊开后端那句:「不是这个备份码对应的」与「结构不对」是两回事,
     // 糊成一句会让用户把一份其实没坏的备份删掉。
-    state.className = "bkup-item-state warn-ink";
-    state.textContent = errText(e);
+    settle(errText(e), true);
   }
 }
 

@@ -8,8 +8,9 @@ export const inbox = defineMessages({
   "inbox.backToIdeas": { zh: "← 随记", en: "← Notes" },
   "inbox.imagesTrashed": { zh: "删了 {n} 张图,在回收站能找回", en: "Deleted {n} image(s) — you can get them back from Trash" },
   "inbox.filterPlaceholder": { zh: "过滤随记…", en: "Filter notes…" },
-  "inbox.weekStats": { zh: "本周捕获 {n} · 转待办 {pct}%", en: "Captured {n} this week · {pct}% became tasks" },
-  "inbox.weekStatsNoRatio": { zh: "本周捕获 {n}", en: "Captured {n} this week" },
+  // W4 Q11 / WD-38:「本周捕获 · 转待办」换白话(用户拍定的词表)。
+  "inbox.weekStats": { zh: "本周记了 {n} 条 · {pct}% 转成了待办", en: "Noted {n} this week · {pct}% became to-dos" },
+  "inbox.weekStatsNoRatio": { zh: "本周记了 {n} 条", en: "Noted {n} this week" },
   "inbox.composePlaceholder": { zh: "随手记一笔…", en: "Jot something down…" },
   // W3 159 / Q6(WD-17):有多个空间时灰字写上会记进哪个空间(只有一个空间时照旧)。
   "inbox.composePlaceholderSpace": { zh: "随手记一笔,记进「{space}」…", en: "Jot something down — goes into “{space}”…" },
@@ -19,7 +20,10 @@ export const inbox = defineMessages({
   "inbox.loadFailed": { zh: "读取失败", en: "Failed to load" },
   "inbox.retry": { zh: "重试", en: "Retry" },
   "inbox.emptyIdeasTitle": { zh: "还没有随记", en: "No notes yet" },
-  "inbox.emptyIdeasHint": { zh: "在上方输入,或按 Ctrl+Alt+N 随手记一个念头。", en: "Type above, or press Ctrl+Alt+N to jot down a passing thought." },
+  // W4 A6 / Q8 ①:{key} 是此刻真生效的那枚捕获键(改过键照着变);它被别的程序占着、按了没反应时
+  // 换下面那句,不提快捷键。
+  "inbox.emptyIdeasHint": { zh: "在上方输入,或按 {key} 随手记一个念头。", en: "Type above, or press {key} to jot down a passing thought." },
+  "inbox.emptyIdeasHintNoKey": { zh: "在上方输入,随手记一个念头。", en: "Type above to jot down a passing thought." },
   "inbox.emptyTrashTitle": { zh: "回收站是空的", en: "Trash is empty" },
   "inbox.emptyTrashHint": { zh: "删掉的随记、长文和配图会先来这里,可还原或彻底删除。", en: "Deleted notes, long-form and images land here first. Restore them or delete them forever." },
   "inbox.removeTagTitle": { zh: "去掉这个标签", en: "Remove this tag" },

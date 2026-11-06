@@ -57,11 +57,14 @@ import { renderTagPicker } from "./tag-picker";
 import { dayKey, dayLabel, startOfWeek, when } from "./tasktime";
 import { identitySig, loadIdentity, signatureChip } from "./identity";
 import { wireChecklistInput } from "./checklist-input";
+import { goneOf, onGoneChange } from "./sync-gone";
+import { openSyncPanel } from "./sync";
 import "./inbox.css";
 import { el, onDragTarget } from "./dom";
 import { mountHistory } from "./history-panel";
 import { errDetail, errText } from "./err";
 import { ideasMarkdown } from "./export-md";
+import { dismissHotkeyBanner, hotkeyBannerDismissed, hotkeys, onHotkeysChange, takenKeys } from "./hotkey-state";
 import { type RemovedGroup, listRemovedImages, removedImageCount, removedImagesSection } from "./trash-images";
 
 // Mirrors of the Rust contracts (lib.rs) — the fields this view consumes. 想法 = a live
@@ -114,6 +117,14 @@ export function focusInboxItem(id: string, tab: Mode): void {
   // 携带发起那刻的空间(codex P1 二审 M):落地前若切了空间,请求自弃——A 的跳转
   // 不许在 B 的列表上清筛选/切 tab。
   pendingFocus = { id, tab, space: currentSpaceId() };
+}
+// 「光标进记一笔框」的请求(W4 WD-37,notebook.ts `summonFocus`):框此刻在就当场放;还没画出来
+// (挂载后的第一发 refresh 还在路上)就记一笔,由 refresh 画完时兑现。只活一个 mount(unmount 清)。
+let composeFocusWanted = false;
+export function focusInboxCompose(): void {
+  const live = document.querySelector<HTMLTextAreaElement>(".v-inbox .compose-input");
+  if (live) live.focus({ preventScroll: true });
+  else composeFocusWanted = true;
 }
 // 「记下灵感」的草稿/暂存图过桥、断电恢复、失败通知与 in-flight 闸:模块态与保存链
 // 骨架全在共享编排件 compose-controller.ts(353,与看板「新建任务」同源收拢;历轮
@@ -205,6 +216,8 @@ const SKELETON = `
       <button class="hbtn" id="inbox-trash-toggle" type="button" title="${t("inbox.tabTrash")}"><span class="lbl" id="inbox-trash-lbl">${t("inbox.tabTrash")}</span><span class="tn" id="n-archived"></span></button>
     </span>
   </header>
+  <div class="hkb-banner" id="hkb-banner" hidden></div>
+  <button class="gone-banner" id="gone-banner" type="button" hidden><b class="gone-head"></b><span class="gone-keep"></span></button>
   <div class="filter-row" id="filter-row" hidden>
     <div class="kind-filter" id="idea-kind-filter"></div>
     <div class="time-filter" id="idea-time-filter"></div>
@@ -250,6 +263,58 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
   const trashLbl = view.querySelector("#inbox-trash-lbl") as HTMLElement;
   const trashN = view.querySelector("#n-archived") as HTMLElement;
   const titleEl = view.querySelector("header h1") as HTMLElement;
+  const hkBanner = view.querySelector("#hkb-banner") as HTMLElement;
+
+  // 全局快捷键被别的程序占着(W4 A6 / Q8 ★①):此前是第一次打开就自己弹出捕获小窗、抢走光标,
+  // 「点此改键」只在小窗里出一次;现在这条挂在随记页顶上,用户点 × 收起前一直在(会话级,
+  // 见 hotkey-state.ts)。改好了键(设置里那次回执换进 hotkey-state)当场收。
+  // ⚠ 读的是启动序先拉好的那份(notebook.ts),挂载时同步画 —— 不等一跳 IPC,免得页头之下整块往下跳。
+  // ⚠ 两枚钮只建一次、之后只换字 / 显隐:「点此改键」是设置浮层「打开它的那枚」,关掉设置焦点要回到它
+  // (A3);改完一枚键这里跟着重画,若整条重建,焦点就没处可回了。
+  const hkFix = el("button", { className: "hkb-fix", type: "button" });
+  // 动态 import:settings 那棵依赖图很大,随记页自己不必静态拖着它(同 err.ts 的「网络自检」钮)。
+  hkFix.addEventListener("click", () => void import("./settings").then((m) => m.openSettingsPanel("hotkeys")));
+  const hkX = el("button", { className: "hkb-x", type: "button", textContent: "×", title: t("capture.gotIt") });
+  hkX.setAttribute("aria-label", t("capture.gotIt"));
+  hkX.addEventListener("click", () => {
+    dismissHotkeyBanner();
+    renderHotkeyBanner();
+  });
+  hkBanner.append(hkFix, hkX);
+  function renderHotkeyBanner(): void {
+    const h = hotkeys();
+    const keys = h ? takenKeys(h) : [];
+    hkBanner.hidden = keys.length === 0 || hotkeyBannerDismissed();
+    hkFix.textContent = keys.length ? t("notebook.hotkeyBanner", { keys: keys.join(t("capture.listSep")) }) : "";
+  }
+  renderHotkeyBanner();
+  // 随记空态那句「或按 Ctrl+Alt+N」:写的是**此刻真生效的**那枚捕获键;它被占着(按了没反应)就不说
+  // (W4 A6 / Q8 ①)。此前写死 Ctrl+Alt+N,改过键也照旧。
+  function emptyIdeasHint(): string {
+    const h = hotkeys();
+    return h && !h.capture_taken ? t("inbox.emptyIdeasHint", { key: h.capture }) : t("inbox.emptyIdeasHintNoKey");
+  }
+  const offHotkeys = onHotkeysChange(() => {
+    renderHotkeyBanner();
+    const hint = view.querySelector<HTMLElement>(".empty-ideas-hint");
+    if (hint) hint.textContent = emptyIdeasHint();
+  });
+
+  // 161 / W4 Q12 ★①(A37 / A39 的桌面对应):这一本已不在账户里(被移出 / 账户被停用 / 自己退出)⇒ 随记页顶挂同一句
+  // (同步浮层那一档,sync-gone.ts),连同「这台上的内容都还在,之后记的只留在这台」;点了开同步浮层(那里写着怎么重新加入)。
+  // 此前随记页上只有侧栏那颗点变色,看着和断网一样,人会一直以为「等等就好」接着记。⛔ 没有 ×:这一档是事实,不是提醒 ——
+  // 服务器又收了这台、或这一本重置了,它自己收。
+  const goneBanner = view.querySelector("#gone-banner") as HTMLButtonElement;
+  goneBanner.addEventListener("click", () => openSyncPanel());
+  function renderGoneBanner(): void {
+    const gone = goneOf(mountSpace);
+    goneBanner.hidden = gone === null;
+    (goneBanner.querySelector(".gone-head") as HTMLElement).textContent =
+      gone === "left" ? t("sync.goneLeft") : gone === "revoked" ? t("sync.goneRevoked") : "";
+    (goneBanner.querySelector(".gone-keep") as HTMLElement).textContent = gone === null ? "" : t("sync.goneKeep");
+  }
+  renderGoneBanner();
+  const offGone = onGoneChange(renderGoneBanner);
 
   // 悬停选中 + ⋯ 速查菜单 + 单键派发,统一走共享控制器(单一真相源跨视图一致)。
   const hk = createHotkeyController();
@@ -583,9 +648,16 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
     statsEl.hidden = active !== "ideas" || statsBlank;
   }
 
+  /** 「还没有随记」那块;那句提示带个类,改键之后就地换字(见上面 `onHotkeysChange`)。 */
+  function emptyIdeasNode(): HTMLElement {
+    const node = centerNode(t("inbox.emptyIdeasTitle"), emptyIdeasHint());
+    (node.lastElementChild as HTMLElement).classList.add("empty-ideas-hint");
+    return node;
+  }
+
   function renderEmpty(mode: Tab): void {
     if (mode === "ideas") {
-      renderCenter(t("inbox.emptyIdeasTitle"), t("inbox.emptyIdeasHint"));
+      list.replaceChildren(emptyIdeasNode());
     } else {
       renderCenter(t("inbox.emptyTrashTitle"), t("inbox.emptyTrashHint"));
     }
@@ -685,6 +757,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
 
   function row(item: CardItem, mode: Mode): HTMLElement {
     const note = el("article", { className: mode === "archived" ? "note archived" : "note" });
+    note.dataset.id = item.id; // A46:远端插入时按它认回「人正看着的那张」(scrollAnchor)
     // 入场动画只给「上一发还不在列上」的卡(601 补;CSS 那半在 .note.fresh 上写着为什么)。
     // 每次 refresh 都是整列 replaceChildren ⇒ 卡片恒是新 DOM ⇒ 不按 id 判就等于每次重绘
     // 都当入场演一遍。首次渲染 renderedIds 是空的 ⇒ 全体 fresh,那才是真的入场。
@@ -741,13 +814,15 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
     if (mode === "ideas") {
       const sig = signatureChip(mountSpace, item.born_device);
       if (sig) timeT.append(sig);
+      // 157 G4 / P5:改过的卡在时间后面标一句(此前卡面看不出改没改过,历史也只在编辑态里)。
+      // 161 / W4 Q16(WP-24)/ A47(WP-19):排法同手机「HH:MM · 别名 · 改过」—— 来源挨着时间、「改过」放在它后面(「改过」紧挨
+      // 别人的名字容易读成那台改的;那个名字是谁**建**的,谁改的不存);留言徽章排在它们之后。
+      if (item.revised) timeT.append(el("span", { className: "edited-mark", textContent: t("inbox.editedMark") }));
       // 留言徽章(§4.7):N=0 不显(那时的入口在 ⋯ 菜单的「留言」)。回收站不显——
       // 那是「决定要不要销毁」的场景,不是读留言的场景(§4.4)。
       // 点它 = 就地展开/收起,不再弹整版浮层(判据见 item-comments 的 PanelMode)。
       const badge = commentBadge(mountSpace, item.id, () => void refresh(), () => toggleComments());
       if (badge) timeT.append(badge);
-      // 157 G4 / P5:改过的卡在时间后面标一句(此前卡面看不出改没改过,历史也只在编辑态里)。
-      if (item.revised) timeT.append(el("span", { className: "edited-mark", textContent: t("inbox.editedMark") }));
     }
     const body = el("div", { className: "note-body" });
     // 留言就地展开的落点:空着时 CSS `:empty` 整个收起,不占位、不留 margin。
@@ -1661,6 +1736,9 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       // 是空串,不会把已保存的正文再灌回去。
       const oldCompose = view.querySelector<HTMLTextAreaElement>(".compose-input");
       const hadComposeFocus = oldCompose !== null && document.activeElement === oldCompose;
+      // 161 / W4 A46(WP-14 / 互配新撞-5):整列要换掉了 —— 先记下人正看着的那张卡离列表上沿多远,画完把它放回原处
+      // (另一台记了一条、插在视口上方时,视口里的卡此前整体下挪一张)。跳转定位 / 回到上次读的位置那两发不记(它们自己定位)。
+      const anchor = active === "ideas" && !restorePending && !focus ? scrollAnchor() : null;
       const composeDraft = oldCompose?.value ?? "";
       const composeCursor = oldCompose?.selectionStart ?? 0;
 
@@ -1710,7 +1788,11 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
         // 收缩,三维正交——口径在共享件 filter-bar.ts,与看板同源)。时间轴(461)
         // 是独立第四维,在类型轴之下、标签轴之上圈定,类型/标签 pill 与 applyFilter
         // 都吃已按时间收窄的集合(同 board.ts 的先后关系)。
-        filterRow.hidden = ideas.length === 0;
+        // W4 A25(WD-27):此前「有随记才出现」—— 记下第一条那一刻这一行冒出来,把记一笔框整体往下推
+        // 52px,正要接着打第二条的眼睛和鼠标对不上了。⇒ 没有随记时也占着位置、只是看不见(`.reserve`
+        // = visibility:hidden,点不到也 Tab 不到),第一条进来时原地显出来,框不动。
+        filterRow.hidden = false;
+        filterRow.classList.toggle("reserve", ideas.length === 0);
         // 157 G4 / P11:从「没筛」进「筛着」那一刻记下读到哪儿,筛选全清掉时滚回去(此前回到顶部,WD-21)。
         const nowFiltered = filterActive(filter) || timeFilter !== "all";
         if (nowFiltered && !wasFiltered) unfilteredScroll = list.scrollTop;
@@ -1728,6 +1810,12 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
           renderKindPills(kindBar, timeNarrowed, topics, filter, () => void refresh());
           renderFilterPills(filterBar, timeNarrowed, topics, filter, () => void refresh());
           wireTagPills(); // pills 每轮重建,拖拽接线跟着重挂(同看板)
+        } else {
+          // 占位那一行要和第一条进来之后同高:时间轴照常画(全是 0,看不见),类型 / 标签两轴清空
+          // (有随记之前它们本来就不出现)。
+          renderTimePills(timeBar, ideas, (i) => i.created_at, timeFilter, () => {});
+          kindBar.replaceChildren();
+          filterBar.replaceChildren();
         }
         const shown = applyFilter(timeNarrowed, filter, (i) => i.content, topics);
         paintFilterCount(filterCount, nowFiltered ? shown.length : null); // Q8(WD-20):筛着写「筛出 N 条」
@@ -1737,7 +1825,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
         // The compose bar always sits at the top of 想法, empty or not.
         const bar = composeBar();
         if (ideas.length === 0) {
-          list.replaceChildren(bar, centerNode(t("inbox.emptyIdeasTitle"), t("inbox.emptyIdeasHint")));
+          list.replaceChildren(bar, emptyIdeasNode());
         } else if (shown.length === 0) {
           // 筛空 ≠ 没有灵感:提示当前筛选,别让用户以为灵感全没了(同看板)。四维各一句,
           // **按「哪一维最具体」排**:词 → 标签 → 类型 → 时间。⚠ 排到最后那一档不必再判
@@ -1787,6 +1875,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
           settleFolds(); // ⚠ 在下面还原滚动位之前:还的是夹后几何里的位置
           if (wasFiltered && !nowFiltered) list.scrollTop = unfilteredScroll;
           else if (nowFiltered && filterChanged) list.scrollTop = 0; // A5:筛出来那一串从最新那条看起
+          else if (anchor) keepAnchor(anchor); // A46:人正看着的那张卡留在原处
           painted = shown.map((i) => i.id);
         }
         wasFiltered = nowFiltered;
@@ -1821,7 +1910,12 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       } else if (newCompose === null && composeDraft !== "") {
         composeCtl.stashDraft(composeDraft, mountSpace);
       }
-      if (hadComposeFocus) newCompose?.focus();
+      // A46(互配新撞-5)的根:此前这里是裸 `focus()` —— 浏览器会把拿到焦点的框滚进视口,而记一笔框在列表最上面 ⇒ 光标
+      // 留在框里(电脑上记完一条后默认就是这样)、人往下翻着看旧随记时,另一台记一条(sync-changed → refresh 整列重建)
+      // 整页就跳回顶。还焦点只是还,⛔ 不滚。
+      if (hadComposeFocus) newCompose?.focus({ preventScroll: true });
+      else if (composeFocusWanted && newCompose) newCompose.focus({ preventScroll: true });
+      if (newCompose) composeFocusWanted = false;
       // 卡片已进文档:把就地展开的留言重挂回去(草稿、已读水位、焦点都在 restoreComment
       // 里)。放在 compose 还焦之后——两者互斥,谁真的握着焦点谁拿回去。
       const runRestore = restoreCommentRun;
@@ -1844,6 +1938,28 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       disarmConfirm(); // 换错误页也是整批替换:在场确认的文档级监听一并收走(codex 二审 M)
       renderError(errText(err));
     }
+  }
+
+  /** A46:人正看着哪一张(列表里第一张下沿还在上沿之下的卡)、离列表上沿多远。记一笔框还露在眼前 = 人在顶上,不记 ——
+   *  那时新来的(自己刚记的、别处来的)就该从上面顶进来、被看见。 */
+  function scrollAnchor(): { id: string; top: number } | null {
+    if (list.scrollTop <= 0) return null;
+    const lt = list.getBoundingClientRect().top;
+    const bar = list.querySelector<HTMLElement>(".compose");
+    if (bar && bar.getBoundingClientRect().bottom > lt) return null;
+    for (const n of list.querySelectorAll<HTMLElement>(".note[data-id]")) {
+      const r = n.getBoundingClientRect();
+      if (r.bottom > lt) return { id: n.dataset.id as string, top: r.top - lt };
+    }
+    return null;
+  }
+
+  /** A46:把那张卡放回原来离上沿的距离(它被删了 / 筛掉了就不动)。 */
+  function keepAnchor(a: { id: string; top: number }): void {
+    const n = list.querySelector<HTMLElement>(`.note[data-id="${CSS.escape(a.id)}"]`);
+    if (!n) return;
+    const delta = n.getBoundingClientRect().top - list.getBoundingClientRect().top - a.top;
+    if (delta !== 0) list.scrollTop += delta;
   }
 
   function switchTo(mode: Tab): void {
@@ -1901,6 +2017,9 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       unmounted = true;
       refreshSeq++; // 作废本 mount 的在途 refresh:迟到响应不许消费新 mount 的 pendingFocus(codex M1)
       closeComments(); // 浮层 portal 在 body 上,不随视图根节点走:切视图/切空间必须自己收
+      offHotkeys();
+      offGone();
+      composeFocusWanted = false; // 「光标进记一笔框」只对这一棵 mount 说
       teardownViewKeys();
       hk.destroy(); // tear down the document keydown + any lingering menu listeners
       root.replaceChildren();

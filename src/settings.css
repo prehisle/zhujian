@@ -334,6 +334,13 @@
   border-color: var(--seal);
   background: var(--seal-tint);
 }
+/* 「没生效:被占用」(W4 A6 / Q8 ①):被别的程序占着的那枚键帽旁一行朱砂小字。与 .hkset-msg.err
+   同色 —— 说的同是「这一行出了问题」;不做成徽章(不带底不带框),它不是可以点的东西。 */
+.hkset-dead {
+  font-size: var(--fs-12);
+  color: var(--seal-ink);
+  white-space: nowrap;
+}
 /* 622:静息升到 --ink(见上面 .hkset-combo 那段;备份页那两枚动作走的也是这个类,
    它们此前是那一页最淡的元素)。⚠ **它与共享的 `.hbtn` 静息不同色是有意的**:`.hbtn` 是
    顶栏一排六枚里的一员(一排同权),这一枚是**本行唯一的动作**,行里的名字是 --ink、
@@ -355,6 +362,9 @@
   background: color-mix(in srgb, var(--ink) 6%, transparent);
   border-color: var(--seal-line);
 }
+
+/* 说明格兼当结果格的那几行(W4 A19 / A4:「立即备份」的结果、「还没有备份」):出了岔子 / 该你动手时走朱砂。 */
+.hkset-desc.err { color: var(--seal-ink); }
 
 /* 行下的一句话:成功=墨绿淡提示,失败=朱砂。
    ⭐ 444 加 `overflow-wrap` —— 这里显的是**后端原话**(路径 / 错误串),Windows 路径里
@@ -408,6 +418,11 @@
   transition: background 0.14s;
 }
 .zoom-btn:hover { background: color-mix(in srgb, var(--ink) 12%, transparent); }
+/* 到头那枚变灰(W4 A21):此前到 200% 再点「＋」没反应、钮照常,也不说到顶。 */
+.zoom-btn:disabled { opacity: 0.4; cursor: default; }
+.zoom-btn:disabled:hover { background: color-mix(in srgb, var(--ink) 6%, transparent); }
+/* 字号那一行下面常在的一句(范围 / 已到最大 / 已到最小):到头时升一档墨色,读得出「到头了」。 */
+.zoom-limit.at-limit { color: var(--ink); }
 /* 三档分段(明暗:自动 / 亮 / 暗):三枚连体按钮,选中那枚上朱砂。 */
 .seg {
   flex: none;
@@ -486,6 +501,14 @@
   width: 100%;
   box-sizing: border-box;
 }
+/* 抄回备份码的那只框(W4 A18):等宽、字号与上面那块码一致,宽到放得下整串 52 位 + 12 个「-」
+   (此前比码短,点开别处后正好藏住最后一个字 —— 抄错的偏偏常是那一位)。⚠ 量过:Consolas 13px 的 64 字
+   约 460px,设置右栏内容宽 ≈ 520px(settings-panel 那笔账)。 */
+.alias-input.bkup-code-input {
+  font-family: Consolas, "Courier New", monospace;
+  font-size: var(--fs-13);
+  letter-spacing: 0;
+}
 /* 这一行是 input +「保存」+「打开文件夹」三件共处的 flex 行。
    ⚠ **中文按钮的字会被挤成竖排**(437 在 Linux/WebKitGTK 上实测:「保存」折 2 行、
    「打开文件夹」折 **3 行**,整行高从 27 撑到 61)—— 上面那条 `width:100%` 让 input 先
@@ -507,6 +530,11 @@
    两条目标不再打架。⚠ `flex-wrap: wrap` 那道保险**留着**:窗口被拉到很窄时
    (面板退化成 `100vw - 48px`)按钮照旧整体掉行,而不是把输入框挤没。 */
 .bkup-body .alias-ctrls .bkup-input { flex: 1 1 260px; width: auto; }
+/* 「备份到」那一行(W4 Q11 / WD-24):路径框独占一整行(此前与两枚钮并排,默认路径显示不全),
+   两枚钮折到下一行靠右。 */
+.bkup-body .alias-ctrls.bkup-dir { justify-content: flex-end; row-gap: 6px; }
+.bkup-body .alias-ctrls.bkup-dir .bkup-input { flex: 1 1 100%; }
+.bkup-dir-note { margin: 0 0 4px; }
 .bkup-acts {
   display: flex;
   gap: 8px;
@@ -571,7 +599,7 @@
   white-space: nowrap;
 }
 .bkup-item-name {
-  order: 2; /* 掉到第二行 */
+  order: 3; /* 掉到状态那一行之下(W4 A19 起状态独占第二行) */
   flex: 1 1 100%;
   min-width: 0;
   font-size: var(--fs-12);
@@ -586,6 +614,13 @@
   flex: 0 1 auto;
   min-width: 0;
   overflow-wrap: anywhere;
+}
+/* ⭐ W4 A19(WD-19):状态那一格**独占第二行**。此前它与三枚钮同排,验完那句「现在打得开:…」一长,
+   三枚钮就被挤到下一行、整张列表往下推(实测 460 → 484)。现在第一行恒是「大小 · 时刻 … 三枚钮」,
+   第二行恒是状态 —— 「还没验过」换成多长的结论都在自己那一行里。 */
+.bkup-item > .bkup-item-state {
+  order: 2;
+  flex-basis: 100%;
 }
 .bkup-item-state.ok { color: var(--ok); }
 .bkup-item-state.err { color: var(--seal-ink); }
@@ -758,7 +793,20 @@
 .about-step.fail .about-mark { color: var(--seal); }
 .about-step > :last-child { color: var(--ink-soft); word-break: break-all; }
 .about-dim { color: var(--ink-soft); }
+/* 「检查更新」的结论那一格(W4 A26):常占一行的位置 —— 结果出来时原地出字,不把下面的作者一句往下推。 */
+.about-update-msg { min-height: 1.5em; }
 .about-err { margin: 0; color: var(--seal-ink); }
+/* 自检的人话结论(W4 Q5 ★①):六行术语上面那一句。比术语行大一档、正文色,连不上时走朱砂 ——
+   它是这一节唯一要先读的那句;地址里没有浏览器肯断的字符,长了照样折行(同 .hkset-msg)。 */
+.about-verdict {
+  margin: 4px 0 6px;
+  font-size: var(--fs-13);
+  line-height: 1.5;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+.about-verdict.fail { color: var(--seal-ink); }
 /* 读库失败那行落在 `.about-kv` 里,`.about-kv dd`(0,1,1)会压过上一条:字色回墨、字体成等宽。
    错误是一句人话不是读数 ⇒ 回正文字体、按词换行;没有 dt 配对,独占 max-content 那列会整句撑出面板
    被裁掉 ⇒ 跨满两列(134)。 */

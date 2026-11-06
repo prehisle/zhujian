@@ -227,6 +227,10 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
         const next = e.key === "ArrowDown" ? hits[i + 1] : hits[i - 1];
         if (next) next.focus();
         else if (e.key === "ArrowUp") input.focus();
+      } else if (e.key === "Escape") {
+        // 结果上按 Esc 回到搜索框(W4 Q11 / WD-34:此前没反应,焦点停在结果上)。框里那一下 Esc 才清词。
+        e.preventDefault();
+        input.focus();
       }
     });
     return node;

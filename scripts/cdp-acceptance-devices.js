@@ -62,7 +62,8 @@
     `${adminRows.length}/${list.length}`);
 
   // ---- 最短唯一前缀:各行互不相同、且都 ≥6 位 ----
-  const sids = list.map((r) => txt(r.querySelector(".dev-sid")).replace(/…$/, ""));
+  // 161 / W4 A30:没起名的那行编号只写一遍 —— 在名字那格(`.dev-name.mono`),右边不再有 `.dev-sid`。
+  const sids = list.map((r) => txt(r.querySelector(".dev-sid") ?? r.querySelector(".dev-name.mono")).replace(/…$/, ""));
   check("短 id 各行互不相同(唯一前缀是算出来的)",
     new Set(sids).size === sids.length, sids.join(","));
   check("短 id 都不短于 6 位", sids.every((s) => s.length >= 6), sids.join(","));
@@ -74,7 +75,7 @@
   const fullId = txt(opened.querySelector(".dev-id"));
   check("点开给出完整 26 位设备 ID", fullId.length === 26, fullId);
   check("完整 ID 以那一行的短 id 开头", fullId.startsWith(sids[0]), `${sids[0]} / ${fullId}`);
-  check("展开行带「复制完整 ID」", txt(opened).includes("复制完整 ID"));
+  check("展开行带「复制完整编号」", txt(opened).includes("复制完整编号")); // 161 / W4 A30:照指南叫「完整编号」
 
   // ---- 操作显隐(§5.3 三句话)+ §5.9 话术 ----
   const btns = [...opened.querySelectorAll(".row button")].map(txt);
@@ -84,7 +85,11 @@
     // 存量账户未回填:整条用户面 fail-closed,**含自助退出**。
     check("admins 为空 → 那句说明在", panelText.includes("本空间还没有设置管理设备"));
     check("admins 为空 → 一个操作按钮都不给",
-      btns.filter((b) => b !== "复制完整 ID").length === 0, btns.join("/"));
+      btns.filter((b) => b !== "复制完整编号").length === 0, btns.join("/"));
+  } else if (isThis && badgeOf(opened).includes("管理") && adminRows.length === 1) {
+    // 161 / W4 A7 = Q7 ★①:账户里唯一的管理设备 —— 不给「退出账户」,换成那一行灰字(服务器那条「至少留一台」照旧兜底)。
+    check("唯一管理设备的本机行不给「退出账户」", !btns.includes("退出账户"), btns.join("/"));
+    check("换成那行灰字", txt(opened).includes("这是账户里唯一的管理设备,不能退出"), txt(opened).slice(-60));
   } else if (isThis) {
     check("本机行给「退出账户」", btns.includes("退出账户"), btns.join("/"));
     check("本机行不给「设为管理 / 取消管理」",

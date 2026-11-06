@@ -76,10 +76,27 @@
   gap: 8px;
 }
 
-/* 破坏性动作在静息态就带朱砂,悬停按 337 的规矩往 --ink 压(--seal-tint 底由 .hbtn 给)。 */
+/* 161 / W4 A48(WP-23):**红色只给真正执行的那一下**(ui-guidelines §3.2)—— 展开后的「确认移除 / 确认退出」是实心朱砂
+   (同 .purge-yes / .v-inbox .do 那一族);名单上常驻的「移除」「退出账户」只是打开确认,照常是 .hbtn。此前三枚同款朱砂描边,
+   入口与执行两下轻重看不出。 */
 .hbtn.dev-danger {
-  color: var(--seal-ink);
-  border-color: var(--seal-line);
+  color: var(--on-seal);
+  background: var(--seal);
+  border-color: var(--seal);
+  font-weight: 600;
+}
+.hbtn.dev-danger:hover {
+  color: var(--on-seal);
+  background: color-mix(in srgb, var(--seal) 88%, var(--ink));
+  border-color: var(--seal);
+}
+
+/* 行下那一句灰字:没起名的设备去哪儿起名(Q16)/ 唯一一台管理设备为什么没有「退出账户」(A7)。 */
+.dev-hint {
+  margin: 0;
+  font-size: var(--fs-12);
+  line-height: 1.6;
+  color: var(--ink-soft);
 }
 
 /* 第二拍宿主:§5.9 的话一句都不能省,故它是块不是一行 pill。 */
@@ -103,6 +120,13 @@
   color: var(--ink);
   overflow-wrap: anywhere;
   user-select: text;
+}
+/* A38:确认块末尾那句「想彻底隔离,移除不够」+ 一枚「意见反馈」(形同 .err-next:去别处的路,不是动作钮)。 */
+.dev-confirm-note {
+  margin: 0;
+  font-size: var(--fs-13);
+  line-height: 1.7;
+  color: var(--ink);
 }
 .dev-confirm-list {
   margin: 0;

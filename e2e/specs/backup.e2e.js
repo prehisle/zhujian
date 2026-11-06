@@ -119,15 +119,31 @@ describe("加密备份(笔①-a):仪式 → 备份 → 产物在列", () => {
     expect((await invoke("backup_status")).configured).toBe(false);
     expect((await invoke("backup_status")).awaiting_ceremony).toBe(true);
 
-    // 先抄错一个字符:必须拒,且**盘上仍然没有配置**。
+    // W4 A18:空框点核对另说一句(此前也报「对不上」)。⚠ 这一句 = 仪式里那段红字(恒在)之后的**最后一枚** err。
+    const lastErr = () =>
+      browser.execute(() => [...document.querySelectorAll(".bkup-body p.hkset-msg.err")].map((n) => n.textContent.trim()).pop());
+    await clickByText("抄好了,核对");
+    await browser.waitUntil(async () => (await lastErr()).includes("框里还是空的"), {
+      timeout: 5000,
+      timeoutMsg: "空框点核对该说「框里还是空的」",
+    });
+
+    // 先抄错一个字符:必须拒,且**盘上仍然没有配置**。W4 A18:说出错在哪一组(最后一位错 = 第 13 组)。
     const wrong = shown.slice(0, -1) + (shown.endsWith("A") ? "B" : "A");
     await (await $(".bkup-input")).setValue(wrong);
     await clickByText("抄好了,核对");
-    await browser.waitUntil(
-      async () => (await shownText($(".bkup-body .hkset-msg.err"))).length > 0,
-      { timeout: 5000, timeoutMsg: "抄错了该给一句响亮的话" },
-    );
+    await browser.waitUntil(async () => (await lastErr()).startsWith("第 13 组对不上"), {
+      timeout: 5000,
+      timeoutMsg: "抄错了该给一句响亮的话,并指出是第 13 组",
+    });
+    expect(await lastErr()).toContain(`「${shown.slice(-4)}」`); // 上面那组的原样
     expect((await invoke("backup_status")).configured).toBe(false);
+    // 抄回的框放得下整串码(此前比码短,失焦后正好藏住最后一个字)。
+    const box = await browser.execute(() => {
+      const i = document.querySelector(".bkup-code-input");
+      return { scroll: i.scrollWidth, client: i.clientWidth };
+    });
+    expect(box.scroll).toBeLessThanOrEqual(box.client);
 
     // 抄对:落盘。
     await (await $(".bkup-input")).setValue(shown);
@@ -136,21 +152,53 @@ describe("加密备份(笔①-a):仪式 → 备份 → 产物在列", () => {
       timeout: 10000,
       timeoutMsg: "回输对上之后应当写好配置",
     });
+    // W4 A4(WD-03):核对通过后**不说**「备份已设置好」—— 一份备份都还没有。「立即备份」那一行照实说。
+    const runDesc = () => browser.execute(() => document.querySelector(".bkup-run-desc")?.textContent.trim() ?? "");
+    await browser.waitUntil(async () => (await runDesc()).includes("还没有备份"), {
+      timeout: 5000,
+      timeoutMsg: "核对通过后「立即备份」那一行该照实说「码已核对,但还没有备份」",
+    });
+    expect(await runDesc()).toContain("备份码已核对");
+    expect(await browser.execute(() => document.querySelector(".bkup-body").textContent)).not.toContain("备份已设置好");
     void body;
   });
 
-  it("立即备份:产物在列,且后端自验过(报告里给的是文件名与大小)", async () => {
+  it("立即备份:结果写在那一行的说明格里、不推版面;「已有备份」当场跟着变(W4 A19 / A17)", async () => {
     await openBackupSection();
+    // 重进这一节,列表空着时那一行照样说「还没有备份」(W4 A4:关掉设置再开,状态不能丢)。
+    const runDesc = () => browser.execute(() => document.querySelector(".bkup-run-desc")?.textContent.trim() ?? "");
+    await browser.waitUntil(async () => (await runDesc()).startsWith("还没有备份"), {
+      timeout: 5000,
+      timeoutMsg: "列表空着时「立即备份」那一行该说「还没有备份」",
+    });
+    // 下面那几行此刻在哪(⛔ 别量屏幕坐标的绝对值:量的是**相对「立即备份」那枚钮**的距离,滚动不影响)。
+    const gaps = () =>
+      browser.execute(() => {
+        const run = [...document.querySelectorAll(".bkup-body button")].find((b) => b.textContent.trim() === "立即备份");
+        const top = run.getBoundingClientRect().top;
+        const sum = document.querySelector(".bkup-list-sum").getBoundingClientRect().top;
+        const auto = document.querySelector(".bkup-auto-state").getBoundingClientRect().top;
+        return [Math.round(sum - top), Math.round(auto - top)];
+      });
+    const before = await gaps();
     await clickByText("立即备份");
-    // 报告里「备好 N 个空间」那句 + 一行产物(e2e 形只有主空间一个)。
-    const ok = await $(".bkup-out .hkset-msg.ok");
-    await ok.waitForExist({ timeout: 60000 });
-    expect(await shownText(ok)).toBe("备好 1 个空间");
-    const files = await $$(".bkup-file");
-    expect(files.length).toBe(1);
-    const line = await shownText(files[0]);
-    expect(line).toContain(".zjbak");
-    expect(line).toContain("zhujian-main-");
+    await browser.waitUntil(async () => (await runDesc()).includes("备好"), {
+      timeout: 60000,
+      timeoutMsg: "「立即备份」跑完,结果该写在那一行的说明格里",
+    });
+    // 「HH:MM 备好 1 个空间:默认空间」—— 空间写显示名(W4 A15:不再是内部号 main),e2e 形只有主空间一个。
+    expect(await runDesc()).toMatch(/备好 1 个空间:默认空间$/);
+    // 一趟干净的备份不往行下插东西(A19);⛔ 文件名不再满屏摆(悬停才看)。
+    expect(await browser.execute(() => document.querySelector(".bkup-run-out").childElementCount)).toBe(0);
+    expect(await gaps()).toEqual(before);
+    // A17(WD-06):紧下一行「已有备份」当场就是 1 份,不用点「刷新」。
+    await browser.waitUntil(
+      async () => (await browser.execute(() => document.querySelector(".bkup-list-sum").textContent)).startsWith("1 份"),
+      { timeout: 5000, timeoutMsg: "「已有备份」该当场变成 1 份" },
+    );
+    const listed = await invoke("backup_list");
+    expect(listed.length).toBe(1);
+    expect(listed[0].file_name).toContain("zhujian-main-"); // 文件名一个字不动(列表 / 轮转按名认)
 
     // 备份不改任何库状态:app 照常能用(随手读一次列表)。
     expect(Array.isArray(await invoke("list_inbox"))).toBe(true);
@@ -235,6 +283,10 @@ describe("加密备份(笔①-a):仪式 → 备份 → 产物在列", () => {
     );
     const okText = await shownText($(".bkup-item-state.ok"));
     expect(okText).toContain("现在打得开");
+    // W4 A15(WD-09 后半):写空间显示名、本地时间(此前「现在打得开:main」)。
+    expect(okText).toContain("默认空间");
+    expect(okText).not.toContain("main");
+    expect(okText).toMatch(/\d{4}-\d{2}-\d{2} \d{2}:\d{2} 备的/);
     // ⛔ 另一行**不许**被连带标成好的 —— 验证是逐份的。
     expect((await $$(".bkup-item-state.err")).length).toBe(0);
     expect(

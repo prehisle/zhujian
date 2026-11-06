@@ -28,75 +28,40 @@
 .v-board header .spacer { flex: 1; }
 /* header 动作按钮统一走共享 .hbtn、靠右那组走共享 .head-tools(都在 controls.css,
    626 起随记页也用同一形);这里只补本视图的特例。 */
-/* 窄窗按钮塌缩(69 立、B 轮重做):**恒一行**是这里唯一要守的形 —— 掉成两行时首行只剩
-   「新建任务」被 .spacer 顶到右边、其余五枚落在第二行,屏上读作「按钮乱了」(用户 2026-09-02
-   点名的第一件)。
-   ⭐ **判据从「窗口有多宽」换成「顶栏自己有多宽」(container query,与列头那两道同一条规矩)。**
-   ⚠ 这不是换个写法:顶栏的可用宽还随**侧栏折没折**(172↔52)、**界面字号档**(241 的 setZoom)
-   一起变,窗口宽根本算不出它。老那条 `@media (max-width: 1099px)` 是 485 按**当时六枚控件、
-   一种侧栏状态**量出来的机制值,其后 502 加了第七枚(到期汇总)没人回头量 ⇒ 到 B 轮实测时
-   1100–1300 这一整档已经是两行,而 1099 以下又直接跳进字母态,中间没有过渡。
-   ⭐ **三档塌缩,让的顺序是「先让不丢能力的」**:
-     ① 摘键帽 —— 纯提示,单键照旧能按;
-     ② 再摘「复制看板」 —— 每列列头那颗「复制」是它的替身(⭐ **65 起那句「替身」是真的**:
-        列窄到 ≤240 时列头那颗本来也退场、两颗同时没了,现在这一档一生效就把那条让位关掉,
-        见下面 `data-hdrcopy` 那节);
-     ③ 最后才摘名字(字母态,69 那套原样保留)。⭐ **键帽在这一档反而回来**:名字没了之后,
-        G / R 是「归档」「回收站」两枚上唯一的记号(所以 ① 那条写成一个左右都封的区间,
-        ⛔ 别改成 max-width 一头封 —— 那样字母态里那两枚会塌成两个只剩数字的椭圆,正是 567
-        刚修掉的形)。
-   ⚠ **三个数是量出来的**(2026-09-02,`e2e/hdr-probe.e2e.js` 逐档扫窗宽,取 header 高 ≤80 =
-   一行;每枚控件都填该字典里**最长**的那一句:到期三段全在「逾期 12 · 今天 5 · 3 天内 8」、
-   排序取「顺序:最新在前」、计数三位数、且看板上有任务[⚠ 空看板时「复制看板」根本不渲染,
-   第一遍就是这么把 tier 0 量小了 90px 的]):中文一行需要的顶栏内容宽 =
-   **全形 1010 / 摘键帽 930 / 再摘复制 840 / 字母态 550** ⇒ 断点取「需要值 − 1」。
-   ⚠⚠ **这三个数是在 Windows/WebView2 的字体栈上量的,WebKitGTK 没量过** —— 同一句中文在两个
-   引擎上字宽不同(485 那轮的读数就是在真 WebKitGTK 上取的,与本轮不是同一台尺)。⇒ Linux 上
-   「恒一行」可能在某一档不成立,新加的那只 e2e(`board.e2e.js` 顶栏三档)会先替我们说话;
-   **真红了按那边的读数把断点调宽**(⛔ 别当抖动)。⛔ 也别因此把断点抬到英文那套 —— 那是另一件事。
-   ⚠ **英文档没治**:同一套量法下英文要 **1150 / 1070 / 960 / 580**(单词比汉字长;C6 换了英文档的界面字
-   之后重量的,改前是 1200 / 1110 / 1000 / 580 —— 窄了一截但仍装不进中文那套断点),
-   而断点只有一套 ⇒ 英文在顶栏内容宽 840–1200 之间仍会掉一行(比改前那条 729 的窄了一截,
-   但没消失)。⛔ 别把断点抬到英文那套 —— 那样中文会在 1380 宽的窗上就开始丢键帽。已记 backlog。
-   ⛔ 下一个动这三个数的人:**先看 `e2e/specs/support.js` 那句窗宽**(485 立的规矩,两者是一对)
-   —— e2e 驱动窗 1260 ⇒ 顶栏内容宽 890,**落在 ② 那一档**,`viewkeys.e2e.js` 拿「回收站」四字
-   当观测面的那几只才有得看。⚠ Linux CI 的 xvfb 默认屏只有 1280 宽 ⇒ ①②之上那两档**e2e 覆盖
-   不到**(要 1300 / 1380 的窗),那是知情的边界,别以为它们有网。 */
-.v-board header { container-type: inline-size; }
-@container (max-width: 1009px) and (min-width: 840px) {
-  .v-board header .hbtn .k { display: none; }
-}
-/* 158 G2 / A11(WD-11):② 那档此前把「复制看板」整枚 display:none(指南说有、窗 1260 上就没了)。
-   现在它只缩成 ⧉ 记号(全名在 title),腾出的宽由「顺序」那枚出:它在这一档也只留 ↕
-   (`#board-sort` 带 id,压过 ③ 那档 `.active .lbl` 的回显 —— 非手动档靠朱砂底色与 title 说)。
-   净宽只减不增(⧉ 约 40,顺序全名 75–100 → ↕ 约 35),三档断点不必重量。
-   ⚠ ⇒ 顶栏那颗只在最窄那截(下面 599 那条)才被收走,`data-hdrcopy` 那条「列头复制不让位」的
-   替身规则只在那一截触发。 */
+/* 窄窗按钮塌缩(69 立、B 轮重做、W4 161 再改判据):**恒一行**是这里唯一要守的形 —— 掉成两行时首行只剩
+   「新建任务」被 .spacer 顶到右边、其余几枚落在第二行,屏上读作「按钮乱了」(用户 2026-09-02 点名的第一件)。
+   ⭐ **三档塌缩,让的顺序是「先让不丢能力的」**(这一条没变):
+     ① 摘键帽(`.hdr-nok`)—— 纯提示,单键照旧能按;
+     ② 再把「复制看板」「顺序」缩成记号 ⧉ / ↕(`.hdr-short`,全名在 title;158 G2 / A11 起不再整枚收走 ——
+        WD-11 那条「指南说有、屏上没有」);
+     ③ 最后才摘名字(字母态 `.hdr-letter`)。⭐ **键帽在这一档反而回来**(没有图标的那几枚):名字没了之后
+        它是唯一的记号;归档 / 回收站 / 到期三枚各有一枚线稿图标顶替(158 G3 / Q13,WD-29)。
+     ④ 实在装不下才把「复制看板」整枚收走(`.hdr-nocopy`,列头那颗「复制」由 `data-hdrcopy` 那条替身规则顶上,65)。
+   ⭐⭐ **W4 A20(WD-11)判据从「顶栏有多宽」换成「这一刻装不装得下」**:此前四档是 container query 写死的
+   宽度(1010 / 930 / 840 / 600),按**最坏内容**量的(到期三段全满、计数三位数;英文还另要一套更宽的、只能
+   将就)⇒ 界面字号放大一档(110%:setZoom 让顶栏的 CSS 宽少一截)就掉进字母态,只剩「+ N」「≡」「0」「0」,
+   页头中间其实还空着一大截 —— 嫌字小才放大的人反而认不出钮。⇒ board.ts 的 `fitHeader` 从 ① 之前的全形起
+   逐档往下试,**取第一档一行放得下的**(读的是板子上真有的字),把那几个类挂在 header 上(档号写在
+   `data-fit`)。中英文、两个引擎的字宽差都不用再另量一套断点 —— 量的就是这一刻屏上那几个字。
+   ⚠ 只认「一行」:那一组钮没被挤到第二行(`.head-tools` 的顶 < 标题的底)且没横着溢出。
+   ⛔ 别再把断点写回 container query —— 那正是 WD-11:断点只能按最坏内容取,平常内容就白白多让一档。 */
+.v-board header.hdr-nok .hbtn .k { display: none; }
 .v-board header .copy-slot .hbtn .lbl-short { display: none; }
-@container (max-width: 929px) {
-  .v-board header .copy-slot .hbtn .lbl { display: none; }
-  .v-board header .copy-slot .hbtn .lbl-short { display: inline; }
-  .v-board header #board-sort .lbl { display: none; }
-  .v-board header #board-sort .lbl-short { display: inline; }
-}
-/* ……但字母态的最窄那截仍装不下它:实测(158,Windows/WebView2,计数个位数)带 ⧉ 时字母态要内容宽
-   ≈570,而 900 宽的最小窗只给 530;按 550 的最坏情况再加 ⧉ 那 48 ⇒ 断点取 599。这一截里它照旧让位,
-   列头那颗「复制」由 `data-hdrcopy` 那条替身规则顶上(65)。⛔ 别把它挪到 929 —— 那正是 WD-11。 */
-@container (max-width: 599px) {
-  .v-board header .copy-slot { display: none; }
-}
-@container (max-width: 839px) {
-  .v-board header .hbtn .lbl { display: none; }
-  .v-board header .hbtn.active .lbl { display: inline; }
-  /* 566:「到期汇总」与「排序」两枚只有 .lbl、没有 +/计数/键帽 ⇒ 字母态下塌成两个空椭圆
-     (实测 27×11,用户面 61)。各留一个记号:到期 = 三段合一的总数(朱砂描边仍只跟逾期走)、
-     排序 = ↕;.active 时全名回来、记号让位(与别的钮同一条规矩)。 */
-  .v-board header .hbtn:not(.active) .lbl-short { display: inline; }
-}
+.v-board header.hdr-short .copy-slot .hbtn .lbl { display: none; }
+.v-board header.hdr-short .copy-slot .hbtn .lbl-short { display: inline; }
+.v-board header.hdr-short #board-sort .lbl { display: none; }
+.v-board header.hdr-short #board-sort .lbl-short { display: inline; }
+.v-board header.hdr-nocopy .copy-slot { display: none; }
+.v-board header.hdr-letter .hbtn .lbl { display: none; }
+.v-board header.hdr-letter .hbtn.active .lbl { display: inline; }
+/* 566:「到期汇总」与「排序」两枚只有 .lbl、没有 +/计数/键帽 ⇒ 字母态下塌成两个空椭圆
+   (实测 27×11,用户面 61)。各留一个记号:到期 = 三段合一的总数(朱砂描边仍只跟逾期走)、
+   排序 = ↕;.active 时全名回来、记号让位(与别的钮同一条规矩)。 */
+.v-board header.hdr-letter .hbtn:not(.active) .lbl-short { display: inline; }
 .v-board header .hbtn .lbl-short { display: none; font-variant-numeric: tabular-nums; }
 /* 158 G3 / Q13(WD-29):字母态里到期 / 归档 / 回收站三枚此前只剩「6」「3 G」「0 R」。各留一枚线稿图标
    (board.ts 的 ICON_*,全名在 title),平时藏着;字母态里图标顶替键帽 G / R 当记号(键照旧能按,
-   设置「快捷键」页写着)—— 腾出的宽刚好装下图标,三档断点不必重量(⚠ 改完在 900 宽最小窗上肉眼核过一行)。 */
+   设置「快捷键」页写着)。 */
 .v-board header .hbtn .ico { display: none; }
 .v-board header .hbtn .ico svg {
   width: 1em;
@@ -108,10 +73,8 @@
   stroke-linecap: round;
   stroke-linejoin: round;
 }
-@container (max-width: 839px) {
-  .v-board header .hbtn:not(.active) .ico { display: inline; margin-right: 3px; }
-  .v-board header .hbtn:not(.active):has(.ico) .k { display: none; }
-}
+.v-board header.hdr-letter .hbtn:not(.active) .ico { display: inline; margin-right: 3px; }
+.v-board header.hdr-letter .hbtn:not(.active):has(.ico) .k { display: none; }
 /* 计数徽记 .tn 走共享件(controls.css)—— 626 之前这儿是两条只管 #trash-toggle 的私货,
    隔壁 #seal-toggle 的那个数根本没吃到(等宽也没有)。 */
 
@@ -420,9 +383,9 @@
 /* 65:两颗「复制」互相当替身,可它们的退场判据是**两根不同的轴**(顶栏内容宽 / 列宽)——
    窄窗 + 多列时两条同时成立,「复制成 Markdown」这条路整个没了(实测:窗 1000 / 5 列)。
    ⇒ 顶栏那颗真被塌缩规则收走时,列头这颗**不再让位**:替身关系从此是真的。
-   ⛔ **判据不是把 929 再写一遍** —— 那会是第二份真相源,顶栏断点一动就静默漂移。
+   ⛔ **判据不是另算一遍顶栏宽** —— 那会是第二份真相源,顶栏让位的判据一动就静默漂移。
    `data-hdrcopy` 由 board.ts 的 syncHdrCopy() 写,它**问 CSS 自己**(读 #copy-slot 的
-   computed display),⇒ 这里与上面那条 @container 永远说的是同一件事。
+   computed display),⇒ 这里与上面那条 `.hdr-nocopy` 永远说的是同一件事(W4 161 起由 fitHeader 按装不装得下挂)。
    ⚠ 代价是知情的:done 列列头最挤(名 + 计数 + 复制 + 全部归档),200px 下带长标签会溢出
    ⇒ 窄列时「全部归档」提前换短标签(它本来 ≤185 才换)。实测 200px 列宽 · 中文 · **计数取
    三位数的最坏情况**:计数 32 / 复制 47 / 归档 44 ⇒ 列名得 46、要 49,「已完成」尾字进省略号,

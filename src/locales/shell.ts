@@ -6,6 +6,8 @@ export const shell = defineMessages({
   "shell.collapseSidebarTitle": { zh: "折叠侧栏 (Ctrl+B)", en: "Collapse sidebar (Ctrl+B)" },
   "shell.collapseSidebar": { zh: "折叠侧栏", en: "Collapse sidebar" },
   "shell.switchSpace": { zh: "切换空间", en: "Switch space" },
+  // W4 A16:侧栏空间名那一格的悬停提示带上全名(那一格窄,长名字最多显两行)。
+  "shell.switchSpaceNamed": { zh: "当前空间「{name}」· 点这里切换", en: "Current space “{name}” · click to switch" },
   "shell.spacesEntry": { zh: "空间…", en: "Spaces…" },
   "shell.personalSpace": { zh: "个人空间", en: "Personal space" },
   "shell.navIdeas": { zh: "随记", en: "Notes" },

@@ -23,6 +23,11 @@ declare global {
     // `topInset()` 是状态栏高度(设备 px),用户面 83 的原生那半;吃它的是 index.html
     // 头里那段首帧脚本(写 `--sat`),这里只把类型登记在同一处,别在两处各写一份。
     __zhujianSystemBars?: { setDark(dark: boolean): void; topInset?(): number };
+    // 冷启首帧底色(161 / W4 A35,WM-18):把**选的档**(不是生效色)交给安卓壳记着,下次冷启时起始窗口 / 窗口底 /
+    // WebView 底在页面画出来之前就是对的纸面色(此前先闪约 0.6 秒整屏白)。桥在 MainActivity.kt 的 LaunchTheme。
+    // 要的是档不是色:「自动」得让系统那头也跟系统走(MODE_NIGHT_AUTO),只递 dark 布尔就分不出「自动恰好是暗」。
+    // 与上面那座同理:桥不在(鸿蒙 / 桌面浏览器里开这页)就跳过 —— 明暗本身照样由 CSS 生效,缺的只是冷启那一瞬。
+    __zhujianLaunchTheme?: { remember(mode: ThemeMode): void };
   }
 }
 
@@ -30,6 +35,7 @@ function paint(): void {
   const dark = mode === "auto" ? media.matches : mode === "dark";
   document.documentElement.dataset.theme = dark ? "dark" : "light";
   window.__zhujianSystemBars?.setDark(dark);
+  window.__zhujianLaunchTheme?.remember(mode);
 }
 
 /** 启动时调一次:接上「自动」档对系统的跟随(首帧的定色内联脚本已做)。 */

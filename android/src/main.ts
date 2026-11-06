@@ -97,14 +97,21 @@ import { onFoldClick, resettleFolds, settleFolds } from "./fold";
 import { closeViewerNow, initViewer, isViewerOpen, openLocalViewer, openViewer } from "./viewer";
 import {
   configuredServer,
+  currentGone,
   dismissScanOverlay,
+  forgetGone,
+  goneSpaces,
   initSync,
   isBooting,
+  prefillServer,
+  pruneGone,
   renderSync,
+  resetJoinForm,
   resetSyncTransient,
   type Spaced,
   type SyncStatus,
 } from "./sync";
+import { repaintDevices, rosterIds, shortIds } from "./devices";
 import { openUrl } from "@tauri-apps/plugin-opener";
 
 type DbInfo = {
@@ -420,9 +427,11 @@ function renderCard(it: TimelineItem, hideTopic: string | null, underDayHead = f
   const tint = cardTint(it.color);
   return `<article class="card${done ? " done" : ""}${tint.cls}"${tint.attr} data-id="${esc(it.id)}" data-stage="${esc(it.stage)}">${tick}<div class="body">
     <p class="content${clamp}">${contentHtml(it.content, true)}</p>${thumbs}
-    <footer><time>${esc(underDayHead ? fmtTimeOfDay(it.created_at) : fmtWhen(it.created_at))}</time>${
+    <footer><time>${esc(underDayHead ? fmtTimeOfDay(it.created_at) : fmtWhen(it.created_at))}</time>${sig}${
+      // 161 / W4 Q16(WP-24):来源挨着时间、「改过」放在它后面 —— 此前「06:00 改过 · zjd2」,「改过」紧挨着别人的名字,
+      // 容易读成那台改的(其实名字是谁建的;谁改的不存,不做)。
       it.revised ? `<span class="edited-mark">${t("cardpanel.editedMark")}</span>` : "" /* 157 G4 / P5 */
-    }${doneAt}${sig}${cmBadge}${meta.join("")}${chips}</footer>
+    }${doneAt}${cmBadge}${meta.join("")}${chips}</footer>
   </div></article>`;
 }
 
@@ -600,6 +609,13 @@ function settleHistory() {
 let nativeBackPending = false; // native 请求的 history.back() 已发、popstate 未归
 
 (window as unknown as Record<string, unknown>).__zhujianHandleBack = (): boolean => {
+  // 政策全文那一页(161 / W4 A11,WM-07):盖在一切之上(首启告知、设置「关于」都开它),返回键先收它、回到开它的那一页。
+  // 它**不压守门条目**(同扫码层):首启告知那会儿账本还没开张,压了反而多一枚「按一下没反应」的空炮。
+  // 框里切页签是把那一份**写进**框里、框从不导航(showPolicyPage 那段)⇒ 点过「用户协议」也是一下就回。
+  if (!$("policy-view").hidden) {
+    closePolicy();
+    return true;
+  }
   if (document.body.classList.contains("scanning")) {
     dismissScanOverlay(); // 扫码层收掉(UI 收尾不等插件),下面的面板/时间轴原地不动
     return true;
@@ -618,7 +634,10 @@ let nativeBackPending = false; // native 请求的 history.back() 已发、popst
     } else if (captureOpen) closeCaptureNow();
     else if (isCommentsOpen()) closeCommentsNow();
     else if (activePane === "docs" && !atSearchLanding() && docsBack()) return true; // 面里回上一页:面还开着,挂账照留
-    else {
+    else if (paneStack.length > 0 && activePane !== null) {
+      backToParentPane(); // 子页回上一层(A11):面还开着,挂账照留
+      return true;
+    } else {
       const fromPane = activePane !== null;
       if (fromPane) closePaneNow();
       settleHistory(); // 销挂账(settleHistory 首分支),不发 back
@@ -692,6 +711,15 @@ window.addEventListener("popstate", () => {
     }
     return;
   }
+  // 政策全文那一页开着时**也会走到这里**(161 / W4 A11,V1986A / WebView 156 真机量的):底下有守门条目(设置面开着)时,
+  // 按返回键是 WebView **自己**在整页会话历史里后退 —— 原生那条 `__zhujianHandleBack` 根本没被问到(页内插桩:只见 popstate、
+  // 不见入口被调),弹掉的是底下那一面的守门条目,于是政策页还盖着、设置面先没了。⇒ 这里同样先收政策页,
+  // 把刚被弹掉的那枚守门条目补压回去(底下那一面还开着)。没有守门条目时(首启告知)WebView 退无可退,才轮到原生入口那一支。
+  if (!$("policy-view").hidden) {
+    closePolicy();
+    pushLayer();
+    return;
+  }
   if (isViewerOpen()) {
     closeViewerNow();
     return;
@@ -721,6 +749,13 @@ window.addEventListener("popstate", () => {
   // 长文面不在列表页:返回键 = 回上一页(编辑器先落一版)。面还开着 ⇒ 守门条目刚被弹掉,补压一枚。
   // 从搜索结果落到这一篇、还停在落点那一页时不走这条:返回 = 回搜索结果(A3),不是回长文列表。
   if (activePane === "docs" && !atSearchLanding() && docsBack()) {
+    pushLayer();
+    return;
+  }
+  // 从设置 / 同步点进来的子页(空间、诊断;161 / W4 A11):返回 = 回那一层(此前越过它、直接落回底下那页)。
+  // 守门条目刚被弹掉、面还开着 ⇒ 补压一枚(同上面长文那一支)。
+  if (paneStack.length > 0 && activePane !== null) {
+    backToParentPane();
     pushLayer();
     return;
   }
@@ -1400,6 +1435,8 @@ async function refreshOnce(): Promise<void> {
       listTasks(space),
     ]);
     if (space !== getCurrentSpace()) return;
+    // 161 / W4 A14(WM-03 / WP-12):设备名字刚随这一轮重读过 —— 开着的设备名单跟着换(此前卡上的来源十几秒就换了,名单还是编号)。
+    repaintDevices();
     if (cardPanel.hasDirtyDraft() || isDragging()) {
       refreshDeferred = true;
       return;
@@ -1875,13 +1912,24 @@ $("compose-doc").addEventListener("click", () => {
 // 单空间时「空间」概念整个隐藏(116 捕获徽章同源原则):徽章藏起、同步标题不带名,
 // 空间面板从同步面底部「空间…」兜底可达;多空间时徽章即入口、兜底收起。三个状态
 // 在同一处原子维护,启动时静态 HTML 徽章即 hidden,不闪。
+/** 随记页顶那一条(161 / W4 Q12 ★①):当前空间这台已不在账户里时挂着,说是哪一种(同同步面那一行),点了进同步页。 */
+function paintGoneBar(): void {
+  // ⚠ 先问本机那本账:刚重置 / 刚切走时,`currentGone` 还是上一份状态说的,下一份到之前别替这一本挂着。
+  const gone = goneSpaces().has(getCurrentSpace()) ? currentGone() : null;
+  $("sync-gone-bar").hidden = gone === null;
+  $("sync-gone-bar-head").textContent = gone === "left" ? t("sync.goneLeft") : gone === "revoked" ? t("sync.goneRevoked") : "";
+}
+
 function renderSpaceChip() {
   const cur = spacesCache.find((s) => s.id === getCurrentSpace());
   const single = spacesCache.length <= 1;
   const chip = $("space-chip") as HTMLButtonElement;
   chip.hidden = single;
   chip.textContent = cur ? spaceLabel(cur) : t("api.defaultSpace");
-  $("sync-spaces-btn").hidden = !single;
+  // 161 / W4 Q6 ★①(X-14):不管几个空间都留着 —— 此前有了第二个空间它就藏起(「徽章即入口」),可人照着
+  //   指南「同步页里那个也在」去找就扑空。已不在账户里时同步面那一块自带一枚「空间…」(紧挨着「去重置」那句,
+  //   Q12),底下这枚就不再摆第二枚。
+  $("sync-spaces-btn").hidden = currentGone() !== null;
   $("sync-title").textContent = single
     ? t("main.syncTitle")
     : t("main.syncTitleSpaced", { name: cur ? spaceLabel(cur) : t("api.defaultSpace") });
@@ -1903,6 +1951,7 @@ function paintComposePh(): void {
 
 function renderSpaceList() {
   const box = $("space-list");
+  const gone = goneSpaces();
   box.innerHTML = spacesCache
     .map((s) => {
       const label = esc(spaceLabel(s));
@@ -1923,7 +1972,12 @@ function renderSpaceList() {
       if (resettingSpace === s.id) {
         // 重置话术分流(space-entry-plan §5):已开同步的空间=清本机副本、可重新
         // 加入;仅本机的本子=删除**唯一副本**,不再用「清库重配」安抚。
-        const warnText = s.configured ? t("main.resetWarnSynced") : t("main.resetWarnLocalOnly");
+        // 161 / W4 Q12(A40):已不在账户里的那一本,确认里点出「之后在这台记的那几条只在这里」。
+        const warnText = gone.has(s.id)
+          ? t("main.resetWarnGone")
+          : s.configured
+            ? t("main.resetWarnSynced")
+            : t("main.resetWarnLocalOnly");
         return `<div class="space-row current" data-space="${esc(s.id)}">
           <div style="flex:1">
             <div>${label}</div>
@@ -1933,11 +1987,14 @@ function renderSpaceList() {
           </div>
         </div>`;
       }
-      const tag = s.current
-        ? `<span class="tag warn">${t("main.tagCurrent")}</span>`
-        : s.configured
-          ? ""
-          : `<span class="tag">${t("main.tagLocalOnly")}</span>`;
+      // Q12(A40 / WP-13):已不在账户里的那一本标「已不再同步」(此前和平时一模一样,看不出已被移除)。
+      const tag =
+        (s.current ? `<span class="tag warn">${t("main.tagCurrent")}</span>` : "") +
+        (gone.has(s.id)
+          ? `<span class="tag warn">${t("main.tagUnsynced")}</span>`
+          : s.current || s.configured
+            ? ""
+            : `<span class="tag">${t("main.tagLocalOnly")}</span>`);
       // 「重置」= 删本机全部数据的最重操作,不常驻行上(ui-audit P1 #11):收进「⋯」。
       const act =
         (s.current ? `<button class="act" data-rename="1">${t("main.rename")}</button>` : "") +
@@ -1960,6 +2017,7 @@ async function refreshSpaces() {
     showErr(err);
     return;
   }
+  pruneGone(spacesCache.map((s) => s.id)); // Q12 那本账:不在了的空间划掉
   renderSpaceChip();
   renderSpaceList();
 }
@@ -2033,25 +2091,44 @@ const PANE_EL: Record<string, string> = {
   diag: "diag",
 };
 let activePane: string | null = null;
+/** 子页的上一层(161 / W4 A11,WM-02 / N-2):从设置点进「空间…」「诊断」、从同步点进「空间…」、
+ *  同步红条点「网络自检」进诊断 —— 这几跳是「面里的下一层」,返回键该回到点进来的那一层(此前越过它、直接落回底下那页;
+ *  从同步红条进诊断再返回,同步面板也没了)。栈底 = 最先开的那一面;每格记着离开时滚到哪儿,回去时还原。
+ *  ⭐ 整段仍只占**一枚**守门条目(面换面同层那条不变):返回弹掉它时回上一层并补压一枚(同长文面「回上一页」那一支);
+ *  用户自己点别处走开(顶栏 / 底栏 / 换面)= 栈清空,一次 settleHistory 就平了,不留「按一下没反应」的空炮。 */
+let paneStack: { name: string; y: number }[] = [];
 
 /** 底栏「长文」按数据显形(用户 2026-10-29 拍「有长文才出现」):真值每轮 refresh 随时间轴快照更新;
  *  初值 false = 未证实有长文就不显(空库首帧不闪)。
  *  ⭐ 「回收站」「归档」两格 159 起**常在**(W3 走查 Q2,用户拍 ①;WM-08 / X-10):此前它俩也按数据显形(408-A1),
  *  清空回收站之后那一格当场没了、想进空回收站无路,而它一出一没其余几格都跟着挪位。空的时候点进去,页里自己说「是空的」。 */
 let hasDocs = false;
+/** 这一次进长文面那一刻有没有长文(161 / W4 A36,WM-28):「那一面开着时钮保显」只给**有长文时进来**的那一趟。
+ *  零篇时从记一笔「长文」进来、一个字没写就退出 —— 此前底栏凭空冒出一格「长文」,回随记又没了。 */
+let docsCellPinned = false;
+
+/** 顶栏四枚入口各开哪一面(161 / W4 Q11,WM-29 前半):那一面开着时它点亮。 */
+const HEAD_PANE: Record<string, string> = { topics: "topics-toggle", search: "search-toggle", sync: "sync-toggle", settings: "settings-toggle" };
 
 /** 底栏高亮的单一渲染点(146 ▲M3):pane 开着高亮 pane 钮,否则高亮当前 mode 钮
  *  ——popstate/closePaneNow 关面后必须回到 mode 高亮,不能清光。「长文」的显形也收在这里:
- *  那一面正开着时钮保显(否则最后一篇删掉的那一刻,高亮着的关面入口凭空消失)。 */
+ *  那一面正开着时钮保显(否则最后一篇删掉的那一刻,高亮着的关面入口凭空消失)—— 只限进来时就有长文的那一趟(A36)。
+ *  161 / W4 Q11(WM-29):顶栏那四枚入口的点亮也收在这里(同一个渲染点,开关面的每条路都会走到);子页亮它的上一层。 */
 function renderBottomBar() {
   document.querySelectorAll<HTMLButtonElement>("#bottombar button").forEach((b) => {
     // 长文(第 4 格):主内容,站在分隔线左边、不算覆盖面。
-    if (b.dataset.pane === "docs") b.hidden = !hasDocs && activePane !== "docs";
+    if (b.dataset.pane === "docs") b.hidden = !hasDocs && !(activePane === "docs" && docsCellPinned);
     b.classList.toggle(
       "active",
       activePane !== null ? b.dataset.pane === activePane : b.dataset.mode === viewMode,
     );
   });
+  const root = paneStack.length > 0 ? paneStack[0].name : activePane;
+  for (const [pane, id] of Object.entries(HEAD_PANE)) {
+    const on = root === pane;
+    $(id).classList.toggle("on", on);
+    $(id).setAttribute("aria-pressed", String(on));
+  }
 }
 
 /** 开面前时间轴滚到哪儿(用户面 79 / ui-guidelines §3.6 第一条:「openPane 记 scrollY,
@@ -2066,10 +2143,44 @@ let timelineScrollY = 0;
  *  此前回到顶,连续整理要每次从头划)。其余面照旧从自己的顶部开(79):设置 / 同步这类是「一张表」,
  *  从头看才对。离开那一刻记、开面那一刻还;切空间整个作废(另一份内容,偏移量没有意义)。 */
 // 159 / W3 A17 搜索那半(WM-12 C / WD-28 同形):从结果点进去再回来、或顶栏再开一次,结果列表别回到顶。
-const KEEP_PANE_SCROLL = new Set(["trash", "search"]);
+// 161 / W4 Q11(WM-29 后半):设置也回到上次读到的位置 —— 一整页长说明,备份 / 反馈 / 关于要逐屏找,关掉再开此前又从顶划起。
+const KEEP_PANE_SCROLL = new Set(["trash", "search", "settings"]);
 let paneScrollY: Record<string, number> = {};
 function rememberPaneScroll(): void {
   if (activePane !== null && KEEP_PANE_SCROLL.has(activePane)) paneScrollY[activePane] = window.scrollY;
+}
+
+/** 从 `activePane` 那一面点进它的下一层 `name`(见 paneStack)。没开着面时就是普通开面。 */
+function openSubPane(name: string): void {
+  const parent = activePane;
+  const y = window.scrollY;
+  const keep = paneStack;
+  openPane(name);
+  if (activePane !== name || parent === null || parent === name) return; // 被闸挡下 / 本来就不在面里:不是子页
+  paneStack = [...keep, { name: parent, y }];
+  renderBottomBar(); // 顶栏点亮的是上一层(openPane 里那次画的时候栈还是空的)
+}
+
+/** 正在「回上一层」(openPane 据此不复位那一面的表单:回到的是刚才那张表,161 / W4 A50)。 */
+let returningToParent = false;
+
+/** 回上一层:换回那一面、滚回离开时的位置。守门条目由调用方处置(popstate 补压 / 挂账照留)。 */
+function backToParentPane(): void {
+  const keep = paneStack;
+  const prev = keep[keep.length - 1];
+  returningToParent = true;
+  try {
+    openPane(prev.name);
+  } finally {
+    returningToParent = false;
+  }
+  if (activePane !== prev.name) {
+    paneStack = keep; // 被开面那几道闸挡下(切换编排 / 记下在飞 / 卡片草稿):还停在子页,上一层照旧记着
+    return;
+  }
+  paneStack = keep.slice(0, -1);
+  renderBottomBar();
+  window.scrollTo({ top: prev.y });
 }
 
 /** 关面回时间轴的 DOM 部分(143 拆出):popstate(返回键)与 UI 关面共用;
@@ -2081,6 +2192,7 @@ function closePaneNow() {
   if (activePane === "docs") closeDocs(); // 编辑器开着就落一版(不等;没写进去草稿还在)
   rememberPaneScroll();
   activePane = null;
+  paneStack = []; // 子页那几层随面一起收(A11)
   hideConfirmBar(); // 关面 = 放弃面内挂着的两拍确认(ui-audit P0 #4)
   for (const id of Object.values(PANE_EL)) $(id).hidden = true;
   document.body.classList.remove("pane-open"); // 恢复 compose+时间轴
@@ -2115,6 +2227,8 @@ function openPane(name: string, landing = false) {
   if (activePane === "docs") closeDocs(); // 面换面同理
   rememberPaneScroll(); // 面换面:离开的那一面若要记位置,此刻记(159 / A17)
   activePane = name;
+  paneStack = []; // 用户自己换了一面 = 不再是谁的子页(A11);openSubPane / backToParentPane 随后自己写回
+  if (name === "docs") docsCellPinned = hasDocs; // A36:进来那一刻有长文,这一趟「长文」格才保显
   hideConfirmBar(); // 面换面:上一面挂着的确认作废
   for (const [key, id] of Object.entries(PANE_EL)) $(id).hidden = key !== name;
   document.body.classList.add("pane-open"); // 开面板接管视图:收 compose+时间轴
@@ -2128,6 +2242,12 @@ function openPane(name: string, landing = false) {
   if (!landing) searchReturn = null;
   if (name === "spaces") {
     spaceMenuFor = null; // 重开面板不带上次的「⋯」展开残留
+    // 161 / W4 A50 / A33(WP-22 / N-1):开空间页 = 一张新表 ——「加入空间(输入配对码)」收起、旧码清掉,上次「全部同步」那行也收
+    // (状态变了,那句话就过时了)。⚠ 从它的子页(诊断)回来不算:那是回到刚才那张表,表里填了一半的照留。
+    if (!returningToParent) {
+      resetJoinForm();
+      $("sync-all-result").textContent = "";
+    }
     void refreshSpaces();
   }
   else if (name === "trash") void panes.loadTrash();
@@ -2152,10 +2272,18 @@ function openPane(name: string, landing = false) {
     // 系统选择器开着的时候被杀,那时挂在 JS 里的 promise 早就没了)。
     backup.loadBackup();
   }
-  else if (name === "diag" && !diagLoaded) {
-    diagLoaded = true;
-    loadDb();
-    runProbe();
+  else if (name === "diag") {
+    // 161 / W4 A10(WM-05 / N-4):**每次进页都现跑**,地址框按当前账户的服务器填(没账户才留上回的 / 渠道默认)。
+    // 此前只在第一次进页跑、之后一直挂着那一次的结果,不写时间:同步明明在线,页上还是二十分钟前那个红 ✗,
+    // 地址框里是上回手打的地址。⇒ 进页那一刻旧结果就被「正在自检…」换掉,不会把旧的当成现在的。
+    // 错误条那枚「网络自检」带着刚才连不上的那台进来(initErr 先写好框再开面),这里不覆盖它。
+    if (!probeUrlPinned) {
+      const cfg = configuredServer();
+      if (cfg) ($("url") as HTMLInputElement).value = cfg;
+    }
+    probeUrlPinned = false;
+    void loadDb();
+    void runProbe();
   }
 }
 
@@ -2208,9 +2336,10 @@ function resetPanesForSpaceChange() {
   paneScrollY = {}; // 同上:各面记的位置是旧空间那份内容的(⚠ 排在关面之后 —— 关面那一下会再记一笔)
   settleHistory(); // 守门条目同轮消掉,不给返回键留「按一下没反应」的空炮
   searchReturn = null; // 「回搜索」那一枚(若有)上一行已平掉;搜索结果是旧空间的,也回不去了
-  diagLoaded = false;
   $("db").innerHTML = `<span class="muted">${t("main.diagLoading")}</span>`;
   $("probe").innerHTML = `<span class="muted">${t("main.probeIdle")}</span>`;
+  diagReport.db = [];
+  diagReport.probe = [];
   panes.resetPanesForSpaceChange();
   topics.resetTopicsForSpaceChange();
   resetDocsForSpaceChange();
@@ -2436,10 +2565,11 @@ document.querySelector("header h1")!.addEventListener("click", (e) => {
   syncToTopHint();
 }
 $("space-chip").addEventListener("click", () => openPane("spaces"));
-$("sync-spaces-btn").addEventListener("click", () => openPane("spaces"));
+// 同步页 / 设置里那两枚「空间…」开的是**子页**(161 / W4 A11):返回键回到点进来的那一层。
+$("sync-spaces-btn").addEventListener("click", () => openSubPane("spaces"));
 // 159 / W3 Q7(WM-16 / X-08):设置里也有一行「空间…」,开的是同一页(同步页那个留着)。此前只有一个空间时
 // 顶栏不显示空间名、设置里没有「空间」,入口只挂在「同步」下面,找不到。
-$("settings-spaces-btn").addEventListener("click", () => openPane("spaces"));
+$("settings-spaces-btn").addEventListener("click", () => openSubPane("spaces"));
 $("topics-toggle").addEventListener("click", () => openPane("topics"));
 $("search-toggle").addEventListener("click", () => openPane("search"));
 // 文本过滤(常驻框,不随 pills 重建):输入即筛,走 projectTimeline 单一渲染路径。
@@ -2540,29 +2670,34 @@ $("bottombar").addEventListener("click", (e) => {
   tall();
 }
 $("settings-toggle").addEventListener("click", () => openPane("settings"));
-$("settings-diag-btn").addEventListener("click", () => openPane("diag"));
+$("settings-diag-btn").addEventListener("click", () => openSubPane("diag"));
 
 // 意见反馈的复制钮(国内上架 17)。⭐ **地址从那个 input 的 value 读**,⛔ 不在这儿再写一份
 // 常数 —— 静态壳里那一处是唯一出处,写两份就是等着它们哪天各说各的。
-// 回执走本节自己的 #feedback-msg(照 #alias-msg 的形:红字挂 .warn-ink,样式住样式层),
-// ⛔ 不走 showBar:这一节在设置面里,回执贴着它比飘一条全局条更好找。
+// 161 / W4 A19(WM-10):回执改走顶上那条会自己收的提示条(同同步面「账户号已复制」)。此前插进本节的 #feedback-msg,
+// 把下面「关于」整节往下推、而且一直挂着(四分钟后、去别页转一圈回来都在)。
 // ⚠ 复制失败那句刻意告诉用户「长按选中手动复制」—— 地址是 readonly input,选得中,
 // 这条路真的走得通(同 sync.copyFailed / devices.copyFailed 那两句)。
 $("feedback-copy").addEventListener("click", () => {
   const mail = ($("feedback-mail") as HTMLInputElement).value;
-  const msg = $("feedback-msg");
   writeClipboard(mail).then(
-    () => {
-      msg.textContent = t("feedback.copied");
-      msg.classList.remove("warn-ink");
-      msg.hidden = false;
-    },
-    () => {
-      msg.textContent = t("feedback.copyFailed");
-      msg.classList.add("warn-ink");
-      msg.hidden = false;
-    },
+    () => showBar(t("feedback.copied"), true),
+    () => showError(t("feedback.copyFailed")),
   );
+});
+// 161 / W4 Q11(WM-32 前半):邮箱点了拉起写信。⚠ 只在交得出网址的这一端(HAS_BROWSER,安卓):鸿蒙上 openUrl 恒错
+// (平台事实②),那一端照旧只摆地址 + 复制钮(上面那条「刻意不做成 mailto」的理由就是它,⛔ 别在那一端做成链接)。
+// 长按照旧能选中这一框(readonly input),手指一按就走的是 click,不碍选字。
+if (HAS_BROWSER) {
+  const mailBox = $("feedback-mail") as HTMLInputElement;
+  mailBox.classList.add("mail-link");
+  mailBox.addEventListener("click", () => {
+    void openUrl(`mailto:${mailBox.value}`).catch((err) => showErr(err));
+  });
+}
+// 161 / W4 Q11(WM-32 前半):「关于」那句里的「意见反馈」—— 滚到那一节。
+$("about-feedback-link").addEventListener("click", () => {
+  $("feedback-title").scrollIntoView({ block: "start", behavior: "smooth" });
 });
 
 // 明暗三档(250):点哪档写哪档,高亮回来按当前档整排重画(单一渲染点,不在点击处
@@ -2601,12 +2736,43 @@ function paintTextSizeSeg() {
 
 // 语言三档(358 第②笔):同上两排的形,只是回执不同——生效语言真变了就 reload
 // (i18n.ts 里判),此时整页换文案就是回执;auto↔解析同语言时页面不动,只刷高亮。
+// 161 / W4 A13(WM-06):重载完回到设置的语言那一行(此前不管从哪页进的,一律落到随记、要再开设置从头划)。
+// 只记一笔在 sessionStorage(本窗重载活得过、进程没了就没了),启动收尾时消费(init 末尾)。
 $("lang-seg").addEventListener("click", (e) => {
   const c = (e.target as HTMLElement).closest<HTMLButtonElement>("[data-lang]")?.dataset.lang;
   if (!c) return;
-  setLangChoice(c as LangChoice);
+  if (setLangChoice(c as LangChoice)) {
+    sessionStorage.setItem(REOPEN_AT_KEY, "lang");
+    reloadFromBase();
+    return;
+  }
   paintLangSeg();
 });
+
+/** 重载整页(改语言那一下),**先把守门条目退干净**(161 / W4 A13,V1986A 真机逮到):设置面开着就压着一枚条目,
+ *  直接 reload 的话那几枚成了「上一个文档」的会话历史 —— WebView 从此自己接返回键去后退(= 再重载一遍),
+ *  时间轴上按返回退不出 app(此前改语言本来就有这一形,只是重载完落在随记、没人连按到那一下)。
+ *  ⇒ 退回底那一格再重载:底下没有东西,返回键照旧回原生那条路。popstate 不来就照样重载(语言已经存了,页面必须换)。 */
+function reloadFromBase(): void {
+  if (histDepth === 0) {
+    location.reload();
+    return;
+  }
+  // ⚠ 捕获期 + 截住:不让 main 那只 popstate 去关面(马上就重载,关了只是一闪)。
+  window.addEventListener(
+    "popstate",
+    (ev) => {
+      ev.stopImmediatePropagation();
+      location.reload();
+    },
+    { once: true, capture: true },
+  );
+  history.go(-histDepth);
+  window.setTimeout(() => location.reload(), 1500);
+}
+
+/** 重载之后要回到哪儿(A13)。今天只有一个值:"lang" = 设置面的语言那一行。 */
+const REOPEN_AT_KEY = "zhujian.reopen-at";
 
 function paintLangSeg() {
   const now = currentLangChoice();
@@ -2658,6 +2824,8 @@ function dueDigest(tasks: TaskItem[], today: string): string | null {
 }
 
 function paintRemindRow() {
+  // 161 / W4 Q9:说明里那个天数与任务面到期钮同一个常数(静态壳里留空,理由见 index.html 那一行)。
+  $("remind-sub").textContent = t("reminder.sub", { days: DUE_SOON_DAYS });
   const cfg = reminderCfg();
   $("remind-seg")
     .querySelectorAll<HTMLButtonElement>("[data-remind]")
@@ -2714,14 +2882,19 @@ $("remind-time").addEventListener("change", () => {
     return;
   }
   saveReminderCfg({ ...reminderCfg(), time: time.value });
-  showRemindMsg(t("reminder.saved", { time: time.value }), false);
+  showBar(t("reminder.saved", { time: time.value }), true); // 回执走提示条(161 / W4 A19),⛔ 别插进页面推走下面那几节
 });
 
+// 「试一条」的回执同上走提示条(A19,WM-10:此前那行「已发送,请下拉看通知栏」两分钟后还挂着,像刚发生)。
+// 发不出去的那句照旧留在本节(#remind-msg):那是要人去处置的状态(多半是系统没许通知),不是一闪而过的回执。
 $("remind-test").addEventListener("click", () => {
   const btn = $("remind-test") as HTMLButtonElement;
   btn.disabled = true;
   sendTestNotification()
-    .then(() => showRemindMsg(t("reminder.testSent"), false))
+    .then(() => {
+      showRemindMsg("", false);
+      showBar(t("reminder.testSent"), true);
+    })
     .catch((e) => showRemindMsg(errText(e), true))
     .finally(() => {
       btn.disabled = false;
@@ -2755,21 +2928,26 @@ async function loadAlias() {
     aliasDevice = d.this_device;
     aliasSaved = d.devices.find((x) => x.device_id === d.this_device)?.alias ?? "";
     input.value = aliasSaved;
-    // 没起名时,id 前 6 位是这台设备唯一能自证身份的东西。**卡片上刻意不显 id 片段**
+    // 没起名时,id 前几位是这台设备唯一能自证身份的东西。**卡片上刻意不显 id 片段**
     // (那是噪音),但这里的语境正是「这是哪台」,显它才有用。
-    input.placeholder = t("main.aliasUnnamed", { id: d.this_device.slice(0, 6) });
+    // 161 / W4 A30(WP-15):位数与设备名单显示的一致(名单按「刚好能分开」取最短前缀,两台前 6 位相同就显 7 位;
+    // 此前这里固定 6 位,两处对不上)。名册在手就按名册算,没连上过就按本机认得的那几台。
+    const ids = rosterIds() ?? d.devices.map((x) => x.device_id);
+    const short = shortIds(ids.includes(d.this_device) ? ids : [...ids, d.this_device]);
+    input.placeholder = t("main.aliasUnnamed", { id: short.get(d.this_device) ?? d.this_device });
     input.disabled = false;
     save.disabled = false;
   } catch (e) {
-    showAliasMsg(errText(e), true);
+    showAliasMsg(errText(e));
   }
 }
 
-function showAliasMsg(text: string, bad: boolean) {
+/** 本节里那行红字:只剩**失败**用它(取不到身份 / 后端拒了);成了的回执 161 / W4 A19 起走提示条。 */
+function showAliasMsg(text: string) {
   const msg = $("alias-msg");
   msg.textContent = text;
-  // 红字走 .warn-ink 类(样式住样式层,门禁看得见);默认色由 .fine 自己给。
-  msg.classList.toggle("warn-ink", bad);
+  // 红字走 .warn-ink 类(样式住样式层,门禁看得见)。
+  msg.classList.add("warn-ink");
   msg.hidden = false;
 }
 
@@ -2791,10 +2969,15 @@ async function saveAlias() {
     aliasSaved = next;
     input.value = next;
     input.blur(); // 收键盘,给一个「这一笔完了」的手势回执(ui-guidelines:手势即回执)
-    showAliasMsg(next === "" ? t("main.aliasCleared") : t("main.aliasSaved"), false);
+    // 161 / W4 A19(WM-10):成了的那句走顶上的提示条(此前插进本节、把「备份」整节往下推还一直挂着);
+    // 失败那句照旧留在框下(要人照着改的,贴着框才好找)。
+    $("alias-msg").hidden = true;
+    showBar(next === "" ? t("main.aliasCleared") : t("main.aliasSaved"), true);
+    // A14:本机自己的名字 —— 名单与卡上的来源都读身份面那份快照,改完重读一遍(此前名单要收起再展开才换)。
+    void loadIdentity(space).then(repaintDevices);
   } catch (e) {
     input.value = aliasSaved; // 后端拒了(超长等):回显旧值 + 后端原话
-    showAliasMsg(errText(e), true);
+    showAliasMsg(errText(e));
   } finally {
     save.disabled = false;
   }
@@ -2843,6 +3026,8 @@ $("space-list").addEventListener("click", async (e) => {
     spaceViews.delete(id); // Q6:重置 = 另一份内容,记着的筛选 / 位置作废
     try {
       await invoke("reset_space", { spaceId: id });
+      forgetGone(id); // Q12:本机这一本的数据删光了,「已不在账户里」那笔账跟着作废
+      paintGoneBar();
       showError(wasSynced ? t("main.spaceReset") : t("main.spaceResetLocalOnly"));
       resetSyncTransient(); // 重置空间的出码页等一次性展示随之作废。
       await reconcileForeground(); // 前台可能已落回 main(后端广播为准,这里对账兜底)。
@@ -2974,7 +3159,9 @@ $("sync-all-btn").addEventListener("click", async () => {
     const outcomes = report.outcomes;
     if (!outcomes.length) {
       // 「全部同步」只遍历开了同步的空间——纯本地本子被跳过是预期(space-entry-plan §5)。
-      box.textContent = t("main.syncAllNoSpaces");
+      // 161 / W4 A33 / Q11(WM-33 / N-1):用提示条说(中性那档:什么都没发生),⛔ 不留在页上 —— 此前那行一直挂着,开了同步再进来还在,说的已经是错的。
+      box.textContent = "";
+      showBar(t("main.syncAllNoSpaces"), false, true);
     } else {
       const progressed = outcomes.filter((o) => o.progressed).length;
       const lines = outcomes
@@ -3007,7 +3194,13 @@ void listen<{ space: string; done: number; total: number }>("sync-all-progress",
 
 // ---- 诊断面(P4-b 收编:打开才读库、才跑网络闸门;120 起入口在底部工具行) -----
 
-let diagLoaded = false;
+/** 诊断面那两段的文字形(161 / W4 Q5:「复制诊断信息」照电脑那份的形 —— 版本 + 构建 / [本机库] / [网络自检])。
+ *  画到屏上的同时记一份;切空间时清掉(那是另一个空间的库)。 */
+const diagReport: { db: string[]; probe: string[] } = { db: [], probe: [] };
+/** 下一次进诊断面时别拿当前账户的服务器盖掉框里那个地址(错误条带着「刚才连不上的那台」进来时置位,A10)。 */
+let probeUrlPinned = false;
+/** 只认最后一次自检的结果(连点「再测一次」、或进页自动跑与手点叠在一起时,迟到的那次不许盖掉新的)。 */
+let probeSeq = 0;
 
 async function loadDb() {
   const box = $("db");
@@ -3024,8 +3217,11 @@ async function loadDb() {
     box.innerHTML = rows
       .map(([k, v]) => `<span class="k">${esc(k)}</span><span class="v">${esc(v)}</span>`)
       .join("");
+    diagReport.db = rows.map(([k, v]) => `${k}: ${v}`);
   } catch (e) {
-    box.innerHTML = `<span class="v warn-ink">${t("main.diagDbFailed", { error: esc(errDetail(e)) })}</span>`;
+    const line = t("main.diagDbFailed", { error: errDetail(e) });
+    box.innerHTML = `<span class="v warn-ink">${esc(line)}</span>`;
+    diagReport.db = [line];
   }
 }
 
@@ -3033,26 +3229,70 @@ async function runProbe() {
   const btn = $("run") as HTMLButtonElement;
   const box = $("probe");
   const url = ($("url") as HTMLInputElement).value.trim();
+  // 空框就点(161 / W4 Q5):此前照样跑、结论那句会是「连不上 :…」—— 先说一句、光标进框(同 sync.ts::lacksInput)。
+  if (!url) {
+    showError(t("sync.needServer"));
+    $("url").focus();
+    return;
+  }
+  const seq = ++probeSeq;
   btn.disabled = true;
   box.innerHTML = `<span class="muted">${t("main.probeRunning")}</span>`;
+  diagReport.probe = [];
   try {
     const steps = await invoke<ProbeStep[]>("net_probe", { url });
-    box.innerHTML = steps
-      .map(
-        (s) => `<div class="step ${s.ok ? "ok" : "fail"}">
+    if (seq !== probeSeq) return;
+    // 161 / W4 Q5(WD-22 / WM-13 后半 / X-09):最上面一句人话结论(两端逐字同的那一对键),术语那几行照旧留在下面。
+    // 判据 = 六项全过才算「能连上」:前几项是本机的加密件,坏了的话连上也同步不了,说「能连上」就是骗人。
+    const ok = steps.every((s) => s.ok);
+    const verdict = ok ? t("probe.verdictOk", { url }) : t("probe.verdictFail", { url });
+    box.innerHTML =
+      `<p class="probe-verdict${ok ? "" : " fail"}">${esc(verdict)}</p>` +
+      steps
+        .map(
+          (s) => `<div class="step ${s.ok ? "ok" : "fail"}">
           <span class="mark">${s.ok ? "✓" : "✗"}</span>
           <span class="name">${esc(s.name)}</span>
           <span class="detail">${esc(s.detail)}</span>
         </div>`,
-      )
-      .join("");
+        )
+        .join("");
+    diagReport.probe = [verdict, url, ...steps.map((s) => `${s.ok ? "✓" : "✗"} ${s.name} — ${s.detail}`)];
   } catch (e) {
-    box.innerHTML = `<span class="v warn-ink">${t("main.probeFailed", { error: esc(errDetail(e)) })}</span>`;
+    if (seq !== probeSeq) return;
+    const line = t("main.probeFailed", { error: errDetail(e) });
+    box.innerHTML = `<span class="v warn-ink">${esc(line)}</span>`;
+    diagReport.probe = [url, line];
   } finally {
-    btn.disabled = false;
+    if (seq === probeSeq) btn.disabled = false;
   }
 }
-$("run").addEventListener("click", runProbe);
+$("run").addEventListener("click", () => void runProbe());
+
+/** 「复制诊断信息」那段文字:形照电脑 `src/about.ts::reportText`(应用名 + 版本 / 构建 / 两段带方括号的小节)。 */
+async function diagText(): Promise<string> {
+  const v = await getVersion();
+  const b = buildStamp();
+  const stamp = `${b.commit} · ${formatBuiltAt(b.at)}`;
+  return [
+    `${t("shell.appName")} v${v}`,
+    b.dirty ? t("main.aboutBuildDirty", { stamp }) : stamp,
+    "",
+    `[${t("shell.diagDbTitle")}]`,
+    ...(diagReport.db.length ? diagReport.db : [t("main.diagLoading")]),
+    "",
+    `[${t("shell.diagNetTitle")}]`,
+    ...(diagReport.probe.length ? diagReport.probe : [t("main.probeIdle")]),
+  ].join("\n");
+}
+$("diag-copy").addEventListener("click", () => {
+  void diagText()
+    .then((text) => writeClipboard(text))
+    .then(
+      () => showBar(t("main.diagCopied"), true),
+      () => showError(t("main.diagCopyFailed")),
+    );
+});
 
 // ---- 关于(250):这台机上装的是哪一版。手机端此前没处看版本号,排查问题第一句总是
 // 「你手机上是几点几」;版本取自 tauri.conf.json,与更新清单 android.json 同源。
@@ -3122,21 +3362,50 @@ export function meaningfulNotes(notes: string | undefined, version: string): str
   return residue === "" ? "" : s;
 }
 
+/** 有新版就把启动时那条提示亮出来(启动查、回前台查、「关于」里手动查,三条路同一个出口)。 */
+function showUpdate(u: MobileUpdate): void {
+  updateFound = u;
+  $("update-msg").textContent = t("main.updateFound", { version: u.version });
+  const notes = meaningfulNotes(u.notes, u.version);
+  $("update-notes").textContent = notes;
+  $("update-notes").hidden = notes === "";
+  $("update").hidden = false;
+}
+
 async function initUpdate() {
+  if (checkUpdate === null) return; // 这条渠道没有应用内更新(国内商店 / 鸿蒙,channel.ts)
   lastUpdateCheckedAt = Date.now();
   try {
     const u = await checkUpdate();
     if (!u || u.versionCode === updateDismissedCode) return;
-    updateFound = u;
-    $("update-msg").textContent = t("main.updateFound", { version: u.version });
-    const notes = meaningfulNotes(u.notes, u.version);
-    $("update-notes").textContent = notes;
-    $("update-notes").hidden = notes === "";
-    $("update").hidden = false;
+    showUpdate(u);
   } catch {
     /* 离线/端点不可达:静默,下次回前台/启动再查。 */
   }
 }
+
+// 161 / W4 Q10(WM-31):「关于」里手动查一次。有新版走启动时那条提示(手动查的不管「稍后」记过没有 —— 人是来问的);
+// 没有就说「已是最新 vX」;查不成照实说(⛔ 不像启动那次静默:这一下是人按的,得有回音)。
+// ⭐ 这一行只在**有应用内更新**的渠道上在:checkUpdate 为 null 的渠道(国内商店包 / 鸿蒙)启动时本来就不查,
+//    那里的这枚钮只会永远说「已是最新」—— 由 init 摘掉整行(构建期渠道接缝,不是运行期探测)。
+$("update-check").addEventListener("click", () => {
+  const check = checkUpdate;
+  if (check === null) throw new Error("这条渠道没有应用内更新,「检查更新」那一行本该在 init 里摘掉");
+  const btn = $("update-check") as HTMLButtonElement;
+  btn.disabled = true;
+  btn.textContent = t("main.updateChecking");
+  lastUpdateCheckedAt = Date.now();
+  void Promise.all([check(), getVersion()])
+    .then(([u, v]) => {
+      if (u) showUpdate(u);
+      else showBar(t("main.updateLatest", { version: v }), true);
+    })
+    .catch((e) => showError(t("main.updateCheckFailed", { error: errDetail(e) })))
+    .finally(() => {
+      btn.disabled = false;
+      btn.textContent = t("shell.checkUpdate");
+    });
+});
 
 // 回前台查更新的节流:短时间内反复切前后台只查一次,不空转 android.json。
 const UPDATE_CHECK_THROTTLE_MS = 10 * 60 * 1000;
@@ -3236,18 +3505,35 @@ cardPanel.initCardPanel({
   // 值 chip 上的截止文字与卡上那颗角标同一支笔(⛔ 别让面板自己算第二份)。
   dueLabel: (due, done) => dueLabel(due, localToday(), done),
 });
+/** core / coord 原话里的空间名 → 屏上的叫法(161 / W4 A41):coord 给的是名字、「默认空间」(main 没起名时,core 不翻)
+ *  或空间 id(非 main 没起名时)。认得出就按这一端的 spaceLabel 说(「未命名空间 · XXXX」、英文档的 Default space),
+ *  认不出照原样。 */
+function spaceLabelFromCore(raw: string): string {
+  const byId = spacesCache.find((s) => s.id === raw);
+  if (byId) return spaceLabel(byId);
+  if (/^默认空间$/.test(raw)) {
+    const main = spacesCache.find((s) => s.id === "main");
+    if (main) return spaceLabel(main);
+  }
+  return raw;
+}
 // 编辑层(706):正文编辑那座底部层。宿主是 cardpanel(草稿/写口/判弃都在那边),
 // 这里只给它返回键层账本的两把手(同留言层与大图查看器的形)。
 // 错误文案后面那枚「网络诊断」(err.ts,用户面 126)开的是设置里的「诊断」面,测**刚才连不上
 // 的那台**(用户面 137):出错那条路给了地址就用它,否则用当前空间已配置的;两样都没有才留着
 // 框里原有的(渠道默认或用户手改的)。面加载过一次之后 openPane 不再自动跑 ⇒ 这里补跑。
+// 161 / W4 A10 / A11:诊断面每次进都现跑(openPane 那一支);从同步 / 空间面上的红条进来的,是那一面的**子页**,返回键回去。
 initErr((url) => {
   const target = url ?? configuredServer();
   if (target) ($("url") as HTMLInputElement).value = target;
-  const loaded = diagLoaded;
-  if (activePane !== "diag") openPane("diag");
-  if (loaded && activePane === "diag") void runProbe();
-});
+  if (activePane === "diag") {
+    void runProbe();
+    return;
+  }
+  probeUrlPinned = true; // 框里刚写的就是要测的那台,开面那一支别再拿当前账户的盖掉
+  openSubPane("diag");
+  probeUrlPinned = false; // 被闸挡下没开成时也别把这一笔留给下一次
+}, spaceLabelFromCore);
 initEditSheet({ pushLayer, settleHistory });
 // 留言层(314 第③笔):写/删成功即整轴重拉(徽章计数跟着走),开合各压/平一枚返回键守门条目。
 initComments({ refresh, pushLayer, settleHistory });
@@ -3255,6 +3541,15 @@ initComments({ refresh, pushLayer, settleHistory });
 initDocs({
   openComments: openCommentsFor,
   refreshTimeline: refresh,
+  // 161 / W4(M1 留下的那条,A36 的后半):一篇长文都没有时进来、新建的那篇一个字没写就退出 —— 别停在空的长文列表(底栏一格不亮),
+  // 回到进长文前那一面(收面;返回键那条路的守门条目由 openPane 的 toggle 一并平掉)。有长文时照旧回列表。
+  // ⚠ 判据是「这一趟进来时底栏那一格亮没亮」(docsCellPinned,A36):有长文时进来、把最后一篇删了再新建又不写 ——
+  //   那时格子还亮着、列表就是进来的那一面,照旧回列表。
+  leaveEmptyNew: () => {
+    if (activePane !== "docs" || docsCellPinned) return false;
+    openPane("docs");
+    return true;
+  },
   getSpaces: () => spacesCache,
   goSeeMoved: (spaceId, itemId) => void goSeeInSpace(spaceId, itemId),
 });
@@ -3273,7 +3568,32 @@ initSync({
   onBootingChange: () => {
     if (lastRefreshOk) projectTimeline();
   },
+  onGoneChange: () => {
+    paintGoneBar();
+    renderSpaceChip();
+    renderSpaceList();
+  },
+  renameSpace: (id) => {
+    // Q13:回执上那枚「改名」—— 开空间页、那一行进改名态(只有当前空间改得了名;回执只在切过去之后才挂这枚)。
+    if (id !== getCurrentSpace()) return;
+    if (activePane !== "spaces") openPane("spaces");
+    if (activePane !== "spaces") return; // 被开面那几道闸挡下
+    renamingSpace = true;
+    spaceRenameErr = null;
+    spaceMenuFor = null;
+    renderSpaceList();
+    // ⚠ 开面那一下还挂着一趟列表重拉(openPane → refreshSpaces),它会把这一行重画一遍、焦点跟着丢 ⇒ 等它落地再把光标放进框。
+    void refreshSpaces().then(() => ($("space-rename-input") as HTMLInputElement | null)?.focus());
+  },
+  openFeedback: () => {
+    openSubPane("settings");
+    if (activePane !== "settings") return; // 被开面那几道闸挡下
+    $("feedback-title").scrollIntoView({ block: "start" });
+  },
 });
+// 161 / W4 Q12 ★①:随记页顶那一条(点了进同步页)与同步面里那枚「空间…」(去重置)。
+$("sync-gone-bar").addEventListener("click", () => openPane("sync"));
+$("sync-gone-spaces").addEventListener("click", () => openSubPane("spaces"));
 initCardSwipe({
   getItem: (id) => lastItems.get(id),
   getCurrentSpace,
@@ -3361,23 +3681,69 @@ const PRIVACY_KEY = "zhujian.privacy";
  *  ⛔ 点「不同意」时这个 Promise **永不兑现** —— 那是刻意的:`app_exit` 是异步的,
  *  在进程真的没掉之前,后面那些启动动作(装配空间 / 查更新)一步都不该开始跑。
  *  ⚠ 那一页**默认就在场**(静态壳里没有 hidden),所以这里不需要"显示"它,只接线。 */
+// ---- 政策全文那一页(651 首启告知开它;161 / W4 A12 起设置「关于」也开它)---------------------------
+// ⛔ **不跳浏览器**:鸿蒙上 `openUrl` 会去调 `xdg-open`(它的编译目标是 linux),
+// 真机报 `No such file or directory (os error 2)` —— 651 实撞。政策页由构建期插件
+// 按渠道烤进产物(三份:隐私政策 / 隐私权利 / 用户协议),这里就地展开;
+// `PRIVACY_URL` 只用来告诉用户最新版发布在哪儿(包里这份是构建那一刻的快照)。
+//
+// 161 / W4 A34 / A11(WM-25 / WM-07 / N-2):
+//  · 框里切页签(三份互链)时,上方那行「最新版本发布在」跟着换成正在看的那一份(此前切到「用户协议」仍写 privacy.html);
+//  · ⛔⛔ **框从不导航**:页面取回来(`fetch` 包里那一份)写进框里那份初始空白文档(`document.write`),切页签同样重写。
+//    框里的导航会进**整页的会话历史**:WM-07 / N-2 那一形(点过几个页签就要多按几下返回、面板上按返回退到后台)就是它;
+//    改成 `location.replace` 也不行 —— V1986A 真机量过:框导航过一次之后,我们自己那一记 `history.back()` 有时连
+//    popstate 都不发(落点是框里的那一份),账本就卡在「back 在飞」,之后每一记返回都被吞,直到重启。不导航 = 框不进会话历史。
+const policyFrame = $("policy-frame") as HTMLIFrameElement;
+$("policy-canonical").textContent = PRIVACY_URL; // 首启告知那一页一出来就印着(打开哪一份,下面按那一份改写)
+/** 只认最后一次要看的那一份(连点两个页签时,先到的那份不许盖掉后点的)。 */
+let policySeq = 0;
+
+/** 把包里的 `page`(三份之一)写进框里。取不到 = 包里那几页不在了(构建坏了),响亮。 */
+async function showPolicyPage(page: string): Promise<void> {
+  const seq = ++policySeq;
+  $("policy-canonical").textContent = new URL(page, PRIVACY_URL).href;
+  const res = await fetch(page);
+  if (!res.ok) throw new Error(`包里的政策页 ${page} 取不到(HTTP ${res.status})`);
+  const html = await res.text();
+  if (seq !== policySeq) return;
+  const doc = policyFrame.contentDocument;
+  if (!doc) throw new Error("政策页框里的文档读不到");
+  doc.open();
+  doc.write(html);
+  doc.close();
+  policyFrame.dataset.page = page; // 现在框里是哪一份(验收资产读它;框的地址恒是初始那份,读不出)
+  // 三份互链(policy-asset.mjs 已把其余链接摘掉):点了就把那一份写进来。⚠ `document.open` 会抹掉文档上的监听,每写一次重挂一次。
+  doc.addEventListener("click", (e) => {
+    const a = (e.target as Element | null)?.closest?.("a[href]");
+    if (!a) return;
+    e.preventDefault();
+    void showPolicyPage(a.getAttribute("href")!).catch((err) => showErr(err));
+  });
+}
+
+/** 打开政策全文,落在 `page`(三份之一)。 */
+function openPolicy(page: string): void {
+  $("policy-view").hidden = false;
+  void showPolicyPage(page).catch((err) => showErr(err));
+}
+
+function closePolicy(): void {
+  $("policy-view").hidden = true;
+}
+
+$("privacy-link").addEventListener("click", (e) => {
+  e.preventDefault();
+  openPolicy("privacy.html");
+});
+$("policy-close").addEventListener("click", closePolicy);
+// 设置「关于」那三枚(A12)。
+document.querySelectorAll<HTMLButtonElement>("[data-policy]").forEach((b) =>
+  b.addEventListener("click", () => openPolicy(b.dataset.policy!)),
+);
+
 function privacyGate(): Promise<void> {
   if (localStorage.getItem(PRIVACY_KEY) === "1") return Promise.resolve();
   return new Promise<void>((resolve) => {
-    // ⛔ **不跳浏览器**:鸿蒙上 `openUrl` 会去调 `xdg-open`(它的编译目标是 linux),
-    // 真机报 `No such file or directory (os error 2)` —— 651 实撞。政策页由构建期插件
-    // 按渠道烤进产物,这里就地展开;`PRIVACY_URL` 只用来告诉用户最新版发布在哪儿
-    // (包里这份是构建那一刻的快照)。
-    $("policy-canonical").textContent = PRIVACY_URL;
-    $("privacy-link").addEventListener("click", (e) => {
-      e.preventDefault();
-      const frame = $("policy-frame") as HTMLIFrameElement;
-      if (!frame.getAttribute("src")) frame.setAttribute("src", "privacy.html");
-      $("policy-view").hidden = false;
-    });
-    $("policy-close").addEventListener("click", () => {
-      $("policy-view").hidden = true;
-    });
     $("privacy-agree").addEventListener("click", () => {
       localStorage.setItem(PRIVACY_KEY, "1");
       document.documentElement.dataset.privacy = "ok";
@@ -3405,11 +3771,18 @@ async function init() {
     if (has) continue;
     document.querySelectorAll<HTMLElement>(`[data-needs="${need}"]`).forEach((e) => (e.hidden = true));
   }
+  // 「检查更新」那一行只在有应用内更新的渠道上在(161 / W4 Q10;理由见那枚钮的监听)。渠道接缝,不是平台接缝 ⇒ 不进上面那张表。
+  if (checkUpdate === null) $("update-check-row").remove();
   // 651(渠道接缝):三处服务器地址输入框的默认值来自**渠道**,不再写死在静态壳里
   // (国内渠道连境内那台,境外渠道连 sync.zhujian.app)。⛔ 静态壳里刻意不留 value ——
   // 这段没跑到就是**空框**,而空框会被创号/加入那两条路当场拒(`sync.ts::lacksInput`)。
   // 留个旧值在那儿才危险:那是「不报错、只连去另一台服务器」。
-  document.querySelectorAll<HTMLInputElement>("input[data-default-server]").forEach((e) => (e.value = SYNC_DEFAULT_URL));
+  // 161 / W4 Q3:加入 / 建账户那两格预填「这台最近一次连上的服务器」(从没连上过才是渠道默认,sync.ts::prefillServer);
+  // 诊断那一格进页时按当前账户的服务器填(A10),首帧留渠道默认。
+  document.querySelectorAll<HTMLInputElement>("input[data-default-server]").forEach((e) => {
+    if (e.id === "url") e.value = SYNC_DEFAULT_URL;
+    else prefillServer(e);
+  });
   // 语言(358 第②笔):壳里保留中文原文防首帧闪(163 契约),这里按生效语言统一
   // 覆写静态文案 + 落 <html lang>。放在启动闸之前——封锁页也要说用户那门语言。
   initLang();
@@ -3467,6 +3840,12 @@ async function init() {
   // 那个刻意「响亮抛」的桩上去。⇒ 那一端连定时拍都不起。
   if (HAS_NOTIFICATION) initDueReminder(dueDigest);
   void refresh();
+  // 161 / W4 A13(WM-06):改了语言、页面重载完 ⇒ 回到设置的语言那一行(那一笔是 lang-seg 的监听在 reload 前写下的)。
+  if (sessionStorage.getItem(REOPEN_AT_KEY) === "lang") {
+    sessionStorage.removeItem(REOPEN_AT_KEY);
+    openPane("settings");
+    $("lang-seg").scrollIntoView({ block: "center" });
+  }
 }
 
 void init();

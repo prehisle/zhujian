@@ -1,7 +1,8 @@
 // 客户端自动更新(88)。启动静默查 https://zhujian.app/updates/latest.json;有新版弹
 // 右下角交互 banner(更新/稍后)——提示式,不点什么都不发生、下次启动再查。点「更新」
 // 下载安装 NSIS 包(更新签名钥验签,与同步的设备鉴权钥无关)并 relaunch。查询失败
-// (离线/端点不可达)静默吞掉,只有手动「检查更新」才把「已是最新/失败」显给用户。
+// (离线/端点不可达)静默吞掉,只有手动「检查更新」才把「已是最新/失败」显给用户 ——
+// W4 A26(WD-28)起那句写在「关于」页那一行自己身上(about.ts),不再在设置浮层外的右下角闪 4 秒。
 import { check, type Update, type DownloadEvent } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { getVersion } from "@tauri-apps/api/app";
@@ -23,18 +24,6 @@ function dismiss(): void {
   banner = null;
   void pending?.close();
   pending = null;
-}
-
-// 一次性提示(无按钮、自动消失)——手动检查回话「已是最新/失败」用。和 sync 的 toast
-// 分开(那个绑同步事件),避免两条提示互相顶掉。
-function flash(msg: string): void {
-  const box = el("div", "update-flash", msg);
-  document.body.appendChild(box);
-  requestAnimationFrame(() => box.classList.add("show"));
-  window.setTimeout(() => {
-    box.classList.remove("show");
-    window.setTimeout(() => box.remove(), 250);
-  }, 4200);
 }
 
 // 更新说明值不值得显(296):空的不显;**只是把版本号又说一遍的也不显**——历史发版的
@@ -114,13 +103,18 @@ export async function checkForUpdateOnFocus(): Promise<void> {
   await initUpdate();
 }
 
-// 侧栏「检查更新」手动入口:有新版走同一 banner,否则明确回话(手动动作要有反馈)。
-export async function checkForUpdateManual(): Promise<void> {
-  try {
-    const update = await check();
-    if (update) showBanner(update);
-    else flash(t("update.upToDate", { v: await getVersion() }));
-  } catch (e) {
-    flash(t("update.checkFailed", { err: errDetail(e) }));
+/** 「关于」页「检查更新」那一下的结论:有新版 = 已经弹出同一张 banner;否则 = 已是最新(带本机版本号)。
+ *  查不成就抛(调用方原样写在那一行下面)。 */
+export type ManualCheck = { kind: "newer"; version: string } | { kind: "latest"; version: string };
+
+// 「关于」页「检查更新」手动入口:有新版走同一 banner,否则明确回话(手动动作要有反馈)。
+// ⛔ 回话不再自己飘一张卡(W4 A26:此前右下角闪 4.5 秒就没了、关于页一个字不留,而且是第四种回执样子)——
+// 结论交给调用方写在那一行上;失败的原话也一样(errDetail 由调用方套「检查失败:」那句)。
+export async function checkForUpdateManual(): Promise<ManualCheck> {
+  const update = await check();
+  if (update) {
+    showBanner(update);
+    return { kind: "newer", version: update.version };
   }
+  return { kind: "latest", version: await getVersion() };
 }

@@ -2,15 +2,16 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { invoke as rawInvoke } from "@tauri-apps/api/core";
 import { readText as readClipboardText } from "@tauri-apps/plugin-clipboard-manager";
 import { listen } from "@tauri-apps/api/event";
-import { mount as mountInbox, inboxHasStashedDraft, focusInboxItem } from "./inbox";
+import { mount as mountInbox, inboxHasStashedDraft, focusInboxItem, focusInboxCompose } from "./inbox";
 import { mount as mountBoard, boardHasStashedDraft, focusTask, focusBoardView } from "./board";
 import { mount as mountTopics } from "./topics";
 import { mount as mountDocs, focusDoc } from "./docs";
 import { mount as mountSearch } from "./search";
 import { parseDeepLink, consumePendingDeepLink } from "./deeplink";
 import { t, initLang, applyStaticI18n } from "./i18n";
-import { initSync, seedSpaceStatuses, setSpaceNames, showToast, syncSpaceSwitched, DEFAULT_SYNC_URL } from "./sync";
-import { initSettings, openSettingsPanel } from "./settings";
+import { codeField, initSync, prefillServerUrl, seedSpaceStatuses, serverField, setSpaceNames, showToast, syncSpaceSwitched } from "./sync";
+import { forgetGone, goneOf } from "./sync-gone";
+import { initSettings, openSettingsPanel, reopenSettingsAfterReload } from "./settings";
 import { bootCrashDiag } from "./about";
 import { initZoom } from "./zoom";
 import { initTheme } from "./theme-mode";
@@ -27,14 +28,17 @@ import {
   joinSpace,
   joinSpaceCancel,
   listSpaces,
+  MAIN_SPACE,
   renameSpace,
   resetSpace,
   setCurrentSpace,
   spaceLabel,
 } from "./space";
 import type { SpaceInfo } from "./space";
-import { errDetail, errText } from "./err";
-import { toastAction } from "./toast";
+import { errDetail, errNode, errText } from "./err";
+import { toastAction, toastGo } from "./toast";
+import { closeToTray } from "./tray-hint";
+import { loadHotkeys } from "./hotkey-state";
 
 // The notebook is one window hosting many views. Only one view is mounted into
 // the shared content root at a time, so each view can own page-scoped DOM ids
@@ -118,7 +122,8 @@ for (const b of navButtons) {
 }
 
 document.getElementById("win-min")?.addEventListener("click", () => void win.minimize());
-document.getElementById("win-close")?.addEventListener("click", () => void win.hide());
+// ✕ = 藏进托盘;第一次先说一句(W4 A5,见 tray-hint.ts)。
+document.getElementById("win-close")?.addEventListener("click", () => closeToTray(() => void win.hide()));
 // 三枚窗口钮按下不拿焦点:系统原生标题栏不抢网页里的键盘焦点,自绘的照样不该抢 —— 原先点完最大化 / 还原,
 // 焦点停在钮上,接着打的字全部落空(153 走查 D-NEW-1)。只拦按下那一下的默认动作,click 照常发;Tab 仍走得到它们。
 for (const id of ["win-min", "win-max", "win-close"]) {
@@ -219,6 +224,22 @@ document.addEventListener("keydown", (e) => {
   navigate("search"); // 搜索视图挂载即聚焦搜索框(search.ts)
 });
 
+// 「把朱简打开」之后光标进「随手记一笔」框(W4 WD-37 / Q11):手动启动、再点一次图标、托盘、主窗热键
+// 都走壳里的 `summon_notebook`,它置一枚 take 旗再 emit 一次 —— 冷启动时这页多半还没起来、事件会丢,
+// 所以启动序末尾也取一次(同「点此改键」那对 `take_open_settings` / `open-settings`)。
+// 只在这几种情况下放:当前在随记页、身前没有浮层(设置 / 同步 / 管理列 / 历史…都是 aria-modal)、
+// 焦点不在任何输入框里(正改着的东西不抢)。⛔ 别改成「每次回窗都放」:悬停卡片按单键靠的是焦点
+// 不在框里,alt-tab 回来光标被塞进记一笔框,下一下 E / D 就打成了字。
+async function summonFocus(): Promise<void> {
+  if (!(await rawInvoke<boolean>("take_summon_focus"))) return;
+  if (currentName !== "inbox") return;
+  if (document.querySelector('[aria-modal="true"]')) return;
+  const a = document.activeElement;
+  if (a instanceof HTMLElement && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.isContentEditable)) return;
+  focusInboxCompose();
+}
+void listen("notebook-summoned", () => void summonFocus());
+
 win.onFocusChanged(({ payload: focused }) => {
   if (focused) {
     current?.onFocus?.();
@@ -243,12 +264,16 @@ function refreshSpaceEntry(): void {
     // D2(411,408 走查):单空间时「空间」这个概念整个不出现在侧栏——落点无歧义,
     // 菜单里那几项(切换/新建/加入/改名/重置)第一天全用不到。与安卓同源(116 捕获
     // 徽章、410 底栏「按数据显形」同一手法),捕获浮窗的 #cap-space 早就是这个规矩。
-    // ⛔ 入口不许就此消失:新建 / 加入空间的**唯一**入口就在这枚徽章的菜单里,故同步
-    // 面底部那行「空间…」是它的兜底,两者由「几个空间」互斥切换(sync.ts::renderHome)
-    // ——永远恰有一条路,别只藏不补。
+    // ⛔ 入口不许就此消失:新建 / 加入空间的入口就在这枚徽章的菜单里,故同步面底部那行
+    // 「空间…」与设置「通用」里那行「空间…」恒在(W4 Q6 ★① 起不再随空间数藏起,sync.ts::renderHome)。
     spaceEntry.hidden = all.length <= 1;
     const curInfo = all.find((s) => s.id === currentSpaceId());
-    if (curInfo) spaceNameEl.textContent = spaceLabel(curInfo);
+    if (curInfo) {
+      spaceNameEl.textContent = spaceLabel(curInfo);
+      // W4 A16(WD-09):侧栏这一格窄(约 80px),「未命名空间 · NEG6」被截成「未命名空间 ·…」——
+      // 名字最多折两行(notebook.html 那条),再长的悬停看全名。
+      spaceEntry.title = t("shell.switchSpaceNamed", { name: spaceLabel(curInfo) });
+    }
   });
 }
 
@@ -641,8 +666,22 @@ async function doJoinSpace(
       if (viewHasDirtyText()) {
         showToast(t("notebook.joinedStay", { name: spaceLabel(out.space), warn }));
       } else {
-        showToast(t("notebook.joined", { name: spaceLabel(out.space), warn }));
         switchSpace(out.space.id);
+        // 161 / W4 Q13 ★①(A44 / WP-07 / X-01,同手机):回执里写明这一本**在这台叫什么** —— 对方那本没起过名时这里先叫
+        // 「未命名空间 · XXXX」,和这台已有的一本同名时点出来(「空间不能重名」只拦新建与改名,加入进来的会撞);旁边一枚
+        // 「改名」直达(空间菜单里那一行)。⛔ 名字怎么来的不动(space-entry-plan §3.6:没起过名那本不落名字记录);只改说法。
+        const label = spaceLabel(out.space);
+        const all = await listSpaces();
+        const twin = all.some((x) => x.id !== out.space.id && spaceLabel(x).toLowerCase() === label.toLowerCase());
+        if (!out.space.name || twin) {
+          toastGo(
+            !out.space.name ? t("sync.joinedUnnamed", { name: label, warn }) : t("sync.joinedTwin", { name: label, warn }),
+            t("notebook.renameGo"),
+            () => void openSpaceMenu(spaceEntry.hidden ? syncEntry : spaceEntry, "rename"),
+          );
+        } else {
+          showToast(t("notebook.joined", { name: label, warn }));
+        }
       }
     } else {
       // 空间已真实存在(账户已注册):如实提示重启后出现,**绝不当失败重试**。
@@ -651,7 +690,8 @@ async function doJoinSpace(
       cancel.textContent = t("notebook.close");
     }
   } catch (e: unknown) {
-    note.textContent = errText(e);
+    // A8 / A41 / A42:人话在前、原文降一档、带「!」(errNode);连不上的那几类后面挂「网络自检」测刚填的那台。
+    note.replaceChildren(errNode(e, serverUrl));
     go.disabled = false;
   } finally {
     joinAttempt = null;
@@ -660,32 +700,42 @@ async function doJoinSpace(
 }
 
 /** 「加入空间」行:点开换成「服务器 + 配对码 + 加入/取消」的小表单,进度就地显。
- *  取消在途加入 = join_space_cancel(只在提交前生效;提交与取消同时就绪成功优先)。 */
-function spaceJoinRow(): HTMLElement {
+ *  取消在途加入 = join_space_cancel(只在提交前生效;提交与取消同时就绪成功优先)。
+ *  `canMerge` = 同步面板此刻有没有「用配对码加入」那枚钮(主空间且还没开同步;判据同 sync.ts::renderHome)。 */
+function spaceJoinRow(canMerge: boolean): HTMLElement {
   const row = document.createElement("button");
   row.className = "space-row action";
   row.textContent = t("notebook.joinSpace");
   row.addEventListener("click", () => {
     const form = document.createElement("div");
     form.className = "space-form";
-    const server = document.createElement("input");
-    server.placeholder = t("notebook.joinServerPh");
-    server.value = DEFAULT_SYNC_URL;
-    server.spellcheck = false;
-    const code = document.createElement("input");
-    code.placeholder = t("notebook.joinCodePh");
-    code.spellcheck = false;
+    // 161 / W4 Q2 / Q3 ★①(WD-13 顺带 / N-6):地址框上方标「服务器地址」、框下一行说是不是官方服务器;预填这台最近一次连上的
+    // 那台(从没连过才是官方)—— 此前一律预填官方地址,自建的人填错时报的却是「配对码无效或已过期」。
+    // A27(WD-30):配对码框有标签,灰字写长什么样(此前要输错一次才知道)。
+    const serverF = serverField(prefillServerUrl(), "");
+    const codeF = codeField("");
+    const server = serverF.input;
+    const code = codeF.input;
+    // W4 A22(WD-16):「加入」「取消」此前是浏览器默认的整行灰底黑边方块钮,与全应用两个样子 ⇒
+    // 走同步面板那一族的 `.hbtn`,并排靠右(`.space-form-acts`)。
     const go = document.createElement("button");
+    go.className = "hbtn";
     go.textContent = t("notebook.join");
     const cancel = document.createElement("button");
+    cancel.className = "hbtn";
     cancel.textContent = t("notebook.cancel");
+    const acts = document.createElement("div");
+    acts.className = "space-form-acts";
+    acts.append(go, cancel);
     const note = document.createElement("div");
     note.className = "space-err";
     // 「另开一个空间 vs 并进当前空间」一句说清(用户面 121):这条路加的是**新空间**,当前
-    // 空间不动;想把本机主空间并进对方账户走的是同步面板那条「用配对码加入」。
+    // 空间不动。W4 A22(WD-13):后半句此前一律叫人去同步面板点「用配对码加入」—— 那枚钮只在
+    // **主空间、还没开同步**时才有(sync.ts::renderHome 同一条判据),建好账户后照着找是死路。
+    // ⇒ 那半句只在它真的在时才说;别的时候照实说这一本已经并不进去了。
     const hint = document.createElement("p");
     hint.className = "space-hint";
-    hint.textContent = t("notebook.joinHint");
+    hint.textContent = canMerge ? t("notebook.joinHint") : t("notebook.joinHintNoMerge");
     for (const inp of [server, code]) {
       inp.addEventListener("keydown", (ke) => {
         ke.stopPropagation();
@@ -702,10 +752,9 @@ function spaceJoinRow(): HTMLElement {
       else closeSpaceMenu();
     });
     form.appendChild(hint);
-    form.appendChild(server);
-    form.appendChild(code);
-    form.appendChild(go);
-    form.appendChild(cancel);
+    form.appendChild(serverF.wrap);
+    form.appendChild(codeF.wrap);
+    form.appendChild(acts);
     form.appendChild(note);
     row.replaceWith(form);
     server.focus();
@@ -717,7 +766,7 @@ function spaceJoinRow(): HTMLElement {
  *  绝不一键删数据。非 main 重置后本机此空间消失,切回主空间;main 重置后原地已是
  *  fresh 未配置空库,留在 main 重载视图。已开同步的空间之后走「加入空间」重新加入;
  *  **仅本机空间 = 删除唯一副本**,警示话术分流(space-entry-plan §5)。 */
-function spaceResetRow(configured: boolean): HTMLElement {
+function spaceResetRow(configured: boolean, gone: boolean): HTMLElement {
   const row = document.createElement("button");
   row.className = "space-row action";
   row.textContent = t("notebook.resetSpace");
@@ -726,9 +775,11 @@ function spaceResetRow(configured: boolean): HTMLElement {
     form.className = "space-form";
     const warn = document.createElement("div");
     warn.className = "space-err";
-    warn.textContent = configured
-      ? t("notebook.resetWarnSynced")
-      : t("notebook.resetWarnLocalOnly");
+    warn.textContent = gone
+      ? t("notebook.resetWarnGone")
+      : configured
+        ? t("notebook.resetWarnSynced")
+        : t("notebook.resetWarnLocalOnly");
     const ok = document.createElement("button");
     ok.textContent = t("notebook.resetConfirm");
     const cancel = document.createElement("button");
@@ -743,6 +794,7 @@ function spaceResetRow(configured: boolean): HTMLElement {
       const id = currentSpaceId();
       resetSpace(id)
         .then(() => {
+          forgetGone(id); // Q12:这一本的本机数据删光了,「已不在账户里」那笔账跟着作废
           closeSpaceMenu();
           if (id !== "main") {
             switchSpace("main");
@@ -767,8 +819,9 @@ function spaceResetRow(configured: boolean): HTMLElement {
   return row;
 }
 
-/** 打开空间菜单。`anchor` = 菜单挂在谁下面(默认侧栏徽章;411/D2 的兜底入口传同步入口)。 */
-async function openSpaceMenu(anchor: HTMLElement = spaceEntry): Promise<void> {
+/** 打开空间菜单。`anchor` = 菜单挂在谁下面(默认侧栏徽章;411/D2 的兜底入口传同步入口)。
+ *  `open = "rename"`:打开即展开「重命名当前空间」那一行(加入回执上那枚「改名」,161 / W4 Q13)。 */
+async function openSpaceMenu(anchor: HTMLElement = spaceEntry, open: "rename" | null = null): Promise<void> {
   if (spaceMenu) {
     closeSpaceMenu();
     return;
@@ -788,6 +841,23 @@ async function openSpaceMenu(anchor: HTMLElement = spaceEntry): Promise<void> {
     name.textContent = spaceLabel(s);
     row.appendChild(dot);
     row.appendChild(name);
+    // 161 / W4 Q13 ★① = A44(WP-07 / X-01):主空间从没起过名时屏上叫「默认空间」,可这个名字不跟着走 —— 别的设备加入后叫
+    // 「未命名空间 · XXXX」。标出来,让人知道它到别处不叫这个名。⛔ 不落名字(space-entry-plan §3.6)。
+    // 非主空间没起过名的本来就叫「未命名空间 · XXXX」(屏上已经说了),不再标。
+    if (s.id === MAIN_SPACE && s.name === null) {
+      const mark = document.createElement("span");
+      mark.className = "space-row-mark";
+      mark.textContent = t("notebook.unnamedMark");
+      mark.title = t("notebook.unnamedMarkTitle");
+      row.appendChild(mark);
+    }
+    // Q12 ★①:已不在账户里的那一本(被移出 / 自己退出)标「已不再同步」(同手机空间页那一行)。
+    if (goneOf(s.id) !== null) {
+      const tag = document.createElement("span");
+      tag.className = "space-row-tag";
+      tag.textContent = t("main.tagUnsynced");
+      row.appendChild(tag);
+    }
     if (!s.alive) {
       // 未装载的空间(同一物理库的第二个名字):列出说明,不可切入。
       row.disabled = true;
@@ -819,23 +889,22 @@ async function openSpaceMenu(anchor: HTMLElement = spaceEntry): Promise<void> {
       showToast(t("notebook.spaceCreated"));
     }),
   );
-  menu.appendChild(spaceJoinRow());
   const curInfo = all.find((s) => s.id === currentSpaceId());
-  menu.appendChild(
-    spaceActionRow(
-      t("notebook.renameSpace"),
-      t("notebook.renameSpacePh"),
-      async (name) => {
-        await renameSpace(currentSpaceId(), name);
-        closeSpaceMenu();
-        refreshSpaceEntry();
-        toastAction(t("notebook.spaceRenamed", { name: name.trim() })); // Q6(WD-17):改完说一声
-      },
-      curInfo ? spaceLabel(curInfo) : "",
-    ),
+  menu.appendChild(spaceJoinRow(currentSpaceId() === MAIN_SPACE && curInfo !== undefined && !curInfo.status.configured));
+  const renameRow = spaceActionRow(
+    t("notebook.renameSpace"),
+    t("notebook.renameSpacePh"),
+    async (name) => {
+      await renameSpace(currentSpaceId(), name);
+      closeSpaceMenu();
+      refreshSpaceEntry();
+      toastAction(t("notebook.spaceRenamed", { name: name.trim() })); // Q6(WD-17):改完说一声
+    },
+    curInfo ? spaceLabel(curInfo) : "",
   );
+  menu.appendChild(renameRow);
   menu.appendChild(
-    spaceResetRow(all.find((s) => s.id === currentSpaceId())?.status.configured ?? false),
+    spaceResetRow(curInfo?.status.configured ?? false, goneOf(currentSpaceId()) !== null),
   );
   // 先挂上再定位:量到真高度才钳得住(见 clampSpaceMenu)。菜单还会**就地长高**
   // (「新建/加入/改名」那几行点开换成表单),故钳位挂在 ResizeObserver 上、不是只做一次。
@@ -846,6 +915,7 @@ async function openSpaceMenu(anchor: HTMLElement = spaceEntry): Promise<void> {
   spaceMenuResize.observe(menu);
   document.addEventListener("mousedown", onSpaceMenuDoc, true);
   document.addEventListener("keydown", onSpaceMenuKey, true);
+  if (open === "rename") renameRow.click(); // 换成改名小表单、原名预填全选、光标进框(spaceActionRow)
 }
 
 spaceEntry.addEventListener("click", () => void openSpaceMenu());
@@ -867,8 +937,16 @@ void (async () => {
     openSpaces: () => void openSpaceMenu(syncEntry),
   });
   refreshSpaceEntry();
-  // 设置面板(232):全局热键 + 界面字号,与空间/同步无关,挂个入口即可。
-  initSettings();
+  // 设置面板(232):全局热键 + 界面字号 …… 外加两条通往外面的路(W4):「空间…」开空间菜单(Q6,
+  // 菜单挂在此刻看得见的那枚入口下:有侧栏徽章挂徽章,单空间时挂同步入口 —— 同 openSpaces 那条),
+  // 恢复回执的「去看看」切到那个空间并说一声(A16,同空间菜单里切空间那句)。
+  initSettings({
+    openSpaces: () => void openSpaceMenu(spaceEntry.hidden ? syncEntry : spaceEntry),
+    gotoSpace: (id, label) => {
+      switchSpace(id);
+      toastAction(t("notebook.switchedTo", { name: label }));
+    },
+  });
 
   // 崩溃弹框(C9)的「复制诊断信息」:把设置「关于」那份诊断先递给壳留着。不 await ——
   // 它不挡任何一条用户路径。
@@ -907,8 +985,15 @@ void (async () => {
   // 判定与水位,自动那条首查延后 10 秒 + wdio before 钩子预置「今天已处理」⇒ 测试里安静。
   initDueReminder();
 
+  // 两枚全局热键此刻生效没有(W4 A6 / Q8 ①):随记页顶那条「点此改键」与空态那句「或按 …」
+  // 挂载时就要读 ⇒ 先于第一次挂视图拉好(一次很快的 IPC;没拉到就挂,页面会以为不知道,不会猜)。
+  await loadHotkeys();
+
   // Land on the last-used view. Absent or unknown (first run, a since-renamed
   // view name) is the first-run default, not an error path — land on inbox.
   const lastView = localStorage.getItem(LAST_VIEW_KEY);
   navigate(lastView !== null && lastView in registry ? (lastView as ViewName) : "inbox");
+  void summonFocus();
+  // 刚因为改语言重载过:把设置开回「语言」那一行(W4 Q11 / WD-36)。
+  reopenSettingsAfterReload();
 })();

@@ -144,6 +144,13 @@ describe("任务看板 · 归档(成就册,可查不可删)", () => {
     await goNotebook("board");
     await $(".col.done").$(".tcard*=504-窄列").waitForExist({ timeout: 10000 });
     await browser.setWindowSize(900, 700);
+    // ⚠ W4 A20 起顶栏按「这一刻装不装得下」挑档(board.ts::fitHeader):900 宽、内容少的时候,顶栏那颗
+    // 「复制看板」(⧉)**留得住** —— 那正是 A20 要的,却也就造不出下面要量的死角了。⇒ 把顶栏的内容宽再挤窄
+    // 一截(右内边距加宽;版面别处一格不动),让 fitHeader 自己走到收走「复制看板」那一档(⛔ 别直接挂
+    // `.hdr-nocopy` —— 那样量的就是挂上去的类,不是 fitHeader 的判断)。
+    await browser.execute(() => {
+      document.querySelector(".v-board header").style.paddingRight = "420px";
+    });
     await browser.pause(300);
 
     const geom = () =>
@@ -159,7 +166,7 @@ describe("任务看板 · 归档(成就册,可查不可删)", () => {
           sealShort: !!head.querySelector(".seal-all-slot .lbl-short") &&
             getComputedStyle(head.querySelector(".seal-all-slot .lbl-short")).display !== "none",
           // 65:「复制本列」在这一档还在不在,取决于顶栏那颗「复制看板」被没被塌缩规则收走
-          // (两颗互为替身)。900px 下顶栏那颗必没了 ⇒ 这颗必须留下,否则复制整个够不着。
+          // (两颗互为替身)。顶栏挤窄之后那颗必没了 ⇒ 这颗必须留下,否则复制整个够不着。
           copyShown: !!head.querySelector(".col-copy") && getComputedStyle(head.querySelector(".col-copy")).display !== "none",
           hdrCopyShown: getComputedStyle(document.querySelector("#copy-slot")).display !== "none",
           colW: Math.round(head.closest(".col").getBoundingClientRect().width),
@@ -196,6 +203,7 @@ describe("任务看板 · 归档(成就册,可查不可删)", () => {
     // 那样量的就是注入的样式,不是仓里那两条 @container)。
     await browser.setWindowSize(1340, 700);
     await browser.execute(() => {
+      document.querySelector(".v-board header").style.paddingRight = ""; // 还回上面挤窄的那一截
       document.querySelector("#board").style.maxWidth = "880px"; // 四列 × 200 + 间隙,恰在 ≤240 那一档
     });
     await browser.pause(300);

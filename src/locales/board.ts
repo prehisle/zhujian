@@ -12,7 +12,8 @@ export const board = defineMessages({
   "board.composePlaceholder": { zh: "新任务标题…", en: "New task title…" },
   // 158 G2 / A16:提交型两端都叫「记下」(ui-guidelines §4.2;随记那枚早就是)。
   "board.composeAdd": { zh: "记下", en: "Note it" },
-  "board.composeDone": { zh: "完成", en: "Done" },
+  // W4 A29(WD-32):这枚只是把新建那一行收起,此前叫「完成」,在看板上读成「标为完成」。
+  "board.composeDone": { zh: "收起", en: "Close" },
   "board.filterPlaceholder": { zh: "过滤任务…", en: "Filter tasks…" },
   "board.gotIt": { zh: "知道了", en: "Got it" },
   "board.colTodo": { zh: "待办", en: "To do" },
@@ -108,7 +109,8 @@ export const board = defineMessages({
   "board.dueSoonNextOnly": { zh: "{days} 天内到期 {n}", en: "{n} due within {days}d" },
   "board.dueSoonTitle": { zh: "点击只看逾期、今天到期与 {days} 天内到期的任务;再点一次回到全部", en: "Click to show only tasks overdue, due today, or due within {days}d; click again for all" },
   "board.noDueMatch": { zh: "到期与快到期的任务不在当前筛选里", en: "No due or upcoming task matches the current filter" },
-  "board.noDueMatchHint": { zh: "放宽标签 / 类型 / 时间 / 过滤词,或再点一次顶栏那枚到期钮回到全部。", en: "Loosen the tag / kind / time / text filter, or click the due button in the header again for all." },
+  // W4 Q11 / WD-38:「顶栏那枚到期钮」换白话(与设置里截止提醒那段同一个说法)。
+  "board.noDueMatchHint": { zh: "放宽标签 / 类型 / 时间 / 过滤词,或再点一次页头显示到期数的那枚按钮回到全部。", en: "Loosen the tag / kind / time / text filter, or click the button showing the due count in the header again for all." },
   "board.sortManual": { zh: "顺序:手动", en: "Order: manual" },
   "board.sortNewest": { zh: "顺序:最新在前", en: "Order: newest first" },
   "board.sortOldest": { zh: "顺序:最早在前", en: "Order: oldest first" },
@@ -116,7 +118,7 @@ export const board = defineMessages({
   "board.sortTitleLocked": { zh: "按创建时间排序中,拖不了。切回「手动」就能拖。", en: "Sorted by creation time, so dragging is off. Switch back to Manual to drag." },
   // 158 G3 / Q13(WD-28):排序 / 只看到期时按住卡一拖,在指针边上说一句。
   "board.noDragSorted": { zh: "按创建时间排序时不能拖 —— 把「顺序」切回「手动」就能拖", en: "Can’t drag while sorted by creation time — switch Order back to Manual" },
-  "board.noDragDue": { zh: "只看到期时不能拖 —— 再点一次顶栏的到期钮就能拖", en: "Can’t drag while showing due tasks only — click the due button in the header again" },
+  "board.noDragDue": { zh: "只看到期时不能拖 —— 再点一次页头显示到期数的那枚按钮就能拖", en: "Can’t drag while showing due tasks only — click the button showing the due count in the header again" },
   "board.sortTitleLockedDue": { zh: "只看到期时按紧急度排,拖不了。再点一次「到期」就能拖。", en: "Showing due tasks only, sorted by urgency, so dragging is off. Click Due again to drag." },
   "board.moveToTop": { zh: "移到列首", en: "Move to top" },
   "board.moveToBottom": { zh: "移到列尾", en: "Move to bottom" },

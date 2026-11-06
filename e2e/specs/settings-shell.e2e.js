@@ -74,8 +74,10 @@ describe("设置面板壳:定高 · ✕ · 说明折叠", () => {
       ),
     );
     expect(texts.some((x) => x.includes("保管权交到你手上"))).toBe(true);
-    expect(texts.some((x) => x.includes("同步身份与账户密钥"))).toBe(true);
-    expect(texts.some((x) => x.includes("卸载朱简不会删掉备份钥"))).toBe(true);
+    // W4 Q11 / WD-38 换了白话(「同步身份与账户密钥」→「登录同步账户用的钥匙」、「备份钥」→「备份密钥」),边界一句没少。
+    expect(texts.some((x) => x.includes("登录同步账户用的钥匙"))).toBe(true);
+    expect(texts.some((x) => x.includes("能看、也能改这个账户里的全部内容"))).toBe(true);
+    expect(texts.some((x) => x.includes("卸载朱简不会删掉备份密钥"))).toBe(true);
     await closeByOverlay();
   });
 

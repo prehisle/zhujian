@@ -24,19 +24,26 @@ export const shell = defineMessages({
   "shell.newSpacePh": { zh: "新空间的名字(比如「家庭」)", en: "Name for the new space (e.g. “Family”)" },
   "shell.spaceCreate": { zh: "新建", en: "Create" },
   "shell.joinScan": { zh: "加入空间(扫电脑二维码)", en: "Join a space (scan the computer's QR code)" },
-  "shell.joinAlt": { zh: "输码加入", en: "Enter a code" },
+  // 161 / W4 Q15 / Q1:两端一个叫法 —— 另加一本 =「加入空间(输入配对码)」(= 桌面空间菜单那一项),把这台接进同一本 =「用配对码加入」。
+  "shell.joinAlt": { zh: "加入空间(输入配对码)", en: "Join a space (enter a pairing code)" },
+  // Q1 ★①(WM-01 / WM-15 / N-3):这一组是「另加一本」,说明第一句先说清(此前两组扫码 / 输码长得一样,选错的人以为同步没成、东西丢了)。
+  "shell.joinNote": { zh: "加入空间 = 另成一本,手机现在这本不会并进去;想和另一台设备看同一本,去「同步」。", en: "Joining a space adds a separate notebook; the one on this phone now is not merged into it. To see the same notebook as another device, go to Sync." },
   "shell.serverPh": { zh: "服务器地址(wss://…)", en: "Server address (wss://…)" },
-  "shell.joinCodePh": { zh: "配对码(对方设备「添加设备」出示)", en: "Pairing code (shown by “Add device” on the other device)" },
+  // 161 / W4 Q2 / A50(WM-16 / WP-22):地址框与配对码框都有标签(此前只有灰字占位,框里一有字就看不出是什么)。
+  "shell.serverLabel": { zh: "服务器地址", en: "Server address" },
+  "shell.codeLabel": { zh: "配对码", en: "Pairing code" },
+  // A27(WM-21):输之前就让人知道长什么样(此前要输错一次才知道,报错里还是「槽号」)。
+  "shell.codePh": { zh: "形如 123456789-XXXX-XXXX", en: "like 123456789-XXXX-XXXX" },
   "shell.joinCancel": { zh: "取消加入", en: "Cancel joining" },
-  "shell.syncAll": { zh: "全部同步(逐空间追赶一次)", en: "Sync all (one catch-up pass per space)" },
+  // 161 / W4 A33 / Q11(WM-33):「逐空间追赶一次」改大白话;降成白钮(index.html)。
+  "shell.syncAll": { zh: "全部同步(开了同步的每一本各连一次)", en: "Sync all (connects each synced notebook once)" },
   // 「并进当前空间 vs 另开一个空间」要讲清(用户面 121):旧句「要把别处的账户带到手机,用
   // 「加入空间」」把**全新手机**也往另开空间引 —— 它该走「同步」里的扫码,让主空间并进电脑的账户。
-  "shell.spacesNote": { zh: "每个空间是一本独立的本子,记录落在当前空间。「加入空间」把电脑上的账户作为另一个空间加进来,手机已有的空间不变;手机还没开过同步、想和电脑看同一本,请到「同步」里「扫码连接电脑」。要让某个空间多端同步,到该空间的「同步」里创建账户。", en: "Each space is a separate notebook; new entries land in the current space. “Join a space” adds the computer's account as another space and leaves the phone's existing spaces untouched; if this phone has never set up sync and should see the same notebook as the computer, go to Sync and use “Scan to connect a computer”. To sync a space across devices, create an account under that space's Sync." },
+  "shell.spacesNote": { zh: "每个空间是一本独立的本子,记录落在当前空间。要让某一本在几台设备上同步,到那一本的「同步」里创建账户。", en: "Each space is a separate notebook; new entries land in the current space. To sync a notebook across devices, create an account under that notebook's Sync." },
   "shell.syncScan": { zh: "扫码连接电脑", en: "Scan to connect a computer" },
-  "shell.syncAltPair": { zh: "手动输入配对码", en: "Enter the pairing code by hand" },
-  "shell.syncCodePh": { zh: "配对码(电脑「添加设备」出示)", en: "Pairing code (shown by “Add device” on the computer)" },
-  "shell.syncManualNote": { zh: "在电脑朱简的「同步」里点「添加设备」,把服务器地址和配对码抄到上面。", en: "In Zhujian on the computer, open Sync and click Add device, then copy the server address and pairing code above." },
-  "shell.syncCreateNote": { zh: "把本机创建为账户的第一台设备。创建后请尽快让电脑加入;加入前唯一副本只在本机。", en: "Make this phone the first device of a new account. Have a computer join soon after; until it does, the only copy lives here." },
+  "shell.syncAltPair": { zh: "用配对码加入", en: "Join with a pairing code" },
+  "shell.syncManualNote": { zh: "在另一台设备朱简的「同步」里点「添加设备」,把服务器地址和配对码填到上面。", en: "On the other device, open Sync in Zhujian and tap Add device, then fill in the server address and pairing code above." },
+  "shell.syncCreateNote": { zh: "把本机创建为账户的第一台设备。创建后请尽快让另一台设备加入;加入前唯一副本只在本机。", en: "Make this phone the first device of a new account. Have another device join soon after; until it does, the only copy lives here." },
   "shell.copyPair": { zh: "复制服务器地址和配对码", en: "Copy server address and pairing code" },
   "shell.connInfo": { zh: "连接信息", en: "Connection info" },
   "shell.bgNote": { zh: "后台不保证实时,回到前台会继续追赶。", en: "Background sync is not guaranteed to be live; it catches up when you come back to the app." },
@@ -78,14 +85,28 @@ export const shell = defineMessages({
   "shell.save": { zh: "保存", en: "Save" },
   "shell.aliasNotePre": { zh: "给这台设备起个名字(如「娟娟的手机」)。它会", en: "Name this device (e.g. “Juanjuan's phone”). The name " },
   "shell.aliasNoteBold": { zh: "同步", en: "syncs" },
-  "shell.aliasNotePost": { zh: "给同一账户的其他设备,让他们看到条目是谁记的。留空 = 不起名。", en: " to the other devices on this account, so they can see who noted each item. Empty = unnamed." },
+  // 161 / W4 Q11(WM-36 / WP-21):别名按空间分别起,加入一个新空间后框是空的,像之前白起了 ⇒ 说明补一句。
+  "shell.aliasNotePost": { zh: "给这个空间里的其他设备,让他们看到条目是谁记的。每个空间分别起;留空 = 不起名。", en: " to the other devices in this space, so they can see who noted each item. Each space has its own; empty = unnamed." },
   "shell.aboutTitle": { zh: "关于", en: "About" },
   // 作者一句(用户 2026-09-25 拍板,两端逐字相同 —— 改措辞要两端一起改)。「意见反馈」是上面那一节的真名(feedback.title)。
-  "shell.aboutAuthor": { zh: "朱简是我一个人做的。好用、不好用,都欢迎在「意见反馈」里告诉我。", en: "I build Zhujian on my own. Whether it works for you or not, tell me through Feedback." },
+  // 161 / W4 Q11(WM-32 前半):「意见反馈」做成跳到那一节的链接 ⇒ 拆成前 / 链 / 后三段(拼起来与原句逐字相同;
+  // data-i18n 元素不许带子元素,只能拆键,同 shell.aliasNote* 那三段)。
+  "shell.aboutAuthorPre": { zh: "朱简是我一个人做的。好用、不好用,都欢迎在", en: "I build Zhujian on my own. Whether it works for you or not, tell me through " },
+  "shell.aboutAuthorLink": { zh: "「意见反馈」", en: "Feedback" },
+  "shell.aboutAuthorPost": { zh: "里告诉我。", en: "." },
+  // 161 / W4 A12(WM-11 / X-13):同意之后在「关于」里还能再看这三份(应用内看,同首启那页;鸿蒙交不出浏览器)。
+  "shell.policyRights": { zh: "隐私权利", en: "Your rights" },
+  "shell.policyTerms": { zh: "用户协议", en: "Terms" },
+  // 161 / W4 Q10(WM-31):手机「关于」里的「检查更新」(只在有应用内更新的渠道上出现,见 channel.ts)。
+  "shell.checkUpdate": { zh: "检查更新", en: "Check for updates" },
   "shell.diag": { zh: "诊断", en: "Diagnostics" },
   "shell.diagDbTitle": { zh: "本机库(建库 + 全部迁移)", en: "Local database (creation + all migrations)" },
-  "shell.diagNetTitle": { zh: "网络栈诊断", en: "Network stack diagnostics" },
-  "shell.runProbe": { zh: "跑诊断", en: "Run" },
+  // 161 / W4 Q15:排障入口两端一个叫法 =「网络自检」(电脑那边一直这么叫)。进页就按当前账户的服务器跑一次(A10),这枚是「改了地址再测」。
+  "shell.diagNetTitle": { zh: "网络自检", en: "Network check" },
+  "shell.runProbe": { zh: "再测一次", en: "Run again" },
+  "shell.diagCopy": { zh: "复制诊断信息", en: "Copy diagnostic info" },
+  // 161 / W4 Q5:复制前一句说清带走了什么(这一端没有带用户名的路径;设备编号在「本机库」那段里)。
+  "shell.diagCopyNote": { zh: "复制的是上面这两段:含这台设备的编号,不含你记的内容和密钥。", en: "Copies the two sections above: it includes this device's ID, but none of your notes and no keys." },
   "shell.cancel": { zh: "取消", en: "Cancel" },
   "shell.confirm": { zh: "确认", en: "Confirm" },
   // 首启隐私政策告知(651;华为 2026-09-04 上架审核驳回第 3 条)。⛔ 别在这几条里
@@ -97,8 +118,12 @@ export const shell = defineMessages({
   "shell.privacyLink": { zh: "阅读完整隐私政策", en: "Read the full privacy policy" },
   "shell.privacyFine": { zh: "开始使用前请读一遍完整的隐私政策。不同意就无法使用朱简。", en: "Please read the full privacy policy before you start. Without your agreement Zhujian cannot be used." },
   "shell.privacyCanonical": { zh: "最新版本发布在:", en: "The current version is published at:" },
+  // 161 / W4 A34(WM-25):正文里那句「从官网下载还是从应用市场安装,各看各的那份」要人自己判断 ——
+  // 而包里烤的就是这只包那个渠道的那一份(scripts/lib/policy-asset.mjs 按渠道取),这一点构建期就定了。
+  "shell.policyThisBuild": { zh: "下面这份随应用一起装进来,就是适用于你手上这一只朱简的那一份。", en: "The copy below ships inside the app and is the one that applies to your copy of Zhujian." },
   "shell.privacyAgree": { zh: "同意并开始使用", en: "Agree and start" },
-  "shell.privacyDecline": { zh: "不同意", en: "Decline" },
+  // 161 / W4 Q11(WM-30):钮写真实行为 —— 点了 app 就退出。
+  "shell.privacyDecline": { zh: "不同意并退出", en: "Decline and quit" },
   "shell.gateChecking": { zh: "正在检查本机空间…", en: "Checking local spaces…" },
   "shell.gateUpgradeTitle": { zh: "需要更新朱简", en: "Zhujian needs updating" },
   "shell.gateUpgradePre": { zh: "本机数据由更新版本的朱简创建,当前装的是旧版:请到官网", en: "This device's data was created by a newer Zhujian and the installed build is older. Get the latest from" },

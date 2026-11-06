@@ -74,6 +74,9 @@ type Deps = {
   getSpaces: () => SpaceInfo[];
   /** 挪到别的空间之后回执上那枚「去看看」(159 / W3 Q4;main.ts goSeeInSpace)。 */
   goSeeMoved: (spaceId: string, itemId: string) => void;
+  /** 新篇一个字没写就退出、而这一本一篇长文都没有:收面回进长文前那一面(161 / W4,A36 的后半)。
+   *  收了 = true;有长文时 main 不收(交回 false),照旧回列表。 */
+  leaveEmptyNew: () => boolean;
 };
 let deps: Deps;
 
@@ -1320,7 +1323,16 @@ function openEditor(d: IdeaItem | null, seed: string | null, carried: File[], at
     void commit().then((r) => {
       if (r === "failed" || editor === null) return;
       const target = id ?? newId;
-      if (r === "same" && target === null) showBar(t("docs.emptyNotSaved"), true); // 新篇一个字没写就走 = 不建,说一声(154 G8)
+      // 新篇一个字没写就走 = 不建,说一声(154 G8)。161 / W4 A36(WM-28):中性那档,⛔ 别用绿条 —— 绿色读作「做成了」。
+      if (r === "same" && target === null) {
+        showBar(t("docs.emptyNotSaved"), false, true);
+        // 一篇长文都没有时别停在空的长文列表(底栏那一格不亮,像走丢了):回进长文前那一面。
+        teardown();
+        if (deps.leaveEmptyNew()) return;
+        readerAt = null;
+        then();
+        return;
+      }
       teardown();
       readerAt = target === null ? null : { key: `${sp}/${target}`, caret: area.selectionStart }; // 回到阅读页:光标那一块摆到顶
       then();

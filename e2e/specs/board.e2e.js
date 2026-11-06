@@ -1074,13 +1074,11 @@ describe("任务看板 · 列有下限,装不下就横滚", () => {
 
 // B(窄窗第二件):**顶栏恒一行**。改前的断点按「窗口有多宽」判、且是 485 按当时六枚控件量的
 // 机制值(1099),502 加第七枚后没人回头量 ⇒ 1100–1300 一整档掉成两行(首行只剩「新建任务」
-// 被 .spacer 顶到右边,屏上读作「按钮乱了」)。现在按**顶栏自己有多宽**判、分三档让位。
-//
-// ⚠ **能覆盖到的只有②③两档** —— ①(全形)与②之上那档要 1380 / 1300 宽的窗,而 Linux CI 的
-// xvfb 默认屏只有 1280 宽,开那么大会被钳住、安静地跑在别的档上。知情的边界,别以为它们有网。
-// ⚠ 三条判据盯的是三件不同的事,缺一不可:`rows` 盯掉行本身;`trashText` 盯「②那一档名字
-// **还在**」(否则把断点全调成字母态也满足「一行」);`kbd` 盯「③那一档键帽**回来了**」
-// (它是「归档」「回收站」两枚在字母态下唯一的记号 —— 567 刚修掉的那个空椭圆就是这么来的)。
+// 被 .spacer 顶到右边,屏上读作「按钮乱了」)。后来按顶栏自己有多宽判(container query)、分档让位;
+// ⭐ W4 A20 起改成按「这一刻装不装得下」挑档(board.ts::fitHeader)—— 写死的宽度只能按最坏内容取,
+// 平常内容就白白多让一档(字号放大一档就进字母态,WD-11)。
+// ⚠ 三条判据盯的是三件不同的事,缺一不可:「一行」盯掉行本身;「再少让一档就放不下」盯白让(WD-11);
+// 字母态里图标顶替键帽盯那个空椭圆(567 / WD-29)。
 describe("任务看板 · 顶栏恒一行,逐档只让该让的", () => {
   const T = "顶栏分档-写年度总结";
   let id;
@@ -1141,30 +1139,65 @@ describe("任务看板 · 顶栏恒一行,逐档只让该让的", () => {
     }
   });
 
-  it("②档(窗 1260):名字还在,键帽让位,「复制看板」缩成记号", async () => {
+  // ⭐ W4 A20(WD-11)起让位按「这一刻装不装得下」挑档(board.ts::fitHeader),不再按写死的宽度:
+  // 此前界面字号放大一档(110%)就掉进字母态,页头中间其实还空着一大截。判据钉两头:
+  // ①这一档一行放得下;②**再少让一档就放不下**(否则就是白白多让了一档 —— WD-11 那个形)。
+  // ⚠ 不断言落在第几档:累积库里别的 spec 留下的卡会改到期汇总与计数的字宽,档数随之变,规矩不变。
+  it("A20:取第一档放得下的 —— 再少让一档就放不下", async () => {
+    for (const w of [1260, 1150, 1000, 900]) {
+      await browser.setWindowSize(w, 700);
+      await browser.pause(250);
+      const r = await browser.execute(() => {
+        const h = document.querySelector(".v-board header");
+        const fit = Number(h.dataset.fit);
+        const tiers = [[], ["hdr-nok"], ["hdr-nok", "hdr-short"], ["hdr-short", "hdr-letter"], ["hdr-short", "hdr-letter", "hdr-nocopy"]];
+        const all = ["hdr-nok", "hdr-short", "hdr-letter", "hdr-nocopy"];
+        const fits = () =>
+          h.querySelector(".head-tools").getBoundingClientRect().top < h.querySelector("h1").getBoundingClientRect().bottom &&
+          h.scrollWidth <= h.clientWidth;
+        const set = (i) => {
+          h.classList.remove(...all);
+          h.classList.add(...tiers[i]);
+        };
+        // 自证前置:挂着的类就是那一档该挂的(否则下面那两句量的不是 fitHeader 挑的那一档)。
+        const classesOk = all.every((c) => h.classList.contains(c) === tiers[fit].includes(c));
+        const nowFits = fits();
+        let looserFits = null;
+        if (fit > 0) {
+          set(fit - 1);
+          looserFits = fits();
+          set(fit);
+        }
+        return { fit, classesOk, nowFits, looserFits };
+      });
+      expect({ w, classesOk: r.classesOk }).toEqual({ w, classesOk: true });
+      if (r.fit < 4) expect({ w, nowFits: r.nowFits }).toEqual({ w, nowFits: true });
+      if (r.fit > 0) expect({ w, looserFits: r.looserFits }).toEqual({ w, looserFits: false });
+    }
+  });
+
+  it("②档以内(窗 1260):名字还在;「复制看板」在(全名或 ⧉ 记号)", async () => {
     await browser.setWindowSize(1260, 700);
     await browser.pause(250);
     const h = await readHeader();
-    expect(h.content).toBeGreaterThanOrEqual(840); // 落在 [840, 929] 那一档
-    expect(h.content).toBeLessThanOrEqual(929);
+    const fit = await browser.execute(() => Number(document.querySelector(".v-board header").dataset.fit));
+    expect(fit).toBeLessThan(3); // 1260 宽、这几张卡,名字放得下(字母态就是 WD-11 那个形)
     expect(h.trashText).toContain("回收站");
-    expect(h.kbdShown).toBe(false);
     expect(h.icoW).toEqual([0, 0, 0]); // 名字还在时图标藏着(display:none ⇒ 宽 0)
-    // 158 G2 / A11(WD-11):此前这里断言「复制看板」整枚不见 —— 正是走查报的毛病(指南说有、屏上没有)。
+    // 158 G2 / A11(WD-11):「复制看板」不整枚收走(指南说有、屏上没有)。
     expect(h.copyShown).toBe(true);
     expect(h.copyBtnW).toBeGreaterThan(0);
-    expect(h.copyLong).toBe(false);
   });
 
-  it("③档(窗 1000,字母态):名字让位,图标顶替键帽当记号(158 G3 / Q13)", async () => {
-    await browser.setWindowSize(1000, 700);
+  it("字母态(窗 900,最小窗):名字让位,图标顶替键帽当记号(158 G3 / Q13)", async () => {
+    await browser.setWindowSize(900, 700);
     await browser.pause(250);
+    const fit = await browser.execute(() => Number(document.querySelector(".v-board header").dataset.fit));
     const h = await readHeader();
-    expect(h.content).toBeLessThan(840); // ⇒ 字母态
+    expect(fit).toBeGreaterThanOrEqual(3); // ⇒ 字母态
     expect(h.trashText).not.toContain("回收站");
     // 此前这一档键帽 G / R 回来当记号,屏上读作「3 G」「0 R」(WD-29)⇒ 现在是图标,键帽让位。
     expect(h.kbdShown).toBe(false);
     for (const w of h.icoW) expect(w).toBeGreaterThan(0);
-    expect(h.copyBtnW).toBeGreaterThan(0); // 字母态里「复制看板」也还在(⧉)
   });
 });

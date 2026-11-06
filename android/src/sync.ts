@@ -11,6 +11,8 @@ import { listen } from "@tauri-apps/api/event";
 // (安卓 = tauri 扫码插件;鸿蒙 658 起 = Scan Kit 系统扫码页,此前 `HAS_SCANNER` 为 false、
 // 两枚按钮整个不渲染 —— 那条摘 UI 的路还留着给将来没有扫码器的端)。判据见 `platform.ts`。
 import { cancelScan, ensureCameraPermission, HAS_SCANNER, scanQrContent, writeClipboard } from "./platform";
+// 渠道接缝(651):加入 / 建账户的地址框从没连上过时预填哪台(161 / W4 Q3)。
+import { SYNC_DEFAULT_URL } from "./channel";
 import {
   getCurrentSpace,
   sinvoke,
@@ -21,6 +23,7 @@ import {
   type SpaceInfo,
 } from "./api";
 import {
+  closeDevicesPanel,
   feedDevices,
   initDevices,
   openDevicesPanel,
@@ -28,8 +31,8 @@ import {
   rosterDeparted,
 } from "./devices";
 import { t } from "./i18n";
-import { $, esc, showBar, showError } from "./ui";
-import { errHtml, showErr } from "./err";
+import { $, actionBar, esc, fmtTimeOfDay, showBar, showError } from "./ui";
+import { errHtml, isRevoked, showErr } from "./err";
 
 /** 后端 `err_code::SEAT_LIMIT` 那句人话的判别片段(core `transport.rs` 的诊断串,
  *  Rust 诊断不翻)。**匹配字面量,不是显示文案** —— 翻它会破坏判据。 */
@@ -78,12 +81,22 @@ type Deps = {
   hasDirtyDraft: () => boolean;
   /** 当前空间进 / 出初始同步(122):时间轴空态要换话术,main 借此重投影一次。 */
   onBootingChange: () => void;
+  /** 「这台已不在这个账户里」变了(161 / W4 Q12):随记页顶那一条、空间页那一行的标、同步面底下那枚「空间…」由 main 重画。 */
+  onGoneChange: () => void;
+  /** 「已加入空间」回执上那枚「改名」(161 / W4 Q13):开空间页、当前那一行进改名态(main 的 renamingSpace 住那边)。 */
+  renameSpace: (id: string) => void;
+  /** 设备名单移除确认里那枚「意见反馈」(161 / W4 A38):开设置面、滚到写信那一节(子页,返回键回同步面)。 */
+  openFeedback: () => void;
 };
 
 let deps: Deps;
 
 const fmtMb = (b: number) => `${(b / 1048576).toFixed(1)} MB`;
 
+/** 配对码的寿命(sync-proto `PAIR_SLOT_TTL_SECS` = core `PAIR_TIMEOUT_SECS` = 600 秒;出码页写「到 HH:MM 失效」用)。 */
+const PAIR_TTL_MS = 600_000;
+
+// 161 / W4 Q15(WP-16 / X-08):在线 / 离线两档取电脑现有的叫法(「已连接 · 另有 N 台设备在线」「离线,重连中…」),两端逐字同。
 const STATE_LABEL: Record<string, string> = {
   off: t("sync.stateOff"),
   connecting: t("sync.stateConnecting"),
@@ -91,6 +104,122 @@ const STATE_LABEL: Record<string, string> = {
   online: t("sync.stateOnline"),
   offline: t("sync.stateOffline"),
 };
+
+// ---- 「这台已不在这个账户里」(161 / W4 Q12 ★①;A37 / A39 / A40)-------------------------------
+// 被移出账户 / 账户被停用 / 自己退出之后,此前同步页照旧写「掉线,重连中…」、通栏「添加设备」照旧、设备名单说「尚未确认服务器支持」——
+// 看着和断网一模一样,人会一直以为「等等就好」接着记,然后为了连回去点「重置」把这几条删掉。⇒ 换成明说的状态。
+// ⛔ **只改说法与入口,不碰同步客户端**:后台照旧重试(封禁解了还能自己回来,回来那一刻这面自己收),不退回「未开启」。
+// 两种来路分开说,分不出的不猜:
+//  · `left`    = 本机自己点了「退出账户」、服务器回执成了(devices.ts commit 那一下记的,客户端知道);
+//  · `revoked` = 服务器拒了这台(core `AUTH_FAILED`「账户被封禁,或本设备未注册/已吊销」那一句 —— 分不出是被移除还是被封禁,
+//               两样一起写)。
+// 记在本机(localStorage,按空间,连同当时的设备身份):重开 app 时第一次鉴权被拒之前就认得出;空间页那一行(那几个空间此刻没在跑)
+// 也靠它标「已不再同步」。收掉的三条路:服务器又收了这台(在线 / 初始同步)、这一本换了身份(重置后重新加入)、这一本不再配同步。
+type GoneWhy = "left" | "revoked";
+type GoneBook = Record<string, { device: string; why: GoneWhy }>;
+const GONE_KEY = "zhujian.sync-gone";
+
+function readGone(): GoneBook {
+  const raw = localStorage.getItem(GONE_KEY);
+  if (raw === null) return {};
+  const o = JSON.parse(raw) as GoneBook;
+  if (typeof o !== "object" || o === null) throw new Error(`本机记的「已不在账户里」账坏了:${raw}`);
+  return o;
+}
+
+function writeGone(o: GoneBook): void {
+  if (Object.keys(o).length === 0) localStorage.removeItem(GONE_KEY);
+  else localStorage.setItem(GONE_KEY, JSON.stringify(o));
+}
+
+/** 本机刚退出了 `space` 的账户(devices.ts 在服务器回执成功那一刻调)。 */
+export function markLeft(space: string, device: string): void {
+  const o = readGone();
+  o[space] = { device, why: "left" };
+  writeGone(o);
+}
+
+/** 这一本被重置了(本机数据删光 / 回到没开同步):它的账作废。 */
+export function forgetGone(space: string): void {
+  const o = readGone();
+  if (!(space in o)) return;
+  delete o[space];
+  writeGone(o);
+}
+
+/** 空间列表刚重拉过:已经不在的那几本(重置掉 / 删掉的)从账上划掉,别让死账一直攒着。 */
+export function pruneGone(liveIds: string[]): void {
+  const o = readGone();
+  const live = new Set(liveIds);
+  let changed = false;
+  for (const k of Object.keys(o)) {
+    if (!live.has(k)) {
+      delete o[k];
+      changed = true;
+    }
+  }
+  if (changed) writeGone(o);
+}
+
+/** 哪几本已不再同步(空间页那一行的标)。 */
+export function goneSpaces(): Set<string> {
+  return new Set(Object.keys(readGone()));
+}
+
+/** 当前空间最近一次画出来的「已不在账户里」那一档;`null` = 不是。 */
+let goneNow: GoneWhy | null = null;
+
+export function currentGone(): GoneWhy | null {
+  return goneNow;
+}
+
+/** 照这一份状态对一遍账,交回这一本现在算不算「已不在账户里」。 */
+function settleGone(space: string, s: SyncStatus): GoneWhy | null {
+  const o = readGone();
+  const had = o[space];
+  let cur: GoneBook[string] | undefined = had;
+  if (!s.configured) cur = undefined;
+  else if (cur && s.device_id !== null && cur.device !== s.device_id) cur = undefined;
+  // 服务器又收了这台(在线 / 初始同步)⇒ 被拒那一形收掉(封禁解了)。⚠ 自己退出的那一形**不**因此收:服务器回执「已退出」
+  // 之后那条会话还要在线一小会儿才收场(真机量过:回执后约 1 秒才断),这一拍要是把账清了,接着鉴权被拒就会记成「被移出」。
+  // 退出的这台回不来(服务器上那个身份已删),回来只有重置后换一个身份 —— 上一行那条路。
+  else if (cur?.why === "revoked" && (s.state === "online" || s.state === "booting")) cur = undefined;
+  if (!cur && s.configured && s.device_id !== null && s.error !== null && isRevoked(s.error)) {
+    cur = { device: s.device_id, why: "revoked" };
+  }
+  if (cur !== had) {
+    if (cur) o[space] = cur;
+    else delete o[space];
+    writeGone(o);
+  }
+  return cur ? cur.why : null;
+}
+
+// ---- 服务器地址框(161 / W4 Q2 / Q3)------------------------------------------------------------
+// 加入 / 建账户的地址框预填「这台最近一次连上的服务器」(连上过才记,本机一份);从没连上过才填渠道默认的官方那台。
+// 自建的人几乎所有账户都在自己那台上 —— 此前「加入空间」一律预填官方地址,填错时报的却是「配对码无效或已过期」。
+// 预填是看得见、能改的,不是静默默认值;框下那一行跟着框里的值说这是不是官方服务器。
+const LAST_SERVER_KEY = "zhujian.last-server";
+
+/** 把地址框填成「这台最近一次连上的」/ 官方那台,并重画框下那一行。 */
+export function prefillServer(input: HTMLInputElement): void {
+  input.value = localStorage.getItem(LAST_SERVER_KEY) ?? SYNC_DEFAULT_URL;
+  paintServerHint(input);
+}
+
+/** 框下那一行(`<id>-hint`):官方服务器 = 一般不用改;别的 = 那是另一套账户。 */
+function paintServerHint(input: HTMLInputElement): void {
+  const hint = document.getElementById(`${input.id}-hint`);
+  if (!hint) throw new Error(`地址框 #${input.id} 下面没有那一行说明(#${input.id}-hint)`);
+  hint.textContent =
+    input.value.trim() === SYNC_DEFAULT_URL
+      ? t("sync.serverHintOfficial")
+      : t("sync.serverHintOther", { url: SYNC_DEFAULT_URL });
+}
+
+// ---- 断开 / 重连(161 / W4 Q14 ★①;A45)------------------------------------------------------
+/** 这一本断开过(见过 offline)、还没再连上 —— 再连上那一刻说一声。按空间记:切走即作废。 */
+let offlineSeenIn: string | null = null;
 
 /** 当前空间是不是在初始同步里(最近一份状态快照说的)。 */
 let booting = false;
@@ -111,29 +240,58 @@ export function configuredServer(): string | null {
 }
 
 export function renderSync(s: SyncStatus) {
-  shownServer = { space: getCurrentSpace(), url: s.server_url };
+  const space = getCurrentSpace();
+  shownServer = { space, url: s.server_url };
   if ((s.state === "booting") !== booting) {
     booting = s.state === "booting";
     deps.onBootingChange();
   }
+  // Q3:这台最近一次真连上的那台服务器(建账户 / 加入的地址框预填它)。
+  if (s.state === "online" && s.server_url) localStorage.setItem(LAST_SERVER_KEY, s.server_url);
+  const gone = settleGone(space, s);
+  if (gone !== goneNow) {
+    goneNow = gone;
+    deps.onGoneChange();
+  }
+  // Q14:断开过、又连上了 ⇒ 说一声。⚠ 只说「已重新连上」—— 状态里没有待发条数,「断开时记的已发出」证不了,不说。
+  if (s.state === "offline" && gone === null) offlineSeenIn = space;
+  else if (s.state === "online") {
+    if (offlineSeenIn === space) showBar(t("sync.reconnected"), true);
+    offlineSeenIn = null;
+  } else if (offlineSeenIn !== space) offlineSeenIn = null;
   const dot = $("sync-dot");
   // 断网/出错态类名用 off 不用 error:全局 .error 是左上角 fixed 的错误提示条,
   // 状态点若带 error 类会被它命中、断网时被拽到左上角盖住「朱」(真机 bug)。
+  // Q14(A45):只有「连着」是实心;没连上的几档(连接中 / 离线 / 已不在账户里)都是空心圈 —— 不只靠颜色分(样式在 index.html)。
   dot.className =
     "dot " +
     (s.state === "online"
       ? "online"
-      : s.state === "connecting" || s.state === "booting"
-        ? "busy"
-        : s.error || s.state === "offline"
-          ? "off"
-          : "");
-  const err = s.error ? `<div class="err">${errHtml(s.error)}</div>` : "";
+      : gone !== null
+        ? "off"
+        : s.state === "connecting" || s.state === "booting"
+          ? "busy"
+          : s.error || s.state === "offline"
+            ? "off"
+            : "");
   const frozen = s.frozen.length
     ? `<div class="err">${t("sync.frozen", { list: esc(s.frozen.join(t("sync.listSep"))) })}</div>`
     : "";
-  $("sync-state").innerHTML =
-    `<b>${esc(STATE_LABEL[s.state] ?? s.state)}</b>${err}${frozen}`;
+  if (gone !== null) {
+    // Q12:说明这一档是什么(不写「重连中」,也不挂「连不上」那句原话 —— 那是网络话);两件事写在下面那块里。
+    $("sync-state").innerHTML = `<b>${esc(gone === "left" ? t("sync.goneLeft") : t("sync.goneRevoked"))}</b>${frozen}`;
+  } else {
+    const err = s.error ? `<div class="err">${errHtml(s.error)}</div>` : "";
+    const peers = s.state === "online" ? esc(t("sync.peersOnline", { n: s.peers_online })) : "";
+    $("sync-state").innerHTML = `<b>${esc(STATE_LABEL[s.state] ?? s.state)}</b>${peers}${err}${frozen}`;
+  }
+  $("sync-gone").hidden = gone === null;
+  // Q14:离线时把本来就会做的那次重连提前(壳里 `sync_reconnect_now`,只在离线时才发)。已不在账户里时不给:连上也是被拒。
+  // ⚠ 断开之后状态在「离线 ↔ 连接中」之间来回(每次重拨都过一下「连接中」)⇒ 这一行在断开期间一直在、只在「连接中」那几拍
+  // 置灰 —— 跟着状态显隐的话整面每隔几秒跳一下(真机量过)。
+  const reconnectable = s.configured && gone === null && s.state === "offline";
+  $("sync-reconnect-row").hidden = !(reconnectable || (s.state === "connecting" && offlineSeenIn === space && gone === null));
+  ($("sync-reconnect-btn") as HTMLButtonElement).disabled = !reconnectable;
   $("sync-join").hidden = s.configured;
   // 未配置态的路数按空间分(space-entry-plan §4):main 保留「一主两辅」(装机
   // onboarding:扫码/输码把本机并进已有账户);**非 main 只有创号一条路**——
@@ -167,6 +325,15 @@ export function renderSync(s: SyncStatus) {
   hint.hidden = !s.boot_hint;
   hint.textContent = s.boot_hint ?? "";
   $("sync-online").hidden = !s.configured;
+  // Q12(A40):已不在账户里 ⇒ 收起通栏「添加设备」与设备名单(那两样要一条被服务器认的会话;此前点了说「未连接服务器(重连中)」、
+  // 名单说「尚未确认服务器支持」,都把原因说成网络)。
+  $("sync-invite-row").hidden = gone !== null;
+  $("sync-devices-row").hidden = gone !== null;
+  $("sync-bg-note").hidden = gone !== null; // 「回到前台会继续追赶」:已不在账户里时不会再追赶了
+  if (gone !== null) {
+    $("sync-pair-out").hidden = true;
+    closeDevicesPanel();
+  }
   // 名册的唯一出处是状态面(§5.7-6):每份新快照都喂给设备面,开着就当场重画。
   feedDevices(s);
   if (s.configured) {
@@ -195,10 +362,37 @@ function renderSecondary() {
   $("sync-server-row").hidden = secondary === null;
 }
 
+/** 点一条辅路:同一条再点 = 收起(连码带上次那句失败一起清,161 / W4 A50);从收着到展开 = 地址框照 Q3 重新预填。 */
+function toggleSecondary(mode: "pair" | "create"): void {
+  if (secondary === mode) {
+    resetSecondary();
+    return;
+  }
+  if (secondary === null) prefillServer($("sync-server") as HTMLInputElement);
+  secondary = mode;
+  renderSecondary();
+}
+
 function resetSecondary() {
   secondary = null;
   ($("sync-code") as HTMLInputElement).value = "";
+  clearFormErr();
   renderSecondary();
+}
+
+/** 建账户 / 输码加入失败那句,**留在表单里**(161 / W4 Q4,WM-12):顶上那条红条照旧 6 秒自收(§2.4 的时长不动),
+ *  可唯一的出路「网络自检」此前跟着条一起没了,收完的面板和失败前一模一样。⇒ 同一句话(连不上的带「网络自检」,
+ *  测的是**刚填的那个地址**)在表单底下留一份,下次点创建 / 加入、或改了服务器地址才清 —— 照电脑那张表。 */
+function showFormErr(err: unknown, serverUrl: string): void {
+  const box = $("sync-form-err");
+  box.innerHTML = errHtml(err, serverUrl);
+  box.hidden = false;
+}
+
+function clearFormErr(): void {
+  const box = $("sync-form-err");
+  box.hidden = true;
+  box.textContent = "";
 }
 
 /** 同步面的一次性展示态全体复位:出码页/连接信息/辅路折叠与输了一半的码。
@@ -208,8 +402,19 @@ export function resetSyncTransient() {
   // 名册是「设备 × 空间」粒度的服务器事实:旧空间那份一个字都不许留到新空间上。
   resetDevices();
   $("sync-pair-out").hidden = true;
+  ($("sync-invite-btn") as HTMLButtonElement).textContent = t("sync.addDevice");
   $("sync-info").hidden = true;
   resetSecondary();
+  offlineSeenIn = null; // 断开过的是旧空间
+}
+
+/** 空间页「加入空间(输入配对码)」那张表复位(161 / W4 A50,WP-22):收起、码清掉 —— 此前五分钟后回来、收起再展开,
+ *  上次的地址和那串旧码都还在,容易拿旧码去点。开空间页(不是从它的子页回来)时由 main 调。 */
+export function resetJoinForm(): void {
+  ($("join-code") as HTMLInputElement).value = "";
+  // 没有扫码器的端表单常开(它是唯一入口):只清码、重填地址。
+  if (!HAS_SCANNER) prefillServer($("join-server") as HTMLInputElement);
+  else $("join-form").hidden = true;
 }
 
 /** 地址 / 码空着就点了钮(122):此前静默 `return`,钮按下去什么也不发生。说一句,并把光标放进空着的那一格。 */
@@ -230,6 +435,7 @@ function lacksInput(serverUrl: string, serverId: string, code?: string, codeId?:
 // 手输与扫码共用同一条加入路(107 抽出:后端 sync_pair_join 不区分码怎么来的)。
 // 配对目标 = 点击那刻的当前空间(写类命令,不走 sinvoke,明确处理响应)。
 async function doJoin(serverUrl: string, code: string) {
+  clearFormErr(); // 「下次点加入才清」(Q4):⚠ 排在空框那道闸前面 —— 空着点也算这一下
   if (lacksInput(serverUrl, "sync-server", code, "sync-code")) return;
   const target = getCurrentSpace();
   const btn = $("sync-join-btn") as HTMLButtonElement;
@@ -249,6 +455,7 @@ async function doJoin(serverUrl: string, code: string) {
     );
   } catch (err) {
     showErr(err, serverUrl);
+    showFormErr(err, serverUrl);
   } finally {
     btn.disabled = false;
     btn.textContent = t("sync.join");
@@ -374,8 +581,21 @@ async function doJoinSpace(serverUrl: string, code: string) {
       // Integrated 不含视图切换(§3.2 二轮 H3):经现有**草稿感知**入口尝试切换,
       // 草稿挡住就保持原前台、指路即可——绝不 reconcileForeground 强切丢草稿。
       if (!deps.hasDirtyDraft()) await deps.switchSpace(out.space.id);
+      // 161 / W4 Q13 ★①(A44):回执里写明这一本**在这台叫什么** —— 对方那本没起过名时这里先叫「未命名空间 · XXXX」,
+      // 和这台已有的一本同名时点出来(「空间不能重名」只拦新建与改名,加入进来的会撞);旁边一枚「改名」直达。
+      // ⛔ 名字怎么来的不动(space-entry-plan §3.6:没起过名那本不落名字记录);只改说法。
+      const twin = deps
+        .getSpaces()
+        .some((x) => x.id !== out.space.id && spaceLabel(x).toLowerCase() === label.toLowerCase());
+      const msg = !out.space.name
+        ? t("sync.joinedUnnamed", { name: label, warn })
+        : twin
+          ? t("sync.joinedTwin", { name: label, warn })
+          : t("sync.joined", { name: label, warn });
       if (getCurrentSpace() === out.space.id) {
-        showBar(t("sync.joined", { name: label, warn }), true);
+        const id = out.space.id;
+        if (!out.space.name || twin) actionBar(msg, t("main.rename"), () => deps.renameSpace(id));
+        else showBar(msg, true);
       } else {
         showBar(t("sync.joinedStay", { name: label, warn }), true);
       }
@@ -397,6 +617,7 @@ async function doJoinSpace(serverUrl: string, code: string) {
 
 async function doCreateAccount() {
   const serverUrl = ($("sync-server") as HTMLInputElement).value.trim();
+  clearFormErr(); // 「下次点创建才清」(Q4),同 doJoin
   if (lacksInput(serverUrl, "sync-server")) return;
   const target = getCurrentSpace();
   const btn = $("sync-create-btn") as HTMLButtonElement;
@@ -409,12 +630,15 @@ async function doCreateAccount() {
     // post-commit 错误(目录刷新失败等)先亮 —— 账户已创建是事实,错误只旁路提示
     // (codex r1 #5);两条走同一根提示条,后到的成功句盖住它之前用户已看到过。
     if (out.post_commit_error) showError(out.post_commit_error);
-    showBar(t("sync.accountCreated"), true);
+    // 161 / W4 Q2(WM-14):只有一个空间时同步面不写空间名 ⇒ 回执里说是哪一本的账户。
+    const made = deps.getSpaces().find((x) => x.id === target);
+    showBar(t("sync.accountCreatedFor", { name: spaceLabel(made ?? { id: target, name: null }) }), true);
     resetSecondary(); // 创号完成,收起辅路。
     void deps.refreshSpaces();
     void sinvoke<SyncStatus>("sync_status").then(renderSync).catch(() => {});
   } catch (err) {
     showErr(err, serverUrl);
+    showFormErr(err, serverUrl);
   } finally {
     btn.disabled = false;
     btn.textContent = t("sync.createAccount");
@@ -432,6 +656,9 @@ async function doInviteDevice() {
     // 码与服务器地址由后端同 runtime 原子取(实现审 M3),不从状态缓存拼。
     const { code, server_url: server } = await syncPairStart(target);
     if (target !== getCurrentSpace()) return; // 出码页属于该空间,已切走就不画
+    // 161 / W4 Q16(WP-25):写几点失效,不只写「10 分钟内有效」。从回执到手这一刻起算(服务器开槽比这一刻早一点 ⇒
+    // 时刻只到分钟、秒数舍掉,宁早不晚)。⛔ 不另加「复制配对码」那类钮(码加地址就能进账户,别鼓励往聊天里贴)。
+    const until = fmtTimeOfDay(new Date(Date.now() + PAIR_TTL_MS).toISOString());
     $("sync-pair-kv").innerHTML = (
       [
         [t("sync.pairServer"), server],
@@ -444,7 +671,7 @@ async function doInviteDevice() {
       )
       .join("");
     $("sync-pair-copy").dataset.copy = t("sync.pairCopyText", { server, code });
-    $("sync-pair-note").textContent = t("sync.pairNote");
+    $("sync-pair-note").textContent = t("sync.pairNote", { until });
     $("sync-pair-out").hidden = false;
   } catch (err) {
     showErr(err);
@@ -454,20 +681,24 @@ async function doInviteDevice() {
     if (String(err).includes(SEAT_LIMIT_MARK)) openDevicesPanel();
   } finally {
     btn.disabled = false;
-    btn.textContent = t("sync.addDevice");
+    // 码在屏上(或刚失败)时这枚钮就是「重新出码」(A42:另一台照报错里那句来找它)。
+    btn.textContent = $("sync-pair-out").hidden ? t("sync.addDevice") : t("sync.pairAgain");
   }
 }
 
 export function initSync(d: Deps): void {
   deps = d;
   $("sync-toggle").addEventListener("click", () => deps.openPane("sync"));
-  $("sync-alt-pair").addEventListener("click", () => {
-    secondary = secondary === "pair" ? null : "pair";
-    renderSecondary();
-  });
-  $("sync-alt-create").addEventListener("click", () => {
-    secondary = secondary === "create" ? null : "create";
-    renderSecondary();
+  $("sync-alt-pair").addEventListener("click", () => toggleSecondary("pair"));
+  $("sync-alt-create").addEventListener("click", () => toggleSecondary("create"));
+  // Q14:「现在重连」—— 壳里只在离线时把重连提前一次(在线时发会断掉现在的会话,那一道判在 Rust 那边)。
+  $("sync-reconnect-btn").addEventListener("click", () => {
+    const btn = $("sync-reconnect-btn") as HTMLButtonElement;
+    btn.disabled = true;
+    void sinvoke<boolean>("sync_reconnect_now")
+      .catch((e: unknown) => showErr(e))
+      // 钮亮不亮由状态说了算(离线才亮):现取一份重画,别在这儿凭空放开。
+      .finally(() => void sinvoke<SyncStatus>("sync_status").then(renderSync).catch(() => {}));
   });
   $("sync-join-btn").addEventListener("click", () => {
     void doJoin(
@@ -510,6 +741,9 @@ export function initSync(d: Deps): void {
   $("join-alt-btn").addEventListener("click", () => {
     const f = $("join-form");
     f.hidden = !f.hidden;
+    // A50:每次展开都是一张新表 —— 码清掉、地址照 Q3 重新预填;收起时码一并清。
+    ($("join-code") as HTMLInputElement).value = "";
+    if (!f.hidden) prefillServer($("join-server") as HTMLInputElement);
   });
   $("join-go").addEventListener("click", () => {
     void doJoinSpace(
@@ -533,6 +767,12 @@ export function initSync(d: Deps): void {
     );
   });
   $("sync-create-btn").addEventListener("click", () => void doCreateAccount());
+  // 改了服务器地址 = 上一次那句失败说的已经不是这个地址了(Q4);框下那一行跟着说这是不是官方服务器(Q2)。
+  $("sync-server").addEventListener("input", () => {
+    clearFormErr();
+    paintServerHint($("sync-server") as HTMLInputElement);
+  });
+  $("join-server").addEventListener("input", () => paintServerHint($("join-server") as HTMLInputElement));
   $("sync-invite-btn").addEventListener("click", () => void doInviteDevice());
   $("sync-pair-copy").addEventListener("click", () => {
     const text = $("sync-pair-copy").dataset.copy ?? "";
@@ -543,7 +783,7 @@ export function initSync(d: Deps): void {
       () => showError(t("sync.copyFailed")),
     );
   });
-  initDevices();
+  initDevices(deps.openFeedback);
   // 事件桥统一信封的三个同步面监听(过滤谓词 acceptSpaced 经 Deps 注入,账本住 main.ts)。
   void listen<Spaced<SyncStatus>>("sync-status", (e) => {
     if (!deps.acceptSpaced(e.payload)) return;

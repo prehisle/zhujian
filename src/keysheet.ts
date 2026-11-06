@@ -105,6 +105,14 @@ export function buildKeySheet(isMac: boolean): HTMLElement {
     [t("settings.keysDblclickKey"), t("inbox.actEdit")],
   ];
 
+  // W4 Q11 / WD-34:搜索页那几枚(search.ts 里结果卡与搜索框的监听,不在 keymap 的单键表上)。
+  // 改那两只监听时回来对一眼。
+  const search: Row[] = [
+    ["↓ / ↑", t("settings.keysSearchArrows")],
+    ["Enter", t("settings.keysSearchEnter")],
+    ["Esc", t("settings.keysSearchEsc")],
+  ];
+
   const editing: Row[] = [
     ["Enter", t("settings.keysEnter")],
     ["Shift+Enter", t("settings.keysShiftEnter")],
@@ -130,6 +138,7 @@ export function buildKeySheet(isMac: boolean): HTMLElement {
     [t("settings.keysGroupDoc"), docCard],
     [t("settings.keysGroupTrash"), trash],
     [t("settings.keysGroupView"), views],
+    [t("settings.keysGroupSearch"), search],
     [t("settings.keysGroupEdit"), editing],
   ] as const) {
     const h = document.createElement("h3");

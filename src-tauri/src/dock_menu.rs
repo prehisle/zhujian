@@ -1,6 +1,6 @@
 // macOS Dock 右键菜单(macos-port-plan §2 的 b)。右键 Dock 上的「朱」图标,在系统
 // 默认项(Options / Show All Windows / Hide / Quit)之上多出「记录灵感 / 打开朱简」
-// 两项,点了路由回壳里现成的 show_window / open_notebook——与托盘菜单、全局热键同
+// 两项,点了路由回壳里现成的 show_window / summon_notebook——与托盘菜单、全局热键同
 // 三条入口共用同一段逻辑,不另起一份。(a = 左键点 Dock 开主窗,已由 lib.rs run()
 // 里的 RunEvent::Reopen 拿下;这里只补右键。)
 //
@@ -22,7 +22,7 @@ use objc2_app_kit::{NSApplication, NSMenu};
 use objc2_foundation::{MainThreadMarker, NSString};
 use tauri::AppHandle;
 
-use crate::{open_notebook, show_window};
+use crate::{show_window, summon_notebook};
 
 /// 点菜单要拿 AppHandle 回 Tauri 侧,但 ObjC 方法是裸函数、带不了闭包捕获——故存
 /// 静态。install 时写一次,之后只读。
@@ -60,7 +60,7 @@ extern "C-unwind" fn dock_capture(_this: &AnyObject, _cmd: Sel, _sender: *mut An
 }
 
 extern "C-unwind" fn dock_notebook(_this: &AnyObject, _cmd: Sel, _sender: *mut AnyObject) {
-    open_notebook(app_handle());
+    summon_notebook(app_handle());
 }
 
 fn app_handle() -> &'static AppHandle {

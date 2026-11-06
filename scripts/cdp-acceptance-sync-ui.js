@@ -20,8 +20,11 @@
   check("同步面已开", visible($("sync")));
 
   const single = $("space-chip").hidden;
-  check("单空间: 头部徽章隐藏 ⟺ 兜底「空间…」显示",
-    $("space-chip").hidden === !$("sync-spaces-btn").hidden,
+  // 161 / W4 Q12:这台已不在账户里时,同步面那一块自带一枚「空间…」,底下这枚兜底就收起(不摆两枚)。
+  // 161 / W4 Q6 ★①:不在那一态时,底下这枚不管几个空间都在(此前多空间时藏起、「徽章即入口」)。
+  const gone = !$("sync-gone").hidden;
+  check("同步面「空间…」:平时不管几个空间都在;已不在账户里时换成那一块自带的一枚",
+    gone ? $("sync-spaces-btn").hidden && !$("sync-gone-spaces").hidden : !$("sync-spaces-btn").hidden,
     `chipHidden=${$("space-chip").hidden} spacesBtnHidden=${$("sync-spaces-btn").hidden}`);
   if (single) {
     check("单空间: 同步标题不带空间名", $("sync-title").textContent === "同步",

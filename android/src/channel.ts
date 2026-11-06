@@ -30,10 +30,11 @@ import { invoke } from "@tauri-apps/api/core";
 /** 安卓更新清单里的一条(`android.json` 与 `tauri.conf.json` 同源)。 */
 export type MobileUpdate = { version: string; versionCode: number; notes: string; url: string };
 
-/** 查更新:有更新回条目、已最新回 null。 */
-export function checkUpdate(): Promise<MobileUpdate | null> {
-  return invoke<MobileUpdate | null>("check_update");
-}
+/** 查更新:有更新回条目、已最新回 null。
+ *  ⭐ 161 / W4 Q10 起**整个导出可以是 `null`** = 这条渠道没有应用内更新(国内商店 / 鸿蒙那两份就是 null)。
+ *  ⛔ 还是同一根轴、同一个开关(上面头注那条「别再加 HAS_SELF_UPDATE」):启动时查不查、「关于」里那枚「检查更新」
+ *  在不在,都只看它是不是 null —— 商店包本来就不查,那枚钮在那儿只会永远说「已是最新」,是假钮。 */
+export const checkUpdate: (() => Promise<MobileUpdate | null>) | null = () => invoke<MobileUpdate | null>("check_update");
 
 /** 「创建账户」「加入空间」「网络诊断」三处输入框的默认服务器地址。 */
 export const SYNC_DEFAULT_URL = "wss://sync.zhujian.app";

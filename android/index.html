@@ -200,6 +200,19 @@
       :root:lang(en) {
         --font-sans: var(--font-sans-en);
       }
+      /* 161 / W4 A35(WM-20):英文界面的弯撇号 / 弯引号排成全角宽(「can’ t」「“Valid”」)。病根是这一端没有 Segoe UI,
+         英文字栈落到系统黑体,而 vivo 那只系统黑体把 U+2018–201F 画成全角(V1986A 上 CDP 量:’ 在 20px 字号下宽 20px,
+         system-ui / sans-serif / 显式写 Roboto 一样宽 —— 写族名找不到 Roboto,只有 `local()` 认得出)。
+         ⇒ 给英文字栈的**第一个族名**补一个只管这几枚标点的面:`local("Roboto")`(安卓系统自带,同机量得 ’ 宽 4px)。
+         ⭐ 借 "Segoe UI" 这个名字是刻意的:它本来就排在 --font-sans-en 第一位(三端同栈,check-theme-drift 钉着,⛔ 别为这一端改令牌),
+         而安卓上从来没有真的 Segoe UI ⇒ 这个面只接住 unicode-range 里那几个字,其余字照旧往后落到系统字体;
+         中文档的字栈里没有它 ⇒ 中文里的弯引号照旧是全角(那是中文排版该有的样子)。
+         找不到 Roboto 的机器上 local() 落空 = 与改前一样,不是新坏处。 */
+      @font-face {
+        font-family: "Segoe UI";
+        src: local("Roboto"), local("Roboto-Regular");
+        unicode-range: U+2018-201F;
+      }
       * { box-sizing: border-box; }
       /* hidden 属性只是 UA 样式表里的普通 display:none,任何作者 display(.update 的
          flex、#scan 的 flex)都会压过它——必须 !important 钉回,否则「hidden 却在屏上」
@@ -283,6 +296,13 @@
       .ghost {
         border: none; background: none; padding: 4px 6px;
         color: var(--ink-soft); font-size: var(--fs-12); font-family: var(--font-sans);
+      }
+      /* 161 / W4 Q11(WM-29 前半):顶栏四枚是面的入口,那一面开着时它点亮(§3.9「入口钮按下后点亮、标明我在这里」)——
+         此前开着设置 / 同步,顶栏四枚同色、底栏也一格不亮,看不出自己在哪。字色走朱砂小字压纸面那枚(--seal-ink),
+         ⛔ 不靠颜色单独说话:另加粗 + 一条底线。由 main.ts::renderBottomBar 按当前面(子页算它的上一层)挂 `.on`。 */
+      .head-acts .ghost.on {
+        color: var(--seal-ink); font-weight: 600;
+        text-decoration: underline; text-decoration-color: var(--seal-line); text-underline-offset: 4px;
       }
       /* 触区扩展(ui-audit P1 #10;codex M4 收敛):halo 只垂直扩、水平不扩(宽度本就
          够,水平扩会与同排毗邻按钮抢点)。单拍即写的 pill(状态/优先级)另立窄 halo,
@@ -652,10 +672,27 @@
            13px 时过不了 §2.2 第二条的小字底线。两条出路(别那么小 / 别那么淡)里取前者
            —— 这条是「后端原话」,是要读的字;而绿底那格没有 --on-ok 令牌,为一处用法往
            三份令牌表里加一个新令牌,代价比 +1px 大得多。 */
-        font-size: var(--fs-14); word-break: break-all;
+        /* 161 / W4 A35(WM-20):长词别在中间断(「WebSoc / ket」)—— 放不下一整行的长串(网址)才在任意处折。 */
+        font-size: var(--fs-14); overflow-wrap: anywhere;
         box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
       }
       .error.notice { background: var(--ok); }
+      /* 161 / W4 A8(WM-26)/ 清单 C 主控定的规矩:**错误条一律带图标**,「出错:」只给认不出的 —— 认得出的换了人话就不带前缀,
+         此前「连不上」那条两样都没有、只靠红色认(§3.1 / ui-guidelines 头一节「错误与成功不得仅靠颜色区分」)。
+         回执(notice)与中性那档不带。同一枚记号也挂在面板里那几处错误字上(同步状态那行 / 设备名单 / 建账户表单)。 */
+      .error:not(.notice):not(.neutral)::before,
+      .sync .state .err::before, .devices .err::before, #sync-form-err::before {
+        content: "!"; display: inline-block; flex: none; box-sizing: border-box;
+        width: 1.3em; height: 1.3em; line-height: calc(1.3em - 2px); margin-right: 6px; vertical-align: 0.05em;
+        text-align: center; font-weight: 700; font-size: var(--fs-12);
+        border: 1px solid currentColor; border-radius: var(--radius-circle);
+      }
+      .error.with-act > span:first-child { flex: 1 1 auto; min-width: 0; }
+      /* A8(WP-16 后半):面板里那几处错误字,人话在前、原文降一档(soft 色、小一号)—— 此前同色同层夹在一起,读不出哪句是给人看的。 */
+      .err-raw { color: var(--ink-soft); font-size: var(--fs-12); }
+      /* 161 / W4 A36(WM-28):不是错、也不是「做成了」的那一档(「一个字没写,这篇没有建」)—— 墨底纸字,中性。
+         明暗两档都是同一对令牌翻面,对比恒高。ui.ts::showBar 的第三参。 */
+      .error.neutral { background: var(--ink); color: var(--paper); }
       /* 操作型回执(§3.1,ui.ts actionBar):回执 + 一枚动作钮(如滑动改状态的「撤销」)。
          钮走 --on-seal 描边幽灵形(底透出条身色,明暗两档都自洽);字号同条身 14px
          (同上一条 343 的账:notice 墨绿底压 --on-seal 只有 4.79,13px 过不了小字底线);
@@ -1135,18 +1172,37 @@
         background: var(--ink-faint); vertical-align: 1px; margin-right: 5px;
       }
       .dot.online { background: var(--ok); }
-      .dot.busy { background: var(--seal); opacity: 0.65; }
+      /* 161 / W4 Q14 ★①(A45 / WP-09):不只靠颜色分 —— 只有「连着」是实心点;连接中 / 离线 / 已不在账户里一律**空心圈**
+         (色弱的人看得出「实 / 空」)。⚠ 边框画在盒子里(box-sizing 由全局 * 那条定),8×8 的外形不变,顶栏那枚钮不跳。 */
+      .dot.busy { background: none; border: 2px solid var(--seal); opacity: 0.65; }
       /* 断网/出错态:类名故意不叫 error——全局错误提示条 .error 是 position:fixed
          左上角朱砂圆角块,若状态点也带 error 类会被它命中,断网时点子被拽到左上角
          盖住「朱」字(实测真机 bug)。用独立类名 off,与 .error 隔离。 */
-      .dot.off { background: var(--seal); }
+      .dot.off { background: none; border: 2px solid var(--seal); }
+      /* 161 / W4 Q12 ★①:随记页顶那一条「这台已不在这个账户里」。在文档流里(它一直在,不是回执);面板开着时收。
+         朱砂浅底 + 朱字(同空间页当前行那一族令牌),整条可点、进同步页。 */
+      .gone-bar {
+        display: flex; flex-direction: column; gap: 2px; width: 100%; margin: 0 0 10px;
+        padding: 8px 12px; text-align: left; font: inherit; font-size: var(--fs-13);
+        background: var(--seal-tint); color: var(--seal-ink-on-seal-tint);
+        border: 1px solid var(--seal-line); border-radius: var(--radius-md);
+      }
+      .gone-bar[hidden], body.pane-open .gone-bar { display: none; }
+      .gone-bar span { color: var(--ink); }
+      .gone-bar b::after { content: " ›"; }
+      /* Q2 / A50:表单里的框有标签;框下那一行说明。 */
+      .field-label { display: block; margin: 8px 0 4px; font-size: var(--fs-12); color: var(--ink-soft); }
+      .sync .fine.field-hint { margin: 0 0 8px; }
+      .sync .fine.sync-intro { margin: 0 0 10px; }
+      .sync .fine.join-note { margin: 0 0 10px; }
+      #sync-gone .row { margin-top: 10px; }
       /* ⚠ 名字叫 sync、定义住在同步面小节,实为**全部 7 个面板 section 的通用容器**
          (空间/搜索/回收站/归档/设置/同步/诊断都套它)——「改同步面样式」与「改所有
          面板骨架」要从这里分岔:动 .sync = 动全部面板。 */
       .sync { margin-top: 4px; border-top: 1px dashed var(--line-strong); padding: 12px 0 4px; margin-bottom: 10px; }
       .sync h2 { font-size: var(--fs-13); color: var(--ink-soft); margin: 0 0 8px; font-weight: 600; }
       .sync .state { font-size: var(--fs-13); margin-bottom: 8px; }
-      .sync .state .err { color: var(--seal-ink); word-break: break-all; }
+      .sync .state .err { color: var(--seal-ink); overflow-wrap: anywhere; } /* 161 / W4 A35:同 .kv .v */
       /* 面板与设置面**全部**说明句都是它 ⇒ 照 336 判例(「那句话是这个区的全部说明,轻到读不出来
          就不是提示了」)走 soft;桌面那半 621 已经这么改过(`.settings-sub` 一族),634 补手机端。 */
       .sync .fine { font-size: var(--fs-12); color: var(--ink-soft); margin: 8px 0 0; }
@@ -1192,6 +1248,20 @@
       }
       .dev-facts li { margin-bottom: 4px; }
       .devices .err { color: var(--seal-ink); font-size: var(--fs-13); word-break: break-all; margin: 8px 0; }
+      /* 161 / W4 A49(WP-08 后半):收着的行看得出能点开 —— 行尾一枚 ▸(展开后行头那枚 ▾);编号(起过名的那行才有)挨在它左边。 */
+      .dev-end { margin-left: auto; display: flex; align-items: center; gap: 6px; }
+      /* 箭头画出来(▸ 这枚字形在系统字体里只有几个像素,真机上几乎看不见):收着朝右、展开朝下。 */
+      .dev-chev {
+        display: inline-block; width: 8px; height: 8px; margin: 0 4px;
+        border-right: 2px solid var(--ink-soft); border-bottom: 2px solid var(--ink-soft);
+        transform: rotate(-45deg);
+      }
+      .dev-head .dev-chev { transform: rotate(45deg); }
+      /* Q16(WP-15 后半):没起名的设备那行下面一句去哪儿起名;A30:没起名的那行编号只写一遍(名字那格就是编号,等宽)。 */
+      .dev-name.mono { font-family: ui-monospace, monospace; letter-spacing: 0.04em; }
+      .dev-hint { flex: 1 1 100%; font-size: var(--fs-12); color: var(--ink-soft); }
+      /* A7 = Q7 ★①:唯一一台管理设备那行,「退出账户」换成的那一行灰字。 */
+      .devices .dev-note { margin: 8px 0 0; font-size: var(--fs-13); color: var(--ink-soft); }
       .devices .row button.danger { background: var(--seal); color: var(--on-seal); }
 
       /* 标签管理面(190):每行 = 拖手柄 + 名 + 色点 + 计数 + 类型;拖手柄纵向拖排序。 */
@@ -1501,6 +1571,11 @@
         flex: 1; width: 100%; border: 1px solid var(--line);
         border-radius: var(--radius-md); background: var(--paper);
       }
+      /* 161 / W4 A34(WM-25):告知页「阅读完整隐私政策」此前是浏览器默认的蓝 + 下划线(rgb(0,0,238)),与全应用两个样子 ⇒
+         照「关于」那几枚链接的形(墨色字 + 朱色细下划线)。 */
+      #privacy-link {
+        color: var(--ink); text-decoration: underline; text-decoration-color: var(--seal-line); text-underline-offset: 2px;
+      }
 
       /* 底部固定确认条(ui-audit P0 #4):两拍确认的第二拍统一落在这条 fixed 条上。
          此前第一拍原位换长文案(「删除」→「确认删除?进回收站」)会变宽换行、3s 又
@@ -1608,6 +1683,8 @@
       .panel .rev .diff { margin: 0 8px 6px; }
       /* 卡上「改过」小字(157 G4 / P5),与时间同一档存在感。 */
       .card footer .edited-mark { color: var(--ink-soft); }
+      /* 161 / W4 Q16(WP-24):「改过」排在来源后面时隔一枚「·」—— 不隔就读成「zjd 改过」(那个名字是谁建的,不是谁改的)。 */
+      .card footer .sig-chip + .edited-mark::before { content: "·"; margin-right: 4px; opacity: 0.6; }
       .panel .movenote {
         display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
         font-size: var(--fs-12); color: var(--seal-ink-on-seal-tint); line-height: 1.5;
@@ -2133,6 +2210,11 @@
         transition: width 0.18s ease-out;
       }
       .ftext.wide { width: 11em; }
+      /* 161 / W4 A35(WM-19):特大字号下「过滤…」只剩「过滤·」。不是框太窄:`type=search` 右边给清除钮(×)留着一块
+         (没字时它透明、位置照占),而这一端字号走 WebView 的 textZoom、`em` / `ch` / `lh` 在这个框上都不跟着放大
+         (V1986A 上 130% 实测:6em / 6ch / 3.25lh 都是 78px,占位字却从 39 长到 51px)⇒ 被那块透明的 × 挤掉了半个字。
+         ⇒ 歇着时把那块收掉(张开 `.wide` 时才要 ×;158 G2 那条「点 × 清空」也只在框有焦点 = 张开时用得到)。 */
+      .ftext:not(.wide)::-webkit-search-cancel-button { display: none; }
       .ftext:focus { outline: none; border-color: var(--seal); }
       .ftext::placeholder { color: var(--ink-faint); }
 
@@ -2145,7 +2227,7 @@
       .diag h2 { font-size: var(--fs-13); color: var(--ink-soft); margin: 12px 0 8px; font-weight: 600; }
       .kv { display: grid; grid-template-columns: max-content 1fr; gap: 2px 12px; font-size: var(--fs-13); }
       .kv .k { color: var(--ink-soft); white-space: nowrap; }
-      .kv .v { word-break: break-all; }
+      .kv .v { overflow-wrap: anywhere; } /* 161 / W4 A35:长词别在中间断(构建那行「chang / es」),网址这类放不下的长串照旧任意处折 */
       /* 构建身份戳那一格(701)。等宽 —— 这串十六进制是用来念给人听 / 抄下来的,
          比例字体下 0 与 O、1 与 l 挤在一起认不准。⚠ 只加字体,不碰 .kv .v 的断行。 */
       .kv .v.mono { font-family: ui-monospace, monospace; user-select: text; }
@@ -2154,6 +2236,14 @@
          行盒撑到 44 自保 §2.3 手机触区 —— 三行上下相邻,⛔ 别换成 ::before halo:那样视觉行距
          不变、中心距仍只有一行高,手指落在两行之间照样会点错。行高撑开后键格要跟着按基线对齐。 */
       .about-author { margin: 0 0 10px; color: var(--ink-soft); }
+      /* 161 / W4 Q11(WM-32 前半):句子里那枚「意见反馈」—— 一枚长得像链接的钮(点了滚到那一节);触区照 .err-next 靠 ::before 外扩(§2.3)。 */
+      .inline-link {
+        position: relative; display: inline; padding: 0; border: 0; background: none;
+        font: inherit; color: var(--ink); text-decoration: underline; text-decoration-color: var(--seal-line); text-underline-offset: 2px;
+      }
+      .inline-link::before { content: ""; position: absolute; inset: -12px -6px; }
+      /* 161 / W4 Q11(WM-32 前半):有浏览器的这一端(安卓)邮箱点了拉起写信 ⇒ 那一框带一条下划线,看得出能点(main.ts 按 HAS_BROWSER 挂)。 */
+      #feedback-mail.mail-link { text-decoration: underline; text-decoration-color: var(--seal-line); text-underline-offset: 2px; }
       #about { align-items: baseline; }
       .kv .v.about-link {
         display: inline-flex; align-items: center; min-height: 44px; justify-self: start;
@@ -2193,17 +2283,26 @@
       /* 面板里「独占一行的动作钮」(同步 / 空间 / 回收站 / 设置里那些):手机上占满这一行。此前是 13 处 inline `style="flex: 1"`,
          tablet-plan 格 5 收成这枚类 —— 手机上逐字等价,宽屏上才好在一处改(下一条)。 */
       .row > .grow { flex: 1; }
+      /* 161 / W4 A35(WM-19):两三枚钮并排的那几行(同步页「手动输入配对码 / 没有其他设备?创建新账户」、关于页那三份协议),
+         挤不下时**整枚换行**,别在钮里把字折成两行(§3.6 510 判例)。⚠ 基准换成 auto(按字的长短)才折得动:`flex:1` 的基准是 0,
+         永远「放得下」,于是只会压窄、在钮里折字。 */
+      .row.wrap { flex-wrap: wrap; }
+      .row.wrap > .grow { flex: 1 1 auto; }
       /* 宽屏上面板收在 720 的阅读宽里(「宽屏」那段),独占一行的钮再拉满就是一条 720 的红 / 灰长条 ⇒ 按字的长短、靠左
          (tablet-plan 格 5「标签 / 同步 / 空间面在 720 阅读宽里排好」)。挂在 JS 打的 `body.widescreen` 上,理由同「导航并进顶栏」那段。
          ⚠ 首启告知与隐私政策页那两枚不在面板里(`.gate`),不归这条。 */
       body.widescreen .sync .row > .grow { flex: 0 1 auto; }
       .step { display: flex; gap: 8px; padding: 6px 0; border-top: 1px dashed var(--line); font-size: var(--fs-13); }
       .step:first-child { border-top: none; }
+      /* 161 / W4 Q5:网络自检最上面那句人话结论(probe.verdictOk / verdictFail);术语那几行照旧排在它下面。 */
+      .probe-verdict { margin: 0 0 6px; font-size: var(--fs-14); font-weight: 600; color: var(--ink); }
+      .probe-verdict.fail { color: var(--seal-ink); }
+      .probe-verdict + .step { border-top: none; }
       .step .mark { flex: none; font-weight: 700; }
       .step.ok .mark { color: var(--ok); }
       .step.fail .mark { color: var(--seal); }
       .step .name { flex: none; font-weight: 600; min-width: 8.5em; }
-      .step .detail { color: var(--ink-soft); word-break: break-all; }
+      .step .detail { color: var(--ink-soft); overflow-wrap: anywhere; } /* 161 / W4 A35:同 .kv .v */
       .step.fail .detail { color: var(--seal-ink); }
       footer.app { text-align: center; margin-top: 24px; }
 
@@ -2221,10 +2320,16 @@
       .bkup-code {
         /* 等宽照桌面 `.bkup-code` 那条(仓里没有 --font-mono 令牌,两端都是就地写族)。 */
         font-family: Consolas, "Courier New", monospace; font-size: var(--fs-16); letter-spacing: 0.12em;
-        line-height: 1.7; word-break: break-all; margin: 8px 0;
+        line-height: 1.7; margin: 8px 0;
         padding: 10px 12px; border: 1px solid var(--seal-line); border-radius: var(--radius-md);
         background: var(--seal-tint); color: var(--ink);
+        /* 161 / W4 A18 + Q11(WM-04 / WM-35):它是一只只读 textarea(backup.ts::codeView,为了长按「全选」只选这串码)。
+           ⛔ 别再写 `word-break: break-all` —— 那会把一组 4 位拆到两行;断点只在组与组之间(码框里每个横杠后面那枚零宽空格)。 */
+        display: block; width: 100%; resize: none; overflow: hidden;
+        white-space: pre-wrap; word-break: normal; overflow-wrap: normal;
+        user-select: text; -webkit-user-select: text;
       }
+      .bkup-code:focus { outline: none; border-color: var(--seal); }
       .bkup-out { margin-bottom: 6px; }
       .bkup-file { font-size: var(--fs-12); color: var(--ink-soft); word-break: break-all; margin: 2px 0; }
       .bkup-item {
@@ -2232,8 +2337,12 @@
         padding: 8px 0; border-top: 1px dashed var(--line); font-size: var(--fs-13);
       }
       .bkup-item-name { flex: 1 1 100%; min-width: 0; word-break: break-all; color: var(--ink); }
+      /* 161 / W4 A15(WM-09):文件名退成第二行小字(主标题是「哪个空间 · 本地几点」,backup.ts::listRow)。 */
+      .bkup-item-file { flex: 1 1 100%; min-width: 0; font-size: var(--fs-12); color: var(--ink-soft); word-break: break-all; }
       .bkup-item-meta { flex: none; font-size: var(--fs-12); color: var(--ink-soft); }
-      .bkup-item-state { flex: 1 1 auto; min-width: 0; font-size: var(--fs-12); color: var(--ink-soft); }
+      /* 161 / W4 A19(WM-23):基准 0 —— 结论那句(「现在打得开:默认空间 · 200 KB」)在自己的盒里折行,
+         ⛔ 别回到 `auto`:按字长算基准时这句一长,「验证」钮就被挤到下一行左边,手指底下的东西换了位置。 */
+      .bkup-item-state { flex: 1 1 0; min-width: 0; font-size: var(--fs-12); color: var(--ink-soft); }
       .bkup-item-state.warn-ink { color: var(--seal-ink); }
       .bkup-item button {
         flex: none; min-height: 32px; padding: 4px 12px;
@@ -2267,6 +2376,13 @@
       </span>
     </div>
 
+    <!-- 161 / W4 Q12 ★①(A37):这台已不在这个账户里时,随记 / 任务页顶上挂同一句,点了进同步页(那里写着怎么办)。
+         在文档流里、不悬浮(它一直在,不是一闪而过的回执);面板开着时收(同步面自己写着)。main.ts::paintGoneBar。 -->
+    <button id="sync-gone-bar" class="gone-bar" type="button" hidden>
+      <b id="sync-gone-bar-head"></b>
+      <span data-i18n="sync.goneKeep">这台上的内容都还在,之后在这台记的只留在这台。</span>
+    </button>
+
     <!-- 空间面板(工序 7/8,multispace-plan §9/§16.1):列表可切、新建必填名、
          当前空间可改名(名字随同步跨端一致,space-name-sync-plan);「全部同步」= 有界 best-effort(§7),
          结果只显「试了 N 个」,绝不显「全部同步完成」。 -->
@@ -2280,64 +2396,100 @@
       <!-- 建不成(重名 / 空名)时框下这一行红字,字留在框里(159 / W3 A11);main.ts paintSpaceNewErr。 -->
       <p id="space-new-err" class="space-err" role="alert" hidden></p>
       <!-- 加入空间(space-entry-plan §2/§3):独立入口直达——扫码/输码加入一个已在
-           别处存在的账户;隐式空槽在后台 staging,成功才出现为空间。 -->
-      <div class="row">
-        <button id="join-scan-btn" class="grow" data-i18n="shell.joinScan">加入空间(扫电脑二维码)</button>
-        <button id="join-alt-btn" class="ghost" data-i18n="shell.joinAlt">输码加入</button>
+           别处存在的账户;隐式空槽在后台 staging,成功才出现为空间。
+           161 / W4 Q1 ★①(WM-01 / WM-15 / N-3):这一组是「另加一本」,降成白钮(红实心只留「新建」),钮名都以「加入空间」开头,
+           说明第一句先说清「另成一本」—— 此前和同步页「扫码 / 输码」长得一样,选错的人以为同步没成、东西丢了。
+           两枚并排挤不下时整枚换行(§3.6)。 -->
+      <div class="row wrap">
+        <button id="join-scan-btn" class="ghost grow" data-i18n="shell.joinScan">加入空间(扫电脑二维码)</button>
+        <button id="join-alt-btn" class="ghost grow" data-i18n="shell.joinAlt">加入空间(输入配对码)</button>
       </div>
+      <p class="fine join-note" data-i18n="shell.joinNote">加入空间 = 另成一本,手机现在这本不会并进去;想和另一台设备看同一本,去「同步」。</p>
+      <!-- A50(WP-22)/ Q2:两个框都有标签;地址框下那一行跟着框里的值说是不是官方服务器(sync.ts::paintServerHint);
+           每次展开都是一张新表(码清掉、地址照 Q3 预填「这台最近一次连上的」)。 -->
       <div id="join-form" hidden>
+        <label class="field-label" for="join-server" data-i18n="shell.serverLabel">服务器地址</label>
         <div class="row">
           <input id="join-server" data-default-server placeholder="服务器地址(wss://…)" data-i18n-placeholder="shell.serverPh" spellcheck="false"
-                 autocapitalize="off" autocomplete="off" />
+                 inputmode="url" autocapitalize="off" autocomplete="off" />
         </div>
+        <p id="join-server-hint" class="fine field-hint"></p>
+        <label class="field-label" for="join-code" data-i18n="shell.codeLabel">配对码</label>
         <div class="row">
-          <input id="join-code" placeholder="配对码(对方设备「添加设备」出示)" data-i18n-placeholder="shell.joinCodePh" spellcheck="false"
+          <input id="join-code" placeholder="形如 123456789-XXXX-XXXX" data-i18n-placeholder="shell.codePh" spellcheck="false"
                  autocapitalize="off" autocomplete="off" />
           <button id="join-go" data-i18n="sync.join">加入</button>
         </div>
+        <p class="fine field-hint" data-i18n="shell.syncManualNote">在另一台设备朱简的「同步」里点「添加设备」,把服务器地址和配对码填到上面。</p>
       </div>
       <div id="join-progress" class="fine" hidden></div>
       <div class="row" id="join-cancel-row" hidden>
         <button id="join-cancel" class="ghost grow" data-i18n="shell.joinCancel">取消加入</button>
       </div>
+      <!-- 161 / W4 A33 / Q11(WM-33 / N-1):白钮;结果那一行开空间页时清掉(状态变了别挂着说过时的话),没开同步时走提示条。 -->
       <div class="row">
-        <button id="sync-all-btn" class="grow" data-i18n="shell.syncAll">全部同步(逐空间追赶一次)</button>
+        <button id="sync-all-btn" class="ghost grow" data-i18n="shell.syncAll">全部同步(开了同步的每一本各连一次)</button>
       </div>
       <div id="sync-all-result" class="fine"></div>
-      <p class="fine" data-i18n="shell.spacesNote">每个空间是一本独立的本子,记录落在当前空间。「加入空间」把电脑上的账户作为另一个空间加进来,手机已有的空间不变;手机还没开过同步、想和电脑看同一本,请到「同步」里「扫码连接电脑」。要让某个空间多端同步,到该空间的「同步」里创建账户。</p>
+      <p class="fine" data-i18n="shell.spacesNote">每个空间是一本独立的本子,记录落在当前空间。要让某一本在几台设备上同步,到那一本的「同步」里创建账户。</p>
     </section>
 
     <section id="sync" class="sync" hidden>
       <h2 id="sync-title" data-i18n="main.syncTitle">同步</h2>
       <div id="sync-state" class="state"></div>
+      <!-- 161 / W4 Q12 ★①(A37 / A39 / A40):这台已不在这个账户里时(状态那一行写是哪一种),同一处写清两件事 + 去「空间」的入口。
+           sync.ts::renderSync 显隐;⛔ 不改同步客户端(后台照旧重试,服务器又收了这台时这一块自己收)。 -->
+      <div id="sync-gone" hidden>
+        <p class="fine" data-i18n="sync.goneKeep">这台上的内容都还在,之后在这台记的只留在这台。</p>
+        <p class="fine" data-i18n="sync.goneRejoin">想重新加入:先把只在这台上的那几条复制出来,再到「空间」里给这一本点「⋯」→「重置」,然后输码加入。</p>
+        <div class="row">
+          <button id="sync-gone-spaces" class="ghost grow" data-i18n="shell.spacesEntry">空间…</button>
+        </div>
+      </div>
+      <!-- Q14 ★①(A45):离线时把本来就会做的重连提前一次(壳里 sync_reconnect_now 只在离线时才发)。 -->
+      <div id="sync-reconnect-row" class="row" hidden>
+        <button id="sync-reconnect-btn" class="ghost grow" data-i18n="sync.reconnectNow">现在重连</button>
+      </div>
       <!-- 未配置态(简化收敛):扫码是唯一主路;手动输码/创号是互斥折叠的辅路,
            点开才见——服务器地址行两条辅路共用,收着时不暴露概念。 -->
       <div id="sync-join" hidden>
+        <!-- 161 / W4 Q2 ★①(WM-14 / WM-17):第一屏先说同步是可选的、不开只在这台、卸载就没了、内容先在本机加密(指南原话)。 -->
+        <p class="fine sync-intro" data-i18n="sync.introOff">同步是可选的:不开,记的东西只存在这台手机上,卸载就没了(想留一份,去 设置 → 备份)。开了之后,内容先在这台上加密再发出去,服务器读不到。</p>
         <div class="row">
           <button id="sync-scan-btn" class="grow" data-i18n="shell.syncScan">扫码连接电脑</button>
         </div>
-        <div class="row">
-          <button id="sync-alt-pair" class="ghost grow" data-i18n="shell.syncAltPair">手动输入配对码</button>
+        <!-- 161 / W4 A35(WM-19):两枚并排挤不下时整枚换行(§3.6),别在钮里把字折成两行。 -->
+        <div class="row wrap">
+          <button id="sync-alt-pair" class="ghost grow" data-i18n="shell.syncAltPair">用配对码加入</button>
           <button id="sync-alt-create" class="ghost grow" data-i18n="sync.altCreateMain">没有其他设备?创建新账户</button>
         </div>
-        <div id="sync-server-row" class="row" hidden>
-          <input id="sync-server" data-default-server placeholder="服务器地址(wss://…)" data-i18n-placeholder="shell.serverPh" spellcheck="false"
-                 autocapitalize="off" autocomplete="off" />
+        <!-- Q2 / A50:地址框有标签、弹网址键盘,框下那一行跟着框里的值说是不是官方服务器;预填照 Q3(sync.ts::prefillServer)。 -->
+        <div id="sync-server-row" hidden>
+          <label class="field-label" for="sync-server" data-i18n="shell.serverLabel">服务器地址</label>
+          <div class="row">
+            <input id="sync-server" data-default-server placeholder="服务器地址(wss://…)" data-i18n-placeholder="shell.serverPh" spellcheck="false"
+                   inputmode="url" autocapitalize="off" autocomplete="off" />
+          </div>
+          <p id="sync-server-hint" class="fine field-hint"></p>
         </div>
         <div id="sync-manual" hidden>
+          <label class="field-label" for="sync-code" data-i18n="shell.codeLabel">配对码</label>
           <div class="row">
-            <input id="sync-code" placeholder="配对码(电脑「添加设备」出示)" data-i18n-placeholder="shell.syncCodePh" spellcheck="false"
+            <input id="sync-code" placeholder="形如 123456789-XXXX-XXXX" data-i18n-placeholder="shell.codePh" spellcheck="false"
                    autocapitalize="off" autocomplete="off" />
             <button id="sync-join-btn" data-i18n="sync.join">加入</button>
           </div>
-          <p class="fine" data-i18n="shell.syncManualNote">在电脑朱简的「同步」里点「添加设备」,把服务器地址和配对码抄到上面。</p>
+          <p class="fine" data-i18n="shell.syncManualNote">在另一台设备朱简的「同步」里点「添加设备」,把服务器地址和配对码填到上面。</p>
         </div>
         <div id="sync-create" hidden>
           <div class="row">
             <button id="sync-create-btn" class="grow" data-i18n="sync.createAccount">创建新账户</button>
           </div>
-          <p class="fine" data-i18n="shell.syncCreateNote">把本机创建为账户的第一台设备。创建后请尽快让电脑加入;加入前唯一副本只在本机。</p>
+          <p class="fine" data-i18n="shell.syncCreateNote">把本机创建为账户的第一台设备。创建后请尽快让另一台设备加入;加入前唯一副本只在本机。</p>
         </div>
+        <!-- 161 / W4 Q4(WM-12):建账户 / 输码加入失败那句**留在表单里**(连不上的带「网络自检」),顶上红条照旧 6 秒自收;
+             下次点创建 / 加入、或改了服务器地址才清(照电脑那张表的做法)。由 sync.ts::showFormErr 写。 -->
+        <p id="sync-form-err" class="fine warn-ink" role="alert" hidden></p>
       </div>
       <div id="sync-boot" hidden>
         <div class="bar"><i id="sync-boot-fill"></i></div>
@@ -2345,7 +2497,7 @@
         <div id="sync-boot-hint" class="fine" hidden></div>
       </div>
       <div id="sync-online" hidden>
-        <div class="row">
+        <div id="sync-invite-row" class="row">
           <!-- 用户面 125 起独占一行(此前与「查看恢复码」并排):照本面其它单钮行的形通栏。 -->
           <button id="sync-invite-btn" class="grow" data-i18n="sync.addDevice">添加设备</button>
         </div>
@@ -2360,7 +2512,7 @@
         </div>
         <!-- 设备名单(identity-plan §5.8):「同伴在线 N」背后的真名单,移除设备与管理
              设备名单都在里头。权限差别在**行上**表达,入口恒显。 -->
-        <div class="row" style="margin-top: 8px">
+        <div id="sync-devices-row" class="row" style="margin-top: 8px">
           <button id="sync-devices-btn" class="ghost grow" data-i18n="devices.entry">设备名单</button>
         </div>
         <div id="sync-devices" class="devices" hidden></div>
@@ -2375,9 +2527,9 @@
             <button id="sync-account-copy" class="ghost" data-i18n="sync.copyAccount">复制账户号</button>
           </div>
         </div>
-        <p class="fine" data-i18n="shell.bgNote">后台不保证实时,回到前台会继续追赶。</p>
+        <p id="sync-bg-note" class="fine" data-i18n="shell.bgNote">后台不保证实时,回到前台会继续追赶。</p>
       </div>
-      <!-- 单空间时头部空间徽章隐藏,空间面板从这里兜底可达(多空间时徽章即入口)。
+      <!-- 单空间时头部空间徽章隐藏,空间面板从这里兜底可达;161 / W4 Q6 起多空间时也留着(指南「同步页里那个也在」)。
            诊断 143 自底栏挪来此处,250 再挪进设置面——同步面只管同步。 -->
       <div class="row" style="margin-top: 14px">
         <button id="sync-spaces-btn" class="ghost grow" data-i18n="shell.spacesEntry" hidden>空间…</button>
@@ -2529,6 +2681,8 @@
     <!-- 设置面(250):这台设备自己的偏好 + 低频工程入口。明暗刻意**不进同步**——它是
          环境属性不是账户属性(手机夜里要暗、桌面白天要亮),跟着同步反而添乱。 -->
     <section id="settings-pane" class="sync" hidden>
+      <!-- 161 / W4 Q11(WM-29 前半):页头一枚标题 —— 此前整页换掉、顶上直接是「空间」,看不出自己在哪(同步 / 回收站各面都有)。 -->
+      <h2 data-i18n="shell.settings">设置</h2>
       <!-- 159 / W3 Q7(WM-16 / X-08):空间入口也挂一份在设置里(开的是同一页,同步页那枚「空间…」照留)。
            只有一个空间时顶栏不显示空间名,此前要找空间只能猜到「同步」下面去。 -->
       <h2 data-i18n="settings.spacesTitle">空间</h2>
@@ -2593,7 +2747,9 @@
         <input id="remind-time" type="time" />
         <button id="remind-test" class="ghost" data-i18n="reminder.test">试一条</button>
       </div>
-      <p class="fine" data-i18n="reminder.sub" data-needs="notification">朱简开着的时候,每天到点用一条系统通知报今天到期与已逾期的任务数;应用没开不会响。只数当前空间。开关与时刻只属于这台手机,不同步到别的设备。</p>
+      <!-- 161 / W4 Q9:说明里有「{days} 天内」那个数(与任务面那枚到期钮同一个 DUE_SOON_DAYS 注入,⛔ 别写死在字典里)⇒
+           由 main.ts::paintRemindRow 填,静态壳里留空(设置面不在首帧上,不闪)。 -->
+      <p id="remind-sub" class="fine" data-needs="notification"></p>
       <p id="remind-msg" class="fine" data-needs="notification" hidden></p>
 
       <h2 data-i18n="shell.aliasTitle">本机别名</h2>
@@ -2603,7 +2759,7 @@
         <button id="alias-save" data-i18n="shell.save" disabled>保存</button>
       </div>
       <!-- 与上面两样刻意不同:别名**进同步**(和空间名同族),外观/字号是设备环境属性。 -->
-      <p class="fine"><span data-i18n="shell.aliasNotePre">给这台设备起个名字(如「娟娟的手机」)。它会</span><b data-i18n="shell.aliasNoteBold">同步</b><span data-i18n="shell.aliasNotePost">给同一账户的其他设备,让他们看到条目是谁记的。留空 = 不起名。</span></p>
+      <p class="fine"><span data-i18n="shell.aliasNotePre">给这台设备起个名字(如「娟娟的手机」)。它会</span><b data-i18n="shell.aliasNoteBold">同步</b><span data-i18n="shell.aliasNotePost">给这个空间里的其他设备,让他们看到条目是谁记的。每个空间分别起;留空 = 不起名。</span></p>
       <p id="alias-msg" class="fine" hidden></p>
 
       <!-- 加密备份(backup-plan §17 笔③):排在「界面字号」之后、「关于」之前。
@@ -2619,8 +2775,10 @@
            ⇒ 由 main.ts 按 HAS_SAF_BRIDGE 一起摘掉;h2 与 body 那句留着,那才是这一端的事实。
            ⚠ 别把它读成「诚实边界可以省」(§17.12 的义务):有备份的那一端一个字都不少。 -->
       <p class="fine" data-i18n="backup.footRestore" data-needs="saf">手机上能做备份,但不能从备份还原。真出事时把 .zjbak 文件拿到电脑上的朱简里恢复。</p>
-      <p class="fine" data-i18n="backup.footCode" data-needs="saf">备份码保存在这台手机上(明文),卸载或清除数据会一起抹掉;抄在纸上的那份是唯一的。</p>
+      <p class="fine" data-i18n="backup.footCode" data-needs="saf">备份码保存在这台手机上(明文),卸载或清除数据会把它抹掉,抄下来的那份就是唯一的了;已经放进文件夹的备份文件不会跟着没。</p>
       <p class="fine" data-i18n="backup.footValid" data-needs="saf">「有效」只有验过才算。文件名和扩展名证明不了任何事。</p>
+      <p class="fine" data-i18n="backup.footScope" data-needs="saf">点「备份」会把这台手机上的每个空间各备一份。手机上没有自动备份:想备份就回这里点一次。</p>
+      <p class="fine" data-i18n="backup.footSecret" data-needs="saf">备份文件加上备份码,就能打开里面的全部内容;开过同步的空间,还能拿它读写这个账户。两样都当秘密保管。</p>
 
       <!-- 意见反馈(国内上架 17)。⭐ **它是上架硬门槛,不是锦上添花**:OPPO《包体测试FAQ》
            原文「所有应用都必须设置显著有效的客服反馈渠道」,且该渠道须在**应用功能界面内**,
@@ -2630,18 +2788,30 @@
            `openUrl` 去调 `xdg-open`、真机报 os error 2(651 实撞)⇒ 做成链接在那一端就是
            「点了没反应」。⇒ 地址原样摆出来 + 一枚复制钮,两端都成立、都不说谎。
            ⚠ 地址的唯一出处就是下面那个 value —— 复制钮读的也是它(⛔ 别在 TS 里另写一份常数)。 -->
-      <h2 data-i18n="feedback.title">意见反馈</h2>
+      <h2 id="feedback-title" data-i18n="feedback.title">意见反馈</h2>
       <p class="fine" data-i18n="feedback.sub">用着有问题、有建议,或者想注销同步账户,发邮件到下面这个地址。作者本人看信。</p>
       <div class="row">
         <input id="feedback-mail" value="3069848@qq.com" readonly spellcheck="false"
                autocapitalize="off" autocomplete="off" />
         <button id="feedback-copy" class="ghost" data-i18n="feedback.copy">复制</button>
       </div>
-      <p id="feedback-msg" class="fine" hidden></p>
 
       <h2 data-i18n="shell.aboutTitle">关于</h2>
-      <p class="about-author" data-i18n="shell.aboutAuthor">朱简是我一个人做的。好用、不好用,都欢迎在「意见反馈」里告诉我。</p>
+      <!-- 161 / W4 Q11(WM-32 前半):「意见反馈」是一枚跳到那一节的链接(此前叫人去那儿、却不是链接)。 -->
+      <p class="about-author"><span data-i18n="shell.aboutAuthorPre">朱简是我一个人做的。好用、不好用,都欢迎在</span><button id="about-feedback-link" type="button" class="inline-link" data-i18n="shell.aboutAuthorLink">「意见反馈」</button><span data-i18n="shell.aboutAuthorPost">里告诉我。</span></p>
       <div id="about" class="kv"></div>
+      <!-- 161 / W4 Q10(WM-31):手动查一次更新。⚠ 只在**有应用内更新**的渠道上在(channel.ts 的 checkUpdate 不是 null),
+           国内商店包 / 鸿蒙这一行由 main.ts 摘掉 —— 那两个渠道本来就不查(商店禁自升级),留着就是一枚点了只会说「已是最新」的假钮。 -->
+      <div id="update-check-row" class="row" style="margin-top: 10px">
+        <button id="update-check" class="ghost grow" data-i18n="shell.checkUpdate">检查更新</button>
+      </div>
+      <!-- 161 / W4 A12(WM-11 / X-13):同意之后在这里还能看隐私政策与用户协议(照电脑「关于」那三条)。应用内看,开的是首启那一页
+           (#policy-view,包里按渠道烤好的那一份)—— 鸿蒙交不出浏览器,这样两端都成立。 -->
+      <div class="row wrap" style="margin-top: 10px">
+        <button class="ghost grow" type="button" data-policy="privacy.html" data-i18n="shell.privacyTitle">隐私政策</button>
+        <button class="ghost grow" type="button" data-policy="privacy-rights.html" data-i18n="shell.policyRights">隐私权利</button>
+        <button class="ghost grow" type="button" data-policy="terms.html" data-i18n="shell.policyTerms">用户协议</button>
+      </div>
 
       <div class="row" style="margin-top: 14px">
         <button id="settings-diag-btn" class="ghost grow" data-i18n="shell.diag">诊断</button>
@@ -2651,13 +2821,18 @@
     <section id="diag" class="diag" hidden>
       <h2 data-i18n="shell.diagDbTitle">本机库(建库 + 全部迁移)</h2>
       <div id="db" class="kv"><span class="muted" data-i18n="main.diagLoading">读取中…</span></div>
-      <h2 data-i18n="shell.diagNetTitle">网络栈诊断</h2>
+      <h2 data-i18n="shell.diagNetTitle">网络自检</h2>
       <div class="row">
         <input id="url" data-default-server placeholder="服务器地址(wss://…)" data-i18n-placeholder="shell.serverPh" spellcheck="false"
                autocapitalize="off" autocomplete="off" />
-        <button id="run" data-i18n="shell.runProbe">跑诊断</button>
+        <button id="run" data-i18n="shell.runProbe">再测一次</button>
       </div>
       <div id="probe"><span class="muted" data-i18n="main.probeIdle">未运行</span></div>
+      <!-- 161 / W4 Q5:一键复制上面两段(照电脑「复制诊断信息」那份的形);复制前一句说清带走了什么。 -->
+      <div class="row" style="margin-top: 14px">
+        <button id="diag-copy" class="ghost grow" data-i18n="shell.diagCopy">复制诊断信息</button>
+      </div>
+      <p class="fine" data-i18n="shell.diagCopyNote">复制的是上面这两段:含这台设备的编号,不含你记的内容和密钥。</p>
     </section>
 
     <!-- 底部固定确认条(ui-audit P0 #4):两拍确认的第二拍统一在此,布局恒定。 -->
@@ -2754,7 +2929,7 @@
       <p class="fine" data-i18n="shell.privacyFine">开始使用前请读一遍完整的隐私政策。不同意就无法使用朱简。</p>
       <div class="row" style="margin-top: 12px">
         <button id="privacy-agree" style="flex: 1" data-i18n="shell.privacyAgree">同意并开始使用</button>
-        <button id="privacy-decline" class="ghost" data-i18n="shell.privacyDecline">不同意</button>
+        <button id="privacy-decline" class="ghost" data-i18n="shell.privacyDecline">不同意并退出</button>
       </div>
     </div>
 
@@ -2767,6 +2942,7 @@
       <div class="row" style="margin-bottom: 10px">
         <button id="policy-close" style="flex: 1" data-i18n="shell.close">关闭</button>
       </div>
+      <p class="fine" data-i18n="shell.policyThisBuild">下面这份随应用一起装进来,就是适用于你手上这一只朱简的那一份。</p>
       <p class="fine"><span data-i18n="shell.privacyCanonical">最新版本发布在:</span> <span id="policy-canonical"></span></p>
       <iframe id="policy-frame"></iframe>
     </div>

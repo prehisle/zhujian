@@ -32,7 +32,7 @@
   // ---- 加入空间入口(app 级,不挑当前空间) ----
   check("「加入空间(扫电脑二维码)」主路可见", visible($("join-scan-btn")),
     $("join-scan-btn")?.textContent);
-  check("「输码加入」辅路可见", visible($("join-alt-btn")));
+  check("「加入空间(输入配对码)」辅路可见", visible($("join-alt-btn")), $("join-alt-btn")?.textContent);
   // 先归位:join-form 可能被上一轮交互留开着(前端刻意保留展开态),资产验的是
   // 折叠开关行为本身,不赌进场状态。
   if (!$("join-form").hidden) { $("join-alt-btn").click(); await sleep(100); }
@@ -41,11 +41,17 @@
 
   $("join-alt-btn").click();
   await sleep(100);
-  check("点「输码加入」: 表单展开", !$("join-form").hidden);
-  check("服务器预填生产地址",
-    $("join-server").value === "wss://sync.zhujian.app", $("join-server").value);
-  check("配对码占位提示指向「添加设备」",
-    ($("join-code").placeholder || "").includes("添加设备"), $("join-code").placeholder);
+  check("点「加入空间(输入配对码)」: 表单展开", !$("join-form").hidden);
+  // 161 / W4 Q3:预填「这台最近一次连上的服务器」(本机记的那一份),从没连上过才是渠道默认的官方那台。
+  const lastServer = localStorage.getItem("zhujian.last-server");
+  check("服务器预填:最近一次连上的那台 / 从没连过才是官方",
+    lastServer !== null ? $("join-server").value === lastServer : /^wss:\/\/sync\.zhujian\.(app|cool)$/.test($("join-server").value),
+    `${$("join-server").value} last=${lastServer}`);
+  // A27 / A50:码框占位给出长相;「去哪儿拿码」那句挪到表单下那一行。
+  check("配对码占位给出长相、表单下那一行指向「添加设备」",
+    ($("join-code").placeholder || "").includes("123456789-XXXX-XXXX") &&
+      ($("join-form").textContent || "").includes("添加设备"),
+    $("join-code").placeholder);
   $("join-alt-btn").click();
   await sleep(100);
   check("再点收起", $("join-form").hidden);

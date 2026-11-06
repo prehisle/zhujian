@@ -33,13 +33,18 @@ type DbInfo = {
 };
 /** core `transport::ProbeStep`:`name` 是稳定标识(不译),`detail` 是 core 的原话。 */
 type ProbeStep = { name: string; ok: boolean; detail: string };
+/** 六项里「连没连上那台服务器」的那一项(core `selftest.rs::net_probe`)。人话结论只看它:
+ *  前五项是本机的加密自测,与「连得上连不上」无关(它们红了照样在下面那几行里报红)。 */
+const CONNECT_STEP = "wss-challenge";
 
 // 桌面只从 zhujian.app 分发(国内版 / 境外版那道渠道接缝只在手机端),故链接写死境外站。
-// ⚠ 用户指南住公开仓(export ALLOW 里有它),官网上没有这一页。
+// W4 Q11 / WD-23:用户指南链官网文档中心(`/docs/`,由公开仓那份 user-guide.md 按「##」拆页生成,
+// build-site-cool.mjs),⛔ 不再链 GitHub 上的 md 源文件 —— 那是开发者的仓库界面,境内也不一定打得开。
 const SITE = "https://zhujian.app";
 const REPO = "https://github.com/prehisle/zhujian";
 
-export function buildAboutPane(pane: HTMLElement, probeUrl: string | null): void {
+/** `gotoFeedback`:作者那句里「意见反馈」几个字点了去哪(设置面板把通用页那一节翻出来,W4 Q11 / WD-33)。 */
+export function buildAboutPane(pane: HTMLElement, probeUrl: string | null, gotoFeedback: () => void): void {
   // 复制诊断信息时要拼的几段,各自拿到结果后填进来;没拿到的那段照实说「没拿到」。
   const report: Report = { version: "", build: "", db: [], probe: [] };
 
@@ -47,8 +52,9 @@ export function buildAboutPane(pane: HTMLElement, probeUrl: string | null): void
     el("h2", "settings-title settings-sect", t("settings.catAbout")),
     el("p", "settings-sub", t("settings.aboutSub")),
     buildVersionRow(report),
-    // 作者一句:是一句话不是读数 ⇒ 正文字体(⛔ 别套 .about-mono)。手机端那格逐字同句。
-    el("p", "about-author", t("settings.aboutAuthor")),
+    // 作者一句:是一句话不是读数 ⇒ 正文字体(⛔ 别套 .about-mono)。手机端那格逐字同句(也是三段拼,
+    // 同 android shell.aboutAuthorPre / Link / Post)。「意见反馈」做成链接跳过去(WD-33:此前点了没反应)。
+    buildAuthorLine(gotoFeedback),
 
     el("h2", "settings-title settings-sect", t("settings.linksTitle")),
     el("p", "settings-sub", t("settings.linksSub")),
@@ -125,8 +131,30 @@ function buildVersionRow(report: Report): HTMLElement {
   const name = el("span", "hkset-name", "");
   report.build = buildLine();
   const stamp = el("div", "hkset-desc about-mono", report.build);
-  const check = el("button", "hkset-change", t("settings.checkUpdate"));
-  check.addEventListener("click", () => void checkForUpdateManual());
+  const check = el("button", "hkset-change about-check", t("settings.checkUpdate"));
+  // W4 A26(WD-28):此前点了钮不变、不说在查,结果在设置浮层外的右下角闪 4 秒半,关于页一个字不留。
+  // ⇒ 点下钮写「正在检查…」并禁用;结论留在这一行下面(这一格常占一行的位置,出字不推版面 —— A19 同理)。
+  // 有新版照旧走那张更新提示条(update.ts),这里多一句指过去。
+  const result = el("p", "hkset-msg about-update-msg", "");
+  check.addEventListener("click", () => {
+    check.disabled = true;
+    check.textContent = t("update.checking");
+    result.className = "hkset-msg about-update-msg";
+    result.textContent = "";
+    checkForUpdateManual()
+      .then((r) => {
+        result.className = "hkset-msg about-update-msg ok";
+        result.textContent = r.kind === "newer" ? t("update.newerHere", { v: r.version }) : t("update.upToDate", { v: r.version });
+      })
+      .catch((e) => {
+        result.className = "hkset-msg about-update-msg err";
+        result.textContent = t("update.checkFailed", { err: errDetail(e) });
+      })
+      .finally(() => {
+        check.disabled = false;
+        check.textContent = t("settings.checkUpdate");
+      });
+  });
   line.append(name, stamp, check);
   const msg = el("p", "hkset-msg", "");
   void getVersion()
@@ -137,8 +165,20 @@ function buildVersionRow(report: Report): HTMLElement {
     })
     .catch((e) => setMsg(msg, errText(e)));
   const wrap = el("div", "", "");
-  wrap.append(line, msg);
+  wrap.append(line, result, msg);
   return wrap;
+}
+
+function buildAuthorLine(gotoFeedback: () => void): HTMLElement {
+  const p = el("p", "about-author", t("settings.aboutAuthorPre"));
+  const a = el("a", "about-link about-feedback", t("settings.aboutAuthorLink"));
+  a.href = "#";
+  a.addEventListener("click", (e) => {
+    e.preventDefault();
+    gotoFeedback();
+  });
+  p.append(a, t("settings.aboutAuthorPost"));
+  return p;
 }
 
 // ---- 链接 ----
@@ -149,7 +189,7 @@ function buildLinks(): HTMLElement {
     [t("settings.linkSource"), REPO],
     // 更新日志与官网同一个来源拼(⛔ 别写死域名:哪天桌面也分渠道,改 SITE 一处就跟着走)。
     [t("settings.linkChangelog"), `${SITE}/changelog.html`],
-    [t("settings.linkGuide"), `${REPO}/blob/main/docs/user-guide.md`],
+    [t("settings.linkGuide"), `${SITE}/docs/`],
     [t("settings.linkTerms"), `${SITE}/terms.html`],
     [t("settings.linkPrivacy"), `${SITE}/privacy.html`],
     [t("settings.linkRights"), `${SITE}/privacy-rights.html`],
@@ -196,7 +236,7 @@ function buildProbeBlock(report: Report, probeUrl: string | null): HTMLElement {
   input.type = "text";
   input.value = probeUrl ?? configuredServer() ?? DEFAULT_SYNC_URL;
   input.spellcheck = false;
-  const run = el("button", "hkset-change", t("settings.probeRun"));
+  const run = el("button", "hkset-change about-probe-run", t("settings.probeRun"));
   const ctrls = el("div", "alias-ctrls", "");
   ctrls.append(input, run);
   line.append(el("div", "hkset-name", t("settings.probeTitle")), el("div", "hkset-desc", t("settings.probeDesc")), ctrls);
@@ -208,15 +248,24 @@ function buildProbeBlock(report: Report, probeUrl: string | null): HTMLElement {
     out.replaceChildren(el("div", "about-dim", t("settings.probeRunning")));
     invoke<ProbeStep[]>("net_probe", { url })
       .then((steps) => {
+        // 人话结论放最上面(W4 Q5 ★①,WD-22):此前六行全是 tls-provider / ed25519 / spake2 之类
+        // 缩写,成功失败都没一句结论,失败时也不写连的是哪台。术语那几行照旧留在下面(查问题用)。
+        // ⚠ 两句与手机诊断页**逐字同**(两端各一份字典,`probe.verdict*`)。
+        const conn = steps.find((s) => s.name === CONNECT_STEP);
+        if (!conn) throw new Error(`net_probe 的结果里没有 ${CONNECT_STEP} 那一项(core 改了名?)`);
+        const verdict = conn.ok ? t("probe.verdictOk", { url }) : t("probe.verdictFail", { url });
         out.replaceChildren(
+          el("p", `about-verdict ${conn.ok ? "ok" : "fail"}`, verdict),
           ...steps.map((s) => {
             const r = el("div", `about-step ${s.ok ? "ok" : "fail"}`, "");
             r.append(el("span", "about-mark", s.ok ? "✓" : "✗"), el("span", "about-mono", s.name), el("span", "", s.detail));
             return r;
           }),
         );
-        report.probe = [url, ...steps.map((s) => `${s.ok ? "✓" : "✗"} ${s.name} — ${s.detail}`)];
+        report.probe = [url, verdict, ...steps.map((s) => `${s.ok ? "✓" : "✗"} ${s.name} — ${s.detail}`)];
         pushCrashDiag(report);
+        // 结论与那几行常落在右栏下沿之外(这一节就在「关于」页靠底;W4 A9 从错误条进来时尤其如此)⇒ 跑完把整节挪进视口。
+        wrap.scrollIntoView({ block: "nearest" });
       })
       .catch((e) => {
         const err = t("settings.probeFailed", { error: errDetail(e) });
@@ -235,7 +284,8 @@ function buildProbeBlock(report: Report, probeUrl: string | null): HTMLElement {
       go();
     }
   });
-  const wrap = el("div", "about-block", "");
+  // `about-probe-block`:从错误条「网络自检」进来时 settings.ts 把这一节滚进视口、焦点落在「开始」上(A9)。
+  const wrap = el("div", "about-block about-probe-block", "");
   wrap.append(line, out);
   return wrap;
 }

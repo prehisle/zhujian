@@ -27,14 +27,12 @@ export const SITE_URL = "https://zhujian.cool";
 export type MobileUpdate = { version: string; versionCode: number; notes: string; url: string };
 
 /**
- * 查更新:**这条渠道没有应用内自升级**。
+ * 查更新:**这条渠道没有应用内自升级** ⇒ 整个导出就是 `null`(161 / W4 Q10 起;此前是一个恒回 null 的函数)。
  *
  * 国内商店审核规范禁自升级(华为/小米等一致);安卓「真机能力」上其实有更新通道
  * (`channel.ts` 那份走 `check_update` invoke 比对 `android.json`),但**这条渠道不许用**
- * —— 与 `ohos/src/channel.ts` 恒 `null` 同一个理由:有没有自升级是渠道政策,不是设备
- * 能力,不该在这儿另起一个判据。调用方本来就 `catch` 静默,这里给 null 只是让它连一次
- * IPC 都不发。
+ * —— 与 `ohos/src/channel.ts` 同一个理由:有没有自升级是渠道政策,不是设备能力,不该在这儿另起一个判据。
+ * ⭐ 为什么从「恒回 null 的函数」改成「导出就是 null」:「关于」里多了一枚手动「检查更新」,这条渠道上它**不该在**
+ * (在了就是一枚永远说「已是最新」的假钮)—— 调用方要的是「这条渠道有没有更新这件事」,恒回 null 的函数答不了。
  */
-export function checkUpdate(): Promise<MobileUpdate | null> {
-  return Promise.resolve(null);
-}
+export const checkUpdate: (() => Promise<MobileUpdate | null>) | null = null;

@@ -12,6 +12,9 @@ const MIN = 0.7;
 const MAX = 2.0;
 const STEP = 0.1;
 const DEFAULT = 1.0;
+/** 两头的百分比(设置里那一行到头变灰、写「已到最大 / 最小」用,W4 A21)。 */
+export const ZOOM_MIN_PERCENT = Math.round(MIN * 100);
+export const ZOOM_MAX_PERCENT = Math.round(MAX * 100);
 
 let factor = DEFAULT;
 let onChange: ((percent: number) => void) | null = null;

@@ -68,11 +68,13 @@ export function initLang(): void {
   document.documentElement.lang = lang;
 }
 
-/** 设置面改档:记住 → 生效语言真变了才 reload(auto↔同解析语言时零动作)。 */
-export function setLangChoice(next: LangChoice): void {
+/** 设置面改档:记住,返回**生效语言变没变**(auto↔同解析语言时 false = 零动作)。
+ *  变了就得 reload —— 161 / W4 A13 起由调用方(main.ts)来 reload:它管着返回键账本,重载前得先把守门条目退干净
+ *  (见 main.ts::reloadFromBase),还要留一笔「重载完回到语言这一行」。 */
+export function setLangChoice(next: LangChoice): boolean {
   if (next === "auto") localStorage.removeItem(KEY);
   else localStorage.setItem(KEY, next);
-  if (resolve(next) !== lang) location.reload();
+  return resolve(next) !== lang;
 }
 
 /**

@@ -8,14 +8,14 @@
          字典与运行期在页面末尾的那段内联 script 里(⚠ 注释里别写闭合标签的字面量:
          按标签切文件的工具会先命中这里,360 当场栽过一次)。 -->
     <title>设备名单与移除设备 · 朱简用户指南</title>
-    <meta name="description" content="同步面板里有一张这个空间当前的设备名单,一台一行,显示名字(没起过名的显设备编号前几位),标出「本机」与「管理设备」,点开看完整编号、可复制。名单是服务器给的,所以「哪台还在册」以它为准。 可以给每台设备起个名字。" />
+    <meta name="description" content="同步面板里有一张这个空间当前的设备名单,一台一行,显示名字(没起过名的显设备编号前几位),标出「本机」与「管理设备」,点开看完整编号、可复制。名单是服务器给的,所以「哪台还在册」以它为准。" />
 
     <!-- ───────── 分享卡片与 canonical(生成器写的;这一页只有中文,不挂 hreflang)───────── -->
     <link rel="canonical" href="https://zhujian.app/docs/devices.html" />
     <meta property="og:type" content="article" />
     <meta property="og:url" content="https://zhujian.app/docs/devices.html" />
     <meta property="og:title" content="设备名单与移除设备 · 朱简用户指南" />
-    <meta property="og:description" content="同步面板里有一张这个空间当前的设备名单,一台一行,显示名字(没起过名的显设备编号前几位),标出「本机」与「管理设备」,点开看完整编号、可复制。名单是服务器给的,所以「哪台还在册」以它为准。 可以给每台设备起个名字。" />
+    <meta property="og:description" content="同步面板里有一张这个空间当前的设备名单,一台一行,显示名字(没起过名的显设备编号前几位),标出「本机」与「管理设备」,点开看完整编号、可复制。名单是服务器给的,所以「哪台还在册」以它为准。" />
     <meta property="og:image" content="https://zhujian.app/og/docs-devices.jpg" />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
@@ -1370,8 +1370,8 @@
         <div class="docs-prose">
 <ul>
 <li>同步面板里有一张<strong>这个空间当前的设备名单</strong>,一台一行,显示名字(没起过名的显设备编号前几位),标出「本机」与「管理设备」,点开看完整编号、可复制。名单是<strong>服务器给的</strong>,所以「哪台还在册」以它为准。</li>
-<li>可以给每台设备起个名字。起过名之后,<strong>别的设备</strong>记下的条目会在时间那一行淡淡标出来源。三条克制的规矩:自己这台记的从不显、没起过名的设备不显、这功能上线前记的老条目一律不显。名字<strong>会同步</strong>给别的设备,并且是<strong>按空间分别起的</strong>。</li>
-<li><strong>谁能移除谁</strong>:第一台创建账户的设备自动是管理设备,之后可以再指定别的。<strong>只有管理设备能移除别人</strong>;不是管理设备的那些,能且只能让<strong>自己</strong>退出。为免把人锁在门外,<strong>管理设备不许被移空</strong>:只剩一台时,它既不能被移除,也不能自助退出。</li>
+<li>可以给每台设备起个名字(设置里的「本机别名」)。起过名之后,<strong>别的设备</strong>记下的条目会在时间那一行淡淡标出来源。三条克制的规矩:自己这台记的从不显、没起过名的设备不显、这功能上线前记的老条目一律不显。名字<strong>会同步</strong>给别的设备,并且是<strong>每个空间分别起的</strong>。没起过名的设备,名单上那一行下面会说去哪儿起名;别的设备改了名,开着的名单跟着变。</li>
+<li><strong>谁能移除谁</strong>:第一台创建账户的设备自动是管理设备,之后可以再指定别的。<strong>只有管理设备能移除别人</strong>;不是管理设备的那些,能且只能让<strong>自己</strong>退出。为免把人锁在门外,<strong>管理设备不许被移空</strong>:只剩一台时,它既不能被移除,也不能自助退出 —— 名单上本机那一行不给【退出账户】,直接写明为什么、怎么办(先把另一台设为管理设备)。</li>
 <li>⚠ <strong>移除意味着什么</strong>(确认框里逐条写着,一句不省):</li>
 <ul>
 <li>被移除的设备<strong>不能再经服务器同步</strong>这个空间;</li>
@@ -1380,7 +1380,7 @@
 <li>同一个 Wi-Fi 下:还在册的设备<strong>每台只要能从服务器取到最新名单,就会断开与它的局域网直连</strong>,通常是立刻,网络不好时可能要等几分钟;那台取不到名单的仍可能继续直连。</li>
 </ul>
 <li>⚠ <strong>若它还有没同步出来的内容,先让它上线同步完再移除</strong>:重新加入需要清空它那边的数据,期间它独有的东西找不回来。</li>
-<li>⚠ <strong>想彻底隔离</strong>(设备丢了、共用一个空间的人要走干净),移除<strong>不够</strong>:数据是端到端加密的,密钥早就在对方手里了,只能重置整个账户(全部设备重新配对、账户密钥轮换)。要走这条路请<a href="/docs/contact.html">发邮件</a>。</li>
+<li>⚠ <strong>想彻底隔离</strong>(设备丢了、共用一个空间的人要走干净),移除<strong>不够</strong>:数据是端到端加密的,密钥早就在对方手里了,只能重置整个账户(全部设备重新配对、账户密钥轮换)。要走这条路请<a href="/docs/contact.html">发邮件</a>;移除确认的末尾就有一枚【意见反馈】,点了直达设置里写信那一节。</li>
 </ul>
         </div>
         <nav class="docs-pager" aria-label="上一页与下一页">

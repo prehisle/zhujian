@@ -14,18 +14,25 @@ import { exportMarkdown } from "./export-md";
 import { reminderCfg, saveReminderCfg, reminderPermissionOk, sendTestNotification } from "./reminder";
 import { setTaskDeleteConfirm, taskDeleteConfirmOn } from "./delete-confirm";
 import { DUE_SOON_DAYS } from "./tasktime";
-import { currentZoomPercent, zoomIn, zoomOut, zoomReset, onZoomChange } from "./zoom";
+import { currentZoomPercent, zoomIn, zoomOut, zoomReset, onZoomChange, ZOOM_MAX_PERCENT, ZOOM_MIN_PERCENT } from "./zoom";
 import { currentThemeMode, setThemeMode, type ThemeMode } from "./theme-mode";
-import { currentLangChoice, setLangChoice, t, type LangChoice } from "./i18n";
+import { currentLangChoice, langChoiceReloads, setLangChoice, t, type LangChoice } from "./i18n";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { currentSpaceId } from "./space";
 import { copyButton } from "./clipboard";
 import { compressImagesOn, setCompressImages } from "./item-images";
 import { buildKeySheet } from "./keysheet";
 import "./settings.css";
 import { errText } from "./err";
+import { holdKeyboard, type KeyboardHold } from "./dom";
+import { closeSyncPanel, rosterIds } from "./sync";
+import { shortIds } from "./devices";
+import { loadHotkeys, setHotkeys, type Hotkeys } from "./hotkey-state";
 
-type Hotkeys = { capture: string; notebook: string };
 type Which = "capture" | "notebook";
+/** lib.rs `HOTKEY_TAKEN` 的镜像:`set_hotkey` 「新键注册不上」那一格的判别记号(⛔ 不是显示文案,
+ *  两处逐字同)。见到它就换成「哪一枚、为什么」的人话(W4 A2)。 */
+const HOTKEY_TAKEN = "hotkey-taken";
 /** 左栏那几类。445 定「只分 3 类」(backlog 用户面 27:小节太少,分细了是另一种难看);
  *  第四类「关于」是盈利准备 C7 / C10 加的 —— 版本 / 链接 / 诊断三节是一整块新东西,
  *  塞进「通用」会把那一页拖到两屏半。⛔ 再加第五类之前先问能不能并进这四类。 */
@@ -42,14 +49,32 @@ const ROWS: { which: Which; name: string; desc: string }[] = [
 const IS_MAC = navigator.userAgent.includes("Mac");
 
 let overlay: HTMLDivElement | null = null;
-let hotkeys: Hotkeys = { capture: "", notebook: "" };
+let hold: KeyboardHold | null = null;
+/** 设置面板通往外面的两条路(notebook.ts 递进来):开空间菜单(W4 Q6)、切到某个空间(恢复回执的「去看看」,A16)。 */
+export type SettingsDeps = { openSpaces(): void; gotoSpace(id: string, label: string): void };
+let deps: SettingsDeps | null = null;
+/** 上次关掉时停在哪一类、右栏滚到哪(W4 Q11 / WD-36:此前重开总回「通用」最上面)。只活在这一趟进程里。 */
+let lastCat: SettingsCat = "general";
+let lastScroll = 0;
+/** 改语言要重载整窗(i18n.ts):重载前记一笔,重载后把设置重新打开在「语言」那一行(WD-36)。
+ *  sessionStorage = 跟着这只窗活、跨 reload 还在,退出就没了 —— 正是「这一次改语言」的寿命。 */
+const REOPEN_KEY = "zhujian.settings-reopen";
+let hotkeys: Hotkeys = { capture: "", notebook: "", capture_taken: false, notebook_taken: false };
 let recording: Which | null = null;
 let recordCleanup: (() => void) | null = null;
 
-export function initSettings(): void {
+export function initSettings(d: SettingsDeps): void {
+  deps = d;
   const entry = document.getElementById("settings-entry");
   if (!entry) throw new Error("侧栏缺 #settings-entry(notebook.html 漂移?)");
   entry.addEventListener("click", () => void openSettingsPanel());
+}
+
+/** 启动序末尾调一次:刚因为改语言重载过,就把设置开回「语言」那一行、焦点落在选中的那档(WD-36)。 */
+export function reopenSettingsAfterReload(): void {
+  if (sessionStorage.getItem(REOPEN_KEY) !== "lang") return;
+  sessionStorage.removeItem(REOPEN_KEY);
+  void openSettingsPanel("general", null, "lang");
 }
 
 /**
@@ -58,9 +83,18 @@ export function initSettings(): void {
  * ⭐ **`cat` 不是可有可无的装饰**:445 分类之后,「点此改键」那条路若落在默认的「通用」上,
  * 用户点了「改键」却看不见热键行 —— 那条提示条的全部意义就没了。故那条路显式传 "hotkeys"。
  */
-export async function openSettingsPanel(cat: SettingsCat = "general", probeUrl: string | null = null): Promise<void> {
+export async function openSettingsPanel(
+  cat?: SettingsCat,
+  probeUrl: string | null = null,
+  landOn: "lang" | "feedback" | null = null,
+): Promise<void> {
   if (overlay) return;
-  hotkeys = await invoke<Hotkeys>("get_hotkeys");
+  // 一次只开一层(W4 A9 / 新撞-2):错误条里的「网络自检」是从同步浮层里点出来的,此前设置叠在
+  // 同步浮层上面、关掉设置底下那层还在。先收掉它 —— 它把焦点还给侧栏「同步」那枚钮,下面
+  // `holdKeyboard` 记下的「打开它的那枚」于是就是它,关掉设置焦点回到那儿。
+  closeSyncPanel();
+  hotkeys = await loadHotkeys();
+  if (overlay) return; // 等 get_hotkeys 那一跳里又被打开了一次(连点两下)
   overlay = document.createElement("div");
   overlay.className = "settings-overlay";
   overlay.addEventListener("mousedown", (e) => {
@@ -69,13 +103,33 @@ export async function openSettingsPanel(cat: SettingsCat = "general", probeUrl: 
   });
   const panel = document.createElement("div");
   panel.className = "settings-panel";
+  panel.setAttribute("role", "dialog");
+  panel.setAttribute("aria-modal", "true");
+  panel.setAttribute("aria-label", t("settings.title"));
   overlay.appendChild(panel);
   document.body.appendChild(overlay);
   document.addEventListener("keydown", onPanelEsc);
-  renderPanel(panel, cat, probeUrl);
+  // 没点名哪一类(侧栏「设置」)= 回到上次那一类、上次那个位置(WD-36);点了名的(「点此改键」/
+  // 「网络自检」/ 改完语言)照点的去。
+  const focus = renderPanel(panel, cat ?? lastCat, probeUrl, cat === undefined ? lastScroll : 0, landOn);
+  // 接管键盘(A3):焦点进面板 —— 平时落在当前那一类的左栏钮上;从「网络自检」进来的落在自检
+  // 那节的「开始」上(A9,那一节先滚进视口)。Esc 的条件同下面的 `onPanelEsc`。
+  hold = holdKeyboard(overlay, panel, {
+    focus,
+    onEscape: () => {
+      if (!recording) closePanel();
+    },
+  });
 }
 
 function closePanel(): void {
+  // 记下停在哪一类、滚到哪(WD-36);下次从侧栏开回到这儿。
+  const content = overlay?.querySelector<HTMLElement>(".settings-content");
+  const on = overlay?.querySelector<HTMLElement>(".settings-cat.on");
+  if (content && on?.dataset.cat) {
+    lastCat = on.dataset.cat as SettingsCat;
+    lastScroll = content.scrollTop;
+  }
   stopRecording();
   // 仪式还开着就让后端丢掉那把**只在内存里**的备份钥(§3.4.1 第 11 格:关面板即清)。
   closeBackupSection();
@@ -83,10 +137,14 @@ function closePanel(): void {
   overlay?.remove();
   overlay = null;
   document.removeEventListener("keydown", onPanelEsc);
+  hold?.release(); // 焦点还给打开它的那枚(侧栏「设置」/ 随记页顶那条「点此改键」)
+  hold = null;
 }
 
 function onPanelEsc(e: KeyboardEvent): void {
   // 录制态的 Esc 被录制监听(window 捕获相)先吞掉(取消录制);非录制态 Esc 关面板。
+  // ⚠ 焦点在面板里时 Esc 走 `holdKeyboard` 的 onEscape(浮层那一层就把它截住了);这一只接的是
+  // 焦点掉到 body 的时候(面板里某一块重画把聚焦的钮换掉了)。
   if (e.key === "Escape" && !recording) {
     e.stopPropagation();
     closePanel();
@@ -100,8 +158,15 @@ const CATS: { cat: SettingsCat; label: string }[] = [
   { cat: "about", label: t("settings.catAbout") },
 ];
 
-/** `probeUrl`:从错误条「网络诊断」进来时,自检要测的那台(err.ts `errNode`)。 */
-function renderPanel(panel: HTMLDivElement, initial: SettingsCat, probeUrl: string | null): void {
+/** `probeUrl`:从错误条「网络诊断」进来时,自检要测的那台(err.ts `errNode`)。
+ *  返回打开时焦点该落的那枚(见 `openSettingsPanel`)。 */
+function renderPanel(
+  panel: HTMLDivElement,
+  initial: SettingsCat,
+  probeUrl: string | null,
+  scroll: number,
+  landOn: "lang" | "feedback" | null,
+): HTMLElement | null {
   panel.innerHTML = "";
   // 标题行 + ✕(2026-08-31 用户点名「只能点面板外关」)。Esc 与点外面照旧;✕ 是显式
   // 关闭意图,⛔ 不套 `!recording` 保护(那两道是防误触,这枚不是误触)—— closePanel
@@ -138,7 +203,7 @@ function renderPanel(panel: HTMLDivElement, initial: SettingsCat, probeUrl: stri
     const pane = document.createElement("section");
     pane.className = "settings-pane";
     pane.dataset.cat = cat;
-    buildPane(cat, pane, probeUrl);
+    buildPane(cat, pane, probeUrl, show);
     panes.set(cat, pane);
     content.appendChild(pane);
   }
@@ -161,6 +226,35 @@ function renderPanel(panel: HTMLDivElement, initial: SettingsCat, probeUrl: stri
     content.scrollTop = 0; // 换一类从头看起,别把上一类滚到一半的位置带过来
   }
   show(initial);
+  // 回到上次那个位置(WD-36)。⚠ 备份那一节是异步建的,内容回来之前滚不到那么深 —— 那就停在能到的最深处。
+  if (scroll > 0) content.scrollTop = scroll;
+  // 改完语言重载回来(WD-36):「语言」那一行滚进视口,焦点落在选中的那档上。
+  if (landOn === "lang") {
+    const seg = panes.get("general")?.querySelector<HTMLElement>(".lang-row .seg-btn.on");
+    if (!seg) throw new Error("通用页缺「语言」那一行(buildLangRow 漂移?)");
+    seg.closest(".hkset-row")?.scrollIntoView({ block: "center" });
+    return seg;
+  }
+  // 从设备名单「移除」确认里那枚「意见反馈」进来(161 / W4 A38:想彻底隔离只能重置整个账户,那条路走写信):
+  // 「意见反馈」那一节滚进视口,焦点落在邮箱链接上(同关于页那句「意见反馈」的落点)。
+  if (landOn === "feedback") {
+    const general = panes.get("general");
+    const sect = general?.querySelector<HTMLElement>(".feedback-sect");
+    const mail = general?.querySelector<HTMLElement>(".feedback-mail");
+    if (!sect || !mail) throw new Error("通用页缺「意见反馈」那一节(buildPane 漂移?)");
+    sect.scrollIntoView({ block: "start" });
+    return mail;
+  }
+  // 从错误条「网络自检」进来(W4 A9 / 新撞-2):此前停在「关于」页最上面,自检那节在可视区下沿
+  // 之外、得自己往下找。⇒ 那一节滚进视口(顶对齐:下面的结果行跟着露出来),焦点落在「开始」上。
+  if (probeUrl !== null) {
+    const block = panes.get("about")?.querySelector<HTMLElement>(".about-probe-block");
+    const run = block?.querySelector<HTMLElement>(".about-probe-run");
+    if (!block || !run) throw new Error("关于页缺网络自检那一节(about.ts 漂移?)");
+    block.scrollIntoView({ block: "start" });
+    return run;
+  }
+  return btns[CATS.findIndex((c) => c.cat === initial)] ?? null;
 }
 
 // ⭐ **623(用户面 74 / G):单行组不写行名** —— 一组只有一行控件时,`.settings-title` 那句
@@ -170,7 +264,7 @@ function renderPanel(panel: HTMLDivElement, initial: SettingsCat, probeUrl: stri
 // ⛔ **多行组照写行名**(快捷键两行、备份那节):那里行名是「这一行是哪一样」的唯一读法。
 // ⇒ 判据是「**这一组有几行**」,不是「读着重不重复」—— 备份那节的组名与首行同为「备份」,
 // 623 摘过一次又照图退回来了(理由记在 backup.ts 那行旁边)。
-function buildPane(cat: SettingsCat, pane: HTMLElement, probeUrl: string | null): void {
+function buildPane(cat: SettingsCat, pane: HTMLElement, probeUrl: string | null, show: (cat: SettingsCat) => void): void {
   if (cat === "hotkeys") {
     pane.append(
       el("h2", "settings-title settings-sect", t("settings.hotkeysTitle")),
@@ -184,6 +278,12 @@ function buildPane(cat: SettingsCat, pane: HTMLElement, probeUrl: string | null)
 
   if (cat === "general") {
     pane.append(
+      // W4 Q6 ★①(WD-17 / X-14):空间的入口也挂一份在设置里(同手机 W3 Q7)。此前只有一个空间时侧栏不显示
+      // 空间名、设置里也没有「空间」,新建空间只能猜到「同步 → 空间…」里去 —— 而新建空间是纯本地的事。
+      el("h2", "settings-title settings-sect", t("settings.spacesTitle")),
+      el("p", "settings-sub", t("settings.spacesSub")),
+      buildSpacesRow(),
+
       el("h2", "settings-title settings-sect", t("settings.autostartTitle")),
       el("p", "settings-sub", t("settings.autostartSub")),
       buildAutostartRow(),
@@ -216,7 +316,8 @@ function buildPane(cat: SettingsCat, pane: HTMLElement, probeUrl: string | null)
       el("p", "settings-sub", t("reminder.sub", { days: DUE_SOON_DAYS })),
       buildReminderRow(),
 
-      el("h2", "settings-title settings-sect", t("settings.feedbackTitle")),
+      // `feedback-sect`:关于页那句「在『意见反馈』里告诉我」点过来落在这儿(W4 Q11 / WD-33)。
+      el("h2", "settings-title settings-sect feedback-sect", t("settings.feedbackTitle")),
       el("p", "settings-sub", t("settings.feedbackSub")),
       buildFeedbackRow(),
     );
@@ -224,7 +325,15 @@ function buildPane(cat: SettingsCat, pane: HTMLElement, probeUrl: string | null)
   }
 
   if (cat === "about") {
-    buildAboutPane(pane, probeUrl); // 版本 / 链接 / 诊断,整节住 src/about.ts
+    // 版本 / 链接 / 诊断,整节住 src/about.ts。「意见反馈」那几个字点了跳到通用页那一节(WD-33)。
+    buildAboutPane(pane, probeUrl, () => {
+      show("general");
+      const sect = pane.parentElement?.querySelector<HTMLElement>(".feedback-sect");
+      const mail = pane.parentElement?.querySelector<HTMLElement>(".feedback-mail");
+      if (!sect || !mail) throw new Error("通用页缺「意见反馈」那一节(buildPane 漂移?)");
+      sect.scrollIntoView({ block: "start" });
+      mail.focus();
+    });
     return;
   }
 
@@ -236,7 +345,13 @@ function buildPane(cat: SettingsCat, pane: HTMLElement, probeUrl: string | null)
   pane.append(
     el("h2", "settings-title settings-sect", t("backup.title")),
     noteFold(t("backup.sub"), t("backup.footSecrets"), t("backup.footUninstall")),
-    buildBackupSection(),
+    buildBackupSection({
+      gotoSpace: (id, label) => {
+        if (!deps) throw new Error("设置面板没接 notebook 的出路(initSettings 漏传?)");
+        closePanel();
+        deps.gotoSpace(id, label);
+      },
+    }),
 
     // 导出为 Markdown(用户面 136):「不绑死你」的那一半 —— 备份是给朱简自己恢复用的加密文件,
     // 这一行给的是离开朱简也读得懂的明文。低频、全量,故住在这一页而不在随记顶栏(顶栏那枚
@@ -284,8 +399,12 @@ function buildExportRow(): HTMLElement {
 // 那道门管的是国内安卓商店,桌面这端不在其内 —— 但此前桌面**一个联系方式都没有**,
 // 三端说同一句话才是对的,故一并做(手机那半在 android/index.html 的 #settings-pane)。
 //
-// ⛔ **不做成 mailto 链接**:没配默认邮件客户端的机器上点了什么都不发生 = 界面在说谎;
-// 配了的机器上又会弹一个用户没打算打开的程序。地址原样摆出来 + 一枚复制钮,是不说谎的形。
+// ⭐ W4 Q11 / WD-33(用户 2026-11-06 拍「全取推荐」)**推翻了此前「不做成 mailto 链接」那条**:
+// 走查里人点地址本身没反应(诊断区还叫人「贴进反馈邮件」),于是地址做成链接,点了走壳的打开外链那条路
+// (opener 插件,`mailto:` 在它的默认放行里)拉起写信。原先担心的两件照旧成立、换了接法:
+// ①没配默认邮件程序的机器:Windows 自己弹「你要用什么打开」那一问(W4 D2 走查实例上实测,opener 不报错);
+//   opener 真报错的那种在行下照实说一句(⛔ 不是静默什么都不发生)。两种情况复制钮都还在;
+// ②会拉起一个程序 ⇒ 那正是点地址的人要的。
 // ⚠ 按 623「单行组不写行名」:这一组只有一行,`.settings-title` 那句已经是这一格的名字,
 // 故行里那枚 `.hkset-name` 放的是**地址本身**,不是再说一遍「邮箱」。
 // ⚠ 零新 CSS:`.hkset-name` 左、复制钮吃 `.hkset-row > :not(...)` 那条自动外边距靠右
@@ -299,8 +418,35 @@ const FEEDBACK_MAIL = "3069848@qq.com";
 function buildFeedbackRow(): HTMLDivElement {
   const line = document.createElement("div");
   line.className = "hkset-row";
-  // copyButton 自带「已复制 / 复制失败」闪回,⇒ 这一行不需要自己的 .hkset-msg。
-  line.append(el("span", "hkset-name", FEEDBACK_MAIL), copyButton(FEEDBACK_MAIL, "hkset-change"));
+  const msg = el("p", "hkset-msg", "");
+  const mail = el("a", "hkset-name about-link feedback-mail", FEEDBACK_MAIL) as HTMLAnchorElement;
+  mail.href = `mailto:${FEEDBACK_MAIL}`;
+  mail.title = t("settings.feedbackMailTitle");
+  mail.addEventListener("click", (e) => {
+    e.preventDefault(); // 裸 href 会把 webview 自己导走 —— 交给系统(同关于页那几条链接)
+    setMsg(msg, "", "");
+    void openUrl(`mailto:${FEEDBACK_MAIL}`).catch((err) => setMsg(msg, t("settings.feedbackMailFailed", { error: errText(err) }), "err"));
+  });
+  // copyButton 自带「已复制 / 复制失败」闪回;行下那句只给「拉不起写信」用。
+  line.append(mail, copyButton(FEEDBACK_MAIL, "hkset-change"));
+  const wrap = document.createElement("div");
+  wrap.append(line, msg);
+  return wrap as HTMLDivElement;
+}
+
+// ---- 空间(W4 Q6 ★①)----
+// 一枚「空间…」:收掉设置、打开空间菜单(切换 / 新建 / 加入 / 改名 / 重置)。同手机设置里那一行,
+// 菜单本身住 notebook.ts(同步面板里那枚「空间…」开的是同一只)。
+function buildSpacesRow(): HTMLDivElement {
+  const line = document.createElement("div");
+  line.className = "hkset-row";
+  const open = el("button", "hkset-change settings-spaces", t("shell.spacesEntry")) as HTMLButtonElement;
+  open.addEventListener("click", () => {
+    if (!deps) throw new Error("设置面板没接 notebook 的出路(initSettings 漏传?)");
+    closePanel();
+    deps.openSpaces();
+  });
+  line.append(open); // 623:单行组不写行名
   return line;
 }
 
@@ -331,14 +477,22 @@ function buildAliasRow(): HTMLDivElement {
   // 本机 device_id 只有取回身份面之后才知道;取回前整行禁用,**不编造占位值**。
   let thisDevice: string | null = null;
   let saved = "";
+  // 本机编号的那几位:当副标题,没起名时它是这台设备唯一能自证身份的东西(卡片上刻意不显 id 片段,设置面这里显——这里的
+  // 语境是「这是哪台」,不是噪音)。161 / W4 A30(WP-15):位数与设备名单显示的一致(名单按「刚好能分开」取最短前缀,两台前 6 位
+  // 相同就显 7 位;此前这里固定 6 位,两处对不上)—— 名册在手就按名册算,没连上过就按本机认得的那几台。
+  let sid = "";
+  // A14(WD-35 前半):本机别名存好后,框下那行跟着换成新名(此前存好了仍写「本机 · 01M6PN」,要去设备名单才看到生效)。
+  const paintSub = () => {
+    sub.textContent = saved === "" ? t("settings.thisDevice", { id: sid }) : t("settings.thisDeviceNamed", { name: saved, id: sid });
+  };
   void invoke<DeviceIdentity>("device_identity", { spaceId: currentSpaceId() })
     .then((d) => {
       thisDevice = d.this_device;
       saved = d.devices.find((x) => x.device_id === d.this_device)?.alias ?? "";
       input.value = saved;
-      // id 前 6 位当副标题:没起名时它是这台设备唯一能自证身份的东西(卡片上刻意
-      // 不显 id 片段,设置面这里显——这里的语境是「这是哪台」,不是噪音)。
-      sub.textContent = t("settings.thisDevice", { id: d.this_device.slice(0, 6) });
+      const ids = rosterIds() ?? d.devices.map((x) => x.device_id);
+      sid = shortIds(ids.includes(d.this_device) ? ids : [...ids, d.this_device]).get(d.this_device) ?? d.this_device;
+      paintSub();
       input.disabled = false;
       save.disabled = false;
     })
@@ -361,6 +515,7 @@ function buildAliasRow(): HTMLDivElement {
       });
       saved = next;
       input.value = next;
+      paintSub();
       setMsg(msg, next === "" ? t("settings.aliasCleared") : t("settings.aliasSaved"), "ok");
     } catch (e) {
       input.value = saved; // 后端拒了(超长等):回显旧值 + 后端原话
@@ -609,13 +764,15 @@ const LANG_CHOICES: { choice: LangChoice; label: string }[] = [
 
 function buildLangRow(): HTMLDivElement {
   const line = document.createElement("div");
-  line.className = "hkset-row zoom-row";
+  line.className = "hkset-row zoom-row lang-row"; // lang-row:改完语言重载回来落在这一行(WD-36)
 
   const seg = document.createElement("div");
   seg.className = "seg";
   const btns = LANG_CHOICES.map(({ choice, label }) => {
     const b = el("button", "seg-btn", label) as HTMLButtonElement;
     b.addEventListener("click", () => {
+      // 要重载才记那一笔(auto↔同语言不重载,记了就会在下一次随便哪种重载后莫名其妙弹出设置)。
+      if (langChoiceReloads(choice)) sessionStorage.setItem(REOPEN_KEY, "lang");
       void setLangChoice(choice).then(paintSeg); // 解析语言没变(auto↔同语言)时只刷高亮
     });
     return b;
@@ -631,28 +788,88 @@ function buildLangRow(): HTMLDivElement {
   return line;
 }
 
+// ---- 界面字号(W4 A21,WD-12 / WD-29)----
+// 此前每点一档整窗缩放,这一行在浮层里的位置跟着变:到 120% 掉出可视区、得先滚才能接着点,200% 时被浮层
+// 底边切掉半截;到 200% 再点「＋」没反应也不说到顶,两头的钮也不变灰。⇒ 三件:
+//   ① 点完把右栏滚回去,让刚点的那枚钮落回点之前在屏幕上的位置(缩放改的是 CSS 像素对屏幕像素的比,
+//      ⇒ 按「CSS 坐标 × 倍数」对齐),对不齐的(滚到头了)至少整行滚进视口;
+//   ② 到头那枚钮变灰;③ 说明格写「已到最大 / 最小」(两头一样;平时写范围,一行常在、不跳)。
 function buildZoomRow(): HTMLDivElement {
   const line = document.createElement("div");
-  line.className = "hkset-row zoom-row";
+  line.className = "hkset-row zoom-row zoom-size-row";
 
   const val = el("span", "zoom-val", `${currentZoomPercent()}%`);
   const minus = el("button", "zoom-btn", "−") as HTMLButtonElement;
   const plus = el("button", "zoom-btn", "＋") as HTMLButtonElement;
   const reset = el("button", "hkset-change", t("settings.zoomReset")) as HTMLButtonElement;
+  minus.setAttribute("aria-label", t("settings.zoomOut"));
+  plus.setAttribute("aria-label", t("settings.zoomIn"));
+  const desc = el("div", "hkset-desc zoom-limit", "");
 
-  minus.addEventListener("click", () => void zoomOut());
-  plus.addEventListener("click", () => void zoomIn());
-  reset.addEventListener("click", () => void zoomReset());
-  // 键盘 / 滚轮 / 这三个按钮任一改了字号,都回来刷新这个百分比标签(单一真相源)。
-  onZoomChange((p) => {
+  const paint = (p: number): void => {
     val.textContent = `${p}%`;
-  });
+    minus.disabled = p <= ZOOM_MIN_PERCENT;
+    plus.disabled = p >= ZOOM_MAX_PERCENT;
+    desc.textContent =
+      p >= ZOOM_MAX_PERCENT
+        ? t("settings.zoomAtMax", { p })
+        : p <= ZOOM_MIN_PERCENT
+          ? t("settings.zoomAtMin", { p })
+          : t("settings.zoomRange", { min: ZOOM_MIN_PERCENT, max: ZOOM_MAX_PERCENT });
+    desc.classList.toggle("at-limit", p >= ZOOM_MAX_PERCENT || p <= ZOOM_MIN_PERCENT);
+  };
+  paint(currentZoomPercent());
+
+  /** 点一档,点完把这枚钮钉回点之前的屏幕位置(①)。 */
+  const step = (btn: HTMLButtonElement, run: () => Promise<number>): void => {
+    const content = line.closest<HTMLElement>(".settings-content");
+    const z0 = currentZoomPercent() / 100;
+    const y0 = btn.getBoundingClientRect().top * z0;
+    const w0 = window.innerWidth;
+    void run().then(() =>
+      afterZoomLayout(w0).then(() => {
+        if (!content || !line.isConnected) return;
+        const z1 = currentZoomPercent() / 100;
+        // 滚多少(CSS 像素):让 `top × z1` 回到 `y0`。
+        content.scrollTop += btn.getBoundingClientRect().top - y0 / z1;
+        keepRowInView(line, content);
+        // 到头那枚变灰了,焦点别丢在一枚禁用的钮上:落到同一行还能按的那枚。
+        if (btn.disabled) (btn === plus ? minus : plus).focus();
+      }),
+    );
+  };
+  minus.addEventListener("click", () => step(minus, zoomOut));
+  plus.addEventListener("click", () => step(plus, zoomIn));
+  reset.addEventListener("click", () => step(reset, zoomReset));
+  // 键盘 / 滚轮 / 这三个按钮任一改了字号,都回来刷新这一行(单一真相源)。
+  onZoomChange(paint);
 
   const ctrls = document.createElement("div");
   ctrls.className = "zoom-ctrls";
   ctrls.append(minus, val, plus, reset);
-  line.append(ctrls); // 623:单行组不写行名(见 buildPane 头上那条)
+  line.append(ctrls, desc); // 623:单行组不写行名(见 buildPane 头上那条)
   return line;
+}
+
+/** 等缩放落到版面上:WebView 换了倍数之后视口的 CSS 宽跟着变(`setZoom` 的 promise 回来时未必已经变了),
+ *  逐帧看 `innerWidth` 离开点之前那个值再量。倍数没变(复位时本来就是 100%)就等满一小会儿收手。 */
+function afterZoomLayout(w0: number): Promise<void> {
+  const until = performance.now() + 500;
+  return new Promise((done) => {
+    const tick = (): void => {
+      if (window.innerWidth !== w0 || performance.now() > until) requestAnimationFrame(() => done());
+      else requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+  });
+}
+
+/** 整行都在右栏的可视区里(上下都不被切);放不下时顶对齐。 */
+function keepRowInView(row: HTMLElement, content: HTMLElement): void {
+  const r = row.getBoundingClientRect();
+  const c = content.getBoundingClientRect();
+  if (r.top < c.top) content.scrollTop -= c.top - r.top;
+  else if (r.bottom > c.bottom) content.scrollTop += Math.min(r.bottom - c.bottom, r.top - c.top);
 }
 
 function buildRow(row: { which: Which; name: string; desc: string }): HTMLDivElement {
@@ -664,18 +881,32 @@ function buildRow(row: { which: Which; name: string; desc: string }): HTMLDivEle
   keys.className = "hkset-keys";
   const combo = el("span", "hkset-combo", hotkeys[row.which]);
   const change = el("button", "hkset-change", t("settings.change")) as HTMLButtonElement;
-  keys.append(combo, change);
+  // 被别的程序占着、按了没反应的那枚(W4 A6 / Q8 ①):此前照常陈列,看不出它根本没生效。
+  // 改键成功(`applyHotkey` 换进新回执)就收。
+  const dead = el("span", "hkset-dead", t("settings.hotkeyTakenTag"));
+  dead.dataset.which = row.which; // e2e 按它认是哪一枚
+  keys.append(dead, combo, change);
+  const paintDead = (): void => {
+    dead.hidden = !hotkeys[row.which === "capture" ? "capture_taken" : "notebook_taken"];
+  };
+  paintDead();
 
   line.append(el("div", "hkset-name", row.name), el("div", "hkset-desc", row.desc), keys);
 
   const msg = el("p", "hkset-msg", "");
-  change.addEventListener("click", () => startRecording(row.which, combo, msg));
+  change.addEventListener("click", () => startRecording(row, combo, msg, paintDead));
 
   wrap.append(line, msg);
   return wrap;
 }
 
-function startRecording(which: Which, combo: HTMLElement, msg: HTMLElement): void {
+function startRecording(
+  row: { which: Which; name: string },
+  combo: HTMLElement,
+  msg: HTMLElement,
+  paintDead: () => void,
+): void {
+  const which = row.which;
   if (recording) stopRecording(); // 同一时刻只录一枚
   recording = which;
   combo.classList.add("recording");
@@ -702,7 +933,7 @@ function startRecording(which: Which, combo: HTMLElement, msg: HTMLElement): voi
       return;
     }
     finishRecording(combo);
-    void applyHotkey(which, [...mods, key].join("+"), combo, msg);
+    void applyHotkey(row, [...mods, key].join("+"), combo, msg, paintDead);
   };
   // window 捕获相:抢在视图自己的单键派发(hotkey-menu 的 E/C/L…)之前吃掉按键。
   recordCleanup = () => window.removeEventListener("keydown", onKey, true);
@@ -720,17 +951,27 @@ function stopRecording(): void {
   recording = null;
 }
 
-async function applyHotkey(which: Which, accel: string, combo: HTMLElement, msg: HTMLElement): Promise<void> {
+async function applyHotkey(
+  row: { which: Which; name: string },
+  accel: string,
+  combo: HTMLElement,
+  msg: HTMLElement,
+  paintDead: () => void,
+): Promise<void> {
+  const which = row.which;
   combo.textContent = "…";
   try {
     const hk = await invoke<Hotkeys>("set_hotkey", { which, accel });
     hotkeys = hk;
+    setHotkeys(hk); // 随记页顶那条「点此改键」、空态那句跟着变(hotkey-state.ts)
     combo.textContent = hk[which];
+    paintDead();
     setMsg(msg, t("settings.hotkeyUpdated"), "ok");
   } catch (e) {
-    // 后端已回滚到旧键(占用/无效等),回显旧值 + 后端原话。
+    // 后端什么都没动(只碰改的这一枚,失败即原样;A2),回显旧值。被占着的那一格说清是哪一枚、
+    // 为什么 —— 此前一律「这个快捷键可能被别的程序占用了」,而真正失败的常是另一枚没动的键。
     combo.textContent = hotkeys[which];
-    setMsg(msg, errText(e), "err");
+    setMsg(msg, String(e) === HOTKEY_TAKEN ? t("settings.hotkeyTaken", { name: row.name, key: accel }) : errText(e), "err");
   }
 }
 

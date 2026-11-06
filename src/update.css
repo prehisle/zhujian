@@ -1,4 +1,4 @@
-/* 自动更新提示(88)。右下角交互 banner(带按钮、不自动消失)+ 一次性 flash 回话。
+/* 自动更新提示(88)。右下角交互 banner(带按钮、不自动消失)。
    视觉令牌沿用 sync-toast(theme.css:纸面卡片 + 朱砂左沿);按钮吃 controls.css 的 .hbtn。 */
 .update-banner {
   position: fixed;
@@ -56,27 +56,4 @@
   background: var(--seal-tint);
 }
 
-/* 一次性提示(手动检查回话) */
-.update-flash {
-  position: fixed;
-  right: 18px;
-  bottom: 18px;
-  z-index: 72;
-  max-width: min(360px, calc(100vw - 60px));
-  background: linear-gradient(180deg, var(--raised), var(--raised-edge));
-  border: 1px solid var(--line-strong);
-  border-left: 3px solid var(--seal);
-  border-radius: var(--radius-md);
-  box-shadow: var(--float-shadow);
-  padding: 10px 14px;
-  font-size: var(--fs-13);
-  line-height: 1.7;
-  color: var(--ink);
-  opacity: 0;
-  transform: translateY(6px);
-  transition: opacity 0.2s, transform 0.2s;
-}
-.update-flash.show {
-  opacity: 1;
-  transform: none;
-}
+/* (W4 A26 起手动「检查更新」的回话写在「关于」页那一行上,右下角那张一次性卡 `.update-flash` 已撤。) */

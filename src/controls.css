@@ -150,13 +150,14 @@
    一旦用 ::-webkit-scrollbar 定制,整条滚动条改走自绘,没写到的部件退回浏览器默认的
    **白**:轨道白一层(被 thumb 的 3px 纸边遮掉大半),横竖同现时右下角那枚 corner 是
    明晃晃的白方块(249;窄窗看板实见)——track/corner 必须铺 transparent。
-   新增可滚容器把选择器加进这一组,别再各写各的。 */
+   新增可滚容器把选择器加进这一组,别再各写各的。(161 / W4 A19 起同步浮层封了顶、长了自己滚,也在这一组。) */
 .v-board .col-body::-webkit-scrollbar,
 .v-board .cols::-webkit-scrollbar,
 .v-board main.trash::-webkit-scrollbar,
 .v-inbox main::-webkit-scrollbar,
 .v-topics main::-webkit-scrollbar,
-.v-search main::-webkit-scrollbar {
+.v-search main::-webkit-scrollbar,
+.sync-panel::-webkit-scrollbar {
   width: 10px;
   height: 10px;
 }
@@ -165,7 +166,8 @@
 .v-board main.trash::-webkit-scrollbar-thumb,
 .v-inbox main::-webkit-scrollbar-thumb,
 .v-topics main::-webkit-scrollbar-thumb,
-.v-search main::-webkit-scrollbar-thumb {
+.v-search main::-webkit-scrollbar-thumb,
+.sync-panel::-webkit-scrollbar-thumb {
   background: var(--line-strong);
   border: 3px solid var(--paper);
   border-radius: var(--radius-md);
@@ -181,7 +183,9 @@
 .v-topics main::-webkit-scrollbar-track,
 .v-topics main::-webkit-scrollbar-corner,
 .v-search main::-webkit-scrollbar-track,
-.v-search main::-webkit-scrollbar-corner {
+.v-search main::-webkit-scrollbar-corner,
+.sync-panel::-webkit-scrollbar-track,
+.sync-panel::-webkit-scrollbar-corner {
   background: transparent;
 }
 

@@ -45,19 +45,43 @@
   background: var(--ok);
   border-color: transparent;
 }
+/* 161 / W4 Q14 ★①(A45 / WP-09):**只有「连着」是实心点,其余都是空心圈** —— 不只靠颜色分(色弱的人分不出红绿),
+   断开时点也变样(同手机)。连接中 / 初始同步 = 琥珀圈、断开 / 出错 = 朱砂圈、没开同步 = 灰圈。
+   两枚彩圈用径向渐变画(外框 9px = 别的几档的 7px + 两边 1px 描边,换档时不挪位;圈宽约 1.7px,比 1px 描边读得出是圈)。
+   ⚠ 琥珀那枚的值仍写在 `background` 上 —— check-hardcoded-colors 按属性登记的就是它。 */
+.sync-dot.busy,
+.sync-dot.err {
+  border: 0;
+  width: 9px;
+  height: 9px;
+}
 .sync-dot.busy {
   /* 「连接中 / 初始同步」的琥珀。它是写死的:纸墨朱三色里没有「中性等待」这一格,
      而它又不能是 --seal(那是 .err 用的,两态得一眼分得开)。与 --ok 不同,琥珀在
      两端不是同一个表达 —— 安卓那份用的是朱砂淡(`--seal` + opacity 0.65),故没有
      「同一个语义两个值」的漂移可消,不提令牌。已登记在 scripts/check-hardcoded-colors.mjs。 */
-  background: #c9973a;
-  border-color: transparent;
+  background: radial-gradient(circle closest-side, transparent 58%, #c9973a 62%);
   animation: sync-pulse 1.6s ease-in-out infinite;
 }
 .sync-dot.err {
-  background: var(--seal);
-  border-color: transparent;
+  background: radial-gradient(circle closest-side, transparent 58%, var(--seal) 62%);
 }
+/* 侧栏「同步」后面那个字(Q14 ★①:断开时写「离线」、已不在账户里写「已不再同步」,不用悬停)。
+   与入口同一档(14px × --ink-soft,理由见 .sync-entry 头注);前缀一枚「·」隔开。
+   侧栏只有 172px:「同步 · 已不再同步」(英文更长)一行放不下 ⇒ 字与「同步」包在一格里、放不下就整段折到下一行、
+   左对齐「同步」(⛔ 别让「同步」两个字自己折成两行 —— 实测过)。 */
+.sync-text {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 6px;
+  min-width: 0;
+}
+.sync-text > * { white-space: nowrap; }
+.sync-word::before {
+  content: "· ";
+}
+.sync-word[hidden] { display: none; }
 @keyframes sync-pulse {
   50% { opacity: 0.35; }
 }
@@ -65,17 +89,25 @@
 /* ---- 设置面板(轻模态) ---- */
 /* 遮罩取浅雾玻璃=「操作型面板」那一路(348 分野判据:阅读型深压、操作型浅雾;
    全文见 item-comments.css 遮罩处注)。 */
+/* 161 / W4 A19(WD-19 / WP-18):浮层**顶对齐**、高度封顶在窗内、长了自己滚。此前 `place-items: center`:展开「退出账户」
+   确认时整只浮层往上跳 83px(长高的那一截上下各分一半);「移除」确认展开后浮层比窗口还高、底部「刷新」「返回」被切掉。
+   顶对齐之后长高只往下长,上沿不动;封顶 + 滚动兜住矮窗。 */
 .sync-overlay {
   position: fixed;
   inset: 0;
   z-index: 60;
   display: grid;
-  place-items: center;
+  justify-items: center;
+  align-items: start;
+  padding: min(14vh, 120px) 0 24px;
   background: color-mix(in srgb, var(--paper) 55%, transparent);
   backdrop-filter: blur(2px);
 }
 .sync-panel {
   width: min(420px, calc(100vw - 48px));
+  max-height: calc(100vh - min(14vh, 120px) - 24px);
+  overflow-y: auto;
+  box-sizing: border-box;
   background: linear-gradient(180deg, var(--raised), var(--raised-edge));
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-lg);
@@ -88,6 +120,32 @@
   font-size: var(--fs-16);
   letter-spacing: 0.04em;
   color: var(--ink);
+}
+/* 标题行 + ✕(W4 A24,WD-26:此前没有任何可见的关法,得猜点外面或按 Esc)。✕ 的形照设置浮层
+   那枚 `.settings-close`(settings.css),尺寸声明自保 §2.3 热区;两只浮层同一种关法。 */
+.sync-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 0 12px;
+}
+.sync-head .sync-title { margin: 0; }
+.sync-close {
+  flex: none;
+  border: none;
+  background: transparent;
+  color: var(--ink-faint);
+  font-size: var(--fs-14);
+  cursor: pointer;
+  width: 28px;
+  height: 24px;
+  line-height: 1;
+  padding: 0;
+  margin-right: -6px;
+}
+.sync-close:hover {
+  color: var(--seal);
 }
 .sync-body {
   display: flex;
@@ -167,6 +225,39 @@
   outline: none;
 }
 .sync-input:focus { border-color: var(--seal-line); }
+/* 161 / W4 Q2 / A27:地址框 / 配对码框一组 = 上方标签 + 框 + 框下一行说明(此前只有灰字占位,框里一有字就看不出是什么)。 */
+.sync-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.sync-label {
+  font-size: var(--fs-12);
+  color: var(--ink-soft);
+}
+.sync-hint {
+  font-size: var(--fs-12);
+  line-height: 1.6;
+  color: var(--ink-soft);
+}
+/* A8(WD-10):「创建」/「加入」等的那两秒写在钮后面(不挪钮)。 */
+.sync-busy {
+  align-self: center;
+  font-size: var(--fs-12);
+  color: var(--ink-soft);
+}
+.sync-busy:empty { display: none; }
+/* Q14 ★①:断开时的「现在重连」那一行(与上下两行同一套间距)。 */
+.sync-reconnect {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.sync-reconnect-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
 
 /* 引导进度(用户面 121):与安卓 `.bar` 同形 —— 细条、朱砂淡底、朱砂填充;字走 .sync-dim。 */
 .sync-boot {

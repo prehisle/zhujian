@@ -915,7 +915,13 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     const head = sec?.querySelector<HTMLElement>(".topic-head");
     if (!head) return;
     // 已在视野里就不动(改名 / 改色:列表别跳);不在就滚到中间 —— 别贴着底边停,回执浮条就压在那儿。
-    const r = head.getBoundingClientRect();
+    // 「在视野里」按**名字**量,不按整个行框:150% 缩放下滚动位置按设备像素取整,整表重画后把 scrollTop
+    // 还回去,贴着上沿那一行会比视口上沿高出零点几像素(实测 0.03px)—— 按行框严格比就当它出了屏,
+    // 滚到正中、整表跳 290px(W4 T1)。名字离行框上下各隔一圈内边距,框边被裁掉几像素、名字整个看得见,
+    // 就是在眼前。
+    const name = head.querySelector<HTMLElement>(".topic-title");
+    if (!name) throw new Error(`topic row ${id} has no .topic-title`);
+    const r = name.getBoundingClientRect();
     const l = list.getBoundingClientRect();
     if (r.top < l.top || r.bottom > l.bottom) head.scrollIntoView({ block: "center" });
     if (!flash) return;

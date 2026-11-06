@@ -10,6 +10,9 @@
   border-bottom: 1px solid var(--line);
 }
 .filter-row[hidden] { display: none; }
+/* 占位态(W4 A25,随记页还没有随记时):这一行照样占着高度、只是看不见 —— 第一条进来时它原地显出来,
+   下面的记一笔框不被往下推。visibility:hidden 连焦点一起拦掉(Tab 不进看不见的过滤框)。 */
+.filter-row.reserve { visibility: hidden; }
 /* 标签行整行没发(一枚标签都筛不出,renderFilterPills 清空)且类型轴也空时:过滤框并到时间轴那一行
    右端,别为它单留一行(10-10,用户报「最初无标签时别显示标签选择区域」——只清空 pill 的话,
    那一行照旧被过滤框撑着,屏上省不下任何东西)。 */

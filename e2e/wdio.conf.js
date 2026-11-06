@@ -242,6 +242,11 @@ export const config = {
         `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`,
       );
     });
+    // W4 161(D1):app 一起来壳就置一枚「光标进随记页记一笔框」的 take 旗(lib.rs `summon_notebook`,
+    // 人手打开朱简那一下),第一只起来的 notebook 页取走它就把光标放进框里。这里先替 spec 取走 ——
+    // 否则谁先取是竞速:spec 第一句 goNotebook 重载出来的那页赶在启动那页之前取到,光标就被塞进记一笔框,
+    // 之后 `browser.keys` 的单键全打成了字(悬停卡片按 E / D 那一族)。那条行为本身在真实例上验。
+    await browser.execute(() => window.__TAURI__.core.invoke("take_summon_focus"));
     // 清**内容**不删库:删库遇上另一窗还开着连接会走 `blocked`,那一路要么挂住要么静默跳过。
     await browser.executeAsync((done) => {
       const req = indexedDB.open("zhujian-compose-draft", 1);

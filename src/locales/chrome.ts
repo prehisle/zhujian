@@ -3,8 +3,9 @@ import { defineMessages } from "./entry";
 
 export const chrome = defineMessages({
   "notebook.maximize": { zh: "最大化", en: "Maximize" },
-  "notebook.capturedIdea": { zh: "捕获窗记下了一条随记", en: "Capture window saved a note" },
-  "notebook.capturedTask": { zh: "捕获窗记下了一条待办", en: "Capture window saved a to-do" },
+  // W4 Q11 / WD-38:「捕获窗」换白话「随手记小窗」(用户拍定的词表)。
+  "notebook.capturedIdea": { zh: "小窗里记下了一条随记", en: "Saved a note from the quick-note window" },
+  "notebook.capturedTask": { zh: "小窗里记下了一条待办", en: "Saved a to-do from the quick-note window" },
   "notebook.restoreDown": { zh: "向下还原", en: "Restore down" },
   "notebook.expandSidebar": { zh: "展开侧栏 (Ctrl+B)", en: "Expand sidebar (Ctrl+B)" },
   "notebook.collapseSidebar": { zh: "折叠侧栏 (Ctrl+B)", en: "Collapse sidebar (Ctrl+B)" },
@@ -14,6 +15,13 @@ export const chrome = defineMessages({
   "notebook.clipboardLink": { zh: "剪贴板里有一条朱简链接", en: "There is a Zhujian link in the clipboard" },
   "notebook.open": { zh: "打开", en: "Open" },
   "notebook.close": { zh: "关闭", en: "Close" },
+  // 全局快捷键被别的程序占着(W4 A6 / Q8 ★①):随记页顶上那条,点了直达设置「快捷键」页。与捕获窗那条同一句。
+  "notebook.hotkeyBanner": { zh: "快捷键 {keys} 被别的程序占用,点此改键", en: "Shortcut {keys} is taken by another program — click here to change it" },
+  // 第一次点 ✕(W4 A5,tray-hint.ts):✕ 实为藏进托盘,第一次先说清。托盘菜单的「退出」今天只有中文,
+  // 故两种语言都说「最下面那一项」,不点它的名字。Windows 托盘左键单击不开窗(留给双击),故写「双击」。
+  "notebook.trayHintTitle": { zh: "关掉窗口,朱简还开着", en: "Closing the window keeps Zhujian running" },
+  "notebook.trayHintBody": { zh: "点 ✕ 只是把窗口收进屏幕右下角的托盘,朱简还在后台开着 —— 快捷键和截止提醒都要靠它。双击托盘里的朱简图标(可能收在 ^ 里)就能回来;要真退出,在那个图标上点右键,选最下面那一项「退出」。", en: "✕ only tucks the window into the tray at the bottom-right of the screen; Zhujian keeps running in the background — the shortcuts and due reminders need it. Double-click the Zhujian icon in the tray (it may be under ^) to bring it back; to really quit, right-click that icon and pick the last item in its menu." },
+  "notebook.trayHintOk": { zh: "知道了,收进托盘", en: "Got it, hide to tray" },
   "notebook.joinPreparing": { zh: "准备中…", en: "Preparing…" },
   "notebook.joinPairing": { zh: "正在配对…", en: "Pairing…" },
   "notebook.joinBooting": { zh: "正在拉取账户数据…", en: "Fetching account data…" },
@@ -23,14 +31,19 @@ export const chrome = defineMessages({
   "notebook.joinWarnSuffix": { zh: "(注意:{warnings})", en: " (note: {warnings})" },
   "notebook.joinedStay": { zh: "已加入空间「{name}」{warn},保存或清空正在编辑的内容后,从空间菜单切换过去", en: "Joined space “{name}”{warn}; save or clear what you are editing, then switch over from the space menu" },
   "notebook.joined": { zh: "已加入空间「{name}」{warn}", en: "Joined space “{name}”{warn}" },
+  // 161 / W4 Q13 ★①:加入回执旁那枚「改名」(没起过名 / 和这台某本同名时),直达空间菜单的改名那一行。
+  "notebook.renameGo": { zh: "改名", en: "Rename" },
   "notebook.joinSpace": { zh: "加入空间(输入配对码)…", en: "Join a space (enter a pairing code)…" },
-  "notebook.joinHint": { zh: "这会把对方账户里的本子作为一个新空间加到这台电脑,当前空间不受影响。想把这台电脑的主空间并进对方账户(两边内容合并),用侧栏「同步」里的「用配对码加入」。", en: "This adds the other account's notebook to this computer as a new space; the current space is not affected. To merge this computer's main space into that account (contents from both sides combined), use “Join with a pairing code” under Sync in the sidebar." },
-  "notebook.joinServerPh": { zh: "服务器地址(wss://…)", en: "Server address (wss://…)" },
-  "notebook.joinCodePh": { zh: "配对码(对方设备「添加设备」出示)", en: "Pairing code (shown by “Add device” on the other device)" },
+  "notebook.joinHint": { zh: "这会把对方账户里的本子作为一个新空间加到这台电脑,当前空间不受影响。想让现在这一本和对方合成同一本(两边内容合并),改用侧栏「同步」里的「用配对码加入」。", en: "This adds the other account's notebook to this computer as a new space; the current space is not affected. To merge the notebook you are in now with that account (contents from both sides combined), use “Join with a pairing code” under Sync in the sidebar instead." },
+  // W4 A22(WD-13):「用配对码加入」那枚钮只在主空间、还没开同步时才有 —— 别的时候不再叫人去找它。
+  "notebook.joinHintNoMerge": { zh: "这会把对方账户里的本子作为一个新空间加到这台电脑,当前空间不受影响,两本各是各的、不合并。", en: "This adds the other account's notebook to this computer as a new space; the current space is not affected, and the two stay separate." },
   "notebook.join": { zh: "加入", en: "Join" },
   "notebook.cancel": { zh: "取消", en: "Cancel" },
   "notebook.resetSpace": { zh: "重置当前空间…", en: "Reset current space…" },
-  "notebook.resetWarnSynced": { zh: "将删除本机此空间的全部数据,不可恢复。确认另一台设备有在线完整副本后再继续;重置后可用「加入空间」重新加入,旧设备身份请告知运营者吊销。", en: "This will delete all data of this space on this device, irreversibly. Make sure another device has a complete copy online before continuing; afterwards you can rejoin via “Join a space”. Ask the operator to revoke the old device identity." },
+  // 161 / W4 Q12(A40 / WP-13 的桌面对应):「旧设备身份请告知运营者吊销」是内部说法 ⇒ 换成用户自己做得到的那条路(值同手机 main.resetWarnSynced)。
+  "notebook.resetWarnSynced": { zh: "将删除本机此空间的全部数据,不可恢复。确认另一台设备有在线完整副本后再继续;重置后可用「加入空间」重新加入,之后到一台管理设备的「设备名单」里把这台的旧身份移除。", en: "This deletes all data of this space on this device, irreversibly. Make sure another device has a complete copy online before continuing; afterwards you can rejoin via “Join a space”, then remove this device's old identity from Devices on an admin device." },
+  // Q12:这一本已不在账户里(被移出 / 自己退出)时,点出之后记的那几条只在这里(值同手机 main.resetWarnGone)。
+  "notebook.resetWarnGone": { zh: "将删除本机此空间的全部数据,不可恢复。这台不在账户里之后记的那几条只在这里、别处没有:先把它们复制出来再重置。重置后可以输码重新加入。", en: "This deletes all data of this space on this device, irreversibly. Anything noted here after this device left the account exists only here: copy it out before resetting. Afterwards you can rejoin with a pairing code." },
   "notebook.resetWarnLocalOnly": { zh: "此空间未开启同步,本机就是唯一副本。重置=永久删除这个本子的全部内容,没有任何地方可以找回。", en: "Sync is not enabled for this space; this device holds the only copy. Resetting permanently deletes everything in this notebook, with no way to get it back." },
   "notebook.resetConfirm": { zh: "确认重置", en: "Confirm reset" },
   "notebook.spaceNotLoaded": { zh: "此空间未装载", en: "This space is not loaded" },
@@ -70,6 +83,11 @@ export const chrome = defineMessages({
   "space.mainSuffix": { zh: "(默认空间)", en: " (default space)" },
   "space.defaultName": { zh: "默认空间", en: "Default space" },
   "space.unnamedName": { zh: "未命名空间 · {id}", en: "Unnamed space · {id}" },
+  // 161 / W4 Q12 ★①:已不在账户里的那一本,空间菜单那一行与侧栏「同步」后面标这一句(键名与值同手机,登记 CROSS_END_KEYS)。
+  "main.tagUnsynced": { zh: "已不再同步", en: "No longer syncing" },
+  // 161 / W4 Q13 ★① = A44(WP-07 / X-01):主空间从没起过名时屏上叫「默认空间」,可这个名字不跟着走 —— 别的设备加入后叫「未命名空间 · XXXX」。空间菜单里标出来;⛔ 不落名字(space-entry-plan §3.6)。
+  "notebook.unnamedMark": { zh: "(未起名)", en: " (no name yet)" },
+  "notebook.unnamedMarkTitle": { zh: "这一本从没起过名:「默认空间」只是这台上的叫法,别的设备加入后它叫「未命名空间 · 四位码」。想到哪儿都叫同一个名,点「重命名当前空间」起一个。", en: "This notebook has never been named: “Default space” is only what this computer calls it; on a device that joins it, it shows as “Unnamed space · code”. To have one name everywhere, use “Rename current space”." },
   "hotkeyMenu.actionsTitle": { zh: "操作(点开,或悬停卡片按 / 键)", en: "Actions (click to open, or hover the card and press /)" },
   "zoom.badge": { zh: "界面字号 {percent}%{limit}", en: "Text size {percent}%{limit}" },
   // 621:半角括号是本仓家风(zh 值里紧贴汉字的括号 171 处半角、全角只有这两条),收齐。

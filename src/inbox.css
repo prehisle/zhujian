@@ -42,6 +42,73 @@
   white-space: nowrap;
 }
 
+/* ---- 全局快捷键被占着(W4 A6 / Q8 ★①):页头下一条淡朱底提示,「点此改键」直达设置「快捷键」页 ----
+   形照捕获窗那条 #cap-hotkey(index.html):淡朱底、朱砂字、右端一枚 ×。前缀 hkb-:裸 hk- 归卡片
+   ⋯ 菜单那族(hotkey-menu.css),同前缀裸类会串样式(settings.css 那条 .hkset- 的同一理由)。
+   左右与内容区对齐(30px;它在页头之下,不必再让浮动窗控)。 */
+.v-inbox .hkb-banner {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 30px 0;
+  padding: 7px 11px;
+  border-radius: var(--radius-sm);
+  background: var(--seal-tint);
+  font-size: var(--fs-13);
+  line-height: 1.45;
+}
+.v-inbox .hkb-banner[hidden] { display: none; }
+.v-inbox .hkb-fix {
+  flex: 1;
+  min-height: 24px;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  color: var(--seal-ink-on-seal-tint);
+  font: inherit;
+  padding: 0;
+}
+.v-inbox .hkb-fix:hover { text-decoration: underline; }
+.v-inbox .hkb-x {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  color: var(--seal-ink-on-seal-tint);
+  font-size: var(--fs-15);
+  line-height: 1;
+  padding: 0;
+}
+.v-inbox .hkb-x:hover { color: var(--seal); }
+
+/* ---- 这一本已不在账户里(161 / W4 Q12 ★①;sync-gone.ts):页头下一条,形同上面那条淡朱底提示 ----
+   粗体那句说是哪一种(你已退出 / 被移出或停用),后面一句「这台上的内容都还在,之后记的只留在这台」;整条是钮,点了开同步浮层。
+   没有 ×(这一档是事实不是提醒,服务器又收了这台或重置后它自己收)。 */
+.v-inbox .gone-banner {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  margin: 10px 30px 0;
+  padding: 7px 11px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: var(--seal-tint);
+  color: var(--seal-ink-on-seal-tint);
+  font: inherit;
+  font-size: var(--fs-13);
+  line-height: 1.45;
+  text-align: left;
+  cursor: pointer;
+}
+.v-inbox .gone-banner[hidden] { display: none; }
+.v-inbox .gone-banner:hover .gone-head { text-decoration: underline; }
+
 /* ---- 新建灵感 compose bar (top of 未归类) ---- */
 .v-inbox .compose {
   display: flex;
@@ -494,6 +561,11 @@
 .v-inbox .discard-hint { margin: 4px 0 0; font-size: var(--fs-12); color: var(--seal-ink); }
 /* 157 G4 / P5:卡上「改过」小字(同署名那一档存在感)、读态历史的落点、比对上头那句说明。 */
 .v-inbox .edited-mark { margin-left: 8px; font-size: var(--fs-12); color: var(--ink-soft); }
+/* 161 / W4 A47 / Q16(WP-19 / WP-24):卡上那一行排成「HH:MM · 别名 · 改过」(同手机)——「·」两边都留空(此前左边 0、贴着时间),
+   「改过」跟在来源后面时也隔一枚「·」(不隔就读成「那台改过」;那个名字是谁建的,不是谁改的)。 */
+.v-inbox .note-time .sig-chip { margin-left: 6px; }
+.v-inbox .note-time .sig-chip + .edited-mark { margin-left: 4px; }
+.v-inbox .note-time .sig-chip + .edited-mark::before { content: "·"; margin-right: 4px; opacity: 0.6; }
 .v-inbox .hist-host:empty { display: none; }
 .v-inbox .hist-host { margin-top: 8px; }
 .v-inbox .hist-vs, .hd-panel .hist-vs { margin: 4px 0; font-family: var(--font-sans); font-size: var(--fs-12); color: var(--ink-soft); }

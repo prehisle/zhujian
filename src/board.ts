@@ -189,15 +189,18 @@ const ICON_SEAL =
 const ICON_TRASH =
   '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 4.2h11M6.2 4.2V2.6h3.6v1.6M3.8 4.2l.8 9.2h6.8l.8-9.2"/></svg>';
 
+// W4 A25(新撞-5):有了第一张任务才冒出来的几枚(到期汇总 / 复制看板 / 顺序)排在「+ 新建任务」**左边**——
+// 页头这一组整体靠右,新冒出来的只吃掉左边的空当,「+ 新建任务」及右边几枚原地不动。此前它们排在右边,
+// 记下第一张时整排往左挪约 100px,手正要再点「+ 新建任务」就点空了。
 const SKELETON = `
   <header data-tauri-drag-region>
     <h1>${t("board.title")}</h1>
     <span class="spacer" data-tauri-drag-region></span>
-    <button class="hbtn" id="add-task" type="button" title="${t("board.newTask")}">+ <span class="lbl">${t("board.newTask")}</span> <kbd class="k">N</kbd></button>
-    <span class="copy-slot" id="copy-slot"></span>
     <span class="head-tools">
       <button class="hbtn due-soon" id="due-soon" title="${t("board.dueSoonTitle", { days: DUE_SOON_DAYS })}" hidden><span class="lbl" id="due-soon-lbl"></span><span class="ico">${ICON_DUE}</span><span class="lbl-short" id="due-soon-n"></span></button>
+      <span class="copy-slot" id="copy-slot"></span>
       <button class="hbtn" id="board-sort" title="${t("board.sortTitle")}"><span class="lbl" id="board-sort-lbl">${t("board.sortManual")}</span><span class="lbl-short">↕</span></button>
+      <button class="hbtn" id="add-task" type="button" title="${t("board.newTask")}">+ <span class="lbl">${t("board.newTask")}</span> <kbd class="k">N</kbd></button>
       <button class="hbtn" id="manage-cols" title="${t("board.manageColsTitle")}">≡ <span class="lbl">${t("board.manageCols")}</span></button>
       <button class="hbtn" id="seal-toggle" title="${t("board.sealTitle")}"><span class="lbl">${t("board.sealLbl")}</span><span class="ico">${ICON_SEAL}</span><span class="tn" id="seal-n">0</span> <kbd class="k">G</kbd></button>
       <button class="hbtn" id="trash-toggle" title="${t("board.trashTitle")}"><span class="lbl">${t("board.trashLbl")}</span><span class="ico">${ICON_TRASH}</span><span class="tn" id="trash-n">0</span> <kbd class="k">R</kbd></button>
@@ -2717,7 +2720,10 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       // 当前标题。时间轴(461)在类型轴之下、标签轴之上——独立第四维,先按创建时间
       // 分区圈定,类型/标签 pill 的计数与筛选都在这个已收窄的集合里算(同 kind 圈定
       // topics 的先后关系)。
-      filterRow.hidden = visible.length === 0;
+      // W4 A25(同随记页那条,WD-27 / 新撞-5):空看板时这一行也占着位置、只是看不见(`.reserve`),
+      // 记下第一张任务时它原地显出来,下面那几列不被整体往下推。
+      filterRow.hidden = false;
+      filterRow.classList.toggle("reserve", visible.length === 0);
       const timeNarrowed = applyTimeFilter(visible, timeFilter, (t) => t.created_at);
       if (visible.length > 0) {
         renderTimePills(timeBar, visible, (t) => t.created_at, timeFilter, (b) => {
@@ -2729,6 +2735,11 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
         renderKindPills(kindBar, timeNarrowed, allTopics, filter, () => void load());
         renderFilterPills(filterBar, timeNarrowed, allTopics, filter, () => void load());
         wireTagPills();
+      } else {
+        // 占位那一行与第一张进来之后同高:时间轴照画(全是 0、看不见),类型 / 标签两轴清空。
+        renderTimePills(timeBar, visible, (t) => t.created_at, timeFilter, () => {});
+        kindBar.replaceChildren();
+        filterBar.replaceChildren();
       }
 
       // 到期汇总(502):计数按**整块看板**算(不随任何筛选收缩)—— 它回答的是「今天我
@@ -2841,15 +2852,61 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
 
   // 65:顶栏那颗「复制看板」被塌缩规则收走时,列头那颗「复制本列」就不再让位(两颗互为替身,
   // 而它们的退场判据是两根不同的轴 —— 顶栏内容宽 / 列宽,窄窗 + 多列时同时成立)。
-  // ⛔ **别在这里重写一遍那个 929** —— 判据是**问 CSS 自己**:顶栏塌缩是 container query
-  // 判的,顶栏可用宽还随侧栏折没折(172↔52)与界面字号档(241 的 setZoom)变,这边算不出。
-  // ⚠ 观察 header 而不是 window:上面那两样都不改窗宽,却都改顶栏宽。
+  // ⛔ 判据是**问 CSS 自己**(读 #copy-slot 的 computed display),别在这里另算一遍。
   const boardHeader = view.querySelector("header") as HTMLElement;
   const syncHdrCopy = (): void => {
     view.dataset.hdrcopy = getComputedStyle(copySlot).display === "none" ? "off" : "on";
   };
-  const hdrRO = new ResizeObserver(syncHdrCopy); // observe() 自己会先派一次,不必手动初始化
+  // ⭐ W4 A20(WD-11)**页头让位改成「按这一刻真装不装得下」**:此前三档断点是 container query 写死的
+  // 宽度,按**最坏内容**量的(到期三段全满、计数三位数、英文另一套)⇒ 界面字号放大一档(110%,顶栏 CSS 宽
+  // 少一截)就掉进字母态,只剩「+ N」「≡」「0」「0」,而页头中间其实还空着一大截。⇒ 从全形起逐档试,
+  // 取**第一档放得下一行**的(板子上真有的字、真有的计数);让的顺序照旧「先让不丢能力的」(board.css)。
+  // 何时重量:顶栏变宽变窄(窗 / 侧栏折叠 / 字号档,ResizeObserver 看宽)、页头里的字或显隐变了
+  // (到期数、计数、复制钮出没、进出回收站 —— MutationObserver)、字体加载完。
+  const FIT_TIERS: string[][] = [
+    [],
+    ["hdr-nok"],
+    ["hdr-nok", "hdr-short"],
+    ["hdr-short", "hdr-letter"],
+    ["hdr-short", "hdr-letter", "hdr-nocopy"],
+  ];
+  const FIT_ALL = ["hdr-nok", "hdr-short", "hdr-letter", "hdr-nocopy"];
+  const headTools = boardHeader.querySelector(".head-tools") as HTMLElement;
+  const headTitle = boardHeader.querySelector("h1") as HTMLElement;
+  /** 一行放得下:那一组钮没被挤到第二行,也没横着溢出。 */
+  const headerFits = (): boolean =>
+    headTools.getBoundingClientRect().top < headTitle.getBoundingClientRect().bottom &&
+    boardHeader.scrollWidth <= boardHeader.clientWidth;
+  const fitHeader = (): void => {
+    let tier = FIT_TIERS.length - 1;
+    for (let i = 0; i < FIT_TIERS.length; i++) {
+      boardHeader.classList.remove(...FIT_ALL);
+      boardHeader.classList.add(...FIT_TIERS[i]);
+      if (headerFits()) {
+        tier = i;
+        break;
+      }
+    }
+    boardHeader.dataset.fit = String(tier); // e2e 与探针读这一格,不靠猜断点
+    syncHdrCopy();
+  };
+  let fitWidth = -1;
+  const hdrRO = new ResizeObserver((entries) => {
+    // 只看内容宽:换档会改页头高度(两行 ↔ 一行),高度变化再触发一次时不重量,免得来回跳。
+    const w = entries[entries.length - 1].contentRect.width;
+    if (w === fitWidth) return;
+    fitWidth = w;
+    fitHeader();
+  }); // observe() 自己会先派一次,不必手动初始化
   hdrRO.observe(boardHeader);
+  // 页头自己的类(换档)不算内容变化 —— 只认它**里面**那几枚钮的字与显隐。
+  const hdrMO = new MutationObserver((records) => {
+    if (records.some((r) => r.target !== boardHeader)) fitHeader();
+  });
+  hdrMO.observe(boardHeader, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ["hidden", "class"] });
+  void document.fonts.ready.then(() => {
+    if (!unmounted) fitHeader();
+  });
 
   composeCtl.setLiveReload(() => void load()); // 本 mount 即当前活看板:旧保存链落账后经它通知重读(codex 四审 M)
   void load();
@@ -2883,6 +2940,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       closeHistoryDialog(); // 同上(158 G4-A8):历史读框取数走「当前空间」,切了空间还开着就会拿旧 id 去问新空间
       teardownViewKeys();
       hdrRO.disconnect(); // 65:观察的是本 mount 的 header,不许活过这棵 mount
+      hdrMO.disconnect(); // W4 A20:同上
       hk.destroy(); // tear down the document keydown + any lingering menu listeners
       // (P1 #9d)compose 草稿与暂存图跨视图存活:文字过桥进模块态,composeCtl.imgs 本身
       // 模块级、root 随下一个 mount 搬家(此前这里 clear 掉=切个视图就丢图)。空间标记

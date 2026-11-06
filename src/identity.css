@@ -1,9 +1,11 @@
 /* 条目署名 chip(identity-plan §3.7):卡片上一枚安静的小字,和时间戳同一档存在感。
    刻意不用标签 chip 的边框/底色——署名不是可点、可筛的实体,只是一句「谁记的」。 */
+/* 161 / W4 A47(WP-19):字色从 --ink-faint 提到 --ink-soft(同卡上的时间)—— 此前压卡底只有 2.31:1,§2.2 小字底线 5.0;
+   它是一句要读的「谁记的」,不是装饰(ui-guidelines §2.1 那句「--ink-faint 只给纯装饰」)。 */
 .sig-chip {
   font-size: var(--fs-12);
   line-height: 1;
-  color: var(--ink-faint);
+  color: var(--ink-soft);
   letter-spacing: 0.02em;
   white-space: nowrap;
   overflow: hidden;

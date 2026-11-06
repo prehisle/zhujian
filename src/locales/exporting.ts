@@ -5,7 +5,8 @@ import { defineMessages } from "./entry";
 
 export const exporting = defineMessages({
   "export.title": { zh: "导出为 Markdown", en: "Export as Markdown" },
-  "export.sub": { zh: "当前空间的全部随记与看板,连同配图和留言,写成 Markdown 放进「下载」文件夹。不含回收站与编辑历史。", en: "Every note and card in this space, with images and comments, as Markdown in your Downloads folder. Trash and edit history are left out." },
+  // W4 A23(WD-14):长文其实一直导出了(「长文」子目录),说明漏写;导完会把那个文件夹打开到最前面,事先说一声。
+  "export.sub": { zh: "当前空间的全部随记、看板与长文,连同配图和留言,写成 Markdown 放进「下载」文件夹;导完会打开那个文件夹。不含回收站与编辑历史。", en: "Every note, board card and long-form note in this space, with images and comments, as Markdown in your Downloads folder; the folder opens when it’s done. Trash and edit history are left out." },
   "export.run": { zh: "导出", en: "Export" },
   "export.running": { zh: "导出中…", en: "Exporting…" },
   "export.done": { zh: "已导出到 {path}", en: "Exported to {path}" },

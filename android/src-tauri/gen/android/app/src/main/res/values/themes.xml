@@ -2,5 +2,7 @@
     <!-- Base application theme. -->
     <style name="Theme.zhujian_android" parent="Theme.MaterialComponents.DayNight.NoActionBar">
         <!-- Customize your theme here. -->
+        <!-- 冷启时起始窗口 / 窗口底是纸面色而不是白(161 / W4 A35;Android 12+ 的 splash 底色缺省就取它)。 -->
+        <item name="android:windowBackground">@color/zj_paper</item>
     </style>
 </resources>

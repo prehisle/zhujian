@@ -823,6 +823,34 @@ impl Coord {
         }
     }
 
+    /// 「现在重连」(161 / W4 Q14 ★①,A45):离线时把**本来就会做**的那次重连提前 —— 只在状态是
+    /// `offline` 时往传输任务发一枚 [`transport::Control::Reconfigured`](core `offline_wait` 收到它即
+    /// 返回 `Idle::Reconfigured`、`backoff = 1`、立刻重拨)。返回 `true` = 发了;`false` = 此刻不是离线,
+    /// 什么都没做(UI 只在离线时给这枚钮,按下与状态变化之间赛跑输了就是这一形)。
+    ///
+    /// ⛔ **在线 / 连接中 / 初始同步中一律不发**:会话里收到 `Reconfigured` = 断掉现在这条会话重来
+    /// (session_loop 那一臂),用户点一下「重连」不该打断一条好好的连接。
+    ///
+    /// 判与发在**同一把状态锁里**做(`try_send` 不 await):传输任务从 `offline` 换到 `connecting` 要拿这把锁,
+    /// 故「判的时候是离线、发出去之前它已经连上了」那一段被锁住。剩下的一段窗口是「退避刚到点、还没把状态改成
+    /// `connecting`」—— 那时这一枚会在下一条会话里被收到,代价是**一次**立刻重拨(`Reconfigured` 是配置变更的
+    /// 常规路:会话收场照常走 wrapup,未 ack 的 op 下次重发,对端幂等吸收),不丢东西、不连环。
+    /// ⛔ 不改状态机、不动退避上限;不拿 `lifecycle`(配对 / 创号可能长持它,重连不该排在它们后面)。
+    pub async fn reconnect_now(&self, space_id: &str) -> Result<bool, String> {
+        let rt = self.control_runtime(space_id)?;
+        let st = rt.status.lock().expect("sync status mutex poisoned");
+        if st.state != "offline" {
+            return Ok(false);
+        }
+        match rt.control.try_send(transport::Control::Reconfigured) {
+            Ok(()) => Ok(true),
+            Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
+                Err("同步任务手上的事排满了,稍后再点".into())
+            }
+            Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => Err("同步任务未运行".into()),
+        }
+    }
+
     // ---- 加入空间(space-entry-plan §3,JoinManager) ----
 
     /// 账户唯一性的权威裁决(§3.5):**重扫磁盘正式候选**(不信缓存 catalog/
@@ -1992,6 +2020,109 @@ mod tests {
         let d = spaces::read_descriptor(spaces::MAIN_SPACE, &main_path).unwrap();
         assert!(d.account_id.is_none(), "取消后不许留任何配置");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 161 / W4 Q14 ★①「现在重连」:**只在离线时**把重连提前一次,而且提前的那一次**当场就拨**。
+    /// ① 没配同步(`off`)→ 不发(`false`);不是前台空间 → 响亮拒。② 配上一台「接了就关」的假服务器,
+    /// 等它连败四次(退避 1 → 2 → 4 秒;⚠ 头一拨偶尔紧跟着再拨一次、相隔几毫秒,量过,所以数四次不数三轮),
+    /// 下一次本该在 ≥ 4 秒后;离线时点一下 → `true`,下一次拨号 1 秒内就到(远早于那一截退避)。
+    /// 服务器替身数它被拨了几次,拨号时刻就是证据。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn reconnect_now_pokes_only_when_offline_and_redials_at_once() {
+        let (coord, dir) = boot_coord("reconnect", &[], fast()).await;
+        assert!(!coord.reconnect_now(spaces::MAIN_SPACE).await.unwrap(), "没配同步:不发");
+        assert!(coord.reconnect_now("01NOTASPACE0000000000000000").await.is_err(), "不是前台空间:拒");
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let dials = Arc::new(Mutex::new(Vec::<std::time::Instant>::new()));
+        let d2 = dials.clone();
+        tokio::spawn(async move {
+            while let Ok((sock, _)) = listener.accept().await {
+                d2.lock().unwrap().push(std::time::Instant::now());
+                drop(sock); // 接了就关:握手不成 ⇒ 离线、按退避重拨
+            }
+        });
+        {
+            let rt = coord.sup.get(spaces::MAIN_SPACE).unwrap();
+            let conn = rt.db.lock().unwrap();
+            conn.execute_batch(&format!(
+                "INSERT INTO sync_meta(key,value) VALUES
+                   ('account_id','01AAAAAAAAAAAAAAAAAAAAACCT'),
+                   ('k_acc','{z}'),('device_key','{z}'),('server_url','ws://127.0.0.1:{port}');",
+                z = "00".repeat(32),
+            ))
+            .unwrap();
+        }
+        assert!(coord.finish_account_creation(spaces::MAIN_SPACE).await.is_none(), "poke 上线");
+
+        let state = || {
+            let rt = coord.sup.get(spaces::MAIN_SPACE).unwrap();
+            let s = rt.status.lock().unwrap().state.clone();
+            s
+        };
+        // 连败四次,且之后已落到离线(退避 ≥ 4 秒那一截里)。
+        let mut ready = false;
+        for _ in 0..600 {
+            if dials.lock().unwrap().len() >= 4 && state() == "offline" {
+                ready = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        assert!(ready, "假服务器连败四次没等到:dials={}", dials.lock().unwrap().len());
+        let n = dials.lock().unwrap().len();
+        let t0 = std::time::Instant::now();
+        assert!(coord.reconnect_now(spaces::MAIN_SPACE).await.unwrap(), "离线:发");
+        let mut redialed = None;
+        for _ in 0..120 {
+            if let Some(at) = dials.lock().unwrap().get(n).copied() {
+                redialed = Some(at.saturating_duration_since(t0));
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        let waited = redialed.expect("点了「现在重连」之后 3 秒内没有再拨");
+
+        assert!(
+            waited < Duration::from_secs(1),
+            "重拨该当场就到(本该等的退避 ≥ 4 秒),实际 {waited:?}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 同上,另一半:**在线时不发** —— 会话里收到 `Reconfigured` = 断掉现在这条会话重来。真服务器上建账户、
+    /// 等到在线,点一下 → `false`,之后一秒里状态一拍都没离开过 `online`(发了的话会掉回 `connecting`)。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn reconnect_now_leaves_a_live_session_alone() {
+        let sdir = crate::test_temp::dir().join(format!("zj-reconnect-srv-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&sdir);
+        std::fs::create_dir_all(&sdir).unwrap();
+        std::fs::write(sdir.join("banlist.txt"), "# 空封禁表\n").unwrap();
+        let cfg = zhujian_syncd::Config::new(sdir.join("banlist.txt"), sdir.join("registry.json"));
+        let (addr, _handle) = zhujian_syncd::serve("127.0.0.1:0".parse().unwrap(), cfg).await.unwrap();
+        let (coord, dir) = boot_coord("reconnect-live", &[], fast()).await;
+        let out = coord.create_account(spaces::MAIN_SPACE, &format!("ws://{addr}")).await.unwrap();
+        assert!(out.post_commit_error.is_none(), "{:?}", out.post_commit_error);
+        let state = || {
+            let rt = coord.sup.get(spaces::MAIN_SPACE).unwrap();
+            let s = rt.status.lock().unwrap().state.clone();
+            s
+        };
+        for _ in 0..200 {
+            if state() == "online" {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        assert_eq!(state(), "online", "建完账户该上线");
+        assert!(!coord.reconnect_now(spaces::MAIN_SPACE).await.unwrap(), "在线:不发");
+        for _ in 0..100 {
+            assert_eq!(state(), "online", "在线时点「现在重连」不许打断会话");
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&sdir);
     }
 
     /// post-commit 旁路(codex r1 #5):收尾失败=Some(人话)旁路报告——坏 catalog

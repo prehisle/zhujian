@@ -1623,6 +1623,46 @@ async fn sync_roster_refresh(
     }
 }
 
+/// 「现在重连」(161 / W4 Q14 ★① = A45 桌面那半;手机孪生 `mobile/src/coord.rs::Coord::reconnect_now`):**只在离线时**
+/// 把传输任务本来就会做的那次重连提前一次 —— 服务器回来后不必干等退避(断得越久等得越久,上限约 60 秒)。
+/// `Ok(true)` = 发了;`Ok(false)` = 此刻不是离线(在线 / 连接中 / 没开同步),什么都没做。
+///
+/// ⭐ 两道判都在 [`reconnect_now`] 里、**同一把状态锁里**做完:
+/// - 只认 `offline`:在线时发 `Reconfigured` 会让会话循环当场收场重拨 = 断掉现在好好的会话;连接中那几拍发了也只是
+///   打断正在进行的拨号(前端在那几拍把钮置灰)。⛔ 别把判据放宽成「不是 online 就发」。
+/// - 判与发在同一个临界区:放锁之后再发,中间状态可能已经翻成 `connecting` / `online`(传输任务写状态拿的是同一把锁)。
+///   `try_send` 不阻塞,持锁发不会卡住传输任务。
+///
+/// ⚠ 不拿 `lifecycle`:离线时传输任务在 `offline_wait` 里睡退避,醒来就重读配置、重拨 —— `Reconfigured` 只是把这一下
+/// 提前,与它自己睡醒是同一件事、同一个读点,不多出任何「看见别的空间配置写到一半」的交错(sync_pair_start 拿锁是因为
+/// 它在**在线会话里**开槽,那是另一条路)。拿了反而会被「加入空间」那种几分钟的长命令卡住整枚钮。
+#[tauri::command]
+fn sync_reconnect_now(space_id: String, spaces: State<'_, Spaces>) -> Result<bool, String> {
+    let rt = spaces.get_writable(&space_id)?;
+    if let Some(v) = rt.veto() {
+        return Err(v);
+    }
+    reconnect_now(&rt.status, &rt.control)
+}
+
+/// [`sync_reconnect_now`] 的判与发(拆出来好在不起传输任务的情况下钉住:离线才发 / 在线不发 / 排满与停了响亮报错)。
+fn reconnect_now(
+    status: &Mutex<sync::transport::SyncStatus>,
+    control: &tokio::sync::mpsc::Sender<sync::transport::Control>,
+) -> Result<bool, String> {
+    let st = status.lock().expect("sync status mutex poisoned");
+    if st.state != "offline" {
+        return Ok(false);
+    }
+    match control.try_send(sync::transport::Control::Reconfigured) {
+        Ok(()) => Ok(true),
+        Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
+            Err("同步任务手上的事排满了,稍后再点".into())
+        }
+        Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => Err("同步任务未运行".into()),
+    }
+}
+
 /// 配对加入的目标闸(space-entry-plan §2,后端不变量、不是 UI 藏按钮):只接受
 /// main——非 main 空间的两条来路是「新建=纯本地本子(同步唯一路=创号)」与
 /// 「加入空间」(隐式 staging 槽,不收目标 space_id);直接 invoke 非 main 必拒。
@@ -2606,23 +2646,36 @@ fn show_window<R: Runtime>(app: &AppHandle<R>, label: &str) {
     raise_and_focus(&window);
 }
 
-/// 唤起笔记本主窗。托盘双击、托盘「打开朱简」菜单项、以及 Ctrl+Alt+M 全局键
-/// 三处入口共用此逻辑,避免散三份将来漂移。
+/// 唤起笔记本主窗(只露窗,不动焦点)。人手「打开朱简」的那几条入口走 `summon_notebook`
+/// (它先调这里);这里直接用的是「点此改键」(`open_settings`)与深链接 —— 各有自己的落焦处。
 /// 刻意不强制切视图:主窗隐藏不销毁,唤起后天然停在离开时的视图;真重启由前端
 /// 视图记忆(zhujian.last-view)恢复——早年写死直达看板,与视图记忆打架,已改。
 fn open_notebook<R: Runtime>(app: &AppHandle<R>) {
     show_window(app, "notebook");
 }
 
-/// 这个空间里有没有任何一条记录 —— `items` 一张表就是全部(㉜ 单实体:随记与任务同表,
-/// 回收站 `archived_at` / 归档册 `sealed_at` 也只是那张表上的两根轴),故一句 EXISTS 到底。
-/// D1(411)的判据;裸 SQL 留在壳里不下 core —— core 是两端共用面,为一句「库空不空」
-/// 给另一台叠一笔复跑债不值(与安卓 `pane_counts` 同一取舍,410)。
-fn space_has_item(conn: &Connection) -> rusqlite::Result<bool> {
-    conn.query_row("SELECT EXISTS(SELECT 1 FROM items)", [], |r| {
-        r.get::<_, i64>(0)
-    })
-    .map(|n| n != 0)
+/// 「把朱简打开」这一下(W4 A1 / WD-37):手动启动、再点一次图标(第二实例)、托盘双击 /
+/// 「打开朱简」、主窗热键、mac 的 Dock。与 `open_notebook` 只差一件事 —— 主窗露出来之后
+/// **光标进「随手记一笔」框**(前端 `notebook.ts` 收 `notebook-summoned`,只在随记页、身前
+/// 没有浮层、焦点不在任何输入框里时才放)。
+/// ⛔ 「点此改键」(`open_settings`)与深链接**不走这里**:那两条路各自有要落焦的地方
+/// (设置面板 / 被定位的那条),光标抢进记一笔框反而把人带偏。
+/// 冷启动时页面多半还没起来、事件会丢 ⇒ 同 `PendingOpenSettings` 的 take 旗兜底。
+fn summon_notebook<R: Runtime>(app: &AppHandle<R>) {
+    open_notebook(app);
+    app.state::<PendingSummonFocus>().0.store(true, Ordering::SeqCst);
+    if let Some(nb) = app.get_webview_window("notebook") {
+        let _ = nb.emit("notebook-summoned", ());
+    }
+}
+
+/// `summon_notebook` 的待处理旗(take 语义:冷启动取一次 + 收到事件取一次,谁先到谁处理)。
+struct PendingSummonFocus(AtomicBool);
+
+/// 取走「光标进记一笔框」的待处理旗(读并清)。
+#[tauri::command]
+fn take_summon_focus(app: AppHandle) -> bool {
+    app.state::<PendingSummonFocus>().0.swap(false, Ordering::SeqCst)
 }
 
 // ── 共享集成 helper(backup-plan §16.3.2,一弹 M3)───────────────────────────────
@@ -2884,13 +2937,77 @@ struct HotkeyState(Mutex<HotkeyRuntime>);
 struct HotkeyRuntime {
     capture: Shortcut,
     capture_accel: String,
+    /// 这一枚此刻真注册在系统里(启动时 / 上次改它时注册成功)。false = 被别的程序占着,
+    /// 按了没反应 —— 主窗随记页顶上那条「点此改键」、设置里那枚「没生效」、随记空态那句
+    /// 「或按 …」都读它(W4 A6 / Q8 ①),捕获窗那条提示条也是(`hotkey_conflicts`)。
+    capture_live: bool,
     notebook: Shortcut,
     notebook_accel: String,
+    notebook_live: bool,
 }
 
-/// 启动时注册失败(被别的程序占用)的全局热键加速键串——供捕获窗内提示条查询后
-/// 显示「点此改键」。`set_hotkey` 两枚都重注册成功时清空(冲突已解,提示条随之消失)。
-struct HotkeyConflicts(Mutex<Vec<String>>);
+/// 对用户说「被占用」的那一格:没注册上**且**不是 Linux。Linux 注册失败多是 Wayland 平台
+/// 限制(XGrabKey 抓不到),不是别的程序占着、改键也没用 ⇒ 照 215 / 232 的判例不说(只留日志)。
+fn hotkey_taken(live: bool) -> bool {
+    !live && !cfg!(target_os = "linux")
+}
+
+impl HotkeyRuntime {
+    fn dto(&self) -> HotkeysDto {
+        HotkeysDto {
+            capture: self.capture_accel.clone(),
+            notebook: self.notebook_accel.clone(),
+            capture_taken: hotkey_taken(self.capture_live),
+            notebook_taken: hotkey_taken(self.notebook_live),
+        }
+    }
+}
+
+/// 注册 / 注销一枚全局热键的那两下:真实现是 global-shortcut 插件,单测里换成假的
+/// (`rebind_one` 的判据要在没有系统热键表的机器上也锁得住)。
+trait HotkeyRegistrar {
+    fn register(&self, sc: Shortcut) -> Result<(), String>;
+    fn unregister(&self, sc: Shortcut) -> Result<(), String>;
+}
+
+struct PluginRegistrar<'a>(&'a AppHandle);
+
+impl HotkeyRegistrar for PluginRegistrar<'_> {
+    fn register(&self, sc: Shortcut) -> Result<(), String> {
+        self.0.global_shortcut().register(sc).map_err(|e| e.to_string())
+    }
+    fn unregister(&self, sc: Shortcut) -> Result<(), String> {
+        self.0.global_shortcut().unregister(sc).map_err(|e| e.to_string())
+    }
+}
+
+/// 把一枚热键从 `old` 换成 `new`,**只碰这一枚**(W4 A2 / 新撞-1)。
+///
+/// ⭐ 232 起的做法是「注销旧两枚 → 注册新两枚」:另一枚没动的键若被别的程序占着,连带重注册
+/// 它必失败 ⇒ 两枚都被占时**改哪枚都改不成**,而红字怪的是新按的键 —— 撞键时唯一的自救路是死的。
+/// 现在:先注册新的,成了再注销旧的 ⇒ 失败时什么都没动(不用回滚,也就没有「回滚又失败」那一格)。
+/// `old_live` = 旧键此刻是不是真注册着:被占着的旧键本来就不是我们的,不去注销它。
+/// 新旧同一枚且旧的活着 = 什么都不用做(先注册会撞上自己)。
+/// Err = 新键注册不上(被别的程序占着,或是系统保留的组合),原话交给调用方记日志。
+fn rebind_one(reg: &impl HotkeyRegistrar, old: Shortcut, old_live: bool, new: Shortcut) -> Result<(), String> {
+    if old_live && new == old {
+        return Ok(());
+    }
+    reg.register(new)?;
+    if old_live {
+        if let Err(e) = reg.unregister(old) {
+            // 新键已经生效、状态里也只认新键 ⇒ 旧键按下去不再有反应,只是没还给系统。不值得为它
+            // 把已经成功的改键报成失败。
+            log::error!("换热键:新键已生效,旧键注销失败:{e}");
+        }
+    }
+    Ok(())
+}
+
+/// `set_hotkey` 「新键注册不上」那一格的错误串。⚠ **是判别记号,不是显示文案**:前端
+/// (`settings.ts` 的 `HOTKEY_TAKEN`)见到它就换成「哪一枚、为什么」的那句人话(两种语言)。
+/// 两处逐字同,改一处必须改另一处。
+const HOTKEY_TAKEN: &str = "hotkey-taken";
 
 /// 捕获窗「点此改键」待处理旗:主窗惰性导航,未加载时 emit 的事件会丢(同 deep-link),
 /// `open_settings` 置旗,notebook 冷启动 + 收到事件各取一次(take 语义,谁先到谁处理)。
@@ -2961,6 +3078,9 @@ fn refresh_tray_hotkey_labels(app: &AppHandle, capture_accel: &str, notebook_acc
 struct HotkeysDto {
     capture: String,
     notebook: String,
+    /// 这一枚被别的程序占着、按了没反应(见 `hotkey_taken`)。
+    capture_taken: bool,
+    notebook_taken: bool,
 }
 
 // ---- 开机自启(用户面 124 ①)-------------------------------------------------------
@@ -3016,94 +3136,83 @@ fn set_autostart(app: AppHandle, on: bool) -> Result<bool, String> {
     al.is_enabled().map_err(|e| e.to_string())
 }
 
-/// 当前两枚热键的加速键串(设置面板初显)。
+/// 当前两枚热键的加速键串 + 哪枚被占着(设置面板、随记页顶那条提示、随记空态都读它)。
 #[tauri::command]
 fn get_hotkeys(app: AppHandle) -> HotkeysDto {
     let st = app.state::<HotkeyState>();
     let rt = st.0.lock().expect("hotkey state");
-    HotkeysDto {
-        capture: rt.capture_accel.clone(),
-        notebook: rt.notebook_accel.clone(),
-    }
+    rt.dto()
 }
 
 /// 改一枚热键(`which` = "capture" | "notebook",`accel` = 新加速键串)。
-/// 注销旧两枚→注册新两枚;新键被占用则回滚回旧键并报错(fail-safe:绝不留半注册态)。
-/// 成功即存盘 + 刷新托盘显示。返回改后两枚串给前端回显。
+/// **只重注册改的这一枚**(`rebind_one`,W4 A2):另一枚原样不动,它被占着也挡不住这一枚。
+/// 新键注册不上 ⇒ `Err(HOTKEY_TAKEN)`,什么都没变(旧键照旧,活着的照旧活着)。
+/// 成功即存盘 + 刷新托盘显示。返回改后两枚串(连同哪枚被占着)给前端回显。
 #[tauri::command]
 fn set_hotkey(app: AppHandle, which: String, accel: String) -> Result<HotkeysDto, String> {
     // 至少一个修饰键:裸键(如「N」)注册成全局热键会到处劫持该键。加速键串靠 '+' 连修饰键。
     if !accel.contains('+') {
-        return Err("请至少带一个修饰键(如 Ctrl、Alt)".into());
+        return Err("要先按住 Ctrl、Alt 或 Shift 中的一个".into());
     }
     let new_sc: Shortcut = accel
         .parse()
         .map_err(|_| "没认出这个快捷键,换一个试试".to_string())?;
     if new_sc.mods.is_empty() {
-        return Err("请至少带一个修饰键(如 Ctrl、Alt)".into());
+        return Err("要先按住 Ctrl、Alt 或 Shift 中的一个".into());
     }
 
     let st = app.state::<HotkeyState>();
     let mut rt = st.0.lock().expect("hotkey state");
 
-    let (new_capture, cap_accel, new_notebook, nb_accel) = match which.as_str() {
-        "capture" => (new_sc, accel.clone(), rt.notebook, rt.notebook_accel.clone()),
-        "notebook" => (rt.capture, rt.capture_accel.clone(), new_sc, accel.clone()),
+    let (old, old_live, other) = match which.as_str() {
+        "capture" => (rt.capture, rt.capture_live, rt.notebook),
+        "notebook" => (rt.notebook, rt.notebook_live, rt.capture),
         _ => return Err("未知的热键项".into()),
     };
-    if new_capture == new_notebook {
+    if new_sc == other {
         return Err("两个快捷键不能设成一样的".into());
     }
-
-    let gs = app.global_shortcut();
-    let _ = gs.unregister_all();
-    let reg = gs
-        .register(new_capture)
-        .and_then(|_| gs.register(new_notebook));
-    if let Err(e) = reg {
-        // 回滚:清掉可能已注册的一半,把旧键装回去。
-        let _ = gs.unregister_all();
-        let _ = gs.register(rt.capture);
-        let _ = gs.register(rt.notebook);
-        log::error!("改热键失败,已回滚:{e}");
-        return Err("这个快捷键可能被别的程序占用了,没换成——换一个再试".into());
+    if let Err(e) = rebind_one(&PluginRegistrar(&app), old, old_live, new_sc) {
+        log::error!("改热键失败({which} → {accel}),原样未动:{e}");
+        return Err(HOTKEY_TAKEN.into());
     }
-
-    rt.capture = new_capture;
-    rt.capture_accel = cap_accel.clone();
-    rt.notebook = new_notebook;
-    rt.notebook_accel = nb_accel.clone();
+    if which == "capture" {
+        rt.capture = new_sc;
+        rt.capture_accel = accel;
+        rt.capture_live = true;
+    } else {
+        rt.notebook = new_sc;
+        rt.notebook_accel = accel;
+        rt.notebook_live = true;
+    }
+    let dto = rt.dto();
     drop(rt);
 
     let cfg = HotkeyConfig {
-        capture: cap_accel.clone(),
-        notebook: nb_accel.clone(),
+        capture: dto.capture.clone(),
+        notebook: dto.notebook.clone(),
     };
     if let Err(e) = save_hotkey_config(&app, &cfg) {
         log::error!("热键配置存盘失败(改动已生效,重启后可能丢):{e}");
     }
     refresh_tray_hotkey_labels(&app, &cfg.capture, &cfg.notebook);
-    // 走到这里两枚键都重注册成功 = 已无占用冲突,清掉启动期记下的那份
-    // (下次捕获窗查询即空,提示条不再出现)。
-    app.state::<HotkeyConflicts>()
-        .0
-        .lock()
-        .expect("hotkey conflicts")
-        .clear();
-    Ok(HotkeysDto {
-        capture: cfg.capture,
-        notebook: cfg.notebook,
-    })
+    Ok(dto)
 }
 
-/// 启动时被别的程序占用、当前失效的全局热键(加速键串)。捕获窗据此显示提示条。
+/// 此刻被别的程序占着、按了没反应的全局热键(加速键串)。捕获窗据此显示提示条。
 #[tauri::command]
 fn hotkey_conflicts(app: AppHandle) -> Vec<String> {
-    app.state::<HotkeyConflicts>()
-        .0
-        .lock()
-        .expect("hotkey conflicts")
-        .clone()
+    let st = app.state::<HotkeyState>();
+    let rt = st.0.lock().expect("hotkey state");
+    let d = rt.dto();
+    let mut out = Vec::new();
+    if d.capture_taken {
+        out.push(d.capture);
+    }
+    if d.notebook_taken {
+        out.push(d.notebook);
+    }
+    out
 }
 
 /// 从捕获窗跳到主窗设置面板(热键冲突提示条「点此改键」):置待处理旗 → 唤起主窗 →
@@ -3583,7 +3692,41 @@ fn spawn_auto_backup_timer(app: &AppHandle) {
             // 也留在 `.backup-auto.json` 的 last_result 与进程内 pending_notice 里。
             let _ = handle.emit("backup://auto", ev);
         }
+        // W4 A17(WD-06 / WD-07):真跑了一趟(成没成都发)就知会一声 —— 开着的设置页「备份与恢复」
+        // 据此重读「自动备份」那一行与「已有备份」列表(此前它真跑了一次,页上一点动静都没有)。
+        // 只是「去重读一下」的提示,⛔ 不带结论(结论照旧从 `backup_auto_status` 读,同一个真相源)。
+        if matches!(tick, zhujian_core::backup::AutoTick::Ran(_)) {
+            let _ = handle.emit("backup://auto-ran", ());
+        }
     });
+}
+
+/// 恢复表单的「选文件…」(161 / W4 Q11 ★,WD-20):弹系统的**打开文件**框、只列 `.zjbak`,交回选中那份的完整路径;
+/// 取消 = `None`(前端什么都不变)。U 盘 / 手机拿来的备份此前只能手抄完整路径。
+///
+/// - 用 rfd(已是本 crate 直接依赖,崩溃弹框在用)的 **异步**那一形:Windows 上它自己起一条线程跑模态框,⛔ 不在主线程
+///   上同步阻塞(会把主窗的事件循环一起卡住);框挂在主窗下面(模态于主窗)。
+/// - 标题与过滤名由前端按当前语言交进来(Rust 侧不翻,i18n 边界)。
+/// - 只是**选一个路径**:读不读、怎么验仍走 `backup_restore`(core 说了算),这里不碰文件内容。
+#[tauri::command]
+async fn backup_pick_file(app: AppHandle, title: String, filter_name: String) -> Result<Option<String>, String> {
+    let win = app
+        .get_webview_window("notebook")
+        .ok_or_else(|| "找不到主窗(notebook),没法弹选文件框".to_string())?;
+    let picked = rfd::AsyncFileDialog::new()
+        .set_title(title)
+        .add_filter(filter_name, &["zjbak"])
+        .set_parent(&win)
+        .pick_file()
+        .await;
+    match picked {
+        None => Ok(None),
+        Some(f) => f
+            .path()
+            .to_str()
+            .map(|s| Some(s.to_string()))
+            .ok_or_else(|| format!("选中的路径不是合法的 UTF-8,没法填进框里:{}", f.path().display())),
+    }
 }
 
 /// 「打开所在文件夹」——复用**已有的** opener 插件(§5.2:v1 不引原生目录选择器)。
@@ -3881,16 +4024,17 @@ pub fn run() {
     // app 级单实例门(§六②):必须最先注册、先于一切开库/transport/热键——两个
     // 进程同开多库会争抢同一 origin 的 op 发射序号(oplog 的 UNIQUE 只能响亮崩,
     // 这道门让它不发生;此前仓库无真单实例锁,全局热键注册冲突只是碰巧兜底)。
-    // 第二实例被拒时把已运行实例的捕获条召到前台;e2e(YS_DB_PATH)刻意不装——
+    // 第二实例被拒时把已运行实例的**主窗**召到前台(W4 A1 / 新撞-3:再点一次图标是人找回朱简
+    // 最自然的那一下,此前弹的是捕获条、主窗藏着就再也找不回来);e2e(YS_DB_PATH)刻意不装——
     // 测试库隔离,且开发者常边开着 dev app 边跑 e2e。
     if e2e_db_path().is_none() {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
             // 第二实例是被 zhujian:// 链接拉起的:交给 deep-link 插件的 on_open_url 处理
-            // (它会唤起主窗+定位条目),这里别再弹捕获条抢焦点。否则(普通再启)照旧弹捕获。
+            // (它会唤起主窗+定位条目),这里别再抢一次焦点。
             if argv.iter().any(|a| a.starts_with("zhujian://")) {
                 return;
             }
-            show_window(app, "capture");
+            summon_notebook(app);
         }));
     }
     builder
@@ -3946,16 +4090,15 @@ pub fn run() {
                     if *shortcut == capture {
                         show_window(app, "capture");
                     } else if *shortcut == notebook {
-                        open_notebook(app);
+                        summon_notebook(app);
                     }
                 })
                 .build(),
         )
-        // 这两枚 state 早年被捕获窗创建期那记 `hotkey_conflicts` 抢先过,才挪到 builder 链上;
-        // 827 起窗在 setup 末段才建(见那里),这个位置已不再是必需,留着无害。空值起手,
-        // 真实冲突名单在 setup 注册热键后回填(见下 `*state().lock() = failed`)。
-        .manage(HotkeyConflicts(Mutex::new(Vec::new())))
+        // 两枚 take 旗。827 起窗在 setup 末段才建(见那里),manage 在哪儿都早于任何 invoke;
+        // 留在 builder 链上是历史位置,无害。
         .manage(PendingOpenSettings(AtomicBool::new(false)))
+        .manage(PendingSummonFocus(AtomicBool::new(false)))
         .setup(|app| {
             // 日志出口**恒装**(用户 2026-09-08 拍板):此前只在 debug / 台架 feature 下装,
             // 于是正式版壳里每一处 `log::error!` 都落空 —— 别的机器出问题时用户手上拿不出
@@ -4131,18 +4274,7 @@ pub fn run() {
                 boot_dir.clone(),
                 dead,
             );
-            // D1 的判据在这儿取(411,408 走查):`activate_space` 会把 conn 移走,故
-            // 必须在装配之前问。「空库」= **所有已装配空间的 `items` 一行都没有**
-            // ——不是只看 main:加入空间的用户 main 恒空(147-150 的「加入」新建独立
-            // 空间),只看 main 会让他每次启动都被弹一次主窗。
-            let mut empty_library = true;
             for (id, path, conn, clk, veto) in live {
-                if empty_library
-                    && space_has_item(&conn)
-                        .unwrap_or_else(|e| panic!("查空间 {id} 有无条目失败:{e}"))
-                {
-                    empty_library = false;
-                }
                 activate_space(app.handle(), &table, id, path, conn, clk, veto)
                     .unwrap_or_else(|e| panic!("装配空间 runtime 失败:{e}"));
             }
@@ -4150,7 +4282,7 @@ pub fn run() {
             // 前台空间(工序 8,§9):启动恒 main;notebook 前端恢复上次空间时会
             // 立即 set_foreground_space 对齐。
             app.manage(ForegroundSpace(Mutex::new(spaces::MAIN_SPACE.to_string())));
-            // 注:HotkeyConflicts / PendingOpenSettings 在 builder 链上 manage(见那里)。此处不再 manage。
+            // 注:PendingOpenSettings / PendingSummonFocus 在 builder 链上 manage(见那里)。此处不再 manage。
 
             // 深链接(4b OS 桥):暂存位 + scheme 注册 + on_open_url 接线。
             app.manage(PendingDeepLink(Mutex::new(None)));
@@ -4194,44 +4326,36 @@ pub fn run() {
             // summons the notebook on whatever view it was left on. (The tray still
             // opens the notebook too — these just add a from-anywhere shortcut.)
             //
-            // 键从 `.hotkeys.json` 读(读不到 / 坏串=平台默认),解析后装进 HotkeyState 供回调
-            // 分派,再注册。改键走 set_hotkey 命令(注销重注册 + 存盘 + 刷托盘)。
+            // 键从 `.hotkeys.json` 读(读不到 / 坏串=平台默认),注册,连同「注册上没有」装进
+            // HotkeyState 供回调分派。改键走 set_hotkey 命令(只重注册改的那一枚 + 存盘 + 刷托盘)。
             let cfg = load_hotkey_config(app.handle());
             let (capture_sc, capture_accel) = parse_hotkey_or(&cfg.capture, ACCEL_CAPTURE);
             let (notebook_sc, notebook_accel) = parse_hotkey_or(&cfg.notebook, ACCEL_NOTEBOOK);
-            app.manage(HotkeyState(Mutex::new(HotkeyRuntime {
-                capture: capture_sc,
-                capture_accel: capture_accel.clone(),
-                notebook: notebook_sc,
-                notebook_accel: notebook_accel.clone(),
-            })));
 
             // 注册失败一律不拖垮启动。热键只是「从任何地方唤起」的便利,托盘「打开朱简」和
             // 窗口内入口都在;撞键(会议/输入法类软件常年占用 Ctrl+Alt+M/N)不该让整个 app
             // 进不去。此前 Win/mac 用 `?` fail-fast——撞键即弹「朱简无法启动」、连托盘都摸不到,
             // 是最坏结局;现对齐 Linux(progress-log 215)只记一笔、留退路(232 起并可去设置改键)。
-            let mut failed: Vec<String> = Vec::new();
-            for (sc, name) in [(capture_sc, &capture_accel), (notebook_sc, &notebook_accel)] {
-                if let Err(e) = app.global_shortcut().register(sc) {
-                    log::error!(
-                        "全局热键 {name} 注册失败(可能被其它程序占用,退回托盘/窗口入口):{e}"
-                    );
-                    failed.push(name.clone());
+            // 没注册上的那枚记成 `*_live = false`:Win/mac 上那是真键位冲突(第三方软件占着),
+            // 主窗随记页顶上挂一条「点此改键」、设置里那枚标「没生效」(W4 Q8 ①);Linux 上多是
+            // Wayland 平台限制,改键也没用 ⇒ 不对用户说(`hotkey_taken`),只留日志。
+            let register = |sc: Shortcut, name: &str| match app.global_shortcut().register(sc) {
+                Ok(()) => true,
+                Err(e) => {
+                    log::error!("全局热键 {name} 注册失败(可能被其它程序占用,退回托盘/窗口入口):{e}");
+                    false
                 }
-            }
-            // Win/mac:撞键=真实键位冲突(第三方软件占用该键),把失效的键交给捕获窗内那条
-            // 非模态提示条(启动时唯一可见的窗就是捕获窗)——「点此改键」一下直达设置面板,
-            // 比原生模态框既不突兀又能顺手修好;只在真占用时现,正常启动不打扰。
-            // Linux:注册失败多是 Wayland 平台限制(XGrabKey 抓不到、非用户可改的键位冲突),
-            // 改键也没用、每次启动都提示会烦 → 不 surface,只留上面日志。
-            if cfg!(target_os = "linux") {
-                failed.clear();
-            }
-            // 填进上面已提前 manage 的名单(不能再 manage 第二次 = 会 panic「already managed」)。
-            *app.state::<HotkeyConflicts>()
-                .0
-                .lock()
-                .expect("hotkey conflicts") = failed;
+            };
+            let capture_live = register(capture_sc, &capture_accel);
+            let notebook_live = register(notebook_sc, &notebook_accel);
+            app.manage(HotkeyState(Mutex::new(HotkeyRuntime {
+                capture: capture_sc,
+                capture_accel: capture_accel.clone(),
+                capture_live,
+                notebook: notebook_sc,
+                notebook_accel: notebook_accel.clone(),
+                notebook_live,
+            })));
 
             // 三只窗都在这儿按配置建(827,backlog 代码与结构 65):`tauri.conf.json` 里各标 `create: false`,Tauri 就不在
             // `setup` 之前替我们建。⛔ 别改回让 Tauri 自建 —— 那样窗是在 `setup` **之前**建出来的、
@@ -4394,7 +4518,7 @@ pub fn run() {
                 .show_menu_on_left_click(cfg!(target_os = "macos"))
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "show" => show_window(app, "capture"),
-                    "notebook" => open_notebook(app),
+                    "notebook" => summon_notebook(app),
                     "quit" => app.exit(0),
                     _ => {}
                 })
@@ -4405,39 +4529,34 @@ pub fn run() {
                         ..
                     } = event
                     {
-                        open_notebook(tray.app_handle());
+                        summon_notebook(tray.app_handle());
                     }
                 })
                 .build(app)?;
 
             // macOS Dock 右键菜单(§2 的 b):与托盘菜单同两项、同用词,路由回同一对
-            // show_window/open_notebook。Windows/Linux 无 Dock,整段 cfg 掉。
+            // show_window/summon_notebook。Windows/Linux 无 Dock,整段 cfg 掉。
             #[cfg(target_os = "macos")]
             dock_menu::install(app.handle());
 
-            // D1(411,408 走查「首用极简」桌面半):首用者只看得见捕获条,主窗存在感
-            // 为零——记完第一条,东西去哪了全靠猜(主窗入口只有托盘双击 / Ctrl+Alt+M,
-            // 两个都零指引)。空库时把主窗也显一次:用户一眼看见「记下的东西住在哪」,
-            // 且**不加任何常驻 UI**——与安卓 A1「回收站/归档册空则不渲染那枚钮」(410)
-            // 同一手法(按数据显形)。有任何一条记录在场就不再弹,主窗照旧只由托盘/热键唤起。
-            // ⭐ 顺序即焦点:先主窗后捕获条,焦点最终落在捕获条上(它还 alwaysOnTop),
-            // 主窗安静地待在它身后——「记一笔」仍是启动后第一个能打字的地方,没被抢走。
-            // ⚠ 不记「是不是第一次启动」的旗:清空库后再指一次路无害,而多一份要落盘、
-            // 要跨设备想清楚语义的状态不值(设计铁律:不加中间态)。
             // 默认开开机自启(只做一次,见 apply_autostart_default)。失败不挡启动:写进日志,
             // 设置里那枚开关读的是系统真值,用户看得见它没开。
             if let Err(e) = apply_autostart_default(app.handle()) {
                 log::error!("{e}");
             }
-            // 开机那一趟只进托盘:每次开机都弹捕获条 / 主窗是打扰,不是指路。
+            // 开机那一趟只进托盘:每次开机都弹窗是打扰,不是指路。
             if launched_by_autostart() {
                 return Ok(());
             }
-            if empty_library {
-                open_notebook(app.handle());
-            }
-            // Show capture once on launch so the first run is discoverable.
-            show_window(app.handle(), "capture");
+            // 人手打开的(开始菜单 / 桌面图标 / 装完那一下)= **露主窗,光标进「随手记一笔」框**
+            // (W4 A1 / Q8 ① / WD-37)。
+            // ⛔ 别再在这儿弹捕获条:411 起是「库空 = 主窗 + 捕获条,库里有东西 = 只弹捕获条」,
+            // 走查撞出来两件 ——①库里一有内容,再打开就只剩屏幕正中一个小窗,照它写的按 Esc 收起,
+            // 屏上就什么都没了(主窗只能从托盘找);②捕获条压在主窗上、抢走光标,新人认不出这只
+            // 「按了快捷键才出来」的小窗是什么,以为在主窗打字、字全进了小窗。主窗顶上那个框本来
+            // 就是「记一笔」,`summon_notebook` 把光标放进去 —— 启动后第一个能打字的地方仍是它。
+            // 快捷键被占时也不再靠这只小窗报信:主窗随记页顶上那条「点此改键」(前端 inbox.ts)。
+            summon_notebook(app.handle());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -4525,6 +4644,7 @@ pub fn run() {
             sync_pair_start,
             sync_device_admin,
             sync_roster_refresh,
+            sync_reconnect_now,
             sync_pair_join,
             join_space,
             join_space_cancel,
@@ -4542,7 +4662,9 @@ pub fn run() {
             wm_composited,
             open_settings,
             take_open_settings,
+            take_summon_focus,
             backup_status,
+            backup_pick_file,
             backup_begin_setup,
             backup_confirm_setup,
             backup_cancel_setup,
@@ -4573,7 +4695,7 @@ pub fn run() {
             // (Windows/Linux 无 Dock);不处理时主窗被关(隐藏)后点 Dock 没反应。
             #[cfg(target_os = "macos")]
             if let tauri::RunEvent::Reopen { .. } = _event {
-                open_notebook(_app_handle);
+                summon_notebook(_app_handle);
             }
         });
 }
@@ -4680,5 +4802,134 @@ mod tests {
         let (sc, accel) = parse_hotkey_or("Ctrl+Alt+ZZZ", ACCEL_NOTEBOOK);
         assert_eq!(accel, ACCEL_NOTEBOOK);
         assert_eq!(sc, ACCEL_NOTEBOOK.parse::<Shortcut>().unwrap());
+    }
+
+    // ── 改一枚只碰一枚(W4 A2 / 新撞-1)──────────────────────────────────────
+
+    /// 假的系统热键表:`taken` = 别的程序占着的键(注册它必失败);`ours` = 我们注册着的;
+    /// `calls` 按序记下每一下注册 / 注销,用来断言「没碰另一枚」。
+    struct FakeReg {
+        taken: Vec<Shortcut>,
+        ours: std::cell::RefCell<Vec<Shortcut>>,
+        calls: std::cell::RefCell<Vec<String>>,
+    }
+    impl FakeReg {
+        fn new(taken: &[&str], ours: &[&str]) -> Self {
+            Self {
+                taken: taken.iter().map(|a| a.parse().unwrap()).collect(),
+                ours: std::cell::RefCell::new(ours.iter().map(|a| a.parse().unwrap()).collect()),
+                calls: std::cell::RefCell::new(Vec::new()),
+            }
+        }
+    }
+    impl HotkeyRegistrar for FakeReg {
+        fn register(&self, sc: Shortcut) -> Result<(), String> {
+            self.calls.borrow_mut().push(format!("+{sc}"));
+            if self.taken.contains(&sc) || self.ours.borrow().contains(&sc) {
+                return Err(format!("HotKey already registered: {sc}"));
+            }
+            self.ours.borrow_mut().push(sc);
+            Ok(())
+        }
+        fn unregister(&self, sc: Shortcut) -> Result<(), String> {
+            self.calls.borrow_mut().push(format!("-{sc}"));
+            let mut ours = self.ours.borrow_mut();
+            let Some(i) = ours.iter().position(|x| *x == sc) else {
+                return Err(format!("not registered: {sc}"));
+            };
+            ours.remove(i);
+            Ok(())
+        }
+    }
+    fn sc(a: &str) -> Shortcut {
+        a.parse().unwrap()
+    }
+
+    #[test]
+    fn rebind_one_works_while_the_other_key_is_taken() {
+        // 走查撞出来的那一形:两枚默认键都被别的程序占着(我们一枚都没注册上)。改捕获窗那枚
+        // 到一个空闲键 —— 232 那套「连带重注册另一枚」必失败;现在只碰这一枚,成。
+        let reg = FakeReg::new(&["Ctrl+Alt+N", "Ctrl+Alt+M"], &[]);
+        rebind_one(&reg, sc("Ctrl+Alt+N"), false, sc("Ctrl+Alt+Shift+8")).expect("另一枚被占着不该挡住这一枚");
+        assert_eq!(*reg.ours.borrow(), vec![sc("Ctrl+Alt+Shift+8")]);
+        // 只有一下:注册新键。被占着的旧键不是我们的,不去注销;另一枚(Ctrl+Alt+M)一下都没碰。
+        assert_eq!(reg.calls.borrow().len(), 1, "{:?}", reg.calls.borrow());
+    }
+
+    #[test]
+    fn rebind_one_swaps_a_live_key_and_releases_the_old_one() {
+        let reg = FakeReg::new(&[], &["Ctrl+Alt+N", "Ctrl+Alt+M"]);
+        rebind_one(&reg, sc("Ctrl+Alt+N"), true, sc("Ctrl+Alt+J")).unwrap();
+        let ours = reg.ours.borrow();
+        assert!(ours.contains(&sc("Ctrl+Alt+J")) && ours.contains(&sc("Ctrl+Alt+M")));
+        assert!(!ours.contains(&sc("Ctrl+Alt+N")), "旧键要还给系统");
+        // 先注册新的、成了再注销旧的(失败时就什么都没动)。
+        assert!(reg.calls.borrow()[0].starts_with('+'), "{:?}", reg.calls.borrow());
+    }
+
+    #[test]
+    fn rebind_one_failure_leaves_everything_as_it_was() {
+        // 新键被别的程序占着:报错,旧键照旧注册着,另一枚也照旧。
+        let reg = FakeReg::new(&["Ctrl+Alt+K"], &["Ctrl+Alt+N", "Ctrl+Alt+M"]);
+        let err = rebind_one(&reg, sc("Ctrl+Alt+N"), true, sc("Ctrl+Alt+K")).unwrap_err();
+        assert!(err.contains("already registered"), "{err}");
+        assert_eq!(*reg.ours.borrow(), vec![sc("Ctrl+Alt+N"), sc("Ctrl+Alt+M")]);
+        assert!(reg.calls.borrow().iter().all(|c| c.starts_with('+')), "失败那一趟不该注销任何键:{:?}", reg.calls.borrow());
+    }
+
+    #[test]
+    fn rebind_one_same_live_key_is_a_no_op_and_retaken_key_retries() {
+        // 把活着的键「改成它自己」:什么都不做(先注册会撞上自己)。
+        let reg = FakeReg::new(&[], &["Ctrl+Alt+N"]);
+        rebind_one(&reg, sc("Ctrl+Alt+N"), true, sc("Ctrl+Alt+N")).unwrap();
+        assert!(reg.calls.borrow().is_empty());
+        // 被占着的旧键「改成它自己」= 再试一次注册(别的程序可能已经放掉了)。
+        let reg = FakeReg::new(&[], &[]);
+        rebind_one(&reg, sc("Ctrl+Alt+N"), false, sc("Ctrl+Alt+N")).unwrap();
+        assert_eq!(*reg.ours.borrow(), vec![sc("Ctrl+Alt+N")]);
+    }
+
+    #[test]
+    fn hotkey_taken_is_silent_on_linux_only() {
+        assert!(!hotkey_taken(true));
+        assert_eq!(hotkey_taken(false), !cfg!(target_os = "linux"));
+    }
+
+    fn status_in(state: &str) -> Mutex<sync::transport::SyncStatus> {
+        Mutex::new(sync::transport::SyncStatus {
+            configured: true,
+            state: state.into(),
+            ..Default::default()
+        })
+    }
+
+    /// 161 / W4 Q14「现在重连」:只在离线时发 `Reconfigured`;在线 / 连接中 / 初始同步 / 没开同步一律不发 ——
+    /// 在线时发会让会话循环当场收场重拨(断掉好好的会话)。同 mobile `reconnect_now_*` 两条集成测的判据,
+    /// 这里不起传输任务,直接钉判与发那一段(「发了之后真的立刻重拨」是 core 的 `Reconfigured` 语义,mobile 那条集成测对真服务器量过)。
+    #[test]
+    fn reconnect_now_pokes_only_when_offline() {
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<sync::transport::Control>(4);
+        for state in ["online", "connecting", "booting", "off"] {
+            assert_eq!(reconnect_now(&status_in(state), &tx), Ok(false), "{state}:不发");
+            assert!(rx.try_recv().is_err(), "{state}:通道里不许多出一枚");
+        }
+        assert_eq!(reconnect_now(&status_in("offline"), &tx), Ok(true), "离线:发");
+        assert!(
+            matches!(rx.try_recv(), Ok(sync::transport::Control::Reconfigured)),
+            "离线时发出去的必须是 Reconfigured(把退避提前,不是别的控制信号)"
+        );
+        assert!(rx.try_recv().is_err(), "只发一枚");
+    }
+
+    /// 排满 / 传输任务已经停了:响亮报错,⛔ 不静默吞成「发了」(前端据此在浮层里写一句)。
+    #[test]
+    fn reconnect_now_reports_full_and_closed() {
+        let (tx, rx) = tokio::sync::mpsc::channel::<sync::transport::Control>(1);
+        tx.try_send(sync::transport::Control::Reconfigured).unwrap();
+        let full = reconnect_now(&status_in("offline"), &tx).unwrap_err();
+        assert!(full.contains("排满"), "{full}");
+        drop(rx);
+        let closed = reconnect_now(&status_in("offline"), &tx).unwrap_err();
+        assert!(closed.contains("未运行"), "{closed}");
     }
 }

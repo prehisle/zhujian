@@ -40,6 +40,7 @@ describe("灵感 · 流转统计(born_stage)", () => {
     await inboxShow("ideas");
     const stats = await $("#idea-stats");
     await stats.waitForExist({ timeout: 5000 });
-    expect(/^本周捕获 \d+ · 转待办 \d+%$/.test(await stats.getText())).toBe(true);
+    // W4 Q11 / WD-38:「本周捕获 · 转待办」换白话(用户拍定的词表)。
+    expect(/^本周记了 \d+ 条 · \d+% 转成了待办$/.test(await stats.getText())).toBe(true);
   });
 });

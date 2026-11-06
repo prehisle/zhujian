@@ -7,4 +7,10 @@
     <color name="teal_700">#FF018786</color>
     <color name="black">#FF000000</color>
     <color name="white">#FFFFFFFF</color>
+    <!-- 纸面色(161 / W4 A35):与 android/index.html 的纸面色令牌(paper)亮暗两档逐字同值。冷启时页面画出来之前
+         露出来的那一段(起始窗口 / 窗口底 / WebView 底)用它,不再是一块白。zj_paper 跟着「本应用」的明暗走
+         (values-night 那份指到暗档);MainActivity.paperColor 按上次选的档直接取亮 / 暗两枚。 -->
+    <color name="zj_paper_light">#FFF3EEE3</color>
+    <color name="zj_paper_dark">#FF1B1813</color>
+    <color name="zj_paper">@color/zj_paper_light</color>
 </resources>

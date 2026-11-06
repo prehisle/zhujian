@@ -1,0 +1,41 @@
+/* 第一次点 ✕ 的那一问(W4 A5,tray-hint.ts)。形照同步浮层那只轻模态:浅雾遮罩(348「操作型面板」
+   那一路)+ 纸面卡片;按钮吃 controls.css 的 .hbtn,主行动那枚照 update.css 的 .update-go 点朱砂。 */
+.th-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  background: color-mix(in srgb, var(--paper) 55%, transparent);
+  backdrop-filter: blur(2px);
+}
+.th-panel {
+  width: min(400px, calc(100vw - 48px));
+  background: linear-gradient(180deg, var(--raised), var(--raised-edge));
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--float-shadow);
+  padding: 18px 20px 20px;
+}
+.th-title {
+  margin: 0 0 10px;
+  font-family: var(--font-serif);
+  font-size: var(--fs-16);
+  letter-spacing: 0.04em;
+  color: var(--ink);
+}
+.th-body {
+  margin: 0 0 16px;
+  font-size: var(--fs-13);
+  line-height: 1.7;
+  color: var(--ink);
+}
+.th-acts {
+  display: flex;
+  gap: 8px;
+}
+.hbtn.th-go {
+  color: var(--seal-ink-on-seal-tint);
+  border-color: var(--seal-line);
+  background: var(--seal-tint);
+}

@@ -137,9 +137,12 @@ try {
   await setArea("");
   await hideBar();
   await clickText("保存");
-  await waitFor(`!document.getElementById("docs-new").hidden`, "空篇保存后回列表");
+  // 161 / W4(M1 留下的那条):一篇长文都没有时进来的(底栏那一格没亮),空篇退出 = 收面回进来之前那一面;有长文时照旧回列表。
+  if (docsBefore.length === 0) await waitFor(`!document.body.classList.contains("pane-open")`, "空篇保存后收面(进来时一篇长文都没有)");
+  else await waitFor(`!document.getElementById("docs-new").hidden`, "空篇保存后回列表");
   ok(/没有建/.test((await bar()) ?? ""), "① 空的新篇保存 ⇒ 屏底说「没有建」", await bar());
   ok((await newDocs()).length === 0, "① 空篇没建");
+  await toList();
 
   // ② G6 只剩图的空篇
   await ev(`document.getElementById("docs-new").click()`);

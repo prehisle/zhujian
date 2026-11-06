@@ -2,7 +2,8 @@
 import { defineMessages } from "./entry";
 
 export const capture = defineMessages({
-  "capture.hotkeyConflict": { zh: "快捷键 {keys} 被占用,点此改键", en: "Shortcut {keys} is taken by another app, click here to change it" },
+  // 与主窗随记页顶那条(notebook.hotkeyBanner,W4 Q8 ①)同一句话。
+  "capture.hotkeyConflict": { zh: "快捷键 {keys} 被别的程序占用,点此改键", en: "Shortcut {keys} is taken by another program — click here to change it" },
   "capture.listSep": { zh: "、", en: ", " },
   "capture.gotIt": { zh: "知道了", en: "Got it" },
   "capture.kindTask": { zh: "任务", en: "Task" },

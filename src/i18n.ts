@@ -73,6 +73,11 @@ export function initLang(): void {
   });
 }
 
+/** 改到这一档会不会重载整窗(生效语言变不变)。设置面板据此决定要不要记「重载后开回语言那一行」(W4 WD-36)。 */
+export function langChoiceReloads(next: LangChoice): boolean {
+  return resolve(next) !== lang;
+}
+
 /** 设置面板改档:记住 → 广播 → 生效语言变了才 reload(auto↔显式但解析同语言时零动作)。 */
 export async function setLangChoice(next: LangChoice): Promise<void> {
   if (next === "auto") localStorage.removeItem(KEY);

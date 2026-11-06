@@ -132,17 +132,18 @@ async function main() {
       doc = await s.evaluate(`(()=>{const f=document.getElementById("policy-frame");const d=f.contentDocument;
         if(!d||d.readyState!=="complete"||!d.body||d.body.innerText.length<200)return null;
         const hrefs=[...d.querySelectorAll("a[href]")].map(a=>a.getAttribute("href"));
-        return {src:f.getAttribute("src"),loc:d.location.pathname,title:d.title,textLen:d.body.innerText.length,
+        return {src:f.dataset.page,loc:f.dataset.page,title:d.title,textLen:d.body.innerText.length,
           hrefs:[...new Set(hrefs)],bad:hrefs.filter(h=>!/^(privacy|privacy-rights|terms)\\.html$/.test(h))}})()`);
       if (doc) break;
       await sleep(250);
     }
+    // 161 / W4 起框**不导航**(包里那一份取回来写进框里,理由见 main.ts::showPolicyPage)⇒ 「框里是哪一份」读框上的 data-page,不再读框的地址 / src。
     step("② iframe 载入包内 privacy.html,正文非空", doc && doc.src === "privacy.html" && /privacy\.html$/.test(doc.loc) && doc.textLen > 200, doc && { loc: doc.loc, title: doc.title, textLen: doc.textLen });
     if (KNIFE === "href-external" && doc) {
       // 刀:往包内那页塞回一条外链(policy-asset.mjs 本该摘掉的那种)
       await s.evaluate(`(()=>{const d=document.getElementById("policy-frame").contentDocument;d.querySelector("a[href]").setAttribute("href","https://zhujian.app/");return 1})()`);
       doc = await s.evaluate(`(()=>{const d=document.getElementById("policy-frame").contentDocument;const hrefs=[...d.querySelectorAll("a[href]")].map(a=>a.getAttribute("href"));
-        return {src:"privacy.html",loc:d.location.pathname,title:d.title,textLen:d.body.innerText.length,hrefs:[...new Set(hrefs)],bad:hrefs.filter(h=>!/^(privacy|privacy-rights|terms).html$/.test(h))}})()`);
+        return {src:"privacy.html",loc:document.getElementById("policy-frame").dataset.page,title:d.title,textLen:d.body.innerText.length,hrefs:[...new Set(hrefs)],bad:hrefs.filter(h=>!/^(privacy|privacy-rights|terms).html$/.test(h))}})()`);
     }
     step("② 页内每条 href 都指向三份之一(没有 / 与外链)", doc && doc.bad.length === 0 && doc.hrefs.length >= 2, doc && { hrefs: doc.hrefs, bad: doc.bad });
 
@@ -156,8 +157,8 @@ async function main() {
       await touchSwipe(s, linkPos.x, linkPos.y, linkPos.x, linkPos.y, 2);
       for (let i = 0; i < 30; i++) {
         await sleep(200);
-        nav = await s.evaluate(`(()=>{const d=document.getElementById("policy-frame").contentDocument;
-          return d&&d.readyState==="complete"&&/privacy-rights\\.html$/.test(d.location.pathname)?{loc:d.location.pathname,textLen:d.body.innerText.length}:null})()`);
+        nav = await s.evaluate(`(()=>{const f=document.getElementById("policy-frame");const d=f.contentDocument;
+          return d&&d.readyState==="complete"&&f.dataset.page==="privacy-rights.html"?{loc:f.dataset.page,textLen:d.body.innerText.length}:null})()`);
         if (nav) break;
       }
     }

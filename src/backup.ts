@@ -17,6 +17,10 @@ import { listen } from "@tauri-apps/api/event";
 import { t } from "./i18n";
 import { copyButton } from "./clipboard";
 import { errText } from "./err";
+import { listSpaces, spaceLabel } from "./space";
+
+/** 设置面板递进来的那一条出路:恢复回执上的「去看看」(W4 A16)—— 收掉设置、切到那个空间。 */
+export type BackupNav = { gotoSpace(id: string, label: string): void };
 
 type BackupStatus = {
   configured: boolean;
@@ -101,10 +105,16 @@ export function noteFold(...texts: string[]): HTMLElement {
   return d;
 }
 
+/** 设置面板这一趟打开时递进来的出路(`buildBackupSection` 记下,恢复回执用)。 */
+let nav: BackupNav | null = null;
+/** 「自动备份真跑了一次」那条事件的退订(W4 A17;关面板时摘,见 `closeBackupSection`)。 */
+let liveOff: (() => void) | null = null;
+
 /** 「备份」一节的整块。设置面板每次打开重建一只。
  *  ⚠ §9 那两段常驻边界(footSecrets / footUninstall)不在这儿了 —— 收进 settings.ts
  *  pane 顶的「说明」折叠(与 backup.sub 同一只)。 */
-export function buildBackupSection(): HTMLElement {
+export function buildBackupSection(navigate: BackupNav): HTMLElement {
+  nav = navigate;
   const body = el("div", "bkup-body", t("common.loading"));
   void refresh(body);
   return body;
@@ -116,31 +126,35 @@ export function buildBackupSection(): HTMLElement {
  * 一把没人抄过的钥)。
  */
 export function closeBackupSection(): void {
+  liveOff?.();
+  liveOff = null;
+  nav = null;
   if (!ceremonyOpen) return;
   ceremonyOpen = false;
   void invoke("backup_cancel_setup");
 }
 
-async function refresh(body: HTMLElement): Promise<void> {
+/** `justSetUp`:刚走完仪式(W4 A4)—— 「立即备份」那一行照实说「码已核对、还没有备份」。 */
+async function refresh(body: HTMLElement, justSetUp = false): Promise<void> {
   try {
-    render(body, await invoke<BackupStatus>("backup_status"));
+    render(body, await invoke<BackupStatus>("backup_status"), justSetUp);
   } catch (e) {
     body.replaceChildren(el("p", "hkset-msg err", errText(e)));
   }
 }
 
-function render(body: HTMLElement, st: BackupStatus): void {
+function render(body: HTMLElement, st: BackupStatus, justSetUp = false): void {
   ceremonyOpen = false;
   body.replaceChildren();
   // ⭐ **恢复恒显,且与上面那半的状态无关**(§16.6):换了机器 / 重装系统之后这台
   // 根本没配过备份 —— 而那正是恢复的主场景。⛔ 别把它塞进 configured 分支里。
   // 先建它是为了拿到 prefill:列表行的「恢复这一份」要把路径填进这张表(123)。
   const restore = buildRestoreSection();
-  body.append(backupHalf(body, st, restore.prefill), restore.wrap);
+  body.append(backupHalf(body, st, restore.prefill, justSetUp), restore.wrap);
 }
 
 /** 备份那一半(配置 / 仪式 / 落点 / 立即备份 / 列表 / 自动)。 */
-function backupHalf(body: HTMLElement, st: BackupStatus, prefill: Prefill): HTMLElement {
+function backupHalf(body: HTMLElement, st: BackupStatus, prefill: Prefill, justSetUp: boolean): HTMLElement {
   const wrap = document.createElement("div");
 
   // ⛔ 配置坏了 / 上次写盘死在半路:显示原话 + 劝阻「重新设置一次」,**不给任何按钮**
@@ -181,7 +195,12 @@ function backupHalf(body: HTMLElement, st: BackupStatus, prefill: Prefill): HTML
     return wrap;
   }
 
-  wrap.append(buildDirRow(st), buildRunRow(body), buildListSection(prefill), buildAutoRow());
+  // 三块互相通气(W4 A17 / A4):「立即备份」跑完、自动备份真跑了一次 ⇒ 列表当场重读;
+  // 列表读出几份 ⇒ 「立即备份」那一行照实说「还没有备份」还是平常那句。
+  const run = buildRunRow(body, justSetUp, () => list.reload());
+  const list = buildListSection(prefill, (n) => run.setCount(n));
+  // 换了「备份到」的文件夹,列表读的就是另一个文件夹了 ⇒ 当场重读(同 A17 那条:状态跟着变)。
+  wrap.append(buildDirRow(st, () => list.reload()), run.wrap, list.wrap, buildAutoRow(() => list.reload()));
   return wrap;
 }
 
@@ -239,9 +258,28 @@ function renderRestoreForm(form: HTMLElement): RestoreFields {
   file.placeholder = t("backup.restoreFilePh");
   const code = document.createElement("input");
   code.type = "text";
-  code.className = "alias-input bkup-input";
+  // 与设置时抄回码那只框同形(等宽、宽到放得下整串码,W4 A18)。
+  code.className = "alias-input bkup-input bkup-code-input";
   code.placeholder = t("backup.restoreCodePh");
+  code.spellcheck = false;
   const out = el("div", "bkup-out", "");
+  // 161 / W4 Q11(WD-20,D2 留下的后半):「选文件…」—— U 盘、手机上拿来的那份不用再手抄完整路径。壳里弹系统的打开文件框、
+  // 只列 .zjbak(`backup_pick_file`,异步、不卡主线程);选中就把完整路径填进框、光标落到备份码那格;取消 = 什么都不变。
+  const pick = button(t("backup.restorePick"), () => {
+    pick.disabled = true;
+    void invoke<string | null>("backup_pick_file", { title: t("backup.pickTitle"), filterName: t("backup.pickFilter") })
+      .then((path) => {
+        if (path === null) return;
+        file.value = path;
+        code.focus();
+      })
+      .catch((e) => out.replaceChildren(el("p", "hkset-msg err", errText(e))))
+      .finally(() => {
+        pick.disabled = false;
+      });
+  });
+  const fileRow = el("div", "alias-ctrls bkup-file-row", "");
+  fileRow.append(file, pick);
 
   const go = button(t("backup.restoreGo"), () => {
     // 两格都要有:⛔ 空值递到后端只会换来一句更含糊的话。
@@ -259,7 +297,14 @@ function renderRestoreForm(form: HTMLElement): RestoreFields {
       .then((r) => renderRestored(out, r))
       // ⛔ 原样摊开后端那句:「这份备份不是这个备份码的」/「还有 N 张图没下载完」/
       // 「来自更新版本」各是一条能照做的路,糊成一句「恢复失败」等于什么都没说。
-      .catch((e) => out.replaceChildren(el("p", "hkset-msg err", errText(e))))
+      // ⭐ W4 A18:码长得不像备份码时,原话下面**另起一行**指到哪一组(与设置时抄错那句同一个说法)。
+      // ⛔ 不替换原话:后端在解码之前还有别的拒(封锁 / 落点),框里的码坏不坏说明不了它这次拒的是什么;
+      // ⛔ 也不认后端的中文原话去分支(那是诊断串,不是接口)。判据只看框里的码。
+      .catch((e) => {
+        out.replaceChildren(el("p", "hkset-msg err", errText(e)));
+        const shape = codeShapeProblem(code.value);
+        if (shape) out.appendChild(el("p", "hkset-msg err bkup-code-hint", shape));
+      })
       .finally(() => {
         go.disabled = false;
       });
@@ -273,9 +318,11 @@ function renderRestoreForm(form: HTMLElement): RestoreFields {
     el("p", "settings-sub", t("backup.restoreLead2")),
     el("p", "settings-sub", t("backup.restoreLead3")),
     el("p", "hkset-msg err", t("backup.restoreLead4")),
-    file,
+    // 路径从哪来(W4 Q11 / WD-20):列表里那几份点一下就填好;别处拿来的点「选文件…」或手填。
+    el("p", "settings-sub", t("backup.restoreFileHint")),
+    fileRow,
     code,
-    el("p", "settings-sub", t("backup.restoreCodeHint")),
+    el("p", "settings-sub", t("backup.restoreCodeHint", { perDevice: t("backup.perDeviceCode") })),
     acts,
     out,
   );
@@ -284,23 +331,88 @@ function renderRestoreForm(form: HTMLElement): RestoreFields {
 
 function renderRestored(out: HTMLElement, r: Restored): void {
   out.replaceChildren();
-  if (r.integrated) {
-    out.appendChild(
-      el(
-        "p",
-        "hkset-msg ok",
-        t("backup.restoreDone", {
-          space: r.source_space_name || t("backup.restoreDoneUnnamed"),
-          when: new Date(r.created_at).toLocaleString(),
-        }),
-      ),
-    );
-  } else {
+  // 装配失败的指路 / 暂存名没清掉,后端原话逐条摊开。
+  const warnings = (): void => {
+    for (const w of r.warnings) out.appendChild(el("div", "bkup-file", w));
+  };
+  if (!r.integrated) {
     // ⛔ 这不是失败:库已经落在盘上了(提交点在幕⑥,壳不许把它撤销)。
     out.appendChild(el("p", "hkset-msg err", t("backup.restoreOnDisk")));
+    warnings();
+    return;
   }
-  // 装配失败的指路 / 暂存名没清掉,后端原话逐条摊开。
-  for (const w of r.warnings) out.appendChild(el("div", "bkup-file", w));
+  // W4 A16(WD-09):此前回执写「已恢复成一个新空间:这个空间」—— 不说它在这台叫什么,空间菜单里
+  // 多出来的「未命名空间 · NEG6」认不出是刚恢复的。⇒ 名字照这台空间表现读(自动起的就照实写),
+  // 旁边一枚「去看看」直接切过去。⛔ 不从备份里读原名去改它(那是恢复路径的事,不是界面)。
+  const takenAt = new Date(r.created_at).getTime();
+  void listSpaces()
+    .then((all) => {
+      const s = all.find((x) => x.id === r.space_id);
+      // 装配进来了却不在空间表里 = 不变量破了;照实写编号,不编一个名字。
+      const label = s ? spaceLabel(s) : r.space_id;
+      const line = el("p", "hkset-msg ok bkup-restored", t("backup.restoreDoneNamed", { name: label, when: when(takenAt) }));
+      out.appendChild(line);
+      if (r.source_space_name && r.source_space_name !== label) {
+        out.appendChild(el("p", "hkset-msg", t("backup.restoreDoneWas", { name: r.source_space_name })));
+      }
+      const go = button(t("backup.restoreGoSee"), () => {
+        if (!nav) throw new Error("备份那一节没接设置面板的出路(buildBackupSection 漏传 nav?)");
+        nav.gotoSpace(r.space_id, label);
+      });
+      const acts = el("div", "bkup-acts", "");
+      acts.appendChild(go);
+      out.appendChild(acts);
+      warnings();
+    })
+    .catch((e) => {
+      // 恢复本身已经成了:读空间表失败只说读不到名字,⛔ 不许读成「恢复失败」。
+      out.append(el("p", "hkset-msg ok", t("backup.restoreDoneNoName", { when: when(takenAt) })), el("p", "hkset-msg err", errText(e)));
+      warnings();
+    });
+}
+
+// ---- 备份码的形状(W4 A18)----
+// ⚠ 镜像 core `sync::crypto` 的 Crockford 那一支(显示 = 13 组 × 4 位,共 52 位;回输容错:不分大小写、
+// 跳过 `-` 与空格、O 读作 0、I / L 读作 1)。**只用来挑一句说清错在哪的话**,⛔ 不当判据:
+// 码对不对永远是 core 说了算(设置时是 `backup_confirm_setup`,恢复时是 `backup_restore`),
+// 这里只在它已经拒了之后才被问。⛔ 码格式一个字不改(清单备注:不加校验位)。
+const CODE_GROUP = 4;
+const CODE_GROUPS = 13;
+const CODE_ALPHABET = /^[0-9A-HJKMNP-TV-Z]$/;
+
+/** 一个字照 core 的容错读成码里那个字;读不成 = null。 */
+function codeChar(raw: string): string | null {
+  const c = raw.toUpperCase().replace("O", "0").replace(/[IL]/, "1");
+  return CODE_ALPHABET.test(c) ? c : null;
+}
+
+/** 框里那串码的有效字(去掉分隔,按 core 的容错规整);认不出的字原样留着。 */
+function codeChars(raw: string): string[] {
+  return [...raw].filter((ch) => ch !== "-" && !/\s/.test(ch)).map((ch) => codeChar(ch) ?? ch);
+}
+
+/** 码长得不像备份码:哪一组里有不会出现的字 / 哪一组位数不对 / 总位数不对。像就回 null。 */
+function codeShapeProblem(raw: string): string | null {
+  const chars = [...raw].filter((ch) => ch !== "-" && !/\s/.test(ch));
+  const bad = chars.findIndex((ch) => codeChar(ch) === null);
+  if (bad >= 0) return t("backup.codeBadChar", { n: Math.floor(bad / CODE_GROUP) + 1, ch: chars[bad] });
+  if (chars.length === CODE_GROUP * CODE_GROUPS) return null;
+  // 人照着分组抄的(带 `-` 或空格):指出位数不对的那一组;一整串没分组的只能报总数。
+  const groups = raw.trim().split(/[\s-]+/).filter(Boolean);
+  const short = groups.length > 1 ? groups.findIndex((g) => g.length !== CODE_GROUP) : -1;
+  if (short >= 0) return t("backup.codeGroupLen", { n: short + 1, len: groups[short].length, per: CODE_GROUP });
+  return t("backup.codeLen", { len: chars.length, groups: CODE_GROUPS, total: CODE_GROUP * CODE_GROUPS });
+}
+
+/** 设置时抄回的码对不上:码就在手上,逐组比出第一处不一样的那组。比不出来(规整口径漂了)回 null。 */
+function codeGroupDiff(shown: string, typed: string): string | null {
+  const want = codeChars(shown);
+  const got = codeChars(typed);
+  const at = want.findIndex((c, i) => got[i] !== c);
+  if (at < 0) return null; // 抄的比显示的多:形状那一句(总位数)已经说过了
+  const g = Math.floor(at / CODE_GROUP);
+  const slice = (xs: string[]) => xs.slice(g * CODE_GROUP, (g + 1) * CODE_GROUP).join("");
+  return t("backup.codeGroupDiff", { n: g + 1, want: slice(want), got: slice(got) || "—" });
 }
 
 /**
@@ -314,7 +426,10 @@ function renderRestored(out: HTMLElement, r: Restored): void {
  * ⛔ **没有删除按钮**:清理属于笔①-b 的轮转(账里那句「别把它单独做成第三个功能」)。
  * 要删走上面那个「打开所在文件夹」自己删。
  */
-function buildListSection(prefill: Prefill): HTMLElement {
+function buildListSection(
+  prefill: Prefill,
+  onCount: (n: number) => void,
+): { wrap: HTMLElement; reload: () => void } {
   const wrap = document.createElement("div");
   const head = el("div", "hkset-row", "");
   // ⭐ 2026-08-31 用户拍板「整节默认折叠」:头行只剩 名字 + 一行汇总 + 「展开」,
@@ -333,17 +448,29 @@ function buildListSection(prefill: Prefill): HTMLElement {
 
   const out = el("div", "", "");
   const tools = el("div", "bkup-list-tools", "");
-  const reload = button(t("backup.listReload"), () => void loadList(out, summary, prefill));
+  // 这一趟面板里验过的那几份(W4 A17):列表现在会自己重读(立即备份 / 自动备份跑完),重读不该把
+  // 刚验过的又打回「还没验过」。键带上大小与改动时刻 —— 文件换了内容就不认旧结论。
+  const verified: VerifyMemo = new Map();
+  const load = (): void => void loadList(out, summary, prefill, onCount, verified);
+  const reload = button(t("backup.listReload"), load);
   tools.append(el("p", "settings-sub bkup-list-hint", t("backup.listDesc")), reload);
   zone.append(tools, out);
 
   wrap.append(head, zone);
-  void loadList(out, summary, prefill);
-  return wrap;
+  load();
+  return { wrap, reload: load };
 }
 
-async function loadList(out: HTMLElement, summary: HTMLElement, prefill: Prefill): Promise<void> {
-  out.replaceChildren(el("p", "hkset-msg", t("common.loading")));
+async function loadList(
+  out: HTMLElement,
+  summary: HTMLElement,
+  prefill: Prefill,
+  onCount: (n: number) => void,
+  verified: VerifyMemo,
+): Promise<void> {
+  // ⚠ 重读时**不先清成「加载中」**:「立即备份」/ 自动备份跑完都会来重读一次(W4 A17),先清会让
+  // 展开着的列表闪一下、把下面的东西往上收再推回去(A19)。读到了一次换完。
+  if (out.childElementCount === 0) out.replaceChildren(el("p", "hkset-msg", t("common.loading")));
   let list: Entry[];
   try {
     list = await invoke<Entry[]>("backup_list");
@@ -354,6 +481,7 @@ async function loadList(out: HTMLElement, summary: HTMLElement, prefill: Prefill
     return;
   }
   out.replaceChildren();
+  onCount(list.length);
   if (list.length === 0) {
     summary.textContent = t("backup.listEmpty");
     out.appendChild(el("p", "hkset-msg", t("backup.listEmpty")));
@@ -365,10 +493,14 @@ async function loadList(out: HTMLElement, summary: HTMLElement, prefill: Prefill
     newest > 0
       ? t("backup.listSummary", { n: list.length, when: when(newest) })
       : t("backup.listSummaryBare", { n: list.length });
-  for (const e of list) out.appendChild(listRow(e, prefill));
+  for (const e of list) out.appendChild(listRow(e, prefill, verified));
 }
 
-function listRow(e: Entry, prefill: Prefill): HTMLElement {
+/** 一份备份「这一趟验过的结论」:键 = 路径 + 大小 + 改动时刻(`memoKey`)。 */
+type VerifyMemo = Map<string, { cls: string; text: string }>;
+const memoKey = (e: Entry): string => `${e.path}|${e.bytes}|${e.modified_ms ?? ""}`;
+
+function listRow(e: Entry, prefill: Prefill, verified: VerifyMemo): HTMLElement {
   const row = el("div", "bkup-item", "");
   // ⭐ 66 字符的文件名默认藏起(2026-08-31 同一刀):平时一行只显 大小·时刻·状态·验证,
   // 点行任意空白处摊开/收回文件名;hover 的 title 也给全名。⛔ `textContent` 恒在 ——
@@ -383,7 +515,19 @@ function listRow(e: Entry, prefill: Prefill): HTMLElement {
   // 盘上事实那半:大小 + 改动时刻。⛔ 这两格**不是**「它是不是一份好备份」。
   const facts = el("span", "bkup-item-meta", `${size(e.bytes)}${e.modified_ms ? " · " + when(e.modified_ms) : ""}`);
   // ⭐ 默认就是这句「还没验过」,不是空白也不是「有效」。
+  // ⭐ W4 A19:这一格**独占第二行**(.bkup-item-state 的 order / flex-basis,settings.css)——
+  // 此前它与三枚钮同排,验完那句一长就把三枚钮挤到下一行、整张列表往下推。
   const state = el("span", "bkup-item-state", t("backup.listUnverified"));
+  const memo = verified.get(memoKey(e));
+  if (memo) {
+    state.className = memo.cls;
+    state.textContent = memo.text;
+  }
+  const settle = (cls: string, text: string): void => {
+    state.className = cls;
+    state.textContent = text;
+    verified.set(memoKey(e), { cls, text });
+  };
 
   const verify = button(t("backup.listVerify"), () => {
     verify.disabled = true;
@@ -391,19 +535,21 @@ function listRow(e: Entry, prefill: Prefill): HTMLElement {
     state.textContent = t("backup.listVerifying");
     void invoke<Verified>("backup_verify", { path: e.path })
       .then((v) => {
-        state.className = "bkup-item-state ok";
         // 说的是「**当前**完整可读」——⛔ 不许追认「当初那趟备份成功了」(§3.3 那张表)。
-        state.textContent = t("backup.listOk", {
-          space: v.space_name || v.space_id,
-          size: size(v.plain_bytes),
-        });
+        // W4 A15(WD-09 后半):空间写**显示名**(此前没起过名的主空间写成内部号「main」,屏上别处都叫
+        // 「默认空间」),备份时刻写本地时间(trailer 里是 UTC)。⛔ 文件名一个字不动(列表 / 轮转按名认)。
+        settle(
+          "bkup-item-state ok",
+          t("backup.listOk", {
+            space: spaceLabel({ id: v.space_id, name: v.space_name }),
+            when: when(new Date(v.created_at).getTime()),
+            size: size(v.plain_bytes),
+          }),
+        );
       })
       // ⛔ 原样摊开后端那句:「不是当前备份码对应的」与「结构不对」是两回事,
       // 糊成一句会让用户把一份其实没坏的备份删掉。
-      .catch((err) => {
-        state.className = "bkup-item-state err";
-        state.textContent = errText(err);
-      })
+      .catch((err) => settle("bkup-item-state err", errText(err)))
       .finally(() => {
         verify.disabled = false;
       });
@@ -431,15 +577,42 @@ function listRow(e: Entry, prefill: Prefill): HTMLElement {
  *    「⛔ 坏配置绝不给按钮」正相反 —— 判据是**里面有没有不可再生的东西**:这份文件里
  *    没有备份钥,重置最坏 = 那些旧备份从此归你自己管。
  */
-function buildAutoRow(): HTMLElement {
+function buildAutoRow(onRan: () => void): HTMLElement {
   const wrap = document.createElement("div");
-  void invoke<AutoStatus>("backup_auto_status")
-    .then((a) => renderAuto(wrap, a))
-    .catch((e) => wrap.replaceChildren(el("p", "hkset-msg err", errText(e))));
+  // `pending_notice` 是「拉一次取走一次」的(设计审 H5):下面那条「真跑了一次就重读」会再拉,
+  // 拉到过的那句留在这一趟面板里,⛔ 别让第二次拉(已经是 null)把它从屏上抹掉。
+  let notice: string | null = null;
+  const load = (): void => {
+    void invoke<AutoStatus>("backup_auto_status")
+      .then((a) => {
+        notice = a.pending_notice ?? notice;
+        renderAuto(wrap, a, notice);
+      })
+      .catch((e) => wrap.replaceChildren(el("p", "hkset-msg err", errText(e))));
+  };
+  load();
+  // W4 A17(WD-06 / WD-07):自动备份在后台真跑了一次,此前开着的设置页上一点动静都没有(「上次自动备份」
+  // 要点「关闭」才冒出来,「已有备份」的份数也不变)。壳每跑完一趟发一枚 `backup://auto-ran`(成没成
+  // 都发;出岔子那句另走 `backup://auto` 的提示条),这里接住就把这一行与列表都重读一遍。
+  // 退订挂在 `liveOff` 上,关面板时摘(`closeBackupSection`)。
+  liveOff?.();
+  let off: (() => void) | null = null;
+  let dead = false;
+  liveOff = () => {
+    dead = true;
+    off?.();
+  };
+  void listen("backup://auto-ran", () => {
+    load();
+    onRan();
+  }).then((un) => {
+    if (dead) un();
+    else off = un;
+  });
   return wrap;
 }
 
-function renderAuto(wrap: HTMLElement, a: AutoStatus): void {
+function renderAuto(wrap: HTMLElement, a: AutoStatus, notice: string | null = a.pending_notice): void {
   wrap.replaceChildren();
 
   if (a.problem) {
@@ -447,7 +620,7 @@ function renderAuto(wrap: HTMLElement, a: AutoStatus): void {
     const reset = button(t("backup.autoReset"), () => {
       reset.disabled = true;
       void invoke<AutoStatus>("backup_reset_auto")
-        .then((next) => renderAuto(wrap, next))
+        .then((next) => renderAuto(wrap, next, notice))
         .catch((e) => {
           reset.disabled = false;
           wrap.appendChild(el("p", "hkset-msg err", errText(e)));
@@ -466,39 +639,48 @@ function renderAuto(wrap: HTMLElement, a: AutoStatus): void {
   const toggle = button(a.enabled ? t("backup.autoOff") : t("backup.autoOn"), () => {
     toggle.disabled = true;
     void invoke<AutoStatus>("backup_set_auto", { enabled: !a.enabled })
-      .then((next) => renderAuto(wrap, next))
+      .then((next) => renderAuto(wrap, next, next.pending_notice ?? notice))
       .catch((e) => {
         toggle.disabled = false;
         setMsg(msg, errText(e), "err");
       });
   });
   toggle.dataset.on = a.enabled ? "1" : "0";
+  // W4 A17(WD-07):开着时此前只写「已开启」—— 隔多久、留几份都收在「说明」折叠里(指南写的是
+  // 「那一行会照实写出来」)。⛔ 两个数照旧从状态读(设计审 H4:那个文件可以手改,写死就会说谎)。
   row.append(
     el("div", "hkset-name", t("backup.autoName")),
-    el("div", "hkset-desc", a.enabled ? t("backup.autoStateOn") : t("backup.autoStateOff")),
+    el(
+      "div",
+      "hkset-desc bkup-auto-state",
+      a.enabled ? t("backup.autoStateOnDetail", { every: everyText(a.every_minutes), keep: a.keep }) : t("backup.autoStateOff"),
+    ),
     toggle,
   );
 
   wrap.append(row, msg);
   // 「上次自动备份」是**状态**,常驻;下面两句是**规则解释**,收进「说明」折叠
   // (2026-08-31 用户拍板「收纳不删」)。⛔ 值仍从状态读、措辞仍按 §15.3 —— 收纳不动这两条。
+  // 开着却还没跑过:说一句它什么时候会来(此前这一行空着,开了之后看不出它在不在干活)。
   if (a.last_success_at || a.last_result) {
     wrap.appendChild(
       el(
         "p",
-        "settings-sub",
+        "settings-sub bkup-auto-last",
         t("backup.autoLast", {
-          when: a.last_success_at ? new Date(a.last_success_at).toLocaleString() : "—",
+          when: a.last_success_at ? when(new Date(a.last_success_at).getTime()) : "—",
           what: a.last_result ?? "",
         }),
       ),
     );
+  } else if (a.enabled) {
+    wrap.appendChild(el("p", "settings-sub bkup-auto-last", t("backup.autoNotYet")));
   }
   wrap.appendChild(
     noteFold(t("backup.autoDesc", { every: everyText(a.every_minutes), keep: a.keep }), t("backup.autoManualSafe")),
   );
   // ⭐ 那枚「结论没能记下来」的通知:它只活在进程内,拉到就得显(设计审 H5)。
-  if (a.pending_notice) wrap.appendChild(el("p", "hkset-msg err", a.pending_notice));
+  if (notice) wrap.appendChild(el("p", "hkset-msg err", notice));
 
   // ⭐⭐ **路径必须列出来,光给个数不算数**(420 补的真机验收撞出来的):
   // 「不再自动管」的意思就是**从此归你处置** —— 不告诉你是哪几份,你就无从处置。
@@ -573,20 +755,34 @@ function renderCeremony(body: HTMLElement, code: string): void {
   const err = el("p", "hkset-msg err", "");
   const input = document.createElement("input");
   input.type = "text";
-  input.className = "alias-input bkup-input";
+  // `bkup-code-input`:等宽、宽到放得下整串码(W4 A18:此前框比码短,点开别处后正好藏住最后一个字,
+  // 抄错的偏偏常是那一位)。
+  input.className = "alias-input bkup-input bkup-code-input";
   input.placeholder = t("backup.ceremonyConfirmPh");
+  input.spellcheck = false;
 
   const confirm = button(t("backup.ceremonyConfirm"), () => {
+    // 空框另说一句(W4 A18):此前空框也报「和显示的备份码对不上」。
+    if (!input.value.trim()) {
+      err.textContent = t("backup.codeEmpty");
+      input.focus();
+      return;
+    }
     confirm.disabled = true;
     err.textContent = "";
     void invoke("backup_confirm_setup", { code: input.value })
       .then(() => {
         ceremonyOpen = false;
-        void refresh(body).then(() => body.appendChild(el("p", "hkset-msg ok", t("backup.ceremonyDone"))));
+        // W4 A4(WD-03):此前这里追加一句「备份已设置好」—— 其实一份备份都没有、自动备份也没开,
+        // 关掉设置再开这句也没了。⇒ 不另起一句,由「立即备份」那一行照实说「码已核对,还没有备份」
+        // (重进这一节时,列表空着它照样说「还没有备份」)。
+        void refresh(body, true);
       })
       .catch((e) => {
         confirm.disabled = false;
-        err.textContent = errText(e);
+        // 码就在手上(W4 A18):core 拒了之后逐组比一遍,说出错在哪一组;⛔ 判对错的仍是 core。
+        err.textContent = codeShapeProblem(input.value) ?? codeGroupDiff(code, input.value) ?? errText(e);
+        input.focus();
       });
   });
   const cancel = button(t("backup.ceremonyCancel"), () => {
@@ -608,7 +804,7 @@ function renderCeremony(body: HTMLElement, code: string): void {
   const acts = el("div", "bkup-acts", "");
   acts.append(confirm, cancel);
   body.append(
-    el("p", "settings-sub", t("backup.ceremonyIntro")),
+    el("p", "settings-sub", t("backup.ceremonyIntro", { perDevice: t("backup.perDeviceCode") })),
     // ⛔ 码只显示、只能手抄:没有「复制」按钮(见文件头注 2)。
     el("div", "bkup-code", code),
     el("p", "hkset-msg err", t("backup.ceremonyWarn")),
@@ -649,7 +845,7 @@ function retryRow(body: HTMLElement, reason: string): HTMLElement {
 }
 
 /** 落点目录:可粘贴的路径 + 保存 + 打开文件夹(§5.2:v1 没有原生目录选择器)。 */
-function buildDirRow(st: BackupStatus): HTMLElement {
+function buildDirRow(st: BackupStatus, onSaved: () => void): HTMLElement {
   const wrap = document.createElement("div");
   const row = el("div", "hkset-row", "");
   const msg = el("p", "hkset-msg", "");
@@ -659,13 +855,17 @@ function buildDirRow(st: BackupStatus): HTMLElement {
   input.className = "alias-input bkup-input";
   input.placeholder = t("backup.dirPh");
   input.value = st.dir;
+  input.title = st.dir; // 再长的路径悬停也看得全(框本身占满一整行,W4 Q11 / WD-24)
+  input.spellcheck = false;
 
   const save = button(t("common.save"), () => {
     save.disabled = true;
     void invoke<BackupStatus>("backup_set_dir", { dir: input.value })
       .then((next) => {
         input.value = next.dir;
+        input.title = next.dir;
         setMsg(msg, t("backup.dirSaved"), "ok");
+        onSaved();
       })
       // 后端拒了(路径不存在 / 不是目录 / 写不进):回显旧值 + 后端原话。
       .catch((e) => {
@@ -686,46 +886,114 @@ function buildDirRow(st: BackupStatus): HTMLElement {
     }
   });
 
-  const ctrls = el("div", "alias-ctrls", "");
+  // `bkup-dir`:路径框独占一整行、两枚钮折到下一行靠右(W4 Q11 / WD-24:此前三样并排,框里的
+  // 默认路径显示不全 —— 偏偏默认那个是普通人在资源管理器里看不见的数据目录)。
+  const ctrls = el("div", "alias-ctrls bkup-dir", "");
   ctrls.append(input, save, open);
   row.append(el("div", "hkset-name", t("backup.dirName")), ctrls);
-  wrap.append(row, msg);
+  // 默认落点与主库同一块盘(指南那句搬到做决定的这一行下面;此前只在指南里)。
+  wrap.append(row, el("p", "settings-sub bkup-dir-note", t("backup.dirNote")), msg);
   return wrap;
 }
 
-function buildRunRow(body: HTMLElement): HTMLElement {
+/**
+ * 「立即备份」那一行。⭐ W4 A19(WD-19):结果**写在这一行自己的说明格里**,不再往行下插一段把
+ * 「已有备份」「自动备份」整排往下推(此前推 37px,手要跟着找)。说明格平时是「点一下,所有空间各备一份」,
+ * 跑着时「备份中…」,跑完「HH:MM 备好 1 个空间:默认空间」—— 一格换字,版面不动。
+ * ⚠ 只有**出了岔子**才往行下摊开细节(失败几个各为什么、剩下几个没跑、明文没删掉):
+ * 那是「失败要摊开」(文件头注 3),宁可推一下版面也不许收成一句。
+ * ⭐ W4 A4:列表空着时这一格照实说「还没有备份」(刚走完仪式时多半一句「码已核对」),
+ * 别让人以为设置好了就是备好了。
+ */
+function buildRunRow(
+  body: HTMLElement,
+  justSetUp: boolean,
+  reloadList: () => void,
+): { wrap: HTMLElement; setCount: (n: number) => void } {
   const wrap = document.createElement("div");
   const row = el("div", "hkset-row", "");
-  const out = el("div", "bkup-out", "");
+  const desc = el("div", "hkset-desc bkup-run-desc", t("backup.runDesc"));
+  const out = el("div", "bkup-out bkup-run-out", ""); // bkup-run-out:只给 e2e 一个准头(同 bkup-restore)
+  let count: number | null = null; // 列表还没读回来 = 不知道,先说平常那句
+  let running = false;
+  let last: { text: string; err: boolean } | null = null;
+
+  const paint = (): void => {
+    let text = t("backup.runDesc");
+    let cls = "";
+    if (running) text = t("backup.running");
+    else if (last) {
+      text = last.text;
+      cls = last.err ? "err" : "ok";
+    } else if (count === 0) {
+      text = justSetUp ? t("backup.setUpNoBackup") : t("backup.noBackupYet");
+      cls = "err";
+    } else if (justSetUp) text = t("backup.setUpDone");
+    desc.textContent = text;
+    desc.className = "hkset-desc bkup-run-desc" + (cls ? ` ${cls}` : "");
+  };
 
   const run = button(t("backup.runNow"), () => {
     run.disabled = true;
-    out.replaceChildren(el("p", "hkset-msg", t("backup.running")));
+    running = true;
+    last = null;
+    out.replaceChildren();
+    paint();
     void invoke<Report>("backup_run")
-      .then((r) => {
-        renderReport(out, r);
-        // 明文删不掉那一支:就地补一枚「重试清扫」。
-        // ⛔ **别在这里重画整节** —— 那会把刚摊开的报告冲掉,而这恰恰是细节最要紧的一支
-        //(哪个空间留下了明文、哪份产物写完但没验)。
-        if (r.blocked) out.appendChild(retryRow(body, r.blocked));
+      .then(async (r) => {
+        // 名字只是给人认的:空间表读不到时照写空间号(真值,不编名字),⛔ 别让它把这一趟的报告吞掉。
+        const names = await spaceNames().catch(() => new Map<string, string>());
+        const clean = r.made.length > 0 && r.failed.length === 0 && !r.fatal && r.skipped === 0 && !r.blocked;
+        if (clean) {
+          last = {
+            text: t("backup.ranOk", {
+              when: when(Date.now()),
+              n: r.made.length,
+              spaces: r.made.map((m) => names.get(m.space_id) ?? m.space_id).join(t("backup.nameSep")),
+            }),
+            err: false,
+          };
+        } else {
+          last = { text: r.made.length > 0 ? t("backup.ranPartly") : t("backup.reportNone"), err: true };
+          renderReport(out, r, names);
+          // 明文删不掉那一支:就地补一枚「重试清扫」。
+          // ⛔ **别在这里重画整节** —— 那会把刚摊开的报告冲掉,而这恰恰是细节最要紧的一支
+          //(哪个空间留下了明文、哪份产物写完但没验)。
+          if (r.blocked) out.appendChild(retryRow(body, r.blocked));
+        }
+        // W4 A17(WD-06):此前紧下一行「已有备份」照旧写「这个目录里还没有备份文件」,要点「刷新」才变。
+        if (r.made.length > 0) reloadList();
       })
-      .catch((e) => out.replaceChildren(el("p", "hkset-msg err", errText(e))))
+      .catch((e) => {
+        last = { text: errText(e), err: true };
+      })
       .finally(() => {
+        running = false;
         run.disabled = false;
+        paint();
       });
   });
-  row.append(
-    el("div", "hkset-name", t("backup.runName")),
-    el("div", "hkset-desc", t("backup.runDesc")),
-    run,
-  );
+  row.append(el("div", "hkset-name", t("backup.runName")), desc, run);
   wrap.append(row, out);
-  return wrap;
+  paint();
+  return {
+    wrap,
+    setCount: (n) => {
+      count = n;
+      paint();
+    },
+  };
+}
+
+/** 空间号 → 这台上的显示名(主空间没起过名 =「默认空间」,同空间菜单)。 */
+async function spaceNames(): Promise<Map<string, string>> {
+  return new Map((await listSpaces()).map((s) => [s.id, spaceLabel(s)] as const));
 }
 
 /** ⭐ 把这一趟摊开:成功几个、失败几个各为什么、剩下几个根本没跑。 */
-function renderReport(out: HTMLElement, r: Report): void {
+function renderReport(out: HTMLElement, r: Report, names: Map<string, string>): void {
   out.replaceChildren();
+  const label = (id: string): string => names.get(id) ?? id;
   out.appendChild(
     el(
       "p",
@@ -733,12 +1001,17 @@ function renderReport(out: HTMLElement, r: Report): void {
       r.made.length > 0 ? t("backup.reportMade", { n: r.made.length }) : t("backup.reportNone"),
     ),
   );
-  for (const m of r.made) out.appendChild(el("div", "bkup-file", `${baseName(m.path)} · ${size(m.bytes)}`));
+  // 一行一份:空间名 · 大小(悬停看文件全名)。⛔ 文件名本身一个字不动(W4 A15),只是不再满屏摆。
+  for (const m of r.made) {
+    const line = el("div", "bkup-file", `${label(m.space_id)} · ${size(m.bytes)}`);
+    line.title = baseName(m.path);
+    out.appendChild(line);
+  }
 
   if (r.failed.length > 0) {
     out.appendChild(el("p", "hkset-msg err", t("backup.reportFailed", { n: r.failed.length })));
     for (const f of r.failed) {
-      out.appendChild(el("div", "bkup-file", `${f.space_id} —— ${f.message}`));
+      out.appendChild(el("div", "bkup-file", `${label(f.space_id)} —— ${f.message}`));
       // ⛔ 盘上留下的那个文件**不得**被读成一份备份:两种态各有各的话。
       if (f.leftover_kind === "unverified") {
         out.appendChild(el("div", "bkup-file", t("backup.leftoverUnverified")));

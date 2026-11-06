@@ -24,13 +24,10 @@ export type MobileUpdate = { version: string; versionCode: number; notes: string
 
 /**
  * 查更新:**这一端没有更新通道**(668 起从 `platform.ts` 挪来这根轴,原因见
- * `android/src/channel.ts` 头注 —— 有没有自升级是渠道政策不是平台能力)。
+ * `android/src/channel.ts` 头注 —— 有没有自升级是渠道政策不是平台能力)⇒ 整个导出就是 `null`
+ * (161 / W4 Q10 起;此前是一个恒回 null 的函数 —— 「关于」里多了一枚手动「检查更新」,这一端它不该在)。
  *
  * 鸿蒙自用装机走 `hdc file send` + `bm install`(还绕不过华为 ID 与设备 UDID 白名单,
  * backlog「鸿蒙(HarmonyOS)适配」)⇒ **没有可以比对的清单**,也没有"下载装上"这个动作。
- * ⚠ 返回 null 的语义是「不提示更新」,调用方那边本来就 `catch` 静默 —— 这里给 null
- * 只是让它连一次失败的 IPC 都不发。
  */
-export function checkUpdate(): Promise<MobileUpdate | null> {
-  return Promise.resolve(null);
-}
+export const checkUpdate: (() => Promise<MobileUpdate | null>) | null = null;

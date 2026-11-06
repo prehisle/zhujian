@@ -16,3 +16,27 @@
   color: var(--seal-ink);
   text-decoration-color: var(--seal);
 }
+
+/* 161 / W4 A8(WD-10 / WP-16)/ 清单 C 那条规矩:**错误条一律带图标,「出错:」只给认不出的** —— 认得出的换了人话就不带
+   前缀,此前「连不上」那条两样都没有、只靠红色认(ui-guidelines 头一节「错误与成功不得仅靠颜色区分」)。同手机那枚
+   `!` 圆(android/index.html `.error::before`)的意思,桌面自己的令牌:描边随字色(currentColor)、字号同所在那行。
+   挂在 `errNode` 那层(`.err-msg`)上 —— 同步浮层 / 设备名单 / 空间菜单里经它画的错误都带上。 */
+.err-msg::before {
+  content: "!";
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 1.3em;
+  height: 1.3em;
+  line-height: 1;
+  margin-right: 6px;
+  vertical-align: -0.2em;
+  font-weight: 700;
+  border: 1px solid currentColor;
+  border-radius: var(--radius-circle);
+}
+/* A8(WP-16 后半):人话在前、原文降一档 —— 此前同色同层夹在一起,读不出哪句是给人看的。 */
+.err-raw {
+  color: var(--ink-soft);
+}

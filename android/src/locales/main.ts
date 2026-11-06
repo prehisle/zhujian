@@ -79,11 +79,16 @@ export const main = defineMessages({
   "main.syncTitleSpaced": { zh: "同步 · {name}", en: "Sync · {name}" },
   "main.renameOk": { zh: "确定", en: "OK" },
   "main.renameCancel": { zh: "取消", en: "Cancel" },
-  "main.resetWarnSynced": { zh: "将删除本机此空间的全部数据,不可恢复。确认另一台设备有在线完整副本后再继续;重置后可用「加入空间」重新加入,旧设备身份请告知运营者吊销。", en: "This deletes all data of this space on this device, irreversibly. Make sure another device has a complete copy online before continuing; afterwards you can rejoin via “Join a space”. Ask the operator to revoke the old device identity." },
+  // 161 / W4 Q12(A40 / WP-13):「旧设备身份请告知运营者吊销」是内部说法(运营者是谁、怎么告知都没说)⇒ 换成用户自己做得到的那条路。
+  "main.resetWarnSynced": { zh: "将删除本机此空间的全部数据,不可恢复。确认另一台设备有在线完整副本后再继续;重置后可用「加入空间」重新加入,之后到一台管理设备的「设备名单」里把这台的旧身份移除。", en: "This deletes all data of this space on this device, irreversibly. Make sure another device has a complete copy online before continuing; afterwards you can rejoin via “Join a space”, then remove this device's old identity from Devices on an admin device." },
+  // Q12:这一本已不在账户里时(被移出 / 自己退出),重置确认点出「之后在这台记的那几条只在这里」。
+  "main.resetWarnGone": { zh: "将删除本机此空间的全部数据,不可恢复。这台不在账户里之后记的那几条只在这里、别处没有:先把它们复制出来再重置。重置后可以输码重新加入。", en: "This deletes all data of this space on this device, irreversibly. Anything noted here after this device left the account exists only here: copy it out before resetting. Afterwards you can rejoin with a pairing code." },
   "main.resetWarnLocalOnly": { zh: "此空间未开启同步,本机就是唯一副本。重置=永久删除这个本子的全部内容,没有任何地方可以找回。", en: "Sync is off for this space; this device holds the only copy. Resetting permanently deletes everything in this notebook, with no way to get it back." },
   "main.resetConfirm": { zh: "确认重置(删除本机数据)", en: "Confirm reset (delete local data)" },
   "main.tagCurrent": { zh: "当前", en: "Current" },
   "main.tagLocalOnly": { zh: "仅本机", en: "Local only" },
+  // Q12:这一本已不在账户里(被移出 / 自己退出 / 账户被停用)。
+  "main.tagUnsynced": { zh: "已不再同步", en: "No longer syncing" },
   "main.rename": { zh: "改名", en: "Rename" },
   "main.moreActions": { zh: "更多操作", en: "More actions" },
   "main.resetEntry": { zh: "重置(删除本机此空间数据)…", en: "Reset (delete this space on this device)…" },
@@ -124,7 +129,8 @@ export const main = defineMessages({
   "main.outcomeFailed": { zh: "失败", en: "Failed" },
   "main.outcomeCancelled": { zh: "被打断", en: "Interrupted" },
   "main.syncAllRunning": { zh: "正在逐空间同步…", en: "Syncing space by space…" },
-  "main.syncAllNoSpaces": { zh: "没有开启同步的空间(纯本地的本子不参与,属预期)。", en: "No space has sync turned on (local-only notebooks are skipped, as expected)." },
+  // 161 / W4 A33 / Q11(WM-33 / N-1):「属预期」改大白话;走提示条,不留在页上。
+  "main.syncAllNoSpaces": { zh: "没有哪一本开了同步:只在这台上的本子不参与「全部同步」。", en: "No notebook has sync turned on; notebooks that live only on this device are skipped." },
   "main.syncAllProgressed": { zh: "(有新数据)", en: " (new data)" },
   "main.syncAllRestoreError": { zh: "{error}(重启应用可恢复)", en: "{error} (restarting the app recovers it)" },
   "main.syncAllSummary": { zh: "试了 {n} 个空间,{progressed} 个有新数据:", en: "Tried {n} {n|space|spaces}, {progressed} had new data:" },
@@ -133,8 +139,14 @@ export const main = defineMessages({
   "main.diagItems": { zh: "items 行数", en: "items rows" },
   "main.diagPath": { zh: "库路径", en: "Database path" },
   "main.diagDbFailed": { zh: "建库失败:{error}", en: "Could not open the database: {error}" },
-  "main.probeRunning": { zh: "诊断中…(连接项最长等 10 秒)", en: "Running diagnostics… (the connect step waits up to 10s)" },
-  "main.probeFailed": { zh: "诊断命令失败:{error}", en: "The diagnostics command failed: {error}" },
+  "main.probeRunning": { zh: "正在自检…(连接那一步最长等 10 秒)", en: "Checking… (the connect step waits up to 10s)" },
+  "main.probeFailed": { zh: "自检没跑成:{error}", en: "The check didn't run: {error}" },
+  // 161 / W4 Q5:网络自检结果最上面那一句人话结论。⛔ **两端逐字同**(桌面 src/locales 同名同值,CROSS_END_KEYS 登记)
+  // —— 改一个字就要两端一起改。术语那几行照旧留在它下面(出了问题的人发给作者时还用得上)。
+  "probe.verdictOk": { zh: "能连上 {url}。", en: "Reached {url}." },
+  "probe.verdictFail": { zh: "连不上 {url}:看看地址对不对、服务器开没开、网络通不通。", en: "Couldn't reach {url}: check the address, whether the server is running, and your network." },
+  "main.diagCopied": { zh: "诊断信息已复制", en: "Diagnostic info copied" },
+  "main.diagCopyFailed": { zh: "复制失败,请长按选中文字手动复制", en: "Copy failed; long-press to select the text and copy it by hand" },
   "main.aboutVersion": { zh: "版本", en: "Version" },
   // 构建身份戳(701)。⚠ 只有「含未提交改动」那句要过字典:`{stamp}` 是十六进制 + 日期,
   // 一个可译的字都没有,拼在代码里比多一枚 zh/en 逐字相同的键干净。
@@ -145,6 +157,10 @@ export const main = defineMessages({
   "main.aboutChangelog": { zh: "更新日志", en: "Changelog" },
   "main.aboutFailed": { zh: "读版本失败:{error}", en: "Could not read the version: {error}" },
   "main.updateFound": { zh: "有新版 v{version}", en: "New version v{version}" },
+  // 161 / W4 Q10(WM-31):「关于」里手动查一次。有新版走启动时那条提示(#update),没有就说一句。
+  "main.updateChecking": { zh: "正在检查…", en: "Checking…" },
+  "main.updateLatest": { zh: "已是最新 v{version}", en: "Up to date: v{version}" },
+  "main.updateCheckFailed": { zh: "没查成:{error}", en: "Couldn't check: {error}" },
   "main.spaceRenamedRefreshFailed": { zh: "空间名已更新,但空间列表刷新失败:{error}", en: "The space was renamed, but the space list could not be refreshed: {error}" },
   "main.gatePreparing": { zh: "正在准备本机空间…", en: "Preparing local spaces…" },
   "main.gateRetrying": { zh: "正在检查本机空间…(重试中)", en: "Checking local spaces… (retrying)" },

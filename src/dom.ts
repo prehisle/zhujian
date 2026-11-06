@@ -2,6 +2,7 @@
 // 逐字相同、3 份 `el(tag, cls, text)` + `btn` 逐字相同),改一次签名要改 14 处;安卓端早收在
 // `android/src/ui.ts` 一处。这里只是去重,不是抽象层(why-no-framework:拼 DOM 是一次性消耗品,
 // 别把它做"可移植");⛔ 别往这里长出第三种形 —— 两种够用,新模块挑一种 import。
+import { isTabKey } from "./keys";
 
 /** 建节点:`props` 直接 `Object.assign` 到元素上,`children` 逐个 `append`。 */
 export function el<K extends keyof HTMLElementTagNameMap>(
@@ -46,7 +47,8 @@ export function onDragTarget(target: HTMLElement, handler: (e: DragEvent) => voi
 
 // ---- 模态面板的 Tab 圈闭(ui-guidelines §3.5;158 起「管理列」面板第一个用)----
 // ⭐ 共享件:§3.5 那条「修就一起修,别只给新面板单独发明一套」—— 下一个要圈闭的面板(留言浮层 /
-// 放大编辑)直接挂这一只:`panel.addEventListener("keydown", (e) => trapTab(panel, e))`。
+// 放大编辑)直接挂这一只:`panel.addEventListener("keydown", (e) => trapTab(panel, e))`;要整套「接管键盘」
+// (焦点进 / 圈住 / 背后按不到 / 关掉还焦)的浮层用下面的 `holdKeyboard`(W4 起设置、同步、关窗那一问在用)。
 
 /** 面板里此刻能拿焦点的控件(按 DOM 序;禁用的、没渲染的不算)。 */
 export function focusables(panel: HTMLElement): HTMLElement[] {
@@ -55,9 +57,67 @@ export function focusables(panel: HTMLElement): HTMLElement[] {
   );
 }
 
-/** Tab / Shift+Tab 到头就绕回另一头,焦点不出面板。 */
+// ---- 浮层接管键盘(ui-guidelines §3.5;W4 A3,WD-04 / 新撞-4)----
+// 设置浮层与同步浮层此前不接管键盘:打开后焦点还在侧栏那枚钮上,Tab 一路走到背后被模糊掉的按钮,
+// 回车把背后的页面切走、按在窗口「关闭」上整只主窗藏进托盘;✕ / 点外面关掉后焦点掉到 body。
+// ⭐ 两只面板共用这一只(§3.5「修就一起修」):
+//   ① 打开:记下此刻的焦点(= 打开它的那枚钮),焦点放进浮层;
+//   ② Tab / Shift+Tab 圈在面板里(document **捕获相**:焦点掉到 body —— 面板重画把聚焦的钮换掉了 ——
+//      时也接得住,同「管理列」那只的判例);叠着两层时只有最上面那层圈;
+//   ③ 浮层里按下的键**不冒到 document**:背后视图的单键 / 卡片键 / Ctrl+F / Ctrl+B 都挂在 document 上。
+//      只 stopPropagation、不 preventDefault ⇒ 钮上的回车 / 空格照旧是点击、框里照旧打字;
+//      面板自己框里的键处理挂在框上,先于这里跑(别名框的 Esc 只放弃编辑那条照旧)。
+//      放行一种:Ctrl + / Ctrl - / Ctrl 0 —— 管的是整窗字号,不是背后某一页(设置里那行就叫人这么按);
+//   ④ Esc 交给面板自己的 `onEscape`(各有条件:录制中不关 / 叠着别的层);
+//   ⑤ 收:摘监听,焦点还给打开它的那枚(它还在文档里的话)。
+// ⛔ 别让 overlay 自己拿焦点(tabindex):焦点落在面板外的遮罩上,Tab 圈闭的「不在面板里」判据就失灵了。
+
+const ZOOM_CODES = new Set(["Equal", "NumpadAdd", "Minus", "NumpadSubtract", "Digit0", "Numpad0"]);
+const holders: HTMLElement[] = [];
+
+export type KeyboardHold = { release(restoreFocus?: boolean): void };
+
+export function holdKeyboard(
+  overlay: HTMLElement,
+  panel: HTMLElement,
+  opts: { onEscape: (e: KeyboardEvent) => void; focus?: HTMLElement | null },
+): KeyboardHold {
+  const returnTo = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  holders.push(panel);
+  const onTab = (e: KeyboardEvent): void => {
+    if (holders[holders.length - 1] !== panel) return;
+    trapTab(panel, e);
+  };
+  const onKey = (e: KeyboardEvent): void => {
+    if (e.key === "Escape") {
+      e.stopPropagation();
+      opts.onEscape(e);
+      return;
+    }
+    if (e.ctrlKey && !e.altKey && !e.metaKey && ZOOM_CODES.has(e.code)) return;
+    e.stopPropagation();
+  };
+  document.addEventListener("keydown", onTab, true);
+  overlay.addEventListener("keydown", onKey);
+  (opts.focus ?? focusables(panel)[0])?.focus();
+  let released = false;
+  return {
+    release(restoreFocus = true) {
+      if (released) return;
+      released = true;
+      document.removeEventListener("keydown", onTab, true);
+      overlay.removeEventListener("keydown", onKey);
+      const i = holders.lastIndexOf(panel);
+      if (i >= 0) holders.splice(i, 1);
+      if (restoreFocus && returnTo?.isConnected) returnTo.focus();
+    },
+  };
+}
+
+/** Tab / Shift+Tab 到头就绕回另一头,焦点不出面板。判 Tab 走 `isTabKey`(WebKitGTK 上 Shift+Tab 的
+ *  `e.key` 是 "Unidentified",那条判据只此一份,见 keys.ts)。 */
 export function trapTab(panel: HTMLElement, e: KeyboardEvent): void {
-  if (e.key !== "Tab" || e.ctrlKey || e.altKey || e.metaKey) return;
+  if (!isTabKey(e) || e.ctrlKey || e.altKey || e.metaKey) return;
   const list = focusables(panel);
   if (list.length === 0) return;
   const first = list[0];

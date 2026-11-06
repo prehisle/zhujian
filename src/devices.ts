@@ -17,6 +17,7 @@ import { t } from "./i18n";
 import "./devices.css";
 import { elText as el, btn } from "./dom";
 import { errLine } from "./err";
+import { markLeft } from "./sync-gone";
 
 /** `sync_device_admin` 的 action:直接用 core `DeviceAction` 的变体名(DTO 同源是
  *  编译期事实,认不出由 serde 当场拒;§5.7-6)。 */
@@ -186,7 +187,8 @@ export function renderDevices(body: HTMLElement, deps: Deps): void {
     // 谁能移除谁,一句说清(用户面 121)—— 行上不显示没权限的按钮是对的,但得有一句
     // 告诉非管理设备「这是权限,不是漏做」。
     body.appendChild(el("p", "sync-note", t("devices.whoCanRemove")));
-    if (adminCount === 1 && roster.length >= 2) {
+    // 161 / W4(同手机 A49,WP-08 后半):「建议再设一台管理设备,万一这台丢了」只对管理设备说 —— 别的设备设不了,「这台」也说不清指谁。
+    if (meAdmin && adminCount === 1 && roster.length >= 2) {
       body.appendChild(el("p", "sync-note", t("devices.oneAdminHint")));
     }
   }
@@ -197,12 +199,13 @@ export function renderDevices(body: HTMLElement, deps: Deps): void {
     if ((a.device === me) !== (b.device === me)) return a.device === me ? -1 : 1;
     return a.device < b.device ? -1 : 1;
   });
-  for (const e of rows) list.appendChild(deviceRow(e, { deps, me, meAdmin, opsOpen, short }));
+  for (const e of rows) list.appendChild(deviceRow(e, { deps, me, meAdmin, opsOpen, short, adminCount }));
   body.appendChild(list);
 
   // 两条错误分类名:动作失败与「拉名册失败」是两件事,合成一个类名会让「动作真的报错了
   // 没有」这条判据被另一条恒亮的错误背书成绿(假绿同族)。
-  if (actErr) body.appendChild(errLine("sync-err dev-act-err", actErr));
+  // 161 / W4 A7(WP-20):确认块还开着时,动作失败那句画在确认块里(confirmBlock),此前落在名单底部、和确认块隔着另一台的那张卡。
+  if (actErr && !confirming) body.appendChild(errLine("sync-err dev-act-err", actErr));
   if (refreshErr) body.appendChild(errLine("sync-err dev-refresh-err", refreshErr));
   body.appendChild(footRow(deps, !refreshing));
 }
@@ -224,6 +227,7 @@ type RowCtx = {
   meAdmin: boolean;
   opsOpen: boolean;
   short: Map<string, string>;
+  adminCount: number;
 };
 
 function deviceRow(e: RosterEntry, ctx: RowCtx): HTMLElement {
@@ -234,13 +238,18 @@ function deviceRow(e: RosterEntry, ctx: RowCtx): HTMLElement {
 
   const row = el("div", "dev-row");
   const head = el("div", "dev-head");
-  head.appendChild(el("span", "dev-name", alias ?? sid));
+  // 唯一定位那一格:短 id 常显,点开是完整 26 位 + 复制(§5.8 ⛔)。
+  // 161 / W4 A30(WP-15):没起名的那台,名字那格就是这枚编号钮 —— 此前名字写一遍编号、下一行编号钮再写一遍。
+  // 起过名的照旧名字在上、编号钮在下(名字可被任一设备改写,编号才定得死是哪台)。
+  const ids = idLine(e.device, sid, deps);
+  if (alias) head.appendChild(el("span", "dev-name", alias));
+  else head.appendChild(ids);
   if (isMe) head.appendChild(el("span", "dev-badge", t("devices.badgeThis")));
   if (e.admin) head.appendChild(el("span", "dev-badge dev-badge--admin", t("devices.badgeAdmin")));
   row.appendChild(head);
-
-  // 唯一定位那一格:短 id 常显,点开是完整 26 位 + 复制(§5.8 ⛔)。
-  row.appendChild(idLine(e.device, sid, deps));
+  if (alias) row.appendChild(ids);
+  // Q16(WP-15 后半):没起名的那行下面一句去哪儿起名(本机 / 那台,说法不同;两端逐字同)。
+  else row.appendChild(el("p", "dev-hint", isMe ? t("devices.unnamedHintSelf") : t("devices.unnamedHint")));
 
   if (confirming?.device === e.device) {
     row.appendChild(confirmBlock(e, ctx));
@@ -248,18 +257,26 @@ function deviceRow(e: RosterEntry, ctx: RowCtx): HTMLElement {
   }
 
   if (!opsOpen) return row;
+  if (isMe && e.admin && ctx.adminCount === 1) {
+    // 161 / W4 A7 = Q7 ★①(WD-08 / WP-20):账户里只剩本机这一台管理设备 ⇒ 不给「退出账户」,换成一行灰字说为什么、怎么办
+    // (此前先给钮、点了确认才被拒,拒绝那句还常驻)。⚠ 只按名单里已有的「管理」徽章在本机判 —— 服务器那条「至少留一台
+    // 管理设备」照旧兜底,⛔ 这里不替它判别的情形(还有别的管理设备时照旧给钮,会拒就让服务器拒)。
+    row.appendChild(el("p", "dev-hint dev-last-admin", t("devices.lastAdminNoLeave")));
+    return row;
+  }
   const acts = el("div", "dev-acts");
+  // 161 / W4 A48(WP-23):常驻的「移除」「退出账户」不用朱砂 —— 红色只给展开后真正执行的那一下(confirmBlock)。
   if (isMe) {
-    // 任何设备都能移除自己(§5.3 第三句)。⛔ 这里**不判**「会不会把 admins 变空」——
+    // 任何设备都能移除自己(§5.3 第三句)。⛔ 除上面那一形外,这里**不判**「会不会把 admins 变空」——
     // 那是服务器的不变量,客户端复算就是第二份判据;会拒就让它拒,把原话显出来。
-    acts.appendChild(btn(t("devices.leave"), "hbtn dev-danger", () => arm(e.device, "Remove", deps)));
+    acts.appendChild(btn(t("devices.leave"), "hbtn", () => arm(e.device, "Remove", deps)));
   } else if (meAdmin) {
     acts.appendChild(
       btn(e.admin ? t("devices.revokeAdmin") : t("devices.grantAdmin"), "hbtn", () =>
         arm(e.device, e.admin ? "RevokeAdmin" : "GrantAdmin", deps),
       ),
     );
-    acts.appendChild(btn(t("devices.remove"), "hbtn dev-danger", () => arm(e.device, "Remove", deps)));
+    acts.appendChild(btn(t("devices.remove"), "hbtn", () => arm(e.device, "Remove", deps)));
   }
   // 非管理设备在别人行上一个按钮都不显示(§5.8:没有权限的动作不显示按钮,也不显示灰的)。
   if (acts.childElementCount > 0) row.appendChild(acts);
@@ -315,33 +332,50 @@ function confirmBlock(e: RosterEntry, ctx: RowCtx): HTMLElement {
   // 完整 26 位随确认面一起给:别名是可被别的设备改的,只有它能唯一定位那台设备。
   box.appendChild(el("div", "dev-confirm-id", e.device));
 
+  // 161 / W4 A38(WP-02):移除别人那一支照指南「一句不省」—— 此前漏了第三条(账户密钥与完整副本拿不回来),丢了手机去移除的
+  // 人会以为这就安全了;顺序照指南(不能同步 / 不删它的 / 密钥与副本拿不回 / 局域网直连 / 先同步完再移除)。
   const lines =
     action === "Remove"
       ? isMe
         ? [t("devices.leaveL1"), t("devices.leaveL2"), t("devices.leaveL3")]
-        : [t("devices.removeL1"), t("devices.removeL2"), t("devices.removeL3"), t("devices.removeL4")]
+        : [t("devices.removeL1"), t("devices.removeL2"), t("devices.removeKeys"), t("devices.removeL3"), t("devices.removeL4")]
       : action === "GrantAdmin"
         ? [t("devices.grantL1")]
         : [t("devices.revokeL1")];
   const ul = el("ul", "dev-confirm-list");
   for (const line of lines) ul.appendChild(el("li", "", line));
   box.appendChild(ul);
+  // A38:「想彻底隔离,移除不够」要指到能做的事 —— 只能重置整个账户,那条路走写信;一枚「意见反馈」直达设置里那一节
+  // (有地址、点了拉起写信)。
+  if (action === "Remove" && !isMe) {
+    const iso = el("p", "dev-confirm-note", t("devices.removeIsolate"));
+    const go = btn(t("devices.removeIsolateGo"), "err-next dev-feedback", () => {
+      // 动态 import:settings → about → sync → devices,静态引会绕成环(同 err.ts 那枚「网络自检」)。
+      void import("./settings").then((m) => m.openSettingsPanel("general", null, "feedback"));
+    });
+    iso.append(" ", go);
+    box.appendChild(iso);
+  }
 
   const acts = el("div", "dev-acts");
+  // A48(WP-23):只有执行那一下是红的(移除 / 退出 = 实心朱砂);设为 / 取消管理不是破坏性的,照常。
   const yes = btn(
     action === "Remove" ? (isMe ? t("devices.leaveYes") : t("devices.removeYes")) : t("devices.ok"),
-    "hbtn dev-danger",
+    action === "Remove" ? "hbtn dev-danger" : "hbtn",
     () => void commit(e.device, action, deps),
   );
   yes.disabled = busy;
   acts.appendChild(yes);
   const no = btn(t("devices.cancel"), "hbtn", () => {
     confirming = null;
+    actErr = ""; // A7(WD-08):点「取消」后上一下被拒的那句红字一并收(此前还挂着)
     deps.rerender();
   });
   no.disabled = busy;
   acts.appendChild(no);
   box.appendChild(acts);
+  // A7(WP-20):这一下被拒的那句红字落在确认块里(此前在名单底部、隔着另一台的卡,确认块也不收)。
+  if (actErr) box.appendChild(errLine("sync-err dev-act-err", actErr));
   return box;
 }
 
@@ -350,12 +384,17 @@ async function commit(device: string, action: DeviceAction, deps: Deps): Promise
   busy = true;
   actErr = "";
   deps.rerender();
-  const name = aliasOf(deps.space, device) ?? device.slice(0, SHORT_ID_MIN);
+  // A30:回执里的编号与名单上那一档同位数(最短唯一前缀;此前固定 6 位,名单显 7 位时两处对不上)。
+  const ids = deps.status?.roster?.map((r) => r.device) ?? [];
+  const name = aliasOf(deps.space, device) ?? shortIds(ids.includes(device) ? ids : [...ids, device]).get(device) ?? device;
   try {
     // 必落账写命令走 invokeInSpace(响应恒到达),空间是否切走由这里自己判 —— 统一
     // 包装的「永不决议」会让 busy 永久锁死(118 教训第三踩)。
     await invokeInSpace(deps.space, "sync_device_admin", { deviceId: device, action });
     if (action === "Remove") noteSelfRemoval(deps.space, device);
+    // 161 / W4 Q12(A39 的桌面对应):自己退出成功 ⇒ 记一笔「你已退出这个账户」(此前退出后同步浮层照旧写「离线,重连中…」+
+    // 「不认这台设备了」,像被踢了)。只在服务器回执成功这一下记(客户端知道),⛔ 不猜。
+    if (action === "Remove" && device === deps.status?.device_id) markLeft(deps.space, device);
     confirming = null;
     deps.toast(
       action === "Remove"

@@ -250,15 +250,18 @@ function wireBar(el: HTMLElement): void {
   errWired = true;
 }
 
-export function showBar(msg: string, notice = false) {
+/** `neutral`(161 / W4 A36,WM-28):既不是错、也不是「做成了」的那一档(「一个字没写,这篇没有建」),墨底纸字;
+ *  读秒按回执那档(按字数)。⛔ 别拿 notice 的绿条说「什么都没发生」—— 绿色读作成功。 */
+export function showBar(msg: string, notice = false, neutral = false) {
   const el = $("error");
   wireBar(el);
   el.textContent = msg;
-  el.classList.toggle("notice", notice);
+  el.classList.toggle("notice", notice && !neutral);
+  el.classList.toggle("neutral", neutral);
   el.classList.remove("with-act", "retiring");
   el.hidden = false;
   clearTimeout(errTimer);
-  errTimer = window.setTimeout(() => retireBar(el), notice ? toastSuccessMs(msg) : TOAST_ERROR_MS);
+  errTimer = window.setTimeout(() => retireBar(el), notice || neutral ? toastSuccessMs(msg) : TOAST_ERROR_MS);
 }
 
 /** 操作型回执(§3.1):回执文案 + 一枚动作钮(如滑动改状态的「撤销」),notice 形。
@@ -303,6 +306,7 @@ function barWithAct(
     el.append(b);
   }
   el.classList.toggle("notice", notice);
+  el.classList.remove("neutral");
   el.classList.add("with-act");
   el.classList.remove("retiring");
   el.hidden = false;

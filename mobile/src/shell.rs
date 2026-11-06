@@ -1705,6 +1705,13 @@ pub async fn sync_roster_refresh(
     coord.roster_refresh(&space_id).await
 }
 
+/// 「现在重连」(161 / W4 Q14):只在离线时把重连提前一次;`false` = 此刻不是离线、什么都没做。机械与
+/// 「在线时不发」那道判都在 [`crate::coord::Coord::reconnect_now`]。
+#[tauri::command]
+pub async fn sync_reconnect_now(space_id: String, coord: State<'_, Coord>) -> Result<bool, String> {
+    coord.reconnect_now(&space_id).await
+}
+
 /// 用配对码加入账户(新设备侧;107 起也可扫码,同一条路)。**space-entry-plan §2
 /// 起只接受 main**(后端不变量,不是 UI 藏按钮):非 main 空间的两条来路是「新建
 /// =纯本地本子(同步唯一路=创号)」与「加入空间」(`join_space`,隐式 staging 槽,

@@ -62,18 +62,20 @@ async function clickTopicAction(title, label) {
     label,
   );
 }
-/** 这一行此刻在不在列表的可视区里。 */
-const rowInView = (title) =>
+/** 这一行此刻在不在列表的可视区里,连同量到的读数(红了能自证:找没找到、行框与列表上下沿、scrollTop)。 */
+const rowGeom = (title) =>
   browser.execute(
     (t) => {
+      const list = document.querySelector(".v-topics #list");
       const sec = [...document.querySelectorAll(".v-topics .topic")].find((s) => s.querySelector(".topic-title")?.textContent === t);
-      if (!sec) return false;
+      if (!sec) return { inView: false, found: false, scrollTop: list.scrollTop, rows: document.querySelectorAll(".v-topics .topic").length };
       const r = sec.querySelector(".topic-head").getBoundingClientRect();
-      const l = document.querySelector(".v-topics #list").getBoundingClientRect();
-      return r.top >= l.top - 1 && r.bottom <= l.bottom + 1;
+      const l = list.getBoundingClientRect();
+      return { inView: r.top >= l.top - 1 && r.bottom <= l.bottom + 1, found: true, head: [r.top, r.bottom], list: [l.top, l.bottom], scrollTop: list.scrollTop };
     },
     title,
   );
+const rowInView = async (title) => (await rowGeom(title)).inView;
 
 describe("W3 159 · 标签(桌面第一波)", () => {
   before(async () => {
@@ -140,7 +142,35 @@ describe("W3 159 · 标签(桌面第一波)", () => {
     await waitToast("已改名为「W159-凑数-15改」");
     const s1 = await browser.execute(() => document.querySelector(".v-topics #list").scrollTop);
     expect(Math.abs(s1 - s0)).toBeLessThanOrEqual(2);
-    expect(await rowInView("W159-凑数-15改")).toBe(true);
+    expect(await rowGeom("W159-凑数-15改")).toMatchObject({ inView: true });
+
+    // 行框顶边被裁掉几像素、名字整个看得见 —— 也算在眼前,改完不跳(W4 T1)。上面那步「贴顶」在 150% 缩放下
+    // 也会落成这一形(整表重画还原 scrollTop 后那行高出视口上沿零点几像素),但落不落得上看缩放与取整,
+    // 100% 缩放(Linux CI)恒落不上 ⇒ 这里把它摆死:贴顶再往下滚 4px。判据若改回按行框严格比,这一步必跳 290。
+    const CLIP = "W159-凑数-10";
+    const s2 = await browser.execute((t) => {
+      const sec = [...document.querySelectorAll(".v-topics .topic")].find((s) => s.querySelector(".topic-title")?.textContent === t);
+      sec.scrollIntoView({ block: "start" });
+      const l = document.querySelector(".v-topics #list");
+      l.scrollTop += 4;
+      return l.scrollTop;
+    }, CLIP);
+    // 前提自证:行框顶边确实在视口上沿之上,名字整个在里面 —— 否则这一步测的不是这一形。
+    const pre = await browser.execute((t) => {
+      const sec = [...document.querySelectorAll(".v-topics .topic")].find((s) => s.querySelector(".topic-title")?.textContent === t);
+      const l = document.querySelector(".v-topics #list").getBoundingClientRect();
+      const h = sec.querySelector(".topic-head").getBoundingClientRect();
+      const n = sec.querySelector(".topic-title").getBoundingClientRect();
+      return { headClipped: h.top < l.top - 1, nameInView: n.top >= l.top && n.bottom <= l.bottom };
+    }, CLIP);
+    expect(pre).toEqual({ headClipped: true, nameInView: true });
+    await clickTopicAction(CLIP, "重命名");
+    await $(".te-title").waitForDisplayed({ timeout: 5000 });
+    await setField(".te-title", "W159-凑数-10改");
+    await keyOn(".te-title", "Enter");
+    await waitToast("已改名为「W159-凑数-10改」");
+    const s3 = await browser.execute(() => document.querySelector(".v-topics #list").scrollTop);
+    expect(Math.abs(s3 - s2)).toBeLessThanOrEqual(2);
 
     // 改色:面板里只有色点,没有「完成」;点一个色点 → 收起 + 回执 + 仍在眼前
     await clickTopicAction("W159-改名后", "颜色");
