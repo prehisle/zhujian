@@ -142,7 +142,9 @@ describe("W3 159 · 标签(桌面第一波)", () => {
     await waitToast("已改名为「W159-凑数-15改」");
     const s1 = await browser.execute(() => document.querySelector(".v-topics #list").scrollTop);
     expect(Math.abs(s1 - s0)).toBeLessThanOrEqual(2);
-    expect(await rowGeom("W159-凑数-15改")).toMatchObject({ inView: true });
+    // ⚠ 别写回 toMatchObject({ inView: true }):它的差异只印期望里那一个键,读数全吞了(165 收口实红一次,啥也没留下)。
+    const g15 = await rowGeom("W159-凑数-15改");
+    if (!g15.inView) throw new Error(`改名后那一行不在眼前:${JSON.stringify({ ...g15, s0, s1 })}`);
 
     // 行框顶边被裁掉几像素、名字整个看得见 —— 也算在眼前,改完不跳(W4 T1)。上面那步「贴顶」在 150% 缩放下
     // 也会落成这一形(整表重画还原 scrollTop 后那行高出视口上沿零点几像素),但落不落得上看缩放与取整,

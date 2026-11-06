@@ -66,7 +66,8 @@ export const chrome = defineMessages({
   "space.moveWarnPost": { zh: "。", en: "." },
   // ⚠ 这句不写列名:列能改名,落点列叫什么要读**对方**空间(选了空间后问句里点名,move-space.ts::pick)。
   "space.moveColNote": { zh: "列不随迁:任务到了那边一律落在新任务进的那一列,排最上面。", en: "Columns don’t come along: over there a task always lands at the top of the column new tasks go into." },
-  "space.moveTo": { zh: "移到", en: "Move to" },
+  // 165 / W5 A19(WD-21):这一行此前只写「移到」—— 看板菜单里换列那项也叫「移到」,换空间的面板里写全是哪种「移到」。
+  "space.moveTo": { zh: "移到空间", en: "Move to space" },
   "space.moveQ": { zh: "移到「{name}」?", en: "Move to “{name}”?" },
   "space.moveQTask": { zh: "移到「{name}」?会落在那边「{col}」的最上面。", en: "Move to “{name}”? It lands at the top of “{col}” there." },
   "space.moveQTaskFrom": { zh: "移到「{name}」?会落在那边「{col}」的最上面,原来在「{from}」。", en: "Move to “{name}”? It lands at the top of “{col}” there; it is in “{from}” now." },

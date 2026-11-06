@@ -28,7 +28,7 @@ import {
 } from "./api";
 import { fillThumb, hydrateThumbs } from "./thumbs";
 import { onFoldClick, resettleFolds, settleFolds } from "./fold";
-import { docTitle, excerpt } from "./docs";
+import { docTitle, docTitleIsHeading, excerpt } from "./docs";
 import { openViewer } from "./viewer";
 import { t } from "./i18n";
 import {
@@ -40,17 +40,18 @@ import {
   contentHtml,
   esc,
   fmtWhen,
-  fmtWhenDated,
   hideConfirmBar,
+  itemSnippet,
   markHits,
   markLocated,
   showBar,
   showError,
+  showUndone,
   splitCols,
 } from "./ui";
 import { INPUT_DEBOUNCE_MS } from "./timing";
 import { errDetail, showErr } from "./err";
-import { isTaskStage, setColumns } from "./columns";
+import { isTaskStage, setColumns, stageLabel } from "./columns";
 
 type Deps = {
   refreshTimeline: () => Promise<void>;
@@ -160,7 +161,7 @@ export async function loadTrash(): Promise<void> {
 function docBodyHtml(content: string): string {
   const title = docTitle(content);
   return (
-    `<h3 class="doc-title${title === "" ? " untitled" : ""}">${esc(title === "" ? t("docs.untitled") : title)}</h3>` +
+    `<h3 class="doc-title${title === "" ? " untitled" : docTitleIsHeading(content) ? "" : " plain"}">${esc(title === "" ? t("docs.untitled") : title)}</h3>` +
     `<p class="doc-ex">${esc(excerpt(content, title))}</p>`
   );
 }
@@ -312,14 +313,18 @@ function onTrashImageClick(el: HTMLElement): boolean {
   return true;
 }
 
-async function trashRun(op: (space: string) => Promise<unknown>, doneMsg: string) {
+/** `done`:做完那句回执 —— 一句话(成功型),或一个自己出条的回调(还原那种带「去看看」的,A22)。 */
+async function trashRun(op: (space: string) => Promise<unknown>, done: string | (() => void)) {
   if (trashBusy) return;
   const space = getCurrentSpace();
   trashBusy = true;
   renderTrash();
   try {
     await op(space);
-    if (space === getCurrentSpace()) showBar(doneMsg, true);
+    if (space === getCurrentSpace()) {
+      if (typeof done === "string") showBar(done, true);
+      else done();
+    }
   } catch (err) {
     if (space === getCurrentSpace()) showErr(err);
   } finally {
@@ -401,9 +406,20 @@ function onTrashClick(e: Event) {
   const task = isTaskStage(row.stage);
   if (act === "restore") {
     // 146:恢复=回主视图,按该行冻结 stage 指路(任务回任务面、灵感回灵感面)。
+    // 165 / W5 A22(两端同句,照桌面):说回到了哪儿 + 【去看看】(指南「还原的回执……带【去看看】」),时长同别的操作型回执;
+    // ⛔ 不再写「在底栏「随记」里」—— 手机一横、平板上根本没有底栏(Q13 那句一起改)。任务说回到哪一列(列已不在 = 只说回到看板)。
+    const col = task ? stageLabel(row.stage) : undefined;
+    const msg = task
+      ? col !== undefined
+        ? t("trash.restoredTask", { col })
+        : t("trash.restoredBoard")
+      : row.doc_at !== null
+        ? t("trash.restoredDoc")
+        : t("trash.restoredNote");
+    const id = row.id;
     void trashRun(
-      (space) => (task ? restoreTask(space, row.id) : restoreNote(space, row.id)),
-      task ? t("panes.restoredTask") : row.doc_at !== null ? t("panes.restoredDoc") : t("panes.restoredIdea"),
+      (space) => (task ? restoreTask(space, id) : restoreNote(space, id)),
+      () => actionBar(msg, t("cardpanel.goSee"), () => deps.focusCard(id)),
     );
     return;
   }
@@ -416,8 +432,13 @@ function onTrashClick(e: Event) {
       const fresh = trashRows.find((r) => r.id === row.id);
       if (!fresh || trashBusy) return;
       const freshTask = isTaskStage(fresh.stage);
-      // A7(WM-04):彻底删除做完要说话。
-      void trashRun((space) => (freshTask ? purgeTask(space, fresh.id) : purgeNote(space, fresh.id)), t("panes.purged"));
+      // A7(WM-04):彻底删除做完要说话。165 / W5 Q15:找不回的那一下写出删的是哪一条(「已彻底删除「…」」,
+      // 字多了按字数读秒自然停久一点);整条没字(只有图)就照旧那一句。
+      const name = itemSnippet(fresh.content);
+      void trashRun(
+        (space) => (freshTask ? purgeTask(space, fresh.id) : purgeNote(space, fresh.id)),
+        name === "" ? t("panes.purged") : t("trash.purgedNamed", { name }),
+      );
     });
   }
 }
@@ -473,14 +494,21 @@ function renderSealed() {
             </div></div>`
           : "";
       const tint = cardTint(r.color);
+      // 165 / W5 A44:归档卡也画标签(同回收站 / 搜索那一形)—— 此前不画,看不出归档时分类保没保留(搜索结果里同一张却带着)。
+      const chips = r.topics
+        .map(
+          (tp) =>
+            `<span class="chip${tp.color ? " tinted" : ""}"${tp.color ? ` style="--tc:${esc(tp.color)}"` : ""}>${esc(tp.title)}</span>`,
+        )
+        .join("");
       return `<article class="card${tint.cls}"${tint.attr} data-sealed="${esc(r.id)}"><div class="body">
         <p class="content">${contentHtml(r.title, false)}</p>
         <footer><time>${
           // 158 G3 / Q13(WM-17):归档页的卡恒写日期 —— 今天完成的此前只写「完成于 13:xx」,翻到这页看不出是哪天。
           r.done_at
-            ? t("panes.doneAt", { when: esc(fmtWhenDated(r.done_at)) })
-            : t("panes.sealedAt", { when: esc(fmtWhenDated(r.sealed_at!)) })
-        }</time></footer>${panel}
+            ? t("panes.doneAt", { when: esc(fmtWhen(r.done_at)) })
+            : t("panes.sealedAt", { when: esc(fmtWhen(r.sealed_at!)) })
+        }</time>${chips}</footer>${panel}
       </div></article>`;
     });
   box.innerHTML = splitCols(cards, colsOf(box));
@@ -515,13 +543,16 @@ function onSealedClick(e: Event) {
           () => {
             if (space !== getCurrentSpace()) return; // 换空间的旧撤销作废
             void (async () => {
+              let ok = false;
               try {
                 await sealTask(space, id);
+                ok = true;
               } catch (err) {
                 showErr(err);
               }
               await loadSealed();
               void deps.refreshTimeline();
+              if (ok && space === getCurrentSpace()) showUndone(); // 165 / W5 Q6
             })();
           },
           { label: t("cardpanel.goSee"), on: () => deps.focusCard(id) },
@@ -764,6 +795,9 @@ export function initPanes(d: Deps) {
   watchCols($("search-results"), renderHits);
   $("search-input").addEventListener("keydown", (e) => {
     if ((e as KeyboardEvent).isComposing) return; // IME 组合期的 Enter 是上屏,不是搜索
-    if ((e as KeyboardEvent).key === "Enter") void runSearch(); // 不等去抖:回车就是「现在搜」
+    if ((e as KeyboardEvent).key !== "Enter") return;
+    void runSearch(); // 不等去抖:回车就是「现在搜」
+    // 165 / W5 Q9:键盘右下那颗键 = 收键盘(结果边打边出、早就在了;此前按了没变化、键盘一直挡着下半屏)。
+    searchInput().blur();
   });
 }

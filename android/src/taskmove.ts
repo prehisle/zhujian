@@ -9,7 +9,7 @@
 //    ⛔ 不自动滚过去 —— 用户正在读的那一屏不该被一次挪卡拽走(同 158 G2 新建那半的拍法)。
 import { listTasks, reorderTask } from "./api";
 import { t } from "./i18n";
-import { actionBar } from "./ui";
+import { actionBar, showUndone } from "./ui";
 import { showErr } from "./err";
 
 /** 卡在看板里的位置:哪一列 + 前后两个邻居(null = 列首 / 列尾)。 */
@@ -89,14 +89,17 @@ export function moveReceipt(space: string, id: string, msg: string, spot: Spot):
   const undo = (): void => {
     if (deps.isSwitching() || deps.getCurrentSpace() !== space) return; // 换空间的旧撤销作废
     void (async () => {
+      let ok = false;
       try {
         await putBack(space, id, spot);
+        ok = true;
       } catch (err) {
         showErr(err);
       }
       await deps.refresh();
       const c = cardEl(id);
       if (c && inView(c)) flashCard(c);
+      if (ok && deps.getCurrentSpace() === space) showUndone(); // 165 / W5 Q6:撤成了说一声(A31 误点撤销也靠它被发现)
     })();
   };
   actionBar(msg, t("ui.undo"), undo, seen ? undefined : { label: t("cardpanel.goSee"), on: () => deps.focusCard(id) });

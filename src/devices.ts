@@ -96,6 +96,8 @@ export function rosterDeparted(space: string, s: SyncStatus): string[] {
 type Pending = { device: string; action: DeviceAction };
 
 let confirming: Pending | null = null;
+// 确认块刚展开的那一次重画:焦点给它的【取消】(W5 Q3 ★①;此前焦点按可见文字落回、找不到就落到旁边那枚)。只用一次。
+let focusCancel = false;
 let expanded: string | null = null;
 let busy = false;
 let actErr = "";
@@ -308,6 +310,7 @@ function idLine(device: string, sid: string, deps: Deps): HTMLElement {
 function arm(device: string, action: DeviceAction, deps: Deps): void {
   confirming = { device, action };
   actErr = "";
+  focusCancel = true;
   deps.rerender();
 }
 
@@ -372,6 +375,10 @@ function confirmBlock(e: RosterEntry, ctx: RowCtx): HTMLElement {
     deps.rerender();
   });
   no.disabled = busy;
+  if (focusCancel) {
+    focusCancel = false;
+    no.dataset.autofocus = "1"; // 宿主(sync.ts::renderPanel)画完把焦点给带这枚标记的
+  }
   acts.appendChild(no);
   box.appendChild(acts);
   // A7(WP-20):这一下被拒的那句红字落在确认块里(此前在名单底部、隔着另一台的卡,确认块也不收)。

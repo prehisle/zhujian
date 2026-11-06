@@ -47,6 +47,9 @@ const IRREGULAR = [
   // 只量得了前一半 ⇒ 它是真不规则形,不是两支写反。读一遍就知道没写反:
   // n=1「1 further space was not attempted」/ n=2「2 further spaces were not attempted」。
   { one: "space was", many: "spaces were", why: "名词与 be 动词一起变(「{n} space was / spaces were not attempted」)" },
+  // 165 / W5 Q15:桌面 board.emptySealed 与手机 main.emptyTasksSealed(看板空了、归档里有那一句)。同上一条:名词与 be 一起变,
+  // n=1「1 archived task is under Archive」/ n=2「2 archived tasks are under Archive」—— 没写反。
+  { one: "task is", many: "tasks are", why: "名词与 be 动词一起变(「{n} archived task is / tasks are under Archive」)" },
 ];
 
 const PROJECTS = [

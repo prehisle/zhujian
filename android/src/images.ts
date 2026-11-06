@@ -124,7 +124,12 @@ async function downsampleForUpload(file: File): Promise<File> {
  *  ⚠ `left` 那道门不是装饰:没被盖住过就判取消,等于把「选择器压根没起来」和「用户
  *  取消了」混成一件事;而**取消判定必须可空转** —— 它若抢在 change 前面,后到的图会
  *  被静默丢掉,那比卡住更糟。
- *  ⚠ 诚实边界:若某台机器连 `visibilitychange` 都不发(本轮没见过),这条路仍会挂住。
+ *  ⚠ 鸿蒙 ArkWeb 就是「连 `visibilitychange` 都不发」的那一种(165 / W5 A5,O1 在 MatePad 模拟器上逐事件量过):
+ *  「选择上传」框、图库、文件三种选择器都是**窗内模态**,本页始终没被盖住 ⇒ 上面那条兜底永远等不到,取消一次
+ *  `picking` 就卡死(「记下」灰、【＋ 加图】再点不弹,退后台再切回才好)。ArkWeb 每次取消都往这只 `<input>` 上
+ *  发 `cancel`(files=0,关框后 60–760ms)⇒ 兜底 = `cancel` + `visibilitychange` 两条。按 HTML 规范 `cancel`
+ *  与 `change` 互斥(选了图只发 change),不会把选中的图丢掉。⛔ 仍别挂 window 的 focus(理由同上)。
+ *  ⚠ 诚实边界:模拟器上没有相机应用,点「拍照」时 ArkWeb 两样都不发,那条路照样挂住(真机有相机,没量过)。
  *  ⛔ 别为此加「用户一碰屏就判取消」那类保险 —— 它会在 change 迟到时把图丢了。 */
 function openPicker(configure: (el: HTMLInputElement) => void): Promise<File[]> {
   return new Promise((resolve) => {
@@ -151,6 +156,8 @@ function openPicker(configure: (el: HTMLInputElement) => void): Promise<File[]> 
       if (left) window.setTimeout(() => settle([]), 1000);
     }
     input.addEventListener("change", () => settle([...(input.files ?? [])]), { once: true });
+    // ArkWeb 的选择器是窗内模态、不发 visibilitychange,取消只发这一记(165 / W5 A5,由头在函数头注)。
+    input.addEventListener("cancel", () => settle([]), { once: true });
     document.addEventListener("visibilitychange", onVisibility);
     document.body.appendChild(input);
     input.click();

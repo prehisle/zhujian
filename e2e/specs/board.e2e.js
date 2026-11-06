@@ -639,30 +639,36 @@ describe("任务看板 · 待确认列(可选验收)", () => {
     await (await cardInColumn("todo", T)).waitForExist({ timeout: 8000 });
   });
 
+  // 拖完先等回执「已移到「…」」再拖下一下:回执挂在 reorder() 落账 + load() 重画之后,那时 `busy` 已放开 ——
+  // 只等库里 status 变了就接着拖,第二下会撞上还没放开的 busy、被 drop 静默不接(165 收口全量实红过一次;等 DOM 别拿库当代理)。
+  async function dragAndLand(sel, status, col) {
+    await dragCardTo(T, sel);
+    await browser.waitUntil(async () => (await statusOf(T)) === status, { timeout: 8000, timeoutMsg: `拖进「${col}」8 s 没落库` });
+    await browser.waitUntil(
+      () => browser.execute((c) => (document.querySelector(".undo-toast .undo-text")?.textContent ?? "").includes(`已移到「${c}」`), col),
+      { timeout: 8000, timeoutMsg: `拖进「${col}」落了库,回执一直没出(load 没收尾?)` },
+    );
+  }
+
   it("进行中 → 待确认 → 已完成:可选验收去处", async () => {
     // 待办 → 进行中.
-    await dragCardTo(T, ".col.doing .col-body");
-    await browser.waitUntil(async () => (await statusOf(T)) === "doing", { timeout: 8000 });
+    await dragAndLand(".col.doing .col-body", "doing", "进行中");
 
     // 进行中 → 待确认 (the new fourth column — work done, awaiting confirmation).
-    await dragCardTo(T, ".col.confirming .col-body");
-    await browser.waitUntil(async () => (await statusOf(T)) === "confirming", { timeout: 8000 });
+    await dragAndLand(".col.confirming .col-body", "confirming", "待确认");
     await expect(await cardInColumn("confirming", T)).toExist();
 
     // 待确认 → 已完成 (confirmed).
-    await dragCardTo(T, ".col.done .col-body");
-    await browser.waitUntil(async () => (await statusOf(T)) === "done", { timeout: 8000 });
+    await dragAndLand(".col.done .col-body", "done", "已完成");
     await expect(await cardInColumn("done", T)).toExist();
   });
 
   it("待确认 → 打回进行中:四态自由双向流转", async () => {
     // It's 'done' from the previous test. Pull it back to 待确认 (done→confirming is
     // legal: free movement), then kick it back to 进行中 for rework.
-    await dragCardTo(T, ".col.confirming .col-body");
-    await browser.waitUntil(async () => (await statusOf(T)) === "confirming", { timeout: 8000 });
+    await dragAndLand(".col.confirming .col-body", "confirming", "待确认");
 
-    await dragCardTo(T, ".col.doing .col-body");
-    await browser.waitUntil(async () => (await statusOf(T)) === "doing", { timeout: 8000 });
+    await dragAndLand(".col.doing .col-body", "doing", "进行中");
     await expect(await cardInColumn("doing", T)).toExist();
   });
 });

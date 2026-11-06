@@ -219,7 +219,8 @@
     await until(() => !bar.hidden, 2000);
     ok("A19 彻底删除一条的确认是普通形(不全宽)", !bar.classList.contains("heavy"));
     click($("confirmbar-yes"));
-    ok("A7 彻底删除给回执「已彻底删除」", !!(await until(() => !$("error").hidden && $("error").textContent === "已彻底删除", 4000)), $("error").textContent);
+    // 165 / W5 Q15 起回执写出删的是哪条:「已彻底删除「…」」(整条没字才照旧那一句)
+    ok("A7 彻底删除给回执「已彻底删除「…」」", !!(await until(() => !$("error").hidden && $("error").textContent.startsWith("已彻底删除「"), 4000)), $("error").textContent);
     ok("A7 …库里真没了", !(await inv("list_trash")).some((x) => x.id === ids.one));
 
     // A18:提示条在场时点顶栏「搜索」那一点

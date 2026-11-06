@@ -10,7 +10,7 @@ import {
 } from "./space";
 import { movePanel } from "./move-space";
 import { autoGrow } from "./autogrow";
-import { dismissUndo, toastAction, toastError, toastGo, toastUndo } from "./toast";
+import { dismissUndo, toastAction, toastError, toastGo, toastUndo, toastUndone } from "./toast";
 import { createComposeController } from "./compose-controller";
 import { copyButton, copyText } from "./clipboard";
 import { buildItemDeepLink } from "./deeplink";
@@ -34,10 +34,11 @@ import {
   wireFilterInput,
 } from "./filter-bar";
 import { IDEA_CARD_KEYS, IDEA_TRASH_KEYS, IDEA_VIEW_KEYS } from "./keymap";
-import { type Act, SATELLITE_LAYERS, armDismiss, createHotkeyController, registerViewKeys } from "./hotkey-menu";
+import { type Act, SATELLITE_LAYERS, armDismiss, createHotkeyController, noHistoryAct, registerViewKeys } from "./hotkey-menu";
+import { isTabKey } from "./keys";
 import { t } from "./i18n";
 import { FOLD_SLACK_PX, hasBoxBelowFold } from "./fold";
-import { type ImageMeta, REPASTE_HINT, attachBlob, imageStrip, listImages, renderContent, wirePasteToAttach } from "./item-images";
+import { type ImageMeta, REPASTE_HINT, attachBlob, imageStrip, listImages, openLightbox, renderContent, wirePasteToAttach } from "./item-images";
 import { withMissingRefs } from "../shared/markdown";
 import { toggleChecklistLine } from "../shared/checklist";
 import {
@@ -54,7 +55,7 @@ import { trashPurgeControl } from "./trash-purge";
 import { focusTask } from "./board";
 import { applyTagColor } from "./tag-color";
 import { renderTagPicker } from "./tag-picker";
-import { dayKey, dayLabel, startOfWeek, when } from "./tasktime";
+import { dayKey, dayLabel, itemSnippet, startOfWeek, when } from "./tasktime";
 import { identitySig, loadIdentity, signatureChip } from "./identity";
 import { wireChecklistInput } from "./checklist-input";
 import { goneOf, onGoneChange } from "./sync-gone";
@@ -113,6 +114,11 @@ let active: Tab = "ideas";
 // 消费(同 board.ts focusId 纪律):切 tab、清筛选让目标必然可见、设 pulseId 脉冲并
 // 滚到视野中央。目标已离场(转待办/彻底删的窄窗)= 静态落 tab,不残留。用完即清。
 let pendingFocus: { id: string; tab: Mode; space: string } | null = null;
+// 165 / W5 Q15(WD-27):长文页头那枚「回收站」开的是随记这只(长文删了进的就是它)—— 下一次挂载直接落在回收站。只活一次。
+let trashOnMount = false;
+export function openInboxTrashNext(): void {
+  trashOnMount = true;
+}
 export function focusInboxItem(id: string, tab: Mode): void {
   // 携带发起那刻的空间(codex P1 二审 M):落地前若切了空间,请求自弃——A 的跳转
   // 不许在 B 的列表上清筛选/切 tab。
@@ -245,7 +251,8 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
   // 空存;重开正常场景 = 恢复上次空间,存里的图属本空间,回填即可)。仅一次,后续 mount
   // 图已常驻。
   composeCtl.restoreImagesOnce();
-  active = "ideas"; // A6:侧栏主导航回主视图(见 `active` 声明处);要落回收站的跳转由 refresh 里的 focus 改
+  active = trashOnMount ? "archived" : "ideas"; // A6:侧栏主导航回主视图(见 `active` 声明处);要落回收站的跳转由 refresh 里的 focus 改
+  trashOnMount = false;
   const view = el("div", { className: "v-inbox view" });
   view.innerHTML = SKELETON;
   root.replaceChildren(view);
@@ -271,7 +278,9 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
   // ⚠ 读的是启动序先拉好的那份(notebook.ts),挂载时同步画 —— 不等一跳 IPC,免得页头之下整块往下跳。
   // ⚠ 两枚钮只建一次、之后只换字 / 显隐:「点此改键」是设置浮层「打开它的那枚」,关掉设置焦点要回到它
   // (A3);改完一枚键这里跟着重画,若整条重建,焦点就没处可回了。
-  const hkFix = el("button", { className: "hkb-fix", type: "button" });
+  // 165 / W5 A40(WD-29):前面带错误那枚「!」圆(err.css `.err-msg::before`)—— W4 定的「错误条一律带图标」此前没管到这条,
+  // 只是红字(状态不单靠颜色)。
+  const hkFix = el("button", { className: "hkb-fix err-msg", type: "button" });
   // 动态 import:settings 那棵依赖图很大,随记页自己不必静态拖着它(同 err.ts 的「网络自检」钮)。
   hkFix.addEventListener("click", () => void import("./settings").then((m) => m.openSettingsPanel("hotkeys")));
   const hkX = el("button", { className: "hkb-x", type: "button", textContent: "×", title: t("capture.gotIt") });
@@ -575,6 +584,16 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
         void save();
       }
     });
+    // W5 A38(WD-11):列表只往下滚了二三十像素时 Shift+Tab 进框,框的上沿约 10px 被列表上沿裁掉、引擎不滚。
+    // ⇒ 从别的控件走进来(relatedTarget 非空)且框**露着一截、上沿被裁**时,把列表滚回到框完整露出。
+    // ⛔ 只管「露着一截」:框整个在屏外是人往下翻着读(A46 那条:重画后还焦点不许把列表滚回顶),不管;
+    //    重画后还焦点那一下 relatedTarget 是空的(旧框已被换掉),也不进这条。
+    input.addEventListener("focus", (e) => {
+      if (e.relatedTarget === null) return;
+      const lt = list.getBoundingClientRect().top;
+      const r = input.getBoundingClientRect();
+      if (r.top < lt && r.bottom > lt) list.scrollTop -= lt - r.top + 8;
+    });
     // 点钮记下后焦点回输入框(157 G2②,W1 走查 WD-07):此前焦点留在钮上、随 refresh 重建 bar 掉到 body,
     // 接着打字全落空(回车那条路不掉 —— refresh 只把焦点还给「本来就握着它」的输入框,见 hadComposeFocus)。
     const addBtn = el("button", {
@@ -670,6 +689,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
    *  就地报错的落点)。mount 死了(切了视图 / 空间)按下作废 —— invoke 注入的是当前空间。 */
   async function undoVia(cmd: string, id: string, extra: Record<string, unknown> = {}): Promise<void> {
     if (unmounted) return;
+    hk.want(id, true); // 撤回来的那张重新是选中、焦点回它(W5 A1 / A3:按错了 → Ctrl+Z → 接着在原处)
     try {
       await invoke(cmd, { id, ...extra });
     } catch (e) {
@@ -677,13 +697,14 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       return;
     }
     void refresh();
+    toastUndone(); // 165 / W5 Q6:撤成了说一声
   }
 
   function leaveCard(note: HTMLElement, from: Mode, to: Mode | null): void {
+    // A leaving card must not stay the shortcut target (it's about to detach). W5 A3 / A12:选中(连同焦点)
+    // 落到原位后一张;⛔ 别再整条 reset() —— 回收站离场后不重画,轨道一清 ↑ ↓ 就再也选不中(A12)。
+    hk.leave(note);
     note.classList.add("removing");
-    // A leaving card must not stay the shortcut target (it's about to detach) — the
-    // action that removes it always fires from this card, so dropping active state is safe.
-    hk.reset();
     // Remove when the fade-out transition ends — but transitionend is NOT guaranteed to
     // fire (an interrupted transition, a backgrounded/headless WebView, or reduced-motion
     // with a 0s transition can all skip it), which would strand the card mid-fade with the
@@ -782,6 +803,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       locateId = null;
       note.classList.add("just-located");
       armLocate(note);
+      hk.want(item.id, true); // W5 Q11:跳过来的这张同时是「选中」、焦点在它的 ⋯ 上 —— 落地就能按单键
       const said = takeLocateNote(item.id);
       if (said !== null) landedNote = locateNoteEl(said);
     }
@@ -834,17 +856,29 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
     // 还开着 / 卡还在 / 没进编辑态,任一不符就丢。
     let histOpen = false;
     let histSeq = 0;
+    // W5 A15 / Q2:摊开的历史照全应用那套键 —— 打开焦点进第一版、Esc 关(焦点在卡里或掉在页面上时都关)、
+    // 关完焦点回这张卡的 ⋯;收起「历史 N 版」那一行 = 整块收走(此前 Esc 关不掉、收起后卡上还留着那一行)。
+    // 样子不动(Q2 ★①:随记的历史照旧卡里展开)。
+    let histEscOff: (() => void) | null = null;
+    function closeHistory(refocus: boolean): void {
+      histSeq++; // 在途那发作废
+      histOpen = false;
+      histEscOff?.();
+      histEscOff = null;
+      const had = histHost.contains(document.activeElement);
+      histHost.replaceChildren();
+      if ((refocus || had) && note.isConnected) handle.focus();
+    }
     async function toggleHistory(): Promise<void> {
       const mine = ++histSeq;
       if (histOpen) {
-        histOpen = false;
-        histHost.replaceChildren();
+        closeHistory(true);
         return;
       }
       histOpen = true;
       const staged = el("div");
       try {
-        await mountHistory(staged, item.id);
+        await mountHistory(staged, item.id, { onCollapse: () => closeHistory(true) });
       } catch (e) {
         if (mine !== histSeq) return;
         histOpen = false;
@@ -858,6 +892,22 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       }
       histHost.replaceChildren(...staged.childNodes);
       histHost.querySelector<HTMLButtonElement>(".hist-toggle")?.click(); // 从菜单进来 = 要看,直接摊开
+      histHost.querySelector<HTMLButtonElement>(".hist-entry")?.focus({ preventScroll: true });
+      histHost.scrollIntoView({ block: "nearest" });
+      const onEsc = (e: KeyboardEvent): void => {
+        if (!note.isConnected) {
+          histEscOff?.(); // 整列重画把这张卡换掉了:监听跟着收
+          histEscOff = null;
+          return;
+        }
+        if (e.key !== "Escape" || e.isComposing || e.defaultPrevented) return;
+        const a = document.activeElement;
+        if (!(a === null || a === document.body || note.contains(a))) return;
+        e.preventDefault();
+        closeHistory(true);
+      };
+      document.addEventListener("keydown", onEsc);
+      histEscOff = () => document.removeEventListener("keydown", onEsc);
     }
 
     // Tag chips — a 想法 may carry tags (just metadata); show them whenever present.
@@ -866,7 +916,9 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
     // 删标签:每个 chip 带一个 ✕(和看板卡片一致),点它去掉该标签、整卡重渲。只有灵感态
     // (mode==="ideas")给这个入口——回收站卡只读,后端也会拒。去掉最后一个标签会让「已整理」
     // 退回「未归类」(notes::remove_topic),但都在「想法」tab 合并显示,视觉上只是标签消失。
-    async function removeTag(topicId: string): Promise<void> {
+    // 165 / W5 A16(WD-17):✕ 一按就摘,此前不说一声、也撤不回;看板同一枚 ✕ 早有「已去掉标签「…」 撤销」(158 G2 / A17)
+    // ⇒ 照看板那句、同一种条。撤销 = 把同一枚挂回去(file_note_to_topic 那条既有标签的路,零副本)。
+    async function removeTag(topicId: string, title: string): Promise<void> {
       try {
         await invoke("remove_note_topic", { id: item.id, topicId });
       } catch (e) {
@@ -874,6 +926,9 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
         return;
       }
       void refresh();
+      toastUndo(t("board.undoUntagged", { tag: title }), t("common.undo"), () =>
+        void undoVia("file_note_to_topic", item.id, { topicId, newTitle: null }),
+      );
     }
     let tagsEl: HTMLElement | null = null;
     if (tagged) {
@@ -889,7 +944,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
                 className: "tag-x",
                 textContent: "✕",
                 title: removeTagTitle,
-                onclick: () => void removeTag(t.id),
+                onclick: () => void removeTag(t.id, t.title),
               }),
             );
           }
@@ -992,6 +1047,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
         closeComments();
         return;
       }
+      if (histOpen) closeHistory(false); // 一张卡上同一时刻一层(W5 A15:此前接着开留言,历史一直摊着)
       // 展开期间单键让位(suspended 判据含 commenting):框里正在打字,按 D 不该删掉这张卡。
       note.classList.add("commenting");
       openInlineComments(cmHost, mountSpace, item.id, () => void refresh(), {
@@ -1000,7 +1056,11 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
         // 手点开的一律给焦点(桌面上开层即能写是对的);重挂只还给本来就握着焦点的人。
         focus: restore ? restore.focused : true,
         remount: restore !== undefined, // 决定滚哪儿:手点滚整块,重挂滚输入框(见 openPanel 末)
-        onClose: () => note.classList.remove("commenting"),
+        onClose: () => {
+          note.classList.remove("commenting");
+          // 关完焦点回这张卡的 ⋯(W5 A4 / Q2;此前掉到页面上)。焦点已被别处接走(点了别的框)就不抢。
+          if (document.activeElement === document.body && note.isConnected) handle.focus();
+        },
       });
     }
 
@@ -1046,6 +1106,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       // 编辑态整块换掉 body(cmHost 随之离开文档),就地展开的留言必须先收——否则那一层
       // 悬在 DOM 外,而 document 上的 Esc 监听还活着(按 Esc 关一个看不见的层)。
       if (inlineCommentState(mountSpace)?.itemId === item.id) closeComments();
+      if (histOpen) closeHistory(false); // 编辑态有自己那份历史;读态摊开的那份先收(W5 A15)
       note.classList.add("editing");
       const area = el("textarea", { className: "edit-area", value: currentContent });
       area.addEventListener("input", () => autoGrow(area)); // no CSS cap — full text stays visible, like the view state
@@ -1107,12 +1168,19 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       function leaveEdit(): void {
         if (closed) return;
         closed = true;
+        // 焦点此刻还在这张卡里(回车 / Esc 收场)或已掉到页面上 ⇒ 收完还给这张卡的 ⋯(W5 A4:此前一律掉到
+        // body,下一下 Tab 落在哪不固定)。已被别处接走(点了别的框 / Tab 走开了)就不抢。
+        const a = document.activeElement;
+        const refocus = a === null || a === document.body || note.contains(a);
         document.removeEventListener("keydown", onKey);
         document.removeEventListener("mousedown", onDown);
+        note.removeEventListener("focusout", onFocusOut);
+        note.removeEventListener("keydown", onTabKey);
         if (closeActiveEdit === commit) closeActiveEdit = null;
         if (teardownActiveEdit === leaveEdit) teardownActiveEdit = null;
         // 列表整体重渲染时这张卡已离开 DOM,无需(也不该)再 showView——只拆监听即可。
         if (note.isConnected) showView();
+        if (refocus && note.isConnected) handle.focus();
         // 编辑期间压住的那次远端 / 回窗刷新,现在补上(716)。
         if (refreshDeferred) {
           refreshDeferred = false;
@@ -1195,8 +1263,31 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
         if (t.closest(SATELLITE_LAYERS)) return;
         commit();
       };
+      // W5 A17(WD-18):Tab 走开 = 离开 = 照「离开就保存」存下并收起(指南「回车、点别处都存」;此前框开着、
+      // 改的字留着、屏上不说,等切了视图才悄悄存上)。与点别处走同一条 commit:没改 = 只收起、不打后端,
+      // ⛔ 不多落一版;改了 = 落一版(和回车 / 点别处那一版是同一版,不是多出来的)。
+      // 判「走开」等焦点真落定了再看(下一拍):焦点还在这张卡里(加图钮 / 历史那几行)、或进了卫星层
+      // (看大图 / ⋯ 菜单 / 留言浮层)不算;relatedTarget 为空(切走窗口 / 点在不可聚焦处)不算 —— 后者归 onDown。
+      // Tab 走出整页(这张是最后一张、后面再没有能停的)时 relatedTarget 也是空的 —— 和切走窗口同形;
+      // 靠「刚按过 Tab」把它认出来(按键与失焦同一拍)。
+      let tabAt = -Infinity;
+      const onTabKey = (e: KeyboardEvent): void => {
+        if (isTabKey(e)) tabAt = performance.now();
+      };
+      function onFocusOut(e: FocusEvent): void {
+        const to = e.relatedTarget as HTMLElement | null;
+        if (to === null ? performance.now() - tabAt > 300 : note.contains(to) || to.closest(SATELLITE_LAYERS)) return;
+        setTimeout(() => {
+          if (closed) return;
+          const a = document.activeElement;
+          if (a instanceof HTMLElement && (note.contains(a) || a.closest(SATELLITE_LAYERS))) return;
+          commit();
+        }, 0);
+      }
       document.addEventListener("keydown", onKey);
       document.addEventListener("mousedown", onDown);
+      note.addEventListener("focusout", onFocusOut);
+      note.addEventListener("keydown", onTabKey);
       // 单一编辑态:开别的卡前先 commit 本卡(保存已改动 / 无改动即收回),而非丢弃。
       closeActiveEdit = commit;
       teardownActiveEdit = leaveEdit;
@@ -1204,6 +1295,8 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       note.replaceChildren(body, err);
       autoGrow(area); // size to the text only now that it's connected (a detached node measures 0)
       area.focus();
+      // 光标放末尾、不全选(W5 Q15「看板按 E 不全选」那条随记这头一起钉住:新建的框赋值后引擎本就落在末尾,写明免得漂)
+      area.setSelectionRange(area.value.length, area.value.length);
 
       // History loads lazily (catalog only — no text until a version is opened); only shows the
       // disclosure if there are past versions.
@@ -1256,10 +1349,10 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
         refsErr = e;
       }
       leaveCard(note, "ideas", null);
-      // 卡片走了、人还在随记:回执里给一枚「打开」直接去那一篇(153 走查 D-M15:原先只能点侧栏「长文」,
-      // 而那儿停在上一次看的那篇)
+      // 卡片走了、人还在随记:回执里给一枚去处钮直接去那一篇(153 走查 D-M15:原先只能点侧栏「长文」,
+      // 而那儿停在上一次看的那篇)。165 / W5 Q14:跳过去看的钮一律叫「去看看」(此前这一枚叫「打开」)。
       toastUndo(t("inbox.undoExpanded"), t("common.undo"), () => void undoVia("set_doc", item.id, { on: false }), {
-        label: t("inbox.openExpanded"),
+        label: t("inbox.goSee"),
         run: () => {
           focusDoc(item.id);
           ctx.navigate("docs");
@@ -1281,6 +1374,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
         showOpErr(errText(e));
         return;
       }
+      if (histOpen) closeHistory(false);
       note.classList.add("editing");
       const have = new Set(topics.map((t) => t.id));
 
@@ -1290,18 +1384,21 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       // 才补一发 refresh 把卡面与筛选计数对齐。失败就地报错、选择器留场。
       let changed = false;
       const close = (): void => {
+        const had = picker.contains(document.activeElement);
         picker.remove();
         note.classList.remove("editing");
+        if (had && note.isConnected) handle.focus(); // W5 A4:收起后焦点回这张卡的 ⋯(此前掉到页面上)
         if (changed) afterFile();
       };
       armDismiss(picker, close);
-      const fileInto = async (topicId: string | null, newTitle: string | null): Promise<void> => {
+      // 回「写成没有」:没写成(就地报错了)时选择器留着打的字、不出回执(tag-picker 的 commit)。
+      const fileInto = async (topicId: string | null, newTitle: string | null): Promise<boolean> => {
         let id: string;
         try {
           id = await invoke<string>("file_note_to_topic", { id: item.id, topicId, newTitle });
         } catch (e) {
           showOpErr(errText(e));
-          return;
+          return false;
         }
         if (!allTopics.some((x) => x.id === id)) {
           // 新建的那枚:本地补一行让候选里认得它(title 同 core 口径 trim);收起时那发 refresh 对齐真相。
@@ -1309,18 +1406,20 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
         }
         have.add(id);
         changed = true;
+        return true;
       };
       // 再点一次已挂的 = 摘掉(与卡上 chip 的 ✕ 同一条命令 remove_note_topic;摘掉最后一个会让
       // 「已整理」退回「未归类」,两个 stage 都在「想法」tab 里,卡不会跳走)。
-      const unfile = async (topicId: string): Promise<void> => {
+      const unfile = async (topicId: string): Promise<boolean> => {
         try {
           await invoke("remove_note_topic", { id: item.id, topicId });
         } catch (e) {
           showOpErr(errText(e));
-          return;
+          return false;
         }
         have.delete(topicId);
         changed = true;
+        return true;
       };
       // 选择器 UI(搜索 + 候选 + Enter 复用/新建)走共享件 tag-picker.ts(与看板同源)。
       // 先把 picker 挂进 DOM 再渲染 —— renderTagPicker 末尾会 focus 搜索框,而 focus 对游离
@@ -1385,7 +1484,9 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       note.classList.add("confirming");
       const off = armDismiss(note, () => {
         confirmOff = null; // armDismiss 已自拆:只归零,别重复拆
+        const had = note.contains(document.activeElement);
         showView();
+        if (had) handle.focus(); // Esc 收起:焦点回这张卡的 ⋯(W5 A4)
       });
       confirmOff = off;
       const confirmPurge = async () => {
@@ -1397,25 +1498,31 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
           return;
         }
         leaveCard(note, "archived", null);
-        toastAction(t("trash.purged")); // A7:做完说一声(不可逆,没有撤销可配)
+        // A7:做完说一声(不可逆,没有撤销可配)。165 / W5 Q15:找不回的那一下写出删的是哪一条(整条没字照旧那句)。
+        const name = itemSnippet(currentContent);
+        toastAction(name === "" ? t("trash.purged") : t("trash.purgedNamed", { name }));
       };
       // A7(WD-11):确认里写明无法恢复、连带删掉几张配图(同一页「已删配图」的彻底删除早就这么写)。
       const q = imgs.length > 0 ? t("trash.purgeOneImagesQ", { m: imgs.length }) : t("trash.purgeOneQ");
-      note.replaceChildren(
-        body,
-        el("div", { className: "confirm" }, [
-          el("span", { className: "confirm-q", textContent: q }),
-          el("button", {
-            className: "no",
-            textContent: t("inbox.cancel"),
-            onclick: () => {
-              disarmConfirm();
-              showView();
-            },
-          }),
-          el("button", { className: "do", textContent: t("inbox.deleteForever"), onclick: confirmPurge }),
-        ]),
-      );
+      const no = el("button", {
+        className: "no",
+        textContent: t("inbox.cancel"),
+        onclick: () => {
+          disarmConfirm();
+          showView();
+          handle.focus();
+        },
+      });
+      const box = el("div", { className: "confirm" }, [
+        el("span", { className: "confirm-q", textContent: q }),
+        no,
+        el("button", { className: "do", textContent: t("inbox.deleteForever"), onclick: confirmPurge }),
+      ]);
+      note.replaceChildren(body, box);
+      // W5 Q3 ★①(WD-39):确认一出来焦点停【取消】—— 回车不做破坏的事,要删就 Tab 一下到执行钮。此前这一条
+      // (全应用唯一真找不回的那个)焦点根本不进,还留在页头,要 Tab 5 下途经热键红条、清空回收站才到。
+      box.scrollIntoView({ block: "nearest" });
+      no.focus({ preventScroll: true });
     }
 
     // ---- 移动到其他空间 (cross-space-move v1;W3 159 / Q4 起三处共用 move-space.ts) ----
@@ -1423,13 +1530,19 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
     // ⛔ 绝不提供重跑;两条预检拒原样说清、可改再试)都在共享件里,这里只留本视图的 DOM 反应。
     function openMove(): void {
       disarmConfirm();
+      if (histOpen) closeHistory(false);
       note.classList.add("confirming"); // 单键挂起(suspended 判据含 confirming)
       const { panel, reveal } = movePanel({
         itemId: item.id,
         sourceSpace: mountSpace,
         targets: otherSpaces,
         fromColumn: null,
-        onClose: showView,
+        onClose: () => {
+          const a = document.activeElement;
+          const had = a === null || a === document.body || note.contains(a);
+          showView();
+          if (had && note.isConnected) handle.focus(); // W5 A4:收起后焦点回这张卡的 ⋯
+        },
         // 迟到(期间重渲 / 切空间)= 卡片已脱离 DOM:列表由现任渲染负责,只在 mount 还活着时补一次刷新。
         onMoved: () => {
           if (note.isConnected) leaveCard(note, "ideas", null);
@@ -1476,7 +1589,9 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       const list: Act[] = [
         { label: t("inbox.actEdit"), key: IDEA_CARD_KEYS.edit, run: openEdit },
         // 157 G4 / P5:改过的才有(没有旧版时这一项点了什么也看不到)。
-        ...(item.revised ? [{ label: t("inbox.actHistory"), key: IDEA_CARD_KEYS.history, run: () => void toggleHistory() }] : []),
+        ...(item.revised ? [{ label: t("inbox.actHistory"), key: IDEA_CARD_KEYS.history, run: () => void toggleHistory() }] : [noHistoryAct(IDEA_CARD_KEYS.history)]),
+        // W5 A9:有配图才有「看图」(从第一张看起,← → 翻、Esc 关;同点缩略图那条路)
+        ...(imgs.length > 0 ? [{ label: t("inbox.actImages"), key: IDEA_CARD_KEYS.images, run: () => void openLightbox(imgs, 0) }] : []),
         { label: t("inbox.actTask"), key: IDEA_CARD_KEYS.task, run: doPromote },
         { label: t("inbox.actTag"), key: IDEA_CARD_KEYS.tag, run: openTopic },
         // 留言(§4.7):N=0 时卡片上没有徽章,这里是写第一条的唯一入口。
@@ -1505,6 +1620,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
         note.classList.contains("editing") ||
         note.classList.contains("confirming") ||
         note.classList.contains("commenting"),
+      { id: item.id }, // 重画后按它把选中 / 焦点接回同一张(W5 A3 / A4)
     );
 
     // 双击卡片 = 默认操作「编辑」(和单键 E 同一入口)。回收站卡片冻结、不编辑;双击在
@@ -1610,6 +1726,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
   function trashBar(imgs: number): HTMLElement[] {
     const err = el("p", { className: "form-err", hidden: true });
     const { button, panel } = trashPurgeControl({
+      which: "notes",
       count: () => ({ items: counts.archived - imgs, images: imgs }),
       claimConfirm: (off) => {
         if (off === null) confirmOff = null;
@@ -1760,7 +1877,12 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       counts.ideas = ideas.length;
       // 顶栏计数报回收站里「有几样东西」:条目 + 已删配图(只剩几张图时钮上不能写 0)。
       counts.archived = archived.length + removedImageCount(removed);
-      statsBlank = stats.captured_week === 0 && stats.born_inbox === 0;
+      // 165 / W5 A42(WD-31):「本周记了 N 条」只数随记本身 —— 此刻在随记里、本周记下的那几条(与页上的卡对得上)。
+      // 此前用 core 的 captured_week(本周生而为随记的全部,含后来展开成长文 / 转成待办的):只新建一篇长文,
+      // 回随记页数字从 3 变 4、页上仍是 3 张。⛔ 不动 core 那条统计(比例的分子分母照旧是「转过待办」的史实)。
+      const weekFrom = startOfWeek().getTime();
+      const notedWeek = ideas.filter((i) => new Date(i.created_at).getTime() >= weekFrom).length;
+      statsBlank = notedWeek === 0 && stats.born_inbox === 0;
       // 「转待办」平时零可见控件(⋯ 悬停才浮现),而看板空态只说「去随记里转」没说怎么点。
       // ⇒ **还没有人转过**的时候让 ⋯ 常驻,转过第一条就回悬停(样式在 hotkey-menu.css)。
       // 判据用 converted 而不是「库里有没有任务」:直接建的任务不算进 born_inbox 那个
@@ -1776,10 +1898,10 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       statsEl.textContent =
         stats.born_inbox > 0
           ? t("inbox.weekStats", {
-              n: stats.captured_week,
+              n: notedWeek,
               pct: Math.round((stats.converted / stats.born_inbox) * 100),
             })
-          : t("inbox.weekStatsNoRatio", { n: stats.captured_week });
+          : t("inbox.weekStatsNoRatio", { n: notedWeek });
       // 这一发真的画成卡片的那批(空态 / 筛空时就是空)。⚠ 必须在 row() 全部调用完之后
       // 才写回 renderedIds —— row() 读的是**上一发**那份,提前写等于把 fresh 判据抹平。
       let painted: string[] = [];
@@ -1793,6 +1915,8 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
         // = visibility:hidden,点不到也 Tab 不到),第一条进来时原地显出来,框不动。
         filterRow.hidden = false;
         filterRow.classList.toggle("reserve", ideas.length === 0);
+        // 165 / W5 A21:库里有标签就让标签那一行恒占着(filter-bar.css .keep-tags),挂上 / 摘掉 / 转走那张时框不再上下跳。
+        filterRow.classList.toggle("keep-tags", topics.length > 0);
         // 157 G4 / P11:从「没筛」进「筛着」那一刻记下读到哪儿,筛选全清掉时滚回去(此前回到顶部,WD-21)。
         const nowFiltered = filterActive(filter) || timeFilter !== "all";
         if (nowFiltered && !wasFiltered) unfilteredScroll = list.scrollTop;

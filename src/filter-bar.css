@@ -15,8 +15,12 @@
 .filter-row.reserve { visibility: hidden; }
 /* 标签行整行没发(一枚标签都筛不出,renderFilterPills 清空)且类型轴也空时:过滤框并到时间轴那一行
    右端,别为它单留一行(10-10,用户报「最初无标签时别显示标签选择区域」——只清空 pill 的话,
-   那一行照旧被过滤框撑着,屏上省不下任何东西)。 */
-.filter-row:has(.topic-filter:empty):has(.kind-filter:empty) {
+   那一行照旧被过滤框撑着,屏上省不下任何东西)。
+   165 / W5 A21(WD-16):这一并只在**库里一枚标签都没有**时做(800 那条用户报的就是「还没有标签时」)。库里有标签
+   (`.keep-tags`,视图按 list_topics 挂)⇒ 标签那一行恒占着(这一批没人挂标签时只剩过滤框)—— 此前挂上一枚 / 转走唯一
+   挂着的那张 / 看板最后一张归档,这一行一出一收,记一笔框和看板列整块上下跳 39px。⚠ 库里第一枚标签建成那一下仍会长出
+   这一行(800 与 A21 在这一格打架,留着 800)。 */
+.filter-row:not(.keep-tags):has(.topic-filter:empty):has(.kind-filter:empty) {
   flex-direction: row;
   align-items: center;
   justify-content: space-between;

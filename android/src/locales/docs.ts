@@ -3,7 +3,8 @@
 import { defineMessages } from "./entry";
 
 export const docs = defineMessages({
-  "docs.new": { zh: "新建长文", en: "New long-form" },
+  // 165 / W5 Q14:同「+ 新建任务」「+ 新建标签」带加号(两端同句)。
+  "docs.new": { zh: "+ 新建长文", en: "+ New long-form" },
   "docs.loading": { zh: "读取中…", en: "Loading…" },
   "docs.loadFailed": { zh: "长文读取失败:{error}", en: "Could not load long-form notes: {error}" },
   "docs.empty": { zh: "还没有长文。在随记卡片的「更多…」里把一条随记「展开成长文」,或点上面新建一篇。", en: "No long-form notes yet. Pick “Expand to long-form” under a note’s “More…”, or start a new one above." },
@@ -24,17 +25,24 @@ export const docs = defineMessages({
   "docs.actMove": { zh: "移动", en: "Move" },
   "docs.copied": { zh: "已复制", en: "Copied" },
   "docs.copyFailed": { zh: "复制失败:{error}", en: "Copy failed: {error}" },
-  "docs.deleteQ": { zh: "删除这篇长文?可在回收站还原", en: "Delete this long-form note? You can restore it from Trash" },
-  "docs.deleteYes": { zh: "删除", en: "Delete" },
+  // 165 / W5 Q4:删长文照随记,不问、给撤销(原先那道「删除这篇长文?」确认撤了)。
   "docs.deleted": { zh: "已移入回收站", en: "Moved to Trash" },
+  // Q13 ★①:删的是最后一篇 ——「长文」那一格(底栏 / 平板顶栏)一离开就收起,先说一声、再写一篇从哪儿进。
+  "docs.deletedLast": { zh: "已移入回收站。「长文」格会收起,再写一篇点 ＋ → 长文", en: "Moved to Trash. The Long-form tab will go away; to write another, tap ＋ → Long-form" },
   "docs.collapsed": { zh: "已收回随记", en: "Moved back to notes" },
   "docs.undo": { zh: "撤销", en: "Undo" },
   "docs.writtenAt": { zh: "写于 {time}", en: "Written {time}" },
+  // 165 / W5 Q15:改过的长文在列表卡与阅读页另写一枚「改于 …」(= 现在这版写成的那一刻)。
+  "docs.editedAt": { zh: "改于 {time}", en: "Edited {time}" },
   "docs.degraded": { zh: "这篇太长或结构太深,按原文显示", en: "Too long or too deeply nested — shown as plain text" },
   "docs.draftFound": { zh: "有一份没保存的草稿({time})", en: "There is an unsaved draft ({time})" },
   "docs.draftResume": { zh: "接着改", en: "Keep editing" },
   "docs.draftDiscard": { zh: "丢掉", en: "Discard" },
-  "docs.draftSaved": { zh: "草稿已存在本机", en: "Draft kept on this device" },
+  // 165 / W5 Q1:挨着红「保存」那行灰字此前只说「草稿已存在本机」,读着像已经存了 —— 补半句离开会怎样(两端同句)。
+  "docs.draftSaved": { zh: "草稿已存在本机 · 离开就存成一版", en: "Draft kept on this device · leaving saves a version" },
+  // Q1 ★①:离开编辑器(返回键 / 保存 / 左上那枚 / 关面)落了一版就说一声;新篇那句带上它在哪(两端同句)。
+  "docs.savedVersion": { zh: "已存成一版", en: "Saved as a new version" },
+  "docs.savedNew": { zh: "已存成一篇,在「长文」页", en: "Saved as a new long-form note, on the Long-form page" },
   "docs.draftFailed": { zh: "草稿没存上:{error}", en: "Draft not kept: {error}" },
   "docs.modeEdit": { zh: "编辑", en: "Write" },
   "docs.modePreview": { zh: "预览", en: "Preview" },
@@ -74,7 +82,8 @@ export const docs = defineMessages({
   "docs.notFound": { zh: "这篇长文已不在长文里(可能被收回、转成任务或删除)", en: "This long-form note is no longer here (moved back, turned into a task, or deleted)" },
   "docs.noTags": { zh: "还没有标签", en: "No tags yet" },
   "docs.newTagPh": { zh: "新标签名", en: "New tag name" },
-  "docs.createAndTag": { zh: "新建并挂上", en: "Create & add" },
+  // 165 / W5 A20:同卡片那枚(此前「挂上」/「打上」两种说法)。
+  "docs.createAndTag": { zh: "新建并打上", en: "Create and add" },
   "docs.tagNameRequired": { zh: "先写标签名", en: "Enter a tag name first" },
   "docs.done": { zh: "完成", en: "Done" },
 });

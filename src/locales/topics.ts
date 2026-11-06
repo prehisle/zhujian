@@ -40,6 +40,10 @@ export const topics = defineMessages({
   "topics.deleteQEmpty": { zh: "删除标签「{name}」?", en: "Delete tag “{name}”?" },
   "topics.deletedToast": { zh: "已删除标签「{name}」", en: "Deleted tag “{name}”" },
   "topics.created": { zh: "已建标签「{name}」", en: "Created tag “{name}”" },
+  // 165 / W5 A20:卡里(随记 / 任务 / 长文)打名字回车(或点「创建「…」」)建成了说一声;打的是已有的(或这张已打着)说「已打上」。
+  // 两端同句(手机 android/src/locales/topics.ts)。共用选择器 tag-picker.ts 说。
+  "topics.createdAdded": { zh: "已建标签「{name}」并打上", en: "Created tag “{name}” and added it" },
+  "topics.addedExisting": { zh: "已打上标签「{name}」", en: "Added tag “{name}”" },
   "topics.renamed": { zh: "已改名为「{name}」", en: "Renamed to “{name}”" },
   "topics.colorSet": { zh: "已给「{name}」换了颜色", en: "Changed the color of “{name}”" },
   "topics.colorCleared": { zh: "已去掉「{name}」的颜色", en: "Removed the color from “{name}”" },

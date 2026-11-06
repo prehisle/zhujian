@@ -3,7 +3,7 @@
 //   第一趟(phase 空)直调命令播种,回 `{needReload:true}`;驱动者 `eval 'location.reload()'` 后跑第二趟才验,
 //   末尾把种子全部 purge、删标签(回收站 / 归档册零残留)。
 // 第二趟验:
-//  A3  「状态 ▾」换列:回执「已改为「X」」+「撤销」,那张卡的操作面收起;点撤销回到出发那列;
+//  A3  「状态 ▾」换列:回执「已移到「X」」+「撤销」,那张卡的操作面收起;点撤销回到出发那列;
 //  A5  撤销条读秒到点进余温态后,「撤销」钮不灰、点了照旧撤回;
 //  A6 / A20 取消归档:回执带「撤销」(操作型回执、过了 3 s 仍满亮),点撤销 = 再归档回去;
 //  A7 / A20 撤回为随记:回执带「撤销」,点了 = 转回待办且截止 / 优先级原样设回;
@@ -93,7 +93,7 @@
     click(pact(cardById(ids.st), "status"));
     const toDoing = await until(() => cardById(ids.st)?.querySelector('.panel [data-status="doing"]'), 2000);
     click(toDoing);
-    ok("A3 换列后出回执「已改为「进行中」」", !!(await until(() => !$("error").hidden && $("error").textContent.includes("已改为「进行中」"), 4000)), $("error").textContent);
+    ok("A3 换列后出回执「已移到「进行中」」", !!(await until(() => !$("error").hidden && $("error").textContent.includes("已移到「进行中」"), 4000)), $("error").textContent);
     ok("A3 回执带「撤销」", barActs().length >= 1 && barActs()[0].textContent === "撤销"); // 158 G3 起卡落到屏外时另挂「去看看」
     ok("A3 库里已在进行中", (await row(ids.st))?.stage === "doing");
     await until(() => cardById(ids.st), 3000);
@@ -101,7 +101,8 @@
     ok("A3 那张卡的操作面收起", !document.querySelector("#timeline .panel"));
     click(barActs()[0]);
     ok("A3 撤销 = 回到待办", !!(await until(() => false, 1500), (await row(ids.st))?.stage === "todo"));
-    ok("A3 点撤销后条收起", $("error").hidden);
+    // 165 / W5 Q6 起撤成了说一声:那条换成「已撤销」(不带钮),不再是一声不吭地收起
+    ok("A3 点撤销后条换成「已撤销」", !!(await until(() => !$("error").hidden && $("error").textContent === "已撤销" && barActs().length === 0, 3000)), $("error").textContent);
 
     // ---- A5:余温里撤销照旧生效 ----
     await until(() => cardById(ids.st), 3000);
@@ -127,7 +128,8 @@
     ok("A7 撤回确认条", !!(await until(() => !$("confirmbar").hidden, 2000)));
     ok("A19 别的确认条左钮照旧叫「取消」", $("confirmbar-no").textContent === "取消", $("confirmbar-no").textContent);
     click($("confirmbar-yes"));
-    ok("A7 回执「已撤回为随记…」带「撤销」", !!(await until(() => barActs().length === 1 && $("error").textContent.includes("已撤回为随记"), 4000)), $("error").textContent);
+    // 165 / W5:回执不再写「在底栏「随记」里」,去向交给另挂的「去看看」⇒ 两枚钮:撤销 + 去看看
+    ok("A7 回执「已撤回为随记」带「撤销」「去看看」", !!(await until(() => barActs().map((b) => b.textContent).join() === "撤销,去看看" && $("error").textContent.includes("已撤回为随记") && !$("error").textContent.includes("底栏"), 4000)), $("error").textContent);
     ok("A20 撤回回执是操作型(6 s 那档)", $("error").classList.contains("with-act"));
     const rv0 = await row(ids.rv);
     ok("A7 库里已是随记、截止优先级清了", !!rv0 && rv0.stage !== "todo" && rv0.due_on === null && rv0.priority === null, rv0 && { stage: rv0.stage, due: rv0.due_on, p: rv0.priority });

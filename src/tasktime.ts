@@ -1,10 +1,11 @@
 import { invoke } from "./space";
 import { armDismiss } from "./hotkey-menu";
 import { DONE_COLUMN } from "./board-columns";
-import { currentLang, t } from "./i18n";
+import { t } from "./i18n";
 import "./tasktime.css";
-import { el } from "./dom";
+import { arrowWalk, el } from "./dom";
 import { errText } from "./err";
+import { toastAction } from "./toast";
 
 // Shared task time-dimension helpers + a reusable due/priority editor, used by
 // both the board and the Today view (one source of truth). `due_on` is a
@@ -97,28 +98,40 @@ export function dayLabel(iso: string): string {
     : t("tasktime.yearMonthDay", { y: d.getFullYear(), m, d: day });
 }
 
-/** RFC3339 → full local stamp, e.g. 「6月13日 14:23」— adds the year across a year
- *  boundary (same rule as dayLabel), so a last-year entry in 回收站 / 编辑历史 / 搜索
- *  can't read as this year's. Shared by inbox + search (one source of truth). */
-const STAMP_LOCALE = currentLang() === "zh" ? "zh-CN" : "en-US";
-const stampThisYear = new Intl.DateTimeFormat(STAMP_LOCALE, {
-  month: "long",
-  day: "numeric",
-  hour: "2-digit",
-  minute: "2-digit",
-  hour12: false,
-});
-const stampWithYear = new Intl.DateTimeFormat(STAMP_LOCALE, {
-  year: "numeric",
-  month: "long",
-  day: "numeric",
-  hour: "2-digit",
-  minute: "2-digit",
-  hour12: false,
-});
+/** RFC3339 → 本地时刻,回收站 / 编辑历史 / 搜索 / 长文 / 已完成卡 / 归档 / 留言同一把尺(165 / W5 Q14,两端一个规矩):
+ *  今天的写「今天 15:18」,今年别的天「11月5日 15:18」,跨年带年(「2025年11月5日 15:18」)。此前桌面这里是
+ *  「11月6日 21:00」一律带日期、已完成卡 / 归档又只写「今天」、随记卡只写时刻 —— 同一天的事随页面三种写法。
+ *  ⛔ 例外只有两处、都不走这里:随记时间轴的卡只写时刻(组头已写了哪天,inbox.ts 的 hm),截止胶囊窄、短写法照旧(dueLabel)。
+ *  与手机 `android/src/ui.ts::fmtWhen` 逐字孪生(键 ui.when* 两端同句)。 */
 export function when(iso: string): string {
   const d = new Date(iso);
-  return (d.getFullYear() === new Date().getFullYear() ? stampThisYear : stampWithYear).format(d);
+  const now = new Date();
+  const p = (n: number): string => String(n).padStart(2, "0");
+  const hm = `${p(d.getHours())}:${p(d.getMinutes())}`;
+  if (d.toDateString() === now.toDateString()) return t("ui.whenToday", { hm });
+  const md = { m: d.getMonth() + 1, d: d.getDate(), hm };
+  return d.getFullYear() === now.getFullYear() ? t("ui.whenThisYear", md) : t("ui.whenOtherYear", { ...md, y: d.getFullYear() });
+}
+
+/** 回执里点名「是哪一条」用的那一截(165 / W5 Q15:「已彻底删除「…」」—— 找不回的那一下得说清删的是谁)。
+ *  取第一行有字的、剥掉行首的 Markdown 标题号与清单方框,空白并成一个,长了截到 `max` 个字加「…」。整条没有字(只有图)= ""。
+ *  与手机 `android/src/ui.ts::itemSnippet` 逐字孪生(两端点名同一截)。 */
+export function itemSnippet(content: string, max = 20): string {
+  const line = content
+    .split("\n")
+    .map((s) => s.trim())
+    .find((s) => s !== "");
+  if (line === undefined) return "";
+  const bare = line.replace(/^#{1,6}\s+/, "").replace(/^[-*+]\s+\[[ xX]\]\s*/, "").replace(/\s+/g, " ").trim();
+  const chars = Array.from(bare);
+  return chars.length > max ? `${chars.slice(0, max).join("")}…` : bare;
+}
+
+/** 截止日 `YYYY-MM-DD` → 「11月8日」(跨年带年)。回执里用(165 / W5 Q5:「已设截止 11月8日」,同手机 cardpanel.ts::dueDayText);
+ *  ⛔ 不用胶囊那种「7 天后」—— 回执说的是设成了哪一天。 */
+export function dueDayText(due: string): string {
+  const [y, m, d] = due.split("-").map(Number);
+  return y === new Date().getFullYear() ? t("tasktime.monthDay", { m, d }) : t("tasktime.yearMonthDay", { y, m, d });
 }
 
 export type DueState = "none" | "overdue" | "today" | "future";
@@ -214,23 +227,31 @@ export function metaRow(
   item: TaskItem,
   today: string,
   refresh: () => void,
-  onError: (msg: string) => void = () => {},
+  onError: (msg: string) => void,
+  /** 选择器没写库就收起(Esc / 没改 / 没填完)、焦点原在它里面时调:把焦点还给卡(W5 A4 / Q2)。
+   *  写了库的那条路走 refresh 重画,焦点由卡片控制器按 id 接回。 */
+  refocus: () => void,
+  /** 截止 / 优先级真写进库之后调(165 / W5 Q5 ★①):宿主据此出「已设截止 … 撤销」那一条。`before` / `after` = 改前 / 改后的值
+   *  (null = 没设 / 清除)。写失败、没改(值一样)不调。 */
+  onWritten: (change: { field: "due"; before: string | null; after: string | null } | { field: "priority"; before: number | null; after: number | null }) => void,
 ): MetaRow {
   const row = el("div", { className: "task-meta" });
   const dueWrap = el("span", { className: "slot due-slot" });
   const priWrap = el("span", { className: "slot pri-slot" });
+  arrowWalk(priWrap); // 优先级那一排展开时 ← → 在档位间挪(W5 A39);平时这里只有一枚不可聚焦的章,不截键
 
   // 成功 → refresh 重渲整卡(连带拆掉展开中的选择器)。失败 → 报错并调 recover 收起选择器,
   // 别停在没有监听的半开态(选择器的 Esc/点外 监听在 mutate 前已 off())。
-  async function call(cmd: string, args: Record<string, unknown>, recover?: () => void): Promise<void> {
+  async function call(cmd: string, args: Record<string, unknown>, recover?: () => void): Promise<boolean> {
     try {
       await invoke(cmd, args);
     } catch (e) {
       onError(errText(e));
       recover?.();
-      return;
+      return false;
     }
     refresh();
+    return true;
   }
 
   // ---- due ----
@@ -265,15 +286,24 @@ export function metaRow(
     // 选值前先 off() 摘监听,成功 refresh 会重渲整卡、失败 renderDue 收起 —— 不留没监听的半开态。
     let off = () => {};
     let done = false;
+    /** 不写库就收起:画回原样,焦点原在框里的还给卡。 */
+    const fold = (): void => {
+      const had = dueWrap.contains(document.activeElement);
+      renderDue();
+      if (had) refocus();
+    };
     const apply = (dueOn: string | null): void => {
       if (done) return;
       done = true;
       off();
       if (dueOn === (item.due_on ?? null)) {
-        renderDue(); // 没改:收起,不打后端
+        fold(); // 没改:收起,不打后端
         return;
       }
-      void call("set_task_due", { id: item.id, dueOn }, renderDue);
+      const before = item.due_on ?? null;
+      void call("set_task_due", { id: item.id, dueOn }, renderDue).then((ok) => {
+        if (ok) onWritten({ field: "due", before, after: dueOn });
+      });
     };
     const input = el("input", {
       className: "due-input",
@@ -281,19 +311,30 @@ export function metaRow(
       value: item.due_on ?? "",
       draggable: false,
     });
-    /** 离开时把框里的值落盘。逐段没填完(`badInput`)= 什么也不存,照原样收起 —— 不猜。 */
+    // 165 / W5 A11(WD-10 / 第二批新撞-1):框里有字、值却是空的(连着打「20261108」年那一格全吃进去成了「202611/08/日」、
+    // 只填了年、打了「-」「/」不跳格)—— 此前回车一收、卡上什么都没设上、一个字不说,以为设好了、到期没提醒。
+    // ⇒ 认出这一形就说一句:回车 = 框留着、在框旁说清怎么填(焦点留在框里,接着改;Esc 放弃);点别处 = 照原样收起、
+    // 底部说一句没设上。⛔ 只在前端认,截止的存储一个字不动(值合法才写,同此前)。
+    // 第二形(走查后实测):卡上原本有截止时,连打「20261108」框里成了「202611-08-04」—— 系统日期框认六位年、值是「合法」的,
+    // 回车送下去被库拒(CHECK 约束,横幅一句「和已有的数据对不上」,读不出错在哪)。⇒ 年不是四位的也当没填好、同一句话。
+    const unfinished = (): boolean =>
+      input.value === "" ? input.validity.badInput || !input.validity.valid : !/^\d{4}-\d{2}-\d{2}$/.test(input.value);
+    const say = el("span", { className: "due-err err-msg", textContent: t("tasktime.dueUnfinished") });
+    say.setAttribute("role", "alert");
+    /** 离开时把框里的值落盘。逐段没填完(`badInput`)= 什么也不存,照原样收起 —— 不猜,但说一声(A11)。 */
     const commit = (): void => {
-      if (input.validity.badInput) {
+      if (unfinished()) {
         done = true;
         off();
-        renderDue();
+        fold();
+        toastAction(t("tasktime.dueNotSet"));
         return;
       }
       apply(input.value || null);
     };
     off = armDismiss(dueWrap, commit, { escape: () => {
       done = true;
-      renderDue();
+      fold();
     } });
     // 键盘改段那几下发的 change 不算「选定」:按键那一拍之内到的 change 一律只记在框里。
     let typing = false;
@@ -301,9 +342,15 @@ export function metaRow(
       if (e.isComposing) return;
       if (e.key === "Enter") {
         e.preventDefault();
+        // A11:没填完的日期回车 ⇒ 不收、不存,框旁说怎么填(再回车同样;改对了回车才存)。
+        if (unfinished()) {
+          if (!say.isConnected) dueWrap.append(say);
+          return;
+        }
         commit();
         return;
       }
+      if (say.isConnected) say.remove(); // 接着改了:那句先收,等下一次回车再判
       typing = true;
       setTimeout(() => (typing = false), 0);
     });
@@ -339,10 +386,24 @@ export function metaRow(
   function openPri(): void {
     // Esc / 点别处 收起(同截止),无「取消」按钮。Esc 走 armDismiss 的文档级监听,不依赖焦点。
     let off = () => {};
-    off = armDismiss(priWrap, renderPri);
+    off = armDismiss(priWrap, () => {
+      const had = priWrap.contains(document.activeElement);
+      renderPri();
+      if (had) refocus();
+    });
     const apply = (p: number | null): void => {
       off();
-      void call("set_task_priority", { id: item.id, priority: p }, renderPri);
+      const before = item.priority ?? null;
+      if (p === before) {
+        // 点的就是当前那档:不打后端(此前照写一遍、白发一条 op),收起;焦点原在这排里的还给卡。
+        const had = priWrap.contains(document.activeElement);
+        renderPri();
+        if (had) refocus();
+        return;
+      }
+      void call("set_task_priority", { id: item.id, priority: p }, renderPri).then((ok) => {
+        if (ok) onWritten({ field: "priority", before, after: p });
+      });
     };
     // 高档在前(P0 · P1 · P2 · 清除)—— 本来就是这个序,506 改名后正好是 P 号升序。
     const choices: (number | null)[] = [3, 2, 1, null];
@@ -355,6 +416,10 @@ export function metaRow(
       }),
     );
     priWrap.replaceChildren(...buttons);
+    // W5 A39(WD-22):焦点进这一排(落在当前那档,没设落第一枚),整排滚进列的可视区 —— 此前焦点不进、
+    // 列尾那张的【清除】被列下沿截掉、列也不跟着滚。
+    (buttons.find((b) => b.classList.contains("cur")) ?? buttons[0])?.focus({ preventScroll: true });
+    priWrap.scrollIntoView({ block: "nearest" });
   }
 
   renderDue();

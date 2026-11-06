@@ -6,6 +6,7 @@
 // 刻意不做成常驻通知中心:朱简的回执只需要「我看到了,做完了」,读完即走。
 import "./toast.css";
 import { TOAST_ERROR_MS, UNDO_WINDOW_MS, toastSuccessMs } from "./timing";
+import { t } from "./i18n";
 
 const HOLD_MS = 1000; // 跟随光标那种(复制链接/复制图片):瞥一眼就够
 
@@ -51,6 +52,10 @@ export function toastError(text: string): void {
 // 没人点 `UNDO_WINDOW_MS` 后自收。⛔ 不做通用撤销栈(profit-readiness §2 那句「最小形」)。
 let undoEl: HTMLElement | null = null;
 let undoTimer: ReturnType<typeof setTimeout> | undefined;
+// 在场那条的「撤销」(没有撤销钮的那种 = null)—— Ctrl+Z 按的就是它(W5 A1)。
+let undoRun: (() => void) | null = null;
+/** 撤销钮上印的那枚键(W5 A1:此前屏上没有任何提示这条路)。mac 是 Cmd(同快捷键表 keysheet.ts 的写法)。 */
+const UNDO_KEY = `${navigator.userAgent.includes("Macintosh") ? "Cmd" : "Ctrl"}+Z`;
 
 /** `extra` = 撤销旁边再挂一枚去处钮(「展开成长文」后的「打开」,同安卓 cardpanel 那条回执;153 走查 D-M15)。 */
 export function toastUndo(text: string, undoLabel: string, onUndo: () => void, extra?: { label: string; run: () => void }): void {
@@ -78,6 +83,9 @@ function actionToast(text: string, buttons: { label: string; run: () => void; go
     btn.type = "button";
     btn.className = b.go ? "undo-btn undo-go" : "undo-btn";
     btn.textContent = b.label;
+    // 撤销钮上印着它的键(同 ⋯ 菜单每项右边那枚键帽):只用键盘的人看得到「按 Ctrl+Z 就是点它」。
+    // 画在 ::after 上(toast.css)、⛔ 不进钮的文字:钮的名字照旧就是「撤销」(读屏 / 认钮都按字认)。
+    if (!b.go) btn.dataset.k = UNDO_KEY;
     btn.addEventListener("click", (e) => {
       e.stopPropagation();
       dismissUndo();
@@ -87,7 +95,25 @@ function actionToast(text: string, buttons: { label: string; run: () => void; go
   }
   document.body.append(box);
   undoEl = box;
+  undoRun = buttons.find((b) => !b.go)?.run ?? null;
   undoTimer = setTimeout(dismissUndo, UNDO_WINDOW_MS);
+}
+
+/** Ctrl+Z(mac Cmd+Z):回执还在、且带【撤销】时,等于点它(W5 A1,WD-01)。此前那枚钮排在整页能停的地方的
+ *  最末一个 —— 只用键盘的人正着要 Tab 209 下、倒着绕出网页 34 下,Ctrl+Z 不认。返回「撤了没有」。
+ *  ⚠ 调用方管「这一记该不该归它」(焦点在框里时 Ctrl+Z 是撤销打字,见 notebook.ts)。 */
+export function undoLast(): boolean {
+  const run = undoRun;
+  if (undoEl === null || run === null) return false;
+  dismissUndo();
+  run();
+  return true;
+}
+
+/** 点了【撤销】、撤成了之后的那一句(165 / W5 Q6 ★①,两端同句「已撤销」):条一收、卡回原处,而回到的地方常不在
+ *  眼前 —— 不说一声就没法确认撤没撤成。成功型、按字数读秒(≈2.2 s),不带钮。⛔ 撤销失败不走这里(调用方照旧报错)。 */
+export function toastUndone(): void {
+  toastAction(t("common.undone"));
 }
 
 /** 收掉在场的撤销回执(视图 unmount 时必调:那枚钮指着的是这棵 mount 的条目)。 */
@@ -96,4 +122,5 @@ export function dismissUndo(): void {
   undoTimer = undefined;
   undoEl?.remove();
   undoEl = null;
+  undoRun = null;
 }

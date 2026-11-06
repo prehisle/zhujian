@@ -77,8 +77,8 @@ export const cardpanel = defineMessages({
   "cardpanel.linkCopied": { zh: "已复制链接", en: "Link copied" },
   "cardpanel.copyLinkFailed": { zh: "复制失败:{error}", en: "Copy failed: {error}" },
   "cardpanel.expandRefsFailed": { zh: "已展开成长文,但没能把图的「图N」补进正文:{error}", en: "Now long-form, but couldn’t add the image mentions to the text: {error}" },
-  "cardpanel.expanded": { zh: "已展开成长文,在底栏「长文」里", en: "Now long-form, find it under Long-form" },
-  "cardpanel.expandedOpen": { zh: "打开", en: "Open" },
+  // 165 / W5:回执不写「在底栏「长文」里」(平板 / 横放没有底栏);去向交给「去看看」(Q14:跳过去看的钮一律叫「去看看」,此前叫「打开」)。
+  "cardpanel.expanded": { zh: "已展开成长文", en: "Expanded to long-form" },
   "cardpanel.promotedShort": { zh: "已转为待办", en: "Now a task" },
   "cardpanel.goSee": { zh: "去看看", en: "Show me" },
   "cardpanel.tagNameRequired": { zh: "标签名不能为空", en: "Tag name cannot be empty" },
@@ -88,6 +88,12 @@ export const cardpanel = defineMessages({
   "cardpanel.revertQMeta": { zh: "撤回为随记?将清除截止和优先级", en: "Send back to Notes? Due date and priority will be cleared" },
   "cardpanel.revertQ": { zh: "撤回为随记?", en: "Send back to Notes?" },
   "cardpanel.revertYes": { zh: "撤回", en: "Send back" },
-  "cardpanel.reverted": { zh: "已撤回为随记,在底栏「随记」里", en: "Sent back to Notes, find it under Notes" },
+  // 165 / W5:同 expanded,不写「底栏」,配「去看看」。
+  "cardpanel.reverted": { zh: "已撤回为随记", en: "Sent back to Notes" },
   "cardpanel.sealed": { zh: "已归档", en: "Archived" },
+  // 165 / W5 Q5 ★①:改截止 / 优先级做完说一声、带【撤销】(此前什么都不说、也撤不回)。键名用桌面看板那一族(board.undo*),两端同句。
+  "board.undoDue": { zh: "已设截止 {day}", en: "Due date set to {day}" },
+  "board.undoDueCleared": { zh: "已清除截止", en: "Due date cleared" },
+  "board.undoPriority": { zh: "已设优先级 {p}", en: "Priority set to {p}" },
+  "board.undoPriorityCleared": { zh: "已清除优先级", en: "Priority cleared" },
 });

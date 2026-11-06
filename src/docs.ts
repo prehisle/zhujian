@@ -22,10 +22,10 @@ import {
   movePartialNote,
 } from "./space";
 import { movePanel } from "./move-space";
-import { dismissUndo, toastAction, toastError, toastUndo } from "./toast";
+import { dismissUndo, toastAction, toastError, toastUndo, toastUndone } from "./toast";
 import { copyText } from "./clipboard";
 import { buildItemDeepLink } from "./deeplink";
-import { armLocate, locateNoteEl, takeLocateNote } from "./locate";
+import { armLocate, locateNoteEl, searchBackArmed, takeLocateNote } from "./locate";
 import { DOC_CARD_KEYS, DOC_VIEW_KEYS } from "./keymap";
 import { type Act, armDismiss, createHotkeyController, registerViewKeys } from "./hotkey-menu";
 import { t } from "./i18n";
@@ -34,6 +34,8 @@ import { toggleChecklistLine } from "../shared/checklist";
 import { type MdRendered, renderMarkdown } from "../shared/markdown-dom";
 import { continueListOnNewline, firstRefs, gutterStack, refInsertion, scanImgRefs } from "../shared/markdown";
 import { renderDiff } from "../shared/diff-dom";
+import { diffPair } from "./history-panel";
+import { openInboxTrashNext } from "./inbox";
 import { closeComments, commentBadge, commentCountFor, inlineCommentState, loadCommentCounts, openInlineComments } from "./item-comments";
 import type { View, ViewCtx } from "./notebook";
 import { applyTagColor } from "./tag-color";
@@ -144,6 +146,12 @@ export function docTitle(content: string): string {
   }
   return "";
 }
+/** 那第一行是不是 Markdown 标题(写了 `#`)。不是 = 列表卡上那行照正文的样子画、不加粗(165 / W5 Q15,WD-35:列表把没写 `#`
+ *  的第一行排成粗体大一号的标题,阅读页里却是普通字 —— 同一行字两处两个样子)。同手机 docs.ts docTitleIsHeading。 */
+export function docTitleIsHeading(content: string): boolean {
+  const first = content.split("\n").find((l) => l.trim() !== "");
+  return first !== undefined && /^\s*#{1,6}\s/.test(first);
+}
 /** 列表卡上题目下面那两行:去掉题目那一行,再把行首的 Markdown 记号(# / > / 列表符 / 勾选框)与
  *  行内的 ** __ ` 摘掉 —— 只是给眼睛扫的字,⛔ 不是渲染(列表卡不进 Markdown 渲染器)。 */
 function excerpt(content: string, title: string): string {
@@ -176,7 +184,16 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
     el("span", { className: "lbl", textContent: t("docs.new") }),
     el("kbd", { className: "k", textContent: DOC_VIEW_KEYS.compose }),
   ]);
-  const header = el("header", {}, [el("h1", { textContent: t("docs.title") }), el("span", { className: "head-tools" }, [newBtn])]);
+  // 165 / W5 Q15(WD-27):页头也放「回收站」—— 删了长文(回执只有【撤销】)此前要想到去随记页的回收站找。开的就是随记那只
+  // (长文删了进的就是它;回收站按冻结的 stage 分两页,长文的 stage 在随记那两档)。排在最右,同随记 / 看板页头那枚「回收站」的位置。
+  const trashBtn = el("button", { className: "hbtn", type: "button", title: t("docs.trashTitle") }, [
+    el("span", { className: "lbl", textContent: t("docs.trash") }),
+  ]);
+  trashBtn.addEventListener("click", () => {
+    openInboxTrashNext();
+    ctx.navigate("inbox");
+  });
+  const header = el("header", {}, [el("h1", { textContent: t("docs.title") }), el("span", { className: "head-tools" }, [newBtn, trashBtn])]);
   header.setAttribute("data-tauri-drag-region", "");
   const main = el("main", { className: "docs-main" });
   view.append(header, main);
@@ -204,11 +221,28 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
   let shownDocId: string | null = null;
   // 历史页开着时不因回窗刷新重画(那会把选好的两版冲掉);离开它走 go()。
   let historyOpen = false;
+  // 列表卡上按 Y(留言)= 打开这一篇、留言就地展开(W5 A13:列表卡此前没有留言 / 历史两项)。画它时取走。
+  let commentsOnOpen: string | null = null;
   // 刚从编辑器回阅读页:光标所在那一块摆到工具条底下(renderDoc 交出摆法,refresh 定完滚动位置后调)
   let readerAt: { id: string; caret: number } | null = null;
   let pinReader: (() => void) | null = null;
 
   const docById = (id: string): DocItem | undefined => docs.find((d) => d.id === id);
+
+  // 每篇「改于」那一刻(165 / W5 Q15,WD / WM-32:改过一版,列表卡与阅读页仍只写第一次写的时间)= 历史目录里最新那一版
+  // 被换下的那一刻(= 现在这版写成的那一刻);没改过 = null。按正文缓存:正文没变不重问(纯勾方框不落版本,0039 ——
+  // 正文变了、目录没变,重问一次答的还是同一个时刻,对)。mount 级:换空间 = 视图重挂,缓存跟着换。
+  const editedMemo = new Map<string, { content: string; at: string | null }>();
+  function editedAtOf(d: DocItem): string | null {
+    const m = editedMemo.get(d.id);
+    return m !== undefined && m.content === d.content ? m.at : null;
+  }
+  async function fetchEditedAt(d: DocItem): Promise<void> {
+    const m = editedMemo.get(d.id);
+    if (m !== undefined && m.content === d.content) return;
+    const cat = await invokeInSpace<RevisionCatalog>(mountSpace, "list_revisions", { id: d.id, before: null });
+    editedMemo.set(d.id, { content: d.content, at: cat.entries.length > 0 ? cat.entries[0].archived_at : null });
+  }
 
   // 可移入的其他空间(同 inbox.ts):挂载时取一次 —— 空间集变了必经切换 / 新建,视图随之重挂。
   let otherSpaces: SpaceInfo[] = [];
@@ -266,6 +300,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
     }
     locateId = args.id as string;
     void refresh();
+    toastUndone(); // 165 / W5 Q6:撤成了说一声
   }
   // ---- 移动到其他空间(cross-space-move v1,同随记那套)----------------------------------
   // 面板先说后果(编辑历史随移动永久删除,告知在提交之前)、选了空间再确认一拍;只有 moved 离场;两个部分成功态
@@ -366,24 +401,26 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       off();
       close();
     };
-    const write = async (cmd: string, args: Record<string, unknown>): Promise<void> => {
+    // 回「写成没有」:打名字那条路写成了,选择器说一句(tag-picker 的 commit,165 / W5 A20)。
+    const write = async (cmd: string, args: Record<string, unknown>): Promise<boolean> => {
       off();
       close();
       try {
         await invokeInSpace(mountSpace, cmd, args);
       } catch (e) {
         onErr(e);
-        return;
+        return false;
       }
       void refresh();
+      return true;
     };
     host.append(picker);
     renderTagPicker(picker, {
       allTopics,
       have: new Set(d.topics.map((x) => x.id)),
-      onPick: (topicId) => void write("file_note_to_topic", { id: d.id, topicId, newTitle: null }),
-      onUnpick: (topicId) => void write("remove_note_topic", { id: d.id, topicId }),
-      onCreate: (title) => void write("file_note_to_topic", { id: d.id, topicId: null, newTitle: title }),
+      onPick: (topicId) => write("file_note_to_topic", { id: d.id, topicId, newTitle: null }),
+      onUnpick: (topicId) => write("remove_note_topic", { id: d.id, topicId }),
+      onCreate: (title) => write("file_note_to_topic", { id: d.id, topicId: null, newTitle: title }),
     });
   }
 
@@ -407,6 +444,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       locateId = null;
       art.classList.add("just-located");
       armLocate(art);
+      hk.want(d.id, true); // W5 Q11:落点那张同时是「选中」、焦点在它的 ⋯ 上
     }
     const err = el("p", { className: "form-err", hidden: true });
     const showErr = (e: unknown): void => {
@@ -415,10 +453,16 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
     };
     const open = (): void => go({ kind: "doc", id: d.id });
     const partialBar = movePartialBar(d);
+    // Q15(WD-35):没写 `#` 的第一行不加粗(阅读页里它是普通字);写了 `#` 的照旧是标题样子。
+    const titleCls = title === "" ? "doc-card-title untitled" : docTitleIsHeading(d.content) ? "doc-card-title" : "doc-card-title plain";
+    const edited = editedAtOf(d);
     const body = el("div", { className: "doc-card-body" }, [
-      el("h2", { className: title === "" ? "doc-card-title untitled" : "doc-card-title", textContent: title === "" ? t("docs.untitled") : title }),
+      el("h2", { className: titleCls, textContent: title === "" ? t("docs.untitled") : title }),
       el("p", { className: "doc-card-ex", textContent: excerpt(d.content, title) }),
-      el("time", { className: "doc-card-time", textContent: when(d.created_at) }),
+      el("div", { className: "doc-card-time" }, [
+        el("time", { textContent: when(d.created_at) }),
+        ...(edited === null ? [] : [el("time", { className: "doc-edited", textContent: t("docs.editedAt", { time: when(edited) }) })]),
+      ]),
       tagChips(d),
       ...(partialBar ? [partialBar] : []),
       err,
@@ -428,7 +472,18 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       () => [
         { label: t("docs.actOpen"), key: DOC_CARD_KEYS.open, run: open },
         { label: t("docs.actEdit"), key: DOC_CARD_KEYS.edit, run: () => openEditorFor(d.id) },
+        // W5 A13(WD-13):快捷键表「长文」那组写着 H 历史 / Y 留言,列表卡上按了却不动(这两项此前只在阅读页)。
+        // 历史 = 进这一篇的历史页;留言 = 打开这一篇、留言就地展开。
+        { label: t("docs.actHistory"), key: DOC_CARD_KEYS.history, run: () => openHistory(d) },
         { label: t("docs.actTag"), key: DOC_CARD_KEYS.tag, run: () => void openTags(body, d, showErr) },
+        {
+          label: t("docs.actComments"),
+          key: DOC_CARD_KEYS.comments,
+          run: () => {
+            commentsOnOpen = d.id;
+            open();
+          },
+        },
         { label: t("docs.actCollapse"), key: DOC_CARD_KEYS.collapse, run: () => void doCollapse(d) },
         { label: t("docs.actCopy"), key: DOC_CARD_KEYS.copy, feedback: copyFeedback(d) },
         { label: t("docs.actCopyLink"), key: DOC_CARD_KEYS.copyLink, feedback: copyLinkFeedback(d) },
@@ -436,6 +491,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
         { label: t("docs.actDelete"), key: DOC_CARD_KEYS.delete, run: () => void doDelete(d), danger: true },
       ],
       () => body.querySelector(".topic-picker, .doc-move") !== null,
+      { id: d.id },
     );
     art.append(body, handle.menu());
     // 点卡片 = 打开(⋯ 菜单 / 选择器里的点击不算)
@@ -620,12 +676,18 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       const key = `${mountSpace}/${d.id}`;
       const barEl = main.querySelector<HTMLElement>(".doc-bar");
       const band = barEl !== null ? barEl.getBoundingClientRect().bottom : 0;
-      let i = from instanceof Node ? anchors.findIndex((x) => x.el.contains(from)) : -1;
-      if (i < 0) i = anchors.findIndex((x) => x.el.getBoundingClientRect().bottom > band);
-      if (i < 0) return caretMemo.get(key) ?? 0;
+      const picked = from instanceof Node ? anchors.findIndex((x) => x.el.contains(from)) : -1;
+      const i = picked >= 0 ? picked : anchors.findIndex((x) => x.el.getBoundingClientRect().bottom > band);
+      const memo = caretMemo.get(key);
+      // 165 / W5 Q15(查到电脑同病,WM-31):没点哪一块、还停在篇首(第一块就在工具条底下,没往里读)= 多半是要接着往后写
+      // ⇒ 落在全文末尾(此前落在开头,得自己划到末尾);上次离开时光标就在第一块里的,回到它。往里读到某一段再「编辑」、
+      // 或双击某一块,照旧落在那一块(153 走查 D-M16「读到哪写到哪」不动)。同手机 docs.ts startCaret。
+      if (picked < 0 && i <= 0) {
+        const firstEnd = anchors.length > 1 ? lineStart(content, anchors[1].line) : content.length + 1;
+        return i === 0 && memo !== undefined && memo < firstEnd ? memo : content.length;
+      }
       const lo = i === 0 ? 0 : lineStart(content, anchors[i].line);
       const hi = i + 1 < anchors.length ? lineStart(content, anchors[i + 1].line) : content.length + 1;
-      const memo = caretMemo.get(key);
       return memo !== undefined && memo >= lo && memo < hi ? memo : lo;
     };
     const paint = (): void => {
@@ -680,10 +742,19 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
         marked: restore?.marked,
         focus: restore ? restore.focused : true,
         remount: restore !== undefined,
-        onClose: () => art.classList.remove("commenting"),
+        onClose: () => {
+          art.classList.remove("commenting");
+          // 关完焦点回这一篇的 ⋯(W5 Q2;此前掉到页面上)。焦点已被别处接走就不抢。
+          if (document.activeElement === document.body && art.isConnected) handle.focus();
+        },
       });
     };
-    const meta = el("div", { className: "doc-meta" }, [el("time", { textContent: t("docs.writtenAt", { time: when(d.created_at) }) })]);
+    const editedAt = editedAtOf(d);
+    const meta = el("div", { className: "doc-meta" }, [
+      el("time", { textContent: t("docs.writtenAt", { time: when(d.created_at) }) }),
+      // Q15:改过一版的另写「改于 …」(此前只写第一次写的时间,改过也不变,像补的那段没存上)
+      ...(editedAt === null ? [] : [el("time", { className: "doc-edited", textContent: t("docs.editedAt", { time: when(editedAt) }) })]),
+    ]);
     const badge = commentBadge(mountSpace, d.id, () => void refresh(), () => toggleComments());
     if (badge) meta.append(badge);
     const tagHost = el("div", { className: "doc-tags" }, [tagChips(d)]);
@@ -699,7 +770,15 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       ...moveActs(tagHost, d),
       { label: t("docs.actDelete"), key: DOC_CARD_KEYS.delete, run: () => void doDelete(d), danger: true },
     ];
-    const handle = hk.register(art, actions, () => art.classList.contains("commenting") || tagHost.querySelector(".topic-picker, .doc-move") !== null);
+    // W5 A13(WD-13 / 新撞-1):阅读页整页就这一张「卡」,页头两枚钮上印着「编辑 E」「历史 H」—— 此前要先把鼠标
+    // 悬停到正文上(或 ↓)才算选中,照着按 E / H / Y 都不动。⇒ 一进来就选中它,鼠标离开也不清(sticky)。
+    hk.want(d.id, false);
+    const handle = hk.register(
+      art,
+      actions,
+      () => art.classList.contains("commenting") || tagHost.querySelector(".topic-picker, .doc-move") !== null,
+      { id: d.id, sticky: true },
+    );
     const partialBar = movePartialBar(d);
     const landedNote = landedId === d.id ? takeLocateNote(d.id) : null;
     landedId = null;
@@ -741,6 +820,8 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
     const r = restoreComment;
     restoreComment = null;
     if (r !== null && r.itemId === d.id) toggleComments(r);
+    else if (commentsOnOpen === d.id) toggleComments(); // 列表卡上按 Y 进来的
+    commentsOnOpen = null;
   }
 
   // ---- 编辑器(§2)-------------------------------------------------------------------
@@ -753,6 +834,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
    *  不给 = 末尾:新篇、从草稿接着写)。 */
   function openEditor(d: DocItem | null, seed: string | null, at?: number): void {
     hk.reset();
+    trashBtn.hidden = true; // 写着的时候不摆去别处的路(点了 = 离开编辑器落一版再走,同「新建长文」那枚在编辑页收起);离开后 refresh 摆回来
     pinReader = null;
     pickerOff?.();
     closeComments();
@@ -1170,7 +1252,8 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       const stay = el("button", { className: "no", type: "button", textContent: t("docs.askStay"), onclick: () => (closeAsk(), area.focus()) });
       const btns = choices.map((c) => el("button", { className: c.main ? "do" : "no", type: "button", textContent: c.label, onclick: () => (closeAsk(), c.run()) }));
       askHost.replaceChildren(el("div", { className: "doc-draft doc-ask" }, [el("span", { textContent: msg }), ...btns, stay]));
-      btns[0].focus();
+      // W5 Q3 ★①:焦点停在「接着写」(= 取消):回车不做那件事(头一枚多半是「扔进回收站」),要做 Tab 过去。
+      stay.focus();
     }
     /** 离开编辑器。`saving` = 点的是【保存】(标了删的图就是要删,不再问);返回钮 / Esc 离开也落一版,但标了删的图先问(154 G7)。
      *  正文空着、只剩图 ⇒ 先问这篇留不留(154 G6:新篇贴图再 Ctrl+Z,图不随文字撤掉,会留下一篇只有图的「(无标题)」)。 */
@@ -1204,7 +1287,15 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
         },
       ]);
     };
+    /** 这一次离开落下的是不是一版**正文**(165 / W5 Q1):只删了标了删的图不算一版(图不进历史)。⚠ 在 commit 之前量 ——
+     *  成功后 `saved` 就跟上了。新篇按「这个编辑器是不是开来写新篇的」认(⛔ 别按 newId:先加图那条路会提前把篇建出来,
+     *  那仍是新写的一篇)。 */
+    const textWillLand = (): boolean => area.value !== saved || (id === null && newId === null);
+    /** Q1 ★①:离开编辑器就落一版(规矩不动),现场说一声 —— 此前几条离开的路(Esc / 保存 / 左上那枚 / 切走)全都一声不吭,
+     *  学会「Esc = 不要了」的人在长文里随手打两字想放弃,就平白多一篇。新篇那句带上它在哪(两端同句)。 */
+    const sayLanded = (): void => toastAction(id === null ? t("docs.savedNew") : t("docs.savedVersion"));
     const finish = (then: () => void): void => {
+      const textLands = textWillLand();
       void commit().then((r) => {
         if (r === "failed" || unmounted) return;
         const target = id ?? newId;
@@ -1212,6 +1303,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
         teardown();
         readerAt = target === null ? null : { id: target, caret: area.selectionStart }; // 回到阅读页:光标那一块摆到顶
         then();
+        if (r === "wrote" && textLands) sayLanded();
       });
     };
     /** 只剩图的空篇:进回收站(连图一起;回收站里还原得回来),不落空正文那一版。 */
@@ -1237,8 +1329,11 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
     };
     leaveEditor = leave;
     flushEditor = () => {
-      // unmount:不等、不碰 DOM;没写进去的那份草稿还在,下次打开会问
-      void commit(true);
+      // unmount:不等、不碰 DOM;没写进去的那份草稿还在,下次打开会问。落成了也说一声(Q1:切走那条离开的路)。
+      const textLands = textWillLand();
+      void commit(true).then((r) => {
+        if (r === "wrote" && textLands) sayLanded();
+      });
       teardown();
     };
 
@@ -1265,16 +1360,22 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
     const modeEdit = el("button", { className: "seg on", type: "button", textContent: t("docs.modeEdit") });
     const modePrev = el("button", { className: "seg", type: "button", textContent: t("docs.modePreview") });
     const edWrap = el("div", { className: "doc-editor" }, [edBox, preview]);
+    // 165 / W5 A41(查):这两段同是「状态不单靠颜色」—— 读屏读得出哪段是选中的。
+    const paintMode = (preview: boolean): void => {
+      modeEdit.classList.toggle("on", !preview);
+      modePrev.classList.toggle("on", preview);
+      modeEdit.setAttribute("aria-pressed", preview ? "false" : "true");
+      modePrev.setAttribute("aria-pressed", preview ? "true" : "false");
+    };
+    paintMode(false);
     modeEdit.onclick = () => {
       edWrap.classList.remove("show-preview");
-      modeEdit.classList.add("on");
-      modePrev.classList.remove("on");
+      paintMode(false);
       area.focus();
     };
     modePrev.onclick = () => {
       edWrap.classList.add("show-preview");
-      modePrev.classList.add("on");
-      modeEdit.classList.remove("on");
+      paintMode(true);
       paintPreview();
     };
     const saveBtn = el("button", { className: "do", type: "button", textContent: t("docs.save"), onclick: () => leave(done, true) });
@@ -1314,7 +1415,8 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
     if (id !== null) mountStrip(id); // 已存过的篇:缩略图条(乐观首帧会同步画一次预览,故放在全部声明之后)
     main.replaceChildren(
       bar(
-        [backBtn(id === null ? t("docs.back") : t("docs.backToDoc"), () => leave(done)), el("span", { className: "segs" }, [modeEdit, modePrev]), addImgBtn, filePick],
+        // 165 / W5 Q1:新篇左上那枚也叫「← 回到正文」—— 它本来就落在这篇的阅读页(此前叫「← 长文」,却不回长文列表;两端同句)。
+        [backBtn(t("docs.backToDoc"), () => leave(done)), el("span", { className: "segs" }, [modeEdit, modePrev]), addImgBtn, filePick],
         [status, saveBtn],
       ),
       el("div", { className: "doc-edit-page" }, [askHost, edWrap, imgRow, err]),
@@ -1344,11 +1446,27 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       el("div", { className: "hv" }, [el("div", { className: "hv-side" }, [listEl, more]), diffCol]),
     );
 
-    const metaOf = new Map<number, RevisionMeta>();
     let old: Pick = "current";
     let neu: Pick = "current";
     const same = (a: Pick, b: Pick): boolean => (a === "current" ? b === "current" : b !== "current" && a.rev === b.rev);
-    const label = (p: Pick): string => (p === "current" ? t("docs.histCurrent") : when(metaOf.get(p.rev)!.archived_at));
+    // 165 / W5 Q15(查到电脑同病,手机新撞-1):旧版那一行写**它写成的那一刻**,不是它被换下的那一刻(此前 17:46 写的第一版
+    // 标「17:48」,列表与阅读页都说「写于 17:46」,历史里却找不到 17:46)。一版写成的那一刻 = 比它早一版被换下的那一刻;
+    // 最早那一版 = 这篇建成的那一刻。目录分页取(新的在前):一页末尾那版要等下一页到了才知道 ⇒ 先写「…」,下一页到了补上。
+    // 同手机 docs.ts renderHistory。
+    const seen: RevisionMeta[] = []; // 已取到的目录,新 → 旧
+    let complete = false; // 目录取到底了(最早那版的「写成」= 建篇那一刻)
+    const writtenAt = (rev: number): string | null => {
+      const i = seen.findIndex((r) => r.revision_id === rev);
+      if (i < 0) throw new Error(`历史目录里没有版本 ${rev}`);
+      if (i + 1 < seen.length) return seen[i + 1].archived_at;
+      return complete ? d.created_at : null;
+    };
+    const whenOf = (rev: number): string => {
+      const at = writtenAt(rev);
+      return at === null ? "…" : when(at);
+    };
+    const label = (p: Pick): string => (p === "current" ? t("docs.histCurrent") : whenOf(p.rev));
+    const whenCells = new Map<number, HTMLElement>();
     const rows: { pick: Pick; oldBtn: HTMLElement; newBtn: HTMLElement }[] = [];
     // 在途请求的代次:换了选择 / 离开历史页之后,旧回包 ⛔ 不许盖新的
     let seq = 0;
@@ -1382,7 +1500,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
         out.replaceChildren(el("p", { className: "doc-note", textContent: t("docs.histNoChange") }));
         return;
       }
-      const r = renderDiff(pair.a.content, pair.b.content);
+      const r = renderDiff(...diffPair(pair.a.content, pair.b.content)); // 165 / W5 A32:末行换行先补齐再比(⛔ 存下的版本不动)
       if (r.degraded !== null) {
         note.textContent = t("docs.histDegraded");
         note.hidden = false;
@@ -1411,9 +1529,11 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
         void compare();
       };
       rows.push({ pick, oldBtn, newBtn });
+      const whenCell = el("span", { className: "hv-when", textContent: when_ });
+      if (pick !== "current") whenCells.set(pick.rev, whenCell);
       listEl.append(
         el("div", { className: "hv-row" }, [
-          el("span", { className: "hv-when", textContent: when_ }),
+          whenCell,
           el("span", { className: "hv-chars", textContent: chars === null ? "" : t("docs.histChars", { n: chars }) }),
           el("span", { className: "hv-picks" }, [oldBtn, newBtn]),
         ]),
@@ -1421,10 +1541,12 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
     }
 
     function addPage(p: RevisionCatalog): void {
-      for (const r of p.entries) {
-        metaOf.set(r.revision_id, r);
-        addRow({ rev: r.revision_id }, when(r.archived_at), r.chars);
-      }
+      const prevLast = seen.length > 0 ? seen[seen.length - 1].revision_id : null;
+      seen.push(...p.entries);
+      complete = !p.has_more;
+      // 上一页末尾那版此刻才知道写成于哪一刻(这一页第一版被换下的那一刻):补上它那一格(先前写的「…」)。
+      if (prevLast !== null) whenCells.get(prevLast)!.textContent = whenOf(prevLast);
+      for (const r of p.entries) addRow({ rev: r.revision_id }, whenOf(r.revision_id), r.chars);
       more.hidden = !p.has_more;
       more.onclick = async () => {
         const before = p.entries[p.entries.length - 1].revision_id;
@@ -1490,6 +1612,9 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       return;
     }
     if (seq !== refreshSeq || unmounted) return;
+    // 「改于」(165 / W5 Q15):每篇问一次目录首页(正文没变的不重问)。问不到只是少那一行字,正文照常(装饰不陪葬)。
+    await Promise.all(list.map((d) => fetchEditedAt(d).catch(() => undefined)));
+    if (seq !== refreshSeq || unmounted) return;
     docs = list;
 
     let focus = pendingFocus;
@@ -1506,11 +1631,12 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       restorePending = false;
     }
 
-    const sig = JSON.stringify([page, list, commentSig()]);
+    const sig = JSON.stringify([page, list, list.map(editedAtOf), commentSig()]);
     if (refocus === true && sig === lastSig) return;
     lastSig = sig;
 
     newBtn.hidden = page.kind !== "list";
+    trashBtn.hidden = false;
     const cm = inlineCommentState(mountSpace);
     restoreComment = cm;
     closeComments();
@@ -1561,6 +1687,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
   // 再看「有没有菜单开着」就看不到了 —— 一记 Esc 既关菜单又回列表。
   const onEsc = (e: KeyboardEvent): void => {
     if (e.key !== "Escape" || e.isComposing || e.defaultPrevented || leaveEditor !== null || page.kind !== "doc") return;
+    if (searchBackArmed()) return; // 从搜索跳来的这一篇:Esc 回搜索(W5 Q11,notebook.ts 那只 window 级监听接)
     const tgt = e.target as HTMLElement | null;
     if (tgt && (tgt.tagName === "INPUT" || tgt.tagName === "TEXTAREA")) return;
     if (document.querySelector(".hk-menu, .topic-picker, .doc-move") !== null || inlineCommentState(mountSpace) !== null) return;

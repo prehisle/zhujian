@@ -78,7 +78,8 @@ export const settings = defineMessages({
   "settings.needModifier": { zh: "要先按住 Ctrl、Alt 或 Shift 中的一个", en: "Hold Ctrl, Alt or Shift first" },
   "settings.keyUnsupported": { zh: "这个键不支持,换一个", en: "That key is not supported, try another" },
   "settings.keysTitle": { zh: "应用里的单键", en: "Keys inside the app" },
-  "settings.keysIntro": { zh: "鼠标悬停在卡片上(或用 ↑ ↓ 选中),直接按一个键就行,不用同时按住 Ctrl 或 Alt。", en: "Hover over a card (or pick one with ↑ ↓) and press a single key — no Ctrl or Alt needed." },
+  // W5 A7:焦点停在卡上(Tab 到它的 ⋯)也算选中这张 —— 此前表头只说悬停 / ↑ ↓,焦点在 ⋯ 上按键作用到的是别的卡。
+  "settings.keysIntro": { zh: "鼠标悬停在卡片上、用 ↑ ↓ 选中,或 Tab 到卡上的 ⋯,直接按一个键就行,不用同时按住 Ctrl 或 Alt。", en: "Hover over a card, pick one with ↑ ↓, or Tab to its ⋯, then press a single key — no Ctrl or Alt needed." },
   "settings.keysGroupPick": { zh: "选卡", en: "Picking a card" },
   "settings.keysGroupIdea": { zh: "随记卡片", en: "Note cards" },
   "settings.keysGroupBoard": { zh: "看板卡片", en: "Board cards" },
@@ -87,14 +88,20 @@ export const settings = defineMessages({
   "settings.keysGroupView": { zh: "不用选卡", en: "No card needed" },
   "settings.keysGroupEdit": { zh: "编辑正文时", en: "While editing text" },
   "settings.keysArrows": { zh: "上一张 / 下一张", en: "Previous / next card" },
+  // W5 Q10:看板 ← → 换列(选中跳到隔壁列最上面那张)。
+  "settings.keysLanes": { zh: "看板:跳到左边 / 右边一列最上面那张", en: "Board: jump to the top card of the column on the left / right" },
+  // W5 A13:H / V 只在改过的卡上有(此前表里没写,没改过的按了一声不吭)。
+  "settings.keysHistoryRevised": { zh: "历史(改过的卡才有)", en: "History (only on edited cards)" },
   "settings.keysSlash": { zh: "打开这张卡的菜单(忘了键就看这里)", en: "Open this card’s menu (lists its keys)" },
   "settings.keysDblclickKey": { zh: "双击", en: "Double-click" },
-  "settings.keysToTask": { zh: "转成任务", en: "Make a task" },
+  "settings.keysToTask": { zh: "转待办", en: "Make a task" },
   "settings.keysMoveSpace": { zh: "移到别的空间", en: "Move to another space" },
   "settings.keysNextCol": { zh: "移到右边一列", en: "Move to the next column" },
   "settings.keysPrevCol": { zh: "移到左边一列", en: "Move to the previous column" },
   "settings.keysSeal": { zh: "归档(已完成的卡)", en: "Archive (done cards)" },
   "settings.keysRevert": { zh: "撤回为随记(待办列的卡)", en: "Send back to Notes (to-do cards)" },
+  // 165 / W5 Q7:同一根轴上的一进一出(同 A 归档 / 取消归档):不在「已完成」的卡 = 完成,已完成的卡 = 打回第一列。
+  "settings.keysComplete": { zh: "完成(已完成的卡:打回「待办」)", en: "Mark done (on a done card: back to To do)" },
   "settings.keysColorDigits": { zh: "卡片颜色;0 清除", en: "Card color; 0 clears it" },
   "settings.keysIdeaCompose": { zh: "随记页:跳到输入框", en: "Notes: jump to the input box" },
   "settings.keysBoardCompose": { zh: "看板:新建任务", en: "Board: new task" },
@@ -104,7 +111,13 @@ export const settings = defineMessages({
   "settings.keysTopicMerge": { zh: "标签页:合并标签", en: "Tags: merge tags" },
   "settings.keysDocCompose": { zh: "长文页:新建长文", en: "Long-form: new long-form note" },
   "settings.keysSearch": { zh: "打开搜索(光标进搜索框)", en: "Open search (cursor in the search box)" },
+  // W5 A1 / Q15:全局那几枚(notebook.ts 的文档级监听)。
+  "settings.keysUndo": { zh: "撤销刚才那一下(屏幕下方回执还在、带「撤销」时)", en: "Undo the last action (while its notice with “Undo” is still showing)" },
+  "settings.keysSettings": { zh: "打开设置", en: "Open settings" },
+  "settings.keysSidebar": { zh: "收起 / 展开侧栏", en: "Collapse / expand the sidebar" },
   "settings.keysEnter": { zh: "保存", en: "Save" },
+  // W5 Q15(WD-33):光标停在待办行上时回车是续一行,想直接记下 / 保存按这枚(此前表里没列)。
+  "settings.keysCtrlEnter": { zh: "记下 / 保存(光标在待办行上也一样)", en: "Note it / save (even on a checklist line)" },
   "settings.keysShiftEnter": { zh: "换行(在待办行里接着起一行)", en: "New line (continues a checklist)" },
   "settings.keysEsc": { zh: "放弃这次修改", en: "Discard the edit" },
   "settings.keysChecklist": { zh: "把这一行变成待办 / 变回来", en: "Turn the line into a checklist item and back" },
@@ -116,6 +129,8 @@ export const settings = defineMessages({
   "settings.keysSearchArrows": { zh: "在搜索框和结果之间上下走", en: "Move between the search box and the results" },
   "settings.keysSearchEnter": { zh: "跳到这一条", en: "Go to this result" },
   "settings.keysSearchEsc": { zh: "在结果上:回到搜索框;在搜索框里:清空", en: "On a result: back to the search box; in the box: clear it" },
+  // W5 Q11:点进一条结果之后,在落点那页按 Esc 回搜索。
+  "settings.keysSearchBack": { zh: "跳过去之后:回到搜索(词和结果都在)", en: "After jumping to a result: back to search (query and results kept)" },
   "settings.autostartTitle": { zh: "开机自动启动", en: "Start at login" },
   "settings.autostartSub": { zh: "开机后朱简悄悄待在托盘里,热键和截止提醒一开机就能用。", en: "Zhujian waits quietly in the tray after you log in, so the shortcuts and due reminders work right away." },
   "settings.autostartOn": { zh: "开", en: "On" },

@@ -7,7 +7,7 @@
 //  Q7  撤销回**原位置**(此前落列尾):换列后撤销,卡回到原列里原来那两张之间;
 //      长按拖(页内合成 PointerEvent 驱动 carddrag 的逻辑半;真手势见原生半截):拿起态、落点线、
 //      跨列落在指定那张之前、回执 + 撤销回原位;只看到期时长按说一句、不拿起;
-//  Q2  已完成卡上的勾点得动 = 回待办(回执「已改为「待办」」+ 撤销);撤销 = 回已完成原位置;
+//  Q2  已完成卡上的勾点得动 = 回待办(回执「已移到「待办」」+ 撤销);撤销 = 回已完成原位置;
 //  Q3  单张归档不问、回执带撤销;「已完成」节头「全部归档」问一次、回执「已归档 N 条」带撤销 + 去看看,撤销 = 全部回来;
 //      取消归档回执带「去看看」,点了 = 收归档页、卡进视野;
 //  Q4  已完成卡的截止只写 M/D、不带逾期色;Q13 逾期一天写「逾期 1 天」、归档卡写日期;
@@ -188,7 +188,7 @@
     const tick = card(`${M}-完成二`).querySelector(".tick input");
     ok("Q2 已完成卡上的勾不是 disabled", !!tick && tick.checked && !tick.disabled);
     tick.click();
-    ok("Q2 点勾 = 回待办,回执「已改为「待办」」带撤销", !!(await until(() => barTexts()[0] === "撤销" && $("error").textContent.includes("已改为「待办」"), 4000)), $("error").textContent);
+    ok("Q2 点勾 = 回待办,回执「已移到「待办」」带撤销", !!(await until(() => barTexts()[0] === "撤销" && $("error").textContent.includes("已移到「待办」"), 4000)), $("error").textContent);
     ok("Q2 库里已在待办", (await stageOf(ids.done2)) === "todo");
     click(barActs()[0]);
     await until(async () => (await stageOf(ids.done2)) === "done", 3000);
@@ -241,7 +241,8 @@
     click(document.querySelector('#bottombar [data-pane="sealed"]'));
     const sc = await until(() => document.querySelector(`#sealed-list [data-sealed="${ids.done1}"]`), 5000);
     ok("Q13 归档页头写「归档」", !!document.querySelector("#sealed-pane h2, #sealed-pane .pane-title") && /归档/.test($("sealed-pane").textContent));
-    ok("Q13 归档卡写日期(完成于 M月D日 HH:MM)", /完成于 \d+月\d+日 \d\d:\d\d/.test(sc?.querySelector("time")?.textContent ?? ""), sc?.querySelector("time")?.textContent);
+    // 165 / W5 Q14 起两端一个写法:今天的写「今天 HH:MM」、别的天「M月D日 HH:MM」—— 都写明是哪天(此前今天的只写时刻)
+    ok("Q13 归档卡写明是哪天(完成于 今天 HH:MM / M月D日 HH:MM)", /完成于 (今天|\d+月\d+日) \d\d:\d\d/.test(sc?.querySelector("time")?.textContent ?? ""), sc?.querySelector("time")?.textContent);
     if (sc) {
       click(sc);
       click(await until(() => document.querySelector(`#sealed-list [data-unseal="${ids.done1}"]`), 2000));
@@ -286,7 +287,7 @@
     await until(async () => (await stageOf(ids.ding)) === "doing", 3000);
     const doingNow = await colIds("doing");
     ok("Q7 落进进行中、排在「进行」之前", doingNow.indexOf(ids.ding) === doingNow.indexOf(ids.doing) - 1, doingNow);
-    ok("Q7 回执「已改为「进行中」」带撤销", !!(await until(() => barTexts()[0] === "撤销" && $("error").textContent.includes("已改为「进行中」"), 3000)), $("error").textContent);
+    ok("Q7 回执「已移到「进行中」」带撤销", !!(await until(() => barTexts()[0] === "撤销" && $("error").textContent.includes("已移到「进行中」"), 3000)), $("error").textContent);
     click(barActs()[0]);
     await until(async () => (await stageOf(ids.ding)) === "todo", 3000);
     ok("Q7 撤销 = 回待办原位置", (await colIds("todo")).indexOf(ids.ding) === dingAt, { was: dingAt, now: (await colIds("todo")).indexOf(ids.ding) });

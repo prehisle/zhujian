@@ -114,6 +114,23 @@ export function holdKeyboard(
   };
 }
 
+/** 一排就地展开的选项(看板卡的优先级 P0–P2 / 清除、颜色 1–7 / 无色):焦点进来后 ← → ↑ ↓ 在这一排里挪
+ *  (到头绕回)。⚠ 吞掉这四枚键(stopPropagation):document 上的卡片控制器拿方向键挪「选中」,
+ *  不截的话按一下 → 选中跑去隔壁那张、这一排晾在原地(W5 A39)。 */
+export function arrowWalk(row: HTMLElement): void {
+  row.addEventListener("keydown", (e) => {
+    if (e.ctrlKey || e.altKey || e.metaKey) return;
+    const d = e.key === "ArrowRight" || e.key === "ArrowDown" ? 1 : e.key === "ArrowLeft" || e.key === "ArrowUp" ? -1 : 0;
+    if (d === 0) return;
+    const list = focusables(row);
+    if (list.length === 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const at = list.indexOf(document.activeElement as HTMLElement);
+    list[(at < 0 ? 0 : at + d + list.length) % list.length].focus();
+  });
+}
+
 /** Tab / Shift+Tab 到头就绕回另一头,焦点不出面板。判 Tab 走 `isTabKey`(WebKitGTK 上 Shift+Tab 的
  *  `e.key` 是 "Unidentified",那条判据只此一份,见 keys.ts)。 */
 export function trapTab(panel: HTMLElement, e: KeyboardEvent): void {

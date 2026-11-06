@@ -156,7 +156,8 @@ describe("长文编辑器离开前问的两句 + 续列表(154 G6–G8)", () => 
       timeout: 8000,
       timeoutMsg: "「不删」之后正文一直没落库",
     });
-    expect(await inEditor()).toBe(false);
+    // 等 DOM 别拿库当代理(860 同形):库里落了 ≠ 编辑器已收 —— 测试那发 list_docs 可能先于页面那发 edit_note 的回话到。
+    await browser.waitUntil(async () => !(await inEditor()), { timeout: 5000, timeoutMsg: "「不删」之后正文落了库、编辑器却一直没收" });
     expect(await imgCount()).toBe(2);
 
     // ② 再标、Esc ⇒「删掉这 1 张」⇒ 删了

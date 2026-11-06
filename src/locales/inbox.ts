@@ -41,13 +41,14 @@ export const inbox = defineMessages({
   "inbox.actCopy": { zh: "复制", en: "Copy" },
   "inbox.actCopyLink": { zh: "复制链接", en: "Copy link" },
   "inbox.actEdit": { zh: "编辑", en: "Edit" },
-  "inbox.actTask": { zh: "待办", en: "Make a task" },
+  // 165 / W5 Q14:「转待办」一个叫法(手机钮与两端回执早就是这个词;此前菜单「待办」、快捷键表「转成任务」)。
+  "inbox.actTask": { zh: "转待办", en: "Make a task" },
   "inbox.actTag": { zh: "标签", en: "Tags" },
   "inbox.actComments": { zh: "留言", en: "Comments" },
-  "inbox.actMove": { zh: "移动", en: "Move" },
+  // 165 / W5 A19(WD-21):换空间那一项写全「移到别的空间」(同快捷键表与面板标题);此前叫「移动」,在看板上与换列的「移到 ▸」只差一个字。
+  "inbox.actMove": { zh: "移到别的空间", en: "Move to another space" },
   "inbox.actExpand": { zh: "展开成长文", en: "Expand to long-form" },
   "inbox.undoExpanded": { zh: "已展开成长文", en: "Expanded to long-form" },
-  "inbox.openExpanded": { zh: "打开", en: "Open" },
   "inbox.expandRefsFailed": { zh: "已展开成长文,但没能把图的「图N」补进正文:{err}", en: "Expanded to long-form, but couldn’t add the image mentions to the text: {err}" },
   "inbox.docBadge": { zh: "长文", en: "Long-form" },
   "inbox.actDelete": { zh: "删除", en: "Delete" },
@@ -58,6 +59,10 @@ export const inbox = defineMessages({
   "inbox.goSee": { zh: "去看看", en: "Show me" },
   "inbox.discardHint": { zh: "改过了 —— 再按一次 Esc 丢掉这次的修改;回车或点别处保存。", en: "You have changes — press Esc again to discard them; Enter or click elsewhere to save." },
   "inbox.actHistory": { zh: "历史", en: "History" },
+  // 165 / W5 A45:没改过的卡按 H(看板 V)此前一声不吭;菜单里照旧只有改过的才列「历史」。
+  "inbox.noHistory": { zh: "这张还没改过,没有历史", en: "Not edited yet, so there’s no history" },
+  // W5 A9:卡片 ⋯ 菜单 / 单键 I —— 只用键盘也打得开大图(两个视图共用这一句)。
+  "inbox.actImages": { zh: "看图", en: "View images" },
   "inbox.editedMark": { zh: "改过", en: "edited" },
   // 158 G4-A8:看板卡的历史读框(history-panel openHistoryDialog)。
   "inbox.histClose": { zh: "关闭", en: "Close" },

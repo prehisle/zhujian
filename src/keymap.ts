@@ -15,6 +15,8 @@
 export const IDEA_CARD_KEYS = {
   edit: "E",
   history: "H",
+  /** 看图(W5 A9:此前只用键盘打不开大图 —— 缩略图不停焦点、菜单里也没有)。只在有配图的卡上出。I = Image。 */
+  images: "I",
   task: "T",
   tag: "L",
   comments: "Y",
@@ -31,6 +33,8 @@ export const IDEA_TRASH_KEYS = { restore: "R", copy: "C", copyLink: "K", deleteF
 /** 看板卡片。颜色的 1-7 / 0 数字键跟着 `CARD_COLORS` 的长度走,不在这张表里。 */
 export const BOARD_CARD_KEYS = {
   edit: "E",
+  /** 看图(W5 A9,同随记卡)。只在有配图的卡上出。 */
+  images: "I",
   copy: "C",
   copyLink: "K",
   tags: "L",
@@ -44,6 +48,9 @@ export const BOARD_CARD_KEYS = {
   toBottom: "F",
   nextCol: "]",
   prevCol: "[",
+  /** 完成(165 / W5 Q7:= 移到「已完成」,不在那一列时才有)/ 已完成的卡上 = 打回第一列(「打回「待办」」,此前右边没有键)。
+   *  同一根轴上的一进一出(同 A 归档 / 取消归档、W 展开 / 收回)。X = 清单里打勾的那个「[x]」。 */
+  complete: "X",
   seal: "A",
   revert: "B",
   move: "M",

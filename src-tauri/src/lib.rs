@@ -2648,8 +2648,8 @@ fn show_window<R: Runtime>(app: &AppHandle<R>, label: &str) {
 
 /// 唤起笔记本主窗(只露窗,不动焦点)。人手「打开朱简」的那几条入口走 `summon_notebook`
 /// (它先调这里);这里直接用的是「点此改键」(`open_settings`)与深链接 —— 各有自己的落焦处。
-/// 刻意不强制切视图:主窗隐藏不销毁,唤起后天然停在离开时的视图;真重启由前端
-/// 视图记忆(zhujian.last-view)恢复——早年写死直达看板,与视图记忆打架,已改。
+/// 刻意不强制切视图:主窗隐藏不销毁,唤起后天然停在离开时的视图;真重启(冷启动)一律回随记
+/// (165 / W5 Q8,前端 notebook.ts 启动序;zhujian.last-view 只给页面重载用)。
 fn open_notebook<R: Runtime>(app: &AppHandle<R>) {
     show_window(app, "notebook");
 }

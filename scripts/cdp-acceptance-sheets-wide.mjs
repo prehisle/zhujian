@@ -2,13 +2,15 @@
 //
 // 高屏 = 宽屏(≥ 720)且高 ≥ 600:记一笔 / 编辑 / 留言三座浮在屏中;其余(手机横放、手机竖放、分屏拖窄拖矮)照旧从屏底升起。
 // 证的是截图台(ui-shots-wide.mjs)照不出来的那几条 —— 截图是静态的、键盘弹不出来,这几条要**动**才看得见:
-//  ① 各尺寸 × 三座:高屏的五档(1440×960 / 1280×800 / 960×1440 / 800×1280 / 720×600 边界)浮在屏中 —— 上下左右都居中、
-//     宽 ≤ 640、不贴屏底;其余六档(800×360 / 915×412 / 720×599 / 719×1000 / 412×915 / 360×800)贴屏底;
+//  ① 各尺寸 × 三座:高屏的五档(1440×960 / 1280×800 / 960×1440 / 800×1280 / 720×600 边界)浮在屏中 —— 左右居中、
+//     宽 ≤ 640、不贴屏底;编辑 / 留言两座上下也居中,**记一笔那一座上沿钉在顶栏下 16**(165 / W5 A53:居中的话键盘一起一落
+//     它整块跳);其余六档(800×360 / 915×412 / 720×599 / 719×1000 / 412×915 / 360×800)贴屏底;
 //  ② 收起态:浮窗淡出、`pointer-events: none`、屏中那一点点不到它;贴底的滑出屏外;
 //  ③ 800×1280(格 4 新进来的那一档):真点当前那一面 = 「一步回捕获」(收起态 focus 输入框开层)照样开浮窗
 //     (浮窗收起态不能用 visibility 藏,见 index.html);
-//  ④ 键盘让出去的那截不算:1280×800 打着字把视口压到 440(= 平板横放弹键盘),浮窗照旧、在剩下那截里居中;捕获框的
-//     「给足高度」退回手机那档;放回 800 仍是浮窗、给足高度回来。不打字时压到 440(= 分屏拖矮)⇒ 翻成贴底;
+//  ④ 键盘让出去的那截不算:1280×800 打着字把视口压到 440(= 平板横放弹键盘),浮窗照旧、**上沿一动不动**、捕获框的
+//     「给足高度」也不退(165 / W5 A53 起;此前居中 + 退回手机那档,键盘起落整块跳 176、写字框三行缩成一行半);
+//     放回 800 仍是浮窗、上沿还在原处。不打字时压到 440(= 分屏拖矮)⇒ 翻成贴底;
 //  ⑤ 最挤的那一档:1024×600 打着字压到 330(7 寸平板横放弹键盘),编辑层的「保存」那排仍在层里、层仍在屏里。
 //
 // 跑法(只读,不写库;但期望值对着展示库写 —— 带清单那张任务、上面两句留言 —— 开跑先问 identifier,不是截图台那只就拒):
@@ -27,7 +29,8 @@
 //  刀 1 浮窗回到 789 的旧判据(宽 < 900 时贴底)⇒ 红 ① 800×1280 / 720×600 两档的三座 + ③;
 //  刀 2 浮窗不看高(宽屏一律浮)⇒ 红 ① 800×360 / 915×412 / 720×599 三档的三座,连带 ② 800×360 收起(浮着收 = 原地
 //       往下挪、不滑出屏外)与 ④ 末格(不打字压矮后开记一笔照样浮);
-//  刀 3 「给足高度」挂在类上、不随视口退档 ⇒ 红 ④ 压矮时的捕获框、⑤ 的「保存」在层里;
+//  刀 3 「给足高度」挂在类上、不随视口退档 ⇒ 红 ⑤ 的「保存」在层里(捕获框那条 165 / W5 A53 起本来就挂在类上、不退档,④ 不再红);
+//  刀 5(165 / W5 A53)记一笔浮窗回到上下居中 ⇒ 红 ① 高屏五档的 compose、③、④ 的「上沿一动不动」;
 //  刀 4 收起态用 visibility 藏 ⇒ 红 ③(focus 不上,开不了层)。
 //  JS 那条 CSS 刀够不着:不锁存(打着字也照视口翻)⇒ 红 ④「压到 440 浮窗照旧」与 ⑤「编辑层仍是浮窗」两格(给足高度那格照绿 ——
 //  它挂在 `@media` 上,本来就不靠锁存);格 4 当轮按 mutation-check「手工三步」改源码跑过一次(摘掉 main.ts `tall()` 头一行、跑、还原)。
@@ -52,6 +55,7 @@ const KNIVES = {
     `max-width: 640px !important; margin-inline: auto !important; } }`,
   3: `body.tallscreen .compose textarea { min-height: 6em !important; } body.tallscreen .compose.editsheet textarea { min-height: 12em !important; }`,
   4: `body.tallscreen .compose:not(.open), body.tallscreen .cmsheet:not(.open) { visibility: hidden !important; }`,
+  5: `body.tallscreen .compose:not(.editsheet) { top: 0 !important; margin-block: auto !important; }`,
 };
 if (KNIFE && !KNIVES[KNIFE]) throw new Error(`没有第 ${KNIFE} 把刀(有 ${Object.keys(KNIVES).join(" / ")})`);
 if (SHOTS) mkdirSync(SHOTS, { recursive: true });
@@ -123,9 +127,13 @@ const GEO = (id) => `(() => { const el = document.getElementById(${JSON.stringif
   const cx = Math.round((b.left + b.right) / 2), cy = Math.round((b.top + b.bottom) / 2);
   const at = document.elementFromPoint(Math.min(Math.max(cx, 0), innerWidth - 1), Math.min(Math.max(cy, 0), innerHeight - 1));
   return { W: innerWidth, H: innerHeight, l: Math.round(b.left), r: Math.round(b.right), t: Math.round(b.top), b: Math.round(b.bottom),
-    op: cs.opacity, pe: cs.pointerEvents, hit: !!at && el.contains(at), tall: document.body.classList.contains("tallscreen") }; })()`;
+    op: cs.opacity, pe: cs.pointerEvents, hit: !!at && el.contains(at), tall: document.body.classList.contains("tallscreen"),
+    head: parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--head-h")) || 0 }; })()`;
 const floating = (g) =>
   g.tall && g.t > 0 && g.b < g.H && Math.abs(g.t - (g.H - g.b)) <= 1 && Math.abs(g.l - (g.W - g.r)) <= 1 && g.r - g.l <= 640 && g.op === "1";
+/** 记一笔那一座(165 / W5 A53):左右居中、上沿钉在顶栏下 16、不贴底。 */
+const pinned = (g) =>
+  g.tall && Math.abs(g.t - (g.head + 16)) <= 1 && g.b < g.H && Math.abs(g.l - (g.W - g.r)) <= 1 && g.r - g.l <= 640 && g.op === "1";
 const docked = (g) => !g.tall && g.b === g.H && g.op === "1";
 const TEXTAREA_MIN = (sel) => `parseFloat(getComputedStyle(document.querySelector(${JSON.stringify(sel)})).minHeight)`;
 
@@ -158,7 +166,8 @@ try {
       await openSheet(kind);
       const g = await ev(GEO(SHEETS[kind].el));
       const tag = `${w}×${h} ${kind}`;
-      if (tall) ok(floating(g), `${tag} 浮在屏中(上下左右居中、宽 ≤ 640、不贴底)`, g);
+      if (tall && kind === "compose") ok(pinned(g), `${tag} 浮在屏中(左右居中、上沿钉在顶栏下 16、宽 ≤ 640、不贴底)`, g);
+      else if (tall) ok(floating(g), `${tag} 浮在屏中(上下左右居中、宽 ≤ 640、不贴底)`, g);
       else ok(docked(g), `${tag} 贴屏底`, g);
       if (w === 800 && h === 1280) await shot(`port-800x1280-${kind}`);
     }
@@ -190,7 +199,7 @@ try {
   {
     const g = await ev(GEO("compose-card"));
     const focus = await ev(`document.activeElement?.id ?? null`);
-    ok(floating(g) && focus === "text", "800×1280 收起态 focus 输入框 → 开浮窗、焦点在框里", { ...g, focus });
+    ok(pinned(g) && focus === "text", "800×1280 收起态 focus 输入框 → 开浮窗、焦点在框里", { ...g, focus });
   }
 
   // ---- ④ 键盘让出去的那截不算 ---------------------------------------------------------------------
@@ -199,13 +208,14 @@ try {
   await openSheet("compose"); // ＋ 开层会 focus 输入框
   ok((await ev(`document.activeElement?.id ?? null`)) === "text", "1280×800 开记一笔:焦点在输入框(下面几格的前置)");
   const full = await ev(TEXTAREA_MIN("#compose-card textarea"));
+  const g0 = await ev(GEO("compose-card"));
   await size(1280, 440); // 平板横放弹键盘
   await sleep(300);
   {
     const g = await ev(GEO("compose-card"));
     const mh = await ev(TEXTAREA_MIN("#compose-card textarea"));
-    ok(floating(g), "1280×800 打着字压到 440:浮窗照旧、在剩下那截里居中", g);
-    ok(mh < full, "  …捕获框的「给足高度」退回手机那档", { full, squeezed: mh });
+    ok(pinned(g) && g.t === g0.t && g.b === g0.b, "1280×800 打着字压到 440:浮窗照旧、上沿一动不动(165 / W5 A53)", { before: g0, after: g });
+    ok(mh === full, "  …捕获框的「给足高度」不退档(键盘起着也是三行)", { full, squeezed: mh });
     await shot("kb-1280x440-compose");
   }
   await size(1280, 800); // 收键盘
@@ -213,7 +223,7 @@ try {
   {
     const g = await ev(GEO("compose-card"));
     const mh = await ev(TEXTAREA_MIN("#compose-card textarea"));
-    ok(floating(g) && mh === full, "放回 1280×800:仍是浮窗、给足高度回来", { ...g, mh, full });
+    ok(pinned(g) && g.t === g0.t && mh === full, "放回 1280×800:仍是浮窗、上沿还在原处", { ...g, mh, full });
   }
   // 不打字时压矮(分屏拖矮)⇒ 照视口翻
   await ev(`document.getElementById("capture-scrim").click(), true`);

@@ -315,8 +315,9 @@ async function render(panel: HTMLElement, refocus: Refocus = "keep"): Promise<vo
   // ---- 删除(行内两段式:结构性动作,且删了没有撤销入口) ---------------------------------
   function confirmDelete(host: HTMLElement, c: BoardColumn): void {
     const prev = [...host.childNodes];
-    // 158 G2 / A18(WD-23):顺序与高亮跟看板卡的删除确认一致 —— 「取消」在前、红实心「删除」在后,
-    // 焦点落在「删除」上(回车即删、Esc 关面板)。此前执行钮在前且只描边,与别处正相反。
+    // 158 G2 / A18(WD-23):顺序与高亮跟看板卡的删除确认一致 —— 「取消」在前、红实心「删除」在后。
+    // W5 Q3 ★①(WD-39):焦点落在「取消」上(回车不删;要删 Tab 一下到红钮)—— 全应用的确认一个规矩,
+    // 此前这里停在「删除」上、回车即删。Esc 关面板照旧。
     // ⚠ 这样排执行钮正落在触发钮(原「删除」)的位置上 ⇒ 走 ui-guidelines §3.2 第 2 条的另一支:
     // 出现后 300ms 内不接(防双击连删),不置 disabled —— 置了会先闪一下灰、焦点也落不上去。
     const armedAt = performance.now();
@@ -330,7 +331,7 @@ async function render(panel: HTMLElement, refocus: Refocus = "keep"): Promise<vo
       (prev.find((n) => n instanceof HTMLButtonElement && n.classList.contains("danger")) as HTMLElement | undefined)?.focus();
     });
     host.replaceChildren(el("span", { className: "bcm-col-q", textContent: t("cols.deleteQ") }), no, yes);
-    yes.focus();
+    no.focus();
 
     async function go(): Promise<void> {
       try {

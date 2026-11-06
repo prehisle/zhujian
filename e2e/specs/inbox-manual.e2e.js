@@ -105,7 +105,7 @@ describe("收件箱 · 转待办(手动,不经 AI)", () => {
 
     const card = await openCard("E2E-待办-源");
     // 转待办 一步到位:点「待办」直接翻 stage(零副本、无确认框),标题即原文。
-    await inboxAction("E2E-待办-源", "待办");
+    await inboxAction("E2E-待办-源", "转待办");
 
     // ㉜: the card leaves 灵感 — the SAME item flipped to a board task (no copy).
     await card.waitForExist({ reverse: true, timeout: 10000 });

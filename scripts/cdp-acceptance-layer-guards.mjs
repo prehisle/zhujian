@@ -206,7 +206,8 @@ const main = async () => {
 
   // ── C. 卡滚出屏就收面 ─────────────────────────────────────────────────────
   // 此刻 B 留下那张卡的操作面开着。把它滚到视口上方,同步量一张下面可见卡的 top 当锚。
-  step("C-前置-面开着、＋ 让位", await evalJs(`document.body.classList.contains("panel-open")`));
+  // 165 / W5 Q15 起操作面开着时 ＋ 留在原位(只有编辑层开着才让位),这一格只认面开着那枚类。
+  step("C-前置-面开着(panel-open)", await evalJs(`document.body.classList.contains("panel-open")`));
   const anchorRaw = await evalJs(`(()=>{const c=document.querySelector('${card}');const r=c.getBoundingClientRect();
     scrollBy(0, r.bottom + 40);
     const vh=innerHeight;const a=[...document.querySelectorAll("#timeline article.card[data-id]")].find(x=>{

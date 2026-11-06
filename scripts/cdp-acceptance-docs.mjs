@@ -160,7 +160,7 @@ try {
   await sleep(1400); // 停笔 1 秒存一代草稿
   const dk = await draftKeys();
   ok(dk.length === 1 && dk[0] === `zhujian.doc-draft:${sp}:${target}`, "④ 停笔 1 秒存进本机草稿(键 = 空间 + 条目)", dk);
-  ok(await ev(`document.querySelector("#docs-body .doc-status").textContent === "草稿已存在本机"`), "④ 状态写「草稿已存在本机」");
+  ok(await ev(`document.querySelector("#docs-body .doc-status").textContent === "草稿已存在本机 · 离开就存成一版"`), "④ 状态写「草稿已存在本机 · 离开就存成一版」(165 / W5 Q1)");
   ok(await clickText("#docs-body .doc-seg", "预览"), "④ 切到预览");
   const pv = await ev(`(() => { const p = document.querySelector("#docs-body .doc-preview"); return { h1: p.querySelector("h1")?.textContent, strong: p.querySelector("strong")?.textContent, code: p.querySelector("code.md-code")?.textContent, tasks: p.querySelectorAll("li.md-task").length, disabled: [...p.querySelectorAll(".ckbox")].every((b) => b.disabled), img: p.querySelectorAll("img").length, raw: p.textContent.includes("onerror"), href: p.querySelectorAll("[href]").length }; })()`);
   ok(pv.h1 === "长文验收标题" && pv.strong === "粗体" && pv.code === "行内码" && pv.tasks === 2, "④ 预览认出标题 / 粗体 / 行内码 / 两个方框", pv);

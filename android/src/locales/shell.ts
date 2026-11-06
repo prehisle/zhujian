@@ -27,7 +27,8 @@ export const shell = defineMessages({
   // 161 / W4 Q15 / Q1:两端一个叫法 —— 另加一本 =「加入空间(输入配对码)」(= 桌面空间菜单那一项),把这台接进同一本 =「用配对码加入」。
   "shell.joinAlt": { zh: "加入空间(输入配对码)", en: "Join a space (enter a pairing code)" },
   // Q1 ★①(WM-01 / WM-15 / N-3):这一组是「另加一本」,说明第一句先说清(此前两组扫码 / 输码长得一样,选错的人以为同步没成、东西丢了)。
-  "shell.joinNote": { zh: "加入空间 = 另成一本,手机现在这本不会并进去;想和另一台设备看同一本,去「同步」。", en: "Joining a space adds a separate notebook; the one on this phone now is not merged into it. To see the same notebook as another device, go to Sync." },
+  // 165 / W5(O1 回报,与 A34 同一类):平板上也是这一句 ⇒ 不点名设备形,「这台设备」。
+  "shell.joinNote": { zh: "加入空间 = 另成一本,这台设备上现在这本不会并进去;想和另一台设备看同一本,去「同步」。", en: "Joining a space adds a separate notebook; the one on this device now is not merged into it. To see the same notebook as another device, go to Sync." },
   "shell.serverPh": { zh: "服务器地址(wss://…)", en: "Server address (wss://…)" },
   // 161 / W4 Q2 / A50(WM-16 / WP-22):地址框与配对码框都有标签(此前只有灰字占位,框里一有字就看不出是什么)。
   "shell.serverLabel": { zh: "服务器地址", en: "Server address" },
@@ -43,7 +44,7 @@ export const shell = defineMessages({
   "shell.syncScan": { zh: "扫码连接电脑", en: "Scan to connect a computer" },
   "shell.syncAltPair": { zh: "用配对码加入", en: "Join with a pairing code" },
   "shell.syncManualNote": { zh: "在另一台设备朱简的「同步」里点「添加设备」,把服务器地址和配对码填到上面。", en: "On the other device, open Sync in Zhujian and tap Add device, then fill in the server address and pairing code above." },
-  "shell.syncCreateNote": { zh: "把本机创建为账户的第一台设备。创建后请尽快让另一台设备加入;加入前唯一副本只在本机。", en: "Make this phone the first device of a new account. Have another device join soon after; until it does, the only copy lives here." },
+  "shell.syncCreateNote": { zh: "把本机创建为账户的第一台设备。创建后请尽快让另一台设备加入;加入前唯一副本只在本机。", en: "Make this device the first one in a new account. Have another device join soon after; until it does, the only copy lives here." },
   "shell.copyPair": { zh: "复制服务器地址和配对码", en: "Copy server address and pairing code" },
   "shell.connInfo": { zh: "连接信息", en: "Connection info" },
   "shell.bgNote": { zh: "后台不保证实时,回到前台会继续追赶。", en: "Background sync is not guaranteed to be live; it catches up when you come back to the app." },

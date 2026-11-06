@@ -13,6 +13,7 @@ import { Loadable } from "@ohos-rs/ability/src/main/ets/helper/loadable";
 import { RustWebviewNodeController, WebviewStyle, WebviewInitData } from "@ohos-rs/ability";
 import { ScanBridge } from "./ScanBridge";
 import { SystemBarsBridge } from "./SystemBars";
+import { OpenerBridge } from "./OpenerBridge";
 
 const DOMAIN = 0x0301;
 const TAG = "ZHUJIAN";
@@ -38,8 +39,8 @@ export class ShellWeb {
  * 还没开始加载、但 controller 已经绑上 Web 组件)时注册接口。⛔ 别挪到 `addWebview` 刚返回
  * 那一刻 —— 那时 Web 组件可能还没 attach,`registerJavaScriptProxy` 会抛 17100001。
  *
- * ⭐ 以后再加桥(通知 / 分享)就在 `bridges()` 里多注册一个对象,别再开第二条路。今天两座:
- * 扫码(`ScanBridge`)、系统栏明暗(`SystemBarsBridge`,659)。
+ * ⭐ 以后再加桥(通知 / 分享)就在 `bridges()` 里多注册一个对象,别再开第二条路。今天三座:
+ * 扫码(`ScanBridge`)、系统栏明暗(`SystemBarsBridge`,659)、把网址交给系统(`OpenerBridge`,W5 A54)。
  */
 @Component
 export struct ZhujianXComponent {
@@ -139,6 +140,8 @@ export struct ZhujianXComponent {
       const win = context.windowStage.getMainWindowSync();
       ctrl.registerJavaScriptProxy(new SystemBarsBridge(win), "__zhujianSystemBars", [], ["setDark"]);
       hilog.info(DOMAIN, TAG, "bridge: __zhujianSystemBars registered");
+      ctrl.registerJavaScriptProxy(new OpenerBridge(context, ctrl), "__zhujianOpener", [], ["open"]);
+      hilog.info(DOMAIN, TAG, "bridge: __zhujianOpener registered");
     } catch (e) {
       // ⛔ 响亮:桥没挂上 = 页面那半会在点扫码时报「壳没接上扫码桥」,这里先留一行凭据。
       hilog.error(DOMAIN, TAG, "bridge: registerJavaScriptProxy failed: %{public}s", String(e));

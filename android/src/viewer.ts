@@ -8,7 +8,7 @@
 import { deleteItemImage, getCurrentSpace, restoreItemImage, type ImageMeta } from "./api";
 import { t } from "./i18n";
 import { fetchImageUrl } from "./thumbs";
-import { $, actionBar, confirmBar, hideConfirmBar, showBar } from "./ui";
+import { $, actionBar, confirmBar, hideConfirmBar, showBar, showUndone } from "./ui";
 import { showErr } from "./err";
 
 type Deps = {
@@ -481,8 +481,11 @@ export function initViewer(d: Deps): void {
                 await restoreItemImage(space, id);
               } catch (err) {
                 showErr(err);
+                await deps.refresh();
+                return;
               }
               await deps.refresh();
+              showUndone(); // 165 / W5 Q6
             })();
           });
         } catch (err) {

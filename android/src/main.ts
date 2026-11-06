@@ -28,6 +28,7 @@ import {
   listBoardColumns,
   listSpaces,
   listTimeline,
+  listSealedTasks,
   listTasks,
   listTopicsFull,
   sealDoneTasks,
@@ -56,6 +57,7 @@ import {
   markLocated,
   showBar,
   showError,
+  showUndone,
   splitCols,
 } from "./ui";
 import { errDetail, errText, initErr, showErr } from "./err";
@@ -442,10 +444,34 @@ function renderCard(it: TimelineItem, hideTopic: string | null, underDayHead = f
 // (tablet-plan 格 5)—— 1 栏时画出来的标记与分栏之前逐字相同。
 let noteCols = 1;
 function measureNoteCols(): number {
-  const w = $("timeline").clientWidth;
+  const w = timelineW();
   // 面板开着时时间轴 display:none,量出来是 0 ⇒ 沿用上一次(关面那一下 ResizeObserver 会再量)
   if (w === 0) return noteCols;
   return colsFor(w);
+}
+
+/** 时间轴里卡片能占的宽 = 盒宽扣掉左右内边距(手机横放给悬浮 ＋ 让的那条右边距在里头,A48)。面板开着时是 0。 */
+function timelineW(): number {
+  const tl = $("timeline");
+  const w = tl.clientWidth;
+  if (w === 0) return 0;
+  const cs = getComputedStyle(tl);
+  return w - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+}
+
+// 手机横放给悬浮 ＋ 让一条右边距(165 / W5 A48;CSS 与由头见 index.html `body.fab-gutter`)。只在宽屏、不是高屏(= 手机横放那 360–412 高)
+// 时让,且只在让了之后栏数不变时让:宽 720–770 的横放让了就从两栏掉成一栏,那种照旧不让。判据只看时间轴的**盒宽**(`clientWidth`
+// 含内边距,让不让都是同一个数)⇒ 打上类、内边距变了、ResizeObserver 再来一趟,答案不变,不自激。
+// ⚠ 64 与 index.html 那条 `padding-right` 同一个数,改一处就得改另一处。
+const FAB_GUTTER = 64;
+const boardFit = (w: number): number => Math.max(1, Math.floor((w + BOARD_COL_GAP) / (BOARD_COL_MIN + BOARD_COL_GAP)));
+function syncFabGutter(): void {
+  const w = $("timeline").clientWidth;
+  if (w === 0) return; // 面板开着:沿用上一次(时间轴不在屏上,＋ 也藏着)
+  const b = document.body.classList;
+  const short = b.contains("widescreen") && !b.contains("tallscreen");
+  const on = short && (viewMode === "ideas" ? colsFor(w) === colsFor(w - FAB_GUTTER) : boardFit(w) === boardFit(w - FAB_GUTTER));
+  b.toggle("fab-gutter", on);
 }
 
 /** 「现在是不是宽屏」—— 读 CSS 算出来的结果(index.html `:root` 的 `--wide`,由「宽屏」那段 `@media` 翻)。
@@ -467,11 +493,11 @@ const BOARD_COL_GAP = 12;
 const boardShown = (): boolean => document.body.classList.contains("board");
 function syncBoardCols(): void {
   const box = $("timeline");
-  const w = box.clientWidth;
+  const w = timelineW();
   const n = box.querySelectorAll(":scope > .tl-group").length;
   // 面板开着时时间轴 0 宽、空态那句话没画列:都沿用上一次(关面那一下 ResizeObserver 会再算)
   if (w === 0 || n === 0) return;
-  const fit = Math.max(1, Math.floor((w + BOARD_COL_GAP) / (BOARD_COL_MIN + BOARD_COL_GAP)));
+  const fit = boardFit(w);
   const rows = Math.ceil(n / fit);
   box.style.setProperty("--board-cols", String(Math.ceil(n / rows)));
 }
@@ -565,7 +591,7 @@ let deferredLayers = 0;
 // 落点之上再开的层(大图 / 编辑 / 留言 / 记一笔)照旧各压各的,先收它们。
 // 用户自己走开了(底栏换面、开别的面、切空间、点通知)= 不再回搜索:那枚条目要么被这次走开平掉,要么转给新开的面用。
 // null = 当前不在「从搜索跳来」的状态;id = 落点那一条(长文落点要据它认「还在不在落点那一页」)。
-let searchReturn: { id: string } | null = null;
+let searchReturn: { id: string; parents: { name: string; y: number }[] } | null = null;
 
 function pushLayer() {
   if (popSuppress > 0) {
@@ -791,6 +817,12 @@ function backToSearch(fromPane: boolean): void {
   if (activePane !== "search") {
     searchReturn = ret;
     pushLayer();
+    return;
+  }
+  // A46:搜索原是回收站 / 归档的子页 ⇒ 接回那一层,再按返回回到它(滚动位照离开时)。
+  if (ret.parents.length > 0) {
+    paneStack = ret.parents;
+    renderBottomBar();
   }
 }
 
@@ -944,6 +976,30 @@ function emptyModeHtml(none: string, hint: string): string {
   return `<p class="muted empty">${none}<br />${hint}</p>`;
 }
 
+/** 任务面一张都没有、而归档里有 ⇒ 空态下面补一句「归档了 N 张,在「归档」里」(165 / W5 Q15 查到手机同病:唯一那张归档后,
+ *  任务页变回「还没有任务」,像是那张没了)。张数要问后端(归档册不在时间轴快照里)⇒ 先占一行藏着,问到了 N > 0 才显;
+ *  问不到只是少这一句(空态本身照常)。初始同步还在拉时不补(那时空态说的是「在拉」)。 */
+function sealedHintHtml(): string {
+  return isBooting() ? "" : `<p class="muted sealed-hint" data-sealed-hint hidden></p>`;
+}
+let sealedHintSeq = 0;
+function fillSealedHint(box: HTMLElement): void {
+  const el = box.querySelector<HTMLElement>("[data-sealed-hint]");
+  if (!el) return;
+  const space = getCurrentSpace();
+  const seq = ++sealedHintSeq;
+  void listSealedTasks(space).then(
+    (rows) => {
+      if (seq !== sealedHintSeq || space !== getCurrentSpace() || !el.isConnected || rows.length === 0) return;
+      el.textContent = t("main.emptyTasksSealed", { n: rows.length });
+      el.hidden = false;
+    },
+    () => {
+      /* 只是少一句提示,空态照常 */
+    },
+  );
+}
+
 function projectTimeline(): void {
   const box = $("timeline");
   // index.html 按面分排法(随记面的分栏在 renderDayGroups,不靠它)。
@@ -952,6 +1008,7 @@ function projectTimeline(): void {
   // 看板 = 任务面 ∧ 宽屏(tablet-plan 格 2);index.html「看板」那段全挂在这枚类上,理由同上、也只在这里写。
   const board = viewMode === "tasks" && isWide();
   document.body.classList.toggle("board", board);
+  syncFabGutter(); // 让不让那条右边距要在量栏数 / 列数之前定(A48)
   disconnectThumbObserver();
   const items = [...lastItems.values()];
   const modeItems = items.filter((i) => homeOf(i) === viewMode);
@@ -1032,7 +1089,7 @@ function projectTimeline(): void {
     box.innerHTML = dueShown.length
       ? (board ? taskSections() : taskSections().filter((s) => dueShown.some((t) => t.stage === s.stage))).map(section).join("")
       : modeItems.length === 0
-        ? emptyModeHtml(t("main.emptyTasks"), t("main.emptyTasksHint"))
+        ? emptyModeHtml(t("main.emptyTasks"), t("main.emptyTasksHint")) + sealedHintHtml()
         : shown.length > 0 && stageF !== null && stageShown.length === 0
           ? `<p class="muted empty">${t("main.noneUnderStage", { stage: esc(stageLabel(stageF)!) })}</p>`
           : stageShown.length > 0 && dueOnly
@@ -1041,6 +1098,7 @@ function projectTimeline(): void {
     // 每排几列要在量折叠(settleFolds)**之前**定下来:列宽决定正文折几行。
     if (board) syncBoardCols();
     paintFilterSum(nowFiltered ? dueShown.length : null, f);
+    fillSealedHint(box);
   }
   // 159 / W3 Q8(WM-26 / X-06):过滤词在卡上标红(同搜索命中;整串匹配,与 applyFilter 同一口径)。
   // ⚠ 排在量折叠之前:标红改了字重,夹线要按标完的样子量。
@@ -1125,6 +1183,7 @@ function paintFilterSum(n: number | null, f: filter.FilterState): void {
 // 栏数真变了才重投影;⛔ 有卡片草稿时不动(同 onFilterPick 的闸:重投影会拆掉草稿)—— 下一次投影照当时的宽重算,
 // 自然排对。不自激:重投影只改高,栏数只看宽。
 new ResizeObserver(() => {
+  syncFabGutter(); // 宽窄 / 高矮翻了(转屏、分屏拖动):让不让 ＋ 那条右边距先定,下面按让完的宽量
   if (viewMode !== "ideas" || !lastRefreshOk || measureNoteCols() === noteCols) return;
   if (cardPanel.hasDirtyDraft()) return;
   projectTimeline();
@@ -1176,8 +1235,12 @@ function syncTagsToggle(): void {
     return l !== null && l.scrollWidth > l.clientWidth + 1;
   });
   // 看板形(`body.board`)的筛选条是另一套排法(`.fmain` 是 display:contents,量不出整行宽),不进这一格。
-  tagsAutoOpen =
-    !tagsOpen && !fitsInline && !clipped && need <= full + 1 && pills.length > 0 && !document.body.classList.contains("board");
+  // 165 / W5 A21:窄屏(手机竖放)上标签少到单独一行放得下时**一律**排成这一形(连「和过滤框一行也放得下」的那种 —— 412 宽的
+  // 机器上第一枚短标签就是),好让下面「空着先占位」那一形的两行高与它逐像素相同:挂上 / 摘光第一个标签,卡都不跳。
+  // 宽屏照旧只在一行放不下时才摊(那儿第一枚标签和过滤框一行放得下,也就不占位)。
+  const board = document.body.classList.contains("board");
+  const narrow = !isWide();
+  tagsAutoOpen = !tagsOpen && (narrow || !fitsInline) && !clipped && need <= full + 1 && pills.length > 0 && !board;
   $("filterbar").classList.toggle("tags-open", tagsOpen || tagsAutoOpen);
   $("filterbar").classList.toggle("tags-fit", tagsAutoOpen);
   btn.classList.toggle("on", tagsOpen);
@@ -1188,10 +1251,10 @@ function syncTagsToggle(): void {
   // 标签行整行没发(一枚真标签都没有,filter.ts renderTopicPills)⇒ 摊开态也藏,别留一枚摊不出东西的 ▴。
   btn.hidden = topics.childElementCount === 0 || (!tagsOpen && (fitsInline || tagsAutoOpen));
   // 标签行空了而类型轴还在 ⇒ 过滤框并进类型那一行右端,别独占一行(用户面 150;CSS 见 `.kinds-inline`)。
-  $("filterbar").classList.toggle(
-    "kinds-inline",
-    topics.childElementCount === 0 && $("filter-kinds").childElementCount > 0,
-  );
+  const kindsInline = topics.childElementCount === 0 && $("filter-kinds").childElementCount > 0;
+  $("filterbar").classList.toggle("kinds-inline", kindsInline);
+  // 165 / W5 A21:窄屏上一枚真标签都没有时,标签行先占位(CSS 见 `.tags-reserve`;高与上面 `.tags-fit` 那一形逐像素同)。
+  $("filterbar").classList.toggle("tags-reserve", narrow && !board && topics.childElementCount === 0 && !kindsInline);
 }
 $("filter-expand").addEventListener("click", () => {
   tagsOpen = !tagsOpen;
@@ -1231,6 +1294,24 @@ new ResizeObserver(() => {
     ft.dispatchEvent(new Event("input", { bubbles: true }));
     ft.blur();
   });
+}
+
+// 165 / W5 A47:筛选条那三行(列 / 类型 / 标签)能横划,被右缘裁掉的那一截此前没有任何「后面还有」的暗示(手机任务页「列」那行
+// 第五枚「已完成」只露一道弧)⇒ 哪头还有没露出来的,那头淡出一截(index.html `.fade-l` / `.fade-r`)。
+// 跟着三样走:自己横划(scroll)、盒子变宽窄(转屏 / 过滤框张开挤窄,ResizeObserver)、里头的钮换了或显隐翻了(重画 / 父标签箭头
+// 翻子标签,MutationObserver —— 那几下不改盒子的宽,RO 看不见)。不自激:只读 scroll 几何、只改这三行自己的类(类不改宽)。
+{
+  const syncFade = (r: HTMLElement): void => {
+    const max = r.scrollWidth - r.clientWidth;
+    r.classList.toggle("fade-l", max > 1 && r.scrollLeft > 1);
+    r.classList.toggle("fade-r", max > 1 && r.scrollLeft < max - 1);
+  };
+  for (const id of ["filter-stages", "filter-kinds", "filter-topics"]) {
+    const r = $(id);
+    r.addEventListener("scroll", () => syncFade(r), { passive: true });
+    new ResizeObserver(() => syncFade(r)).observe(r);
+    new MutationObserver(() => syncFade(r)).observe(r, { childList: true, subtree: true, attributeFilter: ["class"] });
+  }
 }
 
 // 158 G2(W2 走查 A10 / WM-07):截止日期框、提醒时间框点框身只选中一段(没有键盘、没有选择器),
@@ -1546,7 +1627,7 @@ $("timeline").addEventListener("change", async (e) => {
   await refresh();
   if (space !== getCurrentSpace()) return;
   // 操作型回执(§3.1「已完成 · 撤销」):误勾一点召回,不用进操作面翻状态。
-  moveReceipt(space, id, reopen ? t("swipe.changedTo", { stage: stageLabel(LANDING_COLUMN)! }) : t("main.completed"), spot);
+  moveReceipt(space, id, reopen ? t("board.undoMoved", { col: stageLabel(LANDING_COLUMN)! }) : t("main.completed"), spot);
 });
 
 // 「全部归档」(158 G3 / Q3,WM-28):「已完成」节头那枚。问一次(归档后可查、不可删,这件事要在动手前说),
@@ -1585,14 +1666,17 @@ $("timeline").addEventListener("click", (e) => {
         () => {
           if (switching || space !== getCurrentSpace()) return; // 换空间的旧撤销作废
           void (async () => {
+            let failed = 0;
             for (const id of sealed) {
               try {
                 await unsealTask(space, id);
               } catch (err) {
+                failed++;
                 showErr(err); // 逐条撤:撤不回的那条照实报(多半是别处已动过它),其余照撤
               }
             }
             await refresh();
+            if (failed === 0 && space === getCurrentSpace()) showUndone(); // 165 / W5 Q6(有撤不回的那条,错误条留着别盖掉)
           })();
         },
         { label: t("cardpanel.goSee"), on: () => activePane !== "sealed" && openPane("sealed") },
@@ -1802,8 +1886,12 @@ async function save() {
         // 新卡就在屏上 = 闪一下;不在屏上 = 回执带「去看看」,点了才过去(同 157 P3 转待办那枚)。
         const r = card.getBoundingClientRect();
         if (r.bottom > 0 && r.top < window.innerHeight) {
-          card.classList.add("flash");
-          window.setTimeout(() => card.classList.remove("flash"), 1200);
+          // 165 / W5 Q15:多栏(随记分栏 / 看板)上新记一条、其余每张都换一栏,1.2 s 那记脉冲还没找到它就过完了 ⇒ 描边常亮约 3 s 再淡
+          // (index.html `.flash-hold`,与搜索落点框同长)。一栏(手机竖放)照旧那一记:新卡就在最上面,一眼看得见。
+          const hold = noteCols > 1 || boardShown();
+          const cls = hold ? "flash-hold" : "flash";
+          card.classList.add(cls);
+          window.setTimeout(() => card.classList.remove(cls), hold ? 3800 : 1200);
         } else {
           actionBar(t("main.saved"), t("cardpanel.goSee"), () => void focusTimelineCard(newId));
         }
@@ -2123,7 +2211,8 @@ function renderBottomBar() {
       activePane !== null ? b.dataset.pane === activePane : b.dataset.mode === viewMode,
     );
   });
-  const root = paneStack.length > 0 ? paneStack[0].name : activePane;
+  // 子页点亮它的根(设置 → 空间… 亮「设置」);根不在顶栏(回收站 / 归档点进来的搜索,A46)就亮它自己。
+  const root = paneStack.length > 0 && paneStack[0].name in HEAD_PANE ? paneStack[0].name : activePane;
   for (const [pane, id] of Object.entries(HEAD_PANE)) {
     const on = root === pane;
     $(id).classList.toggle("on", on);
@@ -2322,8 +2411,14 @@ function onModeButton(target: ViewMode) {
     else ($("text") as HTMLTextAreaElement).focus();
     return;
   }
+  // 165 / W5 A27:随记与任务各记各的滚动位置。此前切面不动 scrollY ⇒ 从随记划到中段再点「任务」,看板落在半中间
+  // (横放时右边「进行中 3」只剩列头吸着、下面一片空,像是进行中的任务没了);切回来随记也不在刚才那儿。
+  modeScrollY[viewMode] = window.scrollY; // 面板刚关的那一下,这里已是关面还原回来的时间轴位置
   applyMode(target);
+  window.scrollTo({ top: modeScrollY[target] });
 }
+/** 两个主视图各自上次滚到哪儿(A27)。只在底栏 / 顶栏点面切换时记、还;换空间清零(另一份内容)。 */
+const modeScrollY: Record<ViewMode, number> = { ideas: 0, tasks: 0 };
 
 /** 空间变化的统一复位(实现审 M5):关全部面、activePane 归零、诊断缓存作废
  *  (diagLoaded 跨空间残留会把 A 空间的库信息端给 B)、低频面内容清空。 */
@@ -2332,6 +2427,7 @@ function resetPanesForSpaceChange() {
   stashSpaceView();
   // 新空间是另一份时间轴 ⇒ 旧空间那个偏移量没有意义,先清账再关面(79)。
   timelineScrollY = 0;
+  modeScrollY.ideas = modeScrollY.tasks = 0; // 同上(A27 两个主视图各记的位置)
   closePaneNow();
   paneScrollY = {}; // 同上:各面记的位置是旧空间那份内容的(⚠ 排在关面之后 —— 关面那一下会再记一笔)
   settleHistory(); // 守门条目同轮消掉,不给返回键留「按一下没反应」的空炮
@@ -2500,8 +2596,9 @@ async function focusTimelineCard(id: string, opts: FocusOpts = {}) {
 
 /** 点了搜索结果之后离开搜索面(A3):只收 DOM(记下结果列表滚到哪儿,A17),**守门条目留着** —— 它从此是「回搜索」那一层。 */
 function leaveSearch(id: string): void {
+  const parents = paneStack; // 搜索是从回收站 / 归档点进来的(A46):回搜索时连那一层一起接回去
   closePaneNow();
-  searchReturn = { id };
+  searchReturn = { id, parents };
 }
 
 /** 搜索结果点进去(panes.ts onSearchClick → 这里):活条目回时间轴 / 长文定位;回收站 / 归档册的命中切到那一面、
@@ -2571,7 +2668,11 @@ $("sync-spaces-btn").addEventListener("click", () => openSubPane("spaces"));
 // 顶栏不显示空间名、设置里没有「空间」,入口只挂在「同步」下面,找不到。
 $("settings-spaces-btn").addEventListener("click", () => openSubPane("spaces"));
 $("topics-toggle").addEventListener("click", () => openPane("topics"));
-$("search-toggle").addEventListener("click", () => openPane("search"));
+// 165 / W5 A46(WM-20):从回收站 / 归档点「搜索」= 那一面的子页(paneStack,同设置 → 空间…)—— 点结果、返回两下
+// 回到回收站 / 归档(此前落回进它们之前那个主视图)。从别处开照旧是一面。
+$("search-toggle").addEventListener("click", () =>
+  activePane === "trash" || activePane === "sealed" ? openSubPane("search") : openPane("search"),
+);
 // 文本过滤(常驻框,不随 pills 重建):输入即筛,走 projectTimeline 单一渲染路径。
 // 卡片编辑草稿在场时不受理(重投影会拆掉草稿)——把框回退到已存值、响一声,不静默毁稿。
 // 去抖(§2.4 `INPUT_DEBOUNCE`,两端同值):投影虽是纯客户端(无 IPC,比桌面轻一档),
@@ -2589,6 +2690,18 @@ $("filter-text").addEventListener("input", () => {
   filters[viewMode].text = input.value;
   window.clearTimeout(filterTextTimer);
   filterTextTimer = window.setTimeout(projectTimeline, INPUT_DEBOUNCE_MS);
+});
+// 165 / W5 Q9:「过滤…」按回车 / 键盘右下那颗键 = 收键盘(结果边打边出,早就在了;此前按了没变化、键盘一直挡着下半屏)。
+// 还没到点的那一趟去抖当场投影,收起来看到的就是这个词的结果。组字期的回车是上屏(§3.3)。
+$("filter-text").addEventListener("keydown", (e) => {
+  if (e.key !== "Enter" || e.isComposing) return;
+  e.preventDefault();
+  if (filterTextTimer !== undefined) {
+    window.clearTimeout(filterTextTimer);
+    filterTextTimer = undefined;
+    projectTimeline();
+  }
+  ($("filter-text") as HTMLInputElement).blur();
 });
 $("bottombar").addEventListener("click", (e) => {
   const btn = (e.target as HTMLElement).closest<HTMLButtonElement>("#bottombar button");
@@ -2638,6 +2751,10 @@ $("bottombar").addEventListener("click", (e) => {
 {
   let baseW = 0;
   let baseH = 0;
+  // 每个宽度见过的最高视口(165 / W5 A25)。此前只记「当前这个宽度」的一份,换宽就拿此刻的高当基准 ⇒ 打着字转屏(键盘一直起着),
+  // 新那一向的基准就是让过键盘的矮视口,`kb-up` 当场掉了:长文页头那两排又吸回顶上、压住前几段,底栏浮到键盘上沿。
+  // 转回原来那一向时用记着的那份;头一回进这一向、又是打着字转过来的,按「转屏 = 宽高对调」拿上一向的宽当这一向的满高。
+  const maxH = new Map<number, number>();
   const isTextEntry = (el: EventTarget | null): boolean =>
     el instanceof HTMLTextAreaElement ||
     (el instanceof HTMLInputElement && !/^(button|checkbox|radio|range|file|submit|reset|color)$/.test(el.type)) ||
@@ -2646,9 +2763,12 @@ $("bottombar").addEventListener("click", (e) => {
     const w = window.innerWidth;
     const h = window.innerHeight;
     if (w !== baseW) {
+      // ⚠ 对调那一项不能只在「这一向没见过」时用:头一回是打着字转进来的,记下的只有让过键盘的矮视口。
+      const typing = isTextEntry(focused) && document.documentElement.classList.contains("kb-up");
+      baseH = Math.max(h, maxH.get(w) ?? 0, typing ? baseW : 0);
       baseW = w;
-      baseH = h;
     } else if (h > baseH) baseH = h;
+    maxH.set(w, Math.max(maxH.get(w) ?? 0, h));
     document.documentElement.classList.toggle("kb-up", isTextEntry(focused) && h < baseH * 0.75);
   };
   const tall = (): void => {
@@ -2669,6 +2789,136 @@ $("bottombar").addEventListener("click", (e) => {
   sync(document.activeElement);
   tall();
 }
+// ---- 转屏保住正看着的那一块(165 / W5 A28 / A29 / A35 / A26)--------------------------------------------------
+// 视口一换宽(转屏、分屏拖动),排法跟着变(随记一栏 ↔ 两三栏、看板一列 ↔ 2×2 ↔ 一排四列、设置 360 ↔ 720 阅读宽),而滚动位置
+// 只是一个像素数 ⇒ 像素没变,眼前那几张全换了(A28:随记转横,刚才在看的那张得重新找;A35:设置读到中段转屏,位置往回退)。
+// ⇒ 平时记着「正看着的那一块」= 可视区上沿(顶栏 + 吸顶筛选条之下)往下第一个露着的块,和它离上沿多远;一换宽,等这一拍排完
+// (时间轴那只 ResizeObserver 重投影完),把它摆回同一个偏移(规范 §3.6 那条「重画前记住正看着的那张卡、重画后放回同一偏移」
+// 的手机转屏版)。
+//  - 块是什么:时间轴上是卡片;**操作面开着时就是开着的那张**,摆完再把面上那排钮摆进来(A29:竖着开的操作面转横后整排钮在屏外、
+//    页面不跟着滚,看不出开着还是关了)。面板里是那一面里的卡片(回收站 / 归档 / 搜索),没有卡片就是那一面的直接子块(设置的各节)。
+//    长文编辑器自己管(docs.ts::revealCaret,转屏把光标那行摆进来),这里不碰。
+//  - ⚠ 记的那一刻必须是**旧**排法:resize 事件来的时候页面已经按新宽排了 ⇒ 平时在**用户**滚动停下 100ms 后记(长文阅读页记到
+//    正文顶层那一块),宽度一变就冻住。摆完**不重记**(摆回去那一下的滚动也不算):转过去再转回来,锚还是用户最后看着的那一块,
+//    不会每转一次就按新排法换一块、越转越偏。转屏时安卓会连发几次 resize(先换宽、键盘再让一次高),等它们停 120ms 再摆。
+//  - 页里的输入框(设置「本机别名」那类)正握着焦点时,摆完再把它那一行(连同旁边那枚「保存」)摆进可见区(A26:横过来框和「保存」
+//    都在键盘下面,要等打了字页面才跟着光标露出来)。只在宽或高变了之后做一次;浮层(记一笔 / 编辑 / 留言)、吸顶条、
+//    时间轴卡里的输入各有自己的那一套,不碰。
+{
+  type Anchor = { el: HTMLElement; id: string | null; off: number };
+  let anchor: Anchor | null = null;
+  let stableW = window.innerWidth;
+  let settling: number | undefined;
+  let idle: number | undefined;
+  let quietUntil = 0; // 摆回去那一下自己引起的滚动,不当成用户滚动重记
+  const bandTop = (): number => {
+    const cs = getComputedStyle(document.documentElement);
+    const head = parseFloat(cs.getPropertyValue("--head-h")) || 0;
+    return activePane === null ? head + (parseFloat(cs.getPropertyValue("--fbar-h")) || 0) : head;
+  };
+  /** 此刻在看的是哪一个容器(时间轴 / 开着的那一面);长文编辑器开着时 null(它自己管)。 */
+  const scope = (): HTMLElement | null => {
+    if (activePane === null) return $("timeline");
+    const root = $(PANE_EL[activePane]);
+    return root.querySelector(".doc-area") ? null : root;
+  };
+  const record = (): void => {
+    const root = scope();
+    if (!root) {
+      anchor = null;
+      return;
+    }
+    const top = bandTop();
+    const open = activePane === null ? root.querySelector<HTMLElement>(".panel")?.closest<HTMLElement>("article.card[data-id]") : null;
+    // 露着的那几块里**最靠上**的那一块(一样高就取靠左的):多栏时文档序是一栏一栏排的,第一栏里露着的那张未必是最上面那张。
+    const firstShown = (els: Iterable<HTMLElement>): HTMLElement | null => {
+      let best: HTMLElement | null = null;
+      let bt = Infinity;
+      let bl = Infinity;
+      for (const e of els) {
+        const r = e.getBoundingClientRect();
+        if (r.height === 0 || r.bottom <= top + 1 || r.top >= window.innerHeight) continue;
+        if (r.top < bt - 0.5 || (Math.abs(r.top - bt) <= 0.5 && r.left < bl)) {
+          best = e;
+          bt = r.top;
+          bl = r.left;
+        }
+      }
+      return best;
+    };
+    const el =
+      open ??
+      firstShown(root.querySelectorAll<HTMLElement>("article.card[data-id]")) ??
+      (activePane === null
+        ? null
+        : (firstShown(root.querySelectorAll<HTMLElement>(".doc-body > * > *")) ?? firstShown(root.querySelectorAll<HTMLElement>(":scope > *"))));
+    anchor = el ? { el, id: el.matches("article.card[data-id]") ? el.dataset.id! : null, off: el.getBoundingClientRect().top - top } : null;
+  };
+  const restore = (): void => {
+    const a = anchor;
+    const root = scope();
+    if (a && root) {
+      // 时间轴重投影会整片重建 ⇒ 卡片按 id 现找;面板里的子块没被重建,还是那一个。
+      const el = a.id !== null ? root.querySelector<HTMLElement>(`article.card[data-id="${CSS.escape(a.id)}"]`) : a.el.isConnected ? a.el : null;
+      if (el && el.getClientRects().length > 0) {
+        quietUntil = performance.now() + 400;
+        window.scrollBy(0, el.getBoundingClientRect().top - bandTop() - a.off);
+      }
+      if (activePane === null && root.querySelector(".panel")) cardPanel.revealPanel();
+    }
+    revealFocusedRow();
+  };
+  /** 页里那一面(设置 / 同步 / 空间 / 标签 / 搜索)里握着焦点的输入框:它那一行不在可见区就摆进来(A26)。 */
+  const revealFocusedRow = (): void => {
+    const f = document.activeElement;
+    if (activePane === null || !(f instanceof HTMLInputElement || f instanceof HTMLTextAreaElement)) return;
+    if (f.closest(".doc-area, .compose, .cmsheet, header") || !f.closest(`#${PANE_EL[activePane]}`)) return;
+    const row = f.closest<HTMLElement>(".row") ?? f;
+    const r = row.getBoundingClientRect();
+    // 留 8 的边;横放打着字时可见那一截只剩四十几(视口 130 − 顶栏 82),一行框就占满,边距收到正好放下为止(两头均分)。
+    const room = window.innerHeight - bandTop();
+    const pad = Math.max(0, Math.min(8, (room - r.height) / 2));
+    const top = bandTop() + pad;
+    const bottom = window.innerHeight - pad;
+    if (r.bottom > bottom) window.scrollBy(0, Math.min(r.bottom - bottom, r.top - top));
+    else if (r.top < top) window.scrollBy(0, r.top - top);
+  };
+  window.addEventListener(
+    "scroll",
+    () => {
+      if (performance.now() < quietUntil) return;
+      clearTimeout(idle);
+      idle = window.setTimeout(() => {
+        if (settling === undefined && window.innerWidth === stableW && performance.now() >= quietUntil) record();
+      }, 100);
+    },
+    { passive: true },
+  );
+  let lastH = window.innerHeight;
+  window.addEventListener("resize", () => {
+    const wChanged = window.innerWidth !== stableW;
+    const hChanged = window.innerHeight !== lastH;
+    lastH = window.innerHeight;
+    if (!wChanged && settling === undefined) {
+      if (hChanged) window.setTimeout(revealFocusedRow, 120); // 只是键盘起落:不动锚,只管握着焦点的那一行
+      return;
+    }
+    if (settling === undefined && anchor === null) record(); // 没滚过就转屏:锚还没记过(旧排法已经没了,记个近似)
+    clearTimeout(settling);
+    settling = window.setTimeout(() => {
+      settling = undefined;
+      stableW = window.innerWidth;
+      restore();
+    }, 120);
+  });
+  // 开面 / 关面 / 切面之后那一面的「正看着的」换了:下一次滚动会重记;开面那一刻先按当时的样子记一份(用户开了面就转屏、一下没滚)。
+  for (const id of Object.values(PANE_EL)) {
+    new MutationObserver(() => {
+      if (settling === undefined && window.innerWidth === stableW) record();
+    }).observe($(id), { attributes: true, attributeFilter: ["hidden"] });
+  }
+}
+
 $("settings-toggle").addEventListener("click", () => openPane("settings"));
 $("settings-diag-btn").addEventListener("click", () => openSubPane("diag"));
 
@@ -2685,8 +2935,9 @@ $("feedback-copy").addEventListener("click", () => {
     () => showError(t("feedback.copyFailed")),
   );
 });
-// 161 / W4 Q11(WM-32 前半):邮箱点了拉起写信。⚠ 只在交得出网址的这一端(HAS_BROWSER,安卓):鸿蒙上 openUrl 恒错
-// (平台事实②),那一端照旧只摆地址 + 复制钮(上面那条「刻意不做成 mailto」的理由就是它,⛔ 别在那一端做成链接)。
+// 161 / W4 Q11(WM-32 前半):邮箱点了拉起写信。⚠ 只在交得出网址的端(HAS_BROWSER):安卓走真插件;鸿蒙 W5 A54 起
+// 也是 true —— 那一端的 openUrl 被 `ohos/vite.config.ts` 的 opener 接缝换成壳桥 `__zhujianOpener`(平台事实②),
+// 没有能接 mailto 的应用时响亮报错(`opener.ts`),不会点了没反应。复制钮两端照留(没有邮件应用的机器靠它)。
 // 长按照旧能选中这一框(readonly input),手指一按就走的是 click,不碍选字。
 if (HAS_BROWSER) {
   const mailBox = $("feedback-mail") as HTMLInputElement;
@@ -2710,11 +2961,18 @@ $("theme-seg").addEventListener("click", (e) => {
   paintThemeSeg();
 });
 
+/** 设置里那几排分段钮(明暗 / 字号 / 语言 / 压缩大图 / 截止提醒)的选中态:样子(朱底 + 加粗)之外,读屏也要读得出哪一段是选中的
+ *  (165 / W5 A41 查到手机这头:此前只有样子、没有 aria-pressed,读屏念不出;规范「状态不单靠颜色」)。 */
+function markSeg(b: HTMLButtonElement, on: boolean): void {
+  b.classList.toggle("on", on);
+  b.setAttribute("aria-pressed", String(on));
+}
+
 function paintThemeSeg() {
   const now = currentThemeMode();
   $("theme-seg")
     .querySelectorAll<HTMLButtonElement>("[data-theme-mode]")
-    .forEach((b) => b.classList.toggle("on", b.dataset.themeMode === now));
+    .forEach((b) => markSeg(b, b.dataset.themeMode === now));
 }
 
 // 界面字号(251):与明暗三档同形——点哪档写哪档,整排按当前档重画;立刻生效,
@@ -2731,7 +2989,7 @@ function paintTextSizeSeg() {
   const now = String(currentTextSize());
   $("textsize-seg")
     .querySelectorAll<HTMLButtonElement>("[data-textsize]")
-    .forEach((b) => b.classList.toggle("on", b.dataset.textsize === now));
+    .forEach((b) => markSeg(b, b.dataset.textsize === now));
 }
 
 // 语言三档(358 第②笔):同上两排的形,只是回执不同——生效语言真变了就 reload
@@ -2778,7 +3036,7 @@ function paintLangSeg() {
   const now = currentLangChoice();
   $("lang-seg")
     .querySelectorAll<HTMLButtonElement>("[data-lang]")
-    .forEach((b) => b.classList.toggle("on", b.dataset.lang === now));
+    .forEach((b) => markSeg(b, b.dataset.lang === now));
 }
 
 // 压缩大图(用户面 147):开 / 关两档,默认关;同上两排的形,规则在 images.ts。
@@ -2793,7 +3051,7 @@ function paintCompressSeg() {
   const on = compressImagesOn();
   $("compress-seg")
     .querySelectorAll<HTMLButtonElement>("[data-compress]")
-    .forEach((b) => b.classList.toggle("on", (b.dataset.compress === "on") === on));
+    .forEach((b) => markSeg(b, (b.dataset.compress === "on") === on));
 }
 
 // ---- 截止提醒(用户面 39①;调度与水位在 reminder.ts,那儿的文件头写着范围与两处端间差异)----
@@ -2829,7 +3087,7 @@ function paintRemindRow() {
   const cfg = reminderCfg();
   $("remind-seg")
     .querySelectorAll<HTMLButtonElement>("[data-remind]")
-    .forEach((b) => b.classList.toggle("on", (b.dataset.remind === "on") === cfg.on));
+    .forEach((b) => markSeg(b, (b.dataset.remind === "on") === cfg.on));
   const time = $("remind-time") as HTMLInputElement;
   time.value = cfg.time;
   time.disabled = !cfg.on;
@@ -3303,7 +3561,7 @@ $("diag-copy").addEventListener("click", () => {
 //
 // 官网 / 源码 / 更新日志三行(用户 2026-09-25 拍板,桌面那半同文案):官网与更新日志从渠道接缝的
 // `SITE_URL` 拼(国内渠道是 zhujian.cool,⛔ 别写死);源码仓两个渠道同一个。值格摆的是**地址本身**
-// —— 这一端交不出浏览器(`HAS_BROWSER=false`,鸿蒙)时它就是纯文字,用户照抄也能到。
+// —— 交不出浏览器的端(`HAS_BROWSER=false`;今天没有这样的端,鸿蒙 W5 A54 起经壳桥也交得出)上它就是纯文字,用户照抄也能到。
 // ⛔ 别把构建身份戳链到 GitHub 提交:那串 sha 是私有工作仓的,公开仓是白名单导出快照、sha 不同,链过去 404。
 const SOURCE_URL = "https://github.com/prehisle/zhujian";
 function aboutLinkRow(label: string, url: string): string {
@@ -3606,7 +3864,6 @@ initCardDrag({
   getCurrentSpace,
   isSwitching: () => switching,
   hasDirtyDraft: () => cardPanel.hasDirtyDraft(),
-  isBoard: boardShown,
   dueSorted: () => dueOnly,
   order: () => boardOrder,
   refresh,
@@ -3711,6 +3968,9 @@ async function showPolicyPage(page: string): Promise<void> {
   doc.open();
   doc.write(html);
   doc.close();
+  // 165 / W5 A33(WM-15):换一份就从顶上读起 —— 框里那份文档是重写的、滚动位却留着上一份的,切「隐私权利」「用户协议」
+  // 从半句话开始、标题在框外,像没切过去。
+  policyFrame.contentWindow?.scrollTo(0, 0);
   policyFrame.dataset.page = page; // 现在框里是哪一份(验收资产读它;框的地址恒是初始那份,读不出)
   // 三份互链(policy-asset.mjs 已把其余链接摘掉):点了就把那一份写进来。⚠ `document.open` 会抹掉文档上的监听,每写一次重挂一次。
   doc.addEventListener("click", (e) => {
@@ -3721,24 +3981,34 @@ async function showPolicyPage(page: string): Promise<void> {
   });
 }
 
-/** 打开政策全文,落在 `page`(三份之一)。 */
-function openPolicy(page: string): void {
+/** 打开政策全文的那枚钮(关掉时焦点还给它,165 / W5 A52)。 */
+let policyOpener: HTMLElement | null = null;
+
+/** 打开政策全文,落在 `page`(三份之一)。`from` = 点的那一枚(关掉时焦点还给它)。 */
+function openPolicy(page: string, from: HTMLElement): void {
+  policyOpener = from;
   $("policy-view").hidden = false;
   void showPolicyPage(page).catch((err) => showErr(err));
 }
 
+/** 关政策全文(返回键 / 「关闭」两条路同一个收尾):焦点还给打开它的那枚(165 / W5 A52,§3.5「关掉焦点还给打开它的那枚」)——
+ *  此前按返回焦点停在已经藏起来的框里、点「关闭」掉到页面上,外接键盘 / 读屏的人得重新摸。那枚已不在屏上就放下焦点。 */
 function closePolicy(): void {
   $("policy-view").hidden = true;
+  const back = policyOpener;
+  policyOpener = null;
+  if (back && back.isConnected && back.getClientRects().length > 0) back.focus({ preventScroll: true });
+  else (document.activeElement as HTMLElement | null)?.blur();
 }
 
 $("privacy-link").addEventListener("click", (e) => {
   e.preventDefault();
-  openPolicy("privacy.html");
+  openPolicy("privacy.html", $("privacy-link"));
 });
 $("policy-close").addEventListener("click", closePolicy);
 // 设置「关于」那三枚(A12)。
 document.querySelectorAll<HTMLButtonElement>("[data-policy]").forEach((b) =>
-  b.addEventListener("click", () => openPolicy(b.dataset.policy!)),
+  b.addEventListener("click", () => openPolicy(b.dataset.policy!, b)),
 );
 
 function privacyGate(): Promise<void> {
@@ -3787,6 +4057,9 @@ async function init() {
   // 覆写静态文案 + 落 <html lang>。放在启动闸之前——封锁页也要说用户那门语言。
   initLang();
   applyStaticI18n();
+  // 165 / W5 A34(WM-07):同步第一屏那句指去「设置 → 备份」—— 没有备份这条路的端(鸿蒙,HAS_SAF_BRIDGE = false)上
+  // 那是一句指错路的话,换成这一端的那句(同上面 data-needs 那张表:构建期常数,⛔ 不是运行期探测)。
+  if (!HAS_SAF_BRIDGE) $("sync-intro").textContent = t("sync.introOffNoBackup");
   // 651:首启隐私政策告知。⭐ **位置是有讲究的** —— 语言已经生效(告知要说用户那门
   // 话),而后面每一件会碰数据或联网的事(装配空间 / 查更新)都还没开始。
   await privacyGate();

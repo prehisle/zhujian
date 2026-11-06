@@ -36,9 +36,11 @@ import {
 } from "./space";
 import type { SpaceInfo } from "./space";
 import { errDetail, errNode, errText } from "./err";
-import { toastAction, toastGo } from "./toast";
+import { toastAction, toastGo, undoLast } from "./toast";
+import { clearSearchBack, goSearchBack, searchBackArmed } from "./locate";
 import { closeToTray } from "./tray-hint";
 import { loadHotkeys } from "./hotkey-state";
+import { holdKeyboard, type KeyboardHold } from "./dom";
 
 // The notebook is one window hosting many views. Only one view is mounted into
 // the shared content root at a time, so each view can own page-scoped DOM ids
@@ -95,9 +97,8 @@ let currentName: ViewName = "inbox";
 
 const ctx: ViewCtx = { navigate, openItem: (space, item) => void openItemInSpace(space, item) };
 
-// Remember the mounted view across real restarts. Hide-not-destroy already keeps
-// the view alive within one run; this key only matters after 托盘退出 → relaunch.
-// Device-local UI state, deliberately localStorage and NOT the DB — it is not
+// 记着当前挂的是哪一页 —— 165 / W5 Q8 起**只给页面重载用**(改语言重载、截图台切档):冷启动(托盘退出再开)
+// 一律回随记,见启动序末尾。Device-local UI state, deliberately localStorage and NOT the DB — it is not
 // user data and must never ride along into a future sync surface.
 const LAST_VIEW_KEY = "zhujian.last-view";
 
@@ -105,6 +106,7 @@ const LAST_VIEW_KEY = "zhujian.last-view";
 // (e.g. the board's 标签 filter, the 灵感 tab, the 搜索 query) lives at module scope in
 // each view, NOT here.
 function navigate(name: ViewName): void {
+  clearSearchBack(); // 人换了页(或跳转换页):落点上那枚「Esc 回搜索」作废(W5 Q11;搜索的跳转在这之后才登记)
   current?.unmount();
   viewRoot.replaceChildren();
   current = registry[name](viewRoot, ctx);
@@ -224,6 +226,36 @@ document.addEventListener("keydown", (e) => {
   navigate("search"); // 搜索视图挂载即聚焦搜索框(search.ts)
 });
 
+// ---- 全局三键(W5)----------------------------------------------------------
+/** 焦点在能打字的框里(那里的 Ctrl+Z / Esc 归框自己)。 */
+function inField(a: Element | null): boolean {
+  return a instanceof HTMLElement && (a.tagName === "INPUT" || a.tagName === "TEXTAREA" || a.tagName === "SELECT" || a.isContentEditable);
+}
+document.addEventListener("keydown", (e) => {
+  if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey) return;
+  // Ctrl+,(mac Cmd+,)开设置(Q15,WD-28:此前没反应,从第 10 张卡 Shift+Tab 到「设置」要 34 下)。已开着 = 不动。
+  if (e.key === ",") {
+    e.preventDefault();
+    void openSettingsPanel();
+    return;
+  }
+  // Ctrl+Z = 点在场那条回执上的【撤销】(A1,WD-01)。⛔ 焦点在框里不接:那是撤销打字(清单输入那条 e2e 守着)。
+  // 浮层里按的不会到这儿(holdKeyboard 截住了),这里只再挡一道 aria-modal(关窗那一问之类)。
+  if (e.key === "z" || e.key === "Z") {
+    if (inField(document.activeElement) || document.querySelector('[aria-modal="true"]')) return;
+    if (undoLast()) e.preventDefault();
+  }
+});
+// 落点上按 Esc 回搜索(Q11 ★①,WD-24)。挂在 **window 冒泡相**:document 上各层(⋯ 菜单 / 选择器 / 编辑框 / 确认 /
+// 摊开的历史…)的 Esc 都先跑,接了就 preventDefault 或截住 —— 这里只收「没人要的那一记 Esc」。
+window.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape" || e.defaultPrevented || e.isComposing || !searchBackArmed()) return;
+  if (inField(document.activeElement)) return;
+  if (document.querySelector('[aria-modal="true"], .hk-menu, .space-menu')) return;
+  e.preventDefault();
+  goSearchBack();
+});
+
 // 「把朱简打开」之后光标进「随手记一笔」框(W4 WD-37 / Q11):手动启动、再点一次图标、托盘、主窗热键
 // 都走壳里的 `summon_notebook`,它置一枚 take 旗再 emit 一次 —— 冷启动时这页多半还没起来、事件会丢,
 // 所以启动序末尾也取一次(同「点此改键」那对 `take_open_settings` / `open-settings`)。
@@ -242,6 +274,12 @@ void listen("notebook-summoned", () => void summonFocus());
 
 win.onFocusChanged(({ payload: focused }) => {
   if (focused) {
+    // 165 / W5 A23(WD-23):新用户空库第一次打开,光标不进框 —— 实测(走查构建、全新数据目录)启动序那一发 take 在
+    // 壳置旗**之前**(页面 249 ms 取到 false),壳随后置旗、发的那条 notebook-summoned 页面没收到,旗一直挂着(21 s 后
+    // 手动取仍是 true);窗口被 raise 拿到焦点的那一下(≈515 ms)倒是来了。⇒ 拿到焦点时也取一次:旗只在「有一次召唤还没
+    // 兑现」时为真(兑现了 / 让位了都取走),所以普通回窗(alt-tab)取到的是 false、什么也不做 —— 不破上面那条「别每次
+    // 回窗都放」。
+    void summonFocus();
     current?.onFocus?.();
     void checkClipboardForDeepLink(); // 回窗时:剪贴板若是自家深链接,弹「点此打开」
     if (import.meta.env.PROD) void checkForUpdateOnFocus(); // 回窗顺手查一次新版(节流)
@@ -496,6 +534,9 @@ let spaceMenu: HTMLDivElement | null = null;
 // 位置与「点自己不算点外面」都跟着它走,别再写死 spaceEntry。
 let spaceMenuAnchor: HTMLElement = spaceEntry;
 let spaceMenuResize: ResizeObserver | null = null;
+// 菜单接管键盘(W5 A6 / Q2,照 §3.5 设置浮层那套):打开焦点进菜单、↑ ↓ 走项、Tab 圈在里面、菜单里按的键不冒到
+// 身后(此前 ↓ 在背后悄悄选中时间轴的卡,之后按单键就作用到那张)、Esc 关了焦点回打开它的那枚(此前掉到页面上)。
+let spaceHold: KeyboardHold | null = null;
 
 /** 菜单贴锚点下沿,并**硬钳在视口内**:兜底入口(同步入口)贴在侧栏底部,不钳就整个
  *  掉出下沿 = 真实的「点不到」(㊱ 悬停菜单栽过同一课)。长高时由 ResizeObserver 复钳。 */
@@ -508,13 +549,17 @@ function clampSpaceMenu(): void {
   spaceMenu.style.top = `${Math.round(Math.max(8, top))}px`;
 }
 
-function closeSpaceMenu(): void {
+/** `restoreFocus`:Esc / 再点一次入口收起时焦点还给打开它的那枚;点外面收起不还(那一点已把焦点给了别处)。 */
+function closeSpaceMenu(restoreFocus = false): void {
   spaceMenuResize?.disconnect();
   spaceMenuResize = null;
   spaceMenu?.remove();
   spaceMenu = null;
   document.removeEventListener("mousedown", onSpaceMenuDoc, true);
   document.removeEventListener("keydown", onSpaceMenuKey, true);
+  const h = spaceHold;
+  spaceHold = null;
+  h?.release(restoreFocus);
 }
 
 function onSpaceMenuDoc(e: MouseEvent): void {
@@ -525,8 +570,25 @@ function onSpaceMenuDoc(e: MouseEvent): void {
 function onSpaceMenuKey(e: KeyboardEvent): void {
   if (e.key === "Escape") {
     e.stopPropagation();
-    closeSpaceMenu();
+    closeSpaceMenu(true);
   }
+}
+
+/** 菜单里 ↑ ↓ Home End 在各行之间走(灰掉的「未装载」那行跳过;已换成小表单的那行不算一行)。 */
+function onSpaceMenuNav(e: KeyboardEvent): void {
+  if (!spaceMenu || e.ctrlKey || e.altKey || e.metaKey) return;
+  if (e.target instanceof HTMLInputElement) return; // 小表单里的框:方向键归光标
+  const rows = [...spaceMenu.querySelectorAll<HTMLButtonElement>(".space-row")].filter((b) => !b.disabled);
+  if (rows.length === 0) return;
+  const at = rows.indexOf(document.activeElement as HTMLButtonElement);
+  let i: number;
+  if (e.key === "ArrowDown") i = at < 0 ? 0 : (at + 1) % rows.length;
+  else if (e.key === "ArrowUp") i = at < 0 ? rows.length - 1 : (at - 1 + rows.length) % rows.length;
+  else if (e.key === "Home") i = 0;
+  else if (e.key === "End") i = rows.length - 1;
+  else return;
+  e.preventDefault();
+  rows[i].focus();
 }
 
 /** 新建 / 改名空间失败的那句红字(W3 159 / A11,WD-08)。撞名是**认得出的错**,core 那句「已有同名空间「X」」
@@ -565,7 +627,7 @@ function spaceActionRow(
     inp.addEventListener("keydown", (ke) => {
       ke.stopPropagation(); // 视图级单键(N/R/M…)别被输入截走
       if (ke.isComposing) return; // IME 组合期的 Enter/Esc 属于输入法(ui-audit P0 #1)
-      if (ke.key === "Escape") closeSpaceMenu();
+      if (ke.key === "Escape") closeSpaceMenu(true);
       if (ke.key !== "Enter" || busy) return;
       if (initial !== "" && inp.value.trim() === initial.trim()) {
         closeSpaceMenu(); // 没改:不发命令(免得把显示名「默认空间」当真名写进去)
@@ -740,7 +802,7 @@ function spaceJoinRow(canMerge: boolean): HTMLElement {
       inp.addEventListener("keydown", (ke) => {
         ke.stopPropagation();
         if (ke.isComposing) return;
-        if (ke.key === "Escape" && joinAttempt === null) closeSpaceMenu();
+        if (ke.key === "Escape" && joinAttempt === null) closeSpaceMenu(true);
         if (ke.key === "Enter") go.click();
       });
     }
@@ -749,7 +811,7 @@ function spaceJoinRow(canMerge: boolean): HTMLElement {
     });
     cancel.addEventListener("click", () => {
       if (joinAttempt) void joinSpaceCancel().catch(() => {});
-      else closeSpaceMenu();
+      else closeSpaceMenu(true);
     });
     form.appendChild(hint);
     form.appendChild(serverF.wrap);
@@ -809,12 +871,14 @@ function spaceResetRow(configured: boolean, gone: boolean): HTMLElement {
           err.textContent = errText(e);
         });
     });
-    cancel.addEventListener("click", () => closeSpaceMenu());
+    cancel.addEventListener("click", () => closeSpaceMenu(true));
     form.appendChild(warn);
     form.appendChild(ok);
     form.appendChild(cancel);
     form.appendChild(err);
     row.replaceWith(form);
+    // W5 Q3 ★①:确认一出来焦点停【取消】(删的是整本的数据 —— 回车不做这件事,要做 Tab 回到红钮)。
+    cancel.focus();
   });
   return row;
 }
@@ -823,7 +887,7 @@ function spaceResetRow(configured: boolean, gone: boolean): HTMLElement {
  *  `open = "rename"`:打开即展开「重命名当前空间」那一行(加入回执上那枚「改名」,161 / W4 Q13)。 */
 async function openSpaceMenu(anchor: HTMLElement = spaceEntry, open: "rename" | null = null): Promise<void> {
   if (spaceMenu) {
-    closeSpaceMenu();
+    closeSpaceMenu(true);
     return;
   }
   spaceMenuAnchor = anchor;
@@ -915,6 +979,12 @@ async function openSpaceMenu(anchor: HTMLElement = spaceEntry, open: "rename" | 
   spaceMenuResize.observe(menu);
   document.addEventListener("mousedown", onSpaceMenuDoc, true);
   document.addEventListener("keydown", onSpaceMenuKey, true);
+  menu.addEventListener("keydown", onSpaceMenuNav); // ⚠ 先于 holdKeyboard 那只挂(同一元素按注册序跑)
+  // 焦点落在当前那一本上(没有就第一行)—— 此前留在入口钮上,菜单 6 项排在整页最末,倒着进去第一站是「重置当前空间…」。
+  spaceHold = holdKeyboard(menu, menu, {
+    onEscape: () => closeSpaceMenu(true),
+    focus: menu.querySelector<HTMLButtonElement>(".space-row.cur") ?? menu.querySelector<HTMLButtonElement>(".space-row:not(:disabled)"),
+  });
   if (open === "rename") renameRow.click(); // 换成改名小表单、原名预填全选、光标进框(spaceActionRow)
 }
 
@@ -989,9 +1059,14 @@ void (async () => {
   // 挂载时就要读 ⇒ 先于第一次挂视图拉好(一次很快的 IPC;没拉到就挂,页面会以为不知道,不会猜)。
   await loadHotkeys();
 
-  // Land on the last-used view. Absent or unknown (first run, a since-renamed
-  // view name) is the first-run default, not an error path — land on inbox.
-  const lastView = localStorage.getItem(LAST_VIEW_KEY);
+  // 165 / W5 Q8 ★①(WX-04):**冷启动一律回随记**、光标进记一笔框(指南「打开朱简……光标在『随手记一笔』框里」)——
+  // 此前回到上次停的那页,停在长文 / 标签回来那页没有框、光标也不在任何框里;手机冷启动本来就回随记,两台都用的人
+  // 以为「朱简记得我上次在哪」,到手机上每次被送回随记。⛔ 别动「上次在哪个空间」(initCurrentSpace 那一份,另一件事)。
+  // 只有**页面重载**(改语言重载、截图台写 last-view 再 reload)才回到重载前那一页 —— 那不是「关掉再开」。
+  // 判据 = 这一次文档载入的导航类型(重载 = "reload";进程冷启动 / 首启 = "navigate")。
+  // 存的视图名不认识(改过名的旧视图)照旧落随记,不是错误路径。
+  const navType = (performance.getEntriesByType("navigation")[0] as PerformanceNavigationTiming | undefined)?.type;
+  const lastView = navType === "reload" ? localStorage.getItem(LAST_VIEW_KEY) : null;
   navigate(lastView !== null && lastView in registry ? (lastView as ViewName) : "inbox");
   void summonFocus();
   // 刚因为改语言重载过:把设置开回「语言」那一行(W4 Q11 / WD-36)。

@@ -27,7 +27,7 @@ import { authorLabel } from "./identity";
 import { t } from "./i18n";
 import { when } from "./tasktime";
 import "./item-comments.css";
-import { el } from "./dom";
+import { el, holdKeyboard, type KeyboardHold } from "./dom";
 import { errText } from "./err";
 
 /** core `comments::Comment` 的镜像(壳直接返回 core 类型,故这里是唯一一份 TS 侧抄写)。 */
@@ -129,7 +129,16 @@ function openPanel(
   mode: PanelMode,
   host: HTMLElement | null,
   hostText: string | null,
-  opts: { draft?: string; marked?: string | null; focus?: boolean; remount?: boolean; onClose?: () => void } = {},
+  opts: {
+    draft?: string;
+    marked?: string | null;
+    focus?: boolean;
+    remount?: boolean;
+    onClose?: () => void;
+    /** 浮层那一形关掉时焦点回哪儿(**关的那一刻现找**:浮层开着时宿主可能已整列重画,开层那一刻记下的
+     *  节点靠不住 —— 同历史读框 openHistoryDialog 那条)。不给 = 还给打开它时焦点所在的那枚。 */
+    returnFocus?: () => HTMLElement | null;
+  } = {},
 ): void {
   open?.close(); // 单层:再开一个先关掉旧的(它的会话号随即作废)
   const session = ++sessionSeq;
@@ -165,6 +174,13 @@ function openPanel(
   // 一部分(同编辑态),而框里可能有半打的草稿——点旁边看一眼就把话弄丢是不能接受的。
   // 收起只有三条路:再点一次徽章、点 ✕、Esc。
   const overlay = mode === "overlay" ? el("div", { className: "cm-overlay" }, [panel]) : null;
+  // 浮层那一形是模态面板(§3.5:role="dialog"、打开即聚焦、Tab 圈闭 —— 后两样 W5 Q2 起由 holdKeyboard 接管,165 / W5 D1
+  // 回报点名还缺 role)。⚠ inline 那一形是卡片的一部分,不是对话框,不挂。
+  if (mode === "overlay") {
+    panel.setAttribute("role", "dialog");
+    panel.setAttribute("aria-modal", "true");
+    panel.setAttribute("aria-label", t("comments.title"));
+  }
 
   const showErr = (e: unknown): void => {
     // 后端的话原样展示(200 KiB / 500 软闸 / 宿主不存在都是有话可说的拒绝),不吞不改写。
@@ -300,11 +316,22 @@ function openPanel(
   });
 
   // ---- 生命周期 --------------------------------------------------------------
+  // 浮层那一形接管键盘(W5 Q2,照 §3.5 设置浮层那套 `holdKeyboard`):焦点进框、Tab 圈在面板里、面板里按的单键
+  // 不冒到身后的看板(焦点停在「发送」/「销毁」上按 D 此前会删掉身后那张卡)、关掉焦点还回去(此前掉到页面上)。
+  // inline 那一形是卡片的一部分(同编辑态),不接管。
+  let hold: KeyboardHold | null = null;
   function close(): void {
     if (open?.session !== session) return; // 已被后来者顶掉:别去拆别人的层
     open = null;
     (overlay ?? panel).remove();
     document.removeEventListener("keydown", onKey, true);
+    const h = hold;
+    hold = null;
+    if (h) {
+      const back = opts.returnFocus?.() ?? null;
+      h.release(back === null);
+      back?.focus();
+    }
     opts.onClose?.(); // 宿主收尾(inline:把卡片的 commenting 标记摘掉)
   }
   function onKey(e: KeyboardEvent): void {
@@ -331,8 +358,10 @@ function openPanel(
     marked: () => lastMarked,
     hasFocus: () => document.activeElement === area,
   };
-  if (overlay) document.body.append(overlay);
-  else host!.append(panel);
+  if (overlay) {
+    document.body.append(overlay);
+    hold = holdKeyboard(overlay, panel, { onEscape: () => close(), focus: area });
+  } else host!.append(panel);
   void loadPage(false);
   if (opts.focus !== false) area.focus();
   // 滚动只在 inline 那一形要管(浮层天然居中)。`nearest` 一律 = 已经看得见就不动。
@@ -349,8 +378,14 @@ function openPanel(
 /** 居中浮层(看板)。徽章点击与 ⋯ 菜单「留言」共用这一个入口。
  *  `hostText` = 宿主条目的正文,画在面板顶上。⛔ 别省 —— 居中浮层会盖住宿主卡本身,
  *  不带进来的话「在给谁留言」要靠关掉这一层才看得到(601 补,用户实测点名)。 */
-export function openComments(space: string, itemId: string, onChanged: () => void, hostText?: string): void {
-  openPanel(space, itemId, onChanged, "overlay", null, hostText ?? null);
+export function openComments(
+  space: string,
+  itemId: string,
+  onChanged: () => void,
+  hostText?: string,
+  returnFocus?: () => HTMLElement | null,
+): void {
+  openPanel(space, itemId, onChanged, "overlay", null, hostText ?? null, { returnFocus });
 }
 
 /** 卡片内就地展开(随记)。`host` = 卡片里那个空容器,面板直接长在它下面。

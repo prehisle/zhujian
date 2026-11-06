@@ -12,7 +12,7 @@ import { el } from "./dom";
 import { errText } from "./err";
 import { renderContent } from "./item-images";
 import { settlePreviewFolds } from "./fold";
-import { setLocateNote } from "./locate";
+import { armSearchBack, setLocateNote } from "./locate";
 
 // Mirror of the Rust contract (lib.rs `search_items`): an item whose current text
 // OR any past version matched. Single-entity model — a hit can be an idea (未归类 /
@@ -102,6 +102,8 @@ let lastQuery = "";
 // 上次离开时结果列表滚到哪儿(W3 159 / A17,WD-28):从结果点进时间轴、再点侧栏「搜索」回来,词和结果一直在,
 // 滚动位置却回到了顶。只认同一空间 + 同一个词(换了空间 / 词,那是另一份结果)。
 let lastScroll: { space: string; q: string; top: number } | null = null;
+// 落点上按 Esc 回来时(W5 Q11):焦点落回刚才点进去的那条结果(不进框)。只活一次挂载。
+let backTo: string | null = null;
 
 export function mount(root: HTMLElement, ctx: ViewCtx): View {
   const view = el("div", { className: "v-search view" });
@@ -112,6 +114,8 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
   const input = view.querySelector("#q") as HTMLInputElement;
   const clearBtn = view.querySelector("#clear") as HTMLButtonElement;
   const mountSpace = currentSpaceId();
+  let back = lastQuery ? backTo : null; // 这一趟是不是从落点按 Esc 回来的(没有词 = 没有结果可落,照常进框)
+  backTo = null;
   // ✕ 只给鼠标(W3 159 / Q12,WD-29):此前 Tab 先落在它上面,接着一下回车就把词清了。键盘清词走 Esc。
   clearBtn.tabIndex = -1;
   // 首发结果画完时滚回上次的位置(只一次);之后改词 / 回窗重跑,位置归用户自己。
@@ -141,6 +145,14 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
   // 按 trash_kind 分家(灵感回收站 / 看板回收站,一条 archived_at 轴两端列表)。
   // (此前回收站那支要 await 一次读命令,故有一枚 jumpSeq 防连点乱序;159 起整支同步了,它随之退役。)
   function jump(hit: SearchHit): void {
+    go(hit);
+    // 落点上按 Esc 回这儿(W5 Q11):⚠ 在 navigate 之后登记(navigate 先清)。
+    armSearchBack(() => {
+      backTo = hit.id;
+      ctx.navigate("search");
+    });
+  }
+  function go(hit: SearchHit): void {
     // A4(WD-02):只在旧版本里命中的,落点卡上写一句「搜到的是改过之前的版本,去「历史」里看」—— 此前点进去
     // 只有粉框,卡上的字里根本没有那个词。回收站里的卡菜单里没有「历史」,改说还原后再看。
     setLocateNote(
@@ -214,6 +226,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       renderContent(isDoc ? docPreviewText(hit.content) : hit.content, [], undefined, (s) => highlighted(s, query)),
     );
     const node = el("article", { className: "hit", tabIndex: 0 }, [text, meta]);
+    node.dataset.id = hit.id;
     node.addEventListener("click", () => jump(hit));
     node.addEventListener("keydown", (e) => {
       if (e.key === "Enter" || e.key === " ") {
@@ -264,9 +277,22 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       );
       settlePreviewFolds(list, ".hit-text", { fold: t("board.fold"), unfold: t("board.unfold") });
       if (top !== null && top.q === q) list.scrollTop = top.top; // ⚠ 在折叠定局之后:还的是夹后几何里的位置
+      if (back !== null) {
+        // 从落点按 Esc 回来:焦点给刚才点进去的那条(它不在了 —— 回窗重跑后没命中 —— 就进框)
+        const hit = [...list.querySelectorAll<HTMLElement>(".hit")].find((n) => n.dataset.id === back);
+        back = null;
+        if (hit) hit.focus({ preventScroll: true });
+        else input.focus();
+      }
     } catch (err) {
       if (shown !== q) return;
       renderError(errText(err));
+    } finally {
+      // 回来那一趟没画成结果(这回没命中 / 读失败):焦点照常进框,别悬在页面上
+      if (back !== null && shown === q) {
+        back = null;
+        input.focus();
+      }
     }
   }
 
@@ -320,7 +346,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
   } else {
     renderCenter(t("search.idleTitle"), t("search.idleHint"));
   }
-  input.focus();
+  if (back === null) input.focus(); // Esc 回来的那一趟:焦点等结果画好落回那条(run 末尾)
 
   return {
     unmount() {

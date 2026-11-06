@@ -215,6 +215,21 @@ function renderPanel(
     return b;
   });
   nav.append(...btns);
+  // W5 A14:左栏 ↑ ↓(Home / End)换类 —— 焦点跟着到那一枚、右边当场换页(此前只能 Tab + 回车)。到头绕回。
+  nav.addEventListener("keydown", (e) => {
+    if (e.ctrlKey || e.altKey || e.metaKey) return;
+    const at = btns.indexOf(document.activeElement as HTMLButtonElement);
+    if (at < 0) return;
+    let i: number;
+    if (e.key === "ArrowDown") i = (at + 1) % btns.length;
+    else if (e.key === "ArrowUp") i = (at - 1 + btns.length) % btns.length;
+    else if (e.key === "Home") i = 0;
+    else if (e.key === "End") i = btns.length - 1;
+    else return;
+    e.preventDefault();
+    btns[i].focus();
+    show(CATS[i].cat);
+  });
 
   // 高亮与显隐的单一渲染点:按当前分类重画全部几枚,不在点击处各自 toggle(同 paintSeg)。
   function show(cat: SettingsCat): void {
@@ -531,8 +546,10 @@ function buildAliasRow(): HTMLDivElement {
       e.preventDefault();
       void apply();
     }
-    // Esc 在这里只放弃编辑、不关面板(面板级 Esc 监听在 document 上,这里先吞掉)。
-    if (e.key === "Escape") {
+    // W5 A14(WD-14):Esc 与这一层别处一个规矩 —— 框里有没存的改动时,第一下只放弃那改动(框回到存着的名字);
+    // 没改动(或已放弃)时 Esc 就是关设置。此前这里一律吞掉:框里有字时第一下清字、之后怎么按都关不掉,
+    // 而隔壁「提醒时刻」框里一按就关 —— 同一层两种规矩。
+    if (e.key === "Escape" && !e.isComposing && input.value !== saved) {
       e.stopPropagation();
       input.value = saved;
       setMsg(msg, "", "");
@@ -547,6 +564,14 @@ function buildAliasRow(): HTMLDivElement {
   const wrap = document.createElement("div");
   wrap.append(line, msg);
   return wrap as HTMLDivElement;
+}
+
+/** 分段钮(开 | 关、自动 亮 暗…)的「选中」一处画(165 / W5 A41,WD-30):此前只靠选中那段字变红、底色略深来分 ——
+ *  字一样粗、没有勾,选中「关」时是红的反像在警告,读屏也读不出哪段是选中的(状态不单靠颜色,§五)。⇒ `aria-pressed`
+ *  + 选中那段前面一枚勾、字加粗(settings.css `.seg-btn.on`)。⛔ 别在点击处各自 toggle:都走这里。 */
+function segOn(b: HTMLButtonElement, on: boolean): void {
+  b.classList.toggle("on", on);
+  b.setAttribute("aria-pressed", on ? "true" : "false");
 }
 
 // ---- 截止提醒(用户面 39 第一版)----
@@ -574,8 +599,8 @@ function buildReminderRow(): HTMLDivElement {
 
   const paint = (): void => {
     const cfg = reminderCfg();
-    onBtn.classList.toggle("on", cfg.on);
-    offBtn.classList.toggle("on", !cfg.on);
+    segOn(onBtn, cfg.on);
+    segOn(offBtn, !cfg.on);
     time.value = cfg.time;
     time.disabled = !cfg.on;
   };
@@ -633,8 +658,8 @@ function buildCompressRow(): HTMLDivElement {
   seg.append(onBtn, offBtn);
   const paint = (): void => {
     const on = compressImagesOn();
-    onBtn.classList.toggle("on", on);
-    offBtn.classList.toggle("on", !on);
+    segOn(onBtn, on);
+    segOn(offBtn, !on);
   };
   paint();
   onBtn.addEventListener("click", () => {
@@ -665,8 +690,8 @@ function buildDeleteConfirmRow(): HTMLDivElement {
   const msg = el("p", "hkset-msg", "");
   const paint = (): void => {
     const on = taskDeleteConfirmOn();
-    onBtn.classList.toggle("on", on);
-    offBtn.classList.toggle("on", !on);
+    segOn(onBtn, on);
+    segOn(offBtn, !on);
   };
   paint();
   const pick = (on: boolean): void => {
@@ -703,8 +728,8 @@ function buildAutostartRow(): HTMLDivElement {
   seg.append(onBtn, offBtn);
   const msg = el("p", "hkset-msg", "");
   const paint = (on: boolean): void => {
-    onBtn.classList.toggle("on", on);
-    offBtn.classList.toggle("on", !on);
+    segOn(onBtn, on);
+    segOn(offBtn, !on);
   };
   const run = (p: Promise<boolean>): void => {
     onBtn.disabled = offBtn.disabled = true;
@@ -742,7 +767,7 @@ function buildThemeRow(): HTMLDivElement {
   });
   const paintSeg = (): void => {
     const now = currentThemeMode();
-    btns.forEach((b, i) => b.classList.toggle("on", THEME_CHOICES[i].mode === now));
+    btns.forEach((b, i) => segOn(b, THEME_CHOICES[i].mode === now));
   };
   paintSeg();
   seg.append(...btns);
@@ -779,7 +804,7 @@ function buildLangRow(): HTMLDivElement {
   });
   const paintSeg = (): void => {
     const now = currentLangChoice();
-    btns.forEach((b, i) => b.classList.toggle("on", LANG_CHOICES[i].choice === now));
+    btns.forEach((b, i) => segOn(b, LANG_CHOICES[i].choice === now));
   };
   paintSeg();
   seg.append(...btns);
@@ -883,7 +908,8 @@ function buildRow(row: { which: Which; name: string; desc: string }): HTMLDivEle
   const change = el("button", "hkset-change", t("settings.change")) as HTMLButtonElement;
   // 被别的程序占着、按了没反应的那枚(W4 A6 / Q8 ①):此前照常陈列,看不出它根本没生效。
   // 改键成功(`applyHotkey` 换进新回执)就收。
-  const dead = el("span", "hkset-dead", t("settings.hotkeyTakenTag"));
+  // 165 / W5 A40:同随记页顶那条,前面带错误那枚「!」圆(err.css `.err-msg::before`),不单靠红字。
+  const dead = el("span", "hkset-dead err-msg", t("settings.hotkeyTakenTag"));
   dead.dataset.which = row.which; // e2e 按它认是哪一枚
   keys.append(dead, combo, change);
   const paintDead = (): void => {

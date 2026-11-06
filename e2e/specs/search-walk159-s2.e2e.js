@@ -229,13 +229,17 @@ describe("W3 159 · 搜索 / 筛选 / 回收站时刻(桌面第二波)", () => {
     };
     expect(typeof want.idea).toBe("string");
     expect(typeof want.task).toBe("string");
-    // 前端的时间件(when)就地算出期望串,与卡上那行逐字比
+    // 前端的时间件(when)就地算出期望串,与卡上那行逐字比。165 / W5 Q14 起两端一个写法:今天「今天 15:18」、今年别的天
+    // 「11月5日 15:18」、跨年带年(手机 ui.ts::fmtWhen 同规)。
     const fmt = (iso) =>
       browser.execute((s) => {
         const d = new Date(s);
-        const o = { month: "long", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false };
-        if (d.getFullYear() !== new Date().getFullYear()) o.year = "numeric";
-        return new Intl.DateTimeFormat("zh-CN", o).format(d);
+        const now = new Date();
+        const p = (n) => String(n).padStart(2, "0");
+        const hm = `${p(d.getHours())}:${p(d.getMinutes())}`;
+        if (d.toDateString() === now.toDateString()) return `今天 ${hm}`;
+        const md = `${d.getMonth() + 1}月${d.getDate()}日 ${hm}`;
+        return d.getFullYear() === now.getFullYear() ? md : `${d.getFullYear()}年${md}`;
       }, iso);
 
     await inboxShow("archived");

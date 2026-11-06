@@ -109,20 +109,42 @@ export function dayLabel(iso: string): string {
     : t("ui.dayYearMonthDay", { y: d.getFullYear(), m, d: day });
 }
 
-/** 时间戳:今天只报时刻,今年带月日,跨年带年。 */
+/** 时间戳(165 / W5 Q14:两端一个规矩):今天的写「今天 15:18」,别的天写「11月5日 15:18」,跨年带年。
+ *  此前当天只报时刻(回收站「删于 21:10」、长文列表「17:46」)、而同一张在归档 / 长文阅读页又写全日期 —— 一件事几种写法。
+ *  ⛔ 例外只有两处、都不走这里:随记时间轴的卡只写时刻(组头已写了哪天,`fmtTimeOfDay`),截止胶囊窄、短写法照旧(main.ts dueLabel)。 */
 export function fmtWhen(iso: string): string {
   const d = new Date(iso);
   const now = new Date();
-  if (d.toDateString() === now.toDateString()) return fmtTimeOfDay(iso);
-  return fmtWhenDated(iso);
-}
-/** 同 fmtWhen,但当天也带日期(长文阅读页的「写于」,154 G8:同桌面,「写于 23:38」读不出是哪天写的)。 */
-export function fmtWhenDated(iso: string): string {
-  const d = new Date(iso);
-  const md = { m: d.getMonth() + 1, d: d.getDate(), hm: fmtTimeOfDay(iso) };
-  return d.getFullYear() === new Date().getFullYear()
+  const hm = fmtTimeOfDay(iso);
+  if (d.toDateString() === now.toDateString()) return t("ui.whenToday", { hm });
+  const md = { m: d.getMonth() + 1, d: d.getDate(), hm };
+  return d.getFullYear() === now.getFullYear()
     ? t("ui.whenThisYear", md)
     : t("ui.whenOtherYear", { ...md, y: d.getFullYear() });
+}
+
+/** 回执里点名「是哪一条」用的那一截(165 / W5 Q15:「已彻底删除「…」」—— 找不回的那一下得说清删的是谁)。
+ *  取第一行有字的、剥掉行首的 Markdown 标题号与清单方框,长了截到 `max` 个字加「…」。整条没有字(只有图)= ""。
+ *  ⚠ 桌面照抄同一条规则(D2),两端点名同一截。 */
+export function itemSnippet(content: string, max = 20): string {
+  const line = content
+    .split("\n")
+    .map((s) => s.trim())
+    .find((s) => s !== "");
+  if (line === undefined) return "";
+  const bare = line.replace(/^#{1,6}\s+/, "").replace(/^[-*+]\s+\[[ xX]\]\s*/, "").replace(/\s+/g, " ").trim();
+  const chars = Array.from(bare);
+  return chars.length > max ? `${chars.slice(0, max).join("")}…` : bare;
+}
+
+/** 比对前把两版的末行补齐换行(165 / W5 A32):行尾的换行是行的一部分,上一版末行没带换行、补了一段之后它带上了 ⇒
+ *  同一行字被比成「删掉一行 + 加上一行」,红一遍又一字不差绿一遍,读着像改过。⛔ 只改**拿去比的那两份**,存下的版本一个字不动。 */
+export function diffPair(a: string, b: string): [string, string] {
+  const eol = (s: string): string => (s === "" || s.endsWith("\n") ? s : `${s}\n`);
+  const na = eol(a);
+  const nb = eol(b);
+  // 两版**只**差末尾那个换行:补齐就成了同一份、比对里一处差异都不标 ⇒ 这种照原样比(差异就是那个换行,照实报,不误报「没有变化」)。
+  return na === nb ? [a, b] : [na, nb];
 }
 
 // ---- 卡片分栏(宽屏;tablet-plan 格 1 / 5)--------------------------------------------
@@ -315,6 +337,13 @@ function barWithAct(
 }
 
 export const showError = (msg: string) => showBar(msg);
+
+/** 点了【撤销】、撤成了之后的那一句(165 / W5 Q6,两端同句):条一收、卡回原处,而回到的地方常不在眼前 ——
+ *  不说一声就没法确认撤没撤成;误点中撤销(A31)也只有这一句能让人发现。成功型、按字数读秒(约 2 秒),不带钮。
+ *  ⛔ 撤销失败不走这里(调用方照旧 showErr)。 */
+export function showUndone(): void {
+  showBar(t("common.undone"), true);
+}
 
 // ---- 底部固定确认条(ui-audit P0 #4):两拍确认的第二拍 --------------------------
 // 第一拍只弹这条 fixed 条,原按钮与周围布局零改动——第二拍永远落在几何恒定、

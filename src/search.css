@@ -113,7 +113,7 @@
 /* 命中可点跳到条目现在住的地方(ui-audit P1 #8);键盘 Tab 聚焦同样可见可达。 */
 .v-search .hit { cursor: pointer; }
 .v-search .hit:hover { border-color: var(--line-strong); }
-.v-search .hit:focus-visible { outline: 2px solid var(--seal); outline-offset: 1px; }
+/* 键盘焦点框走全局那一圈(theme.css,W5 A18):此前 2px 朱砂实线,和落点红框同色系。 */
 .v-search .hit-text {
   margin: 0;
   font-family: var(--font-serif);

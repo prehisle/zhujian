@@ -74,7 +74,7 @@ describe("716 · 撤销回执(随记)", () => {
     await goNotebook("inbox");
     const card = await $(".note*=E2E-撤销-转待办乙");
     await card.waitForExist({ timeout: 10000 });
-    await inboxAction("E2E-撤销-转待办乙", "待办");
+    await inboxAction("E2E-撤销-转待办乙", "转待办");
     await card.waitForExist({ reverse: true, timeout: 10000 });
     await browser.waitUntil(async () => (await taskStatus(id)) === "todo", { timeout: 8000, timeoutMsg: "转待办后应在 todo" });
 

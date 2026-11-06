@@ -25,7 +25,7 @@ export const backup = defineMessages({
   // 161 / W4 Q11(X-06):两端一个说法 ——「每台设备各一串;拿哪台的备份去恢复,就填哪台的码」(此前这里说「唯一钥匙」,
   // 读成全账户只有一串)。
   "backup.ceremonyIntro": { zh: "把下面这串码抄在纸上(或存进密码管理器),然后原样输一遍。每台设备各一串;拿哪台的备份去恢复,就填哪台的码。", en: "Copy the code below onto paper (or into a password manager), then type it back exactly. Each device has its own code; to restore a backup, use the code of the device that made it." },
-  "backup.ceremonyWarn": { zh: "这串码只存在这台手机上。卸载 app 或在系统设置里「清除数据」,它就没了;到那时,这台手机做的备份没抄下码就永远打不开(文件夹里的备份文件本身还在)。", en: "This code is stored only on this phone. Uninstalling the app or clearing its data erases it; after that, backups made on this phone can never be opened unless you wrote the code down (the backup files in your folder stay where they are)." },
+  "backup.ceremonyWarn": { zh: "这串码只存在这台设备上。卸载 app 或在系统设置里「清除数据」,它就没了;到那时,这台设备做的备份没抄下码就永远打不开(文件夹里的备份文件本身还在)。", en: "This code is stored only on this device. Uninstalling the app or clearing its data erases it; after that, backups made on this device can never be opened unless you wrote the code down (the backup files in your folder stay where they are)." },
   "backup.ceremonyConfirmPh": { zh: "把上面那串码输在这里", en: "Type the code here" },
   "backup.ceremonyConfirm": { zh: "我抄好了,核对", en: "Check what I typed" },
   "backup.ceremonyCancel": { zh: "取消", en: "Cancel" },
@@ -39,7 +39,7 @@ export const backup = defineMessages({
   "backup.dirAt": { zh: "在「{name}」", en: "In “{name}”" },
   "backup.dirGone": { zh: "落点没了(授权被撤销、文件夹被删,或 U 盘 / SD 卡拔了)。请重新挑一个文件夹。", en: "The folder is gone (permission revoked, folder deleted, or the drive was removed). Please pick one again." },
   "backup.dirCancelled": { zh: "没有挑文件夹。", en: "No folder was picked." },
-  "backup.dirAdvice": { zh: "挑网盘的同步文件夹或 U 盘最好。放在手机自己身上的文件夹挡得住误删,但手机丢了 / 坏了,备份跟着一起没。", en: "A cloud-sync folder or a USB drive is best. A folder on the phone itself protects against accidental deletion, but not against losing or breaking the phone." },
+  "backup.dirAdvice": { zh: "挑网盘的同步文件夹或 U 盘最好。放在这台设备自己身上的文件夹挡得住误删,但设备丢了 / 坏了,备份跟着一起没。", en: "A cloud-sync folder or a USB drive is best. A folder on the device itself protects against accidental deletion, but not against losing or breaking the device." },
 
   // ---- ④ 立即备份 ----
   "backup.runName": { zh: "立即备份", en: "Back up now" },
@@ -101,11 +101,11 @@ export const backup = defineMessages({
   "backup.notDone": { zh: "这一趟没跑成。", en: "That attempt did not complete." },
 
   // ---- 诚实边界(⛔ 原样进 UI,别在文案里软化,§17.12)----
-  "backup.footRestore": { zh: "手机上能做备份,但不能从备份还原。真出事时把 .zjbak 文件拿到电脑上的朱简里恢复。", en: "You can create backups on the phone but cannot restore from them here; if something goes wrong, restore the .zjbak file in Zhujian on a computer." },
+  "backup.footRestore": { zh: "这台设备上能做备份,但不能从备份还原。真出事时把 .zjbak 文件拿到电脑上的朱简里恢复。", en: "You can create backups on this device but cannot restore from them here; if something goes wrong, restore the .zjbak file in Zhujian on a computer." },
   // 161 / W4 Q11(WM-34):卸载后没的只是手机上存的那份码,文件夹里的备份文件还在(复核实测 pm clear 前后都在)。
-  "backup.footCode": { zh: "备份码保存在这台手机上(明文),卸载或清除数据会把它抹掉,抄下来的那份就是唯一的了;已经放进文件夹的备份文件不会跟着没。", en: "The backup code is stored on this phone in plain text and is erased if you uninstall or clear app data, leaving your written copy as the only one; backup files already in your folder are not deleted." },
+  "backup.footCode": { zh: "备份码保存在这台设备上(明文),卸载或清除数据会把它抹掉,抄下来的那份就是唯一的了;已经放进文件夹的备份文件不会跟着没。", en: "The backup code is stored on this device in plain text and is erased if you uninstall or clear app data, leaving your written copy as the only one; backup files already in your folder are not deleted." },
   // 161 / W4 Q11(WM-34 / X-12):点一次备的是哪些空间、手机上没有自动备份、备份文件加码等于什么。
-  "backup.footScope": { zh: "点「备份」会把这台手机上的每个空间各备一份。手机上没有自动备份:想备份就回这里点一次。", en: "Back up makes one backup of every space on this phone. There is no automatic backup on the phone: come back here and tap it whenever you want one." },
+  "backup.footScope": { zh: "点「备份」会把这台设备上的每个空间各备一份。这台设备上没有自动备份:想备份就回这里点一次。", en: "Back up makes one backup of every space on this device. There is no automatic backup on this device: come back here and tap it whenever you want one." },
   "backup.footSecret": { zh: "备份文件加上备份码,就能打开里面的全部内容;开过同步的空间,还能拿它读写这个账户。两样都当秘密保管。", en: "A backup file plus its code opens everything in it; for a space with sync turned on, it also gives read and write access to that account. Keep both secret." },
   "backup.footValid": { zh: "「有效」只有验过才算。文件名和扩展名证明不了任何事。", en: "“Valid” only means verified. A file name or extension proves nothing." },
 });

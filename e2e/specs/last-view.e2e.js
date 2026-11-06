@@ -1,22 +1,36 @@
 import { browser, $ } from "@wdio/globals";
 import { BASE, goNotebook, goShow } from "./support.js";
 
-// 57: the notebook lands on the view it last showed (localStorage
-// "zhujian.last-view"), surviving a page (re)load — the same read path a real
-// app restart takes. An unknown stored name must land on inbox, not crash the
-// shell. Reloads below go through browser.url WITHOUT clicking any sidebar
-// button, so the assertion really exercises the landing logic.
-describe("上次视图恢复", () => {
-  it("重新载入后落在上次的视图", async () => {
+// 57 起主窗记着上次那一页(localStorage "zhujian.last-view")。165 / W5 Q8 ★① 起分两种:
+//   · **冷启动**(进程起来第一次载入 = 导航类型 "navigate")一律回随记 —— 指南「打开朱简……光标在『随手记一笔』框里」,
+//     手机冷启动本来就回随记;此前回到上次停的那页(长文 / 标签那几页没有记一笔框);
+//   · **页面重载**(改语言重载、截图台写 last-view 再 reload = 导航类型 "reload")回到重载前那一页。
+// `browser.url` 是一次新的导航(= 冷启动那一形);`location.reload()` 是重载。两条都不点侧栏按钮,真走落地那段判据。
+describe("冷启动落在哪一页", () => {
+  it("冷启动(新导航)一律回随记,哪怕上次停在看板", async () => {
     await goNotebook("board");
     await browser.url(`${BASE}/notebook.html`);
+    await $(".v-inbox").waitForExist({ timeout: 5000 });
+  });
+
+  it("页面重载回到重载前那一页", async () => {
+    await goNotebook("board");
+    await browser.execute(() => setTimeout(() => location.reload(), 0));
+    await browser.waitUntil(async () => browser.execute(() => performance.getEntriesByType("navigation")[0]?.type === "reload"), {
+      timeout: 10000,
+      timeoutMsg: "页面没重载",
+    });
     await $(".v-board").waitForExist({ timeout: 5000 });
   });
 
-  it("存的视图名非法时落回灵感", async () => {
+  it("存的视图名非法时重载也落回随记", async () => {
     await goShow("/notebook.html");
     await browser.execute(() => localStorage.setItem("zhujian.last-view", "nope"));
-    await browser.url(`${BASE}/notebook.html`);
+    await browser.execute(() => setTimeout(() => location.reload(), 0));
+    await browser.waitUntil(async () => browser.execute(() => performance.getEntriesByType("navigation")[0]?.type === "reload"), {
+      timeout: 10000,
+      timeoutMsg: "页面没重载",
+    });
     await $(".v-inbox").waitForExist({ timeout: 5000 });
   });
 });

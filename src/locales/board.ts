@@ -66,6 +66,17 @@ export const board = defineMessages({
   "board.undoSealedAll": { zh: "已归档 {n} 条", en: "Archived {n}" },
   "board.undoUnsealed": { zh: "已取消归档,回到「{col}」", en: "Unarchived, back in “{col}”" },
   "board.undoColored": { zh: "已换色", en: "Color changed" },
+  // 165 / W5 Q5 ★①:列首 / 列尾、截止、优先级也给「已… 撤销」(此前一声不吭、也撤不回;换色有、截止没有,同一个面板两种待遇)。
+  // 截止 / 优先级那四句两端同句(手机 cardpanel 那张操作面,M1 定词);{day} 写「11月8日」、跨年带年。
+  "board.undoToTop": { zh: "已移到列首", en: "Moved to the top" },
+  "board.undoToBottom": { zh: "已移到列尾", en: "Moved to the bottom" },
+  "board.undoDue": { zh: "已设截止 {day}", en: "Due date set to {day}" },
+  "board.undoDueCleared": { zh: "已清除截止", en: "Due date cleared" },
+  "board.undoPriority": { zh: "已设优先级 {p}", en: "Priority set to {p}" },
+  "board.undoPriorityCleared": { zh: "已清除优先级", en: "Priority cleared" },
+  // 165 / W5 Q7 ★①:⋯ 菜单「完成」(不在「已完成」列时才有 = 移到已完成),回执用手机点圈那句(键名照手机 main.completed,两端同句)。
+  "board.complete": { zh: "完成", en: "Mark done" },
+  "main.completed": { zh: "已完成", en: "Completed" },
   "board.undoUntagged": { zh: "已去掉标签「{tag}」", en: "Removed tag “{tag}”" },
   "board.removeTag": { zh: "去掉这个标签", en: "Remove this tag" },
   "board.doneAt": { zh: "完成于 {day}", en: "Done · {day}" },
@@ -128,7 +139,8 @@ export const board = defineMessages({
   "board.revertYes": { zh: "撤回", en: "Send back" },
   "board.revertQMeta": { zh: "撤回为随记?将清除截止和优先级", en: "Send back to Notes? Due date and priority will be cleared" },
   "board.reverted": { zh: "已撤回为随记", en: "Sent back to Notes" },
-  "board.move": { zh: "移动", en: "Move" },
+  // 165 / W5 A19(WD-21):换空间写全(此前「移动」与换列的「移到 ▸」上下只隔一项、只差一个字)。
+  "board.move": { zh: "移到别的空间", en: "Move to another space" },
   "board.renameFailed": { zh: "「{title}」的标题改动未能保存:{err}(草稿:{draft})", en: "Could not save the title change for “{title}”: {err} (draft: {draft})" },
   "board.copyBoard": { zh: "复制看板", en: "Copy board" },
   "board.sealAll": { zh: "全部归档", en: "Archive all" },
@@ -156,7 +168,9 @@ export const board = defineMessages({
   // (inbox.actTask)。⛔ 换了那一项的可见中文,这句要同笔改。
   // ⚠ ⋯ 外面那对「」不是装饰:空态这行会折行,裸的 ⋯ 掉到行尾读起来像「话没说完」——
   // 而 CJK 折行规则不许行尾留开引号、不许行首起闭引号 ⇒ 括起来它就折不散了(实测两版图)。
-  "board.emptyHint": { zh: "点右上角「+ 新建任务」;或在「随记」里点开卡片上的「⋯」菜单,选「待办」。", en: "Click “+ New task” in the top right, or open a note’s ⋯ menu in Notes and pick “Make a task”." },
+  "board.emptyHint": { zh: "点右上角「+ 新建任务」;或在「随记」里点开卡片上的「⋯」菜单,选「转待办」。", en: "Click “+ New task” in the top right, or open a note’s ⋯ menu in Notes and pick “Make a task”." },
+  // 165 / W5 Q15(WD-34 前半):看板空了、归档册里有 —— 说一句它在哪(手机那句不写「页头」,键 main.emptyTasksSealed)。
+  "board.emptySealed": { zh: "归档了 {n} 张,在页头「归档」里。", en: "{n} archived {n|task is|tasks are} under Archive in the header." },
   "board.noMatch": { zh: "没有匹配「{q}」的任务", en: "No tasks matching “{q}”" },
   "board.noMatchHint": { zh: "换个词,或清空过滤框(Esc)。", en: "Try another word, or clear the filter (Esc)." },
   "board.listSeparator": { zh: "、", en: ", " },
@@ -186,4 +200,8 @@ export const board = defineMessages({
   "tasktime.priorityChip": { zh: "优先级·{p}", en: "Priority · {p}" },
   "tasktime.clear": { zh: "清除", en: "Clear" },
   "tasktime.dueChipTitle": { zh: "截止 {day} · 点一下改", en: "Due {day} · click to change" },
+  // 165 / W5 A11(WD-10):截止框里有字、日期却没成(年那一格吃进了 6 位 / 只填了年 / 打了「-」不跳格)。回车 = 框旁这句、框留着;
+  // 点别处 = 收起并在底部说没设上。⛔ 不猜用户想要哪天。
+  "tasktime.dueUnfinished": { zh: "日期没填完整:年、月、日是三格,打完年份按 → 进月份;Esc 放弃", en: "The date isn’t complete: year, month and day are separate fields — after the year, press → for the month; Esc to cancel" },
+  "tasktime.dueNotSet": { zh: "截止没设上:日期没填完整", en: "Due date not set: the date was incomplete" },
 });

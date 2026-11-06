@@ -229,7 +229,7 @@ describe("158 G3 · 看板规矩 Q1–Q13(桌面)+ A7 对齐", () => {
     expect(s.h1).toBe("归档");
     expect(s.countShown).toBe(false);
     expect(s.backText).not.toMatch(/\d/);
-    expect(s.date).toBe("完成于 今天");
+    expect(s.date).toMatch(/^完成于 今天 \d{2}:\d{2}$/); // 165 / W5 Q14:写到时刻(今天「今天 15:18」)
     await $("#seal-toggle").click();
     await browser.waitUntil(async () => (await $(".v-board header h1").getText()) === "任务看板", { timeout: 5000 });
   });

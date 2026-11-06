@@ -53,6 +53,8 @@
   white-space: nowrap;
 }
 .v-docs .doc-card-title.untitled { color: var(--ink-soft); font-weight: 400; }
+/* 165 / W5 Q15(WD-35):第一行没写 # 的不是标题 —— 照阅读页里的样子,不加粗(同手机 .doc-title.plain)。 */
+.v-docs .doc-card-title.plain { font-weight: 400; }
 .v-docs .doc-card-ex {
   margin: 5px 0 0;
   font-family: var(--font-serif);
@@ -67,7 +69,9 @@
 }
 .v-docs .doc-card-ex:empty { display: none; }
 .v-docs .doc-card-time {
-  display: block;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 10px;
   margin-top: 7px;
   font-size: var(--fs-12);
   letter-spacing: 0.03em;

@@ -41,12 +41,14 @@ export const HAS_SAF_BRIDGE = false;
 export const HAS_NOTIFICATION = false;
 
 /**
- * ⛔ 这一端交不出网址给系统浏览器:`openUrl` 的编译目标是 linux、去调 `xdg-open`,
- * 鸿蒙上没有这个程序(651 真机实撞 `os error 2`,见 `.claude/rules/mobile.md` 平台事实②)。
- * ⇒ 设置「关于」里官网 / 源码 / 更新日志三行只摆地址文字,不做成链接 —— 做成链接在这一端
- * 就是「点了没反应」。
+ * 这一端交得出网址(W5 A54 起):共用前端调的 `@tauri-apps/plugin-opener` 的 `openUrl` 在这一端
+ * **不是真插件** —— 真插件的 Rust 那半去调 `xdg-open`,鸿蒙上恒错(651 真机实撞 `os error 2`,
+ * `.claude/rules/mobile.md` 平台事实②);`ohos/vite.config.ts` 的 opener 接缝把它换成
+ * `ohos/src/opener.ts`,经壳里的 `__zhujianOpener` 桥拉起系统浏览器 / 邮件应用。
+ * ⇒ 「关于」官网 / 源码 / 更新日志三行、长文里的链接、意见反馈那一框与安卓一样是可点的链接。
+ * ⚠ 那座桥没挂上时点了会响亮报错(`opener.ts`),不会「点了没反应」。
  */
-export const HAS_BROWSER = false;
+export const HAS_BROWSER = true;
 
 /** 够不着通知权限。⚠ 它不该被调到(`HAS_NOTIFICATION` 已经把整节摘了),真被调到就是接线漏了。 */
 export function notifyPermissionOk(): Promise<boolean> {

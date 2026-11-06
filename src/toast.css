@@ -50,6 +50,20 @@
   border-radius: var(--radius-pill);
   cursor: pointer;
 }
+/* 撤销钮里那枚键(W5 A1):同 ⋯ 菜单的键帽,只是压在纸底钮上 —— 次级字色、细边。字住 data-k(toast.ts),
+   画在 ::after 上,钮自己的文字照旧只有「撤销」。 */
+.undo-toast .undo-btn[data-k]::after {
+  content: attr(data-k);
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 4px;
+  font: inherit;
+  font-size: var(--fs-12);
+  font-weight: 400;
+  color: var(--ink-soft);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-xs);
+}
 /* hover 往「墨」的方向压(§2.1):亮档变深、暗档变浅,翻面由令牌自己完成。 */
 .undo-toast .undo-btn:hover {
   background: color-mix(in srgb, var(--paper) 88%, var(--ink));

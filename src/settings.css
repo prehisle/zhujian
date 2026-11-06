@@ -448,6 +448,16 @@
   color: var(--seal-ink-on-seal-tint);
   background: var(--seal-tint);
 }
+/* 165 / W5 A41(WD-30):选中那段前面一枚勾 —— 状态不单靠颜色(§五)。勾的位置每段都先占着(看不见),选中换段时
+   各段宽度不变、整排不挪(原则 1);⛔ 别改成字加粗:粗体更宽,点一下整排往旁边挤。读屏靠 aria-pressed(settings.ts segOn)。 */
+.seg-btn::before {
+  content: "✓";
+  display: inline-block;
+  width: 1em;
+  margin-left: -4px;
+  visibility: hidden;
+}
+.seg-btn.on::before { visibility: visible; }
 
 .zoom-val {
   font-family: var(--font-sans);

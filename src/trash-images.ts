@@ -119,7 +119,9 @@ function imageRow(
     opts.claimConfirm(
       armDismiss(row, () => {
         opts.claimConfirm(null);
+        const had = row.contains(document.activeElement);
         showView();
+        if (had) handle.focus(); // Esc 收起:焦点回这一行的 ⋯(W5 A4)
       }),
     );
     const purge = async (): Promise<void> => {
@@ -136,24 +138,29 @@ function imageRow(
       }
       opts.onChanged();
     };
+    const no = el("button", {
+      className: opts.buttons.no,
+      textContent: t("trashImages.cancel"),
+      onclick: () => {
+        opts.claimConfirm(null);
+        showView();
+        handle.focus();
+      },
+    });
     side.replaceChildren(
       el("span", { className: "trash-imgs-q", textContent: t("trashImages.deleteForeverQ") }),
-      el("button", {
-        className: opts.buttons.no,
-        textContent: t("trashImages.cancel"),
-        onclick: () => {
-          opts.claimConfirm(null);
-          showView();
-        },
-      }),
+      no,
       el("button", { className: opts.buttons.yes, textContent: t("trashImages.deleteForever"), onclick: purge }),
     );
+    // W5 Q3 ★①:确认一出来焦点停【取消】(回车不做破坏的事;要删 Tab 一下到执行钮)
+    row.scrollIntoView({ block: "nearest" });
+    no.focus({ preventScroll: true });
   };
   const actions = (): Act[] => [
     { label: t("trashImages.restore"), key: opts.keys.restore, run: () => void restore() },
     { label: t("trashImages.deleteForever"), key: opts.keys.deleteForever, run: openPurge, danger: true },
   ];
-  const handle = opts.hk.register(row, actions, () => row.classList.contains("confirming"));
+  const handle = opts.hk.register(row, actions, () => row.classList.contains("confirming"), { id: `img:${im.id}` });
   row.append(thumb, label, side);
   showView();
   return row;

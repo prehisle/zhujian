@@ -3,8 +3,12 @@ import { defineMessages } from "./entry";
 
 export const docs = defineMessages({
   "docs.title": { zh: "长文", en: "Long-form" },
-  "docs.new": { zh: "新建长文", en: "New long-form" },
+  // 165 / W5 Q14:同「+ 新建任务」带加号(两端同句)。
+  "docs.new": { zh: "+ 新建长文", en: "+ New long-form" },
   "docs.loadFailed": { zh: "读取失败", en: "Failed to load" },
+  // 165 / W5 Q15(WD-27):长文页头的「回收站」,开的是随记那只(长文删了进的就是它)。
+  "docs.trash": { zh: "回收站", en: "Trash" },
+  "docs.trashTitle": { zh: "删掉的随记、长文和配图都在这只回收站里", en: "Deleted notes, long-form and images are all in this trash" },
   "docs.retry": { zh: "重试", en: "Retry" },
   "docs.emptyTitle": { zh: "还没有长文", en: "No long-form notes yet" },
   "docs.emptyHint": { zh: "新建一篇,或在随记卡片的 ⋯ 菜单里把一条随记「展开成长文」。", en: "Start a new one, or pick “Expand to long-form” from a note’s ⋯ menu." },
@@ -19,20 +23,24 @@ export const docs = defineMessages({
   "docs.actComments": { zh: "留言", en: "Comments" },
   "docs.actCopy": { zh: "复制", en: "Copy" },
   "docs.actCopyLink": { zh: "复制链接", en: "Copy link" },
-  "docs.actMove": { zh: "移动", en: "Move" },
+  "docs.actMove": { zh: "移到别的空间", en: "Move to another space" },
   "docs.actDelete": { zh: "删除", en: "Delete" },
   "docs.movePartialDone": { zh: "我已处理,解除", en: "Handled, dismiss" },
   "docs.copied": { zh: "已复制", en: "Copied" },
   "docs.copiedLink": { zh: "已复制链接", en: "Link copied" },
   "docs.copyFailed": { zh: "复制失败", en: "Copy failed" },
-  "docs.undoDeleted": { zh: "已移入随记回收站", en: "Moved to the notes trash" },
+  // 165 / W5 Q14:回收站只一个叫法(此前这句叫「随记回收站」,别处都叫「回收站」)。同随记删除那句(inbox.undoDeleted)。
+  "docs.undoDeleted": { zh: "已移入回收站", en: "Moved to Trash" },
   "docs.undoCollapsed": { zh: "已收回随记", en: "Moved back to notes" },
   "docs.writtenAt": { zh: "写于 {time}", en: "Written {time}" },
+  // 165 / W5 Q15:改过一版的长文在列表卡与阅读页另写「改于 …」(= 现在这版写成的那一刻)。两端同句。
+  "docs.editedAt": { zh: "改于 {time}", en: "Edited {time}" },
   "docs.degraded": { zh: "这篇太长或结构太深,按原文显示", en: "Too long or too deeply nested — shown as plain text" },
   "docs.draftFound": { zh: "有一份没保存的草稿({time})", en: "There is an unsaved draft ({time})" },
   "docs.draftResume": { zh: "接着改", en: "Keep editing" },
   "docs.draftDiscard": { zh: "丢掉", en: "Discard" },
-  "docs.draftSaved": { zh: "草稿已存在本机", en: "Draft kept on this device" },
+  // 165 / W5 Q1:挨着红「保存」那行灰字此前只说「草稿已存在本机」,读着像已经存了 —— 补半句离开会怎样(两端同句)。
+  "docs.draftSaved": { zh: "草稿已存在本机 · 离开就存成一版", en: "Draft kept on this device · leaving saves a version" },
   "docs.draftFailed": { zh: "草稿没存上:{err}", en: "Draft not kept: {err}" },
   "docs.addImage": { zh: "＋加图", en: "+ Image" },
   "docs.dropNotImage": { zh: "{n} 个文件不是图片,没收(只收 png / jpeg / webp / gif)", en: "{n} file(s) aren’t images and were skipped (only png / jpeg / webp / gif)" },
@@ -53,7 +61,10 @@ export const docs = defineMessages({
   "docs.modePreview": { zh: "预览", en: "Preview" },
   "docs.save": { zh: "保存", en: "Save" },
   "docs.placeholder": { zh: "用 Markdown 写:# 标题、**粗体**、- 列表、- [ ] 待办、> 引用、``` 代码块", en: "Write in Markdown: # heading, **bold**, - list, - [ ] to-do, > quote, ``` code" },
-  "docs.savedVersion": { zh: "已保存一版", en: "Version saved" },
+  // 165 / W5 Q1 ★①:离开编辑器落了一版就说一声(此前四条离开的路全都一声不吭);新篇那句带上它在哪。两端同句。
+  // Ctrl+S 存完挂在顶上那行也是这一句。
+  "docs.savedVersion": { zh: "已存成一版", en: "Saved as a new version" },
+  "docs.savedNew": { zh: "已存成一篇,在「长文」页", en: "Saved as a new long-form note, on the Long-form page" },
   "docs.histTitle": { zh: "历史 · {title}", en: "History · {title}" },
   "docs.histNone": { zh: "还没有旧版本。每次保存,上一版都会留在这里。", en: "No earlier versions yet. Each save keeps the previous one here." },
   "docs.histCurrent": { zh: "当前", en: "Current" },

@@ -154,7 +154,8 @@ const jsVerify = (id, fromLabel) => `(async () => {
   ok("confirmbar 没被挪用(全程 hidden)", cb.hidden);
   click(err.querySelector(".bar-act"));
   ok("撤销后回到原状态", (await until(() => pillOf(id) === fromLabel, 3000)) !== null);
-  ok("点撤销即收条", await until(() => err.hidden, 1500));
+  // 165 / W5 Q6 起撤成了说一声:撤销那条收掉、换成一句不带钮的「已撤销」(或已经读完收了)。
+  ok("点撤销即收条(撤成了只剩一句「已撤销」)", await until(() => err.hidden || (err.querySelectorAll("button").length === 0 && /^(已撤销|Undone)$/.test(err.textContent.trim())), 1500));
   ok("撤销不弹确认(confirmbar 仍 hidden)", cb.hidden);
   return out;
 })()`;

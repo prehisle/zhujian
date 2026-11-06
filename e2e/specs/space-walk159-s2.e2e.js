@@ -141,7 +141,7 @@ describe("W3 159 · 空间与跨空间移动(桌面第二波,前端半)", () => 
     await installFakeSpace();
     await remount("inbox");
     await $(`.note*=${TOK}-随记`).waitForExist({ timeout: 8000 });
-    await inboxAction(`${TOK}-随记`, "移动");
+    await inboxAction(`${TOK}-随记`, "移到别的空间");
     await $(".v-inbox .move-panel").waitForExist({ timeout: 5000 });
     let s = await panelState(".v-inbox");
     expect(s.warn).toContain("这边不留");
@@ -165,7 +165,7 @@ describe("W3 159 · 空间与跨空间移动(桌面第二波,前端半)", () => 
     });
     s = await panelState(".v-inbox");
     expect(s).toMatchObject({ pressed: [FAKE_NAME], q: `移到「${FAKE_NAME}」?`, yes: true });
-    expect(s.focused).toContain("move-yes");
+    expect(s.focused).toContain("move-no"); // W5 Q3 ★①(D1 改):选了目标、确认一出来焦点停「取消」(此前停「确认移动」)
     expect(await browser.execute(() => window.__w159.calls.length)).toBe(0);
 
     // 挪不动(正文引用了已彻底删掉的图2):原样写出来,不带「要改的那一条已经不在了」那句误判
@@ -194,7 +194,7 @@ describe("W3 159 · 空间与跨空间移动(桌面第二波,前端半)", () => 
     await remount("inbox");
     await armRecorder();
     await browser.execute((id) => (window.__w159.moveResult = () => ({ outcome: "moved", new_id: id, source_already_gone: false })), target);
-    await inboxAction(`${TOK}-要移的随记`, "移动");
+    await inboxAction(`${TOK}-要移的随记`, "移到别的空间");
     await $(".v-inbox .move-panel").waitForExist({ timeout: 5000 });
     await clickIn(".v-inbox", ".move-target");
     await clickIn(".v-inbox", ".move-yes");
@@ -229,7 +229,7 @@ describe("W3 159 · 空间与跨空间移动(桌面第二波,前端半)", () => 
       const body = c.closest(".col-body");
       body.scrollTop = c.offsetTop + c.offsetHeight - body.clientHeight;
     }, last);
-    await boardAction(last, "移动");
+    await boardAction(last, "移到别的空间");
     await $(".v-board .move-panel").waitForExist({ timeout: 5000 });
     const geo = await browser.execute(() => {
       const p = document.querySelector(".v-board .move-panel");
@@ -296,7 +296,7 @@ describe("W3 159 · 空间与跨空间移动(桌面第二波,前端半)", () => 
     await remount("docs");
     await browser.execute((t) => [...document.querySelectorAll(".v-docs .doc-card")].find((c) => c.textContent.includes(t)).click(), `${TOK}-长文`);
     await $(".v-docs .doc-page").waitForExist({ timeout: 5000 });
-    await docAction(`${TOK}-长文`, "移动");
+    await docAction(`${TOK}-长文`, "移到别的空间");
     await $(".v-docs .move-panel.doc-move").waitForExist({ timeout: 5000 });
     const s = await panelState(".v-docs");
     expect(s.warn).toContain("编辑历史会随移动永久删除");

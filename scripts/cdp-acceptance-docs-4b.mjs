@@ -6,7 +6,7 @@
 //          非预期 IPC 四样。⭐ 观测装置先过阴性对照(故意塞一个会发请求的 img、故意调一次 opener、故意导航一个
 //          iframe),四样都真响了才判正文那趟的「零」有意义 —— ⛔ 不拿「没弹窗」当证据。
 //   links  链接平台行为:点每一个 `.md-link`,opener 收到的恰是规范化的 http/https 地址、一次点一发;
-//          鸿蒙(`HAS_BROWSER=false`)应一个 `.md-link` 都没有、点 `.md-link-off` 一发 opener 都不调。
+//          三端同一判据(W5 A54 起鸿蒙也 `HAS_BROWSER=true`:opener 走壳里的 `__zhujianOpener` 桥,不走 IPC)。
 //          opener 那一发在页内被截下(不真开浏览器);真开一次浏览器是手工那格,不在本资产里。
 //   hist   历史接口:N 版 × 近 200 KiB(`--versions`,缺省 200)打开目录不传正文(量 IPC 回包字节)、默认比对只取
 //          两份、翻页期间新增历史不重不漏、版本身份精确(别条的版本 / 已彻底删除 ⇒ 报错,不换版)。
@@ -35,6 +35,18 @@ const arg = (k, d = null) => (argv.includes(k) ? argv[argv.indexOf(k) + 1] : d);
 const TARGET = arg("--target");
 if (!["desktop", "android", "ohos"].includes(TARGET)) throw new Error("--target desktop|android|ohos");
 const PHONE = TARGET !== "desktop";
+// 165 / W5 A32:三端比对前都先把两版的末行换行补齐(手机 `android/src/ui.ts::diffPair`、桌面 `src/history-panel.ts::diffPair`,逐字孪生;
+// 只改拿去比的那两份,存下的版本不动)—— 上一版末行没带换行、补一段之后那一行不再「先红一遍、再一字不差绿一遍」。两版**只**差那个
+// 换行时照原样比(差异照实报)。⇒ 「差异两侧拼回」对的是**规整后**的那两份(D2 起桌面也规整,三端同一判据)。
+const EOL_NORM = true;
+/** 与 ui.ts::diffPair 同一条规则(⛔ 改一处就改另一处)。 */
+function diffPair(a, b) {
+  if (!EOL_NORM) return [a, b];
+  const eol = (s) => (s === "" || s.endsWith("\n") ? s : `${s}\n`);
+  const na = eol(a);
+  const nb = eol(b);
+  return na === nb ? [a, b] : [na, nb];
+}
 const PORT = Number(arg("--port", PHONE ? 9222 : 9233));
 const ONLY = (arg("--only") ?? "sec,links,hist,edge,budget,stale,res").split(",");
 const VERSIONS = Number(arg("--versions", 200));
@@ -205,7 +217,18 @@ const INSTALL = `(() => {
       }
     }
   }).observe(document.documentElement, { subtree: true, childList: true, attributes: true });
+  // 鸿蒙那条(W5 A54 起):共用前端的 openUrl 在这一端被换成 ohos/src/opener.ts,不发 IPC、直接调壳里的
+  // \`window.__zhujianOpener.open(id, url)\` ⇒ 包那只桥对象:记地址、当场回「成了」(不真开浏览器)。
+  if (${TARGET === "ohos"}) {
+    const real = window.__zhujianOpener;
+    if (real) {
+      const fake = { open(id, url) { o.opener.push(url); setTimeout(() => window.__zhujianOpenerDone({ id, ok: true }), 0); } };
+      try { window.__zhujianOpener = fake; } catch {}
+      o.ohosWrapped = window.__zhujianOpener === fake;
+    } else o.ohosWrapped = false;
+  }
   if (o.androidWrapped === false) return "android-ipc-not-wrappable";
+  if (o.ohosWrapped === false) return "ohos-opener-not-wrappable";
   return "installed";
 })()`;
 // 重载会换一只新的记录器(gen 变)⇒ 记号属于旧那只时从头算
@@ -216,6 +239,7 @@ const rule = (cmd, stage, ms, n = 1) => ev(`(window.__zj4b.rules[${J(cmd)}] = { 
 async function install() {
   const r = await ev(INSTALL);
   if (r === "android-ipc-not-wrappable") throw new Error("window.ipc.postMessage 包不上 —— 安卓上看不见 IPC,判据作废");
+  if (r === "ohos-opener-not-wrappable") throw new Error("window.__zhujianOpener 缺席或包不上 —— 鸿蒙上看不见 opener,判据作废");
 }
 /** 安卓的回包不经包装层:拿同参数再取一次量字节(读命令,确定性)。 */
 async function fillBytes(calls) {
@@ -429,7 +453,7 @@ if (ONLY.includes("sec") || ONLY.includes("links")) {
     ok(body.bad.length === 0, "阅读页·正文区一个危险元素都没有", body.bad);
     ok(body.attrs.length === 0, "阅读页·正文区没有 href / src / on* / style 一类属性", body.attrs);
     ok(body.rawKept.length === 0, "阅读页·恶意片段作为文字原样还在", body.rawKept);
-    ok(PHONE && TARGET === "ohos" ? body.link === 0 && body.linkOff >= 3 : body.link >= 3, `阅读页·链接形:${TARGET === "ohos" ? "鸿蒙只显示文字与地址(.md-link-off),没有可点链接" : "合法 http/https 成 .md-link"}`, { link: body.link, off: body.linkOff });
+    ok(body.link >= 3, "阅读页·链接形:合法 http/https 成 .md-link", { link: body.link, off: body.linkOff });
     note("阅读页 · 认出的链接个数", { link: body.link, off: body.linkOff, imgRef: body.imgRef });
 
     if (ONLY.includes("links")) {
@@ -445,9 +469,7 @@ if (ONLY.includes("sec") || ONLY.includes("links")) {
         }
         return { out, total: window.__zj4b.opener.length - before, url: location.href };
       })()`);
-      if (TARGET === "ohos") {
-        ok(lk.total === 0, "鸿蒙·点不可点链接 opener 一发都不调", lk.out);
-      } else {
+      {
         const links = lk.out.filter((x) => x.cls === "md-link");
         ok(links.length >= 3 && links.every((x) => x.got.length === 1), "每点一个链接 opener 恰收到一发", links.map((x) => [x.text, x.got]));
         ok(links.every((x) => x.got.every((u) => /^https?:\/\//.test(u))), "opener 收到的全是 http/https", links.flatMap((x) => x.got));
@@ -474,7 +496,8 @@ if (ONLY.includes("sec") || ONLY.includes("links")) {
     await waitCompare();
     const hv = await readDiff();
     const pair = await inv("revision_texts", { id, a: "latest", b: "current" });
-    ok(hv.old === pair.a.content && hv.neu === pair.b.content, "历史·差异两侧拼回 = 两份原文(逐码元)");
+    const [wantOld, wantNeu] = diffPair(pair.a.content, pair.b.content);
+    ok(hv.old === wantOld && hv.neu === wantNeu, EOL_NORM ? "历史·差异两侧拼回 = 两份原文按末行换行规整后(逐码元,A32)" : "历史·差异两侧拼回 = 两份原文(逐码元)");
     ok(hv.md === 0, "历史·比对面不渲染 Markdown、不出可导航元素", hv.md);
     ok(hv.text.includes("<img src=") && hv.text.includes("<b>加粗?</b>"), "历史·HTML 字样是字");
     await sleep(1500);
@@ -518,14 +541,26 @@ if (ONLY.includes("hist")) {
     return ${VERSIONS};
   })()`, 1800000);
   note(`写入 ${wrote} 版用时`, `${((Date.now() - t0) / 1000).toFixed(1)} s`);
+  // 165 / W5 Q15:手机的长文列表卡 / 阅读页另写「改于 …」,读的是同一条目录命令(每篇一发首页目录,按正文缓存)⇒ 进到阅读页之前
+  // 就会有几发 list_revisions。判据拆成两半:①一路上的每一发目录都不带正文(< 16 KiB);②点「历史」那一下只多一发目录。
+  const oNav = await obs();
+  if (!(await openDoc(id, `${TAG}·历史接口`))) throw new Error("历史接口:阅读页没打开");
+  await sleep(500);
+  const navCalls = await obsSince(oNav);
+  await fillBytes(navCalls.calls);
+  const navCat = navCalls.calls.filter((c) => c.cmd === "list_revisions");
   const o0 = await obs();
-  await openHistory(id, `${TAG}·历史接口`);
+  ok(await barBtn("历史"), "点「历史」");
+  await waitFor(`!!document.querySelector("${R} .hv-row")`, "历史目录");
+  await waitCompare();
   await sleep(500);
   let o1 = await obsSince(o0);
   await fillBytes(o1.calls);
   const cat = o1.calls.filter((c) => c.cmd === "list_revisions");
   const tx = o1.calls.filter((c) => c.cmd === "revision_texts");
   note("打开历史页的 IPC", o1.calls.filter((c) => /revision/.test(c.cmd)));
+  note("进阅读页一路上的目录(「改于」那几发,只手机有)", navCat.map((c) => c.resBytes));
+  ok(navCat.every((c) => c.resBytes < 16 * 1024), "进阅读页一路上的目录(「改于」)每发都不带正文(< 16 KiB)", navCat.map((c) => c.resBytes));
   ok(cat.length === 1 && cat[0].resBytes < 16 * 1024, `打开目录 = 一发 list_revisions、回包 < 16 KiB(${VERSIONS} 版 × 200 KiB 的正文一个字节都没跟来)`, cat.map((c) => c.resBytes));
   ok(tx.length === 1 && tx[0].resBytes > 2 * 195000 && tx[0].resBytes < 3 * 204800, "默认比对 = 一发 revision_texts、回包恰两份全文", tx.map((c) => c.resBytes));
   const rows0 = await ev(`document.querySelectorAll("${R} .hv-row").length`);
@@ -612,8 +647,9 @@ if (ONLY.includes("edge")) {
   for (let vi = 1; vi < V.length; vi++) {
     await pick(rowOf(vi - 1), rowOf(vi));
     const d = await readDiff();
-    const exact = d.old === V[vi - 1] && d.neu === V[vi];
-    ok(exact, `V${vi - 1} → V${vi}:差异两侧拼回 = 写进去的原文(逐码元)`, exact ? { hl: d.hl, ws: d.ws } : { old: J(d.old), neu: J(d.neu), want: [J(V[vi - 1]), J(V[vi])], note: d.note });
+    const want = diffPair(V[vi - 1], V[vi]);
+    const exact = d.old === want[0] && d.neu === want[1];
+    ok(exact, `V${vi - 1} → V${vi}:差异两侧拼回 = 写进去的原文${EOL_NORM ? "(末行换行规整后,A32)" : ""}(逐码元)`, exact ? { hl: d.hl, ws: d.ws } : { old: J(d.old), neu: J(d.neu), want: want.map(J), note: d.note });
     ok(d.md === 0, `V${vi - 1} → V${vi}:不渲染 Markdown`);
     if (vi === 1 || vi === 3) ok(d.cls === "diff" && (d.text.length > 0), `V${vi - 1} → V${vi}:只差行结束符也报出差异(不误报「没有变化」)`, d.cls);
     if (vi === 7) ok(d.hl >= 3, "删加等长 ⇒ 逐行配对、字级高亮", d.hl);
@@ -650,7 +686,8 @@ if (ONLY.includes("budget")) {
     await inv("edit_note", { id, content: c.b });
     await openHistory(id, `${TAG}·降级`);
     const d = await readDiff();
-    const exact = d.old === c.a && d.neu === c.b;
+    const [wa, wb] = diffPair(c.a, c.b);
+    const exact = d.old === wa && d.neu === wb;
     if (c.want === "ok") {
       ok(d.cls === "diff" && !d.note, `${c.name}:不降级`, { cls: d.cls, note: d.note });
       const nodes = await ev(`document.querySelector("${R} .hv-out .diff").querySelectorAll("*").length`);

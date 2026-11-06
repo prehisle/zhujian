@@ -118,8 +118,10 @@ function render(body: HTMLElement, st: Status, outboxProblem: string): void {
     //   (没骗人,但把一个平台边界说成了安装故障)。
     // ⚠ 两句**各自静态**地写出来(⛔ 别写成 `t(cond ? "a" : "b")`):`check-i18n-drift`
     // 静态核键,动态调用要另进 DYNAMIC_T 登记表 —— 为省一行让门禁少看一处不划算。
-    const why = HAS_SAF_BRIDGE ? t("backup.noBridge") : t("backup.notOnThisEnd");
-    body.appendChild(el("p", "fine warn-ink", why));
+    // 165 / W5 A34(WM-34):「这一端本来就没有」是平台事实、不是出错 ⇒ 平常的说明字,⛔ 别用出错那种红(此前一整句常驻红字、
+    // 却又不带出错的 ! 图标,像是坏了)。「该有却没挂上」才是真出错,照旧红。
+    if (HAS_SAF_BRIDGE) body.appendChild(el("p", "fine warn-ink", t("backup.noBridge")));
+    else body.appendChild(el("p", "fine", t("backup.notOnThisEnd")));
     return;
   }
   // ⛔ **不等就什么都不给点**(⛔ 不静默重试、⛔ 不回退到别的落点):这是**漂移**类风险

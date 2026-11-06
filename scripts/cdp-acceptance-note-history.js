@@ -7,15 +7,15 @@
 // 跑法:node scripts/android-cdp.mjs forward && node scripts/cdp-run.mjs note-history
 //
 // # 判据
-//  ① 随记卡的操作面上有「历史」入口(data-pact="history")
-//  ② 没改过的随记:历史面是一句「还没有改过」,没有版本块、没有任何按钮(除「返回」)
-//  ③ 改两次之后(edit_note 走 IPC):历史面恰两块,**新的在前**(历史里存的是被替换掉的那一版:改成 v2
+//  ① 改过的随记卡,操作面「更多…」里有「历史」入口(data-pact="history")
+//  ② 没改过的随记:「更多…」里**不列**「历史」(165 / W5 A45:指南「改过的才有」;此前列着、点进去只一句「还没有改过」)
+//  ③ 改两次之后(第一次走编辑层 UI —— 卡上的「改过」要靠那一趟重拉才进快照;第二次 edit_note 走 IPC):历史面恰两块,**新的在前**(历史里存的是被替换掉的那一版:改成 v2
 //     时存 v1、改成 v3 时存 v2 ⇒ 列表 = [v2, v1]);**没点开时 DOM 里一份正文都没有**(目录不带正文);
 //     点开一块才显示那一版、逐字对上;再点另一块 = 前一块收起,同一时刻只展开一版
 //  ④ 每块都有时间字与字数;**没有修改 / 恢复的动作** —— 历史面里的按钮只许是版本块头(data-rev,
 //     只是「看」)与「更早的版本」(只有超过一页才出现)(只读:改回去要走编辑)
 //  ⑤ 「返回」回到操作面(edit 入口又在)
-//  ⑥ 任务卡同样有「历史」入口(item_revisions 是 items 表级的,随记与任务同一张表)
+//  ⑥ 任务卡同一条规矩:没改过不列「历史」(item_revisions 是 items 表级的,随记与任务同一张表)
 //  ⑦ 翻页:51 版时第一页 50 块 +「更早的版本」,点了接上第 51 块、不重不漏,翻到底按钮消失
 //
 // # 这支守不到的那半
@@ -94,17 +94,22 @@
     if (!ok("探针随记入时间轴", !!card)) return out;
     note = card.dataset.id;
 
-    // ---- ① / ② 没改过:入口在,历史面是一句话 ----
-    const empty = await enterHistory(note);
-    if (!ok("① 操作面上有「历史」入口,历史面开得出来", !!empty)) return out;
-    ok("② 没改过时是一句「还没有改过」,零个版本块", empty.querySelectorAll(".rev").length === 0 && /还没有改过|Not edited/.test(empty.textContent), empty.textContent.trim());
-    ok("② 历史面里没有按钮(只读)", empty.querySelectorAll("button").length === 0);
-    click(await actOf(note, "back"));
+    // ---- ② 没改过:「更多…」里不列「历史」(A45)----
+    const none = await actOf(note, "history");
+    ok("② 没改过:「更多…」里没有「历史」(A45)", none === null);
+    ok("② …「更多…」确实开着(前置:别把没开成读成没有)", !!inPanel(note, "copy"));
+    click(inPanel(note, "back"));
     if (!ok("⑤ 「返回」回到操作面(edit 入口又在)", (await until(() => panelOf(note)?.querySelector('[data-pact="edit"]'), 3000)) !== null)) return out;
 
-    // ---- 改两次(走 IPC,不经 UI;历史里存的是被换掉的那一版)----
+    // ---- 改两次(历史里存的是被换掉的那一版):第一次走编辑层(保存后整轴重拉,卡上「改过」进快照),第二次走 IPC ----
     const v2 = v1 + " v2", v3 = v1 + " v3";
-    await inv("edit_note", { id: note, content: v2 });
+    click(inPanel(note, "edit"));
+    if (!ok("编辑层开得出来(前置)", await until(() => document.getElementById("edit-sheet").classList.contains("open"), 2000))) return out;
+    const et = document.getElementById("edit-text");
+    et.value = v2;
+    et.dispatchEvent(new Event("input", { bubbles: true }));
+    click(document.getElementById("edit-save"));
+    if (!ok("编辑层存成 v2(前置)", await until(() => cardOf(note)?.querySelector(".edited-mark") && cardOf(note)?.querySelector(".content")?.textContent.includes(" v2"), 5000))) return out;
     await inv("edit_note", { id: note, content: v3 });
     const cat = await inv("list_revisions", { id: note, before: null });
     const ids = cat.entries.map((r) => r.revision_id);
@@ -130,11 +135,20 @@
       revBtns.map((b) => b.outerHTML.slice(0, 80)));
     ok("④ 一页之内没有「更早的版本」", !panelOf(note)?.querySelector('[data-pact="histmore"]'));
     // 点开第二块(v1)→ 只它展开、逐字对上;再点第一块(v2)→ 换成 v2、仍只一块展开
-    const openText = () => [...(panelOf(note)?.querySelectorAll(".rev.open p") ?? [])].map((p) => p.textContent);
+    // 157 G4 / P5 起点开一版画的是「这一版 → 现在」的比对(shared/diff-dom),不是旧版全文 ⇒ 从比对里拼回旧的那一侧(相等 + 删掉的行)。
+    // 165 / W5 A32:比对前两版末行换行补齐(只改拿去比的那两份)⇒ 拼回来末尾多一个换行,去掉再对。
+    const openOld = () => {
+      const open = [...(panelOf(note)?.querySelectorAll(".rev.open") ?? [])];
+      const d = open.length === 1 ? open[0].querySelector(".diff") : null;
+      if (!d) return { n: open.length, old: null };
+      let a = "";
+      for (const k of d.children) if (k.classList.contains("diff-eq") || k.classList.contains("diff-del")) a += k.textContent;
+      return { n: open.length, old: a.replace(/\n$/, "") };
+    };
     click(panelOf(note).querySelector(`[data-rev="${ids[1]}"]`));
-    ok("③ 点开一块才显示那一版(v1)", (await until(() => openText().join() === v1)) !== null, openText());
+    ok("③ 点开一块才显示那一版(v1;比对的旧那一侧逐字对上)", (await until(() => openOld().old === v1)) !== null, openOld());
     click(panelOf(note).querySelector(`[data-rev="${ids[0]}"]`));
-    ok("③ 换一块 = 前一块收起,只展开 v2", (await until(() => openText().join() === v2)) !== null, openText());
+    ok("③ 换一块 = 前一块收起,只展开 v2", (await until(() => { const o = openOld(); return o.n === 1 && o.old === v2; })) !== null, openOld());
     click(await actOf(note, "back"));
     ok("⑤ 「返回」回到操作面", (await until(() => panelOf(note)?.querySelector('[data-pact="edit"]'), 3000)) !== null);
 
@@ -170,9 +184,8 @@
     5000);
     if (!ok("探针任务入时间轴", !!tcard)) return out;
     task = tcard.dataset.id;
-    const th = await enterHistory(task);
-    ok("⑥ 任务卡同样开得出历史面(还没改过那句)", !!th && th.querySelectorAll(".rev").length === 0, th?.textContent.trim());
-    click(await actOf(task, "back"));
+    ok("⑥ 没改过的任务卡同样不列「历史」(A45)", (await actOf(task, "history")) === null && !!inPanel(task, "copy"));
+    click(inPanel(task, "back"));
   } catch (e) {
     out.runError = String(e?.message ?? e);
   } finally {

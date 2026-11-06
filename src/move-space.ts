@@ -181,7 +181,8 @@ export function movePanel(opts: MovePanelOpts): { panel: HTMLElement; reveal: ()
     question.hidden = false;
     yes.hidden = false;
     paintQuestion();
-    yes.focus({ preventScroll: true });
+    // W5 Q3 ★①:确认一出来焦点停【取消】(移走会永久删掉编辑历史 —— 回车不做这件事,要做 Tab 一下到「确认移动」)。
+    no.focus({ preventScroll: true });
     actions.scrollIntoView({ block: "nearest" });
     if (opts.fromColumn === null) return;
     const mine = ++pickSeq;

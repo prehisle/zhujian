@@ -106,7 +106,7 @@ describe("157 G4 · 随记页的折叠 / 回顶 / 筛选时胶囊", () => {
   });
 
   it("P3:转待办回执带「去看看」,点了落到看板那张卡", async () => {
-    await inboxAction("E2EW4-短随记", "待办");
+    await inboxAction("E2EW4-短随记", "转待办");
     const go = await $(".undo-toast .undo-go");
     await go.waitForExist({ timeout: 5000 });
     // ⚠ 读 textContent 不读 getText:回执条有入场淡入,全量里读早了 getText 给空串(只见过一次,单跑不出)。

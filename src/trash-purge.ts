@@ -24,11 +24,13 @@ export type TrashPurgeOpts = {
   claimConfirm: (off: (() => void) | null) => void;
   /** 点了「彻底删除全部」。确认区此时已经收起。 */
   onYes: () => void;
+  /** 这是哪一只回收站(165 / W5 Q14:确认句写明只清这一只 —— 随记 / 长文那只与看板那只是两只,清哪只都只清自己)。 */
+  which: "notes" | "tasks";
 };
 
 /** 返回两样:`button` 放进工具条右端;`panel` 紧跟在工具条后面插进页面(平时 `hidden`,不占位)。 */
 export function trashPurgeControl(opts: TrashPurgeOpts): { button: HTMLButtonElement; panel: HTMLElement } {
-  const { count, claimConfirm, onYes } = opts;
+  const { count, claimConfirm, onYes, which } = opts;
   const button = el("button", { className: "purge-open", type: "button", textContent: t("trash.emptyTrash") });
   button.setAttribute("aria-expanded", "false");
   const no = el("button", { className: "purge-no", type: "button", textContent: t("trash.cancel") });
@@ -46,6 +48,10 @@ export function trashPurgeControl(opts: TrashPurgeOpts): { button: HTMLButtonEle
   let off: (() => void) | null = null;
   const close = (): void => {
     if (panel.hidden) return; // 已收:别再去动宿主的槽位(那时它可能已登记着别的确认)
+    // 焦点在确认区里(取消 / Esc 收场)或已掉到页面上 ⇒ 收完还给「清空回收站」那枚(W5 A4:此前 Esc 后掉到 body,
+    // 下一下 Tab 落到第 1 条的 ⋯)。点了别处、焦点已被接走就不抢。
+    const a = document.activeElement;
+    const refocus = a === null || a === document.body || panel.contains(a);
     const f = off;
     off = null;
     f?.();
@@ -53,16 +59,18 @@ export function trashPurgeControl(opts: TrashPurgeOpts): { button: HTMLButtonEle
     panel.hidden = true;
     button.disabled = false;
     button.setAttribute("aria-expanded", "false");
+    if (refocus && button.isConnected) button.focus({ preventScroll: true });
   };
   button.addEventListener("click", () => {
     if (!panel.hidden) return;
     const { items, images } = count();
-    (panel.querySelector(".purge-q") as HTMLElement).textContent =
+    const q =
       images === 0
         ? t("trash.purgeAllQ", { n: items })
         : items === 0
           ? t("trash.purgeAllImagesQ", { m: images })
           : t("trash.purgeAllMixedQ", { n: items, m: images });
+    (panel.querySelector(".purge-q") as HTMLElement).textContent = `${q}${which === "notes" ? t("trash.scopeNotes") : t("trash.scopeTasks")}`;
     panel.hidden = false;
     button.disabled = true;
     button.setAttribute("aria-expanded", "true");

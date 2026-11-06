@@ -225,7 +225,8 @@ describe("W3 159 · 回收站 / 搜索 / 看板(桌面第一波)", () => {
     expect(pi.overlap).toBe(false);
     expect(pi.underIsTrigger).toBe(true); // 双击的第二下落在置灰的原钮上
     expect(pi.yesFull).toBe(true);
-    expect(pi.q).toMatch(/^彻底删除回收站里全部 \d+ 条(和 \d+ 张配图)?\?无法恢复。$/);
+    // 165 / W5 Q14:问句后面写明只清这一只(随记 / 长文与看板是两只回收站)
+    expect(pi.q).toMatch(/^彻底删除回收站里全部 \d+ 条(和 \d+ 张配图)?\?无法恢复。只清这只\(随记与长文\);看板的回收站不动。$/);
     await browser.execute(() => document.querySelector("button.purge-open").click()); // 第二下
     expect((await invoke("list_archived")).length).toBe(before);
     await browser.keys("Escape");
@@ -245,7 +246,7 @@ describe("W3 159 · 回收站 / 搜索 / 看板(桌面第一波)", () => {
     expect(pb.overlap).toBe(false);
     expect(pb.underIsTrigger).toBe(true);
     expect(pb.yesFull).toBe(true);
-    expect(pb.q).toMatch(/^彻底删除回收站里全部 \d+ 条(和 \d+ 张配图)?\?无法恢复。$/);
+    expect(pb.q).toMatch(/^彻底删除回收站里全部 \d+ 条(和 \d+ 张配图)?\?无法恢复。只清这只\(看板的任务\);随记的回收站不动。$/);
     expect(pb.shape).toBe(pi.shape); // 两个回收站同一个结构、同一套类名、同一个钮序
     await armRecorder();
     await $("button.purge-yes").click();

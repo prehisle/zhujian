@@ -228,7 +228,7 @@ textarea {
 }
 
 /* 跳转定位高亮(深链接 / 搜索命中 / 剪贴板「打开」冷着陆):区别于 .just-born 的一次性涟漪,
-   这个**持续常亮**——浅朱砂底 + 朱砂描边 + 柔光,把冷着陆的目标卡钉住,留到下次点击/滚动
+   这个**常亮约 3 s**(165 / W5 A43)——浅朱砂底 + 朱砂描边 + 柔光,把冷着陆的目标卡钉住,到点或下次点击/滚动
    才由 .locate-fading 淡出摘除(时序控制见 locate.ts)。 */
 .just-located::after {
   content: "";
@@ -256,6 +256,31 @@ textarea {
   background: var(--seal-tint);
   border: 1px dashed var(--seal-line);
   border-radius: var(--radius-sm);
+}
+
+/* ---- 键盘焦点:全应用一个样子(W5 A18,WD-20)----
+   此前三种:过滤框 / 记一笔框拿到焦点只把边框从淡灰换成淡红(和没拿到并排几乎分不出);⋯ / 标签 ✕ / 清单方框是
+   引擎默认的 1px 细黑圈(✕ 上那一圈把 ✕ 盖成一个小「0」);搜索结果 / 移动面板目标是 2px 朱砂实线(和选中 /
+   落点红框同色系)。⇒ 一律 2px 墨色实线、离控件 2px。⛔ 别用朱砂:朱砂是「选中 / 落点」的颜色,焦点得和它分得开。
+   只画在 :focus-visible 上(键盘来的焦点;鼠标点不画)。 */
+:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+/* 文本框:各自的样式表里多半写了 outline:none(拿焦点就是在打字,边框换色那一下是给鼠标那条路的),
+   ⇒ 同一圈画在 box-shadow 上(不和那几十条 outline:none 抢优先级),看上去一样。勾选框 / 单选照上面那条走 outline。 */
+/* ⚠ 捕获浮窗那只框(index.html `#capture`)除外:那扇窗就这一个框、开着就是在打字,一圈墨框只是噪音。
+   文本框这一档用 --ink-soft 不用 --ink:引擎对文本框恒判 focus-visible(鼠标点进去也算),记一笔框开机就拿着
+   焦点 ⇒ 实墨那圈常驻在首屏最显眼处,比页上任何东西都黑(W5c 主控看基线定);次级墨与淡红边框仍分得开。 */
+:is(textarea:not(#capture), select, input:not([type="checkbox"]):not([type="radio"])):focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--ink-soft);
+}
+/* 键盘焦点停在一张卡的 ⋯ 上 = 「键盘在这张卡上」:整张卡也描这一圈 —— 选中(浅红边)本身和鼠标悬停长得一样,
+   靠这一圈分出「单键作用于哪张」(W5 A18 末句;选中 / 焦点的规矩见 hotkey-menu.ts 头)。 */
+.hk-host:has(.hk-btn:focus-visible) {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
 }
 
 @media (prefers-reduced-motion: reduce) {

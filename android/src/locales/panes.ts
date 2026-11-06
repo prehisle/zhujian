@@ -37,9 +37,14 @@ export const panes = defineMessages({
   // A7(WM-04):彻底删除做完要说话(此前还原、清空都有回执,唯独它一声不吭)。
   "panes.purged": { zh: "已彻底删除", en: "Deleted forever" },
   "panes.purgedImage": { zh: "这张图已彻底删除", en: "Image deleted forever" },
-  "panes.restoredTask": { zh: "已还原,在底栏「任务」里", en: "Restored, find it under Tasks" },
-  "panes.restoredDoc": { zh: "已还原,在底栏「长文」里", en: "Restored, find it under Long-form" },
-  "panes.restoredIdea": { zh: "已还原,在底栏「随记」里", en: "Restored, find it under Notes" },
+  // 165 / W5 A22(连 Q13 的还原那句):还原回执两端同句、键名照桌面 trash.restored*,配【去看看】;⛔ 不写「在底栏…里」
+  // (手机一横、平板上没有底栏)。任务说回到看板哪一列;那一列已不在了就只说回到看板。
+  "trash.restoredNote": { zh: "已还原到随记", en: "Restored to Notes" },
+  "trash.restoredDoc": { zh: "已还原到「长文」", en: "Restored to Long-form" },
+  "trash.restoredTask": { zh: "已还原到看板「{col}」列", en: "Restored to the “{col}” column" },
+  "trash.restoredBoard": { zh: "已还原到看板", en: "Restored to the board" },
+  // 165 / W5 Q15:彻底删除(找不回的那一下)写出删的是哪一条;两端同句、同一截(ui.ts::itemSnippet:第一行有字的、去掉 # 与方框、20 字封顶加「…」)。
+  "trash.purgedNamed": { zh: "已彻底删除「{name}」", en: "Deleted “{name}” forever" },
   // 159(对齐桌面 trash.purgeOneQ / trash.purgeOneImagesQ):写「无法恢复」,带图时说清连带几张。
   "panes.purgeOneQ": { zh: "彻底删除这条?无法恢复", en: "Delete this forever? This cannot be undone" },
   "panes.purgeOneImagesQ": { zh: "彻底删除这条和它的 {m} 张配图?无法恢复", en: "Delete this and its {m} {m|image|images} forever? This cannot be undone" },

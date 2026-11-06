@@ -193,10 +193,9 @@ try {
   await waitFor(`!!document.querySelector("#docs-body .doc-acts")`, "「不删」后回阅读页");
   ok((await inv("list_docs", { spaceId: sp })).find((d) => d.id === id).content === `${BODY}改`, "③ 「不删」⇒ 字落库");
   ok((await imgsOf(id)).length === 2, "③ 「不删」⇒ 图还在");
-  // G8「写于」今天也带日期
+  // G8「写于」今天也带日期 —— 165 / W5 Q14 起两端一个写法:今天的写「今天 HH:MM」(别的天「M月D日 HH:MM」)
   const written = await ev(`document.querySelector("#docs-body .doc-meta time").textContent`);
-  const now = new Date();
-  ok(written.includes(`${now.getMonth() + 1}月${now.getDate()}日`), "⑤ 今天建的篇「写于」带月日", written);
+  ok(/^写于 今天 \d{2}:\d{2}$/.test(written), "⑤ 今天建的篇「写于」写明是今天(Q14:「写于 今天 HH:MM」)", written);
 
   await clickText("编辑");
   await waitFor(`document.querySelectorAll("#docs-body .doc-imgs .thumbs .thumb").length === 2`, "编辑器条画齐 2 张");

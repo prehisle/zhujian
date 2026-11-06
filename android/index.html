@@ -436,6 +436,13 @@
       .compose.open { transform: translateY(0); }
       /* 键盘起着:手势条压在键盘底下,底边那段安全区白留(ArkWeb 照报它的高)⇒ 收掉(`kb-up` 见 main.ts)。 */
       html.kb-up .compose { padding-bottom: 12px; }
+      /* 手机横放打着字(宽屏、不是高屏、键盘起着;165 / W5 A26):键盘一起可见区只剩约 130,捕获层(两行起步的写字框 + 一排钮
+         + 上下 12)比它还高 ⇒ 层顶顶进状态栏、和系统图标叠在一起。⇒ 层高封在「可见区扣掉状态栏」之内(还放不下就层里滚),
+         写字框起步收成一行、上边距收一半。编辑层不在这条里(它由 kbsheet 按可见区夹高)。 */
+      html.kb-up body.widescreen:not(.tallscreen) .compose:not(.editsheet) {
+        max-height: calc(100vh - var(--sat)); overflow-y: auto; padding-top: 6px;
+      }
+      html.kb-up body.widescreen:not(.tallscreen) .compose:not(.editsheet) textarea { min-height: 1.6em; }
       /* 底部层(捕获/留言)开着时锁住背景滚动 —— 由 kbsheet.ts 上下这个类,由头写在那边:
          键盘一起 Chromium 会滚文档去露焦点输入框,而层是 fixed 的,滚了只有背后的时间轴在动
          (240 报的「弹键盘背景乱滚」,2026-08-28 换了个形回来,A/B 各 5 次实测)。 */
@@ -463,10 +470,14 @@
       }
       /* 面板接管视图时(回收站/归档/标签/搜索/空间),捕获入口与层一并让出。 */
       body.pane-open #capture-fab { display: none !important; }
-      /* 卡片操作面开着时也让位(706,用户报「＋ 压在保存上」):它是 fixed 且画在时间轴
-         之上,而操作面/编辑层的钮就落在右下那一带。⛔ 别只藏编辑那一态 —— 操作面本身也在
-         它底下,一枚盖住按钮的悬浮钮不分「正在编辑」还是「正要点删除」。 */
-      body.panel-open #capture-fab { display: none !important; }
+      /* 编辑层开着时让位(706,用户报「＋ 压在保存上」)。165 / W5 Q15(用户拍 ★「＋ 照旧留在原位」):只开着操作面时
+         ＋ 不再藏 —— 此前一并藏掉,照习惯点那个位置,点开的是下面另一张卡的操作面、接着打的字打进空气。
+         操作面那排钮不被它压着靠两样:开面 / 换子面时 `cardpanel.ts::revealPanel` 把面摆到 ＋ 上沿之上;
+         最后一张卡也滚得上去(`#timeline` 底边那 72 的留白)。 */
+      body.panel-editing #capture-fab { display: none !important; }
+      /* 键盘起着(焦点在页里的输入框:「过滤…」、卡内「新标签名」)时让位(165 / W5 A48):它跟着视口底沿浮到键盘上沿,
+         压着键盘上方那截列表 —— 而那时正在打字,用不着它。`visibility` 不改 `display`:收键盘那一下不跳。 */
+      html.kb-up #capture-fab { visibility: hidden; }
       .compose textarea {
         display: block; width: 100%;
         border: none; background: none; resize: none; outline: none;
@@ -677,6 +688,15 @@
         box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
       }
       .error.notice { background: var(--ok); }
+      /* 165 / W5 A31(平板新撞-1 / WM-12):**回执落在吸顶区(顶栏 + 筛选条)之下**。此前它贴着顶栏下沿横贯整宽 7 秒,
+         正好盖住筛选条 —— 平板上【撤销】压在右上「过滤…」的位置,挪完卡想马上过滤,一点就把刚挪的卡撤回去、一句话没有;
+         手机竖着盖住「列」那一行。筛选条是做完一件事、下一下最常点的地方,回执不该压在它上面。
+         只挪回执(成功 / 中性两档):错误条照旧紧贴顶栏(写在记一笔 / 编辑层开着时也要读得到,那时下面是层)。
+         `--fbar-h` 是 JS 量的筛选条真高,筛选条 hidden / 面开着(pane-open 把它 display:none)时是 0 ⇒ 回到顶栏下沿。
+         ⚠ 误点中撤销的那一下另有「已撤销」兜着(Q6,ui.ts::showUndone)。 */
+      .error.notice, .error.neutral {
+        top: max(calc(8px + var(--sat)), calc(var(--head-h, 0px) + var(--fbar-h, 0px) + 8px));
+      }
       /* 161 / W4 A8(WM-26)/ 清单 C 主控定的规矩:**错误条一律带图标**,「出错:」只给认不出的 —— 认得出的换了人话就不带前缀,
          此前「连不上」那条两样都没有、只靠红色认(§3.1 / ui-guidelines 头一节「错误与成功不得仅靠颜色区分」)。
          回执(notice)与中性那档不带。同一枚记号也挂在面板里那几处错误字上(同步状态那行 / 设备名单 / 建账户表单)。 */
@@ -793,6 +813,11 @@
       }
       /* 157 G3(WM-24):最后一张卡能滚到悬浮 ＋ 上方(＋ 高 56 + 离底 16),别永远被它压着一角。 */
       #timeline { padding-bottom: calc(56px + 16px); }
+      /* 手机横放(宽屏、不是高屏)给悬浮 ＋ 让一条右边距(165 / W5 A48):视口只有 360 高,＋ 占掉右下角五分之一,压在右列卡片
+         正文末尾那几个字 / 清单项上。横向宽裕,竖向才金贵 ⇒ 让出右边那一条,卡片从它旁边过。64 = ＋ 56 + 离右缘 16 − body 的 14 + 6 缝。
+         只在让了之后栏数不变时才让(main.ts::syncFabGutter 判、打 `body.fab-gutter`,同一个 64 住在那边的 FAB_GUTTER):
+         宽 720–770 的横放让了就从两栏掉成一栏,那种照旧不让。⚠ 是 padding 不是 margin(这一族横向 margin 一个字都不许写,705)。 */
+      body.fab-gutter #timeline { padding-right: 64px; }
       /* position:relative = swipe-track(182 卡下亮出目标印)的定位基;不改流内布局。 */
       .timeline .tl-group { display: flex; flex-direction: column; gap: 8px; position: relative; }
       /* 节头**吸顶**(用户面 85 ④ / ui-consistency M10 的前置,639 补钉的):任务卡上的状态印摘掉之后,
@@ -815,9 +840,12 @@
       .timeline .tl-sec { display: flex; align-items: center; gap: 6px; }
       /* 「全部归档」:节头里的文字钮(朱砂小字 = 能点),靠右。触区向上 / 左右撑开(节头上方是筛选条,z 更高、盖得住);
          向下只撑 4 —— 再多就压到第一张卡的右上角(节头下沿与卡只隔 4px)。 */
+      /* 165 / W5 A50(WM-27):朱砂字 → 节头同色加下划线(下划线标它可点)。规范「红色不用于常驻入口」:它常驻在「已完成」节头,
+         此前比卡上任何东西都显眼;点了本来就有一道确认,不靠红来提醒。 */
       .tl-act {
         margin-left: auto; position: relative; padding: 0 2px; border: 0; background: none;
-        font: inherit; font-weight: 400; letter-spacing: 0; color: var(--seal-ink);
+        font: inherit; font-weight: 400; letter-spacing: 0; color: var(--ink-soft);
+        text-decoration: underline; text-underline-offset: 2px;
       }
       .tl-act::before { content: ""; position: absolute; left: -10px; right: -10px; top: -12px; bottom: -4px; }
       /* 随记在宽屏上分栏(tablet-plan 格 1,用户拍「瀑布流 · 横三竖二」):轮流分栏,第 i 张进第 i % n 栏,
@@ -840,6 +868,9 @@
          ⚠ 病根是**两个毫不相干的语义共用一个裸类名**;同族风险还剩一枚 `.fpill.child` ——
          今天没有通用 `.child` 规则纯属运气,不是设计。 */
       p.empty { text-align: center; margin: 40px 0; }
+      /* 165 / W5 Q15:任务空态底下那句「归档了 N 张,在「归档」里」(main.ts sealedHintHtml):接在空态那句话下面、同居中;
+         上外边距负一截与 p.empty 的下边距折叠成一行间距。 */
+      p.sealed-hint { text-align: center; margin: -28px 0 40px; }
       /* 空态那句话(「回收站是空的」…)= 这个区的**全部说明**,照 336 判例走 soft,别用 faint(634)。 */
       .muted { color: var(--ink-soft); font-size: var(--fs-13); }
       .card {
@@ -955,6 +986,14 @@
         0% { box-shadow: 0 0 0 0 var(--seal-tint); border-color: var(--seal); }
         100% { box-shadow: 0 0 0 10px transparent; border-color: var(--line); }
       }
+      /* 多栏(平板 / 手机横放)上新记的那张(165 / W5 Q15,用户拍 ★):新记一条,其余每张都换一栏,1.2 s 那记脉冲还没找到它
+         就过完了 ⇒ 同一身朱砂描边常亮约 3.2 s 再淡 0.6 s(与搜索落点框同长,ui.ts LOCATED_HOLD_MS / LOCATED_FADE_MS)。
+         排法不动(tablet-plan 定的)。时长与 main.ts 记下那段摘类的 3800 同一个数。 */
+      .card.flash-hold { animation: card-flash-hold 3.8s ease-out; }
+      @keyframes card-flash-hold {
+        0%, 84% { box-shadow: 0 0 0 2px var(--seal-tint); border-color: var(--seal); }
+        100% { box-shadow: 0 0 0 0 transparent; border-color: var(--line); }
+      }
       /* 冷着陆的定位框(159 / W3 A14,ui.ts markLocated):从搜索结果 / 挪空间后的「去看看」落过来的那张,常亮一会儿再褪
          —— 同桌面 `.just-located` 那一形(朱砂描边 + 柔光 + 淡朱底)。上面那记 `.flash` 留给「你自己刚建的、知道在哪儿的」。
          淡朱底走 inset 阴影(画在底色之上、字之下):有色卡的底是 `--card-rgb` 那层,改 background 会把它盖掉。
@@ -983,9 +1022,11 @@
         border-radius: var(--radius-xs); padding: 0 1px; font-weight: 600;
       }
       .card .body { flex: 1; min-width: 0; }
-      /* 竖屏长按拖卡(158 G3 / Q7,carddrag.ts):长按是「拿起」不是「选字」⇒ 竖屏任务面的卡不让选字、不弹系统菜单
-         (要文字走卡片「更多… → 复制」)。拿起来的那张浮在上面、稍放大带影;落点是一条朱砂横线(fixed,JS 摆位置)。 */
-      body[data-view="tasks"]:not(.board) #timeline .card { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+      /* 长按拖卡(158 G3 / Q7,carddrag.ts):长按是「拿起」不是「选字」⇒ 任务面的卡不让选字、不弹系统菜单
+         (要文字走卡片「更多… → 复制」)。拿起来的那张浮在上面、稍放大带影;落点是一条朱砂横线(fixed,JS 摆位置)。
+         165 / W5 A37 起看板(平板、手机横放)也长按拿卡:此前这条只给竖屏,ArkWeb 上手指落在字上约 570ms 就选中一个词、
+         弹系统菜单并发 pointercancel,把还没拿起的那一下打掉(`contextmenu.preventDefault()` 挡不住,O1 实测)。 */
+      body[data-view="tasks"] #timeline .card { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
       .card.lifted { position: relative; z-index: 2; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22); border-color: var(--seal-line); }
       .drag-line {
         position: fixed; height: 3px; z-index: 6; pointer-events: none;
@@ -1114,7 +1155,14 @@
          本层上的第二次 pointerdown。closeViewerNow 关层时必须把这个类摘掉,否则下次开图
          整层还挂着 opacity:0(图在、看不见)。 */
       #viewer.closing { opacity: 0; transition: opacity 0.3s ease; }
-      #viewer img { max-width: 100vw; max-height: 88vh; object-fit: contain; will-change: transform; }
+      /* 图高另封一道「整层扣掉上下内边距、图与说明之间的 10、说明那一行之后还剩多少」(165 / W5 A30):
+         手机横放视口只有 360 高,88vh 的图 + 说明 + 上下让位一共约 398,整列超出视口、居中后上下各溢出一截 ——
+         图顶进状态栏、「图2 · 2/9」那行落进手势条。36 = 上 10 + 间距 10 + 下 16(本层 padding / gap);说明那一行
+         按 1.5em 算(13px × 行高 1.6 ≈ 21,随界面字号一起放大)。竖放时这道封顶比 88vh 宽松,样子不变。 */
+      #viewer img {
+        max-width: 100vw; max-height: min(88vh, calc(100vh - var(--sat) - env(safe-area-inset-bottom) - 36px - 1.5em));
+        object-fit: contain; will-change: transform;
+      }
       #viewer .cap { color: #fff; opacity: 0.85; font-size: var(--fs-13); transition: opacity 0.15s; }
       #viewer.zoomed .cap { opacity: 0; }
       /* 删图按钮:右上角,低调描边;放大态淡出并禁点(与角标同,防平移误触)。 */
@@ -1728,6 +1776,8 @@
       .doc-list { display: flex; flex-direction: column; gap: 10px; }
       .doc-card .doc-title { margin: 0 0 4px; font-size: var(--fs-16); font-family: var(--font-serif); font-weight: 600; color: var(--ink); overflow-wrap: anywhere; }
       .doc-card .doc-title.untitled { color: var(--ink-soft); font-weight: 400; }
+      /* 165 / W5 Q15:第一行没写 `#` = 不是标题,照阅读页那样是普通字(不加粗);写了 `#` 的照旧粗。 */
+      .doc-card .doc-title.plain { font-weight: 400; }
       .doc-card .doc-ex {
         margin: 0; font-size: var(--fs-13); color: var(--ink-soft); line-height: 1.6;
         display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
@@ -1737,9 +1787,21 @@
          (153 走查 A-M06)。键盘起着时不吸:横屏顶栏到键盘只剩 60px,再吸两排就看不见在写的字(docs.ts visibleBand 照这条判)。 */
       .doc-head { position: sticky; top: var(--head-h, 0px); z-index: 3; background: var(--paper); }
       html.kb-up .doc-head { position: static; }
+      /* 手机横放打着长文(宽屏、不是高屏、键盘起着;165 / W5 A26):键盘一起可见区只剩约 130,吸着的顶栏(连状态栏)就占掉 82,
+         页头两排又不吸 ⇒ 屏上只露正在打的那一行、「保存」那排在屏外。⇒ 这一形里顶栏不吸(跟着正文滚走),页头只留
+         「← 回到正文 / 保存」那一排、吸在屏顶;「编辑 / 预览 / 加图 / 拍照」那排收起(收键盘就回来)。屏上是保存那排 + 两三行字。
+         `body.doc-editing` 由 docs.ts 编辑器开合时打 / 摘;docs.ts::visibleBand 照「顶栏吸不吸」算上沿。 */
+      html.kb-up body.doc-editing.widescreen:not(.tallscreen) > header { position: static; }
+      html.kb-up body.doc-editing.widescreen:not(.tallscreen) .doc-head { position: sticky; top: 0; }
+      html.kb-up body.doc-editing.widescreen:not(.tallscreen) .doc-tools { display: none; }
       .doc-bar { align-items: center; }
       .doc-bar .doc-gap { flex: 1; }
       .doc-bar .doc-status, .hv-title { font-size: var(--fs-12); color: var(--ink-soft); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      /* 165 / W5 Q1:顶上那行加了半句「· 离开就存成一版」—— 手机竖着一行放不下:此前它与两枚钮一起挤,「← 回到正文」「保存」
+         被压到在钮里折字(「保 / 存」竖排),那半句又被省略号吃掉(要紧的正是它)。⇒ 钮按自己的字宽、不跟着缩;这行字吃剩下的宽、
+         最多折三行(界面字号 130% 时要三行;还放不下才省略)。⛔ 别给钮加 nowrap(§3.6 那条:那类钮是共用的 .row button)—— flex:none 只管这一排。 */
+      .doc-bar > button { flex: none; }
+      .doc-bar .doc-status { white-space: normal; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; line-height: 1.35; }
       .doc-bar .doc-status.bad { color: var(--seal-ink); }
       .doc-draft { flex-wrap: wrap; align-items: center; font-size: var(--fs-13); color: var(--ink-soft); }
       .doc-draft span { flex: 1 1 100%; }
@@ -1937,10 +1999,11 @@
            这里只翻旗子,浮窗本身在下面「浮窗」那段、挂在 main.ts 打的 `body.tallscreen` 上(理由在那段头注)。 */
         @media (min-height: 600px) {
           :root { --tall: 1; }
-          /* 浮窗里打字的地方给足高度(手机上捕获框两行起步是为了少挡屏,平板上没这个顾虑)。⚠ 这两条留在这层条件里、
-             不挂 `body.tallscreen`:键盘一起视口缩到 600 以下时浮窗照旧(见「浮窗」那段),可这两条就得退回手机那档 ——
-             编辑层被 kbsheet 按可见区夹着高,正文框撑着 12em 不缩,「保存」那排会被挤出层外。 */
-          body.tallscreen .compose textarea { min-height: 6em; }
+          /* 编辑层浮窗里打字的地方给足高度(手机上两行起步是为了少挡屏,平板上没这个顾虑)。⚠ 这一条留在这层条件里、
+             不挂 `body.tallscreen`:键盘一起视口缩到 600 以下时浮窗照旧(见「浮窗」那段),可这一条就得退回手机那档 ——
+             编辑层被 kbsheet 按可见区夹着高,正文框撑着 12em 不缩,「保存」那排会被挤出层外。
+             记一笔那座的 6em 165 / W5 A53 起挪出这层条件、挂到 `body.tallscreen` 上(「浮窗」那段):它不限高、浮窗又改成
+             靠顶栏下沿,键盘起着也放得下 —— 此前键盘一起写字框就从三行缩成一行半。 */
           body.tallscreen .compose.editsheet textarea { min-height: 12em; }
         }
       }
@@ -1987,7 +2050,11 @@
          都是按手机宽做的),放不下全部列时**均匀**折(四列 = 2 + 2,不是 3 + 1)。1400 的框一排四列(每列 341)、1280
          四列(304)、竖放 960 / 800 与手机横放 2 + 2。同一排的列等高(grid 默认 stretch)⇒ 列头在本列滚完之前都吸着顶。
          空态那句话(还没有任务 / 筛空了)不是一列,横跨整排。 */
-      body.board #timeline {
+      /* ⚠ `:not(.pane-open)` 不是装饰(165 / W5 A36):开面时收时间轴那条 `body.pane-open #timeline { display:none }`
+         与这条特异性相同、排在前面 ⇒ 不带它的话看板压过「收起」,平板任务页点设置 / 同步 / 长文时看板不走,
+         设置接在看板下面、同步与长文插在看板上面(随记页那面没有 .board,一直是整页换);转屏时设置读到的位置
+         也跟着看板的高度往回退(A35)。 */
+      body.board:not(.pane-open) #timeline {
         display: grid; grid-template-columns: repeat(var(--board-cols), minmax(0, 1fr)); gap: 12px;
       }
       body.board #timeline > p { grid-column: 1 / -1; }
@@ -2040,10 +2107,14 @@
          360 → 147,平板横放没量过、按常见键盘高估约剩四五百),写成 `@media` 的话一打字浮窗就跳成满幅底栏、收键盘又跳回来。main.ts 在「打着字、
          视口比这个宽度下见过的最高那次矮」时沿用上一次的判断,其余时候照 `--tall` 翻(见那边 `tallscreen` 那段)。
          上下 0 + margin-block:auto + fit-content = 竖向居中 ⇒ 键盘起着时浮窗在它上面那截里居中,不用 JS。
+         **记一笔那一座例外:竖向靠顶栏下沿**(165 / W5 A53,鸿蒙平板走查):居中的话键盘一起一落它整块上下跳 176、正要点「记下」时挪位。
+         ⇒ 上沿钉在顶栏下 16,下沿 0 + margin-block-end:auto + fit-content:键盘起落一动不动;可见区比它还矮(7 寸平板横放打字、
+         又摆着暂存图)时按可见区夹高、层里滚,不会落到键盘后面。编辑 / 留言两座仍居中:它们由 kbsheet 按可见区夹高
+         (最矮 240),靠上钉住的话 7 寸平板横放打字时(可见区约 330)放不下,「保存」那排会挤到键盘后面。
          收起态不能再靠 translateY(110%) 滑出屏外(浮窗在屏中),改成淡出 + pointer-events:none;⛔ 别用
          visibility:hidden —— 捕获层「一步回捕获」靠在收起态 focus 输入框开层,visibility 隐掉的元素 focus 不上。
          留言层不在 511 那组共用规则里,居中自己补 margin-inline(`.compose` 的横向居中来自那条共用规则,
-         ⛔ 这里别给它写横向 margin,705 的闸拦着)。打字处给足高度那两条住在上面那层条件里(理由在那儿)。 */
+         ⛔ 这里别给它写横向 margin,705 的闸拦着)。打字处给足高度:编辑层那条住在上面那层条件里、记一笔那条在本段末(理由各在那儿)。 */
       body.tallscreen .compose,
       body.tallscreen .cmsheet {
         top: 0; bottom: 0; height: fit-content; margin-block: auto;
@@ -2059,6 +2130,10 @@
       body.tallscreen .cm-compose { padding-bottom: 12px; }
       body.tallscreen .compose.open,
       body.tallscreen .cmsheet.open { transform: none; opacity: 1; pointer-events: auto; }
+      /* 记一笔那一座竖向靠顶栏下沿(165 / W5 A53,由头在本段头注)。 */
+      body.tallscreen .compose:not(.editsheet) { top: calc(var(--head-h, 0px) + 16px); margin-block: 0 auto; overflow-y: auto; }
+      /* 记一笔浮窗的写字框给足三行(165 / W5 A53,由头写在上面「宽屏」那段 @media 里编辑层那条的头注):挂在类上,键盘起着也不缩。 */
+      body.tallscreen .compose:not(.editsheet) textarea { min-height: 6em; }
 
       /* 时间轴筛选条(filter.ts 渲染):类型行在上、标签行+文本框在下,两行横向可滑。
          本面无条目时整条 hidden(main.ts)。
@@ -2086,6 +2161,15 @@
         -webkit-overflow-scrolling: touch; scrollbar-width: none;
       }
       .fstages::-webkit-scrollbar, .fkinds::-webkit-scrollbar, .ftopics::-webkit-scrollbar { display: none; }
+      /* 「后面还有」的暗示(165 / W5 A47):这三行能横划,可被右缘裁掉的那一枚(手机任务页「列」那行第五枚「已完成」只露一道弧)
+         此前没有任何暗示。哪头还有没露出来的,那头淡出一截(main.ts 按 scrollLeft / scrollWidth 打 `.fade-l` / `.fade-r`)。
+         遮罩只取透明度,渐变里那枚令牌的颜色无所谓;⚠ 老引擎(Chrome 110)只认带前缀的 `-webkit-mask-image`,两条都写。 */
+      .fade-r { -webkit-mask-image: linear-gradient(to right, var(--ink) calc(100% - 32px), transparent); mask-image: linear-gradient(to right, var(--ink) calc(100% - 32px), transparent); }
+      .fade-l { -webkit-mask-image: linear-gradient(to left, var(--ink) calc(100% - 32px), transparent); mask-image: linear-gradient(to left, var(--ink) calc(100% - 32px), transparent); }
+      .fade-l.fade-r {
+        -webkit-mask-image: linear-gradient(to right, transparent, var(--ink) 32px, var(--ink) calc(100% - 32px), transparent);
+        mask-image: linear-gradient(to right, transparent, var(--ink) 32px, var(--ink) calc(100% - 32px), transparent);
+      }
       /* 触区(122):筛选钮只有 30px 高、行间 8px。给它们一层**上下各 4px** 的 halo —— 恰好把
          行间空隙从中线分给上下两行,⛔ 不叠(同操作面 `.panel button.p` 那条「miss=落空 优于 miss=误点」)。
          横向不扩,理由同那一族。⚠ 三行都是横滚容器(`overflow-x:auto` 会连带把纵向也裁掉),
@@ -2196,6 +2280,23 @@
       /* 自动摊开那一形(159 / W3 A23,main.ts `tagsAutoOpen`):标签少、收起态挤不下而单独一行放得下 ⇒ 标签独占第一行、
          过滤框落第二行(读的顺序同收起态:先标签、后过滤框);没有 ▾(摊开了也还是这一行)。 */
       #filterbar.tags-fit .ftopics { order: -1; }
+      /* 过滤框在这一形里也靠右(165 / W5 A21):与收起态(标签行右端)、摊开态(第一行右端)同一个位置 —— 下面「占位」那一形里
+         它在第一行右端,挂上第一个标签时只是原地落下一行,不再横着跳到左边。 */
+      #filterbar.tags-fit .ftext { margin-left: auto; }
+      /* 空着时标签行先占位(165 / W5 A21;规范「空着时筛选行先占位」,同桌面 `.filter-row.reserve`):手机竖放上挂第一个标签时
+         标签行几乎总是「和过滤框一行放不下、单独一行放得下」(上面 `.tags-fit` 那一形),此前整块筛选条从一行长成两行,
+         下面所有卡往下跳 43、转待办摘掉又跳回来。⇒ 一枚真标签都没有时(main.ts::syncTagsToggle 打 `.tags-reserve`)
+         过滤框照旧在第一行右端,第二行留一行看不见的标签行高(一枚空 pill 的盒,字号 / 内边距 / 边框与 `.fpill` 同),
+         挂上第一个标签就是 `.tags-fit` 的两行,卡一像素不动。宽屏(横放 / 平板)不占:那儿第一枚标签和过滤框一行放得下。 */
+      #filterbar.tags-reserve .fmain { flex-wrap: wrap; }
+      #filterbar.tags-reserve .ftopics { order: 1; flex: 0 0 100%; }
+      #filterbar.tags-reserve .ftext { margin-left: auto; }
+      /* ⚠ box-sizing 得自己写:全局那条 `* { box-sizing: border-box }` 管不到伪元素 ⇒ 不写的话 min-height 30 算进的是内容盒,
+         这一行比真 pill 高 9(30 + 上下内边距 10 + 边框 2 = 42 对 32.8),挂上第一个标签时卡往上跳 9(真机实测)。 */
+      #filterbar.tags-reserve .ftopics::before {
+        content: "\00a0"; visibility: hidden; display: inline-flex; align-items: center; box-sizing: border-box;
+        min-height: 30px; padding: 5px 0; border: 1px solid transparent; font-size: var(--fs-13);
+      }
       /* 用户面 36:9.5em 缩到 6em —— 它此前吃掉 360dp 屏的三分之一,而这一行真正要给的是
          标签。⭐ 张开态挂 `.wide`(main.ts 的 focusin/focusout):一直 6em 的话打三个字就
          看不见自己打了什么,那是把一个患换成另一个患;歇着时它只是个提示,不影响读。
@@ -2242,7 +2343,7 @@
         font: inherit; color: var(--ink); text-decoration: underline; text-decoration-color: var(--seal-line); text-underline-offset: 2px;
       }
       .inline-link::before { content: ""; position: absolute; inset: -12px -6px; }
-      /* 161 / W4 Q11(WM-32 前半):有浏览器的这一端(安卓)邮箱点了拉起写信 ⇒ 那一框带一条下划线,看得出能点(main.ts 按 HAS_BROWSER 挂)。 */
+      /* 161 / W4 Q11(WM-32 前半):交得出网址的端(HAS_BROWSER;安卓,W5 A54 起鸿蒙也是)邮箱点了拉起写信 ⇒ 那一框带一条下划线,看得出能点(main.ts 按 HAS_BROWSER 挂)。 */
       #feedback-mail.mail-link { text-decoration: underline; text-decoration-color: var(--seal-line); text-underline-offset: 2px; }
       #about { align-items: baseline; }
       .kv .v.about-link {
@@ -2404,7 +2505,7 @@
         <button id="join-scan-btn" class="ghost grow" data-i18n="shell.joinScan">加入空间(扫电脑二维码)</button>
         <button id="join-alt-btn" class="ghost grow" data-i18n="shell.joinAlt">加入空间(输入配对码)</button>
       </div>
-      <p class="fine join-note" data-i18n="shell.joinNote">加入空间 = 另成一本,手机现在这本不会并进去;想和另一台设备看同一本,去「同步」。</p>
+      <p class="fine join-note" data-i18n="shell.joinNote">加入空间 = 另成一本,这台设备上现在这本不会并进去;想和另一台设备看同一本,去「同步」。</p>
       <!-- A50(WP-22)/ Q2:两个框都有标签;地址框下那一行跟着框里的值说是不是官方服务器(sync.ts::paintServerHint);
            每次展开都是一张新表(码清掉、地址照 Q3 预填「这台最近一次连上的」)。 -->
       <div id="join-form" hidden>
@@ -2454,7 +2555,7 @@
            点开才见——服务器地址行两条辅路共用,收着时不暴露概念。 -->
       <div id="sync-join" hidden>
         <!-- 161 / W4 Q2 ★①(WM-14 / WM-17):第一屏先说同步是可选的、不开只在这台、卸载就没了、内容先在本机加密(指南原话)。 -->
-        <p class="fine sync-intro" data-i18n="sync.introOff">同步是可选的:不开,记的东西只存在这台手机上,卸载就没了(想留一份,去 设置 → 备份)。开了之后,内容先在这台上加密再发出去,服务器读不到。</p>
+        <p id="sync-intro" class="fine sync-intro" data-i18n="sync.introOff">同步是可选的:不开,记的东西只存在这台设备上,卸载就没了(想留一份,去 设置 → 备份)。开了之后,内容先在这台上加密再发出去,服务器读不到。</p>
         <div class="row">
           <button id="sync-scan-btn" class="grow" data-i18n="shell.syncScan">扫码连接电脑</button>
         </div>
@@ -2552,7 +2653,7 @@
     <section id="docs-pane" class="sync" hidden>
       <h2 data-i18n="shell.navDocs">长文</h2>
       <div class="row">
-        <button id="docs-new" class="ghost grow" data-i18n="docs.new">新建长文</button>
+        <button id="docs-new" class="ghost grow" data-i18n="docs.new">+ 新建长文</button>
       </div>
       <div id="docs-body"></div>
     </section>
@@ -2774,19 +2875,19 @@
            (471 真机上先看见:降级那句刚说完"这一端还没有备份",下面三句接着讲怎么用备份)。
            ⇒ 由 main.ts 按 HAS_SAF_BRIDGE 一起摘掉;h2 与 body 那句留着,那才是这一端的事实。
            ⚠ 别把它读成「诚实边界可以省」(§17.12 的义务):有备份的那一端一个字都不少。 -->
-      <p class="fine" data-i18n="backup.footRestore" data-needs="saf">手机上能做备份,但不能从备份还原。真出事时把 .zjbak 文件拿到电脑上的朱简里恢复。</p>
-      <p class="fine" data-i18n="backup.footCode" data-needs="saf">备份码保存在这台手机上(明文),卸载或清除数据会把它抹掉,抄下来的那份就是唯一的了;已经放进文件夹的备份文件不会跟着没。</p>
+      <p class="fine" data-i18n="backup.footRestore" data-needs="saf">这台设备上能做备份,但不能从备份还原。真出事时把 .zjbak 文件拿到电脑上的朱简里恢复。</p>
+      <p class="fine" data-i18n="backup.footCode" data-needs="saf">备份码保存在这台设备上(明文),卸载或清除数据会把它抹掉,抄下来的那份就是唯一的了;已经放进文件夹的备份文件不会跟着没。</p>
       <p class="fine" data-i18n="backup.footValid" data-needs="saf">「有效」只有验过才算。文件名和扩展名证明不了任何事。</p>
-      <p class="fine" data-i18n="backup.footScope" data-needs="saf">点「备份」会把这台手机上的每个空间各备一份。手机上没有自动备份:想备份就回这里点一次。</p>
+      <p class="fine" data-i18n="backup.footScope" data-needs="saf">点「备份」会把这台设备上的每个空间各备一份。这台设备上没有自动备份:想备份就回这里点一次。</p>
       <p class="fine" data-i18n="backup.footSecret" data-needs="saf">备份文件加上备份码,就能打开里面的全部内容;开过同步的空间,还能拿它读写这个账户。两样都当秘密保管。</p>
 
       <!-- 意见反馈(国内上架 17)。⭐ **它是上架硬门槛,不是锦上添花**:OPPO《包体测试FAQ》
            原文「所有应用都必须设置显著有效的客服反馈渠道」,且该渠道须在**应用功能界面内**,
            「而非仅展示在隐私政策链接或用户协议链接内」——⛔ 别因为政策页第九节已经写了邮箱
            就把这一节摘掉,文档点名那样不算。单机应用同样要;应用宝 / 小米 / OPPO / vivo 通用。
-           ⛔ **刻意不做成 mailto 链接 / 不走 openUrl**:这棵前端树两只手机壳共用,而鸿蒙上
-           `openUrl` 去调 `xdg-open`、真机报 os error 2(651 实撞)⇒ 做成链接在那一端就是
-           「点了没反应」。⇒ 地址原样摆出来 + 一枚复制钮,两端都成立、都不说谎。
+           ⚠ 地址原样摆出来 + 一枚复制钮,是两端都成立的那一半(没有邮件应用的机器靠复制)。点框拉起写信
+           是叠在上面的(161 / W4 Q11,main.ts 按 HAS_BROWSER 挂):此前鸿蒙上 `openUrl` 去调 `xdg-open`、
+           真机报 os error 2(651 实撞),那一端只摆地址;W5 A54 起鸿蒙经 opener 接缝走壳桥,两端都可点。
            ⚠ 地址的唯一出处就是下面那个 value —— 复制钮读的也是它(⛔ 别在 TS 里另写一份常数)。 -->
       <h2 id="feedback-title" data-i18n="feedback.title">意见反馈</h2>
       <p class="fine" data-i18n="feedback.sub">用着有问题、有建议,或者想注销同步账户,发邮件到下面这个地址。作者本人看信。</p>

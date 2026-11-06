@@ -78,8 +78,12 @@
   gap: 18px;
   transition: background 0.12s, color 0.12s;
 }
-.hk-item:hover { background: color-mix(in srgb, var(--ink) 8%, transparent); }
-.hk-item.danger:hover { background: var(--seal-tint); color: var(--seal-ink-on-seal-tint); }
+.hk-item:hover,
+.hk-item:focus-visible { background: color-mix(in srgb, var(--ink) 8%, transparent); }
+/* 菜单项的键盘焦点框往里收(菜单自己 overflow:auto,外沿那圈会被裁掉)—— W5 A2 起打开菜单焦点就进第一项。 */
+.hk-item:focus-visible { outline-offset: -2px; }
+.hk-item.danger:hover,
+.hk-item.danger:focus-visible { background: var(--seal-tint); color: var(--seal-ink-on-seal-tint); }
 .hk-label { white-space: nowrap; }
 .hk-key {
   flex: none;
@@ -100,7 +104,8 @@
   border-color: var(--seal-line);
   background: var(--seal-tint);
 }
-.hk-item:hover .hk-key { color: var(--ink); }
+.hk-item:hover .hk-key,
+.hk-item:focus-visible .hk-key { color: var(--ink); }
 .hk-item.danger:hover .hk-key { color: var(--seal-ink-on-seal-tint); }
 
 /* Slide only — do NOT animate from opacity:0: a WebDriver/isDisplayed check during the

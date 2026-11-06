@@ -1,6 +1,8 @@
 // 任务卡左右滑改状态(182):落在任务卡上的横滑 → 前进/后退一个 stage。
-// 看板的那几列排成一条线性链(**列由用户定,不再恒是四态**),右滑前进、左滑后退;
-// 端点(首列再左滑、末列再右滑)不响应——撤回/入册/转待办仍走操作面板(守克制,不把 off-axis 动作塞进滑动)。
+// 看板的那几列排成一条线性链(**列由用户定,不再恒是四态**),右滑前进、左滑后退 —— 按链上的先后,不按屏上的左右:
+// 手机横放 / 平板竖放的看板折成 2×2,上排右列「进行中」往右滑进的是下排的「待确认」(165 / W5 A49)。
+// 端点(首列再左滑、末列再右滑)不挪 —— 撤回/入册/转待办仍走操作面板(守克制,不把 off-axis 动作塞进滑动);
+// 滑过了阈值就说一句「已是第一 / 最后一列」(165 / W5 A49:此前卡弹回去、一声不吭,像是划坏了)。
 // 只拦「pointerdown 命中任务卡」的横滑;顶部标题栏等非卡区域的横滑一概不吃,给日后
 // 「横滑切视图」留一条干净通道。竖向滚动交回原生(.card { touch-action: pan-y }),
 // 横向占优才锁定为滑动。进 done 走 update_task_status,后端照常盖 done_at(与勾框一致)。
@@ -8,6 +10,7 @@
 import { updateTaskStatus, type TaskStatus, type TimelineItem } from "./api";
 import { t } from "./i18n";
 import { showErr } from "./err";
+import { showBar } from "./ui";
 import { moveReceipt, spotOf } from "./taskmove";
 import { isDragging } from "./carddrag";
 import { isTaskStage, liveTaskColumns, stageLabel } from "./columns";
@@ -89,7 +92,13 @@ export function initCardSwipe(deps: Deps): void {
     // 上一次滑动的尾随 click 必在本次 pointerdown 之前派发完;到这里还挂着的 justSwiped
     // 是「click 没来」的残留,清掉,免 400ms 兜底窗口误吞下一次点击。
     justSwiped = false;
-    if (active) return; // 一次只跟一指
+    if (active) {
+      // 一次只跟一指:第二指(非首指)不受理。⚠ 但新来的是**首指**(isPrimary)= 之前的手指全抬起来了 ⇒ 手上这一份是陈的
+      // (上一指的抬手没送到时间轴:按着的时候卡被重画掉、抬手落到别处),收掉重来 —— 不然它一直挂着,之后每一次横滑都
+      // 在这一行早退,卡划不动、也不说话(165 / W5 A49 台架上撞到,刷新页面才好)。
+      if (!e.isPrimary) return;
+      reset(false);
+    }
     if (isDragging()) return; // 长按拖已经拿起了这张卡(carddrag.ts)
     if (deps.isSwitching() || deps.hasDirtyDraft()) return;
     const el = e.target as HTMLElement;
@@ -178,14 +187,19 @@ export function initCardSwipe(deps: Deps): void {
       justSwiped = false;
     }, 400); // click 不来时的兜底清标
     const dx = e.clientX - active.startX;
-    const commit =
+    const armed =
       !cancelled &&
-      active.to !== null &&
       dx > 0 === active.dir > 0 && // 收尾方向须与锁定方向一致(半路折返不算)
       Math.abs(dx) >= Math.min(COMMIT_MIN, active.width * COMMIT_RATIO);
-    const { id, to } = active;
+    const commit = armed && active.to !== null;
+    const { id, to, from, dir } = active;
     reset(true);
     if (commit && to) void commitSwipe(id, to);
+    // 端点方向滑过了阈值:卡弹回原处,说一句为什么(中性那档;已删列里的卡不在链上,两头都没有列,不说)。
+    else if (armed && chain().includes(from)) {
+      const col = stageLabel(from)!;
+      showBar(dir > 0 ? t("swipe.atLast", { col }) : t("swipe.atFirst", { col }), false, true);
+    }
   }
 
   timeline.addEventListener("pointerup", (e) => end(e, false));
@@ -207,6 +221,6 @@ export function initCardSwipe(deps: Deps): void {
     // 回执 + 撤销:滑动是低门槛手势,给一记 6s 可撤销窗口替代两拍确认(误滑可召回)。
     // 走操作型回执而非 confirmBar——动作已成事实,确认条的「取消」在这儿是反义歧义。
     // 在屏上就闪一下(不强行滚动,免拽走视口);滑到屏外的那一节就带「去看看」(158 G3 / Q1)。
-    moveReceipt(space, id, t("swipe.changedTo", { stage: stageLabel(to)! }), spot);
+    moveReceipt(space, id, t("board.undoMoved", { col: stageLabel(to)! }), spot);
   }
 }

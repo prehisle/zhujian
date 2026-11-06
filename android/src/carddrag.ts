@@ -1,6 +1,8 @@
-// 竖屏长按拖卡(158 G3 / Q7,W2 走查 WM-11):手机竖放时任务面是四节串成的一条长列表,此前长按没反应、
+// 长按拖卡(158 G3 / Q7,W2 走查 WM-11):手机竖放时任务面是四节串成的一条长列表,此前长按没反应、
 // 一拖就是滚页面,换列只能走「列 ▾」菜单或横滑(横滑只到相邻那列)。⇒ 长按一张任务卡把它拿起来,
 // 拖到哪一节的哪两张之间就落在那儿;拖到屏上沿 / 下沿自动滚。
+// 165 / W5 A37 起看板(平板横竖、手机横放 2×2)也走这一条:此前看板整套被排除,平板上挪卡只剩横滑(只到链上相邻
+// 那列)和「列 ▾」。看板上列是并排 / 折成几排的格子 ⇒ 落点按手指离哪一列最近(横纵两个方向一起算)认列,卡跟手横竖都走。
 //
 // 手势怎么和滚动、横滑分开(⛔ 三条别拆):
 //  ① **拿起之前一切照旧**:按下后手指挪出 SLOP 就放弃(竖挪 = 原生滚动,横挪 = swipe.ts 的横滑);
@@ -18,9 +20,10 @@
 // (与 core 的 reorder_visible 同一个锚法),base 用整列真序,乐观并发闸照常把关。
 // 回执与撤销同其余三条挪卡路(taskmove.ts):撤销放回原位置,落到屏外带「去看看」。
 //
-// 不拖的几种:宽屏看板(那儿是横滑 + 列并排;本轮只做竖屏)、只看到期时(那时按截止排,不是手动序 ——
-// 长按说一句为什么)、已删的列(只读收容区,卡只出不进:那一节不画落点线)。
-// ⚠ 空节在竖屏上不画(146 §2.1)⇒ 拖不进一张卡都没有的列;那种走「列 ▾」菜单。
+// 不拖的几种:只看到期时(那时按截止排,不是手动序 —— 长按说一句为什么)、已删的列(只读收容区,卡只出不进:
+// 那一节不画落点线)。
+// ⚠ 空节在竖屏上不画(146 §2.1)⇒ 竖屏拖不进一张卡都没有的列,那种走「列 ▾」菜单;看板上空列常驻(一枚「空」),
+// 落点线画在列头下沿。
 import { reorderTask, type TimelineItem } from "./api";
 import { t } from "./i18n";
 import { showBar } from "./ui";
@@ -38,8 +41,6 @@ type Deps = {
   getCurrentSpace: () => string;
   isSwitching: () => boolean;
   hasDirtyDraft: () => boolean;
-  /** 屏上是宽屏看板吗(body.board)。 */
-  isBoard: () => boolean;
   /** 任务面「只看到期」开着吗(那时卡按截止排)。 */
   dueSorted: () => boolean;
   /** 看板手动序全量(含被筛掉的)。 */
@@ -58,8 +59,10 @@ let drag: {
   id: string;
   from: string;
   pointerId: number;
+  startX: number;
   startY: number;
   startScroll: number;
+  x: number;
   y: number;
   line: HTMLElement;
   raf: number;
@@ -87,10 +90,10 @@ function band(): { top: number; bottom: number } {
 
 function lift(): void {
   if (!pending) return;
-  const { card, id, pointerId, y } = pending;
+  const { card, id, pointerId, x, y } = pending;
   pending = null;
   const item = deps.getItem(id);
-  if (!item || !card.isConnected || deps.isSwitching() || deps.hasDirtyDraft() || deps.isBoard()) return;
+  if (!item || !card.isConnected || deps.isSwitching() || deps.hasDirtyDraft()) return;
   if (deps.dueSorted()) {
     showBar(t("carddrag.dueSorted"), true);
     swallowClick = true;
@@ -100,7 +103,7 @@ function lift(): void {
   line.className = "drag-line";
   line.hidden = true;
   document.body.appendChild(line);
-  drag = { card, id, from: item.stage, pointerId, startY: y, startScroll: window.scrollY, y, line, raf: 0, target: null };
+  drag = { card, id, from: item.stage, pointerId, startX: x, startY: y, startScroll: window.scrollY, x, y, line, raf: 0, target: null };
   card.classList.add("lifted");
   document.body.classList.add("card-dragging");
   swallowClick = true;
@@ -116,13 +119,14 @@ function frame(): void {
   if (drag.y < b.top + EDGE) v = -MAX_SPEED * Math.min(1, (b.top + EDGE - drag.y) / EDGE);
   else if (drag.y > b.bottom - EDGE) v = MAX_SPEED * Math.min(1, (drag.y - (b.bottom - EDGE)) / EDGE);
   if (v !== 0) window.scrollBy(0, Math.round(v));
-  drag.card.style.transform = `translateY(${drag.y - drag.startY + window.scrollY - drag.startScroll}px) scale(1.02)`;
-  drag.target = locate(drag.y, b);
+  // 竖屏一列时 x 恒近似不动;看板上卡横竖都跟手(拖去隔壁那一列 / 下一排)。
+  drag.card.style.transform = `translate(${drag.x - drag.startX}px, ${drag.y - drag.startY + window.scrollY - drag.startScroll}px) scale(1.02)`;
+  drag.target = locate(drag.x, drag.y, b);
   drag.raf = requestAnimationFrame(frame);
 }
 
 /** 手指此刻对着的落点,顺手摆好那条横线;对着已删的列(或什么都没对着)= null。 */
-function locate(y: number, b: { top: number; bottom: number }): Target | null {
+function locate(x: number, y: number, b: { top: number; bottom: number }): Target | null {
   if (!drag) return null;
   const line = drag.line;
   const secs = [...document.querySelectorAll<HTMLElement>("#timeline > .tl-group[data-col]")];
@@ -130,12 +134,15 @@ function locate(y: number, b: { top: number; bottom: number }): Target | null {
     line.hidden = true;
     return null;
   }
-  // 手指所在那一节;夹在两节之间 / 越出首尾就取最近的那节。
+  // 手指所在那一节;夹在两节之间 / 越出首尾就取最近的那节。横纵两个方向一起量(看板上列并排、折成几排;
+  // 竖屏一列时各节同一个横向范围,横向那一项恒 0,与只量纵向逐字同一个结果)。
   let sec = secs[0];
   let best = Infinity;
   for (const s of secs) {
     const r = s.getBoundingClientRect();
-    const d = y < r.top ? r.top - y : y > r.bottom ? y - r.bottom : 0;
+    const dy = y < r.top ? r.top - y : y > r.bottom ? y - r.bottom : 0;
+    const dx = x < r.left ? r.left - x : x > r.right ? x - r.right : 0;
+    const d = Math.hypot(dx, dy);
     if (d < best) {
       best = d;
       sec = s;
@@ -207,7 +214,7 @@ async function drop(id: string, from: string, tg: Target): Promise<void> {
   deps.onDone();
   await deps.refresh();
   if (deps.getCurrentSpace() !== space) return;
-  const msg = from === tg.stage ? t("carddrag.reordered") : t("swipe.changedTo", { stage: stageLabel(tg.stage)! });
+  const msg = from === tg.stage ? t("carddrag.reordered") : t("board.undoMoved", { col: stageLabel(tg.stage)! });
   moveReceipt(space, id, msg, spot);
 }
 
@@ -219,7 +226,7 @@ export function initCardDrag(d: Deps): void {
     cancelPending();
     swallowClick = false;
     if (drag || !e.isPrimary || e.button !== 0) return;
-    if (document.body.dataset.view !== "tasks" || deps.isBoard() || deps.isSwitching() || deps.hasDirtyDraft()) return;
+    if (document.body.dataset.view !== "tasks" || deps.isSwitching() || deps.hasDirtyDraft()) return;
     const el = e.target as HTMLElement;
     if (el.closest(".tick, .ckbox, .thumb, .panel, .cm-badge, .fold-toggle")) return;
     const card = el.closest<HTMLElement>("article.card[data-id]");
@@ -236,7 +243,10 @@ export function initCardDrag(d: Deps): void {
       if (Math.hypot(e.clientX - pending.x, e.clientY - pending.y) > SLOP) cancelPending();
       return;
     }
-    if (drag && e.pointerId === drag.pointerId) drag.y = e.clientY;
+    if (drag && e.pointerId === drag.pointerId) {
+      drag.x = e.clientX;
+      drag.y = e.clientY;
+    }
   });
   document.addEventListener("pointerup", (e) => {
     if (pending && e.pointerId === pending.pointerId) cancelPending();

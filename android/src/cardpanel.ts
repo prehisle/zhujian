@@ -74,7 +74,7 @@ import {
   type TopicItem,
 } from "./api";
 import { t } from "./i18n";
-import { $, actionBar, confirmBar, esc, fmtWhen, hideConfirmBar, showBar, showError } from "./ui";
+import { $, actionBar, confirmBar, diffPair, esc, fmtWhen, hideConfirmBar, showBar, showError, showUndone } from "./ui";
 import { errDetail, errText, showErr } from "./err";
 import { writeClipboard } from "./platform";
 import { DONE_COLUMN, LANDING_COLUMN, isTaskStage, liveTaskColumns, stageLabel } from "./columns";
@@ -170,11 +170,14 @@ let state: PanelState | null = null;
 let busy = false; // 面板内写操作 in-flight:整面禁点(事件入口统一拒)
 
 /** 面板态的两处**外壳投影**的唯一同步点(706):
- *  ① `body.panel-open` —— 悬浮 ＋ 让位(它是 fixed 的,压在操作面/编辑层的钮上,用户面报的);
+ *  ① `body.panel-open`(操作面开着)/ `body.panel-editing`(编辑层开着)—— 后者让悬浮 ＋ 让位(它是 fixed 的,
+ *     706 那时压在卡里编辑的「保存」上,用户面报的)。165 / W5 Q15(用户拍 ★):只开着操作面时 ＋ **留在原位** —— 此前
+ *     一并藏掉,照习惯点那个位置点开的是下面另一张卡的操作面、接着打的字打进空气;操作面那排钮由 `revealPanel` 摆在 ＋ 上沿之上;
  *  ② 编辑层 —— 只要面板不在 edit 态,层就该是收着的(换卡 / 进别的子面 / 收面 / 切空间同理)。
  *  ⛔ 别在别处零散地推这两样:漏一处的样子是「＋ 赖着不走」或「编辑层关不掉」。 */
 function syncShell(): void {
   document.body.classList.toggle("panel-open", state !== null);
+  document.body.classList.toggle("panel-editing", state !== null && state.mode === "edit");
   if (!state || state.mode !== "edit") closeEditSheet();
 }
 
@@ -377,7 +380,8 @@ function renderMore(item: TimelineItem): string {
   if (item.kind === "idea") acts.push(actBtn("expand", t("cardpanel.actExpand")));
   acts.push(actBtn("copy", t("cardpanel.actCopy"))); // 158 G3 / Q11:复制这张卡的文字
   acts.push(actBtn("copylink", t("cardpanel.actCopyLink"))); // 152:同桌面卡片的「复制链接」
-  acts.push(actBtn("history", t("cardpanel.actHistory")));
+  // 165 / W5 A45:没改过的卡不列「历史」(指南「改过的才有」;卡面上的「改过」两字已经说了有没有,点进去只得一句「还没有改过」)。
+  if (item.revised) acts.push(actBtn("history", t("cardpanel.actHistory")));
   // 移动入口:仅 ≥2 空间、且本条无未处理的部分移动登记时出现(§4)。
   if (!movePartialNote(item.id) && deps.getSpaces().length >= 2) acts.push(actBtn("move", t("cardpanel.actMove")));
   if (item.stage === LANDING_COLUMN) acts.push(actBtn("revert", t("cardpanel.actRevert"), { warn: true }));
@@ -458,7 +462,7 @@ function renderHistory(): string {
         : open.text === null || open.now === undefined
           ? `<p>…</p>`
           : `<p class="rev-vs">${t("cardpanel.histVsNow")}</p>${(() => {
-              const d = renderDiff(open.text, open.now);
+              const d = renderDiff(...diffPair(open.text, open.now)); // 165 / W5 A32:末行换行先补齐再比
               return (d.degraded !== null ? `<p class="rev-vs">${t("cardpanel.histDegraded")}</p>` : "") + d.root.outerHTML;
             })()}`;
       return `<div class="rev${isOpen ? " open" : ""}"><button class="revh" data-rev="${r.revision_id}"><time>${esc(
@@ -691,6 +695,7 @@ async function enterHistory(card: HTMLElement) {
     session.revisions = revisions;
     session.revOpen = null;
     renderPanel(currentCard() ?? card);
+    revealPanel(); // 165 / W5 A55:卡在屏下半截时,历史那几行连同「返回」别落在底栏后面
   } catch (err) {
     if (state === session && space === getCurrentSpace()) showErr(err);
   }
@@ -737,6 +742,7 @@ async function toggleRevision(revId: number, card: HTMLElement) {
     if (!histStill(session, space, seq)) return;
     session.revOpen = { id: revId, text: pair.a.content, now: pair.b.content };
     renderPanel(currentCard() ?? card);
+    revealPanel(); // 165 / W5 A55:展开的比对与唯一的「返回」被底栏挡住、页面不跟着滚 ⇒ 摆回底栏上方(面顶不越过顶栏)
   } catch (err) {
     if (!histStill(session, space, seq)) return;
     session.revOpen = null;
@@ -959,7 +965,7 @@ function onTimelineClick(e: Event) {
       onCommitted: () => {
         const space = getCurrentSpace();
         void deps.refresh().then(() => {
-          if (getCurrentSpace() === space) moveReceipt(space, id, t("swipe.changedTo", { stage: stageLabel(to)! }), spot);
+          if (getCurrentSpace() === space) moveReceipt(space, id, t("board.undoMoved", { col: stageLabel(to)! }), spot);
         });
       },
       afterSession: () => setState(null),
@@ -971,7 +977,9 @@ function onTimelineClick(e: Event) {
     const session = state;
     const raw = prioBtn.dataset.prio!;
     const prio = raw === "" ? null : (Number(raw) as 1 | 2 | 3);
+    const before = deps.getItem(session.id)?.priority ?? null;
     void run((space) => setTaskPriority(space, session.id, prio), {
+      onCommitted: () => priorityReceipt(session.id, before, prio), // 165 / W5 Q5
       afterSession: () => setMode(session, "actions"),
     });
     return;
@@ -1023,13 +1031,17 @@ function onTimelineClick(e: Event) {
 /** 158 G2(W2 走查 A9 / WM-06):点开靠屏下方的卡,操作面展开在屏外 / 底栏底下,页面不跟着滚 ⇒
  *  开面与换子面之后,面板下沿压在底栏(没有底栏就是视口底)之下就把文档往上滚那么多,
  *  但不把面板顶滚过顶栏(面板比可视区还高时宁可露顶)。只在用户点出来的那一下滚;刷新重画不滚。 */
-function revealPanel(): void {
+export function revealPanel(): void {
   const p = document.querySelector<HTMLElement>("#timeline .panel");
   if (!p) return;
   const nav = document.getElementById("bottombar");
   const navR = nav && nav.getClientRects().length > 0 ? nav.getBoundingClientRect() : null;
   // 宽屏上底栏搬进了顶栏(tablet-plan 格 3):那时它不在屏底,只认视口底。
-  const floor = navR && navR.top > window.innerHeight / 2 ? navR.top : window.innerHeight;
+  let floor = navR && navR.top > window.innerHeight / 2 ? navR.top : window.innerHeight;
+  // 165 / W5 Q15:操作面开着时悬浮 ＋ 留在原位 ⇒ 面上那排钮摆在它上沿之上(横向与面板交叠时才算;它不在屏上就不管)。
+  const fab = document.getElementById("capture-fab");
+  const fabR = fab && fab.getClientRects().length > 0 ? fab.getBoundingClientRect() : null;
+  if (fabR && getComputedStyle(fab!).visibility !== "hidden" && fabR.left < p.getBoundingClientRect().right) floor = Math.min(floor, fabR.top);
   const head = document.querySelector("header")?.getBoundingClientRect().bottom ?? 0;
   const r = p.getBoundingClientRect();
   const GAP = 8;
@@ -1144,7 +1156,7 @@ function handleAct(act: string, card: HTMLElement) {
           onCommitted: () =>
             refsErr !== null
               ? showBar(t("cardpanel.expandRefsFailed", { error: errDetail(refsErr) }))
-              : actionBar(t("cardpanel.expanded"), t("cardpanel.expandedOpen"), () => deps.openDoc(item.id)),
+              : actionBar(t("cardpanel.expanded"), t("cardpanel.goSee"), () => deps.openDoc(item.id)), // 165 / W5 Q14:跳过去看的钮一律叫「去看看」
         },
       );
       return;
@@ -1165,8 +1177,11 @@ function handleAct(act: string, card: HTMLElement) {
                   await revertTaskToInbox(space, item.id);
                 } catch (err) {
                   showErr(err);
+                  await deps.refresh();
+                  return;
                 }
                 await deps.refresh();
+                showUndone(); // 165 / W5 Q6
               })();
             },
             { label: t("cardpanel.goSee"), on: () => deps.focusCard(item.id) },
@@ -1180,13 +1195,32 @@ function handleAct(act: string, card: HTMLElement) {
         showError(t("cardpanel.tagNameRequired"));
         return;
       }
+      // 这一张上已经打着同名(不分大小写)的那一枚:不写库,照实说已打上(165 走查时撞到:core 复用那一枚后再挂一次撞 UNIQUE,
+      // 报「这次改动和已有的数据对不上」—— 人只是又打了一遍同一个名字)。
+      const on = item.topics.find((x) => x.title.toLowerCase() === title.toLowerCase());
+      if (on) {
+        session.tagDraft = "";
+        deps.onDraftClosed();
+        renderPanel(card);
+        showBar(t("topics.addedExisting", { name: on.title }), true);
+        return;
+      }
       const task = isTaskStage(item.stage);
+      // 165 / W5 A20:建成了说一声(此前一声不吭,看不出挂上没有)。同名(不分大小写)的标签已在时 core 复用那一枚、不另建
+      // ⇒ 按回来的 id 认:是开面时就有的那枚 = 只是打上了,别说「已建」。
+      const known = new Map(session.topics.map((x) => [x.id, x.title]));
+      let topicId: string | null = null;
       void run(
-        (space) =>
-          task
-            ? addTaskTopicByTitle(space, item.id, title)
-            : fileNoteToTopic(space, item.id, null, title),
+        async (space) => {
+          topicId = task
+            ? await addTaskTopicByTitle(space, item.id, title)
+            : await fileNoteToTopic(space, item.id, null, title);
+        },
         {
+          onCommitted: () => {
+            const had = topicId !== null ? known.get(topicId) : undefined;
+            showBar(had !== undefined ? t("topics.addedExisting", { name: had }) : t("topics.createdAdded", { name: title }), true);
+          },
           afterSession: () => {
             session.tagDraft = ""; // 挂上了才清草稿 = 草稿收场,补被延后的刷新
             deps.onDraftClosed();
@@ -1197,11 +1231,14 @@ function handleAct(act: string, card: HTMLElement) {
       );
       return;
     }
-    case "due-clear":
+    case "due-clear": {
+      const before = item.due_on;
       void run((space) => setTaskDue(space, item.id, null), {
+        onCommitted: () => dueReceipt(item.id, before, null),
         afterSession: () => setMode(session, "actions"), // 同状态/优先级:清完就回主面
       });
       return;
+    }
     // 两拍类:第一拍弹底部固定确认条,第二拍在条上执行(onYes 复核 session 未变——
     // 期间换卡/收面/切空间的旧确认一律作废,不许作用到新语境)。
     case "del": {
@@ -1224,8 +1261,11 @@ function handleAct(act: string, card: HTMLElement) {
                   await (task ? restoreTask(space, cur.id) : restoreNote(space, cur.id));
                 } catch (err) {
                   showErr(err);
+                  await deps.refresh();
+                  return;
                 }
                 await deps.refresh();
+                showUndone(); // 165 / W5 Q6
               })();
             });
           },
@@ -1263,10 +1303,13 @@ function handleAct(act: string, card: HTMLElement) {
                     if (prio !== null) await setTaskPriority(space, item.id, prio);
                   } catch (err) {
                     showErr(err);
+                    await deps.refresh();
+                    return;
                   }
                   await deps.refresh();
+                  showUndone(); // 165 / W5 Q6
                 })();
-              });
+              }, { label: t("cardpanel.goSee"), on: () => deps.focusCard(item.id) }); // 165:回执不再写「在底栏「随记」里」(平板 / 横放没有底栏),去向交给「去看看」
             },
           });
         },
@@ -1288,8 +1331,11 @@ function handleAct(act: string, card: HTMLElement) {
                   await unsealTask(space, item.id);
                 } catch (err) {
                   showErr(err);
+                  await deps.refresh();
+                  return;
                 }
                 await deps.refresh();
+                showUndone(); // 165 / W5 Q6
               })();
             });
           },
@@ -1319,9 +1365,56 @@ function onTimelineChange(e: Event) {
   }
   const session = state;
   const v = input.value; // "" = 清
-  void run((space) => setTaskDue(space, session.id, v === "" ? null : v), {
+  const before = deps.getItem(session.id)?.due_on ?? null;
+  const next = v === "" ? null : v;
+  void run((space) => setTaskDue(space, session.id, next), {
+    onCommitted: () => dueReceipt(session.id, before, next),
     afterSession: () => setMode(session, "actions"), // 拨完就回主面(同状态/优先级)
   });
+}
+
+// ---- 截止 / 优先级的回执与撤销(165 / W5 Q5 ★①,查到手机同病)----------------------------------------
+// 规范原则 2「每个写操作要么确认、要么能撤销」:换列、归档有「已… 撤销」,同一张操作面上改截止、改优先级却什么都不说、也撤不回。
+// ⇒ 改完出一条「已设截止 …」/「已设优先级 …」带【撤销】;撤销 = **再写一次旧值**(截止 / 优先级是卡的字段,不进编辑历史 ——
+// core `task::set_due` / `set_priority` 只记 oplog 字段改动,不落版本 ⇒ 撤销不会多出一版,也没有哪一版要抹)。
+// ⚠ 旧值是改之前那一刻屏上快照里的值;撤销窗口(6 s)里别处又改了它,撤销照样写回旧值(同撤回为随记的撤销那一形)。
+
+/** 截止日 `YYYY-MM-DD` → 「11月8日」(跨年带年);回执里用,⛔ 不用胶囊那种「7 天后」—— 回执说的是设成了哪一天。 */
+function dueDayText(due: string): string {
+  const [y, m, d] = due.split("-").map(Number);
+  return y === new Date().getFullYear() ? t("ui.dayMonthDay", { m, d }) : t("ui.dayYearMonthDay", { y, m, d });
+}
+
+function dueReceipt(id: string, before: string | null, after: string | null): void {
+  if (before === after) return;
+  const space = getCurrentSpace();
+  actionBar(after === null ? t("board.undoDueCleared") : t("board.undoDue", { day: dueDayText(after) }), t("ui.undo"), () =>
+    undoField(space, () => setTaskDue(space, id, before)),
+  );
+}
+
+function priorityReceipt(id: string, before: 1 | 2 | 3 | null, after: 1 | 2 | 3 | null): void {
+  if (before === after) return;
+  const space = getCurrentSpace();
+  const label = PRIORITIES.find((p) => p.key === after)!.label;
+  actionBar(after === null ? t("board.undoPriorityCleared") : t("board.undoPriority", { p: label }), t("ui.undo"), () =>
+    undoField(space, () => setTaskPriority(space, id, before)),
+  );
+}
+
+function undoField(space: string, op: () => Promise<unknown>): void {
+  if (deps.isSwitching() || getCurrentSpace() !== space) return; // 换空间的旧撤销作废
+  void (async () => {
+    try {
+      await op();
+    } catch (err) {
+      showErr(err);
+      await deps.refresh();
+      return;
+    }
+    await deps.refresh();
+    showUndone();
+  })();
 }
 
 /** 标签新建草稿实时入 state(实现审 H1:真相在 state,重画从 state 画回)。
@@ -1388,12 +1481,37 @@ const editHost: EditHost = {
   },
 };
 
+/** 卡内「新标签名」按回车 / 键盘右下那颗键 = 新建并打上(165 / W5 A20 / Q9;此前按了没反应也不说话,得去点那枚钮)。
+ *  闸与 `onTimelineClick` 开头那几行同一条;IME 组合期的回车是上屏,不是提交(§3.3)。 */
+function onTimelineKeydown(e: KeyboardEvent) {
+  const el = e.target as HTMLElement;
+  if (!el.matches("input.tagnew") || e.key !== "Enter" || e.isComposing) return;
+  e.preventDefault();
+  if (deps.isSwitching() || deps.isCaptureSaving() || busy || !state) return;
+  const card = currentCard();
+  if (card) handleAct("tagnew", card);
+}
+
+/** 「新标签名」框一获焦、键盘一起,把这一面(连同底下那枚「返回」)整个摆回键盘上方(165 / W5 A20:卡正好停在某一窄段时,
+ *  页面只把框滚进来、框下面那排钮落在键盘后面)。等视口真缩了(原生侧 ime inset,527)再量;没等到 resize 就按时兜一次。 */
+function onTimelineFocusIn(e: FocusEvent) {
+  if (!(e.target as HTMLElement).matches?.("input.tagnew")) return;
+  const reveal = (): void => revealPanel();
+  window.addEventListener("resize", reveal, { once: true });
+  window.setTimeout(() => {
+    window.removeEventListener("resize", reveal);
+    revealPanel();
+  }, 450);
+}
+
 export function initCardPanel(d: Deps) {
   deps = d;
   const timeline = $("timeline");
   timeline.addEventListener("click", onTimelineClick);
   timeline.addEventListener("change", onTimelineChange);
   timeline.addEventListener("input", onTimelineInput);
+  timeline.addEventListener("keydown", onTimelineKeydown);
+  timeline.addEventListener("focusin", onTimelineFocusIn);
   let scrollQueued = false;
   window.addEventListener(
     "scroll",

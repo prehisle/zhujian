@@ -206,6 +206,25 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     const tasks = tasksByTopic.get(topic.id) ?? [];
 
     const check = el("span", { className: "check", textContent: "" }); // ✓ (merge mode)
+    // W5 A8(WD-06):合并态里每行前那枚方框停焦点、空格 / 回车勾选 —— 此前一个都不停,Tab 进的是整块列表、
+    // 在里面按 ↓ / 空格只滚列表,只用键盘合并不成。↑ ↓ 在方框之间走。平时(不在合并态)它藏着、不停焦点。
+    if (merging) {
+      check.tabIndex = 0;
+      check.setAttribute("role", "checkbox");
+      check.setAttribute("aria-checked", "false");
+      check.setAttribute("aria-label", topic.title);
+      check.addEventListener("keydown", (e) => {
+        if (e.key === " " || e.key === "Enter") {
+          e.preventDefault();
+          toggleSelect(topic.id);
+        } else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+          e.preventDefault();
+          const all = [...list.querySelectorAll<HTMLElement>(".check")];
+          const i = all.indexOf(check);
+          all[e.key === "ArrowDown" ? Math.min(i + 1, all.length - 1) : Math.max(i - 1, 0)]?.focus();
+        }
+      });
+    }
     // 拖动手柄(仅非合并态出现;draggable 只挂它,避开 head 里的按钮/展开点击冲突)。
     const handle = el("span", { className: "topic-drag", textContent: "⠿", title: t("topics.dragHint") });
     handle.draggable = true;
@@ -460,6 +479,8 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
           showActions();
         }),
       );
+      // W5 Q3 ★①:确认一出来焦点停【取消】(回车不删;要删 Shift+Tab 一下到「删除」)。
+      actions.querySelector<HTMLButtonElement>(".tbtn:not(.danger)")?.focus({ preventScroll: true });
     }
     async function doDelete(): Promise<void> {
       try {
@@ -733,6 +754,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     for (const [id, sec] of sections) {
       sec.classList.toggle("selected", selected.has(id));
       sec.classList.toggle("survivor", merging && survivor === id);
+      sec.querySelector(".check")?.setAttribute("aria-checked", String(selected.has(id)));
     }
     paintBar();
   }
@@ -764,6 +786,16 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
         label.addEventListener("click", () => setSurvivor(id));
         const x = el("span", { className: "mb-chip-x", textContent: "✕", title: t("topics.removeFromMerge") });
         x.addEventListener("click", () => deselect(id));
+        // 键盘也点得到(W5 A8):「留下哪枚」与「从合并里拿掉」两处此前只认鼠标。
+        for (const [n, act] of [[label, () => setSurvivor(id)], [x, () => deselect(id)]] as const) {
+          n.tabIndex = 0;
+          n.setAttribute("role", "button");
+          n.addEventListener("keydown", (e) => {
+            if (e.key !== "Enter" && e.key !== " ") return;
+            e.preventDefault();
+            act();
+          });
+        }
         const chip = el("div", { className: isKeep ? "mb-chip is-keep" : "mb-chip" });
         if (isKeep) chip.append(el("span", { className: "mb-chip-keep", textContent: t("topics.keep") }));
         chip.append(label, x);
@@ -808,6 +840,9 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
 
   function setMerging(on: boolean): void {
     disarmConfirm(); // 合并确认的 Esc / 点别处监听不跨模式存活
+    // 收起时焦点在列表 / 合并栏里(或掉在页面上)⇒ 还给「合并 M」那枚(W5 A8 / Q2);进来时焦点进第一枚方框。
+    const a = document.activeElement;
+    const refocus = !on && (a === null || a === document.body || list.contains(a) || mergebar.contains(a));
     merging = on;
     selected.clear();
     survivor = null;
@@ -824,7 +859,16 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     (mergeToggle.querySelector(".lbl") as HTMLElement).textContent = on ? t("topics.done") : t("topics.mergeTags");
     mergebar.hidden = !on;
     render();
+    if (on) list.querySelector<HTMLElement>(".check")?.focus({ preventScroll: true });
+    else if (refocus) mergeToggle.focus({ preventScroll: true });
   }
+  // W5 A8:合并态里 Esc = 退出合并(此前要再按 M)。确认那一拍开着时 Esc 先退回挑选(armDismiss 在捕获相先接了)。
+  function onMergeEsc(e: KeyboardEvent): void {
+    if (!merging || e.key !== "Escape" || e.defaultPrevented || e.isComposing) return;
+    e.preventDefault();
+    setMerging(false);
+  }
+  document.addEventListener("keydown", onMergeEsc);
 
   function askMerge(): void {
     if (selected.size < 2 || !survivor || confirming) return;
@@ -836,6 +880,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       confirmOff = null;
       backFromConfirm();
     });
+    mbNo.focus({ preventScroll: true }); // W5 Q3 ★①:确认一出来焦点停【取消】
   }
   function backFromConfirm(): void {
     disarmConfirm();
@@ -1063,6 +1108,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
       savedScroll = list.scrollTop;
       disarmConfirm(); // 在场确认的文档级监听不跨 mount 存活(codex M3)
       teardownViewKeys();
+      document.removeEventListener("keydown", onMergeEsc);
       root.replaceChildren();
     },
     onFocus() {

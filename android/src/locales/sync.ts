@@ -19,7 +19,10 @@ export const sync = defineMessages({
   "sync.goneKeep": { zh: "这台上的内容都还在,之后在这台记的只留在这台。", en: "Everything on this device is still here; what you note from now on stays only on this device." },
   "sync.goneRejoin": { zh: "想重新加入:先把只在这台上的那几条复制出来,再到「空间」里给这一本点「⋯」→「重置」,然后输码加入。", en: "To rejoin: first copy out the entries that exist only on this device, then in Spaces tap “⋯” on this notebook → Reset, and join again with a pairing code." },
   // 161 / W4 Q2(WM-14 / WM-17):没开同步时第一屏那几句(指南原话搬过来)。
-  "sync.introOff": { zh: "同步是可选的:不开,记的东西只存在这台手机上,卸载就没了(想留一份,去 设置 → 备份)。开了之后,内容先在这台上加密再发出去,服务器读不到。", en: "Sync is optional. Without it, your notes live only on this phone and are gone if you uninstall (to keep a copy, use Settings → Backup). With it, content is encrypted on this device before it leaves, and the server can't read it." },
+  // 165 / W5 A34(WM-07):「这台手机」→「这台设备」(平板上也是这几句;安卓平板同病)。
+  "sync.introOff": { zh: "同步是可选的:不开,记的东西只存在这台设备上,卸载就没了(想留一份,去 设置 → 备份)。开了之后,内容先在这台上加密再发出去,服务器读不到。", en: "Sync is optional. Without it, your notes live only on this device and are gone if you uninstall (to keep a copy, use Settings → Backup). With it, content is encrypted on this device before it leaves, and the server can't read it." },
+  // 同上,没有备份这条路的端(鸿蒙,HAS_SAF_BRIDGE = false)那一句:⛔ 别指去「设置 → 备份」(那一节在这一端只说「这一端还没有备份」)。
+  "sync.introOffNoBackup": { zh: "同步是可选的:不开,记的东西只存在这台设备上,卸载就没了(这一端还没有备份)。开了之后,内容先在这台上加密再发出去,服务器读不到。", en: "Sync is optional. Without it, your notes live only on this device and are gone if you uninstall (this build has no backup yet). With it, content is encrypted on this device before it leaves, and the server can't read it." },
   // Q2 / Q3:地址框下那一行,跟着框里的值说(预填的是这台最近一次连上的那台,从没连过才是官方那台)。
   "sync.serverHintOfficial": { zh: "官方服务器,一般不用改;自建的填你自己的(那是另一套账户)。", en: "The official server; usually leave it as is. If you run your own, enter yours (that is a separate set of accounts)." },
   "sync.serverHintOther": { zh: "不是官方服务器:这台服务器上的账户是另一套,和官方的不互通(官方的是 {url})。", en: "Not the official server: accounts on it are a separate set, not shared with the official one (that is {url})." },
@@ -66,7 +69,7 @@ export const sync = defineMessages({
   // ⚠ 这句给的是**另一台**的路,措辞与桌面可见文案逐字对齐(「同步」= 侧栏 / 顶栏那枚钮、
   // 「用配对码加入」= 桌面 sync.joinWithCode 与本端 shell.syncAltPair、「加入空间(输入配对码)」= 桌面 notebook.joinSpace 与本端
   // shell.joinAlt)。161 / W4(WM-15 / N-3):此前只写电脑那条路,对方是另一部手机时对不上;Q16:写几点失效。
-  "sync.pairNote": { zh: "在另一台设备上打开朱简的「同步」:那台没开过同步,就选「用配对码加入」;已经在用自己账户的,改走它的「空间」→「加入空间(输入配对码)」。服务器地址和配对码两项都要填。出码和对方初始同步期间,不要切换空间、不要运行「全部同步」,并保持本机亮屏在前台。配对码到 {until} 失效、只能用一次。", en: "On the other device, open Sync in Zhujian: if it has never set up sync, choose “Join with a pairing code”; if it already has its own account, go to its Spaces → “Join a space (enter a pairing code)” instead. Both the server address and the pairing code are required. While the code is out and the other side is doing its initial sync, do not switch spaces or run Sync all, and keep this phone awake in the foreground. The code expires at {until} and can be used once." },
+  "sync.pairNote": { zh: "在另一台设备上打开朱简的「同步」:那台没开过同步,就选「用配对码加入」;已经在用自己账户的,改走它的「空间」→「加入空间(输入配对码)」。服务器地址和配对码两项都要填。出码和对方初始同步期间,不要切换空间、不要运行「全部同步」,并保持本机亮屏在前台。配对码到 {until} 失效、只能用一次。", en: "On the other device, open Sync in Zhujian: if it has never set up sync, choose “Join with a pairing code”; if it already has its own account, go to its Spaces → “Join a space (enter a pairing code)” instead. Both the server address and the pairing code are required. While the code is out and the other side is doing its initial sync, do not switch spaces or run Sync all, and keep this device awake in the foreground. The code expires at {until} and can be used once." },
   "sync.pairAgain": { zh: "重新出码", en: "Issue a new code" },
   "sync.addDevice": { zh: "添加设备", en: "Add device" },
   "sync.bootProgress": { zh: "正在拉取账户数据 {received} / {total}", en: "Fetching account data {received} / {total}" },
@@ -77,7 +80,7 @@ export const sync = defineMessages({
   "sync.bootWaiting": { zh: "正在等另一台设备发来初始快照…", en: "Waiting for another device to send the initial snapshot…" },
   "sync.snapshotDone": { zh: "快照 {total} 已收全,校验并导入中…", en: "Snapshot {total} received, verifying and importing…" },
   "sync.snapshotProgress": { zh: "拉取快照 {received} / {total}({pct}%)", en: "Fetching snapshot {received} / {total} ({pct}%)" },
-  "sync.pairDone": { zh: "新设备已加入账户。它接着要取回全部内容,本机看不到那一头的进度:等那台的同步状态不再是「初始同步中…」,就可以离开本页了。", en: "The new device has joined the account and is now fetching everything; this phone can't see its progress. Once its sync status no longer says “Initial sync…”, you can leave this page." },
+  "sync.pairDone": { zh: "新设备已加入账户。它接着要取回全部内容,本机看不到那一头的进度:等那台的同步状态不再是「初始同步中…」,就可以离开本页了。", en: "The new device has joined the account and is now fetching everything; this device can't see its progress. Once its sync status no longer says “Initial sync…”, you can leave this page." },
   "sync.pairFailed": { zh: "配对失败:{detail}(可重新出码)", en: "Pairing failed: {detail} (you can issue a new code)" },
   // 设备管理面(identity-plan §5.8/§5.9;android/src/devices.ts)。⚠ 两端各一份独立字典、
   // 键空间独立;这一族与桌面同名的键**刻意不进** CROSS_END_KEYS —— 端间措辞可以各自随

@@ -54,6 +54,10 @@ export const topics = defineMessages({
   "topics.newSave": { zh: "建", en: "Create" },
   "topics.newCancel": { zh: "取消", en: "Cancel" },
   "topics.created": { zh: "已建标签", en: "Tag created" },
+  // 165 / W5 A20:卡里(随记 / 任务 / 长文)「新标签名」回车或点「新建并打上」建成了说一声(此前一声不吭,看不出挂上没有)。两端同句。
+  "topics.createdAdded": { zh: "已建标签「{name}」并打上", en: "Created tag “{name}” and added it" },
+  // 同上,同名标签已在(core 不另建,复用那一枚)时那一句。
+  "topics.addedExisting": { zh: "已打上标签「{name}」", en: "Added tag “{name}”" },
   // 展开看名下内容(user-44 第五刀):点计数 → 行下摊开随记 + 任务,纯只读。
   // 可见中文与桌面那份逐字同(「随记 N」/「任务 N」),⛔ 但键空间仍各自独立,别去对齐键名。
   "topics.expandHint": { zh: "点一下看名下的内容", en: "Tap to see what’s tagged" },

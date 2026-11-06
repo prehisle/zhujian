@@ -23,7 +23,7 @@
 // 桌面在 `src/theme.css` 的 `--ink-soft-on-tint-tcard` 那段与 board.css 的 `.v-board .tcard.tinted`)。
 
 import { t } from "./i18n";
-import { el } from "./dom";
+import { arrowWalk, el } from "./dom";
 import { armDismiss } from "./hotkey-menu";
 
 export type CardColor = { hex: string; name: string };
@@ -79,9 +79,15 @@ export function openCardColorPicker(
   wrap: HTMLElement,
   current: string | null,
   apply: (hex: string | null) => void,
+  /** 不选就收起(Esc / 点别处)且焦点原在色板里时调:把焦点还给卡(W5 A4 / Q2)。 */
+  refocus: () => void,
 ): void {
   let off = () => {};
-  off = armDismiss(wrap, () => wrap.replaceChildren());
+  off = armDismiss(wrap, () => {
+    const had = wrap.contains(document.activeElement);
+    wrap.replaceChildren();
+    if (had) refocus();
+  });
   const pick = (hex: string | null): void => {
     off(); // 先摘监听:apply 成功会重渲整卡、失败要报错,两条路都不该留下没监听的半开态
     apply(hex);
@@ -101,10 +107,14 @@ export function openCardColorPicker(
     });
     return b;
   };
-  wrap.replaceChildren(
-    el("div", { className: "card-color-row" }, [
-      ...CARD_COLORS.map((c, i) => swatch(c.hex, String(i + 1))),
-      swatch(null, "0"),
-    ]),
-  );
+  const row = el("div", { className: "card-color-row" }, [
+    ...CARD_COLORS.map((c, i) => swatch(c.hex, String(i + 1))),
+    swatch(null, "0"),
+  ]);
+  arrowWalk(row);
+  wrap.replaceChildren(row);
+  // W5 A39(WD-22):焦点进色板(落在当前那色上,没色落第一枚)、整排滚进列的可视区 —— 此前 S / L / Y / M 都进、
+  // 只有 P / H 不进,列尾那张的选项还被列下沿截掉。数字键照旧是快速通道(色点上印着),不受影响。
+  (row.querySelector<HTMLElement>(".color-swatch.current") ?? row.querySelector<HTMLElement>(".color-swatch"))?.focus({ preventScroll: true });
+  row.scrollIntoView({ block: "nearest" });
 }

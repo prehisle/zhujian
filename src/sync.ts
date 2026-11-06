@@ -519,7 +519,12 @@ function renderPanel(refocus: "first" | "keep" = "keep"): void {
       renderDevices(body, devicesDeps());
       break;
   }
-  if (refocus === "first") {
+  // 子块点名要焦点的那一枚(设备名单里刚展开的确认块的【取消】,W5 Q3)先于「落回原处」。只认一次。
+  const auto = body.querySelector<HTMLElement>("[data-autofocus]");
+  if (auto) {
+    auto.removeAttribute("data-autofocus");
+    auto.focus();
+  } else if (refocus === "first") {
     (focusables(body)[0] ?? close).focus();
   } else if (wasIn) {
     const after = focusables(panel);

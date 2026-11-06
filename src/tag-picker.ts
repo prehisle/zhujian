@@ -10,6 +10,7 @@
 import { groupPills } from "./filter-bar";
 import { t } from "./i18n";
 import { el } from "./dom";
+import { toastAction } from "./toast";
 
 // ---- small DOM helper (same shape as the views / hotkey-menu.ts) ------------
 // 一个可选标签。color 本件不用(选择器不着色),但两视图的 topic 类型都带,收成同一
@@ -22,12 +23,12 @@ export type TagPickerOpts = {
   /** 已在该条目上的标签 id —— 候选里点亮(`.on`),再点一次 = 摘掉(onUnpick);Enter 精确命中它时无操作。
    *  675 起与手机端同形(此前是从候选隐藏、要摘去点卡上的 ✕;用户 2026-09-12 拍板三处统一)。 */
   have: Set<string>;
-  /** 选中一个既有(未挂的)标签。 */
-  onPick: (topicId: string) => void | Promise<void>;
+  /** 选中一个既有(未挂的)标签。回 `false` = 没写成(调用方已就地报错):框里打的字留着、不出回执。 */
+  onPick: (topicId: string) => void | boolean | Promise<void | boolean>;
   /** 再点一次已挂的标签 = 摘掉。 */
-  onUnpick: (topicId: string) => void | Promise<void>;
-  /** 输入了库里没有的新名并确认 → 新建并挂上。 */
-  onCreate: (title: string) => void | Promise<void>;
+  onUnpick: (topicId: string) => void | boolean | Promise<void | boolean>;
+  /** 输入了库里没有的新名并确认 → 新建并挂上。回 `false` 同 onPick。 */
+  onCreate: (title: string) => void | boolean | Promise<void | boolean>;
   /** 选/建/摘后不收起选择器,可连续改多个:回调多半是异步落库,等它落定就地重渲候选(search
    *  文本与焦点原样留存,renderChoices 读同一个活的 `have`——调用方在回调里 `have.add` /
    *  `have.delete` 后,那枚候选的点亮态跟着翻)。默认 false = 点一下即由调用方的回调自行收起(灵感)。 */
@@ -43,10 +44,19 @@ export function renderTagPicker(container: HTMLElement, opts: TagPickerOpts): vo
   // 选/建/摘的落地:keepOpen 时等回调(异步落库)落定,再就地重渲候选并把焦点还给搜索框——
   // renderChoices 读活的 `have`(调用方已 add / delete 过),于是那枚候选的点亮态翻面、search 文本
   // 留存,可接着改下一个。默认(灵感)不重渲:调用方的回调自己会收起选择器。
-  function commit(run: () => void | Promise<void>): void {
+  // `said` = 打名字那条路(回车 / 点「创建「…」」)写成之后的回执(165 / W5 A20,两端同句):此前回车建好挂上了,
+  // 选择器不收、框里字还在、一声不吭,看不出挂上没有。写成 ⇒ 框清空(§3.3 提交型输入「成功后清空」)、底部说一句;
+  // 点候选那条路不说(Q5 ★①:挂标签不给回执 —— 胶囊当场出现在卡上)。没写成(回 false)⇒ 字留着、不说。
+  function commit(run: () => void | boolean | Promise<void | boolean>, said?: string): void {
     const r = run();
-    if (!keepOpen) return;
-    void Promise.resolve(r).then(() => {
+    if (!keepOpen && said === undefined) return;
+    void Promise.resolve(r).then((ok) => {
+      if (ok === false) return;
+      if (said !== undefined) {
+        search.value = "";
+        toastAction(said);
+      }
+      if (!keepOpen || !search.isConnected) return;
       renderChoices();
       search.focus();
     });
@@ -107,7 +117,7 @@ export function renderTagPicker(container: HTMLElement, opts: TagPickerOpts): vo
           className: "choice create",
           draggable: false,
           textContent: t("tagPicker.create", { name: q }),
-          onclick: () => commit(() => onCreate(q)),
+          onclick: () => commit(() => onCreate(q), t("topics.createdAdded", { name: q })),
         }),
       );
     }
@@ -131,10 +141,12 @@ export function renderTagPicker(container: HTMLElement, opts: TagPickerOpts): vo
     const hits = allTopics.filter((tp) => tp.title.toLowerCase().includes(ql));
     const match = allTopics.find((tp) => tp.title.toLowerCase() === ql) ?? (hits.length === 1 ? hits[0] : undefined);
     if (match) {
-      // 命中已有 → 直接加;已在卡上则无操作 —— Enter 是「加」的手势,摘要点那枚点亮的候选。
-      if (!have.has(match.id)) commit(() => onPick(match.id));
+      // 命中已有 → 直接加;已在卡上则不写库、照实说一声(165 / W5 A20:此前一声不吭)—— Enter 是「加」的手势,
+      // 摘要点那枚点亮的候选。⚠ 同名已挂时 ⛔ 别再走一次写库:手机 M1 撞到过 core 复用同名后再挂一次撞 UNIQUE。
+      if (have.has(match.id)) commit(() => true, t("topics.addedExisting", { name: match.title }));
+      else commit(() => onPick(match.id), t("topics.addedExisting", { name: match.title }));
     } else {
-      commit(() => onCreate(q)); // 无匹配 → 新建并加
+      commit(() => onCreate(q), t("topics.createdAdded", { name: q })); // 无匹配 → 新建并加
     }
   });
 

@@ -32,6 +32,8 @@ export const main = defineMessages({
   "main.emptyBooting": { zh: "正在从其他设备取回记录…", en: "Fetching your entries from your other devices…" },
   "main.emptyTasks": { zh: "还没有任务。", en: "No tasks yet." },
   "main.emptyTasksHint": { zh: "点右下角 ＋ 记一件待办", en: "Tap ＋ at the bottom right to add one" },
+  // 165 / W5 Q15(查到手机同病):任务一张都没有、归档里有 —— 空态补一句,别让唯一那张归档后像是没了(同桌面那句,手机不写「页头」)。
+  "main.emptyTasksSealed": { zh: "归档了 {n} 张,在「归档」里", en: "{n} archived {n|task is|tasks are} under Archive" },
   "main.listSep": { zh: "、", en: ", " },
   "main.noMatchText": { zh: "没有匹配「{q}」的{noun}。", en: "No {noun} match “{q}”." },
   "main.noMatchTextIn": { zh: "{scope}没有匹配「{q}」的{noun}。", en: "No {noun} {scope} match “{q}”." },

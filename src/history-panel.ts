@@ -16,10 +16,25 @@ type RevisionCatalog = { entries: RevisionMeta[]; total: number; has_more: boole
 type VersionText = { revision_id: number | null; archived_at: string | null; content: string };
 type VersionPair = { a: VersionText; b: VersionText };
 
+/** 比对前把两版的末行补齐换行(165 / W5 A32):行尾的换行是行的一部分,上一版末行没带换行、补了一段之后它带上了 ⇒
+ *  同一行字被比成「删掉一行 + 加上一行」,红一遍又一字不差绿一遍,读着像改过。⛔ 只改**拿去比的那两份**,存下的版本一个字不动。
+ *  两版**只**差末尾那个换行:补齐就成了同一份、比对里一处差异都不标 ⇒ 这种照原样比(差异就是那个换行,照实报)。
+ *  与手机 `android/src/ui.ts::diffPair` 逐字孪生;长文历史(docs.ts)与随记 / 看板卡的历史(这里)同一条。 */
+export function diffPair(a: string, b: string): [string, string] {
+  const eol = (s: string): string => (s === "" || s.endsWith("\n") ? s : `${s}\n`);
+  const na = eol(a);
+  const nb = eol(b);
+  return na === nb ? [a, b] : [na, nb];
+}
+
 /** 往 `host` 里挂「历史 N 版」开关与面板;没有历史就什么也不挂。目录读失败照抛,由调用方决定
  *  怎么降级(编辑态里历史是附带的,读不到不该挡编辑)。`expanded` = 不要开关、目录直接摊开
- *  (看板卡的历史读框:框本身就是「要看」,再套一层能收起的开关是多一步)。 */
-export async function mountHistory(host: HTMLElement, itemId: string, opts: { expanded?: boolean } = {}): Promise<void> {
+ *  (看板卡的历史读框:框本身就是「要看」,再套一层能收起的开关是多一步)。`onCollapse` 见开关那一行。 */
+export async function mountHistory(
+  host: HTMLElement,
+  itemId: string,
+  opts: { expanded?: boolean; onCollapse?: () => void } = {},
+): Promise<void> {
   const first = await invoke<RevisionCatalog>("list_revisions", { id: itemId, before: null });
   if (first.total === 0) return;
 
@@ -57,7 +72,7 @@ export async function mountHistory(host: HTMLElement, itemId: string, opts: { ex
           if (mine !== seq) return;
           // 157 G4 / P5:复用长文的比对 —— 这一版 → 现在,删掉的标红、加上的标绿(此前只摊旧版全文,
           // 改了哪儿得自己对)。算不出逐行差异时 renderDiff 自己退回两份原文,这里补一句说明。
-          const d = renderDiff(pair.a.content, pair.b.content);
+          const d = renderDiff(...diffPair(pair.a.content, pair.b.content)); // 165 / W5 A32:末行换行先补齐再比
           text.replaceChildren(
             el("p", { className: "hist-vs", textContent: t("inbox.histVsNow") }),
             ...(d.degraded !== null ? [el("p", { className: "hist-vs", textContent: t("docs.histDegraded") })] : []),
@@ -94,8 +109,11 @@ export async function mountHistory(host: HTMLElement, itemId: string, opts: { ex
   const toggle = el("button", {
     className: "hist-toggle",
     textContent: t("inbox.historyToggle", { n: first.total }),
+    // `onCollapse`(随记读态那份,W5 A15):摊开着再点这一行 = 整块收走、交给宿主(此前只藏面板、卡上留着
+    // 「历史 1 版」那一行,之后按 H 第一下收这行、第二下才展开)。编辑态那份不给,照旧只开合面板。
     onclick: () => {
-      panel.hidden = !panel.hidden;
+      if (!panel.hidden && opts.onCollapse) opts.onCollapse();
+      else panel.hidden = !panel.hidden;
     },
   });
   host.replaceChildren(toggle, panel);

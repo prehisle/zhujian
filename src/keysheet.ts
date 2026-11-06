@@ -33,7 +33,8 @@ export function buildKeySheet(isMac: boolean): HTMLElement {
 
   const ideaCard = rowsOf(IDEA_CARD_KEYS, {
     edit: t("inbox.actEdit"),
-    history: t("inbox.actHistory"),
+    history: t("settings.keysHistoryRevised"),
+    images: t("inbox.actImages"),
     task: t("settings.keysToTask"),
     tag: t("inbox.actTag"),
     comments: t("inbox.actComments"),
@@ -59,6 +60,7 @@ export function buildKeySheet(isMac: boolean): HTMLElement {
 
   const boardCard = rowsOf(BOARD_CARD_KEYS, {
     edit: t("board.edit"),
+    images: t("inbox.actImages"),
     copy: t("board.copy"),
     copyLink: t("board.copyLink"),
     tags: t("board.tags"),
@@ -66,11 +68,12 @@ export function buildKeySheet(isMac: boolean): HTMLElement {
     priority: t("board.priority"),
     comments: t("board.comments"),
     color: t("board.color"),
-    history: t("inbox.actHistory"),
+    history: t("settings.keysHistoryRevised"),
     toTop: t("board.moveToTop"),
     toBottom: t("board.moveToBottom"),
     nextCol: t("settings.keysNextCol"),
     prevCol: t("settings.keysPrevCol"),
+    complete: t("settings.keysComplete"),
     seal: t("settings.keysSeal"),
     revert: t("settings.keysRevert"),
     move: t("settings.keysMoveSpace"),
@@ -97,10 +100,15 @@ export function buildKeySheet(isMac: boolean): HTMLElement {
     ...rowsOf(DOC_VIEW_KEYS, { compose: t("settings.keysDocCompose") }),
     // W3 159 / Q9(WD-19):全局的那一枚(notebook.ts 的文档级监听,不在 keymap 的单键表里)。
     [`${mod}F`, t("settings.keysSearch")],
+    // W5 A1 / Q15:同住 notebook.ts 的几枚全局键。改那几只监听时回来对一眼。
+    [`${mod}Z`, t("settings.keysUndo")],
+    [`${mod},`, t("settings.keysSettings")],
+    [`${mod}B`, t("settings.keysSidebar")],
   ];
 
   const pick: Row[] = [
     ["↑ / ↓", t("settings.keysArrows")],
+    ["← / →", t("settings.keysLanes")],
     ["/", t("settings.keysSlash")],
     [t("settings.keysDblclickKey"), t("inbox.actEdit")],
   ];
@@ -111,10 +119,12 @@ export function buildKeySheet(isMac: boolean): HTMLElement {
     ["↓ / ↑", t("settings.keysSearchArrows")],
     ["Enter", t("settings.keysSearchEnter")],
     ["Esc", t("settings.keysSearchEsc")],
+    ["Esc", t("settings.keysSearchBack")],
   ];
 
   const editing: Row[] = [
     ["Enter", t("settings.keysEnter")],
+    [`${mod}Enter`, t("settings.keysCtrlEnter")],
     ["Shift+Enter", t("settings.keysShiftEnter")],
     ["Esc", t("settings.keysEsc")],
     [`${mod}L`, t("settings.keysChecklist")],

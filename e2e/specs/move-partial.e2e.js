@@ -84,7 +84,7 @@ describe("跨空间移动 · 部分成功登记的持久化", () => {
       const pageNotice = await $(".v-docs .doc-page .move-partial");
       await pageNotice.waitForDisplayed({ timeout: 10000 });
       expect(await pageNotice.getText()).toContain("E2E长文原话");
-      expect(await cornerMenuHas(".v-docs .doc-page", "正文", "移动")).toBe(false);
+      expect(await cornerMenuHas(".v-docs .doc-page", "正文", "移到别的空间")).toBe(false);
 
       await (await pageNotice.$("button*=解除")).click();
       await pageNotice.waitForExist({ reverse: true, timeout: 10000 });

@@ -47,7 +47,6 @@ import {
   type IdeaItem,
   type ImageMeta,
   type RevisionCatalog,
-  type RevisionMeta,
   type SpaceInfo,
   type TopicItem,
 } from "./api";
@@ -61,7 +60,7 @@ import { figureSrc, hydrateThumbs } from "./thumbs";
 import { openViewer } from "./viewer";
 import { capturePhoto, PICK_MAX, pickImages, toBase64 } from "./images";
 import { t } from "./i18n";
-import { $, actionBar, confirmBar, fmtWhen, fmtWhenDated, hideConfirmBar, showBar } from "./ui";
+import { $, actionBar, confirmBar, diffPair, fmtWhen, hideConfirmBar, showBar, showUndone } from "./ui";
 import { applyEdit } from "./checklist-input";
 import { errDetail, showErr } from "./err";
 
@@ -101,6 +100,22 @@ let readerAt: { key: string; caret: number } | null = null;
 
 const root = (): HTMLElement => $("docs-body");
 
+/** 每篇「改于」那一刻(165 / W5 Q15,WM-32:改过一版,列表卡与阅读页仍只写第一次写的时间,像补的那段没存上)
+ *  = 历史目录里最新那一版被换下的那一刻(= 现在这版写成的那一刻);没改过 = null。按正文缓存:正文没变不重问
+ *  (纯勾方框不落版本,0039 —— 正文变了、目录没变,重问一次答的还是同一个时刻,对)。 */
+const editedMemo = new Map<string, { content: string; at: string | null }>();
+function editedAtOf(sp: string, d: IdeaItem): string | null {
+  const m = editedMemo.get(`${sp}/${d.id}`);
+  return m !== undefined && m.content === d.content ? m.at : null;
+}
+async function fetchEditedAt(sp: string, d: IdeaItem): Promise<void> {
+  const key = `${sp}/${d.id}`;
+  const m = editedMemo.get(key);
+  if (m !== undefined && m.content === d.content) return;
+  const cat = await listRevisions(sp, d.id, null);
+  editedMemo.set(key, { content: d.content, at: cat.entries.length > 0 ? cat.entries[0].archived_at : null });
+}
+
 // ---- 小件 ------------------------------------------------------------------------
 
 type Kids = (Node | string | null)[];
@@ -137,7 +152,9 @@ function lineOf(v: string, off: number): number {
 /** 页面上「看得见」的那一截(视口坐标):上沿 = 吸顶顶栏,以及吸在它下面的页头那排(`.doc-head`,键盘起着时不吸);
  *  下沿 = 视口底(键盘起着时原生侧已把视口缩到键盘上沿),底栏现身时再让开它。 */
 function visibleBand(): { top: number; bottom: number } {
-  let top = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--head-h")) || 0;
+  // 顶栏不吸的那一形(手机横放打着长文,165 / W5 A26:index.html `body.doc-editing` 那组)它跟着正文滚走,上沿从 0 算。
+  const bar = document.querySelector<HTMLElement>("body > header");
+  let top = bar !== null && getComputedStyle(bar).position !== "sticky" ? 0 : parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--head-h")) || 0;
   const head = root().querySelector<HTMLElement>(".doc-head");
   if (head !== null && getComputedStyle(head).position === "sticky") {
     const r = head.getBoundingClientRect();
@@ -145,7 +162,12 @@ function visibleBand(): { top: number; bottom: number } {
   }
   let bottom = window.innerHeight;
   const nav = document.getElementById("bottombar");
-  if (nav !== null && getComputedStyle(nav).visibility !== "hidden" && nav.offsetHeight > 0) bottom = Math.min(bottom, nav.getBoundingClientRect().top);
+  // ⚠ 只认在屏底的底栏:宽屏上它搬进了顶栏(tablet-plan 格 3),那时它的上沿在顶栏里 —— 拿它当下沿,可见那一截就成了负的,
+  // 平板 / 横放上光标怎么摆都「出界」(165 / W5 A24 平板那半查到)。
+  if (nav !== null && getComputedStyle(nav).visibility !== "hidden" && nav.offsetHeight > 0) {
+    const navTop = nav.getBoundingClientRect().top;
+    if (navTop > window.innerHeight / 2) bottom = Math.min(bottom, navTop);
+  }
   return { top, bottom };
 }
 
@@ -160,6 +182,12 @@ export function docTitle(content: string): string {
     from = end + 1;
   }
   return "";
+}
+/** 那第一行是不是 Markdown 标题(写了 `#`)。不是 = 列表卡上那行照正文的样子画、不加粗(165 / W5 Q15 查到手机同病:
+ *  列表卡把没写 `#` 的第一行排成粗体标题,阅读页里却是普通字 —— 同一行字两处两个样子)。 */
+export function docTitleIsHeading(content: string): boolean {
+  const first = content.split("\n").find((l) => l.trim() !== "");
+  return first !== undefined && /^\s*#{1,6}\s/.test(first);
 }
 /** 列表卡上题目下面那两行:摘掉行首的 Markdown 记号与行内 ** __ ` —— 只是给眼睛扫的字,
  *  ⛔ 不是渲染(列表卡不进 Markdown 渲染器)。同桌面 excerpt。
@@ -328,6 +356,9 @@ async function load(): Promise<void> {
     return;
   }
   if (seq !== loadSeq || sp !== getCurrentSpace()) return;
+  // 「改于」(Q15):每篇问一次目录(缓存过的不问)。问不到只是少那一行字,正文照常(同缩略图「装饰不陪葬」)。
+  await Promise.all(list.map((d) => fetchEditedAt(sp, d).catch(() => undefined)));
+  if (seq !== loadSeq || sp !== getCurrentSpace()) return;
   docs = list;
   if (pendingFocus !== null) {
     const id = pendingFocus;
@@ -381,9 +412,9 @@ function renderList(): void {
     const title = docTitle(d.content);
     const art = el("article", "card doc-card", [
       el("div", "body", [
-        el("h3", title === "" ? "doc-title untitled" : "doc-title", [title === "" ? t("docs.untitled") : title]),
+        el("h3", title === "" ? "doc-title untitled" : docTitleIsHeading(d.content) ? "doc-title" : "doc-title plain", [title === "" ? t("docs.untitled") : title]),
         el("p", "doc-ex", [excerpt(d.content, title)]),
-        el("footer", "", [el("time", "", [fmtWhen(d.created_at)]), tagChips(d)]),
+        el("footer", "", [el("time", "", [fmtWhen(d.created_at)]), editedTime(space, d), tagChips(d)]),
       ]),
     ]);
     art.dataset.doc = d.id;
@@ -391,6 +422,12 @@ function renderList(): void {
     list.append(art);
   }
   root().replaceChildren(list);
+}
+
+/** 「改于 …」那一枚(Q15);没改过 = null(不占位)。 */
+function editedTime(sp: string, d: IdeaItem): HTMLElement | null {
+  const at = editedAtOf(sp, d);
+  return at === null ? null : el("time", "doc-edited", [t("docs.editedAt", { time: fmtWhen(at) })]);
 }
 
 // ---- 阅读页 ----------------------------------------------------------------------
@@ -401,8 +438,8 @@ function bar(left: HTMLElement[], right: HTMLElement[]): HTMLElement {
 }
 
 /** 正文 → DOM(共用渲染器)。配图映射每篇建一次;勾方框走 edit_note 落一版(同随记,⛔ 不猜行)。
- *  链接:安卓把校验过的地址直接交 opener;鸿蒙交不出浏览器(`HAS_BROWSER = false`)⇒ `openLink: null`,
- *  只显示文字与地址(共用渲染器那形)。`docId = null` = 还没建成的新篇(不会有图);`shown` = 原位
+ *  链接:把校验过的地址直接交 opener(安卓真插件;鸿蒙 W5 A54 起经 opener 接缝换成壳桥,同样交得出);
+ *  交不出浏览器的端(`HAS_BROWSER = false`,今天没有)⇒ `openLink: null`,只显示文字与地址(共用渲染器那形)。`docId = null` = 还没建成的新篇(不会有图);`shown` = 原位
  *  画成图的那几张的编号(阅读页与编辑器的缩略图条不再重复摆它们);`figs` = 逐个 `.md-fig` 是哪一张
  *  (渲染器按文档序逐个取 src,与 `querySelectorAll(".md-fig")` 同序);`anchors` = 顶层每一块起于第几行(读到哪 / 写到哪对位用)。 */
 function renderBody(
@@ -534,14 +571,19 @@ function renderDoc(d: IdeaItem): void {
     anchors = b.anchors;
     pin();
   };
-  /** 从阅读页进编辑器时光标落在哪:页头底下第一块(正读着的那一段)的行首;上次在这篇里离开编辑器时的光标正落在这一块里,就回到它。 */
+  /** 从阅读页进编辑器时光标落在哪:页头底下第一块(正读着的那一段)的行首;上次在这篇里离开编辑器时的光标正落在这一块里,就回到它。
+   *  165 / W5 Q15(WM-31):还停在篇首(第一块就在页头底下,没往里读)= 多半是要接着往后写 ⇒ 落在全文末尾(此前落在开头,
+   *  得自己划到末尾);往里读到某一段再点「编辑」照旧落在那一段(153 A-M06 那条「读到哪写到哪」不动)。 */
   const startCaret = (): number => {
     const band = visibleBand().top;
     const i = anchors.findIndex((x) => x.el.getBoundingClientRect().bottom > band);
-    if (i < 0) return caretMemo.get(key) ?? 0;
-    const from = i === 0 ? 0 : lineStart(content, anchors[i].line);
-    const to = i + 1 < anchors.length ? lineStart(content, anchors[i + 1].line) : content.length + 1;
     const memo = caretMemo.get(key);
+    if (i <= 0) {
+      const firstEnd = anchors.length > 1 ? lineStart(content, anchors[1].line) : content.length + 1;
+      return i === 0 && memo !== undefined && memo < firstEnd ? memo : content.length;
+    }
+    const from = lineStart(content, anchors[i].line);
+    const to = i + 1 < anchors.length ? lineStart(content, anchors[i + 1].line) : content.length + 1;
     return memo !== undefined && memo >= from && memo < to ? memo : from;
   };
   paint();
@@ -584,7 +626,7 @@ function renderDoc(d: IdeaItem): void {
       : null;
   if (draft !== null && draft.text === d.content) clearDraft(sp, d.id, draft.gen); // 已经存进去了的草稿,静默收掉
 
-  const meta = el("div", "doc-meta", [el("time", "", [t("docs.writtenAt", { time: fmtWhenDated(d.created_at) })])]);
+  const meta = el("div", "doc-meta", [el("time", "", [t("docs.writtenAt", { time: fmtWhen(d.created_at) })]), editedTime(sp, d)]);
   // 留言徽章:comments.ts 出的是转义过的固定形 HTML(数字 + 固定文案),不含正文
   const badge = commentBadgeHtml(sp, d.id);
   if (badge !== "") {
@@ -678,16 +720,18 @@ function readerActions(d: IdeaItem): HTMLElement {
             }),
           ]
         : []),
+      // 165 / W5 Q4 ★(两端拍):长文照随记 —— 不问、删完给【撤销】(长文本来就进随记那只回收站,撤销条就是那一拍,§3.8)。
+      // 此前先出「删除这篇长文?」要再点一下,6 s 不点就「没确认,已作罢」。
       btn(
         t("docs.actDelete"),
-        () =>
-          confirmBar(t("docs.deleteQ"), t("docs.deleteYes"), () => {
-            if (busy || page.kind !== "doc" || page.id !== d.id) return;
-            void write(() => archiveNote(sp, d.id), () => {
-              page = { kind: "list" };
-              actionBar(t("docs.deleted"), t("docs.undo"), () => void undo(() => restoreNote(sp, d.id)));
-            });
-          }),
+        () => {
+          if (busy || page.kind !== "doc" || page.id !== d.id) return;
+          const last = docs.length === 1 && docs[0].id === d.id;
+          void write(() => archiveNote(sp, d.id), () => {
+            page = { kind: "list" };
+            deletedBar(sp, d.id, last);
+          });
+        },
         "warn",
       ),
     );
@@ -820,8 +864,15 @@ async function undo(op: () => Promise<unknown>): Promise<void> {
     showErr(err);
     return;
   }
+  showUndone(); // 165 / W5 Q6
   void deps.refreshTimeline();
   if (page.kind === "list") void load();
+}
+
+/** 删了一篇长文之后那条回执(带【撤销】)。`last` = 删的是这一本里最后一篇(165 / W5 Q13 ★①):人还在长文页上、「长文」格还挂着,
+ *  一离开它就收起 ⇒ 回执补半句它会收起、再写一篇从哪儿进(规矩不动,只把这一跳说在前头)。 */
+function deletedBar(sp: string, id: string, last: boolean): void {
+  actionBar(last ? t("docs.deletedLast") : t("docs.deleted"), t("docs.undo"), () => void undo(() => restoreNote(sp, id)));
 }
 
 // 打标签:与随记同一条命令(长文的 stage 就在随记那两档)。同卡片操作面的标签那排:点亮的再点就摘。
@@ -860,8 +911,31 @@ async function renderTags(panel: HTMLElement, d: IdeaItem): Promise<void> {
       showBar(t("docs.tagNameRequired"));
       return;
     }
-    void write(() => fileNoteToTopic(sp, d.id, null, title), () => {});
+    // 165 / W5 A20:同卡片那一格 —— 建成了说一声;同名标签已在(core 复用、不另建)就只说打上了;这一篇已打着它 = 不写库,照实说。
+    const on = d.topics.find((x) => x.title.toLowerCase() === title.toLowerCase());
+    if (on) {
+      input.value = "";
+      showBar(t("topics.addedExisting", { name: on.title }), true);
+      return;
+    }
+    const known = new Map(all.map((x) => [x.id, x.title]));
+    let topicId: string | null = null;
+    void write(
+      async () => {
+        topicId = await fileNoteToTopic(sp, d.id, null, title);
+      },
+      () => {
+        const had = topicId !== null ? known.get(topicId) : undefined;
+        showBar(had !== undefined ? t("topics.addedExisting", { name: had }) : t("topics.createdAdded", { name: title }), true);
+      },
+    );
   }, "p");
+  // 回车 / 键盘右下那颗键 = 新建并打上(A20 / Q9);组字期的回车是上屏(§3.3)
+  input.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" || e.isComposing) return;
+    e.preventDefault();
+    if (!busy) create.click();
+  });
   panel.replaceChildren(
     el("div", "lane", [pills]),
     el("div", "lane", [input, create]),
@@ -1032,31 +1106,44 @@ function openEditor(d: IdeaItem | null, seed: string | null, carried: File[], at
   /** 把光标那一行摆进看得见的那一截(153 走查 A-M02 / M03 / M04 / M05:横屏转长文那行压在顶栏下、转屏后找不到写到哪、
    *  贴键盘那行压进键盘、带图转长文光标在键盘后)。WebView 自己只管「光标在视口里」,不知道顶上那截被吸顶顶栏盖着,
    *  贴键盘那行也只差几像素就算露出来了 ⇒ 这里按真正露出来的那一截再摆一次。`top` = 摆到顶(刚打开时),否则只在出界时挪最少的一步。 */
-  function revealCaret(mode: "top" | "nearest"): void {
+  function revealCaret(mode: "top" | "nearest" | "settle"): void {
     if (!area.isConnected || edBox.hidden) return;
     const band = visibleBand();
     const { top, h } = caretBox();
     const pad = 8;
+    // 回到页顶时光标那一行还露得出来吗(工具排 = 「← 回到正文 / 保存」那排也露着)。⚠ 页顶时页头那两排不吸顶、是正文上面的普通块,
+    // 它们自己就占着那一截 ⇒ 只看下沿(视口底;底栏在屏底时让开它),不按吸顶算的 band.top。
+    const fitsAtTop = top + window.scrollY + h <= band.bottom - pad;
     if (mode === "top") {
-      // 光标就在开头那一屏:回页顶(工具排也露着),别为了「摆到顶」把它们推走
-      if (top + window.scrollY + h < window.innerHeight * 0.5) window.scrollTo(0, 0);
+      // 光标就在开头那一屏:回页顶(工具排也露着),别为了「摆到顶」把它们推走。
+      // 键盘还没起(从阅读页点「编辑」)时按半屏算:键盘一起视口矮一大截,先给它留着。⚠ 键盘已经起着(从「记一笔」点「长文」进来,
+      // 那一层的键盘一直没落)时视口已经是矮的,别再打对折(165 / W5 A24:522 高的视口按 261 判,新篇光标在 271 ⇒ 被「摆到顶」,
+      // 「← 回到正文 / 保存」那排滚到顶栏后面、屏上只有写字框和键盘)。
+      const kb = document.documentElement.classList.contains("kb-up");
+      if (kb ? fitsAtTop : top + window.scrollY + h < window.innerHeight * 0.5) window.scrollTo(0, 0);
       else window.scrollBy(0, top - band.top - pad);
+      return;
+    }
+    // 视口变了(键盘起落、转屏)之后:光标回到页顶也露得出来,就回页顶(165 / W5 A24 / A25:收键盘那一下页头两排重新吸顶,
+    // 正好盖住前两段、屏上只剩最后一段;写到一半转横再转回,前几段滚到吸顶那排底下)。露不出来才只挪最少的一步。
+    if (mode === "settle" && fitsAtTop) {
+      if (window.scrollY !== 0) window.scrollTo(0, 0);
       return;
     }
     if (top < band.top + pad) window.scrollBy(0, top - band.top - pad);
     else if (top + h > band.bottom - pad) window.scrollBy(0, Math.min(top + h - (band.bottom - pad), top - band.top - pad));
   }
   let revealDue: ReturnType<typeof setTimeout> | null = null;
-  const revealSoon = (ms: number): void => {
+  const revealSoon = (ms: number, mode: "nearest" | "settle" = "nearest"): void => {
     if (revealDue !== null) clearTimeout(revealDue);
     revealDue = setTimeout(() => {
       revealDue = null;
-      revealCaret("nearest");
+      revealCaret(mode);
     }, ms);
   };
   // 转屏 / 键盘起落 / 分屏拖动:视口变了就再摆一次(等这一拍排完);打字停一下摆一次(横屏顶栏下那行 WebView 认为看得见、不滚);
   // 点进某一行之后摆一次(贴键盘那行)。⛔ 只在编辑态:预览开着时没有光标可摆。
-  const onResize = (): void => revealSoon(60);
+  const onResize = (): void => revealSoon(60, "settle");
   window.addEventListener("resize", onResize);
   area.addEventListener("click", () => revealSoon(0));
 
@@ -1088,9 +1175,12 @@ function openEditor(d: IdeaItem | null, seed: string | null, carried: File[], at
     const cs = getComputedStyle(area);
     areaW = es[es.length - 1].contentRect.width + parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight);
     if (area.clientWidth !== fitW) {
+      // 头一回(刚打开)那一下照旧只挪最少的一步 —— 打开时怎么摆归 revealCaret("top");之后宽度变了 = 转屏 / 分屏拖动,
+      // 同窗口 resize 那条一样按「回得了页顶就回页顶」摆(165 / W5 A25;两条谁后到谁算,得是同一个判法)。
+      const first = fitW === -1;
       fitW = area.clientWidth;
       fitArea(area);
-      revealSoon(60);
+      revealSoon(60, first ? "nearest" : "settle");
     }
     syncHl();
   });
@@ -1270,6 +1360,7 @@ function openEditor(d: IdeaItem | null, seed: string | null, carried: File[], at
     return "wrote";
   }
   function teardown(): void {
+    document.body.classList.remove("doc-editing");
     if (draftDue !== null) clearTimeout(draftDue);
     if (revealDue !== null) clearTimeout(revealDue);
     window.removeEventListener("resize", onResize);
@@ -1320,6 +1411,10 @@ function openEditor(d: IdeaItem | null, seed: string | null, carried: File[], at
     ]);
   }
   function finish(then: () => void): void {
+    // Q1:落下的是不是一版**正文**(只删了标记的图不算一版 —— 图不进历史)。⚠ 在 commit 之前量:成功后 `saved` 就跟上了。
+    // `wasNew` 按「这个编辑器是不是开来写新篇的」认(⛔ 别按 newId:先加图那条路会提前把篇建出来,那仍是新写的一篇)。
+    const wasNew = id === null;
+    const textChanged = area.value !== saved || (wasNew && newId === null);
     void commit().then((r) => {
       if (r === "failed" || editor === null) return;
       const target = id ?? newId;
@@ -1336,6 +1431,8 @@ function openEditor(d: IdeaItem | null, seed: string | null, carried: File[], at
       teardown();
       readerAt = target === null ? null : { key: `${sp}/${target}`, caret: area.selectionStart }; // 回到阅读页:光标那一块摆到顶
       then();
+      // 165 / W5 Q1 ★①:离开编辑器就落一版(规矩不动),现场说一声 —— 此前四条离开的路全都一声不吭,学会「返回 = 不要了」的人会平白多一篇。
+      if (r === "wrote" && textChanged) showBar(wasNew ? t("docs.savedNew") : t("docs.savedVersion"), true);
     });
   }
   /** 只剩图的空篇:进回收站(连图一起;回收站里还原得回来),不落空正文那一版。 */
@@ -1355,8 +1452,9 @@ function openEditor(d: IdeaItem | null, seed: string | null, carried: File[], at
     teardown();
     clearDraft(sp, target, null);
     void deps.refreshTimeline();
+    const last = !docs.some((x) => x.id !== target); // 新篇还没进 docs ⇒ 列表里没有别的就算最后一篇
     go({ kind: "list" });
-    actionBar(t("docs.deleted"), t("docs.undo"), () => void undo(() => restoreNote(sp, target)));
+    deletedBar(sp, target, last);
   }
   editor = {
     back: () => {
@@ -1385,6 +1483,8 @@ function openEditor(d: IdeaItem | null, seed: string | null, carried: File[], at
           else await editNote(sp, curId, text);
           clearDraft(sp, curId, gen);
           void deps.refreshTimeline();
+          // Q1:关面 / 换面那条离开的路也说一声(人已经在别的页上了,所以新篇那句带上它在哪)
+          if (sp === getCurrentSpace()) showBar(id === null ? t("docs.savedNew") : t("docs.savedVersion"), true);
         } catch (e) {
           showBar(t("docs.saveFailed", { error: errDetail(e) }));
         }
@@ -1419,7 +1519,8 @@ function openEditor(d: IdeaItem | null, seed: string | null, carried: File[], at
     // 页头两排吸在顶栏底下(153 走查 A-M06:长文写到中段,保存 / 预览 / 加图都滚出屏外);键盘起着时不吸(index.html .doc-head)
     el("div", "doc-head", [
       bar(
-        [btn(id === null ? t("docs.back") : t("docs.backToDoc"), () => leave(done, false), "ghost")],
+        // 165 / W5 Q1:新篇左上那枚也叫「← 回到正文」—— 它本来就落在这篇的阅读页(此前叫「← 长文」,却不回长文列表)
+        [btn(t("docs.backToDoc"), () => leave(done, false), "ghost")],
         [status, btn(t("docs.save"), () => leave(done, true))],
       ),
       // 加图两枚钮与「编辑 / 预览」同一排、吸在页头里 —— ⛔ 别挪到正文框底下:框不矮于视口,
@@ -1437,6 +1538,8 @@ function openEditor(d: IdeaItem | null, seed: string | null, carried: File[], at
     // 缩略图条在正文下面(154 G1:同阅读页;编辑器这条张张都在,× 标删)
     el("div", "doc-imgs", [thumbs, delNote]),
   );
+  // 编辑器开着(index.html 手机横放打字那一形挂在它上面,165 / W5 A26);teardown 摘。
+  document.body.classList.add("doc-editing");
   fitArea(area);
   paintHl();
   const caret = Math.min(at ?? area.value.length, area.value.length);
@@ -1473,11 +1576,18 @@ function renderHistory(d: IdeaItem): void {
     out,
   );
 
-  const metaOf = new Map<number, RevisionMeta>();
   let old: Pick = "current";
   let neu: Pick = "current";
   const same = (a: Pick, b: Pick): boolean => (a === "current" ? b === "current" : b !== "current" && a.rev === b.rev);
-  const label = (p: Pick): string => (p === "current" ? t("docs.histCurrent") : fmtWhen(metaOf.get(p.rev)!.archived_at));
+  // 165 / W5 Q15(手机新撞-1):旧版那一行写**它写成的那一刻**,不是它被换下的那一刻(此前 17:46 写的第一版标「17:48」,
+  // 列表与阅读页都说「写于 17:46」,历史里却找不到 17:46)。一版写成的那一刻 = 比它早一版被换下的那一刻;最早那一版 = 这篇建成的那一刻。
+  // 目录分页取(新的在前):一页末尾那版要等下一页到了才知道 ⇒ 先写「…」,下一页到了补上。
+  const writtenOf = new Map<number, string>();
+  const whenOf = (rev: number): string => {
+    const at = writtenOf.get(rev);
+    return at === undefined ? "…" : fmtWhen(at);
+  };
+  const label = (p: Pick): string => (p === "current" ? t("docs.histCurrent") : whenOf(p.rev));
   const rows: { pick: Pick; oldBtn: HTMLElement; newBtn: HTMLElement }[] = [];
   // 在途请求的代次:换了选择 / 离开历史页之后,旧回包 ⛔ 不许盖新的
   let seq = 0;
@@ -1511,7 +1621,7 @@ function renderHistory(d: IdeaItem): void {
       out.replaceChildren(el("p", "doc-note", [t("docs.histNoChange")]));
       return;
     }
-    const r = renderDiff(pair.a.content, pair.b.content);
+    const r = renderDiff(...diffPair(pair.a.content, pair.b.content)); // 165 / W5 A32:末行换行先补齐再比(⛔ 存下的版本不动)
     if (r.degraded !== null) {
       note.textContent = t("docs.histDegraded");
       note.hidden = false;
@@ -1526,6 +1636,7 @@ function renderHistory(d: IdeaItem): void {
     out.replaceChildren(r.root);
   }
 
+  const whenCells = new Map<number, HTMLElement>();
   function addRow(pick: Pick, when: string, chars: number | null): void {
     const oldBtn = btn(t("docs.histOld"), () => {
       if (same(pick, neu)) neu = old; // 点到对面那一格 = 两边对调
@@ -1540,9 +1651,11 @@ function renderHistory(d: IdeaItem): void {
     oldBtn.setAttribute("aria-label", t("docs.histOldAria", { when }));
     newBtn.setAttribute("aria-label", t("docs.histNewAria", { when }));
     rows.push({ pick, oldBtn, newBtn });
+    const whenCell = el("span", "hv-when", [when]);
+    if (pick !== "current") whenCells.set(pick.rev, whenCell);
     listEl.append(
       el("div", "hv-row", [
-        el("span", "hv-when", [when]),
+        whenCell,
         el("span", "hv-chars", [chars === null ? "" : t("docs.histChars", { n: chars })]),
         oldBtn,
         newBtn,
@@ -1550,11 +1663,31 @@ function renderHistory(d: IdeaItem): void {
     );
   }
 
+  /** 记下这一页里每版写成的那一刻:页内第 k 版 = 第 k+1 版被换下的那一刻;一页的最后一版等下一页(没有下一页 = 建篇那一刻);
+   *  上一页挂着「…」的那一版,这一页第一版一到就补上。行上的字与无障碍名跟着改(`whenCells`)。 */
+  let pendingTail: number | null = null;
+  function noteWritten(p: RevisionCatalog): void {
+    const e = p.entries;
+    if (pendingTail !== null && e.length > 0) writtenOf.set(pendingTail, e[0].archived_at);
+    for (let k = 0; k + 1 < e.length; k++) writtenOf.set(e[k].revision_id, e[k + 1].archived_at);
+    if (e.length > 0) pendingTail = e[e.length - 1].revision_id;
+    if (!p.has_more && pendingTail !== null) {
+      writtenOf.set(pendingTail, d.created_at);
+      pendingTail = null;
+    }
+    for (const r of rows) {
+      if (r.pick === "current") continue;
+      const when = whenOf(r.pick.rev);
+      whenCells.get(r.pick.rev)!.textContent = when;
+      r.oldBtn.setAttribute("aria-label", t("docs.histOldAria", { when }));
+      r.newBtn.setAttribute("aria-label", t("docs.histNewAria", { when }));
+    }
+  }
   function addPage(p: RevisionCatalog): void {
     for (const r of p.entries) {
-      metaOf.set(r.revision_id, r);
-      addRow({ rev: r.revision_id }, fmtWhen(r.archived_at), r.chars);
+      addRow({ rev: r.revision_id }, "", r.chars);
     }
+    noteWritten(p);
     more.hidden = !p.has_more;
     more.onclick = async () => {
       const before = p.entries[p.entries.length - 1].revision_id;

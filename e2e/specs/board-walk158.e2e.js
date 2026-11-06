@@ -161,8 +161,8 @@ describe("158 · 看板 W2 走查修的那批(桌面)", () => {
     await browser.execute(() => document.querySelector('.col[data-col="done"] .seal-all-slot .act').click());
     const q = await browser.execute(() => document.querySelector('.col[data-col="done"] .seal-all-slot .confirm-q')?.textContent);
     expect(q).toBe(`归档 ${doneAll} 条?`);
-    // A18:确认一出现,焦点就在执行钮上
-    expect(await browser.execute(() => document.activeElement?.textContent)).toBe("归档");
+    // A18 → W5 Q3 ★①(D1 改):确认一出现,焦点停「取消」(此前停执行钮,回车即全部归档)
+    expect(await browser.execute(() => document.activeElement?.textContent)).toBe("取消");
     await browser.execute(() => document.querySelector('.col[data-col="done"] .seal-all-slot .act.primary').click());
     await waitToast(`已归档 ${doneAll} 条`);
     await clickToast("撤销");
@@ -203,7 +203,7 @@ describe("158 · 看板 W2 走查修的那批(桌面)", () => {
     await boardAction(T, "撤回为随记");
     const q = await browser.execute((sel) => eval(sel).querySelector(".confirm-q")?.textContent, cardEl(T));
     expect(q).toBe("撤回为随记?将清除截止和优先级");
-    expect(await browser.execute(() => document.activeElement?.textContent)).toBe("撤回"); // A18 焦点
+    expect(await browser.execute(() => document.activeElement?.textContent)).toBe("取消"); // A18 焦点 → W5 Q3:停「取消」
     await browser.execute((sel) => eval(sel).querySelector(".act.primary").click(), cardEl(T));
     await waitToast("已撤回为随记");
     // 158 G3 / A7 对齐手机:配「撤销」(转回待办并设回截止 / 优先级,撤销那半在 board-walk158-g3)+「去看看」
@@ -229,7 +229,8 @@ describe("158 · 看板 W2 走查修的那批(桌面)", () => {
     await $(".bcm-overlay").waitForExist({ timeout: 5000, reverse: true });
   });
 
-  it("A12 / A18:有卡的自定义列点「删除」→ 面板里写明原因;空列删除确认「取消」在前、红「删除」在后且拿着焦点", async () => {
+  // W5 Q3 ★①(D1 改):确认一出来焦点停「取消」(此前 158 A18 定的是停「删除」、回车即删)—— 要删 Tab 一下到红钮。
+  it("A12 / A18:有卡的自定义列点「删除」→ 面板里写明原因;空列删除确认「取消」在前、红「删除」在后,焦点停「取消」", async () => {
     const COL = "E2E158列";
     await goNotebook("board");
     await $("#manage-cols").waitForDisplayed({ timeout: 8000 });
@@ -274,7 +275,9 @@ describe("158 · 看板 W2 走查修的那批(桌面)", () => {
         solid: acts.querySelector(".bcm-btn.danger")?.classList.contains("solid"),
       };
     }, rowSel(COL));
-    expect(c).toEqual({ order: ["取消", "删除"], focused: "删除", solid: true });
+    expect(c).toEqual({ order: ["取消", "删除"], focused: "取消", solid: true });
+    await browser.keys(["Tab"]); // 到红钮
+    expect(await browser.execute(() => document.activeElement?.textContent)).toBe("删除");
     await browser.pause(350); // 执行钮落在原「删除」位上 ⇒ 出现后 300ms 内不接(§3.2 防连击)
     await browser.keys(["Enter"]);
     await browser.waitUntil(() => browser.execute((s) => !eval(s), rowSel(COL)), { timeout: 8000, timeoutMsg: "回车没删掉那一列" });
@@ -389,13 +392,14 @@ describe("158 · 看板 W2 走查修的那批(桌面)", () => {
     await browser.keys(["Escape"]);
   });
 
-  it("A18:卡的删除确认出现时焦点在「删除」上", async () => {
+  // W5 Q3 ★①(D1 改):全应用的确认一个规矩 —— 焦点停「取消」(此前停「删除」,再按一下回车就删)。
+  it("A18 → W5 Q3:卡的删除确认出现时焦点在「取消」上", async () => {
     const T = `${P}A18-删`;
     await invoke("create_task", { title: T });
     await goNotebook("board");
     await $(`.tcard*=${T}`).waitForExist({ timeout: 8000 });
     await boardAction(T, "删除");
-    expect(await browser.execute(() => document.activeElement?.textContent)).toBe("删除");
+    expect(await browser.execute(() => document.activeElement?.textContent)).toBe("取消");
     expect(await browser.execute(() => document.activeElement?.closest(".tcard")?.textContent.includes("E2E158-A18-删"))).toBe(true);
     await browser.keys(["Escape"]);
   });

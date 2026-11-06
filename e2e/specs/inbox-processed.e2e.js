@@ -43,7 +43,7 @@ describe("灵感 · 想法列表(打标签的想法就地长 chip + 管理)", ()
     await card.waitForExist({ timeout: 10000 });
 
     // 转待办 一步到位:点「待办」直接翻 stage(零副本、无确认框),标题即原文。
-    await inboxAction("E2E-已整理-乙", "待办");
+    await inboxAction("E2E-已整理-乙", "转待办");
 
     // ㉜: the SAME item flips to a board task and leaves 已归类 (no second record).
     await card.waitForExist({ reverse: true, timeout: 10000 });
