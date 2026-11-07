@@ -29,10 +29,10 @@ import { armLocate, locateNoteEl, searchBackArmed, takeLocateNote } from "./loca
 import { DOC_CARD_KEYS, DOC_VIEW_KEYS } from "./keymap";
 import { type Act, armDismiss, createHotkeyController, registerViewKeys } from "./hotkey-menu";
 import { t } from "./i18n";
-import { type ImageMeta, attachBlob, figureSrc, getThumb, imageStrip, openLightbox, pasteImage } from "./item-images";
+import { type ImageMeta, attachBlob, figureSrc, imageStrip, openLightbox, pasteImage } from "./item-images";
 import { toggleChecklistLine } from "../shared/checklist";
 import { type MdRendered, renderMarkdown } from "../shared/markdown-dom";
-import { continueListOnNewline, firstRefs, gutterStack, refInsertion, scanImgRefs } from "../shared/markdown";
+import { continueListOnNewline, refInsertion, scanImgRefs } from "../shared/markdown";
 import { renderDiff } from "../shared/diff-dom";
 import { diffPair } from "./history-panel";
 import { openInboxTrashNext } from "./inbox";
@@ -132,6 +132,15 @@ function clearDraft(space: string, id: string | null, gen: number | null): void 
   } catch {
     /* 清不掉 = 下次打开时再问一次「接着改 / 丢掉」,不影响正文 */
   }
+}
+
+// ---- 宽屏两栏的左右比例(868 用户拍:中间那道缝能拖)------------------------------------
+// 值 = 写字框那栏占两栏总宽的比例(0–1,不含中缝)。存 localStorage、**不进同步**(同 board-sort:这是「我这块屏幕
+// 怎么摆」的属性)。读不到 / 不认识的值一律回 0.5 —— 不是静默兜底,是「还没拖过」;双击中缝就删掉这个键、回到它。
+const SPLIT_KEY = "zhujian.doc-split";
+function readSplit(): number {
+  const v = Number(localStorage.getItem(SPLIT_KEY));
+  return v > 0 && v < 1 ? v : 0.5;
 }
 
 /** 列表与标题栏用的题目:第一行非空字,去掉开头的 `#`。 */
@@ -875,7 +884,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
     const imgRow = el("div", { className: "img-editor" }, [imgErr, delNote]);
     function mountStrip(target: string): ReturnType<typeof imageStrip> {
       if (strip === null) {
-        strip = imageStrip(target, { editable: true, onMetas: (m) => ((imgs = m), (imgsKnown = true), paintPreview(), paintHl(), paintDelNote()), onMark: () => paintGutterMarks() });
+        strip = imageStrip(target, { editable: true, onMetas: (m) => ((imgs = m), (imgsKnown = true), paintPreview(), paintHl(), paintDelNote()), onMark: () => paintDelNote() });
         imgRow.prepend(strip.root);
       }
       return strip;
@@ -996,77 +1005,32 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
     // 写字框里的「图N」:能对上一张图的垫一层底色(对不上 = 引用断了,照普通字)。纯文本框给不了几个字单独上色 ⇒ 背后垫一层
     // 同字体同排版的影子层,只画底色,字仍是写字框自己的(光标 / 输入法 / 撤销一概不碰);写字框背景透明,纸色由外框给。
     // 排版参数逐项从写字框的计算样式抄(⛔ 别在 CSS 里另写一份:差一个字距,底色就和字错开)。
-    // 窄边(154 G2):写字框**外面**右侧一列,每张图一枚缩略图(带「图N」角标),停在第一次提到它的那一行,挨得太近就往下错开;
-    // ⛔ 别挪回框里 —— 那版按列数给写字框加右内边距,连没提到图的段落也一起让位,四列时正文只剩一条缝(153 走查 G2)。
+    // 写字框里只有这层底色、⛔ 不画图(868 用户拍,拆掉 154 G2 那列窄边缩略图):看图走右边预览、窄屏切【预览】或点底下那条。
     const hl = el("div", { className: "doc-hl" });
     hl.setAttribute("aria-hidden", "true");
-    const gutIn = el("div", { className: "doc-gut-in" });
-    const gut = el("div", { className: "doc-gut" }, [gutIn]);
-    const edBox = el("div", { className: "doc-ed" }, [hl, area, gut]);
-    const THUMB_H = 50; // 窄边一枚的高 44 + 上下留缝(docs.css .doc-gut .ref-thumb)
+    const edBox = el("div", { className: "doc-ed" }, [hl, area]);
     const HL_COPY = ["fontFamily", "fontSize", "fontWeight", "fontStyle", "lineHeight", "letterSpacing", "wordSpacing", "tabSize", "textIndent",
       "paddingTop", "paddingRight", "paddingBottom", "paddingLeft", "whiteSpace", "overflowWrap", "wordBreak"] as const;
     function syncHl(): void {
       const cs = getComputedStyle(area);
       for (const k of HL_COPY) hl.style[k] = cs[k];
       Object.assign(hl.style, { top: `${area.clientTop}px`, left: `${area.clientLeft}px`, width: `${areaW}px`, height: `${area.clientHeight}px` });
-      Object.assign(gut.style, { top: `${area.clientTop}px`, height: `${area.clientHeight}px` });
       hl.scrollTop = area.scrollTop;
-      placeGutter();
-    }
-    /** 窄边那几枚各停到影子层里它那处「图N」所在的那一行(折行随宽度变 ⇒ 尺寸一变就重摆)。 */
-    function placeGutter(): void {
-      const marks = hl.querySelectorAll<HTMLElement>("mark.ref.first");
-      const pins = gutIn.querySelectorAll<HTMLElement>(".ref-thumb");
-      if (marks.length !== pins.length) throw new Error(`窄边 ${pins.length} 枚、影子层首提 ${marks.length} 处,对不上`);
-      const o = hl.getBoundingClientRect().top - hl.scrollTop;
-      const tops = gutterStack([...marks].map((m) => m.getBoundingClientRect().top - o), THUMB_H);
-      pins.forEach((p, i) => (p.style.top = `${tops[i]}px`));
-      gutIn.style.transform = `translateY(${-area.scrollTop}px)`;
     }
     function paintHl(): void {
       const v = area.value;
-      const bySeq = new Map(imgs.map((m) => [m.seq, m]));
+      const have = new Set(imgs.map((m) => m.seq));
       const nodes: (string | HTMLElement)[] = [];
-      const refs = scanImgRefs(v).filter((r) => bySeq.has(r.n));
-      const first = new Set(firstRefs(refs));
-      const pins: HTMLElement[] = [];
       let last = 0;
-      refs.forEach((r, i) => {
-        nodes.push(v.slice(last, r.a));
-        const mark = el("mark", { className: first.has(i) ? "ref first" : "ref", textContent: v.slice(r.a, r.b) });
-        nodes.push(mark);
+      for (const r of scanImgRefs(v)) {
+        if (!have.has(r.n)) continue;
+        nodes.push(v.slice(last, r.a), el("mark", { className: "ref", textContent: v.slice(r.a, r.b) }));
         last = r.b;
-        if (!first.has(i)) return;
-        const m = bySeq.get(r.n)!;
-        const img = el("img", { alt: "" });
-        const pin = el("button", { className: "ref-thumb", type: "button", title: t("itemImages.badge", { n: m.seq }), tabIndex: -1 }, [
-          img,
-          el("span", { className: "n", textContent: t("itemImages.badge", { n: m.seq }) }),
-        ]);
-        pin.dataset.img = m.id;
-        pin.classList.toggle("del-marked", strip?.isMarked(m.id) ?? false);
-        pin.addEventListener("mousedown", (e) => e.preventDefault()); // 不抢写字框的焦点
-        pin.addEventListener("click", () => void openLightbox(imgs, imgs.indexOf(m)));
-        getThumb(m.id).then(
-          (u) => {
-            img.src = u;
-          },
-          () => pin.classList.add("broken"),
-        );
-        pins.push(pin);
-      });
+      }
       // 一处都没标 ⇒ 影子层整个清空,⛔ 别留一份全文去排版(200 KiB 一篇逐键重排约 30 ms,桌面实测)
       if (nodes.length > 0) nodes.push(`${v.slice(last)}\n`); // 末尾那个空行也要占高(与写字框一致)
-      edBox.classList.toggle("has-thumbs", pins.length > 0);
       hl.replaceChildren(...nodes);
-      gutIn.replaceChildren(...pins);
       syncHl();
-    }
-    /** 标记一变(条里 / 大图角上的 ×),窄边那枚跟着变淡。 */
-    function paintGutterMarks(): void {
-      for (const th of gutIn.querySelectorAll<HTMLElement>(".ref-thumb")) th.classList.toggle("del-marked", strip?.isMarked(th.dataset.img!) ?? false);
-      paintDelNote();
     }
     /** 标了删的图正文里提到几处(154 G4,用户拍「点 × 标记时提示、不弹框」):保存删掉后这几处变灰带删除线,正文一个字不改。
      *  标记或正文一变就重算;一张都没提到 ⇒ 不出。 */
@@ -1122,7 +1086,6 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
     let syncDue = false;
     area.addEventListener("scroll", () => {
       hl.scrollTop = area.scrollTop;
-      gutIn.style.transform = `translateY(${-area.scrollTop}px)`;
       if (syncDue) return;
       syncDue = true;
       requestAnimationFrame(() => {
@@ -1359,7 +1322,68 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
 
     const modeEdit = el("button", { className: "seg on", type: "button", textContent: t("docs.modeEdit") });
     const modePrev = el("button", { className: "seg", type: "button", textContent: t("docs.modePreview") });
-    const edWrap = el("div", { className: "doc-editor" }, [edBox, preview]);
+    // 宽屏并排时中间那道缝(868 用户拍):拖着改左右宽、双击回一半一半、键盘 ← / → 每下挪 5%;两边各留一个最小宽
+    // (两栏 CSS 的 min-width,拖时从写字框那栏的计算样式读,⛔ 别在这里另写一份数)。窄屏不并排,这道缝不显示(CSS 管)。
+    const split = el("div", { className: "doc-split", tabIndex: 0, title: t("docs.splitHint") });
+    split.setAttribute("role", "separator");
+    split.setAttribute("aria-orientation", "vertical");
+    split.setAttribute("aria-label", t("docs.splitHint"));
+    split.setAttribute("aria-valuemin", "0");
+    split.setAttribute("aria-valuemax", "100");
+    const edWrap = el("div", { className: "doc-editor" }, [edBox, split, preview]);
+    let ratio = readSplit();
+    /** 列宽写成两个 fr(乘 100:两个小数 fr 加起来可能差一丝不到 1,不足 1 的 fr 只分走那么多剩余宽)。 */
+    function applySplit(r: number): void {
+      ratio = r;
+      edWrap.style.setProperty("--doc-l", `${r * 100}fr`);
+      edWrap.style.setProperty("--doc-r", `${(1 - r) * 100}fr`);
+      split.setAttribute("aria-valuenow", String(Math.round(r * 100)));
+    }
+    /** 想要的比例按两边最小宽收住。 */
+    function clampSplit(r: number): number {
+      const avail = edWrap.getBoundingClientRect().width - split.getBoundingClientRect().width;
+      const min = parseFloat(getComputedStyle(edBox).minWidth);
+      if (Number.isNaN(min)) throw new Error("长文编辑器:并排时两栏的 min-width 没配");
+      const lo = Math.min(0.5, min / avail);
+      return Math.min(1 - lo, Math.max(lo, r));
+    }
+    function saveSplit(): void {
+      localStorage.setItem(SPLIT_KEY, String(ratio));
+      syncPreview();
+    }
+    applySplit(ratio);
+    split.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0) return;
+      e.preventDefault(); // 不抢写字框的焦点、不起选区
+      split.setPointerCapture(e.pointerId);
+      edWrap.classList.add("dragging");
+      const move = (m: PointerEvent): void => {
+        const r = edWrap.getBoundingClientRect();
+        const gap = split.getBoundingClientRect().width;
+        applySplit(clampSplit((m.clientX - r.left - gap / 2) / (r.width - gap)));
+      };
+      const up = (): void => {
+        split.removeEventListener("pointermove", move);
+        split.removeEventListener("pointerup", up);
+        split.removeEventListener("pointercancel", up);
+        edWrap.classList.remove("dragging");
+        saveSplit();
+      };
+      split.addEventListener("pointermove", move);
+      split.addEventListener("pointerup", up);
+      split.addEventListener("pointercancel", up);
+    });
+    split.addEventListener("dblclick", () => {
+      applySplit(0.5);
+      localStorage.removeItem(SPLIT_KEY);
+      syncPreview();
+    });
+    split.addEventListener("keydown", (e) => {
+      if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+      e.preventDefault();
+      applySplit(clampSplit(ratio + (e.key === "ArrowLeft" ? -0.05 : 0.05)));
+      saveSplit();
+    });
     // 165 / W5 A41(查):这两段同是「状态不单靠颜色」—— 读屏读得出哪段是选中的。
     const paintMode = (preview: boolean): void => {
       modeEdit.classList.toggle("on", !preview);

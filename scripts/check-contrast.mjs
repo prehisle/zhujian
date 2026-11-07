@@ -236,6 +236,11 @@ const RUNTIME_VARS = [
       " `.card.tinted` 上(用户面 110);只在有色时挂,无色卡不挂 class 也不挂变量 ⇒ 没有「兜底退回」这回事",
   },
   { name: "--tc", where: "安卓侧同一件事(android/src/filter.ts 等),chip 上的行内 style" },
+  {
+    name: "--doc-l",
+    where: "src/docs.ts 长文编辑器 applySplit:宽屏两栏左栏的 fr,打开编辑器当场写(没拖过 = 50fr),拖中缝 / 双击 / ← → 时改",
+  },
+  { name: "--doc-r", where: "同 --doc-l(右栏那份,恒等于 100 − 左栏)" },
   { name: "--nav-h", where: "android/src/main.ts 量出底栏实高后写根元素,供悬浮钮定位" },
   {
     name: "--head-h",

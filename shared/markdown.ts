@@ -47,7 +47,7 @@ export const MD_MAX_DOM = 16_384;
 export function imgRefText(n: number): string {
   return `图${n}`;
 }
-/** 正文里一处「图N」引用在原文中的位置 `[a, b)` 与它在第几行(`split("\n")` 口径;写字框给它垫底色、配缩略图用)。 */
+/** 正文里一处「图N」引用在原文中的位置 `[a, b)` 与它在第几行(`split("\n")` 口径;写字框给它垫底色用)。 */
 export type ImgRefSpan = { a: number; b: number; n: number; line: number };
 
 /** 原文里每一处「图N」。词法同解析器:「图」+ 1–6 位数字(连着第 7 位数字就整串不算);
@@ -164,29 +164,6 @@ export function continueListOnNewline(value: string, selStart: number, selEnd: n
   const ins = `\n${m[1]}${mark}${m[5]}${m[6] !== undefined ? "[ ] " : ""}`;
   const at = selStart + ins.length;
   return { value: value.slice(0, selStart) + ins + value.slice(selStart), selStart: at, selEnd: at };
-}
-
-/** 写字框窄边上那一列缩略图(154 G2:一列、挂在框外,同一张图只配一枚 —— 配在第一次提到它的地方,同渲染器
- *  「只画一次」):`refs` 里每张图第一次出现的那几处的下标(顺序同 `refs`)。 */
-export function firstRefs(refs: ImgRefSpan[]): number[] {
-  const seen = new Set<number>();
-  const out: number[] = [];
-  refs.forEach((r, i) => {
-    if (seen.has(r.n)) return;
-    seen.add(r.n);
-    out.push(i);
-  });
-  return out;
-}
-
-/** 一列里每枚缩略图的上沿:想停在它那一行的 `ys[i]`(从上往下排好的),与上一枚隔不足 `h` 就往下错开(像页边批注)。 */
-export function gutterStack(ys: number[], h: number): number[] {
-  let floor = -Infinity;
-  return ys.map((y) => {
-    const top = Math.max(y, floor);
-    floor = top + h;
-    return top;
-  });
 }
 
 /** 链接地址的长度上限(码元)。比它长的一律不当链接 —— 也是在给每次校验的复制量封顶。 */

@@ -59,6 +59,8 @@ export const docs = defineMessages({
   "docs.imageNoDoc":{ zh: "这篇还没建成,图没挂上;先保存一次再贴", en: "This doc isn't created yet, so the image wasn't attached. Save once, then paste again." },
   "docs.modeEdit": { zh: "编辑", en: "Write" },
   "docs.modePreview": { zh: "预览", en: "Preview" },
+  // 宽屏两栏中间那道能拖的缝(悬停提示 + 读屏名,同一句)
+  "docs.splitHint": { zh: "拖动调整两栏宽度 · 双击恢复一半一半", en: "Drag to resize the panes · double-click to split evenly" },
   "docs.save": { zh: "保存", en: "Save" },
   "docs.placeholder": { zh: "用 Markdown 写:# 标题、**粗体**、- 列表、- [ ] 待办、> 引用、``` 代码块", en: "Write in Markdown: # heading, **bold**, - list, - [ ] to-do, > quote, ``` code" },
   // 165 / W5 Q1 ★①:离开编辑器落了一版就说一声(此前四条离开的路全都一声不吭);新篇那句带上它在哪。两端同句。

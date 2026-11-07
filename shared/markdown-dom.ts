@@ -17,12 +17,14 @@
 //   - 图N → 有界整数,交给各端的 `image(n)` 查当前条目的配图;有就画成本文件建的芯片按钮
 //     (文案是各端字典给的,点了调各端的回调),查不到就问各端的 `gone(n)`:给了文案 ⇒ `span.img-gone`
 //     (字仍是原文「图N」,灰 + 删除线由各端 CSS 管,文案只进 `title`;154 G4),不给 ⇒ 按原文「图N」;
-//   - **写到哪画到哪**(154 G1,用户拍):每张查得到的图**只画一次**,画在正文里第一次提到它的地方 ——
-//     一段里只有图N(中间只隔空白 / 换行)且张张头一回出现 ⇒ 整段换成原位的图;句中提到的(标题、列表项、
-//     引用里的段落同理)⇒ 字照常画(图N 是芯片),那几张画在这一块的正下方;再提到只是芯片。
-//     原位的图 = `button.md-fig` 包一个 `img` + 一枚编号角标 `span.md-fig-n`:`img.src` 只取各端 `src()`
-//     交回的串(各端从自己的取图命令拿的 blob: / data: 地址,⛔ 不来自正文),`alt` / `title` /
-//     `aria-label` / 角标的字是各端字典给的文案;
+//   - **写到哪画到哪**(154 G1,用户拍;868 起按行):每张查得到的图**只画一次**,画在正文里第一次提到它的地方 ——
+//     段落**按行看**(段里的换行原样显示,写的人看到的就是一行一行;⛔ 别回到按段:不隔空行的
+//     「字 / 图2 / 图3」是一段,图2、图3 就全成了芯片、图堆在整段底下):一行里只有图N(中间只隔空白)
+//     且张张头一回出现 ⇒ 那一行原地换成图;句中提到的(标题、列表项、引用里同理)⇒ 字照常画(图N 是芯片),
+//     那几张画在**那一行**正下方(标题画在标题下面);再提到只是芯片。段落在这几处断开,`div.md-blk` 包住断开的几截。
+//     原位的图 = `button.md-fig` 包一个 `img`(⛔ 不再带编号角标:图就在写它的地方,编号看缩略图条):
+//     `img.src` 只取各端 `src()` 交回的串(各端从自己的取图命令拿的 blob: / data: 地址,⛔ 不来自正文),
+//     `alt` / `title` / `aria-label` 是各端字典给的文案;
 //   - 勾选状态与行号 → 布尔 / 行号,交给各端的 `checkbox` 换回文案与翻面回调,方框本身由本文件建;
 //   - 有序列表起始号 → 校验过的整数,写 `start` 属性(数值,不是字符串拼接)。
 // 各端交进来的文案只进 `textContent` / `title` / `aria-label`(⛔ 它们不来自正文)。
@@ -109,15 +111,11 @@ function block(cx: Cx, b: MdBlock): HTMLElement {
     case "heading": {
       const h = mk(cx, b.level === 1 ? "h1" : b.level === 2 ? "h2" : "h3");
       inlines(cx, h, b.c);
-      return withFigs(cx, h, b.c);
+      const below = mentioned(cx, b.c);
+      return below === null ? h : blk(cx, [h, below]);
     }
-    case "para": {
-      const figs = figures(cx, b.c);
-      if (figs !== null) return figs;
-      const p = mk(cx, "p");
-      inlines(cx, p, b.c);
-      return withFigs(cx, p, b.c);
-    }
+    case "para":
+      return para(cx, b.c);
     case "list": {
       const l = mk(cx, b.ordered ? "ol" : "ul");
       if (b.ordered && b.start !== 1) {
@@ -153,7 +151,86 @@ function block(cx: Cx, b: MdBlock): HTMLElement {
 
 type MdImage = NonNullable<ReturnType<MdHooks["image"]>>;
 
-/** 一段里只有图N(中间只隔空白)、张张查得到且都还没画过 ⇒ 整段原位画成图;否则 `null`(照普通段落画)。 */
+/** 一段按行画(头注「写到哪画到哪」):只有图N 的那一行原地换成图;别的行照字画,句中头一回提到的图画在那一行
+ *  正下方。段落在这几处断开,断开了就用 `div.md-blk` 包住那几截(没断 = 照旧一个 `p`)。 */
+function para(cx: Cx, xs: MdInline[]): HTMLElement {
+  const parts: HTMLElement[] = [];
+  let run: MdInline[][] = [];
+  const flush = (): void => {
+    if (run.length === 0) return;
+    const p = mk(cx, "p");
+    inlines(cx, p, joinLines(run));
+    parts.push(p);
+    run = [];
+  };
+  for (const ln of splitLines(xs)) {
+    const figs = figures(cx, ln);
+    if (figs !== null) {
+      flush();
+      parts.push(figs);
+      continue;
+    }
+    run.push(ln);
+    const below = mentioned(cx, ln);
+    if (below !== null) {
+      flush();
+      parts.push(below);
+    }
+  }
+  flush();
+  return blk(cx, parts);
+}
+
+/** 按顶层文本里的换行把一段切成行。换行落在粗 / 斜 / 链接 / 行内码里面的不切(那几行算一行:里面有字,本来就成不了图行)。
+ *  只切不拼,总复制量 = 原文本长。 */
+function splitLines(xs: MdInline[]): MdInline[][] {
+  const lines: MdInline[][] = [[]];
+  for (const x of xs) {
+    if (x.t !== "text") {
+      lines[lines.length - 1].push(x);
+      continue;
+    }
+    x.s.split("\n").forEach((s, i) => {
+      if (i > 0) lines.push([]);
+      if (s !== "") lines[lines.length - 1].push({ t: "text", s });
+    });
+  }
+  return lines;
+}
+
+/** `splitLines` 的反向:几行拼回一串行内节点,行间补回换行;相邻的文字攒起来一次 `join`(⛔ 别在循环里拼越来越长的串),
+ *  于是文本节点数不会比原来多(DOM 预算照旧)。 */
+function joinLines(lines: MdInline[][]): MdInline[] {
+  const out: MdInline[] = [];
+  let pend: string[] = [];
+  const flush = (): void => {
+    if (pend.length === 0) return;
+    out.push({ t: "text", s: pend.join("") });
+    pend = [];
+  };
+  lines.forEach((ln, i) => {
+    if (i > 0) pend.push("\n");
+    for (const x of ln) {
+      if (x.t === "text") pend.push(x.s);
+      else {
+        flush();
+        out.push(x);
+      }
+    }
+  });
+  flush();
+  return out;
+}
+
+/** 一块断成了几截(字 / 图)就包一层 `div.md-blk`;只有一截就原样交回。 */
+function blk(cx: Cx, parts: HTMLElement[]): HTMLElement {
+  if (parts.length === 1) return parts[0];
+  const wrap = mk(cx, "div", "md-blk");
+  wrap.append(...parts);
+  return wrap;
+}
+
+/** 一行里只有图N(中间只隔空白)、张张查得到且都还没画过 ⇒ 这一行原地画成图;否则 `null`(照字画)。 */
 function figures(cx: Cx, xs: MdInline[]): HTMLElement | null {
   const ns: number[] = [];
   const imgs: MdImage[] = [];
@@ -162,7 +239,7 @@ function figures(cx: Cx, xs: MdInline[]): HTMLElement | null {
     if (x.t !== "img" || cx.drawn.has(x.n)) return null;
     const img = cx.hooks.image(x.n);
     if (img === null) return null;
-    if (ns.includes(x.n)) continue; // 「图1 图1」:同一段里也只画一次
+    if (ns.includes(x.n)) continue; // 「图1 图1」:同一行里也只画一次
     ns.push(x.n);
     imgs.push(img);
   }
@@ -170,8 +247,9 @@ function figures(cx: Cx, xs: MdInline[]): HTMLElement | null {
   return figBox(cx, ns, imgs);
 }
 
-/** 句中提到的图:这一块里头一回出现、查得到的那几张画在它正下方(`div.md-blk` 包住这一块与图);没有就原样交回。 */
-function withFigs(cx: Cx, e: HTMLElement, xs: MdInline[]): HTMLElement {
+/** 句中提到的图:这几个行内节点(粗 / 斜里的也算)里头一回出现、查得到的那几张画成一组,交给调用方摆在那一行 / 那个标题下面;
+ *  一张都没有回 `null`。 */
+function mentioned(cx: Cx, xs: MdInline[]): HTMLElement | null {
   const ns: number[] = [];
   const imgs: MdImage[] = [];
   const walk = (ys: MdInline[]): void => {
@@ -186,10 +264,7 @@ function withFigs(cx: Cx, e: HTMLElement, xs: MdInline[]): HTMLElement {
     }
   };
   walk(xs);
-  if (imgs.length === 0) return e;
-  const wrap = mk(cx, "div", "md-blk");
-  wrap.append(e, figBox(cx, ns, imgs));
-  return wrap;
+  return imgs.length === 0 ? null : figBox(cx, ns, imgs);
 }
 
 function figBox(cx: Cx, ns: number[], imgs: MdImage[]): HTMLElement {
@@ -215,9 +290,7 @@ function figBox(cx: Cx, ns: number[], imgs: MdImage[]): HTMLElement {
         },
         () => fig.classList.add("broken"),
       );
-    const tag = mk(cx, "span", "md-fig-n");
-    tag.append(txt(cx, img.label));
-    fig.append(pic, tag);
+    fig.append(pic);
     wrap.append(fig);
   });
   return wrap;

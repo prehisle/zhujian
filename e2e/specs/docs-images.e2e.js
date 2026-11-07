@@ -148,3 +148,111 @@ describe("长文的图(154 G3–G5)", () => {
     expect(gone.title).toContain("图2");
   });
 });
+
+// 868(用户拍):写字框里一张图都不画(拆掉 154 G2 那列窄边),只有「图N」垫底色;预览 / 阅读页**按行**原地成图 ——
+// 不隔空行的「字 / 图2」也算两行,图2 原地换成图、句中的图1 画在那一行下面,大图上不带编号角标;
+// 宽屏两栏中间那道缝能拖(收在两栏 min-width)、比例记在本机(离开再开还在)、← / → 每下挪 5%、双击回一半一半并删掉那个键。
+// 按行的判据本身在 `scripts/test-markdown.mjs`(有阴性刀);这里只管两端接线与中缝的真拖。
+describe("长文编辑器:写字框不画图、预览按行成图、中缝能拖(868)", () => {
+  const SPLIT_KEY = "zhujian.doc-split";
+  const forgetSplit = () => browser.execute((k) => localStorage.removeItem(k), SPLIT_KEY);
+  beforeEach(async () => {
+    await clearInbox();
+    await clearDocs();
+    await forgetSplit();
+  });
+  after(forgetSplit); // ⛔ 别把拖过的比例泄漏给后面的 spec
+
+  /** 一块 `.md-blk` 的几截:p 记 "p",别的记 class。 */
+  const blkShape = (root) =>
+    browser.execute((sel) => {
+      const b = document.querySelector(`${sel} .md-blk`);
+      return {
+        kids: b ? [...b.children].map((k) => (k.tagName === "P" ? "p" : k.className)) : null,
+        chips: [...document.querySelectorAll(`${sel} .img-ref`)].map((c) => c.textContent),
+        figs: document.querySelectorAll(`${sel} .md-fig`).length,
+        tags: document.querySelectorAll(`${sel} .md-fig span`).length,
+      };
+    }, root);
+  const widths = () =>
+    browser.execute((k) => {
+      const ed = document.querySelector(".v-docs .doc-ed");
+      return {
+        l: Math.round(ed.getBoundingClientRect().width),
+        r: Math.round(document.querySelector(".v-docs .doc-preview").getBoundingClientRect().width),
+        min: parseFloat(getComputedStyle(ed).minWidth),
+        saved: localStorage.getItem(k),
+        wide: matchMedia("(min-width: 1180px)").matches,
+      };
+    }, SPLIT_KEY);
+  const toEditor = async () => {
+    await browser.execute(() => document.querySelectorAll(".v-docs .doc-bar .hbtn")[1].click());
+    await $(".v-docs .doc-area").waitForExist({ timeout: 5000 });
+  };
+
+  it("写字框只有底色;预览与阅读页按行原地成图、不带角标;中缝拖 / 收底 / 记住 / 键盘 / 双击", async () => {
+    const id = await invoke("capture_doc", { content: "# 分栏E2E\n\n1图1好的\n图2" });
+    await invoke("add_item_image", { itemId: id, mime: "image/png", dataB64: PNG });
+    await invoke("add_item_image", { itemId: id, mime: "image/png", dataB64: PNG });
+
+    // ① 阅读页:同一段里的「图2」那一行原地成图,句中的图1 画在那一行下面
+    await openDoc("分栏E2E");
+    await browser.waitUntil(() => browser.execute(() => document.querySelectorAll(".v-docs .doc-page .md .md-fig").length === 2), {
+      timeout: 8000,
+      timeoutMsg: "阅读页一直没画出两张原位图",
+    });
+    expect(await blkShape(".v-docs .doc-page .md")).toEqual({ kids: ["p", "md-figs", "md-figs"], chips: ["图1"], figs: 2, tags: 0 });
+
+    // ② 编辑器:并排;写字框里两处底色、一张图都没有;预览同阅读页
+    await toEditor();
+    const w0 = await widths();
+    expect(w0.wide).toBe(true);
+    await browser.waitUntil(() => browser.execute(() => document.querySelectorAll(".v-docs .doc-hl .ref").length === 2), {
+      timeout: 5000,
+      timeoutMsg: "写字框里的两处「图N」一直没垫上底色",
+    });
+    expect(await browser.execute(() => document.querySelectorAll(".v-docs .doc-ed img, .v-docs .doc-ed button").length)).toBe(0);
+    await browser.waitUntil(() => browser.execute(() => document.querySelectorAll(".v-docs .doc-preview .md-fig").length === 2), {
+      timeout: 5000,
+      timeoutMsg: "预览一直没画出两张原位图",
+    });
+    expect(await blkShape(".v-docs .doc-preview")).toEqual({ kids: ["p", "md-figs", "md-figs"], chips: ["图1"], figs: 2, tags: 0 });
+
+    // ③ 中缝:没拖过 = 一半一半;往左拖 150 ⇒ 左窄 150、右宽 150,比例记下来
+    expect(Math.abs(w0.l - w0.r)).toBeLessThanOrEqual(2);
+    expect(w0.saved).toBe(null);
+    const split = await $(".v-docs .doc-split");
+    await browser.action("pointer").move({ origin: split }).down({ button: 0 }).move({ origin: "pointer", x: -150, y: 0, duration: 60 }).up({ button: 0 }).perform();
+    const w1 = await widths();
+    const moved = { dl: w0.l - w1.l, dr: w1.r - w0.r };
+    const near150 = (d) => d >= 146 && d <= 154;
+    expect(near150(moved.dl) && near150(moved.dr) ? "ok" : moved).toBe("ok"); // 红了带读数
+    expect(Number(w1.saved)).toBeLessThan(0.5);
+
+    // ④ 拖过头:收在写字框那栏的 min-width
+    const y = await browser.execute(() => {
+      const r = document.querySelector(".v-docs .doc-split").getBoundingClientRect();
+      return Math.round(r.top + r.height / 2);
+    });
+    await browser.action("pointer").move({ origin: split }).down({ button: 0 }).move({ origin: "viewport", x: 4, y, duration: 60 }).up({ button: 0 }).perform();
+    const w2 = await widths();
+    expect(Math.abs(w2.l - w2.min) <= 1 ? "ok" : w2).toBe("ok");
+
+    // ⑤ 记在本机:回阅读页再进编辑器,还是那个宽
+    await browser.execute(() => document.querySelectorAll(".v-docs .doc-bar .hbtn")[0].click());
+    await $(".v-docs .doc-page .md").waitForExist({ timeout: 8000 });
+    await toEditor();
+    expect(Math.abs((await widths()).l - w2.min)).toBeLessThanOrEqual(1);
+
+    // ⑥ 键盘:聚焦中缝按 → ⇒ 比例 +5%
+    const before = Number((await widths()).saved);
+    await browser.execute(() => document.querySelector(".v-docs .doc-split").focus());
+    await browser.keys(["ArrowRight"]);
+    expect(Number((await widths()).saved) - before).toBeCloseTo(0.05, 3);
+
+    // ⑦ 双击:回一半一半、键删掉
+    await (await $(".v-docs .doc-split")).doubleClick(); // ⑤ 重开过编辑器,先前那个句柄已陈旧
+    const w3 = await widths();
+    expect({ even: Math.abs(w3.l - w3.r) <= 2, saved: w3.saved }).toEqual({ even: true, saved: null });
+  });
+});

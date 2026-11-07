@@ -24,7 +24,7 @@ const r = await build({
   format: "esm",
 });
 const M = await import("data:text/javascript," + encodeURIComponent(r.outputFiles[0].text));
-const { parseMarkdown, validateHttpUrl, renderMarkdown, toggleChecklistLine, scanImgRefs, firstRefs, gutterStack, refInsertion, withMissingRefs, continueListOnNewline, MD_MAX_NODES, MD_MAX_DEPTH, MD_MAX_BYTES } = M;
+const { parseMarkdown, validateHttpUrl, renderMarkdown, toggleChecklistLine, scanImgRefs, refInsertion, withMissingRefs, continueListOnNewline, MD_MAX_NODES, MD_MAX_DEPTH, MD_MAX_BYTES } = M;
 
 // ---------------------------------------------------------------------------
 // 语法树 → 紧凑字符串(只为断言好读)
@@ -303,7 +303,7 @@ test("图N 与方框:渲染器自己建,钩子只给文案与动作;查不到的
   const r = render("见图1 与图2\n\n- [x] 做完");
   assert.equal(
     r.html,
-    '<div .md><div .md-blk><p>见<button .img-ref>图1</button> 与图2</p><div .md-figs><button .md-fig aria-label=图1><img></img><span .md-fig-n>图1</span></button></div></div>' +
+    '<div .md><div .md-blk><p>见<button .img-ref>图1</button> 与图2</p><div .md-figs><button .md-fig aria-label=图1><img></img></button></div></div>' +
       '<ul><li .md-task.on><button .ckbox aria-label=取消勾选></button><p>做完</p></li></ul></div>',
   );
   const buttons = [];
@@ -322,7 +322,7 @@ test("图N 与方框:渲染器自己建,钩子只给文案与动作;查不到的
   assert.equal(ro.log.listeners.length, 0);
 });
 test("写到哪画到哪:每张图只画一次,画在第一次提到它的地方;句中的画在那一块下面;src 只取钩子交回的串", () => {
-  const FIG = (n) => `<button .md-fig aria-label=图${n}><img></img><span .md-fig-n>图${n}</span></button>`;
+  const FIG = (n) => `<button .md-fig aria-label=图${n}><img></img></button>`;
   const CHIP = (n) => `<button .img-ref>图${n}</button>`;
   const three = { image: (n) => (n <= 3 ? { label: `图${n}`, open() {}, src: () => `blob:app/${n}` } : null) };
   // 单独成段 ⇒ 整段换成图;同一段里写两遍也只画一张;再提到只是芯片
@@ -363,6 +363,33 @@ test("写到哪画到哪:每张图只画一次,画在第一次提到它的地方
   figs[0].on.click[0](e);
   assert.equal(e.stopped, 1);
   assert.deepEqual(r.opened, ["img:1"]);
+});
+test("按行画图(868):一行里只有图N ⇒ 那一行原地换成图;句中提到的画在那一行下面;没图的段落照旧一个 p", () => {
+  const FIG = (n) => `<div .md-figs><button .md-fig aria-label=图${n}><img></img></button></div>`;
+  const CHIP = (n) => `<button .img-ref>图${n}</button>`;
+  const three = { image: (n) => (n <= 3 ? { label: `图${n}`, open() {}, src: () => `blob:app/${n}` } : null) };
+  // 用户截图那一段:不隔空行的「字 / 图2 / 图3」是同一段,图2、图3 也各自原地成图
+  assert.equal(render("1图1好的\n图2\n图3", three).html, `<div .md><div .md-blk><p>1${CHIP(1)}好的</p>${FIG(1)}${FIG(2)}${FIG(3)}</div></div>`);
+  // 图行夹在字中间:前后两截各成一个 p
+  assert.equal(render("前一行\n图1\n后一行\n再一行", three).html, `<div .md><div .md-blk><p>前一行</p>${FIG(1)}<p>后一行\n再一行</p></div></div>`);
+  // 句中提到:图紧跟那一行,不等到整段末尾
+  assert.equal(render("甲\n见图2 乙\n丙", three).html, `<div .md><div .md-blk><p>甲\n见${CHIP(2)} 乙</p>${FIG(2)}<p>丙</p></div></div>`);
+  // 同一行两张 = 同一组;画过的再单独一行只是芯片
+  assert.equal(
+    render("图1 图2\n图1", three).html,
+    `<div .md><div .md-blk><div .md-figs><button .md-fig aria-label=图1><img></img></button><button .md-fig aria-label=图2><img></img></button></div><p>${CHIP(1)}</p></div></div>`,
+  );
+  // 换行落在粗体里:不切开(那几行算一行),图画在它下面
+  assert.equal(render("**粗\n图1**", three).html, `<div .md><div .md-blk><p><strong>粗\n${CHIP(1)}</strong></p>${FIG(1)}</div></div>`);
+  // 列表项与引用里的段落同理
+  assert.equal(
+    render("- 图1\n- 见图2\n\n> 引\n> 图3", three).html,
+    `<div .md><ul><li>${FIG(1)}</li><li><div .md-blk><p>见${CHIP(2)}</p>${FIG(2)}</div></li></ul><blockquote><div .md-blk><p>引</p>${FIG(3)}</div></blockquote></div>`,
+  );
+  // 没图的段落:照旧一个 p、一个文本节点(按行切了又拼回去,DOM 节点数不涨)
+  const plain = render("甲\n乙\n丙");
+  assert.equal(plain.html, "<div .md><p>甲\n乙\n丙</p></div>");
+  assert.equal(plain.root.kids[0].kids.length, 1);
 });
 test("原位图的图址晚到:Promise 落了才写 src,拒了只标坏、不写", async () => {
   let ok;
@@ -485,13 +512,6 @@ test("写字框标注:scanImgRefs 的位置、行号、代码里不认", () => {
   const got = scanImgRefs(src).map((r) => `${src.slice(r.a, r.b)}@${r.line}`);
   assert.deepEqual(got, ["图1@1", "图2@3", "图3@4", "图4@7", "图5@10", "图8@15", "图9@18"]);
 });
-test("写字框窄边:每张图只配一枚(第一次提到处),一列里挨太近往下错开", () => {
-  const src = "图1 图2\n图1\n\n```\n图3\n```\n图3 图2";
-  const refs = scanImgRefs(src);
-  assert.deepEqual(firstRefs(refs).map((i) => `图${refs[i].n}@${refs[i].line}`), ["图1@0", "图2@0", "图3@6"]);
-  assert.deepEqual(gutterStack([0, 0, 10, 200, 210], 50), [0, 50, 100, 200, 250]);
-  assert.deepEqual(gutterStack([], 50), []);
-});
 test("顶层块的起始行:与 blocks 一一对应,行号口径同 split(\"\n\")", () => {
   const src = "\n# 题\n段一\n段一续\n\n- a\n- b\n\n> 引\n> 用\n```\nx\n\n```\n---\n图1\n";
   const r = parseMarkdown(src);
@@ -516,7 +536,7 @@ test("已删的图(154 G4):查不到图且 gone 给了文案 ⇒ 灰的带删除
   const r = render("见图1 与图2,图3\n\n图2", { gone: (n) => (n === 2 ? "这张图已不在" : null) });
   assert.equal(
     r.html,
-    '<div .md><div .md-blk><p>见<button .img-ref>图1</button> 与<span .img-gone>图2</span>,图3</p><div .md-figs><button .md-fig aria-label=图1><img></img><span .md-fig-n>图1</span></button></div></div>' +
+    '<div .md><div .md-blk><p>见<button .img-ref>图1</button> 与<span .img-gone>图2</span>,图3</p><div .md-figs><button .md-fig aria-label=图1><img></img></button></div></div>' +
       "<p><span .img-gone>图2</span></p></div>",
   );
   assert.ok(r.log.props.includes("title"));

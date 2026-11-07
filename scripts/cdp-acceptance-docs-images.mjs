@@ -11,9 +11,9 @@
 //     写了两段字、光标放在第一段句中加图 ⇒ 插在那一段段尾另起一段(154 G3)→ 写字加图后**直接关面** ⇒ 字与图都落下。
 //   取图在飞时按返回 = 拦一句、留在编辑器;放行后照常。
 //   写字框里的「图N」(833):对得上的垫底色、影子层与写字框内框重合;图删了那段不再垫。
-//     手机上**没有窄边**(154 G2):写字框不让位、右内边距不随图变;图在正文下面那条里看。
-//   编辑器的缩略图条**张张都在**、在正文下面(154 G1);预览里每张图画在第一次提到它的地方(句中的画在那一段下面、
-//     带「图N」角标),再提到只是芯片;删图 = 条里或大图角上的 ×(同一份标记)。
+//     写字框里不画图(手机从来没有窄边;桌面那列 868 也拆了):写字框不让位、右内边距不随图变;图在正文下面那条里看。
+//   编辑器的缩略图条**张张都在**、在正文下面(154 G1);预览里每张图画在第一次提到它的地方(按行:只有图N 的那一行原地成图,
+//     句中的画在那一行下面;868 起不带编号角标),再提到只是芯片;删图 = 条里或大图角上的 ×(同一份标记)。
 //
 // 取图不经系统选择器:页内把 `HTMLInputElement.prototype.click` 换掉,遇到 file input 就塞几张页内现画
 // 的 PNG 并发 change(同用户选完回来)。⚠ 诚实边界:系统相册 / 相机那半、取消那条路、降采样的手感
@@ -195,16 +195,16 @@ try {
   // ④ 预览:单独成段的三段「图N」原位画成图(字节真到了),句中的「图1」仍是芯片
   ok((await areaText()).endsWith("图1\n\n图2\n\n图3\n\n"), "③ 拍的那张也插了「图3」", await areaText());
   // ③b 写字框里的标注(833):四处「图N」都垫了底色;垫底色的那一格与写字框里那几个字落在同一处(影子层与写字框同宽同排版);
-  //     手机上没有窄边(154 G2):写字框里没有缩略图、右内边距是 CSS 给的那一份(不随图变)
+  //     写字框里不画图:右内边距是 CSS 给的那一份(不随图变)
   const padBefore = await ev(`getComputedStyle(document.querySelector("#docs-body textarea.doc-area")).paddingRight`);
   const hl = await ev(`(() => {
     const a = document.querySelector("#docs-body textarea.doc-area"), h = document.querySelector("#docs-body .doc-hl");
     const ra = a.getBoundingClientRect(), rh = h.getBoundingClientRect();
-    return { marks: [...h.querySelectorAll(".ref")].map((m) => m.firstChild.textContent), thumbs: document.querySelectorAll("#docs-body .doc-ed .ref-thumb, #docs-body .doc-pins").length,
+    return { marks: [...h.querySelectorAll(".ref")].map((m) => m.firstChild.textContent), imgsInEd: document.querySelectorAll("#docs-body .doc-ed img").length,
       dx: Math.round(rh.left - ra.left - a.clientLeft), w: [Math.round(rh.width), a.clientWidth], hh: [Math.round(rh.height), a.clientHeight],
       pad: getComputedStyle(a).paddingRight, copied: getComputedStyle(h).paddingRight };
   })()`);
-  ok(hl.marks.join() === "图1,图1,图2,图3" && hl.thumbs === 0, "③b 四处「图N」垫了底色、写字框里没有窄边缩略图", hl);
+  ok(hl.marks.join() === "图1,图1,图2,图3" && hl.imgsInEd === 0, "③b 四处「图N」垫了底色、写字框里一张图都不画", hl);
   ok(hl.dx === 0 && hl.w[0] === hl.w[1] && hl.hh[0] === hl.hh[1] && hl.pad === hl.copied, "③b 影子层与写字框内框重合", hl);
   // ③c 每处底色落在那几个字所在的那一行(834:系统字号 / 界面字号不是 100% 时,影子层抄来的放大后字号被 textZoom
   //     再放大一遍,底色整片往下错、越往后错得越多)。这几段都短、不折行 ⇒ 第几行 = 前面有几个换行。
@@ -233,13 +233,13 @@ try {
   const chip = await ev(`(() => { const b = document.querySelector("#docs-body .doc-preview .img-ref"); return b ? b.textContent : null; })()`);
   ok(chip !== null, "④ 句中的「图1」是芯片", chip);
   await waitFor(`[...document.querySelectorAll("#docs-body .doc-preview .md-fig img")].filter((i) => i.complete && i.naturalWidth > 0).length === 3`, "预览里三张图原位显示");
-  // 图1 第一次是在句中提到的 ⇒ 画在那一段下面;后面单独那段「图1」只是芯片(每张只画一次);每张大图带编号角标
+  // 图1 第一次是在句中提到的 ⇒ 画在那一行下面;后面单独那段「图1」只是芯片(每张只画一次);大图上不带编号角标(868)
   const figs = await ev(`(() => {
     const p = document.querySelector("#docs-body .doc-preview");
-    return { tags: [...p.querySelectorAll(".md-fig .md-fig-n")].map((e) => e.textContent), underSentence: !!p.querySelector(".md-blk > p + .md-figs .md-fig[aria-label='图1']"),
+    return { order: [...p.querySelectorAll(".md-fig")].map((e) => e.getAttribute("aria-label")), tags: p.querySelectorAll(".md-fig span").length, underSentence: !!p.querySelector(".md-blk > p + .md-figs .md-fig[aria-label='图1']"),
       n: p.querySelectorAll(".md-fig img").length, dels: p.querySelectorAll(".md-fig-box .thumb-del").length };
   })()`);
-  ok(figs.n === 3 && figs.tags.join() === "图1,图2,图3" && figs.underSentence, "④ 每张只画一次、带编号;图1 画在提到它的那句下面", figs);
+  ok(figs.n === 3 && figs.order.join() === "图1,图2,图3" && figs.tags === 0 && figs.underSentence, "④ 每张只画一次、不带角标;图1 画在提到它的那句下面", figs);
   ok((await stripVis()).join() === "1,2,3" && figs.dels === 3, "④ 预览时条里也张张都在、三张大图角上各一枚 ×", { strip: await stripVis(), dels: figs.dels });
   await shot("doc-edit-preview");
 

@@ -118,9 +118,16 @@ const KNIVES = [
   {
     name: "原位图:句中提到的不画在那一块下面",
     file: DOM,
-    from: "  if (imgs.length === 0) return e;\n",
-    to: "  return e;\n",
+    from: "  return imgs.length === 0 ? null : figBox(cx, ns, imgs);\n",
+    to: "  return null;\n",
     red: ["写到哪画到哪:每张图只画一次,画在第一次提到它的地方;句中的画在那一块下面;src 只取钩子交回的串", "图N 与方框:渲染器自己建,钩子只给文案与动作;查不到的图按原文"],
+  },
+  {
+    name: "原位图:退回按段看(段里的换行不切行)",
+    file: DOM,
+    from: "      if (i > 0) lines.push([]);\n",
+    to: '      if (i > 0) lines[lines.length - 1].push({ t: "text", s: "\\n" });\n',
+    red: ["按行画图(868):一行里只有图N ⇒ 那一行原地换成图;句中提到的画在那一行下面;没图的段落照旧一个 p"],
   },
   {
     name: "渲染器拿 innerHTML 画文字",
