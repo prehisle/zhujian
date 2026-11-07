@@ -69,10 +69,13 @@ async function main() {
   if (!st) return { error: "找不到顶栏「设置」" };
   tap(st.x, st.y);
   await sleep(1500);
+  // 划动坐标按屏算(869:写死的 1440 是 MatePad 模拟器的屏中,Mate 60 Pro 宽 1260 ⇒ 划在屏外、一下没划,S2–S4 假红)。
+  const scr = await ev(`({ w: Math.round(innerWidth * devicePixelRatio), h: Math.round(innerHeight * devicePixelRatio) })`);
+  const sx = Math.round(scr.w / 2);
   for (let i = 0; i < 6; i++) {
     const c = await center("#about a.about-link:last-of-type");
     if (c && c.bottom < c.vh - 40 && c.top > 80) break;
-    hdc(`uitest uiInput swipe 1440 1600 1440 600 1200`);
+    hdc(`uitest uiInput swipe ${sx} ${Math.round(scr.h * 0.6)} ${sx} ${Math.round(scr.h * 0.22)} 1200`);
     await sleep(1200);
   }
 
