@@ -254,8 +254,10 @@ const SUITES = {
       { n: "① 安卓通知条退回 13px(颜色一个字不动)",
         expect: [".error.notice", "字号 13px", "4.79"],
         note: "与基线成一红一绿对照:同一对颜色,14px 绿、13px 红 —— 判的是**组合**不是颜色本身",
-        edits: [["android/index.html", "font-size: var(--fs-14); word-break: break-all;",
-                 "font-size: var(--fs-13); word-break: break-all;"]] },
+        // 161 起那一行换成 `overflow-wrap: anywhere`,旧锚 `…; word-break: break-all;` 只剩 367 的 `.dev-name` 命中 ⇒
+        // 刀落在设备名上、门禁照样绿(868 撞见,871 查实)。
+        edits: [["android/index.html", "font-size: var(--fs-14); overflow-wrap: anywhere;",
+                 "font-size: var(--fs-13); overflow-wrap: anywhere;"]] },
       { n: "② 标签详情复制钮的 hover 退回朱砂",
         expect: [".v-topics .dtask-copy:hover", "字号 12px", "4.87"],
         note: "它的字号来自 `font: var(--fs-12)/1 …` **简写**,这一刀同时守着简写那条取数路",
@@ -280,9 +282,10 @@ const SUITES = {
       { n: "⑦ @media 块里出现字号",
         expect: "块里有带颜色或字号的规则",
         note: "扁平抓取器会把条件块里的声明当成无条件生效的 —— 两个方向都可能算错",
-        // 158 起那条「复制看板整枚藏起」改成缩记号,刀口挪到同一个 @container 块里的另一行(换的是锚,不是刀)。
-        edits: [["src/board.css", "  .v-board header .copy-slot .hbtn .lbl { display: none; }",
-                 "  .v-board header .copy-slot .hbtn .lbl { display: none; font-size: var(--fs-12); }"]] },
+        // 161 A20 起顶栏让位改由 fitHeader 挂 class,原锚那条搬出了 @container ⇒ 刀口挪到列头那个 @container 块
+        // (换的是锚,不是刀;871)。
+        edits: [["src/board.css", "  .v-board .col-copy { display: none; }",
+                 "  .v-board .col-copy { display: none; font-size: var(--fs-12); }"]] },
       { n: "⑧ 字号写在**另一条只写字号的规则**里(跨规则取数)",
         expect: [".v-topics .zzprobe", "字号 13px"],
         note: "只写 font-size 的规则若没进层叠,这个签名就是「字号不知道」→ 退回 4.5 → 4.79 平安过关",
@@ -492,6 +495,9 @@ for (const name of picked) {
         if (hits === 0) throw new Error(`这一刀下不去:${file} 里找不到「${String(from).slice(0, 46)}」`);
         // 只对正则锚较真:串锚逐字写死,多处命中是作者知情的;正则是**放宽**过的,
         // 撞上第二处就会落错地方,而落错地方和落对地方在输出上长得一样。
+        // ⚠ 串锚多处命中大半是有意的(「任一 `export function` 前插一行」「任一处用法改回字面量」),
+        // 而串锚落错地方时下面的「没红 / 红错了地方」照样会报 —— contrast ① 就是这么被逮到的(871 试过
+        // 串锚也一律要唯一,十一刀当场下不去,撤了)。
         if (from instanceof RegExp && hits > 1) {
           throw new Error(`锚点不唯一:${file} 里「${String(from).slice(0, 46)}」命中 ${hits} 处,刀会落在第一处`);
         }
