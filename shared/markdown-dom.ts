@@ -17,11 +17,12 @@
 //   - 图N → 有界整数,交给各端的 `image(n)` 查当前条目的配图;有就画成本文件建的芯片按钮
 //     (文案是各端字典给的,点了调各端的回调),查不到就问各端的 `gone(n)`:给了文案 ⇒ `span.img-gone`
 //     (字仍是原文「图N」,灰 + 删除线由各端 CSS 管,文案只进 `title`;154 G4),不给 ⇒ 按原文「图N」;
-//   - **写到哪画到哪**(154 G1,用户拍;868 起按行):每张查得到的图**只画一次**,画在正文里第一次提到它的地方 ——
-//     段落**按行看**(段里的换行原样显示,写的人看到的就是一行一行;⛔ 别回到按段:不隔空行的
-//     「字 / 图2 / 图3」是一段,图2、图3 就全成了芯片、图堆在整段底下):一行里只有图N(中间只隔空白)
-//     且张张头一回出现 ⇒ 那一行原地换成图;句中提到的(标题、列表项、引用里同理)⇒ 字照常画(图N 是芯片),
-//     那几张画在**那一行**正下方(标题画在标题下面);再提到只是芯片。段落在这几处断开,`div.md-blk` 包住断开的几截。
+//   - **写到哪画到哪**(154 G1,用户拍;868 补起**按位置**):每张查得到的图**只画一次**,就画在正文里第一次提到它的
+//     **那个位置** —— 段落里那个「图N」原地换成图,这一行在那儿断开:前面的字、图、后面的字依次往下排(紧挨着、
+//     中间只隔空白的几张并成一组);句中的也一样(用户看了「句中留芯片、图画在那一行下面」那版,点名要原地)。
+//     ⛔ 别回到按段(不隔空行的「字 / 图2 / 图3」是一段,图2、图3 会全成芯片、图堆在整段底下),也别回到「句中留芯片」。
+//     例外两处:粗 / 斜里提到的不拆那层,图画在那一行下面;标题里提到的画在标题下面。再提到只是芯片。
+//     段落断开了就用 `div.md-blk` 包住断开的几截。
 //     原位的图 = `button.md-fig` 包一个 `img`(⛔ 不再带编号角标:图就在写它的地方,编号看缩略图条):
 //     `img.src` 只取各端 `src()` 交回的串(各端从自己的取图命令拿的 blob: / data: 地址,⛔ 不来自正文),
 //     `alt` / `title` / `aria-label` 是各端字典给的文案;
@@ -151,8 +152,8 @@ function block(cx: Cx, b: MdBlock): HTMLElement {
 
 type MdImage = NonNullable<ReturnType<MdHooks["image"]>>;
 
-/** 一段按行画(头注「写到哪画到哪」):只有图N 的那一行原地换成图;别的行照字画,句中头一回提到的图画在那一行
- *  正下方。段落在这几处断开,断开了就用 `div.md-blk` 包住那几截(没断 = 照旧一个 `p`)。 */
+/** 一段逐行画(头注「写到哪画到哪」):行里头一回提到、查得到的图在那个位置原地画 —— 前面那截字收成一个 `p`、
+ *  接着是图、后面那截字另起;粗 / 斜里头一回提到的画在那一行下面。断开了就用 `div.md-blk` 包住那几截(没断 = 照旧一个 `p`)。 */
 function para(cx: Cx, xs: MdInline[]): HTMLElement {
   const parts: HTMLElement[] = [];
   let run: MdInline[][] = [];
@@ -163,15 +164,41 @@ function para(cx: Cx, xs: MdInline[]): HTMLElement {
     parts.push(p);
     run = [];
   };
+  const keep = (seg: MdInline[]): void => {
+    const t = trimSeg(seg);
+    if (t.length > 0) run.push(t);
+  };
   for (const ln of splitLines(xs)) {
-    const figs = figures(cx, ln);
-    if (figs !== null) {
+    let seg: MdInline[] = [];
+    let i = 0;
+    while (i < ln.length) {
+      // 从 i 起收一组:头一回提到、查得到的图,中间只隔空白(同一张提两遍也只画一张)
+      const ns: number[] = [];
+      const imgs: MdImage[] = [];
+      let j = i;
+      for (; j < ln.length; j++) {
+        const y = ln[j];
+        if (y.t === "text" && y.s.trim() === "" && ns.length > 0) continue;
+        if (y.t !== "img" || cx.drawn.has(y.n)) break;
+        const img = cx.hooks.image(y.n);
+        if (img === null) break;
+        if (ns.includes(y.n)) continue;
+        ns.push(y.n);
+        imgs.push(img);
+      }
+      if (imgs.length === 0) {
+        seg.push(ln[i]);
+        i++;
+        continue;
+      }
+      keep(seg);
+      seg = [];
       flush();
-      parts.push(figs);
-      continue;
+      parts.push(figBox(cx, ns, imgs));
+      i = j;
     }
-    run.push(ln);
-    const below = mentioned(cx, ln);
+    keep(seg);
+    const below = mentioned(cx, ln); // 顶层的上面都画过了 ⇒ 这里只剩粗 / 斜里的
     if (below !== null) {
       flush();
       parts.push(below);
@@ -181,7 +208,32 @@ function para(cx: Cx, xs: MdInline[]): HTMLElement {
   return blk(cx, parts);
 }
 
-/** 按顶层文本里的换行把一段切成行。换行落在粗 / 斜 / 链接 / 行内码里面的不切(那几行算一行:里面有字,本来就成不了图行)。
+/** 一截行内节点去掉两头的空白(只动两头的文本节点;整截都是空白 ⇒ 空数组)。行本来就被解析器修过两头,
+ *  这里修的是图断开处留下的那点空白(「见 图1 吧」⇒「见」/ 图 /「吧」)。 */
+function trimSeg(xs: MdInline[]): MdInline[] {
+  const out = xs.slice();
+  while (out.length > 0 && out[0].t === "text") {
+    const s = out[0].s.trimStart();
+    if (s !== "") {
+      out[0] = { t: "text", s };
+      break;
+    }
+    out.shift();
+  }
+  while (out.length > 0) {
+    const last = out[out.length - 1];
+    if (last.t !== "text") break;
+    const s = last.s.trimEnd();
+    if (s !== "") {
+      out[out.length - 1] = { t: "text", s };
+      break;
+    }
+    out.pop();
+  }
+  return out;
+}
+
+/** 按顶层文本里的换行把一段切成行。换行落在粗 / 斜 / 链接 / 行内码里面的不切(那几行算一行)。
  *  只切不拼,总复制量 = 原文本长。 */
 function splitLines(xs: MdInline[]): MdInline[][] {
   const lines: MdInline[][] = [[]];
@@ -230,24 +282,7 @@ function blk(cx: Cx, parts: HTMLElement[]): HTMLElement {
   return wrap;
 }
 
-/** 一行里只有图N(中间只隔空白)、张张查得到且都还没画过 ⇒ 这一行原地画成图;否则 `null`(照字画)。 */
-function figures(cx: Cx, xs: MdInline[]): HTMLElement | null {
-  const ns: number[] = [];
-  const imgs: MdImage[] = [];
-  for (const x of xs) {
-    if (x.t === "text" && x.s.trim() === "") continue;
-    if (x.t !== "img" || cx.drawn.has(x.n)) return null;
-    const img = cx.hooks.image(x.n);
-    if (img === null) return null;
-    if (ns.includes(x.n)) continue; // 「图1 图1」:同一行里也只画一次
-    ns.push(x.n);
-    imgs.push(img);
-  }
-  if (imgs.length === 0) return null;
-  return figBox(cx, ns, imgs);
-}
-
-/** 句中提到的图:这几个行内节点(粗 / 斜里的也算)里头一回出现、查得到的那几张画成一组,交给调用方摆在那一行 / 那个标题下面;
+/** 不能原地画的那几处(粗 / 斜里、标题里):这几个行内节点里头一回出现、查得到的那几张画成一组,交给调用方摆在那一行 / 那个标题下面;
  *  一张都没有回 `null`。 */
 function mentioned(cx: Cx, xs: MdInline[]): HTMLElement | null {
   const ns: number[] = [];

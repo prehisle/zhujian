@@ -4,7 +4,7 @@
 //   已存过的篇:「编辑 / 预览」那排有「＋ 加图 / ＋ 拍照」→ 加两张**当场挂上**(保存之前 list_item_images 就有)、
 //     并在光标处各插一段「图N」(832)、正文框随内容长高不在框里滚;钮与新长出来的缩略图都在底栏上沿之上
 //     (矮屏几何格:第一版把它们放在 60vh 正文框底下,360×640 上整排压在底栏后)、拍照那发的 input 带 capture →
-//     预览里单独成段的「图N」**原位画成图**(字节真到了:naturalWidth > 0)、句中的「图1」仍是芯片 → × 只做标记
+//     预览里的「图N」**原位画成图**(字节真到了:naturalWidth > 0;868 补起句中第一次提到的也原地)、再提到的「图1」是芯片 → × 只做标记
 //     (库里还在、再点一下撤销)→ 保存后标了的那张没了、它进了回收站(可还原)、阅读页原位显示余下两张而缩略图条
 //     把它们藏掉 → 再标一张、**关面**(不是保存)⇒ 那张一张不删(同桌面 unmount:删图认的是前台空间)。
 //   新篇(832 起没有暂存条):一个字没写就加图 ⇒ 当场建篇挂上、正文是两段「图N」→ 返回 = 回阅读页;
@@ -12,8 +12,8 @@
 //   取图在飞时按返回 = 拦一句、留在编辑器;放行后照常。
 //   写字框里的「图N」(833):对得上的垫底色、影子层与写字框内框重合;图删了那段不再垫。
 //     写字框里不画图(手机从来没有窄边;桌面那列 868 也拆了):写字框不让位、右内边距不随图变;图在正文下面那条里看。
-//   编辑器的缩略图条**张张都在**、在正文下面(154 G1);预览里每张图画在第一次提到它的地方(按行:只有图N 的那一行原地成图,
-//     句中的画在那一行下面;868 起不带编号角标),再提到只是芯片;删图 = 条里或大图角上的 ×(同一份标记)。
+//   编辑器的缩略图条**张张都在**、在正文下面(154 G1);预览里每张图原地画在第一次提到它的那个位置(句中也是,句子在那儿断开;
+//     868 起不带编号角标),再提到只是芯片;删图 = 条里或大图角上的 ×(同一份标记)。
 //
 // 取图不经系统选择器:页内把 `HTMLInputElement.prototype.click` 换掉,遇到 file input 就塞几张页内现画
 // 的 PNG 并发 change(同用户选完回来)。⚠ 诚实边界:系统相册 / 相机那半、取消那条路、降采样的手感
@@ -192,7 +192,7 @@ try {
   ok(metas.length === 3, "③ 库里 3 张");
   await hideBar();
 
-  // ④ 预览:单独成段的三段「图N」原位画成图(字节真到了),句中的「图1」仍是芯片
+  // ④ 预览:三张都原位画成图(字节真到了);后面单独那段「图1」是再提到 ⇒ 芯片
   ok((await areaText()).endsWith("图1\n\n图2\n\n图3\n\n"), "③ 拍的那张也插了「图3」", await areaText());
   // ③b 写字框里的标注(833):四处「图N」都垫了底色;垫底色的那一格与写字框里那几个字落在同一处(影子层与写字框同宽同排版);
   //     写字框里不画图:右内边距是 CSS 给的那一份(不随图变)
@@ -231,15 +231,15 @@ try {
   await clickText("预览");
   await waitFor(`!document.querySelector("#docs-body .doc-preview").hidden`, "预览");
   const chip = await ev(`(() => { const b = document.querySelector("#docs-body .doc-preview .img-ref"); return b ? b.textContent : null; })()`);
-  ok(chip !== null, "④ 句中的「图1」是芯片", chip);
+  ok(chip !== null, "④ 再提到的「图1」是芯片", chip);
   await waitFor(`[...document.querySelectorAll("#docs-body .doc-preview .md-fig img")].filter((i) => i.complete && i.naturalWidth > 0).length === 3`, "预览里三张图原位显示");
-  // 图1 第一次是在句中提到的 ⇒ 画在那一行下面;后面单独那段「图1」只是芯片(每张只画一次);大图上不带编号角标(868)
+  // 图1 第一次是在句中提到的 ⇒ 句子在那儿断开、图紧跟前半句(868 补);后面单独那段「图1」只是芯片(每张只画一次);大图上不带编号角标(868)
   const figs = await ev(`(() => {
     const p = document.querySelector("#docs-body .doc-preview");
     return { order: [...p.querySelectorAll(".md-fig")].map((e) => e.getAttribute("aria-label")), tags: p.querySelectorAll(".md-fig span").length, underSentence: !!p.querySelector(".md-blk > p + .md-figs .md-fig[aria-label='图1']"),
       n: p.querySelectorAll(".md-fig img").length, dels: p.querySelectorAll(".md-fig-box .thumb-del").length };
   })()`);
-  ok(figs.n === 3 && figs.order.join() === "图1,图2,图3" && figs.tags === 0 && figs.underSentence, "④ 每张只画一次、不带角标;图1 画在提到它的那句下面", figs);
+  ok(figs.n === 3 && figs.order.join() === "图1,图2,图3" && figs.tags === 0 && figs.underSentence, "④ 每张只画一次、不带角标;图1 原地紧跟前半句", figs);
   ok((await stripVis()).join() === "1,2,3" && figs.dels === 3, "④ 预览时条里也张张都在、三张大图角上各一枚 ×", { strip: await stripVis(), dels: figs.dels });
   await shot("doc-edit-preview");
 

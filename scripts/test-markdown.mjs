@@ -300,10 +300,10 @@ test("打不开外部浏览器的平台:链接只显示文字与地址,不挂监
   assert.equal(r.log.listeners.length, 0);
 });
 test("图N 与方框:渲染器自己建,钩子只给文案与动作;查不到的图按原文", () => {
-  const r = render("见图1 与图2\n\n- [x] 做完");
+  const r = render("见图1 与图2,再看图1\n\n- [x] 做完");
   assert.equal(
     r.html,
-    '<div .md><div .md-blk><p>见<button .img-ref>图1</button> 与图2</p><div .md-figs><button .md-fig aria-label=图1><img></img></button></div></div>' +
+    '<div .md><div .md-blk><p>见</p><div .md-figs><button .md-fig aria-label=图1><img></img></button></div><p>与图2,再看<button .img-ref>图1</button></p></div>' +
       '<ul><li .md-task.on><button .ckbox aria-label=取消勾选></button><p>做完</p></li></ul></div>',
   );
   const buttons = [];
@@ -315,13 +315,13 @@ test("图N 与方框:渲染器自己建,钩子只给文案与动作;查不到的
     b.on.click[0](e);
     assert.equal(e.stopped, 1);
   }
-  assert.deepEqual(r.opened, ["img:1", "img:1", "tick:2"]); // 芯片与它下面那张图都开图1
+  assert.deepEqual(r.opened, ["img:1", "img:1", "tick:2"]); // 原地那张图与后面再提到的芯片都开图1
   // 只读视图:方框禁用、不挂监听
   const ro = render("- [ ] 只读", { checkbox: () => ({ label: "未勾", toggle: null }) });
   assert.ok(ro.log.props.includes("disabled"));
   assert.equal(ro.log.listeners.length, 0);
 });
-test("写到哪画到哪:每张图只画一次,画在第一次提到它的地方;句中的画在那一块下面;src 只取钩子交回的串", () => {
+test("写到哪画到哪:每张图只画一次,画在第一次提到它的地方(句中也原地);标题 / 粗斜里的画在下面;src 只取钩子交回的串", () => {
   const FIG = (n) => `<button .md-fig aria-label=图${n}><img></img></button>`;
   const CHIP = (n) => `<button .img-ref>图${n}</button>`;
   const three = { image: (n) => (n <= 3 ? { label: `图${n}`, open() {}, src: () => `blob:app/${n}` } : null) };
@@ -331,24 +331,24 @@ test("写到哪画到哪:每张图只画一次,画在第一次提到它的地方
     r.html,
     `<div .md><div .md-figs>${FIG(1)}</div><p>${CHIP(1)}\n${CHIP(1)}</p><p>见${CHIP(1)}</p><p>${CHIP(1)} x</p><blockquote><p>${CHIP(1)}</p></blockquote></div>`,
   );
-  // 句中第一次提到 ⇒ 字照常、图画在那一块正下方(标题 / 列表项 / 粗体里的同理);查不到的照原文、不画
+  // 句中第一次提到 ⇒ 句子在那儿断开、图原地画;标题里 / 粗体里的不拆,画在下面;查不到的照原文、不画
   const m = render("见图1 与图4\n\n# 题图2\n\n- 项 **图3** 与图1\n\n图2 图3", three);
   assert.equal(
     m.html,
     "<div .md>" +
-      `<div .md-blk><p>见${CHIP(1)} 与图4</p><div .md-figs>${FIG(1)}</div></div>` +
+      `<div .md-blk><p>见</p><div .md-figs>${FIG(1)}</div><p>与图4</p></div>` +
       `<div .md-blk><h1>题${CHIP(2)}</h1><div .md-figs>${FIG(2)}</div></div>` +
       `<ul><li><div .md-blk><p>项 <strong>${CHIP(3)}</strong> 与${CHIP(1)}</p><div .md-figs>${FIG(3)}</div></div></li></ul>` +
       `<p>${CHIP(2)} ${CHIP(3)}</p>` +
       "</div>",
   );
-  // 段里夹了字(哪怕图是头一回出现)就不是图段:字照画、图在下面
-  assert.equal(render("图2 x", three).html, `<div .md><div .md-blk><p>${CHIP(2)} x</p><div .md-figs>${FIG(2)}</div></div></div>`);
-  // 单独成段里有一张已经画过:那一段照字画,没画过的那张画在它下面
+  // 图在行首、后面跟着字:图在前、字另起
+  assert.equal(render("图2 x", three).html, `<div .md><div .md-blk><div .md-figs>${FIG(2)}</div><p>x</p></div></div>`);
+  // 同一行里有一张已经画过:它只是芯片,没画过的那张在它后面原地画
   const part = render("见图1\n\n图1 图2", three);
   assert.equal(
     part.html,
-    `<div .md><div .md-blk><p>见${CHIP(1)}</p><div .md-figs>${FIG(1)}</div></div><div .md-blk><p>${CHIP(1)} ${CHIP(2)}</p><div .md-figs>${FIG(2)}</div></div></div>`,
+    `<div .md><div .md-blk><p>见</p><div .md-figs>${FIG(1)}</div></div><div .md-blk><p>${CHIP(1)}</p><div .md-figs>${FIG(2)}</div></div></div>`,
   );
   const imgs = [];
   const walk = (n) => { if (n.nodeType === 1) { if (n.tag === "img") imgs.push(n); n.kids.forEach(walk); } };
@@ -364,27 +364,30 @@ test("写到哪画到哪:每张图只画一次,画在第一次提到它的地方
   assert.equal(e.stopped, 1);
   assert.deepEqual(r.opened, ["img:1"]);
 });
-test("按行画图(868):一行里只有图N ⇒ 那一行原地换成图;句中提到的画在那一行下面;没图的段落照旧一个 p", () => {
+test("按位置画图(868 补):第一次提到的图N 原地换成图(句中也是),那一行在那儿断开;没图的段落照旧一个 p", () => {
   const FIG = (n) => `<div .md-figs><button .md-fig aria-label=图${n}><img></img></button></div>`;
   const CHIP = (n) => `<button .img-ref>图${n}</button>`;
   const three = { image: (n) => (n <= 3 ? { label: `图${n}`, open() {}, src: () => `blob:app/${n}` } : null) };
-  // 用户截图那一段:不隔空行的「字 / 图2 / 图3」是同一段,图2、图3 也各自原地成图
-  assert.equal(render("1图1好的\n图2\n图3", three).html, `<div .md><div .md-blk><p>1${CHIP(1)}好的</p>${FIG(1)}${FIG(2)}${FIG(3)}</div></div>`);
+  // 用户截图那一段:不隔空行的「字 / 图2 / 图3」是同一段,三张都原地 ——「1图1好的」在图1 那儿断开
+  assert.equal(render("1图1好的\n图2\n图3", three).html, `<div .md><div .md-blk><p>1</p>${FIG(1)}<p>好的</p>${FIG(2)}${FIG(3)}</div></div>`);
   // 图行夹在字中间:前后两截各成一个 p
   assert.equal(render("前一行\n图1\n后一行\n再一行", three).html, `<div .md><div .md-blk><p>前一行</p>${FIG(1)}<p>后一行\n再一行</p></div></div>`);
-  // 句中提到:图紧跟那一行,不等到整段末尾
-  assert.equal(render("甲\n见图2 乙\n丙", three).html, `<div .md><div .md-blk><p>甲\n见${CHIP(2)} 乙</p>${FIG(2)}<p>丙</p></div></div>`);
+  // 句中提到:就在那个字后面断开,前面的行与「见」同一个 p、「乙」与后面的行同一个 p;断开处的空白修掉
+  assert.equal(render("甲\n见图2 乙\n丙", three).html, `<div .md><div .md-blk><p>甲\n见</p>${FIG(2)}<p>乙\n丙</p></div></div>`);
+  assert.equal(render("见 图1 吧", three).html, `<div .md><div .md-blk><p>见</p>${FIG(1)}<p>吧</p></div></div>`);
+  // 查不到的图N 不并进组、照原文;再提到的只是芯片
+  assert.equal(render("图1图9 吧\n再看图1", three).html, `<div .md><div .md-blk>${FIG(1)}<p>图9 吧\n再看${CHIP(1)}</p></div></div>`);
   // 同一行两张 = 同一组;画过的再单独一行只是芯片
   assert.equal(
     render("图1 图2\n图1", three).html,
     `<div .md><div .md-blk><div .md-figs><button .md-fig aria-label=图1><img></img></button><button .md-fig aria-label=图2><img></img></button></div><p>${CHIP(1)}</p></div></div>`,
   );
-  // 换行落在粗体里:不切开(那几行算一行),图画在它下面
+  // 粗体里提到的:不拆那层,图画在那一行下面(换行落在粗体里也不切开)
   assert.equal(render("**粗\n图1**", three).html, `<div .md><div .md-blk><p><strong>粗\n${CHIP(1)}</strong></p>${FIG(1)}</div></div>`);
   // 列表项与引用里的段落同理
   assert.equal(
     render("- 图1\n- 见图2\n\n> 引\n> 图3", three).html,
-    `<div .md><ul><li>${FIG(1)}</li><li><div .md-blk><p>见${CHIP(2)}</p>${FIG(2)}</div></li></ul><blockquote><div .md-blk><p>引</p>${FIG(3)}</div></blockquote></div>`,
+    `<div .md><ul><li>${FIG(1)}</li><li><div .md-blk><p>见</p>${FIG(2)}</div></li></ul><blockquote><div .md-blk><p>引</p>${FIG(3)}</div></blockquote></div>`,
   );
   // 没图的段落:照旧一个 p、一个文本节点(按行切了又拼回去,DOM 节点数不涨)
   const plain = render("甲\n乙\n丙");
@@ -536,7 +539,7 @@ test("已删的图(154 G4):查不到图且 gone 给了文案 ⇒ 灰的带删除
   const r = render("见图1 与图2,图3\n\n图2", { gone: (n) => (n === 2 ? "这张图已不在" : null) });
   assert.equal(
     r.html,
-    '<div .md><div .md-blk><p>见<button .img-ref>图1</button> 与<span .img-gone>图2</span>,图3</p><div .md-figs><button .md-fig aria-label=图1><img></img></button></div></div>' +
+    '<div .md><div .md-blk><p>见</p><div .md-figs><button .md-fig aria-label=图1><img></img></button></div><p>与<span .img-gone>图2</span>,图3</p></div>' +
       "<p><span .img-gone>图2</span></p></div>",
   );
   assert.ok(r.log.props.includes("title"));

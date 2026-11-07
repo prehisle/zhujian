@@ -150,7 +150,7 @@ describe("长文的图(154 G3–G5)", () => {
 });
 
 // 868(用户拍):写字框里一张图都不画(拆掉 154 G2 那列窄边),只有「图N」垫底色;预览 / 阅读页**按行**原地成图 ——
-// 不隔空行的「字 / 图2」也算两行,图2 原地换成图、句中的图1 画在那一行下面,大图上不带编号角标;
+// 不隔空行的「字 / 图2」也算两行,图2 原地换成图;句中的图1 也原地(868 补:句子在那儿断开),大图上不带编号角标;
 // 宽屏两栏中间那道缝能拖(收在两栏 min-width)、比例记在本机(离开再开还在)、← / → 每下挪 5%、双击回一半一半并删掉那个键。
 // 按行的判据本身在 `scripts/test-markdown.mjs`(有阴性刀);这里只管两端接线与中缝的真拖。
 describe("长文编辑器:写字框不画图、预览按行成图、中缝能拖(868)", () => {
@@ -195,13 +195,13 @@ describe("长文编辑器:写字框不画图、预览按行成图、中缝能拖
     await invoke("add_item_image", { itemId: id, mime: "image/png", dataB64: PNG });
     await invoke("add_item_image", { itemId: id, mime: "image/png", dataB64: PNG });
 
-    // ① 阅读页:同一段里的「图2」那一行原地成图,句中的图1 画在那一行下面
+    // ① 阅读页:「1图1好的」在图1 那儿断开、图原地画;同一段里的「图2」那一行原地成图;一枚芯片都不剩
     await openDoc("分栏E2E");
     await browser.waitUntil(() => browser.execute(() => document.querySelectorAll(".v-docs .doc-page .md .md-fig").length === 2), {
       timeout: 8000,
       timeoutMsg: "阅读页一直没画出两张原位图",
     });
-    expect(await blkShape(".v-docs .doc-page .md")).toEqual({ kids: ["p", "md-figs", "md-figs"], chips: ["图1"], figs: 2, tags: 0 });
+    expect(await blkShape(".v-docs .doc-page .md")).toEqual({ kids: ["p", "md-figs", "p", "md-figs"], chips: [], figs: 2, tags: 0 });
 
     // ② 编辑器:并排;写字框里两处底色、一张图都没有;预览同阅读页
     await toEditor();
@@ -216,7 +216,7 @@ describe("长文编辑器:写字框不画图、预览按行成图、中缝能拖
       timeout: 5000,
       timeoutMsg: "预览一直没画出两张原位图",
     });
-    expect(await blkShape(".v-docs .doc-preview")).toEqual({ kids: ["p", "md-figs", "md-figs"], chips: ["图1"], figs: 2, tags: 0 });
+    expect(await blkShape(".v-docs .doc-preview")).toEqual({ kids: ["p", "md-figs", "p", "md-figs"], chips: [], figs: 2, tags: 0 });
 
     // ③ 中缝:没拖过 = 一半一半;往左拖 150 ⇒ 左窄 150、右宽 150,比例记下来
     expect(Math.abs(w0.l - w0.r)).toBeLessThanOrEqual(2);

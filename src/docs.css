@@ -203,8 +203,8 @@
 .v-docs .md > :first-child { margin-top: 0; }
 .v-docs .md > :last-child { margin-bottom: 0; }
 .v-docs .md p { margin: 0 0 0.9em; }
-/* 原位的图(共用渲染器的 .md-figs > button.md-fig > img,⛔ 不带编号角标;154 G1 + 868 按行:只有图N 的那一行原地成图,
-   句中提到的画在那一行下面 = .md-blk 包住断开的几截);点开看原图 */
+/* 原位的图(共用渲染器的 .md-figs > button.md-fig > img,⛔ 不带编号角标;154 G1 + 868 补:第一次提到的「图N」原地成图,
+   句中也是、句子在那儿断开 = .md-blk 包住断开的几截);点开看原图 */
 .v-docs .md .md-blk { margin: 0 0 1em; }
 .v-docs .md .md-blk > p,
 .v-docs .md .md-blk > h1,
