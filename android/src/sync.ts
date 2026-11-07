@@ -405,6 +405,7 @@ export function resetSyncTransient() {
   ($("sync-invite-btn") as HTMLButtonElement).textContent = t("sync.addDevice");
   $("sync-info").hidden = true;
   resetSecondary();
+  clearJoinErr(); // 164:加入失败那句说的是换空间 / 重置之前的事
   offlineSeenIn = null; // 断开过的是旧空间
 }
 
@@ -550,7 +551,21 @@ function renderJoinProgress(text: string | null) {
   $("join-cancel-row").hidden = joinAttempt === null;
 }
 
+/** 加入空间失败的原话(164):留在加入那一块里,不只靠几秒就走的提示条 —— A41 那句四五行,要读完才知道下一步。 */
+function showJoinErr(err: unknown, serverUrl: string): void {
+  const box = $("join-err");
+  box.innerHTML = errHtml(err, serverUrl);
+  box.hidden = false;
+}
+
+function clearJoinErr(): void {
+  const box = $("join-err");
+  box.hidden = true;
+  box.textContent = "";
+}
+
 async function doJoinSpace(serverUrl: string, code: string) {
+  clearJoinErr(); // 「下次点加入才清」(同 doJoin 的 Q4):空着点也算这一下
   if (lacksInput(serverUrl, "join-server", code, "join-code")) return;
   if (joinAttempt) {
     showError(t("sync.joinInFlight"));
@@ -605,6 +620,7 @@ async function doJoinSpace(serverUrl: string, code: string) {
     }
   } catch (err) {
     showErr(err, serverUrl);
+    showJoinErr(err, serverUrl);
   } finally {
     joinAttempt = null;
     renderJoinProgress(null);

@@ -53,6 +53,7 @@ import {
   fmtTimeOfDay,
   fmtWhen,
   hideConfirmBar,
+  dropErrorBar,
   markHits,
   markLocated,
   showBar,
@@ -2283,6 +2284,7 @@ function closePaneNow() {
   activePane = null;
   paneStack = []; // 子页那几层随面一起收(A11)
   hideConfirmBar(); // 关面 = 放弃面内挂着的两拍确认(ui-audit P0 #4)
+  dropErrorBar(); // 164:同上,别盖在时间轴顶上
   for (const id of Object.values(PANE_EL)) $(id).hidden = true;
   document.body.classList.remove("pane-open"); // 恢复 compose+时间轴
   // 折叠上限跟着界面字号重算(705)。⛔ 夹在这两行**中间**不是随手放的:上一行之后时间轴
@@ -2319,6 +2321,7 @@ function openPane(name: string, landing = false) {
   paneStack = []; // 用户自己换了一面 = 不再是谁的子页(A11);openSubPane / backToParentPane 随后自己写回
   if (name === "docs") docsCellPinned = hasDocs; // A36:进来那一刻有长文,这一趟「长文」格才保显
   hideConfirmBar(); // 面换面:上一面挂着的确认作废
+  dropErrorBar(); // 164:上一面的错误条别盖在这一面的钮上
   for (const [key, id] of Object.entries(PANE_EL)) $(id).hidden = key !== name;
   document.body.classList.add("pane-open"); // 开面板接管视图:收 compose+时间轴
   // 面板从自己的顶部开始(79);面换面同样归零。KEEP_PANE_SCROLL 里那几面回到上次读到的地方(159 / A17)——

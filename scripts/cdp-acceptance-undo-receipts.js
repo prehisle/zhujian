@@ -28,6 +28,10 @@
   const isDone = (id) => !!cardOf(id)?.classList.contains("done");
   const trashRow = (id) => document.querySelector(`[data-trash="${id}"]`);
   const trashOpen = () => !document.getElementById("trash-pane").hidden;
+  // 165 M1 Q6 起点【撤销】不再是「收条」,而是同一根条换成「已撤销」回执(ui.ts::showUndone):回执形、没有动作钮。
+  // 结构自证,与语言无关(同上面那几条)。
+  const undoneShown = () =>
+    !err.hidden && err.classList.contains("notice") && !err.classList.contains("with-act") && !err.querySelector(".bar-act");
   // 回收站面是 toggle:要开就开、要收就收,⛔ 别盲点(盲点一次 = 该开的时候把它收了)。
   const setTrash = async (want) => {
     if (trashOpen() === want) return true;
@@ -111,7 +115,7 @@
     ok("A confirmbar 不被挪用", cb.hidden);
     click(err.querySelector(".bar-act"));
     ok("A 撤销:卡回非 done", (await until(() => cardOf(id) && !isDone(id))) !== null);
-    ok("A 点撤销即收条", await until(() => err.hidden, 1500));
+    ok("A 点撤销后条换成「已撤销」回执(Q6)", await until(undoneShown, 1500));
 
     // ---- A2:再勾完成 → 点条身 = 只收不撤销 ----
     cardOf(id).querySelector(".tick input").click();
@@ -134,7 +138,7 @@
     click(err.querySelector(".bar-act"));
     ok("B 撤销:卡回轴", (await until(() => cardOf(id), 3000)) !== null);
     ok("B 捞回仍是 done(按删除那刻分流)", isDone(id));
-    ok("B 点撤销即收条", await until(() => err.hidden, 1500));
+    ok("B 点撤销后条换成「已撤销」回执(Q6)", await until(undoneShown, 1500));
 
     // ---- C:归档(158 G3 / Q3 起一点即归,done 卡才有入册钮)→ 回执带撤销 → 点撤销回看板 ----
     const seal = await openAct(id, "seal");
@@ -146,7 +150,7 @@
     click(err.querySelector(".bar-act"));
     ok("C 撤销:卡回轴", (await until(() => cardOf(id), 3000)) !== null);
     ok("C 回来仍是 done(unseal 语义)", isDone(id));
-    ok("C 点撤销即收条", await until(() => err.hidden, 1500));
+    ok("C 点撤销后条换成「已撤销」回执(Q6)", await until(undoneShown, 1500));
   } finally {
     // 清场:删进回收站 → 回收站彻底删(卡节点跨刷新按 id 现查;清场 del 的回执
     // 不点撤销、任它 6s 自收,不影响断言——末尾只断条目零残留)。

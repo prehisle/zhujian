@@ -89,6 +89,11 @@ const tap = ([x, y]) => sh(["shell", "input", "tap", String(x), String(y)]);
   const beforeT = installedUpdateTime();
   console.log(`设备 ${device} / 现装 ${beforeV ?? "(无)"} → 安装 ${apk}`);
   sh(["shell", "input", "keyevent", "KEYCODE_WAKEUP"]);
+  // 873:连装两只包时,上一单的安装器页(「安装完成」)若还在前台,下一单在 vivo 上直接报「因系统原因安装失败」
+  // (V1986A 一晚撞两次;关掉那页、回桌面、停掉 app 再装即成)⇒ 开装前先清场。停 app = 反正装的时候也会被杀。
+  sh(["shell", "am", "force-stop", INSTALLER]);
+  sh(["shell", "input", "keyevent", "KEYCODE_HOME"]);
+  sh(["shell", "am", "force-stop", PKG]);
 
   // 后台起 install(会阻塞在拦截页);不 await
   const proc = spawn("adb", (device ? ["-s", device] : []).concat(["install", "-r", apk]), {

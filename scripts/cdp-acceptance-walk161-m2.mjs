@@ -17,11 +17,13 @@
 //  S3  A7 = Q7 / A49 / A30 / Q16:设备名单里本机是唯一一台管理设备 ⇒ 没有「退出账户」、换成那行灰字;不对它说「建议再设一台」;
 //      收着的行有箭头;没起名的那行编号只写一遍、下面一句去哪儿起名;「复制完整编号」。
 //  S4  Q16 / A42:「添加设备」出码 ⇒ 写「到 HH:MM 失效」,钮变「重新出码」。
-//  S5  A41:拿这一本自己的码去「加入空间」⇒ 人话「这台上已经有这个账户的一本了(「<测试空间名>」)…重置…」,不说「空间=账户」。
+//  S5  A41:拿这一本自己的码去「加入空间」⇒ 人话「这台上已经有这个账户的一本了(「<测试空间名>」)…重置…」,不说「空间=账户」;
+//      164:同一句也留在 `#join-err`(提示条几秒就走、换面就收)。
 //  S6  A27 / A42 / Q3:码的样子不对 ⇒ 说长相、不说「槽号」、不挂原文;样子对但不存在 ⇒ 「重新出码」+「核对服务器地址」。
 //  S7  A8 / Q14 / A33:停服务器 ⇒ 点变空心圈、「现在重连」在;那行错误带图标、原文降一档;名单「刷新」留下的那句在断开期间不来回闪;
 //      起回服务器、点「现在重连」⇒ 0.5 秒内就去连(不等退避)、连上后「已重新连上」、名单那句收掉。
-//  S11 A38(主控收口补的手机半):无界面对端拿这台出的码加入 ⇒ 名单里点开它那一行:移除前的说明照指南一句不省(第三条「账户密钥和
+//  S11 164:S5 那条长错误条在换到同步面时已收 ⇒ 不手动收、直接真点「重新出码」就出新码(改前那一下被条吃掉)。
+//      A38(主控收口补的手机半):无界面对端拿这台出的码加入 ⇒ 名单里点开它那一行:移除前的说明照指南一句不省(第三条「账户密钥和
 //      那份完整副本也拿不回来」排在「不删它的」之后)、末尾「想彻底隔离…移除不够」+ 一枚「意见反馈」;真点它 ⇒ 开设置、「意见反馈」那一节
 //      在屏上(等备份那一节画完再量);返回键 ⇒ 回同步面。
 //  S10 M1 留下的那条:一篇长文都没有时,记一笔 →「长文」→ 一个字不写退出 ⇒ 回到随记、面收起。
@@ -330,7 +332,8 @@ const main = async () => {
         return {scan:s.textContent,alt:a.textContent,scanGhost:s.classList.contains("ghost"),altGhost:a.classList.contains("ghost"),allGhost:all.classList.contains("ghost"),allText:all.textContent,
           note:document.querySelector('[data-i18n="shell.joinNote"]').textContent,res:document.getElementById("sync-all-result").textContent}})()`);
       step("S0 Q1 加入那一组是白钮、钮名以「加入空间」开头", g.scanGhost && g.altGhost && /^加入空间/.test(g.scan) && g.alt === "加入空间(输入配对码)", JSON.stringify(g));
-      step("S0 Q1 说明第一句「另成一本,手机现在这本不会并进去」", /^加入空间 = 另成一本,手机现在这本不会并进去/.test(g.note), g.note);
+      // 165 M1 A34 起「手机」改说「这台设备」(同步第一屏那组同改)。
+      step("S0 Q1 说明第一句「另成一本,这台设备上现在这本不会并进去」", /^加入空间 = 另成一本,这台设备上现在这本不会并进去/.test(g.note), g.note);
       step("S0 A33 「全部同步」白钮、不说「逐空间追赶」;开页时没有上次那行", g.allGhost && !/逐空间|追赶/.test(g.allText) && g.res === "", JSON.stringify(g));
       await tapSel("#join-alt-btn");
       await until(`!document.getElementById("join-form").hidden`, 2000);
@@ -422,6 +425,9 @@ const main = async () => {
       await sleep(300);
       const b = await bars();
       step("S5 A41 同一个账户再加入:人话指出这台已有那一本、先重置,不说「空间=账户」", b.includes(`这台上已经有这个账户的一本了(「${NAME}」)`) && /重置/.test(b) && !/^[^(]*空间=账户/.test(b), b);
+      // 164:那句四五行的原话也留在加入那一块里(提示条几秒就走,而且换面就收)
+      const je = await evalJs(`(()=>{const e=document.getElementById("join-err");return e.hidden?null:e.textContent})()`);
+      step("S5 164 加入失败的原话留在 #join-err", je !== null && je.includes(`这台上已经有这个账户的一本了(「${NAME}」)`), String(je));
     }
 
     if (on("S11")) {
@@ -431,9 +437,10 @@ const main = async () => {
         // 码已在屏上(S4 出的那枚,S5 已经拿它撞过一次)时这枚叫「重新出码」⇒ 等**换了一枚**再读,别读到旧的。
         const codeNow = `(()=>{const o=document.getElementById("sync-pair-out");if(o.hidden)return null;const v=[...document.querySelectorAll("#sync-pair-kv .v")];return v[1]?v[1].textContent:null})()`;
         const oldCode = await evalJs(codeNow);
-        // ⚠ S5 留下的那条提示条(A41 那句长,四五行)正盖在这枚钮上 —— 真点会点到提示条上、钮一下没收到(量过:钮文字一次没变)。
-        //   先收掉它(同 joinWith 那一手),再真点。
-        await evalJs(`(()=>{const e=document.getElementById("error");e.hidden=true;e.textContent="";e.classList.remove("retiring");return 1})()`);
+        // 164:S5 留下的那条提示条(A41 那句长,四五行)从前挂着读秒跟到这一面、正盖在这枚钮上 —— 真点只收了提示条、钮一下没收到。
+        //   现在换面 / 关面就收错误条(要读完的那句留在 #join-err)⇒ ⛔ 别再手动收它,直接真点才是这条的回归。
+        const barNow = await evalJs(`(()=>{const e=document.getElementById("error");return e.hidden?null:{cls:e.className,txt:e.textContent.slice(0,40)}})()`);
+        step("S11 164 换到同步面时上一面的错误条已收", barNow === null || /notice|neutral|with-act/.test(barNow.cls), JSON.stringify(barNow));
         await tapSel("#sync-invite-btn");
         const fresh = await until(`(${codeNow})!==null&&(${codeNow})!==${JSON.stringify(oldCode)}`, 10000);
         const code = await evalJs(codeNow);
@@ -517,6 +524,7 @@ const main = async () => {
           window.__m2dmo=new MutationObserver(()=>{if(window.__m2conn===null&&!d.classList.contains("off"))window.__m2conn=performance.now()});window.__m2dmo.observe(d,{attributes:true})})();1`);
         if (!(await evalJs(`!document.getElementById("sync-reconnect-btn").disabled && document.getElementById("sync-dot").classList.contains("off")`))) continue; // 自己先动了
         const c = await centerDev("#sync-reconnect-btn");
+        if (!c) continue; // 判完「还离线」到取坐标之间它自己退避重连上了、钮收了:同上,这一趟不算(873 撞到)
         const tapAt = await evalJs(`performance.now()`); // 发 adb 之前记(adb 一来一回要上百毫秒,点是在这之后落的)
         await adb(["shell", "input", "tap", String(c[0]), String(c[1])]);
         const backOnline = await until(`document.getElementById("sync-dot").classList.contains("online")`, 6000);

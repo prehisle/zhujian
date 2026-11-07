@@ -254,6 +254,16 @@ function hideBar(): void {
   el.hidden = true;
 }
 
+/** 换面 / 关面时调(164):错误型提示条说的是上一页的事 —— 挂着读秒走到下一页,正盖在那一页顶上的钮上,
+ *  而 §3.1 定了它点一下只收、不穿透 ⇒ 第一下点击白给(walk161-m2 S11 量到:同步面「添加设备」点了没反应)。
+ *  要读完的长句各自落在表单 / 面板里那一行(加入空间 `#join-err`、同步表单 `#sync-form-err`、设备名单),不靠这条。
+ *  回执 / 中性 / 带动作钮(撤销、网络自检)那几形不收:翻一页不该把撤销的机会也翻没了。 */
+export function dropErrorBar(): void {
+  const el = $("error");
+  if (el.hidden || el.classList.contains("notice") || el.classList.contains("neutral") || el.classList.contains("with-act")) return;
+  hideBar();
+}
+
 /** 读秒到点的退场(157 G1②):先进余温态 —— 整条变淡,条**还在原位**接住迟到的那一下点
  *  (点条身 = hideBar,立刻收;那一下不会落到底下的「同步」上),`BAR_RETIRE_MS` 后才真收。
  *  ⛔ 别把余温态的钮移走或藏掉:条会变矮,瞄着钮落下的那一指正好穿过去。

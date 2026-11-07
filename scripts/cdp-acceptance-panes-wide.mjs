@@ -190,7 +190,7 @@ try {
     sync: `document.getElementById("sync-toggle").click()`,
     spaces: `document.getElementById("space-chip").click()`,
     settings: `document.getElementById("settings-toggle").click()`,
-    trash: PANES.trash.open,
+    // ⛔ 回收站不在这儿了:158 G2(W2 A19)起「清空」挪到每段末尾、不通栏,那一面再没有 `.row > .grow`(873 摘)。
   };
   for (const [w, h] of [[1440, 960], [412, 915]]) {
     await size(w, h);

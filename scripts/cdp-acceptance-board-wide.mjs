@@ -155,10 +155,11 @@ try {
       ok(b.due && Math.abs(mid(b.due) - mid(b.topics)) <= 2 && b.due.r < b.topics.l, `${tag} 到期钮在标签行最前`, { due: b.due, topics: b.topics });
       if (w === 1280) base1280 = b;
     } else {
+      // 158 G3 起竖屏节头也带计数(同宽屏列头那条:计数 = 这一节的卡数)。
       ok(
-        !b.board && b.rows.every((n) => n === 1) && b.stagePills === 5 && b.groups.every((g) => g.count === null), // 全部 + 四列
-        `${tag} 窄屏照旧(一节一行、状态那排在、节头不带计数)`,
-        { rows: b.rows, stagePills: b.stagePills },
+        !b.board && b.rows.every((n) => n === 1) && b.stagePills === 5 && b.groups.every((g) => g.count === String(g.cards)), // 全部 + 四列
+        `${tag} 窄屏照旧(一节一行、状态那排在、节头计数 = 卡数)`,
+        { rows: b.rows, stagePills: b.stagePills, counts: b.groups.map((g) => `${g.count}/${g.cards}`) },
       );
     }
     if (w === 720) await shot("split-720x1000-tasks");

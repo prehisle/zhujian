@@ -701,7 +701,7 @@
          此前「连不上」那条两样都没有、只靠红色认(§3.1 / ui-guidelines 头一节「错误与成功不得仅靠颜色区分」)。
          回执(notice)与中性那档不带。同一枚记号也挂在面板里那几处错误字上(同步状态那行 / 设备名单 / 建账户表单)。 */
       .error:not(.notice):not(.neutral)::before,
-      .sync .state .err::before, .devices .err::before, #sync-form-err::before {
+      .sync .state .err::before, .devices .err::before, #sync-form-err::before, #join-err::before {
         content: "!"; display: inline-block; flex: none; box-sizing: border-box;
         width: 1.3em; height: 1.3em; line-height: calc(1.3em - 2px); margin-right: 6px; vertical-align: 0.05em;
         text-align: center; font-weight: 700; font-size: var(--fs-12);
@@ -2520,6 +2520,8 @@
         <p class="fine field-hint" data-i18n="shell.syncManualNote">在另一台设备朱简的「同步」里点「添加设备」,把服务器地址和配对码填到上面。</p>
       </div>
       <div id="join-progress" class="fine" hidden></div>
+      <!-- 164:加入失败的原话留在这一行,到下一次点「加入」才清(同同步面 #sync-form-err,Q4)。⚠ 放在 #join-form 外面:有扫码那条路的端试完一次就收表单。 -->
+      <p id="join-err" class="fine warn-ink" role="alert" hidden></p>
       <div class="row" id="join-cancel-row" hidden>
         <button id="join-cancel" class="ghost grow" data-i18n="shell.joinCancel">取消加入</button>
       </div>
