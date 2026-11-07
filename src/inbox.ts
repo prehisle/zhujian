@@ -14,7 +14,7 @@ import { dismissUndo, toastAction, toastError, toastGo, toastUndo, toastUndone }
 import { createComposeController } from "./compose-controller";
 import { copyButton, copyText } from "./clipboard";
 import { buildItemDeepLink } from "./deeplink";
-import { armLocate, locateNoteEl, takeLocateNote } from "./locate";
+import { armLocate, clearSearchBack, locateNoteEl, takeLocateNote } from "./locate";
 import {
   type FilterState,
   type TimeBucket,
@@ -355,17 +355,20 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
   let otherSpaces: SpaceInfo[] = [];
   // 「随手记一笔」的灰字(Q6,WD-17):有多个空间时写上会记进哪个空间;只有一个空间时照旧(同侧栏徽章的判据)。
   let composePh = t("inbox.composePlaceholder");
-  void listSpaces()
-    .then((all) => {
-      otherSpaces = all.filter((s) => s.alive && s.id !== mountSpace);
-      const me = all.find((s) => s.id === mountSpace);
-      if (all.length > 1 && me) {
-        composePh = t("inbox.composePlaceholderSpace", { space: spaceLabel(me) });
+  const refreshSpaces = (): void => {
+    void listSpaces()
+      .then((all) => {
+        otherSpaces = all.filter((s) => s.alive && s.id !== mountSpace);
+        const me = all.find((s) => s.id === mountSpace);
+        composePh = all.length > 1 && me ? t("inbox.composePlaceholderSpace", { space: spaceLabel(me) }) : t("inbox.composePlaceholder");
         const live = view.querySelector<HTMLTextAreaElement>(".compose-input");
         if (live) live.placeholder = composePh;
-      }
-    })
-    .catch(() => {});
+      })
+      .catch(() => {});
+  };
+  refreshSpaces();
+  // 160:在这页改了当前空间名(或远端改名落地),灰字跟着换 —— 此前要重进页面。notebook.ts 刷完名字表发这一声。
+  document.addEventListener("zhujian:space-names", refreshSpaces);
 
   // 拖拽打标签(用户面 92 第三半),两根轴镜像 board.ts:卡→pill 认 `dragging`、pill→卡认
   // `draggingTopic`,互斥并存,两边的 dragover/drop 各自先查自己那根、对方拖动时早返回。
@@ -2088,6 +2091,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
 
   function switchTo(mode: Tab): void {
     if (active === mode) return;
+    clearSearchBack(); // 168:落点页里自己换到回收站 = 走开了,「Esc 回搜索」作废(同 board 那两只开关)
     // A6(WD-04):离开时间轴前记下读到哪儿(首发还没画完就切走的,沿用 mount 时那份);回收站从顶上看。
     if (active === "ideas" && !restorePending) savedScroll = list.scrollTop;
     active = mode;
@@ -2117,6 +2121,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       return true;
     },
     unmount() {
+      document.removeEventListener("zhujian:space-names", refreshSpaces);
       // Remember where the user was reading so the next mount can restore it —— 只记时间轴的(A6:
       // 在回收站里离开,时间轴的那份在进回收站时已经记下了)。
       if (active === "ideas" && !restorePending) savedScroll = list.scrollTop;

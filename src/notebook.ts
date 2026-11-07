@@ -312,6 +312,8 @@ function refreshSpaceEntry(): void {
       // 名字最多折两行(notebook.html 那条),再长的悬停看全名。
       spaceEntry.title = t("shell.switchSpaceNamed", { name: spaceLabel(curInfo) });
     }
+    // 视图里写着空间名的地方各自重取(160:随记「记一笔」的灰字)。
+    document.dispatchEvent(new CustomEvent("zhujian:space-names"));
   });
 }
 

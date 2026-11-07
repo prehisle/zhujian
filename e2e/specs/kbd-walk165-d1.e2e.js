@@ -249,6 +249,29 @@ describe("W5 D1 · 桌面键盘与焦点", () => {
     await waitState((s) => s.onBtn && s.focusCard === `${P}左`, "放大编辑丢掉后焦点没回这张卡的 ⋯");
   });
 
+  it("看板:按 E 紧跟着打的字进编辑框,不被当成那张卡的单键(D 删 / T 置顶)(168)", async () => {
+    await focusDots(".tcard", `${P}左`);
+    // 一发连按:E 之后那几下落在「重画中、编辑框还没出来」的窗口里(各不相同,免 WebKitWebDriver 吞相邻重复字)
+    await browser.keys(["e", "d", "t", "x"]);
+    await $(".tcard .edit-input").waitForExist({ timeout: 5000 });
+    const here = () =>
+      browser.execute(() => ({
+        val: document.activeElement?.value ?? null,
+        cls: String(document.activeElement?.className ?? ""),
+        confirm: !!document.querySelector(".tcard .confirm-q"),
+      }));
+    await browser
+      .waitUntil(async () => (await here()).val === `${P}左dtx`, { timeout: 3000 })
+      .catch(async () => {
+        throw new Error(`E 后紧跟的字没进编辑框。现场:${JSON.stringify(await here())}`);
+      });
+    expect((await here()).confirm).toBe(false); // D 没被派发成删除确认
+    await browser.keys("Escape"); // 改过:先提醒
+    await browser.keys("Escape"); // 再按 = 丢
+    await waitState((s) => s.onBtn && s.focusCard === `${P}左`, "丢掉编辑后焦点没回这张卡的 ⋯");
+    expect((await invoke("list_tasks")).some((t) => t.title === `${P}左`)).toBe(true); // 没删、没存成「…dtx」
+  });
+
   it("看板:P 的选项焦点进去,Esc 收起焦点回 ⋯(A39)", async () => {
     await focusDots(".tcard", `${P}左`);
     await browser.keys("p");
@@ -277,6 +300,20 @@ describe("W5 D1 · 桌面键盘与焦点", () => {
       timeout: 6000,
       timeoutMsg: "Esc 回搜索后焦点没落回那条结果",
     });
+    // 168:再跳一次,在落点页里自己换到回收站 = 走开了 ⇒ Esc 不再回搜索
+    await browser.keys("Enter");
+    await $(".v-board").waitForExist({ timeout: 8000 });
+    await waitState((s) => s.selected[0] === `${P}右`, "第二次跳过去落点不对");
+    await browser.execute(() => document.querySelector(".v-board #trash-toggle").click());
+    await browser.waitUntil(async () => browser.execute(() => !!document.querySelector(".v-board #trash-toggle.active")), {
+      timeout: 6000,
+      timeoutMsg: "回收站没打开",
+    });
+    await browser.execute(() => document.activeElement?.blur());
+    await browser.keys("Escape");
+    await browser.pause(400);
+    expect(await browser.execute(() => !!document.querySelector(".v-search"))).toBe(false);
+    await browser.execute(() => document.querySelector(".v-board #trash-toggle").click()); // 回看板
   });
 
   it("标签合并:M 进来焦点在第一枚方框,空格勾选,Esc 退出、焦点回「合并」钮(A8)", async () => {

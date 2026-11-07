@@ -28,7 +28,7 @@ async function installFakeSpace() {
     (fake, fakeName) => {
       const realFetch = window.__w159RealFetch ?? window.fetch;
       window.__w159RealFetch = realFetch;
-      window.__w159 = { calls: [], moveResult: null, renameErr: null, createErr: null };
+      window.__w159 = { calls: [], moveResult: null, renameErr: null, createErr: null, renamed: null };
       const reply = (v, ok = true) =>
         Promise.resolve(
           new Response(JSON.stringify(v ?? null), {
@@ -51,7 +51,13 @@ async function installFakeSpace() {
           return realFetch.call(window, input, init).then((r) =>
             r.headers.get("Tauri-Response") !== "ok"
               ? r
-              : r.json().then((all) => reply([...all, { id: fake, name: fakeName, status: all[0].status, alive: true }])),
+              : r.json().then((all) =>
+                  reply([
+                    // 改名成功过(160):那一本按新名回,像真改了一样 —— 看谁跟着换、谁要重进页面才换
+                    ...all.map((sp) => (w.renamed && sp.id === w.renamed.id ? { ...sp, name: w.renamed.name } : sp)),
+                    { id: fake, name: fakeName, status: all[0].status, alive: true },
+                  ]),
+                ),
           );
         }
         if (cmd === "move_item_to_space") {
@@ -61,6 +67,7 @@ async function installFakeSpace() {
         if (cmd === "rename_space" || cmd === "create_space") {
           w.calls.push({ cmd, args });
           const err = cmd === "rename_space" ? w.renameErr : w.createErr;
+          if (!err && cmd === "rename_space" && args) w.renamed = { id: args.spaceId, name: args.name };
           return err ? reply(err, false) : reply(cmd === "create_space" ? { id: fake, name: fakeName, status: null, alive: true } : null);
         }
         // 前台空间喂壳:假空间那一发不能改写成 main —— 壳会回声一条 `space-foreground: main`,notebook 跟着
@@ -413,5 +420,11 @@ describe("W3 159 · 空间与跨空间移动(桌面第二波,前端半)", () => 
     await enter("演示:新名字");
     await waitToast("空间已改名为「演示:新名字」");
     expect(await browser.execute(() => window.__w159.calls.filter((c) => c.cmd === "rename_space").map((c) => c.args.name))).toEqual([FAKE_NAME, "演示:新名字"]);
+    // 160:记一笔框的灰字当场跟着换,不用重进页面
+    const ph = () => browser.execute(() => document.querySelector(".v-inbox .compose-input")?.placeholder ?? "");
+    await browser.waitUntil(async () => (await ph()) === "随手记一笔,记进「演示:新名字」…", {
+      timeout: 5000,
+      timeoutMsg: `改完名记一笔框的灰字没跟着换:${await ph()}`,
+    });
   });
 });

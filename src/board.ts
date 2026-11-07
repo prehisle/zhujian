@@ -14,7 +14,7 @@ import { copyButton, copyText } from "./clipboard";
 import { dismissUndo, flashToast, toastAction, toastGo, toastUndo, toastUndone } from "./toast";
 import { setTaskDeleteConfirm, taskDeleteConfirmOn } from "./delete-confirm";
 import { buildItemDeepLink } from "./deeplink";
-import { armLocate, locateNoteEl, takeLocateNote } from "./locate";
+import { armLocate, clearSearchBack, locateNoteEl, takeLocateNote } from "./locate";
 import { focusInboxItem } from "./inbox";
 import {
   type FilterState,
@@ -430,7 +430,47 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
   let activeEditFlush: (() => Promise<boolean>) | null = null;
   function requestEdit(id: string): void {
     pendingEditId = id;
+    holdTypeAhead();
     void load();
+  }
+  // 按 E 到编辑框出现之间隔着一次 load() 重画:这段里那张卡还不算「编辑中」,紧跟着打的字会被当成
+  // 它的单键派发(D 删 / T 置顶 / S 截止……),要不就落空(168)。⇒ 待开编辑期间把可打印的单键收进
+  // 缓冲、不派发,编辑框一出来照原样续在光标处(openEdit 末尾);Esc 当场撤掉这次开编辑、Backspace
+  // 删缓冲末字。兜底 1 秒自放:卡没画出来(被远端删了)时别一直吞键。
+  // ⚠ 输入法:没有可编辑的焦点时输入法不组字,缓冲里收到的是拼音字母本身 —— 续进框里也是字母,
+  // 窗口之后的键才进输入法(知情的边界;不收的话那几个字母要么落空、要么被当成单键)。
+  let typeAhead: { buf: string; release: () => void } | null = null;
+  function holdTypeAhead(): void {
+    if (typeAhead) return;
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.ctrlKey || e.metaKey || e.altKey || e.isComposing) return;
+      if (e.key === "Escape") {
+        pendingEditId = null;
+        release();
+      } else if (e.key === "Backspace") {
+        if (typeAhead) typeAhead.buf = [...typeAhead.buf].slice(0, -1).join("");
+      } else if ([...e.key].length === 1) {
+        if (typeAhead && !e.repeat) typeAhead.buf += e.key;
+      } else {
+        return;
+      }
+      e.preventDefault();
+      e.stopImmediatePropagation();
+    };
+    const timer = setTimeout(() => release(), 1000);
+    function release(): void {
+      document.removeEventListener("keydown", onKey, true);
+      clearTimeout(timer);
+      typeAhead = null;
+    }
+    document.addEventListener("keydown", onKey, true);
+    typeAhead = { buf: "", release };
+  }
+  /** 取走待开编辑期间收下的字并放手(没在收 = 空串)。 */
+  function takeTypeAhead(): string {
+    const s = typeAhead?.buf ?? "";
+    typeAhead?.release();
+    return s;
   }
 
   // Whether a topic filter is active. When filtered the column DOM holds only the
@@ -2181,6 +2221,12 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       input.focus();
       // Q15(桌面新撞-3):光标放末尾、不全选 —— 此前整段是选中的,第一下按键就把标题整段换掉。
       input.setSelectionRange(input.value.length, input.value.length);
+      // 按 E 之后、框出来之前打的字(holdTypeAhead 收着的)续在光标处;走 input 事件让「改过了」与长高照常算。
+      const ahead = takeTypeAhead();
+      if (ahead) {
+        input.setRangeText(ahead, input.selectionStart, input.selectionEnd, "end");
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      }
       autoGrow(input);
     }
 
@@ -2947,13 +2993,16 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
   });
   armMidnightRefresh();
 
+  // 168:人在落点页里自己换了子视图(回收站 / 归档册)= 走开了,那枚「Esc 回搜索」作废(同 notebook 换页那条)。
   function toggleTrash(): void {
+    clearSearchBack();
     boardView = boardView === "trash" ? "board" : "trash";
     load();
   }
   trashToggle.addEventListener("click", toggleTrash);
 
   function toggleSealed(): void {
+    clearSearchBack();
     boardView = boardView === "sealed" ? "board" : "sealed";
     load();
   }
@@ -3036,6 +3085,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       // mount 的 focusId、在已脱离 DOM 的旧看板上渲染,新看板反而拿不到跳转。顺带清 focusId,
       // 明确取消"离开看板时尚未落地的这次定位"。
       unmounted = true;
+      typeAhead?.release(); // 待开编辑那一秒内切走:收键的监听不跨 mount
       memo.time = timeFilter; // Q6:这个空间的时间轴选择写回(filter 是同一对象,已经在里面)
       dragging = null;
       stopAutoScroll(); // 拖到一半切视图:rAF 循环不许活过这棵 mount
