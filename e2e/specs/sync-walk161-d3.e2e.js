@@ -429,23 +429,35 @@ describe("W4 161 · D3 同步 / 设备 / 配对 / 被移除 / 断网", () => {
       timeout: 10000,
     });
     for (const withFocus of [true, false]) {
-      await browser.execute((focus) => {
-        const list = document.getElementById("list");
-        if (focus) document.querySelector(".compose-input").focus();
-        else document.activeElement?.blur?.();
-        list.scrollTop = 420;
-      }, withFocus);
+      // 照人真用的先后:先把光标放进框(或拿走),**等框的过渡落定再往下翻**。
       // ⚠ 记一笔框拿到 / 丢掉焦点时自己有一段过渡(框的高度跟着变),等它落定再量 —— 否则量到的是过渡中途那一帧,
       // 与产品在远端那一发里看到的版面差几像素(全量里红过一次:-20.3 → -23.3,就是这一段)。
+      // ⚠ 而且这框住在 #list 里面:同一拍里「focus + 设 scrollTop」,WebKitGTK 会在框随后长高时把光标那行
+      // 滚回眼前 —— 863 起 Linux CI 每趟都在下面的前置那句读到 33(867 改成先等再翻)。
+      await browser.execute((focus) => {
+        if (focus) document.querySelector(".compose-input").focus();
+        else document.activeElement?.blur?.();
+      }, withFocus);
       await browser.pause(600);
+      await browser.execute(() => {
+        document.getElementById("list").scrollTop = 420;
+      });
+      await browser.pause(150);
       // 看着的那张 = 产品里 `scrollAnchor` 认的同一张(列表里第一张下沿还在上沿之下的卡)。
       const probe = await browser.execute(() => {
         const list = document.getElementById("list");
         const lt = list.getBoundingClientRect().top;
         const n = [...list.querySelectorAll(".note[data-id]")].find((x) => x.getBoundingClientRect().bottom > lt);
-        return { id: n.dataset.id, top: n.getBoundingClientRect().top - lt, scroll: list.scrollTop };
+        return {
+          id: n.dataset.id,
+          top: n.getBoundingClientRect().top - lt,
+          scroll: list.scrollTop,
+          room: list.scrollHeight - list.clientHeight,
+          focusInCompose: document.activeElement?.classList.contains("compose-input") ?? false,
+        };
       });
-      expect(probe.scroll).toBeGreaterThan(300); // 前置:真翻下去了
+      // 前置:真翻下去了(红了带读数:room < 420 = 列表本来就不够长;room 够而 scroll 小 = 有东西把它滚回去了)。
+      if (!(probe.scroll > 300)) throw new Error(`前置没成,列表没真翻下去:${JSON.stringify({ withFocus, ...probe })}`);
       await invoke("capture_note", { content: `D3A46-远端-${withFocus}` });
       await browser.execute(() => window.__TAURI__.event.emit("sync-changed", { space: "main" }));
       await browser.waitUntil(

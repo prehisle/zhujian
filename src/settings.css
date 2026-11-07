@@ -511,12 +511,15 @@
   width: 100%;
   box-sizing: border-box;
 }
-/* 抄回备份码的那只框(W4 A18):等宽、字号与上面那块码一致,宽到放得下整串 52 位 + 12 个「-」
-   (此前比码短,点开别处后正好藏住最后一个字 —— 抄错的偏偏常是那一位)。⚠ 量过:Consolas 13px 的 64 字
-   约 460px,设置右栏内容宽 ≈ 520px(settings-panel 那笔账)。 */
+/* 抄回备份码的那只框(W4 A18):等宽,宽到放得下整串 52 位 + 12 个「-」
+   (此前比码短,点开别处后正好藏住最后一个字 —— 抄错的偏偏常是那一位)。框 = 右栏内容宽(≈ 522px 含边,
+   文字区 ≈ 504px)。⚠ 字号是 12 不是 13(867):Consolas 只有 Windows 有,别处退到 0.6em 宽的等宽字
+  (Linux 的 Liberation / DejaVu、mac 的 Courier New),WebKitGTK 还把每个字的步进取整成整像素 ⇒ 13px 时
+   64 字 = 64×8 = 512 > 504,公开 CI 量到 scrollWidth 529 > clientWidth 520(863 起连红,最后一组藏在框外)。
+   12px:Consolas ≈ 422、0.6em 字取整后 64×7 = 448 / 不取整 461,三端都有余量。 */
 .alias-input.bkup-code-input {
   font-family: Consolas, "Courier New", monospace;
-  font-size: var(--fs-13);
+  font-size: var(--fs-12);
   letter-spacing: 0;
 }
 /* 这一行是 input +「保存」+「打开文件夹」三件共处的 flex 行。

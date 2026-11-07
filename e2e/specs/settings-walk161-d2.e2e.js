@@ -36,53 +36,63 @@ describe("W4 161 · D2 备份与设置其余", () => {
       const code = await invoke("backup_begin_setup", { dir: null });
       await invoke("backup_confirm_setup", { code });
     }
-    if ((await invoke("backup_list")).length === 0) await invoke("backup_run");
+    // 要的是「有一份验得过的」,⛔ 不是「列表非空」:backup.e2e.js 在同一个文件夹里留了一份冒牌货,
+    // 它前面红了的话列表里就只剩那份冒牌货(867 前 Linux CI 就是这么连带红到下面 `good` 那句的)。
+    const verifies = async () => {
+      for (const e of await invoke("backup_list")) if ((await tryInvoke("backup_verify", { path: e.path })).ok) return true;
+      return false;
+    };
+    if (!(await verifies())) await invoke("backup_run");
     await invoke("backup_set_auto", { enabled: true });
-    await goNotebook("inbox");
-    await openSettings();
-    await showCat("backup");
-    const st = await invoke("backup_auto_status");
-    await browser.waitUntil(
-      async () => (await browser.execute(() => document.querySelector(".bkup-auto-state")?.textContent ?? "")).startsWith("已开启"),
-      { timeout: 5000, timeoutMsg: "自动备份那一行没渲染出来" },
-    );
-    // 开着时那一行照实写两个数(从状态读,⛔ 不写死)。
-    expect(await browser.execute(() => document.querySelector(".bkup-auto-state").textContent)).toContain(`留最近 ${st.keep} 份`);
-    if (!st.last_success_at && !st.last_result) {
-      expect(await browser.execute(() => document.querySelector(".bkup-auto-last").textContent)).toContain("还没自动备过");
-    }
-
-    // 先验一份(拿到「现在打得开」),再往文件夹里放一个文件、模拟壳发一枚「跑完了」。
-    const listed = await invoke("backup_list");
-    const n0 = listed.length;
-    // ⚠ 挑真的那一份点「验证」:backup.e2e.js 在同一个文件夹里留了一份冒牌货(验不过)。
-    let good = null;
-    for (const e of listed) if ((await tryInvoke("backup_verify", { path: e.path })).ok) good = e.file_name;
-    expect(good).toBeTruthy();
-    await browser.execute((name) => {
-      const row = [...document.querySelectorAll(".bkup-item")].find((r) => r.querySelector(".bkup-item-name").textContent.trim() === name);
-      row.querySelector("button").click();
-    }, good);
-    await browser.waitUntil(async () => (await browser.execute(() => !!document.querySelector(".bkup-item-state.ok"))), {
-      timeout: 60000,
-      timeoutMsg: "第一份没验出「现在打得开」",
-    });
-    const dir = (await invoke("backup_status")).dir;
-    const fake = "zhujian-main-20260102T000000Z-01ZZZZZZZZZZZZZZZZZZZZZZZY.zjbak";
-    writeFileSync(join(dir, fake), Buffer.alloc(1024, 0x5a));
+    // ⚠ 开关一开就进 try:中途红了也得关回去 —— 留着开 ⇒ 排在后面的 zz-backup-auto 找不到「开启」钮、跟着红。
     try {
-      await browser.execute(() => window.__TAURI__.event.emit("backup://auto-ran", null));
+      await goNotebook("inbox");
+      await openSettings();
+      await showCat("backup");
+      const st = await invoke("backup_auto_status");
       await browser.waitUntil(
-        async () => (await browser.execute(() => document.querySelector(".bkup-list-sum").textContent)).startsWith(`${n0 + 1} 份`),
-        { timeout: 5000, timeoutMsg: "「跑完了」之后「已有备份」该当场重读(不用点「刷新」)" },
+        async () => (await browser.execute(() => document.querySelector(".bkup-auto-state")?.textContent ?? "")).startsWith("已开启"),
+        { timeout: 5000, timeoutMsg: "自动备份那一行没渲染出来" },
       );
-      // 重读不把刚验过的那份打回「还没验过」。
-      expect(await browser.execute(() => document.querySelectorAll(".bkup-item-state.ok").length)).toBe(1);
+      // 开着时那一行照实写两个数(从状态读,⛔ 不写死)。
+      expect(await browser.execute(() => document.querySelector(".bkup-auto-state").textContent)).toContain(`留最近 ${st.keep} 份`);
+      if (!st.last_success_at && !st.last_result) {
+        expect(await browser.execute(() => document.querySelector(".bkup-auto-last").textContent)).toContain("还没自动备过");
+      }
+
+      // 先验一份(拿到「现在打得开」),再往文件夹里放一个文件、模拟壳发一枚「跑完了」。
+      const listed = await invoke("backup_list");
+      const n0 = listed.length;
+      // ⚠ 挑真的那一份点「验证」:backup.e2e.js 在同一个文件夹里留了一份冒牌货(验不过)。
+      let good = null;
+      for (const e of listed) if ((await tryInvoke("backup_verify", { path: e.path })).ok) good = e.file_name;
+      expect(good).toBeTruthy();
+      await browser.execute((name) => {
+        const row = [...document.querySelectorAll(".bkup-item")].find((r) => r.querySelector(".bkup-item-name").textContent.trim() === name);
+        row.querySelector("button").click();
+      }, good);
+      await browser.waitUntil(async () => (await browser.execute(() => !!document.querySelector(".bkup-item-state.ok"))), {
+        timeout: 60000,
+        timeoutMsg: "第一份没验出「现在打得开」",
+      });
+      const dir = (await invoke("backup_status")).dir;
+      const fake = "zhujian-main-20260102T000000Z-01ZZZZZZZZZZZZZZZZZZZZZZZY.zjbak";
+      writeFileSync(join(dir, fake), Buffer.alloc(1024, 0x5a));
+      try {
+        await browser.execute(() => window.__TAURI__.event.emit("backup://auto-ran", null));
+        await browser.waitUntil(
+          async () => (await browser.execute(() => document.querySelector(".bkup-list-sum").textContent)).startsWith(`${n0 + 1} 份`),
+          { timeout: 5000, timeoutMsg: "「跑完了」之后「已有备份」该当场重读(不用点「刷新」)" },
+        );
+        // 重读不把刚验过的那份打回「还没验过」。
+        expect(await browser.execute(() => document.querySelectorAll(".bkup-item-state.ok").length)).toBe(1);
+      } finally {
+        rmSync(join(dir, fake), { force: true });
+      }
+      expect(readdirSync(dir)).not.toContain(fake);
     } finally {
-      rmSync(join(dir, fake), { force: true });
       await invoke("backup_set_auto", { enabled: false });
     }
-    expect(readdirSync(dir)).not.toContain(fake);
     await closeSettings();
   });
 
