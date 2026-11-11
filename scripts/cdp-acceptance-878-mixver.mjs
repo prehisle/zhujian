@@ -95,8 +95,9 @@ const acked = async (id) => ev(`(JSON.parse(localStorage.getItem(${J(ACK_KEY)}) 
 //   · `sync-status` 事件(后台状态推送):在 `plugin:event|listen` 登记那一刻把 handler 换成转发壳,推过来的状态 skew = true。
 //   ⛔ 只改回包那一条不够:连上之后后台一推,那一行就被真状态冲掉(878 第一版实撞)。
 const INSTALL = `(() => {
-  if (window.__zj878) return "already";
-  const o = { calls: [] };
+  // 可重入:文档开头那一趟在安卓上包不上 window.ipc(那一刻桥还没就位),重载后 install() 再跑一趟要能补上
+  // —— ⛔ 别再用「装过了就整段跳过」(878 真机第一趟栽在这:记录器在、却一发安卓 IPC 都没记到)。
+  const o = window.__zj878 || { calls: [] };
   window.__zj878 = o;
   const fake = () => sessionStorage.getItem("zj878.fakeSkew") === "1";
   const I = () => window.__TAURI_INTERNALS__;
@@ -109,7 +110,7 @@ const INSTALL = `(() => {
     return true;
   };
   const orig = window.fetch.bind(window);
-  window.fetch = async function (u, init) {
+  if (!window.fetch.__zj878) window.fetch = Object.assign(async function (u, init) {
     const m = /^(?:https?:\\/\\/ipc\\.localhost|ipc:\\/\\/localhost)\\/(.*)$/.exec(String(u));
     if (!m) return orig(u, init);
     const cmd = decodeURIComponent(m[1]);
@@ -124,27 +125,39 @@ const INSTALL = `(() => {
     if (cmd !== "sync_status" || !fake() || !res.ok) return res;
     const v = await res.clone().json();
     return new Response(JSON.stringify({ ...v, skew: true }), { status: res.status, headers: res.headers });
-  };
+  }, { __zj878: true });
   // 安卓上 Tauri 从不走 fetch(WebView 读不到 POST 体),一律 window.ipc.postMessage;桌面构型 / 鸿蒙走 fetch(822)
   if (/Android/.test(navigator.userAgent)) {
-    const ipc = window.ipc;
-    if (!ipc) return "android-ipc-missing";
-    const origPm = ipc.postMessage.bind(ipc);
-    const shell = {
-      postMessage(data) {
-        let msg = null;
-        try { msg = JSON.parse(data); } catch {}
-        if (!msg) return origPm(data);
-        o.calls.push(msg.cmd);
-        if (msg.cmd === "plugin:event|listen" && wrapListen(msg.payload)) return origPm(JSON.stringify(msg));
-        if (msg.cmd === "sync_status" && fake()) {
-          const back = msg.callback;
-          msg.callback = I().transformCallback((v) => I().runCallback(back, { ...v, skew: true }), true);
-          return origPm(JSON.stringify(msg));
-        }
-        return origPm(data);
-      },
+    /** 把 Tauri 的安卓 IPC 桥包成转发壳(记命令 / 换 sync-status 监听 / 改 sync_status 回包)。 */
+    const mk = (real) => {
+      const origPm = real.postMessage.bind(real);
+      return {
+        __zj878: true,
+        postMessage(data) {
+          let msg = null;
+          try { msg = JSON.parse(data); } catch {}
+          if (!msg) return origPm(data);
+          o.calls.push(msg.cmd);
+          if (msg.cmd === "plugin:event|listen" && wrapListen(msg.payload)) return origPm(JSON.stringify(msg));
+          if (msg.cmd === "sync_status" && fake()) {
+            const back = msg.callback;
+            msg.callback = I().transformCallback((v) => I().runCallback(back, { ...v, skew: true }), true);
+            return origPm(JSON.stringify(msg));
+          }
+          return origPm(data);
+        },
+      };
     };
+    // 文档开头那一趟:桥还没装(Tauri 稍后用 JS 赋值 window.ipc,878 真机实测两次 set)⇒ 挂访问器,
+    // 赋值那一刻就包上 —— 这样 app 启动时登记的 sync-status 监听也走转发壳(只在重载后补包就晚了,监听早登记完)。
+    const cur = window.ipc;
+    if (cur === undefined) {
+      let shell;
+      Object.defineProperty(window, "ipc", { configurable: true, get() { return shell; }, set(v) { shell = v && !v.__zj878 ? mk(v) : v; } });
+      return "trapped";
+    }
+    if (cur.__zj878) return "installed";
+    const shell = mk(cur);
     try { window.ipc = shell; } catch {}
     if (window.ipc !== shell) return "android-ipc-not-wrappable";
   }
