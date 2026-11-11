@@ -64,7 +64,7 @@ const ALLOWED = [
       "空间库在自己的数据目录;备份恢复是先解密成 `.backup-staging/<新ULID>.sqlite3` 单个文件再开," +
       "旁边不可能有外来的 `-wal`(restore.rs 幕②③);能往数据目录里塞文件的人本来就能直接改库。" +
       "⚠ 这是缓办不是不办:修法 = rusqlite 0.32 → 0.41(libsqlite3-sys 0.39 / SQLite 3.54)," +
-      "跨 9 个小版本、动数据层,记在 backlog 测试与工装,触发门 = 下次动数据层或两端同发。",
+      "跨 9 个小版本、动数据层,记在 backlog 测试与工装,触发门 = 本次带 v42 迁移的大版本发完后的下一版。",
   },
 ];
 for (const a of ALLOWED) {
