@@ -732,6 +732,45 @@ function assertMacWindowsMatchBase() {
   );
 }
 
+// ── 两只手机壳的系统备份关着、拍照那条 `<queries>` 在(doc-slimming 格③第七条:architecture / rules/mobile.md 的 ⛔ 换成机制)──
+// 备份(H2,android-plan §7):系统备份 / 换机迁移把库搬到别机 = device_key + k_acc 离机 + 同一 device_id 两份副本,撞分叉冻结模型。
+// 安卓 = manifest 三个属性 + data_extraction_rules 两段全排除;鸿蒙 = module.json5 压根不声明备份扩展(模板默认开着)。
+// 拍照(391):没有 IMAGE_CAPTURE 那条 `<queries>`,wry 问不到相机 app,「拍照」静默打开相册、不报错。
+// 最现实的违反路径是重新生成 gen/(两份模板默认都是开备份、无 queries),漂了真机上看不出来,只有取证 / 换机那天才知道。
+// ⚠ 诚实边界:①纯文本扫描,先剥注释(两份文件的注释里自己就提到这些词);②只看这三份文件,构建期注入的 manifest 合并不在面内;
+//   ③闸只证「声明在」,不证系统真照办(那半是 102 / 103 真机验过的);④鸿蒙只拒备份扩展的三种写法,不拦别的名字。
+// ⛔ 不是新开门禁(停止扩张线):几个字面量。
+function assertMobileBackupOffAndCaptureQuery() {
+  const read = (rel) => readFileSync(join(repoRoot, rel), "utf8");
+  const xml = (rel) => read(rel).replace(/<!--[\s\S]*?-->/g, "");
+  const bad = [];
+  const MANIFEST = "android/src-tauri/gen/android/app/src/main/AndroidManifest.xml";
+  const man = xml(MANIFEST);
+  const app = man.match(/<application\b[^>]*>/)?.[0] ?? "";
+  for (const [attr, want] of [["allowBackup", "false"], ["fullBackupContent", "false"], ["dataExtractionRules", "@xml/data_extraction_rules"]]) {
+    if (!new RegExp(`android:${attr}\\s*=\\s*"${want.replace(/[.@/]/g, "\\$&")}"`).test(app)) bad.push(`    ${MANIFEST}:<application> 少了 android:${attr}="${want}"`);
+  }
+  const queries = man.match(/<queries>[\s\S]*?<\/queries>/)?.[0] ?? "";
+  if (!/android:name\s*=\s*"android\.media\.action\.IMAGE_CAPTURE"/.test(queries)) bad.push(`    ${MANIFEST}:<queries> 里没有 IMAGE_CAPTURE(拍照会静默打开相册,391)`);
+  const RULES = "android/src-tauri/gen/android/app/src/main/res/xml/data_extraction_rules.xml";
+  const rules = xml(RULES);
+  if (/<include\b/.test(rules)) bad.push(`    ${RULES}:出现了 <include>`);
+  for (const sec of ["cloud-backup", "device-transfer"]) {
+    const body = rules.match(new RegExp(`<${sec}>([\\s\\S]*?)</${sec}>`))?.[1];
+    if (!body || !/<exclude\s+domain\s*=\s*"root"\s+path\s*=\s*"\."\s*\/>/.test(body)) bad.push(`    ${RULES}:<${sec}> 没有全排除 root`);
+  }
+  const MODULE = "ohos/src-tauri/gen/ohos/entry/src/main/module.json5";
+  const mod = read(MODULE).replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|\s)\/\/.*$/gm, "$1");
+  const hit = mod.match(/BackupExtensionAbility|allowToBackupRestore|"type"\s*:\s*"backup"/);
+  if (hit) bad.push(`    ${MODULE}:声明了系统备份(${hit[0]})`);
+  if (!bad.length) return;
+  die(
+    `手机壳的系统备份 / 拍照声明不对 —— ⛔ 不落地:\n${bad.join("\n")}\n` +
+      `  备份必须关死:系统备份复活到别机 = 密钥离机 + 同一设备身份两份副本(H2,android-plan §7);用户备份走朱简自己的加密备份。\n` +
+      `  ⇒ 重新生成过 gen/ 的话,把这几处从上一版原样搬回来(注释里写着为什么)。`,
+  );
+}
+
 // ── handoff「手上的债」的形(测试与工装 113 立,698 接上)──────────────────────
 // 8 KB 闸 697 收口时只剩 6 字节余量,而债**一轮一行、只增不减**(销掉才删,那几半的触发门握在
 // 别的机器手里)⇒ 下一个人加一行必撞,还会被迫去压**别人写的**行 = 静默丢判据。
@@ -774,6 +813,7 @@ function runLocalGates() {
   assertPreflightHasNoRepoCondition();
   assertAuditStaysOutOfCi();
   assertMacWindowsMatchBase();
+  assertMobileBackupOffAndCaptureQuery();
   console.log(`→ 本地十道静态门禁(几秒量级)…`);
   for (const g of LOCAL_GATES) {
     try {
