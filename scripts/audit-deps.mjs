@@ -36,6 +36,11 @@ const offline = process.argv.includes("--offline");
 // 一条 = 一个「知道、看过、当前不修」的通告,必须写清 why。⭐ **放行表自己会过期**:
 // 下面每条声明了它该命中哪几份 lock,**命中不上就红**(升上去了 / crate 被换掉了 ⇒ 这条
 // 该删,而不是继续挂着假装还在守什么)。⛔ 别加"全局忽略"这种形。
+//
+// 第二种写法 `version` + `anyLock: true`(874 立):不点名 lock,**钉死到 crate 的那一个版本**,
+// 扫描面里凡带这个版本的 lock 都算命中;一份都命不中 = 过期,照样红。只给「why 是**产品代码**的
+// 性质、跟哪份 lock 无关」的那种条目用 —— 工作仓比公开快照多几份 lock,逐份点名的话两边总有
+// 一边红。⛔ 没钉 `version` 的 `anyLock` 一律拒(那就是全局忽略)。
 const ALLOWED = [
   {
     id: "RUSTSEC-2026-0235",
@@ -48,7 +53,28 @@ const ALLOWED = [
       "(它是 rust_decimal 的可选依赖,只是被 Cargo.lock 记着;cargo audit 只读 lock 不看 feature)" +
       "⇒ 编都没编进去,更不存在「app 去反序列化外来 rkyv 归档」这条路。",
   },
+  {
+    id: "RUSTSEC-2026-0459",
+    crate: "libsqlite3-sys",
+    version: "0.30.1",
+    anyLock: true,
+    why:
+      "bundled SQLite < 3.54:开一个库时若旁边配着页大小不同的 `-wal`,查询会读出未初始化的页缓存。" +
+      "前提是「库 + -wal 那一对文件是不太受信的人写的」。⭐ 实际暴露:app 开的库全是自己建的 —— " +
+      "空间库在自己的数据目录;备份恢复是先解密成 `.backup-staging/<新ULID>.sqlite3` 单个文件再开," +
+      "旁边不可能有外来的 `-wal`(restore.rs 幕②③);能往数据目录里塞文件的人本来就能直接改库。" +
+      "⚠ 这是缓办不是不办:修法 = rusqlite 0.32 → 0.41(libsqlite3-sys 0.39 / SQLite 3.54)," +
+      "跨 9 个小版本、动数据层,记在 backlog 测试与工装,触发门 = 下次动数据层或两端同发。",
+  },
 ];
+for (const a of ALLOWED) {
+  if (a.anyLock ? !a.version || a.locks : !a.locks?.length) {
+    console.error(`⛔ 判不出:放行表 ${a.id} 写法不对 —— 要么逐份点名 locks,要么 anyLock + 钉死 version,二选一`);
+    process.exit(2);
+  }
+}
+const allowFor = (id, crate, version, lock) =>
+  ALLOWED.find((a) => a.id === id && a.crate === crate && (a.anyLock ? a.version === version : a.locks.includes(lock)));
 
 // ── 取扫描面 ──────────────────────────────────────────────────────────────────
 function lockfiles() {
@@ -114,7 +140,7 @@ function main() {
       .join(" / ") || "无";
     for (const v of vulns) {
       const id = v.advisory.id;
-      const allow = ALLOWED.find((a) => a.id === id && a.locks.includes(lock));
+      const allow = allowFor(id, v.package.name, v.package.version, lock);
       if (allow) hits.set(`${id}@${lock}`, allow);
       else unexpected.push({ lock, id, crate: v.package.name, version: v.package.version, title: v.advisory.title, patched: (v.versions.patched || []).join(", ") });
     }
@@ -127,11 +153,18 @@ function main() {
 
   // 放行表过期检查
   const stale = [];
-  for (const a of ALLOWED) for (const lock of a.locks) if (!hits.has(`${a.id}@${lock}`)) stale.push(`${a.id} 在 ${lock} 上`);
+  for (const a of ALLOWED) {
+    if (a.anyLock) {
+      if (![...hits.values()].includes(a)) stale.push(`${a.id}(${a.crate} ${a.version})在哪份 lock 上都没命中`);
+    } else for (const lock of a.locks) if (!hits.has(`${a.id}@${lock}`)) stale.push(`${a.id} 在 ${lock} 上`);
+  }
 
   if (hits.size) {
     console.log("\n已放行(每条都是「看过、当前不修」,⛔ 别默默续期):");
-    for (const [key, a] of hits) console.log(`  · ${key}(${a.crate})\n      ${a.why}`);
+    for (const a of ALLOWED) {
+      const on = [...hits].filter(([, h]) => h === a).map(([key]) => key.slice(a.id.length + 1));
+      if (on.length) console.log(`  · ${a.id}(${a.crate})@ ${on.join(" · ")}\n      ${a.why}`);
+    }
   }
 
   let bad = false;
