@@ -29,6 +29,8 @@ export const sync = defineMessages({
   "sync.listSep": { zh: "、", en: ", " },
   "sync.warnSep": { zh: ";", en: "; " },
   "sync.frozen": { zh: "已冻结设备:{list}(需人工处理)", en: "Frozen devices: {list} (needs manual attention)" },
+  // 878:对端版本较新(core `status.skew`,sync-protocol §5.3 许诺的那句);同桌面 sync.skewWarn,两端逐字同。
+  "sync.skewWarn": { zh: "对端版本较新:请升级朱简后继续同步。", en: "The other device runs a newer version: update Zhujian to keep syncing." },
   "sync.altCreateMain": { zh: "没有其他设备?创建新账户", en: "No other device? Create an account" },
   "sync.altCreateOther": { zh: "开启多端同步(创建账户)", en: "Turn on multi-device sync (create an account)" },
   "sync.infoAccount": { zh: "账户号", en: "Account ID" },

@@ -184,6 +184,12 @@ const CROSS_END_KEYS = [
   { key: "board.undoPriority", why: "优先级回执(Q5)" },
   { key: "board.undoPriorityCleared", why: "同上,清掉优先级" },
   { key: "main.completed", why: "「已完成」回执(Q7)" },
+  // 发版全案格 2(混版提醒):两端第一次往已配同步的空间发长文标记前同一问;旧端「请升级」同一句。
+  { key: "docs.skewAskTitle", why: "混版提醒标题" },
+  { key: "docs.skewAskBody", why: "混版提醒正文(版本号三端同列)" },
+  { key: "docs.skewAskGo", why: "「仍然使用」" },
+  { key: "docs.skewAskCancel", why: "「先不用」" },
+  { key: "sync.skewWarn", why: "对端版本较新:请升级(手机此前不渲染)" },
 ];
 
 /*

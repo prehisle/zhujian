@@ -202,6 +202,11 @@ export function rosterIds(): string[] | null {
   return cur()?.roster?.map((r) => r.device) ?? null;
 }
 
+/** 某个空间此刻的同步状态;`null` = 还没拿到(启动基线之前)。混版提醒判「已配同步」用(doc-skew-ask.ts,878)。 */
+export function syncStatusOf(space: string): SyncStatus | null {
+  return statuses.get(space) ?? null;
+}
+
 /** 当前空间已配置的服务器;没配 / 还没拿到状态 = `null`(设置「关于」网络自检那格用,用户面 137)。 */
 export function configuredServer(): string | null {
   return cur()?.server_url ?? null;

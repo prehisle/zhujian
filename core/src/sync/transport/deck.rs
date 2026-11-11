@@ -1034,11 +1034,18 @@ impl Deck<'_> {
                     s.error = Some(reason);
                 });
             }
-            Event::OriginSuspended { origin, reason } => {
-                // 挂起多是瞬态(依赖未到,落地即解);只进状态不弹提示。
+            Event::OriginSuspended { origin, cause, reason } => {
+                // 依赖未到多是瞬态(落地即解):只进状态不弹提示。
                 self.set_status(|s| {
                     s.error = Some(format!("部分同步暂挂(来源 {origin}):{reason}"));
                 });
+                // 版本偏斜只有升级本机能解(§5.3「挂起 + UI 提示『对端版本较新,请升级』」,
+                // 878 B):与整帧解不开([`Opened::Skew`])走**同一个**出口 —— 同一枚
+                // `status.skew`、同一个每会话一次的 toast 去重位,不另起第二套。
+                match cause {
+                    SuspendCause::VersionSkew => self.report_skew(),
+                    SuspendCause::DependencyMissing => {}
+                }
             }
             Event::OriginQuarantined { origin, relay_from, reason } => {
                 // 持久隔离(毒 op,§4):常驻告警——双坐标都报(origin ≠ 必然的作恶

@@ -58,6 +58,7 @@ import { HAS_BROWSER, writeClipboard } from "./platform";
 import { commentBadgeHtml, loadCommentCounts } from "./comments";
 import { figureSrc, hydrateThumbs } from "./thumbs";
 import { openViewer } from "./viewer";
+import { skewAsk } from "./skewask";
 import { capturePhoto, PICK_MAX, pickImages, toBase64 } from "./images";
 import { t } from "./i18n";
 import { $, actionBar, confirmBar, diffPair, fmtWhen, hideConfirmBar, showBar, showUndone } from "./ui";
@@ -254,9 +255,14 @@ function clearDraft(sp: string, id: string | null, gen: number | null): void {
 
 export function initDocs(d: Deps): void {
   deps = d;
+  // 878:新建长文 = 第一次落盘时发 doc_at ⇒ 混版提醒在开编辑器这一刻问(落盘那一刻有关面 flush 那条路,问不了)。
   $("docs-new").addEventListener("click", () => {
     if (page.kind !== "list" || busy) return;
-    openEditor(null, loadDraft(space, null)?.text ?? null, []);
+    const sp = space;
+    skewAsk(sp, () => {
+      if (page.kind !== "list" || busy || sp !== space || sp !== getCurrentSpace()) return;
+      openEditor(null, loadDraft(sp, null)?.text ?? null, []);
+    });
   });
 }
 
@@ -691,10 +697,14 @@ function readerActions(d: IdeaItem): HTMLElement {
     );
   } else {
     acts.append(
+      // 878:收回也发 doc_at(= null)⇒ 已配同步的空间第一次先过混版提醒(撤销那一下同样发,一并过)。
       btn(t("docs.actCollapse"), () =>
-        void write(() => setDoc(sp, d.id, false), () => {
-          page = { kind: "list" };
-          actionBar(t("docs.collapsed"), t("docs.undo"), () => void undo(() => setDoc(sp, d.id, true)));
+        skewAsk(sp, () => {
+          if (busy || sp !== getCurrentSpace() || page.kind !== "doc" || page.id !== d.id) return;
+          void write(() => setDoc(sp, d.id, false), () => {
+            page = { kind: "list" };
+            actionBar(t("docs.collapsed"), t("docs.undo"), () => skewAsk(sp, () => void undo(() => setDoc(sp, d.id, true))));
+          });
         }),
       ),
       btn(t("docs.actCopy"), () =>
@@ -756,7 +766,11 @@ function renderMove(panel: HTMLElement, d: IdeaItem): void {
       return btn(label, () =>
         confirmBar(t("cardpanel.moveQ", { name: label }), t("cardpanel.moveYes"), () => {
           if (busy || page.kind !== "doc" || page.id !== d.id || readerMode !== "move") return;
-          void runMove(d.id, s.id, label);
+          // 878:目标那边收到 create + doc_at ⇒ 按**目标**空间过混版提醒。
+          skewAsk(s.id, () => {
+            if (busy || page.kind !== "doc" || page.id !== d.id || readerMode !== "move") return;
+            void runMove(d.id, s.id, label);
+          });
         }),
       "p");
     });

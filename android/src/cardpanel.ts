@@ -82,6 +82,7 @@ import { moveReceipt, spotOf } from "./taskmove";
 import { capturePhoto, PICK_MAX, pickImages, toBase64 } from "./images";
 import { openViewer } from "./viewer";
 import { withMissingRefs } from "../../shared/markdown";
+import { skewAsk } from "./skewask";
 import { closeEditSheet, openEditSheet, paintEditSheet, type EditHost } from "./editsheet";
 import { renderDiff } from "../../shared/diff-dom";
 
@@ -945,6 +946,8 @@ function onTimelineClick(e: Event) {
     const label = distinctSpaceLabels(deps.getSpaces()).get(target) ?? target;
     confirmBar(t("cardpanel.moveQ", { name: label }), t("cardpanel.moveYes"), () => {
       if (state !== session || busy || session.mode !== "move") return;
+      // 878:卡片上移的是随记(恒无 doc_at)或任务 —— 只有「展开 × 转待办」并发收敛出的任务行会潜伏 doc_at,时间轴行不带这一列
+      // (core TimelineRow 只给 kind)⇒ 这里不过混版提醒;那一形的诚实边界记在 878。长文的移动在 docs.ts,那边按目标空间问。
       void runMove(target, label);
     });
     return;
@@ -1142,23 +1145,28 @@ function handleAct(act: string, card: HTMLElement) {
       // 卡离开随记面、住进「长文」面:回执指路 + 一枚「打开」(底栏那枚钮此刻才显形,408-A1 那形)。
       // 154 G3(用户拍两端统一,同桌面):正文里还没提到的图,「图N」各成一段接在文末并落一版;撤销只翻回 doc_at。
       // 补失败不拦展开(那时已经翻过去了,⛔ 别让 run 当整笔失败、轴不重拉),回执换成明说。
-      let refsErr: unknown = null;
-      void run(
-        async (space) => {
-          await setDoc(space, item.id, true);
-          const next = withMissingRefs(item.content, item.images.map((m) => m.seq));
-          if (next !== null)
-            await editNote(space, item.id, next).catch((e: unknown) => {
-              refsErr = e;
-            });
-        },
-        {
-          onCommitted: () =>
-            refsErr !== null
-              ? showBar(t("cardpanel.expandRefsFailed", { error: errDetail(refsErr) }))
-              : actionBar(t("cardpanel.expanded"), t("cardpanel.goSee"), () => deps.openDoc(item.id)), // 165 / W5 Q14:跳过去看的钮一律叫「去看看」
-        },
-      );
+      // 878:展开发 doc_at ⇒ 已配同步的空间第一次先过混版提醒;确认回来复核面板 session 与空间都没变。
+      const sp = getCurrentSpace();
+      skewAsk(sp, () => {
+        if (state !== session || busy || getCurrentSpace() !== sp) return;
+        let refsErr: unknown = null;
+        void run(
+          async (space) => {
+            await setDoc(space, item.id, true);
+            const next = withMissingRefs(item.content, item.images.map((m) => m.seq));
+            if (next !== null)
+              await editNote(space, item.id, next).catch((e: unknown) => {
+                refsErr = e;
+              });
+          },
+          {
+            onCommitted: () =>
+              refsErr !== null
+                ? showBar(t("cardpanel.expandRefsFailed", { error: errDetail(refsErr) }))
+                : actionBar(t("cardpanel.expanded"), t("cardpanel.goSee"), () => deps.openDoc(item.id)), // 165 / W5 Q14:跳过去看的钮一律叫「去看看」
+          },
+        );
+      });
       return;
     }
     case "promote":

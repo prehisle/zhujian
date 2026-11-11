@@ -1150,6 +1150,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       itemId: item.id,
       sourceSpace: mountSpace,
       targets: otherSpaces,
+      carriesDocAt: false, // 任务卡的前端行不带 doc_at(见 MovePanelOpts.carriesDocAt)
       fromColumn: col ? { id: col.id, name: columnName(col) } : null,
       onClose: () => void load(),
       onMoved: () => void load(), // 死 mount(切了视图 / 空间)上 load 自己头一行就退

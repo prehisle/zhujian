@@ -4036,6 +4036,74 @@ async fn the_wire_only_admits_a_full_canonical_device_id_as_from() {
     assert_eq!(runnable, vec![PEER_ONE.to_string()], "规范 id 的 Hello 必须真开出活");
 }
 
+/// 878 B:**版本偏斜的挂起接到「对端版本较新,请升级」那个既有出口上**(sync-protocol
+/// §5.3 的承诺;此前只有整帧解不开那条路接着它)。走真入口 `on_wire` → 真引擎 → 真分型,
+/// 不手搓事件:中间哪一层把分型弄丢,这里都红。
+///
+/// * 版本偏斜 ⇒ `status.skew` 置位、toast **整会话只一次**(两个不同 origin 各挂一次,
+///   引擎各报一枚事件,toast 去重位只放第一枚过去);
+/// * 依赖未到 ⇒ `skew` 不置位、不 toast,但仍走原来那行 `status.error`(阳性对照:证明
+///   挂起事件**确实到了** deck,`skew` 没亮不是因为事件没来)。
+#[tokio::test]
+async fn a_version_skew_suspension_reports_skew_once_and_a_missing_dependency_does_not() {
+    fn seal_from(cfg: &SyncConfig, from: &str, msg: &Msg) -> Vec<u8> {
+        crypto::seal_msg(
+            &cfg.k_acc,
+            &FrameAddr { account_id: &cfg.account_id, from_device: from, to: &cfg.device_id, domain: msg_domain(msg) },
+            msg,
+        )
+    }
+    fn future_kind(n: u8) -> Msg {
+        let Msg::Ops { origin, mut ops } = wire_probe_op(n) else { unreachable!("探针恒是 Ops") };
+        ops[0].kind = "kind_from_the_future".into();
+        Msg::Ops { origin, ops }
+    }
+    fn skew_toasts(rx: &mut mpsc::UnboundedReceiver<SyncEvent>) -> usize {
+        let mut n = 0;
+        while let Ok(ev) = rx.try_recv() {
+            if matches!(&ev, SyncEvent::Toast(m) if m.contains("对端版本较新")) {
+                n += 1;
+            }
+        }
+        n
+    }
+
+    // ① 版本偏斜:两个 origin 各挂一次。
+    let mut r = deck_rig("suspend-skew");
+    let cfg = deck_cfg(&r.db);
+    for n in [1u8, 2] {
+        offline_face(&mut r)
+            .on_wire(Ingress::RelayDeliver, PEER_ONE, &cfg.device_id, &seal_from(&cfg, PEER_ONE, &future_kind(n)))
+            .await
+            .expect("挂起不拆会话");
+    }
+    let st = r.status.lock().unwrap().clone();
+    assert_eq!(st.suspended, 2, "两个 origin 都该挂起(否则下面的「只一次」是空测):{st:?}");
+    assert!(st.skew, "版本偏斜的挂起必须亮升级提示:{st:?}");
+    assert_eq!(skew_toasts(&mut r._events), 1, "升级 toast 整会话只弹一次");
+
+    // ② 依赖未到:item set_field 打在一条本机没有、也没墓碑的行上。
+    let mut r = deck_rig("suspend-dep");
+    let cfg = deck_cfg(&r.db);
+    let Msg::Ops { origin, mut ops } = wire_probe_op(3) else { unreachable!("探针恒是 Ops") };
+    ops[0].entity = "item".into();
+    ops[0].kind = "set_field".into();
+    ops[0].payload = serde_json::json!({"field": "content", "value": "无主"});
+    let orphan = Msg::Ops { origin, ops };
+    offline_face(&mut r)
+        .on_wire(Ingress::RelayDeliver, PEER_ONE, &cfg.device_id, &seal_from(&cfg, PEER_ONE, &orphan))
+        .await
+        .expect("挂起不拆会话");
+    let st = r.status.lock().unwrap().clone();
+    assert_eq!(st.suspended, 1, "依赖未到也得真挂起:{st:?}");
+    assert!(
+        st.error.as_deref().is_some_and(|e| e.starts_with("部分同步暂挂")),
+        "阳性对照:挂起事件确实到了 deck:{st:?}"
+    );
+    assert!(!st.skew, "依赖未到绝不劝人升级:{st:?}");
+    assert_eq!(skew_toasts(&mut r._events), 0, "依赖未到不弹升级 toast");
+}
+
 /// 「空探不许放一个字节上线」的**顺序屏障**(307;替掉原先那两处
 /// `next_msg(200ms).is_none()`)。
 ///

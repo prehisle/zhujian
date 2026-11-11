@@ -66,6 +66,7 @@ import { mountHistory } from "./history-panel";
 import { errDetail, errText } from "./err";
 import { ideasMarkdown } from "./export-md";
 import { dismissHotkeyBanner, hotkeyBannerDismissed, hotkeys, onHotkeysChange, takenKeys } from "./hotkey-state";
+import { askDocSkew } from "./doc-skew-ask";
 import { type RemovedGroup, listRemovedImages, removedImageCount, removedImagesSection } from "./trash-images";
 
 // Mirrors of the Rust contracts (lib.rs) — the fields this view consumes. 想法 = a live
@@ -1336,6 +1337,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
     // ---- 展开成长文(longform-plan §1:只翻 doc_at,零副本、不进编辑历史)----
     // 与「转待办」并列的第二个出口:卡片离开随记、去「长文」视图;配撤销(收回 = 同一格翻回来)。
     async function doExpand(): Promise<void> {
+      if (!(await askDocSkew(mountSpace))) return; // 878 混版提醒:已配同步的空间第一次发 doc_at 前问一次
       try {
         await invoke("set_doc", { id: item.id, on: true });
       } catch (e) {
@@ -1539,6 +1541,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
         itemId: item.id,
         sourceSpace: mountSpace,
         targets: otherSpaces,
+        carriesDocAt: item.doc_at !== null,
         fromColumn: null,
         onClose: () => {
           const a = document.activeElement;

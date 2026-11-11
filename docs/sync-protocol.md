@@ -113,7 +113,7 @@
 - **挂起 op 只存内存,崩溃即丢也无害**:水位没有越过它,重连后任何持有者按 hello 重喂——「不记账 + 水位不过缺口 = 自愈」,这是整个引擎的正确性支点。
 - **喂入序与 P1 契约的对缝**:replay.rs 写的调用方契约是「按 HLC 升序喂入」;本引擎实际提供的是**弱化形**——per-origin 按 seq(=HLC)升序、跨 origin 任意交错,以 Err-挂起-重试兜住跨 origin 因果。论证:op 的因果依赖(编辑依赖 create、link 依赖两端行)恒指向**更低 HLC** 的 op(observe 机制:能引用必先见过);每条队内按 HLC 升序放行;若队头被挂起,它依赖的更低 HLC op 要么已应用、要么是(或先于)另一条队的队头——依赖链沿 HLC 严格递减,必然终结于无依赖的 op → **无环、必有进展,不会互锁**。LWW/tombstone-sticky/OR-set 判定全部按日志全集重算,与到达序无关。P2-c 落地时把 replay.rs 模块注释的契约行改写成此弱化形(codex 一轮已核:LWW/OR-set/sticky 在「乱序但最终全到」下终局与全局 HLC 升序一致)。
 - 跨 origin「tombstone 先于 create 到达」**不挂起**:现实现 `apply_entity_tombstone` 删 0 行也算 Applied(幂等),之后 create 被 sticky 压制——两种到达序终局一致(codex 一轮实核过,Applied 路径活性更好,引擎无需特判)。
-- **版本偏斜自愈**:新版本对端发来未知 field/kind → 该 origin 挂起 + UI 提示「对端版本较新,请升级」;本端升级后重喂自然继续,零丢失。同账户设备**不要求**锁版本,但旧端会停在挂起态直到升级——诚实且安全。
+- **版本偏斜自愈**:新版本对端发来未知 field/kind → 该 origin 挂起 + UI 提示「对端版本较新,请升级」;本端升级后重喂自然继续,零丢失。同账户设备**不要求**锁版本,但旧端会停在挂起态直到升级——诚实且安全。实现(878 起;此前两型合一、这条提示没兑现):引擎事件 `OriginSuspended` 带类型化 `cause`(`VersionSkew` ← `UnsupportedVocab` / `DependencyMissing`);传输层对 `VersionSkew` 走与整帧解不开同一个出口(`status.skew` 只置不清 + 每会话一次 toast),依赖未到只落 `status.error`。
 - 引擎为 sans-io 纯逻辑:输入=解密后的内层消息 + 本地日志句柄,输出=待发内层消息;不持 socket。收敛 property test 直接驱动两个引擎实例 + 内存服务器模型(§9)。
 
 ### 5.4 图字节旁路(blob 域)

@@ -57,7 +57,8 @@ use crate::sync::boot::{self, BootMsg, BootReceiver, BootSender, ChunkOutcome};
 use crate::sync::crypto::{self, Domain, FrameAddr, OpenError};
 use crate::sync::engine::{
     OpsServe, OpsServeTo,
-    read_blob_chunk, BlobServe, Engine, Event, Lane, Msg, Output, Route, RouteHint, BROADCAST,
+    read_blob_chunk, BlobServe, Engine, Event, Lane, Msg, Output, Route, RouteHint, SuspendCause,
+    BROADCAST,
 };
 use crate::sync::lan::{self, Ingress, LanAd};
 use crate::sync::lan_net;
@@ -251,7 +252,9 @@ pub struct SyncStatus {
     pub poison_breaker: Option<String>,
     /// 挂起的 origin 数(依赖未到/对端版本较新,通常瞬态)。
     pub suspended: usize,
-    /// 收到过「解得开但读不懂」的帧:对端版本较新,请升级。
+    /// 对端版本较新,请升级。两个来源走同一出口(deck 的 `report_skew`):收到过「解得开但
+    /// 读不懂」的帧,或某个 origin 因词汇表外的 op 挂起(878 B)。只置不清 —— 只有换二进制
+    /// 能解,而换二进制必然重启(状态随空间 transport 重建归零)。
     pub skew: bool,
     /// 收到过 HLC 墙钟比本机快 >24h 的远端 op(L1):对端系统时间可能错、LWW 会偏向它。
     pub clock_skew: bool,

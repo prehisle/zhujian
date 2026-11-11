@@ -1870,6 +1870,83 @@ fn dependency_missing_and_unknown_vocab_suspend_not_quarantine() {
     assert!(eng.is_suspended("DEPDEV0000000000000000001X"));
 }
 
+/// 一批输出里的挂起事件,摊成 `(origin, cause)`。
+fn suspend_causes(outs: &[Output]) -> Vec<(String, SuspendCause)> {
+    outs.iter()
+        .filter_map(|o| match o {
+            Output::Event(Event::OriginSuspended { origin, cause, .. }) => Some((origin.clone(), *cause)),
+            _ => None,
+        })
+        .collect()
+}
+
+/// 878 B:挂起事件带**类型化原因**,版本偏斜与依赖未到分开报(传输层只对前者劝人升级,
+/// sync-protocol §5.3)。三个样本:词汇表外的 kind、词汇表外的 item 字段(= `doc_at` 那次
+/// 真实混版的形,且行根本不在 —— 证 shape 层的版本偏斜判定**先于**依赖判定,否则旧端会把
+/// 「新字段打在一条它也没有的行上」报成依赖未到而不劝升级)、依赖未到。
+///
+/// 同时钉两型的引擎处置**一字不差**:不隔离、不记账、不推水位、op 留在队头(挂起),
+/// 有别的 origin 落地时同因不重报 —— 分型只许改事件上那枚标签。
+#[test]
+fn suspend_event_carries_typed_cause() {
+    let (mut conn, mut clock, mut eng) = fresh();
+    const KIND: &str = "SKEWKND0000000000000000001";
+    const FIELD: &str = "SKEWFD00000000000000000001";
+    const DEP: &str = "DEPMSS00000000000000000001";
+    const OTHER: &str = "0THERDEV000000000000000004";
+
+    let mut vocab = topic_op(KIND, 1_000, 1, "01TOPICSKEWKND00000000001");
+    vocab.kind = "kind_from_the_future".into();
+    let field = RemoteOp {
+        op_id: Ulid::new().to_string(),
+        hlc: Hlc { wall_ms: 1_100, counter: 0, device_id: FIELD.into() }.encode(),
+        entity: "item".into(),
+        entity_id: "01NOSUCHITEMSKEW000000000X".into(),
+        kind: "set_field".into(),
+        payload: json!({"field": "field_from_the_future", "value": "2026-11-11T00:00:00Z"}),
+        origin_seq: 1,
+    };
+    let orphan = RemoteOp {
+        op_id: Ulid::new().to_string(),
+        hlc: Hlc { wall_ms: 1_200, counter: 0, device_id: DEP.into() }.encode(),
+        entity: "item".into(),
+        entity_id: "01NOSUCHITEMDEP0000000000X".into(),
+        kind: "set_field".into(),
+        payload: json!({"field": "content", "value": "无主"}),
+        origin_seq: 1,
+    };
+    for (origin, op, want) in [
+        (KIND, vocab, SuspendCause::VersionSkew),
+        (FIELD, field, SuspendCause::VersionSkew),
+        (DEP, orphan, SuspendCause::DependencyMissing),
+    ] {
+        let outs = eng
+            .on_relay_msg(&mut conn, &mut clock, DEV, Msg::Ops { origin: origin.into(), ops: vec![op] })
+            .unwrap();
+        assert_eq!(suspend_causes(&outs), vec![(origin.to_string(), want)], "{origin}:{outs:?}");
+        // 处置不随分型变:挂起、不隔离、不记账不推水位。
+        assert!(eng.is_suspended(origin), "{origin} 必须队头挂起");
+        assert!(quarantine_row(&conn, origin).is_none(), "{origin} 挂起绝不隔离");
+        assert_eq!(watermark(&conn, origin).unwrap(), 0, "{origin} 挂起不记账不推水位");
+    }
+    assert_eq!(eng.suspended_count(), 3);
+    // 别的 origin 落地 = 全体挂起头重试;三条依旧挂着、同因不重报。
+    let outs = eng
+        .on_relay_msg(
+            &mut conn,
+            &mut clock,
+            OTHER,
+            Msg::Ops { origin: OTHER.into(), ops: vec![topic_op(OTHER, 2_000, 1, "01TOPIC0THERSKEW000000001")] },
+        )
+        .unwrap();
+    assert!(suspend_causes(&outs).is_empty(), "同因不重报:{outs:?}");
+    assert_eq!(watermark(&conn, OTHER).unwrap(), 1, "重试的触发器自己得真落地");
+    for origin in [KIND, FIELD, DEP] {
+        assert!(eng.is_suspended(origin), "{origin} 重试后仍挂起");
+        assert_eq!(watermark(&conn, origin).unwrap(), 0);
+    }
+}
+
 #[test]
 fn stateful_invalid_at_apply_quarantines_with_apply_stage() {
     let (mut conn, mut clock, mut eng) = fresh();

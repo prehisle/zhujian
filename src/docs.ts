@@ -44,6 +44,7 @@ import { when } from "./tasktime";
 import { applyEdit, wireChecklistInput } from "./checklist-input";
 import { el } from "./dom";
 import { errDetail, errText } from "./err";
+import { askDocSkew } from "./doc-skew-ask";
 import "./docs.css";
 
 // lib.rs `ProcessedItem` 里这个视图用到的字段(`list_docs` 恒带非空 doc_at)。
@@ -289,6 +290,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
     toastUndo(t("docs.undoDeleted"), t("common.undo"), () => void undoVia("restore_note", { id }));
   }
   async function doCollapse(d: DocItem): Promise<void> {
+    if (!(await askDocSkew(mountSpace))) return; // 878 混版提醒:收回也发 doc_at = null
     try {
       await invokeInSpace(mountSpace, "set_doc", { id: d.id, on: false });
     } catch (e) {
@@ -327,6 +329,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       itemId: d.id,
       sourceSpace: mountSpace,
       targets: otherSpaces,
+      carriesDocAt: true,
       fromColumn: null,
       onClose: () => panel.remove(),
       onMoved: () => {
@@ -1699,13 +1702,16 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
     return docs.map((d) => commentCountFor(mountSpace, d.id));
   }
 
-  function startNew(): void {
+  async function startNew(): Promise<void> {
     if (leaveEditor !== null) return;
+    // 878 混版提醒:新篇第一次保存走 capture_doc(create + doc_at),在开编辑器之前问 —— 别让人写完了才被拦
+    if (!(await askDocSkew(mountSpace))) return;
+    if (unmounted || leaveEditor !== null) return; // 问的那会儿切走了 / 已经开了编辑器
     const draft = loadDraft(mountSpace, null);
     openEditor(null, draft?.text ?? null);
   }
-  newBtn.addEventListener("click", startNew);
-  const teardownViewKeys = registerViewKeys([{ key: DOC_VIEW_KEYS.compose, run: () => page.kind === "list" && startNew() }]);
+  newBtn.addEventListener("click", () => void startNew());
+  const teardownViewKeys = registerViewKeys([{ key: DOC_VIEW_KEYS.compose, run: () => void (page.kind === "list" && startNew()) }]);
   // 阅读页里 Esc = 回列表(编辑器开着时 Esc 归编辑器,见 openEditor 的 onKey)
   // ⚠ 挂捕获阶段:⋯ 菜单那条 Esc 监听挂在冒泡阶段、先注册,它先跑就会先把菜单收掉,这里
   // 再看「有没有菜单开着」就看不到了 —— 一记 Esc 既关菜单又回列表。
@@ -1714,7 +1720,8 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
     if (searchBackArmed()) return; // 从搜索跳来的这一篇:Esc 回搜索(W5 Q11,notebook.ts 那只 window 级监听接)
     const tgt = e.target as HTMLElement | null;
     if (tgt && (tgt.tagName === "INPUT" || tgt.tagName === "TEXTAREA")) return;
-    if (document.querySelector(".hk-menu, .topic-picker, .doc-move") !== null || inlineCommentState(mountSpace) !== null) return;
+    // `.th-overlay` = 窗里那一问(混版提醒在阅读页「收回随记」时弹):Esc 归它取消,别同时把人带回列表
+    if (document.querySelector(".hk-menu, .topic-picker, .doc-move, .th-overlay") !== null || inlineCommentState(mountSpace) !== null) return;
     if (historyOpen) go({ kind: "doc", id: page.id });
     else go({ kind: "list" });
   };

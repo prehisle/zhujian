@@ -84,5 +84,11 @@ export const docs = defineMessages({
   "docs.histOldText": { zh: "旧版", en: "Older" },
   "docs.histNewText": { zh: "新版", en: "Newer" },
   "docs.histLoading": { zh: "读取中…", en: "Loading…" },
+  // 878 混版提醒(doc-skew-ask.ts):第一次往已配同步的空间发长文标记前问一次。两端逐字同、键名同。
+  // ⛔ 别改成让人声明「都升了」—— 点了只代表看过提醒(设备名单不显示版本,他答不准)。
+  "docs.skewAskTitle": { zh: "其他设备都升级了吗?", en: "Are your other devices updated?" },
+  "docs.skewAskBody": { zh: "这个空间里如果还有设备低于 电脑 0.2.50 / 安卓 0.3.46 / 鸿蒙 0.3.39,它会暂停接收这台设备之后的所有改动(不只是长文),升级后自动补齐。", en: "If any device in this space is older than desktop 0.2.50 / Android 0.3.46 / HarmonyOS 0.3.39, it will stop receiving all changes from this device (not just long-forms) until it is updated, then catch up automatically." },
+  "docs.skewAskGo": { zh: "仍然使用", en: "Continue anyway" },
+  "docs.skewAskCancel": { zh: "先不用", en: "Not now" },
   "docs.notFound": { zh: "这篇长文已不在长文里(可能被收回、转成任务或删除)", en: "This long-form note is no longer here (moved back, turned into a task, or deleted)" },
 });

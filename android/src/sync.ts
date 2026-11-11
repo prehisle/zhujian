@@ -263,27 +263,33 @@ export function renderSync(s: SyncStatus) {
   // 断网/出错态类名用 off 不用 error:全局 .error 是左上角 fixed 的错误提示条,
   // 状态点若带 error 类会被它命中、断网时被拽到左上角盖住「朱」(真机 bug)。
   // Q14(A45):只有「连着」是实心;没连上的几档(连接中 / 离线 / 已不在账户里)都是空心圈 —— 不只靠颜色分(样式在 index.html)。
+  // 878:对端版本较新 ⇒ 连着也不实心(同桌面 dotClass 把 skew 算异常:这时那台的改动收不进来,「连着」不等于在同步)。
   dot.className =
     "dot " +
-    (s.state === "online"
-      ? "online"
-      : gone !== null
-        ? "off"
-        : s.state === "connecting" || s.state === "booting"
-          ? "busy"
-          : s.error || s.state === "offline"
-            ? "off"
-            : "");
-  const frozen = s.frozen.length
-    ? `<div class="err">${t("sync.frozen", { list: esc(s.frozen.join(t("sync.listSep"))) })}</div>`
-    : "";
+    (s.skew
+      ? "off"
+      : s.state === "online"
+        ? "online"
+        : gone !== null
+          ? "off"
+          : s.state === "connecting" || s.state === "booting"
+            ? "busy"
+            : s.error || s.state === "offline"
+              ? "off"
+              : "");
+  // 878:对端版本较新(core 把「版本偏斜」那一类挂起接到 `skew` 上)—— 同 frozen 一样跟在状态下面,已不在账户里那一档也照写。
+  const warns =
+    (s.skew ? `<div class="err">${esc(t("sync.skewWarn"))}</div>` : "") +
+    (s.frozen.length
+      ? `<div class="err">${t("sync.frozen", { list: esc(s.frozen.join(t("sync.listSep"))) })}</div>`
+      : "");
   if (gone !== null) {
     // Q12:说明这一档是什么(不写「重连中」,也不挂「连不上」那句原话 —— 那是网络话);两件事写在下面那块里。
-    $("sync-state").innerHTML = `<b>${esc(gone === "left" ? t("sync.goneLeft") : t("sync.goneRevoked"))}</b>${frozen}`;
+    $("sync-state").innerHTML = `<b>${esc(gone === "left" ? t("sync.goneLeft") : t("sync.goneRevoked"))}</b>${warns}`;
   } else {
     const err = s.error ? `<div class="err">${errHtml(s.error)}</div>` : "";
     const peers = s.state === "online" ? esc(t("sync.peersOnline", { n: s.peers_online })) : "";
-    $("sync-state").innerHTML = `<b>${esc(STATE_LABEL[s.state] ?? s.state)}</b>${peers}${err}${frozen}`;
+    $("sync-state").innerHTML = `<b>${esc(STATE_LABEL[s.state] ?? s.state)}</b>${peers}${err}${warns}`;
   }
   $("sync-gone").hidden = gone === null;
   // Q14:离线时把本来就会做的那次重连提前(壳里 `sync_reconnect_now`,只在离线时才发)。已不在账户里时不给:连上也是被拒。

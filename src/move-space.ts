@@ -33,6 +33,7 @@ import {
   spaceLabel,
 } from "./space";
 import { armDismiss } from "./hotkey-menu";
+import { askDocSkew } from "./doc-skew-ask";
 import { toastGo } from "./toast";
 import { errText } from "./err";
 import { t } from "./i18n";
@@ -45,6 +46,9 @@ export type MovePanelOpts = {
   sourceSpace: string;
   /** 可移入的其他空间(活着、不是源)。宿主保证非空(空 = 不给「移动」入口)。 */
   targets: SpaceInfo[];
+  /** 条目带着长文标记(doc_at 非空):移过去目标会收到 create + doc_at ⇒ 先过混版提醒、判的是**目标**空间(878)。
+   *  ⛔ 看板给 false 是已知边界:任务卡的前端行没有 doc_at(只有并发收敛才会出现「任务行带潜伏 doc_at」那一形)。 */
+  carriesDocAt: boolean;
   /** 任务卡现在那一列的名字(看板给);随记 / 长文给 null。落点列名由本件现读目标空间。 */
   fromColumn: { id: string; name: string } | null;
   /** 取消 / Esc / 点别处:宿主把卡画回原样。 */
@@ -230,6 +234,14 @@ export function movePanel(opts: MovePanelOpts): { panel: HTMLElement; reveal: ()
     const target = picked;
     const name = labelOf(target);
     const colInfo = opts.fromColumn && landing !== null ? { landing, from: opts.fromColumn.id === LANDING_COLUMN ? null : opts.fromColumn.name } : null;
+    if (opts.carriesDocAt) {
+      // 878 混版提醒(判目标空间)。问着的时候点在弹窗上 = 点在面板外:moving 置真,armDismiss 那只就接着守、不把面板收掉;
+      // 先不置灰 —— 「先不用」之后焦点要还回「确认移动」,置灰的钮接不住焦点。
+      moving = true;
+      const go = await askDocSkew(target);
+      moving = false;
+      if (!go) return;
+    }
     setBusy(true);
     let r: MoveResult;
     try {

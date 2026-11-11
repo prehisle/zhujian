@@ -8,8 +8,7 @@
 // ⚠ 只管自绘的那枚 ✕(Windows / Linux)。Alt+F4、任务栏「关闭窗口」走的是壳里 `CloseRequested`
 // 那条路(lib.rs,直接藏),不经这里 —— 那两样是知道自己在干嘛的人才按的。
 import { t } from "./i18n";
-import { elText as el, holdKeyboard } from "./dom";
-import "./tray-hint.css";
+import { confirmDialog } from "./confirm-dialog";
 
 const KEY = "zhujian.tray-hint-seen";
 
@@ -17,39 +16,25 @@ function seen(): boolean {
   return localStorage.getItem(KEY) === "1";
 }
 
-/** 自绘 ✕ 的点击:第一次先问一句,之后直接 `hide()`。 */
+/** 自绘 ✕ 的点击:第一次先问一句,之后直接 `hide()`。弹窗本体 878 起抽成 confirm-dialog.ts(混版提醒共用)。 */
 export function closeToTray(hide: () => void): void {
   if (seen() || document.querySelector(".th-overlay")) {
     hide();
     return;
   }
-  const overlay = el("div", "th-overlay");
-  const panel = el("div", "th-panel");
-  panel.setAttribute("role", "dialog");
-  panel.setAttribute("aria-modal", "true");
-  panel.setAttribute("aria-label", t("notebook.trayHintTitle"));
-  const ok = el("button", "hbtn th-go", t("notebook.trayHintOk"));
-  const cancel = el("button", "hbtn", t("notebook.cancel"));
-  const acts = el("div", "th-acts");
-  acts.append(ok, cancel);
-  panel.append(el("h2", "th-title", t("notebook.trayHintTitle")), el("p", "th-body", t("notebook.trayHintBody")), acts);
-  overlay.append(panel);
-  document.body.append(overlay);
-
-  const done = (thenHide: boolean): void => {
-    hold.release(!thenHide); // 要藏窗就不必把焦点还回去(还回 ✕ 上,下次回窗焦点就停在那枚钮上)
-    overlay.remove();
+  void confirmDialog({
+    title: t("notebook.trayHintTitle"),
+    body: t("notebook.trayHintBody"),
+    ok: t("notebook.trayHintOk"),
+    cancel: t("notebook.cancel"),
+    focus: "ok",
+    returnFocusOnOk: false, // 要藏窗就不必把焦点还回去(还回 ✕ 上,下次回窗焦点就停在那枚钮上)
+  }).then((thenHide) => {
     try {
       localStorage.setItem(KEY, "1");
     } catch {
       // 写不进去的最坏结果只是下次点 ✕ 再问一次 —— 不值得为它挡住藏窗。
     }
     if (thenHide) hide();
-  };
-  const hold = holdKeyboard(overlay, panel, { focus: ok, onEscape: () => done(false) });
-  ok.addEventListener("click", () => done(true));
-  cancel.addEventListener("click", () => done(false));
-  overlay.addEventListener("mousedown", (e) => {
-    if (e.target === overlay) done(false);
   });
 }

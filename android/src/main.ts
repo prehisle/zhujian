@@ -53,6 +53,7 @@ import {
   fmtTimeOfDay,
   fmtWhen,
   hideConfirmBar,
+  dismissStickyConfirm,
   dropErrorBar,
   markHits,
   markLocated,
@@ -81,6 +82,7 @@ import * as panes from "./panes";
 import * as topics from "./topics";
 import { closeDocs, docsAtLanding, docsBack, focusDoc, initDocs, openDocs, reloadDocs, resetDocsForSpaceChange, startDocFrom } from "./docs";
 import { initCardSwipe } from "./swipe";
+import { skewAsk } from "./skewask";
 import { initCardDrag, isDragging } from "./carddrag";
 import { loadIdentity, signatureFor } from "./identity";
 import { createKbSheet, type KbSheet } from "./kbsheet";
@@ -647,6 +649,8 @@ let nativeBackPending = false; // native 请求的 history.back() 已发、popst
     dismissScanOverlay(); // 扫码层收掉(UI 收尾不等插件),下面的面板/时间轴原地不动
     return true;
   }
+  // 878:sticky 的确认条(混版提醒)不会自己收 ⇒ 返回键先收它(= 先不用、不记),下面的层原地不动。它不压守门条目(同扫码层)。
+  if (dismissStickyConfirm()) return true;
   // 挂账层必须先于「在飞合并」判(codex 终局审 M1):deferredLayers 只在
   // popSuppress>0 窗口内产生,后判就永远够不着——「UI 关层 back 在飞→重开层→
   // 硬件返回」会被合并吞掉、重开的层却还开着。挂账层没有已压的历史条目,直关销账。
@@ -1920,20 +1924,30 @@ $("save").addEventListener("click", save);
 // 「长文」(831,backlog 152 ③):把框里的字与暂存图带进一篇新长文。⛔ 取图在飞时不受理:屏上
 // 摆着骨架时 takeBatch 只带走有字节的那几张(同「记下」那条 picking 闸的理由)。卡片草稿挡开面,
 // 先问过再收层 —— 否则层收了、面没开,用户落回时间轴。字交给长文那边落成草稿之后才清这边。
+// 878:新建长文第一次落盘发 doc_at ⇒ 已配同步的空间先过混版提醒(skewask.ts);「先不用」= 什么都没动,字和图还在框里。
 $("compose-doc").addEventListener("click", () => {
   if (captureSaving || switching || picking) return;
   if (cardPanel.hasDirtyDraft()) {
     showError(t("main.finishDraftFirst"));
     return;
   }
-  const ta = $("text") as HTMLTextAreaElement;
-  ta.blur();
-  dismissCapture();
-  openPane("docs");
-  if (activePane !== "docs") throw new Error("长文:开面没成(闸已在上面问过,不该到这儿)"); // 框里的字还在
-  startDocFrom(ta.value, compImgs.takeBatch());
-  ta.value = "";
-  localStorage.removeItem(COMPOSE_DRAFT_KEY); // 图的那份由 takeBatch 清
+  const sp = getCurrentSpace();
+  skewAsk(sp, () => {
+    // 中间隔着一次读与一次确认:前提重新核一遍(换了空间 / 又在写 / 又有了卡片草稿 = 这一下作罢)
+    if (captureSaving || switching || picking || getCurrentSpace() !== sp) return;
+    if (cardPanel.hasDirtyDraft()) {
+      showError(t("main.finishDraftFirst"));
+      return;
+    }
+    const ta = $("text") as HTMLTextAreaElement;
+    ta.blur();
+    dismissCapture();
+    openPane("docs");
+    if (activePane !== "docs") throw new Error("长文:开面没成(闸已在上面问过,不该到这儿)"); // 框里的字还在
+    startDocFrom(ta.value, compImgs.takeBatch());
+    ta.value = "";
+    localStorage.removeItem(COMPOSE_DRAFT_KEY); // 图的那份由 takeBatch 清
+  });
 });
 
 // ---- 悬浮 ＋ 钮 + 底部捕获层(232 优化)--------------------------------------

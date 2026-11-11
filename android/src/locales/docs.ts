@@ -30,6 +30,12 @@ export const docs = defineMessages({
   // Q13 ★①:删的是最后一篇 ——「长文」那一格(底栏 / 平板顶栏)一离开就收起,先说一声、再写一篇从哪儿进。
   "docs.deletedLast": { zh: "已移入回收站。「长文」格会收起,再写一篇点 ＋ → 长文", en: "Moved to Trash. The Long-form tab will go away; to write another, tap ＋ → Long-form" },
   "docs.collapsed": { zh: "已收回随记", en: "Moved back to notes" },
+  // 878(混版提醒,skewask.ts):本机第一次往已配同步的空间发长文标记前问这一句;两端逐字同、键名同。
+  // ⛔ 别写成让人声明「都升了」—— 设备名单不显示版本,答不准;点了只代表看过提醒。
+  "docs.skewAskTitle": { zh: "其他设备都升级了吗?", en: "Are your other devices updated?" },
+  "docs.skewAskBody": { zh: "这个空间里如果还有设备低于 电脑 0.2.50 / 安卓 0.3.46 / 鸿蒙 0.3.39,它会暂停接收这台设备之后的所有改动(不只是长文),升级后自动补齐。", en: "If any device in this space is older than desktop 0.2.50 / Android 0.3.46 / HarmonyOS 0.3.39, it will stop receiving all changes from this device (not just long-forms) until it is updated, then catch up automatically." },
+  "docs.skewAskGo": { zh: "仍然使用", en: "Continue anyway" },
+  "docs.skewAskCancel": { zh: "先不用", en: "Not now" },
   "docs.undo": { zh: "撤销", en: "Undo" },
   "docs.writtenAt": { zh: "写于 {time}", en: "Written {time}" },
   // 165 / W5 Q15:改过的长文在列表卡与阅读页另写一枚「改于 …」(= 现在这版写成的那一刻)。

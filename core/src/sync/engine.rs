@@ -606,6 +606,19 @@ impl RouteState {
     }
 }
 
+/// 队头挂起的**类型化原因**(878 B)。分型在源头([`replay::OpError`] 的两枚挂起型一对一
+/// 映射过来),⛔ 不靠事后解析 `reason` 串。两型在引擎里的处置**完全相同**(op 放回队头、
+/// 不记账、不推水位、有 op 落地即全体重试);分开只为让传输层分得清该不该劝人升级:
+/// 依赖未到通常几秒自愈,而版本偏斜只有换二进制能解(§5.3「挂起 + UI 提示『对端版本
+/// 较新,请升级』」)。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SuspendCause {
+    /// [`replay::OpError::UnsupportedVocab`]:词汇表外的 entity/kind/field = 对端版本较新。
+    VersionSkew,
+    /// [`replay::OpError::DependencyMissing`]:跨 origin 因果依赖未到(行缺失且无墓碑)。
+    DependencyMissing,
+}
+
 /// 引擎事件。
 #[derive(Debug)]
 pub enum Event {
@@ -619,7 +632,8 @@ pub enum Event {
     /// **随引擎装配重检**(L-c2a:引擎活到 runtime 生命期,不再是每次重连重检)。
     OriginFrozen { origin: String, reason: String },
     /// origin 队头挂起(依赖未到/对端版本较新)。解开不另发事件;同因不重报。
-    OriginSuspended { origin: String, reason: String },
+    /// `cause` 是类型化的分型(§5.3 承诺的升级提示只对版本偏斜成立),`reason` 是人话细节。
+    OriginSuspended { origin: String, cause: SuspendCause, reason: String },
     /// origin 被持久隔离(毒 op,OpError::InvalidOp;epoch-plan §4):此后其帧到即丢,
     /// 跨重启生效。relay_from 是投递该 op 的设备——**不得断言 origin 设备 = 作恶发送
     /// 者**,吊谁由运营者依双坐标判断;UI 必须转常驻告警。
@@ -708,8 +722,9 @@ pub(crate) struct OriginSlot {
     pub(crate) queue: BTreeMap<i64, PendingOp>,
     /// 挂起原因(队头 apply Err;有 op 落地即全体解锁重试)。
     suspended: Option<String>,
-    /// 已报过的挂起原因(事件去重:同因不重报,换因/恢复后再挂重报)。
-    suspend_reported: Option<String>,
+    /// 已报过的挂起原因(事件去重:同因不重报,换因/恢复后再挂重报)。「因」= 分型 + 人话
+    /// 两样都算:只比人话的话,两型撞上同一句话时版本偏斜会被依赖未到那次吞掉(878 B)。
+    suspend_reported: Option<(SuspendCause, String)>,
     /// 已发 want 的缺口位(节流:同一缺口在收到新 hello/ops 前不重复广播)。
     wanted: Option<i64>,
     /// LRU 轴:最近一次被帧触碰的单调序号(Engine::touch 发号)。
@@ -2286,19 +2301,29 @@ impl Engine {
                         }
                         // UnsupportedVocab(版本偏斜)/ DependencyMissing(因果未到)
                         // → 队头挂起:op 放回,换别的 origin;同因不重报(既有自愈
-                        // 语义,§5.3 支点不动)。
-                        Err(e) => {
-                            let reason = e.to_string();
-                            let slot = self.slots.get_mut(&origin).expect("刚取过");
-                            slot.queue.insert(head_seq, p);
-                            if slot.suspend_reported.as_deref() != Some(reason.as_str()) {
-                                slot.suspend_reported = Some(reason.clone());
-                                out.push(Output::Event(Event::OriginSuspended {
-                                    origin: origin.clone(),
-                                    reason: reason.clone(),
-                                }));
-                            }
-                            slot.suspended = Some(reason);
+                        // 语义,§5.3 支点不动)。两臂**处置一字不差**,只差事件上那枚
+                        // 分型(878 B);逐型写开、不留通配臂,OpError 再加一型就是
+                        // 编译期逼答,而不是被默认收进「挂起」。
+                        Err(replay::OpError::UnsupportedVocab(reason)) => {
+                            self.suspend_head(
+                                &origin,
+                                head_seq,
+                                p,
+                                SuspendCause::VersionSkew,
+                                reason,
+                                out,
+                            );
+                            break;
+                        }
+                        Err(replay::OpError::DependencyMissing(reason)) => {
+                            self.suspend_head(
+                                &origin,
+                                head_seq,
+                                p,
+                                SuspendCause::DependencyMissing,
+                                reason,
+                                out,
+                            );
                             break;
                         }
                     }
@@ -2312,6 +2337,32 @@ impl Engine {
                 slot.suspended = None;
             }
         }
+    }
+
+    /// 队头挂起(drain 两枚挂起臂共用,878 B 从原先那条通配臂原样搬出):op 放回队头
+    /// (不记账、不推水位——那两件只在 apply 成功的事务里发生),标挂起,同因不重报。
+    /// 纯内存、不可失败。
+    fn suspend_head(
+        &mut self,
+        origin: &str,
+        head_seq: i64,
+        p: PendingOp,
+        cause: SuspendCause,
+        reason: String,
+        out: &mut Vec<Output>,
+    ) {
+        let slot = self.slots.get_mut(origin).expect("刚取过");
+        slot.queue.insert(head_seq, p);
+        let key = (cause, reason);
+        if slot.suspend_reported.as_ref() != Some(&key) {
+            out.push(Output::Event(Event::OriginSuspended {
+                origin: origin.to_string(),
+                cause,
+                reason: key.1.clone(),
+            }));
+            slot.suspend_reported = Some(key.clone());
+        }
+        slot.suspended = Some(key.1);
     }
 
     /// 一条 op 落地后的引擎侧收尾:翻案事件上抛 + 图字节旁路联动(§5.4)。

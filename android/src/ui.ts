@@ -362,20 +362,42 @@ export function showUndone(): void {
 
 let cbTimer: number | undefined;
 let cbToken = 0;
+/** 当前这条是 sticky 的(见 `ConfirmOpts`):返回键收它(`dismissStickyConfirm`)。 */
+let cbSticky = false;
 
 /** 重破坏那一档(§3.8「确认钮全宽」/ §3.2 第 6 条权重升格;159 / W3 A19:清空回收站此前与删一枚标签同形同大)。
  *  `from` = 点出这条确认的那枚钮 —— 全宽的执行钮横贯整条,**会落到它的原落点上**(§3.2 第 2 条),量了躲开。 */
 export type HeavyConfirm = { from: HTMLElement };
 
+/** 878(混版提醒):一句读不完 6 秒的问话。
+ *  `sticky` = 不起到期计时器(⛔ 不自动作罢:读不完就被收走,人只好再点一次、再读半截);只有点钮 / 返回键 / 换面收它。
+ *  `body` = 问句下面另起一行的正文:问句加粗当标题;版式借重破坏那档的三行(问句独占整宽,否则 360 宽下字挤在左边一窄条里),
+ *  ⛔ 但不躲触发钮(这条是异步弹的,没有「点出它的那枚钮」可量)。既有调用点都不给,行为一字不变。 */
+export type ConfirmOpts = { sticky?: boolean; body?: string };
+
 /** `noLabel`:左钮的字,不给就是「取消」。158 G1(W2 走查 WM-24):编辑层点「取消」问「丢掉这次的修改?」,
  *  条上左钮再印一个「取消」,读不出是「取消丢掉」还是「取消编辑」⇒ 那种问句给左钮换一个不歧义的词。
  *  `heavy`:见 `HeavyConfirm`。版式换成三行(问句 / 全宽执行钮 / 全宽取消,同空间重置那形「确认钮全宽独行、取消拉开在下」)。 */
-export function confirmBar(question: string, yesLabel: string, onYes: () => void, noLabel?: string, heavy?: HeavyConfirm): void {
+export function confirmBar(
+  question: string,
+  yesLabel: string,
+  onYes: () => void,
+  noLabel?: string,
+  heavy?: HeavyConfirm,
+  opts?: ConfirmOpts,
+): void {
   const token = ++cbToken;
   const bar = $("confirmbar");
-  bar.classList.toggle("heavy", heavy !== undefined);
+  const body = opts?.body;
+  bar.classList.toggle("heavy", heavy !== undefined || body !== undefined);
   bar.style.transform = "";
-  $("confirmbar-q").textContent = question;
+  const q = $("confirmbar-q");
+  if (body === undefined) q.textContent = question;
+  else {
+    const b = document.createElement("b");
+    b.textContent = question;
+    q.replaceChildren(b, document.createElement("br"), body);
+  }
   const yes = $("confirmbar-yes") as HTMLButtonElement;
   const no = $("confirmbar-no") as HTMLButtonElement;
   no.textContent = noLabel ?? t("shell.cancel");
@@ -392,6 +414,8 @@ export function confirmBar(question: string, yesLabel: string, onYes: () => void
   bar.hidden = false;
   if (heavy) dodgeTrigger(bar, yes, heavy.from);
   clearTimeout(cbTimer);
+  cbSticky = opts?.sticky === true;
+  if (cbSticky) return;
   cbTimer = window.setTimeout(() => {
     if (token !== cbToken) return;
     // 没接第二拍:先交代一句、钮变灰(条高不变,迟到的那一指落在条上不落到底下),余温过了才收(157 G1②)。
@@ -407,11 +431,19 @@ export function confirmBar(question: string, yesLabel: string, onYes: () => void
 
 export function hideConfirmBar(): void {
   cbToken++;
+  cbSticky = false;
   clearTimeout(cbTimer);
   const bar = $("confirmbar");
   bar.classList.remove("retiring", "heavy");
   bar.style.transform = "";
   bar.hidden = true;
+}
+
+/** 返回键(main.ts `__zhujianHandleBack`):sticky 那条开着就收它 = 作罢,消费这一下;别的确认条照旧不归返回键管。 */
+export function dismissStickyConfirm(): boolean {
+  if (!cbSticky || $("confirmbar").hidden) return false;
+  hideConfirmBar();
+  return true;
 }
 
 /** 全宽执行钮横贯整条 ⇒ 点出确认的那枚钮若正好在条的高度上(翻到面底时「清空…」就在屏底、正是条出现的地方),
