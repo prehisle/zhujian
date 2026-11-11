@@ -25,7 +25,8 @@
 //  A49  横放 2×2 看板:「进行中」往右划进下一排的「待确认」(链上的下一列)、撤销;「已完成」往右划:卡不动、说「已是最后一列」。
 //  A37  看板上长按拿卡(按住 700ms 再拖)拖进另一列 ⇒ 写库 + 回执「已移到「…」」;拖回原处。
 //  Q15  多栏(横放随记)上新记一条:新卡挂 `.flash-hold`(描边常亮约 3 s),2.5 s 后还亮着。
-//  A21  空着时标签行先占位:临时空间里两条随记 → 给其中一条挂第一个标签 → 摘走(转待办):最上面那张卡的 top 三拍逐像素相同。
+//  A21  (879 翻案:用户拍「不占位」)一枚标签都没有时标签行**不**另占一行:临时空间里两条随记 → 标签行不在过滤框下面;
+//       挂第一个标签 → 标签行长出来(卡往下,代价照收);转待办摘走 → 卡回到第一拍的位置(±0.5)。
 //
 // 前置:devtools 包、app 在前台、首启告知已同意、界面语言中文、竖屏手机宽、没开任何面;主空间里有种子库那样的数据
 //   (随记两屏以上、任务四列都有卡、一张九图的随记)—— `walk-seed.mjs --android` 播的那份。
@@ -173,7 +174,7 @@ const main = async () => {
     "html.kb-up #capture-fab{visibility:visible !important}", // A48 键盘起着 ＋ 不让
     "body.board.pane-open #timeline{display:grid !important}", // A36 看板压过收起
     "#viewer img{max-height:88vh !important}", // A30 回到旧封顶
-    "#filterbar.tags-reserve .ftopics::before{display:none !important}", // A21 不占位
+    "#filterbar .fmain{flex-wrap:wrap !important}#filter-topics:empty{order:1;flex:0 0 100% !important;min-height:41px}", // A21 占位加回来
     "body.panel-open #capture-fab{display:none !important}", // Q15 ＋ 又藏
   ].join("\n");
   const knife = process.env.W165_KNIFE === "css";
@@ -506,7 +507,7 @@ const main = async () => {
     } else step("A26 别名框(没读到本机设备,框是灰的)", "skip");
     await closePanes();
 
-    // ── A21:空着时标签行先占位(临时空间)──────────────────────────────────────
+    // ── A21:空着时标签行不占位(临时空间;879 翻案)──────────────────────────────
     await mode("ideas");
     tempSp = await inv("create_space", { name: "W165M2" });
     await inv("activate_space", { spaceId: tempSp });
@@ -523,20 +524,20 @@ const main = async () => {
       await until(`document.querySelectorAll("#timeline article.card[data-id]").length>0`, 5000);
       await sleep(400);
     };
-    const FIRST = `(()=>{const c=document.querySelector("#timeline article.card[data-id]");const fb=document.getElementById("filterbar");return {top:c.getBoundingClientRect().top,fb:fb.getBoundingClientRect().height,cls:fb.className,tags:document.getElementById("filter-topics").childElementCount}})()`;
+    const FIRST = `(()=>{const c=document.querySelector("#timeline article.card[data-id]");const fb=document.getElementById("filterbar");const tp=document.getElementById("filter-topics").getBoundingClientRect(),ft=document.getElementById("filter-text").getBoundingClientRect();return {top:c.getBoundingClientRect().top,fb:fb.getBoundingClientRect().height,cls:fb.className,tags:document.getElementById("filter-topics").childElementCount,topicsBelow:tp.height>1&&tp.top>=ft.bottom-1}})()`;
     await reloadIdeas();
     const r0 = await evalJs(FIRST);
-    step("A21 前置:一枚标签都没有时筛选条在占位(.tags-reserve)", r0.tags === 0 && /tags-reserve/.test(r0.cls), r0);
-    await snap("A21-reserve");
+    step("A21 一枚标签都没有:标签行不在过滤框下面另占一行(879 用户拍不占位)", r0.tags === 0 && r0.topicsBelow === false, r0);
+    await snap("A21-no-reserve");
     await inv("file_note_to_topic", { id: ra, topicId: null, newTitle: "9" });
     await reloadIdeas();
     const r1 = await evalJs(FIRST);
-    step("A21 挂上第一个标签:卡一像素不动(标签行落进占好的那一行)", r1.tags > 0 && Math.abs(r1.top - r0.top) < 0.5, { before: r0, after: r1 });
+    step("A21 挂上第一个标签:标签行长出来", r1.tags > 0, { before: r0, after: r1 });
     await snap("A21-first-tag");
     await inv("promote_note_to_task", { id: ra, title: `${M} 甲` });
     await reloadIdeas();
     const r2 = await evalJs(FIRST);
-    step("A21 转待办(标签行又空了):卡还是不动", r2.tags === 0 && Math.abs(r2.top - r0.top) < 0.5, { before: r0, after: r2 });
+    step("A21 转待办(标签行又空了):卡回到第一拍的位置、标签行仍不占", r2.tags === 0 && r2.topicsBelow === false && Math.abs(r2.top - r0.top) < 0.5, { before: r0, after: r2 });
   } catch (e) {
     out.runError = String(e?.stack ?? e);
   } finally {

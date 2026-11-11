@@ -6,6 +6,9 @@
 //   node scripts/cdp-acceptance-walk161-m2.mjs                 # 打印 {pass, steps};设了 ANDROID_SERIAL 就只认那一台
 //   node scripts/cdp-acceptance-walk161-m2.mjs --only S7,S8    # 只跑点名那几段(阴性对照用)
 //   node scripts/cdp-acceptance-walk161-m2.mjs --inject-css '<css>'  # 样式阴性刀:页内注入,对应那几格应当红
+//   node scripts/cdp-acceptance-walk161-m2.mjs --ohos --only S5,S11   # 鸿蒙真机(879 加):adb 那几手换成 hdc —— 真点走
+//        `uitest uiInput click`、返回键 `uitest uiInput keyEvent Back`、前台查 `aa dump -l`、端口 `hdc rport`;9222 的转发照
+//        skill `zhujian-ohos-verify` 自己建。⚠ 鸿蒙上问不到「软键盘起着没有」⇒ dropIme 改成页内 blur(收键盘不经返回键)。
 //
 // 逐段(编号对 .zjshots/W4-walk/清单.md):
 //  S0  Q2 / Q1 / Q15 / A27 / A50 / A33:没开同步的同步页第一屏那几句、「用配对码加入」、地址框有标签 + 弹网址键盘 + 框下那行说明跟着值变;
@@ -60,13 +63,28 @@ const ONLY = argv.includes("--only") ? new Set(argv[argv.indexOf("--only") + 1].
 const INJECT_CSS = argv.includes("--inject-css") ? argv[argv.indexOf("--inject-css") + 1] : null;
 const on = (s) => ONLY === null || ONLY.has(s);
 const execFileAsync = promisify(execFile);
+const OHOS = argv.includes("--ohos");
 const adb = (args) => execFileAsync("adb", args, { encoding: "utf8", maxBuffer: 1 << 24 });
+// hdc 路径与 `ohos-drive.mjs` / `cdp-run.mjs` 同一个环境变量、同一个默认值。
+const hdc = (args) => execFileAsync(process.env.OHOS_HDC ?? "G:\\ohos-sdk\\toolchains\\hdc.exe", args, { encoding: "utf8", maxBuffer: 1 << 24 });
+/** 设备上的一下真点(物理像素)。 */
+const devTap = (x, y) => (OHOS ? hdc(["shell", `uitest uiInput click ${x} ${y}`]) : adb(["shell", "input", "tap", String(x), String(y)]));
+const portUp = () => (OHOS ? hdc(["rport", `tcp:${SYNC_PORT}`, `tcp:${SYNC_PORT}`]) : adb(["reverse", `tcp:${SYNC_PORT}`, `tcp:${SYNC_PORT}`]));
+const portDown = () => (OHOS ? hdc(["fport", "rm", `tcp:${SYNC_PORT}`, `tcp:${SYNC_PORT}`]) : adb(["reverse", "--remove", `tcp:${SYNC_PORT}`]));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const SYNCD = ["release", "debug"].map((p) => join(ROOT, `server/target/${p}/zhujian-syncd.exe`)).find(existsSync);
 const PEER = join(ROOT, "core/target/debug/examples/headless-peer.exe");
 
 async function focusedPkg() {
+  if (OHOS) {
+    // 同 cdp-run.mjs::ohosAppState:按 `Mission ID #` 切块、只认本包那一块(⛔ 别全文搜 FOREGROUND)。
+    const out = await hdc(["shell", "aa dump -l"]).catch(() => null);
+    for (const block of (out?.stdout ?? "").split(/^\s*Mission ID #/m).slice(1)) {
+      if (block.includes(`bundle name [${PKG}]`)) return /app state #FOREGROUND/.test(block) ? PKG : "(朱简在后台)";
+    }
+    return null;
+  }
   const out = await adb(["shell", "dumpsys", "window"]).catch(() => null);
   const m = out?.stdout.match(/mCurrentFocus=Window\{\S+ \S+ ([^/\s}]+)/);
   return m ? m[1] : null;
@@ -76,8 +94,10 @@ async function imeShown() {
   const m = out?.stdout.match(/mInputShown=(true|false)/);
   return m ? m[1] === "true" : null;
 }
-const back = () => adb(["shell", "input", "keyevent", "4"]);
+const back = () => (OHOS ? hdc(["shell", "uitest uiInput keyEvent Back"]) : adb(["shell", "input", "keyevent", "4"]));
+let blurIme = null; // 鸿蒙:main() 里接上页内 blur
 async function dropIme() {
+  if (OHOS) return blurIme?.();
   if (await imeShown()) {
     await back();
     await sleep(700);
@@ -202,6 +222,7 @@ const main = async () => {
     if (r.exceptionDetails) throw new Error(`页内异常: ${JSON.stringify(r.exceptionDetails).slice(0, 400)}`);
     return r.result.value;
   };
+  if (OHOS) blurIme = () => evalJs(`(()=>{const a=document.activeElement;if(a&&a!==document.body)a.blur();return 1})()`).then(() => sleep(500));
   const inv = (cmd, args = {}) => evalJs(`window.__TAURI__.core.invoke(${JSON.stringify(cmd)}, ${JSON.stringify(args)})`);
   const until = async (expr, ms = 4000) => {
     const t0 = Date.now();
@@ -236,7 +257,7 @@ const main = async () => {
         return JSON.stringify({w:r.width,h:r.height,hiddenBy:chain,pane:document.body.className})})()`).catch(() => "?");
       throw new Error(`找不到(或没画出来)${sel}:${why}`);
     }
-    await adb(["shell", "input", "tap", String(c[0]), String(c[1])]);
+    await devTap(c[0], c[1]);
   };
   /** 两拍确认:点第一枚、等确认条、同一口气点「是」(6 秒窗口;skill:第二拍前现取坐标)。 */
   const tapConfirm = async (sel) => {
@@ -297,7 +318,7 @@ const main = async () => {
   const savedLast = await evalJs(`localStorage.getItem("zhujian.last-server")`);
   const created = []; // 本资产建出来 / 加入的空间,收尾全部重置(删库文件)
   await startServer();
-  await adb(["reverse", `tcp:${SYNC_PORT}`, `tcp:${SYNC_PORT}`]);
+  await portUp();
   await watchBars();
 
   try {
@@ -526,7 +547,7 @@ const main = async () => {
         const c = await centerDev("#sync-reconnect-btn");
         if (!c) continue; // 判完「还离线」到取坐标之间它自己退避重连上了、钮收了:同上,这一趟不算(873 撞到)
         const tapAt = await evalJs(`performance.now()`); // 发 adb 之前记(adb 一来一回要上百毫秒,点是在这之后落的)
-        await adb(["shell", "input", "tap", String(c[0]), String(c[1])]);
+        await devTap(c[0], c[1]);
         const backOnline = await until(`document.getElementById("sync-dot").classList.contains("online")`, 6000);
         const connAt = await evalJs(`window.__m2conn`);
         if (connAt !== null && connAt < tapAt) continue; // 点之前就自己动了:这一趟不算
@@ -636,7 +657,7 @@ const main = async () => {
     await evalJs(savedLast === null ? `localStorage.removeItem("zhujian.last-server");1` : `localStorage.setItem("zhujian.last-server",${JSON.stringify(savedLast)});1`).catch(() => {});
     await evalJs(`document.getElementById("m2-knife")?.remove();1`).catch(() => {});
     await stopServer();
-    await adb(["reverse", "--remove", `tcp:${SYNC_PORT}`]).catch(() => {});
+    await portDown().catch(() => {});
     rmSync(SRV_DIR, { recursive: true, force: true });
     const left = await evalJs(`(async()=>(await window.__TAURI__.core.invoke("list_spaces")).map(x=>x.name).join("|"))()`).catch(() => "?");
     step("收尾-测试空间零残留、回到开跑那一本", !/M2验收/.test(left) && (await curSpace().catch(() => null)) === homeSpace, left);

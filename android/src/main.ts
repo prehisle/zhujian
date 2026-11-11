@@ -1258,8 +1258,7 @@ function syncTagsToggle(): void {
   // 标签行空了而类型轴还在 ⇒ 过滤框并进类型那一行右端,别独占一行(用户面 150;CSS 见 `.kinds-inline`)。
   const kindsInline = topics.childElementCount === 0 && $("filter-kinds").childElementCount > 0;
   $("filterbar").classList.toggle("kinds-inline", kindsInline);
-  // 165 / W5 A21:窄屏上一枚真标签都没有时,标签行先占位(CSS 见 `.tags-reserve`;高与上面 `.tags-fit` 那一形逐像素同)。
-  $("filterbar").classList.toggle("tags-reserve", narrow && !board && topics.childElementCount === 0 && !kindsInline);
+  // ⛔ 一枚真标签都没有时不占标签行(879 用户拍,翻 165 / W5 A21 的 `.tags-reserve`;由头在 index.html `.tags-fit .ftext` 下面)。
 }
 $("filter-expand").addEventListener("click", () => {
   tagsOpen = !tagsOpen;
