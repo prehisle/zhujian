@@ -22,6 +22,14 @@ import { fileURLToPath } from "node:url";
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const argv = process.argv.slice(2);
 const acceptExclusions = argv.includes("--accept-exclusions");
+// 不认识的开关响亮拒、印用法(backlog 测试与工装 51(p):870 敲 `--help` 想看用法,它照常真跑了)。⛔ 别改回静默吃掉。
+{
+  const bad = argv.filter((a) => a.startsWith("-") && a !== "--accept-exclusions");
+  if (bad.length || argv.filter((a) => !a.startsWith("-")).length > 1) {
+    console.error(`不认识的参数 ${(bad.length ? bad : argv).join(" ")} —— 用法:node scripts/export-public.mjs [目标目录] [--accept-exclusions]`);
+    process.exit(1);
+  }
+}
 const target = resolve(argv.find((a) => !a.startsWith("--")) ?? join(repoRoot, "..", "zhujian-public"));
 // 这道闸守的是「别把自己清空」——下面会把 target 里除 .git 外的东西全删掉。
 // ⚠ **按路径分段比,别用裸 `startsWith`**(450 在 Linux 那台真撞上):公开仓的工作副本在

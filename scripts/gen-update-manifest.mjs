@@ -11,6 +11,12 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const BASE_URL = "https://zhujian.app/updates";
 const fwd = (p) => p.replace(/\\/g, "/");
 
+// 不认识的开关响亮拒、印用法(backlog 测试与工装 51(p):870 敲 `--help` 想看用法,它照常真跑了)。⛔ 别改回静默吃掉。
+if (process.argv.length > 3 || process.argv[2]?.startsWith("-")) {
+  console.error(`不认识的参数 ${process.argv.slice(2).join(" ")} —— 用法:node scripts/gen-update-manifest.mjs ["更新说明"]`);
+  process.exit(1);
+}
+
 // ── 1. 三处版本号必须一致(单一真相源分散在三个文件,漂移即拒发) ──
 const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8")).version;
 const conf = JSON.parse(readFileSync(join(root, "src-tauri/tauri.conf.json"), "utf8")).version;

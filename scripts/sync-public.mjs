@@ -54,6 +54,16 @@ if (toBranch === "main") die("`--to-branch main` 就是默认行为,别绕这一
 // ⚠ 位置参数的挑法要把**所有**「跟在开关后面的值」排掉,不然 `--to-branch gate/x` 那个
 // 分支名会被当成目标目录(与 `-m` 那条同一个坑,原注在下面几行)。
 const valueIdxs = new Set([msgIdx + 1, toBranchIdx + 1].filter((i) => i > 0));
+// 不认识的开关响亮拒、印用法(backlog 测试与工装 51(p):870 敲 `--help` 想看用法,它照常真跑了)。⛔ 别改回静默吃掉。
+{
+  const KNOWN = ["--dry-run", "--accept-exclusions", "-m", "--message", "--to-branch"];
+  const bad = argv.filter((a, i) => !valueIdxs.has(i) && a.startsWith("-") && !KNOWN.includes(a));
+  const positional = argv.filter((a, i) => !valueIdxs.has(i) && !a.startsWith("-"));
+  if (bad.length || positional.length > 1) {
+    console.error(`不认识的参数 ${(bad.length ? bad : positional).join(" ")} —— 用法:node scripts/sync-public.mjs [目标目录] [--dry-run] [--accept-exclusions] [-m 说明] [--to-branch 分支]`);
+    process.exit(1);
+  }
+}
 const target = resolve(
   argv.find((a, i) => !a.startsWith("-") && !valueIdxs.has(i)) ??
     join(repoRoot, "..", "zhujian-public"),
