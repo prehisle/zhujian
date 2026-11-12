@@ -400,9 +400,11 @@
         justify-content: center;
         gap: 4px 16px;
         font-size: var(--fs-13);
-        /* 这一行里有「开源 MIT · 不用注册」,是要读的 ⇒ --ink-soft(progress-log 896);分隔点仍淡 */
+        /* 小字要读得清 ⇒ --ink-soft(progress-log 896);分隔点仍淡 */
         color: var(--ink-soft);
       }
+      /* 第二行 = 信任点(不用注册 / 开源 / 加密同步):全页最能打的三件事,字用 ink、紧贴平台行 */
+      .platforms.pf-trust { margin-top: 6px; color: var(--ink); }
       .platforms li { white-space: nowrap; }
       .platforms li + li::before { content: "·"; margin-right: 16px; color: var(--ink-faint); }
 
@@ -1369,8 +1371,12 @@
               <li>Android</li>
               <li data-i18n="hero.pfHarmony">HarmonyOS</li>
               <li data-i18n="hero.pfTrial">macOS / Linux early builds</li>
-              <li data-i18n="hero.pfOss">Open source (MIT)</li>
+            </ul>
+            <!-- 信任行:与平台名分开排、字用 ink(progress-log 897)。⛔ 首页上「AI」只在承诺区那一处,别往这行加。 -->
+            <ul class="platforms pf-trust">
               <li data-i18n="hero.pfNoSignup">No sign-up</li>
+              <li data-i18n="hero.pfOss">Open source (MIT)</li>
+              <li data-i18n="hero.pfE2ee">End-to-end encrypted sync</li>
             </ul>
           </div>
         </div>
@@ -1427,7 +1433,7 @@
             <div class="row-copy">
               <div class="step" data-i18n="flow.step2">2</div>
               <h3 data-i18n="flow.card2Title">Sort it</h3>
-              <p data-i18n="flow.card2">In Notes, tag it or turn it into a task. Every edit keeps the previous version, so old drafts can be recovered; deleting puts it in Trash first, and you can restore it any time.</p>
+              <p data-i18n="flow.card2">In Notes, tag it. When it becomes something to do, turn it into a task: it stays the same item, with no second copy.</p>
             </div>
             <button class="shot-zoom crop crop-inbox" type="button" aria-label="Open a larger view" data-i18n-aria-label="shot.zoom">
               <img src="/shots/en/desktop-inbox.webp" data-i18n-src="shot.inboxSrc" width="1890" height="1050" loading="lazy" decoding="async"
@@ -1440,7 +1446,7 @@
             <div class="row-copy">
               <div class="step" data-i18n="flow.step3">3</div>
               <h3 data-i18n="flow.card3Title">Get it done</h3>
-              <p data-i18n="flow.card3">To do, In progress, To confirm, Done. Drag tasks along; finished ones go to Archive, where you can look them up but not delete them.</p>
+              <p data-i18n="flow.card3">To do, In progress, To confirm, Done. Drag tasks along; finished ones go to Archive, where you can look them up later.</p>
             </div>
             <button class="shot-zoom crop crop-board" type="button" aria-label="Open a larger view" data-i18n-aria-label="shot.zoom">
               <img src="/shots/en/desktop-board.webp" data-i18n-src="shot.boardSrc" width="1890" height="1050" loading="lazy" decoding="async"
@@ -1453,7 +1459,8 @@
       <!-- ───────── 小处 ───────── -->
       <!-- 改版 2b:大小不一的格子,一格一件事。⛔ 每一格都要能指到产品里真有的东西(与事实表同一条规矩):
            编辑留历史 / 回收站 / 归档不可删 = design-rules 三条铁律;列只能在电脑上改 = 「还做不好的」那条;
-           /space、单键、导出 Markdown 与帮助页「数据、键盘和源码」那节同源。 -->
+           /space、单键、导出 Markdown 与帮助页「数据、键盘和源码」那节同源;同步那格 = 事实表「同步」行。
+           ⛔ 格数别随手加:三栏下现在刚好排满三行(两枚宽格 + 五枚单格),多一格会落单。 -->
       <section class="features" id="features">
         <div class="wrap">
           <span class="eyebrow" data-i18n="feat.eyebrow">Small things</span>
@@ -1461,8 +1468,8 @@
           <div class="bento">
             <article class="tile t-wide">
               <div>
-                <h3 data-i18n="feat.histTitle">Every version is kept</h3>
-                <p data-i18n="feat.hist">Each edit keeps the version before it. If you break something or cut too much, the old draft is still there.</p>
+                <h3 data-i18n="feat.histTitle">Edited or deleted, you can get it back</h3>
+                <p data-i18n="feat.hist">Each edit keeps the version before it. Deleting goes to Trash first, and you can restore it any time; deleting for good only happens inside Trash.</p>
               </div>
               <div class="versions" aria-hidden="true">
                 <div class="ver now"><b data-i18n="feat.verNow">Now</b><span data-i18n="feat.ver3">Call Mum, ask about the check-up and the next appointment</span></div>
@@ -1471,9 +1478,9 @@
               </div>
             </article>
             <article class="tile">
-              <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13" /></svg>
-              <h3 data-i18n="feat.trashTitle">Deleting goes to Trash first</h3>
-              <p data-i18n="feat.trash">Restore any time. Deleting for good only happens inside Trash.</p>
+              <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="5" width="13" height="9" rx="1" /><path d="M5 18h7M8.5 14v4" /><rect x="17" y="8" width="5" height="11" rx="1" /></svg>
+              <h3 data-i18n="feat.syncTitle">Noted on your computer, there on your phone</h3>
+              <p data-i18n="feat.sync">Turn on sync and your computer and phone hold the same notebook. Everything is encrypted on your device before it leaves, so the server can't read it. On the same Wi-Fi, devices sync directly.</p>
             </article>
             <article class="tile">
               <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="5" rx="1" /><path d="M5 9v10h14V9M10 13h4" /></svg>

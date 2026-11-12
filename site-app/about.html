@@ -396,9 +396,11 @@
         justify-content: center;
         gap: 4px 16px;
         font-size: var(--fs-13);
-        /* 这一行里有「开源 MIT · 不用注册」,是要读的 ⇒ --ink-soft(progress-log 896);分隔点仍淡 */
+        /* 小字要读得清 ⇒ --ink-soft(progress-log 896);分隔点仍淡 */
         color: var(--ink-soft);
       }
+      /* 第二行 = 信任点(不用注册 / 开源 / 加密同步):全页最能打的三件事,字用 ink、紧贴平台行 */
+      .platforms.pf-trust { margin-top: 6px; color: var(--ink); }
       .platforms li { white-space: nowrap; }
       .platforms li + li::before { content: "·"; margin-right: 16px; color: var(--ink-faint); }
 
