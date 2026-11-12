@@ -105,6 +105,9 @@ export function openNewBoard(onCreated?: () => void, onCancel?: () => void): voi
       return;
     }
     close();
+    // 900 C8:建好之后焦点还给打开它的那一枚(此前只有「没建就关」那条路还,建好了焦点掉到 body)。侧栏那枚
+    // 「+ 新建看板」随后会被重画换掉 —— board-nav 的 paint 按「焦点原在哪一枚」接回新那枚。
+    if (opener?.isConnected) opener.focus({ preventScroll: true });
     setCurrentBoard(id);
     boardsChanged();
     onCreated?.();

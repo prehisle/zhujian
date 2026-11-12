@@ -124,7 +124,12 @@ function paint(boards: Board[], cols: BoardColumn[]): void {
     });
     rows.push(h);
   }
+  // 900 C8:重画前焦点在这一组里的哪一枚(某块看板那一行 / 「+ 新建看板」)⇒ 重画后还给新那枚。此前整组
+  // replaceChildren 之后焦点掉到 body(新建看板「建好」、键盘在这一组里时别处来的一次重画,都是这一形)。
+  const a = document.activeElement;
+  const focusKey = a instanceof HTMLElement && host.contains(a) ? (a.classList.contains("bn-add") ? ".bn-add" : a.dataset.board !== undefined ? `[data-board="${CSS.escape(a.dataset.board)}"]` : null) : null;
   host.replaceChildren(...rows);
+  if (focusKey !== null) host.querySelector<HTMLElement>(focusKey)?.focus({ preventScroll: true });
   paintActive();
   paintDropTargets();
 }
@@ -257,7 +262,9 @@ function openRowMenu(row: HTMLElement, b: Board, e: MouseEvent): void {
     ]);
     it.setAttribute("role", "menuitem");
     it.addEventListener("click", () => {
-      close(false);
+      // 900 C8:先把焦点还给这一行再跑 —— 随后打开的面板(管理看板 / 删除确认)记它为 opener,关掉时还得回来;
+      // 改名那一项自己会把焦点带进输入框。此前菜单项一摘焦点就在 body 上,面板关掉后无处可还。
+      close(true);
       a.run();
     });
     menu.append(it);

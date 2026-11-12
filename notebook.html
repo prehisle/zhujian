@@ -254,6 +254,9 @@
       .space-form .space-hint { margin: 0; color: var(--ink-soft); font-size: var(--fs-12); line-height: 1.6; }
       /* 「加入」「取消」并排靠右,走全应用的 .hbtn(W4 A22;此前是浏览器默认的整行方块钮)。 */
       .space-form-acts { display: flex; justify-content: flex-end; gap: 8px; }
+      /* 900 C1:重置空间的「确认重置」= 真正执行的那一下 ⇒ 实心朱砂(§3.2;同 devices.css 的 .hbtn.dev-danger 那一档)。 */
+      .hbtn.space-danger { color: var(--on-seal); background: var(--seal); border-color: var(--seal); font-weight: 600; }
+      .hbtn.space-danger:hover { color: var(--on-seal); background: color-mix(in srgb, var(--seal) 88%, var(--ink)); border-color: var(--seal); }
 
       .sidebar nav { display: flex; flex-direction: column; gap: 2px; }
       .sidebar nav button {
@@ -339,7 +342,8 @@
         min-width: 0;
       }
       .sidebar nav .board-nav .bn-rename:focus { outline: none; }
-      .sidebar nav .board-nav .bn-add { font-family: var(--font-sans); font-size: var(--fs-12); color: var(--ink-faint); }
+      /* 900 C10:能点的入口不该是侧栏里最淡的(622 / §3.8)⇒ --ink-soft(此前 --ink-faint 亮档约 2.3:1)。 */
+      .sidebar nav .board-nav .bn-add { font-family: var(--font-sans); font-size: var(--fs-12); color: var(--ink-soft); }
       .sidebar nav .board-nav .bn-holding {
         font-family: var(--font-sans);
         font-size: var(--fs-12);

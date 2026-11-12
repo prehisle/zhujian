@@ -152,14 +152,17 @@ function lineOf(v: string, off: number): number {
 }
 /** 页面上「看得见」的那一截(视口坐标):上沿 = 吸顶顶栏,以及吸在它下面的页头那排(`.doc-head`,键盘起着时不吸);
  *  下沿 = 视口底(键盘起着时原生侧已把视口缩到键盘上沿),底栏现身时再让开它。 */
-function visibleBand(): { top: number; bottom: number } {
+function visibleBand(scrolled = false): { top: number; bottom: number } {
   // 顶栏不吸的那一形(手机横放打着长文,165 / W5 A26:index.html `body.doc-editing` 那组)它跟着正文滚走,上沿从 0 算。
   const bar = document.querySelector<HTMLElement>("body > header");
   let top = bar !== null && getComputedStyle(bar).position !== "sticky" ? 0 : parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--head-h")) || 0;
   const head = root().querySelector<HTMLElement>(".doc-head");
   if (head !== null && getComputedStyle(head).position === "sticky") {
     const r = head.getBoundingClientRect();
-    if (r.top <= top + 1) top = Math.max(top, r.bottom);
+    // `scrolled` = 调用方马上要把页面滚下去(刚打开时「摆到顶」那一支):页头此刻还在它原来的位置、没吸住,滚完它就吸上来盖住
+    // 光标那一行 ⇒ 按「已经吸住」算(900 / 应用评审二轮 M5:键盘起着页头也吸之后,从「记一笔」点「长文」进来没有下一次 resize 来补摆)。
+    if (scrolled) top += r.height;
+    else if (r.top <= top + 1) top = Math.max(top, r.bottom);
   }
   let bottom = window.innerHeight;
   const nav = document.getElementById("bottombar");
@@ -1135,7 +1138,7 @@ function openEditor(d: IdeaItem | null, seed: string | null, carried: File[], at
       // 「← 回到正文 / 保存」那排滚到顶栏后面、屏上只有写字框和键盘)。
       const kb = document.documentElement.classList.contains("kb-up");
       if (kb ? fitsAtTop : top + window.scrollY + h < window.innerHeight * 0.5) window.scrollTo(0, 0);
-      else window.scrollBy(0, top - band.top - pad);
+      else window.scrollBy(0, top - visibleBand(true).top - pad);
       return;
     }
     // 视口变了(键盘起落、转屏)之后:光标回到页顶也露得出来,就回页顶(165 / W5 A24 / A25:收键盘那一下页头两排重新吸顶,

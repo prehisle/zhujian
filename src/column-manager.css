@@ -60,7 +60,9 @@
   font-family: var(--font-sans);
   font-size: var(--fs-12);
   line-height: 1.6;
-  color: var(--ink-faint);
+  /* 900 C10:这句是这一面唯一的说明(列怎么改、完成列是什么)⇒ --ink-soft(622 的判据:同屏别处拿不到的升一档;
+     此前 --ink-faint 亮档约 2.3:1)。 */
+  color: var(--ink-soft);
 }
 
 /* 闸关着那条横幅:两句分行(第一句是 core 出的原文,第二句是本端补的那句人话)。 */
@@ -126,7 +128,9 @@
   flex: none;
   font-family: var(--font-sans);
   font-size: var(--fs-12);
-  color: var(--ink-faint);
+  /* 900 C10:「N 条」在这一面里同屏拿不到(看板压在遮罩后面),而它正是「这一列删不删得了」的依据 ⇒ --ink-soft。
+     ⚠ 与看板列头 `.col-count` 不同族:那枚数的是紧挨着的那堆卡,622 拍了留淡。 */
+  color: var(--ink-soft);
 }
 .bcm-col-acts {
   flex: none;
@@ -260,6 +264,12 @@
   padding: 3px 11px;
   cursor: pointer;
   white-space: nowrap;
+  /* 900 C4:这一行的 pill 写的是列名(用户起的)。此前一枚长列名把面板内容撑到比面板宽(实测 526 对 408),
+     面板 `overflow-y:auto` 连带把 x 轴算成 auto ⇒ 底下长出一条横向滚动条。封顶到行宽、名字省略(完整名字在 title)。
+     包含块 `.bcm-role-pills` 是 flex:1 + min-width:0 的定宽格,百分比不循环。 */
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .bcm-pill:hover { color: var(--ink); border-color: var(--seal-line); }
 .bcm-pill.on { color: var(--seal-ink-on-seal-tint); background: var(--seal-tint); border-color: var(--seal-line); cursor: default; }

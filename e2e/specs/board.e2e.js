@@ -1195,7 +1195,13 @@ describe("任务看板 · 顶栏恒一行,逐档只让该让的", () => {
     await browser.pause(250);
     const fit = await browser.execute(() => Number(document.querySelector(".v-board header").dataset.fit));
     const h = await readHeader();
-    expect(fit).toBeGreaterThanOrEqual(3); // ⇒ 字母态
+    // ⚠ 「窗 900 ⇒ 字母态」不是规矩,是 WebView2 字宽下的读数:898 把两枚钮收进「⋯」之后页头窄了,
+    //    WebKitGTK 的字宽下 900 已经放得下第 2 档(公开 CI 那趟收到 fit=2,900)—— 产品没坏,
+    //    `fitHeader` 本来就按「放不放得下」挑档。⇒ 没进字母态的引擎上只核「名字还在」,字母态那几句留给进了的。
+    if (fit < 3) {
+      expect(h.trashText).toContain("回收站");
+      return;
+    }
     expect(h.trashText).not.toContain("回收站");
     // 此前这一档键帽 G / R 回来当记号,屏上读作「3 G」「0 R」(WD-29)⇒ 现在是图标,键帽让位。
     expect(h.kbdShown).toBe(false);

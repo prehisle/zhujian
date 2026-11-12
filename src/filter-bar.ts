@@ -179,7 +179,17 @@ export function renderFilterPills(
     const nEl = document.createElement("span");
     nEl.className = "tf-n";
     nEl.textContent = String(n);
-    b.append(document.createTextNode(label), nEl);
+    // 900 C6:名字单独一格(同安卓 `.flabel`)—— 超长标签名按行宽省略,计数照旧露在右端;此前整枚 nowrap 不能缩,
+    // 窄窗口里被窗口边切掉。被省略时完整名字进 title(悬停那一刻量,窗口改过宽也准)。
+    const l = document.createElement("span");
+    l.className = "flabel";
+    l.textContent = label;
+    b.append(l, nEl);
+    b.addEventListener("mouseenter", () => {
+      const hint = b.dataset.topicId ? t("filter.pillTitle") : "";
+      b.title = l.scrollWidth > l.clientWidth ? (hint ? `${label}
+${hint}` : label) : hint;
+    });
     b.onclick = (e) => {
       // 桌面交互:平时**单击 = 只筛这一个标签**(替换选集,再点它自己 = 取消回「所有」);
       // 按住 **Ctrl/⌘ 单击 = 多选**(把标签切进/切出 OR 并集)。「所有」= 清空选集(回到
@@ -331,7 +341,14 @@ export function renderKindPills(
   const pill = (key: string, label: string, n?: number) => {
     const b = document.createElement("button");
     b.className = `tf-pill kind-pill${f.kind === key ? " active" : ""}`;
-    b.append(document.createTextNode(label));
+    // 类型名也是用户起的 ⇒ 同标签 pill:名字单独一格、超宽省略,完整名字进 title(900 C6)。
+    const l = document.createElement("span");
+    l.className = "flabel";
+    l.textContent = label;
+    b.append(l);
+    b.addEventListener("mouseenter", () => {
+      b.title = l.scrollWidth > l.clientWidth ? label : "";
+    });
     if (n !== undefined) {
       const nEl = document.createElement("span");
       nEl.className = "tf-n";

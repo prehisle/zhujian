@@ -181,6 +181,16 @@ window.addEventListener(
 win.onResized(() => void syncMaxGlyph());
 void syncMaxGlyph();
 
+// ---- 视口很矮(900 C9)-----------------------------------------------------
+// 界面字号放到 200% 时 CSS 视口只剩 ~350 高,页头 + 筛选条把内容区挤没。这里只挂一个状态类 `vh-short`,
+// 怎么让位全在 controls.css(同名那一节:视图自己能滚、页头吸顶、筛选条跟着内容走)。
+// 走类不走 `@media`:那一节要给吸顶的页头铺纸色底,而对比度门禁不认条件块里的颜色规则。
+// ⛔ 阈值别抬:主窗 minHeight 600,100%–140% 档下 CSS 高度恒 ≥ 428,这个类永远挂不上(正常高度零变化的保证)。
+const shortViewport = window.matchMedia("(max-height: 420px)");
+const applyShortViewport = (): void => void document.body.classList.toggle("vh-short", shortViewport.matches);
+shortViewport.addEventListener("change", applyShortViewport);
+applyShortViewport();
+
 // ---- 侧栏折叠(小按钮 + Ctrl+B)---------------------------------------------
 // 设备本地 UI 状态,和 last-view 一样走 localStorage、绝不进 DB/同步。折叠把侧栏收成
 // 细条、只藏 brand/nav/同步,留一个 » 作展开入口。双击 brand 刻意不接管(那是拖拽区
@@ -877,10 +887,17 @@ function spaceResetRow(configured: boolean, gone: boolean): HTMLElement {
       : configured
         ? t("notebook.resetWarnSynced")
         : t("notebook.resetWarnLocalOnly");
+    // 900 C1:两枚钮此前没挂类 ⇒ 浏览器原生灰钮。走全应用的 .hbtn;真正执行的那一下是实心朱砂
+    // (§3.2「红色只给真正执行的那一下」,同设备名单的「确认移除」)。
     const ok = document.createElement("button");
+    ok.className = "hbtn space-danger";
     ok.textContent = t("notebook.resetConfirm");
     const cancel = document.createElement("button");
+    cancel.className = "hbtn";
     cancel.textContent = t("notebook.cancel");
+    const acts = document.createElement("div");
+    acts.className = "space-form-acts";
+    acts.append(ok, cancel);
     const err = document.createElement("div");
     err.className = "space-err";
     let busy = false;
@@ -908,8 +925,7 @@ function spaceResetRow(configured: boolean, gone: boolean): HTMLElement {
     });
     cancel.addEventListener("click", () => closeSpaceMenu(true));
     form.appendChild(warn);
-    form.appendChild(ok);
-    form.appendChild(cancel);
+    form.appendChild(acts);
     form.appendChild(err);
     row.replaceWith(form);
     // W5 Q3 ★①:确认一出来焦点停【取消】(删的是整本的数据 —— 回车不做这件事,要做 Tab 回到红钮)。

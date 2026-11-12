@@ -163,6 +163,7 @@ export const main = defineMessages({
   "main.aboutSite": { zh: "官网", en: "Website" },
   "main.aboutSource": { zh: "源码", en: "Source code" },
   "main.aboutChangelog": { zh: "更新日志", en: "Changelog" },
+  "main.aboutGuide": { zh: "用户指南", en: "User guide" },
   "main.aboutFailed": { zh: "读版本失败:{error}", en: "Could not read the version: {error}" },
   "main.updateFound": { zh: "有新版 v{version}", en: "New version v{version}" },
   // 161 / W4 Q10(WM-31):「关于」里手动查一次。有新版走启动时那条提示(#update),没有就说一句。

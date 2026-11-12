@@ -20,7 +20,7 @@ export const topics = defineMessages({
   // 改名(514):点名字进编辑态。⛔ 键空间与桌面独立(两份字典),别去和 src/locales 对齐。
   "topics.renameHint": { zh: "点一下改名", en: "Tap to rename" },
   "topics.renamePh": { zh: "标签名", en: "Tag name" },
-  "topics.renameSave": { zh: "存", en: "Save" },
+  "topics.renameSave": { zh: "保存", en: "Save" },
   "topics.renameCancel": { zh: "取消", en: "Cancel" },
   "topics.renamed": { zh: "已改名", en: "Renamed" },
   // 159(W3 A13):新建 / 改名空着点「建」「存」,框下红字说一声(同桌面那句)。

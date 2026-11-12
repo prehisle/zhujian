@@ -2831,7 +2831,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
           ? t("board.sealedStatsOnBoard", { n: doneOnBoard.length, col: anyColName(doneHomes[0])! })
           : t("boards.sealedStatsOnBoards", { n: doneOnBoard.length });
     const stats = t("board.sealedStats", { week, total });
-    const bar = el("div", { className: "trash-bar" }, [el("span", { className: "grow", textContent: stats + onBoardNote })]);
+    const bar = el("div", { className: "trash-bar sealed-stats" }, [el("span", { className: "grow", textContent: stats + onBoardNote })]);
     const list = el("div", { className: "trash-list" });
     let lastDay = "";
     for (const t of items) {

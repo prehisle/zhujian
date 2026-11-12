@@ -96,7 +96,8 @@
   font: inherit;
   font-size: var(--fs-12);
   letter-spacing: 0.03em;
-  color: var(--ink-faint);
+  /* 900 C10:能点的入口不该是屏上最淡的(622 给未选中 tab 升档的同一条依据,§3.8)⇒ --ink-soft,同 .hbtn 静息。 */
+  color: var(--ink-soft);
   background: transparent;
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-pill);
@@ -492,7 +493,10 @@
 }
 /* 色板:一排印着**数字键**的色点 + 无色。那个数字不是装饰 —— 1-7/0 八枚 Act 是 hidden 的
    (不进 ⋯ 菜单),色板是它们唯一的发现入口。 */
-.v-board .card-color-row { display: inline-flex; align-items: center; gap: 5px; }
+/* 900 C5:一排挤不下时整枚换行、别让「无色」在自己内部折成上下两行(ui-guidelines 510 那条:给这一行 flex-wrap,
+   一条声明就够 —— 先断行再谈收缩,钮到不了「缩到要折字」那一步;⛔ 不另给色点写 flex:none,有 wrap 之后它变不红)。
+   默认列宽下八枚恰好比卡内宽多一点,此前被压的正是「无色」那一枚。 */
+.v-board .card-color-row { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 5px; }
 /* ⚠ 色点上那个数字**是键名、要读的**,不是 ▸▾× 那类当图标的字形 ⇒ 按 ui-guidelines §2.2
    第一条必须 ≥12px,⛔ 不许往 check-fs-drift 的 ALLOW 里签字(那张表只放行「要看的」)。
    ⭐ 那道闸的头注点名的原型正是 topics 那枚色板:17px 圆钮里用 9px 写「无」,342 已抬到 12px
@@ -672,6 +676,9 @@
   color: var(--ink-faint);
 }
 .v-board .trash-bar .grow { flex: 1; }
+/* 900 C10:归档册顶上那行「本周完成 N · 累计 N(含…还没归档的 N 张)」—— 这几个数同屏别处拿不到(下面只列册子里的)
+   ⇒ --ink-soft(622 的判据)。回收站那行「N 张已删除的卡片」数的是紧挨着的那堆,照 622 留淡,不跟着升。 */
+.v-board .trash-bar.sealed-stats { color: var(--ink-soft); }
 
 /* 一张卡都没有的看板:列照常画出,第一列的列体里一句「怎么开始」(W3 159 / Q12,WD-40)。 */
 .v-board .col-empty {
@@ -829,7 +836,34 @@
   cursor: pointer;
   user-select: none;
 }
-.v-board .dont-ask input { cursor: pointer; margin: 0; }
+/* 900 C3:此前是浏览器原生的白方框(暗档里尤其扎眼)。画成正文待办方框 `.ckbox` 那一形(item-images.css):
+   方的、--line-strong 描边、勾上 = 朱砂底 + ✓。仍是真 checkbox(键盘 Space、label 点击、.checked 都照旧)。 */
+.v-board .dont-ask input {
+  appearance: none;
+  flex: none;
+  position: relative;
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  border: 1.5px solid var(--line-strong);
+  border-radius: var(--radius-xs);
+  background: transparent;
+  cursor: pointer;
+}
+.v-board .dont-ask input:hover { border-color: var(--seal); }
+.v-board .dont-ask input:checked { background: var(--seal); border-color: var(--seal); }
+.v-board .dont-ask input:checked::after {
+  /* 勾用两条边画(不走字形:这一格只有 11px 见方,字形要 <12px,过不了字号阶)。 */
+  content: "";
+  position: absolute;
+  left: 3.5px;
+  top: 0.5px;
+  width: 3px;
+  height: 7px;
+  border: solid var(--on-seal);
+  border-width: 0 1.5px 1.5px 0;
+  transform: rotate(45deg);
+}
 
 /* ---- 卡级操作失败横幅(ui-audit P0 #6:非破坏,不替换看板) ---- */
 .v-board .op-err {

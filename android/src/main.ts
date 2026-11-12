@@ -2160,9 +2160,11 @@ async function save() {
       if (card) {
         // 158 G2(W2 走查 A16 / WM-19):滚到中段新建,保存后被拉回顶部、读到哪儿全丢 ⇒ 不再强拉。
         // 新卡就在屏上 = 闪一下;不在屏上 = 回执带「去看看」,点了才过去(同 157 P3 转待办那枚)。
-        const r = card.getBoundingClientRect();
-        // 889:看板上列自己滚 / 看板横滚,卡可能在本列滚走的那截或屏外那列里 —— 那时只认 taskmove 那把带列框的尺子。
-        if (boardShown() ? inView(card) : r.bottom > 0 && r.top < window.innerHeight) {
+        // 889:看板上列自己滚 / 看板横滚,卡可能在本列滚走的那截或屏外那列里 —— 只认 taskmove 那把带列框的尺子。
+        // 900(应用评审二轮 M1):随记面也认同一把尺子。此前这一支拿整个视口量(`bottom > 0 && top < innerHeight`),
+        // 而顶栏 + 筛选条吸在上面、底栏盖在下面 ⇒ 列表只滚了一两屏的边上,新卡压在吸顶条底下也算「在屏上」,
+        // 那记脉冲闪在看不见的地方、回执又不出 = 记下之后什么信号都没有。⛔ 不强拉回顶(158 G2 拍的)。
+        if (inView(card)) {
           // 165 / W5 Q15:多栏(随记分栏 / 看板)上新记一条、其余每张都换一栏,1.2 s 那记脉冲还没找到它就过完了 ⇒ 描边常亮约 3 s 再淡
           // (index.html `.flash-hold`,与搜索落点框同长)。一栏(手机竖放)照旧那一记:新卡就在最上面,一眼看得见。
           const hold = noteCols > 1 || boardShown();
@@ -2433,7 +2435,9 @@ async function reconcileForeground() {
   }
 }
 
-async function switchSpace(id: string) {
+/** `announce = false` 只给启动时那次「回到上次的空间」用(900 / 应用评审二轮 M7):那不是用户切的 —— 设置里换语言会重载页面,
+ *  重载完这儿把人送回原来的空间,却冒一句「已切换到 …」;冷启动落在非默认空间时同一句。用户自己切(含新建后自动切、深链定位)照旧说。 */
+async function switchSpace(id: string, announce = true) {
   showChrome(); // 换空间:顶栏露着(890)
   if (switching || captureSaving || id === getCurrentSpace()) return;
   if (cardPanel.hasDirtyDraft()) {
@@ -2453,7 +2457,7 @@ async function switchSpace(id: string) {
     // 159 / W3 Q6(WM-17):切过去说一声(此前只有新建空间说话;同桌面 notebook.switchedTo)。
     // 新建空间那条路随后会用「空间已创建」顶掉这一句(同一条通道,后来的赢)。
     const now = spacesCache.find((s) => s.id === id);
-    if (getCurrentSpace() === id && now) showBar(t("main.switchedTo", { name: spaceLabel(now) }), true);
+    if (announce && getCurrentSpace() === id && now) showBar(t("main.switchedTo", { name: spaceLabel(now) }), true);
   } catch (err) {
     showErr(err);
     await reconcileForeground(); // 失败已回滚(§9):对账回真前台。
@@ -3878,7 +3882,7 @@ $("diag-copy").addEventListener("click", () => {
 // 的 versionName 一模一样 ⇒ 版本号那一行答不出「你手上那只是哪棵树」。为什么要有它、
 // 脏是怎么判的,全在 `scripts/lib/build-stamp.mjs` 顶注。
 //
-// 官网 / 源码 / 更新日志三行(用户 2026-09-25 拍板,桌面那半同文案):官网与更新日志从渠道接缝的
+// 官网 / 源码 / 更新日志 / 用户指南四行(前三行用户 2026-09-25 拍板,桌面那半同文案;第四行见 loadAbout 里那条):官网与更新日志从渠道接缝的
 // `SITE_URL` 拼(国内渠道是 zhujian.cool,⛔ 别写死);源码仓两个渠道同一个。值格摆的是**地址本身**
 // —— 交不出浏览器的端(`HAS_BROWSER=false`;今天没有这样的端,鸿蒙 W5 A54 起经壳桥也交得出)上它就是纯文字,用户照抄也能到。
 // ⛔ 别把构建身份戳链到 GitHub 提交:那串 sha 是私有工作仓的,公开仓是白名单导出快照、sha 不同,链过去 404。
@@ -3901,7 +3905,10 @@ async function loadAbout() {
       `${esc(b.dirty ? t("main.aboutBuildDirty", { stamp }) : stamp)}</span>` +
       aboutLinkRow(t("main.aboutSite"), SITE_URL) +
       aboutLinkRow(t("main.aboutSource"), SOURCE_URL) +
-      aboutLinkRow(t("main.aboutChangelog"), `${SITE_URL}/changelog.html`);
+      aboutLinkRow(t("main.aboutChangelog"), `${SITE_URL}/changelog.html`) +
+      // 900(应用评审二轮 M11):用户指南(文档中心 `/docs/`,两个站都有)。同桌面 about.ts `GUIDE_URL` 的做法:
+      // 从渠道接缝的 `SITE_URL` 拼,国内包去 zhujian.cool、境外包去 zhujian.app,⛔ 别写死域名。
+      aboutLinkRow(t("main.aboutGuide"), `${SITE_URL}/docs/`);
     // 裸 href 会把 WebView 自己导走 —— 一律交给系统浏览器(同更新条「下载」那条路)。
     box.querySelectorAll<HTMLAnchorElement>("a.about-link").forEach((a) =>
       a.addEventListener("click", (e) => {
@@ -4418,7 +4425,7 @@ async function init() {
   const last = localStorage.getItem(LAST_SPACE_KEY);
   if (last && last !== getCurrentSpace()) {
     if (spacesCache.some((s) => s.id === last)) {
-      await switchSpace(last);
+      await switchSpace(last, false);
     } else {
       localStorage.removeItem(LAST_SPACE_KEY);
     }

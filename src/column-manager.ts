@@ -53,15 +53,21 @@ let overlay: HTMLDivElement | null = null;
 let onChanged: (() => void) | null = null;
 /** 管的是哪块看板(0043)。面板关掉即摘。 */
 let boardId: string | null = null;
+/** 打开这一面时焦点所在的那一枚(看板页头「⋯」/ 侧栏那一行):关掉时还给它(900 C8;ui-guidelines §3.5
+ *  「关完焦点还给打开它的那枚」—— 此前关掉后焦点掉到 body,键盘用户得从头 Tab 回来)。 */
+let opener: HTMLElement | null = null;
 
 /**
  * 打开列管理面。`opts.onChanged` 在**每一笔写成功之后**调用(看板在背后跟着重画),
  * ⛔ 不是只在关闭时调一次:面板开着的时候看板就该已经是新的了。
  */
-export function openColumnManager(opts: { boardId: string; onChanged: () => void }): void {
+export function openColumnManager(opts: { boardId: string; onChanged: () => void; opener?: HTMLElement | null }): void {
   if (overlay) return;
   onChanged = opts.onChanged;
   boardId = opts.boardId;
+  // `opts.opener`:从「新建看板」取消回来重开的那一次,焦点此刻在 body 上 —— 由调用方把最初那一枚带回来。
+  const a = document.activeElement;
+  opener = opts.opener !== undefined ? opts.opener : a instanceof HTMLElement && a !== document.body ? a : null;
   overlay = el("div", { className: "bcm-overlay" });
   overlay.addEventListener("mousedown", (e) => {
     if (e.target === overlay) closeColumnManager();
@@ -84,8 +90,13 @@ export function openColumnManager(opts: { boardId: string; onChanged: () => void
  * (memory `module-state-hoisting-checklist` 那五坑)。
  */
 export function closeColumnManager(): void {
+  const was = overlay;
+  const back = opener;
+  opener = null;
   overlay?.remove();
   overlay = null;
+  // 焦点还给打开它的那一枚(还在文档里才还;看板 unmount 那条路上它多半已经不在了)。面板本来就没开着 = 不动焦点。
+  if (was && back?.isConnected) back.focus({ preventScroll: true });
   onChanged = null;
   boardId = null;
   // ⛔ 别漏这一句:`draggingId` 是模块态,留着旧值的话下一次开面板时,任何一次
@@ -498,8 +509,9 @@ async function render(panel: HTMLElement, refocus: Refocus = "keep"): Promise<vo
       const cb = onChanged;
       if (cb === null) throw new Error("column manager is open without onChanged"); // openColumnManager 恒给,缺了是 bug
       const id = board.id;
+      const back = opener; // 最初打开这一面的那一枚:closeColumnManager 把焦点还给它,「新建看板」于是记它为自己的 opener
       closeColumnManager();
-      openNewBoard(undefined, () => openColumnManager({ boardId: id, onChanged: cb }));
+      openNewBoard(undefined, () => openColumnManager({ boardId: id, onChanged: cb, opener: back }));
     });
     sec.append(el("div", { className: "bcm-board-del" }, [another]));
     return sec;
@@ -513,6 +525,10 @@ async function render(panel: HTMLElement, refocus: Refocus = "keep"): Promise<vo
   function pill(label: string, on: boolean, run: () => void): HTMLElement {
     const b = el("button", { className: on ? "bcm-pill on" : "bcm-pill", type: "button", textContent: label });
     b.setAttribute("aria-pressed", String(on));
+    // 900 C4:列名是用户起的、可以任意长 ⇒ 这枚封顶到行宽、省略(column-manager.css `.bcm-pill`);被省略时完整名字进 title。
+    b.addEventListener("mouseenter", () => {
+      b.title = b.scrollWidth > b.clientWidth ? label : "";
+    });
     b.addEventListener("click", (e) => {
       e.stopPropagation();
       if (!on) run();

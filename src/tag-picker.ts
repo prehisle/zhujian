@@ -126,6 +126,9 @@ export function renderTagPicker(container: HTMLElement, opts: TagPickerOpts): vo
       nodes.push(el("span", { className: "topic-hint", textContent: t("tagPicker.first") }));
     }
     choices.replaceChildren(...nodes);
+    // 900 C7:候选一变(打开 / 打字 / 挂摘之后)就把整块滚进可视区 —— 此前只有搜索框靠 focus() 自己滚进来,
+    // 贴着视口下沿的那张卡按 L,框压底、候选全在屏外(随记页最明显;看板列尾同形)。已在屏内时是空操作。
+    container.scrollIntoView({ block: "nearest" });
   }
 
   search.addEventListener("input", renderChoices);

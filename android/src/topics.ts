@@ -181,7 +181,7 @@ function render(): void {
         <span class="tn-edit">
           <input class="tn-input" value="${esc(nameDraft)}" placeholder="${t("topics.newPh")}"
                  autocapitalize="off" autocomplete="off" />${errLine()}
-          <button data-create-save="1">${t("topics.newSave")}</button>
+          <button data-create-save="1" class="tn-save">${t("topics.newSave")}</button>
           <button data-create-cancel="1" class="ghost">${t("topics.newCancel")}</button>
         </span>
       </article>`
@@ -239,7 +239,7 @@ function rowHtml(tp: TopicTreeItem, label: string, kidCount: number): string {
           <span class="tn-edit">
             <input class="tn-input" value="${esc(nameDraft)}" placeholder="${t("topics.renamePh")}"
                    autocapitalize="off" autocomplete="off" />${errLine()}
-            <button data-rename-save="${esc(tp.id)}">${t("topics.renameSave")}</button>
+            <button data-rename-save="${esc(tp.id)}" class="tn-save">${t("topics.renameSave")}</button>
             <button data-rename-cancel="1" class="ghost">${t("topics.renameCancel")}</button>
             <button data-del="${esc(tp.id)}" class="tn-del">${t("topics.deleteBtn")}</button>
             ${kindEntry}
@@ -282,7 +282,7 @@ function rowHtml(tp: TopicTreeItem, label: string, kidCount: number): string {
           <span class="tk-edit">
             <input class="tk-input" value="${esc(tp.kind ?? "")}" placeholder="${t("topics.kindPh")}"
                    autocapitalize="off" autocomplete="off" maxlength="40" />
-            <button data-kind-save="${esc(tp.id)}">${t("topics.kindSave")}</button>
+            <button data-kind-save="${esc(tp.id)}" class="tn-save">${t("topics.kindSave")}</button>
             <button data-kind-clear="${esc(tp.id)}" class="ghost">${t("topics.kindClear")}</button>
           </span>
           <p class="tk-hint">${t("topics.kindHint")}</p>

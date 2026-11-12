@@ -79,7 +79,7 @@ export const shell = defineMessages({
   "shell.size90": { zh: "小", en: "Small" },
   "shell.size100": { zh: "标准", en: "Default" },
   "shell.size115": { zh: "大", en: "Large" },
-  "shell.size130": { zh: "特大", en: "Extra large" },
+  "shell.size130": { zh: "特大", en: "Largest" },
   "shell.textSizeNote": { zh: "在系统字号的基础上叠加。只影响这台设备。", en: "Applied on top of the system font size. This device only." },
   "shell.aliasTitle": { zh: "本机别名", en: "Device alias" },
   "shell.aliasUnnamed": { zh: "未命名", en: "Unnamed" },

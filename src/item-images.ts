@@ -523,6 +523,12 @@ export function imageStrip(
       });
     img.addEventListener("click", (e) => {
       e.stopPropagation();
+      // 900 C8:小图不是能停焦点的东西,点它那一下焦点掉到 body ⇒ 看完大图(Esc)回来键盘无处可接。开图前把焦点
+      // 放到这张卡的 ⋯ 上(「选中 = 焦点」:看的就是这张卡的图),关图后窗口把焦点还回来时它还在那儿。
+      // 编辑态的图条不管(那时人在写字框里,⋯ 也不在)。
+      if (!opts.editable && document.activeElement === document.body) {
+        wrap.closest(".hk-host")?.querySelector<HTMLElement>(".hk-btn")?.focus({ preventScroll: true });
+      }
       void openLightbox(all, all.indexOf(m));
     });
     wrap.append(img, el("span", { className: "img-badge", textContent: t("itemImages.badge", { n: m.seq }) }));

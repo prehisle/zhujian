@@ -83,11 +83,12 @@ async function main() {
   const rows = await ev(`[...document.querySelectorAll("#about a.about-link")].map((a) => { const cs = getComputedStyle(a); return { text: a.textContent, href: a.getAttribute("href"), td: cs.textDecorationLine, cur: cs.cursor }; })`);
   const hrefs = rows.map((r) => r.href);
   step(
-    "S1 A54「关于」里官网 / 源码 / 更新日志三行是可点的链接",
-    rows.length === 3 &&
+    "S1 A54「关于」里官网 / 源码 / 更新日志 / 用户指南四行是可点的链接",
+    rows.length === 4 &&
       /^https:\/\/zhujian\.(cool|app)$/.test(hrefs[0]) &&
       hrefs[1] === "https://github.com/prehisle/zhujian" &&
       hrefs[2] === `${hrefs[0]}/changelog.html` &&
+      hrefs[3] === `${hrefs[0]}/docs/` && // 应用评审二轮 M11:第四行「用户指南」(本改动只在安卓真机验过,鸿蒙这一格待复跑)
       rows.every((r) => r.td.includes("underline") && r.cur === "pointer"),
     rows,
   );
@@ -101,7 +102,7 @@ async function main() {
     // S2 —— 真点三行
     const href0 = await ev("location.href");
     const got = [];
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < 4; i++) {
       const c = await center(`#about a.about-link:nth-of-type(${i + 1})`);
       if (!c) return { error: `找不到「关于」第 ${i + 1} 行链接` };
       const n0 = await ev("window.__zjO1Got.length");
@@ -110,7 +111,7 @@ async function main() {
       got.push(await ev(`window.__zjO1Got.slice(${n0})`));
     }
     step(
-      "S2 A54 真点三行:每点一下桥恰收到一发、就是那一行的地址",
+      "S2 A54 真点四行:每点一下桥恰收到一发、就是那一行的地址",
       got.every((g, i) => g.length === 1 && g[0] === hrefs[i]),
       got,
     );

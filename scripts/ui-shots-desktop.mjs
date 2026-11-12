@@ -300,6 +300,8 @@ async function shootNotebook(cdp, page, lang, theme, file) {
       await cdp.evaluate(`(() => { document.querySelector("#hkb-banner .hkb-x").click(); return true; })()`);
       await cdp.waitFor(`document.getElementById("hkb-banner").hidden === true`, "随记页热键冲突条收起", 5000);
       process.stdout.write(`(热键 ${conflicts.join("/")} 被别的程序占着,随记页冲突条已收起) `);
+      // 收条会让列表重画一发、卡片重走入场动画;紧接着截 = 截在半透明的中途(应用评审二轮 C 组归因:关掉这段卡片就是实的)。
+      await cdp.waitFor(`document.getAnimations().every((a) => a.playState !== "running")`, "收条后的入场动画放完", 5000);
     }
   }
   if (page.query && !empty) {

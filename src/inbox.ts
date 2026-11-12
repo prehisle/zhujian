@@ -735,6 +735,10 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       // 筛空时还得亮「筛空」空态而不是留白——离场动画完成后走整列重渲对齐一切。
       // 回收站没有筛选条,保留原轻路径(动画离场即完)。
       if (from === "ideas") {
+        // 900 C8:离场的是屏上最后一张(没有相邻的卡可接焦点,hk.leave 接不到人)且焦点已掉到 body ⇒ 落到记一笔框,
+        // 别让键盘用户停在一个什么都不是的地方。还有别的卡时不动:选中与焦点照「选中 = 焦点」三条由 hk 接到后一张。
+        const a = document.activeElement;
+        if ((a === null || a === document.body) && list.querySelector(".note") === null) composeFocusWanted = true;
         void refresh();
         return;
       }
@@ -1148,7 +1152,9 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
         area.focus();
         for (const f of files) void attachBlob(item.id, f).then(afterAttach).catch(onImgErr);
       });
-      const addImgBtn = el("button", { className: "act ghost add-img", type: "button", textContent: t("inbox.addImage"), onclick: () => filePick.click() });
+      // 900 C2:此前挂的是 `act ghost`,而 `.act` 只写在 `.v-board` 底下 ⇒ 随记里这枚没有任何样式、显成浏览器原生灰钮
+      // (controls.css `.fold-toggle` 那条注释里修过的同一族)。走全应用的 .hbtn,同长文那枚「＋加图」。
+      const addImgBtn = el("button", { className: "hbtn add-img", type: "button", textContent: t("inbox.addImage"), onclick: () => filePick.click() });
       addImgBtn.addEventListener("mousedown", (e) => e.preventDefault());
       imgEditor.append(strip.root, addImgBtn, filePick, imgErr);
 

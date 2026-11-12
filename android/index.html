@@ -271,6 +271,10 @@
       }
       header h1 .seal.totop::after { opacity: 0.45; }
       .head-acts { flex: none; display: flex; align-items: center; }
+      /* 900(应用评审二轮 M6 ①):英文档四枚导航词比中文宽出一截(203 对 164),360 宽上空间徽章只剩 58、四个字的空间名
+         缩成两个字加省略号。英文档每枚左右各收 2px(6 → 4),省下的 16 全归徽章(四个汉字的名字正好放得下)。
+         词与词之间仍隔 8,触区照旧(那层 halo 本来就不横向外扩,四枚一向是首尾相接的)。中文档不动。 */
+      :root:lang(en) .head-acts .ghost { padding-inline: 4px; }
       /* 顶栏四枚一律是词(ui-consistency M11):此前「设置」是一枚齿轮图标、另三枚是词,
          同一排两种语汇;这一端的导航全是词(底栏四枚也是),孤例归队。⚠ 换成词多占 8px
          (130% 字号档 15px),360 宽 + 四字空间名下徽章仍有 5px 余量不省略;更长的名字
@@ -355,7 +359,14 @@
         flex: 0 1 auto; min-width: 0;
         overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
         vertical-align: 2px; margin-left: 8px;
+        /* 900(应用评审二轮 M3):触区。同排四枚 `.ghost` 都带一层 44 定高 halo,唯独它没有(实高 20)。
+           ⚠ 它不能照抄 `.ghost::before` 就完事:省略号要 `overflow` 非 visible,而 `hidden` 会把探出盒外的 halo
+           裁掉(屏上看不出,`elementFromPoint` 才判得到,514)。⇒ `clip` + `overflow-clip-margin`:裁剪框往外放 14px(从内边距盒算起,边框那 1px 不算在内 ⇒ 12 只够 42),
+           halo 上下各探出的那 12 留得住(下沿到顶栏下沿为止);省略号照旧(它按内容盒截字,不看裁剪框)。不认 `clip` 的老引擎停在上一行的
+           `hidden` = 修之前的样子。横向不扩(`left/right: 0`,同那一族的理由)。 */
+        position: relative; overflow: clip; overflow-clip-margin: 14px;
       }
+      .space-chip::before { content: ""; position: absolute; left: 0; right: 0; top: 50%; height: 44px; transform: translateY(-50%); }
 
       /* 空间面板(工序 7/8):列表行 + 新建 + 全部同步。 */
       /* ⛔ **`min-height` 是上面那条 halo 的前提,别当装饰摘掉**(635):行里的 `.act`
@@ -495,7 +506,10 @@
          360px 屏上可用 332px ⇒ **中文档仍装得下,英文档超出 10px,会触发下面那条 wrap**。
          这正是当初补那两条保险的用处:装不下时整枚钮换行,⛔ 而不是让 flex 把按钮压扁、
          文字折成两行(那正是用户面 23/29/61 那一族患的形)。⚠ 中文档这一行一像素没变。 */
-      .compose-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; margin-top: 8px; }
+      /* 900(应用评审二轮 M6 ②):折行时第一行靠左。831 加了第四枚「长文」之后英文档必折成两行,而 `flex-end` 把第一行四枚小钮
+         顶到右边、左边空出一截参差(「记下」那行靠右是它自己的 margin-left:auto,与这条无关)。不折行的中文档一像素不变:
+         那一行的余量本来就全被「记下」的 auto 外边距吃掉,轮不到 justify-content 分。 */
+      .compose-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-start; margin-top: 8px; }
       .compose-row button { white-space: nowrap; }
       /* 主按钮(朱砂实心)。⚠ 出生在捕获层,后被留言层 #cm-send 复用——改它=改两层。 */
       .primary {
@@ -841,7 +855,7 @@
          随记的日期节头只有一段字,flex 对它是空操作。 */
       .timeline .tl-sec { display: flex; align-items: center; gap: 6px; }
       /* 「全部归档」:节头里的文字钮(朱砂小字 = 能点),靠右。触区向上 / 左右撑开(节头上方是筛选条,z 更高、盖得住);
-         向下只撑 4 —— 再多就压到第一张卡的右上角(节头下沿与卡只隔 4px)。 */
+         向下只撑到下一张卡的上沿(数在 `.tl-act::before` 那条头上)—— 再多就压到第一张卡的右上角。 */
       /* 165 / W5 A50(WM-27):朱砂字 → 节头同色加下划线(下划线标它可点)。规范「红色不用于常驻入口」:它常驻在「已完成」节头,
          此前比卡上任何东西都显眼;点了本来就有一道确认,不靠红来提醒。 */
       .tl-act {
@@ -849,7 +863,10 @@
         font: inherit; font-weight: 400; letter-spacing: 0; color: var(--ink-soft);
         text-decoration: underline; text-underline-offset: 2px;
       }
-      .tl-act::before { content: ""; position: absolute; left: -10px; right: -10px; top: -12px; bottom: -4px; }
+      /* 900(应用评审二轮 M10):触区从上 12 / 下 4(实高约 31–35)撑到上 17 / 下 8 = 字高 + 25 ≥ 44。真机量的:节头上沿离上一张卡 8、
+         字离节头上沿 8、离下沿 4、节头离下一张卡 4 ⇒ 两张卡之间一共 43.2。下 8 = 正好贴到下一张卡的上沿、**不压进去**(上面那条
+         「别压到第一张卡」照旧成立);上 17 = 贴到上一张卡的下沿再过 1px(落在它右下圆角的弧外)。⛔ 再往下加就真压卡了。 */
+      .tl-act::before { content: ""; position: absolute; left: -10px; right: -10px; top: -17px; bottom: -8px; }
       /* 随记在宽屏上分栏(tablet-plan 格 1,用户拍「瀑布流 · 横三竖二」):轮流分栏,第 i 张进第 i % n 栏,
          卡在栏里紧挨着往下排 ⇒ 没有「长卡旁边空一大块」(789 那版按行对齐的毛病);点开一张只推它自己那栏。
          `.tl-cols` 只在 main.ts 算出放得下两栏时才画(renderDayGroups)⇒ 手机竖放上它根本不存在,这两条不必进 @media。
@@ -1539,6 +1556,10 @@
       }
       .tk-edit button, .tn-edit button, .tc-edit .tc-cancel { font-size: var(--fs-12); padding: 4px 10px; border-radius: var(--radius-sm); }
       .tk-edit button.ghost, .tn-edit button.ghost, .tc-edit .tc-cancel { background: none; color: var(--ink-soft); border: 1px solid var(--line-strong); }
+      /* 900(应用评审二轮 M2):这一族里的主钮(新建的「建」/ 改名的「保存」/ 类型的「存」)此前**什么类都没挂**,
+         只吃到上面那条字号与内边距 ⇒ 底色、字色、边框全是引擎的原生按钮(灰底黑字 2px outset),与同排三枚药丸不是一家。
+         朱砂实底 = 这一行的主操作(同 `.primary` 的色;尺寸跟同排走,不抄它的 7px 22px)。边框 1px 同色:与同排描边钮等高。 */
+      .tk-edit button.tn-save, .tn-edit button.tn-save { background: var(--seal); color: var(--on-seal); border: 1px solid var(--seal); font-weight: 600; }
       /* 删除(user-44 第三刀):warn ghost 形(同 .panel .acts button.warn 的调)——
          第一拍只是开确认,不该长成实底朱砂;实底那枚在底部确认条的第二拍上。 */
       .tn-edit button.tn-del { background: none; color: var(--seal-ink); border: 1px solid var(--seal-line); }
@@ -1799,6 +1820,11 @@
          (153 走查 A-M06)。键盘起着时不吸:横屏顶栏到键盘只剩 60px,再吸两排就看不见在写的字(docs.ts visibleBand 照这条判)。 */
       .doc-head { position: sticky; top: var(--head-h, 0px); z-index: 3; background: var(--paper); }
       html.kb-up .doc-head { position: static; }
+      /* 900(应用评审二轮 M5):手机竖放打着长文时页头照旧吸着。上面那条「键盘起着不吸」是为横屏立的(顶栏到键盘只剩 60px),
+         横屏那一形后来有了自己的排法(下面 165 那组);竖放键盘起着还剩四百多 px,页头两排占 100,而不吸的代价是写到十几行
+         「保存 / 回到正文 / 预览」全滚出屏、得手动滚回顶才存得了。只认编辑器(`body.doc-editing`):阅读页键盘起着是在填标签,
+         那儿照旧不吸。平板(宽屏 ∧ 高屏)没动。光标别压在吸着的页头底下 = docs.ts::visibleBand 照 computed 的 position 算上沿。 */
+      html.kb-up body.doc-editing:not(.widescreen) .doc-head { position: sticky; }
       /* 手机横放打着长文(宽屏、不是高屏、键盘起着;165 / W5 A26):键盘一起可见区只剩约 130,吸着的顶栏(连状态栏)就占掉 82,
          页头两排又不吸 ⇒ 屏上只露正在打的那一行、「保存」那排在屏外。⇒ 这一形里顶栏不吸(跟着正文滚走),页头只留
          「← 回到正文 / 保存」那一排、吸在屏顶;「编辑 / 预览 / 加图 / 拍照」那排收起(收键盘就回来)。屏上是保存那排 + 两三行字。

@@ -122,6 +122,12 @@ mark.filter-hit {
   gap: 6px;
   transition: background 0.14s, color 0.14s, border-color 0.14s;
 }
+/* 900 C6:超长标签名(用户自己起的,可以任意长)—— 整枚封顶到这一行的宽度,名字那格省略,色点 / 计数 / 折叠箭头不缩。
+   此前整枚 nowrap 不能缩,窄窗口里被窗口边切掉(ui-guidelines「nowrap 元素必须能缩」)。包含块(.topic-filter / .kind-filter)
+   是定宽的 flex 行,百分比封顶不循环。 */
+.tf-pill { max-width: 100%; min-width: 0; }
+.tf-pill .flabel { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.tf-pill .tf-n, .tf-pill .tf-caret { flex: none; }
 .tf-pill:hover { color: var(--ink); border-color: var(--seal-line); }
 .tf-pill.active {
   color: var(--seal-ink-on-seal-tint);

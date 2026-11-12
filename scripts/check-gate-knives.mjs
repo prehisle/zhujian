@@ -346,7 +346,7 @@ const SUITES = {
       { n: "⑭ 安卓壳原文与 zh 字典漂移", expect: "原文与 zh 字典漂移",
         edits: [["android/index.html", /(data-i18n="shell\.navIdeas">)([^<]+)</, "$1$2X<"]] },
       { n: "⑮ 安卓壳中文摘掉 data-i18n(未绑)", expect: "未绑 data-i18n 的中文",
-        edits: [["android/index.html", ' data-i18n="shell.navTasks">任务', ">任务"]] },
+        edits: [["android/index.html", ' data-i18n="shell.navTasks">看板', ">看板"]] },
       { n: "⑯ 两端同名键值漂移(CROSS_END_KEYS)", expect: "两端 zh 值不同",
         edits: [["android/src/locales/filter.ts", '"filter.all": { zh: "所有"', '"filter.all": { zh: "全部"']] },
       { n: "⑰ 两端同名键在一端消失(CROSS_END_KEYS)", expect: "侧不存在",

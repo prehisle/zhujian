@@ -758,7 +758,9 @@
 .keysheet-list kbd {
   font-family: var(--font-sans);
   font-size: var(--fs-12);
-  color: var(--ink-soft);
+  /* 键位表里键帽就是正文:--ink-soft 压自己那层 6% 墨底再叠面板渐变,渲染后只有 4.4–4.49(12px 该 5.0),
+     静态门禁判不了这一格(backlog 174 / progress-log 900)⇒ 走 --ink。 */
+  color: var(--ink);
   background: color-mix(in srgb, var(--ink) 6%, transparent);
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
