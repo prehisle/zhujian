@@ -417,7 +417,9 @@ try {
 // (Tauri 2 在 Windows 上走 `http://ipc.localhost/<命令>`;页里的 `__TAURI_INTERNALS__.invoke` 不可写、包不了),把 `list_boards`
 // 回来的某块看板的 `landing` 改成 null(= core 解析出 ⊥ 时壳给的样子),再让对端动一下触发一轮真刷新。
 // ⚠ 只改**读**到的那一格,写命令照常走 core;它证的是「前端照 core 给的 ⊥ 怎么画」,⛔ 不证 core 怎么解析出 ⊥。
-// ⚠ 真机(安卓 WebView 走 `ipc://` 自定义协议)上 Fetch 截不截得到没量过 —— 这一段只在截图台(WebView2)上跑过。
+// ⚠ **真机上这几段恒红,是资产边界不是产品红**(894 V1986A 实跑:竖放 51 过 / 15 红、横放 55 过 / 15 红,15 红全是
+//   「等对端改动触发本机刷新超过 20s」及其后 ⑪ ⑫ ㉑ ㉔ ㉕ 那几格)—— 截不到;推断是安卓 IPC 不走 `ipc.localhost`(未单独量)。
+//   ⇒ 这几段只在截图台(WebView2)上作数;真机跑这支时把那 15 格当已知边界,看其余各格。
 // 同一层顺带数 `sealed_counts_by_board` 调了几回(M3:一轮刷新只问一次;第二波起空态问的是它,不再拉整本成就册)。
 async function mbopt() {
   const live2 = (await boards()).filter((b) => !b.deleted);
