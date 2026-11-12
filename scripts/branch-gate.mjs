@@ -771,6 +771,35 @@ function assertMobileBackupOffAndCaptureQuery() {
   );
 }
 
+// ── 手机前端写剪贴板只走平台接缝 `writeClipboard`(doc-slimming 格③第八条:rules/mobile.md 的 ⛔ 换成机制)──
+// 696:`navigator.clipboard.writeText` 在安卓 WebView 上随版本而定 —— Chrome 110 恒拒(带真手势也拒)、151 可用
+// ⇒ 失灵的样子是「点了报复制失败」,在新机器上复现不出来。接缝在两份 `platform.ts`(安卓走插件、鸿蒙走 Web API)。
+// 面 = 手机前端会打进包的三处:`android/src`、`ohos/src`(鸿蒙覆盖层)、`shared/`(两端共用的纯逻辑);只豁免两份 `platform.ts`。
+// ⚠ 诚实边界:①纯文本扫描,先剥注释(几处注释里自己就提到这个名字);②只认 `navigator.clipboard` 这个写法,
+//   换名取别名(`const n = navigator; n.clipboard`)、`document.execCommand("copy")` 不在面内;③桌面 `src/` 不在面内(WebView2 上 Web API 可用)。
+// ⛔ 不是新开门禁(停止扩张线):一个字面量。
+function assertMobileClipboardViaSeam() {
+  const SEAMS = new Set(["android/src/platform.ts", "ohos/src/platform.ts"]);
+  const files = execFileSync("git", ["-C", repoRoot, "ls-files", "--", "android/src", "ohos/src", "shared"], { encoding: "utf8" })
+    .split("\n")
+    .filter((f) => /\.(ts|tsx|js|mjs)$/.test(f) && !SEAMS.has(f));
+  const bad = [];
+  for (const rel of files) {
+    const code = readFileSync(join(repoRoot, rel), "utf8")
+      .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ""))
+      .replace(/(^|\s)\/\/.*$/gm, "$1");
+    code.split("\n").forEach((l, i) => {
+      if (/navigator\s*\.\s*clipboard/.test(l)) bad.push(`    ${rel}:${i + 1}  ${l.trim().slice(0, 80)}`);
+    });
+  }
+  if (!bad.length) return;
+  die(
+    `手机前端绕过平台接缝直接碰了 navigator.clipboard —— ⛔ 不落地:\n${bad.join("\n")}\n` +
+      `  安卓 WebView 上这条 Web API 随版本而定(Chrome 110 恒拒、151 可用,696)⇒ 失灵只在旧机上看得到。\n` +
+      `  ⇒ 改走 platform.ts 的 writeClipboard(两端各一份接缝)。`,
+  );
+}
+
 // ── handoff「手上的债」的形(测试与工装 113 立,698 接上)──────────────────────
 // 8 KB 闸 697 收口时只剩 6 字节余量,而债**一轮一行、只增不减**(销掉才删,那几半的触发门握在
 // 别的机器手里)⇒ 下一个人加一行必撞,还会被迫去压**别人写的**行 = 静默丢判据。
@@ -814,6 +843,7 @@ function runLocalGates() {
   assertAuditStaysOutOfCi();
   assertMacWindowsMatchBase();
   assertMobileBackupOffAndCaptureQuery();
+  assertMobileClipboardViaSeam();
   console.log(`→ 本地十道静态门禁(几秒量级)…`);
   for (const g of LOCAL_GATES) {
     try {

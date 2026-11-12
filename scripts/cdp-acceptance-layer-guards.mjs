@@ -5,8 +5,9 @@
 //  A. **捕获层压返回键守门条目**:真点 ＋(adb tap)→ 键盘起 → 返回收键盘 → 再一记返回**只收层**,
 //     app 仍在前台(改前这一记直接退 app —— 146 那条 `__zhujianHandleBack` 无层可关回 false)。
 //     再开层 → 点遮罩收(UI 那条路,平守门条目)→ 草稿原样在框里。
-//  B. **编辑层返回与点遮罩同规矩**:打一个字 → 返回 → 层**还开着** + 提示条「先保存或取消」
-//     (改前直接丢稿);点「取消」收掉;再开一次不打字 → 返回 → 收层、操作面回主面。
+//  B. **编辑层的丢稿只走「取消」且先问**(157 P1 起的规矩):真打一个字 → 真点「取消」→ 弹「丢掉这次的修改?」、
+//     层还开着、稿还在 → 真点「丢掉」→ 收层;再开一次不打字 → 真按返回 → 收层、操作面回主面。
+//     ⛔ 「改过了按返回 / 点遮罩 = 保存」那半**不在本资产**(会写库、留不可删的历史)—— 守它的是 `walk157-g4`(自种卡、零残留)。
 //  C. **卡整张滚出屏就收面**:开一张卡的操作面 → 滚到它在视口上方 → 面没了、＋ 回来了,
 //     且**屏上内容没跳**(卡在视口上方变矮,由滚动锚定补回 —— 同一张可见卡的 top 前后差 ≤1px)。
 //  D. **移动到别的空间要两拍**(只在 ≥2 个空间时跑,否则如实 SKIPPED):点目标 → 只弹确认条、
@@ -116,7 +117,16 @@ const main = async () => {
     if (!c) throw new Error(`找不到 ${sel}`);
     await adb(["shell", "input", "tap", String(c[0]), String(c[1])]);
   };
-  const barText = () => evalJs(`(()=>{const e=document.getElementById("error");return e.hidden?"":e.textContent})()`);
+  /** 键盘起落时视口在变:连着两次(间隔 250ms)读到同一个高度才算停稳,最多等 3 秒。 */
+  const settleViewport = async () => {
+    let last = -1;
+    for (let i = 0; i < 12; i++) {
+      const h = await evalJs(`visualViewport.height`);
+      if (h === last) return;
+      last = h;
+      await sleep(250);
+    }
+  };
   const clearBar = () => evalJs(`(()=>{const e=document.getElementById("error");e.hidden=true;e.textContent="";return 1})()`);
   /** app 被一记返回退到桌面了(那一格已判红):拉回前台、重连,后面几段照判。 */
   const relaunch = async () => {
@@ -186,18 +196,33 @@ const main = async () => {
   step("B-打进了一个字", await until(`document.getElementById("edit-text").value.endsWith("q")`, 3000));
   await clearBar();
   await dropIme();
-  await back();
-  await sleep(900);
-  if (!step("B-改过了按返回:app 仍在前台", (await focusedPkg()) === PKG)) await relaunch();
-  step("B-改过了按返回:层还开着", await evalJs(editOpen));
-  const bar = await barText();
-  step("B-改过了按返回:提示先保存或取消", /保存|Save/.test(bar), bar);
+  // ⛔ 改过了**别按返回**:157 起那一记 = 保存(写库、留不可删的历史;888 原样跑旧版真写进了测试机一张卡)。
+  const cbOpen = `!document.getElementById("confirmbar").hidden`;
+  await tapSel("#edit-cancel");
+  step("B-改过了点取消:先问丢不丢", await until(cbOpen, 2000), await evalJs(`document.getElementById("confirmbar-q").textContent`));
+  // 点「取消」会把键盘重新拉起(正文框一直握着焦点),确认条随视口往上挪 ⇒ 等视口停稳再量坐标。
+  // 888 实撞:半途量的坐标落在键盘上,「丢掉」没点中、反倒打进一个字母。
+  await settleViewport();
+  step("B-问着的时候层还开着", await evalJs(editOpen));
   step("B-稿还在", await evalJs(`document.getElementById("edit-text").value.endsWith("q")`));
-  await evalJs(`(()=>{if(${editOpen})document.getElementById("edit-cancel").click();return 1})()`);
-  step("B-点取消收层", await until(`!(${editOpen})`, 3000));
+  await tapSel("#confirmbar-yes");
+  step("B-点丢掉收层", await until(`!(${editOpen})`, 3000));
+  step("B-丢掉后确认条也收了", await until(`!(${cbOpen})`, 2000));
+  if (await evalJs(editOpen)) {
+    // 层还开着就是脏的:后面那记返回会把它存进库。页内直点丢稿收拾(onYes = 丢稿,不写库),本段到此为止。
+    await evalJs(`(()=>{document.getElementById("edit-cancel").click();document.getElementById("confirmbar-yes").click();return 1})()`);
+    step("B-丢稿没成,已页内收拾、后半段不跑(防写库)", false);
+    return out;
+  }
   step("B-再开一次(没改过)", await openEdit());
+  const v0 = await evalJs(`document.getElementById("edit-text").value`);
   await sleep(700);
   await dropIme();
+  // ⛔ 按返回前核一次框里没被改过(键盘收起那一下若误触了键,改过的层一记返回就存进库)。
+  if (!step("B-按返回前框里没改过(防写库)", (await evalJs(`document.getElementById("edit-text").value`)) === v0)) {
+    await evalJs(`(()=>{document.getElementById("edit-cancel").click();document.getElementById("confirmbar-yes").click();return 1})()`);
+    return out;
+  }
   await back();
   await sleep(900);
   step("B-没改过按返回:层收了", !(await evalJs(editOpen)));
