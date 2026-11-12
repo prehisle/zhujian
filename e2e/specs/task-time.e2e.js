@@ -408,20 +408,30 @@ describe("任务时间维度 · 窄列里行内编辑器不折行也不撑破卡
   // 566(用户面 61):顶栏字母态(board.css 那个 1099 断点之下)里「到期汇总」与「排序」两枚
   // 此前只有 .lbl、没有 +/计数/键帽 ⇒ 隐掉文字就塌成两个空椭圆(559 截图照出来的,实测 27×11)。
   // 现在各留一个记号:到期 = 三段合一的总数、排序 = ↕。这只只断「字母态下钮上有可见的字、且不是
-  // 全名」;⚠ 同一只前面那两例已把窗摆在 950,正好就在字母态里,别另开一只再摆一次窗。
+  // 全名」;字母态由下面那只自己钉住(894),不靠窗宽。
   // ⛔ 前置断言(全名真的隐了)少不得:窗宽哪天被改回 1100,后面两条会安静地恒绿。
+  // ⚠ 894:W4 A20 起页头按「这一刻装不装得下」挑档(board.ts::fitHeader),**窗 950 只在 Windows 的字宽下恰是字母态** ——
+  // 893 起看板标题变短(看板名),Linux / WebKitGTK 在 950 装得下第 2 档,这只在公开 CI 上连红两趟(全名还在 ⇒ 可见 1 段)。
+  // 这只验的是**字母态那组 CSS** 给两枚钮留了记号,不是「950 挑哪档」(挑档由 board.e2e「顶栏恒一行」与 probes/hdr-tiers 守)
+  // ⇒ 在同一次 execute 里把页头**钉进字母态**(= FIT_TIERS[3])、量、再原样还回(同步完成,观察者插不进来)。
   it("顶栏字母态:「到期汇总」与「排序」两枚不再是空椭圆", async () => {
     const m = await browser.execute(() => {
       const shown = (el) => [...el.querySelectorAll("span")].filter((s) => getComputedStyle(s).display !== "none").map((s) => s.textContent.trim());
+      const hdr = document.querySelector(".v-board header");
+      const was = hdr.getAttribute("class") ?? "";
+      hdr.classList.remove("hdr-nok", "hdr-short", "hdr-letter", "hdr-nocopy");
+      hdr.classList.add("hdr-short", "hdr-letter");
       const due = document.querySelector("#due-soon");
       const sort = document.querySelector("#board-sort");
-      return {
+      const out = {
         dueHidden: due.hidden,
         due: shown(due),
         sort: shown(sort),
         dueW: Math.round(due.getBoundingClientRect().width),
         sortW: Math.round(sort.getBoundingClientRect().width),
       };
+      hdr.setAttribute("class", was);
+      return out;
     });
     expect(m.dueHidden).toBe(false); // 本 describe 造的那条今天到期 ⇒ 这枚钮必在
     // 158 G3 / Q13(WD-29):字母态里多一枚线稿图标(.ico,无文字)在总数前面 ⇒ 可见的是 ["", 总数]。
