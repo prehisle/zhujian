@@ -29,6 +29,7 @@ import {
 } from "@tauri-apps/plugin-notification";
 import { invokeInSpace, listSpaces, spaceLabel } from "./space";
 import { dueAttentionState, dueSummaryFullLabel, isDueSoon, localToday, type TaskItem } from "./tasktime";
+import { type Board, doneColumnSet } from "./boards";
 import { t } from "./i18n";
 
 const CFG_KEY = "zhujian.due-remind"; // {on:boolean, time:"HH:MM"}
@@ -77,15 +78,19 @@ async function digestBody(): Promise<string | null> {
   const spaces = (await listSpaces()).filter((s) => s.alive);
   const lines: string[] = [];
   for (const s of spaces) {
-    const tasks = await invokeInSpace<TaskItem[]>(s.id, "list_tasks");
+    const [tasks, boards] = await Promise.all([
+      invokeInSpace<TaskItem[]>(s.id, "list_tasks"),
+      invokeInSpace<Board[]>(s.id, "list_boards"),
+    ]);
+    const doneCols = doneColumnSet(boards); // 0043:完成 = 各看板解析后的完成列(core 给的)
     let late = 0;
     let now = 0;
     let soon = 0;
     for (const it of tasks) {
-      const st = dueAttentionState(it, today);
+      const st = dueAttentionState(it, today, doneCols);
       if (st === "overdue") late++;
       else if (st === "today") now++;
-      else if (isDueSoon(it, today)) soon++;
+      else if (isDueSoon(it, today, doneCols)) soon++;
     }
     if (late + now === 0) continue; // 只有「快到期」的不响(响不响的口径没变,见头注)
     const sum = dueSummaryFullLabel(late, now, soon);

@@ -51,6 +51,8 @@ import {
   movePartialClear,
   movePartialMark,
   movePartialNote,
+  moveTaskToBoard,
+  promoteBackTo,
   promoteNoteToTask,
   removeNoteTopic,
   removeTaskTopic,
@@ -77,8 +79,20 @@ import { t } from "./i18n";
 import { $, actionBar, confirmBar, diffPair, esc, fmtWhen, hideConfirmBar, showBar, showError, showUndone } from "./ui";
 import { errDetail, errText, showErr } from "./err";
 import { writeClipboard } from "./platform";
-import { DONE_COLUMN, LANDING_COLUMN, isTaskStage, liveTaskColumns, stageLabel } from "./columns";
+import {
+  boardName,
+  boardOfStage,
+  isDoneStage,
+  isHeldStage,
+  isTaskStage,
+  landingOfStage,
+  liveBoards,
+  liveColumnsOf,
+  stageLabel,
+  type Board,
+} from "./columns";
 import { moveReceipt, spotOf } from "./taskmove";
+import { columnOf, columnView, scrollByFor } from "./boardscroll";
 import { capturePhoto, PICK_MAX, pickImages, toBase64 } from "./images";
 import { openViewer } from "./viewer";
 import { withMissingRefs } from "../../shared/markdown";
@@ -88,7 +102,8 @@ import { renderDiff } from "../../shared/diff-dom";
 
 // actions = 两行主面;more = 低频动作子面;status/due/prio = 值 chip 各自点开的那一排
 // (选完自己回 actions);tags/move/history = 既有三张子面;edit = 屏底编辑层开着。
-type Mode = "actions" | "more" | "edit" | "tags" | "move" | "history" | "status" | "due" | "prio";
+// board = 「挪到看板」(任务卡)/「放进看板」(随记卡)那一排(0043;哪一种由卡自己是不是任务定,不另存)。
+type Mode = "actions" | "more" | "edit" | "tags" | "move" | "board" | "history" | "status" | "due" | "prio";
 
 type PanelState = {
   space: string;
@@ -149,12 +164,27 @@ type Deps = {
   dueLabel: (due: string, done: boolean) => string;
 };
 
-// 状态 picker 的目标域 = **能落卡的那几列**(B-f 第 1 段起从库里来;已删的列不在内 ——
+// 状态 picker 的目标域 = **卡自己那块看板上能落卡的那几列**(B-f 第 1 段起从库里来;已删的列不在内 ——
 // core 的 `is_live_task_column` 会拒,UI 不给一条注定被拒的路)。
-// ⚠ 卡自己正待在一个已删的列里时,它的当前态不在这一行 pill 里 ⇒ 一枚都不高亮,点哪一枚
-// 就搬去哪一列。那正是 §4.3 要的:收容区里的卡**只能往外走**。
-const statuses = (): { key: TaskStatus; label: string }[] =>
-  liveTaskColumns().map((c) => ({ key: c.id, label: stageLabel(c.id)! }));
+// 0043:跨看板不走这一排(core `transition` 只许同看板),走「更多… → 挪到看板」;收容区里的卡这一排为空,
+// 状态 chip 整枚不画(plan §3a:只能挪出去)。
+const statuses = (stage: string): { key: TaskStatus; label: string }[] =>
+  liveColumnsOf(stage).map((c) => ({ key: c.id, label: stageLabel(c.id)! }));
+
+/** 「挪到看板」/「放进看板」的候选(0043,用户拍 ⑥ / ⑤):活看板,core 给的序。
+ *  ⚠ 任务卡在一块活看板的活列上时,它自己那块不算候选(core 拒「已经在这块看板上了」);收容区里的卡**全部**活看板
+ *  都是出口,含它原来那块(core 允许:落那块的落点,codex 2b 一轮 H1)。随记卡全部活看板都是候选。 */
+function boardTargets(item: TimelineItem): Board[] {
+  const live = liveBoards();
+  if (!isTaskStage(item.stage) || isHeldStage(item.stage)) return live;
+  const own = boardOfStage(item.stage)?.id;
+  return live.filter((b) => b.id !== own);
+}
+
+/** 「更多…」里出不出看板那一枚(渐进式披露,同桌面:活看板 ≥ 2 块才有「看板」这回事)。
+ *  ⚠ 收容区里的卡例外 —— 它**只有**这一条出口,只剩一块看板也得给(落它的落点)。 */
+const boardEntryShown = (item: TimelineItem): boolean =>
+  isTaskStage(item.stage) && isHeldStage(item.stage) ? liveBoards().length >= 1 : liveBoards().length >= 2;
 // 506:排列改成高档在前(无 · P0 · P1 · P2)—— P 记号下「P0 最高」是读法的一部分,
 // 3→2→1 倒序列才读得顺,也与桌面 tasktime.ts::openPri 的 [3,2,1,清除] 同向。
 // ⚠ key 仍是库里的 1/2/3(1=低),⛔ 别照 label 的顺序去改 key。「无」留在最前不动:
@@ -304,6 +334,8 @@ function renderPanel(card: HTMLElement) {
     panel.innerHTML = renderTags(item);
   } else if (state.mode === "move") {
     panel.innerHTML = renderMove();
+  } else if (state.mode === "board") {
+    panel.innerHTML = renderBoardPicker(item);
   } else if (state.mode === "history") {
     panel.innerHTML = renderHistory();
   } else if (state.mode === "more") {
@@ -353,11 +385,12 @@ function renderActions(item: TimelineItem): string {
   // 才有 ⇒ 这三枚恒在,否则「还没设」那一态就没有入口了。
   const props = task
     ? `<div class="props">${[
-        propBtn("status", t("cardpanel.laneStatus"), stageLabel(item.stage)!, true),
+        // 0043:收容区里的卡没有可换的列(只能挪出去)⇒ 状态 chip 不画,别给一排空 picker。
+        ...(isHeldStage(item.stage) ? [] : [propBtn("status", t("cardpanel.laneStatus"), stageLabel(item.stage)!, true)]),
         propBtn(
           "due",
           t("cardpanel.laneDue"),
-          item.due_on ? deps.dueLabel(item.due_on, item.stage === DONE_COLUMN) : t("cardpanel.dueNone"),
+          item.due_on ? deps.dueLabel(item.due_on, isDoneStage(item.stage)) : t("cardpanel.dueNone"),
           item.due_on !== null,
         ),
         propBtn(
@@ -384,9 +417,12 @@ function renderMore(item: TimelineItem): string {
   // 165 / W5 A45:没改过的卡不列「历史」(指南「改过的才有」;卡面上的「改过」两字已经说了有没有,点进去只得一句「还没有改过」)。
   if (item.revised) acts.push(actBtn("history", t("cardpanel.actHistory")));
   // 移动入口:仅 ≥2 空间、且本条无未处理的部分移动登记时出现(§4)。
+  // 0043:挪到看板(任务)/ 放进看板(随记);活看板 ≥ 2 块才出,收容区里的卡恒出(它唯一的出口)。
+  if (boardEntryShown(item)) acts.push(actBtn("board", task ? t("cardpanel.actMoveBoard") : t("cardpanel.actPromoteTo")));
   if (!movePartialNote(item.id) && deps.getSpaces().length >= 2) acts.push(actBtn("move", t("cardpanel.actMove")));
-  if (item.stage === LANDING_COLUMN) acts.push(actBtn("revert", t("cardpanel.actRevert"), { warn: true }));
-  if (item.stage === DONE_COLUMN) acts.push(actBtn("seal", t("cardpanel.actSeal")));
+  // 0043:撤回只许从卡所在看板的**落点**走、归档只许在它的**完成列**里(core 解析的角色,不是 id 字面量)。
+  if (task && landingOfStage(item.stage) === item.stage) acts.push(actBtn("revert", t("cardpanel.actRevert"), { warn: true }));
+  if (isDoneStage(item.stage)) acts.push(actBtn("seal", t("cardpanel.actSeal")));
   acts.push(actBtn("del", t("cardpanel.actDelete"), { warn: true }));
   return `<div class="acts">${acts.join("")}</div>
     <div class="acts"><button data-pact="back"${busy ? " disabled" : ""}>${t("cardpanel.back")}</button></div>`;
@@ -397,7 +433,7 @@ function renderMore(item: TimelineItem): string {
 function renderValuePicker(item: TimelineItem, which: "status" | "due" | "prio"): string {
   let lane: string;
   if (which === "status") {
-    lane = `<span class="lab">${t("cardpanel.laneStatus")}</span><span class="pillrow">${statuses()
+    lane = `<span class="lab">${t("cardpanel.laneStatus")}</span><span class="pillrow">${statuses(item.stage)
       // 列名是同步来的自由文本 ⇒ 进 HTML 前转义(backlog 用户面 144;id 同理)
       .map((s) => pill(esc(s.label), `data-status="${esc(s.key)}"`, item.stage === s.key, busy || item.stage === s.key))
       .join("")}</span>`;
@@ -422,6 +458,18 @@ function renderValuePicker(item: TimelineItem, which: "status" | "due" | "prio")
     ).join("")}</span>`;
   }
   return `<div class="lane">${lane}</div>
+    <div class="acts"><button data-pact="back"${busy ? " disabled" : ""}>${t("cardpanel.back")}</button></div>`;
+}
+
+/** 看板 picker(0043):任务卡 =「挪到看板」(落对方落点列首)、随记卡 =「放进看板」(转待办落那块的落点)。
+ *  目标按钮用 data-board-to,点即执行 —— 同看板内挪卡可撤、不丢东西,不配两拍(对照:挪到别的空间要两拍,那是删历史)。
+ *  候选为空(只剩自己这一块)不会走到这里:入口按 boardEntryShown 出。 */
+function renderBoardPicker(item: TimelineItem): string {
+  const rows = boardTargets(item)
+    .map((b) => `<button data-board-to="${esc(b.id)}" class="p"${busy ? " disabled" : ""}>${esc(boardName(b))}</button>`)
+    .join("");
+  const lab = isTaskStage(item.stage) ? t("cardpanel.actMoveBoard") : t("cardpanel.actPromoteTo");
+  return `<div class="lane"><span class="lab">${lab}</span><span class="pillrow">${rows}</span></div>
     <div class="acts"><button data-pact="back"${busy ? " disabled" : ""}>${t("cardpanel.back")}</button></div>`;
 }
 
@@ -535,7 +583,8 @@ async function run(
       // 写已提交:轴必须重拉,不随面板 session 陪葬
       void deps.refresh().then(() => {
         const top1 = top0 === null || state !== session ? null : panelTop();
-        if (top0 !== null && top1 !== null && top1 !== top0) window.scrollBy(0, top1 - top0);
+        const p = document.querySelector("#timeline .panel");
+        if (p && top0 !== null && top1 !== null && top1 !== top0) scrollByFor(p, top1 - top0); // 看板上推它那一列(889)
       });
     }
     const card = currentCard();
@@ -547,6 +596,32 @@ async function run(
 function panelTop(): number | null {
   const p = document.querySelector<HTMLElement>("#timeline .panel");
   return p ? p.getBoundingClientRect().top : null;
+}
+
+/** 随记成了待办之后的回执(「转待办」与「放进看板」共用;157 G4 / P3):「撤销」= 退回随记(同桌面),「去看看」=
+ *  切到任务面、切到它落进的那块看板定位(main.ts focusTimelineCard 按卡所在看板切)。
+ *  只在 run 的 onCommitted 里调 ⇒ 此刻 getCurrentSpace() = 写时空间。 */
+function promotedReceipt(id: string, msg: string): void {
+  const space = getCurrentSpace();
+  actionBar(
+    msg,
+    t("ui.undo"),
+    () => {
+      if (deps.isSwitching() || getCurrentSpace() !== space) return; // 换空间的旧撤销作废
+      void (async () => {
+        try {
+          await revertTaskToInbox(space, id);
+        } catch (err) {
+          showErr(err);
+          await deps.refresh();
+          return;
+        }
+        await deps.refresh();
+        showUndone(); // 165 / W5 Q6
+      })();
+    },
+    { label: t("cardpanel.goSee"), on: () => deps.focusCard(id) },
+  );
 }
 
 /** 跨空间移动的专用收口(§2.7 安卓入口;不复用 run()——结果是 MoveResult 五分道、
@@ -937,6 +1012,29 @@ function onTimelineClick(e: Event) {
     );
     return;
   }
+  const boardBtn = el.closest<HTMLElement>("[data-board-to]");
+  if (boardBtn && state?.mode === "board") {
+    const session = state;
+    const item = deps.getItem(session.id);
+    const target = liveBoards().find((b) => b.id === boardBtn.dataset.boardTo);
+    if (!item || !target) return;
+    const name = boardName(target);
+    if (isTaskStage(item.stage)) {
+      // 挪到看板(用户拍 ⑥):落对方落点列首。回执带「去看看」(切到那块看板定位);⛔ 不配撤销 —— 挪回来落的是
+      // 这边的落点列首、不是原位,撤不成原样就不说「撤销」(§3.1;同桌面 moveToBoard)。
+      void run((space) => moveTaskToBoard(space, item.id, target.id), {
+        onCommitted: () =>
+          actionBar(t("cardpanel.movedToBoard", { board: name }), t("cardpanel.goSee"), () => deps.focusCard(item.id)),
+        afterSession: () => setState(null), // 卡离开了这块看板,面板跟着收(同换列)
+      });
+    } else {
+      // 放进看板(用户拍 ⑤):同「转待办」,只是落点名的那块。回执同 promote:撤销 = 退回随记;去看看 = 切过去定位。
+      void run((space) => promoteNoteToTask(space, item.id, item.content, target.id), {
+        onCommitted: () => promotedReceipt(item.id, t("cardpanel.promotedTo", { board: name })),
+      });
+    }
+    return;
+  }
   const moveBtn = el.closest<HTMLElement>("[data-move-to]");
   if (moveBtn && state?.mode === "move") {
     // 两拍(122):移动会**永久**删掉编辑历史(面上那行警示说的),而同面的删除 / 撤回都是两拍 ——
@@ -1045,14 +1143,21 @@ export function revealPanel(): void {
   const fab = document.getElementById("capture-fab");
   const fabR = fab && fab.getClientRects().length > 0 ? fab.getBoundingClientRect() : null;
   if (fabR && getComputedStyle(fab!).visibility !== "hidden" && fabR.left < p.getBoundingClientRect().right) floor = Math.min(floor, fabR.top);
-  const head = document.querySelector("header")?.getBoundingClientRect().bottom ?? 0;
+  let head = document.querySelector("header")?.getBoundingClientRect().bottom ?? 0;
+  // 889:看板上列自己滚 ⇒ 地板与天花板换成这一列看得见的那一框(列底 / 吸顶列头下沿),推的也是这一列。
+  const col = columnOf(p);
+  if (col) {
+    const v = columnView(col);
+    floor = Math.min(floor, v.bottom);
+    head = v.top;
+  }
   const r = p.getBoundingClientRect();
   const GAP = 8;
   const need = r.bottom + GAP - floor;
   if (need <= 0) return;
   const room = r.top - head - GAP;
   const by = Math.min(need, Math.max(0, room));
-  if (by > 0) window.scrollBy(0, by);
+  if (by > 0) scrollByFor(p, by);
 }
 
 /** 收面(没草稿时):点卡片空白与「卡滚出屏」共用这一条。 */
@@ -1072,7 +1177,12 @@ function collapseIfScrolledAway(): void {
   const card = currentCard();
   if (!card || card.getClientRects().length === 0) return;
   const r = card.getBoundingClientRect();
-  if (r.bottom > 0 && r.top < window.innerHeight) return;
+  // 889:看板上卡住在一列里,列竖着滚走、或看板横滚把这一列推出屏,都算滚走。
+  const col = columnOf(card);
+  if (col) {
+    const v = columnView(col);
+    if (r.bottom > v.top && r.top < v.bottom && r.right > v.left && r.left < v.right) return;
+  } else if (r.bottom > 0 && r.top < window.innerHeight) return;
   collapse(card);
 }
 
@@ -1120,6 +1230,11 @@ function handleAct(act: string, card: HTMLElement) {
     case "move":
       clearConfirm();
       setMode(session, "move");
+      renderPanel(card);
+      return;
+    case "board":
+      clearConfirm();
+      setMode(session, "board");
       renderPanel(card);
       return;
     case "move-ack":
@@ -1172,29 +1287,9 @@ function handleAct(act: string, card: HTMLElement) {
     case "promote":
       // 146:卡离开灵感面——回执指路,且走 onCommitted(重投影清掉 session 也要响)。
       // 157 G4 / P3:回执带「撤销」(= 退回随记,同桌面)与「去看看」(切到任务面落到那张卡)。
+      // 0043:落默认看板(用户拍 ④;core 解析)。
       void run((space) => promoteNoteToTask(space, item.id, item.content), {
-        onCommitted: () => {
-          const space = getCurrentSpace();
-          actionBar(
-            t("cardpanel.promotedShort"),
-            t("ui.undo"),
-            () => {
-              if (deps.isSwitching() || getCurrentSpace() !== space) return; // 换空间的旧撤销作废
-              void (async () => {
-                try {
-                  await revertTaskToInbox(space, item.id);
-                } catch (err) {
-                  showErr(err);
-                  await deps.refresh();
-                  return;
-                }
-                await deps.refresh();
-                showUndone(); // 165 / W5 Q6
-              })();
-            },
-            { label: t("cardpanel.goSee"), on: () => deps.focusCard(item.id) },
-          );
-        },
+        onCommitted: () => promotedReceipt(item.id, t("cardpanel.promotedShort")),
       });
       return;
     case "tagnew": {
@@ -1298,7 +1393,12 @@ function handleAct(act: string, card: HTMLElement) {
           // (取值冻结在第二拍那一刻;不设回就不是完整的撤销,§3.1 那条「撤销 ≠ 完整恢复不配发」)。
           const cur = deps.getItem(item.id);
           if (!cur) return;
-          const { content, due_on: due, priority: prio } = cur;
+          const { content, due_on: due, priority: prio, stage: was } = cur;
+          // 0043:撤销要转回**原来那块**看板的**原来那一列**(⛔ 不是默认看板)。只有落点列里的卡撤得回(入口按
+          // landingOfStage 出),所以「回原列」= 那块看板的落点仍是撤回前那一列 —— 比较由 core `promote_back_to` 在
+          // 写事务里做,落点在这之间被改了 / 看板删了 ⇒ 整笔拒、照实报,⛔ 别落到新落点还说「已撤销」(同桌面,883)。
+          const home = boardOfStage(was);
+          if (!home) throw new Error(`task ${item.id} is on column ${was}, which has no board`);
           void run((space) => revertTaskToInbox(space, item.id), {
             onCommitted: () => {
               const space = getCurrentSpace();
@@ -1306,7 +1406,7 @@ function handleAct(act: string, card: HTMLElement) {
                 if (deps.isSwitching() || getCurrentSpace() !== space) return; // 换空间的旧撤销作废
                 void (async () => {
                   try {
-                    await promoteNoteToTask(space, item.id, content);
+                    await promoteBackTo(space, item.id, content, home.id, was);
                     if (due !== null) await setTaskDue(space, item.id, due);
                     if (prio !== null) await setTaskPriority(space, item.id, prio);
                   } catch (err) {
@@ -1521,16 +1621,15 @@ export function initCardPanel(d: Deps) {
   timeline.addEventListener("keydown", onTimelineKeydown);
   timeline.addEventListener("focusin", onTimelineFocusIn);
   let scrollQueued = false;
-  window.addEventListener(
-    "scroll",
-    () => {
-      if (!state || scrollQueued) return;
-      scrollQueued = true;
-      requestAnimationFrame(() => {
-        scrollQueued = false;
-        collapseIfScrolledAway();
-      });
-    },
-    { passive: true },
-  );
+  const onScroll = (): void => {
+    if (!state || scrollQueued) return;
+    scrollQueued = true;
+    requestAnimationFrame(() => {
+      scrollQueued = false;
+      collapseIfScrolledAway();
+    });
+  };
+  window.addEventListener("scroll", onScroll, { passive: true });
+  // 889:看板上滚的是列 / 看板本身,元素的 scroll 不冒泡 ⇒ 捕获阶段在时间轴上也收。
+  timeline.addEventListener("scroll", onScroll, { capture: true, passive: true });
 }

@@ -16,7 +16,8 @@
 import { t } from "./i18n";
 import { currentSpaceId, invokeInSpace, listSpaces, spaceLabel } from "./space";
 import { PRIORITY_LABEL, type TaskItem } from "./tasktime";
-import { type BoardColumn, DONE_COLUMN, columnName } from "./board-columns";
+import { type BoardColumn, columnName } from "./board-columns";
+import { type Board, boardName, doneColumnSet } from "./boards";
 import type { ImageMeta } from "./item-images";
 import type { Comment, CommentPage } from "./item-comments";
 
@@ -80,8 +81,12 @@ function taskMarkdown(it: TaskItem, done: boolean, sealed: boolean, extra: strin
 
 /** 列按看板的顺序(core 已排好);只出**有卡**的任务列。已删的列还扣着卡时照出、名字后注明。
  *  ⛔ 一张卡的列在列表里找不到 = 数据不一致,整趟报错(别把它悄悄漏掉 —— 导出漏卡没人发现得了)。 */
-function boardMarkdown(cols: BoardColumn[], tasks: TaskItem[], sealed: TaskItem[], extras: Map<string, string[]>): string {
+function boardMarkdown(boards: Board[], cols: BoardColumn[], tasks: TaskItem[], sealed: TaskItem[], extras: Map<string, string[]>): string {
   const taskCols = cols.filter((c) => c.kind === "task");
+  // 0043:完成 = 各看板解析后的完成列(core 给的);多于一块看板时列名前挂看板名,否则同名列分不清。
+  const doneCols = doneColumnSet(boards);
+  const boardOf = new Map(boards.map((b) => [b.id, b]));
+  const multi = boards.length > 1;
   const known = new Set(taskCols.map((c) => c.id));
   const stray = tasks.find((it) => !known.has(it.status));
   if (stray) throw new Error(`task ${stray.id} sits in unknown column ${stray.status}`);
@@ -89,8 +94,11 @@ function boardMarkdown(cols: BoardColumn[], tasks: TaskItem[], sealed: TaskItem[
   for (const c of taskCols) {
     const inCol = tasks.filter((it) => it.status === c.id);
     if (inCol.length === 0) continue;
-    const name = c.deleted ? t("export.deletedCol", { name: columnName(c) }) : columnName(c);
-    const done = c.id === DONE_COLUMN;
+    const own = c.board_id === null ? undefined : boardOf.get(c.board_id);
+    if (own === undefined) throw new Error(`task column ${c.id} has no board`);
+    const bare = multi ? `${boardName(own)} · ${columnName(c)}` : columnName(c);
+    const name = c.deleted || c.board_deleted ? t("export.deletedCol", { name: bare }) : bare;
+    const done = doneCols.has(c.id);
     sections.push([`## ${name}`, ...inCol.map((it) => taskMarkdown(it, done, false, extras.get(it.id) ?? []))].join("\n"));
   }
   if (sealed.length > 0) {
@@ -126,13 +134,14 @@ type ExportImage = { image_id: string; rel: string };
  */
 export async function exportMarkdown(): Promise<string> {
   const space = currentSpaceId();
-  const [ideas, docs, tasks, sealed, cols, images, counts, spaces] = await Promise.all([
+  const [ideas, docs, tasks, sealed, cols, boards, images, counts, spaces] = await Promise.all([
     invokeInSpace<MdIdea[]>(space, "list_ideas"),
     // 长文(0042):随记列表不含它们,⛔ 漏了这一发长文的正文、配图、留言就静默从导出里消失
     invokeInSpace<MdIdea[]>(space, "list_docs"),
     invokeInSpace<TaskItem[]>(space, "list_tasks"),
     invokeInSpace<TaskItem[]>(space, "list_sealed_tasks"),
     invokeInSpace<BoardColumn[]>(space, "list_board_columns"),
+    invokeInSpace<Board[]>(space, "list_boards"),
     invokeInSpace<Record<string, ImageMeta[]>>(space, "list_all_item_images"),
     invokeInSpace<Record<string, { n: number }>>(space, "item_comment_counts"),
     listSpaces(),
@@ -192,7 +201,7 @@ export async function exportMarkdown(): Promise<string> {
     `# ${t("export.boardHead")}`,
     t("export.boardMeta", { space: spaceName, at, n: tasks.length + sealed.length }),
     "",
-    boardMarkdown(cols, tasks, sealed, extras),
+    boardMarkdown(boards, cols, tasks, sealed, extras),
   ].join("\n");
 
   const now = new Date();

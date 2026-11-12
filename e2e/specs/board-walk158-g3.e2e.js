@@ -95,7 +95,8 @@ describe("158 G3 · 看板规矩 Q1–Q13(桌面)+ A7 对齐", () => {
       document.body.click();
       return { arrow, labels, back, again };
     }, cardEl(T));
-    const live = (await invoke("list_board_columns")).filter((c) => c.kind === "task" && !c.deleted);
+    // 0043:只数种子看板「任务」上的活列(别的看板 / 已删看板里的列不在这块看板的「移到 ▸」里)。
+    const live = (await invoke("list_board_columns")).filter((c) => c.kind === "task" && !c.deleted && !c.board_deleted && c.board_id === "tasks");
     expect(sub).not.toBe(null);
     expect(sub.arrow).toBe("▸");
     expect(sub.back).toBe("‹ 移到");
@@ -217,7 +218,8 @@ describe("158 G3 · 看板规矩 Q1–Q13(桌面)+ A7 对齐", () => {
     await invoke("update_task_status", { id, to: "done" });
     await invoke("seal_task", { id });
     await goNotebook("board");
-    expect(await $(".v-board header h1").getText()).toBe("任务看板");
+    // 0043 多看板:看板态的页头 = 这块看板的名字(种子看板没改名 = 「任务」)。
+    expect(await $(".v-board header h1").getText()).toBe("任务");
     await $("#seal-toggle").click();
     await $(".sealed-view").$(`.tcard*=${T}`).waitForExist({ timeout: 8000 });
     const s = await browser.execute((sel) => ({
@@ -231,7 +233,7 @@ describe("158 G3 · 看板规矩 Q1–Q13(桌面)+ A7 对齐", () => {
     expect(s.backText).not.toMatch(/\d/);
     expect(s.date).toMatch(/^完成于 今天 \d{2}:\d{2}$/); // 165 / W5 Q14:写到时刻(今天「今天 15:18」)
     await $("#seal-toggle").click();
-    await browser.waitUntil(async () => (await $(".v-board header h1").getText()) === "任务看板", { timeout: 5000 });
+    await browser.waitUntil(async () => (await $(".v-board header h1").getText()) === "任务", { timeout: 5000 }); // 0043:页头 = 看板名
   });
 
   it("Q6:勾「不再提示」删的那一下,回执写明在设置哪里改回;设置里「删任务前确认」开回来就又问", async () => {
@@ -344,7 +346,8 @@ describe("158 G3 · 看板规矩 Q1–Q13(桌面)+ A7 对齐", () => {
     await $(".bcm-panel .bcm-hint").waitForExist({ timeout: 8000 });
     const hint = await browser.execute(() => document.querySelector(".bcm-panel .bcm-hint").textContent);
     expect(hint).not.toContain("产品语义");
-    expect(hint).toContain("新任务落下的那一列");
+    // 0043:落点 / 完成列成了每块看板可换的角色,说明不再点名两列,改说两条删列前置。
+    expect(hint).toContain("完成列要先取消才能删");
     await browser.execute(() => document.querySelector(".bcm-panel .bcm-close").click());
     await $(".bcm-overlay").waitForExist({ timeout: 5000, reverse: true });
   });

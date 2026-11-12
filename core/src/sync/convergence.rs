@@ -464,13 +464,17 @@ fn trash_tasks() -> String {
         board::TASK_COLUMN_IDS
     )
 }
-/// 成就归档的来源列 —— 「完成」那个角色(见 `board::DONE_COLUMN`),不是随便一列。
+/// 成就归档的来源 —— 卡所在看板**解析后的完成列**里的卡(0043;codex 实现审 2b 一轮 M5:
+/// 原先写死种子 `done`,用户看板的完成列里的卡永远轮不到归档,种子角色改了还会选错)。
+/// 与 `board::roles::done_of` 同口径:看板活、列活、归属对、完成指针指着它。
 fn done_tasks() -> String {
-    format!(
-        "SELECT id FROM items WHERE stage = '{}' \
-         AND archived_at IS NULL AND sealed_at IS NULL ORDER BY id",
-        board::DONE_COLUMN
-    )
+    "SELECT i.id FROM items i \
+       JOIN board_column c ON c.id = i.stage \
+       JOIN board b ON b.id = COALESCE(c.board_id, 'tasks') \
+      WHERE c.kind = 'task' AND c.tombstoned_at IS NULL AND b.tombstoned_at IS NULL \
+        AND b.done_column_id = c.id \
+        AND i.archived_at IS NULL AND i.sealed_at IS NULL ORDER BY i.id"
+        .to_string()
 }
 
 /// 拖拽 / 流转的**目标池** = 活着的任务列(含随机流刚建的自定义列)。
@@ -591,6 +595,27 @@ fn cards_in_custom_columns(conn: &Connection) -> i64 {
 /// 守的是 [`EDITABLE_COLUMNS`] 那个设计选择(见它的头注),形同 [`DEVICE_LWW_COLLISIONS`]。
 static COLUMN_LWW_COLLISIONS: AtomicUsize = AtomicUsize::new(0);
 
+/// 0043 多看板的覆盖计数(同列那组的理由:只断言指纹相等,会让「一次都没真跑到」假绿)。
+/// 分开计:建 / 改角色 / 删 / 看板上建列 / 跨看板挪卡在存储层、指纹层、授权表各自不同形。
+fn board_role_op_count(conn: &Connection) -> i64 {
+    conn.query_row(
+        "SELECT COUNT(*) FROM oplog WHERE entity = 'board' AND kind = 'set_field' \
+           AND json_extract(payload, '$.field') IN ('landing_column_id', 'done_column_id')",
+        [],
+        |r| r.get(0),
+    )
+    .expect("count board role ops")
+}
+static BOARD_CREATES: AtomicUsize = AtomicUsize::new(0);
+static BOARD_ROLE_SETS: AtomicUsize = AtomicUsize::new(0);
+static BOARD_DELETES: AtomicUsize = AtomicUsize::new(0);
+static COLUMNS_IN_BOARDS: AtomicUsize = AtomicUsize::new(0);
+static CARDS_MOVED_ACROSS_BOARDS: AtomicUsize = AtomicUsize::new(0);
+const LIVE_BOARDS: &str = "SELECT id FROM board WHERE tombstoned_at IS NULL ORDER BY id";
+const USER_BOARDS: &str = "SELECT id FROM board WHERE tombstoned_at IS NULL AND id <> 'tasks' ORDER BY id";
+const LIVE_TASKS_ANY_BOARD: &str = "SELECT i.id FROM items i JOIN board_column c ON c.id = i.stage \
+     WHERE c.kind = 'task' AND i.archived_at IS NULL AND i.sealed_at IS NULL ORDER BY i.id";
+
 fn column_lww_collisions(conn: &Connection) -> i64 {
     conn.query_row(
         "SELECT COUNT(*) FROM (SELECT entity_id FROM oplog \
@@ -621,7 +646,11 @@ fn random_command(conn: &mut Connection, clock: &mut Clock, rng: &mut Rng, step:
     // test 靠广度不靠特定路径,故可接受;但「种子 1 当年抓到活锁」那条战绩指的是旧序列,
     // 别拿它当今天还在复现的回归锚。0041 从 29 加到 36:配图回收站三支 + 贴图各多分几格
     // (原先每种子不到一次,还原一次都轮不上,见 IMAGE_RESTORES 头注)。
-    let roll = rng.below(36);
+    // 0043 从 36 加到 40:多看板命令面占三格(36..=38)+ 跨看板挪卡一格(39),见 BOARD_*
+    // 计数头注。只给一格时 20 个种子里「删看板」一次都轮不到(实测 9 次尝试、每次都还没有
+    // 用户看板),覆盖计数恒 0。
+    // 同轮多给设备别名一格(26 | 40):序列被打乱后它的撞写覆盖(DEVICE_LWW_COLLISIONS)掉到 0。
+    let roll = rng.below(41);
     let done: Result<(), String> = match roll {
         0..=3 => notes::capture(conn, clock, &format!("灵感 {step}-{}", rng.below(1000))).map(|_| ()),
         4 => match rng.pick(&ids(conn, LIVE_IDEAS)).cloned() {
@@ -629,7 +658,7 @@ fn random_command(conn: &mut Connection, clock: &mut Clock, rng: &mut Rng, step:
             None => Ok(()),
         },
         5 => match rng.pick(&ids(conn, LIVE_IDEAS)).cloned() {
-            Some(id) => notes::promote_to_task(conn, clock, &id, &format!("转办 {step}")).map(|_| ()),
+            Some(id) => notes::promote_to_task(conn, clock, &id, &format!("转办 {step}"), None, &crate::board::gate::DETACHED).map(|_| ()),
             None => Ok(()),
         },
         6 => task::create(
@@ -638,7 +667,7 @@ fn random_command(conn: &mut Connection, clock: &mut Clock, rng: &mut Rng, step:
             &format!("任务 {step}"),
             [None, Some("2026-07-20"), Some("2026-08-01")][rng.below(3)],
             [None, Some(1), Some(2), Some(3)][rng.below(4)],
-            None,
+            None, None, &crate::board::gate::DETACHED
         )
         .map(|_| ()),
         // ⭐ 目标列**查库**取(480):0036 之前这里是四值字面量,于是没有任何一枚 item op
@@ -822,7 +851,7 @@ fn random_command(conn: &mut Connection, clock: &mut Clock, rng: &mut Rng, step:
         // (见 SEEN_DEVICES 的头注:只命名自己就验不到撞写),值取小池子 + **清名**
         // (`None` 是「显式清名」的规范表示,与「没有这一行」不同——epoch 合成基线与
         // boot 双侧预审都特判过它,指纹里的 quote() 也是为它)。
-        26 => match rng.pick(&ids(conn, SEEN_DEVICES)).cloned() {
+        26 | 40 => match rng.pick(&ids(conn, SEEN_DEVICES)).cloned() {
             Some(target) => {
                 let alias = [None, Some("设备甲"), Some("设备乙"), Some("设备丙")][rng.below(4)];
                 let before = device_op_count(conn);
@@ -840,7 +869,7 @@ fn random_command(conn: &mut Connection, clock: &mut Clock, rng: &mut Rng, step:
         // ⚠ 前置不满足的一律走 Err = 合法跳过 —— 删 `todo`/`done`(480 定案:不可删)、
         //   删非空列(不变量 4)、改名撞已被对端删掉的列(只读收容区),这三条都会真发生。
         27 => match rng.below(8) {
-            0..=1 => board::create_column(conn, clock, &format!("列{}", rng.below(4)), &crate::board::gate::DETACHED)
+            0..=1 => board::create_column(conn, clock, &format!("列{}", rng.below(4)), None, &crate::board::gate::DETACHED)
                 .inspect(|_| {
                     COLUMN_CREATES.fetch_add(1, Ordering::Relaxed);
                 })
@@ -870,6 +899,84 @@ fn random_command(conn: &mut Connection, clock: &mut Clock, rng: &mut Rng, step:
                 }),
                 None => Ok(()),
             },
+        },
+        // 0043 多看板的**本地写命令面**:建(三列带完成 / 一列纯分类)/ 改名 / 排序 / 指定或
+        // 取消完成列 / 指定落点 / 删看板 / 在用户看板上建列。前置不满足的一律 Err = 合法跳过
+        // (删非空看板、改完成列时列里有卡、落点撞完成列……都会真发生)。
+        36..=38 => match if ids(conn, USER_BOARDS).is_empty() { 0 } else { rng.below(10) } {
+            // 还没有用户看板时先建一块(否则后面几支全落空)。
+            0..=1 => {
+                let r = if rng.below(2) == 0 {
+                    board::create_board(conn, clock, &format!("看板{}", rng.below(4)), &["待处理", "进行中", "已完成"], Some(2), &crate::board::gate::DETACHED)
+                } else {
+                    board::create_board(conn, clock, &format!("分类{}", rng.below(4)), &["一类"], None, &crate::board::gate::DETACHED)
+                };
+                r.inspect(|_| {
+                    BOARD_CREATES.fetch_add(1, Ordering::Relaxed);
+                })
+                .map(|_| ())
+            }
+            2 => match rng.pick(&ids(conn, LIVE_BOARDS)).cloned() {
+                Some(b) => board::rename_board(conn, clock, &b, &format!("板名{}", rng.below(4))),
+                None => Ok(()),
+            },
+            3 => {
+                let bs = ids(conn, LIVE_BOARDS);
+                match (rng.pick(&bs).cloned(), rng.pick(&bs).cloned()) {
+                    (Some(b), Some(n)) if b != n => board::reorder_board(conn, clock, &b, None, Some(&n)),
+                    _ => Ok(()),
+                }
+            }
+            4..=5 => match rng.pick(&ids(conn, LIVE_BOARDS)).cloned() {
+                Some(b) => {
+                    // 只在角色 op 真长了时计数(codex 实现审 2b 一轮 M5:幂等 no-op / 空候选也
+                    // 返回 Ok,按 Ok 计会假非零)。
+                    let before = board_role_op_count(conn);
+                    let cols = crate::board::live_columns(conn, &b).unwrap_or_default();
+                    let r = match rng.below(3) {
+                        0 => board::set_board_done(conn, clock, &b, None),
+                        1 => match rng.pick(&cols) {
+                            Some(c) => board::set_board_done(conn, clock, &b, Some(c)),
+                            None => Ok(()),
+                        },
+                        _ => match rng.pick(&cols) {
+                            Some(c) => board::set_board_landing(conn, clock, &b, c),
+                            None => Ok(()),
+                        },
+                    };
+                    if r.is_ok() && board_role_op_count(conn) > before {
+                        BOARD_ROLE_SETS.fetch_add(1, Ordering::Relaxed);
+                    }
+                    r
+                }
+                None => Ok(()),
+            },
+            // 删看板要先清空、成功率低,多给几格(否则覆盖计数常为 0)。
+            6..=8 => match rng.pick(&ids(conn, USER_BOARDS)).cloned() {
+                Some(b) => board::delete_board(conn, clock, &b).inspect(|()| {
+                    BOARD_DELETES.fetch_add(1, Ordering::Relaxed);
+                }),
+                None => Ok(()),
+            },
+            _ => match rng.pick(&ids(conn, USER_BOARDS)).cloned() {
+                Some(b) => board::create_column(conn, clock, &format!("板列{}", rng.below(4)), Some(&b), &crate::board::gate::DETACHED)
+                    .inspect(|_| {
+                        COLUMNS_IN_BOARDS.fetch_add(1, Ordering::Relaxed);
+                    })
+                    .map(|_| ()),
+                None => Ok(()),
+            },
+        },
+        // 0043 跨看板:挪卡(落对方落点)/ 在随机看板上新建。死看板 / 无落点 ⇒ Err 跳过。
+        39 => match (rng.pick(&ids(conn, LIVE_TASKS_ANY_BOARD)).cloned(), rng.pick(&ids(conn, LIVE_BOARDS)).cloned()) {
+            (Some(t), Some(b)) if rng.below(2) == 0 => {
+                task::move_to_board(conn, clock, &t, &b, &crate::board::gate::DETACHED).inspect(|()| {
+                    CARDS_MOVED_ACROSS_BOARDS.fetch_add(1, Ordering::Relaxed);
+                })
+            }
+            (_, Some(b)) => task::create(conn, clock, &format!("板上任务 {step}"), None, None, None, Some(&b), &crate::board::gate::DETACHED)
+                .map(|_| ()),
+            _ => Ok(()),
         },
         // 空间改名(0028 space 单例寄存器):小池子名跨机并发撞写,LWW 收敛由
         // space_profile 指纹断言(space-name-sync-plan §7)。
@@ -906,7 +1013,16 @@ const FINGERPRINTS: &[(&str, &str)] = &[
     (
         "board_column",
         "SELECT id||'|'||title||'|'||kind||'|'||system||'|'||position||'|'||created_at \
-         ||'|'||quote(tombstoned_at) FROM board_column ORDER BY id",
+         ||'|'||quote(tombstoned_at)||'|'||quote(board_id) FROM board_column ORDER BY id",
+    ),
+    // 0043 看板(multiboard-plan;codex 二轮:指纹含全部字段与列归属)。marker 比原字符串
+    // (同列:收敛测要证两端收敛到**同一枚** min HLC)。⚠ 随机命令流里的看板臂随第 2 段
+    // 命令层一起加,今天这一行守的是「三端都从迁移得到同一块种子看板」。
+    (
+        "board",
+        "SELECT id||'|'||title||'|'||position||'|'||quote(landing_column_id) \
+         ||'|'||quote(done_column_id)||'|'||created_at||'|'||quote(tombstoned_at) \
+         FROM board ORDER BY id",
     ),
     ("item_topic", "SELECT item_id||'|'||topic_id FROM item_topic ORDER BY item_id, topic_id"),
     // 0035 留言:四列全进(quote() 让 born_device 的 NULL 与字面「∅」不同指纹)。
@@ -1124,6 +1240,12 @@ fn three_peers_converge_under_partitions_reorder_and_loss() {
     assert!(COLUMN_RENAMES.load(Ordering::Relaxed) > 0, "随机流里一次列改名都没成");
     assert!(COLUMN_REORDERS.load(Ordering::Relaxed) > 0, "随机流里一次列排序都没成");
     assert!(COLUMN_DELETES.load(Ordering::Relaxed) > 0, "随机流里一个看板列都没删成");
+    // 0043 多看板五支(codex 实现审 2a 二轮:合并完整功能前必须有非零覆盖)。
+    assert!(BOARD_CREATES.load(Ordering::Relaxed) > 0, "随机流里一块看板都没建成");
+    assert!(BOARD_ROLE_SETS.load(Ordering::Relaxed) > 0, "随机流里一次看板角色都没改成");
+    assert!(BOARD_DELETES.load(Ordering::Relaxed) > 0, "随机流里一块看板都没删成");
+    assert!(COLUMNS_IN_BOARDS.load(Ordering::Relaxed) > 0, "随机流里一枚 create_in_board 都没发出");
+    assert!(CARDS_MOVED_ACROSS_BOARDS.load(Ordering::Relaxed) > 0, "随机流里一次跨看板挪卡都没成");
     assert!(
         COLUMN_LWW_COLLISIONS.load(Ordering::Relaxed) > 0,
         "没有任何一列被两台以上机器改过 —— board_column 的字段级 LWW 一次都没被验到\
@@ -1159,8 +1281,8 @@ fn the_task_selectors_reach_cards_that_live_in_a_custom_column() {
     let mut conn = db::open(&path).expect("open migrated db");
     let mut clock = Clock::load(&conn).expect("load clock");
 
-    let col = board::create_column(&mut conn, &mut clock, "自建", &crate::board::gate::DETACHED).expect("建列");
-    let card = task::create(&mut conn, &mut clock, "住在自建列里", None, None, None).unwrap();
+    let col = board::create_column(&mut conn, &mut clock, "自建", None, &crate::board::gate::DETACHED).expect("建列");
+    let card = task::create(&mut conn, &mut clock, "住在自建列里", None, None, None, None, &crate::board::gate::DETACHED).unwrap();
     task::transition(&mut conn, &mut clock, &card, &col, &crate::board::gate::DETACHED).expect("拖进去");
 
     assert!(ids(&conn, &live_tasks()).contains(&card), "live_tasks 必须够得着自定义列上的活卡");

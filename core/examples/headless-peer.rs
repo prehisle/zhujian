@@ -16,9 +16,27 @@
 //! | `color <id> <#RRGGBB>` / `uncolor <id>` | 上色 / 清色 |
 //! | `title <id> <新标题>` | 改标题 |
 //! | `list` | 列出库里的卡(id / stage / color / content) |
+//! | `board flow\|one <标题>` | 建一块看板(0043;flow = 待处理 / 进行中 / 已完成三列、完成列 = 已完成;one = 一列纯分类),回显 id |
+//! | `boards` / `cols` | 列出看板(id / 落点 / 完成列 / 删没删)/ 列(id / 看板 / 删没删 / 活卡数) |
+//! | `newin <看板id> <标题>` | 在那块看板的落点新建一张卡 |
+//! | `landing <看板id> <列id>` | 改那块看板的新卡落点 |
+//! | `archive <id>` / `restore <id>` | 卡进回收站 / 还原(还原回原列;原列 / 原看板死了 ⇒ 进收容区) |
+//! | `delboard <看板id>` | 删看板(先清空,core 前置) |
+//! | `col <看板id> <列名>` | 在那块看板上加一列(种子 `tasks` ⇒ 五键 `create`;别的看板 ⇒ `create_in_board`) |
+//! | `latch` | 台架:给当前账户立 board_columns 闩(见下)|
 //! | `offline` / `online` | 停 transport(整连接下线)/ 重起 |
 //! | `status` | 打一行当前同步状态 |
+//! | `account` | 只在 `--solo-first` 下用:这才建号并上线 |
 //! | `quit`(或 stdin EOF) | 停 transport 退出 |
+//!
+//! `--solo-first`(0043 第 4 段):先**不**建号,库是纯本地空间 ⇒ 落卡闸的 solo 臂放行,`board` 等写列的命令
+//! 才建得出看板(建了号之后 detached 事实没有名册,闸恒拒);种完再 `account` 建号上线,手机来配对时整份引导过去。
+//!
+//! `latch`(0043 第 5 段混版):已建号的空间里 detached 事实没有名册,建列 / 往自定义列落卡恒被闸拒;
+//! 而混版那组要的恰是「一台 v42 旧端在场时新端照常建看板」= 规格 §5.1 说的「已闩的 v42」形
+//! (账户里早有人用过自定义列,闩已立)。生产里闩只由名册臂第一次成立时立(gate.rs `arm_latch`),
+//! 台架没有 supervisor 造不出名册 ⇒ 这条命令直接把那一格写成 `"board_columns_v1 <account_id>"`,
+//! 只替代「闩怎么立起来的」那一步,⛔ 闸本身照常判。⛔ 只在台架库上用。
 //!
 //! 为什么住 core 的 examples:用到的全是 core 的公开 API(`db::open` / `Clock` /
 //! `sync::transport::{create_account, run, Control}` / `task::*`),桌面与手机两只壳
@@ -127,7 +145,7 @@ impl Peer {
 
 fn status_line(s: &SyncStatus) -> String {
     format!(
-        "state={} peers_online={} account={} device={} error={:?} boot_hint={:?} frozen={:?} quarantined={:?}",
+        "state={} peers_online={} account={} device={} error={:?} boot_hint={:?} frozen={:?} quarantined={:?} suspended={} skew={}",
         s.state,
         s.peers_online,
         s.account_id.as_deref().unwrap_or("-"),
@@ -136,6 +154,8 @@ fn status_line(s: &SyncStatus) -> String {
         s.boot_hint,
         s.frozen,
         s.quarantined,
+        s.suspended,
+        s.skew,
     )
 }
 
@@ -161,12 +181,14 @@ async fn main() {
     let mut server: Option<String> = None;
     let mut dir: Option<PathBuf> = None;
     let mut join: Option<String> = None;
+    let mut solo_first = false;
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         match a.as_str() {
             "--server" => server = Some(args.next().unwrap_or_else(|| die("--server 缺参数"))),
             "--dir" => dir = Some(PathBuf::from(args.next().unwrap_or_else(|| die("--dir 缺参数")))),
             "--join" => join = Some(args.next().unwrap_or_else(|| die("--join 缺参数"))),
+            "--solo-first" => solo_first = true,
             other => die(&format!("不认识的参数:{other}")),
         }
     }
@@ -182,7 +204,11 @@ async fn main() {
     let dbh = Arc::new(Mutex::new(conn));
 
     let existing = transport::account_id(&dbh.lock().unwrap()).unwrap_or_else(|e| die(&e));
+    if solo_first && (existing.is_some() || join.is_some()) {
+        die("--solo-first 只对空目录、且不带 --join 有意义");
+    }
     match existing {
+        None if solo_first => println!("SOLO 未建号;种完数据发 `account`"),
         Some(acct) => {
             if join.is_some() {
                 die("--dir 里已有账户,--join 只对空目录有意义");
@@ -213,8 +239,13 @@ async fn main() {
         wrote,
         dir,
     };
-    let mut running = Some(peer.start());
-    println!("ONLINE starting");
+    let mut running = if solo_first {
+        None
+    } else {
+        println!("ONLINE starting");
+        Some(peer.start())
+    };
+    let server_url = server.clone();
 
     // stdin 在独立线程里读(阻塞读),一行一条转进 tokio 通道;EOF = quit。
     let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel::<String>();
@@ -272,7 +303,11 @@ async fn main() {
                             Err(e) => println!("ERR pair {e}"),
                         },
                     },
-                    "new" => match peer.write(|c, k| task::create(c, k, rest, None, None, None)) {
+                    // 新卡落默认看板的落点(台架库只有种子看板 ⇒ `todo`,种子列不过闸),故 detached 的事实
+                    // 不改变行为;它是台架,不是生产写路径(gate.rs `detached` 头注第 1 类)。
+                    "new" => match peer.write(|c, k| {
+                        task::create(c, k, rest, None, None, None, None, &zhujian_core::board::gate::RuntimeFacts::detached())
+                    }) {
                         Ok(id) => println!("OK new {id}"),
                         Err(e) => println!("ERR new {e}"),
                     },
@@ -294,6 +329,112 @@ async fn main() {
                             Err(e) => println!("ERR title {e}"),
                         }
                     }
+                    // ---- 0043 多看板(multiboard-plan 第 4 段手机验收要一台能建看板的对端;手机自己不建,用户拍 ⑩)----
+                    // 列名写死中文,与桌面「新建看板」两个模板同名;这里是台架,不过 i18n。detached 事实同上(台架,不是生产写路径)。
+                    "board" => {
+                        let (tpl, title) = rest.split_once(' ').unwrap_or((rest, ""));
+                        let (cols, done): (&[&str], Option<usize>) = match tpl {
+                            "flow" => (&["待处理", "进行中", "已完成"], Some(2)),
+                            "one" => (&["收着"], None),
+                            _ => {
+                                println!("ERR board 模板只认 flow / one");
+                                continue;
+                            }
+                        };
+                        match peer.write(|c, k| {
+                            zhujian_core::board::create_board(c, k, title.trim(), cols, done, &zhujian_core::board::gate::RuntimeFacts::detached())
+                        }) {
+                            Ok(id) => println!("OK board {id}"),
+                            Err(e) => println!("ERR board {e}"),
+                        }
+                    }
+                    "boards" => match zhujian_core::board::list_boards(&peer.db.lock().unwrap()) {
+                        Ok(rows) => {
+                            for b in rows {
+                                println!(
+                                    "BOARD {} landing={} done={} deleted={} default={} {}",
+                                    b.id,
+                                    b.landing.as_deref().unwrap_or("-"),
+                                    b.done.as_deref().unwrap_or("-"),
+                                    b.deleted,
+                                    b.is_default,
+                                    b.title
+                                );
+                            }
+                            println!("OK boards");
+                        }
+                        Err(e) => println!("ERR boards {e}"),
+                    },
+                    "cols" => match zhujian_core::board::list_columns(&peer.db.lock().unwrap()) {
+                        Ok(rows) => {
+                            for c in rows {
+                                println!(
+                                    "COL {} board={} kind={} deleted={} board_deleted={} live={} {}",
+                                    c.id,
+                                    c.board_id.as_deref().unwrap_or("-"),
+                                    c.kind,
+                                    c.deleted,
+                                    c.board_deleted,
+                                    c.live_items,
+                                    c.title
+                                );
+                            }
+                            println!("OK cols");
+                        }
+                        Err(e) => println!("ERR cols {e}"),
+                    },
+                    "newin" => {
+                        let (b, t) = rest.split_once(' ').unwrap_or((rest, ""));
+                        match peer.write(|c, k| {
+                            task::create(c, k, t.trim(), None, None, None, Some(b), &zhujian_core::board::gate::RuntimeFacts::detached())
+                        }) {
+                            Ok(id) => println!("OK newin {id}"),
+                            Err(e) => println!("ERR newin {e}"),
+                        }
+                    }
+                    "landing" => {
+                        let (b, col) = rest.split_once(' ').unwrap_or((rest, ""));
+                        match peer.write(|c, k| zhujian_core::board::set_board_landing(c, k, b, col.trim())) {
+                            Ok(()) => println!("OK landing {b} {}", col.trim()),
+                            Err(e) => println!("ERR landing {e}"),
+                        }
+                    }
+                    "archive" => match peer.write(|c, k| task::archive(c, k, rest)) {
+                        Ok(()) => println!("OK archive {rest}"),
+                        Err(e) => println!("ERR archive {e}"),
+                    },
+                    "restore" => match peer.write(|c, k| task::restore(c, k, rest)) {
+                        Ok(()) => println!("OK restore {rest}"),
+                        Err(e) => println!("ERR restore {e}"),
+                    },
+                    "col" => {
+                        let (b, t) = rest.split_once(' ').unwrap_or((rest, ""));
+                        match peer.write(|c, k| {
+                            zhujian_core::board::create_column(c, k, t.trim(), Some(b), &zhujian_core::board::gate::RuntimeFacts::detached())
+                        }) {
+                            Ok(id) => println!("OK col {id}"),
+                            Err(e) => println!("ERR col {e}"),
+                        }
+                    }
+                    "latch" => {
+                        let conn = peer.db.lock().unwrap();
+                        match transport::account_id(&conn) {
+                            Ok(Some(acct)) => match conn.execute(
+                                "INSERT INTO sync_meta (key, value) VALUES ('board_columns_latch', ?1) \
+                                 ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                                [format!("board_columns_v1 {acct}")],
+                            ) {
+                                Ok(_) => println!("OK latch {acct}"),
+                                Err(e) => println!("ERR latch {e}"),
+                            },
+                            Ok(None) => println!("ERR latch 还没建号"),
+                            Err(e) => println!("ERR latch {e}"),
+                        }
+                    }
+                    "delboard" => match peer.write(|c, k| zhujian_core::board::delete_board(c, k, rest)) {
+                        Ok(()) => println!("OK delboard {rest}"),
+                        Err(e) => println!("ERR delboard {e}"),
+                    },
                     "list" => match peer.list() {
                         Ok(rows) => {
                             for r in rows {
@@ -316,6 +457,21 @@ async fn main() {
                         }
                     }
                     "status" => println!("STATUS {}", status_line(&peer.status.lock().unwrap())),
+                    "account" => {
+                        if transport::account_id(&peer.db.lock().unwrap()).ok().flatten().is_some() {
+                            println!("ERR 已有账户");
+                            continue;
+                        }
+                        match transport::create_account(&peer.db, &server_url).await {
+                            Ok(_) => {
+                                let acct = transport::account_id(&peer.db.lock().unwrap()).ok().flatten();
+                                println!("ACCOUNT created {}", acct.as_deref().unwrap_or("?"));
+                                running = Some(peer.start());
+                                println!("ONLINE starting");
+                            }
+                            Err(e) => println!("ERR account {e}"),
+                        }
+                    }
                     "quit" => {
                         if let Some(r) = running.take() {
                             stop(r).await;

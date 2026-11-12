@@ -1,6 +1,7 @@
 import { TOPICS_VIEW_KEYS } from "./keymap";
 import { invoke } from "./space";
-import { type BoardColumn, DONE_COLUMN, columnName, loadBoardColumns } from "./board-columns";
+import { type BoardColumn, columnName, loadBoardColumns } from "./board-columns";
+import { type Board, boardName, doneColumnSet, loadBoards } from "./boards";
 import type { View, ViewCtx } from "./notebook";
 import { type TaskItem, PRIORITY_LABEL, dueDateLabel, dueLabel, dueState, localToday, when } from "./tasktime";
 import { copyButton } from "./clipboard";
@@ -38,6 +39,8 @@ type TopicTree = {
 // 曾经是 board.ts 那份四值表的**第二份复制品**(连字典键都复制了一份 topics.col*),
 // 现在两处共用 `board-columns.ts` 的 columnName()。⛔ 别再抄第三份。
 let colName = new Map<string, string>();
+// 0043:各看板解析后的完成列(core 给的),「已完成的不说逾期」按它判。
+let doneCols = new Set<string>();
 
 // ---- small DOM helper (same shape as inbox.ts) -----------------------------
 // ---- 前缀分组(纯视觉层级)---------------------------------------------------
@@ -579,7 +582,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     const meta: Node[] = [el("span", { className: "dtask-col", textContent: cn })];
     if (task.due_on) {
       // 158 G3 / Q4:已完成的不说「逾期 / 今天」,只写截止那天(同看板卡那枚灰章)。
-      const done = task.status === DONE_COLUMN;
+      const done = doneCols.has(task.status);
       const st = done ? "done" : dueState(task.due_on, today);
       const label = done ? dueDateLabel(task.due_on, today) : dueLabel(task.due_on, today);
       meta.push(el("span", { className: `dtask-due ${st}`, textContent: label }));
@@ -984,23 +987,34 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
   }
   async function refresh(refocus = false): Promise<void> {
     try {
-      const [t, tasks, cols] = await Promise.all([
+      const [t, tasks, cols, boards] = await Promise.all([
         invoke<TopicTree[]>("list_topics_full"),
         invoke<TaskItem[]>("list_tasks"),
         // 列名(B-f 第 1 段):这里**要全部列、不过 boardColumns()** —— 下钻列表连已删列
         // 里的卡也要显示得出名字,而那道滤子是「看板画哪几列」的判据,不是命名的。
         loadBoardColumns(),
+        loadBoards(),
       ]);
-      const sig = JSON.stringify([t, tasks, cols]);
+      const sig = JSON.stringify([t, tasks, cols, boards]);
       // `=== true` 同 inbox:防未来把 refresh 直接接成事件回调时 Event 误当 refocus。
       if (refocus === true && sig === lastSig) return;
       lastSig = sig;
       // ⛔ **只取任务列**:`columnName()` 对「没改过名却查不到 canonical」是响亮抛,而灵感那两
       // 列(`inbox`/`filed`)刻意没有显示名(灵感是纸面的默认态,不印列名)—— 整份 map 过去
       // 会在第一行就炸。⚠ 已删的任务列**要留着**:它里头的卡照样在这份下钻列表里。
+      // 0043:多于一块看板时列名前挂看板名(「书单 · 在读」),否则两块看板的同名列分不清。
+      const boardOf = new Map((boards as Board[]).map((b) => [b.id, b]));
+      const multi = boards.length > 1;
       colName = new Map(
-        (cols as BoardColumn[]).filter((c) => c.kind === "task").map((c) => [c.id, columnName(c)]),
+        (cols as BoardColumn[])
+          .filter((c) => c.kind === "task")
+          .map((c) => {
+            const own = c.board_id === null ? undefined : boardOf.get(c.board_id);
+            if (own === undefined) throw new Error(`task column ${c.id} has no board`);
+            return [c.id, multi ? `${boardName(own)} · ${columnName(c)}` : columnName(c)];
+          }),
       );
+      doneCols = doneColumnSet(boards);
       trees = t;
       tasksByTopic = new Map();
       for (const task of tasks) {

@@ -1,5 +1,9 @@
 // 列管理面(B-f 第 2 段;board-columns-plan §8 那张表末行)。
 //
+// ⭐ 0043(multiboard-plan §6)起管的是**一块看板**:它的列 + 两个角色(新卡落点 / 完成列)+ 这块看板
+// 本身(改名 / 删)。角色是看板上的指针(core 解析,`Board.landing` / `Board.done`),⛔ 前端不另算;
+// 改角色走 `board/set_field`,**不过**列的那道发送端闸(plan §5.1)⇒ 闸关着时那一节照样可写。
+//
 // 看板顶栏「管理列」→ 这一面:**新建 / 改名 / 拖顺序 / 删**。
 // ⭐ **纯桌面**:安卓只做读侧(2026-08-25 用户拍板①,plan §8.6 四)——那不是债,是产品范围。
 // ⭐ 开在**看板顶栏**、不占左侧栏、不进「设置」面(同日拍板③:那一面今天全是纯本地不同步
@@ -28,6 +32,16 @@ import {
   renameColumn,
   reorderColumn,
 } from "./board-columns";
+import {
+  type Board,
+  boardName,
+  deleteBoard,
+  loadBoards,
+  renameBoard,
+  setBoardDone,
+  setBoardLanding,
+} from "./boards";
+import { openNewBoard } from "./board-new";
 import { t } from "./i18n";
 import "./column-manager.css";
 import { el, focusables, onDragTarget, trapTab } from "./dom";
@@ -37,14 +51,17 @@ let overlay: HTMLDivElement | null = null;
 
 /** 列变了要回看板重画(board.ts 传进来的 `load`)。面板关掉即摘。 */
 let onChanged: (() => void) | null = null;
+/** 管的是哪块看板(0043)。面板关掉即摘。 */
+let boardId: string | null = null;
 
 /**
  * 打开列管理面。`opts.onChanged` 在**每一笔写成功之后**调用(看板在背后跟着重画),
  * ⛔ 不是只在关闭时调一次:面板开着的时候看板就该已经是新的了。
  */
-export function openColumnManager(opts: { onChanged: () => void }): void {
+export function openColumnManager(opts: { boardId: string; onChanged: () => void }): void {
   if (overlay) return;
   onChanged = opts.onChanged;
+  boardId = opts.boardId;
   overlay = el("div", { className: "bcm-overlay" });
   overlay.addEventListener("mousedown", (e) => {
     if (e.target === overlay) closeColumnManager();
@@ -70,6 +87,7 @@ export function closeColumnManager(): void {
   overlay?.remove();
   overlay = null;
   onChanged = null;
+  boardId = null;
   // ⛔ 别漏这一句:`draggingId` 是模块态,留着旧值的话下一次开面板时,任何一次
   // **不是从这儿发起**的拖动(拖个文件进窗口就够)扫过某一行都会被当成「在拖那一列」
   // ⇒ 一次没人要求的排序写。dragend 正常会清它,这里守的是「拖到一半面板没了」。
@@ -111,10 +129,11 @@ async function render(panel: HTMLElement, refocus: Refocus = "keep"): Promise<vo
   const seq = ++renderSeq;
   let cols: BoardColumn[];
   let gate: ColumnGate;
+  let boards: Board[];
   try {
-    // 两发并发:列与闸没有先后依赖。⚠ 闸答的是「问的那一刻」,故每次重画都重问一遍
+    // 三发并发:列、闸、看板没有先后依赖。⚠ 闸答的是「问的那一刻」,故每次重画都重问一遍
     // (§5.2:⛔ 不许 mount 时算好一个 bool 长期缓存)。
-    [cols, gate] = await Promise.all([loadBoardColumns(), loadColumnGate()]);
+    [cols, gate, boards] = await Promise.all([loadBoardColumns(), loadColumnGate(), loadBoards()]);
   } catch (e) {
     // 读失败(含「四键残缺」那档 core 的响亮报错)照实说,⛔ 不猜一个「能用」。
     if (!overlay || seq !== renderSeq) return; // 同下:关掉了 / 有更晚一趟 ⇒ 不落 DOM
@@ -126,7 +145,17 @@ async function render(panel: HTMLElement, refocus: Refocus = "keep"): Promise<vo
   }
   if (!overlay) return; // await 期间面板已被关掉(切空间 / Esc)
   if (seq !== renderSeq) return; // 有更晚的一趟在途:旧响应⛔ 不落 DOM
-  const rows = boardColumns(cols);
+  const brd = boards.find((b) => b.id === boardId && !b.deleted);
+  if (!brd) {
+    // 开着面板时这块看板被(别的设备)删了:照实说一句、只留关闭,⛔ 不猜别的看板。
+    panel.replaceChildren(
+      el("h2", { className: "bcm-title", textContent: t("cols.title") }),
+      el("div", { className: "bcm-err", textContent: t("cols.boardGone") }),
+    );
+    return;
+  }
+  const board: Board = brd;
+  const rows = boardColumns(cols, board.id);
 
   const closeBtn = el("button", {
     className: "bcm-close",
@@ -137,7 +166,7 @@ async function render(panel: HTMLElement, refocus: Refocus = "keep"): Promise<vo
   closeBtn.setAttribute("aria-label", t("cols.close"));
   closeBtn.addEventListener("click", () => closeColumnManager());
   const head = el("div", { className: "bcm-head" }, [
-    el("h2", { className: "bcm-title", textContent: t("cols.title") }),
+    el("h2", { className: "bcm-title", textContent: t("cols.titleFor", { board: boardName(board) }) }),
     closeBtn,
   ]);
   const hint = el("p", { className: "bcm-hint", textContent: t("cols.hint") });
@@ -177,6 +206,7 @@ async function render(panel: HTMLElement, refocus: Refocus = "keep"): Promise<vo
 
   for (const c of rows) list.append(row(c));
   if (gate.can_manage) body.push(creator());
+  body.push(boardSection());
 
   panel.replaceChildren(...body);
   const newInput = panel.querySelector<HTMLInputElement>(".bcm-new .bcm-col-input");
@@ -193,7 +223,11 @@ async function render(panel: HTMLElement, refocus: Refocus = "keep"): Promise<vo
       textContent: t("cols.count", { n: c.live_items }),
     });
     const acts = el("span", { className: "bcm-col-acts" });
-    const headRow = el("div", { className: "bcm-col-head" }, [name, count, acts]);
+    // 0043:两个角色在列名后面各挂一枚标(读 core 解析的指针);改它们在底下「这块看板」那一节。
+    const roles: HTMLElement[] = [];
+    if (c.id === board.landing) roles.push(el("span", { className: "bcm-role", textContent: t("cols.roleLanding") }));
+    if (c.id === board.done) roles.push(el("span", { className: "bcm-role done", textContent: t("cols.roleDone") }));
+    const headRow = el("div", { className: "bcm-col-head" }, [name, ...roles, count, acts]);
     sec.append(headRow);
 
     // 已删的列 = 只读收容区(§4.3):列身还画着是因为**还有卡扣在里面**,卡只出不进,
@@ -243,6 +277,8 @@ async function render(panel: HTMLElement, refocus: Refocus = "keep"): Promise<vo
     // ⛔ **`deletable === false` 的那两列根本不给按钮** —— 那是列的**永久属性**(挂着产品
     // 语义的落点与完成列,plan §2.3a),给一枚永远灰着的钮只会让人反复去点它问为什么。
     // 「非空」那一格不同:它是**用户此刻就能解掉**的条件 ⇒ 钮留着、灰着、说清还剩几条。
+    // ⚠ 0043 起 `deletable` 不再是永久属性:完成列(先取消)、看板上最后一枚能放卡的列也是 false。
+    // 那两种的原因由角色标 / 底下那节说清,这里照旧不给一枚永远灰着的钮。
     if (c.deletable) {
       // 158 G2 / A12(WD-22):有卡的列删不了,原因此前只在悬停提示里(点了没反应、悬停还变红)。
       // 现在钮照样淡着(aria-disabled,⛔ 不用 disabled —— 那样点了连原因都说不出),点一下在这一行
@@ -365,7 +401,7 @@ async function render(panel: HTMLElement, refocus: Refocus = "keep"): Promise<vo
         return;
       }
       try {
-        await createColumn(title);
+        await createColumn(title, board.id);
       } catch (e) {
         showErr(errText(e));
         return;
@@ -374,6 +410,124 @@ async function render(panel: HTMLElement, refocus: Refocus = "keep"): Promise<vo
       await afterWrite("new");
     }
     return el("div", { className: "bcm-new" }, [input, add]);
+  }
+
+  // ---- 这块看板(0043):两个角色 + 改名 + 删 -------------------------------------------
+  // 角色用一排药丸选(当前那枚按下):列是个位数,一眼看全,比下拉直。⛔ 候选与限制只防「点了必然被拒」,
+  // 真正的前置(新旧完成列都得空着、落点≠完成列…)在 core,拒了原样显那句话。
+  function boardSection(): HTMLElement {
+    const sec = el("div", { className: "bcm-board" }, [
+      el("h3", { className: "bcm-sub", textContent: t("cols.boardSection") }),
+    ]);
+    // 新卡落在:除完成列以外的活列。
+    const landingPills = rows
+      .filter((c) => c.id !== board.done)
+      .map((c) =>
+        pill(columnName(c), c.id === board.landing, () => void write(() => setBoardLanding(board.id, c.id))),
+      );
+    sec.append(roleRow(t("cols.landingLabel"), landingPills));
+    // 完成列:「不设」+ 除落点以外的活列;只有一列的看板不能设(core 同拒,这里不摆)。
+    const donePills = [
+      pill(t("cols.doneNone"), board.done === null, () => void write(() => setBoardDone(board.id, null))),
+      ...(rows.length < 2
+        ? []
+        : rows
+            .filter((c) => c.id !== board.landing)
+            .map((c) => pill(columnName(c), c.id === board.done, () => void write(() => setBoardDone(board.id, c.id))))),
+    ];
+    sec.append(roleRow(t("cols.doneLabel"), donePills));
+    sec.append(el("p", { className: "bcm-hint", textContent: board.done === null ? t("cols.doneNoneHint") : t("cols.doneHint") }));
+
+    // 改看板名(no-op 闸同列改名:比显示名,别把本端字典的种子名写进库)。
+    const nameInput = el("input", { className: "bcm-col-input", type: "text", value: boardName(board) });
+    const saveName = cbtn(t("cols.save"), () => void commitName());
+    nameInput.addEventListener("keydown", (e) => {
+      if (e.key !== "Enter") return;
+      e.preventDefault();
+      void commitName();
+    });
+    async function commitName(): Promise<void> {
+      const next = nameInput.value.trim();
+      if (next === "") {
+        showErr(t("cols.emptyBoardName"));
+        return;
+      }
+      if (next === boardName(board)) return;
+      await write(() => renameBoard(board.id, next));
+    }
+    sec.append(roleRow(t("cols.boardName"), [nameInput, saveName]));
+
+    // 删这块看板:种子看板不给;有卡(含已删列里的)= 淡着、点了说还剩几张(同删列)。
+    if (board.deletable) {
+      const n = cols.filter((c) => c.kind === "task" && c.board_id === board.id).reduce((s, c) => s + c.live_items, 0);
+      const acts = el("div", { className: "bcm-board-del" });
+      const del = cbtn(t("cols.deleteBoard"), () => {
+        if (n > 0) {
+          if (!sec.querySelector(".bcm-col-note"))
+            sec.append(el("div", { className: "bcm-col-note", textContent: t("cols.deleteBoardBlocked", { n }) }));
+          return;
+        }
+        const prev = [...acts.childNodes];
+        const armedAt = performance.now();
+        const yes = cbtn(t("cols.deleteYes"), () => {
+          if (performance.now() - armedAt < CONFIRM_ARM_MS) return;
+          void (async () => {
+            try {
+              await deleteBoard(board.id);
+            } catch (e) {
+              acts.replaceChildren(...prev);
+              showErr(errText(e));
+              return;
+            }
+            onChanged?.();
+            closeColumnManager(); // 看板没了,这一面也没东西可管了(看板视图回到默认看板)
+          })();
+        }, true);
+        yes.classList.add("solid");
+        const no = cbtn(t("cols.cancel"), () => acts.replaceChildren(...prev));
+        acts.replaceChildren(el("span", { className: "bcm-col-q", textContent: t("cols.deleteBoardQ") }), no, yes);
+        no.focus();
+      }, n === 0);
+      if (n > 0) {
+        del.setAttribute("aria-disabled", "true");
+        del.classList.add("blocked");
+        del.title = t("cols.deleteBoardBlocked", { n });
+      }
+      acts.append(del);
+      sec.append(acts);
+    }
+    // 新建另一块看板(只有一块看板时侧栏不展开,这里是它的入口;渐进式披露,用户 2026-11-11 拍)。
+    // 先关这一面再开对话框:两层遮罩叠着,Esc / 点遮罩会分不清关的是谁。
+    const another = cbtn(t("cols.newBoard"), () => {
+      closeColumnManager();
+      openNewBoard();
+    });
+    sec.append(el("div", { className: "bcm-board-del" }, [another]));
+    return sec;
+  }
+  function roleRow(label: string, items: HTMLElement[]): HTMLElement {
+    return el("div", { className: "bcm-role-row" }, [
+      el("span", { className: "bcm-role-label", textContent: label }),
+      el("div", { className: "bcm-role-pills" }, items),
+    ]);
+  }
+  function pill(label: string, on: boolean, run: () => void): HTMLElement {
+    const b = el("button", { className: on ? "bcm-pill on" : "bcm-pill", type: "button", textContent: label });
+    b.setAttribute("aria-pressed", String(on));
+    b.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (!on) run();
+    });
+    return b;
+  }
+  async function write(op: () => Promise<void>): Promise<void> {
+    try {
+      await op();
+    } catch (e) {
+      showErr(errText(e));
+      return;
+    }
+    await afterWrite();
   }
 
   // ---- 拖排序(整套复用 topics 189 那条:同层兄弟、按落点算前后邻居、只写被拖那一枚) ----

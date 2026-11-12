@@ -1028,6 +1028,11 @@
          弹系统菜单并发 pointercancel,把还没拿起的那一下打掉(`contextmenu.preventDefault()` 挡不住,O1 实测)。 */
       body[data-view="tasks"] #timeline .card { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
       .card.lifted { position: relative; z-index: 2; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22); border-color: var(--seal-line); }
+      /* 看板上(889 起列自己滚、看板横滚)拿起的那张若原地平移,一出本列就被列的 overflow 裁掉 ⇒ 改成浮一张替身
+         (fixed:不受任何一层滚动盒裁剪)跟手,原卡留在原位淡下去当「从哪儿拿的」。替身是克隆、摘了 data-id 与 inert,
+         按 id 找卡的那些路找不到它(carddrag.ts)。 */
+      .card.lifted.drag-ghost { position: fixed; margin: 0; z-index: 6; pointer-events: none; }
+      .card.drag-src { opacity: 0.4; }
       .drag-line {
         position: fixed; height: 3px; z-index: 6; pointer-events: none;
         background: var(--seal); border-radius: var(--radius-pill);
@@ -2045,29 +2050,53 @@
          窄屏照旧空节不画。挂在类上还有两个好处:①转屏遇上卡片草稿不重画时(main.ts 那只 ResizeObserver),版式与
          画出来的内容仍是同一套,不会出现「网格里排着窄屏那份节」;②check-contrast 不收 `@media` 里带颜色 / 字号的规则
          (它按扁平层叠算,条件块会算错),挂在类上它才判得到列头与「空」这两组字。
-         每排几列由 main.ts::syncBoardCols 按时间轴的宽算好写进 --board-cols —— 每列 ≥ 300(≈ 手机屏宽:卡片里的东西
-         都是按手机宽做的),放不下全部列时**均匀**折(四列 = 2 + 2,不是 3 + 1)。1400 的框一排四列(每列 341)、1280
-         四列(304)、竖放 960 / 800 与手机横放 2 + 2。同一排的列等高(grid 默认 stretch)⇒ 列头在本列滚完之前都吸着顶。
-         空态那句话(还没有任务 / 筛空了)不是一列,横跨整排。 */
+         ⭐ 889 起(用户在手机横放上报「执行中找不到、一划两列一起动」,选择题改判 ③A → 同桌面):**全部列排一排、
+         看板横着滚、每列自己竖着滚**。此前 2 + 2 折排 + 整页滚:第一排高 = 最长那列(用户库待处理 117 张),第二排
+         要滑过一百多张才露头;滑一列另一列跟着走,短列一划就空。
+         ⇒ 每列宽由 main.ts::syncBoardCols 算好写进 --board-col-w:屏上放得下 k 列(每列 ≥ 300,≈ 手机屏宽)就平分给 k 列,
+         放不下全部时再让下一列在右边露出一截(看得出右边还有),多出来的往右排、横滚看,松手按列对齐(scroll-snap)。
+         看板高 = 视口 − 看板上沿离页顶多远(--board-top,main.ts::syncBoardTop 量:顶栏、它的下外边距、「空间已不在」条、
+         筛选条与其外边距,几样加起来写不死)− 屏底那段留白(body 的 padding-bottom)⇒ 整页不再滚,列各滚各的,列头吸在列顶。
+         下限 160:筛选条摊开 / 手机横放键盘起着时宁可整页滚一点,也别把列压成一条缝。
+         横滑的分工(⛔ 别动):卡是 `touch-action: pan-y`,手指落在卡上横划 = 改状态(swipe.ts),只有落在列头 / 列间空白
+         / 卡下面那截淡底上横划才是原生横滚看板 —— 两个手势各占一块地,不抢。
+         空态那句话(还没有任务 / 筛空了)不是一列,占满整行。 */
       /* ⚠ `:not(.pane-open)` 不是装饰(165 / W5 A36):开面时收时间轴那条 `body.pane-open #timeline { display:none }`
          与这条特异性相同、排在前面 ⇒ 不带它的话看板压过「收起」,平板任务页点设置 / 同步 / 长文时看板不走,
          设置接在看板下面、同步与长文插在看板上面(随记页那面没有 .board,一直是整页换);转屏时设置读到的位置
          也跟着看板的高度往回退(A35)。 */
       body.board:not(.pane-open) #timeline {
-        display: grid; grid-template-columns: repeat(var(--board-cols), minmax(0, 1fr)); gap: 12px;
+        display: flex; flex-direction: row; align-items: stretch; gap: 12px;
+        overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain;
+        scroll-snap-type: x mandatory; scrollbar-width: none;
+        height: max(160px, calc(100vh - var(--board-top) - var(--nav-clear) - env(safe-area-inset-bottom, 0px)));
+        padding-bottom: 0;
       }
-      body.board #timeline > p { grid-column: 1 / -1; }
-      /* 每列一层淡底(--sunken,不透明实色 —— 列头吸顶时拿它当底)。左右 8 = 卡与列边的呼吸;上 4 = 让列头那块底
-         离开列的圆角(贴着上沿的话,圆角切掉的两个角会被列头的方底补回来,露出两粒小尖)。 */
+      body.board #timeline::-webkit-scrollbar { display: none; }
+      /* 拖着卡时看板由 carddrag.ts 在屏边一帧一帧地横推,吸附开着会把每一小步拽回列边;松手后恢复,浏览器自己对齐到最近那列。 */
+      body.board.card-dragging #timeline { scroll-snap-type: none; }
+      body.board #timeline > p { flex: 1 0 100%; }
+      /* 每列一层淡底(--sunken,不透明实色 —— 列头吸顶时拿它当底)。左右 8 = 卡与列边的呼吸;上 4 = 列头离开列的圆角。
+         列自己竖着滚:overflow 连同圆角一起裁 ⇒ 吸顶的列头方角不会露出列外。下 72 = 悬浮 ＋(56 + 离底 16)的高:
+         最后一张卡也滚得上 ＋ 的上沿(同手机上 #timeline 底边那条)。列里的孩子不许被压扁(flex 列 + 定高时
+         overflow 不是 visible 的孩子 min-height 归 0,会被挤矮)。 */
       body.board #timeline > .tl-group {
-        background: var(--sunken); border-radius: var(--radius-lg); padding: 4px 8px 8px;
+        flex: 0 0 var(--board-col-w); min-width: 0;
+        overflow-x: hidden; overflow-y: auto; overscroll-behavior-y: contain; scrollbar-width: none;
+        scroll-snap-align: start;
+        background: var(--sunken); border-radius: var(--radius-lg); padding: 4px 8px 72px;
       }
+      body.board #timeline > .tl-group::-webkit-scrollbar { display: none; }
+      body.board #timeline > .tl-group > * { flex-shrink: 0; }
       /* 列头 = 状态名 + 计数。字抬到 14:在看板上它是这一列的标题,不再是手机上那行 12px 的节头;也是对比度的
          要求 —— --ink-soft 压 --sunken 亮档 4.75,够 14px 的 4.5、不够 14px 以下的 5.0(ui-guidelines §2.2)。
          字色照基础那条写一遍,是为了让 check-contrast 在这个签名上判得到这一对。
-         每一列都是「第一节」,上内边距一样(⚠ 选择器带 #timeline 是为了压过基础那条 `:first-child`,它是 (0,4,0))。 */
+         每一列都是「第一节」,上内边距一样(⚠ 选择器带 #timeline 是为了压过基础那条 `:first-child`,它是 (0,4,0))。
+         吸顶贴的是**列自己的顶**:889 起列自己滚,基础那条的「顶栏 + 筛选条」那个高在列里是一大截空。⚠ top 是 −4 不是 0:
+         滚动盒里的吸顶是从**内边距内沿**算起的,列有上 4 的内边距 ⇒ top 0 吸在列顶下 4,卡滚过时从那条缝里露出来
+         (891 用户真机截图;截图台的图分辨率低没看出来)。−4 = 列的 padding-top,改那边就得改这里。 */
       body.board #timeline .tl-sec {
-        display: flex; align-items: center; gap: 8px;
+        top: -4px; display: flex; align-items: center; gap: 8px;
         padding: 6px 4px 4px; background: var(--sunken); color: var(--ink-soft); font-size: var(--fs-14);
       }
       /* 计数:与桌面 board.css 的 `.col-count` 同形(底换成 --ink-veil —— 桌面那句 color-mix 老引擎不认,mobile.md 643)。
@@ -2099,6 +2128,70 @@
       body.board #filterbar .fmain { display: contents; }
       body.board #filter-stages > :not(.fdue) { display: none; }
       body.board #filter-kinds { order: -1; flex: 0 0 100%; }
+      /* 0043:看板切换那排(与它下面那句收容区说明)在看板上也独占一行、排最上(类型行之上)。 */
+      body.board #filter-boards { order: -3; flex: 0 0 100%; }
+      body.board #board-note { order: -2; }
+
+      /* 顶栏收起(890,chromehide.ts;用户拍「往下划自动收,往上划露出」):手机横放只有 360–412 高,顶栏 + 筛选条吃掉约 110。
+         `body.chrome-hidden` 只在矮屏(宽屏 ∧ 不是高屏)的时间轴上由 JS 打;下面再套 `:not(.pane-open)`:开面那一下类还没摘,
+         面板的顶栏(返回 / 标题都在里头)不许跟着收。
+         收 = 两样按 `--chrome-shift`(收的那一刻 JS 量的:两样里靠下那条的下沿)往上平移出屏 —— 不改流内布局,随记整页滚时
+         内容本来就从它们底下过;看板借一个负的上外边距长到状态栏下 8(`--board-top` 那段被借走,高度同步补上)。
+         状态栏那条在顶栏收走后会露出底下滚过的卡 ⇒ 铺一条纸底(::before)。筛着时屏顶那枚细条(#chrome-peek)写着筛的是什么,
+         点它露出;它在时看板与节头再往下让 28(`chrome-peek-on`,JS 跟着细条打)。 */
+      body.widescreen:not(.tallscreen) > header,
+      body.widescreen:not(.tallscreen) #filterbar { transition: transform 0.2s ease; }
+      /* ⛔ 看板的上外边距 / 高度别做过渡(892 实撞):两条过渡在半路对不齐,文档瞬间涨到 408 > 360、整页变得能滚 ——
+         空列滚不动,手指的推力就链到整页上,收起那一下的布局又把它拉回来,被读成「往上划」,刚收的顶栏当场又露出来。
+         一步到位、只让顶栏与筛选条滑:它俩在看板上面(z 4 / 5),看着就是顶栏滑开、露出已经长好的看板。 */
+      body.chrome-hidden:not(.pane-open) > header,
+      body.chrome-hidden:not(.pane-open) #filterbar { transform: translateY(calc(-1 * var(--chrome-shift))); }
+      body.chrome-hidden:not(.pane-open)::before {
+        content: ""; position: fixed; top: 0; left: 0; right: 0; height: var(--sat); z-index: 5; background: var(--paper);
+      }
+      body.chrome-hidden.board:not(.pane-open) #timeline {
+        margin-top: calc(var(--sat) + 8px - var(--board-top));
+        height: max(160px, calc(100vh - var(--sat) - 8px - var(--nav-clear) - env(safe-area-inset-bottom, 0px)));
+      }
+      body.chrome-hidden.chrome-peek-on.board:not(.pane-open) #timeline {
+        margin-top: calc(var(--sat) + 36px - var(--board-top));
+        height: max(160px, calc(100vh - var(--sat) - 36px - var(--nav-clear) - env(safe-area-inset-bottom, 0px)));
+      }
+      /* 随记的日期节头照旧吸顶,只是吸到状态栏下(看板列头吸的是列顶,`body.board #timeline .tl-sec` 那条特异性更高,不受这条管)。 */
+      body.chrome-hidden:not(.pane-open) .timeline .tl-sec { top: calc(var(--sat) - 1px); }
+      body.chrome-hidden.chrome-peek-on:not(.pane-open) .timeline .tl-sec { top: calc(var(--sat) + 27px); }
+      .chrome-peek {
+        position: fixed; top: calc(var(--sat) + 4px); left: 50%; transform: translateX(-50%); z-index: 6;
+        max-width: 80%; padding: 3px 12px; border: 1px solid var(--line); border-radius: var(--radius-pill);
+        background: var(--paper); color: var(--ink-soft); font: inherit; font-size: var(--fs-12);
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      }
+      .chrome-peek[hidden] { display: none; }
+      /* 顶栏收着时,贴顶的那几条(错误条;回执退回上方时也是)跟着贴到状态栏下 —— 否则悬在原来顶栏 + 筛选条下沿那个高度,
+         底下已经是看板(892 用户「类似问题」那半)。细条在时让到它下面。 */
+      body.chrome-hidden:not(.pane-open) .error { top: calc(var(--sat) + 8px); }
+      body.chrome-hidden.chrome-peek-on:not(.pane-open) .error { top: calc(var(--sat) + 36px); }
+
+      /* 宽屏上的三条浮条(892;用户手机横放真机截图「提示绿条位置不太对」,选择题拍「屏底居中窄条」):错误 / 回执条(.error)、
+         确认条(#confirmbar)、更新条(.update)此前沿用手机那套 —— 左右各 14 横贯整宽,回执贴在筛选条下沿,手机横放上正好压住
+         看板列头,平板上一条 1400 宽的绿条。⇒ 宽屏一律**收窄居中**:按内容宽,最宽 560,且两边各让出悬浮 ＋ 那一格
+         (56 + 离边 16 + 缝 16 = 88,两边 176)—— 720 那档最宽 544,不碰右下角的 ＋。
+         ⚠ 居中用 left/right 0 + margin auto,⛔ 别用 transform:确认条「躲开触发钮」那步(ui.ts::dodgeTrigger)写的就是
+         inline transform,会被盖掉。 */
+      body.widescreen .error,
+      body.widescreen #confirmbar,
+      body.widescreen .update {
+        left: 0; right: 0; margin-inline: auto; width: fit-content; max-width: min(560px, calc(100% - 176px));
+      }
+      /* 回执(成功 / 中性两档)落到屏底居中(同安卓 Snackbar):不压列头,也不压筛选条(做完一件事最常点的地方,165 / W5 A31
+         的由头仍在)。两种情况退回上方(上面那条 `.error.notice` 的位置,照样收窄):
+         ①底部弹层开着(`html.kb-locked`:记一笔 / 编辑 / 留言;手机横放上它们从屏底升起,回执压在「记下」上);
+         ②确认条在屏上(`body.confirm-up`,ui.ts 打):它也在屏底,两条会叠 —— 它俩是两套独立的条,真会同时出
+         (确认条等第二拍时同步推来一句「已重新连上」)。错误条(红)照旧贴顶:写在弹层开着时也要读得到。 */
+      html:not(.kb-locked) body.widescreen:not(.confirm-up) .error.notice,
+      html:not(.kb-locked) body.widescreen:not(.confirm-up) .error.neutral {
+        top: auto; bottom: calc(var(--nav-clear) + env(safe-area-inset-bottom, 0px));
+      }
 
       /* 浮窗 = 高屏(tablet-plan 格 4;789 立的形,用户 9-30 拍 ④A):记一笔 / 编辑 / 留言三座从屏底升起改成屏中浮窗。
          判据是「宽屏且高 ≥ 600」,在上面「宽屏」那段里套的那层翻 `--tall`;**挂在 main.ts 打的 `body.tallscreen` 上、
@@ -2182,9 +2275,14 @@
       .fpill::after, .fexpand::after { content: ""; position: absolute; left: 0; right: 0; top: -4px; bottom: -4px; }
       /* 灵感面 main.ts 清空 #filter-stages → :empty 隐整行(同 .fkinds 的形)。 */
       .fstages:empty { display: none; }
+      /* 归档册按看板筛那排(0043,backlog 170;panes.ts renderSealed):同筛选行的皮,与下面的卡隔开一行距。
+         ⚠ 盖的是 `.fstages` 那条 halo 用的负 margin 的下半(上半照旧 -4px)。 */
+      #sealed-list > .sealed-boards { margin-bottom: 12px; }
       /* 无 kind 时 filter.ts 清空 #filter-kinds → :empty 隐整行(无类型一条不多)。 */
       .fkinds:empty { display: none; }
       .fmain { display: flex; align-items: center; gap: 10px; }
+      /* 当前看板空着、只剩看板切换那排时 main.ts 把主行藏起;看板上它是 display:contents,压过 UA 的 [hidden] ⇒ 这里补回。 */
+      #filterbar .fmain[hidden], body.board #filterbar .fmain[hidden] { display: none; }
       /* 筛着时那一行「筛出 N 条 · 标签「…」」(159 / W3 Q8;main.ts paintFilterSum)。三种排法(竖屏一列 /
          `.kinds-inline` / 看板的横排折行)里都独占一行。 */
       .fsum { flex: 0 0 100%; margin: 0; font-size: var(--fs-12); color: var(--ink-soft); overflow-wrap: anywhere; }
@@ -2750,6 +2848,10 @@
          (仅当库里有标了 kind 的标签才现),标签 pill 行 + 文本框在下;两行横向可滑。
          本面无条目时整条隐藏(main.ts renderFilterBar);pane 打开时随时间轴一起收。 -->
     <section id="filterbar" hidden>
+      <!-- 0043 看板切换(multiboard-plan §6 手机,main.ts renderBoardPills):活看板 ≥ 2 块或收容区有卡才画,否则清空 → :empty 隐 -->
+      <div id="filter-boards" class="fstages"></div>
+      <!-- 看着收容区时那一行说明(只能挪出去、怎么挪) -->
+      <p id="board-note" class="fsum" hidden></p>
       <!-- 任务面状态 chips 行(404+1,main.ts renderStagePills):全部+四态;灵感面清空,:empty 隐 -->
       <div id="filter-stages" class="fstages"></div>
       <div id="filter-kinds" class="fkinds"></div>
@@ -2766,6 +2868,9 @@
       <!-- 筛着时那一行「筛出 N 条 · 标签「…」」(159 / W3 Q8;main.ts paintFilterSum)。 -->
       <p id="filter-sum" class="fsum" hidden></p>
     </section>
+
+    <!-- 手机横放顶栏收起时(890,chromehide.ts)屏顶那枚细条:筛着才露,字抄 #filter-sum 那句;点它把顶栏与筛选条叫回来。 -->
+    <button id="chrome-peek" class="chrome-peek" type="button" hidden></button>
 
     <main id="timeline" class="timeline"></main>
 

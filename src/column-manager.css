@@ -222,3 +222,83 @@
   line-height: 1.6;
   color: var(--ink-soft);
 }
+
+/* ---- 0043 多看板:角色标 + 「这块看板」那一节 ----------------------------------------- */
+/* 列名后面的角色标:落点 = 淡边;完成 = 朱砂淡底(同看板上完成列那一路的 ✓ 色)。 */
+.bcm-role {
+  flex: none;
+  font-family: var(--font-sans);
+  font-size: var(--fs-12);
+  color: var(--ink-soft);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-pill);
+  height: 19px;
+  padding: 0 7px;
+  display: grid;
+  place-items: center;
+}
+.bcm-role.done { color: var(--seal-ink-on-seal-tint); background: var(--seal-tint); border-color: var(--seal-line); }
+
+.bcm-board {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+.bcm-sub {
+  margin: 0;
+  font-family: var(--font-serif);
+  font-size: var(--fs-14);
+  letter-spacing: 0.04em;
+  color: var(--ink);
+}
+.bcm-role-row { display: flex; align-items: center; gap: 10px; }
+.bcm-role-label {
+  flex: none;
+  width: 64px;
+  font-family: var(--font-sans);
+  font-size: var(--fs-12);
+  color: var(--ink-soft);
+}
+.bcm-role-pills { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.bcm-pill {
+  min-height: 24px;
+  font-family: var(--font-sans);
+  font-size: var(--fs-12);
+  color: var(--ink-soft);
+  background: transparent;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-pill);
+  padding: 3px 11px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.bcm-pill:hover { color: var(--ink); border-color: var(--seal-line); }
+.bcm-pill.on { color: var(--seal-ink-on-seal-tint); background: var(--seal-tint); border-color: var(--seal-line); cursor: default; }
+.bcm-board-del { display: flex; align-items: center; gap: 6px; padding-top: 4px; }
+.bcm-board .bcm-col-note { padding-left: 74px; }
+
+/* ---- 新建看板(board-nav.ts):名字 + 两个模板 ---------------------------------------- */
+.bn-tpls { display: flex; flex-direction: column; gap: 6px; }
+.bn-tpl {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  text-align: left;
+  min-height: 24px;
+  font: inherit;
+  background: transparent;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
+  cursor: pointer;
+}
+.bn-tpl:hover { border-color: var(--seal-line); }
+.bn-tpl.on { background: var(--seal-tint); border-color: var(--seal-line); }
+.bn-tpl-title { font-family: var(--font-serif); font-size: var(--fs-14); color: var(--ink); }
+.bn-tpl-sub { font-family: var(--font-sans); font-size: var(--fs-12); color: var(--ink-faint); }
+.bn-new-acts { display: flex; justify-content: flex-end; gap: 8px; }
+.bcm-btn.solid-ink { color: var(--on-seal); background: var(--seal); border-color: var(--seal); font-weight: 600; }
+.bcm-btn.solid-ink:hover { color: var(--on-seal); background: color-mix(in srgb, var(--seal) 88%, var(--ink)); }

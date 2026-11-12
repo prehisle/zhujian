@@ -53,6 +53,7 @@ import type { View, ViewCtx } from "./notebook";
 import { docPreviewText, focusDoc } from "./docs";
 import { trashPurgeControl } from "./trash-purge";
 import { focusTask } from "./board";
+import { type Board, boardName, liveBoards, loadBoards } from "./boards";
 import { applyTagColor } from "./tag-color";
 import { renderTagPicker } from "./tag-picker";
 import { dayKey, dayLabel, itemSnippet, startOfWeek, when } from "./tasktime";
@@ -368,6 +369,9 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       .catch(() => {});
   };
   refreshSpaces();
+  // 看板名单(「放进看板 ▸」的候选):随 refresh() 一并取,菜单打开那一刻读最新这份。
+  let boards: Board[] = [];
+  const intoTargets = (): Board[] => liveBoards(boards).filter((b) => b.landing !== null);
   // 160:在这页改了当前空间名(或远端改名落地),灰字跟着换 —— 此前要重进页面。notebook.ts 刷完名字表发这一声。
   document.addEventListener("zhujian:space-names", refreshSpaces);
 
@@ -746,7 +750,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
   // 正文 → 它那枚钮:showView 整块重排卡身时(编辑 / 确认收起后)要把钮放回正文后面,否则夹着却没钮。
   const foldBtns = new WeakMap<HTMLElement, HTMLButtonElement>();
   function foldToggle(id: string, body: HTMLElement): HTMLButtonElement {
-    const b = el("button", { className: "act ghost fold-toggle", type: "button" });
+    const b = el("button", { className: "fold-toggle", type: "button" });
     const paint = (): void => {
       const folded = body.classList.contains("clamped");
       b.textContent = folded ? `${t("board.unfold")} ▾` : `${t("board.fold")} ▴`;
@@ -1314,9 +1318,11 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
     // ---- 转待办 (manual todo) ----
     // 转待办 = 翻 stage 到 todo,零副本、一步到位:按当前原文直转,不弹确认/编辑框。
     // 想改标题就先按 E 编辑、或转过去后在看板改(改标题会照常进历史)。
-    async function doPromote(): Promise<void> {
+    // 0043:`into` 缺省 = 落默认看板(「转待办」);给了 = 「放进看板 ▸」点名那块(core 解析它的落点,
+    // 放不进就响亮拒、⛔ 不退到别的看板)。撤销照旧 = 撤回为随记(刚放进去的卡就在那块的落点上)。
+    async function doPromote(into?: Board): Promise<void> {
       try {
-        await invoke("promote_note_to_task", { id: item.id, title: currentContent });
+        await invoke("promote_note_to_task", { id: item.id, title: currentContent, boardId: into?.id ?? null });
       } catch (e) {
         // 直转失败时把错误显示在卡上(而非静默),复用共享错误行(不累积)。
         showOpErr(errText(e));
@@ -1325,7 +1331,9 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       afterPromote();
       // 716:刚转的待办撤回 = 无损(截止 / 优先级还没来得及设),配发撤销;看板那侧的 B 仍要确认。
       // 157 G4 / P3:回执再带一枚「去看看」(同展开成长文那枚「打开」):转完不知道去哪看(W1 WD-28)。
-      toastUndo(t("inbox.undoPromoted"), t("common.undo"), () => void undoVia("revert_task_to_inbox", item.id), {
+      const said = into ? t("inbox.promotedTo", { board: boardName(into) }) : t("inbox.undoPromoted");
+      // 「去看看」不必先切看板:看板视图消费跳转时自己切到卡所在那块(board.ts load 的 focus 段)。
+      toastUndo(said, t("common.undo"), () => void undoVia("revert_task_to_inbox", item.id), {
         label: t("inbox.goSee"),
         run: () => {
           focusTask(item.id);
@@ -1598,7 +1606,16 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
         ...(item.revised ? [{ label: t("inbox.actHistory"), key: IDEA_CARD_KEYS.history, run: () => void toggleHistory() }] : [noHistoryAct(IDEA_CARD_KEYS.history)]),
         // W5 A9:有配图才有「看图」(从第一张看起,← → 翻、Esc 关;同点缩略图那条路)
         ...(imgs.length > 0 ? [{ label: t("inbox.actImages"), key: IDEA_CARD_KEYS.images, run: () => void openLightbox(imgs, 0) }] : []),
-        { label: t("inbox.actTask"), key: IDEA_CARD_KEYS.task, run: doPromote },
+        { label: t("inbox.actTask"), key: IDEA_CARD_KEYS.task, run: () => void doPromote() },
+        // 0043「放进看板 ▸」(用户拍 ⑤):只有一块看板时不出(渐进式披露,「转待办」已经就是它);
+        // 候选 = 放得进卡的活看板(落点 ⊥ 的不列 —— 显示条件 = 接收条件),core 给的顺序、默认那块在最前。
+        ...(liveBoards(boards).length > 1 && intoTargets().length > 0
+          ? [{
+              label: t("inbox.actIntoBoard"),
+              key: "",
+              sub: () => intoTargets().map((b) => ({ label: boardName(b), key: "", run: () => void doPromote(b) })),
+            }]
+          : []),
         { label: t("inbox.actTag"), key: IDEA_CARD_KEYS.tag, run: openTopic },
         // 留言(§4.7):N=0 时卡片上没有徽章,这里是写第一条的唯一入口。
         { label: t("inbox.actComments"), key: IDEA_CARD_KEYS.comments, run: () => toggleComments() },
@@ -1773,7 +1790,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
     if (unmounted) return; // 死 mount 不再发起任何刷新(codex M1:防抢食模块级 pendingFocus)
     const seq = ++refreshSeq;
     try {
-      const [ideas, archived, stats, topics, , cmCounts, removed] = await Promise.all([
+      const [ideas, archived, stats, topics, , cmCounts, removed, freshBoards] = await Promise.all([
         invoke<IdeaItem[]>("list_ideas"),
         invoke<IdeaItem[]>("list_archived"),
         // 本地周一 00:00 换成 UTC RFC3339 给后端(后端从不算本地时间,同 due_on 的哲学)。
@@ -1787,8 +1804,11 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
         loadCommentCounts(mountSpace),
         // 回收站里的已删配图(用户面 149):宿主 stage 属灵感的那些归这一页。
         listRemovedImages("ideas"),
+        // 0043:「放进看板 ▸」的候选(同样并发,不加一跳)。
+        loadBoards(),
       ]);
       if (seq !== refreshSeq) return; // 有更晚的 refresh 已在途:旧响应不落 DOM(乱序覆盖/计数错位)
+      boards = freshBoards;
 
       // 跨视图跳转(P1 #8):seq 守卫之后取走(同 board),陈旧的 refresh 不碰它;
       // 空间对不上=弃(codex 二审 M)。

@@ -11,6 +11,7 @@ import { listTasks, reorderTask } from "./api";
 import { t } from "./i18n";
 import { actionBar, showUndone } from "./ui";
 import { showErr } from "./err";
+import { columnOf, columnView } from "./boardscroll";
 
 /** 卡在看板里的位置:哪一列 + 前后两个邻居(null = 列首 / 列尾)。 */
 export type Spot = { stage: string; prev: string | null; next: string | null };
@@ -65,12 +66,18 @@ function cardEl(id: string): HTMLElement | null {
 export function inView(card: HTMLElement): boolean {
   const r = card.getBoundingClientRect();
   if (r.height === 0) return false;
+  const SLICE = 24;
+  // 889:看板上卡住在一列里,列自己滚、看板横滚 ⇒ 量的是这一列看得见的那一框(横向也要露出一截)。
+  const col = columnOf(card);
+  if (col) {
+    const v = columnView(col);
+    return r.bottom > v.top + SLICE && r.top < v.bottom - SLICE && r.right > v.left + SLICE && r.left < v.right - SLICE;
+  }
   const cs = getComputedStyle(document.documentElement);
   const top = (parseFloat(cs.getPropertyValue("--head-h")) || 0) + (parseFloat(cs.getPropertyValue("--fbar-h")) || 0);
   const nav = document.getElementById("bottombar");
   const navR = nav && nav.getClientRects().length > 0 ? nav.getBoundingClientRect() : null;
   const floor = navR && navR.top > window.innerHeight / 2 ? navR.top : window.innerHeight;
-  const SLICE = 24;
   return r.bottom > top + SLICE && r.top < floor - SLICE;
 }
 

@@ -13,12 +13,12 @@ import { showErr } from "./err";
 import { showBar } from "./ui";
 import { moveReceipt, spotOf } from "./taskmove";
 import { isDragging } from "./carddrag";
-import { isTaskStage, liveTaskColumns, stageLabel } from "./columns";
+import { isTaskStage, liveColumnsOf, stageLabel } from "./columns";
 
 // 任务列的线性链(**B-f 第 1 段起从库里来**;此前是四值字面量)。序 = core 按 position
 // 排好的序,数组顺序即右滑前进方向。⚠ 取的是**活着的**任务列 —— 已删的列不是落点
-// (core 的 `is_live_task_column` 会拒),卡从收容区里只能滑出、不能滑进另一个已删列。
-const chain = (): string[] => liveTaskColumns().map((c) => c.id);
+// (core 的 `is_live_task_column` 会拒)。0043:链 = 卡**自己那块看板**的活列;收容区里的卡链为空(只能「挪到看板」出去)。
+const chain = (from: string): string[] => liveColumnsOf(from).map((c) => c.id);
 
 // 提交阈值(横移达卡宽 35% 或硬下限 84px)、锁定阈值、端点方向的橡皮筋阻尼。
 const COMMIT_RATIO = 0.35;
@@ -41,7 +41,7 @@ type Deps = {
 
 /** from 态按方向算目标态;端点方向、或 from 本身不在链上(已删列里的卡)返回 null。 */
 function targetStage(from: string, dir: 1 | -1): TaskStatus | null {
-  const c = chain();
+  const c = chain(from);
   const i = c.indexOf(from);
   if (i < 0) return null;
   const j = i + dir;
@@ -196,7 +196,7 @@ export function initCardSwipe(deps: Deps): void {
     reset(true);
     if (commit && to) void commitSwipe(id, to);
     // 端点方向滑过了阈值:卡弹回原处,说一句为什么(中性那档;已删列里的卡不在链上,两头都没有列,不说)。
-    else if (armed && chain().includes(from)) {
+    else if (armed && chain(from).includes(from)) {
       const col = stageLabel(from)!;
       showBar(dir > 0 ? t("swipe.atLast", { col }) : t("swipe.atFirst", { col }), false, true);
     }

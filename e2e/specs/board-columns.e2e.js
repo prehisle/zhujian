@@ -11,7 +11,9 @@ import { goNotebook, invoke, shownText, tryInvoke } from "./support.js";
 // ⚠ 断言口径一律**落库为准**:`list_board_columns` 是后端的读模型,DOM 只是它的投影。
 
 const listCols = () => invoke("list_board_columns");
-const taskCols = async () => (await listCols()).filter((c) => c.kind === "task" && !c.deleted);
+// 0043 起只认**种子看板「任务」**上的活列(别的看板的列 / 已删看板里的列不属于这一面;multiboard.e2e.js 会留下后者)。
+const taskCols = async () =>
+  (await listCols()).filter((c) => c.kind === "task" && !c.deleted && !c.board_deleted && c.board_id === "tasks");
 const colById = async (id) => (await listCols()).find((c) => c.id === id);
 
 /** 把当前库里所有**自定义**任务列删掉,让每只用例互不干扰(种子六列删不掉,也不该删)。 */

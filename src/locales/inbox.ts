@@ -54,6 +54,9 @@ export const inbox = defineMessages({
   "inbox.actDelete": { zh: "删除", en: "Delete" },
   "inbox.undoDeleted": { zh: "已移入回收站", en: "Moved to Trash" },
   "inbox.undoPromoted": { zh: "已转为待办", en: "Turned into a task" },
+  // 0043 随记「更多…」里的「放进看板 ▸」(multiboard-plan §0 ⑤):≥ 2 块看板才出现。
+  "inbox.actIntoBoard": { zh: "放进看板", en: "Put on board" },
+  "inbox.promotedTo": { zh: "已放进看板「{board}」", en: "Put on board “{board}”" },
   "inbox.trashNote": { zh: "删掉的随记、长文和配图会一直留在这,直到你彻底删除", en: "Deleted notes, long-form and images stay here until you delete them forever" },
   "inbox.filterNoMatch": { zh: "没有匹配「{q}」的随记", en: "No notes match “{q}”" },
   "inbox.goSee": { zh: "去看看", en: "Show me" },

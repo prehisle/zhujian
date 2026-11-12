@@ -96,4 +96,9 @@ export const cardpanel = defineMessages({
   "board.undoDueCleared": { zh: "已清除截止", en: "Due date cleared" },
   "board.undoPriority": { zh: "已设优先级 {p}", en: "Priority set to {p}" },
   "board.undoPriorityCleared": { zh: "已清除优先级", en: "Priority cleared" },
+  // 0043 多看板第 4 段:卡片「更多…」里的「挪到看板」/ 随记的「放进看板」(活看板 ≥ 2 块才出,渐进式披露同桌面)。
+  "cardpanel.actMoveBoard": { zh: "挪到看板", en: "Move to board" },
+  "cardpanel.actPromoteTo": { zh: "放进看板", en: "Add to board" },
+  "cardpanel.movedToBoard": { zh: "已挪到看板「{board}」", en: "Moved to board “{board}”" },
+  "cardpanel.promotedTo": { zh: "已放进看板「{board}」", en: "Added to board “{board}”" },
 });

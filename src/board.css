@@ -728,10 +728,8 @@
    都恰好是 8 行。
    ⛔ **刻意没有渐隐遮罩**:那要往 check-hardcoded-colors 的放行表里添一行(mask 的通道值
    `#000` —— 官网那处正是这么签的),而「展开」这枚钮本身已经把「下面还有」说清楚了。
-   ⛔ 钮**不覆写 .act 的 padding**:.act 那份(12px 字 + 上下各 5px + 边框)恰好卡在
-   check-hit-zone 的 24px 自保线上,照 691 那样收窄成 1px 就得去登记表里签一行。 */
+   钮的长相不在这儿:「展开 / 收起」全应用一份,住 controls.css 的 `.fold-toggle`。 */
 .v-board .ttitle.clamped { max-height: 12em; overflow: hidden; }
-.v-board .tcard .fold-toggle { margin-top: 6px; }
 .v-board .tcard.done .ttitle { color: var(--ink-soft); }
 .v-board .tcard.done .ttitle::before { content: "✓ "; color: var(--seal); font-weight: 700; }
 /* 待确认 title hint: a quiet ⋯ marks work parked awaiting confirmation */
@@ -890,3 +888,34 @@
 .v-board .center > div:not(.big):not(.err-box) { max-width: 340px; font-size: var(--fs-13); line-height: 1.7; }
 .v-board .center .err-box { max-width: 480px; } /* 其余九条声明 = 共享件 .view .center .err-box(controls.css,345)。480 vs 其余三家 460 判「有意」:与上一行 340/330 两对同向(board 中央列整族更宽),自初始提交 da8d68f(㊶)就成对存在、此后零改动、progress-log 亦无独改记录——是成对写下的区分,不是漂移;真要统一属观感改动,先过目。 */
 /* @keyframes rise 住 controls.css(全文档一份)—— keyframes 是文档级全局名,四份同名副本只有最后加载的那份生效。 */
+
+/* ---- 0043 多看板 ------------------------------------------------------------------------ */
+/* 归档册:每条带来自哪块看板的小签(用户拍 ⑦;只有一块看板时不挂)+ 顶上一排按看板筛的药丸。 */
+.v-board .done-at .board-tag {
+  display: inline-block;
+  margin-right: 8px;
+  padding: 0 7px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-pill);
+  color: var(--ink-soft);
+}
+.v-board .sealed-boards {
+  max-width: 560px;
+  margin: 0 auto 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.v-board .sealed-none { max-width: 560px; margin: 8px auto; font-size: var(--fs-13); color: var(--ink-faint); }
+/* 收容区:按原看板 / 列分组,组头带「看板已删除 / 列已删除」一枚虚边标(同 .col-gone 那一形)。 */
+.v-board .holding-from { display: flex; align-items: center; gap: 8px; }
+.v-board .holding-why {
+  font-size: var(--fs-12);
+  color: var(--ink-faint);
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius-pill);
+  padding: 0 8px;
+}
+/* 只有一列的看板:限宽居中(同归档册的 560),不铺满整屏(用户 2026-11-11 拍)。 */
+.v-board .cols.single { justify-content: center; }
+.v-board .cols.single > .col { flex: 0 1 560px; }

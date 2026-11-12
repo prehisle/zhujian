@@ -252,23 +252,40 @@ pub fn topic_tombstone(conn: &Connection, clock: &mut Clock, id: &str) -> Result
 ///
 /// ⚠ 这张表没有 `updated_at` 那种本地簿记列:列只有 title / position 两个可改字段。
 /// 六个种子**永不走这条路**(§7.1a:不发 create),故这里读到的行恒是用户自建列。
+///
+/// ⭐ **0043 起按行上的归属选唯一编码**(multiboard-plan §2.3,codex 二轮清单 `oplog.rs:255`):
+/// `board_id` NULL(种子看板)⇒ 五键 `create`;非 NULL ⇒ 六键 `create_in_board`。编码由**行**
+/// 决定、不由调用方传参 —— ⛔ 别另加一个「发哪种」的参数,那是第二份会漂的真相源。
+/// 压实合成基线(`epoch`)走的是同一份读行逻辑。
 pub fn board_column_create(conn: &Connection, clock: &mut Clock, id: &str) -> Result<(), String> {
-    let payload = conn
-        .query_row(
-            "SELECT title, kind, system, position, created_at FROM board_column WHERE id = ?1",
-            [id],
-            |r| {
-                Ok(json!({
-                    "title": r.get::<_, String>(0)?,
-                    "kind": r.get::<_, String>(1)?,
-                    "system": r.get::<_, i64>(2)? == 1,
-                    "position": r.get::<_, String>(3)?,
-                    "created_at": r.get::<_, String>(4)?,
-                }))
-            },
-        )
-        .map_err(|e| format!("读取看板列出生快照失败({id}):{e}"))?;
-    append(conn, clock, "board_column", id, "create", payload)
+    let (kind, payload) = board_column_birth(conn, id)?;
+    append(conn, clock, "board_column", id, kind, payload)
+}
+
+/// 一枚列的出生 op 的 `(kind, payload)`,从行上读(读行发声)。**发射与压实共用这一份**
+/// (`epoch::synthesize_baseline` 的用户列那一臂直接调它;codex 实现审一轮 L1)。
+pub(crate) fn board_column_birth(conn: &Connection, id: &str) -> Result<(&'static str, Value), String> {
+    conn.query_row(
+        "SELECT title, kind, system, position, created_at, board_id FROM board_column WHERE id = ?1",
+        [id],
+        |r| {
+            let mut p = json!({
+                "title": r.get::<_, String>(0)?,
+                "kind": r.get::<_, String>(1)?,
+                "system": r.get::<_, i64>(2)? == 1,
+                "position": r.get::<_, String>(3)?,
+                "created_at": r.get::<_, String>(4)?,
+            });
+            Ok(match r.get::<_, Option<String>>(5)? {
+                None => ("create", p),
+                Some(b) => {
+                    p["board_id"] = json!(b);
+                    ("create_in_board", p)
+                }
+            })
+        },
+    )
+    .map_err(|e| format!("读取看板列出生快照失败({id}):{e}"))
 }
 
 /// 看板列字段变更(**只有 title | position**,§3 的白名单)。值从行上读回(读行发声)。
@@ -314,6 +331,47 @@ pub fn board_column_tombstone(
     id: &str,
 ) -> Result<(String, String), String> {
     append_returning(conn, clock, "board_column", id, "tombstone", json!({}))
+}
+
+// ---- board(看板,multiboard-plan §2.3) ----------------------------------------------
+
+/// 看板出生:payload **恰三键** `{title, position, created_at}`(shape 层钉死)。两根角色指针
+/// 生为 NULL、只走 set_field。种子 `'tasks'` 永不走这条路(implicit genesis)。
+pub fn board_create(conn: &Connection, clock: &mut Clock, id: &str) -> Result<(), String> {
+    let payload = conn
+        .query_row("SELECT title, position, created_at FROM board WHERE id = ?1", [id], |r| {
+            Ok(json!({
+                "title": r.get::<_, String>(0)?,
+                "position": r.get::<_, String>(1)?,
+                "created_at": r.get::<_, String>(2)?,
+            }))
+        })
+        .map_err(|e| format!("读取看板出生快照失败({id}):{e}"))?;
+    append(conn, clock, "board", id, "create", payload)
+}
+
+/// 看板字段变更(白名单 title | position | landing_column_id | done_column_id)。读行发声;
+/// 两根指针可为 NULL ⇒ payload 落 JSON null(shape 层收)。
+pub fn board_set(conn: &Connection, clock: &mut Clock, id: &str, fields: &[&str]) -> Result<(), String> {
+    for field in fields {
+        let sql = match *field {
+            "title" | "position" | "landing_column_id" | "done_column_id" => {
+                format!("SELECT {field} FROM board WHERE id = ?1")
+            }
+            other => panic!("board set_field 不认识的字段(必是 bug):{other}"),
+        };
+        let value: Option<String> = conn
+            .query_row(&sql, [id], |r| r.get(0))
+            .map_err(|e| format!("读取看板字段 {field} 失败({id}):{e}"))?;
+        append(conn, clock, "board", id, "set_field", json!({ "field": field, "value": value }))?;
+    }
+    Ok(())
+}
+
+/// 看板销毁:payload 恰零键,墓碑时刻取 `op.hlc` 原文。交回 `(op_id, hlc)`:调用方紧接着
+/// 要拿这两格去登记 0043 的授权行(同 [`board_column_tombstone`]:先发 op、再登记、再改行)。
+pub fn board_tombstone(conn: &Connection, clock: &mut Clock, id: &str) -> Result<(String, String), String> {
+    append_returning(conn, clock, "board", id, "tombstone", json!({}))
 }
 
 // ---- space(profile 单例寄存器,space-name-sync-plan §3) ---------------------------

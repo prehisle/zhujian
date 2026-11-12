@@ -150,11 +150,50 @@ pub fn restore(conn: &mut Connection, clock: &mut Clock, id: &str) -> Result<(),
 /// differs, so a no-change promote is a pure stage flip. Fails fast on an empty title,
 /// a missing/archived item, or an item that is not an idea (already a task). Returns the
 /// item's id (unchanged — there is no separate task id anymore).
+///
+/// ⭐ 0043:`board` = 落哪块看板(`None` = **默认看板**,用户拍 ④:侧栏最上面那块;`Some` = 随记
+/// 「更多…」里的「放进看板 ▸」,用户拍 ⑤)。目标列 = 那块看板解析后的落点,经 [`crate::task::landing_target`]
+/// 与 `task::create` / `move_to_board` 共用同一份解析;看板不存在 / 已删 / 落点 ⊥ ⇒ 响亮拒,⛔ 不退到
+/// 别的看板(plan §3)。落点是自定义列时过落卡闸(codex 二轮 M5)。解析、闸、写卡同一事务,任何一步
+/// 失败整笔回滚。
 pub fn promote_to_task(
     conn: &mut Connection,
     clock: &mut Clock,
     id: &str,
     title: &str,
+    board: Option<&str>,
+    facts: &crate::board::gate::RuntimeFacts,
+) -> Result<String, String> {
+    promote(conn, clock, id, title, board, None, facts)
+}
+
+/// 看板「撤回为随记」的**撤销**:转回撤回前那块看板,且只在它的落点**仍是**撤回前那一列(`column`)时
+/// 才转 —— 否则响亮拒、什么都不写(撤销要完整恢复,落到别的列不叫撤销;ui-guidelines §3.1)。
+///
+/// ⭐ 期望列在**写事务里**与解析结果比(codex 实现审 883 二轮 M1):前端先读看板再发命令隔着一次往返,
+/// 别的设备同步来的落点改动能插进那个窗,只有事务内的比较是原子的。比较在改标题、过闸之前。
+/// 截止 / 优先级由壳另发命令设回、列内位置不还原(落列首)—— 158 起的既有边界,不在这里扩。
+pub fn promote_back_to(
+    conn: &mut Connection,
+    clock: &mut Clock,
+    id: &str,
+    title: &str,
+    board: &str,
+    column: &str,
+    facts: &crate::board::gate::RuntimeFacts,
+) -> Result<String, String> {
+    promote(conn, clock, id, title, Some(board), Some(column), facts)
+}
+
+/// 两个入口的共用体。`expect` = 解析出的落点必须是这一列,否则拒(只有撤销给)。
+fn promote(
+    conn: &mut Connection,
+    clock: &mut Clock,
+    id: &str,
+    title: &str,
+    board: Option<&str>,
+    expect: Option<&str>,
+    facts: &crate::board::gate::RuntimeFacts,
 ) -> Result<String, String> {
     let title = title.trim();
     if title.is_empty() {
@@ -178,6 +217,15 @@ pub fn promote_to_task(
         return Err("长文不能直接转为待办,请先收回随记".to_string());
     }
 
+    // 目标列解析一次,期望列与落卡闸都在任何写入之前判(拒了就什么都没写过,不靠回滚兜)。
+    let target = crate::task::landing_target(&tx, board)?;
+    if let Some(want) = expect {
+        if target != want {
+            return Err("撤销不了:这块看板的落点已经改了,卡回不到原来那一列".to_string());
+        }
+    }
+    crate::board::gate::ensure_card_may_land(&tx, &target, facts)?;
+
     // Apply the wording as an edit ONLY if it changed — no copy, history keeps the
     // original. An unchanged title is a pure stage flip.
     let current = repo::current_content(&tx, id)
@@ -191,7 +239,7 @@ pub fn promote_to_task(
         oplog::item_set(&tx, clock, id, &["content"])?;
     }
 
-    let n = repo::promote_to_todo(&tx, id).map_err(|e| e.to_string())?;
+    let n = repo::promote_to_column(&tx, id, &target).map_err(|e| e.to_string())?;
     if n != 1 {
         return Err(format!("转为待办失败(影响 {n} 行),已回滚"));
     }
@@ -214,15 +262,20 @@ pub fn revert_task_to_inbox(conn: &mut Connection, clock: &mut Clock, id: &str) 
     let stage = repo::active_task_stage(&tx, id)
         .map_err(|e| e.to_string())?
         .ok_or_else(|| "任务不存在或在回收站,无法撤回".to_string())?;
-    if stage != "todo" {
-        return Err("只有「待办」中的任务可以撤回为灵感".to_string());
+    // 0043:「待办」= 卡所在看板解析后的落点(plan §4)。
+    let landing = match crate::board::board_of(&tx, &stage)? {
+        Some(b) => crate::board::landing_of(&tx, &b)?,
+        None => None,
+    };
+    if landing.as_deref() != Some(stage.as_str()) {
+        return Err("只有落点列(「待办」)里的任务可以撤回为灵感".to_string());
     }
     let to = if repo::item_has_topic(&tx, id).map_err(|e| e.to_string())? {
         "filed"
     } else {
         "inbox"
     };
-    let n = repo::revert_to_idea(&tx, id, to).map_err(|e| e.to_string())?;
+    let n = repo::revert_to_idea_from(&tx, id, to, &stage).map_err(|e| e.to_string())?;
     if n != 1 {
         return Err(format!("撤回失败(影响 {n} 行),已回滚"));
     }
@@ -761,7 +814,7 @@ mod tests {
         );
         assert!(set_doc(&mut conn, &mut clock, &id, true).is_err(), "已是长文再展开 = 拒");
         assert!(
-            promote_to_task(&mut conn, &mut clock, &id, "一条随记").unwrap_err().contains("长文"),
+            promote_to_task(&mut conn, &mut clock, &id, "一条随记", None, &crate::board::gate::DETACHED).unwrap_err().contains("长文"),
             "长文不能直接转待办"
         );
         set_doc(&mut conn, &mut clock, &id, false).unwrap();
@@ -769,7 +822,7 @@ mod tests {
         assert!(repo::item_revisions(&conn, &id).unwrap().is_empty(), "收回也不进编辑历史");
         assert!(set_doc(&mut conn, &mut clock, &id, false).is_err(), "随记再收回 = 拒");
 
-        let task_id = crate::task::create(&mut conn, &mut clock, "任务", None, None, None).unwrap();
+        let task_id = crate::task::create(&mut conn, &mut clock, "任务", None, None, None, None, &crate::board::gate::DETACHED).unwrap();
         assert!(set_doc(&mut conn, &mut clock, &task_id, true).is_err(), "任务不能展开");
         let trashed = capture(&mut conn, &mut clock, "进回收站的").unwrap();
         archive(&mut conn, &mut clock, &trashed).unwrap();
@@ -791,7 +844,7 @@ mod tests {
         set_doc(&mut conn, &mut clock, &tagged_doc, true).unwrap();
         let tagged_idea = capture(&mut conn, &mut clock, "挂标签的随记 关键词").unwrap();
         file_to_topic(&mut conn, &mut clock, &tagged_idea, Some(topic.as_str()), None).unwrap();
-        let task_id = crate::task::create(&mut conn, &mut clock, "任务 关键词", None, None, None).unwrap();
+        let task_id = crate::task::create(&mut conn, &mut clock, "任务 关键词", None, None, None, None, &crate::board::gate::DETACHED).unwrap();
 
         let ids = |rows: Vec<repo::OrganizedRow>| -> Vec<String> {
             let mut v: Vec<String> = rows.into_iter().map(|r| r.id).collect();
@@ -859,7 +912,7 @@ mod tests {
         let idea = capture(&mut conn, &mut clock, "灵感进回收站").unwrap();
         archive(&mut conn, &mut clock, &idea).unwrap();
         let task_id =
-            crate::task::create(&mut conn, &mut clock, "任务进回收站", None, None, None).unwrap();
+            crate::task::create(&mut conn, &mut clock, "任务进回收站", None, None, None, None, &crate::board::gate::DETACHED).unwrap();
         crate::task::archive(&mut conn, &mut clock, &task_id).unwrap();
         let survivor = capture(&mut conn, &mut clock, "活着的").unwrap();
 
@@ -884,7 +937,7 @@ mod tests {
         assert!(err.contains("太长"), "{err}");
         let id = capture(&mut conn, &mut clock, "正常条目").unwrap();
         assert!(edit(&mut conn, &mut clock, &id, &too_long).unwrap_err().contains("太长"));
-        assert!(promote_to_task(&mut conn, &mut clock, &id, &too_long).unwrap_err().contains("太长"));
+        assert!(promote_to_task(&mut conn, &mut clock, &id, &too_long, None, &crate::board::gate::DETACHED).unwrap_err().contains("太长"));
         assert!(create_topic(&mut conn, &mut clock, &too_long).unwrap_err().contains("太长"));
         assert!(file_to_topic(&mut conn, &mut clock, &id, None, Some(&too_long))
             .unwrap_err()
@@ -1023,7 +1076,7 @@ mod tests {
         let n = repo::add_item(&conn, "记得交房租").unwrap();
 
         // Promote with the SAME wording: pure flip, content unchanged, still one row.
-        let id = promote_to_task(&mut conn, &mut clock, &n, "记得交房租").unwrap();
+        let id = promote_to_task(&mut conn, &mut clock, &n, "记得交房租", None, &crate::board::gate::DETACHED).unwrap();
         assert_eq!(id, n, "the item id is the task id — same subject");
         assert_eq!(stage(&conn, &n), "todo");
         let total: i64 = conn.query_row("SELECT COUNT(*) FROM items", [], |r| r.get(0)).unwrap();
@@ -1037,14 +1090,14 @@ mod tests {
         assert!(shapes.contains(&("set_field".into(), "position".into())), "{shapes:?}");
 
         // It is no longer an idea — re-promoting fails fast.
-        assert!(promote_to_task(&mut conn, &mut clock, &n, "再来一次").is_err());
+        assert!(promote_to_task(&mut conn, &mut clock, &n, "再来一次", None, &crate::board::gate::DETACHED).is_err());
     }
 
     #[test]
     fn promote_with_changed_wording_keeps_original_in_history() {
         let (mut conn, mut clock) = fresh_db();
         let n = repo::add_item(&conn, "买菜").unwrap();
-        promote_to_task(&mut conn, &mut clock, &n, "去超市买菜").unwrap();
+        promote_to_task(&mut conn, &mut clock, &n, "去超市买菜", None, &crate::board::gate::DETACHED).unwrap();
         assert_eq!(content(&conn, &n), "去超市买菜");
         // The original capture is preserved as history (no data loss, no copy).
         let hist: Vec<String> = repo::item_revisions(&conn, &n).unwrap().into_iter().map(|r| r.content).collect();
@@ -1083,7 +1136,7 @@ mod tests {
         let (mut conn, mut clock) = fresh_db();
         let id = repo::add_item(&conn, "会变成任务的").unwrap();
         let t = file_to_topic(&mut conn, &mut clock, &id, None, Some("标")).unwrap();
-        promote_to_task(&mut conn, &mut clock, &id, "会变成任务的").unwrap();
+        promote_to_task(&mut conn, &mut clock, &id, "会变成任务的", None, &crate::board::gate::DETACHED).unwrap();
         assert_eq!(stage(&conn, &id), "todo");
         assert!(
             remove_topic(&mut conn, &mut clock, &id, &t).is_err(),
@@ -1096,9 +1149,9 @@ mod tests {
         let (mut conn, mut clock) = fresh_db();
         let first = repo::add_item(&conn, "甲").unwrap();
         let second = repo::add_item(&conn, "乙").unwrap();
-        assert!(promote_to_task(&mut conn, &mut clock, &first, "   ").is_err(), "empty title rejected");
-        promote_to_task(&mut conn, &mut clock, &first, "甲").unwrap();
-        promote_to_task(&mut conn, &mut clock, &second, "乙").unwrap();
+        assert!(promote_to_task(&mut conn, &mut clock, &first, "   ", None, &crate::board::gate::DETACHED).is_err(), "empty title rejected");
+        promote_to_task(&mut conn, &mut clock, &first, "甲", None, &crate::board::gate::DETACHED).unwrap();
+        promote_to_task(&mut conn, &mut clock, &second, "乙", None, &crate::board::gate::DETACHED).unwrap();
         // Newest promoted is on top of 待办.
         assert_eq!(repo::column_task_ids(&conn, "todo").unwrap(), vec![second, first]);
     }
@@ -1109,7 +1162,7 @@ mod tests {
 
         // Untagged todo -> 未归类.
         let a = repo::add_item(&conn, "误转的").unwrap();
-        promote_to_task(&mut conn, &mut clock, &a, "误转的").unwrap();
+        promote_to_task(&mut conn, &mut clock, &a, "误转的", None, &crate::board::gate::DETACHED).unwrap();
         revert_task_to_inbox(&mut conn, &mut clock, &a).unwrap();
         assert_eq!(stage(&conn, &a), "inbox");
         // 撤回清空任务态属性,四个字段各一条 op,stage 的值是 inbox、position 归 NULL。
@@ -1124,7 +1177,7 @@ mod tests {
         // Tagged todo -> 已整理 (the tag filing is durable).
         let b = repo::add_item(&conn, "既有标签又转待办").unwrap();
         let topic = file_to_topic(&mut conn, &mut clock, &b, None, Some("某标签")).unwrap();
-        promote_to_task(&mut conn, &mut clock, &b, "既有标签又转待办").unwrap();
+        promote_to_task(&mut conn, &mut clock, &b, "既有标签又转待办", None, &crate::board::gate::DETACHED).unwrap();
         revert_task_to_inbox(&mut conn, &mut clock, &b).unwrap();
         assert_eq!(stage(&conn, &b), "filed", "kept filed because it still has a tag");
         let links: i64 = conn

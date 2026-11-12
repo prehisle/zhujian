@@ -64,7 +64,7 @@ use rusqlite::Connection;
 /// 当前 schema 版本 = 迁移链末位。spaces 的只读 exact-match 检查(multispace-plan §10)
 /// 与 staging 建库都以它为锚;加新迁移时此常量跟着 MIGRATIONS 一起动
 /// (migration_sets_user_version 测试与下方一致性测试双守)。
-pub const SCHEMA_VERSION: i64 = 42;
+pub const SCHEMA_VERSION: i64 = 43;
 
 /// 安卓前滚迁移下限(codex 设计审 H1):手机端只对 `user_version >= 28` 的既有
 /// 正式库做原地前滚(现网手机全部诞生于 v28 干净装)。1-27 的老迁移不自带崩溃窗
@@ -150,6 +150,10 @@ const MIGRATIONS: &[(i64, ForeignKeys, &str)] = &[
     // 长文标记(backlog 用户面 152,longform-plan §1):items 加可空同步字段 doc_at。新增字段在
     // 旧端归 UnsupportedVocab(挂起、升级即自愈)⇒ 单版直发,同 0040。只加一个 NULL 列。
     (42, ForeignKeys::Enforced, include_str!("../migrations/0042_item_doc_at.sql")),
+    // 多看板(backlog 用户面 170,multiboard-plan):新实体 board + board_column.board_id 出生字段
+    // + oplog 词汇加 `board × *` 与 `board_column × create_in_board`。新 entity / 新 kind 在旧端归
+    // UnsupportedVocab(挂起、升级即自愈)⇒ 单版直发,同 0040–0042。只重建 oplog ⇒ 仍是 `Enforced`。
+    (43, ForeignKeys::Enforced, include_str!("../migrations/0043_board.sql")),
 ];
 
 /// Open the database at `path`, enforce foreign keys, and apply migrations.

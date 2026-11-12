@@ -6,6 +6,7 @@
 import {
   getCurrentSpace,
   listBoardColumns,
+  listBoards,
   listItemImages,
   listRemovedImages,
   listSealedTasks,
@@ -51,7 +52,7 @@ import {
 } from "./ui";
 import { INPUT_DEBOUNCE_MS } from "./timing";
 import { errDetail, showErr } from "./err";
-import { isTaskStage, setColumns, stageLabel } from "./columns";
+import { allBoards, boardName, boardOfStage, isHeldStage, isTaskStage, setBoards, setColumns, stageLabel } from "./columns";
 
 type Deps = {
   refreshTimeline: () => Promise<void>;
@@ -408,11 +409,15 @@ function onTrashClick(e: Event) {
     // 146:恢复=回主视图,按该行冻结 stage 指路(任务回任务面、灵感回灵感面)。
     // 165 / W5 A22(两端同句,照桌面):说回到了哪儿 + 【去看看】(指南「还原的回执……带【去看看】」),时长同别的操作型回执;
     // ⛔ 不再写「在底栏「随记」里」—— 手机一横、平板上根本没有底栏(Q13 那句一起改)。任务说回到哪一列(列已不在 = 只说回到看板)。
+    // 0043(backlog 170):原列 / 原看板已删 ⇒ 卡还原进了收容区(plan §3a),回执照实说(同桌面 boards.restoredHeld),
+    // 「去看看」经 focusCard 切到收容区那一格。⛔ 别再说「已还原到「X」列」—— 那一列已经不在看板上了。
     const col = task ? stageLabel(row.stage) : undefined;
     const msg = task
-      ? col !== undefined
-        ? t("trash.restoredTask", { col })
-        : t("trash.restoredBoard")
+      ? isHeldStage(row.stage)
+        ? t("boards.restoredHeld")
+        : col !== undefined
+          ? t("trash.restoredTask", { col })
+          : t("trash.restoredBoard")
       : row.doc_at !== null
         ? t("trash.restoredDoc")
         : t("trash.restoredNote");
@@ -452,6 +457,8 @@ let sealedRows: import("./api").TaskItem[] = [];
  *  归档册是只读视图,**静默才是常态** —— 508 起那枚「取消入册」不再常驻(design-rules
  *  「只读视图只留离场动作、且不常驻」),点卡片才出、再点收起。 */
 let sealedOpenId: string | null = null;
+/** 0043(用户拍 ⑦,backlog 170):归档册按看板筛 —— 正筛着哪块看板;null = 全部。本机 UI 态,换空间清。 */
+let sealedBoard: string | null = null;
 
 export async function loadSealed(): Promise<void> {
   const space = getCurrentSpace();
@@ -459,9 +466,14 @@ export async function loadSealed(): Promise<void> {
   const box = $("sealed-list");
   box.innerHTML = `<p class="muted empty">${t("panes.loading")}</p>`;
   try {
-    const rows = await listSealedTasks(space);
+    // 列与看板同批取(同回收站那条):每条要按「来自哪块看板」标签 / 筛,⛔ 别指望主时间轴那轮已经登记过。
+    const [rows, cols, bds] = await Promise.all([listSealedTasks(space), listBoardColumns(space), listBoards(space)]);
     if (space !== getCurrentSpace() || seq !== sealedSeq) return;
+    setColumns(cols);
+    setBoards(bds);
     sealedRows = rows;
+    // 从搜索点进来要定位那一条:先回「全部」,免得它正好被筛掉、落空。
+    if (sealedLocate !== null) sealedBoard = null;
     // 重载后那张卡可能已经不在(自己刚取消入册 / 对端动过):展开态跟着作废。
     // ⛔ 别留着 —— 那个 id 若还挂着,下一次渲染会把面板开在一张**别的**卡上是不可能的
     // (按 id 匹配),但它会让「其实没有卡开着」的状态无声地存活到下一轮。
@@ -485,7 +497,20 @@ function renderSealed() {
     box.innerHTML = `<p class="muted empty">${t("panes.sealedEmpty")}</p>`;
     return;
   }
-  const cards = sealedRows
+  // 0043(用户拍 ⑦,同桌面 renderSealed):成就合一本,**来自 ≥ 2 块看板**才出顶上那排筛选、每条才挂看板名小签
+  // (只有一块 = 今天的样子,一枚「全部」是噪音)。筛的是看板、不是列:来处按卡所在列的归属认(删掉的看板也算一块)。
+  // ⛔ 别按「库里有几块看板」判:已删的看板也在表里,只剩一块活看板时会凭空挂上「任务」。
+  const fromOf = (r: { status: string }): string | null => boardOfStage(r.status)?.id ?? null;
+  const pillBoards = allBoards().filter((b) => sealedRows.some((r) => fromOf(r) === b.id));
+  const tagged = pillBoards.length >= 2;
+  if (!tagged || !pillBoards.some((b) => b.id === sealedBoard)) sealedBoard = null;
+  const shown = sealedBoard === null ? sealedRows : sealedRows.filter((r) => fromOf(r) === sealedBoard);
+  const pill = (label: string, id: string | null): string =>
+    `<button type="button" class="fpill${sealedBoard === id ? " active" : ""}" aria-pressed="${sealedBoard === id}" data-sealed-board="${esc(id ?? "")}">${esc(label)}</button>`;
+  const pills = tagged
+    ? `<div class="fstages sealed-boards">${pill(t("boards.sealedAll"), null)}${pillBoards.map((b) => pill(boardName(b), b.id)).join("")}</div>`
+    : "";
+  const cards = shown
     .map((r) => {
       const panel =
         r.id === sealedOpenId
@@ -501,9 +526,11 @@ function renderSealed() {
             `<span class="chip${tp.color ? " tinted" : ""}"${tp.color ? ` style="--tc:${esc(tp.color)}"` : ""}>${esc(tp.title)}</span>`,
         )
         .join("");
+      const from = tagged ? boardOfStage(r.status) : undefined;
+      const tag = from ? `<span class="pill">${esc(boardName(from))}</span>` : "";
       return `<article class="card${tint.cls}"${tint.attr} data-sealed="${esc(r.id)}"><div class="body">
         <p class="content">${contentHtml(r.title, false)}</p>
-        <footer><time>${
+        <footer>${tag}<time>${
           // 158 G3 / Q13(WM-17):归档页的卡恒写日期 —— 今天完成的此前只写「完成于 13:xx」,翻到这页看不出是哪天。
           r.done_at
             ? t("panes.doneAt", { when: esc(fmtWhen(r.done_at)) })
@@ -511,11 +538,20 @@ function renderSealed() {
         }</time>${chips}</footer>${panel}
       </div></article>`;
     });
-  box.innerHTML = splitCols(cards, colsOf(box));
+  const list = cards.length > 0 ? splitCols(cards, colsOf(box)) : `<p class="muted empty">${t("boards.sealedNoneHere")}</p>`;
+  box.innerHTML = pills + list;
 }
 
 function onSealedClick(e: Event) {
   const el = e.target as HTMLElement;
+  const pick = el.closest<HTMLElement>("[data-sealed-board]");
+  if (pick) {
+    // 换筛选 = 本机 UI 态,不写库;展开着的那张若被筛掉就一起收(同重载那条)。
+    sealedBoard = pick.dataset.sealedBoard || null;
+    sealedOpenId = null;
+    renderSealed();
+    return;
+  }
   const id = el.closest<HTMLElement>("[data-unseal]")?.dataset.unseal;
   if (!id) {
     // 点卡片本身 = 开合它的操作面板(至多一张开着,同时间轴那套)。写在途时整面禁点,
@@ -768,6 +804,7 @@ export function resetPanesForSpaceChange() {
   trashOpenId = null;
   sealedRows = [];
   sealedOpenId = null;
+  sealedBoard = null;
   clearConfirm();
   searchHits = [];
   shownQuery = "";

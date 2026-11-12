@@ -463,20 +463,6 @@
 /* W3 159 / A16(WD-21):展开里的长条先夹在八行(8 × 行高 1.6),fold.ts::settlePreviewFolds 量了再定。 */
 .v-topics .tnote-text.clamped,
 .v-topics .dtask-title.clamped { max-height: 12.8em; overflow: hidden; }
-.v-topics .topic-body .fold-toggle {
-  display: block;
-  margin-top: 6px;
-  min-height: 24px;
-  font: var(--fs-12)/1.4 var(--font-sans);
-  letter-spacing: 0.04em;
-  color: var(--ink-soft);
-  background: transparent;
-  border: 1px solid var(--line-strong);
-  border-radius: var(--radius-pill);
-  padding: 3px 12px;
-  cursor: pointer;
-}
-.v-topics .topic-body .fold-toggle:hover { color: var(--ink); background: color-mix(in srgb, var(--ink) 6%, transparent); }
 .v-topics .tnote-time {
   display: block;
   margin-top: 6px;

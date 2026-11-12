@@ -258,10 +258,22 @@ const RUNTIME_VARS = [
       "兜底 0px 时节头会吸到筛选条底下 —— 同 --head-h 那条,运行期没跑就是这个样子",
   },
   {
-    name: "--board-cols",
+    name: "--board-col-w",
     where:
-      "android/src/main.ts::syncBoardCols 按时间轴的宽算出宽屏看板每排几列(tablet-plan 格 2),写在 #timeline 上;" +
-      "只在宽屏的任务面被网格吃。不写兜底:没算过的那一刻(空态那句话没画列)网格退成一列,那句话本来就横跨整排",
+      "android/src/main.ts::syncBoardCols 按时间轴的宽算出宽屏看板每列多宽(889 起一排 + 横滚,此前是每排几列的 --board-cols)," +
+      "写在 #timeline 上;只在宽屏的任务面被列的 flex-basis 吃。不写兜底:没算过的那一刻(空态那句话没画列)根本没有列",
+  },
+  {
+    name: "--board-top",
+    where:
+      "android/src/main.ts::syncBoardTop 量出宽屏看板上沿离页顶多远(889),写在 #timeline 上,只被看板的 height 吃;" +
+      "不写兜底:没量过的那一刻只可能是空态(没有列),那时 height 算不出就退回 auto,内容照常往下排",
+  },
+  {
+    name: "--chrome-shift",
+    where:
+      "android/src/chromehide.ts 在手机横放顶栏收起的那一刻量出顶栏 / 筛选条里靠下那条的下沿(890),写根元素;" +
+      "只被 body.chrome-hidden 下那两条 transform 吃。不写兜底:没量过就不会有 chrome-hidden 这枚类",
   },
   {
     name: "--ck-indent",

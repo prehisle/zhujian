@@ -411,14 +411,15 @@ const main = async () => {
       return evalJs(`(()=>{const r=document.querySelector('#timeline [data-id="${id}"]').getBoundingClientRect();return {x:r.left+r.width*0.5,y:r.top+Math.min(28,r.height/2),w:r.width}})()`);
     };
     const colOf = (id) => evalJs(`document.querySelector('#timeline [data-id="${id}"]')?.closest(".tl-group")?.dataset.col??null`);
-    step("前置-横放任务页是 2×2 看板", (await evalJs(`document.body.classList.contains("board") && getComputedStyle(document.getElementById("timeline")).getPropertyValue("--board-cols").trim()==="2"`)));
-    // A49 ①「进行中」往右 = 链上的下一列「待确认」(在下一排)
+    // 889 起看板一排横滚(此前 2×2 折排):手机横放上「待确认」在屏外,A49 往右划照样按链进它(不按屏上左右)。
+    step("前置-横放任务页是一排横滚的看板", (await evalJs(`(()=>{const tl=document.getElementById("timeline");return document.body.classList.contains("board")&&getComputedStyle(tl).overflowX==="auto"&&tl.scrollWidth>tl.clientWidth})()`)));
+    // A49 ①「进行中」往右 = 链上的下一列「待确认」(在屏外那一列)
     const doing = await plain("doing");
     if (step("A49 前置:「进行中」里有一张普通卡", !!doing)) {
       const p = await centerOf(doing);
       await clearBar();
       await touch(p.x - p.w * 0.3, p.y, p.x + p.w * 0.35, p.y);
-      step("A49「进行中」往右划进下一排的「待确认」", (await until(`document.querySelector('#timeline [data-id="${doing}"]')?.closest(".tl-group")?.dataset.col==="confirming"`, 4000)) && (await barIs(/^已移到「待确认」$/.toString(), 3000)), await barText());
+      step("A49「进行中」往右划进屏外那一列「待确认」", (await until(`document.querySelector('#timeline [data-id="${doing}"]')?.closest(".tl-group")?.dataset.col==="confirming"`, 4000)) && (await barIs(/^已移到「待确认」$/.toString(), 3000)), await barText());
       await clickBarAct("撤销");
       step("A49 撤销:回到「进行中」", await until(`document.querySelector('#timeline [data-id="${doing}"]')?.closest(".tl-group")?.dataset.col==="doing"`, 4000));
     }

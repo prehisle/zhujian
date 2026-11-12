@@ -57,6 +57,17 @@ use crate::clock::Clock;
 use crate::{frindex, oplog, repo};
 
 pub mod gate;
+mod boards;
+mod roles;
+pub use boards::{
+    create_board, delete_board, list_boards, rename_board, reorder_board, set_board_done,
+    set_board_landing, BoardRow,
+};
+pub(crate) use roles::{
+    board_live, board_of, default_board, done_of, entered_done, landing_of,
+};
+#[cfg(test)]
+pub(crate) use roles::live_columns;
 
 /// 能力 token:「本端认识 `board_column` 这套词汇」(plan §6 / §5.5,B-d 落)。
 ///
@@ -168,6 +179,34 @@ pub(crate) const SEED_COLUMNS: &[SeedColumn] = &[
     },
 ];
 
+/// 种子看板的 id(迁移 0043 种下,implicit genesis:不发 create、不可删)。
+/// `board_column.board_id IS NULL` 的任务列都属于它(multiboard-plan §2.2)。
+pub const SEED_BOARD: &str = "tasks";
+
+/// 种子看板的 canonical 出生形 —— **唯一描述源**(同 [`SEED_COLUMNS`] 那条规矩:必须与
+/// `core/migrations/0043_board.sql` 那条 INSERT 逐字段相等)。四个可变字段的 genesis 值
+/// 也住这里:压实给种子看板**无条件**合成四枚 set、boot 物化时「没有 set 行」⇒ 取这里的
+/// genesis(multiboard-plan §5.2,codex 二轮定形)。
+pub(crate) struct SeedBoard {
+    pub(crate) id: &'static str,
+    pub(crate) canonical_title: &'static str,
+    pub(crate) position: &'static str,
+    /// genesis 落点 = `todo`(⚠ 不是 NULL:NULL 的含义是「最左非完成列」)。
+    pub(crate) landing_column_id: Option<&'static str>,
+    /// genesis 完成列 = `done`(⚠ 不是 NULL:NULL 的含义是「没有完成列」)。
+    pub(crate) done_column_id: Option<&'static str>,
+    pub(crate) created_at: &'static str,
+}
+
+pub(crate) const SEED_BOARD_ROW: SeedBoard = SeedBoard {
+    id: SEED_BOARD,
+    canonical_title: "任务",
+    position: "a0",
+    landing_column_id: Some(LANDING_COLUMN),
+    done_column_id: Some(DONE_COLUMN),
+    created_at: "2026-08-24T00:00:00.000Z",
+};
+
 /// 六个种子 id 的 SQL 集合字面量 `('inbox', 'filed', …)`,给 `id IN {…}` / `NOT IN {…}` 用。
 ///
 /// ⛔ **判据是「那六个明确 id」,不是 `system = 0`、也不是 `kind = 'task'`**(plan §7.1a/§7.1e):
@@ -273,8 +312,14 @@ pub(crate) fn column_kind(conn: &Connection, id: &str) -> rusqlite::Result<Optio
 ///
 /// 三格缺一不可:行在(不是凭空一个 id)、`kind='task'`(不许把卡拖进灵感列)、
 /// **未盖墓碑**(已删列是只读收容区,卡只出不进,plan §4.3)。
+///
+/// ⚠ 0043 起多一格:**它的看板也得活着**(multiboard-plan §3「可落」两半;codex 一轮 H1)——
+/// 死看板里未墓碑的列(含迟到出生的)只出不进,住收容区。
 pub(crate) fn is_live_task_column(conn: &Connection, id: &str) -> rusqlite::Result<bool> {
-    Ok(column_kind(conn, id)?.is_some_and(|c| c.is_task() && !c.deleted))
+    if !column_kind(conn, id)?.is_some_and(|c| c.is_task() && !c.deleted) {
+        return Ok(false);
+    }
+    roles::column_accepts_cards(conn, id).map_err(rusqlite::Error::InvalidParameterName)
 }
 
 /// 该列上**未归档未封存**的条目数 —— 「删列要先清空」(不变量 4)那条判据的唯一 Rust 侧
@@ -386,6 +431,11 @@ pub struct BoardColumnRow {
     /// UI 该按 `deletable && live_items == 0` 决定「删除」是可点还是灰,⛔ 别自己重写
     /// 这条规则(plan §8.1-2:B-f 不拥有任何数据安全判定)。
     pub deletable: bool,
+    /// 0043:这一列属于哪块看板(`board_of`;灵感两列 `None`)。前端按它分组。
+    pub board_id: Option<String>,
+    /// 0043:它的看板已删 ⇒ 这一列(哪怕自身没墓碑)也住收容区、只出不进(plan §3a)。
+    /// ⚠ 与 [`Self::deleted`] 是两格:⛔ 别把「看板已删」伪造成列自身已有墓碑(codex 二轮)。
+    pub board_deleted: bool,
 }
 
 /// 全部列(**含已删的**),按 `(position, id)` 升序 —— 与 `items` 的读序同一条规矩。
@@ -398,11 +448,16 @@ pub fn list_columns(conn: &Connection) -> rusqlite::Result<Vec<BoardColumnRow>> 
     // 条目」的判据写成本文件里的第二份子查询才是真代价(清单 14;那条判据还有第三份住在
     // 迁移 0036 的守护 ① 里,改不动)。
     let mut stmt = conn.prepare(
-        "SELECT id, title, kind, system, position, tombstoned_at IS NOT NULL \
-         FROM board_column ORDER BY position, id",
+        "SELECT c.id, c.title, c.kind, c.system, c.position, c.tombstoned_at IS NOT NULL, \
+                CASE WHEN c.kind = 'task' THEN COALESCE(c.board_id, ?1) END, \
+                COALESCE(b.tombstoned_at IS NOT NULL, 0) \
+           FROM board_column c \
+           LEFT JOIN board b ON c.kind = 'task' AND b.id = COALESCE(c.board_id, ?1) \
+          ORDER BY c.position, c.id",
     )?;
-    let rows: Vec<(String, String, String, bool, String, bool)> = stmt
-        .query_map([], |r| {
+    type Row = (String, String, String, bool, String, bool, Option<String>, bool);
+    let rows: Vec<Row> = stmt
+        .query_map([SEED_BOARD], |r| {
             Ok((
                 r.get(0)?,
                 r.get(1)?,
@@ -410,13 +465,19 @@ pub fn list_columns(conn: &Connection) -> rusqlite::Result<Vec<BoardColumnRow>> 
                 r.get::<_, i64>(3)? == 1,
                 r.get(4)?,
                 r.get(5)?,
+                r.get(6)?,
+                r.get(7)?,
             ))
         })?
         .collect::<rusqlite::Result<_>>()?;
     rows.into_iter()
-        .map(|(id, title, kind, system, position, deleted)| {
+        .map(|(id, title, kind, system, position, deleted, board_id, board_deleted)| {
             let is_title_overridden = title_is_overridden(&id, &title);
-            let deletable = undeletable_reason(&id, system).is_none();
+            // 0043:动态拒因(完成列 / 最后一枚非完成列 / 死看板)与删列命令**共用**
+            // [`column_delete_refusal`](codex 实现审 2b 一轮 L1:读 DTO 与命令同一份判据)。
+            let deletable = column_delete_refusal(conn, &id, system)
+                .map_err(rusqlite::Error::InvalidParameterName)?
+                .is_none();
             let live_items = live_item_count(conn, &id)?;
             Ok(BoardColumnRow {
                 id,
@@ -428,6 +489,8 @@ pub fn list_columns(conn: &Connection) -> rusqlite::Result<Vec<BoardColumnRow>> 
                 deleted,
                 live_items,
                 deletable,
+                board_id,
+                board_deleted,
             })
         })
         .collect()
@@ -551,14 +614,14 @@ pub(crate) fn audit_board_column_semantics(
     //    (a) kind 只有三种;(b) set_field 的字段名只有 title | position。
     let bad_ops = one(&format!(
         "SELECT COUNT(*) FROM {prefix}oplog WHERE entity = 'board_column' AND ( \
-             COALESCE(kind, '') NOT IN ('create', 'set_field', 'tombstone') \
+             COALESCE(kind, '') NOT IN ('create', 'create_in_board', 'set_field', 'tombstone') \
              OR (COALESCE(kind, '') = 'set_field' \
                  AND COALESCE(json_extract(payload, '$.field'), '') NOT IN ('title', 'position')))"
     ))?;
     if bad_ops > 0 {
         return Err(format!(
             "看板列语义审计({who}):{bad_ops} 条 board_column op 词汇非法\
-             (只认 create/set_field/tombstone,且 set_field 只改 title|position),整体回滚"
+             (只认 create/create_in_board/set_field/tombstone,且 set_field 只改 title|position),整体回滚"
         ));
     }
     // (c) **灵感那两列身上一枚 op 都不许有**(不变量 2 是全局的,远端也不许违反)。
@@ -577,7 +640,7 @@ pub(crate) fn audit_board_column_semantics(
     // (d) **六个种子都不发 create**(§7.1a):收到即坏。
     let seed_creates = one(&format!(
         "SELECT COUNT(*) FROM {prefix}oplog \
-          WHERE entity = 'board_column' AND kind = 'create' AND entity_id IN {seeds}"
+          WHERE entity = 'board_column' AND kind IN ('create', 'create_in_board') AND entity_id IN {seeds}"
     ))?;
     if seed_creates > 0 {
         return Err(format!(
@@ -590,7 +653,7 @@ pub(crate) fn audit_board_column_semantics(
     //    也照样必须有行**(不变量 5:列行永不物理删除,墓碑只是标志位)。
     let missing = one(&format!(
         "SELECT COUNT(*) FROM (SELECT DISTINCT entity_id FROM {prefix}oplog \
-             WHERE entity = 'board_column' AND kind = 'create') o \
+             WHERE entity = 'board_column' AND kind IN ('create', 'create_in_board')) o \
          WHERE NOT EXISTS (SELECT 1 FROM {prefix}board_column c WHERE c.id = o.entity_id)"
     ))?;
     if missing > 0 {
@@ -688,6 +751,167 @@ pub(crate) fn audit_board_column_semantics(
              tombstone HLC(确定性 min 被破坏,两端会分叉),整体回滚"
         ));
     }
+
+    // ⑥ 归属值背书(multiboard-plan §2.4,codex 二轮 M3):`board_id` 是出生字段,FK 只证
+    //    「指向某块存在的看板」—— 把归属篡改成另一块存在的看板 FK 照样过。逐行核出生事实:
+    //    五键 create ⟺ NULL;create_in_board ⟺ 载荷里那枚 ULID;没有出生 op 的(六个种子)恒 NULL。
+    //    ⚠ attached 快照的 FK 可被篡改,父行在不在另查(`board_id` 不许缺父行;⛔ 别把角色指针
+    //    那条「悬空许可」套到这里)。
+    let bad_owner = one(&format!(
+        "SELECT COUNT(*) FROM {prefix}board_column c WHERE NOT (c.board_id IS ( \
+             SELECT CASE o.kind WHEN 'create_in_board' THEN json_extract(o.payload, '$.board_id') END \
+               FROM {prefix}oplog o \
+              WHERE o.entity = 'board_column' AND o.entity_id = c.id \
+                AND o.kind IN ('create', 'create_in_board') \
+              ORDER BY o.hlc LIMIT 1)) \
+            OR (c.board_id IS NOT NULL \
+                AND NOT EXISTS (SELECT 1 FROM {prefix}board b WHERE b.id = c.board_id))"
+    ))?;
+    if bad_owner > 0 {
+        return Err(format!(
+            "看板列语义审计({who}):{bad_owner} 个列的归属(board_id)与自身出生 op 不符\
+             或指向不存在的看板(出生字段被改写),整体回滚"
+        ));
+    }
+    Ok(())
+}
+
+/// 种子看板的出生字段审计(同 [`audit_seed_columns`] 的形):行必须在,id / created_at 是
+/// canonical,且**永无墓碑**。四个可变字段是用户数据,归 [`audit_board_semantics`] 按日志核。
+///
+/// `prefix` 同语义审计(`"boot."` = 只读挂载的快照)。⚠ 它要进**双侧预审**,不只在 strict
+/// battery(codex 实现审一轮 H2):快照侧的种子行被排除在表级复制之外,异常会被掩盖;本机侧
+/// 的异常则会随导入保留。
+pub(crate) fn audit_seed_board(conn: &Connection, prefix: &str) -> Result<(), String> {
+    let seed = &SEED_BOARD_ROW;
+    let (created_at, tombstoned_at): (String, Option<String>) = conn
+        .query_row(
+            &format!("SELECT created_at, tombstoned_at FROM {prefix}board WHERE id = ?1"),
+            [seed.id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .map_err(|e| format!("种子看板「{}」读不到({e})——库结构残缺,整体拒", seed.id))?;
+    if created_at != seed.created_at {
+        return Err(format!(
+            "种子看板的 created_at 是「{created_at}」,应为「{}」(迁移里写死的 canonical 字面量)",
+            seed.created_at
+        ));
+    }
+    if tombstoned_at.is_some() {
+        return Err("种子看板带着墓碑标记——种子看板不可删除".into());
+    }
+    Ok(())
+}
+
+/// 看板的 op-backed 语义审计(multiboard-plan §5.2;形照 [`audit_board_column_semantics`],
+/// 双侧可跑)。分工同那只:无背书行 / 墓碑复活 / 依赖前置三格在 boot 的三个登记面里。
+pub(crate) fn audit_board_semantics(conn: &Connection, prefix: &str, who: &str) -> Result<(), String> {
+    let one = |sql: &str| -> Result<i64, String> {
+        conn.query_row(sql, [], |r| r.get(0)).map_err(|e| e.to_string())
+    };
+    let seed = &SEED_BOARD_ROW;
+    // ① 词汇:kind 三种;set_field 字段只有四个。
+    let bad_ops = one(&format!(
+        "SELECT COUNT(*) FROM {prefix}oplog WHERE entity = 'board' AND ( \
+             COALESCE(kind, '') NOT IN ('create', 'set_field', 'tombstone') \
+             OR (COALESCE(kind, '') = 'set_field' \
+                 AND COALESCE(json_extract(payload, '$.field'), '') NOT IN \
+                     ('title', 'position', 'landing_column_id', 'done_column_id')))"
+    ))?;
+    if bad_ops > 0 {
+        return Err(format!("看板语义审计({who}):{bad_ops} 条 board op 词汇非法,整体回滚"));
+    }
+    // ② 种子看板:永无 create、永无 tombstone(implicit genesis + 不可删)。
+    let seed_bad = one(&format!(
+        "SELECT COUNT(*) FROM {prefix}oplog WHERE entity = 'board' AND entity_id = '{}' \
+            AND kind IN ('create', 'tombstone')",
+        seed.id
+    ))?;
+    if seed_bad > 0 {
+        return Err(format!(
+            "看板语义审计({who}):种子看板身上有 {seed_bad} 枚 create/tombstone——它不发 create、不可删,整体回滚"
+        ));
+    }
+    // ③ 有 create 背书的看板必须有行(墓碑只是标志位,有墓碑也必须有行)。
+    let missing = one(&format!(
+        "SELECT COUNT(*) FROM (SELECT DISTINCT entity_id FROM {prefix}oplog \
+             WHERE entity = 'board' AND kind = 'create') o \
+         WHERE NOT EXISTS (SELECT 1 FROM {prefix}board b WHERE b.id = o.entity_id)"
+    ))?;
+    if missing > 0 {
+        return Err(format!("看板语义审计({who}):{missing} 个有 create op 的看板没有行,整体回滚"));
+    }
+    // ④ 用户看板的四个字段 == 自身日志的 LWW 赢家。两根指针不在 create 载荷里 ⇒ 初值恒 NULL。
+    // ⚠ created_at 是出生字段,同样要按 create 载荷背书(codex 实现审一轮 H2:冻结触发器只防
+    //    正常 UPDATE,防不了不可信快照;漏了它,坏快照能过 boot 与 battery,压实还会把错值当
+    //    出生快照再发出去)。set_field 不许改它(shape 层拒),故赢家恒是 create。
+    for (field, create_key) in [
+        ("title", Some("title")),
+        ("position", Some("position")),
+        ("landing_column_id", None),
+        ("done_column_id", None),
+        ("created_at", Some("created_at")),
+    ] {
+        let bad = crate::sync::boot::count_field_mismatches(conn, prefix, "board", "board", field, create_key)?;
+        if bad > 0 {
+            return Err(format!(
+                "看板语义审计({who}):{bad} 块用户看板的 {field} 与自身日志的 LWW 赢家不符,整体回滚"
+            ));
+        }
+    }
+    // ⑤ 种子看板的四个字段:赢家 = 该字段全部 set_field 里 HLC 最大者;**没有 set 行 ⇒ genesis**。
+    //    三态(codex 二轮,照 `audit_board_column_semantics` ④ 那个 `Option<Option<String>>`):
+    //    无行 ⇒ genesis;赢家 value 为 JSON null ⇒ SQL NULL(只有两根指针接受);字符串 ⇒ 该串。
+    //    ⛔ 别写 `COALESCE(value, genesis)`:那会把「取消完成列」读回成 `done`。
+    for (field, genesis, nullable) in [
+        ("title", Some(seed.canonical_title), false),
+        ("position", Some(seed.position), false),
+        ("landing_column_id", seed.landing_column_id, true),
+        ("done_column_id", seed.done_column_id, true),
+    ] {
+        let winner: Option<Option<String>> = conn
+            .query_row(
+                &format!(
+                    "SELECT json_extract(payload, '$.value') FROM {prefix}oplog \
+                      WHERE entity = 'board' AND entity_id = ?1 AND kind = 'set_field' \
+                        AND json_extract(payload, '$.field') = ?2 \
+                      ORDER BY hlc DESC LIMIT 1"
+                ),
+                (seed.id, field),
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(|e| e.to_string())?;
+        let expect: Option<String> = match winner {
+            None => genesis.map(str::to_string),
+            Some(None) if !nullable => {
+                return Err(format!(
+                    "看板语义审计({who}):种子看板的 {field} 赢家是 null——协议不接受,整体回滚"
+                ))
+            }
+            Some(v) => v,
+        };
+        let actual: Option<String> = conn
+            .query_row(&format!("SELECT {field} FROM {prefix}board WHERE id = ?1"), [seed.id], |r| r.get(0))
+            .map_err(|e| e.to_string())?;
+        if actual != expect {
+            return Err(format!(
+                "看板语义审计({who}):种子看板的 {field} 是 {actual:?},按自身日志应为 {expect:?}\
+                 (状态与日志矛盾),整体回滚"
+            ));
+        }
+    }
+    // ⑥ 墓碑 marker == 该看板全部 tombstone op 的 MIN(hlc)(同列 ⑤)。
+    let bad_marker = one(&format!(
+        "SELECT COUNT(*) FROM {prefix}board b WHERE b.tombstoned_at IS NOT NULL \
+           AND NOT (b.tombstoned_at IS (SELECT MIN(o.hlc) FROM {prefix}oplog o \
+                     WHERE o.entity = 'board' AND o.kind = 'tombstone' AND o.entity_id = b.id))"
+    ))?;
+    if bad_marker > 0 {
+        return Err(format!(
+            "看板语义审计({who}):{bad_marker} 块看板的墓碑标记 ≠ 自身日志里最小的那枚 tombstone HLC,整体回滚"
+        ));
+    }
     Ok(())
 }
 
@@ -703,7 +927,12 @@ pub(crate) fn audit_board_column_semantics(
 /// 绕过了 ⑥**,那是 H 级数据损坏路径的信号,⛔ 别当成清理没做干净就顺手删了了事。
 pub(crate) fn audit_tombstone_apply_empty(conn: &Connection) -> Result<(), String> {
     let n: i64 = conn
-        .query_row("SELECT COUNT(*) FROM sync_board_column_tombstone_apply", [], |r| r.get(0))
+        .query_row(
+            "SELECT (SELECT COUNT(*) FROM sync_board_column_tombstone_apply) \
+                  + (SELECT COUNT(*) FROM sync_board_tombstone_apply)",
+            [],
+            |r| r.get(0),
+        )
         .map_err(|e| e.to_string())?;
     if n > 0 {
         return Err(format!(
@@ -745,10 +974,15 @@ pub(crate) fn audit_tombstone_apply_empty(conn: &Connection) -> Result<(), Strin
 ///
 /// ⚠ **末键取的是全表最大值,含已 tombstone 的行**:列行永不物理删除(不变量 5),
 /// 让新列去顶一个死列的键只会造出并列。⇒ 键单调增长,新列恒在最右。
+///
+/// ⭐ 0043:`board` = 建在哪块看板上(`None` 或种子 `'tasks'` = 种子看板 ⇒ `board_id` NULL、
+/// 发五键 `create`;别的看板 ⇒ 发六键 `create_in_board`,编码由行决定,见
+/// `oplog::board_column_birth`)。看板已删 ⇒ 拒。
 pub fn create_column(
     conn: &mut Connection,
     clock: &mut Clock,
     title: &str,
+    board: Option<&str>,
     facts: &gate::RuntimeFacts,
 ) -> Result<String, String> {
     let title = title.trim();
@@ -756,7 +990,6 @@ pub fn create_column(
         return Err("列名不能为空".to_string());
     }
     repo::ensure_content_fits(title)?;
-    let id = Ulid::new().to_string();
     // ⛔ **`now_iso_millis` 不是 `now_iso`**:shape 层的 create 那一臂走 `validate_iso_millis`
     // (定宽 `…THH:MM:SS.sssZ`),而 `now_iso` 出的是不带毫秒的 RFC3339 ⇒ 换成它,本机
     // 一切正常、op 到**对端**才被判 `InvalidOp` = per-origin 持久隔离(plan §4.0)。
@@ -773,6 +1006,31 @@ pub fn create_column(
     //    往外发这种 op」,与改的是哪一列无关。在事务里问,故它读到的配置键与下面
     //    这笔写是同一个快照(首版自检清单 10)。
     gate::ensure_can_emit(&tx, facts)?;
+    let owner = match board {
+        Some(b) if b != SEED_BOARD => {
+            if !roles::board_live(&tx, b)? {
+                return Err("这块看板不存在或已删除,不能在上面建列".to_string());
+            }
+            Some(b)
+        }
+        _ => None,
+    };
+    let id = insert_column_row(&tx, title, owner, &created_at)?;
+    // 读行发声:payload 全从刚落的行上读回,⛔ 别在这里另攒一份。
+    oplog::board_column_create(&tx, clock, &id)?;
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(id)
+}
+
+/// 落一行用户列(落在**全部列的末键之后**;列序是全局的,一块看板的列按同一把键排)。
+/// 只写行、不发 op —— 调用方紧接着 `oplog::board_column_create`(读行发声)。
+pub(crate) fn insert_column_row(
+    tx: &Connection,
+    title: &str,
+    board: Option<&str>,
+    created_at: &str,
+) -> Result<String, String> {
+    let id = Ulid::new().to_string();
     let last: Option<String> = tx
         .query_row("SELECT position FROM board_column ORDER BY position DESC LIMIT 1", [], |r| {
             r.get(0)
@@ -781,14 +1039,11 @@ pub fn create_column(
         .map_err(|e| e.to_string())?;
     let position = frindex::key_between(last.as_deref(), None)?;
     tx.execute(
-        "INSERT INTO board_column (id, title, kind, system, position, created_at) \
-         VALUES (?1, ?2, 'task', 0, ?3, ?4)",
-        (&id, title, &position, &created_at),
+        "INSERT INTO board_column (id, title, kind, system, position, created_at, board_id) \
+         VALUES (?1, ?2, 'task', 0, ?3, ?4, ?5)",
+        (&id, title, &position, created_at, board),
     )
     .map_err(|e| format!("建列失败({id}):{e}"))?;
-    // 读行发声:payload 的五格全从刚落的行上读回,⛔ 别在这里另攒一份。
-    oplog::board_column_create(&tx, clock, &id)?;
-    tx.commit().map_err(|e| e.to_string())?;
     Ok(id)
 }
 
@@ -914,11 +1169,11 @@ pub fn delete_column(
     let Some((system, tombstoned_at)) = row else {
         return Err(format!("列不存在:{id}"));
     };
-    if let Some(why) = undeletable_reason(id, system == 1) {
-        return Err(why);
-    }
     if tombstoned_at.is_some() {
         return Err(format!("这一列已经删除了:{id}"));
+    }
+    if let Some(why) = column_delete_refusal(&tx, id, system == 1)? {
+        return Err(why);
     }
     let live = live_item_count(&tx, id).map_err(|e| e.to_string())?;
     if live > 0 {
@@ -949,6 +1204,39 @@ pub fn delete_column(
 ///
 /// ⛔ **系统列这一道与「不许删」是两回事**:`inbox`/`filed` 连改名和排序一起禁
 /// (不变量 2),而 [`ROLE_COLUMNS`] 那两列只禁删。别把两者合并成一个谓词。
+/// 这一列**此刻**为什么不能删(`None` = 规则上允许;是否为空另看 `live_items`)。读模型的
+/// `deletable` 与 [`delete_column`] 共用这一份(codex 实现审 2b 一轮 L1)。
+///
+/// 固定拒因走 [`undeletable_reason`](系统列 / 种子 `todo` / `done`);0043 加三条动态拒因
+/// (multiboard-plan §3;命令层,⛔ 不进 shape / 授权触发器 —— 合法并发或旧端的删除照收,
+/// 读侧降级):所在看板已删(列只读);它是当前完成列(先取消,同 477:删了归档会**安静地**
+/// 停摆);删了它这块看板就一枚非完成活列都不剩(新卡无处可落)。
+pub(crate) fn column_delete_refusal(
+    conn: &Connection,
+    id: &str,
+    system: bool,
+) -> Result<Option<String>, String> {
+    if let Some(why) = undeletable_reason(id, system) {
+        return Ok(Some(why));
+    }
+    let Some(b) = roles::board_of(conn, id)? else { return Ok(None) };
+    if !roles::board_live(conn, &b)? {
+        return Ok(Some("这一列所在的看板已删除,列是只读的".to_string()));
+    }
+    let done = roles::done_of(conn, &b)?;
+    if done.as_deref() == Some(id) {
+        return Ok(Some("这一列是这块看板的完成列,请先取消完成列再删".to_string()));
+    }
+    let others = roles::live_columns(conn, &b)?
+        .into_iter()
+        .filter(|c| c != id && Some(c) != done.as_ref())
+        .count();
+    if others == 0 {
+        return Ok(Some("这是这块看板上最后一枚能放新卡的列,不能删".to_string()));
+    }
+    Ok(None)
+}
+
 fn ensure_editable(tx: &Connection, id: &str, what: &str) -> Result<(), String> {
     let row: Option<(i64, Option<String>)> = tx
         .query_row(
@@ -966,6 +1254,12 @@ fn ensure_editable(tx: &Connection, id: &str, what: &str) -> Result<(), String> 
     }
     if tombstoned_at.is_some() {
         return Err(format!("这一列已删除,不可{what}(已删的列是只读的)"));
+    }
+    // 0043:死看板里的列(含迟到出生的)同样只读 —— 它们住收容区(plan §3a)。
+    if let Some(b) = roles::board_of(tx, id)? {
+        if !roles::board_live(tx, &b)? {
+            return Err(format!("这一列所在的看板已删除,不可{what}"));
+        }
     }
     Ok(())
 }

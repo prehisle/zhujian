@@ -243,9 +243,15 @@ pub fn check_fresh_to_account(conn: &Connection) -> Result<(), String> {
     // 这里不再重复 origin 谓词。少了 (b),无背书行永不进水位视野——全网只此一份、
     // 还自以为同步了,是水位协议照不见的静默不收敛(评审①-H1)。
     let legacy_msg = "这台设备有早于同步纪元的历史数据,只能作为账户首台,或清空后加入";
-    let (orphan_items, orphan_topics, orphan_links, orphan_images, orphan_comments, orphan_columns) =
+    let (orphan_items, orphan_topics, orphan_links, orphan_images, orphan_comments, orphan_columns, orphan_boards) =
         count_unbacked_rows(conn)?;
-    if orphan_items + orphan_topics + orphan_links + orphan_images + orphan_comments + orphan_columns
+    if orphan_items
+        + orphan_topics
+        + orphan_links
+        + orphan_images
+        + orphan_comments
+        + orphan_columns
+        + orphan_boards
         > 0
     {
         return Err(legacy_msg.into());
@@ -530,6 +536,12 @@ fn import_attached(conn: &mut Connection, clock: &mut Clock) -> Result<ImportRep
     // 日志矛盾」这种损坏会被合并**顺手修好**、再让 battery 误过。⇒ 先各自查各自的账。
     crate::board::audit_board_column_semantics(&tx, "", "本机")?;
     crate::board::audit_board_column_semantics(&tx, "boot.", "快照")?;
+    // 看板(multiboard-plan §5.2)同样双侧独立预审:种子看板四个字段下方也要从合并后的
+    // 日志物化,理由与上面那只逐字相同。
+    crate::board::audit_board_semantics(&tx, "", "本机")?;
+    crate::board::audit_board_semantics(&tx, "boot.", "快照")?;
+    crate::board::audit_seed_board(&tx, "")?;
+    crate::board::audit_seed_board(&tx, "boot.")?;
     tx.execute("INSERT INTO sync_replay_active (flag) VALUES (1)", [])
         .map_err(|e| e.to_string())?;
 
@@ -558,10 +570,24 @@ fn import_attached(conn: &mut Connection, clock: &mut Clock) -> Result<ImportRep
     // ⚠ `tombstoned_at` 随行 INSERT 进来,**不需要授权行** —— §2.3 ④ 是
     // `BEFORE UPDATE OF tombstoned_at`,INSERT 根本不触发它。而这个值就是合并后的赢家:
     // fresh 端不可能对一个自己没有的列发过 tombstone op ⇒ 该列的全部 op 都在快照里。
+    // 看板(0043)—— ⛔ **必须排在 board_column 之前**(FK 父先子:`board_column.board_id
+    // REFERENCES board(id)`)。⭐ **只复制用户看板**:种子 `'tasks'` 两端都有(迁移种下),
+    // 照搬当场撞 PRIMARY KEY(codex 二轮 M2;同种子列)。它的四个可变字段在下方 oplog 合并
+    // **之后**从合并日志物化。`tombstoned_at` 随行进来 = 合并后的赢家(fresh 端没对它发过 op)。
     tx.execute(
         &format!(
-            "INSERT INTO board_column (id, title, kind, system, position, created_at, tombstoned_at) \
-             SELECT id, title, kind, system, position, created_at, tombstoned_at \
+            "INSERT INTO board (id, title, position, landing_column_id, done_column_id, created_at, tombstoned_at) \
+             SELECT id, title, position, landing_column_id, done_column_id, created_at, tombstoned_at \
+               FROM boot.board WHERE id <> '{}'",
+            crate::board::SEED_BOARD
+        ),
+        [],
+    )
+    .map_err(|e| format!("导入 board 失败:{e}"))?;
+    tx.execute(
+        &format!(
+            "INSERT INTO board_column (id, title, kind, system, position, created_at, tombstoned_at, board_id) \
+             SELECT id, title, kind, system, position, created_at, tombstoned_at, board_id \
                FROM boot.board_column WHERE id NOT IN {}",
             crate::board::seed_ids_sql()
         ),
@@ -692,6 +718,8 @@ fn import_attached(conn: &mut Connection, clock: &mut Clock) -> Result<ImportRep
     // 两边必然都有。⛔ 也别与迁移里那份 canonical 默认值盲比:按不变量 2 它们可改名、
     // 可排序、可删,那就是用户数据(`board::audit_seed_columns` 因此刻意不核这三格)。
     materialize_task_seed_columns(&tx)?;
+    // 种子看板的四个可变字段同理从合并后的日志物化(multiboard-plan §5.2)。
+    materialize_seed_board(&tx)?;
 
     // ---- 导入后校验(§6.2 步骤 4;任一不过 = 整体回滚,连豁免标志一起消失) ----
     // 结构校验四件套(双序 / 墓碑复活 / counter 治理 / 连续性+FK)抽成共享审计函数,
@@ -844,6 +872,35 @@ fn materialize_task_seed_columns(tx: &Connection) -> Result<(), String> {
     Ok(())
 }
 
+/// 种子看板的四个可变字段,**从合并后的 oplog 物化**(multiboard-plan §5.2;形照
+/// [`materialize_task_seed_columns`])。
+///
+/// ⭐ **三态**(codex 二轮):该字段**没有** set 行 ⇒ 不动行(保留迁移里的 genesis 值);有赢家
+/// 且 value 是 JSON null ⇒ SQL NULL(`json_extract` 对 JSON null 正好给 SQL NULL);字符串 ⇒
+/// 该串。⛔ 别写成无条件 UPDATE —— 那会把没改过的 `done_column_id` 清成 NULL(= 取消完成列)。
+/// 种子看板永无墓碑(shape + 存储层两道),故这里没有墓碑那一段。
+fn materialize_seed_board(tx: &Connection) -> Result<(), String> {
+    let seed = crate::board::SEED_BOARD;
+    for field in ["title", "position", "landing_column_id", "done_column_id"] {
+        tx.execute(
+            &format!(
+                "UPDATE board SET {field} = ( \
+                     SELECT json_extract(w.payload, '$.value') FROM oplog w \
+                      WHERE w.entity = 'board' AND w.entity_id = board.id AND w.kind = 'set_field' \
+                        AND json_extract(w.payload, '$.field') = '{field}' \
+                      ORDER BY w.hlc DESC LIMIT 1) \
+                 WHERE id = '{seed}' AND EXISTS ( \
+                     SELECT 1 FROM oplog w \
+                      WHERE w.entity = 'board' AND w.entity_id = board.id AND w.kind = 'set_field' \
+                        AND json_extract(w.payload, '$.field') = '{field}')"
+            ),
+            [],
+        )
+        .map_err(|e| format!("物化种子看板的 {field} 失败:{e}"))?;
+    }
+    Ok(())
+}
+
 // ---- 严格电池:结构 + 语义审计的单一来源(epoch-plan §2.6/§3.3/§3.4) ------------
 //
 // 「压实后的库必须能通过新设备引导它的快照时要过的全部严格审计」——同一套电池四个
@@ -866,6 +923,8 @@ pub(crate) fn strict_battery(conn: &Connection) -> Result<(), String> {
     // (漏掉一个真 seed id ⇒ boot/fresh 可能永久拒;错列一个 ⇒ 无背书的行静默穿过电池)。
     crate::board::audit_seed_columns(conn)?;
     crate::board::audit_tombstone_apply_empty(conn)?;
+    // 0043:种子看板的出生字段(同 audit_seed_columns 的定位,不是登记表的新面)。
+    crate::board::audit_seed_board(conn, "")?;
     Ok(())
 }
 
@@ -945,6 +1004,20 @@ fn audit_tombstone_resurrection(conn: &Connection) -> Result<(), String> {
         return Err(format!(
             "{unmarked} 个已 tombstone 的 {what} 没盖墓碑标记(列的墓碑是标志位不是删行,\
              marker 空 = 复活),快照损坏?整体回滚"
+        ));
+    }
+    // 看板(0043)与列同一种反形态:墓碑是标志位,「有墓碑 op 却没盖 marker」才是复活。
+    let (what, sql) = (
+        "board",
+        "SELECT COUNT(*) FROM board b \
+          WHERE b.tombstoned_at IS NULL \
+            AND EXISTS (SELECT 1 FROM oplog o WHERE o.entity = 'board' \
+                         AND o.kind = 'tombstone' AND o.entity_id = b.id)",
+    );
+    let unmarked: i64 = conn.query_row(sql, [], |r| r.get(0)).map_err(|e| e.to_string())?;
+    if unmarked > 0 {
+        return Err(format!(
+            "{unmarked} 个已 tombstone 的 {what} 没盖墓碑标记(marker 空 = 复活),快照损坏?整体回滚"
         ));
     }
     Ok(())
@@ -1058,6 +1131,8 @@ pub(crate) fn count_field_mismatches(
     field: &str,
     create_key: Option<&str>,
 ) -> Result<i64, String> {
+    // ⚠ 0043 起列有两种出生 op(create / create_in_board),扫描域与初值来源都认两种(codex 二轮
+    // 清单 boot.rs:1071/1075);别的实体没有 create_in_board,多认一个对它们是空操作。
     // create 初值:Some(k) 取自 $.<k>;None = 恒 NULL(create-forced-NULL 字段:item 的
     // archived_at/sealed_at/done_at、topic 的 color——apply_*_create 忽略 payload 直写 NULL,审计
     // 必须同口径,否则恶意 create 注入同名键 + 表里设同值即过审,replay 却得 NULL 静默
@@ -1068,11 +1143,11 @@ pub(crate) fn count_field_mismatches(
     };
     let sql = format!(
         "SELECT COUNT(*) FROM {prefix}{table} t \
-         WHERE EXISTS (SELECT 1 FROM {prefix}oplog WHERE entity = ?1 AND entity_id = t.id AND kind = 'create') \
+         WHERE EXISTS (SELECT 1 FROM {prefix}oplog WHERE entity = ?1 AND entity_id = t.id AND kind IN ('create', 'create_in_board')) \
            AND NOT (t.{field} IS ( \
                 SELECT value FROM ( \
                     SELECT hlc, {create_value_expr} AS value FROM {prefix}oplog \
-                      WHERE entity = ?1 AND entity_id = t.id AND kind = 'create' \
+                      WHERE entity = ?1 AND entity_id = t.id AND kind IN ('create', 'create_in_board') \
                     UNION ALL \
                     SELECT hlc, json_extract(payload, '$.value') AS value FROM {prefix}oplog \
                       WHERE entity = ?1 AND entity_id = t.id AND kind = 'set_field' \
@@ -1146,6 +1221,7 @@ fn audit_op_backed_semantics(live: &Connection) -> Result<(), String> {
     // ②′ 看板列的四轴(词汇/坐标、op 在行缺、值 == 日志赢家、墓碑 marker == 确定性 min)。
     //    ⭐ 与 `import_attached` 的双侧预审是**同一份描述**,只是 prefix/话术不同。
     crate::board::audit_board_column_semantics(live, "", "本库")?;
+    crate::board::audit_board_semantics(live, "", "本库")?;
     // ③ 标签关联 OR-set:op-backed link(有 link_add)的存活集必须 == 表里的 op-backed 行。
     audit_link_or_set(live)?;
     // ④ 「图N」有效编号:有 image_add op 的每张已落行图,行 seq 必须 == reconcile 值。
@@ -1398,7 +1474,7 @@ fn audit_create_multiplicity(live: &Connection) -> Result<(), String> {
     let dup: i64 = live
         .query_row(
             "SELECT COUNT(*) FROM (SELECT entity, entity_id FROM oplog \
-             WHERE kind IN ('create', 'image_add') \
+             WHERE kind IN ('create', 'create_in_board', 'image_add') \
              GROUP BY entity, entity_id HAVING COUNT(*) > 1)",
             [],
             |r| r.get(0),
@@ -1409,10 +1485,10 @@ fn audit_create_multiplicity(live: &Connection) -> Result<(), String> {
             "导入后语义审计:{dup} 个实体有重复 create/image_add(每实体恰一条),整体回滚"
         ));
     }
-    let (items, topics, links, images, comments, columns) = count_unbacked_rows(live)?;
-    if items + topics + links + images + comments + columns > 0 {
+    let (items, topics, links, images, comments, columns, boards) = count_unbacked_rows(live)?;
+    if items + topics + links + images + comments + columns + boards > 0 {
         return Err(format!(
-            "导入后语义审计:存在无 op 背书的行(item {items} / topic {topics} / link {links} / image {images} / comment {comments} / board_column {columns})\
+            "导入后语义审计:存在无 op 背书的行(item {items} / topic {topics} / link {links} / image {images} / comment {comments} / board_column {columns} / board {boards})\
             ——严格纪元下每行必有恰一条 create/link_add/image_add 背书(pre-0020 遗产先在锚点压实;\
             看板列的六个内置种子是 schema 提供的、按 id 显式豁免),整体回滚"
         ));
@@ -1426,7 +1502,7 @@ fn audit_create_multiplicity(live: &Connection) -> Result<(), String> {
 /// fresh 闸与导入审计对「什么算无背书」各说各话。
 pub(crate) fn count_unbacked_rows(
     conn: &Connection,
-) -> Result<(i64, i64, i64, i64, i64, i64), String> {
+) -> Result<(i64, i64, i64, i64, i64, i64, i64), String> {
     let one = |sql: &str| -> Result<i64, String> {
         conn.query_row(sql, [], |r| r.get(0)).map_err(|e| e.to_string())
     };
@@ -1459,10 +1535,18 @@ pub(crate) fn count_unbacked_rows(
         // genesis**(不发 create,但此后 title/position/tombstone 全走普通 op)。
         // ⛔ 若为了绕开这一格干脆不计 board_column,**无背书的用户列就能穿过 fresh/battery**
         //    = 一个静默不同步的洞(§7.2 那张表点名警告过这条)。
+        // 0043:两种出生 op 都算背书(codex 二轮清单 boot.rs:1464)。
         one(&format!(
             "SELECT COUNT(*) FROM board_column WHERE id NOT IN {} AND id NOT IN \
-             (SELECT entity_id FROM oplog WHERE entity = 'board_column' AND kind = 'create')",
+             (SELECT entity_id FROM oplog WHERE entity = 'board_column' \
+                 AND kind IN ('create', 'create_in_board'))",
             crate::board::seed_ids_sql()
+        ))?,
+        // 0043(multiboard-plan §5.2):用户看板必须有 create 背书;只豁免种子 'tasks'。
+        one(&format!(
+            "SELECT COUNT(*) FROM board WHERE id <> '{}' AND id NOT IN \
+             (SELECT entity_id FROM oplog WHERE entity = 'board' AND kind = 'create')",
+            crate::board::SEED_BOARD
         ))?,
     ))
 }
@@ -1628,7 +1712,7 @@ fn audit_op_preconditions(live: &Connection) -> Result<(), String> {
                 AND NOT EXISTS (SELECT 1 FROM board_column c WHERE c.id = o.entity_id) \
                 AND NOT EXISTS (SELECT 1 FROM oplog x WHERE x.entity = 'board_column' \
                                  AND x.entity_id = o.entity_id \
-                                 AND (x.kind = 'create' \
+                                 AND (x.kind IN ('create', 'create_in_board') \
                                       OR (x.kind = 'tombstone' AND x.hlc < o.hlc)))",
             [],
             |r| r.get(0),
@@ -1647,7 +1731,8 @@ fn audit_op_preconditions(live: &Connection) -> Result<(), String> {
             "SELECT COUNT(*) FROM oplog o \
               WHERE o.entity = 'board_column' AND o.kind IN ('set_field', 'tombstone') \
                 AND EXISTS (SELECT 1 FROM oplog c WHERE c.entity = 'board_column' \
-                             AND c.entity_id = o.entity_id AND c.kind = 'create' AND c.hlc >= o.hlc)",
+                             AND c.entity_id = o.entity_id AND c.kind IN ('create', 'create_in_board') \
+                             AND c.hlc >= o.hlc)",
             [],
             |r| r.get(0),
         )
@@ -1655,6 +1740,58 @@ fn audit_op_preconditions(live: &Connection) -> Result<(), String> {
     if bad_column_order > 0 {
         return Err(format!(
             "导入后语义审计:{bad_column_order} 条 board_column op 的 create 晚于它(set-before-create,live 挂起),整体回滚"
+        ));
+    }
+    // 0043:`create_in_board` 的父依赖(codex 二轮:boot 对偶)—— 它指的那块看板**必须有行**
+    // (live 在看板行未到时归 DependencyMissing);**允许父已墓碑**(看板行永不物理删除,
+    // 墓碑只是 marker)。⛔ 别把角色指针那条「悬空许可」套到出生归属上。
+    let orphan_born: i64 = live
+        .query_row(
+            "SELECT COUNT(*) FROM oplog o \
+              WHERE o.entity = 'board_column' AND o.kind = 'create_in_board' \
+                AND NOT EXISTS (SELECT 1 FROM board b \
+                                 WHERE b.id = json_extract(o.payload, '$.board_id'))",
+            [],
+            |r| r.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    if orphan_born > 0 {
+        return Err(format!(
+            "导入后语义审计:{orphan_born} 条 create_in_board 指向本库没有行的看板(live 挂起),整体回滚"
+        ));
+    }
+    // 看板自己的依赖前置与因果序(同列那两格):set_field / tombstone 的坐标必须有行或有
+    // create 背书;有 create 背书的,create 必须 HLC 早于它。种子 'tasks' 的行恒在(迁移种下、
+    // 看板行永不物理删除、缺行过不了 audit_seed_board)⇒ 天然落不进计数,⛔ 不写 seed 豁免。
+    let orphan_board: i64 = live
+        .query_row(
+            "SELECT COUNT(*) FROM oplog o \
+              WHERE o.entity = 'board' AND o.kind IN ('set_field', 'tombstone') \
+                AND NOT EXISTS (SELECT 1 FROM board b WHERE b.id = o.entity_id) \
+                AND NOT EXISTS (SELECT 1 FROM oplog x WHERE x.entity = 'board' \
+                                 AND x.entity_id = o.entity_id AND x.kind = 'create')",
+            [],
+            |r| r.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    if orphan_board > 0 {
+        return Err(format!(
+            "导入后语义审计:{orphan_board} 条 board op 指向无行且无 create 背书的看板(孤儿,live 挂起),整体回滚"
+        ));
+    }
+    let bad_board_order: i64 = live
+        .query_row(
+            "SELECT COUNT(*) FROM oplog o \
+              WHERE o.entity = 'board' AND o.kind IN ('set_field', 'tombstone') \
+                AND EXISTS (SELECT 1 FROM oplog c WHERE c.entity = 'board' \
+                             AND c.entity_id = o.entity_id AND c.kind = 'create' AND c.hlc >= o.hlc)",
+            [],
+            |r| r.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+    if bad_board_order > 0 {
+        return Err(format!(
+            "导入后语义审计:{bad_board_order} 条 board op 的 create 晚于它(set-before-create,live 挂起),整体回滚"
         ));
     }
     // item op 的 **stage 坐标**前置(§4.2 的 boot 半边 —— B-c 第 2 段随 apply 层那道

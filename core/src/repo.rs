@@ -38,7 +38,12 @@ const IDEA_STAGES: &str = crate::board::IDEA_COLUMN_IDS;
 /// (480 结清 477 那笔账)。⛔ 别在本模块的 SQL 里再写 `'todo'` / `'done'` 字面量 ——
 /// 那两个 id 之所以敢写死,靠的是 `board::undeletable_reason` 保证它们永不可删,
 /// 而**只有引用同一份常量,那条保证才跟得过来**。
+// ⚠ 0043(多看板)起这两个常量**只剩测试便捷包装在用**:生产路径的目标列一律由编排层按
+// `board::roles` 解析后显式传进来(multiboard-plan §4;codex 二轮 M1:一次解析的目标列贯穿
+// 插入 / 置顶 / 闸 / 出生快照)。
+#[cfg(test)]
 const LANDING: &str = crate::board::LANDING_COLUMN;
+#[cfg(test)]
 const DONE: &str = crate::board::DONE_COLUMN;
 
 /// 单条正文/标题的字节上限(P2-g,codex 轮 M 级):正文全文进同步 op(set_field
@@ -944,13 +949,21 @@ pub(crate) fn delete_inbox_item(conn: &Connection, id: &str) -> rusqlite::Result
 /// card, one write, no renumbering. The `stage IN idea / archived_at IS NULL` guard
 /// rejects an already-task, archived, or missing item as a 0-row no-op. due/priority
 /// stay NULL (idea attrs were none). Returns rows changed.
-pub(crate) fn promote_to_todo(conn: &Connection, id: &str) -> rusqlite::Result<usize> {
-    let key = front_key(conn, LANDING, id)?;
+///
+/// 0043 起落点由调用方给(`column` = 解析后的 `landing(default_board)`)。
+pub(crate) fn promote_to_column(conn: &Connection, id: &str, column: &str) -> rusqlite::Result<usize> {
+    let key = front_key(conn, column, id)?;
     let sql = format!(
-        "UPDATE items SET stage = '{LANDING}', updated_at = ?2, position = ?3 \
+        "UPDATE items SET stage = ?4, updated_at = ?2, position = ?3 \
          WHERE id = ?1 AND stage IN {IDEA_STAGES} AND archived_at IS NULL"
     );
-    conn.execute(&sql, (id, now_iso(), key))
+    conn.execute(&sql, (id, now_iso(), key, column))
+}
+
+/// 测试便捷包装:种子看板语义(落 `todo`)。
+#[cfg(test)]
+pub(crate) fn promote_to_todo(conn: &Connection, id: &str) -> rusqlite::Result<usize> {
+    promote_to_column(conn, id, LANDING)
 }
 
 /// 撤回为灵感: flip a 'todo' back to an idea stage (`to_stage` = 'filed' if it still
@@ -958,15 +971,26 @@ pub(crate) fn promote_to_todo(conn: &Connection, id: &str) -> rusqlite::Result<u
 /// (position/due/priority) the idea stages forbid (the row CHECKs require them NULL).
 /// The `stage = 'todo' / archived_at IS NULL` guard rejects a more-mature or archived
 /// task. Returns rows changed.
-pub(crate) fn revert_to_idea(conn: &Connection, id: &str, to_stage: &str) -> rusqlite::Result<usize> {
+///
+/// 0043 起「只有落点列里的卡能撤回」的落点由调用方给(卡所在看板解析后的 landing)。
+pub(crate) fn revert_to_idea_from(
+    conn: &Connection,
+    id: &str,
+    to_stage: &str,
+    landing: &str,
+) -> rusqlite::Result<usize> {
     conn.execute(
-        &format!(
-            "UPDATE items SET stage = ?2, updated_at = ?3, \
-                    position = NULL, due_on = NULL, priority = NULL \
-             WHERE id = ?1 AND stage = '{LANDING}' AND archived_at IS NULL"
-        ),
-        (id, to_stage, now_iso()),
+        "UPDATE items SET stage = ?2, updated_at = ?3, \
+                position = NULL, due_on = NULL, priority = NULL \
+         WHERE id = ?1 AND stage = ?4 AND archived_at IS NULL",
+        (id, to_stage, now_iso(), landing),
     )
+}
+
+/// 测试便捷包装:种子看板语义(只认 `todo`)。
+#[cfg(test)]
+pub(crate) fn revert_to_idea(conn: &Connection, id: &str, to_stage: &str) -> rusqlite::Result<usize> {
+    revert_to_idea_from(conn, id, to_stage, LANDING)
 }
 
 /// Move an Inbox item into 已整理 (stage inbox -> filed) — the 0-tag entry point used
@@ -1329,24 +1353,36 @@ pub fn all_topics_with_notes(conn: &Connection) -> rusqlite::Result<Vec<TopicTre
 /// nothing is inserted). Lands at the 待办 column's END (a fractional key after the
 /// current last card; `task::create` then repositions it to the front). Tags, if any,
 /// are linked separately within the caller's transaction. Returns its ULID.
+///
+/// 0043 起落在调用方给的 `column`(解析后的落点);`born_stage` 同值。
+pub(crate) fn insert_task_into(
+    conn: &Connection,
+    content: &str,
+    due_on: Option<&str>,
+    priority: Option<i64>,
+    column: &str,
+) -> rusqlite::Result<String> {
+    let id = Ulid::new().to_string();
+    let now = now_iso();
+    let key = end_key(conn, column, &id)?;
+    conn.execute(
+        "INSERT INTO items (id, content, stage, created_at, updated_at, due_on, priority, position, born_stage, born_device) \
+         VALUES (?1, ?2, ?7, ?3, ?3, ?4, ?5, ?6, ?7, \
+                 (SELECT value FROM sync_meta WHERE key = 'device_id'))",
+        (&id, content, &now, due_on, priority, &key, column),
+    )?;
+    Ok(id)
+}
+
+/// 测试便捷包装:种子看板语义(落 `todo`)。
+#[cfg(test)]
 pub(crate) fn insert_task(
     conn: &Connection,
     content: &str,
     due_on: Option<&str>,
     priority: Option<i64>,
 ) -> rusqlite::Result<String> {
-    let id = Ulid::new().to_string();
-    let now = now_iso();
-    let key = end_key(conn, LANDING, &id)?;
-    conn.execute(
-        &format!(
-            "INSERT INTO items (id, content, stage, created_at, updated_at, due_on, priority, position, born_stage, born_device) \
-             VALUES (?1, ?2, '{LANDING}', ?3, ?3, ?4, ?5, ?6, '{LANDING}', \
-                     (SELECT value FROM sync_meta WHERE key = 'device_id'))"
-        ),
-        (&id, content, &now, due_on, priority, &key),
-    )?;
-    Ok(id)
+    insert_task_into(conn, content, due_on, priority, LANDING)
 }
 
 /// 跨空间移动的目标侧落行(cross-space-move §2.6):id 由调用方铸好(新 ULID 已过
@@ -1517,14 +1553,32 @@ pub fn active_task_stage(conn: &Connection, id: &str) -> rusqlite::Result<Option
 /// 清除,故归档/撤回后完成时刻天然保住(迁移 0030 语义)。CASE 里的 `stage` 是行的
 /// **旧值**(SQLite 的 UPDATE...SET 右式一律读未改前的行值),「旧≠done」判据真实成立;
 /// 编排层据同一条边把 `"done_at"` 加进 oplog 发射(task.rs)。
-pub(crate) fn set_task_stage(conn: &Connection, id: &str, from: &str, to: &str) -> rusqlite::Result<usize> {
+///
+/// ⭐ 0043 起「进入完成列」这条边由**调用方**按 `board::roles::entered_done` 在 UPDATE
+/// 之前算一次、以 `entered_done` 传进来;同一个布尔同时驱动这里的盖章与编排层的字段发射
+/// (codex 设计审二轮 M4:原先 SQL 与发射各判一次,多看板下会分叉)。
+pub(crate) fn set_task_stage_with(
+    conn: &Connection,
+    id: &str,
+    from: &str,
+    to: &str,
+    entered_done: bool,
+) -> rusqlite::Result<usize> {
     let key = end_key(conn, to, id)?;
     conn.execute(
         "UPDATE items SET stage = ?3, updated_at = ?4, position = ?5, \
-                done_at = CASE WHEN stage <> 'done' AND ?3 = 'done' THEN ?4 ELSE done_at END \
+                done_at = CASE WHEN ?6 THEN ?4 ELSE done_at END \
          WHERE id = ?1 AND stage = ?2 AND archived_at IS NULL AND sealed_at IS NULL",
-        (id, from, to, now_iso(), key),
+        (id, from, to, now_iso(), key, entered_done),
     )
+}
+
+/// 测试便捷包装:现场按角色算 `entered_done`。
+#[cfg(test)]
+pub(crate) fn set_task_stage(conn: &Connection, id: &str, from: &str, to: &str) -> rusqlite::Result<usize> {
+    let entered = crate::board::entered_done(conn, from, to)
+        .map_err(|e| rusqlite::Error::InvalidParameterName(e))?;
+    set_task_stage_with(conn, id, from, to, entered)
 }
 
 /// The active card ids in a column, in board order (`position`).
@@ -1793,35 +1847,54 @@ pub(crate) fn purge_archived_tasks(conn: &Connection) -> rusqlite::Result<usize>
 
 /// 归档一条「已完成」任务(盖 sealed_at)。position 冻结原值(已退出 partial unique
 /// 的约束范围)。guard 使 非 done/回收站中/已归档/不存在 均为 0 行 no-op,调用方 fail-fast。
-pub(crate) fn seal_task(conn: &Connection, id: &str) -> rusqlite::Result<usize> {
+///
+/// 0043 起完成列由调用方给(卡所在看板解析后的 done)。
+pub(crate) fn seal_task_in(conn: &Connection, id: &str, done_column: &str) -> rusqlite::Result<usize> {
     let now = now_iso();
     conn.execute(
-        &format!(
-            "UPDATE items SET sealed_at = ?2, updated_at = ?2 \
-             WHERE id = ?1 AND stage = '{DONE}' AND archived_at IS NULL AND sealed_at IS NULL"
-        ),
-        (id, &now),
+        "UPDATE items SET sealed_at = ?2, updated_at = ?2 \
+         WHERE id = ?1 AND stage = ?3 AND archived_at IS NULL AND sealed_at IS NULL",
+        (id, &now, done_column),
     )
+}
+
+/// 测试便捷包装:种子看板语义(只认 `done`)。
+#[cfg(test)]
+pub(crate) fn seal_task(conn: &Connection, id: &str) -> rusqlite::Result<usize> {
+    seal_task_in(conn, id, DONE)
 }
 
 /// 一键归档全部「已完成」:同一时间戳盖满整列(一批一个归档时刻,时间轴上归成一组)。
 /// 返回归档条数(0 = 列本来就空,不是错误)。
-pub(crate) fn seal_all_done(conn: &Connection) -> rusqlite::Result<usize> {
+///
+/// 0043 起按看板:调用方给出那块看板解析后的完成列。
+pub(crate) fn seal_all_in(conn: &Connection, done_column: &str) -> rusqlite::Result<usize> {
     let now = now_iso();
     conn.execute(
-        &format!(
-            "UPDATE items SET sealed_at = ?1, updated_at = ?1 \
-             WHERE stage = '{DONE}' AND archived_at IS NULL AND sealed_at IS NULL"
-        ),
-        [&now],
+        "UPDATE items SET sealed_at = ?1, updated_at = ?1 \
+         WHERE stage = ?2 AND archived_at IS NULL AND sealed_at IS NULL",
+        [&now, done_column],
     )
+}
+
+/// 测试便捷包装:种子看板语义。
+#[cfg(test)]
+pub(crate) fn seal_all_done(conn: &Connection) -> rusqlite::Result<usize> {
+    seal_all_in(conn, DONE)
 }
 
 /// 取消归档:sealed_at 置回 NULL,任务回到看板「已完成」列的**原位**(158 G4-A4:冻结的
 /// 旧排序键没被活跃卡占就沿用,被占了紧跟占位卡之后,同 restore_task 的 `reinstate_key`)。
 /// guard 使 未归档/不存在 为 0 行。
+///
+/// ⚠ 0043 起取键按卡**实际所在的列**(codex 实现审二轮 L2:原先写死 `DONE`,自定义看板的
+/// 完成列取消归档时位置冲突检查会去查种子 `done`)。语义不变:回原列,不做隐式移动。
 pub(crate) fn unseal_task(conn: &Connection, id: &str) -> rusqlite::Result<usize> {
-    let key = reinstate_key(conn, DONE, id)?;
+    let stage: Option<String> = conn
+        .query_row("SELECT stage FROM items WHERE id = ?1 AND sealed_at IS NOT NULL", [id], |r| r.get(0))
+        .optional()?;
+    let Some(stage) = stage else { return Ok(0) };
+    let key = reinstate_key(conn, &stage, id)?;
     conn.execute(
         "UPDATE items SET sealed_at = NULL, updated_at = ?2, position = ?3 \
          WHERE id = ?1 AND sealed_at IS NOT NULL",
@@ -2186,10 +2259,10 @@ mod tests {
     }
 
     #[test]
-    fn migration_sets_user_version_42_and_enforces_foreign_keys() {
+    fn migration_sets_user_version_43_and_enforces_foreign_keys() {
         let conn = fresh_db();
         let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0)).unwrap();
-        assert_eq!(version, 42);
+        assert_eq!(version, 43);
         let fk: i64 = conn.pragma_query_value(None, "foreign_keys", |r| r.get(0)).unwrap();
         assert_eq!(fk, 1, "foreign keys must be ON");
     }

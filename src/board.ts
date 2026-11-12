@@ -36,12 +36,26 @@ import {
 } from "./filter-bar";
 import {
   type BoardColumn,
-  DONE_COLUMN,
-  LANDING_COLUMN,
   boardColumns,
   columnName,
   loadBoardColumns,
 } from "./board-columns";
+import {
+  type Board,
+  BOARDS_CHANGED,
+  boardName,
+  boardsChanged,
+  currentBoard,
+  doneColumnSet,
+  holdingColumns,
+  liveBoards,
+  loadBoards,
+  markActiveBoard,
+  moveTaskToBoard,
+  shareBoardData,
+  setCurrentBoard,
+  setDraggingCard,
+} from "./boards";
 import { closeColumnManager, openColumnManager } from "./column-manager";
 import { closeHistoryDialog, openHistoryDialog } from "./history-panel";
 import { BOARD_CARD_KEYS, BOARD_TRASH_KEYS, BOARD_VIEW_KEYS, SEALED_CARD_KEYS } from "./keymap";
@@ -91,7 +105,7 @@ export function focusBoardView(v: BoardView): void {
 // 看板的列。**B-f 第 1 段起从库里来**(board-columns-plan:`items.stage` 指向 `board_column`
 // 一行的身份,列可改名 / 排序 / 增删)⇒ ⛔ 这里不再有四值字面量,取法与「画哪几列」的判据
 // 都在共享件 `board-columns.ts`。手工工具照旧:没有 AI「建议」列,新任务恒生在落点列
-// (`LANDING_COLUMN`),此后随手拖。'待确认' 仍只是 进行中 与 已完成 之间的可选停靠位。
+// (0043 起是**每块看板自己的落点**,core 解析,`Board.landing`),此后随手拖。
 
 // ---- 列内排序轴(500)--------------------------------------------------------
 // 默认「手动」= 用户拖出来的 `position` 序,那是看板的本义;另两档按 `created_at` 正/逆序。
@@ -169,21 +183,22 @@ const btn = (label: string, kind: string, onclick: () => void) =>
 // 158 G2 / A14(W2 复核新撞 1):多行正文不再压成一行 —— 卡里的清单被压成「- [ ] 搬家打包 - [x] 书 - [ ] 衣服」、
 // 空行也丢了。首行做这条任务的那一项,其余各行原样缩两格挂在它下面(Markdown 列表项的续行 / 子清单),
 // 空行保留为空行(不带缩进,免得行尾挂空格)。
-function mdLine(item: TaskItem, status: string): string {
-  const box = status === DONE_COLUMN ? "[x]" : "[ ]";
+function mdLine(item: TaskItem, done: boolean): string {
+  const box = done ? "[x]" : "[ ]";
   const lines = item.title.trim().split(/\r?\n/);
   const rest = lines.slice(1).map((l) => (l.trim() === "" ? "" : `  ${l.trimEnd()}`));
   return [`- ${box} ${lines[0].trim()}`, ...rest].join("\n");
 }
-function columnMarkdown(name: string, status: string, items: TaskItem[]): string {
-  return [`## ${name}`, ...items.map((t) => mdLine(t, status))].join("\n");
+// `done` = 这一列是它看板解析后的完成列(0043:读 core 给的角色,⛔ 别比 "done" 字面量)。
+function columnMarkdown(name: string, done: boolean, items: TaskItem[]): string {
+  return [`## ${name}`, ...items.map((t) => mdLine(t, done))].join("\n");
 }
 // The whole board: each non-empty column in board order, blank line between.
-function boardMarkdown(cols: BoardColumn[], items: TaskItem[]): string {
+function boardMarkdown(cols: BoardColumn[], items: TaskItem[], doneId: string | null): string {
   return cols
-    .map((c) => ({ name: columnName(c), status: c.id, inCol: items.filter((t) => t.status === c.id) }))
+    .map((c) => ({ name: columnName(c), done: c.id === doneId, inCol: items.filter((t) => t.status === c.id) }))
     .filter((c) => c.inCol.length > 0)
-    .map((c) => columnMarkdown(c.name, c.status, c.inCol))
+    .map((c) => columnMarkdown(c.name, c.done, c.inCol))
     .join("\n\n");
 }
 
@@ -245,7 +260,8 @@ type TopicOpt = { id: string; title: string; color: string | null; kind: string 
 
 // Three views in one column: the kanban, the 回收站 (soft-deleted tasks), and the
 // 归档 (成就归档 — sealed done tasks, viewable, not deletable).
-type BoardView = "board" | "trash" | "sealed";
+// 0043 多一格 `holding`:收容区(已删除的看板 / 列里还扣着的卡,multiboard-plan §3a),从侧栏底部那行进。
+type BoardView = "board" | "trash" | "sealed" | "holding";
 
 // The 标签/文本 filter must survive leaving and returning to the board. navigate() in
 // notebook.ts unmounts+remounts on every view switch, so a mount-scope value would
@@ -371,6 +387,10 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
   //    闹钟 + 权限(安卓),而且 `due_on` 今天只有**日**没有时刻 —— 那是另一笔账。
   // ⚠ 显示条件 = 有内容:一条到期/逾期都没有时整枚藏起(别在顶栏摆一个恒亮的 0)。
   let dueOnly = false; // mount 级(同 boardView 的 peek 语义,不跨视图记忆)
+  // 归档册的看板筛选(0043,用户拍 ⑦;null = 全部)。同 dueOnly 是 mount 级的 peek,不跨视图记。
+  let sealedBoard: string | null = null;
+  // 归档卡要不要挂来源看板的小签(= 顶上那排筛选在不在);renderSealed 每次先算好再画卡。
+  let sealedTagged = false;
   /** 跨过本地午夜自动重算一次:`today` 只在 load() 里刷新,而「今天到期」这件事**没人
    *  操作也会变**。算到下一个本地零点的毫秒数,到点重画并再排一次。unmount 清。 */
   let midnightTimer: ReturnType<typeof setTimeout> | undefined;
@@ -394,6 +414,35 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
   // (memory `module-state-hoisting-checklist` 那五坑的第一条)。首帧空数组 —— load()
   // 之前没有任何渲染路径读它。
   let cols: BoardColumn[] = [];
+  // 0043 多看板(multiboard-plan §6):全部列(命名回收站 / 归档 / 收容区里的来处要它)、全部看板、
+  // 这台此刻在看的那块(`boards.ts` currentBoard:记着的那块还活着就是它,否则默认看板)。
+  // ⭐ 角色(落点 / 完成列)只读 core 解析的 `cur.landing` / `cur.done`,⛔ 前端不另算。
+  // 同 cols:mount 级、首帧空,load() 之前没有渲染路径读它们。
+  let allCols: BoardColumn[] = [];
+  let boards: Board[] = [];
+  let cur: Board | null = null;
+  /** 本看板解析后的完成列(null = 纯分类看板:没有「完成」、没有归档入口)。 */
+  const doneId = (): string | null => cur?.done ?? null;
+  /** 本看板解析后的落点(null = 放不进卡;core 会响亮拒)。 */
+  const landingId = (): string | null => cur?.landing ?? null;
+  /** 全部看板的完成列(到期口径「完成的不算」按它)。 */
+  let doneCols = new Set<string>();
+  /** 一列的显示名(含别的看板的列 / 已删的列);找不到 = null。 */
+  const anyColName = (id: string): string | null => {
+    const c = allCols.find((x) => x.id === id && x.kind === "task");
+    return c ? columnName(c) : null;
+  };
+  /** 一列属于哪块看板(找不到 = null)。 */
+  const boardOfCol = (id: string): Board | null => {
+    const c = allCols.find((x) => x.id === id && x.kind === "task");
+    return c?.board_id ? (boards.find((b) => b.id === c.board_id) ?? null) : null;
+  };
+  /** 「挪到看板 ▸」的候选:别的活看板里放得进卡的那几块(落点 ⊥ 的不列 —— 显示条件 = 接收条件)。
+   *  `includeOwn` = 收容区里的卡:它自己那块看板(还活着时)也是合法出口(core move_to_board 头注)。 */
+  function moveBoardTargets(item: TaskItem, includeOwn = false): Board[] {
+    const own = boardOfCol(item.status)?.id ?? null;
+    return liveBoards(boards).filter((b) => b.landing !== null && (includeOwn || b.id !== own));
+  }
 
   // Fingerprint of the last rendered state. load() runs on every window refocus
   // (alt-tab back) but skips the DOM rebuild when this matches — refresh without flicker.
@@ -583,8 +632,14 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
   // 158 G2 / A7(WD-06 / 36):撤回为随记此前一声不吭。回执带「去看看」(随记页定位那条)。
   // 158 G3 / A7 对齐手机(74fe6f65):再配「撤销」= 转回待办,并把撤回时清掉的截止 / 优先级原样设回 ——
   // 取值冻结在点「撤回」那一刻;设不回就不是完整的撤销(§3.1「撤销 ≠ 完整恢复不配发」)。
+  // 0043:撤销要转回**原来那块**看板,⛔ 不是默认看板 —— 否则在非默认看板上撤回再撤销,卡会跑到另一块上去。
+  // 只有落点列里的卡撤得回,所以「回原列」= 那块看板的落点**仍是撤回前那一列**;落在列首(列内位置本就不还原,
+  // 158 起如此)。落点在撤回与撤销之间被改了(别的设备同步过来)⇒ 回不了原列 ⇒ core 在写事务里比 `expectedColumn`
+  // 拒、什么都不写,⛔ 别落到新落点还说「已撤销」(codex 实现审 883 一、二轮 M1;前端先读再发隔一次往返,不原子)。
   const revert = async (item: TaskItem): Promise<void> => {
-    const { id, title, due_on: due, priority: prio } = item;
+    const { id, title, due_on: due, priority: prio, status: was } = item;
+    const home = boardOfCol(was);
+    if (!home) throw new Error(`task ${id} is on column ${was}, which has no board`);
     if (!(await call("revert_task_to_inbox", { id })) || unmounted) return;
     undoable(
       true,
@@ -592,7 +647,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       async () => {
         clearOpError();
         try {
-          await invoke("promote_note_to_task", { id, title });
+          await invoke("promote_note_to_task", { id, title, boardId: home.id, expectedColumn: was });
           if (due !== null) await invoke("set_task_due", { id, dueOn: due });
           if (prio !== null) await invoke("set_task_priority", { id, priority: prio });
         } catch (e) {
@@ -618,13 +673,25 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
   // 那张卡(复用跨视图跳转那条 focusId 通道:清筛选、滚到中央、常亮)。
   const restoreFromTrash = async (item: TaskItem): Promise<void> => {
     if (!(await call("restore_task", { id: item.id })) || unmounted) return;
-    const col = cols.find((c) => c.id === item.status);
-    toastGo(col ? t("trash.restoredTask", { col: columnName(col) }) : t("trash.restoredBoard"), t("inbox.goSee"), () => {
-      if (unmounted) return;
-      focusId = item.id;
-      boardView = "board";
-      void load();
-    });
+    // 0043:回原列,原列可能在别的看板上 ⇒ 名字从全部列里取,「去看看」先切到那块看板。
+    // 原列 / 原看板已删 ⇒ 卡进了收容区(plan §3a),「去看看」落收容区。
+    const name = anyColName(item.status);
+    const home = boardOfCol(item.status);
+    const held = holdingColumns(allCols).some((c) => c.id === item.status) || !home || home.deleted;
+    toastGo(
+      held ? t("boards.restoredHeld") : name !== null ? t("trash.restoredTask", { col: name }) : t("trash.restoredBoard"),
+      t("inbox.goSee"),
+      () => {
+        if (unmounted) return;
+        focusId = item.id;
+        if (held) boardView = "holding";
+        else {
+          if (home) setCurrentBoard(home.id, mountSpace);
+          boardView = "board";
+        }
+        void load();
+      },
+    );
   };
   // 165 / W5 Q15:找不回的那一下写出删的是哪一条(「已彻底删除「…」」,两端同句;整条没字照旧那句)。
   const purgeOne = async (item: TaskItem): Promise<void> => {
@@ -644,7 +711,8 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
   // 158 G2 / A6(WD-07 / 08):全部归档与取消归档此前都不说话。全部归档的撤销 = 把这一批逐条取消
   // 归档(`ids` = 点下那刻看板上「已完成」列**全部**的卡,含被筛掉的 —— seal_done_tasks 归的就是全部)。
   const sealAllDone = async (ids: string[]): Promise<void> => {
-    undoable(await call("seal_done_tasks", {}), t("board.undoSealedAll", { n: ids.length }), async () => {
+    // 0043:按看板归档(这块看板解析后的完成列);纯分类看板根本不给这个入口。
+    undoable(await call("seal_done_tasks", { boardId: cur?.id }), t("board.undoSealedAll", { n: ids.length }), async () => {
       let failed = 0;
       for (const id of ids) {
         try {
@@ -658,24 +726,54 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       return failed === 0; // 有一条没撤回就不说「已撤销」(横幅里照实写着哪条)
     });
   };
-  const unseal = async (id: string): Promise<void> => {
-    const done = cols.find((c) => c.id === DONE_COLUMN);
-    if (!done) throw new Error("看板缺「已完成」列"); // 完成列不可删(deletable=false),缺了是真 bug
-    // 158 G3 / Q3:回执再带「去看看」—— 取消归档发生在归档页,卡回了看板「已完成」列,人还在归档页。
+  // 0043:取消归档**回原列**(core 不改语义,plan §4);原列 / 原看板已删 ⇒ 进收容区(§3a)。
+  // 回执说回了哪一列;「去看看」切到那块看板(或收容区)再定位。
+  const unseal = async (item: TaskItem): Promise<void> => {
+    const id = item.id;
+    const home = boardOfCol(item.status);
+    const name = anyColName(item.status);
+    const held = holdingColumns(allCols).some((c) => c.id === item.status) || !home || home.deleted || name === null;
+    // 158 G3 / Q3:回执再带「去看看」—— 取消归档发生在归档页,卡回了看板,人还在归档页。
     // 点了 = 切回看板并定位那张卡(复用跨视图跳转那条 focusId 通道:清筛选、滚到中央、常亮)。
     undoable(
       await call("unseal_task", { id }),
-      t("board.undoUnsealed", { col: columnName(done) }),
+      held ? t("boards.unsealedHeld") : t("board.undoUnsealed", { col: name }),
       () => call("seal_task", { id }),
       {
         label: t("inbox.goSee"),
         run: () => {
           focusId = id;
-          boardView = "board";
+          if (held) boardView = "holding";
+          else {
+            if (home) setCurrentBoard(home.id, mountSpace);
+            boardView = "board";
+          }
           void load();
         },
       },
     );
+  };
+  // 跨看板挪(用户拍 ⑥):落对方落点列首;收容区里的卡也走这条出来。回执带「去看看」= 切过去定位。
+  // ⛔ 不配撤销:挪回来落的是**这边的落点列首**,不是原位 —— 撤不成原样就不说「撤销」(§3.1)。
+  const moveToBoard = async (item: TaskItem, target: Board): Promise<void> => {
+    clearOpError();
+    try {
+      await moveTaskToBoard(item.id, target.id);
+    } catch (e) {
+      showOpError(errText(e));
+      void load();
+      return;
+    }
+    boardsChanged();
+    void load();
+    if (unmounted) return;
+    toastGo(t("boards.movedTo", { board: boardName(target) }), t("inbox.goSee"), () => {
+      if (unmounted) return;
+      setCurrentBoard(target.id, mountSpace);
+      focusId = item.id;
+      boardView = "board";
+      void load();
+    });
   };
 
   function clearDropHovers(): void {
@@ -970,7 +1068,8 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       // 任务侧是 add_task_topic。这里取 = 提交那刻冻结。
       const ids = autoTagTopicIds(filter);
       const topicId = ids[0] ?? null;
-      return { payload: { title: submitted, topicId }, tagged: topicId === null ? 0 : 1, autoTags: ids.slice(1) };
+      // 0043:建在**这块**看板的落点(core 解析一次、贯穿插入 / 置顶 / 闸;落点 ⊥ 响亮拒,⛔ 不退别的看板)。
+      return { payload: { title: submitted, topicId, boardId: cur?.id ?? null }, tagged: topicId === null ? 0 : 1, autoTags: ids.slice(1) };
     },
     afterCreate: async (id, _notices, autoTags) => {
       // 头一枚之外的补挂(串行:同一行的几笔标签写,并发只是自找写锁竞争,枚数是个位数)。
@@ -1084,7 +1183,17 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
   addTaskBtn.addEventListener("click", () => setComposeOpen(compose.hidden));
   // 列管理面(B-f 第 2 段)。每笔写落地就回调这里重画看板 —— 面板开着的时候看板就该
   // 已经是新的了(⛔ 不是关掉才刷:改完名还得回来确认列头真变了才算数)。
-  manageColsBtn.addEventListener("click", () => openColumnManager({ onChanged: () => void load() }));
+  // 0043:列管理开的是**这块**看板(列、两个角色、改名 / 删看板都在那一面里)。
+  manageColsBtn.addEventListener("click", () => {
+    if (cur === null) return; // 首帧 load 之前点不到(钮随 load 显形);防的是那一瞬
+    openColumnManager({
+      boardId: cur.id,
+      onChanged: () => {
+        boardsChanged();
+        void load();
+      },
+    });
+  });
   composeAdd.addEventListener("click", () => void submitNewTask());
   composeClose.addEventListener("click", () => setComposeOpen(false));
   composeInput.addEventListener("input", () => {
@@ -1411,13 +1520,17 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
     return [...root.querySelectorAll<HTMLElement>(".tcard")].find((x) => x.dataset.histFor === id)?.querySelector<HTMLElement>(".hk-btn") ?? null;
   }
 
-  function card(item: TaskItem, mode: "board" | "trash" | "sealed"): HTMLElement {
+  function card(item: TaskItem, mode: "board" | "trash" | "sealed" | "holding"): HTMLElement {
     // Highlight a due card at a glance: overdue/today wear a 朱砂 accent. 完成的卡不算
     // (dueAttentionState)——done 列本已靠 .done 的淡出信号说「这条不用管了」,逾期强调
     // 留着是逆信号。
-    const st = mode === "board" ? dueAttentionState(item, today) : "none";
+    const st = mode === "board" ? dueAttentionState(item, today, doneCols) : "none";
     const dueCls = st === "overdue" || st === "today" ? ` due-${st}` : "";
-    const modeCls = mode === "board" ? item.status : mode === "trash" ? "archived" : "sealed";
+    // 0043:`.done`(淡出 + ✓)按**角色**挂(这块看板解析后的完成列),⛔ 不再按列 id 字面量 ——
+    // 种子 `done` 被取消完成列后不该还淡着,自定义完成列也要淡。其余列 id 照挂(进行中 / 待确认的左边线)。
+    const roleCls = item.status === doneId() ? " done" : "";
+    const modeCls =
+      mode === "board" ? (item.status === "done" ? "" : item.status) + roleCls : mode === "trash" ? "archived" : mode;
     const titleP = el("p", { className: "ttitle", textContent: item.title });
     const c = el("article", { className: `tcard ${modeCls}${dueCls}` }, [titleP]);
     c.dataset.histFor = item.id; // 历史读框关掉时按它找回这张卡(openHistory);⛔ 别复用 taskId —— 那个只挂看板态,拖放按它读列序
@@ -1531,6 +1644,30 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       // 回收站行恒带 archived_at(core 契约),缺 = 契约断了,响亮抛。
       if (!item.archived_at) throw new Error(`board: trash row ${item.id} without archived_at`);
       c.append(el("div", { className: "done-at deleted-at", textContent: t("trash.deletedAt", { when: when(item.archived_at) }) }));
+    } else if (mode === "holding") {
+      // 收容区(multiboard-plan §3a):可见、只读,**卡只出不进** —— 唯一的去处是「挪到看板 ▸」(落对方落点),
+      // 外加删除(进回收站,同样是离场)。⛔ 没有完成 / 归档(不在任何解析后的完成列里,core 也拒)、没有编辑。
+      const acts = el("div", { className: "acts" });
+      c.append(acts);
+      const handle = hk.register(
+        c,
+        () => {
+          const list: Act[] = [];
+          const targets = moveBoardTargets(item, true);
+          if (targets.length > 0)
+            list.push({
+              label: t("boards.moveToBoardMenu"),
+              key: "",
+              sub: () => targets.map((b) => ({ label: boardName(b), key: "", run: () => void moveToBoard(item, b) })),
+            });
+          list.push({ label: t("board.delete"), key: BOARD_CARD_KEYS.delete, run: () => requestArchive(acts, item.id), danger: true });
+          return list;
+        },
+        () => !!c.querySelector(".confirm-q"),
+        { id: item.id },
+      );
+      c.append(handle.menu());
+      if (item.topics.length > 0) c.append(el("div", { className: "task-meta task-topic" }, item.topics.map(readonlyTopicChip)));
     } else if (mode === "sealed") {
       // 归档册是**只读视图**:唯一的离场动作「取消归档」不常驻(design-rules「只读视图的
       // 动作只留离场动作、且不常驻」),走与灵感 / 看板同一套 hotkey-menu —— 悬停 ⋯ /
@@ -1543,7 +1680,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       const handle = hk.register(
         c,
         () => [
-          { label: t("board.unseal"), key: SEALED_CARD_KEYS.unseal, run: () => unseal(item.id) },
+          { label: t("board.unseal"), key: SEALED_CARD_KEYS.unseal, run: () => unseal(item) },
           ...(item.revised ? [{ label: t("inbox.actHistory"), key: SEALED_CARD_KEYS.history, run: () => openHistory(item) }] : [noHistoryAct(SEALED_CARD_KEYS.history)]),
         ],
         undefined,
@@ -1556,11 +1693,16 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       // 165 / W5 Q14:写到时刻、两端一个规矩(今天「今天 15:18」/ 别的天「11月5日 15:18」,tasktime.ts::when);组头照旧只写哪天。
       const at = item.done_at ?? item.sealed_at;
       const mark = item.revised ? [el("span", { className: "edited-mark", textContent: t("inbox.editedMark") })] : [];
+      // 0043(用户拍 ⑦):成就合一本,每条标出来自哪块看板 —— 只有一块看板时不标(标了也只有「任务」一种,是噪音)。
+      // ⚠ 判据与顶上那排筛选同一个(`sealedTagged`,renderSealed 里算):成就来自 ≥ 2 块看板才挂 ——
+      // ⛔ 别按「库里有几块看板」判:已删的看板也在 `boards` 里,只剩一块活看板时会凭空挂上「任务」。
+      const from = sealedTagged ? boardOfCol(item.status) : null;
+      const tag = from ? [el("span", { className: "board-tag", textContent: boardName(from) })] : [];
       if (at !== null) {
         const day = when(at);
-        c.append(el("div", { className: "done-at" }, [item.done_at ? t("board.doneAt", { day }) : t("board.sealedAt", { day }), ...mark]));
-      } else if (mark.length > 0) {
-        c.append(el("div", { className: "done-at" }, mark));
+        c.append(el("div", { className: "done-at" }, [...tag, item.done_at ? t("board.doneAt", { day }) : t("board.sealedAt", { day }), ...mark]));
+      } else if (mark.length > 0 || tag.length > 0) {
+        c.append(el("div", { className: "done-at" }, [...tag, ...mark]));
       }
       // 165 / W5 A44(WD-34 / WM-21):归档卡也画标签(只读,不带 ✕ —— 归档册改不动)。此前只在搜索结果里看得到,
       // 读不出归档时分类保没保留。
@@ -1568,7 +1710,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
     } else {
       // 完成时刻(0030):已完成卡显示「完成于 …」。done_at 可能为 null(本功能上线前
       // 完成的老卡)——那就不显示。与归档册同口径(165 / W5 Q14:写到时刻,tasktime.ts::when)。
-      if (item.status === DONE_COLUMN && item.done_at) {
+      if (item.status === doneId() && item.done_at) {
         c.append(el("div", { className: "done-at", textContent: t("board.doneAt", { day: when(item.done_at) }) }));
       }
       // due/priority: pure-display chips on the card; edits open from the ⋯ menu (㊺).
@@ -1592,7 +1734,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
             () => call("set_task_priority", { id: item.id, priority: before }),
           );
         }
-      });
+      }, item.status === doneId());
       // 颜色(0040):色板就地展开在 due/priority 那一行(同它们的形),平时是空壳、不占位。
       // ⚠ 只在活跃看板挂 —— core 的 set_task_color 带 archived/sealed 守卫,回收站与归档册
       // 的卡改不动;**显示条件 = 接收条件**,别摆一条点了必然报错的入口。
@@ -1794,9 +1936,8 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
           });
           list.push({ label: t("board.colorNone"), key: "0", hidden: true, run: () => void setColor(null, true) });
         }
-        // 左右邻居按**活着的**列算(同 moveTo:已删的列不是移动目标)。卡自己在一个已删
-        // 的列里时 `i < 0` ⇒ 两条都不出 —— 那是对的:它只能被拖走或走别的动作。
-        const live = cols.filter((col) => !col.deleted);
+        // 左右邻居按本看板的活列算(0043 起 `cols` 只剩本看板的活列,已删的进了收容区)。
+        const live = cols;
         const i = live.findIndex((col) => col.id === item.status);
         // 列内置顶/置底同理只给活着的列(已删的列 core 会拒重排);列里只有它一张时不出
         // (显示条件 = 接收条件,别摆一条点了必然无事发生的动作)。时间序下同样不出 ——
@@ -1820,23 +1961,33 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
             key: "",
             sub: () => targets.map((col) => ({ label: columnName(col), key: "", run: () => moveTo(col) })),
           });
+        // 0043(用户拍 ⑥):「挪到看板 ▸」—— 别的活看板里放得进卡的那几块,落对方落点列首。只有一块看板时不出。
+        const boardTargets = moveBoardTargets(item);
+        if (boardTargets.length > 0)
+          list.push({
+            label: t("boards.moveToBoardMenu"),
+            key: "",
+            sub: () => boardTargets.map((b) => ({ label: boardName(b), key: "", run: () => void moveToBoard(item, b) })),
+          });
         // 165 / W5 Q7 ★①(WD-26 / WX-01):「完成」= 移到「已完成」,不在那一列时才有;回执同手机点圈那句「已完成 撤销」。
         // 已完成卡上的「打回「待办」」配同一枚 X(一进一出;此前右边空着,C 节第五条)。
-        const doneCol = live.find((col) => col.id === DONE_COLUMN);
-        if (item.status !== DONE_COLUMN && doneCol)
+        // 0043:完成 / 落点读 core 解析的角色;纯分类看板(没有完成列)没有「完成」、没有「归档」。
+        const doneCol = live.find((col) => col.id === doneId());
+        if (item.status !== doneId() && doneCol)
           list.push({ label: t("board.complete"), key: BOARD_CARD_KEYS.complete, run: () => moveTo(doneCol, t("main.completed")) });
-        const landing = live.find((col) => col.id === LANDING_COLUMN);
-        if (item.status === DONE_COLUMN && landing)
+        const landing = live.find((col) => col.id === landingId());
+        if (item.status === doneId() && landing)
           list.push({ label: t("board.backToCol", { col: columnName(landing) }), key: BOARD_CARD_KEYS.complete, run: () => moveTo(landing) });
         // 归档: only a 已完成 card can enter the 成就册 (viewable, undeletable). Key A
         // (Archive) — the view-level key for the 归档 view is G, deliberately different
         // (card keys and view keys share the document and must not collide).
-        if (item.status === DONE_COLUMN)
+        if (doneCol && item.status === doneCol.id)
           list.push({ label: t("board.seal"), key: BOARD_CARD_KEYS.seal, run: () => sealOne(item.id) });
         // 撤回为灵感: a 灵感 is just a not-yet-clarified task, so only the least-mature
         // column (待办) may retreat into it. Single-entity: flips the SAME subject's stage
         // back to 灵感 (已归类 if it still carries a tag, else 未归类) — nothing is deleted.
-        if (item.status === LANDING_COLUMN)
+        // 0043:「卡所在看板的落点」才能撤回(core revert_to_idea 同口径,multiboard-plan §4)。
+        if (landing && item.status === landing.id)
           list.push({
             label: t("board.revertToIdea"),
             key: BOARD_CARD_KEYS.revert,
@@ -1919,14 +2070,16 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
           return;
         }
         dragging = { id: item.id, from: item.status };
+        setDraggingCard(item.id); // 侧栏看板名据此接放(拖到别的看板 = 挪过去,用户拍 ⑥)
         c.classList.add("dragging");
-        // 归档条只对能落进去的拖动现身(done 卡),显示条件=接收条件。
-        if (item.status === DONE_COLUMN) board.classList.add("drag-done");
+        // 归档条只对能落进去的拖动现身(完成列的卡),显示条件=接收条件。
+        if (item.status === doneId()) board.classList.add("drag-done");
         e.dataTransfer?.setData("text/plain", item.id);
         if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
       });
       c.addEventListener("dragend", () => {
         dragging = null;
+        setDraggingCard(null);
         stopAutoScroll();
         c.classList.remove("dragging");
         board.classList.remove("drag-done");
@@ -2270,7 +2423,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
   /** 「展开 / 收起」那枚钮(704):只长在**真被夹住**的卡上。点一下翻 `.clamped` 并记进
    *  `expanded` —— 记了下一发 load() 重画才不会把它又合上(重画在同一个 mount 里)。 */
   function foldToggle(id: string, body: HTMLElement): HTMLButtonElement {
-    const b = el("button", { className: "act ghost fold-toggle", type: "button" });
+    const b = el("button", { className: "fold-toggle", type: "button" });
     const paint = (): void => {
       const folded = body.classList.contains("clamped");
       // 箭头与筛选条父子折叠那枚同一套语言(filter-bar.ts 的 ▸/▾);这里是纵向折叠,
@@ -2319,7 +2472,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
     board.className = "board-wrap";
     // 复制看板: copies every non-empty column as Markdown. Built from the currently
     // shown tasks, so it respects the active filters (标签 and/or 文本).
-    copySlot.replaceChildren(copyBoardButton(boardMarkdown(cols, items)));
+    copySlot.replaceChildren(copyBoardButton(boardMarkdown(cols, items, doneId())));
     const sections = cols.map((col) => {
       const status = col.id;
       const name = columnName(col);
@@ -2335,10 +2488,10 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       // 「已删除」标,卡只出不进(下面不给它接 dragover/drop);卡拖光了它自然不再出现。
       if (col.deleted) head.append(el("span", { className: "col-gone", textContent: t("board.colDeleted") }));
       // 复制本列为 Markdown (only when the column has cards).
-      if (inCol.length > 0) head.append(copyButton(columnMarkdown(name, status, inCol), "col-copy", t("board.copy")));
+      if (inCol.length > 0) head.append(copyButton(columnMarkdown(name, status === doneId(), inCol), "col-copy", t("board.copy")));
       // 一键全部归档(仅 已完成 列、非空时):干完的活整列入成就册。非破坏、可逐条取消
       // 归档,但批量动一整列仍值得一次行内确认(swap 在列头的 slot 里,不弹窗)。
-      if (status === DONE_COLUMN && inCol.length > 0) {
+      if (status === doneId() && inCol.length > 0) {
         const slot = el("span", { className: "seal-all-slot" });
         // 两份标签常驻 DOM、由 container query 二选一显形(与 header 那排 .hbtn 的
         // 「窄窗缩成字母」同一套手法):窄列下「全部」让位给列名,钮仍在原地。
@@ -2458,7 +2611,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       el("span", { className: "az-label", textContent: t("board.archiveZoneHint") }),
     ]);
     onDragTarget(zone, (e) => {
-      if (dragging && dragging.from === DONE_COLUMN) {
+      if (dragging && dragging.from === doneId()) {
         e.preventDefault();
         clearDropHovers();
         zone.classList.add("drop-hover");
@@ -2473,15 +2626,16 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       const d = dragging;
       dragging = null;
       stopAutoScroll();
-      if (!d || d.from !== DONE_COLUMN) return;
+      if (!d || d.from !== doneId()) return;
       // 真归档(成就册),不再是丢回收站——「归档」一词自此只有一个意思(概念隔离)。
       // 手势即回执:松手即离场,不等重载才消失;失败由 sealOne 内的 load() 复原。
       board.querySelector(`[data-task-id="${d.id}"]`)?.remove();
-      bumpColCount(DONE_COLUMN, -1); // 卡即刻离场,计数同帧扣掉,别等 sealOne 内的 load()
+      bumpColCount(d.from, -1); // 卡即刻离场,计数同帧扣掉,别等 sealOne 内的 load()
       sealOne(d.id);
     });
 
-    const cols_wrap = el("div", { className: "cols" }, sections);
+    // 只有一列的看板(书单这类纯分类)限宽居中,读起来像一张清单(用户 2026-11-11 拍)。
+    const cols_wrap = el("div", { className: cols.length === 1 ? "cols single" : "cols" }, sections);
     board.replaceChildren(cols_wrap, zone);
     settleFolds(); // ⚠ 必须在还原滚动位**之前**:下面那几行还的是**夹后**几何里的位置
     // 还原各列滚动位(记录见 load() 重画定局处;列变短时 scrollTop 由浏览器自钳位)。
@@ -2549,8 +2703,33 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
   // 归档册:干完的活按**完成日**分组成时间轴(0030 决定 A:完成时刻优先,老卡无 done_at
   // 时回落归档日 sealed_at;同灵感 ㊳ 的按天分组,共享 dayKey/dayLabel)。批量归档不再把
   // 一周的活压成归档那天——答得准「什么时候干完」。只读 + 每卡一个「取消归档」;无删除入口。
-  function renderSealed(items: TaskItem[], doneOnBoard: TaskItem[]): void {
-    if (items.length === 0) {
+  function renderSealed(allItems: TaskItem[], allDoneOnBoard: TaskItem[]): void {
+    // 0043(用户拍 ⑦):成就合一本,顶上可按看板筛。只在**不止一块看板有东西可看**时出那排筛选
+    // (单看板 = 今天的样子,一枚「全部」是噪音)。筛的是看板、不是列:来处按卡所在列的归属认。
+    const fromOf = (x: TaskItem): string | null => boardOfCol(x.status)?.id ?? null;
+    const both = [...allItems, ...allDoneOnBoard];
+    const pillBoards = boards.filter((b) => both.some((x) => fromOf(x) === b.id));
+    sealedTagged = pillBoards.length >= 2;
+    if (pillBoards.length < 2 || !pillBoards.some((b) => b.id === sealedBoard)) sealedBoard = null;
+    const items = sealedBoard === null ? allItems : allItems.filter((x) => fromOf(x) === sealedBoard);
+    const doneOnBoard = sealedBoard === null ? allDoneOnBoard : allDoneOnBoard.filter((x) => fromOf(x) === sealedBoard);
+    const pills: HTMLElement | null =
+      pillBoards.length < 2
+        ? null
+        : el("div", { className: "sealed-boards" }, [
+            sealedPill(t("boards.sealedAll"), null),
+            ...pillBoards.map((b) => sealedPill(boardName(b), b.id)),
+          ]);
+    function sealedPill(label: string, id: string | null): HTMLElement {
+      const p = el("button", { className: "tf-pill" + (sealedBoard === id ? " active" : ""), type: "button", textContent: label });
+      p.setAttribute("aria-pressed", String(sealedBoard === id));
+      p.addEventListener("click", () => {
+        sealedBoard = id;
+        void load();
+      });
+      return p;
+    }
+    if (allItems.length === 0) {
       renderCentered(
         el("div", { className: "big", textContent: t("board.sealedEmpty") }),
         el("div", { textContent: t("board.sealedEmptyHint") }),
@@ -2574,15 +2753,16 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
     const total = items.length + doneOnBoard.length;
     // W3 159 / A21(WD-26):这两个数含看板「已完成」列里还没归档的那几张(口径如上,⛔ 别改回只数册子里的),
     // 而下面只列册子里的 ⇒ 页头写「累计 5」、下面只有 3 张,对不上又不说。补半句交代那几张在哪。
-    const done = cols.find((c) => c.id === DONE_COLUMN);
-    if (!done) throw new Error("看板缺「已完成」列"); // 完成列不可删(deletable=false),缺了是真 bug(同 unseal)
+    // 0043:那几张散在哪些完成列里 —— 只在一列时点名(「已完成」),散在几块看板的完成列里就泛说。
+    const doneHomes = [...new Set(doneOnBoard.map((x) => x.status))];
+    const onBoardNote =
+      doneOnBoard.length === 0
+        ? ""
+        : doneHomes.length === 1 && anyColName(doneHomes[0]) !== null
+          ? t("board.sealedStatsOnBoard", { n: doneOnBoard.length, col: anyColName(doneHomes[0])! })
+          : t("boards.sealedStatsOnBoards", { n: doneOnBoard.length });
     const stats = t("board.sealedStats", { week, total });
-    const bar = el("div", { className: "trash-bar" }, [
-      el("span", {
-        className: "grow",
-        textContent: doneOnBoard.length > 0 ? stats + t("board.sealedStatsOnBoard", { n: doneOnBoard.length, col: columnName(done) }) : stats,
-      }),
-    ]);
+    const bar = el("div", { className: "trash-bar" }, [el("span", { className: "grow", textContent: stats + onBoardNote })]);
     const list = el("div", { className: "trash-list" });
     let lastDay = "";
     for (const t of items) {
@@ -2595,6 +2775,35 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
         list.append(el("div", { className: "tl-date", textContent: dayLabel(ts) }));
       }
       list.append(card(t, "sealed"));
+    }
+    if (items.length === 0) list.append(el("p", { className: "sealed-none", textContent: t("boards.sealedNoneHere") }));
+    board.replaceChildren(...(pills ? [pills] : []), bar, list);
+  }
+
+  // 收容区(multiboard-plan §3a):已删除的看板 / 列里还扣着的活卡,**按原看板 / 列分组、保留来处名**。
+  // 只读、只出不进(卡上只有「挪到看板 ▸」与删除)。清空了就只剩一句「这里空了」—— 侧栏那行同时消失。
+  function renderHolding(active: TaskItem[]): void {
+    const groups = holdingColumns(allCols)
+      .map((c) => ({ col: c, items: active.filter((x) => x.status === c.id) }))
+      .filter((g) => g.items.length > 0);
+    if (groups.length === 0) {
+      renderCentered(
+        el("div", { className: "big", textContent: t("boards.holdingEmpty") }),
+        el("div", { textContent: t("boards.holdingEmptyHint") }),
+      );
+      return;
+    }
+    board.className = "trash holding-view";
+    const bar = el("div", { className: "trash-bar" }, [
+      el("span", { className: "grow", textContent: t("boards.holdingBar", { n: groups.reduce((n, g) => n + g.items.length, 0) }) }),
+    ]);
+    const list = el("div", { className: "trash-list" });
+    for (const g of groups) {
+      const home = g.col.board_id ? boards.find((b) => b.id === g.col.board_id) : undefined;
+      const where = home ? t("boards.holdingFrom", { board: boardName(home), col: columnName(g.col) }) : columnName(g.col);
+      const why = g.col.board_deleted ? t("boards.holdingBoardGone") : t("boards.holdingColGone");
+      list.append(el("div", { className: "tl-date holding-from" }, [where, el("span", { className: "holding-why", textContent: why })]));
+      for (const x of g.items) list.append(card(x, "holding"));
     }
     board.replaceChildren(bar, list);
   }
@@ -2695,7 +2904,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
     today = localToday();
     const seq = ++loadSeq;
     try {
-      const [active, archived, sealed, topics, allCols, , cmCounts, removed] = await Promise.all([
+      const [active, archived, sealed, topics, freshCols, freshBoards, , cmCounts, removed] = await Promise.all([
         invoke<TaskItem[]>("list_tasks"),
         invoke<TaskItem[]>("list_archived_tasks"),
         invoke<TaskItem[]>("list_sealed_tasks"),
@@ -2705,6 +2914,8 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
         // 下一次 load 就对上了。⛔ 别为它去开一条「一次读两样」的合并命令(那要在 core 里
         // 造第二份口径)。
         loadBoardColumns(),
+        // 看板(0043):角色 / 默认 / 死活都是 core 解析好的;与列同理并发取、各是一份快照。
+        loadBoards(),
         // 设备名册(0033 署名):与列表**并发**取,不给渲染加一跳延迟。
         loadIdentity(mountSpace),
         // 留言计数(0035 徽章):同样并发;列表另走分页(§4.14.2 第 4 条)。
@@ -2718,7 +2929,24 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       const focus = focusId;
       focusId = null;
       allTopics = topics;
-      cols = boardColumns(allCols);
+      allCols = freshCols;
+      boards = freshBoards;
+      doneCols = doneColumnSet(boards);
+      // 跨视图跳到一张任务卡(搜索 / 深链接 / 「去看看」):它在别的看板上就先切过去,在收容区就落收容区
+      // —— 否则跳过来那块看板上没有它,白跳(0043)。只认看板态的跳转;回收站 / 归档册的跳转不动看板。
+      if (focus !== null && boardView === "board") {
+        const hit = active.find((x) => x.id === focus);
+        if (hit) {
+          if (holdingColumns(allCols).some((c) => c.id === hit.status)) boardView = "holding";
+          else {
+            const home = boardOfCol(hit.status);
+            if (home && !home.deleted) setCurrentBoard(home.id, mountSpace);
+          }
+        }
+      }
+      cur = currentBoard(boards, mountSpace);
+      cols = boardColumns(allCols, cur.id);
+      shareBoardData({ space: mountSpace, boards, cols: allCols }); // 侧栏名单与收容计数跟着这一份
 
       // 死标签回落 + 匹配口径归一(trim+忽略大小写)都在共享件;回落是纯状态修正
       // (no DOM),必须先于指纹。
@@ -2745,7 +2973,11 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
         topics,
         // 列进指纹:别台设备给列改了名 / 调了顺序 / 删了一列,任务数据一个字节没变、
         // 变的只有列头与列序 —— 不进指纹的话 refocus 刷新会在这一格短路掉(同 cmCounts)。
-        cols,
+        // 0043:全部列(收容区 / 来处名)、看板(名字 / 角色)与在看哪块、归档册筛哪块同理。
+        allCols,
+        boards,
+        cur.id,
+        sealedBoard,
         cmCounts,
         // 设备名册(317):同 cmCounts 的理由——别台设备改别名时任务数据不动,变的
         // 只有署名 chip 与留言层里那行作者。
@@ -2809,8 +3041,16 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       // 158 G3 / Q13(WD-33):页头随视图改名(此前归档页 / 回收站页都还写着「任务看板」,看不出在哪);
       // 进了归档 / 回收站,那枚开关变成「← 看板」返回钮 —— 它旁边的数字是归档 / 回收站的条数,
       // 挂在「看板」两个字后面读成「看板上有几张」,这时藏起来(页里那一行自己会说几条)。
+      // 0043:看板态的页头 = 这块看板的名字(侧栏里点的那块);收容区一个固定的名。
       boardTitle.textContent =
-        boardView === "sealed" ? t("board.sealedTitle") : boardView === "trash" ? t("board.trashTitle") : t("board.title");
+        boardView === "sealed"
+          ? t("board.sealedTitle")
+          : boardView === "trash"
+            ? t("board.trashTitle")
+            : boardView === "holding"
+              ? t("boards.holdingTitle")
+              : boardName(cur);
+      markActiveBoard(boardView === "holding" ? "holding" : boardView === "board" ? cur.id : null);
       trashN.hidden = boardView === "trash";
       sealN.hidden = boardView === "sealed";
       trashN.textContent = String(archived.length + removedImageCount(removed));
@@ -2842,10 +3082,17 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
         if (focus !== null) board.querySelector(".just-located")?.scrollIntoView({ block: "center" });
         return;
       }
+      if (boardView === "holding") {
+        filterRow.hidden = true;
+        if (focus !== null && active.some((t) => t.id === focus)) locateId = focus;
+        renderHolding(active);
+        if (focus !== null) board.querySelector(".just-located")?.scrollIntoView({ block: "center" });
+        return;
+      }
       if (boardView === "sealed") {
         filterRow.hidden = true;
         if (focus !== null && sealed.some((t) => t.id === focus)) locateId = focus;
-        renderSealed(sealed, active.filter((t) => t.status === DONE_COLUMN));
+        renderSealed(sealed, active.filter((t) => doneCols.has(t.status)));
         if (focus !== null) board.querySelector(".just-located")?.scrollIntoView({ block: "center" });
         return;
       }
@@ -2855,7 +3102,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       // 真出现「卡的 stage 不在任何画出来的列里」= 那一列凭空消失了,那时宁可少画一张卡也
       // 不让列头计数与看板打架 —— 但那是**损坏**,不是常态。
       const visible = active.filter((t) => cols.some((c) => c.id === t.status));
-      doneIds = visible.filter((t) => t.status === DONE_COLUMN).map((t) => t.id);
+      doneIds = visible.filter((t) => t.status === doneId()).map((t) => t.id);
       // 空看板照样摆出列和「管理列」(W3 159 / Q12,WD-40,用户拍板 —— **推翻用户面 85 ② 那半**):新空间
       // 的看板此前一根列都没有、也没有「管理列」,想先把列排好再往里放卡,无处下手。⇒ 空态也画列(renderEmptyBoard),
       // 「管理列」常在。「顺序」仍按数据藏(没有卡就没有可排的东西,85 ② 这半照旧);⛔ 不造开关(408-411)。
@@ -2911,17 +3158,17 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       // 该处理什么」,那句话的意思不该被当前视野改写。跳转定位那条路把筛选清空时它也一并
       // 关掉(不然「跳转即揭示」会被它筛掉)。
       if (focusOnBoard) dueOnly = false;
-      const dueNow = visible.filter((t) => dueAttentionState(t, today) === "today").length;
-      const dueLate = visible.filter((t) => dueAttentionState(t, today) === "overdue").length;
-      const dueNext = visible.filter((t) => isDueSoon(t, today)).length; // 快到期(60-A)
+      const dueNow = visible.filter((t) => dueAttentionState(t, today, doneCols) === "today").length;
+      const dueLate = visible.filter((t) => dueAttentionState(t, today, doneCols) === "overdue").length;
+      const dueNext = visible.filter((t) => isDueSoon(t, today, doneCols)).length; // 快到期(60-A)
       paintDueSoon(dueNow, dueLate, dueNext);
       paintSortBtn(); // dueOnly 这一轮的终值已经摆定(上面 paintDueSoon 可能刚把它归零)
 
       const shownAll = applyFilter(timeNarrowed, filter, (t) => t.title, allTopics);
       const shown = dueOnly
         ? shownAll.filter((t) => {
-            const st = dueAttentionState(t, today);
-            return st === "today" || st === "overdue" || isDueSoon(t, today);
+            const st = dueAttentionState(t, today, doneCols);
+            return st === "today" || st === "overdue" || isDueSoon(t, today, doneCols);
           })
         : shownAll;
 
@@ -3077,6 +3324,10 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
   });
 
   composeCtl.setLiveReload(() => void load()); // 本 mount 即当前活看板:旧保存链落账后经它通知重读(codex 四审 M)
+  // 0043:侧栏那边动了看板(建 / 改名 / 排序 / 删、把卡拖到某块看板名上)⇒ 重取。自己发的那声也会回到这里,
+  // 多一发 load 无害(loadSeq 只让最晚那发落 DOM)。
+  const onBoardsChanged = (): void => void load();
+  document.addEventListener(BOARDS_CHANGED, onBoardsChanged);
   void load();
 
   return {
@@ -3086,6 +3337,9 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       // mount 的 focusId、在已脱离 DOM 的旧看板上渲染,新看板反而拿不到跳转。顺带清 focusId,
       // 明确取消"离开看板时尚未落地的这次定位"。
       unmounted = true;
+      document.removeEventListener(BOARDS_CHANGED, onBoardsChanged);
+      markActiveBoard(null); // 侧栏上「正在看哪块」的标随视图走
+      setDraggingCard(null);
       typeAhead?.release(); // 待开编辑那一秒内切走:收键的监听不跨 mount
       memo.time = timeFilter; // Q6:这个空间的时间轴选择写回(filter 是同一对象,已经在里面)
       dragging = null;

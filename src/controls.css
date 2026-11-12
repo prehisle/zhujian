@@ -270,3 +270,22 @@
   height: 24px;
   transform: translate(-50%, -50%);
 }
+
+/* 「展开 ▾ / 收起 ▴」—— 长条折叠那枚钮,全应用一份(随记 / 看板 / 搜索 / 标签页展开 / 回收站)。
+   此前随记与看板挂的是 `act ghost`,而 `.act` 只写在 `.v-board` 底下 ⇒ 随记里那枚没有任何样式、
+   显成浏览器原生灰底按钮(用户 2026-11-11 截图);搜索与标签页又各抄了一份胶囊。⛔ 别再按视图各写一份。
+   min-height 24px = check-hit-zone 的自保线。 */
+.fold-toggle {
+  display: block;
+  margin-top: 6px;
+  min-height: 24px;
+  font: var(--fs-12)/1.4 var(--font-sans);
+  letter-spacing: 0.04em;
+  color: var(--ink-soft);
+  background: transparent;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-pill);
+  padding: 3px 12px;
+  cursor: pointer;
+}
+.fold-toggle:hover { color: var(--ink); background: color-mix(in srgb, var(--ink) 6%, transparent); }

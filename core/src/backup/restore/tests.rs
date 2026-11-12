@@ -118,7 +118,7 @@ fn seed_rich(c: &mut Connection, k: &mut Clock) {
     let t1 = notes::create_topic(c, k, "标签一").unwrap();
     let t2 = notes::create_topic(c, k, "标签二").unwrap();
     notes::file_to_topic(c, k, &idea, Some(&t1), None).unwrap();
-    let task_id = task::create(c, k, "任务乙", Some("2026-07-20"), Some(2), Some(&t2)).unwrap();
+    let task_id = task::create(c, k, "任务乙", Some("2026-07-20"), Some(2), Some(&t2), None, &crate::board::gate::DETACHED).unwrap();
     task::add_topic(c, k, &task_id, &t1).unwrap();
     images::attach(c, k, &task_id, &[1, 2, 3, 4], "image/png").unwrap();
     let (img2, _) = images::attach(c, k, &task_id, &[5, 6, 7, 8], "image/png").unwrap();
@@ -126,7 +126,7 @@ fn seed_rich(c: &mut Connection, k: &mut Clock) {
     comments::add(c, k, &task_id, "留一句").unwrap();
     let dead = notes::capture(c, k, "回收站里的").unwrap();
     notes::archive(c, k, &dead).unwrap();
-    let sealed = task::create(c, k, "已入册", None, None, None).unwrap();
+    let sealed = task::create(c, k, "已入册", None, None, None, None, &crate::board::gate::DETACHED).unwrap();
     task::transition(c, k, &sealed, "done", &crate::board::gate::DETACHED).unwrap();
     task::seal(c, k, &sealed).unwrap();
 }
@@ -424,7 +424,7 @@ fn a_backup_taken_before_the_images_finished_downloading_is_refused_loudly() {
     let key = BackupKey::from_bytes(KEY_A);
     // ⚠ 样本只脏这一格:integrity 干净、版本对、身份干净 —— 否则别的闸会代答。
     let db = r.build_db("blob.sqlite3", |c, k| {
-        let item = crate::task::create(c, k, "带图的任务", None, None, None).unwrap();
+        let item = crate::task::create(c, k, "带图的任务", None, None, None, None, &crate::board::gate::DETACHED).unwrap();
         let (img, _) = crate::images::attach(c, k, &item, &[9, 9, 9], "image/png").unwrap();
         // 「有 image_add、无 tombstone、宿主活着、字节行未建」= 还在途中的那一格。
         c.execute("DELETE FROM item_image WHERE id = ?1", [&img]).unwrap();
@@ -560,7 +560,7 @@ fn every_failed_act_leaves_no_plaintext_behind() {
 
     // 幕④:图字节没下全。
     let db4 = r.build_db("act4.sqlite3", |c, k| {
-        let item = crate::task::create(c, k, "四", None, None, None).unwrap();
+        let item = crate::task::create(c, k, "四", None, None, None, None, &crate::board::gate::DETACHED).unwrap();
         let (img, _) = crate::images::attach(c, k, &item, &[1], "image/png").unwrap();
         c.execute("DELETE FROM item_image WHERE id = ?1", [&img]).unwrap();
     });

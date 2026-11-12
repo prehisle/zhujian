@@ -41,6 +41,7 @@ import { clearSearchBack, goSearchBack, searchBackArmed } from "./locate";
 import { closeToTray } from "./tray-hint";
 import { loadHotkeys } from "./hotkey-state";
 import { holdKeyboard, type KeyboardHold } from "./dom";
+import { initBoardNav, refreshBoardNav } from "./board-nav";
 
 // The notebook is one window hosting many views. Only one view is mounted into
 // the shared content root at a time, so each view can own page-scoped DOM ids
@@ -114,6 +115,9 @@ function navigate(name: ViewName): void {
   for (const b of navButtons) b.classList.toggle("active", b.dataset.view === name);
   localStorage.setItem(LAST_VIEW_KEY, name);
 }
+
+// 0043 多看板:侧栏「看板」下面那一组(各块 / 新建 / 收容区)。点里面任一块 = 切到看板视图(那块已记成「在看的」)。
+initBoardNav(document.getElementById("board-nav") as HTMLElement, { navigate: () => navigate("board") });
 
 for (const b of navButtons) {
   b.addEventListener("click", () => {
@@ -281,6 +285,7 @@ win.onFocusChanged(({ payload: focused }) => {
     // 回窗都放」。
     void summonFocus();
     current?.onFocus?.();
+    void refreshBoardNav();
     void checkClipboardForDeepLink(); // 回窗时:剪贴板若是自家深链接,弹「点此打开」
     if (import.meta.env.PROD) void checkForUpdateOnFocus(); // 回窗顺手查一次新版(节流)
   }
@@ -333,6 +338,7 @@ function switchSpace(id: string): void {
   refreshSpaceEntry();
   syncSpaceSwitched();
   navigate(currentName);
+  void refreshBoardNav(); // 0043:看板名单是空间的
 }
 
 // 前台空间被别的窗切了(捕获浮窗切空间 = 方案 B「连带切 notebook」):壳侧 fg 是
@@ -1005,7 +1011,10 @@ void (async () => {
   // ——菜单挂在同步入口下面(那枚钮恒显),不挂已经 hidden 的徽章(hidden 元素量出来
   // 是零矩形,菜单会飞到左上角 0,0)。
   await initSync({
-    refresh: () => current?.onFocus?.(),
+    refresh: () => {
+      current?.onFocus?.();
+      void refreshBoardNav(); // 0043:别台建 / 删 / 改名 / 排序了看板,侧栏那一组跟着变
+    },
     openSpaces: () => void openSpaceMenu(syncEntry),
   });
   refreshSpaceEntry();

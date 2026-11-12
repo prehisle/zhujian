@@ -16,7 +16,7 @@
 // 所有读方(包括 main.ts 的判弃逻辑)从这里取。
 import { invoke } from "@tauri-apps/api/core";
 import { t } from "./i18n";
-import type { BoardColumn } from "./columns";
+import type { Board, BoardColumn } from "./columns";
 
 export const MAIN_SPACE = "main";
 
@@ -190,6 +190,10 @@ export const listTimeline = (space: string) =>
 export const listBoardColumns = (space: string) =>
   invoke<BoardColumn[]>("list_board_columns", { spaceId: space });
 
+/** 全部看板(含已删的,收容区靠它说来处),core 已按 (position, id) 排好(0043)。
+ *  ⛔ 同 listBoardColumns:交给 `columns.ts` 的 setBoards 统一登记;角色(落点 / 完成列)只读它给的。 */
+export const listBoards = (space: string) => invoke<Board[]>("list_boards", { spaceId: space });
+
 export const listIdeas = (space: string) => invoke<IdeaItem[]>("list_ideas", { spaceId: space });
 
 /** 长文列表(0042):主归属 = 长文的全部活条目,最近成为长文的在前。 */
@@ -281,10 +285,11 @@ export const captureDoc = (space: string, content: string) =>
 export const setDoc = (space: string, id: string, on: boolean) =>
   invoke<void>("set_doc", { spaceId: space, id, on });
 
-export const captureTodo = (space: string, content: string) =>
-  invoke<string>("capture_todo", { spaceId: space, content });
+/** 记一条待办:落 `boardId` 那块看板的落点列首(0043;null = 默认看板)。 */
+export const captureTodo = (space: string, content: string, boardId: string | null) =>
+  invoke<string>("capture_todo", { spaceId: space, content, boardId });
 
-/** 勾「标完成」(= 流转到 done 的便捷路)。 */
+/** 勾「标完成」:流转到卡所在看板**解析后的完成列**(纯分类看板 core 拒,UI 本就不出勾)。 */
 export const completeTask = (space: string, id: string) =>
   invoke<void>("complete_task", { spaceId: space, id });
 
@@ -307,11 +312,20 @@ export const purgeNote = (space: string, id: string) =>
 export const purgeArchived = (space: string) =>
   invoke<number>("purge_archived", { spaceId: space });
 
-/** 灵感转待办(翻 stage 零副本)。返回任务 id。 */
-export const promoteNoteToTask = (space: string, id: string, title: string) =>
-  invoke<string>("promote_note_to_task", { spaceId: space, id, title });
+/** 灵感转待办(翻 stage 零副本)。返回任务 id。`boardId` = 「放进看板」点名那块(null = 默认看板)。 */
+export const promoteNoteToTask = (space: string, id: string, title: string, boardId: string | null = null) =>
+  invoke<string>("promote_note_to_task", { spaceId: space, id, title, boardId, expectedColumn: null });
 
-/** 待办撤回为灵感(仅 todo 列)。 */
+/** 「撤回为随记」的**撤销**:转回原来那块看板,且只在它的落点仍是撤回前那一列时才转 —— 否则 core 在写事务里拒、
+ *  什么都不写(core `promote_back_to`;⛔ 别在前端先读再发,那不原子 —— 883 codex 实现审二轮 M1)。 */
+export const promoteBackTo = (space: string, id: string, title: string, boardId: string, expectedColumn: string) =>
+  invoke<string>("promote_note_to_task", { spaceId: space, id, title, boardId, expectedColumn });
+
+/** 跨看板挪卡:落对方看板的落点列首;收容区里的卡也走这条出来(0043,用户拍 ⑥)。 */
+export const moveTaskToBoard = (space: string, id: string, boardId: string) =>
+  invoke<void>("move_task_to_board", { spaceId: space, id, boardId });
+
+/** 待办撤回为灵感(仅卡所在看板的落点列)。 */
 export const revertTaskToInbox = (space: string, id: string) =>
   invoke<void>("revert_task_to_inbox", { spaceId: space, id });
 
@@ -409,8 +423,9 @@ export const purgeArchivedTasks = (space: string) =>
 export const sealTask = (space: string, id: string) =>
   invoke<void>("seal_task", { spaceId: space, id });
 
-/** 一键归档「已完成」列,返回条数。 */
-export const sealDoneTasks = (space: string) => invoke<number>("seal_done_tasks", { spaceId: space });
+/** 一键归档 `boardId` 那块看板的完成列,返回条数(0043:按看板;没有完成列 core 拒)。 */
+export const sealDoneTasks = (space: string, boardId: string) =>
+  invoke<number>("seal_done_tasks", { spaceId: space, boardId });
 
 /** 取消归档:回看板「已完成」列末尾。 */
 export const unsealTask = (space: string, id: string) =>

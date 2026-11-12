@@ -1879,7 +1879,9 @@ mod tests {
         coord.take_pending_bridge(); // 恢复前台的桥交接。
         assert!(coord.sup.get(spaces::MAIN_SPACE).is_ok());
         coord
-            .write(spaces::MAIN_SPACE, |c, k| task::create(c, k, "遍历后照写", None, None, None))
+            .write(spaces::MAIN_SPACE, |c, k| {
+                task::create(c, k, "遍历后照写", None, None, None, None, &zhujian_core::board::gate::RuntimeFacts::detached())
+            })
             .await
             .unwrap();
         let _ = std::fs::remove_dir_all(&dir);

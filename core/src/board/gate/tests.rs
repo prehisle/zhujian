@@ -264,14 +264,14 @@ fn a_configured_space_is_shut_out_on_every_one_of_the_five_doors() {
     let mut clock = Clock::load(&conn).unwrap();
 
     // 先在还是 solo 的时候把料备齐:一个自定义列 + 一张卡。
-    let col = create_column(&mut conn, &mut clock, "本周", &DETACHED).expect("建列");
-    let card = crate::task::create(&mut conn, &mut clock, "一张卡", None, None, None).expect("建卡");
+    let col = create_column(&mut conn, &mut clock, "本周", None, &DETACHED).expect("建列");
+    let card = crate::task::create(&mut conn, &mut clock, "一张卡", None, None, None, None, &crate::board::gate::DETACHED).expect("建卡");
 
     configure(&conn);
     let f = facts(false, false);
 
     // ① 建列 ② 改名 ③ 排序 ④ 删列
-    assert!(create_column(&mut conn, &mut clock, "下周", &f).is_err(), "① 建列必拒");
+    assert!(create_column(&mut conn, &mut clock, "下周", None, &f).is_err(), "① 建列必拒");
     assert!(rename_column(&mut conn, &mut clock, &col, "改了", &f).is_err(), "② 改名必拒");
     assert!(
         reorder_column(&mut conn, &mut clock, &col, None, Some(super::super::LANDING_COLUMN), &f).is_err(),
@@ -310,7 +310,7 @@ fn a_configured_space_is_shut_out_on_every_one_of_the_five_doors() {
 fn seed_columns_still_take_cards_while_the_gate_is_shut() {
     let mut conn = fresh_db("seed-lands");
     let mut clock = Clock::load(&conn).unwrap();
-    let card = crate::task::create(&mut conn, &mut clock, "一张卡", None, None, None).expect("建卡");
+    let card = crate::task::create(&mut conn, &mut clock, "一张卡", None, None, None, None, &crate::board::gate::DETACHED).expect("建卡");
     configure(&conn);
     let f = facts(false, false);
     assert!(ensure_can_emit(&conn, &f).is_err(), "前提:闸此刻是关的");
@@ -341,11 +341,11 @@ fn the_latch_is_armed_by_the_roster_arm_and_never_by_itself() {
     //    拒即回滚。⇒ 真正该被守的是「闸在写命令自己的事务内」,由
     //    [`a_rolled_back_write_leaves_no_latch_behind`] + 变异 ⑯ 守着。
     //    ⛔ 别把这句读成「`if` 的位置有测守着」,也别为它硬造第二只测(477 判例)。
-    assert!(create_column(&mut conn, &mut clock, "本周", &facts(false, true)).is_err());
+    assert!(create_column(&mut conn, &mut clock, "本周", None, &facts(false, true)).is_err());
     assert_eq!(latch_row(&conn), None, "① 拒的那一趟⛔ 不许留下任何授权痕迹");
 
     // ② 第一次成立。
-    create_column(&mut conn, &mut clock, "本周", &facts_with_capable_roster(true)).expect("② 该放行");
+    create_column(&mut conn, &mut clock, "本周", None, &facts_with_capable_roster(true)).expect("② 该放行");
     assert_eq!(
         latch_row(&conn).as_deref(),
         Some(format!("{} 01ACCOUNT00000000000000000", crate::board::CAP_BOARD_COLUMNS_V1).as_str()),
@@ -353,7 +353,7 @@ fn the_latch_is_armed_by_the_roster_arm_and_never_by_itself() {
     );
 
     // ③ 名册臂塌掉之后,闩自己扛得住。
-    create_column(&mut conn, &mut clock, "下周", &facts(false, true)).expect("③ 闩必须扛得住");
+    create_column(&mut conn, &mut clock, "下周", None, &facts(false, true)).expect("③ 闩必须扛得住");
 }
 
 /// ⭐ **§5.3 后两行**(「本机离线」M / 「两端从不同时在线」H)—— 闩兑现的就是这两格。
@@ -364,11 +364,11 @@ fn the_latch_is_armed_by_the_roster_arm_and_never_by_itself() {
 fn the_latch_carries_the_gate_through_an_offline_session() {
     let mut conn = fresh_db("latch-offline");
     let mut clock = Clock::load(&conn).unwrap();
-    let card = crate::task::create(&mut conn, &mut clock, "一张卡", None, None, None).expect("建卡");
+    let card = crate::task::create(&mut conn, &mut clock, "一张卡", None, None, None, None, &crate::board::gate::DETACHED).expect("建卡");
     configure(&conn);
 
     // 一次短暂重叠在线:建列成功,闩随之立起。
-    let col = create_column(&mut conn, &mut clock, "本周", &facts_with_capable_roster(true)).expect("建列");
+    let col = create_column(&mut conn, &mut clock, "本周", None, &facts_with_capable_roster(true)).expect("建列");
 
     // 此后本机离线 —— 名册不知道、观测清空。
     let offline = facts(false, true);
@@ -391,7 +391,7 @@ fn the_latch_carries_the_gate_through_an_offline_session() {
 fn a_solo_space_never_writes_a_latch() {
     let mut conn = fresh_db("latch-solo");
     let mut clock = Clock::load(&conn).unwrap();
-    create_column(&mut conn, &mut clock, "本周", &facts_with_capable_roster(false)).expect("solo 恒放行");
+    create_column(&mut conn, &mut clock, "本周", None, &facts_with_capable_roster(false)).expect("solo 恒放行");
     assert_eq!(latch_row(&conn), None, "solo 那一臂**先**短路,⛔ 一行都不许写");
 }
 
@@ -408,7 +408,7 @@ fn a_new_account_starts_without_the_old_accounts_latch() {
     let mut conn = fresh_db("latch-rebind");
     let mut clock = Clock::load(&conn).unwrap();
     configure(&conn);
-    create_column(&mut conn, &mut clock, "本周", &facts_with_capable_roster(true)).expect("先把闩立起来");
+    create_column(&mut conn, &mut clock, "本周", None, &facts_with_capable_roster(true)).expect("先把闩立起来");
     let armed = latch_row(&conn).expect("前提:闩立着");
 
     // 走真的那条路:清配置 → 加入另一个账户。⛔ 中间一句「删闩」都没有。
@@ -419,7 +419,7 @@ fn a_new_account_starts_without_the_old_accounts_latch() {
     put(&conn, "server_url", "wss://other.example.test");
 
     assert_eq!(latch_row(&conn), Some(armed), "② 那一行还在 —— ⛔ 没人删它,也不该有人删");
-    let e = create_column(&mut conn, &mut clock, "下周", &facts(false, true)).unwrap_err();
+    let e = create_column(&mut conn, &mut clock, "下周", None, &facts(false, true)).unwrap_err();
     assert!(e.contains("已加入账户"), "① 新账户必须重新走名册臂,得到:{e}");
 }
 
@@ -433,12 +433,12 @@ fn a_capability_generation_bump_invalidates_the_latch() {
     let mut clock = Clock::load(&conn).unwrap();
     configure(&conn);
     put(&conn, LATCH_KEY, "board_columns_v0 01ACCOUNT00000000000000000");
-    let e = create_column(&mut conn, &mut clock, "本周", &facts(false, true)).unwrap_err();
+    let e = create_column(&mut conn, &mut clock, "本周", None, &facts(false, true)).unwrap_err();
     assert!(e.contains("已加入账户"), "上一代 token 的闩⛔ 不许认,得到:{e}");
 
     // 反向对照:同一个账户、**当代** token ⇒ 认。
     put(&conn, LATCH_KEY, &latch_value("01ACCOUNT00000000000000000"));
-    create_column(&mut conn, &mut clock, "本周", &facts(false, true)).expect("当代 token 必须认");
+    create_column(&mut conn, &mut clock, "本周", None, &facts(false, true)).expect("当代 token 必须认");
 }
 
 /// ⭐ **闩与它授权的那笔写同生共死**:那笔写失败回滚,闩跟着不立。
@@ -468,10 +468,10 @@ fn the_veto_outranks_the_latch() {
     let mut conn = fresh_db("veto-latch");
     let mut clock = Clock::load(&conn).unwrap();
     configure(&conn);
-    create_column(&mut conn, &mut clock, "本周", &facts_with_capable_roster(true)).expect("先把闩立起来");
+    create_column(&mut conn, &mut clock, "本周", None, &facts_with_capable_roster(true)).expect("先把闩立起来");
     assert!(is_latched(&conn, "01ACCOUNT00000000000000000").unwrap(), "前提:闩确实立着");
 
-    let e = create_column(&mut conn, &mut clock, "下周", &facts(true, true)).unwrap_err();
+    let e = create_column(&mut conn, &mut clock, "下周", None, &facts(true, true)).unwrap_err();
     assert!(
         e.contains("正在改同步配置"),
         "⛔ 闩为真 + 转换在飞 ⇒ 必须仍拒:否决是**顶层**的,不是析取里的一项。得到:{e}"
@@ -484,11 +484,11 @@ fn a_pure_local_space_may_use_all_five_doors() {
     let mut conn = fresh_db("all-doors-open");
     let mut clock = Clock::load(&conn).unwrap();
     let f = facts(false, false);
-    let a = create_column(&mut conn, &mut clock, "甲", &f).expect("① 建列");
-    let b = create_column(&mut conn, &mut clock, "乙", &f).expect("① 建列");
+    let a = create_column(&mut conn, &mut clock, "甲", None, &f).expect("① 建列");
+    let b = create_column(&mut conn, &mut clock, "乙", None, &f).expect("① 建列");
     rename_column(&mut conn, &mut clock, &a, "甲甲", &f).expect("② 改名");
     reorder_column(&mut conn, &mut clock, &a, None, Some(&b), &f).expect("③ 排序");
-    let card = crate::task::create(&mut conn, &mut clock, "一张卡", None, None, None).expect("建卡");
+    let card = crate::task::create(&mut conn, &mut clock, "一张卡", None, None, None, None, &crate::board::gate::DETACHED).expect("建卡");
     crate::task::transition(&mut conn, &mut clock, &card, &a, &f).expect("⑤ 拖进自定义列");
     crate::task::transition(&mut conn, &mut clock, &card, super::super::LANDING_COLUMN, &f).expect("⑤ 拖回来");
     delete_column(&mut conn, &mut clock, &a, &f).expect("④ 删列");
@@ -522,11 +522,11 @@ fn explaining_the_gate_never_arms_the_latch() {
     assert_eq!(latch_row(&conn), None, "① 只读探针⛔ 不许留下任何授权痕迹");
 
     // ② 名册臂塌掉(会话断 / 观测清)⇒ 写必须重新被拒。探针若偷偷立了闩,这里会放行。
-    let e = create_column(&mut conn, &mut clock, "本周", &facts(false, true)).unwrap_err();
+    let e = create_column(&mut conn, &mut clock, "本周", None, &facts(false, true)).unwrap_err();
     assert!(e.contains("已加入账户"), "② 探针立过闩的话这里会放行,得到:{e}");
 
     // 反向对照:同一格走**写**那条路,闩确实会立起来 —— 证明上面挑的坐标不是个平凡格。
-    create_column(&mut conn, &mut clock, "本周", &armed_facts).expect("写那条路该放行");
+    create_column(&mut conn, &mut clock, "本周", None, &armed_facts).expect("写那条路该放行");
     assert!(latch_row(&conn).is_some(), "反向对照:写那条路确实立闩");
 }
 
@@ -564,7 +564,7 @@ fn the_probe_and_the_gate_answer_with_one_voice() {
     let mut conn = fresh_db("probe-latched");
     let mut clock = Clock::load(&conn).unwrap();
     configure(&conn);
-    create_column(&mut conn, &mut clock, "本周", &facts_with_capable_roster(true)).expect("先把闩立起来");
+    create_column(&mut conn, &mut clock, "本周", None, &facts_with_capable_roster(true)).expect("先把闩立起来");
     let offline = facts(false, true);
     assert!(matches!(explain(&conn, &offline).unwrap(), GateVerdict::Open), "闩立着 ⇒ 断网也该给写入口");
     assert!(ensure_can_emit(&conn, &offline).is_ok());
@@ -581,4 +581,47 @@ fn a_torn_config_makes_the_probe_shout_too() {
     put(&conn, "account_id", "01ACCOUNT00000000000000000");
     let e = explain(&conn, &facts(false, false)).unwrap_err();
     assert!(e.contains("残缺"), "要的是 load_config 那句响亮的话,得到:{e}");
+}
+
+/// 0043 新增的落卡入口(multiboard-plan §4 落卡闸接线,codex 设计审二轮 M5 / 实现审 2b §14):
+/// 新建进自定义落点、转待办进默认看板的自定义落点、跨看板挪卡、建看板(顺带建列)—— 闸关着时
+/// 一律拒,且**整笔回滚**:正文、修订历史、op 都不留。落种子列的照旧放行。
+#[test]
+fn the_new_landing_doors_are_shut_too_and_roll_back_whole() {
+    let mut conn = fresh_db("mb-doors");
+    let mut clock = Clock::load(&conn).unwrap();
+    let b = crate::board::create_board(&mut conn, &mut clock, "工作", &["待处理", "已完成"], Some(1), &DETACHED).unwrap();
+    crate::board::reorder_board(&mut conn, &mut clock, &b, None, Some(crate::board::SEED_BOARD)).unwrap();
+    let card = crate::task::create(&mut conn, &mut clock, "种子上的卡", None, None, None, Some(crate::board::SEED_BOARD), &DETACHED).unwrap();
+    let idea = crate::notes::capture(&mut conn, &mut clock, "原来的念头").unwrap();
+
+    configure(&conn);
+    let f = facts(false, false);
+    let ops = |c: &Connection| -> i64 { c.query_row("SELECT COUNT(*) FROM oplog", [], |r| r.get(0)).unwrap() };
+    let revs = |c: &Connection| -> i64 { c.query_row("SELECT COUNT(*) FROM item_revisions", [], |r| r.get(0)).unwrap() };
+    let (n0, r0) = (ops(&conn), revs(&conn));
+
+    assert!(crate::task::create(&mut conn, &mut clock, "x", None, None, None, Some(&b), &f).is_err(), "新建进自定义落点必拒");
+    assert!(crate::task::create(&mut conn, &mut clock, "x", None, None, None, None, &f).is_err(), "默认看板的落点是自定义列 ⇒ 拒");
+    assert!(
+        crate::notes::promote_to_task(&mut conn, &mut clock, &idea, "换了个说法", None, &f).is_err(),
+        "转待办进默认看板的自定义落点必拒"
+    );
+    assert!(
+        crate::notes::promote_to_task(&mut conn, &mut clock, &idea, "换了个说法", Some(&b), &f).is_err(),
+        "「放进看板 ▸」点名进自定义落点同样必拒"
+    );
+    assert!(crate::task::move_to_board(&mut conn, &mut clock, &card, &b, &f).is_err(), "跨看板挪进自定义列必拒");
+    assert!(crate::board::create_board(&mut conn, &mut clock, "新", &["一列"], None, &f).is_err(), "建看板顺带建列 ⇒ 拒");
+    assert_eq!((ops(&conn), revs(&conn)), (n0, r0), "整笔回滚:op 与修订历史都没长");
+    let content: String = conn.query_row("SELECT content FROM items WHERE id = ?1", [&idea], |r| r.get(0)).unwrap();
+    assert_eq!(content, "原来的念头", "转待办先改的标题随回滚还原");
+
+    // 落种子列不过闸。
+    crate::task::create(&mut conn, &mut clock, "落种子", None, None, None, Some(crate::board::SEED_BOARD), &f)
+        .expect("种子列照旧放行");
+    // 默认看板是「工作」(落点是自定义列),点名放进种子看板 ⇒ 落 todo,不过闸 —— 证点名的看板真被
+    // 用上了,而不是又解析回默认看板(那样会被闸拒)。
+    crate::notes::promote_to_task(&mut conn, &mut clock, &idea, "原来的念头", Some(crate::board::SEED_BOARD), &f)
+        .expect("点名放进种子看板照旧放行");
 }

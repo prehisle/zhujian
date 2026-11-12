@@ -26,6 +26,7 @@ import {
   fileNoteToTopic,
   renameTask,
   listBoardColumns,
+  listBoards,
   listSpaces,
   listTimeline,
   listSealedTasks,
@@ -66,8 +67,29 @@ import { errDetail, errText, initErr, showErr } from "./err";
 import { toggleChecklistLine } from "../../shared/checklist";
 import { buildStamp, formatBuiltAt } from "../../shared/build-stamp";
 import { applyChecklistMarker, wireChecklistNewline } from "./checklist-input";
-import { DONE_COLUMN, LANDING_COLUMN, boardColumns, isTaskStage, setColumns, stageLabel } from "./columns";
-import { initTaskMove, moveReceipt, spotOf } from "./taskmove";
+import {
+  HOLDING,
+  boardColumns,
+  boardHasDone,
+  boardName,
+  boardOfStage,
+  currentView,
+  holdingCount,
+  holdingLabel,
+  isDoneStage,
+  isHeldStage,
+  isTaskStage,
+  landingOfStage,
+  liveBoards,
+  setBoards,
+  setColumns,
+  setCurrentView,
+  stageLabel,
+  switcherShown,
+} from "./columns";
+import { initTaskMove, inView, moveReceipt, spotOf } from "./taskmove";
+import { initBoardScroll, restoreBoardScroll, scrollByFor } from "./boardscroll";
+import { initChromeHide, showChrome, syncPeek } from "./chromehide";
 import { capturePhoto, composeImages, compressImagesOn, PICK_MAX, pickImages, setCompressImages } from "./images";
 import { INPUT_DEBOUNCE_MS } from "./timing";
 // **平台接缝**(OH-d/D3):只在安卓壳里存在的那三条命令。鸿蒙那端由 vite 换成另一份实现。
@@ -284,9 +306,14 @@ function homeOf(it: TimelineItem): ViewMode | "docs" {
 // 任务面的分组 = **当前空间真实的那几列**(B-f 第 1 段起从库里来;此前是四值字面量)。
 // 序 = core 按 position 排好的序;空组不显;组内沿时间倒序 —— 手机不读 position、不做拖排,
 // 组内时间序是本端自己的确定性顺序(146 §2.1)。
-// ⚠ 已删但还扣着卡的列也在里面(§4.3 只读收容区),卡挪光后它自然不再出现。
-const taskSections = (): { stage: string; label: string }[] =>
-  boardColumns().map((c) => ({ stage: c.id, label: stageLabel(c.id)! }));
+// ⚠ 0043 起已删但还扣着卡的列**不再**留在看板上,统一进收容区(multiboard-plan §3a;切换那排末尾那一枚)。
+// 0043(multiboard-plan §6 第 4 段):只画**当前那块看板**的列;看着收容区时 = 收容区那几列,节头说来处。
+const taskSections = (space: string): { stage: string; label: string }[] => {
+  const held = currentView(space) === HOLDING;
+  return boardColumns(space).map((c) => ({ stage: c.id, label: held ? holdingLabel(c.id) : stageLabel(c.id)! }));
+};
+/** 看板与列这一轮落定了没有(切空间到新数据到达之间是空的 ⇒ 当前看板答不上,任务面一节都不分)。 */
+const boardsReady = (): boolean => liveBoards().length > 0;
 
 // 优先级角标的三档词(1..3;下标 0 恒不取——priority 有值才画这枚 chip)。
 // ⚠ 506 起是 P 记号且方向相反:3 = **P0(最高)** / 2 = P1 / 1 = P2,库里仍存 1/2/3。
@@ -337,7 +364,7 @@ function dueLabel(due: string, today: string, done = false): string {
  *  的口径**刻意不同**:那颗答的是「这条哪天到期」这件事实,完成与否是另一回事,历史信息
  *  留着;「要不要吓人 / 算不算数」的地方才用这个。 */
 function dueAttentionState(it: { stage: string; due_on: string | null }, today: string): DueState | "none" {
-  if (it.stage === DONE_COLUMN || !it.due_on) return "none";
+  if (isDoneStage(it.stage) || !it.due_on) return "none"; // 0043:按卡所在看板解析后的完成列判(plan §6)
   return dueState(it.due_on, today);
 }
 
@@ -376,11 +403,14 @@ function dueSummaryFullLabel(late: number, now: number, soon: number): string {
 //    「想法 sits in a per-day timeline → time-of-day only; 回收站 is flat → full stamp」)。
 function renderCard(it: TimelineItem, hideTopic: string | null, underDayHead = false): string {
   const isTask = stageLabel(it.stage) !== undefined;
-  const done = it.stage === DONE_COLUMN;
-  const tick = isTask
-    ? `<label class="tick"><input type="checkbox" data-id="${esc(it.id)}"
-         ${done ? "checked" : ""} /><span class="box"></span></label>`
-    : "";
+  // 0043:勾 = 「挪进这块看板的完成列」⇒ 纯分类看板(没有完成列)与收容区里的卡**不出勾**(plan §6 手机);
+  // 已完成的卡取消勾 = 点回它那块看板的落点 ⇒ 落点 ⊥(放不进卡)时勾灰着,别给一条注定被拒的路。
+  const done = isDoneStage(it.stage);
+  const tick =
+    isTask && boardHasDone(it.stage)
+      ? `<label class="tick"><input type="checkbox" data-id="${esc(it.id)}"
+         ${done ? "checked" : ""}${done && landingOfStage(it.stage) === null ? " disabled" : ""} /><span class="box"></span></label>`
+      : "";
   // ⛔ 卡上不再盖状态印(用户面 85 ④ / ui-consistency M10):任务面**恒按状态分段**
   // (projectTimeline 里每段头上就是 `stageLabel` 那一行),每张卡再印一遍等于把节头说第二遍;
   // 随记面上没有任务卡。状态改挂在 `data-stage` 上给工装认(swipe-undo 那支资产读它),
@@ -485,12 +515,14 @@ const isWide = (): boolean => getComputedStyle(document.documentElement).getProp
  *  ⚠ 答的是**此刻的视口**:键盘起着时它会说「不是」;要窗口高的那个答案看 `body.tallscreen`(下面键盘那段打)。 */
 const isTall = (): boolean => getComputedStyle(document.documentElement).getPropertyValue("--tall").trim() === "1";
 
-// 宽屏看板每排几列(tablet-plan 格 2;用户拍 ③「放不下全部列就均匀折成几排」)。每列不窄于 BOARD_COL_MIN
-// (≈ 手机屏宽:卡片与操作面都是按手机宽做的),放得下几列就几列;放不下全部时**均匀**折 —— 先算要几排、再把列
-// 平分进去(四列两排 = 2 + 2,不是 3 + 1;五列 = 3 + 2)。结果写进 `--board-cols`,网格本身在 index.html。
-// ⚠ BOARD_COL_GAP 与看板网格的 gap 12 是同一个数,改一处就得改另一处。
+// 宽屏看板每列多宽(tablet-plan 格 2;889 起「一排 + 横滚 + 每列自滚」,此前是 ③A「放不下就均匀折成几排」)。每列不窄于
+// BOARD_COL_MIN(≈ 手机屏宽:卡片与操作面都是按手机宽做的);屏上放得下 k 列就把宽平分给 k 列、恰好露 k 列,多出来的
+// 往右排、横滚看(按列对齐)。结果写进 `--board-col-w`,排法本身在 index.html「看板」那段。
+// ⚠ BOARD_COL_GAP 与看板那排的 gap 12 是同一个数,改一处就得改另一处。
 const BOARD_COL_MIN = 300;
 const BOARD_COL_GAP = 12;
+/** 放不下全部列时右边露出的下一列那截(含列间距之外的部分;889)。 */
+const BOARD_PEEK = 24;
 /** 屏上现在是不是看板(= 任务面 ∧ 宽屏)= body 上那枚 `board` 类(index.html「看板」那段全挂在它上面)。
  *  只由 projectTimeline 投影时写;时间轴的 ResizeObserver 拿它比「宽窄翻了没有」。 */
 const boardShown = (): boolean => document.body.classList.contains("board");
@@ -500,9 +532,24 @@ function syncBoardCols(): void {
   const n = box.querySelectorAll(":scope > .tl-group").length;
   // 面板开着时时间轴 0 宽、空态那句话没画列:都沿用上一次(关面那一下 ResizeObserver 会再算)
   if (w === 0 || n === 0) return;
-  const fit = boardFit(w);
-  const rows = Math.ceil(n / fit);
-  box.style.setProperty("--board-cols", String(Math.ceil(n / rows)));
+  const k = Math.min(n, boardFit(w));
+  // 放不下全部列时,让下一列在右边露出至多 BOARD_PEEK 那一截:不露的话平板竖放恰好两整列,看不出右边还有列可滑。
+  // 列数优先 —— 只拿 k 列各取下限之后剩下的那点宽,不为了露这一截少放一整列(960 竖放三列只剩 8,就不露)。
+  const peek = k < n ? Math.max(0, Math.min(BOARD_PEEK, w - BOARD_COL_MIN * k - BOARD_COL_GAP * (k - 1))) : 0;
+  // 向下取整:小数宽累加起来可能比框宽多出零点几。
+  box.style.setProperty("--board-col-w", `${Math.floor((w - peek - BOARD_COL_GAP * (k - 1)) / k)}px`);
+  syncBoardTop();
+}
+/** 看板上沿离页顶多远 → `--board-top`(看板高 = 视口扣掉它与屏底留白,index.html「看板」那段)。上面那几样(顶栏、
+ *  「空间已不在」条、筛选条连同各自的外边距)高度都会变,CSS 写不死 ⇒ 量。重投影、时间轴变宽窄、顶栏 / 筛选条变高时各量一次。
+ *  不自激:写它只改时间轴的高,上沿不动。面板开着(时间轴不在屏上)/ 不是看板时不量,沿用上一次。 */
+function syncBoardTop(): void {
+  const box = $("timeline");
+  if (!boardShown() || box.clientWidth === 0) return;
+  // 扣掉此刻的上外边距:顶栏收着时(890)看板借了一个负的上外边距,收 / 露那 0.2 s 里它还在过渡 —— 直接量盒的上沿会量到
+  // 半路的位置(890 第一版就这么把看板高算成 329、整页多滚一截)。扣掉之后量的恒是它在流里本来的上沿。
+  const top = `${box.getBoundingClientRect().top + window.scrollY - parseFloat(getComputedStyle(box).marginTop)}px`;
+  if (box.style.getPropertyValue("--board-top") !== top) box.style.setProperty("--board-top", top);
 }
 
 // 随记时间轴:同一天的卡归到一个日期节头下(用户面 86)。
@@ -1016,7 +1063,10 @@ function projectTimeline(): void {
   syncFabGutter(); // 让不让那条右边距要在量栏数 / 列数之前定(A48)
   disconnectThumbObserver();
   const items = [...lastItems.values()];
-  const modeItems = items.filter((i) => homeOf(i) === viewMode);
+  // 0043:任务面只装**当前那块看板**(或收容区)的卡 —— 筛选条的计数、到期汇总、空态都按这一块说。
+  const space = getCurrentSpace();
+  const onBoard = viewMode === "tasks" && boardsReady() ? new Set(boardColumns(space).map((c) => c.id)) : null;
+  const modeItems = items.filter((i) => homeOf(i) === viewMode && (onBoard === null || onBoard.has(i.stage)));
   const f = filters[viewMode];
   // 157 G4 / P11:从「没筛」进「筛着」那一刻记下读到哪儿,筛选全清掉时滚回去(此前留在筛选时的位置)。
   const fs = filterScroll[viewMode];
@@ -1078,12 +1128,15 @@ function projectTimeline(): void {
     // 数的是这一节**画出来的**卡(筛选之后),同横屏列头口径。
     // Q3:「已完成」那一节头上挂「全部归档」(问一次、回执带撤销;同桌面列头那枚)。n 按这一列**全部**的卡说
     // (seal_done_tasks 归的是全部,含被筛掉的)。
-    const doneAll = modeItems.filter((i) => i.stage === DONE_COLUMN).length;
+    // 0043:「已完成」= 当前看板解析后的完成列;纯分类看板 / 收容区没有这一枚。
+    const view = boardsReady() ? currentView(space) : HOLDING;
+    const curDone = view === HOLDING ? null : view.done;
+    const doneAll = curDone === null ? 0 : modeItems.filter((i) => i.stage === curDone).length;
     const section = (s: { stage: string; label: string }): string => {
       const rows = inSection(s.stage);
       const count =
         `<span class="tl-count">${rows.length}</span>` +
-        (s.stage === DONE_COLUMN && doneAll > 0
+        (s.stage === curDone && doneAll > 0
           ? `<button type="button" class="tl-act" data-seal-all="${doneAll}">${t("main.sealAll")}</button>`
           : "");
       const cards =
@@ -1092,7 +1145,7 @@ function projectTimeline(): void {
       return `<section class="tl-group" data-col="${esc(s.stage)}"><h3 class="tl-sec">${esc(s.label)}${count}</h3>${cards}</section>`;
     };
     box.innerHTML = dueShown.length
-      ? (board ? taskSections() : taskSections().filter((s) => dueShown.some((t) => t.stage === s.stage))).map(section).join("")
+      ? (board ? taskSections(space) : taskSections(space).filter((s) => dueShown.some((t) => t.stage === s.stage))).map(section).join("")
       : modeItems.length === 0
         ? emptyModeHtml(t("main.emptyTasks"), t("main.emptyTasksHint")) + sealedHintHtml()
         : shown.length > 0 && stageF !== null && stageShown.length === 0
@@ -1112,6 +1165,7 @@ function projectTimeline(): void {
   hydrateThumbs(box);
   settleFolds(box); // ⚠ 必须在 restore **之前**:编辑态那张卡的正文被盖着,量出来两个高都是 0
   cardPanel.restore(box); // 展开态跨重画恢复(条目已不在=清态)
+  restoreBoardScroll(); // 889:看板上列各自滚,整片重建会把它们清回 0 ⇒ 摆回去(不是看板时空操作)
   if (fs.was && !nowFiltered) window.scrollTo(0, fs.y);
   fs.was = nowFiltered;
 }
@@ -1120,8 +1174,16 @@ function projectTimeline(): void {
  *  是常驻元素(不随 pills 重建、打字不丢焦点),值在 applyMode/清筛处另行同步。 */
 function renderFilterBar(modeItems: TimelineItem[]): void {
   const bar = $("filterbar");
-  bar.hidden = modeItems.length === 0;
-  if (modeItems.length === 0) return;
+  // 0043:看板切换那排在,当前这块空着也得留着这条 —— 否则空看板上切不回别的看板。
+  const boardsRow = renderBoardPills($("filter-boards"));
+  bar.hidden = modeItems.length === 0 && !boardsRow;
+  const fmain = bar.querySelector<HTMLElement>(".fmain")!;
+  fmain.hidden = modeItems.length === 0;
+  if (modeItems.length === 0) {
+    // 只剩看板那排:其余几排清掉(:empty 隐),别留着上一块看板的状态 / 类型钮。
+    for (const id of ["filter-stages", "filter-kinds"]) $(id).replaceChildren();
+    return;
+  }
   renderStagePills($("filter-stages"), modeItems);
   const f = filters[viewMode];
   filter.renderKindPills($("filter-kinds"), modeItems, allFilterTopics, f, onFilterPick);
@@ -1148,6 +1210,7 @@ function paintFilterSum(n: number | null, f: filter.FilterState): void {
   if (n === null || n === 0) {
     el.hidden = true;
     el.textContent = "";
+    syncPeek();
     return;
   }
   const parts = [t("filter.count", { n })];
@@ -1158,6 +1221,7 @@ function paintFilterSum(n: number | null, f: filter.FilterState): void {
   }
   el.textContent = parts.join(" · ");
   el.hidden = false;
+  syncPeek(); // 顶栏收着时屏顶那枚细条跟着这句走(890)
 }
 
 // ---- 筛选条常驻要的顶栏高度(604)---------------------------------------------
@@ -1171,7 +1235,10 @@ function paintFilterSum(n: number | null, f: filter.FilterState): void {
     // ⚠ 量小数高(getBoundingClientRect),别用 offsetHeight:后者取整,82.2 记成 82 ⇒ 吸顶的节头与筛选条之间
     // 漏一条零点几 px 的缝,卡片从缝里露出一线(157 G3 / WM-22 真机截图量到)。
     document.documentElement.style.setProperty("--head-h", `${head.getBoundingClientRect().height}px`);
-  new ResizeObserver(syncHeadHeight).observe(head);
+  new ResizeObserver(() => {
+    syncHeadHeight();
+    syncBoardTop(); // 看板上沿跟着顶栏走(889)
+  }).observe(head);
   syncHeadHeight();
 }
 // 时间轴节头吸顶要的筛选条高度(用户面 85 ④ / ui-consistency M10 的前置):节头贴在筛选条下沿,
@@ -1181,7 +1248,10 @@ function paintFilterSum(n: number | null, f: filter.FilterState): void {
   const bar = $("filterbar");
   const syncBarHeight = (): void =>
     document.documentElement.style.setProperty("--fbar-h", `${bar.getBoundingClientRect().height}px`); // 小数,理由同 --head-h
-  new ResizeObserver(syncBarHeight).observe(bar);
+  new ResizeObserver(() => {
+    syncBarHeight();
+    syncBoardTop(); // 看板上沿跟着筛选条走(889:摊开 / 收起标签)
+  }).observe(bar);
   syncBarHeight();
 }
 // 随记栏数跟着时间轴的宽走(tablet-plan 格 1):转屏、分屏拖宽窄、关掉面板(时间轴从 0 宽回来)都会改它。
@@ -1194,7 +1264,7 @@ new ResizeObserver(() => {
   projectTimeline();
 }).observe($("timeline"));
 // 看板同理(tablet-plan 格 2):宽窄翻了 = 排法换了(画不画空列与计数、状态维算不算)⇒ 重投影;没翻 = 只是每排
-// 几列可能变了,改 `--board-cols` 就够,不重画。⛔ 有卡片草稿时不重投影(同上);每排几列照改 —— 它只动排法,拆不掉草稿;
+// 几列可能变了,改 `--board-col-w`(每列多宽,889)就够,不重画。⛔ 有卡片草稿时不重投影(同上);每排几列照改 —— 它只动排法,拆不掉草稿;
 // 下一次投影照当时的宽窄画。不自激:重投影与改列数只改高,宽窄与每排几列只看宽。
 new ResizeObserver(() => {
   if (viewMode !== "tasks" || !lastRefreshOk) return;
@@ -1310,7 +1380,7 @@ new ResizeObserver(() => {
     r.classList.toggle("fade-l", max > 1 && r.scrollLeft > 1);
     r.classList.toggle("fade-r", max > 1 && r.scrollLeft < max - 1);
   };
-  for (const id of ["filter-stages", "filter-kinds", "filter-topics"]) {
+  for (const id of ["filter-boards", "filter-stages", "filter-kinds", "filter-topics"]) {
     const r = $(id);
     r.addEventListener("scroll", () => syncFade(r), { passive: true });
     new ResizeObserver(() => syncFade(r)).observe(r);
@@ -1359,7 +1429,7 @@ function renderStagePills(bar: HTMLElement, modeItems: TimelineItem[]): void {
   // 自己 / 并排那枚的事,不叠进来。
   const f = filters[viewMode];
   const scoped = filter.applyFilter(modeItems, { ...f, text: "" }, (i) => i.content, allFilterTopics);
-  for (const s of taskSections()) {
+  for (const s of taskSections(getCurrentSpace())) {
     nodes.push(mk(s.label, s.stage, scoped.filter((i) => i.stage === s.stage).length));
   }
   const due = dueSummaryPill(modeItems);
@@ -1404,6 +1474,59 @@ function onDuePick(): void {
     return;
   }
   dueOnly = !dueOnly;
+  projectTimeline();
+}
+
+/** 任务面的看板切换那排(0043,multiboard-plan §6 手机「任务面顶上一枚看板切换」)。
+ *  渐进式披露(§6 末 ①):只有一块活看板、收容区也空 ⇒ 整排不画(:empty 隐),手机上看不出有「看板」这回事。
+ *  一枚一块活看板(core 给的序,最前 = 默认看板),收容区有卡时末尾多一枚「已删除的看板 / 列 N」。
+ *  返回这排画没画。看着收容区时下面再挂一行说明(只能挪出去、怎么挪)。 */
+function renderBoardPills(row: HTMLElement): boolean {
+  const note = $("board-note");
+  if (viewMode !== "tasks" || !boardsReady() || !switcherShown()) {
+    row.replaceChildren();
+    note.hidden = true;
+    return false;
+  }
+  const view = currentView(getCurrentSpace());
+  const mk = (label: string, id: string, count: number | null): HTMLButtonElement => {
+    const b = document.createElement("button");
+    b.type = "button";
+    const on = view === HOLDING ? id === HOLDING : view.id === id;
+    b.className = `fpill${on ? " active" : ""}`;
+    b.dataset.board = id;
+    b.append(document.createTextNode(label));
+    if (count !== null) {
+      const n = document.createElement("span");
+      n.className = "fn";
+      n.textContent = String(count);
+      b.append(n);
+    }
+    b.addEventListener("click", () => onBoardPick(id));
+    return b;
+  };
+  const axis = document.createElement("span");
+  axis.className = "faxis";
+  axis.textContent = t("boards.axis");
+  const nodes: HTMLElement[] = [axis, ...liveBoards().map((b) => mk(boardName(b), b.id, null))];
+  const held = holdingCount();
+  if (held > 0) nodes.push(mk(t("boards.holdingPill"), HOLDING, held));
+  row.replaceChildren(...nodes);
+  note.textContent = t("boards.holdingBar");
+  note.hidden = view !== HOLDING;
+  return true;
+}
+
+/** 点看板钮:同 onStagePick 的草稿闸。换看板是本机 UI 态(不同步);状态维 / 到期维随之清(列是那块看板自己的)。 */
+function onBoardPick(id: string): void {
+  if (cardPanel.hasDirtyDraft()) {
+    showError(t("main.finishDraftFirst"));
+    return;
+  }
+  setCurrentView(getCurrentSpace(), id);
+  taskStageFilter = null;
+  dueOnly = false;
+  window.scrollTo({ top: 0 });
   projectTimeline();
 }
 
@@ -1509,10 +1632,11 @@ async function refreshOnce(): Promise<void> {
     // 留言计数(0035 徽章)与设备名册同批并发:它是**聚合计数**这一个真相源,列表另走
     // 分页(§4.14.2 第 4 条)——别为了对齐把留言正文整批拉过来。同样内部吞错(装饰)。
     // 159 / W3 Q2:底栏「回收站」「归档」两格空了也常在 ⇒ 不再为它俩的显形取 pane_counts。
-    const [items, ftopics, cols, , , tasksInOrder] = await Promise.all([
+    const [items, ftopics, cols, bds, , , tasksInOrder] = await Promise.all([
       listTimeline(space),
       listTopicsFull(space),
       listBoardColumns(space), // 看板列(B-f 第 1 段):没有它连「这行是不是任务」都答不了 ⇒ 失败同走整轮错误页
+      listBoards(space), // 0043:落点 / 完成列 / 默认看板都在这里(core 解析过);与列同批取、同批落
       loadIdentity(space),
       loadCommentCounts(space),
       // 157 G4 / P3:任务面每一节的卡序 = 看板的手动序(同桌面看板默认那一档)⇒ 刚转成的待办落在「待办」最上,
@@ -1529,9 +1653,10 @@ async function refreshOnce(): Promise<void> {
     // ⚠ **列必须先于任何投影落定**:renderCard / 分组 / 滑动链全问 columns.ts,
     // 早一行晚一行的差别是「这一帧的卡按新列画还是按旧列画」。
     setColumns(cols);
-    // 状态维的死筛回落(同标签轴的 reconcile):被筛的那一列若已彻底消失(删掉且卡也挪光),
+    setBoards(bds);
+    // 状态维的死筛回落(同标签轴的 reconcile):被筛的那一列若已不在当前看板上(删掉 / 看板换了),
     // 该筛选就成了一条永远筛空的死路 ⇒ 清掉。⛔ 别改成在渲染处回落显 id。
-    if (taskStageFilter !== null && !boardColumns().some((c) => c.id === taskStageFilter)) taskStageFilter = null;
+    if (taskStageFilter !== null && !boardColumns(space).some((c) => c.id === taskStageFilter)) taskStageFilter = null;
     lastItems = new Map(items.map((i) => [i.id, i])); // 全量真值,只在成功读取后更新
     taskOrder = new Map(tasksInOrder.map((x, i) => [x.id, i]));
     boardOrder = tasksInOrder.map((x) => ({ id: x.id, stage: x.status }));
@@ -1598,6 +1723,7 @@ function blankTimelineForSpaceChange(): void {
   // 留着 = 万一有一帧漏网,卡会**安静地**顶着旧空间的列名画出来;清空 = 列登记处(`stageLabel` / `isTaskStage`)
   // 一律答不上,任务面一节都分不出来。⇒ 错的方向落在「画不出」而不是「画错」这一侧。
   setColumns([]);
+  setBoards([]); // 同列:看板也是每个空间自己一套
   hasDocs = false; // 旧空间的「长文」钮不许挂到新空间数据到达前
   renderBottomBar();
   lastRefreshOk = false; // 快照失效(146 ▲▲M2):新空间读到之前,mode 切换不许投影旧数据
@@ -1617,11 +1743,15 @@ $("timeline").addEventListener("change", async (e) => {
   }
   const space = getCurrentSpace();
   // 勾框与 lastItems 是同一次投影(勾框在屏 ⇒ 快照必有此行)。
-  const reopen = lastItems.get(id)!.stage === DONE_COLUMN;
+  // 0043:完成 = 卡所在看板**解析后的完成列**(core `complete` 在事务里解析);取消勾 = 点回那块看板的落点。
+  const stage = lastItems.get(id)!.stage;
+  const back = isDoneStage(stage) ? landingOfStage(stage) : null;
+  // 落点 ⊥ 的完成卡,勾在 renderCard 里已灰掉 ⇒ 走到这里是投影与快照不同步,响亮抛。
+  if (isDoneStage(stage) && back === null) throw new Error(`done card ${id} has no landing to go back to`);
   const spot = spotOf(id);
   input.disabled = true;
   try {
-    if (reopen) await updateTaskStatus(space, id, LANDING_COLUMN);
+    if (back !== null) await updateTaskStatus(space, id, back);
     else await completeTask(space, id);
   } catch (err) {
     showErr(err);
@@ -1631,7 +1761,7 @@ $("timeline").addEventListener("change", async (e) => {
   await refresh();
   if (space !== getCurrentSpace()) return;
   // 操作型回执(§3.1「已完成 · 撤销」):误勾一点召回,不用进操作面翻状态。
-  moveReceipt(space, id, reopen ? t("board.undoMoved", { col: stageLabel(LANDING_COLUMN)! }) : t("main.completed"), spot);
+  moveReceipt(space, id, back !== null ? t("board.undoMoved", { col: stageLabel(back)! }) : t("main.completed"), spot);
 });
 
 // 「全部归档」(158 G3 / Q3,WM-28):「已完成」节头那枚。问一次(归档后可查、不可删,这件事要在动手前说),
@@ -1645,7 +1775,11 @@ $("timeline").addEventListener("click", (e) => {
     return;
   }
   const space = getCurrentSpace();
-  const ids = [...lastItems.values()].filter((i) => i.stage === DONE_COLUMN).map((i) => i.id);
+  // 0043:归的是**当前那块看板**的完成列(钮只画在它的节头上)。
+  const view = currentView(space);
+  if (view === HOLDING || view.done === null) return;
+  const { id: boardId, done } = view;
+  const ids = [...lastItems.values()].filter((i) => i.stage === done).map((i) => i.id);
   if (ids.length === 0) return;
   confirmBar(t("main.sealAllQ", { n: ids.length }), t("main.sealAllYes"), () => {
     if (switching || space !== getCurrentSpace()) return;
@@ -1655,8 +1789,8 @@ $("timeline").addEventListener("click", (e) => {
       let sealed: string[];
       let n: number;
       try {
-        sealed = (await listTasks(space)).filter((x) => x.status === DONE_COLUMN).map((x) => x.id);
-        n = await sealDoneTasks(space);
+        sealed = (await listTasks(space)).filter((x) => x.status === done).map((x) => x.id);
+        n = await sealDoneTasks(space, boardId);
       } catch (err) {
         showErr(err);
         await refresh();
@@ -1846,8 +1980,14 @@ async function save() {
   navSeq++; // 作废在途 focus 定位:不许其内部切面打破「新卡在当前面」承诺
   refreshSaveDisabled();
   try {
-    const capture = mode === "ideas" ? captureIdea : captureTodo;
-    const newId = await capture(space, savingDraft);
+    // 0043:任务面记的落**此刻看着的那块看板**的落点(plan §6 第 4 段);看着收容区(只出不进)⇒ 落默认看板并切过去。
+    let boardId: string | null = null;
+    if (mode === "tasks" && boardsReady()) {
+      const view = currentView(space);
+      if (view === HOLDING) setCurrentView(space, liveBoards().find((b) => b.is_default)!.id);
+      else boardId = view.id;
+    }
+    const newId = mode === "ideas" ? await captureIdea(space, savingDraft) : await captureTodo(space, savingDraft, boardId);
     // 条目已建 → 把冻结的暂存图逐张挂上(失败按张计,条目在、图可去卡片「加图」重贴)。
     // 挂完再刷新,新卡带着缩略图一次呈现。
     if (savingImgs.length) {
@@ -1889,7 +2029,8 @@ async function save() {
         // 158 G2(W2 走查 A16 / WM-19):滚到中段新建,保存后被拉回顶部、读到哪儿全丢 ⇒ 不再强拉。
         // 新卡就在屏上 = 闪一下;不在屏上 = 回执带「去看看」,点了才过去(同 157 P3 转待办那枚)。
         const r = card.getBoundingClientRect();
-        if (r.bottom > 0 && r.top < window.innerHeight) {
+        // 889:看板上列自己滚 / 看板横滚,卡可能在本列滚走的那截或屏外那列里 —— 那时只认 taskmove 那把带列框的尺子。
+        if (boardShown() ? inView(card) : r.bottom > 0 && r.top < window.innerHeight) {
           // 165 / W5 Q15:多栏(随记分栏 / 看板)上新记一条、其余每张都换一栏,1.2 s 那记脉冲还没找到它就过完了 ⇒ 描边常亮约 3 s 再淡
           // (index.html `.flash-hold`,与搜索落点框同长)。一栏(手机竖放)照旧那一记:新卡就在最上面,一眼看得见。
           const hold = noteCols > 1 || boardShown();
@@ -2150,6 +2291,7 @@ async function reconcileForeground() {
 }
 
 async function switchSpace(id: string) {
+  showChrome(); // 换空间:顶栏露着(890)
   if (switching || captureSaving || id === getCurrentSpace()) return;
   if (cardPanel.hasDirtyDraft()) {
     // 用户主动切换(含新建空间后的自动切)被草稿挡下;后端强制的前台变更走
@@ -2289,6 +2431,7 @@ function backToParentPane(): void {
 /** 关面回时间轴的 DOM 部分(143 拆出):popstate(返回键)与 UI 关面共用;
  *  history 账目由调用方处置——UI 关面随后 settleHistory(),popstate 已经弹掉。 */
 function closePaneNow() {
+  showChrome(); // 关面回到时间轴:顶栏露着,往下划再收(890)
   // 备份码仪式还开着就让后端把那把**只在内存里**的钥丢掉(盘上此刻什么都没写过 ⇒
   // 下次是干净的首次使用)。⛔ 反过来「先落盘再让用户抄」会留下一把没人抄过的钥。
   if (activePane === "settings") backup.closeBackup();
@@ -2303,6 +2446,7 @@ function closePaneNow() {
   // 折叠上限跟着界面字号重算(705)。⛔ 夹在这两行**中间**不是随手放的:上一行之后时间轴
   // 才量得到真高(隐藏时行高读得出、但那趟白算),而它会改文档高度 ⇒ 必须赶在下面 scrollTo 之前。
   resettleFolds("#timeline");
+  restoreBoardScroll(); // 889:时间轴 display:none 那一段把看板各列的滚动位置清了 ⇒ 摆回去(不是看板时空操作)
   // 还原开面前的位置 —— ⛔ 必须在上一行**之后**:时间轴还 display:none 时文档不够高,
   // 滚过去会被当场钳回文档底(正是本条要修的那个钳)。
   window.scrollTo({ top: timelineScrollY });
@@ -2397,6 +2541,7 @@ function openPane(name: string, landing = false) {
 /** 切面落地:翻 mode → placeholder/底栏高亮 → 投影。快照失效(读失败/清屏中)时
  *  不投影旧数据——错误页/载入页保留,顺手触发一次重试(▲▲M2)。 */
 function applyMode(target: ViewMode) {
+  showChrome(); // 切面 = 刚点过顶栏里的导航:露着(890)
   viewMode = target;
   paintComposePh();
   ($("filter-text") as HTMLInputElement).value = filters[target].text; // 各面记忆自己的过滤词
@@ -2574,6 +2719,14 @@ async function focusTimelineCard(id: string, opts: FocusOpts = {}) {
     // 定位目标被本面专属的两维藏着:各自清自己(标签/文本维的既有行为不动,单轮单件事)。
     // ⚠ 两维合用一次重投影 —— 各投一次会让屏幕连跳两帧。
     let cleared = false;
+    // 0043:卡在别的看板上(转待办落默认看板、挪到看板、取消归档回原列…)⇒ 先切到它那块(或收容区)。
+    const home = isHeldStage(item.stage) ? HOLDING : boardOfStage(item.stage)?.id;
+    if (home === undefined) throw new Error(`task ${id} is on column ${item.stage}, which has no board`);
+    const view = currentView(space);
+    if ((view === HOLDING ? HOLDING : view.id) !== home) {
+      setCurrentView(space, home);
+      cleared = true;
+    }
     if (taskStageFilter !== null && item.stage !== taskStageFilter) {
       taskStageFilter = null;
       cleared = true;
@@ -2660,7 +2813,10 @@ async function goSeeInSpace(spaceId: string, itemId: string): Promise<void> {
 document.querySelector("header h1")!.addEventListener("click", (e) => {
   if ((e.target as HTMLElement).closest("#space-chip")) return; // chip 自己开空间面板
   if (activePane !== null) openPane(activePane);
-  else window.scrollTo({ top: 0 });
+  else if (boardShown()) {
+    // 889:看板上整页不滚、列各滚各的 ⇒ 「回顶」= 每列回到列顶(横向停在哪儿不动)。
+    for (const col of $("timeline").querySelectorAll<HTMLElement>(":scope > .tl-group")) col.scrollTop = 0;
+  } else window.scrollTo({ top: 0 });
 });
 // 滚出一屏才让「朱简」底下那条线浮出来(CSS `.seal.totop`)。⚠ 阈值取一屏是有由头的:
 // 不到一屏时一划就到顶,提示只会是纯噪音。⛔ 别每帧写 DOM —— 只在**跨过阈值那一刻**改 class;
@@ -2853,7 +3009,8 @@ $("bottombar").addEventListener("click", (e) => {
       let bl = Infinity;
       for (const e of els) {
         const r = e.getBoundingClientRect();
-        if (r.height === 0 || r.bottom <= top + 1 || r.top >= window.innerHeight) continue;
+        // 889:看板横滚 ⇒ 屏外那几列的卡也有一样的纵坐标,横向也得露着才算。
+        if (r.height === 0 || r.bottom <= top + 1 || r.top >= window.innerHeight || r.right <= 0 || r.left >= window.innerWidth) continue;
         if (r.top < bt - 0.5 || (Math.abs(r.top - bt) <= 0.5 && r.left < bl)) {
           best = e;
           bt = r.top;
@@ -2878,7 +3035,7 @@ $("bottombar").addEventListener("click", (e) => {
       const el = a.id !== null ? root.querySelector<HTMLElement>(`article.card[data-id="${CSS.escape(a.id)}"]`) : a.el.isConnected ? a.el : null;
       if (el && el.getClientRects().length > 0) {
         quietUntil = performance.now() + 400;
-        window.scrollBy(0, el.getBoundingClientRect().top - bandTop() - a.off);
+        scrollByFor(el, el.getBoundingClientRect().top - bandTop() - a.off); // 看板上推的是它那一列(889)
       }
       if (activePane === null && root.querySelector(".panel")) cardPanel.revealPanel();
     }
@@ -2899,17 +3056,16 @@ $("bottombar").addEventListener("click", (e) => {
     if (r.bottom > bottom) window.scrollBy(0, Math.min(r.bottom - bottom, r.top - top));
     else if (r.top < top) window.scrollBy(0, r.top - top);
   };
-  window.addEventListener(
-    "scroll",
-    () => {
-      if (performance.now() < quietUntil) return;
-      clearTimeout(idle);
-      idle = window.setTimeout(() => {
-        if (settling === undefined && window.innerWidth === stableW && performance.now() >= quietUntil) record();
-      }, 100);
-    },
-    { passive: true },
-  );
+  const onScroll = (): void => {
+    if (performance.now() < quietUntil) return;
+    clearTimeout(idle);
+    idle = window.setTimeout(() => {
+      if (settling === undefined && window.innerWidth === stableW && performance.now() >= quietUntil) record();
+    }, 100);
+  };
+  window.addEventListener("scroll", onScroll, { passive: true });
+  // 889:看板上滚的是列 / 看板本身,事件不冒泡到 window ⇒ 捕获阶段在时间轴上也收一份。
+  $("timeline").addEventListener("scroll", onScroll, { capture: true, passive: true });
   let lastH = window.innerHeight;
   window.addEventListener("resize", () => {
     const wChanged = window.innerWidth !== stableW;
@@ -3875,6 +4031,8 @@ initCardSwipe({
   hasDirtyDraft: () => cardPanel.hasDirtyDraft(),
   refresh,
 });
+initBoardScroll(getCurrentSpace);
+initChromeHide();
 initCardDrag({
   getItem: (id) => lastItems.get(id),
   getCurrentSpace,

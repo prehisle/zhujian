@@ -89,6 +89,8 @@ macro_rules! shared_handler {
             $crate::remove_note_topic,
             // 119 全功能底座:任务
             $crate::list_board_columns,
+            $crate::list_boards,
+            $crate::move_task_to_board,
             $crate::list_tasks,
             $crate::list_archived_tasks,
             $crate::list_sealed_tasks,

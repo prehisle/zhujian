@@ -1101,8 +1101,8 @@ mod tests {
         let (mut src, mut sc) = fresh_db("task-src");
         let (mut dst, mut dc) = fresh_db("task-dst");
         // 目标列先有一张卡,验证「新来的先可见」。
-        task::create(&mut dst, &mut dc, "已有卡", None, None, None).unwrap();
-        let id = task::create(&mut src, &mut sc, "搬家的任务", Some("2026-08-01"), Some(2), None).unwrap();
+        task::create(&mut dst, &mut dc, "已有卡", None, None, None, None, &crate::board::gate::DETACHED).unwrap();
+        let id = task::create(&mut src, &mut sc, "搬家的任务", Some("2026-08-01"), Some(2), None, None, &crate::board::gate::DETACHED).unwrap();
 
         let pkg = export_ready(&mut src, &id);
         let new_id = import(&mut dst, &mut dc, &pkg).unwrap();
@@ -1293,7 +1293,7 @@ mod tests {
     fn move_preserves_done_at() {
         let (mut src, mut sc) = fresh_db("done-keep");
         let (mut dst, mut dc) = fresh_db("done-keep-dst");
-        let id = task::create(&mut src, &mut sc, "干完的活", None, None, None).unwrap();
+        let id = task::create(&mut src, &mut sc, "干完的活", None, None, None, None, &crate::board::gate::DETACHED).unwrap();
         task::transition(&mut src, &mut sc, &id, "done", &crate::board::gate::DETACHED).unwrap(); // writer 盖 done_at
         let src_done: String =
             src.query_row("SELECT done_at FROM items WHERE id=?1", [&id], |r| r.get(0)).unwrap();
@@ -1321,7 +1321,7 @@ mod tests {
     #[test]
     fn concurrent_done_at_blocks_finalize() {
         let (mut src, mut sc) = fresh_db("done-h1");
-        let id = task::create(&mut src, &mut sc, "干完的活", None, None, None).unwrap();
+        let id = task::create(&mut src, &mut sc, "干完的活", None, None, None, None, &crate::board::gate::DETACHED).unwrap();
         task::transition(&mut src, &mut sc, &id, "done", &crate::board::gate::DETACHED).unwrap(); // done_at=T1
         let pkg = export_ready(&mut src, &id); // 导出捕获 T1
         inject_done_at(&mut src, &mut sc, &id, "2026-07-20T10:00:00.000Z"); // 并发改成 T2(LWW 胜)
@@ -1340,7 +1340,7 @@ mod tests {
     fn move_preserves_color() {
         let (mut src, mut sc) = fresh_db("color-keep");
         let (mut dst, mut dc) = fresh_db("color-keep-dst");
-        let id = task::create(&mut src, &mut sc, "上了色的活", None, None, None).unwrap();
+        let id = task::create(&mut src, &mut sc, "上了色的活", None, None, None, None, &crate::board::gate::DETACHED).unwrap();
         task::set_color(&mut src, &mut sc, &id, Some("#3f8272".into())).unwrap();
 
         let pkg = export_ready(&mut src, &id);
@@ -1386,7 +1386,7 @@ mod tests {
         // 任务行带着潜伏 doc_at(两端并发「展开 × 转待办」收敛后的形;单机命令造不出,裸
         // UPDATE + 同轮发 op 模拟)—— 原值随包走、目标仍是任务、补发同值 op;再回放到第三库
         // 归属与字段一致(codex 实现审一弹 L:move 缺这一形的样本)。
-        let latent = task::create(&mut src, &mut sc, "带潜伏标记的任务", None, None, None).unwrap();
+        let latent = task::create(&mut src, &mut sc, "带潜伏标记的任务", None, None, None, None, &crate::board::gate::DETACHED).unwrap();
         let ts = "2026-10-28T10:00:00.000Z";
         src.execute("UPDATE items SET doc_at = ?2 WHERE id = ?1", (&latent, ts)).unwrap();
         crate::oplog::item_set(&src, &mut sc, &latent, &["doc_at"]).unwrap();
@@ -1453,7 +1453,7 @@ mod tests {
     fn move_without_color_emits_no_color_op() {
         let (mut src, mut sc) = fresh_db("color-none");
         let (mut dst, mut dc) = fresh_db("color-none-dst");
-        let id = task::create(&mut src, &mut sc, "没上色的活", None, None, None).unwrap();
+        let id = task::create(&mut src, &mut sc, "没上色的活", None, None, None, None, &crate::board::gate::DETACHED).unwrap();
         let pkg = export_ready(&mut src, &id);
         assert_eq!(pkg.color, None);
         let new_id = import(&mut dst, &mut dc, &pkg).unwrap();
@@ -1474,7 +1474,7 @@ mod tests {
     #[test]
     fn concurrent_recolor_blocks_finalize() {
         let (mut src, mut sc) = fresh_db("color-h1");
-        let id = task::create(&mut src, &mut sc, "上了色的活", None, None, None).unwrap();
+        let id = task::create(&mut src, &mut sc, "上了色的活", None, None, None, None, &crate::board::gate::DETACHED).unwrap();
         task::set_color(&mut src, &mut sc, &id, Some("#3f8272".into())).unwrap();
         let pkg = export_ready(&mut src, &id); // 导出捕获松石
         task::set_color(&mut src, &mut sc, &id, Some("#6b5b95".into())).unwrap(); // 改成藤紫
@@ -1678,7 +1678,7 @@ mod tests {
         let trashed = notes::capture(&mut src, &mut sc, "进回收站").unwrap();
         notes::archive(&mut src, &mut sc, &trashed).unwrap();
         assert!(export(&mut src, &trashed).unwrap_err().contains("回收站"));
-        let sealed = task::create(&mut src, &mut sc, "已归档成就", None, None, None).unwrap();
+        let sealed = task::create(&mut src, &mut sc, "已归档成就", None, None, None, None, &crate::board::gate::DETACHED).unwrap();
         task::transition(&mut src, &mut sc, &sealed, "done", &crate::board::gate::DETACHED).unwrap();
         task::seal(&mut src, &mut sc, &sealed).unwrap();
         assert!(export(&mut src, &sealed).unwrap_err().contains("成就归档"));
@@ -2248,7 +2248,7 @@ tx.execute(\"DELETE FROM sync_replay_active\", []) \
         let (mut dst, mut dc) = fresh_db("cust-dst");
         let col = "01USERCOLUMN00000000000001";
         plant_user_column(&src, col, "a45");
-        let id = task::create(&mut src, &mut sc, "住在自定义列里", Some("2026-09-01"), Some(3), None)
+        let id = task::create(&mut src, &mut sc, "住在自定义列里", Some("2026-09-01"), Some(3), None, None, &crate::board::gate::DETACHED)
             .unwrap();
         task::transition(&mut src, &mut sc, &id, col, &crate::board::gate::DETACHED).unwrap();
 
@@ -2339,7 +2339,7 @@ tx.execute(\"DELETE FROM sync_replay_active\", []) \
     fn import_refuses_a_package_whose_target_stage_drifted() {
         let (mut src, mut sc) = fresh_db("drift-src");
         let (mut dst, mut dc) = fresh_db("drift-dst");
-        let id = task::create(&mut src, &mut sc, "搬家的", None, None, None).unwrap();
+        let id = task::create(&mut src, &mut sc, "搬家的", None, None, None, None, &crate::board::gate::DETACHED).unwrap();
         let mut pkg = export_ready(&mut src, &id);
         pkg.target_stage = "doing".to_string(); // 合法 stage、却不是源身份算出来的那个
 
@@ -2360,7 +2360,7 @@ tx.execute(\"DELETE FROM sync_replay_active\", []) \
     fn a_broken_target_space_blocks_the_move_and_leaves_the_source_intact() {
         let (mut src, mut sc) = fresh_db("broken-dst-src");
         let (mut dst, mut dc) = fresh_db("broken-dst");
-        let id = task::create(&mut src, &mut sc, "搬不过去的", None, None, None).unwrap();
+        let id = task::create(&mut src, &mut sc, "搬不过去的", None, None, None, None, &crate::board::gate::DETACHED).unwrap();
         let pkg = export_ready(&mut src, &id);
         // 目标库的种子被改坏(created_at 不由触发器冻结,是 audit 那一格守的)。
         dst.execute("UPDATE board_column SET created_at='2020-01-01T00:00:00.000Z' WHERE id='todo'", [])
@@ -2387,7 +2387,7 @@ tx.execute(\"DELETE FROM sync_replay_active\", []) \
         let (mut dst, mut dc) = fresh_db("stage-moved-dst");
         let col = "01USERCOLUMN00000000000001";
         plant_user_column(&src, col, "a45");
-        let id = task::create(&mut src, &mut sc, "导出后被拖走", None, None, None).unwrap();
+        let id = task::create(&mut src, &mut sc, "导出后被拖走", None, None, None, None, &crate::board::gate::DETACHED).unwrap();
         task::transition(&mut src, &mut sc, &id, col, &crate::board::gate::DETACHED).unwrap();
         let pkg = export_ready(&mut src, &id);
         import(&mut dst, &mut dc, &pkg).unwrap();

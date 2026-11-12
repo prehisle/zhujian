@@ -159,7 +159,7 @@ fn fresh_check_passes_on_virgin_and_fully_endorsed_dbs() {
     let idea = notes::capture(&mut p.conn, &mut p.clock, "有背书的灵感").unwrap();
     let topic = notes::create_topic(&mut p.conn, &mut p.clock, "标签").unwrap();
     notes::file_to_topic(&mut p.conn, &mut p.clock, &idea, Some(&topic), None).unwrap();
-    let task_id = task::create(&mut p.conn, &mut p.clock, "任务", None, None, None).unwrap();
+    let task_id = task::create(&mut p.conn, &mut p.clock, "任务", None, None, None, None, &crate::board::gate::DETACHED).unwrap();
     images::attach(&mut p.conn, &mut p.clock, &task_id, &[1, 2, 3], "image/png").unwrap();
     check_fresh_to_account(&p.conn).expect("全背书仍 fresh");
 }
@@ -215,7 +215,7 @@ fn supply_gate_refuses_uncertified_source() {
 #[test]
 fn fresh_check_rejects_legacy_shaped_ops_fourth_gate() {
     let mut a = peer("fresh4");
-    let task = task::create(&mut a.conn, &mut a.clock, "行有背书", None, None, None).unwrap();
+    let task = task::create(&mut a.conn, &mut a.clock, "行有背书", None, None, None, None, &crate::board::gate::DETACHED).unwrap();
     check_fresh_to_account(&a.conn).expect("现代形态 = fresh(阴性对照)");
     let hlc = a.clock.tick(&a.conn).unwrap();
     let seq: i64 = a
@@ -685,7 +685,7 @@ fn import_rejects_space_profile_state_log_mismatch_both_sides() {
 #[test]
 fn import_preserves_nonnull_done_at() {
     let mut a = peer("done-a");
-    let id = task::create(&mut a.conn, &mut a.clock, "干完的活", None, None, None).unwrap();
+    let id = task::create(&mut a.conn, &mut a.clock, "干完的活", None, None, None, None, &crate::board::gate::DETACHED).unwrap();
     task::transition(&mut a.conn, &mut a.clock, &id, "done", &crate::board::gate::DETACHED).unwrap();
     // 工序1 无本地 writer:合法远端 done_at set_field 落值 + 记 op(strict battery 要求行值
     // == oplog LWW 赢家,故经 apply_remote_op 落值,而非裸 UPDATE)。
@@ -728,7 +728,7 @@ fn import_preserves_nonnull_done_at() {
 #[test]
 fn import_preserves_card_color() {
     let mut a = peer("color-a");
-    let id = task::create(&mut a.conn, &mut a.clock, "上了色的活", None, None, None).unwrap();
+    let id = task::create(&mut a.conn, &mut a.clock, "上了色的活", None, None, None, None, &crate::board::gate::DETACHED).unwrap();
     // color 有本地 writer(不同于 done_at 工序1 那会儿),直接走命令层即可:它同轮发一条
     // set_field op,strict battery 要的「行值 == oplog LWW 赢家」自然成立。
     task::set_color(&mut a.conn, &mut a.clock, &id, Some("#7f8b3a".into())).unwrap();
@@ -750,7 +750,7 @@ fn import_preserves_card_color() {
 fn import_preserves_doc_at() {
     let mut a = peer("doc-a");
     let doc = notes::capture_doc(&mut a.conn, &mut a.clock, "# 一篇长文").unwrap();
-    let latent = task::create(&mut a.conn, &mut a.clock, "带潜伏标记的任务", None, None, None).unwrap();
+    let latent = task::create(&mut a.conn, &mut a.clock, "带潜伏标记的任务", None, None, None, None, &crate::board::gate::DETACHED).unwrap();
     // 单机造不出这一形(命令前置拒),裸 UPDATE + 同轮发 op 模拟并发收敛后的终态。
     a.conn.execute("UPDATE items SET doc_at = '2026-10-28T10:00:00.000Z' WHERE id = ?1", [&latent]).unwrap();
     crate::oplog::item_set(&a.conn, &mut a.clock, &latent, &["doc_at"]).unwrap();
@@ -802,9 +802,9 @@ fn import_merges_all_shapes_and_advances_clock() {
     notes::file_to_topic(&mut a.conn, &mut a.clock, &idea, Some(&t_work), None).unwrap();
     notes::set_topic_color(&mut a.conn, &mut a.clock, &t_work, Some("#3f7a99".into())).unwrap(); // 颜色随快照过通道 + 过审计
     notes::edit(&mut a.conn, &mut a.clock, &idea, "灵感甲(改)").unwrap(); // → 1 条历史
-    let task_id = task::create(&mut a.conn, &mut a.clock, "任务乙", Some("2026-08-01"), Some(2), None).unwrap();
+    let task_id = task::create(&mut a.conn, &mut a.clock, "任务乙", Some("2026-08-01"), Some(2), None, None, &crate::board::gate::DETACHED).unwrap();
     images::attach(&mut a.conn, &mut a.clock, &task_id, &[9, 9, 9], "image/png").unwrap();
-    let done_id = task::create(&mut a.conn, &mut a.clock, "已完事", None, None, None).unwrap();
+    let done_id = task::create(&mut a.conn, &mut a.clock, "已完事", None, None, None, None, &crate::board::gate::DETACHED).unwrap();
     task::transition(&mut a.conn, &mut a.clock, &done_id, "done", &crate::board::gate::DETACHED).unwrap();
     task::seal(&mut a.conn, &mut a.clock, &done_id).unwrap(); // 归档成就(sealed 行)
     let trash_id = notes::capture(&mut a.conn, &mut a.clock, "进回收站").unwrap();
@@ -995,7 +995,7 @@ fn import_rejects_semantically_divergent_snapshot() {
     let idea = notes::capture(&mut a.conn, &mut a.clock, "日志里的真内容").unwrap();
     let topic = notes::create_topic(&mut a.conn, &mut a.clock, "标签").unwrap();
     notes::file_to_topic(&mut a.conn, &mut a.clock, &idea, Some(&topic), None).unwrap();
-    let task = task::create(&mut a.conn, &mut a.clock, "带图", None, None, None).unwrap();
+    let task = task::create(&mut a.conn, &mut a.clock, "带图", None, None, None, None, &crate::board::gate::DETACHED).unwrap();
     images::attach(&mut a.conn, &mut a.clock, &task, &[5, 5, 5], "image/png").unwrap();
     let snap = make_snapshot(&a.conn, &a.dir).unwrap();
 
@@ -1086,7 +1086,7 @@ fn import_accepts_link_with_tombstoned_parent() {
 #[test]
 fn import_rejects_legacy_link_remove_without_observed() {
     let mut a = peer("legacyrm-a");
-    let task = task::create(&mut a.conn, &mut a.clock, "挂过标签的任务", None, None, None).unwrap();
+    let task = task::create(&mut a.conn, &mut a.clock, "挂过标签的任务", None, None, None, None, &crate::board::gate::DETACHED).unwrap();
     let topic = notes::create_topic(&mut a.conn, &mut a.clock, "标签").unwrap();
     task::add_topic(&mut a.conn, &mut a.clock, &task, &topic).unwrap();
     // 手工重演遗留 remove_topic:删行 + 发不带 observed 的 link_remove
@@ -1130,7 +1130,7 @@ fn import_rejects_legacy_link_remove_without_observed() {
 #[test]
 fn import_rejects_json_null_observed_as_legacy() {
     let mut a = peer("nullobs-a");
-    let task = task::create(&mut a.conn, &mut a.clock, "挂过标签的任务", None, None, None).unwrap();
+    let task = task::create(&mut a.conn, &mut a.clock, "挂过标签的任务", None, None, None, None, &crate::board::gate::DETACHED).unwrap();
     let topic = notes::create_topic(&mut a.conn, &mut a.clock, "标签").unwrap();
     task::add_topic(&mut a.conn, &mut a.clock, &task, &topic).unwrap();
     a.conn
@@ -1173,7 +1173,7 @@ fn import_rejects_json_null_observed_as_legacy() {
 #[test]
 fn import_rejects_observed_array_with_null() {
     let mut a = peer("nullelem-a");
-    let task = task::create(&mut a.conn, &mut a.clock, "挂过标签的任务", None, None, None).unwrap();
+    let task = task::create(&mut a.conn, &mut a.clock, "挂过标签的任务", None, None, None, None, &crate::board::gate::DETACHED).unwrap();
     let topic = notes::create_topic(&mut a.conn, &mut a.clock, "标签").unwrap();
     task::add_topic(&mut a.conn, &mut a.clock, &task, &topic).unwrap();
     a.conn
@@ -1256,7 +1256,7 @@ fn import_rejects_dependent_op_with_only_later_tombstone() {
 #[test]
 fn import_rejects_position_lww_divergence() {
     let mut a = peer("posdiv-a");
-    let task = task::create(&mut a.conn, &mut a.clock, "任务", None, None, None).unwrap();
+    let task = task::create(&mut a.conn, &mut a.clock, "任务", None, None, None, None, &crate::board::gate::DETACHED).unwrap();
     // 追加一条更高 HLC 的合法 frindex position set_field,但不改行——LWW 赢家 ≠ 表列。
     inject_raw_op(&a.conn, &mut a.clock, "item", &task, "set_field",
         r#"{"field":"position","value":"zz"}"#);
@@ -1271,7 +1271,7 @@ fn import_rejects_position_lww_divergence() {
 #[test]
 fn import_rejects_link_entity_id_payload_mismatch() {
     let mut a = peer("linkmis-a");
-    let task = task::create(&mut a.conn, &mut a.clock, "任务", None, None, None).unwrap();
+    let task = task::create(&mut a.conn, &mut a.clock, "任务", None, None, None, None, &crate::board::gate::DETACHED).unwrap();
     let topic = notes::create_topic(&mut a.conn, &mut a.clock, "标签").unwrap();
     inject_raw_op(
         &a.conn,
@@ -1293,7 +1293,7 @@ fn import_rejects_link_entity_id_payload_mismatch() {
 #[test]
 fn import_rejects_forbidden_created_at_set_field() {
     let mut a = peer("createdat-a");
-    let task = task::create(&mut a.conn, &mut a.clock, "任务", None, None, None).unwrap();
+    let task = task::create(&mut a.conn, &mut a.clock, "任务", None, None, None, None, &crate::board::gate::DETACHED).unwrap();
     inject_raw_op(
         &a.conn,
         &mut a.clock,
@@ -1312,7 +1312,7 @@ fn import_rejects_forbidden_created_at_set_field() {
 #[test]
 fn import_rejects_unknown_set_field() {
     let mut a = peer("unkfield-a");
-    let task = task::create(&mut a.conn, &mut a.clock, "任务", None, None, None).unwrap();
+    let task = task::create(&mut a.conn, &mut a.clock, "任务", None, None, None, None, &crate::board::gate::DETACHED).unwrap();
     inject_raw_op(&a.conn, &mut a.clock, "item", &task, "set_field", r#"{"field":"never_existed","value":1}"#);
     let snap = raw_snapshot(&a.conn, &a.dir);
     let mut b = peer("unkfield-b");
@@ -1324,7 +1324,7 @@ fn import_rejects_unknown_set_field() {
 #[test]
 fn import_rejects_image_add_bad_mime() {
     let mut a = peer("badmime-a");
-    let task = task::create(&mut a.conn, &mut a.clock, "任务", None, None, None).unwrap();
+    let task = task::create(&mut a.conn, &mut a.clock, "任务", None, None, None, None, &crate::board::gate::DETACHED).unwrap();
     let img = ulid::Ulid::new().to_string();
     inject_raw_op(
         &a.conn,
@@ -1344,7 +1344,7 @@ fn import_rejects_image_add_bad_mime() {
 #[test]
 fn import_rejects_duplicate_item_create() {
     let mut a = peer("dupcreate-a");
-    let task = task::create(&mut a.conn, &mut a.clock, "任务", None, None, None).unwrap();
+    let task = task::create(&mut a.conn, &mut a.clock, "任务", None, None, None, None, &crate::board::gate::DETACHED).unwrap();
     inject_raw_op(
         &a.conn,
         &mut a.clock,
@@ -1363,7 +1363,7 @@ fn import_rejects_duplicate_item_create() {
 #[test]
 fn import_rejects_corrupted_image_bytes() {
     let mut a = peer("badbytes-a");
-    let task = task::create(&mut a.conn, &mut a.clock, "任务", None, None, None).unwrap();
+    let task = task::create(&mut a.conn, &mut a.clock, "任务", None, None, None, None, &crate::board::gate::DETACHED).unwrap();
     images::attach(&mut a.conn, &mut a.clock, &task, &[1, 2, 3], "image/png").unwrap();
     // item_image 不可 UPDATE(只追加/删除),故删行后重插一条 data 不符其 image_add
     // sha256 的行(等价于「字节被篡改」的坏快照)。
@@ -1394,7 +1394,7 @@ fn import_rejects_corrupted_image_bytes() {
 fn import_rejects_self_origin_injection() {
     let mut b = peer("selforigin-b");
     let mut a = peer("selforigin-a");
-    let task = task::create(&mut a.conn, &mut a.clock, "任务", None, None, None).unwrap();
+    let task = task::create(&mut a.conn, &mut a.clock, "任务", None, None, None, None, &crate::board::gate::DETACHED).unwrap();
     // 伪造 hlc:取真 hlc 前缀(时间戳+计数器,前 23 字符)拼上导入端 b 的 device_id 后缀。
     let real = a.clock.tick(&a.conn).unwrap().encode();
     let forged_hlc = format!("{}{}", &real[..23], b.device_id);
@@ -1420,7 +1420,7 @@ fn import_rejects_self_origin_injection() {
 #[test]
 fn import_rejects_set_field_out_of_domain() {
     let mut a = peer("domain-a");
-    let task = task::create(&mut a.conn, &mut a.clock, "任务", None, None, None).unwrap();
+    let task = task::create(&mut a.conn, &mut a.clock, "任务", None, None, None, None, &crate::board::gate::DETACHED).unwrap();
     inject_raw_op(&a.conn, &mut a.clock, "item", &task, "set_field", r#"{"field":"priority","value":99}"#);
     let snap = raw_snapshot(&a.conn, &a.dir);
     let mut b = peer("domain-b");
@@ -1433,7 +1433,7 @@ fn import_rejects_set_field_out_of_domain() {
 #[test]
 fn import_rejects_orphan_set_field() {
     let mut a = peer("orphan-sf-a");
-    task::create(&mut a.conn, &mut a.clock, "任务", None, None, None).unwrap();
+    task::create(&mut a.conn, &mut a.clock, "任务", None, None, None, None, &crate::board::gate::DETACHED).unwrap();
     let phantom = ulid::Ulid::new().to_string();
     inject_raw_op(&a.conn, &mut a.clock, "item", &phantom, "set_field", r#"{"field":"content","value":"孤儿"}"#);
     let snap = raw_snapshot(&a.conn, &a.dir);
@@ -1446,7 +1446,7 @@ fn import_rejects_orphan_set_field() {
 #[test]
 fn import_rejects_orphan_link() {
     let mut a = peer("orphan-link-a");
-    task::create(&mut a.conn, &mut a.clock, "任务", None, None, None).unwrap();
+    task::create(&mut a.conn, &mut a.clock, "任务", None, None, None, None, &crate::board::gate::DETACHED).unwrap();
     let pi = ulid::Ulid::new().to_string();
     let pt = ulid::Ulid::new().to_string();
     inject_raw_op(
@@ -1467,7 +1467,7 @@ fn import_rejects_orphan_link() {
 #[test]
 fn import_rejects_image_length_mismatch() {
     let mut a = peer("imglen-a");
-    let task = task::create(&mut a.conn, &mut a.clock, "任务", None, None, None).unwrap();
+    let task = task::create(&mut a.conn, &mut a.clock, "任务", None, None, None, None, &crate::board::gate::DETACHED).unwrap();
     images::attach(&mut a.conn, &mut a.clock, &task, &[1, 2, 3], "image/png").unwrap();
     let (img, seq, mime, created): (String, i64, String, String) = a
         .conn
@@ -1495,7 +1495,7 @@ fn import_rejects_image_length_mismatch() {
 #[test]
 fn import_rejects_position_float() {
     let mut a = peer("posfloat-a");
-    let task = task::create(&mut a.conn, &mut a.clock, "任务", None, None, None).unwrap();
+    let task = task::create(&mut a.conn, &mut a.clock, "任务", None, None, None, None, &crate::board::gate::DETACHED).unwrap();
     inject_raw_op(&a.conn, &mut a.clock, "item", &task, "set_field", r#"{"field":"position","value":1.5}"#);
     let snap = raw_snapshot(&a.conn, &a.dir);
     let mut b = peer("posfloat-b");
@@ -1509,7 +1509,7 @@ fn import_rejects_position_float() {
 #[test]
 fn import_rejects_legacy_int_position() {
     let mut a = peer("posint-a");
-    let task = task::create(&mut a.conn, &mut a.clock, "任务", None, None, None).unwrap();
+    let task = task::create(&mut a.conn, &mut a.clock, "任务", None, None, None, None, &crate::board::gate::DETACHED).unwrap();
     inject_raw_op(&a.conn, &mut a.clock, "item", &task, "set_field", r#"{"field":"position","value":5}"#);
     let snap = raw_snapshot(&a.conn, &a.dir);
     let mut b = peer("posint-b");
@@ -1557,7 +1557,7 @@ fn import_rejects_set_before_create() {
 #[test]
 fn import_rejects_image_seq_overflow() {
     let mut a = peer("imgseq-a");
-    let task = task::create(&mut a.conn, &mut a.clock, "任务", None, None, None).unwrap();
+    let task = task::create(&mut a.conn, &mut a.clock, "任务", None, None, None, None, &crate::board::gate::DETACHED).unwrap();
     let sha = "a".repeat(64);
     let max = images::MAX_IMAGE_SEQ;
     for _ in 0..2 {
@@ -1584,7 +1584,7 @@ fn import_rejects_image_seq_overflow() {
 #[test]
 fn import_counter_above_log_watermark_is_legal_below_is_not() {
     let mut a = peer("cntr-a");
-    let task = task::create(&mut a.conn, &mut a.clock, "任务", None, None, None).unwrap();
+    let task = task::create(&mut a.conn, &mut a.clock, "任务", None, None, None, None, &crate::board::gate::DETACHED).unwrap();
     images::attach(&mut a.conn, &mut a.clock, &task, &[1, 2], "image/png").unwrap();
     // 模拟压实后形态:曾有更高编号的图被彻底删除、其 add 不进新账本,counter 留洞。
     a.conn.execute_batch("INSERT INTO sync_replay_active (flag) VALUES (1);").unwrap();
@@ -1618,7 +1618,7 @@ fn import_counter_above_log_watermark_is_legal_below_is_not() {
 #[test]
 fn import_rejects_legacy_image_without_sha256() {
     let mut a = peer("nosha-a");
-    let task = task::create(&mut a.conn, &mut a.clock, "任务", None, None, None).unwrap();
+    let task = task::create(&mut a.conn, &mut a.clock, "任务", None, None, None, None, &crate::board::gate::DETACHED).unwrap();
     let img = ulid::Ulid::new().to_string();
     inject_raw_op(
         &a.conn,
@@ -1708,7 +1708,7 @@ fn import_rejects_set_before_create_even_if_tombstoned() {
 #[test]
 fn import_rejects_domain_loser() {
     let mut a = peer("loser-a");
-    let task = task::create(&mut a.conn, &mut a.clock, "任务", None, None, None).unwrap();
+    let task = task::create(&mut a.conn, &mut a.clock, "任务", None, None, None, None, &crate::board::gate::DETACHED).unwrap();
     inject_raw_op(&a.conn, &mut a.clock, "item", &task, "set_field", r#"{"field":"priority","value":99}"#);
     inject_raw_op(&a.conn, &mut a.clock, "item", &task, "set_field", r#"{"field":"priority","value":2}"#);
     a.conn.execute("INSERT INTO sync_replay_active (flag) VALUES (1)", []).unwrap();
@@ -1724,7 +1724,7 @@ fn import_rejects_domain_loser() {
 #[test]
 fn attach_rejects_at_max_seq() {
     let mut a = peer("attachmax-a");
-    let task = task::create(&mut a.conn, &mut a.clock, "任务", None, None, None).unwrap();
+    let task = task::create(&mut a.conn, &mut a.clock, "任务", None, None, None, None, &crate::board::gate::DETACHED).unwrap();
     let max = images::MAX_IMAGE_SEQ;
     a.conn
         .execute("INSERT INTO item_image_counter (item_id, last_seq) VALUES (?1, ?2)", rusqlite::params![task, max])
@@ -1837,7 +1837,7 @@ fn paired_then_bootstrapped_instances_converge_end_to_end() {
     let idea = notes::capture(&mut ap.conn, &mut ap.clock, "老端灵感").unwrap();
     let topic = notes::create_topic(&mut ap.conn, &mut ap.clock, "共同话题").unwrap();
     notes::file_to_topic(&mut ap.conn, &mut ap.clock, &idea, Some(&topic), None).unwrap();
-    let a_task = task::create(&mut ap.conn, &mut ap.clock, "老端任务", None, Some(1), None).unwrap();
+    let a_task = task::create(&mut ap.conn, &mut ap.clock, "老端任务", None, Some(1), None, None, &crate::board::gate::DETACHED).unwrap();
     images::attach(&mut ap.conn, &mut ap.clock, &a_task, &[7, 7], "image/png").unwrap();
 
     // ---- 新端 B:配对前已有本地数据(引导是并集,不丢)。 ----
@@ -2643,7 +2643,7 @@ fn local_item_op(p: &mut Peer, entity_id: &str, kind: &str, payload: serde_json:
 #[test]
 fn import_carries_a_trashed_image_and_it_restores_on_the_new_peer() {
     let mut a = peer("trash-a");
-    let task = task::create(&mut a.conn, &mut a.clock, "任务", None, None, None).unwrap();
+    let task = task::create(&mut a.conn, &mut a.clock, "任务", None, None, None, None, &crate::board::gate::DETACHED).unwrap();
     let (img, _) = images::attach(&mut a.conn, &mut a.clock, &task, &[1, 2], "image/png").unwrap();
     images::remove(&mut a.conn, &mut a.clock, &img).unwrap();
     let at: String = a
@@ -2666,7 +2666,7 @@ fn import_carries_a_trashed_image_and_it_restores_on_the_new_peer() {
 #[test]
 fn import_rejects_a_removed_flag_the_log_never_wrote() {
     let mut a = peer("forge-a");
-    let task = task::create(&mut a.conn, &mut a.clock, "任务", None, None, None).unwrap();
+    let task = task::create(&mut a.conn, &mut a.clock, "任务", None, None, None, None, &crate::board::gate::DETACHED).unwrap();
     let (img, _) = images::attach(&mut a.conn, &mut a.clock, &task, &[1, 2], "image/png").unwrap();
     a.conn
         .execute("UPDATE item_image SET removed_at = '2026-10-12T08:00:00Z' WHERE id = ?1", [&img])
@@ -2702,7 +2702,7 @@ fn import_rejects_an_orphan_image_set_field() {
 #[test]
 fn import_rejects_an_image_set_field_older_than_its_add() {
     let mut a = peer("setbeforeadd-a");
-    let task = task::create(&mut a.conn, &mut a.clock, "任务", None, None, None).unwrap();
+    let task = task::create(&mut a.conn, &mut a.clock, "任务", None, None, None, None, &crate::board::gate::DETACHED).unwrap();
     let img = ulid::Ulid::new().to_string();
     let data = vec![4u8, 5, 6];
     let sha: String = {
@@ -2737,4 +2737,247 @@ fn import_rejects_an_image_set_field_older_than_its_add() {
     let mut b = peer("setbeforeadd-b");
     let err = import_snapshot(&mut b.conn, &mut b.clock, &snap.path).unwrap_err();
     assert!(err.contains("set-before-add"), "{err}");
+}
+
+// ---- 多看板(multiboard-plan §5.2;0043) -----------------------------------------------
+
+/// 以本机 origin 落任意实体的一枚 op(回放路径造等价终态;看板的写命令归第 2 段)。
+fn local_any_op(p: &mut Peer, entity: &str, entity_id: &str, kind: &str, payload: serde_json::Value) {
+    let hlc = p.clock.tick(&p.conn).unwrap();
+    let seq: i64 = p
+        .conn
+        .query_row(
+            "SELECT COALESCE(MAX(origin_seq), 0) + 1 FROM oplog WHERE origin = ?1",
+            [hlc.device_id.as_str()],
+            |r| r.get(0),
+        )
+        .unwrap();
+    let op = crate::replay::RemoteOp {
+        op_id: ulid::Ulid::new().to_string(),
+        hlc: hlc.encode(),
+        entity: entity.into(),
+        entity_id: entity_id.into(),
+        kind: kind.into(),
+        payload,
+        origin_seq: seq,
+    };
+    crate::replay::apply_remote_op(&mut p.conn, &mut p.clock, &op).expect("落本机 op");
+}
+
+fn board_snapshot(conn: &Connection) -> Vec<String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT id||'|'||title||'|'||position||'|'||quote(landing_column_id)||'|'||quote(done_column_id) \
+             ||'|'||quote(tombstoned_at) FROM board ORDER BY id",
+        )
+        .unwrap();
+    let rows = stmt.query_map([], |r| r.get(0)).unwrap().collect::<rusqlite::Result<Vec<String>>>().unwrap();
+    rows
+}
+
+fn owners(conn: &Connection) -> Vec<(String, Option<String>)> {
+    let mut stmt = conn.prepare("SELECT id, board_id FROM board_column ORDER BY id").unwrap();
+    let rows = stmt
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+        .unwrap()
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .unwrap();
+    rows
+}
+
+/// 引导:用户看板表级复制(排在列之前)、列带归属、种子看板四字段从合并日志**三态**物化
+/// (无 set ⇒ genesis;set 为 null ⇒ NULL;set 为串 ⇒ 该串)。
+#[test]
+fn boot_copies_user_boards_and_materializes_the_seed_board_in_three_states() {
+    let mut a = peer("board-src");
+    notes::capture(&mut a.conn, &mut a.clock, "让快照非空").unwrap();
+    let b_id = ulid::Ulid::new().to_string();
+    let gone = ulid::Ulid::new().to_string();
+    let col = ulid::Ulid::new().to_string();
+    local_any_op(&mut a, "board", &b_id, "create",
+        serde_json::json!({"title":"话术","position":"a1","created_at":"2026-11-11T10:00:00.000Z"}));
+    local_any_op(&mut a, "board", &gone, "create",
+        serde_json::json!({"title":"将删","position":"a2","created_at":"2026-11-11T10:00:00.000Z"}));
+    local_any_op(&mut a, "board_column", &col, "create_in_board",
+        serde_json::json!({"title":"客服","kind":"task","system":false,"position":"a1",
+                           "created_at":"2026-11-11T10:00:00.000Z","board_id": b_id}));
+    local_any_op(&mut a, "board", &b_id, "set_field", serde_json::json!({"field":"landing_column_id","value":col}));
+    local_any_op(&mut a, "board", &gone, "tombstone", serde_json::json!({}));
+    // 种子看板:取消完成列(→ NULL);落点改走又改回 genesis(→ 'todo');标题没碰(→ genesis)。
+    local_any_op(&mut a, "board", "tasks", "set_field", serde_json::json!({"field":"done_column_id","value":null}));
+    local_any_op(&mut a, "board", "tasks", "set_field", serde_json::json!({"field":"landing_column_id","value":"doing"}));
+    local_any_op(&mut a, "board", "tasks", "set_field", serde_json::json!({"field":"landing_column_id","value":"todo"}));
+    let expect_boards = board_snapshot(&a.conn);
+    let expect_owners = owners(&a.conn);
+
+    let snap = raw_snapshot(&a.conn, &a.dir);
+    let mut b = peer("board-dst");
+    import_snapshot(&mut b.conn, &mut b.clock, &snap.path).expect("引导应当成功");
+
+    assert_eq!(board_snapshot(&b.conn), expect_boards, "三块看板逐格一致(含种子三态与墓碑 marker 原文)");
+    assert_eq!(owners(&b.conn), expect_owners, "列的归属随行进来");
+    let tasks: (Option<String>, Option<String>, String) = b
+        .conn
+        .query_row("SELECT landing_column_id, done_column_id, title FROM board WHERE id = 'tasks'", [], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+        })
+        .unwrap();
+    assert_eq!(tasks, (Some("todo".into()), None, "任务".into()), "改回 genesis / 设 NULL / 没碰 三态各对");
+    crate::board::audit_board_semantics(&b.conn, "", "本库").unwrap();
+    crate::board::audit_board_column_semantics(&b.conn, "", "本库").unwrap();
+}
+
+/// 归属是出生字段:快照里把列的 `board_id` 改成**另一块存在的看板**,FK 照样过 ——
+/// 这一格只有「归属值背书」那条审计拦得住(codex 二轮 M3)。
+#[test]
+fn a_snapshot_whose_column_changed_owner_is_refused() {
+    let mut a = peer("board-tamper-src");
+    notes::capture(&mut a.conn, &mut a.clock, "让快照非空").unwrap();
+    let b1 = ulid::Ulid::new().to_string();
+    let b2 = ulid::Ulid::new().to_string();
+    let col = ulid::Ulid::new().to_string();
+    for (id, pos) in [(&b1, "a1"), (&b2, "a2")] {
+        local_any_op(&mut a, "board", id, "create",
+            serde_json::json!({"title":"x","position":pos,"created_at":"2026-11-11T10:00:00.000Z"}));
+    }
+    local_any_op(&mut a, "board_column", &col, "create_in_board",
+        serde_json::json!({"title":"列","kind":"task","system":false,"position":"a1",
+                           "created_at":"2026-11-11T10:00:00.000Z","board_id": b1}));
+    let snap = raw_snapshot(&a.conn, &a.dir);
+    {
+        let t = Connection::open(&snap.path).unwrap();
+        // 篡改者能改 attached 库的任何东西,包括拆掉冻结触发器。
+        t.execute_batch("DROP TRIGGER trg_board_column_birth_immutable;").unwrap();
+        t.execute("UPDATE board_column SET board_id = ?1 WHERE id = ?2", [&b2, &col]).unwrap();
+    }
+    let mut b = peer("board-tamper-dst");
+    let err = import_snapshot(&mut b.conn, &mut b.clock, &snap.path).unwrap_err();
+    assert!(err.contains("归属"), "{err}");
+    let n: i64 = b.conn.query_row("SELECT COUNT(*) FROM board", [], |r| r.get(0)).unwrap();
+    assert_eq!(n, 1, "整体回滚:只剩种子看板");
+}
+
+/// 压实 → 新设备引导,**接收端带本机种子写**(codex 实现审一轮 M2 点名的组合)。三个字段各验
+/// 一种胜负:源基线 NULL 胜接收端较早的串;源基线 genesis 值胜接收端较早的非 genesis;接收端
+/// 更高 HLC 的本机写仍胜出。另带两种列出生与一块墓碑看板。
+#[test]
+fn compact_then_boot_merges_seed_board_fields_by_hlc_not_by_source() {
+    let mut b = peer("board-combo-dst");
+    // 接收端较早的本机写(稍后都应输给源端压实基线)。
+    local_any_op(&mut b, "board", "tasks", "set_field", serde_json::json!({"field":"done_column_id","value":"doing"}));
+    local_any_op(&mut b, "board", "tasks", "set_field", serde_json::json!({"field":"landing_column_id","value":"confirming"}));
+    std::thread::sleep(std::time::Duration::from_millis(5));
+
+    let mut a = peer("board-combo-src");
+    notes::capture(&mut a.conn, &mut a.clock, "让快照非空").unwrap();
+    let ub = ulid::Ulid::new().to_string();
+    let gone = ulid::Ulid::new().to_string();
+    let seed_col = ulid::Ulid::new().to_string();
+    let user_col = ulid::Ulid::new().to_string();
+    local_any_op(&mut a, "board", &ub, "create",
+        serde_json::json!({"title":"话术","position":"a1","created_at":"2026-11-11T10:00:00.000Z"}));
+    local_any_op(&mut a, "board", &gone, "create",
+        serde_json::json!({"title":"将删","position":"a2","created_at":"2026-11-11T10:00:00.000Z"}));
+    local_any_op(&mut a, "board_column", &seed_col, "create",
+        serde_json::json!({"title":"种子看板上的新列","kind":"task","system":false,"position":"a6",
+                           "created_at":"2026-11-11T10:00:00.000Z"}));
+    local_any_op(&mut a, "board_column", &user_col, "create_in_board",
+        serde_json::json!({"title":"客服","kind":"task","system":false,"position":"a1",
+                           "created_at":"2026-11-11T10:00:00.000Z","board_id": ub}));
+    local_any_op(&mut a, "board", &gone, "tombstone", serde_json::json!({}));
+    local_any_op(&mut a, "board", "tasks", "set_field", serde_json::json!({"field":"done_column_id","value":null}));
+    local_any_op(&mut a, "board", "tasks", "set_field", serde_json::json!({"field":"landing_column_id","value":"doing"}));
+    local_any_op(&mut a, "board", "tasks", "set_field", serde_json::json!({"field":"landing_column_id","value":"todo"}));
+    crate::epoch::compact(&mut a.conn).expect("源端压实");
+    let src_owners = owners(&a.conn);
+
+    // 接收端更高 HLC 的本机写:先观测源端最大 HLC,保证它确实更晚。
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    let src_max: String = a.conn.query_row("SELECT MAX(hlc) FROM oplog", [], |r| r.get(0)).unwrap();
+    b.clock.observe(&b.conn, &crate::clock::Hlc::parse(&src_max).unwrap()).unwrap();
+    local_any_op(&mut b, "board", "tasks", "set_field", serde_json::json!({"field":"title","value":"我的看板"}));
+
+    let snap = raw_snapshot(&a.conn, &a.dir);
+    import_snapshot(&mut b.conn, &mut b.clock, &snap.path).expect("引导应当成功");
+
+    let tasks: (String, String, Option<String>, Option<String>) = b
+        .conn
+        .query_row(
+            "SELECT title, position, landing_column_id, done_column_id FROM board WHERE id = 'tasks'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )
+        .unwrap();
+    assert_eq!(
+        tasks,
+        ("我的看板".into(), "a0".into(), Some("todo".into()), None),
+        "title:接收端更晚胜;landing:源基线 genesis 值胜较早非 genesis;done:源基线 NULL 胜较早串"
+    );
+    assert_eq!(owners(&b.conn), src_owners, "两种出生的列归属随行");
+    let gone_marked: bool = b
+        .conn
+        .query_row("SELECT tombstoned_at IS NOT NULL FROM board WHERE id = ?1", [&gone], |r| r.get(0))
+        .unwrap();
+    assert!(gone_marked, "墓碑看板随行");
+    crate::board::audit_board_semantics(&b.conn, "", "本库").unwrap();
+    crate::board::audit_tombstone_apply_empty(&b.conn).unwrap();
+}
+
+/// 同一列既有五键 create 又有六键 create_in_board = 两种出生**合计**两枚 ⇒ 拒(codex 二轮:
+/// 「两种出生合计恰一枚」,⛔ 不是各允许一枚)。
+#[test]
+fn a_column_born_twice_in_two_encodings_is_refused() {
+    let mut a = peer("board-dupbirth-src");
+    notes::capture(&mut a.conn, &mut a.clock, "让快照非空").unwrap();
+    let ub = ulid::Ulid::new().to_string();
+    let col = ulid::Ulid::new().to_string();
+    local_any_op(&mut a, "board", &ub, "create",
+        serde_json::json!({"title":"x","position":"a1","created_at":"2026-11-11T10:00:00.000Z"}));
+    local_any_op(&mut a, "board_column", &col, "create_in_board",
+        serde_json::json!({"title":"列","kind":"task","system":false,"position":"a1",
+                           "created_at":"2026-11-11T10:00:00.000Z","board_id": ub}));
+    let snap = raw_snapshot(&a.conn, &a.dir);
+    // 第二枚出生:同 origin、序号接上、HLC 更晚(各种连续性 / 双序审计都过),只是编码不同。
+    let hlc = a.clock.tick(&a.conn).unwrap();
+    {
+        let t = Connection::open(&snap.path).unwrap();
+        let seq: i64 = t
+            .query_row("SELECT MAX(origin_seq) + 1 FROM oplog WHERE origin = ?1", [hlc.device_id.as_str()], |r| r.get(0))
+            .unwrap();
+        t.execute(
+            "INSERT INTO oplog (op_id, hlc, entity, entity_id, kind, payload, origin_seq) \
+             VALUES (?1, ?2, 'board_column', ?3, 'create', ?4, ?5)",
+            rusqlite::params![
+                ulid::Ulid::new().to_string(),
+                hlc.encode(),
+                &col,
+                serde_json::json!({"title":"列","kind":"task","system":false,"position":"a1",
+                                   "created_at":"2026-11-11T10:00:00.000Z"}).to_string(),
+                seq
+            ],
+        )
+        .unwrap();
+    }
+    let mut b = peer("board-dupbirth-dst");
+    let err = import_snapshot(&mut b.conn, &mut b.clock, &snap.path).unwrap_err();
+    assert!(err.contains("重复"), "{err}");
+}
+
+/// 用户看板的 created_at 是出生字段:快照里改成另一个合法时间、日志不动 ⇒ 拒(codex 实现审一轮 H2)。
+#[test]
+fn a_snapshot_whose_board_changed_birth_time_is_refused() {
+    let mut a = peer("board-birth-src");
+    notes::capture(&mut a.conn, &mut a.clock, "让快照非空").unwrap();
+    let ub = ulid::Ulid::new().to_string();
+    local_any_op(&mut a, "board", &ub, "create",
+        serde_json::json!({"title":"x","position":"a1","created_at":"2026-11-11T10:00:00.000Z"}));
+    let snap = raw_snapshot(&a.conn, &a.dir);
+    {
+        let t = Connection::open(&snap.path).unwrap();
+        t.execute_batch("DROP TRIGGER trg_board_birth_immutable;").unwrap();
+        t.execute("UPDATE board SET created_at = '2020-01-01T00:00:00.000Z' WHERE id = ?1", [&ub]).unwrap();
+    }
+    let mut b = peer("board-birth-dst");
+    let err = import_snapshot(&mut b.conn, &mut b.clock, &snap.path).unwrap_err();
+    assert!(err.contains("created_at"), "{err}");
 }

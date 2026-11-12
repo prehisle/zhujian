@@ -22,14 +22,19 @@
 //
 // 不拖的几种:只看到期时(那时按截止排,不是手动序 —— 长按说一句为什么)、已删的列(只读收容区,卡只出不进:
 // 那一节不画落点线)。
+// 889 起看板列自己竖着滚、看板横着滚(index.html「看板」那段):拿起的卡原地平移一出本列就被列的 overflow 裁掉 ⇒
+// 看板上改成浮一张替身(fixed 克隆,`.drag-ghost`)跟手、原卡淡在原位;屏边自动滚也分两路 —— 手指靠近看板左右沿 =
+// 看板横滚(去屏外那几列),靠近手指下那一列的上下沿 = 那一列竖滚。竖屏一列照旧原卡平移 + 整页滚,一个字没改。
+//
 // ⚠ 空节在竖屏上不画(146 §2.1)⇒ 竖屏拖不进一张卡都没有的列,那种走「列 ▾」菜单;看板上空列常驻(一枚「空」),
 // 落点线画在列头下沿。
 import { reorderTask, type TimelineItem } from "./api";
 import { t } from "./i18n";
 import { showBar } from "./ui";
 import { showErr } from "./err";
-import { isTaskStage, liveTaskColumns, stageLabel } from "./columns";
+import { isTaskStage, liveColumnsOf, stageLabel } from "./columns";
 import { moveReceipt, spotOf } from "./taskmove";
+import { columnView, onBoard, type Box } from "./boardscroll";
 
 const LONG_PRESS_MS = 380; // 抢在 WebView 自己的长按(选字 / 菜单,~500ms)之前
 const SLOP = 8; // 拿起之前手指挪出这么远 = 不是长按
@@ -65,6 +70,8 @@ let drag: {
   x: number;
   y: number;
   line: HTMLElement;
+  /** 看板上跟手的那张替身(889);竖屏 = null,原卡自己平移。 */
+  ghost: HTMLElement | null;
   raf: number;
   target: Target | null;
 } | null = null;
@@ -103,17 +110,44 @@ function lift(): void {
   line.className = "drag-line";
   line.hidden = true;
   document.body.appendChild(line);
-  drag = { card, id, from: item.stage, pointerId, startX: x, startY: y, startScroll: window.scrollY, x, y, line, raf: 0, target: null };
-  card.classList.add("lifted");
+  let ghost: HTMLElement | null = null;
+  if (onBoard()) {
+    // 替身:克隆原卡、钉在原卡此刻的位置(fixed —— 不受列 / 看板两层滚动盒裁剪),之后只按手指位移平移。
+    // 摘掉 data-id 与所有 id:按 id 找卡的路(落点、回执、草稿)只认原卡;inert:替身里的勾框 / 钮点不着。
+    // 挂在原卡那一列里(不挂 body):卡的样式有的挂在 `#timeline` / 列上,挂出去会走样;fixed 不占流,不挤列里的排法。
+    const r = card.getBoundingClientRect();
+    ghost = card.cloneNode(true) as HTMLElement;
+    ghost.removeAttribute("data-id");
+    for (const e of ghost.querySelectorAll("[id]")) e.removeAttribute("id");
+    ghost.inert = true;
+    ghost.classList.add("lifted", "drag-ghost");
+    ghost.style.left = `${r.left}px`;
+    ghost.style.top = `${r.top}px`;
+    ghost.style.width = `${r.width}px`;
+    card.parentElement!.appendChild(ghost);
+    card.classList.add("drag-src");
+  } else card.classList.add("lifted");
+  drag = { card, id, from: item.stage, pointerId, startX: x, startY: y, startScroll: window.scrollY, x, y, line, ghost, raf: 0, target: null };
   document.body.classList.add("card-dragging");
   swallowClick = true;
   (window as unknown as { __zhujianHaptic?: { longPress(): void } }).__zhujianHaptic?.longPress();
   frame();
 }
 
+/** 屏边自动滚的速度:离边 edge 以内按深入多少线性加速,封顶 MAX_SPEED;不在边上 = 0。负 = 往回(上 / 左)。 */
+function edgeSpeed(p: number, lo: number, hi: number, edge: number): number {
+  if (p < lo + edge) return -MAX_SPEED * Math.min(1, (lo + edge - p) / edge);
+  if (p > hi - edge) return MAX_SPEED * Math.min(1, (p - (hi - edge)) / edge);
+  return 0;
+}
+
 /** 每帧:屏边自动滚 → 卡跟手 → 重算落点。 */
 function frame(): void {
   if (!drag) return;
+  if (drag.ghost) {
+    boardFrame(drag.ghost);
+    return;
+  }
   const b = band();
   let v = 0;
   if (drag.y < b.top + EDGE) v = -MAX_SPEED * Math.min(1, (b.top + EDGE - drag.y) / EDGE);
@@ -122,6 +156,28 @@ function frame(): void {
   // 竖屏一列时 x 恒近似不动;看板上卡横竖都跟手(拖去隔壁那一列 / 下一排)。
   drag.card.style.transform = `translate(${drag.x - drag.startX}px, ${drag.y - drag.startY + window.scrollY - drag.startScroll}px) scale(1.02)`;
   drag.target = locate(drag.x, drag.y, b);
+  drag.raf = requestAnimationFrame(frame);
+}
+
+/** 看板上的一帧(889):看板左右沿 = 横滚,手指下那一列的上下沿 = 那一列竖滚;替身按手指位移平移(它是 fixed,不用补滚动量)。 */
+function boardFrame(ghost: HTMLElement): void {
+  if (!drag) return;
+  const tl = document.getElementById("timeline")!;
+  const tr = tl.getBoundingClientRect();
+  // 横向的边带别比一列的三分之一宽:手机横放一列 300 上下,72 的边带两头一占,中间那列放不下手指不动的地方。
+  const vx = edgeSpeed(drag.x, tr.left, tr.right, Math.min(EDGE, tr.width / 6));
+  if (vx !== 0) tl.scrollLeft += Math.round(vx);
+  drag.target = locate(drag.x, drag.y, band());
+  const col = drag.target ? tl.querySelector<HTMLElement>(`:scope > .tl-group[data-col="${CSS.escape(drag.target.stage)}"]`) : null;
+  if (col && vx === 0) {
+    const v = columnView(col);
+    // 手机横放一列看得见的只有一百六七十高,两头各 72 的边带就把它占满了 ⇒ 边带封在可见高的四分之一。
+    if (drag.x >= v.left && drag.x <= v.right) {
+      const vy = edgeSpeed(drag.y, v.top, v.bottom, Math.min(EDGE, (v.bottom - v.top) / 4));
+      if (vy !== 0) col.scrollTop += Math.round(vy);
+    }
+  }
+  ghost.style.transform = `translate(${drag.x - drag.startX}px, ${drag.y - drag.startY}px) scale(1.02)`;
   drag.raf = requestAnimationFrame(frame);
 }
 
@@ -149,7 +205,7 @@ function locate(x: number, y: number, b: { top: number; bottom: number }): Targe
     }
   }
   const stage = sec.dataset.col!;
-  if (!liveTaskColumns().some((c) => c.id === stage)) {
+  if (!liveColumnsOf(drag!.from).some((c) => c.id === stage)) { // 0043:只落卡自己那块看板的活列
     line.hidden = true;
     return null;
   }
@@ -168,19 +224,22 @@ function locate(x: number, y: number, b: { top: number; bottom: number }): Targe
   if (before) ly = before.getBoundingClientRect().top - 5;
   else if (after) ly = after.getBoundingClientRect().bottom + 3;
   else ly = (sec.querySelector(".tl-sec")?.getBoundingClientRect().bottom ?? sr.top) + 3;
-  line.hidden = ly < b.top || ly > b.bottom;
+  // 看板上(889)那条线只许画在这一列看得见的那一框里:列滚走的那截、看板横滚到屏外的那半都不画。
+  const v: Box = onBoard() ? columnView(sec) : { top: b.top, bottom: b.bottom, left: sr.left, right: sr.right };
+  line.hidden = ly < v.top || ly > v.bottom || v.right <= v.left;
   line.style.top = `${Math.round(ly)}px`;
-  line.style.left = `${Math.round(sr.left)}px`;
-  line.style.width = `${Math.round(sr.width)}px`;
+  line.style.left = `${Math.round(v.left)}px`;
+  line.style.width = `${Math.round(v.right - v.left)}px`;
   return { stage, before: before?.dataset.id ?? null, after: after?.dataset.id ?? null };
 }
 
 function endDrag(commit: boolean): void {
   if (!drag) return;
-  const { card, id, from, line, raf, target } = drag;
+  const { card, id, from, line, ghost, raf, target } = drag;
   cancelAnimationFrame(raf);
   line.remove();
-  card.classList.remove("lifted");
+  ghost?.remove();
+  card.classList.remove("lifted", "drag-src");
   card.style.transform = "";
   document.body.classList.remove("card-dragging");
   drag = null;

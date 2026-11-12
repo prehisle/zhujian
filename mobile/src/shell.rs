@@ -520,15 +520,22 @@ pub async fn capture_idea(
     coord.write(&space_id, |conn, clock| notes::capture(conn, clock, &content)).await
 }
 
-/// 捕获一条待办(born_stage='todo')——task::create 固定生 todo、frindex 置列首。
+/// 捕获一条待办 —— 落那块看板解析后的落点列首。
+///
+/// 0043:`board_id` = 任务面此刻在看的那块(multiboard-plan §6 第 4 段);不传 = 默认看板。
+/// 点名的看板放不进卡 ⇒ core 响亮拒,⛔ 不退到默认看板。落点是自定义列时要过落卡闸 ⇒ 临界区里现采事实。
 #[tauri::command]
 pub async fn capture_todo(
     space_id: String,
     content: String,
+    board_id: Option<String>,
     coord: State<'_, Coord>,
 ) -> Result<String, String> {
     coord
-        .write(&space_id, |conn, clock| task::create(conn, clock, &content, None, None, None))
+        .write(&space_id, |conn, clock| {
+            let facts = zhujian_core::board::gate::RuntimeFacts::observe(&coord.sup, &space_id);
+            task::create(conn, clock, &content, None, None, None, board_id.as_deref(), &facts)
+        })
         .await
 }
 
@@ -538,7 +545,8 @@ pub async fn capture_todo(
 // 账户准备空槽」的旧场景改走隐式 `.joining-*` staging(coord::join_space),用户
 // 永远看不到空槽——「配对失败就清库不丢内容」由 staging 不可见性天然成立。
 
-/// 任务行勾「标完成」= task::transition(id,"done")。done→done / 不存在 / 已归档 /
+/// 任务行勾「标完成」= `task::complete`(0043:卡所在看板**解析后的完成列**;纯分类看板
+/// 没有完成列 ⇒ 拒,前端不出那枚勾)。done→done / 不存在 / 已归档 /
 /// 远端抢先改态,一律响亮拒——前端收到错误就刷新时间轴(android-plan §2 必改②)。
 #[tauri::command]
 pub async fn complete_task(
@@ -551,7 +559,7 @@ pub async fn complete_task(
             // 发送端闸的运行期事实(board-columns-plan §5;B-e 第 1 段)。**在 `write`
             // 的临界区里现采**,与桌面那三处同一个理由(锁前查有「查后置位抢锁」竞态)。
             let facts = zhujian_core::board::gate::RuntimeFacts::observe(&coord.sup, &space_id);
-            task::transition(conn, clock, &id, "done", &facts)
+            task::complete(conn, clock, &id, &facts)
         })
         .await
 }
@@ -934,15 +942,28 @@ pub async fn purge_archived(space_id: String, coord: State<'_, Coord>) -> Result
 }
 
 /// 灵感转待办(翻 stage 零副本,单实体 ㉜)。返回任务 id(= 条目自身 id)。
+///
+/// 0043(与桌面同形):`board_id` 缺省 = 落默认看板(「转待办」);给了 = 随记「更多…」里的「放进看板」
+/// 点名那块(multiboard-plan §0 ⑤)。`expected_column` 只有看板「撤回为随记」的**撤销**给:落点不是它就拒
+/// (core `promote_back_to`,比较在写事务里;⛔ 别在前端先读再发,那不原子);给它就必须同时给 `board_id`。
 #[tauri::command]
 pub async fn promote_note_to_task(
     space_id: String,
     id: String,
     title: String,
+    board_id: Option<String>,
+    expected_column: Option<String>,
     coord: State<'_, Coord>,
 ) -> Result<String, String> {
     coord
-        .write(&space_id, |conn, clock| notes::promote_to_task(conn, clock, &id, &title))
+        .write(&space_id, |conn, clock| {
+            let facts = zhujian_core::board::gate::RuntimeFacts::observe(&coord.sup, &space_id);
+            match (board_id.as_deref(), expected_column.as_deref()) {
+                (b, None) => notes::promote_to_task(conn, clock, &id, &title, b, &facts),
+                (Some(b), Some(c)) => notes::promote_back_to(conn, clock, &id, &title, b, c, &facts),
+                (None, Some(_)) => Err("promote_note_to_task: expected_column 必须同 board_id 一起给".to_string()),
+            }
+        })
         .await
 }
 
@@ -999,6 +1020,10 @@ pub struct BoardColumn {
     deleted: bool,
     live_items: i64,
     deletable: bool,
+    /// 0043:属于哪块看板(灵感两列 `None`)。任务面按它只画当前那块。
+    board_id: Option<String>,
+    /// 0043:所在看板已删 ⇒ 这一列住收容区、只出不进(multiboard-plan §3a)。
+    board_deleted: bool,
 }
 
 impl From<zhujian_core::board::BoardColumnRow> for BoardColumn {
@@ -1012,6 +1037,8 @@ impl From<zhujian_core::board::BoardColumnRow> for BoardColumn {
             deleted: c.deleted,
             live_items: c.live_items,
             deletable: c.deletable,
+            board_id: c.board_id,
+            board_deleted: c.board_deleted,
         }
     }
 }
@@ -1023,6 +1050,66 @@ pub fn list_board_columns(space_id: String, coord: State<'_, Coord>) -> Result<V
         let rows = zhujian_core::board::list_columns(conn).map_err(|e| e.to_string())?;
         Ok(rows.into_iter().map(BoardColumn::from).collect())
     })
+}
+
+/// 一块看板的当前态(与桌面 `Board` DTO 逐字段一致;core `board::list_boards` 原样透传)。
+/// ⛔ 前端别自己算角色:`landing` / `done` 是 core 解析过的(悬空已降级)。
+#[derive(serde::Serialize)]
+pub struct Board {
+    id: String,
+    /// ⚠ `title_overridden == false`(种子看板没改过名)时按本端字典显示。
+    title: String,
+    title_overridden: bool,
+    /// 解析后的落点;`None` = 放不进卡。
+    landing: Option<String>,
+    /// 解析后的完成列;`None` = 纯分类看板(没有「完成」与成就归档)。
+    done: Option<String>,
+    deleted: bool,
+    /// 默认看板(随记「转待办」落这里)= 活看板里排最前那块。
+    is_default: bool,
+    deletable: bool,
+}
+
+impl From<zhujian_core::board::BoardRow> for Board {
+    fn from(b: zhujian_core::board::BoardRow) -> Self {
+        // `position` 同列那样不出壳(读序已排好)。
+        Board {
+            id: b.id,
+            title: b.title,
+            title_overridden: b.is_title_overridden,
+            landing: b.landing,
+            done: b.done,
+            deleted: b.deleted,
+            is_default: b.is_default,
+            deletable: b.deletable,
+        }
+    }
+}
+
+/// 全部看板(含已删的 —— 收容区要靠它说出来处),已按 `(position, id)` 排好。
+/// ⚠ 手机只读看板、不建 / 改 / 删(用户拍 ⑩),写命令只有下面那条挪卡。
+#[tauri::command]
+pub fn list_boards(space_id: String, coord: State<'_, Coord>) -> Result<Vec<Board>, String> {
+    coord.with_read(&space_id, |conn| {
+        let rows = zhujian_core::board::list_boards(conn)?;
+        Ok(rows.into_iter().map(Board::from).collect())
+    })
+}
+
+/// 跨看板挪卡(用户拍 ⑥):落到对方看板的落点列首;收容区里的卡也走这条出来。
+#[tauri::command]
+pub async fn move_task_to_board(
+    space_id: String,
+    id: String,
+    board_id: String,
+    coord: State<'_, Coord>,
+) -> Result<(), String> {
+    coord
+        .write(&space_id, |conn, clock| {
+            let facts = zhujian_core::board::gate::RuntimeFacts::observe(&coord.sup, &space_id);
+            task::move_to_board(conn, clock, &id, &board_id, &facts)
+        })
+        .await
 }
 
 /// 一张看板卡(与桌面 TaskItem 同形)。
@@ -1116,11 +1203,23 @@ pub async fn create_task(
     due_on: Option<String>,
     priority: Option<i64>,
     topic_id: Option<String>,
+    board_id: Option<String>,
     coord: State<'_, Coord>,
 ) -> Result<String, String> {
+    // 0043:`board_id` = 在哪块看板上新建;不传 = 默认看板。
     coord
         .write(&space_id, |conn, clock| {
-            task::create(conn, clock, &title, due_on.as_deref(), priority, topic_id.as_deref())
+            let facts = zhujian_core::board::gate::RuntimeFacts::observe(&coord.sup, &space_id);
+            task::create(
+                conn,
+                clock,
+                &title,
+                due_on.as_deref(),
+                priority,
+                topic_id.as_deref(),
+                board_id.as_deref(),
+                &facts,
+            )
         })
         .await
 }
@@ -1290,8 +1389,19 @@ pub async fn seal_task(space_id: String, id: String, coord: State<'_, Coord>) ->
 
 /// 一键归档「已完成」列全部任务,返回条数(0=列本来就空)。
 #[tauri::command]
-pub async fn seal_done_tasks(space_id: String, coord: State<'_, Coord>) -> Result<usize, String> {
-    coord.write(&space_id, |conn, clock| task::seal_all(conn, clock)).await
+///
+/// 0043:`board_id` = 哪块看板;不传 = 种子看板「任务」(与改造前同义)。
+pub async fn seal_done_tasks(
+    space_id: String,
+    board_id: Option<String>,
+    coord: State<'_, Coord>,
+) -> Result<usize, String> {
+    coord
+        .write(&space_id, |conn, clock| {
+            let board = board_id.as_deref().unwrap_or(zhujian_core::board::SEED_BOARD);
+            task::seal_all(conn, clock, board)
+        })
+        .await
 }
 
 /// 取消归档:回看板「已完成」列原位(想删须先取消归档再走两段式)。

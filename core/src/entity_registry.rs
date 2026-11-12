@@ -257,6 +257,26 @@ const ENTITIES: &[Entity] = &[
         replay_dispatch: Facet::Required,
         replay_shape: Facet::Required,
     },
+    // 0043(multiboard-plan):看板成为一等实体,形照 board_column —— 十一格全 Required,
+    // 种子 'tasks' 是 implicit genesis(⑤⑦ 两面按 `board::SEED_BOARD` 显式豁免)。
+    // ⚠ 本表只守到实体级:列的第二种出生 kind `create_in_board` 不在这里(本文件头注第 4 条
+    // 那段诚实盲区),它的五处接线由 replay / board / boot / epoch 各自的行为测守。
+    Entity {
+        name: "board",
+        table: "board",
+        vocab: Facet::Required,
+        core_tables: Facet::Required,
+        compact_fingerprint: Facet::Required,
+        compact_baseline: Facet::Required,
+        boot_import: Facet::Required,
+        // 墓碑形态同列:标志位不是删行,查的是「有墓碑 op 却没盖 marker」。
+        tombstone_audit: Facet::Required,
+        unbacked_rows: Facet::Required,
+        op_preconditions: Facet::Required,
+        convergence: Facet::Required,
+        replay_dispatch: Facet::Required,
+        replay_shape: Facet::Required,
+    },
     Entity {
         name: "comment",
         table: "item_comment",

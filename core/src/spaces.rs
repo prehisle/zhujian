@@ -256,6 +256,11 @@ const CORE_TABLES: &[&str] = &[
     // 0036 的墓碑写者授权表(§2.3「④ 的形」)。常态恒空,但**缺表 = 每一枚合法的列墓碑
     // 都落不了地**(④ 的 EXISTS 子查询查的就是它),同样是 catalog 级的结构缺失。
     "sync_board_column_tombstone_apply",
+    // 0043 的看板(multiboard-plan §2.1)。`board_column.board_id` 的外键父表,且归档触发器
+    // `trg_item_seal_only_done` 的 EXISTS 子查询 JOIN 它 —— 缺了 = 第一笔归档就炸。
+    "board",
+    // 0043 的看板墓碑写者授权表(同 sync_board_column_tombstone_apply:缺表 = 每枚合法看板墓碑都落不了地)。
+    "sync_board_tombstone_apply",
 ];
 
 /// 只读读取一个空间的描述符:**不跑迁移、不写库、不切 WAL**(`db::open` 是读写

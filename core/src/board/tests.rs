@@ -669,7 +669,7 @@ fn legacy_six_stages_survive_the_rebuild_and_still_work() {
     // ---- 新 schema 上把手动主线跑一遍 ----
     let mut clock = crate::clock::Clock::load(&conn).unwrap();
     let id = crate::notes::capture(&mut conn, &mut clock, "迁移后的新卡").expect("捕获");
-    crate::notes::promote_to_task(&mut conn, &mut clock, &id, "迁移后的新卡").expect("转待办");
+    crate::notes::promote_to_task(&mut conn, &mut clock, &id, "迁移后的新卡", None, &crate::board::gate::DETACHED).expect("转待办");
     crate::task::transition(&mut conn, &mut clock, &id, "doing", &crate::board::gate::DETACHED).expect("todo → doing");
     crate::task::transition(&mut conn, &mut clock, &id, "done", &crate::board::gate::DETACHED).expect("doing → done");
     crate::task::seal(&mut conn, &mut clock, &id).expect("入成就册");
@@ -734,6 +734,28 @@ fn items_schema_survives_the_rebuild_byte_for_byte() {
          INSERT INTO item_revisions (item_id, content, archived_at)\n    \
          VALUES (OLD.id, OLD.content, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'));\n\
          END",
+    ), (
+        // 0043(多看板):归档判据从字面量 `OLD.stage <> 'done'` 改成「所在看板解析后的完成列」
+        // (multiboard-plan §2.4)。新形照迁移原文逐字钉死。
+        "trg_item_seal_only_done",
+        r#"CREATE TRIGGER trg_item_seal_only_done
+BEFORE UPDATE OF sealed_at ON items
+FOR EACH ROW
+WHEN NEW.sealed_at IS NOT NULL AND OLD.sealed_at IS NULL
+     AND (OLD.archived_at IS NOT NULL
+          OR NOT EXISTS (
+              SELECT 1
+              FROM board_column c
+              JOIN board b ON b.id = COALESCE(c.board_id, 'tasks')
+              WHERE c.id = OLD.stage
+                AND c.kind = 'task'
+                AND c.tombstoned_at IS NULL
+                AND b.tombstoned_at IS NULL
+                AND b.done_column_id = c.id))
+     AND NOT EXISTS (SELECT 1 FROM sync_replay_active)
+BEGIN
+    SELECT RAISE(ABORT, '只有在所在看板「完成列」里、且不在回收站的卡可以归档');
+END"#,
     )];
 
     let objects = |conn: &Connection| -> std::collections::BTreeMap<String, (String, String)> {
@@ -873,9 +895,9 @@ fn read_model_lists_every_column_in_key_order_with_live_counts() {
     // live_items:回收站与成就归档里的都不算(那两根轴上的卡不在看板上)。
     let mut clock = crate::clock::Clock::load(&conn).unwrap();
     let idea = crate::notes::capture(&mut conn, &mut clock, "一条灵感").unwrap();
-    let t1 = crate::task::create(&mut conn, &mut clock, "活的", None, None, None).unwrap();
-    let t2 = crate::task::create(&mut conn, &mut clock, "要进回收站的", None, None, None).unwrap();
-    let t3 = crate::task::create(&mut conn, &mut clock, "要进成就册的", None, None, None).unwrap();
+    let t1 = crate::task::create(&mut conn, &mut clock, "活的", None, None, None, None, &crate::board::gate::DETACHED).unwrap();
+    let t2 = crate::task::create(&mut conn, &mut clock, "要进回收站的", None, None, None, None, &crate::board::gate::DETACHED).unwrap();
+    let t3 = crate::task::create(&mut conn, &mut clock, "要进成就册的", None, None, None, None, &crate::board::gate::DETACHED).unwrap();
     crate::task::archive(&mut conn, &mut clock, &t2).unwrap();
     crate::task::transition(&mut conn, &mut clock, &t3, "done", &crate::board::gate::DETACHED).unwrap();
     crate::task::seal(&mut conn, &mut clock, &t3).unwrap();
@@ -934,7 +956,7 @@ fn taskness_is_read_from_the_column_kind_not_a_literal_list() {
     assert!(!is_live_task_column(&conn, "01NOSUCHCOLUMN0000000001").unwrap(), "没有的列不是落点");
 
     let mut clock = crate::clock::Clock::load(&conn).unwrap();
-    let id = crate::task::create(&mut conn, &mut clock, "拖进自定义列", None, None, None).unwrap();
+    let id = crate::task::create(&mut conn, &mut clock, "拖进自定义列", None, None, None, None, &crate::board::gate::DETACHED).unwrap();
     crate::task::transition(&mut conn, &mut clock, &id, col, &crate::board::gate::DETACHED).expect("todo → 自定义列");
 
     assert_eq!(crate::repo::active_task_stage(&conn, &id).unwrap().as_deref(), Some(col));
@@ -966,7 +988,7 @@ fn a_deleted_column_is_a_read_only_containment_area() {
     let col = "01USERCOLUMN00000000000002";
     plant_user_column(&conn, col, "要被删的列", "a45");
     let mut clock = crate::clock::Clock::load(&conn).unwrap();
-    let inside = crate::task::create(&mut conn, &mut clock, "留在收容区的卡", None, None, None)
+    let inside = crate::task::create(&mut conn, &mut clock, "留在收容区的卡", None, None, None, None, &crate::board::gate::DETACHED)
         .unwrap();
     crate::task::transition(&mut conn, &mut clock, &inside, col, &crate::board::gate::DETACHED).unwrap();
     plant_tombstone(&conn, col);
@@ -983,7 +1005,7 @@ fn a_deleted_column_is_a_read_only_containment_area() {
     // 只出不进。⚠ 排序那条路的样本**只有 ⓪ 那道闸拒得掉**(清单 13):基准列表给的是
     // 收容区此刻的真实顺序、新序也是一次合法的单卡拖动 ⇒ 后面「看板已变化」「一次只移一张」
     // 那几把尺全都放行,唯一拦得住它的就是「目标列不是活的任务列」。
-    let outside = crate::task::create(&mut conn, &mut clock, "外面的卡", None, None, None).unwrap();
+    let outside = crate::task::create(&mut conn, &mut clock, "外面的卡", None, None, None, None, &crate::board::gate::DETACHED).unwrap();
     let err = crate::task::transition(&mut conn, &mut clock, &outside, col, &crate::board::gate::DETACHED).unwrap_err();
     assert!(err.contains("非法的状态流转"), "拖不进去:{err}");
     let err = crate::task::reorder(
@@ -1048,7 +1070,7 @@ fn wire_shape_ok(op: &crate::oplog::Op, id: &str) {
 fn a_new_column_lands_at_the_end_and_its_op_is_something_the_far_end_can_take() {
     let (mut conn, mut clock) = fresh_rw("create-col");
     let before: Vec<String> = list_columns(&conn).unwrap().into_iter().map(|c| c.position).collect();
-    let id = create_column(&mut conn, &mut clock, "  下周  ", &crate::board::gate::DETACHED).expect("建列");
+    let id = create_column(&mut conn, &mut clock, "  下周  ", None, &crate::board::gate::DETACHED).expect("建列");
 
     // id 过的是**收端那把严尺**(首字符 ≤ '7'),不是 clock 那把松的。
     assert!(crate::replay::is_new_column_id(&id), "列 id 必须是 26 位严格 ULID:{id}");
@@ -1074,13 +1096,13 @@ fn a_new_column_lands_at_the_end_and_its_op_is_something_the_far_end_can_take() 
     wire_shape_ok(&ops[0], &id);
 
     // 空标题拒(trim 之后)。
-    assert!(create_column(&mut conn, &mut clock, "   ", &crate::board::gate::DETACHED).unwrap_err().contains("不能为空"));
+    assert!(create_column(&mut conn, &mut clock, "   ", None, &crate::board::gate::DETACHED).unwrap_err().contains("不能为空"));
 }
 
 #[test]
 fn renaming_and_reordering_emit_one_lww_set_field_each_and_refuse_the_idea_columns() {
     let (mut conn, mut clock) = fresh_rw("rename-col");
-    let id = create_column(&mut conn, &mut clock, "甲", &crate::board::gate::DETACHED).unwrap();
+    let id = create_column(&mut conn, &mut clock, "甲", None, &crate::board::gate::DETACHED).unwrap();
 
     rename_column(&mut conn, &mut clock, &id, " 乙 ", &crate::board::gate::DETACHED).expect("改名");
     assert_eq!(row_of(&conn, &id).title, "乙");
@@ -1111,7 +1133,7 @@ fn renaming_and_reordering_emit_one_lww_set_field_each_and_refuse_the_idea_colum
 #[test]
 fn deleting_a_column_keeps_the_row_consumes_its_grant_and_refuses_a_second_go() {
     let (mut conn, mut clock) = fresh_rw("delete-col");
-    let id = create_column(&mut conn, &mut clock, "临时", &crate::board::gate::DETACHED).unwrap();
+    let id = create_column(&mut conn, &mut clock, "临时", None, &crate::board::gate::DETACHED).unwrap();
     delete_column(&mut conn, &mut clock, &id, &crate::board::gate::DETACHED).expect("空列删得掉");
 
     let row = row_of(&conn, &id);
@@ -1143,8 +1165,8 @@ fn deleting_a_column_keeps_the_row_consumes_its_grant_and_refuses_a_second_go() 
 #[test]
 fn a_column_with_live_cards_refuses_to_go_and_says_how_many() {
     let (mut conn, mut clock) = fresh_rw("delete-nonempty");
-    let id = create_column(&mut conn, &mut clock, "在用", &crate::board::gate::DETACHED).unwrap();
-    let card = crate::task::create(&mut conn, &mut clock, "一件事", None, None, None).unwrap();
+    let id = create_column(&mut conn, &mut clock, "在用", None, &crate::board::gate::DETACHED).unwrap();
+    let card = crate::task::create(&mut conn, &mut clock, "一件事", None, None, None, None, &crate::board::gate::DETACHED).unwrap();
     crate::task::transition(&mut conn, &mut clock, &card, &id, &crate::board::gate::DETACHED).expect("拖进新列");
     assert_eq!(row_of(&conn, &id).live_items, 1);
 
@@ -1194,10 +1216,10 @@ fn whatever_column_a_product_line_pins_itself_to_must_be_undeletable() {
     };
 
     // ① 新建任务 / ② 转待办:落点必须受保护。
-    let a = crate::task::create(&mut conn, &mut clock, "新任务", None, None, None).unwrap();
+    let a = crate::task::create(&mut conn, &mut clock, "新任务", None, None, None, None, &crate::board::gate::DETACHED).unwrap();
     must_be_safe(&conn, &stage_of(&conn, &a), "新建任务");
     let idea = crate::notes::capture(&mut conn, &mut clock, "灵感").unwrap();
-    let b = crate::notes::promote_to_task(&mut conn, &mut clock, &idea, "转来的").unwrap();
+    let b = crate::notes::promote_to_task(&mut conn, &mut clock, &idea, "转来的", None, &crate::board::gate::DETACHED).unwrap();
     must_be_safe(&conn, &stage_of(&conn, &b), "转待办");
     // ③ 撤回为灵感:只有落点那一列的卡退得回去 ⇒ 它同样承重。
     crate::notes::revert_task_to_inbox(&mut conn, &mut clock, &b).expect("落点上的卡退得回灵感");
@@ -1212,7 +1234,7 @@ fn whatever_column_a_product_line_pins_itself_to_must_be_undeletable() {
         .collect();
     let mut stamping = 0;
     for col in &live_cols {
-        let card = crate::task::create(&mut conn, &mut clock, "探针", None, None, None).unwrap();
+        let card = crate::task::create(&mut conn, &mut clock, "探针", None, None, None, None, &crate::board::gate::DETACHED).unwrap();
         if stage_of(&conn, &card) == *col {
             continue; // 已经在那儿了,transition 会判 from == to
         }
@@ -1274,4 +1296,554 @@ fn the_role_columns_are_real_non_system_task_seeds() {
     // 其余四个种子照 480 的定案分两边:系统那两个连改名一起禁,doing/confirming 全放。
     assert!(undeletable_reason("inbox", true).is_some() && undeletable_reason("filed", true).is_some());
     assert!(undeletable_reason("doing", false).is_none() && undeletable_reason("confirming", false).is_none());
+}
+
+// ---- 0043:归档触发器按「所在看板解析后的完成列」判(multiboard-plan §2.4) --------------
+
+/// 直接打存储层:建两块看板(一块有完成列、一块纯分类),各放一张卡,逐格试 `sealed_at`。
+#[test]
+fn sealing_follows_the_done_role_of_the_cards_own_board() {
+    let conn = fresh_db("seal-role");
+    let with_done = "01JBOARDWITHDONE0000000000";
+    let plain = "01JBOARDPLAIN0000000000000";
+    conn.execute_batch(&format!(
+        "INSERT INTO board (id, title, position, created_at) VALUES \
+           ('{with_done}', '有完成', 'a1', '2026-11-11T10:00:00.000Z'), \
+           ('{plain}', '纯分类', 'a2', '2026-11-11T10:00:00.000Z');
+         INSERT INTO board_column (id, title, kind, system, position, created_at, board_id) VALUES \
+           ('01JCOLDONE0000000000000000', '做完', 'task', 0, 'a1', '2026-11-11T10:00:00.000Z', '{with_done}'), \
+           ('01JCOLPLAIN000000000000000', '分类', 'task', 0, 'a1', '2026-11-11T10:00:00.000Z', '{plain}');
+         UPDATE board SET done_column_id = '01JCOLDONE0000000000000000' WHERE id = '{with_done}';"
+    ))
+    .unwrap();
+    let card = |id: &str, stage: &str| {
+        conn.execute(
+            "INSERT INTO items (id, content, stage, created_at, updated_at, position, born_stage, born_device) \
+             VALUES (?1, 'x', ?2, '2026-11-11T10:00:00.000Z', '2026-11-11T10:00:00.000Z', 'a0', ?2, \
+                     (SELECT value FROM sync_meta WHERE key = 'device_id'))",
+            (id, stage),
+        )
+        .unwrap();
+    };
+    let seal = |id: &str| conn.execute("UPDATE items SET sealed_at = '2026-11-11T11:00:00.000Z' WHERE id = ?1", [id]);
+    card("01JCARDA000000000000000000", "01JCOLDONE0000000000000000");
+    card("01JCARDB000000000000000000", "01JCOLPLAIN000000000000000");
+    card("01JCARDC000000000000000000", "done");
+    card("01JCARDD000000000000000000", "01JCOLDONE0000000000000000");
+
+    assert!(seal("01JCARDA000000000000000000").is_ok(), "自定义看板的完成列可归档");
+    let e = seal("01JCARDB000000000000000000").unwrap_err().to_string();
+    assert!(e.contains("完成列"), "纯分类看板没有完成列:{e}");
+    assert!(seal("01JCARDC000000000000000000").is_ok(), "种子看板 genesis 完成列 = done");
+
+    // 种子看板取消完成列 ⇒ done 里的卡不能再归档(⛔ 别写 `<> 子查询`:NULL 会漏拒)。
+    conn.execute("UPDATE board SET done_column_id = NULL WHERE id = 'tasks'", []).unwrap();
+    conn.execute("UPDATE items SET sealed_at = NULL WHERE id = '01JCARDC000000000000000000'", []).ok();
+    card("01JCARDE000000000000000000", "done");
+    let e = seal("01JCARDE000000000000000000").unwrap_err().to_string();
+    assert!(e.contains("完成列"), "取消完成列后 done 不再是完成列:{e}");
+
+    // 看板删了 ⇒ 它完成列里的卡进收容区,不能本地归档(codex 二轮 M2)。
+    // 墓碑 marker 只能经授权表改写(0043):先有 op 背书、再登记、再改行。
+    conn.execute_batch(&format!(
+        "INSERT INTO oplog (op_id, hlc, entity, entity_id, kind, payload, origin_seq) \
+             VALUES ('op-del-board', 'H-del-board', 'board', '{with_done}', 'tombstone', '{{}}', 1); \
+         INSERT INTO sync_board_tombstone_apply (board_id, op_id, from_hlc, to_hlc, mode) \
+             VALUES ('{with_done}', 'op-del-board', NULL, 'H-del-board', 'apply_min'); \
+         UPDATE board SET tombstoned_at = 'H-del-board' WHERE id = '{with_done}';"
+    ))
+    .unwrap();
+    let e = seal("01JCARDD000000000000000000").unwrap_err().to_string();
+    assert!(e.contains("完成列"), "死看板里的卡不能归档:{e}");
+
+    // 回放豁免:远端合法 seal 到达时本机角色可能已改 —— 照收。
+    conn.execute("INSERT INTO sync_replay_active (flag) VALUES (1)", []).unwrap();
+    assert!(seal("01JCARDB000000000000000000").is_ok(), "回放豁免");
+}
+
+// ---- 多看板命令层(multiboard-plan §3 / §3a / §4;2b 必带测试见 plan §14) ----------------
+
+use crate::board::gate::DETACHED as D;
+
+/// 本库全部 op 都过收端 shape(看板命令产物的对端可收性;同 `wire_shape_ok` 的理由)。
+fn all_ops_wire_ok(conn: &Connection) {
+    let mut stmt = conn
+        .prepare("SELECT op_id, hlc, entity, entity_id, kind, payload FROM oplog ORDER BY hlc")
+        .unwrap();
+    let rows: Vec<(String, String, String, String, String, String)> = stmt
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)))
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap();
+    for (op_id, hlc, entity, entity_id, kind, payload) in rows {
+        crate::replay::validate_op_shape(&crate::replay::RemoteOp {
+            op_id,
+            hlc,
+            entity: entity.clone(),
+            entity_id: entity_id.clone(),
+            kind: kind.clone(),
+            payload: serde_json::from_str(&payload).unwrap(),
+            origin_seq: 1,
+        })
+        .unwrap_or_else(|e| panic!("本地发的 {entity}/{kind} {entity_id} 过不了收端 shape:{e:?}"));
+    }
+}
+
+fn op_count(conn: &Connection) -> i64 {
+    conn.query_row("SELECT COUNT(*) FROM oplog", [], |r| r.get(0)).unwrap()
+}
+
+fn stage_of(conn: &Connection, id: &str) -> String {
+    conn.query_row("SELECT stage FROM items WHERE id = ?1", [id], |r| r.get(0)).unwrap()
+}
+
+fn cols_of(conn: &Connection, board: &str) -> Vec<String> {
+    crate::board::live_columns(conn, board).unwrap()
+}
+
+/// 三列带完成列的看板(待处理 / 进行中 / 已完成)。
+fn flow_board(conn: &mut Connection, clock: &mut crate::clock::Clock, title: &str) -> (String, Vec<String>) {
+    let b = create_board(conn, clock, title, &["待处理", "进行中", "已完成"], Some(2), &D).unwrap();
+    let cols = cols_of(conn, &b);
+    (b, cols)
+}
+
+#[test]
+fn a_new_board_is_born_with_its_columns_and_every_op_crosses_the_wire() {
+    let (mut conn, mut clock) = fresh_rw("mb-create");
+    let (b, cols) = flow_board(&mut conn, &mut clock, "工作");
+    assert_eq!(cols.len(), 3);
+    let row = list_boards(&conn).unwrap().into_iter().find(|r| r.id == b).unwrap();
+    assert_eq!((row.landing.as_deref(), row.done.as_deref()), (Some(cols[0].as_str()), Some(cols[2].as_str())));
+    assert!(!row.is_default, "新看板排在种子后面,不是默认");
+    for c in &cols {
+        assert_eq!(row_of(&conn, c).board_id.as_deref(), Some(b.as_str()));
+        assert_eq!(ops_of(&conn, c)[0].kind, "create_in_board", "非种子看板上的列走六键出生");
+    }
+    let plain = create_board(&mut conn, &mut clock, "话术", &["客服"], None, &D).unwrap();
+    assert_eq!(crate::board::done_of(&conn, &plain).unwrap(), None, "纯分类看板没有完成列");
+    // 种子看板上建列仍是五键 create(不用多看板的人不发新词汇)。
+    let seed_col = create_column(&mut conn, &mut clock, "本周", None, &D).unwrap();
+    assert_eq!(ops_of(&conn, &seed_col)[0].kind, "create");
+    all_ops_wire_ok(&conn);
+    // 只有一列的看板不能设完成列。
+    assert!(create_board(&mut conn, &mut clock, "x", &["唯一"], Some(0), &D).is_err());
+}
+
+#[test]
+fn role_resolution_degrades_on_dangling_pointers_and_is_deterministic() {
+    let (mut conn, mut clock) = fresh_rw("mb-roles");
+    let (b, cols) = flow_board(&mut conn, &mut clock, "工作");
+    // 落点 = 完成(并发造出的碰撞)⇒ 落点退成最左那枚非完成列。
+    conn.execute("UPDATE board SET landing_column_id = ?2 WHERE id = ?1", (&b, &cols[2])).unwrap();
+    assert_eq!(crate::board::landing_of(&conn, &b).unwrap().as_deref(), Some(cols[0].as_str()));
+    // 指向别的看板的列 ⇒ 悬空:完成列读成 ⊥,落点读成最左。
+    conn.execute("UPDATE board SET done_column_id = 'todo', landing_column_id = 'doing' WHERE id = ?1", [&b]).unwrap();
+    assert_eq!(crate::board::done_of(&conn, &b).unwrap(), None);
+    assert_eq!(crate::board::landing_of(&conn, &b).unwrap().as_deref(), Some(cols[0].as_str()));
+    // 指向不存在的列 ⇒ 同样悬空。
+    conn.execute("UPDATE board SET done_column_id = 'NOPE' WHERE id = 'tasks'", []).unwrap();
+    assert_eq!(crate::board::done_of(&conn, "tasks").unwrap(), None);
+    // 看板已删 ⇒ 一切 ⊥,且它的列不收卡。
+    delete_board(&mut conn, &mut clock, &b).unwrap();
+    assert_eq!(crate::board::landing_of(&conn, &b).unwrap(), None);
+    assert!(!crate::board::is_live_task_column(&conn, &cols[0]).unwrap(), "死看板的列只出不进");
+    assert!(row_of(&conn, &cols[0]).board_deleted && !row_of(&conn, &cols[0]).deleted,
+            "看板已删 ≠ 列自身有墓碑,两格分开");
+}
+
+#[test]
+fn new_cards_land_on_the_board_they_were_made_on_and_promotes_go_to_the_default() {
+    let (mut conn, mut clock) = fresh_rw("mb-land");
+    let (b, cols) = flow_board(&mut conn, &mut clock, "工作");
+    let t = crate::task::create(&mut conn, &mut clock, "工作卡", None, None, None, Some(&b), &D).unwrap();
+    let (stage, born): (String, String) = conn
+        .query_row("SELECT stage, born_stage FROM items WHERE id = ?1", [&t], |r| Ok((r.get(0)?, r.get(1)?)))
+        .unwrap();
+    assert_eq!((stage.as_str(), born.as_str()), (cols[0].as_str(), cols[0].as_str()),
+               "插入 / 置顶 / 出生快照用的是同一个解析结果");
+    let first: String = conn
+        .query_row("SELECT id FROM items WHERE stage = ?1 ORDER BY position LIMIT 1", [&cols[0]], |r| r.get(0))
+        .unwrap();
+    assert_eq!(first, t, "落在列首");
+
+    // 转待办:落默认看板。先是种子(todo),把「工作」拖到最前后变成它的落点。
+    let idea = crate::notes::capture(&mut conn, &mut clock, "一个念头").unwrap();
+    crate::notes::promote_to_task(&mut conn, &mut clock, &idea, "一个念头", None, &D).unwrap();
+    assert_eq!(stage_of(&conn, &idea), "todo");
+    reorder_board(&mut conn, &mut clock, &b, None, Some("tasks")).unwrap();
+    assert!(list_boards(&conn).unwrap().into_iter().find(|r| r.id == b).unwrap().is_default);
+    let idea2 = crate::notes::capture(&mut conn, &mut clock, "另一个念头").unwrap();
+    crate::notes::promote_to_task(&mut conn, &mut clock, &idea2, "另一个念头", None, &D).unwrap();
+    assert_eq!(stage_of(&conn, &idea2), cols[0], "默认看板 = 侧栏最上面那块");
+    // 撤回:只认卡所在看板的落点。
+    crate::notes::revert_task_to_inbox(&mut conn, &mut clock, &idea2).unwrap();
+    crate::task::transition(&mut conn, &mut clock, &t, &cols[1], &D).unwrap();
+    assert!(crate::notes::revert_task_to_inbox(&mut conn, &mut clock, &t).is_err(), "不在落点列不能撤回");
+    all_ops_wire_ok(&conn);
+}
+
+#[test]
+fn a_board_without_a_landing_refuses_new_cards_instead_of_falling_back() {
+    let (mut conn, mut clock) = fresh_rw("mb-noland");
+    let (b, cols) = flow_board(&mut conn, &mut clock, "工作");
+    // 并发造出「只剩完成列」(命令层不许删到这一步,这里直接改行模拟远端终态)。
+    for (i, c) in cols[..2].iter().enumerate() {
+        let h = clock.tick(&conn).unwrap().encode(); // 墓碑 marker 有「49 字节 HLC」的 CHECK
+        conn.execute_batch(&format!(
+            "INSERT INTO oplog (op_id, hlc, entity, entity_id, kind, payload, origin_seq) \
+               VALUES ('op-{c}', '{h}', 'board_column', '{c}', 'tombstone', '{{}}', {}); \
+             INSERT INTO sync_board_column_tombstone_apply (column_id, op_id, from_hlc, to_hlc, mode) \
+               VALUES ('{c}', 'op-{c}', NULL, '{h}', 'apply_min'); \
+             UPDATE board_column SET tombstoned_at = '{h}' WHERE id = '{c}';",
+            1000 + i
+        ))
+        .unwrap();
+    }
+    assert_eq!(crate::board::landing_of(&conn, &b).unwrap(), None);
+    let before = op_count(&conn);
+    assert!(crate::task::create(&mut conn, &mut clock, "x", None, None, None, Some(&b), &D).is_err());
+    reorder_board(&mut conn, &mut clock, &b, None, Some("tasks")).unwrap();
+    let after_reorder = op_count(&conn);
+    assert_eq!(after_reorder, before + 1);
+    let idea = crate::notes::capture(&mut conn, &mut clock, "念头").unwrap();
+    let n = op_count(&conn);
+    assert!(crate::notes::promote_to_task(&mut conn, &mut clock, &idea, "念头", None, &D).is_err(),
+            "默认看板没有落点 ⇒ 拒,⛔ 不退到种子看板");
+    assert_eq!(op_count(&conn), n, "拒绝不留 op");
+    assert_eq!(stage_of(&conn, &idea), "inbox");
+}
+
+/// 随记「更多…」里的「放进看板 ▸」(用户拍 ⑤):`promote_to_task` 点名一块看板 ⇒ 落**那块**解析后的落点
+/// 列首,⛔ 不看默认看板;点名的看板放不进卡(不存在 / 已删 / 落点 ⊥)⇒ 响亮拒、⛔ 不退到别的看板,
+/// 且整笔回滚(先改的标题也还原,不留 op、不留修订)。
+#[test]
+fn promoting_into_a_named_board_lands_there_and_never_falls_back() {
+    let (mut conn, mut clock) = fresh_rw("mb-promote-into");
+    let (b, cols) = flow_board(&mut conn, &mut clock, "工作");
+    let old = crate::task::create(&mut conn, &mut clock, "先在那儿的卡", None, None, None, Some(&b), &D).unwrap();
+
+    // ① 默认看板是种子,点名「工作」⇒ 落「工作」的落点列首;born_stage 不动(出生时是灵感)。
+    let idea = crate::notes::capture(&mut conn, &mut clock, "念头甲").unwrap();
+    crate::notes::promote_to_task(&mut conn, &mut clock, &idea, "念头甲", Some(&b), &D).unwrap();
+    assert_eq!(stage_of(&conn, &idea), cols[0], "点名的看板压过默认看板");
+    let first: String = conn
+        .query_row("SELECT id FROM items WHERE stage = ?1 ORDER BY position LIMIT 1", [&cols[0]], |r| r.get(0))
+        .unwrap();
+    assert_eq!(first, idea, "落在列首,先在那儿的卡({old})让到后面");
+    // 落点改指第二列 ⇒ 下一张跟着改落点(读的是解析结果,不是「最左列」字面)。
+    set_board_landing(&mut conn, &mut clock, &b, &cols[1]).unwrap();
+    let idea_b = crate::notes::capture(&mut conn, &mut clock, "念头乙").unwrap();
+    crate::notes::promote_to_task(&mut conn, &mut clock, &idea_b, "念头乙", Some(&b), &D).unwrap();
+    assert_eq!(stage_of(&conn, &idea_b), cols[1]);
+    // 刚放进去的卡在它那块看板的落点上 ⇒ 撤回(随记那侧回执的「撤销」)走得通。
+    crate::notes::revert_task_to_inbox(&mut conn, &mut clock, &idea_b).expect("落点上的卡撤得回随记");
+
+    // ② 反过来:「工作」成了默认,点名种子 ⇒ 落 todo。
+    reorder_board(&mut conn, &mut clock, &b, None, Some("tasks")).unwrap();
+    let idea2 = crate::notes::capture(&mut conn, &mut clock, "念头丙").unwrap();
+    crate::notes::promote_to_task(&mut conn, &mut clock, &idea2, "念头丙", Some("tasks"), &D).unwrap();
+    assert_eq!(stage_of(&conn, &idea2), "todo");
+
+    // ③ 放不进卡的看板:不存在 / 已删 ⇒ 拒,整笔回滚(标题改字也还原)。
+    let (dead, _) = flow_board(&mut conn, &mut clock, "要删的");
+    delete_board(&mut conn, &mut clock, &dead).unwrap();
+    let idea3 = crate::notes::capture(&mut conn, &mut clock, "原话").unwrap();
+    let revs = |c: &Connection| -> i64 { c.query_row("SELECT COUNT(*) FROM item_revisions", [], |r| r.get(0)).unwrap() };
+    let (n0, r0) = (op_count(&conn), revs(&conn));
+    for target in [dead.as_str(), "01NOSUCHBOARD0000000000000"] {
+        let e = crate::notes::promote_to_task(&mut conn, &mut clock, &idea3, "换个说法", Some(target), &D).unwrap_err();
+        assert!(e.contains("不存在或已删除"), "{target}: {e}");
+    }
+    assert_eq!((op_count(&conn), revs(&conn)), (n0, r0), "拒绝不留 op、不留修订");
+    let content: String = conn.query_row("SELECT content FROM items WHERE id = ?1", [&idea3], |r| r.get(0)).unwrap();
+    assert_eq!((stage_of(&conn, &idea3).as_str(), content.as_str()), ("inbox", "原话"), "⛔ 没退到默认看板,标题也回滚了");
+    all_ops_wire_ok(&conn);
+}
+
+/// 看板「撤回为随记」的撤销(`promote_back_to`):落点仍是撤回前那一列 ⇒ 转回去;落点已改 / 看板已删 ⇒
+/// 响亮拒、什么都不写(不落新落点、不改标题、不留 op / 修订)。期望列在写事务里比(codex 实现审二轮 M1)。
+#[test]
+fn undoing_a_revert_only_goes_back_to_the_column_it_left() {
+    let (mut conn, mut clock) = fresh_rw("mb-undo-revert");
+    let (b, cols) = flow_board(&mut conn, &mut clock, "工作");
+    let idea = crate::notes::capture(&mut conn, &mut clock, "原话").unwrap();
+    crate::notes::promote_to_task(&mut conn, &mut clock, &idea, "原话", Some(&b), &D).unwrap();
+    crate::notes::revert_task_to_inbox(&mut conn, &mut clock, &idea).unwrap();
+
+    // ① 落点被改到第二列 ⇒ 拒,整笔不写(改了说法也不进历史)。
+    set_board_landing(&mut conn, &mut clock, &b, &cols[1]).unwrap();
+    let revs = |c: &Connection| -> i64 { c.query_row("SELECT COUNT(*) FROM item_revisions", [], |r| r.get(0)).unwrap() };
+    let (n0, r0) = (op_count(&conn), revs(&conn));
+    let e = crate::notes::promote_back_to(&mut conn, &mut clock, &idea, "换了说法", &b, &cols[0], &D).unwrap_err();
+    assert!(e.contains("撤销不了"), "{e}");
+    assert_eq!((op_count(&conn), revs(&conn)), (n0, r0), "拒绝不留 op、不留修订");
+    let content: String = conn.query_row("SELECT content FROM items WHERE id = ?1", [&idea], |r| r.get(0)).unwrap();
+    assert_eq!((stage_of(&conn, &idea).as_str(), content.as_str()), ("inbox", "原话"), "⛔ 没落到新落点");
+
+    // ② 落点改回来 ⇒ 转回原列。
+    set_board_landing(&mut conn, &mut clock, &b, &cols[0]).unwrap();
+    crate::notes::promote_back_to(&mut conn, &mut clock, &idea, "原话", &b, &cols[0], &D).unwrap();
+    assert_eq!(stage_of(&conn, &idea), cols[0]);
+
+    // ③ 看板删了 ⇒ 拒(同 landing_target 的话术),不退到默认看板。
+    crate::notes::revert_task_to_inbox(&mut conn, &mut clock, &idea).unwrap();
+    delete_board(&mut conn, &mut clock, &b).unwrap();
+    let n1 = op_count(&conn);
+    assert!(crate::notes::promote_back_to(&mut conn, &mut clock, &idea, "原话", &b, &cols[0], &D).is_err());
+    assert_eq!((op_count(&conn), stage_of(&conn, &idea).as_str()), (n1, "inbox"));
+    all_ops_wire_ok(&conn);
+}
+
+#[test]
+fn moving_across_boards_lands_on_the_landing_and_dragging_never_crosses() {
+    let (mut conn, mut clock) = fresh_rw("mb-move");
+    let (b, cols) = flow_board(&mut conn, &mut clock, "工作");
+    let t = crate::task::create(&mut conn, &mut clock, "卡", None, None, None, None, &D).unwrap();
+    assert!(crate::task::transition(&mut conn, &mut clock, &t, &cols[1], &D).is_err(), "transition 不跨看板");
+    crate::task::move_to_board(&mut conn, &mut clock, &t, &b, &D).unwrap();
+    assert_eq!(stage_of(&conn, &t), cols[0]);
+    assert!(crate::task::move_to_board(&mut conn, &mut clock, &t, &b, &D).is_err(), "同看板拒");
+    // 进完成列盖 done_at;离开不清;挪回种子看板落 todo,done_at 仍在。
+    crate::task::transition(&mut conn, &mut clock, &t, &cols[2], &D).unwrap();
+    let done_at: Option<String> = conn.query_row("SELECT done_at FROM items WHERE id = ?1", [&t], |r| r.get(0)).unwrap();
+    assert!(done_at.is_some());
+    crate::task::move_to_board(&mut conn, &mut clock, &t, "tasks", &D).unwrap();
+    assert_eq!(stage_of(&conn, &t), "todo");
+    let kept: Option<String> = conn.query_row("SELECT done_at FROM items WHERE id = ?1", [&t], |r| r.get(0)).unwrap();
+    assert_eq!(kept, done_at, "离开完成列不清 done_at");
+    all_ops_wire_ok(&conn);
+}
+
+#[test]
+fn entered_done_is_one_edge_so_a_timeless_done_card_never_emits_a_null() {
+    let (mut conn, mut clock) = fresh_rw("mb-edge");
+    let (b, cols) = flow_board(&mut conn, &mut clock, "工作");
+    // 完成列 → 另一块看板的完成列:不算「进入」。
+    assert!(!crate::board::entered_done(&conn, "done", &cols[2]).unwrap());
+    assert!(crate::board::entered_done(&conn, &cols[1], &cols[2]).unwrap());
+    assert!(!crate::board::entered_done(&conn, &cols[2], &cols[0]).unwrap());
+    // 取消种子看板的完成列后,进 `done` 不再算完成。
+    set_board_done(&mut conn, &mut clock, "tasks", None).unwrap();
+    assert!(!crate::board::entered_done(&conn, "doing", "done").unwrap());
+    let t = crate::task::create(&mut conn, &mut clock, "卡", None, None, None, None, &D).unwrap();
+    crate::task::transition(&mut conn, &mut clock, &t, "done", &D).unwrap();
+    let done_at: Option<String> = conn.query_row("SELECT done_at FROM items WHERE id = ?1", [&t], |r| r.get(0)).unwrap();
+    assert_eq!(done_at, None, "不是完成列就不盖章,也不发一枚 NULL 的 done_at");
+    let _ = b;
+    all_ops_wire_ok(&conn);
+}
+
+#[test]
+fn sealing_and_unsealing_follow_the_cards_own_board() {
+    let (mut conn, mut clock) = fresh_rw("mb-seal");
+    let (b, cols) = flow_board(&mut conn, &mut clock, "工作");
+    let plain = create_board(&mut conn, &mut clock, "话术", &["客服"], None, &D).unwrap();
+    let t = crate::task::create(&mut conn, &mut clock, "干完", None, None, None, Some(&b), &D).unwrap();
+    let p = crate::task::create(&mut conn, &mut clock, "一句话术", None, None, None, Some(&plain), &D).unwrap();
+    // 断言的是**编排层**那句话(存储层触发器话术不同):两层各自有牙齿。
+    let e = crate::task::seal(&mut conn, &mut clock, &t).unwrap_err();
+    assert!(e.starts_with("归档失败"), "还不在完成列:{e}");
+    crate::task::transition(&mut conn, &mut clock, &t, &cols[2], &D).unwrap();
+    let e = crate::task::seal(&mut conn, &mut clock, &p).unwrap_err();
+    assert!(e.starts_with("归档失败"), "纯分类看板不能归档:{e}");
+    assert!(crate::task::seal_all(&mut conn, &mut clock, &plain).is_err());
+    assert_eq!(crate::task::seal_all(&mut conn, &mut clock, &b).unwrap(), 1);
+    // 取消归档:回原列(自定义完成列),按实际原列取键、可见。
+    crate::task::unseal(&mut conn, &mut clock, &t).unwrap();
+    assert_eq!(stage_of(&conn, &t), cols[2]);
+    assert!(repo::column_task_ids(&conn, &cols[2]).unwrap().contains(&t));
+    all_ops_wire_ok(&conn);
+}
+
+#[test]
+fn deleting_boards_and_columns_keeps_the_preconditions_and_leaves_no_op_on_refusal() {
+    let (mut conn, mut clock) = fresh_rw("mb-delete");
+    let (b, cols) = flow_board(&mut conn, &mut clock, "工作");
+    let t = crate::task::create(&mut conn, &mut clock, "卡", None, None, None, Some(&b), &D).unwrap();
+    let n = op_count(&conn);
+    assert!(delete_board(&mut conn, &mut clock, &b).is_err(), "还有卡");
+    assert!(delete_board(&mut conn, &mut clock, "tasks").is_err(), "种子看板不可删");
+    assert!(delete_column(&mut conn, &mut clock, &cols[2], &D).is_err(), "完成列先取消");
+    assert!(set_board_done(&mut conn, &mut clock, &b, Some(&cols[0])).is_err(), "落点不能当完成列");
+    assert!(set_board_done(&mut conn, &mut clock, &b, Some(&cols[1])).is_ok(), "两列都空 ⇒ 可改");
+    let n2 = op_count(&conn);
+    assert_eq!(n2, n + 1);
+    assert!(set_board_done(&mut conn, &mut clock, &b, None).is_ok());
+    // 「最后一枚非完成列」:删掉 cols[1] 后只剩 cols[0](落点,有卡)与 cols[2]。
+    delete_column(&mut conn, &mut clock, &cols[1], &D).unwrap();
+    set_board_done(&mut conn, &mut clock, &b, Some(&cols[2])).unwrap();
+    crate::task::move_to_board(&mut conn, &mut clock, &t, "tasks", &D).unwrap();
+    let n3 = op_count(&conn);
+    assert!(delete_column(&mut conn, &mut clock, &cols[0], &D).is_err(), "最后一枚非完成列不能删");
+    assert_eq!(op_count(&conn), n3, "拒绝不留 op");
+    delete_board(&mut conn, &mut clock, &b).unwrap();
+    crate::board::audit_tombstone_apply_empty(&conn).unwrap();
+    assert!(list_boards(&conn).unwrap().into_iter().find(|r| r.id == b).unwrap().deleted);
+    assert!(rename_column(&mut conn, &mut clock, &cols[0], "x", &D).is_err(), "死看板的列只读");
+    all_ops_wire_ok(&conn);
+}
+
+#[test]
+fn a_restored_card_from_a_deleted_board_is_visible_in_containment_and_can_leave() {
+    let (mut conn, mut clock) = fresh_rw("mb-contain");
+    let (b, cols) = flow_board(&mut conn, &mut clock, "工作");
+    let t = crate::task::create(&mut conn, &mut clock, "进回收站的卡", None, None, None, Some(&b), &D).unwrap();
+    crate::task::archive(&mut conn, &mut clock, &t).unwrap();
+    delete_board(&mut conn, &mut clock, &b).unwrap();
+    crate::task::restore(&mut conn, &mut clock, &t).unwrap();
+    assert_eq!(stage_of(&conn, &t), cols[0], "还原回原列(不做隐式移动)");
+    let row = row_of(&conn, &cols[0]);
+    assert!(row.board_deleted && row.live_items == 1, "收容区可见:看板已删的列上有一张活卡");
+    assert!(crate::task::seal(&mut conn, &mut clock, &t).is_err(), "收容区里的卡不能本地归档");
+    crate::task::move_to_board(&mut conn, &mut clock, &t, "tasks", &D).unwrap();
+    assert_eq!(stage_of(&conn, &t), "todo", "能挪出收容区");
+}
+
+// ---- 2b 实现审一轮(H1 / M1–M4 / L1)的回归 -------------------------------------------
+
+/// H1:单看板空间里,墓碑列还原出来的卡能经「挪到看板」选**它自己那块**出来。
+#[test]
+fn a_card_in_a_deleted_column_of_a_live_board_can_leave_to_its_own_board() {
+    let (mut conn, mut clock) = fresh_rw("mb-h1");
+    let c = create_column(&mut conn, &mut clock, "临时", None, &D).unwrap();
+    let t = crate::task::create(&mut conn, &mut clock, "卡", None, None, None, None, &D).unwrap();
+    crate::task::transition(&mut conn, &mut clock, &t, &c, &D).unwrap();
+    crate::task::archive(&mut conn, &mut clock, &t).unwrap();
+    delete_column(&mut conn, &mut clock, &c, &D).unwrap();
+    crate::task::restore(&mut conn, &mut clock, &t).unwrap();
+    assert_eq!(stage_of(&conn, &t), c, "还原回原列(收容区)");
+    crate::task::move_to_board(&mut conn, &mut clock, &t, "tasks", &D).unwrap();
+    assert_eq!(stage_of(&conn, &t), "todo", "收容区出口:落自己那块看板的落点");
+    assert!(crate::task::move_to_board(&mut conn, &mut clock, &t, "tasks", &D).is_err(), "普通活列里的卡同看板仍拒");
+}
+
+/// M1:打勾完成落到**此刻**解析出的完成列(读与写同一事务)。
+#[test]
+fn completing_lands_in_the_current_done_role() {
+    let (mut conn, mut clock) = fresh_rw("mb-m1");
+    let (b, cols) = flow_board(&mut conn, &mut clock, "工作");
+    let e = create_column(&mut conn, &mut clock, "验收完", Some(&b), &D).unwrap();
+    set_board_done(&mut conn, &mut clock, &b, Some(&e)).unwrap();
+    let t = crate::task::create(&mut conn, &mut clock, "卡", None, None, None, Some(&b), &D).unwrap();
+    crate::task::complete(&mut conn, &mut clock, &t, &D).unwrap();
+    assert_eq!(stage_of(&conn, &t), e, "完成角色已从 {} 改到 E", cols[2]);
+    let done_at: Option<String> = conn.query_row("SELECT done_at FROM items WHERE id = ?1", [&t], |r| r.get(0)).unwrap();
+    assert!(done_at.is_some(), "进入完成列盖章");
+    let plain = create_board(&mut conn, &mut clock, "话术", &["客服"], None, &D).unwrap();
+    let p = crate::task::create(&mut conn, &mut clock, "话术卡", None, None, None, Some(&plain), &D).unwrap();
+    let n = op_count(&conn);
+    assert!(crate::task::complete(&mut conn, &mut clock, &p, &D).is_err(), "纯分类看板没有勾");
+    assert_eq!(op_count(&conn), n);
+}
+
+/// M2:完成指针悬空时「取消完成列」照样写下 NULL;迟到的那列到了,完成角色也不复活。
+#[test]
+fn cancelling_a_dangling_done_pointer_is_a_real_write() {
+    let (mut conn, mut clock) = fresh_rw("mb-m2");
+    let (b, _) = flow_board(&mut conn, &mut clock, "工作");
+    let late = ulid::Ulid::new().to_string();
+    conn.execute("UPDATE board SET done_column_id = ?2 WHERE id = ?1", (&b, &late)).unwrap();
+    assert_eq!(crate::board::done_of(&conn, &b).unwrap(), None, "悬空 ⇒ 解析为 ⊥");
+    let n = op_count(&conn);
+    set_board_done(&mut conn, &mut clock, &b, None).unwrap();
+    assert_eq!(op_count(&conn), n + 1, "发了一枚 done_column_id = null");
+    let raw: Option<String> = conn.query_row("SELECT done_column_id FROM board WHERE id = ?1", [&b], |r| r.get(0)).unwrap();
+    assert_eq!(raw, None);
+    // 迟到的列到了(这里直接落行,模拟它的 create_in_board 终于回放)。
+    conn.execute(
+        "INSERT INTO board_column (id, title, kind, system, position, created_at, board_id) \
+         VALUES (?1, '迟到', 'task', 0, 'zz', '2026-11-11T10:00:00.000Z', ?2)",
+        (&late, &b),
+    )
+    .unwrap();
+    assert_eq!(crate::board::done_of(&conn, &b).unwrap(), None, "取消的事实不被迟到的列推翻");
+}
+
+/// M3:删看板数的是**全部列**(含收容区里的墓碑列)上的活卡;拒绝时什么都不留。
+#[test]
+fn a_board_with_a_card_in_containment_cannot_be_deleted() {
+    let (mut conn, mut clock) = fresh_rw("mb-m3");
+    let (b, cols) = flow_board(&mut conn, &mut clock, "工作");
+    let extra = create_column(&mut conn, &mut clock, "临时", Some(&b), &D).unwrap();
+    let t = crate::task::create(&mut conn, &mut clock, "卡", None, None, None, Some(&b), &D).unwrap();
+    crate::task::transition(&mut conn, &mut clock, &t, &extra, &D).unwrap();
+    crate::task::archive(&mut conn, &mut clock, &t).unwrap();
+    delete_column(&mut conn, &mut clock, &extra, &D).unwrap();
+    crate::task::restore(&mut conn, &mut clock, &t).unwrap();
+    let n = op_count(&conn);
+    let e = delete_board(&mut conn, &mut clock, &b).unwrap_err();
+    assert!(e.contains("1 张卡"), "{e}");
+    assert_eq!(op_count(&conn), n, "拒绝不留 op");
+    assert!(!list_boards(&conn).unwrap().into_iter().find(|r| r.id == b).unwrap().deleted);
+    crate::board::audit_tombstone_apply_empty(&conn).unwrap();
+    let _ = cols;
+}
+
+/// M4:取消归档按卡**实际所在的列**查位置冲突(codex 给的构造)。
+#[test]
+fn unsealing_checks_for_a_position_clash_in_the_cards_own_column() {
+    let (mut conn, mut clock) = fresh_rw("mb-m4");
+    let (b, cols) = flow_board(&mut conn, &mut clock, "工作");
+    let d = &cols[2];
+    let pos = |conn: &Connection, id: &str| -> String {
+        conn.query_row("SELECT position FROM items WHERE id = ?1", [id], |r| r.get(0)).unwrap()
+    };
+    let mk = |conn: &mut Connection, clock: &mut crate::clock::Clock, title: &str| {
+        let t = crate::task::create(conn, clock, title, None, None, None, Some(&b), &D).unwrap();
+        crate::task::complete(conn, clock, &t, &D).unwrap();
+        t
+    };
+    let a = mk(&mut conn, &mut clock, "甲");
+    let k = pos(&conn, &a);
+    crate::task::seal(&mut conn, &mut clock, &a).unwrap();
+    let bb = mk(&mut conn, &mut clock, "乙");
+    assert_eq!(pos(&conn, &bb), k, "乙占了甲原来的键");
+    let c = mk(&mut conn, &mut clock, "丙");
+    let k2 = pos(&conn, &c);
+    crate::task::unseal(&mut conn, &mut clock, &a).unwrap();
+    let pa = pos(&conn, &a);
+    assert!(k < pa && pa < k2, "甲紧跟占位的乙之后:{k} < {pa} < {k2}");
+    assert_eq!(stage_of(&conn, &a), *d);
+    // 反向对照:只有种子 done 占着同一个键,D 里没人占 ⇒ 原样保留。
+    let (b2, cols2) = flow_board(&mut conn, &mut clock, "另一块");
+    let x = crate::task::create(&mut conn, &mut clock, "戊", None, None, None, Some(&b2), &D).unwrap();
+    crate::task::complete(&mut conn, &mut clock, &x, &D).unwrap();
+    let kx = pos(&conn, &x);
+    crate::task::seal(&mut conn, &mut clock, &x).unwrap();
+    let s = crate::task::create(&mut conn, &mut clock, "种子上的", None, None, None, Some("tasks"), &D).unwrap();
+    crate::task::complete(&mut conn, &mut clock, &s, &D).unwrap();
+    conn.execute("UPDATE items SET position = ?2 WHERE id = ?1", (&s, &kx)).unwrap();
+    crate::task::unseal(&mut conn, &mut clock, &x).unwrap();
+    assert_eq!(pos(&conn, &x), kx, "另一列占着同键不该干扰");
+    assert_eq!(stage_of(&conn, &x), cols2[2]);
+}
+
+/// L1:读模型的 `deletable` 带上动态拒因(与删列命令同一份判据)。
+#[test]
+fn the_read_model_knows_a_done_column_cannot_be_deleted() {
+    let (mut conn, mut clock) = fresh_rw("mb-l1");
+    let (b, cols) = flow_board(&mut conn, &mut clock, "工作");
+    assert!(!row_of(&conn, &cols[2]).deletable, "完成列");
+    assert!(row_of(&conn, &cols[1]).deletable, "普通列");
+    set_board_done(&mut conn, &mut clock, &b, None).unwrap();
+    delete_column(&mut conn, &mut clock, &cols[1], &D).unwrap();
+    delete_column(&mut conn, &mut clock, &cols[2], &D).unwrap();
+    assert!(!row_of(&conn, &cols[0]).deletable, "最后一枚非完成列");
+}
+
+/// §14:自定义完成列经 reorder / reorder_visible 拖进去,同样盖完成时刻。
+#[test]
+fn dragging_into_a_custom_done_column_stamps_done_at_on_both_drag_paths() {
+    let (mut conn, mut clock) = fresh_rw("mb-drag");
+    let (b, cols) = flow_board(&mut conn, &mut clock, "工作");
+    let a = crate::task::create(&mut conn, &mut clock, "拖一", None, None, None, Some(&b), &D).unwrap();
+    let z = crate::task::create(&mut conn, &mut clock, "拖二", None, None, None, Some(&b), &D).unwrap();
+    crate::task::reorder(&mut conn, &mut clock, &a, &cols[0], &cols[2], &[], &[a.clone()], &D).unwrap();
+    crate::task::reorder_visible(&mut conn, &mut clock, &z, &cols[0], &cols[2], &[a.clone()], &[a.clone(), z.clone()], &D).unwrap();
+    for t in [&a, &z] {
+        let done_at: Option<String> = conn.query_row("SELECT done_at FROM items WHERE id = ?1", [t], |r| r.get(0)).unwrap();
+        assert!(done_at.is_some(), "{t} 拖进完成列要盖章");
+    }
+    all_ops_wire_ok(&conn);
 }

@@ -24,11 +24,23 @@ use crate::{board, frindex, oplog, repo};
 /// (首版自检清单 5:不可达的防护 = 死码,别加)。
 /// ⚠ 已删的列**只出不进**(plan §4.3 只读收容区):卡拖得出去、拖不进来,
 /// 正是靠这里只卡 `to` 兑现的。
+///
+/// ⚠ 0043 起多一格:**同一块看板之内**才算流转(multiboard-plan §3)。跨看板挪卡走
+/// [`move_to_board`](落对方落点,用户拍 ⑥),⛔ 别让 transition / 拖拽悄悄跨看板。
 fn legal(conn: &Connection, from: &str, to: &str) -> Result<bool, String> {
     if from == to {
         return Ok(false);
     }
-    board::is_live_task_column(conn, to).map_err(|e| e.to_string())
+    if !board::is_live_task_column(conn, to).map_err(|e| e.to_string())? {
+        return Ok(false);
+    }
+    same_board(conn, from, to)
+}
+
+/// 两列在同一块看板上(都按 `board::board_of` 解析;灵感列 / 不存在 → false)。
+fn same_board(conn: &Connection, from: &str, to: &str) -> Result<bool, String> {
+    let (a, b) = (board::board_of(conn, from)?, board::board_of(conn, to)?);
+    Ok(a.is_some() && a == b)
 }
 
 /// 「目标列非法」的统一说法(`reorder` / `reorder_visible` 入口那道)+ 发送端闸。
@@ -60,31 +72,51 @@ pub fn transition(
     let from = repo::active_task_stage(&tx, id)
         .map_err(|e| e.to_string())?
         .ok_or_else(|| format!("任务不存在或已归档: {id}"))?;
-    if !legal(&tx, &from, to)? {
+    transition_in(&tx, clock, id, &from, to, facts)?;
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// [`transition`] 的事务体:调用方已在**同一事务**里读到 `from`(并按需解析出 `to`)。
+/// 「打勾完成」[`complete`] 也走这里 —— codex 实现审 2b 一轮 M1:原先 complete 在事务外
+/// 解析完成列再调 transition,角色在两步之间被改走时会落到一枚普通列、不盖完成时刻。
+fn transition_in(
+    tx: &Connection,
+    clock: &mut Clock,
+    id: &str,
+    from: &str,
+    to: &str,
+    facts: &gate::RuntimeFacts,
+) -> Result<(), String> {
+    let from = from.to_string();
+    if !legal(tx, &from, to)? {
         return Err(format!("非法的状态流转:{from} → {to}"));
     }
     // 发送端闸(plan §5.2 最后一格)。⛔ 刻意**不**并进 `legal`:那一句是纯谓词
     // (`bool`),而闸拒绝时要给一句能行动的人话,合成一个 `bool` 就把原因丢了。
-    gate::ensure_card_may_land(&tx, to, facts)?;
-    let changed = repo::set_task_stage(&tx, id, &from, to).map_err(|e| e.to_string())?;
+    gate::ensure_card_may_land(tx, to, facts)?;
+    // 「进入完成列」这条边在 UPDATE 之前算一次,同一个布尔驱动盖章与发射(plan §3)。
+    let entered = board::entered_done(tx, &from, to)?;
+    let changed = repo::set_task_stage_with(tx, id, &from, to, entered).map_err(|e| e.to_string())?;
     if changed != 1 {
         return Err(format!("流转失败:任务状态已变化(期望 {from}),已忽略本次操作"));
     }
     // set_task_stage 同时把卡落到目标列末尾——stage 与 position 都变了。进入 done 的那条
     // 边(legal 已保证 from≠to,故 to=done ⟹ from≠done)还盖了 done_at(0030),一并发射:
     // 读行发声取回刚盖的完成时刻(必非空,协议只增不清);其余流转不带 done_at。
-    oplog::item_set(&tx, clock, id, done_fields(to))?;
-    tx.commit().map_err(|e| e.to_string())?;
+    oplog::item_set(tx, clock, id, done_fields(entered))?;
     Ok(())
 }
 
 /// 一次改了 stage 的流转要发射的字段:进 done 时 stage+position+done_at,否则 stage+position。
 /// 只在真正换列(stage 变)时调用——列内拖动(stage 不变)走另一条只发 position 的路,
 /// 永不带 done_at(那张卡本就在 done、done_at 未变)。
-fn done_fields(to: &str) -> &'static [&'static str] {
-    // ⛔ 别写死 "done":那一列之所以敢被写死,靠的是 `board::undeletable_reason` 保证它
-    // 永不可删(480 结清 477 那笔账)—— 引用同一份常量,那条保证才跟得过来。
-    if to == board::DONE_COLUMN {
+///
+/// ⭐ 0043 起入参是**已经算好的那条边**(`board::entered_done`),不是目标列 id:多看板下
+/// 「完成列 A 里一张无 done_at 的旧卡挪到完成列 B」不算进入,⛔ 别再按目标列判(那会想发
+/// 一枚值为 NULL 的 done_at,`oplog::item_set` 读行发声当场报错;codex 设计审二轮 M4)。
+fn done_fields(entered_done: bool) -> &'static [&'static str] {
+    if entered_done {
         &["stage", "position", "done_at"]
     } else {
         &["stage", "position"]
@@ -111,6 +143,12 @@ pub fn reorder(
     // ⓪ 目标列合法性。0036 起这一句要**查库**(列是数据不是常量)⇒ 挪进事务里问,
     //    与后面那些判据读同一个快照(首版自检清单 10:别隔着一次往返再拿旧事实动手)。
     ensure_live_task_column(&tx, to_status, facts)?;
+    // 0043:拖拽只在同一块看板之内;跨看板走 move_to_board(落对方落点,plan §0 ⑥)。
+    if from_status != to_status && !same_board(&tx, from_status, to_status)? {
+        return Err("不能跨看板拖动:请用「挪到看板」".to_string());
+    }
+    // 「进入完成列」这条边在 UPDATE 之前算一次(plan §3)。
+    let entered = board::entered_done(&tx, from_status, to_status)?;
 
     // ① the dragged card is on the board and still in the column we dragged it from.
     let cur = repo::active_task_stage(&tx, id)
@@ -162,8 +200,8 @@ pub fn reorder(
     //    任务列,本 if 判过 from≠to,而 `cur == from_status` 保证 from 本就是任务列
     //    ⇒ 留着就是不可达的防护(首版自检清单 5)。不变量由测钉住,不由死码守。
     if from_status != to_status {
-        let changed =
-            repo::set_task_stage(&tx, id, from_status, to_status).map_err(|e| e.to_string())?;
+        let changed = repo::set_task_stage_with(&tx, id, from_status, to_status, entered)
+            .map_err(|e| e.to_string())?;
         if changed != 1 {
             return Err("流转失败:任务状态已变化,已忽略本次操作".to_string());
         }
@@ -178,7 +216,7 @@ pub fn reorder(
 
     // 发射:只有被拖卡自己——跨列 stage+position(+ done_at 若拖进 done)两三条,列内一条。
     if from_status != to_status {
-        oplog::item_set(&tx, clock, id, done_fields(to_status))?;
+        oplog::item_set(&tx, clock, id, done_fields(entered))?;
     } else {
         oplog::item_set(&tx, clock, id, &["position"])?;
     }
@@ -242,6 +280,12 @@ pub fn reorder_visible(
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     // ⓪ 同 `reorder`:目标列合法性 0036 起要查库,故与其余判据同一个快照(清单 10)。
     ensure_live_task_column(&tx, to_status, facts)?;
+    // 0043:拖拽只在同一块看板之内;跨看板走 move_to_board(落对方落点,plan §0 ⑥)。
+    if from_status != to_status && !same_board(&tx, from_status, to_status)? {
+        return Err("不能跨看板拖动:请用「挪到看板」".to_string());
+    }
+    // 「进入完成列」这条边在 UPDATE 之前算一次(plan §3)。
+    let entered = board::entered_done(&tx, from_status, to_status)?;
 
     let cur = repo::active_task_stage(&tx, id)
         .map_err(|e| e.to_string())?
@@ -295,8 +339,8 @@ pub fn reorder_visible(
         }
         // ⚠ 同 `reorder` ④:那句 `legal` 0036 起恒真(⓪ + 本分支 + `cur == from_status`),
         //   已按首版自检清单 5 拿掉。
-        let changed =
-            repo::set_task_stage(&tx, id, from_status, to_status).map_err(|e| e.to_string())?;
+        let changed = repo::set_task_stage_with(&tx, id, from_status, to_status, entered)
+            .map_err(|e| e.to_string())?;
         if changed != 1 {
             return Err("流转失败:任务状态已变化,已忽略本次操作".to_string());
         }
@@ -342,7 +386,7 @@ pub fn reorder_visible(
 
     // 跨列进 done 那条边一并发 done_at(同 reorder);筛选态列内拖动只 position。
     if from_status != to_status {
-        oplog::item_set(&tx, clock, id, done_fields(to_status))?;
+        oplog::item_set(&tx, clock, id, done_fields(entered))?;
     } else {
         oplog::item_set(&tx, clock, id, &["position"])?;
     }
@@ -358,6 +402,10 @@ pub fn reorder_visible(
 /// snapshot is emitted AFTER the reposition — 读行发声 makes it carry the final front
 /// key, so no extra position op is needed. Title trimmed/non-empty; priority
 /// range-checked up front (the DB CHECK is the backstop). Returns the new id.
+///
+/// ⭐ 0043(multiboard-plan §4,codex 二轮 M1):`board` = 在哪块看板上点的「新建」(`None` =
+/// 默认看板)。目标列 = 那块看板解析后的落点,**解析一次**,同一个值贯穿插入、置顶、落卡闸
+/// 与出生快照(`born_stage`);落点 ⊥ ⇒ 响亮拒(⛔ 不退到别的看板)。
 pub fn create(
     conn: &mut Connection,
     clock: &mut Clock,
@@ -365,6 +413,8 @@ pub fn create(
     due_on: Option<&str>,
     priority: Option<i64>,
     topic_id: Option<&str>,
+    board: Option<&str>,
+    facts: &gate::RuntimeFacts,
 ) -> Result<String, String> {
     let title = title.trim();
     if title.is_empty() {
@@ -378,10 +428,11 @@ pub fn create(
     }
 
     let tx = conn.transaction().map_err(|e| e.to_string())?;
-    let id = repo::insert_task(&tx, title, due_on, priority).map_err(|e| e.to_string())?;
-    let key = repo::front_key(&tx, board::LANDING_COLUMN, &id).map_err(|e| e.to_string())?;
-    let n =
-        repo::set_task_position(&tx, &id, board::LANDING_COLUMN, &key).map_err(|e| e.to_string())?;
+    let target = landing_target(&tx, board)?;
+    gate::ensure_card_may_land(&tx, &target, facts)?;
+    let id = repo::insert_task_into(&tx, title, due_on, priority, &target).map_err(|e| e.to_string())?;
+    let key = repo::front_key(&tx, &target, &id).map_err(|e| e.to_string())?;
+    let n = repo::set_task_position(&tx, &id, &target, &key).map_err(|e| e.to_string())?;
     if n != 1 {
         return Err(format!("置顶写入失败(任务 {id},影响 {n} 行)"));
     }
@@ -617,14 +668,98 @@ pub fn purge_all(conn: &mut Connection, clock: &mut Clock) -> Result<usize, Stri
     Ok(removed)
 }
 
+/// 一块看板(`None` = 默认看板)解析后的落点;看板不存在 / 已删 / 落点 ⊥ 一律响亮拒。
+pub(crate) fn landing_target(conn: &Connection, board: Option<&str>) -> Result<String, String> {
+    let b = match board {
+        Some(b) => b.to_string(),
+        None => board::default_board(conn)?,
+    };
+    if !board::board_live(conn, &b)? {
+        return Err("这块看板不存在或已删除".to_string());
+    }
+    board::landing_of(conn, &b)?
+        .ok_or_else(|| "这块看板没有能放卡的列(先在列管理里加一列)".to_string())
+}
+
+/// 跨看板挪卡(multiboard-plan §0 ⑥):落到对方看板的落点列**列首**(同转待办,新来的先
+/// 可见)。同看板内的流转走 [`transition`] / 拖拽,这里只管换看板。目标落点 ⊥ 响亮拒。
+pub fn move_to_board(
+    conn: &mut Connection,
+    clock: &mut Clock,
+    id: &str,
+    board_id: &str,
+    facts: &gate::RuntimeFacts,
+) -> Result<(), String> {
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    let from = repo::active_task_stage(&tx, id)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("任务不存在或已归档: {id}"))?;
+    // 同看板只拒**普通活列**里的卡;收容区里的卡(所在列已删、看板仍活着)选它自己那块看板
+    // 是合法出口,落到解析后的落点(codex 实现审 2b 一轮 H1:原先无条件拒,单看板空间里墓碑列
+    // 还原的卡根本出不来)。
+    if board::board_of(&tx, &from)?.as_deref() == Some(board_id)
+        && board::is_live_task_column(&tx, &from).map_err(|e| e.to_string())?
+    {
+        return Err("这张卡已经在这块看板上了".to_string());
+    }
+    let target = landing_target(&tx, Some(board_id))?;
+    gate::ensure_card_may_land(&tx, &target, facts)?;
+    let entered = board::entered_done(&tx, &from, &target)?;
+    let changed =
+        repo::set_task_stage_with(&tx, id, &from, &target, entered).map_err(|e| e.to_string())?;
+    if changed != 1 {
+        return Err(format!("挪到看板失败:任务状态已变化(期望 {from}),已忽略本次操作"));
+    }
+    let key = repo::front_key(&tx, &target, id).map_err(|e| e.to_string())?;
+    let n = repo::set_task_position(&tx, id, &target, &key).map_err(|e| e.to_string())?;
+    if n != 1 {
+        return Err(format!("置顶写入失败(任务 {id},影响 {n} 行)"));
+    }
+    oplog::item_set(&tx, clock, id, done_fields(entered))?;
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// 「打勾完成」(手机端的勾;multiboard-plan §4):流转到卡所在看板**解析后的完成列**。那块
+/// 看板没有完成列(纯分类)⇒ 响亮拒(UI 本就不该给勾)。⛔ 别再在壳里写 `"done"` 字面量。
+///
+/// ⭐ 读卡、解析完成列、写入**同一事务**(codex 实现审 2b 一轮 M1 推翻了原先「事务外读、
+/// transition 的 CAS + legal 会兜住」那条论证:legal 只查活列与同看板,不查目标仍是完成角色)。
+pub fn complete(conn: &mut Connection, clock: &mut Clock, id: &str, facts: &gate::RuntimeFacts) -> Result<(), String> {
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    let stage = repo::active_task_stage(&tx, id)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("任务不存在或已归档: {id}"))?;
+    let b = board::board_of(&tx, &stage)?.ok_or_else(|| format!("任务不在任何看板上: {id}"))?;
+    let done = board::done_of(&tx, &b)?.ok_or_else(|| "这块看板没有完成列".to_string())?;
+    transition_in(&tx, clock, id, &stage, &done, facts)?;
+    tx.commit().map_err(|e| e.to_string())
+}
+
 // ---- 成就归档 (sealed_at, 0017) ----------------------------------------------------
 
 /// 归档一条「已完成」任务进成就册(可查、不可删)。只有活跃的 done 可归档;其余 fail fast。
+///
+/// 0043:「已完成」= 卡所在看板**解析后的完成列**;没有完成列的看板(纯分类)、已删看板
+/// (收容区)里的卡一律不能本地归档(plan §3a)。
 pub fn seal(conn: &mut Connection, clock: &mut Clock, id: &str) -> Result<(), String> {
     let tx = conn.transaction().map_err(|e| e.to_string())?;
-    let n = repo::seal_task(&tx, id).map_err(|e| e.to_string())?;
+    let stage = repo::active_task_stage(&tx, id)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "归档失败:任务不存在、在回收站或已归档".to_string())?;
+    // 两层各有牙齿(变异对照 ⑯ 逮到的:原先这里判完再把 `stage` 自己传给 SQL 守卫,去掉判断
+    // 后存储层触发器照样拦住 ⇒ 这一层是假守卫):SQL 守卫按**解析后的完成列**比,列不对就 0 行、
+    // 给这句人话;存储层 `trg_item_seal_only_done` 是第二道,话术不同,测试据此分得出是谁拦的。
+    let done = match board::board_of(&tx, &stage)? {
+        Some(b) => board::done_of(&tx, &b)?,
+        None => None,
+    };
+    let n = match done {
+        Some(d) => repo::seal_task_in(&tx, id, &d).map_err(|e| e.to_string())?,
+        None => 0,
+    };
     if n != 1 {
-        return Err(format!("归档失败:只有「已完成」的任务可以归档,影响行数 {n}"));
+        return Err("归档失败:只有在所在看板「完成列」里的任务可以归档".to_string());
     }
     oplog::item_set(&tx, clock, id, &["sealed_at"])?;
     tx.commit().map_err(|e| e.to_string())?;
@@ -632,10 +767,14 @@ pub fn seal(conn: &mut Connection, clock: &mut Clock, id: &str) -> Result<(), St
 }
 
 /// 一键归档全部「已完成」。空列是 0 条的正常结果,不是错误(UI 自己决定说什么)。
-pub fn seal_all(conn: &mut Connection, clock: &mut Clock) -> Result<usize, String> {
+///
+/// 0043:按看板(`board_id` = 那块看板);它没有完成列 ⇒ 响亮拒(UI 本就不该给这个入口)。
+pub fn seal_all(conn: &mut Connection, clock: &mut Clock, board_id: &str) -> Result<usize, String> {
     let tx = conn.transaction().map_err(|e| e.to_string())?;
-    let ids = repo::column_task_ids(&tx, board::DONE_COLUMN).map_err(|e| e.to_string())?;
-    let sealed = repo::seal_all_done(&tx).map_err(|e| e.to_string())?;
+    let done = board::done_of(&tx, board_id)?
+        .ok_or_else(|| "这块看板没有完成列,无可归档".to_string())?;
+    let ids = repo::column_task_ids(&tx, &done).map_err(|e| e.to_string())?;
+    let sealed = repo::seal_all_in(&tx, &done).map_err(|e| e.to_string())?;
     if sealed != ids.len() {
         return Err(format!(
             "一键归档不一致:点名 {} 条、实归 {sealed} 条,已回滚",
@@ -969,12 +1108,12 @@ mod tests {
     #[test]
     fn seal_all_reports_count_and_zero_on_empty() {
         let (mut conn, mut clock) = fresh_db();
-        assert_eq!(seal_all(&mut conn, &mut clock).unwrap(), 0, "empty done column is a 0, not an error");
+        assert_eq!(seal_all(&mut conn, &mut clock, crate::board::SEED_BOARD).unwrap(), 0, "empty done column is a 0, not an error");
         let a = mk(&conn, "A");
         let b = mk(&conn, "B");
         transition(&mut conn, &mut clock, &a, "done", &crate::board::gate::DETACHED).unwrap();
         transition(&mut conn, &mut clock, &b, "done", &crate::board::gate::DETACHED).unwrap();
-        assert_eq!(seal_all(&mut conn, &mut clock).unwrap(), 2);
+        assert_eq!(seal_all(&mut conn, &mut clock, crate::board::SEED_BOARD).unwrap(), 2);
         assert!(ids(&conn, "done").is_empty());
         for t in [&a, &b] {
             assert!(field_ops(&conn, t).iter().any(|(f, v)| f == "sealed_at" && !v.is_null()));
@@ -1276,10 +1415,10 @@ mod tests {
     fn create_inserts_at_column_front_with_one_birth_op() {
         let (mut conn, mut clock) = fresh_db();
         let (a, b, c) = three_todos(&conn); // a0 a1 a2
-        let d = create(&mut conn, &mut clock, "  D  ", None, None, None).unwrap();
+        let d = create(&mut conn, &mut clock, "  D  ", None, None, None, None, &crate::board::gate::DETACHED).unwrap();
         assert_eq!(ids(&conn, "todo"), vec![d.clone(), a.clone(), b.clone(), c.clone()]);
         assert_eq!(title_of(&conn, &d), "D");
-        let e = create(&mut conn, &mut clock, "E", None, None, None).unwrap();
+        let e = create(&mut conn, &mut clock, "E", None, None, None, None, &crate::board::gate::DETACHED).unwrap();
         assert_eq!(ids(&conn, "todo"), vec![e.clone(), d.clone(), a, b, c]);
         // 新建 = 一条出生快照,读行发声使其自带列首终键;不再有任何 position op,
         // 后来者(E)的新建也一张别的卡都不动。
@@ -1297,10 +1436,10 @@ mod tests {
     fn create_is_atomic_and_validated() {
         let (mut conn, mut clock) = fresh_db();
         let (a, b, c) = three_todos(&conn);
-        assert!(create(&mut conn, &mut clock, "   ", None, None, None).is_err());
-        assert!(create(&mut conn, &mut clock, "坏优先级", None, Some(9), None).is_err());
-        assert!(create(&mut conn, &mut clock, "坏日期", Some("2026-02-31"), None, None).is_err());
-        assert!(create(&mut conn, &mut clock, "坏主题", None, None, Some("ghost")).is_err());
+        assert!(create(&mut conn, &mut clock, "   ", None, None, None, None, &crate::board::gate::DETACHED).is_err());
+        assert!(create(&mut conn, &mut clock, "坏优先级", None, Some(9), None, None, &crate::board::gate::DETACHED).is_err());
+        assert!(create(&mut conn, &mut clock, "坏日期", Some("2026-02-31"), None, None, None, &crate::board::gate::DETACHED).is_err());
+        assert!(create(&mut conn, &mut clock, "坏主题", None, None, Some("ghost"), None, &crate::board::gate::DETACHED).is_err());
         assert_eq!(ids(&conn, "todo"), vec![a, b, c]);
         assert_eq!(positions(&conn, "todo"), keys(&["a0", "a1", "a2"]));
         let total: i64 = conn.query_row("SELECT COUNT(*) FROM oplog", [], |r| r.get(0)).unwrap();
@@ -1311,7 +1450,7 @@ mod tests {
     fn create_with_topic_tags_the_card() {
         let (mut conn, mut clock) = fresh_db();
         let topic = repo::insert_topic(&conn, "工作").unwrap();
-        let id = create(&mut conn, &mut clock, "带标签", None, None, Some(&topic)).unwrap();
+        let id = create(&mut conn, &mut clock, "带标签", None, None, Some(&topic), None, &crate::board::gate::DETACHED).unwrap();
         let row = repo::list_tasks(&conn).unwrap().into_iter().find(|t| t.id == id).unwrap();
         assert_eq!(row.topics.len(), 1);
         assert_eq!(row.topics[0].title, "工作");

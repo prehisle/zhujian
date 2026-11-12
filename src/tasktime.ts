@@ -1,6 +1,5 @@
 import { invoke } from "./space";
 import { armDismiss } from "./hotkey-menu";
-import { DONE_COLUMN } from "./board-columns";
 import { t } from "./i18n";
 import "./tasktime.css";
 import { arrowWalk, el } from "./dom";
@@ -156,9 +155,11 @@ export function dueState(due: string | null, today: string): DueState {
  *  不该继续占看板顶栏汇总 / 卡片朱砂强调 / 每日提醒的「逾期/今天」计数。不改卡片自身
  *  due chip 的颜色(`metaRow` 的 `renderDue` 不经这里)——那颗 chip 答的是「这条哪天到
  *  期」这件事实,完成与否是另一回事,历史信息留着;三处「要不要吓人 / 算不算数」的口径
- *  才用这个。 */
-export function dueAttentionState(item: Pick<TaskItem, "due_on" | "status">, today: string): DueState {
-  if (item.status === DONE_COLUMN) return "none";
+ *  才用这个。
+ *  0043(多看板):「完成」= 卡在它那块看板**解析后的完成列**里 ⇒ 调用方传 `boards.ts` 的
+ *  `doneColumnSet`(core 解析的结果),⛔ 别再比 `"done"` 字面量。 */
+export function dueAttentionState(item: Pick<TaskItem, "due_on" | "status">, today: string, doneCols: ReadonlySet<string>): DueState {
+  if (doneCols.has(item.status)) return "none";
   return dueState(item.due_on, today);
 }
 
@@ -170,9 +171,9 @@ export const DUE_SOON_DAYS = 3;
  *  ⛔ **刻意不做成 `DueState` 的第五档** —— 那个枚举同时喂着卡片那颗 due chip 的上色
  *  (`dueState` → `renderDue`),给它加一档会让 chip 跟着变脸,而「汇总的口径与卡片 chip
  *  刻意不同」是已拍过板的形。这里只答汇总钮 / 只看到期那一根轴。 */
-export function isDueSoon(item: Pick<TaskItem, "due_on" | "status">, today: string): boolean {
+export function isDueSoon(item: Pick<TaskItem, "due_on" | "status">, today: string, doneCols: ReadonlySet<string>): boolean {
   // "future" 已保证:未完成、due_on 非 null、且严格晚于今天 ⇒ 这里只剩「远不远」要判。
-  if (dueAttentionState(item, today) !== "future") return false;
+  if (dueAttentionState(item, today, doneCols) !== "future") return false;
   return dayDiff(item.due_on as string, today) <= DUE_SOON_DAYS;
 }
 
@@ -234,6 +235,8 @@ export function metaRow(
   /** 截止 / 优先级真写进库之后调(165 / W5 Q5 ★①):宿主据此出「已设截止 … 撤销」那一条。`before` / `after` = 改前 / 改后的值
    *  (null = 没设 / 清除)。写失败、没改(值一样)不调。 */
   onWritten: (change: { field: "due"; before: string | null; after: string | null } | { field: "priority"; before: number | null; after: number | null }) => void,
+  /** 这张卡在不在它那块看板的完成列里(0043:宿主按 core 解析的角色给,⛔ 别在这里比字面量)。 */
+  isDone: boolean,
 ): MetaRow {
   const row = el("div", { className: "task-meta" });
   const dueWrap = el("span", { className: "slot due-slot" });
@@ -262,7 +265,7 @@ export function metaRow(
     }
     // 158 G3 / Q4(WD-10):已完成的卡不再说「逾期 / 今天」,只留一枚灰色的截止日期 —— 与顶栏汇总、
     // 卡片朱砂、每日提醒「完成的不算」同一口径(dueAttentionState)。日期照写(这条哪天到期是事实)。
-    const done = item.status === DONE_COLUMN;
+    const done = isDone;
     const st = done ? "done" : dueState(item.due_on, today);
     // 158 G2 / A17(WD-27):章本身点得开选择器(此前只能走 ⋯ → 截止 / `/` S,点章没反应)。
     // ⚠ 宿主卡的 CARD_CONTROLS 认 `.chip`,按在章上不起拖、双击不进编辑。

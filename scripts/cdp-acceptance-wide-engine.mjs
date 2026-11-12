@@ -7,7 +7,8 @@
 //
 //  ① 1440×960 随记面:`--wide` / `--tall` 两面旗子都翻成 1(后一面住在套着的 `@media` 里)、body 上 widescreen / tallscreen、
 //     导航在顶栏里、顶栏是三栏网格、悬浮 ＋ 离屏底 16 + 屏底安全区(`--nav-h` 里的 `env()` 解得出来;ArkWeb 报手势条高);
-//  ② 1440×960 任务面:看板网格的栏数 = `--board-cols`、`#filter-stages` 是 `display: contents`、状态钮藏着(到期钮在);
+//  ② 1440×960 任务面:看板是一排横滚的 flex(889 起;此前是网格)—— 列宽吃 `--board-col-w`、高吃 `--board-top` 的 calc / max()、
+//     横向 scroll-snap、列自己 overflow-y 滚;`#filter-stages` 是 `display: contents`、状态钮藏着(到期钮在);
 //  ③ 1440×960 记一笔:屏中浮窗(上下左右居中、宽 ≤ 640、不透明);
 //  ④ 800×360:宽屏、不是高屏,记一笔贴屏底;
 //  ⑤ 360×640:不是宽屏,导航在屏底。
@@ -79,14 +80,18 @@ try {
   const b = await ev(`(() => { const tl = document.getElementById("timeline"); const cs = getComputedStyle(tl);
     const stages = document.getElementById("filter-stages");
     return { board: document.body.classList.contains("board"), groups: tl.querySelectorAll(":scope > .tl-group").length, display: cs.display,
-      tracks: cs.gridTemplateColumns.split(" ").length, cols: tl.style.getPropertyValue("--board-cols").trim(),
+      flow: cs.flexDirection, ox: cs.overflowX, snap: cs.scrollSnapType, h: cs.height, top: tl.style.getPropertyValue("--board-top").trim(),
+      colW: tl.style.getPropertyValue("--board-col-w").trim(),
+      col: (() => { const g = tl.querySelector(":scope > .tl-group"); const gc = g && getComputedStyle(g); return gc && { w: g.getBoundingClientRect().width, oy: gc.overflowY, align: gc.scrollSnapAlign }; })(),
       stagesDisplay: getComputedStyle(stages).display,
       hiddenPills: [...stages.children].filter((x) => !x.classList.contains("fdue")).every((x) => getComputedStyle(x).display === "none") }; })()`);
   if (!b.groups) {
     console.log(JSON.stringify({ error: "库里没有任务,看板画不出列 —— ② 无从验起" }));
     process.exitCode = 2;
   } else {
-    ok(b.board && b.display === "grid" && String(b.tracks) === b.cols, "② 看板网格的栏数 = --board-cols", b);
+    ok(b.board && b.display === "flex" && b.flow === "row" && b.ox === "auto" && /mandatory/.test(b.snap), "② 看板是一排横滚的 flex、横向 scroll-snap", b);
+    ok(!!b.colW && !!b.col && Math.abs(b.col.w - parseFloat(b.colW)) < 1 && b.col.oy === "auto" && /start/.test(b.col.align), "② 列宽 = --board-col-w、列自己竖滚、按列头对齐", b.col);
+    ok(!!b.top && b.h !== "auto" && parseFloat(b.h) > 0, "② 看板定高(--board-top 的 calc / max() 解得出来)", { h: b.h, top: b.top });
     ok(b.stagesDisplay === "contents" && b.hiddenPills, "② 状态排拆成 display: contents、状态钮藏着", { stages: b.stagesDisplay, hiddenPills: b.hiddenPills });
   }
   await face("ideas");
@@ -102,7 +107,9 @@ try {
   await ev(`document.getElementById("capture-fab").click(), true`);
   await sleep(450);
   const c = await ev(SHEET);
-  ok(Math.abs(c.l - (c.W - c.r)) <= 1 && Math.abs(c.t - (c.H - c.b)) <= 1 && c.r - c.l <= 640 && c.op === "1", "③ 记一笔是屏中浮窗", c);
+  // 165 / W5 A53 起记一笔那座竖向**靠顶栏下沿**(上沿 = 顶栏下 16,键盘起落不挪),不再竖向居中 —— 889 才把这条判据跟上。
+  const headH = await ev(`parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--head-h"))`);
+  ok(Math.abs(c.l - (c.W - c.r)) <= 1 && Math.abs(c.t - (headH + 16)) <= 1 && c.b < c.H && c.r - c.l <= 640 && c.op === "1", "③ 记一笔是屏中浮窗(横向居中、上沿在顶栏下 16)", { ...c, headH });
   await close();
 
   // ---- ④ 800×360 -------------------------------------------------------------------------------

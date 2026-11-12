@@ -442,6 +442,23 @@ impl Ctx<'_> {
                     };
                     self.dispatch(ws, ops).await?;
                     admitted?;
+                    // multiboard-plan §15(885 撞出):给刚上线的它回一枚**定向** Hello,把本机 caps
+                    // 当面告诉它。它的能力观测表随它自己的引擎槽清空(`EngineSlot::new` / `retire` /
+                    // `Drop`),而本机若一直在线,不保证因它上线而发出能力 Hello(会话仪式只在**本机**
+                    // 开会话时广播;LAN 收敛 / 建链 / busy 重建碰巧也会发)⇒ 没有那些触发时,它的落卡闸
+                    // 名册臂要等本机重连才凑得齐。
+                    // ⚠ 刻意独立于通告面(不看 ready / 缺钥 / 本机名册真值):缺观测的是**它**,
+                    //    本机看不见它的表(§15.5 一轮 Q3)。引擎不在(引导中)= 没有可宣告的东西,跳过。
+                    // ⚠ 收端会因这一枚走既有的有界对账工作(补洞 Want / 准入 / 缺图询问;busy Nack
+                    //    照常置新债号),全表与「接受」的判据在 §15.3a。构造持库锁,dispatch 前放锁。
+                    let outs = {
+                        let conn = self.db.lock().expect("db mutex poisoned");
+                        match self.engine.peek() {
+                            None => vec![],
+                            Some(e) => e.make_hello(&conn, &device, Route::Relay)?,
+                        }
+                    };
+                    self.dispatch(ws, outs).await?;
                     // §2 收敛触发②:它在线而本机缺它的验证钥 → 定向回一帧本机通告。
                     let outs = self
                         .deck(ws)

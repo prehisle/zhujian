@@ -412,6 +412,7 @@ export function confirmBar(
   };
   bar.classList.remove("retiring");
   bar.hidden = false;
+  document.body.classList.add("confirm-up"); // 宽屏上回执条见它在屏底就退回上方,别两条叠(index.html「宽屏上的三条浮条」,892)
   if (heavy) dodgeTrigger(bar, yes, heavy.from);
   clearTimeout(cbTimer);
   cbSticky = opts?.sticky === true;
@@ -437,6 +438,7 @@ export function hideConfirmBar(): void {
   bar.classList.remove("retiring", "heavy");
   bar.style.transform = "";
   bar.hidden = true;
+  document.body.classList.remove("confirm-up");
 }
 
 /** 返回键(main.ts `__zhujianHandleBack`):sticky 那条开着就收它 = 作罢,消费这一下;别的确认条照旧不归返回键管。 */

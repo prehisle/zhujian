@@ -5626,6 +5626,174 @@ async fn a_directed_control_frame_ack_also_clears_the_unknown_mark() {
     relay.task.abort();
 }
 
+/// multiboard-plan §15(885 撞出)夹具:把 `peer` 的通告缓存先种上,让 §2 收敛触发②
+/// (`lan_hello_if_key_missing`,上线且缺钥就定向问一枚)那条**既有**路闭嘴 —— 否则一次上线
+/// 通知会出两枚定向 Hello,计数断言分不清哪枚是新钩子的。
+fn seed_cached_ad(rig: &LanRig, peer: &str) {
+    let conn = rig.db.lock().unwrap();
+    let lan::AdMerge::Store { record, .. } =
+        lan::merge_peer_ad(None, &ad_of(&pubkey_of(&[6u8; 32]), 1), Ingress::RelayDeliver, NOW_MS)
+    else {
+        panic!("首见必落库");
+    };
+    write_peer_ad(&conn, peer, &record).unwrap();
+}
+
+/// 在 `ms` 内收齐发往 `peer` 的定向 Hello(其余帧一律 Ack 掉,当一个会应答的服务器)。
+async fn directed_hellos_to(relay: &mut FakeRelay, cfg: &SyncConfig, peer: &str, ms: u64) -> Vec<(u64, Msg)> {
+    let mut got = vec![];
+    let deadline = tokio::time::Instant::now() + Duration::from_millis(ms);
+    loop {
+        let left = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if left.is_zero() {
+            return got;
+        }
+        let Some((n, to, msg)) = relay.next_out(cfg, left.as_millis() as u64).await else { return got };
+        if to == peer && matches!(msg, Msg::Hello { .. }) {
+            got.push((n, msg));
+        } else {
+            relay.ack(n);
+        }
+    }
+}
+
+/// **对端上线 ⇒ 本机恰回一枚带能力的定向 Hello**(multiboard-plan §15.3 / §15.4 第 2 只)。
+///
+/// 病:对端的能力观测随它自己的引擎槽清空,而一直在线的本机此前**不保证**因它上线而发能力 Hello
+/// (LAN 收敛 / 建链 / busy 重建碰巧也会发,但没有这些触发时)⇒ 它的落卡闸名册臂要等本机重连
+/// (885 在 MuMu 上实测)。修法是在线臂里新加的那一步。
+/// 计数只断**新钩子这一口**(§15.3 L1):通告缓存先种上,让缺钥那条既有的定向问闭嘴;
+/// 断「恰一枚」而不是「至少一枚」,并且第二次上线通知再恰一枚 —— 每处理一次上线通知产出一枚,
+/// 不随会话去重(对端每次重建会话都要重新听一遍)。
+#[tokio::test]
+async fn a_peer_coming_online_gets_exactly_one_directed_caps_hello() {
+    let (mut relay, rig, cfg) = relay_rig("relay-online-caps", 92).await;
+    seed_cached_ad(&rig, PEER_ONE);
+    // 会话仪式那几枚先放走(广播 Hello 等),免得混进下面的计数。
+    assert!(
+        directed_hellos_to(&mut relay, &cfg, PEER_ONE, 1000).await.is_empty(),
+        "上线通知之前不该有给它的定向 Hello"
+    );
+
+    for round in 1..=2 {
+        relay.reply.send(ServerMsg::Peer { device: PEER_ONE.into(), online: true }).expect("假中转还活着");
+        let got = directed_hellos_to(&mut relay, &cfg, PEER_ONE, 1500).await;
+        assert_eq!(got.len(), 1, "第 {round} 次上线通知:恰一枚定向 Hello,实见 {}", got.len());
+        let (n, Msg::Hello { caps, .. }) = &got[0] else { unreachable!() };
+        assert!(
+            caps.as_ref().is_some_and(|c| sync_proto::has_capability(c, crate::board::CAP_BOARD_COLUMNS_V1)),
+            "那一枚必须带本机能力宣告,实见 {caps:?}"
+        );
+        relay.ack(*n);
+    }
+    rig.task.abort();
+    relay.task.abort();
+}
+
+/// 等**给 `peer` 的那枚定向 Hello**,带总期限(实现审二轮 M1:非目标帧不许续期)。非 Hello 帧 Ack 掉;
+/// 别的 Hello(债驱动的广播等)一律不 Ack。
+async fn wait_directed_hello(relay: &mut FakeRelay, cfg: &SyncConfig, peer: &str, what: &str) -> u64 {
+    let deadline = tokio::time::Instant::now() + Duration::from_millis(8000);
+    loop {
+        let left = deadline.saturating_duration_since(tokio::time::Instant::now()).as_millis() as u64;
+        let got = if left == 0 { None } else { relay.next_out(cfg, left).await };
+        let Some((n, to, m)) = got else {
+            panic!("{what}:8s 内没等到给 {peer} 的定向 Hello(新钩子坏了?)—— 还没走到债的断言");
+        };
+        if to == peer && matches!(m, Msg::Hello { .. }) {
+            return n;
+        }
+        if !matches!(m, Msg::Hello { .. }) {
+            relay.ack(n);
+        }
+    }
+}
+
+/// 处理完成屏障(实现审一轮 M1):冒充服务器报 `peer` 上线,读到**给它的那枚定向 Hello** 为止。
+/// 客户端按序处理同一条连接上的 ServerMsg,故这枚帧一出现,之前塞进去的 Ack / Nack 必已处理完。
+/// 屏障之前读到的帧:非 Hello 一律 Ack(当个会应答的服务器);**Hello 一律不 Ack**(广播的那些
+/// 是债驱动的重建,Ack 了就把要验的东西换掉了),广播 Hello 的号收进返回值。
+async fn barrier_via_online(relay: &mut FakeRelay, cfg: &SyncConfig, peer: &str) -> Vec<u64> {
+    relay.reply.send(ServerMsg::Peer { device: peer.into(), online: true }).expect("假中转还活着");
+    let mut broadcasts = vec![];
+    // **总期限**(实现审二轮 M1):债挂着时广播每拍一枚,按「下一枚任意帧」计时会被它们无限续期
+    // —— 新钩子坏了这里就永远挂着,而不是红。
+    let deadline = tokio::time::Instant::now() + Duration::from_millis(8000);
+    loop {
+        let left = deadline.saturating_duration_since(tokio::time::Instant::now()).as_millis() as u64;
+        let got = if left == 0 { None } else { relay.next_out(cfg, left).await };
+        let Some((n, to, m)) = got else {
+            panic!("屏障失败:8s 内没等到给 {peer} 的那枚定向 Hello(新钩子坏了?)—— 与债无关");
+        };
+        match (&m, to.as_str()) {
+            (Msg::Hello { .. }, t) if t == peer => return broadcasts,
+            (Msg::Hello { .. }, t) if t == BROADCAST => broadcasts.push(n),
+            (Msg::Hello { .. }, _) => {}
+            _ => relay.ack(n),
+        }
+    }
+}
+
+/// **新钩子那枚定向 Hello 与对账重发债**(multiboard-plan §15.3a / §15.4 第 3 只,设计审一轮 M1 索取;
+/// 实现审一轮 M1 补上因果边界):
+/// ① 债已挂着时,它的 Ack **不清债**:Ack 之后立一道处理完成屏障,屏障**之后**还得冒出债驱动的广播 Hello
+///    (屏障之前那些可能是 Ack 处理之前就排进去的,不算数)。
+/// ② 已有债(旧号)时它撞 `busy` **换新号**:扣着一枚旧号广播的 Ack → 定向 Hello busy → 屏障 → 放旧号广播的
+///    Ack → 屏障 → 仍得重建(旧号还不了新债)→ 屏障之后那枚(新号)的 Ack 才清 → 屏障之后静默。
+/// 两件都是既有规则落在一枚新帧上,⛔ 不是新语义。
+#[tokio::test]
+async fn the_online_caps_hello_neither_clears_nor_dodges_the_reconcile_debt() {
+    // ①
+    let (mut relay, rig, cfg) =
+        relay_rig_beat("relay-online-caps-debt", 93, Duration::from_millis(250)).await;
+    for p in [PEER_ONE, PEER_TWO] {
+        seed_cached_ad(&rig, p);
+    }
+    let (ritual, to, msg) = relay.next_out(&cfg, 8000).await.expect("仪式 Hello");
+    assert!(matches!(msg, Msg::Hello { .. }) && to == BROADCAST, "仪式第一枚是广播 Hello");
+    relay.nack(ritual, err_code::BUSY); // 置债
+    relay.reply.send(ServerMsg::Peer { device: PEER_ONE.into(), online: true }).expect("假中转还活着");
+    // 债驱动的广播 Hello:助手里刻意不 Ack,债照旧挂着。
+    let directed = wait_directed_hello(&mut relay, &cfg, PEER_ONE, "①").await;
+    relay.ack(directed); // 定向 Hello 的 Ack —— **不许**算还债
+    let _before = barrier_via_online(&mut relay, &cfg, PEER_TWO).await;
+    assert!(
+        next_broadcast_hello(&mut relay, &cfg, 8000).await.is_some(),
+        "定向 Hello 的 Ack(已确认处理完)还不了这笔债:屏障之后心跳必须照样重建广播 Hello"
+    );
+    rig.task.abort();
+    relay.task.abort();
+
+    // ②
+    let (mut relay, rig, cfg) =
+        relay_rig_beat("relay-online-caps-busy", 94, Duration::from_millis(250)).await;
+    for p in [PEER_ONE, PEER_TWO, PEER_THREE] {
+        seed_cached_ad(&rig, p);
+    }
+    let (ritual, _, _) = relay.next_out(&cfg, 8000).await.expect("仪式 Hello");
+    relay.nack(ritual, err_code::BUSY); // 旧号的债
+    let old = next_broadcast_hello(&mut relay, &cfg, 8000).await.expect("旧号债驱动的那枚广播");
+    // 扣着 `old` 的 Ack 不放;此刻冒出定向 Hello 并撞 busy。
+    relay.reply.send(ServerMsg::Peer { device: PEER_ONE.into(), online: true }).expect("假中转还活着");
+    let directed = wait_directed_hello(&mut relay, &cfg, PEER_ONE, "②").await;
+    relay.nack(directed, err_code::BUSY); // 换新号
+    let _ = barrier_via_online(&mut relay, &cfg, PEER_TWO).await;
+    relay.ack(old); // 旧号广播的迟到 Ack —— 还不了新债
+    let _ = barrier_via_online(&mut relay, &cfg, PEER_THREE).await;
+    let fresh = next_broadcast_hello(&mut relay, &cfg, 8000)
+        .await
+        .expect("旧号的 Ack 还不了定向 busy 置的新债:屏障之后心跳必须照样重建");
+    relay.ack(fresh);
+    let _ = barrier_via_online(&mut relay, &cfg, PEER_ONE).await;
+    assert!(
+        next_broadcast_hello(&mut relay, &cfg, 2000).await.is_none(),
+        "新号那枚广播的 Ack(已确认处理完)之后债就清了"
+    );
+    rig.task.abort();
+    relay.task.abort();
+}
+
+
 /// **会话收场:ops 那一笔要 rollback 而不是提交**(§6.1「未 Ack 的 `ServeOps` 不推进
 /// 游标、退回 pending」)。
 ///
@@ -6464,6 +6632,19 @@ fn spawn_transport_full(
     allow_boot_source: bool,
     boot_commit: BootCommitLatch,
 ) -> Rig {
+    spawn_transport_caps(db, clock, dir, blob_policy, allow_boot_source, boot_commit, Arc::new(PeerCaps::default()))
+}
+
+/// 同上,能力观测表的把手由调用方给(要从外面读「这一代听没听过某台的 caps」时用)。
+fn spawn_transport_caps(
+    db: Arc<Mutex<Connection>>,
+    clock: Arc<Mutex<Clock>>,
+    dir: PathBuf,
+    blob_policy: BlobPolicy,
+    allow_boot_source: bool,
+    boot_commit: BootCommitLatch,
+    peer_caps: Arc<PeerCaps>,
+) -> Rig {
     let (ctl_tx, ctl_rx) = mpsc::channel(8);
     let (ev_tx, ev_rx) = mpsc::unbounded_channel();
     let status = Arc::new(Mutex::new(SyncStatus::default()));
@@ -6488,7 +6669,7 @@ fn spawn_transport_full(
         boot_commit,
         restart_flag: Arc::new(Mutex::new(None)),
         engine_present: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-        peer_caps: Arc::new(PeerCaps::default()),
+        peer_caps,
         lan: None,
     };
     let task = tokio::spawn(run(t));
@@ -7135,6 +7316,82 @@ async fn create_account_commit_boundary_no_await_after_save() {
 
 // ---- 压轴:真服务器 + 双库端到端(建账户 → 配对 → 引导 → 双向实时互通) ----
 
+/// **一直在线的 A 不重连,刚重建会话的 M 也重新听到 A 的能力**(multiboard-plan §15.4 第 1 只;
+/// 885 在 MuMu 上撞出:M 升级重启后落卡闸名册臂要等 A 重连)。真服务器、两台真 runtime。
+///
+/// 隔离(§15.4 二轮 L1):两台都是 `lan: None`(不监听;双方都没有对方的监听地址 ⇒ 也不拨出、不移交链路)。
+/// ⚠ **通告面没关**,偏离了设计稿「让通告面不就绪」那半:`ready` 只有归属对齐失败才为假,台架造不出;
+/// 改走「通告停用」(序号顶满)反而会让缺钥那条定向问**每次上线都发** —— 它带 caps,会把病整个盖住。
+/// 改用「先等两边互相钉住对方的公钥」把那条既有路闭上(M 重启后缓存还在:不首见、不缺钥),
+/// 再由**删掉新钩子必红**(mutation-check)证明台架里没有别的获知路径。
+/// 「清 M 本代观测」由正常重建槽完成(新 runtime 带一只新的空表),⛔ 不手动清。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_restarted_peer_relearns_caps_without_the_other_side_reconnecting() {
+    let addr = start_server().await;
+    let url = format!("ws://{addr}");
+    let (db_a, clock_a, dir_a) = test_db("caps-a");
+    create_account_as(&db_a, &url, Some(ACCT)).await.unwrap();
+    let mut rig_a = spawn_transport(db_a.clone(), clock_a.clone(), dir_a);
+    wait_state(&rig_a.status, "online").await;
+    let dev_a = clock_a.lock().unwrap().device_id().to_string();
+    // 观察起点 = A 第一次 online(实现审一轮 M2):之前那几枚(connecting → online)排掉;
+    // **此后一枚都不排**,到收尾逐条查 —— 中途排空会把 A 的一次重连连证据一起删掉。
+    while rig_a.events.try_recv().is_ok() {}
+
+    let (db_m, clock_m, dir_m) = test_db("caps-m");
+    let (tx, rx) = oneshot::channel();
+    rig_a.control.send(Control::PairStart { reply: tx }).await.unwrap();
+    let code = timeout(Duration::from_secs(10), rx).await.unwrap().unwrap().unwrap();
+    pair_join(&db_m, &url, &code, |_| Ok(())).await.unwrap();
+    let dev_m = clock_m.lock().unwrap().device_id().to_string();
+    let caps_m1 = Arc::new(PeerCaps::default());
+    let rig_m = spawn_transport_caps(
+        db_m.clone(),
+        clock_m.clone(),
+        dir_m.clone(),
+        BlobPolicy::Full,
+        true,
+        Arc::new(Mutex::new(None)),
+        caps_m1.clone(),
+    );
+    wait_state(&rig_m.status, "online").await;
+    wait_until("前提:第一代 M 听到了 A 的能力", || caps_m1.supports(&dev_a)).await;
+    wait_until("前提:两边互相钉住了对方的局域网公钥(缺钥那条定向问从此闭嘴)", || {
+        read_peer_ad(&db_a.lock().unwrap(), &dev_m).unwrap().is_some()
+            && read_peer_ad(&db_m.lock().unwrap(), &dev_a).unwrap().is_some()
+    })
+    .await;
+
+    // M 整台停掉(槽随任务没了,观测表随之作废),等 A 看见它下线。
+    rig_m.task.abort();
+    // ⚠ `peers_online == 0` 也可能是 A 自己进了 connecting —— 那一种由收尾的事件流断言抓。
+    wait_until("A 看见 M 下线", || rig_a.status.lock().unwrap().peers_online == 0).await;
+
+    // M 重建:新 runtime、新会话、一只空的观测表。A 全程不动。
+    let caps_m2 = Arc::new(PeerCaps::default());
+    assert!(!caps_m2.supports(&dev_a), "前提:新一代 M 的表是空的");
+    let rig_m2 = spawn_transport_caps(
+        db_m.clone(),
+        clock_m.clone(),
+        dir_m,
+        BlobPolicy::Full,
+        true,
+        Arc::new(Mutex::new(None)),
+        caps_m2.clone(),
+    );
+    wait_state(&rig_m2.status, "online").await;
+    wait_until("新一代 M 不等 A 重连就重新听到 A 的能力", || caps_m2.supports(&dev_a)).await;
+
+    // A 的会话没重建过:从它第一次 online 起(配对、M 停、M 重建全程),状态面一次都没离开 online。
+    while let Ok(ev) = rig_a.events.try_recv() {
+        if let SyncEvent::Status(st) = ev {
+            assert_eq!(st.state, "online", "A 不许为此重连(实见 {})", st.state);
+        }
+    }
+    rig_a.task.abort();
+    rig_m2.task.abort();
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn end_to_end_pair_boot_and_realtime_converge() {
     let addr = start_server().await;
@@ -7771,7 +8028,7 @@ async fn metadata_only_peer_syncs_ops_and_tasks_without_pulling_blobs() {
     {
         let mut conn = db_a.lock().unwrap();
         let mut clk = clock_a.lock().unwrap();
-        task::create(&mut conn, &mut clk, "甲派的活", None, None, None).unwrap();
+        task::create(&mut conn, &mut clk, "甲派的活", None, None, None, None, &crate::board::gate::DETACHED).unwrap();
     }
     wait_until("B 收到 A 的任务", || {
         let conn = db_b.lock().unwrap();
@@ -7803,7 +8060,7 @@ async fn metadata_only_peer_syncs_ops_and_tasks_without_pulling_blobs() {
     {
         let mut conn = db_b.lock().unwrap();
         let mut clk = clock_b.lock().unwrap();
-        task::create(&mut conn, &mut clk, "乙记的待办", None, None, None).unwrap();
+        task::create(&mut conn, &mut clk, "乙记的待办", None, None, None, None, &crate::board::gate::DETACHED).unwrap();
     }
     wait_until("A 收到 B 直接建的 todo", || count_items(&db_a) == 3).await;
     wait_until("oplog 终局逐行一致", || {

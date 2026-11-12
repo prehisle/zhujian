@@ -263,7 +263,6 @@
 }
 /* 157 G4 / P13:长随记夹在 8 行(12.8em = 8 × 上面那条 line-height 1.6;走 em 的理由同 board.css 那条)。 */
 .v-inbox .note-text.clamped { max-height: 12.8em; overflow: hidden; }
-.v-inbox .note .fold-toggle { margin-top: 6px; }
 .v-inbox .note-time {
   display: block;
   margin-top: 7px;

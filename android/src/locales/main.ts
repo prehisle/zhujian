@@ -166,4 +166,15 @@ export const main = defineMessages({
   "main.spaceRenamedRefreshFailed": { zh: "空间名已更新,但空间列表刷新失败:{error}", en: "The space was renamed, but the space list could not be refreshed: {error}" },
   "main.gatePreparing": { zh: "正在准备本机空间…", en: "Preparing local spaces…" },
   "main.gateRetrying": { zh: "正在检查本机空间…(重试中)", en: "Checking local spaces… (retrying)" },
+  // ---- 0043 多看板第 4 段(multiboard-plan §6 手机;columns.ts / main.ts 的看板切换条)。与桌面 boards.* 同句,两端字典各一份。
+  // 种子看板没改过名时的本端名(同种子列 §7.1d:canonical 串不出 core,各端各显自己那门语言)。
+  "boards.seedName": { zh: "任务", en: "Tasks" },
+  "boards.axis": { zh: "看板", en: "Board" },
+  "boards.holdingPill": { zh: "已删除的看板 / 列", en: "Deleted boards / columns" },
+  "boards.holdingFrom": { zh: "「{board}」· {col}", en: "“{board}” · {col}" },
+  // backlog 170(第 4 段留的两笔小账):归档册按看板筛(panes.ts renderSealed)、回收站还原进了收容区的回执。三句与桌面逐字同。
+  "boards.sealedAll": { zh: "全部看板", en: "All boards" },
+  "boards.sealedNoneHere": { zh: "这块看板还没有归档的成就", en: "Nothing archived from this board yet" },
+  "boards.restoredHeld": { zh: "已还原:它原来那一列已经删了,先放在「已删除的看板 / 列」那里", en: "Restored — its column was deleted, so it’s waiting under “Deleted boards / columns”" },
+  "boards.holdingBar": { zh: "这些卡原来所在的看板或列已经删了,只能挪出去:点卡片 → 更多… → 挪到看板。挪完这里就空了。", en: "These cards’ board or column was deleted. They can only be moved out: tap a card → More… → Move to board. Once moved, this view empties." },
 });

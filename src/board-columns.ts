@@ -27,22 +27,24 @@ export type BoardColumn = {
   deleted: boolean;
   /** 该列上未归档未封存的条目数(后端算的,⛔ 别拿 list_tasks 再数一遍当第二份口径)。 */
   live_items: number;
-  /** 这一列**允许**删吗(480 定案)。⚠ 不是「现在能不能删」——非空还要先清空。 */
+  /** 这一列**此刻**允许删吗(480 定案;0043 起含动态拒因:完成列 / 看板上最后一枚能放卡的列 /
+   *  看板已删)。⚠ 不是「现在能不能删」的全部——非空还要先清空。 */
   deletable: boolean;
+  /** 0043:属于哪块看板(灵感两列 null)。 */
+  board_id: string | null;
+  /** 0043:所在看板已删 ⇒ 这一列住收容区(multiboard-plan §3a),只出不进。 */
+  board_deleted: boolean;
 };
 
 /** 全部列(含已删的),已由 core 按 `(position, id)` 排好。⛔ 前端别再排一次(0022:同键并列合法)。 */
 export const loadBoardColumns = (): Promise<BoardColumn[]> => invoke<BoardColumn[]>("list_board_columns");
 
 /**
- * 挂着产品语义、故永不可删的那两列(core 的 `board::LANDING_COLUMN` / `DONE_COLUMN`)。
- *
- * ⭐ **前端有这两个字面量是安全的,理由是 480 那条裁决**:这两列**只禁删**(可改名、可排
- * 序),id 永不消失 ⇒ 「新任务落哪儿」「进哪一列盖 done_at / 能不能入成就册」这些角色恒
- * 钉在这两个 id 上。⛔ 但别把它们扩成第二份「有哪几列」——那是 loadBoardColumns 的活。
+ * 种子看板的种子落点 `todo`。⚠ **0043 起它不再是「落点」这个角色**(角色是每块看板上的指针,
+ * 读 `boards.ts` 的 `Board.landing`)—— 只剩一个用处:**跨空间移动恒落目标空间的种子 `todo`**
+ * (multiboard-plan §5.3),`move-space.ts` 的提示照这一列说。⛔ 别拿它判角色(plan §1 不变量 3)。
  */
-export const LANDING_COLUMN = "todo";
-export const DONE_COLUMN = "done";
+export const SEED_TODO_COLUMN = "todo";
 
 /**
  * 六个种子列的 canonical 名住在**本端字典**里(§7.1d)。
@@ -78,15 +80,14 @@ export function columnName(c: BoardColumn): string {
 }
 
 /**
- * 看板要画的列 = **任务列** ∧ (**活着** ∨ **还扣着卡**)。
+ * 一块看板要画的列 = 属于它的**活**任务列(0043 起)。
  *
- * 后半句就是 §4.3 那个只读收容区:对端删掉一列、本端正好有卡在里面 —— 列行保留、卡继续
- * 引用它。⛔ 那时**必须**把这一列画出来,否则卡就从看板上「不见了」(而它其实还在库里)。
- * 用户把卡拖走后它自然消失(下一次 load 时 live_items 归零)。
- * ⚠ 已删的列**不是拖放目标**(core 的 `is_live_task_column` 会拒)⇒ 画它的人要记得不接放。
+ * ⭐ multiboard-plan §3a 改了 board-columns §4.3 的现行形:已删的列(或已删看板的列)里还扣着
+ * 卡时,**不再**作为只读列留在原看板上,一并挪进侧栏底部那个收容区(`boards.ts`
+ * `holdingColumns`)—— 每张活卡只有一个归宿,⛔ 别在原看板上同时留一份。
  */
-export function boardColumns(cols: BoardColumn[]): BoardColumn[] {
-  return cols.filter((c) => c.kind === "task" && (!c.deleted || c.live_items > 0));
+export function boardColumns(cols: BoardColumn[], boardId: string): BoardColumn[] {
+  return cols.filter((c) => c.kind === "task" && c.board_id === boardId && !c.deleted && !c.board_deleted);
 }
 
 // ---- 写侧(B-f 第 2 段;⭐ **只有桌面有这一半** —— 安卓只做读侧,2026-08-25 用户拍板) ----
@@ -97,8 +98,9 @@ export function boardColumns(cols: BoardColumn[]): BoardColumn[] {
 // 的答案只有两个来源:`list_board_columns` 给的 `deletable`/`live_items`/`deleted`,
 // 与下面那枚只读探针给的 `can_manage`。
 
-/** 新建一个任务列(落在最右)。返回新列 id。 */
-export const createColumn = (title: string): Promise<string> => invoke<string>("create_board_column", { title });
+/** 在 `boardId` 那块看板上新建一个任务列(落在最右)。返回新列 id。 */
+export const createColumn = (title: string, boardId: string): Promise<string> =>
+  invoke<string>("create_board_column", { title, boardId });
 
 /** 给一列改名。⚠ 调用前先过 no-op 闸,见 column-manager.ts 里那段(英文档下的真陷阱)。 */
 export const renameColumn = (id: string, title: string): Promise<void> =>

@@ -38,7 +38,7 @@ import { toastGo } from "./toast";
 import { errText } from "./err";
 import { t } from "./i18n";
 import { el } from "./dom";
-import { type BoardColumn, LANDING_COLUMN, columnName } from "./board-columns";
+import { type BoardColumn, SEED_TODO_COLUMN, columnName } from "./board-columns";
 
 export type MovePanelOpts = {
   itemId: string;
@@ -172,7 +172,7 @@ export function movePanel(opts: MovePanelOpts): { panel: HTMLElement; reveal: ()
     question.textContent =
       from === null || landing === null
         ? t("space.moveQ", { name })
-        : from.id === LANDING_COLUMN
+        : from.id === SEED_TODO_COLUMN
           ? t("space.moveQTask", { name, col: landing })
           : t("space.moveQTaskFrom", { name, col: landing, from: from.name });
   }
@@ -192,7 +192,7 @@ export function movePanel(opts: MovePanelOpts): { panel: HTMLElement; reveal: ()
     const mine = ++pickSeq;
     try {
       const cols = await invokeInSpace<BoardColumn[]>(id, "list_board_columns");
-      const col = cols.find((c) => c.id === LANDING_COLUMN);
+      const col = cols.find((c) => c.id === SEED_TODO_COLUMN);
       if (mine !== pickSeq || col === undefined) return;
       landing = columnName(col);
       paintQuestion();
@@ -233,7 +233,7 @@ export function movePanel(opts: MovePanelOpts): { panel: HTMLElement; reveal: ()
     if (moving || picked === null) return;
     const target = picked;
     const name = labelOf(target);
-    const colInfo = opts.fromColumn && landing !== null ? { landing, from: opts.fromColumn.id === LANDING_COLUMN ? null : opts.fromColumn.name } : null;
+    const colInfo = opts.fromColumn && landing !== null ? { landing, from: opts.fromColumn.id === SEED_TODO_COLUMN ? null : opts.fromColumn.name } : null;
     if (opts.carriesDocAt) {
       // 878 混版提醒(判目标空间)。问着的时候点在弹窗上 = 点在面板外:moving 置真,armDismiss 那只就接着守、不把面板收掉;
       // 先不置灰 —— 「先不用」之后焦点要还回「确认移动」,置灰的钮接不住焦点。

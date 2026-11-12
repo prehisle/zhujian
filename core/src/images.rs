@@ -281,7 +281,7 @@ mod tests {
     fn trash_lists_by_owner_and_each_clear_only_touches_its_own_page() {
         let (mut c, mut k) = fresh_db();
         let idea = notes::capture(&mut c, &mut k, "灵感宿主\n第二行").unwrap();
-        let todo = task::create(&mut c, &mut k, "任务宿主", None, None, None).unwrap();
+        let todo = task::create(&mut c, &mut k, "任务宿主", None, None, None, None, &crate::board::gate::DETACHED).unwrap();
         let (idea_keep, _) = attach(&mut c, &mut k, &idea, &[1], "image/png").unwrap();
         let (idea_gone, _) = attach(&mut c, &mut k, &idea, &[2], "image/png").unwrap();
         let (todo_gone, _) = attach(&mut c, &mut k, &todo, &[3], "image/png").unwrap();

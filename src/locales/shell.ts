@@ -12,7 +12,8 @@ export const shell = defineMessages({
   "shell.personalSpace": { zh: "个人空间", en: "Personal space" },
   "shell.navIdeas": { zh: "随记", en: "Notes" },
   "shell.navDocs": { zh: "长文", en: "Long-form" },
-  "shell.navTasks": { zh: "任务", en: "Tasks" },
+  // 0043 多看板(multiboard-plan §0 ⑨):侧栏那项改叫「看板」,下面展开各块。⛔ 键名不动(命名铁律)。
+  "shell.navTasks": { zh: "看板", en: "Boards" },
   "shell.navTags": { zh: "标签", en: "Tags" },
   "shell.navSearch": { zh: "搜索", en: "Search" },
   "shell.sync": { zh: "同步", en: "Sync" },

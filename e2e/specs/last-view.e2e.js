@@ -59,7 +59,7 @@ describe("侧栏折叠成图标条", () => {
     const open = await state();
     expect(open.collapsed).toBe(false);
     expect(open).toMatchObject({ navClickable: true, lblShown: true, icoShown: true });
-    expect(open.title).toBe("任务"); // 图标态下靠它说明「这是什么」
+    expect(open.title).toBe("看板"); // 图标态下靠它说明「这是什么」
 
     await toggle();
     await browser.pause(300); // 宽度有 0.18s 过渡
