@@ -290,6 +290,18 @@ async function shootNotebook(cdp, page, lang, theme, file) {
     return true;
   })()`);
   await cdp.waitFor(`window.innerWidth >= ${NB_W - 60}`, `视口宽跟上 ${NB_W}`, 8000);
+  // 随记页顶那条「快捷键被别的程序占用」的红条(`#hkb-banner`)与捕获窗那条同一个隐藏入参:用户日常那只
+  // 朱简开着就有、关着就没有 —— 899 重拍官网配图时它进了图。判据与处置照 shootCapture 那段:
+  // 问壳自己的答案、等 DOM 跟上、按产品自己的收起路径(那枚 ×)点掉,并把「本趟有没有它」印出来。
+  if (page.view === "inbox") {
+    const conflicts = await cdp.evaluate(`window.__TAURI__.core.invoke("hotkey_conflicts")`);
+    if (conflicts.length > 0) {
+      await cdp.waitFor(`document.getElementById("hkb-banner")?.hidden === false`, "随记页热键冲突条挂上", 8000);
+      await cdp.evaluate(`(() => { document.querySelector("#hkb-banner .hkb-x").click(); return true; })()`);
+      await cdp.waitFor(`document.getElementById("hkb-banner").hidden === true`, "随记页热键冲突条收起", 5000);
+      process.stdout.write(`(热键 ${conflicts.join("/")} 被别的程序占着,随记页冲突条已收起) `);
+    }
+  }
   if (page.query && !empty) {
     await cdp.evaluate(`(() => {
       const q = document.querySelector("#q");

@@ -359,6 +359,12 @@
         margin: 26px 0 0;
       }
       .hero h1 .accent { color: var(--seal); }
+      /* 英文档:文楷的拉丁字本来就宽,照中文那一档的字号与字距,第二行 "think it through later." 放不进
+         780 的栏、折成三行,把产品图挤出首屏(progress-log 899)⇒ 字号降一档、字距归零,桌面宽两行排完。 */
+      :root:lang(en) .hero h1 { font-size: clamp(36px, 5.6vw, 64px); letter-spacing: 0; }
+      /* 同一个因:给汉字配的标题字距落在拉丁字上显得散 ⇒ 英文档的标题字距一律归零。 */
+      :root:lang(en) :is(.section-title, .row-copy h3, .tile h3, .promise-grid h3, .post-title) { letter-spacing: 0; }
+      :root:lang(en) .eyebrow { letter-spacing: 0.08em; }
       .hero-lead {
         margin: 22px auto 0;
         max-width: 36em;
@@ -518,8 +524,8 @@
       /* 看板:「进行中」「待确认」两列,带小清单的那张卡在正中 */
       .crop.crop-board { aspect-ratio: 3 / 2; }
       .crop-board > img:first-child { width: 200%; transform: translate(-35.5%, -24%); }
-      /* 英文界面的看板顶栏折成两行,列头往下错约 6% 图高 ⇒ 多上移这一截(量法:列头在 1050 高的图里 zh 约 285、en 约 348) */
-      html[lang="en"] .crop-board > img:first-child { transform: translate(-35.5%, -30%); }
+      /* ⚠ 这里曾有一条英文档专属的多上移 6%(那时英文看板顶栏折成两行)。899 起页头收纳后英文也是一行,
+         那条反而把列名推出了框 ⇒ 撤掉;重拍配图后顶栏行数要是又变了,先量列头位置再回来改。 */
       /* 同一份随记在手机上,压在右下角、底边出框 */
       .crop .crop-phone {
         position: absolute;
@@ -1291,6 +1297,8 @@
         /* 三步收成一列:图在字下面,左右交替那一翻只在两栏时有意义 */
         .row, .row.flip { grid-template-columns: 1fr; }
         .row.flip .row-copy { order: 0; }
+        /* 收成一列之后图别跟着栏宽撑满:平板竖放那一档(≈820)一张图占一整屏、图里的字比正文还大(899) */
+        .row > .demo, .row > .shot-zoom { width: min(100%, 560px); justify-self: center; }
 
         /* 窄屏收成一列:标签在上、正文在下,行间那道线只留给标签那一格 */
         .facts { grid-template-columns: 1fr; }
@@ -1304,6 +1312,13 @@
         /* 第一步演示(progress-log 896):4/3 的台面在 390 宽只有约 250 高,列表那块按百分比钉死、装不下三张卡,
            第三张掉出白底。⇒ 窄屏台面改成方的,列表改成贴底、按内容定高。 */
         .demo { aspect-ratio: 1 / 1; }
+        /* 窄屏首屏:电脑图缩到这个宽度一个字都读不出,而来的人多半拿着手机 ⇒ 只摆手机那张、居中当主角
+           (progress-log 899);下载区同理把 Android 卡排到最前。 */
+        /* 首屏那枚「新版本」胶囊不许折行,英文那句长、在 390 宽顶到了屏边(899)⇒ 窄屏许它折 */
+        .news-pill { white-space: normal; }
+        .stage-desktop { display: none; }
+        .stage-phone { position: static; width: min(64%, 250px); margin: 0 auto; }
+        .dl-row .dl-card:nth-child(2) { order: -1; }
         .demo-list { top: auto; }
         .bento { grid-template-columns: 1fr; }
         .t-wide { grid-column: auto; grid-template-columns: 1fr; }
@@ -1508,7 +1523,7 @@
             <article class="tile t-wide">
               <div>
                 <h3 data-i18n="feat.keysTitle">手不离键盘</h3>
-                <p data-i18n="feat.keys">卡片上的每个动作都有一个单键;按 ] 往前挪一列,按 [ 往后挪。</p>
+                <p data-i18n="feat.keys">卡片上的每个动作都有一个单键;按 ] 移到右边一列,按 [ 移回去。</p>
               </div>
               <div class="keys" aria-hidden="true">
                 <span><kbd>E</kbd><span data-i18n="feat.kEdit">编辑</span></span>
@@ -1757,7 +1772,7 @@
           "feat.spaceA": { zh: "一个空间一本本子,互不相混。纸条里打", en: "Each space is its own notebook, kept apart. Type" },
           "feat.spaceB": { zh: "就换过去。", en: "in the slip to switch." },
           "feat.keysTitle": { zh: "手不离键盘", en: "Hands on the keyboard" },
-          "feat.keys": { zh: "卡片上的每个动作都有一个单键;按 ] 往前挪一列,按 [ 往后挪。", en: "Every action on a card has a single key: press ] to move it a column forward, [ to move it back." },
+          "feat.keys": { zh: "卡片上的每个动作都有一个单键;按 ] 移到右边一列,按 [ 移回去。", en: "Every action on a card has a single key: press ] to move it one column right, [ to move it back left." },
           "feat.kEdit": { zh: "编辑", en: "Edit" },
           "feat.kCopy": { zh: "复制", en: "Copy" },
           "feat.kTag": { zh: "标签", en: "Tags" },
