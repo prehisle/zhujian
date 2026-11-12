@@ -91,7 +91,7 @@
   font-size: var(--fs-12);
   font-weight: 600;
   letter-spacing: 0.04em;
-  color: var(--ink-faint);
+  color: var(--ink-soft); /* 与顶栏 .hbtn .k 同一族、同一档(progress-log 896)*/
   background: color-mix(in srgb, var(--ink) 6%, transparent);
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-xs);

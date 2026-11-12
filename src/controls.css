@@ -66,7 +66,8 @@
   font-size: var(--fs-12);
   font-weight: 600;
   letter-spacing: 0.04em;
-  color: var(--ink-faint);
+  /* 键名是要读的、同屏别处拿不到 ⇒ --ink-soft(用户拍,progress-log 896)。⚠ 亮档压按钮底 4.57,仍差 5.0 一点,知情。 */
+  color: var(--ink-soft);
   background: color-mix(in srgb, var(--ink) 6%, transparent);
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-xs);

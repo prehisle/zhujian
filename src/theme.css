@@ -41,7 +41,10 @@
      ⚠ 这组数是**对着 board.css 的 18% / 20% 浓度、card-color.ts 那七色、这份 --raised/--raised-edge**
      算的 —— 改浓度、加色、动纸面令牌,都得照原法重算(读数与跑法在 progress-log 同号条目)。
      ⛔ 与安卓那两枚 --ink-soft-on-tint / --ink-faint-on-tint **不同名、不同值**:那边浓度 15%、底是单色,
-     是分别算的;别为了「看起来该合并」把一端的值抄给另一端(check-theme-drift 按名字比,同名不同值会红)。 */
+     是分别算的;别为了「看起来该合并」把一端的值抄给另一端(check-theme-drift 按名字比,同名不同值会红)。
+     ⭐ 第二个用处(progress-log 896):有色标签 chip(随记 / 看板 / 长文 / 搜索的 `.tinted`)的字也走 soft 这枚 ——
+     chip 底 = 标签色 12% 混 --paper,--ink-soft 压上去八色最紧 4.37(亮),这枚 5.60(亮)/ 7.29(暗;按色值算)。
+     ⚠ 动这枚的值、tag-color.ts 那八色或 chip 的 12% 浓度,chip 这一头也要重算。 */
   --ink-soft-on-tint-tcard: #5b5347;
   --ink-faint-on-tint-tcard: #938b7a;
   --seal-tint-solid: #f3e4d9; /* = --seal-tint 叠在 --raised 上的实色(与安卓那枚同名同值同义) */

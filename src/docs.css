@@ -92,6 +92,7 @@
   border: 1px solid var(--seal-line);
 }
 .v-docs .tag.tinted {
+  color: var(--ink-soft-on-tint-tcard); /* 染色底上 --ink-soft 只有 4.37(< §2.2 小字 5.0)⇒ 借染色卡那枚,八色最紧 5.60;theme.css 那段注释 */
   border-color: color-mix(in srgb, var(--tag-color) 55%, var(--line-strong));
   background: color-mix(in srgb, var(--tag-color) 12%, var(--paper));
 }

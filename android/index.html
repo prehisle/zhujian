@@ -488,7 +488,7 @@
         field-sizing: content;
         caret-color: var(--seal);
       }
-      .compose textarea::placeholder { color: var(--ink-faint); }
+      .compose textarea::placeholder { color: var(--ink-soft); }
       /* 562 加第三枚左侧小钮后量过、618(copy-plan 格 1d 把它从「＋ 待办 / ＋ To-do」改成
          「＋ 清单 / ＋ Checklist」)照同一手法重量:这一行排开 zh 档 259px / en 档 **342px**
          (改口前 en 是 322px;两趟都拿桌面 Chrome 的字体度量量的,真机字体回退可能再宽一点)。
@@ -649,7 +649,7 @@
         field-sizing: content;
         caret-color: var(--seal);
       }
-      .cm-compose textarea::placeholder { color: var(--ink-faint); }
+      .cm-compose textarea::placeholder { color: var(--ink-soft); }
       /* 写/删 in-flight:整层禁点(防双击——重复提交造不出「撤销」)。 */
       .cmsheet.busy .cm-del, .cmsheet.busy .cm-more { opacity: 0.45; pointer-events: none; }
       /* 卡上的留言徽章:与时间戳同一档存在感,但它**是可点的**——触区靠 ::before 外扩
@@ -2427,7 +2427,7 @@
          ⇒ 歇着时把那块收掉(张开 `.wide` 时才要 ×;158 G2 那条「点 × 清空」也只在框有焦点 = 张开时用得到)。 */
       .ftext:not(.wide)::-webkit-search-cancel-button { display: none; }
       .ftext:focus { outline: none; border-color: var(--seal); }
-      .ftext::placeholder { color: var(--ink-faint); }
+      .ftext::placeholder { color: var(--ink-soft); }
 
       /* 诊断面(P4-b 原样收编,打开才跑)。⚠ 下面的 .kv 与 .row 出生在这一节,但早已是
          **通用面板骨架**:.row 遍布 body 里空间/同步/搜索/回收站/设置各面(⛔ 别在这儿

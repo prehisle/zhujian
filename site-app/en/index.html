@@ -80,7 +80,8 @@
         --font-sans-en: "Segoe UI", system-ui, -apple-system, "Microsoft YaHei", "PingFang SC", sans-serif;
         /* 官网标题一族(改版 1a):自托管的文楷子集,认不到时退回系统楷体。只此一处用它的地方是官网。 */
         --font-display: "Zhujian WenKai", "Kaiti SC", "STKaiti", "KaiTi", serif;
-        /* 手机截图外那圈机身。刻意不随明暗翻面:它画的是一台黑色手机,不是纸面。 */
+        /* 手机截图外那圈机身:画的是一台黑色手机,不是纸面。⚠ 暗档另给一个值(下面那块):
+           这枚正好等于暗档的 --paper,不换的话那圈机身在暗色页上是隐形的(progress-log 896)。 */
         --bezel: #1b1813;
         /* 首页「承诺」那块深色带(改版 2b):两档都是深的,暗色档再深一级;前景同族,不借 --ink。 */
         --band: #1e1a15;
@@ -137,6 +138,7 @@
           --band-veil: rgba(36, 32, 25, 0.55); /* = --raised 55% */
           --seal-select: rgba(223, 106, 79, 0.26); /* = --seal 26% */
           --band: #0f0d0a;
+          --bezel: #3a342a; /* 比暗档纸面亮一级的深灰:机身看得见,仍读作黑色手机 */
           --band-ink: #ede5d6;
           --band-soft: #9d927e;
           --band-line: rgba(237, 229, 214, 0.1);
@@ -256,6 +258,8 @@
       @media (max-width: 720px) {
         .nav a.hide-sm { display: none; }
         .nav { gap: 16px; }
+        /* 窄屏顶栏只剩「下载 / EN」两枚,都够 44px 高(ui-guidelines §2.3;progress-log 896) */
+        .nav a.ghost-btn, .nav a.lang { display: inline-flex; align-items: center; min-height: 44px; }
       }
 
       /* 另一种语言的提示条(改版 2c)。⚠ `[hidden]` 显式写死:哪天有人给 .lang-hint 加 display,
@@ -396,7 +400,8 @@
         justify-content: center;
         gap: 4px 16px;
         font-size: var(--fs-13);
-        color: var(--ink-faint);
+        /* 这一行里有「开源 MIT · 不用注册」,是要读的 ⇒ --ink-soft(progress-log 896);分隔点仍淡 */
+        color: var(--ink-soft);
       }
       .platforms li { white-space: nowrap; }
       .platforms li + li::before { content: "·"; margin-right: 16px; color: var(--ink-faint); }
@@ -1095,7 +1100,13 @@
         border-radius: var(--radius-pill);
         padding: 8px 18px;
       }
-      .dl-foot { margin-top: 30px; font-size: var(--fs-14); color: var(--ink-faint); }
+      .dl-foot { margin-top: 30px; font-size: var(--fs-14); color: var(--ink-soft); }
+      .dl-mail { margin: 8px 0 0; font-size: var(--fs-14); color: var(--ink-soft); }
+      /* 装的时候会撞到的那一句,写在各自那张卡的按钮下面(progress-log 896):此前四件事串在页面最底一段淡字里。
+         境内站没有分平台的卡 ⇒ 生成器把同两句排成按钮行下面的两行(.dl-notes)。 */
+      .dl-hint { margin-top: 14px; font-size: var(--fs-13); line-height: 1.65; color: var(--ink-soft); text-align: center; }
+      .dl-notes { list-style: none; margin: 22px auto 0; padding: 0; max-width: 620px; font-size: var(--fs-13); line-height: 1.8; color: var(--ink-soft); }
+      .dl-notes b { color: var(--ink); font-weight: 600; margin-right: 8px; }
 
       /* 尝鲜版:mac/Linux 链路已通但未正式发布 —— 一行文字链。
          此前是两张与正式版并列的卡,半屏面积只装了两句 caveat;降成一行之后
@@ -1105,7 +1116,7 @@
         max-width: 620px;
         font-size: var(--fs-13);
         line-height: 1.9;
-        color: var(--ink-faint);
+        color: var(--ink-soft);
       }
       .dl-trial .trial-tag {
         font-size: var(--fs-12);
@@ -1124,7 +1135,7 @@
       .dl-log a { color: var(--seal); text-decoration: none; }
       .dl-log a:hover { text-decoration: underline; }
       /* 核对安装包:与尝鲜版那一行同一身小字 + 朱色链接,排在更新日志之下、页脚说明之上。 */
-      .dl-verify { margin: 10px 0 0; font-size: var(--fs-13); color: var(--ink-faint); }
+      .dl-verify { margin: 10px 0 0; font-size: var(--fs-13); color: var(--ink-soft); }
       .dl-verify a { color: var(--seal); text-decoration: none; margin-left: 10px; white-space: nowrap; }
       .dl-verify a:hover { text-decoration: underline; }
 
@@ -1280,6 +1291,10 @@
       }
 
       @media (max-width: 600px) {
+        /* 第一步演示(progress-log 896):4/3 的台面在 390 宽只有约 250 高,列表那块按百分比钉死、装不下三张卡,
+           第三张掉出白底。⇒ 窄屏台面改成方的,列表改成贴底、按内容定高。 */
+        .demo { aspect-ratio: 1 / 1; }
+        .demo-list { top: auto; }
         .bento { grid-template-columns: 1fr; }
         .t-wide { grid-column: auto; grid-template-columns: 1fr; }
       }
@@ -1478,7 +1493,7 @@
             <article class="tile t-wide">
               <div>
                 <h3 data-i18n="feat.keysTitle">Hands on the keyboard</h3>
-                <p data-i18n="feat.keys">Every action on a card has a single key; ] and [ move it one column forward or back.</p>
+                <p data-i18n="feat.keys">Every action on a card has a single key: press ] to move it a column forward, [ to move it back.</p>
               </div>
               <div class="keys" aria-hidden="true">
                 <span><kbd>E</kbd><span data-i18n="feat.kEdit">Edit</span></span>
@@ -1543,11 +1558,13 @@
               <div class="os">Windows</div>
               <div class="meta"><span data-i18n="dl.winMeta">10 / 11 · 64-bit</span> · v0.2.49</div>
               <span class="btn btn-primary" data-i18n="dl.winBtn">Download .exe</span>
+              <div class="dl-hint" data-i18n="dl.winHint">The first install warns about an “unknown publisher” — choose “More info → Run anyway”. It then lives in the tray; bring it up with the hotkey.</div>
             </a>
             <a class="dl-card" href="https://zhujian.app/updates/zhujian_0.3.45_aarch64.apk">
               <div class="os">Android</div>
               <div class="meta"><span data-i18n="dl.androidMeta">11+ · 64-bit</span> · v0.3.45</div>
               <span class="btn btn-primary" data-i18n="dl.apkBtn">Download APK</span>
+              <div class="dl-hint" data-i18n="dl.apkHint">Allow “unknown sources” on first install; updates also take a tap to install.</div>
             </a>
             <!-- 鸿蒙:商店链接,⛔ 刻意不印版本号 —— 它自成一条版本线(与安卓解绑),
                  bump-version.mjs 只认桌面 / 安卓两侧,印了就是没人核的第五处;商店页自己会显版本。
@@ -1576,7 +1593,8 @@
             <a href="https://zhujian.app/updates/SHA256SUMS-android.txt" data-i18n="dl.sumsAndroid">Android</a>
             <a href="/docs/verify.html" data-i18n="dl.verifyHow">How (in Chinese)</a>
           </p>
-          <p class="dl-foot" data-i18n="dl.foot">Desktop updates are signed by the developer and checked before installing; the Windows installer is not code-signed, so the first install warns about an “unknown publisher” — choose “More info → Run anyway” · On Windows it lives in the tray; bring it up with the hotkey · On Android, allow “unknown sources” on first install; updates also take a tap to install · Questions? Email 3069848@qq.com</p>
+          <p class="dl-foot" data-i18n="dl.foot">Desktop updates are signed by the developer and checked before installing; the Windows installer is not code-signed. There is no iPhone version.</p>
+          <p class="dl-mail" data-i18n="dl.mail">Questions? Email 3069848@qq.com</p>
         </div>
       </section>
       <!-- ───────── /下载 ───────── -->

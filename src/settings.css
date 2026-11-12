@@ -672,7 +672,7 @@
   opacity: 0.5;
 }
 .alias-input::placeholder {
-  color: var(--ink-faint);
+  color: var(--ink-soft);
 }
 
 /* 截止提醒(39):开/关 seg + 报点 time 输入 + 「试一条」。输入框与 .alias-input 同族

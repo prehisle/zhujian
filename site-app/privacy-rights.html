@@ -45,7 +45,8 @@
         --font-sans-en: "Segoe UI", system-ui, -apple-system, "Microsoft YaHei", "PingFang SC", sans-serif;
         /* 官网标题一族(改版 1a):自托管的文楷子集,认不到时退回系统楷体。只此一处用它的地方是官网。 */
         --font-display: "Zhujian WenKai", "Kaiti SC", "STKaiti", "KaiTi", serif;
-        /* 手机截图外那圈机身。刻意不随明暗翻面:它画的是一台黑色手机,不是纸面。 */
+        /* 手机截图外那圈机身:画的是一台黑色手机,不是纸面。⚠ 暗档另给一个值(下面那块):
+           这枚正好等于暗档的 --paper,不换的话那圈机身在暗色页上是隐形的(progress-log 896)。 */
         --bezel: #1b1813;
         /* 首页「承诺」那块深色带(改版 2b):两档都是深的,暗色档再深一级;前景同族,不借 --ink。 */
         --band: #1e1a15;
@@ -102,6 +103,7 @@
           --band-veil: rgba(36, 32, 25, 0.55); /* = --raised 55% */
           --seal-select: rgba(223, 106, 79, 0.26); /* = --seal 26% */
           --band: #0f0d0a;
+          --bezel: #3a342a; /* 比暗档纸面亮一级的深灰:机身看得见,仍读作黑色手机 */
           --band-ink: #ede5d6;
           --band-soft: #9d927e;
           --band-line: rgba(237, 229, 214, 0.1);

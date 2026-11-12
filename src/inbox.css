@@ -139,6 +139,9 @@
   transition: border-color 0.14s;
 }
 .v-inbox .compose-input:focus { border-color: var(--seal-line); }
+/* 占位字是这枚框唯一的说明 ⇒ 走 --ink-soft(336 / 621 J 的判例)。⛔ 别删:没有这条它用的是引擎默认灰
+   (#757575),不随明暗档翻面,而写死颜色门禁看不见「没人写过」的值(progress-log 896)。 */
+.v-inbox .compose-input::placeholder { color: var(--ink-soft); }
 .v-inbox .compose-add {
   flex: none;
   font: inherit;
@@ -322,7 +325,7 @@
 }
 /* 有色标签:朱砂淡底换成该色的实心点 + 极淡底色 + 描边染色(同看板 .chip.topic.set.tinted)。 */
 .v-inbox .tag.tinted {
-  color: var(--ink-soft);
+  color: var(--ink-soft-on-tint-tcard); /* 染色底上 --ink-soft 只有 4.37(< §2.2 小字 5.0)⇒ 借染色卡那枚,八色最紧 5.60;theme.css 那段注释 */
   border-color: color-mix(in srgb, var(--tag-color) 55%, var(--line-strong));
   background: color-mix(in srgb, var(--tag-color) 12%, var(--paper));
 }

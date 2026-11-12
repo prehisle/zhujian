@@ -141,6 +141,8 @@
   transition: border-color 0.14s;
 }
 .v-board .compose-input:focus { border-color: var(--seal-line); }
+/* 同 inbox.css 那条:不写就落到引擎默认灰,不随明暗档翻面(progress-log 896)。 */
+.v-board .compose-input::placeholder { color: var(--ink-soft); }
 .v-board .compose-add {
   flex: none;
   font: inherit;
@@ -188,6 +190,7 @@
   margin-right: 2px;
 }
 .v-board .task-meta .chip.topic.set.tinted {
+  color: var(--ink-soft-on-tint-tcard); /* 染色底上 --ink-soft 只有 4.37(< §2.2 小字 5.0)⇒ 借染色卡那枚,八色最紧 5.60;theme.css 那段注释 */
   border-color: color-mix(in srgb, var(--tag-color) 55%, var(--line-strong));
   background: color-mix(in srgb, var(--tag-color) 12%, var(--paper));
 }

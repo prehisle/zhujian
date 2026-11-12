@@ -104,7 +104,8 @@ mark.filter-hit {
   padding: 0 1px;
   font-weight: 600;
 }
-.filter-text::placeholder { color: var(--ink-faint); }
+/* 占位字是这枚框唯一的说明(框外没有标签)⇒ --ink-soft,不走 --ink-faint(336 判例;progress-log 896)。 */
+.filter-text::placeholder { color: var(--ink-soft); }
 .tf-pill {
   font: inherit;
   font-size: var(--fs-12);
