@@ -128,7 +128,11 @@ try {
     console.log(`(刀 ${KNIFE}:${KNIVES[KNIFE]})`);
   }
   space = await ev(`localStorage.getItem("zhujian.last-space")`);
-  const counts = await ev(`window.__TAURI__.core.invoke("pane_counts", { spaceId: ${JSON.stringify(space)} })`);
+  // mbopt 第二波:回收站 / 归档的条数改问 core 的 `trash_counts` / `sealed_counts_by_board`(手机已不调 pane_counts;回收站 = 四格之和,
+  // 归档 = 各组之和含已删看板与 null 组)。⚠ 两条是两次独立读,只当起点判据用。
+  const tc = await ev(`window.__TAURI__.core.invoke("trash_counts", { spaceId: ${JSON.stringify(space)} })`);
+  const sc = await ev(`window.__TAURI__.core.invoke("sealed_counts_by_board", { spaceId: ${JSON.stringify(space)} })`);
+  const counts = { trash: tc.ideas + tc.tasks + tc.idea_images + tc.task_images, sealed: sc.reduce((n, g) => n + g.n, 0) };
   if (counts.trash !== 0 || counts.sealed < 1) throw new Error(`不是展示库的起点(回收站 ${counts.trash} / 归档 ${counts.sealed};要 0 / ≥1)—— 先重起截图台实例`);
   if ((await ev(`localStorage.getItem("zhujian.lang")`)) !== "zh") throw new Error("界面不是中文 —— 上一趟没还原?先重起截图台实例");
 
@@ -191,7 +195,7 @@ try {
     await ev(`localStorage.setItem("zhujian.lang", ${JSON.stringify(lang)}), true`);
     await size(720, 1000);
     await reload();
-    // 回收站那枚按 pane_counts 显形(renderBottomBar),与卡片落 DOM 不是同一刻 ⇒ 等它出来再量
+    // 回收站那枚的显形(renderBottomBar)与卡片落 DOM 不是同一刻 ⇒ 等它出来再量
     await waitFor(`!document.querySelector('#bottombar [data-pane="trash"]').hidden`, "回收站那枚钮显形");
     const n = await ev(NAV);
     ok(n.buttons === 4, `720 ${lang}:回收站有东西 ⇒ 导航四枚钮 + 分隔(五枚)`, n.buttons);

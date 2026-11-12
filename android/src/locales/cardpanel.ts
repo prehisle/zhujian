@@ -79,7 +79,10 @@ export const cardpanel = defineMessages({
   "cardpanel.expandRefsFailed": { zh: "已展开成长文,但没能把图的「图N」补进正文:{error}", en: "Now long-form, but couldn’t add the image mentions to the text: {error}" },
   // 165 / W5:回执不写「在底栏「长文」里」(平板 / 横放没有底栏);去向交给「去看看」(Q14:跳过去看的钮一律叫「去看看」,此前叫「打开」)。
   "cardpanel.expanded": { zh: "已展开成长文", en: "Expanded to long-form" },
-  "cardpanel.promotedShort": { zh: "已转为待办", en: "Now a task" },
+  // mbopt 第二波(用户 2026-11-12 拍):回执「已转为卡片」两端逐字同(桌面 inbox.undoPromoted);按钮名「转待办」不改(那是命令名)。
+  "cardpanel.promotedShort": { zh: "已转为卡片", en: "Turned into a card" },
+  // mbopt R2(第一波小账):「转待办」落默认看板,那块的落点 ⊥(只剩完成列 / 一列都没有)⇒ 钮事前灰、点了说这句;手机不建列 ⇒ 指到电脑上。
+  "cardpanel.promoteNoLanding": { zh: "「转待办」会放进「{board}」,可它里面没有能放新卡片的列;在电脑上给它加一列再来", en: "“Make a task” puts it on “{board}”, which has no column that takes new cards. Add one on a computer first" },
   "cardpanel.goSee": { zh: "去看看", en: "Show me" },
   "cardpanel.tagNameRequired": { zh: "标签名不能为空", en: "Tag name cannot be empty" },
   "cardpanel.deleteQ": { zh: "删除?将移入回收站(可还原)", en: "Delete? It moves to Trash and can be restored" },

@@ -13,9 +13,12 @@ import "./column-manager.css";
 let dialog: HTMLDivElement | null = null;
 
 /** 开「新建看板」。建好之后:记成「在看这块」、广播看板变了、再调 `onCreated`(侧栏传「切到看板视图」;
- *  列管理面里开的那次不传 —— 看板视图收到广播自己重画到新那块)。 */
-export function openNewBoard(onCreated?: () => void): void {
+ *  列管理面里开的那次不传 —— 看板视图收到广播自己重画到新那块)。
+ *  没建就关掉(取消 / Esc / 点遮罩):给了 `onCancel` 就交它(列管理面里开的那次 = 回到列管理面),
+ *  否则焦点还给打开它的那一枚(ui-guidelines §3.5「关完焦点还给打开它的那枚」)。 */
+export function openNewBoard(onCreated?: () => void, onCancel?: () => void): void {
   if (dialog) return;
+  const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
   const overlay = el("div", { className: "bcm-overlay" });
   dialog = overlay;
   const panel = el("div", { className: "bcm-panel bn-new" });
@@ -27,15 +30,21 @@ export function openNewBoard(onCreated?: () => void): void {
     dialog = null;
     document.removeEventListener("keydown", onKey);
   };
+  /** 没建就关:回到打开它的地方。 */
+  const cancelOut = (): void => {
+    close();
+    if (onCancel) onCancel();
+    else if (opener?.isConnected) opener.focus({ preventScroll: true });
+  };
   const onKey = (e: KeyboardEvent): void => {
     trapTab(panel, e);
     if (e.key === "Escape") {
       e.stopPropagation();
-      close();
+      cancelOut();
     }
   };
   overlay.addEventListener("mousedown", (e) => {
-    if (e.target === overlay) close();
+    if (e.target === overlay) cancelOut();
   });
 
   const name = el("input", { className: "bcm-col-input", type: "text", placeholder: t("bnav.namePh") });
@@ -66,7 +75,7 @@ export function openNewBoard(onCreated?: () => void): void {
   paintTpl();
   const err = el("div", { className: "bcm-err", hidden: true });
   const cancel = el("button", { className: "bcm-btn", type: "button", textContent: t("cols.cancel") });
-  cancel.addEventListener("click", close);
+  cancel.addEventListener("click", cancelOut);
   const ok = el("button", { className: "bcm-btn solid-ink", type: "button", textContent: t("bnav.create") });
   ok.addEventListener("click", () => void go());
   name.addEventListener("keydown", (e) => {

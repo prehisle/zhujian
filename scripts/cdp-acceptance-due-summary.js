@@ -274,7 +274,7 @@
       doneCol.click();
       await sleep(250);
       const et = emptyText();
-      ok("⑦ 交集为空时走到期专属空态,不是「该状态下没有任务」", /到期|due/i.test(et) && !/「.*」下没有任务|No tasks under/.test(et), {
+      ok("⑦ 交集为空时走到期专属空态,不是「该状态下没有任务」", /到期|due/i.test(et) && !/「.*」下没有(任务|卡片)|No (tasks|cards) under/.test(et), {
         empty: et,
       });
       stageBtns()[0].click();

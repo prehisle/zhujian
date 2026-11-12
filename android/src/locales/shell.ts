@@ -10,7 +10,7 @@ import { defineMessages } from "./entry";
 export const shell = defineMessages({
   "shell.appName": { zh: "朱简", en: "Zhujian" },
   "shell.navIdeas": { zh: "随记", en: "Notes" },
-  "shell.navTasks": { zh: "任务", en: "Tasks" },
+  "shell.navTasks": { zh: "看板", en: "Boards" },
   "shell.navTags": { zh: "标签", en: "Tags" },
   "shell.navSearch": { zh: "搜索", en: "Search" },
   "shell.navDocs": { zh: "长文", en: "Long-form" },
@@ -51,8 +51,8 @@ export const shell = defineMessages({
   "shell.spacesEntry": { zh: "空间…", en: "Spaces…" },
   "shell.searchPh": { zh: "搜索…", en: "Search…" },
   "shell.searchGo": { zh: "搜", en: "Go" },
-  "shell.trashNote": { zh: "删掉的随记(含长文)、任务和配图先到这里,随记与任务分两段、各清各的;还原回到原来的位置(配图回到原编号);彻底删除后无法找回。", en: "Deleted notes (long-form included), tasks and images land here first, in two sections that are emptied separately; restoring puts them back where they were (images keep their number); deleting forever cannot be undone." },
-  "shell.sealedNote": { zh: "归档的任务在这里,可查、不可删。", en: "Archived tasks live here. You can look them up, not delete them." },
+  "shell.trashNote": { zh: "删掉的随记(含长文)、卡片和配图先到这里,随记与卡片分两段、各清各的;还原回到原来的位置(配图回到原编号);彻底删除后无法找回。", en: "Deleted notes (long-form included), cards and images land here first, in two sections that are emptied separately; restoring puts them back where they were (images keep their number); deleting forever cannot be undone." },
+  "shell.sealedNote": { zh: "归档的卡片在这里,可查、不可删。", en: "Archived cards live here. You can look them up, not delete them." },
   // ⚠ 末句(点条数)刻意排在「都会同步」之后:那一条是**只读**的,不产生任何 op,
   //   混进前面那串会让人以为「看一眼」也会同步出去。
   "shell.topicsNote": { zh: "点名字改名、删除、设类型,点色点改颜色,点条数看标签下有什么;拖 ⠿ 调顺序。这些都会同步到别的设备。", en: "Tap a name to rename, delete or set its kind; tap the dot to change color; tap the count to see what’s under a tag; drag ⠿ to reorder. All of this syncs to your other devices." },

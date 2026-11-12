@@ -190,6 +190,10 @@ const CROSS_END_KEYS = [
   { key: "docs.skewAskGo", why: "「仍然使用」" },
   { key: "docs.skewAskCancel", why: "「先不用」" },
   { key: "sync.skewWarn", why: "对端版本较新:请升级(手机此前不渲染)" },
+  // 看板优化那轮(用户拍「卡片」统称,两端一并改):标签页计数与提醒自检那句两端同键同句。
+  { key: "topics.counts", why: "标签行计数「N 条随记 · M 张卡片」" },
+  { key: "topics.countsDocs", why: "同上,有长文时" },
+  { key: "reminder.testEmpty", why: "提醒自检:没有到期的卡片" },
 ];
 
 /*

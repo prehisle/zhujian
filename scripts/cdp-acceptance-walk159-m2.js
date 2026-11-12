@@ -212,10 +212,10 @@
     await until(() => hitCards().length === db.length, 6000);
     // 回收站命中的章(Q12)
     const pill = (id) => hitCard(id)?.querySelector(".pill")?.textContent;
-    ok("Q12 回收站里的任务写「回收站 · 任务」", pill(ids.trTask) === "回收站 · 任务", pill(ids.trTask));
+    ok("Q12 回收站里的卡片写「回收站 · 卡片」(mbopt 第二波:任务 → 卡片)", pill(ids.trTask) === "回收站 · 卡片", pill(ids.trTask));
     ok("Q12 回收站里的随记写「回收站 · 随记」", pill(ids.trOne) === "回收站 · 随记", pill(ids.trOne));
     ok("Q12 回收站里的长文写「回收站 · 长文」", pill(ids.trDoc) === "回收站 · 长文", pill(ids.trDoc));
-    ok("Q12 活任务写「任务」、归档写「归档」", pill(ids.task) === "任务" && pill(ids.sealed) === "归档");
+    ok("Q12 活卡片写「卡片」、归档写「归档」", pill(ids.task) === "卡片" && pill(ids.sealed) === "归档");
     // 滚到结果中段,记下位置
     const target = hitCard(ids.flow[4]);
     target.scrollIntoView({ block: "center" });
@@ -263,7 +263,7 @@
     if (tcard) {
       await settle(tcard);
       ok("A14 …那一条在屏内", inView(tcard), tcard.getBoundingClientRect().top);
-      ok("Q12 回收站里任务的小章叫「任务」", tcard.querySelector(".pill")?.textContent === "任务", tcard.querySelector(".pill")?.textContent);
+      ok("Q12 回收站里卡片的小章叫「卡片」", tcard.querySelector(".pill")?.textContent === "卡片", tcard.querySelector(".pill")?.textContent);
     }
     ok("A3 回收站落点按返回 → 回搜索结果", back() === true && !!(await until(() => paneOpen("search-pane") && hitCards().length > 0, 3000)));
     ok("A3 …回收站那一面收了", $("trash-pane").hidden);

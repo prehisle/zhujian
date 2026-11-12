@@ -13,8 +13,8 @@ export const topics = defineMessages({
   "topics.kindHint": { zh: "类型是给标签归一类(比如「人名」),随记页和看板的筛选条上就能按类型筛;不填就是没有类型。", en: "A kind groups tags (e.g. Person); the filter bars on Notes and the board can then filter by kind. Leave it empty for none." },
   "topics.dragHint": { zh: "拖动排序", en: "Drag to reorder" },
   // 行上的计数(159 / W3 Q12,WM-27 / X-11):照桌面分开写,可见中文与桌面那两句同(键空间各自独立)。
-  "topics.counts": { zh: "{ideas} 条随记 · {tasks} 个任务", en: "{ideas} {ideas|note|notes} · {tasks} {tasks|task|tasks}" },
-  "topics.countsDocs": { zh: "{ideas} 条随记 · {docs} 篇长文 · {tasks} 个任务", en: "{ideas} {ideas|note|notes} · {docs} long-form · {tasks} {tasks|task|tasks}" },
+  "topics.counts": { zh: "{ideas} 条随记 · {tasks} 张卡片", en: "{ideas} {ideas|note|notes} · {tasks} {tasks|card|cards}" },
+  "topics.countsDocs": { zh: "{ideas} 条随记 · {docs} 篇长文 · {tasks} 张卡片", en: "{ideas} {ideas|note|notes} · {docs} long-form · {tasks} {tasks|card|cards}" },
   "topics.kindSet": { zh: "已设类型", en: "Kind set" },
   "topics.kindCleared": { zh: "已清类型", en: "Kind cleared" },
   // 改名(514):点名字进编辑态。⛔ 键空间与桌面独立(两份字典),别去和 src/locales 对齐。
@@ -59,13 +59,13 @@ export const topics = defineMessages({
   // 同上,同名标签已在(core 不另建,复用那一枚)时那一句。
   "topics.addedExisting": { zh: "已打上标签「{name}」", en: "Added tag “{name}”" },
   // 展开看名下内容(user-44 第五刀):点计数 → 行下摊开随记 + 任务,纯只读。
-  // 可见中文与桌面那份逐字同(「随记 N」/「任务 N」),⛔ 但键空间仍各自独立,别去对齐键名。
+  // 可见中文与桌面那份逐字同(「随记 N」/「卡片 N」;mbopt 第二波「任务」→「卡片」两端一并改),⛔ 但键空间仍各自独立,别去对齐键名。
   "topics.expandHint": { zh: "点一下看名下的内容", en: "Tap to see what’s tagged" },
   "topics.bodyIdeas": { zh: "随记 {n}", en: "Notes {n}" },
-  "topics.bodyTasks": { zh: "任务 {n}", en: "Tasks {n}" },
+  "topics.bodyTasks": { zh: "卡片 {n}", en: "Cards {n}" },
   "topics.bodyNoIdeas": { zh: "还没有随记打这个标签", en: "No notes with this tag yet" },
   "topics.bodyDocs": { zh: "长文 {n}", en: "Long-form {n}" },
-  "topics.bodyNoTasks": { zh: "还没有任务打这个标签", en: "No tasks with this tag yet" },
+  "topics.bodyNoTasks": { zh: "还没有卡片打这个标签", en: "No cards with this tag yet" },
   // 父子层级(user-44 第六刀):父行右侧那枚箭头的读屏名。屏上只有 ▾/▸ 一个字符,
   // 说清「几个」全靠这一句 —— 可见中文与桌面标签视图那两句同(那边是 title 悬停)。
   "topics.kidsExpand": { zh: "展开 {n} 个子标签", en: "Show {n} child {n|tag|tags}" },

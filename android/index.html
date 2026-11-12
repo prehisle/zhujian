@@ -478,6 +478,8 @@
       /* 键盘起着(焦点在页里的输入框:「过滤…」、卡内「新标签名」)时让位(165 / W5 A48):它跟着视口底沿浮到键盘上沿,
          压着键盘上方那截列表 —— 而那时正在打字,用不着它。`visibility` 不改 `display`:收键盘那一下不跳。 */
       html.kb-up #capture-fab { visibility: hidden; }
+      /* 任务面上这块看板放不进卡(mbopt R2,main.ts syncLandingBlock):＋ 灰着 —— 点它只说原因、不开记一笔(同 `.primary:disabled` 的淡法)。 */
+      #capture-fab.blocked { opacity: 0.4; box-shadow: none; }
       .compose textarea {
         display: block; width: 100%;
         border: none; background: none; resize: none; outline: none;
@@ -871,6 +873,10 @@
       /* 165 / W5 Q15:任务空态底下那句「归档了 N 张,在「归档」里」(main.ts sealedHintHtml):接在空态那句话下面、同居中;
          上外边距负一截与 p.empty 的下边距折叠成一行间距。 */
       p.sealed-hint { text-align: center; margin: -28px 0 40px; }
+      /* 空看板在横放看板上(mbopt M12):空态那几句装在第一列那枚虚框里,归档那句接在虚框下面(不再负边距折叠)。 */
+      body.board #timeline .tl-group > p.sealed-hint { margin: 8px 0 0; }
+      /* 看着收容区时的那句说明(mbopt M10):竖放时是时间轴的首行、随内容滚走 —— 此前住在吸顶的筛选条里,压两三行一直钉在屏顶。 */
+      p.held-note { margin: 0 0 12px; }
       /* 空态那句话(「回收站是空的」…)= 这个区的**全部说明**,照 336 判例走 soft,别用 faint(634)。 */
       .muted { color: var(--ink-soft); font-size: var(--fs-13); }
       .card {
@@ -1683,7 +1689,8 @@
       }
       .panel .acts button.warn { border-color: var(--seal-line); color: var(--seal-ink); }
       .panel .acts button.confirm { background: var(--seal); border-color: var(--seal); color: var(--on-seal); }
-      .panel button:disabled { opacity: 0.45; }
+      /* `.blocked` = 事前灰、仍点得动(点了说原因;mbopt R2「转待办」在默认看板放不进卡时),同 #capture-fab.blocked 的意思。 */
+      .panel button:disabled, .panel button.blocked { opacity: 0.45; }
       /* 值 chip 行(706):任务的状态 / 截止 / 优先级 各一枚,**显示当前值**、点开才出
          那一排候选。与动作钮同高同形(照 `.acts button` 的 padding 与 halo,触区 ~46),
          差别只在「键」是灰的小字、右端一记 ▾ —— 读起来是「这条的属性」不是「一个命令」。 */
@@ -2128,9 +2135,20 @@
       body.board #filterbar .fmain { display: contents; }
       body.board #filter-stages > :not(.fdue) { display: none; }
       body.board #filter-kinds { order: -1; flex: 0 0 100%; }
-      /* 0043:看板切换那排(与它下面那句收容区说明)在看板上也独占一行、排最上(类型行之上)。 */
-      body.board #filter-boards { order: -3; flex: 0 0 100%; }
-      body.board #board-note { order: -2; }
+      /* 0043:看板切换那排排最上(类型行之上)。mbopt M9(893「看到但没改」):它此前独占一行、过滤框被挤到第二行,筛选条高出一行
+         ⇒ 过滤框并进这一排的右端(切换排吃剩下的宽、自己横滚),到期钮与标签照旧在下一行。`.boards-on` = 切换排画了(main.ts renderFilterBar)。
+         收容区那句说明在看板上压成一行(看板整页不滚,没处「滚走」;竖放它在时间轴首行,mbopt M10)。 */
+      body.board #filter-boards { order: -3; flex: 1 1 0; min-width: 0; }
+      body.board #filterbar.boards-on .ftext { order: -3; }
+      /* 第一行到此为止:切换排的基宽是 0(吃剩下的宽),不断行的话下面的到期钮 / 标签行(也是 flex:1)会一起挤进第一行、把过滤框夹在中间。
+         一条零高的整行断开它,负的上外边距抵掉它多出来的那道行距(#filterbar 的 gap 8)。只在下面真有东西(标签 / 到期钮)时断
+         (`.boards-wrap`,main.ts renderFilterBar):零高行排在最后时那道行距抵不掉。 */
+      body.board #filterbar.boards-wrap::after { content: ""; order: -2; flex: 0 0 100%; margin-top: -8px; }
+      /* 没有标签时空标签行别白占一道行距。只在 `.boards-on` 下:单看板时空标签行(flex:1)是把过滤框推到右端的那块垫子,不能收。 */
+      body.board #filterbar.boards-on #filter-topics:empty { display: none; }
+      body.board #board-note { order: -2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      /* 只有一列的看板(mbopt M12):那一列限宽(main.ts syncBoardCols,560 同桌面)、在看板里居中。 */
+      body.board:not(.pane-open) #timeline.solo { justify-content: center; }
 
       /* 顶栏收起(890,chromehide.ts;用户拍「往下划自动收,往上划露出」):手机横放只有 360–412 高,顶栏 + 筛选条吃掉约 110。
          `body.chrome-hidden` 只在矮屏(宽屏 ∧ 不是高屏)的时间轴上由 JS 打;下面再套 `:not(.pane-open)`:开面那一下类还没摘,
@@ -2294,6 +2312,12 @@
       body:not(.board) #filterbar.kinds-inline .fstages { flex: 0 0 100%; }
       body:not(.board) #filterbar.kinds-inline .fkinds { flex: 1; min-width: 0; }
       body:not(.board) #filterbar.kinds-inline .ftopics { display: none; }
+      /* 标签行、类型行都空着的任务面(mbopt M9;多看板竖放截图 mb4/s1):过滤框此前单占一行 ⇒ 并进「列」那排右端,
+         列那排吃剩下的宽、照旧横滚。看板切换那排(有才画)照旧独占它那一行。main.ts syncTagsToggle 打 `.stages-inline`。 */
+      body:not(.board) #filterbar.stages-inline { flex-flow: row wrap; align-items: center; column-gap: 10px; }
+      body:not(.board) #filterbar.stages-inline #filter-boards { flex: 0 0 100%; }
+      body:not(.board) #filterbar.stages-inline #filter-stages { flex: 1 1 0; min-width: 0; }
+      body:not(.board) #filterbar.stages-inline .ftopics { display: none; }
       .faxis {
         flex: none; font-size: var(--fs-12); letter-spacing: 0.04em;
         color: var(--ink-faint);
@@ -2759,14 +2783,14 @@
       <div id="trash-list" class="timeline"></div>
       <!-- 158 G2(W2 走查 A19 / WM-21):整面最重的那一下不再全宽常驻在列表最上面、紧挨第一张卡
            (§3.8「重破坏:不常驻列表行」)⇒ 每段末尾一枚、不通栏 —— 翻完那一段要清的人才走到这里。 -->
-      <p class="fine" data-i18n="shell.trashNote">删掉的随记(含长文)、任务和配图先到这里,随记与任务分两段、各清各的;还原回到原来的位置(配图回到原编号);彻底删除后无法找回。</p>
+      <p class="fine" data-i18n="shell.trashNote">删掉的随记(含长文)、卡片和配图先到这里,随记与卡片分两段、各清各的;还原回到原来的位置(配图回到原编号);彻底删除后无法找回。</p>
     </section>
 
     <!-- 归档册面(120):已完成入册的任务(史实,可查);取消入册回看板已完成。 -->
     <section id="sealed-pane" class="sync" hidden>
       <h2 data-i18n="shell.navSealed">归档</h2>
       <div id="sealed-list" class="timeline"></div>
-      <p class="fine" data-i18n="shell.sealedNote">归档的任务在这里,可查、不可删。</p>
+      <p class="fine" data-i18n="shell.sealedNote">归档的卡片在这里,可查、不可删。</p>
     </section>
 
     <!-- 标签管理面(190,安卓精简版):拖手柄调顺序(1c)+ 点「类型」标自由文本类型(kind)
@@ -3043,7 +3067,7 @@
          「一步回捕获」推广到两面);诊断在同步面底部。 -->
     <nav id="bottombar">
       <button data-mode="ideas" class="active" data-i18n="shell.navIdeas">随记</button>
-      <button data-mode="tasks" data-i18n="shell.navTasks">任务</button>
+      <button data-mode="tasks" data-i18n="shell.navTasks">看板</button>
       <!-- 长文(longform-plan 第 4 格):主内容,站在分隔线左边;有长文才显形(用户 2026-10-29 拍),
            显隐由 renderBottomBar 管。回收站 / 归档 159 起常在(W3 走查 Q2),不再按数据显形。 -->
       <button data-pane="docs" data-i18n="shell.navDocs" hidden>长文</button>

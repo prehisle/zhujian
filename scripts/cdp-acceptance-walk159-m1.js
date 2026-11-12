@@ -136,7 +136,7 @@
     // Q1:两段 + 段头计数
     const idsIn = (s) => [...sec(s).querySelectorAll("[data-trash]")].map((c) => c.dataset.trash);
     ok("Q1 两段:随记在前、任务在后", sec("ideas") && sec("tasks") && !!(sec("ideas").compareDocumentPosition(sec("tasks")) & Node.DOCUMENT_POSITION_FOLLOWING));
-    ok("Q1 段头写「随记」「任务」", sec("ideas").querySelector(".tl-sec").textContent.startsWith("随记") && sec("tasks").querySelector(".tl-sec").textContent.startsWith("任务"));
+    ok("Q1 段头写「随记」「卡片」(mbopt 第二波:任务 → 卡片)", sec("ideas").querySelector(".tl-sec").textContent.startsWith("随记") && sec("tasks").querySelector(".tl-sec").textContent.startsWith("卡片"));
     const nIdeasDom = idsIn("ideas").length;
     const nTasksDom = idsIn("tasks").length;
     ok("Q1 随记段头的数 = 该段卡数", Number(sec("ideas").querySelector(".tl-count").textContent) === nIdeasDom, nIdeasDom);
@@ -146,7 +146,7 @@
     ok("Q1 任务进任务段", inSec("tasks", ids.task) && !inSec("ideas", ids.task));
     ok("Q1 随记宿主的已删图在随记段", !!sec("ideas").querySelector(`[data-trash-img="${ids.liveNoteImg}"]`));
     ok("Q1 任务宿主的已删图在任务段", !!sec("tasks").querySelector(`[data-trash-img="${ids.liveTaskImg}"]`) && !sec("ideas").querySelector(`[data-trash-img="${ids.liveTaskImg}"]`));
-    ok("Q1 每段末尾一枚「清空…」", $("trash-empty-ideas")?.textContent === "清空随记回收站" && $("trash-empty-tasks")?.textContent === "清空任务回收站");
+    ok("Q1 每段末尾一枚「清空…」", $("trash-empty-ideas")?.textContent === "清空随记回收站" && $("trash-empty-tasks")?.textContent === "清空卡片回收站");
     ok("Q1 「清空…」在那一段的卡之后", !!(sec("ideas").querySelector("[data-trash]").compareDocumentPosition($("trash-empty-ideas")) & Node.DOCUMENT_POSITION_FOLLOWING));
     ok("Q1 「清空…」不通栏(次级钮)", $("trash-empty-ideas").getBoundingClientRect().width < $("trash-pane").getBoundingClientRect().width * 0.7);
     void removed;
@@ -190,9 +190,9 @@
     clearBar();
     click($("trash-empty-tasks")); // 面底那枚(任务段在下)
     const bar = $("confirmbar");
-    ok("A19 点「清空任务回收站」弹确认", !!(await until(() => !bar.hidden, 2000)));
+    ok("A19 点「清空卡片回收站」弹确认", !!(await until(() => !bar.hidden, 2000)));
     const q = $("confirmbar-q").textContent;
-    ok("A19 确认句说清是任务那段、几个任务、几张配图", q.startsWith("清空任务回收站?") && q.includes("个任务") && q.includes("张配图") && q.includes("随记那段不动"), q);
+    ok("A19 确认句说清是卡片那段、几张卡片、几张配图", q.startsWith("清空卡片回收站?") && q.includes("张卡片") && q.includes("张配图") && q.includes("随记那段不动"), q);
     ok("A19 是全宽那一档(heavy)", bar.classList.contains("heavy"));
     const br = bar.getBoundingClientRect();
     const yr = $("confirmbar-yes").getBoundingClientRect();
@@ -276,9 +276,9 @@
       clearBar();
       click($("trash-empty-tasks"));
       await until(() => !bar.hidden, 2000);
-      ok("Q1 清空任务的确认句", $("confirmbar-q").textContent.startsWith("清空任务回收站?这一段的 1 个任务和 1 张配图"), $("confirmbar-q").textContent);
+      ok("Q1 清空任务的确认句", $("confirmbar-q").textContent.startsWith("清空卡片回收站?这一段的 1 张卡片和 1 张配图"), $("confirmbar-q").textContent);
       click($("confirmbar-yes"));
-      ok("Q1 回执「任务回收站已清空」", !!(await until(() => $("error").textContent === "任务回收站已清空", 5000)));
+      ok("Q1 回执「卡片回收站已清空」", !!(await until(() => $("error").textContent === "卡片回收站已清空", 5000)));
       ok("Q1 两段都清完 = 「回收站是空的。」", !!(await until(() => $("trash-list").textContent.includes("回收站是空的。"), 4000)));
       ok("Q2 清空后底栏「回收站」仍在", !navPane("trash").hidden);
     } else {
@@ -337,7 +337,7 @@
     const tasks = await inv("list_tasks");
     const fold = tree.find((x) => x.id === ids.tFold);
     const nTasksFold = tasks.filter((x) => x.topics.some((tp) => tp.id === ids.tFold)).length;
-    ok("Q12 计数写「N 条随记 · M 个任务」且与库对得上", trow(ids.tFold).querySelector(".tcount").textContent.replace(/\s/g, "") === `${fold.notes.length}条随记·${nTasksFold}个任务`, trow(ids.tFold).querySelector(".tcount").textContent);
+    ok("Q12 计数写「N 条随记 · M 张卡片」且与库对得上", trow(ids.tFold).querySelector(".tcount").textContent.replace(/\s/g, "") === `${fold.notes.length}条随记·${nTasksFold}张卡片`, trow(ids.tFold).querySelector(".tcount").textContent);
     ok("Q12 页尾说明:点名字改名删除、点色点改颜色", $("topics-pane").querySelector("p.fine").textContent.includes("点名字改名、删除") && $("topics-pane").querySelector("p.fine").textContent.includes("点色点改颜色"));
     // A16 标签页展开
     click(trow(ids.tFold).querySelector(".tcount"));

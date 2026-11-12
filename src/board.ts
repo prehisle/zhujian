@@ -11,7 +11,7 @@ import { movePanel } from "./move-space";
 import { autoGrow } from "./autogrow";
 import { createComposeController } from "./compose-controller";
 import { copyButton, copyText } from "./clipboard";
-import { dismissUndo, flashToast, toastAction, toastGo, toastUndo, toastUndone } from "./toast";
+import { dismissUndo, flashToast, toastAction, toastError, toastGo, toastUndo, toastUndone } from "./toast";
 import { setTaskDeleteConfirm, taskDeleteConfirmOn } from "./delete-confirm";
 import { buildItemDeepLink } from "./deeplink";
 import { armLocate, clearSearchBack, locateNoteEl, takeLocateNote } from "./locate";
@@ -50,16 +50,18 @@ import {
   holdingColumns,
   liveBoards,
   loadBoards,
+  loadSealedCounts,
   markActiveBoard,
   moveTaskToBoard,
   shareBoardData,
   setCurrentBoard,
+  setBoardViewLive,
   setDraggingCard,
 } from "./boards";
 import { closeColumnManager, openColumnManager } from "./column-manager";
 import { closeHistoryDialog, openHistoryDialog } from "./history-panel";
 import { BOARD_CARD_KEYS, BOARD_TRASH_KEYS, BOARD_VIEW_KEYS, SEALED_CARD_KEYS } from "./keymap";
-import { type RemovedGroup, listRemovedImages, removedImageCount, removedImagesSection } from "./trash-images";
+import { type RemovedGroup, listRemovedImages, loadTrashCounts, removedImageCount, removedImagesSection } from "./trash-images";
 import { trashPurgeControl } from "./trash-purge";
 import { type Act, SATELLITE_LAYERS, armDismiss, createHotkeyController, noHistoryAct, registerViewKeys } from "./hotkey-menu";
 import { CARD_COLORS, applyCardColor, openCardColorPicker } from "./card-color";
@@ -277,12 +279,17 @@ type BoardView = "board" | "trash" | "sealed" | "holding";
 //
 // ⭐ W3 159 / Q6(WD-18):两样都**按空间各记一份**(同随记 inbox.ts 的 SpaceMemo):此前全模块一份,切到别的空间
 // 那边没有这枚标签 ⇒ reconcileTopicFilter 把选集清空,切回来筛选没了。mount 时按本 mount 的空间取、unmount 写回。
-type SpaceMemo = { filter: FilterState; time: TimeBucket };
+//
+// ⭐ R5(多看板优化,用户 2026-11-12 拍):**切到另一块看板时标签 / 类型 / 时间筛选回「所有」**(别的看板多半没有这几枚
+// 标签,留着只会把新那块筛空)。`board` = 这份筛选是在哪块看板上选的;load() 发现眼前这块不是它就清。过滤词不清
+// (它不认看板,打的字跟着人走)。⚠ 判据放在 load() 而不是各个「切看板」入口:切的路有侧栏、新建、「去看看」、
+// 跳转、所在那块被删回默认 …… 漏一条就是一次筛空。
+type SpaceMemo = { filter: FilterState; time: TimeBucket; board: string | null };
 const memos = new Map<string, SpaceMemo>();
 function memoFor(space: string): SpaceMemo {
   let m = memos.get(space);
   if (m === undefined) {
-    m = { filter: { kind: "all", topics: [], text: "" }, time: "all" };
+    m = { filter: { kind: "all", topics: [], text: "" }, time: "all", board: null };
     memos.set(space, m);
   }
   return m;
@@ -361,6 +368,14 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
   const opErrBar = view.querySelector("#op-err") as HTMLElement;
   const opErrMsg = view.querySelector("#op-err-msg") as HTMLElement;
 
+  // D11:页头那几格变了才写 —— 原样再写一遍也算一次 DOM 变更,会惊动页头的 MutationObserver 白量一趟。
+  const setText = (n: Node, s: string): void => {
+    if (n.textContent !== s) n.textContent = s;
+  };
+  const setHidden = (e: HTMLElement, h: boolean): void => {
+    if (e.hidden !== h) e.hidden = h;
+  };
+
   // 卡级操作失败的非破坏性横幅(ui-audit P0 #6):写在看板上方、不替换任何内容——
   // renderError(整版错误页)只留给「读取失败」。新一次操作入口先清旧错,横幅本身
   // 可点「知道了」收起。
@@ -391,6 +406,8 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
   let sealedBoard: string | null = null;
   // 归档卡要不要挂来源看板的小签(= 顶上那排筛选在不在);renderSealed 每次先算好再画卡。
   let sealedTagged = false;
+  /** 这一趟挂着看板以来,活卡上出现过标签的看板(标签行恒占位的判据,见 load 里 B8 / W3 那段)。 */
+  const tagRowBoards = new Set<string>();
   /** 跨过本地午夜自动重算一次:`today` 只在 load() 里刷新,而「今天到期」这件事**没人
    *  操作也会变**。算到下一个本地零点的毫秒数,到点重画并再排一次。unmount 清。 */
   let midnightTimer: ReturnType<typeof setTimeout> | undefined;
@@ -409,7 +426,8 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
   // bar and the per-card picker, rebuilt each load.
   let allTopics: TopicOpt[] = [];
 
-  // 本看板要画的列(= 任务列 ∧ 活着或还扣着卡,判据在 board-columns.ts),每次 load 重取。
+  // 本看板要画的列(= 这块看板的活任务列,判据在 board-columns.ts `boardColumns`;删掉的列里还扣着的卡
+  // 0043 起进收容区,不再画在原看板上),每次 load 重取。
   // ⚠ **mount 级,不是模块级**:切空间 = 换一整套列,模块级会把 A 空间的列画到 B 上
   // (memory `module-state-hoisting-checklist` 那五坑的第一条)。首帧空数组 —— load()
   // 之前没有任何渲染路径读它。
@@ -432,6 +450,8 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
     const c = allCols.find((x) => x.id === id && x.kind === "task");
     return c ? columnName(c) : null;
   };
+  /** 卡回到这一列 = 进收容区吗(core 的 `held`:列已删 ∨ 看板已删;不看此刻有没有卡)。 */
+  const heldAt = (id: string): boolean => allCols.some((c) => c.id === id && c.held);
   /** 一列属于哪块看板(找不到 = null)。 */
   const boardOfCol = (id: string): Board | null => {
     const c = allCols.find((x) => x.id === id && x.kind === "task");
@@ -677,7 +697,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
     // 原列 / 原看板已删 ⇒ 卡进了收容区(plan §3a),「去看看」落收容区。
     const name = anyColName(item.status);
     const home = boardOfCol(item.status);
-    const held = holdingColumns(allCols).some((c) => c.id === item.status) || !home || home.deleted;
+    const held = !home || heldAt(item.status);
     toastGo(
       held ? t("boards.restoredHeld") : name !== null ? t("trash.restoredTask", { col: name }) : t("trash.restoredBoard"),
       t("inbox.goSee"),
@@ -732,7 +752,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
     const id = item.id;
     const home = boardOfCol(item.status);
     const name = anyColName(item.status);
-    const held = holdingColumns(allCols).some((c) => c.id === item.status) || !home || home.deleted || name === null;
+    const held = !home || name === null || heldAt(item.status);
     // 158 G3 / Q3:回执再带「去看看」—— 取消归档发生在归档页,卡回了看板,人还在归档页。
     // 点了 = 切回看板并定位那张卡(复用跨视图跳转那条 focusId 通道:清筛选、滚到中央、常亮)。
     undoable(
@@ -764,8 +784,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       void load();
       return;
     }
-    boardsChanged();
-    void load();
+    boardsChanged(); // 本视图听着这一声重取(onBoardsChanged),⛔ 别再自己 load 一遍(D10)
     if (unmounted) return;
     toastGo(t("boards.movedTo", { board: boardName(target) }), t("inbox.goSee"), () => {
       if (unmounted) return;
@@ -1134,7 +1153,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       }
       composeErr.textContent = partialSaveMsg(failed, why, tagFailed);
       pulseId = id; // 下一次渲染给这张新卡一记朱砂脉冲
-      // the new 'todo' appears at the front of the 待办 column. 158 G3 / Q1(WD-16b):列滚到底时建的卡
+      // 新卡落在这块看板落点列的列首。158 G3 / Q1(WD-16b):列滚到底时建的卡
       // 排在列首 = 视野外,列也不回顶(落点不变,不抢用户的滚动位)⇒ 只在这时说一声并给「去看看」。
       void load().then(() => {
         if (!unmounted && cardOffscreen(id)) toastGo(t("board.created"), t("inbox.goSee"), () => flashCard(id));
@@ -1180,19 +1199,23 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
     }
   }
 
-  addTaskBtn.addEventListener("click", () => setComposeOpen(compose.hidden));
+  /** R2:这块看板放不进卡(落点 ⊥)时,「+ 新建卡片」与快捷键 N 都只说为什么、不开框。返回 true = 拦下了。 */
+  function blockedCompose(): boolean {
+    if (cur === null || cur.landing !== null) return false;
+    toastError(t("board.newTaskNoLanding"));
+    return true;
+  }
+  addTaskBtn.addEventListener("click", () => {
+    if (compose.hidden && blockedCompose()) return;
+    setComposeOpen(compose.hidden);
+  });
   // 列管理面(B-f 第 2 段)。每笔写落地就回调这里重画看板 —— 面板开着的时候看板就该
   // 已经是新的了(⛔ 不是关掉才刷:改完名还得回来确认列头真变了才算数)。
   // 0043:列管理开的是**这块**看板(列、两个角色、改名 / 删看板都在那一面里)。
   manageColsBtn.addEventListener("click", () => {
     if (cur === null) return; // 首帧 load 之前点不到(钮随 load 显形);防的是那一瞬
-    openColumnManager({
-      boardId: cur.id,
-      onChanged: () => {
-        boardsChanged();
-        void load();
-      },
-    });
+    // 每笔写之后广播一声:本视图(onBoardsChanged)与侧栏各取各的,⛔ 别在这里再 load 一遍(D10)。
+    openColumnManager({ boardId: cur.id, onChanged: boardsChanged });
   });
   composeAdd.addEventListener("click", () => void submitNewTask());
   composeClose.addEventListener("click", () => setComposeOpen(false));
@@ -1526,11 +1549,11 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
     // 留着是逆信号。
     const st = mode === "board" ? dueAttentionState(item, today, doneCols) : "none";
     const dueCls = st === "overdue" || st === "today" ? ` due-${st}` : "";
-    // 0043:`.done`(淡出 + ✓)按**角色**挂(这块看板解析后的完成列),⛔ 不再按列 id 字面量 ——
-    // 种子 `done` 被取消完成列后不该还淡着,自定义完成列也要淡。其余列 id 照挂(进行中 / 待确认的左边线)。
-    const roleCls = item.status === doneId() ? " done" : "";
-    const modeCls =
-      mode === "board" ? (item.status === "done" ? "" : item.status) + roleCls : mode === "trash" ? "archived" : mode;
+    // 0043:`.done`(淡出 + ✓)按**角色**挂(这块看板解析后的完成列),⛔ 不按列 id 字面量 ——
+    // 种子 `done` 被取消完成列后不该还淡着,自定义完成列也要淡。
+    // ⛔ 列 id 不再进卡片的 class(R6,用户 2026-11-12 拍):此前「进行中 / 待确认」两枚种子列靠它挂朱砂 / 灰色左边线,
+    // 自定义列与别的看板没有 ⇒ 所有列一个样。认卡在哪一列走列身的 `data-col`。
+    const modeCls = mode === "board" ? (item.status === doneId() ? "done" : "") : mode === "trash" ? "archived" : mode;
     const titleP = el("p", { className: "ttitle", textContent: item.title });
     const c = el("article", { className: `tcard ${modeCls}${dueCls}` }, [titleP]);
     c.dataset.histFor = item.id; // 历史读框关掉时按它找回这张卡(openHistory);⛔ 别复用 taskId —— 那个只挂看板态,拖放按它读列序
@@ -1833,7 +1856,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       // `]` `[` 仍是去左右邻居的快速键(调用方算好邻居再交进来)。目标必须是活着的列(已删的列 core 会拒)。
       // `said` = 回执换一句(165 / W5 Q7:⋯「完成」/ X 说手机点圈那句「已完成」,别的路照旧「已移到「…」」)。
       function moveTo(target: BoardColumn, said?: string): void {
-        if (busy || target.deleted || target.id === item.status) return;
+        if (busy || !target.accepts_cards || target.id === item.status) return;
         const toStatus = target.id;
         const fromStatus = item.status;
         // 716 撤销要回到**原位**(不是源列列尾):先记下源列此刻的序(含本卡),撤销时按这份序
@@ -2070,7 +2093,8 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
           return;
         }
         dragging = { id: item.id, from: item.status };
-        setDraggingCard(item.id); // 侧栏看板名据此接放(拖到别的看板 = 挪过去,用户拍 ⑥)
+        // 侧栏看板名据此接放、亮起(拖到别的看板 = 挪过去,用户拍 ⑥;卡自己那块不接,R1)。
+        setDraggingCard({ id: item.id, own: cur?.id ?? null });
         c.classList.add("dragging");
         // 归档条只对能落进去的拖动现身(完成列的卡),显示条件=接收条件。
         if (item.status === doneId()) board.classList.add("drag-done");
@@ -2484,9 +2508,6 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
         el("span", { className: "col-name", textContent: name, title: name }),
         el("span", { className: "col-count", textContent: String(inCol.length) }),
       ]);
-      // §4.3 的只读收容区:这一列已被(多半是对端)删掉,但本端还有卡扣在里面。列头挂一枚
-      // 「已删除」标,卡只出不进(下面不给它接 dragover/drop);卡拖光了它自然不再出现。
-      if (col.deleted) head.append(el("span", { className: "col-gone", textContent: t("board.colDeleted") }));
       // 复制本列为 Markdown (only when the column has cards).
       if (inCol.length > 0) head.append(copyButton(columnMarkdown(name, status === doneId(), inCol), "col-copy", t("board.copy")));
       // 一键全部归档(仅 已完成 列、非空时):干完的活整列入成就册。非破坏、可逐条取消
@@ -2521,17 +2542,9 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       // 的老口径(`.col.done` 之类),而**查列一律走 `data-col`** —— 自定义列的 id 是 ULID,
       // 可能以数字开头,`.col.01J…` 是**非法 CSS 选择器**(querySelector 当场抛)。
       // ⛔ 别把机器读的那一份挪回 class。
-      const section = (extra: string): HTMLElement => {
-        const sec = el("section", { className: `col ${status}${extra}` }, [head, body]);
-        sec.dataset.col = status;
-        return sec;
-      };
-
-      // 已删的列**不接放**:core 的 `is_live_task_column` 会拒(§4.3「卡只出不进」),
-      // 这里不注册 dragover ⇒ 光标就是「不可放下」,而不是放下去再报错。⛔ 别改成
-      // 「接下来再报错」——那是把一条已知的拒绝演成一次失败操作。
-      if (col.deleted) return section(" col-readonly");
-      const sec = section("");
+      // ⚠ 这里只有活列(`boardColumns`);删掉的列里还扣着的卡在收容区(plan §3a),那边只出不进。
+      const sec = el("section", { className: `col ${status}` }, [head, body]);
+      sec.dataset.col = status;
 
       // The column is a drop target: a drop reorders within this column, or —
       // from another column — moves the task here AND inserts it at the dropped spot.
@@ -2606,9 +2619,11 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       return sec;
     });
 
-    // The 归档 drop strip below the columns — only a 已完成 card may land here.
+    // The 归档 drop strip below the columns — only a card from this board's 完成列 may land here.
+    // 纯分类看板(没有完成列)没有归档 ⇒ 不摆这一条(它本来也永远不会亮)。
+    const doneCol = cols.find((c) => c.id === doneId());
     const zone = el("div", { className: "archive-zone" }, [
-      el("span", { className: "az-label", textContent: t("board.archiveZoneHint") }),
+      el("span", { className: "az-label", textContent: doneCol ? t("board.archiveZoneHint", { col: columnName(doneCol) }) : "" }),
     ]);
     onDragTarget(zone, (e) => {
       if (dragging && dragging.from === doneId()) {
@@ -2636,7 +2651,8 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
 
     // 只有一列的看板(书单这类纯分类)限宽居中,读起来像一张清单(用户 2026-11-11 拍)。
     const cols_wrap = el("div", { className: cols.length === 1 ? "cols single" : "cols" }, sections);
-    board.replaceChildren(cols_wrap, zone);
+    if (doneCol) board.replaceChildren(cols_wrap, zone);
+    else board.replaceChildren(cols_wrap);
     settleFolds(); // ⚠ 必须在还原滚动位**之前**:下面那几行还的是**夹后**几何里的位置
     // 还原各列滚动位(记录见 load() 重画定局处;列变短时 scrollTop 由浏览器自钳位)。
     for (const sec of board.querySelectorAll<HTMLElement>(".col")) {
@@ -2730,9 +2746,13 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       return p;
     }
     if (allItems.length === 0) {
+      // 说法点名**这块看板**的完成列(R4:别写死「已完成」);这块没有完成列就泛说「有完成列的看板」。
+      const doneCol = cols.find((c) => c.id === doneId());
       renderCentered(
         el("div", { className: "big", textContent: t("board.sealedEmpty") }),
-        el("div", { textContent: t("board.sealedEmptyHint") }),
+        el("div", {
+          textContent: doneCol ? t("board.sealedEmptyHint", { col: columnName(doneCol) }) : t("boards.sealedEmptyHintNoDone"),
+        }),
       );
       return;
     }
@@ -2815,18 +2835,24 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
 
   /** 一张卡都没有的看板(W3 159 / Q12,WD-40):照常画出各列(列头、计数 0、可拖放),那句「怎么开始」
    *  落在第一列的列体里 —— 此前是整页居中一句话、一根列都没有。没有可复制的东西:复制钮收起。 */
-  /** `sealedN` = 归档册里有几张(165 / W5 Q15,WD-34 前半:唯一那张归档后看板变回「还没有任务」,只有页头「归档 1」对得上 ——
-   *  像是那张没了;有归档的补一句它在哪)。 */
+  /** `sealedN` = **这块看板**的成就有几张(165 / W5 Q15,WD-34 前半:唯一那张归档后看板变回「还没有卡片」,只有页头
+   *  「归档 1」对得上 —— 像是那张没了;有归档的补一句它在哪)。
+   *  R3(多看板优化,用户 2026-11-12 拍):这几句只说**这块看板**的事 —— 归档数只数这块的成就,这块没有完成列就不提归档;
+   *  「转待办」那半句只在默认看板上说(转待办落默认看板),别的看板说「放进看板」;放不进卡(落点 ⊥)就只说为什么。 */
   function renderEmptyBoard(sealedN: number): void {
     renderBoard([]);
     copySlot.replaceChildren();
     const first = board.querySelector<HTMLElement>(".col .col-body");
-    if (!first) return; // 一根列都没有 = 列全删光了(core 不许删「已完成」,不该发生):就不放提示
+    if (!first || cur === null) return; // 一根列都没有(活看板恒至少一列,不该发生):就不放提示
+    const hint =
+      cur.landing === null ? t("board.newTaskNoLanding") : cur.is_default ? t("board.emptyHint") : t("boards.emptyHintOther");
     first.append(
       el("div", { className: "col-empty" }, [
         el("p", { className: "col-empty-big", textContent: t("board.empty") }),
-        el("p", { textContent: t("board.emptyHint") }),
-        ...(sealedN > 0 ? [el("p", { className: "col-empty-sealed", textContent: t("board.emptySealed", { n: sealedN }) })] : []),
+        el("p", { textContent: hint }),
+        ...(sealedN > 0 && cur.done !== null
+          ? [el("p", { className: "col-empty-sealed", textContent: t("board.emptySealed", { n: sealedN }) })]
+          : []),
       ]),
     );
   }
@@ -2903,11 +2929,13 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
     if (unmounted) return; // 死 mount 不再发起任何加载(codex M1)
     today = localToday();
     const seq = ++loadSeq;
+    // W3(多看板优化第二波):回收站 / 归档册的整张表只在**那一页**才拉;顶栏两个数走计数命令(trash_counts /
+    // sealed_counts_by_board)。`view` = 这一发按哪一页取的数 —— 取完页已经换了(reselect 排着的那发还没起)就按新页重取,
+    // ⛔ 别拿上一页的数据画这一页(codex 第二波第 4 条)。
+    const view = boardView;
     try {
-      const [active, archived, sealed, topics, freshCols, freshBoards, , cmCounts, removed] = await Promise.all([
+      const [active, topics, freshCols, freshBoards, , cmCounts, trashCounts, sealedCounts, trashLists, sealedList] = await Promise.all([
         invoke<TaskItem[]>("list_tasks"),
-        invoke<TaskItem[]>("list_archived_tasks"),
-        invoke<TaskItem[]>("list_sealed_tasks"),
         invoke<TopicOpt[]>("list_topics"),
         // 看板列(B-f 第 1 段):同样**并发**取。⚠ 它与 list_tasks 是两次独立读,中间那一
         // 瞬对端可能刚删掉一列 —— 无害:两份都是快照,最坏是这一帧少画/多画一列的收容区,
@@ -2920,10 +2948,21 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
         loadIdentity(mountSpace),
         // 留言计数(0035 徽章):同样并发;列表另走分页(§4.14.2 第 4 条)。
         loadCommentCounts(mountSpace),
-        // 回收站里的已删配图(用户面 149):宿主 stage 属任务的那些归这一页。
-        listRemovedImages("tasks"),
+        // 顶栏「回收站 N」「归档 N」(W3):两个计数命令,与列表是独立的读 —— ⛔ 别要求它们在并发写下与页里的列表严格相等。
+        loadTrashCounts(),
+        loadSealedCounts(),
+        // 回收站页:进了回收站的卡 + 回收站里的已删配图(用户面 149:宿主 stage 属任务的那些归这一页)。
+        view === "trash"
+          ? Promise.all([invoke<TaskItem[]>("list_archived_tasks"), listRemovedImages("tasks")])
+          : null,
+        // 归档册页:成就全表。
+        view === "sealed" ? invoke<TaskItem[]>("list_sealed_tasks") : null,
       ]);
       if (seq !== loadSeq) return; // 有更晚的 load 已在途:旧响应不落 DOM(否则盖新画/拆脉冲)
+      if (boardView !== view) {
+        void load(); // 取数途中换了页:这一份是上一页的,按新页重取
+        return;
+      }
       // focus 只由**确认最新**的这一发消费(codex 三审 H1):放在 seq 守卫之后取走——陈旧的
       // load 直接 return、不碰 focusId,跳转请求因此永远交给真正会渲染的那一发,不会丢。
       const focus = focusId;
@@ -2937,7 +2976,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       if (focus !== null && boardView === "board") {
         const hit = active.find((x) => x.id === focus);
         if (hit) {
-          if (holdingColumns(allCols).some((c) => c.id === hit.status)) boardView = "holding";
+          if (heldAt(hit.status)) boardView = "holding";
           else {
             const home = boardOfCol(hit.status);
             if (home && !home.deleted) setCurrentBoard(home.id, mountSpace);
@@ -2945,6 +2984,15 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
         }
       }
       cur = currentBoard(boards, mountSpace);
+      // R5:眼前这块不是筛选选定时那块 ⇒ 标签 / 类型 / 时间筛选与「只看到期」回到「所有」(判据住 SpaceMemo 头注)。
+      const switched = memo.board !== null && memo.board !== cur.id;
+      if (switched) {
+        filter.kind = "all";
+        filter.topics = [];
+        timeFilter = "all";
+        dueOnly = false;
+      }
+      memo.board = cur.id;
       cols = boardColumns(allCols, cur.id);
       shareBoardData({ space: mountSpace, boards, cols: allCols }); // 侧栏名单与收容计数跟着这一份
 
@@ -2967,9 +3015,10 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
         q,
         today,
         active,
-        archived,
-        removed,
-        sealed,
+        trashCounts,
+        sealedCounts,
+        trashLists,
+        sealedList,
         topics,
         // 列进指纹:别台设备给列改了名 / 调了顺序 / 删了一列,任务数据一个字节没变、
         // 变的只有列头与列序 —— 不进指纹的话 refocus 刷新会在这一格短路掉(同 cmCounts)。
@@ -3026,7 +3075,8 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       hk.reset();
       // 留言浮层:宿主还在就重拉第一页,已经离开这个视图(删了 / 移走了 / 撤回成灵感)
       // 就关掉——别让人对着不在了的条目写话(同灵感)。
-      refreshOpenComments(mountSpace, [...active, ...archived, ...sealed].map((t) => t.id));
+      // 回收站 / 归档册的列表只在那一页才有 ⇒ 别的页上,开着留言的那条已不在眼前就收(宿主离开了这一页)。
+      refreshOpenComments(mountSpace, [...active, ...(trashLists?.[0] ?? []), ...(sealedList ?? [])].map((t) => t.id));
       disarmConfirm(); // 卡片将被整批替换:在场确认的文档级监听一并收走
       if (activeEditCleanup) {
         activeEditCleanup();
@@ -3042,40 +3092,62 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       // 进了归档 / 回收站,那枚开关变成「← 看板」返回钮 —— 它旁边的数字是归档 / 回收站的条数,
       // 挂在「看板」两个字后面读成「看板上有几张」,这时藏起来(页里那一行自己会说几条)。
       // 0043:看板态的页头 = 这块看板的名字(侧栏里点的那块);收容区一个固定的名。
-      boardTitle.textContent =
+      // D11:页头里的字与显隐**变了才写**(setText / setHidden)—— 原样再写一遍也会惊动页头的 MutationObserver,
+      // 每次 load 白量一趟 fitHeader。
+      setText(
+        boardTitle,
         boardView === "sealed"
           ? t("board.sealedTitle")
           : boardView === "trash"
             ? t("board.trashTitle")
             : boardView === "holding"
               ? t("boards.holdingTitle")
-              : boardName(cur);
+              : boardName(cur),
+      );
       markActiveBoard(boardView === "holding" ? "holding" : boardView === "board" ? cur.id : null);
-      trashN.hidden = boardView === "trash";
-      sealN.hidden = boardView === "sealed";
-      trashN.textContent = String(archived.length + removedImageCount(removed));
+      setHidden(trashN, boardView === "trash");
+      setHidden(sealN, boardView === "sealed");
+      // 条目 + 已删配图**张数**(core 两格各自按同一谓词数好,⛔ 别再把配图组数 / 列表长度叠上去)。
+      setText(trashN, String(trashCounts.tasks + trashCounts.task_images));
       trashToggle.classList.toggle("active", boardView === "trash");
-      trashToggle.firstChild!.textContent = boardView === "trash" ? t("board.backToBoard") : t("board.trashLbl");
-      sealN.textContent = String(sealed.length);
+      setText(trashToggle.firstChild!, boardView === "trash" ? t("board.backToBoard") : t("board.trashLbl"));
+      // B12(用户 2026-11-12 拍):「归档 N」的 N 只数**这块看板**的成就(来处按卡所在列的归属认,同归档册那排筛选);
+      // 这块看板没有完成列、也没有成就 ⇒ 这枚不显(纯分类看板上一枚恒 0 的「归档」是噪音)。快捷键 G 照旧开得了归档册。
+      // 在归档册里它是「← 看板」返回钮,恒显。
+      // W3:这块看板那一组的 n(core 按卡所在列的归属分组,含已删看板与 null 组 —— 那两种不属任何活看板,这里自然不取)。
+      const sealedHere = sealedCounts.find((g) => g.board_id === cur!.id)?.n ?? 0;
+      setHidden(sealToggle, boardView !== "sealed" && cur.done === null && sealedHere === 0);
+      setText(sealN, String(sealedHere));
       sealToggle.classList.toggle("active", boardView === "sealed");
-      sealToggle.firstChild!.textContent = boardView === "sealed" ? t("board.backToBoard") : t("board.sealLbl");
+      setText(sealToggle.firstChild!, boardView === "sealed" ? t("board.backToBoard") : t("board.sealLbl"));
 
-      // 新建任务 only makes sense on the board, not in the 回收站/归档.
-      addTaskBtn.hidden = boardView !== "board";
-      // 「管理列」同理:回收站 / 归档册里根本没有列(B-f 第 2 段)。⚠ 看板态下「顺序」还要
-      // 过一道「有没有卡」(下面算完 visible 再定;「管理列」159 起空看板也在),这里先按视图收。
-      manageColsBtn.hidden = boardView !== "board";
+      // 新建卡片 only makes sense on the board, not in the 回收站/归档.
+      setHidden(addTaskBtn, boardView !== "board");
+      // R2:这块看板放不进卡(落点 ⊥:只剩完成列,多半是别的设备并发造出来的)⇒ 事前灰掉、title 说原因,
+      // ⛔ 别等人打完字才被 core 拒。用 aria-disabled 不用 disabled:点了 / 按 N 还要说一句为什么(blockedCompose)。
+      const noLanding = cur.landing === null;
+      addTaskBtn.classList.toggle("blocked", noLanding);
+      if (addTaskBtn.getAttribute("aria-disabled") !== (noLanding ? "true" : null)) {
+        if (noLanding) addTaskBtn.setAttribute("aria-disabled", "true");
+        else addTaskBtn.removeAttribute("aria-disabled");
+      }
+      addTaskBtn.title = noLanding ? t("board.newTaskNoLanding") : t("board.newTask");
+      // 「管理看板」同理:回收站 / 归档册里根本没有列(B-f 第 2 段)。⚠ 看板态下「顺序」还要
+      // 过一道「有没有卡」(下面算完 visible 再定;「管理看板」159 起空看板也在),这里先按视图收。
+      setHidden(manageColsBtn, boardView !== "board");
       // 排序轴同理只属看板(回收站按 archived_at、归档册按完成日,各有各的轴,500 不碰)。
-      sortBtn.hidden = boardView !== "board";
+      setHidden(sortBtn, boardView !== "board");
       // ⚠ paintSortBtn() 的调用挪到 paintDueSoon 之后(dueOnly title 要读它这一轮的
       // 终值——focusOnBoard 与「到期数归零」两条路都会在这之后才把 dueOnly 摆定,这里
       // 调会读到上一轮的旧值)。
-      if (boardView !== "board") dueSoonBtn.hidden = true; // 汇总也只属看板;计数在下面算
-      if (boardView !== "board") setComposeOpen(false);
+      if (boardView !== "board") setHidden(dueSoonBtn, true); // 汇总也只属看板;计数在下面算
+      if ((boardView !== "board" || noLanding) && !compose.hidden) setComposeOpen(false); // 框里的字留着(DOM 不动)
 
       // 搜索直达回收站/归档(P1 #8):目标在列表才脉冲+滚动;已离场(还原/取消归档的
       // 窄窗)静态落列表,不残留。
       if (boardView === "trash") {
+        if (trashLists === null) throw new Error("trash view loaded without trash lists");
+        const [archived, removed] = trashLists;
         filterRow.hidden = true;
         if (focus !== null && archived.some((t) => t.id === focus)) locateId = focus;
         renderTrash(archived, removed);
@@ -3090,24 +3162,23 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
         return;
       }
       if (boardView === "sealed") {
+        if (sealedList === null) throw new Error("sealed view loaded without the sealed list");
         filterRow.hidden = true;
-        if (focus !== null && sealed.some((t) => t.id === focus)) locateId = focus;
-        renderSealed(sealed, active.filter((t) => doneCols.has(t.status)));
+        if (focus !== null && sealedList.some((t) => t.id === focus)) locateId = focus;
+        renderSealed(sealedList, active.filter((t) => doneCols.has(t.status)));
         if (focus !== null) board.querySelector(".just-located")?.scrollIntoView({ block: "center" });
         return;
       }
       // 只显示 / 只计数「落在画出来的那几列里」的卡,列头计数因此永远与看板上的卡一致。
-      // ⭐ **B-f 第 1 段起这一句不再会静默吞卡**:`cols` 是从库里查来的,已删但还扣着卡的
-      // 列也在里面(§4.3 收容区)⇒ 每张活着的任务卡都必有归宿。⚠ 它仍是一道 fail-safe:
-      // 真出现「卡的 stage 不在任何画出来的列里」= 那一列凭空消失了,那时宁可少画一张卡也
-      // 不让列头计数与看板打架 —— 但那是**损坏**,不是常态。
+      // 0043 起 `cols` 只有**这块**看板的活列:别的看板上的卡、收容区里的卡(已删的看板 / 列,侧栏那一行进)
+      // 在这里本来就不画 —— 那是归宿不同,不是吞卡。
       const visible = active.filter((t) => cols.some((c) => c.id === t.status));
       doneIds = visible.filter((t) => t.status === doneId()).map((t) => t.id);
       // 空看板照样摆出列和「管理列」(W3 159 / Q12,WD-40,用户拍板 —— **推翻用户面 85 ② 那半**):新空间
       // 的看板此前一根列都没有、也没有「管理列」,想先把列排好再往里放卡,无处下手。⇒ 空态也画列(renderEmptyBoard),
       // 「管理列」常在。「顺序」仍按数据藏(没有卡就没有可排的东西,85 ② 这半照旧);⛔ 不造开关(408-411)。
-      manageColsBtn.hidden = false;
-      sortBtn.hidden = visible.length === 0;
+      setHidden(manageColsBtn, false);
+      setHidden(sortBtn, visible.length === 0);
 
       // 跨视图跳转(搜索命中任务 → 看板):focus 已在上方 seq 守卫之后取走(`focus`)。
       // 目标仍在看板(boardView==='board' 且在 visible)才动作——**在过滤之前**清掉标签/
@@ -3133,9 +3204,15 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       // 记下第一张任务时它原地显出来,下面那几列不被整体往下推。
       filterRow.hidden = false;
       filterRow.classList.toggle("reserve", visible.length === 0);
-      // 165 / W5 A21(WD-16):库里有标签就让标签那一行恒占着(filter-bar.css .keep-tags)—— 此前最后一张归档后两行筛选
+      // 165 / W5 A21(WD-16):有标签就让标签那一行恒占着(filter-bar.css .keep-tags)—— 此前最后一张归档后两行筛选
       // 收成一行,四列整体上移 39px。
-      filterRow.classList.toggle("keep-tags", allTopics.length > 0);
+      // ⭐ B8(多看板优化,用户 2026-11-12 拍):「有标签」从「库里有」收窄到「**这块看板**上有卡打过标签」:
+      // 书单这类从不打标签的看板上,标签那一行此前只剩一枚「过滤卡片…」单占一行;现在它并到时间那一行右端。
+      // W3(第二波)起看板页不再拉成就全表 ⇒ 判据 = 这块看板的活卡有标签,**或这一趟打开看板以来它有过**(tagRowBoards):
+      // A21 守的那几下(最后一张归档 / 转走唯一挂着的)照旧不跳;重开看板时按眼前的活卡重新判(那不是「跳」)。
+      // 这块看板上**第一次**打标签那一下会长出那一行(同 800 那格,在库里第一枚标签建成时就长,留着)。
+      if (visible.some((x) => x.topics.length > 0)) tagRowBoards.add(cur.id);
+      filterRow.classList.toggle("keep-tags", tagRowBoards.has(cur.id));
       const timeNarrowed = applyTimeFilter(visible, timeFilter, (t) => t.created_at);
       if (visible.length > 0) {
         renderTimePills(timeBar, visible, (t) => t.created_at, timeFilter, (b) => {
@@ -3178,7 +3255,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       filtered = timeFilter !== "all" || filterActive(filter) || dueOnly;
       paintFilterCount(filterCount, filtered ? shown.length : null); // Q8(WD-20):筛着写「筛出 N 条」
 
-      if (visible.length === 0) renderEmptyBoard(sealed.length);
+      if (visible.length === 0) renderEmptyBoard(sealedHere);
       else if (shown.length === 0) renderFilteredEmpty();
       else {
         renderBoard(shown);
@@ -3252,6 +3329,8 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
   function toggleSealed(): void {
     clearSearchBack();
     boardView = boardView === "sealed" ? "board" : "sealed";
+    // B12:从某块看板进归档册 ⇒ 筛选预选那块(它不在筛选排里时 renderSealed 自己落回「全部看板」)。
+    if (boardView === "sealed") sealedBoard = cur?.id ?? null;
     load();
   }
   sealToggle.addEventListener("click", toggleSealed);
@@ -3260,7 +3339,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
   // G 归档切换(卡片单键 A 是「归档这张卡」,视图键须错开)。全屏时鼠标要跑到右上角很远,
   // 键盘直达。
   const teardownViewKeys = registerViewKeys([
-    { key: BOARD_VIEW_KEYS.compose, run: () => { if (boardView === "board") setComposeOpen(true); } },
+    { key: BOARD_VIEW_KEYS.compose, run: () => { if (boardView === "board" && !blockedCompose()) setComposeOpen(true); } },
     { key: BOARD_VIEW_KEYS.trash, run: toggleTrash },
     { key: BOARD_VIEW_KEYS.sealed, run: toggleSealed },
   ]);
@@ -3292,7 +3371,14 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
   const headerFits = (): boolean =>
     headTools.getBoundingClientRect().top < headTitle.getBoundingClientRect().bottom &&
     boardHeader.scrollWidth <= boardHeader.clientWidth;
-  const fitHeader = (): void => {
+  // D11:上一次排档时页头里长什么样(标题 + 那排钮的标记)。没变就不重排 —— 每次 load 都会重建复制钮、
+  // 原样写回计数,MutationObserver 照样派过来;逐档试一遍要强制重排 5 次。`force` = 量的前提变了而标记没变:
+  // 内容宽变了(ResizeObserver 已按宽去重;⚠ 别拿 clientWidth 进 key —— 它含内边距,内边距一变它不动)、字体刚加载完。
+  let fitKey = "";
+  const fitHeader = (force = false): void => {
+    const key = `${headTitle.textContent}|${headTools.innerHTML}`;
+    if (!force && key === fitKey) return;
+    fitKey = key;
     let tier = FIT_TIERS.length - 1;
     for (let i = 0; i < FIT_TIERS.length; i++) {
       boardHeader.classList.remove(...FIT_ALL);
@@ -3311,7 +3397,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
     const w = entries[entries.length - 1].contentRect.width;
     if (w === fitWidth) return;
     fitWidth = w;
-    fitHeader();
+    fitHeader(true);
   }); // observe() 自己会先派一次,不必手动初始化
   hdrRO.observe(boardHeader);
   // 页头自己的类(换档)不算内容变化 —— 只认它**里面**那几枚钮的字与显隐。
@@ -3320,17 +3406,40 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
   });
   hdrMO.observe(boardHeader, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ["hidden", "class"] });
   void document.fonts.ready.then(() => {
-    if (!unmounted) fitHeader();
+    if (!unmounted) fitHeader(true);
   });
 
   composeCtl.setLiveReload(() => void load()); // 本 mount 即当前活看板:旧保存链落账后经它通知重读(codex 四审 M)
-  // 0043:侧栏那边动了看板(建 / 改名 / 排序 / 删、把卡拖到某块看板名上)⇒ 重取。自己发的那声也会回到这里,
-  // 多一发 load 无害(loadSeq 只让最晚那发落 DOM)。
-  const onBoardsChanged = (): void => void load();
+  // 同一拍里叫了好几次「重取」(广播一声 + 紧接着切块 / 新建完再切过来)只发一趟:微任务里合并(D10)。
+  let loadQueued = false;
+  function queueLoad(): void {
+    if (loadQueued) return;
+    loadQueued = true;
+    queueMicrotask(() => {
+      loadQueued = false;
+      void load();
+    });
+  }
+  // 0043:侧栏那边动了看板(建 / 改名 / 排序 / 删、把卡拖到某块看板名上)、本视图自己挪了卡 / 改了列 ⇒ 重取。
+  // 侧栏在本视图挂着时不自己取,等这一发经 BOARD_DATA 交过去(D10)。
+  const onBoardsChanged = (): void => queueLoad();
   document.addEventListener(BOARDS_CHANGED, onBoardsChanged);
+  setBoardViewLive(true);
   void load();
 
   return {
+    // D9:看板视图已挂着时点侧栏里的一块看板(或「看板」本身、收容区那一行)= 就地换,不整页卸载重挂 —— 新建框里
+    // 打了一半的字、开着的编辑都还在(编辑由 load 先落盘再画)。在看哪块已由侧栏记进 localStorage,load 读它;
+    // 换了块的筛选清法在 load 里(R5)。子视图与「只看到期」这类 mount 级 peek 同重挂时一样回到看板。
+    reselect() {
+      clearSearchBack(); // 人换了地方:那枚「Esc 回搜索」作废(同 notebook 换页)
+      boardView = pendingView ?? "board";
+      pendingView = null;
+      sealedBoard = null;
+      dueOnly = false;
+      queueLoad();
+      return true;
+    },
     unmount() {
       // 作废本 mount 的在途 load(codex 四审 H):loadSeq 是 mount 局部,但 focusId 是模块
       // 全局——不 bump 的话,旧 mount 晚回的 load 仍满足自己的 seq 守卫,会消费掉后来新
@@ -3338,6 +3447,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       // 明确取消"离开看板时尚未落地的这次定位"。
       unmounted = true;
       document.removeEventListener(BOARDS_CHANGED, onBoardsChanged);
+      setBoardViewLive(false);
       markActiveBoard(null); // 侧栏上「正在看哪块」的标随视图走
       setDraggingCard(null);
       typeAhead?.release(); // 待开编辑那一秒内切走:收键的监听不跨 mount

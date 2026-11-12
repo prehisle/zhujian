@@ -9,7 +9,7 @@ export const inbox = defineMessages({
   "inbox.imagesTrashed": { zh: "删了 {n} 张图,在回收站能找回", en: "Deleted {n} image(s) — you can get them back from Trash" },
   "inbox.filterPlaceholder": { zh: "过滤随记…", en: "Filter notes…" },
   // W4 Q11 / WD-38:「本周捕获 · 转待办」换白话(用户拍定的词表)。
-  "inbox.weekStats": { zh: "本周记了 {n} 条 · {pct}% 转成了待办", en: "Noted {n} this week · {pct}% became to-dos" },
+  "inbox.weekStats": { zh: "本周记了 {n} 条 · {pct}% 转成了卡片", en: "Noted {n} this week · {pct}% became cards" },
   "inbox.weekStatsNoRatio": { zh: "本周记了 {n} 条", en: "Noted {n} this week" },
   "inbox.composePlaceholder": { zh: "随手记一笔…", en: "Jot something down…" },
   // W3 159 / Q6(WD-17):有多个空间时灰字写上会记进哪个空间(只有一个空间时照旧)。
@@ -53,10 +53,12 @@ export const inbox = defineMessages({
   "inbox.docBadge": { zh: "长文", en: "Long-form" },
   "inbox.actDelete": { zh: "删除", en: "Delete" },
   "inbox.undoDeleted": { zh: "已移入回收站", en: "Moved to Trash" },
-  "inbox.undoPromoted": { zh: "已转为待办", en: "Turned into a task" },
+  "inbox.undoPromoted": { zh: "已转为卡片", en: "Turned into a card" },
   // 0043 随记「更多…」里的「放进看板 ▸」(multiboard-plan §0 ⑤):≥ 2 块看板才出现。
   "inbox.actIntoBoard": { zh: "放进看板", en: "Put on board" },
   "inbox.promotedTo": { zh: "已放进看板「{board}」", en: "Put on board “{board}”" },
+  // W5:「转待办」落的默认看板此刻放不进卡(落点 ⊥)—— 事前灰着时说的那句(口径同 board.newTaskNoLanding)。
+  "inbox.promoteNoLanding": { zh: "默认看板「{board}」现在没有能放新卡片的列:到「管理看板」里新建一列,或取消完成列", en: "The default board “{board}” has no column that can take new cards: add a column in “Manage board”, or unset the done column" },
   "inbox.trashNote": { zh: "删掉的随记、长文和配图会一直留在这,直到你彻底删除", en: "Deleted notes, long-form and images stay here until you delete them forever" },
   "inbox.filterNoMatch": { zh: "没有匹配「{q}」的随记", en: "No notes match “{q}”" },
   "inbox.goSee": { zh: "去看看", en: "Show me" },

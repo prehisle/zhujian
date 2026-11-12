@@ -9,8 +9,9 @@
 //
 // ⚠ **手机只做读侧 + 切看板 + 挪卡**(用户拍 ⑩;board-columns §8.6 四):建 / 删看板、改列、指定角色只在桌面。
 // ⚠ 桌面那棵树另有同形的 `src/board-columns.ts` / `src/boards.ts` —— 两个前端不共享代码、字典也各一份
-// (同 filter-bar 与 filter.ts 的既有形)。⛔ 判据只有一条:都照 core 给的 `kind` / `deleted` /
-// `board_deleted` / `landing` / `done` 分。
+// (同 filter-bar 与 filter.ts 的既有形)。⛔ 判据只有一条:都照 core 给的 `accepts_cards` / `held` /
+// `landing` / `done` 分(mbopt E24:「活列」「收容区」两条规则 core 解析好了给,前端⛔ 别再拿 `kind` / `deleted` /
+// `board_deleted` 自己拼)。
 
 import { t } from "./i18n";
 
@@ -32,6 +33,11 @@ export type BoardColumn = {
   board_id: string | null;
   /** 0043:所在看板已删 ⇒ 这一列住收容区。 */
   board_deleted: boolean;
+  /** core 解析:卡此刻能不能落进这一列(活任务列 ∧ 看板活着)。看板上画哪几列、卡能换到哪几列只看它。灵感列恒 false。 */
+  accepts_cards: boolean;
+  /** core 解析:这一列上的活卡属收容区(任务列 ∧ (列已删 ∨ 看板已删);判列不判有没有卡)。灵感列恒 false。
+   *  ⭐ 任务列里 `accepts_cards` 与 `held` 恰好一真一假(两处不重不漏)。 */
+  held: boolean;
 };
 
 /** 一块看板的当前态(与壳的 `Board` DTO 逐字段一致)。 */
@@ -48,6 +54,10 @@ export type Board = {
   /** 默认看板 = 活看板里排最前那块(随记「转待办」落这里)。 */
   is_default: boolean;
   deletable: boolean;
+  /** 这块看板**活列**上的活卡数(⚠ 不含收容区的卡;已删看板恒 0)。⛔ 别拿它推「删看板合不合法」—— 那由 core 命令现场判。 */
+  live_items: number;
+  /** 其中不在完成列里的(没有完成列 = 全部活卡)—— 切换排上看板名旁那个数(mbopt C13 / R7)。 */
+  open_items: number;
 };
 
 // 当前空间的全部列 / 全部看板,已由 core 按 `(position, id)` 排好。
@@ -57,15 +67,21 @@ export type Board = {
 // 别处零散地改它,也别在切空间时留着旧空间那份(refreshOnce 与时间轴同批取、同批落)。
 let columns: BoardColumn[] = [];
 let boards: Board[] = [];
+// id → 行(mbopt M14):一次重画里每张卡要问四五回「这一列是谁 / 属于哪块看板」,逐次 `find` 是 O(列数) × 卡数。
+// 与上面两份同批换(只在 setColumns / setBoards 里建),⛔ 别在别处单改其一。
+let colById = new Map<string, BoardColumn>();
+let boardById = new Map<string, Board>();
 
 /** 一轮加载落定:整体替换。⛔ 不做增量合并 —— 那会造出「半个空间的列」。 */
 export function setColumns(cols: BoardColumn[]): void {
   columns = cols;
+  colById = new Map(cols.map((c) => [c.id, c]));
 }
 
 /** 同 setColumns:看板与列要同一轮落(main.ts refreshOnce 同批取)。切空间时清成 []。 */
 export function setBoards(bs: Board[]): void {
   boards = bs;
+  boardById = new Map(bs.map((b) => [b.id, b]));
 }
 
 /** 六个种子列的 canonical 名住在**本端字典**里(§7.1d;core 只答「有没有被改过名」)。
@@ -101,29 +117,33 @@ export function boardName(b: Board): string {
 /** 全部看板(含已删,归档册按看板筛要认得删掉那块的来处),保持 core 给的顺序。 */
 export const allBoards = (): Board[] => boards;
 
-/** 活看板(切换条、挪到看板的候选),保持 core 给的顺序。 */
+/** 活看板(切换条),保持 core 给的顺序。 */
 export const liveBoards = (): Board[] => boards.filter((b) => !b.deleted);
+
+/** 放得进卡的活看板(「挪到看板 ▸」「放进看板 ▸」的候选,mbopt R1:显示条件 = 接收条件)。
+ *  落点 ⊥(core 解析:这块看板只剩完成列 / 一列都没有)的那块不列 —— 点了 core 也是响亮拒。 */
+export const landableBoards = (): Board[] => liveBoards().filter((b) => b.landing !== null);
+
+/** 默认看板(活看板里排最前那块;种子不可删 ⇒ 恒有)。缺了是 core 契约断了,响亮抛。 */
+export function defaultBoard(): Board {
+  const d = boards.find((b) => !b.deleted && b.is_default);
+  if (!d) throw new Error("no live default board");
+  return d;
+}
 
 /** 这一列属于哪块看板(灵感列 / 不认识的 stage = undefined)。 */
 export function boardOfStage(stage: string): Board | undefined {
-  const c = columns.find((x) => x.id === stage);
+  const c = colById.get(stage);
   if (!c || c.board_id === null) return undefined;
-  return boards.find((b) => b.id === c.board_id);
+  return boardById.get(c.board_id);
 }
 
-/** 这一列在收容区里吗(plan §3a):任务列 ∧ (列已删 ∨ 看板已删)。⚠ 不看还有没有卡 —— 判的是「这张卡在不在收容区」。 */
-function heldColumn(c: BoardColumn): boolean {
-  return c.kind === "task" && (c.deleted || c.board_deleted);
-}
+/** 这个 stage 的卡在收容区里吗(plan §3a;只出不进:没有勾、没有换列、只能「挪到看板」)。
+ *  判据 = core 的 `held`(mbopt E24)。⚠ 不看还有没有卡 —— 判的是「这张卡在不在收容区」。 */
+export const isHeldStage = (stage: string): boolean => colById.get(stage)?.held === true;
 
-/** 这个 stage 的卡在收容区里吗(只出不进:没有勾、没有换列、只能「挪到看板」)。 */
-export const isHeldStage = (stage: string): boolean => {
-  const c = columns.find((x) => x.id === stage);
-  return c !== undefined && heldColumn(c);
-};
-
-/** 收容区的列:还扣着活卡的那几列(空了就不显,同桌面 holdingColumns)。 */
-export const holdingColumns = (): BoardColumn[] => columns.filter((c) => heldColumn(c) && c.live_items > 0);
+/** 收容区的列:`held` 且还扣着活卡的那几列(空了就不显,同桌面 holdingColumns;mbopt E24 / plan §3a)。 */
+export const holdingColumns = (): BoardColumn[] => columns.filter((c) => c.held && c.live_items > 0);
 
 /** 收容区里一共几张卡(切换条那一格的 N)。 */
 export const holdingCount = (): number => holdingColumns().reduce((n, c) => n + c.live_items, 0);
@@ -162,14 +182,14 @@ const curKey = (space: string): string => `zhujian.board-current.${space}`;
 export function currentView(space: string): Board | typeof HOLDING {
   const saved = localStorage.getItem(curKey(space));
   if (saved === HOLDING && holdingCount() > 0) return HOLDING;
-  const live = liveBoards();
-  const hit = live.find((b) => b.id === saved);
-  if (hit) return hit;
-  const dflt = live.find((b) => b.is_default);
-  // 种子看板不可删 ⇒ 活看板恒非空、恒有一块是默认。缺了是 core 契约断了,响亮抛。
-  if (!dflt) throw new Error("no live default board");
-  return dflt;
+  const hit = saved === null ? undefined : boardById.get(saved);
+  if (hit && !hit.deleted) return hit;
+  // 种子看板不可删 ⇒ 活看板恒非空、恒有一块是默认(defaultBoard 缺了就响亮抛)。
+  return defaultBoard();
 }
+
+/** 一个「正看着的」的身份串(活看板 id 或 `HOLDING`):比较「换没换看板」、按看板记横滚位置用。 */
+export const viewId = (v: Board | typeof HOLDING): string => (v === HOLDING ? HOLDING : v.id);
 
 export function setCurrentView(space: string, id: string): void {
   localStorage.setItem(curKey(space), id);
@@ -180,27 +200,27 @@ export const switcherShown = (): boolean => liveBoards().length >= 2 || holdingC
 
 // ---- 任务面按当前看板分组 -----------------------------------------------------------
 
-/** 任务面要分的那几组:当前看板的活任务列;看着收容区时 = 收容区的列。
- *  ⚠ 0043 起删掉的列(哪怕看板还活着)不再作为只读列留在看板上,统一进收容区(plan §3a)。 */
-export function boardColumns(space: string): BoardColumn[] {
-  const v = currentView(space);
+/** 任务面要分的那几组:那块看板上 `accepts_cards` 的列(core 解析的活任务列);看着收容区时 = 收容区的列。
+ *  ⚠ 0043 起删掉的列(哪怕看板还活着)不再作为只读列留在看板上,统一进收容区(plan §3a;它的 `held` 为真、`accepts_cards` 为假)。
+ *  `v` 由调用方解析一次传进来(mbopt M14:一次重画只读一次 localStorage,见 main.ts projectTimeline)。 */
+export function boardColumns(v: Board | typeof HOLDING): BoardColumn[] {
   if (v === HOLDING) return holdingColumns();
-  return columns.filter((c) => c.kind === "task" && c.board_id === v.id && !c.deleted && !c.board_deleted);
+  return columns.filter((c) => c.board_id === v.id && c.accepts_cards);
 }
 
-/** 这张卡能被换到哪几列(状态 picker、横滑链):它**自己那块活看板**的活任务列;收容区里的卡 = 空(只能挪出)。
- *  已删的列不在内 —— core 的 `is_live_task_column` 会拒,UI 不该给一条注定被拒的路。 */
+/** 这张卡能被换到哪几列(状态 picker、横滑链):它**自己那块活看板**上 `accepts_cards` 的列;收容区里的卡 = 空(只能挪出)。
+ *  已删的列不在内 —— core 的 `is_live_task_column` 会拒,UI 不该给一条注定被拒的路(执行仍由 core 现场校验)。 */
 export function liveColumnsOf(stage: string): BoardColumn[] {
   if (isHeldStage(stage)) return [];
-  const c = columns.find((x) => x.id === stage);
-  if (!c || c.kind !== "task" || c.board_id === null) return [];
-  return columns.filter((x) => x.kind === "task" && x.board_id === c.board_id && !x.deleted && !x.board_deleted);
+  const c = colById.get(stage);
+  if (!c || c.board_id === null) return []; // 灵感列 / 不认识的 stage:不在任何看板上
+  return columns.filter((x) => x.board_id === c.board_id && x.accepts_cards);
 }
 
 /** 这个 stage 该显示的印文;**不是任务列(或列还没加载)= undefined**。
  *  ⚠ 调用方拿 undefined 当「灵感 / 不盖印」用,与从前 `STAGE_LABEL[stage]` 的语义一字不差。 */
 export function stageLabel(stage: string): string | undefined {
-  const c = columns.find((x) => x.id === stage);
+  const c = colById.get(stage);
   return c && c.kind === "task" ? nameOf(c) : undefined;
 }
 

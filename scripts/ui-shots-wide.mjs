@@ -125,7 +125,7 @@ const READY = {
 };
 // 六个覆盖面(tablet-plan 格 5)。⚠ 排在所有别的图**之后**:回收站那面要先往回收站里放几条(PANE_PREP),放了之后
 // 导航多一枚「回收站」、随记少几张 —— 排在后面,前面那几十张的几何就不受它影响,与没有这六面的旧 manifest 照样逐张可比。
-// 底栏钮(回收站 / 归档)按 pane_counts 显形,与卡片落 DOM 不是同一刻 ⇒ 等它出来再点。
+// 底栏钮(回收站 / 归档)的显形与卡片落 DOM 不是同一刻 ⇒ 等它出来再点。
 const PANE_BTN = (pane) => `(async () => {
     const b = () => document.querySelector('#bottombar [data-pane="${pane}"]');
     for (let i = 0; i < 50 && b().hidden; i++) await new Promise((r) => setTimeout(r, 100));

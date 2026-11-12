@@ -69,7 +69,7 @@ describe("716 · 撤销回执(随记)", () => {
     });
   });
 
-  it("转待办 → 「已转为待办 · 撤销」→ 点撤销,库里回到 inbox、不再是任务", async () => {
+  it("转待办 → 「已转为卡片 · 撤销」→ 点撤销,库里回到 inbox、不再是任务", async () => {
     const id = await invoke("capture_note", { content: "E2E-撤销-转待办乙" });
     await goNotebook("inbox");
     const card = await $(".note*=E2E-撤销-转待办乙");
@@ -78,7 +78,7 @@ describe("716 · 撤销回执(随记)", () => {
     await card.waitForExist({ reverse: true, timeout: 10000 });
     await browser.waitUntil(async () => (await taskStatus(id)) === "todo", { timeout: 8000, timeoutMsg: "转待办后应在 todo" });
 
-    await clickUndo("已转为待办");
+    await clickUndo("已转为卡片");
     await $(".note*=E2E-撤销-转待办乙").waitForExist({ timeout: 10000 });
     await browser.waitUntil(async () => (await inInbox(id)) && (await taskStatus(id)) === null, {
       timeout: 8000,

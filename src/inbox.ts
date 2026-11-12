@@ -53,7 +53,7 @@ import type { View, ViewCtx } from "./notebook";
 import { docPreviewText, focusDoc } from "./docs";
 import { trashPurgeControl } from "./trash-purge";
 import { focusTask } from "./board";
-import { type Board, boardName, liveBoards, loadBoards } from "./boards";
+import { type Board, boardName, boardsChanged, liveBoards, loadBoards } from "./boards";
 import { applyTagColor } from "./tag-color";
 import { renderTagPicker } from "./tag-picker";
 import { dayKey, dayLabel, itemSnippet, startOfWeek, when } from "./tasktime";
@@ -372,6 +372,11 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
   // 看板名单(「放进看板 ▸」的候选):随 refresh() 一并取,菜单打开那一刻读最新这份。
   let boards: Board[] = [];
   const intoTargets = (): Board[] => liveBoards(boards).filter((b) => b.landing !== null);
+  /** 「转待办」此刻做不做得了:默认看板落点 ⊥ ⇒ 给出原因(Act.blocked)。默认看板的判定是 core 给的 `is_default`。 */
+  const promoteBlocked = (): { blocked?: string } => {
+    const dflt = liveBoards(boards).find((b) => b.is_default);
+    return dflt !== undefined && dflt.landing === null ? { blocked: t("inbox.promoteNoLanding", { board: boardName(dflt) }) } : {};
+  };
   // 160:在这页改了当前空间名(或远端改名落地),灰字跟着换 —— 此前要重进页面。notebook.ts 刷完名字表发这一声。
   document.addEventListener("zhujian:space-names", refreshSpaces);
 
@@ -1329,11 +1334,12 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
         return;
       }
       afterPromote();
+      boardsChanged(); // 侧栏看板名旁的卡数跟着变(C13;侧栏自己重取 —— 看板视图此刻没挂着)
       // 716:刚转的待办撤回 = 无损(截止 / 优先级还没来得及设),配发撤销;看板那侧的 B 仍要确认。
       // 157 G4 / P3:回执再带一枚「去看看」(同展开成长文那枚「打开」):转完不知道去哪看(W1 WD-28)。
       const said = into ? t("inbox.promotedTo", { board: boardName(into) }) : t("inbox.undoPromoted");
       // 「去看看」不必先切看板:看板视图消费跳转时自己切到卡所在那块(board.ts load 的 focus 段)。
-      toastUndo(said, t("common.undo"), () => void undoVia("revert_task_to_inbox", item.id), {
+      toastUndo(said, t("common.undo"), () => void undoVia("revert_task_to_inbox", item.id).then(boardsChanged), {
         label: t("inbox.goSee"),
         run: () => {
           focusTask(item.id);
@@ -1606,7 +1612,9 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
         ...(item.revised ? [{ label: t("inbox.actHistory"), key: IDEA_CARD_KEYS.history, run: () => void toggleHistory() }] : [noHistoryAct(IDEA_CARD_KEYS.history)]),
         // W5 A9:有配图才有「看图」(从第一张看起,← → 翻、Esc 关;同点缩略图那条路)
         ...(imgs.length > 0 ? [{ label: t("inbox.actImages"), key: IDEA_CARD_KEYS.images, run: () => void openLightbox(imgs, 0) }] : []),
-        { label: t("inbox.actTask"), key: IDEA_CARD_KEYS.task, run: () => void doPromote() },
+        // W5(R2 那族):「转待办」落默认看板 —— 它此刻放不进卡(落点 ⊥)就事前淡着、点了 / 按 T 只说为什么,
+        // ⛔ 别等 core 拒了才报。「放进看板 ▸」照旧只列放得进的那几块(它就是这时的出路)。
+        { label: t("inbox.actTask"), key: IDEA_CARD_KEYS.task, run: () => void doPromote(), ...promoteBlocked() },
         // 0043「放进看板 ▸」(用户拍 ⑤):只有一块看板时不出(渐进式披露,「转待办」已经就是它);
         // 候选 = 放得进卡的活看板(落点 ⊥ 的不列 —— 显示条件 = 接收条件),core 给的顺序、默认那块在最前。
         ...(liveBoards(boards).length > 1 && intoTargets().length > 0

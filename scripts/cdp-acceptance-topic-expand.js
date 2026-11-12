@@ -139,7 +139,7 @@
     // ---- ③ 两段内容 ---------------------------------------------------------------
     const body = bodyOf(full);
     const heads = [...body.querySelectorAll(".tb-h")].map((h) => h.textContent.trim());
-    ok("③ 两段段头且条数与库对得上", heads.length === 2 && heads[0] === "随记 1" && heads[1] === "任务 1", { heads });
+    ok("③ 两段段头且条数与库对得上", heads.length === 2 && heads[0] === "随记 1" && heads[1] === "卡片 1", { heads });
     const texts = [...body.querySelectorAll(".tb-text")].map((e) => e.textContent);
     ok("③ 随记与任务的正文都印出来了", texts.includes("ZJ44e随记内容") && texts.includes("ZJ44e任务内容"), { texts });
     ok("③ 随记带时刻", !!body.querySelector(".tb-when")?.textContent.trim());
@@ -168,7 +168,7 @@
     const eb = bodyOf(empty);
     const empties = [...eb.querySelectorAll(".tb-empty")].map((e) => e.textContent.trim());
     ok("⑥ 空标签给两句空态文案,不是一片空白", empties.length === 2 && empties.every((s) => s.length > 0), { empties });
-    ok("⑥ 空态那两段的段头是 0", [...eb.querySelectorAll(".tb-h")].map((h) => h.textContent.trim()).join("|") === "随记 0|任务 0");
+    ok("⑥ 空态那两段的段头是 0", [...eb.querySelectorAll(".tb-h")].map((h) => h.textContent.trim()).join("|") === "随记 0|卡片 0");
 
     // ---- ⑦ 合并态不渲展开面 --------------------------------------------------------
     document.getElementById("topics-merge").click();

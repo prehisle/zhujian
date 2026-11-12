@@ -27,6 +27,11 @@ export function removedImageCount(groups: RemovedGroup[]): number {
   return groups.reduce((n, g) => n + g.images.length, 0);
 }
 
+/** 回收站的条数(core `repo::trash_counts`):条目两类 + 已删配图两类,配图**按张数**(同 removedImageCount)。
+ *  顶栏「回收站 N」用它,⛔ 别为一个数把整张回收站拉回来。 */
+export type TrashCounts = { ideas: number; tasks: number; idea_images: number; task_images: number };
+export const loadTrashCounts = (): Promise<TrashCounts> => invoke<TrashCounts>("trash_counts");
+
 export type TrashImagesOpts = {
   /** 宿主视图的单键控制器:每行登记成一张「卡」,与条目行同一套悬停 / 右键 / 单键。 */
   hk: HotkeyController;

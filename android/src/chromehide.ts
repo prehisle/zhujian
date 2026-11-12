@@ -80,16 +80,21 @@ export function showChrome(): void {
   set(false);
 }
 
-/** 屏顶那条细条:收着、且筛着(#filter-sum 露着)才露,字照抄那句摘要。筛选变了(main.ts::paintFilterSum)也调一次。 */
+/** 屏顶那条细条:收着、且(筛着 —— #filter-sum 露着 —— 或有看板切换排)才露。字 = 当前看板名(切换排在时;mbopt M11:
+ *  收起后看不出眼前是哪块看板)· 那句筛选摘要(筛着时)。筛选 / 看板变了(main.ts::paintFilterSum,每次投影都调)也调一次。 */
 export function syncPeek(): void {
   // 收着时筛选也会变(点卡上的标签胶囊就筛):筛选条多出 / 少了「筛出 N 条」那一行,高度变了,收起那一刻量的位移就不够,
   // 它的底边会从屏顶漏下来(890 截图实撞)⇒ 每次筛选变了重量一次。
   if (hidden) measureShift();
   const peek = document.getElementById("chrome-peek")!;
   const sum = document.getElementById("filter-sum")!;
-  const on = hidden && !sum.hidden && sum.textContent !== "";
+  // 切换排只在任务面 ∧ 有 ≥ 2 块看板(或收容区有卡)时才画(main.ts renderBoardPills)⇒ 读得到当前那枚就是「该说看板名」。
+  const board = document.querySelector<HTMLElement>("#filter-boards .fpill.active")?.dataset.label ?? "";
+  const filtered = !sum.hidden && sum.textContent !== "" ? sum.textContent! : "";
+  const text = [board, filtered].filter((x) => x !== "").join(" · ");
+  const on = hidden && text !== "";
   peek.hidden = !on;
-  if (on) peek.textContent = sum.textContent;
+  if (on) peek.textContent = text;
   document.body.classList.toggle("chrome-peek-on", on); // 看板与节头给它让 28(index.html「顶栏收起」那段)
 }
 

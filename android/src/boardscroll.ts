@@ -32,19 +32,28 @@ export function scrollByFor(el: Element, dy: number): void {
 // projectTimeline 每次都整片重建 #timeline(同步、刷新、挪卡之后都会)⇒ 新画的列从 0 滚起;开面板时 #timeline 是
 // display:none,列的滚动位置也跟着没了。整页滚那会儿没这个问题(window 的 scrollY 不随 DOM 重建清零)。
 // ⇒ 一直记着(#timeline 上一只**捕获阶段**的 scroll 监听 —— 元素的 scroll 不冒泡,捕获收得到),重画 / 关面之后摆回去。
-// 按空间记:换了空间作废(列是那个空间的)。只记看板上的;窄屏的节不滚,收不到事件。
-let mem: { space: string; left: number; tops: Map<string, number> } = { space: "", left: 0, tops: new Map() };
-let spaceOf: () => string = () => "";
+// 按「空间 + 看板」各记一份(mbopt M4):列是那块看板的,换一块看板横滚位置不沿用上一块 —— 此前只按空间记,#timeline 本身
+// 不随重画换掉,它的 scrollLeft 就把上一块看板横滚到的位置原样带到了新的那块上。切回来时还它自己上次的位置。
+// 只记看板上的;窄屏的节不滚,收不到事件。
+type Mem = { left: number; tops: Map<string, number> };
+const mems = new Map<string, Mem>();
+let keyOf: () => string = () => "";
 
-export function initBoardScroll(getCurrentSpace: () => string): void {
-  spaceOf = getCurrentSpace;
+function memFor(key: string): Mem {
+  let m = mems.get(key);
+  if (!m) mems.set(key, (m = { left: 0, tops: new Map() }));
+  return m;
+}
+
+/** `getKey` = 「此刻屏上画的是哪个空间的哪块看板」的身份串(main.ts 在每次投影里解析一次,这里只读)。 */
+export function initBoardScroll(getKey: () => string): void {
+  keyOf = getKey;
   const tl = document.getElementById("timeline")!;
   tl.addEventListener(
     "scroll",
     (e) => {
       if (!onBoard()) return;
-      const space = spaceOf();
-      if (mem.space !== space) mem = { space, left: 0, tops: new Map() };
+      const mem = memFor(keyOf());
       const el = e.target as HTMLElement;
       if (el === tl) mem.left = tl.scrollLeft;
       else if (el.parentElement === tl && el.dataset.col !== undefined) mem.tops.set(el.dataset.col, el.scrollTop);
@@ -53,9 +62,11 @@ export function initBoardScroll(getCurrentSpace: () => string): void {
   );
 }
 
-/** 把记着的横滚与各列竖滚摆回去(重画之后、关面之后各调一次;不是看板 / 换了空间就什么都不做)。 */
+/** 把这块看板记着的横滚与各列竖滚摆回去(重画之后、关面之后各调一次;不是看板就什么都不做)。
+ *  没记过(头一回看这块 / 换了空间)= 横滚归零、列从顶上起。 */
 export function restoreBoardScroll(): void {
-  if (!onBoard() || mem.space !== spaceOf()) return;
+  if (!onBoard()) return;
+  const mem = memFor(keyOf());
   const tl = document.getElementById("timeline")!;
   for (const col of tl.querySelectorAll<HTMLElement>(":scope > .tl-group[data-col]")) {
     const y = mem.tops.get(col.dataset.col!);

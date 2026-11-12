@@ -14,7 +14,7 @@ const cols = () => invoke("list_board_columns");
 const tasks = () => invoke("list_tasks");
 const taskByTitle = async (title) => (await tasks()).find((t) => t.title === title);
 const navItems = () =>
-  browser.execute(() => [...document.querySelectorAll("#board-nav .bn-item")].map((b) => b.textContent.trim()));
+  browser.execute(() => [...document.querySelectorAll("#board-nav .bn-item")].map((b) => b.querySelector(".bn-name").textContent.trim()));
 
 const READ = "多看板-书单";
 const FLOW = "多看板-周报";
@@ -116,7 +116,7 @@ describe("多看板 · 桌面", () => {
       cols: document.querySelectorAll("#board .col").length,
       single: !!document.querySelector("#board .cols.single"),
       parentSubOn: document.querySelector('.sidebar nav button[data-view="board"]').classList.contains("sub-on"),
-      activeSub: document.querySelector("#board-nav .bn-item.active")?.textContent.trim() ?? null,
+      activeSub: document.querySelector("#board-nav .bn-item.active .bn-name")?.textContent.trim() ?? null,
     }));
     expect(st).toEqual({ cols: 1, single: true, parentSubOn: true, activeSub: READ });
   });
@@ -302,7 +302,7 @@ describe("多看板 · 桌面", () => {
 
     // 用侧栏切到它,在列管理里删
     await goNotebook("board");
-    await browser.execute((name) => [...document.querySelectorAll("#board-nav .bn-item")].find((b) => b.textContent.trim() === name).click(), FLOW);
+    await browser.execute((name) => [...document.querySelectorAll("#board-nav .bn-item")].find((b) => b.querySelector(".bn-name").textContent.trim() === name).click(), FLOW);
     await browser.waitUntil(async () => (await browser.execute(() => document.querySelector(".v-board header h1")?.textContent)) === FLOW, { timeout: 8000 });
     await browser.execute(() => document.querySelector("#manage-cols").click());
     await $(".bcm-board").waitForExist({ timeout: 5000 });

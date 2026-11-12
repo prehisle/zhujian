@@ -34,6 +34,11 @@ use crate::frindex;
 const TASK_STAGES: &str = crate::board::TASK_COLUMN_IDS;
 /// 灵感态列的 id 集合,同上。
 const IDEA_STAGES: &str = crate::board::IDEA_COLUMN_IDS;
+/// 回收站成员的 SQL 谓词(`i` = items 别名;双轴行不进回收站,见 [`trash_items`] 头注)。
+/// [`idea_trash`] / [`archived_tasks`] / [`trash_counts`] 共用 —— 计数与列表同一段。
+pub(crate) const TRASH_WHERE: &str = "i.archived_at IS NOT NULL AND i.sealed_at IS NULL";
+/// 成就册成员的 SQL 谓词(`i` = items 别名)。[`sealed_tasks`] 与 `board::sealed_counts_by_board` 共用。
+pub(crate) const SEALED_WHERE: &str = "i.sealed_at IS NOT NULL";
 /// 「新任务落哪一列」/「完成住哪一列」的**唯一正式子**在 `board`;这里只是把名字拉近
 /// (480 结清 477 那笔账)。⛔ 别在本模块的 SQL 里再写 `'todo'` / `'done'` 字面量 ——
 /// 那两个 id 之所以敢写死,靠的是 `board::undeletable_reason` 保证它们永不可删,
@@ -544,7 +549,7 @@ pub fn idea_stats(conn: &Connection, week_start: &str) -> rusqlite::Result<IdeaS
 pub fn idea_trash(conn: &Connection) -> rusqlite::Result<Vec<OrganizedRow>> {
     organized_rows(
         conn,
-        &format!("i.stage IN {IDEA_STAGES} AND i.archived_at IS NOT NULL AND i.sealed_at IS NULL"),
+        &format!("i.stage IN {IDEA_STAGES} AND {TRASH_WHERE}"),
         "i.archived_at DESC",
     )
 }
@@ -1525,9 +1530,39 @@ pub fn list_tasks(conn: &Connection) -> rusqlite::Result<Vec<TaskRow>> {
 pub fn archived_tasks(conn: &Connection) -> rusqlite::Result<Vec<TaskRow>> {
     task_rows(
         conn,
-        &format!("i.stage IN {TASK_STAGES} AND i.archived_at IS NOT NULL AND i.sealed_at IS NULL"),
+        &format!("i.stage IN {TASK_STAGES} AND {TRASH_WHERE}"),
         "i.archived_at DESC",
     )
+}
+
+/// 回收站的条数(K5:顶栏 / 底栏计数不必拉全表)。条目两类与 [`idea_trash`] / [`archived_tasks`]
+/// 同谓词;已删配图两类与 [`removed_image_count`] 同口径(宿主在灵感 / 任务那边)。前端按自己那一面
+/// 组合(桌面任务回收站 = `tasks + task_images`;手机统一回收站 = 四格之和)。
+/// 两壳命令直接返回它(契约同源,同 [`RemovedImage`])。
+#[derive(serde::Serialize, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TrashCounts {
+    pub ideas: i64,
+    pub tasks: i64,
+    pub idea_images: i64,
+    pub task_images: i64,
+}
+
+pub fn trash_counts(conn: &Connection) -> rusqlite::Result<TrashCounts> {
+    let (ideas, tasks) = conn.query_row(
+        &format!(
+            "SELECT COUNT(*) FILTER (WHERE i.stage IN {IDEA_STAGES}), \
+                    COUNT(*) FILTER (WHERE i.stage IN {TASK_STAGES}) \
+               FROM items i WHERE {TRASH_WHERE}"
+        ),
+        [],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )?;
+    Ok(TrashCounts {
+        ideas,
+        tasks,
+        idea_images: removed_image_count(conn, TrashScope::Ideas)?,
+        task_images: removed_image_count(conn, TrashScope::Tasks)?,
+    })
 }
 
 // ---- Board: stage transition + reorder primitives -------------------------------
@@ -1911,7 +1946,7 @@ pub(crate) fn unseal_task(conn: &Connection, id: &str) -> rusqlite::Result<usize
 pub fn sealed_tasks(conn: &Connection) -> rusqlite::Result<Vec<TaskRow>> {
     task_rows(
         conn,
-        "i.sealed_at IS NOT NULL",
+        SEALED_WHERE,
         "COALESCE(i.done_at, i.sealed_at) DESC, i.id DESC",
     )
 }

@@ -243,6 +243,12 @@ export const listArchivedTasks = (space: string) =>
 export const listSealedTasks = (space: string) =>
   invoke<TaskItem[]>("list_sealed_tasks", { spaceId: space });
 
+/** 成就册按看板分组的条数(core `board::sealed_counts_by_board`):**含已删看板**;`board_id = null` 那组 = 封存行的 stage
+ *  不是任务列,如实单列、不并进任何看板。只有条数 > 0 的组(没出现 = 这块看板没有成就)。 */
+export type SealedCount = { board_id: string | null; n: number };
+export const sealedCountsByBoard = (space: string) =>
+  invoke<SealedCount[]>("sealed_counts_by_board", { spaceId: space });
+
 export const listTopics = (space: string) => invoke<TopicItem[]>("list_topics", { spaceId: space });
 
 /** 按标签浏览(只含名下有灵感的标签)。 */

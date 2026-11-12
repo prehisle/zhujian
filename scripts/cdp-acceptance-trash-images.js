@@ -46,8 +46,9 @@
     const m2 = await inv("add_item_image", { itemId: id, mime: "image/png", dataB64: PNG });
     await inv("delete_item_image", { imageId: m2.id });
     check("删后图条只剩图1", JSON.stringify(await seqs(id)) === "[1]");
-    const counts = await inv("pane_counts");
-    check("pane_counts.trash 带上已删图", counts.trash >= 1, counts.trash);
+    // mbopt 第二波:改问 core `trash_counts`(与回收站列表同口径;已删配图按张数、按宿主在灵感 / 任务那边分两格)。宿主是随记 ⇒ 落 idea_images。
+    const counts = await inv("trash_counts");
+    check("trash_counts.idea_images 带上已删图", counts.idea_images >= 1, counts);
 
     await reopen();
     const r = await waitFor(() => row(m2.id));

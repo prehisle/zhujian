@@ -32,8 +32,13 @@ export type BoardColumn = {
   deletable: boolean;
   /** 0043:属于哪块看板(灵感两列 null)。 */
   board_id: string | null;
-  /** 0043:所在看板已删 ⇒ 这一列住收容区(multiboard-plan §3a),只出不进。 */
+  /** 0043:所在看板已删 ⇒ 这一列住收容区(multiboard-plan §3a),只出不进。⚠ 只拿来说「为什么在收容区」,
+   *  判「在不在收容区」读 `held`。 */
   board_deleted: boolean;
+  /** 卡此刻能不能落进这一列(活任务列 ∧ 看板活着;core 解析)。「看板画哪几列」就是它。 */
+  accepts_cards: boolean;
+  /** 这一列上的活卡属收容区(任务列 ∧ (列已删 ∨ 看板已删);core 解析,判列不判有没有卡;灵感列恒 false)。 */
+  held: boolean;
 };
 
 /** 全部列(含已删的),已由 core 按 `(position, id)` 排好。⛔ 前端别再排一次(0022:同键并列合法)。 */
@@ -87,7 +92,8 @@ export function columnName(c: BoardColumn): string {
  * `holdingColumns`)—— 每张活卡只有一个归宿,⛔ 别在原看板上同时留一份。
  */
 export function boardColumns(cols: BoardColumn[], boardId: string): BoardColumn[] {
-  return cols.filter((c) => c.kind === "task" && c.board_id === boardId && !c.deleted && !c.board_deleted);
+  // W1(多看板优化第二波):「活列」由 core 给(`accepts_cards`),⛔ 别再拿 kind / deleted / board_deleted 自己拼。
+  return cols.filter((c) => c.accepts_cards && c.board_id === boardId);
 }
 
 // ---- 写侧(B-f 第 2 段;⭐ **只有桌面有这一半** —— 安卓只做读侧,2026-08-25 用户拍板) ----
@@ -95,7 +101,7 @@ export function boardColumns(cols: BoardColumn[], boardId: string): BoardColumn[
 // ⛔ **这四条不是「前端的写命令」,是 core 那四条的搬运工**:每一道拒绝(空名 / 系统列 /
 // 已删的列 / 角色列 / 非空列 / 发送端闸)都在 core 里,壳原样透传那句人话。
 // ⛔ 前端**一句谓词都不许写**(plan §8.1-2:B-f 不拥有任何数据安全判定)——「按钮该不该灰」
-// 的答案只有两个来源:`list_board_columns` 给的 `deletable`/`live_items`/`deleted`,
+// 的答案只有两个来源:`list_board_columns` 给的 `deletable`/`live_items`/`accepts_cards`/`held`,
 // 与下面那枚只读探针给的 `can_manage`。
 
 /** 在 `boardId` 那块看板上新建一个任务列(落在最右)。返回新列 id。 */

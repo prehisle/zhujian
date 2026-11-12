@@ -5,7 +5,7 @@ export const chrome = defineMessages({
   "notebook.maximize": { zh: "最大化", en: "Maximize" },
   // W4 Q11 / WD-38:「捕获窗」换白话「随手记小窗」(用户拍定的词表)。
   "notebook.capturedIdea": { zh: "小窗里记下了一条随记", en: "Saved a note from the quick-note window" },
-  "notebook.capturedTask": { zh: "小窗里记下了一条待办", en: "Saved a to-do from the quick-note window" },
+  "notebook.capturedTask": { zh: "小窗里记下了一张卡片", en: "Saved a card from the quick-note window" },
   "notebook.restoreDown": { zh: "向下还原", en: "Restore down" },
   "notebook.expandSidebar": { zh: "展开侧栏 (Ctrl+B)", en: "Expand sidebar (Ctrl+B)" },
   "notebook.collapseSidebar": { zh: "折叠侧栏 (Ctrl+B)", en: "Collapse sidebar (Ctrl+B)" },
@@ -65,7 +65,7 @@ export const chrome = defineMessages({
   "space.moveWarnBold": { zh: "编辑历史会随移动永久删除,不迁入目标空间", en: "the edit history is permanently deleted and does not come along" },
   "space.moveWarnPost": { zh: "。", en: "." },
   // ⚠ 这句不写列名:列能改名,落点列叫什么要读**对方**空间(选了空间后问句里点名,move-space.ts::pick)。
-  "space.moveColNote": { zh: "列不随迁:任务到了那边一律落在新任务进的那一列,排最上面。", en: "Columns don’t come along: over there a task always lands at the top of the column new tasks go into." },
+  "space.moveColNote": { zh: "列不随迁:卡片到了那边一律落在新卡片进的那一列,排最上面。", en: "Columns don’t come along: over there a card always lands at the top of the column new cards go into." },
   // 165 / W5 A19(WD-21):这一行此前只写「移到」—— 看板菜单里换列那项也叫「移到」,换空间的面板里写全是哪种「移到」。
   "space.moveTo": { zh: "移到空间", en: "Move to space" },
   "space.moveQ": { zh: "移到「{name}」?", en: "Move to “{name}”?" },

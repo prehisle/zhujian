@@ -249,7 +249,7 @@ describe("158 G3 · 看板规矩 Q1–Q13(桌面)+ A7 对齐", () => {
       card.querySelector(".dont-ask input[type=checkbox]").checked = true;
       card.querySelector(".act.primary").click();
     }, cardEl(A));
-    await waitToast("已移入回收站。以后删任务不再问,要改回:设置 → 通用 →「删任务前确认」");
+    await waitToast("已移入回收站。以后删卡片不再问,要改回:设置 → 通用 →「删卡片前确认」");
     // 设置 → 通用:那枚开关此刻在「关」
     await browser.execute(() => document.getElementById("settings-entry").click());
     await $("#delete-confirm-off").waitForExist({ timeout: 5000 });

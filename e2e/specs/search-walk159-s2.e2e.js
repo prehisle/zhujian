@@ -101,7 +101,7 @@ describe("W3 159 · 搜索 / 筛选 / 回收站时刻(桌面第二波)", () => {
       idea: await hitBadges("删掉的随记"),
       task: await hitBadges("删掉的任务"),
       doc: await hitBadges("删掉的长文"),
-    }).toEqual({ idea: [["回收站 · 随记"]], task: [["回收站 · 任务"]], doc: [["回收站 · 长文"]] });
+    }).toEqual({ idea: [["回收站 · 随记"]], task: [["回收站 · 卡片"]], doc: [["回收站 · 长文"]] });
 
     await browser.execute(() =>
       [...document.querySelectorAll(".v-search .hit")].find((h) => h.textContent.includes("删掉的任务")).click(),

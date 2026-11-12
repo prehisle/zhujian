@@ -301,6 +301,15 @@
       }
       .sidebar nav .board-nav button:hover { background: color-mix(in srgb, var(--ink) 6%, transparent); color: var(--ink); }
       .sidebar nav .board-nav .bn-item.active { color: var(--ink); background: var(--seal-tint); }
+      /* C13(多看板优化第二波):名字右侧灰小字的卡数(board-nav.ts;0 不显)。名字长了它让位省略,数字不被挤掉。 */
+      .sidebar nav .board-nav .bn-item .bn-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+      .sidebar nav .board-nav .bn-item .bn-n {
+        flex: none;
+        font-family: var(--font-sans);
+        font-size: var(--fs-12);
+        color: var(--ink-faint);
+        font-variant-numeric: tabular-nums;
+      }
       .sidebar nav .board-nav .bn-item.active::before {
         content: "";
         position: absolute;
@@ -313,7 +322,23 @@
       .sidebar nav .board-nav .bn-item.dragging { opacity: 0.45; }
       .sidebar nav .board-nav .bn-item.drop-before { border-top-color: var(--seal); }
       .sidebar nav .board-nav .bn-item.drop-after { border-bottom-color: var(--seal); }
+      /* 拖卡途中放得进的那几块看板整体轻亮(C16;显示条件 = 接收条件,board-nav.ts paintDropTargets);指到哪块再实一档。 */
+      .sidebar nav .board-nav .bn-item.can-drop { color: var(--ink); background: color-mix(in srgb, var(--seal-tint) 50%, transparent); box-shadow: inset 0 0 0 1px var(--seal-line); }
       .sidebar nav .board-nav .bn-item.card-hover { background: var(--seal-tint); color: var(--ink); box-shadow: inset 0 0 0 1px var(--seal-line); }
+      /* 右键「改名」:这一行原地换成输入框(board-nav.ts startRename),几何对齐那一行的字。 */
+      .sidebar nav .board-nav .bn-rename {
+        font-family: var(--font-serif);
+        font-size: var(--fs-14);
+        color: var(--ink);
+        background: var(--paper);
+        border: 1px solid var(--seal-line);
+        border-radius: var(--radius-sm);
+        margin: 0 0 0 30px;
+        padding: 3px 7px;
+        min-height: 26px;
+        min-width: 0;
+      }
+      .sidebar nav .board-nav .bn-rename:focus { outline: none; }
       .sidebar nav .board-nav .bn-add { font-family: var(--font-sans); font-size: var(--fs-12); color: var(--ink-faint); }
       .sidebar nav .board-nav .bn-holding {
         font-family: var(--font-sans);

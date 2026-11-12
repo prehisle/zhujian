@@ -6,7 +6,8 @@ export const panes = defineMessages({
   "panes.kindIdea": { zh: "随记", en: "Note" },
   "panes.kindDoc": { zh: "长文", en: "Long-form" },
   // 159 / W3 Q12(WM-29):回收站里任务的小章叫「任务」(此前印列名「待办」,同一张在搜索里叫「任务」)。
-  "panes.kindTask": { zh: "任务", en: "Task" },
+  // mbopt 第二波(用户 2026-11-12 拍):卡片的统称一律「卡片」—— 回收站 / 搜索 / 标签页里与「随记」并列的那一类、量词「N 张卡片」。键名不动。
+  "panes.kindTask": { zh: "卡片", en: "Card" },
   "panes.deletedAt": { zh: "删于 {when}", en: "Deleted {when}" },
   "panes.restore": { zh: "还原", en: "Restore" },
   "panes.purge": { zh: "彻底删除", en: "Delete forever" },
@@ -21,19 +22,19 @@ export const panes = defineMessages({
   "panes.emptyTrashYes": { zh: "清空", en: "Empty" },
   // 159(W3 走查 Q1):回收站一页分「随记」「任务」两段,各数各的、各自清空;确认句说清清的是哪一段、几条、几张配图。
   "panes.secIdeas": { zh: "随记", en: "Notes" },
-  "panes.secTasks": { zh: "任务", en: "Tasks" },
+  "panes.secTasks": { zh: "卡片", en: "Cards" },
   "panes.secIdeasEmpty": { zh: "没有删掉的随记。", en: "No deleted notes." },
-  "panes.secTasksEmpty": { zh: "没有删掉的任务。", en: "No deleted tasks." },
+  "panes.secTasksEmpty": { zh: "没有删掉的卡片。", en: "No deleted cards." },
   "panes.emptyIdeas": { zh: "清空随记回收站", en: "Empty notes trash" },
-  "panes.emptyTasks": { zh: "清空任务回收站", en: "Empty tasks trash" },
+  "panes.emptyTasks": { zh: "清空卡片回收站", en: "Empty cards trash" },
   "panes.whatNotes": { zh: "{n} 条", en: "{n} {n|item|items}" },
-  "panes.whatTasks": { zh: "{n} 个任务", en: "{n} {n|task|tasks}" },
+  "panes.whatTasks": { zh: "{n} 张卡片", en: "{n} {n|card|cards}" },
   "panes.whatImages": { zh: "{m} 张配图", en: "{m} {m|image|images}" },
   "panes.whatBoth": { zh: "{items}和 {images}", en: "{items} and {images}" },
-  "panes.emptyIdeasQ": { zh: "清空随记回收站?这一段的 {what}将彻底删除、无法恢复(任务那段不动)", en: "Empty the notes trash? {what} here will be deleted forever (the tasks section stays)" },
-  "panes.emptyTasksQ": { zh: "清空任务回收站?这一段的 {what}将彻底删除、无法恢复(随记那段不动)", en: "Empty the tasks trash? {what} here will be deleted forever (the notes section stays)" },
+  "panes.emptyIdeasQ": { zh: "清空随记回收站?这一段的 {what}将彻底删除、无法恢复(卡片那段不动)", en: "Empty the notes trash? {what} here will be deleted forever (the cards section stays)" },
+  "panes.emptyTasksQ": { zh: "清空卡片回收站?这一段的 {what}将彻底删除、无法恢复(随记那段不动)", en: "Empty the cards trash? {what} here will be deleted forever (the notes section stays)" },
   "panes.ideasEmptied": { zh: "随记回收站已清空", en: "Notes trash emptied" },
-  "panes.tasksEmptied": { zh: "任务回收站已清空", en: "Tasks trash emptied" },
+  "panes.tasksEmptied": { zh: "卡片回收站已清空", en: "Cards trash emptied" },
   // A7(WM-04):彻底删除做完要说话(此前还原、清空都有回执,唯独它一声不吭)。
   "panes.purged": { zh: "已彻底删除", en: "Deleted forever" },
   "panes.purgedImage": { zh: "这张图已彻底删除", en: "Image deleted forever" },
@@ -50,14 +51,15 @@ export const panes = defineMessages({
   "panes.purgeOneImagesQ": { zh: "彻底删除这条和它的 {m} 张配图?无法恢复", en: "Delete this and its {m} {m|image|images} forever? This cannot be undone" },
   "panes.doneAt": { zh: "完成于 {when}", en: "Done {when}" },
   "panes.sealedAt": { zh: "归档于 {when}", en: "Archived {when}" },
-  "panes.unseal": { zh: "取消归档(回到「已完成」)", en: "Unarchive (back to Done)" },
-  "panes.unsealed": { zh: "已取消归档,回到「已完成」", en: "Unarchived, back in Done" },
-  "panes.sealedEmpty": { zh: "还没有归档的任务。", en: "No archived tasks yet." },
+  // mbopt R4:{col} = 这张卡回去的那一列(它那块看板的完成列各叫各的;原列 / 原看板已删 = 「已删除的看板 / 列」)。
+  "panes.unseal": { zh: "取消归档(回到「{col}」)", en: "Unarchive (back to “{col}”)" },
+  "panes.unsealed": { zh: "已取消归档,回到「{col}」", en: "Unarchived, back in “{col}”" },
+  "panes.sealedEmpty": { zh: "还没有归档的卡片。", en: "No archived cards yet." },
   "panes.sealedLoadFailed": { zh: "归档读取失败:{error}", en: "Could not load Archive: {error}" },
   "panes.hitInbox": { zh: "随记", en: "Note" },
   "panes.hitProcessed": { zh: "随记", en: "Note" },
   "panes.hitDoc": { zh: "长文", en: "Long-form" },
-  "panes.hitTask": { zh: "任务", en: "Task" },
+  "panes.hitTask": { zh: "卡片", en: "Card" },
   "panes.hitArchived": { zh: "回收站", en: "Trash" },
   "panes.hitSealed": { zh: "归档", en: "Archive" },
   // 159 / W3 Q12:回收站里的命中说清原来是什么(同桌面 search.statusTrashKind)。
@@ -67,7 +69,7 @@ export const panes = defineMessages({
   // 159 / W3 Q8(WM-15):结果头上写条数(同桌面 search.matchCount)。
   "panes.searchCount": { zh: "{n} 条匹配", en: "{n} {n|match|matches}" },
   // 159 / W3 A20:范围补上长文与任务(同桌面 search.idleHint)。有结果时也挂在条数后面(A4)。
-  "panes.searchPrompt": { zh: "随记、长文、任务、归档、回收站和改过的旧版本都一起搜。", en: "Notes, long-form, tasks, the archive, the trash and past versions are all searched." },
+  "panes.searchPrompt": { zh: "随记、长文、卡片、归档、回收站和改过的旧版本都一起搜。", en: "Notes, long-form, cards, the archive, the trash and past versions are all searched." },
   // 159 / W3 A14:从搜索点进回收站 / 归档,那一条在读的这一会儿不在了。
   "panes.locateGone": { zh: "那一条已经不在这里了(可能刚被还原、取消归档或彻底删除)", en: "That item is no longer here (it may have just been restored, unarchived or deleted forever)" },
   "panes.searching": { zh: "搜索中…", en: "Searching…" },

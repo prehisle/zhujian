@@ -29,13 +29,14 @@ import {
   listBoards,
   listSpaces,
   listTimeline,
-  listSealedTasks,
+  sealedCountsByBoard,
   listTasks,
   listTopicsFull,
   sealDoneTasks,
   spaceLabel,
   unsealTask,
   updateTaskStatus,
+  type SealedCount,
   type SearchHitItem,
   type SpaceInfo,
   type TaskItem,
@@ -74,6 +75,7 @@ import {
   boardName,
   boardOfStage,
   currentView,
+  defaultBoard,
   holdingCount,
   holdingLabel,
   isDoneStage,
@@ -86,6 +88,8 @@ import {
   setCurrentView,
   stageLabel,
   switcherShown,
+  viewId,
+  type Board,
 } from "./columns";
 import { initTaskMove, inView, moveReceipt, spotOf } from "./taskmove";
 import { initBoardScroll, restoreBoardScroll, scrollByFor } from "./boardscroll";
@@ -308,12 +312,30 @@ function homeOf(it: TimelineItem): ViewMode | "docs" {
 // 组内时间序是本端自己的确定性顺序(146 §2.1)。
 // ⚠ 0043 起已删但还扣着卡的列**不再**留在看板上,统一进收容区(multiboard-plan §3a;切换那排末尾那一枚)。
 // 0043(multiboard-plan §6 第 4 段):只画**当前那块看板**的列;看着收容区时 = 收容区那几列,节头说来处。
-const taskSections = (space: string): { stage: string; label: string }[] => {
-  const held = currentView(space) === HOLDING;
-  return boardColumns(space).map((c) => ({ stage: c.id, label: held ? holdingLabel(c.id) : stageLabel(c.id)! }));
+const taskSections = (view: BoardView | null): { stage: string; label: string }[] => {
+  if (view === null) return [];
+  const held = view === HOLDING;
+  return boardColumns(view).map((c) => ({ stage: c.id, label: held ? holdingLabel(c.id) : stageLabel(c.id)! }));
 };
 /** 看板与列这一轮落定了没有(切空间到新数据到达之间是空的 ⇒ 当前看板答不上,任务面一节都不分)。 */
 const boardsReady = (): boolean => liveBoards().length > 0;
+type BoardView = Board | typeof HOLDING;
+/** 这一次投影画的是哪块看板(任务面 ∧ 看板已落定;否则 null)。mbopt M14:**每次投影只解析一次**(currentView 要读 localStorage
+ *  再滤一遍看板),往下传给分节 / 筛选条 / 切换排;此前一次重画要解析七回左右。⛔ 只在 projectTimeline 里写。 */
+let shownView: BoardView | null = null;
+/** 横滚位置按「空间 + 看板」记的那枚身份串(boardscroll.ts;mbopt M4)。随 shownView 一起写。 */
+let shownBoardKey = "";
+
+/** 这次「记一笔」/ ＋ 在任务面上落哪块看板(plan §6 第 4 段:此刻看着的那块;看着收容区 ⇒ 默认看板)。 */
+const composeBoard = (view: BoardView): Board => (view === HOLDING ? defaultBoard() : view);
+
+/** 任务面上新卡放不进去的原因(mbopt R2):要落的那块看板落点 ⊥(core 解析:只剩完成列 / 一列都没有)⇒ 一句话;
+ *  放得进 / 不在任务面 / 看板还没落定 = null。⇒ ＋ 与「记下」**事前**灰掉并说这句,⛔ 别等打完字才让 core 拒。 */
+function landingBlocked(): string | null {
+  if (viewMode !== "tasks" || shownView === null) return null;
+  const b = composeBoard(shownView);
+  return b.landing === null ? t("boards.noLanding", { board: boardName(b) }) : null;
+}
 
 // 优先级角标的三档词(1..3;下标 0 恒不取——priority 有值才画这枚 chip)。
 // ⚠ 506 起是 P 记号且方向相反:3 = **P0(最高)** / 2 = P1 / 1 = P2,库里仍存 1/2/3。
@@ -523,6 +545,8 @@ const BOARD_COL_MIN = 300;
 const BOARD_COL_GAP = 12;
 /** 放不下全部列时右边露出的下一列那截(含列间距之外的部分;889)。 */
 const BOARD_PEEK = 24;
+/** 只有一列的看板:那一列限宽、在看板里居中(mbopt M12;同桌面 board.css `.cols.single` 与归档册的 560,用户 2026-11-11 拍)。 */
+const BOARD_SOLO_MAX = 560;
 /** 屏上现在是不是看板(= 任务面 ∧ 宽屏)= body 上那枚 `board` 类(index.html「看板」那段全挂在它上面)。
  *  只由 projectTimeline 投影时写;时间轴的 ResizeObserver 拿它比「宽窄翻了没有」。 */
 const boardShown = (): boolean => document.body.classList.contains("board");
@@ -530,8 +554,14 @@ function syncBoardCols(): void {
   const box = $("timeline");
   const w = timelineW();
   const n = box.querySelectorAll(":scope > .tl-group").length;
+  box.classList.toggle("solo", n === 1); // 居中靠 CSS(index.html「看板」那段)
   // 面板开着时时间轴 0 宽、空态那句话没画列:都沿用上一次(关面那一下 ResizeObserver 会再算)
   if (w === 0 || n === 0) return;
+  if (n === 1) {
+    box.style.setProperty("--board-col-w", `${Math.min(w, BOARD_SOLO_MAX)}px`);
+    syncBoardTop();
+    return;
+  }
   const k = Math.min(n, boardFit(w));
   // 放不下全部列时,让下一列在右边露出至多 BOARD_PEEK 那一截:不露的话平板竖放恰好两整列,看不出右边还有列可滑。
   // 列数优先 —— 只拿 k 列各取下限之后剩下的那点宽,不为了露这一截少放一整列(960 竖放三列只剩 8,就不露)。
@@ -1028,22 +1058,48 @@ function emptyModeHtml(none: string, hint: string): string {
   return `<p class="muted empty">${none}<br />${hint}</p>`;
 }
 
-/** 任务面一张都没有、而归档里有 ⇒ 空态下面补一句「归档了 N 张,在「归档」里」(165 / W5 Q15 查到手机同病:唯一那张归档后,
- *  任务页变回「还没有任务」,像是那张没了)。张数要问后端(归档册不在时间轴快照里)⇒ 先占一行藏着,问到了 N > 0 才显;
- *  问不到只是少这一句(空态本身照常)。初始同步还在拉时不补(那时空态说的是「在拉」)。 */
-function sealedHintHtml(): string {
-  return isBooting() ? "" : `<p class="muted sealed-hint" data-sealed-hint hidden></p>`;
+/** 空看板那句「怎么放进第一张」(mbopt R3:只说**这块看板**的事)。落点 ⊥ ⇒ 说放不进的原因(＋ 此刻是灰的);
+ *  「转待办」那半句只在默认看板上说(随记转待办落默认看板,别的看板上说了是指错路),别的看板指「放进看板」(同桌面 boards.emptyHintOther)。 */
+function emptyTasksHint(view: BoardView | null): string {
+  if (view === null || view === HOLDING) return t("main.emptyTasksHint");
+  if (view.landing === null) return t("boards.noLanding", { board: esc(boardName(view)) });
+  return view.is_default ? t("main.emptyTasksHintPromote") : t("main.emptyTasksHintOther");
 }
+const emptyTasksLines = (view: BoardView | null): string => `${t("main.emptyTasks")}<br />${emptyTasksHint(view)}`;
+
+/** 这块看板一张都没有、而它的归档里有 ⇒ 空态下面补一句「归档了 N 张,在「归档」里」(165 / W5 Q15 查到手机同病:唯一那张归档后,
+ *  任务页变回空态,像是那张没了)。张数要问后端(归档册不在时间轴快照里)⇒ 先占一行藏着,问到了 N > 0 才显;
+ *  问不到只是少这一句(空态本身照常)。初始同步还在拉时不补(那时空态说的是「在拉」)。
+ *  mbopt R3:只数**这块看板**的成就(按卡所在列的归属认);这块看板没有完成列 ⇒ 根本不提归档(它不产生成就)。 */
+function sealedHintHtml(view: BoardView | null): string {
+  if (isBooting() || view === null || view === HOLDING || view.done === null) return "";
+  return `<p class="muted sealed-hint" data-sealed-hint hidden></p>`;
+}
+// 成就册按看板的条数一轮只问一次(mbopt M3):空看板每次重画(同步事件、切看板、筛选)都会走到这里,此前每回都重新调后端。
+// 每轮 refreshOnce 落定时作废(`sealedCache = null`)—— 归档 / 取消归档都会触发一轮刷新,数不会旧过一轮。
+// 第二波起问的是 core 的 `sealed_counts_by_board`(只要条数,不再拉整本成就册回来自己按列归看板)。
+let sealedCache: { space: string; rows: Promise<SealedCount[]> } | null = null;
 let sealedHintSeq = 0;
-function fillSealedHint(box: HTMLElement): void {
+function fillSealedHint(box: HTMLElement, view: BoardView | null): void {
   const el = box.querySelector<HTMLElement>("[data-sealed-hint]");
-  if (!el) return;
+  if (!el || view === null || view === HOLDING) return;
   const space = getCurrentSpace();
   const seq = ++sealedHintSeq;
-  void listSealedTasks(space).then(
+  if (sealedCache === null || sealedCache.space !== space) {
+    const rows = sealedCountsByBoard(space);
+    sealedCache = { space, rows };
+    rows.catch(() => {
+      if (sealedCache?.rows === rows) sealedCache = null; // 问不到不缓存,下次重画再问
+    });
+  }
+  const boardId = view.id;
+  void sealedCache.rows.then(
     (rows) => {
-      if (seq !== sealedHintSeq || space !== getCurrentSpace() || !el.isConnected || rows.length === 0) return;
-      el.textContent = t("main.emptyTasksSealed", { n: rows.length });
+      if (seq !== sealedHintSeq || space !== getCurrentSpace() || !el.isConnected) return;
+      // 没有这块看板那一组 = 它一张成就都没有(core 只回条数 > 0 的组)。
+      const n = rows.find((r) => r.board_id === boardId)?.n;
+      if (n === undefined || n === 0) return;
+      el.textContent = t("main.emptyTasksSealed", { n });
       el.hidden = false;
     },
     () => {
@@ -1065,7 +1121,10 @@ function projectTimeline(): void {
   const items = [...lastItems.values()];
   // 0043:任务面只装**当前那块看板**(或收容区)的卡 —— 筛选条的计数、到期汇总、空态都按这一块说。
   const space = getCurrentSpace();
-  const onBoard = viewMode === "tasks" && boardsReady() ? new Set(boardColumns(space).map((c) => c.id)) : null;
+  const view: BoardView | null = viewMode === "tasks" && boardsReady() ? currentView(space) : null;
+  shownView = view;
+  shownBoardKey = view === null ? space : `${space}|${viewId(view)}`;
+  const onBoard = view === null ? null : new Set(boardColumns(view).map((c) => c.id));
   const modeItems = items.filter((i) => homeOf(i) === viewMode && (onBoard === null || onBoard.has(i.stage)));
   const f = filters[viewMode];
   // 157 G4 / P11:从「没筛」进「筛着」那一刻记下读到哪儿,筛选全清掉时滚回去(此前留在筛选时的位置)。
@@ -1075,7 +1134,8 @@ function projectTimeline(): void {
   // 死标签/死类型回落(纯状态,先于渲染 pills 与应用过滤,同桌面共享件次序)。
   filter.reconcileTopicFilter(f, allFilterTopics);
   filter.reconcileKindFilter(f, allFilterTopics);
-  renderFilterBar(modeItems);
+  renderFilterBar(modeItems, view);
+  syncLandingBlock();
   const shown = filter.applyFilter(modeItems, f, (i) => i.content, allFilterTopics);
   // 157 G4 / P10:筛着标签时卡上那枚胶囊照常显示 —— 218 起把它藏掉,用户读成「标签被摘了」(W1 走查 WM-32 / WD-18)。
   // ⛔ `soleTopicFilter` 留着(两端纯逻辑被 check-filter-parity 同压),只是不再拿它藏胶囊。
@@ -1129,10 +1189,10 @@ function projectTimeline(): void {
     // Q3:「已完成」那一节头上挂「全部归档」(问一次、回执带撤销;同桌面列头那枚)。n 按这一列**全部**的卡说
     // (seal_done_tasks 归的是全部,含被筛掉的)。
     // 0043:「已完成」= 当前看板解析后的完成列;纯分类看板 / 收容区没有这一枚。
-    const view = boardsReady() ? currentView(space) : HOLDING;
-    const curDone = view === HOLDING ? null : view.done;
+    const curDone = view === null || view === HOLDING ? null : view.done;
     const doneAll = curDone === null ? 0 : modeItems.filter((i) => i.stage === curDone).length;
-    const section = (s: { stage: string; label: string }): string => {
+    // `emptyHtml`:这一列空着时画什么(默认那枚「空」;空看板横放时第一列装空态那几句,mbopt M12)。
+    const section = (s: { stage: string; label: string }, emptyHtml?: string): string => {
       const rows = inSection(s.stage);
       const count =
         `<span class="tl-count">${rows.length}</span>` +
@@ -1140,14 +1200,24 @@ function projectTimeline(): void {
           ? `<button type="button" class="tl-act" data-seal-all="${doneAll}">${t("main.sealAll")}</button>`
           : "");
       const cards =
-        board && rows.length === 0 ? `<p class="tl-empty">${t("main.boardEmpty")}</p>` : rows.map((it) => renderCard(it, hideTopic)).join("");
+        board && rows.length === 0 ? (emptyHtml ?? `<p class="tl-empty">${t("main.boardEmpty")}</p>`) : rows.map((it) => renderCard(it, hideTopic)).join("");
       // data-col:长按拖认落点在哪一列(carddrag.ts)。
       return `<section class="tl-group" data-col="${esc(s.stage)}"><h3 class="tl-sec">${esc(s.label)}${count}</h3>${cards}</section>`;
     };
+    const sections = taskSections(view);
+    // 空看板(mbopt M12):横放的看板上照样画出各列 + 「空」,空态那几句放进第一列(同桌面画列;此前一句话盖掉全部列,
+    // 看不出这块看板有哪几列)。初始同步还在拉 / 竖放 照旧一句话。
+    const emptyBoardCols = board && !isBooting() && view !== null && sections.length > 0;
+    // 看着收容区时那句说明(mbopt M10):竖放 = 时间轴首行、随内容滚走;横放的看板留在筛选条里压成一行(renderBoardPills)。
+    const heldNote = view === HOLDING && !board ? `<p class="muted held-note">${t("boards.holdingBar")}</p>` : "";
     box.innerHTML = dueShown.length
-      ? (board ? taskSections(space) : taskSections(space).filter((s) => dueShown.some((t) => t.stage === s.stage))).map(section).join("")
+      ? heldNote + (board ? sections : sections.filter((s) => dueShown.some((t) => t.stage === s.stage))).map((s) => section(s)).join("")
       : modeItems.length === 0
-        ? emptyModeHtml(t("main.emptyTasks"), t("main.emptyTasksHint")) + sealedHintHtml()
+        ? emptyBoardCols
+          ? sections
+              .map((s, i) => section(s, i === 0 ? `<p class="tl-empty tl-empty-lead">${emptyTasksLines(view)}</p>${sealedHintHtml(view)}` : undefined))
+              .join("")
+          : emptyModeHtml(t("main.emptyTasks"), emptyTasksHint(view)) + sealedHintHtml(view)
         : shown.length > 0 && stageF !== null && stageShown.length === 0
           ? `<p class="muted empty">${t("main.noneUnderStage", { stage: esc(stageLabel(stageF)!) })}</p>`
           : stageShown.length > 0 && dueOnly
@@ -1156,7 +1226,7 @@ function projectTimeline(): void {
     // 每排几列要在量折叠(settleFolds)**之前**定下来:列宽决定正文折几行。
     if (board) syncBoardCols();
     paintFilterSum(nowFiltered ? dueShown.length : null, f);
-    fillSealedHint(box);
+    fillSealedHint(box, view);
   }
   // 159 / W3 Q8(WM-26 / X-06):过滤词在卡上标红(同搜索命中;整串匹配,与 applyFilter 同一口径)。
   // ⚠ 排在量折叠之前:标红改了字重,夹线要按标完的样子量。
@@ -1172,22 +1242,27 @@ function projectTimeline(): void {
 
 /** 筛选条:本面有条目才显示(空面无可筛)。类型行 + 标签行由 filter.ts 渲染,文本框
  *  是常驻元素(不随 pills 重建、打字不丢焦点),值在 applyMode/清筛处另行同步。 */
-function renderFilterBar(modeItems: TimelineItem[]): void {
+function renderFilterBar(modeItems: TimelineItem[], view: BoardView | null): void {
   const bar = $("filterbar");
   // 0043:看板切换那排在,当前这块空着也得留着这条 —— 否则空看板上切不回别的看板。
-  const boardsRow = renderBoardPills($("filter-boards"));
+  const boardsRow = renderBoardPills($("filter-boards"), view);
   bar.hidden = modeItems.length === 0 && !boardsRow;
+  bar.classList.toggle("boards-on", boardsRow); // 横放:过滤框并进切换那排的右端(index.html「看板」那段,mbopt M9)
+  if (boardsRow) revealActiveBoard(view!);
   const fmain = bar.querySelector<HTMLElement>(".fmain")!;
   fmain.hidden = modeItems.length === 0;
   if (modeItems.length === 0) {
     // 只剩看板那排:其余几排清掉(:empty 隐),别留着上一块看板的状态 / 类型钮。
     for (const id of ["filter-stages", "filter-kinds"]) $(id).replaceChildren();
+    bar.classList.remove("boards-wrap");
     return;
   }
-  renderStagePills($("filter-stages"), modeItems);
+  renderStagePills($("filter-stages"), modeItems, view);
   const f = filters[viewMode];
   filter.renderKindPills($("filter-kinds"), modeItems, allFilterTopics, f, onFilterPick);
   filter.renderTopicPills($("filter-topics"), modeItems, allFilterTopics, f, onFilterPick);
+  // 横放有切换排时,第一行 = 切换排 + 过滤框;下面还有到期钮 / 标签才断到第二行(index.html `.boards-wrap`,mbopt M9)。
+  bar.classList.toggle("boards-wrap", boardsRow && ($("filter-topics").childElementCount > 0 || $("filter-stages").querySelector(".fdue") !== null));
   // 159 / W3 A5(WM-03 前半):筛选清掉的那一下,标签条滚回开头 —— 此前「所有」停在屏外(x=−245),
   // 看得见的几枚都没选中,看不出现在是「全部」。只在「筛着 → 不筛」那一下滚(平时自己横划到哪儿就停哪儿)。
   const was = barWasPicked[viewMode];
@@ -1328,6 +1403,10 @@ function syncTagsToggle(): void {
   // 标签行空了而类型轴还在 ⇒ 过滤框并进类型那一行右端,别独占一行(用户面 150;CSS 见 `.kinds-inline`)。
   const kindsInline = topics.childElementCount === 0 && $("filter-kinds").childElementCount > 0;
   $("filterbar").classList.toggle("kinds-inline", kindsInline);
+  // 标签、类型两行都空着 ⇒ 过滤框并进「列」那排右端(mbopt M9;CSS 见 `.stages-inline`)。看板形有自己那套排法,不进这一格。
+  const stagesInline =
+    !board && topics.childElementCount === 0 && $("filter-kinds").childElementCount === 0 && $("filter-stages").childElementCount > 0;
+  $("filterbar").classList.toggle("stages-inline", stagesInline);
   // ⛔ 一枚真标签都没有时不占标签行(879 用户拍,翻 165 / W5 A21 的 `.tags-reserve`;由头在 index.html `.tags-fit .ftext` 下面)。
 }
 $("filter-expand").addEventListener("click", () => {
@@ -1400,7 +1479,7 @@ document.addEventListener("click", (e) => {
 /** 任务面的状态 chips 行:全部 + 四态(固定成员,含 0 计数——行的成员不随数据增减,
  *  布局稳定),与标签/类型 pills 同皮(.fpill)。计数随标签 / 类型筛选收缩、不随文本收缩(158 Q9 / 192)。
  *  灵感面清空该行(CSS :empty 隐)。 */
-function renderStagePills(bar: HTMLElement, modeItems: TimelineItem[]): void {
+function renderStagePills(bar: HTMLElement, modeItems: TimelineItem[], view: BoardView | null): void {
   if (viewMode !== "tasks") {
     bar.replaceChildren();
     return;
@@ -1429,7 +1508,7 @@ function renderStagePills(bar: HTMLElement, modeItems: TimelineItem[]): void {
   // 自己 / 并排那枚的事,不叠进来。
   const f = filters[viewMode];
   const scoped = filter.applyFilter(modeItems, { ...f, text: "" }, (i) => i.content, allFilterTopics);
-  for (const s of taskSections(getCurrentSpace())) {
+  for (const s of taskSections(view)) {
     nodes.push(mk(s.label, s.stage, scoped.filter((i) => i.stage === s.stage).length));
   }
   const due = dueSummaryPill(modeItems);
@@ -1481,20 +1560,20 @@ function onDuePick(): void {
  *  渐进式披露(§6 末 ①):只有一块活看板、收容区也空 ⇒ 整排不画(:empty 隐),手机上看不出有「看板」这回事。
  *  一枚一块活看板(core 给的序,最前 = 默认看板),收容区有卡时末尾多一枚「已删除的看板 / 列 N」。
  *  返回这排画没画。看着收容区时下面再挂一行说明(只能挪出去、怎么挪)。 */
-function renderBoardPills(row: HTMLElement): boolean {
+function renderBoardPills(row: HTMLElement, view: BoardView | null): boolean {
   const note = $("board-note");
-  if (viewMode !== "tasks" || !boardsReady() || !switcherShown()) {
+  if (view === null || !switcherShown()) {
     row.replaceChildren();
     note.hidden = true;
     return false;
   }
-  const view = currentView(getCurrentSpace());
   const mk = (label: string, id: string, count: number | null): HTMLButtonElement => {
     const b = document.createElement("button");
     b.type = "button";
     const on = view === HOLDING ? id === HOLDING : view.id === id;
     b.className = `fpill${on ? " active" : ""}`;
     b.dataset.board = id;
+    b.dataset.label = label; // 横放收起顶栏后屏顶那枚细条写当前看板名(chromehide.ts syncPeek,mbopt M11)
     b.append(document.createTextNode(label));
     if (count !== null) {
       const n = document.createElement("span");
@@ -1508,26 +1587,58 @@ function renderBoardPills(row: HTMLElement): boolean {
   const axis = document.createElement("span");
   axis.className = "faxis";
   axis.textContent = t("boards.axis");
-  const nodes: HTMLElement[] = [axis, ...liveBoards().map((b) => mk(boardName(b), b.id, null))];
+  // 看板名右侧的灰小字 = 这块看板还没完成的卡数(mbopt C13 / R7:core 的 `open_items`,不在完成列的活卡;没有完成列 = 全部)。
+  // 0 不显(同收容那枚 —— 空了就不写数)。⚠ 它与下面画的卡是两次独立读,并发写下可能差一拍,⛔ 别拿屏上卡数去校它。
+  const nodes: HTMLElement[] = [axis, ...liveBoards().map((b) => mk(boardName(b), b.id, b.open_items > 0 ? b.open_items : null))];
   const held = holdingCount();
   if (held > 0) nodes.push(mk(t("boards.holdingPill"), HOLDING, held));
   row.replaceChildren(...nodes);
+  // 收容区那句说明(mbopt M10):竖放时它是时间轴的首行、随内容滚走(projectTimeline 画),⛔ 别放回吸顶的筛选条里 ——
+  // 那儿它压两三行、一直钉在屏顶。横放的看板整页不滚(列各自滚),没有「滚走」这回事 ⇒ 留在筛选条里、压成一行(index.html)。
   note.textContent = t("boards.holdingBar");
-  note.hidden = view !== HOLDING;
+  note.hidden = view !== HOLDING || !document.body.classList.contains("board");
   return true;
 }
 
-/** 点看板钮:同 onStagePick 的草稿闸。换看板是本机 UI 态(不同步);状态维 / 到期维随之清(列是那块看板自己的)。 */
+/** 切到某块看板后(点切换排、「去看看」跳过去、记一笔从收容区落回默认看板…)那枚看板钮滚进视野(mbopt M13,仿 revealActiveTopic)。
+ *  只在「看的看板换了」那一下滚:同一块看板上的重画(同步、筛选)不动 —— 用户自己横划到哪儿就停哪儿。 */
+let revealedBoard = "";
+function revealActiveBoard(view: BoardView): void {
+  const key = shownBoardKey;
+  if (key === revealedBoard) return;
+  const row = $("filter-boards");
+  const pill = row.querySelector<HTMLElement>(`.fpill[data-board="${viewId(view)}"]`);
+  if (!pill || row.clientWidth === 0) return; // 还没排版(面开着 / 条藏着):下回重画再滚
+  revealedBoard = key;
+  const r = row.getBoundingClientRect();
+  const p = pill.getBoundingClientRect();
+  if (p.left < r.left || p.right > r.right) row.scrollLeft += p.left - r.left - 8;
+}
+
+/** 点看板钮:同 onStagePick 的草稿闸。换看板是本机 UI 态(不同步)。 */
 function onBoardPick(id: string): void {
   if (cardPanel.hasDirtyDraft()) {
     showError(t("main.finishDraftFirst"));
     return;
   }
-  setCurrentView(getCurrentSpace(), id);
-  taskStageFilter = null;
-  dueOnly = false;
+  enterBoard(getCurrentSpace(), id);
   window.scrollTo({ top: 0 });
   projectTimeline();
+}
+
+/** 换到另一块看板(或收容区)的唯一写口:记下这台在看哪块,并清掉跟着上一块走的筛选(不重投影,调用方投)。
+ *  状态维 / 到期维:列是那块看板自己的。标签维 / 类型维(mbopt R5,用户 2026-11-12 拍):回「所有」—— 换了一块看板还筛着上一块的
+ *  标签,新看板多半一张都不剩,读成「这块是空的」。过滤词不清(那是用户正在找的一个词,同切面照旧)。
+ *  同一块看板上不算换,什么都不清。 */
+function enterBoard(space: string, id: string): void {
+  const cur = boardsReady() ? viewId(currentView(space)) : null;
+  setCurrentView(space, id);
+  if (cur === id) return;
+  taskStageFilter = null;
+  dueOnly = false;
+  const f = filters.tasks;
+  f.topics = [];
+  f.kind = "all";
 }
 
 /** 点状态 chip 的落点:同 onFilterPick 的草稿闸;点已选中的状态 = 回「全部」。 */
@@ -1656,7 +1767,7 @@ async function refreshOnce(): Promise<void> {
     setBoards(bds);
     // 状态维的死筛回落(同标签轴的 reconcile):被筛的那一列若已不在当前看板上(删掉 / 看板换了),
     // 该筛选就成了一条永远筛空的死路 ⇒ 清掉。⛔ 别改成在渲染处回落显 id。
-    if (taskStageFilter !== null && !boardColumns(space).some((c) => c.id === taskStageFilter)) taskStageFilter = null;
+    if (taskStageFilter !== null && !boardColumns(currentView(space)).some((c) => c.id === taskStageFilter)) taskStageFilter = null;
     lastItems = new Map(items.map((i) => [i.id, i])); // 全量真值,只在成功读取后更新
     taskOrder = new Map(tasksInOrder.map((x, i) => [x.id, i]));
     boardOrder = tasksInOrder.map((x) => ({ id: x.id, stage: x.status }));
@@ -1665,6 +1776,7 @@ async function refreshOnce(): Promise<void> {
     hasDocs = items.some((i) => i.kind === "doc");
     renderBottomBar();
     lastRefreshOk = true;
+    sealedCache = null; // 成就册张数随这一轮作废(空看板那句提示要时再问一次,mbopt M3)
     projectTimeline();
     // Q6:这份筛选 / 位置从此归这个空间;切回来的那一下还它上次读到的位置(落的是同一面才还)。
     viewSpace = space;
@@ -1731,7 +1843,8 @@ function blankTimelineForSpaceChange(): void {
 }
 
 // 勾「标完成」:写命令,带点击时看到的空间;成败都刷新,不吞错、不做静默幂等。
-// 158 G3 / Q2(WM-04 / X-10):已完成卡上的勾也点得动 —— 取消勾 = 点回「待办」(同桌面),此前它是 disabled、点了没反应。
+// 158 G3 / Q2(WM-04 / X-10):已完成卡上的勾也点得动 —— 取消勾 = 点回**卡所在那块看板的落点**(0043 起不再是「待办」;同桌面),
+// 此前它是 disabled、点了没反应。落点 ⊥ 时勾灰着(renderCard)。
 // 两个方向都给回执 + 撤销(撤销放回原列原位置,taskmove.ts);卡挪出视野时回执带「去看看」(Q1)。
 $("timeline").addEventListener("change", async (e) => {
   const input = e.target as HTMLInputElement;
@@ -1781,7 +1894,8 @@ $("timeline").addEventListener("click", (e) => {
   const { id: boardId, done } = view;
   const ids = [...lastItems.values()].filter((i) => i.stage === done).map((i) => i.id);
   if (ids.length === 0) return;
-  confirmBar(t("main.sealAllQ", { n: ids.length }), t("main.sealAllYes"), () => {
+  // mbopt R4:点名的是**这块看板的完成列**(名字可改、各块不同),⛔ 别写死「已完成」。
+  confirmBar(t("main.sealAllQ", { n: ids.length, col: stageLabel(done)! }), t("main.sealAllYes"), () => {
     if (switching || space !== getCurrentSpace()) return;
     void (async () => {
       // 撤销要逐条取消归档的那一批按**库里此刻**的「已完成」列取(屏上那份快照可能比库旧一拍 —— 刚撤销的单张归档
@@ -1932,7 +2046,19 @@ async function pullDeepLink(): Promise<void> {
 // 窗口),是一次**静默的分批**。真机上第一次跑回归网就是这么红的:`记下` 抢在降采样
 // 前面,三张只挂上一张。
 function refreshSaveDisabled(): void {
-  ($("save") as HTMLButtonElement).disabled = switching || captureSaving || picking;
+  ($("save") as HTMLButtonElement).disabled = switching || captureSaving || picking || landingBlocked() !== null;
+}
+
+/** 任务面上这块看板放不进卡时(mbopt R2):＋ 灰掉(点它说原因、不开记一笔)、「记下」灰掉、记一笔框的灰字换成原因。
+ *  每次投影调一次(看的看板、它的落点、面都可能变了)。⛔ 别让 core 在用户打完字之后才拒。 */
+function syncLandingBlock(): void {
+  const why = landingBlocked();
+  const fab = $("capture-fab");
+  fab.classList.toggle("blocked", why !== null);
+  if (why !== null) fab.setAttribute("aria-disabled", "true");
+  else fab.removeAttribute("aria-disabled");
+  refreshSaveDisabled();
+  paintComposePh();
 }
 
 // 捕获层(232)的开合账。122 起它也压返回键守门条目(此前不压 ⇒ 键盘收掉后的下一记返回
@@ -1965,6 +2091,12 @@ async function save() {
     showError(t("main.finishDraftFirst"));
     return;
   }
+  // mbopt R2:这块看板放不进卡 ——「记下」此刻本是灰的(refreshSaveDisabled),这条兜非点击的路子;草稿原样留在框里。
+  const blocked = landingBlocked();
+  if (blocked !== null) {
+    showError(blocked);
+    return;
+  }
   const space = getCurrentSpace();
   const mode = viewMode; // 落点冻结在点击那刻,响应回来绝不重读
   // 「筛着标签记录 → 那几枚标签全挂上」的待挂集,同刻冻结(同 mode / 图批):往返期间
@@ -1984,7 +2116,7 @@ async function save() {
     let boardId: string | null = null;
     if (mode === "tasks" && boardsReady()) {
       const view = currentView(space);
-      if (view === HOLDING) setCurrentView(space, liveBoards().find((b) => b.is_default)!.id);
+      if (view === HOLDING) setCurrentView(space, defaultBoard().id);
       else boardId = view.id;
     }
     const newId = mode === "ideas" ? await captureIdea(space, savingDraft) : await captureTodo(space, savingDraft, boardId);
@@ -2125,6 +2257,12 @@ $("compose-doc").addEventListener("click", () => {
   captureKb = kb;
 
   fab.addEventListener("click", () => {
+    // mbopt R2:这块看板放不进卡 ⇒ 不开记一笔,说原因(＋ 此刻是灰的,syncLandingBlock)。
+    const blocked = landingBlocked();
+    if (blocked !== null) {
+      showError(blocked);
+      return;
+    }
     kb.open();
     ta.focus(); // 键盘自动起
   });
@@ -2184,6 +2322,11 @@ function renderSpaceChip() {
 function paintComposePh(): void {
   const cur = spacesCache.length > 1 ? spacesCache.find((s) => s.id === getCurrentSpace()) : undefined;
   const ta = $("text") as HTMLTextAreaElement;
+  const blocked = landingBlocked(); // mbopt R2:放不进卡时灰字就说为什么(「记下」同时是灰的)
+  if (blocked !== null) {
+    ta.placeholder = blocked;
+    return;
+  }
   if (cur === undefined) {
     ta.placeholder = viewMode === "ideas" ? t("main.composeIdeaPh") : t("main.composeTaskPh");
     return;
@@ -2569,7 +2712,12 @@ function onModeButton(target: ViewMode) {
     // 已经在顶上才落到老行为(拉起记一笔)。面板刚关的那一下不算(用户是要回这一面,不是要回顶)。
     if (hadPane) return;
     if (document.scrollingElement!.scrollTop > 0) window.scrollTo({ top: 0, behavior: "smooth" });
-    else ($("text") as HTMLTextAreaElement).focus();
+    else {
+      // mbopt R2(第一波小账):这块看板放不进卡时 ＋ 是灰的,这条「一步回捕获」也拦 —— 同点灰 ＋:不开记一笔,说原因。
+      const blocked = landingBlocked();
+      if (blocked !== null) showError(blocked);
+      else ($("text") as HTMLTextAreaElement).focus();
+    }
     return;
   }
   // 165 / W5 A27:随记与任务各记各的滚动位置。此前切面不动 scrollY ⇒ 从随记划到中段再点「任务」,看板落在半中间
@@ -2722,9 +2870,8 @@ async function focusTimelineCard(id: string, opts: FocusOpts = {}) {
     // 0043:卡在别的看板上(转待办落默认看板、挪到看板、取消归档回原列…)⇒ 先切到它那块(或收容区)。
     const home = isHeldStage(item.stage) ? HOLDING : boardOfStage(item.stage)?.id;
     if (home === undefined) throw new Error(`task ${id} is on column ${item.stage}, which has no board`);
-    const view = currentView(space);
-    if ((view === HOLDING ? HOLDING : view.id) !== home) {
-      setCurrentView(space, home);
+    if (viewId(currentView(space)) !== home) {
+      enterBoard(space, home); // 换看板连带清掉跟着上一块走的筛选(mbopt R5)
       cleared = true;
     }
     if (taskStageFilter !== null && item.stage !== taskStageFilter) {
@@ -4031,7 +4178,7 @@ initCardSwipe({
   hasDirtyDraft: () => cardPanel.hasDirtyDraft(),
   refresh,
 });
-initBoardScroll(getCurrentSpace);
+initBoardScroll(() => shownBoardKey); // 横滚位置按「空间 + 看板」各记(mbopt M4)
 initChromeHide();
 initCardDrag({
   getItem: (id) => lastItems.get(id),

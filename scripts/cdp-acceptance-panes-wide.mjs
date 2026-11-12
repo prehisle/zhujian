@@ -126,7 +126,11 @@ try {
   }
   // ---- 前置:往回收站放三条随记一张任务(展示库原本回收站是空的)----------------------------------
   space = await ev(`localStorage.getItem("zhujian.last-space")`);
-  const counts = await ev(`window.__TAURI__.core.invoke("pane_counts", { spaceId: ${JSON.stringify(space)} })`);
+  // mbopt 第二波:回收站 / 归档的条数改问 core 的 `trash_counts` / `sealed_counts_by_board`(手机已不调 pane_counts;回收站 = 四格之和,
+  // 归档 = 各组之和含已删看板与 null 组)。⚠ 两条是两次独立读,只当起点判据用。
+  const tc = await ev(`window.__TAURI__.core.invoke("trash_counts", { spaceId: ${JSON.stringify(space)} })`);
+  const sc = await ev(`window.__TAURI__.core.invoke("sealed_counts_by_board", { spaceId: ${JSON.stringify(space)} })`);
+  const counts = { trash: tc.ideas + tc.tasks + tc.idea_images + tc.task_images, sealed: sc.reduce((n, g) => n + g.n, 0) };
   if (counts.trash !== 0 || counts.sealed < 3) throw new Error(`不是展示库的起点(回收站 ${counts.trash} / 归档 ${counts.sealed};要 0 / ≥3)—— 先重起截图台实例`);
   trashed = await ev(`(async () => { const inv = window.__TAURI__.core.invoke, sp = ${JSON.stringify(space)}; const out = [];
     const ideas = await inv("list_ideas", { spaceId: sp });

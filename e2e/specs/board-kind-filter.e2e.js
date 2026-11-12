@@ -175,12 +175,12 @@ describe("任务看板 · 按标签类型筛选", () => {
     await switchView("board");
     const big = $(".center .big");
     await big.waitForExist({ timeout: 8000 });
-    await browser.waitUntil(async () => (await big.getText()).includes("类型下没有任务"), {
+    await browser.waitUntil(async () => (await big.getText()).includes("类型下没有卡片"), {
       timeout: 8000,
       timeoutMsg: `选着的类型清空后未出现类型空态,屏上是:${await big.getText().catch(() => "(取不到)")}`,
     });
     const text = await big.getText();
-    expect(text).toContain(`「${KIND_EMPTY}」类型下没有任务`);
+    expect(text).toContain(`「${KIND_EMPTY}」类型下没有卡片`);
     expect(text).not.toContain("「」");
     expect((await kindPills()).some((k) => k.includes(KIND_EMPTY))).toBe(true); // 选中的不从脚下消失
 

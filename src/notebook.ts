@@ -117,7 +117,13 @@ function navigate(name: ViewName): void {
 }
 
 // 0043 多看板:侧栏「看板」下面那一组(各块 / 新建 / 收容区)。点里面任一块 = 切到看板视图(那块已记成「在看的」)。
-initBoardNav(document.getElementById("board-nav") as HTMLElement, { navigate: () => navigate("board") });
+// 看板视图已挂着 ⇒ 交它的 reselect 就地换那一块(不整页卸载重挂:新建框里打了一半的字、列的滚动都还在)。
+initBoardNav(document.getElementById("board-nav") as HTMLElement, {
+  navigate: () => {
+    if (currentName === "board" && current?.reselect?.()) return;
+    navigate("board");
+  },
+});
 
 for (const b of navButtons) {
   b.addEventListener("click", () => {
@@ -329,6 +335,7 @@ void listen("space-name-changed", () => refreshSpaceEntry());
 // 捕获浮窗记下了一条(157 G3):当前视图就地重查(同回窗那条路),并说一句 —— 浮窗那边记完即收,交代归这里。
 void listen<{ kind: "task" | "idea" }>("captured", (e) => {
   current?.onFocus?.();
+  if (e.payload.kind === "task") void refreshBoardNav(); // 侧栏看板名旁的卡数(C13;看板视图挂着时它自己会交数据,这一发跳过)
   toastAction(e.payload.kind === "task" ? t("notebook.capturedTask") : t("notebook.capturedIdea"));
 });
 

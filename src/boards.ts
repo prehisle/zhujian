@@ -26,6 +26,10 @@ export type Board = {
   is_default: boolean;
   /** 种子看板不可删。 */
   deletable: boolean;
+  /** 这块看板**活列**上的活卡数(⚠ 不含收容区;已删看板恒 0)。⛔ 别拿它判删看板合不合法(那由 core 现场判)。 */
+  live_items: number;
+  /** 其中不在完成列里的(没有完成列 = 全部活卡)—— 侧栏看板名旁的卡数(R7)。 */
+  open_items: number;
 };
 
 /** 种子看板的 id(core `board::SEED_BOARD`)。⛔ 只用来查本端字典的显示名,别拿它判角色。 */
@@ -49,14 +53,19 @@ export function doneColumnSet(boards: Board[]): Set<string> {
   return new Set(liveBoards(boards).flatMap((b) => (b.done ? [b.done] : [])));
 }
 
-/** 收容区的列(plan §3a):任务列 ∧ (列已删 ∨ 看板已删) ∧ 还扣着活卡。 */
+/** 收容区的列(plan §3a):core 判成收容的列(`held`)∧ 还扣着活卡。⛔ 别再拿 deleted / board_deleted 自己拼。 */
 export function holdingColumns(cols: BoardColumn[]): BoardColumn[] {
-  return cols.filter((c) => c.kind === "task" && (c.deleted || c.board_deleted) && c.live_items > 0);
+  return cols.filter((c) => c.held && c.live_items > 0);
 }
 
 /** 收容区里一共几张卡(侧栏那一行的 N)。 */
 export const holdingCount = (cols: BoardColumn[]): number =>
   holdingColumns(cols).reduce((n, c) => n + c.live_items, 0);
+
+/** 成就册里一块看板的条数(core `board::sealed_counts_by_board`):含已删看板;`board_id === null` = 封存行的
+ *  stage 不是任务列,如实单列一组(不并进任何看板)。 */
+export type SealedCount = { board_id: string | null; n: number };
+export const loadSealedCounts = (): Promise<SealedCount[]> => invoke<SealedCount[]>("sealed_counts_by_board");
 
 // ---- 当前看板(本机 UI 态,不同步) ----------------------------------------------------
 
@@ -104,13 +113,29 @@ export function shareBoardData(d: BoardData): void {
   document.dispatchEvent(new CustomEvent<BoardData>(BOARD_DATA, { detail: d }));
 }
 
-// ---- 拖卡到侧栏看板名(用户拍 ⑥) ------------------------------------------------------
-// 看板视图拖起一张卡时登记它的 id,侧栏看板名据此决定接不接放(显示条件 = 接收条件)。
-let draggingCard: string | null = null;
-export const setDraggingCard = (id: string | null): void => {
-  draggingCard = id;
+// 看板视图挂着没有(含回收站 / 归档册 / 收容区子视图)。挂着 = 它每次 load 都把数据经 BOARD_DATA 交给侧栏,
+// 侧栏就不必为同一件事再自己问一遍 core(一次改动只取一趟)。
+let viewLive = false;
+export const setBoardViewLive = (on: boolean): void => {
+  viewLive = on;
 };
-export const draggingCardId = (): string | null => draggingCard;
+export const boardViewLive = (): boolean => viewLive;
+
+// ---- 拖卡到侧栏看板名(用户拍 ⑥) ------------------------------------------------------
+// 看板视图拖起一张卡时登记它的 id 与它此刻所在的那块看板(`own`;收容区的卡 = null,它自己那块也是合法出口),
+// 侧栏看板名据此决定接不接放、拖着时哪几块亮起(显示条件 = 接收条件,R1)。起拖 / 收拖各广播一声。
+export const CARD_DRAG = "zhujian:card-drag";
+type DraggingCard = { id: string; own: string | null };
+let draggingCard: DraggingCard | null = null;
+export const setDraggingCard = (card: DraggingCard | null): void => {
+  if (card === null && draggingCard === null) return;
+  draggingCard = card;
+  document.dispatchEvent(new CustomEvent(CARD_DRAG));
+};
+export const draggingCardId = (): string | null => draggingCard?.id ?? null;
+/** 这块看板此刻接不接正在拖的那张卡:活 ∧ 落点非 ⊥ ∧ 不是卡自己那块(R1;侧栏只画活看板)。 */
+export const acceptsDraggingCard = (b: Board): boolean =>
+  draggingCard !== null && !b.deleted && b.landing !== null && b.id !== draggingCard.own;
 
 // ---- 写侧(纯桌面;每道拒绝由 core 出) ---------------------------------------------------
 

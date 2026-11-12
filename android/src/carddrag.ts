@@ -32,7 +32,7 @@ import { reorderTask, type TimelineItem } from "./api";
 import { t } from "./i18n";
 import { showBar } from "./ui";
 import { showErr } from "./err";
-import { isTaskStage, liveColumnsOf, stageLabel } from "./columns";
+import { isHeldStage, isTaskStage, liveColumnsOf, stageLabel } from "./columns";
 import { moveReceipt, spotOf } from "./taskmove";
 import { columnView, onBoard, type Box } from "./boardscroll";
 
@@ -292,7 +292,8 @@ export function initCardDrag(d: Deps): void {
     if (!card || card.querySelector(".panel")) return;
     const id = card.dataset.id!;
     const item = deps.getItem(id);
-    if (!item || !isTaskStage(item.stage)) return;
+    // 收容区里的卡只出不进、没有列可换(plan §3a):长按不拎起替身 —— 拎起来也无处可放(mbopt M5)。
+    if (!item || !isTaskStage(item.stage) || isHeldStage(item.stage)) return;
     pending = { card, id, pointerId: e.pointerId, x: e.clientX, y: e.clientY, timer: window.setTimeout(lift, LONG_PRESS_MS) };
   });
 

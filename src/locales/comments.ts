@@ -23,7 +23,7 @@ export const comments = defineMessages({
   "search.clear": { zh: "清空", en: "Clear" },
   "search.statusIdeas": { zh: "随记", en: "Notes" },
   "search.statusTrash": { zh: "回收站", en: "Trash" },
-  "search.statusTask": { zh: "任务", en: "Tasks" },
+  "search.statusTask": { zh: "卡片", en: "Cards" },
   "search.statusSealed": { zh: "归档", en: "Archive" },
   "search.statusDoc": { zh: "长文", en: "Long-form" },
   // W3 159 / Q12(WD-31):回收站里的命中说清原来是什么。
@@ -34,7 +34,7 @@ export const comments = defineMessages({
   "search.landedOldTrash": { zh: "搜到的词在这条改过之前的版本里 —— 还原后在 ⋯ 菜单的「历史」里看得到。", en: "The words you searched for are in an earlier version of this one — restore it, then see “History” in the ⋯ menu." },
   "search.failed": { zh: "搜索失败", en: "Search failed" },
   "search.idleTitle": { zh: "在当前空间的所有条目里查找", en: "Search everything in this space" },
-  "search.idleHint": { zh: "随记、长文、任务、归档、回收站和改过的旧版本都一起搜。", en: "Notes, long-form, tasks, the archive, the trash and past versions are all searched." },
+  "search.idleHint": { zh: "随记、长文、卡片、归档、回收站和改过的旧版本都一起搜。", en: "Notes, long-form, cards, the archive, the trash and past versions are all searched." },
   "search.noMatch": { zh: "没有匹配的条目", en: "No matches" },
   "search.noMatchDetail": { zh: "当前空间里没有内容匹配「{q}」。", en: "Nothing in this space matches “{q}”." },
   "search.matchCount": { zh: "{n} 条匹配", en: "{n} {n|match|matches}" },

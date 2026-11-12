@@ -1016,7 +1016,8 @@ pub struct BoardColumn {
     kind: String,
     system: bool,
     title_overridden: bool,
-    /// 已删 = 只读收容区(§4.3):卡只出不进,列身仍要画,否则卡就「不见了」。
+    /// 列自身已删(墓碑)。⚠ 0043 起已删的列**不再**作为只读列画在原看板上:列上还有活卡就
+    /// 进收容区(multiboard-plan §3a;判据看 `held`),卡只出不进。
     deleted: bool,
     live_items: i64,
     deletable: bool,
@@ -1024,6 +1025,11 @@ pub struct BoardColumn {
     board_id: Option<String>,
     /// 0043:所在看板已删 ⇒ 这一列住收容区、只出不进(multiboard-plan §3a)。
     board_deleted: bool,
+    /// 0043:卡此刻能不能落进这一列(活任务列 ∧ 看板活着;core `Facts::column_accepts_cards`)。
+    /// ⛔ 前端别再拿 `kind` / `deleted` / `board_deleted` 自己拼「活列」。
+    accepts_cards: bool,
+    /// 0043:这一列上的活卡属收容区(任务列 ∧ (列已删 ∨ 看板已删),plan §3a;不看有没有卡)。
+    held: bool,
 }
 
 impl From<zhujian_core::board::BoardColumnRow> for BoardColumn {
@@ -1039,6 +1045,8 @@ impl From<zhujian_core::board::BoardColumnRow> for BoardColumn {
             deletable: c.deletable,
             board_id: c.board_id,
             board_deleted: c.board_deleted,
+            accepts_cards: c.accepts_cards,
+            held: c.held,
         }
     }
 }
@@ -1068,6 +1076,10 @@ pub struct Board {
     /// 默认看板(随记「转待办」落这里)= 活看板里排最前那块。
     is_default: bool,
     deletable: bool,
+    /// 这块看板**活列**上的活卡数(已删看板恒 0;它的卡在收容区)。
+    live_items: i64,
+    /// 其中不在完成列里的(没有完成列 = 全部活卡)—— 看板旁的卡数用它。
+    open_items: i64,
 }
 
 impl From<zhujian_core::board::BoardRow> for Board {
@@ -1082,6 +1094,8 @@ impl From<zhujian_core::board::BoardRow> for Board {
             deleted: b.deleted,
             is_default: b.is_default,
             deletable: b.deletable,
+            live_items: b.live_items,
+            open_items: b.open_items,
         }
     }
 }
@@ -1191,6 +1205,22 @@ pub fn pane_counts(space_id: String, coord: State<'_, Coord>) -> Result<PaneCoun
             sealed: q("SELECT COUNT(*) FROM items WHERE sealed_at IS NOT NULL")?,
         })
     })
+}
+
+/// 回收站计数(灵感 / 任务两类条目 + 两类已删配图;core `repo::trash_counts`,与桌面同契约)。
+/// ⚠ 与上面 `pane_counts.trash` 口径不同:这里两类条目同回收站列表(双轴行归成就册、不算)。
+#[tauri::command]
+pub fn trash_counts(space_id: String, coord: State<'_, Coord>) -> Result<repo::TrashCounts, String> {
+    coord.with_read(&space_id, |conn| repo::trash_counts(conn).map_err(|e| e.to_string()))
+}
+
+/// 成就册按看板分组的条数(含已删看板;core `board::sealed_counts_by_board`,与桌面同契约)。
+#[tauri::command]
+pub fn sealed_counts_by_board(
+    space_id: String,
+    coord: State<'_, Coord>,
+) -> Result<Vec<zhujian_core::board::SealedCount>, String> {
+    coord.with_read(&space_id, |conn| zhujian_core::board::sealed_counts_by_board(conn))
 }
 
 /// 新建任务(生而 todo、置列首;due/priority/标签可选,整体原子)。返回 id。

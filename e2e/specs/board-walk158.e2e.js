@@ -315,7 +315,7 @@ describe("158 · 看板 W2 走查修的那批(桌面)", () => {
       document.querySelector("#compose-input").value = "   ";
       document.querySelector("#compose-add").click();
     });
-    await browser.waitUntil(async () => (await $("#compose-err").getText()) === "先写个任务标题", {
+    await browser.waitUntil(async () => (await $("#compose-err").getText()) === "先写个卡片标题", {
       timeout: 5000,
       timeoutMsg: "空提交没说话",
     });

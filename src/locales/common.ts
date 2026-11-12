@@ -52,7 +52,7 @@ export const common = defineMessages({
   "trash.emptied": { zh: "回收站已清空", en: "Trash emptied" },
   // 165 / W5 Q14:清空确认句写明只清这一只(随记 / 长文与看板是两只回收站,此前两只同一句,看不出另一只动不动)。接在问句后面。
   "trash.scopeNotes": { zh: "只清这只(随记与长文);看板的回收站不动。", en: " Only this trash (notes and long-form); the board’s trash is left alone." },
-  "trash.scopeTasks": { zh: "只清这只(看板的任务);随记的回收站不动。", en: " Only this trash (board tasks); the notes trash is left alone." },
+  "trash.scopeTasks": { zh: "只清这只(看板的卡片);随记的回收站不动。", en: " Only this trash (board cards); the notes trash is left alone." },
   "trash.purgeOneQ": { zh: "彻底删除这条?无法恢复", en: "Delete this forever? This cannot be undone" },
   "trash.purgeOneImagesQ": { zh: "彻底删除这条和它的 {m} 张配图?无法恢复", en: "Delete this and its {m} {m|image|images} forever? This cannot be undone" },
   "trash.purged": { zh: "已彻底删除", en: "Deleted forever" },

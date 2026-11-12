@@ -479,7 +479,8 @@ struct BoardColumn {
     system: bool,
     /// §7.1d 的终态判据。`false` ⇒ 前端按 `id` 查字典。
     title_overridden: bool,
-    /// 已删 = 只读收容区(§4.3):卡只出不进,列身仍要画出来,否则卡就「不见了」。
+    /// 列自身已删(墓碑)。⚠ 0043 起已删的列**不再**作为只读列画在原看板上:列上还有活卡就
+    /// 进收容区(multiboard-plan §3a;判据看 `held`),卡只出不进。
     deleted: bool,
     /// 该列上未归档未封存的条目数(删列前的「先清空」提示与「已删除的列(N)」都用它)。
     live_items: i64,
@@ -490,6 +491,11 @@ struct BoardColumn {
     board_id: Option<String>,
     /// 0043:所在看板已删 ⇒ 这一列住收容区、只出不进(multiboard-plan §3a)。
     board_deleted: bool,
+    /// 0043:卡此刻能不能落进这一列(活任务列 ∧ 看板活着;core `Facts::column_accepts_cards`)。
+    /// ⛔ 前端别再拿 `kind` / `deleted` / `board_deleted` 自己拼「活列」。
+    accepts_cards: bool,
+    /// 0043:这一列上的活卡属收容区(任务列 ∧ (列已删 ∨ 看板已删),plan §3a;不看有没有卡)。
+    held: bool,
 }
 
 impl From<zhujian_core::board::BoardColumnRow> for BoardColumn {
@@ -507,6 +513,8 @@ impl From<zhujian_core::board::BoardColumnRow> for BoardColumn {
             deletable: c.deletable,
             board_id: c.board_id,
             board_deleted: c.board_deleted,
+            accepts_cards: c.accepts_cards,
+            held: c.held,
         }
     }
 }
@@ -528,6 +536,10 @@ struct Board {
     is_default: bool,
     /// 种子看板不可删。
     deletable: bool,
+    /// 这块看板**活列**上的活卡数(已删看板恒 0;它的卡在收容区)。
+    live_items: i64,
+    /// 其中不在完成列里的(没有完成列 = 全部活卡)—— 看板旁的卡数用它。
+    open_items: i64,
 }
 
 impl From<zhujian_core::board::BoardRow> for Board {
@@ -542,6 +554,8 @@ impl From<zhujian_core::board::BoardRow> for Board {
             deleted: b.deleted,
             is_default: b.is_default,
             deletable: b.deletable,
+            live_items: b.live_items,
+            open_items: b.open_items,
         }
     }
 }
@@ -910,6 +924,22 @@ fn list_sealed_tasks(space_id: String, spaces: State<'_, Spaces>) -> Result<Vec<
         let rows = repo::sealed_tasks(&conn).map_err(|e| e.to_string())?;
         Ok(rows.into_iter().map(TaskItem::from).collect())
     })
+}
+
+/// 回收站计数(灵感 / 任务两类条目 + 两类已删配图;core `repo::trash_counts`,契约同源)。
+/// 顶栏 / 侧栏的数字用它,⛔ 别为一个数拉全表。
+#[tauri::command]
+fn trash_counts(space_id: String, spaces: State<'_, Spaces>) -> Result<repo::TrashCounts, String> {
+    spaces.read(&space_id, |conn| repo::trash_counts(&conn).map_err(|e| e.to_string()))
+}
+
+/// 成就册按看板分组的条数(含已删看板;core `board::sealed_counts_by_board`,契约同源)。
+#[tauri::command]
+fn sealed_counts_by_board(
+    space_id: String,
+    spaces: State<'_, Spaces>,
+) -> Result<Vec<zhujian_core::board::SealedCount>, String> {
+    spaces.read(&space_id, |conn| zhujian_core::board::sealed_counts_by_board(&conn))
 }
 
 /// Manually create a standalone todo (no source note) directly on the board, born
@@ -4760,6 +4790,8 @@ pub fn run() {
             seal_done_tasks,
             unseal_task,
             list_sealed_tasks,
+            trash_counts,
+            sealed_counts_by_board,
             create_task,
             rename_task,
             set_task_due,

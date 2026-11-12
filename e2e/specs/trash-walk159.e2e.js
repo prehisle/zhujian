@@ -246,7 +246,7 @@ describe("W3 159 · 回收站 / 搜索 / 看板(桌面第一波)", () => {
     expect(pb.overlap).toBe(false);
     expect(pb.underIsTrigger).toBe(true);
     expect(pb.yesFull).toBe(true);
-    expect(pb.q).toMatch(/^彻底删除回收站里全部 \d+ 条(和 \d+ 张配图)?\?无法恢复。只清这只\(看板的任务\);随记的回收站不动。$/);
+    expect(pb.q).toMatch(/^彻底删除回收站里全部 \d+ 条(和 \d+ 张配图)?\?无法恢复。只清这只\(看板的卡片\);随记的回收站不动。$/);
     expect(pb.shape).toBe(pi.shape); // 两个回收站同一个结构、同一套类名、同一个钮序
     await armRecorder();
     await $("button.purge-yes").click();
@@ -256,7 +256,7 @@ describe("W3 159 · 回收站 / 搜索 / 看板(桌面第一波)", () => {
     const empty = await $(".v-board .center");
     await empty.waitForExist({ timeout: 8000 });
     const emptyText = await empty.getText();
-    expect(emptyText).toContain("删掉的任务会落到这里");
+    expect(emptyText).toContain("删掉的卡片会落到这里");
     expect(emptyText).not.toContain("删除的任务和配图");
     await invoke("purge_note", { id: n1 });
   });
@@ -355,7 +355,7 @@ describe("W3 159 · 回收站 / 搜索 / 看板(桌面第一波)", () => {
       await goNotebook("board");
       await $(".col-empty").waitForExist({ timeout: 10000 });
       expect(await $$(".v-board .cols .col").length).toBeGreaterThanOrEqual(3);
-      expect(await $(".col-empty").getText()).toContain("还没有任务");
+      expect(await $(".col-empty").getText()).toContain("还没有卡片");
       expect(await $("#manage-cols").isDisplayed()).toBe(true);
       expect(await $("#board-sort").isDisplayed()).toBe(false); // 没卡就没得排:顺序钮照旧藏
     } finally {

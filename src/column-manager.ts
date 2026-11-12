@@ -4,7 +4,7 @@
 // 本身(改名 / 删)。角色是看板上的指针(core 解析,`Board.landing` / `Board.done`),⛔ 前端不另算;
 // 改角色走 `board/set_field`,**不过**列的那道发送端闸(plan §5.1)⇒ 闸关着时那一节照样可写。
 //
-// 看板顶栏「管理列」→ 这一面:**新建 / 改名 / 拖顺序 / 删**。
+// 看板顶栏「管理看板」(侧栏右键一块看板名「管理看板」同)→ 这一面:列的**新建 / 改名 / 拖顺序 / 删**。
 // ⭐ **纯桌面**:安卓只做读侧(2026-08-25 用户拍板①,plan §8.6 四)——那不是债,是产品范围。
 // ⭐ 开在**看板顶栏**、不占左侧栏、不进「设置」面(同日拍板③:那一面今天全是纯本地不同步
 // 的项,而列是同步实体)。
@@ -215,7 +215,7 @@ async function render(panel: HTMLElement, refocus: Refocus = "keep"): Promise<vo
 
   // ---- 一行 ----------------------------------------------------------------------------
   function row(c: BoardColumn): HTMLElement {
-    const sec = el("div", { className: c.deleted ? "bcm-col gone" : "bcm-col" });
+    const sec = el("div", { className: "bcm-col" });
     sec.dataset.col = c.id; // ⛔ 机器一律读这一份:ULID 可能以数字开头,`.bcm-col.01J…` 是非法选择器
     const name = el("span", { className: "bcm-col-name", textContent: columnName(c) });
     const count = el("span", {
@@ -230,12 +230,8 @@ async function render(panel: HTMLElement, refocus: Refocus = "keep"): Promise<vo
     const headRow = el("div", { className: "bcm-col-head" }, [name, ...roles, count, acts]);
     sec.append(headRow);
 
-    // 已删的列 = 只读收容区(§4.3):列身还画着是因为**还有卡扣在里面**,卡只出不进,
-    // 改名 / 排序 / 再删一次全被 core 拒 ⇒ 这里一个动作按钮都不给,只挂一枚标。
-    if (c.deleted) {
-      headRow.insertBefore(el("span", { className: "bcm-col-gone", textContent: t("cols.deleted") }), count);
-      return sec;
-    }
+    // ⚠ 这里只有活列(`boardColumns` 已滤掉删了的):删掉的列里还扣着的卡 0043 起统一进收容区(plan §3a),
+    // 不再作为只读列留在这一面上。
     if (!gate.can_manage) return sec;
 
     // 拖动手柄:draggable 只挂它(避开行里的按钮),形与 topics 189 那套逐条同构。
@@ -274,11 +270,10 @@ async function render(panel: HTMLElement, refocus: Refocus = "keep"): Promise<vo
     });
 
     acts.append(cbtn(t("cols.rename"), () => openRename(sec, c)));
-    // ⛔ **`deletable === false` 的那两列根本不给按钮** —— 那是列的**永久属性**(挂着产品
-    // 语义的落点与完成列,plan §2.3a),给一枚永远灰着的钮只会让人反复去点它问为什么。
+    // ⛔ **`deletable === false` 的列不给删除钮**:种子看板的 `todo` / `done`(永不可删,plan §2.3a)、
+    // 当前完成列(先取消)、看板上最后一枚能放卡的列 —— 后两种的原因由角色标 / 底下那节说清;
+    // 给一枚永远灰着的钮只会让人反复去点它问为什么(`deletable` 0043 起随角色变,不是永久属性)。
     // 「非空」那一格不同:它是**用户此刻就能解掉**的条件 ⇒ 钮留着、灰着、说清还剩几条。
-    // ⚠ 0043 起 `deletable` 不再是永久属性:完成列(先取消)、看板上最后一枚能放卡的列也是 false。
-    // 那两种的原因由角色标 / 底下那节说清,这里照旧不给一枚永远灰着的钮。
     if (c.deletable) {
       // 158 G2 / A12(WD-22):有卡的列删不了,原因此前只在悬停提示里(点了没反应、悬停还变红)。
       // 现在钮照样淡着(aria-disabled,⛔ 不用 disabled —— 那样点了连原因都说不出),点一下在这一行
@@ -497,10 +492,14 @@ async function render(panel: HTMLElement, refocus: Refocus = "keep"): Promise<vo
       sec.append(acts);
     }
     // 新建另一块看板(只有一块看板时侧栏不展开,这里是它的入口;渐进式披露,用户 2026-11-11 拍)。
-    // 先关这一面再开对话框:两层遮罩叠着,Esc / 点遮罩会分不清关的是谁。
+    // 先关这一面再开对话框:两层遮罩叠着,Esc / 点遮罩会分不清关的是谁。没建就关掉 ⇒ 原样回到这一面
+    // (此前取消了两层都没了,人得再点一次「管理看板」)。
     const another = cbtn(t("cols.newBoard"), () => {
+      const cb = onChanged;
+      if (cb === null) throw new Error("column manager is open without onChanged"); // openColumnManager 恒给,缺了是 bug
+      const id = board.id;
       closeColumnManager();
-      openNewBoard();
+      openNewBoard(undefined, () => openColumnManager({ boardId: id, onChanged: cb }));
     });
     sec.append(el("div", { className: "bcm-board-del" }, [another]));
     return sec;

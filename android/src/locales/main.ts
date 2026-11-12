@@ -30,10 +30,15 @@ export const main = defineMessages({
   "main.emptyIdeas": { zh: "还没有随记。", en: "No notes yet." },
   "main.emptyIdeasHint": { zh: "点右下角 ＋ 随手记一笔", en: "Tap ＋ at the bottom right to jot one down" },
   "main.emptyBooting": { zh: "正在从其他设备取回记录…", en: "Fetching your entries from your other devices…" },
-  "main.emptyTasks": { zh: "还没有任务。", en: "No tasks yet." },
-  "main.emptyTasksHint": { zh: "点右下角 ＋ 记一件待办", en: "Tap ＋ at the bottom right to add one" },
-  // 165 / W5 Q15(查到手机同病):任务一张都没有、归档里有 —— 空态补一句,别让唯一那张归档后像是没了(同桌面那句,手机不写「页头」)。
-  "main.emptyTasksSealed": { zh: "归档了 {n} 张,在「归档」里", en: "{n} archived {n|task is|tasks are} under Archive" },
+  // mbopt R4(用户 2026-11-11 拍):看板不一定管任务(书单 / 话术),卡片的统称一律「卡片」。⛔ 键名不动(命名铁律)。
+  // mbopt R3:空态只说**这块看板**的事 ——「转待办」那半句只在默认看板上说(emptyTasksHintPromote;随记转待办落默认看板)。
+  "main.emptyTasks": { zh: "还没有卡片。", en: "No cards yet." },
+  "main.emptyTasksHint": { zh: "点右下角 ＋ 记一张卡片", en: "Tap ＋ at the bottom right to add a card" },
+  // 非默认看板:随记上的入口是「更多… → 放进看板」(有这块看板在 ⇒ 活看板 ≥ 2,那一枚是出的)。
+  "main.emptyTasksHintOther": { zh: "点右下角 ＋ 记一张卡片,或在随记里点开一条、在「更多…」里点「放进看板」", en: "Tap ＋ at the bottom right to add a card, or open a note in Notes and tap “Add to board” under “More…”" },
+  "main.emptyTasksHintPromote": { zh: "点右下角 ＋ 记一张卡片,或在随记里点开一条、点「转待办」", en: "Tap ＋ at the bottom right to add a card, or open a note in Notes and tap “Make a task”" },
+  // 165 / W5 Q15(查到手机同病):这块看板一张都没有、它的归档里有 —— 空态补一句,别让唯一那张归档后像是没了(同桌面那句,手机不写「页头」)。
+  "main.emptyTasksSealed": { zh: "归档了 {n} 张,在「归档」里", en: "{n} {n|card|cards} archived, under Archive" },
   "main.listSep": { zh: "、", en: ", " },
   "main.noMatchText": { zh: "没有匹配「{q}」的{noun}。", en: "No {noun} match “{q}”." },
   "main.noMatchTextIn": { zh: "{scope}没有匹配「{q}」的{noun}。", en: "No {noun} {scope} match “{q}”." },
@@ -44,17 +49,18 @@ export const main = defineMessages({
   "main.noneUnderTags": { zh: "「{labels}」下没有{noun}。", en: "No {noun} under “{labels}”." },
   "main.noneUnderKind": { zh: "「{kind}」类型下没有{noun}。", en: "No {noun} of kind “{kind}”." },
   "main.nounIdeas": { zh: "随记", en: "notes" },
-  "main.nounTasks": { zh: "任务", en: "tasks" },
+  "main.nounTasks": { zh: "卡片", en: "cards" },
   "main.noMatch": { zh: "没有匹配的{noun}。", en: "No {noun} match." },
   // 158 G3 / Q5:手机也叫「列」(同桌面看板的叫法;键名不动)
   "main.stageAxis": { zh: "列", en: "Column" },
   "main.sealAll": { zh: "全部归档", en: "Archive all" },
-  "main.sealAllQ": { zh: "把「已完成」里的 {n} 条都归档?归档后可查、不可删", en: "Archive all {n} in Done? Archived tasks can be viewed but not deleted" },
+  // mbopt R4:{col} = 这块看板的完成列名(各块看板各叫各的,⛔ 别写死「已完成」)。
+  "main.sealAllQ": { zh: "把「{col}」里的 {n} 张都归档?归档后可查、不可删", en: "Archive all {n} in “{col}”? Archived cards can be viewed but not deleted" },
   "main.sealAllYes": { zh: "全部归档", en: "Archive all" },
   "main.sealedAll": { zh: "已归档 {n} 条", en: "Archived {n}" },
   "main.filtersClearedByBack": { zh: "已清掉筛选,再按一次返回离开", en: "Filters cleared. Press back again to leave" },
   "main.stageAll": { zh: "全部", en: "All" },
-  "main.noneUnderStage": { zh: "「{stage}」下没有任务。", en: "No tasks under “{stage}”." },
+  "main.noneUnderStage": { zh: "「{stage}」下没有卡片。", en: "No cards under “{stage}”." },
   // 宽屏看板上空着的那一列(tablet-plan 格 2):列常驻,里面一枚淡虚框。
   "main.boardEmpty": { zh: "空", en: "Empty" },
   // 到期汇总钮那一句(用户面 60-D):与桌面 board.dueSoonToday / board.dueSoonLate **逐字
@@ -66,7 +72,7 @@ export const main = defineMessages({
   // 逐字同形。{days} 由 DUE_SOON_DAYS 注入,⛔ 别在这儿写死天数。
   "main.dueSoonNext": { zh: "{days} 天内 {n}", en: "{n} within {days}d" },
   "main.dueSoonNextOnly": { zh: "{days} 天内到期 {n}", en: "{n} due within {days}d" },
-  "main.noneDue": { zh: "到期与快到期的任务不在当前筛选里。", en: "No due or upcoming task matches the current filter." },
+  "main.noneDue": { zh: "到期与快到期的卡片不在当前筛选里。", en: "No due or upcoming card matches the current filter." },
   "main.timelineLoadFailed": { zh: "时间轴读取失败:{error}", en: "Could not load the timeline: {error}" },
   "main.spaceSwitchedDraftDropped": { zh: "空间已切换,未保存的编辑已丢弃", en: "Space switched, unsaved changes were discarded" },
   "main.loading": { zh: "正在载入…", en: "Loading…" },
@@ -96,10 +102,10 @@ export const main = defineMessages({
   "main.resetEntry": { zh: "重置(删除本机此空间数据)…", en: "Reset (delete this space on this device)…" },
   "main.finishDraftBeforeSwitch": { zh: "先保存或取消正在编辑的内容,再切换空间", en: "Save or cancel what you are editing before switching spaces" },
   "main.composeIdeaPh": { zh: "随手记一笔…", en: "Jot something down…" },
-  "main.composeTaskPh": { zh: "记一件待办…", en: "Note a task…" },
+  "main.composeTaskPh": { zh: "记一张卡片…", en: "Add a card…" },
   // 159 / W3 Q6(WM-17):有多个空间时灰字写上会记进哪个空间(只有一个空间时照旧;随记那句同桌面 inbox.composePlaceholderSpace)。
   "main.composeIdeaPhSpace": { zh: "随手记一笔,记进「{space}」…", en: "Jot something down — goes into “{space}”…" },
-  "main.composeTaskPhSpace": { zh: "记一件待办,记进「{space}」…", en: "Note a task — goes into “{space}”…" },
+  "main.composeTaskPhSpace": { zh: "记一张卡片,记进「{space}」…", en: "Add a card — goes into “{space}”…" },
   // 159 / W3 Q6:切空间、改空间名做完都说一声(同桌面 notebook.switchedTo / notebook.spaceRenamed)。
   "main.switchedTo": { zh: "已切到「{name}」", en: "Switched to “{name}”" },
   "main.spaceRenamed": { zh: "空间已改名为「{name}」", en: "Space renamed to “{name}”" },
@@ -176,5 +182,8 @@ export const main = defineMessages({
   "boards.sealedAll": { zh: "全部看板", en: "All boards" },
   "boards.sealedNoneHere": { zh: "这块看板还没有归档的成就", en: "Nothing archived from this board yet" },
   "boards.restoredHeld": { zh: "已还原:它原来那一列已经删了,先放在「已删除的看板 / 列」那里", en: "Restored — its column was deleted, so it’s waiting under “Deleted boards / columns”" },
+  // mbopt R2:任务面上要落的那块看板放不进卡(core 解析的落点 ⊥:只剩完成列 / 一列都没有)⇒ ＋ 与「记下」事前灰掉,点 ＋ / 灰字说这句。
+  // 手机不建列(用户拍 ⑩),故指到电脑上去。
+  "boards.noLanding": { zh: "「{board}」里没有能放新卡片的列,在电脑上给它加一列再来记", en: "“{board}” has no column that takes new cards. Add one on a computer first" },
   "boards.holdingBar": { zh: "这些卡原来所在的看板或列已经删了,只能挪出去:点卡片 → 更多… → 挪到看板。挪完这里就空了。", en: "These cards’ board or column was deleted. They can only be moved out: tap a card → More… → Move to board. Once moved, this view empties." },
 });

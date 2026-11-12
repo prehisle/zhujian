@@ -82,9 +82,11 @@ import { writeClipboard } from "./platform";
 import {
   boardName,
   boardOfStage,
+  defaultBoard,
   isDoneStage,
   isHeldStage,
   isTaskStage,
+  landableBoards,
   landingOfStage,
   liveBoards,
   liveColumnsOf,
@@ -171,20 +173,26 @@ type Deps = {
 const statuses = (stage: string): { key: TaskStatus; label: string }[] =>
   liveColumnsOf(stage).map((c) => ({ key: c.id, label: stageLabel(c.id)! }));
 
-/** 「挪到看板」/「放进看板」的候选(0043,用户拍 ⑥ / ⑤):活看板,core 给的序。
- *  ⚠ 任务卡在一块活看板的活列上时,它自己那块不算候选(core 拒「已经在这块看板上了」);收容区里的卡**全部**活看板
- *  都是出口,含它原来那块(core 允许:落那块的落点,codex 2b 一轮 H1)。随记卡全部活看板都是候选。 */
+/** 「挪到看板」/「放进看板」的候选(0043,用户拍 ⑥ / ⑤):**放得进卡的**活看板,core 给的序。
+ *  ⚠ 显示条件 = 接收条件(mbopt R1,同桌面 board.ts moveBoardTargets / inbox.ts intoTargets):落点 ⊥ 的看板不列,点了也是 core 响亮拒。
+ *  任务卡在一块活看板的活列上时,它自己那块不算候选(core 拒「已经在这块看板上了」);收容区里的卡**全部**放得进的活看板
+ *  都是出口,含它原来那块(core 允许:落那块的落点,codex 2b 一轮 H1)。随记卡全部放得进的活看板都是候选。 */
 function boardTargets(item: TimelineItem): Board[] {
-  const live = liveBoards();
-  if (!isTaskStage(item.stage) || isHeldStage(item.stage)) return live;
+  const ok = landableBoards();
+  if (!isTaskStage(item.stage) || isHeldStage(item.stage)) return ok;
   const own = boardOfStage(item.stage)?.id;
-  return live.filter((b) => b.id !== own);
+  return ok.filter((b) => b.id !== own);
 }
 
-/** 「更多…」里出不出看板那一枚(渐进式披露,同桌面:活看板 ≥ 2 块才有「看板」这回事)。
+/** 「更多…」里出不出看板那一枚(渐进式披露,同桌面:有 ≥ 2 块**放得进卡的**看板才有「看板」这回事)。
+ *  任务卡:候选(别的放得进的看板)非空就出 —— 自己那块落点 ⊥ 时它也照样能挪出去。
+ *  随记卡:放得进的 ≥ 2 块才出(只有一块时「转待办」就是它)。
  *  ⚠ 收容区里的卡例外 —— 它**只有**这一条出口,只剩一块看板也得给(落它的落点)。 */
-const boardEntryShown = (item: TimelineItem): boolean =>
-  isTaskStage(item.stage) && isHeldStage(item.stage) ? liveBoards().length >= 1 : liveBoards().length >= 2;
+const boardEntryShown = (item: TimelineItem): boolean => {
+  const n = boardTargets(item).length;
+  if (!isTaskStage(item.stage)) return n >= 2;
+  return n >= 1;
+};
 // 506:排列改成高档在前(无 · P0 · P1 · P2)—— P 记号下「P0 最高」是读法的一部分,
 // 3→2→1 倒序列才读得顺,也与桌面 tasktime.ts::openPri 的 [3,2,1,清除] 同向。
 // ⚠ key 仍是库里的 1/2/3(1=低),⛔ 别照 label 的顺序去改 key。「无」留在最前不动:
@@ -309,9 +317,18 @@ function pill(label: string, attrs: string, on: boolean, disabled = false): stri
   return `<button ${attrs} class="p${on ? " on" : ""}"${disabled ? " disabled" : ""}>${label}</button>`;
 }
 
-function actBtn(act: string, label: string, opts: { warn?: boolean } = {}): string {
+function actBtn(act: string, label: string, opts: { warn?: boolean; blocked?: boolean } = {}): string {
   // 两拍确认不再原位变话术(ui-audit P0 #4):按钮几何恒定,确认在底部固定条。
-  return `<button data-pact="${act}" class="${opts.warn ? "warn" : ""}"${busy ? " disabled" : ""}>${label}</button>`;
+  // `blocked` = 事前灰(mbopt R2):看着灰、**仍点得动** —— 点了说为什么不行(同悬浮 ＋ 的 `.blocked`),⛔ 别换成 disabled(那就哑了)。
+  const cls = [opts.warn ? "warn" : "", opts.blocked ? "blocked" : ""].filter(Boolean).join(" ");
+  return `<button data-pact="${act}" class="${cls}"${opts.blocked ? ` aria-disabled="true"` : ""}${busy ? " disabled" : ""}>${label}</button>`;
+}
+
+/** 「转待办」此刻做不成的原因(mbopt R2,第一波小账):它落**默认看板**的落点(core 解析),落点 ⊥(只剩完成列 / 一列都没有)⇒
+ *  钮事前灰、点了说这句;放得进 = null。⚠ 只控展示与入口,执行仍交 core `promote` 现场校验(并发下它照样会响亮拒)。 */
+function promoteBlocked(): string | null {
+  const d = defaultBoard();
+  return d.landing === null ? t("cardpanel.promoteNoLanding", { board: boardName(d) }) : null;
 }
 
 /** 值 chip(706):`键 值 ▾` 三段 —— 键是灰的小字,值是这条现在的样子,▾ 说明点得开。
@@ -378,7 +395,9 @@ function renderActions(item: TimelineItem): string {
   const acts: string[] = [
     actBtn("edit", t("cardpanel.actEdit")),
     actBtn("tags", t("cardpanel.actTags")),
-    task ? actBtn("comment", t("cardpanel.actComment")) : actBtn("promote", t("cardpanel.actPromote")),
+    task
+      ? actBtn("comment", t("cardpanel.actComment"))
+      : actBtn("promote", t("cardpanel.actPromote"), { blocked: promoteBlocked() !== null }),
     actBtn("more", t("cardpanel.actMore")),
   ];
   // 值 chip 行(仅任务):显示当前值、点开才出候选。⚠ 卡上的角标只在**设了**截止/优先级时
@@ -1284,7 +1303,13 @@ function handleAct(act: string, card: HTMLElement) {
       });
       return;
     }
-    case "promote":
+    case "promote": {
+      // mbopt R2:默认看板放不进卡 ⇒ 钮本是灰的,点了只说原因、不打后端(core 也会拒,但那是事后)。
+      const blocked = promoteBlocked();
+      if (blocked !== null) {
+        showError(blocked);
+        return;
+      }
       // 146:卡离开灵感面——回执指路,且走 onCommitted(重投影清掉 session 也要响)。
       // 157 G4 / P3:回执带「撤销」(= 退回随记,同桌面)与「去看看」(切到任务面落到那张卡)。
       // 0043:落默认看板(用户拍 ④;core 解析)。
@@ -1292,6 +1317,7 @@ function handleAct(act: string, card: HTMLElement) {
         onCommitted: () => promotedReceipt(item.id, t("cardpanel.promotedShort")),
       });
       return;
+    }
     case "tagnew": {
       const title = session.tagDraft.trim();
       if (!title) {

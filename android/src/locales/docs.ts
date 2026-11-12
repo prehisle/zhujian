@@ -85,7 +85,7 @@ export const docs = defineMessages({
   "docs.histLimited": { zh: "细化受限:后面几处只标到整行", en: "Detail limited: later changes are marked by whole line" },
   "docs.histOldText": { zh: "旧版", en: "Older" },
   "docs.histNewText": { zh: "新版", en: "Newer" },
-  "docs.notFound": { zh: "这篇长文已不在长文里(可能被收回、转成任务或删除)", en: "This long-form note is no longer here (moved back, turned into a task, or deleted)" },
+  "docs.notFound": { zh: "这篇长文已不在长文里(可能被收回、转成卡片或删除)", en: "This long-form note is no longer here (moved back, turned into a card, or deleted)" },
   "docs.noTags": { zh: "还没有标签", en: "No tags yet" },
   "docs.newTagPh": { zh: "新标签名", en: "New tag name" },
   // 165 / W5 A20:同卡片那枚(此前「挂上」/「打上」两种说法)。

@@ -26,6 +26,15 @@
 }
 /* 标题 h1 与它前面那枚朱砂方印:共享件 .view header h1(见 controls.css,339 抽出)。 */
 .v-board header .spacer { flex: 1; }
+/* R2:这块看板放不进卡(落点 ⊥)时「+ 新建卡片」事前灰着(aria-disabled,点了说原因 —— 同列管理里删不了的那枚 .bcm-btn.blocked)。 */
+.v-board #add-task.blocked,
+.v-board #add-task.blocked:hover {
+  color: var(--ink-faint);
+  border-color: var(--line);
+  background: transparent;
+  cursor: default;
+}
+.v-board #add-task.blocked .k { color: var(--ink-faint); border-color: var(--line); }
 /* header 动作按钮统一走共享 .hbtn、靠右那组走共享 .head-tools(都在 controls.css,
    626 起随记页也用同一形);这里只补本视图的特例。 */
 /* 窄窗按钮塌缩(69 立、B 轮重做、W4 161 再改判据):**恒一行**是这里唯一要守的形 —— 掉成两行时首行只剩
@@ -399,22 +408,9 @@
   .v-board[data-hdrcopy="off"] .seal-all-slot .lbl-long { display: none; }
   .v-board[data-hdrcopy="off"] .seal-all-slot .lbl-short { display: inline; }
 }
-.v-board .col[data-col="doing"] .col-name { color: var(--seal); }
-/* §4.3 只读收容区:这一列已被删掉、本端还有卡扣在里面。整列压暗 + 列头一枚「已删除」标,
-   卡只出不进(dragover 根本没接)。卡拖光了这一列就不再出现。 */
-.v-board .col-readonly .col-name { color: var(--ink-faint); text-decoration: line-through; }
-/* 与 .col-count 同一枚徽章几何(高度靠 height 而不是 px 行高——热区门禁按行盒算下界,
-   px/em 行高它算不准,见那道闸的判词),只把实底换成虚边以区分「这不是计数」。 */
-.v-board .col-gone {
-  font-size: var(--fs-12);
-  color: var(--ink-faint);
-  border: 1px dashed var(--line-strong);
-  border-radius: var(--radius-pill);
-  height: 19px;
-  padding: 0 8px;
-  display: grid;
-  place-items: center;
-}
+/* R6(多看板优化,用户 2026-11-12 拍):此前「进行中」列名朱砂、卡片朱砂 / 灰色左边线、「待确认」标题前一枚 ⋯,
+   全按种子列 id 挂 —— 自定义列与别的看板没有,同一块看板上两种待遇。去掉:所有列一个样。
+   (删掉的列 0043 起进收容区,原看板上不再有只读列,`.col-readonly` / `.col-gone` 一并退场。) */
 .v-board .col-count {
   font-size: var(--fs-12);
   color: var(--ink-faint);
@@ -456,10 +452,7 @@
 .v-board .tcard.is-active { border-color: var(--seal-line); }
 /* the .acts row is only the inline-confirm host now (删除 / 撤回); empty = no row */
 .v-board .acts:empty { display: none; }
-/* doing is the active focus (朱砂 bar); 待确认 is set aside / on hold (a muted grey
-   bar — alive but not being worked); done recedes */
-.v-board .tcard.doing { box-shadow: var(--card-shadow), inset 3px 0 0 var(--seal); }
-.v-board .tcard.confirming { box-shadow: var(--card-shadow), inset 3px 0 0 var(--line-strong); }
+/* the board's done column recedes (按角色挂 .done,board.ts card()) */
 .v-board .tcard.done { opacity: 0.62; }
 /* due highlight: an overdue card carries a 朱砂 left bar; due-today a soft seal edge */
 .v-board .tcard.due-today { border-color: var(--seal-line); }
@@ -732,8 +725,6 @@
 .v-board .ttitle.clamped { max-height: 12em; overflow: hidden; }
 .v-board .tcard.done .ttitle { color: var(--ink-soft); }
 .v-board .tcard.done .ttitle::before { content: "✓ "; color: var(--seal); font-weight: 700; }
-/* 待确认 title hint: a quiet ⋯ marks work parked awaiting confirmation */
-.v-board .tcard.confirming .ttitle::before { content: "⋯ "; color: var(--ink-faint); font-weight: 700; }
 
 .v-board .prov {
   margin-top: 6px;
@@ -907,7 +898,7 @@
   gap: 6px;
 }
 .v-board .sealed-none { max-width: 560px; margin: 8px auto; font-size: var(--fs-13); color: var(--ink-faint); }
-/* 收容区:按原看板 / 列分组,组头带「看板已删除 / 列已删除」一枚虚边标(同 .col-gone 那一形)。 */
+/* 收容区:按原看板 / 列分组,组头带「看板已删除 / 列已删除」一枚虚边标(实底换虚边,以区分「这不是计数」)。 */
 .v-board .holding-from { display: flex; align-items: center; gap: 8px; }
 .v-board .holding-why {
   font-size: var(--fs-12);

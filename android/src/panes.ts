@@ -491,6 +491,9 @@ export async function loadSealed(): Promise<void> {
   }
 }
 
+/** 取消归档回哪儿(mbopt R4:点名那一列,⛔ 别写死「已完成」—— 各块看板的完成列各叫各的):回原列;原列 / 原看板已删 ⇒ 收容区。 */
+const unsealDest = (status: string): string => (isHeldStage(status) ? t("boards.holdingPill") : stageLabel(status)!);
+
 function renderSealed() {
   const box = $("sealed-list");
   if (!sealedRows.length) {
@@ -515,7 +518,7 @@ function renderSealed() {
       const panel =
         r.id === sealedOpenId
           ? `<div class="panel"><div class="acts">
-              <button data-unseal="${esc(r.id)}"${sealedBusy ? " disabled" : ""}>${t("panes.unseal")}</button>
+              <button data-unseal="${esc(r.id)}"${sealedBusy ? " disabled" : ""}>${t("panes.unseal", { col: esc(unsealDest(r.status)) })}</button>
             </div></div>`
           : "";
       const tint = cardTint(r.color);
@@ -564,6 +567,8 @@ function onSealedClick(e: Event) {
   }
   if (sealedBusy) return;
   const space = getCurrentSpace();
+  // 回执说回到哪一列(mbopt R4):按点的那一刻屏上这张卡的来处算(钮上写的也是它)。
+  const dest = unsealDest(sealedRows.find((r) => r.id === id)!.status);
   sealedBusy = true;
   renderSealed(); // 立即画出禁用态(同 trashRun 的形):连点不许并发提交同一条
   void (async () => {
@@ -574,7 +579,7 @@ function onSealedClick(e: Event) {
       // 158 G3 / Q3:另挂「去看看」= 回任务面落到那张卡(收归档页、滚过去、闪一下)。
       if (space === getCurrentSpace())
         actionBar(
-          t("panes.unsealed"),
+          t("panes.unsealed", { col: dest }),
           t("ui.undo"),
           () => {
             if (space !== getCurrentSpace()) return; // 换空间的旧撤销作废

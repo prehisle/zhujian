@@ -9,7 +9,9 @@
 use rusqlite::{Connection, OptionalExtension};
 use ulid::Ulid;
 
-use super::{gate, live_item_count, roles, SEED_BOARD, SEED_BOARD_ROW};
+use std::collections::HashMap;
+
+use super::{gate, live_item_count, live_item_counts_by_stage, roles, SEED_BOARD, SEED_BOARD_ROW};
 use crate::clock::Clock;
 use crate::{frindex, oplog, repo};
 
@@ -36,33 +38,120 @@ pub struct BoardRow {
     pub is_default: bool,
     /// 种子看板不可删。
     pub deletable: bool,
+    /// 这块看板**活列**上的活卡数(解析后的 `live_columns`;已删看板恒 0 —— 它的卡在收容区)。
+    pub live_items: i64,
+    /// 其中**不在解析后完成列**里的(没有完成列 = 全部活卡)。看板旁的卡数用它(R7 口径)。
+    pub open_items: i64,
+}
+
+/// 一块看板上的活卡数,三种口径出自**同一份计数**([`board_card_counts`]):读模型的
+/// `live_items` / `open_items` 与 [`delete_board`] 的「先清空」前置共用,⛔ 别各写一句 SQL。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct BoardCardCounts {
+    /// **所有权集合**:这块看板名下全部任务列(含已墓碑的,即收容区里那些)上的活卡 ——
+    /// 删看板的前置看它(⛔ 别拿目的地集合 `live_columns` 代替,codex 实现审 2b 一轮 M3)。
+    pub(crate) owned: i64,
+    /// 解析后活列上的活卡。
+    pub(crate) live: i64,
+    /// 活列上、不在解析后完成列里的活卡。
+    pub(crate) open: i64,
+}
+
+/// 按 [`roles::Facts`] 与每 stage 活卡数([`live_item_counts_by_stage`])合出一块看板的三个数。
+/// 纯函数,不碰库。没有活卡的 stage 不在 `per_stage` 里 = 0 张。
+pub(crate) fn board_card_counts(
+    facts: &roles::Facts,
+    per_stage: &HashMap<String, i64>,
+    board_id: &str,
+) -> BoardCardCounts {
+    let n = |c: &str| per_stage.get(c).copied().unwrap_or(0);
+    let owned = facts.columns.iter().filter(|c| c.board == board_id).map(|c| n(&c.id)).sum();
+    let roles = facts.roles(board_id);
+    let live: i64 = roles.live_columns.iter().map(|c| n(c)).sum();
+    let open = live - roles.done.as_deref().map_or(0, n);
+    BoardCardCounts { owned, live, open }
 }
 
 /// 全部看板,按 `(position, id)`;含已删的(收容区要靠它解释来处)。
+///
+/// ⭐ 查询数与看板数无关(五句):默认看板一句、角色事实两句([`roles::Facts::load`])、
+/// 活卡数一句 `GROUP BY`、看板行一句;角色与卡数都在内存里问同一份事实。
+/// ⚠ 五句共用一个读快照([`super::in_read_snapshot`],同 `list_columns`;codex mbopt 一轮 M1:
+/// 否则事实读完后另一连接建出的看板会以「有行、无落点」的样子出现)。
 pub fn list_boards(conn: &Connection) -> Result<Vec<BoardRow>, String> {
+    super::in_read_snapshot(conn, |e| e.to_string(), list_boards_in)
+}
+
+fn list_boards_in(conn: &Connection) -> Result<Vec<BoardRow>, String> {
     let default = roles::default_board(conn)?;
-    let mut stmt = s(conn.prepare(
+    let facts = roles::Facts::load(conn)?;
+    let per_stage = s(live_item_counts_by_stage(conn))?;
+    #[cfg(test)]
+    super::read_seam::fire();
+    let mut stmt = s(conn.prepare_cached(
         "SELECT id, title, position, tombstoned_at IS NOT NULL FROM board ORDER BY position, id",
     ))?;
     let rows: Vec<(String, String, String, bool)> = s(s(stmt
         .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))))?
     .collect())?;
-    rows.into_iter()
+    Ok(rows
+        .into_iter()
         .map(|(id, title, position, deleted)| {
             let seed = id == SEED_BOARD;
-            Ok(BoardRow {
+            let roles = facts.roles(&id);
+            let counts = board_card_counts(&facts, &per_stage, &id);
+            BoardRow {
                 is_title_overridden: !(seed && title == SEED_BOARD_ROW.canonical_title),
-                landing: roles::landing_of(conn, &id)?,
-                done: roles::done_of(conn, &id)?,
+                landing: roles.landing,
+                done: roles.done,
                 is_default: id == default,
                 deletable: !seed,
+                live_items: counts.live,
+                open_items: counts.open,
                 id,
                 title,
                 position,
                 deleted,
-            })
+            }
         })
-        .collect()
+        .collect())
+}
+
+/// 成就册里一块看板的条数([`sealed_counts_by_board`] 的一行)。两壳命令直接返回它(契约同源)。
+#[derive(serde::Serialize, Debug, Clone, PartialEq, Eq)]
+pub struct SealedCount {
+    /// 卡所在列的看板(含已删看板);`None` = stage 不是任务列(见下)。
+    pub board_id: Option<String>,
+    pub n: i64,
+}
+
+/// 成就册里每块看板各几张(K5:顶栏计数不必拉全表)。卡的看板 = `board_of(它的 stage 列)`,
+/// **含已删看板**(成就是史实)。成员口径与 [`crate::repo::sealed_tasks`] 同一段谓词
+/// ([`crate::repo::SEALED_WHERE`])。
+///
+/// ⚠ `board_id = None` 那一组 = 封存行的 stage 不是任务列。第一方路径造不出(本地 seal 只认
+/// 完成列,`trg_item_seal_only_done`),但归档册列表(`sealed_tasks`)不看 stage、照样列它 ⇒
+/// 这里**如实分出一组**,不并进任何看板、也不丢(否则各组之和 ≠ 册子条数)。
+/// 顺序:按看板 id 升序,`None` 在最前。⚠ 事实与计数共用一个读快照(同 [`list_boards`])。
+pub fn sealed_counts_by_board(conn: &Connection) -> Result<Vec<SealedCount>, String> {
+    super::in_read_snapshot(conn, |e| e.to_string(), sealed_counts_by_board_in)
+}
+
+fn sealed_counts_by_board_in(conn: &Connection) -> Result<Vec<SealedCount>, String> {
+    let facts = roles::Facts::load(conn)?;
+    #[cfg(test)]
+    super::read_seam::fire();
+    let mut stmt = s(conn.prepare_cached(&format!(
+        "SELECT i.stage, COUNT(*) FROM items i WHERE {} GROUP BY i.stage",
+        crate::repo::SEALED_WHERE
+    )))?;
+    let per_stage: Vec<(String, i64)> =
+        s(s(stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?))))?.collect())?;
+    let mut by_board: std::collections::BTreeMap<Option<String>, i64> = Default::default();
+    for (stage, n) in per_stage {
+        *by_board.entry(facts.board_of(&stage).map(str::to_string)).or_insert(0) += n;
+    }
+    Ok(by_board.into_iter().map(|(board_id, n)| SealedCount { board_id, n }).collect())
 }
 
 fn ensure_live_board(conn: &Connection, id: &str) -> Result<(), String> {
@@ -240,13 +329,10 @@ pub fn delete_board(conn: &mut Connection, clock: &mut Clock, id: &str) -> Resul
     }
     let tx = s(conn.transaction())?;
     ensure_live_board(&tx, id)?;
-    let live: i64 = s(tx.query_row(
-        "SELECT COUNT(*) FROM items i JOIN board_column c ON c.id = i.stage \
-          WHERE c.kind = 'task' AND COALESCE(c.board_id, ?2) = ?1 \
-            AND i.archived_at IS NULL AND i.sealed_at IS NULL",
-        [id, SEED_BOARD],
-        |r| r.get(0),
-    ))?;
+    // 同一事务里读事实与计数(首版自检清单 10);口径 = 所有权集合(`owned`),见 [`BoardCardCounts`]。
+    let facts = roles::Facts::load(&tx)?;
+    let per_stage = s(live_item_counts_by_stage(&tx))?;
+    let live = board_card_counts(&facts, &per_stage, id).owned;
     if live > 0 {
         return Err(format!("这块看板上还有 {live} 张卡,请先挪走再删除"));
     }

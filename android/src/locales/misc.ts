@@ -21,7 +21,7 @@ export const misc = defineMessages({
   "swipe.atLast": { zh: "「{col}」已是最后一列", en: "“{col}” is already the last column" },
   // carddrag.ts(长按拖卡,158 G3 / Q7;165 / W5 A37 起看板上也拖)
   "carddrag.reordered": { zh: "已挪到这里", en: "Moved here" },
-  "carddrag.dueSorted": { zh: "只看到期时按截止日排,不能拖;先点掉那枚到期钮", en: "Sorted by due date while showing due tasks only, so cards can't be dragged. Turn that filter off first" },
+  "carddrag.dueSorted": { zh: "只看到期时按截止日排,不能拖;先点掉那枚到期钮", en: "Sorted by due date while showing due cards only, so cards can't be dragged. Turn that filter off first" },
   "ui.undo": { zh: "撤销", en: "Undo" },
   // 165 / W5 Q6:点了【撤销】、撤成了以后说一声(两端同句,ui.ts::showUndone)。
   "common.undone": { zh: "已撤销", en: "Undone" },

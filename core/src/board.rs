@@ -60,8 +60,8 @@ pub mod gate;
 mod boards;
 mod roles;
 pub use boards::{
-    create_board, delete_board, list_boards, rename_board, reorder_board, set_board_done,
-    set_board_landing, BoardRow,
+    create_board, delete_board, list_boards, rename_board, reorder_board, sealed_counts_by_board,
+    set_board_done, set_board_landing, BoardRow, SealedCount,
 };
 pub(crate) use roles::{
     board_live, board_of, default_board, done_of, entered_done, landing_of,
@@ -300,12 +300,9 @@ impl ColumnKind {
 /// ⚠ 拿 `items.stage` 来查时 `None` 是**不可达**的(0036 起那是 FK)⇒ 调用方碰上它要响亮报
 /// 「数据损坏」,⛔ 别写成默认值分支。
 pub(crate) fn column_kind(conn: &Connection, id: &str) -> rusqlite::Result<Option<ColumnKind>> {
-    conn.query_row(
-        "SELECT kind, tombstoned_at IS NOT NULL FROM board_column WHERE id = ?1",
-        [id],
-        |r| Ok(ColumnKind { kind: r.get(0)?, deleted: r.get(1)? }),
-    )
-    .optional()
+    conn.prepare_cached("SELECT kind, tombstoned_at IS NOT NULL FROM board_column WHERE id = ?1")?
+        .query_row([id], |r| Ok(ColumnKind { kind: r.get(0)?, deleted: r.get(1)? }))
+        .optional()
 }
 
 /// 「这个 id 是不是一个**活着的任务列**」——看板拖拽 / 流转的**目标**判据。
@@ -322,19 +319,38 @@ pub(crate) fn is_live_task_column(conn: &Connection, id: &str) -> rusqlite::Resu
     roles::column_accepts_cards(conn, id).map_err(rusqlite::Error::InvalidParameterName)
 }
 
+/// 「活卡」的 SQL 谓词(未归档 ∧ 未封存;对 `items` 不带别名)。⭐ [`live_item_count`] 与
+/// [`live_item_counts_by_stage`] **共用这一段**(宏 = 编译期拼进字面量,`prepare_cached` 要
+/// `&str` 常量形的 SQL)—— ⛔ 别在别处再手写一遍。
+macro_rules! live_item_pred {
+    () => {
+        "archived_at IS NULL AND sealed_at IS NULL"
+    };
+}
+
 /// 该列上**未归档未封存**的条目数 —— 「删列要先清空」(不变量 4)那条判据的唯一 Rust 侧
-/// 正式子;[`list_columns`] 与 [`delete_column`] 共用。
+/// 正式子;[`delete_column`] 与看板命令用它,读模型用同谓词的 [`live_item_counts_by_stage`]。
 ///
 /// ⚠ **仓里还有第三份,住在迁移 0036 里**:`trg_board_column_no_tombstone_nonempty`
 /// 那只**带回放豁免**的守护(plan §2.3 ①)。它与这里必须逐字同口径。⛔ 那份改不了
 /// (迁移是 append-only 史实),所以要漂只会往这边漂 —— 两边分工写在 [`delete_column`] 头上。
 pub(crate) fn live_item_count(conn: &Connection, column_id: &str) -> rusqlite::Result<i64> {
-    conn.query_row(
-        "SELECT COUNT(*) FROM items \
-          WHERE stage = ?1 AND archived_at IS NULL AND sealed_at IS NULL",
-        [column_id],
-        |r| r.get(0),
-    )
+    conn.prepare_cached(concat!("SELECT COUNT(*) FROM items WHERE stage = ?1 AND ", live_item_pred!()))?
+        .query_row([column_id], |r| r.get(0))
+}
+
+/// 每个 stage 上的活卡数(一句 `GROUP BY`;没有活卡的 stage 不在表里 = 0 张)。读模型一次
+/// 拿全,⛔ 别回到逐列调 [`live_item_count`](那是 N+1)。谓词与它共用 `live_item_pred!`。
+pub(crate) fn live_item_counts_by_stage(
+    conn: &Connection,
+) -> rusqlite::Result<std::collections::HashMap<String, i64>> {
+    let mut stmt = conn.prepare_cached(concat!(
+        "SELECT stage, COUNT(*) FROM items WHERE ",
+        live_item_pred!(),
+        " GROUP BY stage"
+    ))?;
+    let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?;
+    rows.collect()
 }
 
 // ---- 477 那笔账:两列身上挂着**产品语义** ⇒ 永不可删(480 用户拍板) -----------------
@@ -397,7 +413,54 @@ pub(crate) fn undeletable_reason(id: &str, system: bool) -> Option<String> {
 
 // ---- read model(两端 UI 的唯一读法) ---------------------------------------------------
 
+/// 让一组读**共用一个读快照**(codex 实现审 mbopt 一轮 M1):读模型先读角色事实、再读计数、
+/// 最后读行,三段之间若别的连接提交了写,拼出来的组合可能是任何一个时刻都不存在的状态。
+///
+/// * 调用方已在事务里(`!is_autocommit()`)⇒ 直接读:那个事务本身就是一个快照,⛔ 别再开
+///   (SQLite 不支持嵌套 `BEGIN`)。
+/// * 否则开一个 **deferred** 读事务(`unchecked_transaction`,默认 DEFERRED:第一句读才取快照,
+///   不拿写锁;WAL 下不挡别的连接写),读完 `commit`;中途出错则 drop = 回滚,什么都没写过。
+///
+/// `sql_err` 把开 / 收事务的 SQLite 错误换成调用方的错误类型。
+pub(crate) fn in_read_snapshot<T, E>(
+    conn: &Connection,
+    sql_err: impl Fn(rusqlite::Error) -> E,
+    f: impl FnOnce(&Connection) -> Result<T, E>,
+) -> Result<T, E> {
+    if !conn.is_autocommit() {
+        return f(conn);
+    }
+    let tx = conn.unchecked_transaction().map_err(&sql_err)?;
+    let out = f(&tx)?;
+    tx.commit().map_err(&sql_err)?;
+    Ok(out)
+}
+
+/// 测试专用的插缝:读模型在「事实与计数已读、行还没读」那一刻调 [`read_seam::fire`],
+/// 测试借它从另一连接插入一次提交,证明几段读共用同一个快照(M1 的回归测)。生产构建里不存在。
+#[cfg(test)]
+pub(crate) mod read_seam {
+    use std::cell::RefCell;
+
+    thread_local! {
+        static HOOK: RefCell<Option<Box<dyn FnOnce()>>> = RefCell::new(None);
+    }
+
+    /// 装一次性钩子(本线程下一次 `fire` 取走并执行)。
+    pub(crate) fn arm(f: impl FnOnce() + 'static) {
+        HOOK.with(|h| *h.borrow_mut() = Some(Box::new(f)));
+    }
+
+    pub(crate) fn fire() {
+        let f = HOOK.with(|h| h.borrow_mut().take());
+        if let Some(f) = f {
+            f();
+        }
+    }
+}
+
 /// 一列的当前态。**两端 UI 只读这个**,⛔ 别各自去查 `board_column`。
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BoardColumnRow {
     pub id: String,
     /// 同步来的原文。⚠ **系统列的显示文案不一定是它** —— 见 [`Self::is_title_overridden`]。
@@ -436,64 +499,78 @@ pub struct BoardColumnRow {
     /// 0043:它的看板已删 ⇒ 这一列(哪怕自身没墓碑)也住收容区、只出不进(plan §3a)。
     /// ⚠ 与 [`Self::deleted`] 是两格:⛔ 别把「看板已删」伪造成列自身已有墓碑(codex 二轮)。
     pub board_deleted: bool,
+    /// 0043:一枚卡此刻能不能**落进**这一列(= `roles::Facts::column_accepts_cards`:活的任务列
+    /// ∧ 它的看板活着)。灵感列恒 `false`(这一格只答「卡片」)。⭐ 前端判「这一列画不画在看板上 /
+    /// 能不能拖进去」只读它,⛔ 别再拿 `kind` / `deleted` / `board_deleted` 自己拼一份。
+    pub accepts_cards: bool,
+    /// 0043:这一列上的活卡属不属**收容区**(plan §3a:任务列 ∧ (列已墓碑 ∨ 看板已墓碑);
+    /// = `roles::Facts::column_held`)。⚠ 判的是列,不看它此刻有没有卡 —— 收容区「非空才显」
+    /// 由前端按 `held && live_items > 0` 定。灵感列恒 `false`。
+    pub held: bool,
 }
 
 /// 全部列(**含已删的**),按 `(position, id)` 升序 —— 与 `items` 的读序同一条规矩。
 ///
 /// ⚠ 一次全量返回而不分「活的 / 删的」两个查询:列是个位数量级,分两趟只会给 UI 造出
 /// **第二份口径**;要哪一族由调用方按 [`BoardColumnRow::kind`] / [`BoardColumnRow::deleted`] 分。
+///
+/// ⭐ **查询数与列数无关**(四句):角色事实一次读([`roles::Facts::load`],两句)、活卡数一句
+/// `GROUP BY`([`live_item_counts_by_stage`])、列行一句;每列的 `deletable` / `board_*` /
+/// `accepts_cards` / `held` 都在内存里问同一份事实。⛔ 别回到逐列调按 id 的角色函数(N+1)。
+///
+/// ⚠ 那几句**必须在同一个读快照里**([`in_read_snapshot`];codex 实现审 mbopt 一轮 M1):
+/// 事实读完、列行读之前若另一连接提交了一枚新任务列,拼出来就是「`kind=task` 却没有归属」
+/// —— 改前一句 JOIN 造不出的组合。
 pub fn list_columns(conn: &Connection) -> rusqlite::Result<Vec<BoardColumnRow>> {
-    // 两趟:先把行读完(`live_items` 要另调 [`live_item_count`],不能在 query_map 的闭包里
-    // 借着同一个 conn 再查)。⚠ 那是**刻意**的 N+1 —— 列是个位数量级,而把「什么算 live
-    // 条目」的判据写成本文件里的第二份子查询才是真代价(清单 14;那条判据还有第三份住在
-    // 迁移 0036 的守护 ① 里,改不动)。
-    let mut stmt = conn.prepare(
-        "SELECT c.id, c.title, c.kind, c.system, c.position, c.tombstoned_at IS NOT NULL, \
-                CASE WHEN c.kind = 'task' THEN COALESCE(c.board_id, ?1) END, \
-                COALESCE(b.tombstoned_at IS NOT NULL, 0) \
-           FROM board_column c \
-           LEFT JOIN board b ON c.kind = 'task' AND b.id = COALESCE(c.board_id, ?1) \
-          ORDER BY c.position, c.id",
+    in_read_snapshot(conn, |e| e, list_columns_in)
+}
+
+fn list_columns_in(conn: &Connection) -> rusqlite::Result<Vec<BoardColumnRow>> {
+    let facts = roles::Facts::load(conn).map_err(rusqlite::Error::InvalidParameterName)?;
+    let counts = live_item_counts_by_stage(conn)?;
+    #[cfg(test)]
+    read_seam::fire();
+    let mut stmt = conn.prepare_cached(
+        "SELECT id, title, kind, system, position, tombstoned_at IS NOT NULL \
+           FROM board_column ORDER BY position, id",
     )?;
-    type Row = (String, String, String, bool, String, bool, Option<String>, bool);
-    let rows: Vec<Row> = stmt
-        .query_map([SEED_BOARD], |r| {
-            Ok((
-                r.get(0)?,
-                r.get(1)?,
-                r.get(2)?,
-                r.get::<_, i64>(3)? == 1,
-                r.get(4)?,
-                r.get(5)?,
-                r.get(6)?,
-                r.get(7)?,
-            ))
-        })?
-        .collect::<rusqlite::Result<_>>()?;
-    rows.into_iter()
-        .map(|(id, title, kind, system, position, deleted, board_id, board_deleted)| {
-            let is_title_overridden = title_is_overridden(&id, &title);
-            // 0043:动态拒因(完成列 / 最后一枚非完成列 / 死看板)与删列命令**共用**
-            // [`column_delete_refusal`](codex 实现审 2b 一轮 L1:读 DTO 与命令同一份判据)。
-            let deletable = column_delete_refusal(conn, &id, system)
-                .map_err(rusqlite::Error::InvalidParameterName)?
-                .is_none();
-            let live_items = live_item_count(conn, &id)?;
-            Ok(BoardColumnRow {
-                id,
-                title,
-                kind,
-                system,
-                position,
-                is_title_overridden,
-                deleted,
-                live_items,
-                deletable,
-                board_id,
-                board_deleted,
-            })
+    let rows = stmt.query_map([], |r| {
+        Ok((
+            r.get::<_, String>(0)?,
+            r.get::<_, String>(1)?,
+            r.get::<_, String>(2)?,
+            r.get::<_, i64>(3)? == 1,
+            r.get::<_, String>(4)?,
+            r.get::<_, bool>(5)?,
+        ))
+    })?;
+    rows.map(|row| {
+        let (id, title, kind, system, position, deleted) = row?;
+        let is_title_overridden = title_is_overridden(&id, &title);
+        // 0043:动态拒因(完成列 / 最后一枚非完成列 / 死看板)与删列命令**共用**
+        // [`column_delete_refusal_in`](codex 实现审 2b 一轮 L1:读 DTO 与命令同一份判据)。
+        let deletable = column_delete_refusal_in(&facts, &id, system).is_none();
+        // 没有活卡的 stage 不在 GROUP BY 的结果里 —— 那就是 0 张,不是缺省兜底。
+        let live_items = counts.get(&id).copied().unwrap_or(0);
+        let board_id = facts.board_of(&id).map(str::to_string);
+        let board_deleted = board_id.as_deref().is_some_and(|b| facts.board_tombstoned(b));
+        Ok(BoardColumnRow {
+            accepts_cards: facts.column_accepts_cards(&id),
+            held: facts.column_held(&id),
+            id,
+            title,
+            kind,
+            system,
+            position,
+            is_title_overridden,
+            deleted,
+            live_items,
+            deletable,
+            board_id,
+            board_deleted,
         })
-        .collect()
+    })
+    .collect()
 }
 
 /// §7.1d 的终态判据(单一正式子;[`list_columns`] 是它唯一的生产消费者)。
@@ -1216,25 +1293,31 @@ pub(crate) fn column_delete_refusal(
     id: &str,
     system: bool,
 ) -> Result<Option<String>, String> {
+    Ok(column_delete_refusal_in(&roles::Facts::load(conn)?, id, system))
+}
+
+/// [`column_delete_refusal`] 的本体:问一份已读好的角色事实(读模型对每列调它,不再逐列读库)。
+fn column_delete_refusal_in(facts: &roles::Facts, id: &str, system: bool) -> Option<String> {
     if let Some(why) = undeletable_reason(id, system) {
-        return Ok(Some(why));
+        return Some(why);
     }
-    let Some(b) = roles::board_of(conn, id)? else { return Ok(None) };
-    if !roles::board_live(conn, &b)? {
-        return Ok(Some("这一列所在的看板已删除,列是只读的".to_string()));
+    let b = facts.board_of(id)?;
+    if !facts.board_live(b) {
+        return Some("这一列所在的看板已删除,列是只读的".to_string());
     }
-    let done = roles::done_of(conn, &b)?;
-    if done.as_deref() == Some(id) {
-        return Ok(Some("这一列是这块看板的完成列,请先取消完成列再删".to_string()));
+    let roles = facts.roles(b);
+    if roles.done.as_deref() == Some(id) {
+        return Some("这一列是这块看板的完成列,请先取消完成列再删".to_string());
     }
-    let others = roles::live_columns(conn, &b)?
-        .into_iter()
-        .filter(|c| c != id && Some(c) != done.as_ref())
+    let others = roles
+        .live_columns
+        .iter()
+        .filter(|c| c.as_str() != id && Some(*c) != roles.done.as_ref())
         .count();
     if others == 0 {
-        return Ok(Some("这是这块看板上最后一枚能放新卡的列,不能删".to_string()));
+        return Some("这是这块看板上最后一枚能放新卡的列,不能删".to_string());
     }
-    Ok(None)
+    None
 }
 
 fn ensure_editable(tx: &Connection, id: &str, what: &str) -> Result<(), String> {
@@ -1256,10 +1339,9 @@ fn ensure_editable(tx: &Connection, id: &str, what: &str) -> Result<(), String> 
         return Err(format!("这一列已删除,不可{what}(已删的列是只读的)"));
     }
     // 0043:死看板里的列(含迟到出生的)同样只读 —— 它们住收容区(plan §3a)。
-    if let Some(b) = roles::board_of(tx, id)? {
-        if !roles::board_live(tx, &b)? {
-            return Err(format!("这一列所在的看板已删除,不可{what}"));
-        }
+    let facts = roles::Facts::load(tx)?;
+    if facts.board_of(id).is_some_and(|b| !facts.board_live(b)) {
+        return Err(format!("这一列所在的看板已删除,不可{what}"));
     }
     Ok(())
 }

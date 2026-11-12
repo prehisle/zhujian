@@ -2,7 +2,7 @@ import "./hotkey-menu.css";
 import { t } from "./i18n";
 import { NATIVE_MENU_KEEP } from "./context-menu";
 import { el, holdKeyboard, type KeyboardHold } from "./dom";
-import { toastAction } from "./toast";
+import { toastAction, toastError } from "./toast";
 
 // 悬停即选中 + ⋯ 速查菜单 + 单键直达 —— 抽自 inbox 的原型,做成视图无关的公共件,
 // 让「同一个键 = 同一个概念」跨视图(灵感 / 任务看板 / …)一致,肌肉记忆才能迁移。
@@ -27,6 +27,9 @@ export type Act = {
   key: string;
   /** 危险操作(删除类),菜单行染成朱砂。 */
   danger?: boolean;
+  /** 此刻做不了的原因(R2 那族「事前灰」:随记「转待办」在默认看板放不进卡时)。给了 = 菜单行淡着(aria-disabled,
+   *  title 写原因),点它 / 按它的键只说这句、⛔ 不跑 run。⛔ 别拿它藏动作:做不了也照列,人才知道为什么。 */
+  blocked?: string;
   /** 不进 ⋯ 菜单,只当单键快捷键用。0040 卡片配色的 1-7 / 0 八枚数字键走这条:它们是
    *  「悬停即按」的快速通道,全摊进菜单会把 14 行撑到 22 行。⚠ 发现性由菜单里那项
    *  「颜色」兑现 —— 色板上每个色点标着自己的数字键。⛔ 别拿它藏危险动作:右键菜单与
@@ -186,6 +189,10 @@ export function createHotkeyController(hopts: HotkeyOpts = {}): HotkeyController
 
   // 执行一个动作。feedback 型:跑完把返回文案交给 flash(菜单开着才闪)。run 型:直接跑。
   function runAct(act: Act, flash: ((text: string) => void) | null): void {
+    if (act.blocked !== undefined) {
+      toastError(act.blocked);
+      return;
+    }
     if (act.feedback) {
       // 键盘路径(菜单没开)此前静默执行 —— `/` C 复制了却屏上什么也没变(158 G2 / A17,WD-21)。
       // 没有菜单行可闪,就用底部那条回执说同一句。
@@ -548,6 +555,11 @@ export function createHotkeyController(hopts: HotkeyOpts = {}): HotkeyController
             draggable: false,
           });
           item.setAttribute("role", "menuitem");
+          if (a.blocked !== undefined) {
+            item.classList.add("blocked");
+            item.setAttribute("aria-disabled", "true");
+            item.title = a.blocked;
+          }
           item.dataset.key = a.key;
           const label = el("span", { className: "hk-label", textContent: a.label });
           item.append(label);
@@ -557,6 +569,9 @@ export function createHotkeyController(hopts: HotkeyOpts = {}): HotkeyController
             e.stopPropagation();
             if (a.sub) {
               drill(a);
+            } else if (a.blocked !== undefined) {
+              closeMenu(true);
+              runAct(a, null); // 只说原因
             } else if (a.feedback) {
               // keep the menu up to flash the result in this row
               runAct(a, (text) => {
