@@ -3,6 +3,7 @@
 // 自动截图 + 如实报错(绝不盲点完就宣布成功)。拦截页有两种,谁出来点谁:
 //   · 「外部来源」风险页 → 勾「已了解应用的风险检测结果」(`…:id/deleted_file_state_cb`)→ 继续安装;
 //   · 同 versionCode 反装时部分 ROM 先弹「已安装相同版本」(PackageInterceptActivity)→ 重新安装。
+//   · 894 起 vivo 新版风险页**没有勾选框**,只有「继续安装」(V1986A / V2352GA 都是)→ 等它亮了就点。
 //
 // 用法:
 //   node scripts/android-install-auto.mjs <apk路径> [--device <serial>] [--expect <版本>]
@@ -77,7 +78,7 @@ function installerNodes() {
       const a = (k) => n.match(new RegExp(` ${k}="([^"]*)"`))?.[1] ?? "";
       const b = a("bounds").match(/\[(\d+),(\d+)\]\[(\d+),(\d+)\]/);
       const c = b ? [Math.round((+b[1] + +b[3]) / 2), Math.round((+b[2] + +b[4]) / 2)] : null;
-      return { pkg: a("package"), id: a("resource-id"), text: a("text"), checked: a("checked") === "true", c };
+      return { pkg: a("package"), id: a("resource-id"), text: a("text"), checked: a("checked") === "true", enabled: a("enabled") !== "false", c };
     })
     .filter((n) => n.pkg === INSTALLER && n.c && (n.c[0] > 0 || n.c[1] > 0));
 }
@@ -126,6 +127,11 @@ const tap = ([x, y]) => sh(["shell", "input", "tap", String(x), String(y)]);
     } else if (box && go) {
       tap(go.c);
       steps.push("继续安装");
+    } else if (!box && go && go.enabled) {
+      // 894:vivo 新版拦截页(两台都撞)只剩「外部来源应用」一段说明 + 「继续安装」,没有那枚勾选框 ⇒ 旧判据
+      // 「先有勾选框才点继续」永远不成立、一下不点。没框时只认**亮着的**那枚钮(检测中它是灰的,下一拍再读)。
+      tap(go.c);
+      steps.push("继续安装(无勾选框)");
     }
     await sleep(1000);
   }
