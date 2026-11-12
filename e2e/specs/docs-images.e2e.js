@@ -72,7 +72,7 @@ describe("长文的图(154 G3–G5)", () => {
     await invoke("add_item_image", { itemId: id, mime: "image/png", dataB64: PNG });
     await invoke("add_item_image", { itemId: id, mime: "image/png", dataB64: PNG });
     await inboxShow("ideas");
-    await inboxAction("图E2E", "展开成长文");
+    await inboxAction("图E2E", "转成长文");
     await browser.waitUntil(async () => (await docContent(id)) === "# 图E2E\n\n见图2。\n\n图1", {
       timeout: 8000,
       timeoutMsg: "展开之后正文一直没补上「图1」",

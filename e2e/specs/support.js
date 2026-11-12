@@ -366,6 +366,18 @@ export async function cornerMenuHas(cardSel, content, label) {
     label,
   );
 }
+/** 看板页头「⋯」菜单里点一项(898 B1):`copy-board` 复制看板 / `manage-cols` 管理看板。菜单点开才建,
+ *  ⛔ 别直接 `document.querySelector("#manage-cols")` —— 菜单没开时那一项不在 DOM 里。 */
+export async function boardMore(itemId) {
+  await $("#board-more").waitForDisplayed({ timeout: 8000 });
+  await browser.execute((id) => {
+    if (!document.querySelector(".board-more-menu")) document.querySelector("#board-more").click();
+    const it = document.querySelector(`.board-more-menu #${id}`);
+    if (!it) throw new Error(`看板「⋯」菜单里没有 #${id}`);
+    it.click();
+  }, itemId);
+}
+
 export const boardMenuHas = (content, label) => cornerMenuHas(".tcard", content, label);
 
 // Run a backend command and capture success/failure (for asserting fail-fast

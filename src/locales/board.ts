@@ -133,6 +133,12 @@ export const board = defineMessages({
   "board.sortManual": { zh: "顺序:手动", en: "Order: manual" },
   "board.sortNewest": { zh: "顺序:最新在前", en: "Order: newest first" },
   "board.sortOldest": { zh: "顺序:最早在前", en: "Order: oldest first" },
+  // 898 B1:页头窄档里「顺序」那枚只剩的一个词(此前是无字的 ↕;英文档默认窗宽就落在这一档)。
+  "board.sortManualShort": { zh: "手动", en: "Manual" },
+  "board.sortNewestShort": { zh: "最新", en: "Newest" },
+  "board.sortOldestShort": { zh: "最早", en: "Oldest" },
+  // 898 B1:页头那枚「⋯」的悬停提示与读屏名(里面就这两项)。
+  "board.moreTitle": { zh: "更多:复制看板、管理看板", en: "More: copy board, manage board" },
   "board.sortTitle": { zh: "点击切换列内顺序(手动 / 最新在前 / 最早在前)", en: "Click to change order within columns (manual / newest first / oldest first)" },
   "board.sortTitleLocked": { zh: "按创建时间排序中,拖不了。切回「手动」就能拖。", en: "Sorted by creation time, so dragging is off. Switch back to Manual to drag." },
   // 158 G3 / Q13(WD-28):排序 / 只看到期时按住卡一拖,在指针边上说一句。
@@ -163,7 +169,7 @@ export const board = defineMessages({
   // W3 159 / A20(WD-24):此前写「删除的任务和配图」,读着像随记的图也在这儿 —— 看板回收站只装任务(与任务里删掉的图)。
   "board.trashEmptyHint": { zh: "删掉的卡片会落到这里,可还原或彻底删除;卡片里删掉的配图也在这儿。做完的卡片请用「归档」。", en: "Deleted cards land here, along with images removed from cards. Restore them or delete them forever. Finished cards belong in Archive." },
   "board.trashCount": { zh: "{n} 张已删除的卡片", en: "{n} deleted {n|card|cards}" },
-  "board.sealedEmpty": { zh: "还没有归档的成就", en: "No archived achievements yet" },
+  "board.sealedEmpty": { zh: "还没有归档的卡片", en: "No archived cards yet" },
   // {col} = 眼前这块看板的完成列名;这块没有完成列时换 boards.sealedEmptyHintNoDone。
   "board.sealedEmptyHint": { zh: "在「{col}」列点「全部归档」,或把那一列的卡片拖到看板底部。归档的卡片可查、不可删。", en: "Click “Archive all” in the “{col}” column, or drag one of its cards to the bottom of the board. Archived cards can be viewed but not deleted." },
   // 158 G3 / Q13(WD-33):归档页的页头与卡上日期(老卡没有完成日时写入档那天)。
@@ -179,6 +185,13 @@ export const board = defineMessages({
   // 而 CJK 折行规则不许行尾留开引号、不许行首起闭引号 ⇒ 括起来它就折不散了(实测两版图)。
   // R3:「转待办」落默认看板 ⇒ 这句只在默认看板上说;别的看板说 boards.emptyHintOther(「放进看板」)。
   "board.emptyHint": { zh: "点右上角「+ 新建卡片」;或在「随记」里点开卡片上的「⋯」菜单,选「转待办」。", en: "Click “+ New card” in the top right, or open a note’s ⋯ menu in Notes and pick “Make a task”." },
+  // 898 G3:空看板再说一句能拖。{col} = 这块看板此刻的完成列名(角色由 core 解析,人能改指);没有完成列换 NoDone 那句。
+  "board.emptyDrag": { zh: "卡片可以拖到别的列,拖进「{col}」列就是做完。", en: "Drag a card to another column; the “{col}” column means done." },
+  "board.emptyDragNoDone": { zh: "卡片可以拖到别的列。", en: "Drag a card to another column." },
+  // 同上后半:种子三列(名字没改过时)在空看板上各一句。
+  "board.colHintDoing": { zh: "正在做的。", en: "What you’re working on." },
+  "board.colHintConfirming": { zh: "做完了,等对方回音。", en: "Finished, waiting to hear back." },
+  "board.colHintDone": { zh: "做完的放这儿。", en: "Finished cards go here." },
   // 165 / W5 Q15(WD-34 前半):看板空了、归档册里有 —— 说一句它在哪(手机那句不写「页头」,键 main.emptyTasksSealed)。
   // R3 起 {n} 只数这块看板的成就;这块没有完成列就不说这句。
   "board.emptySealed": { zh: "归档了 {n} 张,在页头「归档」里。", en: "{n} {n|card|cards} archived, under Archive in the header." },
@@ -190,7 +203,7 @@ export const board = defineMessages({
   "board.noTasksInKind": { zh: "「{kind}」类型下没有卡片", en: "No cards of kind “{kind}”" },
   "board.noTasksInKindHint": { zh: "切到「全部类型」看全部卡片。", en: "Switch “Kind” to “All kinds” to see every card." },
   "board.noTasksInTime": { zh: "这段时间内没有卡片", en: "No cards in this time range" },
-  "board.noTasksInTimeHint": { zh: "切到「时间」轴的「全部」看全部卡片。", en: "Switch “Time” to “All” to see every card." },
+  "board.noTasksInTimeHint": { zh: "切到「记于」轴的「全部」看全部卡片。", en: "Switch “Created” to “All” to see every card." },
   "board.loadFailed": { zh: "读取失败", en: "Failed to load" },
   "board.retry": { zh: "重试", en: "Retry" },
   // 506:三档改用 P 记号显示(高→P0 / 中→P1 / 低→P2)。⛔ 键名与库里的 1/2/3 一个字没动,
@@ -224,7 +237,7 @@ export const board = defineMessages({
   "boards.unsealedHeld": { zh: "已取消归档:它原来那一列已经删了,先放在「已删除的看板 / 列」那里", en: "Unarchived — its column was deleted, so it’s waiting under “Deleted boards / columns”" },
   "boards.sealedAll": { zh: "全部看板", en: "All boards" },
   "boards.sealedStatsOnBoards": { zh: "(含各看板完成列里还没归档的 {n} 张)", en: " (including {n} {n|card|cards} still in boards’ done columns, not archived yet)" },
-  "boards.sealedNoneHere": { zh: "这块看板还没有归档的成就", en: "Nothing archived from this board yet" },
+  "boards.sealedNoneHere": { zh: "这块看板还没有归档的卡片", en: "Nothing archived from this board yet" },
   "boards.sealedEmptyHintNoDone": { zh: "归档只在有完成列的看板上:在完成列点「全部归档」,或把完成列里的卡片拖到看板底部。归档的卡片可查、不可删。", en: "Archiving works on boards with a done column: click “Archive all” there, or drag a card from it to the bottom of the board. Archived cards can be viewed but not deleted." },
   // R3:非默认看板空着时的那句(「转待办」落默认看板,这里说「放进看板」;≥ 2 块看板时随记 ⋯ 里才有它,而非默认看板在场就 ≥ 2 块)。
   "boards.emptyHintOther": { zh: "点右上角「+ 新建卡片」;或在「随记」里点开卡片上的「⋯」菜单,选「放进看板」。", en: "Click “+ New card” in the top right, or open a note’s ⋯ menu in Notes and pick “Put on board”." },

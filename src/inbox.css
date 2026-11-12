@@ -526,6 +526,15 @@
 /* 彻底删除的那句后果(W3 159 / A7:写明无法恢复、连带几张配图),同看板卡的 .confirm-q。 */
 .v-inbox .confirm-q { font-size: var(--fs-12); color: var(--seal-ink-on-seal-tint); letter-spacing: 0.02em; }
 
+/* 教学期那一行(898 G2,inbox.ts::refresh):字档与颜色同下面空态提示那句(.center > div)。 */
+.v-inbox .teach-hint {
+  margin: 18px 0 0;
+  text-align: center;
+  font-size: var(--fs-13);
+  line-height: 1.7;
+  color: var(--ink-soft);
+}
+
 /* ---- centered empty / error states ---- */
 .v-inbox .center {
   height: 100%;

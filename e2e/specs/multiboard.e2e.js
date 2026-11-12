@@ -1,5 +1,5 @@
 import { browser, $, expect } from "@wdio/globals";
-import { boardAction, boardMenuHas, cornerMenuHas, goNotebook, inboxAction, invoke, openCompose, tryInvoke } from "./support.js";
+import { boardAction, boardMenuHas, cornerMenuHas, goNotebook, inboxAction, invoke, openCompose, tryInvoke, boardMore } from "./support.js";
 
 // 多看板第 3 段(multiboard-plan §6 / §9 格 3):桌面侧栏看板组、新建看板、列管理里的两个角色、
 // 挪到看板、收容区、归档册按看板筛。
@@ -81,7 +81,7 @@ describe("多看板 · 桌面", () => {
     expect((await boards()).filter((b) => !b.deleted).length).toBe(1);
     expect(await navItems()).toEqual([]);
     await expect($("#board-nav .bn-add")).not.toExist();
-    await browser.execute(() => document.querySelector("#manage-cols").click());
+    await boardMore("manage-cols");
     await $(".bcm-board").waitForExist({ timeout: 5000 });
     const btns = await browser.execute(() => [...document.querySelectorAll(".bcm-board .bcm-btn")].map((b) => b.textContent.trim()));
     expect(btns).toContain("+ 新建一块看板");
@@ -304,7 +304,7 @@ describe("多看板 · 桌面", () => {
     await goNotebook("board");
     await browser.execute((name) => [...document.querySelectorAll("#board-nav .bn-item")].find((b) => b.querySelector(".bn-name").textContent.trim() === name).click(), FLOW);
     await browser.waitUntil(async () => (await browser.execute(() => document.querySelector(".v-board header h1")?.textContent)) === FLOW, { timeout: 8000 });
-    await browser.execute(() => document.querySelector("#manage-cols").click());
+    await boardMore("manage-cols");
     await $(".bcm-board").waitForExist({ timeout: 5000 });
     const clickBtn = (label) =>
       browser.execute((l) => [...document.querySelectorAll(".bcm-board .bcm-btn")].find((x) => x.textContent.trim() === l)?.click(), label);

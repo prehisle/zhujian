@@ -41,11 +41,12 @@
    「新建任务」被 .spacer 顶到右边、其余几枚落在第二行,屏上读作「按钮乱了」(用户 2026-09-02 点名的第一件)。
    ⭐ **三档塌缩,让的顺序是「先让不丢能力的」**(这一条没变):
      ① 摘键帽(`.hdr-nok`)—— 纯提示,单键照旧能按;
-     ② 再把「复制看板」「顺序」缩成记号 ⧉ / ↕(`.hdr-short`,全名在 title;158 G2 / A11 起不再整枚收走 ——
-        WD-11 那条「指南说有、屏上没有」);
+     ② 再把「顺序」缩成一个状态词「手动 / 最新 / 最早」(`.hdr-short`,全句在 title)。⛔ 不退成无字的 ↕:
+        它此刻哪一档决定卡能不能拖,得读得出(898 B1;英文档默认窗宽就落在这一档,此前只剩一枚 ↕);
      ③ 最后才摘名字(字母态 `.hdr-letter`)。⭐ **键帽在这一档反而回来**(没有图标的那几枚):名字没了之后
-        它是唯一的记号;归档 / 回收站 / 到期三枚各有一枚线稿图标顶替(158 G3 / Q13,WD-29)。
-     ④ 实在装不下才把「复制看板」整枚收走(`.hdr-nocopy`,列头那颗「复制」由 `data-hdrcopy` 那条替身规则顶上,65)。
+        它是唯一的记号;归档 / 回收站 / 到期三枚各有一枚线稿图标顶替(158 G3 / Q13,WD-29)。「顺序」照旧是那个词。
+   ⚠ 898 B1 起「复制看板」「管理看板」住进页头那枚「⋯」的菜单,不占页头的宽 ⇒ 原先的第 ④ 档(整枚收走
+   「复制看板」`.hdr-nocopy`)与它的替身规则(列头「复制」不让位,`data-hdrcopy`,65)一并退场:菜单里那一项恒在。
    ⭐⭐ **W4 A20(WD-11)判据从「顶栏有多宽」换成「这一刻装不装得下」**:此前四档是 container query 写死的
    宽度(1010 / 930 / 840 / 600),按**最坏内容**量的(到期三段全满、计数三位数;英文还另要一套更宽的、只能
    将就)⇒ 界面字号放大一档(110%:setZoom 让顶栏的 CSS 宽少一截)就掉进字母态,只剩「+ N」「≡」「0」「0」,
@@ -55,17 +56,14 @@
    ⚠ 只认「一行」:那一组钮没被挤到第二行(`.head-tools` 的顶 < 标题的底)且没横着溢出。
    ⛔ 别再把断点写回 container query —— 那正是 WD-11:断点只能按最坏内容取,平常内容就白白多让一档。 */
 .v-board header.hdr-nok .hbtn .k { display: none; }
-.v-board header .copy-slot .hbtn .lbl-short { display: none; }
-.v-board header.hdr-short .copy-slot .hbtn .lbl { display: none; }
-.v-board header.hdr-short .copy-slot .hbtn .lbl-short { display: inline; }
+/* 「顺序」:窄档(② 起,含字母态)只剩状态词;带 id 的这两条压过下面字母态那几条通用规则(含 .active 时全名回来那条)。 */
 .v-board header.hdr-short #board-sort .lbl { display: none; }
 .v-board header.hdr-short #board-sort .lbl-short { display: inline; }
-.v-board header.hdr-nocopy .copy-slot { display: none; }
 .v-board header.hdr-letter .hbtn .lbl { display: none; }
 .v-board header.hdr-letter .hbtn.active .lbl { display: inline; }
 /* 566:「到期汇总」与「排序」两枚只有 .lbl、没有 +/计数/键帽 ⇒ 字母态下塌成两个空椭圆
    (实测 27×11,用户面 61)。各留一个记号:到期 = 三段合一的总数(朱砂描边仍只跟逾期走)、
-   排序 = ↕;.active 时全名回来、记号让位(与别的钮同一条规矩)。 */
+   排序 = 状态词(上面那两条);到期那枚 .active 时全名回来、记号让位(与别的钮同一条规矩)。 */
 .v-board header.hdr-letter .hbtn:not(.active) .lbl-short { display: inline; }
 .v-board header .hbtn .lbl-short { display: none; font-variant-numeric: tabular-nums; }
 /* 158 G3 / Q13(WD-29):字母态里到期 / 归档 / 回收站三枚此前只剩「6」「3 G」「0 R」。各留一枚线稿图标
@@ -378,10 +376,8 @@
 }
 /* 列窄到装不下常态那四件时,分两档让位(阈值都是实测的,见下)。
    ⛔ 「全部归档」自己**永不退场**:那是这一列唯一的批量入口,退场就没路了 —— 它只换短标签。
-   ① ≤240px:「复制本列」退场。顶栏还有「复制看板」那颗兜着,与 header 在窄窗口下藏
-      .copy-slot 是同一条规矩(只是判据从窗口宽换成列宽)。带它时列头要 235px。
-      ⭐ **65 起有一条例外**:顶栏那颗自己也被收走时(`.v-board[data-hdrcopy="off"]`),
-      这一条让位不生效 —— 否则两颗同时没了、复制整个够不着。规则就在下面那两条 @container 之后。
+   ① ≤240px:「复制本列」退场。页头「⋯」菜单里那项「复制看板」兜着(它恒在,不随窗宽收走 ——
+      65 那条「两颗同时没了」的替身规则因此退场,898 B1)。带它时列头要 235px。
    ② ≤185px:「全部归档」换成短标签「归档」(-25px)。不换的话列名会被挤成「已…」——
       900px 最小窗口下四列各 158px,实拍量到的就是这一格。 */
 @container (max-width: 240px) {
@@ -391,25 +387,6 @@
 @container (max-width: 185px) {
   .v-board .seal-all-slot .lbl-long { display: none; }
   .v-board .seal-all-slot .lbl-short { display: inline; }
-}
-/* 65:两颗「复制」互相当替身,可它们的退场判据是**两根不同的轴**(顶栏内容宽 / 列宽)——
-   窄窗 + 多列时两条同时成立,「复制成 Markdown」这条路整个没了(实测:窗 1000 / 5 列)。
-   ⇒ 顶栏那颗真被塌缩规则收走时,列头这颗**不再让位**:替身关系从此是真的。
-   ⛔ **判据不是另算一遍顶栏宽** —— 那会是第二份真相源,顶栏让位的判据一动就静默漂移。
-   `data-hdrcopy` 由 board.ts 的 syncHdrCopy() 写,它**问 CSS 自己**(读 #copy-slot 的
-   computed display),⇒ 这里与上面那条 `.hdr-nocopy` 永远说的是同一件事(W4 161 起由 fitHeader 按装不装得下挂)。
-   ⚠ 代价是知情的:done 列列头最挤(名 + 计数 + 复制 + 全部归档),200px 下带长标签会溢出
-   ⇒ 窄列时「全部归档」提前换短标签(它本来 ≤185 才换)。实测 200px 列宽 · 中文 · **计数取
-   三位数的最坏情况**:计数 32 / 复制 47 / 归档 44 ⇒ 列名得 46、要 49,「已完成」尾字进省略号,
-   **列头不溢出**;⚠ 真实数据(个位数计数)下连那 3px 都不裁(`board-seal.e2e.js` 量的)。
-   ⛔ 别为这 3px 再去动别的:列名有 title 挂全名,而「复制这一列」整个够不着才是真的没路。
-   ⚠ 少了短标签那一环就**真的溢出**(列名只剩 38、`headOverflow` 为真),有阴性刀跑过。
-   ⚠ **英文档下这一格今天就溢出**(不带复制那颗也溢出,列名 得 73 / 要 86)—— 那是既有的
-   英文字宽问题、不是本条引进的,账在 backlog 用户面 66 同族。 */
-.v-board[data-hdrcopy="off"] .col-copy { display: inline-block; }
-@container (max-width: 240px) {
-  .v-board[data-hdrcopy="off"] .seal-all-slot .lbl-long { display: none; }
-  .v-board[data-hdrcopy="off"] .seal-all-slot .lbl-short { display: inline; }
 }
 /* R6(多看板优化,用户 2026-11-12 拍):此前「进行中」列名朱砂、卡片朱砂 / 灰色左边线、「待确认」标题前一枚 ⋯,
    全按种子列 id 挂 —— 自定义列与别的看板没有,同一块看板上两种待遇。去掉:所有列一个样。
@@ -706,6 +683,8 @@
 }
 .v-board .col-empty p { margin: 0 0 6px; }
 .v-board .col-empty-big { font-family: var(--font-serif); font-size: var(--fs-15); color: var(--ink); }
+/* 空看板上种子列各一句「这一列放什么」(898 G3):比第一列那段小一档。⛔ 别降到 --ink-faint:那是要读的一句(§2.2 小字底线)。 */
+.v-board .col-empty-role { font-size: var(--fs-12); }
 
 .v-board .ttitle {
   margin: 0;

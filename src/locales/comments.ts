@@ -33,6 +33,8 @@ export const comments = defineMessages({
   "search.landedOld": { zh: "搜到的词在这条改过之前的版本里 —— ⋯ 菜单的「历史」里看得到。", en: "The words you searched for are in an earlier version of this one — see “History” in the ⋯ menu." },
   "search.landedOldTrash": { zh: "搜到的词在这条改过之前的版本里 —— 还原后在 ⋯ 菜单的「历史」里看得到。", en: "The words you searched for are in an earlier version of this one — restore it, then see “History” in the ⋯ menu." },
   "search.failed": { zh: "搜索失败", en: "Search failed" },
+  // 898 W3:只有一个空间时说 idleTitleOne(不提「当前空间」);有多个空间才说下面那句。
+  "search.idleTitleOne": { zh: "在所有内容里查找", en: "Search everything" },
   "search.idleTitle": { zh: "在当前空间的所有条目里查找", en: "Search everything in this space" },
   "search.idleHint": { zh: "随记、长文、卡片、归档、回收站和改过的旧版本都一起搜。", en: "Notes, long-form, cards, the archive, the trash and past versions are all searched." },
   "search.noMatch": { zh: "没有匹配的条目", en: "No matches" },

@@ -42,6 +42,8 @@ const CONNECT_STEP = "wss-challenge";
 // build-site-cool.mjs),⛔ 不再链 GitHub 上的 md 源文件 —— 那是开发者的仓库界面,境内也不一定打得开。
 const SITE = "https://zhujian.app";
 const REPO = "https://github.com/prehisle/zhujian";
+/** 用户指南的地址。设置左栏底那枚「用户指南 ↗」与本页「链接」里那枚读的是这同一个(898 B5),⛔ 别抄第二份。 */
+export const GUIDE_URL = `${SITE}/docs/`;
 
 /** `gotoFeedback`:作者那句里「意见反馈」几个字点了去哪(设置面板把通用页那一节翻出来,W4 Q11 / WD-33)。 */
 export function buildAboutPane(pane: HTMLElement, probeUrl: string | null, gotoFeedback: () => void): void {
@@ -189,7 +191,7 @@ function buildLinks(): HTMLElement {
     [t("settings.linkSource"), REPO],
     // 更新日志与官网同一个来源拼(⛔ 别写死域名:哪天桌面也分渠道,改 SITE 一处就跟着走)。
     [t("settings.linkChangelog"), `${SITE}/changelog.html`],
-    [t("settings.linkGuide"), `${SITE}/docs/`],
+    [t("settings.linkGuide"), GUIDE_URL],
     [t("settings.linkTerms"), `${SITE}/terms.html`],
     [t("settings.linkPrivacy"), `${SITE}/privacy.html`],
     [t("settings.linkRights"), `${SITE}/privacy-rights.html`],

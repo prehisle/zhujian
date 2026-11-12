@@ -206,7 +206,9 @@ describe("W4 161 · D1 桌面壳与键盘", () => {
     const hint = await $(".empty-ideas-hint");
     await hint.waitForExist({ timeout: 8000 });
     const text = await browser.execute(() => document.querySelector(".empty-ideas-hint").textContent);
-    expect(text).toBe(hk.capture_taken ? "在上方输入,随手记一个念头。" : `在上方输入,或按 ${hk.capture} 随手记一个念头。`);
+    // 第一句恒有;第二句(在别的程序里按那枚键)只在键生效时出。
+    const first = "要做的事,之后转成待办放进看板。";
+    expect(text).toBe(hk.capture_taken ? first : `${first}在别的程序里按 ${hk.capture} 也能随手记,不用切回来。`);
   });
 
   it("WD-34:搜索结果上按 Esc 回到搜索框", async () => {

@@ -52,7 +52,7 @@ describe("收件箱 · 手工删除", () => {
     await goNotebook("inbox");
 
     await $(".center .big").waitForExist({ timeout: 10000 });
-    expect(await $(".center .big").getText()).toContain("还没有随记");
+    expect(await $(".center .big").getText()).toContain("想到什么,先记在这儿");
     await expect($$(".note")).toBeElementsArrayOfSize(0);
   });
 });

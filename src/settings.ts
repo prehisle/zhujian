@@ -9,7 +9,7 @@
 // 外观 / 语言 / 字号 / 别名(444 实测面板整高 2546px,而它之前是 6649px)。
 import { invoke } from "@tauri-apps/api/core";
 import { buildBackupSection, closeBackupSection, noteFold } from "./backup";
-import { buildAboutPane } from "./about";
+import { buildAboutPane, GUIDE_URL } from "./about";
 import { exportMarkdown } from "./export-md";
 import { reminderCfg, saveReminderCfg, reminderPermissionOk, sendTestNotification } from "./reminder";
 import { setTaskDeleteConfirm, taskDeleteConfirmOn } from "./delete-confirm";
@@ -24,6 +24,7 @@ import { compressImagesOn, setCompressImages } from "./item-images";
 import { buildKeySheet } from "./keysheet";
 import "./settings.css";
 import { errText } from "./err";
+import { toastError } from "./toast";
 import { holdKeyboard, type KeyboardHold } from "./dom";
 import { closeSyncPanel, rosterIds } from "./sync";
 import { shortIds } from "./devices";
@@ -214,7 +215,13 @@ function renderPanel(
     b.addEventListener("click", () => show(cat));
     return b;
   });
-  nav.append(...btns);
+  // 左栏最底下一枚「用户指南 ↗」(898 B5):此前这条链接只在「关于」页里,人在别的分类下找不到帮助。哪一类下都看得见;
+  // 地址与「关于」那枚同一个出处(about.ts `GUIDE_URL`),交给系统浏览器开(同那一排链接)。⛔ 它不是一类:不进 CATS、
+  // 不参与 ↑ ↓ 换类、没有选中态。打不开照实说一句(回执浮在设置浮层之上)。
+  const guide = el("button", "settings-guide", `${t("settings.linkGuide")} ↗`) as HTMLButtonElement;
+  guide.title = GUIDE_URL;
+  guide.addEventListener("click", () => void openUrl(GUIDE_URL).catch((err) => toastError(errText(err))));
+  nav.append(...btns, guide);
   // W5 A14:左栏 ↑ ↓(Home / End)换类 —— 焦点跟着到那一枚、右边当场换页(此前只能 Tab + 回车)。到头绕回。
   nav.addEventListener("keydown", (e) => {
     if (e.ctrlKey || e.altKey || e.metaKey) return;
@@ -272,10 +279,10 @@ function renderPanel(
   return btns[CATS.findIndex((c) => c.cat === initial)] ?? null;
 }
 
-// ⭐ **623(用户面 74 / G):单行组不写行名** —— 一组只有一行控件时,`.settings-title` 那句
-// 已经是这一格的名字,行里再写一遍就是把同一个词说了两遍(改前:语言/语言、界面字号/字号、
-// 本机别名/名字三组字面重复,外加外观/明暗、截止提醒/每日提醒两组近义重复)。⇒ 通用页这
-// 五组的 `.hkset-name` 全摘掉,控件靠 `.hkset-row` 那条自动外边距照旧右对齐。
+// ⭐ **623(用户面 74 / G):单行组不写行名** —— 一组只有一行控件时,节名那句已经是这一格的名字,行里再写一遍
+// 就是把同一个词说了两遍(改前:语言/语言、界面字号/字号、本机别名/名字三组字面重复)。
+// 898 B2 起通用页的节名**自己住进那一行的行首**(`generalSect`),这条的结论没变、形换了:一行里仍只有一个名字,
+// 各 build*Row 照旧不写 `.hkset-name`,由 `generalSect` 统一放。
 // ⛔ **多行组照写行名**(快捷键两行、备份那节):那里行名是「这一行是哪一样」的唯一读法。
 // ⇒ 判据是「**这一组有几行**」,不是「读着重不重复」—— 备份那节的组名与首行同为「备份」,
 // 623 摘过一次又照图退回来了(理由记在 backup.ts 那行旁边)。
@@ -292,49 +299,25 @@ function buildPane(cat: SettingsCat, pane: HTMLElement, probeUrl: string | null,
   }
 
   if (cat === "general") {
+    // 898 B2:每节一行 —— 节名与控件同一行、说明在下(同快捷键页 / 备份页那套 `.hkset-row`);此前是
+    // 「标题 → 说明 → 空一段 → 右下角控件」,十节摞成两屏半。两行以上的长说明只留第一句常显,其余收进行下那只
+    // 「说明」折叠(备份页那只 noteFold;⛔ 一句事实都没删,只挪了地方)。
     pane.append(
       // W4 Q6 ★①(WD-17 / X-14):空间的入口也挂一份在设置里(同手机 W3 Q7)。此前只有一个空间时侧栏不显示
       // 空间名、设置里也没有「空间」,新建空间只能猜到「同步 → 空间…」里去 —— 而新建空间是纯本地的事。
-      el("h2", "settings-title settings-sect", t("settings.spacesTitle")),
-      el("p", "settings-sub", t("settings.spacesSub")),
-      buildSpacesRow(),
-
-      el("h2", "settings-title settings-sect", t("settings.autostartTitle")),
-      el("p", "settings-sub", t("settings.autostartSub")),
-      buildAutostartRow(),
-
-      el("h2", "settings-title settings-sect", t("settings.appearance")),
-      el("p", "settings-sub", t("settings.appearanceSub")),
-      buildThemeRow(),
-
-      el("h2", "settings-title settings-sect", t("settings.langTitle")),
-      el("p", "settings-sub", t("settings.langSub")),
-      buildLangRow(),
-
-      el("h2", "settings-title settings-sect", t("settings.textSize")),
-      el("p", "settings-sub", t("settings.textSizeSub")),
-      buildZoomRow(),
-
-      el("h2", "settings-title settings-sect", t("settings.compressTitle")),
-      el("p", "settings-sub", t("settings.compressSub")),
-      buildCompressRow(),
-
-      el("h2", "settings-title settings-sect", t("settings.deleteConfirmTitle")),
-      el("p", "settings-sub", t("settings.deleteConfirmSub")),
-      buildDeleteConfirmRow(),
-
-      el("h2", "settings-title settings-sect", t("settings.aliasTitle")),
-      el("p", "settings-sub", t("settings.aliasSub")),
-      buildAliasRow(),
-
-      el("h2", "settings-title settings-sect", t("reminder.title")),
-      el("p", "settings-sub", t("reminder.sub", { days: DUE_SOON_DAYS })),
-      buildReminderRow(),
-
+      generalSect(t("settings.spacesTitle"), t("settings.spacesSub"), buildSpacesRow()),
+      generalSect(t("settings.autostartTitle"), t("settings.autostartSub"), buildAutostartRow()),
+      generalSect(t("settings.appearance"), t("settings.appearanceSub"), buildThemeRow()),
+      generalSect(t("settings.langTitle"), t("settings.langSub"), buildLangRow(), { more: t("settings.langMore") }),
+      generalSect(t("settings.textSize"), t("settings.textSizeSub"), buildZoomRow()),
+      generalSect(t("settings.compressTitle"), t("settings.compressSub"), buildCompressRow(), { more: t("settings.compressMore") }),
+      generalSect(t("settings.deleteConfirmTitle"), t("settings.deleteConfirmSub"), buildDeleteConfirmRow(), {
+        more: t("settings.deleteConfirmMore"),
+      }),
+      generalSect(t("settings.aliasTitle"), t("settings.aliasSub"), buildAliasRow(), { more: t("settings.aliasMore") }),
+      generalSect(t("reminder.title"), t("reminder.sub"), buildReminderRow(), { more: t("reminder.more", { days: DUE_SOON_DAYS }) }),
       // `feedback-sect`:关于页那句「在『意见反馈』里告诉我」点过来落在这儿(W4 Q11 / WD-33)。
-      el("h2", "settings-title settings-sect feedback-sect", t("settings.feedbackTitle")),
-      el("p", "settings-sub", t("settings.feedbackSub")),
-      buildFeedbackRow(),
+      generalSect(t("settings.feedbackTitle"), t("settings.feedbackSub"), buildFeedbackRow(), { cls: "feedback-sect", below: true }),
     );
     return;
   }
@@ -357,22 +340,57 @@ function buildPane(cat: SettingsCat, pane: HTMLElement, probeUrl: string | null,
   // ⚠ 恢复那半也在这一节里(§16),故左栏那枚按钮叫「备份与恢复」。
   // ⭐ 三段长说明(是什么 / §9 那两段边界)收进一只「说明」折叠(2026-08-31 用户拍板
   // 「收纳不删」—— 此前字典里那句「常驻」被用户当面重议;⛔ 内容与措辞一字没动)。
+  // 898 G4:还没设置备份时这只折叠默认摊开(backup.ts 读到状态那一刻定,见 notesAwaitingStatus)。
+  const notes = noteFold(t("backup.sub"), t("backup.footSecrets"), t("backup.footUninstall"));
   pane.append(
     el("h2", "settings-title settings-sect", t("backup.title")),
-    noteFold(t("backup.sub"), t("backup.footSecrets"), t("backup.footUninstall")),
-    buildBackupSection({
-      gotoSpace: (id, label) => {
-        if (!deps) throw new Error("设置面板没接 notebook 的出路(initSettings 漏传?)");
-        closePanel();
-        deps.gotoSpace(id, label);
+    notes,
+    buildBackupSection(
+      {
+        gotoSpace: (id, label) => {
+          if (!deps) throw new Error("设置面板没接 notebook 的出路(initSettings 漏传?)");
+          closePanel();
+          deps.gotoSpace(id, label);
+        },
       },
-    }),
+      notes,
+    ),
 
     // 导出为 Markdown(用户面 136):「不绑死你」的那一半 —— 备份是给朱简自己恢复用的加密文件,
     // 这一行给的是离开朱简也读得懂的明文。低频、全量,故住在这一页而不在随记顶栏(顶栏那枚
     // 「复制随记」管的是随手复制当前那批)。写法在 export-md.ts,落盘在 core::export_md。
     buildExportRow(),
   );
+}
+
+/** 通用页的一节(898 B2):把节名放进 `body` 那一行的行首、说明放到行下(`.hkset-desc`,排在这一行自己原有的
+ *  那格 —— 字号范围 / 本机编号 —— 之前),`more` 收进行下的「说明」折叠。`body` = 各 build*Row 的产物(一行本身,
+ *  或「行 + 行下那句结果」的包装)。节名仍是 h2(读屏按标题跳节;`cls` 给落点认人用)。 */
+function generalSect(
+  title: string,
+  sub: string,
+  body: HTMLElement,
+  opts: { more?: string; cls?: string; below?: boolean } = {},
+): HTMLElement {
+  const name = el("h2", `settings-title settings-sect hkset-name${opts.cls ? ` ${opts.cls}` : ""}`, title);
+  const desc = el("div", "hkset-desc", sub);
+  const sect = el("div", "settings-item", "");
+  // `below`:这一节的那一行自己有名字(意见反馈:行首就是地址本身)⇒ 节名与说明另起一行,原来那一行排在它下面。
+  if (opts.below) {
+    const head = el("div", "hkset-row settings-item-head", "");
+    head.append(name, desc);
+    sect.append(head, body);
+    return sect;
+  }
+  const line = body.classList.contains("hkset-row") ? body : body.querySelector<HTMLElement>(".hkset-row");
+  if (!line) throw new Error(`通用页「${title}」那一节没有 .hkset-row(build*Row 漂移?)`);
+  line.prepend(name);
+  const own = line.querySelector(".hkset-desc");
+  if (own) own.before(desc);
+  else line.append(desc);
+  sect.append(body);
+  if (opts.more !== undefined) line.after(noteFold(opts.more));
+  return sect;
 }
 
 // 与上面「从备份恢复」同形的一行:名字 + 说明 + 右端一枚钮(⛔ 起初单开一节「标题 + 说明 + 孤零零一枚钮」,
@@ -420,10 +438,12 @@ function buildExportRow(): HTMLElement {
 // ①没配默认邮件程序的机器:Windows 自己弹「你要用什么打开」那一问(W4 D2 走查实例上实测,opener 不报错);
 //   opener 真报错的那种在行下照实说一句(⛔ 不是静默什么都不发生)。两种情况复制钮都还在;
 // ②会拉起一个程序 ⇒ 那正是点地址的人要的。
-// ⚠ 按 623「单行组不写行名」:这一组只有一行,`.settings-title` 那句已经是这一格的名字,
+// ⚠ 按 623「单行组不写行名」:这一组只有一行,节名那句已经是这一格的名字,
 // 故行里那枚 `.hkset-name` 放的是**地址本身**,不是再说一遍「邮箱」。
 // ⚠ 零新 CSS:`.hkset-name` 左、复制钮吃 `.hkset-row > :not(...)` 那条自动外边距靠右
 // ——⛔ 别往这一行里再加第二个控件,那条规则会把空隙均分给两个(它自己的注释里写着)。
+// ⚠ 898 B2 重排通用页时这一节**刻意没把地址行并到节名那一行**(`generalSect` 的 `below`):说明那句写的是
+// 「发邮件到下面这个地址」,地址得真在它下面。
 //
 // ⚠ 地址在两端各有一份出处(这里 + android/index.html 那个 input 的 value),
 // **刻意没做成共享常数** —— 两棵前端树今天本来就不共享代码(仓根 `shared/` 那笔还在 backlog),

@@ -1,5 +1,5 @@
 import { browser, $, expect } from "@wdio/globals";
-import { invoke, goNotebook, boardAction, boardMenuHas, clearInbox } from "./support.js";
+import { invoke, goNotebook, boardAction, boardMenuHas, clearInbox, boardMore } from "./support.js";
 
 // 158 G3(W2「做事」规矩 Q1–Q13,用户全取 ★)桌面那一半 + A7 两端对齐。能自动化的那几条:
 //  Q1 挪完 / 新建完卡落在视野外 → 回执带「去看看」,点了滚过去并闪一下;落点在视野里不挂;
@@ -341,8 +341,7 @@ describe("158 G3 · 看板规矩 Q1–Q13(桌面)+ A7 对齐", () => {
 
   it("Q13:管理列面板的说明说人话(不再写「挂着产品语义」)", async () => {
     await goNotebook("board");
-    await $("#manage-cols").waitForDisplayed({ timeout: 8000 });
-    await $("#manage-cols").click();
+    await boardMore("manage-cols");
     await $(".bcm-panel .bcm-hint").waitForExist({ timeout: 8000 });
     const hint = await browser.execute(() => document.querySelector(".bcm-panel .bcm-hint").textContent);
     expect(hint).not.toContain("产品语义");

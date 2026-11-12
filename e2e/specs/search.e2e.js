@@ -93,7 +93,10 @@ describe("搜索(按内容跨状态查找想法)", () => {
 
     // Clearing the box returns to the idle prompt.
     await $("#clear").click();
-    await expect(await $(".big*=所有条目里查找")).toExist();
+    // 标题两形(只有一个空间 / 有多个空间,逐字断言在 critique-desk-a 那例里):库是累积的,这里只认「回到了空着的那一态」。
+    const idle = await $(".center.idle .big");
+    await idle.waitForExist({ timeout: 5000 });
+    expect(await idle.getText()).toContain("里查找");
     await expect(await $(".hit")).not.toExist();
   });
 });

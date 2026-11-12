@@ -1,4 +1,4 @@
-import { currentSpaceId, invoke } from "./space";
+import { currentSpaceId, invoke, listSpaces } from "./space";
 import { focusBoardView, focusTask } from "./board";
 import { t } from "./i18n";
 import { focusInboxItem } from "./inbox";
@@ -131,6 +131,21 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
     );
   }
 
+  // 空着时那句标题(898 W3):只有一个空间时不提「当前空间」(没有别的空间可比,那四个字是噪音);有多个空间才点名
+  // (判法同随记「随手记一笔」灰字那一手:空间数 > 1)。空间名单是异步来的 ⇒ 来之前按一个空间说,来了发现不止一个就地换字。
+  let idleTitle = t("search.idleTitleOne");
+  function renderIdle(): void {
+    renderCenter(idleTitle, t("search.idleHint"));
+    list.firstElementChild!.classList.add("idle");
+  }
+  void listSpaces()
+    .then((all) => {
+      if (all.length <= 1) return;
+      idleTitle = t("search.idleTitle");
+      if (list.querySelector(".center.idle")) renderIdle();
+    })
+    .catch(() => {});
+
   function renderError(message: string): void {
     list.replaceChildren(
       el("div", { className: "center" }, [
@@ -259,7 +274,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
     shown = q;
     lastQuery = q; // remember across view switches
     if (!q) {
-      renderCenter(t("search.idleTitle"), t("search.idleHint"));
+      renderIdle();
       return;
     }
     try {
@@ -344,7 +359,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
     clearBtn.hidden = false;
     void run(lastQuery);
   } else {
-    renderCenter(t("search.idleTitle"), t("search.idleHint"));
+    renderIdle();
   }
   if (back === null) input.focus(); // Esc 回来的那一趟:焦点等结果画好落回那条(run 末尾)
 

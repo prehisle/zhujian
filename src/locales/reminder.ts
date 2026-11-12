@@ -8,7 +8,9 @@ export const reminder = defineMessages({
   "reminder.title": { zh: "截止提醒", en: "Due reminder" },
   // 158 G3 / Q10:通知与看板顶栏那枚到期钮说同一句(带「3 天内」);电脑上点通知不会跳转,照实说。
   // W4 Q9 ★①:「应用没开着不会响」挪到第一句(此前埋在四行说明中间);WD-38:「看板顶栏那枚到期钮」换白话。
-  "reminder.sub": { zh: "应用没开着时不会响。开着时,每天到点用一条系统通知报逾期、今天到期与 {days} 天内到期的卡片数,和看板页头显示到期数的那枚按钮说的一样;只在有逾期或今天到期时才响,每天至多一条。电脑上点通知不会跳转,打开看板点那枚按钮就只剩这些。开关与时刻只属于这台设备,不同步。", en: "It never fires when the app isn’t running. While it is, one system notification a day reports cards overdue, due today, and due within {days}d — the same as the button showing the due count in the board header. It only fires when something is overdue or due today, at most once a day. On a computer, clicking the notification doesn’t jump anywhere; open the board and click that button to see just those cards. The switch and time are per-device and never synced." },
+  // 898 B2:这一句常显,其余几句一字不动地住进 reminder.more(行下那只「说明」折叠)。
+  "reminder.sub": { zh: "应用没开着时不会响。", en: "It never fires when the app isn’t running." },
+  "reminder.more": { zh: "开着时,每天到点用一条系统通知报逾期、今天到期与 {days} 天内到期的卡片数,和看板页头显示到期数的那枚按钮说的一样;只在有逾期或今天到期时才响,每天至多一条。电脑上点通知不会跳转,打开看板点那枚按钮就只剩这些。开关与时刻只属于这台设备,不同步。", en: "While it is, one system notification a day reports cards overdue, due today, and due within {days}d — the same as the button showing the due count in the board header. It only fires when something is overdue or due today, at most once a day. On a computer, clicking the notification doesn’t jump anywhere; open the board and click that button to see just those cards. The switch and time are per-device and never synced." },
   "reminder.on": { zh: "开", en: "On" },
   "reminder.off": { zh: "关", en: "Off" },
   "reminder.test": { zh: "试一条", en: "Send test" },

@@ -407,7 +407,7 @@ describe("任务时间维度 · 窄列里行内编辑器不折行也不撑破卡
 
   // 566(用户面 61):顶栏字母态(board.css 那个 1099 断点之下)里「到期汇总」与「排序」两枚
   // 此前只有 .lbl、没有 +/计数/键帽 ⇒ 隐掉文字就塌成两个空椭圆(559 截图照出来的,实测 27×11)。
-  // 现在各留一个记号:到期 = 三段合一的总数、排序 = ↕。这只只断「字母态下钮上有可见的字、且不是
+  // 现在各留一个记号:到期 = 三段合一的总数、排序 = 状态词(898 B1 起;此前 ↕)。这只只断「字母态下钮上有可见的字、且不是
   // 全名」;字母态由下面那只自己钉住(894),不靠窗宽。
   // ⛔ 前置断言(全名真的隐了)少不得:窗宽哪天被改回 1100,后面两条会安静地恒绿。
   // ⚠ 894:W4 A20 起页头按「这一刻装不装得下」挑档(board.ts::fitHeader),**窗 950 只在 Windows 的字宽下恰是字母态** ——
@@ -419,7 +419,7 @@ describe("任务时间维度 · 窄列里行内编辑器不折行也不撑破卡
       const shown = (el) => [...el.querySelectorAll("span")].filter((s) => getComputedStyle(s).display !== "none").map((s) => s.textContent.trim());
       const hdr = document.querySelector(".v-board header");
       const was = hdr.getAttribute("class") ?? "";
-      hdr.classList.remove("hdr-nok", "hdr-short", "hdr-letter", "hdr-nocopy");
+      hdr.classList.remove("hdr-nok", "hdr-short", "hdr-letter");
       hdr.classList.add("hdr-short", "hdr-letter");
       const due = document.querySelector("#due-soon");
       const sort = document.querySelector("#board-sort");
@@ -439,7 +439,7 @@ describe("任务时间维度 · 窄列里行内编辑器不折行也不撑破卡
     expect(m.due[0]).toBe(""); // 图标(svg,不带字)
     expect(m.due[1]).toMatch(/^\d+$/); // 记号是个纯数字(三段合一的总数)
     expect(Number(m.due[1])).toBeGreaterThanOrEqual(1);
-    expect(m.sort).toEqual(["↕"]);
+    expect(m.sort).toEqual(["手动"]); // 898 B1:记号是当前那一档的状态词(此前是无字的 ↕)
     // 改前两枚都是 27px(纯 padding + 边框);记号上身后至少得比它宽。
     expect(m.dueW).toBeGreaterThan(30);
     expect(m.sortW).toBeGreaterThan(30);

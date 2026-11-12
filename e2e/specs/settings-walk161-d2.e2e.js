@@ -265,9 +265,10 @@ describe("W4 161 · D2 备份与设置其余", () => {
     );
     const at = (id) => order.indexOf(id);
     expect(at("add-task")).toBeGreaterThan(at("due-soon"));
-    expect(at("add-task")).toBeGreaterThan(at("copy-slot"));
     expect(at("add-task")).toBeGreaterThan(at("board-sort"));
-    expect(at("add-task")).toBeLessThan(at("manage-cols"));
+    // 898 B1:「复制看板 / 管理看板」收进「⋯」;「⋯ / 归档 / 回收站」仍在「新建」右边(它们不随数据出没)。
+    expect(at("add-task")).toBeLessThan(at("board-more"));
+    expect(at("board-more")).toBeLessThan(at("seal-toggle"));
     expect(await browser.execute(() => document.getElementById("compose-close").textContent)).toBe("收起");
   });
 
@@ -275,14 +276,17 @@ describe("W4 161 · D2 备份与设置其余", () => {
     await goNotebook("inbox");
     await openSettings();
     await showCat("general");
-    const subs = await browser.execute(() =>
-      Object.fromEntries(
-        [...document.querySelectorAll(".settings-pane[data-cat='general'] h2")].map((h) => [h.textContent, h.nextElementSibling.textContent]),
-      ),
-    );
-    expect(subs["截止提醒"].startsWith("应用没开着时不会响。")).toBe(true);
-    expect(subs["截止提醒"]).toContain("看板页头显示到期数的那枚按钮");
-    for (const k of ["外观", "语言", "界面字号"]) expect(subs[k]).toContain("只影响这台电脑,不会同步");
+    // 898 B2:节名住进那一行的行首、说明在行下(第一句常显),其余几句在行下那只「说明」折叠里 —— 一句都没删。
+    const [subs, whole] = await browser.execute(() => {
+      const hs = [...document.querySelectorAll(".settings-pane[data-cat='general'] h2")];
+      return [
+        Object.fromEntries(hs.map((h) => [h.textContent, h.closest(".hkset-row").querySelector(".hkset-desc").textContent])),
+        Object.fromEntries(hs.map((h) => [h.textContent, h.closest(".settings-item").textContent])),
+      ];
+    });
+    expect(subs["截止提醒"]).toBe("应用没开着时不会响。");
+    expect(whole["截止提醒"]).toContain("看板页头显示到期数的那枚按钮");
+    for (const k of ["外观", "语言", "界面字号"]) expect(whole[k]).toContain("只影响这台电脑,不会同步");
     expect(await browser.execute(() => document.querySelector(".settings-pane[data-cat='hotkeys'] .hkset-name").textContent)).toBe("随手记小窗");
     await showCat("about");
     const guide = await browser.execute(() =>

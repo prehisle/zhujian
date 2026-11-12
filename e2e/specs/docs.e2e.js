@@ -49,7 +49,7 @@ describe("长文(展开 → 编辑 → 保存 → 比对)", () => {
 
     // ① 随记卡 ⋯「展开成长文」:卡片离开随记,库里成了长文
     await inboxShow("ideas");
-    await inboxAction("长文E2E标题", "展开成长文");
+    await inboxAction("长文E2E标题", "转成长文");
     await browser.waitUntil(async () => (await invoke("list_docs")).some((d) => d.id === id), {
       timeout: 8000,
       timeoutMsg: "展开之后 list_docs 里一直没有这一篇",

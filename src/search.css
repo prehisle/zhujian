@@ -40,6 +40,11 @@
   transition: border-color 0.16s;
 }
 .v-search .field:focus-within { border-color: var(--seal-line); }
+/* 焦点那一圈画在外框上(898 A1):看得见的框是 `.field`(圆角),`#q` 自己没边没底 —— theme.css 那条文本框
+   焦点圈落在 `#q` 上就是一圈直角框压在圆角框里面。同色同粗(2px --ink-soft),跟着 `.field` 的圆角走;
+   卡片投影照旧留着。⛔ 判 `#q:focus-visible` 不判 `:focus-within`:焦点在 ✕ 上时 ✕ 自己有那圈墨线,别画两圈。 */
+.v-search .field:has(#q:focus-visible) { box-shadow: 0 0 0 2px var(--ink-soft), var(--card-shadow); }
+.v-search #q:focus-visible { box-shadow: none; }
 .v-search .field .mag {
   /* 放大镜是内联 SVG(settings-gear 的形,212「图标一律内联 SVG」)——此前是 Segoe
      私用区字形 U+E721,mac/Linux 无该字体、渲成空白/tofu。 */

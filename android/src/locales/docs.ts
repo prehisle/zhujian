@@ -7,7 +7,7 @@ export const docs = defineMessages({
   "docs.new": { zh: "+ 新建长文", en: "+ New long-form" },
   "docs.loading": { zh: "读取中…", en: "Loading…" },
   "docs.loadFailed": { zh: "长文读取失败:{error}", en: "Could not load long-form notes: {error}" },
-  "docs.empty": { zh: "还没有长文。在随记卡片的「更多…」里把一条随记「展开成长文」,或点上面新建一篇。", en: "No long-form notes yet. Pick “Expand to long-form” under a note’s “More…”, or start a new one above." },
+  "docs.empty": { zh: "还没有长文。在随记卡片的「更多…」里把一条随记「转成长文」,或点上面新建一篇。", en: "No long-form notes yet. Pick “Turn into long-form” under a note’s “More…”, or start a new one above." },
   "docs.untitled": { zh: "(无标题)", en: "(Untitled)" },
   "docs.back": { zh: "← 长文", en: "← Long-form" },
   // 同桌面;「← 正文」看着像名词不像「回去」(153 走查 A-M16)

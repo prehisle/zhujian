@@ -1117,15 +1117,10 @@ describe("任务看板 · 顶栏恒一行,逐档只让该让的", () => {
         icoW: ["#trash-toggle", "#seal-toggle", "#due-soon"].map((id) =>
           Math.round(document.querySelector(`${id} .ico`)?.getBoundingClientRect().width ?? -1),
         ),
-        // ⛔ 「复制看板」在不在**别用 querySelector 判**:塌缩走的是 display:none,节点还在
-        //    DOM 里 ⇒ 那么写恒 true(第一版就是这么白得一格的)。
-        copyShown: getComputedStyle(document.querySelector("#copy-slot")).display !== "none",
-        // 158 G2 / A11:窄档里「复制看板」只剩 ⧉ 记号 —— 量的是那枚钮自己看不看得见、全名藏没藏。
-        copyBtnW: Math.round(document.querySelector("#copy-slot .hbtn")?.getBoundingClientRect().width ?? 0),
-        copyLong: (() => {
-          const l = document.querySelector("#copy-slot .hbtn .lbl");
-          return l ? getComputedStyle(l).display !== "none" : "absent";
-        })(),
+        // 898 B1:「复制看板 / 管理看板」住进「⋯」—— 那枚钮哪一档都在(量宽,不只看 display)。
+        moreW: Math.round(document.querySelector("#board-more")?.getBoundingClientRect().width ?? 0),
+        // 「顺序」哪一档都带字:全句或状态词(此前窄档是无字的 ↕)。
+        sortText: document.querySelector("#board-sort").innerText.trim(),
       };
     });
 
@@ -1156,8 +1151,8 @@ describe("任务看板 · 顶栏恒一行,逐档只让该让的", () => {
       const r = await browser.execute(() => {
         const h = document.querySelector(".v-board header");
         const fit = Number(h.dataset.fit);
-        const tiers = [[], ["hdr-nok"], ["hdr-nok", "hdr-short"], ["hdr-short", "hdr-letter"], ["hdr-short", "hdr-letter", "hdr-nocopy"]];
-        const all = ["hdr-nok", "hdr-short", "hdr-letter", "hdr-nocopy"];
+        const tiers = [[], ["hdr-nok"], ["hdr-nok", "hdr-short"], ["hdr-short", "hdr-letter"]];
+        const all = ["hdr-nok", "hdr-short", "hdr-letter"];
         const fits = () =>
           h.querySelector(".head-tools").getBoundingClientRect().top < h.querySelector("h1").getBoundingClientRect().bottom &&
           h.scrollWidth <= h.clientWidth;
@@ -1177,12 +1172,12 @@ describe("任务看板 · 顶栏恒一行,逐档只让该让的", () => {
         return { fit, classesOk, nowFits, looserFits };
       });
       expect({ w, classesOk: r.classesOk }).toEqual({ w, classesOk: true });
-      if (r.fit < 4) expect({ w, nowFits: r.nowFits }).toEqual({ w, nowFits: true });
+      if (r.fit < 3) expect({ w, nowFits: r.nowFits }).toEqual({ w, nowFits: true });
       if (r.fit > 0) expect({ w, looserFits: r.looserFits }).toEqual({ w, looserFits: false });
     }
   });
 
-  it("②档以内(窗 1260):名字还在;「复制看板」在(全名或 ⧉ 记号)", async () => {
+  it("②档以内(窗 1260):名字还在;「⋯」在,「顺序」带字", async () => {
     await browser.setWindowSize(1260, 700);
     await browser.pause(250);
     const h = await readHeader();
@@ -1190,9 +1185,9 @@ describe("任务看板 · 顶栏恒一行,逐档只让该让的", () => {
     expect(fit).toBeLessThan(3); // 1260 宽、这几张卡,名字放得下(字母态就是 WD-11 那个形)
     expect(h.trashText).toContain("回收站");
     expect(h.icoW).toEqual([0, 0, 0]); // 名字还在时图标藏着(display:none ⇒ 宽 0)
-    // 158 G2 / A11(WD-11):「复制看板」不整枚收走(指南说有、屏上没有)。
-    expect(h.copyShown).toBe(true);
-    expect(h.copyBtnW).toBeGreaterThan(0);
+    // 158 G2 / A11(WD-11)的意思照旧:「复制看板」够得着 —— 898 B1 起它在「⋯」菜单里,那枚钮在。
+    expect(h.moreW).toBeGreaterThan(0);
+    expect(["顺序:手动", "手动"]).toContain(h.sortText);
   });
 
   it("字母态(窗 900,最小窗):名字让位,图标顶替键帽当记号(158 G3 / Q13)", async () => {
@@ -1205,5 +1200,7 @@ describe("任务看板 · 顶栏恒一行,逐档只让该让的", () => {
     // 此前这一档键帽 G / R 回来当记号,屏上读作「3 G」「0 R」(WD-29)⇒ 现在是图标,键帽让位。
     expect(h.kbdShown).toBe(false);
     for (const w of h.icoW) expect(w).toBeGreaterThan(0);
+    expect(h.moreW).toBeGreaterThan(0);
+    expect(h.sortText).toBe("手动"); // 898 B1:字母态里「顺序」仍带状态词
   });
 });

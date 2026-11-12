@@ -137,20 +137,14 @@ describe("任务看板 · 归档(成就册,可查不可删)", () => {
   // ⭐ 阈值走的是**列宽**不是窗口宽(列数用户自定义、侧栏可折叠 ⇒ 窗口宽算不出列宽),
   // 所以这两格锚的是 900×700 下那个窄列宽(569 起列宽有 200px 下限,装不下就横滚),
   // 别改成断言窗口宽。
-  // ⭐ **65 起这一格多守一条**:「复制本列」在窄列退场的前提是**顶栏那颗还在**;顶栏那颗
-  // 也被收走时它必须留下(两颗互为替身)。900px 下两条判据同时踩到,正是那个死角的现场。
+  // ⭐ 「复制本列」在窄列退场的前提是**整板那份复制还够得着**。65 起这里守过一条替身规则(顶栏那颗「复制看板」
+  // 被收走时列头这颗不让位);898 B1 起「复制看板」住进页头「⋯」的菜单、哪一档都在 ⇒ 替身规则退场,
+  // 这一格改守:窄列里列头那颗退场时,页头「⋯」在、菜单里真有「复制看板」。
   it("504:900px 窄窗下列头不折行、不裁字(常态与确认态各一格)", async () => {
     await seedDoneTask("504-窄列");
     await goNotebook("board");
     await $(".col.done").$(".tcard*=504-窄列").waitForExist({ timeout: 10000 });
     await browser.setWindowSize(900, 700);
-    // ⚠ W4 A20 起顶栏按「这一刻装不装得下」挑档(board.ts::fitHeader):900 宽、内容少的时候,顶栏那颗
-    // 「复制看板」(⧉)**留得住** —— 那正是 A20 要的,却也就造不出下面要量的死角了。⇒ 把顶栏的内容宽再挤窄
-    // 一截(右内边距加宽;版面别处一格不动),让 fitHeader 自己走到收走「复制看板」那一档(⛔ 别直接挂
-    // `.hdr-nocopy` —— 那样量的就是挂上去的类,不是 fitHeader 的判断)。
-    await browser.execute(() => {
-      document.querySelector(".v-board header").style.paddingRight = "420px";
-    });
     await browser.pause(300);
 
     const geom = () =>
@@ -165,11 +159,10 @@ describe("任务看板 · 归档(成就册,可查不可删)", () => {
           // 窄列下「全部归档」换短标签,但那枚钮**永不退场**
           sealShort: !!head.querySelector(".seal-all-slot .lbl-short") &&
             getComputedStyle(head.querySelector(".seal-all-slot .lbl-short")).display !== "none",
-          // 65:「复制本列」在这一档还在不在,取决于顶栏那颗「复制看板」被没被塌缩规则收走
-          // (两颗互为替身)。顶栏挤窄之后那颗必没了 ⇒ 这颗必须留下,否则复制整个够不着。
           copyShown: !!head.querySelector(".col-copy") && getComputedStyle(head.querySelector(".col-copy")).display !== "none",
-          hdrCopyShown: getComputedStyle(document.querySelector("#copy-slot")).display !== "none",
+          moreW: Math.round(document.querySelector("#board-more").getBoundingClientRect().width),
           colW: Math.round(head.closest(".col").getBoundingClientRect().width),
+          headW: Math.round(head.getBoundingClientRect().width),
           sealShown: !!head.querySelector(".seal-all-slot .act"),
           clipped: [...head.querySelectorAll(".seal-all-slot .act, .seal-all-slot .confirm-q")].map(
             (el) => el.scrollWidth > el.clientWidth + 1,
@@ -179,14 +172,33 @@ describe("任务看板 · 归档(成就册,可查不可删)", () => {
 
     const normal = await geom();
     expect(normal).toMatchObject({ nameWrapped: false, nameClipped: false, headOverflow: false });
-    // 65:⛔ 这一格**不是**「复制本列在窄列下退场」——那条 504 的老断言在 65 之前是对的,
-    // 但它锚住的正是那个死角(顶栏那颗与列头这颗按两根不同的轴退,窄窗多列时同时没了)。
-    // ⭐ 前置自证:先断顶栏那颗真的没了,再断这颗留下 —— 否则「留下」可能只是因为窗还很宽。
-    expect(normal.hdrCopyShown).toBe(false);
-    expect(normal.copyShown).toBe(true);
-    expect(normal.sealShort).toBe(true); // 让位链:复制留下 ⇒「全部归档」提前换短标签
+    // 前置自证:真量在「列窄到复制本列退场」那一档里(否则下面那几格可能只是因为窗还很宽)。
+    expect(normal.headW).toBeLessThanOrEqual(240);
+    expect(normal.copyShown).toBe(false);
+    // 整板那份复制够得着:页头「⋯」在,菜单里有「复制看板」。
+    expect(normal.moreW).toBeGreaterThan(0);
+    const items = await browser.execute(() => {
+      document.querySelector("#board-more").click();
+      const ids = [...document.querySelectorAll(".board-more-menu .hk-item")].map((x) => x.id);
+      document.querySelector("#board-more").click();
+      return ids;
+    });
+    expect(items).toEqual(["copy-board", "manage-cols"]);
     expect(normal.sealShown).toBe(true);
     expect(normal.clipped).toEqual([false]);
+
+    // 正向对照:列够宽时列头那颗「复制」在(⛔ 别把窄列让位修成「永不显示」)。判据那条 @container 量的是**列头**的宽
+    // (比列窄一圈内边距),累积库里列数不定 ⇒ 不靠窗宽碰运气,直接把这一列撑到 320(⛔ 没注入任何塌缩规则)。
+    await browser.execute(() => {
+      document.querySelector('.col[data-col="done"]').style.flex = "0 0 320px";
+    });
+    await browser.pause(300);
+    const wide = await geom();
+    expect(wide.headW).toBeGreaterThan(240);
+    expect(wide.copyShown).toBe(true);
+    await browser.execute(() => {
+      document.querySelector('.col[data-col="done"]').style.flex = "";
+    });
 
     // 确认态:常态那几件让位,问句 + 两枚钮独占列头,一件都不许被裁。
     await browser.execute(() => document.querySelector('.col[data-col="done"] .seal-all-slot .act').click());
@@ -196,25 +208,6 @@ describe("任务看板 · 归档(成就册,可查不可删)", () => {
     expect(confirming.clipped).toEqual([false, false, false]); // 问句 / 取消 / 归档
     await browser.execute(() => document.body.click());
     await browser.pause(300);
-    // 65 的正向对照(⛔ 别把那个死角修成「列头那颗永不退场」):顶栏那颗还在时,窄列这条
-    // 让位照旧生效。⚠ **光靠窗宽造不出这个局面** —— 窗要宽到顶栏那颗回来(内容宽 >929
-    // ⇒ 窗 >1299),那么四列各自就都 >240 了、这颗本来就不该退。⇒ 两根轴分开驱动:
-    // 窗宽管顶栏,`#board` 上一条临时 max-width 只挤窄列(⛔ 别改成注入塌缩规则本身 ——
-    // 那样量的就是注入的样式,不是仓里那两条 @container)。
-    await browser.setWindowSize(1340, 700);
-    await browser.execute(() => {
-      document.querySelector(".v-board header").style.paddingRight = ""; // 还回上面挤窄的那一截
-      document.querySelector("#board").style.maxWidth = "880px"; // 四列 × 200 + 间隙,恰在 ≤240 那一档
-    });
-    await browser.pause(300);
-    const wide = await geom();
-    // ⭐ 前置自证在先:这两格不成立就说明没量在要量的那个区间里,那一趟不算数(⛔ 别只看结论格)。
-    expect(wide.hdrCopyShown).toBe(true);
-    expect(wide.colW).toBeLessThanOrEqual(240);
-    expect(wide.copyShown).toBe(false);
-    await browser.execute(() => {
-      document.querySelector("#board").style.maxWidth = "";
-    });
     await browser.setWindowSize(1260, 700); // 还原驱动窗宽(support.js 的口径)
     await browser.pause(300);
   });

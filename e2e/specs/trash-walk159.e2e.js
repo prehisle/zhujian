@@ -356,7 +356,15 @@ describe("W3 159 · 回收站 / 搜索 / 看板(桌面第一波)", () => {
       await $(".col-empty").waitForExist({ timeout: 10000 });
       expect(await $$(".v-board .cols .col").length).toBeGreaterThanOrEqual(3);
       expect(await $(".col-empty").getText()).toContain("还没有卡片");
-      expect(await $("#manage-cols").isDisplayed()).toBe(true);
+      // 898 B1:「管理看板」住进页头「⋯」—— 空看板上那枚「⋯」在,菜单里有「管理看板」、没有「复制看板」(没东西可抄)。
+      expect(await $("#board-more").isDisplayed()).toBe(true);
+      const items = await browser.execute(() => {
+        document.querySelector("#board-more").click();
+        const ids = [...document.querySelectorAll(".board-more-menu .hk-item")].map((x) => x.id);
+        document.querySelector("#board-more").click();
+        return ids;
+      });
+      expect(items).toEqual(["manage-cols"]);
       expect(await $("#board-sort").isDisplayed()).toBe(false); // 没卡就没得排:顺序钮照旧藏
     } finally {
       for (const id of live) await invoke("restore_task", { id });

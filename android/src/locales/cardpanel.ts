@@ -70,15 +70,15 @@ export const cardpanel = defineMessages({
   "cardpanel.discardYes": { zh: "丢掉", en: "Discard" },
   "cardpanel.discardNo": { zh: "接着改", en: "Keep editing" },
   "cardpanel.finishDraftFirst": { zh: "先保存或取消正在编辑的内容", en: "Save or cancel what you are editing first" },
-  "cardpanel.actExpand": { zh: "展开成长文", en: "Expand to long-form" },
+  "cardpanel.actExpand": { zh: "转成长文", en: "Turn into long-form" },
   "cardpanel.actCopy": { zh: "复制", en: "Copy" },
   "cardpanel.textCopied": { zh: "已复制这张卡的文字", en: "Card text copied" },
   "cardpanel.actCopyLink": { zh: "复制链接", en: "Copy link" },
   "cardpanel.linkCopied": { zh: "已复制链接", en: "Link copied" },
   "cardpanel.copyLinkFailed": { zh: "复制失败:{error}", en: "Copy failed: {error}" },
-  "cardpanel.expandRefsFailed": { zh: "已展开成长文,但没能把图的「图N」补进正文:{error}", en: "Now long-form, but couldn’t add the image mentions to the text: {error}" },
+  "cardpanel.expandRefsFailed": { zh: "已转成长文,但没能把图的「图N」补进正文:{error}", en: "Now long-form, but couldn’t add the image mentions to the text: {error}" },
   // 165 / W5:回执不写「在底栏「长文」里」(平板 / 横放没有底栏);去向交给「去看看」(Q14:跳过去看的钮一律叫「去看看」,此前叫「打开」)。
-  "cardpanel.expanded": { zh: "已展开成长文", en: "Expanded to long-form" },
+  "cardpanel.expanded": { zh: "已转成长文", en: "Turned into long-form" },
   // mbopt 第二波(用户 2026-11-12 拍):回执「已转为卡片」两端逐字同(桌面 inbox.undoPromoted);按钮名「转待办」不改(那是命令名)。
   "cardpanel.promotedShort": { zh: "已转为卡片", en: "Turned into a card" },
   // mbopt R2(第一波小账):「转待办」落默认看板,那块的落点 ⊥(只剩完成列 / 一列都没有)⇒ 钮事前灰、点了说这句;手机不建列 ⇒ 指到电脑上。

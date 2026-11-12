@@ -183,7 +183,7 @@ describe("878 混版提醒:第一次往已配同步的空间发长文标记前�
     await installWrapper();
     await feed({ main: true });
 
-    await inboxAction("DSK-展开", "展开成长文");
+    await inboxAction("DSK-展开", "转成长文");
     const a = await waitAsk();
     expect(a).toEqual({ title: TITLE, body: BODY, buttons: ["仍然使用", "先不用"], focused: "先不用", modal: true });
     // 先不用:取消这次操作,一枚写命令都不发、不记、卡还在随记
@@ -195,7 +195,7 @@ describe("878 混版提醒:第一次往已配同步的空间发长文标记前�
     expect(await browser.execute(() => [...document.querySelectorAll(".v-inbox .note")].some((n) => n.textContent.includes("DSK-展开")))).toBe(true);
 
     // Esc 同「先不用」
-    await inboxAction("DSK-展开", "展开成长文");
+    await inboxAction("DSK-展开", "转成长文");
     await waitAsk();
     await escape();
     await askGone();
@@ -203,7 +203,7 @@ describe("878 混版提醒:第一次往已配同步的空间发长文标记前�
     expect(await acked("main")).toBe(false);
 
     // 仍然使用:照做、记住
-    await inboxAction("DSK-展开", "展开成长文");
+    await inboxAction("DSK-展开", "转成长文");
     await waitAsk();
     await answer(".th-go");
     await askGone();
@@ -281,7 +281,7 @@ describe("878 混版提醒:第一次往已配同步的空间发长文标记前�
     await installWrapper();
     await feed({ main: false });
 
-    await inboxAction("DSK-未配", "展开成长文");
+    await inboxAction("DSK-未配", "转成长文");
     await browser.waitUntil(async () => (await invoke("list_docs")).some((d) => d.id === id), {
       timeout: 8000,
       timeoutMsg: "没配同步时展开成长文一直没落库",

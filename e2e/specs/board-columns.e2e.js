@@ -1,5 +1,5 @@
 import { browser, $, $$, expect } from "@wdio/globals";
-import { goNotebook, invoke, shownText, tryInvoke } from "./support.js";
+import { goNotebook, invoke, shownText, tryInvoke, boardMore } from "./support.js";
 
 // 列管理面(B-f 第 2 段):新建 / 改名 / 拖排序 / 删,以及那几道「不许」。
 //
@@ -28,9 +28,9 @@ async function clearCustomColumns() {
   }
 }
 
-/** 打开列管理面(顶栏那枚「管理列」)。 */
+/** 打开列管理面(页头「⋯」里的「管理看板」)。 */
 async function openManager() {
-  await browser.execute(() => document.querySelector("#manage-cols").click());
+  await boardMore("manage-cols");
   await $(".bcm-panel").waitForExist({ timeout: 5000 });
   await $(".bcm-list .bcm-col").waitForExist({ timeout: 5000 });
 }

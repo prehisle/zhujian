@@ -52,7 +52,7 @@ The handful of things worth understanding before you rely on them — where the 
 
 ### Long-form
 
-- When a note grows long, **Expand to long-form** moves it into its own Long-form view; you can also start one there. Like making a task, it is the same item in a different place, not a copy.
+- When a note grows long, **Turn into long-form** moves it into its own Long-form view; you can also start one there. Like making a task, it is the same item in a different place, not a copy.
 - Long-form is written in Markdown: headings, bold, lists, quotes, code blocks and links are understood. Markdown applies only here; in notes and tasks the checkbox is still the only Markdown that works.
 - While you write, a draft is kept on the device; a version is made when you press **Save**.
 - **Every version is kept, and you can compare them**: pick any two and see what was removed in red and added in green, down to the character.

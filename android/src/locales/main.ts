@@ -180,7 +180,7 @@ export const main = defineMessages({
   "boards.holdingFrom": { zh: "「{board}」· {col}", en: "“{board}” · {col}" },
   // backlog 170(第 4 段留的两笔小账):归档册按看板筛(panes.ts renderSealed)、回收站还原进了收容区的回执。三句与桌面逐字同。
   "boards.sealedAll": { zh: "全部看板", en: "All boards" },
-  "boards.sealedNoneHere": { zh: "这块看板还没有归档的成就", en: "Nothing archived from this board yet" },
+  "boards.sealedNoneHere": { zh: "这块看板还没有归档的卡片", en: "Nothing archived from this board yet" },
   "boards.restoredHeld": { zh: "已还原:它原来那一列已经删了,先放在「已删除的看板 / 列」那里", en: "Restored — its column was deleted, so it’s waiting under “Deleted boards / columns”" },
   // mbopt R2:任务面上要落的那块看板放不进卡(core 解析的落点 ⊥:只剩完成列 / 一列都没有)⇒ ＋ 与「记下」事前灰掉,点 ＋ / 灰字说这句。
   // 手机不建列(用户拍 ⑩),故指到电脑上去。

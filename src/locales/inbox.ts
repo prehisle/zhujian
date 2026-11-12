@@ -9,7 +9,6 @@ export const inbox = defineMessages({
   "inbox.imagesTrashed": { zh: "删了 {n} 张图,在回收站能找回", en: "Deleted {n} image(s) — you can get them back from Trash" },
   "inbox.filterPlaceholder": { zh: "过滤随记…", en: "Filter notes…" },
   // W4 Q11 / WD-38:「本周捕获 · 转待办」换白话(用户拍定的词表)。
-  "inbox.weekStats": { zh: "本周记了 {n} 条 · {pct}% 转成了卡片", en: "Noted {n} this week · {pct}% became cards" },
   "inbox.weekStatsNoRatio": { zh: "本周记了 {n} 条", en: "Noted {n} this week" },
   "inbox.composePlaceholder": { zh: "随手记一笔…", en: "Jot something down…" },
   // W3 159 / Q6(WD-17):有多个空间时灰字写上会记进哪个空间(只有一个空间时照旧)。
@@ -19,11 +18,14 @@ export const inbox = defineMessages({
   "inbox.savedImagesFailed": { zh: "随记已保存,但 {n} 张图未能附加", en: "Note saved, but {n} {n|image|images} failed to attach" },
   "inbox.loadFailed": { zh: "读取失败", en: "Failed to load" },
   "inbox.retry": { zh: "重试", en: "Retry" },
-  "inbox.emptyIdeasTitle": { zh: "还没有随记", en: "No notes yet" },
+  // 898 G1:空态从「还没有…」换成「这儿是干嘛的」—— 先记在这儿、要做的之后转成待办;热键那句说它在**别的程序里**也能用。
+  "inbox.emptyIdeasTitle": { zh: "想到什么,先记在这儿", en: "Whatever comes to mind, note it here first" },
   // W4 A6 / Q8 ①:{key} 是此刻真生效的那枚捕获键(改过键照着变);它被别的程序占着、按了没反应时
-  // 换下面那句,不提快捷键。
-  "inbox.emptyIdeasHint": { zh: "在上方输入,或按 {key} 随手记一个念头。", en: "Type above, or press {key} to jot down a passing thought." },
-  "inbox.emptyIdeasHintNoKey": { zh: "在上方输入,随手记一个念头。", en: "Type above to jot down a passing thought." },
+  // 换下面那句(只剩第一句),不提快捷键。
+  "inbox.emptyIdeasHint": { zh: "要做的事,之后转成待办放进看板。在别的程序里按 {key} 也能随手记,不用切回来。", en: "Things to do can be turned into tasks on the board later. Press {key} in any other app to jot something down without switching back." },
+  "inbox.emptyIdeasHintNoKey": { zh: "要做的事,之后转成待办放进看板。", en: "Things to do can be turned into tasks on the board later." },
+  // 898 G2:教学期(记过随记、还没转过一次待办 = `.hk-teach` 那个条件)列表下方一行灰字,条件不成立下一发 refresh 自己消失。
+  "inbox.teachHint": { zh: "点卡片右上角的 ⋯,可以打标签,或转成待办放进看板。", en: "Click ⋯ at a card’s top right to tag it, or turn it into a task on the board." },
   "inbox.emptyTrashTitle": { zh: "回收站是空的", en: "Trash is empty" },
   "inbox.emptyTrashHint": { zh: "删掉的随记、长文和配图会先来这里,可还原或彻底删除。", en: "Deleted notes, long-form and images land here first. Restore them or delete them forever." },
   "inbox.removeTagTitle": { zh: "去掉这个标签", en: "Remove this tag" },
@@ -47,9 +49,10 @@ export const inbox = defineMessages({
   "inbox.actComments": { zh: "留言", en: "Comments" },
   // 165 / W5 A19(WD-21):换空间那一项写全「移到别的空间」(同快捷键表与面板标题);此前叫「移动」,在看板上与换列的「移到 ▸」只差一个字。
   "inbox.actMove": { zh: "移到别的空间", en: "Move to another space" },
-  "inbox.actExpand": { zh: "展开成长文", en: "Expand to long-form" },
-  "inbox.undoExpanded": { zh: "已展开成长文", en: "Expanded to long-form" },
-  "inbox.expandRefsFailed": { zh: "已展开成长文,但没能把图的「图N」补进正文:{err}", en: "Expanded to long-form, but couldn’t add the image mentions to the text: {err}" },
+  // 898 W1:「展开成长文」→「转成长文」(与「转待办」同一个动词)。⛔ 键名不动(命名铁律)。
+  "inbox.actExpand": { zh: "转成长文", en: "Turn into long-form" },
+  "inbox.undoExpanded": { zh: "已转成长文", en: "Turned into long-form" },
+  "inbox.expandRefsFailed": { zh: "已转成长文,但没能把图的「图N」补进正文:{err}", en: "Turned into long-form, but couldn’t add the image mentions to the text: {err}" },
   "inbox.docBadge": { zh: "长文", en: "Long-form" },
   "inbox.actDelete": { zh: "删除", en: "Delete" },
   "inbox.undoDeleted": { zh: "已移入回收站", en: "Moved to Trash" },

@@ -524,7 +524,8 @@ describe("W4 161 · D3 同步 / 设备 / 配对 / 被移除 / 断网", () => {
     expect(gen).toContain("每个空间分别起");
     // 起个名 ⇒ 框下那行换成「本机 · 名字 · 编号」;清掉 ⇒ 回到只写编号。
     await $(".alias-input:not([disabled])").waitForExist({ timeout: 5000 });
-    const sub = () => browser.execute(() => document.querySelector(".alias-input").closest(".hkset-row").querySelector(".hkset-desc").textContent);
+    // 898 B2:这一行现在有两格 .hkset-desc —— 前一格是这一节的说明,后一格才是「本机 · 编号」那行。
+    const sub = () => browser.execute(() => [...document.querySelector(".alias-input").closest(".hkset-row").querySelectorAll(".hkset-desc")].pop().textContent);
     const setAlias = (v) =>
       browser.execute((val) => {
         const i = document.querySelector(".alias-input");

@@ -1,5 +1,5 @@
 import { browser, $, expect } from "@wdio/globals";
-import { boardAction, boardPickTopicPill, goNotebook, inboxAction, inboxShow, invoke, openCompose, tryInvoke } from "./support.js";
+import { boardAction, boardPickTopicPill, goNotebook, inboxAction, inboxShow, invoke, openCompose, tryInvoke, boardMore } from "./support.js";
 
 // 多看板优化(用户 2026-11-12 拍;两端共用的行为规矩 R1–R6)桌面那一半能自动化的几条:
 //  D1 / R3 空看板提示只说这块看板(归档数只数这块的成就、没有完成列不提归档、非默认看板不说「转待办」);
@@ -105,11 +105,15 @@ describe("多看板优化 · 桌面", () => {
     await cleanup();
   });
 
-  it("D12:顶栏那枚叫「管理看板」,title 说清管哪些事", async () => {
+  it("D12:页头「⋯」里那一项叫「管理看板」,title 说清管哪些事", async () => {
     await navClick(SEED);
+    await $("#board-more").waitForDisplayed({ timeout: 8000 });
     const b = await browser.execute(() => {
-      const x = document.querySelector("#manage-cols");
-      return { lbl: x.querySelector(".lbl").textContent, title: x.title };
+      document.querySelector("#board-more").click();
+      const x = document.querySelector(".board-more-menu #manage-cols");
+      const out = { lbl: x.querySelector(".hk-label").textContent, title: x.title };
+      document.querySelector("#board-more").click(); // 收回去
+      return out;
     });
     expect(b.lbl).toBe("管理看板");
     for (const w of ["看板名", "新卡片落在哪一列", "完成列", "删除看板"]) expect(b.title).toContain(w);
@@ -122,7 +126,7 @@ describe("多看板优化 · 桌面", () => {
         if (!x) throw new Error("列管理面里没有「+ 新建一块看板」");
         x.click();
       });
-    await browser.execute(() => document.querySelector("#manage-cols").click());
+    await boardMore("manage-cols");
     await $(".bcm-board").waitForExist({ timeout: 5000 });
     await openNew();
     await $(".bn-new").waitForExist({ timeout: 5000 });

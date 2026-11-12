@@ -1,5 +1,5 @@
 import { $, expect, browser } from "@wdio/globals";
-import { goNotebook } from "./support.js";
+import { goNotebook, invoke } from "./support.js";
 
 // 设置面板的「壳」三格(2026-08-31 用户当面点名的那轮):
 // ①切分类面板几何一格不动(此前 `max-height` 只是上限、实高随内容 ⇒ 切类跳变);
@@ -53,20 +53,27 @@ describe("设置面板壳:定高 · ✕ · 说明折叠", () => {
     });
   });
 
-  it("「说明」折叠默认收起;点开后 §9 那几段边界逐字还在", async () => {
+  it("「说明」折叠:设置过备份默认收起、还没设置默认摊开;摊开后 §9 那几段边界逐字还在", async () => {
+    // 库是全套 spec 累积的(backup.e2e 会把备份设上)⇒ 照此刻的真状态判哪一态;两态各自的断言都在下面。
+    const st = await invoke("backup_status");
+    const wantOpen = !st.configured && !st.problem && !st.blocked;
     await openPanel();
     await browser.execute(() => document.querySelector('.settings-cat[data-cat="backup"]').click());
     const notes = await $(".settings-pane[data-cat='backup'] .settings-notes");
     await notes.waitForExist({ timeout: 5000 });
-    // 默认收起:段落在 DOM(收纳不删)但不可见。
+    // 开不开是读到备份状态那一刻定的 ⇒ 等那一节画完(「读取中…」换成真内容)再看。
+    await $(".settings-pane[data-cat='backup'] .bkup-body .hkset-row").waitForExist({ timeout: 8000 });
     const para = await $(".settings-pane[data-cat='backup'] .settings-notes .settings-sub");
-    expect(await para.isExisting()).toBe(true);
-    expect(await para.isDisplayed()).toBe(false);
-    // 点 summary 摊开:三段全可见,且 §9 那两段边界的关键词逐字在(⛔ 这三格是「收纳
+    expect(await para.isExisting()).toBe(true); // 收纳不删:段落恒在 DOM
+    expect(await browser.execute(() => document.querySelector(".settings-pane[data-cat='backup'] .settings-notes").open)).toBe(wantOpen);
+    expect(await para.isDisplayed()).toBe(wantOpen);
+    // 收着就点 summary 摊开:三段全可见,且 §9 那两段边界的关键词逐字在(⛔ 这三格是「收纳
     // 不删」的网 —— 谁哪天把段落真删了,这里先红)。
-    await browser.execute(() =>
-      document.querySelector(".settings-pane[data-cat='backup'] .settings-notes summary").click(),
-    );
+    if (!wantOpen) {
+      await browser.execute(() =>
+        document.querySelector(".settings-pane[data-cat='backup'] .settings-notes summary").click(),
+      );
+    }
     await browser.waitUntil(async () => para.isDisplayed(), { timeout: 3000 });
     const texts = await browser.execute(() =>
       [...document.querySelectorAll(".settings-pane[data-cat='backup'] .settings-notes .settings-sub")].map((n) =>

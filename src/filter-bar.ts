@@ -472,6 +472,11 @@ export function applyTimeFilter<T>(items: T[], bucket: TimeBucket, createdAtOf: 
   return bucket === "all" ? items : items.filter((it) => timeBucketOf(createdAtOf(it)) === bucket);
 }
 
+/** 这条轴在页上叫什么(898 D3)。轴按的一直是**创建时间**;随记页叫「时间」("time"),看板页叫「记于」("created")——
+ *  看板页头那排「逾期 · 今天 · 3 天内」说的是到期日,筛选行再来一个「时间:今天」,两个「今天」挨着、说的不是一回事。
+ *  ⛔ 调用方必须点名,不设默认。 */
+export type TimeAxisName = "time" | "created";
+
 /** 筛空时的补一句(157 G3 / WD-19):空态标题只说最具体的那一维(词 → 标签 → 类型 → 时间),
  *  其余还开着的维在这里点名 —— 此前三维叠着筛空,屏上只说「没有匹配「咖啡」」,清了词还是空,
  *  才发现时间与标签也选着。`said` = 标题已经说了哪一维(比它更具体的维此时必然没开)。
@@ -481,13 +486,17 @@ export function otherLayersNote(
   all: FilterTopic[],
   time: TimeBucket,
   said: "text" | "topics" | "kind",
+  axis: TimeAxisName,
 ): string {
   const parts: string[] = [];
   if (said === "text" && f.topics.length > 0) {
     parts.push(t("filter.layerTags", { labels: selectedTopicLabels(f, all).join(t("filter.layerSep")) }));
   }
   if (said !== "kind" && f.kind !== "all") parts.push(t("filter.layerKind", { kind: f.kind }));
-  if (time !== "all") parts.push(t("filter.layerTime", { time: time === "1d" ? t("filter.time1d") : time === "7d" ? t("filter.time7d") : t("filter.timeOld") }));
+  if (time !== "all") {
+    const bucket = time === "1d" ? t("filter.time1d") : time === "7d" ? t("filter.time7d") : t("filter.timeOld");
+    parts.push(axis === "created" ? t("filter.layerCreated", { time: bucket }) : t("filter.layerTime", { time: bucket }));
+  }
   return parts.length ? t("filter.alsoActive", { layers: parts.join(t("filter.layerSep")) }) : "";
 }
 
@@ -500,6 +509,7 @@ export function renderTimePills<T>(
   createdAtOf: (item: T) => string,
   current: TimeBucket,
   onPick: (bucket: TimeBucket) => void,
+  axisName: TimeAxisName,
 ): void {
   const countOf = (bucket: TimeBucket) =>
     bucket === "all" ? items.length : items.filter((it) => timeBucketOf(createdAtOf(it)) === bucket).length;
@@ -515,7 +525,7 @@ export function renderTimePills<T>(
   };
   const axis = document.createElement("span");
   axis.className = "tf-axis";
-  axis.textContent = t("filter.timeAxis");
+  axis.textContent = axisName === "created" ? t("filter.createdAxis") : t("filter.timeAxis");
   bar.replaceChildren(
     axis,
     pill("all", t("filter.all")),

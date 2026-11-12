@@ -11,7 +11,8 @@ export const docs = defineMessages({
   "docs.trashTitle": { zh: "删掉的随记、长文和配图都在这只回收站里", en: "Deleted notes, long-form and images are all in this trash" },
   "docs.retry": { zh: "重试", en: "Retry" },
   "docs.emptyTitle": { zh: "还没有长文", en: "No long-form notes yet" },
-  "docs.emptyHint": { zh: "新建一篇,或在随记卡片的 ⋯ 菜单里把一条随记「展开成长文」。", en: "Start a new one, or pick “Expand to long-form” from a note’s ⋯ menu." },
+  // 引的是随记 ⋯ 菜单那一项的原话(inbox.actExpand),⛔ 换了那一项的可见串这句同笔改。末句 = 898 W4。
+  "docs.emptyHint": { zh: "新建一篇,或在随记卡片的 ⋯ 菜单里把一条随记「转成长文」。长文适合写得长、要分段的东西,按 Markdown 显示。", en: "Start a new one, or pick “Turn into long-form” from a note’s ⋯ menu. Long-form suits longer, structured writing and renders as Markdown." },
   "docs.untitled": { zh: "(无标题)", en: "(Untitled)" },
   "docs.back": { zh: "← 长文", en: "← Long-form" },
   "docs.backToDoc": { zh: "← 回到正文", en: "← Back to text" },
@@ -83,6 +84,9 @@ export const docs = defineMessages({
   "docs.histLimited": { zh: "细化受限:后面几处只标到整行", en: "Detail limited: later changes are marked by whole line" },
   "docs.histOldText": { zh: "旧版", en: "Older" },
   "docs.histNewText": { zh: "新版", en: "Newer" },
+  // 898 B4:历史页每一版一枚(句子用户拍过;只复制、不恢复)。
+  "docs.histCopy": { zh: "复制这一版", en: "Copy this version" },
+  "docs.histCopied": { zh: "已复制这一版的原文", en: "Copied this version’s text" },
   "docs.histLoading": { zh: "读取中…", en: "Loading…" },
   // 878 混版提醒(doc-skew-ask.ts):第一次往已配同步的空间发长文标记前问一次。两端逐字同、键名同。
   // ⛔ 别改成让人声明「都升了」—— 点了只代表看过提醒(设备名单不显示版本,他答不准)。

@@ -1555,6 +1555,26 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
         neu = pick;
         void compare();
       };
+      // 「复制这一版」(898 B4):把这一版的原文(Markdown 源)放进剪贴板 —— 想拿回旧版里的一段,此前只能从比对里一行行抠。
+      // ⛔ 历史仍然只读(longform-plan §4 末):这里不恢复、不落新版、不碰数据层,取文走的就是比对那条只读命令
+      // (当前版也向库要,不拿进历史页那一刻手里的 `d.content` 当数:别台改了它,比对那边读到的是新的)。
+      const copyBtn = el("button", { className: "hv-copy", type: "button", textContent: t("docs.histCopy") });
+      copyBtn.onclick = async () => {
+        let text: string;
+        try {
+          text = (await invokeInSpace<VersionPair>(mountSpace, "revision_texts", { id: d.id, a: pick, b: "current" })).a.content;
+        } catch (e) {
+          if (copyBtn.isConnected) toastError(errText(e));
+          return;
+        }
+        if (!copyBtn.isConnected) return; // 取文途中离开了历史页:不往剪贴板里塞东西
+        try {
+          await copyText(text);
+          toastAction(t("docs.histCopied"));
+        } catch {
+          toastAction(t("docs.copyFailed")); // 同本页别处的复制失败(copyFeedback)
+        }
+      };
       rows.push({ pick, oldBtn, newBtn });
       const whenCell = el("span", { className: "hv-when", textContent: when_ });
       if (pick !== "current") whenCells.set(pick.rev, whenCell);
@@ -1562,6 +1582,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
         el("div", { className: "hv-row" }, [
           whenCell,
           el("span", { className: "hv-chars", textContent: chars === null ? "" : t("docs.histChars", { n: chars }) }),
+          copyBtn,
           el("span", { className: "hv-picks" }, [oldBtn, newBtn]),
         ]),
       );

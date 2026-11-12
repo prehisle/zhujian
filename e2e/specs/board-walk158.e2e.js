@@ -1,5 +1,5 @@
 import { browser, $, expect } from "@wdio/globals";
-import { invoke, goNotebook, boardAction, clearInbox } from "./support.js";
+import { invoke, goNotebook, boardAction, clearInbox, boardMore } from "./support.js";
 
 // 158 G1 + G2 桌面那一半(W2「做事」走查,用户全取推荐):看板这一侧能自动化的那几条。
 //  A1 卡内编辑改过按 Esc 先提醒、再按才丢;A2 截止框逐段输入不存、离开才一次性存;
@@ -215,8 +215,7 @@ describe("158 · 看板 W2 走查修的那批(桌面)", () => {
 
   it("A12:管理列面板是对话框,打开焦点在面板里、Tab 圈在里面、✕ 关得掉", async () => {
     await goNotebook("board");
-    await $("#manage-cols").waitForDisplayed({ timeout: 8000 });
-    await $("#manage-cols").click();
+    await boardMore("manage-cols");
     await $(".bcm-panel .bcm-col").waitForExist({ timeout: 8000 });
     const s = await browser.execute(() => {
       const p = document.querySelector(".bcm-panel");
@@ -233,8 +232,7 @@ describe("158 · 看板 W2 走查修的那批(桌面)", () => {
   it("A12 / A18:有卡的自定义列点「删除」→ 面板里写明原因;空列删除确认「取消」在前、红「删除」在后,焦点停「取消」", async () => {
     const COL = "E2E158列";
     await goNotebook("board");
-    await $("#manage-cols").waitForDisplayed({ timeout: 8000 });
-    await $("#manage-cols").click();
+    await boardMore("manage-cols");
     await $(".bcm-panel .bcm-new .bcm-col-input").waitForExist({ timeout: 8000 });
     await browser.execute((n) => {
       const i = document.querySelector(".bcm-panel .bcm-new .bcm-col-input");
@@ -253,7 +251,7 @@ describe("158 · 看板 W2 走查修的那批(桌面)", () => {
     const tid = await invoke("create_task", { title: T });
     await invoke("update_task_status", { id: tid, to: colId });
     await browser.execute(() => document.querySelector(".bcm-panel .bcm-close").click());
-    await $("#manage-cols").click();
+    await boardMore("manage-cols");
     await browser.waitUntil(() => browser.execute((s) => !!eval(s)?.querySelector(".bcm-btn.blocked"), rowSel(COL)), { timeout: 8000 });
     await browser.execute((s) => eval(s).querySelector(".bcm-btn.blocked").click(), rowSel(COL));
     expect(await browser.execute((s) => eval(s).querySelector(".bcm-col-note")?.textContent, rowSel(COL))).toBe("先把这一列的 1 个条目移走");
@@ -262,7 +260,7 @@ describe("158 · 看板 W2 走查修的那批(桌面)", () => {
     // 卡挪走 → 删除确认的顺序与焦点
     await invoke("update_task_status", { id: tid, to: "todo" });
     await browser.execute(() => document.querySelector(".bcm-panel .bcm-close").click());
-    await $("#manage-cols").click();
+    await boardMore("manage-cols");
     await browser.waitUntil(() => browser.execute((s) => !!eval(s)?.querySelector(".bcm-btn.danger:not(.blocked)"), rowSel(COL)), {
       timeout: 8000,
     });
@@ -297,8 +295,8 @@ describe("158 · 看板 W2 走查修的那批(桌面)", () => {
         window.__lastClip = t;
         return Promise.resolve();
       };
-      document.querySelector("#copy-slot .hbtn").click();
     });
+    await boardMore("copy-board"); // 898 B1:「复制看板」住进页头「⋯」
     await browser.waitUntil(async () => (await browser.execute(() => window.__lastClip)) !== null, { timeout: 5000 });
     const md = await browser.execute(() => window.__lastClip);
     const i = md.indexOf(`- [ ] ${P}A14-搬家打包`);

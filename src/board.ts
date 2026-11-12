@@ -83,7 +83,7 @@ import { t } from "./i18n";
 import { FOLD_SLACK_PX, hasBoxBelowFold } from "./fold";
 import { wireChecklistInput } from "./checklist-input";
 import "./board.css";
-import { el, onDragTarget, trapTab } from "./dom";
+import { arrowWalk, el, holdKeyboard, onDragTarget, trapTab } from "./dom";
 import { isTabKey } from "./keys";
 import { errDetail, errText } from "./err";
 
@@ -131,6 +131,10 @@ function readBoardSort(): BoardSort {
 }
 function sortLabel(s: BoardSort): string {
   return s === "newest" ? t("board.sortNewest") : s === "oldest" ? t("board.sortOldest") : t("board.sortManual");
+}
+/** 页头窄档里「顺序」那枚只剩的一个词(898 B1):状态字,中英都有 —— 此前窄档是无字的 ↕,看不出此刻哪一档。 */
+function sortLabelShort(s: BoardSort): string {
+  return s === "newest" ? t("board.sortNewestShort") : s === "oldest" ? t("board.sortOldestShort") : t("board.sortManualShort");
 }
 // 卡上的交互件(⋯ 钮 / 标签 chip 与它的 ✕ / 勾选框 / 留言徽章 / 「图N」链接 / 缩略图 /
 // 行内确认的钮与勾选)。按下或双击落在它们上面,那一下归它们自己:不是拖卡、不是开编辑。
@@ -214,19 +218,23 @@ const ICON_SEAL =
 const ICON_TRASH =
   '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 4.2h11M6.2 4.2V2.6h3.6v1.6M3.8 4.2l.8 9.2h6.8l.8-9.2"/></svg>';
 
-// W4 A25(新撞-5):有了第一张任务才冒出来的几枚(到期汇总 / 复制看板 / 顺序)排在「+ 新建任务」**左边**——
+// W4 A25(新撞-5):有了第一张任务才冒出来的几枚(到期汇总 / 顺序)排在「+ 新建卡片」**左边**——
 // 页头这一组整体靠右,新冒出来的只吃掉左边的空当,「+ 新建任务」及右边几枚原地不动。此前它们排在右边,
 // 记下第一张时整排往左挪约 100px,手正要再点「+ 新建任务」就点空了。
+// 898 B1(页头收纳):此前一排七枚同样轻重。「+ 新建卡片」成了这一页唯一的实心主钮(与随记页「记下」同一档,
+// `.hbtn.primary`),位置不动 —— 仍在后冒出来那两枚之右、「⋯ / 归档 / 回收站」之左:放最右的话进归档 / 回收站
+// (它收起)那一下,「归档」「回收站」两枚开关会从手底下滑走;放到「到期汇总」紧后面则「顺序」冒出来时它要挪(A25)。
+// 「复制看板」「管理看板」收进一枚「⋯」(`#board-more`,菜单是点开才建的 `.hk-menu`);「顺序」留在页头(它的
+// 当前档决定卡能不能拖,得常显),窄了缩成「手动 / 最新 / 最早」一个词,⛔ 不再退成无字的 ↕。
 const SKELETON = `
   <header data-tauri-drag-region>
     <h1>${t("board.title")}</h1>
     <span class="spacer" data-tauri-drag-region></span>
     <span class="head-tools">
       <button class="hbtn due-soon" id="due-soon" title="${t("board.dueSoonTitle", { days: DUE_SOON_DAYS })}" hidden><span class="lbl" id="due-soon-lbl"></span><span class="ico">${ICON_DUE}</span><span class="lbl-short" id="due-soon-n"></span></button>
-      <span class="copy-slot" id="copy-slot"></span>
-      <button class="hbtn" id="board-sort" title="${t("board.sortTitle")}"><span class="lbl" id="board-sort-lbl">${t("board.sortManual")}</span><span class="lbl-short">↕</span></button>
-      <button class="hbtn" id="add-task" type="button" title="${t("board.newTask")}">+ <span class="lbl">${t("board.newTask")}</span> <kbd class="k">N</kbd></button>
-      <button class="hbtn" id="manage-cols" title="${t("board.manageColsTitle")}">≡ <span class="lbl">${t("board.manageCols")}</span></button>
+      <button class="hbtn" id="board-sort" title="${t("board.sortTitle")}"><span class="lbl" id="board-sort-lbl">${t("board.sortManual")}</span><span class="lbl-short" id="board-sort-short">${t("board.sortManualShort")}</span></button>
+      <button class="hbtn primary" id="add-task" type="button" title="${t("board.newTask")}">+ <span class="lbl">${t("board.newTask")}</span> <kbd class="k">N</kbd></button>
+      <button class="hbtn" id="board-more" type="button" title="${t("board.moreTitle")}" aria-label="${t("board.moreTitle")}" aria-haspopup="menu" aria-expanded="false">⋯</button>
       <button class="hbtn" id="seal-toggle" title="${t("board.sealTitle")}"><span class="lbl">${t("board.sealLbl")}</span><span class="ico">${ICON_SEAL}</span><span class="tn" id="seal-n">0</span> <kbd class="k">G</kbd></button>
       <button class="hbtn" id="trash-toggle" title="${t("board.trashTitle")}"><span class="lbl">${t("board.trashLbl")}</span><span class="ico">${ICON_TRASH}</span><span class="tn" id="trash-n">0</span> <kbd class="k">R</kbd></button>
     </span>
@@ -341,7 +349,6 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
 
   const board = view.querySelector("#board") as HTMLElement;
   const boardTitle = view.querySelector("header h1") as HTMLElement;
-  const copySlot = view.querySelector("#copy-slot") as HTMLElement;
   const filterRow = view.querySelector("#filter-row") as HTMLElement;
   const filterBar = view.querySelector("#topic-filter") as HTMLElement;
   const kindBar = view.querySelector("#kind-filter") as HTMLElement;
@@ -355,10 +362,11 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
   const addTaskBtn = view.querySelector("#add-task") as HTMLButtonElement;
   const sortBtn = view.querySelector("#board-sort") as HTMLButtonElement;
   const sortLbl = view.querySelector("#board-sort-lbl") as HTMLElement;
+  const sortShort = view.querySelector("#board-sort-short") as HTMLElement;
   const dueSoonBtn = view.querySelector("#due-soon") as HTMLButtonElement;
   const dueSoonLbl = view.querySelector("#due-soon-lbl") as HTMLElement;
   const dueSoonN = view.querySelector("#due-soon-n") as HTMLElement;
-  const manageColsBtn = view.querySelector("#manage-cols") as HTMLButtonElement;
+  const moreBtn = view.querySelector("#board-more") as HTMLButtonElement;
   const compose = view.querySelector("#compose") as HTMLElement;
   const composeInput = view.querySelector("#compose-input") as HTMLTextAreaElement;
   wireChecklistInput(composeInput); // Shift+Enter 续待办项 / Ctrl+L 起一条 / Tab 缩进(562,600)
@@ -1209,13 +1217,83 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
     if (compose.hidden && blockedCompose()) return;
     setComposeOpen(compose.hidden);
   });
-  // 列管理面(B-f 第 2 段)。每笔写落地就回调这里重画看板 —— 面板开着的时候看板就该
-  // 已经是新的了(⛔ 不是关掉才刷:改完名还得回来确认列头真变了才算数)。
-  // 0043:列管理开的是**这块**看板(列、两个角色、改名 / 删看板都在那一面里)。
-  manageColsBtn.addEventListener("click", () => {
-    if (cur === null) return; // 首帧 load 之前点不到(钮随 load 显形);防的是那一瞬
-    // 每笔写之后广播一声:本视图(onBoardsChanged)与侧栏各取各的,⛔ 别在这里再 load 一遍(D10)。
-    openColumnManager({ boardId: cur.id, onChanged: boardsChanged });
+  // ---- 页头「⋯」菜单(898 B1):复制看板 / 管理看板 ------------------------------------------
+  // 点开才建、portal 到 body(同卡片 ⋯ 那只 `.hk-menu` 的样子与层级);打开焦点进第一项、↑ ↓ 走项、Esc / 点别处关、
+  // 关完焦点还给「⋯」(W5 Q2 那一族)。这两项此前没有单键,收进来也没有 ⇒ 右侧不印键帽。
+  /** 此刻看板上画着的那批卡抄成的 Markdown(renderBoard 写;空看板 / 没在看板态 = null ⇒ 菜单里不出「复制看板」)。 */
+  let boardMd: string | null = null;
+  let moreMenu: { close(restoreFocus?: boolean): void } | null = null;
+  function closeMoreMenu(restoreFocus = false): void {
+    moreMenu?.close(restoreFocus);
+  }
+  function openMoreMenu(): void {
+    const item = (id: string, label: string, title: string, run: () => void): HTMLButtonElement => {
+      const b = el("button", { className: "hk-item", type: "button", id, title }, [el("span", { className: "hk-label", textContent: label })]);
+      b.setAttribute("role", "menuitem");
+      b.addEventListener("click", () => {
+        closeMoreMenu(true); // 先收菜单、焦点回「⋯」:随后打开的面板关掉时焦点还到它身上
+        run();
+      });
+      return b;
+    };
+    const items: HTMLButtonElement[] = [];
+    // 复制看板:抄的是此刻筛出来的那批(同此前页头那枚)。回执走屏底那句(菜单已收,同卡片单键 C 的报法)。
+    const md = boardMd;
+    if (md !== null) {
+      items.push(
+        item("copy-board", t("board.copyBoard"), t("board.copyBoard"), () => {
+          void copyText(md).then(
+            () => toastAction(t("clipboard.copied")),
+            () => toastAction(t("clipboard.copyFail")),
+          );
+        }),
+      );
+    }
+    // 管理看板:列管理面(B-f 第 2 段)。每笔写落地就广播一声,本视图(onBoardsChanged)与侧栏各取各的,
+    // ⛔ 别在这里再 load 一遍(D10)。0043:开的是**这块**看板(列、两个角色、改名 / 删看板都在那一面里)。
+    items.push(
+      item("manage-cols", t("board.manageCols"), t("board.manageColsTitle"), () => {
+        if (cur === null) return; // 首帧 load 之前点不到(钮随 load 显形);防的是那一瞬
+        openColumnManager({ boardId: cur.id, onChanged: boardsChanged });
+      }),
+    );
+    const menu = el("div", { className: "hk-menu board-more-menu" }, items);
+    menu.setAttribute("role", "menu");
+    const r = moreBtn.getBoundingClientRect();
+    menu.style.top = `${r.bottom + 6}px`;
+    menu.style.right = `${Math.max(6, window.innerWidth - r.right)}px`;
+    document.body.append(menu);
+    arrowWalk(menu);
+    const onDown = (e: MouseEvent): void => {
+      const n = e.target as Node;
+      if (menu.contains(n) || moreBtn.contains(n)) return; // 点「⋯」自己 = 它的 click 来收
+      closeMoreMenu();
+    };
+    const onBlur = (): void => closeMoreMenu();
+    document.addEventListener("mousedown", onDown, true);
+    window.addEventListener("blur", onBlur);
+    const hold = holdKeyboard(menu, menu, { onEscape: () => closeMoreMenu(true), focus: items[0] });
+    moreBtn.setAttribute("aria-expanded", "true");
+    moreBtn.classList.add("on");
+    const me = {
+      close(restoreFocus = false): void {
+        if (moreMenu !== me) return;
+        moreMenu = null;
+        document.removeEventListener("mousedown", onDown, true);
+        window.removeEventListener("blur", onBlur);
+        // 焦点明着还给「⋯」,不靠 holdKeyboard 记下的「打开那一刻的焦点」:点钮不一定让钮拿到焦点(WebKit),那时记下的是别处。
+        hold.release(false);
+        menu.remove();
+        if (restoreFocus) moreBtn.focus({ preventScroll: true });
+        moreBtn.setAttribute("aria-expanded", "false");
+        moreBtn.classList.remove("on");
+      },
+    };
+    moreMenu = me;
+  }
+  moreBtn.addEventListener("click", () => {
+    if (moreMenu !== null) closeMoreMenu(true);
+    else openMoreMenu();
   });
   composeAdd.addEventListener("click", () => void submitNewTask());
   composeClose.addEventListener("click", () => setComposeOpen(false));
@@ -2415,35 +2493,6 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
     return c;
   }
 
-  /** 顶栏「复制看板」(158 G2 / A11,WD-11):窄窗下此前整枚 display:none(指南说有、屏上没有)。
-   *  现在两份标签常驻、由 board.css 那条 container query 二选一:窄了只剩一枚 ⧉ 记号,全名在 title。
-   *  点完两份标签一起闪「已复制」(同 copyButton 的形,它只认一份 textContent,故这里自己接)。 */
-  function copyBoardButton(md: string): HTMLButtonElement {
-    const long = el("span", { className: "lbl", textContent: t("board.copyBoard") });
-    const short = el("span", { className: "lbl-short", textContent: "⧉" });
-    const b = el("button", { className: "hbtn", type: "button", title: t("board.copyBoard") }, [long, short]);
-    b.setAttribute("aria-label", t("board.copyBoard"));
-    let revert: ReturnType<typeof setTimeout> | undefined;
-    b.addEventListener("click", async (e) => {
-      e.stopPropagation();
-      let said: string;
-      try {
-        await copyText(md);
-        said = t("clipboard.copied");
-      } catch {
-        said = t("clipboard.copyFail");
-      }
-      long.textContent = said;
-      short.textContent = said === t("clipboard.copied") ? "✓" : "✕";
-      clearTimeout(revert);
-      revert = setTimeout(() => {
-        long.textContent = t("board.copyBoard");
-        short.textContent = "⧉";
-      }, 1200);
-    });
-    return b;
-  }
-
   /** 「展开 / 收起」那枚钮(704):只长在**真被夹住**的卡上。点一下翻 `.clamped` 并记进
    *  `expanded` —— 记了下一发 load() 重画才不会把它又合上(重画在同一个 mount 里)。 */
   function foldToggle(id: string, body: HTMLElement): HTMLButtonElement {
@@ -2494,9 +2543,9 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
 
   function renderBoard(items: TaskItem[]): void {
     board.className = "board-wrap";
-    // 复制看板: copies every non-empty column as Markdown. Built from the currently
+    // 复制看板(页头「⋯」里那一项): copies every non-empty column as Markdown. Built from the currently
     // shown tasks, so it respects the active filters (标签 and/or 文本).
-    copySlot.replaceChildren(copyBoardButton(boardMarkdown(cols, items, doneId())));
+    boardMd = boardMarkdown(cols, items, doneId());
     const sections = cols.map((col) => {
       const status = col.id;
       const name = columnName(col);
@@ -2828,6 +2877,13 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
     board.replaceChildren(bar, list);
   }
 
+  /** 种子列 id → 空看板上那一句「这一列放什么」(898 G3)。第一列(待办)不在表里:那里已经是「怎么开始」。 */
+  const SEED_COL_HINT: Record<string, (() => string) | undefined> = {
+    doing: () => t("board.colHintDoing"),
+    confirming: () => t("board.colHintConfirming"),
+    done: () => t("board.colHintDone"),
+  };
+
   function renderCentered(...children: Node[]): void {
     board.className = "centered";
     board.replaceChildren(el("div", { className: "center" }, children));
@@ -2841,20 +2897,41 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
    *  「转待办」那半句只在默认看板上说(转待办落默认看板),别的看板说「放进看板」;放不进卡(落点 ⊥)就只说为什么。 */
   function renderEmptyBoard(sealedN: number): void {
     renderBoard([]);
-    copySlot.replaceChildren();
+    boardMd = null; // 空看板没东西可抄:菜单里不出「复制看板」
     const first = board.querySelector<HTMLElement>(".col .col-body");
     if (!first || cur === null) return; // 一根列都没有(活看板恒至少一列,不该发生):就不放提示
     const hint =
       cur.landing === null ? t("board.newTaskNoLanding") : cur.is_default ? t("board.emptyHint") : t("boards.emptyHintOther");
+    // 898 G3:再说一句「卡片能拖」。⚠ 「做完」靠的是这块看板的**完成列角色**(core 解析的 `cur.done`,人能在「管理看板」里
+    // 改指、也能取消),不是「最后一列」也不是某个列名 ⇒ 句子里点名的是眼前那一列此刻的名字;没有完成列就只说能拖。
+    // 放不进卡(落点 ⊥)或只有一列时不说 —— 没有东西可拖 / 没有别的列。
+    const doneCol = cur.done === null ? undefined : cols.find((c) => c.id === cur!.done);
+    const drag =
+      cur.landing === null || cols.length < 2
+        ? null
+        : doneCol
+          ? t("board.emptyDrag", { col: columnName(doneCol) })
+          : t("board.emptyDragNoDone");
     first.append(
       el("div", { className: "col-empty" }, [
         el("p", { className: "col-empty-big", textContent: t("board.empty") }),
         el("p", { textContent: hint }),
+        ...(drag ? [el("p", { className: "col-empty-drag", textContent: drag })] : []),
         ...(sealedN > 0 && cur.done !== null
           ? [el("p", { className: "col-empty-sealed", textContent: t("board.emptySealed", { n: sealedN }) })]
           : []),
       ]),
     );
+    // 898 G3 后半:种子那三列各一句「这一列放什么」。身份 = 种子列 id ∧ 名字没改过(`title_overridden === false`,
+    // 同 columnName 查本端字典的那个判据)⇒ 改过名的列不说(那已经是人自己的意思);「已完成」那句还要它此刻真是完成列。
+    // ⛔ 只在**整块看板一张卡都没有**时说(这里):有卡之后空列照旧不放占位符(renderBoard 里那条注释的决定没动)。
+    for (const c of cols) {
+      const say = c.title_overridden ? undefined : SEED_COL_HINT[c.id];
+      if (!say || c === cols[0] || (c.id === "done" && cur.done !== c.id)) continue;
+      board
+        .querySelector<HTMLElement>(`.col[data-col="${c.id}"] .col-body`)
+        ?.append(el("div", { className: "col-empty col-empty-role" }, [el("p", { textContent: say() })]));
+    }
   }
 
   function renderFilteredEmpty(): void {
@@ -2862,7 +2939,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
     const q = filter.text.trim();
     // 157 G3(WD-19):标题之外还开着的维,补在提示前面点名(同随记页)。
     const hint = (said: "text" | "topics" | "kind", h: string): string => {
-      const note = otherLayersNote(filter, allTopics, timeFilter, said);
+      const note = otherLayersNote(filter, allTopics, timeFilter, said, "created");
       return note ? `${note}${h}` : h;
     };
     if (q !== "") {
@@ -3082,9 +3159,8 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
         activeEditCleanup();
         activeEditCleanup = null;
       }
-      // Cleared here; renderBoard re-adds the 复制看板 button. Trash/empty states have
-      // nothing to copy, so the slot stays empty.
-      copySlot.replaceChildren();
+      // Cleared here; renderBoard sets it again. Trash/empty states have nothing to copy.
+      boardMd = null;
 
       // The toggles always reflect the live counts.
       // 顶栏计数 = 条目 + 已删配图(只剩几张图时钮上不能写 0)。
@@ -3132,9 +3208,10 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
         else addTaskBtn.removeAttribute("aria-disabled");
       }
       addTaskBtn.title = noLanding ? t("board.newTaskNoLanding") : t("board.newTask");
-      // 「管理看板」同理:回收站 / 归档册里根本没有列(B-f 第 2 段)。⚠ 看板态下「顺序」还要
+      // 「⋯」(复制看板 / 管理看板)同理:回收站 / 归档册里根本没有列(B-f 第 2 段)。⚠ 看板态下「顺序」还要
       // 过一道「有没有卡」(下面算完 visible 再定;「管理看板」159 起空看板也在),这里先按视图收。
-      setHidden(manageColsBtn, boardView !== "board");
+      setHidden(moreBtn, boardView !== "board");
+      if (boardView !== "board") closeMoreMenu(); // 开着菜单时被带去了回收站 / 归档册(深链接、搜索落点):一并收
       // 排序轴同理只属看板(回收站按 archived_at、归档册按完成日,各有各的轴,500 不碰)。
       setHidden(sortBtn, boardView !== "board");
       // ⚠ paintSortBtn() 的调用挪到 paintDueSoon 之后(dueOnly title 要读它这一轮的
@@ -3177,7 +3254,6 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       // 空看板照样摆出列和「管理列」(W3 159 / Q12,WD-40,用户拍板 —— **推翻用户面 85 ② 那半**):新空间
       // 的看板此前一根列都没有、也没有「管理列」,想先把列排好再往里放卡,无处下手。⇒ 空态也画列(renderEmptyBoard),
       // 「管理列」常在。「顺序」仍按数据藏(没有卡就没有可排的东西,85 ② 这半照旧);⛔ 不造开关(408-411)。
-      setHidden(manageColsBtn, false);
       setHidden(sortBtn, visible.length === 0);
 
       // 跨视图跳转(搜索命中任务 → 看板):focus 已在上方 seq 守卫之后取走(`focus`)。
@@ -3218,7 +3294,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
         renderTimePills(timeBar, visible, (t) => t.created_at, timeFilter, (b) => {
           timeFilter = b;
           void load();
-        });
+        }, "created");
         // 类型轴在标签 pills 之上(路线 A 钻取器);renderKindPills 无 kind 时清空、CSS
         // :empty 隐整行。标签 pills 随 kind 收到该类型内(见 filter-bar.ts)。
         renderKindPills(kindBar, timeNarrowed, allTopics, filter, () => void load());
@@ -3226,7 +3302,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
         wireTagPills();
       } else {
         // 占位那一行与第一张进来之后同高:时间轴照画(全是 0、看不见),类型 / 标签两轴清空。
-        renderTimePills(timeBar, visible, (t) => t.created_at, timeFilter, () => {});
+        renderTimePills(timeBar, visible, (t) => t.created_at, timeFilter, () => {}, "created");
         kindBar.replaceChildren();
         filterBar.replaceChildren();
       }
@@ -3280,6 +3356,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
   // 不然这颗按钮自己看着还是「手动」、没人告诉你为什么拖不动了。
   function paintSortBtn(): void {
     sortLbl.textContent = sortLabel(boardSort);
+    sortShort.textContent = sortLabelShort(boardSort);
     sortBtn.classList.toggle("active", boardSort !== "manual");
     sortBtn.title =
       boardSort !== "manual" ? t("board.sortTitleLocked") : dueOnly ? t("board.sortTitleLockedDue") : t("board.sortTitle");
@@ -3344,34 +3421,27 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
     { key: BOARD_VIEW_KEYS.sealed, run: toggleSealed },
   ]);
 
-  // 65:顶栏那颗「复制看板」被塌缩规则收走时,列头那颗「复制本列」就不再让位(两颗互为替身,
-  // 而它们的退场判据是两根不同的轴 —— 顶栏内容宽 / 列宽,窄窗 + 多列时同时成立)。
-  // ⛔ 判据是**问 CSS 自己**(读 #copy-slot 的 computed display),别在这里另算一遍。
   const boardHeader = view.querySelector("header") as HTMLElement;
-  const syncHdrCopy = (): void => {
-    view.dataset.hdrcopy = getComputedStyle(copySlot).display === "none" ? "off" : "on";
-  };
   // ⭐ W4 A20(WD-11)**页头让位改成「按这一刻真装不装得下」**:此前三档断点是 container query 写死的
   // 宽度,按**最坏内容**量的(到期三段全满、计数三位数、英文另一套)⇒ 界面字号放大一档(110%,顶栏 CSS 宽
   // 少一截)就掉进字母态,只剩「+ N」「≡」「0」「0」,而页头中间其实还空着一大截。⇒ 从全形起逐档试,
   // 取**第一档放得下一行**的(板子上真有的字、真有的计数);让的顺序照旧「先让不丢能力的」(board.css)。
   // 何时重量:顶栏变宽变窄(窗 / 侧栏折叠 / 字号档,ResizeObserver 看宽)、页头里的字或显隐变了
-  // (到期数、计数、复制钮出没、进出回收站 —— MutationObserver)、字体加载完。
+  // (到期数、计数、「顺序」换档、进出回收站 —— MutationObserver)、字体加载完。
   const FIT_TIERS: string[][] = [
     [],
     ["hdr-nok"],
     ["hdr-nok", "hdr-short"],
     ["hdr-short", "hdr-letter"],
-    ["hdr-short", "hdr-letter", "hdr-nocopy"],
   ];
-  const FIT_ALL = ["hdr-nok", "hdr-short", "hdr-letter", "hdr-nocopy"];
+  const FIT_ALL = ["hdr-nok", "hdr-short", "hdr-letter"];
   const headTools = boardHeader.querySelector(".head-tools") as HTMLElement;
   const headTitle = boardHeader.querySelector("h1") as HTMLElement;
   /** 一行放得下:那一组钮没被挤到第二行,也没横着溢出。 */
   const headerFits = (): boolean =>
     headTools.getBoundingClientRect().top < headTitle.getBoundingClientRect().bottom &&
     boardHeader.scrollWidth <= boardHeader.clientWidth;
-  // D11:上一次排档时页头里长什么样(标题 + 那排钮的标记)。没变就不重排 —— 每次 load 都会重建复制钮、
+  // D11:上一次排档时页头里长什么样(标题 + 那排钮的标记)。没变就不重排 —— 每次 load 都会重写几枚钮的类、
   // 原样写回计数,MutationObserver 照样派过来;逐档试一遍要强制重排 5 次。`force` = 量的前提变了而标记没变:
   // 内容宽变了(ResizeObserver 已按宽去重;⚠ 别拿 clientWidth 进 key —— 它含内边距,内边距一变它不动)、字体刚加载完。
   let fitKey = "";
@@ -3389,7 +3459,6 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       }
     }
     boardHeader.dataset.fit = String(tier); // e2e 与探针读这一格,不靠猜断点
-    syncHdrCopy();
   };
   let fitWidth = -1;
   const hdrRO = new ResizeObserver((entries) => {
@@ -3469,6 +3538,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       }
       activeEditFlush = null;
       closeComments(); // 浮层 portal 在 body 上,不随视图根节点走:切视图/切空间必须自己收
+      closeMoreMenu(); // 页头「⋯」菜单 portal 在 body 上,不随视图根节点走
       closeColumnManager(); // 同上:列管理面也 portal 在 body 上,且它的 onChanged 指着这一棵 mount 的 load()
       closeHistoryDialog(); // 同上(158 G4-A8):历史读框取数走「当前空间」,切了空间还开着就会拿旧 id 去问新空间
       teardownViewKeys();

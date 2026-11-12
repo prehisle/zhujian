@@ -236,6 +236,26 @@ document.addEventListener("keydown", (e) => {
   navigate("search"); // 搜索视图挂载即聚焦搜索框(search.ts)
 });
 
+// Ctrl+1 … Ctrl+5(mac 上 Cmd)= 侧栏从上到下那五页(898 B3:此前换页只能点侧栏;Ctrl+F 是唯一带键的一页)。
+// 走的就是点那一枚(已在这一页 = 它的 reselect,同点击);顺序读侧栏 DOM,⛔ 别在这儿另抄一份页名表。
+// 让位同 Ctrl+F:正在改东西的框里不跳(ctrlFMayLeave),键照样吞掉;浮层开着时按键到不了这儿(holdKeyboard)。
+const viewNavButtons = navButtons.filter((b) => b.dataset.view !== undefined);
+document.addEventListener("keydown", (e) => {
+  if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey || !/^[1-9]$/.test(e.key)) return;
+  const target = viewNavButtons[Number(e.key) - 1];
+  if (target === undefined) return;
+  e.preventDefault();
+  if (!ctrlFMayLeave(document.activeElement)) return;
+  target.click();
+});
+/** 侧栏五项的悬停提示带上键(启动序里 applyStaticI18n 之后调:那一趟会把 title 写回页名)。 */
+function paintNavKeyTitles(): void {
+  const mod = navigator.userAgent.includes("Macintosh") ? "Cmd+" : "Ctrl+";
+  viewNavButtons.forEach((b, i) => {
+    b.title = `${b.title} (${mod}${i + 1})`;
+  });
+}
+
 // ---- 全局三键(W5)----------------------------------------------------------
 /** 焦点在能打字的框里(那里的 Ctrl+Z / Esc 归框自己)。 */
 function inField(a: Element | null): boolean {
@@ -1051,6 +1071,7 @@ void (async () => {
   // 并挂「别窗改档 → 本窗 reload」。同样纯设备本地、不进同步。
   initLang();
   applyStaticI18n();
+  paintNavKeyTitles();
 
   // 505:卡片以外的右键也归应用管 —— 列空白 / 看板背景 / 侧栏 / 标签视图上不再弹
   // WebView2 那份「返回 · 刷新 · 另存为 · 打印 · 检查」(那个「刷新」点下去是重载整个

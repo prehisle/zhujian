@@ -30,7 +30,7 @@ export const sync = defineMessages({
   "sync.entryTitleOff": { zh: "同步(未启用):让手机和另一台电脑看同一份", en: "Sync (not set up): see the same notes on your phone and another computer" },
   "sync.panelTitle": { zh: "同步", en: "Sync" },
   // 161 / W4 Q2 ★①(WD-21):第一屏先说同步是可选的、不开就只在这台、内容先在本机加密(指南原话搬过来)。
-  "sync.homeIntro": { zh: "同步是可选的:不开,记的东西只存在这台电脑上。开了之后,内容先在这台上加密再发出去,服务器读不到。", en: "Sync is optional. Without it, your notes live only on this computer. With it, content is encrypted on this computer before it leaves, and the server cannot read it." },
+  "sync.homeIntro": { zh: "同步是可选的:不开,记的东西只存在这台电脑上。开了之后,内容先在这台上加密再发出去,服务器读不到。不想开同步,也可以在「设置 → 备份与恢复」里自己留一份。", en: "Sync is optional. Without it, your notes live only on this computer. With it, content is encrypted on this computer before it leaves, and the server cannot read it. If you’d rather not sync, you can keep your own copy under Settings → Backup & restore." },
   "sync.createAccount": { zh: "创建账户(第一台设备)", en: "Create account (first device)" },
   "sync.joinWithCode": { zh: "用配对码加入", en: "Join with a pairing code" },
   "sync.nonMainHint": { zh: "要把别处的账户带到这台电脑,用左上空间菜单里的「加入空间」。", en: "To bring an account from elsewhere onto this computer, use “Join space” in the space menu at the top left." },

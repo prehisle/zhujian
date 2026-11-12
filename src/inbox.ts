@@ -1938,18 +1938,13 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       // 这个动作 —— 一条都没转过的人,哪怕已经自己建了一堆任务,也仍然没见过它。
       // born_inbox > 0 这一半是**老库的护栏**:0018 之前的条目 born_stage 未知、恒不进
       // 分母 ⇒ 那种库上 converted 恒为 0,少了这一半 ⋯ 会永久常驻。⛔ 别去掉。
-      view.classList.toggle("hk-teach", stats.born_inbox > 0 && stats.converted === 0);
+      const teaching = stats.born_inbox > 0 && stats.converted === 0;
+      view.classList.toggle("hk-teach", teaching);
       updateTabs();
-      // 头部一行淡字统计(和标签计数同性质的纯信息)。比例=累计:生而为灵感的条目里
-      // 有多少转过待办(含后来归档/进回收站的——经历是史实);分母 0(全是 0018 前的
-      // 老数据)时只显捕获数,不显「—」的哑谜;两个数都是 0 时整行不显(statsBlank)。
-      statsEl.textContent =
-        stats.born_inbox > 0
-          ? t("inbox.weekStats", {
-              n: notedWeek,
-              pct: Math.round((stats.converted / stats.born_inbox) * 100),
-            })
-          : t("inbox.weekStatsNoRatio", { n: notedWeek });
+      // 头部一行淡字统计(和标签计数同性质的纯信息):只报本周记了几条;两个数都是 0 时整行不显(statsBlank)。
+      // ⛔ 别把「转成卡片」的比例 / 条数加回这一行(898):现成的 converted 是**全库累计**,挂在「本周」
+      //    后面会读成本周的数;百分比读着也像考核。要本周口径得给 idea_stats 加字段,另拍。
+      statsEl.textContent = t("inbox.weekStatsNoRatio", { n: notedWeek });
       // 这一发真的画成卡片的那批(空态 / 筛空时就是空)。⚠ 必须在 row() 全部调用完之后
       // 才写回 renderedIds —— row() 读的是**上一发**那份,提前写等于把 fresh 判据抹平。
       let painted: string[] = [];
@@ -1976,7 +1971,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
           renderTimePills(timeBar, ideas, (i) => i.created_at, timeFilter, (b) => {
             timeFilter = b;
             void refresh();
-          });
+          }, "time");
           // 类型轴在标签 pills 之上(路线 A 钻取器);renderKindPills 无 kind 时清空、CSS
           // :empty 隐整行。标签 pills 随 kind 收到该类型内(见 filter-bar.ts)。
           renderKindPills(kindBar, timeNarrowed, topics, filter, () => void refresh());
@@ -1985,7 +1980,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
         } else {
           // 占位那一行要和第一条进来之后同高:时间轴照常画(全是 0,看不见),类型 / 标签两轴清空
           // (有随记之前它们本来就不出现)。
-          renderTimePills(timeBar, ideas, (i) => i.created_at, timeFilter, () => {});
+          renderTimePills(timeBar, ideas, (i) => i.created_at, timeFilter, () => {}, "time");
           kindBar.replaceChildren();
           filterBar.replaceChildren();
         }
@@ -2013,7 +2008,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
           const label = selectedTopicLabels(filter, topics).join("、");
           // 157 G3(WD-19):标题之外还开着的维,补在提示前面点名。
           const hint = (said: "text" | "topics" | "kind", h: string): string => {
-            const note = otherLayersNote(filter, topics, timeFilter, said);
+            const note = otherLayersNote(filter, topics, timeFilter, said, "time");
             return note ? `${note}${h}` : h;
           };
           list.replaceChildren(
@@ -2043,7 +2038,9 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
             }
             group!.append(row(i, "ideas"));
           }
-          list.replaceChildren(bar, tl);
+          // 898 G2:教学期在列表下方说一句 ⋯ 里有什么(⋯ 常驻着,但没人知道点开是什么)。条件就是上面 `.hk-teach` 那一个,
+          // ⛔ 不另记状态:转过第一条,下一发 refresh 这行自己没了。只在画出卡片的这一支里出(空态 / 筛空 / 回收站都不出)。
+          list.replaceChildren(bar, tl, ...(teaching ? [el("p", { className: "teach-hint", textContent: t("inbox.teachHint") })] : []));
           settleFolds(); // ⚠ 在下面还原滚动位之前:还的是夹后几何里的位置
           if (wasFiltered && !nowFiltered) list.scrollTop = unfilteredScroll;
           else if (nowFiltered && filterChanged) list.scrollTop = 0; // A5:筛出来那一串从最新那条看起

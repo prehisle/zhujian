@@ -199,6 +199,23 @@
   color: var(--seal-ink-on-seal-tint);
   background: var(--seal-tint);
 }
+/* 左栏最底下那枚「用户指南 ↗」(898 B5):形同分类钮(同字同档同热区),沉到栏底(自动外边距吃掉中间的空),
+   上面一条细线把它与分类隔开 —— 它是出门的链接,不是第五类。 */
+.settings-guide {
+  margin-top: auto;
+  font-family: var(--font-serif);
+  font-size: var(--fs-13);
+  letter-spacing: 0.03em;
+  text-align: left;
+  color: var(--ink-soft);
+  background: transparent;
+  border: 0;
+  border-top: 1px solid var(--line);
+  padding: 10px 10px 8px;
+  cursor: pointer;
+  transition: color 0.14s;
+}
+.settings-guide:hover { color: var(--seal-ink); }
 .settings-content {
   flex: 1;
   min-width: 0;
@@ -289,6 +306,20 @@
   font-size: var(--fs-13);
   color: var(--ink);
 }
+/* ---- 通用页的一节一行(898 B2,settings.ts `generalSect`)----
+   节名(h2)住在 `.hkset-row` 的行首、控件在同一行右端、说明在行下;长说明的后几句在行下那只「说明」折叠里。
+   节名保住节标题那一档字(衬线 14px:`.settings-sect` 在本文件靠后、同特异性压过 `.hkset-name` 的 13px),
+   只摘掉它当独立标题时的上下外边距 —— 节与节之间的留白改由 `.settings-item` 给。
+   节名可缩可折(英文档「Confirm before deleting a card」+ 放大档下面板变窄):宁可它折两行,也不把控件挤出行。 */
+.settings-item + .settings-item { margin-top: 8px; }
+.hkset-row > .settings-sect {
+  margin: 0;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+.settings-item .settings-notes { margin: -6px 0 2px; }
+/* 意见反馈:节名那一行下面紧跟地址那一行,两行之间不要各 10px 的行内边距叠起来。 */
+.settings-item-head { padding-bottom: 0; }
 .hkset-desc {
   order: 2; /* 排到所有控件之后 */
   flex: 1 1 100%; /* 占满 ⇒ 与标题挤不进同一行,必换行 */
@@ -345,8 +376,10 @@
    它们此前是那一页最淡的元素)。⚠ **它与共享的 `.hbtn` 静息不同色是有意的**:`.hbtn` 是
    顶栏一排六枚里的一员(一排同权),这一枚是**本行唯一的动作**,行里的名字是 --ink、
    说明是 --ink-soft,它再淡就轮到「静态的比能按的重」了。 */
+/* 字体走界面黑体(898 A3):此前写死 --font-serif —— 英文档这枚钮是 Georgia、旁边的名字与说明是 Segoe UI,
+   一行里两种字;中文档同因(宋体压在雅黑旁边),只是小字号下不显眼。`.seg-btn` 同。 */
 .hkset-change {
-  font-family: var(--font-serif);
+  font-family: var(--font-sans);
   font-size: var(--fs-12);
   color: var(--ink);
   background: transparent;
@@ -432,7 +465,7 @@
   overflow: hidden;
 }
 .seg-btn {
-  font-family: var(--font-serif);
+  font-family: var(--font-sans);
   font-size: var(--fs-13);
   color: var(--ink-soft);
   background: color-mix(in srgb, var(--ink) 4%, transparent);
@@ -769,6 +802,9 @@
   color: var(--seal-ink);
   text-decoration-color: var(--seal);
 }
+/* 暗档那条下划线(898 A2):--seal-line 是 45% 透明的朱砂,压在暗面板上细细一条几乎看不见(亮档 38% 压浅纸看得清),
+   一排链接读成一排粗体字。暗档直接走实色 --seal;悬停仍由字色转朱分得出。 */
+:root[data-theme="dark"] .about-link { text-decoration-color: var(--seal); }
 .about-block {
   padding: 10px 0;
 }

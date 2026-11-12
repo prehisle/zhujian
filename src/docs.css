@@ -415,7 +415,7 @@
 }
 .v-docs .hv { display: grid; grid-template-columns: 1fr; gap: 18px; }
 @media (min-width: 1100px) {
-  .v-docs .hv { grid-template-columns: 300px 1fr; align-items: start; }
+  .v-docs .hv { grid-template-columns: 340px 1fr; align-items: start; }
 }
 .v-docs .hv-side { display: flex; flex-direction: column; gap: 6px; }
 .v-docs .hv-list { display: flex; flex-direction: column; gap: 2px; }
@@ -426,11 +426,28 @@
   min-height: 32px;
   padding: 2px 4px 2px 10px;
   border-radius: var(--radius-sm);
+  /* 英文档 / 带年份的日期 / 放大档下一行放不下时,「旧 / 新」那对整组掉到下一行靠右,⛔ 不挤破、不折字(898 B4 加了一枚钮)。 */
+  flex-wrap: wrap;
 }
 .v-docs .hv-row:hover { background: color-mix(in srgb, var(--ink) 4%, transparent); }
 .v-docs .hv-when { font-size: var(--fs-13); color: var(--ink); font-variant-numeric: tabular-nums; }
-.v-docs .hv-chars { flex: 1; font-size: var(--fs-12); color: var(--ink-faint); }
-.v-docs .hv-picks { display: inline-flex; gap: 4px; }
+.v-docs .hv-chars { flex: 1 0 auto; font-size: var(--fs-12); color: var(--ink-faint); }
+.v-docs .hv-picks { display: inline-flex; gap: 4px; margin-left: auto; }
+/* 「复制这一版」(898 B4):行里一枚字钮,比「旧 / 新」那对轻(那对是这一页的主操作),字色 --ink-soft(它是要读的字)。 */
+.v-docs .hv-copy {
+  flex: none;
+  font: inherit;
+  font-size: var(--fs-12);
+  min-height: 24px;
+  padding: 2px 6px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink-soft);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.v-docs .hv-copy:hover { color: var(--ink); background: color-mix(in srgb, var(--ink) 6%, transparent); }
 .v-docs .hv-pick {
   font: inherit;
   font-size: var(--fs-12);

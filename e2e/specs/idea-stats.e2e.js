@@ -41,6 +41,6 @@ describe("灵感 · 流转统计(born_stage)", () => {
     const stats = await $("#idea-stats");
     await stats.waitForExist({ timeout: 5000 });
     // W4 Q11 / WD-38:「本周捕获 · 转待办」换白话(用户拍定的词表)。
-    expect(/^本周记了 \d+ 条 · \d+% 转成了卡片$/.test(await stats.getText())).toBe(true);
+    expect(/^本周记了 \d+ 条$/.test(await stats.getText())).toBe(true);
   });
 });

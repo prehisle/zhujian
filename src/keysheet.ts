@@ -99,6 +99,8 @@ export function buildKeySheet(isMac: boolean): HTMLElement {
     }),
     ...rowsOf(DOC_VIEW_KEYS, { compose: t("settings.keysDocCompose") }),
     // W3 159 / Q9(WD-19):全局的那一枚(notebook.ts 的文档级监听,不在 keymap 的单键表里)。
+    // 898 B3:切视图那五枚(同住 notebook.ts;顺序 = 侧栏从上到下)。
+    [`${mod}1 – ${mod}5`, t("settings.keysViews")],
     [`${mod}F`, t("settings.keysSearch")],
     // W5 A1 / Q15:同住 notebook.ts 的几枚全局键。改那几只监听时回来对一眼。
     [`${mod}Z`, t("settings.keysUndo")],

@@ -32,6 +32,9 @@ export const filter = defineMessages({
   "filter.layerTime": { zh: "时间「{time}」", en: "time “{time}”" },
   "filter.layerSep": { zh: "、", en: ", " },
   "filter.timeAxis": { zh: "时间", en: "Time" },
+  // 898 D3:同一条轴在看板页上的名字(页头那排到期汇总也有个「今天」,这条按的是创建时间)。
+  "filter.createdAxis": { zh: "记于", en: "Created" },
+  "filter.layerCreated": { zh: "记于「{time}」", en: "created “{time}”" },
   // 157 G3(WD-11):三档是互斥分段,名字也得读成分段 —— 「近1天 / 近7天」读着像后者包含前者。
   "filter.time1d": { zh: "今天", en: "Today" },
   "filter.time7d": { zh: "昨天至6天前", en: "Yesterday–6 days ago" },

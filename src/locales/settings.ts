@@ -32,7 +32,9 @@ export const settings = defineMessages({
   "settings.themeLight": { zh: "亮", en: "Light" },
   "settings.themeDark": { zh: "暗", en: "Dark" },
   "settings.langTitle": { zh: "语言", en: "Language" },
-  "settings.langSub": { zh: "界面语言。「自动」跟随系统;改档后窗口会重新加载,回来还停在这一行。只影响这台电脑,不会同步。", en: "Interface language. Auto follows the system; windows reload after switching and you land back on this row. This computer only; it doesn’t sync." },
+  // 898 B2:这一句常显,其余几句一字不动地住进 settings.langMore(行下那只「说明」折叠)。
+  "settings.langSub": { zh: "界面语言。「自动」跟随系统;改档后窗口会重新加载,回来还停在这一行。", en: "Interface language. Auto follows the system; windows reload after switching and you land back on this row." },
+  "settings.langMore": { zh: "只影响这台电脑,不会同步。", en: "This computer only; it doesn’t sync." },
   "settings.langAuto": { zh: "自动", en: "Auto" },
   "settings.langZh": { zh: "中文", en: "中文" },
   "settings.langEn": { zh: "English", en: "English" },
@@ -46,18 +48,24 @@ export const settings = defineMessages({
   "settings.zoomIn": { zh: "放大", en: "Larger" },
   "settings.zoomOut": { zh: "缩小", en: "Smaller" },
   "settings.compressTitle": { zh: "压缩大图", en: "Compress large images" },
-  "settings.compressSub": { zh: "默认关:按原图保存,截图里的字清清楚楚。打开后,存图前会把大照片缩小并转成 JPEG,省同步流量和空间,但画质有损、原图找不回来;长截图不会被压成窄条。已存的图不受影响。只影响这台设备。", en: "Off by default: images are saved as-is, so text in screenshots stays sharp. When on, large photos are shrunk and re-saved as JPEG first—less sync traffic and storage, but lossy, and the original can’t be recovered; long screenshots are never squeezed into a thin strip. Images already saved aren’t affected. This device only." },
+  // 898 B2:这一句常显,其余几句一字不动地住进 settings.compressMore(行下那只「说明」折叠)。
+  "settings.compressSub": { zh: "默认关:按原图保存,截图里的字清清楚楚。", en: "Off by default: images are saved as-is, so text in screenshots stays sharp." },
+  "settings.compressMore": { zh: "打开后,存图前会把大照片缩小并转成 JPEG,省同步流量和空间,但画质有损、原图找不回来;长截图不会被压成窄条。已存的图不受影响。只影响这台设备。", en: "When on, large photos are shrunk and re-saved as JPEG first—less sync traffic and storage, but lossy, and the original can’t be recovered; long screenshots are never squeezed into a thin strip. Images already saved aren’t affected. This device only." },
   "settings.compressOn": { zh: "开", en: "On" },
   "settings.compressOff": { zh: "关", en: "Off" },
   // 158 G3 / Q6(WD-18):看板删除确认里勾过「不再提示」后,在这里改回来。
   "settings.deleteConfirmTitle": { zh: "删卡片前确认", en: "Confirm before deleting a card" },
-  "settings.deleteConfirmSub": { zh: "开着时,在看板上删一张卡片会先问一句(删了也只是进回收站)。在那句确认里勾过「不再提示」,这里就是关;想再被问,点「开」。只影响这台设备。", en: "When on, deleting a card on the board asks first (deleted cards go to the Trash either way). Ticking “Don’t ask again” in that question turns this off; click On to be asked again. This device only." },
+  // 898 B2:这一句常显,其余几句一字不动地住进 settings.deleteConfirmMore(行下那只「说明」折叠)。
+  "settings.deleteConfirmSub": { zh: "开着时,在看板上删一张卡片会先问一句(删了也只是进回收站)。", en: "When on, deleting a card on the board asks first (deleted cards go to the Trash either way)." },
+  "settings.deleteConfirmMore": { zh: "在那句确认里勾过「不再提示」,这里就是关;想再被问,点「开」。只影响这台设备。", en: "Ticking “Don’t ask again” in that question turns this off; click On to be asked again. This device only." },
   "settings.deleteConfirmOn": { zh: "开", en: "On" },
   "settings.deleteConfirmOff": { zh: "关", en: "Off" },
   "settings.deleteConfirmSaveFailed": { zh: "没存上(这台设备的本地存储写不进去),下次照旧", en: "Couldn’t save (this device’s local storage refused the write); nothing changed" },
   "settings.aliasTitle": { zh: "本机别名", en: "Device alias" },
   // 161 / W4 Q11(WD-35 后半 / WP-21):说清是按空间分别起的(加入一个新空间后别名框是空的,像之前白起了)。同手机 shell.aliasNotePost。
-  "settings.aliasSub": { zh: "给这台设备起个名字,比如「书房台式机」,别的设备上就能看出每条是哪台记的。名字会同步给这个空间里的其他设备;每个空间分别起。", en: "Name this device, e.g. “Study desktop”, so your other devices can tell which one wrote each entry. The name syncs to the other devices in this space; each space has its own." },
+  // 898 B2:这一句常显,其余几句一字不动地住进 settings.aliasMore(行下那只「说明」折叠)。
+  "settings.aliasSub": { zh: "给这台设备起个名字,比如「书房台式机」,别的设备上就能看出每条是哪台记的。", en: "Name this device, e.g. “Study desktop”, so your other devices can tell which one wrote each entry." },
+  "settings.aliasMore": { zh: "名字会同步给这个空间里的其他设备;每个空间分别起。", en: "The name syncs to the other devices in this space; each space has its own." },
   "settings.aliasUnnamed": { zh: "未命名", en: "Unnamed" },
   "settings.thisDevice": { zh: "本机 · {id}", en: "This device · {id}" },
   // A14(WD-35 前半):存好别名后框下那行跟着换(此前仍只写编号)。
@@ -110,6 +118,7 @@ export const settings = defineMessages({
   "settings.keysTopicCreate": { zh: "标签页:新建标签", en: "Tags: new tag" },
   "settings.keysTopicMerge": { zh: "标签页:合并标签", en: "Tags: merge tags" },
   "settings.keysDocCompose": { zh: "长文页:新建长文", en: "Long-form: new long-form note" },
+  "settings.keysViews": { zh: "切换视图(依侧栏顺序:随记 / 看板 / 长文 / 标签 / 搜索)", en: "Switch view (in sidebar order: Notes / Boards / Long-form / Tags / Search)" },
   "settings.keysSearch": { zh: "打开搜索(光标进搜索框)", en: "Open search (cursor in the search box)" },
   // W5 A1 / Q15:全局那几枚(notebook.ts 的文档级监听)。
   "settings.keysUndo": { zh: "撤销刚才那一下(屏幕下方回执还在、带「撤销」时)", en: "Undo the last action (while its notice with “Undo” is still showing)" },

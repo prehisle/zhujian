@@ -95,7 +95,7 @@ let ceremonyOpen = false;
  * ⛔ **收纳不是删**:backup-plan §9 那几段诚实边界一字不动地住在里面 —— 这只构件动的
  * 只是「默认显不显」,别拿它当「这段可以砍」的许可。原生 `<details>`:零状态、面板重建即回到收起。
  */
-export function noteFold(...texts: string[]): HTMLElement {
+export function noteFold(...texts: string[]): HTMLDetailsElement {
   const d = document.createElement("details");
   d.className = "settings-notes";
   const s = document.createElement("summary");
@@ -110,11 +110,17 @@ let nav: BackupNav | null = null;
 /** 「自动备份真跑了一次」那条事件的退订(W4 A17;关面板时摘,见 `closeBackupSection`)。 */
 let liveOff: (() => void) | null = null;
 
+/** pane 顶那只「说明」折叠,等这一趟第一次读到状态时定它默认开不开(898 G4):**还没设置备份**就摊开 ——
+ *  没设置过的人正需要读「备份是什么、钥匙归谁管」;设置过的照旧收起。⛔ 只定这一次(读完即清):之后人自己开合说了算,
+ *  走完仪式那一发重画也不去动它。坏配置 / 封锁态不摊(那两态页上要读的是那句原话)。 */
+let notesAwaitingStatus: HTMLDetailsElement | null = null;
+
 /** 「备份」一节的整块。设置面板每次打开重建一只。
  *  ⚠ §9 那两段常驻边界(footSecrets / footUninstall)不在这儿了 —— 收进 settings.ts
- *  pane 顶的「说明」折叠(与 backup.sub 同一只)。 */
-export function buildBackupSection(navigate: BackupNav): HTMLElement {
+ *  pane 顶的「说明」折叠(与 backup.sub 同一只;`notes` 就是它,见上面那条)。 */
+export function buildBackupSection(navigate: BackupNav, notes: HTMLDetailsElement): HTMLElement {
   nav = navigate;
+  notesAwaitingStatus = notes;
   const body = el("div", "bkup-body", t("common.loading"));
   void refresh(body);
   return body;
@@ -129,6 +135,7 @@ export function closeBackupSection(): void {
   liveOff?.();
   liveOff = null;
   nav = null;
+  notesAwaitingStatus = null;
   if (!ceremonyOpen) return;
   ceremonyOpen = false;
   void invoke("backup_cancel_setup");
@@ -146,6 +153,10 @@ async function refresh(body: HTMLElement, justSetUp = false): Promise<void> {
 function render(body: HTMLElement, st: BackupStatus, justSetUp = false): void {
   ceremonyOpen = false;
   body.replaceChildren();
+  if (notesAwaitingStatus) {
+    notesAwaitingStatus.open = !st.configured && !st.problem && !st.blocked;
+    notesAwaitingStatus = null;
+  }
   // ⭐ **恢复恒显,且与上面那半的状态无关**(§16.6):换了机器 / 重装系统之后这台
   // 根本没配过备份 —— 而那正是恢复的主场景。⛔ 别把它塞进 configured 分支里。
   // 先建它是为了拿到 prefill:列表行的「恢复这一份」要把路径填进这张表(123)。
