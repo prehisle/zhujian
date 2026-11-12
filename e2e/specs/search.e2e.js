@@ -96,7 +96,13 @@ describe("搜索(按内容跨状态查找想法)", () => {
     // 标题两形(只有一个空间 / 有多个空间,逐字断言在 critique-desk-a 那例里):库是累积的,这里只认「回到了空着的那一态」。
     const idle = await $(".center.idle .big");
     await idle.waitForExist({ timeout: 5000 });
-    expect(await idle.getText()).toContain("里查找");
+    // ⚠ 别紧接着 `getText()`:空态带入场动画(`rise`,从透明起),WebDriver 对「还没显形」的元素回空串 ——
+    //    898 / 900 两趟全量各红过一次、单跑恒绿,就是读在了淡入的头几十毫秒里。⇒ 等它读得到字。
+    let seen = "";
+    await browser.waitUntil(async () => (seen = await idle.getText()).includes("里查找"), {
+      timeout: 5000,
+      timeoutMsg: "空着的那一态没出现「…里查找」",
+    }).catch((e) => { throw new Error(`${e.message};最后读到 ${JSON.stringify(seen)}`); });
     await expect(await $(".hit")).not.toExist();
   });
 });
