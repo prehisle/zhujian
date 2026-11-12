@@ -13,8 +13,10 @@ import { boardAction, boardMore, clearInbox, goNotebook, inboxAction, inboxShow,
 // 原生滚动条(C4 的另一半)、字色那几档(C10)是看图 / 对比度门禁的事,不在这里。
 
 const P = "评审C-";
-const LONG_TAG = `${P}一个特别特别长的标签名字用来看筛选条在窄窗口里会不会被窗口边切掉一二三四五六七八九十一二三四五六`;
-const LONG_COL = `${P}一个名字特别特别长的列看看管理面板里会不会被撑宽一二三四五六七八九十`;
+// ⚠ 名字要长到「字宽只有半个字」也照样放不下:Linux runner 上没有中文字体,汉字按缺字框排、窄一半,
+// 五六十个字在 900 宽的筛选条里刚好放得下 ⇒ 「被省略」那格量不到(900 的 CI 红在这儿;产品没坏)。
+const LONG_TAG = `${P}一个特别特别长的标签名字用来看筛选条在窄窗口里会不会被窗口边切掉${"一二三四五六七八九十".repeat(12)}`;
+const LONG_COL = `${P}一个名字特别特别长的列看看管理面板里会不会被撑宽${"一二三四五六七八九十".repeat(8)}`;
 
 const nav = (view) => browser.execute((v) => document.querySelector(`.sidebar nav button[data-view="${v}"]`).click(), view);
 const focusDesc = () =>
@@ -529,6 +531,8 @@ describe("应用评审 C · 视口很矮时筛选条跟着内容滚", () => {
       await goNotebook(view);
       await $(first).waitForExist({ timeout: 8000 });
       await setZoom(2, 350);
+      // 「矮视口」那一档是 matchMedia 的 change 事件挂上去的,比 innerHeight 变晚一帧 ⇒ 等它挂上再量(否则读到的是换档前那一帧)
+      await browser.waitUntil(() => browser.execute(() => document.body.classList.contains("vh-short")), { timeout: 5000, timeoutMsg: "视口矮到 350 了,body 却没挂 vh-short" });
       const top = await layout(view);
       expect({ view, overflowY: top.overflowY, hdrPos: top.hdrPos, scrollable: top.scrollable }).toEqual({ view, overflowY: "auto", hdrPos: "sticky", scrollable: true });
       // 内容区至少占视图高的六成(此前只剩页头与筛选条挤剩的那一点,甚至整个在屏外)

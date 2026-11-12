@@ -702,13 +702,16 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
    *  就地报错的落点)。mount 死了(切了视图 / 空间)按下作废 —— invoke 注入的是当前空间。 */
   async function undoVia(cmd: string, id: string, extra: Record<string, unknown> = {}): Promise<void> {
     if (unmounted) return;
-    hk.want(id, true); // 撤回来的那张重新是选中、焦点回它(W5 A1 / A3:按错了 → Ctrl+Z → 接着在原处)
     try {
       await invoke(cmd, { id, ...extra });
     } catch (e) {
       toastError(t("common.undoFailed", { err: errDetail(e) }));
       return;
     }
+    // 撤回来的那张重新是选中、焦点回它(W5 A1 / A3:按错了 → Ctrl+Z → 接着在原处)。
+    // ⚠ 点名紧贴下面那发 refresh、别挪回 invoke 之前:删掉那一下的离场收尾(leaveCard 260ms 后)也会发一趟 refresh,
+    // 它若落在「点名之后、命令返回之前」,那趟重画里还没有这张卡 ⇒ 点名被白白用掉,卡回来时没人选它(900 的 CI 上撞到)。
+    hk.want(id, true);
     void refresh();
     toastUndone(); // 165 / W5 Q6:撤成了说一声
   }
