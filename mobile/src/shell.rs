@@ -1186,29 +1186,8 @@ pub fn list_sealed_tasks(space_id: String, coord: State<'_, Coord>) -> Result<Ve
     })
 }
 
-#[derive(serde::Serialize)]
-pub struct PaneCounts {
-    trash: i64,
-    sealed: i64,
-}
-
-/// 底栏「回收站/归档册」显形用的两个计数(408-A1:空则不渲染那枚钮)。
-/// 只为显隐服务——别拿它当列表口径,两个面各有自己的 list 命令。
-#[tauri::command]
-pub fn pane_counts(space_id: String, coord: State<'_, Coord>) -> Result<PaneCounts, String> {
-    coord.with_read(&space_id, |conn| {
-        let q = |sql: &str| conn.query_row(sql, [], |r| r.get(0)).map_err(|e| e.to_string());
-        Ok(PaneCounts {
-            // 0041:回收站里只有已删配图时钮也得显形(否则那几张图没有入口)。
-            trash: q("SELECT COUNT(*) FROM items WHERE archived_at IS NOT NULL")?
-                + repo::removed_image_count(conn, repo::TrashScope::All).map_err(|e| e.to_string())?,
-            sealed: q("SELECT COUNT(*) FROM items WHERE sealed_at IS NOT NULL")?,
-        })
-    })
-}
-
 /// 回收站计数(灵感 / 任务两类条目 + 两类已删配图;core `repo::trash_counts`,与桌面同契约)。
-/// ⚠ 与上面 `pane_counts.trash` 口径不同:这里两类条目同回收站列表(双轴行归成就册、不算)。
+/// 两类条目同回收站列表(双轴行归成就册、不算)。
 #[tauri::command]
 pub fn trash_counts(space_id: String, coord: State<'_, Coord>) -> Result<repo::TrashCounts, String> {
     coord.with_read(&space_id, |conn| repo::trash_counts(conn).map_err(|e| e.to_string()))

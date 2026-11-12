@@ -68,7 +68,7 @@ import { errDetail, errText } from "./err";
 import { ideasMarkdown } from "./export-md";
 import { dismissHotkeyBanner, hotkeyBannerDismissed, hotkeys, onHotkeysChange, takenKeys } from "./hotkey-state";
 import { askDocSkew } from "./doc-skew-ask";
-import { type RemovedGroup, listRemovedImages, removedImageCount, removedImagesSection } from "./trash-images";
+import { type RemovedGroup, listRemovedImages, loadTrashCounts, removedImageCount, removedImagesSection } from "./trash-images";
 
 // Mirrors of the Rust contracts (lib.rs) — the fields this view consumes. 想法 = a live
 // idea (未归类 + 已归类 merged); a tag is just metadata it may or may not carry, so one
@@ -1797,10 +1797,15 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
   async function refresh(refocus = false): Promise<void> {
     if (unmounted) return; // 死 mount 不再发起任何刷新(codex M1:防抢食模块级 pendingFocus)
     const seq = ++refreshSeq;
+    // 173:回收站的整张表只在**回收站页**才拉(同 board W3);随记页顶栏那个数走计数命令 `trash_counts`。
+    // 要落回收站的跳转(pendingFocus.tab)在取数**之后**才改 `active` ⇒ 这里先按它判,别取了随记页的数再画回收站。
+    const pf = pendingFocus;
+    const wantTrash = pf && pf.space === mountSpace ? pf.tab === "archived" : active === "archived";
     try {
-      const [ideas, archived, stats, topics, , cmCounts, removed, freshBoards] = await Promise.all([
+      const [ideas, trash, stats, topics, , cmCounts, freshBoards, trashCounts] = await Promise.all([
         invoke<IdeaItem[]>("list_ideas"),
-        invoke<IdeaItem[]>("list_archived"),
+        // 回收站页:进了回收站的随记 + 回收站里的已删配图(用户面 149:宿主 stage 属灵感的那些归这一页)。
+        wantTrash ? Promise.all([invoke<IdeaItem[]>("list_archived"), listRemovedImages("ideas")]) : null,
         // 本地周一 00:00 换成 UTC RFC3339 给后端(后端从不算本地时间,同 due_on 的哲学)。
         invoke<IdeaStats>("idea_stats", { weekStart: startOfWeek().toISOString() }),
         // 筛选 pills 要认识全部标签(死标签回落判断 + 正被筛的零计数标签的标题)。
@@ -1810,19 +1815,26 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
         // 留言计数(0035 徽章):同样并发。它是**聚合计数**这一个真相源,列表另走
         // 分页(§4.14.2 第 4 条)——别为了对齐把留言正文整批拉过来。
         loadCommentCounts(mountSpace),
-        // 回收站里的已删配图(用户面 149):宿主 stage 属灵感的那些归这一页。
-        listRemovedImages("ideas"),
         // 0043:「放进看板 ▸」的候选(同样并发,不加一跳)。
         loadBoards(),
+        // 随记页顶栏「回收站 N」(173):不在回收站页时才要;与列表是独立的读,⛔ 别要求并发写下严格相等。
+        wantTrash ? null : loadTrashCounts(),
       ]);
       if (seq !== refreshSeq) return; // 有更晚的 refresh 已在途:旧响应不落 DOM(乱序覆盖/计数错位)
       boards = freshBoards;
+      const [archived, removed] = trash ?? [[], []];
 
       // 跨视图跳转(P1 #8):seq 守卫之后取走(同 board),陈旧的 refresh 不碰它;
       // 空间对不上=弃(codex 二审 M)。
       let focus = pendingFocus;
       pendingFocus = null;
       if (focus && focus.space !== mountSpace) focus = null;
+      // 173:取数途中又来了一发跳转、要落的页与这一发取的不是同一页 ⇒ 把跳转放回去、按它重取(同 board「取数途中换了页」)。
+      if ((focus ? focus.tab === "archived" : active === "archived") !== wantTrash) {
+        pendingFocus = focus;
+        void refresh();
+        return;
+      }
       if (focus) {
         active = focus.tab;
         if (focus.tab === "ideas") {
@@ -1860,6 +1872,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
         ideas,
         archived,
         removed,
+        trashCounts,
         stats,
         topics,
         cmCounts,
@@ -1910,7 +1923,8 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       if (closeActiveEdit) closeActiveEdit();
       counts.ideas = ideas.length;
       // 顶栏计数报回收站里「有几样东西」:条目 + 已删配图(只剩几张图时钮上不能写 0)。
-      counts.archived = archived.length + removedImageCount(removed);
+      // 173:回收站页按页上的列表数(与 trashBar 的拆分同源);随记页走计数命令。
+      counts.archived = trashCounts ? trashCounts.ideas + trashCounts.idea_images : archived.length + removedImageCount(removed);
       // 165 / W5 A42(WD-31):「本周记了 N 条」只数随记本身 —— 此刻在随记里、本周记下的那几条(与页上的卡对得上)。
       // 此前用 core 的 captured_week(本周生而为随记的全部,含后来展开成长文 / 转成待办的):只新建一篇长文,
       // 回随记页数字从 3 变 4、页上仍是 3 张。⛔ 不动 core 那条统计(比例的分子分母照旧是「转过待办」的史实)。

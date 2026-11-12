@@ -94,7 +94,6 @@ macro_rules! shared_handler {
             $crate::list_tasks,
             $crate::list_archived_tasks,
             $crate::list_sealed_tasks,
-            $crate::pane_counts,
             $crate::trash_counts,
             $crate::sealed_counts_by_board,
             $crate::create_task,

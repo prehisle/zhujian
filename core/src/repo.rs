@@ -35,7 +35,7 @@ const TASK_STAGES: &str = crate::board::TASK_COLUMN_IDS;
 /// 灵感态列的 id 集合,同上。
 const IDEA_STAGES: &str = crate::board::IDEA_COLUMN_IDS;
 /// 回收站成员的 SQL 谓词(`i` = items 别名;双轴行不进回收站,见 [`trash_items`] 头注)。
-/// [`idea_trash`] / [`archived_tasks`] / [`trash_counts`] 共用 —— 计数与列表同一段。
+/// [`trash_items`] / [`idea_trash`] / [`archived_tasks`] / [`trash_counts`] 共用 —— 计数与列表同一段。
 pub(crate) const TRASH_WHERE: &str = "i.archived_at IS NOT NULL AND i.sealed_at IS NULL";
 /// 成就册成员的 SQL 谓词(`i` = items 别名)。[`sealed_tasks`] 与 `board::sealed_counts_by_board` 共用。
 pub(crate) const SEALED_WHERE: &str = "i.sealed_at IS NOT NULL";
@@ -647,15 +647,15 @@ pub fn live_timeline(conn: &Connection) -> rusqlite::Result<Vec<TimelineRow>> {
 /// 触发器整事务回滚、回收站从此清不空。**回收站家族谓词一律 `sealed_at IS NULL`**
 /// (列表/还原/单删/清空共 10 处,漏一处=英文触发器报错重现)。
 pub fn trash_items(conn: &Connection) -> rusqlite::Result<Vec<TrashRow>> {
-    let mut stmt = conn.prepare(
+    let mut stmt = conn.prepare(&format!(
         "SELECT i.id, i.content, i.created_at, i.archived_at, i.stage, i.color, t.id, t.title, t.color, \
                 i.doc_at \
          FROM items i \
          LEFT JOIN item_topic it ON it.item_id = i.id \
          LEFT JOIN topics t ON t.id = it.topic_id \
-         WHERE i.archived_at IS NOT NULL AND i.sealed_at IS NULL \
-         ORDER BY i.archived_at DESC, i.id DESC, t.position IS NULL, t.position, t.updated_at, t.id",
-    )?;
+         WHERE {TRASH_WHERE} \
+         ORDER BY i.archived_at DESC, i.id DESC, t.position IS NULL, t.position, t.updated_at, t.id"
+    ))?;
     let rows = stmt.query_map([], |r| {
         Ok((
             r.get::<_, String>(0)?,
