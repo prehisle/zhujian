@@ -338,7 +338,7 @@ function landingBlocked(): string | null {
 }
 
 // 优先级角标的三档词(1..3;下标 0 恒不取——priority 有值才画这枚 chip)。
-// ⚠ 506 起是 P 记号且方向相反:3 = **P0(最高)** / 2 = P1 / 1 = P2,库里仍存 1/2/3。
+// ⚠ 库里存 1/2/3,3 = **高** / 2 = 中 / 1 = 低(506 起一度是 P0 / P1 / P2 记号,903 用户拍换回)。
 const PRIORITY_LABEL: Record<number, string> = {
   1: t("main.prioLow"),
   2: t("main.prioMid"),
@@ -2538,8 +2538,9 @@ let timelineScrollY = 0;
  *  此前回到顶,连续整理要每次从头划)。其余面照旧从自己的顶部开(79):设置 / 同步这类是「一张表」,
  *  从头看才对。离开那一刻记、开面那一刻还;切空间整个作废(另一份内容,偏移量没有意义)。 */
 // 159 / W3 A17 搜索那半(WM-12 C / WD-28 同形):从结果点进去再回来、或顶栏再开一次,结果列表别回到顶。
-// 161 / W4 Q11(WM-29 后半):设置也回到上次读到的位置 —— 一整页长说明,备份 / 反馈 / 关于要逐屏找,关掉再开此前又从顶划起。
-const KEEP_PANE_SCROLL = new Set(["trash", "search", "settings"]);
+// 161 / W4 Q11(WM-29 后半)一度让设置也回到上次读到的位置;903(用户拍)改回:**每次打开设置都从最上面开始**。
+// ⚠ 从设置进子面(诊断 / 备份…)再返回时回原位置的那条不归这张表管(paneStack 自己记的 y,backToParentPane 还),照旧。
+const KEEP_PANE_SCROLL = new Set(["trash", "search"]);
 let paneScrollY: Record<string, number> = {};
 function rememberPaneScroll(): void {
   if (activePane !== null && KEEP_PANE_SCROLL.has(activePane)) paneScrollY[activePane] = window.scrollY;

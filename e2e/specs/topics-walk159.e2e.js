@@ -71,7 +71,8 @@ const rowGeom = (title) =>
       if (!sec) return { inView: false, found: false, scrollTop: list.scrollTop, rows: document.querySelectorAll(".v-topics .topic").length };
       const r = sec.querySelector(".topic-head").getBoundingClientRect();
       const l = list.getBoundingClientRect();
-      return { inView: r.top >= l.top - 1 && r.bottom <= l.bottom + 1, found: true, head: [r.top, r.bottom], list: [l.top, l.bottom], scrollTop: list.scrollTop };
+      // 容差 4px(903):改名后那一行会比列表顶高出 1.7(Linux)~ 3(Windows)px 而 scrollTop 没动、上面各行高度也没变 —— 看不出来的亚像素挪动,不算「不在眼前」。
+      return { inView: r.top >= l.top - 4 && r.bottom <= l.bottom + 4, found: true, head: [r.top, r.bottom], list: [l.top, l.bottom], scrollTop: list.scrollTop };
     },
     title,
   );

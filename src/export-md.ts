@@ -70,7 +70,8 @@ function taskMarkdown(it: TaskItem, done: boolean, sealed: boolean, extra: strin
   const [first, ...rest] = it.title.split("\n");
   const meta: string[] = [];
   if (it.due_on) meta.push(t("export.due", { date: it.due_on }));
-  if (it.priority !== null) meta.push(PRIORITY_LABEL[it.priority]);
+  // 903:三档改叫「高 / 中 / 低」后,光一个「高」字夹在截止与标签之间读不出是什么 ⇒ 用卡上那枚章的同一句(「优先级·高」)。
+  if (it.priority !== null) meta.push(t("tasktime.priorityChip", { p: PRIORITY_LABEL[it.priority] }));
   const doneAt = it.done_at ?? (sealed ? it.sealed_at : null);
   if (done && doneAt) meta.push(t("export.doneAt", { date: isoDay(doneAt) }));
   const tags = tagText(it.topics);

@@ -9,8 +9,8 @@ import { toastAction } from "./toast";
 // Shared task time-dimension helpers + a reusable due/priority editor, used by
 // both the board and the Today view (one source of truth). `due_on` is a
 // user-local calendar day `YYYY-MM-DD` (or null); `priority` is null = 未设, or
-// 1/2/3 = 低/中/高 —— ⚠ **506 起屏上显示的是 P 记号**(3→P0 最高 / 2→P1 / 1→P2),
-// 库里存的仍是 1/2/3(表级 CHECK 钉死的三档),改的只是字典里那三个词。
+// 1/2/3 = 低/中/高 —— 屏上的词也是「低 / 中 / 高」(903;506 起那段时间显示的是 P 记号 3→P0 / 2→P1 / 1→P2),
+// 库里存的一直是 1/2/3(表级 CHECK 钉死的三档),改的只是字典里那三个词。
 // "今天/逾期" is decided here, on the frontend, against the
 // local calendar day — the backend never computes a local "today".
 /** A tag on a task: a topic id + its title for display + an optional chip color
@@ -47,8 +47,7 @@ export type TaskItem = {
   topics: TaskTag[];
 };
 
-/** 库里的 1/2/3 → 屏上的词。⚠ **506 起是 P 记号,方向是反的**:数字越大越紧急,
- *  而 P 号越小越紧急(3=priHigh=**P0**)⇒ 读 CSS 类 `.p3` 时别照数字猜档位。 */
+/** 库里的 1/2/3 → 屏上的词(低 / 中 / 高,903)。数字越大越紧急:3 = priHigh = 「高」⇒ CSS 类 `.p3` 是最高档。 */
 export const PRIORITY_LABEL: Record<number, string> = {
   1: t("tasktime.priLow"),
   2: t("tasktime.priMid"),
@@ -408,7 +407,7 @@ export function metaRow(
         if (ok) onWritten({ field: "priority", before, after: p });
       });
     };
-    // 高档在前(P0 · P1 · P2 · 清除)—— 本来就是这个序,506 改名后正好是 P 号升序。
+    // 高档在前(高 · 中 · 低 · 清除)。
     const choices: (number | null)[] = [3, 2, 1, null];
     const buttons = choices.map((p) =>
       el("button", {

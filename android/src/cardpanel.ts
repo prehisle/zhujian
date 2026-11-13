@@ -194,7 +194,7 @@ const boardEntryShown = (item: TimelineItem): boolean => {
   if (!isTaskStage(item.stage)) return n >= 2;
   return n >= 1;
 };
-// 506:排列改成高档在前(无 · P0 · P1 · P2)—— P 记号下「P0 最高」是读法的一部分,
+// 506:排列改成高档在前(无 · 高 · 中 · 低;903 起词换回「高 / 中 / 低」,顺序不动)——
 // 3→2→1 倒序列才读得顺,也与桌面 tasktime.ts::openPri 的 [3,2,1,清除] 同向。
 // ⚠ key 仍是库里的 1/2/3(1=低),⛔ 别照 label 的顺序去改 key。「无」留在最前不动:
 // 它是「未设」那一态、不是第四档,位置也是老用户的肌肉记忆。

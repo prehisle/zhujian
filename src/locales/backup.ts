@@ -133,7 +133,7 @@ export const backup = defineMessages({
   "backup.restoreLead3": { zh: "恢复回来的是备份那一刻的数据;同一台机器上恢复会多出一个空间,恢复完会写出它在这台叫什么。", en: "You get the data as of the moment the backup was taken; restoring on the same machine leaves you with one extra space, and once it finishes you are told what it is called here." },
   "backup.restoreLead4": { zh: "跑起来之后不能取消、也没有进度;过程中临时需要大约 3 倍于库大小的磁盘空间。", en: "Once started it cannot be cancelled and shows no progress; it temporarily needs roughly three times the library's size in free disk space." },
   // W4 Q11 / WD-20:路径从哪来。
-  "backup.restoreFileHint": { zh: "上面「已有备份」里的,点那一份的「恢复这一份」就填好了;U 盘、手机上拿来的,点「选文件…」去挑,或在下面填它的完整路径。", en: "For a file under Existing backups above, click its Restore this one and this is filled in; for one from a USB stick or a phone, click Choose file… or enter its full path below." },
+  "backup.restoreFileHint": { zh: "上面「已有备份」里的,点那一份的「恢复这一份」就填好了;U 盘、手机上拿来的,点「选文件…」去挑,或直接填它的完整路径。", en: "For a file under Existing backups above, click its Restore this one and this is filled in; for one from a USB stick or a phone, click Choose file… or type in its full path." },
   "backup.restoreFilePh": { zh: "备份文件(.zjbak)的完整路径", en: "Full path of the backup file (.zjbak)" },
   // 161 / W4 Q11(WD-20):系统打开文件框,只列 .zjbak;选中即填完整路径(src-tauri backup_pick_file)。
   "backup.restorePick": { zh: "选文件…", en: "Choose file…" },

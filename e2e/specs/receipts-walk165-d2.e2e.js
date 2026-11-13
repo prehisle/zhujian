@@ -132,13 +132,13 @@ describe("W5 D2 · 桌面回执与一致性", () => {
     await waitToast("已撤销", "截止撤成了没说「已撤销」");
     await until(async () => (await task(t))?.due_on === null, "截止撤销没写回旧值(没设)");
 
-    // 优先级:选中 P2 回车;再撤销
+    // 优先级:选中「低」回车;再撤销
     await focusDots(".tcard", t);
     await browser.keys("p");
     await until(async () => browser.execute(() => document.activeElement?.classList.contains("choice")), "P 的选项没拿到焦点");
-    await browser.execute(() => [...document.querySelectorAll(".pri-slot .choice")].find((b) => b.textContent === "P2").focus());
+    await browser.execute(() => [...document.querySelectorAll(".pri-slot .choice")].find((b) => b.textContent === "低").focus());
     await browser.keys("Enter");
-    await waitToast("已设优先级 P2", "设了优先级没说");
+    await waitToast("已设优先级 低", "设了优先级没说");
     await until(async () => (await task(t))?.priority === 1, "优先级没存进去");
     await clickUndo();
     await waitToast("已撤销", "优先级撤成了没说「已撤销」");

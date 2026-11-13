@@ -266,7 +266,12 @@ describe("应用评审取舍 · 桌面 E 组", () => {
       await ta.setValue(`/tag ${WORD}`);
       await browser.waitUntil(async () => (await rows()).length >= 1, { timeout: 4000 });
       expect((await rows()).map((x) => x.t)).toEqual(["/tag|打标签"]);
-      await ta.setValue("");
+      // ⚠ 别写 setValue(""):WebKitGTK 的驱动拒空串(Missing text parameter,903 公开 CI 实红);清场走页内。
+      await browser.execute(() => {
+        const c = document.querySelector("#capture");
+        c.value = "";
+        c.dispatchEvent(new Event("input", { bubbles: true }));
+      });
     });
   });
 

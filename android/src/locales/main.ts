@@ -4,10 +4,10 @@
 import { defineMessages } from "./entry";
 
 export const main = defineMessages({
-  // 506:三档改用 P 记号(高→P0 / 中→P1 / 低→P2),同桌面 tasktime.pri*。⛔ 库里仍是 1/2/3。
-  "main.prioLow": { zh: "P2", en: "P2" },
-  "main.prioMid": { zh: "P1", en: "P1" },
-  "main.prioHigh": { zh: "P0", en: "P0" },
+  // 506 起三档是 P 记号(P0 / P1 / P2);903(用户拍)换回「高 / 中 / 低」,同桌面 tasktime.pri*。⛔ 库里仍是 1/2/3。
+  "main.prioLow": { zh: "低", en: "Low" },
+  "main.prioMid": { zh: "中", en: "Medium" },
+  "main.prioHigh": { zh: "高", en: "High" },
   "main.viewImage": { zh: "查看图{n}", en: "View image {n}" },
   "main.deleteImage": { zh: "删除图{n}(保存时生效)", en: "Delete image {n} (takes effect when you save)" },
   "main.undoDeleteImage": { zh: "撤销删除图{n}", en: "Undo deleting image {n}" },
@@ -17,7 +17,7 @@ export const main = defineMessages({
   "main.dueTomorrow": { zh: "明天", en: "Tomorrow" },
   "main.dueOverdueDays": { zh: "逾期 {n} 天", en: "{n} {n|day|days} overdue" },
   "main.dueInDays": { zh: "{n} 天后", en: "In {n} {n|day|days}" },
-  // 506:改名后「P0优先」不成话 ⇒ 角标换成与桌面 tasktime.priorityChip 逐字同形。
+  // 506:角标与桌面 tasktime.priorityChip 逐字同形(903 起读作「优先级·高」)。
   "main.priorityChip": { zh: "优先级·{p}", en: "Priority · {p}" },
   "main.doneAt": { zh: "完成于 {when}", en: "Done {when}" },
   // 长卡折叠那枚钮(用户面 116),与桌面 board.unfold / board.fold 逐字同形;

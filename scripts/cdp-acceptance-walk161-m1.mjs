@@ -21,7 +21,7 @@
 //  A35  同步页「没有其他设备?创建新账户」不在钮里折两行(标准字号);过滤框歇着时不给清除钮留位。
 //  A36  (这个空间一篇长文都没有时)记一笔 →「长文」→ 一个字不写退出:底栏不冒「长文」格、那句提示是中性那档不是绿条。
 //  Q10  (有应用内更新的渠道)「检查更新」点了有回音(已是最新 / 新版提示 / 没查成,三者之一,15 秒内)。
-//  WM-29 设置页有标题、开着时顶栏「设置」点亮、底栏不亮;关了再开回到上次的位置。
+//  WM-29 设置页有标题、开着时顶栏「设置」点亮、底栏不亮;关了再开**从最上面开始**(903 用户拍,反过来了:此前是回到上次的位置)。
 //  A35  冷启首帧底色那座桥在(`__zhujianLaunchTheme`)—— 冷启那 0.6 秒本身只能录屏看(见诚实边界)。
 //
 // 前置:devtools 包、app 在前台、首启告知已同意、界面语言中文(系统中文)、竖屏手机宽、没开任何面。
@@ -228,7 +228,7 @@ const main = async () => {
   step("A19 回执没把「关于」往下推", Math.abs(aboutTop1 - aboutTop0) < 1, `${aboutTop0} → ${aboutTop1}`);
   step("A19 本节里没有那行常驻灰字", await evalJs(`!document.getElementById("feedback-msg")`));
   await clearBar();
-  // WM-29 后半:关了再开回到原处
+  // WM-29 后半(903 用户拍反过来):关了再开从最上面开始(y0 > 0 是自证前置);细判在 cdp-acceptance-picks-q.mjs 的 Q2
   const y0 = await evalJs(`(()=>{const se=document.scrollingElement;se.scrollTop=Math.round(se.scrollHeight*0.45);return se.scrollTop})()`);
   await sleep(300);
   await tapSel("#settings-toggle");
@@ -237,7 +237,7 @@ const main = async () => {
   await until(paneIs("settings-pane"), 3000);
   await sleep(500);
   const y1 = await evalJs(`document.scrollingElement.scrollTop`);
-  step("WM-29 重开设置回到上次的位置", Math.abs(y1 - y0) < 6, `${y0} → ${y1}`);
+  step("WM-29 重开设置从最上面开始", y0 > 100 && y1 < 2, `${y0} → ${y1}`);
 
   // ── A11 / A10 / Q5:设置 → 诊断 → 返回 ──────────────────────────────────────
   await evalJs(`(()=>{document.getElementById("url").value=${JSON.stringify(PROBE_URL)};

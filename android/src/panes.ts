@@ -574,7 +574,20 @@ function renderSealed() {
     cards.length > 0
       ? splitCols(cards, colsOf(box))
       : `<p class="muted empty">${sealedBoard === null ? t("panes.sealedEmpty") : t("boards.sealedNoneHere")}</p>`;
+  // 整排是重画的(横向滚动位随 innerHTML 归零)⇒ 先摆回重画前的位置,再把选中那枚挪进可视区(903,用户拍):
+  // 902 起进面恒选当前看板,看板一多它可能半出屏。⛔ 只动这一排自己的 scrollLeft,别用 scrollIntoView —— 那会带着整页竖向滚。
+  const prevLeft = box.querySelector<HTMLElement>(".sealed-boards")?.scrollLeft ?? 0;
   box.innerHTML = pills + list;
+  const strip = box.querySelector<HTMLElement>(".sealed-boards");
+  const on = strip?.querySelector<HTMLElement>(".fpill.active");
+  if (strip && on) {
+    strip.scrollLeft = prevLeft;
+    const s = strip.getBoundingClientRect();
+    const a = on.getBoundingClientRect();
+    const pad = 12; // 贴边留一点,看得出两侧还有
+    if (a.left < s.left + pad) strip.scrollLeft += a.left - s.left - pad;
+    else if (a.right > s.right - pad) strip.scrollLeft += a.right - s.right + pad;
+  }
 }
 
 function onSealedClick(e: Event) {

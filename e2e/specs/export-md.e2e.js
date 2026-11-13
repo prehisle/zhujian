@@ -100,7 +100,7 @@ describe("设置 · 导出为 Markdown", () => {
   it("看板.md:待办不勾、带截止与优先级;完成列打勾;已归档的进「归档」一节", async () => {
     const md = readFileSync(join(outDir, "看板.md"), "utf8");
     expect(md.startsWith("# 看板\n")).toBe(true);
-    expect(md).toContain(`- [ ] ${TODO} · 截止 2026-12-31 · P0`);
+    expect(md).toContain(`- [ ] ${TODO} · 截止 2026-12-31 · 优先级·高`);
     expect(md).toMatch(new RegExp(`^- \\[x\\] ${DONE} · 完成于 \\d{4}-\\d{2}-\\d{2}$`, "m"));
     const sealedAt = md.indexOf("\n## 归档\n");
     expect(sealedAt).toBeGreaterThan(0);

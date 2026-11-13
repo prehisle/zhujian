@@ -416,8 +416,16 @@
         border: 1px solid var(--seal-line); border-radius: var(--radius-sm);
         background: var(--paper); color: var(--ink); font-size: var(--fs-14);
       }
-      /* 「⋯」展开出的重置入口子行(P1 #11:最重操作不常驻行上) */
-      .space-row.sub { margin-top: -4px; border-style: dashed; background: none; }
+      /* 「⋯」展开出的重置入口子行(P1 #11:最重操作不常驻行上)。
+         903(用户拍):那枚入口此前是虚线框里一行淡字、读不出能按 ⇒ 做成与同页白钮(`.row button.ghost`:
+         「加入空间…」「全部同步…」)同一形的钮 —— 实线框、同字号、整行宽、自己长够 44(触区在盒内,那层 44 halo 不外探)。
+         危险性靠点进去那一拍确认说,不靠把入口藏淡。子行自己不再画框(否则框套框)。 */
+      .space-row.sub { border: none; padding: 0; background: none; }
+      .space-row.sub .act {
+        flex: 1; min-width: 0; min-height: 44px; padding: 8px 16px;
+        border: 1px solid var(--line-strong); border-radius: var(--radius-sm);
+        color: var(--ink-soft); font-size: var(--fs-14);
+      }
       /* 重置确认态:确认钮全宽独行升格、取消拉开在下(P1 #11) */
       .space-row .act.reset-confirm {
         display: block; width: 100%; margin-top: 10px; min-height: 44px;

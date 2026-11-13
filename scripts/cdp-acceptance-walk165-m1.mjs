@@ -8,7 +8,7 @@
 // 逐条(编号同 .zjshots/W5-walk/清单.md):
 //  Q14  时间写法:今天的写「今天 HH:MM」(回收站「删于 …」、已完成卡「完成于 …」、长文「写于 …」);挪列回执「已移到「…」」。
 //  Q6   点了【撤销】、撤成了 ⇒「已撤销」(随记删除 / 挪列 / 截止 / 优先级 / 长文删除五处)。
-//  Q5   (查到手机同病)改截止 / 优先级:「已设截止 M月D日」「已设优先级 P0」带撤销,撤销 = 旧值写回。
+//  Q5   (查到手机同病)改截止 / 优先级:「已设截止 M月D日」「已设优先级 高」带撤销(903 起三档读作高 / 中 / 低),撤销 = 旧值写回。
 //  A20  卡内「新标签名」按键盘的回车(页内合成回车;真按输入法那颗键见回报截图)= 新建并打上 + 回执「已建标签「…」并打上」;同名再来一次 =「已打上标签「…」」。
 //  A45  没改过的卡「更多…」里不列「历史」。
 //  A55  卡在屏下半截时开「历史」、点开一版比对:面板(连同「返回」)整个在底栏上沿之上。
@@ -338,7 +338,7 @@ const main = async () => {
     await doPact(t1, "prio");
     await until(`!!${card(t1)}?.querySelector('[data-prio="3"]')`, 2000);
     await evalJs(`${card(t1)}.querySelector('[data-prio="3"]').click()`);
-    step("Q5 改优先级回执「已设优先级 P0」带撤销", (await barIs(/^已设优先级 P0$/.toString(), 5000)) && (await barActs()).includes("撤销"), await barText());
+    step("Q5 改优先级回执「已设优先级 高」带撤销", (await barIs(/^已设优先级 高$/.toString(), 5000)) && (await barActs()).includes("撤销"), await barText());
     await snap("Q5-priority");
     await clickBarAct("撤销");
     step("Q5 撤销优先级 ⇒「已撤销」、库里回到没设", (await barIs(/^已撤销$/.toString(), 5000)) && (await until(`(async()=>(await window.__TAURI__.core.invoke("list_tasks",{spaceId:window.__w165sp})).find(x=>x.id===${J(t1)})?.priority===null)()`, 4000)), await barText());

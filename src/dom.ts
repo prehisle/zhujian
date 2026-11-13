@@ -114,7 +114,7 @@ export function holdKeyboard(
   };
 }
 
-/** 一排就地展开的选项(看板卡的优先级 P0–P2 / 清除、颜色 1–7 / 无色):焦点进来后 ← → ↑ ↓ 在这一排里挪
+/** 一排就地展开的选项(看板卡的优先级 高 / 中 / 低 / 清除、颜色 1–7 / 无色):焦点进来后 ← → ↑ ↓ 在这一排里挪
  *  (到头绕回)。⚠ 吞掉这四枚键(stopPropagation):document 上的卡片控制器拿方向键挪「选中」,
  *  不截的话按一下 → 选中跑去隔壁那张、这一排晾在原地(W5 A39)。 */
 export function arrowWalk(row: HTMLElement): void {

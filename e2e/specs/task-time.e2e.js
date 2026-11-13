@@ -84,11 +84,16 @@ describe("任务时间维度 · 看板设置截止/优先级", () => {
       });
   });
 
-  it("⋯ 菜单优先级 → 选「P0」→ 落库 priority=3", async () => {
-    // ㊺: open the priority picker from the ⋯ menu's 优先级, then pick P0 (.choice.p3;
-    // 506 起最高档屏上读作 P0,库里仍是 3 —— 选择器与断言走类名,不受改名影响)。
+  it("⋯ 菜单优先级 → 选「高」→ 落库 priority=3", async () => {
+    // ㊺: open the priority picker from the ⋯ menu's 优先级, then pick 高 (.choice.p3;
+    // 库里是 3 —— 点选走类名;屏上的词另断:903 起四枚钮读作「高 / 中 / 低 / 清除」、章读作「优先级·高」)。
     await boardAction(T, "优先级");
     await $(`.tcard*=${T}`).$(".choice.p3").waitForExist({ timeout: 5000 });
+    const words = await browser.execute((title) => {
+      const card = [...document.querySelectorAll(".tcard")].find((c) => c.textContent.includes(title));
+      return [...card.querySelectorAll(".pri-slot .choice")].map((b) => b.textContent);
+    }, T);
+    expect(words).toEqual(["高", "中", "低", "清除"]);
     await browser.execute((title) => {
       const card = [...document.querySelectorAll(".tcard")].find((c) =>
         c.textContent.includes(title),
@@ -102,6 +107,7 @@ describe("任务时间维度 · 看板设置截止/优先级", () => {
     });
     // Chained $(...).$(...) is fine; only combined `descendant *=text` is not.
     await expect($(`.tcard*=${T}`).$(".chip.pri.set.p3")).toExist();
+    expect(await $(`.tcard*=${T}`).$(".chip.pri.set.p3").getText()).toBe("优先级·高");
   });
 });
 
@@ -331,7 +337,7 @@ describe("任务时间维度 · 到期汇总", () => {
 // 高度会随字号档 / 行高 / padding 漂,而「排了几行」是那件事本身。
 // ⛔ **别退回「数 rect 个数」**(510 那版就是这么写的,522 在 WebView2 138 上实测证伪):
 // 同一行上可以有多个 rect(实测同 `y` 同高、宽 288 与 96 的两个)⇒ 那把尺答的是「这段文字被
-// 切成了几段」,不是「排了几行」。它在这两例上今天恰好还绿,是因为 P0/P1/P2/清除 都是固定短词
+// 切成了几段」,不是「排了几行」。它在这两例上今天恰好还绿,是因为 高/中/低/清除 都是固定短词
 // 不触发分段 —— 那是运气不是判据,失效方向是**假红**。字据与复现见 e2e/probes/tagpick-long.e2e.js 头注。
 // ⚠ 新尺仍假定「同一行上各段 rect 的顶边相同」:哪天这几枚钮里混进**不同字号的段**(加图标那种),
 // 同一行也可能落进两个 y ⇒ 假红会以更窄的形回来。⛔ 这是推理不是字据(没造过混合字号的输入)。
@@ -403,6 +409,72 @@ describe("任务时间维度 · 窄列里行内编辑器不折行也不撑破卡
     expect(m.lines).toEqual([1]);
     expect(m.cardOverflow).toBe(0);
     expect(m.bodyOverflow).toBe(0);
+  });
+
+  // 903:三档改叫「高 / 中 / 低」(en High / Medium / Low)—— 章从「优先级·P1」变成带汉字 / 英文长词的一枚。
+  // 窄列里:章自己不折行、不撑破卡片与列体,截止那枚章还在(没被挤掉)。英文档最长的那组(「Priority · Medium」
+  // 与四枚钮 High / Medium / Low / Clear)本套件是中文档、切语言要整窗重载 ⇒ 把**字典里的英文原文**直接写进同一批
+  // 节点上量(量的是 CSS 装不装得下这几个词,词从 locales 来不来由 i18n 门禁守)。
+  it("优先级的章与选择器换成词之后:窄列里不折行、不撑破、不挤掉截止章(中文与英文最长词)", async () => {
+    await boardAction(T, "优先级");
+    await $(`.tcard*=${T}`).$(".choice.p2").waitForExist({ timeout: 5000 });
+    await browser.execute((title) => {
+      const card = [...document.querySelectorAll(".tcard")].find((c) => c.textContent.includes(title));
+      card.querySelector(".choice.p2").click();
+    }, T);
+    await $(`.tcard*=${T}`).$(".chip.pri.set.p2").waitForExist({ timeout: 8000 });
+    const read = (title, chipText) =>
+      browser.execute(
+        (t, text) => {
+          const card = [...document.querySelectorAll(".tcard")].find((c) => c.textContent.includes(t));
+          const body = card.closest(".col-body") ?? card.parentElement;
+          const pri = card.querySelector(".chip.pri.set");
+          const due = card.querySelector(".chip.due.set");
+          if (text !== null) pri.textContent = text;
+          const lines = (elm) => {
+            const r = document.createRange();
+            r.selectNodeContents(elm);
+            return new Set([...r.getClientRects()].map((rc) => Math.round(rc.y))).size;
+          };
+          const cr = card.getBoundingClientRect();
+          const dr = due.getBoundingClientRect();
+          const pr = pri.getBoundingClientRect();
+          return {
+            text: pri.textContent,
+            cardW: card.clientWidth,
+            cardOverflow: card.scrollWidth - card.clientWidth,
+            bodyOverflow: body.scrollWidth - body.clientWidth,
+            priLines: lines(pri),
+            dueLines: lines(due),
+            dueShown: dr.width > 0 && dr.left >= cr.left && dr.right <= cr.right,
+            priInside: pr.left >= cr.left && pr.right <= cr.right,
+            // 两枚章不许叠在一起:要么各占一行,要么同一行上左右不相交(slot 被挤瘪时章会溢出自己的 slot、盖到截止章上,
+            // 而卡片的 scrollWidth 不长 —— 阴性对照量出来的形,光看溢出逮不到)。
+            apart: Math.abs(pr.top - dr.top) > 4 || pr.left >= dr.right || dr.left >= pr.right,
+          };
+        },
+        title,
+        chipText,
+      );
+    const fit = { cardOverflow: 0, bodyOverflow: 0, priLines: 1, dueLines: 1, dueShown: true, priInside: true, apart: true };
+    const zh = await read(T, null);
+    expect(zh.cardW).toBeLessThan(180); // 前置:真在窄列里
+    expect(zh.text).toBe("优先级·中");
+    expect(zh).toMatchObject(fit);
+    const en = await read(T, "Priority · Medium");
+    expect(en).toMatchObject(fit);
+    // 选择器那一排:英文四个词,各一行、不撑破
+    await boardAction(T, "优先级");
+    await $(`.tcard*=${T}`).$(".pri-slot .choice").waitForExist({ timeout: 5000 });
+    await browser.execute((title) => {
+      const card = [...document.querySelectorAll(".tcard")].find((c) => c.textContent.includes(title));
+      [...card.querySelectorAll(".pri-slot .choice")].forEach((b, i) => (b.textContent = ["High", "Medium", "Low", "Clear"][i]));
+    }, T);
+    const m = await measure(T, ".pri-slot");
+    expect(m.lines).toEqual([1, 1, 1, 1]);
+    expect(m.cardOverflow).toBe(0);
+    expect(m.bodyOverflow).toBe(0);
+    await browser.keys("Escape"); // 收起选择器(没写库),别把展开态留给下一例
   });
 
   // 566(用户面 61):顶栏字母态(board.css 那个 1099 断点之下)里「到期汇总」与「排序」两枚
