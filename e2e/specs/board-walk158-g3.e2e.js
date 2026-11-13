@@ -6,7 +6,7 @@ import { invoke, goNotebook, boardAction, boardMenuHas, clearInbox, boardMore } 
 //  Q2 ⋯「移到 ▸」子菜单列出所有列(本列除外)、已完成卡一步「打回「待办」」;
 //  Q3 取消归档回执带「去看看」,点了回看板定位那张;
 //  Q4 已完成卡不显示逾期,只留灰色截止日期;Q13 逾期一天说「逾期 1 天」;
-//  Q6 勾「不再提示」那一下回执写明在设置哪里改回,设置里那枚开关改得回来;
+//  Q6(删卡确认 +「不再提示」+ 设置里那枚开关)已随 F 组 F4 / R3 整套退场,锚在 picks-desk-f.e2e.js;
 //  Q10 每日提醒正文带「3 天内」;Q12 放大框底下那行小字;
 //  Q13 排序时按住卡拖说一句、管理列说明说人话、归档页页头 / 返回钮 / 卡上日期;
 //  A7 撤回为随记的「撤销」转回待办并把截止 / 优先级原样设回。
@@ -61,7 +61,6 @@ async function cleanupTitles() {
 describe("158 G3 · 看板规矩 Q1–Q13(桌面)+ A7 对齐", () => {
   before(async () => {
     await cleanupTitles();
-    await browser.execute(() => localStorage.removeItem("ysNotebook.taskArchiveConfirmDismissed"));
     await browser.execute(() => localStorage.setItem("zhujian.board-sort", "manual"));
     await goNotebook("board");
   });
@@ -69,7 +68,6 @@ describe("158 G3 · 看板规矩 Q1–Q13(桌面)+ A7 对齐", () => {
   after(async () => {
     await browser.execute(() => {
       document.querySelector(".undo-toast")?.remove();
-      localStorage.removeItem("ysNotebook.taskArchiveConfirmDismissed");
       localStorage.setItem("zhujian.board-sort", "manual");
     });
     await cleanupTitles();
@@ -234,39 +232,6 @@ describe("158 G3 · 看板规矩 Q1–Q13(桌面)+ A7 对齐", () => {
     expect(s.date).toMatch(/^完成于 今天 \d{2}:\d{2}$/); // 165 / W5 Q14:写到时刻(今天「今天 15:18」)
     await $("#seal-toggle").click();
     await browser.waitUntil(async () => (await $(".v-board header h1").getText()) === "任务", { timeout: 5000 }); // 0043:页头 = 看板名
-  });
-
-  it("Q6:勾「不再提示」删的那一下,回执写明在设置哪里改回;设置里「删任务前确认」开回来就又问", async () => {
-    const A = `${P}Q6-甲`;
-    const B = `${P}Q6-乙`;
-    await invoke("create_task", { title: B });
-    await invoke("create_task", { title: A });
-    await goNotebook("board");
-    await $(`.tcard*=${A}`).waitForExist({ timeout: 8000 });
-    await boardAction(A, "删除");
-    await browser.execute((sel) => {
-      const card = eval(sel);
-      card.querySelector(".dont-ask input[type=checkbox]").checked = true;
-      card.querySelector(".act.primary").click();
-    }, cardEl(A));
-    await waitToast("已移入回收站。以后删卡片不再问,要改回:设置 → 通用 →「删卡片前确认」");
-    // 设置 → 通用:那枚开关此刻在「关」
-    await browser.execute(() => document.getElementById("settings-entry").click());
-    await $("#delete-confirm-off").waitForExist({ timeout: 5000 });
-    expect(await browser.execute(() => document.querySelector("#delete-confirm-off").classList.contains("on"))).toBe(true);
-    await browser.execute(() => document.querySelector("#delete-confirm-on").click());
-    expect(await browser.execute(() => localStorage.getItem("ysNotebook.taskArchiveConfirmDismissed"))).toBe(null);
-    await browser.execute(() => {
-      document.querySelector(".settings-overlay").dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
-    });
-    await $(".settings-overlay").waitForExist({ timeout: 5000, reverse: true });
-    // 再删一张:又问了
-    await boardAction(B, "删除");
-    await browser.waitUntil(() => browser.execute((sel) => !!eval(sel)?.querySelector(".confirm-q"), cardEl(B)), {
-      timeout: 5000,
-      timeoutMsg: "开关拨回「开」后删任务没再问",
-    });
-    await browser.keys(["Escape"]);
   });
 
   it("Q10:每日提醒正文与看板汇总钮同一句(带「3 天内」);只在有逾期 / 今天时才响", async () => {

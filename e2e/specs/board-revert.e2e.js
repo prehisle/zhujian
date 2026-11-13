@@ -7,8 +7,7 @@ import { invoke, goNotebook, clearInbox, boardAction, boardMenuHas } from "./sup
 //      restore/seed fork) — untagged → 未归类, still-tagged → 已归类. So after a revert
 //      the item is no longer a task (list_tasks no longer has it) but is in list_inbox.
 //      进行中/已完成 tasks have no such button.
-//   2. 删除二次确认 + 不再提示 — a board 删除 shows an inline confirm the first time,
-//      with a persisted opt-out checkbox.
+//   2. 删卡片不再先问(F 组 F4 / R3)— 删除直接进回收站 + 带「撤销」的回执(此前是行内确认 +「不再提示」勾选)。
 
 // Click an inline-confirm pill (e.g. 撤回) on the card carrying `title` by exact text.
 // (The card's primary actions moved into the ⋯ menu — use boardAction for those; this
@@ -87,7 +86,7 @@ describe("任务看板 · 撤回为灵感", () => {
   });
 });
 
-describe("任务看板 · 删除二次确认 + 不再提示", () => {
+describe("任务看板 · 删卡片不再先问(F 组 F4 / R3)", () => {
   const T1 = "删确认-甲";
   const T2 = "删确认-乙";
 
@@ -95,45 +94,43 @@ describe("任务看板 · 删除二次确认 + 不再提示", () => {
     await invoke("create_task", { title: T2 });
     await invoke("create_task", { title: T1 }); // T1 lands at the front of 待办
     await goNotebook("board");
-    // Start from a known state: the confirm opt-out is NOT set.
-    await browser.execute(() => localStorage.removeItem("ysNotebook.taskArchiveConfirmDismissed"));
-    await goNotebook("board");
   });
 
   after(async () => {
-    // Don't leak the opt-out into other specs' board cards.
-    await browser.execute(() => localStorage.removeItem("ysNotebook.taskArchiveConfirmDismissed"));
+    await browser.execute(() => {
+      document.querySelector(".undo-toast")?.remove();
+      localStorage.removeItem("ysNotebook.taskArchiveConfirmDismissed");
+    });
   });
 
-  it("首次点删除 → 弹「移入回收站?」确认(不立刻删)→ 勾不再提示 + 删除 → 进回收站", async () => {
+  it("点删除 → 不问、直接进回收站,回执「已移入回收站」带「撤销」;点撤销 → 回到待办", async () => {
     await (await $(".col.todo").$(`.tcard*=${T1}`)).waitForExist({ timeout: 8000 });
-
-    // Click 删除 (⋯ menu): an inline confirm appears; the task is NOT archived yet.
     await boardAction(T1, "删除");
-    await $(".tcard .confirm-q").waitForExist({ timeout: 5000 });
-    const q = await $(".tcard .confirm-q").getText();
-    expect(q).toContain("移入回收站");
-    expect(await inTrash(T1)).toBe(false); // confirm shown, not yet deleted
-
-    // Tick 不再提示, then click the confirm's 删除.
-    await browser.execute((t) => {
-      const card = [...document.querySelectorAll(".tcard")].find((c) => c.textContent.includes(t));
-      card.querySelector(".dont-ask input[type=checkbox]").checked = true;
-    }, T1);
-    await browser.execute((t) => {
-      const card = [...document.querySelectorAll(".tcard")].find((c) => c.textContent.includes(t));
-      [...card.querySelectorAll("button.act.primary")].find((b) => b.textContent === "删除").click();
-    }, T1);
-
-    await browser.waitUntil(async () => await inTrash(T1), { timeout: 8000 });
+    await browser.waitUntil(async () => await inTrash(T1), { timeout: 8000, timeoutMsg: "点了删除没直接进回收站(还在等确认?)" });
+    // 没有确认条、没有「不再提示」
+    expect(await browser.execute(() => document.querySelectorAll(".tcard .confirm-q, .dont-ask").length)).toBe(0);
+    await $(".undo-toast").waitForExist({ timeout: 5000 });
+    const toast = await browser.execute(() => ({
+      text: document.querySelector(".undo-toast .undo-text").textContent,
+      btns: [...document.querySelectorAll(".undo-toast button")].map((b) => b.textContent),
+    }));
+    expect(toast).toEqual({ text: "已移入回收站", btns: ["撤销"] });
+    await browser.execute(() => document.querySelector(".undo-toast .undo-btn").click());
+    await browser.waitUntil(async () => await taskExists(T1), { timeout: 8000, timeoutMsg: "撤销没把卡还回来" });
+    await (await $(".col.todo").$(`.tcard*=${T1}`)).waitForExist({ timeout: 8000 });
   });
 
-  it("勾过不再提示后,再删另一张卡 → 不弹确认、直接进回收站", async () => {
+  it("旧机器上留着的「不再提示」偏好(开 / 关)都不再有任何作用:删就是直接删", async () => {
     await (await $(".col.todo").$(`.tcard*=${T2}`)).waitForExist({ timeout: 8000 });
-    // Opt-out persisted from the previous test → no confirm, straight to 回收站.
+    // 旧键两种取值各走一遍:没有(= 旧的「要问」)与 "1"(= 旧的「不问」)
+    await browser.execute(() => localStorage.removeItem("ysNotebook.taskArchiveConfirmDismissed"));
     await boardAction(T2, "删除");
     await browser.waitUntil(async () => await inTrash(T2), { timeout: 8000 });
-    // No confirm was ever shown for this delete.
     await expect($(".tcard .confirm-q")).not.toExist();
+    await browser.execute(() => localStorage.setItem("ysNotebook.taskArchiveConfirmDismissed", "1"));
+    await boardAction(T1, "删除");
+    await browser.waitUntil(async () => await inTrash(T1), { timeout: 8000 });
+    // 回执不再提「以后不问 / 在设置里改回」
+    expect(await browser.execute(() => document.querySelector(".undo-toast .undo-text").textContent)).toBe("已移入回收站");
   });
 });

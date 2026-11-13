@@ -17,6 +17,7 @@ import { t } from "./i18n";
 import "./devices.css";
 import { elText as el, btn } from "./dom";
 import { errLine } from "./err";
+import { copyFailText } from "./clipboard";
 import { markLeft } from "./sync-gone";
 
 /** `sync_device_admin` 的 action:直接用 core `DeviceAction` 的变体名(DTO 同源是
@@ -299,7 +300,7 @@ function idLine(device: string, sid: string, deps: Deps): HTMLElement {
       btn(t("devices.copyId"), "hbtn dev-copy", () => {
         void navigator.clipboard.writeText(device).then(
           () => deps.toast(t("devices.idCopied")),
-          () => deps.toast(t("devices.copyFailed")),
+          (e) => deps.toast(copyFailText(e)),
         );
       }),
     );

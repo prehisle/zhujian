@@ -21,6 +21,9 @@ export const filter = defineMessages({
   // ⚠ 只写 Ctrl 不写 ⌘,与上面 pillTitle 同口径(mac 桌面未正式对外发)。
   "filter.multiHint": { zh: "按住 Ctrl 点另一枚可多选", en: "Ctrl-click another tag to add it" },
   "filter.unionHint": { zh: "{n} 个标签 · 挂任一个都算", en: "{n} tags · any one counts" },
+  // 902 F5:标签行两行折叠的那枚钮(桌面独有;箭头 ▾ / ▴ 由 filter-bar.ts 另挂、不进文案)。
+  "filter.more": { zh: "更多 {n}", en: "{n} more" },
+  "filter.less": { zh: "收起", en: "Show less" },
   "filter.collapseKids": { zh: "收起子标签", en: "Hide child tags" },
   "filter.expandKids": { zh: "展开 {n} 个子标签", en: "Show {n} child {n|tag|tags}" },
   // 时间轴(461):按创建时间三档互斥分区 + 「所有」重置(复用 filter.all)。仅桌面接线,

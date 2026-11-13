@@ -26,6 +26,7 @@ import "./sync.css";
 import { elText as el, btn, focusables, holdKeyboard, type KeyboardHold } from "./dom";
 import { errLine, errNode, setErrSpaceLabel } from "./err";
 import { copyButton } from "./clipboard";
+import { noteFold } from "./backup";
 
 // 同步服务器默认地址(官方那台)——创建账户/加入设备(本文件)+ 加入空间(notebook.ts)三处入口:从没连上过任何服务器时预填它,
 // 地址框下那一行拿它判「这是不是官方服务器」(W4 Q2 / Q3)。
@@ -429,7 +430,7 @@ function openPanel(): void {
   // 接管键盘(W4 A3,同设置浮层;dom.ts `holdKeyboard`):焦点进面板、Tab 圈在面板里、背后按不到,
   // 关掉后焦点回侧栏「同步」那枚钮。⚠ 先接管、后画:它在接管那一刻记下「打开它的那枚」(此刻
   // 焦点还在侧栏钮上);面板这时还是空的,焦点由下面那次 renderPanel("first") 放进去。
-  hold = holdKeyboard(overlay, panel, { onEscape: () => closePanel() });
+  hold = holdKeyboard(overlay, panel, { onEscape: () => escapeOneLevel() });
   renderPanel("first");
 }
 
@@ -456,13 +457,32 @@ function closePanel(): void {
   resetDevicesPage();
 }
 
+/** 每一页按 Esc 退到哪(902 E6):与那一页自己的「返回」钮同一个去处;没有「返回」的两页(首页、出码页 —— 出码页自己
+ *  那枚钮就叫「关闭」,配对活着时重开面板也直接回到它)= 关面板。⛔ 新增一页必须在这里登记(Record 穷尽,漏了编译不过)。 */
+const ESC_BACK: Record<Mode, Mode | null> = {
+  home: null,
+  pair: null,
+  create: "home",
+  join: "home",
+  advanced: "home",
+  devices: "home",
+  server: "advanced",
+};
+
+/** Esc 只退一层(902 E6):在二级页上先回上一层,到了首页再按才关。此前不管在哪一页都整个关掉。 */
+function escapeOneLevel(): void {
+  const back = ESC_BACK[mode];
+  if (back === null) closePanel();
+  else goto(back);
+}
+
 function onPanelKey(e: KeyboardEvent): void {
   // 错误后面那枚「网络自检」(err.ts)会把设置面板叠在本面板上面:两只 Esc 监听都挂在
   // document 上、谁也拦不住谁,不让一步 ⇒ 一次 Esc 两层全关。上面那层先走。
   if (document.querySelector(".settings-overlay")) return;
   if (e.key === "Escape") {
     e.stopPropagation();
-    closePanel();
+    escapeOneLevel();
   }
 }
 
@@ -572,19 +592,21 @@ function renderHome(body: HTMLElement): void {
     body.appendChild(
       el("p", "sync-note", t("sync.homeIntro")),
     );
+    // 902 F6 ①:这一屏只有一枚主钮「创建账户」;「用配对码加入」降成它下面一行淡字链接(此前两枚并排同形,
+    // 第一次来的人看不出该点哪枚)。
     const acts = el("div", "sync-actions");
-    acts.appendChild(btn(t("sync.createAccount"), "hbtn", () => goto("create")));
+    acts.appendChild(btn(t("sync.createAccount"), "hbtn primary", () => goto("create")));
     // 「用配对码加入」只在 main(装机 onboarding,本机数据保留并合并;space-entry-
     // plan §4):非 main 空间同步唯一路 = 创号;「把别处的账户带过来」在空间菜单的
     // 「加入空间」——那是独立入口,不背到这里。
-    if (currentSpaceId() === MAIN_SPACE) {
-      acts.appendChild(btn(t("sync.joinWithCode"), "hbtn", () => goto("join")));
-    } else {
+    const main = currentSpaceId() === MAIN_SPACE;
+    if (!main) {
       body.appendChild(
         el("p", "sync-dim", t("sync.nonMainHint")),
       );
     }
     body.appendChild(acts);
+    if (main) body.appendChild(btn(t("sync.joinLink"), "sync-link sync-join-link", () => goto("join")));
     body.appendChild(spacesEntryRow()); // 不管几个空间都在(W4 Q6 ★①),见该函数
     return;
   }
@@ -794,11 +816,12 @@ function submitRow(
   run: () => Promise<unknown>,
   url: () => string,
   done: () => void,
+  goCls = "hbtn",
 ): void {
   const acts = el("div", "sync-actions");
   const busy = el("span", "sync-busy");
   const err = el("div", "sync-err sync-form-err");
-  const go = btn(label, "hbtn", () => {
+  const go = btn(label, goCls, () => {
     if (go.disabled) return;
     go.disabled = true;
     busy.textContent = t("sync.connecting");
@@ -818,14 +841,30 @@ function submitRow(
 }
 
 function renderCreate(body: HTMLElement): void {
+  // 902 F6 ②(用户拍板;此前 W4 Q2 ★① 是三段说明全摊开 + 地址框常显,一屏字压着一枚钮):
+  //  · 「这是在做什么」与「钥匙丢了回不来」两句**常显**;
+  //  · 「同步是可选的…」那段在上一屏刚读过(同一个键),这里收进「说明」折叠 —— ⛔ 收纳不是删;
+  //  · 服务器地址收成一行「服务器:官方(sync.zhujian.app)」+「更改…」,点了才摊开原来那组(标签 + 框 + 框下提示);
+  //    预填的不是官方地址(这台上次连的是自建那台)⇒ 一来就摊开,别把「这不是官方服务器」藏在一枚链接后面。
   body.appendChild(el("p", "sync-note", t("sync.createIntro")));
-  // Q2 ★①(WD-21):做决定的这一屏把指南那几句说全 —— 同步是可选的、不开就只在这台、内容先在本机加密(同第一屏那句),
-  // 以及丢了回不来。
-  body.appendChild(el("p", "sync-note", t("sync.homeIntro")));
   body.appendChild(el("p", "sync-note", t("sync.createLoseNote")));
+  body.appendChild(noteFold(t("sync.homeIntro")));
   // Q2 / Q3:地址框有标签、框下一行说是不是官方服务器;预填这台最近一次连上的那台。
   const server = serverField(prefillServerUrl());
-  body.appendChild(server.wrap);
+  if (server.input.value.trim() === DEFAULT_SYNC_URL) {
+    const line = el("div", "sync-server-line");
+    line.appendChild(el("span", "", t("sync.serverOfficialLine", { host: new URL(DEFAULT_SYNC_URL).host })));
+    line.appendChild(
+      btn(t("sync.serverChange"), "sync-link sync-server-change", () => {
+        line.replaceWith(server.wrap);
+        server.input.focus();
+        server.input.select();
+      }),
+    );
+    body.appendChild(line);
+  } else {
+    body.appendChild(server.wrap);
+  }
   submitRow(
     body,
     t("sync.createGo"),
@@ -837,6 +876,7 @@ function renderCreate(body: HTMLElement): void {
       showToast(t("sync.accountCreated"));
       goto("home");
     },
+    "hbtn primary", // 「创建」是这一屏的主钮,「返回」照旧淡
   );
 }
 

@@ -200,12 +200,20 @@ async function render(panel: HTMLElement, refocus: Refocus = "keep"): Promise<vo
   body.push(err);
 
   function showErr(msg: string): void {
+    clearErr();
     err.textContent = msg;
     err.hidden = false;
   }
   function clearErr(): void {
     err.hidden = true;
     err.textContent = "";
+    for (const n of panel.querySelectorAll(".bcm-row-err")) n.remove();
+  }
+  /** 「这块看板」那几行(新卡落在 / 完成列 / 看板名)触发的错:红字挨着那一行正下方(902 E3)。此前落在列清单下面那格
+   *  共用的 `.bcm-err`,与点的那一行隔着「新增一列」和半个面板。一次只留一句(换一行再错,旧的那句收掉)。 */
+  function showRowErr(rowEl: HTMLElement, msg: string): void {
+    clearErr();
+    rowEl.after(el("div", { className: "bcm-err bcm-row-err", textContent: msg }));
   }
 
   /** 一笔写落地之后:清错、看板重画、本面板按新真相重建。 */
@@ -426,22 +434,31 @@ async function render(panel: HTMLElement, refocus: Refocus = "keep"): Promise<vo
       el("h3", { className: "bcm-sub", textContent: t("cols.boardSection") }),
     ]);
     // 新卡落在:除完成列以外的活列。
+    // 三行各自先建出来:里面的钮被拒时红字要落在自己那一行下面(showRowErr),回调里得拿得到那一行。
+    const landingRow = roleRow(t("cols.landingLabel"), []);
+    const doneRow = roleRow(t("cols.doneLabel"), []);
+    const nameRow = roleRow(t("cols.boardName"), []);
+    const fill = (rowEl: HTMLElement, items: HTMLElement[]): void => {
+      (rowEl.querySelector(".bcm-role-pills") as HTMLElement).append(...items);
+    };
     const landingPills = rows
       .filter((c) => c.id !== board.done)
       .map((c) =>
-        pill(columnName(c), c.id === board.landing, () => void write(() => setBoardLanding(board.id, c.id))),
+        pill(columnName(c), c.id === board.landing, () => void write(() => setBoardLanding(board.id, c.id), landingRow)),
       );
-    sec.append(roleRow(t("cols.landingLabel"), landingPills));
+    fill(landingRow, landingPills);
+    sec.append(landingRow);
     // 完成列:「不设」+ 除落点以外的活列;只有一列的看板不能设(core 同拒,这里不摆)。
     const donePills = [
-      pill(t("cols.doneNone"), board.done === null, () => void write(() => setBoardDone(board.id, null))),
+      pill(t("cols.doneNone"), board.done === null, () => void write(() => setBoardDone(board.id, null), doneRow)),
       ...(rows.length < 2
         ? []
         : rows
             .filter((c) => c.id !== board.landing)
-            .map((c) => pill(columnName(c), c.id === board.done, () => void write(() => setBoardDone(board.id, c.id))))),
+            .map((c) => pill(columnName(c), c.id === board.done, () => void write(() => setBoardDone(board.id, c.id), doneRow)))),
     ];
-    sec.append(roleRow(t("cols.doneLabel"), donePills));
+    fill(doneRow, donePills);
+    sec.append(doneRow);
     sec.append(el("p", { className: "bcm-hint", textContent: board.done === null ? t("cols.doneNoneHint") : t("cols.doneHint") }));
 
     // 改看板名(no-op 闸同列改名:比显示名,别把本端字典的种子名写进库)。
@@ -455,13 +472,14 @@ async function render(panel: HTMLElement, refocus: Refocus = "keep"): Promise<vo
     async function commitName(): Promise<void> {
       const next = nameInput.value.trim();
       if (next === "") {
-        showErr(t("cols.emptyBoardName"));
+        showRowErr(nameRow, t("cols.emptyBoardName"));
         return;
       }
       if (next === boardName(board)) return;
-      await write(() => renameBoard(board.id, next));
+      await write(() => renameBoard(board.id, next), nameRow);
     }
-    sec.append(roleRow(t("cols.boardName"), [nameInput, saveName]));
+    fill(nameRow, [nameInput, saveName]);
+    sec.append(nameRow);
 
     // 删这块看板:种子看板不给;有卡(含已删列里的)= 淡着、点了说还剩几张(同删列)。
     if (board.deletable) {
@@ -535,11 +553,11 @@ async function render(panel: HTMLElement, refocus: Refocus = "keep"): Promise<vo
     });
     return b;
   }
-  async function write(op: () => Promise<void>): Promise<void> {
+  async function write(op: () => Promise<void>, rowEl: HTMLElement): Promise<void> {
     try {
       await op();
     } catch (e) {
-      showErr(errText(e));
+      showRowErr(rowEl, errText(e));
       return;
     }
     await afterWrite();

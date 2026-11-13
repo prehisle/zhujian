@@ -131,6 +131,15 @@ export function buildBackupSection(navigate: BackupNav, notes: HTMLDetailsElemen
  * ⭐ 盘上此刻什么都没写过 ⇒ 下次是干净的首次使用(⛔ 反过来「先落盘再让用户抄」会留下
  * 一把没人抄过的钥)。
  */
+/** 设置浮层的 Esc 先问这里(902 E6:Esc 只退一层):备份码那一步开着时,Esc = 它自己那枚「取消」(回到备份页),
+ *  返回 true 表示这一下已经用掉、别再关浮层。码框里的 Esc 照旧只清框(框上自己拦了,到不了这里)。 */
+let ceremonyCancel: (() => void) | null = null;
+export function escapeBackupCeremony(): boolean {
+  if (!ceremonyOpen || ceremonyCancel === null) return false;
+  ceremonyCancel();
+  return true;
+}
+
 export function closeBackupSection(): void {
   liveOff?.();
   liveOff = null;
@@ -223,6 +232,9 @@ function backupHalf(body: HTMLElement, st: BackupStatus, prefill: Prefill, justS
  *    ⛔ 任何「恢复 = 覆盖回去」的暗示都是在描述另一个产品(v1 明确不做覆盖恢复)。
  * 2. **前置提示必须在按钮之前**:不能取消 / 没有进度 / 临时要 ≈3 倍库大小的盘(§16.9),
  *    ⛔ 别为了版面把它们挪到结果里 —— 那时用户已经等在那儿了。
+ *    排法(902 F7,用户拍板):表单分三步 —— ① 备份文件 ② 备份码 ③ 开始前要知道。第 ③ 步里「不能取消 / 没进度 / 3 倍盘」
+ *    (红字)与「绝不覆盖、新建一个空间」两句**常显**;「恢复出来的空间不同步…」「是备份那一刻的数据…」两句收进
+ *    折叠「恢复之后会怎样」—— 四句仍都在「开始恢复」之前、一句没删,折叠的只是恢复**之后**才用得上的那两句。
  * 3. **失败与「库已经在盘上、只是没装配上」是两回事**(§16.8 幕⑦):后者⛔ 绝不许
  *    显示成「恢复失败」,那会诱导用户再恢复一次、于是多出第二个空间。
  */
@@ -243,7 +255,7 @@ function buildRestoreSection(): { wrap: HTMLElement; prefill: Prefill } {
     }
   });
   // 列表行「恢复这一份」(123):表没开就开,路径填进去,光标落到备份码那格 —— 只是替用户
-  // 抄路径,⛔ 不替他按「恢复」(四条前置提示得先让他读到,见本节头注第 2 条)。
+  // 抄路径,⛔ 不替他按「恢复」(第 ③ 步「开始前要知道」得先让他读到,见本节头注第 2 条)。
   const prefill: Prefill = (path) => {
     if (fields === null) toggle.click();
     if (fields === null) throw new Error("restore form did not open");
@@ -265,10 +277,12 @@ type RestoreFields = { file: HTMLInputElement; code: HTMLInputElement };
 function renderRestoreForm(form: HTMLElement): RestoreFields {
   const file = document.createElement("input");
   file.type = "text";
+  file.id = "bkup-restore-file"; // 给第 ① 步那枚 <label for> 认(表单同一时刻至多一张)
   file.className = "alias-input bkup-input";
   file.placeholder = t("backup.restoreFilePh");
   const code = document.createElement("input");
   code.type = "text";
+  code.id = "bkup-restore-code";
   // 与设置时抄回码那只框同形(等宽、宽到放得下整串码,W4 A18)。
   code.className = "alias-input bkup-input bkup-code-input";
   code.placeholder = t("backup.restoreCodePh");
@@ -323,17 +337,33 @@ function renderRestoreForm(form: HTMLElement): RestoreFields {
 
   const acts = el("div", "bkup-acts", "");
   acts.appendChild(go);
+  // 步名:序号 + 名字。①② 是真 <label for>(读屏念得出这只框是什么;此前两只框只有灰字占位),③ 不对着框、是小标题。
+  const step = (n: string, name: string, forId: string | null): HTMLElement => {
+    const h = document.createElement(forId === null ? "p" : "label");
+    h.className = "bkup-step";
+    if (forId !== null) (h as HTMLLabelElement).htmlFor = forId;
+    h.textContent = `${n} ${name}`;
+    return h;
+  };
+  // 「恢复之后会怎样」折叠(同「说明」那只 noteFold 的形:原生 <details>、零状态,表单重开即回到收起)。
+  const after = document.createElement("details");
+  after.className = "settings-notes bkup-after";
+  const afterSum = document.createElement("summary");
+  afterSum.textContent = t("backup.restoreAfter");
+  after.append(afterSum, el("p", "settings-sub", t("backup.restoreLead2")), el("p", "settings-sub", t("backup.restoreLead3")));
   form.append(
-    // ⭐ 四条前置提示在按钮之前(§16.2 / §16.11 / §16.9),⛔ 一条都别删。
-    el("p", "settings-sub", t("backup.restoreLead1")),
-    el("p", "settings-sub", t("backup.restoreLead2")),
-    el("p", "settings-sub", t("backup.restoreLead3")),
-    el("p", "hkset-msg err", t("backup.restoreLead4")),
-    // 路径从哪来(W4 Q11 / WD-20):列表里那几份点一下就填好;别处拿来的点「选文件…」或手填。
-    el("p", "settings-sub", t("backup.restoreFileHint")),
+    // ① 路径从哪来(W4 Q11 / WD-20):列表里那几份点一下就填好;别处拿来的点「选文件…」或手填。
+    step("①", t("backup.restoreStepFile"), file.id),
     fileRow,
+    el("p", "settings-sub", t("backup.restoreFileHint")),
+    step("②", t("backup.restoreCodePh"), code.id),
     code,
     el("p", "settings-sub", t("backup.restoreCodeHint", { perDevice: t("backup.perDeviceCode") })),
+    // ③ ⭐ 四条前置提示都在按钮之前(§16.2 / §16.11 / §16.9),⛔ 一条都别删;哪两句常显、哪两句进折叠见本节头注第 2 条。
+    step("③", t("backup.restoreStepBefore"), null),
+    el("p", "hkset-msg err", t("backup.restoreLead4")),
+    el("p", "settings-sub", t("backup.restoreLead1")),
+    after,
     acts,
     out,
   );
@@ -796,10 +826,12 @@ function renderCeremony(body: HTMLElement, code: string): void {
         input.focus();
       });
   });
-  const cancel = button(t("backup.ceremonyCancel"), () => {
+  const doCancel = (): void => {
     ceremonyOpen = false;
     void invoke("backup_cancel_setup").then(() => refresh(body));
-  });
+  };
+  const cancel = button(t("backup.ceremonyCancel"), doCancel);
+  ceremonyCancel = doCancel;
   input.addEventListener("keydown", (e) => {
     if (e.key === "Enter") {
       e.preventDefault();

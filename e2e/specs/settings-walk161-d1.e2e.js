@@ -1,5 +1,5 @@
 import { $, expect, browser } from "@wdio/globals";
-import { clearInbox, goNotebook, invoke } from "./support.js";
+import { clearInbox, goNotebook, invoke, openSyncServerField } from "./support.js";
 
 // W4 走查修复(backlog 用户面 161)桌面 D1 组「桌面壳与键盘」—— e2e 证得了的那几格(处理器面):
 //   A3   设置 / 同步浮层接管键盘:打开焦点进浮层、Tab 圈在里面、背后的单键按不到、关掉焦点回到打开它的钮
@@ -71,14 +71,20 @@ describe("W4 161 · D1 桌面壳与键盘", () => {
       await browser.keys(["Tab"]);
       expect(await activeIn(".sync-panel")).toBe(true);
     }
-    // 换页(创建账户):焦点落在这一页第一个控件 = 服务器地址框(此前掉到 body)。
+    // 换页(创建账户):焦点落在这一页第一个控件(此前掉到 body)。902 F6 起地址框默认收着,第一个控件是那枚「更改…」。
     await browser.execute(() => {
       for (const b of document.querySelectorAll(".sync-panel button")) if (b.textContent.includes("创建账户")) return b.click();
       throw new Error("面板里没有「创建账户」");
     });
+    await browser.waitUntil(() => browser.execute(() => document.activeElement?.classList.contains("sync-server-change")), {
+      timeout: 3000,
+      timeoutMsg: "进「创建账户」页后焦点该在这一页第一个控件(「更改…」)上",
+    });
+    // 点开:焦点进地址框
+    await browser.keys("Enter");
     await browser.waitUntil(() => browser.execute(() => document.activeElement?.classList.contains("sync-input")), {
       timeout: 3000,
-      timeoutMsg: "进「创建账户」页后焦点该在服务器地址框里",
+      timeoutMsg: "「更改…」上回车后焦点该在服务器地址框里",
     });
     await $(".sync-panel .sync-close").click();
     await $(".sync-overlay").waitForExist({ timeout: 5000, reverse: true });
@@ -93,7 +99,7 @@ describe("W4 161 · D1 桌面壳与键盘", () => {
       for (const b of document.querySelectorAll(".sync-panel button")) if (b.textContent.includes("创建账户")) return b.click();
       throw new Error("面板里没有「创建账户」");
     });
-    await $(".sync-panel .sync-input").waitForExist({ timeout: 3000 });
+    await openSyncServerField();
     await browser.execute(() => {
       const input = document.querySelector(".sync-panel .sync-input");
       input.value = "ws://127.0.0.1:1"; // 本机 1 号口没人听 ⇒ 当场被拒,落「连不上」那一类

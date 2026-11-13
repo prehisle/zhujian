@@ -272,10 +272,21 @@ describe("多看板 · 桌面", () => {
     await invoke("update_task_status", { id: b, to: "done" });
     await invoke("seal_task", { id: b });
     await goNotebook("board");
+    await $(".v-board header h1").waitForExist({ timeout: 8000 });
+    await $("#board .col").waitForExist({ timeout: 8000 });
+    const homeName = await browser.execute(() => document.querySelector(".v-board header h1").textContent);
     await browser.execute(() => document.querySelector("#seal-toggle").click());
     await $(".sealed-view").waitForExist({ timeout: 8000 });
     const pills = await browser.execute(() => [...document.querySelectorAll(".sealed-boards .tf-pill")].map((p) => p.textContent.trim()));
     expect(pills).toEqual(expect.arrayContaining(["全部看板", "任务", FLOW]));
+    // 进册恒选当前看板(F 组 F8 / R4)⇒ 此刻筛着进来时那块(页头写着的那块);两块的卡都要看就切「全部看板」
+    expect(pills).toContain(homeName);
+    expect(await browser.execute(() => document.querySelector(".sealed-boards .tf-pill.active")?.textContent.trim())).toBe(homeName);
+    await browser.execute(() => [...document.querySelectorAll(".sealed-boards .tf-pill")].find((p) => p.textContent.trim() === "全部看板").click());
+    await browser.waitUntil(async () => (await browser.execute((t) => [...document.querySelectorAll(".sealed-view .tcard")].some((c) => c.textContent.includes(t)), SEAL_A)) === true, {
+      timeout: 8000,
+      timeoutMsg: "切到「全部看板」后另一块看板的归档没出来",
+    });
     const tagOf = (title) =>
       browser.execute((t) => [...document.querySelectorAll(".tcard")].find((c) => c.textContent.includes(t))?.querySelector(".board-tag")?.textContent ?? null, title);
     expect(await tagOf(SEAL_A)).toBe(FLOW);

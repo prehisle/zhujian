@@ -240,6 +240,35 @@
   line-height: 1.6;
   color: var(--ink-soft);
 }
+/* 902 F6:淡字链接(第一屏「已有账户?用配对码加入」、创建屏「更改…」):不是钮的分量,但仍是真 <button>
+   (键盘可达);字走 --ink-soft(能点的入口不走 --ink-faint,§3.8),min-height 自保 §2.3 热区。 */
+.sync-link {
+  align-self: flex-start;
+  font: inherit;
+  font-size: var(--fs-12);
+  color: var(--ink-soft);
+  background: none;
+  border: 0;
+  padding: 3px 0;
+  min-height: 24px;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  text-decoration-color: var(--line-strong);
+}
+.sync-link:hover { color: var(--ink); text-decoration-color: currentColor; }
+/* 创建屏的服务器那一行:「服务器:官方(…)」+「更改…」。 */
+.sync-server-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px 10px;
+  font-size: var(--fs-12);
+  color: var(--ink-soft);
+}
+.sync-server-line .sync-link { align-self: center; }
+/* 「说明」折叠(settings.css 的 .settings-notes)放进同步浮层:浮层自己有 10px 的行距,不要它那 14px 的下外边距。 */
+.sync-body .settings-notes { margin: 0; }
 /* A8(WD-10):「创建」/「加入」等的那两秒写在钮后面(不挪钮)。 */
 .sync-busy {
   align-self: center;

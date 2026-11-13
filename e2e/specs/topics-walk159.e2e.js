@@ -135,6 +135,21 @@ describe("W3 159 · 标签(桌面第一波)", () => {
       return document.querySelector(".v-topics #list").scrollTop;
     }, MID);
     expect(s0).toBeGreaterThan(200);
+    // 随机红过(全量里那一行顶比列表顶高约 3px、scrollTop 没动)⇒ 记下改名前的现场,红了自带读数:
+    // 那一行改名前离列表顶多远、它上面每一行多高、指针悬在哪一行(悬停会让那一行多出操作钮)。
+    const snap = () =>
+      browser.execute((t) => {
+        const list = document.querySelector(".v-topics #list");
+        const secs = [...document.querySelectorAll(".v-topics .topic")];
+        const i = secs.findIndex((s) => s.querySelector(".topic-title")?.textContent.startsWith(t));
+        return {
+          gap: i < 0 ? null : secs[i].querySelector(".topic-head").getBoundingClientRect().top - list.getBoundingClientRect().top,
+          above: secs.slice(0, i).map((s) => [s.querySelector(".topic-title")?.textContent, Math.round(s.getBoundingClientRect().height * 100) / 100]),
+          hover: document.querySelector(".v-topics .topic:hover .topic-title")?.textContent ?? null,
+          listTop: list.getBoundingClientRect().top,
+        };
+      }, MID);
+    const before15 = await snap();
     await clickTopicAction(MID, "重命名");
     await $(".te-title").waitForDisplayed({ timeout: 5000 });
     await setField(".te-title", "W159-凑数-15改");
@@ -144,7 +159,15 @@ describe("W3 159 · 标签(桌面第一波)", () => {
     expect(Math.abs(s1 - s0)).toBeLessThanOrEqual(2);
     // ⚠ 别写回 toMatchObject({ inView: true }):它的差异只印期望里那一个键,读数全吞了(165 收口实红一次,啥也没留下)。
     const g15 = await rowGeom("W159-凑数-15改");
-    if (!g15.inView) throw new Error(`改名后那一行不在眼前:${JSON.stringify({ ...g15, s0, s1 })}`);
+    if (!g15.inView) {
+      const after15 = await snap();
+      const changed = after15.above.filter(([name, h], k) => before15.above[k]?.[0] !== name || before15.above[k]?.[1] !== h);
+      throw new Error(
+        `改名后那一行不在眼前:${JSON.stringify({ ...g15, s0, s1 })}
+  改名前离列表顶 ${before15.gap}px、改名后 ${after15.gap}px;列表顶 ${before15.listTop} → ${after15.listTop};` +
+          `悬停行 ${before15.hover} → ${after15.hover};上面高度变了的行(改名后):${JSON.stringify(changed)},改名前同位:${JSON.stringify(changed.map((c) => before15.above[after15.above.indexOf(c)]))}`,
+      );
+    }
 
     // 行框顶边被裁掉几像素、名字整个看得见 —— 也算在眼前,改完不跳(W4 T1)。上面那步「贴顶」在 150% 缩放下
     // 也会落成这一形(整表重画还原 scrollTop 后那行高出视口上沿零点几像素),但落不落得上看缩放与取整,

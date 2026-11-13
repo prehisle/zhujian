@@ -3,7 +3,7 @@ import { boardAction, boardMore, clearInbox, goNotebook, inboxAction, inboxShow,
 
 // 应用评审二轮 · 桌面 C 组(上一轮没看到的面里的确凿毛病:浮层 / 次级页 / 边界 / 缩放 / 纯键盘)里能自动化的几条:
 //  C1 重置空间的两枚钮走 .hbtn、「确认重置」实心朱砂、焦点落「取消」(⛔ 这支绝不点「确认重置」);
-//  C2 随记编辑态「＋加图」不是原生灰钮;C3 删卡确认里的「不再提示」是应用自己的方框;
+//  C2 随记编辑态「＋加图」不是原生灰钮;(C3 删卡确认里的「不再提示」方框:随确认条一起退场了,F 组 F4 / R3,见 picks-desk-f)
 //  C4 管理看板面板:长列名不把面板撑出横向滚动条;
 //  C5 卡片色板的「无色」不在自己内部折行;C6 超长标签的筛选 pill 不越出筛选条、名字省略、悬停给完整名字;
 //  C7 标签选择器打开 / 打字后整块在可视区内;
@@ -217,34 +217,6 @@ describe("应用评审 C · 原生控件漏样式与溢出", () => {
     expect(g.rows).toBeGreaterThan(1); // 真的换了行(摆位成立)
     expect({ ...g, rows: 0 }).toEqual({ noneH: 20, noneFits: true, dots: [20], inCard: true, inSlot: true, rows: 0 });
     await esc();
-  });
-
-  it("C3:删卡确认里的「不再提示」是应用自己的方框(不是原生白框),照旧勾得上", async () => {
-    await browser.execute(() => localStorage.removeItem("ysNotebook.taskArchiveConfirmDismissed"));
-    await goNotebook("board");
-    await $(`.tcard*=${P}带超长标签的一张卡`).waitForExist({ timeout: 8000 });
-    await boardAction(`${P}带超长标签的一张卡`, "删除");
-    await $(".v-board .dont-ask input").waitForExist({ timeout: 5000 });
-    const g = await browser.execute(() => {
-      const inp = document.querySelector(".v-board .dont-ask input");
-      const before = getComputedStyle(inp);
-      const r = { appearance: before.appearance, w: inp.getBoundingClientRect().width, bg0: before.backgroundColor, type: inp.type };
-      inp.click();
-      const after = getComputedStyle(inp);
-      const cancel = document.querySelector(".v-board .tcard .act.ghost");
-      return { ...r, checked: inp.checked, bg1: after.backgroundColor, seal: getComputedStyle(document.querySelector(".v-board .tcard .act.primary")).backgroundColor, focusCancel: document.activeElement === cancel };
-    });
-    expect(g.appearance).toBe("none");
-    expect(g.type).toBe("checkbox");
-    expect(g.w).toBe(14);
-    expect(g.bg0).toBe("rgba(0, 0, 0, 0)");
-    expect(g.checked).toBe(true);
-    expect(g.bg1).toBe(g.seal); // 勾上 = 朱砂底(同旁边那枚执行钮)
-    expect(g.focusCancel).toBe(true);
-    // 取消:卡还在、没写「以后不问」
-    await browser.execute(() => document.querySelector(".v-board .tcard .act.ghost").click());
-    await $(`.tcard*=${P}带超长标签的一张卡`).waitForExist({ timeout: 8000 });
-    expect((await invoke("list_tasks")).some((t) => t.id === taskId)).toBe(true);
   });
 
   it("C4:管理看板 —— 长列名的角色 pill 封顶到行宽,面板不长横向滚动条(900 宽)", async () => {

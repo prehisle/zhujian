@@ -38,7 +38,6 @@ export const inbox = defineMessages({
   "inbox.deleteForever": { zh: "彻底删除", en: "Delete forever" },
   "inbox.copied": { zh: "已复制", en: "Copied" },
   "inbox.copiedLink": { zh: "已复制链接", en: "Link copied" },
-  "inbox.copyFailed": { zh: "复制失败", en: "Copy failed" },
   "inbox.actRestore": { zh: "还原", en: "Restore" },
   "inbox.actCopy": { zh: "复制", en: "Copy" },
   "inbox.actCopyLink": { zh: "复制链接", en: "Copy link" },
@@ -65,6 +64,8 @@ export const inbox = defineMessages({
   "inbox.trashNote": { zh: "删掉的随记、长文和配图会一直留在这,直到你彻底删除", en: "Deleted notes, long-form and images stay here until you delete them forever" },
   "inbox.filterNoMatch": { zh: "没有匹配「{q}」的随记", en: "No notes match “{q}”" },
   "inbox.goSee": { zh: "去看看", en: "Show me" },
+  // 编辑态框下那行淡字(902 F1;随记编辑态与看板卡片就地编辑态共用,同 discardHint 的共用法)。
+  "inbox.editHint": { zh: "回车或点别处保存 · Esc 不要了", en: "Enter or click elsewhere to save · Esc to discard" },
   "inbox.discardHint": { zh: "改过了 —— 再按一次 Esc 丢掉这次的修改;回车或点别处保存。", en: "You have changes — press Esc again to discard them; Enter or click elsewhere to save." },
   "inbox.actHistory": { zh: "历史", en: "History" },
   // 165 / W5 A45:没改过的卡按 H(看板 V)此前一声不吭;菜单里照旧只有改过的才列「历史」。

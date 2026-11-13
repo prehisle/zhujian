@@ -23,7 +23,7 @@ import {
 } from "./space";
 import { movePanel } from "./move-space";
 import { dismissUndo, toastAction, toastError, toastUndo, toastUndone } from "./toast";
-import { copyText } from "./clipboard";
+import { copyFailText, copyText } from "./clipboard";
 import { buildItemDeepLink } from "./deeplink";
 import { armLocate, locateNoteEl, searchBackArmed, takeLocateNote } from "./locate";
 import { DOC_CARD_KEYS, DOC_VIEW_KEYS } from "./keymap";
@@ -376,21 +376,14 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
     ]);
   }
 
+  // 失败不在这里兜成文案:让它 reject,hotkey-menu 统一报「复制失败:{原因}」(902 F3)。
   const copyFeedback = (d: DocItem) => async (): Promise<string> => {
-    try {
-      await copyText(d.content);
-      return t("docs.copied");
-    } catch {
-      return t("docs.copyFailed");
-    }
+    await copyText(d.content);
+    return t("docs.copied");
   };
   const copyLinkFeedback = (d: DocItem) => async (): Promise<string> => {
-    try {
-      await copyText(await buildItemDeepLink(d.id));
-      return t("docs.copiedLink");
-    } catch {
-      return t("docs.copyFailed");
-    }
+    await copyText(await buildItemDeepLink(d.id));
+    return t("docs.copiedLink");
   };
 
   // 打标签:与随记同一条命令(长文的 stage 就在随记那两档),选择器是共享件。
@@ -1571,8 +1564,8 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
         try {
           await copyText(text);
           toastAction(t("docs.histCopied"));
-        } catch {
-          toastAction(t("docs.copyFailed")); // 同本页别处的复制失败(copyFeedback)
+        } catch (e) {
+          toastError(copyFailText(e)); // 同本页别处的复制失败(带原因的全句)
         }
       };
       rows.push({ pick, oldBtn, newBtn });

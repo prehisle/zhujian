@@ -53,7 +53,20 @@ import {
 } from "./ui";
 import { INPUT_DEBOUNCE_MS } from "./timing";
 import { errDetail, showErr } from "./err";
-import { allBoards, boardName, boardOfStage, isHeldStage, isTaskStage, setBoards, setColumns, stageLabel } from "./columns";
+import {
+  type Board,
+  HOLDING,
+  allBoards,
+  boardName,
+  boardOfStage,
+  currentView,
+  isHeldStage,
+  isTaskStage,
+  liveBoards,
+  setBoards,
+  setColumns,
+  stageLabel,
+} from "./columns";
 
 type Deps = {
   refreshTimeline: () => Promise<void>;
@@ -463,7 +476,14 @@ let sealedOpenId: string | null = null;
 /** 0043(用户拍 ⑦,backlog 170):归档册按看板筛 —— 正筛着哪块看板;null = 全部。本机 UI 态,换空间清。 */
 let sealedBoard: string | null = null;
 
-export async function loadSealed(): Promise<void> {
+/** 这台此刻正看着的那块活看板(筛选排里恒在的那一枚、进面时预选的那一枚);正看着收容区 = 没有「当前看板」。 */
+function sealedCurrent(): Board | null {
+  const v = currentView(getCurrentSpace());
+  return v === HOLDING ? null : v;
+}
+
+/** `entering` = 用户这一下**开**归档面(main.ts openPane);面开着时的重载(远端变更 / 取消归档之后)不给,筛选留在人选的那一枚上。 */
+export async function loadSealed(entering = false): Promise<void> {
   const space = getCurrentSpace();
   const seq = ++sealedSeq;
   const box = $("sealed-list");
@@ -475,6 +495,8 @@ export async function loadSealed(): Promise<void> {
     setColumns(cols);
     setBoards(bds);
     sealedRows = rows;
+    // 902(用户拍 R4):进面恒选当前看板(它没有归档就是那句「这块看板还没有归档的卡片」);只有一块活看板的库照旧不筛。
+    if (entering) sealedBoard = liveBoards().length >= 2 ? (sealedCurrent()?.id ?? null) : null;
     // 从搜索点进来要定位那一条:先回「全部」,免得它正好被筛掉、落空。
     if (sealedLocate !== null) sealedBoard = null;
     // 重载后那张卡可能已经不在(自己刚取消入册 / 对端动过):展开态跟着作废。
@@ -499,17 +521,20 @@ const unsealDest = (status: string): string => (isHeldStage(status) ? t("boards.
 
 function renderSealed() {
   const box = $("sealed-list");
-  if (!sealedRows.length) {
+  // 0043(用户拍 ⑦,同桌面 renderSealed):成就合一本,筛的是看板、不是列:来处按卡所在列的归属认(删掉的看板也算一块)。
+  // 902(用户拍 R4):**活看板 ≥ 2 块**时顶上那排筛选恒出现 ——「全部看板」+ 当前看板(恒在,哪怕它没有归档)+ 其他有归档的看板。
+  // 只有一块活看板的库照旧:归档来自 ≥ 2 块看板(另一块已删)才出那排,否则不出(一枚「全部」是噪音)。
+  // ⛔ 活看板只有一块时别把它硬塞进那排:已删的看板也在表里,会凭空挂上「任务」。
+  const fromOf = (r: { status: string }): string | null => boardOfStage(r.status)?.id ?? null;
+  const multi = liveBoards().length >= 2;
+  const curId = multi ? (sealedCurrent()?.id ?? null) : null;
+  const pillBoards = allBoards().filter((b) => b.id === curId || sealedRows.some((r) => fromOf(r) === b.id));
+  const tagged = multi || pillBoards.length >= 2;
+  if (!tagged || !pillBoards.some((b) => b.id === sealedBoard)) sealedBoard = null;
+  if (!tagged && !sealedRows.length) {
     box.innerHTML = `<p class="muted empty">${t("panes.sealedEmpty")}</p>`;
     return;
   }
-  // 0043(用户拍 ⑦,同桌面 renderSealed):成就合一本,**来自 ≥ 2 块看板**才出顶上那排筛选、每条才挂看板名小签
-  // (只有一块 = 今天的样子,一枚「全部」是噪音)。筛的是看板、不是列:来处按卡所在列的归属认(删掉的看板也算一块)。
-  // ⛔ 别按「库里有几块看板」判:已删的看板也在表里,只剩一块活看板时会凭空挂上「任务」。
-  const fromOf = (r: { status: string }): string | null => boardOfStage(r.status)?.id ?? null;
-  const pillBoards = allBoards().filter((b) => sealedRows.some((r) => fromOf(r) === b.id));
-  const tagged = pillBoards.length >= 2;
-  if (!tagged || !pillBoards.some((b) => b.id === sealedBoard)) sealedBoard = null;
   const shown = sealedBoard === null ? sealedRows : sealedRows.filter((r) => fromOf(r) === sealedBoard);
   const pill = (label: string, id: string | null): string =>
     `<button type="button" class="fpill${sealedBoard === id ? " active" : ""}" aria-pressed="${sealedBoard === id}" data-sealed-board="${esc(id ?? "")}">${esc(label)}</button>`;
@@ -544,7 +569,11 @@ function renderSealed() {
         }</time>${chips}</footer>${panel}
       </div></article>`;
     });
-  const list = cards.length > 0 ? splitCols(cards, colsOf(box)) : `<p class="muted empty">${t("boards.sealedNoneHere")}</p>`;
+  // 筛着某块看板而它没有归档 = 「这块看板还没有归档的卡片」;在「全部看板」上还是空的 = 整本都空,照旧那句。
+  const list =
+    cards.length > 0
+      ? splitCols(cards, colsOf(box))
+      : `<p class="muted empty">${sealedBoard === null ? t("panes.sealedEmpty") : t("boards.sealedNoneHere")}</p>`;
   box.innerHTML = pills + list;
 }
 

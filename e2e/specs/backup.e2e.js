@@ -85,6 +85,43 @@ describe("加密备份(笔①-a):仪式 → 备份 → 产物在列", () => {
     expect(labels).toContain("恢复…");
   });
 
+  // 应用评审取舍 E6(Esc 只退一层):备份码那一步开着时按 Esc = 它自己那枚「取消」—— 回到备份页、设置浮层还在、
+  // 内存里那把钥丢掉;再按一次才关浮层。此前一按整个设置就关了。⚠ 必须排在下面那例之前:这里要一只还没设过备份的库。
+  // 阴性对照:settings.ts 的 escapeOneLevel 里拔掉 escapeBackupCeremony 那一支 ⇒ 红在「设置浮层还在」。
+  it("仪式开着按 Esc ⇒ 只退回备份页(钥丢掉、浮层还在);码框里的 Esc 照旧只清框;再按才关浮层", async () => {
+    await openBackupSection();
+    await clickByText("设置备份");
+    await (await $(".bkup-code")).waitForExist({ timeout: 5000 });
+    expect((await invoke("backup_status")).awaiting_ceremony).toBe(true);
+    const escOn = (sel) =>
+      browser.execute((s) => {
+        const n = s ? document.querySelector(s) : document.activeElement;
+        if (s) n.focus();
+        n.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+      }, sel);
+    // 码框里:只清框,仪式还开着
+    await (await $(".bkup-code-input")).setValue("ABCD");
+    await escOn(".bkup-code-input");
+    expect(await browser.execute(() => document.querySelector(".bkup-code-input").value)).toBe("");
+    expect(await $(".bkup-code").isExisting()).toBe(true);
+    // 框外(面板里别的地方):退回备份页
+    await escOn(".settings-close");
+    await (await $(".bkup-code")).waitForExist({ timeout: 5000, reverse: true });
+    expect(await $(".settings-panel").isExisting()).toBe(true);
+    await browser.waitUntil(async () => (await invoke("backup_status")).awaiting_ceremony === false, {
+      timeout: 5000,
+      timeoutMsg: "Esc 退回备份页之后,后端还留着那把没人抄过的钥",
+    });
+    expect((await invoke("backup_status")).configured).toBe(false);
+    await browser.waitUntil(
+      async () => (await browser.execute(() => [...document.querySelectorAll(".settings-panel button")].some((b) => b.textContent.trim() === "设置备份"))),
+      { timeout: 5000, timeoutMsg: "退回之后备份页没画回「设置备份」" },
+    );
+    expect(await browser.execute(() => document.querySelector(".settings-panel").contains(document.activeElement))).toBe(true);
+    await escOn(null);
+    await (await $(".settings-panel")).waitForExist({ timeout: 5000, reverse: true });
+  });
+
   it("仪式:显示码 → 回输核对对上了才落盘;⛔ 码只能手抄(没有复制按钮)", async () => {
     const body = await openBackupSection();
     await clickByText("设置备份");

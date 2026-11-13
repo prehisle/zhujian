@@ -92,8 +92,9 @@ export const backup = defineMessages({
   "backup.footSecrets": { zh: "⚠ 备份文件里有这台设备登录同步账户用的钥匙(不然恢复出来的库没法同步)。谁拿到备份文件加备份码,就能看、也能改这个账户里的全部内容 —— 两样都要像密码一样收好。", en: "⚠ A backup contains the keys this device uses to sign in to your sync account (otherwise a restored library could not sync). Anyone with the backup file plus the code can read and change everything in the account — keep both as safe as a password." },
   // 自动备份(笔①-b,§15.5)。⛔ 频率与份数是**变量**:那个文件可以手改,写死就会说谎。
   "backup.autoName": { zh: "自动备份", en: "Automatic backup" },
-  "backup.autoOn": { zh: "开启", en: "Turn on" },
-  "backup.autoOff": { zh: "关闭", en: "Turn off" },
+  // 902 F2:钮上把「开 / 关的是什么」写全(此前是光秃秃的「开启」/「关闭」;「关闭」在设置浮层里读着像关掉这一页)。
+  "backup.autoOn": { zh: "开启自动备份", en: "Turn on automatic backup" },
+  "backup.autoOff": { zh: "停用自动备份", en: "Turn off automatic backup" },
   // W4 A17(WD-07):开着时那一行照实写隔多久、留几份(此前只写「已开启」,两个数藏在「说明」折叠里)。
   "backup.autoStateOnDetail": { zh: "已开启 · {every}一次,每个空间留最近 {keep} 份", en: "On · runs {every}, keeping the {keep} most recent per space" },
   "backup.autoStateOff": { zh: "未开启", en: "Off" },
@@ -122,6 +123,11 @@ export const backup = defineMessages({
   "backup.restoreOpen": { zh: "恢复…", en: "Restore…" },
   "backup.restoreClose": { zh: "收起", en: "Close" },
   // 前置提示:§16.2 的形 + §16.11 的诚实边界 + §16.9 的两个数(⛔ 一条都别删)。
+  // 902 F7:恢复表单分三步的步名(序号 ①②③ 由 backup.ts 另挂);第 ② 步的名字沿用 backup.restoreCodePh「备份码」。
+  "backup.restoreStepFile": { zh: "备份文件", en: "Backup file" },
+  "backup.restoreStepBefore": { zh: "开始前要知道", en: "Before you start" },
+  // 第 ③ 步里那只折叠的名字:里面是 restoreLead2 / restoreLead3(恢复之后才用得上的两句)。
+  "backup.restoreAfter": { zh: "恢复之后会怎样", en: "What happens afterwards" },
   "backup.restoreLead1": { zh: "恢复绝不覆盖任何现有数据:它新建一个空间,原来的空间原样在那儿,要不要删由你决定。", en: "Restoring never overwrites existing data: it creates a new space, and your current spaces stay exactly as they are; deleting them is your call." },
   "backup.restoreLead2": { zh: "恢复出来的空间不同步,直到你给它创建账户、把别的设备重新加进来;它也不会踢掉任何设备、不会让旧账户消失。", en: "The restored space does not sync until you create an account for it and pair your other devices again; it removes no device and makes no old account disappear." },
   "backup.restoreLead3": { zh: "恢复回来的是备份那一刻的数据;同一台机器上恢复会多出一个空间,恢复完会写出它在这台叫什么。", en: "You get the data as of the moment the backup was taken; restoring on the same machine leaves you with one extra space, and once it finishes you are told what it is called here." },

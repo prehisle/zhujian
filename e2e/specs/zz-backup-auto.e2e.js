@@ -83,12 +83,12 @@ describe("自动备份(笔①-b):开关真落盘 + 失败提示条与去抖", ()
         await browser.execute(() =>
           [...document.querySelectorAll(".settings-panel button")]
             .map((b) => b.textContent.trim())
-            .some((t) => t === "开启" || t === "关闭"),
+            .some((t) => t === "开启自动备份" || t === "停用自动备份"),
         ),
       { timeout: 5000, timeoutMsg: "「自动备份」那一节该渲染出来" },
     );
 
-    await clickByText("开启");
+    await clickByText("开启自动备份");
     await browser.waitUntil(async () => (await invoke("backup_auto_status")).enabled === true, {
       timeout: 5000,
       timeoutMsg: "开关要真的落进 .backup-auto.json",
@@ -105,7 +105,7 @@ describe("自动备份(笔①-b):开关真落盘 + 失败提示条与去抖", ()
     expect(texts.join(" ")).not.toContain("永远不会被自动删除");
 
     // 再关回去:同样落盘。
-    await clickByText("关闭");
+    await clickByText("停用自动备份");
     await browser.waitUntil(async () => (await invoke("backup_auto_status")).enabled === false, {
       timeout: 5000,
       timeoutMsg: "关也要落盘",

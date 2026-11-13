@@ -3,7 +3,7 @@
 //  ① 返回键收卡片操作面:子面(标签)→ 回主面 → 收面 → 再按才放行退 app(`__zhujianHandleBack` 回 false)。
 //     此前操作面 / 卡内标签选择器开着时按返回直接退出 app(操作面不压守门条目,无层可关就回 false)。
 //  ② 确认条读秒到点:先进余温态(说「没确认,已作罢」、两钮灰、条高不变、那一点仍落在条上),
-//     `BAR_RETIRE_MS` 后才收;条目没被删。
+//     `BAR_RETIRE_MS` 后才收;条目没动(拿「撤回为随记」那条两拍验 —— 删卡片已不再先问)。
 //  ③ 提示条读秒到点:同样先余温(整条淡、仍在原位接点)再收。
 //
 // 前置:界面语言中文;库可以是空的 —— 本资产自播一条随记,末尾 purge 掉(回收站零残留)。
@@ -67,8 +67,8 @@
     ok("…操作面收起", await until(() => !panel()));
     ok("返回键③无层可关 ⇒ 放行退 app", back() === false);
 
-    // ② 确认条到点先余温。157 G4 / P2 起删**随记**一点即删(不再弹确认条)⇒ 先把种子转成待办,
-    //    删任务仍是两拍,拿它来验确认条。
+    // ② 确认条到点先余温。157 G4 / P2 起删**随记**一点即删、902(用户拍 R3)起删**卡片**也一点即删(都不弹确认条)
+    //    ⇒ 先把种子转成待办,拿「撤回为随记」那条两拍来验确认条(落点列里的卡才有它;刚转的卡就在落点)。
     click(card().querySelector(".body"));
     await until(() => !!pact("promote"));
     click(pact("promote"));
@@ -79,12 +79,12 @@
     click(card().querySelector(".body"));
     await until(() => !!pact("more"));
     click(pact("more"));
-    await until(() => !!pact("del"));
-    click(pact("del"));
+    await until(() => !!pact("revert"));
+    click(pact("revert"));
     const cb = document.getElementById("confirmbar");
     const yes = document.getElementById("confirmbar-yes");
     const q = document.getElementById("confirmbar-q");
-    ok("删除第一拍弹确认条", await until(() => !cb.hidden, 1500));
+    ok("撤回第一拍弹确认条", await until(() => !cb.hidden, 1500));
     const h0 = cb.getBoundingClientRect().height;
     ok("6s 内还是原样", (await sleep(5500), !cb.hidden && !cb.classList.contains("retiring")));
     ok("到点进余温态", await until(() => cb.classList.contains("retiring"), 1500));
@@ -96,7 +96,7 @@
     ok("余温:点在确认钮的位置仍落在条上(不漏到底下)", !!hit && cb.contains(hit), hit?.outerHTML?.slice(0, 80));
     click(yes); // 迟到的那一下:灰钮不执行
     ok("余温后收起", await until(() => cb.hidden, 2000));
-    ok("条目没被删", (await inv("list_timeline", {})).some((x) => x.id === seedId));
+    ok("条目没被撤回(仍是卡片)", (await inv("list_tasks", {})).some((x) => x.id === seedId));
     if (panel()) click(card().querySelector(".body"));
 
     // ③ 提示条到点先余温(「复制链接」的回执;测试机的剪贴板被写一次)

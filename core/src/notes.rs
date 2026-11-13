@@ -74,19 +74,19 @@ pub fn set_doc(conn: &mut Connection, clock: &mut Clock, id: &str, on: bool) -> 
 /// item is frozen. Fails fast on an empty body, a missing/archived item, or a no-op edit.
 pub fn edit(conn: &mut Connection, clock: &mut Clock, id: &str, new_content: &str) -> Result<(), String> {
     if new_content.trim().is_empty() {
-        return Err("灵感内容不能为空".to_string());
+        return Err("随记内容不能为空".to_string());
     }
     repo::ensure_content_fits(new_content)?;
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     let (_stage, archived) = repo::item_state(&tx, id)
         .map_err(|e| e.to_string())?
-        .ok_or_else(|| "灵感不存在".to_string())?;
+        .ok_or_else(|| "随记不存在".to_string())?;
     if archived {
         return Err("回收站中的条目不可编辑".to_string());
     }
     let current = repo::current_content(&tx, id)
         .map_err(|e| e.to_string())?
-        .ok_or_else(|| "灵感不存在".to_string())?;
+        .ok_or_else(|| "随记不存在".to_string())?;
     if current == new_content {
         return Err("内容未改变,无需保存".to_string());
     }
@@ -125,7 +125,7 @@ pub fn archive(conn: &mut Connection, clock: &mut Clock, id: &str) -> Result<(),
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     let n = repo::archive_idea(&tx, id).map_err(|e| e.to_string())?;
     if n != 1 {
-        return Err(format!("移入回收站失败:这条灵感不存在或已在回收站,影响行数 {n}"));
+        return Err(format!("移入回收站失败:这条随记不存在或已在回收站,影响行数 {n}"));
     }
     oplog::item_set(&tx, clock, id, &["archived_at"])?;
     tx.commit().map_err(|e| e.to_string())?;
@@ -137,7 +137,7 @@ pub fn restore(conn: &mut Connection, clock: &mut Clock, id: &str) -> Result<(),
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     let n = repo::restore_idea(&tx, id).map_err(|e| e.to_string())?;
     if n != 1 {
-        return Err(format!("还原失败:这条灵感不在回收站,影响行数 {n}"));
+        return Err(format!("还原失败:这条随记不在回收站,影响行数 {n}"));
     }
     oplog::item_set(&tx, clock, id, &["archived_at"])?;
     tx.commit().map_err(|e| e.to_string())?;
@@ -204,12 +204,12 @@ fn promote(
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     let (stage, archived) = repo::item_state(&tx, id)
         .map_err(|e| e.to_string())?
-        .ok_or_else(|| "灵感不存在".to_string())?;
+        .ok_or_else(|| "随记不存在".to_string())?;
     if archived {
         return Err("回收站中的条目不能转为待办".to_string());
     }
     if stage != "inbox" && stage != "filed" {
-        return Err("只有灵感(未归类/已归类)可以转为待办".to_string());
+        return Err("只有随记(未归类/已归类)可以转为待办".to_string());
     }
     // 长文不能直接转待办(longform-plan §1):要先收回随记。⛔ 这只是**本机命令前置**,不是
     // 回放的跨字段约束 —— 两端并发「展开 × 转待办」照样收敛成任务行带 doc_at(读侧任务优先)。
@@ -230,7 +230,7 @@ fn promote(
     // original. An unchanged title is a pure stage flip.
     let current = repo::current_content(&tx, id)
         .map_err(|e| e.to_string())?
-        .ok_or_else(|| "灵感不存在".to_string())?;
+        .ok_or_else(|| "随记不存在".to_string())?;
     if current != title {
         let n = repo::update_item_content(&tx, id, title).map_err(|e| e.to_string())?;
         if n != 1 {
@@ -268,7 +268,7 @@ pub fn revert_task_to_inbox(conn: &mut Connection, clock: &mut Clock, id: &str) 
         None => None,
     };
     if landing.as_deref() != Some(stage.as_str()) {
-        return Err("只有落点列(「待办」)里的任务可以撤回为灵感".to_string());
+        return Err("只有落点列(「待办」)里的任务可以撤回为随记".to_string());
     }
     let to = if repo::item_has_topic(&tx, id).map_err(|e| e.to_string())? {
         "filed"
@@ -311,7 +311,7 @@ pub fn file_to_topic(
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     let (stage, archived) = repo::item_state(&tx, id)
         .map_err(|e| e.to_string())?
-        .ok_or_else(|| "灵感不存在".to_string())?;
+        .ok_or_else(|| "随记不存在".to_string())?;
     if archived {
         return Err("回收站中的条目不能归类".to_string());
     }
@@ -319,12 +319,12 @@ pub fn file_to_topic(
         "inbox" => {
             let n = repo::file_inbox_item(&tx, id).map_err(|e| e.to_string())?;
             if n != 1 {
-                return Err(format!("移动灵感到已整理失败(影响 {n} 行),已回滚"));
+                return Err(format!("移动随记到已整理失败(影响 {n} 行),已回滚"));
             }
             oplog::item_set(&tx, clock, id, &["stage"])?;
         }
         "filed" => {}
-        _ => return Err("只有灵感可以归类到标签".to_string()),
+        _ => return Err("只有随记可以归类到标签".to_string()),
     }
     let topic_id = match target {
         Target::Existing(t) => {
@@ -367,13 +367,13 @@ pub fn remove_topic(conn: &mut Connection, clock: &mut Clock, id: &str, topic_id
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     let (stage, archived) = repo::item_state(&tx, id)
         .map_err(|e| e.to_string())?
-        .ok_or_else(|| "灵感不存在".to_string())?;
+        .ok_or_else(|| "随记不存在".to_string())?;
     if archived {
         return Err("回收站中的条目不能改标签".to_string());
     }
     match stage.as_str() {
         "inbox" | "filed" => {}
-        _ => return Err("只有灵感可以在这里去标签(任务请在看板去标签)".to_string()),
+        _ => return Err("只有随记可以在这里去标签(任务请在看板去标签)".to_string()),
     }
     let removed = repo::unlink_item_topic(&tx, id, topic_id).map_err(|e| e.to_string())?;
     if removed == 1 {
@@ -706,7 +706,7 @@ pub fn purge(conn: &mut Connection, clock: &mut Clock, id: &str) -> Result<(), S
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     let deleted = repo::purge_idea(&tx, id).map_err(|e| e.to_string())?;
     if deleted != 1 {
-        return Err(format!("彻底删除失败:这条灵感不在回收站,删除行数 {deleted}"));
+        return Err(format!("彻底删除失败:这条随记不在回收站,删除行数 {deleted}"));
     }
     oplog::item_tombstone(&tx, clock, id)?;
     tx.commit().map_err(|e| e.to_string())?;

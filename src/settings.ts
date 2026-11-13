@@ -8,11 +8,10 @@
 // 行的形,纯 CSS)。此前 6 节 30 多行控件全在同一个滚动流里,要改备份落点得滚过热键 /
 // 外观 / 语言 / 字号 / 别名(444 实测面板整高 2546px,而它之前是 6649px)。
 import { invoke } from "@tauri-apps/api/core";
-import { buildBackupSection, closeBackupSection, noteFold } from "./backup";
+import { buildBackupSection, closeBackupSection, escapeBackupCeremony, noteFold } from "./backup";
 import { buildAboutPane, GUIDE_URL } from "./about";
 import { exportMarkdown } from "./export-md";
 import { reminderCfg, saveReminderCfg, reminderPermissionOk, sendTestNotification } from "./reminder";
-import { setTaskDeleteConfirm, taskDeleteConfirmOn } from "./delete-confirm";
 import { DUE_SOON_DAYS } from "./tasktime";
 import { currentZoomPercent, zoomIn, zoomOut, zoomReset, onZoomChange, ZOOM_MAX_PERCENT, ZOOM_MIN_PERCENT } from "./zoom";
 import { currentThemeMode, setThemeMode, type ThemeMode } from "./theme-mode";
@@ -117,9 +116,7 @@ export async function openSettingsPanel(
   // 那节的「开始」上(A9,那一节先滚进视口)。Esc 的条件同下面的 `onPanelEsc`。
   hold = holdKeyboard(overlay, panel, {
     focus,
-    onEscape: () => {
-      if (!recording) closePanel();
-    },
+    onEscape: () => escapeOneLevel(),
   });
 }
 
@@ -142,13 +139,24 @@ function closePanel(): void {
   hold = null;
 }
 
+/** Esc 只退一层(902 E6):录制中不动(录制监听自己收);备份码那一步开着 = 先退回备份页(焦点落回左栏当前那一类,
+ *  那一步的钮随重画没了);否则关浮层。 */
+function escapeOneLevel(): void {
+  if (recording) return;
+  if (escapeBackupCeremony()) {
+    overlay?.querySelector<HTMLElement>(".settings-cat.on")?.focus();
+    return;
+  }
+  closePanel();
+}
+
 function onPanelEsc(e: KeyboardEvent): void {
   // 录制态的 Esc 被录制监听(window 捕获相)先吞掉(取消录制);非录制态 Esc 关面板。
   // ⚠ 焦点在面板里时 Esc 走 `holdKeyboard` 的 onEscape(浮层那一层就把它截住了);这一只接的是
   // 焦点掉到 body 的时候(面板里某一块重画把聚焦的钮换掉了)。
   if (e.key === "Escape" && !recording) {
     e.stopPropagation();
-    closePanel();
+    escapeOneLevel();
   }
 }
 
@@ -311,9 +319,6 @@ function buildPane(cat: SettingsCat, pane: HTMLElement, probeUrl: string | null,
       generalSect(t("settings.langTitle"), t("settings.langSub"), buildLangRow(), { more: t("settings.langMore") }),
       generalSect(t("settings.textSize"), t("settings.textSizeSub"), buildZoomRow()),
       generalSect(t("settings.compressTitle"), t("settings.compressSub"), buildCompressRow(), { more: t("settings.compressMore") }),
-      generalSect(t("settings.deleteConfirmTitle"), t("settings.deleteConfirmSub"), buildDeleteConfirmRow(), {
-        more: t("settings.deleteConfirmMore"),
-      }),
       generalSect(t("settings.aliasTitle"), t("settings.aliasSub"), buildAliasRow(), { more: t("settings.aliasMore") }),
       generalSect(t("reminder.title"), t("reminder.sub"), buildReminderRow(), { more: t("reminder.more", { days: DUE_SOON_DAYS }) }),
       // `feedback-sect`:关于页那句「在『意见反馈』里告诉我」点过来落在这儿(W4 Q11 / WD-33)。
@@ -692,38 +697,6 @@ function buildCompressRow(): HTMLDivElement {
   });
   line.append(seg); // 623:单行组不写行名
   return line;
-}
-
-// 「删任务前确认」(158 G3 / Q6,WD-18):看板删除确认里那枚「不再提示」勾过之后,在这里改回来。
-// 同压缩大图那一形(开 / 关两档 seg,单行组不写行名);偏好本身住 delete-confirm.ts。写失败照实说。
-function buildDeleteConfirmRow(): HTMLDivElement {
-  const wrap = document.createElement("div");
-  const line = document.createElement("div");
-  line.className = "hkset-row zoom-row";
-  const seg = document.createElement("div");
-  seg.className = "seg";
-  const onBtn = el("button", "seg-btn", t("settings.deleteConfirmOn")) as HTMLButtonElement;
-  const offBtn = el("button", "seg-btn", t("settings.deleteConfirmOff")) as HTMLButtonElement;
-  onBtn.id = "delete-confirm-on"; // e2e 探针按它认钮
-  offBtn.id = "delete-confirm-off";
-  seg.append(onBtn, offBtn);
-  const msg = el("p", "hkset-msg", "");
-  const paint = (): void => {
-    const on = taskDeleteConfirmOn();
-    segOn(onBtn, on);
-    segOn(offBtn, !on);
-  };
-  paint();
-  const pick = (on: boolean): void => {
-    const ok = setTaskDeleteConfirm(on);
-    setMsg(msg, ok ? "" : t("settings.deleteConfirmSaveFailed"), ok ? "" : "err");
-    paint();
-  };
-  onBtn.addEventListener("click", () => pick(true));
-  offBtn.addEventListener("click", () => pick(false));
-  line.append(seg); // 623:单行组不写行名
-  wrap.append(line, msg);
-  return wrap;
 }
 
 const THEME_CHOICES: { mode: ThemeMode; label: string }[] = [

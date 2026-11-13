@@ -1,4 +1,4 @@
-import { invoke, mirrorSpace, spaceLabel, listSpaces, dotClass, MAIN_SPACE } from "./space";
+import { invoke, invokeInSpace, mirrorSpace, spaceLabel, listSpaces, dotClass, MAIN_SPACE } from "./space";
 import { invoke as rawInvoke } from "@tauri-apps/api/core";
 import { emitTo, listen } from "@tauri-apps/api/event";
 import { LogicalSize } from "@tauri-apps/api/dpi";
@@ -62,6 +62,7 @@ async function initSpaceTag(): Promise<void> {
     sawForegroundEvent = true;
     targetSpace = e.payload;
     void refreshSpaceNames(); // 顺带刷新名字表(改名/新建后标签不腐)。
+    refreshKnownTags(); // /tag 的候选跟着落点空间走
   });
   // 空间名变了(本地改名 / 远端改名落地 / 引导落名;space-name-sync-plan §4.7):
   // 徽章只靠 space-foreground 顺带刷会漏「没切空间只改名」的一切路径。
@@ -75,6 +76,7 @@ async function initSpaceTag(): Promise<void> {
   } catch {
     // 壳还没就绪(启动竞速):保持 main;随后的事件会对齐。
   }
+  refreshKnownTags();
   await refreshSpaceNames();
 }
 void initSpaceTag();
@@ -259,6 +261,42 @@ async function pickSpace(id: string): Promise<void> {
 }
 spaceTag.addEventListener("click", () => void openSpacePicker());
 
+// ---- /tag 的候选:落点空间里已有的标签(902 E5)----
+// 此前 `/tag 家` 回车直接记下「家」,已有「家里」也不提 —— 存的时候后端只认**完全同名**(不分大小写)的那枚,
+// 差一个字就新建。⇒ 打到 `/tag 词` 时把名字里含这个词的已有标签列在命令那一行下面,↓ + 回车 / 点选就用那一枚;
+// 不选直接回车照旧(完全同名的那枚存的时候照旧被后端复用,不会重名)。
+// 名单按落点空间取:开窗(获得焦点)、落点空间变了各取一次;取回来时面板开着就重画。
+let knownTags: string[] = [];
+let knownTagsSeq = 0;
+function refreshKnownTags(): void {
+  const seq = ++knownTagsSeq;
+  void invokeInSpace<{ title: string }[]>(targetSpace, "list_topics").then(
+    (list) => {
+      if (seq !== knownTagsSeq) return; // 有更晚的一趟(空间又变了):旧响应不落
+      knownTags = [...new Set(list.map((x) => x.title))];
+      cmd.refresh();
+      void fitWindow();
+    },
+    (e: unknown) => {
+      if (seq !== knownTagsSeq) return;
+      knownTags = []; // 取不到就不列候选(/tag 照旧能用);别拿上一个空间的名单充数
+      console.error("list_topics:", e);
+    },
+  );
+}
+/** 名字里含 `arg` 的已有标签(不分大小写;已挂在这一条上的不列):以它开头的排前面,其余按名字。 */
+function tagOptions(arg: string): string[] {
+  const q = arg.toLowerCase();
+  const taken = new Set(captureTags.map((g) => g.toLowerCase()));
+  return knownTags
+    .filter((name) => name.toLowerCase().includes(q) && !taken.has(name.toLowerCase()))
+    .sort((a, b) => {
+      const pa = a.toLowerCase().startsWith(q) ? 0 : 1;
+      const pb = b.toLowerCase().startsWith(q) ? 0 : 1;
+      return pa - pb || a.localeCompare(b);
+    });
+}
+
 const cmd = createCaptureCommands({
   input,
   panel: cmdPanel,
@@ -271,7 +309,13 @@ const cmd = createCaptureCommands({
       enabled: () => Object.keys(targetNames).length >= 2,
     },
     { id: "task", label: t("capture.cmdTaskLabel"), hint: t("capture.cmdTaskHint"), takesArg: false },
-    { id: "tag", label: t("capture.cmdTagLabel"), hint: t("capture.cmdTagHint"), takesArg: true },
+    {
+      id: "tag",
+      label: t("capture.cmdTagLabel"),
+      hint: t("capture.cmdTagHint"),
+      takesArg: true,
+      argOptions: tagOptions,
+    },
   ],
   onExec: (id, arg) => {
     if (id === "space") {
@@ -576,6 +620,7 @@ appWindow.onFocusChanged(({ payload: focused }) => {
     // 顺带刷新空间名字表:新建第二个空间不一定伴随前台切换事件,唤起浮窗这一刻
     // 对齐(徽章该出现就出现、改名不腐)。
     void refreshSpaceNames();
+    refreshKnownTags(); // /tag 的候选名单(别的窗里可能刚建 / 改名 / 删了标签)
     // 热键冲突也复查:去设置改好键后壳已清空冲突,这次唤起提示条自然消失。
     void refreshHotkeyBar();
     void fitWindow();

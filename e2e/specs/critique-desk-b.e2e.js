@@ -204,21 +204,19 @@ describe("应用评审 B · 设置", () => {
         };
       }),
     );
-    expect(rows.map((r) => r.name)).toEqual(["空间", "开机自动启动", "外观", "语言", "界面字号", "压缩大图", "删卡片前确认", "本机别名", "截止提醒", "意见反馈"]);
+    expect(rows.map((r) => r.name)).toEqual(["空间", "开机自动启动", "外观", "语言", "界面字号", "压缩大图", "本机别名", "截止提醒", "意见反馈"]);
     for (const r of rows) {
       expect({ name: r.name, descBelow: r.descBelow, overflow: r.overflow }).toEqual({ name: r.name, descBelow: true, overflow: false });
       // 意见反馈那一节例外:说明写的是「下面这个地址」,地址行排在说明下面,节名那一行没有控件。
       expect({ name: r.name, sameLine: r.sameLine }).toEqual({ name: r.name, sameLine: r.name === "意见反馈" ? null : true });
     }
     const by = Object.fromEntries(rows.map((r) => [r.name, r]));
-    // 有折叠的正是那五节,默认收着;常显的那一句自己读得通,其余几句一字不少地在折叠里。
-    expect(rows.filter((r) => r.fold).map((r) => r.name)).toEqual(["语言", "压缩大图", "删卡片前确认", "本机别名", "截止提醒"]);
+    // 有折叠的正是那四节(「删卡片前确认」那一节随删卡不再先问退场,F 组 F4),默认收着;常显的那一句自己读得通,其余几句一字不少地在折叠里。
+    expect(rows.filter((r) => r.fold).map((r) => r.name)).toEqual(["语言", "压缩大图", "本机别名", "截止提醒"]);
     for (const r of rows.filter((x) => x.fold)) expect({ name: r.name, open: r.fold.open }).toEqual({ name: r.name, open: false });
     expect(by["截止提醒"].desc).toBe("应用没开着时不会响。");
     expect(by["截止提醒"].fold.text).toMatch(/^开着时,每天到点用一条系统通知报逾期、今天到期与 \d+ 天内到期的卡片数/);
     expect(by["截止提醒"].fold.text).toContain("开关与时刻只属于这台设备,不同步。");
-    expect(by["删卡片前确认"].desc).toBe("开着时,在看板上删一张卡片会先问一句(删了也只是进回收站)。");
-    expect(by["删卡片前确认"].fold.text).toBe("在那句确认里勾过「不再提示」,这里就是关;想再被问,点「开」。只影响这台设备。");
     expect(by["本机别名"].desc).toBe("给这台设备起个名字,比如「书房台式机」,别的设备上就能看出每条是哪台记的。");
     expect(by["本机别名"].fold.text).toBe("名字会同步给这个空间里的其他设备;每个空间分别起。");
     expect(by["压缩大图"].fold.text).toContain("长截图不会被压成窄条。已存的图不受影响。只影响这台设备。");
@@ -388,15 +386,16 @@ describe("应用评审 B · 长文历史「复制这一版」", () => {
     expect(await browser.execute(() => document.querySelector(".v-docs .hv").innerText.includes("恢复"))).toBe(false);
   });
 
-  it("B4:写剪贴板失败 ⇒ 说「复制失败」,不说已复制", async () => {
+  it("B4:写剪贴板失败 ⇒ 说「复制失败:原因」,不说已复制", async () => {
     // 接着上一例,还在历史页上
     await browser.execute(() => {
       navigator.clipboard.writeText = () => Promise.reject(new Error("denied"));
       document.querySelectorAll(".v-docs .hv-copy")[0].click();
     });
-    await browser.waitUntil(async () => (await browser.execute(() => document.body.innerText.includes("复制失败"))) === true, {
+    // F 组 F3:带上系统给的原话(此前只有「复制失败」四个字)
+    await browser.waitUntil(async () => (await browser.execute(() => document.body.innerText.includes("复制失败:Error: denied"))) === true, {
       timeout: 5000,
-      timeoutMsg: "写剪贴板失败没有照实说",
+      timeoutMsg: "写剪贴板失败没有照实说(要带原因)",
     });
   });
 });

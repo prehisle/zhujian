@@ -29,7 +29,6 @@ export const docs = defineMessages({
   "docs.movePartialDone": { zh: "我已处理,解除", en: "Handled, dismiss" },
   "docs.copied": { zh: "已复制", en: "Copied" },
   "docs.copiedLink": { zh: "已复制链接", en: "Link copied" },
-  "docs.copyFailed": { zh: "复制失败", en: "Copy failed" },
   // 165 / W5 Q14:回收站只一个叫法(此前这句叫「随记回收站」,别处都叫「回收站」)。同随记删除那句(inbox.undoDeleted)。
   "docs.undoDeleted": { zh: "已移入回收站", en: "Moved to Trash" },
   "docs.undoCollapsed": { zh: "已收回随记", en: "Moved back to notes" },

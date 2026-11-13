@@ -24,7 +24,13 @@ export type CommandDef = {
   takesArg: boolean;
   /** 动态可用(如 /space 仅 ≥2 空间才给);缺省恒可用。 */
   enabled?: () => boolean;
+  /** 取参命令的候选(902 E5):命令词打全、后面已有参数时问一次,返回的每一项在命令那一行下面各占一行,
+   *  ↑↓ + 回车 / 点选 = 拿这一项当参数执行(`/tag 家` → 已有的「家里」)。不选、直接回车 = 照旧拿打的字执行。 */
+  argOptions?: (arg: string) => string[];
 };
+
+/** 候选最多列几行(纸条窗高有上限,列多了把正文挤没)。 */
+const MAX_OPTIONS = 6;
 
 export type CaptureCommands = {
   /** 输入变化后重算匹配、刷新面板(main.ts 的 input 监听里调,随后自行量窗)。 */
@@ -44,6 +50,8 @@ export function createCaptureCommands(opts: {
 }): CaptureCommands {
   const { input, panel, commands, onExec } = opts;
   let matches: CommandDef[] = [];
+  /** 候选行(排在命令行之后;`hi` 跨两段数)。只在恰好一条命令、词打全、有参数时非空。 */
+  let options: string[] = [];
   let hi = 0;
   let dismissed = false; // Esc 关过面板,直到首行不再像命令才复位
 
@@ -96,6 +104,33 @@ export function createCaptureCommands(opts: {
       });
       panel.appendChild(row);
     });
+    options.forEach((name, k) => {
+      const i = matches.length + k;
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "cmd-row cmd-opt" + (i === hi ? " hi" : "");
+      // 第一格留空占位(与命令行的「/tag」同宽),名字对齐在命令名那一列之后;写法同已挂上的标签 chip(#名字)。
+      const pad = document.createElement("span");
+      pad.className = "cmd-name";
+      const label = document.createElement("span");
+      label.className = "cmd-label";
+      label.textContent = "#" + name;
+      row.append(pad, label);
+      row.addEventListener("mousedown", (ev) => {
+        ev.preventDefault();
+        exec(matches[0], name);
+      });
+      row.addEventListener("mouseenter", () => {
+        hi = i;
+        paintHi();
+      });
+      panel.appendChild(row);
+    });
+  }
+
+  /** 首行里命令词之后的参数(去首尾空白)。 */
+  function argText(): string {
+    return firstLine().replace(/^\/[a-z]*[ \t]*/i, "").trim();
   }
 
   function refresh(): void {
@@ -103,20 +138,30 @@ export function createCaptureCommands(opts: {
     if (word === null) {
       dismissed = false; // 首行不再像命令 → Esc 抑制解除
       matches = [];
+      options = [];
       render();
       return;
     }
     if (dismissed) {
       matches = [];
+      options = [];
       render();
       return;
     }
     matches = commands.filter((c) => (c.enabled ? c.enabled() : true) && c.id.startsWith(word));
-    if (hi >= matches.length) hi = 0;
+    // 候选(902 E5):只在命令词打全(`/tag`,不是 `/ta`)且后面有字时问。高亮默认仍在命令那一行 ——
+    // 不选直接回车 = 照旧拿打的字;↓ 才进候选。
+    const only = matches.length === 1 && matches[0].id === word ? matches[0] : null;
+    const arg = argText();
+    const wasOn = hi >= matches.length ? options[hi - matches.length] : undefined;
+    options = only?.argOptions && arg !== "" ? only.argOptions(arg).slice(0, MAX_OPTIONS) : [];
+    // 高亮停在某枚候选上、接着又打了字:那一格换了人就回到命令行 —— 别让回车落在一枚没看过的候选上。
+    if (hi >= matches.length + options.length || (wasOn !== undefined && options[hi - matches.length] !== wasOn)) hi = 0;
     render();
   }
 
-  function exec(cmd: CommandDef): void {
+  /** `picked` = 点名的候选(拿它当参数,不用打的那几个字)。 */
+  function exec(cmd: CommandDef, picked?: string): void {
     const v = input.value;
     const nl = v.indexOf("\n");
     const line1 = nl === -1 ? v : v.slice(0, nl);
@@ -125,7 +170,7 @@ export function createCaptureCommands(opts: {
     const argRaw = line1.replace(/^\/[a-z]*[ \t]*/i, "");
     if (cmd.takesArg) {
       input.value = restLines.replace(/^\n/, ""); // 参数消费掉,只留后续行
-      onExec(cmd.id, argRaw.trim());
+      onExec(cmd.id, picked ?? argRaw.trim());
     } else {
       input.value = argRaw + restLines; // 余下留作正文
       onExec(cmd.id, "");
@@ -139,26 +184,29 @@ export function createCaptureCommands(opts: {
 
   function handleKey(e: KeyboardEvent): boolean {
     if (panel.hidden || matches.length === 0) return false;
+    const rows = matches.length + options.length;
     switch (e.key) {
       case "ArrowDown":
         e.preventDefault();
-        hi = (hi + 1) % matches.length;
+        hi = (hi + 1) % rows;
         paintHi();
         return true;
       case "ArrowUp":
         e.preventDefault();
-        hi = (hi - 1 + matches.length) % matches.length;
+        hi = (hi - 1 + rows) % rows;
         paintHi();
         return true;
       case "Enter":
       case "Tab":
         e.preventDefault();
-        exec(matches[hi]);
+        if (hi < matches.length) exec(matches[hi]);
+        else exec(matches[0], options[hi - matches.length]);
         return true;
       case "Escape":
         e.preventDefault();
         dismissed = true;
         matches = [];
+        options = [];
         render();
         return true;
       default:

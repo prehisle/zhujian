@@ -9,7 +9,6 @@ export const images = defineMessages({
   "itemImages.failTooBig": { zh: "({mb} MB 超过 {max} MB 上限)", en: " ({mb} MB is over the {max} MB limit)" },
   "itemImages.failBadType": { zh: "(不支持 {mime} 这种格式,只收 png / jpeg / webp / gif)", en: " ({mime} isn’t a supported format; only png / jpeg / webp / gif)" },
   "itemImages.copiedImage": { zh: "已复制图片", en: "Image copied" },
-  "itemImages.copyFail": { zh: "复制失败", en: "Copy failed" },
   "itemImages.pasteFail": { zh: "粘贴图片失败", en: "Failed to paste image" },
   "itemImages.badge": { zh: "图{n}", en: "Image {n}" },
   "itemImages.loading": { zh: "图片载入中…", en: "Loading image…" },
@@ -36,5 +35,8 @@ export const images = defineMessages({
   "trashImages.cancel": { zh: "取消", en: "Cancel" },
   "clipboard.copy": { zh: "复制", en: "Copy" },
   "clipboard.copied": { zh: "已复制", en: "Copied" },
-  "clipboard.copyFail": { zh: "复制失败", en: "Copy failed" },
+  // 复制失败一律带原因(902 F3;此前六个键全是「复制失败」、调用点把系统给的原话丢了)。全句与手机 `cardpanel.copyLinkFailed` 同句。
+  // `copyFailShort` 只给钮上 / 菜单行里闪字那种窄位置用,旁边恒另出一条全句的错误提示条(clipboard.ts::copyFailed)。
+  "clipboard.copyFail": { zh: "复制失败:{err}", en: "Copy failed: {err}" },
+  "clipboard.copyFailShort": { zh: "复制失败", en: "Copy failed" },
 });

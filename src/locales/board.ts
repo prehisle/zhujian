@@ -60,13 +60,8 @@ export const board = defineMessages({
   "board.deleteForever": { zh: "彻底删除", en: "Delete forever" },
   "board.unseal": { zh: "取消归档", en: "Unarchive" },
   "board.cancel": { zh: "取消", en: "Cancel" },
-  "board.archiveQ": { zh: "移入回收站?可在回收站还原", en: "Move to Trash? You can restore it from there" },
-  "board.dontAskAgain": { zh: "不再提示", en: "Don't ask again" },
   "board.delete": { zh: "删除", en: "Delete" },
   "board.undoDeleted": { zh: "已移入回收站", en: "Moved to Trash" },
-  // 158 G3 / Q6(WD-18):勾着「不再提示」删的那一下,说清以后不问了、在哪改回。
-  // 「删任务前确认」是设置里那一项的名字(settings.deleteConfirmTitle),原样引。
-  "board.undoDeletedNoAsk": { zh: "已移入回收站。以后删卡片不再问,要改回:设置 → 通用 →「删卡片前确认」", en: "Moved to Trash. You won’t be asked again; to change that: Settings → General → “Confirm before deleting a card”" },
   // 158 G3 / Q1(WD-16):新建的卡落在视野外(列滚到底时建的,排在列首)才说这一句,配「去看看」。
   "board.created": { zh: "已记下", en: "Added" },
   "board.undoMoved": { zh: "已移到「{col}」", en: "Moved to “{col}”" },
@@ -89,7 +84,6 @@ export const board = defineMessages({
   "board.removeTag": { zh: "去掉这个标签", en: "Remove this tag" },
   "board.doneAt": { zh: "完成于 {day}", en: "Done · {day}" },
   "board.copied": { zh: "已复制", en: "Copied" },
-  "board.copyFailed": { zh: "复制失败", en: "Copy failed" },
   "board.linkCopied": { zh: "已复制链接", en: "Link copied" },
   "board.partialHandled": { zh: "我已处理,解除", en: "Handled, dismiss" },
   "board.edit": { zh: "编辑", en: "Edit" },

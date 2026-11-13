@@ -227,7 +227,16 @@ describe("W4 161 · D2 备份与设置其余", () => {
     const warn = await browser.execute(() => document.querySelector(".sync-panel .sync-warn").textContent);
     expect(warn).toContain("只换地址、账户原样不动");
     expect(warn).toContain("不是在这里改");
-    await browser.execute(() => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+    // 应用评审取舍 E6(Esc 只退一层;此前这里一下就整个关掉):修改服务器 → 高级 → 首页 → 关。
+    const esc = () => browser.execute(() => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+    const has = (l) => browser.execute((x) => [...document.querySelectorAll(".sync-panel button")].some((b) => b.textContent.trim() === x), l);
+    await esc();
+    await browser.waitUntil(() => has("修改服务器"), { timeout: 5000, timeoutMsg: "「修改服务器」页上按 Esc 没回到「高级」那一页" });
+    expect(await $(".sync-panel .sync-warn").isExisting()).toBe(false);
+    await esc();
+    await browser.waitUntil(() => has("高级…"), { timeout: 5000, timeoutMsg: "「高级」页上按 Esc 没回到首页" });
+    expect(await $(".sync-overlay").isExisting()).toBe(true);
+    await esc();
     await $(".sync-overlay").waitForExist({ timeout: 5000, reverse: true });
     // 把喂进去的假状态退回真值(别把「已配置」留给后面的 spec)。
     const real = await invoke("sync_status");

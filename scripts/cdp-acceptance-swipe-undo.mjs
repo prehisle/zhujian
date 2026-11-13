@@ -172,8 +172,6 @@ const jsCleanup = (id) => `(async () => {
       const del = await openCardAct(id, "del");
       if (del) {
         click(del);
-        await until(() => !cb.hidden, 1500);
-        click(document.getElementById("confirmbar-yes"));
         await until(() => !cardOf(id), 2000);
       }
     }

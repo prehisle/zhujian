@@ -3,6 +3,7 @@ import { t } from "./i18n";
 import { NATIVE_MENU_KEEP } from "./context-menu";
 import { el, holdKeyboard, type KeyboardHold } from "./dom";
 import { toastAction, toastError } from "./toast";
+import { copyFailed } from "./clipboard";
 
 // 悬停即选中 + ⋯ 速查菜单 + 单键直达 —— 抽自 inbox 的原型,做成视图无关的公共件,
 // 让「同一个键 = 同一个概念」跨视图(灵感 / 任务看板 / …)一致,肌肉记忆才能迁移。
@@ -42,7 +43,9 @@ export type Act = {
    *  (菜单行右侧那格画「▸」/ 留空);要单键直达的另立 `hidden` 项(看板的 `]` `[`)。 */
   sub?: () => Act[];
   /** 留开动作(如复制):执行后在自己的菜单行里闪一下返回的文案,而非关闭菜单。
-   *  从键盘触发(菜单没开)时改用底部回执说同一句(158)。返回值即要闪的文案,失败也自行兜底成文案。 */
+   *  从键盘触发(菜单没开)时改用底部回执说同一句(158)。返回值即要闪的文案。
+   *  今天全是「复制」一族:**失败就让它 reject**(⛔ 别自己 catch 成文案 —— 那样原因就丢了),这里统一报
+   *  「复制失败:{原因}」(902 F3):菜单行里闪短的 + 屏底一条全句,键盘触发的直接出全句。 */
   feedback?: () => Promise<string>;
 };
 
@@ -196,7 +199,13 @@ export function createHotkeyController(hopts: HotkeyOpts = {}): HotkeyController
     if (act.feedback) {
       // 键盘路径(菜单没开)此前静默执行 —— `/` C 复制了却屏上什么也没变(158 G2 / A17,WD-21)。
       // 没有菜单行可闪,就用底部那条回执说同一句。
-      void act.feedback().then((text) => (flash ? flash(text) : toastAction(text)));
+      void act.feedback().then(
+        (text) => (flash ? flash(text) : toastAction(text)),
+        (e) => {
+          const short = copyFailed(e); // 屏底全句(带原因)
+          flash?.(short);
+        },
+      );
     } else {
       act.run?.();
     }

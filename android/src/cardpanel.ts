@@ -1372,13 +1372,11 @@ function handleAct(act: string, card: HTMLElement) {
       });
       return;
     }
-    // 两拍类:第一拍弹底部固定确认条,第二拍在条上执行(onYes 复核 session 未变——
-    // 期间换卡/收面/切空间的旧确认一律作废,不许作用到新语境)。
     case "del": {
-      // 157 G4 / P2:随记一点即删 + 6 s 撤销(进回收站找得回,同桌面与 user-guide);任务仍两拍(同桌面看板)。
-      const doDelete = () => {
-        if (state !== session || busy) return;
-        // 确认期间远端可能已翻 stage(灵感→任务):按现行条目分流,不用第一拍的快照。
+      // 157 G4 / P2:随记一点即删 + 6 s 撤销(进回收站找得回,同桌面与 user-guide)。
+      // 902(用户拍 R3):看板卡片同一形 —— 不再先问(此前任务两拍),直接进回收站 + 同一条带「撤销」的回执。
+      {
+        // 按现行条目分流(远端可能已翻 stage:灵感→任务),不用开面时的快照。
         const cur = deps.getItem(session.id);
         if (!cur) return;
         const task = isTaskStage(cur.stage);
@@ -1406,11 +1404,11 @@ function handleAct(act: string, card: HTMLElement) {
             setState(null);
           },
         });
-      };
-      if (isTaskStage(item.stage)) confirmBar(t("cardpanel.deleteQ"), t("cardpanel.deleteYes"), doDelete);
-      else doDelete();
+      }
       return;
     }
+    // 两拍类:第一拍弹底部固定确认条,第二拍在条上执行(onYes 复核 session 未变——
+    // 期间换卡/收面/切空间的旧确认一律作废,不许作用到新语境)。
     case "revert": {
       const hasMeta = item.due_on !== null || item.priority !== null;
       confirmBar(

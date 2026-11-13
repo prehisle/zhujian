@@ -53,14 +53,6 @@ export const settings = defineMessages({
   "settings.compressMore": { zh: "打开后,存图前会把大照片缩小并转成 JPEG,省同步流量和空间,但画质有损、原图找不回来;长截图不会被压成窄条。已存的图不受影响。只影响这台设备。", en: "When on, large photos are shrunk and re-saved as JPEG first—less sync traffic and storage, but lossy, and the original can’t be recovered; long screenshots are never squeezed into a thin strip. Images already saved aren’t affected. This device only." },
   "settings.compressOn": { zh: "开", en: "On" },
   "settings.compressOff": { zh: "关", en: "Off" },
-  // 158 G3 / Q6(WD-18):看板删除确认里勾过「不再提示」后,在这里改回来。
-  "settings.deleteConfirmTitle": { zh: "删卡片前确认", en: "Confirm before deleting a card" },
-  // 898 B2:这一句常显,其余几句一字不动地住进 settings.deleteConfirmMore(行下那只「说明」折叠)。
-  "settings.deleteConfirmSub": { zh: "开着时,在看板上删一张卡片会先问一句(删了也只是进回收站)。", en: "When on, deleting a card on the board asks first (deleted cards go to the Trash either way)." },
-  "settings.deleteConfirmMore": { zh: "在那句确认里勾过「不再提示」,这里就是关;想再被问,点「开」。只影响这台设备。", en: "Ticking “Don’t ask again” in that question turns this off; click On to be asked again. This device only." },
-  "settings.deleteConfirmOn": { zh: "开", en: "On" },
-  "settings.deleteConfirmOff": { zh: "关", en: "Off" },
-  "settings.deleteConfirmSaveFailed": { zh: "没存上(这台设备的本地存储写不进去),下次照旧", en: "Couldn’t save (this device’s local storage refused the write); nothing changed" },
   "settings.aliasTitle": { zh: "本机别名", en: "Device alias" },
   // 161 / W4 Q11(WD-35 后半 / WP-21):说清是按空间分别起的(加入一个新空间后别名框是空的,像之前白起了)。同手机 shell.aliasNotePost。
   // 898 B2:这一句常显,其余几句一字不动地住进 settings.aliasMore(行下那只「说明」折叠)。

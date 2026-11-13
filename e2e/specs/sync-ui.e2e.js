@@ -1,5 +1,5 @@
 import { $, $$, expect, browser } from "@wdio/globals";
-import { invoke, goNotebook } from "./support.js";
+import { invoke, goNotebook, openSyncServerField } from "./support.js";
 
 // P2-g 同步 UI 最小面。e2e 库从不配置同步账户,这里钉死的是「未配置=零打扰」契约:
 // 侧栏只有一枚安静入口(灰点),面板给两条入路(创建账户/用配对码加入),Esc 即走。
@@ -54,6 +54,10 @@ describe("P2-g 同步 UI(未配置=零打扰)", () => {
       }
       throw new Error("面板里没有「创建账户」按钮");
     });
+    // 902 F6:地址默认收成一行「服务器:官方(…)」+「更改…」;点开才是那一个输入框。
+    await $(".sync-panel .sync-server-line").waitForExist({ timeout: 3000 });
+    expect((await $$(".sync-panel .sync-input")).length).toBe(0);
+    await openSyncServerField();
     await browser.waitUntil(
       async () => (await $$(".sync-panel .sync-input")).length === 1,
       { timeout: 3000, timeoutMsg: "创建账户页应只有服务器地址一个输入框(无码)" },
@@ -92,7 +96,7 @@ describe("P2-g 同步 UI(未配置=零打扰)", () => {
       }
       throw new Error("面板里没有「创建账户」按钮");
     });
-    await $(".sync-panel .sync-input").waitForExist({ timeout: 3000 });
+    await openSyncServerField();
     // 本机 1 号口没人听 ⇒ 拨号当场被拒,落「连不上」一类(settings-shell 那例同一个地址)。
     await browser.execute(() => {
       const input = document.querySelector(".sync-panel .sync-input");

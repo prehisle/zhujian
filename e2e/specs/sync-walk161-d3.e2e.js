@@ -117,7 +117,8 @@ describe("W4 161 · D3 同步 / 设备 / 配对 / 被移除 / 断网", () => {
       text: document.querySelector(".sync-panel").textContent,
     }));
     expect(f.label).toBe("服务器地址");
-    expect(f.value).toBe("ws://127.0.0.1:1"); // 预填的是最近连上的那台,不是官方
+    expect(f.value).toBe("ws://127.0.0.1:1"); // 预填的是最近连上的那台,不是官方 ⇒ 地址框一来就摊着(F 组 F6),不出「服务器:官方」那一行
+    expect(await $(".sync-panel .sync-server-line").isExisting()).toBe(false);
     expect(f.hint).toContain("不是官方服务器");
     expect(f.text).toContain("账户就回不来");
     // 框里换成官方地址 ⇒ 那一行跟着换。
@@ -162,7 +163,7 @@ describe("W4 161 · D3 同步 / 设备 / 配对 / 被移除 / 断网", () => {
   it("A27:用配对码加入 —— 配对码框有标签、灰字写长什么样;样子不对时不提「槽号」、不挂原文", async () => {
     await goNotebook("inbox");
     await openSync();
-    await clickIn(".sync-panel button", "用配对码加入");
+    await clickIn(".sync-panel button", "已有账户?用配对码加入");
     await $(".sync-panel .sync-field").waitForExist({ timeout: 5000 });
     const labels = await browser.execute(() => [...document.querySelectorAll(".sync-panel .sync-label")].map((n) => n.textContent));
     expect(labels).toEqual(["服务器地址", "配对码"]);

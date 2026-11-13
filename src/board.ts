@@ -10,9 +10,8 @@ import {
 import { movePanel } from "./move-space";
 import { autoGrow } from "./autogrow";
 import { createComposeController } from "./compose-controller";
-import { copyButton, copyText } from "./clipboard";
+import { copyButton, copyFailText, copyText } from "./clipboard";
 import { dismissUndo, flashToast, toastAction, toastError, toastGo, toastUndo, toastUndone } from "./toast";
-import { setTaskDeleteConfirm, taskDeleteConfirmOn } from "./delete-confirm";
 import { buildItemDeepLink } from "./deeplink";
 import { armLocate, clearSearchBack, locateNoteEl, takeLocateNote } from "./locate";
 import { focusInboxItem } from "./inbox";
@@ -28,6 +27,7 @@ import {
   reconcileKindFilter,
   reconcileTopicFilter,
   renderFilterPills,
+  wireFilterFold,
   renderKindPills,
   renderTimePills,
   otherLayersNote,
@@ -266,8 +266,6 @@ const SKELETON = `
 // 类型,0031)或 null = 无类型 —— 类型轴 pill 行(renderKindPills)据它分组。
 type TopicOpt = { id: string; title: string; color: string | null; kind: string | null };
 
-// 删除确认偏好(「删任务前确认」)158 G3 / Q6 起挪到 delete-confirm.ts —— 设置 → 通用里那枚开关读写同一个键。
-
 // Three views in one column: the kanban, the 回收站 (soft-deleted tasks), and the
 // 归档 (成就归档 — sealed done tasks, viewable, not deletable).
 // 0043 多一格 `holding`:收容区(已删除的看板 / 列里还扣着的卡,multiboard-plan §3a),从侧栏底部那行进。
@@ -351,6 +349,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
   const boardTitle = view.querySelector("header h1") as HTMLElement;
   const filterRow = view.querySelector("#filter-row") as HTMLElement;
   const filterBar = view.querySelector("#topic-filter") as HTMLElement;
+  const offFilterFold = wireFilterFold(filterBar, "board", view); // 标签行两行折叠(902 F5)
   const kindBar = view.querySelector("#kind-filter") as HTMLElement;
   const timeBar = view.querySelector("#time-filter") as HTMLElement;
   const filterInput = view.querySelector("#board-filter") as HTMLInputElement;
@@ -414,6 +413,8 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
   let sealedBoard: string | null = null;
   // 归档卡要不要挂来源看板的小签(= 顶上那排筛选在不在);renderSealed 每次先算好再画卡。
   let sealedTagged = false;
+  // 这一趟归档册是从收容区(「已删除的看板 / 列」)进来的 ⇒ 没有「当前看板」:筛选排里不硬塞一枚、进来选「全部看板」(902 F8)。
+  let sealedNoHome = false;
   /** 这一趟挂着看板以来,活卡上出现过标签的看板(标签行恒占位的判据,见 load 里 B8 / W3 那段)。 */
   const tagRowBoards = new Set<string>();
   /** 跨过本地午夜自动重算一次:`today` 只在 load() 里刷新,而「今天到期」这件事**没人
@@ -653,9 +654,15 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
     return cardOffscreen(id) ? { label: t("inbox.goSee"), run: () => flashCard(id) } : undefined;
   }
 
-  // `noAskNote`:这一下是勾着「不再提示」删的 ⇒ 回执说清以后不问了、在哪改回(158 G3 / Q6,WD-18)。
-  const archive = async (id: string, noAskNote = false): Promise<void> => {
-    undoable(await call("archive_task", { id }), noAskNote ? t("board.undoDeletedNoAsk") : t("board.undoDeleted"), () => restore(id));
+  // 删卡片不再先问(902 F4 / R3,用户拍板;两端同形):直接进回收站 + 带「撤销」的回执,同删随记。此前(158 G3 / Q6)
+  // 是行内确认 +「不再提示」勾选 + 设置里那枚「删卡片前确认」开关,三样一并拿掉;旧的本地存储键留在用户机器上不管。
+  // ⛔ 别的两拍确认(清空回收站 / 销毁 / 全部归档 / 删列 / 删看板…)不在此列。菜单与单键 D 走的都是这一条;
+  // 删后选中 / 焦点落原位后一张(重画接力,hotkey-menu 的 RegisterOpts.id,W5 A3)。
+  const archive = async (id: string): Promise<void> => {
+    undoable(await call("archive_task", { id }), t("board.undoDeleted"), () => {
+      hk.want(id, true); // 撤回来的那张重新是选中、焦点回它的 ⋯(同删随记的撤销,W5 A1)
+      return restore(id);
+    });
   };
   // 158 G2 / A7(WD-06 / 36):撤回为随记此前一声不吭。回执带「去看看」(随记页定位那条)。
   // 158 G3 / A7 对齐手机(74fe6f65):再配「撤销」= 转回待办,并把撤回时清掉的截止 / 优先级原样设回 ——
@@ -1244,7 +1251,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
         item("copy-board", t("board.copyBoard"), t("board.copyBoard"), () => {
           void copyText(md).then(
             () => toastAction(t("clipboard.copied")),
-            () => toastAction(t("clipboard.copyFail")),
+            (e) => toastError(copyFailText(e)),
           );
         }),
       );
@@ -1417,45 +1424,6 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
   function revealConfirm(host: HTMLElement): void {
     host.scrollIntoView({ block: "nearest" });
     host.querySelector<HTMLButtonElement>(".act.ghost")?.focus({ preventScroll: true });
-  }
-
-  // 删除 a board card: straight to 回收站 if the user opted out of the confirm, else
-  // an inline confirm explaining it's recoverable + a 不再提示 checkbox.
-  function requestArchive(acts: HTMLElement, id: string): void {
-    if (!taskDeleteConfirmOn()) {
-      void archive(id);
-      return;
-    }
-    const dontAsk = el("input", { type: "checkbox" });
-    disarmConfirm();
-    confirmOff = armDismiss(acts, () => {
-      confirmOff = null;
-      void load();
-    });
-    acts.replaceChildren(
-      el("span", { className: "confirm-q", textContent: t("board.archiveQ") }),
-      el("label", { className: "dont-ask" }, [dontAsk, document.createTextNode(t("board.dontAskAgain"))]),
-      el("button", {
-        className: "act ghost",
-        textContent: t("board.cancel"),
-        onclick: () => {
-          disarmConfirm();
-          void load();
-        },
-      }),
-      el("button", {
-        className: "act primary",
-        textContent: t("board.delete"),
-        // Persist the opt-out before deleting; if the write fails we don't pretend it
-        // stuck — the confirm just shows again next time. Either way the delete runs.
-        // 写不进去(本地存储拒写)就不说「以后不问了」—— 下次照旧问,那才是真话。
-        onclick: () => {
-          disarmConfirm();
-          void archive(id, dontAsk.checked && setTaskDeleteConfirm(false));
-        },
-      }),
-    );
-    revealConfirm(acts);
   }
 
   // A card's tags (M:N). Each current tag is a chip with a ✕ to drop it; the ⋯ menu's
@@ -1761,7 +1729,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
               key: "",
               sub: () => targets.map((b) => ({ label: boardName(b), key: "", run: () => void moveToBoard(item, b) })),
             });
-          list.push({ label: t("board.delete"), key: BOARD_CARD_KEYS.delete, run: () => requestArchive(acts, item.id), danger: true });
+          list.push({ label: t("board.delete"), key: BOARD_CARD_KEYS.delete, run: () => void archive(item.id), danger: true });
           return list;
         },
         () => !!c.querySelector(".confirm-q"),
@@ -1908,23 +1876,16 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       // ⋯ menu + single-key shortcuts. Declared once, drive BOTH the menu and the
       // keyboard (single source of truth). Keys match 灵感 where they overlap
       // (E 编辑 / C 复制 / L 标签 / D 删除), so the muscle memory transfers.
+      // 失败不在这里兜成文案:让它 reject,hotkey-menu 统一报「复制失败:{原因}」(902 F3)。
       const copyFeedback = async (): Promise<string> => {
-        try {
-          await copyText(item.title);
-          return t("board.copied");
-        } catch {
-          return t("board.copyFailed");
-        }
+        await copyText(item.title);
+        return t("board.copied");
       };
       // 复制这条任务的深链接(zhujian://open?…&item=…):粘到别的笔记 / 发给对方设备都能
       // 直接打开它(见 deeplink.ts)。菜单反馈复用 copy 一族的「点一下闪一下」。
       const copyLinkFeedback = async (): Promise<string> => {
-        try {
-          await copyText(await buildItemDeepLink(item.id));
-          return t("board.linkCopied");
-        } catch {
-          return t("board.copyFailed");
-        }
+        await copyText(await buildItemDeepLink(item.id));
+        return t("board.linkCopied");
       };
       // 列间移动: advance/retreat the card one column. The target column's current DOM
       // order (excludes this card — cross-column) is the base; the card appends to the
@@ -2106,7 +2067,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
         // 移动到其他空间(cross-space-move v1):≥2 空间才出现。
         if (otherSpaces.length > 0 && !movePartialNote(item.id))
           list.push({ label: t("board.move"), key: BOARD_CARD_KEYS.move, run: () => openMoveSpace(acts, item) });
-        list.push({ label: t("board.delete"), key: BOARD_CARD_KEYS.delete, run: () => requestArchive(acts, item.id), danger: true });
+        list.push({ label: t("board.delete"), key: BOARD_CARD_KEYS.delete, run: () => void archive(item.id), danger: true });
         return list;
       }
       // A card mid inline-rename / mid-confirm owns the keyboard (its own Enter/Esc).
@@ -2420,7 +2381,9 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
           return chip;
         }),
       );
-      // Enter/点别处 保存、Esc 取消、Ctrl+V 配图 都是隐式手势,不再常驻一行说明书。
+      // 902 F1:就地编辑态的框下常驻一行「回车或点别处保存 · Esc 不要了」(同随记编辑态那行、同一个键;用户这次
+      // 改了主意 —— 此前是「隐式手势,不常驻说明书」)。放大面板里它让位给面板底那句 `board.zoomHint`(CSS 藏)。
+      const editHint = el("p", { className: "edit-hint", textContent: t("inbox.editHint") });
       // 报错与放大钮同占一行:`.edit-err:empty` 本就收起,这一行的高度平时只由那枚小钮决定。
       // 复用卡上小钮那一档(`.act.ghost`),只在 CSS 里收窄单字符的左右留白 —— 别为它另拍一套。
       const zoomBtn = btn("⤢", "ghost edit-zoom", () => openZoom());
@@ -2429,7 +2392,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       // ⛔ 这一行必须在正文框**之前**:它要服务的正是「框长过视口」那一态,而那一态里框底
       // 在屏幕外 —— 钮挂在框下面等于「最需要它的时候它不在屏上」(实测 154px 窄列、十行
       // 正文:框高 466、底边 751,窗才 680)。报错行跟着上移是顺带的好处,不必滚到底才看见。
-      const form = el("div", { className: "edit-form" }, [el("div", { className: "edit-bar" }, [err, zoomBtn]), input, discardHint, tagView, imgEditor]);
+      const form = el("div", { className: "edit-form" }, [el("div", { className: "edit-bar" }, [err, zoomBtn]), input, discardHint, editHint, tagView, imgEditor]);
 
       function openZoom(): void {
         if (zoomed) return;
@@ -2778,19 +2741,26 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
   // 时回落归档日 sealed_at;同灵感 ㊳ 的按天分组,共享 dayKey/dayLabel)。批量归档不再把
   // 一周的活压成归档那天——答得准「什么时候干完」。只读 + 每卡一个「取消归档」;无删除入口。
   function renderSealed(allItems: TaskItem[], allDoneOnBoard: TaskItem[]): void {
-    // 0043(用户拍 ⑦):成就合一本,顶上可按看板筛。只在**不止一块看板有东西可看**时出那排筛选
-    // (单看板 = 今天的样子,一枚「全部」是噪音)。筛的是看板、不是列:来处按卡所在列的归属认。
+    // 0043(用户拍 ⑦):成就合一本,顶上可按看板筛。筛的是看板、不是列:来处按卡所在列的归属认(删掉的看板也算一块)。
+    // 902 F8 / R4(用户拍板,两端同形;手机 panes.ts::renderSealed):**活看板 ≥ 2 块**时那排筛选恒出现 ——
+    // 「全部看板」+ 当前看板(恒在,哪怕它没有归档)+ 其他有内容的看板;进册恒选当前看板(toggleSealed),它没有归档就是
+    // 那句「这块看板还没有归档的卡片」。此前要「不止一块看板有东西可看」才出,当前看板没归档时预选被改回「全部」——
+    // 从 B 看板点进归档册,看到的是 A 看板的卡,屏上不说为什么。
+    // 只有一块活看板的库照旧:成就来自 ≥ 2 块看板(另一块已删)才出那排,否则不出(一枚「全部」是噪音)。
+    // ⛔ 活看板只有一块时别把它硬塞进那排:已删的看板也在 `boards` 里,会凭空挂上「任务」。
     const fromOf = (x: TaskItem): string | null => boardOfCol(x.status)?.id ?? null;
     const both = [...allItems, ...allDoneOnBoard];
-    const pillBoards = boards.filter((b) => both.some((x) => fromOf(x) === b.id));
-    sealedTagged = pillBoards.length >= 2;
-    if (pillBoards.length < 2 || !pillBoards.some((b) => b.id === sealedBoard)) sealedBoard = null;
+    const multi = liveBoards(boards).length >= 2;
+    const homeId = multi && !sealedNoHome ? (cur?.id ?? null) : null;
+    const pillBoards = boards.filter((b) => b.id === homeId || both.some((x) => fromOf(x) === b.id));
+    const tagged = multi || pillBoards.length >= 2;
+    sealedTagged = tagged; // 来处名小签:筛选排在就挂(筛着单块看板时也挂,同手机)
+    if (!tagged || !pillBoards.some((b) => b.id === sealedBoard)) sealedBoard = null;
     const items = sealedBoard === null ? allItems : allItems.filter((x) => fromOf(x) === sealedBoard);
     const doneOnBoard = sealedBoard === null ? allDoneOnBoard : allDoneOnBoard.filter((x) => fromOf(x) === sealedBoard);
-    const pills: HTMLElement | null =
-      pillBoards.length < 2
-        ? null
-        : el("div", { className: "sealed-boards" }, [
+    const pills: HTMLElement | null = !tagged
+      ? null
+      : el("div", { className: "sealed-boards" }, [
             sealedPill(t("boards.sealedAll"), null),
             ...pillBoards.map((b) => sealedPill(boardName(b), b.id)),
           ]);
@@ -2803,7 +2773,9 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       });
       return p;
     }
-    if (allItems.length === 0) {
+    // 整本都空:只有一块活看板的库照旧是整页那句「还没有归档的卡片」+ 怎么归档;多看板的库筛选排照出(下面),
+    // 空的那句落在列表位上。
+    if (allItems.length === 0 && !multi) {
       // 说法点名**这块看板**的完成列(R4:别写死「已完成」);这块没有完成列就泛说「有完成列的看板」。
       const doneCol = cols.find((c) => c.id === doneId());
       renderCentered(
@@ -2854,7 +2826,10 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       }
       list.append(card(t, "sealed"));
     }
-    if (items.length === 0) list.append(el("p", { className: "sealed-none", textContent: t("boards.sealedNoneHere") }));
+    // 筛着某块看板而它没有归档 = 「这块看板还没有归档的卡片」;在「全部看板」上还是空的 = 整本都空,说整本那句(同手机)。
+    if (items.length === 0) {
+      list.append(el("p", { className: "sealed-none", textContent: sealedBoard === null ? t("board.sealedEmpty") : t("boards.sealedNoneHere") }));
+    }
     board.replaceChildren(...(pills ? [pills] : []), bar, list);
   }
 
@@ -3250,7 +3225,10 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       if (boardView === "sealed") {
         if (sealedList === null) throw new Error("sealed view loaded without the sealed list");
         filterRow.hidden = true;
-        if (focus !== null && sealedList.some((t) => t.id === focus)) locateId = focus;
+        if (focus !== null && sealedList.some((t) => t.id === focus)) {
+          locateId = focus;
+          sealedBoard = null; // 跳来定位那一张:回「全部看板」,免得它正好被筛掉、落空(同手机 sealedLocate)
+        }
         renderSealed(sealedList, active.filter((t) => doneCols.has(t.status)));
         if (focus !== null) board.querySelector(".just-located")?.scrollIntoView({ block: "center" });
         return;
@@ -3414,9 +3392,15 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
 
   function toggleSealed(): void {
     clearSearchBack();
+    const fromHolding = boardView === "holding";
     boardView = boardView === "sealed" ? "board" : "sealed";
-    // B12:从某块看板进归档册 ⇒ 筛选预选那块(它不在筛选排里时 renderSealed 自己落回「全部看板」)。
-    if (boardView === "sealed") sealedBoard = cur?.id ?? null;
+    // B12 / 902 F8:从某块看板进归档册 ⇒ **恒选那块**(多看板的库里它恒在筛选排里;只有一块活看板、不出筛选排时
+    // renderSealed 自己落回「全部看板」)。从收容区进来没有「当前看板」⇒ 选「全部看板」。
+    // ⚠ 只有「进入」这一下定选择:册内重载(取消归档之后 / 远端变更)不走这里,筛选留在人选的那一枚上。
+    if (boardView === "sealed") {
+      sealedNoHome = fromHolding;
+      sealedBoard = fromHolding ? null : (cur?.id ?? null);
+    }
     load();
   }
   sealToggle.addEventListener("click", toggleSealed);
@@ -3514,6 +3498,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       boardView = pendingView ?? "board";
       pendingView = null;
       sealedBoard = null;
+      sealedNoHome = false;
       dueOnly = false;
       queueLoad();
       return true;
@@ -3524,6 +3509,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       // mount 的 focusId、在已脱离 DOM 的旧看板上渲染,新看板反而拿不到跳转。顺带清 focusId,
       // 明确取消"离开看板时尚未落地的这次定位"。
       unmounted = true;
+      offFilterFold();
       document.removeEventListener(BOARDS_CHANGED, onBoardsChanged);
       setBoardViewLive(false);
       markActiveBoard(null); // 侧栏上「正在看哪块」的标随视图走

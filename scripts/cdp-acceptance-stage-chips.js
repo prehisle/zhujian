@@ -53,8 +53,6 @@
     }
     if (del) {
       click(del);
-      await until(() => !cb.hidden, 1500);
-      click(document.getElementById("confirmbar-yes"));
       await until(() => !cardOf(id));
     }
     click(document.querySelector('#bottombar [data-pane="trash"]'));

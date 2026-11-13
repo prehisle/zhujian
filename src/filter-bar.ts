@@ -316,6 +316,166 @@ ${hint}` : label) : hint;
   bar.replaceChildren(...pills);
 }
 
+// ---- 标签行折叠(902 F5)------------------------------------------------------------
+// 标签一多,这一行能折出五六行、把半屏内容顶下去(应用评审)。默认只显示**两行**,排不下的收起,行尾一枚
+// 「更多 N ▾」,点开后变「收起 ▴」。规矩:
+//  ① 正在筛选(选中)的标签即使排在折叠区也留在可见行(同上面「选中的不藏」);「所有 / 无标签」与行尾说明位不折;
+//  ② 展开状态按视图记在 localStorage(这台屏幕怎么用,同侧栏折叠;不进库、不同步);
+//  ③ 把卡片拖起来(拖到 pill 上 = 打标签)时自动展开,松手还原 —— 否则收起的标签接不到;
+//  ④ 不满两行时什么都不出,与此前逐像素相同;
+//  ⑤ 窗口变宽变窄、pill 重画、子标签 ▸/▾ 翻面都重算。
+// ⚠ 「更多」钮是标签行**外面**的兄弟节点(插在 `.topic-filter` 后面):check-filter-parity 把行内每个 BUTTON 当标签核。
+// ⚠ 整套接在行外(MutationObserver + ResizeObserver),⛔ 不改 renderFilterPills 一个字:那道闸把它的函数体切出去
+//   单独求值,函数里引用任何本节的模块级名字都会在闸里 ReferenceError。
+// 折起来的 pill 挂 `data-fold`(CSS 藏)。⛔ 不走 class:本节的观察器盯着子 pill 的 class(▸/▾ 翻的是 `.hidden`),
+// 自己再改 class 就自激。
+
+/** 这一行此刻排成几行。按「左缘回到上一枚的左边或原地 = 换行了」数(行内各枚高矮不一、`align-items:center`,
+ *  拿 offsetTop 比会把同一行的高矮两枚数成两行)。只数真占位的(`offsetParent !== null`)。 */
+function pillRows(bar: HTMLElement): number {
+  let rows = 0;
+  let prevLeft = Infinity;
+  for (const c of bar.children) {
+    const el = c as HTMLElement;
+    if (el.offsetParent === null) continue;
+    if (el.offsetLeft <= prevLeft) rows += 1;
+    prevLeft = el.offsetLeft;
+  }
+  return rows;
+}
+
+const FOLD_ROWS = 2;
+
+/** 给一条标签行接上「两行折叠」。`view` 进 localStorage 键名(看板 / 随记各记各的);`scope` = 这个视图的根
+ *  (卡片的 dragstart / dragend 冒到它身上,监听随视图 DOM 一起走)。返回卸载钩(视图 unmount 时调)。 */
+export function wireFilterFold(bar: HTMLElement, view: "board" | "inbox", scope: HTMLElement): () => void {
+  const KEY = `zhujian.tagrows-open.${view}`;
+  // 读不到 / 读失败 = 收起(默认那一边);写失败 = 这次照做、下次回默认,不为它报错(纯版式偏好)。
+  let open = false;
+  try {
+    open = localStorage.getItem(KEY) === "1";
+  } catch {
+    open = false;
+  }
+  let dragOpen = false; // 拖卡片期间的临时展开(不写存储)
+
+  const more = document.createElement("button");
+  more.type = "button";
+  more.className = "tf-more";
+  more.hidden = true;
+  if (bar.id) more.setAttribute("aria-controls", bar.id);
+  const label = document.createElement("span");
+  const arrow = document.createElement("span");
+  arrow.className = "tf-more-arrow";
+  arrow.setAttribute("aria-hidden", "true");
+  more.append(label, arrow);
+  bar.after(more);
+
+  let busy = false; // 自己改 DOM 时观察器回调不重入
+  const refold = (): void => {
+    if (busy) return;
+    busy = true;
+    try {
+      const pills = [...bar.querySelectorAll<HTMLElement>(":scope > .tf-pill")];
+      for (const p of pills) delete p.dataset.fold;
+      more.hidden = true;
+      if (bar.children.length === 0 || pillRows(bar) <= FOLD_ROWS) return; // ④ 不满两行:什么都不出
+      const expanded = open || dragOpen;
+      more.hidden = false; // 先让它占位再量:它吃掉这一行右端的宽度
+      more.setAttribute("aria-expanded", String(expanded));
+      if (expanded) {
+        label.textContent = t("filter.less");
+        arrow.textContent = "▴";
+        return;
+      }
+      // 能折的:真标签、没被选中、没被它的父收着(那些本来就不占位)。从行尾往回折,折到两行为止。
+      const cand = pills.filter((p) => p.dataset.topicId && !p.classList.contains("active") && !p.classList.contains("hidden"));
+      arrow.textContent = "▾";
+      label.textContent = t("filter.more", { n: cand.length }); // 先按最宽的数字占位
+      const hideLast = (k: number): void => {
+        cand.forEach((p, i) => {
+          if (i >= cand.length - k) p.dataset.fold = "1";
+          else delete p.dataset.fold;
+        });
+      };
+      // 折得越多行数越少(单调)⇒ 二分找最小的 k。全折了还超两行(选中的太多 / 窗太窄)就全折,不再硬压。
+      let lo = 1;
+      let hi = cand.length;
+      while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        hideLast(mid);
+        if (pillRows(bar) <= FOLD_ROWS) hi = mid;
+        else lo = mid + 1;
+      }
+      hideLast(lo);
+      if (cand.length === 0) {
+        more.hidden = true; // 没有一枚可折(全是选中的):钮点了也没用,不出
+        return;
+      }
+      label.textContent = t("filter.more", { n: lo });
+    } finally {
+      busy = false;
+    }
+  };
+
+  more.addEventListener("click", () => {
+    open = !(open || dragOpen);
+    dragOpen = false;
+    try {
+      localStorage.setItem(KEY, open ? "1" : "0");
+    } catch {
+      /* 见上:写不进去就只管这一次 */
+    }
+    refold();
+  });
+
+  // ③ 拖卡片:行外起的拖(卡片)才展开;拖的是 pill 自己(pill → 卡片那条路)不动。
+  // ⚠ 展开放到下一拍:dragstart 里同步改版式(筛选行长高、卡片从指针下挪走)会让引擎当场取消这次拖。
+  const onDragStart = (e: DragEvent): void => {
+    if (open || more.hidden) return;
+    if (e.target instanceof Node && bar.contains(e.target)) return;
+    setTimeout(() => {
+      dragOpen = true;
+      refold();
+    }, 0);
+  };
+  const onDragEnd = (): void => {
+    // 同样排到下一拍:排在 dragstart 那一拍之后(一按即放的拖,两个事件可能挨着到)。
+    setTimeout(() => {
+      if (!dragOpen) return;
+      dragOpen = false;
+      refold();
+    }, 0);
+  };
+  scope.addEventListener("dragstart", onDragStart);
+  scope.addEventListener("dragend", onDragEnd);
+  scope.addEventListener("drop", onDragEnd);
+
+  // ⑤ pill 整行重画(childList)与子标签 ▸/▾ 翻面(子 pill 的 class)⇒ 重算;回调在微任务里,先于下一帧。
+  const mo = new MutationObserver((list) => {
+    if (list.some((m) => m.type === "childList" || (m.target as HTMLElement).classList.contains("child"))) refold();
+  });
+  mo.observe(bar, { childList: true, subtree: true, attributes: true, attributeFilter: ["class"] });
+  // 行宽变了(窗口缩放 / 侧栏收放 / 字号档)⇒ 重算。折叠只改高度,宽度不变就不再进来,不会自激。
+  let lastW = -1;
+  const ro = new ResizeObserver(() => {
+    const w = bar.clientWidth + more.offsetWidth;
+    if (w === lastW) return;
+    lastW = w;
+    refold();
+  });
+  ro.observe(bar);
+  refold();
+
+  return () => {
+    mo.disconnect();
+    ro.disconnect();
+    scope.removeEventListener("dragstart", onDragStart);
+    scope.removeEventListener("dragend", onDragEnd);
+    scope.removeEventListener("drop", onDragEnd);
+  };
+}
+
 // 类型轴 pill 行(0031 kind):全部类型 + 库里出现过的每个 kind。仅当至少一个标签标了
 // kind 才有内容(否则清空 bar,CSS `:empty` 隐藏整行——无 kind 就一条不多)。计数口径
 // 同标签 pill:挂该类型任一标签的条目数(全量,不随文本收缩)。选一个 kind 会把标签轴

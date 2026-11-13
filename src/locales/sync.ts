@@ -32,7 +32,11 @@ export const sync = defineMessages({
   // 161 / W4 Q2 ★①(WD-21):第一屏先说同步是可选的、不开就只在这台、内容先在本机加密(指南原话搬过来)。
   "sync.homeIntro": { zh: "同步是可选的:不开,记的东西只存在这台电脑上。开了之后,内容先在这台上加密再发出去,服务器读不到。不想开同步,也可以在「设置 → 备份与恢复」里自己留一份。", en: "Sync is optional. Without it, your notes live only on this computer. With it, content is encrypted on this computer before it leaves, and the server cannot read it. If you’d rather not sync, you can keep your own copy under Settings → Backup & restore." },
   "sync.createAccount": { zh: "创建账户(第一台设备)", en: "Create account (first device)" },
-  "sync.joinWithCode": { zh: "用配对码加入", en: "Join with a pairing code" },
+  // 902 F6:第一屏「创建账户」是唯一的主钮,加入降成它下面一行淡字链接(整句可点)。别处文案里引的「用配对码加入」指的就是它。
+  "sync.joinLink": { zh: "已有账户?用配对码加入", en: "Already have an account? Join with a pairing code" },
+  // 创建屏:服务器地址默认收成这一行 +「更改…」(预填不是官方地址时不出这一行、直接摊开地址框)。
+  "sync.serverOfficialLine": { zh: "服务器:官方({host})", en: "Server: official ({host})" },
+  "sync.serverChange": { zh: "更改…", en: "Change…" },
   "sync.nonMainHint": { zh: "要把别处的账户带到这台电脑,用左上空间菜单里的「加入空间」。", en: "To bring an account from elsewhere onto this computer, use “Join space” in the space menu at the top left." },
   "sync.peersOnline": { zh: " · 另有 {n} 台设备在线", en: " · {n} other {n|device|devices} online" },
   "sync.skewWarn": { zh: "对端版本较新:请升级朱简后继续同步。", en: "The other device runs a newer version: update Zhujian to keep syncing." },
@@ -104,7 +108,6 @@ export const sync = defineMessages({
   "devices.idCollapse": { zh: "收起", en: "Collapse" },
   "devices.copyId": { zh: "复制 ID", en: "Copy ID" },
   "devices.idCopied": { zh: "设备 ID 已复制", en: "Device ID copied" },
-  "devices.copyFailed": { zh: "复制失败", en: "Copy failed" },
   "devices.remove": { zh: "移除", en: "Remove" },
   "devices.leave": { zh: "退出账户", en: "Leave account" },
   "devices.grantAdmin": { zh: "设为管理", en: "Make admin" },

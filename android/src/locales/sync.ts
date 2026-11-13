@@ -65,11 +65,11 @@ export const sync = defineMessages({
   "sync.pairCode": { zh: "配对码", en: "Pairing code" },
   "sync.pairCopyText": { zh: "服务器地址:{server}\n配对码:{code}", en: "Server: {server}\nPairing code: {code}" },
   // ⚠ 这句给的是**电脑端**的路,措辞与桌面可见文案逐字对齐(「同步」= 侧栏那枚钮、
-  // 「用配对码加入」= sync.joinWithCode、「空间…」= shell.spacesEntry、「加入空间」=
+  // 「用配对码加入」= 桌面 sync.joinLink 那一行的后半句、「空间…」= shell.spacesEntry、「加入空间」=
   // notebook.joinSpace)。⛔ 别写成「点左上角的「空间」」—— 那枚徽章**只有一个空间时
   // 整个藏起**(notebook.ts::refreshSpaceEntry),而那正是收到配对码那台电脑的常态。
   // ⚠ 这句给的是**另一台**的路,措辞与桌面可见文案逐字对齐(「同步」= 侧栏 / 顶栏那枚钮、
-  // 「用配对码加入」= 桌面 sync.joinWithCode 与本端 shell.syncAltPair、「加入空间(输入配对码)」= 桌面 notebook.joinSpace 与本端
+  // 「用配对码加入」= 桌面 sync.joinLink 那一行的后半句与本端 shell.syncAltPair、「加入空间(输入配对码)」= 桌面 notebook.joinSpace 与本端
   // shell.joinAlt)。161 / W4(WM-15 / N-3):此前只写电脑那条路,对方是另一部手机时对不上;Q16:写几点失效。
   "sync.pairNote": { zh: "在另一台设备上打开朱简的「同步」:那台没开过同步,就选「用配对码加入」;已经在用自己账户的,改走它的「空间」→「加入空间(输入配对码)」。服务器地址和配对码两项都要填。出码和对方初始同步期间,不要切换空间、不要运行「全部同步」,并保持本机亮屏在前台。配对码到 {until} 失效、只能用一次。", en: "On the other device, open Sync in Zhujian: if it has never set up sync, choose “Join with a pairing code”; if it already has its own account, go to its Spaces → “Join a space (enter a pairing code)” instead. Both the server address and the pairing code are required. While the code is out and the other side is doing its initial sync, do not switch spaces or run Sync all, and keep this device awake in the foreground. The code expires at {until} and can be used once." },
   "sync.pairAgain": { zh: "重新出码", en: "Issue a new code" },

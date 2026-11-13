@@ -27,6 +27,7 @@ import {
   reconcileKindFilter,
   reconcileTopicFilter,
   renderFilterPills,
+  wireFilterFold,
   renderKindPills,
   renderTimePills,
   otherLayersNote,
@@ -264,6 +265,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
   const copySlot = view.querySelector("#inbox-copy-slot") as HTMLElement;
   const filterRow = view.querySelector("#filter-row") as HTMLElement;
   const filterBar = view.querySelector("#idea-topic-filter") as HTMLElement;
+  const offFilterFold = wireFilterFold(filterBar, "inbox", view); // 标签行两行折叠(902 F5)
   const kindBar = view.querySelector("#idea-kind-filter") as HTMLElement;
   const timeBar = view.querySelector("#idea-time-filter") as HTMLElement;
   const filterInput = view.querySelector("#idea-filter") as HTMLInputElement;
@@ -1172,8 +1174,12 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
           return chip;
         }),
       );
-      // 编辑态:输入框 + 标签 + 配图条 + 历史。Enter/点别处 保存、Esc 取消、Ctrl+V 配图 都是隐式
-      // 手势,不再常驻一行说明书(用户拍板:学一次就够,常驻提示是纯噪音)。
+      // 编辑态:输入框 + 一行淡字提示 + 标签 + 配图条 + 历史。
+      // 902 F1:框下常驻一行「回车或点别处保存 · Esc 不要了」(用户这次改了主意 —— 此前拍的是「学一次就够,
+      // 不常驻说明书」;应用评审里这三个手势屏上一处都没写,第一次改字的人不知道怎么存、怎么退)。
+      // 句子逐键核过:回车存、点别处 / Tab 走开存、Esc 丢;清单行上回车是续项 —— 已知例外,用户知情,不为它改句。
+      // Ctrl+V 配图仍是隐式手势(旁边有「＋加图」)。
+      const editHint = el("p", { className: "edit-hint", textContent: t("inbox.editHint") });
       // 157 G4 / P1:改过之后按 Esc 先说一句,再按一次才丢(Enter / 点别处照旧保存)。
       const discardHint = el("p", { className: "discard-hint", hidden: true, textContent: t("inbox.discardHint") });
       let discardArmed = false;
@@ -1182,7 +1188,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
         discardHint.hidden = true;
       };
       area.addEventListener("input", disarmDiscard);
-      body.replaceChildren(area, discardHint, tagView, imgEditor, hist);
+      body.replaceChildren(area, discardHint, editHint, tagView, imgEditor, hist);
 
       // 离开编辑态的唯一出口:拆掉文档级按键/点击监听、清掉单一编辑态登记、回视图。save 成功后也走它。
       // `closed` 幂等锁:点别处保存(异步)与随后的重渲/切卡可能重复调用,只执行一次。
@@ -1598,22 +1604,15 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
     // The card's actions are declared once and reused by the menu AND the keyboard
     // via the shared hotkey controller. Operations are unchanged: 编辑/转待办/打标签 open
     // their inline forms, 删除/彻底删除 run their two-step confirm, 复制 flashes 已复制.
+    // 失败不在这里兜成文案:让它 reject,hotkey-menu 统一报「复制失败:{原因}」(902 F3)。
     const copyFeedback = async (): Promise<string> => {
-      try {
-        await copyText(currentContent);
-        return t("inbox.copied");
-      } catch {
-        return t("inbox.copyFailed");
-      }
+      await copyText(currentContent);
+      return t("inbox.copied");
     };
     // 复制这条灵感的深链接(zhujian://open?…&item=…):粘到别处 / 发对方设备都能直接打开它。
     const copyLinkFeedback = async (): Promise<string> => {
-      try {
-        await copyText(await buildItemDeepLink(item.id));
-        return t("inbox.copiedLink");
-      } catch {
-        return t("inbox.copyFailed");
-      }
+      await copyText(await buildItemDeepLink(item.id));
+      return t("inbox.copiedLink");
     };
     function actionsFor(): Act[] {
       if (mode === "archived") {
@@ -2208,6 +2207,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       closeComments(); // 浮层 portal 在 body 上,不随视图根节点走:切视图/切空间必须自己收
       offHotkeys();
       offGone();
+      offFilterFold();
       composeFocusWanted = false; // 「光标进记一笔框」只对这一棵 mount 说
       teardownViewKeys();
       hk.destroy(); // tear down the document keydown + any lingering menu listeners

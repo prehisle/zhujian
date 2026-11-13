@@ -10,10 +10,10 @@ import { t } from "./i18n";
 import { parseChecklistLine } from "../shared/checklist";
 import { saveImageDraft, loadImageDraft, newDraftImageId, type DraftImage } from "./compose-draft";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { copyText } from "./clipboard";
+import { copyFailText, copyText } from "./clipboard";
 import { readImage } from "@tauri-apps/plugin-clipboard-manager";
 import type { Image as ShellImage } from "@tauri-apps/api/image";
-import { flashToast, toastAction } from "./toast";
+import { flashToast, toastAction, toastError } from "./toast";
 import { getCurrentWindow, currentMonitor } from "@tauri-apps/api/window";
 import { emitTo, listen } from "@tauri-apps/api/event";
 import {
@@ -521,11 +521,13 @@ export function imageStrip(
       .catch(() => {
         wrap.classList.add("broken");
       });
+    const refocus = opts.editable ? focusKeeper(img) : null;
     img.addEventListener("click", (e) => {
       e.stopPropagation();
+      refocus?.();
       // 900 C8:小图不是能停焦点的东西,点它那一下焦点掉到 body ⇒ 看完大图(Esc)回来键盘无处可接。开图前把焦点
       // 放到这张卡的 ⋯ 上(「选中 = 焦点」:看的就是这张卡的图),关图后窗口把焦点还回来时它还在那儿。
-      // 编辑态的图条不管(那时人在写字框里,⋯ 也不在)。
+      // 编辑态的图条走上面那一支(那时人在写字框里,⋯ 也不在)。
       if (!opts.editable && document.activeElement === document.body) {
         wrap.closest(".hk-host")?.querySelector<HTMLElement>(".hk-btn")?.focus({ preventScroll: true });
       }
@@ -728,7 +730,7 @@ function appendInline(frag: DocumentFragment, text: string, images: ImageMeta[])
         e.stopPropagation();
         copyText(url)
           .then(() => flashToast(e.clientX, e.clientY, t("itemImages.copiedLink")))
-          .catch(() => flashToast(e.clientX, e.clientY, t("itemImages.copyFail")));
+          .catch((err) => toastError(copyFailText(err))); // 带原因的全句要读得完 ⇒ 屏底错误条,不跟光标飘一秒
       });
       frag.append(a);
       last = m.index + url.length; // leave any trailing punctuation for the plain-text tail
@@ -753,6 +755,20 @@ function appendInline(frag: DocumentFragment, text: string, images: ImageMeta[])
  *  的单一真相源。条目要等提交才存在,粘贴时还没有 id 可挂,所以图先以内存预览暂存(object URL,
  *  移除/清空时 revoke 不漏内存),提交拿到 id 后 attachAll 逐张挂上。规则:凡是能输入条目正文的
  *  地方,都能 Ctrl+V 配图 —— 新入口一律接这个控制器,不再各写各的。 */
+/** 902 E7(C8 的编辑态那半):写着字点小图看大图,Esc 回来焦点不在写字框里了 —— 小图不是能停焦点的东西,点它那一下
+ *  焦点掉到 body。按下那一刻焦点还在原处(mousedown 先于失焦),记下来;返回的函数在 click 里调:焦点已掉到 body 且
+ *  原来那枚还在文档里,就放回去(光标位置不变)。看大图是另一只窗,关图后窗口把焦点还回来时它还在那儿。 */
+function focusKeeper(img: HTMLElement): () => void {
+  let before: HTMLElement | null = null;
+  img.addEventListener("mousedown", () => {
+    const at = document.activeElement;
+    before = at instanceof HTMLElement && at !== document.body ? at : null;
+  });
+  return () => {
+    if (document.activeElement === document.body && before?.isConnected) before.focus({ preventScroll: true });
+  };
+}
+
 /** 暂存图条目(pendingImages 内部批的元素;takeBatch/putBack/attachBatch 传递用)。 */
 export type PendingImage = { id: string; blob: Blob; url: string; thumb: HTMLElement };
 
@@ -814,7 +830,9 @@ export function pendingImages(
   function add(blob: Blob, restoreId?: string): void {
     const url = URL.createObjectURL(blob);
     const img = el("img", { className: "img-thumb-img", src: url, title: t("itemImages.clickZoom") });
+    const refocus = focusKeeper(img); // 还没存的那几张也一样:人在写字框里点开预览,看完回原处
     img.addEventListener("click", () => {
+      refocus();
       if (opts.openPreview) opts.openPreview(blob);
       else void openLightboxBlob(blob);
     });

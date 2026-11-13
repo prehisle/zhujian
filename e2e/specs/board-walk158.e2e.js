@@ -42,7 +42,6 @@ describe("158 · 看板 W2 走查修的那批(桌面)", () => {
 
   before(async () => {
     await cleanupTitles(P);
-    await browser.execute(() => localStorage.removeItem("ysNotebook.taskArchiveConfirmDismissed"));
     await goNotebook("board");
   });
 
@@ -390,15 +389,6 @@ describe("158 · 看板 W2 走查修的那批(桌面)", () => {
     await browser.keys(["Escape"]);
   });
 
-  // W5 Q3 ★①(D1 改):全应用的确认一个规矩 —— 焦点停「取消」(此前停「删除」,再按一下回车就删)。
-  it("A18 → W5 Q3:卡的删除确认出现时焦点在「取消」上", async () => {
-    const T = `${P}A18-删`;
-    await invoke("create_task", { title: T });
-    await goNotebook("board");
-    await $(`.tcard*=${T}`).waitForExist({ timeout: 8000 });
-    await boardAction(T, "删除");
-    expect(await browser.execute(() => document.activeElement?.textContent)).toBe("取消");
-    expect(await browser.execute(() => document.activeElement?.closest(".tcard")?.textContent.includes("E2E158-A18-删"))).toBe(true);
-    await browser.keys(["Escape"]);
-  });
+  // W5 Q3 ★①(全应用的确认焦点停「取消」)在看板上的锚是上面 A7 那例的「撤回为随记」确认;
+  // 原来这里那例守的是卡的删除确认 —— 删卡片不再先问(F 组 F4 / R3),确认条没了,那例随之退场。
 });

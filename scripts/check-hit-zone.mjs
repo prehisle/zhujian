@@ -94,8 +94,6 @@ const REGISTRY = [
   { selector: ".link-ref", cls: "inline", why: "正文里的链接引用,同上" },
   { selector: ".v-docs .md .md-link", cls: "inline", why: "长文 Markdown 正文里的链接(shared/markdown-dom.ts 画),嵌在文字流里、形照 .link-ref;撑大会顶开行距" },
   { selector: ".err-next", cls: "inline", why: "错误那句话末尾的「下一步」链接(src/err.ts,C8),嵌在文字流里、形照 .link-ref;撑大会顶开错误行的行距" },
-  { selector: ".v-board .dont-ask", cls: "native", why: "「不再询问」label 含原生 checkbox,label 整体即触区、宽度由文字撑、高随行盒;点字即点框" },
-  { selector: ".v-board .dont-ask input", cls: "native", why: "原生 checkbox,UA 自绘尺寸;外层 label 已是它的扩展触区" },
 ];
 
 // ---- 解析件(与 check-contrast 同源同纪律;它是脚本不是库,故照抄不共享)------------

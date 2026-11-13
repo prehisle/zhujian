@@ -85,8 +85,6 @@ export const cardpanel = defineMessages({
   "cardpanel.promoteNoLanding": { zh: "「转待办」会放进「{board}」,可它里面没有能放新卡片的列;在电脑上给它加一列再来", en: "“Make a task” puts it on “{board}”, which has no column that takes new cards. Add one on a computer first" },
   "cardpanel.goSee": { zh: "去看看", en: "Show me" },
   "cardpanel.tagNameRequired": { zh: "标签名不能为空", en: "Tag name cannot be empty" },
-  "cardpanel.deleteQ": { zh: "删除?将移入回收站(可还原)", en: "Delete? It moves to Trash and can be restored" },
-  "cardpanel.deleteYes": { zh: "删除", en: "Delete" },
   "cardpanel.deleted": { zh: "已移入回收站", en: "Moved to Trash" },
   "cardpanel.revertQMeta": { zh: "撤回为随记?将清除截止和优先级", en: "Send back to Notes? Due date and priority will be cleared" },
   "cardpanel.revertQ": { zh: "撤回为随记?", en: "Send back to Notes?" },

@@ -1,8 +1,10 @@
 // @cdp-run single
 // 144 P0 #4:两拍确认改底部固定确认条(#confirmbar)——第一拍不再原位换长文案
 // (按钮几何恒定),第二拍恒落 fixed 条;取消/收面即废旧确认(token)。
-// 真数据全流程:建临时灵感 → 面板「删除」第一拍弹条+原按钮几何不变 → 取消不删 →
-// 再删确认入回收站 → 回收站「彻底删除」两拍真销毁 → 全程零残留。
+// 真数据全流程:建临时灵感 → 转成待办 → 面板「撤回为随记」第一拍弹条+原按钮几何不变 → 取消不撤 →
+// 再点确认撤回 → 「删除」一点即删入回收站(不弹条)→ 回收站「彻底删除」两拍真销毁 → 全程零残留。
+// ⚠ 902(用户拍 R3)起删卡片不再先问(同删随记)⇒ 卡片面板上的两拍换成「撤回为随记」那条来验;
+//   「删除不弹确认条」的正面断言在 ⑤b。
 // 跑法 `node scripts/cdp-run.mjs p0-confirm`(⛔ 别裸 evalfile:退出码恒 0);
 // CDP 单调用 10s 上限,等待全用轮询不用死睡。
 // ⚠ 91 改了两处形,别改回去:①回收站两枚离场钮**不常驻**(51 起点卡片才出面板)⇒ 取钮走
@@ -88,7 +90,8 @@
     );
     if (!ok("建临时条目入时间轴", !!card)) throw new Error("abort");
     id = card.dataset.id;
-    // 157 G4 / P2 起删**随记**一点即删(不再两拍)⇒ 先转成待办,删任务仍两拍,这支验的是那条确认条。
+    // 157 G4 / P2 起删**随记**一点即删、902 起删卡片也是 ⇒ 先转成待办,拿「撤回为随记」那条两拍验确认条
+    // (落点列里的卡才有它;刚转的卡就在默认看板的落点)。
     const promote = await openCardAct(id, "promote");
     if (!ok("转成待办", !!promote)) throw new Error("abort");
     click(promote);
@@ -97,32 +100,42 @@
     if (!ok("切到任务面看得见它", !!(await until(() => cardOf(id), 3000)))) throw new Error("abort");
     document.getElementById("error").hidden = true;
 
-    // ② 开卡片面板,拿「删除」按钮
-    const del = await openCardAct(id, "del");
-    if (!ok("面板展开有「删除」", !!del)) throw new Error("abort");
-    const g0 = del.getBoundingClientRect();
+    // ② 开卡片面板,拿「撤回为随记」按钮
+    const rev = await openCardAct(id, "revert");
+    if (!ok("面板展开有「撤回为随记」", !!rev)) throw new Error("abort");
+    const g0 = rev.getBoundingClientRect();
 
     // ③ 第一拍:弹确认条,原按钮几何恒定(不再原位换长文案)
-    click(del);
+    click(rev);
     await until(() => !cb.hidden, 1000);
-    const g1 = del.getBoundingClientRect();
+    const g1 = rev.getBoundingClientRect();
     ok("第一拍弹底部确认条", !cb.hidden);
-    ok("确认条话术带「回收站」", document.getElementById("confirmbar-q").textContent.includes("回收站"));
-    ok("原「删除」按钮几何不变", g1.left === g0.left && g1.top === g0.top && g1.width === g0.width);
+    ok("确认条话术带「撤回为随记」", document.getElementById("confirmbar-q").textContent.includes("撤回为随记"));
+    ok("原「撤回为随记」按钮几何不变", g1.left === g0.left && g1.top === g0.top && g1.width === g0.width);
 
-    // ④ 取消:条收起、条目不删
+    // ④ 取消:条收起、条目不动
     click(document.getElementById("confirmbar-no"));
     await until(() => cb.hidden, 1000);
-    ok("取消收条且条目仍在", cb.hidden && !!cardOf(id));
+    ok("取消收条且卡片仍在看板上", cb.hidden && !!cardOf(id));
 
-    // ⑤ 重发第一拍 → 第二拍确认 → 条目离开时间轴(进回收站)
-    const del2 = await openCardAct(id, "del");
-    if (!ok("重发第一拍取得删除钮", !!del2)) throw new Error("abort");
-    click(del2);
+    // ⑤ 重发第一拍 → 第二拍确认 → 卡片离开任务面(回随记)
+    const rev2 = await openCardAct(id, "revert");
+    if (!ok("重发第一拍取得撤回钮", !!rev2)) throw new Error("abort");
+    click(rev2);
     await until(() => !cb.hidden, 1000);
     click(document.getElementById("confirmbar-yes"));
+    ok("确认撤回后卡片离开任务面", !!(await until(() => !cardOf(id))));
+    click(document.querySelector('#bottombar [data-mode="ideas"]'));
+    if (!ok("随记面上看得见它", !!(await until(() => cardOf(id), 3000)))) throw new Error("abort");
+    document.getElementById("error").hidden = true;
+
+    // ⑤b 删除:一点即删、不弹确认条(随记 157 起、卡片 902 起),进回收站
+    const del = await openCardAct(id, "del");
+    if (!ok("面板展开有「删除」", !!del)) throw new Error("abort");
+    click(del);
+    ok("删除不弹确认条", cb.hidden);
     const gone = await until(() => !cardOf(id));
-    ok("确认删除后条目离开时间轴", !!gone);
+    ok("一点即删:条目离开时间轴", !!gone);
 
     // ⑥ 回收站:「彻底删除」两拍真销毁(顺带验 panes 侧接入)
     if (!ok("开回收站面", await setTrash(true))) throw new Error("abort");
@@ -150,8 +163,6 @@
           const del = await openCardAct(id, "del");
           if (del) {
             click(del);
-            await until(() => !cb.hidden, 1500);
-            click(document.getElementById("confirmbar-yes"));
             await until(() => !cardOf(id), 2000);
           }
         }

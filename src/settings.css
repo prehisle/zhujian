@@ -596,6 +596,18 @@
   overflow-wrap: anywhere;
 }
 .bkup-out { margin-top: 2px; }
+/* 902 F7:恢复表单的三步步名(「① 备份文件」…)。①② 是 <label>,③ 是 <p>;同一档字:13px、正文色、半粗 ——
+   比说明字(12px 灰)高一档,一眼分得出三块。步与步之间留白由它的上外边距给。 */
+.bkup-step {
+  display: block;
+  margin: 14px 0 6px;
+  font-size: var(--fs-13);
+  font-weight: 600;
+  color: var(--ink);
+}
+.bkup-restore > .bkup-step:first-child { margin-top: 4px; }
+.bkup-restore > .settings-sub { margin: 6px 0 0; }
+.bkup-restore > .bkup-after { margin: 6px 0 10px; }
 
 /* 备份列表的一行。**444 之前是一根柱子**,这里记清楚是怎么坏的 ——
    原设计写的是「文件名可挤、事实与状态不挤」:名字 `flex:1 + min-width:0 + overflow-wrap:anywhere`,
@@ -660,6 +672,11 @@
   flex: 0 1 auto;
   min-width: 0;
   overflow-wrap: anywhere;
+  /* 902 E4:上面那句「与事实同一档灰」此前没有落成声明 —— 这一格吃的是继承来的正文字号与 --ink,比四周的说明字
+     (.hkset-desc / .settings-sub:12px × --ink-soft)大一号、深一档。对齐到那一档;停在 --ink-soft 不往 --ink-faint 降
+     (「还没验过」是要人读到的状态,§2.1)。验过的两档(.ok / .err)颜色照旧由下面两条盖。 */
+  font-size: var(--fs-12);
+  color: var(--ink-soft);
 }
 /* ⭐ W4 A19(WD-19):状态那一格**独占第二行**。此前它与三枚钮同排,验完那句「现在打得开:…」一长,
    三枚钮就被挤到下一行、整张列表往下推(实测 460 → 484)。现在第一行恒是「大小 · 时刻 … 三枚钮」,

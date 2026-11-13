@@ -112,8 +112,9 @@
     id = card.dataset.id;
     const del = await openAct(id, "del");
     if (!ok("操作面有删除钮", !!del)) return JSON.stringify(out);
-    if (!ok("删除二拍成立", await twoTap(del))) return JSON.stringify(out);
-    await until(() => !cardOf(id), 3000);
+    // 902(用户拍 R3)起删卡片一点即删、不弹确认条
+    click(del);
+    if (!ok("删除一点即删(不弹确认条)", cb.hidden && (await until(() => !cardOf(id), 3000)) !== null)) return JSON.stringify(out);
     ok("删除后 trash 钮显形", (await until(() => !btnOf("trash").hidden, 3000)) !== null);
 
     // ---- 2:开回收站,只 purge 探针(存量不动),验面开着与关面后钮都在 ----
@@ -188,7 +189,7 @@
     if (id && cardOf(id)) {
       const del = await openAct(id, "del");
       if (del) {
-        await twoTap(del);
+        click(del);
         await until(() => !cardOf(id));
       }
       if ((await until(() => !btnOf("trash").hidden, 3000)) !== null) {

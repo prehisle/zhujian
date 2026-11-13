@@ -17,6 +17,8 @@
 import { invokeInSpace } from "./space";
 import { t, initLang } from "./i18n";
 import { flashToast } from "./toast";
+import { copyFailText } from "./clipboard";
+import { TOAST_ERROR_MS } from "./timing";
 import { isTabKey } from "./keys";
 import { emit, listen } from "@tauri-apps/api/event";
 import { getCurrentWindow, Window } from "@tauri-apps/api/window";
@@ -135,8 +137,8 @@ function mountLightbox(
     }
   };
   // 遮罩底部中央的一次性回执(z 抬到遮罩之上,否则被 9000 层盖住看不见)。
-  const toast = (text: string): void =>
-    flashToast(window.innerWidth / 2, window.innerHeight - 20, text, { extraClass: "on-lightbox" });
+  const toast = (text: string, ms?: number): void =>
+    flashToast(window.innerWidth / 2, window.innerHeight - 20, text, { extraClass: "on-lightbox", ms });
   const onKey = (e: KeyboardEvent): void => {
     if (e.key === "Escape") {
       e.preventDefault();
@@ -151,7 +153,7 @@ function mountLightbox(
       if (!shown || shown.naturalWidth === 0) return; // 还没解码出来 / 已换成失败面:不假装复制
       copyImageToClipboard(shown).then(
         () => toast(t("itemImages.copiedImage")),
-        () => toast(t("itemImages.copyFail")), // 写剪贴板被拒要响亮,别静默(与 clipboard.ts 同纪律)
+        (err) => toast(copyFailText(err), TOAST_ERROR_MS), // 写剪贴板被拒要响亮,别静默;带原因的全句给满错误档的读秒
       );
       return;
     }

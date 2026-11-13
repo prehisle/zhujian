@@ -101,12 +101,10 @@
     );
     ok("点命中关面回时间轴并闪卡", !!focused);
 
-    // ③ 删进回收站(经确认条),再搜:回收站命中 → 点卡切到回收站面
+    // ③ 删进回收站(902 用户拍 R3 起删卡片 / 随记都一点即删,不经确认条),再搜:回收站命中 → 点卡切到回收站面
     const del = await openCardAct(id, "del");
     if (!ok("卡片面板有「删除」", !!del)) throw new Error("abort");
     click(del);
-    await until(() => !cb.hidden, 1000);
-    click(document.getElementById("confirmbar-yes"));
     await until(() => !cardOf(id));
     click(document.getElementById("search-toggle"));
     click(document.getElementById("search-btn"));
@@ -128,8 +126,6 @@
           const del = await openCardAct(id, "del");
           if (del) {
             click(del);
-            await until(() => !cb.hidden, 1500);
-            click(document.getElementById("confirmbar-yes"));
             await until(() => !cardOf(id), 2000);
           }
         }

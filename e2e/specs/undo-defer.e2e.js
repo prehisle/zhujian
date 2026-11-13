@@ -112,9 +112,6 @@ describe("716 · 撤销回执(看板)", () => {
     const card = await $(".tcard*=E2E-撤销-看板删丁");
     await card.waitForExist({ timeout: 10000 });
     await boardAction("E2E-撤销-看板删丁", "删除");
-    // 首次删除带行内确认(之后勾了「不再提示」就直删);两种形都认。
-    const confirm = await card.$(".acts button.primary");
-    if (await confirm.isExisting()) await confirm.click();
     await card.waitForExist({ reverse: true, timeout: 10000 });
     await browser.waitUntil(async () => (await taskStatus(id)) === null, { timeout: 8000, timeoutMsg: "删除后不该还在活跃任务里" });
 

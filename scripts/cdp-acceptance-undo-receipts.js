@@ -3,9 +3,12 @@
 // 全部换成 actionBar(带「撤销」钮),本资产逐动作断言「回执形态 + 撤销真回退 +
 // 点条身只收不执行」。单相(全是页内点击,无原生手势):
 //   node scripts/android-cdp.mjs evalfile scripts/cdp-acceptance-undo-receipts.js
-// ⚠ 二拍确认(删除/入册)与撤销窗口(CONFIRM_REVERT_MS=6s)都在本 eval 内连点,
-//   别拆成多发。断言与语言无关:回执形态以结构自证(notice+with-act、恰一枚
-//   .bar-act、#confirmbar 不被挪用),动作效果以卡片 done class / 在不在轴上自证。
+// ⚠ 撤销窗口(CONFIRM_REVERT_MS=6s)与清场那记彻底删除的二拍都在本 eval 内连点,
+//   别拆成多发。断言大多与语言无关:回执形态以结构自证(notice+with-act、恰一枚
+//   .bar-act、#confirmbar 不被挪用),动作效果以卡片 done class / 在不在轴上自证;
+//   只有 B 段「回执就是删随记那一句」认中文原文(跑手默认中文档)。
+// 三处都是一点即成、不先问(勾 / 归档 158 起,删卡片 902 用户拍 R3 起)。
+// 阴性对照(R3,行为刀 ⇒ 改前的包上跑):B「不弹确认条」那格红、卡不离轴。
 (async () => {
   const out = { pass: false, steps: [] };
   const ok = (name, cond) => {
@@ -126,19 +129,21 @@
     await new Promise((r) => setTimeout(r, 300));
     ok("A2 条身不执行撤销:卡仍 done", isDone(id));
 
-    // ---- B:删除(二拍)→ 回执带撤销 → 点撤销捞回 ----
+    // ---- B:删除卡片(902 用户拍 R3 起一点即删、不再先问,同删随记)→ 回执带撤销 → 点撤销捞回 ----
     const del = await openAct(id, "del");
     if (!ok("B 操作面有删除钮", !!del)) return JSON.stringify(out);
     click(del);
-    if (!ok("B 第一拍弹确认条", await until(() => !cb.hidden, 1500))) return JSON.stringify(out);
-    click(document.getElementById("confirmbar-yes"));
+    ok("B 不弹确认条(一点即删)", cb.hidden);
     ok("B 删除提交:卡离轴", (await until(() => !cardOf(id), 3000)) !== null);
     if (!ok("B 回执 actionBar 形", await until(barShape, 2000))) return JSON.stringify(out);
-    ok("B 确认条已收(不被挪用)", cb.hidden);
+    ok("B 回执就是删随记那一句、钮是「撤销」", err.querySelector("span")?.textContent === "已移入回收站" && err.querySelector(".bar-act")?.textContent === "撤销");
+    ok("B 确认条全程没出场", cb.hidden);
+    ok("B 卡真进了回收站(后端)", (await window.__TAURI_INTERNALS__.invoke("list_trash", { spaceId: await window.__TAURI_INTERNALS__.invoke("foreground_space") })).some((r) => r.id === id));
     click(err.querySelector(".bar-act"));
     ok("B 撤销:卡回轴", (await until(() => cardOf(id), 3000)) !== null);
     ok("B 捞回仍是 done(按删除那刻分流)", isDone(id));
     ok("B 点撤销后条换成「已撤销」回执(Q6)", await until(undoneShown, 1500));
+    ok("B 撤销后回收站里没有它了(后端)", !(await window.__TAURI_INTERNALS__.invoke("list_trash", { spaceId: await window.__TAURI_INTERNALS__.invoke("foreground_space") })).some((r) => r.id === id));
 
     // ---- C:归档(158 G3 / Q3 起一点即归,done 卡才有入册钮)→ 回执带撤销 → 点撤销回看板 ----
     const seal = await openAct(id, "seal");
@@ -158,8 +163,6 @@
       const del = await openAct(id, "del");
       if (del) {
         click(del);
-        await until(() => !cb.hidden, 1500);
-        click(document.getElementById("confirmbar-yes"));
         await until(() => !cardOf(id));
       }
       await setTrash(true);

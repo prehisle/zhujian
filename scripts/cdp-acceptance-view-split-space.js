@@ -131,8 +131,6 @@
             if (del) {
               click(del);
               const cb = document.getElementById("confirmbar");
-              await until(() => !cb.hidden, 1500);
-              click(document.getElementById("confirmbar-yes"));
               await until(() => !document.querySelector(`#timeline [data-id="${tempId}"]`), 2000);
             }
           }

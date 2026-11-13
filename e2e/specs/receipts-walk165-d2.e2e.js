@@ -56,7 +56,6 @@ async function cleanupBoard() {
 
 describe("W5 D2 · 桌面回执与一致性", () => {
   before(async () => {
-    await browser.execute(() => localStorage.removeItem("ysNotebook.taskArchiveConfirmDismissed"));
     await cleanupBoard();
   });
 

@@ -589,19 +589,9 @@ describe("任务看板 · 按主题筛选", () => {
 describe("任务看板 · 删除任意活跃任务 → 回收站 → 还原回原列", () => {
   const T = "删除戊-进行中的活";
 
-  // Click the 删除 pill on the card carrying `title`, then click through the inline
-  // confirm (进度㉖ added a 移入回收站? confirm with a 不再提示 opt-out). If a prior
-  // spec set the opt-out there is no confirm — the card's gone — so the second step
-  // is a no-op. Robust either way.
+  // 删除 lives in the card's ⋯ menu;点了就进回收站,不再先问(F 组 F4 / R3:此前有一句「移入回收站?」+ 不再提示)。
   async function clickDelete(title) {
-    // 删除 lives in the card's ⋯ menu now; the inline confirm (移入回收站?) is unchanged.
     await boardAction(title, "删除");
-    await browser.execute((t) => {
-      const card = [...document.querySelectorAll(".tcard")].find((c) => c.textContent.includes(t));
-      if (!card) return; // already archived (opt-out) — nothing to confirm
-      const yes = [...card.querySelectorAll("button.act.primary")].find((b) => b.textContent === "删除");
-      if (yes) yes.click();
-    }, title);
   }
 
   before(async () => {

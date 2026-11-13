@@ -108,11 +108,17 @@
       `thumb=${after.thumb} len=${b64(after.url).length}`);
 
     // ── 级联:删图 → 缩略图跟着没 ────────────────────────────────────
+    // ⚠ 删图 = 进回收站(已删配图那一段还要画它的缩略图)⇒ 这一步之后缩略图**仍查得到**是对的;
+    //   级联发生在「彻底删除」(purge_item_image)那一下。此前这格拿 delete 之后就该报错当判据,
+    //   删图改成软删之后一直是红的(资产过时,不是产品坏)。
     await invoke("delete_item_image", { spaceId: space, imageId: meta.id });
+    const trashed = await invoke("get_item_thumb", { spaceId: space, imageId: meta.id }).catch(() => null);
+    check("删图(进回收站)后缩略图还在(回收站要画它)", trashed !== null && trashed.thumb === true, `thumb=${trashed?.thumb}`);
+    await invoke("purge_item_image", { spaceId: space, imageId: meta.id });
     let e4 = null;
     await invoke("get_item_thumb", { spaceId: space, imageId: meta.id })
       .catch((e) => { e4 = String(e); });
-    check("删图后取缩略图响亮错(级联真生效)", !!e4, e4 ?? "竟然还查得到");
+    check("彻底删图后取缩略图响亮错(级联真生效)", !!e4, e4 ?? "竟然还查得到");
   } catch (e) {
     check("A 段未抛异常", false, String(e));
   } finally {

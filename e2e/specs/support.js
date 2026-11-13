@@ -624,6 +624,18 @@ export async function inboxCompose(text) {
  *  ⚠ 遮罩窗由 `lib.rs` 的 setup 在启动时建好、常驻隐藏 ⇒ **句柄恒在**,找不到就响亮报。
  *  等「遮罩真的挂上了」是调用方的事(切过来之后 `$(".img-lightbox").waitForExist()`)。
  */
+/** 同步浮层「创建账户」页:服务器地址默认收成一行「服务器:官方(…)」+「更改…」(902 F6),点了才摊开地址框。
+ *  要往框里填地址的用例先经它。预填不是官方地址时那一行不出、框本来就摊着 —— 两种形都认。
+ *  ⛔ 没等到地址框就别点「创建」:框里填的本机死地址是「不往官方服务器上建账户」的那道保险。 */
+export async function openSyncServerField() {
+  await browser.waitUntil(() => browser.execute(() => !!document.querySelector(".sync-panel .sync-server-change, .sync-panel .sync-input")), {
+    timeout: 5000,
+    timeoutMsg: "创建账户页上既没有「更改…」也没有地址框",
+  });
+  await browser.execute(() => document.querySelector(".sync-panel .sync-server-change")?.click());
+  await $(".sync-panel .sync-input").waitForExist({ timeout: 3000 });
+}
+
 export async function toLightbox(timeoutMs = 10000) {
   const back = await browser.getWindowHandle();
   const t0 = Date.now();

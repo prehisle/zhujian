@@ -752,6 +752,11 @@
 .v-board .edit-bar .edit-err { margin-right: auto; min-width: 0; }
 /* 158 G1 / A1:改过后按一次 Esc 的那句提醒(同随记 .v-inbox .discard-hint 一档)。 */
 .v-board .discard-hint { margin: 4px 0 0; font-size: var(--fs-12); color: var(--seal-ink); }
+/* 902 F1:就地编辑态框下常驻的一行淡字(同 `.ze-hint` 那一档;随记 .v-inbox .edit-hint 同形)。红字那句出来时让位;
+   放大面板里不显 —— 面板底下有它自己那句(board.zoomHint:那里回车是换行,这句不成立)。 */
+.v-board .edit-hint { margin: 0; font-size: var(--fs-12); color: var(--ink-soft); }
+.v-board .discard-hint:not([hidden]) + .edit-hint,
+.ze-panel .edit-form .edit-hint { display: none; }
 /* 单字符钮:`.act` 那档的 5px 13px 是给「编辑 / 删除」两字用的,一个箭头占不满;
    它坐在正文框上头,矮一点才不至于把编辑框整个往下顶。
    ⚠ 选择器必须写成 `.act.edit-zoom`(0,3,0):`.v-board .act` 那一族定义在本节**之后**,
@@ -826,45 +831,6 @@
 .v-board .act.ghost { background: transparent; color: var(--ink-soft); border-color: var(--line-strong); }
 .v-board .act.ghost:hover { color: var(--ink); background: color-mix(in srgb, var(--ink) 6%, transparent); }
 .v-board .confirm-q { font-size: var(--fs-12); color: var(--seal-ink); letter-spacing: 0.02em; }
-/* 不再提示 opt-out inside the delete confirm row */
-.v-board .dont-ask {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  font-size: var(--fs-12);
-  color: var(--ink-soft);
-  cursor: pointer;
-  user-select: none;
-}
-/* 900 C3:此前是浏览器原生的白方框(暗档里尤其扎眼)。画成正文待办方框 `.ckbox` 那一形(item-images.css):
-   方的、--line-strong 描边、勾上 = 朱砂底 + ✓。仍是真 checkbox(键盘 Space、label 点击、.checked 都照旧)。 */
-.v-board .dont-ask input {
-  appearance: none;
-  flex: none;
-  position: relative;
-  width: 14px;
-  height: 14px;
-  margin: 0;
-  border: 1.5px solid var(--line-strong);
-  border-radius: var(--radius-xs);
-  background: transparent;
-  cursor: pointer;
-}
-.v-board .dont-ask input:hover { border-color: var(--seal); }
-.v-board .dont-ask input:checked { background: var(--seal); border-color: var(--seal); }
-.v-board .dont-ask input:checked::after {
-  /* 勾用两条边画(不走字形:这一格只有 11px 见方,字形要 <12px,过不了字号阶)。 */
-  content: "";
-  position: absolute;
-  left: 3.5px;
-  top: 0.5px;
-  width: 3px;
-  height: 7px;
-  border: solid var(--on-seal);
-  border-width: 0 1.5px 1.5px 0;
-  transform: rotate(45deg);
-}
-
 /* ---- 卡级操作失败横幅(ui-audit P0 #6:非破坏,不替换看板) ---- */
 .v-board .op-err {
   flex: none;

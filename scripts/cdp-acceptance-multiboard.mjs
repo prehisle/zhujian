@@ -11,8 +11,10 @@
 //   ⑥ 「更多… → 挪到看板」:候选不含卡自己那块;挪到分类板 ⇒ 落它的落点、回执「去看看」切到那块并定位;再挪回来。
 //   ⑦ 收容区的卡:状态 chip 不画、没有勾;「挪到看板」把它挪出去 ⇒ 收容区那一格的计数少一。⚠ 这一格**消耗**一张收容卡(见前置)。
 //   ⑧ 在分类板上用「记一笔」记一条 ⇒ 落分类板的落点(不是默认看板);清场删掉。
-//   ⑨ (backlog 170)归档册按看板筛:流程板与默认看板各有一条成就 ⇒ 顶上一排「全部看板 / 各块」(core 序、只列有成就的)、
-//      每条挂来处看板名;点流程板只剩它的、点「全部看板」回来。成就是本资产现造的,清场还原(X 回落点、默认看板那条删掉)。
+//   ⑨ (backlog 170;902 用户拍 R4 改)归档册按看板筛:流程板与默认看板各有一条成就 ⇒ 顶上一排「全部看板 / 当前看板(恒在,
+//      哪怕它没有成就)/ 其他有成就的各块」(core 序);**进面恒选当前看板** —— 从分类板进来 = 选着它、出「这块看板还没有归档的卡片」;
+//      点「全部看板」每条挂来处看板名;点流程板只剩它的;收面、切到流程板再进 = 选着流程板。成就是本资产现造的,清场还原
+//      (X 回落点、默认看板那条删掉)。单块活看板的库「不出那排」这台架造不出(见 cdp-acceptance-picks-p.mjs 在默认空间里核的那格)。
 //   ⑩ (backlog 170,要前置里那张「回收卡」)回收站「还原」一张原看板已删的卡 ⇒ 回执照实说进了「已删除的看板 / 列」、
 //      「去看看」切到收容区并定位;清场再把它删回回收站(下次还能跑)。
 //   ⑪–⑳(多看板优化 mbopt,手机组 M1–M13;要两块**空着的**看板:对端 `board flow 空板` / `board one 空类`,缺了整段跳过):
@@ -353,13 +355,20 @@ try {
     const sealed = await inv("list_sealed_tasks", { spaceId: space });
     const colsNow = await inv("list_board_columns", { spaceId: space });
     const boardOf = (st) => colsNow.find((c) => c.id === st)?.board_id ?? null;
-    const wantPills = ["", ...bs.map((b) => b.id).filter((id) => sealed.some((r) => boardOf(r.status) === id))];
+    // 此刻当前看板 = 分类板(⑧ 切过去的):它没有完成列 ⇒ 没有成就,正好是「当前看板恒在、哪怕没有归档」那一形。
+    const oneSealed = sealed.filter((r) => boardOf(r.status) === one.id).length;
+    const wantPills = ["", ...bs.map((b) => b.id).filter((id) => id === one.id || sealed.some((r) => boardOf(r.status) === id))];
     await page(`const b = document.querySelector('[data-pane="sealed"]'); click(b); return true;`);
     const got = await waitFor(
       `(() => { const p = [...document.querySelectorAll("#sealed-list [data-sealed-board]")].map((b) => b.dataset.sealedBoard); return p.length ? p : null; })()`,
       "归档册顶上的看板那排",
     );
-    ok(J(got) === J(wantPills), "⑨ 归档册那排 = 「全部看板」+ 有成就的各块(core 序)", { got, wantPills });
+    ok(J(got) === J(wantPills), "⑨ 归档册那排 = 「全部看板」+ 当前看板(恒在)+ 其他有成就的各块(core 序)", { got, wantPills });
+    const entry = await page(`return { active: [...document.querySelectorAll("#sealed-list [data-sealed-board].active")].map((b) => b.dataset.sealedBoard), cards: document.querySelectorAll("#sealed-list [data-sealed]").length, empty: document.querySelector("#sealed-list p.empty")?.textContent ?? null };`);
+    ok(J(entry.active) === J([one.id]), "⑨ (R4)进面恒选当前看板(分类板)", entry);
+    if (oneSealed === 0) ok(entry.cards === 0 && entry.empty === "这块看板还没有归档的卡片", "⑨ (R4)当前看板没有归档 ⇒ 那句现成的空态、一张卡不画", entry);
+    else console.log("· ⑨ 「当前看板没有归档」那格跳过(分类板上竟有成就)");
+    await page(`const b = document.querySelector('#sealed-list [data-sealed-board=""]'); if (b) click(b); return !!b;`);
     const tags = await page(`return { x: cardOf2(${J(X)})?.querySelector("footer .pill")?.textContent ?? null, d: cardOf2(${J(dId)})?.querySelector("footer .pill")?.textContent ?? null };
       function cardOf2(id) { return document.querySelector('#sealed-list [data-sealed="' + id + '"]'); }`);
     ok(tags.x === flow.title && tags.d !== null && tags.d !== flow.title, "⑨ 每条挂来处看板名", tags);
@@ -371,6 +380,14 @@ try {
     await page(`const b = document.querySelector('#sealed-list [data-sealed-board=""]'); if (b) click(b); return !!b;`);
     const all = await page(`return [...document.querySelectorAll("#sealed-list [data-sealed]")].map((c) => c.dataset.sealed);`);
     ok(all.includes(X) && all.includes(dId), "⑨ 点「全部看板」两条都回来");
+    // R4:收面、切到流程板再进 ⇒ 选着流程板(进面那一下不记上次点过哪枚)
+    await page(`const b = document.querySelector('[data-mode="tasks"]'); click(b); return true;`);
+    await sleep(400);
+    await pickBoard(flow.id);
+    await page(`const b = document.querySelector('[data-pane="sealed"]'); click(b); return true;`);
+    await waitFor(`!!document.querySelector("#sealed-list [data-sealed-board]")`, "再进归档册");
+    const again = await page(`return { active: [...document.querySelectorAll("#sealed-list [data-sealed-board].active")].map((b) => b.dataset.sealedBoard), ids: [...document.querySelectorAll("#sealed-list [data-sealed]")].map((c) => c.dataset.sealed) };`);
+    ok(J(again.active) === J([flow.id]) && again.ids.includes(X) && !again.ids.includes(dId), "⑨ (R4)切到流程板再进 ⇒ 选着流程板、只有它的成就", again);
     // 清场:X 取消归档、回落点;默认看板那条在 finally 里删
     await inv("unseal_task", { spaceId: space, id: X });
     await inv("update_task_status", { spaceId: space, id: X, to: flow.landing });

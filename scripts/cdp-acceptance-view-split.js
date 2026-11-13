@@ -233,8 +233,6 @@
         const del = await until(() => c.querySelector('.panel [data-pact="del"]'), 1500);
         if (!del) continue;
         click(del);
-        await until(() => !cb.hidden, 1500);
-        click(document.getElementById("confirmbar-yes"));
         await until(() => !cardOf(id), 2000);
       }
       click(document.querySelector('#bottombar [data-pane="trash"]'));

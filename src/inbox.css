@@ -172,6 +172,15 @@
   overflow-y: auto;
   padding: 20px 30px 28px;
 }
+/* 902 E1:宽屏上给内容区一个阅读宽度 —— 1920 宽时一条正文一行拉到约 1640px,读一行要转头。
+   做法照长文页(docs.css 的 .doc-list / .doc-page / .doc-bar.narrow):**页头通栏、内容区封顶、靠左不居中**
+   (左缘与页头标题、筛选条对齐;居中的话时间轴那根竖线会随窗宽左右漂)。筛选条是与看板共用的那一条
+   (filter-bar.css),照旧通栏。
+   ⛔ 数不是照抄长文的 860:默认窗口 1260 下这一栏是 1027px(侧栏收起 1147px),「默认窗口一个像素不变」
+   ⇒ 封顶取在它们之上;窗口拉到比默认宽约一百像素起才开始咬。
+   整页居中的那枚空态 / 加载态(没有记一笔框时的 .center)不封:它是对着整页摆的。 */
+.v-inbox main > :not(.center),
+.v-inbox main > .compose ~ .center { max-width: 1160px; }
 /* 纸面滚动条住 controls.css(全应用一份,348 统一;新增可滚容器去那边登记)。 */
 
 /* ---- 想法 timeline (a left rail + per-day headings) ---- */
@@ -570,6 +579,10 @@
 .v-inbox .img-editor .add-img { margin-top: 6px; }
 /* 编辑态按了一次 Esc 而正文改过(157 G4 / P1):再按一次才丢。 */
 .v-inbox .discard-hint { margin: 4px 0 0; font-size: var(--fs-12); color: var(--seal-ink); }
+/* 902 F1:编辑框下常驻的一行淡字(同看板放大面板 `.ze-hint` 那一档:12px、ink-soft)。
+   按过一次 Esc、红字那句出来时它让位 —— 那句里已经把「回车或点别处保存」说了,两句叠着是重复,且多顶一行高。 */
+.v-inbox .edit-hint { margin: 4px 0 0; font-size: var(--fs-12); color: var(--ink-soft); }
+.v-inbox .discard-hint:not([hidden]) + .edit-hint { display: none; }
 /* 157 G4 / P5:卡上「改过」小字(同署名那一档存在感)、读态历史的落点、比对上头那句说明。 */
 .v-inbox .edited-mark { margin-left: 8px; font-size: var(--fs-12); color: var(--ink-soft); }
 /* 161 / W4 A47 / Q16(WP-19 / WP-24):卡上那一行排成「HH:MM · 别名 · 改过」(同手机)——「·」两边都留空(此前左边 0、贴着时间),

@@ -2650,7 +2650,7 @@ function openPane(name: string, landing = false) {
     void refreshSpaces();
   }
   else if (name === "trash") void panes.loadTrash();
-  else if (name === "sealed") void panes.loadSealed();
+  else if (name === "sealed") void panes.loadSealed(true); // 开面那一下:筛选预选当前看板
   else if (name === "docs") openDocs();
   else if (name === "topics") void topics.loadTopics();
   else if (name === "search") {

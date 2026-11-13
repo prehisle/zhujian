@@ -68,6 +68,31 @@
   align-items: center;
   gap: 8px;
 }
+/* 902 F5:标签行两行折叠。折起来的 pill 挂 data-fold(filter-bar.ts::wireFilterFold);「更多 N ▾ / 收起 ▴」是标签行
+   **外面**的兄弟(check-filter-parity 把行内每个按钮当标签核),贴着标签行最后一行的行尾。
+   皮肤:同 pill 的字档与高度、不描边(它不是一枚标签,是这一行的开关),悬停变深。 */
+.tf-pill[data-fold] { display: none; }
+.tf-more {
+  flex: none;
+  align-self: flex-end;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  font: inherit;
+  font-size: var(--fs-12);
+  letter-spacing: 0.02em;
+  color: var(--ink-soft);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-pill);
+  padding: 4px 6px;
+  cursor: pointer;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.tf-more[hidden] { display: none; }
+.tf-more:hover { color: var(--ink); }
+.tf-more-arrow { align-self: center; } /* 字号跟钮走(12px 令牌);⛔ 别照 .tf-caret 写 9px —— 那是字号门禁登记在册的例外,不新增 */
 /* 文本过滤框:与 pills 同排同形(胶囊),常驻元素——renderFilterPills 只重建 pills,
    打字过程中的重渲不碰它,焦点/光标不丢。 */
 .filter-text {

@@ -6,7 +6,7 @@
 //   ⑤ Tab 走开 = 离开就保存(A17,⛔ 没改不多落一版);⤢ 上回车 = 放大、不是保存(A10);E 不全选(Q15)。
 // 用真键(browser.keys):焦点移动、钮上回车 = 点击这些默认动作合成事件给不了。
 // 阴性对照(本轮手工三刀,读数在回报):摘掉 hotkey-menu.ts 的 onFocusIn 里 setActiveRow → ① 红;
-// leave() 里不落到后一张 → ② 红;revealConfirm 改回 .act.primary → ④ 红。
+// leave() 里不落到后一张 → ② 红;revealConfirm 改回 .act.primary → ④ 红(④ 今天由随记回收站「彻底删除」那例守;看板删卡不再有确认,F 组 F4)。
 import { browser, $, expect } from "@wdio/globals";
 import { clearInbox, goNotebook, inboxShow, invoke, typeText } from "./support.js";
 
@@ -49,10 +49,6 @@ const waitState = (pred, msg) =>
   });
 
 describe("W5 D1 · 桌面键盘与焦点", () => {
-  before(async () => {
-    await browser.execute(() => localStorage.removeItem("ysNotebook.taskArchiveConfirmDismissed")); // 删任务前确认:开
-  });
-
   it("随记:⋯ 上的焦点就是选中;↓ 挪选中时焦点跟着走;E 作用于焦点那张、光标在末尾(A7 / Q15)", async () => {
     await clearInbox();
     for (const s of ["甲", "乙", "丙"]) await invoke("capture_note", { content: `${P}${s}` });
@@ -220,13 +216,26 @@ describe("W5 D1 · 桌面键盘与焦点", () => {
     await waitState((s) => s.selected.length === 1 && s.selected[0] === after && s.focusCard === after, "挪完列选中 / 焦点没留在原位后一张");
   });
 
-  it("看板:删除确认焦点停【取消】;E 不全选;⤢ 上回车 = 放大、不存(Q3 / Q15 / A10)", async () => {
+  it("看板:D 直接删(不再先问)、选中落原位后一张;Ctrl+Z 撤回来重新是选中;E 不全选;⤢ 上回车 = 放大、不存(F4 / A3 / A1 / Q15 / A10)", async () => {
     await focusDots(".tcard", `${P}左`);
+    // 原位后一张 = 文档序里紧跟它的那张;它是最后一张就往前一张(hotkey-menu 的 leave 同一条规矩)
+    const next = await browser.execute((t) => {
+      const all = [...document.querySelectorAll(".tcard")];
+      const i = all.findIndex((c) => c.textContent.includes(t));
+      return ((all[i + 1] ?? all[i - 1])?.querySelector(".ttitle")?.textContent ?? "").replace(/\s+/g, " ").trim().slice(0, 24);
+    }, `${P}左`);
+    expect(next).not.toBe(""); // 前置:屏上不止它一张(否则下面那句是空断言)
+    await browser.execute(() => document.querySelector(".undo-toast")?.remove());
     await browser.keys("d");
-    await waitState((s) => s.cls.includes("act ghost") && s.focusCard === `${P}左`, "删除确认焦点没停【取消】(Q3)");
-    await browser.keys("Enter");
-    await waitState((s) => s.onBtn && s.focusCard === `${P}左`, "回车取消后焦点没回 ⋯");
-    expect((await invoke("list_tasks")).some((t) => t.title === `${P}左`)).toBe(true);
+    // 不问:没有确认条,卡直接进回收站,回执带【撤销】
+    await browser.waitUntil(async () => !(await invoke("list_tasks")).some((t) => t.title === `${P}左`), { timeout: 6000, timeoutMsg: "D 没直接删(还在等确认?)" });
+    expect(await browser.execute(() => !!document.querySelector(".tcard .confirm-q"))).toBe(false);
+    await $(".undo-toast").waitForExist({ timeout: 5000 });
+    expect(await browser.execute(() => document.querySelector(".undo-toast .undo-text").textContent)).toBe("已移入回收站");
+    await waitState((s) => s.selected.length === 1 && s.selected[0] === next && s.focusCard === next, "删掉后选中 / 焦点没落到原位后一张");
+    await browser.keys(["Control", "z"]);
+    await browser.waitUntil(async () => (await invoke("list_tasks")).some((t) => t.title === `${P}左`), { timeout: 6000, timeoutMsg: "Ctrl+Z 没把卡撤回来" });
+    await waitState((s) => s.selected[0] === `${P}左` && s.focusCard === `${P}左` && s.onBtn, "撤回来的那张没重新成为选中 / 拿到焦点");
     await browser.keys("e");
     await $(".tcard .edit-input").waitForExist({ timeout: 5000 });
     const ed = await browser.execute(() => {
