@@ -324,7 +324,7 @@ pub fn file_to_topic(
             oplog::item_set(&tx, clock, id, &["stage"])?;
         }
         "filed" => {}
-        _ => return Err("只有随记可以归类到标签".to_string()),
+        _ => return Err("只有随记可以在这里挂标签(卡片请在看板上挂)".to_string()),
     }
     let topic_id = match target {
         Target::Existing(t) => {

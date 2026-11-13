@@ -1197,12 +1197,21 @@ function collapse(card: HTMLElement): void {
   deps.onDraftClosed(); // 三审 M1:收面即「草稿域收场」,补被延后的刷新
 }
 
+/** 转屏 / 分屏换宽那一小段里别按「滚走了」收面(905;165 A29 的后半截):换宽后时间轴整片重排(竖放一栏 ↔ 横放一排列、每列自滚),
+ *  开着的那张卡在新排法里多半不在可见区(列表靠下的卡落在它那一列的深处),重排带出的那记 scroll 就会把面收掉 ——
+ *  而 main.ts 的转屏锚要等排完(120ms)才把它摆回来,晚了一步。⇒ 换宽时由 main.ts 叫这一下,锚摆完之后照旧。 */
+let holdUntil = 0;
+export function holdThroughRelayout(ms: number): void {
+  holdUntil = performance.now() + ms;
+}
+
 /** 卡整张滚出视口就收面(122):面板开着时悬浮 ＋ 让位(`syncShell`),而面板此前不随滚动收
  *  ⇒ 滚走之后 ＋ 一直不见,得回去找那张卡再点一下。有草稿 / 写在飞时不收(同点空白那条闸)。
  *  ⚠ 卡在视口上方收起时,文档变矮那一截由浏览器的滚动锚定补回,屏上内容不跳。
  *  ⚠ 时间轴被面板接管(`pane-open` 整个 display:none)时卡量出来是全零 —— 那不是「滚走了」,跳过。 */
 function collapseIfScrolledAway(): void {
   if (!state || busy || hasDirtyDraft()) return;
+  if (performance.now() < holdUntil) return;
   const card = currentCard();
   if (!card || card.getClientRects().length === 0) return;
   const r = card.getBoundingClientRect();

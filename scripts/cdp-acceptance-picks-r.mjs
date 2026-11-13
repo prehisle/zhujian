@@ -40,7 +40,16 @@ import { openSession, pageTarget, sleep, touchSwipe } from "./lib/cdp.mjs";
 
 const execFileAsync = promisify(execFile);
 const adb = (args) => execFileAsync("adb", args, { encoding: "utf8", maxBuffer: 1 << 24 });
-const shell = async (...a) => (await adb(["shell", ...a])).stdout.trim();
+// --ohos(905):鸿蒙真机上跑(9222 那条转发照 skill `zhujian-ohos-verify` 自己建)。设备侧只有三样要换:返回键走 hdc、截图走 CDP、
+// 转屏没有命令行入口 ⇒ 横放那一段(R1-W)不跑、报在 skipped 里。HDC 环境变量 = hdc.exe 的完整路径。
+const OHOS = process.argv.includes("--ohos");
+const HDC = process.env.HDC ?? "G:/ohos-sdk/toolchains/hdc.exe";
+const shell = async (...a) => {
+  if (!OHOS) return (await adb(["shell", ...a])).stdout.trim();
+  if (a[0] === "settings") return "0";
+  if (a.join(" ") === "input keyevent 4") return (await execFileAsync(HDC, ["shell", "uitest uiInput keyEvent Back"], { encoding: "utf8" })).stdout.trim();
+  throw new Error(`--ohos 下没有这条设备命令:${a.join(" ")}`);
+};
 const argv = process.argv.slice(2);
 const SHOTS = argv.includes("--shots") ? argv[argv.indexOf("--shots") + 1] : null;
 const KNIFE = process.env.PICKSR_KNIFE === "scroll";
@@ -87,6 +96,11 @@ const main = async () => {
   const click = (sel) => evalJs(`(()=>{const e=document.querySelector(${J(sel)});if(!e)return false;e.click();return true})()`);
   const snap = async (name) => {
     if (!SHOTS) return;
+    if (OHOS) {
+      const r = await s.send("Page.captureScreenshot", { format: "png" });
+      writeFileSync(`${SHOTS}/${name}.png`, Buffer.from(r.data, "base64"));
+      return;
+    }
     const { stdout } = await execFileAsync("adb", ["exec-out", "screencap", "-p"], { encoding: "buffer", maxBuffer: 1 << 26 });
     writeFileSync(`${SHOTS}/${name}.png`, stdout);
   };
@@ -258,6 +272,8 @@ const main = async () => {
       const nav = async (id) => {
         const t0 = await titleNow();
         const hit = await tap(`#${id}`);
+        // 多等一会儿再判「没落上」:触摸那记的 click 会迟到(905 装机后头一趟撞过 —— 迟到的那记 + 兜底 click = 一下翻了两个月)。
+        for (let i = 0; i < 8 && (await titleNow()) === t0; i++) await sleep(100);
         if ((await titleNow()) === t0) await click(`#${id}`);
         return hit;
       };
@@ -384,7 +400,8 @@ const main = async () => {
     await shell("settings", "put", "system", "accelerometer_rotation", "0");
     await shell("settings", "put", "system", "user_rotation", "1");
     rotated = true;
-    if (step("R1-W 前置:真转成了横放", !!(await until(`innerWidth > innerHeight && innerWidth > 700`, 6000)))) {
+    if (OHOS) (out.skipped ??= []).push("R1-W 横放随记:鸿蒙没有命令行转屏,这一段没跑");
+    else if (step("R1-W 前置:真转成了横放", !!(await until(`innerWidth > innerHeight && innerWidth > 700`, 6000)))) {
       await sleep(1000);
       await scrollPage(0);
       // 真划一下(设备像素;横放后 input 吃的是转过来的坐标系):从屏下 3/4 推到 1/4,列表往下走、顶栏随之收起

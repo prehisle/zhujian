@@ -3270,6 +3270,7 @@ $("bottombar").addEventListener("click", (e) => {
       if (hChanged) window.setTimeout(revealFocusedRow, 120); // 只是键盘起落:不动锚,只管握着焦点的那一行
       return;
     }
+    cardPanel.holdThroughRelayout(700); // 排完(120)+ 摆回去那一下(400)之前,开着的操作面不按「滚走了」收(A29)
     if (settling === undefined && anchor === null) record(); // 没滚过就转屏:锚还没记过(旧排法已经没了,记个近似)
     clearTimeout(settling);
     settling = window.setTimeout(() => {

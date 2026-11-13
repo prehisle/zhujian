@@ -192,8 +192,9 @@ const main = async () => {
       // 英文档 + 字号最大档
       await reload({ "zhujian.lang": "en" });
       if (step("Q1 英文档已生效", (await evalJs(`document.documentElement.lang`)) === "en")) {
-        step("Q1 前置:字号桥在", await evalJs(`typeof window.__zhujianTextSize?.set==="function"`));
-        await evalJs(`(()=>{window.__zhujianTextSize.set(130);return 1})()`);
+        // 鸿蒙没有字号桥(`HAS_TEXT_ZOOM` 关着,905 真机上撞到)⇒ 那台只验默认字号,报在 skipped 里。
+        if (await evalJs(`typeof window.__zhujianTextSize?.set==="function"`)) await evalJs(`(()=>{window.__zhujianTextSize.set(130);return 1})()`);
+        else (out.skipped ??= []).push("Q1 / Q3 最大字号:这台没有字号桥,按默认字号量的");
         await sleep(900);
         await pickBoard(homeBoard);
         await until(`!!${card(seedId)}`, 5000);
@@ -223,7 +224,7 @@ const main = async () => {
         out.q1PickerRows = new Set(g.ps.map((p) => Math.round(p.t))).size; // 只记不判:挤不下时整枚换到下一行是规矩(ui-guidelines §3.6),钮自己不折字才是判据
         await snap("Q1-en-130-picker");
         await evalJs(`${pact(seedId, "back")}?.click()`);
-        await evalJs(`(()=>{window.__zhujianTextSize.set(${startSize});return 1})()`);
+        await evalJs(`(()=>{window.__zhujianTextSize?.set(${startSize});return 1})()`);
       }
       await reload({ "zhujian.lang": "zh" });
       step("Q1 回到中文档", (await evalJs(`document.documentElement.lang`)) === "zh");
@@ -257,7 +258,8 @@ const main = async () => {
       await click("#settings-diag-btn");
       const inDiag = await until(`!document.getElementById("diag").hidden&&document.body.classList.contains("pane-open")`, 3000);
       await sleep(300);
-      await execFileAsync("adb", ["shell", "input", "keyevent", "4"]);
+      if (process.argv.includes("--ohos")) await execFileAsync(process.env.HDC ?? "G:/ohos-sdk/toolchains/hdc.exe", ["shell", "uitest uiInput keyEvent Back"]); // 鸿蒙:返回键走 hdc(905)
+      else await execFileAsync("adb", ["shell", "input", "keyevent", "4"]);
       const backOk = await until(settingsOpen, 4000);
       await sleep(600);
       const yb = await evalJs(`document.scrollingElement.scrollTop`);

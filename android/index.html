@@ -620,8 +620,16 @@
       .dp-head h3 { margin: 0; font-size: var(--fs-15); font-weight: 600; color: var(--ink); font-family: var(--font-sans); }
       .dp-nav {
         border: none; background: none; color: var(--ink-soft);
-        width: 44px; height: 44px; font-size: var(--fs-24); line-height: 1; font-family: var(--font-sans);
+        width: 44px; height: 44px; padding: 0; display: grid; place-items: center;
       }
+      /* 换月的箭头是画出来的(905,用户拍:原来那对「‹ ›」字符看着像书名号)。遮罩只取形、色走 currentColor;
+         ⚠ 老引擎只认带前缀的 `-webkit-mask`,两条都写。「下个月」= 同一枚镜像。 */
+      .dp-nav::before {
+        content: ""; width: 20px; height: 20px; background: currentColor;
+        -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M10 3.5 5.5 8l4.5 4.5'/%3E%3C/svg%3E") center / contain no-repeat;
+        mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M10 3.5 5.5 8l4.5 4.5'/%3E%3C/svg%3E") center / contain no-repeat;
+      }
+      #dp-next::before { transform: scaleX(-1); }
       .dp-grid { display: grid; grid-template-columns: repeat(7, 1fr); justify-items: stretch; }
       #dp-days { grid-template-rows: repeat(6, 44px); } /* 恒六行:空着的那几行也占高(空格子自己撑不起行高) */
       .dp-week span { text-align: center; font-size: var(--fs-12); color: var(--ink-soft); line-height: 28px; }
@@ -2953,9 +2961,9 @@
     <div id="date-scrim" hidden></div>
     <section id="date-sheet" class="compose datesheet" role="dialog" aria-label="截止" data-i18n-aria-label="cardpanel.laneDue">
       <div class="dp-head">
-        <button id="dp-prev" class="dp-nav" type="button">‹</button>
+        <button id="dp-prev" class="dp-nav" type="button"></button>
         <h3 id="dp-title"></h3>
-        <button id="dp-next" class="dp-nav" type="button">›</button>
+        <button id="dp-next" class="dp-nav" type="button"></button>
       </div>
       <div id="dp-week" class="dp-grid dp-week"></div>
       <div id="dp-days" class="dp-grid"></div>

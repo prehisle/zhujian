@@ -1,4 +1,6 @@
 // @cdp-run phase timeout=180000
+// ⚠ 前置(905 定性):从**刚拉起、还没被真点过**的 app 上跑(`am force-stop` → monkey 拉起 → forward)。前面别的资产真点过屏之后 WebView 有系统焦点,
+//   页内 `focus()` 会弹出真键盘 ⇒ 过滤框 ×、列内拖那几格连着红(不是产品红)。
 // 158 G3(W2 走查规矩 Q1–Q13,用户全取 ★)手机那半的页内可断言部分。两趟(同 walk158-g12):
 //   第一趟(phase 空)直调命令播种,回 `{needReload:true}`;驱动者 `eval 'location.reload()'` 后跑第二趟才验,
 //   末尾把种子全部 purge、删标签、还原截止提醒水位(回收站 / 归档册零残留)。
@@ -227,7 +229,7 @@
     ok("Q3 「已完成」节头有「全部归档」", sa?.textContent === "全部归档");
     if (sa) {
       click(sa);
-      ok("Q3 全部归档问一次(带条数)", !!(await until(() => !$("confirmbar").hidden && $("confirmbar-q").textContent.includes(`${doneCount0} 条`), 2000)), $("confirmbar-q").textContent);
+      ok("Q3 全部归档问一次(带条数)", !!(await until(() => !$("confirmbar").hidden && $("confirmbar-q").textContent.includes(`${doneCount0} 张`), 2000)), $("confirmbar-q").textContent);
       click($("confirmbar-yes"));
       ok(`Q3 回执「已归档 ${doneCount0} 条」带「撤销」「去看看」`, !!(await until(() => $("error").textContent.includes(`已归档 ${doneCount0} 条`) && barTexts().join() === "撤销,去看看", 4000)), { t: $("error").textContent, a: barTexts() });
       ok("Q3 …已完成那节没了", (await colIds("done")).length === 0);

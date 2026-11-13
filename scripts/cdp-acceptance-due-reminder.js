@@ -56,6 +56,7 @@
   const I = window.__TAURI_INTERNALS__;
   const SP = "main";
   const inv = (c, a) => I.invoke(c, { spaceId: SP, ...a });
+  const MULTI = (await I.invoke("list_spaces")).length > 1;
   const ok = (name, cond, extra) => out.steps.push({ name, ok: !!cond, ...(extra ? { extra } : {}) });
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const $ = (id) => document.getElementById(id);
@@ -107,7 +108,9 @@
         ? [`逾期 ${late} · 今天 ${now}`, `${late} overdue · ${now} today`]
         : [`今天到期 ${now}`, `${now} due today`];
     const forms = soon === 0 ? head : [`${head[0]} · 3 天内 ${soon}`, `${head[1]} · ${soon} within 3d`];
-    return { late, now, forms };
+    // 905:这台有不止一个空间时,正文前面点了空间名(`reminder.spaceLine`:「名」句 / name: 句)⇒ 两形都认,尾巴必须逐字是那把尺。
+    const hit = (body) => typeof body === "string" && forms.some((f, i) => body === f || (MULTI && (i === 0 ? /^「.+」$/.test(body.slice(0, body.length - f.length)) && body.endsWith(f) : body.endsWith(": " + f))));
+    return { late, now, forms, hit };
   };
 
   const T = {
@@ -231,7 +234,7 @@
     localStorage.removeItem(LAST);
     const got4 = await fireUntil("07:30", 1);
     ok("④ 到点报了一条", got4 && log().length === 1, { log: log() });
-    ok("④ 正文 = 现算的那把尺(逾期 M · 今天 N)", want4.late > 0 && log()[0] && want4.forms.includes(log()[0].body), {
+    ok("④ 正文 = 现算的那把尺(逾期 M · 今天 N)", want4.late > 0 && log()[0] && want4.hit(log()[0].body), {
       body: log()[0] ? log()[0].body : null,
       want: want4.forms,
     });
@@ -246,7 +249,7 @@
     localStorage.removeItem(LAST);
     const got5 = await fireUntil("07:30", 2);
     ok("⑤ 清掉水位就再报", got5 && log().length === 2, { log: log().length });
-    ok("⑤ 正文是**新**数(分辨器:证明中间那次真没报)", log()[1] && want5.forms.includes(log()[1].body), {
+    ok("⑤ 正文是**新**数(分辨器:证明中间那次真没报)", log()[1] && want5.hit(log()[1].body), {
       body: log()[1] ? log()[1].body : null,
       want: want5.forms,
     });
@@ -262,7 +265,7 @@
     localStorage.setItem(CFG, JSON.stringify({ on: true, time: "07:30" }));
     const got6 = await fireUntil("23:59", 3);
     ok("⑥ 再开就响", got6 && log().length === 3, { log: log().length });
-    ok("⑥ 正文是新数(证明关着那次真没报)", log()[2] && want6.forms.includes(log()[2].body), {
+    ok("⑥ 正文是新数(证明关着那次真没报)", log()[2] && want6.hit(log()[2].body), {
       body: log()[2] ? log()[2].body : null,
       want: want6.forms,
     });

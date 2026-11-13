@@ -1,4 +1,6 @@
 // @cdp-run phase timeout=150000
+// ⚠ 前置(905 定性):从**刚拉起、还没被真点过**的 app 上跑(`am force-stop` → monkey 拉起 → forward)。前面别的资产真点过屏之后 WebView 有系统焦点,
+//   页内 `focus()` 会弹出真键盘 ⇒ 过滤框 ×、列内拖那几格连着红(不是产品红)。
 // 158 G1 + G2(W2 走查用户全取的那批确定毛病)手机那半的页内可断言部分。两趟:
 //   第一趟(phase 空)直调命令播种,回 `{needReload:true}`;驱动者 `eval 'location.reload()'` 后跑第二趟才验,
 //   末尾把种子全部 purge、删标签(回收站 / 归档册零残留)。
