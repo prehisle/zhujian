@@ -12,6 +12,7 @@ import {
   openDevicesPage,
   renderDevices,
   resetDevicesPage,
+  escapeDevicesConfirm,
   rosterDeparted,
   shortIds,
 } from "./devices";
@@ -471,6 +472,8 @@ const ESC_BACK: Record<Mode, Mode | null> = {
 
 /** Esc 只退一层(902 E6):在二级页上先回上一层,到了首页再按才关。此前不管在哪一页都整个关掉。 */
 function escapeOneLevel(): void {
+  // 设备名单里开着确认块(移除 / 退出 / 设为、取消管理):先收它(904 H1),再按才回首页。
+  if (mode === "devices" && escapeDevicesConfirm(() => renderPanel())) return;
   const back = ESC_BACK[mode];
   if (back === null) closePanel();
   else goto(back);

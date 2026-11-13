@@ -110,7 +110,7 @@ pub fn delete_inbox(conn: &mut Connection, clock: &mut Clock, id: &str) -> Resul
     let deleted = repo::delete_inbox_item(&tx, id).map_err(|e| e.to_string())?;
     if deleted != 1 {
         return Err(format!(
-            "删除失败:这条灵感已不在收件箱(可能已被整理或已删除),删除行数 {deleted}"
+            "删除失败:这条随记已经不在了(可能已转成卡片或已删除),删除行数 {deleted}"
         ));
     }
     oplog::item_tombstone(&tx, clock, id)?;
@@ -209,7 +209,7 @@ fn promote(
         return Err("回收站中的条目不能转为待办".to_string());
     }
     if stage != "inbox" && stage != "filed" {
-        return Err("只有随记(未归类/已归类)可以转为待办".to_string());
+        return Err("只有随记可以转为待办".to_string());
     }
     // 长文不能直接转待办(longform-plan §1):要先收回随记。⛔ 这只是**本机命令前置**,不是
     // 回放的跨字段约束 —— 两端并发「展开 × 转待办」照样收敛成任务行带 doc_at(读侧任务优先)。
@@ -319,7 +319,7 @@ pub fn file_to_topic(
         "inbox" => {
             let n = repo::file_inbox_item(&tx, id).map_err(|e| e.to_string())?;
             if n != 1 {
-                return Err(format!("移动随记到已整理失败(影响 {n} 行),已回滚"));
+                return Err(format!("给随记挂标签失败(影响 {n} 行),已回滚"));
             }
             oplog::item_set(&tx, clock, id, &["stage"])?;
         }
@@ -383,7 +383,7 @@ pub fn remove_topic(conn: &mut Connection, clock: &mut Clock, id: &str, topic_id
         if stage == "filed" && !repo::item_has_topic(&tx, id).map_err(|e| e.to_string())? {
             let n = repo::unfile_item(&tx, id).map_err(|e| e.to_string())?;
             if n != 1 {
-                return Err(format!("回退未归类失败(影响 {n} 行),已回滚"));
+                return Err(format!("去掉标签失败(影响 {n} 行),已回滚"));
             }
             oplog::item_set(&tx, clock, id, &["stage"])?;
         }

@@ -20,7 +20,7 @@ export const settings = defineMessages({
   "settings.hotkeysIntro": { zh: "在任何程序里都能唤起朱简。和别的软件撞了,就在这里换一个。", en: "Summon Zhujian from inside any program. If a shortcut clashes with another app, change it here." },
   // W4 Q11 / WD-38:内部说法换白话(用户拍定的词表):「捕获窗」→「随手记小窗」、「修饰键」→ 点名是哪几个键。
   "settings.captureWin": { zh: "随手记小窗", en: "Quick-note window" },
-  "settings.captureWinDesc": { zh: "从任何地方弹出快速记录窗", en: "Pop up the quick capture slip from anywhere" },
+  "settings.captureWinDesc": { zh: "从任何地方弹出快速记录窗", en: "Pop up a quick note from anywhere" },
   "settings.notebookWin": { zh: "主窗", en: "Main window" },
   "settings.notebookWinDesc": { zh: "从任何地方唤起朱简主窗口", en: "Bring up the Zhujian main window from anywhere" },
   "settings.recordHintMac": { zh: "点「更改」后,先按住 Cmd、Ctrl 或 Option,再按一个字母或数字;Esc 取消。", en: "After clicking Change, hold Cmd, Ctrl or Option, then press a letter or digit; Esc cancels." },

@@ -139,14 +139,14 @@ describe("应用评审修复 · 桌面 A 组", () => {
     await $(".v-inbox .center .big").waitForExist({ timeout: 8000 });
     expect(await $(".v-inbox .center .big").getText()).toBe("想到什么,先记在这儿");
     // 空态上不出教学那行(哪怕条件成立)
-    await stubStats({ captured_week: 1, born_inbox: 1, converted: 0 });
+    await stubStats({ captured_week: 1, born_inbox: 1, converted: 0, converted_week: 0 });
     await remountInbox();
     await $(".v-inbox .center .big").waitForExist({ timeout: 8000 });
     expect(await teachState()).toEqual({ cls: true, hint: null, notes: 0 });
 
     // 记一条 ⇒ 教学期:⋯ 常驻 + 列表下方那一行
     await invoke("capture_note", { content: `${P}教学期那一条` });
-    await stubStats({ captured_week: 1, born_inbox: 1, converted: 0 });
+    await stubStats({ captured_week: 1, born_inbox: 1, converted: 0, converted_week: 0 });
     await remountInbox();
     await browser.waitUntil(async () => (await teachState()).notes === 1, { timeout: 8000, timeoutMsg: "那条随记没画出来" });
     let st = await teachState();
@@ -189,12 +189,37 @@ describe("应用评审修复 · 桌面 A 组", () => {
     expect((await teachState()).hint).not.toBe(null);
 
     // 转过一次待办(统计里 converted 不再是 0)⇒ 下一发自己消失,⋯ 回到悬停才现
-    await stubStats({ captured_week: 1, born_inbox: 1, converted: 1 });
+    await stubStats({ captured_week: 1, born_inbox: 1, converted: 1, converted_week: 0 });
     await remountInbox();
     await browser.waitUntil(async () => (await teachState()).notes === 1, { timeout: 8000, timeoutMsg: "那条随记没画出来(第二发)" });
     st = await teachState();
     expect(st.cls).toBe(false);
     expect(st.hint).toBe(null);
+    await stubStats(null);
+  });
+
+  // 904 I:页头那一行的三态(统计钉死、随记页是空的 ⇒ N = 0)。真库上摆不出「M = 0」与「全是 0」(整轮累计),所以用 stubStats。
+  it("I:页头统计 —— M = 0 只说前半句;N = 0 而 M > 0 也说新句;全是 0 整行不显", async () => {
+    await clearInbox();
+    await inboxShow("ideas");
+    const head = () =>
+      browser.execute(() => {
+        const el = document.getElementById("idea-stats");
+        return { hidden: el.hidden, text: el.textContent };
+      });
+    const waitHead = (want, msg) =>
+      browser.waitUntil(async () => JSON.stringify(await head()) === JSON.stringify(want), { timeout: 8000, timeoutMsg: msg }).catch(async (e) => {
+        throw new Error(`${msg}\n  现场:${JSON.stringify(await head())}\n  ${e.message}`);
+      });
+    await stubStats({ captured_week: 3, born_inbox: 3, converted: 2, converted_week: 0 });
+    await remountInbox();
+    await waitHead({ hidden: false, text: "本周记了 0 条" }, "M = 0 时应只说前半句(全库累计的 converted 不许挂上来)");
+    await stubStats({ captured_week: 2, born_inbox: 2, converted: 2, converted_week: 2 });
+    await remountInbox();
+    await waitHead({ hidden: false, text: "本周记了 0 条,另有 2 条已转成卡片" }, "N = 0 而 M > 0 时应说新句");
+    await stubStats({ captured_week: 0, born_inbox: 0, converted: 0, converted_week: 0 });
+    await remountInbox();
+    await browser.waitUntil(async () => (await head()).hidden, { timeout: 8000, timeoutMsg: "全是 0 时整行应不显" });
     await stubStats(null);
   });
 

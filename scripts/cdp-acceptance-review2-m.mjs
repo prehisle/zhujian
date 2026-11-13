@@ -8,7 +8,8 @@
 //     (M2 主钮底色 / M3 徽章触区被 overflow:hidden 裁掉 / M5 键盘起着页头不吸 / M10 触区缩回 / M6① 顶栏内边距 / M6② 第一行靠右)
 //
 // 逐条(编号同 .zjshots/900-fix/mob-m.md):
-//  M1  随记列表滚到「新卡压在吸顶条底下」的位置记下:不拉回顶(158 G2)、回执「已记下」带「去看看」,点了新卡露在吸顶条之下;
+//  M1  随记列表滚到「新卡压在吸顶条底下」的位置记下:新卡算不在眼前(900 的尺子)⇒ 自己滚回顶、新卡整张露在吸顶条之下、
+//      回执「已记下」不挂钮(用户 2026-11-13 改拍:此前 = 不拉回顶 + 回执带「去看看」;横放 / 任务面那几半在 `picks-r`);
 //      在顶上记下:新卡闪一下、回执不挂钮(这一半是「别把在屏上的也判成不在」的对照)。
 //  M2  标签面改名那一行的主钮:字是「保存」、底色 = 「记下」那枚主钮的底色(不是引擎的原生灰钮)。
 //  M3  顶栏空间徽章的可点高度 ≥ 44(逐点探,0.5px 步长;halo 被 overflow 裁掉时只有 20)。
@@ -171,15 +172,14 @@ const main = async () => {
     const a = await evalJs(`(()=>{const e=document.getElementById("error");const c=document.querySelector('#timeline [data-id="${idA}"]');const r=c&&c.getBoundingClientRect();
       const cs=getComputedStyle(document.documentElement);const chrome=(parseFloat(cs.getPropertyValue("--head-h"))||0)+(parseFloat(cs.getPropertyValue("--fbar-h"))||0);
       return {y:scrollY,hidden:e.hidden,text:e.textContent,acts:[...e.querySelectorAll(".bar-act")].map(b=>b.textContent),cardBottom:r&&r.bottom,chrome}})()`);
-    step("M1 前置:新卡真的压在吸顶条底下(否则这一格是空测)", !!idA && a.cardBottom !== null && a.cardBottom < a.chrome + 24, a);
-    step("M1 不拉回顶(158 G2)", Math.abs(a.y - y0) < 2, { y0, y: a.y });
-    step("M1 新卡被吸顶条盖着时回执「已记下」带「去看看」", !a.hidden && a.text.includes("已记下") && a.acts.join() === "去看看", a);
+    // 「新卡真的压在吸顶条底下」这格前置从这儿撤了:滚回顶之后量不到「滚之前它在哪儿」;滚的那 150 就是照它量的(见上面那行)。
+    step("M1 前置:记下之前列表不在顶(滚了 150,否则这一格是空测)", !!idA && y0 > 100, { y0 });
+    step("M1 新卡被吸顶条盖着 ⇒ 自己滚回顶", a.y < 2, { y0, y: a.y });
+    step("M1 回执「已记下」、不挂「去看看」", !a.hidden && a.text.includes("已记下") && a.acts.length === 0, a);
     await snap("M1-saved-under-chrome");
-    await evalJs(`(()=>{const b=document.querySelector("#error .bar-act");if(b)b.click();return 1})()`);
-    await sleep(1200);
     const a2 = await evalJs(`(()=>{const c=document.querySelector('#timeline [data-id="${idA}"]');const r=c.getBoundingClientRect();const cs=getComputedStyle(document.documentElement);
       const chrome=(parseFloat(cs.getPropertyValue("--head-h"))||0)+(parseFloat(cs.getPropertyValue("--fbar-h"))||0);return {top:r.top,bottom:r.bottom,chrome,ih:innerHeight}})()`);
-    step("M1 点「去看看」= 新卡整张露在吸顶条之下", a2.top >= a2.chrome - 1 && a2.bottom <= a2.ih, a2);
+    step("M1 新卡整张露在吸顶条之下", a2.top >= a2.chrome - 1 && a2.bottom <= a2.ih, a2);
     await clearBar();
     await evalJs(`(()=>{window.scrollTo(0,0);return 1})()`);
     await sleep(300);

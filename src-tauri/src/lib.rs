@@ -212,6 +212,7 @@ struct IdeaStatsItem {
     captured_week: i64,
     born_inbox: i64,
     converted: i64,
+    converted_week: i64,
 }
 
 /// 深链接定位:一条 item 现在住在哪个视图/子视图,供前端 navigate + 高亮。返回值
@@ -257,6 +258,7 @@ fn idea_stats(space_id: String, week_start: String, spaces: State<'_, Spaces>) -
             captured_week: s.captured_week,
             born_inbox: s.born_inbox,
             converted: s.converted,
+            converted_week: s.converted_week,
         })
     })
 }

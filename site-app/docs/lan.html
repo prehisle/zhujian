@@ -521,7 +521,7 @@
       }
       .crop > img:first-child { position: absolute; top: 0; left: 0; }
       /* 随记:左上角那块(侧栏 + 时间轴头几条) */
-      .crop-inbox > img:first-child { width: 175%; }
+      .crop-inbox > img:first-child { width: 160%; } /* 904:175% 时第二张卡上的标签正好被下沿切掉,配的那句讲的就是打标签 */
       /* 看板:「进行中」「待确认」两列,带小清单的那张卡在正中 */
       .crop.crop-board { aspect-ratio: 3 / 2; }
       .crop-board > img:first-child { width: 200%; transform: translate(-35.5%, -24%); }

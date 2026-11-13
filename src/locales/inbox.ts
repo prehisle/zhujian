@@ -10,6 +10,7 @@ export const inbox = defineMessages({
   "inbox.filterPlaceholder": { zh: "过滤随记…", en: "Filter notes…" },
   // W4 Q11 / WD-38:「本周捕获 · 转待办」换白话(用户拍定的词表)。
   "inbox.weekStatsNoRatio": { zh: "本周记了 {n} 条", en: "Noted {n} this week" },
+  "inbox.weekStatsConverted": { zh: "本周记了 {n} 条,另有 {m} 条已转成卡片", en: "Noted {n} this week, plus {m} turned into cards" },
   "inbox.composePlaceholder": { zh: "随手记一笔…", en: "Jot something down…" },
   // W3 159 / Q6(WD-17):有多个空间时灰字写上会记进哪个空间(只有一个空间时照旧)。
   "inbox.composePlaceholderSpace": { zh: "随手记一笔,记进「{space}」…", en: "Jot something down — goes into “{space}”…" },

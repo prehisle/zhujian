@@ -615,8 +615,30 @@ function onSpaceMenuDoc(e: MouseEvent): void {
 function onSpaceMenuKey(e: KeyboardEvent): void {
   if (e.key === "Escape") {
     e.stopPropagation();
-    closeSpaceMenu(true);
+    escapeSpaceMenu();
   }
+}
+
+/** 菜单里点开的小表单 → 它换下来的那一行(新建 / 加入 / 改名 / 重置的确认,四处同一个形)。 */
+const spaceFormRow = new WeakMap<HTMLElement, HTMLElement>();
+
+/** Esc 只退一层(904 H1,同同步面板 / 设置那一族):菜单里开着小表单时先收表单、那一行换回来、焦点落在它上面,
+ *  再按才关菜单。此前不管开没开表单都整个关掉。框里有没有字不另判(此前也不判)。
+ *  ⚠ 加入在途、或小表单那一下正在提交(新建 / 改名 / 重置,`data-busy`)时照旧整个关(那一趟自己跑完;
+ *  表单收回去的话进度 / 失败那行红字就没处写了,菜单却还开着)。 */
+function escapeSpaceMenu(): void {
+  if (!spaceMenu) return;
+  if (joinAttempt === null) {
+    const forms = [...spaceMenu.querySelectorAll<HTMLElement>(".space-form")];
+    const form = forms.find((f) => f.contains(document.activeElement)) ?? forms[forms.length - 1];
+    const row = form === undefined ? undefined : spaceFormRow.get(form);
+    if (form !== undefined && row !== undefined && form.dataset.busy === undefined) {
+      form.replaceWith(row);
+      row.focus();
+      return;
+    }
+  }
+  closeSpaceMenu(true);
 }
 
 /** 菜单里 ↑ ↓ Home End 在各行之间走(灰掉的「未装载」那行跳过;已换成小表单的那行不算一行)。 */
@@ -672,22 +694,25 @@ function spaceActionRow(
     inp.addEventListener("keydown", (ke) => {
       ke.stopPropagation(); // 视图级单键(N/R/M…)别被输入截走
       if (ke.isComposing) return; // IME 组合期的 Enter/Esc 属于输入法(ui-audit P0 #1)
-      if (ke.key === "Escape") closeSpaceMenu(true);
+      if (ke.key === "Escape") escapeSpaceMenu();
       if (ke.key !== "Enter" || busy) return;
       if (initial !== "" && inp.value.trim() === initial.trim()) {
         closeSpaceMenu(); // 没改:不发命令(免得把显示名「默认空间」当真名写进去)
         return;
       }
       busy = true;
+      form.dataset.busy = "1";
       inp.disabled = true;
       err.textContent = "";
       submit(inp.value).catch((e: unknown) => {
         busy = false;
+        delete form.dataset.busy;
         inp.disabled = false;
         err.textContent = spaceNameErrText(e);
         inp.focus();
       });
     });
+    spaceFormRow.set(form, row);
     row.replaceWith(form);
     inp.focus();
     inp.select();
@@ -847,7 +872,7 @@ function spaceJoinRow(canMerge: boolean): HTMLElement {
       inp.addEventListener("keydown", (ke) => {
         ke.stopPropagation();
         if (ke.isComposing) return;
-        if (ke.key === "Escape" && joinAttempt === null) closeSpaceMenu(true);
+        if (ke.key === "Escape" && joinAttempt === null) escapeSpaceMenu();
         if (ke.key === "Enter") go.click();
       });
     }
@@ -863,6 +888,7 @@ function spaceJoinRow(canMerge: boolean): HTMLElement {
     form.appendChild(codeF.wrap);
     form.appendChild(acts);
     form.appendChild(note);
+    spaceFormRow.set(form, row);
     row.replaceWith(form);
     server.focus();
   });
@@ -904,6 +930,7 @@ function spaceResetRow(configured: boolean, gone: boolean): HTMLElement {
     ok.addEventListener("click", () => {
       if (busy) return;
       busy = true;
+      form.dataset.busy = "1";
       err.textContent = "";
       const id = currentSpaceId();
       resetSpace(id)
@@ -920,6 +947,7 @@ function spaceResetRow(configured: boolean, gone: boolean): HTMLElement {
         })
         .catch((e: unknown) => {
           busy = false;
+          delete form.dataset.busy;
           err.textContent = errText(e);
         });
     });
@@ -927,6 +955,7 @@ function spaceResetRow(configured: boolean, gone: boolean): HTMLElement {
     form.appendChild(warn);
     form.appendChild(acts);
     form.appendChild(err);
+    spaceFormRow.set(form, row);
     row.replaceWith(form);
     // W5 Q3 ★①:确认一出来焦点停【取消】(删的是整本的数据 —— 回车不做这件事,要做 Tab 回到红钮)。
     cancel.focus();
@@ -1033,7 +1062,7 @@ async function openSpaceMenu(anchor: HTMLElement = spaceEntry, open: "rename" | 
   menu.addEventListener("keydown", onSpaceMenuNav); // ⚠ 先于 holdKeyboard 那只挂(同一元素按注册序跑)
   // 焦点落在当前那一本上(没有就第一行)—— 此前留在入口钮上,菜单 6 项排在整页最末,倒着进去第一站是「重置当前空间…」。
   spaceHold = holdKeyboard(menu, menu, {
-    onEscape: () => closeSpaceMenu(true),
+    onEscape: () => escapeSpaceMenu(),
     focus: menu.querySelector<HTMLButtonElement>(".space-row.cur") ?? menu.querySelector<HTMLButtonElement>(".space-row:not(:disabled)"),
   });
   if (open === "rename") renameRow.click(); // 换成改名小表单、原名预填全选、光标进框(spaceActionRow)

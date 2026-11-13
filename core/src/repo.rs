@@ -527,6 +527,10 @@ pub struct IdeaStats {
     /// 其中现在处于任务态的条数(分子)——含回收站里冻结在任务态的、已入成就册的:
     /// 「转过待办」是它们共同的经历。
     pub converted: i64,
+    /// 本周记下的随记里、现在处于任务态的条数(904 I:随记页头「另有 M 条已转成卡片」)= `captured_week`
+    /// 与 `converted` 两个条件的交集,同一个 `week_start`。转了又撤回的不算(stage 回到灵感态);
+    /// 进了回收站 / 归档册的照算(同 `converted`)。
+    pub converted_week: i64,
 }
 
 /// `week_start` 是前端按本地周一 00:00 换算的 UTC RFC3339(后端从不算本地时间,同
@@ -536,11 +540,19 @@ pub fn idea_stats(conn: &Connection, week_start: &str) -> rusqlite::Result<IdeaS
         &format!(
             "SELECT COUNT(*) FILTER (WHERE created_at >= ?1), \
                     COUNT(*), \
-                    COUNT(*) FILTER (WHERE stage IN {TASK_STAGES}) \
+                    COUNT(*) FILTER (WHERE stage IN {TASK_STAGES}), \
+                    COUNT(*) FILTER (WHERE created_at >= ?1 AND stage IN {TASK_STAGES}) \
              FROM items WHERE born_stage = 'inbox'"
         ),
         [week_start],
-        |r| Ok(IdeaStats { captured_week: r.get(0)?, born_inbox: r.get(1)?, converted: r.get(2)? }),
+        |r| {
+            Ok(IdeaStats {
+                captured_week: r.get(0)?,
+                born_inbox: r.get(1)?,
+                converted: r.get(2)?,
+                converted_week: r.get(3)?,
+            })
+        },
     )
 }
 
@@ -3875,6 +3887,68 @@ mod tests {
         assert_eq!(archive_task(&conn, &a).unwrap(), 1);
         let after = idea_stats(&conn, "0000-01-01T00:00:00Z").unwrap();
         assert_eq!((after.born_inbox, after.converted), (2, 1));
+    }
+
+    /// 904 I:`converted_week` = 本周记下的随记里现在是卡片的条数。六种情形各钉一格。
+    #[test]
+    fn idea_stats_converted_week_counts_this_weeks_notes_that_are_cards_now() {
+        let conn = fresh_db();
+        const WEEK: &str = "2026-11-09T00:00:00Z";
+        let cw = || idea_stats(&conn, WEEK).unwrap().converted_week;
+        // created_at 由 add_item 取当下;要摆「哪一周记的」就直接改它。
+        let set_created = |id: &str, at: &str| {
+            assert_eq!(conn.execute("UPDATE items SET created_at = ?2 WHERE id = ?1", [id, at]).unwrap(), 1);
+        };
+        const THIS_WEEK: &str = "2026-11-10T08:00:00Z";
+        const LAST_WEEK: &str = "2026-11-08T23:59:59Z";
+        assert_eq!(cw(), 0);
+
+        // ① 本周记、本周转:计。
+        let a = add_item(&conn, "本周记本周转").unwrap();
+        set_created(&a, THIS_WEEK);
+        assert_eq!(cw(), 0, "还没转:不计");
+        assert_eq!(promote_to_todo(&conn, &a).unwrap(), 1);
+        assert_eq!(cw(), 1, "本周记、本周转:计");
+
+        // ② 上周记、本周转:不计(全库累计那个数照涨)。
+        let b = add_item(&conn, "上周记本周转").unwrap();
+        set_created(&b, LAST_WEEK);
+        assert_eq!(promote_to_todo(&conn, &b).unwrap(), 1);
+        let s = idea_stats(&conn, WEEK).unwrap();
+        assert_eq!((s.converted, s.converted_week), (2, 1), "上周记的不进本周那个数");
+
+        // ③ 转了又撤回:不计。
+        let c = add_item(&conn, "转了又撤回").unwrap();
+        set_created(&c, THIS_WEEK);
+        assert_eq!(promote_to_todo(&conn, &c).unwrap(), 1);
+        assert_eq!(cw(), 2);
+        assert_eq!(revert_to_idea(&conn, &c, "inbox").unwrap(), 1);
+        assert_eq!(cw(), 1, "撤回成随记:不计");
+
+        // ④ 转进自定义列(0036 起 stage 可以是自定义列 id):计。
+        conn.execute(
+            "INSERT INTO board_column (id, title, kind, system, position, created_at) \
+             VALUES ('01USERCOLUMN00000000000001', '验收中', 'task', 0, 'Zz', '2026-08-24T00:00:00.000Z')",
+            [],
+        )
+        .unwrap();
+        let d = add_item(&conn, "转进自定义列").unwrap();
+        set_created(&d, THIS_WEEK);
+        assert_eq!(promote_to_column(&conn, &d, "01USERCOLUMN00000000000001").unwrap(), 1);
+        assert_eq!(stage_of(&conn, &d), "01USERCOLUMN00000000000001");
+        assert_eq!(cw(), 2, "自定义列也是任务态:计");
+
+        // ⑤ 转后进回收站:照计(同 converted)。
+        assert_eq!(archive_task(&conn, &a).unwrap(), 1);
+        assert_eq!(cw(), 2, "进了回收站仍算转过");
+
+        // ⑥ 生而为任务的:不计。
+        let t = insert_task(&conn, "直接建的任务", None, None).unwrap();
+        set_created(&t, THIS_WEEK);
+        assert_eq!(cw(), 2, "生而为任务的不进随记统计");
+
+        // 周起点在未来:0。
+        assert_eq!(idea_stats(&conn, "9999-01-01T00:00:00Z").unwrap().converted_week, 0);
     }
 
     #[test]

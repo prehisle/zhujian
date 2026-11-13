@@ -8,13 +8,14 @@
 //  A6 / A20 取消归档:回执带「撤销」(操作型回执、过了 3 s 仍满亮),点撤销 = 再归档回去;
 //  A7 / A20 撤回为随记:回执带「撤销」,点了 = 转回待办且截止 / 优先级原样设回;
 //  A9  点靠屏下方的卡:操作面(及「更多…」子面)展开后下沿在底栏之上;
-//  A10 点截止日期框框身 = 调 showPicker(系统选择器本身只能真机看,见原生半截);
+//  A10 点提醒时间框框身 = 调 showPicker(系统选择器本身只能真机看,见原生半截);截止那一格不再是日期框
+//      (应用评审取舍题 R2:换成一枚钮 + 应用自己的月历层)⇒ 这里只核「点那枚钮月历层开、取消即收、不弹系统选择器」,月历层本身归 picks-r;
 //  A13 选中一枚标签再点开过滤框:标签行变窄后选中那枚仍整枚在行内;
 //  A16 空着点「记下」说一声;滚到中段新建,保存后不拉回顶部、回执带「去看看」;
 //  A19 「清空回收站」挪到面底、不通栏;编辑层「取消」的确认条左钮叫「接着改」(别的确认条照旧「取消」);
 //      键盘收着时点过滤框的 × = 清字且不聚焦(不弹键盘)。
 // 前置:界面语言中文;没开任何面板;竖屏(视口 < 720 宽,看板形不在此列)。
-// 原生半截(每轮真机发,截图进 .zjshots/158-g12/phone/):`adb shell input tap` 点截止日期框中部 → 弹系统日历;
+// 原生半截(每轮真机发,截图进 .zjshots/158-g12/phone/):
 //   点设置 → 截止提醒的时间框中部 → 弹系统时间选择器;过滤框真打字后按返回收键盘、再真点 × → `mInputShown=false`;
 //   点靠屏底的卡 → 截图看动作排在底栏之上。
 // 阴性对照:把 ui.ts retireBar 里置灰那句加回去,A5 红在「余温里撤销钮没灰」;把 cardpanel 状态那支的
@@ -198,22 +199,26 @@
     await sleep(100);
     ok("A9 「更多…」子面下沿也在底栏之上", !!p9b && p9b.getBoundingClientRect().bottom <= $("bottombar").getBoundingClientRect().top);
 
-    // ---- A10:点日期框框身 = showPicker ----
+    // ---- A10:截止那枚钮开月历层(不弹系统选择器);提醒时间框框身 = showPicker ----
     click(pact(card(`${M}-填充7`), "back"));
     await until(() => pact(card(`${M}-填充7`), "due"), 2000);
     click(pact(card(`${M}-填充7`), "due"));
-    const dateIn = await until(() => card(`${M}-填充7`)?.querySelector(".panel input[type=date]"), 2000);
+    const dateBtn = await until(() => card(`${M}-填充7`)?.querySelector('.panel [data-pact="due-pick"]'), 2000);
     let picked = 0;
     const orig = HTMLInputElement.prototype.showPicker;
     HTMLInputElement.prototype.showPicker = function () {
       picked++;
     };
     try {
-      click(dateIn);
-      ok("A10 点截止日期框框身弹选择器(showPicker)", picked === 1, { picked });
+      click(dateBtn);
+      const sheetOpen = await until(() => $("date-sheet").classList.contains("open"), 2000);
+      ok("A10 点截止那枚钮开应用自己的月历层、不弹系统选择器", !!sheetOpen && picked === 0 && !card(`${M}-填充7`).querySelector(".panel input[type=date]"), { picked });
+      click($("dp-cancel"));
+      ok("A10 月历层点「取消」即收", !!(await until(() => !$("date-sheet").classList.contains("open"), 2000)));
+      await sleep(300); // 等收层那记 history.back() 归账
       const tin = $("remind-time");
       click(tin);
-      ok("A10 点提醒时间框框身弹选择器", picked === 2, { picked });
+      ok("A10 点提醒时间框框身弹选择器", picked === 1, { picked });
     } finally {
       HTMLInputElement.prototype.showPicker = orig;
     }

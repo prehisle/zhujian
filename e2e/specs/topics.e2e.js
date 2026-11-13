@@ -410,6 +410,17 @@ describe("标签合并(手动把碎标签并成一个)", () => {
 
     // Re-crown the survivor by clicking KEEP's chip label in the merge bar.
     await clickJs(`.mb-chip-label*=${KEEP}`);
+    // 904 H3:合并条上的叫法是「留下」(此前「存续」);角标只挂在留下的那一枚上。
+    const words = await browser.execute(() => ({
+      bar: document.querySelector("#mb-chips").parentElement.textContent,
+      badges: [...document.querySelectorAll(".mb-chip-keep")].map((n) => n.textContent),
+      keepChip: document.querySelector(".mb-chip.is-keep .mb-chip-label")?.textContent ?? "",
+      tips: [...new Set([...document.querySelectorAll(".mb-chip-label")].map((n) => n.title))],
+    }));
+    expect(words.badges).toEqual(["留下"]);
+    expect(words.keepChip).toContain(KEEP);
+    expect(words.tips).toEqual(["设为留下的那枚"]);
+    expect(words.bar).toContain("(点下面的标签可改留下哪一枚)");
 
     // Type a fresh title (CJK via execute + input event), then merge.
     const RENAMED = "E2E-改名-合并后庚";

@@ -123,6 +123,7 @@ import {
   refreshOpenComments,
 } from "./comments";
 import { closeEditSheetNow, initEditSheet, isEditSheetDirty, isEditSheetOpen, saveEditSheet } from "./editsheet";
+import { closeDatePickNow, initDatePick, isDatePickOpen } from "./datepick";
 import { disconnectThumbObserver, fillThumb, hydrateThumbs } from "./thumbs";
 import { onFoldClick, resettleFolds, settleFolds } from "./fold";
 import { closeViewerNow, initViewer, isViewerOpen, openLocalViewer, openViewer } from "./viewer";
@@ -733,6 +734,7 @@ let nativeBackPending = false; // native 请求的 history.back() 已发、popst
   // 硬件返回」会被合并吞掉、重开的层却还开着。挂账层没有已压的历史条目,直关销账。
   if (deferredLayers > 0) {
     if (isViewerOpen()) closeViewerNow();
+    else if (isDatePickOpen()) closeDatePickNow();
     else if (isEditSheetOpen()) {
       if (isEditSheetDirty()) {
         saveEditSheet(); // 157 G4 / P1:离开 = 保存;存成了宿主照常收层销账,存不成层与挂账都留着
@@ -789,7 +791,7 @@ function clearTaskFiltersByBack(): boolean {
 // 开着面板就收面;开着编辑 / 留言 / 大图 / 记一笔这些层、或有卡片草稿时不动(那是正在做的事,别被一条通知拽走)。
 window.addEventListener("zhujian-notif-tap", () => {
   if (switching || captureSaving || !lastRefreshOk) return;
-  if (cardPanel.hasDirtyDraft() || isViewerOpen() || isEditSheetOpen() || captureOpen || isCommentsOpen()) return;
+  if (cardPanel.hasDirtyDraft() || isViewerOpen() || isEditSheetOpen() || isDatePickOpen() || captureOpen || isCommentsOpen()) return;
   navSeq++; // 作废在途的定位(同主动导航)
   if (activePane !== null) {
     closePaneNow();
@@ -830,6 +832,11 @@ window.addEventListener("popstate", () => {
   }
   if (isViewerOpen()) {
     closeViewerNow();
+    return;
+  }
+  // 选截止日期的月历层(904):返回键 = 取消,什么都不写;底下那排「截止」原样留着。
+  if (isDatePickOpen()) {
+    closeDatePickNow();
     return;
   }
   // 编辑层(706)在最上头(留言层开着时它开不出来:遮罩压着卡片操作面)。
@@ -1467,12 +1474,13 @@ new ResizeObserver(() => {
   }
 }
 
-// 158 G2(W2 走查 A10 / WM-07):截止日期框、提醒时间框点框身只选中一段(没有键盘、没有选择器),
+// 158 G2(W2 走查 A10 / WM-07):提醒时间框点框身只选中一段(没有键盘、没有选择器),
 // 只有右端小图标能改 ⇒ 点框身任一处都弹系统选择器(安卓的时间选择器里自带「键盘输入」那一档)。
+// 截止日期那一格原先也走这条;904 起它不再是日期框(应用自己的月历层,datepick.ts)。
 document.addEventListener("click", (e) => {
   const el = e.target;
   if (!(el instanceof HTMLInputElement) || el.disabled || el.readOnly) return;
-  if (el.type !== "date" && el.type !== "time") return;
+  if (el.type !== "time") return;
   el.showPicker();
 });
 
@@ -2077,6 +2085,16 @@ function dismissCapture(): void {
   settleHistory();
 }
 
+/** 这张卡是不是时间轴里最靠上的那一张(多栏时每栏头一张一样高,都算)。只在「记下」落地那一下问一次。 */
+function isTopmostCard(card: HTMLElement): boolean {
+  let min = Infinity;
+  for (const c of document.querySelectorAll<HTMLElement>("#timeline article.card")) {
+    const r = c.getBoundingClientRect();
+    if (r.height > 0 && r.top < min) min = r.top;
+  }
+  return card.getBoundingClientRect().top <= min + 1;
+}
+
 async function save() {
   const ta = $("text") as HTMLTextAreaElement;
   if (captureSaving || picking) return; // picking:钮此刻是 disabled 的,这条兜非点击的路子
@@ -2167,7 +2185,29 @@ async function save() {
         // 900(应用评审二轮 M1):随记面也认同一把尺子。此前这一支拿整个视口量(`bottom > 0 && top < innerHeight`),
         // 而顶栏 + 筛选条吸在上面、底栏盖在下面 ⇒ 列表只滚了一两屏的边上,新卡压在吸顶条底下也算「在屏上」,
         // 那记脉冲闪在看不见的地方、回执又不出 = 记下之后什么信号都没有。⛔ 不强拉回顶(158 G2 拍的)。
-        if (inView(card)) {
+        // 904(用户 2026-11-13 拍,改掉 158 G2 / 900 在**随记面**上那一半):随记面上自己记下的那一条不在眼前 ⇒ 自己滚回顶让它露出来
+        // (新随记恒在列表最上),回执「已记下」照出、不再挂「去看看」。瞬时滚,不用平滑:那记闪只有 1.2 s,滚完就过了。
+        // 看板 / 任务面照旧(不拉、带「去看看」):新卡落的是某一列 / 某一节的头上,不在页顶。
+        // ⛔ 这只管「自己刚记下的」;对端同步来的新条目照旧不动读到的位置(重画保锚那条,ui-guidelines §3.1)。
+        let shown = inView(card);
+        let revealed = false;
+        if (mode === "ideas" && !shown) {
+          // 手机横放时顶栏可能正收着(890):这一下是「一帧跳大半屏」的程序滚动,chromehide 不把它当「滚回顶 = 露」⇒ 明着叫回来,
+          // 否则人在页顶、顶栏却收着,上面空出一条(真机实撞)。
+          showChrome();
+          window.scrollTo({ top: 0 });
+          // ⚠ 这一刻键盘多半还没落完(刚 blur),视口还是让过键盘的那一截 —— 手机横放时只剩一百来高,顶栏 + 筛选条一占,
+          // `inView` 对哪张卡都答「不在」(真机逐事件量的:先滚、几十毫秒后视口才长回来)。⇒ 人真在页顶(scrollY 归零了)、新卡又是最上面那张 = 键盘一落它就在眼前,
+          // 照「露出来了」办;⛔ 别在这儿拿 `inView` 一票否决再去 scrollIntoView —— 那会把页面从顶上又推下去、回执挂回「去看看」。
+          shown = inView(card) || (window.scrollY < 1 && isTopmostCard(card));
+          if (!shown) {
+            card.scrollIntoView({ block: "center" }); // 滚回顶它也不是最上面那张(顶上另有东西占着)⇒ 直接滚到它
+            shown = inView(card);
+          }
+          revealed = shown;
+        }
+        if (shown) {
+          if (revealed) showBar(t("main.saved"), true);
           // 165 / W5 Q15:多栏(随记分栏 / 看板)上新记一条、其余每张都换一栏,1.2 s 那记脉冲还没找到它就过完了 ⇒ 描边常亮约 3 s 再淡
           // (index.html `.flash-hold`,与搜索落点框同长)。一栏(手机竖放)照旧那一记:新卡就在最上面,一眼看得见。
           const hold = noteCols > 1 || boardShown();
@@ -4125,6 +4165,7 @@ initErr((url) => {
   probeUrlPinned = false; // 被闸挡下没开成时也别把这一笔留给下一次
 }, spaceLabelFromCore);
 initEditSheet({ pushLayer, settleHistory });
+initDatePick({ pushLayer, settleHistory });
 // 留言层(314 第③笔):写/删成功即整轴重拉(徽章计数跟着走),开合各压/平一枚返回键守门条目。
 initComments({ refresh, pushLayer, settleHistory });
 // 长文面(longform-plan 第 4 格):留言走同一个入口;写成功后整轴重拉(底栏「长文」钮跟着显形)。

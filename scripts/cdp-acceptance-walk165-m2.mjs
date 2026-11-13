@@ -379,7 +379,7 @@ const main = async () => {
     await rotate(true);
     await armKnife();
 
-    // Q15 多栏新卡描边常亮(新卡要在眼前 —— 不在眼前出的是「已记下 [去看看]」那条,不闪;先回到页顶)
+    // Q15 多栏新卡描边常亮(先回到页顶,量的是「本来就在眼前」那一形;不在眼前时随记面自己滚回顶,归 picks-r 的 R1-W)
     await evalJs(`(()=>{window.scrollTo(0,0);return 1})()`);
     await sleep(500);
     await tapEl("#capture-fab");

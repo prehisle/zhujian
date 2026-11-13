@@ -467,7 +467,16 @@ export function createHotkeyController(hopts: HotkeyOpts = {}): HotkeyController
       function onMenuKey(e: KeyboardEvent): void {
         if (e.key === "Escape") {
           e.preventDefault();
-          closeMenu(true);
+          // Esc 只退一层(904 H1):在「移到 ▸」这类子层里先回上一层(= 顶上那行「‹ 返回」,焦点落回进去的那一项),
+          // 再按才关。此前在子层里也整个关掉。⚠ 退层那一下要 stopPropagation:不截的话同一枚键接着走到
+          // 菜单上 holdKeyboard 那只,又把菜单关了。
+          const back = menuEl?.querySelector<HTMLButtonElement>(".hk-back");
+          if (back) {
+            e.stopPropagation();
+            back.click();
+          } else {
+            closeMenu(true);
+          }
         }
       }
       /** 菜单里的键(焦点在菜单项上时):↑ ↓ Home End 走项、→ 进「移到 ▸」这类子层、← 退回、

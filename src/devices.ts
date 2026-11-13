@@ -99,11 +99,26 @@ type Pending = { device: string; action: DeviceAction };
 let confirming: Pending | null = null;
 // 确认块刚展开的那一次重画:焦点给它的【取消】(W5 Q3 ★①;此前焦点按可见文字落回、找不到就落到旁边那枚)。只用一次。
 let focusCancel = false;
+// 确认块刚被 Esc 收起的那一次重画:焦点还给触发它的那枚钮(904 H1)。只在那一次重画里有值。
+let refocusArm: Pending | null = null;
 let expanded: string | null = null;
 let busy = false;
 let actErr = "";
 let refreshing = false;
 let refreshErr = "";
+
+/** 同步浮层的 Esc 先问这里(904 H1:Esc 只退一层):确认块开着时,Esc = 它自己那枚「取消」(确认块收起、
+ *  红字一并收),焦点回到触发它的那枚钮;返回 true 表示这一下已经用掉、别再往上退。
+ *  ⚠ 那一下正在提交(busy)时不拦 ——「取消」此刻也是灰的。 */
+export function escapeDevicesConfirm(rerender: () => void): boolean {
+  if (confirming === null || busy) return false;
+  refocusArm = confirming;
+  confirming = null;
+  actErr = "";
+  rerender();
+  refocusArm = null;
+  return true;
+}
 
 export function resetDevicesPage(): void {
   confirming = null;
@@ -272,14 +287,12 @@ function deviceRow(e: RosterEntry, ctx: RowCtx): HTMLElement {
   if (isMe) {
     // 任何设备都能移除自己(§5.3 第三句)。⛔ 除上面那一形外,这里**不判**「会不会把 admins 变空」——
     // 那是服务器的不变量,客户端复算就是第二份判据;会拒就让它拒,把原话显出来。
-    acts.appendChild(btn(t("devices.leave"), "hbtn", () => arm(e.device, "Remove", deps)));
+    acts.appendChild(armBtn(t("devices.leave"), e.device, "Remove", deps));
   } else if (meAdmin) {
     acts.appendChild(
-      btn(e.admin ? t("devices.revokeAdmin") : t("devices.grantAdmin"), "hbtn", () =>
-        arm(e.device, e.admin ? "RevokeAdmin" : "GrantAdmin", deps),
-      ),
+      armBtn(e.admin ? t("devices.revokeAdmin") : t("devices.grantAdmin"), e.device, e.admin ? "RevokeAdmin" : "GrantAdmin", deps),
     );
-    acts.appendChild(btn(t("devices.remove"), "hbtn", () => arm(e.device, "Remove", deps)));
+    acts.appendChild(armBtn(t("devices.remove"), e.device, "Remove", deps));
   }
   // 非管理设备在别人行上一个按钮都不显示(§5.8:没有权限的动作不显示按钮,也不显示灰的)。
   if (acts.childElementCount > 0) row.appendChild(acts);
@@ -306,6 +319,14 @@ function idLine(device: string, sid: string, deps: Deps): HTMLElement {
     );
   }
   return wrap;
+}
+
+/** 行上触发确认块的那枚钮。确认块被 Esc 收起后的那一次重画里,给刚才触发它的那枚打上要焦点的标记
+ *  (宿主 sync.ts::renderPanel 画完把焦点给它)。 */
+function armBtn(label: string, device: string, action: DeviceAction, deps: Deps): HTMLButtonElement {
+  const b = btn(label, "hbtn", () => arm(device, action, deps));
+  if (refocusArm !== null && refocusArm.device === device && refocusArm.action === action) b.dataset.autofocus = "1";
+  return b;
 }
 
 function arm(device: string, action: DeviceAction, deps: Deps): void {

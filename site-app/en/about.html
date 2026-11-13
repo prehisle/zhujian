@@ -524,7 +524,7 @@
       }
       .crop > img:first-child { position: absolute; top: 0; left: 0; }
       /* 随记:左上角那块(侧栏 + 时间轴头几条) */
-      .crop-inbox > img:first-child { width: 175%; }
+      .crop-inbox > img:first-child { width: 160%; } /* 904:175% 时第二张卡上的标签正好被下沿切掉,配的那句讲的就是打标签 */
       /* 看板:「进行中」「待确认」两列,带小清单的那张卡在正中 */
       .crop.crop-board { aspect-ratio: 3 / 2; }
       .crop-board > img:first-child { width: 200%; transform: translate(-35.5%, -24%); }
@@ -1395,7 +1395,7 @@
                  加粗的短句与正文各成一键(data-i18n 只覆写 textContent)。 -->
             <p data-i18n="ethos.p1">I built it because three things kept bothering me.</p>
             <p><strong data-i18n="ethos.why1a">Your data lives in someone else's cloud. </strong><span data-i18n="ethos.why1b">If the service shuts down, your account gets banned, or the database leaks, it is no longer yours. So Zhujian keeps your data on your own devices, and sync only carries encrypted content.</span></p>
-            <p><strong data-i18n="ethos.why2a">You can't open it when you need to jot something down. </strong><span data-i18n="ethos.why2b">A web board needs a browser and a login, stalls when the network is slow, and keeps growing features. A thought often lasts only a few seconds. Zhujian's answer: press a hotkey, a slip of paper pops up, type, hit Enter, and it tucks itself away.</span></p>
+            <p><strong data-i18n="ethos.why2a">You can't open it when you need to jot something down. </strong><span data-i18n="ethos.why2b">A web board needs a browser and a login, stalls when the network is slow, and keeps growing features. A thought often lasts only a few seconds. Zhujian's answer: press a hotkey, a quick note pops up, type, hit Enter, and it tucks itself away.</span></p>
             <p><strong data-i18n="ethos.why3a">Your words get rewritten. </strong><span data-i18n="ethos.why3b">Many tools now use AI to polish, summarize, and sort what you write. When AI can write almost anything for you, the ideas you came up with yourself, untouched, are the ones worth keeping. Zhujian never changes a word you write.</span></p>
             <p data-i18n="ethos.p4">One more thing: I wrote Zhujian's code together with AI. Having AI help me write a program is one thing; letting it change your words is another.</p>
             <!-- 字源那段里两个词是加粗的,故按加粗边界切片;英文版把「原名朱笺」的来龙去脉

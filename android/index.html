@@ -462,10 +462,10 @@
       /* 手机横放打着字(宽屏、不是高屏、键盘起着;165 / W5 A26):键盘一起可见区只剩约 130,捕获层(两行起步的写字框 + 一排钮
          + 上下 12)比它还高 ⇒ 层顶顶进状态栏、和系统图标叠在一起。⇒ 层高封在「可见区扣掉状态栏」之内(还放不下就层里滚),
          写字框起步收成一行、上边距收一半。编辑层不在这条里(它由 kbsheet 按可见区夹高)。 */
-      html.kb-up body.widescreen:not(.tallscreen) .compose:not(.editsheet) {
+      html.kb-up body.widescreen:not(.tallscreen) .compose:not(.editsheet):not(.datesheet) {
         max-height: calc(100vh - var(--sat)); overflow-y: auto; padding-top: 6px;
       }
-      html.kb-up body.widescreen:not(.tallscreen) .compose:not(.editsheet) textarea { min-height: 1.6em; }
+      html.kb-up body.widescreen:not(.tallscreen) .compose:not(.editsheet):not(.datesheet) textarea { min-height: 1.6em; }
       /* 底部层(捕获/留言)开着时锁住背景滚动 —— 由 kbsheet.ts 上下这个类,由头写在那边:
          键盘一起 Chromium 会滚文档去露焦点输入框,而层是 fixed 的,滚了只有背后的时间轴在动
          (240 报的「弹键盘背景乱滚」,2026-08-28 换了个形回来,A/B 各 5 次实测)。 */
@@ -473,6 +473,7 @@
       /* 捕获层遮罩:压住时间轴/底栏,点它=收层。编辑层(706)共用同一身几何与暗度
          —— 两层不会同时开(编辑只从卡片操作面进,那时捕获层是收着的)。 */
       #capture-scrim,
+      #date-scrim,
       #edit-scrim {
         position: fixed; inset: 0; z-index: 13;
         background: rgba(0, 0, 0, 0.35);
@@ -609,6 +610,39 @@
       /* 钮排右端成组:「保存」落在与捕获层「记下」一模一样的位置(最右),「取消」贴它左边。 */
       .editsheet .compose-row .cancel { margin-left: auto; }
       .editsheet .compose-row .primary { margin-left: 10px; }
+
+      /* 选日期的层(datepick.ts;用户 2026-11-13 拍:选截止日期别再弹系统那张蓝色对话框)。与捕获 / 编辑层同一座底部层
+         (`.compose` 那身几何,宽屏上跟着变浮窗),色全走令牌:选中那天朱砂实心圆、今天一圈朱砂线。
+         每格高 44 = 触区(§2.3),看得见的圆是里头那枚 36 的 span;月历恒六行(行数随月份变的话顶上那排换月钮会上下挪)。
+         手机横放时可见区比它矮 ⇒ kbsheet 按可见区夹高、层里滚(`overflow-y`)。 */
+      .datesheet { overflow-y: auto; overscroll-behavior: contain; }
+      .dp-head { display: flex; align-items: center; justify-content: space-between; }
+      .dp-head h3 { margin: 0; font-size: var(--fs-15); font-weight: 600; color: var(--ink); font-family: var(--font-sans); }
+      .dp-nav {
+        border: none; background: none; color: var(--ink-soft);
+        width: 44px; height: 44px; font-size: var(--fs-24); line-height: 1; font-family: var(--font-sans);
+      }
+      .dp-grid { display: grid; grid-template-columns: repeat(7, 1fr); justify-items: stretch; }
+      #dp-days { grid-template-rows: repeat(6, 44px); } /* 恒六行:空着的那几行也占高(空格子自己撑不起行高) */
+      .dp-week span { text-align: center; font-size: var(--fs-12); color: var(--ink-soft); line-height: 28px; }
+      .dp-day {
+        border: none; background: none; padding: 0; height: 44px;
+        display: grid; place-items: center;
+        color: var(--ink); font-size: var(--fs-14); font-family: var(--font-sans);
+      }
+      .dp-day span {
+        width: 36px; height: 36px; border-radius: var(--radius-circle);
+        display: grid; place-items: center; border: 1px solid transparent;
+      }
+      .dp-day.today span { border-color: var(--seal); color: var(--seal-ink); font-weight: 600; }
+      .dp-day.on span { background: var(--seal); border-color: var(--seal); color: var(--on-seal); font-weight: 600; }
+      /* 底下那排三枚各高 44(隐形盒那一形:ghost 没底没边,撑高屏上看不出来;主钮本来就是大药丸)。手机横放时层里要滚 ⇒
+         这一排吸在层底,「确定」随时够得着(底色 = 层自己的纸色,盖住滚过去的日格)。 */
+      .datesheet .compose-row { position: sticky; bottom: 0; background: var(--raised); }
+      .datesheet .compose-row button { min-height: 44px; }
+      .datesheet .compose-row .dp-act { font-size: var(--fs-14); padding: 0 12px; }
+      .datesheet .compose-row .cancel { margin-left: auto; }
+      .datesheet .compose-row .primary { margin-left: 10px; }
 
       /* 留言层(314 第③笔,identity-plan §4.7):几何与捕获层同一套(src/kbsheet.ts)——
          贴键盘上沿、收键盘停屏底。与捕获层的差别只有两处:限高(顶上留一条背景,读得出
@@ -1816,11 +1850,6 @@
         border-color: var(--tc, var(--seal)); color: var(--tc, var(--seal)); font-weight: 600;
       }
       .panel button.p.on.tinted { color: color-mix(in srgb, var(--tc) 55%, var(--ink)); }
-      .panel input[type="date"] {
-        border: 1px solid var(--line-strong); border-radius: var(--radius-sm);
-        background: var(--paper); color: var(--ink); padding: 3px 6px; font-size: var(--fs-13);
-        font-family: var(--font-sans);
-      }
       .panel input.tagnew {
         flex: 1; min-width: 0; padding: 5px 10px;
         border: 1px solid var(--line-strong); border-radius: var(--radius-pill);
@@ -2292,9 +2321,11 @@
       body.tallscreen .compose.open,
       body.tallscreen .cmsheet.open { transform: none; opacity: 1; pointer-events: auto; }
       /* 记一笔那一座竖向靠顶栏下沿(165 / W5 A53,由头在本段头注)。 */
-      body.tallscreen .compose:not(.editsheet) { top: calc(var(--head-h, 0px) + 16px); margin-block: 0 auto; overflow-y: auto; }
+      body.tallscreen .compose:not(.editsheet):not(.datesheet) { top: calc(var(--head-h, 0px) + 16px); margin-block: 0 auto; overflow-y: auto; }
       /* 记一笔浮窗的写字框给足三行(165 / W5 A53,由头写在上面「宽屏」那段 @media 里编辑层那条的头注):挂在类上,键盘起着也不缩。 */
-      body.tallscreen .compose:not(.editsheet) textarea { min-height: 6em; }
+      body.tallscreen .compose:not(.editsheet):not(.datesheet) textarea { min-height: 6em; }
+      /* 宽屏上月历不跟着内容列撑满(七格摊开每格一百多宽,数字散成一片):手机横放的底部层、平板的浮窗都收到 400。 */
+      body.widescreen .datesheet { max-width: 400px; }
 
       /* 时间轴筛选条(filter.ts 渲染):类型行在上、标签行+文本框在下,两行横向可滑。
          本面无条目时整条 hidden(main.ts)。
@@ -2914,6 +2945,24 @@
         <button id="edit-todo" class="ghost cimg" type="button" data-i18n="shell.insertTodo">＋ 清单</button>
         <button id="edit-cancel" class="ghost cancel" type="button" data-i18n="cardpanel.cancel">取消</button>
         <button id="edit-save" class="primary" type="button" data-i18n="cardpanel.save">保存</button>
+      </div>
+    </section>
+
+    <!-- 选日期的层(datepick.ts):选截止日期用的月历,替掉系统那张日历对话框。点某天只是选中,「确定」才写;
+         「清除」只在这条设过截止时出;星期行、年月标题、日子由 datepick.ts 画。 -->
+    <div id="date-scrim" hidden></div>
+    <section id="date-sheet" class="compose datesheet" role="dialog" aria-label="截止" data-i18n-aria-label="cardpanel.laneDue">
+      <div class="dp-head">
+        <button id="dp-prev" class="dp-nav" type="button">‹</button>
+        <h3 id="dp-title"></h3>
+        <button id="dp-next" class="dp-nav" type="button">›</button>
+      </div>
+      <div id="dp-week" class="dp-grid dp-week"></div>
+      <div id="dp-days" class="dp-grid"></div>
+      <div class="compose-row">
+        <button id="dp-clear" class="ghost dp-act" type="button" data-i18n="cardpanel.dueClear">清除</button>
+        <button id="dp-cancel" class="ghost dp-act cancel" type="button" data-i18n="cardpanel.cancel">取消</button>
+        <button id="dp-ok" class="primary" type="button" data-i18n="main.renameOk">确定</button>
       </div>
     </section>
 

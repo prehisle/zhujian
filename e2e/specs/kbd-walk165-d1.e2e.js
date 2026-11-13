@@ -289,6 +289,36 @@ describe("W5 D1 · 桌面键盘与焦点", () => {
     await waitState((s) => s.onBtn && s.focusCard === `${P}左`, "Esc 收起后焦点没回 ⋯");
   });
 
+  // 904 H1(Esc 只退一层):「移到 ▸」子层里按 Esc 先回上一层菜单、焦点落回「移到」那一行,再按才关。
+  // 阴性对照:把 hotkey-menu.ts::onMenuKey 里退层那一支拔掉(一律 closeMenu)→ 这一例红在「子层里按 Esc 把菜单整个关了」。
+  it("看板:⋯ 菜单的「移到 ▸」子层里 Esc 先回上一层(焦点回「移到」那行),再按才关、焦点回 ⋯", async () => {
+    await focusDots(".tcard", `${P}左`);
+    await browser.keys("Enter");
+    await waitState((s) => s.menu && s.inMenu, "回车开了菜单,焦点却没进菜单");
+    const menuNow = () =>
+      browser.execute(() => ({
+        open: !!document.querySelector(".hk-menu"),
+        sub: !!document.querySelector(".hk-menu .hk-back"),
+        focusLabel: document.activeElement?.querySelector?.(".hk-label")?.textContent ?? null,
+        focusHasSub: !!document.activeElement?.classList?.contains("hk-has-sub"),
+      }));
+    const waitMenu = (pred, msg) =>
+      browser.waitUntil(async () => pred(await menuNow()), { timeout: 5000, timeoutMsg: msg }).catch(async (e) => {
+        throw new Error(`${msg}\n  现场:${JSON.stringify(await menuNow())}\n  ${e.message}`);
+      });
+    await browser.execute(() => {
+      const row = [...document.querySelectorAll(".hk-menu .hk-has-sub")].find((b) => b.querySelector(".hk-label").textContent === "移到");
+      if (!row) throw new Error("菜单里没有「移到 ▸」");
+      row.focus();
+    });
+    await browser.keys("ArrowRight");
+    await waitMenu((m) => m.open && m.sub && !m.focusHasSub && m.focusLabel !== null, "→ 没进「移到 ▸」子层");
+    await browser.keys("Escape");
+    await waitMenu((m) => m.open && !m.sub && m.focusHasSub && m.focusLabel === "移到", "子层里按 Esc 把菜单整个关了 / 焦点没回「移到」那一行");
+    await browser.keys("Escape");
+    await waitState((s) => !s.menu && s.onBtn && s.focusCard === `${P}左`, "回到主菜单后再按 Esc 没关菜单 / 焦点没回 ⋯");
+  });
+
   it("搜索:回车跳过去,落点那张是选中、焦点在它的 ⋯;Esc 回搜索,词在、焦点回那条结果(Q11)", async () => {
     await goNotebook("search");
     await browser.execute((q) => {

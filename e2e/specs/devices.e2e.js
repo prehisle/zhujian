@@ -271,4 +271,47 @@ describe("367 片⑤ 设备管理面", () => {
     );
     expect((await $$(".sync-panel .dev-row")).length).toBe(2);
   });
+
+  // 904 H1(Esc 只退一层):确认块开着时 Esc = 它自己那枚「取消」,焦点回触发它的那枚钮;再按回同步首页;再按才关面板。
+  // 用真键(焦点落在哪一枚合成事件说了不算)。阴性对照:拔掉 sync.ts::escapeOneLevel 里先问 escapeDevicesConfirm 那一行
+  // → 红在「Esc 没只收确认块」;拔掉 devices.ts::armBtn 里打 autofocus 标记那一行 → 红在焦点那一格。
+  it("确认块开着时 Esc 只收确认块、焦点回触发它的那枚;再按回首页,再按才关面板", async () => {
+    await openDevices();
+    await feed([{ device: ME, admin: true }, { device: B, admin: true }, { device: C, admin: false }]);
+    const here = () =>
+      browser.execute(() => {
+        const a = document.activeElement;
+        const rows = [...document.querySelectorAll(".sync-panel .dev-row")];
+        return {
+          panel: !!document.querySelector(".sync-panel"),
+          rows: rows.length,
+          confirm: !!document.querySelector(".sync-panel .dev-confirm"),
+          focusText: a?.tagName === "BUTTON" ? a.textContent.trim() : null,
+          focusRow: rows.indexOf(a?.closest?.(".dev-row") ?? null),
+        };
+      });
+    const waitHere = (pred, msg) =>
+      browser.waitUntil(async () => pred(await here()), { timeout: 5000, timeoutMsg: msg }).catch(async (e) => {
+        throw new Error(`${msg}\n  现场:${JSON.stringify(await here())}\n  ${e.message}`);
+      });
+    // 几种触发钮各走一遍:别人行上的「移除」「设为管理」「取消管理」、本机行上的「退出账户」。
+    for (const [row, label] of [
+      [2, "移除"],
+      [2, "设为管理"],
+      [1, "取消管理"],
+      [0, "退出账户"],
+    ]) {
+      await clickRowBtn(row, label);
+      await waitHere((h) => h.confirm && h.focusText === "取消", `点「${label}」后确认块没出来 / 焦点没停在「取消」`);
+      await browser.keys("Escape");
+      await waitHere(
+        (h) => h.panel && h.rows === 3 && !h.confirm && h.focusText === label && h.focusRow === row,
+        `Esc 没只收确认块,或焦点没回第 ${row} 行的「${label}」`,
+      );
+    }
+    await browser.keys("Escape");
+    await waitHere((h) => h.panel && h.rows === 0, "确认块收起后再按 Esc 应回同步首页");
+    await browser.keys("Escape");
+    await waitHere((h) => !h.panel, "首页上再按 Esc 应关面板");
+  });
 });

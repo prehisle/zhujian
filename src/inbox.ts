@@ -96,7 +96,8 @@ type IdeaItem = {
 type TopicItem = { id: string; title: string; color: string | null; kind: string | null };
 // 灵感流转统计(lib.rs idea_stats):纯派生、只算不存。born_inbox=0(还没有出生态
 // 已知的灵感,0018 前的老数据不算)时不显比例——数字从补列那天起诚实积累。
-type IdeaStats = { captured_week: number; born_inbox: number; converted: number };
+// converted_week = 本周记下的随记里现在已是卡片的条数(页头「另有 M 条已转成卡片」,904 I)。
+type IdeaStats = { captured_week: number; born_inbox: number; converted: number; converted_week: number };
 
 // The 想法/回收站 tabs share one card renderer; this is the union it accepts —
 // both route through row(). (146 摘掉只读的「去向」第三 tab后,Tab 收回 Mode。)
@@ -1947,7 +1948,8 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       // 回随记页数字从 3 变 4、页上仍是 3 张。⛔ 不动 core 那条统计(比例的分子分母照旧是「转过待办」的史实)。
       const weekFrom = startOfWeek().getTime();
       const notedWeek = ideas.filter((i) => new Date(i.created_at).getTime() >= weekFrom).length;
-      statsBlank = notedWeek === 0 && stats.born_inbox === 0;
+      const cardedWeek = stats.converted_week;
+      statsBlank = notedWeek === 0 && cardedWeek === 0 && stats.born_inbox === 0;
       // 「转待办」平时零可见控件(⋯ 悬停才浮现),而看板空态只说「去随记里转」没说怎么点。
       // ⇒ **还没有人转过**的时候让 ⋯ 常驻,转过第一条就回悬停(样式在 hotkey-menu.css)。
       // 判据用 converted 而不是「库里有没有任务」:直接建的任务不算进 born_inbox 那个
@@ -1958,10 +1960,12 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       const teaching = stats.born_inbox > 0 && stats.converted === 0;
       view.classList.toggle("hk-teach", teaching);
       updateTabs();
-      // 头部一行淡字统计(和标签计数同性质的纯信息):只报本周记了几条;两个数都是 0 时整行不显(statsBlank)。
-      // ⛔ 别把「转成卡片」的比例 / 条数加回这一行(898):现成的 converted 是**全库累计**,挂在「本周」
-      //    后面会读成本周的数;百分比读着也像考核。要本周口径得给 idea_stats 加字段,另拍。
-      statsEl.textContent = t("inbox.weekStatsNoRatio", { n: notedWeek });
+      // 头部一行淡字统计(和标签计数同性质的纯信息):本周记了几条;本周记的里有已转成卡片的,后面再报一句
+      // 「另有 M 条已转成卡片」(904 I,用户拍板;M = core 的 converted_week,本周口径)。全是 0 时整行不显(statsBlank)。
+      // ⚠ 用「另有」不用「其中」:N 是此刻还在随记页上的(A42,见上),转走的那 M 条不在 N 里。M = 0 时只说前半句。
+      // ⛔ 别拿全库累计的 converted 挂在「本周」后面(898:会读成本周的数);⛔ 不出比例(百分比读着像考核)。
+      statsEl.textContent =
+        cardedWeek > 0 ? t("inbox.weekStatsConverted", { n: notedWeek, m: cardedWeek }) : t("inbox.weekStatsNoRatio", { n: notedWeek });
       // 这一发真的画成卡片的那批(空态 / 筛空时就是空)。⚠ 必须在 row() 全部调用完之后
       // 才写回 renderedIds —— row() 读的是**上一发**那份,提前写等于把 fresh 判据抹平。
       let painted: string[] = [];

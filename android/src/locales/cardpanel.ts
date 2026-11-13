@@ -37,6 +37,9 @@ export const cardpanel = defineMessages({
   "cardpanel.laneDue": { zh: "截止", en: "Due" },
   "cardpanel.lanePriority": { zh: "优先级", en: "Priority" },
   "cardpanel.dueClear": { zh: "清除", en: "Clear" },
+  // 选截止日期的月历层(datepick.ts)上两枚换月钮的读屏名;星期与年月标题由 Intl 按界面语言出,不进字典。
+  "cardpanel.duePrevMonth": { zh: "上个月", en: "Previous month" },
+  "cardpanel.dueNextMonth": { zh: "下个月", en: "Next month" },
   // 159 / W3 Q4(WM-19 / WM-34):「这边删除」读着像进了回收站 ⇒「这边不留」;随记卡 / 任务卡 / 长文三处共用这一套(同桌面 space.moveWarn*)。
   "cardpanel.moveWarnPre": { zh: "移到别的空间 = 那边新生一条、这边不留;", en: "Moving to another space creates a new one there and keeps nothing here; " },
   "cardpanel.moveWarnBold": { zh: "编辑历史会随移动永久删除,不迁入目标空间", en: "the edit history is permanently deleted and does not come along" },

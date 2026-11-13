@@ -1,5 +1,5 @@
 import { $, expect, browser } from "@wdio/globals";
-import { goNotebook } from "./support.js";
+import { goNotebook, invoke } from "./support.js";
 
 // 411/D2「首用入口分层·桌面半」(408 走查):单空间时侧栏那枚「个人空间 ▾」徽章整个藏起
 // ——落点无歧义,菜单里那几项(切换/新建/加入/改名/重置)第一天全用不到。
@@ -91,5 +91,48 @@ describe("411/D2 空间入口分层(单空间藏徽章,同步面兜底)", () => 
       timeout: 3000,
       timeoutMsg: "「取消」应关闭空间菜单",
     });
+  });
+
+  // 904 H1(Esc 只退一层):菜单里点开的小表单(新建 / 加入 / 重置的确认)按 Esc 先收表单、那一行换回来且拿到焦点,
+  // 再按才关菜单。用真键。阴性对照:把 notebook.ts::escapeSpaceMenu 里收表单那一支拔掉(一律 closeSpaceMenu)→ 红在
+  // 「Esc 把整个菜单关了」。
+  it("空间菜单里的小表单:Esc 先收表单回到菜单(焦点在那一行),再按才关菜单", async () => {
+    await goNotebook("inbox");
+    await browser.execute(() => document.getElementById("sync-entry").click());
+    await (await $(".sync-panel")).waitForExist({ timeout: 3000 });
+    await clickByText(".sync-panel button", "空间…");
+    await (await $(".space-menu")).waitForExist({ timeout: 3000 });
+    const here = () =>
+      browser.execute(() => ({
+        menu: !!document.querySelector(".space-menu"),
+        forms: document.querySelectorAll(".space-menu .space-form").length,
+        focusForm: !!document.activeElement?.closest?.(".space-form"),
+        focusText: document.activeElement?.classList?.contains("space-row") ? document.activeElement.textContent.trim() : null,
+      }));
+    const waitHere = (pred, msg) =>
+      browser.waitUntil(async () => pred(await here()), { timeout: 5000, timeoutMsg: msg }).catch(async (e) => {
+        throw new Error(`${msg}\n  现场:${JSON.stringify(await here())}\n  ${e.message}`);
+      });
+    const spacesBefore = (await invoke("list_spaces")).length;
+    for (const label of ["＋ 新建空间", "加入空间(输入配对码)…", "重置当前空间…"]) {
+      await clickByText(".space-menu button", label);
+      await waitHere((h) => h.forms === 1 && h.focusForm, `点「${label}」后小表单没出来 / 焦点没进表单`);
+      if (label === "＋ 新建空间") {
+        // 框里有字也一样只收表单(此前有字没字都整个关,不另问)
+        await browser.keys(["x", "y"]);
+        expect(await browser.execute(() => document.activeElement.value)).toBe("xy");
+      }
+      await browser.keys("Escape");
+      await waitHere((h) => h.menu && h.forms === 0 && h.focusText === label, `Esc 把整个菜单关了,或焦点没回「${label}」那一行`);
+    }
+    // 收回去的那一行还是活的:再点照样开出表单(框是空的,刚才那两个字没留着)
+    await clickByText(".space-menu button", "＋ 新建空间");
+    await waitHere((h) => h.forms === 1 && h.focusForm, "收回去的那一行再点没开出表单");
+    expect(await browser.execute(() => document.activeElement.value)).toBe("");
+    await browser.keys("Escape");
+    await waitHere((h) => h.menu && h.forms === 0, "第二次收表单没收住");
+    await browser.keys("Escape");
+    await waitHere((h) => !h.menu, "菜单上再按 Esc 应关菜单");
+    expect((await invoke("list_spaces")).length).toBe(spacesBefore); // 一本都没建出来、没删掉
   });
 });

@@ -25,11 +25,11 @@ The handful of things worth understanding before you rely on them — where the 
 ### Jot it down
 
 - Some things arrive as a single sentence, at a moment when you have no time to sort them out. Zhujian catches that sentence first: it opens straight into a text box, closes when you are done, and does not interrupt what you were doing.
-- On the desktop, `Ctrl+Alt+N` brings up a slip; press Enter and it is saved to Notes, and the window goes away on its own. `Ctrl+Alt+M` opens the main window on whichever view you left it. Both hotkeys are rebindable under Settings → Shortcuts (change one if it clashes with another app; a clash no longer keeps the app from starting). You can also double-click the tray icon for the main window, or right-click it for the menu.
+- On the desktop, `Ctrl+Alt+N` brings up a quick note; press Enter and it is saved to Notes, and the window goes away on its own. `Ctrl+Alt+M` opens the main window on whichever view you left it. Both hotkeys are rebindable under Settings → Shortcuts (change one if it clashes with another app; a clash no longer keeps the app from starting). You can also double-click the tray icon for the main window, or right-click it for the menu.
 - On the phone, tap the round button at the bottom to write, then tap "Note it" to go back to the list.
 - **Attach images**: on the desktop, paste a screenshot with `Ctrl+V`; on the phone, use "+ Image" to pick from the gallery or "+ Photo" to take one. One item can hold several; each is badged `Image 1`, `Image 2`, and tapping opens it full size.
 - **Checklists in the body**: start a line with `- [ ] buy milk` and it renders as a tappable box — tick it and the line goes faint. Good for splitting one thing into a few small steps.
-- In the desktop capture slip, type `/` at the start of a line for commands: `/task` files this one straight onto the board, `/tag family` attaches a tag (existing tags are listed as you type), `/space` picks which space it lands in. Ordinary text that happens to start with `/` (say `/etc/hosts`) does not trigger anything.
+- In the desktop quick note, type `/` at the start of a line for commands: `/task` files this one straight onto the board, `/tag family` attaches a tag (existing tags are listed as you type), `/space` picks which space it lands in. Ordinary text that happens to start with `/` (say `/etc/hosts`) does not trigger anything.
 
 ### Notes
 
@@ -142,7 +142,7 @@ npm run tauri build  # release build (frontend embedded in a standalone exe)
 ### Code map
 
 ```
-index.html / src/main.ts          the capture slip (its own window)
+index.html / src/main.ts          the quick note (its own window)
 notebook.html / src/notebook.ts   main window shell (sidebar + view registry + single-window navigation)
 src/{inbox,board,topics,search}.ts  the four views: Notes / board / tags / global search
 src/{item-images,checklist,hotkey-menu,clipboard,tasktime}.ts  shared cross-view controllers

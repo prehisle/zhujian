@@ -101,6 +101,7 @@ import { withMissingRefs } from "../../shared/markdown";
 import { skewAsk } from "./skewask";
 import { dropEmptyChecklistItems } from "./checklist-input";
 import { closeEditSheet, openEditSheet, paintEditSheet, type EditHost } from "./editsheet";
+import { closeDatePick, openDatePick } from "./datepick";
 import { renderDiff } from "../../shared/diff-dom";
 
 // actions = 两行主面;more = 低频动作子面;status/due/prio = 值 chip 各自点开的那一排
@@ -219,6 +220,7 @@ function syncShell(): void {
   document.body.classList.toggle("panel-open", state !== null);
   document.body.classList.toggle("panel-editing", state !== null && state.mode === "edit");
   if (!state || state.mode !== "edit") closeEditSheet();
+  if (!state || state.mode !== "due") closeDatePick(); // 月历层只属于「截止」那一排(904):换卡 / 回主面 / 收面 / 切空间都收
 }
 
 /** 换面板态(开 / 收 / 换卡)。⛔ 一切 `state = …` 都走这里。 */
@@ -463,7 +465,11 @@ function renderValuePicker(item: TimelineItem, which: "status" | "due" | "prio")
   } else if (which === "due") {
     lane =
       `<span class="lab">${t("cardpanel.laneDue")}</span>` +
-      `<input type="date" data-due value="${esc(item.due_on ?? "")}"${busy ? " disabled" : ""} />` +
+      // 904(用户 2026-11-13 拍):这一格此前是 `<input type="date">`,点它弹系统那张蓝色的日历对话框 ⇒ 换成一枚钮,
+      // 点它开应用自己的月历层(datepick.ts);钮上写现在设的是哪一天(同回执那支笔),没设 = 「未设」。
+      `<button data-pact="due-pick" data-due class="p${item.due_on ? " on" : ""}"${busy ? " disabled" : ""}>${
+        item.due_on ? esc(dueDayText(item.due_on)) : t("cardpanel.dueNone")
+      }</button>` +
       (item.due_on
         ? `<button data-pact="due-clear" class="p"${busy ? " disabled" : ""}>${t("cardpanel.dueClear")}</button>`
         : "");
@@ -1364,14 +1370,16 @@ function handleAct(act: string, card: HTMLElement) {
       );
       return;
     }
-    case "due-clear": {
-      const before = item.due_on;
-      void run((space) => setTaskDue(space, item.id, null), {
-        onCommitted: () => dueReceipt(item.id, before, null),
-        afterSession: () => setMode(session, "actions"), // 同状态/优先级:清完就回主面
+    case "due-clear":
+      commitDue(session, null);
+      return;
+    case "due-pick":
+      clearConfirm();
+      openDatePick(item.due_on, {
+        onPick: (day) => commitDue(session, day),
+        onClear: () => commitDue(session, null),
       });
       return;
-    }
     case "del": {
       // 157 G4 / P2:随记一点即删 + 6 s 撤销(进回收站找得回,同桌面与 user-guide)。
       // 902(用户拍 R3):看板卡片同一形 —— 不再先问(此前任务两拍),直接进回收站 + 同一条带「撤销」的回执。
@@ -1491,21 +1499,21 @@ function handleAct(act: string, card: HTMLElement) {
   }
 }
 
-function onTimelineChange(e: Event) {
-  const input = e.target as HTMLInputElement;
-  if (!input.matches("input[data-due]") || !state || busy) return;
-  if (deps.isCaptureSaving()) {
-    // 锁定期不受理写(146 实现审 M1):DOM 回写成真值,不留「拨了没写」的假象。
-    input.value = deps.getItem(state.id)?.due_on ?? "";
+/** 写截止的单一写口(月历层的「确定」/「清除」与那一排上的「清除」共用;`next` null = 清)。
+ *  层收掉到这里之间面板可能已经换了卡 / 收了面(返回键、远端删了这条)⇒ 按 session 判弃;锁定期不受理写(146 实现审 M1)。
+ *  选的就是现在那天 = 没改:不写、不出回执,照「选完回主面」收场。 */
+function commitDue(session: PanelState, next: string | null): void {
+  if (state !== session || busy || deps.isSwitching() || deps.isCaptureSaving()) return;
+  const before = deps.getItem(session.id)?.due_on ?? null;
+  if (before === next) {
+    setMode(session, "actions");
+    const c = currentCard();
+    if (c) renderPanel(c);
     return;
   }
-  const session = state;
-  const v = input.value; // "" = 清
-  const before = deps.getItem(session.id)?.due_on ?? null;
-  const next = v === "" ? null : v;
   void run((space) => setTaskDue(space, session.id, next), {
     onCommitted: () => dueReceipt(session.id, before, next),
-    afterSession: () => setMode(session, "actions"), // 拨完就回主面(同状态/优先级)
+    afterSession: () => setMode(session, "actions"), // 选完就回主面(同状态/优先级)
   });
 }
 
@@ -1644,7 +1652,6 @@ export function initCardPanel(d: Deps) {
   deps = d;
   const timeline = $("timeline");
   timeline.addEventListener("click", onTimelineClick);
-  timeline.addEventListener("change", onTimelineChange);
   timeline.addEventListener("input", onTimelineInput);
   timeline.addEventListener("keydown", onTimelineKeydown);
   timeline.addEventListener("focusin", onTimelineFocusIn);

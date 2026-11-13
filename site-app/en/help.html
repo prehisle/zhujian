@@ -524,7 +524,7 @@
       }
       .crop > img:first-child { position: absolute; top: 0; left: 0; }
       /* 随记:左上角那块(侧栏 + 时间轴头几条) */
-      .crop-inbox > img:first-child { width: 175%; }
+      .crop-inbox > img:first-child { width: 160%; } /* 904:175% 时第二张卡上的标签正好被下沿切掉,配的那句讲的就是打标签 */
       /* 看板:「进行中」「待确认」两列,带小清单的那张卡在正中 */
       .crop.crop-board { aspect-ratio: 3 / 2; }
       .crop-board > img:first-child { width: 200%; transform: translate(-35.5%, -24%); }
@@ -1447,8 +1447,8 @@ Linux    ~/.local/share/app.zhujian.notebook/notebook.sqlite3</pre>
             <div>
               <h3 data-i18n="tinker.keysTitle">Hands on the keyboard</h3>
               <ul class="marks">
-                <li data-i18n="tinker.k1">Ctrl+Alt+N brings up the slip, Ctrl+Alt+M opens the main window; both can be changed. On a Mac it is Cmd+Alt.</li>
-                <li data-i18n="tinker.k2">In the slip, start a line with /: /task saves it as a task, /tag name adds a tag, /space picks another space.</li>
+                <li data-i18n="tinker.k1">Ctrl+Alt+N brings up the quick note, Ctrl+Alt+M opens the main window; both can be changed. On a Mac it is Cmd+Alt.</li>
+                <li data-i18n="tinker.k2">In the quick note, start a line with /: /task saves it as a task, /tag name adds a tag, /space picks another space.</li>
                 <li data-i18n="tinker.k3">Every item in a card's ⋯ menu shows a single key: E edit, C copy, L tags, S due date, P priority, B send back, D delete, ] and [ move a column right or left.</li>
                 <li data-i18n="tinker.k4">Start a line with - [ ] and it becomes a box you can tick.</li>
               </ul>

@@ -324,10 +324,14 @@ const main = async () => {
     // Q5 截止
     await openPanel(t1);
     await doPact(t1, "due");
-    await until(`!!${card(t1)}?.querySelector("input[data-due]")`, 2000);
+    // 截止那一格不再是日期框:点那枚钮开应用自己的月历层,选日 → 「确定」才写(月历层本身的验收在 picks-r 的 R2)。
+    await until(`!!${card(t1)}?.querySelector('[data-pact="due-pick"]')`, 2000);
     const d = new Date(Date.now() + 2 * 86400000);
     const dueIso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-    await evalJs(`(()=>{const i=${card(t1)}.querySelector("input[data-due]");i.value=${J(dueIso)};i.dispatchEvent(new Event("change",{bubbles:true}));return 1})()`);
+    await evalJs(`${card(t1)}.querySelector('[data-pact="due-pick"]').click()`);
+    await until(`document.getElementById("date-sheet").classList.contains("open")`, 2000);
+    if (!(await evalJs(`!!document.querySelector('#dp-days [data-day=${J(dueIso)}]')`))) await evalJs(`(()=>{document.getElementById("dp-next").click();return 1})()`); // 后天跨了月
+    await evalJs(`(()=>{document.querySelector('#dp-days [data-day=${J(dueIso)}]').click();document.getElementById("dp-ok").click();return 1})()`);
     step("Q5 改截止回执「已设截止 M月D日」带撤销", await barIs(new RegExp(`^已设截止 ${d.getMonth() + 1}月${d.getDate()}日$`).toString(), 5000) && (await barActs()).includes("撤销"), await barText());
     await snap("Q5-due");
     await clickBarAct("撤销");
