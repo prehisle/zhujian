@@ -8,6 +8,7 @@
 // 每视图模块级一份(跨 mount 存活的并发态各视图各一份),bindSave 每个输入区接线一份
 // (board compose 条常驻 = 每 mount 一次;inbox 每次重建 composeBar 一次)。
 import { autoGrow } from "./autogrow";
+import { dropEmptyChecklistLines } from "./checklist-input";
 import { clearTextDraft, loadTextDraft, saveTextDraft } from "./compose-draft";
 import { pendingImages } from "./item-images";
 import { currentSpaceId, invokeInSpace } from "./space";
@@ -149,7 +150,10 @@ export function createComposeController(opts: {
   function bindSave(w: SaveWiring): () => Promise<void> {
     const doSave = async (): Promise<void> => {
       const submitted = w.input.value; // 提交那刻的快照:成功后用它清同内容的输入框/存底
-      const prep = w.prepare(submitted);
+      // 空的待办项在这里摘掉(901):两个视图的「记一笔 / 新建卡片」共用这一个出口,视图的 prepare 拿到的
+      // 已是摘过的正文 —— 摘完为空就走它各自原有的空输入策略,不另造提示。⛔ `submitted` 仍是框里的原文:
+      // 下面「值仍等于刚提交的才清」与作废存底两处拿它对照,换成摘过的那份就再也对不上、框清不掉。
+      const prep = w.prepare(dropEmptyChecklistLines(submitted));
       if (prep === null) return; // 空输入拒收(策略在视图侧):图批未取,预览区原样不动
       let tagged = prep.tagged ?? 0;
       const autoTags = prep.autoTags ?? [];

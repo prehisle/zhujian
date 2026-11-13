@@ -26,12 +26,13 @@ import {
   type RemovedGroup,
   type SearchHitItem,
   type SearchStatus,
+  type SpaceInfo,
 } from "./api";
 import { fillThumb, hydrateThumbs } from "./thumbs";
 import { onFoldClick, resettleFolds, settleFolds } from "./fold";
 import { docTitle, docTitleIsHeading, excerpt } from "./docs";
 import { openViewer } from "./viewer";
-import { t } from "./i18n";
+import { currentLang, t } from "./i18n";
 import {
   $,
   actionBar,
@@ -61,6 +62,8 @@ type Deps = {
   /** 点了一条搜索结果(main.ts 实现):按归属分流到时间轴 / 长文 / 回收站 / 归档册并定位那一条(ui-audit P1 #8、
    *  159 A14),且压住「按一次返回回到搜索结果」那一层(159 A3,WM-02)。 */
   jumpFromSearch: (hit: SearchHitItem) => void;
+  /** 这台上的空间(main.ts 的 spacesCache 影子):搜索没结果时「有没有多个空间」照顶栏空间徽章那一处判(901)。 */
+  getSpaces: () => SpaceInfo[];
 };
 
 let deps: Deps;
@@ -711,7 +714,13 @@ async function runSearch() {
     if (hits.length) {
       shownQuery = q;
       renderHits();
-    } else box.innerHTML = `<p class="muted empty">${t("panes.searchNoHit", { q: esc(q) })}</p>`;
+    } else {
+      // 901:没结果时多说一句怎么办;有多个空间(判法同顶栏空间徽章显不显:main.ts::renderSpaceChip)再接一句「只搜当前空间」。
+      // 两句各是一个键;英文句间要一个空格、中文句号后不要(拼接处定,不写进字典值的首尾)。
+      const gap = currentLang() === "en" ? " " : "";
+      const other = deps.getSpaces().length > 1 ? `${gap}<span class="search-other-spaces">${t("panes.searchOtherSpaces")}</span>` : "";
+      box.innerHTML = `<p class="muted empty">${t("panes.searchNoHit", { q: esc(q) })}${other}</p>`;
+    }
   } catch (err) {
     if (space !== getCurrentSpace() || seq !== searchSeq) return;
     searchHits = [];

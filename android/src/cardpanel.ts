@@ -99,6 +99,7 @@ import { capturePhoto, PICK_MAX, pickImages, toBase64 } from "./images";
 import { openViewer } from "./viewer";
 import { withMissingRefs } from "../../shared/markdown";
 import { skewAsk } from "./skewask";
+import { dropEmptyChecklistItems } from "./checklist-input";
 import { closeEditSheet, openEditSheet, paintEditSheet, type EditHost } from "./editsheet";
 import { renderDiff } from "../../shared/diff-dom";
 
@@ -851,7 +852,10 @@ async function saveEdit() {
   const session = state;
   const item = deps.getItem(state.id);
   if (!item || session.editDraft === null) return;
-  const draft = session.editDraft;
+  // 901:空的清单项在提交这一刻摘掉(checklist-input.ts::dropEmptyChecklistItems);摘完为空照旧走下面那句提示。
+  // 本来就带空项的旧条目点了「保存」= 一次正常编辑(摘掉、留历史);没改就「取消」不经过这里,一笔不写。
+  // ⚠ editHost.isDirty 仍比框里的原文(没动过就不算脏、返回不拦);只有点了「保存」才按摘过的这份比。
+  const draft = dropEmptyChecklistItems(session.editDraft);
   const trimmed = draft.trim();
   if (!trimmed) {
     showError(t("cardpanel.emptyContent"));
@@ -859,7 +863,7 @@ async function saveEdit() {
   }
   const task = isTaskStage(item.stage);
   // 同值不写(codex L10):任务比 trim 后标题、灵感比原字符串——未改直接收起,
-  // 不产生一条内容相同的历史版本和同步 op。⚠ 判据与 editHost.isDirty 逐字同一条。
+  // 不产生一条内容相同的历史版本和同步 op。⚠ 判据与 editHost.isDirty 同一条(那边比的是没摘空项的原文,见上)。
   const textSame = task ? trimmed === item.content : draft === item.content;
   const dels = session.editDeletes ?? new Set<string>();
   if (textSame && dels.size === 0) {

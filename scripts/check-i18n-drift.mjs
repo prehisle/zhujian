@@ -125,6 +125,7 @@ const CROSS_END_KEYS = [
   { key: "filter.count", why: "「筛出 N 条」(159 / W3 Q8),两端筛着时同一句话" },
   // 161 / W4(Q5 / Q15 / A8 / Q12 / Q13 / Q14 / Q16 / A7 / A41 / A42):设置与连接那一族,两端同一件事说同一句话。
   { key: "probe.verdictOk", why: "网络自检的人话结论(Q5)" },
+  { key: "settings.notes", why: "设置里长说明折叠钮上的字(桌面 898 / 手机 901),两端同一枚钮同一个词" },
   { key: "probe.verdictFail", why: "同上,连不上那一句" },
   { key: "err.probeNext", why: "错误条指去「网络自检」(Q15 两端统一叫法)" },
   { key: "err.net", why: "连不上按原话分类(A8),两端同键同正则同句" },

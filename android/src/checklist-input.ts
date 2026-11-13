@@ -17,6 +17,7 @@
 import {
   continueChecklistOnNewline,
   minimalEditRange,
+  parseChecklistLine,
   toggleChecklistMarker,
   type ChecklistEdit,
 } from "../../shared/checklist";
@@ -61,4 +62,21 @@ export function delegateChecklistNewline(root: HTMLElement, sel: string): void {
 export function applyChecklistMarker(ta: HTMLTextAreaElement): void {
   if (document.activeElement !== ta) ta.focus();
   applyEdit(ta, toggleChecklistMarker(ta.value, ta.selectionStart, ta.selectionEnd));
+}
+
+/** 提交那一刻把**空的清单项**整行摘掉(901,用户拍板;桌面那半同一条规矩):一行认得出是待办项
+ *  (`parseChecklistLine`,画方框认行的就是它 —— ⛔ 别另写一套正则)而标记后面没有任何字。
+ *  调用方只有两处:记一笔的「记下」、卡片编辑的「保存」;摘完为空就走各自原有的「空内容」那条路。
+ *
+ *  ⛔ **只在提交前调**:打字过程中不动(正在打的那一行可能暂时是空的,续行那记带出来的就是空项)。
+ *  ⛔ 点方框打勾那条路(main.ts::flushChecklist,0039 纯勾选不留历史)不经过这里;长文(docs.ts)也不调 ——
+ *  那里的 `- [ ]` 是用户写的 Markdown 源,原样保存。别的行一个字不动(缩进、空行、行尾空白都照旧)。 */
+export function dropEmptyChecklistItems(content: string): string {
+  return content
+    .split("\n")
+    .filter((line) => {
+      const p = parseChecklistLine(line);
+      return p === null || p.rest.trim() !== "";
+    })
+    .join("\n");
 }

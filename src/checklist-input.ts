@@ -61,6 +61,25 @@ function collapseMidListExit(value: string, caret: number, edit: ChecklistEdit):
   return { value: out, selStart: ls - 1, selEnd: ls - 1 };
 }
 
+/** 提交给后端之前,把**空的待办项**整行摘掉(901,用户拍板;手机那半同一条判据)。
+ *
+ *  判据不另写一套:就是 `parseChecklistLine` 认得的行(`shared/checklist.ts` 的 `LINE_RE`)且标记后面
+ *  没有非空白 —— 与续行那记「空项上回车 = 退出清单」(`continueChecklistOnNewline`)同一句话。合起来等价于
+ *  整行匹配 `/^[ \t]*- \[[ xX]\]\s*$/`。别的行(含空行、裸 `- ` 列表)一字不动;没有空项时原样返回。
+ *
+ *  ⛔ **只在提交那一刻调**(记一笔 / 捕获浮窗 / 随记与卡片编辑的保存),输入过程中不许调 —— 正在打的那一行
+ *  可以暂时是空的。⛔ 点方框打勾(`toggleChecklistLine` → edit_note / rename_task,0039 不留历史那条路)
+ *  与长文(那里的 `- [ ]` 是用户写的 Markdown 源)都不经过这里,别接上去。 */
+export function dropEmptyChecklistLines(content: string): string {
+  return content
+    .split(NL)
+    .filter((l) => {
+      const p = parseChecklistLine(l);
+      return p === null || p.rest.trim() !== "";
+    })
+    .join(NL);
+}
+
 /** 这一记裸回车会不会被拿去续待办项(157 G4 / P6)—— 给挂在 `wireChecklistInput` **之前**的提交监听
  *  先问一句(捕获浮窗);挂在之后的看 `e.defaultPrevented` 就够。 */
 export function enterContinuesChecklist(ta: HTMLTextAreaElement, e: KeyboardEvent): boolean {

@@ -211,7 +211,9 @@ const main = async () => {
   if (await evalJs(`!document.getElementById("remind-sub").hidden`)) {
     const sub = await evalJs(`document.getElementById("remind-sub").textContent`);
     step("Q9 截止提醒说明第一句是「开在屏幕上才响」", sub.startsWith("只有朱简开在屏幕上时才会响"), sub.slice(0, 40));
-    step("Q9 说明里的范围含「3 天内」(与任务面到期钮同一个数)", /逾期、今天到期与 3 天内到期/.test(sub), sub);
+    // 应用评审取舍题 N4 起:常显的只有第一句,带天数的那几句住进节下的「说明」折叠(#remind-more;收着也读得到 textContent)。
+    const more = await evalJs(`document.getElementById("remind-more").textContent`);
+    step("Q9 说明里的范围含「3 天内」(与任务面到期钮同一个数;在「说明」折叠里)", /逾期、今天到期与 3 天内到期/.test(more), more);
   } else step("Q9 截止提醒说明", "skip", "这一端没有通知那一节");
   // A19:「复制」回执不推走下面那一节
   const aboutTop0 = await (async () => {

@@ -292,6 +292,10 @@
       .seg button.on { color: var(--seal-ink-on-seal-tint); background: var(--seal-tint); font-weight: 600; }
       /* 设置面里各节之间留白(.sync h2 本身没有上边距,「关于」会紧贴上一节的说明字)。 */
       #settings-pane h2:not(:first-child) { margin-top: 22px; }
+      /* 901 设置面长说明的折叠(`details.notes`):summary 是 `.fine` 那一枚(颜色 / 字号不另开规则,同启动闸那只折叠的做法),
+         这里只管几何 —— 一行高 44 = 触区(§2.3;隐形盒那一形,行高写死不随字号档漂)。折叠里的段落照 `.fine`,首段贴着钮。 */
+      #settings-pane details.notes > summary { margin: 0; min-height: 44px; line-height: 44px; }
+      #settings-pane details.notes > summary + .fine { margin-top: 0; }
       /* ⛔ **这一族是控件,不许走 `--ink-faint`**(634,ui-consistency-plan M1):顶栏「标签 / 搜索 /
          同步 / 设置」四枚主导航就是它,另有 compose 三枚与更新条「稍后」。判据是 A2 拍板里那条
          **「未选中 tab 是能点的控件(§3.8),一个控件不劈两档」** —— faint 压纸面只有 2.29:1,
@@ -1120,7 +1124,20 @@
          今天/逾期用朱砂强调,未来是平静的墨色。done 卡降噪成描边淡字——
          `.card.done .chip.due` 四个类选择器,比 `.chip.due.overdue` 三个
          类选择器特异性更高(0,0,4,0 > 0,0,3,0),不靠源顺序也赢;放在下面仅为顺读。 */
-      .chip.due::before { content: "📅 "; }
+      /* 901(用户拍板):日历是遮罩画的线条图标,颜色跟角标上的字走(currentColor)。此前是「📅」表情 —— 那枚字形上
+         恒印着「7 月 17 日」,挨着真的截止日期读着像两个日期。⚠ 与桌面 tasktime.css 那条是逐字同的一段,改一处要改两处;
+         带前缀与不带前缀的 mask 两条都留(老引擎只认前者)。 */
+      .chip.due::before {
+        content: "";
+        display: inline-block;
+        width: 0.95em;
+        height: 0.95em;
+        margin-right: 4px;
+        vertical-align: -0.12em;
+        background: currentColor;
+        -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='2.5' y='3.5' width='11' height='10' rx='1.5'/%3E%3Cpath d='M2.5 6.8h11M5.5 2v3M10.5 2v3'/%3E%3C/svg%3E") center / contain no-repeat;
+        mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='2.5' y='3.5' width='11' height='10' rx='1.5'/%3E%3Cpath d='M2.5 6.8h11M5.5 2v3M10.5 2v3'/%3E%3C/svg%3E") center / contain no-repeat;
+      }
       .chip.due.future { color: var(--ink-soft); border-color: var(--line-strong); }
       .chip.due.today {
         color: var(--seal-ink-on-seal-tint); border-color: var(--seal-line); background: var(--seal-tint); font-weight: 600;
@@ -2968,7 +2985,14 @@
         <button data-lang="zh" data-i18n="settings.langZh">中文</button>
         <button data-lang="en" data-i18n="settings.langEn">English</button>
       </div>
-      <p class="fine" data-i18n="settings.langSub">界面语言。「自动」跟随系统;改档后本页会重新载入。只影响这台设备,不同步到别的设备。</p>
+      <!-- 901(用户拍板,同桌面 898 B2):说明在两行以上的节只留第一句常显,其余收进「说明」折叠(`details.notes`,
+           启动闸「技术详情」那一形的原生 details + `.fine` 的 summary)。⛔ 一句事实都没删,只挪了地方;
+           ⚠ 折叠不包住 h2(节间距靠 #settings-pane h2:not(:first-child),见「界面字号」那段);带 data-needs 的节,折叠上同样带。 -->
+      <p class="fine" data-i18n="settings.langSub">界面语言。「自动」跟随系统;改档后本页会重新载入。</p>
+      <details class="notes">
+        <summary class="fine" data-i18n="settings.notes">说明</summary>
+        <p class="fine" data-i18n="settings.langMore">只影响这台设备,不同步到别的设备。</p>
+      </details>
 
       <!-- 压缩大图(用户面 147):默认关 = 按原图存;与外观 / 字号 / 语言同族的设备偏好,不进同步。
            规则在 images.ts::downsampleForUpload。 -->
@@ -2977,7 +3001,11 @@
         <button data-compress="on" data-i18n="settings.compressOn">开</button>
         <button data-compress="off" data-i18n="settings.compressOff">关</button>
       </div>
-      <p class="fine" data-i18n="settings.compressSub">默认关:按原图保存,截图里的字清清楚楚。打开后,加图前会把大照片缩小并转成 JPEG,省同步流量和空间,但画质有损、原图找不回来;长截图不会被压成窄条。已存的图不受影响。只影响这台设备。</p>
+      <p class="fine" data-i18n="settings.compressSub">默认关:按原图保存,截图里的字清清楚楚。</p>
+      <details class="notes">
+        <summary class="fine" data-i18n="settings.notes">说明</summary>
+        <p class="fine" data-i18n="settings.compressMore">打开后,加图前会把大照片缩小并转成 JPEG,省同步流量和空间,但画质有损、原图找不回来;长截图不会被压成窄条。已存的图不受影响。只影响这台设备。</p>
+      </details>
 
       <!-- 截止提醒(用户面 39①,桌面那半是 553)。⛔ 四个元素上那枚 data-needs="notification"
            同 textzoom 那族:没有通知插件的端(鸿蒙)由 main.ts 按构建期常数 HAS_NOTIFICATION
@@ -2997,6 +3025,10 @@
            由 main.ts::paintRemindRow 填,静态壳里留空(设置面不在首帧上,不闪)。 -->
       <p id="remind-sub" class="fine" data-needs="notification"></p>
       <p id="remind-msg" class="fine" data-needs="notification" hidden></p>
+      <details class="notes" data-needs="notification">
+        <summary class="fine" data-i18n="settings.notes">说明</summary>
+        <p id="remind-more" class="fine"></p>
+      </details>
 
       <h2 data-i18n="shell.aliasTitle">本机别名</h2>
       <div class="row">
@@ -3005,8 +3037,12 @@
         <button id="alias-save" data-i18n="shell.save" disabled>保存</button>
       </div>
       <!-- 与上面两样刻意不同:别名**进同步**(和空间名同族),外观/字号是设备环境属性。 -->
-      <p class="fine"><span data-i18n="shell.aliasNotePre">给这台设备起个名字(如「娟娟的手机」)。它会</span><b data-i18n="shell.aliasNoteBold">同步</b><span data-i18n="shell.aliasNotePost">给这个空间里的其他设备,让他们看到条目是谁记的。每个空间分别起;留空 = 不起名。</span></p>
+      <p class="fine" data-i18n="shell.aliasSub">给这台设备起个名字(如「娟娟的手机」)。</p>
       <p id="alias-msg" class="fine" hidden></p>
+      <details class="notes">
+        <summary class="fine" data-i18n="settings.notes">说明</summary>
+        <p class="fine"><span data-i18n="shell.aliasNotePre">它会</span><b data-i18n="shell.aliasNoteBold">同步</b><span data-i18n="shell.aliasNotePost">给这个空间里的其他设备,让他们看到条目是谁记的。每个空间分别起;留空 = 不起名。</span></p>
+      </details>
 
       <!-- 加密备份(backup-plan §17 笔③):排在「界面字号」之后、「关于」之前。
            ⛔ 三条诚实边界原样进 UI,别在文案里软化(§17.12):手机上能备份不能还原 /
@@ -3020,11 +3056,15 @@
            (471 真机上先看见:降级那句刚说完"这一端还没有备份",下面三句接着讲怎么用备份)。
            ⇒ 由 main.ts 按 HAS_SAF_BRIDGE 一起摘掉;h2 与 body 那句留着,那才是这一端的事实。
            ⚠ 别把它读成「诚实边界可以省」(§17.12 的义务):有备份的那一端一个字都不少。 -->
+      <!-- 901:第一段(能备份、不能在这台还原)常显,另四段收进「说明」折叠 —— data-needs="saf" 挂在折叠上,一摘一起摘。 -->
       <p class="fine" data-i18n="backup.footRestore" data-needs="saf">这台设备上能做备份,但不能从备份还原。真出事时把 .zjbak 文件拿到电脑上的朱简里恢复。</p>
-      <p class="fine" data-i18n="backup.footCode" data-needs="saf">备份码保存在这台设备上(明文),卸载或清除数据会把它抹掉,抄下来的那份就是唯一的了;已经放进文件夹的备份文件不会跟着没。</p>
-      <p class="fine" data-i18n="backup.footValid" data-needs="saf">「有效」只有验过才算。文件名和扩展名证明不了任何事。</p>
-      <p class="fine" data-i18n="backup.footScope" data-needs="saf">点「备份」会把这台设备上的每个空间各备一份。这台设备上没有自动备份:想备份就回这里点一次。</p>
-      <p class="fine" data-i18n="backup.footSecret" data-needs="saf">备份文件加上备份码,就能打开里面的全部内容;开过同步的空间,还能拿它读写这个账户。两样都当秘密保管。</p>
+      <details class="notes" data-needs="saf">
+        <summary class="fine" data-i18n="settings.notes">说明</summary>
+        <p class="fine" data-i18n="backup.footCode">备份码保存在这台设备上(明文),卸载或清除数据会把它抹掉,抄下来的那份就是唯一的了;已经放进文件夹的备份文件不会跟着没。</p>
+        <p class="fine" data-i18n="backup.footValid">「有效」只有验过才算。文件名和扩展名证明不了任何事。</p>
+        <p class="fine" data-i18n="backup.footScope">点「备份」会把这台设备上的每个空间各备一份。这台设备上没有自动备份:想备份就回这里点一次。</p>
+        <p class="fine" data-i18n="backup.footSecret">备份文件加上备份码,就能打开里面的全部内容;开过同步的空间,还能拿它读写这个账户。两样都当秘密保管。</p>
+      </details>
 
       <!-- 意见反馈(国内上架 17)。⭐ **它是上架硬门槛,不是锦上添花**:OPPO《包体测试FAQ》
            原文「所有应用都必须设置显著有效的客服反馈渠道」,且该渠道须在**应用功能界面内**,

@@ -84,7 +84,9 @@ export const shell = defineMessages({
   "shell.aliasTitle": { zh: "本机别名", en: "Device alias" },
   "shell.aliasUnnamed": { zh: "未命名", en: "Unnamed" },
   "shell.save": { zh: "保存", en: "Save" },
-  "shell.aliasNotePre": { zh: "给这台设备起个名字(如「娟娟的手机」)。它会", en: "Name this device (e.g. “Juanjuan's phone”). The name " },
+  // 901:第一句常显(aliasSub),其余收进节下那只「说明」折叠 —— 原来那一段从第一个句号处切开,一个字没动。
+  "shell.aliasSub": { zh: "给这台设备起个名字(如「娟娟的手机」)。", en: "Name this device (e.g. “Juanjuan's phone”)." },
+  "shell.aliasNotePre": { zh: "它会", en: "The name " },
   "shell.aliasNoteBold": { zh: "同步", en: "syncs" },
   // 161 / W4 Q11(WM-36 / WP-21):别名按空间分别起,加入一个新空间后框是空的,像之前白起了 ⇒ 说明补一句。
   "shell.aliasNotePost": { zh: "给这个空间里的其他设备,让他们看到条目是谁记的。每个空间分别起;留空 = 不起名。", en: " to the other devices in this space, so they can see who noted each item. Each space has its own; empty = unnamed." },

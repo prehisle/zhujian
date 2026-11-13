@@ -9,7 +9,7 @@ import { createCaptureCommands } from "./capture-commands";
 import { initTheme } from "./theme-mode";
 import { t, initLang, applyStaticI18n } from "./i18n";
 import { armAppContextMenu } from "./context-menu";
-import { enterContinuesChecklist, wireChecklistInput } from "./checklist-input";
+import { dropEmptyChecklistLines, enterContinuesChecklist, wireChecklistInput } from "./checklist-input";
 import { errDetail, errText } from "./err";
 
 const input = document.getElementById("capture") as HTMLTextAreaElement;
@@ -449,7 +449,8 @@ input.addEventListener("keydown", async (e) => {
   if (e.key === "Enter" && !e.shiftKey) {
     e.preventDefault();
     if (capSaving) return;
-    const content = input.value.trim();
+    // 空的待办项提交前摘掉(901);摘完为空就是下面那条「没东西可存」的老路。
+    const content = dropEmptyChecklistLines(input.value).trim();
     // Nothing to save (no text AND no image) → just close.
     if (content.length === 0 && pend.count() === 0) {
       await dismiss();

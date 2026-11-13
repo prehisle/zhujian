@@ -518,6 +518,22 @@
         outline-offset: -1px;
       }
       .crop img { display: block; height: auto; max-width: none; }
+      /* 窄屏的裁图小到读不出字,而「能点开」只有手型光标在说(触屏上没有光标)⇒ 图角上印一枚小签,字就是按钮自己的
+         aria-label(「点开看大图」,跟着语言走;901 用户拍板)。 */
+      .shot-zoom::after {
+        content: attr(aria-label);
+        display: none; /* 只在窄屏显(见下面 600px 那块;颜色与字号写在这儿,对比度门禁不认条件块里的) */
+        position: absolute;
+        right: 8px;
+        bottom: 8px;
+        padding: 3px 9px;
+        border-radius: var(--radius-pill);
+        background: var(--paper);
+        border: 1px solid var(--line-strong);
+        color: var(--ink-soft);
+        font-size: var(--fs-12);
+        line-height: 1.5;
+      }
       .crop > img:first-child { position: absolute; top: 0; left: 0; }
       /* 随记:左上角那块(侧栏 + 时间轴头几条) */
       .crop-inbox > img:first-child { width: 175%; }
@@ -1316,6 +1332,7 @@
            (progress-log 899);下载区同理把 Android 卡排到最前。 */
         /* 首屏那枚「新版本」胶囊不许折行,英文那句长、在 390 宽顶到了屏边(899)⇒ 窄屏许它折 */
         .news-pill { white-space: normal; }
+        .shot-zoom::after { display: block; }
         .stage-desktop { display: none; }
         .stage-phone { position: static; width: min(64%, 250px); margin: 0 auto; }
         .dl-row .dl-card:nth-child(2) { order: -1; }
@@ -1428,7 +1445,7 @@
               <div class="step" data-i18n="flow.step1">一</div>
               <h3 data-i18n="flow.card1Title">记下</h3>
               <p>
-                <span data-i18n="flow.card1a">全局热键</span> <span class="kbd-inline">Ctrl+Alt+N</span> <span data-i18n="flow.card1b">唤出一张纸条,写完回车就存进随记,窗口自己收起。截图可以直接粘贴。</span>
+                <span data-i18n="flow.card1a">全局热键</span> <span class="kbd-inline">Ctrl+Alt+N</span> <span data-i18n="flow.card1b">唤出一张纸条,写完回车就存进随记,窗口自己收起。截图可以直接粘贴。手机上点右下角的圆钮就能写。</span>
               </p>
             </div>
             <!-- 演示:纸条里逐字打出「新的那条」的原文 → 回车键亮一下 → 纸条收起、那条落进随记。
@@ -1486,8 +1503,8 @@
            ⛔ 格数别随手加:三栏下现在刚好排满三行(两枚宽格 + 五枚单格),多一格会落单。 -->
       <section class="features" id="features">
         <div class="wrap">
-          <span class="eyebrow" data-i18n="feat.eyebrow">小处</span>
-          <h2 class="section-title" data-i18n="feat.title">不起眼,但每天都用得上</h2>
+          <span class="eyebrow" data-i18n="feat.eyebrow">细节</span>
+          <h2 class="section-title" data-i18n="feat.title">每天都用得上的细节</h2>
           <div class="bento">
             <article class="tile t-wide">
               <div>
@@ -1576,7 +1593,7 @@
         <div class="wrap">
           <span class="eyebrow" data-i18n="dl.eyebrow">现在就能用</span>
           <h2 class="section-title" data-i18n="dl.title">装一个试试</h2>
-          <p class="section-lead" data-i18n="dl.lead">Windows 和 Android 是正式版,装好后会自动检查新版本并提示你;鸿蒙版在华为应用市场,更新由商店管。macOS 与 Linux 是尝鲜版。</p>
+          <p class="section-lead" data-i18n="dl.lead">Windows 和 Android 是正式版,装好后会自动检查新版本并提示你;鸿蒙版在华为应用市场,更新由商店管。macOS 与 Linux 是尝鲜版。没有 iPhone 版。</p>
 
           <!-- 版本号刻意留在 markup 里、不进字典;字典只装那半句需要翻的机型说明。
                ⚠ 这一页的版本号有**两种写法**:显示用的 `· v<版本>` 与下载 href 里的包名
@@ -1623,7 +1640,7 @@
             <a href="https://zhujian.app/updates/SHA256SUMS-android.txt" data-i18n="dl.sumsAndroid">安卓版</a>
             <a href="/docs/verify.html" data-i18n="dl.verifyHow">怎么核</a>
           </p>
-          <p class="dl-foot" data-i18n="dl.foot">桌面更新包有开发者签名,装前会核对;Windows 安装包没做系统签名。没有 iPhone 版。</p>
+          <p class="dl-foot" data-i18n="dl.foot">桌面更新包有开发者签名,装前会核对;Windows 安装包没做系统签名。</p>
           <p class="dl-mail" data-i18n="dl.mail">有问题发邮件到 3069848@qq.com</p>
         </div>
       </section>
@@ -1734,7 +1751,7 @@
           "flow.step1": { zh: "一", en: "1" },
           "flow.card1Title": { zh: "记下", en: "Note it" },
           "flow.card1a": { zh: "全局热键", en: "The global hotkey" },
-          "flow.card1b": { zh: "唤出一张纸条,写完回车就存进随记,窗口自己收起。截图可以直接粘贴。", en: "brings up a slip. Press Enter and it's saved to Notes; the window goes away on its own. Screenshots paste straight in." },
+          "flow.card1b": { zh: "唤出一张纸条,写完回车就存进随记,窗口自己收起。截图可以直接粘贴。手机上点右下角的圆钮就能写。", en: "brings up a slip. Press Enter and it's saved to Notes; the window goes away on its own. Screenshots paste straight in. On your phone, tap the round button at the bottom right to write." },
           "flow.step2": { zh: "二", en: "2" },
           "flow.card2Title": { zh: "理一理", en: "Sort it" },
           "flow.card2": { zh: "在随记里给它打标签。要做的事转成待办,还是原来那一条,不会多出一份。", en: "In Notes, tag it. When it becomes something to do, turn it into a task: it stays the same item, with no second copy." },
@@ -1752,8 +1769,8 @@
           "flow.card3Alt": { zh: "任务看板:待办、进行中、待确认、已完成四列,卡片上标着截止日期和标签", en: "The task board: four columns (To do, In progress, To confirm, Done) with due dates and tags on the cards" },
           /* — 看大图(653):两枚都只挂 aria-label,屏上不多一个字 — */
           /* — 改版 2b:首页「小处」与「承诺」 — */
-          "feat.eyebrow": { zh: "小处", en: "Small things" },
-          "feat.title": { zh: "不起眼,但每天都用得上", en: "Small things you use every day" },
+          "feat.eyebrow": { zh: "细节", en: "Details" },
+          "feat.title": { zh: "每天都用得上的细节", en: "Details you use every day" },
           "feat.histTitle": { zh: "改过的、删掉的,都找得回来", en: "Edited or deleted, you can get it back" },
           "feat.hist": { zh: "每次编辑都保留改动前的版本;删了先进回收站,随时还原。真正删掉,只能在回收站里做。", en: "Each edit keeps the version before it. Deleting goes to Trash first, and you can restore it any time; deleting for good only happens inside Trash." },
           "feat.verNow": { zh: "现在", en: "Now" },
@@ -1871,7 +1888,7 @@
           /* — 下载 — */
           "dl.eyebrow": { zh: "现在就能用", en: "Ready to use" },
           "dl.title": { zh: "装一个试试", en: "Give it a try" },
-          "dl.lead": { zh: "Windows 和 Android 是正式版,装好后会自动检查新版本并提示你;鸿蒙版在华为应用市场,更新由商店管。macOS 与 Linux 是尝鲜版。", en: "Windows and Android are the supported builds; once installed they check for new versions and prompt you. The HarmonyOS build is on Huawei AppGallery, which handles its updates. macOS and Linux are early builds." },
+          "dl.lead": { zh: "Windows 和 Android 是正式版,装好后会自动检查新版本并提示你;鸿蒙版在华为应用市场,更新由商店管。macOS 与 Linux 是尝鲜版。没有 iPhone 版。", en: "Windows and Android are the supported builds; once installed they check for new versions and prompt you. The HarmonyOS build is on Huawei AppGallery, which handles its updates. macOS and Linux are early builds. There is no iPhone version." },
           "dl.winMeta": { zh: "10 / 11 · 64 位", en: "10 / 11 · 64-bit" },
           "dl.winBtn": { zh: "下载安装包", en: "Download .exe" },
           "dl.androidMeta": { zh: "11+ · 64 位", en: "11+ · 64-bit" },
@@ -1888,7 +1905,7 @@
           "dl.sumsAndroid": { zh: "安卓版", en: "Android" },
           /* 用户指南只有中文,同 dl.changelog 把这一点说在链接上。 */
           "dl.verifyHow": { zh: "怎么核", en: "How (in Chinese)" },
-          "dl.foot": { zh: "桌面更新包有开发者签名,装前会核对;Windows 安装包没做系统签名。没有 iPhone 版。", en: "Desktop updates are signed by the developer and checked before installing; the Windows installer is not code-signed. There is no iPhone version." },
+          "dl.foot": { zh: "桌面更新包有开发者签名,装前会核对;Windows 安装包没做系统签名。", en: "Desktop updates are signed by the developer and checked before installing; the Windows installer is not code-signed." },
           "dl.mail": { zh: "有问题发邮件到 3069848@qq.com", en: "Questions? Email 3069848@qq.com" },
           "dl.winHint": { zh: "首次安装会提示「未知发布者」,点「更多信息 → 仍要运行」。装好后在系统托盘里,热键唤出。", en: "The first install warns about an “unknown publisher” — choose “More info → Run anyway”. It then lives in the tray; bring it up with the hotkey." },
           "dl.apkHint": { zh: "首次安装要允许「未知来源」,更新也要你点一下装。", en: "Allow “unknown sources” on first install; updates also take a tap to install." },

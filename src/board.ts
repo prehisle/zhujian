@@ -81,7 +81,7 @@ import { type TaskItem, DUE_SOON_DAYS, PRIORITY_LABEL, dayKey, dayLabel, dueAtte
 import { identitySig, loadIdentity, signatureChip } from "./identity";
 import { t } from "./i18n";
 import { FOLD_SLACK_PX, hasBoxBelowFold } from "./fold";
-import { wireChecklistInput } from "./checklist-input";
+import { dropEmptyChecklistLines, wireChecklistInput } from "./checklist-input";
 import "./board.css";
 import { arrowWalk, el, holdKeyboard, onDragTarget, trapTab } from "./dom";
 import { isTabKey } from "./keys";
@@ -2266,14 +2266,23 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       let saving = false; // 幂等:点别处/回车/切卡可能并发触发,保存中再触发直接让位
       // 已落盘的标题:改名成功、删图那步却失败时,重试不能再改一遍同样的名(no-op rename 也会留一条重复版本)。
       let savedTitle = item.title;
-      const titleChanged = (): boolean => input.value.trim() !== "" && input.value !== savedTitle;
+      // 空的待办项保存时摘掉(901,同随记编辑态):要写的是摘过的那份。⛔ 「框里的字动过」这一格不能省 ——
+      // 旧卡本来就带空项时,打开没改就点别处 / 回车也走到这里,省了它就成了「看一眼就多一版历史」;动过而
+      // 摘完与原文相同(只添了个空项)同样不写。
+      const toSave = (v: string): string => dropEmptyChecklistLines(v);
+      const titleChanged = (): boolean => {
+        if (input.value === savedTitle) return false;
+        const v = toSave(input.value);
+        return v.trim() !== "" && v !== savedTitle;
+      };
       const save = async () => {
         if (saving) return;
         saving = true;
         try {
           if (titleChanged()) {
-            await invoke("rename_task", { id: item.id, title: input.value });
-            savedTitle = input.value;
+            const v = toSave(input.value);
+            await invoke("rename_task", { id: item.id, title: v });
+            savedTitle = v;
           }
           await strip.commitDeletes(); // 148:编辑态里标了删的图,随保存这一步才真删
         } catch (e) {
@@ -2378,7 +2387,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       // 动静就丢)。未改动/空/保存中 = 无事(false);失败上 op-err 横幅并附草稿,不无声。
       // 148:标了删的图也算「已改动」,同一刻落 —— 否则远端一刷新,标记就悄悄没了。
       activeEditFlush = async () => {
-        const v = input.value;
+        const v = toSave(input.value); // 刷新前落盘也是一次提交:空项同样摘掉
         if (saving || (!titleChanged() && strip.pendingDeletes() === 0)) return false;
         if (titleChanged()) {
           try {

@@ -81,7 +81,20 @@
 .task-meta .chip-x:hover { opacity: 1; }
 
 /* due states: overdue & today wear 朱砂; future is calm ink */
-.task-meta .chip.due.set::before { content: "📅 "; }
+/* 901(用户拍板):章头的日历是遮罩画的线条图标,颜色跟章上的字走(currentColor)。此前是「📅」表情 ——
+   那枚字形上恒印着「7 月 17 日」,挨着真的截止日期读着像两个日期。⚠ 手机那半(android/index.html)是
+   逐字同的一段,改一处要改两处;带前缀与不带前缀的 mask 两条都留(老引擎只认前者)。 */
+.task-meta .chip.due.set::before {
+  content: "";
+  display: inline-block;
+  width: 0.95em;
+  height: 0.95em;
+  margin-right: 4px;
+  vertical-align: -0.12em;
+  background: currentColor;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='2.5' y='3.5' width='11' height='10' rx='1.5'/%3E%3Cpath d='M2.5 6.8h11M5.5 2v3M10.5 2v3'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='2.5' y='3.5' width='11' height='10' rx='1.5'/%3E%3Cpath d='M2.5 6.8h11M5.5 2v3M10.5 2v3'/%3E%3C/svg%3E") center / contain no-repeat;
+}
 /* 158 G2 / A17:章点得开截止选择器(卡本身是 grab 手型,章上要说「这是个钮」)。 */
 .task-meta .chip.due.clickable { cursor: pointer; }
 .task-meta .chip.due.future { color: var(--ink-soft); border-color: var(--line-strong); }

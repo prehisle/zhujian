@@ -506,6 +506,22 @@
         outline-offset: -1px;
       }
       .crop img { display: block; height: auto; max-width: none; }
+      /* 窄屏的裁图小到读不出字,而「能点开」只有手型光标在说(触屏上没有光标)⇒ 图角上印一枚小签,字就是按钮自己的
+         aria-label(「点开看大图」,跟着语言走;901 用户拍板)。 */
+      .shot-zoom::after {
+        content: attr(aria-label);
+        display: none; /* 只在窄屏显(见下面 600px 那块;颜色与字号写在这儿,对比度门禁不认条件块里的) */
+        position: absolute;
+        right: 8px;
+        bottom: 8px;
+        padding: 3px 9px;
+        border-radius: var(--radius-pill);
+        background: var(--paper);
+        border: 1px solid var(--line-strong);
+        color: var(--ink-soft);
+        font-size: var(--fs-12);
+        line-height: 1.5;
+      }
       .crop > img:first-child { position: absolute; top: 0; left: 0; }
       /* 随记:左上角那块(侧栏 + 时间轴头几条) */
       .crop-inbox > img:first-child { width: 175%; }
@@ -1304,6 +1320,7 @@
            (progress-log 899);下载区同理把 Android 卡排到最前。 */
         /* 首屏那枚「新版本」胶囊不许折行,英文那句长、在 390 宽顶到了屏边(899)⇒ 窄屏许它折 */
         .news-pill { white-space: normal; }
+        .shot-zoom::after { display: block; }
         .stage-desktop { display: none; }
         .stage-phone { position: static; width: min(64%, 250px); margin: 0 auto; }
         .dl-row .dl-card:nth-child(2) { order: -1; }

@@ -58,7 +58,7 @@ import { applyTagColor } from "./tag-color";
 import { renderTagPicker } from "./tag-picker";
 import { dayKey, dayLabel, itemSnippet, startOfWeek, when } from "./tasktime";
 import { identitySig, loadIdentity, signatureChip } from "./identity";
-import { wireChecklistInput } from "./checklist-input";
+import { dropEmptyChecklistLines, wireChecklistInput } from "./checklist-input";
 import { goneOf, onGoneChange } from "./sync-gone";
 import { openSyncPanel } from "./sync";
 import "./inbox.css";
@@ -1213,14 +1213,23 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       const err = errLine();
       let saving = false; // 幂等:点别处/回车/切卡可能并发触发,保存中再触发直接让位
       // 正文要不要写:空内容(后端拒空)或没改动(edit_note 对 no-op 会 fail-fast)都不写。
-      const textChanged = (): boolean => area.value.trim() !== "" && area.value !== currentContent;
+      // 空的待办项保存时摘掉(901):要写的是摘过的那份。⛔ 「框里的字动过」这一格不能省 —— 旧条目本来就带
+      // 空项时,打开没改就点别处 / 回车也会走到这里,省了它就成了「看一眼就被改写一版」;动过而摘完与原文
+      // 相同(只添了个空项)同样不写(no-op 会 fail-fast)。
+      const toSave = (): string => dropEmptyChecklistLines(area.value);
+      const textChanged = (): boolean => {
+        if (area.value === currentContent) return false;
+        const v = toSave();
+        return v.trim() !== "" && v !== currentContent;
+      };
       const save = async () => {
         if (saving) return;
         saving = true;
         try {
           if (textChanged()) {
-            await invoke("edit_note", { id: item.id, content: area.value });
-            currentContent = area.value; // 先记下:删图那步失败后重试,正文不再写第二遍(no-op 会 fail-fast)
+            const v = toSave();
+            await invoke("edit_note", { id: item.id, content: v });
+            currentContent = v; // 先记下:删图那步失败后重试,正文不再写第二遍(no-op 会 fail-fast)
             paintContent(); // ⛔ 别写成 textP.textContent —— 那会把方框与「图N」链接一起抹成纯文本
             // 「改过」标记与菜单里的「历史」读的是库里派生的 revised(codex 851 M1):首次改完要重拉一发才出来;
             // ⛔ 别在前端直接置 true —— 纯勾选(0039)不留版,该不该标只有库说了算。leaveEdit 末尾补刷。

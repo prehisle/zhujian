@@ -67,7 +67,7 @@ import {
 import { errDetail, errText, initErr, showErr } from "./err";
 import { toggleChecklistLine } from "../../shared/checklist";
 import { buildStamp, formatBuiltAt } from "../../shared/build-stamp";
-import { applyChecklistMarker, wireChecklistNewline } from "./checklist-input";
+import { applyChecklistMarker, dropEmptyChecklistItems, wireChecklistNewline } from "./checklist-input";
 import {
   HOLDING,
   boardColumns,
@@ -2080,7 +2080,9 @@ function dismissCapture(): void {
 async function save() {
   const ta = $("text") as HTMLTextAreaElement;
   if (captureSaving || picking) return; // picking:钮此刻是 disabled 的,这条兜非点击的路子
-  if (!ta.value.trim()) {
+  // 901:空的清单项在提交这一刻摘掉(只摘送出去的那份;框里的字不动,失败退回的也是原文)。摘完为空 = 没写字,走下面那句。
+  const cleaned = dropEmptyChecklistItems(ta.value);
+  if (!cleaned.trim()) {
     // 图不能独立成条(条目正文非空):只贴图没写字时给可辨识提示,不静默无反应。
     // 158 G2(W2 走查 A16 / WM-18):一个字没写就点「记下」也说一声(此前层不收、什么都不说)。
     showError(compImgs.count() > 0 ? t("main.textBeforeImages") : t("main.nothingToSave"));
@@ -2102,7 +2104,8 @@ async function save() {
   // 「筛着标签记录 → 那几枚标签全挂上」的待挂集,同刻冻结(同 mode / 图批):往返期间
   // 用户点 pill 改了筛选,挂的仍是点「记下」那一刻筛着的几枚。
   const autoTags = filter.autoTagTopicIds(filters[mode]);
-  const savingDraft = ta.value;
+  const rawDraft = ta.value;
+  const savingDraft = cleaned;
   ta.value = "";
   // 图与文字同刻冻结带走(两缓冲,同 takeBatch):在飞期间新贴的图属于下一条,清预览。
   const savingImgs = compImgs.takeBatch();
@@ -2183,7 +2186,7 @@ async function save() {
     showErr(err);
     // 失败:取走的那份放回。框里有新字就合并(先写的在前),光标置尾接着改。
     const live = ta.value;
-    ta.value = live === "" ? savingDraft : `${savingDraft}\n${live}`;
+    ta.value = live === "" ? rawDraft : `${rawDraft}\n${live}`;
     persistComposeText(); // 退回的文字重新持久化(程序改值不触发 input)
     compImgs.putBack(savingImgs); // 图同样退回预览条,可连同文字一起重试
     ta.focus();
@@ -3406,7 +3409,9 @@ function dueDigest(tasks: TaskItem[], today: string): string | null {
 
 function paintRemindRow() {
   // 161 / W4 Q9:说明里那个天数与任务面到期钮同一个常数(静态壳里留空,理由见 index.html 那一行)。
-  $("remind-sub").textContent = t("reminder.sub", { days: DUE_SOON_DAYS });
+  // 901:第一句常显(#remind-sub),带天数的那几句住进节下的「说明」折叠(#remind-more)。
+  $("remind-sub").textContent = t("reminder.sub");
+  $("remind-more").textContent = t("reminder.more", { days: DUE_SOON_DAYS });
   const cfg = reminderCfg();
   $("remind-seg")
     .querySelectorAll<HTMLButtonElement>("[data-remind]")
@@ -4209,7 +4214,7 @@ initTaskMove({
   isSwitching: () => switching,
   getCurrentSpace,
 });
-panes.initPanes({ refreshTimeline: refresh, focusCard: (id) => void focusTimelineCard(id), jumpFromSearch });
+panes.initPanes({ refreshTimeline: refresh, focusCard: (id) => void focusTimelineCard(id), jumpFromSearch, getSpaces: () => spacesCache });
 topics.initTopicsPane({ refreshTimeline: refresh, isSwitching: () => switching });
 
 // ---- 启动闸(工序 6)+ 上次空间恢复(工序 8) --------------------------------

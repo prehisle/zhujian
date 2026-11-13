@@ -73,6 +73,8 @@ export const panes = defineMessages({
   // 159 / W3 A14:从搜索点进回收站 / 归档,那一条在读的这一会儿不在了。
   "panes.locateGone": { zh: "那一条已经不在这里了(可能刚被还原、取消归档或彻底删除)", en: "That item is no longer here (it may have just been restored, unarchived or deleted forever)" },
   "panes.searching": { zh: "搜索中…", en: "Searching…" },
-  "panes.searchNoHit": { zh: "没有找到「{q}」。", en: "Nothing found for “{q}”." },
+  // 901(用户拍板的原话,⛔ 一个字别改):没结果时多说一句怎么办;有多个空间时再接 searchOtherSpaces 那句(独立的键)。
+  "panes.searchNoHit": { zh: "没有找到「{q}」。换个词,或者少打几个字试试。", en: "Nothing found for “{q}”. Try another word, or a shorter one." },
+  "panes.searchOtherSpaces": { zh: "这里只搜当前空间,别的空间要切过去再搜。", en: "Only the current space is searched; switch spaces to search the others." },
   "panes.searchFailed": { zh: "搜索失败:{error}", en: "Search failed: {error}" },
 });

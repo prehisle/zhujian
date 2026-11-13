@@ -510,6 +510,22 @@
         outline-offset: -1px;
       }
       .crop img { display: block; height: auto; max-width: none; }
+      /* 窄屏的裁图小到读不出字,而「能点开」只有手型光标在说(触屏上没有光标)⇒ 图角上印一枚小签,字就是按钮自己的
+         aria-label(「点开看大图」,跟着语言走;901 用户拍板)。 */
+      .shot-zoom::after {
+        content: attr(aria-label);
+        display: none; /* 只在窄屏显(见下面 600px 那块;颜色与字号写在这儿,对比度门禁不认条件块里的) */
+        position: absolute;
+        right: 8px;
+        bottom: 8px;
+        padding: 3px 9px;
+        border-radius: var(--radius-pill);
+        background: var(--paper);
+        border: 1px solid var(--line-strong);
+        color: var(--ink-soft);
+        font-size: var(--fs-12);
+        line-height: 1.5;
+      }
       .crop > img:first-child { position: absolute; top: 0; left: 0; }
       /* 随记:左上角那块(侧栏 + 时间轴头几条) */
       .crop-inbox > img:first-child { width: 175%; }
@@ -1308,6 +1324,7 @@
            (progress-log 899);下载区同理把 Android 卡排到最前。 */
         /* 首屏那枚「新版本」胶囊不许折行,英文那句长、在 390 宽顶到了屏边(899)⇒ 窄屏许它折 */
         .news-pill { white-space: normal; }
+        .shot-zoom::after { display: block; }
         .stage-desktop { display: none; }
         .stage-phone { position: static; width: min(64%, 250px); margin: 0 auto; }
         .dl-row .dl-card:nth-child(2) { order: -1; }
@@ -1420,7 +1437,7 @@
               <div class="step" data-i18n="flow.step1">1</div>
               <h3 data-i18n="flow.card1Title">Note it</h3>
               <p>
-                <span data-i18n="flow.card1a">The global hotkey</span> <span class="kbd-inline">Ctrl+Alt+N</span> <span data-i18n="flow.card1b">brings up a slip. Press Enter and it's saved to Notes; the window goes away on its own. Screenshots paste straight in.</span>
+                <span data-i18n="flow.card1a">The global hotkey</span> <span class="kbd-inline">Ctrl+Alt+N</span> <span data-i18n="flow.card1b">brings up a slip. Press Enter and it's saved to Notes; the window goes away on its own. Screenshots paste straight in. On your phone, tap the round button at the bottom right to write.</span>
               </p>
             </div>
             <!-- 演示:纸条里逐字打出「新的那条」的原文 → 回车键亮一下 → 纸条收起、那条落进随记。
@@ -1478,8 +1495,8 @@
            ⛔ 格数别随手加:三栏下现在刚好排满三行(两枚宽格 + 五枚单格),多一格会落单。 -->
       <section class="features" id="features">
         <div class="wrap">
-          <span class="eyebrow" data-i18n="feat.eyebrow">Small things</span>
-          <h2 class="section-title" data-i18n="feat.title">Small things you use every day</h2>
+          <span class="eyebrow" data-i18n="feat.eyebrow">Details</span>
+          <h2 class="section-title" data-i18n="feat.title">Details you use every day</h2>
           <div class="bento">
             <article class="tile t-wide">
               <div>
@@ -1568,7 +1585,7 @@
         <div class="wrap">
           <span class="eyebrow" data-i18n="dl.eyebrow">Ready to use</span>
           <h2 class="section-title" data-i18n="dl.title">Give it a try</h2>
-          <p class="section-lead" data-i18n="dl.lead">Windows and Android are the supported builds; once installed they check for new versions and prompt you. The HarmonyOS build is on Huawei AppGallery, which handles its updates. macOS and Linux are early builds.</p>
+          <p class="section-lead" data-i18n="dl.lead">Windows and Android are the supported builds; once installed they check for new versions and prompt you. The HarmonyOS build is on Huawei AppGallery, which handles its updates. macOS and Linux are early builds. There is no iPhone version.</p>
 
           <!-- 版本号刻意留在 markup 里、不进字典;字典只装那半句需要翻的机型说明。
                ⚠ 这一页的版本号有**两种写法**:显示用的 `· v<版本>` 与下载 href 里的包名
@@ -1615,7 +1632,7 @@
             <a href="https://zhujian.app/updates/SHA256SUMS-android.txt" data-i18n="dl.sumsAndroid">Android</a>
             <a href="/docs/verify.html" data-i18n="dl.verifyHow">How (in Chinese)</a>
           </p>
-          <p class="dl-foot" data-i18n="dl.foot">Desktop updates are signed by the developer and checked before installing; the Windows installer is not code-signed. There is no iPhone version.</p>
+          <p class="dl-foot" data-i18n="dl.foot">Desktop updates are signed by the developer and checked before installing; the Windows installer is not code-signed.</p>
           <p class="dl-mail" data-i18n="dl.mail">Questions? Email 3069848@qq.com</p>
         </div>
       </section>

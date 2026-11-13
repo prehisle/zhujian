@@ -11,10 +11,16 @@ export const settings = defineMessages({
   // 159 / W3 Q7(WM-16 / X-08):设置里那一行「空间…」(开的是同步页那同一页)。
   "settings.spacesTitle": { zh: "空间", en: "Spaces" },
   "settings.spacesSub": { zh: "每个空间是一本独立的本子。新建、切换、改名都在这里。", en: "Each space is a separate notebook. Create, switch and rename them here." },
+  // 901:设置面长说明的折叠钮(index.html `details.notes`);词与桌面同键同值。
+  "settings.notes": { zh: "说明", en: "Details" },
   "settings.langTitle": { zh: "语言", en: "Language" },
-  "settings.langSub": { zh: "界面语言。「自动」跟随系统;改档后本页会重新载入。只影响这台设备,不同步到别的设备。", en: "Interface language. Auto follows the system; the page reloads after switching. This device only; it does not sync." },
+  // 901(用户拍板,同桌面「每节只留第一句常显」):这一句常显,其余几句一字不动地住进 settings.langMore(节下那只「说明」折叠)。
+  "settings.langSub": { zh: "界面语言。「自动」跟随系统;改档后本页会重新载入。", en: "Interface language. Auto follows the system; the page reloads after switching." },
+  "settings.langMore": { zh: "只影响这台设备,不同步到别的设备。", en: "This device only; it does not sync." },
   "settings.compressTitle": { zh: "压缩大图", en: "Compress large images" },
-  "settings.compressSub": { zh: "默认关:按原图保存,截图里的字清清楚楚。打开后,加图前会把大照片缩小并转成 JPEG,省同步流量和空间,但画质有损、原图找不回来;长截图不会被压成窄条。已存的图不受影响。只影响这台设备。", en: "Off by default: images are saved as-is, so text in screenshots stays sharp. When on, large photos are shrunk and re-saved as JPEG when added—less sync traffic and storage, but lossy, and the original can’t be recovered; long screenshots are never squeezed into a thin strip. Images already saved aren’t affected. This device only." },
+  // 901(用户拍板,同桌面「每节只留第一句常显」):这一句常显,其余几句一字不动地住进 settings.compressMore(节下那只「说明」折叠)。
+  "settings.compressSub": { zh: "默认关:按原图保存,截图里的字清清楚楚。", en: "Off by default: images are saved as-is, so text in screenshots stays sharp." },
+  "settings.compressMore": { zh: "打开后,加图前会把大照片缩小并转成 JPEG,省同步流量和空间,但画质有损、原图找不回来;长截图不会被压成窄条。已存的图不受影响。只影响这台设备。", en: "When on, large photos are shrunk and re-saved as JPEG when added—less sync traffic and storage, but lossy, and the original can’t be recovered; long screenshots are never squeezed into a thin strip. Images already saved aren’t affected. This device only." },
   "settings.compressOn": { zh: "开", en: "On" },
   "settings.compressOff": { zh: "关", en: "Off" },
   "settings.langAuto": { zh: "自动", en: "Auto" },
