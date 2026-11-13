@@ -464,9 +464,13 @@
 /* 字号那一行下面常在的一句(范围 / 已到最大 / 已到最小):到头时升一档墨色,读得出「到头了」。 */
 .zoom-limit.at-limit { color: var(--ink); }
 /* 三档分段(明暗:自动 / 亮 / 暗):三枚连体按钮,选中那枚上朱砂。 */
+/* 908 D9 补:高度钉 31(= 本面控件高,含上下 1px 边)。此前靠字形撑高,Windows 恰 31,
+   Linux CI(缺中文字体、按替身字体量)撑出别的数,与同行钉死 31 的时刻框 / 「试一条」差开。
+   界面字号走 WebView 原生缩放,钉 px 不怕放大档。 */
 .seg {
   flex: none;
   display: flex;
+  height: 31px;
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
   overflow: hidden;

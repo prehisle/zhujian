@@ -198,8 +198,9 @@ describe("908 桌面观感:顶栏 / 药丸 / 候选 / 返回 / 回收站计数",
     // 前置:两行都真量到了三 / 两件(否则「全相等」对一件也成立)
     expect(r.alias.length).toBe(2);
     expect(r.remind.length).toBe(3);
-    expect(new Set(r.alias).size).toBe(1);
-    expect(new Set(r.remind).size).toBe(1);
+    // 红了要带出读数(Linux CI 曾在这里红,只报「2 ≠ 1」)
+    expect(r.alias).toEqual([r.alias[0], r.alias[0]]);
+    expect(r.remind).toEqual([r.remind[0], r.remind[0], r.remind[0]]);
   });
 
   it("D10:看板回收站里 R 照旧是开关(进 / 出),左上「‹ 看板」随之显 / 藏", async () => {
