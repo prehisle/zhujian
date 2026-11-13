@@ -49,7 +49,7 @@
       const more = await until(() => cardOf(id)?.querySelector('.panel [data-pact="more"]'), 1500);
       if (!more) continue;
       click(more);
-      del = await until(() => cardOf(id)?.querySelector('.panel [data-pact="del"]'), 1500);
+      del = await until(() => document.querySelector('#more-list [data-more-act="del"]'), 1500); // 906:「更多…」是屏底菜单层
     }
     if (del) {
       click(del);
@@ -96,8 +96,10 @@
     t1 = await compose(m1);
     t2 = await compose(m2);
     if (!ok("两条种子任务入面", !!t1 && !!t2)) return JSON.stringify(out);
-    const tick = cardOf(t2)?.querySelector(".tick input");
-    if (!ok("乙卡有勾框", !!tick)) return JSON.stringify(out);
+    // 906:卡左边那枚勾完成的圆圈撤了 ⇒ 「一下完成」走操作面最前面那枚「完成」(同一条写口)。
+    if (!cardOf(t2)?.querySelector(".panel")) click(cardOf(t2).querySelector(".content"));
+    const tick = await until(() => cardOf(t2)?.querySelector('.panel [data-pact="complete"]'), 2000);
+    if (!ok("乙卡的操作面有「完成」钮", !!tick)) return JSON.stringify(out);
     // ⛔⛔ **基线要在勾之前取**(639 真机逮到):此前这里写死等 `chipCount("done") >= 1`,
     //    那是给**近空库**写的判据 —— 用户真库里本来就有 20 条已完成 ⇒ 这个 until **第一拍
     //    就成立**,一格没等,后面「乙在」当场红在「还没落账」的窗口里。判据要判**增量**。

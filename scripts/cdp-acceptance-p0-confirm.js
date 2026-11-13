@@ -55,7 +55,9 @@
   // (历史 · 移动 · 撤回 · 归档 · 删除)收在「更多…」子面里。⇒ 先把面板弄回**主面**
   // (判据 = `more` 这枚在不在),主面上没有的再钻一层。⛔ 别写成「恒先点 more」——
   // 主面那四枚在更多面里找不着。
-  const inPanel = (id, act) => cardOf(id)?.querySelector(`.panel [data-pact="${act}"]`) ?? null;
+  const inPanel = (id, act) =>
+    cardOf(id)?.querySelector(`.panel [data-pact="${act}"]`) ??
+    (cardOf(id)?.querySelector(".panel") && document.getElementById("more-sheet").classList.contains("open") ? document.querySelector(`#more-list [data-more-act="${act}"]`) : null); // 906:「更多…」是屏底菜单层 ⇒ 面里没有的那几枚到层里找(#more-list [data-more-act])
   const openCardAct = async (id, act) => {
     for (let i = 0; i < 4; i++) {
       if (!inPanel(id, "more")) {
@@ -103,15 +105,20 @@
     // ② 开卡片面板,拿「撤回为随记」按钮
     const rev = await openCardAct(id, "revert");
     if (!ok("面板展开有「撤回为随记」", !!rev)) throw new Error("abort");
-    const g0 = rev.getBoundingClientRect();
+    // 906:「撤回为随记」住在屏底菜单层里,选了它层就收 ⇒ 「原位不换长文案、几何恒定」量的换成卡片操作面第一层那一排
+    // (拿「更多…」那枚当尺子):第一拍之后它一像素没动、字也没变。
+    const ruler = cardOf(id).querySelector('.panel [data-pact="more"]');
+    const g0 = ruler.getBoundingClientRect();
+    const t0 = ruler.textContent;
 
     // ③ 第一拍:弹确认条,原按钮几何恒定(不再原位换长文案)
     click(rev);
     await until(() => !cb.hidden, 1000);
-    const g1 = rev.getBoundingClientRect();
+    const ruler1 = cardOf(id).querySelector('.panel [data-pact="more"]');
+    const g1 = ruler1 ? ruler1.getBoundingClientRect() : { left: -1, top: -1, width: -1 };
     ok("第一拍弹底部确认条", !cb.hidden);
     ok("确认条话术带「撤回为随记」", document.getElementById("confirmbar-q").textContent.includes("撤回为随记"));
-    ok("原「撤回为随记」按钮几何不变", g1.left === g0.left && g1.top === g0.top && g1.width === g0.width);
+    ok("原「撤回为随记」按钮几何不变(906:量操作面第一层那一排 —— 没挪位、字没换)", g1.left === g0.left && g1.top === g0.top && g1.width === g0.width && ruler1?.textContent === t0);
 
     // ④ 取消:条收起、条目不动
     click(document.getElementById("confirmbar-no"));

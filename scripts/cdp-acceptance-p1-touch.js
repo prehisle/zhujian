@@ -1,5 +1,5 @@
 // @cdp-run single
-// 144 后续 P1 #10/#11(安卓):触区达标(底栏 44px 实高、.tick 48、小按钮 ::before halo)
+// 144 后续 P1 #10/#11(安卓):触区达标(底栏 44px 实高、操作面「完成」钮的触区同排一致(906 前是 .tick 48)、小按钮 ::before halo)
 // + 空间「重置」入口降权(默认不常驻,收进「⋯」;确认钮全宽独行与取消拉开)。
 // 只读断言 + 空间面板开合(不碰 reset-ok),evalfile 跑,pass=true 才算过。
 (async () => {
@@ -25,33 +25,28 @@
   const navBtns = [...document.querySelectorAll("#bottombar button")].filter((b) => !b.hidden);
   ok("底栏按钮 ≥44px", navBtns.length > 0 && navBtns.every((b) => b.offsetHeight >= 44), { h: navBtns.map((b) => b.offsetHeight) });
 
-  // ② .tick 宽 48。146:任务行只在任务面——先切任务面再查(启动恒落灵感面,
-  //    不切则永走「跳过」的空测),测完切回灵感面。
+  // ② 906:卡左边那枚勾完成的圆圈(.tick,此前这一格量它的 48 宽与「圈心钉第一行」)撤了 ⇒ 这一格改量接班的那一枚:
+  //    操作面最前面的「完成」钮 —— 看得见的盒 + 上下那层 halo 的触区,与这一排别的钮一样高。
+  //    146:任务行只在任务面——先切任务面再查,测完切回灵感面。没有「还没完成、看板有完成列」的任务卡就如实跳过。
   const tasksBtn = document.querySelector('#bottombar [data-mode="tasks"]');
   click(tasksBtn);
   await new Promise((r) => setTimeout(r, 200));
-  const tick = document.querySelector("#timeline .tick");
-  ok(tick ? ".tick 宽 ≥48px" : ".tick 无任务行可测(跳过)", tick ? tick.offsetWidth >= 48 : true);
-  // ⭐ M12(UI 一致性手机半):触区照旧 48 宽 × 整卡高,而**记号钉在正文第一行** ——
-  //    这两条是对着来的(⛔ 别为了对齐把上面那个 48/stretch 改小),所以判据挨着放:
-  //    谁改一条,另一条当场说话。判据 = 圈心与第一行行心的距离 ≤2px。
-  //    ⚠ 只有**长卡**判得出来 —— 单行卡上「整卡居中」与「钉第一行」是同一个位置
-  //    ⇒ 挑正文高过两行半的那张,一张都没有就如实跳过,别让空测长得像真绿。
-  //    ⛔ **阈值 1px 是量出来的,别放宽**:对的写法四档实测偏差全是 0(639),而被它逮到的
-  //    那个错写法(`em` 不跟 textZoom)在 115% 档偏 1.92 —— 阈值放到 2 就恰好放它过去。
-  const tallCard = [...document.querySelectorAll("#timeline .card")].find((c) => {
-    const p = c.querySelector(".content");
-    if (!c.querySelector(".tick .box") || !p) return false;
-    return p.getBoundingClientRect().height > parseFloat(getComputedStyle(p).lineHeight) * 2.5;
-  });
-  if (tallCard) {
-    const p = tallCard.querySelector(".content");
-    const pr = p.getBoundingClientRect();
-    const br = tallCard.querySelector(".tick .box").getBoundingClientRect();
-    const lh = parseFloat(getComputedStyle(p).lineHeight);
-    const drift = Math.round((br.top + br.height / 2 - (pr.top + lh / 2)) * 10) / 10;
-    ok(".tick 圈心钉在正文第一行", Math.abs(drift) <= 1, { drift, lineH: Math.round(lh * 10) / 10, contentH: Math.round(pr.height) });
-  } else ok(".tick 无长任务卡可测(跳过)", true, { skipped: true });
+  ok("任务卡上不再有 .tick", !document.querySelector("#timeline .tick"));
+  const openCard = [...document.querySelectorAll("#timeline article.card[data-id]:not(.done)")][0];
+  if (openCard) {
+    if (!openCard.querySelector(".panel")) click(openCard.querySelector(".content"));
+    await new Promise((r) => setTimeout(r, 300));
+    const cb = document.querySelector('#timeline .panel [data-pact="complete"]');
+    if (cb) {
+      const zoneOf = (b) => { const cs = getComputedStyle(b, "::before"); return cs.content === "none" ? 0 : b.clientHeight - parseFloat(cs.top) - parseFloat(cs.bottom); };
+      const zone = zoneOf(cb);
+      const next = zoneOf(document.querySelector('#timeline .panel [data-pact="edit"]'));
+      // 这一排的触区 = 内盒 + 上下各 5 的 halo;V1986A 标准字号量到 43.3(整排如此)⇒ 判「完成」没比同排的钮小、且有 halo。
+      ok("「完成」钮触区与同排的钮一样高(内盒 + halo,> 40)", zone > 40 && Math.abs(zone - next) < 0.5, { zone, next });
+    } else ok("「完成」钮无可测(这张卡的看板没有完成列,跳过)", true, { skipped: true });
+    click(document.querySelector("#timeline .panel")?.closest("article.card")?.querySelector(".content") ?? openCard.querySelector(".content")); // 收面
+    await new Promise((r) => setTimeout(r, 200));
+  } else ok("「完成」钮无任务行可测(跳过)", true, { skipped: true });
   click(document.querySelector('#bottombar [data-mode="ideas"]'));
   await new Promise((r) => setTimeout(r, 200));
 

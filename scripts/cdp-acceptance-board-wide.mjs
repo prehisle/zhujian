@@ -238,24 +238,28 @@ try {
   await sleep(300);
   const geo = await ev(`(() => {
     const p = document.querySelector("#timeline .panel"), card = p.closest(".card"), R = (el) => el.getBoundingClientRect();
-    return { panelL: R(p).left, panelT: R(p).top, cardL: R(card).left, id: card.dataset.id,
+    const row = p.querySelector(".acts"), last = [...row.querySelectorAll("button")].pop();
+    return { panelL: R(p).left, panelT: R(p).top, panelR: R(p).right, rowMid: (R(row).top + R(row).bottom) / 2, lastR: R(last).right, cardL: R(card).left, id: card.dataset.id,
       rows: new Set([...p.querySelectorAll(".acts button")].map((b) => Math.round(R(b).top))).size };
   })()`);
   ok(geo.rows === 1, "1280 操作面四枚动作钮一排", geo.rows);
   ok(Math.round(geo.panelL - geo.cardL) === 13, "操作面左缘 = 卡片内容左缘(边 1 + 内边距 12)", Math.round(geo.panelL - geo.cardL));
   await shot("panel-1280");
-  // 操作面顶上那条内边距(虚线下 3px)、x 落在原勾框那一竖条里:收回左缩进之后这块归操作面,不许再是勾框的触区
-  const px = Math.round(geo.panelL + 6);
-  const py = Math.round(geo.panelT + 3);
-  const hit = await ev(`(() => { const e = document.elementFromPoint(${px}, ${py}); return { inTick: !!e.closest(".tick"), inPanel: !!e.closest(".panel") }; })()`);
-  ok(!hit.inTick && hit.inPanel, `(${px},${py}) 命中操作面、不是勾框`, hit);
+  // 操作面里的空白:不许是「一点就完成」的触区。906 起卡左边那枚勾完成的圆圈撤了(屏上不该再有 .tick)、「完成」成了这一排最前面
+  // 那枚钮 ⇒ 原来量的那一点(虚线下 3px、左缘往里 6)现在落在「完成」钮自己的触区里(钮上下各 5 的 halo),点它完成是对的;
+  // 「空白不完成」换到真空白的地方量:动作钮那一排、最后一枚钮右边到操作面右缘之间的中点。
+  const px = Math.round((geo.lastR + geo.panelR) / 2);
+  const py = Math.round(geo.rowMid);
+  ok(geo.panelR - geo.lastR >= 8, "自证前置:动作钮那一排右边真有一截空白(≥ 8)", { lastR: geo.lastR, panelR: geo.panelR });
+  const hit = await ev(`(() => { const e = document.elementFromPoint(${px}, ${py}); return { inTick: !!e.closest(".tick") || document.querySelectorAll("#timeline .tick").length > 0, inPanel: !!e.closest(".panel"), onBtn: !!e.closest("button") }; })()`);
+  ok(!hit.inTick && hit.inPanel && !hit.onBtn, `(${px},${py}) 命中操作面的空白、不是哪枚钮(屏上也没有勾框)`, hit);
   for (const type of ["mousePressed", "mouseReleased"]) await s.send("Input.dispatchMouseEvent", { type, x: px, y: py, button: "left", clickCount: 1 });
   await sleep(300);
   await s.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: px, y: py }] });
   await s.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
   await sleep(800);
   const after = await ev(`(() => { const c = document.querySelector('#timeline .card[data-id="${geo.id}"]');
-    return { stage: c.dataset.stage, checked: c.querySelector(".tick input").checked, lane: !!c.querySelector(".panel .lane") }; })()`);
+    return { stage: c.dataset.stage, checked: c.classList.contains("done"), lane: !!c.querySelector(".panel .lane") }; })()`);
   ok(after.stage === "doing" && !after.checked && !after.lane, "真点 + 真触那条空白:没勾完成、没弹选择行", after);
 
   // ---- ⑤ 横滑的目标印 --------------------------------------------------------------------
@@ -287,12 +291,22 @@ try {
   await size(800, 1280);
   await toTasks();
   ok(await ev(`!document.getElementById("filter-expand").hidden`), "800 竖放标签行放不下 ⇒ 摊开钮在");
+  {
+    // 906:收起态那枚钮写着「更多 N ▾」,与到期钮同一行(此前这一格只在摊开态判;摊开后钮搬进了标签块,见下)。
+    const c = await ev(`(() => { const R = (q) => { const b = document.querySelector(q).getBoundingClientRect(); return { t: Math.round(b.top), b: Math.round(b.bottom) }; };
+      return { due: R("#filter-stages .fdue"), expand: R("#filter-expand"), text: document.getElementById("filter-expand").textContent }; })()`);
+    ok(Math.abs(mid(c.due) - mid(c.expand)) <= 2 && /^更多 \d+▾$/.test(c.text), "收起态:到期钮与摊开钮同一行,钮上写「更多 N ▾」", c);
+  }
   await ev(`document.getElementById("filter-expand").click(), true`);
   await sleep(300);
   try {
     const g = await ev(`(() => { const R = (q) => { const b = document.querySelector(q).getBoundingClientRect(); return { l: Math.round(b.left), t: Math.round(b.top), b: Math.round(b.bottom) }; };
-      return { due: R("#filter-stages .fdue"), expand: R("#filter-expand"), topics: R("#filter-topics") }; })()`);
-    ok(Math.abs(mid(g.due) - mid(g.expand)) <= 2 && g.topics.t > g.due.b && g.due.l === g.topics.l, "摊开态:到期钮与摊开钮同一行,标签块在下一行、左对齐", g);
+      const tp = document.getElementById("filter-topics"), x = document.getElementById("filter-expand");
+      return { due: R("#filter-stages .fdue"), ftext: R("#filter-text"), topics: R("#filter-topics"), last: tp.lastElementChild === x, text: x.textContent }; })()`);
+    // 906(用户拍「收起钮放到标签末尾」):摊开后钮写「收起 ▴」、是标签块的最后一枚 ⇒ 第一行上与到期钮作伴的换成过滤框;
+    // 判据照旧(同一行 ±2、标签块在下一行、左对齐),只是找的元素换了。
+    ok(Math.abs(mid(g.due) - mid(g.ftext)) <= 2 && g.topics.t > g.due.b && g.due.l === g.topics.l, "摊开态:到期钮与过滤框同一行,标签块在下一行、左对齐", g);
+    ok(g.last && g.text === "收起▴", "摊开态:钮写「收起 ▴」、排在标签块最后一枚", g);
     await shot("tags-open-800");
   } finally {
     await ev(`document.getElementById("filter-expand").click(), true`); // 这个开关落 localStorage,收回去

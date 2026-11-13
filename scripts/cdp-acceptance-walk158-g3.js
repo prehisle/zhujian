@@ -48,7 +48,11 @@
   const $ = (id) => document.getElementById(id);
   const card = (m) => [...document.querySelectorAll("#timeline article.card[data-id]")].find((c) => c.querySelector(".content")?.textContent === m);
   const cardById = (id) => document.querySelector(`#timeline article.card[data-id="${id}"]`);
-  const pact = (el, a) => el?.querySelector(`.panel [data-pact="${a}"]`) ?? null;
+  // 906:「更多…」不再是卡片里的一面,是屏底那张菜单层(#more-list [data-more-act]);这张卡的操作面开着、层也开着时,
+  // 面里找不到的那几枚(删除 / 归档 / 撤回 / 复制 / 历史…)到层里找 —— 判据照旧,只是找元素的路多了这一段。
+  const pact = (el, a) =>
+    el?.querySelector(`.panel [data-pact="${a}"]`) ??
+    (el?.querySelector(".panel") && document.getElementById("more-sheet").classList.contains("open") ? document.querySelector(`#more-list [data-more-act="${a}"]`) : null);
   const tasks = async () => await inv("list_tasks", {});
   const colIds = async (stage) => (await tasks()).filter((x) => x.status === stage).map((x) => x.id);
   const stageOf = async (id) => (await tasks()).find((x) => x.id === id)?.status ?? null;
@@ -184,13 +188,17 @@
     await inv("reorder_task", { id: ids.yi, fromStatus: "doing", toStatus: "todo", baseTargetIds: await colIds("todo"), orderedIds: todo0 }); // 摆回原位,后面要用
     clearBar();
 
-    // ---- Q2:已完成卡的勾点回待办 ----
+    // ---- Q2:已完成的卡点得回待办 ----
+    // 906:卡左边那枚勾完成的圆圈撤了 ⇒ 已完成的卡挪回去走操作面的「列」那枚(候选里点「待办」);「回待办 + 回执 + 撤销回原位」照旧。
     const doneOrd = await colIds("done");
     await until(() => card(`${M}-完成二`), 3000);
-    const tick = card(`${M}-完成二`).querySelector(".tick input");
-    ok("Q2 已完成卡上的勾不是 disabled", !!tick && tick.checked && !tick.disabled);
+    await openPanel(card(`${M}-完成二`));
+    ok("Q2 已完成卡的操作面没有「完成」钮(已经完成了)", !pact(cardById(ids.done2), "complete") && !!pact(cardById(ids.done2), "status"));
+    click(pact(cardById(ids.done2), "status"));
+    const tick = await until(() => cardById(ids.done2)?.querySelector('.panel [data-status="todo"]'), 2000);
+    ok("Q2 已完成卡的「列」候选里「待办」点得动", !!tick && !tick.disabled);
     tick.click();
-    ok("Q2 点勾 = 回待办,回执「已移到「待办」」带撤销", !!(await until(() => barTexts()[0] === "撤销" && $("error").textContent.includes("已移到「待办」"), 4000)), $("error").textContent);
+    ok("Q2 点「待办」= 回待办,回执「已移到「待办」」带撤销", !!(await until(() => barTexts()[0] === "撤销" && $("error").textContent.includes("已移到「待办」"), 4000)), $("error").textContent);
     ok("Q2 库里已在待办", (await stageOf(ids.done2)) === "todo");
     click(barActs()[0]);
     await until(async () => (await stageOf(ids.done2)) === "done", 3000);

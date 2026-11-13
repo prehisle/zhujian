@@ -34,7 +34,7 @@
   const MARK = "W157-G1-种子";
   const card = () => [...document.querySelectorAll("#timeline article.card[data-id]")].find((c) => c.textContent.includes(MARK));
   const panel = () => card()?.querySelector(".panel") ?? null;
-  const pact = (a) => panel()?.querySelector(`[data-pact="${a}"]`) ?? null;
+  const pact = (a) => panel()?.querySelector(`[data-pact="${a}"]`) ?? (panel() && document.getElementById("more-sheet").classList.contains("open") ? document.querySelector(`#more-list [data-more-act="${a}"]`) : null); // 906:「更多…」是屏底菜单层 ⇒ 面里没有的那几枚到层里找(#more-list [data-more-act])
   let seedId = null;
 
   if (document.documentElement.lang !== "zh") {

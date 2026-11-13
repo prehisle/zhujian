@@ -135,8 +135,9 @@ try {
   await click(`#timeline .card[data-id="${target}"] .body`);
   await waitFor(`!!document.querySelector('#timeline .panel [data-pact="more"]')`, "卡片操作面");
   await click(`#timeline .panel [data-pact="more"]`);
-  await waitFor(`!!document.querySelector('#timeline .panel [data-pact="expand"]')`, "更多… 里有「展开成长文」");
-  await click(`#timeline .panel [data-pact="expand"]`);
+  // 906:「更多…」是屏底菜单层(#more-list [data-more-act])
+  await waitFor(`!!document.querySelector('#more-list [data-more-act="expand"]')`, "更多… 里有「展开成长文」");
+  await click(`#more-list [data-more-act="expand"]`);
   await waitFor(`!document.querySelector('#timeline .card[data-id="${target}"]')`, "展开后那张卡离开随记面");
   ok(await ev(`!document.getElementById("error").hidden && document.getElementById("error").textContent.includes("长文")`), "② 回执指路(提到「长文」)");
   ok(await docsBtnShown(), "② 底栏「长文」钮显形");

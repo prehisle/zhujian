@@ -239,7 +239,8 @@ const main = async () => {
       const top0 = await evalJs(`document.scrollingElement.scrollTop`);
       const y0 = await evalJs(`(()=>{const se=document.scrollingElement;se.scrollTop=Math.round((se.scrollHeight-innerHeight)*0.6);return se.scrollTop})()`);
       await sleep(300);
-      step("Q2 自证前置:设置面够长,关之前真的不在顶", top0 < 2 && y0 > 150, { top0, y0 });
+      // 阈值 40:906 起设置首页短了,高屏(鸿蒙 Mate 60 Pro)上能滚的只剩一百来像素 —— 判的是「真的不在顶」,不是滚了多远
+      step("Q2 自证前置:设置面够长,关之前真的不在顶", top0 < 2 && y0 > 40, { top0, y0 });
       await snap("Q2-scrolled");
       await click("#settings-toggle");
       await until(`!document.body.classList.contains("pane-open")`, 3000);
@@ -263,7 +264,7 @@ const main = async () => {
       const backOk = await until(settingsOpen, 4000);
       await sleep(600);
       const yb = await evalJs(`document.scrollingElement.scrollTop`);
-      step("Q2 设置 → 诊断 → 返回键:回到进子面前的位置(照旧)", !!inDiag && !!backOk && yd > 150 && Math.abs(yb - yd) < 6, { yd, yb, inDiag: !!inDiag });
+      step("Q2 设置 → 诊断 → 返回键:回到进子面前的位置(照旧)", !!inDiag && !!backOk && yd > 40 && Math.abs(yb - yd) < 6, { yd, yb, inDiag: !!inDiag });
       // 从别的面换到设置也是「打开设置面」:同样在顶
       await click("#search-toggle");
       await until(`!document.getElementById("search-pane").hidden`, 3000);

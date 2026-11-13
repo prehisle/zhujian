@@ -153,6 +153,15 @@ const main = async () => {
     await tapSel(toggle);
     await until(paneIs(id), 3000);
   };
+  /** 906:设置的重节各住进了自己的二级页(#set-compress / #set-remind / #set-alias / #set-backup / #set-about)——
+   *  要验那一节里的东西,先从设置首页真点它那一行进去。已经在那一页就不动。 */
+  const toSetPage = async (id) => {
+    if (await evalJs(paneIs(id))) return;
+    await ensurePane("settings-pane", "#settings-toggle");
+    await tapSel(`#settings-pane [data-set-page="${id}"]`);
+    await until(paneIs(id), 3000);
+    await sleep(400);
+  };
   const closePanes = async () => {
     if (await evalJs(`document.body.classList.contains("pane-open")`)) {
       await tapSel(`#bottombar [data-mode="ideas"]`);
@@ -199,33 +208,34 @@ const main = async () => {
   // ── WM-29 / A19 / Q9:设置页 ───────────────────────────────────────────────
   await tapSel("#settings-toggle");
   step("WM-29 设置开了", await until(paneIs("settings-pane"), 3000));
-  // 第一次开设置面时备份那一节是从「读取中…」长出来的(设置过备份的机器上会长一两百像素)⇒ 等它定了再量几何
-  await until(`!/读取中/.test(document.getElementById("backup-body").innerText)`, 8000);
-  await sleep(400);
+  await sleep(400); // 906:备份那一节住进了二级页,首页不再有「从读取中…长出来」那一段
   step(
     "WM-29 页头有标题「设置」",
     await evalJs(`(()=>{const h=document.querySelector("#settings-pane > h2");return h&&h.textContent==="设置"&&h.getBoundingClientRect().height>0})()`),
   );
   step("WM-29 顶栏「设置」点亮(.on + 加粗)", await evalJs(`document.getElementById("settings-toggle").classList.contains("on")&&getComputedStyle(document.getElementById("settings-toggle")).fontWeight>=600`));
   step("WM-29 底栏一格都不亮", await evalJs(`![...document.querySelectorAll("#bottombar button")].some(b=>b.classList.contains("active"))`));
-  if (await evalJs(`!document.getElementById("remind-sub").hidden`)) {
+  if (await evalJs(`(()=>{const r=document.querySelector('#settings-pane [data-set-page="set-remind"]');return !!r&&!r.hidden})()`)) {
+    await toSetPage("set-remind"); // 906:截止提醒那一节在它的二级页里(进页才画那两句)
     const sub = await evalJs(`document.getElementById("remind-sub").textContent`);
     step("Q9 截止提醒说明第一句是「开在屏幕上才响」", sub.startsWith("只有朱简开在屏幕上时才会响"), sub.slice(0, 40));
     // 应用评审取舍题 N4 起:常显的只有第一句,带天数的那几句住进节下的「说明」折叠(#remind-more;收着也读得到 textContent)。
     const more = await evalJs(`document.getElementById("remind-more").textContent`);
     step("Q9 说明里的范围含「3 天内」(与任务面到期钮同一个数;在「说明」折叠里)", /逾期、今天到期与 3 天内到期/.test(more), more);
   } else step("Q9 截止提醒说明", "skip", "这一端没有通知那一节");
-  // A19:「复制」回执不推走下面那一节
+  // A19:「复制」回执不推走下面那一节。906:意见反馈成了首页最后一节(「关于」住进了二级页)⇒ 「下面那一节的上沿」换成
+  // 「这一页的总高」—— 回执要是又插回本节里,页面就长高;阈值照旧 < 1。
+  await ensurePane("settings-pane", "#settings-toggle");
   const aboutTop0 = await (async () => {
     await centerDev("#feedback-copy");
-    return evalJs(`document.getElementById("about").getBoundingClientRect().top`);
+    return evalJs(`document.scrollingElement.scrollHeight`);
   })();
   await clearBar();
   await tapSel("#feedback-copy");
   const fb = await until(`!document.getElementById("error").hidden&&/邮箱地址已复制/.test(document.getElementById("error").textContent)`, 3000);
   step("A19 「复制」回执走顶上提示条(绿)", fb && (await evalJs(`document.getElementById("error").classList.contains("notice")`)), await barText());
-  const aboutTop1 = await evalJs(`document.getElementById("about").getBoundingClientRect().top`);
-  step("A19 回执没把「关于」往下推", Math.abs(aboutTop1 - aboutTop0) < 1, `${aboutTop0} → ${aboutTop1}`);
+  const aboutTop1 = await evalJs(`document.scrollingElement.scrollHeight`);
+  step("A19 回执没把下面的东西往下推(页面没长高)", Math.abs(aboutTop1 - aboutTop0) < 1, `${aboutTop0} → ${aboutTop1}`);
   step("A19 本节里没有那行常驻灰字", await evalJs(`!document.getElementById("feedback-msg")`));
   await clearBar();
   // WM-29 后半(903 用户拍反过来):关了再开从最上面开始(y0 > 0 是自证前置);细判在 cdp-acceptance-picks-q.mjs 的 Q2
@@ -296,12 +306,13 @@ const main = async () => {
   await ensurePane("settings-pane", "#settings-toggle");
 
   // ── A12 / A34 / A11:政策全文 ───────────────────────────────────────────────
+  await toSetPage("set-about"); // 906:「关于」是设置的二级页
   step(
     "A12 「关于」里有三份(隐私政策 / 隐私权利 / 用户协议)",
-    (await evalJs(`[...document.querySelectorAll("#settings-pane [data-policy]")].map(b=>b.textContent).join("/")`)) === "隐私政策/隐私权利/用户协议",
+    (await evalJs(`[...document.querySelectorAll("#set-about [data-policy]")].map(b=>b.textContent).join("/")`)) === "隐私政策/隐私权利/用户协议",
   );
   const hist0 = await evalJs(`history.length`);
-  await tapSel(`#settings-pane [data-policy="terms.html"]`);
+  await tapSel(`#set-about [data-policy="terms.html"]`);
   step("A12 点「用户协议」开的是应用内那一页", await until(shown("policy-view"), 3000));
   step("A34 上方那行是用户协议的地址", await until(`/\\/terms\\.html$/.test(document.getElementById("policy-canonical").textContent)`, 3000), await evalJs(`document.getElementById("policy-canonical").textContent`));
   step("A34 「这一份就是适用于你这一只的」那句在", await evalJs(`[...document.querySelectorAll("#policy-view .fine")].some(p=>/适用于你手上这一只朱简/.test(p.textContent))`));
@@ -320,19 +331,28 @@ const main = async () => {
   } else step("A34 框里的页签", false, "政策页没载出来");
   await back();
   await sleep(600);
-  step("A11 政策页上一记返回就收面板、回到设置", (await evalJs(`document.getElementById("policy-view").hidden`)) && (await evalJs(paneIs("settings-pane"))));
-  await ensurePane("settings-pane", "#settings-toggle");
+  // 906:回到的是开它的那一页 =「关于」(设置的二级页)
+  step("A11 政策页上一记返回就收面板、回到设置(「关于」那一页)", (await evalJs(`document.getElementById("policy-view").hidden`)) && (await evalJs(paneIs("set-about"))));
+  await toSetPage("set-about");
   step("A11 …而且 app 还在前台", (await focusedPkg()) === PKG, await focusedPkg());
   step("A34 告知页链接不是浏览器默认蓝", (await evalJs(`getComputedStyle(document.getElementById("privacy-link")).color`)) !== "rgb(0, 0, 238)", await evalJs(`getComputedStyle(document.getElementById("privacy-link")).color`));
   step("WM-30 「不同意并退出」", (await evalJs(`document.getElementById("privacy-decline").textContent`)) === "不同意并退出");
 
   // ── Q11 WM-32 / Q10:关于 ──────────────────────────────────────────────────
+  await toSetPage("set-about");
   await tapSel("#about-feedback-link");
   await sleep(900);
-  step("WM-32 「意见反馈」是链接,点了滚到那一节", await evalJs(`(()=>{const t=document.getElementById("feedback-title").getBoundingClientRect().top;return t>=0&&t<160})()`), await evalJs(`document.getElementById("feedback-title").getBoundingClientRect().top`));
+  // 906:意见反馈在设置首页的最末 ⇒ 点了 = 回首页并滚到那一节;那一节贴着页底、滚不到「离顶 160 以内」时,判「页面已滚到底、那一节整个在屏内」。
+  step(
+    "WM-32 「意见反馈」是链接,点了滚到那一节",
+    await evalJs(`(()=>{if(document.getElementById("settings-pane").hidden)return false;const t=document.getElementById("feedback-title").getBoundingClientRect().top;const se=document.scrollingElement;
+      const atEnd=se.scrollTop>=se.scrollHeight-innerHeight-2;const b=document.getElementById("feedback-copy").getBoundingClientRect().bottom;return t>=0&&(t<160||(atEnd&&b<=innerHeight))})()`),
+    await evalJs(`document.getElementById("feedback-title").getBoundingClientRect().top`),
+  );
   step("WM-32 邮箱那一框看得出能点(安卓)", await evalJs(`document.getElementById("feedback-mail").classList.contains("mail-link")`));
   if (await evalJs(`!!document.getElementById("update-check")`)) {
     await clearBar();
+    await toSetPage("set-about");
     await tapSel("#update-check");
     const said = await until(`(()=>{const e=document.getElementById("error");return (!e.hidden&&/已是最新 v|没查成/.test(e.textContent))||!document.getElementById("update").hidden})()`, 15000);
     step("Q10 「检查更新」有回音(已是最新 / 新版提示 / 没查成)", said, (await barText()) || (await evalJs(`document.getElementById("update-msg").textContent`)));
@@ -340,6 +360,8 @@ const main = async () => {
   } else step("Q10 「检查更新」", "skip", "这条渠道没有应用内更新(那一行被摘了)");
 
   // ── A18 / WM-35:备份码框(还没设置备份时)─────────────────────────────────
+  await toSetPage("set-backup"); // 906:备份是设置的二级页
+  await until(`(()=>{const b=document.getElementById("backup-body");return b.childElementCount>0&&!/读取中/.test(b.innerText)})()`, 8000);
   const setupBtn = await evalJs(`(()=>{const b=[...document.querySelectorAll("#backup-body button")].find(x=>x.textContent==="设置备份");if(!b)return false;b.id="w161-setup";return true})()`);
   if (setupBtn) {
     await tapSel("#w161-setup");
@@ -371,13 +393,14 @@ const main = async () => {
   // ── A19 / A31 几何半截:验证结论长了,钮不下行(假行量 CSS)────────────────────
   const row = JSON.parse(
     await evalJs(`(()=>{const w=document.createElement("div");w.className="bkup-item";w.id="w161-row";
-      w.innerHTML='<span class="bkup-item-name">默认空间 · 2026-11-06 05:02</span><span class="bkup-item-file">zhujian-main-20261105T210253Z-01M6PRB3XXXXXXXXXXXXXXXXXX.zjbak</span><span class="bkup-item-meta">200 KB</span><span class="bkup-item-state">现在打得开:一个名字起得很长很长的空间 · 1.2 MB</span><button class="ghost">验证</button>';
+      w.innerHTML='<div class="bkup-item-main"><span class="bkup-item-name">默认空间 · 2026-11-06 05:02</span><div class="bkup-item-sub"><span class="bkup-item-meta">200 KB</span><span class="bkup-item-state">现在打得开:一个名字起得很长很长的空间 · 1.2 MB</span></div></div><button class="ghost">验证</button><span class="bkup-item-file" hidden>zhujian-main-20261105T210253Z-01M6PRB3XXXXXXXXXXXXXXXXXX.zjbak</span>'; // 906:行的结构同 backup.ts::listRow(文件名平时收着)
       document.getElementById("backup-body").appendChild(w);const s=w.querySelector(".bkup-item-state").getBoundingClientRect(),b=w.querySelector("button").getBoundingClientRect(),m=w.querySelector(".bkup-item-meta").getBoundingClientRect();
       const r={sameRow:b.top<s.bottom&&b.bottom>s.top&&Math.abs(m.top-s.top)<20,right:b.right>s.right};w.remove();return JSON.stringify(r)})()`),
   );
   step("A19 验证结论长了,「验证」钮仍在同一行的右边", row.sameRow && row.right, JSON.stringify(row));
 
   // ── A13 + A35 英文:改语言重载后回到语言那一行 ────────────────────────────────
+  await ensurePane("settings-pane", "#settings-toggle"); // 906:上一段停在「备份」那一页,语言那一排在设置首页
   await tapSel(`#lang-seg [data-lang="en"]`);
   await reconnect();
   const enOk = await until(`document.documentElement.lang==="en"`, 12000);

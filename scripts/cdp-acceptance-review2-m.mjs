@@ -227,6 +227,8 @@ const main = async () => {
 
     // ── M11 关于里的用户指南 ───────────────────────────────────────────────────
     await click("#settings-toggle");
+    await until(`!document.getElementById("settings-pane").hidden`, 3000);
+    await click(`#settings-pane [data-set-page="set-about"]`); // 906:「关于」是设置的二级页
     await until(`document.querySelectorAll("#about .k").length>=3`, 5000);
     const m11 = await evalJs(`(()=>{const ks=[...document.querySelectorAll("#about .k")].map(k=>k.textContent);const as=[...document.querySelectorAll("#about a.about-link")].map(a=>a.getAttribute("href"));return {ks,as}})()`);
     step("M11「关于」第四行链接是「用户指南」、地址 = 官网 + /docs/", m11.as.length === 4 && m11.as[3] === `${m11.as[0]}/docs/` && m11.ks[m11.ks.length - 1] === "用户指南", m11);

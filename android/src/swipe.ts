@@ -5,7 +5,7 @@
 // 滑过了阈值就说一句「已是第一 / 最后一列」(165 / W5 A49:此前卡弹回去、一声不吭,像是划坏了)。
 // 只拦「pointerdown 命中任务卡」的横滑;顶部标题栏等非卡区域的横滑一概不吃,给日后
 // 「横滑切视图」留一条干净通道。竖向滚动交回原生(.card { touch-action: pan-y }),
-// 横向占优才锁定为滑动。进 done 走 update_task_status,后端照常盖 done_at(与勾框一致)。
+// 横向占优才锁定为滑动。进 done 走 update_task_status,后端照常盖 done_at(与操作面的「完成」一致)。
 
 import { updateTaskStatus, type TaskStatus, type TimelineItem } from "./api";
 import { t } from "./i18n";
@@ -102,8 +102,8 @@ export function initCardSwipe(deps: Deps): void {
     if (isDragging()) return; // 长按拖已经拿起了这张卡(carddrag.ts)
     if (deps.isSwitching() || deps.hasDirtyDraft()) return;
     const el = e.target as HTMLElement;
-    // 勾框/正文里的待办方框/缩略图/展开面板各有其主,不抢。
-    if (el.closest(".tick") || el.closest(".ckbox") || el.closest(".thumb") || el.closest(".panel")) return;
+    // 正文里的待办方框/缩略图/展开面板各有其主,不抢。
+    if (el.closest(".ckbox") || el.closest(".thumb") || el.closest(".panel")) return;
     const card = el.closest<HTMLElement>("article.card[data-id]");
     if (!card || card.querySelector(".panel")) return; // 面板开着的卡不滑
     const id = card.dataset.id!;

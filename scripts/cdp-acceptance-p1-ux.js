@@ -49,7 +49,9 @@
   // (历史 · 移动 · 撤回 · 归档 · 删除)收在「更多…」子面里。⇒ 先把面板弄回**主面**
   // (判据 = `more` 这枚在不在),主面上没有的再钻一层。⛔ 别写成「恒先点 more」——
   // 主面那四枚在更多面里找不着。
-  const inPanel = (id, act) => cardOf(id)?.querySelector(`.panel [data-pact="${act}"]`) ?? null;
+  const inPanel = (id, act) =>
+    cardOf(id)?.querySelector(`.panel [data-pact="${act}"]`) ??
+    (cardOf(id)?.querySelector(".panel") && document.getElementById("more-sheet").classList.contains("open") ? document.querySelector(`#more-list [data-more-act="${act}"]`) : null); // 906:「更多…」是屏底菜单层 ⇒ 面里没有的那几枚到层里找(#more-list [data-more-act])
   const openCardAct = async (id, act) => {
     for (let i = 0; i < 4; i++) {
       if (!inPanel(id, "more")) {

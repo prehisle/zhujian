@@ -44,7 +44,9 @@
   // ⚠ #timeline 每刷一轮整片重建 ⇒ 一律现查,别缓存节点(316)。
   const cardOf = (id) => document.querySelector('#timeline [data-id="' + id + '"]');
   const panelOf = (id) => cardOf(id)?.querySelector(".panel") ?? null;
-  const inPanel = (id, pact) => panelOf(id)?.querySelector('[data-pact="' + pact + '"]') ?? null;
+  const inPanel = (id, pact) =>
+    panelOf(id)?.querySelector('[data-pact="' + pact + '"]') ??
+    (panelOf(id) && document.getElementById("more-sheet").classList.contains("open") ? document.querySelector('#more-list [data-more-act="' + pact + '"]') : null); // 906:「更多…」是屏底菜单层 ⇒ 面里没有的那几枚到层里找(#more-list [data-more-act])
   /** 开卡片面板取某个入口(面板可能本来就开着,点正文是**收**⇒ 先看在不在)。
    *  706 起主面只剩四枚,「历史」在「更多…」后面 ⇒ 先把面板弄回主面(判据 = `more` 在不在),
    *  主面上没有的再钻一层。⛔ 别写成「恒先点 more」:主面那四枚在更多面里找不着。 */
@@ -98,7 +100,8 @@
     const none = await actOf(note, "history");
     ok("② 没改过:「更多…」里没有「历史」(A45)", none === null);
     ok("② …「更多…」确实开着(前置:别把没开成读成没有)", !!inPanel(note, "copy"));
-    click(inPanel(note, "back"));
+    window.__zhujianHandleBack(); // 906:「更多…」是屏底菜单层,没有「返回」钮 ⇒ 走返回键那条入口收层
+    await until(() => !document.getElementById("more-sheet").classList.contains("open"), 1500);
     if (!ok("⑤ 「返回」回到操作面(edit 入口又在)", (await until(() => panelOf(note)?.querySelector('[data-pact="edit"]'), 3000)) !== null)) return out;
 
     // ---- 改两次(历史里存的是被换掉的那一版):第一次走编辑层(保存后整轴重拉,卡上「改过」进快照),第二次走 IPC ----
@@ -149,7 +152,7 @@
     ok("③ 点开一块才显示那一版(v1;比对的旧那一侧逐字对上)", (await until(() => openOld().old === v1)) !== null, openOld());
     click(panelOf(note).querySelector(`[data-rev="${ids[0]}"]`));
     ok("③ 换一块 = 前一块收起,只展开 v2", (await until(() => { const o = openOld(); return o.n === 1 && o.old === v2; })) !== null, openOld());
-    click(await actOf(note, "back"));
+    click(inPanel(note, "back")); // 历史面自己那枚「返回」(906 前这里绕了一圈:actOf 先回主面、再进「更多…」那一面拿它的「返回」)
     ok("⑤ 「返回」回到操作面", (await until(() => panelOf(note)?.querySelector('[data-pact="edit"]'), 3000)) !== null);
 
     // ---- ⑦ 翻页:再改 49 次 ⇒ 51 版,一页 50 ⇒ 第一页 50 块 +「更早的版本」,点了接上第 51 块 ----
@@ -166,7 +169,7 @@
         return ids2.length === 51 && new Set(ids2).size === 51 ? ids2 : null;
       })) !== null);
     ok("⑦ 翻到底后「更早的版本」消失", !panelOf(note)?.querySelector('[data-pact="histmore"]'));
-    click(await actOf(note, "back"));
+    click(inPanel(note, "back")); // 历史面自己那枚「返回」(906 前这里绕了一圈:actOf 先回主面、再进「更多…」那一面拿它的「返回」)
 
     // ---- ⑥ 任务卡也有入口(同一张表)----
     const tasksTab = document.querySelector('#bottombar [data-mode="tasks"]');
@@ -185,7 +188,8 @@
     if (!ok("探针任务入时间轴", !!tcard)) return out;
     task = tcard.dataset.id;
     ok("⑥ 没改过的任务卡同样不列「历史」(A45)", (await actOf(task, "history")) === null && !!inPanel(task, "copy"));
-    click(inPanel(task, "back"));
+    window.__zhujianHandleBack(); // 906:「更多…」是屏底菜单层,没有「返回」钮 ⇒ 走返回键那条入口收层
+    await until(() => !document.getElementById("more-sheet").classList.contains("open"), 1500);
   } catch (e) {
     out.runError = String(e?.message ?? e);
   } finally {

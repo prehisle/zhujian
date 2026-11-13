@@ -19,7 +19,6 @@ import {
   addTaskTopic,
   captureIdea,
   captureTodo,
-  completeTask,
   deviceIdentity,
   setDeviceAlias,
   editNote,
@@ -35,7 +34,6 @@ import {
   sealDoneTasks,
   spaceLabel,
   unsealTask,
-  updateTaskStatus,
   type SealedCount,
   type SearchHitItem,
   type SpaceInfo,
@@ -71,7 +69,6 @@ import { applyChecklistMarker, dropEmptyChecklistItems, wireChecklistNewline } f
 import {
   HOLDING,
   boardColumns,
-  boardHasDone,
   boardName,
   boardOfStage,
   currentView,
@@ -81,7 +78,6 @@ import {
   isDoneStage,
   isHeldStage,
   isTaskStage,
-  landingOfStage,
   liveBoards,
   setBoards,
   setColumns,
@@ -91,7 +87,7 @@ import {
   viewId,
   type Board,
 } from "./columns";
-import { initTaskMove, inView, moveReceipt, spotOf } from "./taskmove";
+import { initTaskMove, inView } from "./taskmove";
 import { initBoardScroll, restoreBoardScroll, scrollByFor } from "./boardscroll";
 import { initChromeHide, showChrome, syncPeek } from "./chromehide";
 import { capturePhoto, composeImages, compressImagesOn, PICK_MAX, pickImages, setCompressImages } from "./images";
@@ -124,6 +120,7 @@ import {
 } from "./comments";
 import { closeEditSheetNow, initEditSheet, isEditSheetDirty, isEditSheetOpen, saveEditSheet } from "./editsheet";
 import { closeDatePickNow, initDatePick, isDatePickOpen } from "./datepick";
+import { closeMoreSheetNow, initMoreSheet, isMoreSheetOpen } from "./moresheet";
 import { disconnectThumbObserver, fillThumb, hydrateThumbs } from "./thumbs";
 import { onFoldClick, resettleFolds, settleFolds } from "./fold";
 import { closeViewerNow, initViewer, isViewerOpen, openLocalViewer, openViewer } from "./viewer";
@@ -425,15 +422,10 @@ function dueSummaryFullLabel(late: number, now: number, soon: number): string {
 // ⛔ 只有随记面传 true —— 回收站与搜索是平铺的,那儿的卡必须保留完整日期(同桌面 inbox.ts
 //    「想法 sits in a per-day timeline → time-of-day only; 回收站 is flat → full stamp」)。
 function renderCard(it: TimelineItem, hideTopic: string | null, underDayHead = false): string {
-  const isTask = stageLabel(it.stage) !== undefined;
-  // 0043:勾 = 「挪进这块看板的完成列」⇒ 纯分类看板(没有完成列)与收容区里的卡**不出勾**(plan §6 手机);
-  // 已完成的卡取消勾 = 点回它那块看板的落点 ⇒ 落点 ⊥(放不进卡)时勾灰着,别给一条注定被拒的路。
+  // 906(用户拍「卡片左边…那么丑,要做」):任务卡左边那枚勾完成的圆圈撤了 —— 「完成」是操作面第一层最前面那一枚
+  // (cardpanel.ts renderActions,出现条件 = 原来画圆圈的条件),正文左缘与随记卡同一条线。已完成的卡在正文前带一枚朱砂 ✓
+  // (index.html `.card.done .content::before`,同桌面看板完成列);挪回去走操作面的「列」那枚。
   const done = isDoneStage(it.stage);
-  const tick =
-    isTask && boardHasDone(it.stage)
-      ? `<label class="tick"><input type="checkbox" data-id="${esc(it.id)}"
-         ${done ? "checked" : ""}${done && landingOfStage(it.stage) === null ? " disabled" : ""} /><span class="box"></span></label>`
-      : "";
   // ⛔ 卡上不再盖状态印(用户面 85 ④ / ui-consistency M10):任务面**恒按状态分段**
   // (projectTimeline 里每段头上就是 `stageLabel` 那一行),每张卡再印一遍等于把节头说第二遍;
   // 随记面上没有任务卡。状态改挂在 `data-stage` 上给工装认(swipe-undo 那支资产读它),
@@ -483,7 +475,7 @@ function renderCard(it: TimelineItem, hideTopic: string | null, underDayHead = f
   // 此前「只夹任务面」的理由(随记是单列流水、长卡不挡别的卡)被用户推翻。
   const clamp = " clamped";
   const tint = cardTint(it.color);
-  return `<article class="card${done ? " done" : ""}${tint.cls}"${tint.attr} data-id="${esc(it.id)}" data-stage="${esc(it.stage)}">${tick}<div class="body">
+  return `<article class="card${done ? " done" : ""}${tint.cls}"${tint.attr} data-id="${esc(it.id)}" data-stage="${esc(it.stage)}"><div class="body">
     <p class="content${clamp}">${contentHtml(it.content, true)}</p>${thumbs}
     <footer><time>${esc(underDayHead ? fmtTimeOfDay(it.created_at) : fmtWhen(it.created_at))}</time>${sig}${
       // 161 / W4 Q16(WP-24):来源挨着时间、「改过」放在它后面 —— 此前「06:00 改过 · zjd2」,「改过」紧挨着别人的名字,
@@ -735,6 +727,7 @@ let nativeBackPending = false; // native 请求的 history.back() 已发、popst
   if (deferredLayers > 0) {
     if (isViewerOpen()) closeViewerNow();
     else if (isDatePickOpen()) closeDatePickNow();
+    else if (isMoreSheetOpen()) closeMoreSheetNow();
     else if (isEditSheetOpen()) {
       if (isEditSheetDirty()) {
         saveEditSheet(); // 157 G4 / P1:离开 = 保存;存成了宿主照常收层销账,存不成层与挂账都留着
@@ -791,7 +784,7 @@ function clearTaskFiltersByBack(): boolean {
 // 开着面板就收面;开着编辑 / 留言 / 大图 / 记一笔这些层、或有卡片草稿时不动(那是正在做的事,别被一条通知拽走)。
 window.addEventListener("zhujian-notif-tap", () => {
   if (switching || captureSaving || !lastRefreshOk) return;
-  if (cardPanel.hasDirtyDraft() || isViewerOpen() || isEditSheetOpen() || isDatePickOpen() || captureOpen || isCommentsOpen()) return;
+  if (cardPanel.hasDirtyDraft() || isViewerOpen() || isEditSheetOpen() || isDatePickOpen() || isMoreSheetOpen() || captureOpen || isCommentsOpen()) return;
   navSeq++; // 作废在途的定位(同主动导航)
   if (activePane !== null) {
     closePaneNow();
@@ -837,6 +830,11 @@ window.addEventListener("popstate", () => {
   // 选截止日期的月历层(904):返回键 = 取消,什么都不写;底下那排「截止」原样留着。
   if (isDatePickOpen()) {
     closeDatePickNow();
+    return;
+  }
+  // 卡片「更多…」的屏底菜单(906):返回键 = 收层,什么都不做;卡片上的操作面原样留着。
+  if (isMoreSheetOpen()) {
+    closeMoreSheetNow();
     return;
   }
   // 编辑层(706)在最上头(留言层开着时它开不出来:遮罩压着卡片操作面)。
@@ -1371,10 +1369,42 @@ let ftextRestW = 0;
  *  「所有 / 无标签 / 家里」三枚挤在过滤框左边那一截里,第三枚被切成「○ 家」,而点 ▾ 摊开后也只有这一行。 */
 let tagsAutoOpen = false;
 
+/** 摊开 / 收起那枚钮与摊开态第一行的垫片(906)。⚠ 钮在摊开态被搬进标签块当最后一枚,而 filter.ts 每次重画都
+ *  `replaceChildren` ⇒ 那一刻它不在文档里,⛔ 别在这一段里用 `$("filter-expand")` 现查,一律走这两枚引用。 */
+const tagsBtn = $("filter-expand") as HTMLButtonElement;
+const tagsSpacer = document.createElement("span");
+tagsSpacer.className = "fspacer";
+tagsSpacer.setAttribute("aria-hidden", "true");
+
+/** 收起态那一行里**没露全**的标签钮有几枚(906:「更多 N ▾」的 N)。按标签行歇在开头(没横划过)时的排法数 ——
+ *  横划之后这个数不跟着变(它说的是「这一行一共还藏着几枚」,不是此刻屏上的瞬时读数)。 */
+function hiddenPillCount(topics: HTMLElement): number {
+  const edge = topics.getBoundingClientRect().left + topics.clientWidth;
+  let n = 0;
+  for (const p of topics.querySelectorAll<HTMLElement>(":scope > .fpill")) {
+    if (p.offsetWidth === 0) continue; // 收着的子标签不占位,不算
+    if (p.getBoundingClientRect().right + topics.scrollLeft > edge + 1) n++;
+  }
+  return n;
+}
+
+/** 钮上的字:词 + 一枚不念出来的箭头(读屏念 aria-label)。 */
+function setTagsBtnLabel(text: string, arrow: string): void {
+  const a = document.createElement("span");
+  a.className = "fexpand-arrow";
+  a.setAttribute("aria-hidden", "true");
+  a.textContent = arrow;
+  tagsBtn.replaceChildren(text, a);
+}
+
 function syncTagsToggle(): void {
   const topics = $("filter-topics");
-  const btn = $("filter-expand") as HTMLButtonElement;
+  const btn = tagsBtn;
   const ft = $("filter-text");
+  const fmain = ft.parentElement as HTMLElement;
+  // 906:先把摊开态搬进标签块的那两样摘回原位(钮回到过滤框前头),下面的量法与「标签行空不空」都按 filter.ts 画的那几枚算。
+  tagsSpacer.remove();
+  if (btn.parentElement !== fmain) fmain.insertBefore(btn, ft);
   // 全部 pill 排成一行要多宽:逐枚量(⛔ 别用 scrollWidth —— 摊开态它恒等于 clientWidth,而这个数两态都要用)。
   // 收起的子标签(`.fpill.hidden`)宽 0,不算;gap 8 = `.ftopics` 的 gap。
   const pills = [...topics.children].filter((k): k is HTMLElement => k instanceof HTMLElement && k.offsetWidth > 0);
@@ -1398,28 +1428,64 @@ function syncTagsToggle(): void {
   const board = document.body.classList.contains("board");
   const narrow = !isWide();
   tagsAutoOpen = !tagsOpen && (narrow || !fitsInline) && !clipped && need <= full + 1 && pills.length > 0 && !board;
+  const empty = topics.childElementCount === 0; // ⚠ 赶在下面往标签块里搬东西之前读
   $("filterbar").classList.toggle("tags-open", tagsOpen || tagsAutoOpen);
   $("filterbar").classList.toggle("tags-fit", tagsAutoOpen);
   btn.classList.toggle("on", tagsOpen);
-  btn.textContent = tagsOpen ? "▴" : "▾";
   btn.setAttribute("aria-label", tagsOpen ? t("shell.tagsCollapse") : t("shell.tagsExpand"));
+  btn.setAttribute("aria-expanded", String(tagsOpen));
   // 一行装得下就整枚藏起(一枚点了没变化的钮比没有更糟);自动摊开那一形同理(摊开了也还是那一行)。
-  // 摊开态(用户自己按的)照留 ▴,否则收不回来。
-  // 标签行整行没发(一枚真标签都没有,filter.ts renderTopicPills)⇒ 摊开态也藏,别留一枚摊不出东西的 ▴。
-  btn.hidden = topics.childElementCount === 0 || (!tagsOpen && (fitsInline || tagsAutoOpen));
+  // 摊开态(用户自己按的)照留「收起 ▴」,否则收不回来。
+  // 标签行整行没发(一枚真标签都没有,filter.ts renderTopicPills)⇒ 摊开态也藏,别留一枚摊不出东西的钮。
+  btn.hidden = empty || (!tagsOpen && (fitsInline || tagsAutoOpen));
+  // 906(用户拍「收起钮放到标签末尾」):此前收起态是一枚只有「▾」的小圆钮,摊开后它连同「过滤…」另起一行靠右、左边空着。
+  // 摊开态:钮写「收起 ▴」、搬进标签块当**最后一枚**;竖放上过滤框回到「标签 所有 无标签」那一行的右端 —— 那一行末尾垫一枚
+  //   吃掉余宽的垫片(真标签从下一行排起),过滤框绝对定位叠在垫片上(它不能搬进标签块:filter.ts 每次重画整块换掉,
+  //   搬进去打着字就丢焦点)。垫片的基宽 = 歇着的过滤框;一行连垫片都放不下(特大字号)时垫片自己落到第二行,过滤框跟着它。
+  //   看板形(横放)不垫:那儿过滤框本来就和到期钮同一行(index.html `body.board` 那组)。
+  // 收起态:钮写「更多 N ▾」(N = 这一行没露全的标签枚数,说法同桌面 `filter.more`);量不出一个站得住的数就只写「更多 ▾」。
+  ft.style.top = "";
+  if (tagsOpen && !empty) {
+    setTagsBtnLabel(t("filter.less"), "▴");
+    if (!board) {
+      tagsSpacer.style.flexBasis = `${ftextRestW}px`;
+      const firstTag = topics.querySelector(":scope > .fpill[data-topic-id]");
+      if (firstTag) firstTag.before(tagsSpacer);
+      else topics.append(tagsSpacer);
+    }
+    topics.append(btn);
+    if (tagsSpacer.isConnected) ft.style.top = `${tagsSpacer.getBoundingClientRect().top - fmain.getBoundingClientRect().top + fmain.scrollTop}px`;
+  } else if (!btn.hidden) {
+    // 数字的位数会改钮的宽、钮的宽又改标签行的宽 ⇒ 写上去再量,量到「写的数 = 量的数」才算数(至多三拍);对不上就不写数。
+    let n = pills.length;
+    let settled = false;
+    for (let i = 0; i < 3 && !settled; i++) {
+      setTagsBtnLabel(t("filter.more", { n }), "▾");
+      const got = hiddenPillCount(topics);
+      settled = got === n;
+      n = got;
+    }
+    // 钮摆上去之后一枚都没被藏住、也没有哪枚名字被截着 ⇒ 摊开了也不会多露出什么:整枚藏起(同上面「一行装得下」那条;
+    // 看板形量不出整行宽、fitsInline 恒 false,宽屏上标签明明全露着也曾挂着一枚 ▾)。量的那一下恒在「钮摆着」时做 ⇒ 结论不随它显隐翻。
+    if (settled && n === 0 && !clipped) btn.hidden = true;
+    else if (!settled || n <= 0) setTagsBtnLabel(t("shell.tagsMore"), "▾");
+  }
   // 标签行空了而类型轴还在 ⇒ 过滤框并进类型那一行右端,别独占一行(用户面 150;CSS 见 `.kinds-inline`)。
-  const kindsInline = topics.childElementCount === 0 && $("filter-kinds").childElementCount > 0;
+  const kindsInline = empty && $("filter-kinds").childElementCount > 0;
   $("filterbar").classList.toggle("kinds-inline", kindsInline);
   // 标签、类型两行都空着 ⇒ 过滤框并进「列」那排右端(mbopt M9;CSS 见 `.stages-inline`)。看板形有自己那套排法,不进这一格。
-  const stagesInline =
-    !board && topics.childElementCount === 0 && $("filter-kinds").childElementCount === 0 && $("filter-stages").childElementCount > 0;
+  const stagesInline = !board && empty && $("filter-kinds").childElementCount === 0 && $("filter-stages").childElementCount > 0;
   $("filterbar").classList.toggle("stages-inline", stagesInline);
   // ⛔ 一枚真标签都没有时不占标签行(879 用户拍,翻 165 / W5 A21 的 `.tags-reserve`;由头在 index.html `.tags-fit .ftext` 下面)。
 }
-$("filter-expand").addEventListener("click", () => {
+tagsBtn.addEventListener("click", () => {
   tagsOpen = !tagsOpen;
   localStorage.setItem(TAGS_OPEN_KEY, tagsOpen ? "1" : "0");
   syncTagsToggle();
+});
+// 父标签上那枚箭头翻子标签显隐(filter.ts 就地改类,不重画、也不改标签行盒子的宽)⇒ 「没露全的有几枚」要跟着重数(906)。
+$("filter-topics").addEventListener("click", (e) => {
+  if ((e.target as HTMLElement).closest(".fcaret")) syncTagsToggle();
 });
 // ⚠ 那枚钮的显隐是**量出来的**,而量的结果会随视口(转屏)与字号(251 的 textZoom:
 // `.ftext` 是 em,放大字号就吃掉更多横向空间)一起变 —— 只在 renderFilterBar 里算的话,
@@ -1681,7 +1747,10 @@ function revealActiveTopic(): void {
   if (!pill) return;
   const r = row.getBoundingClientRect();
   const p = pill.getBoundingClientRect();
-  if (p.left < r.left || p.right > r.right) row.scrollLeft += p.left - r.left - 8;
+  // 左边留 8 的引子;行窄到「引子 + 这一枚」放不下时(906:收起态那枚钮写了字、比原来的 ▾ 宽,过滤框一张开标签行只剩九十来宽)
+  // 引子让出来,先保这一枚整枚在行里。
+  const lead = Math.max(0, Math.min(8, r.width - p.width));
+  if (p.left < r.left || p.right > r.right) row.scrollLeft += p.left - r.left - lead;
 }
 
 /** 筛空(本面有条目、被当前筛选滤没了)的空态文案:词优先,再标签,再类型——别让
@@ -1829,7 +1898,7 @@ function refresh(): Promise<void> {
 }
 
 /** 空间已切换(currentSpace 刚翻):旧空间的时间轴立即离场(codex 四审——旧 DOM
- *  多留一拍,点它的缩略图/勾框就会拿旧条目 id 打到新空间;清屏 = 没有可点的旧目标),
+ *  多留一拍,点它的缩略图/操作面就会拿旧条目 id 打到新空间;清屏 = 没有可点的旧目标),
  *  随后的 refresh 负责画新空间。 */
 function blankTimelineForSpaceChange(): void {
   refreshDeferred = false; // 旧空间欠的刷新作废:新空间马上整轴重拉
@@ -1849,41 +1918,6 @@ function blankTimelineForSpaceChange(): void {
   lastRefreshOk = false; // 快照失效(146 ▲▲M2):新空间读到之前,mode 切换不许投影旧数据
   $("timeline").innerHTML = `<p class="muted empty">${t("main.loading")}</p>`;
 }
-
-// 勾「标完成」:写命令,带点击时看到的空间;成败都刷新,不吞错、不做静默幂等。
-// 158 G3 / Q2(WM-04 / X-10):已完成卡上的勾也点得动 —— 取消勾 = 点回**卡所在那块看板的落点**(0043 起不再是「待办」;同桌面),
-// 此前它是 disabled、点了没反应。落点 ⊥ 时勾灰着(renderCard)。
-// 两个方向都给回执 + 撤销(撤销放回原列原位置,taskmove.ts);卡挪出视野时回执带「去看看」(Q1)。
-$("timeline").addEventListener("change", async (e) => {
-  const input = e.target as HTMLInputElement;
-  const id = input.dataset.id;
-  if (!id || input.disabled || input.type !== "checkbox") return;
-  if (switching) {
-    input.checked = !input.checked; // 切换编排中:屏上还是旧空间的卡,勾选不受理、当场回弹
-    return;
-  }
-  const space = getCurrentSpace();
-  // 勾框与 lastItems 是同一次投影(勾框在屏 ⇒ 快照必有此行)。
-  // 0043:完成 = 卡所在看板**解析后的完成列**(core `complete` 在事务里解析);取消勾 = 点回那块看板的落点。
-  const stage = lastItems.get(id)!.stage;
-  const back = isDoneStage(stage) ? landingOfStage(stage) : null;
-  // 落点 ⊥ 的完成卡,勾在 renderCard 里已灰掉 ⇒ 走到这里是投影与快照不同步,响亮抛。
-  if (isDoneStage(stage) && back === null) throw new Error(`done card ${id} has no landing to go back to`);
-  const spot = spotOf(id);
-  input.disabled = true;
-  try {
-    if (back !== null) await updateTaskStatus(space, id, back);
-    else await completeTask(space, id);
-  } catch (err) {
-    showErr(err);
-    await refresh();
-    return;
-  }
-  await refresh();
-  if (space !== getCurrentSpace()) return;
-  // 操作型回执(§3.1「已完成 · 撤销」):误勾一点召回,不用进操作面翻状态。
-  moveReceipt(space, id, back !== null ? t("board.undoMoved", { col: stageLabel(back)! }) : t("main.completed"), spot);
-});
 
 // 「全部归档」(158 G3 / Q3,WM-28):「已完成」节头那枚。问一次(归档后可查、不可删,这件事要在动手前说),
 // 回执带「撤销」(逐条取消归档 —— 同桌面 sealAllDone)与「去看看」(开归档页)。单张归档不问(cardpanel)。
@@ -2523,6 +2557,12 @@ const PANE_EL: Record<string, string> = {
   topics: "topics-pane",
   settings: "settings-pane",
   diag: "diag",
+  // 设置的二级页(906):名字 = 那一页的元素 id;都只从设置首页的入口行进(openSubPane)。
+  "set-compress": "set-compress",
+  "set-remind": "set-remind",
+  "set-alias": "set-alias",
+  "set-backup": "set-backup",
+  "set-about": "set-about",
 };
 let activePane: string | null = null;
 /** 子页的上一层(161 / W4 A11,WM-02 / N-2):从设置点进「空间…」「诊断」、从同步点进「空间…」、
@@ -2625,7 +2665,7 @@ function closePaneNow() {
   showChrome(); // 关面回到时间轴:顶栏露着,往下划再收(890)
   // 备份码仪式还开着就让后端把那把**只在内存里**的钥丢掉(盘上此刻什么都没写过 ⇒
   // 下次是干净的首次使用)。⛔ 反过来「先落盘再让用户抄」会留下一把没人抄过的钥。
-  if (activePane === "settings") backup.closeBackup();
+  if (activePane === "set-backup") backup.closeBackup(); // 906:备份那一节住进了自己的二级页
   if (activePane === "docs") closeDocs(); // 编辑器开着就落一版(不等;没写进去草稿还在)
   rememberPaneScroll();
   activePane = null;
@@ -2662,7 +2702,7 @@ function openPane(name: string, landing = false) {
   // ⚠ 只在「从时间轴进面板」那一次记账:面换面同层,此刻的 scrollY 是**上一个面板**的
   // 位置,记了就把时间轴那个数冲掉(关面还原到面板的偏移量 = 更怪的一跳)。
   if (!wasOpen) timelineScrollY = window.scrollY;
-  if (activePane === "settings") backup.closeBackup(); // 面换面同理(toggle 那条走 closePaneNow)
+  if (activePane === "set-backup") backup.closeBackup(); // 面换面同理(toggle 那条走 closePaneNow;回设置首页也算离开)
   if (activePane === "docs") closeDocs(); // 面换面同理
   rememberPaneScroll(); // 面换面:离开的那一面若要记位置,此刻记(159 / A17)
   activePane = name;
@@ -2700,14 +2740,20 @@ function openPane(name: string, landing = false) {
     window.scrollTo({ top: paneScrollY.search ?? 0 });
   }
   else if (name === "settings") {
+    // 906:首页只剩三排分段钮 + 入口行;各节住进自己的二级页,进那一页才画 / 才读(下面几支)。
     paintThemeSeg();
     paintTextSizeSeg();
     paintLangSeg();
-    paintCompressSeg();
+    paintSettingsSummaries();
+  }
+  else if (name === "set-compress") paintCompressSeg();
+  else if (name === "set-remind") {
     paintRemindRow();
     paintRemindPermission();
-    void loadAlias();
-    void loadAbout();
+  }
+  else if (name === "set-alias") void loadAlias();
+  else if (name === "set-about") void loadAbout();
+  else if (name === "set-backup") {
     // 备份一节(§17):⛔ 每次开面都重新问一遍状态 —— 回调不是真相源(进程可能在
     // 系统选择器开着的时候被杀,那时挂在 JS 里的 promise 早就没了)。
     backup.loadBackup();
@@ -3289,6 +3335,46 @@ $("bottombar").addEventListener("click", (e) => {
 
 $("settings-toggle").addEventListener("click", () => openPane("settings"));
 $("settings-diag-btn").addEventListener("click", () => openSubPane("diag"));
+// 906:设置首页的入口行 → 各自的二级页(设置的子页:返回键回首页、回到进去前的滚动位置,同「诊断」那一跳)。
+$("settings-entries").addEventListener("click", (e) => {
+  const page = (e.target as HTMLElement).closest<HTMLElement>("[data-set-page]")?.dataset.setPage;
+  if (page) openSubPane(page);
+});
+// 二级页顶上那枚「设置」:与返回键同一条路(回上一层、滚回原位);守门条目不动 —— 整段只占一枚,面还开着(paneStack 头注)。
+document.addEventListener("click", (e) => {
+  if (!(e.target as HTMLElement).closest("[data-set-back]")) return;
+  if (paneStack.length > 0 && activePane !== null) backToParentPane();
+});
+
+/** 设置首页入口行右边那句摘要(906):每次开首页重读一遍。⛔ 拿不到就空着,不写假值;异步那几样在回来之前留着上一次的
+ *  (别先清空再长回来,行尾会闪),读失败 / 这一端没有才清掉。 */
+function paintSettingsSummaries(): void {
+  const put = (id: string, text: string): void => {
+    $(id).textContent = text;
+  };
+  put("set-sum-spaces", spacesCache.length > 0 ? t("settings.sumSpaces", { n: spacesCache.length }) : "");
+  put("set-sum-compress", compressImagesOn() ? t("settings.compressOn") : t("settings.compressOff"));
+  if (HAS_NOTIFICATION) {
+    const cfg = reminderCfg();
+    put("set-sum-remind", cfg.on ? t("settings.sumRemindOn", { time: cfg.time }) : t("settings.sumRemindOff"));
+  }
+  const space = getCurrentSpace();
+  void deviceIdentity(space).then(
+    (d) => {
+      if (space !== getCurrentSpace()) return;
+      put("set-sum-alias", d.devices.find((x) => x.device_id === d.this_device)?.alias ?? "");
+    },
+    () => put("set-sum-alias", ""),
+  );
+  void backup.backupSummary().then(
+    (text) => put("set-sum-backup", text ?? ""),
+    () => put("set-sum-backup", ""),
+  );
+  void getVersion().then(
+    (v) => put("set-sum-about", `v${v}`),
+    () => put("set-sum-about", ""),
+  );
+}
 
 // 意见反馈的复制钮(国内上架 17)。⭐ **地址从那个 input 的 value 读**,⛔ 不在这儿再写一份
 // 常数 —— 静态壳里那一处是唯一出处,写两份就是等着它们哪天各说各的。
@@ -3315,8 +3401,11 @@ if (HAS_BROWSER) {
   });
 }
 // 161 / W4 Q11(WM-32 前半):「关于」那句里的「意见反馈」—— 滚到那一节。
+// 906:「关于」住进了二级页、意见反馈留在首页 ⇒ 先回首页(同返回键那条路),再滚到那一节。
 $("about-feedback-link").addEventListener("click", () => {
-  $("feedback-title").scrollIntoView({ block: "start", behavior: "smooth" });
+  if (paneStack.length > 0 && activePane === "set-about") backToParentPane();
+  if (activePane !== "settings") return; // 被开面那几道闸挡下
+  $("feedback-title").scrollIntoView({ block: "start" });
 });
 
 // 明暗三档(250):点哪档写哪档,高亮回来按当前档整排重画(单一渲染点,不在点击处
@@ -4167,6 +4256,7 @@ initErr((url) => {
 }, spaceLabelFromCore);
 initEditSheet({ pushLayer, settleHistory });
 initDatePick({ pushLayer, settleHistory });
+initMoreSheet({ pushLayer, settleHistory });
 // 留言层(314 第③笔):写/删成功即整轴重拉(徽章计数跟着走),开合各压/平一枚返回键守门条目。
 initComments({ refresh, pushLayer, settleHistory });
 // 长文面(longform-plan 第 4 格):留言走同一个入口;写成功后整轴重拉(底栏「长文」钮跟着显形)。

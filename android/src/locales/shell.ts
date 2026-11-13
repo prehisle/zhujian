@@ -69,6 +69,8 @@ export const shell = defineMessages({
   "shell.commentSend": { zh: "记下", en: "Post" },
   "shell.filterPh": { zh: "过滤…", en: "Filter…" },
   "shell.tagsExpand": { zh: "摊开全部标签", en: "Show all tags" },
+  // 906:收起态那枚钮量不出「还藏着几枚」时不带数的那一形(带数的走 filter.more)。
+  "shell.tagsMore": { zh: "更多", en: "More" },
   "shell.tagsCollapse": { zh: "收起标签行", en: "Collapse tag row" },
   "shell.appearance": { zh: "外观", en: "Appearance" },
   "shell.themeAuto": { zh: "自动", en: "Auto" },

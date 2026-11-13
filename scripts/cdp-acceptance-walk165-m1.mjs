@@ -150,7 +150,8 @@ const main = async () => {
     return id || null;
   };
   const card = (id) => `document.querySelector('#timeline [data-id="${id}"]')`;
-  const pact = (id, p) => `${card(id)}?.querySelector('.panel [data-pact="${p}"]')`;
+  // 906:「更多…」是屏底菜单层 ⇒ 面里没有的那几枚到层里找(#more-list [data-more-act])
+  const pact = (id, p) => `(${card(id)}?.querySelector('.panel [data-pact="${p}"]') ?? (${card(id)}?.querySelector(".panel") && document.getElementById("more-sheet").classList.contains("open") ? document.querySelector('#more-list [data-more-act="${p}"]') : null))`;
   /** 开卡片面板并停在主面(面板可能本来就开着,点正文是收 ⇒ 先看在不在)。 */
   const openPanel = async (id) => {
     for (let i = 0; i < 4; i++) {
@@ -349,7 +350,9 @@ const main = async () => {
     await clearBar();
     // 完成 → Q14「完成于 今天 HH:MM」+ A50
     await inv("add_task_topic_by_title", { id: t1, title: `${M}-tag` });
-    await evalJs(`${card(t1)}.querySelector(".tick input").click()`);
+    // 906:卡左边那枚勾完成的圆圈撤了 ⇒ 开操作面、点最前面那枚「完成」(同一条写口,回执照旧)
+    await evalJs(`(async()=>{if(!${card(t1)}.querySelector(".panel"))${card(t1)}.querySelector(".content").click();
+      for(let i=0;i<40;i++){const b=${card(t1)}?.querySelector('.panel [data-pact="complete"]');if(b){b.click();return true}await new Promise(r=>setTimeout(r,50))}return false})()`);
     await barIs(/^已完成/.toString(), 5000);
     await sleep(500);
     const doneAt = await until(`${card(t1)}?.querySelector(".done-at")?.textContent ?? ""`, 4000);
@@ -573,7 +576,15 @@ const main = async () => {
     // ── 设置:A41 / A34 / A33 / A52 ──────────────────────────────────────────────
     await click("#settings-toggle");
     await until(`!document.getElementById("settings-pane").hidden`, 3000);
+    // 906:「压缩大图」那一排住进了二级页(进页才画选中态)⇒ 进去一趟再回首页,三排都画过了再判
+    await click(`#settings-pane [data-set-page="set-compress"]`);
+    await until(`!document.getElementById("set-compress").hidden`, 3000);
+    await click("#set-compress [data-set-back]");
+    await until(`!document.getElementById("settings-pane").hidden`, 3000);
     step("A41 设置里的分段钮读屏读得出选中段(每排恰一枚 aria-pressed=true)", await evalJs(`["theme-seg","lang-seg","compress-seg"].every(id=>{const s=document.getElementById(id);if(!s)return true;const b=[...s.querySelectorAll("button")];return b.length>0&&b.filter(x=>x.getAttribute("aria-pressed")==="true").length===1&&b.every(x=>x.hasAttribute("aria-pressed"))})`));
+    // 906:那三枚政策钮在「关于」那一页(设置的二级页)⇒ 先从首页那一行进去
+    await click(`#settings-pane [data-set-page="set-about"]`);
+    await until(`!document.getElementById("set-about").hidden`, 3000);
     const pb = await evalJs(`(()=>{const b=document.querySelector('[data-policy="privacy.html"]');b.scrollIntoView({block:"center"});return !!b})()`);
     if (pb) {
       await sleep(400);

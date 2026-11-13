@@ -294,8 +294,35 @@
       #settings-pane h2:not(:first-child) { margin-top: 22px; }
       /* 901 设置面长说明的折叠(`details.notes`):summary 是 `.fine` 那一枚(颜色 / 字号不另开规则,同启动闸那只折叠的做法),
          这里只管几何 —— 一行高 44 = 触区(§2.3;隐形盒那一形,行高写死不随字号档漂)。折叠里的段落照 `.fine`,首段贴着钮。 */
-      #settings-pane details.notes > summary { margin: 0; min-height: 44px; line-height: 44px; }
-      #settings-pane details.notes > summary + .fine { margin-top: 0; }
+      #settings-pane details.notes > summary, .set-page details.notes > summary { margin: 0; min-height: 44px; line-height: 44px; }
+      #settings-pane details.notes > summary + .fine, .set-page details.notes > summary + .fine { margin-top: 0; }
+      /* 906 设置首页的入口行(用户拍「首页只留短的,重的进二级页」):一行一项 —— 左边名字、右边一句当前值的摘要 + 一枚画出来的
+         「进去」箭头(遮罩取形、色走 currentColor,同月历换月那枚;⛔ 不用「›」字符,905 用户说那对字符像书名号)。
+         行高 48 = 触区;行间一条细线。摘要放不下就省略(名字不许被挤)。带 data-needs 的行被 main.ts 打 hidden ⇒ 这里补回 display:none。 */
+      .set-list { margin-top: 22px; border-top: 1px solid var(--line); }
+      .set-row {
+        display: flex; align-items: center; gap: 10px; width: 100%; min-height: 48px; padding: 0 2px;
+        border: 0; border-bottom: 1px solid var(--line); background: none;
+        color: var(--ink); font-size: var(--fs-15); font-family: var(--font-sans); text-align: left;
+      }
+      .set-row[hidden] { display: none; }
+      .set-row:active { background: var(--ink-veil); }
+      .set-name { flex: none; }
+      .set-sum {
+        flex: 1 1 0; min-width: 0; text-align: right; color: var(--ink-soft); font-size: var(--fs-13);
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      }
+      .set-row::after, .set-back::before {
+        content: ""; flex: none; width: 16px; height: 16px; background: currentColor;
+        -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M10 3.5 5.5 8l4.5 4.5'/%3E%3C/svg%3E") center / contain no-repeat;
+        mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M10 3.5 5.5 8l4.5 4.5'/%3E%3C/svg%3E") center / contain no-repeat;
+      }
+      .set-row::after { transform: scaleX(-1); color: var(--ink-faint); margin-left: auto; }
+      /* 二级页顶上那枚「设置」(回首页;返回键同路):高 44 = 触区,左缘与正文对齐。 */
+      .set-back {
+        display: inline-flex; align-items: center; gap: 4px; min-height: 44px; margin: -6px 0 6px; padding: 0 12px 0 0;
+        border: 0; background: none; color: var(--ink-soft); font-size: var(--fs-14); font-family: var(--font-sans);
+      }
       /* ⛔ **这一族是控件,不许走 `--ink-faint`**(634,ui-consistency-plan M1):顶栏「标签 / 搜索 /
          同步 / 设置」四枚主导航就是它,另有 compose 三枚与更新条「稍后」。判据是 A2 拍板里那条
          **「未选中 tab 是能点的控件(§3.8),一个控件不劈两档」** —— faint 压纸面只有 2.29:1,
@@ -462,10 +489,10 @@
       /* 手机横放打着字(宽屏、不是高屏、键盘起着;165 / W5 A26):键盘一起可见区只剩约 130,捕获层(两行起步的写字框 + 一排钮
          + 上下 12)比它还高 ⇒ 层顶顶进状态栏、和系统图标叠在一起。⇒ 层高封在「可见区扣掉状态栏」之内(还放不下就层里滚),
          写字框起步收成一行、上边距收一半。编辑层不在这条里(它由 kbsheet 按可见区夹高)。 */
-      html.kb-up body.widescreen:not(.tallscreen) .compose:not(.editsheet):not(.datesheet) {
+      html.kb-up body.widescreen:not(.tallscreen) .compose:not(.editsheet):not(.datesheet):not(.moresheet) {
         max-height: calc(100vh - var(--sat)); overflow-y: auto; padding-top: 6px;
       }
-      html.kb-up body.widescreen:not(.tallscreen) .compose:not(.editsheet):not(.datesheet) textarea { min-height: 1.6em; }
+      html.kb-up body.widescreen:not(.tallscreen) .compose:not(.editsheet):not(.datesheet):not(.moresheet) textarea { min-height: 1.6em; }
       /* 底部层(捕获/留言)开着时锁住背景滚动 —— 由 kbsheet.ts 上下这个类,由头写在那边:
          键盘一起 Chromium 会滚文档去露焦点输入框,而层是 fixed 的,滚了只有背后的时间轴在动
          (240 报的「弹键盘背景乱滚」,2026-08-28 换了个形回来,A/B 各 5 次实测)。 */
@@ -474,6 +501,7 @@
          —— 两层不会同时开(编辑只从卡片操作面进,那时捕获层是收着的)。 */
       #capture-scrim,
       #date-scrim,
+      #more-scrim,
       #edit-scrim {
         position: fixed; inset: 0; z-index: 13;
         background: rgba(0, 0, 0, 0.35);
@@ -651,6 +679,21 @@
       .datesheet .compose-row .dp-act { font-size: var(--fs-14); padding: 0 12px; }
       .datesheet .compose-row .cancel { margin-left: auto; }
       .datesheet .compose-row .primary { margin-left: 10px; }
+
+      /* 卡片「更多…」的屏底菜单(moresheet.ts;906,用户拍「屏底弹出的菜单列表」—— 此前是卡片里一堆药丸钮 + 单挂的「返回」)。
+         与捕获 / 编辑 / 选日期同一座底部层(`.compose` 那身几何,宽屏上跟着变浮窗)。一行一项、左对齐、行高 52(≥ 48 触区),
+         行间一条细线;「删除」那一段在最底下,上面隔一条粗一档的线 + 一截空。朱砂字 = 撤回 / 删除(同此前 `.acts button.warn`)。
+         手机横放时可见区比菜单矮 ⇒ kbsheet 按可见区夹高、层里滚。左右内边距收掉(行自己带),按下去的底色才铺得满行。 */
+      .moresheet { overflow-y: auto; overscroll-behavior: contain; padding-inline: 0; padding-top: 6px; }
+      .ms-item {
+        display: flex; align-items: center; width: 100%; min-height: 52px; padding: 0 20px;
+        border: 0; border-top: 1px solid var(--line); background: none;
+        color: var(--ink); font-size: var(--fs-15); font-family: var(--font-sans); text-align: left;
+      }
+      .ms-group > .ms-item:first-child { border-top: 0; }
+      .ms-item:active { background: var(--ink-veil); }
+      .ms-item.warn { color: var(--seal-ink); }
+      .ms-tail { margin-top: 8px; border-top: 1px solid var(--line-strong); }
 
       /* 留言层(314 第③笔,identity-plan §4.7):几何与捕获层同一套(src/kbsheet.ts)——
          贴键盘上沿、收键盘停屏底。与捕获层的差别只有两处:限高(顶上留一条背景,读得出
@@ -863,7 +906,7 @@
         padding: 8px 22px; font-size: var(--fs-14); font-family: var(--font-sans);
       }
 
-      /* 时间轴:灵感行素卡;任务行带勾框 + stage 印。146:主视图分灵感/任务两面,
+      /* 时间轴:灵感行与任务行同一张素卡(906 起任务行不再带勾框;stage 印 85 ④ 起也不盖了)。146:主视图分灵感/任务两面,
          任务面按四态分组,组头轻标题、组内沿列 gap。 */
       .timeline { display: flex; flex-direction: column; gap: 8px; }
 
@@ -1006,6 +1049,9 @@
         white-space: pre-wrap; word-break: break-word;
       }
       .card.done .content { color: var(--ink-faint); }
+      /* 906(用户拍):任务卡左边那枚勾完成的圆圈撤了(「完成」在操作面第一层,cardpanel.ts)⇒ 已完成的卡照桌面看板完成列那样,
+         正文前带一枚朱砂 ✓(桌面 board.css `.tcard.done .ttitle::before`),字照旧淡下去。 */
+      .card.done .content::before { content: "✓ "; color: var(--seal); font-weight: 700; }
       /* 长卡折叠(用户面 116,承桌面 704):任务面正文超 8 行默认夹住,下面长一枚「展开 / 收起」。
          ⛔⛔ **上限那个数不在这儿,在 `main.ts::settleFolds` 里按 px 写** —— 桌面那份的
          `max-height: 12em` 在这一端**没有能用的等价 CSS 单位**(MuMu/Chrome 110 四档实测):
@@ -1025,8 +1071,8 @@
         color: var(--ink-soft); font-size: var(--fs-12); font-family: var(--font-sans);
       }
       /* 正文里的待办方框(checklist.ts 认行、ui.ts::contentHtml 画):行首 `- [ ] `/`- [x] `。
-         形状**刻意是方的** —— 左边那枚「整条任务做完了」的勾(.tick)是圆的,两者一眼分得开:
-         圆 = 这条任务,方 = 正文里的一项。尺寸用 em 跟着字号四档走。 */
+         形状是方的(906 之前卡左边另有一枚圆的勾 = 「整条任务做完了」,方 = 正文里的一项;那枚圆的撤了,
+         方的照旧)。尺寸用 em 跟着字号四档走。 */
       /* 一整个待办项 = 一行 flex。⛔ 别退回「方框 + 裸文字」的纯内联排法:那样长条目
          **折行后第二行会顶格**跑到方框左边,两个待办项的边界糊成一片(桌面真机截图逮到
          的,手机上列更窄、更容易撞)。缩进化成整行左内边距 —— flex 容器里的纯空白子节点
@@ -1275,39 +1321,6 @@
       #viewer.zoomed .viewer-del, #viewer.zoomed .viewer-close { opacity: 0; pointer-events: none; }
       /* 只读(674:编辑态点缩略图看大图):删只在缩略图 × 上,大图纯看。 */
       #viewer.readonly .viewer-del { display: none; }
-
-      /* 勾框:任务行的「标完成」。触区放大到整块 label,视觉是一枚圆圈,勾上即朱砂。
-         ⭐ **记号钉在第一行,盒子照旧整卡高**(UI 一致性 M12):`align-self:stretch` 那句是
-         §2.3「勾选区拓到 48」明写要的,⛔ 别为了对齐把触区改小;此前配的是 `place-items:center`
-         ⇒ 圈**竖直居中在整张卡上**,五行的长卡上它离自己管的那行标题约 130px,读作「浮在正文
-         中间的一枚圈」。⇒ 只挪记号:`start` 把圈顶到盒子上沿,再用 padding 压回第一行的行心。
-         padding 的来历(⛔ 别改成整数,它是算出来的):`.tick` 的上负 margin 是 10px ⇒ 盒子上沿
-         比正文上沿高 10;行心在半个行高处;圈高 22、半高 11 ⇒ 10 + 0.5lh - 11 = 0.5lh - 1px。
-         ⛔⛔ **单位必须是 `lh`,`em` 在这里是错的 —— 而它错得很安静**(639 真机四档逐档量出来的):
-         安卓的字号四档走 WebView 原生 textZoom(textsize.ts),它把**计算后字号**推大了
-         (四档读到 14.4 / 16 / 18.4 / 20.8),`getComputedStyle` 也照实报 ⇒ 看着 em 该跟着走。
-         **实测不跟**:`calc(0.8em - 1px)` 算出来的 padding 四档**恒是 11.8px**(em 拿的是缩放前
-         那个 16),于是 100% 档偏 0、130% 档偏 **-3.84px**;而 `lh` 四档给 10.52 / 11.80 / 13.72 /
-         15.64,**四档偏差全是 0**。⇒ 教训是「computed 报的字号变了」证明不了「em 会跟着变」。
-         ⚠ `font-size` 那句是让这个 `lh` 与**正文**同源:body 是 `--fs-15`、`.card .content` 是
-         `--fs-16`,不钉住就按 15 算。行高倍率 1.6 从 body 继承,与 `.content` 那句同值。
-         ⚠ 圈里那枚 ✓ 有自己的 `--fs-14`,不受这行影响。
-         ⚠ `lh` 要 WebView ≥ 109 —— 这一端早就踩在更高的台阶上了(`.compose textarea` 的
-         `field-sizing: content` 要 123),⛔ 别为它加一条 em 兜底:老机器上那条兜底只会**安静地**
-         偏一两像素,没人会发现(= 静默默认值,设计铁律里明写不写)。 */
-      .tick { flex: none; display: grid; place-items: start center; width: 48px; align-self: stretch;
-        margin: -10px 0 -10px -12px; font-size: var(--fs-16); padding-top: calc(0.5lh - 1px); }
-      .tick input { position: absolute; opacity: 0; pointer-events: none; }
-      .tick .box {
-        width: 22px; height: 22px; border-radius: var(--radius-circle);
-        border: 1.6px solid var(--line-strong);
-        display: grid; place-items: center;
-        color: transparent; font-size: var(--fs-14); font-weight: 700;
-      }
-      .tick input:checked + .box {
-        background: var(--seal); border-color: var(--seal); color: var(--on-seal);
-      }
-      .tick .box::after { content: "✓"; }
 
       /* 同步面(P4-d):状态点 + 输码一屏 + 引导进度。 */
       .dot {
@@ -1776,6 +1789,8 @@
         /* 实高 ~36 + ::before 上下 5 = 触区 ~46(P1 #10/codex M4:优先真实尺寸) */
       }
       .panel .acts button.warn { border-color: var(--seal-line); color: var(--seal-ink); }
+      /* 906:任务卡操作面最前面那枚「完成」—— 主色实底(同「记下」「确定」那族主钮),这一排里唯一的实心钮。 */
+      .panel .acts button.main { background: var(--seal); border-color: var(--seal); color: var(--on-seal); font-weight: 600; }
       .panel .acts button.confirm { background: var(--seal); border-color: var(--seal); color: var(--on-seal); }
       /* `.blocked` = 事前灰、仍点得动(点了说原因;mbopt R2「转待办」在默认看板放不进卡时),同 #capture-fab.blocked 的意思。 */
       .panel button:disabled, .panel button.blocked { opacity: 0.45; }
@@ -2208,16 +2223,12 @@
         border: 1px dashed var(--line-strong); border-radius: var(--radius-md);
         background: var(--sunken); color: var(--ink-soft); font-size: var(--fs-14);
       }
-      /* 列里点开卡片:操作面收掉左缩进,四枚动作钮在 304 宽的列里才一排放得下(1280 横放那档:缩着只剩 216、要 252)。
-         46 = 勾框的 48 − 它自己的 -12 外边距 + 卡片的 gap 10(`.tick` / `.card` 两条规则),改那两处就得改这里。
-         收回来之后操作面盖住勾框下面那截空白触区 —— 圈在第一行,不受影响;点操作面的空隙落在操作面上,不会误勾。 */
-      body.board #timeline .panel { margin-left: -46px; }
       /* 横滑改状态那条目标印(182)相对 .tl-group 定位、左右各 0:列有 8 的内边距,跟着收进来,别比卡宽出两截。 */
       body.board #timeline .swipe-track { left: 8px; right: 8px; }
       /* 看板上收掉「状态」那排(列头就是状态)。⚠ 只收状态钮本身 —— 到期汇总钮住在同一排(#filter-stages 最前那枚),
          整排藏掉它就一起没了 ⇒ 状态排与主行(.fmain)都拆成透明盒(display:contents),钮直接排进筛选条这一行:
-         到期钮打头,标签 / 摊开钮 / 过滤框跟上。摊开态照旧 —— 标签块 order:1 独占下一行、摊开钮 margin-left:auto
-         留在第一行右端;类型行(有才画)order:-1 提到最上、独占一行。列间距 10 = .fmain 自己的 gap。 */
+         到期钮打头,标签 / 摊开钮 / 过滤框跟上。摊开态 —— 标签块 order:1 独占下一行(906 起「收起 ▴」是它的最后一枚),
+         过滤框 margin-left:auto 留在第一行右端;类型行(有才画)order:-1 提到最上、独占一行。列间距 10 = .fmain 自己的 gap。 */
       body.board #filterbar { flex-flow: row wrap; align-items: center; column-gap: 10px; }
       body.board #filter-stages,
       body.board #filterbar .fmain { display: contents; }
@@ -2329,11 +2340,13 @@
       body.tallscreen .compose.open,
       body.tallscreen .cmsheet.open { transform: none; opacity: 1; pointer-events: auto; }
       /* 记一笔那一座竖向靠顶栏下沿(165 / W5 A53,由头在本段头注)。 */
-      body.tallscreen .compose:not(.editsheet):not(.datesheet) { top: calc(var(--head-h, 0px) + 16px); margin-block: 0 auto; overflow-y: auto; }
+      body.tallscreen .compose:not(.editsheet):not(.datesheet):not(.moresheet) { top: calc(var(--head-h, 0px) + 16px); margin-block: 0 auto; overflow-y: auto; }
       /* 记一笔浮窗的写字框给足三行(165 / W5 A53,由头写在上面「宽屏」那段 @media 里编辑层那条的头注):挂在类上,键盘起着也不缩。 */
-      body.tallscreen .compose:not(.editsheet):not(.datesheet) textarea { min-height: 6em; }
+      body.tallscreen .compose:not(.editsheet):not(.datesheet):not(.moresheet) textarea { min-height: 6em; }
       /* 宽屏上月历不跟着内容列撑满(七格摊开每格一百多宽,数字散成一片):手机横放的底部层、平板的浮窗都收到 400。 */
       body.widescreen .datesheet { max-width: 400px; }
+      /* 「更多…」的菜单同理(906):一列短词,撑到 640 两边全是空。⚠ 住在这儿是为了排在上面浮窗那条 max-width 之后。 */
+      body.widescreen .moresheet { max-width: 400px; }
 
       /* 时间轴筛选条(filter.ts 渲染):类型行在上、标签行+文本框在下,两行横向可滑。
          本面无条目时整条 hidden(main.ts)。
@@ -2468,26 +2481,40 @@
         flex: none; font: inherit; font-size: var(--fs-13); line-height: 1;
         color: var(--ink-soft); background: transparent;
         border: 1px solid var(--line-strong); border-radius: var(--radius-pill);
-        padding: 5px 10px; min-height: 30px;
-        display: inline-flex; align-items: center;
+        padding: 5px 12px; min-height: 30px; min-width: 44px; white-space: nowrap;
+        display: inline-flex; align-items: center; justify-content: center; gap: 4px;
+        font-variant-numeric: tabular-nums;
       }
       .fexpand[hidden] { display: none; }
-      .fexpand.on { color: var(--seal-ink-on-seal-tint); border-color: var(--seal); background: var(--seal-tint); }
+      /* 906(用户拍「收起钮放到标签末尾」):钮上写字 —— 收起态「更多 N ▾」、摊开态「收起 ▴」(main.ts syncTagsToggle)。
+         摊开态它是标签块的最后一枚,⛔ 不再上选中色(此前 `.on` 是朱砂底):排在一堆标签后面,朱砂底读起来像一枚选中的标签。 */
+      .fexpand-arrow { font-size: var(--fs-12); color: var(--ink-faint); }
       /* 摊开态:**整条主行换行,标签块独占整行**(用户面 71)。
          ⛔ 别退回「只给 .ftopics 加 wrap」那一版:它仍与摊开钮 / 过滤框同处一行,`flex:1`
          分到的只有约六成屏宽 ⇒ 换行发生在那只**已经被缩短的盒子**里,于是第二行起每行右边
          都在白让位(599 真机量:11 枚标签排了 8 行,把内容往下推了近 1000 设备 px;604 复量
          时「英语」那行右边空着 335 设备 px,而下一枚要 338 —— 就差 3px 被踢到下一行)。
-         摊开钮靠 `margin-left:auto` 留在第一行右端、与收起态同位置:它是这一行的开关,
-         位置一跳用户就得重新找它。
          ⚠ 限高只是保险(标签几十枚时不许它把整屏吃光);`overflow: hidden auto` 不能写成
-         `overflow-y: auto` —— 另一轴是 visible 时会被算成 auto,凭空多一条横滚条。 */
+         `overflow-y: auto` —— 另一轴是 visible 时会被算成 auto,凭空多一条横滚条。
+         906(用户拍,真机截图「这个箭头不太合理吧?而且左边空间浪费了」):摊开钮此前靠 `margin-left:auto` 连同过滤框
+         留在第一行右端、左边整截空着 ⇒ 钮写上「收起 ▴」搬进标签块当最后一枚(main.ts syncTagsToggle),过滤框的去处分两形:
+         · 竖放(不是看板):回到「标签 所有 无标签」那一行的右端。那一行末尾有一枚吃掉余宽的垫片(`.fspacer`,main.ts 插的,
+           真标签从下一行排起),过滤框绝对定位叠在垫片上(`top` 由 main.ts 按垫片的位置写)。滚动盒从标签块换成主行
+           (`.fmain`):过滤框是主行的孩子,标签多到要滚时它跟着第一行一起滚走,不会悬在滚过去的标签上面。
+           主行的上下 4px 内边距 / 负外边距 = 标签钮那层 halo 的地方(滚动盒会裁掉探出去的那截,同 `.ftopics` 那条)。
+         · 看板(横放):照旧在第一行(与到期钮同一行),靠 `margin-left:auto` 贴右;滚动盒仍是标签块(主行在那儿是 display:contents)。 */
       #filterbar.tags-open .fmain { flex-wrap: wrap; }
       #filterbar.tags-open .ftopics {
         order: 1; flex: 0 0 100%;
         flex-wrap: wrap; overflow: hidden auto; row-gap: 8px; max-height: 40vh;
       }
-      #filterbar.tags-open .fexpand { margin-left: auto; }
+      body.board #filterbar.tags-open .ftext { margin-left: auto; }
+      .fspacer { flex: 1 0 0; height: 30px; }
+      body:not(.board) #filterbar.tags-open:not(.tags-fit) .fmain {
+        position: relative; overflow: hidden auto; max-height: 40vh; padding-block: 4px; margin-block: -4px;
+      }
+      body:not(.board) #filterbar.tags-open:not(.tags-fit) .ftopics { overflow: visible; max-height: none; }
+      body:not(.board) #filterbar.tags-open:not(.tags-fit) .ftext { position: absolute; right: 0; z-index: 1; }
       /* 自动摊开那一形(159 / W3 A23,main.ts `tagsAutoOpen`):标签少、收起态挤不下而单独一行放得下 ⇒ 标签独占第一行、
          过滤框落第二行(读的顺序同收起态:先标签、后过滤框);没有 ▾(摊开了也还是这一行)。 */
       #filterbar.tags-fit .ftopics { order: -1; }
@@ -2637,13 +2664,15 @@
         display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center;
         padding: 8px 0; border-top: 1px dashed var(--line); font-size: var(--fs-13);
       }
-      .bkup-item-name { flex: 1 1 100%; min-width: 0; word-break: break-all; color: var(--ink); }
-      /* 161 / W4 A15(WM-09):文件名退成第二行小字(主标题是「哪个空间 · 本地几点」,backup.ts::listRow)。 */
-      .bkup-item-file { flex: 1 1 100%; min-width: 0; font-size: var(--fs-12); color: var(--ink-soft); word-break: break-all; }
-      .bkup-item-meta { flex: none; font-size: var(--fs-12); color: var(--ink-soft); }
-      /* 161 / W4 A19(WM-23):基准 0 —— 结论那句(「现在打得开:默认空间 · 200 KB」)在自己的盒里折行,
-         ⛔ 别回到 `auto`:按字长算基准时这句一长,「验证」钮就被挤到下一行左边,手指底下的东西换了位置。 */
-      .bkup-item-state { flex: 1 1 0; min-width: 0; font-size: var(--fs-12); color: var(--ink-soft); }
+      /* 906:一条 = 左边一块字(第一行「空间 · 本地几点」、第二行小字「大小 · 验没验过」)+ 右边一枚「验证」(backup.ts::listRow)。
+         左边那块基准 0、在自己的盒里折行 —— 结论那句(「现在打得开:默认空间 · 200 KB」)一长也挤不动「验证」钮(161 / W4 A19 的由头照旧)。 */
+      .bkup-item-main { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+      .bkup-item-name { min-width: 0; word-break: break-all; color: var(--ink); }
+      .bkup-item-sub { font-size: var(--fs-12); color: var(--ink-soft); overflow-wrap: anywhere; }
+      .bkup-item-meta::after { content: " · "; white-space: pre; }
+      /* 那串长文件名平时收着(906),点这一条的字才露:独占一行小字(161 / W4 A15 那一行的样子)。 */
+      .bkup-item-file { flex: 1 1 100%; min-width: 0; font-size: var(--fs-12); color: var(--ink-soft); word-break: break-all; user-select: text; -webkit-user-select: text; }
+      .bkup-item-file[hidden] { display: none; }
       .bkup-item-state.warn-ink { color: var(--seal-ink); }
       .bkup-item button {
         flex: none; min-height: 32px; padding: 4px 12px;
@@ -2974,6 +3003,12 @@
       </div>
     </section>
 
+    <!-- 卡片「更多…」的屏底菜单(906,moresheet.ts):项目由 cardpanel.ts 的 moreItems 给,这里只有空壳。 -->
+    <div id="more-scrim" hidden></div>
+    <section id="more-sheet" class="compose moresheet" role="dialog" aria-label="更多…" data-i18n-aria-label="cardpanel.actMore">
+      <div id="more-list" role="menu"></div>
+    </section>
+
     <div id="error" class="error" hidden></div>
 
     <!-- 时间轴筛选(灵感/看板两面,与桌面同源三维:标签+文本+类型):类型 pill 行在上
@@ -2991,9 +3026,10 @@
         <div id="filter-topics" class="ftopics"></div>
         <!-- 摊开 / 收起标签行(用户面 36)。平时单行横滑,屏幕上常常一枚真标签都露不出来;
              点它翻成多行全展(桌面 `.topic-filter` 本来就是全展开的)。收起态一行装得下时
-             main.ts 把整枚藏起 —— 一枚点了没变化的钮比没有更糟。 -->
+             main.ts 把整枚藏起 —— 一枚点了没变化的钮比没有更糟。
+             906:钮上的字(「更多 N ▾」/「收起 ▴」)由 main.ts syncTagsToggle 写;摊开态它被搬进 #filter-topics 当最后一枚。 -->
         <button id="filter-expand" class="fexpand" type="button" aria-label="摊开全部标签"
-                data-i18n-aria-label="shell.tagsExpand" hidden>▾</button>
+                data-i18n-aria-label="shell.tagsExpand" hidden></button>
         <input id="filter-text" class="ftext" type="search" placeholder="过滤…" data-i18n-placeholder="shell.filterPh"
                autocapitalize="off" autocomplete="off" spellcheck="false" />
       </div>
@@ -3011,14 +3047,6 @@
     <section id="settings-pane" class="sync" hidden>
       <!-- 161 / W4 Q11(WM-29 前半):页头一枚标题 —— 此前整页换掉、顶上直接是「空间」,看不出自己在哪(同步 / 回收站各面都有)。 -->
       <h2 data-i18n="shell.settings">设置</h2>
-      <!-- 159 / W3 Q7(WM-16 / X-08):空间入口也挂一份在设置里(开的是同一页,同步页那枚「空间…」照留)。
-           只有一个空间时顶栏不显示空间名,此前要找空间只能猜到「同步」下面去。 -->
-      <h2 data-i18n="settings.spacesTitle">空间</h2>
-      <div class="row">
-        <button id="settings-spaces-btn" class="ghost grow" data-i18n="shell.spacesEntry">空间…</button>
-      </div>
-      <p class="fine" data-i18n="settings.spacesSub">每个空间是一本独立的本子。新建、切换、改名都在这里。</p>
-
       <h2 data-i18n="shell.appearance">外观</h2>
       <div id="theme-seg" class="seg">
         <button data-theme-mode="auto" data-i18n="shell.themeAuto">自动</button>
@@ -3059,6 +3087,43 @@
         <p class="fine" data-i18n="settings.langMore">只影响这台设备,不同步到别的设备。</p>
       </details>
 
+      <!-- 906(用户拍「设置页太复杂了 → 首页只留短的,重的进二级页」):此前一整页十节。首页只留「一行就选完」的三样
+           (外观 / 界面字号 / 语言)与意见反馈;其余各收成一行入口 —— 左边名字、右边一句当前值的摘要(main.ts
+           paintSettingsSummaries;拿不到就空着,⛔ 不写假值)—— 点进去是单独一页(下面那几只 `.set-page`,
+           走 openSubPane:返回键 / 页头那枚「设置」回到这里、回到进去前的滚动位置)。
+           「空间」「诊断」两行开的是原来那两页(#spaces / #diag),id 不动。
+           ⛔ 带 data-needs 的入口行与它那一页一起摘(鸿蒙没有通知 ⇒ 没有「截止提醒」这一行),别留一行点进去是空页。 -->
+      <div id="settings-entries" class="set-list">
+        <button id="settings-spaces-btn" class="set-row" type="button"><span class="set-name" data-i18n="settings.spacesTitle">空间</span><span id="set-sum-spaces" class="set-sum"></span></button>
+        <button class="set-row" type="button" data-set-page="set-compress"><span class="set-name" data-i18n="settings.compressTitle">压缩大图</span><span id="set-sum-compress" class="set-sum"></span></button>
+        <button data-needs="notification" class="set-row" type="button" data-set-page="set-remind"><span class="set-name" data-i18n="reminder.title">截止提醒</span><span id="set-sum-remind" class="set-sum"></span></button>
+        <button class="set-row" type="button" data-set-page="set-alias"><span class="set-name" data-i18n="shell.aliasTitle">本机别名</span><span id="set-sum-alias" class="set-sum"></span></button>
+        <button class="set-row" type="button" data-set-page="set-backup"><span class="set-name" data-i18n="backup.title">备份</span><span id="set-sum-backup" class="set-sum"></span></button>
+        <button class="set-row" type="button" data-set-page="set-about"><span class="set-name" data-i18n="shell.aboutTitle">关于</span><span id="set-sum-about" class="set-sum"></span></button>
+        <button id="settings-diag-btn" class="set-row" type="button"><span class="set-name" data-i18n="shell.diag">诊断</span></button>
+      </div>
+
+      <!-- 意见反馈(国内上架 17)。⭐ **它是上架硬门槛,不是锦上添花**:OPPO《包体测试FAQ》
+           原文「所有应用都必须设置显著有效的客服反馈渠道」,且该渠道须在**应用功能界面内**,
+           「而非仅展示在隐私政策链接或用户协议链接内」——⛔ 别因为政策页第九节已经写了邮箱
+           就把这一节摘掉,文档点名那样不算。单机应用同样要;应用宝 / 小米 / OPPO / vivo 通用。
+           ⚠ 地址原样摆出来 + 一枚复制钮,是两端都成立的那一半(没有邮件应用的机器靠复制)。点框拉起写信
+           是叠在上面的(161 / W4 Q11,main.ts 按 HAS_BROWSER 挂):此前鸿蒙上 `openUrl` 去调 `xdg-open`、
+           真机报 os error 2(651 实撞),那一端只摆地址;W5 A54 起鸿蒙经 opener 接缝走壳桥,两端都可点。
+           ⚠ 地址的唯一出处就是下面那个 value —— 复制钮读的也是它(⛔ 别在 TS 里另写一份常数)。 -->
+      <h2 id="feedback-title" data-i18n="feedback.title">意见反馈</h2>
+      <p class="fine" data-i18n="feedback.sub">用着有问题、有建议,或者想注销同步账户,发邮件到下面这个地址。作者本人看信。</p>
+      <div class="row">
+        <input id="feedback-mail" value="3069848@qq.com" readonly spellcheck="false"
+               autocapitalize="off" autocomplete="off" />
+        <button id="feedback-copy" class="ghost" data-i18n="feedback.copy">复制</button>
+      </div>
+    </section>
+
+    <!-- 设置的二级页(906):每页顶上一枚「设置」回首页,下面就是原来那一节,一个字没改。
+         ⚠ 各页里元素上的 data-needs 照留(那一节在没有那条桥的端上整页都到不了,留着只是不碍事)。 -->
+    <section id="set-compress" class="sync set-page" hidden>
+      <button class="set-back" type="button" data-set-back data-i18n-aria-label="settings.back" aria-label="返回设置"><span data-i18n="shell.settings">设置</span></button>
       <!-- 压缩大图(用户面 147):默认关 = 按原图存;与外观 / 字号 / 语言同族的设备偏好,不进同步。
            规则在 images.ts::downsampleForUpload。 -->
       <h2 data-i18n="settings.compressTitle">压缩大图</h2>
@@ -3071,7 +3136,10 @@
         <summary class="fine" data-i18n="settings.notes">说明</summary>
         <p class="fine" data-i18n="settings.compressMore">打开后,加图前会把大照片缩小并转成 JPEG,省同步流量和空间,但画质有损、原图找不回来;长截图不会被压成窄条。已存的图不受影响。只影响这台设备。</p>
       </details>
+    </section>
 
+    <section id="set-remind" class="sync set-page" data-needs="notification" hidden>
+      <button class="set-back" type="button" data-set-back data-i18n-aria-label="settings.back" aria-label="返回设置"><span data-i18n="shell.settings">设置</span></button>
       <!-- 截止提醒(用户面 39①,桌面那半是 553)。⛔ 四个元素上那枚 data-needs="notification"
            同 textzoom 那族:没有通知插件的端(鸿蒙)由 main.ts 按构建期常数 HAS_NOTIFICATION
            把**这五个一起**摘掉 —— 留着就是「开关点了会亮、到点一声不响」= 界面在说谎。
@@ -3094,7 +3162,10 @@
         <summary class="fine" data-i18n="settings.notes">说明</summary>
         <p id="remind-more" class="fine"></p>
       </details>
+    </section>
 
+    <section id="set-alias" class="sync set-page" hidden>
+      <button class="set-back" type="button" data-set-back data-i18n-aria-label="settings.back" aria-label="返回设置"><span data-i18n="shell.settings">设置</span></button>
       <h2 data-i18n="shell.aliasTitle">本机别名</h2>
       <div class="row">
         <input id="alias-input" placeholder="未命名" data-i18n-placeholder="shell.aliasUnnamed" maxlength="60" spellcheck="false"
@@ -3108,7 +3179,10 @@
         <summary class="fine" data-i18n="settings.notes">说明</summary>
         <p class="fine"><span data-i18n="shell.aliasNotePre">它会</span><b data-i18n="shell.aliasNoteBold">同步</b><span data-i18n="shell.aliasNotePost">给这个空间里的其他设备,让他们看到条目是谁记的。每个空间分别起;留空 = 不起名。</span></p>
       </details>
+    </section>
 
+    <section id="set-backup" class="sync set-page" hidden>
+      <button class="set-back" type="button" data-set-back data-i18n-aria-label="settings.back" aria-label="返回设置"><span data-i18n="shell.settings">设置</span></button>
       <!-- 加密备份(backup-plan §17 笔③):排在「界面字号」之后、「关于」之前。
            ⛔ 三条诚实边界原样进 UI,别在文案里软化(§17.12):手机上能备份不能还原 /
            落点在本机挡不住手机丢了 / 清数据会抹掉备份码。整节内容由 src/backup.ts 渲染
@@ -3130,23 +3204,10 @@
         <p class="fine" data-i18n="backup.footScope">点「备份」会把这台设备上的每个空间各备一份。这台设备上没有自动备份:想备份就回这里点一次。</p>
         <p class="fine" data-i18n="backup.footSecret">备份文件加上备份码,就能打开里面的全部内容;开过同步的空间,还能拿它读写这个账户。两样都当秘密保管。</p>
       </details>
+    </section>
 
-      <!-- 意见反馈(国内上架 17)。⭐ **它是上架硬门槛,不是锦上添花**:OPPO《包体测试FAQ》
-           原文「所有应用都必须设置显著有效的客服反馈渠道」,且该渠道须在**应用功能界面内**,
-           「而非仅展示在隐私政策链接或用户协议链接内」——⛔ 别因为政策页第九节已经写了邮箱
-           就把这一节摘掉,文档点名那样不算。单机应用同样要;应用宝 / 小米 / OPPO / vivo 通用。
-           ⚠ 地址原样摆出来 + 一枚复制钮,是两端都成立的那一半(没有邮件应用的机器靠复制)。点框拉起写信
-           是叠在上面的(161 / W4 Q11,main.ts 按 HAS_BROWSER 挂):此前鸿蒙上 `openUrl` 去调 `xdg-open`、
-           真机报 os error 2(651 实撞),那一端只摆地址;W5 A54 起鸿蒙经 opener 接缝走壳桥,两端都可点。
-           ⚠ 地址的唯一出处就是下面那个 value —— 复制钮读的也是它(⛔ 别在 TS 里另写一份常数)。 -->
-      <h2 id="feedback-title" data-i18n="feedback.title">意见反馈</h2>
-      <p class="fine" data-i18n="feedback.sub">用着有问题、有建议,或者想注销同步账户,发邮件到下面这个地址。作者本人看信。</p>
-      <div class="row">
-        <input id="feedback-mail" value="3069848@qq.com" readonly spellcheck="false"
-               autocapitalize="off" autocomplete="off" />
-        <button id="feedback-copy" class="ghost" data-i18n="feedback.copy">复制</button>
-      </div>
-
+    <section id="set-about" class="sync set-page" hidden>
+      <button class="set-back" type="button" data-set-back data-i18n-aria-label="settings.back" aria-label="返回设置"><span data-i18n="shell.settings">设置</span></button>
       <h2 data-i18n="shell.aboutTitle">关于</h2>
       <!-- 161 / W4 Q11(WM-32 前半):「意见反馈」是一枚跳到那一节的链接(此前叫人去那儿、却不是链接)。 -->
       <p class="about-author"><span data-i18n="shell.aboutAuthorPre">朱简是我一个人做的。好用、不好用,都欢迎在</span><button id="about-feedback-link" type="button" class="inline-link" data-i18n="shell.aboutAuthorLink">「意见反馈」</button><span data-i18n="shell.aboutAuthorPost">里告诉我。</span></p>
@@ -3162,10 +3223,6 @@
         <button class="ghost grow" type="button" data-policy="privacy.html" data-i18n="shell.privacyTitle">隐私政策</button>
         <button class="ghost grow" type="button" data-policy="privacy-rights.html" data-i18n="shell.policyRights">隐私权利</button>
         <button class="ghost grow" type="button" data-policy="terms.html" data-i18n="shell.policyTerms">用户协议</button>
-      </div>
-
-      <div class="row" style="margin-top: 14px">
-        <button id="settings-diag-btn" class="ghost grow" data-i18n="shell.diag">诊断</button>
       </div>
     </section>
 

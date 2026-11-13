@@ -113,7 +113,7 @@ function lift(): void {
   let ghost: HTMLElement | null = null;
   if (onBoard()) {
     // 替身:克隆原卡、钉在原卡此刻的位置(fixed —— 不受列 / 看板两层滚动盒裁剪),之后只按手指位移平移。
-    // 摘掉 data-id 与所有 id:按 id 找卡的路(落点、回执、草稿)只认原卡;inert:替身里的勾框 / 钮点不着。
+    // 摘掉 data-id 与所有 id:按 id 找卡的路(落点、回执、草稿)只认原卡;inert:替身里的钮点不着。
     // 挂在原卡那一列里(不挂 body):卡的样式有的挂在 `#timeline` / 列上,挂出去会走样;fixed 不占流,不挤列里的排法。
     const r = card.getBoundingClientRect();
     ghost = card.cloneNode(true) as HTMLElement;
@@ -287,7 +287,7 @@ export function initCardDrag(d: Deps): void {
     if (drag || !e.isPrimary || e.button !== 0) return;
     if (document.body.dataset.view !== "tasks" || deps.isSwitching() || deps.hasDirtyDraft()) return;
     const el = e.target as HTMLElement;
-    if (el.closest(".tick, .ckbox, .thumb, .panel, .cm-badge, .fold-toggle")) return;
+    if (el.closest(".ckbox, .thumb, .panel, .cm-badge, .fold-toggle")) return;
     const card = el.closest<HTMLElement>("article.card[data-id]");
     if (!card || card.querySelector(".panel")) return;
     const id = card.dataset.id!;

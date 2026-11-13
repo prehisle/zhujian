@@ -24,12 +24,23 @@
   const cb = document.getElementById("confirmbar");
   const btnOf = (pane) => document.querySelector(`#bottombar [data-pane="${pane}"]`);
   const cardOf = (id) => document.querySelector(`#timeline [data-id="${id}"]`);
+
+  // 906:卡左边那枚勾完成的圆圈撤了,「完成」在操作面第一层最前面 ⇒ 开这张卡的操作面、点那一枚(同一条写口,回执照旧)。
+  const completeCard = async (id) => {
+    if (!cardOf(id)?.querySelector(".panel")) click(cardOf(id).querySelector(".content"));
+    const b = await until(() => cardOf(id)?.querySelector('.panel [data-pact="complete"]'), 2000);
+    if (!b) return false;
+    click(b);
+    return true;
+  };
   const paneOpen = () => document.body.classList.contains("pane-open");
   // 706 起操作面主面只剩四枚(编辑 / 标签 / 留言·转待办 / 更多…),低频那几件
   // (历史 · 移动 · 撤回 · 归档 · 删除)收在「更多…」子面里。⇒ 先把面板弄回**主面**
   // (判据 = `more` 这枚在不在),主面上没有的再钻一层。⛔ 别写成「恒先点 more」——
   // 主面那四枚在更多面里找不着。
-  const inPanel = (id, act) => cardOf(id)?.querySelector(`.panel [data-pact="${act}"]`) ?? null;
+  const inPanel = (id, act) =>
+    cardOf(id)?.querySelector(`.panel [data-pact="${act}"]`) ??
+    (cardOf(id)?.querySelector(".panel") && document.getElementById("more-sheet").classList.contains("open") ? document.querySelector(`#more-list [data-more-act="${act}"]`) : null); // 906:「更多…」是屏底菜单层 ⇒ 面里没有的那几枚到层里找(#more-list [data-more-act])
   const openAct = async (id, act) => {
     for (let i = 0; i < 4; i++) {
       if (!inPanel(id, "more")) {
@@ -144,7 +155,7 @@
     );
     if (!ok("第二探针入轴", !!card2)) return JSON.stringify(out);
     id = card2.dataset.id;
-    cardOf(id).querySelector(".tick input").click(); // 勾完成(407 回执无妨)
+    await completeCard(id); // 完成(906 起走操作面那枚「完成」;407 回执无妨)
     await until(() => cardOf(id)?.classList.contains("done"), 3000);
     const seal = await openAct(id, "seal");
     if (!ok("操作面有入册钮", !!seal)) return JSON.stringify(out);

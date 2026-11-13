@@ -127,7 +127,7 @@
             // 706:「删除」在操作面的「更多…」子面里。
             const more = await until(() => c.querySelector('.panel [data-pact="more"]'), 1500);
             if (more) click(more);
-            const del = await until(() => c.querySelector('.panel [data-pact="del"]'), 1500);
+            const del = await until(() => document.querySelector('#more-list [data-more-act="del"]'), 1500); // 906:「更多…」是屏底菜单层
             if (del) {
               click(del);
               const cb = document.getElementById("confirmbar");

@@ -123,6 +123,8 @@ const CROSS_END_KEYS = [
   { key: "filter.topicAxis", why: "标签轴标题(桌面 623 / 安卓 635);两端同一条轴的名字" },
   { key: "filter.allKinds", why: "「全部类型」pill,同上" },
   { key: "filter.count", why: "「筛出 N 条」(159 / W3 Q8),两端筛着时同一句话" },
+  { key: "filter.more", why: "标签行折叠钮「更多 N」(桌面 902 / 手机 906),两端同一枚钮同一个说法" },
+  { key: "filter.less", why: "同上,「收起」" },
   // 161 / W4(Q5 / Q15 / A8 / Q12 / Q13 / Q14 / Q16 / A7 / A41 / A42):设置与连接那一族,两端同一件事说同一句话。
   { key: "probe.verdictOk", why: "网络自检的人话结论(Q5)" },
   { key: "settings.notes", why: "设置里长说明折叠钮上的字(桌面 898 / 手机 901),两端同一枚钮同一个词" },

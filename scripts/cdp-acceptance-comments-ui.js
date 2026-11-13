@@ -29,7 +29,9 @@
   const sheetOpen = () => document.body.classList.contains("cm-open");
   const cardOf = (id) => document.querySelector(`#timeline [data-id="${id}"]`);
   const badgeOf = (id) => cardOf(id)?.querySelector(".cm-badge");
-  const inPanel = (id, act) => cardOf(id)?.querySelector(`.panel [data-pact="${act}"]`) ?? null;
+  const inPanel = (id, act) =>
+    cardOf(id)?.querySelector(`.panel [data-pact="${act}"]`) ??
+    (cardOf(id)?.querySelector(".panel") && document.getElementById("more-sheet").classList.contains("open") ? document.querySelector(`#more-list [data-more-act="${act}"]`) : null); // 906:「更多…」是屏底菜单层 ⇒ 面里没有的那几枚到层里找(#more-list [data-more-act])
   /** 拿操作面上的「留言」入口。706 起**随记卡**的主面四枚是 编辑/标签/转待办/更多…
    *  ⇒ 留言在「更多…」里(任务卡它仍在主面)。面板可能本来就开着、也可能停在某张子面上,
    *  故判据一律是「`more` 这枚在不在」= 现在是主面。 */

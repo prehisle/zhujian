@@ -10,7 +10,13 @@ import { defineMessages } from "./entry";
 export const settings = defineMessages({
   // 159 / W3 Q7(WM-16 / X-08):设置里那一行「空间…」(开的是同步页那同一页)。
   "settings.spacesTitle": { zh: "空间", en: "Spaces" },
-  "settings.spacesSub": { zh: "每个空间是一本独立的本子。新建、切换、改名都在这里。", en: "Each space is a separate notebook. Create, switch and rename them here." },
+  // 906:设置首页入口行右边那句摘要(index.html `.set-row`,main.ts paintSettingsSummaries)与二级页顶上那枚返回钮的读屏名。
+  "settings.back": { zh: "返回设置", en: "Back to Settings" },
+  "settings.sumSpaces": { zh: "{n} 个", en: "{n}" },
+  "settings.sumRemindOn": { zh: "每天 {time}", en: "Daily at {time}" },
+  "settings.sumRemindOff": { zh: "关着", en: "Off" },
+  "settings.sumBackupLast": { zh: "上次 {when}", en: "Last {when}" },
+  "settings.sumBackupUnset": { zh: "还没设置", en: "Not set up" },
   // 901:设置面长说明的折叠钮(index.html `details.notes`);词与桌面同键同值。
   "settings.notes": { zh: "说明", en: "Details" },
   "settings.langTitle": { zh: "语言", en: "Language" },

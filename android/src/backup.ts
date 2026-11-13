@@ -88,6 +88,34 @@ export function closeBackup(): void {
   void invoke("backup_cancel_setup");
 }
 
+/**
+ * 设置首页「备份」那一行右边的摘要(906):「还没设置」/「上次 11-13 10:02」;说不准就 null(那一行不写摘要,⛔ 不编)。
+ * 「上次」= 用户那个文件夹里**认得出是 core 起名**的备份里最新那份的时刻(文件名里的 UTC 换成本地,同列表那一行的读法)——
+ * 只是「文件夹里最新那份是几点的」,⛔ 不是「有效」(那只有点「验证」才算)。没有 SAF 的端、封锁 / 配置坏了、没挑文件夹、
+ * 文件夹里一份都认不出:一律 null。只读:一次状态查询 + 一次列目录(与进那一页时做的同一趟),不起任何搬运。
+ */
+export async function backupSummary(): Promise<string | null> {
+  if (!saf.hasBridge()) return null;
+  const st = await invoke<Status>("backup_status");
+  if (st.problem || st.blocked) return null;
+  if (!st.configured) return t("settings.sumBackupUnset");
+  const tree = saf.currentTree();
+  if (!tree.configured || !tree.writable) return null;
+  const list = await saf.listTree(false);
+  if (list.error) return null;
+  let last = 0;
+  for (const it of list.items) {
+    const m = CORE_NAME.exec(it.name);
+    if (!m) continue;
+    const [, , y, mo, d, h, mi, sec] = m;
+    last = Math.max(last, Date.UTC(Number(y), Number(mo) - 1, Number(d), Number(h), Number(mi), Number(sec)));
+  }
+  if (last === 0) return null;
+  const at = new Date(last);
+  const p2 = (n: number) => String(n).padStart(2, "0");
+  return t("settings.sumBackupLast", { when: `${p2(at.getMonth() + 1)}-${p2(at.getDate())} ${p2(at.getHours())}:${p2(at.getMinutes())}` });
+}
+
 async function refresh(): Promise<void> {
   const body = $("backup-body");
   try {
@@ -514,13 +542,31 @@ async function reloadList(scope?: HTMLElement, quiet = false): Promise<void> {
  * 认不出的名字(被 provider 改过名,或不是 core 起的)⇒ 照旧整名当标题、旁边写文件改动时刻,不编一个空间出来。
  */
 function listRow(it: saf.SafItem, spaces: SpaceInfo[]): HTMLElement {
+  // 906(用户拍「设置页太复杂了」):一条只写「空间名 · 时间」+ 下面一行小字「大小 · 验没验过」,右边一枚「验证」;
+  // 那串长文件名收起来 —— 点这一条的字才露(再点收回),`title` 里也有。⛔ 文件名一个字不动,只是平时不念。
   const row = el("div", "bkup-item", "");
+  const main = el("div", "bkup-item-main", "");
+  const sub = el("div", "bkup-item-sub", "");
   const label = nameLabel(it.name, spaces);
+  let file: HTMLElement | null = null;
   if (label !== null) {
-    row.append(el("span", "bkup-item-name", label), el("span", "bkup-item-file", it.name), el("span", "bkup-item-meta", size(it.bytes)));
+    main.append(el("span", "bkup-item-name", label));
+    sub.append(el("span", "bkup-item-meta", size(it.bytes)));
+    file = el("span", "bkup-item-file", it.name);
+    file.hidden = true;
+    row.title = it.name;
+    main.setAttribute("role", "button");
+    main.setAttribute("aria-expanded", "false");
+    main.addEventListener("click", () => {
+      file!.hidden = !file!.hidden;
+      main.setAttribute("aria-expanded", String(!file!.hidden));
+    });
   } else {
-    row.append(el("span", "bkup-item-name", it.name), el("span", "bkup-item-meta", `${size(it.bytes)}${it.ms ? " · " + when(it.ms) : ""}`));
+    main.append(el("span", "bkup-item-name", it.name));
+    sub.append(el("span", "bkup-item-meta", `${size(it.bytes)}${it.ms ? " · " + when(it.ms) : ""}`));
   }
+  main.append(sub);
+  row.append(main);
   // ⭐ 默认就是这句「还没验过」,不是空白也不是「有效」。这次开着 app 时验过的,贴回当时的结论(A31)。
   const state = el("span", "bkup-item-state", t("backup.listUnverified"));
   const seen = verdicts.get(verdictKey(it));
@@ -536,7 +582,9 @@ function listRow(it: saf.SafItem, spaces: SpaceInfo[]): HTMLElement {
       b.disabled = false;
     });
   });
-  row.append(state, verify);
+  sub.append(state);
+  row.append(verify);
+  if (file) row.append(file);
   return row;
 }
 
@@ -585,7 +633,7 @@ async function verifyOne(it: saf.SafItem, state: HTMLElement): Promise<void> {
     settle(t("backup.listOk", { space: spaceLabel({ id: v.space_id, name: v.space_name }), size: size(v.plain_bytes) }), false);
     // ⛔ 「验完就删」这条义务没兑现的话要说出来 —— 它不是失败(验证结论照旧成立),
     // 但静默就等于假装做到了(实现审一弹 M-4)。
-    if (v.cleanup_error) state.parentElement?.appendChild(el("div", "bkup-file warn-ink", v.cleanup_error));
+    if (v.cleanup_error) state.closest(".bkup-item")?.appendChild(el("div", "bkup-file warn-ink", v.cleanup_error));
   } catch (e) {
     // ⛔ 原样摊开后端那句:「不是这个备份码对应的」与「结构不对」是两回事,
     // 糊成一句会让用户把一份其实没坏的备份删掉。

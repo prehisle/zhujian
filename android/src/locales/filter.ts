@@ -15,5 +15,8 @@ export const filter = defineMessages({
   "filter.topicAxis": { zh: "标签", en: "Tags" },
   // 159 / W3 Q8(WM-26):筛着时筛选条底下写条数(值与桌面 src/locales/filter.ts 同键逐字相同)。
   "filter.count": { zh: "筛出 {n} 条", en: "{n} {n|match|matches}" },
+  // 906:标签行收起态那枚钮「更多 N ▾」/ 摊开态「收起 ▴」(main.ts syncTagsToggle;键与值同桌面 src/locales/filter.ts 逐字)。
+  "filter.more": { zh: "更多 {n}", en: "{n} more" },
+  "filter.less": { zh: "收起", en: "Show less" },
   "filter.allKinds": { zh: "全部类型", en: "All kinds" },
 });

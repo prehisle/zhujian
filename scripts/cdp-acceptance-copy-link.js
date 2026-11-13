@@ -39,7 +39,9 @@
   };
   const click = (el) => el.dispatchEvent(new MouseEvent("click", { bubbles: true }));
   const cardOf = (id) => document.querySelector('#timeline [data-id="' + id + '"]');
-  const inPanel = (id, pact) => cardOf(id)?.querySelector('.panel [data-pact="' + pact + '"]') ?? null;
+  const inPanel = (id, pact) =>
+    cardOf(id)?.querySelector('.panel [data-pact="' + pact + '"]') ??
+    (cardOf(id)?.querySelector(".panel") && document.getElementById("more-sheet").classList.contains("open") ? document.querySelector('#more-list [data-more-act="' + pact + '"]') : null); // 906:「更多…」是屏底菜单层 ⇒ 面里没有的那几枚到层里找(#more-list [data-more-act])
   const btnText = (root, text) => [...(root?.querySelectorAll("button") ?? [])].find((b) => b.textContent.trim() === text) ?? null;
   const bar = () => document.getElementById("error");
 
@@ -102,10 +104,12 @@
     const got1 = await until(() => !bar().hidden && bar().textContent === "已复制链接", 4000);
     ok("② 回执「已复制链接」", !!got1, bar().textContent);
     ok("② 剪贴板恰收到一发,文本 = 这条的链接", writes.length === 1 && writes[0] === linkOf(note), { writes, want: linkOf(note) });
-    ok("② 面板留在原地(「复制链接」还在)", !!inPanel(note, "copylink"));
+    // 906:「复制链接」住在屏底菜单层里,选了它层就收 ⇒ 「面板留在原地」认卡片上的操作面还开着(第一层那枚「更多…」还在)。
+    ok("② 面板留在原地(操作面还开着)", !!cardOf(note)?.querySelector('.panel [data-pact="more"]') && !document.getElementById("more-sheet").classList.contains("open"));
 
     // ---- ③ 长文阅读页 ----
-    click(inPanel(note, "expand"));
+    click(inPanel(note, "more")); // 再开一次菜单层,「转成长文」在里头
+    click(await until(() => inPanel(note, "expand"), 2000));
     if (!ok("展开成长文后卡离开随记面", await until(() => !cardOf(note), 4000))) return out;
     const docsBtn = await until(() => {
       const b = document.querySelector('#bottombar [data-pane="docs"]');

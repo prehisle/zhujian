@@ -28,6 +28,15 @@
   const err = document.getElementById("error");
   const cb = document.getElementById("confirmbar");
   const cardOf = (id) => document.querySelector(`#timeline [data-id="${id}"]`);
+
+  // 906:卡左边那枚勾完成的圆圈撤了,「完成」在操作面第一层最前面 ⇒ 开这张卡的操作面、点那一枚(同一条写口,回执照旧)。
+  const completeCard = async (id) => {
+    if (!cardOf(id)?.querySelector(".panel")) click(cardOf(id).querySelector(".content"));
+    const b = await until(() => cardOf(id)?.querySelector('.panel [data-pact="complete"]'), 2000);
+    if (!b) return false;
+    click(b);
+    return true;
+  };
   const isDone = (id) => !!cardOf(id)?.classList.contains("done");
   const trashRow = (id) => document.querySelector(`[data-trash="${id}"]`);
   const trashOpen = () => !document.getElementById("trash-pane").hidden;
@@ -70,7 +79,9 @@
   // (历史 · 移动 · 撤回 · 归档 · 删除)收在「更多…」子面里。⇒ 先把面板弄回**主面**
   // (判据 = `more` 这枚在不在),主面上没有的再钻一层。⛔ 别写成「恒先点 more」——
   // 主面那四枚在更多面里找不着。
-  const inPanel = (id, act) => cardOf(id)?.querySelector(`.panel [data-pact="${act}"]`) ?? null;
+  const inPanel = (id, act) =>
+    cardOf(id)?.querySelector(`.panel [data-pact="${act}"]`) ??
+    (cardOf(id)?.querySelector(".panel") && document.getElementById("more-sheet").classList.contains("open") ? document.querySelector(`#more-list [data-more-act="${act}"]`) : null); // 906:「更多…」是屏底菜单层 ⇒ 面里没有的那几枚到层里找(#more-list [data-more-act])
   const openAct = async (id, act) => {
     for (let i = 0; i < 4; i++) {
       if (!inPanel(id, "more")) {
@@ -111,8 +122,8 @@
     id = card.dataset.id;
     ok("出生非 done", !isDone(id));
 
-    // ---- A:勾完成 → 回执带撤销 → 点撤销回原态 ----
-    cardOf(id).querySelector(".tick input").click(); // 原生激活:翻 checked + 发 change
+    // ---- A:完成 → 回执带撤销 → 点撤销回原态(906 起「完成」是操作面最前面那一枚,不再是卡左边的圆圈)----
+    await completeCard(id);
     ok("A 勾完成:卡变 done", (await until(() => isDone(id))) !== null);
     if (!ok("A 回执 actionBar 形", await until(barShape, 2000))) return JSON.stringify(out);
     ok("A confirmbar 不被挪用", cb.hidden);
@@ -121,7 +132,7 @@
     ok("A 点撤销后条换成「已撤销」回执(Q6)", await until(undoneShown, 1500));
 
     // ---- A2:再勾完成 → 点条身 = 只收不撤销 ----
-    cardOf(id).querySelector(".tick input").click();
+    await completeCard(id);
     ok("A2 再勾:卡变 done", (await until(() => isDone(id))) !== null);
     if (!ok("A2 回执在场", await until(barShape, 2000))) return JSON.stringify(out);
     click(err.querySelector("span")); // 条身文本,不是钮

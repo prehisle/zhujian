@@ -69,6 +69,13 @@ async function main() {
   if (!st) return { error: "找不到顶栏「设置」" };
   tap(st.x, st.y);
   await sleep(1500);
+  // 906:「关于」是设置的二级页 ⇒ 真点首页「关于」那一行进去(行在首页靠下,先摆进屏内)
+  await ev(`(() => { document.querySelector('#settings-pane [data-set-page="set-about"]').scrollIntoView({ block: "center" }); return 1; })()`);
+  await sleep(600);
+  const ar = await center('#settings-pane [data-set-page="set-about"]');
+  if (!ar) return { error: "找不到设置首页「关于」那一行" };
+  tap(ar.x, ar.y);
+  await sleep(1200);
   // 划动坐标按屏算(869:写死的 1440 是 MatePad 模拟器的屏中,Mate 60 Pro 宽 1260 ⇒ 划在屏外、一下没划,S2–S4 假红)。
   const scr = await ev(`({ w: Math.round(innerWidth * devicePixelRatio), h: Math.round(innerHeight * devicePixelRatio) })`);
   const sx = Math.round(scr.w / 2);

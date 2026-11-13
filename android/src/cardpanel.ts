@@ -8,7 +8,8 @@
 //   ① 动作行**四枚封顶** —— 任务:编辑 · 标签 · 留言 · 更多…;随记:编辑 · 标签 · 转待办 · 更多…
 //   ② 值 chip 行(仅任务)—— 状态 / 截止 / 优先级 各一枚,**显示当前值**、点开才出候选,
 //      选完自己回到 ①。
-//   低频那几件(历史 · 移动 · 撤回为随记 · 归档 · 删除 · 随记的留言)收进「更多…」子面,
+//   低频那几件(历史 · 移动 · 撤回为随记 · 归档 · 删除 · 随记的留言)收进「更多…」——706 起是卡片里的一面,
+//   906 起是屏底那张菜单层(`moresheet.ts`;用户嫌那一堆药丸钮 + 单挂的「返回」难看,拍「屏底弹出的菜单列表」)。
 //   删除排最后、朱砂。数:随记 4 枚 / 任务 7 枚(改前 7 / 17)。
 // ⛔ 别把三条 lane 摊回 actions 面 —— 那正是本轮要治的病。⛔ 也别往动作行里加第五枚:
 //   四枚是**上限**不是巧合(它要在 360px 屏上排一行、且一眼数得完),新入口进「更多…」。
@@ -66,6 +67,7 @@ import {
   setTaskPriority,
   unsealTask,
   updateTaskStatus,
+  completeTask,
   listRevisions,
   revisionTexts,
   type ImageMeta,
@@ -80,6 +82,7 @@ import { $, actionBar, confirmBar, diffPair, esc, fmtWhen, hideConfirmBar, showB
 import { errDetail, errText, showErr } from "./err";
 import { writeClipboard } from "./platform";
 import {
+  boardHasDone,
   boardName,
   boardOfStage,
   defaultBoard,
@@ -102,12 +105,14 @@ import { skewAsk } from "./skewask";
 import { dropEmptyChecklistItems } from "./checklist-input";
 import { closeEditSheet, openEditSheet, paintEditSheet, type EditHost } from "./editsheet";
 import { closeDatePick, openDatePick } from "./datepick";
+import { closeMoreSheet, openMoreSheet, repaintMoreSheet, type MoreItem } from "./moresheet";
 import { renderDiff } from "../../shared/diff-dom";
 
-// actions = 两行主面;more = 低频动作子面;status/due/prio = 值 chip 各自点开的那一排
+// actions = 两行主面;status/due/prio = 值 chip 各自点开的那一排
 // (选完自己回 actions);tags/move/history = 既有三张子面;edit = 屏底编辑层开着。
 // board = 「挪到看板」(任务卡)/「放进看板」(随记卡)那一排(0043;哪一种由卡自己是不是任务定,不另存)。
-type Mode = "actions" | "more" | "edit" | "tags" | "move" | "board" | "history" | "status" | "due" | "prio";
+// 906:低频动作(「更多…」)不再是卡片里的一面 —— 它是屏底那张菜单层(moresheet.ts),开着时 mode 仍是 actions。
+type Mode = "actions" | "edit" | "tags" | "move" | "board" | "history" | "status" | "due" | "prio";
 
 type PanelState = {
   space: string;
@@ -209,6 +214,8 @@ const PRIORITIES: { key: 1 | 2 | 3 | null; label: string }[] = [
 let deps: Deps;
 let state: PanelState | null = null;
 let busy = false; // 面板内写操作 in-flight:整面禁点(事件入口统一拒)
+/** 「更多…」那张屏底菜单是替哪一个面板态开的(906;null = 没开)。它只属于「这张卡的主面」:换卡 / 进子面 / 收面 / 切空间都收。 */
+let moreFor: PanelState | null = null;
 
 /** 面板态的两处**外壳投影**的唯一同步点(706):
  *  ① `body.panel-open`(操作面开着)/ `body.panel-editing`(编辑层开着)—— 后者让悬浮 ＋ 让位(它是 fixed 的,
@@ -221,6 +228,11 @@ function syncShell(): void {
   document.body.classList.toggle("panel-editing", state !== null && state.mode === "edit");
   if (!state || state.mode !== "edit") closeEditSheet();
   if (!state || state.mode !== "due") closeDatePick(); // 月历层只属于「截止」那一排(904):换卡 / 回主面 / 收面 / 切空间都收
+  // 「更多…」的屏底菜单同理(906):只属于开它的那张卡的主面。滚走收面 / 转屏 / 刷新清态都走 setState ⇒ 都到这里。
+  if (moreFor !== null && (state !== moreFor || state.mode !== "actions")) {
+    moreFor = null;
+    closeMoreSheet();
+  }
 }
 
 /** 换面板态(开 / 收 / 换卡)。⛔ 一切 `state = …` 都走这里。 */
@@ -320,10 +332,14 @@ function pill(label: string, attrs: string, on: boolean, disabled = false): stri
   return `<button ${attrs} class="p${on ? " on" : ""}"${disabled ? " disabled" : ""}>${label}</button>`;
 }
 
-function actBtn(act: string, label: string, opts: { warn?: boolean; blocked?: boolean } = {}): string {
+/** 这张卡的操作面出不出「完成」那一枚(906:原来卡左边那枚圆圈的出现条件,逐条照搬):任务卡、它那块看板有完成列
+ *  (纯分类看板 / 收容区里的卡没有)、且还没完成。已完成的卡不出 —— 挪回去走「列」那枚(落点放不进卡时那一排本来就没有它)。 */
+const completeShown = (item: TimelineItem): boolean => isTaskStage(item.stage) && boardHasDone(item.stage) && !isDoneStage(item.stage);
+
+function actBtn(act: string, label: string, opts: { warn?: boolean; blocked?: boolean; main?: boolean } = {}): string {
   // 两拍确认不再原位变话术(ui-audit P0 #4):按钮几何恒定,确认在底部固定条。
   // `blocked` = 事前灰(mbopt R2):看着灰、**仍点得动** —— 点了说为什么不行(同悬浮 ＋ 的 `.blocked`),⛔ 别换成 disabled(那就哑了)。
-  const cls = [opts.warn ? "warn" : "", opts.blocked ? "blocked" : ""].filter(Boolean).join(" ");
+  const cls = [opts.warn ? "warn" : "", opts.blocked ? "blocked" : "", opts.main ? "main" : ""].filter(Boolean).join(" ");
   return `<button data-pact="${act}" class="${cls}"${opts.blocked ? ` aria-disabled="true"` : ""}${busy ? " disabled" : ""}>${label}</button>`;
 }
 
@@ -358,8 +374,6 @@ function renderPanel(card: HTMLElement) {
     panel.innerHTML = renderBoardPicker(item);
   } else if (state.mode === "history") {
     panel.innerHTML = renderHistory();
-  } else if (state.mode === "more") {
-    panel.innerHTML = renderMore(item);
   } else if (state.mode === "status" || state.mode === "due" || state.mode === "prio") {
     panel.innerHTML = renderValuePicker(item, state.mode);
   } else {
@@ -369,6 +383,11 @@ function renderPanel(card: HTMLElement) {
   }
   card.querySelector(".body")!.appendChild(panel);
   if (state.mode === "edit") paintEditSheet(editView());
+  // 屏底菜单开着时这张卡被重画(同步推来的改动:改过 / 换了列 / 多了一个空间…)⇒ 菜单按现在的条目原地换(906)。
+  if (moreFor === state) {
+    const m = moreItems(item);
+    repaintMoreSheet(m.items, m.tail);
+  }
 }
 
 /** 递给编辑层的那份投影(真相仍在 state / lastItems)。 */
@@ -395,12 +414,18 @@ function renderActions(item: TimelineItem): string {
   // 动作行**四枚封顶**(706):前三枚按频次拍——任务卡日常是「改字 / 归类 / 留话」,
   // 随记卡是「改字 / 归类 / 转成待办」(转待办是产品主干路,⛔ 别把它埋进「更多…」)。
   // 加图 / 拍照在编辑层里(674 起就不在操作面)。
+  // 906:任务卡最前面多一枚「完成」(主色实底;原来卡左边那枚圆圈)。四枚封顶照旧 ⇒ 有「完成」的卡,「留言」让进「更多…」
+  // 菜单的最上面(五枚在 360 宽 + 特大字号 / 英文档下一排放不下);没有「完成」的任务卡(已完成 / 纯分类看板 / 收容区)照旧留言在第三枚。
+  const complete = completeShown(item);
   const acts: string[] = [
+    ...(complete ? [actBtn("complete", t("docs.done"), { main: true })] : []),
     actBtn("edit", t("cardpanel.actEdit")),
     actBtn("tags", t("cardpanel.actTags")),
-    task
-      ? actBtn("comment", t("cardpanel.actComment"))
-      : actBtn("promote", t("cardpanel.actPromote"), { blocked: promoteBlocked() !== null }),
+    ...(task
+      ? complete
+        ? []
+        : [actBtn("comment", t("cardpanel.actComment"))]
+      : [actBtn("promote", t("cardpanel.actPromote"), { blocked: promoteBlocked() !== null })]),
     actBtn("more", t("cardpanel.actMore")),
   ];
   // 值 chip 行(仅任务):显示当前值、点开才出候选。⚠ 卡上的角标只在**设了**截止/优先级时
@@ -426,28 +451,28 @@ function renderActions(item: TimelineItem): string {
   return `${noteBlock}<div class="acts">${acts.join("")}</div>${props}`;
 }
 
-/** 「更多…」子面(706):低频那几件。次序 = 由轻到重,**删除永远在最后**并与上面隔开
- *  (它是这一面唯一的朱砂)。⛔ 别把这几枚挪回动作行 —— 一年点一次的东西不该天天占屏。 */
-function renderMore(item: TimelineItem): string {
+/** 「更多…」那张屏底菜单里的项(706 立的那一面;906 起住屏底菜单层 moresheet.ts,用户拍「屏底弹出的菜单列表」)。
+ *  次序 = 由轻到重,**删除永远在最后**、单独一段(`tail`)。⛔ 别把这几枚挪回动作行 —— 一年点一次的东西不该天天占屏。
+ *  ⛔ 各项的出现条件与 706 以来逐条相同,换的只是住处;选了一项走的仍是 `handleAct` 那同一条路。 */
+function moreItems(item: TimelineItem): { items: MoreItem[]; tail: MoreItem[] } {
   const task = isTaskStage(item.stage);
-  const acts: string[] = [];
-  if (!task) acts.push(actBtn("comment", t("cardpanel.actComment"))); // 随记的留言让位给「转待办」
+  const items: MoreItem[] = [];
+  // 随记的留言让位给「转待办」;有「完成」那一枚的任务卡,留言让位给它(906)。都排在菜单最上面。
+  if (!task || completeShown(item)) items.push({ act: "comment", label: t("cardpanel.actComment") });
   // 展开成长文(0042):只给随记(时间轴上的随记就是主归属为随记的条目,长文不在时间轴上画)。
-  if (item.kind === "idea") acts.push(actBtn("expand", t("cardpanel.actExpand")));
-  acts.push(actBtn("copy", t("cardpanel.actCopy"))); // 158 G3 / Q11:复制这张卡的文字
-  acts.push(actBtn("copylink", t("cardpanel.actCopyLink"))); // 152:同桌面卡片的「复制链接」
+  if (item.kind === "idea") items.push({ act: "expand", label: t("cardpanel.actExpand") });
+  items.push({ act: "copy", label: t("cardpanel.actCopy") }); // 158 G3 / Q11:复制这张卡的文字
+  items.push({ act: "copylink", label: t("cardpanel.actCopyLink") }); // 152:同桌面卡片的「复制链接」
   // 165 / W5 A45:没改过的卡不列「历史」(指南「改过的才有」;卡面上的「改过」两字已经说了有没有,点进去只得一句「还没有改过」)。
-  if (item.revised) acts.push(actBtn("history", t("cardpanel.actHistory")));
+  if (item.revised) items.push({ act: "history", label: t("cardpanel.actHistory") });
   // 移动入口:仅 ≥2 空间、且本条无未处理的部分移动登记时出现(§4)。
   // 0043:挪到看板(任务)/ 放进看板(随记);活看板 ≥ 2 块才出,收容区里的卡恒出(它唯一的出口)。
-  if (boardEntryShown(item)) acts.push(actBtn("board", task ? t("cardpanel.actMoveBoard") : t("cardpanel.actPromoteTo")));
-  if (!movePartialNote(item.id) && deps.getSpaces().length >= 2) acts.push(actBtn("move", t("cardpanel.actMove")));
+  if (boardEntryShown(item)) items.push({ act: "board", label: task ? t("cardpanel.actMoveBoard") : t("cardpanel.actPromoteTo") });
+  if (!movePartialNote(item.id) && deps.getSpaces().length >= 2) items.push({ act: "move", label: t("cardpanel.actMove") });
   // 0043:撤回只许从卡所在看板的**落点**走、归档只许在它的**完成列**里(core 解析的角色,不是 id 字面量)。
-  if (task && landingOfStage(item.stage) === item.stage) acts.push(actBtn("revert", t("cardpanel.actRevert"), { warn: true }));
-  if (isDoneStage(item.stage)) acts.push(actBtn("seal", t("cardpanel.actSeal")));
-  acts.push(actBtn("del", t("cardpanel.actDelete"), { warn: true }));
-  return `<div class="acts">${acts.join("")}</div>
-    <div class="acts"><button data-pact="back"${busy ? " disabled" : ""}>${t("cardpanel.back")}</button></div>`;
+  if (task && landingOfStage(item.stage) === item.stage) items.push({ act: "revert", label: t("cardpanel.actRevert"), warn: true });
+  if (isDoneStage(item.stage)) items.push({ act: "seal", label: t("cardpanel.actSeal") });
+  return { items, tail: [{ act: "del", label: t("cardpanel.actDelete"), warn: true }] };
 }
 
 /** 值 chip 点开的那一排(706):一次只出一样,选完由写口把 mode 拨回 actions。
@@ -782,7 +807,7 @@ async function enterTags(card: HTMLElement) {
 /** 进历史面:现读旧版本再翻 mode(同 enterTags 的形:在途期间面板可自由导航,回来时 session /
  *  空间 / mode 任一变了就弃,⛔ 不许把 mode 硬翻回去踩掉编辑)。
  *  ⚠⚠ **判据是「还停在出发那张面上吗」,⛔ 不是「是不是 actions 面」**:706 起「历史」是从
- *  「更多…」子面点的(出发时 mode = `more`),写死 `actions` 会把每一次都判弃 —— 屏上的样子是
+ *  「更多…」子面点的(出发时 mode = `more`;906 起「更多…」是屏底菜单、出发时又是 `actions` 了,判据照旧按出发那张面),写死 `actions` 会把每一次都判弃 —— 屏上的样子是
  *  「点历史没反应」,而且**一格错误都不报**。note-history 那支资产当场逮到,别再写回去。 */
 async function enterHistory(card: HTMLElement) {
   if (!state) return;
@@ -1116,10 +1141,9 @@ function onTimelineClick(e: Event) {
   }
   // 面板内其余区域(textarea/输入框等)不冒泡成开合。
   if (el.closest(".panel")) return;
-  // 勾框、正文里的待办方框、缩略图、留言徽章各有其主(main.ts),不抢——徽章漏在这里的
+  // 正文里的待办方框、缩略图、留言徽章各有其主(main.ts),不抢——徽章漏在这里的
   // 话,点它会连带把操作面板开合一次(留言层滑上来,底下的面板悄悄换了态)。
   if (
-    el.closest(".tick") ||
     el.closest(".ckbox") ||
     el.closest(".thumb") ||
     el.closest(".cm-badge") ||
@@ -1250,15 +1274,49 @@ function handleAct(act: string, card: HTMLElement) {
     case "histmore":
       void moreHistory(card);
       return;
-    case "more":
+    case "more": {
+      // 906:开屏底菜单(卡片里的主面原样留着)。选了一项 = 层已收,再走这同一个 handleAct —— 写在飞 / 切换编排 /
+      // 「记下」在飞 / 面板已换了卡时不受理(同 onTimelineClick 那几道闸;层开着时遮罩压着时间轴,正常点不出这几种,
+      // 防的是同步推来的重画与迟到的点击)。
+      clearConfirm();
+      const m = moreItems(item);
+      moreFor = session;
+      openMoreSheet(m.items, m.tail, {
+        onPick: (picked) => {
+          if (moreFor === session) moreFor = null;
+          if (state !== session || busy || deps.isSwitching() || deps.isCaptureSaving()) return;
+          const c = currentCard();
+          if (c) handleAct(picked, c);
+        },
+      });
+      return;
+    }
     case "status":
     case "due":
     case "prio":
       clearConfirm();
       setMode(session, act);
       renderPanel(card);
-      revealPanel(); // 子面比主面高(「更多…」三排):展开后同样要在屏内(A9)
+      revealPanel(); // 子面可能比主面高:展开后同样要在屏内(A9)
       return;
+    case "complete": {
+      // 906:原来卡左边那枚圆圈的写口(main.ts 的 change 监听)搬到这里。完成 = 卡所在看板**解析后的完成列**(core `complete`
+      // 在事务里解析)。回执「已完成」+「撤销」(放回原列原位置,taskmove.ts;卡挪出视野时带「去看看」)照旧;
+      // 卡离开这一节,操作面跟着收(同换列)。
+      if (!completeShown(item)) return;
+      const id = session.id;
+      const spot = spotOf(id);
+      void run((space) => completeTask(space, id), {
+        onCommitted: () => {
+          const space = getCurrentSpace();
+          void deps.refresh().then(() => {
+            if (getCurrentSpace() === space) moveReceipt(space, id, t("main.completed"), spot);
+          });
+        },
+        afterSession: () => setState(null),
+      });
+      return;
+    }
     case "comment":
       // 留言层盖在面板之上;面板留着不收(收层回来还在原处)。写/删由留言层自己走
       // 命令与刷新,不经 run()——它不是面板的业务写。

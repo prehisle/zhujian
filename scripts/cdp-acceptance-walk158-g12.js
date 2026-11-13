@@ -46,7 +46,11 @@
   const $ = (id) => document.getElementById(id);
   const card = (m) => [...document.querySelectorAll("#timeline article.card[data-id]")].find((c) => c.textContent.includes(m));
   const cardById = (id) => document.querySelector(`#timeline article.card[data-id="${id}"]`);
-  const pact = (el, a) => el?.querySelector(`.panel [data-pact="${a}"]`) ?? null;
+  // 906:「更多…」不再是卡片里的一面,是屏底那张菜单层(#more-list [data-more-act]);这张卡的操作面开着、层也开着时,
+  // 面里找不到的那几枚(删除 / 归档 / 撤回 / 复制 / 历史…)到层里找 —— 判据照旧,只是找元素的路多了这一段。
+  const pact = (el, a) =>
+    el?.querySelector(`.panel [data-pact="${a}"]`) ??
+    (el?.querySelector(".panel") && document.getElementById("more-sheet").classList.contains("open") ? document.querySelector(`#more-list [data-more-act="${a}"]`) : null);
   const live = async () => await inv("list_timeline", {});
   const row = async (id) => (await live()).find((x) => x.id === id);
   const barActs = () => [...document.querySelectorAll("#error:not([hidden]) .bar-act")];
@@ -197,13 +201,15 @@
     ok("A9 操作面展开后页面跟着滚了", window.scrollY > y0, { y0, y1: window.scrollY });
     ok("A9 操作面下沿在底栏之上", !!p9 && p9.getBoundingClientRect().bottom <= $("bottombar").getBoundingClientRect().top, { pb: p9?.getBoundingClientRect().bottom, nav: $("bottombar").getBoundingClientRect().top });
     click(pact(card(`${M}-填充7`), "more"));
-    const p9b = await until(() => pact(card(`${M}-填充7`), "del") && card(`${M}-填充7`).querySelector(".panel"), 2000);
-    await sleep(100);
-    ok("A9 「更多…」子面下沿也在底栏之上", !!p9b && p9b.getBoundingClientRect().bottom <= $("bottombar").getBoundingClientRect().top);
+    // 906:「更多…」是屏底升起的菜单层(不再是卡片里比主面高的那一面)⇒ 这一格量的换成那张层:整张在屏内、「删除」够得着。
+    const p9b = await until(() => pact(card(`${M}-填充7`), "del") && $("more-sheet"), 2000);
+    await sleep(500); // 层的过场 0.22 s + 遮罩那记漏点的抑制窗 450 ms(下面要点遮罩收层)
+    const delR = pact(card(`${M}-填充7`), "del")?.getBoundingClientRect();
+    ok("A9 「更多…」菜单层整张在屏内、「删除」露着", !!p9b && !!delR && p9b.getBoundingClientRect().top >= 0 && delR.bottom <= window.innerHeight + 1, { top: p9b?.getBoundingClientRect().top, del: delR?.bottom, vh: window.innerHeight });
 
     // ---- A10:截止那枚钮开月历层(不弹系统选择器);提醒时间框框身 = showPicker ----
-    click(pact(card(`${M}-填充7`), "back"));
-    await until(() => pact(card(`${M}-填充7`), "due"), 2000);
+    click($("more-scrim")); // 收菜单层(906:没有「返回」钮了,点遮罩收)
+    await until(() => !$("more-sheet").classList.contains("open") && pact(card(`${M}-填充7`), "due"), 2000);
     click(pact(card(`${M}-填充7`), "due"));
     const dateBtn = await until(() => card(`${M}-填充7`)?.querySelector('.panel [data-pact="due-pick"]'), 2000);
     let picked = 0;

@@ -35,7 +35,9 @@
   const click = (el) => el.dispatchEvent(new MouseEvent("click", { bubbles: true }));
   const $ = (id) => document.getElementById(id);
   const card = (m) => [...document.querySelectorAll("#timeline article.card[data-id]")].find((c) => c.textContent.includes(m));
-  const pact = (m, a) => card(m)?.querySelector(`.panel [data-pact="${a}"]`) ?? null;
+  const pact = (m, a) =>
+    card(m)?.querySelector(`.panel [data-pact="${a}"]`) ??
+    (card(m)?.querySelector(".panel") && document.getElementById("more-sheet").classList.contains("open") ? document.querySelector(`#more-list [data-more-act="${a}"]`) : null); // 906:「更多…」是屏底菜单层 ⇒ 面里没有的那几枚到层里找(#more-list [data-more-act])
   const TAG = "W157G4-标签";
   const LONG = "W157G4-长\n" + Array.from({ length: 20 }, (_, i) => `第 ${i + 1} 行`).join("\n");
   const png = (w, h) => {

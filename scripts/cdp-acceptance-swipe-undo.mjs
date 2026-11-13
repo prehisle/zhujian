@@ -58,7 +58,11 @@ const HELPERS = `
   };
   const inPanel = (id, act) => {
     const c = cardOf(id);
-    return (c && c.querySelector('.panel [data-pact="' + act + '"]')) || null;
+    const hit = c && c.querySelector('.panel [data-pact="' + act + '"]');
+    if (hit) return hit;
+    // 906:「更多…」是屏底那张菜单层(#more-list [data-more-act])⇒ 这张卡的操作面开着、层也开着时,面里没有的到层里找。
+    const sheetOpen = document.getElementById("more-sheet").classList.contains("open");
+    return (c && c.querySelector(".panel") && sheetOpen && document.querySelector('#more-list [data-more-act="' + act + '"]')) || null;
   };
   // 706 起操作面主面只剩四枚,「删除」等低频件在「更多…」子面里 ⇒ 先把面板弄回主面
   // (判据 = "more" 这枚在不在),主面上没有的再钻一层。⛔ 别写成「恒先点 more」。

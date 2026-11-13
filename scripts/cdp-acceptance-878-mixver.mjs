@@ -202,8 +202,10 @@ async function cardAct(id, act) {
   await ev(`(() => { const c = document.querySelector('#timeline .card[data-id="${id}"]'); if (!c.querySelector(".panel")) c.querySelector(".body").dispatchEvent(new MouseEvent("click", { bubbles: true })); return true; })()`);
   await waitFor(`!!document.querySelector('#timeline .card[data-id="${id}"] .panel [data-pact="more"]') || !!document.querySelector('#timeline .card[data-id="${id}"] .panel [data-pact="${act}"]')`, "操作面");
   await ev(`(() => { const p = document.querySelector('#timeline .card[data-id="${id}"] .panel'); const m = p.querySelector('[data-pact="more"]'); if (m && !p.querySelector('[data-pact="${act}"]')) m.click(); return true; })()`);
-  await waitFor(`!!document.querySelector('#timeline .card[data-id="${id}"] .panel [data-pact="${act}"]')`, `「${act}」钮`);
-  await ev(`(document.querySelector('#timeline .card[data-id="${id}"] .panel [data-pact="${act}"]').click(), true)`);
+  // 906:「更多…」是屏底菜单层 ⇒ 第一层没有的那一枚到层里找(#more-list [data-more-act])
+  const SEL = `(document.querySelector('#timeline .card[data-id="${id}"] .panel [data-pact="${act}"]') ?? document.querySelector('#more-list [data-more-act="${act}"]'))`;
+  await waitFor(`!!${SEL}`, `「${act}」钮`);
+  await ev(`(${SEL}.click(), true)`);
 }
 const clickDocsText = (text) =>
   ev(`(() => { const b = [...document.querySelectorAll("#docs-body button")].find((x) => x.textContent.trim() === ${J(text)}); if (!b || b.disabled) return false; b.click(); return true; })()`);

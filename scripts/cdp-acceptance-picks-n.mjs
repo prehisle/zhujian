@@ -44,7 +44,7 @@ const M = "PICKSN";
 const KNIFE_CSS = [
   ".chip.due.today::before,.chip.due.overdue::before{-webkit-mask:none !important;mask:none !important}",
   ".chip.due.future::before{width:1.9em !important;height:1.9em !important}",
-  "#settings-pane details.notes > summary{min-height:0 !important;line-height:1.2 !important}",
+  ":is(#settings-pane,.set-page) details.notes > summary{min-height:0 !important;line-height:1.2 !important}", // 906:折叠分住在设置首页与它的二级页里
 ].join("\n");
 
 // 改之前那几段说明的全文(N4「一个字没丢」的字据;⛔ 这里是历史原文,不随字典改)。
@@ -382,42 +382,60 @@ const main = async () => {
       await until(`!document.getElementById("settings-pane").hidden`, 3000);
       await sleep(500);
     };
+    // 906:设置的重节各住进了自己的二级页(.set-page)⇒ 五只折叠不在同一页上:语言那只在首页,压缩大图 / 截止提醒 / 本机别名 / 备份
+    // 各在它那一页。文档序没变(首页在前、二级页按原来的节序排)⇒ 下标照旧 0–4;要量几何 / 真点的那只,先从首页那一行进它那一页。
+    const SET = ":is(#settings-pane,.set-page)";
     await openSettings();
-    const folds = await evalJs(`(()=>[...document.querySelectorAll("#settings-pane details.notes")].filter(d=>!d.hidden).map(d=>({open:d.open,sum:d.querySelector("summary").textContent,
-      body:[...d.querySelectorAll("p")].map(p=>p.textContent),bodyH:d.getBoundingClientRect().height-d.querySelector("summary").getBoundingClientRect().height})))()`);
-    step("N4 五节各一只折叠,钮上都是「说明」", folds.length === 5 && folds.every((f) => f.sum === "说明"), folds.map((f) => f.sum));
+    const pages = await evalJs(`(()=>[...document.querySelectorAll(${J(`${SET} details.notes`)})].filter(d=>!d.hidden).map((d,i)=>{d.dataset.n4=String(i);return d.closest("section").id}))()`);
+    const sumSel = (i) => `details.notes[data-n4="${i}"] > summary`;
+    const goFold = async (i) => {
+      if (await evalJs(`document.getElementById(${J(pages[i])}).hidden`)) {
+        await openSettings();
+        if (pages[i] !== "settings-pane") {
+          await click(`#settings-pane [data-set-page="${pages[i]}"]`);
+          await until(`!document.getElementById(${J(pages[i])}).hidden`, 3000);
+          await sleep(400);
+        }
+      }
+      await evalJs(`(()=>{document.querySelector(${J(sumSel(i))}).scrollIntoView({block:"center"});return 1})()`);
+      await settle(sumSel(i));
+    };
+    const folds = [];
+    const spans = [];
+    for (let i = 0; i < pages.length; i++) {
+      await goFold(i);
+      folds.push(
+        await evalJs(`(()=>{const d=document.querySelector(${J(sumSel(i))}).parentElement;return {open:d.open,sum:d.querySelector("summary").textContent,shown:d.getClientRects().length>0,
+          body:[...d.querySelectorAll("p")].map(p=>p.textContent),bodyH:d.getBoundingClientRect().height-d.querySelector("summary").getBoundingClientRect().height}})()`),
+      );
+      // 触区:逐点探(0.5 步长)
+      spans.push(
+        await evalJs(`(()=>{const e=document.querySelector(${J(sumSel(i))});const r=e.getBoundingClientRect();const x=r.left+20;let lo=null,hi=null;
+          for(let y=r.top-30;y<=r.bottom+30;y+=0.5){if(document.elementFromPoint(x,y)===e){if(lo===null)lo=y;hi=y}}return lo===null?0:hi-lo+0.5})()`),
+      );
+    }
+    step("N4 五节各一只折叠,钮上都是「说明」", folds.length === 5 && folds.every((f) => f.sum === "说明" && f.shown), folds.map((f) => f.sum));
     // ⚠ 收着的 details 里,段落自己的 rect 仍有高度(新引擎用 content-visibility 藏)⇒ 量的是「整只折叠比那枚钮高出多少」
     step("N4 默认都收着(整只折叠只有那枚钮那么高)", folds.every((f) => !f.open && Math.abs(f.bodyH) < 1), folds.map((f) => [f.open, f.bodyH]));
     const txt = (sel) => evalJs(`(()=>{const e=document.querySelector(${J(sel)});return e?e.textContent:null})()`);
     const langSub = await txt(`#settings-pane [data-i18n="settings.langSub"]`);
-    const compSub = await txt(`#settings-pane [data-i18n="settings.compressSub"]`);
-    const aliasSub = await txt(`#settings-pane [data-i18n="shell.aliasSub"]`);
-    const remSub = await txt("#remind-sub");
+    const compSub = await txt(`#set-compress [data-i18n="settings.compressSub"]`);
+    const aliasSub = await txt(`#set-alias [data-i18n="shell.aliasSub"]`);
+    const remSub = await txt("#remind-sub"); // 进过「截止提醒」那一页之后才有字(上面那一圈进过了)
     const remMore = await txt("#remind-more");
     step("N4 语言:常显那句 + 折叠里的 = 原来那一整段", langSub + folds[0].body.join("") === OLD.lang, [langSub, folds[0].body]);
     step("N4 压缩大图:同上", compSub + folds[1].body.join("") === OLD.compress, [compSub, folds[1].body]);
     const rem = `${remSub}${remMore}`;
     step("N4 截止提醒:同上(中间那个天数由常数注入)", rem.startsWith(OLD.remindHead) && rem.endsWith(OLD.remindTail) && /^\d+$/.test(rem.slice(OLD.remindHead.length, rem.length - OLD.remindTail.length)), rem);
     step("N4 本机别名:同上", aliasSub + folds[3].body.join("") === OLD.alias, [aliasSub, folds[3].body]);
-    const restore = await txt(`#settings-pane [data-i18n="backup.footRestore"]`);
+    const restore = await txt(`#set-backup [data-i18n="backup.footRestore"]`);
     step("N4 备份:第一段常显、另四段在折叠里,五段一字不差", restore === OLD.backup[0] && J(folds[4].body) === J(OLD.backup.slice(1)), [restore, folds[4].body]);
     step("N4 常显的第一句都以句号收尾(自己读得通)", [langSub, compSub, aliasSub, remSub, restore].every((x) => /。$/.test(x)), [langSub, compSub, aliasSub, remSub]);
-
-    // 触区:逐点探(0.5 步长)+ 真触摸点开 / 收回
-    const sumSel = (i) => `#settings-pane details.notes:nth-of-type(${i}) > summary`;
-    const idx = await evalJs(`(()=>{const all=[...document.querySelectorAll("#settings-pane details")];return [...document.querySelectorAll("#settings-pane details.notes")].filter(d=>!d.hidden).map(d=>all.indexOf(d)+1)})()`);
-    const spans = [];
-    for (const i of idx) {
-      await evalJs(`(()=>{document.querySelector(${J(sumSel(i))}).scrollIntoView({block:"center"});return 1})()`);
-      await settle(sumSel(i));
-      spans.push(
-        await evalJs(`(()=>{const e=document.querySelector(${J(sumSel(i))});const r=e.getBoundingClientRect();const x=r.left+20;let lo=null,hi=null;
-          for(let y=r.top-30;y<=r.bottom+30;y+=0.5){if(document.elementFromPoint(x,y)===e){if(lo===null)lo=y;hi=y}}return lo===null?0:hi-lo+0.5})()`),
-      );
-    }
     step("N4 五枚折叠钮可点高度都 ≥ 44", spans.length === 5 && spans.every((x) => x >= 43.5), spans);
-    const s2 = sumSel(idx[1]); // 压缩大图那只(折叠里的字最多)
-    await evalJs(`(()=>{document.querySelector(${J(s2)}).scrollIntoView({block:"center"});return 1})()`);
+
+    // 真触摸点开 / 收回
+    const s2 = sumSel(1); // 压缩大图那只(折叠里的字最多)
+    await goFold(1);
     await snap("N4-settings-folded");
     let opened = false;
     for (let i = 0; i < 3 && !opened; i++) {
@@ -445,9 +463,9 @@ const main = async () => {
       await dropIme();
       await snap("N3-search-empty-en");
       await openSettings();
-      const en = await evalJs(`(()=>[...document.querySelectorAll("#settings-pane details.notes")].filter(d=>!d.hidden).map(d=>d.querySelector("summary").textContent))()`);
+      const en = await evalJs(`(()=>[...document.querySelectorAll(":is(#settings-pane,.set-page) details.notes")].filter(d=>!d.hidden).map(d=>d.querySelector("summary").textContent))()`);
       step("N4 英文档折叠钮上是 Details", en.length === 5 && en.every((x) => x === "Details"), en);
-      const cjk = await evalJs(`(()=>[...document.querySelectorAll("#settings-pane details.notes p, #settings-pane .fine")].map(p=>p.textContent).filter(x=>/[\\u4e00-\\u9fff]/.test(x)))()`);
+      const cjk = await evalJs(`(()=>[...document.querySelectorAll(":is(#settings-pane,.set-page) details.notes p, :is(#settings-pane,.set-page) .fine")].map(p=>p.textContent).filter(x=>/[\\u4e00-\\u9fff]/.test(x)))()`);
       step("N4 英文档的说明里没有中文", cjk.length === 0, cjk);
       await evalJs(`(()=>{document.querySelector("#lang-seg").scrollIntoView({block:"start"});return 1})()`);
       await snap("N4-settings-en");

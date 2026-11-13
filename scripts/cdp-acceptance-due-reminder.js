@@ -167,26 +167,32 @@
    *  第一版就这么栽的(前一发探针脚本把面留开着了 ⇒ ① 那格读到上一趟的 07:30,
    *  而 `cfg` 明明是 null;⭐ 是那格自己把工装的病喊出来的)。⇒ 先收再开,保证是**新开**。
    *  同族记述在 skill `zhujian-android-verify`「卡片操作面板可能本来就开着」那条。 */
-  const openSettings = async () => {
-    if (!$("settings-pane").hidden) {
-      $("settings-toggle").click();
-      await sleep(300);
-    }
-    $("settings-toggle").click();
-    await sleep(500);
-  };
+  // 906:「截止提醒」住进了设置的二级页(#set-remind)⇒ 「开设置面」= 开设置首页、再从「截止提醒」那一行进它那一页
+  // (进页那一下才跑 paintRemindRow);「收」= 不管停在首页还是二级页都收干净(在二级页时点「设置」先回首页,再点一次才收)。
   const closeSettings = async () => {
+    if (!document.body.classList.contains("pane-open")) return;
+    if ($("settings-pane").hidden) {
+      $("settings-toggle").click();
+      await sleep(300);
+    }
     if (!$("settings-pane").hidden) {
       $("settings-toggle").click();
       await sleep(300);
     }
+  };
+  const openSettings = async () => {
+    await closeSettings();
+    $("settings-toggle").click();
+    await sleep(400);
+    document.querySelector('#settings-pane [data-set-page="set-remind"]').click();
+    await sleep(500);
   };
 
   try {
     // ---- ① 设置面那一节在,且没被摘掉 ------------------------------------------
     await openSettings();
     const parts = {
-      h2: [...document.querySelectorAll('#settings-pane h2[data-needs="notification"]')].length,
+      h2: [...document.querySelectorAll('#set-remind h2[data-needs="notification"]')].filter((h) => h.getClientRects().length > 0).length,
       seg: !!$("remind-seg"),
       time: !!$("remind-time"),
       test: !!$("remind-test"),

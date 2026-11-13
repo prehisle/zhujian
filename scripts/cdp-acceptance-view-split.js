@@ -66,7 +66,8 @@
       click(modeBtn("ideas"));
       await until(() => activeMode() === "ideas");
     }
-    ok("灵感面无任务勾框", !document.querySelector("#timeline .tick"));
+    // 906:任务卡不再带勾框 ⇒ 「灵感面上没有任务卡」改认时间轴上有没有「列」那种分节(任务面才按列分节,[data-col])。
+    ok("灵感面无任务卡", document.querySelectorAll("#timeline [data-col]").length === 0);
     // ⚠ 91 换了判据:从前写死 `includes("灵感")`,而那句文案早已改成「随手记一笔…」
     //   ⇒ 这一格红了不知多少轮,红的是**文案腐烂**不是产品(memory `stale-number-in-docs-and-fixtures`)。
     //   现在判「两面各有一句、且不是同一句、切回来还原样」—— 换文案不会再红,接错线照样红。
@@ -165,16 +166,17 @@
     ok("focus 在途被切面作废(用户赢)", activeMode() === "ideas" && !paneOpen());
 
     // ⑩ refresh 在途切面:任务面勾完成(写+refresh 在途)后立刻切灵感面,
-    //    迟到响应只许投影当前面(灵感面不得出现 .tick/任务卡)。
+    //    迟到响应只许投影当前面(灵感面不得出现任务卡)。
     click(modeBtn("tasks"));
     await until(() => activeMode() === "tasks");
-    const tick = cardOf(idT)?.querySelector(".tick input");
-    if (!ok("任务卡有勾框", !!tick)) throw new Error("abort");
-    tick.checked = true;
-    tick.dispatchEvent(new Event("change", { bubbles: true })); // completeTask + refresh 在途
+    // 906:「完成」是操作面最前面那一枚(卡左边的圆圈撤了)—— 同一条写口:completeTask + refresh 在途。
+    if (!cardOf(idT)?.querySelector(".panel")) click(cardOf(idT).querySelector(".content"));
+    const tick = await until(() => cardOf(idT)?.querySelector('.panel [data-pact="complete"]'), 2000);
+    if (!ok("任务卡的操作面有「完成」钮", !!tick)) throw new Error("abort");
+    click(tick); // completeTask + refresh 在途
     click(modeBtn("ideas"));
     await sleep(900); // 等在途 refresh 落定
-    ok("refresh 在途切面只投影当前面", activeMode() === "ideas" && !document.querySelector("#timeline .tick"));
+    ok("refresh 在途切面只投影当前面", activeMode() === "ideas" && !cardOf(idT));
 
     // ⑪ 关层在飞再开层(146 ▲▲M4 挂账补压):关面的 history.back 尚未收口时立刻重开,
     //    面应照开;随后 toggle 关闭应干净落地(账本与屏幕一致,无空炮/双弹)。
@@ -230,7 +232,7 @@
         const more = await until(() => c.querySelector('.panel [data-pact="more"]'), 1500);
         if (!more) continue;
         click(more);
-        const del = await until(() => c.querySelector('.panel [data-pact="del"]'), 1500);
+        const del = await until(() => document.querySelector('#more-list [data-more-act="del"]'), 1500); // 906:「更多…」是屏底菜单层
         if (!del) continue;
         click(del);
         await until(() => !cardOf(id), 2000);

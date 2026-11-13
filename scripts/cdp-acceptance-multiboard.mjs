@@ -107,7 +107,7 @@ async function waitFor(expr, what, ms = 8000) {
 const H = `
   const click = (el) => el.dispatchEvent(new MouseEvent("click", { bubbles: true }));
   const cardOf = (id) => document.querySelector('#timeline article.card[data-id="' + id + '"]');
-  const pact = (el, a) => el?.querySelector('.panel [data-pact="' + a + '"]') ?? null;
+  const pact = (el, a) => el?.querySelector('.panel [data-pact="' + a + '"]') ?? (el?.querySelector(".panel") && document.getElementById("more-sheet").classList.contains("open") ? document.querySelector('#more-list [data-more-act="' + a + '"]') : null);
 `;
 const page = (body) => ev(`(async () => { ${H} ${body} })()`);
 
@@ -205,8 +205,10 @@ try {
   ok(J(await sections()) === J(flowCols), "① 切到流程板:状态那排 = 它的活列(别的看板的列不在)", { got: await sections(), flowCols });
 
   // ② 勾 / 取消勾 / 全部归档
-  ok(await page(`return !!cardOf(${J(X)})?.querySelector(".tick input")`), "② 流程板的卡上有勾");
-  await page(`click(cardOf(${J(X)}).querySelector(".tick input")); return true;`);
+  // 906:卡左边那枚勾完成的圆圈撤了 ⇒ 「勾」= 操作面最前面那枚「完成」;「取消勾」= 操作面「列」那枚里点回落点。判据照旧。
+  await openPanel(X);
+  ok(await page(`return !!pact(cardOf(${J(X)}), "complete")`), "② 流程板的卡上有「完成」");
+  await clickPact(X, "complete");
   await waitFor(`(async () => (await window.__TAURI__.core.invoke("list_tasks", { spaceId: ${J(space)} })).find((t) => t.id === ${J(X)})?.status === ${J(flow.done)})()`, "勾完进流程板自己的完成列");
   const xt = (await tasks()).find((t) => t.id === X);
   ok(xt.status === flow.done && xt.status !== "done" && xt.done_at !== null, "② 勾 = 进它自己的完成列、盖 done_at", { status: xt.status, done_at: xt.done_at });
@@ -217,15 +219,20 @@ try {
   ok(!!(await waitFor(`(async () => (await window.__TAURI__.core.invoke("list_sealed_tasks", { spaceId: ${J(space)} })).some((t) => t.id === ${J(X)}))()`, "X 进了成就册")), "② 全部归档归的是流程板的完成列");
   await clickBarAct("撤销", "已归档");
   ok(!!(await waitFor(`(async () => (await window.__TAURI__.core.invoke("list_tasks", { spaceId: ${J(space)} })).find((t) => t.id === ${J(X)})?.status === ${J(flow.done)})()`, "撤销全部归档 → X 回完成列")), "② 撤销全部归档 → 回流程板完成列");
-  await waitFor(`!!cardOf(${J(X)})?.querySelector(".tick input:checked")`, "X 的勾在屏上");
-  await page(`click(cardOf(${J(X)}).querySelector(".tick input")); return true;`);
+  await waitFor(`!!cardOf(${J(X)})?.classList.contains("done")`, "X 在屏上、是已完成的样子");
+  await openPanel(X);
+  await clickPact(X, "status");
+  await waitFor(`!!cardOf(${J(X)})?.querySelector('.panel [data-status=${J(flow.landing)}]')`, "「列」候选里有落点");
+  await page(`click(cardOf(${J(X)}).querySelector('.panel [data-status=${J(flow.landing)}]')); return true;`);
   await waitFor(`(async () => (await window.__TAURI__.core.invoke("list_tasks", { spaceId: ${J(space)} })).find((t) => t.id === ${J(X)})?.status === ${J(flow.landing)})()`, "取消勾回落点");
   ok((await statusOf(X)) === flow.landing, "② 取消勾 = 回流程板的落点");
 
   // ③ 分类板
   await pickBoard(one.id);
-  const oneView = await page(`return { ticks: document.querySelectorAll("#timeline .tick").length, cards: document.querySelectorAll("#timeline article.card").length, sealAll: document.querySelectorAll("#timeline [data-seal-all]").length };`);
-  ok(oneView.cards > 0 && oneView.ticks === 0 && oneView.sealAll === 0, "③ 分类板:有卡、没有勾、没有全部归档", oneView);
+  const oneFirst = await page(`return document.querySelector("#timeline article.card[data-id]")?.dataset.id ?? null;`);
+  if (oneFirst) await openPanel(oneFirst);
+  const oneView = await page(`return { ticks: document.querySelectorAll('#timeline .tick, #timeline .panel [data-pact="complete"]').length + (document.querySelector("#timeline .panel") ? 0 : 1), cards: document.querySelectorAll("#timeline article.card").length, sealAll: document.querySelectorAll("#timeline [data-seal-all]").length };`);
+  ok(oneView.cards > 0 && oneView.ticks === 0 && oneView.sealAll === 0, "③ 分类板:有卡、操作面开着也没有「完成」、没有全部归档", oneView);
 
   // ④ 撤回为随记 → 撤销回原看板原列
   await pickBoard(flow.id);
@@ -301,10 +308,11 @@ try {
     ok(await pickBoard("@holding"), "⑦ 切到收容区");
     await waitFor(`!!cardOf(${J(held.id)})`, "收容卡在屏上");
     // 说明住哪儿(mbopt M10):横放的看板 = 筛选条里那一行(#board-note);竖放 = 时间轴首行(p.held-note,随内容滚走、不吸顶)。
+    await openPanel(held.id);
     const hv = await page(`const c = cardOf(${J(held.id)}); const board = document.body.classList.contains("board");
       const tlNote = document.querySelector("#timeline > p.held-note");
-      return { tick: !!c.querySelector(".tick"), board, note: board ? !document.getElementById("board-note").hidden && !tlNote : !!tlNote && document.getElementById("board-note").hidden && document.getElementById("timeline").firstElementChild === tlNote };`);
-    ok(!hv.tick && hv.note, "⑦ 收容卡没有勾、顶上有说明(横放在筛选条里一行,竖放是时间轴首行)", hv);
+      return { tick: !!c.querySelector(".tick") || !c.querySelector(".panel") || !!pact(c, "complete"), board, note: board ? !document.getElementById("board-note").hidden && !tlNote : !!tlNote && document.getElementById("board-note").hidden && document.getElementById("timeline").firstElementChild === tlNote };`);
+    ok(!hv.tick && hv.note, "⑦ 收容卡没有「完成」、顶上有说明(横放在筛选条里一行,竖放是时间轴首行)", hv);
     if (hv.board) {
       const nh = await page(`const n = document.getElementById("board-note"); return { h: n.getBoundingClientRect().height, lh: parseFloat(getComputedStyle(n).lineHeight) || 18 };`);
       ok(nh.h <= nh.lh + 2, "⑦ (mbopt M10)横放:那句说明压成一行", nh);

@@ -257,10 +257,13 @@ const main = async () => {
     await evalJs(`(()=>{if(!document.querySelector('${card} .panel [data-pact="more"]'))document.querySelector('${card} .content').click();return 1})()`);
     await until(`!!document.querySelector('${card} .panel [data-pact="more"]')`, 3000);
     await evalJs(`(()=>{document.querySelector('${card} .panel [data-pact="more"]').click();return 1})()`);
-    const hasMove = await until(`!!document.querySelector('${card} .panel [data-pact="move"]')`, 2000);
-    if (!hasMove) step("D-移动两拍", "skip", "更多…里没有移动入口");
+    const hasMove = await until(`!!document.querySelector('#more-list [data-more-act="move"]')`, 2000); // 906:「更多…」是屏底菜单层
+    if (!hasMove) {
+      await evalJs(`(()=>{window.__zhujianHandleBack&&window.__zhujianHandleBack();return 1})()`); // 收菜单层
+      step("D-移动两拍", "skip", "更多…里没有移动入口");
+    }
     else {
-      await evalJs(`(()=>{document.querySelector('${card} .panel [data-pact="move"]').click();return 1})()`);
+      await evalJs(`(()=>{document.querySelector('#more-list [data-more-act="move"]').click();return 1})()`);
       await until(`!!document.querySelector('${card} .panel [data-move-to]')`, 3000);
       await evalJs(`(()=>{document.querySelector('${card} .panel [data-move-to]').click();return 1})()`);
       await sleep(400);

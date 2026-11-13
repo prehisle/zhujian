@@ -387,7 +387,8 @@
     // ================= Q7:设置里的「空间…」 =================
     click($("settings-toggle"));
     await until(() => paneOpen("settings-pane"), 2000);
-    ok("Q7 设置里有「空间…」", $("settings-spaces-btn")?.textContent === "空间…" && $("settings-spaces-btn").getBoundingClientRect().height > 0);
+    // 906:设置首页那一枚成了入口行(左边名字「空间」、右边个数 + 箭头;此前是一枚写着「空间…」的钮),id 不动。
+    ok("Q7 设置里有「空间」那一行", $("settings-spaces-btn")?.querySelector(".set-name")?.textContent === "空间" && $("settings-spaces-btn").getBoundingClientRect().height > 0);
     click($("settings-spaces-btn"));
     ok("Q7 点了开的是空间那一页", !!(await until(() => paneOpen("spaces") && $("space-list").querySelector(".space-row"), 3000)));
     ok("Q7 同步页那枚「空间…」照留(元素在)", !!$("sync-spaces-btn"));
@@ -472,8 +473,9 @@
     click(mv.querySelector(".body"));
     await until(() => tlCard(ids.flow[7])?.querySelector('[data-pact="more"]'), 2000);
     click(tlCard(ids.flow[7]).querySelector('[data-pact="more"]'));
-    await until(() => tlCard(ids.flow[7])?.querySelector('[data-pact="move"]'), 2000);
-    click(tlCard(ids.flow[7]).querySelector('[data-pact="move"]'));
+    // 906:「更多…」是屏底菜单层(#more-list [data-more-act])
+    await until(() => document.querySelector('#more-list [data-more-act="move"]'), 2000);
+    click(document.querySelector('#more-list [data-more-act="move"]'));
     const warn = await until(() => tlCard(ids.flow[7])?.querySelector(".movewarn")?.textContent, 2000);
     ok("Q4 随记卡的移动说明:「这边不留」+「编辑历史」", warn === "移到别的空间 = 那边新生一条、这边不留;编辑历史会随移动永久删除,不迁入目标空间。", warn);
     click(tlCard(ids.flow[7]).querySelector(`[data-move-to="${ids.space}"]`));

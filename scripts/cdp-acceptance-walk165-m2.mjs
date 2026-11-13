@@ -494,6 +494,9 @@ const main = async () => {
     await closePanes();
     await click("#settings-toggle");
     await until(`!document.getElementById("settings-pane").hidden`, 3000);
+    // 906:「本机别名」住进了设置的二级页 ⇒ 先从首页那一行进去(进页才读身份、框才解禁)
+    await click(`#settings-pane [data-set-page="set-alias"]`);
+    await until(`!document.getElementById("set-alias").hidden&&!document.getElementById("alias-input").disabled`, 4000);
     await evalJs(`(()=>{document.getElementById("alias-input").scrollIntoView({block:"center"});return 1})()`);
     await sleep(600);
     if (await evalJs(`!document.getElementById("alias-input").disabled`)) {
