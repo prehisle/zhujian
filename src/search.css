@@ -17,7 +17,7 @@
   flex: none;
   padding: 20px calc(var(--winctl-dead) + 12px) 12px 30px;
   display: flex;
-  align-items: baseline;
+  align-items: center; /* 908 D5:与另四页同一形(标题按行框居中、同一条基线) */
   gap: 14px;
 }
 /* 标题 h1 与它前面那枚朱砂方印:共享件 .view header h1(见 controls.css,339 抽出)。 */
@@ -100,7 +100,7 @@
   margin: 0 0 12px;
   font-size: var(--fs-12);
   letter-spacing: 0.04em;
-  color: var(--ink-faint);
+  color: var(--ink-soft); /* 908 D14:--ink-faint → --ink-soft(小字说明 / 计数要读得到:§2.2 小字底线 5.0,faint 压纸面约 2.2–2.5) */
   font-variant-numeric: tabular-nums;
 }
 
@@ -168,6 +168,9 @@
 /* topic (tag) chips */
 .v-search .chip {
   flex: none;
+  /* 908 D7:补一圈边 —— 此前没写 border,`.tinted` 那句 border-color 落空(宽 0),chip 比旁边的类别徽标矮 2px、
+     暗档里 12% 的标签色底压在卡面上几乎看不见。无色那枚边透明(只占位,与徽标同高),有色那枚由下面 `.tinted` 染色。 */
+  border: 1px solid transparent;
   background: color-mix(in srgb, var(--ink) 6%, transparent);
   max-width: 220px;
   overflow: hidden;

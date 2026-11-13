@@ -17,10 +17,11 @@
    放不下的动作钮整体落到第二行(首行高 ≥36px,第二行天然在窗控下方)。 */
 .v-board header {
   flex: none;
-  padding: 20px calc(var(--winctl-dead) + 30px) 16px 30px;
+  /* 908 D5:下内边距 16 → 12、baseline → center,与随记 / 长文 / 标签 / 搜索四页同一形(切视图顶栏底线不跳;controls.css `.hbtn .k` 那段)。 */
+  padding: 20px calc(var(--winctl-dead) + 30px) 12px 30px;
   display: flex;
   flex-wrap: wrap;
-  align-items: baseline;
+  align-items: center;
   gap: 8px 14px;
   border-bottom: 1px solid var(--line);
 }
@@ -193,7 +194,7 @@
   border-color: color-mix(in srgb, var(--tag-color) 55%, var(--line-strong));
   background: color-mix(in srgb, var(--tag-color) 12%, var(--paper));
 }
-.v-board .task-topic .topic-hint { font-size: var(--fs-12); color: var(--ink-faint); }
+.v-board .task-topic .topic-hint { font-size: var(--fs-12); color: var(--ink-soft); } /* 908 D14:--ink-faint → --ink-soft(小字说明 / 计数要读得到:§2.2 小字底线 5.0,faint 压纸面约 2.2–2.5) */
 
 /* 标签选择器(⋯ 菜单「标签 L」展开):一个能搜、能建的内联选择器,取代旧的「一排按钮 + 取消」。
    搜标签把已有的顶到眼前(引导复用),输入名无匹配才出现「创建『x』」(染朱、虚线以示新建)。 */
@@ -239,6 +240,8 @@
 /* 已挂上的候选点亮(675):同这张卡上优先级选择器的 .cur 与筛选条的 .tf-pill.active。再点一次摘掉。 */
 .v-board .task-topic .choice.on { color: var(--seal-ink-on-seal-tint); border-color: var(--seal); background: var(--seal-tint); font-weight: 600; }
 .v-board .task-topic .choice.create { border-style: dashed; color: var(--seal-ink); border-color: var(--seal-line); }
+/* 有色标签的色点(908 D8,同 inbox.css 那条):只加点、不染底。 */
+.v-board .task-topic .choice.tinted::before { content: "●"; color: var(--tag-color); margin-right: 3px; }
 .v-board .task-topic .choice.create:hover { background: var(--seal-tint); border-color: var(--seal); }
 
 /* ---- the board: columns row + an archive drop strip ---- */
@@ -624,12 +627,15 @@
 .hd-err { margin: 0; font-size: var(--fs-13); color: var(--seal-ink); }
 
 /* ---- trash view: a single scrolling list + an empty/clear bar ---- */
-.v-board main.trash { display: block; overflow-y: auto; padding: 16px 24px 22px; }
-.v-board main.trash .trash-list { max-width: 560px; margin: 0 auto; }
+/* 908 D13(用户拍):回收站 / 归档册 / 收容区这一栏**靠左、最宽 860**,与长文列表(docs.css `.doc-list`)同一个版心 ——
+   此前是居中 560,三种列表三种版心(随记通栏、长文靠左 860、这里居中 560)。左右内边距 30 与页头标题、随记 / 长文的内容区对齐
+   (此前 24)。栏里各件(工具条 / 确认区 / 列表 / 已删配图 / 空筛提示 / 看板筛选排)同宽同靠左。 */
+.v-board main.trash { display: block; overflow-y: auto; padding: 20px 30px 28px; }
+.v-board main.trash .trash-list { max-width: 860px; }
 /* 清空回收站的确认区(trash-purge.css)跟工具条、条目列表同一栏宽(W3 159 / A19「全宽」= 这一栏的全宽)。 */
-.v-board main.trash .purge-panel { max-width: 560px; margin: 0 auto 14px; }
-/* 「已删配图」一节(用户面 149,trash-images.ts)跟条目列表同一栏宽、同居中,别铺满整屏。 */
-.v-board main.trash .trash-imgs { max-width: 560px; margin-left: auto; margin-right: auto; }
+.v-board main.trash .purge-panel { max-width: 860px; margin: 0 0 14px; }
+/* 「已删配图」一节(用户面 149,trash-images.ts)跟条目列表同一栏宽,别铺满整屏。 */
+.v-board main.trash .trash-imgs { max-width: 860px; }
 /* 纸面滚动条住 controls.css(全应用一份,348 统一;新增可滚容器去那边登记)。 */
 
 /* ---- 归档(成就册)view: reuses the trash list layout + a day timeline ---- */
@@ -667,13 +673,13 @@
   .v-board .col-head.confirming .seal-all-slot .confirm-q { flex: 1 1 100%; }
 }
 .v-board .trash-bar {
-  max-width: 560px;
-  margin: 0 auto 14px;
+  max-width: 860px; /* 908 D13:同 main.trash 那一栏 */
+  margin: 0 0 14px;
   display: flex;
   align-items: center;
   gap: 10px;
   font-size: var(--fs-13);
-  color: var(--ink-faint);
+  color: var(--ink-soft); /* 908 D14:--ink-faint → --ink-soft(小字说明 / 计数要读得到:§2.2 小字底线 5.0,faint 压纸面约 2.2–2.5) */
 }
 .v-board .trash-bar .grow { flex: 1; }
 /* 900 C10:归档册顶上那行「本周完成 N · 累计 N(含…还没归档的 N 张)」—— 这几个数同屏别处拿不到(下面只列册子里的)
@@ -873,13 +879,13 @@
   color: var(--ink-soft);
 }
 .v-board .sealed-boards {
-  max-width: 560px;
-  margin: 0 auto 10px;
+  max-width: 860px; /* 908 D13:同 main.trash 那一栏(靠左) */
+  margin: 0 0 10px;
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
 }
-.v-board .sealed-none { max-width: 560px; margin: 8px auto; font-size: var(--fs-13); color: var(--ink-faint); }
+.v-board .sealed-none { max-width: 860px; margin: 8px 0; font-size: var(--fs-13); color: var(--ink-soft); } /* 908 D14:--ink-faint → --ink-soft(小字说明 / 计数要读得到:§2.2 小字底线 5.0,faint 压纸面约 2.2–2.5) */
 /* 收容区:按原看板 / 列分组,组头带「看板已删除 / 列已删除」一枚虚边标(实底换虚边,以区分「这不是计数」)。 */
 .v-board .holding-from { display: flex; align-items: center; gap: 8px; }
 .v-board .holding-why {
@@ -889,6 +895,6 @@
   border-radius: var(--radius-pill);
   padding: 0 8px;
 }
-/* 只有一列的看板:限宽居中(同归档册的 560),不铺满整屏(用户 2026-11-11 拍)。 */
+/* 只有一列的看板:限宽居中(560,当时同归档册;归档册 908 D13 起改靠左 860,这一条是看板的列、没跟着改),不铺满整屏(用户 2026-11-11 拍)。 */
 .v-board .cols.single { justify-content: center; }
 .v-board .cols.single > .col { flex: 0 1 560px; }

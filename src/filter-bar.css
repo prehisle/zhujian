@@ -45,7 +45,7 @@
 .tf-hint {
   font-size: var(--fs-12);
   letter-spacing: 0.04em;
-  color: var(--ink-faint);
+  color: var(--ink-soft); /* 908 D14:--ink-faint → --ink-soft(小字说明 / 计数要读得到:§2.2 小字底线 5.0,faint 压纸面约 2.2–2.5) */
 }
 /* 轴名小标(「类型」):与 pills 同排,弱化以示这是分组标签而非可点项。 */
 .tf-axis {

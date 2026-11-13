@@ -105,7 +105,7 @@ describe("长文的图(154 G3–G5)", () => {
     expect(err).toContain("1 个文件不是图片");
 
     // ③ 「＋加图」钮:接着排在图3 后面
-    expect(await browser.execute(() => [...document.querySelectorAll(".v-docs .doc-bar .hbtn .lbl")].some((n) => n.textContent === "＋加图"))).toBe(true);
+    expect(await browser.execute(() => [...document.querySelectorAll(".v-docs .doc-bar .hbtn .lbl")].some((n) => n.textContent === "+ 加图"))).toBe(true); // 908 D17:半角加号 + 空格
     await feed("pick", ["b.png"]);
     await browser.waitUntil(async () => (await areaValue()).includes("图4"), { timeout: 8000, timeoutMsg: "＋加图之后写字框里一直没插「图4」" });
     expect(await areaValue()).toBe("# 图E2E\n\n见图2。\n\n图3\n\n图4\n\n图1");

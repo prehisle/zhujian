@@ -39,8 +39,8 @@ async function openTrash() {
   });
 }
 async function openBoard() {
-  // Toggle says "← 看板" while in trash view.
-  await $("#trash-toggle").click();
+  // 908 D10:回收站里返回走页面左上那枚「‹ 看板」(顶栏开关照原样,不再换成返回钮)。
+  await $("#board-back").click();
   await $(".col.done").waitForExist({ timeout: 8000 });
 }
 

@@ -258,6 +258,7 @@ const SKELETON = `
     <span class="op-err-msg" id="op-err-msg"></span>
     <button class="act ghost" id="op-err-x" type="button">${t("board.gotIt")}</button>
   </div>
+  <div class="page-back-row" id="board-back-row" hidden><button class="hbtn page-back" id="board-back" type="button">${t("board.backToBoard")}</button></div>
   <main id="board"></main>
 `;
 
@@ -358,6 +359,8 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
   const trashN = view.querySelector("#trash-n") as HTMLElement;
   const sealToggle = view.querySelector("#seal-toggle") as HTMLButtonElement;
   const sealN = view.querySelector("#seal-n") as HTMLElement;
+  const backRow = view.querySelector("#board-back-row") as HTMLElement;
+  const backBtn = view.querySelector("#board-back") as HTMLButtonElement;
   const addTaskBtn = view.querySelector("#add-task") as HTMLButtonElement;
   const sortBtn = view.querySelector("#board-sort") as HTMLButtonElement;
   const sortLbl = view.querySelector("#board-sort-lbl") as HTMLElement;
@@ -3149,8 +3152,9 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
       // The toggles always reflect the live counts.
       // 顶栏计数 = 条目 + 已删配图(只剩几张图时钮上不能写 0)。
       // 158 G3 / Q13(WD-33):页头随视图改名(此前归档页 / 回收站页都还写着「任务看板」,看不出在哪);
-      // 进了归档 / 回收站,那枚开关变成「← 看板」返回钮 —— 它旁边的数字是归档 / 回收站的条数,
-      // 挂在「看板」两个字后面读成「看板上有几张」,这时藏起来(页里那一行自己会说几条)。
+      // 908 D10(用户拍):进了归档 / 回收站,顶栏那两枚开关**照原样**(字、数、键帽都不换,也不点亮)——
+      // 此前它们换成点亮的「← 看板」返回钮;返回改走页面左上那枚「‹ 看板」(`.page-back-row`,同随记回收站「‹ 随记」、
+      // 长文阅读页「‹ 长文」)。R / G 两枚单键照旧是开关(进 / 出都是它)。
       // 0043:看板态的页头 = 这块看板的名字(侧栏里点的那块);收容区一个固定的名。
       // D11:页头里的字与显隐**变了才写**(setText / setHidden)—— 原样再写一遍也会惊动页头的 MutationObserver,
       // 每次 load 白量一趟 fitHeader。
@@ -3165,21 +3169,16 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
               : boardName(cur),
       );
       markActiveBoard(boardView === "holding" ? "holding" : boardView === "board" ? cur.id : null);
-      setHidden(trashN, boardView === "trash");
-      setHidden(sealN, boardView === "sealed");
+      setHidden(backRow, boardView !== "trash" && boardView !== "sealed");
       // 条目 + 已删配图**张数**(core 两格各自按同一谓词数好,⛔ 别再把配图组数 / 列表长度叠上去)。
       setText(trashN, String(trashCounts.tasks + trashCounts.task_images));
-      trashToggle.classList.toggle("active", boardView === "trash");
-      setText(trashToggle.firstChild!, boardView === "trash" ? t("board.backToBoard") : t("board.trashLbl"));
       // B12(用户 2026-11-12 拍):「归档 N」的 N 只数**这块看板**的成就(来处按卡所在列的归属认,同归档册那排筛选);
       // 这块看板没有完成列、也没有成就 ⇒ 这枚不显(纯分类看板上一枚恒 0 的「归档」是噪音)。快捷键 G 照旧开得了归档册。
-      // 在归档册里它是「← 看板」返回钮,恒显。
+      // 在归档册里它恒显(人就在它开的那一页上)。
       // W3:这块看板那一组的 n(core 按卡所在列的归属分组,含已删看板与 null 组 —— 那两种不属任何活看板,这里自然不取)。
       const sealedHere = sealedCounts.find((g) => g.board_id === cur!.id)?.n ?? 0;
       setHidden(sealToggle, boardView !== "sealed" && cur.done === null && sealedHere === 0);
       setText(sealN, String(sealedHere));
-      sealToggle.classList.toggle("active", boardView === "sealed");
-      setText(sealToggle.firstChild!, boardView === "sealed" ? t("board.backToBoard") : t("board.sealLbl"));
 
       // 新建卡片 only makes sense on the board, not in the 回收站/归档.
       setHidden(addTaskBtn, boardView !== "board");
@@ -3404,6 +3403,8 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
     load();
   }
   sealToggle.addEventListener("click", toggleSealed);
+  // 左上「‹ 看板」(908 D10):回收站 / 归档册里才显(load 里按 boardView 摆);点它 = 再按一下那枚开关。
+  backBtn.addEventListener("click", () => (boardView === "trash" ? toggleTrash() : toggleSealed()));
 
   // 视图级全局单键(不悬停卡片也生效;键义和卡片单键错开):N 新建任务、R 回收站切换、
   // G 归档切换(卡片单键 A 是「归档这张卡」,视图键须错开)。全屏时鼠标要跑到右上角很远,

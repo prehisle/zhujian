@@ -5,7 +5,7 @@ export const inbox = defineMessages({
   "inbox.title": { zh: "随记", en: "Notes" },
   "inbox.copyIdeas": { zh: "复制随记", en: "Copy notes" },
   "inbox.tabTrash": { zh: "回收站", en: "Trash" },
-  "inbox.backToIdeas": { zh: "← 随记", en: "← Notes" },
+  "inbox.backToIdeas": { zh: "‹ 随记", en: "‹ Notes" },
   "inbox.imagesTrashed": { zh: "删了 {n} 张图,在回收站能找回", en: "Deleted {n} image(s) — you can get them back from Trash" },
   "inbox.filterPlaceholder": { zh: "过滤随记…", en: "Filter notes…" },
   // W4 Q11 / WD-38:「本周捕获 · 转待办」换白话(用户拍定的词表)。
@@ -78,7 +78,7 @@ export const inbox = defineMessages({
   "inbox.histClose": { zh: "关闭", en: "Close" },
   "inbox.histNone": { zh: "这一条现在没有旧版本可看。", en: "There are no earlier versions of this one now." },
   "inbox.histVsNow": { zh: "这一版 → 现在:删掉的标红,加上的标绿", en: "This version → now: removed in red, added in green" },
-  "inbox.addImage": { zh: "＋加图", en: "+ Image" },
+  "inbox.addImage": { zh: "+ 加图", en: "+ Image" },
   "inbox.filterNoMatchHint": { zh: "换个词,或清空过滤框(Esc)。", en: "Try another word, or clear the filter (Esc)." },
   "inbox.filterEmptyTag": { zh: "「{tag}」下没有随记", en: "No notes under “{tag}”" },
   "inbox.filterEmptyTagHint": { zh: "切到「所有」看全部随记。", en: "Switch to “All” to see every note." },

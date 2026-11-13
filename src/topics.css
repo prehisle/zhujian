@@ -24,12 +24,14 @@
    ⚠ 缺的只是**那一角**,钮的中心与右缘照旧点得到(637 量过)。
    配 wrap:排不开时 `.head-tools` 整块落到第二行,首行高 ≥36px ⇒ 第二行天然在窗控下方
    (同 board.css 那段的道理)。搜索页也是 +12,但它没有动作钮 ⇒ 不在这条账里,没跟着改。 */
+/* 908 D5:底边距 14 → 12、baseline → center —— 上面「14 与 border 有无严格对应」那条已不成立(随记 / 长文 / 看板的头
+   也都带 border-bottom、写的是 12),五页切视图时这条底线跳 2–8px(908 巡检量的)。五页一律 12 + center。 */
 .v-topics header {
   flex: none;
-  padding: 20px calc(var(--winctl-dead) + 30px) 14px 30px;
+  padding: 20px calc(var(--winctl-dead) + 30px) 12px 30px;
   display: flex;
   flex-wrap: wrap;
-  align-items: baseline;
+  align-items: center;
   gap: 8px 14px;
   border-bottom: 1px solid var(--line);
 }
@@ -96,7 +98,7 @@
   font: inherit;
   font-size: var(--fs-12);
   letter-spacing: 0.04em;
-  color: var(--ink-faint);
+  color: var(--ink-soft); /* 908 D14 / D15:「N 个子标签」是要读的字,--ink-faint → --ink-soft(§2.2 小字底线) */
   background: transparent;
   border: 1px solid var(--line);
   border-radius: var(--radius-pill);
@@ -109,7 +111,7 @@
   border-color: var(--seal-line);
   background: var(--seal-tint);
 }
-.v-topics .topic-kids-toggle .kt-chev { font-size: 9px; margin-right: 1px; }
+.v-topics .topic-kids-toggle .kt-chev { font-size: 9px; margin-right: 1px; display: inline-block; transform: scale(1.3); } /* 908 D15:同 .topic-caret,放大走 transform(字号登记着纯装饰 9px) */
 .v-topics.merging .topic-kids-toggle { display: none; } /* 合并态要选子标签,不折叠 */
 /* 每个子行头挂一条短横「elbow」接回导轨,明示「这是父的子项」 */
 .v-topics .topic-kids .topic-head { position: relative; }
@@ -197,7 +199,7 @@
   font-size: var(--fs-12);
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.04em;
-  color: var(--ink-faint);
+  color: var(--ink-soft); /* 908 D14:--ink-faint → --ink-soft(小字说明 / 计数要读得到:§2.2 小字底线 5.0,faint 压纸面约 2.2–2.5) */
 }
 
 /* ---- 拖动手柄(0031 手动排序):默认隐,悬停行才现;合并态藏起 ---- */
@@ -354,7 +356,11 @@
   width: 14px;
   text-align: center;
   font-size: 10px;
-  color: var(--ink-faint);
+  /* 908 D15:三角放大一档、颜色深一档(此前 10px × --ink-faint,一行里最不起眼的就是「这一行能点开」的那个记号)。
+     放大走 transform 不改 font-size:字号这一格在 check-fs-drift 的登记表里按「纯装饰字形 10px」签着,
+     且放大只该放字形、不该把行盒撑高(标题行的垂直节奏不动)。 */
+  transform: scale(1.6);
+  color: var(--ink-soft);
   transition: color 0.14s;
 }
 .v-topics .topic-head:hover .topic-caret { color: var(--seal); }
@@ -380,7 +386,7 @@
 }
 .v-topics .drill-empty {
   font-size: var(--fs-13);
-  color: var(--ink-faint);
+  color: var(--ink-soft); /* 908 D14:--ink-faint → --ink-soft(小字说明 / 计数要读得到:§2.2 小字底线 5.0,faint 压纸面约 2.2–2.5) */
   font-style: italic;
   padding: 4px 2px;
 }

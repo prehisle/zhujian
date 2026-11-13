@@ -41,6 +41,7 @@ import type { View, ViewCtx } from "./notebook";
 import { applyTagColor } from "./tag-color";
 import { renderTagPicker } from "./tag-picker";
 import { when } from "./tasktime";
+import type { TrashCounts } from "./trash-images";
 import { applyEdit, wireChecklistInput } from "./checklist-input";
 import { el } from "./dom";
 import { errDetail, errText } from "./err";
@@ -196,8 +197,12 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
   ]);
   // 165 / W5 Q15(WD-27):页头也放「回收站」—— 删了长文(回执只有【撤销】)此前要想到去随记页的回收站找。开的就是随记那只
   // (长文删了进的就是它;回收站按冻结的 stage 分两页,长文的 stage 在随记那两档)。排在最右,同随记 / 看板页头那枚「回收站」的位置。
-  const trashBtn = el("button", { className: "hbtn", type: "button", title: t("docs.trashTitle") }, [
+  // 908 D12:三页同写「回收站 N」—— N 同随记页顶栏那个数(条目 + 已删配图张数,`trash_counts` 的随记那两格;
+  // 长文删了进的就是这只)。不带键帽:长文页没有打开回收站的单键(⛔ 别为了齐整新加)。
+  const trashN = el("span", { className: "tn" });
+  const trashBtn = el("button", { className: "hbtn", id: "docs-trash", type: "button", title: t("docs.trashTitle") }, [
     el("span", { className: "lbl", textContent: t("docs.trash") }),
+    trashN,
   ]);
   trashBtn.addEventListener("click", () => {
     openInboxTrashNext();
@@ -523,8 +528,9 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
   function bar(left: HTMLElement[], right: HTMLElement[], narrow = false): HTMLElement {
     return el("div", { className: narrow ? "doc-bar narrow" : "doc-bar" }, [...left, el("span", { className: "doc-bar-gap" }), ...right]);
   }
+  // 908 D10:`page-back` = 页面左上那枚「‹ 上一页名」(同随记回收站「‹ 随记」、看板回收站 / 归档册「‹ 看板」,controls.css)。
   function backBtn(label: string, run: () => void): HTMLElement {
-    return el("button", { className: "hbtn", type: "button", textContent: label, onclick: run });
+    return el("button", { className: "hbtn page-back", type: "button", textContent: label, onclick: run });
   }
 
   /** 正文 → DOM(共用渲染器)。配图映射每篇建一次;勾方框走 edit_note 落一版(同随记,⛔ 不猜行)。
@@ -1639,7 +1645,13 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
     const seq = ++refreshSeq;
     let list: DocItem[];
     try {
-      [list] = await Promise.all([invokeInSpace<DocItem[]>(mountSpace, "list_docs"), loadCommentCounts(mountSpace)]);
+      let trash: TrashCounts;
+      [list, , trash] = await Promise.all([
+        invokeInSpace<DocItem[]>(mountSpace, "list_docs"),
+        loadCommentCounts(mountSpace),
+        invokeInSpace<TrashCounts>(mountSpace, "trash_counts"),
+      ]);
+      trashN.textContent = String(trash.ideas + trash.idea_images);
     } catch (e) {
       if (seq !== refreshSeq) return;
       lastSig = "";

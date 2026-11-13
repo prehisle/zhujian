@@ -295,7 +295,7 @@
 .bn-tpl:hover { border-color: var(--seal-line); }
 .bn-tpl.on { background: var(--seal-tint); border-color: var(--seal-line); }
 .bn-tpl-title { font-family: var(--font-serif); font-size: var(--fs-14); color: var(--ink); }
-.bn-tpl-sub { font-family: var(--font-sans); font-size: var(--fs-12); color: var(--ink-faint); }
+.bn-tpl-sub { font-family: var(--font-sans); font-size: var(--fs-12); color: var(--ink-soft); } /* 908 D14:--ink-faint → --ink-soft(小字说明 / 计数要读得到:§2.2 小字底线 5.0,faint 压纸面约 2.2–2.5) */
 .bn-new-acts { display: flex; justify-content: flex-end; gap: 8px; }
 .bcm-btn.solid-ink { color: var(--on-seal); background: var(--seal); border-color: var(--seal); font-weight: 600; }
 .bcm-btn.solid-ink:hover { color: var(--on-seal); background: color-mix(in srgb, var(--seal) 88%, var(--ink)); }

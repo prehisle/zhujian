@@ -408,7 +408,7 @@ describe("W3 159 · 空间与跨空间移动(桌面第二波,前端半)", () => 
     // 新建空间撞名:同一句、同一个样
     await browser.execute(() => document.body.dispatchEvent(new MouseEvent("mousedown", { bubbles: true })));
     await browser.execute((n) => (window.__w159.createErr = `已有同名空间「${n}」`), FAKE_NAME);
-    await openRow("＋ 新建空间");
+    await openRow("+ 新建空间");
     await enter(FAKE_NAME);
     await browser.waitUntil(async () => ((await form())?.err ?? "") !== "", { timeout: 5000, timeoutMsg: "新建撞名没报" });
     expect(await form()).toMatchObject({ value: FAKE_NAME, err: `已有同名空间「${FAKE_NAME}」` });

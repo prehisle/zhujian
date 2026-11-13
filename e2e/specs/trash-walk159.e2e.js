@@ -74,6 +74,9 @@ const purgeProbe = () =>
     };
   });
 
+// 看板在不在回收站里:908 D10 起顶栏那枚开关进了回收站照原样(不再点亮)⇒ 认页面左上「‹ 看板」那一行显没显。
+const boardInTrash = () => browser.execute(() => document.querySelector("#board-back-row")?.hidden === false);
+
 describe("W3 159 · 回收站 / 搜索 / 看板(桌面第一波)", () => {
   after(async () => {
     await inboxShow("ideas");
@@ -117,17 +120,18 @@ describe("W3 159 · 回收站 / 搜索 / 看板(桌面第一波)", () => {
       timeoutMsg: `回时间轴没还原到它自己的位置:want≈${s1} got=${await listTop()}`,
     });
 
-    // 「← 随记」那条路同理:回收站滚到 300 再回来,时间轴仍是 s1(此前共用 = 300)
+    // 「‹ 随记」那条路同理:回收站滚到 300 再回来,时间轴仍是 s1(此前共用 = 300)
+    // (908 D10 起回去走页面左上那枚「‹ 随记」;顶栏那枚开关照原样,再按也回得来)
     await $("#inbox-trash-toggle").click();
     await $(".note*=W159-A6 废 0").waitForExist({ timeout: 10000 });
     await browser.execute(() => {
       document.querySelector(".v-inbox #list").scrollTop = 300;
     });
-    await $("#inbox-trash-toggle").click();
+    await $("#inbox-back").click();
     await $(".note:not(.archived)").waitForExist({ timeout: 10000 });
     await browser.waitUntil(async () => Math.abs((await listTop()) - s1) <= 2, {
       timeout: 5000,
-      timeoutMsg: `「← 随记」回来没还原时间轴的位置:want≈${s1} got=${await listTop()}`,
+      timeoutMsg: `「‹ 随记」回来没还原时间轴的位置:want≈${s1} got=${await listTop()}`,
     });
 
     for (const n of await invoke("list_archived")) if (n.content.startsWith("W159-A6")) await invoke("purge_note", { id: n.id });
@@ -308,7 +312,7 @@ describe("W3 159 · 回收站 / 搜索 / 看板(桌面第一波)", () => {
       timeout: 8000,
       timeoutMsg: "悬停按 R 没有还原那张卡",
     });
-    expect((await $("#trash-toggle").getAttribute("class")).split(/\s+/)).toContain("active");
+    expect(await boardInTrash()).toBe(true); // 人还在回收站
     await waitToast("已还原到看板「待办」列");
 
     // 还原那张的「去看看」:回看板、定位到它
@@ -319,11 +323,11 @@ describe("W3 159 · 回收站 / 搜索 / 看板(桌面第一波)", () => {
     );
     await clickGoSee();
     await waitLocated(".tcard", G);
-    expect((await $("#trash-toggle").getAttribute("class")).split(/\s+/)).not.toContain("active");
+    expect(await boardInTrash()).toBe(false);
 
     // 指针不在卡上:R 照旧是回收站开关
     await browser.execute(() => document.dispatchEvent(new KeyboardEvent("keydown", { key: "r", bubbles: true, cancelable: true })));
-    await browser.waitUntil(async () => (await $("#trash-toggle").getAttribute("class")).split(/\s+/).includes("active"), {
+    await browser.waitUntil(boardInTrash, {
       timeout: 5000,
       timeoutMsg: "没悬停卡时 R 没打开回收站",
     });

@@ -122,6 +122,13 @@ const thumbCache = new Map<string, string>(); // imageId → 降采样(长边 �
 // 157 G4 / P12 起**不再方裁**:保持原比例、长边至多 192(core `thumbs::THUMB_SPEC` 同轮换成 `192fit-jpeg80`),
 // 卡上按比例显示(`fitThumbBox`)。上面那段「两边都钉死」照旧成立:长边钉 192,短边随比例更小。
 const THUMB_PX = 192;
+/** 缩略图的衬底色(908 D3):JPEG 没有透明通道,透明 PNG 不先铺底就 drawImage → toDataURL("image/jpeg"),
+ *  透明处被编码成**黑**(卡上一圈黑边 / 黑底)。⇒ 先铺一层纸色再画。
+ *  ⚠ 刻意写死**亮档 --raised 的值**、不读当前主题:小图算一次就回存派生表(put_item_thumb)、此后永久复用,
+ *  跟着当时的明暗档取色 = 同一张图换档后底色对不上、且两台机器各存各的。透明图多是给浅底画的(深色字 / 图标),
+ *  浅纸底两档下都读得出;暗档里它就是一块浅纸,与「图片原本的样子」一致。
+ *  ⚠ 只治**新算的**小图:已回存的旧小图要等 core `thumbs::THUMB_SPEC` 换规格才会失效重算(那是 core 的事,本轮不动)。 */
+const THUMB_MATTE = "#faf6ec";
 /** 缩略框按图的比例定宽(157 G4 / P12):高恒 72,宽 = 72 × 宽高比,夹在 36..160 之间 ——
  *  超出这个区间的极端长图 / 宽图照旧 cover 裁一截,但一眼仍读得出「长」还是「宽」。⚠ 安卓
  *  `thumbs.ts::fitThumbBox` 同一组数(两端不共享代码)。 */
@@ -140,6 +147,8 @@ function shrinkToThumb(url: string): Promise<string> {
       c.height = Math.max(1, Math.round(img.naturalHeight * k));
       const ctx = c.getContext("2d");
       if (!ctx) return reject(new Error("canvas 2d 上下文不可用"));
+      ctx.fillStyle = THUMB_MATTE;
+      ctx.fillRect(0, 0, c.width, c.height);
       ctx.drawImage(img, 0, 0, c.width, c.height);
       resolve(c.toDataURL("image/jpeg", 0.8));
     };

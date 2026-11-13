@@ -43,11 +43,14 @@ describe("㊵ 视图级单键 / `/` 开菜单 / 侧栏拖窗", () => {
 
   it("看板:按 R → 切到回收站,再按 R → 切回看板", async () => {
     await goNotebook("board");
-    expect(await $("#trash-toggle").getText()).toContain("回收站");
+    const inTrash = () => browser.execute(() => document.querySelector(".v-board header h1").textContent === "回收站");
+    expect(await inTrash()).toBe(false);
     await pressKey("r");
-    expect(await $("#trash-toggle").getText()).toContain("看板"); // "← 看板 …" while in 回收站
+    // 908 D10:进了回收站顶栏那枚照原样(仍写「回收站」),观测面换成页头标题 + 左上「‹ 看板」显出来
+    await browser.waitUntil(inTrash, { timeout: 5000, timeoutMsg: "按 R 没进回收站" });
+    expect(await browser.execute(() => document.querySelector("#board-back-row").hidden)).toBe(false);
     await pressKey("r");
-    expect(await $("#trash-toggle").getText()).toContain("回收站");
+    await browser.waitUntil(async () => !(await inTrash()), { timeout: 5000, timeoutMsg: "再按 R 没回看板" });
   });
 
   it("看板:焦点在输入框时,单键让位(R 不触发回收站切换)", async () => {

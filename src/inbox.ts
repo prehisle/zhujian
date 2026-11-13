@@ -223,7 +223,7 @@ const SKELETON = `
     <span class="head-tools">
       <span class="idea-stats" id="idea-stats"></span>
       <span class="copy-slot" id="inbox-copy-slot"></span>
-      <button class="hbtn" id="inbox-trash-toggle" type="button" title="${t("inbox.tabTrash")}"><span class="lbl" id="inbox-trash-lbl">${t("inbox.tabTrash")}</span><span class="tn" id="n-archived"></span></button>
+      <button class="hbtn" id="inbox-trash-toggle" type="button" title="${t("inbox.tabTrash")}"><span class="lbl">${t("inbox.tabTrash")}</span><span class="tn" id="n-archived"></span></button>
     </span>
   </header>
   <div class="hkb-banner" id="hkb-banner" hidden></div>
@@ -237,6 +237,7 @@ const SKELETON = `
       <input class="filter-text" id="idea-filter" type="search" placeholder="${t("inbox.filterPlaceholder")}" autocomplete="off" spellcheck="false" />
     </div>
   </div>
+  <div class="page-back-row" id="inbox-back-row" hidden><button class="hbtn page-back" id="inbox-back" type="button">${t("inbox.backToIdeas")}</button></div>
   <main id="list"></main>
 `;
 
@@ -272,8 +273,9 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
   const filterInput = view.querySelector("#idea-filter") as HTMLInputElement;
   const filterCount = view.querySelector("#idea-filter-count") as HTMLElement;
   const trashToggle = view.querySelector("#inbox-trash-toggle") as HTMLButtonElement;
-  const trashLbl = view.querySelector("#inbox-trash-lbl") as HTMLElement;
   const trashN = view.querySelector("#n-archived") as HTMLElement;
+  const backRow = view.querySelector("#inbox-back-row") as HTMLElement;
+  const backBtn = view.querySelector("#inbox-back") as HTMLButtonElement;
   const titleEl = view.querySelector("header h1") as HTMLElement;
   const hkBanner = view.querySelector("#hkb-banner") as HTMLElement;
 
@@ -659,9 +661,10 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
   // 从顶上看 —— 两边不再共用同一个 scrollTop)。跳转定位那条路把它清掉(定位赢)。
   let restorePending = true;
 
-  // 顶栏那枚「回收站」开关(用户面 74 / E,626):与任务页的 `#trash-toggle` 同一形 ——
-  // 进去时钮变成「← 随记」并点亮,再按一下回来;计数只报回收站里有几条(想法数在筛选条
-  // 第一枚 pill 上,别在顶栏再报一遍)。⛔ 这里刻意**没有**键帽 / 视图级单键:随记的卡片
+  // 顶栏那枚「回收站」开关(用户面 74 / E,626):与任务页的 `#trash-toggle` 同一形 —— 再按一下回来;
+  // 计数只报回收站里有几条(想法数在筛选条第一枚 pill 上,别在顶栏再报一遍)。
+  // 908 D10(用户拍):进了回收站这枚钮**照原样**(不再换成点亮的「← 随记」),回去走页面左上那枚「‹ 随记」
+  // (`.page-back-row`,同长文阅读页「‹ 长文」、看板回收站 / 归档册「‹ 看板」的位置与写法)。⛔ 这里刻意**没有**键帽 / 视图级单键:随记的卡片
   // 单键 `R` 是「还原」(`actionsFor` 的 archived 分支),视图键与卡片键挂的是同一个
   // document 监听 = 一个键干两件事(board.ts::trashActionsFor 那条注释里判过的同一件事,
   // 那边是被迫把「还原」改成 `U`)。改随记的 `R` 义 = 改用户已有的快捷键,不做。
@@ -671,11 +674,10 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
   let statsBlank = true;
   function updateTabs(): void {
     const inTrash = active === "archived";
-    // 回收站里那枚钮是「← 随记」:后面再挂回收站件数读成「随记 9 条」,故进去时不报数;页标题跟着叫「回收站」
-    // (157 G3,W1 走查 WD-12 / WD-13)。`.in-trash` 让卡上的 ⋯ 常驻 —— 还原 / 彻底删除只在那里面。
-    trashN.textContent = inTrash ? "" : String(counts.archived);
-    trashToggle.classList.toggle("active", inTrash);
-    trashLbl.textContent = inTrash ? t("inbox.backToIdeas") : t("inbox.tabTrash");
+    // 页标题跟着叫「回收站」(157 G3,W1 走查 WD-12 / WD-13)。`.in-trash` 让卡上的 ⋯ 常驻 —— 还原 / 彻底删除只在那里面。
+    // 908 D10 / D12:顶栏那枚恒写「回收站 N」(在不在回收站里都一样),返回走左上那枚。
+    trashN.textContent = String(counts.archived);
+    backRow.hidden = !inTrash;
     titleEl.textContent = inTrash ? t("inbox.tabTrash") : t("inbox.title");
     view.classList.toggle("in-trash", inTrash);
     // 「本周捕获 N · 转待办 X%」说的是想法那半:回收站态收起(同看板进回收站时收起
@@ -2166,6 +2168,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
   wireFilterInput(filterInput, filter, () => void refresh());
 
   trashToggle.addEventListener("click", () => switchTo(active === "archived" ? "ideas" : "archived"));
+  backBtn.addEventListener("click", () => switchTo("ideas"));
 
   // 视图级全局单键:N 跳到顶部「记下灵感」输入框(全屏时省得把鼠标移上去)。
   // 输入框只在「想法」tab 才有,没有时静默无操作。

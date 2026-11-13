@@ -220,6 +220,9 @@
   flex: 1;
   min-width: 0;
   overflow-y: auto;
+  /* 908 D16:滚动条的位置恒留着 —— 此前「关于 / 快捷键」这类不满一屏的页没有滚动条、「通用」那页有,
+     右侧那列钮的右缘随分类跳 9px(959 / 968)。stable = 有没有滚动条都先让出那一条宽。 */
+  scrollbar-gutter: stable;
   padding: 14px 20px 20px;
 }
 /* 每一类的第一个小节标题不要那 20px 上留白(它是给**同一类里**小节之间开的)。 */
@@ -378,14 +381,18 @@
    说明是 --ink-soft,它再淡就轮到「静态的比能按的重」了。 */
 /* 字体走界面黑体(898 A3):此前写死 --font-serif —— 英文档这枚钮是 Georgia、旁边的名字与说明是 Segoe UI,
    一行里两种字;中文档同因(宋体压在雅黑旁边),只是小字号下不显眼。`.seg-btn` 同。 */
+/* 908 D9:圆头药丸(同顶栏 .hbtn、同步浮层里那枚「空间…」;手机 907 已全药丸),高度钉到这一面的控件高
+   `min-height: 31px` = 分段选择器 `.seg`(29 的段 + 上下 1px 边)—— 「开 / 关 + 时刻框 + 试一条」那一行三件同高。
+   分段选择器自己不动(用户拍);同行的输入框(.alias-input / .remind-time)也钉 31。 */
 .hkset-change {
   font-family: var(--font-sans);
   font-size: var(--fs-12);
   color: var(--ink);
   background: transparent;
   border: 1px solid var(--line-strong);
-  border-radius: var(--radius-sm);
-  padding: 4px 10px;
+  border-radius: var(--radius-pill);
+  min-height: 31px;
+  padding: 4px 12px;
   cursor: pointer;
   transition: background 0.14s, color 0.14s, border-color 0.14s;
 }
@@ -444,9 +451,9 @@
   color: var(--ink);
   background: color-mix(in srgb, var(--ink) 6%, transparent);
   border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  width: 30px;
-  height: 28px;
+  border-radius: var(--radius-pill); /* 908 D9:圆头(正方 31 ⇒ 正圆),高同本面控件高 31(见 .hkset-change) */
+  width: 31px;
+  height: 31px;
   cursor: pointer;
   transition: background 0.14s;
 }
@@ -706,6 +713,7 @@
 }
 .alias-input {
   width: 150px;
+  height: 31px; /* 908 D9:与同行的「保存」同高(本面控件高,见 .hkset-change) */
   font-family: var(--font-sans);
   font-size: var(--fs-13);
   padding: 5px 8px;
@@ -734,6 +742,7 @@
   gap: 8px;
 }
 .remind-time {
+  height: 31px; /* 908 D9:与同行的开 / 关分段、「试一条」同高(本面控件高,见 .hkset-change) */
   font-family: var(--font-sans);
   font-size: var(--fs-13);
   padding: 4px 6px;

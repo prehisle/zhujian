@@ -67,8 +67,8 @@ describe("标签 · 浏览与收缩展开", () => {
     const sec = await $(`.topic*=${T}`);
     await sec.waitForExist({ timeout: 10000 });
 
-    // The flat row shows a notes/tasks count.
-    await expect(sec.$(".topic-count")).toHaveText("2 条随记 · 0 张卡片");
+    // The flat row shows a notes/tasks count —— 908 D11:为 0 的那项不写(此前「2 条随记 · 0 张卡片」)。
+    await expect(sec.$(".topic-count")).toHaveText("2 条随记");
 
     // Clicking the row expands it INLINE (no separate page) — both notes show under 想法.
     await sec.$(".topic-head").click();
@@ -90,7 +90,7 @@ describe("标签 · 浏览与收缩展开", () => {
     await goNotebook("topics");
     const sec = await $(`.topic*=${T}`);
     await sec.waitForExist({ timeout: 10000 });
-    await expect(sec.$(".topic-count")).toHaveText("0 条随记 · 1 张卡片");
+    await expect(sec.$(".topic-count")).toHaveText("1 张卡片"); // 908 D11:0 不写
 
     await sec.$(".topic-head").click();
     const task = await $(".dtask-title*=E2E-标签任务-甲");
@@ -200,7 +200,47 @@ describe("标签 · 浏览与收缩展开", () => {
     await goNotebook("topics");
     const sec = await $(".topic*=E2E-标签-乙");
     await sec.waitForExist({ timeout: 10000 });
-    await expect(sec.$(".topic-count")).toHaveText("0 条随记 · 0 张卡片");
+    // 908 D11:全 0 就空着(此前「0 条随记 · 0 张卡片」)。⛔ 别用 toHaveText("") —— 空串判据认不认「空」随版本变,直接读 textContent。
+    expect(await browser.execute((el) => el.textContent, await sec.$(".topic-count"))).toBe("");
+  });
+
+  // 908 D11(用户拍「分项保留、0 一律不写」):三项都有 / 只缺长文 = 两端同句的整句键;缺项的几种 = 分项拼,0 的那项不出现。
+  it("标签行计数:哪项为 0 就不写哪项(随记 / 长文 / 卡片三项各种组合)", async () => {
+    const P = "E2E-计数-";
+    const mk = async (title) => invoke("create_topic", { title: P + title });
+    const note = async (tid, c) => invoke("file_note_to_topic", { id: await invoke("capture_note", { content: c }), topicId: tid, newTitle: null });
+    const doc = async (tid, c) => invoke("file_note_to_topic", { id: await invoke("capture_doc", { content: c }), topicId: tid, newTitle: null });
+    const task = async (tid, c) => invoke("create_task", { title: c, topicId: tid });
+    const all = await mk("全");
+    await note(all, `${P}全-随记`);
+    await doc(all, `# ${P}全-长文`);
+    await task(all, `${P}全-卡`);
+    const it2 = await mk("随卡");
+    await note(it2, `${P}随卡-随记`);
+    await task(it2, `${P}随卡-卡`);
+    const dOnly = await mk("只长文");
+    await doc(dOnly, `# ${P}只长文`);
+    const dt = await mk("长卡");
+    await doc(dt, `# ${P}长卡-长文`);
+    await task(dt, `${P}长卡-卡1`);
+    await task(dt, `${P}长卡-卡2`);
+
+    await goNotebook("topics");
+    await $(`.topic*=${P}长卡`).waitForExist({ timeout: 10000 });
+    const counts = await browser.execute((p) => {
+      const out = {};
+      for (const sec of document.querySelectorAll(".v-topics .topic")) {
+        const title = sec.querySelector(".topic-title")?.textContent ?? "";
+        if (title.startsWith(p)) out[title.slice(p.length)] = sec.querySelector(".topic-count").textContent;
+      }
+      return out;
+    }, P);
+    expect(counts).toEqual({
+      全: "1 条随记 · 1 篇长文 · 1 张卡片",
+      随卡: "1 条随记 · 1 张卡片",
+      只长文: "1 篇长文",
+      长卡: "1 篇长文 · 2 张卡片",
+    });
   });
 });
 

@@ -211,7 +211,7 @@
   margin: 10px 0;
   font-family: var(--font-sans);
   font-size: var(--fs-12);
-  color: var(--ink-faint);
+  color: var(--ink-soft); /* 908 D14:--ink-faint → --ink-soft(小字说明 / 计数要读得到:§2.2 小字底线 5.0,faint 压纸面约 2.2–2.5) */
 }
 
 .cm-more {

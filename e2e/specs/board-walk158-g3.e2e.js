@@ -210,7 +210,7 @@ describe("158 G3 · 看板规矩 Q1–Q13(桌面)+ A7 对齐", () => {
     expect(await browser.execute(() => document.querySelector(".sealed-view"))).toBe(null);
   });
 
-  it("Q13:归档页页头写「归档」、返回钮不挂数字、卡上写完成日期", async () => {
+  it("Q13:归档页页头写「归档」、顶栏开关照原样 + 左上「‹ 看板」(908 D10)、卡上写完成日期", async () => {
     const T = `${P}Q13-归档页`;
     const id = await invoke("create_task", { title: T });
     await invoke("update_task_status", { id, to: "done" });
@@ -222,15 +222,22 @@ describe("158 G3 · 看板规矩 Q1–Q13(桌面)+ A7 对齐", () => {
     await $(".sealed-view").$(`.tcard*=${T}`).waitForExist({ timeout: 8000 });
     const s = await browser.execute((sel) => ({
       h1: document.querySelector(".v-board header h1").textContent,
-      backText: document.querySelector("#seal-toggle").innerText.replace(/\s+/g, " ").trim(),
-      countShown: getComputedStyle(document.querySelector("#seal-n")).display !== "none",
+      toggleText: document.querySelector("#seal-toggle").innerText.replace(/\s+/g, " ").trim(),
+      toggleActive: document.querySelector("#seal-toggle").classList.contains("active"),
+      back: document.querySelector("#board-back").textContent,
+      backShown: document.querySelector("#board-back").offsetParent !== null,
+      dx: Math.abs(document.querySelector("#board-back").getBoundingClientRect().left - document.querySelector(".v-board header h1").getBoundingClientRect().left),
       date: eval(sel).querySelector(".done-at")?.textContent,
     }), cardEl(T));
     expect(s.h1).toBe("归档");
-    expect(s.countShown).toBe(false);
-    expect(s.backText).not.toMatch(/\d/);
+    // 908 D10 / D12:顶栏「归档 N G」进了册子照原样(字、数、键帽都在,不点亮);返回在页面左上,与页头标题左缘对齐。
+    expect(s.toggleText).toMatch(/^归档 \d+ G$/);
+    expect(s.toggleActive).toBe(false);
+    expect(s.back).toBe("‹ 看板");
+    expect(s.backShown).toBe(true);
+    expect(s.dx).toBeLessThanOrEqual(1);
     expect(s.date).toMatch(/^完成于 今天 \d{2}:\d{2}$/); // 165 / W5 Q14:写到时刻(今天「今天 15:18」)
-    await $("#seal-toggle").click();
+    await $("#board-back").click();
     await browser.waitUntil(async () => (await $(".v-board header h1").getText()) === "任务", { timeout: 5000 }); // 0043:页头 = 看板名
   });
 

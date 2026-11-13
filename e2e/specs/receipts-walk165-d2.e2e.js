@@ -317,7 +317,8 @@ describe("W5 D2 · 桌面回执与一致性", () => {
     }, `${P}新篇`);
     expect(c.cls).toBe("doc-card-title plain");
     expect(c.edited).toMatch(/^改于 今天/);
-    await browser.execute(() => [...document.querySelectorAll(".v-docs header .hbtn")].find((b) => b.textContent === "回收站").click());
+    // 908 D12:长文页那枚也写「回收站 N」(带数)⇒ 按 id 认,不按全文
+    await browser.execute(() => document.querySelector(".v-docs header #docs-trash").click());
     await $(".v-inbox.in-trash").waitForExist({ timeout: 8000 });
     const d = (await invoke("list_docs")).find((x) => x.content.startsWith(`${P}新篇`));
     await invoke("archive_note", { id: d.id });

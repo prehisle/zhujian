@@ -82,7 +82,10 @@
   background: color-mix(in srgb, var(--ink) 6%, transparent);
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-xs);
-  padding: 1px 5px;
+  /* 908 D4:键帽不许撑高按钮 —— 此前 `padding: 1px 5px` + 继承的行高让键帽盒(23.2)比按钮的字行(19.2)高,
+     带键帽的 .hbtn 35.2、不带的 31.2,同一排两种高。收紧到行高 1.4 / 上下零衬垫 ⇒ 键帽盒 18.8 < 字行,按钮恒 31.2。 */
+  line-height: 1.4;
+  padding: 0 5px;
   min-width: 15px;
   text-align: center;
 }
@@ -107,6 +110,18 @@
   gap: 14px;
   margin-left: auto;
 }
+
+/* 页面左上那枚「‹ 上一页名」(908 D10,用户拍):随记回收站「‹ 随记」、看板回收站 / 归档册「‹ 看板」与长文阅读 / 编辑 / 历史页
+   (docs.ts 的 doc-bar 第一枚「‹ 长文」「‹ 正文」)同一个位置、同一种写法 —— 此前前两处是右上顶栏那枚开关换成点亮的「← 看板」。
+   钮本身就是 .hbtn(同长文那枚);随记 / 看板那一行是页头与 main 之间的一条(不随列表滚走),左缘 30 与页头标题对齐,
+   到正文的距离照长文工具条(钮下 8 + 8 = 16)。 */
+.page-back-row {
+  flex: none;
+  position: relative;
+  z-index: 1;
+  padding: 20px 30px 0;
+}
+.view > .page-back-row:not([hidden]) + main { padding-top: 16px; }
 
 /* 计数徽记:「归档 3」「回收站 12」那个数 —— 说的是**按下去会看到几条**,是这枚控件的
    一部分,故与 .lbl 同色同档(622 那条「一个控件不劈两档」的判据;626 收进共享件时
@@ -145,7 +160,10 @@
    记档的观感现状,不趁合并偷改(346 err-box max-width 那条纪律);border/background
    四处各不相同,本就不是交集。组选择器不改变各选择器自身的特异性(每条仍 (0,2,0)),
    .badge.inbox / .tag.task / .dtask-due.overdue 那些 (0,3,0) modifier 照旧压得住。
-   共享规则与各视图余下声明**零重叠**,同权重跨文件不决胜。 */
+   共享规则与各视图余下声明**零重叠**,同权重跨文件不决胜。
+   908 D7:高度收成**一种** —— 行高 1 + 上下 4px + 1px 边 = 22px,与看板卡上那枚 `.task-meta .chip`(tasktime.css)同一形。
+   此前这一族走继承行高(19.2)+ 2px ⇒ 25.2,看板 22,搜索命中行的标签 chip 又没边 23.2,同一个「标签」三种高。
+   长文卡的 `.v-docs .tag`(docs.css)与卡片选标签的候选(inbox.css `.tag-picker .choice`)各自写着同一组值。 */
 .v-search .badge,
 .v-search .chip,
 .v-inbox .tag,
@@ -153,7 +171,8 @@
 .v-topics .dtask-due,
 .v-topics .dtask-pri {
   font-size: var(--fs-12);
-  padding: 2px 9px;
+  line-height: 1;
+  padding: 4px 9px;
   border-radius: var(--radius-pill);
   color: var(--ink-soft);
 }
@@ -172,13 +191,17 @@
    **白**:轨道白一层(被 thumb 的 3px 纸边遮掉大半),横竖同现时右下角那枚 corner 是
    明晃晃的白方块(249;窄窗看板实见)——track/corner 必须铺 transparent。
    新增可滚容器把选择器加进这一组,别再各写各的。(161 / W4 A19 起同步浮层封了顶、长了自己滚,也在这一组。)
-   900 C4:卡片 ⋯ 菜单 / 设置右栏 / 管理看板面板此前不在这张白名单里 ⇒ 显的是浏览器原生滚动条(暗档里一条白)。 */
+   900 C4:卡片 ⋯ 菜单 / 设置右栏 / 管理看板面板此前不在这张白名单里 ⇒ 显的是浏览器原生滚动条(暗档里一条白)。
+   908 D1:长文页(`main.docs-main` 与编辑器左右两栏)同病漏在外面,补进来。 */
 .v-board .col-body::-webkit-scrollbar,
 .v-board .cols::-webkit-scrollbar,
 .v-board main.trash::-webkit-scrollbar,
 .v-inbox main::-webkit-scrollbar,
 .v-topics main::-webkit-scrollbar,
 .v-search main::-webkit-scrollbar,
+.v-docs main::-webkit-scrollbar,
+.v-docs .doc-area::-webkit-scrollbar,
+.v-docs .doc-preview::-webkit-scrollbar,
 .hk-menu::-webkit-scrollbar,
 .settings-content::-webkit-scrollbar,
 .bcm-panel::-webkit-scrollbar,
@@ -194,6 +217,9 @@
 .v-inbox main::-webkit-scrollbar-thumb,
 .v-topics main::-webkit-scrollbar-thumb,
 .v-search main::-webkit-scrollbar-thumb,
+.v-docs main::-webkit-scrollbar-thumb,
+.v-docs .doc-area::-webkit-scrollbar-thumb,
+.v-docs .doc-preview::-webkit-scrollbar-thumb,
 .hk-menu::-webkit-scrollbar-thumb,
 .settings-content::-webkit-scrollbar-thumb,
 .bcm-panel::-webkit-scrollbar-thumb,
@@ -216,6 +242,12 @@
 .v-topics main::-webkit-scrollbar-corner,
 .v-search main::-webkit-scrollbar-track,
 .v-search main::-webkit-scrollbar-corner,
+.v-docs main::-webkit-scrollbar-track,
+.v-docs main::-webkit-scrollbar-corner,
+.v-docs .doc-area::-webkit-scrollbar-track,
+.v-docs .doc-area::-webkit-scrollbar-corner,
+.v-docs .doc-preview::-webkit-scrollbar-track,
+.v-docs .doc-preview::-webkit-scrollbar-corner,
 .hk-menu::-webkit-scrollbar-track,
 .hk-menu::-webkit-scrollbar-corner,
 .settings-content::-webkit-scrollbar-track,

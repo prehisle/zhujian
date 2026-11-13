@@ -57,7 +57,7 @@ describe("灵感 · 回收站(软删 → 还原 / 彻底删除 / 清空)", () =>
     expect((await invoke("list_inbox")).some((n) => n.id === id)).toBe(false);
   });
 
-  it("进回收站:页标题叫「回收站」、返回钮不挂件数、卡上 ⋯ 常驻(157 G3)", async () => {
+  it("进回收站:页标题叫「回收站」、顶栏那枚照原样(「回收站 N」不点亮)、左上「‹ 随记」点回、卡上 ⋯ 常驻(157 G3 / 908 D10)", async () => {
     await seedProcessedTaskless("E2E-回收-乙");
     await inboxShow("ideas");
     await $(".note*=E2E-回收-乙").waitForExist({ timeout: 10000 });
@@ -66,13 +66,37 @@ describe("灵感 · 回收站(软删 → 还原 / 彻底删除 / 清空)", () =>
     const card = await $(".note*=E2E-回收-乙");
     await card.waitForExist({ timeout: 10000 });
     expect(await $(".v-inbox header h1").getText()).toBe("回收站");
-    expect(await $("#n-archived").getText()).toBe("");
-    expect(await $("#inbox-trash-lbl").getText()).toBe("← 随记");
+    // 908 D10 / D12:顶栏那枚在回收站里不变身 —— 字仍是「回收站」、数照报、不点亮;返回在页面左上(与页头标题左缘对齐)。
+    const s = await browser.execute(() => {
+      const tg = document.querySelector("#inbox-trash-toggle");
+      const back = document.querySelector("#inbox-back");
+      const h1 = document.querySelector(".v-inbox header h1").getBoundingClientRect();
+      const b = back.getBoundingClientRect();
+      return {
+        toggle: tg.innerText.replace(/\s+/g, " ").trim(),
+        active: tg.classList.contains("active"),
+        back: back.textContent,
+        backShown: back.offsetParent !== null,
+        dx: Math.abs(b.left - h1.left),
+        belowHeader: b.top >= document.querySelector(".v-inbox header").getBoundingClientRect().bottom,
+      };
+    });
+    expect(s.toggle).toMatch(/^回收站 \d+$/);
+    expect(s.active).toBe(false);
+    expect(s.back).toBe("‹ 随记");
+    expect(s.backShown).toBe(true);
+    expect(s.dx).toBeLessThanOrEqual(1);
+    expect(s.belowHeader).toBe(true);
     // 没悬停、没选中也看得见(判视觉本体:computed opacity,不判 class)
     const op = await browser.execute((el) => getComputedStyle(el.querySelector(".hk-btn")).opacity, card);
     expect(Number(op)).toBe(1);
-    await inboxShow("ideas");
-    expect(await $(".v-inbox header h1").getText()).toBe("随记");
+    // 左上那枚点回时间轴(不走顶栏开关);回来后它藏起
+    await $("#inbox-back").click();
+    await browser.waitUntil(async () => (await $(".v-inbox header h1").getText()) === "随记", {
+      timeout: 5000,
+      timeoutMsg: "点「‹ 随记」没回到时间轴",
+    });
+    expect(await browser.execute(() => document.querySelector("#inbox-back-row").hidden)).toBe(true);
     expect(await $("#n-archived").getText()).not.toBe("");
   });
 

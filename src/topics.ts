@@ -42,6 +42,22 @@ let colName = new Map<string, string>();
 // 0043:各看板解析后的完成列(core 给的),「已完成的不说逾期」按它判。
 let doneCols = new Set<string>();
 
+// ---- 标签行的计数(908 D11,用户拍「分项保留、0 一律不写」)---------------------
+// 此前「0 条随记 · 3 张卡片」0 照写、长文为 0 时不写,两种规矩混着。现在哪一项为 0 就不写哪一项,全 0 就空着。
+// ⚠ 随记与卡片都不为 0 时仍走两枚整句键(topics.counts / countsDocs):它们是两端同句的键
+//   (check-i18n-drift 的 CROSS_END_KEYS 钉着,手机标签详情还在用),整句与分项拼出来的字逐字相同;
+//   缺项的那几种才用分项键拼。⛔ 别为了「统一」全改成分项拼 —— 那两枚整句键就没人用了,i18n 闸会红。
+function topicCountText(ideas: number, docs: number, tasks: number): string {
+  if (ideas > 0 && tasks > 0) {
+    return docs > 0 ? t("topics.countsDocs", { ideas, docs, tasks }) : t("topics.counts", { ideas, tasks });
+  }
+  const parts: string[] = [];
+  if (ideas > 0) parts.push(t("topics.countPartIdeas", { n: ideas }));
+  if (docs > 0) parts.push(t("topics.countPartDocs", { n: docs }));
+  if (tasks > 0) parts.push(t("topics.countPartTasks", { n: tasks }));
+  return parts.join(" · ");
+}
+
 // ---- small DOM helper (same shape as inbox.ts) -----------------------------
 // ---- 前缀分组(纯视觉层级)---------------------------------------------------
 // 标签名带 `/` 时(如 zhujian/同步),若存在与首段同名的父标签,该行收进父标签下方的子
@@ -259,11 +275,7 @@ export function mount(root: HTMLElement, _ctx: ViewCtx): View {
     if (topic.kind) kindBadge.classList.add("on");
     const countEl = el("span", {
       className: "topic-count",
-      // 没有长文的标签照旧只报两类(多一个恒为 0 的数是噪音)
-      textContent:
-        topic.docs.length > 0
-          ? t("topics.countsDocs", { ideas: topic.notes.length, docs: topic.docs.length, tasks: tasks.length })
-          : t("topics.counts", { ideas: topic.notes.length, tasks: tasks.length }),
+      textContent: topicCountText(topic.notes.length, topic.docs.length, tasks.length),
     });
     const keepBadge = el("span", { className: "keep-badge", textContent: t("topics.keep") });
 

@@ -818,7 +818,7 @@ function buildZoomRow(): HTMLDivElement {
 
   const val = el("span", "zoom-val", `${currentZoomPercent()}%`);
   const minus = el("button", "zoom-btn", "−") as HTMLButtonElement;
-  const plus = el("button", "zoom-btn", "＋") as HTMLButtonElement;
+  const plus = el("button", "zoom-btn", "+") as HTMLButtonElement;
   const reset = el("button", "hkset-change", t("settings.zoomReset")) as HTMLButtonElement;
   minus.setAttribute("aria-label", t("settings.zoomOut"));
   plus.setAttribute("aria-label", t("settings.zoomIn"));

@@ -15,7 +15,7 @@ export const board = defineMessages({
   "board.sealLbl": { zh: "归档 ", en: "Archive " },
   "board.trashTitle": { zh: "回收站", en: "Trash" },
   "board.trashLbl": { zh: "回收站 ", en: "Trash " },
-  "board.backToBoard": { zh: "← 看板 ", en: "← Board " },
+  "board.backToBoard": { zh: "‹ 看板", en: "‹ Board" },
   "board.composePlaceholder": { zh: "新卡片…", en: "New card…" },
   // 158 G2 / A16:提交型两端都叫「记下」(ui-guidelines §4.2;随记那枚早就是)。
   "board.composeAdd": { zh: "记下", en: "Note it" },

@@ -85,7 +85,8 @@
 .v-docs .tag {
   font-size: var(--fs-12);
   letter-spacing: 0.02em;
-  padding: 2px 9px;
+  line-height: 1; /* 908 D7:同 controls.css 徽记 chip 族那组值(22px 高) */
+  padding: 4px 9px;
   border-radius: var(--radius-pill);
   color: var(--ink-soft);
   background: var(--seal-tint);
@@ -248,7 +249,10 @@
 .v-docs .md ol { margin: 0 0 0.9em; padding-left: 1.6em; }
 .v-docs .md li > p { margin: 0; }
 .v-docs .md li.md-task { list-style: none; position: relative; }
-.v-docs .md li.md-task > .ckbox { position: absolute; left: -1.5em; top: 0.38em; }
+/* 908 D2:`margin-top: 0` —— 方框的共用规则(item-images.css `.ckbox`)带着 0.28em 的上外边距,那是给随记卡 flex 行
+   「对齐首行字面」用的;这里是绝对定位、top 已按行盒算好(0.38em ≈ (1.75 行高 − 1em 框)/ 2),两截叠加方框就比字低约 5px。
+   改后框心与首行字心差 ≤ 1px(908 实例量)。随记卡上那份不动。 */
+.v-docs .md li.md-task > .ckbox { position: absolute; left: -1.5em; top: 0.38em; margin-top: 0; }
 /* 勾过的项:方框实心 + 文字压淡(同随记正文的 .ckline.on;⛔ 不划删除线,理由见 item-images.css) */
 .v-docs .md li.md-task.on > .ckbox { background: var(--seal); border-color: var(--seal); color: var(--on-seal); }
 .v-docs .md li.md-task.on > .ckbox::after { content: "✓"; }

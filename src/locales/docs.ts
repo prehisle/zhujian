@@ -14,7 +14,7 @@ export const docs = defineMessages({
   // 引的是随记 ⋯ 菜单那一项的原话(inbox.actExpand),⛔ 换了那一项的可见串这句同笔改。末句 = 898 W4。
   "docs.emptyHint": { zh: "新建一篇,或在随记卡片的 ⋯ 菜单里把一条随记「转成长文」。长文适合写得长、要分段的东西,按 Markdown 显示。", en: "Start a new one, or pick “Turn into long-form” from a note’s ⋯ menu. Long-form suits longer, structured writing and renders as Markdown." },
   "docs.untitled": { zh: "(无标题)", en: "(Untitled)" },
-  "docs.back": { zh: "← 长文", en: "← Long-form" },
+  "docs.back": { zh: "‹ 长文", en: "‹ Long-form" },
   "docs.backToDoc": { zh: "← 回到正文", en: "← Back to text" },
   "docs.actOpen": { zh: "打开", en: "Open" },
   "docs.actEdit": { zh: "编辑", en: "Edit" },
@@ -42,7 +42,7 @@ export const docs = defineMessages({
   // 165 / W5 Q1:挨着红「保存」那行灰字此前只说「草稿已存在本机」,读着像已经存了 —— 补半句离开会怎样(两端同句)。
   "docs.draftSaved": { zh: "草稿已存在本机 · 离开就存成一版", en: "Draft kept on this device · leaving saves a version" },
   "docs.draftFailed": { zh: "草稿没存上:{err}", en: "Draft not kept: {err}" },
-  "docs.addImage": { zh: "＋加图", en: "+ Image" },
+  "docs.addImage": { zh: "+ 加图", en: "+ Image" },
   "docs.dropNotImage": { zh: "{n} 个文件不是图片,没收(只收 png / jpeg / webp / gif)", en: "{n} file(s) aren’t images and were skipped (only png / jpeg / webp / gif)" },
   "docs.delRefsOne": { zh: "图{n} 正文里提到 {k} 处", en: "Image {n} is mentioned {k} time(s)" },
   "docs.delRefs": { zh: "{list}:保存删掉后,正文里这几处「图N」会变灰、划掉,字不改", en: "{list}: once deleted on save, those mentions turn grey and struck through; the text itself isn’t changed" },

@@ -10,11 +10,11 @@
 import { groupPills } from "./filter-bar";
 import { t } from "./i18n";
 import { el } from "./dom";
+import { applyTagColor } from "./tag-color";
 import { toastAction } from "./toast";
 
 // ---- small DOM helper (same shape as the views / hotkey-menu.ts) ------------
-// 一个可选标签。color 本件不用(选择器不着色),但两视图的 topic 类型都带,收成同一
-// 形状省得调用方再映射一层。
+// 一个可选标签。color 给候选画那颗色点(908 D8:同筛选条的 .tf-dot,只加点、不染底 —— 底色留给「已挂上」)。
 export type PickerTopic = { id: string; title: string; color: string | null };
 
 export type TagPickerOpts = {
@@ -83,6 +83,7 @@ export function renderTagPicker(container: HTMLElement, opts: TagPickerOpts): vo
       onclick: () => commit(() => (on ? onUnpick(tp.id) : onPick(tp.id))),
     });
     b.setAttribute("aria-pressed", on ? "true" : "false");
+    applyTagColor(b, tp.color);
     return b;
   }
 

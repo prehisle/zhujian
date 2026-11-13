@@ -46,7 +46,7 @@ describe("411/D2 空间入口分层(单空间藏徽章,同步面兜底)", () => 
     });
     const menu = await $(".space-menu");
     await menu.waitForExist({ timeout: 3000 });
-    // 两项的真文案带前缀/后缀(「＋ 新建空间」「加入空间(输入配对码)…」),故按包含判。
+    // 两项的真文案带前缀/后缀(「+ 新建空间」「加入空间(输入配对码)…」),故按包含判。
     const labels = await browser.execute(() =>
       [...document.querySelectorAll(".space-menu button")].map((b) => b.textContent.trim()).join("|"),
     );
@@ -114,10 +114,10 @@ describe("411/D2 空间入口分层(单空间藏徽章,同步面兜底)", () => 
         throw new Error(`${msg}\n  现场:${JSON.stringify(await here())}\n  ${e.message}`);
       });
     const spacesBefore = (await invoke("list_spaces")).length;
-    for (const label of ["＋ 新建空间", "加入空间(输入配对码)…", "重置当前空间…"]) {
+    for (const label of ["+ 新建空间", "加入空间(输入配对码)…", "重置当前空间…"]) {
       await clickByText(".space-menu button", label);
       await waitHere((h) => h.forms === 1 && h.focusForm, `点「${label}」后小表单没出来 / 焦点没进表单`);
-      if (label === "＋ 新建空间") {
+      if (label === "+ 新建空间") {
         // 框里有字也一样只收表单(此前有字没字都整个关,不另问)
         await browser.keys(["x", "y"]);
         expect(await browser.execute(() => document.activeElement.value)).toBe("xy");
@@ -126,7 +126,7 @@ describe("411/D2 空间入口分层(单空间藏徽章,同步面兜底)", () => 
       await waitHere((h) => h.menu && h.forms === 0 && h.focusText === label, `Esc 把整个菜单关了,或焦点没回「${label}」那一行`);
     }
     // 收回去的那一行还是活的:再点照样开出表单(框是空的,刚才那两个字没留着)
-    await clickByText(".space-menu button", "＋ 新建空间");
+    await clickByText(".space-menu button", "+ 新建空间");
     await waitHere((h) => h.forms === 1 && h.focusForm, "收回去的那一行再点没开出表单");
     expect(await browser.execute(() => document.activeElement.value)).toBe("");
     await browser.keys("Escape");

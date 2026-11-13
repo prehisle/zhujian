@@ -362,9 +362,25 @@ async function shootNotebook(cdp, page, lang, theme, file) {
       );
     }
   }
-  // 字体没就位时截图会拿到 fallback 字形 ⇒ 一批图的字宽对不上,像素比对当场无意义。
-  await cdp.waitFor(`document.fonts.status === "loaded"`, "字体加载完成", 8000);
+  await waitSettled(cdp);
   await cdp.shot(file);
+}
+
+// 截前等页面停稳(908 D18):字体就位 + 入场动画(rise 0.4s)与过渡(0.14s)全部放完。
+// 此前只等字体 ⇒ 基线里长文列表 / 标签页 / 空态一批图截在入场半透明的中途、设置分类同时亮两格(过渡没走完),
+// 全是假象(908 巡检 report「边界」第一条)。⛔ 别拿固定 sleep 硬顶:慢机器照样漏,快机器白等。
+// 判据 = `document.getAnimations()` 里**有限次**的动画全不在 running;无限循环的(转圈 / 脉冲)永远放不完,不等它。
+// 判据在两帧之后取:同一帧里刚挂上的节点,其入场动画要到下一帧才进 getAnimations()。
+const SETTLED = `(async () => {
+  await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+  if (document.fonts.status !== "loaded") return false;
+  return document.getAnimations().every(
+    (a) => a.playState !== "running" || a.effect?.getComputedTiming().iterations === Infinity,
+  );
+})()`;
+async function waitSettled(cdp) {
+  // 字体没就位时截图会拿到 fallback 字形 ⇒ 一批图的字宽对不上,像素比对当场无意义。
+  await cdp.waitFor(SETTLED, "字体就位且入场动画 / 过渡放完", 8000);
 }
 
 // 纸条上摆什么字:⭐ **651 之前这一格是隐藏入参** —— 捕获窗的草稿是**断电恢复**的
@@ -403,7 +419,7 @@ async function shootCapture(cdp, lang, theme, file) {
     await cdp.waitFor(`document.getElementById("cap-hotkey").hidden === true`, "热键冲突条收起", 5000);
     process.stdout.write(`(热键 ${conflicts.join("/")} 被别的程序占着,冲突条已收起) `);
   }
-  await cdp.waitFor(`document.fonts.status === "loaded"`, "字体加载完成", 8000);
+  await waitSettled(cdp);
   await cdp.shot(file);
 }
 

@@ -47,7 +47,7 @@ export const chrome = defineMessages({
   "notebook.resetWarnLocalOnly": { zh: "此空间未开启同步,本机就是唯一副本。重置=永久删除这个本子的全部内容,没有任何地方可以找回。", en: "Sync is not enabled for this space; this device holds the only copy. Resetting permanently deletes everything in this notebook, with no way to get it back." },
   "notebook.resetConfirm": { zh: "确认重置", en: "Confirm reset" },
   "notebook.spaceNotLoaded": { zh: "此空间未装载", en: "This space is not loaded" },
-  "notebook.newSpace": { zh: "＋ 新建空间", en: "+ New space" },
+  "notebook.newSpace": { zh: "+ 新建空间", en: "+ New space" },
   "notebook.newSpacePh": { zh: "空间名(比如「家庭」)", en: "Space name (e.g. “Family”)" },
   "notebook.spaceCreated": { zh: "空间已创建,现在就能记录。想多端同步,到「同步」里创建账户。", en: "Space created. You can start noting right away. To sync across devices, create an account under Sync." },
   "notebook.renameSpace": { zh: "重命名当前空间", en: "Rename current space" },

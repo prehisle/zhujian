@@ -100,7 +100,7 @@ describe("157 G4 · 随记页的折叠 / 回顶 / 筛选时胶囊", () => {
     await inboxAction("E2EW4-短随记", "编辑");
     // 编辑态正文在框的 value 里,`.note*=` 按文字认不出这张卡 ⇒ 编辑态是全局单例,直接按类找。
     await $(".v-inbox .edit-area").waitForExist({ timeout: 5000 });
-    expect(await $(".v-inbox .img-editor .add-img").getText()).toBe("＋加图");
+    expect(await $(".v-inbox .img-editor .add-img").getText()).toBe("+ 加图"); // 908 D17:半角加号 + 空格
     await browser.execute(() => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })));
     await $(".v-inbox .edit-area").waitForExist({ timeout: 5000, reverse: true });
   });

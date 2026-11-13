@@ -344,7 +344,8 @@ describe("W5 D1 · 桌面键盘与焦点", () => {
     await $(".v-board").waitForExist({ timeout: 8000 });
     await waitState((s) => s.selected[0] === `${P}右`, "第二次跳过去落点不对");
     await browser.execute(() => document.querySelector(".v-board #trash-toggle").click());
-    await browser.waitUntil(async () => browser.execute(() => !!document.querySelector(".v-board #trash-toggle.active")), {
+    // 908 D10:顶栏开关在回收站里不再点亮 ⇒ 认左上那枚「‹ 看板」显出来
+    await browser.waitUntil(async () => browser.execute(() => document.querySelector(".v-board #board-back-row")?.hidden === false), {
       timeout: 6000,
       timeoutMsg: "回收站没打开",
     });
