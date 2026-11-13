@@ -567,13 +567,15 @@ const main = async () => {
       await closePanes();
       await tapSel("#capture-fab");
       await sleep(800);
-      await tapSel("#compose-doc");
+      // 907:这一本在 S2 里配了同步 ⇒ 878 起第一次建长文先问一句「其他设备都升级了吗?」(skewask.ts,sticky 的确认条)。
+      // 这段写在 878 之前、没认这道条,点完「长文」面不开就红了;⇒ 条出来就真点「仍然使用」,再判进没进长文。
+      await tapConfirm("#compose-doc");
       const inDocs = await until(paneIs("docs-pane"), 3000);
       await dropIme();
       await back();
       const left = await until(`!document.body.classList.contains("pane-open")`, 4000);
       const cells = await evalJs(`[...document.querySelectorAll("#bottombar button")].filter(b=>!b.hidden).map(b=>b.textContent+(b.classList.contains("active")?"*":"")).join("|")`);
-      step("S10 零篇长文时新建一个字不写就退出 ⇒ 回到随记、面收起、底栏不冒「长文」", inDocs && left && /随记\*/.test(cells) && !/长文/.test(cells), cells);
+      step("S10 零篇长文时新建一个字不写就退出 ⇒ 回到随记、面收起、底栏不冒「长文」", inDocs && left && /随记\*/.test(cells) && !/长文/.test(cells), JSON.stringify({ inDocs, left, cells }));
     }
 
     if (on("S8")) {

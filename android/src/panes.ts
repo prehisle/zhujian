@@ -77,6 +77,8 @@ type Deps = {
   jumpFromSearch: (hit: SearchHitItem) => void;
   /** 这台上的空间(main.ts 的 spacesCache 影子):搜索没结果时「有没有多个空间」照顶栏空间徽章那一处判(901)。 */
   getSpaces: () => SpaceInfo[];
+  /** 这个空间里叫这个名字的标签是什么颜色(main.ts 的全量标签影子;没颜色 / 查不到 = null)。搜索结果只带标签名,色点靠它(907 T13②)。 */
+  topicColor: (title: string) => string | null;
 };
 
 let deps: Deps;
@@ -713,7 +715,13 @@ function renderHits() {
               ${body}
               <footer><span class="pill">${esc(hitLabel(h))}</span>${old}
                 <time>${esc(fmtWhen(h.created_at))}</time>
-                ${h.topics.map((tp) => `<span class="chip">${esc(tp)}</span>`).join("")}</footer>
+                ${h.topics
+                  .map((tp) => {
+                    // 907 T13②:与时间轴卡脚同一枚长相 —— 有色的带色点,没颜色的(含已删掉的标签)画空心圈。
+                    const c = deps.topicColor(tp);
+                    return `<span class="chip topic${c ? " tinted" : ""}"${c ? ` style="--tc:${esc(c)}"` : ""}>${esc(tp)}</span>`;
+                  })
+                  .join("")}</footer>
             </div></article>`;
       }),
       colsOf(box),

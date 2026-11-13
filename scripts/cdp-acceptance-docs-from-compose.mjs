@@ -175,7 +175,9 @@ try {
   // 草稿要在点下去的同一拍就在 —— 停笔 1 秒那一发还没到点。⚠ 在**同一个任务里**点完就读(833):
   // 带图过来会当场建篇,建成那一刻清掉新篇草稿(字已经在库里了);分两发读就成了和建篇赛跑,
   // MuMu 上建篇先到、读到 null(vivo 上读先到,所以 831 / 832 都绿过)。
-  const draftNow = await ev(`(() => { document.getElementById("compose-doc").click(); const r = localStorage.getItem(${JSON.stringify(docDraftKey())}); return r === null ? null : JSON.parse(r).text; })()`);
+  // 907:878 起点「长文」先过混版提醒那道(skewask.ts 先读一次空间列表,异步)⇒ 草稿不再落在点下去的同一个任务里,同拍读恒 null。
+  // 改成点完在页内逐帧盯(至多 1 秒),逮到第一眼非空就回 —— 仍远早于「停笔 1 秒」那一发,也赶在建篇清草稿之前。
+  const draftNow = await ev(`(async () => { document.getElementById("compose-doc").click(); const t0 = performance.now(); for (;;) { const r = localStorage.getItem(${JSON.stringify(docDraftKey())}); if (r !== null) return JSON.parse(r).text; if (performance.now() - t0 > 1000) return null; await new Promise((f) => setTimeout(f, 4)); } })()`);
   ok(draftNow === TEXT, "② ⭐ 点下去那一刻长文草稿就落了(不等停笔)", draftNow);
   await waitFor(`!!document.querySelector("#docs-body textarea.doc-area")`, "编辑器");
   ok(await paneOpen(), "② 长文面开着");

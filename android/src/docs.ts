@@ -134,6 +134,13 @@ function btn(label: string, onClick: () => void, cls = ""): HTMLButtonElement {
   return b;
 }
 
+/** 子面排头那枚「‹」(907 T8;同卡片操作面 cardpanel.ts::backBtn、index.html `.panel button.pback`):屏上不添字,读屏念「返回」。 */
+function backBtn(onClick: () => void): HTMLButtonElement {
+  const b = btn("", onClick, "pback");
+  b.setAttribute("aria-label", t("cardpanel.back"));
+  return b;
+}
+
 /** 原文第 `line` 行(`split("\n")` 口径)起于第几个码元。 */
 function lineStart(v: string, line: number): number {
   let at = 0;
@@ -748,7 +755,8 @@ function readerActions(d: IdeaItem): HTMLElement {
         "warn",
       ),
     );
-    panel.append(acts, el("div", "acts", [btn(t("cardpanel.back"), () => docsBack())]));
+    acts.prepend(backBtn(() => docsBack())); // 907 T8:「返回」不再单占一行,排在这一排最前面
+    panel.append(acts);
     return panel;
   }
   panel.append(acts);
@@ -781,19 +789,14 @@ function renderMove(panel: HTMLElement, d: IdeaItem): void {
   // 都说「这边不留」(此前「这边删除」读着像进了回收站)。键就用卡片操作面那一份,⛔ 别再在这儿另起一套。
   const warn = el("div", "movewarn", [t("cardpanel.moveWarnPre"), el("b", "", [t("cardpanel.moveWarnBold")]), t("cardpanel.moveWarnPost")]);
   const lane = el("div", "lane", [
+    backBtn(() => {
+      hideConfirmBar();
+      readerMode = "more";
+      render();
+    }),
     el("span", "pillrow", rows.length > 0 ? rows : [el("span", "lab", [t("cardpanel.noOtherSpace")])]),
   ]);
-  panel.append(
-    warn,
-    lane,
-    el("div", "acts", [
-      btn(t("cardpanel.back"), () => {
-        hideConfirmBar();
-        readerMode = "more";
-        render();
-      }),
-    ]),
-  );
+  panel.append(warn, lane);
 }
 
 async function runMove(id: string, target: string, label: string): Promise<void> {

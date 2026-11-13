@@ -211,6 +211,13 @@ function errLine(): string {
 
 /** 行上的计数(159 / W3 Q12,WM-27 / X-11):照桌面分开写「19 条随记 · 4 个任务」(有长文才多一段)。
  *  此前写合计「23 项」,和随记页标签条的 19、看板的 4 对不上,读不出那 23 是怎么来的。 */
+/** 行上只写**总数**(907 T12,用户拍):随记 + 长文 + 卡片之和,0 就什么也不写(只剩那枚「›」)。分开的说法
+ *  (`countsText`)留给读屏(aria-label)与合并态那一行;点进去的那一层照旧分段列着。 */
+function countTotal(tp: TopicTreeItem): string {
+  const n = tp.notes.length + tp.docs.length + (tasksByTopic.get(tp.id)?.length ?? 0);
+  return n > 0 ? String(n) : "";
+}
+
 function countsText(tp: TopicTreeItem): string {
   const tasks = tasksByTopic.get(tp.id)?.length ?? 0;
   return tp.docs.length > 0
@@ -312,7 +319,7 @@ function rowHtml(tp: TopicTreeItem, label: string, kidCount: number): string {
           tp.color ? `<i class="tdot" style="--tc:${esc(tp.color)}"></i>` : `<i class="tdot none"></i>`
         }</button>
         <button class="tcount" data-expand="${esc(tp.id)}" aria-expanded="${tp.id === expandedId}"
-                title="${t("topics.expandHint")}">${countsText(tp)}</button>
+                title="${t("topics.expandHint")}" aria-label="${esc(countsText(tp))}">${countTotal(tp)}</button>
         ${kindZone}
       </article>${bodyHtml(tp)}`;
 }

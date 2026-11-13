@@ -17,9 +17,9 @@
 //  A23  底栏 / 顶栏的字不可选(user-select:none)。
 //  Q2   底栏「回收站」「归档」常在,分隔线也在;「长文」只在有长文时在。
 //  Q5   合并:先点要留下的(高亮 + 提示换成「把谁并进「X」?」),再点要并进来的 → 确认句方向对、落库方向对。
-//  Q12  标签行计数写「N 条随记 · M 个任务」且与库对得上;新建重名 → 字留在框里、框下红字、不带「出错:」、顶部不弹错;
+//  Q12  标签行计数(907 T12 起行上只写总数、分开的说法在读屏名里)与库对得上;新建重名 → 字留在框里、框下红字、不带「出错:」、顶部不弹错;
 //       空名 → 框下「标签名不能为空」;改名重名同样留字留态;新建成功 → 滚到它、闪一下;页尾说明;类型框下的说明;
-//       改色时色板那行留着名字;超长名字折行显示全名。
+//       改色时色板那行留着名字;超长名字一行省略(907 T12 改判,此前折行显示全名)。
 // 前置:界面语言中文;首启告知已点掉;竖屏手机宽(< 720,非宽屏形);没开任何面。
 //   ⚠ 清空那两格要**回收站里除本趟种子外没有别的**(它们真会彻底删掉一整段)—— 不成立时那两格进 `skipped`、点「取消」收场,
 //   其余照跑。真机上要验清空,先在界面上把回收站清干净再跑。
@@ -337,7 +337,9 @@
     const tasks = await inv("list_tasks");
     const fold = tree.find((x) => x.id === ids.tFold);
     const nTasksFold = tasks.filter((x) => x.topics.some((tp) => tp.id === ids.tFold)).length;
-    ok("Q12 计数写「N 条随记 · M 张卡片」且与库对得上", trow(ids.tFold).querySelector(".tcount").textContent.replace(/\s/g, "") === `${fold.notes.length}条随记·${nTasksFold}张卡片`, trow(ids.tFold).querySelector(".tcount").textContent);
+    // 907 T12(用户拍):行上只写总数,分开的说法挪进读屏名(aria-label);两样都与库对得上。
+    const tc = trow(ids.tFold).querySelector(".tcount");
+    ok("Q12 计数:行上写总数、读屏名写「N 条随记 · M 张卡片」,都与库对得上", tc.textContent.trim() === String(fold.notes.length + fold.docs.length + nTasksFold) && (tc.getAttribute("aria-label") ?? "").replace(/\s/g, "") === `${fold.notes.length}条随记·${nTasksFold}张卡片`, { text: tc.textContent, aria: tc.getAttribute("aria-label") });
     ok("Q12 页尾说明:点名字改名删除、点色点改颜色", $("topics-pane").querySelector("p.fine").textContent.includes("点名字改名、删除") && $("topics-pane").querySelector("p.fine").textContent.includes("点色点改颜色"));
     // A16 标签页展开
     click(trow(ids.tFold).querySelector(".tcount"));
@@ -349,7 +351,8 @@
     click(trow(ids.tFold).querySelector(".tcount"));
     // WM-22 超长名字折行
     const ln2 = trow(ids.tLong).querySelector(".tname");
-    ok("Q12 超长标签名折行显示全名(不截断)", ln2.scrollWidth <= ln2.clientWidth + 1 && ln2.getBoundingClientRect().height > 30 && getComputedStyle(ln2).whiteSpace !== "nowrap", { h: ln2.getBoundingClientRect().height });
+    // 907 T12(用户拍,翻 159 那条「折行显示全名」):超长名字一行省略、行不长高;触区照旧 44。
+    ok("Q12 超长标签名一行省略(不折行;907 T12 改判)", ln2.scrollWidth > ln2.clientWidth + 1 && getComputedStyle(ln2).whiteSpace === "nowrap" && getComputedStyle(ln2).textOverflow === "ellipsis" && Math.abs(ln2.getBoundingClientRect().height - 44) < 1.5, { h: ln2.getBoundingClientRect().height });
     // WM-31 改色留名
     click(trow(ids.tKeep).querySelector(".tcolor"));
     ok("Q12 改色时色板那行留着标签名", (await until(() => trow(ids.tKeep)?.querySelector(".tc-name"), 2000))?.textContent === `${M}留`);

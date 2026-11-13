@@ -300,6 +300,8 @@
          「进去」箭头(遮罩取形、色走 currentColor,同月历换月那枚;⛔ 不用「›」字符,905 用户说那对字符像书名号)。
          行高 48 = 触区;行间一条细线。摘要放不下就省略(名字不许被挤)。带 data-needs 的行被 main.ts 打 hidden ⇒ 这里补回 display:none。 */
       .set-list { margin-top: 22px; border-top: 1px solid var(--line); }
+      /* 907 T13③:紧跟在收着的「说明」后面时收一截 —— 那枚钮为触区占着 44 的行高,字下面本来就空着 13,再加 22 比别处的节距宽出一截。 */
+      details.notes:not([open]) + .set-list { margin-top: 9px; }
       .set-row {
         display: flex; align-items: center; gap: 10px; width: 100%; min-height: 48px; padding: 0 2px;
         border: 0; border-bottom: 1px solid var(--line); background: none;
@@ -450,13 +452,13 @@
       .space-row.sub { border: none; padding: 0; background: none; }
       .space-row.sub .act {
         flex: 1; min-width: 0; min-height: 44px; padding: 8px 16px;
-        border: 1px solid var(--line-strong); border-radius: var(--radius-sm);
+        border: 1px solid var(--line-strong); border-radius: var(--radius-pill);
         color: var(--ink-soft); font-size: var(--fs-14);
       }
       /* 重置确认态:确认钮全宽独行升格、取消拉开在下(P1 #11) */
       .space-row .act.reset-confirm {
         display: block; width: 100%; margin-top: 10px; min-height: 44px;
-        border: 1px solid var(--seal-line); border-radius: var(--radius-md);
+        border: 1px solid var(--seal-line); border-radius: var(--radius-pill);
         color: var(--seal-ink-on-seal-tint); font-size: var(--fs-14); font-weight: 600;
       }
       .space-row .act.reset-cancel {
@@ -478,12 +480,16 @@
         padding: 12px 14px calc(12px + env(safe-area-inset-bottom));
         box-shadow: 0 -8px 28px rgba(0, 0, 0, 0.18);
         transform: translateY(110%); /* 收起态:滑到屏下 */
-        transition: transform 0.22s ease;
+        transition: transform 0.22s ease, box-shadow 0.22s ease;
         will-change: transform;
       }
       /* 开态位置 = 贴视口底。⭐ 这是**唯一**的开态几何(2026-08-28 起):JS 不再设 inline
          transform,键盘的高度由原生 ime inset 从视口那头解决。⛔ 别再往 JS 里加抬升。 */
       .compose.open { transform: translateY(0); }
+      /* 收着时不带影(907 T1):层只往屏下滑出自己高度的 110%,矮的那几座(记一笔、「更多…」)那一成只有十来像素,
+         而影子往上探 36(偏移 8 + 模糊 28)⇒ 漏回屏内、压在底栏上一道灰。影子跟着开合一起渐变(同 0.22s),不会突然冒出来。
+         ⚠ 写成「收着时摘掉」而不是「开着时才加」:影子那条声明留在原处,高屏浮窗那一形(`body.tallscreen`)特异性更高、照旧盖它。 */
+      .compose:not(.open), .cmsheet:not(.open) { box-shadow: none; }
       /* 键盘起着:手势条压在键盘底下,底边那段安全区白留(ArkWeb 照报它的高)⇒ 收掉(`kb-up` 见 main.ts)。 */
       html.kb-up .compose { padding-bottom: 12px; }
       /* 手机横放打着字(宽屏、不是高屏、键盘起着;165 / W5 A26):键盘一起可见区只剩约 130,捕获层(两行起步的写字框 + 一排钮
@@ -707,7 +713,7 @@
         border-radius: var(--radius-lg) var(--radius-lg) 0 0;
         box-shadow: 0 -8px 28px rgba(0, 0, 0, 0.18);
         transform: translateY(110%); /* 收起态:滑到屏下 */
-        transition: transform 0.22s ease;
+        transition: transform 0.22s ease, box-shadow 0.22s ease;
         will-change: transform;
       }
       /* 同 .compose.open:开态就贴视口底,键盘由原生 ime inset 从视口那头让位。 */
@@ -800,7 +806,9 @@
         font-size: var(--fs-14); overflow-wrap: anywhere;
         box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
       }
-      .error.notice { background: var(--ok); }
+      /* 907 T10(用户拍):操作回执由墨绿底改成深墨底 —— 与中性那档(`.error.neutral`)同一对令牌:亮档近黑底纸色字,
+         暗档翻面成浅底深字(暗档再用深底就和背景糊成一片)。出错的红条不变。 */
+      .error.notice { background: var(--ink); color: var(--paper); }
       /* 165 / W5 A31(平板新撞-1 / WM-12):**回执落在吸顶区(顶栏 + 筛选条)之下**。此前它贴着顶栏下沿横贯整宽 7 秒,
          正好盖住筛选条 —— 平板上【撤销】压在右上「过滤…」的位置,挪完卡想马上过滤,一点就把刚挪的卡撤回去、一句话没有;
          手机竖着盖住「列」那一行。筛选条是做完一件事、下一下最常点的地方,回执不该压在它上面。
@@ -838,6 +846,8 @@
         border-radius: var(--radius-pill); padding: 4px 14px;
       }
       .error .bar-act::before { content: ""; position: absolute; inset: -12px -10px; }
+      /* 回执 / 中性条上的动作钮(「撤销」)跟着条身的字色走(907 T10):描边 + 字都是纸色,明暗两档与条身同翻。 */
+      .error.notice .bar-act, .error.neutral .bar-act { border-color: var(--paper); color: var(--paper); }
       /* 错误那句话末尾的「下一步」(用户面 126,err.ts errHtml):嵌在文字流里的一枚文字链,
          色随所在那行(同步状态 / 设备名单的 .err 是朱字)、下划线标它可点;触区照 .bar-act
          靠 ::before 外扩(§2.3),不撑开行距。 */
@@ -1085,7 +1095,7 @@
       .ckbox {
         position: relative; /* 触区扩展(::before)要锚在自己身上 */
         flex: none;
-        width: 1.15em; height: 1.15em; padding: 0; margin-top: 0.25em;
+        width: 1.15em; height: 1.15em; padding: 0; margin-top: 0.525em; /* = (行高 2.2 − 框 1.15) / 2:框与这一行第一行字的中线对齐(907 T5;此前 0.25em 偏上 4px) */
         border: 1.6px solid var(--line-strong); border-radius: var(--radius-xs);
         background: transparent; font: inherit; line-height: 1; text-align: center;
       }
@@ -1098,8 +1108,10 @@
       }
       .ckline.on .ckbox { background: var(--seal); border-color: var(--seal); color: var(--on-seal); }
       .ckline.on .ckbox::after { content: "✓"; }
-      /* 有方框的正文行距放宽 —— 上面那条触区要长在这里(且清单本就该比散文松)。 */
-      .content:has(.ckbox) { line-height: 2.2; }
+      /* 清单行的行距放宽 —— 上面那条触区要长在这里(且清单本就该比散文松)。
+         907 T5:只落在清单行自己身上。此前写在整段正文上(`.content:has(.ckbox)`),同一张卡里的普通正文行也被拉到 2.2,
+         比没清单的卡松一大截。⚠ 长卡折叠的「8 行」照旧按清单行高算(fold.ts::lineH),别跟着缩。 */
+      .ckline { line-height: 2.2; }
       /* 勾过那一行的文字压淡:清单的用处就是「一眼看出还剩几项」。⛔ 不划删除线——
          正文是用户的话,划掉它太重(且删除线在中文小字号上糊成一团)。 */
       .ckline.on .cktext { color: var(--ink-faint); }
@@ -1316,8 +1328,10 @@
         padding: 8px 18px; font-size: var(--fs-14); font-family: var(--font-sans);
         transition: opacity 0.15s;
       }
+      /* 907 T13④:两枚等高(40)、字在各自盒里居中 ⇒ 同一条中线(此前「删除」随字高 37、「✕」40)。 */
+      .viewer-del, .viewer-close { display: inline-flex; align-items: center; justify-content: center; min-height: 40px; line-height: 1; }
       .viewer-del { right: 16px; }
-      .viewer-close { left: 16px; min-width: 44px; min-height: 40px; padding: 8px 14px; }
+      .viewer-close { left: 16px; min-width: 44px; padding: 8px 14px; }
       #viewer.zoomed .viewer-del, #viewer.zoomed .viewer-close { opacity: 0; pointer-events: none; }
       /* 只读(674:编辑态点缩略图看大图):删只在缩略图 × 上,大图纯看。 */
       #viewer.readonly .viewer-del { display: none; }
@@ -1355,8 +1369,13 @@
       /* ⚠ 名字叫 sync、定义住在同步面小节,实为**全部 7 个面板 section 的通用容器**
          (空间/搜索/回收站/归档/设置/同步/诊断都套它)——「改同步面样式」与「改所有
          面板骨架」要从这里分岔:动 .sync = 动全部面板。 */
-      .sync { margin-top: 4px; border-top: 1px dashed var(--line-strong); padding: 12px 0 4px; margin-bottom: 10px; }
+      /* 907 T11(用户拍):面顶那条虚线去掉(它紧贴着顶栏的实线,两条线叠着);页标题放大加深,一眼看出在哪一页。 */
+      .sync { margin-top: 4px; padding: 6px 0 4px; margin-bottom: 10px; }
       .sync h2 { font-size: var(--fs-13); color: var(--ink-soft); margin: 0 0 8px; font-weight: 600; }
+      /* 页标题 = 这一面里的第一枚 h2(设置的二级页 / 空间 / 诊断在它前面还有一枚「‹ 设置」,所以认 first-of-type 不认 first-child;
+         标签面的在 `.phead` 里)。与顶栏「朱简」同字号同字重、墨色;节标题(设置首页「外观」那几枚)照旧是上一条的小灰字。 */
+      .sync > h2:first-of-type, .diag > h2:first-of-type, .phead > h2 { font-size: var(--fs-17); color: var(--ink); font-weight: 700; }
+      .sync > h2:first-of-type, .diag > h2:first-of-type { margin: 0 0 12px; }
       .sync .state { font-size: var(--fs-13); margin-bottom: 8px; }
       .sync .state .err { color: var(--seal-ink); overflow-wrap: anywhere; } /* 161 / W4 A35:同 .kv .v */
       /* 面板与设置面**全部**说明句都是它 ⇒ 照 336 判例(「那句话是这个区的全部说明,轻到读不出来
@@ -1481,8 +1500,10 @@
          负 margin 让外边距盒仍是 20 = 兄弟们的高度,**行高一点不变**。 */
       /* 159(W3 走查 Q12,WM-22):超长的名字在这一行**折行显示全名**(此前一行省略,只有点进改名框才看得全)。
          ⚠ `overflow: hidden` 留着:它不再是给省略号用的,但上面那条「halo 会被裁掉」的判例照旧成立,别改回 ::before。 */
+      /* 907 T12(用户拍,翻 159 那条「折行显示全名」):右边那列只剩一个总数,名字拿到大部分宽;仍放不下的**一行省略**(不再折三行),
+         全名在点进去的改名框里看。 */
       .tname { flex: 1; min-width: 0; font-size: var(--fs-14); color: var(--ink);
-        overflow: hidden; white-space: normal; overflow-wrap: anywhere;
+        overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
         min-height: 44px;
         background: none; border: 0; padding: 12px 0; margin: -12px 0; font-family: inherit; text-align: left;
         text-decoration: underline dotted var(--line-strong); text-underline-offset: 3px; }
@@ -1512,6 +1533,8 @@
         min-height: 44px; margin: -12px 0; padding: 0;
         display: inline-flex; align-items: center; gap: 2px;
         background: none; border: 0; font-family: inherit;
+        /* 907 T12:这一列只剩「总数 ›」(0 的只有「›」)⇒ 给个最小宽、靠右排:位数不同 / 没有数的行,前面那枚色点仍在同一条竖线上。 */
+        min-width: 34px; justify-content: flex-end;
       }
       .tcount::after {
         content: "›"; font-size: var(--fs-13); line-height: 1;
@@ -1544,7 +1567,7 @@
          每一项前空 0.6em,含紧跟在首行文字后面的第一项。⚠ 别写成 `.ckline + .ckline` / `:not(:first-child)`:前面那句
          是裸文本节点、不算元素,首项照样是 first-child ⇒ 方框贴着上一句的末字(159 真机截图看到的)。正文以清单开头时
          行首多出这一点空,摘要行里看不出来,不另分支。 */
-      .tb-text .ckline { display: inline; padding-left: 0; margin-left: 0.6em; }
+      .tb-text .ckline { display: inline; padding-left: 0; margin-left: 0.6em; line-height: inherit; }
       .tb-text .ckbox { display: inline-block; vertical-align: -0.15em; width: 1em; height: 1em; margin: 0 0.25em 0 0; }
       .tb-text .ckbox::before { content: none; }
       /* 时刻:与卡片 footer 里的 <time> **同档**(634 起两处都是 soft —— A2「乙」把日期时间判为
@@ -1634,7 +1657,8 @@
         content: ""; position: absolute; left: 0; right: 0;
         top: 50%; height: 44px; transform: translateY(-50%);
       }
-      .tk-edit button, .tn-edit button, .tc-edit .tc-cancel { font-size: var(--fs-12); padding: 4px 10px; border-radius: var(--radius-sm); }
+      /* 907 T9:同上,全圆药丸;单字钮(「建」「存」「清」)最窄 44(这一族高二十来像素)。 */
+      .tk-edit button, .tn-edit button, .tc-edit .tc-cancel { font-size: var(--fs-12); padding: 4px 10px; border-radius: var(--radius-pill); min-width: 44px; }
       .tk-edit button.ghost, .tn-edit button.ghost, .tc-edit .tc-cancel { background: none; color: var(--ink-soft); border: 1px solid var(--line-strong); }
       /* 900(应用评审二轮 M2):这一族里的主钮(新建的「建」/ 改名的「保存」/ 类型的「存」)此前**什么类都没挂**,
          只吃到上面那条字号与内边距 ⇒ 底色、字色、边框全是引擎的原生按钮(灰底黑字 2px outset),与同排三枚药丸不是一家。
@@ -1647,7 +1671,7 @@
          源行高亮走 outline(负 offset 压在行框内,不挤兄弟行的布局)。 */
       .mhint { display: flex; align-items: center; gap: 8px; color: var(--ink-soft); }
       .mhint-txt { flex: 1; min-width: 0; }
-      .mhint button { font-size: var(--fs-12); padding: 4px 10px; border-radius: var(--radius-sm);
+      .mhint button { font-size: var(--fs-12); padding: 4px 10px; border-radius: var(--radius-pill);
         background: none; color: var(--ink-soft); border: 1px solid var(--line-strong); }
       /* 「这一行里那个**只读**的标签名」——合并态与类型编辑态共用(632 补起两处)。
          ⛔ 别为其中一处单开一个类:它俩要的是同一件事(占满余量、长名字省略号)。 */
@@ -1797,11 +1821,13 @@
       /* 值 chip 行(706):任务的状态 / 截止 / 优先级 各一枚,**显示当前值**、点开才出
          那一排候选。与动作钮同高同形(照 `.acts button` 的 padding 与 halo,触区 ~46),
          差别只在「键」是灰的小字、右端一记 ▾ —— 读起来是「这条的属性」不是「一个命令」。 */
+      /* 907 T7(用户拍):三枚在 360 宽中文档常见取值下排进一行 —— 左右留白 14 → 10、键 / 值 / 小三角之间 5 → 4
+         (此前三枚合 310.9、面宽 306,「优先级」单掉到第二行)。字号、上下留白(触区)不动;放不下时(英文、长列名、长日期)整枚换行、不截字。 */
       .panel .props { display: flex; flex-wrap: wrap; gap: 10px 6px; }
       .panel button.prop {
-        display: inline-flex; align-items: baseline; gap: 5px;
+        display: inline-flex; align-items: baseline; gap: 4px; white-space: nowrap;
         border: 1px solid var(--line-strong); border-radius: var(--radius-pill); background: none;
-        color: var(--ink); font-size: var(--fs-13); padding: 8px 14px; font-family: var(--font-sans);
+        color: var(--ink); font-size: var(--fs-13); padding: 8px 10px; font-family: var(--font-sans);
       }
       .panel button.prop .k { color: var(--ink-faint); font-size: var(--fs-12); }
       .panel button.prop .v { color: var(--ink-soft); }
@@ -1813,6 +1839,26 @@
         font-size: var(--fs-12); color: var(--ink-soft);
       }
       .panel .lane .lab { flex: none; }
+      /* 907 T8(用户拍):子面(列 / 截止 / 优先级 / 标签 / 历史 / 移动 / 挪到看板)的「返回」不再单占一行,改成这一排最前面一枚
+         画出来的小「‹」(同月历换月那枚遮罩,色走 currentColor;读屏念 aria-label「返回」)。看得见的只有那枚 16 的尖角,
+         盒 22 × 24(⚠ 选择器写 `button.pback`:要与 `.panel .acts button` 同权重、靠排在后面压过它 —— 长文阅读页那枚住在 `.acts` 里);触区靠 ::before 撑到 44 × 44 —— 往左探 16(卡的左内边距那一截,没有别的可点的东西)、往右只到下一枚之前的缝(6),
+         往上探 18(到卡脚下沿)、往下只探 2(下一行候选钮自己的 halo 往上探 4,行距 6,不叠)。 */
+      .panel button.pback {
+        position: relative; flex: none; align-self: flex-start; display: inline-grid; place-items: center;
+        width: 22px; height: 24px; padding: 0; margin-left: -4px;
+        border: 0; background: none; color: var(--ink-soft);
+      }
+      .panel button.pback::after {
+        content: ""; width: 16px; height: 16px; background: currentColor;
+        -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M10 3.5 5.5 8l4.5 4.5'/%3E%3C/svg%3E") center / contain no-repeat;
+        mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='black' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M10 3.5 5.5 8l4.5 4.5'/%3E%3C/svg%3E") center / contain no-repeat;
+      }
+      /* 竖向:候选折成几行时(标签多、列多)「‹」对着**第一行**(候选钮高 24 = 它的盒高),不跟着整块居中;长文阅读页那排 36 高的动作钮里它居中。 */
+      .panel .acts button.pback { align-self: center; }
+      /* 「‹」后面直接跟着候选(标签 / 移动那两面,没有小标题)时,候选块吃这一行剩下的宽、在自己盒里折行 —— 否则候选一多(或有一枚
+         名字很长的标签)整块掉到下一行,「‹」又单占了一行。 */
+      .panel .lane > .pback + .pillrow { flex: 1 1 0; min-width: 0; }
+      .panel button.pback::before { content: ""; position: absolute; left: -16px; right: -6px; top: -18px; bottom: -2px; }
       /* 「列」那一排底下的灰字(158 G3 / Q5):手机只做列的读侧,管理在电脑上。是这一格的全部说明 ⇒ soft 不用 faint(634)。 */
       .panel .colhint { margin: 0; font-size: var(--fs-12); color: var(--ink-soft); }
       .panel .pillrow { display: inline-flex; gap: 5px; flex-wrap: wrap; }
@@ -2361,9 +2407,13 @@
          筛选条不再居中**,且**手机竖屏一点看不出来**(architecture 对这一族的原话:只在宽屏现形的漏)。
          ⚠ 满幅铺底也**不需要**:body 左右那 14px padding 里没有任何东西会滚上来 —— `.card` 无负
          margin 无阴影、`.swipe-track` 相对 `.tl-group` 定位、`.tl-sec` 是正 margin,全在内容盒内。 */
+      /* 907 T3:吸顶后药丸顶离顶栏底线也留一道缝。此前条自己没有上内边距:静止时那 10 是顶栏的下外边距,一吸顶就是 0、药丸贴死那条线。
+         ⇒ 条自己带 8 的上内边距(纸底跟着铺上去)、等量负的上外边距抵回:静止时药丸离线仍是 10(顶栏那 10 与这 −8 折叠成 2,加内边距 8),
+         吸顶时是 8;吸住 / 脱开是连续的,内容不跳。`--fbar-h` 量的是整条的高,节头吸顶位跟着走。⚠ 只动纵向(横向 margin 的禁令照旧)。 */
       #filterbar {
         position: sticky; top: var(--head-h, 0px); z-index: 4;
         display: flex; flex-direction: column; gap: 8px;
+        margin-top: -8px; padding-top: 8px;
         margin-bottom: 12px; padding-bottom: 8px;
         background: var(--paper);
       }
@@ -2409,6 +2459,11 @@
       .fsum { flex: 0 0 100%; margin: 0; font-size: var(--fs-12); color: var(--ink-soft); overflow-wrap: anywhere; }
       .fsum[hidden] { display: none; }
       .ftopics { flex: 1; min-width: 0; }
+      /* 907 T2:收起态标签行只露得出**整枚**的钮 —— 此前行尾那枚被裁成半截(「无标签」剩「无标」)。main.ts syncTagsToggle 把行宽收到
+         「最后一枚整枚露着的钮」的右沿(行内 `flex` 写死),「更多 N」紧跟在它后面,过滤框照旧贴右(`.tags-cut`)。
+         行歇在开头时右缘不再淡出(那一截淡的正是最后一枚整钮;「更多 N」已经说了后面还有);横划起来之后照旧两头淡。 */
+      #filterbar.tags-cut .ftext { margin-left: auto; }
+      #filterbar.tags-cut .ftopics.fade-r:not(.fade-l) { -webkit-mask-image: none; mask-image: none; }
       /* 标签行空、类型轴在(main.ts syncTagsToggle 打 `.kinds-inline`):过滤框并进类型那一行右端,
          不再独占一行(用户面 150)。状态排照旧独占上一行;看板有自己那套排法(上面 body.board 那组),不套这条。 */
       body:not(.board) #filterbar.kinds-inline { flex-flow: row wrap; align-items: center; column-gap: 10px; }
@@ -2551,7 +2606,7 @@
          数它有几处,数字会腐),.kv 也被同步配对/连接信息/关于共用——改 .row input 的
          内边距 = 改全 app 每个面板的表单。定义不挪(挪 = 动层叠位号,.row button 与 .ghost 的特异性互动
          就在下方登记着),但判影响面别认这行节名。 */
-      .diag { margin-top: 20px; border-top: 1px dashed var(--line-strong); padding-top: 12px; }
+      .diag { margin-top: 4px; padding-top: 6px; } /* 907 T11:同 `.sync`,顶上不再画虚线 */
       .diag h2 { font-size: var(--fs-13); color: var(--ink-soft); margin: 12px 0 8px; font-weight: 600; }
       .kv { display: grid; grid-template-columns: max-content 1fr; gap: 2px 12px; font-size: var(--fs-13); }
       .kv .k { color: var(--ink-soft); white-space: nowrap; }
@@ -2572,7 +2627,10 @@
       .inline-link::before { content: ""; position: absolute; inset: -12px -6px; }
       /* 161 / W4 Q11(WM-32 前半):交得出网址的端(HAS_BROWSER;安卓,W5 A54 起鸿蒙也是)邮箱点了拉起写信 ⇒ 那一框带一条下划线,看得出能点(main.ts 按 HAS_BROWSER 挂)。 */
       #feedback-mail.mail-link { text-decoration: underline; text-decoration-color: var(--seal-line); text-underline-offset: 2px; }
-      #about { align-items: baseline; }
+      /* 907 T13⑤:六行同一个节奏 —— 每格都撑到 44(此前只有三枚链接行是 44、其余二十来像素,行距一宽一窄),格内竖向居中;
+         行间不再另加缝。链接行的触区照旧是它自己那 44 的盒。 */
+      #about { align-items: stretch; row-gap: 0; }
+      #about > .k, #about > .v { display: flex; align-items: center; min-height: 44px; }
       .kv .v.about-link {
         display: inline-flex; align-items: center; min-height: 44px; justify-self: start;
         color: var(--ink); text-decoration: underline; text-decoration-color: var(--seal-line);
@@ -2591,8 +2649,14 @@
          的触区**真的叠着**(实测边界间隙 0.00)。⇒ 让它自己长够,halo 从此恒在盒内,
          相邻间隙恒 9.72。⚠ `.row` 是 `align-items: stretch` ⇒ 同排的 `input` 跟着长到 44,
          那正是触屏该有的样子;⛔ 别改成给某一枚钮单写 `min-height`(634 那版就是个例)。 */
+      /* 907 T4:面板 / 卡片里的输入框聚焦走应用自己的样子(同过滤框 `.ftext:focus`:去掉引擎那圈粗黑框、边框换朱砂),亮暗同一条。
+         边框变色就是焦点指示(键盘走到它看得出)。⚠ 新添输入框记得进这份名单 —— 不在名单里的照旧是引擎默认框。 */
+      .row input:focus, .space-row input.rename:focus, .tn-input:focus, .tk-input:focus,
+      .panel input.tagnew:focus, .doc-area:focus, #backup-code-input:focus { outline: none; border-color: var(--seal); }
+      /* 907 T9:面板里的钮一律全圆药丸(此前 8px 圆角矩形,与主界面的药丸两种形状)。单字钮(「搜」「建」)给个最小宽,
+         别成正圆小球:这一族高 44 ⇒ 最窄 64。 */
       .row button {
-        padding: 8px 16px; border: none; border-radius: var(--radius-sm); min-height: 44px;
+        padding: 8px 16px; border: none; border-radius: var(--radius-pill); min-height: 44px; min-width: 64px;
         background: var(--seal); color: var(--on-seal); font-size: var(--fs-14); font-weight: 600;
       }
       /* ghost 在 .row 里被 .row button(0,1,1 > 0,1,0)盖成朱底白字,「连接信息」
@@ -2676,7 +2740,7 @@
       .bkup-item-state.warn-ink { color: var(--seal-ink); }
       .bkup-item button {
         flex: none; min-height: 32px; padding: 4px 12px;
-        border: 1px solid var(--line-strong); border-radius: var(--radius-sm);
+        border: 1px solid var(--line-strong); border-radius: var(--radius-pill);
         background: none; color: var(--ink-soft); font-size: var(--fs-13); font-family: var(--font-sans);
       }
       /* 触区扩展(§2.3):这一条是恒显的「其他文件」入口,不是装饰字。 */
@@ -2717,6 +2781,9 @@
          当前空间可改名(名字随同步跨端一致,space-name-sync-plan);「全部同步」= 有界 best-effort(§7),
          结果只显「试了 N 个」,绝不显「全部同步完成」。 -->
     <section id="spaces" class="sync" hidden>
+      <!-- 907 T13①:从设置(或同步)点进来时,页头同另外五张二级页 —— 一枚回上一层的钮(字 = 上一层那一面的标题,main.ts paintSubBack 写;
+           从顶栏的空间徽章直接开时没有上一层,这枚不出)。 -->
+      <button class="set-back" type="button" data-set-back data-sub-back hidden><span></span></button>
       <h2 data-i18n="shell.spacesTitle">空间</h2>
       <div id="space-list"></div>
       <div class="row" style="margin-top: 8px">
@@ -3227,6 +3294,9 @@
     </section>
 
     <section id="diag" class="diag" hidden>
+      <!-- 907 T13①:同「空间」那页 —— 回上一层的钮 + 页标题(此前这一页两样都没有,顶上直接是「本机库」)。 -->
+      <button class="set-back" type="button" data-set-back data-sub-back hidden><span></span></button>
+      <h2 data-i18n="shell.diag">诊断</h2>
       <h2 data-i18n="shell.diagDbTitle">本机库(建库 + 全部迁移)</h2>
       <div id="db" class="kv"><span class="muted" data-i18n="main.diagLoading">读取中…</span></div>
       <h2 data-i18n="shell.diagNetTitle">网络自检</h2>

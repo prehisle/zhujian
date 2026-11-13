@@ -22,6 +22,12 @@ const FOLD_BTN_H = 44;
  *  放大**后**的真值。⛔ 别为了「上限住 CSS」把它改回单位写法,除非在最老的那台上重量一遍。 */
 const FOLD_LINES = 8;
 
+/** 这张卡「一行」有多高(px):带清单的卡按清单行(2.2)、其余按正文自己(1.6)。
+ *  907 T5 起 2.2 只落在清单行身上(此前整段正文一起放宽),夹线照旧按从前那个数算 —— 带清单的卡仍是夹到 8 个清单行高。 */
+function lineH(p: HTMLElement): number {
+  return parseFloat(getComputedStyle(p.querySelector<HTMLElement>(".ckline") ?? p).lineHeight);
+}
+
 /** 展开态:只活在一次 mount 里 —— 不进库、不进 localStorage、不进同步(桌面 704 拍的形)。
  *  展开是「读一眼」的手势不是模式;存起来就要给每张卡各生一份状态、跨端语义还得重新定义。
  *  ⚠ 切空间不清:id 是 ULID 全局唯一,别的空间的卡撞不上这里的残留。 */
@@ -66,7 +72,7 @@ export function settleFolds(box: HTMLElement): void {
   const read = bodies.map((p) => {
     // 这一档下这张卡的八行有多高。⚠ 读的是 computed 的 `lineHeight` —— textZoom 放大后它报
     // 的是真值,而 `em` / `lh` 两种单位都给不出这个数(见 FOLD_LINES 那条)。
-    const cap = parseFloat(getComputedStyle(p).lineHeight) * FOLD_LINES;
+    const cap = lineH(p) * FOLD_LINES;
     return { cap, over: p.scrollHeight > cap + FOLD_BTN_H, boxCut: hasBoxBelowFold(p, p.getBoundingClientRect().top + cap) };
   });
   bodies.forEach((p, i) => {
@@ -100,7 +106,7 @@ export function settleFolds(box: HTMLElement): void {
  *  (上次的结果留着)⇒ `panes.ts::focusSearch` 开面时拿 `#search-results` 调一次。 */
 export function resettleFolds(scope: string): void {
   const bodies = [...document.querySelectorAll<HTMLElement>(`${scope} .content.clamped`)];
-  const caps = bodies.map((p) => parseFloat(getComputedStyle(p).lineHeight) * FOLD_LINES);
+  const caps = bodies.map((p) => lineH(p) * FOLD_LINES);
   bodies.forEach((p, i) => (p.style.maxHeight = `${caps[i]}px`));
 }
 

@@ -1402,6 +1402,9 @@ function syncTagsToggle(): void {
   const btn = tagsBtn;
   const ft = $("filter-text");
   const fmain = ft.parentElement as HTMLElement;
+  // 907 T2:上一趟写死的行宽先摘掉 —— 下面所有量法(一行装不装得下、没露全的有几枚)都按标签行「自然」的宽算,量完再裁。
+  topics.style.flex = "";
+  $("filterbar").classList.remove("tags-cut");
   // 906:先把摊开态搬进标签块的那两样摘回原位(钮回到过滤框前头),下面的量法与「标签行空不空」都按 filter.ts 画的那几枚算。
   tagsSpacer.remove();
   if (btn.parentElement !== fmain) fmain.insertBefore(btn, ft);
@@ -1469,6 +1472,28 @@ function syncTagsToggle(): void {
     // 看板形量不出整行宽、fitsInline 恒 false,宽屏上标签明明全露着也曾挂着一枚 ▾)。量的那一下恒在「钮摆着」时做 ⇒ 结论不随它显隐翻。
     if (settled && n === 0 && !clipped) btn.hidden = true;
     else if (!settled || n <= 0) setTagsBtnLabel(t("shell.tagsMore"), "▾");
+    // 907 T2:行尾那枚别露半截(「无标签」剩「无标」)—— 把标签行收到「最后一枚整枚露着的」右沿为止,「更多 N」紧跟其后、过滤框照旧贴右
+    // (`.tags-cut`)。N 数的本来就是「没露全的」,裁完那几枚从半截变成整枚不露,数不变。只在数站得住(settled)时裁;
+    // 一枚钮都放不全(过滤框张开、行只剩几十像素)就不裁 —— 那时宁可露半截,也别让这一行空掉。看板形是另一套排法,不进这一格。
+    // 选着某枚标签时也不裁:那时这一行会横滚到选中那枚(revealActiveTopic),行要留着自然的宽,选中那枚才整枚放得进来。
+    // ⚠ 不自激:裁完的宽只由钮自己的宽与行的自然宽定,下一趟(ResizeObserver 被这次改宽叫起来)先摘再量、裁出同一个数。
+    const picked = filters[viewMode].topics.length > 0; // 含「无标签」
+    if (!btn.hidden && settled && n > 0 && !board && !picked) {
+      const left = topics.getBoundingClientRect().left - topics.scrollLeft;
+      const room = topics.clientWidth;
+      let cut = 0;
+      let wholePills = 0;
+      for (const k of pills) {
+        const right = k.getBoundingClientRect().right - left;
+        if (right > room + 1) break;
+        cut = right;
+        if (k.classList.contains("fpill")) wholePills++;
+      }
+      if (wholePills > 0 && cut < room - 1) {
+        topics.style.flex = `0 0 ${Math.ceil(cut)}px`;
+        $("filterbar").classList.add("tags-cut");
+      }
+    }
   }
   // 标签行空了而类型轴还在 ⇒ 过滤框并进类型那一行右端,别独占一行(用户面 150;CSS 见 `.kinds-inline`)。
   const kindsInline = empty && $("filter-kinds").childElementCount > 0;
@@ -1588,6 +1613,24 @@ function renderStagePills(bar: HTMLElement, modeItems: TimelineItem[], view: Boa
   const due = dueSummaryPill(modeItems);
   if (due) nodes.unshift(due); // 最前,理由见 dueSummaryPill 的注释
   bar.replaceChildren(...nodes);
+  revealActiveStage();
+}
+
+/** 选中的那一列整枚露在这一排里(907 T6):英文档 360 宽上,到期汇总钮一长(「1 overdue · 1 today · 1 within 3d」),
+ *  排在它后面的「Column」与选中的「All」就被挤出右缘 —— 一进看板,看不出现在筛的是哪一列。⇒ 重画完把选中那枚滚进来。
+ *  「露着」按淡出那一截之外算:这一排哪头还有没露出来的,那头的 32 是淡的(`.fade-l` / `.fade-r`),选中那枚压在里面等于半截看不清
+ *  ⇒ 它后面 / 前面还有钮时多让出那 32。本来就整枚露在清楚的那一段里时一动不动;用户自己横划不重画,不受打扰。
+ *  做法取「滚进视野」而不是把汇总钮的字收短:那句话与桌面逐字同形,两位数时怎么收都还会挤。 */
+const STAGE_FADE = 32; // = index.html `.fade-l` / `.fade-r` 淡出那一截的宽
+function revealActiveStage(): void {
+  const row = $("filter-stages");
+  const pill = row.querySelector<HTMLElement>(".fpill.active[data-stage]");
+  if (!pill || row.clientWidth === 0) return; // 还没排版(面开着 / 条藏着):下回重画再滚
+  const r = row.getBoundingClientRect();
+  const p = pill.getBoundingClientRect();
+  const over = p.right + (pill.nextElementSibling ? STAGE_FADE : 0) - r.right;
+  if (over > 0) row.scrollLeft += Math.max(0, Math.min(over, p.left - r.left)); // 行比这一枚还窄时先保它的左沿
+  else if (p.left < r.left) row.scrollLeft -= r.left - p.left + (pill.previousElementSibling ? STAGE_FADE : 0);
 }
 
 /** 到期汇总钮(用户面 60-D,对齐桌面 502 那枚):一眼答「今天该处理什么」,点一下只看
@@ -2588,7 +2631,22 @@ const HEAD_PANE: Record<string, string> = { topics: "topics-toggle", search: "se
  *  ——popstate/closePaneNow 关面后必须回到 mode 高亮,不能清光。「长文」的显形也收在这里:
  *  那一面正开着时钮保显(否则最后一篇删掉的那一刻,高亮着的关面入口凭空消失)—— 只限进来时就有长文的那一趟(A36)。
  *  161 / W4 Q11(WM-29):顶栏那四枚入口的点亮也收在这里(同一个渲染点,开关面的每条路都会走到);子页亮它的上一层。 */
+/** 「空间」「诊断」两页顶上那枚回上一层的钮(907 T13①):这两页有好几个来路(设置 / 同步 / 顶栏徽章 / 错误条里的「网络自检」),
+ *  所以字不写死 —— 写上一层那一面自己的标题(从设置进来 = 「设置」,与另外五张二级页同形);没有上一层就不出。
+ *  跟着 paneStack 走:每次它变了都会重画底栏(renderBottomBar),挂在那儿。点它走的是 `[data-set-back]` 那条现成的路。 */
+function paintSubBack(): void {
+  const parent = paneStack.length > 0 ? paneStack[paneStack.length - 1].name : null;
+  for (const b of document.querySelectorAll<HTMLButtonElement>("[data-sub-back]")) {
+    const title = parent === null ? null : $(PANE_EL[parent]).querySelector("h2")?.textContent ?? null;
+    b.hidden = title === null;
+    if (title === null) continue;
+    b.querySelector("span")!.textContent = title;
+    b.setAttribute("aria-label", parent === "settings" ? t("settings.back") : t("cardpanel.back"));
+  }
+}
+
 function renderBottomBar() {
+  paintSubBack();
   document.querySelectorAll<HTMLButtonElement>("#bottombar button").forEach((b) => {
     // 长文(第 4 格):主内容,站在分隔线左边、不算覆盖面。
     if (b.dataset.pane === "docs") b.hidden = !hasDocs && !(activePane === "docs" && docsCellPinned);
@@ -4347,7 +4405,14 @@ initTaskMove({
   isSwitching: () => switching,
   getCurrentSpace,
 });
-panes.initPanes({ refreshTimeline: refresh, focusCard: (id) => void focusTimelineCard(id), jumpFromSearch, getSpaces: () => spacesCache });
+panes.initPanes({
+  refreshTimeline: refresh,
+  focusCard: (id) => void focusTimelineCard(id),
+  jumpFromSearch,
+  getSpaces: () => spacesCache,
+  // 907 T13②:搜索结果只带标签名(core 的 search 不回颜色)⇒ 按名字到这个空间的全量标签里查(同一空间里标签名唯一)。
+  topicColor: (title) => allFilterTopics.find((tp) => tp.title === title)?.color ?? null,
+});
 topics.initTopicsPane({ refreshTimeline: refresh, isSwitching: () => switching });
 
 // ---- 启动闸(工序 6)+ 上次空间恢复(工序 8) --------------------------------

@@ -352,6 +352,13 @@ function promoteBlocked(): string | null {
 
 /** 值 chip(706):`键 值 ▾` 三段 —— 键是灰的小字,值是这条现在的样子,▾ 说明点得开。
  *  `set` = 设过值(截止/优先级),往朱砂上靠一档;状态恒有值,故恒 set。 */
+/** 子面排头那枚「‹」(907 T8,用户拍):此前每张子面底下单挂一枚「返回」、独占一行且比候选钮还大 ⇒ 改成这一排**最前面**一枚
+ *  画出来的小尖角(index.html `.panel .pback`;屏上不添字,读屏念 aria-label)。走的仍是 `data-pact="back"` 那同一条路,
+ *  返回键 / 点别处收面照旧。七张子面同形:列 / 截止 / 优先级 / 标签 / 历史 / 移动 / 挪到看板。 */
+function backBtn(): string {
+  return `<button data-pact="back" class="pback" aria-label="${t("cardpanel.back")}"${busy ? " disabled" : ""}></button>`;
+}
+
 function propBtn(act: "status" | "due" | "prio", key: string, value: string, set: boolean): string {
   return (
     `<button data-pact="${act}" class="prop${set ? " set" : ""}"${busy ? " disabled" : ""}>` +
@@ -485,8 +492,7 @@ function renderValuePicker(item: TimelineItem, which: "status" | "due" | "prio")
       .map((s) => pill(esc(s.label), `data-status="${esc(s.key)}"`, item.stage === s.key, busy || item.stage === s.key))
       .join("")}</span>`;
     // 158 G3 / Q5(WM-16 / X-06):手机只做列的读侧(建 / 改名 / 排 / 删在桌面)—— 这一排底下说一句,别让人到处找管理入口。
-    return `<div class="lane">${lane}</div><p class="colhint">${t("cardpanel.colsOnDesktop")}</p>
-    <div class="acts"><button data-pact="back"${busy ? " disabled" : ""}>${t("cardpanel.back")}</button></div>`;
+    return `<div class="lane">${backBtn()}${lane}</div><p class="colhint">${t("cardpanel.colsOnDesktop")}</p>`;
   } else if (which === "due") {
     lane =
       `<span class="lab">${t("cardpanel.laneDue")}</span>` +
@@ -508,8 +514,7 @@ function renderValuePicker(item: TimelineItem, which: "status" | "due" | "prio")
       ),
     ).join("")}</span>`;
   }
-  return `<div class="lane">${lane}</div>
-    <div class="acts"><button data-pact="back"${busy ? " disabled" : ""}>${t("cardpanel.back")}</button></div>`;
+  return `<div class="lane">${backBtn()}${lane}</div>`;
 }
 
 /** 看板 picker(0043):任务卡 =「挪到看板」(落对方落点列首)、随记卡 =「放进看板」(转待办落那块的落点)。
@@ -520,8 +525,7 @@ function renderBoardPicker(item: TimelineItem): string {
     .map((b) => `<button data-board-to="${esc(b.id)}" class="p"${busy ? " disabled" : ""}>${esc(boardName(b))}</button>`)
     .join("");
   const lab = isTaskStage(item.stage) ? t("cardpanel.actMoveBoard") : t("cardpanel.actPromoteTo");
-  return `<div class="lane"><span class="lab">${lab}</span><span class="pillrow">${rows}</span></div>
-    <div class="acts"><button data-pact="back"${busy ? " disabled" : ""}>${t("cardpanel.back")}</button></div>`;
+  return `<div class="lane">${backBtn()}<span class="lab">${lab}</span><span class="pillrow">${rows}</span></div>`;
 }
 
 /** 移动 picker(§2.7 安卓入口):**永久删历史告知在选择之前**(§4)+ 其他空间按
@@ -540,8 +544,7 @@ function renderMove(): string {
     )
     .join("");
   return `<div class="movewarn">${t("cardpanel.moveWarnPre")}<b>${t("cardpanel.moveWarnBold")}</b>${t("cardpanel.moveWarnPost")}</div>
-    <div class="lane"><span class="pillrow">${rows || `<span class="lab">${t("cardpanel.noOtherSpace")}</span>`}</span></div>
-    <div class="acts"><button data-pact="back"${busy ? " disabled" : ""}>${t("cardpanel.back")}</button></div>`;
+    <div class="lane">${backBtn()}<span class="pillrow">${rows || `<span class="lab">${t("cardpanel.noOtherSpace")}</span>`}</span></div>`;
 }
 
 /** 编辑历史面(用户面 87,677):这条改过的旧版本,新的在前,**只读** —— ⛔ 不给「恢复」
@@ -570,9 +573,11 @@ function renderHistory(): string {
       )}</time><span class="n">${esc(t("cardpanel.histChars", { n: r.chars }))}</span></button>${body}</div>`;
     })
     .join("");
-  const more = cat?.has_more ? `<button data-pact="histmore">${t("cardpanel.histMore")}</button>` : "";
-  return `<div class="hist">${rows || `<span class="lab">${t("cardpanel.histEmpty")}</span>`}</div>
-    <div class="acts">${more}<button data-pact="back"${busy ? " disabled" : ""}>${t("cardpanel.back")}</button></div>`;
+  // 907 T8:这一面没有「一排候选」可以挂「‹」⇒ 顶上一行「‹ 历史」(小标题用的就是「更多…」菜单里进来的那个词);
+  // 「更早的版本」那枚(有才出)照旧在列表下面。
+  const more = cat?.has_more ? `<div class="acts"><button data-pact="histmore">${t("cardpanel.histMore")}</button></div>` : "";
+  return `<div class="lane">${backBtn()}<span class="lab">${t("cardpanel.actHistory")}</span></div>
+    <div class="hist">${rows || `<span class="lab">${t("cardpanel.histEmpty")}</span>`}</div>${more}`;
 }
 
 function renderTags(item: TimelineItem): string {
@@ -589,13 +594,12 @@ function renderTags(item: TimelineItem): string {
       }${tp.color ? ` style="--tc:${esc(tp.color)}"` : ""}>${esc(tp.title)}</button>`;
     })
     .join("");
-  return `<div class="lane"><span class="pillrow">${pills || `<span class="lab">${t("cardpanel.noTags")}</span>`}</span></div>
+  return `<div class="lane">${backBtn()}<span class="pillrow">${pills || `<span class="lab">${t("cardpanel.noTags")}</span>`}</span></div>
     <div class="lane">
       <input class="tagnew" placeholder="${t("cardpanel.newTagPh")}" autocapitalize="off" autocomplete="off"
              value="${esc(state.tagDraft)}"${busy ? " disabled" : ""} />
       <button data-pact="tagnew" class="p"${busy ? " disabled" : ""}>${t("cardpanel.createAndTag")}</button>
-    </div>
-    <div class="acts"><button data-pact="back"${busy ? " disabled" : ""}>${t("cardpanel.back")}</button></div>`;
+    </div>`;
 }
 
 // ---- 写操作统一收口(实现审 M2/M3 的形) ---------------------------------------
