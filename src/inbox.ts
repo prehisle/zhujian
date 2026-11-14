@@ -290,7 +290,7 @@ export function mount(root: HTMLElement, ctx: ViewCtx): View {
   const hkFix = el("button", { className: "hkb-fix err-msg", type: "button" });
   // 动态 import:settings 那棵依赖图很大,随记页自己不必静态拖着它(同 err.ts 的「网络自检」钮)。
   hkFix.addEventListener("click", () => void import("./settings").then((m) => m.openSettingsPanel("hotkeys")));
-  const hkX = el("button", { className: "hkb-x", type: "button", textContent: "×", title: t("capture.gotIt") });
+  const hkX = el("button", { className: "hkb-x", type: "button", textContent: "✕", title: t("capture.gotIt") }); // 909 E14:关闭一律「✕」(同浮层那几枚)
   hkX.setAttribute("aria-label", t("capture.gotIt"));
   hkX.addEventListener("click", () => {
     dismissHotkeyBanner();

@@ -24,6 +24,9 @@
      理由对**这里**照旧成立,别看见"看板那边加了 nowrap"就往这儿也补一条。
      回归网 = `e2e/specs/board-tag-picker.e2e.js` 最后那例(两半判据:收成一行 **且** 不撑破)。 */
 .task-meta .slot { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+/* 909 E4:没设截止 / 优先级 / 颜色时那几格是空的,但照样是 flex 项、各吃一份 7px 间距 —— 三格全空时「💬 2」比标题左缘
+   缩进 21px、「3 天后」与「改过」之间隔出 21px(正常 7)。空格不占位;一有内容(:empty 不再成立)就回来。 */
+.task-meta .slot:empty { display: none; }
 
 /* chips: a quiet at-a-glance DISPLAY of the set due/priority/tag (㊺ — editing is via the
    ⋯ menu now, so a chip is no longer clickable; it just shows the value). */

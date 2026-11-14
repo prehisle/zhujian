@@ -310,6 +310,9 @@
    一层、页面一层,两层滚动条,写到第三屏预览还停在开头)。缩略图条钉在底下。 */
 .v-docs main:has(> .doc-edit-page) { display: flex; flex-direction: column; overflow: hidden; }
 .v-docs .doc-edit-page { flex: 1; min-height: 0; max-width: 860px; display: flex; flex-direction: column; gap: 10px; }
+/* 909 E5:单栏(下面那条并排媒体查询以下)时编辑框封顶 860,工具条却铺满 main ⇒ 「保存」比编辑框右缘多出一截
+   (1120 窗 28px、110% 53px)。工具条跟编辑框同宽;并排时两样一起铺满(媒体查询里放开)。 */
+.v-docs main:has(> .doc-edit-page) > .doc-bar { max-width: 860px; }
 .v-docs .doc-editor { flex: 1; min-height: 0; display: grid; grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr); gap: 16px; }
 /* 写字框 + 背后那层「图N」标注(docs.ts paintHl):纸色给外框,写字框透明、叠在标注层上面 */
 .v-docs .doc-ed { position: relative; min-height: 0; height: 100%; background: var(--paper); border-radius: var(--radius-md); }
@@ -368,6 +371,7 @@
 /* 宽屏并排:左写右看,「编辑 / 预览」那组切换就用不着了 */
 @media (min-width: 1180px) {
   .v-docs .doc-edit-page { max-width: none; }
+  .v-docs main:has(> .doc-edit-page) > .doc-bar { max-width: none; }
   .v-docs .doc-editor {
     grid-template-columns: var(--doc-l) 16px var(--doc-r);
     gap: 0;

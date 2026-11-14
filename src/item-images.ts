@@ -137,6 +137,13 @@ export function fitThumbBox(box: HTMLElement, img: HTMLImageElement): void {
   const w = Math.round(Math.min(160, Math.max(36, (72 * img.naturalWidth) / img.naturalHeight)));
   box.style.width = `${w}px`;
 }
+/** 角标放不下全称就换短称(909 E3):缩略框按比例最窄只有 36(竖图 / 手机截图 ≈ 40),英文「Image 2」要 ≈ 51 ——
+ *  此前在框里折成两行、盖住半张图。量的是这一刻屏上那几个字(角标被 CSS 封顶在框宽、溢出裁掉 ⇒ 看 scrollWidth;中英字宽、两个引擎各不同,不写死断点);
+ *  框还没排版(宽 0,如藏在收起的卡里)就先留全称。中文「图N」两种一样长,等于不变。全称照旧在 img 的 title / alt 上。 */
+function fitThumbBadge(box: HTMLElement, badge: HTMLElement, seq: number): void {
+  badge.textContent = t("itemImages.badge", { n: seq });
+  if (box.clientWidth > 0 && badge.scrollWidth > badge.clientWidth) badge.textContent = t("itemImages.badgeShort", { n: seq });
+}
 function shrinkToThumb(url: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const img = new Image();
@@ -522,7 +529,11 @@ export function imageStrip(
     const wrap = el("div", { className: "img-thumb" });
     wrap.dataset.seq = String(m.seq); // 长文阅读页按编号藏起正文里已原位显示的那几张
     const img = el("img", { className: "img-thumb-img", alt: t("itemImages.badge", { n: m.seq }), title: t("itemImages.badge", { n: m.seq }) });
-    img.addEventListener("load", () => fitThumbBox(wrap, img));
+    const badge = el("span", { className: "img-badge", textContent: t("itemImages.badge", { n: m.seq }) });
+    img.addEventListener("load", () => {
+      fitThumbBox(wrap, img);
+      fitThumbBadge(wrap, badge, m.seq);
+    });
     getThumb(m.id)
       .then((url) => {
         img.src = url; // 缓存命中=同帧微任务落 src,重渲不再逐张闪现(且落的是小图,不解全尺寸位图)
@@ -542,7 +553,7 @@ export function imageStrip(
       }
       void openLightbox(all, all.indexOf(m));
     });
-    wrap.append(img, el("span", { className: "img-badge", textContent: t("itemImages.badge", { n: m.seq }) }));
+    wrap.append(img, badge);
     if (opts.editable) {
       const del = el("button", { className: "img-del" });
       const paintMark = (): void => {

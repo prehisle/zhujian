@@ -1,17 +1,19 @@
 // 界面字号缩放(桌面 232 设置族)——用户在 PC 上看正文吃力时整体放大 / 缩小。
 // 走 WebView 原生缩放(`setZoom`,等价浏览器 Ctrl+):整体等比,不碰 CSS 坐标,
-// fixed 弹层 / 看大图 / 悬停菜单全都一致跟随;比缩根字号可靠(本项目布局几乎全 px、
-// 缩根字号只动少数 rem 元素)。纯设备本地——localStorage 记忆、重启保留,**不进同步**
+// 主窗里的 fixed 弹层 / 悬停菜单全都一致跟随;比缩根字号可靠(本项目布局几乎全 px、
+// 缩根字号只动少数 rem 元素)。⚠ Tauri 的缩放是**逐 WebView** 的:看大图那只遮罩窗(606 起是独立的第三只窗)
+// 与捕获窗不会自己跟 —— 909 E2 起它们走 zoom-follow.ts(开窗读这一档 + 听这里改档时发的广播)。纯设备本地——localStorage 记忆、重启保留,**不进同步**
 // (每台机器屏幕大小 / 视力舒适度各管各的,同过去反而添乱)。
 import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { emit } from "@tauri-apps/api/event";
 import { t } from "./i18n";
+import { ZOOM_DEFAULT, ZOOM_EVENT, ZOOM_KEY, ZOOM_MAX, ZOOM_MIN, clampZoom, savedZoom } from "./zoom-follow";
 import "./zoom.css";
 
-const ZOOM_KEY = "zhujian.zoom";
-const MIN = 0.7;
-const MAX = 2.0;
+const MIN = ZOOM_MIN;
+const MAX = ZOOM_MAX;
 const STEP = 0.1;
-const DEFAULT = 1.0;
+const DEFAULT = ZOOM_DEFAULT;
 /** 两头的百分比(设置里那一行到头变灰、写「已到最大 / 最小」用,W4 A21)。 */
 export const ZOOM_MIN_PERCENT = Math.round(MIN * 100);
 export const ZOOM_MAX_PERCENT = Math.round(MAX * 100);
@@ -36,29 +38,18 @@ function showBadge(text: string): void {
   badgeTimer = window.setTimeout(() => badge?.classList.remove("show"), 1100);
 }
 
-// 步进落在 0.1 网格上,避免浮点毛刺(1.0 - 0.1 - 0.1… 漂成 0.799999)。
-function clamp(f: number): number {
-  return Math.min(MAX, Math.max(MIN, Math.round(f * 10) / 10));
-}
-
 function percent(): number {
   return Math.round(factor * 100);
 }
 
-function loadSaved(): number {
-  const raw = localStorage.getItem(ZOOM_KEY);
-  if (raw === null) return DEFAULT;
-  const n = Number(raw);
-  return Number.isFinite(n) ? clamp(n) : DEFAULT;
-}
-
-// 应用一档:落库 → 通知 WebView → 回调设置面板刷新标签。`announce` 决定要不要飘回执
+// 应用一档:落库 → 通知 WebView → 广播给捕获窗 / 看大图(zoom-follow.ts)→ 回调设置面板刷新标签。`announce` 决定要不要飘回执
 // (键盘 / 滚轮 / 设置按钮改字号时飘;启动恢复时不飘)。
 async function apply(next: number, announce: boolean): Promise<number> {
   const prev = factor;
-  factor = clamp(next);
+  factor = clampZoom(next);
   localStorage.setItem(ZOOM_KEY, String(factor));
   await getCurrentWebview().setZoom(factor);
+  void emit(ZOOM_EVENT, factor);
   onChange?.(percent());
   // 到上下限也飘(飘当前值),免得用户以为坏了;单例复用,连按不叠。
   if (announce) {
@@ -91,7 +82,7 @@ export function onZoomChange(cb: ((percent: number) => void) | null): void {
 
 // 启动接线:先恢复上次字号(不飘回执),再挂键盘 / 滚轮。放在 notebook boot 里。
 export function initZoom(): void {
-  void apply(loadSaved(), false);
+  void apply(savedZoom(), false);
 
   // Ctrl +/-/0(含小键盘);用 e.code 认键,不受布局 / shift 影响(= 与 + 同键)。
   document.addEventListener("keydown", (e) => {

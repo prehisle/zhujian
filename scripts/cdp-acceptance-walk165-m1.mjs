@@ -450,7 +450,7 @@ const main = async () => {
     await dropIme();
     step("Q14「+ 新建长文」带加号", (await evalJs(`document.getElementById("docs-new").textContent`)) === "+ 新建长文");
     if (step("Q1 前置:新篇编辑器开了", await until(`!!document.querySelector("#docs-body textarea.doc-area")`, 4000))) {
-      step("Q1 新篇左上那枚叫「← 回到正文」", await evalJs(`document.querySelector("#docs-body .doc-bar button").textContent==="← 回到正文"`));
+      step("Q1 新篇左上那枚叫「‹ 正文」", await evalJs(`document.querySelector("#docs-body .doc-bar button").textContent==="‹ 正文"`));
       const v1 = `${M} 长文\n第一段`; // 末行不带换行(A32 的前提)
       await evalJs(`(()=>{const a=document.querySelector("#docs-body textarea.doc-area");a.value=${J(v1)};a.dispatchEvent(new Event("input",{bubbles:true}));return 1})()`);
       step("Q1 顶上那行「草稿已存在本机 · 离开就存成一版」", await until(`document.querySelector("#docs-body .doc-status")?.textContent==="草稿已存在本机 · 离开就存成一版"`, 3000));
@@ -499,7 +499,7 @@ const main = async () => {
       await back(); // 回阅读页
       await until(`!!document.querySelector("#docs-body .doc-meta")`, 4000);
       // 列表:「改于」+ 第一行没写 # 不加粗
-      await evalJs(`[...document.querySelectorAll("#docs-body .doc-bar button")].find(b=>b.textContent==="← 长文").click()`);
+      await evalJs(`[...document.querySelectorAll("#docs-body .doc-bar button")].find(b=>b.textContent==="‹ 长文").click()`);
       await until(`!!document.querySelector('#docs-body [data-doc="${docId}"]')`, 4000);
       const li = JSON.parse(await evalJs(`(()=>{const c=document.querySelector('#docs-body [data-doc="${docId}"]');const h=c.querySelector(".doc-title");
         return JSON.stringify({edited:c.querySelector("footer .doc-edited")?.textContent??"",plain:h.classList.contains("plain"),fw:getComputedStyle(h).fontWeight})})()`));

@@ -15,7 +15,7 @@ export const docs = defineMessages({
   "docs.emptyHint": { zh: "新建一篇,或在随记卡片的 ⋯ 菜单里把一条随记「转成长文」。长文适合写得长、要分段的东西,按 Markdown 显示。", en: "Start a new one, or pick “Turn into long-form” from a note’s ⋯ menu. Long-form suits longer, structured writing and renders as Markdown." },
   "docs.untitled": { zh: "(无标题)", en: "(Untitled)" },
   "docs.back": { zh: "‹ 长文", en: "‹ Long-form" },
-  "docs.backToDoc": { zh: "← 回到正文", en: "← Back to text" },
+  "docs.backToDoc": { zh: "‹ 正文", en: "‹ Text" },
   "docs.actOpen": { zh: "打开", en: "Open" },
   "docs.actEdit": { zh: "编辑", en: "Edit" },
   "docs.actHistory": { zh: "历史", en: "History" },

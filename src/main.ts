@@ -1,8 +1,9 @@
 import { invoke, invokeInSpace, mirrorSpace, spaceLabel, listSpaces, dotClass, MAIN_SPACE } from "./space";
 import { invoke as rawInvoke } from "@tauri-apps/api/core";
 import { emitTo, listen } from "@tauri-apps/api/event";
-import { LogicalSize } from "@tauri-apps/api/dpi";
+import { LogicalSize, PhysicalPosition } from "@tauri-apps/api/dpi";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { followZoom, followedZoom } from "./zoom-follow";
 import { REPASTE_HINT, openLightboxBlob, pendingImages } from "./item-images";
 import { saveTextDraft, loadTextDraft, clearTextDraft } from "./compose-draft";
 import { createCaptureCommands } from "./capture-commands";
@@ -104,7 +105,7 @@ function renderHotkeyBar(conflicts: string[]): void {
   });
   const x = document.createElement("span");
   x.className = "hk-x";
-  x.textContent = "×";
+  x.textContent = "✕"; // 909 E14:关闭一律「✕」(同浮层那几枚)
   x.title = t("capture.gotIt");
   x.addEventListener("click", () => {
     hotkeyDismissed = true;
@@ -164,7 +165,7 @@ function resetMods(): void {
 function chipX(title: string, onClick: () => void): HTMLSpanElement {
   const x = document.createElement("span");
   x.className = "x";
-  x.textContent = "×";
+  x.textContent = "✕"; // 909 E14:同上
   x.title = title;
   x.addEventListener("click", onClick);
   return x;
@@ -351,6 +352,15 @@ function autoGrowInput(): void {
   input.style.height = `${input.scrollHeight}px`;
 }
 
+/** 上一次摆的窗宽(逻辑 px)。null = 还没摆过(窗按 tauri.conf 的 center 出生,那一次不挪)。 */
+let lastWinW: number | null = null;
+/** 换字号档时窗宽变了:左右各让一半,窗口中线不动(否则宽度只往右长,纸片偏到一边)。 */
+async function keepCenter(oldW: number, newW: number): Promise<void> {
+  const pos = await appWindow.outerPosition();
+  const sf = await appWindow.scaleFactor();
+  await appWindow.setPosition(new PhysicalPosition(Math.round(pos.x - ((newW - oldW) / 2) * sf), pos.y));
+}
+
 async function fitWindow(): Promise<void> {
   // 按键说明条(621):正文一有字就让位 —— 它此前是 placeholder 的后半截,placeholder 本来
   // 就这么消失。⭐ 切显隐必须在量高之前:它是 slip 高度的一部分(实测这条占 34px),量完再切
@@ -369,8 +379,14 @@ async function fitWindow(): Promise<void> {
     input.style.overflowY = "hidden";
   }
   const h = Math.max(MIN_H, Math.min(MAX_H, slip.offsetHeight + BODY_PAD_V));
+  // 909 E2:界面字号跟主窗(zoom-follow.ts)⇒ 上面量的都是 CSS px,窗口要按同一倍数摆(否则 150% 时纸片被窗口裁掉一截)。
+  const z = followedZoom();
+  const w = Math.round(WIN_W * z);
   try {
-    await appWindow.setSize(new LogicalSize(WIN_W, h));
+    const prevW = lastWinW;
+    lastWinW = w; // 先记后挪:fitWindow 常被连着叫好几次(不等上一次),别让两次都按同一个旧宽各挪一回
+    if (prevW !== null && prevW !== w) await keepCenter(prevW, w);
+    await appWindow.setSize(new LogicalSize(w, Math.round(h * z)));
   } catch {
     // setSize needs core:window:allow-set-size + an app restart to take effect; until then
     // the window keeps its fixed height (content scrolls) rather than crashing.
@@ -450,6 +466,9 @@ initTheme();
 // 「主窗改档 → 本窗 reload」(捕获窗自己没有语言开关,只跟)。
 initLang();
 applyStaticI18n();
+
+// 界面字号(909 E2):跟主窗同一档(捕获窗自己没有字号开关,只跟);落下去之后按新倍数重新量窗。
+followZoom(() => void fitWindow());
 
 // 505:浮窗上的右键同样归应用管 —— 纸条背景 / 徽章 / 提示行右键不再弹浏览器菜单
 // (这里那个「刷新」重载的是捕获窗本身,正在打的草稿看着就没了)。⭐ 正文那个 textarea

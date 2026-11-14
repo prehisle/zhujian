@@ -38,8 +38,10 @@
 .v-board #add-task.blocked .k { color: var(--ink-faint); border-color: var(--line); }
 /* header 动作按钮统一走共享 .hbtn、靠右那组走共享 .head-tools(都在 controls.css,
    626 起随记页也用同一形);这里只补本视图的特例。 */
-/* 窄窗按钮塌缩(69 立、B 轮重做、W4 161 再改判据):**恒一行**是这里唯一要守的形 —— 掉成两行时首行只剩
+/* 窄窗按钮塌缩(69 立、B 轮重做、W4 161 再改判据):**能一行就一行**是这里要守的形 —— 掉成两行时首行只剩
    「新建任务」被 .spacer 顶到右边、其余几枚落在第二行,屏上读作「按钮乱了」(用户 2026-09-02 点名的第一件)。
+   ⚠ 「恒一行」守不住的一格(909 巡检量的):界面字号 ≥150%、1260 窗,连字母态那一组也排不进标题那一行 ⇒ 整组
+   (那几枚都在 .head-tools 里,不会散)折到第二行,靠左与标题左缘同列(controls.css `head-wrap`,909 E6)。
    ⭐ **三档塌缩,让的顺序是「先让不丢能力的」**(这一条没变):
      ① 摘键帽(`.hdr-nok`)—— 纯提示,单键照旧能按;
      ② 再把「顺序」缩成一个状态词「手动 / 最新 / 最早」(`.hdr-short`,全句在 title)。⛔ 不退成无字的 ↕:
@@ -397,9 +399,12 @@
    (删掉的列 0043 起进收容区,原看板上不再有只读列,`.col-readonly` / `.col-gone` 一并退场。) */
 .v-board .col-count {
   font-size: var(--fs-12);
-  color: var(--ink-faint);
+  color: var(--ink-soft); /* 909 E7(908 D14 漏网):--ink-faint → --ink-soft(列里几张卡是要读的数) */
   font-variant-numeric: tabular-nums;
-  background: color-mix(in srgb, var(--ink) 7%, transparent);
+  /* 909 E7:此前垫一层 7% 墨底,--ink-soft 压上去亮档只剩 4.47(< §2.2 小字底线 5.0;去掉底是 5.11)。换成一圈细线:
+     仍读作一枚计数小牌,底就是纸面。inset 阴影画线 = 不占尺寸,19 的高宽照旧。 */
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--line-strong);
   border-radius: var(--radius-pill);
   min-width: 19px;
   height: 19px;

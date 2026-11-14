@@ -724,7 +724,7 @@
   color: var(--ink);
   background: var(--paper);
   border: 1px solid var(--line-strong);
-  border-radius: var(--radius-xs);
+  border-radius: var(--radius-sm); /* 909 E11:输入框圆角统一 8(同步 / 管理看板 / 留言 / 标签页那几只);此前 4 */
 }
 .alias-input:focus {
   outline: none;
@@ -753,7 +753,7 @@
   color: var(--ink);
   background: var(--paper);
   border: 1px solid var(--line-strong);
-  border-radius: var(--radius-xs);
+  border-radius: var(--radius-sm); /* 909 E11:输入框圆角统一 8(同步 / 管理看板 / 留言 / 标签页那几只);此前 4 */
 }
 .remind-time:focus {
   outline: none;

@@ -110,6 +110,10 @@
   gap: 14px;
   margin-left: auto;
 }
+/* 909 E6(用户拍):那一组折到第二行时**靠左、与页标题左缘同列**(head-wrap.ts 量了挂 `head-wrap`)。
+   此前第二行照旧被上面那句 auto 顶到右边、右缘停在死区前(看板 150% 时组从 274 起、标题在 202)。
+   第二行本就在窗控底下,不必给它让位;auto 边距不参与断行,归零不改「折不折」。五页同一条。 */
+.view > header.head-wrap > .head-tools { margin-left: 0; }
 
 /* 页面左上那枚「‹ 上一页名」(908 D10,用户拍):随记回收站「‹ 随记」、看板回收站 / 归档册「‹ 看板」与长文阅读 / 编辑 / 历史页
    (docs.ts 的 doc-bar 第一枚「‹ 长文」「‹ 正文」)同一个位置、同一种写法 —— 此前前两处是右上顶栏那枚开关换成点亮的「← 看板」。
@@ -140,6 +144,9 @@
    (board 的中央列整族更宽),意图不明就不趁合并偷改(topics 头 14px 那条的纪律),留在
    各视图文件里(后注:480/460 已考古判「有意」,判据见 board.css 同位注释)。这也让
    共享规则与各视图规则声明的属性**零重叠**,同权重跨文件不决胜。 */
+/* 909 E15:空态 / 加载态那句说明(五页各写一份 max-width 330–360 的 .center > div)行尾别落单一两个字
+   (「…打 / 标签。」「…搜。」)。balance 让几行一样长,居中摆着也稳;不认它的引擎(旧 WebKitGTK)照旧按原样折,不出错。 */
+.view .center > div:not(.big):not(.err-box) { text-wrap: balance; }
 .view .center .err-box {
   white-space: pre-wrap;
   word-break: break-word;

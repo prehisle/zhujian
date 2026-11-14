@@ -6,7 +6,7 @@
 //   ④ A16 / A20:随记摘标签有回执与撤销;选择器打名字回车建成说一声、框清空;同名已挂不写库照实说;
 //   ⑤ A45 没改过按 H / V 说一句;A44 归档卡带标签;Q14 时间写到「今天 HH:MM」;A42「本周记了」只数随记;
 //   ⑥ A43 跳转落点约 3 秒后自己淡;Q15 彻底删除写出是哪条、清空确认写明只清这一只、看板空了说归档在哪;
-//   ⑦ Q1 / Q15 长文:离开说存成一篇 / 一版、新篇左上叫「← 回到正文」、顶行、列表首行不误加粗、改于、页头回收站;
+//   ⑦ Q1 / Q15 长文:离开说存成一篇 / 一版、新篇左上叫「‹ 正文」、顶行、列表首行不误加粗、改于、页头回收站;
 //   ⑧ A21 库里有标签时摘掉唯一那枚,记一笔框不跳。
 // 用真键(browser.keys)的地方:单键与焦点、日期框逐段输入 —— 合成事件给不了那几样默认动作。
 import { browser, $, expect } from "@wdio/globals";
@@ -290,11 +290,11 @@ describe("W5 D2 · 桌面回执与一致性", () => {
     await waitToast(`已彻底删除「${P}要彻底删的那条,名字长一点看截…」`, "彻底删除没写出是哪条(或截法不对:取第一行、去 #、20 字封顶加「…」)");
   });
 
-  it("长文:新篇左上叫「← 回到正文」、顶行说离开就存;离开说已存成一篇 / 一版;列表首行没 # 不加粗、改于;页头回收站开随记那只(Q1 / Q15)", async () => {
+  it("长文:新篇左上叫「‹ 正文」、顶行说离开就存;离开说已存成一篇 / 一版;列表首行没 # 不加粗、改于;页头回收站开随记那只(Q1 / Q15)", async () => {
     await goNotebook("docs");
     await browser.keys("n");
     await $(".v-docs .doc-area").waitForExist({ timeout: 8000 });
-    expect(await browser.execute(() => document.querySelector(".v-docs .doc-bar .hbtn").textContent)).toBe("← 回到正文");
+    expect(await browser.execute(() => document.querySelector(".v-docs .doc-bar .hbtn").textContent)).toBe("‹ 正文");
     await typeText(`${P}新篇`);
     await until(async () => browser.execute(() => document.querySelector(".doc-status").textContent === "草稿已存在本机 · 离开就存成一版"), "顶上那行没说离开就存");
     await browser.keys("Escape");

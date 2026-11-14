@@ -553,7 +553,10 @@ function renderPanel(refocus: "first" | "keep" = "keep"): void {
     auto.removeAttribute("data-autofocus");
     auto.focus();
   } else if (refocus === "first") {
-    (focusables(body)[0] ?? close).focus();
+    // 909 E10:二级页左上那枚「‹ 返回」排在最前,但焦点照旧落到这一页的第一个**内容**控件(此前就是这么落的;
+    // 落在返回上,一按回车就退出去了)。这一页除了返回别无可聚焦的才落到它。
+    const fs = focusables(body);
+    (fs.find((n) => !n.classList.contains("sync-back")) ?? fs[0] ?? close).focus();
   } else if (wasIn) {
     const after = focusables(panel);
     const same = after.find((n) => n.tagName === at.tagName && (n.textContent ?? "") === atText);
@@ -564,6 +567,12 @@ function renderPanel(refocus: "first" | "keep" = "keep"): void {
 function goto(m: Mode): void {
   mode = m;
   renderPanel("first");
+}
+
+/** 二级页左上那枚「‹ 返回」(909 E10,用户拍):同卡片 ⋯ 菜单子层顶上那枚(hotkey-menu.ts drill)的写法与位置 ——
+ *  子层的第一行、靠左;页底那排只留这一页的动作(主钮靠右)。去处 = ESC_BACK 里这一页登记的那一层(Esc 与它同一个去处)。 */
+function backTop(run: () => void): HTMLElement {
+  return btn(t("sync.back"), "hbtn sync-back", run);
 }
 
 /** 设备页的接线(identity-plan §5.8)。`status` 每次现取——名册的唯一出处是状态面,
@@ -784,6 +793,7 @@ function advancedEntryRow(): HTMLElement {
 }
 
 function renderAdvanced(body: HTMLElement): void {
+  body.appendChild(backTop(() => goto("home")));
   const s = cur();
   if (s?.configured) {
     // 账户号(盈利准备 C4):客服对号 / 人工开通都要用户报出这一串 —— 看得见、抄得走。
@@ -798,9 +808,6 @@ function renderAdvanced(body: HTMLElement): void {
     acts.appendChild(btn(t("sync.changeServer"), "hbtn", () => goto("server")));
     body.appendChild(acts);
   }
-  const acts = el("div", "sync-actions");
-  acts.appendChild(btn(t("sync.back"), "hbtn", () => goto("home")));
-  body.appendChild(acts);
 }
 
 function formErr(body: HTMLElement): HTMLElement {
@@ -812,7 +819,8 @@ function formErr(body: HTMLElement): HTMLElement {
 /** 创号 / 加入两张表单共用的提交形(161 / W4 A8 / A19,WD-10 / WD-19):
  *  - 等的那两秒在钮后面写「正在连接…」(此前上一条红字先没了、钮无声变灰,不说在干什么);
  *  - 上一条红字**留着**直到这一次有了结果(此前一点就抹掉,出结果再冒出来 —— 钮跟着上下跳);
- *  - 红字落在钮那一行**下面**(`formErr` 排在 acts 之后),每报一次错钮都不挪位。 */
+ *  - 红字落在钮那一行**下面**(`formErr` 排在 acts 之后),每报一次错钮都不挪位;
+ *  - 909 E10:「返回」搬到页面左上(backTop,调用方先挂),这一排只剩主钮,靠右;「正在连接…」写在主钮左边。 */
 function submitRow(
   body: HTMLElement,
   label: string,
@@ -821,7 +829,7 @@ function submitRow(
   done: () => void,
   goCls = "hbtn",
 ): void {
-  const acts = el("div", "sync-actions");
+  const acts = el("div", "sync-actions end");
   const busy = el("span", "sync-busy");
   const err = el("div", "sync-err sync-form-err");
   const go = btn(label, goCls, () => {
@@ -836,9 +844,8 @@ function submitRow(
         err.replaceChildren(errNode(e, url()));
       });
   });
-  acts.appendChild(go);
-  acts.appendChild(btn(t("sync.back"), "hbtn", () => goto("home")));
   acts.appendChild(busy);
+  acts.appendChild(go);
   body.appendChild(acts);
   body.appendChild(err);
 }
@@ -849,6 +856,7 @@ function renderCreate(body: HTMLElement): void {
   //  · 「同步是可选的…」那段在上一屏刚读过(同一个键),这里收进「说明」折叠 —— ⛔ 收纳不是删;
   //  · 服务器地址收成一行「服务器:官方(sync.zhujian.app)」+「更改…」,点了才摊开原来那组(标签 + 框 + 框下提示);
   //    预填的不是官方地址(这台上次连的是自建那台)⇒ 一来就摊开,别把「这不是官方服务器」藏在一枚链接后面。
+  body.appendChild(backTop(() => goto("home")));
   body.appendChild(el("p", "sync-note", t("sync.createIntro")));
   body.appendChild(el("p", "sync-note", t("sync.createLoseNote")));
   body.appendChild(noteFold(t("sync.homeIntro")));
@@ -879,11 +887,12 @@ function renderCreate(body: HTMLElement): void {
       showToast(t("sync.accountCreated"));
       goto("home");
     },
-    "hbtn primary", // 「创建」是这一屏的主钮,「返回」照旧淡
+    "hbtn primary", // 「创建」是这一屏的主钮
   );
 }
 
 function renderJoin(body: HTMLElement): void {
+  body.appendChild(backTop(() => goto("home")));
   body.appendChild(el("p", "sync-note", t("sync.joinIntro")));
   const server = serverField(prefillServerUrl());
   const code = codeField();
@@ -900,6 +909,7 @@ function renderJoin(body: HTMLElement): void {
       showToast(t("sync.joinedToast"));
       goto("home");
     },
+    "hbtn primary", // 909 E10:「加入」是这一屏的主钮,同「创建」
   );
 }
 
@@ -951,15 +961,16 @@ function renderPair(body: HTMLElement): void {
 }
 
 function renderServer(body: HTMLElement): void {
+  body.appendChild(backTop(() => goto("advanced")));
   body.appendChild(el("p", "sync-note", t("sync.serverIntro")));
   // W4 Q11 / WD-25:指南那条警告搬到改地址的这一屏(此前只在指南里):它不是「换到别的服务器」用的。
   body.appendChild(el("p", "sync-warn", t("sync.serverWarn")));
   const server = input(t("sync.serverPlaceholder"), cur()?.server_url ?? "");
   body.appendChild(server);
   const err = formErr(body);
-  const acts = el("div", "sync-actions");
+  const acts = el("div", "sync-actions end");
   acts.appendChild(
-    btn(t("sync.save"), "hbtn", () => {
+    btn(t("sync.save"), "hbtn primary", () => {
       err.textContent = "";
       void invoke("sync_set_server", { serverUrl: server.value.trim() })
         .then(() => goto("advanced"))
@@ -968,7 +979,6 @@ function renderServer(body: HTMLElement): void {
         });
     }),
   );
-  acts.appendChild(btn(t("sync.back"), "hbtn", () => goto("advanced")));
   body.appendChild(acts);
 }
 

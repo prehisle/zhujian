@@ -204,6 +204,10 @@
   gap: 8px;
   margin-top: 4px;
 }
+/* 909 E10:二级页页底那一排只剩这一页的动作(「返回」搬去左上),主钮独占右下;「正在连接…」排在它左边。 */
+.sync-actions.end { justify-content: flex-end; }
+/* 二级页左上那枚「‹ 返回」(sync.ts backTop / devices.ts):子层的第一行、靠左,不被 .sync-body 的纵向 flex 拉满一行。 */
+.sync-back { align-self: flex-start; }
 /* 面板底部的入口行(空间入口 / 「高级」),与上方同步动作用细线分隔。
    (类名是 88 时「版本 + 检查更新」那行起的;那行已搬去设置「关于」,名字留着。) */
 .sync-update-row {
@@ -221,7 +225,8 @@
   background: var(--paper);
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-sm);
-  padding: 8px 10px;
+  height: 31px; /* 909 E10:同面板控件高 31(908 D9 / 设置的别名框);此前 8px 衬垫撑出 38.8。钉死,不靠字形撑 */
+  padding: 0 10px;
   outline: none;
 }
 .sync-input:focus { border-color: var(--seal-line); }

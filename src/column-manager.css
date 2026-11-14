@@ -154,7 +154,8 @@
   background: var(--paper);
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-sm);
-  padding: 6px 10px;
+  height: 31px; /* 909 E9:与同行的「新建 / 保存」同高 = 面板控件高 31(908 D9,同设置面板);钉死,不靠字形撑 */
+  padding: 0 10px;
 }
 .bcm-col-input:focus { outline: none; border-color: var(--seal-line); }
 .bcm-col-edit,
@@ -166,10 +167,11 @@
 }
 .bcm-new { padding-top: 10px; border-top: 1px solid var(--line); }
 
-/* 小按钮。min-height 是**热区自保的那一格**(≥24,§2.3);padding 只管观感。 */
+/* 小按钮(圆头药丸)。909 E9:高度钉 31 = 面板控件高(908 D9,同设置面板的钮 / 框;此前 24,与同行 30 的输入框差开);
+   31 同时守着热区那一格(≥24,§2.3)。padding 只管左右。 */
 .bcm-btn {
   flex: none;
-  min-height: 24px;
+  height: 31px;
   font-family: var(--font-sans);
   font-size: var(--fs-12);
   letter-spacing: 0.03em;
@@ -177,7 +179,7 @@
   background: transparent;
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-pill);
-  padding: 3px 11px;
+  padding: 0 11px;
   cursor: pointer;
   white-space: nowrap;
   transition: background 0.14s, color 0.14s, border-color 0.14s;

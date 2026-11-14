@@ -38,7 +38,7 @@
   position: absolute;
   left: 0;
   bottom: 0;
-  padding: 1px 5px;
+  padding: 1px 4px; /* 909 E3:左右 5 → 4 —— 竖拍照片(3:4)的框 54 宽,英文「Image 2」带 5 的衬垫差 0.7px 放不下 */
   font-family: var(--font-sans);
   font-size: var(--fs-12);
   line-height: 1.4;
@@ -46,6 +46,10 @@
   background: var(--seal);
   border-top-right-radius: var(--radius-xs);
   pointer-events: none;
+  /* 909 E3:恒一行。放不下全称时 item-images.ts 的 fitThumbBadge 换短称;这两句是最后一道 —— 宁可裁掉尾巴,不折成两行盖住图。 */
+  white-space: nowrap;
+  max-width: 100%;
+  overflow: hidden;
 }
 
 /* 新建入口(灵感「记下灵感」/ 看板「新建任务」)里的暂存图条:compose 是 flex 行,

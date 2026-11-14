@@ -396,10 +396,8 @@ describe("应用评审取舍 · 桌面 F 组", () => {
     expect(g.line).toBe("服务器:官方(sync.zhujian.app)");
     expect(g.change).toEqual({ tag: "BUTTON", text: "更改…" });
     expect(g.inputs).toBe(0);
-    expect(g.acts).toEqual([
-      { t: "创建", primary: true },
-      { t: "返回", primary: false },
-    ]);
+    // 909 E10:「返回」搬到页面左上(.sync-back),页底只剩主钮
+    expect(g.acts).toEqual([{ t: "创建", primary: true }]);
     // 点「更改…」:原来那一组回来(标签 + 框 + 框下那句),焦点进框,那一行收走
     await browser.execute(() => document.querySelector(".sync-panel .sync-server-change").click());
     await $(".sync-panel .sync-input").waitForExist({ timeout: 5000 });

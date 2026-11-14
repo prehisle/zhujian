@@ -260,6 +260,18 @@
   transition: opacity 0.14s;
 }
 .v-topics .topic-head:hover .topic-actions { opacity: 1; }
+/* 909 E13:静息(没就地展开东西)时这组钮**不占排版位**,悬停时浮在行右端 —— 此前它在 flex 行里占着一整格,
+   字号放大 / 窗窄时排不下就整枚折到第二行:平时看不见(opacity 0),却把那一行撑高(200% 时计数长的行 70、其余 50)。
+   浮起来那一下若压到计数的尾巴,底色(= 悬停行的底:纸面 + 4% 墨,同上面 :hover 那条)把它盖住,不叠字。
+   就地展开(.open:类型输入 / 调色板 / 删除确认)要占位排版,照旧回到行内(下面那条)。 */
+.v-topics .topic-actions:not(.open) {
+  position: absolute;
+  top: 50%;
+  right: 10px;
+  transform: translateY(-50%);
+  padding-left: 10px;
+  background: color-mix(in srgb, var(--ink) 4%, var(--paper));
+}
 /* 就地展开了要交互的东西(类型输入 / 调色板 / 删除确认 / 失败提示)时钉住可见 ——
    否则鼠标一离开这一行,正在填的输入框和刚报的错就一起隐形(topics.ts swapActions)。
    `transition: none` 是要紧的一格:淡入期间 opacity 真的会有一瞬等于 0,而「祖先

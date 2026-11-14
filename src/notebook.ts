@@ -14,6 +14,7 @@ import { forgetGone, goneOf } from "./sync-gone";
 import { initSettings, openSettingsPanel, reopenSettingsAfterReload } from "./settings";
 import { bootCrashDiag } from "./about";
 import { initZoom } from "./zoom";
+import { watchHeadWrap } from "./head-wrap";
 import { initTheme } from "./theme-mode";
 import { initUpdate, checkForUpdateOnFocus } from "./update";
 import { armAppContextMenu } from "./context-menu";
@@ -111,6 +112,7 @@ function navigate(name: ViewName): void {
   current?.unmount();
   viewRoot.replaceChildren();
   current = registry[name](viewRoot, ctx);
+  watchHeadWrap(viewRoot); // 909 E6:顶栏那组钮折到第二行时靠左(head-wrap.ts)
   currentName = name;
   for (const b of navButtons) b.classList.toggle("active", b.dataset.view === name);
   localStorage.setItem(LAST_VIEW_KEY, name);
@@ -565,7 +567,7 @@ function showDeepLinkPill(url: string): void {
   const dismiss = document.createElement("button");
   dismiss.type = "button";
   dismiss.className = "deeplink-pill-dismiss";
-  dismiss.textContent = "×";
+  dismiss.textContent = "✕"; // 909 E14:关闭一律「✕」(同浮层那几枚)
   dismiss.setAttribute("aria-label", t("notebook.close"));
   dismiss.addEventListener("click", () => hideDeepLinkPill());
   pill.append(label, openBtn, dismiss);

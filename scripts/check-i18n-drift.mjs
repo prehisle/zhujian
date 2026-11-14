@@ -180,7 +180,7 @@ const CROSS_END_KEYS = [
   { key: "docs.savedNew", why: "同上,新篇「已存成一篇」" },
   { key: "docs.editedAt", why: "长文「改于 …」(Q15)" },
   { key: "docs.new", why: "「+ 新建长文」(Q14)" },
-  { key: "docs.backToDoc", why: "左上「← 回到正文」(Q1)" },
+  { key: "docs.backToDoc", why: "左上「‹ 正文」(Q1;909 由「← 回到正文」改)" },
   { key: "board.undoMoved", why: "挪列回执「已移到「…」」(Q14)" },
   { key: "board.undoDue", why: "截止回执(Q5)" },
   { key: "board.undoDueCleared", why: "同上,清掉截止" },

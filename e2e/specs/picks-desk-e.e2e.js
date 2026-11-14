@@ -283,8 +283,8 @@ describe("应用评审取舍 · 桌面 E 组", () => {
         if (!b) throw new Error("同步浮层里没有按钮:" + l);
         b.click();
       }, label);
-    // 二级页的记号:「返回」钮(首页没有)。创建账户页的地址框默认收着(F 组 F6),不能再拿输入框个数认页。
-    const onSub = () => browser.execute(() => [...document.querySelectorAll(".sync-panel .sync-actions button")].some((b) => b.textContent === "返回"));
+    // 二级页的记号:左上那枚「‹ 返回」(909 E10;首页没有)。创建账户页的地址框默认收着(F 组 F6),不能再拿输入框个数认页。
+    const onSub = () => browser.execute(() => !!document.querySelector(".sync-panel .sync-back"));
     for (const entry of ["创建账户", "用配对码加入"]) {
       await (await $("#sync-entry")).click();
       await $(".sync-panel").waitForExist({ timeout: 5000 });

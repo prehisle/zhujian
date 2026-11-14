@@ -19,6 +19,23 @@
   background: rgba(20, 16, 10, 0.78);
   cursor: zoom-out;
 }
+/* 909 E1:放大后溢出出现的滚动条 —— 此前是原生的白杠(15px、带箭头,压在暗遮罩上刺眼)。照主窗那套纸面滚动条的形
+   (controls.css:10px、圆头、轨道与右下角透明),只是 thumb 换一档在暗遮罩上看得见的墨色;3px 透明边 + padding-box
+   让它细在中间。⚠ 主窗那份白名单够不到这里(本窗只装 theme.css + 本文件),故单写一份。 */
+.img-lightbox::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+.img-lightbox::-webkit-scrollbar-thumb {
+  background: var(--ink-faint);
+  background-clip: padding-box;
+  border: 3px solid transparent;
+  border-radius: var(--radius-md);
+}
+.img-lightbox::-webkit-scrollbar-track,
+.img-lightbox::-webkit-scrollbar-corner {
+  background: transparent;
+}
 /* 舞台:min-100% + flex 居中 → 图小于视口时居中、大于视口时从边缘起可滚(不裁顶/不裁左)。
    safe center:图超出视口时对齐退回 start,保证正 scroll 能到达两端(否则不安全居中会把
    左/上侧内容顶到负方向、滚不到)。 */
@@ -36,6 +53,9 @@
   flex: none; /* 不被 flex 收缩:宽高由 JS 直接写(makeImageViewer),超出即溢出交原生滚动 */
   /* 宽高由 JS 直接写,不用 object-fit/transform。 */
   border-radius: var(--radius-sm);
+  /* 909 E12:透明图铺一层纸色(同 908 D3 缩略图那层底 THUMB_MATTE:固定亮档纸面,不随明暗翻 —— 透明图多是给浅底画的)。
+     此前透出的是墨色遮罩,深色线稿 / 黑字截图在上面看不见。本窗不挂 data-theme,--raised 恒是亮档那一值。 */
+  background: var(--raised);
   box-shadow: var(--float-shadow);
   /* 禁原生图拖影 + 触控手势,平移/缩放全由脚本接管。 */
   touch-action: none;
@@ -134,6 +154,15 @@
 }
 .img-lightbox-nav.next {
   right: 12px;
+}
+/* 909 E1:放大后长出滚动条(竖条贴右缘、横条贴底,各 10px)时,贴着那条边的几枚往里让一条的宽,
+   别压在滚动条上(此前关闭钮 / 下一张压竖条、计数牌贴横条)。类由 lightbox.ts 的 layout() 按能不能滚挂。 */
+.img-lightbox.scroll-y .img-lightbox-close,
+.img-lightbox.scroll-y .img-lightbox-nav.next {
+  right: 22px;
+}
+.img-lightbox.scroll-x .img-lightbox-count {
+  bottom: 24px;
 }
 .img-lightbox-count {
   position: fixed;

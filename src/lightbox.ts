@@ -34,6 +34,7 @@ import {
   LIGHTBOX_READY,
 } from "./lightbox-msg";
 import "./lightbox.css";
+import { followZoom, followedZoom } from "./zoom-follow";
 import { el } from "./dom";
 
 // 与 item-images.ts 那份同源的小 DOM helper(两个模块各留一份、互不 import:遮罩窗
@@ -216,14 +217,17 @@ function makeImageViewer(
     return { w: Math.max(1, w - PAD * 2), h: Math.max(1, h - PAD * 2) };
   };
   // fit 基准与最小缩放都封顶 1:1——小图不放大(旧 CSS max-width/height 的行为,M3)。
+  // 909 E2:「1:1」按**没放大界面字号时**的 CSS px 算 —— 本窗跟着界面字号缩放之后,1 个 CSS px 是 zoom 倍那么大;
+  // 不除掉它,150% 档下一张 1600 宽的图会被放到 2400 物理像素(糊),而界面字号要放大的是钮和字,不是图。
+  const oneToOne = (): number => 1 / followedZoom();
   const fitWholeScale = (): number => {
     const { w, h } = viewport();
-    return Math.min(w / nw(), h / nh(), 1);
+    return Math.min(w / nw(), h / nh(), oneToOne());
   };
   const baseScale = (): number => {
     if (mode === "fit") return fitWholeScale();
     const { w } = viewport();
-    return Math.min(w / nw(), 1); // 铺宽同样不超 1:1
+    return Math.min(w / nw(), oneToOne()); // 铺宽同样不超 1:1
   };
   const canScrollY = (): boolean => {
     const s = scroller();
@@ -239,6 +243,10 @@ function makeImageViewer(
     img.style.width = `${Math.round(nw() * scale)}px`;
     img.style.height = `${Math.round(nh() * scale)}px`;
     img.style.cursor = canPan() ? "grab" : "default"; // 157 起单击不关,别再画「点了缩回去」的放大镜
+    // 909 E1:滚动条在不在 ⇒ 贴边那几枚(关闭 / 下一张 / 计数牌)让不让位(lightbox.css)。
+    const s = scroller();
+    s?.classList.toggle("scroll-y", canScrollY());
+    s?.classList.toggle("scroll-x", canScrollX());
   };
   // 取向:默认恒「整图」——超高长截图也先看全貌(默认铺宽会让人以为图就到那儿为止);
   // 想看清双击切「铺宽」或 Ctrl+滚轮放大,一步就到(2026-07-18 用户拍板,反转 139 的自动挑)。
@@ -270,7 +278,7 @@ function makeImageViewer(
     const fy = before.height > 0 ? Math.min(1, Math.max(0, (cy - before.top) / before.height)) : 0.5;
     const base = baseScale();
     const oldScale = base * zoom;
-    const maxScale = Math.max(1, fitWholeScale() * 8); // 上限=1:1 或整图基准 8× 取大(避免大图被放到离谱尺寸)
+    const maxScale = Math.max(oneToOne(), fitWholeScale() * 8); // 上限=1:1 或整图基准 8× 取大(避免大图被放到离谱尺寸)
     const newScale = Math.min(maxScale, Math.max(fitWholeScale(), oldScale * factor));
     if (newScale === oldScale) return;
     zoom = newScale / base;
@@ -282,7 +290,7 @@ function makeImageViewer(
   // resize/mode 变后 baseScale 变,把绝对 scale 钳回 [整图可见, 8×](zoom 是相对 baseScale 的乘子)。
   const clampZoom = (): void => {
     const base = baseScale();
-    const scale = Math.min(Math.max(1, fitWholeScale() * 8), Math.max(fitWholeScale(), base * zoom));
+    const scale = Math.min(Math.max(oneToOne(), fitWholeScale() * 8), Math.max(fitWholeScale(), base * zoom));
     zoom = scale / base;
   };
 
@@ -429,7 +437,7 @@ function shedVisuals(overlay: HTMLElement, img: HTMLImageElement): void {
  *  才变)。`viewer.init()` 若用旧视口布局,亮相后会被迟到的 resize 再排一次 —— 尺寸可见地
  *  跳一记(163 的契约,超高图最显眼)。这里等视口真到达**期望的 CSS 尺寸**再放行。
  *  ⚠ 判据刻意不是「离开原尺寸」(605 那一版的形):遮罩窗第二次开图时几何本来就已经对了,
- *  「等它变」会每次白等到超时。期望值 = 显示器物理尺寸 ÷ dpr(本窗没有页面缩放,dpr 即缩放比)。
+ *  「等它变」会每次白等到超时。期望值 = 显示器物理尺寸 ÷ dpr(909 E2 起本窗跟界面字号缩放,而 WebView 的缩放已乘进 dpr ⇒ 这一式照旧成立;150% 档实测 2560 ÷ 1.5 = 1707 = innerWidth)。
  *  600ms 兜底 —— setSize 被拒/无效时视口永不到位,超时按当前视口布局(不更糟)。 */
 function awaitViewport(mon: MonitorRect, signal: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
@@ -628,6 +636,9 @@ function renderData(src: string, alt: string, mon: MonitorRect | null): void {
 // ⚠ 先 present(摆位 + show)再渲染:用户点下缩略图那刻就该看见暗下来的一屏,而不是
 // 等字节取回来窗口才蹦出来(遮罩这层的存在意义之一就是「立刻有回执」)。
 initLang();
+// 909 E2:跟主窗同一档界面字号(关闭钮 / 翻页钮 / 计数牌 / 回执跟着放大;图的「整图 / 铺宽」照旧按视口算)。
+// ⚠ WebView 的缩放把 devicePixelRatio 一起乘上去,awaitViewport 的「显示器物理尺寸 ÷ dpr = 视口 CSS 尺寸」照旧成立。
+followZoom();
 void (async () => {
   await listen<LightboxOpen>(LIGHTBOX_OPEN, (e) => {
     const p = e.payload;

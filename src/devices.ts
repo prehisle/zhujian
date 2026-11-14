@@ -179,6 +179,8 @@ export function refreshDevices(deps: Deps): void {
 // ---- 渲染 ----
 
 export function renderDevices(body: HTMLElement, deps: Deps): void {
+  // 909 E10:返回在左上,同同步浮层其余二级页(sync.ts backTop 那一形;这里不 import 它 —— sync.ts 已经 import 本文件)。
+  body.appendChild(btn(t("sync.back"), "hbtn sync-back", () => deps.back()));
   const s = deps.status;
   const roster = s?.roster ?? null;
 
@@ -229,13 +231,12 @@ export function renderDevices(body: HTMLElement, deps: Deps): void {
 }
 
 function footRow(deps: Deps, canRefresh: boolean): HTMLElement {
-  const acts = el("div", "sync-actions");
+  const acts = el("div", "sync-actions end");
   const r = btn(canRefresh ? t("devices.refresh") : t("devices.refreshing"), "hbtn", () =>
     refreshDevices(deps),
   );
   r.disabled = !canRefresh;
   acts.appendChild(r);
-  acts.appendChild(btn(t("sync.back"), "hbtn", () => deps.back()));
   return acts;
 }
 

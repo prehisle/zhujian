@@ -68,11 +68,11 @@ describe("P2-g 同步 UI(未配置=零打扰)", () => {
     expect(createText).not.toContain("邀请码");
     // 用户面 125:创号页也不再预告「会给你一串恢复码」之类的话。
     expect(createText).not.toContain("恢复码");
+    // 909 E10:「返回」在页面左上(.sync-back,「‹ 返回」)。
     await browser.execute(() => {
-      for (const b of document.querySelectorAll(".sync-panel button")) {
-        if (b.textContent === "返回") return b.click();
-      }
-      throw new Error("没有「返回」按钮");
+      const b = document.querySelector(".sync-panel .sync-back");
+      if (!b) throw new Error("没有「‹ 返回」按钮");
+      b.click();
     });
     // Esc 关面板(文档级监听)。
     await browser.execute(() => {

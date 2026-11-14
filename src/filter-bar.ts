@@ -371,51 +371,83 @@ export function wireFilterFold(bar: HTMLElement, view: "board" | "inbox", scope:
   more.append(label, arrow);
   bar.after(more);
 
+  // 909 E13:折下去的那几行从第一枚 pill 那一列起(此前从轴名「标签」底下起,≥140% 字号时一眼看得出歪)。
+  // 做法 = 行的左内边距让出「轴名 + 它的右边距 + 一份间距」,轴名自己再用等量的负左边距挪回行首 ⇒ 第一行照旧
+  // 「标签 所有 …」,折下去的每一行都从「所有」那一列起。量的是这一刻轴名的宽(中英文、字号档各不同,不写死)。
+  // 轴名是 renderFilterPills 每次新建的(整行 replaceChildren),所以每次重算都要重挂;没有轴名(整行空着)就撤掉。
+  const indent = (): void => {
+    const axis = bar.querySelector<HTMLElement>(":scope > .tf-axis");
+    if (!axis) {
+      bar.style.paddingLeft = "";
+      return;
+    }
+    const w = axis.offsetWidth + parseFloat(getComputedStyle(axis).marginRight) + parseFloat(getComputedStyle(bar).columnGap);
+    bar.style.paddingLeft = `${w}px`;
+    axis.style.marginLeft = `${-w}px`;
+  };
+  // 909 E13:「更多 N ▾ / 收起 ▴」贴着最后一枚 pill(此前它排在整行标签区的右端,最后一行短时离最后一枚隔出一大截,
+  // 200% 时 82px)。它在行外(见上),排版位置不动 —— 只在视觉上平移过去(transform 不改排版,后面的过滤框不跟着挪);
+  // 它与标签区底对齐(align-self:flex-end),正好落在最后一行上。
+  const placeMore = (): void => {
+    more.style.transform = "";
+    if (more.hidden) return;
+    const shown = [...bar.children].filter((c) => (c as HTMLElement).offsetParent !== null);
+    const last = shown[shown.length - 1] as HTMLElement | undefined;
+    if (!last) return;
+    const dx = more.getBoundingClientRect().left - (last.getBoundingClientRect().right + parseFloat(getComputedStyle(bar).columnGap));
+    if (dx > 0.5) more.style.transform = `translateX(${-dx}px)`;
+  };
+
   let busy = false; // 自己改 DOM 时观察器回调不重入
   const refold = (): void => {
     if (busy) return;
     busy = true;
     try {
-      const pills = [...bar.querySelectorAll<HTMLElement>(":scope > .tf-pill")];
-      for (const p of pills) delete p.dataset.fold;
-      more.hidden = true;
-      if (bar.children.length === 0 || pillRows(bar) <= FOLD_ROWS) return; // ④ 不满两行:什么都不出
-      const expanded = open || dragOpen;
-      more.hidden = false; // 先让它占位再量:它吃掉这一行右端的宽度
-      more.setAttribute("aria-expanded", String(expanded));
-      if (expanded) {
-        label.textContent = t("filter.less");
-        arrow.textContent = "▴";
-        return;
-      }
-      // 能折的:真标签、没被选中、没被它的父收着(那些本来就不占位)。从行尾往回折,折到两行为止。
-      const cand = pills.filter((p) => p.dataset.topicId && !p.classList.contains("active") && !p.classList.contains("hidden"));
-      arrow.textContent = "▾";
-      label.textContent = t("filter.more", { n: cand.length }); // 先按最宽的数字占位
-      const hideLast = (k: number): void => {
-        cand.forEach((p, i) => {
-          if (i >= cand.length - k) p.dataset.fold = "1";
-          else delete p.dataset.fold;
-        });
-      };
-      // 折得越多行数越少(单调)⇒ 二分找最小的 k。全折了还超两行(选中的太多 / 窗太窄)就全折,不再硬压。
-      let lo = 1;
-      let hi = cand.length;
-      while (lo < hi) {
-        const mid = (lo + hi) >> 1;
-        hideLast(mid);
-        if (pillRows(bar) <= FOLD_ROWS) hi = mid;
-        else lo = mid + 1;
-      }
-      hideLast(lo);
-      if (cand.length === 0) {
-        more.hidden = true; // 没有一枚可折(全是选中的):钮点了也没用,不出
-        return;
-      }
-      label.textContent = t("filter.more", { n: lo });
+      indent();
+      fold();
+      placeMore();
     } finally {
       busy = false;
     }
+  };
+  const fold = (): void => {
+    const pills = [...bar.querySelectorAll<HTMLElement>(":scope > .tf-pill")];
+    for (const p of pills) delete p.dataset.fold;
+    more.hidden = true;
+    if (bar.children.length === 0 || pillRows(bar) <= FOLD_ROWS) return; // ④ 不满两行:什么都不出
+    const expanded = open || dragOpen;
+    more.hidden = false; // 先让它占位再量:它吃掉这一行右端的宽度
+    more.setAttribute("aria-expanded", String(expanded));
+    if (expanded) {
+      label.textContent = t("filter.less");
+      arrow.textContent = "▴";
+      return;
+    }
+    // 能折的:真标签、没被选中、没被它的父收着(那些本来就不占位)。从行尾往回折,折到两行为止。
+    const cand = pills.filter((p) => p.dataset.topicId && !p.classList.contains("active") && !p.classList.contains("hidden"));
+    arrow.textContent = "▾";
+    label.textContent = t("filter.more", { n: cand.length }); // 先按最宽的数字占位
+    const hideLast = (k: number): void => {
+      cand.forEach((p, i) => {
+        if (i >= cand.length - k) p.dataset.fold = "1";
+        else delete p.dataset.fold;
+      });
+    };
+    // 折得越多行数越少(单调)⇒ 二分找最小的 k。全折了还超两行(选中的太多 / 窗太窄)就全折,不再硬压。
+    let lo = 1;
+    let hi = cand.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      hideLast(mid);
+      if (pillRows(bar) <= FOLD_ROWS) hi = mid;
+      else lo = mid + 1;
+    }
+    hideLast(lo);
+    if (cand.length === 0) {
+      more.hidden = true; // 没有一枚可折(全是选中的):钮点了也没用,不出
+      return;
+    }
+    label.textContent = t("filter.more", { n: lo });
   };
 
   more.addEventListener("click", () => {

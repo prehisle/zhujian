@@ -65,7 +65,8 @@ export const sync = defineMessages({
   "sync.accountKv": { zh: "账户号 {id}", en: "Account ID {id}" },
   "sync.copyAccount": { zh: "复制账户号", en: "Copy account ID" },
   "sync.changeServer": { zh: "修改服务器", en: "Change server" },
-  "sync.back": { zh: "返回", en: "Back" },
+  // 909 E10:二级页左上那枚(sync.ts backTop),同卡片菜单子层的「‹ …」。
+  "sync.back": { zh: "‹ 返回", en: "‹ Back" },
   "sync.createIntro": { zh: "把本机创建为账户的第一台设备,其他设备之后配对加入。", en: "Make this device the account's first device; other devices join later by pairing." },
   // Q2 ★①:创建账户表单上把「丢了回不来」说出来(指南「账户密钥只在你自己的设备上」那条)。
   "sync.createLoseNote": { zh: "账户的钥匙只在你的设备上,服务器没有:这台丢了又没有别的设备和备份,账户就回不来。", en: "The account key exists only on your devices, never on the server: if this computer is lost and you have no other device and no backup, the account cannot be recovered." },

@@ -11,6 +11,8 @@ export const images = defineMessages({
   "itemImages.copiedImage": { zh: "已复制图片", en: "Image copied" },
   "itemImages.pasteFail": { zh: "粘贴图片失败", en: "Failed to paste image" },
   "itemImages.badge": { zh: "图{n}", en: "Image {n}" },
+  // 909 E3:缩略框太窄(竖图)放不下全称时的角标。中文本来就短,与全称同句。
+  "itemImages.badgeShort": { zh: "图{n}", en: "#{n}" },
   "itemImages.loading": { zh: "图片载入中…", en: "Loading image…" },
   "itemImages.loadFail": { zh: "图片加载失败", en: "Image failed to load" },
   "itemImages.close": { zh: "关闭(Esc)", en: "Close (Esc)" },
