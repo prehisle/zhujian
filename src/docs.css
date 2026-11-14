@@ -439,7 +439,7 @@
 }
 .v-docs .hv-row:hover { background: color-mix(in srgb, var(--ink) 4%, transparent); }
 .v-docs .hv-when { font-size: var(--fs-13); color: var(--ink); font-variant-numeric: tabular-nums; }
-.v-docs .hv-chars { flex: 1 0 auto; font-size: var(--fs-12); color: var(--ink-faint); }
+.v-docs .hv-chars { flex: 1 0 auto; font-size: var(--fs-12); color: var(--ink-soft); } /* 912 用户拍:每版字数只在这里看得到 = 622 A2「同屏别处拿不到的升」;与手机同档 */
 .v-docs .hv-picks { display: inline-flex; gap: 4px; margin-left: auto; }
 /* 「复制这一版」(898 B4):行里一枚字钮,比「旧 / 新」那对轻(那对是这一页的主操作),字色 --ink-soft(它是要读的字)。 */
 .v-docs .hv-copy {
@@ -465,7 +465,7 @@
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-pill);
   background: transparent;
-  color: var(--ink-faint);
+  color: var(--ink-soft); /* 912 用户拍:能点的钮不走 faint(622 / 900 C10 判例;此前亮 2.3),与手机 .hv-pick 同档 */
   cursor: pointer;
 }
 .v-docs .hv-pick:hover { color: var(--ink); }
