@@ -46,10 +46,9 @@
   background: var(--seal);
   border-top-right-radius: var(--radius-xs);
   pointer-events: none;
-  /* 909 E3:恒一行。放不下全称时 item-images.ts 的 fitThumbBadge 换短称;这两句是最后一道 —— 宁可裁掉尾巴,不折成两行盖住图。 */
+  /* 909 E3:恒一行。放不下全称时 item-images.ts 的 fitThumbBadge 换短称;短称还放不下就由外框 .img-thumb 的 overflow 裁尾巴。
+     ⛔ 别在角标自己身上加 overflow:hidden / max-width:Linux CI 的 WebKitGTK WebDriver 会把它判成看不见(读出空串,909 撞到)。 */
   white-space: nowrap;
-  max-width: 100%;
-  overflow: hidden;
 }
 
 /* 新建入口(灵感「记下灵感」/ 看板「新建任务」)里的暂存图条:compose 是 flex 行,

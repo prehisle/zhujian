@@ -138,11 +138,11 @@ export function fitThumbBox(box: HTMLElement, img: HTMLImageElement): void {
   box.style.width = `${w}px`;
 }
 /** 角标放不下全称就换短称(909 E3):缩略框按比例最窄只有 36(竖图 / 手机截图 ≈ 40),英文「Image 2」要 ≈ 51 ——
- *  此前在框里折成两行、盖住半张图。量的是这一刻屏上那几个字(角标被 CSS 封顶在框宽、溢出裁掉 ⇒ 看 scrollWidth;中英字宽、两个引擎各不同,不写死断点);
+ *  此前在框里折成两行、盖住半张图。量的是这一刻屏上那几个字(角标宽 vs 框内宽;中英字宽、两个引擎各不同,不写死断点);
  *  框还没排版(宽 0,如藏在收起的卡里)就先留全称。中文「图N」两种一样长,等于不变。全称照旧在 img 的 title / alt 上。 */
 function fitThumbBadge(box: HTMLElement, badge: HTMLElement, seq: number): void {
   badge.textContent = t("itemImages.badge", { n: seq });
-  if (box.clientWidth > 0 && badge.scrollWidth > badge.clientWidth) badge.textContent = t("itemImages.badgeShort", { n: seq });
+  if (box.clientWidth > 0 && badge.getBoundingClientRect().width > box.clientWidth + 0.5) badge.textContent = t("itemImages.badgeShort", { n: seq });
 }
 function shrinkToThumb(url: string): Promise<string> {
   return new Promise((resolve, reject) => {
