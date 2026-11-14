@@ -3,7 +3,7 @@
 //   E5 长文编辑单栏(视口 < 1180)时工具条与编辑框同宽:「保存」右缘 = 编辑框右缘;
 //   E6 字号放大、顶栏那组钮折到第二行时靠左,与页标题左缘同列(看板 / 长文 / 标签 / 随记);
 //   E7 小字加深:留言时间 / 「销毁」/ 随记内嵌留言的标题、筛选条轴名与计数、看板列头计数 = --ink-soft;计数与药丸同色;
-//   E8 留言「记下」= 圆头药丸、满朱、与留言框同高;
+//   E8 留言「记下」= 圆头药丸、满朱、与留言框单行同高;框随字数长高、钮贴底(909 尾巴);
 //   E9 管理看板浮层:钮是圆头药丸,钮与输入框同高 31;
 //   E10 同步浮层二级页:「‹ 返回」在子层左上、页底只剩主钮(靠右、主钮样式);输入框高 31;Esc 照旧退一层;
 //   E11 设置里的别名框 / 提醒时刻框圆角 8;
@@ -142,6 +142,21 @@ describe("909 电脑版观感补看", () => {
         del: getComputedStyle(document.querySelector(".cm-del")).color,
       };
     });
+    // 909 尾巴:留言框单行起、随字数长高(钮钉单行高、贴底),清空缩回 —— 不提交,只改框里的字
+    const g = await browser.execute(() => {
+      const i = document.querySelector(".cm-input");
+      const s = document.querySelector(".cm-send");
+      const h = (e) => Math.round(e.getBoundingClientRect().height * 10) / 10;
+      const h0 = h(i);
+      i.value = ["一", "二", "三"].join(String.fromCharCode(10));
+      i.dispatchEvent(new Event("input"));
+      const h3 = h(i);
+      const sendH3 = h(s);
+      const dy3 = Math.round((s.getBoundingClientRect().bottom - i.getBoundingClientRect().bottom) * 10) / 10;
+      i.value = "";
+      i.dispatchEvent(new Event("input"));
+      return { h0, h3, sendH3, dy3, back: h(i) };
+    });
     await esc();
     await $(".cm-panel").waitForExist({ timeout: 5000, reverse: true });
     expect(r.radius).toBe("999px");
@@ -150,6 +165,11 @@ describe("909 电脑版观感补看", () => {
     expect(Math.abs(r.bottomDy)).toBeLessThanOrEqual(0.5);
     expect(r.meta).toBe(soft);
     expect(r.del).toBe(soft);
+    expect(g.h0).toBeLessThan(40); // 单行起(此前 rows=2 ⇒ 58.8,钮跟着近圆)
+    expect(g.h3).toBeGreaterThan(g.h0 * 2); // 三行字长高了
+    expect(Math.abs(g.sendH3 - g.h0)).toBeLessThanOrEqual(0.5); // 钮不跟着长
+    expect(Math.abs(g.dy3)).toBeLessThanOrEqual(0.5); // 钮贴底
+    expect(Math.abs(g.back - g.h0)).toBeLessThanOrEqual(0.5); // 清空缩回
   });
 
   it("E7:随记内嵌留言的标题 = --ink-soft", async () => {

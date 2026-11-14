@@ -149,7 +149,7 @@ function openPanel(
   const more = el("button", { className: "cm-more", textContent: t("comments.loadMore"), hidden: true });
   const area = el("textarea", {
     className: "cm-input",
-    rows: 2,
+    rows: 1, // 909:单行起、随字数长高(同随记记一笔框);旁边「记下」钉单行高,框长高时它贴底
     placeholder: t("comments.inputPlaceholder"),
     value: opts.draft ?? "",
   });
@@ -282,6 +282,7 @@ function openPanel(
       await invokeInSpace(space, "add_item_comment", { itemId, content });
       if (!live()) return; // 面板已关 / 已换卡:库里已经写下了,只是不再动这块 DOM
       area.value = "";
+      grow();
       clearErr();
       cursor = null;
       if (open) open.paged = false; // 自己写的那条在第一页顶上,回到第一页是对的
@@ -306,6 +307,14 @@ function openPanel(
       if (live()) showErr(e);
     }
   }
+  // 随字数长高(909):先归 auto 再量 scrollHeight(否则只长不缩);封顶交给 CSS max-height,超了框内滚。
+  // ⚠ 全局 border-box ⇒ 高 = scrollHeight + 上下边。
+  const grow = (): void => {
+    if (!area.isConnected || area.offsetParent === null) return; // 没排版(藏着)就不量,否则量出 0 把框压扁
+    area.style.height = "auto";
+    area.style.height = `${area.scrollHeight + area.offsetHeight - area.clientHeight}px`;
+  };
+  area.addEventListener("input", grow);
   send.addEventListener("click", () => void submit());
   area.addEventListener("keydown", (e) => {
     if (e.isComposing) return; // IME 组合期的 Enter 属于输入法(ui-audit P0 #1)
@@ -363,6 +372,7 @@ function openPanel(
     hold = holdKeyboard(overlay, panel, { onEscape: () => close(), focus: area });
   } else host!.append(panel);
   void loadPage(false);
+  grow(); // 带着草稿重挂 / 打开时,框按草稿长好
   if (opts.focus !== false) area.focus();
   // 滚动只在 inline 那一形要管(浮层天然居中)。`nearest` 一律 = 已经看得见就不动。
   //  · 手点展开:把**整块**带进视口(用户要读的是列表);

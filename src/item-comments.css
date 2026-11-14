@@ -257,18 +257,22 @@
   font-size: var(--fs-14);
   line-height: 1.6;
   padding: 6px 8px;
+  /* 909:单行起、随字数长高(item-comments.ts grow),长到六行封顶、再多框内滚 */
+  max-height: calc(var(--fs-14) * 1.6 * 6 + 14px);
+  overflow-y: auto;
 }
 .cm-input:focus {
   outline: none;
   border-color: var(--seal-line);
 }
 /* 909 E8:与随记记一笔框那枚「记下」(inbox.css .compose-add)同族 —— 满朱圆头药丸、字档 13 / 600;
-   高度钉到旁边留言框的高(2 行:14px × 1.6 × 2 + 上下衬垫 6 × 2 + 边 1 × 2,从 .cm-input 那几句派生 ——
-   改那边的字号 / 行高 / 衬垫 / rows,这里跟着改)。钉死不靠字形撑(Linux CI 缺中文字体,908 那次就红在撑出来的高上)。 */
+   高度钉到旁边留言框**单行**时的高(14px × 1.6 + 上下衬垫 6 × 2 + 边 1 × 2,从 .cm-input 那几句派生 ——
+   改那边的字号 / 行高 / 衬垫,这里跟着改);框长高时它贴底(.cm-compose align-items: flex-end)。
+   钉死不靠字形撑(Linux CI 缺中文字体,908 那次就红在撑出来的高上)。此前框是两行、钮跟着 58.8 高 ≈ 圆,909 改单行长高。 */
 .cm-send {
   flex: none;
-  height: calc(var(--fs-14) * 1.6 * 2 + 14px);
-  min-height: 24px; /* 热区自保那一格(§2.3)写成显式 px 给热区门禁认:它读不出上面那句 calc(恒 ≈ 58.8,本就远大于 24) */
+  height: calc(var(--fs-14) * 1.6 + 14px);
+  min-height: 24px; /* 热区自保那一格(§2.3)写成显式 px 给热区门禁认:它读不出上面那句 calc(恒 ≈ 36.4,本就远大于 24) */
   border: 1px solid var(--seal);
   background: var(--seal);
   color: var(--on-seal);

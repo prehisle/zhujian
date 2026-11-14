@@ -118,6 +118,8 @@ function fetchThumbData(space: string, id: string): Promise<ThumbData | null> {
  *  字节巨大[多帧/元数据],直接放原 URL 进缓存 = 缓存无界 ⇒ 长边钉死、短边随比例更小)。
  *  小图不放大,但照样重编码。解码失败响亮抛给调用方标错框。 */
 const THUMB_PX = 192;
+/** 缩略图铺底色 = 亮档纸色,固定不随明暗(缓存的小图两档共用;同桌面 `item-images.ts` THUMB_MATTE)。 */
+const THUMB_MATTE = "#faf6ec";
 /** 缩略框按图的比例定宽:高恒 72,宽 = 72 × 宽高比,夹在 36..160(同桌面 `item-images.ts::fitThumbBox`)。 */
 export function fitThumbBox(box: HTMLElement, img: HTMLImageElement): void {
   if (!img.naturalWidth || !img.naturalHeight) return;
@@ -135,7 +137,13 @@ async function shrinkToThumb(url: string): Promise<string> {
   const c = document.createElement("canvas");
   c.width = Math.max(1, Math.round(img.naturalWidth * k));
   c.height = Math.max(1, Math.round(img.naturalHeight * k));
-  c.getContext("2d")!.drawImage(img, 0, 0, c.width, c.height);
+  const ctx = c.getContext("2d");
+  if (!ctx) throw new Error("canvas 2d 上下文不可用");
+  // 909:先铺固定亮档纸色(同桌面 item-images.ts THUMB_MATTE)—— JPEG 没有透明,透明 PNG 不铺底会编成黑边;
+  // core `THUMB_SPEC` 同轮换成 `192fit-jpeg80-matte`,旧的黑边缩略图看一次即重算。
+  ctx.fillStyle = THUMB_MATTE;
+  ctx.fillRect(0, 0, c.width, c.height);
+  ctx.drawImage(img, 0, 0, c.width, c.height);
   return c.toDataURL("image/jpeg", 0.8);
 }
 

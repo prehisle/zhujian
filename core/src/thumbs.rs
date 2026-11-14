@@ -25,7 +25,9 @@ use crate::repo::now_iso;
 /// 冒充新规格(改了这里则存量行全体未命中、看一次自动刷新,是安全方向)。
 /// 157 G4 / P12 从 `144sq-jpeg80`(中央方裁)换成这一版:缩略图按原比例显示(限高),方裁的小图
 /// 认不出长图宽图。用的正是上面第 ④ 条那个旋钮,零迁移。
-pub const THUMB_SPEC: &str = "192fit-jpeg80";
+/// 909 再拧一次 → `192fit-jpeg80-matte`:两端出 JPEG 前先铺固定亮档纸色(透明 PNG 的透明处此前编成黑),
+/// 旧规格行全体未命中、看一次按新做法重算。⚠ 两端 `shrinkToThumb` 都得先铺底,否则会以新规格回存黑边图、再也不刷新。
+pub const THUMB_SPEC: &str = "192fit-jpeg80-matte";
 
 /// 缩略图字节上界(与 0032 的 CHECK 同值,`thumb_size_cap_matches_schema` 对拍钉死)。
 ///
