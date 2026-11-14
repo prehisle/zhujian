@@ -51,7 +51,7 @@
 .tf-axis {
   font-size: var(--fs-12);
   letter-spacing: 0.04em;
-  color: var(--ink-soft); /* 909 E7(908 D14 漏网):--ink-faint → --ink-soft(轴名是要读的字;§2.2 小字底线 5.0) */
+  color: var(--ink-faint); /* 留淡(896 用户拍:旁边的药丸自己说明了是哪根轴;909 误改深过,911 用户拍退回) */
   margin-right: 2px;
 }
 /* 标签 pills + 文本过滤框同排(kind 行之下)。 */
@@ -160,9 +160,9 @@ mark.filter-hit {
   background: var(--seal-tint);
   font-weight: 600;
 }
-/* 909 E7:计数与药丸里的字同一档色(622「一个控件不劈两档」;此前 --ink-faint,一枚药丸里字深数浅)。
-   随药丸走:静息 --ink-soft、悬停 --ink、选中朱字、空位 .empty 一起淡 —— 不再各写一条。 */
-.tf-n { font-size: var(--fs-12); color: inherit; font-variant-numeric: tabular-nums; }
+/* 计数留淡(622 用户拍 A2:纯计数说的是屏上就摆着的那堆;908 / 909 误改深过,911 用户拍退回) */
+.tf-n { font-size: var(--fs-12); color: var(--ink-faint); font-variant-numeric: tabular-nums; }
+.tf-pill.active .tf-n { color: var(--seal-ink-on-seal-tint); }
 /* 有色标签的筛选钮带一颗色点,让整条筛选条读出颜色分布(无色标签无点)。 */
 .tf-dot {
   width: 8px;

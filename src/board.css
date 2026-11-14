@@ -399,12 +399,9 @@
    (删掉的列 0043 起进收容区,原看板上不再有只读列,`.col-readonly` / `.col-gone` 一并退场。) */
 .v-board .col-count {
   font-size: var(--fs-12);
-  color: var(--ink-soft); /* 909 E7(908 D14 漏网):--ink-faint → --ink-soft(列里几张卡是要读的数) */
+  color: var(--ink-faint); /* 留淡(622 用户拍 A2:纯计数说的是屏上就摆着的那堆;908 / 909 误改深过,911 用户拍退回) */
   font-variant-numeric: tabular-nums;
-  /* 909 E7:此前垫一层 7% 墨底,--ink-soft 压上去亮档只剩 4.47(< §2.2 小字底线 5.0;去掉底是 5.11)。换成一圈细线:
-     仍读作一枚计数小牌,底就是纸面。inset 阴影画线 = 不占尺寸,19 的高宽照旧。 */
-  background: transparent;
-  box-shadow: inset 0 0 0 1px var(--line-strong);
+  background: color-mix(in srgb, var(--ink) 7%, transparent);
   border-radius: var(--radius-pill);
   min-width: 19px;
   height: 19px;

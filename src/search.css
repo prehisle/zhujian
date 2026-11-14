@@ -100,7 +100,7 @@
   margin: 0 0 12px;
   font-size: var(--fs-12);
   letter-spacing: 0.04em;
-  color: var(--ink-soft); /* 908 D14:--ink-faint → --ink-soft(小字说明 / 计数要读得到:§2.2 小字底线 5.0,faint 压纸面约 2.2–2.5) */
+  color: var(--ink-faint); /* 留淡(622 用户拍 A2:纯计数说的是屏上就摆着的那堆;908 / 909 误改深过,911 用户拍退回) */
   font-variant-numeric: tabular-nums;
 }
 

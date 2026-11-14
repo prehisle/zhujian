@@ -2,7 +2,7 @@
 //   E4 看板卡元信息行:空的截止 / 优先级 / 颜色格不占位 ——「💬 N」与标题左缘对齐,相邻两项之间就是一份间距;
 //   E5 长文编辑单栏(视口 < 1180)时工具条与编辑框同宽:「保存」右缘 = 编辑框右缘;
 //   E6 字号放大、顶栏那组钮折到第二行时靠左,与页标题左缘同列(看板 / 长文 / 标签 / 随记);
-//   E7 小字加深:留言时间 / 「销毁」/ 随记内嵌留言的标题、筛选条轴名与计数、看板列头计数 = --ink-soft;计数与药丸同色;
+//   E7 小字加深:留言时间 / 「销毁」/ 随记内嵌留言的标题 = --ink-soft;筛选条轴名与计数、看板列头计数照 622 A2 / 896 留 --ink-faint(911 退回);
 //   E8 留言「记下」= 圆头药丸、满朱、与留言框单行同高;框随字数长高、钮贴底(909 尾巴);
 //   E9 管理看板浮层:钮是圆头药丸,钮与输入框同高 31;
 //   E10 同步浮层二级页:「‹ 返回」在子层左上、页底只剩主钮(靠右、主钮样式);输入框高 31;Esc 照旧退一层;
@@ -96,10 +96,10 @@ describe("909 电脑版观感补看", () => {
     for (const g of r.due.gaps) expect(Math.abs(g)).toBeLessThanOrEqual(0.5);
   });
 
-  it("E7:看板列头计数、筛选条轴名与计数 = --ink-soft;计数与药丸同一档色", async () => {
+  it("留淡(622 A2 / 896 用户拍):看板列头计数、筛选条轴名与药丸里的数 = --ink-faint;选中那枚的数随药丸朱字", async () => {
     await goNotebook("board");
     await $(".v-board .col-count").waitForExist({ timeout: 8000 });
-    const soft = await tokenColor("--ink-soft");
+    const faint = await tokenColor("--ink-faint");
     const r = await browser.execute(() => {
       const c = (e) => (e ? getComputedStyle(e).color : null);
       const pill = [...document.querySelectorAll(".tf-pill")].find((p) => p.offsetParent !== null && !p.classList.contains("active") && !p.classList.contains("empty") && p.querySelector(".tf-n"));
@@ -113,10 +113,11 @@ describe("909 电脑版观感补看", () => {
         actN: c(act?.querySelector(".tf-n")),
       };
     });
-    expect(r.col).toBe(soft);
-    expect(r.axis).toBe(soft);
+    expect(r.col).toBe(faint);
+    expect(r.axis).toBe(faint);
     expect(r.pill).not.toBe(null);
-    expect(r.pillN).toBe(r.pill);
+    expect(r.pillN).toBe(faint);
+    expect(r.pill).not.toBe(faint); // 药丸字本身不淡,淡的只是数
     expect(r.actN).toBe(r.act);
   });
 
