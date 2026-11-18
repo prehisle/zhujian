@@ -7,7 +7,14 @@
     <description>朱简电脑版与安卓版的每一次更新</description>
     <language>zh-CN</language>
     <atom:link href="https://zhujian.app/changelog.xml" rel="self" type="application/rss+xml" />
-    <pubDate>Sat, 26 Sep 2026 00:00:00 +0800</pubDate>
+    <pubDate>Wed, 18 Nov 2026 00:00:00 +0800</pubDate>
+    <item>
+      <title>2026 年 11 月 18 日:电脑版 0.2.50 · 安卓版 0.3.46</title>
+      <link>https://zhujian.app/changelog.html#2026-11-18</link>
+      <guid isPermaLink="true">https://zhujian.app/changelog.html#2026-11-18</guid>
+      <pubDate>Wed, 18 Nov 2026 00:00:00 +0800</pubDate>
+      <description>&lt;ul&gt;&lt;li&gt;&lt;strong&gt;电脑版 0.2.50&lt;/strong&gt;:新增「长文」和多块看板:长文能配图、对比改前改后;贴的图不再压糊&lt;/li&gt;&lt;li&gt;&lt;strong&gt;安卓版 0.3.46&lt;/strong&gt;:新增「长文」和多块看板;长文能配图、对比改前改后;平板横放排得更开&lt;/li&gt;&lt;/ul&gt;</description>
+    </item>
     <item>
       <title>2026 年 9 月 26 日:电脑版 0.2.49 · 安卓版 0.3.45</title>
       <link>https://zhujian.app/changelog.html#2026-09-26</link>
